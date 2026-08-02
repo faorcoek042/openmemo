@@ -165,8 +165,17 @@ importers:
         specifier: workspace:*
         version: link:../shared
 
+  packages/llm:
+    dependencies:
+      '@openmemo/shared':
+        specifier: workspace:*
+        version: link:../shared
+
   packages/mindmap:
     dependencies:
+      '@openmemo/llm':
+        specifier: workspace:*
+        version: link:../llm
       '@openmemo/shared':
         specifier: workspace:*
         version: link:../shared

@@ -24,5 +24,7 @@ export * from './store.js';
 export * from './queue.js';
 export * from './installer.js';
 export * from './manifest.js';
+export * from './unpack.js';
+export * from './signature.js';
 
 export const PACKAGE_NAME = '@openmemo/downloader' as const;

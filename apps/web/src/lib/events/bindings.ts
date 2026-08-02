@@ -17,14 +17,14 @@ import { notesSse } from '../../features/notes/sse';
 import { tasksSse } from '../../features/tasks/sse';
 import { systemSse } from './system.sse';
 
-// T-022 / T-023 认领各自 feature 后，在此追加一行 import + 一个数组项。
-// import { modelsSse } from '../../features/models/sse';
-// import { runtimeSse } from '../../features/runtime/sse';
+import { modelsSse } from '../../features/models/sse';
+import { runtimeSse } from '../../features/runtime/sse';
+// T-023 认领后在此追加一行 import + 一个数组项。
 // import { mindmapSse } from '../../features/mindmap/sse';
 
 export type SseBinding = (qc: QueryClient) => (() => void)[];
 
-const BINDINGS: SseBinding[] = [systemSse, notesSse, tasksSse];
+const BINDINGS: SseBinding[] = [systemSse, notesSse, tasksSse, modelsSse, runtimeSse];
 
 /** 注册全部绑定，返回统一的注销函数。 */
 export function registerAllSseBindings(qc: QueryClient): () => void {

@@ -23,6 +23,7 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
+    "@openmemo/llm": "workspace:*",
     "@openmemo/shared": "workspace:*"
   }
 }

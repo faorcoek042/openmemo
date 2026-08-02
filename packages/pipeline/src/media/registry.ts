@@ -101,6 +101,23 @@ export class MediaSourceRegistry {
    * after every cheaper, licence-clean option has actually been tried and declined.
    */
   async probe(input: string, signal: AbortSignal): Promise<MediaInfo> {
+    return (await this.probeWithSource(input, signal)).info;
+  }
+
+  /**
+   * Same fallback walk as `probe`, but also returns WHICH adapter succeeded.
+   *
+   * The pipeline needs this: it must fetch with the same adapter that probed, otherwise
+   * it would re-resolve by score and could pick a different one. An earlier version
+   * called `resolve()` then `probe()` separately, which silently bypassed this whole
+   * fallback chain — the GPL fallback could never actually engage during a real import,
+   * and a transient network error on the first candidate aborted the job instead of
+   * trying the next.
+   */
+  async probeWithSource(
+    input: string,
+    signal: AbortSignal,
+  ): Promise<{ source: MediaSource; info: MediaInfo }> {
     const candidates = this.candidates(input);
     if (candidates.length === 0) {
       throw new NoMediaSourceError(input, DEFAULT_REMEDIATION);
@@ -114,7 +131,7 @@ export class MediaSourceRegistry {
         continue;
       }
       try {
-        return await source.probe(input, signal);
+        return { source, info: await source.probe(input, signal) };
       } catch (err) {
         if (signal.aborted) throw err;
         failures.push(`${source.id}: ${err instanceof Error ? err.message : String(err)}`);

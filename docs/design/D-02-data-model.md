@@ -20,8 +20,9 @@ depends_on: D-01, ADR-001, ADR-002, ADR-003, ADR-004, R-01, R-03, R-04
 - **本轮已核实的四处订正**（读上游源码/官方文档取得，详见 §7）：① **npm 包名是 `mind-elixir` v5.14.0，不是 `mind-elixir-core`**（ADR-002/R-03/BOARD 需订正），且 `MindElixirData` **没有 `linkData`**，只有 `arrows`；② markmap 的 `transform()` 只吃 Markdown，但 `Markmap.create()` 吃 `IPureNode` → **绕过 transform 直接构造节点树**，省掉两次有损转换；③ `tokenize='simple'` 写法与 `simple_query()/simple_highlight()` 用法已由 libsimple README 逐字确认，**且原生支持拼音检索**（memo.ac 没有）；④ `vec0` 支持**元数据列（可过滤）/ `+辅助列` / `partition key`**，且分区键与 rescore/IVF/DiskANN 互斥。
 - **【2026-08-02 状态升级】§4 检索三件套已由 T-014 实证跑通**：外部内容表 + 三组触发器 + `tokenize='simple'` + bm25 + `simple_query`/`simple_highlight` + **拼音检索** + WAL + 外键 + `vec0` KNN **全部通过**。§4 从"设计意图"升级为**已验证**。驱动定案 `better-sqlite3` v13 + `node:sqlite` 备胎 + 薄适配层（ADR-005 决策 6），**D-02 无需改动**。
 - **由实测带回的两条硬约定（已写死在文中）**：① **写 `vec0` 的整数列一律绑 `BigInt`**——绑 JS `number` 必报 `Only integers are allows for primary key values`，两个驱动表现一致（是 sqlite-vec 的行为不是驱动 bug），转换收口到 DB 适配层，业务代码照传 `number`（§4.3）；② **扩展能力只能实测，不能读 `PRAGMA compile_options` 推断**——不列 `ENABLE_LOAD_EXTENSION` 也照样能加载，本文早期的 V-6 提法就错在这个前提上（§4.1 已写入方法论更正）。
-- **未验证/存疑**：① **§1 的 26 张业务表 DDL 仍未整体执行**（T-014 只跑了 §4 的检索部分），T-016 落 `0001_init.sql` 时必须实测；② 驱动**只在 Linux x64 glibc 实测**，mac/Win/arm64/musl 全未验证，上游 issue #1509（arm64 需 GLIBC_2.38）未复现；③ libsimple 辅助函数的形参级签名仍 UNKNOWN；④ 重转写后 `quote` 相似度重定位的阈值（0.75/0.4）未调过。
-- **对其他 agent 的影响**：T-011 请把 §1 的 DDL 落成 `0001_init.sql` 并**实测跑通**（含扩展加载），注意 **`mind-elixir` 包名订正**与 **Node ≥ 22 基线**，跑不通的地方回写 inbox；T-013 请注意 API 只暴露 `uid`、时间戳出入口转换（DB 毫秒整数 ↔ API ISO 字符串）、以及 §1.8 的 `model_installs` 只是**可重建索引**，权威源仍是 `manifests/*.json`；T-012 请对齐 §1.8 `backend_installs` 的 `selftest_json` 与熔断字段 `failure_count`。
+- **DDL 已整体实证（2026-08-02）**：`oss-scout` 在 `packages/db` 落地跑通 **26 表 + 57 索引 + 3 FTS5 + 11 触发器**，`foreign_key_check` 干净 → 本文 DDL 全部从"设计意图"升级为**已验证**。由此得到一条全项目规则（ADR-009）：**设计文档里的 DDL 不许写「（略）」** —— 下游会照抄，而省略号是个空洞，只有实现时才炸；§4.1 的 `mindmap_nodes_fts` 三个触发器已补全为可执行 SQL。
+- **未验证/存疑**：① 驱动与扩展**只在 Linux x64 glibc 实测**，mac/Win/arm64/musl 全未验证，上游 issue #1509（arm64 需 GLIBC_2.38）未复现；② libsimple 辅助函数的形参级签名仍 UNKNOWN（只有用法级示例）；③ 重转写后 `quote` 相似度重定位的阈值（0.75/0.4）未用真实数据调过；④ 混合检索 RRF 的实际效果未做评测。
+- **对其他 agent 的影响**：§1/§4 的 DDL 已由 `packages/db` 落地，后续改 schema **必须走迁移**（§5），不要直接改本文的建表语句而不加迁移；T-013 请注意 API 只暴露 `uid`、时间戳出入口转换（DB 毫秒整数 ↔ API ISO 字符串）、以及 §1.8 的 `model_installs` 只是**可重建索引**，权威源仍是 `manifests/*.json`；T-012 请对齐 §1.8 `backend_installs` 的 `selftest_json` 与熔断字段 `failure_count`。
 
 ---
 
@@ -30,9 +31,16 @@ depends_on: D-01, ADR-001, ADR-002, ADR-003, ADR-004, R-01, R-03, R-04
 > **诚实标记**：`[已定]` = 上游 ADR/研究已裁决；`[已验证]` = 已在真实 SQLite 上跑通（注明由谁在哪个任务里跑的）；
 > `[设计]` = 我的决策，未执行过 SQL；`[待核实]` = 需要实证；`UNKNOWN` = 查不到，不编。
 >
-> **DDL 的执行状态（2026-08-02 更新）**：
-> - ✅ **§4 检索部分（FTS5 + libsimple + sqlite-vec）已由 `oss-scout` 在 T-014 实测跑通**，见 §7 V-1/V-6。
-> - ⬜ **§1 的 26 张业务表 DDL 仍未整体执行** —— T-016 落 `0001_init.sql` 时以实测为准，冲突回写 inbox。
+> **DDL 的执行状态（2026-08-02 二次更新）**：
+> - ✅ **§4 检索部分**（FTS5 + libsimple + sqlite-vec）由 `oss-scout` 在 T-014 实测跑通。
+> - ✅ **§1 的全部业务表**由 `oss-scout` 在 `packages/db` 落地跑通：
+>   **26 表 + 57 索引 + 3 个 FTS5 虚拟表 + 11 个触发器**，`PRAGMA foreign_key_check` 输出为空。
+> - → 本文档的 DDL 已**整体从"设计意图"升级为"已验证"**。
+>
+> ⚠️ **一条由此得到的教训（ADR-009 已升为全项目规则）**：
+> 本文 §4.1 的 `mindmap_nodes_fts` 触发器原先写的是「（略）」。
+> 下游会把设计文档里的 DDL 当作"照抄即可"，而「（略）」是个**空洞** —— 只有实现时才炸。
+> **设计文档里的 DDL 一律写全，不许省略。** 该处已于 2026-08-02 补全为可执行 SQL。
 
 ---
 
@@ -72,9 +80,18 @@ PRAGMA trusted_schema = OFF;      -- 安全：禁止 schema 中的函数在未�
 | **路径** | 一律**相对路径**（相对各自的根） | 数据目录可整体搬迁/改盘符 |
 | **枚举** | `TEXT` + `CHECK` 约束 | 可读、可 grep；性能差异在本地规模下可忽略 |
 
-> **循环外键说明**：`media_sources.thumbnail_asset_id → media_assets` 与 `media_assets.source_id → media_sources`
-> 构成循环。SQLite 在**运行时**解析外键（不要求建表顺序），且两列均可空 + `ON DELETE SET NULL`，因此合法。
+> **循环外键说明**（2026-08-02 补全：原文只列了 1 组，实际有 **3 组**）：
+>
+> | # | 循环 | 断环列（可空 + `ON DELETE SET NULL`） |
+> |---|---|---|
+> | 1 | `media_sources.thumbnail_asset_id → media_assets` ⇄ `media_assets.source_id → media_sources` | `thumbnail_asset_id` |
+> | 2 | `notes.cover_asset_id → media_assets` ⇄ `media_assets.note_id → notes` | `cover_asset_id` |
+> | 3 | `mindmaps.root_node_id → mindmap_nodes` ⇄ `mindmap_nodes.mindmap_id → mindmaps` | `root_node_id` |
+>
+> SQLite 在**运行时**解析外键（不要求建表顺序），且每组都有一条**可空 + `ON DELETE SET NULL`**
+> 的"断环列"，因此三组都合法。
 > 但**批量删除时需注意顺序**，建议删除走应用层事务而非纯级联 `[设计]`。
+> 落地后请跑一次 `PRAGMA foreign_key_check` 验证（T-014/T-016 已实测通过，输出为空）。
 
 ### 1.2 元数据与设置
 
@@ -953,7 +970,20 @@ CREATE VIRTUAL TABLE mindmap_nodes_fts USING fts5(
   content_rowid = 'id',
   tokenize = 'simple'
 );
--- 三个触发器同上模式（略）
+CREATE TRIGGER mindmap_nodes_fts_ai AFTER INSERT ON mindmap_nodes BEGIN
+  INSERT INTO mindmap_nodes_fts(rowid, text, note_md)
+  VALUES (new.id, new.text, new.note_md);
+END;
+CREATE TRIGGER mindmap_nodes_fts_ad AFTER DELETE ON mindmap_nodes BEGIN
+  INSERT INTO mindmap_nodes_fts(mindmap_nodes_fts, rowid, text, note_md)
+  VALUES ('delete', old.id, old.text, old.note_md);
+END;
+CREATE TRIGGER mindmap_nodes_fts_au AFTER UPDATE OF text, note_md ON mindmap_nodes BEGIN
+  INSERT INTO mindmap_nodes_fts(mindmap_nodes_fts, rowid, text, note_md)
+  VALUES ('delete', old.id, old.text, old.note_md);
+  INSERT INTO mindmap_nodes_fts(rowid, text, note_md)
+  VALUES (new.id, new.text, new.note_md);
+END;
 ```
 
 **注意事项**

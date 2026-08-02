@@ -1,0 +1,28 @@
+{
+  "name": "@openmemo/llm",
+  "version": "0.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "type": "module",
+  "description": "LLM 适配层：OpenAI 兼容 + Anthropic 两个实现，覆盖云/Ollama/LM Studio/llama-server",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@openmemo/shared": "workspace:*"
+  }
+}

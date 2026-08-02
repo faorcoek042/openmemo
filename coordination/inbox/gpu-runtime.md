@@ -123,3 +123,66 @@
 - D-06 §9.1 列了 10 项已实测（附命令与输出），§9.2 列了 **12 项未验证/未实现**。
 - **未实现**：F3 流式引擎、F3 两阶段。**未真跑**：yt-dlp 路径、真实 RSS feed、真实 HLS 流、Windows/macOS 分支、长音频（最长只测到 220s）、中途取消、`nice`、中文多语种（只测了英文）。
 - 两个 TOCTOU 缺口是**已知未修**，不是"应该没问题"。
+
+---
+
+## [2026-08-02 15:35] T-025 DONE
+
+交付:
+- `packages/pipeline/src/asr/sherpaOnnx.ts`（F3 流式引擎）、`asr/merge.ts`（两阶段合并）
+- 新测试：`asr/__tests__/{merge,sherpaStream}.test.ts`、`media/__tests__/registryFallback.test.ts`
+- 修改：`media/registry.ts`（新增 `probeWithSource`）、`transcribe.ts`（改用回退链）、`index.ts`
+- **`docs/SECURITY.md`（新建）**
+- `docs/design/D-06-pipeline.md` 追加 §11–§14
+
+**测试 75 → 101 全绿**，eslint 干净，`tsc -b` 干净。
+
+## A. F3 流式（已实测）
+- `SherpaOnnxEngine` + `streaming-zipformer-zh-14M`（74 MB）：**RTF 0.010–0.066（15–105x 实时）**，逐字时间戳，11–12 次 partial 更新演进出完整句子。
+- **两阶段真跑通**：流式草稿「…全球金融**动能**的表现」→ 用户改成「**动荡**」→ large-v3-turbo 离线重跑「…金融**动荡**的表现。」→ 合并结果 **`已更新 0 段转写 · 你编辑过的 1 段已保留`**，`flags=4`(HUMAN_CONFIRMED)，**USER EDIT PRESERVED: YES ✅**。
+- 合并**按时间匹配而非按索引**：两遍模型切分天然不同，按索引会把别人的句子塞给用户。最强保证：**编辑过的段即使重跑处无对应也永不删除**。
+- ⚠️ **第一次真跑就抓到 bug**：`close()` 先置 `closed=true` 再排空队列 → 已排队的写入全部 bail，**整段录音零输出**。拆成 `closing`/`closed` 两个标志已修 + 回归测试。
+
+## B. 中文补测（Manager 要求，结论明确）
+素材 `Zh-Twitter.ogg`（CC BY 3.0，337s 中文维基朗读）。
+
+| | base | large-v3-turbo-q5_0 |
+|---|---|---|
+| ASR RTF | 0.055（18.2x） | **0.377（2.7x）** |
+| 置信度均值 | 0.81 | **0.95** |
+| 繁体泄漏 | 有 | **0/22 段** |
+
+**base 中文不可用**（不是稍差，是专有名词几乎全错）：维基百科→**危机摆科**、百科全书→**摆科权书**、华尔街日报→**花耳街日报**、印度孟买→**印度梦买**、迈克尔杰克逊逝世→**麦克尔结克训试事**、谷歌/李开复→**古歌/李开夫**、乔治·W.布什→**乔志W不时**、752%→**752的**。large-v3-turbo 上述全部正确。
+
+**三条建议**：① **不要给中文用户提供 base/small 选项**，会让人以为产品很差；② 繁简问题有廉价解法**且已验证**——初始 prompt「以下是普通话的句子，请使用简体中文转写。」能把 `對我做了介紹` 纠正为 `对我做了介绍`（已写进流水线中文默认参数，但**只解决字形不解决准确率**）；③ F3 实时用 sherpa zh-14M，离线用 large-v3-turbo。FunASR/Paraformer **未测**（sherpa-onnx 已支持，建议下轮评估）。
+
+**⚠️ 这条改变了 GPU spike 的性质**：中文必须用 large-v3-turbo，而它在 CPU 上只有 2.7x 实时（1 小时录音跑 22 分钟）。中文是主要用户群 → **ADR-003 决策 3 的 CUDA/Vulkan 实测从"性能优化"升级为"中文可用性前提"**。
+
+## C. 未验证项补跑（全部实测）
+- **真实 RSS**：LibriVox（128 集）+ NASA Megaphone（102 集），标题与 enclosure 全部正确解析。
+- **长音频 33.6 分钟**：80 chunk / 430 段 / RTF 0.089（11.2x）/ **峰值内存仅 89 MB**（不随时长增长）/ chunk 连续无缺口 / 时间戳单调。
+- **中途取消**：**0 孤儿进程、0 permit 泄漏、无死锁、部分结果保留 [0,1,2]、临时文件已清**。
+- **yt-dlp**：真实 YouTube 视频 probe 成功（Big Buck Bunny，635s，7 tracks）。**并且植入恶意 `~/.config/yt-dlp/config`（`--exec "touch PWNED"`）实测 `--ignore-config` 挡住了** —— 从"我们配了参数"变成"真实攻击验证通过"。
+- **仍未验证**：HLS 真实流、Windows/macOS、F3 接浏览器麦克风、ffmpeg 协议白名单的恶意播放列表实测。
+
+## D. `docs/SECURITY.md`
+威胁模型 + 7 层防护 + **两个 TOCTOU 缺口逐条记录**（位置/触发前提/为何当前可接受/**必须立即修复的触发条件**）。DNS rebinding 那条列了 5 个触发条件（多用户、非 127.0.0.1、云部署、下载内容回显、本机出现其它 localhost 服务）。附表如实标注三项未验证 + 一项**未实现**（解压 Zip-Slip 防护在 `packages/downloader`，属 `model-mgmt`）。
+
+## 第三个 bug（补跑时抓到，影响 TD-002）
+长音频跑挂在 `fetch failed`，查下去发现真正问题是 **`TranscribePipeline` 调 `resolve()`+`probe()`，绕过了我 T-020 加的 probe 回退链**。后果：① **GPL 兜底在真实导入路径里永远不触发**——TD-002 的解析顺序在最关键那条路径上是摆设；② 第一个候选的瞬时网络错误直接失败整个任务。已加 `registry.probeWithSource()` 修复 + 回归测试。
+
+需要 Manager 决策:
+1. **`sherpa-onnx-node@1.13.4`（Apache-2.0）需要加进 `packages/pipeline/package.json`** —— 该文件不在我的所有权范围，我用动态 `import()` 懒加载使其缺失时可降级，但正式依赖需指派人添加。
+2. **中文默认模型策略**：是否采纳"不向中文用户提供 base/small"的建议（§12.3）。
+3. **GPU spike 优先级是否上调**（见 B 末尾：中文可用性依赖它）。
+4. **F3 剩余接线归属**：麦克风 → WS → `AsrStream` → 停止后自动排离线重跑 job。合并函数已就绪，但队列层与前端接线跨 `apps/daemon`(oss-scout) 与 `apps/web`(前端组)。
+5. **解压 Zip-Slip 防护未实现**（`packages/downloader`），需确认归属与排期。
+
+与 `oss-scout` 的契约（无 DISPUTE）:
+`mergeTranscripts()` 只依赖 `transcript_segments.edited_at`（`null`=未编辑，判定唯一依据）与 `text_raw`（编辑前原文，供 diff/还原）。撤销由 D-02 §1.5 的 `is_active=0` 多版本机制承担，合并函数不实现。`packages/db` 目前只有 driver/migrate 骨架、尚无 schema，落 schema 时请保留这两列。
+
+诚实声明:
+- D-06 §14.1 列 11 项本轮实测，§14.2 列 **10 项仍未验证/未实现**。
+- **未实现**：F3 接浏览器麦克风、F3 两阶段在 daemon 的调度、说话人分离、解压防护。
+- **未验证**：HLS 真实流、Windows/macOS、ffmpeg 协议白名单实测、FunASR 对比。
+- 测试脚手架自身出过一次**假红灯**（`pgrep` 数到了并行任务，误报孤儿进程泄漏），已改为按父进程归属。与 ADR-008 记的"假绿灯"是同一类问题的镜像。

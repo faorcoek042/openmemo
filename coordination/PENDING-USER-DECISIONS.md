@@ -8,7 +8,7 @@
 | # | 事项 | 卡在哪 | 影响 | 不解决的后果 |
 |---|------|--------|------|-------------|
 | A-1 | **GitHub remote** | 仓库无 remote | `.github/workflows/build-backends.yml` **从未执行** | mac / Windows 的 whisper.cpp 后端二进制**产不出来** → 要求 2.1 在这两个平台无法端到端验证 |
-| A-2 | **一台 NVIDIA 显卡机器** | 本机无 GPU | CUDA vs Vulkan 性能比 = UNKNOWN | ADR-003 决策 3「Vulkan 为默认」**永远只能挂"临时立场"**。已知 CUDA 包 677.9MB vs Vulkan 22.7MB，差 22 倍体积，但性能差多少不知道 |
+| **A-2** 🔥 | **一台 NVIDIA 显卡机器** | 本机无 GPU | CUDA vs Vulkan 性能比 = UNKNOWN | **⚠️ 优先级已上调（ADR-011 决策 2）：这不再只是性能优化，而是中文可用性前提。** 实测证明中文必须用 `large-v3-turbo`（`base` 把「维基百科」转成「危机摆科」，不可用），而 turbo 在 CPU 上只有 **2.7x 实时 —— 1 小时录音要跑 22 分钟**。中文是主要用户群。**这是唯一一个"缺硬件会实质影响产品可用性"的事项**，其余待环境项都只影响验证覆盖率 |
 | A-3 | **一台 macOS 机器** | 无 | ① Gatekeeper 是否拦截下载的原生二进制 ② `better-sqlite3` mac prebuild ③ Metal/CoreML 后端 | mac 分发形态无法定案（ADR-003 决策 4 的 ad-hoc 签名方案未经实测） |
 | A-4 | **一台 Windows 机器** | 无 | ① SmartScreen 行为 ② `better-sqlite3` win prebuild ③ CUDA/Vulkan 后端 | 同上 |
 | A-5 | **arm64 / musl 环境** | 无 | 上游 open issue **#1509**：`better-sqlite3` 的 `linux-arm64.node` 要求 GLIBC_2.38 | Apple Silicon 与树莓派/Alpine 用户可能装不上，**未复现** |

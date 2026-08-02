@@ -11,7 +11,9 @@
  *   - the bundled tier is committed to git (ADR-001 mandates manifests be in-repo so
  *     "what did we download" stays auditable)
  *
- * Signature verification is specified but NOT yet implemented — see verifyCatalogSignature.
+ * Signature verification is implemented (see verifyCatalogSignature below) but NOT yet
+ * ACTIVE in production, because no signing key has been provisioned — see that function's
+ * doc comment for what protects the catalog in the meantime.
  */
 
 import { promises as fs } from 'node:fs';
@@ -21,6 +23,7 @@ import {
   validateBackendManifest,
   validateModelManifest,
 } from '@openmemo/shared';
+import { OPENMEMO_CATALOG_PUBLIC_KEY, verifyEd25519 } from './signature.js';
 
 export type ManifestTier = 'remote' | 'cache' | 'bundled';
 
@@ -176,20 +179,42 @@ export function loadBackendManifest<T>(
 /**
  * Detached-signature verification for remote catalogs.
  *
- * NOT IMPLEMENTED. Specified here because it is a real requirement, not an optional
- * nicety: a catalog contains download URLs, so whoever controls the catalog controls
- * what the app fetches. ComfyUI-Manager relies on a URL allowlist plus a post-hoc
- * malware blocklist and has needed repeated security patches.
+ * A real requirement, not an optional nicety: a catalog contains download URLs, so
+ * whoever controls the catalog controls what the app fetches. ComfyUI-Manager relies on a
+ * URL allowlist plus a post-hoc malware blocklist and has needed repeated security
+ * patches — Ed25519 signing is the harder-to-bypass layer on top of that same allowlist
+ * idea.
  *
- * Planned: Ed25519 detached signature, public key compiled into the binary, verification
- * failure rejects the catalog outright (degrade to cache/bundled, never "accept anyway").
- * Until this exists, the real protection is that every file carries a SHA-256 in a
- * manifest committed to git, and the schema restricts URLs to an allowlisted host set.
+ * The verification itself (Ed25519 via node:crypto, see signature.ts) is fully
+ * implemented and correct. What is HONESTLY NOT TRUE YET: this is not active in
+ * production, because `OPENMEMO_CATALOG_PUBLIC_KEY` is `null` — no signing key has been
+ * provisioned. `loadManifest` above never calls this function; nothing currently produces
+ * a `.sig` file to verify against. Wiring it into the remote-fetch path is future work,
+ * gated on actually having a key.
+ *
+ * Until a key exists, the real protection against a hostile/compromised catalog is:
+ *   (a) every file carries a SHA-256 in `vendor/manifests/*.json`, committed to git and
+ *       schema-validated at every load tier (remote/cache/bundled) — ADR-001;
+ *   (b) the schema restricts mirror URLs to an allowlisted host set (see @openmemo/shared
+ *       schemas.ts), so a compromised catalog cannot simply point at an arbitrary origin.
+ *
+ * Fail-closed by design: if a caller supplies a signature to check but no key is
+ * configured (the `publicKey` param, or the module default, is null), this THROWS rather
+ * than returning `true` or silently skipping the check. A signature nobody can verify
+ * must never be treated as equivalent to "verified" — that would be strictly worse than
+ * not attempting verification at all, because it would look secure while being a no-op.
  */
 export async function verifyCatalogSignature(
-  _catalogBytes: Uint8Array,
-  _signature: Uint8Array,
-  _publicKey: Uint8Array,
+  catalogBytes: Uint8Array,
+  signature: Uint8Array,
+  publicKey: Uint8Array | string | null = OPENMEMO_CATALOG_PUBLIC_KEY,
 ): Promise<boolean> {
-  throw new Error('verifyCatalogSignature is not implemented yet — see TODO(T-020)');
+  if (publicKey == null) {
+    throw new Error(
+      'verifyCatalogSignature: a signature was supplied but no catalog signing key is ' +
+        'configured (OPENMEMO_CATALOG_PUBLIC_KEY is null — no key has been provisioned yet). ' +
+        'Failing closed rather than silently accepting an unverifiable signature.',
+    );
+  }
+  return verifyEd25519(catalogBytes, signature, publicKey);
 }

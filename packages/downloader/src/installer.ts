@@ -21,6 +21,7 @@ import type { ArtifactFile, PlatformSelector } from '@openmemo/shared';
 import { DownloadError, type DownloadSource, downloadFile } from './download.js';
 import { type ProbeOutcome, type ProbeTarget, orderSourcesForDownload } from './probe.js';
 import type { ArtifactStore, StoreKind } from './store.js';
+import { unpackArchive } from './unpack.js';
 
 export interface InstallTarget {
   id: string;
@@ -188,7 +189,17 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
     // Archives are expanded only after their digest has been verified — never unpack
     // unverified bytes.
     if (f.unpack) {
-      await unpackArchive(linked, path.join(store.byNameDir(target.kind), stripExt(f.name)), f.unpack);
+      try {
+        await unpackArchive(linked, path.join(store.byNameDir(target.kind), stripExt(f.name)), f.unpack, {
+          signal: opts.signal,
+        });
+      } catch (e) {
+        throw new DownloadError(
+          `Archive extraction (${f.unpack}) failed for ${f.name}: ${(e as Error).message}`,
+          'UNPACK_FAILED',
+          false,
+        );
+      }
     }
 
     const rec: InstalledFileRecord = {
@@ -209,20 +220,4 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
 
 function stripExt(name: string): string {
   return name.replace(/\.(zip|tar\.gz|tgz)$/i, '');
-}
-
-/**
- * Archive expansion.
- *
- * Deliberately not implemented with a bundled extractor yet: the only archives we need
- * are backend packs and the macOS CoreML encoder, neither of which the Linux spike
- * exercises. Throwing loudly beats a silently wrong stub.
- * TODO(T-020): wire up an extractor with path-traversal (zip-slip) guards.
- */
-async function unpackArchive(_src: string, _dest: string, kind: 'zip' | 'tar.gz'): Promise<void> {
-  throw new DownloadError(
-    `Archive extraction (${kind}) is not implemented yet — see TODO(T-020)`,
-    'UNPACK_FAILED',
-    false,
-  );
 }

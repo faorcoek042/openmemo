@@ -132,10 +132,14 @@ export class TranscribePipeline {
     };
 
     // ---- 1. resolve + probe --------------------------------------------------------
-    const source = await registry.resolve(req.input);
-    const info = await time('probe', async () => {
+    //
+    // probeWithSource walks the candidate list and returns the adapter that actually
+    // succeeded. Using resolve() + probe() separately would bypass the fallback chain
+    // (D-01 §6.4): the GPL fallback would never engage, and a transient network error on
+    // the first candidate would fail the whole job instead of trying the next one.
+    const { source, info } = await time('probe', async () => {
       req.onProgress?.({ step: 'probe', fraction: 0 });
-      const probed = await source.probe(req.input, req.signal);
+      const probed = await registry.probeWithSource(req.input, req.signal);
       req.onProgress?.({ step: 'probe', fraction: 1 });
       return probed;
     });
