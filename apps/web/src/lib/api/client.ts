@@ -180,11 +180,57 @@ export async function api<T>(
   return apiCall<T>(surface, path, opts);
 }
 
-async function apiCall<T>(surface: Surface, path: string, opts?: ApiOptions): Promise<T> {
-  const state = surfaceState(surface);
+/**
+ * 端点级的"这条路由不存在"记账。
+ *
+ * ## 为什么不能按 surface 记（这是一次真实事故的根因）
+ *
+ * 原来的实现是：任何一条 404 就把**整个 surface** 标成 mock，之后该面所有调用
+ * 直接走内存实现、**一个网络请求都不发**。
+ *
+ * 真浏览器实测的症状是：星标 / 标签 / 段落编辑「渲染是绿的，点了没用，
+ * 抓包一个非 GET 请求都没有」。而 daemon 侧这三个端点直连全部 200 且真落库。
+ *
+ * 根因：`PATCH /notes/:uid/mindmap` 不存在（daemon 只有 GET/POST）→ 一个 404 →
+ * **整个 `notes` 面被毒化** → 星标、标签、段落编辑全部改走 mock。
+ * 一条缺失的路由，废掉了同面所有功能。
+ *
+ * 我在 D-08 §4.5 里预测过这个失败模式，但没修。这次修掉。
+ */
+const missingEndpoints = new Set<string>();
 
-  // 已判定为假 → 直接走 mock，不再每次撞真接口（省掉一串 404 噪声）
-  if (state === 'mock' || state === 'offline') {
+/** 记账键：方法 + 路径模板（把 ULID / 数字段位归一化，避免每个 uid 各记一条）。 */
+function endpointKey(method: string, path: string): string {
+  const template = path
+    .split('?')[0]!
+    .replace(/\/[0-9A-HJKMNP-TV-Z]{26}(?=\/|$)/g, '/:uid')
+    .replace(/\/\d+(?=\/|$)/g, '/:n');
+  return `${method} ${template}`;
+}
+
+/** 供诊断页/测试查看当前被判定为"未实现"的端点。 */
+export function missingEndpointList(): string[] {
+  return [...missingEndpoints].sort();
+}
+
+/** 端点恢复（例如 daemon 升级后补上了路由）。 */
+export function forgetMissingEndpoints(): void {
+  missingEndpoints.clear();
+}
+
+async function apiCall<T>(surface: Surface, path: string, opts?: ApiOptions): Promise<T> {
+  const method = (opts?.method ?? 'GET').toUpperCase();
+  const isWrite = method !== 'GET' && method !== 'HEAD';
+  const key = endpointKey(method, path);
+
+  /**
+   * ★ 写操作**永不静默回落 mock**。
+   *
+   * 读操作回落 mock 只是"显示了假数据"，界面上有 MockNotice 标着；
+   * 而写操作回落 mock 会让用户以为**改动保存了**，实际什么都没发生 ——
+   * 这比报错糟糕得多。所以写必须要么真成功、要么把错误抛给用户看见。
+   */
+  if (!isWrite && missingEndpoints.has(key)) {
     if (!mockFetcher) {
       throw new ApiError(503, { code: 'NO_BACKEND', message: 'daemon unreachable and no mock' });
     }
@@ -193,18 +239,30 @@ async function apiCall<T>(surface: Surface, path: string, opts?: ApiOptions): Pr
 
   try {
     const out = await realFetch<T>(path, opts);
-    if (state !== 'live') markSurface(surface, 'live');
+    // 真接通了：既清掉该端点的"缺失"记录，也把该面标成 live
+    missingEndpoints.delete(key);
+    if (surfaceState(surface) !== 'live') markSurface(surface, 'live');
     return out;
   } catch (err) {
-    if (isNotImplemented(err) && mockFetcher) {
-      // daemon 在跑，但这条路由还没实现 → 这个面回落 mock
-      markSurface(surface, 'mock');
-      return mockFetcher<T>(path, opts);
+    if (isNotImplemented(err)) {
+      // 只记这一条端点，**不再牵连同面的其它端点**
+      missingEndpoints.add(key);
+      if (!isWrite && mockFetcher) {
+        markSurface(surface, 'mock');
+        return mockFetcher<T>(path, opts);
+      }
+      throw err; // 写操作：如实报错，让用户知道没保存成功
     }
-    if (err instanceof TypeError && mockFetcher) {
-      // fetch 抛 TypeError = 网络层失败 = daemon 没起
+    if (err instanceof TypeError) {
+      // 网络层失败 = daemon 没起。这是整机状态，按面记没问题
       markSurface(surface, 'offline');
-      return mockFetcher<T>(path, opts);
+      if (!isWrite && mockFetcher) return mockFetcher<T>(path, opts);
+      throw new ApiError(503, {
+        code: 'DAEMON_UNREACHABLE',
+        message: 'local service unreachable',
+        messageZh: '连不上本地服务，改动未保存',
+        retryable: true,
+      });
     }
     throw err;
   }

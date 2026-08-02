@@ -29,7 +29,7 @@ export function TagEditor({
     const name = draft.trim();
     setDraft('');
     setAdding(false);
-    if (name) add.mutate({ noteUid, name });
+    if (name) add.mutate({ noteUid, name, existingTagUids: arr(tags).map((t) => t.uid) });
   };
 
   return (

@@ -296,7 +296,8 @@
     "markmapLoss": "切到大纲视图将不显示 {{edges}} 条关联线与 {{summaries}} 个概要",
     "empty": "还没有思维导图",
     "emptyHint": "转写完成后可以让 AI 生成，也可以从空白开始手动整理。",
-    "open": "打开思维导图"
+    "open": "打开思维导图",
+    "editsNotPersisted": "导图编辑目前只在本页生效，尚未保存到本地服务（保存接口未实现）。"
   },
   "search": {
     "title": "搜索",

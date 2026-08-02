@@ -12,6 +12,7 @@ import {
   toFreeMind,
   toMarkdown,
   toOpml,
+  validate,
   type MindMapDoc,
 } from '@openmemo/mindmap';
 import { makeEvent, topics, type NoteUpdatedEvent } from '@openmemo/shared';
@@ -304,6 +305,39 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
          * 已报 Manager：shared 需要补流水线 job 的表示。
          */
         sendJson(res, 202, { jobUid: job.uid, noteUid: note.uid });
+        return true;
+      }
+
+      // ---- PATCH：保存编辑后的导图（前端渲染器改完要能落盘）----
+      if (kind === 'mindmap' && method === 'PATCH') {
+        const body = (await readJsonBody(req)) as { doc?: unknown } | undefined;
+        const raw = body?.doc;
+        if (!raw || typeof raw !== 'object') {
+          sendError(res, 400, 'BAD_DOC', 'doc is required', '缺少 doc');
+          return true;
+        }
+        // LLM 和前端都可能产出环/悬空引用；写库前必校验（D-02 §2.2 约束 5）
+        const doc = raw as MindMapDoc;
+        const v = validate(doc);
+        if (!v.ok) {
+          sendError(
+            res,
+            400,
+            'INVALID_MINDMAP',
+            `validation failed: ${v.issues.map((i) => i.code).join(', ')}`,
+            `思维导图校验失败：${v.issues.map((i) => i.message).slice(0, 3).join('；')}`,
+            { details: v.issues.slice(0, 10) },
+          );
+          return true;
+        }
+        const row = mindmaps.save({ noteId: note.id, doc, generatedBy: 'user' });
+        sse.publish(
+          makeEvent('note.updated', topics.note(note.uid), {
+            noteUid: note.uid,
+            changed: ['mindmap'],
+          }),
+        );
+        sendJson(res, 200, { revision: row.revision, mindmapUid: row.uid });
         return true;
       }
 

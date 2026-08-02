@@ -322,6 +322,16 @@ export class JobQueue {
       .run({ id, now });
   }
 
+  /** 暂停一个**尚未开始**的任务（没有 worker 要停，直接置 paused）。 */
+  pauseQueued(id: number, now = Date.now()): void {
+    this.db
+      .prepare(
+        `UPDATE jobs SET state='paused', pause_requested=0, updated_at=:now
+         WHERE id=:id AND state IN ('queued','blocked')`,
+      )
+      .run({ id, now });
+  }
+
   requestPause(id: number, now = Date.now()): void {
     this.db
       .prepare(`UPDATE jobs SET pause_requested=1, updated_at=:now WHERE id=:id`)

@@ -76,8 +76,10 @@ export function useToggleStarMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (v: { noteUid: string; starred: boolean }) =>
-      api<{ ok: true }>('notes', `/notes/${v.noteUid}/star`, {
-        method: 'POST',
+      // ⚠️ 动词是 **PUT**（读 `organize.ts` 的 STAR_RE 分支确认，非 PUT 一律 405）。
+      // 之前写成 POST：405 既不是 404 也不是 501，不触发"未实现"回落，直接抛错回滚 —— 点了必弹错。
+      api<{ uid: string; starred: boolean }>('notes', `/notes/${v.noteUid}/star`, {
+        method: 'PUT',
         body: { starred: v.starred },
       }),
     onMutate: async (v) => {
@@ -97,14 +99,33 @@ export function useToggleStarMutation() {
   });
 }
 
+/**
+ * 加标签。
+ *
+ * ⚠️ 服务端不是"追加一个标签名"，而是**整表替换 tagUids**（读 `organize.ts` 的
+ * TAGS_OF_NOTE_RE 分支确认：body 要 `{tagUids: string[]}`，传空数组表示清空）。
+ * 所以要两步：
+ *   1. `POST /api/tags {name}` —— 建标签或取回同名的（服务端按归一化名判重）
+ *   2. `POST /api/notes/:uid/tags {tagUids: [...已有, 新的]}` —— 整表替换
+ *
+ * 之前我按 `{name}` 单步发，服务端一律 400。**这是第三次栽在"没读实现就按设计猜形状"。**
+ */
 export function useAddTagMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { noteUid: string; name: string }) =>
-      api<{ uid: string; name: string; color: string | null }>('notes', `/notes/${v.noteUid}/tags`, {
+    mutationFn: async (v: { noteUid: string; name: string; existingTagUids: readonly string[] }) => {
+      const tag = await api<{ uid: string; name: string; color: string | null }>('notes', '/tags', {
         method: 'POST',
         body: { name: v.name },
-      }),
+      });
+      // 已经挂上了就不重复提交（服务端会整表替换，重复 uid 没有意义）
+      if (v.existingTagUids.includes(tag.uid)) return tag;
+      await api<unknown>('notes', `/notes/${v.noteUid}/tags`, {
+        method: 'POST',
+        body: { tagUids: [...v.existingTagUids, tag.uid] },
+      });
+      return tag;
+    },
     onSuccess: (_d, v) => {
       void qc.invalidateQueries({ queryKey: qk.notes.detail(v.noteUid) });
       void qc.invalidateQueries({ queryKey: qk.notes.all });

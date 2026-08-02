@@ -296,7 +296,8 @@
     "markmapLoss": "The outline view will not show {{edges}} connections and {{summaries}} summaries",
     "empty": "No mind map yet",
     "emptyHint": "Generate one with AI after transcription, or start from a blank canvas.",
-    "open": "Open mind map"
+    "open": "Open mind map",
+    "editsNotPersisted": "Mind map edits apply on this page only and are not saved yet (the save endpoint is not implemented)."
   },
   "search": {
     "title": "Search",

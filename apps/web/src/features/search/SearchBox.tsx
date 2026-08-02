@@ -32,6 +32,11 @@ export function SearchBox() {
         ref={ref}
         placeholder={`${t('app.search')}  ⌘K`}
         aria-label={t('app.search')}
+        // 顶栏搜索框在 DOM 里排在业务输入框**之前**。按 `input[type=text]`
+        // 或"页面上第一个文本框"定位时会先命中它 —— 给它一个明确的 testid，
+        // 让自动化能把两者区分开（capture 那个是 capture-url-input）。
+        data-testid="global-search-input"
+        type="text"
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             const v = (e.target as HTMLInputElement).value.trim();

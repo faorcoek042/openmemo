@@ -1053,3 +1053,73 @@ interface SelfCheckReport {
 - 冷启动 **仍然 EXIT=1**，3 条失败没消除。`pipeline.missing=[]` 这次是真实产品路径达成的（与 T-042 那次靠复制文件不同），但中文搜索仍不可用。
 - media-tools 包是我**本地解压安装**的（manifest 无 URL），不是走 API 装的 —— 这一点不能算作"API 装机成功"。
 - macOS media-tools 未接、Windows 未验证。
+
+---
+
+## [2026-08-03 09:20] T-055 DONE
+
+### D4 —— 修掉了，并实测非默认目录
+
+根因比 `architect` 描述的还多一处：**制品根目录有三处各算各的**
+```
+apps/daemon/src/pipeline/setup.ts   dirs.modelsDir = paths.modelsDir          (忽略 OPENMEMO_MODELS)
+apps/daemon/src/http/rest/state.ts  OPENMEMO_MODELS ?? join(dataDir,'models')
+packages/pipeline discoverTools()   什么都不传 → 退回平台默认目录
+```
+用 `--data-dir` 启动时前两处对、第三处错，于是"装成功了仍报没装"原样复现。
+
+**修法：单一定义。** `resolveStoreRoot(dataDir?)` 放在 `packages/pipeline/src/tools.ts`，
+`setup.ts` 与 `state.ts` 都改成调它，`discoverTools` 新增 `storeRoot` / `dataDir` 入参并由 daemon 显式传入。
+
+**实测（`--data-dir` 旗标，且清空所有 `OPENMEMO_*` 环境变量）**：
+```
+dataDir          = /tmp/dd55
+pipeline.missing = []
+ffmpeg     = /tmp/dd55/models/by-name/backend/media-tools-linux-x64/ffmpeg
+whisperCli = /tmp/dd55/models/by-name/backend/whisper-bin-ubuntu-x64/whisper-bin-ubuntu-x64/whisper-cli
+modelPath  = /tmp/dd55/models/by-name/asr/ggml-base-q5_1.bin
+```
+**加测「搬走数据目录」**：把原目录 `/tmp/cold4` 改名后重启，三个路径**全部指向新目录 `/tmp/dd55`**、
+`pipeline.missing` 仍为 `[]`。（`absOf()` 优先 `relPath`、`by-name` 扫描兜底，两层都生效。）
+
+### D3 —— 统一了，但还剩一处不归我
+```
+apps/daemon/src/config/paths.ts     %APPDATA%       ← 权威（D-02 §6.1 定义数据目录）
+packages/pipeline/src/tools.ts      %APPDATA%       ← 我改的，原为 LOCALAPPDATA
+packages/downloader/src/store.ts    %LOCALAPPDATA%  ← 仍不一致（model-mgmt 的文件）
+```
+原状态下 Windows 上下载器写 `…\Local\OpenMemo\models`、流水线找 `…\Roaming\OpenMemo\models`，
+**装好的包永远找不到，每台 Windows 都必现**。
+⚠️ **`store.ts` 那处现在够不到产品路径**（D4 修完后 daemon 显式传 `storeRoot`，不会走它的默认值），
+但**独立使用 downloader 时仍会错**。建议 `model-mgmt` 改成 import `resolveStoreRoot`，别再各留一份常量。
+**未在真机验证**（无 Windows），纯路径逻辑，靠读代码统一。
+
+### 顺带
+- `scripts/selfcheck.mjs` 的 2 个 lint 错（未使用 import）已清，全仓 lint 干净。
+- **109/109 测试全绿**，`tsc -b` 干净。
+
+### 孤儿回收协验 —— 没能给出结论，如实说明
+起长转写 → `kill -9` daemon → 重启，观察到：
+```
+[daemon] 崩溃恢复：1 个中断的任务已重新入队      ← job 级恢复确实工作
+ppid=1 的孤儿数: 0
+```
+**没能造出一个持久的孤儿来验证回收**，两个原因：
+1. **本机同时跑着 3 个 agent 的 daemon 与 whisper-cli**（`ppid` 分属 1869882 / 1118106 / …），
+   归属不可靠 —— 我上一轮就在这上面栽过一次（把 SIGTERM 打断误判成 unpack bug）。
+2. **更本质的一条**：我们的 chunk 设计让每个 `whisper-cli` 只跑一个 chunk，**存活通常 <1 秒**，
+   `kill -9` daemon 之后子进程往往已经自己退了，`ppid` 来不及变成 1。
+
+→ 给 `oss-scout` 的结论：**你的回收逻辑（按 dataDir + `ppid===1`、刻意不按进程名）方向是对的**，
+但**孤儿在本产品里天然罕见**——真要复现得用大模型跑长 chunk 人为拉长子进程寿命。
+**我没能实证它"确实杀掉一个在途孤儿"，你的诚实标注应当保留。**
+
+需要 Manager 决策:
+1. `packages/downloader/src/store.ts` 的 `%LOCALAPPDATA%` 请 `model-mgmt` 改为 import `resolveStoreRoot`（现在够不到产品路径，但独立用会错）。
+2. 孤儿回收的实证仍缺；若要补，建议在**单 agent 独占机器**的窗口里做，否则归属不可靠。
+
+诚实声明:
+- D4 的实测是**清空所有 `OPENMEMO_*` 环境变量、只用 `--data-dir` 旗标**做的，不是靠 env 兜底。
+- D3 **未在真 Windows 上验证**，只统一了常量。
+- 孤儿回收**未实证**，我没有把"崩溃恢复入队成功"说成"孤儿被回收"——那是两件事。
+- 本轮我的改动被别的 agent 的 `git add -A` 一并提交进了 `0888e43`（T-053），非我提交。

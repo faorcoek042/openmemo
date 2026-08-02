@@ -23,15 +23,12 @@
  *   node scripts/selfcheck.mjs --json
  */
 
-import { execFile } from 'node:child_process';
-import { access, constants, readdir, readFile } from 'node:fs/promises';
+import { access, constants, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 
-const execFileAsync = promisify(execFile);
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 // ---------------------------------------------------------------------------------------

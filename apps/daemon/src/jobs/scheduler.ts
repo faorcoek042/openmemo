@@ -13,6 +13,20 @@ import type { JobQueue, JobRow } from './queue.js';
 
 export type JobHandler = (job: JobRow, signal: AbortSignal) => Promise<void>;
 
+/**
+ * 中止一个在跑任务的**三种意图**。
+ *
+ * 此前三者共用一个裸 `AbortController`，worker 停下来后一律按"用户取消"处理，
+ * 造成两个严重后果：
+ *   - **暂停 = 不可逆取消**：`state='paused'` 没有任何写入方，`resume()` 的
+ *     `WHERE state='paused'` 永远匹配 0 行，接口却回 204 告诉用户成功了。
+ *   - **正常退出杀死在跑任务**：daemon 优雅关闭把在跑的标成 `cancelled`，
+ *     而崩溃恢复只捞 `running`/`leased` → **正常关闭反而不如 `kill -9` 能恢复**。
+ *
+ * abort 信号本身分不出意图，所以意图必须单独记，且在 worker 真正停下后据此收口状态。
+ */
+export type StopIntent = 'cancel' | 'pause' | 'shutdown';
+
 export interface SchedulerDeps {
   readonly queue: JobQueue;
   readonly lanes: LanePool;
@@ -36,6 +50,8 @@ export class Scheduler {
   #timer: NodeJS.Timeout | undefined;
   #stopped = false;
   readonly #running = new Map<number, AbortController>();
+  /** jobId → 中止意图。只在中止时写入，worker 停下后读取并清除。 */
+  readonly #intents = new Map<number, StopIntent>();
 
   constructor(private readonly deps: SchedulerDeps) {}
 
@@ -54,8 +70,11 @@ export class Scheduler {
     this.#stopped = true;
     if (this.#timer) clearInterval(this.#timer);
     this.#timer = undefined;
-    // 软停：置 abort，worker 在 chunk 边界退出并保留 checkpoint（D-01 §4.4）
-    for (const ac of this.#running.values()) ac.abort();
+    // 软停：意图是**进程退出**，不是用户取消 —— 任务应被置回 queued，重启后自动续跑
+    for (const [jobId, ac] of this.#running) {
+      this.#intents.set(jobId, 'shutdown');
+      ac.abort();
+    }
     const deadline = Date.now() + graceMs;
     while (this.#running.size > 0 && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 50));
@@ -63,9 +82,47 @@ export class Scheduler {
   }
 
   /** 取消一个 job（软取消：worker 在 chunk 边界停，已落库结果保留）。 */
+  /** 用户取消：终态 `cancelled`，checkpoint 丢弃（已落库的段落仍保留）。 */
   cancel(jobId: number, hard = false): void {
     this.deps.queue.requestCancel(jobId, hard);
+    this.#intents.set(jobId, 'cancel');
     this.#running.get(jobId)?.abort();
+  }
+
+  /**
+   * 用户暂停：终态 `paused`，**可 resume**。
+   *
+   * 与 cancel 的唯一区别就是停下来之后置什么状态 —— 但这个区别决定了
+   * 用户点的是"稍后继续"还是"前功尽弃"。
+   */
+  pause(jobId: number): boolean {
+    const ac = this.#running.get(jobId);
+    if (!ac) return false; // 没在跑的任务由调用方走 queue 层处理
+    this.deps.queue.requestPause(jobId);
+    this.#intents.set(jobId, 'pause');
+    ac.abort();
+    return true;
+  }
+
+  /**
+   * worker 因 abort 停下之后，按意图收口状态。
+   *
+   * 默认按 `cancel` —— 意图缺失只可能是内部漏记，宁可当成用户取消（可见的终态），
+   * 也不要留在 `running` 让任务永远转圈。
+   */
+  #settleAborted(job: JobRow): 'cancelled' | 'paused' | 'queued' {
+    const intent = this.#intents.get(job.id) ?? 'cancel';
+    if (intent === 'pause') {
+      this.deps.queue.markPaused(job.id);
+      return 'paused';
+    }
+    if (intent === 'shutdown') {
+      // 进程退出不是用户意图：置回 queued，重启后调度器自动接走
+      this.deps.queue.markInterrupted(job.id);
+      return 'queued';
+    }
+    this.deps.queue.markCancelled(job.id);
+    return 'cancelled';
   }
 
   async #pump(): Promise<void> {
@@ -129,7 +186,9 @@ export class Scheduler {
        * 一个被取消的任务会被记成**成功**。必须先看 abort 标志。
        */
       if (ac.signal.aborted) {
-        queue.markCancelled(job.id);
+        // 优雅中止：worker 在 chunk 边界正常返回（不抛异常），走的是这条路
+        const settled = this.#settleAborted(job);
+        sse.publish(jobStateEvent(job.uid, settled, 'running'));
       } else if (after && (after.state === 'running' || after.state === 'leased')) {
         // runner 可能已自行置终态（succeed/block），别覆盖
         queue.succeed(job.id);
@@ -144,26 +203,38 @@ export class Scheduler {
       const aborted = ac.signal.aborted;
       const message = err instanceof Error ? err.message : String(err);
       // 用户取消不算失败
-      // 取消：worker 已经停了，这里把状态**收口成终态**。
+      // 中止：worker 已经停了，这里按**意图**把状态收口。
       // 只置 cancel_requested 而不改 state，任务会永远卡在 running（T-049 实测）。
       const state = aborted
-        ? (queue.markCancelled(job.id), 'cancelled')
+        ? this.#settleAborted(job)
         : queue.fail(job.id, 'RUNNER_ERROR', message, isRetryable(err));
-      sse.publish(
-        jobFailedEvent(
-          job.uid,
-          {
-            code: aborted ? 'CANCELLED' : 'RUNNER_ERROR',
-            message: aborted ? 'cancelled by user' : message,
-            messageZh: aborted ? '任务已取消' : `任务失败：${message}`,
-            retryable: state === 'queued',
-          },
-          state === 'queued',
-        ),
-      );
+
+      /*
+       * 三种中止意图**不能都报成 job.failed/已取消**：
+       *   - 暂停 → 是 job.state(paused)，用户还要 resume，报"失败"会吓到他
+       *   - 进程退出 → 是 job.state(queued)，重启会自动接着跑，同样不是失败
+       * 只有真正的用户取消与运行错误才走 job.failed。
+       */
+      if (state === 'paused' || state === 'queued') {
+        sse.publish(jobStateEvent(job.uid, state, 'running'));
+      } else {
+        sse.publish(
+          jobFailedEvent(
+            job.uid,
+            {
+              code: aborted ? 'CANCELLED' : 'RUNNER_ERROR',
+              message: aborted ? 'cancelled by user' : message,
+              messageZh: aborted ? '任务已取消' : `任务失败：${message}`,
+              retryable: false,
+            },
+            false,
+          ),
+        );
+      }
     } finally {
       clearInterval(renew);
       this.#running.delete(job.id);
+      this.#intents.delete(job.id);
       release();
     }
   }

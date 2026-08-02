@@ -475,6 +475,21 @@ export class Repos {
     });
   }
 
+  /**
+   * 用一批新段落**整体替换**某份转写稿（两阶段合并的落库路径）。
+   *
+   * 整体替换而不是 diff：合并结果已经是"最终应该长什么样"，
+   * 再算一次 diff 只会多一处可能出错的地方。一个事务内完成。
+   */
+  replaceSegments(transcriptId: number, segments: readonly SegmentInput[]): number {
+    return this.db.transaction(() => {
+      this.db
+        .prepare(`DELETE FROM transcript_segments WHERE transcript_id = :t`)
+        .run({ t: transcriptId });
+      return this.insertSegments(transcriptId, segments);
+    });
+  }
+
   segmentsOf(transcriptId: number): SegmentRow[] {
     return this.db
       .prepare<SegmentRow>(

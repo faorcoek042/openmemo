@@ -282,9 +282,14 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       pause: (uid) => {
         const job = queue_.byUid(uid);
         if (!job) return false;
-        queue_.requestPause(job.id);
-        sched.cancel(job.id, false); // 软停：worker 在 chunk 边界退出并保留 checkpoint
-        return true;
+        // 在跑的：让 scheduler 按 'pause' 意图中止（停下后置 state='paused'，可 resume）
+        if (sched.pause(job.id)) return true;
+        // 还在排队的：没有 worker 要停，直接置 paused
+        if (job.state === 'queued' || job.state === 'blocked') {
+          queue_.pauseQueued(job.id);
+          return true;
+        }
+        return false;
       },
       resume: (uid) => {
         const job = queue_.byUid(uid);

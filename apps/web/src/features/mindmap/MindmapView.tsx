@@ -25,6 +25,11 @@ import { downloadMindmapImage } from './export';
  * 数据进出都经 `packages/mindmap` 的适配器（`toMindElixir` / `fromMindElixir`），
  * 业务侧只见 `MindMapDoc`。换渲染器 = 换这一个文件。
  */
+/** 形状完整才交给渲染器 —— `toMindElixir` 会 `Object.keys(doc.nodes)`，nodes 缺失即崩。 */
+function isRenderableDoc(d: MindMapDoc | null | undefined): d is MindMapDoc {
+  return Boolean(d && typeof d === 'object' && d.nodes && typeof d.nodes === 'object' && d.rootKey);
+}
+
 export function MindmapView({
   doc,
   editable = true,
@@ -43,7 +48,7 @@ export function MindmapView({
 
   useEffect(() => {
     const el = hostRef.current;
-    if (!el) return;
+    if (!el || !isRenderableDoc(doc)) return;
 
     const me = new MindElixir({
       el,
@@ -80,6 +85,14 @@ export function MindmapView({
     };
     // doc.uid 变化才重建；doc 内容变化由外部走 refresh，避免编辑时被自己覆盖
   }, [doc.uid, editable]);
+
+  if (!isRenderableDoc(doc)) {
+    return (
+      <div className="flex h-full items-center justify-center p-6 text-sm text-ink-muted">
+        {t('mindmap.empty')}
+      </div>
+    );
+  }
 
   const loss = markmapLoss(doc);
 

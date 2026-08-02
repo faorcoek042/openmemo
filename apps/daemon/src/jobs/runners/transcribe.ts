@@ -28,7 +28,14 @@ import {
   transcribeStartedEvent,
 } from '../events.js';
 import { makeEvent, topics } from '@openmemo/shared';
-import { PLAN_VERSION, type StepProgress, type TranscribePipeline } from '@openmemo/pipeline';
+import {
+  PLAN_VERSION,
+  formatMergeSummary,
+  mergeTranscripts,
+  type MergeableSegment,
+  type StepProgress,
+  type TranscribePipeline,
+} from '@openmemo/pipeline';
 
 import type { Repos } from '../../db/repos.js';
 import { mayRetitleNote } from './retitle.js';
@@ -56,6 +63,11 @@ export interface TranscribePayload {
   readonly input: string;
   readonly language?: string | null;
   readonly sourceKind: string;
+  /**
+   * F3 两阶段：这是流式稿的离线重跑，跑完要与流式稿做 `mergeTranscripts`。
+   * 不设时就是普通转写。
+   */
+  readonly mergeWithTranscriptId?: number;
 }
 
 /** 把绝对路径转成相对 media 根的路径（D-02 §1.1：绝不存绝对路径，数据目录可搬迁）。 */
@@ -241,6 +253,64 @@ export async function runTranscribeJob(
     }),
   );
 
+  /*
+   * F3 两阶段合并（D-06 §15.2 冻结契约）。
+   *
+   * `mergeTranscripts` 此前**零调用方** —— 录音会话在 payload 里塞了
+   * `mergeWithTranscriptId`，但 runner 从来没读过它。于是"用户改过的段落在重跑后保留"
+   * 这条被实测验证过的逻辑，在产品里根本走不到。
+   *
+   * 规则（冻结）：编辑过的一律保留（有无对应都不覆盖不删除），未编辑的用重跑替换/删除，
+   * 重跑新发现的新增。匹配按**时间重叠**不按索引 —— 两遍模型切分天然不同。
+   */
+  let mergeSummary: string | undefined;
+  if (payload.mergeWithTranscriptId !== undefined) {
+    const draftRows = repos.segmentsOf(payload.mergeWithTranscriptId);
+    const rerunRows = repos.segmentsOf(transcript.id);
+    if (draftRows.length > 0) {
+      const draft: MergeableSegment[] = draftRows.map((r) => ({
+        id: r.id,
+        startMs: r.start_ms,
+        endMs: r.end_ms,
+        text: r.text,
+        confidence: r.confidence,
+        noSpeechProb: r.no_speech_prob,
+        words: null,
+        chunkIdx: r.chunk_idx ?? 0,
+        flags: r.flags,
+        speakerLabel: null,
+        editedAt: r.edited_at,
+      }));
+      const rerun = rerunRows.map((r) => ({
+        startMs: r.start_ms,
+        endMs: r.end_ms,
+        text: r.text,
+        confidence: r.confidence,
+        noSpeechProb: r.no_speech_prob,
+        words: null,
+        chunkIdx: r.chunk_idx ?? 0,
+        flags: r.flags,
+        speakerLabel: null,
+      }));
+      const merged = mergeTranscripts(draft, rerun);
+      repos.replaceSegments(
+        transcript.id,
+        merged.segments.map((sg) => ({
+          startMs: sg.startMs,
+          endMs: sg.endMs,
+          text: sg.text,
+          confidence: sg.confidence,
+          noSpeechProb: sg.noSpeechProb,
+          words: sg.words,
+          chunkIdx: sg.chunkIdx,
+          flags: sg.flags,
+        })),
+      );
+      mergeSummary = formatMergeSummary(merged.stats);
+      console.log(`[transcribe] 两阶段合并：${mergeSummary}`);
+    }
+  }
+
   // ---- 收尾 ----
   const segCount = repos.segmentsOf(transcript.id).length;
   repos.updateTranscript(transcript.id, {
@@ -294,6 +364,7 @@ export async function runTranscribeJob(
     segmentCount: segCount,
     rtf: result.rtf,
     durationMs: result.durationMs,
+    ...(mergeSummary === undefined ? {} : { mergeSummary }),
   });
 }
 
