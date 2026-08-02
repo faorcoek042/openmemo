@@ -33,6 +33,7 @@ import {
 } from '@openmemo/pipeline';
 
 import type { AppPaths } from '../config/paths.js';
+import { resolveActiveModel, scanByName } from './modelStore.js';
 
 export interface PipelineBundle {
   readonly tools: ToolPaths;
@@ -108,9 +109,18 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
     ...(env['OPENMEMO_YTDLP'] ? { ytDlp: env['OPENMEMO_YTDLP'] } : {}),
   });
 
+  /*
+   * VAD 模型：先读安装记录（role='vad'），再退到 by-name 扫描，最后才是环境变量/旧路径。
+   * **不写死 `ggml-silero-v6.2.0.bin`** —— 版本一变就找不到了（ADR-014 ②）。
+   */
+  const vadInstalled = resolveActiveModel(dirs.modelsDir, 'vad');
   const tools: ToolPaths = {
     ...discovered,
-    vadModel: firstExisting(env['OPENMEMO_VAD_MODEL'], join(dirs.modelsDir, 'ggml-silero-v6.2.0.bin')),
+    vadModel:
+      firstExisting(env['OPENMEMO_VAD_MODEL']) ??
+      vadInstalled?.path ??
+      scanByName(dirs.modelsDir, 'asr', { ext: '.bin', includes: 'silero' }) ??
+      firstExisting(join(dirs.modelsDir, 'ggml-silero-v6.2.0.bin')),
   };
 
   const missing: string[] = [];
@@ -118,11 +128,19 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
   if (!tools.ffprobe) missing.push('ffprobe');
   if (!tools.whisperCli) missing.push('whisper-cli');
 
-  const modelPath = firstExisting(
-    env['OPENMEMO_ASR_MODEL'],
-    join(dirs.modelsDir, 'ggml-base.en.bin'),
-    join(dirs.modelsDir, 'ggml-base.bin'),
-  );
+  /*
+   * ASR 模型：**读安装记录**，不猜文件名（ADR-014 ②）。
+   *
+   * 冷启动实测：网页装好 `whisper-base-q5_1` → 硬链到 `by-name/asr/ggml-base-q5_1.bin`，
+   * 而旧代码只找 `ggml-base.en.bin` / `ggml-base.bin`，于是"装成功了仍然找不到"。
+   * 顺序：环境变量（开发用）> active.json 指定的 > 任意已装且完好的 > by-name 扫描。
+   */
+  const asrInstalled = resolveActiveModel(dirs.modelsDir, 'asr');
+  const modelPath =
+    firstExisting(env['OPENMEMO_ASR_MODEL']) ??
+    asrInstalled?.path ??
+    scanByName(dirs.modelsDir, 'asr', { ext: '.bin' }) ??
+    null;
   if (!modelPath) missing.push('asr-model');
 
   const registry = buildDefaultRegistry({

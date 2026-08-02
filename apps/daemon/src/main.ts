@@ -34,6 +34,7 @@ import { JobQueue } from './jobs/queue.js';
 import { LanePool } from './jobs/lanes.js';
 import { Repos } from './db/repos.js';
 import { buildPipeline, type PipelineBundle } from './pipeline/setup.js';
+import { resolveExtensionDir } from './pipeline/modelStore.js';
 import { Scheduler, type JobHandler } from './jobs/scheduler.js';
 import { runTranscribeJob } from './jobs/runners/transcribe.js';
 import { createNoteRoutes } from './http/rest/notes.js';
@@ -193,7 +194,9 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     // ---- DB：业务 schema 失败 = 启动失败；扩展/索引失败只降级 ----
     database = openAppDatabase({
       filename: paths.dbFile,
-      extensions: defaultExtensionPaths(paths.extensionsDir),
+      // 扩展目录优先取**已安装的 sqlite-ext 包**的解包位置（ADR-014 ③），
+      // 找不到才退回 OPENMEMO_EXT_DIR / <dataDir>/bin/ext
+      extensions: defaultExtensionPaths(resolveExtensionDir(paths.modelsDir, paths.extensionsDir)),
       backupDir: paths.backupsDir,
     });
 

@@ -137,6 +137,15 @@ export class ParaformerEngine implements AsrEngine {
        */
       wordTimestamps: false,
       diarization: false,
+      /*
+       * 8 s, not the 30 s default.
+       *
+       * One call returns one segment, so chunk length is the timeline granularity. At
+       * 84x real time the extra calls cost almost nothing (a 30 s window is ~0.36 s of
+       * compute either way), and it turns "one 30 s block of text" into a usable
+       * timeline — which is the whole point of ADR-013's segment-level fallback.
+       */
+      preferredChunkMs: 8_000,
     };
   }
 

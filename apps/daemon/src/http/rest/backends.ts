@@ -12,6 +12,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { install } from '@openmemo/downloader';
+import { isPackApplicable } from '@openmemo/runtime';
 import {
   BACKENDS,
   makeEvent,
@@ -39,20 +40,25 @@ function currentPlatform(): PlatformSelector {
 }
 
 /** 这个包能不能装在本机：os/arch 对得上，且对应后端**真的枚举到了设备**。 */
+/**
+ * 适用性判定 —— 策略在 `@openmemo/runtime`，这里只做调用（ADR-014 决策 2）。
+ *
+ * 原实现要求 `hardware.backends[].available`，而该标志来自 probe，
+ * **probe 可执行文件本身装在后端包里** → 干净机器上装不了任何包（T-044 实测：
+ * 4 个 linux/x64 包全部 409）。现在 L1（CPU / macOS Metal）无条件可装，
+ * L2 加速包维持 probe gate。
+ */
 function applicability(
   state: RestState,
   pack: BackendPack,
 ): { applicable: boolean; reason: string | null } {
   const platform = currentPlatform();
-  const platformOk = pack.os === platform.os && pack.arch === platform.arch;
-  if (!platformOk) {
-    return { applicable: false, reason: `适用于 ${pack.os}/${pack.arch}，与本机不符` };
-  }
-  const status = state.hardware.backends.find((b) => b.id === pack.backend);
-  if (!status?.available) {
-    return { applicable: false, reason: status?.unavailableReason ?? '该后端在本机不可用' };
-  }
-  return { applicable: true, reason: null };
+  const r = isPackApplicable(
+    { id: pack.id, backend: pack.backend, os: pack.os, arch: pack.arch },
+    platform,
+    state.hardware,
+  );
+  return { applicable: r.applicable, reason: r.reason };
 }
 
 /**
@@ -226,7 +232,8 @@ export async function handleBackendRoutes(
       return true;
     }
     const status = state.hardware.backends.find((b) => b.id === backend);
-    if (!status?.available) {
+    // CPU 同理：它是 L1 兜底，选它永远合法（ADR-014 决策 1）
+    if (backend !== 'cpu' && !status?.available) {
       sendError(
         res,
         409,

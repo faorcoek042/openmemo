@@ -320,7 +320,10 @@ export class RestState {
       if (!group) {
         group = {
           groupId: m.groupId,
-          role: roleToActivationSlot(m.role),
+          // ★ 这里必须是**真实的 ModelRole**，不能收窄成 store kind。
+          // 收窄只用于"落到哪个磁盘目录"；把它漏进 API 响应会让 vad/punctuation
+          // 在网页上全部显示成 asr —— 目录里明明有，用户却找不到那一类。
+          role: m.role,
           family: m.family,
           // 组名去掉变体后缀：「Whisper large-v3 (q5_0)」→「Whisper large-v3」
           displayName: m.displayName.replace(/\s*\([^)]*\)\s*$/, ''),

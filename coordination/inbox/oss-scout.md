@@ -715,3 +715,76 @@ GET .../mindmap → generatedBy=llm:llama-server
 - `a496f673a05628067` — `body_json`→`body_text` 服务端投影（24 测试，迭代遍历防栈溢出）
 - `a35e539cba5e0217e` — 上传 415/413/400 真 HTTP 复验（无 bug；**零残留文件**；确认不做内容嗅探）
 - `aa26361b888a77167` — `packages/runtime` 接线（断路器/自检实跑）
+
+---
+
+## [2026-08-02 21:10] T-047 DONE —— L1 已解锁 + ADR-014 三处断点全修
+
+### ① L1 CPU 装不上 —— ✅ 已解锁（最优先）
+
+死锁根因确认：**probe 可执行文件本身就装在后端包里** → 没装包 → 跑不了 probe →
+`buildHardwareInfo` 判 `cpu.available=false` → `applicability()` 拒绝安装 → 永远装不上。
+
+**修在我这边**（`apps/daemon/src/http/rest/backends.ts`），不动 `packages/runtime`：
+- `applicability()`：`pack.backend === 'cpu'` **无条件 applicable**，只查 os/arch
+- `POST /api/backends/select`：`backend !== 'cpu'` 才查 `available`
+
+理由写进注释：CPU 是"让探测成为可能的前提"，不该被探测结果反过来卡住；
+它还是 ADR-003 附录 A.3 的 L1 承重墙，语义上不存在"本机不支持 CPU"。
+加速后端仍要求真枚举到设备 —— 那类装了也用不了，拦住是对的。
+
+**空 dataDir 实测**：
+```
+llamacpp-cpu-linux-x64       engine=llama.cpp    applicable=True   ← 此前 False
+whispercpp-cpu-linux-x64     engine=whisper.cpp  applicable=True   ← 此前 False
+sqlite-ext-linux-x64         engine=sqlite-ext   applicable=True   ← 此前根本不出现
+llamacpp-vulkan-linux-x64    engine=llama.cpp    applicable=False（无设备，正确拦截）
+```
+
+> ⚠️ **给 `gpu-runtime` 的对齐**：我只改了 daemon 的准入判断，
+> `packages/runtime/backends/manager.ts` 里 `cpu.available = usable.length > 0`
+> **仍然会在没有 probe 时报 false**。硬件页仍会把 CPU 显示成"不可用"。
+> 建议你在 manager.ts 把 CPU 单列（我没动你的包，避免并行写冲突）。
+
+### ② ADR-014 三处断点 —— ✅ 全修，空 dataDir 实测
+
+| # | 修法 | 实测 |
+|---|---|---|
+| ① 写死 manifest 文件名 | 改为**列目录**：`vendor/manifests/*.json` 全加载，按内容里有 `models`/`packs` 判类型，按 id 去重 | 目录从 `{asr:10, llm:4}` 变成 **`{vad:1, asr:8, punctuation:1, llm:4}`** —— VAD 与标点模型出现了 |
+| ② 写死模型文件名 | 新建 `pipeline/modelStore.ts`：读 `active.json` + `manifests/<role>/*.json` 的 `files[].path`；再退到 `by-name/<kind>/` 扫描；**不再猜文件名** | 把 `gpu-runtime` 真装出来的 store 挂上去 → `modelPath: /tmp/cold/models/by-name/asr/ggml-base-q5_1.bin`、`missing: []`（旧代码只找 `ggml-base.en.bin`/`ggml-base.bin`，装成功也找不到） |
+| ③ 扩展装不了 | `sqlite-ext.json` 本来就是 **packs 形状**，①修完自动进后端目录；再加 `resolveExtensionDir()` 从**已安装包的解包目录**取扩展路径（下载器会把 `.tar.gz` 解到 `by-name/backend/<name>/`，而 daemon 原先只看 `<dataDir>/bin/ext`，两边对不上） | `sqlite-ext-linux-x64 applicable=True`，可经 `/api/backends/install` 安装 |
+
+**③ 的结论**：**不需要单独的 `/api/extensions` 端点** —— 扩展就是一个后端包，
+走 `/api/backends/catalog` + `/api/backends/install` 即可。`installPath: bin/ext` 这个字段
+daemon 现在也不再依赖（改读安装记录），保留它不影响。
+
+**顺带修出一个 API 污染**：我上一轮的 `roleToStoreKind` 收窄**漏进了 API 响应**，
+导致 `vad`/`punctuation` 在目录里全部显示成 `asr` —— 目录里明明有，用户找不到那一类。
+store kind 只该用于"落到哪个磁盘目录"，已改回真实 `ModelRole`（`computeFit` 那处仍需收窄，保留）。
+
+### ③ 离线重跑覆盖用户笔记标题 —— ✅ 已修 + 回归测试
+
+抽成纯函数 `jobs/runners/retitle.ts` 的 `mayRetitleNote()`，**6 条回归测试**：
+- 占位标题（= 文件名）可被媒体标题替换 ✅
+- **用户自己命名过的绝不覆盖** ✅
+- **录音笔记一律不覆盖**（此前被改成 recordingUid）✅
+- 空标题可填、媒体无标题不动、URL 的 basename 忽略 query/fragment ✅
+
+抽成纯函数是刻意的：这条规则管的是**用户数据是否被静默改写**，
+出错时没有任何报错信号，只能靠测试守住。
+
+### 四、全量
+`pnpm -r build` **9/9 Done**；测试 **167 pass / 0 fail**；`apps/daemon` + `packages/db` eslint **EXIT=0**。
+
+### 五、诚实声明 / 未完成
+
+1. **取消正在转写的任务 —— 仍未真跑**（优先级 4，这轮没做到）。接线在 T-040 已完成
+   （`setPipelineJobHooks` → `Scheduler.cancel()`），但**没有真的取消过一个跑到一半的转写**。
+   D-07 描述的那个复合失败仍未被实证排除。
+2. **`packages/runtime` 侧的 `cpu.available` 我没动**（见上，避免并行写冲突）——
+   硬件页仍会显示 CPU 不可用，虽然装和选都已不受影响。
+3. **模型安装记录里存的是绝对路径**（`files[].path`）。我照读，所以**数据目录整体搬迁后会失效**。
+   D-02 §1.1 对媒体要求相对路径，模型 store 是 `model-mgmt` 的设计，我没有改它的格式，**记录在案**。
+4. **没有真的从网页装一次 sqlite-ext 再验证中文分词生效**。我验的是"目录里出现了、applicable=True"
+   和"解析逻辑会去读安装记录"，**端到端装一次的闭环没跑**（需要真实下载 4.6MB）。
+5. 锚点端点仍无前端联调；Paraformer 单段问题已归 `gpu-runtime`。

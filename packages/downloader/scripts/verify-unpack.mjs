@@ -258,28 +258,69 @@ console.log('\n[4] absolute paths (POSIX and Windows-style) are rejected');
   }
 }
 
-/* --- 5. symlink entry in tar rejected ------------------------------------------ */
-console.log('\n[5] a real symlink entry in a tar archive is rejected');
+/* --- 5. symlink policy: internal allowed, escaping rejected -------------------- */
+/*
+ * The rule is TARGET-based, not type-based. Rejecting every symlink looked safer but
+ * broke real software: the official whisper.cpp tarball ships
+ * `libwhisper.so -> libwhisper.so.1.7.6` (ordinary shared-library versioning), and a
+ * guard that stops the product installing its own backend is not a working guard.
+ * What actually matters is whether the link can be used to write outside destDir.
+ */
+console.log('\n[5] symlink policy: 指向内部允许，逃逸拒绝');
 if (!tarAvailable) {
-  check('tar binary available', false, 'skipping symlink test');
+  check('tar binary available', false, 'skipping symlink tests');
 } else {
-  const srcDir = path.join(root, 'tar-symlink-src');
-  await fs.mkdir(srcDir, { recursive: true });
-  await fs.writeFile(path.join(srcDir, 'real.txt'), 'real file\n');
-  await fs.symlink('real.txt', path.join(srcDir, 'link.txt'));
+  // 5a. internal symlink — MUST be allowed (this is the whisper.cpp case)
+  {
+    const srcDir = path.join(root, 'tar-symlink-ok');
+    await fs.mkdir(srcDir, { recursive: true });
+    await fs.writeFile(path.join(srcDir, 'real.txt'), 'real file\n');
+    await fs.symlink('real.txt', path.join(srcDir, 'link.txt'));
+    const archivePath = path.join(root, 'symlink-ok.tar.gz');
+    execFileSync('tar', ['-czf', archivePath, '--no-recursion', 'real.txt', 'link.txt'], { cwd: srcDir });
 
-  const archivePath = path.join(root, 'symlink.tar.gz');
-  execFileSync('tar', ['-czf', archivePath, '--no-recursion', 'real.txt', 'link.txt'], { cwd: srcDir });
+    const destDir = path.join(root, 'symlink-ok-out');
+    let err = null;
+    try {
+      await unpackTarGz(archivePath, destDir);
+    } catch (e) {
+      err = e;
+    }
+    check('内部 symlink 不再被拒', err == null, err?.message);
+    const st = await fs.lstat(path.join(destDir, 'link.txt')).catch(() => null);
+    check('link.txt 已创建', st != null, st?.isSymbolicLink() ? 'symlink' : st ? 'regular file (copy fallback)' : 'missing');
+    const content = await fs.readFile(path.join(destDir, 'link.txt'), 'utf8').catch(() => '');
+    check('通过 link 能读到目标内容', content.includes('real file'), JSON.stringify(content.slice(0, 20)));
+  }
 
-  const destDir = path.join(root, 'symlink-out');
-  const err = await mustThrow(() => unpackTarGz(archivePath, destDir));
-  check('extraction throws', err != null, err?.message);
-  check('throws with SYMLINK_REJECTED code', err instanceof UnpackError && err.code === 'SYMLINK_REJECTED', err?.code);
-  const linkExists = await fs
-    .lstat(path.join(destDir, 'link.txt'))
-    .then(() => true)
-    .catch(() => false);
-  check('the symlink itself was never created', !linkExists);
+  // 5b. escaping symlink — MUST still be rejected
+  {
+    const srcDir = path.join(root, 'tar-symlink-evil');
+    await fs.mkdir(srcDir, { recursive: true });
+    await fs.symlink('../../../../etc/passwd', path.join(srcDir, 'evil.txt'));
+    const archivePath = path.join(root, 'symlink-evil.tar.gz');
+    execFileSync('tar', ['-czf', archivePath, '--no-recursion', 'evil.txt'], { cwd: srcDir });
+
+    const destDir = path.join(root, 'symlink-evil-out');
+    const err = await mustThrow(() => unpackTarGz(archivePath, destDir));
+    check('逃逸 symlink 仍被拒绝', err != null, err?.message?.slice(0, 80));
+    check('拒绝码为 SYMLINK_REJECTED', err instanceof UnpackError && err.code === 'SYMLINK_REJECTED', err?.code);
+    const exists = await fs.lstat(path.join(destDir, 'evil.txt')).then(() => true).catch(() => false);
+    check('逃逸链接从未被创建', !exists);
+  }
+
+  // 5c. absolute symlink — MUST still be rejected
+  {
+    const srcDir = path.join(root, 'tar-symlink-abs');
+    await fs.mkdir(srcDir, { recursive: true });
+    await fs.symlink('/etc/passwd', path.join(srcDir, 'abs.txt'));
+    const archivePath = path.join(root, 'symlink-abs.tar.gz');
+    execFileSync('tar', ['-czf', archivePath, '--no-recursion', 'abs.txt'], { cwd: srcDir });
+
+    const destDir = path.join(root, 'symlink-abs-out');
+    const err = await mustThrow(() => unpackTarGz(archivePath, destDir));
+    check('绝对路径 symlink 仍被拒绝', err instanceof UnpackError && err.code === 'SYMLINK_REJECTED', err?.code);
+  }
 }
 
 /* --- 6. zip-bomb guards: entry count and total bytes --------------------------- */

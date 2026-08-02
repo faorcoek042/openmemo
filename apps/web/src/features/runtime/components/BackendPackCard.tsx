@@ -39,6 +39,12 @@ export function BackendPackCard({
 }: BackendPackCardProps) {
   // 承重墙：内置 CPU 档不允许卸载
   const isLoadBearing = pack.tier === 'builtin' || pack.backend === 'cpu';
+  /**
+   * 已构建、摘要已核实，但**还没有发布地址**（仓库无 git remote，CI 从未跑过）。
+   * 必须在按钮上就说清楚，而不是让用户点下去等一个必然失败的下载 ——
+   * 失败要在看得见的地方发生，不要推迟到点击之后。
+   */
+  const pendingCi = (pack as { availability?: string }).availability === 'pending-ci';
   const selfTestFailed = selfTest != null && !selfTest.passed;
 
   return (
@@ -163,12 +169,17 @@ export function BackendPackCard({
           <Button
             size="sm"
             variant={pack.recommended ? 'primary' : 'secondary'}
-            disabled={installing || !pack.applicable}
+            disabled={installing || !pack.applicable || pendingCi}
+            title={pendingCi ? '该组件已构建并核实过摘要，但尚未发布下载地址（需要先跑 CI 发布）' : undefined}
             onClick={() => onInstall(pack.id)}
             data-testid={`backend-install-${pack.id}`}
           >
             <Download className="size-3.5" aria-hidden />
-            {installing ? '正在开始…' : `安装 ${formatBytes(pack.totalSizeBytes, locale)}`}
+            {pendingCi
+              ? '尚未发布，暂不可安装'
+              : installing
+                ? '正在开始…'
+                : `安装 ${formatBytes(pack.totalSizeBytes, locale)}`}
           </Button>
         )}
       </div>

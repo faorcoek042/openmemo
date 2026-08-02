@@ -165,6 +165,84 @@ function safeJoin(destDir: string, rawName: string): string {
   return resolved;
 }
 
+
+/**
+ * Decide whether an archive link entry is safe, and where it points.
+ *
+ * Rejecting EVERY symlink is too blunt and breaks real software: the official
+ * whisper.cpp tarball ships `libwhisper.so -> libwhisper.so.1.7.6`, which is ordinary
+ * shared-library versioning, not an attack. A guard that blocks the product from
+ * installing its own backend is a broken guard.
+ *
+ * The actual threat is a link that ESCAPES the destination — `evil -> /etc/passwd`, or
+ * `evil -> ../../../home/user/.ssh/id_rsa` — because a later write through that path
+ * lands outside the sandbox. So the rule is target-based, not type-based:
+ *   - absolute target            → reject
+ *   - resolves outside destRoot  → reject
+ *   - resolves inside destRoot   → allow
+ */
+function resolveLinkTarget(
+  destRoot: string,
+  entryName: string,
+  linkTarget: string,
+): string {
+  if (linkTarget.length === 0) {
+    throw new UnpackError(`Archive link "${entryName}" has an empty target`, 'CORRUPT');
+  }
+  if (linkTarget.startsWith('/') || linkTarget.startsWith('\\') || WINDOWS_ABS_RE.test(linkTarget)) {
+    throw new UnpackError(
+      `Archive link "${entryName}" points outside the archive via an absolute path: "${linkTarget}"`,
+      'SYMLINK_REJECTED',
+    );
+  }
+  const linkDir = path.dirname(path.resolve(destRoot, entryName));
+  const resolved = path.resolve(linkDir, linkTarget);
+  const root = path.resolve(destRoot);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    throw new UnpackError(
+      `Archive link "${entryName}" escapes the destination: "${linkTarget}"`,
+      'SYMLINK_REJECTED',
+    );
+  }
+  return resolved;
+}
+
+/**
+ * Create a link that has already been validated as internal.
+ *
+ * Falls back to copying on Windows, where symlink creation needs Developer Mode or
+ * elevation. A copy is functionally equivalent here (these are small `.so`/`.dll`
+ * version aliases) and costs less than making the user change an OS setting.
+ */
+async function materialiseLink(
+  dest: string,
+  linkTarget: string,
+  resolvedTarget: string,
+  hard: boolean,
+): Promise<void> {
+  await fs.mkdir(path.dirname(dest), { recursive: true });
+  await fs.rm(dest, { force: true });
+  try {
+    if (hard) await fs.link(resolvedTarget, dest);
+    else await fs.symlink(linkTarget, dest);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'EPERM' || code === 'ENOSYS' || code === 'EXDEV' || code === 'ENOENT') {
+      // Target may legitimately not exist yet (tar order) — retry as a copy if possible.
+      try {
+        await fs.copyFile(resolvedTarget, dest);
+      } catch {
+        throw new UnpackError(
+          `Could not materialise link "${dest}" -> "${linkTarget}": ${String((e as Error).message)}`,
+          'CORRUPT',
+        );
+      }
+    } else {
+      throw e;
+    }
+  }
+}
+
 /* --------------------------------- ZIP ------------------------------------ */
 // Reference: PKWARE .ZIP File Format Specification (APPNOTE.TXT). Only what backend packs
 // and model archives actually use is implemented: methods 0 (stored) and 8 (deflate),
@@ -291,9 +369,8 @@ export async function unpackZip(src: string, destDir: string, opts?: UnpackOptio
       const isDir = entry.name.endsWith('/');
       const dest = safeJoin(destRoot, entry.name);
 
-      if (entry.isUnix && ((entry.externalAttrs >>> 16) & S_IFMT) === S_IFLNK) {
-        throw new UnpackError(`Archive contains a symlink entry, which is rejected: "${entry.name}"`, 'SYMLINK_REJECTED');
-      }
+      const isSymlink =
+        entry.isUnix && ((entry.externalAttrs >>> 16) & S_IFMT) === S_IFLNK;
 
       if (isDir) {
         await fs.mkdir(dest, { recursive: true });
@@ -333,6 +410,15 @@ export async function unpackZip(src: string, destDir: string, opts?: UnpackOptio
       }
       if (data.length !== entry.uncompressedSize) {
         throw new UnpackError(`"${entry.name}" decompressed to an unexpected size`, 'CORRUPT');
+      }
+
+      if (isSymlink) {
+        // In ZIP, a symlink's file CONTENT is its target path.
+        const linkTarget = data.toString('utf8').trim();
+        const resolved = resolveLinkTarget(destRoot, entry.name, linkTarget);
+        await materialiseLink(dest, linkTarget, resolved, false);
+        files.push(dest);
+        continue;
       }
 
       await fs.mkdir(path.dirname(dest), { recursive: true });
@@ -464,7 +550,13 @@ export async function unpackTarGz(src: string, destDir: string, opts?: UnpackOpt
     pendingLongName = null;
 
     if (typeFlag === '2' || typeFlag === '1') {
-      throw new UnpackError(`Archive contains a symlink/hardlink entry, which is rejected: "${name}"`, 'SYMLINK_REJECTED');
+      // linkname field, bytes 157..257
+      const linkTarget = readCString(header.subarray(157, 257));
+      const dest = safeJoin(destRoot, name);
+      const resolved = resolveLinkTarget(destRoot, name, linkTarget);
+      await materialiseLink(dest, linkTarget, resolved, typeFlag === '1');
+      files.push(dest);
+      continue;
     }
 
     const isDir = typeFlag === '5' || name.endsWith('/');

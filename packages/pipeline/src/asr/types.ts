@@ -46,6 +46,17 @@ export interface AsrCapabilities {
   wordTimestamps: boolean;
   diarization: boolean;
   maxAudioSeconds?: number;
+  /**
+   * Preferred ASR chunk length, in ms.
+   *
+   * Exists because chunk size is not only a scheduling knob — for an engine with no
+   * word-level timestamps it IS the timeline resolution. Offline Paraformer returns one
+   * block of text per call, so a 30 s chunk yields exactly one segment spanning 30 s,
+   * and F5's Chinese highlighting (already degraded to segment level by ADR-013) ends up
+   * with nothing to highlight. Such engines ask for shorter chunks; whisper, which
+   * emits its own sentence timings, leaves this unset.
+   */
+  preferredChunkMs?: number;
 }
 
 export interface TranscribeChunkRequest {

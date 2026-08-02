@@ -95,8 +95,33 @@ export const ERROR_CODES = [
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
+/**
+ * Codes emitted by the pipeline/job system rather than the downloader.
+ *
+ * The daemon already blocks jobs with these (`queue.block(id, 'MISSING_ASR_MODEL', …)`)
+ * and the web app already has localized copy for them.
+ */
+export const PIPELINE_ERROR_CODES = [
+  'MISSING_ASR_MODEL',
+  'MISSING_LLM',
+  'MISSING_BACKEND',
+  'RESOURCE_DISK_FULL',
+  'MISSING_API_KEY',
+] as const;
+export type PipelineErrorCode = (typeof PIPELINE_ERROR_CODES)[number];
+
 export interface JobError {
-  code: ErrorCode;
+  /**
+   * Stable code the UI looks up for copy and remediation.
+   *
+   * Deliberately NOT closed to `ErrorCode`: that enum is download-specific, but `JobError`
+   * is used by every job type, and pipeline jobs fail for reasons downloads never do
+   * (no ASR model, no API key). Closing it here forced casts at every pipeline call site
+   * and broke the build. The union keeps autocomplete for known codes while letting a
+   * domain add its own without editing this file — new failure modes should not require a
+   * change to a shared contract before they can be reported.
+   */
+  code: ErrorCode | PipelineErrorCode | (string & {});
   message: string;
   messageZh: string;
   retryable: boolean;

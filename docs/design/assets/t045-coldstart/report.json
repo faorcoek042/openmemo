@@ -1,0 +1,54 @@
+{
+  "ranAt": "2026-08-02T09:28:07.462Z",
+  "steps": [
+    {
+      "id": "0",
+      "name": "打开网页并完成鉴权",
+      "status": "yes",
+      "detail": "已拿到 session cookie"
+    },
+    {
+      "id": "1",
+      "name": "首启引导可点着走",
+      "status": "yes",
+      "detail": "推进了 4 步（按钮：下一步/开始使用）"
+    },
+    {
+      "id": "2",
+      "name": "网页检测硬件",
+      "status": "yes",
+      "detail": "你的硬件显卡未检测到可用 GPU内存17 GB · 可用 1.6 GB处理器AMD RYZEN AI MAX+ 395 w/ Radeon 8060S · 32 核 / 32 线程模型目录/tmp/om-cold/mod"
+    },
+    {
+      "id": "3",
+      "name": "网页装加速后端（whisper.cpp）",
+      "status": "no",
+      "detail": "点了「CPU可安装whisper.cpp · CPU 后端（Linux x64）推荐兜底后端whisper.cpp v1.9.」但未成功：UNPACK_FAILED: Archive extraction (tar.gz) failed for whisper-bin-ubuntu-x64.tar.gz: Archive contains a symlink/hardlink entry, which is rejected: \"whisper-bin-ubuntu-x64/libwhisper.so\""
+    },
+    {
+      "id": "4",
+      "name": "网页装 ASR 模型",
+      "status": "yes",
+      "detail": "点「下载 2.3 MB」下载完成（100%）"
+    },
+    {
+      "id": "5",
+      "name": "目录里能看到 VAD 模型",
+      "status": "yes",
+      "detail": "2 个：vad/silero-vad-onnx, vad/silero-vad-ggml"
+    },
+    {
+      "id": "6",
+      "name": "网页装中文分词器 libsimple",
+      "status": "blocked",
+      "detail": "目录里有 1 条但 availability=pending-ci（无发布 URL，仓库无 git remote，CI 从未跑过）→ 网页装不了"
+    },
+    {
+      "id": "7",
+      "name": "试转一段音频",
+      "status": "no",
+      "detail": "找不到链接输入框"
+    }
+  ],
+  "pageErrors": []
+}

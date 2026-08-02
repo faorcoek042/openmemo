@@ -9,65 +9,17 @@
  *
  * 其中相当一部分根本不需要真浏览器：**它们只需要一个 DOM 和一次事件派发。**
  *
- * ## 三个必须做对的地方
+ * ## 两个必须做对的地方
  *
- * 1. **jsdom 全局必须在 react-dom 之前装好** —— 所以本模块在顶层就装，
- *    测试文件把它放在第一个 import。CJS 的 `require` 按序执行，能保证这个顺序。
- * 2. **`IS_REACT_ACT_ENVIRONMENT = true`**，否则 React 19 会对每次状态更新告警刷屏。
- * 3. **给 input 赋值要用原生 setter** —— React 劫持了 `value` 的 setter 来做受控组件，
- *    直接 `input.value = x` 不会触发 React 的 onChange。这是手写测试宿主最容易踩的坑。
+ * 1. **`./dom-env` 必须是第一个 import**（且必须是独立模块）——
+ *    ESM 里一个模块的所有 import 都先于它自己的语句执行，
+ *    把 DOM 装配写在本文件顶层语句里是**不起作用的**。详见 dom-env.ts 的注释。
+ * 2. **给 input 赋值要用原生 setter** —— React 劫持了 `value` 的 setter 做受控组件，
+ *    直接 `el.value = x` 不会触发 onChange。
  */
 
-import { JSDOM } from 'jsdom';
-
-/* ── 1. DOM 全局（必须在任何 React 代码之前）────────────────────────────── */
-
-const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', {
-  url: 'http://127.0.0.1:17650/',
-  pretendToBeVisual: true,
-});
-
-const w = dom.window as unknown as Window & typeof globalThis;
-
-const define = (key: string, value: unknown): void => {
-  Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
-};
-
-define('window', w);
-define('document', w.document);
-define('navigator', w.navigator);
-define('location', w.location);
-for (const k of [
-  'HTMLElement',
-  'HTMLInputElement',
-  'HTMLTextAreaElement',
-  'Element',
-  'Node',
-  'Event',
-  'CustomEvent',
-  'MouseEvent',
-  'KeyboardEvent',
-  'getComputedStyle',
-  'localStorage',
-  'sessionStorage',
-] as const) {
-  define(k, (w as unknown as Record<string, unknown>)[k]);
-}
-define('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(Date.now()), 0));
-define('cancelAnimationFrame', (id: number) => clearTimeout(id));
-define('matchMedia', () => ({
-  matches: false,
-  addEventListener() {},
-  removeEventListener() {},
-}));
-define('BroadcastChannel', class {
-  postMessage(): void {}
-  addEventListener(): void {}
-  close(): void {}
-});
-define('IS_REACT_ACT_ENVIRONMENT', true);
-
-/* ── 2. React / 应用依赖（此时 DOM 已就绪）──────────────────────────────── */
+// ⚠️ 必须第一行：装 jsdom 全局 + 修 React 的事件特性检测（见 dom-env.ts）
+import './dom-env';
 
 import { createElement, act, type ReactElement, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -123,9 +75,14 @@ export async function render(
   });
 
   const flush = async (): Promise<void> => {
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
+    // 两轮：第一轮让 setState 的更新提交，第二轮让因它产生的副作用
+    // （query/mutation 的 promise、useEffect）落地。一轮 setTimeout(0) 不够 ——
+    // 实测症状是"onChange 已触发但下一个事件处理器仍拿到旧 state"。
+    for (let i = 0; i < 2; i += 1) {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+    }
   };
   await flush();
 
@@ -141,11 +98,18 @@ export async function render(
 
 /* ── 4. 交互 ───────────────────────────────────────────────────────────── */
 
+async function settle(): Promise<void> {
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+  });
+}
+
 export async function click(el: Element | null): Promise<void> {
   if (!el) throw new Error('click: 元素不存在');
   await act(async () => {
     el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
   });
+  await settle();
 }
 
 /**
@@ -162,10 +126,19 @@ export async function type(el: Element | null, value: string): Promise<void> {
       : window.HTMLInputElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
   if (!setter) throw new Error('type: 拿不到原生 value setter');
+  // jsdom 不支持原生 input 事件检测，React 会退回 polyfill 路径，
+  // 而该路径依赖 document.activeElement —— 不 focus 就会在内部拿到 null 并抛异常。
+  (el as HTMLElement).focus();
   await act(async () => {
     setter.call(el, value);
+    // React 的受控输入靠 `_valueTracker` 判定"值变没变"。用原型 setter 赋值可以绕过
+    // React 在实例上装的 setter，让 tracker 看到差异；随后派发 input 事件触发 onChange。
+    // ⚠️ 只派 input，**不要**再补一个 change：React 对文本输入只认 input，
+    // 多派的 change 会让 tracker 在同一轮里被二次读取并复位，onChange 反而不触发。
     el.dispatchEvent(new window.Event('input', { bubbles: true }));
   });
+  // 必须等这次 setState 提交完再返回，否则下一个事件的处理器闭包仍持有旧 state
+  await settle();
 }
 
 export async function pressKey(el: Element | null, key: string): Promise<void> {
@@ -173,6 +146,7 @@ export async function pressKey(el: Element | null, key: string): Promise<void> {
   await act(async () => {
     el.dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles: true }));
   });
+  await settle();
 }
 
 /* ── 5. 查询 ───────────────────────────────────────────────────────────── */

@@ -102,6 +102,29 @@ export {
 } from './backends/manager.js';
 export type { BuildHardwareInfoInput } from './backends/manager.js';
 
+// Backend pack applicability policy (ADR-014 decision 2: L1 CPU is never probe-gated).
+export {
+  L1_BACKENDS,
+  evaluateApplicability,
+  isAlwaysApplicable,
+  isPackApplicable,
+} from './backends/applicability.js';
+export type {
+  ApplicabilityInput,
+  ApplicabilityResult,
+  PackDescriptor,
+} from './backends/applicability.js';
+
+// -- functional self-check (ADR-014: verify the FEATURE, not the component) -----------------
+export { CHINESE_PROBE_WORDS, listByName, runSelfCheck } from './selfcheck.js';
+export type {
+  CheckResult,
+  CheckStatus,
+  SelfCheckInput,
+  SelfCheckProbes,
+  SelfCheckReport,
+} from './selfcheck.js';
+
 // -- self-test -----------------------------------------------------------------------------
 export {
   SELF_TEST_TIMEOUT_MS,

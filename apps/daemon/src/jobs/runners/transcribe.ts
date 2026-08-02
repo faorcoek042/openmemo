@@ -31,6 +31,7 @@ import { makeEvent, topics } from '@openmemo/shared';
 import { PLAN_VERSION, type StepProgress, type TranscribePipeline } from '@openmemo/pipeline';
 
 import type { Repos } from '../../db/repos.js';
+import { mayRetitleNote } from './retitle.js';
 import type { SseHub } from '../../http/sse.js';
 import type { JobQueue, JobRow } from '../queue.js';
 
@@ -248,10 +249,28 @@ export async function runTranscribeJob(
     durationMs: result.durationMs,
     rtf: result.rtf,
   });
+  /*
+   * ⚠️ **绝不覆盖用户已有的标题**。
+   *
+   * 之前这里无条件用媒体元数据的标题覆盖 `notes.title`，后果是**用户数据被静默改写**：
+   * F3 录音笔记（用户在 URL 里传了 title）转写完自己变成了 recordingUid，
+   * 用户重命名过的笔记也会在离线重跑后被改回文件名。
+   * 缺功能用户会报，静默改名用户只会觉得"这软件有鬼"。
+   *
+   * 规则：只有当笔记标题还是**导入时的占位值**（等于原始输入的文件名/URL basename）
+   * 时，才允许用更好的媒体标题替换它。录音（kind='recording'）一律不覆盖。
+   */
+  const mayRetitle = mayRetitleNote({
+    noteKind: note.kind,
+    currentTitle: note.title,
+    input: payload.input,
+    mediaTitle: result.info.title,
+  });
+
   repos.updateNote(note.id, {
     status: result.yielded ? 'partial' : 'ready',
     durationMs: result.durationMs,
-    ...(result.info.title ? { title: result.info.title } : {}),
+    ...(mayRetitle ? { title: result.info.title as string } : {}),
   });
 
   sse.publish(

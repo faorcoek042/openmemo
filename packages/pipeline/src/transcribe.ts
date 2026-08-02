@@ -185,6 +185,22 @@ export class TranscribePipeline {
     const durationMs = normalized.durationMs ?? probed.durationMs ?? 0;
     if (durationMs <= 0) throw new Error('could not determine audio duration');
 
+    /*
+     * Chunk sizing follows the ENGINE, not a fixed constant.
+     *
+     * For engines without word-level timestamps the chunk length is the finest timeline
+     * resolution the transcript can have (see AsrCapabilities.preferredChunkMs). Asking
+     * the engine keeps that decision next to the knowledge that motivates it.
+     */
+    const engineCaps = await asr.capabilities().catch(() => null);
+    const targetChunkMs =
+      this.opts.targetChunkMs ?? engineCaps?.preferredChunkMs ?? undefined;
+    const maxChunkMs =
+      this.opts.maxChunkMs ??
+      (engineCaps?.preferredChunkMs !== undefined
+        ? Math.round(engineCaps.preferredChunkMs * 1.5)
+        : undefined);
+
     // ---- 4. VAD --------------------------------------------------------------------
     const { chunks, speechMs } = await time('vad', () =>
       this.inLane('cpu.media', req.signal, async () => {
@@ -204,15 +220,15 @@ export class TranscribePipeline {
             segments.length > 0
               ? planChunks(segments, {
                   totalDurationMs: durationMs,
-                  targetChunkMs: this.opts.targetChunkMs,
-                  maxChunkMs: this.opts.maxChunkMs,
+                  ...(targetChunkMs !== undefined ? { targetChunkMs } : {}),
+                  ...(maxChunkMs !== undefined ? { maxChunkMs } : {}),
                 })
               : // VAD ran and found no speech. Do not silently transcribe silence —
                 // whisper hallucinates on it. Zero chunks is the honest answer.
                 [];
         } else {
           // Degradation, not failure: fixed windows still produce a usable transcript.
-          plan = planFixedChunks(durationMs, this.opts.targetChunkMs ?? 30_000);
+          plan = planFixedChunks(durationMs, targetChunkMs ?? 30_000);
           speech = durationMs;
         }
 

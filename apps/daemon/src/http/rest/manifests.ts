@@ -46,8 +46,42 @@ export interface BackendCatalog {
   packs: BackendPack[];
 }
 
-const MODEL_MANIFEST_FILES = ['models-whisper.json', 'models-llm.json'];
-const BACKEND_MANIFEST_FILE = 'backends.json';
+/*
+ * ⚠️ **不要再写死文件名清单**（ADR-014）。
+ *
+ * 曾经这里是 `['models-whisper.json','models-llm.json']`，于是磁盘上真实存在的
+ * `models-asr-support.json`（VAD / Paraformer / 标点）与 `sqlite-ext.json`（中文分词器）
+ * **从来没被加载过** —— 上游把东西加进目录了，下游看不见，
+ * 表现成"网页上根本没有 VAD 这一项"，排查时会怀疑上游没做，其实是这一行挡的。
+ *
+ * 改为**列目录**：manifest 目录下所有 `*.json` 都尝试加载，按内容判类型。
+ * 这样上游加文件，下游自动看见，不需要两边同步改。
+ */
+
+/** 文件名 → 类型的判定不靠命名约定，靠内容里有没有 `models` / `packs` 数组。 */
+type ManifestKind = 'model' | 'backend' | 'unknown';
+
+function classifyManifest(raw: unknown): ManifestKind {
+  if (!raw || typeof raw !== 'object') return 'unknown';
+  const o = raw as Record<string, unknown>;
+  if (Array.isArray(o['models'])) return 'model';
+  if (Array.isArray(o['packs'])) return 'backend';
+  return 'unknown';
+}
+
+/** 列出 manifest 目录里所有 `*.json`（排除 schema.json 这类非目录文件）。 */
+async function listManifestFiles(manifestDir: string): Promise<string[]> {
+  let names: string[];
+  try {
+    names = await fs.readdir(manifestDir);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((n) => n.endsWith('.json') && n !== 'schema.json')
+    .sort()
+    .map((n) => path.join(manifestDir, n));
+}
 
 /**
  * 定位 `vendor/manifests`。
@@ -73,18 +107,24 @@ async function readJsonFile(file: string): Promise<unknown> {
 
 export async function loadModelCatalog(manifestDir: string): Promise<ModelCatalog> {
   const models: ModelEntry[] = [];
+  const seen = new Set<string>();
   let catalogVersion = '0';
 
-  for (const name of MODEL_MANIFEST_FILES) {
-    const file = path.join(manifestDir, name);
+  for (const file of await listManifestFiles(manifestDir)) {
     const raw = await readJsonFile(file);
+    if (classifyManifest(raw) !== 'model') continue; // 后端目录/其它文件跳过
     const checked = validateModelManifest(raw);
     if (!checked.ok) {
       throw new Error(`模型 manifest 校验失败 ${file}: ${checked.errors.slice(0, 5).join('; ')}`);
     }
     // zod 已按 shared 的 ModelEntrySchema 校验通过，schema 与 ModelEntry 同源，可以断言。
     const doc = raw as ModelManifestDoc;
-    models.push(...doc.models);
+    for (const m of doc.models) {
+      // 多个文件里出现同一个 id 时以先读到的为准，避免目录里出现重复项
+      if (seen.has(m.id)) continue;
+      seen.add(m.id);
+      models.push(m);
+    }
     catalogVersion = doc.catalogVersion;
   }
 
@@ -92,12 +132,25 @@ export async function loadModelCatalog(manifestDir: string): Promise<ModelCatalo
 }
 
 export async function loadBackendCatalog(manifestDir: string): Promise<BackendCatalog> {
-  const file = path.join(manifestDir, BACKEND_MANIFEST_FILE);
-  const raw = await readJsonFile(file);
-  const checked = validateBackendManifest(raw);
-  if (!checked.ok) {
-    throw new Error(`后端 manifest 校验失败 ${file}: ${checked.errors.slice(0, 5).join('; ')}`);
+  const packs: BackendPack[] = [];
+  const seen = new Set<string>();
+  let catalogVersion = '0';
+
+  for (const file of await listManifestFiles(manifestDir)) {
+    const raw = await readJsonFile(file);
+    if (classifyManifest(raw) !== 'backend') continue;
+    const checked = validateBackendManifest(raw);
+    if (!checked.ok) {
+      throw new Error(`后端 manifest 校验失败 ${file}: ${checked.errors.slice(0, 5).join('; ')}`);
+    }
+    const doc = raw as BackendManifestDoc;
+    for (const p of doc.packs) {
+      if (seen.has(p.id)) continue;
+      seen.add(p.id);
+      packs.push(p);
+    }
+    catalogVersion = doc.catalogVersion;
   }
-  const doc = raw as BackendManifestDoc;
-  return { catalogVersion: doc.catalogVersion, packs: doc.packs };
+
+  return { catalogVersion, packs };
 }

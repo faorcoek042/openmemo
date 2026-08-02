@@ -12,7 +12,9 @@
     "clean": "tsc -b --clean",
     "dev": "vite",
     "preview": "vite preview",
-    "test": "tsc -p tsconfig.test.json && node -e \"require('fs').writeFileSync('dist/test/package.json','{\\\"type\\\":\\\"commonjs\\\"}')\" && node --test \"dist/test/**/*.test.js\""
+    "test": "pnpm run test:unit && pnpm run test:components",
+    "test:unit": "tsc -p tsconfig.test.json && node -e \"require('fs').writeFileSync('.test-out/unit/package.json','{\\\"type\\\":\\\"commonjs\\\"}')\" && node --test \".test-out/unit/**/*.test.js\"",
+    "test:components": "vite build --ssr src/test/components.test.tsx --outDir .test-out/components --logLevel warn && node --test .test-out/components/components.test.js"
   },
   "dependencies": {
     "@openmemo/mindmap": "workspace:*",
