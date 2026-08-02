@@ -8,7 +8,9 @@ import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { MockNotice } from '../../components/common/MockNotice';
 import {
   LLM_ACTIVE_KEY,
+  LLM_DEFAULT_MODEL_KEY,
   LLM_PROVIDERS_KEY,
+  baseUrlKeyFor,
   readActiveProviderId,
   readProviders,
   secretKeyFor,
@@ -59,17 +61,42 @@ export function LlmSettingsSection() {
   const maskOf = (id: string) =>
     arr(secrets.data?.secrets).find((s) => s.key === secretKeyFor(id))?.masked ?? null;
 
+  /**
+   * 保存 provider —— **同时写 daemon 真正读的那几个键**。
+   *
+   * 只写 `llm.providers` 是不够的：daemon 的 `resolveConfiguredProvider()` 只看
+   * `llm.defaultProviderId` / `llm.defaultModelId` / `llm.baseUrl.<id>`。
+   * 少写任何一个，用户就会遇到"界面上配好了、功能说没配"。
+   */
   const upsertProvider = (p: LlmProviderConfig) => {
     const next = providers.some((x) => x.id === p.id)
       ? providers.map((x) => (x.id === p.id ? p : x))
       : [...providers, p];
-    patch.mutate({ [LLM_PROVIDERS_KEY]: next });
+    patch.mutate({
+      [LLM_PROVIDERS_KEY]: next,
+      // baseUrl 是按 provider 存的，改哪个写哪个
+      [baseUrlKeyFor(p.id)]: p.baseUrl,
+      // 改的是当前默认 provider 的话，默认模型也要跟着走，
+      // 否则会出现"provider 换了、模型还是上一家的"这种解析不出来的组合
+      ...(activeId === p.id ? { [LLM_DEFAULT_MODEL_KEY]: p.model } : {}),
+    });
+  };
+
+  /** 设为默认：provider / model / baseUrl 三个键必须一起写，缺一个就解析不出 provider。 */
+  const setActive = (p: LlmProviderConfig) => {
+    patch.mutate({
+      [LLM_ACTIVE_KEY]: p.id,
+      [LLM_DEFAULT_MODEL_KEY]: p.model,
+      [baseUrlKeyFor(p.id)]: p.baseUrl,
+    });
   };
 
   const removeProvider = (id: string) => {
     patch.mutate({
       [LLM_PROVIDERS_KEY]: providers.filter((x) => x.id !== id),
-      ...(activeId === id ? { [LLM_ACTIVE_KEY]: null } : {}),
+      // 删掉当前默认 provider 时，模型也要一起清 ——
+      // 留着一个指向已删 provider 的模型名，只会让解析失败得更难懂
+      ...(activeId === id ? { [LLM_ACTIVE_KEY]: null, [LLM_DEFAULT_MODEL_KEY]: null } : {}),
     });
     if (hasKey(id)) delSecret.mutate(secretKeyFor(id));
   };
@@ -131,7 +158,7 @@ export function LlmSettingsSection() {
                     size="sm"
                     variant={activeId === p.id ? 'ghost' : 'secondary'}
                     disabled={activeId === p.id}
-                    onClick={() => patch.mutate({ [LLM_ACTIVE_KEY]: p.id })}
+                    onClick={() => setActive(p)}
                   >
                     {activeId === p.id ? t('settings.active') : t('settings.setActive')}
                   </Button>

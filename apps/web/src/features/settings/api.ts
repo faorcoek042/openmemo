@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import type { PurposeBindings } from '@openmemo/shared';
+
 import { api } from '../../lib/api/client';
 import { qk } from '../../app/query';
 
@@ -122,7 +124,47 @@ export interface LlmProviderConfig {
 
 /** settings 里的存放位置（点分 key，符合服务端的 `KEY_RE`）。 */
 export const LLM_PROVIDERS_KEY = 'llm.providers';
-export const LLM_ACTIVE_KEY = 'llm.activeProviderId';
+/**
+ * ⚠️ **订正**：这里原来是 `'llm.activeProviderId'` —— 一个 **daemon 从来不读的键**。
+ *
+ * 全仓核对（exhaustive grep）的结果是零重叠：
+ *
+ * | 前端写 | daemon 读 |
+ * |---|---|
+ * | `llm.providers`、`llm.activeProviderId` | `llm.defaultProviderId`、`llm.defaultModelId`、`llm.purposes`、`llm.baseUrl.<id>` |
+ *
+ * 也就是说**整个 LLM 配置界面是一次死写**：用户配好 provider、填了 Key、
+ * 界面显示"已启用"，而 `resolveConfiguredProvider()` 永远解析不出 provider，
+ * F4 的摘要与导图一直是"未配置"。填了等于没填，且没有任何提示。
+ *
+ * 改成直接用 daemon 读的那个键，**而不是同时写两个** ——
+ * 两个键表示同一件事就是下一个不一致的来源。
+ * `llm.providers` 保留：它是**前端自己的清单**（label / kind / isLocal），
+ * daemon 不需要也不读，但用户得能在界面上管理多个 provider。
+ */
+export const LLM_ACTIVE_KEY = 'llm.defaultProviderId';
+
+/** daemon 用它决定"用哪个模型"。必须与 active provider 的 model 同步写入。 */
+export const LLM_DEFAULT_MODEL_KEY = 'llm.defaultModelId';
+
+/** 每个 provider 一条 baseUrl，daemon 按 `llm.baseUrl.<providerId>` 取。 */
+export function baseUrlKeyFor(providerId: string): string {
+  return `llm.baseUrl.${providerId}`;
+}
+
+/** 按用途分档的绑定表。形状见 `@openmemo/shared` 的 `PurposeBindings`。 */
+export const LLM_PURPOSES_KEY = 'llm.purposes';
+
+export function readDefaultModelId(settings: SettingsMap | undefined): string | null {
+  const raw = settings?.[LLM_DEFAULT_MODEL_KEY];
+  return typeof raw === 'string' ? raw : null;
+}
+
+export function readPurposeBindings(settings: SettingsMap | undefined): PurposeBindings {
+  const raw = settings?.[LLM_PURPOSES_KEY];
+  // 服务端存的是任意 JSON，这里只认对象；数组/字符串一律当"没配"，不让脏数据把设置页炸掉
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as PurposeBindings) : {};
+}
 
 /** 某 provider 的 API Key 在 secrets 里的 key。 */
 export function secretKeyFor(providerId: string): string {

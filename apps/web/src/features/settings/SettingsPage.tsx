@@ -6,6 +6,7 @@ import { useUiStore, type ThemeMode } from '../../lib/stores/ui.store';
 import { LlmSettingsSection } from './LlmSettingsSection';
 import { DataLocationSection } from './DataLocationSection';
 import { ProxySettingsSection } from './ProxySettingsSection';
+import { PurposeBindingsSection } from './PurposeBindingsSection';
 import { PanelBoundary } from '../../components/common/PanelBoundary';
 
 /** 设置（最小可用版）。运行时/模型/存储页归 T-022。 */
@@ -52,6 +53,11 @@ export default function SettingsPage() {
 
       <PanelBoundary name={t('settings.llm')}>
         <LlmSettingsSection />
+      </PanelBoundary>
+
+      {/* 按用途分档：紧跟在 LLM 配置之后 —— 它是对上面那份全局配置的逐字段覆盖 */}
+      <PanelBoundary name={t('settings.purposes.title')}>
+        <PurposeBindingsSection />
       </PanelBoundary>
 
       {/* 代理：中文网络下 HF/GitHub 直连不通，这是"下载模型"的前置条件 */}

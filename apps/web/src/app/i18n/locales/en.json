@@ -369,7 +369,31 @@
       "route": "Route",
       "fastest": "fastest",
       "unreachable": "unreachable",
-      "effective": "In effect"
+      "effective": "In effect",
+      "testUsesSaved": "⚠️ You have unsaved changes. Tests run against the SAVED configuration — save first, or you are reading a stale result."
+    },
+    "purposes": {
+      "title": "Per-purpose models",
+      "intro": "Chat, summary+mindmap, and translation can each use a different model. Fields left blank inherit the global configuration above. Summary and mindmap share one slot — both are \"read the whole text, emit structure\".",
+      "names": {
+        "chat": "Chat",
+        "summarize": "Summary + mindmap",
+        "translate": "Translation"
+      },
+      "hints": {
+        "chat": "Wants a long context window.",
+        "summarize": "Wants reliable structured-JSON output.",
+        "translate": "Wants cheap and fast — the cost gap shows up at volume."
+      },
+      "provider": "Provider",
+      "model": "Model",
+      "inheritOption": "Inherit global",
+      "inherited": "inherited",
+      "overridden": "overridden",
+      "effective": "In effect: {{provider}} · {{model}}",
+      "incomplete": "⚠️ Incomplete: both a provider and a model must resolve, otherwise this feature is treated as \"no LLM configured\".",
+      "noDefault": "No default provider/model is configured above. Fields left blank here have nothing to inherit.",
+      "resetAll": "Reset all to inherit"
     }
   },
   "mock": {

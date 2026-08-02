@@ -369,7 +369,31 @@
       "route": "线路",
       "fastest": "最快",
       "unreachable": "不可达",
-      "effective": "当前生效"
+      "effective": "当前生效",
+      "testUsesSaved": "⚠️ 有未保存的改动。测试用的是**已保存**的配置，请先保存再测，否则看到的是旧结果。"
+    },
+    "purposes": {
+      "title": "按用途分别配置模型",
+      "intro": "对话、摘要+导图、翻译各自可以用不同的模型。留空的项继承上面的全局配置。摘要与导图共用一档——两者都是“读全文吐结构”，能力要求同类。",
+      "names": {
+        "chat": "对话",
+        "summarize": "摘要 + 思维导图",
+        "translate": "翻译"
+      },
+      "hints": {
+        "chat": "要的是上下文长。",
+        "summarize": "要的是能稳定吐结构化 JSON。",
+        "translate": "要的是便宜快速，翻译量大时成本差距明显。"
+      },
+      "provider": "服务商",
+      "model": "模型",
+      "inheritOption": "继承全局",
+      "inherited": "继承",
+      "overridden": "已覆盖",
+      "effective": "实际生效：{{provider}} · {{model}}",
+      "incomplete": "⚠️ 配置不完整：服务商与模型都有值才会生效，否则该功能会当作“未配置 LLM”。",
+      "noDefault": "上面还没有配置默认的服务商与模型。这里留空的项没有可继承的值，等于没配。",
+      "resetAll": "全部恢复为继承全局"
     }
   },
   "mock": {

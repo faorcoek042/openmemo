@@ -42,12 +42,30 @@ import { StatusChip } from '../../components/common/StatusChip';
 
 const ENDPOINT = '/settings/proxy';
 
+/** `GET`/`PATCH /api/settings/proxy` 的响应外壳。 */
+interface ProxyResponse {
+  /** 三个 URL 已脱敏（`http://***:***@host`）—— 不可原样写回。 */
+  config: ProxyConfig;
+  /** 进程里**实际生效**的那一份。与 config 不一致时说明改了还没应用。 */
+  active?: { url: string | null; mode?: string } | null;
+  /** ffmpeg 的代理能力，由 daemon 判定并给出中文说明 —— 前端不再自己拼这段话。 */
+  media?: { supported: boolean; reason: string | null; noteZh: string | null };
+  appliedImmediately?: boolean;
+}
+
 export function ProxySettingsSection() {
   const { t } = useTranslation();
 
+  /**
+   * ⚠️ 响应是**带壳**的 `{config, active, media, modes, defaultModeZh}`，不是裸 `ProxyConfig`。
+   *
+   * 而且 `config` 里的三个 URL 都经过 `redactProxyUrl()` —— 带凭据的地址回显为
+   * `http://***:***@host:port`。**这一点决定了写回策略**：把读到的值原样 PATCH 回去，
+   * 等于用 `***` 覆盖掉用户真实的密码。所以下面只发**用户真的改过**的字段。
+   */
   const q = useQuery({
     queryKey: ['settings', 'proxy'] as const,
-    queryFn: () => api<ProxyConfig>('settings', ENDPOINT),
+    queryFn: () => api<ProxyResponse>('settings', ENDPOINT),
     retry: false,
   });
 
@@ -61,36 +79,53 @@ export function ProxySettingsSection() {
    */
   const notImplemented = q.error instanceof ApiError && q.error.status === 404;
   const [cfg, setCfg] = useState<ProxyConfig>(DEFAULT_PROXY_CONFIG);
-  const [dirty, setDirty] = useState(false);
+  // 记录用户**动过**哪些字段。只有这些才会被 PATCH 出去（见上面的脱敏说明）
+  const [touched, setTouched] = useState<Set<keyof ProxyConfig>>(new Set());
+  const dirty = touched.size > 0;
 
   useEffect(() => {
-    if (q.data) {
-      setCfg(q.data);
-      setDirty(false);
+    if (q.data?.config) {
+      setCfg({ ...DEFAULT_PROXY_CONFIG, ...q.data.config });
+      setTouched(new Set());
     }
   }, [q.data]);
 
   const save = useMutation({
-    mutationFn: (next: ProxyConfig) => api<ProxyConfig>('settings', ENDPOINT, { method: 'PUT', body: next }),
-    onSuccess: () => setDirty(false),
+    mutationFn: () => {
+      // ★ 只发改过的字段：没改过的 URL 手里只有脱敏值，发回去会毁掉真实凭据
+      const body: Partial<ProxyConfig> = {};
+      for (const k of touched) (body as Record<string, unknown>)[k] = cfg[k];
+      // mode 总是带上：PATCH 端点用它做校验，且它没有脱敏问题
+      body.mode = cfg.mode;
+      return api<ProxyResponse>('settings', ENDPOINT, { method: 'PATCH', body });
+    },
+    onSuccess: () => {
+      setTouched(new Set());
+      void q.refetch();
+    },
   });
 
-  // ★ 两个**独立**动作，各自独立的 loading / 结果，互不覆盖
+  /*
+   * ★ 两个**独立**动作，各自独立的 loading / 结果，互不覆盖。
+   * 两者都**不发请求体** —— 服务端一律用**已保存**的配置去测。
+   * 这不是疏漏，而是必须让用户知道的一件事：**没保存就测，测的是旧配置**。
+   * 下面有未保存改动时会明确提示，免得他对着刚改的地址看一份旧结果。
+   */
   const testProxy = useMutation({
-    mutationFn: () => api<ProxyTestReport>('settings', `${ENDPOINT}/test`, { method: 'POST', body: cfg }),
+    mutationFn: () => api<ProxyTestReport>('settings', `${ENDPOINT}/test`, { method: 'POST' }),
   });
   const testSources = useMutation({
-    mutationFn: () => api<SourceLatencyReport>('settings', `${ENDPOINT}/sources`, { method: 'POST', body: cfg }),
+    mutationFn: () => api<SourceLatencyReport>('settings', `${ENDPOINT}/sources`, { method: 'POST' }),
   });
 
   const patch = (p: Partial<ProxyConfig>) => {
     setCfg((c) => ({ ...c, ...p }));
-    setDirty(true);
+    setTouched((prev) => new Set([...prev, ...(Object.keys(p) as (keyof ProxyConfig)[])]));
   };
 
   const manual = cfg.mode === 'manual';
-  // ffmpeg 不支持 SOCKS：只有手动模式填了 socks5 才确定会走这条降级
-  const socksInUse = manual && Boolean(cfg.socks5);
+  // 由 daemon 判定，不再靠前端猜"填了 socks5 就一定降级"
+  const media = q.data?.media;
 
   return (
     <section className="rounded-lg border border-line bg-surface-1 p-4">
@@ -173,11 +208,17 @@ export function ProxySettingsSection() {
         也就是说选 SOCKS 时：**解析/下载走代理，媒体拉流这条链路直连**。
         不写出来，用户会以为全走代理了 —— 那是个隐私预期问题，不只是功能问题。
       */}
-      {socksInUse ? (
+      {media && media.supported === false ? (
         <Banner
           tone="warning"
           title={t('settings.proxy.socksFfmpegTitle')}
-          detail={t('settings.proxy.socksFfmpegDetail')}
+          /*
+           * ★ 直接渲染 daemon 给的 `media.noteZh`，不再用我自己写的那段。
+           * 判定来自 `ffmpegProxySupport()`（实测 libavformat 只认 http_proxy），
+           * 前端复刻一份措辞只会在两边不一致时误导用户 ——
+           * 能力边界由**做判定的那一方**来描述。
+           */
+          detail={media.noteZh ?? media.reason ?? t('settings.proxy.socksFfmpegDetail')}
         />
       ) : null}
 
@@ -188,7 +229,7 @@ export function ProxySettingsSection() {
           variant="primary"
           disabled={!dirty || save.isPending}
           data-testid="proxy-save"
-          onClick={() => save.mutate(cfg)}
+          onClick={() => save.mutate()}
         >
           {save.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
           {t('settings.proxy.save')}
@@ -216,6 +257,13 @@ export function ProxySettingsSection() {
       </div>
 
       {save.isError ? <ErrorBlock error={save.error} /> : null}
+
+      {/* 测试用的是**已保存**的配置。有未保存改动时必须说，否则用户会对着新地址读旧结果 */}
+      {dirty ? (
+        <p className="mt-2 text-xs text-warning" data-testid="proxy-unsaved">
+          {t('settings.proxy.testUsesSaved')}
+        </p>
+      ) : null}
 
       {/* ── 代理连通性结果 ── */}
       {testProxy.isError ? <ErrorBlock error={testProxy.error} /> : null}

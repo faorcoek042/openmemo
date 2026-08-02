@@ -1470,3 +1470,98 @@ demo 的 token **已经失效**（`instanceId` 从 `01KZ1S3BFK…` 变成 `01KZ2
 ### 纪律
 全程自建实例（17820/17821/17822，均绑 127.0.0.1），用完按端口只杀自己的 pid；
 **没有重启、没有触碰 `:10000` 的 demo，也没有去它的数据目录找 token**。
+
+---
+
+## T-088 复跑：段首词 + 三条顺带 + 「已保留 N 段」
+
+### ① 段首词：**时间点对，个数对不上**
+
+**0:00.22 —— 对。** 用定点 seek 精确划边界（暂停后直接设 `currentTime`，绕开起播抖动）：
+
+    seek 219ms → 无高亮        seek 299ms → idx=0 " And"
+    seek 220ms → idx=0 " And"  seek 300ms → 无高亮
+    seek 240/260/280ms → idx=0 " And"      seek 330ms → idx=1 " so"
+
+区间正好是 **[220, 300)**，与 `effectiveEnd` 的 `min(220+80, next.s=330)` 完全一致，
+边界夹取也对（没有撑到 330 去抢 `' so'`）。**修复本身成立。**
+
+**10 个词 —— 对不上。** 我用 rAF 记录器（每帧比对，不是定时采样）录了整段播放，
+实际经过 **23 个不同的词**，不是 10。那个 10 是**采样节奏的产物**：
+上一轮我用 700ms×14 采样，只能看到 9 个；现在按帧记录就能看到 23 个。
+**这个数字不是不变量，不该拿它当验收标准** —— 换个采样率就换个答案。
+
+### ①附 **一个新问题：80ms 的保底比位置推送周期还短**
+
+`MIN_WORD_MS = 80`，但 `PlayerBar` 把播放位置**节流到 ~10Hz（每 100ms 推一次）**。
+保底窗口比推送周期还小，于是"保证可见"并不成立 —— 实测从 0 起播 8 次：
+
+    第1次 亮@276ms  第2次 亮@263ms  第3次 亮@285ms  第4次 【没亮】
+    第5次 亮@243ms  第6次 亮@298ms  第7次 亮@270ms  第8次 亮@274ms
+    → 段首词被看到 7/8 次
+
+同类问题也命中**真实短词**：`idx=13 ' for'` 真实区间 `6840-6900`（**60ms**，不是退化词，
+`effectiveEnd` 帮不上它），全程记录里**一次都没亮过**。
+
+建议（归 `architect`，我没动他的组件）：要么把 `MIN_WORD_MS` 提到**大于位置推送周期**
+（≥120ms），要么让 `WordHighlight` 直接读 `audio.currentTime` 而不是读被节流的 `positionMs`。
+后者更彻底：高亮的时间分辨率不该由播放器的节流参数决定。
+
+### ② 顺带三条
+
+| 项 | 结果 |
+|---|---|
+| 代理 UI 两个独立按钮 | **YES** — `Test proxy` / `Test download sources` |
+| 默认 `system` | **YES** — `proxy-mode-system` 已选中 |
+| 端点未上线时回落 | **YES** — `404 GET /api/settings/proxy` → 界面正常显示默认值，未崩 |
+| 手动模式字段 | **YES** — `proxy-httpProxy` / `proxy-httpsProxy` / `proxy-socks5` |
+| SOCKS 提示两半句 | **YES** — 填入 socks5 后才出现（合理），且 ffmpeg 直连**与** yt-dlp 仍走代理两句都在 |
+| 回环始终直连提示 | **YES** |
+| **密码不出现在界面上** | **YES** — 填 `socks5://user:sUperSecret123@…` 后 `innerText` 不含密码 |
+
+密码在 `innerHTML` 里能搜到，但**只存在于那个输入框自己的 `value`** ——
+可编辑字段必然如此，不是泄漏。真正要防的是"回显到别处"（横幅、日志、测试结果），
+那些地方干净。
+
+### ③ 「已保留 N 段」：**数字是 3，且真的保住了**
+
+这条以前没人验过，因为 fixture 造不出来。这次起了**我自己的真 daemon**
+（`OPENMEMO_DATA_DIR=/tmp/om-t088`，whisper-cli 上 PATH），真跑：
+
+1. 把 `jfk.wav` 拼成 66s 导入 → 真转写出 **9 段**
+2. `PATCH` 编辑 **seq 1 / 4 / 7** 三段 → `editedAt` 落库
+3. 界面点「Re-transcribe」→ 横幅显示 **"Your 3 edited segment(s) will be preserved"** —— **数字正确**
+4. 改语言 `language=zh` **连跑两次**（按代码注释的告诫：测一次会通过，第二次才暴露）
+
+<!-- -->
+
+    第 1 次重跑后：9 段，editedAt 仍在的 3 段 → seq [1, 3, 8]
+    第 2 次重跑后：9 段，editedAt 仍在的 3 段 → seq [1, 3, 8]
+    三段文本逐字未变
+
+**注意 seq 从 1/4/7 变成 1/3/8** —— 这不是错，正是"按时间轴对齐而非段落序号"的证据：
+两遍模型断句不同，段号必然移位，而内容和 `editedAt` 跟着时间轴走。
+界面上那句 `mergeByTimeNote` 解释的就是这件事，**实测与文案一致**。
+
+**「编辑不会被吞」这个承诺，到此闭环。**
+
+### ⚠️ 但顺带挖出一个真 bug：`textRaw` 在 GET 里丢了
+
+    PATCH /api/notes/:uid/segments/5  → 返回 textRaw='ask what you can do for your country'
+    立刻 GET /api/notes/:uid/transcript → 同一段 textRaw=None（editedAt 正常）
+
+**不是重跑弄丢的** —— 我特意新编辑一段再立刻读，就已经是 null。
+是 **`GET .../transcript` 的序列化没带上 `textRaw`**。
+后果：契约里 `textRaw` 的用途写的是「供『查看改动』与『还原』」，
+而刷新一次页面原文就没了 —— **这两个功能实际上永远不可用**，
+且不会报错（字段是可空的，读到 null 只会安静地不显示按钮）。
+归 daemon（`oss-scout`）。这是"只在响应里存在、一落地就消失"的老套路，
+和当初 `words` 那条同一类。
+
+### 门禁
+    web build 0 · tsc 0 · eslint 0 · verify-proxy 43/43 · verify-offline 38/38 · verify-unpack 53/53
+
+### 纪律
+自建实例：daemon `17650`（我自己的 dataDir `/tmp/om-t088`）、fixture `17820`、生产构建 `17822`，
+均绑 `127.0.0.1`；用完按端口只杀自己的 pid。**没有触碰 `:10000` 的 demo**。
+demo 的 token 这次没试 —— 上一轮已证明重启会换 token，而我不需要它。
