@@ -322,11 +322,18 @@ function safeName(title: string): string {
 
 function sendDownload(res: ServerResponse, body: string, mime: string, filename: string): void {
   const buf = Buffer.from(body, 'utf8');
-  // filename* 用 RFC 5987 编码，保证中文文件名在各浏览器正确落地
+  /*
+   * ⚠️ `Content-Disposition` 的 `filename=` 部分**必须是纯 ASCII** ——
+   * 直接塞中文会让 Node 抛 `Invalid character in header content` 并 500。
+   * 正确做法（RFC 6266 / 5987）：
+   *   filename=  给一个 ASCII 回退名（老浏览器用）
+   *   filename*= 给 UTF-8 百分号编码的真名（现代浏览器优先用这个）
+   */
+  const asciiFallback = filename.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '');
   res.writeHead(200, {
     'Content-Type': mime,
     'Content-Length': String(buf.length),
-    'Content-Disposition': `attachment; filename="${filename.replace(/"/g, '')}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    'Content-Disposition': `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
   });

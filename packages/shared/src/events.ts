@@ -391,6 +391,12 @@ export interface RecordStateEvent extends SseEventBase {
 export interface MindmapDeltaEvent extends SseEventBase {
   type: 'mindmap.delta';
   mindmapUid: string;
+  /**
+   * Present so clients never need a mindmapUid→noteUid lookup table — consistent with
+   * `transcribe.*`. The mindmap is rendered inside the note view, so every consumer of
+   * this event needs the note it belongs to.
+   */
+  noteUid: string;
   seq: number;
   nodes: {
     nodeKey: string;

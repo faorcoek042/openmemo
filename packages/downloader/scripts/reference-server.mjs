@@ -59,6 +59,14 @@ const PORT = Number(argv[argv.indexOf('--port') + 1]) || 17650;
  * talks to a single origin.
  */
 const PROXY = argv.includes('--proxy') ? argv[argv.indexOf('--proxy') + 1] : null;
+/**
+ * Pure-shim mode: serve ONLY the built web app and forward every /api call upstream.
+ *
+ * Once apps/daemon implements the contract for real, testing against this file's own
+ * handlers would be testing the wrong implementation. --proxy-all turns this process into
+ * a static-file server plus a transparent proxy, so the browser exercises the daemon.
+ */
+const PROXY_ALL = argv.includes('--proxy-all');
 const ROOT = process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-refserver', 'models');
 
 const store = new ArtifactStore(ROOT);
@@ -437,12 +445,68 @@ const MIME = {
   '.woff2': 'font/woff2',
 };
 
+/**
+ * Transparent reverse proxy to the upstream daemon.
+ *
+ * Forwards method/headers/body verbatim so cookies and auth behave as same-origin.
+ * The Origin/Referer rewrite is required: the daemon enforces a same-origin check and
+ * from its perspective THIS process is the browser — without the rewrite every POST is
+ * rejected with "请求来源不被信任" and no mutation can be exercised at all.
+ */
+async function proxyUpstream(req, res, url, method) {
+  if (!PROXY) return apiError(res, 404, 'NOT_FOUND', `未配置上游: ${method} ${url.pathname}`);
+  const target = new URL(url.pathname + url.search, PROXY);
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  const body = chunks.length ? Buffer.concat(chunks) : undefined;
+  const headers = { ...req.headers };
+  delete headers.host;
+  delete headers['content-length'];
+  if (headers.origin) headers.origin = PROXY;
+  if (headers.referer) headers.referer = PROXY + '/';
+  try {
+    const up = await fetch(target, {
+      method,
+      headers,
+      body: method === 'GET' || method === 'HEAD' ? undefined : body,
+      redirect: 'manual',
+    });
+    const out = {};
+    up.headers.forEach((v, k) => {
+      if (k !== 'content-encoding' && k !== 'content-length' && k !== 'transfer-encoding') out[k] = v;
+    });
+    const sc = up.headers.getSetCookie?.();
+    // SSE and other streaming responses must be piped, not buffered — buffering an
+    // event stream would make the browser wait forever for a body that never ends.
+    const ct = up.headers.get('content-type') ?? '';
+    res.writeHead(up.status, out);
+    if (sc?.length) res.setHeader('set-cookie', sc);
+    if (ct.includes('text/event-stream') && up.body) {
+      const reader = up.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(Buffer.from(value));
+      }
+      return res.end();
+    }
+    return res.end(Buffer.from(await up.arrayBuffer()));
+  } catch (e) {
+    return apiError(res, 502, 'UPSTREAM_UNREACHABLE', `上游 daemon 无法访问: ${e?.message ?? e}`);
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
   const p = url.pathname;
   const method = req.method ?? 'GET';
 
   try {
+    // In pure-shim mode nothing below is ours; jump straight to the proxy branch.
+    if (PROXY_ALL && (p.startsWith('/api/') || p.startsWith('/ws/') || p.startsWith('/media/'))) {
+      return await proxyUpstream(req, res, url, method);
+    }
+
     /* ---- SSE: one global stream (ADR-004 decision 5) ---- */
     if (p === '/api/events') {
       res.writeHead(200, {
@@ -614,39 +678,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p.startsWith('/api/') || p.startsWith('/ws/') || p.startsWith('/media/')) {
       if (PROXY) {
-        // Forward verbatim (method, headers, body) so cookies/auth behave as same-origin.
-        const target = new URL(url.pathname + url.search, PROXY);
-        const chunks = [];
-        for await (const c of req) chunks.push(c);
-        const body = chunks.length ? Buffer.concat(chunks) : undefined;
-        const headers = { ...req.headers };
-        delete headers.host;
-        delete headers['content-length'];
-        // The daemon enforces a same-origin check. From its point of view this proxy IS
-        // the browser, so present the upstream's own origin — otherwise every POST is
-        // rejected with "请求来源不被信任" and no mutation can ever be tested.
-        if (headers.origin) headers.origin = PROXY;
-        if (headers.referer) headers.referer = PROXY + '/';
-        try {
-          const up = await fetch(target, {
-            method,
-            headers,
-            body: method === 'GET' || method === 'HEAD' ? undefined : body,
-            redirect: 'manual',
-          });
-          const buf = Buffer.from(await up.arrayBuffer());
-          const out = {};
-          up.headers.forEach((v, k) => {
-            if (k !== 'content-encoding' && k !== 'content-length' && k !== 'transfer-encoding') out[k] = v;
-          });
-          // Node lowercases and merges set-cookie; forward it explicitly.
-          const sc = up.headers.getSetCookie?.();
-          res.writeHead(up.status, out);
-          if (sc?.length) res.setHeader('set-cookie', sc);
-          return res.end(buf);
-        } catch (e) {
-          return apiError(res, 502, 'UPSTREAM_UNREACHABLE', `上游 daemon 无法访问: ${e?.message ?? e}`);
-        }
+        return await proxyUpstream(req, res, url, method);
       }
       return apiError(res, 404, 'NOT_FOUND', `参考服务器未实现 ${method} ${p}`);
     }
@@ -673,7 +705,7 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`  models root : ${ROOT}`);
   console.log(`  web dist    : ${WEB_DIST}`);
   console.log(`  catalog     : ${MODELS.length} models, ${backendDoc.packs.length} backend packs`);
-  console.log(`  proxy       : ${PROXY ?? '(none — unmatched /api returns 404)'}`);
+  console.log(`  proxy       : ${PROXY ?? '(none — unmatched /api returns 404)'}${PROXY_ALL ? '  [PROXY-ALL: serving static only]' : ''}`);
 });
 
 process.on('SIGTERM', () => server.close(() => process.exit(0)));

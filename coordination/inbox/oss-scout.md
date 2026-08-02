@@ -519,3 +519,118 @@ Manager 让我端到端验一次搜索，**一验就炸**：FTS5 索引 49 行�
 
 派生 subagent 记录（未 kill，可复用）:
 - `aa4ba3daa1f6c8db2` — 把 reference-server 27 个端点移植成 TS（已完成，含真实 59.7MB 下载验证）
+
+---
+
+## [2026-08-02 18:10] T-033 DONE —— 端点补齐 + 构建红灯已修
+
+### 一、⚠️ 先说构建红灯：修好了，但根因比你说的更严重
+
+你转达的是「`jobUid` 应改成 `jobId`」。**真实根因是：我在 T-028 用 `as never` 关掉了
+所有 SSE 事件的类型检查**，所以 daemon 侧一个错都不报，一直到 `apps/web` 才炸。
+
+去掉 22 处 `as never` 后，编译器一次性吐出 **16 处契约不符**，远不止 `jobUid`：
+
+| 我发的 | 契约要求 |
+|---|---|
+| `jobUid` | `jobId` |
+| `startSec` / `endSec` | `startMs` / `endMs` |
+| `durationSec` | `durationMs` |
+| `fraction`（0..1） | `pct`（0..100） |
+| 缺 `noteUid` | `transcribe.segment/done` **必填** |
+| 缺 `previousState` / `willRetry` / `resultKind` | 必填 |
+
+**也就是说：T-028 那次"端到端打通"里，daemon 发的每一个 SSE 事件字段名都是错的**，
+前端接过去只会拿到一堆 undefined。而我的 e2e 脚本**只断言了事件类型、没断言 payload 字段名**，
+所以它照样报"✅ 打通"。这是"假绿灯"家族里我自己贡献的第二个。
+
+**两项修复**：
+1. 新建 `apps/daemon/src/jobs/events.ts` —— 所有事件集中构造，**零类型断言**，编译器当守门人。
+2. e2e 脚本加 **payload 字段名断言**（`[8]` 段），8 类事件逐字段核对。现在实测全 ✅。
+
+**订正你的一处判断**：`MindmapDeltaEvent` 缺的**不是 `noteUid`**（加了也不够用）。
+它要求 `{ mindmapUid, seq, nodes[] }` —— 而 `mindmapUid` **要落库后才有**，
+delta 的意义恰恰是"落库前的渐进展示"。我**刻意不发这个事件**（凑假 uid 比不发更糟），
+渐进反馈暂由 `job.progress` 承担。要真做，得改成"先建空 mindmap 行拿 uid，再边生成边发 delta"。
+
+**另一个同类缺口**：`JobCreatedEvent` 要求完整的 `DownloadJob`
+（`kind:'model'|'backend-pack'`、`totalBytes`、`parts`、`fileIndex`…）——
+那是**为下载建模的**，转写/导图这类流水线 job 填不进去。我同样**不发 `job.created`**，
+前端从 202 响应拿 jobUid。**shared 需要补流水线 job 的表示。**
+
+### 二、补完的端点（36 条路由，全部实调验证）
+
+| 优先级 | 端点 | 实调结果 |
+|---|---|---|
+| P1 | `GET/PATCH /api/settings` | `{"settings":{"llm.defaultProviderId":"llama-server","ui.theme":"dark"}}` |
+| P1 | `GET /api/secrets`、`PUT/DELETE /api/secrets/:key` | `masked:"sk-t…cdef"`；**disclosure 原文可见**「API Key 以**明文**保存在 …/secrets.json（文件权限 0600、目录 0700）」 |
+| P1 | `POST /api/notes/upload`（multipart 流式） | **7,045,198 字节**上传成功 → `{noteUid,jobUid,bytes,storedAs:"01KZ…S1.wav"}`；400MB 实测 RSS 峰值 73MiB（**O(1) 内存**） |
+| P2 | `PATCH /api/notes/:uid` | `{"hasBody":true}`，且**正文立刻能被中文搜到**（body_text→FTS5 触发器实证：搜「手写的笔记」命中 1 条） |
+| P2 | `GET/POST /api/tags`、`DELETE /api/tags/:uid`、`POST /api/notes/:uid/tags` | `[{"name":"演讲","usageCount":1}]` |
+| P2 | `PUT /api/notes/:uid/star` | `{"starred":true}` |
+| P2 | `GET/POST /api/folders`、`PATCH/DELETE /api/folders/:uid`、`PUT /api/notes/:uid/folder` | 树形返回 + **成环检测**（`move 课程→第一课 would cycle? true`） |
+| P2 | `GET /api/notes/:uid/export?format=` | md 4770B / srt 5803B / vtt 5673B / json 8772B，SRT 时间码 `00:00:00,000 --> 00:00:06,120` 正确 |
+| P2 | `POST/GET /api/notes/:uid/mindmap`（F4 接进 daemon） | job runner 已注册（`lane:'gpu.llm'`，与 gpu.asr 互斥） |
+| P2 | `transcribe.started` 补发 | e2e 实测 ✅ 且在所有 segment 之前 |
+| P3 | `LlmProvider.embed()` | **按裁决 v1 不做**，在 `packages/llm/src/types.ts` 留了裁决理由 + 可逆性说明，**不留空实现** |
+| P3 | `selectEngine()` 接线 | 已接（`pickEngine(language)`）。⚠️ 见下诚实项 |
+
+### 三、修的 4 个 bug（都是实跑逼出来的）
+
+1. **SSE 全部事件字段名错**（见一）—— `as never` 掩盖。
+2. **导出中文文件名 → 500**：`Content-Disposition` 的 `filename=` **必须纯 ASCII**，
+   塞中文 Node 直接抛 `Invalid character in header content`。已按 RFC 6266 改成
+   ASCII 回退名 + `filename*=UTF-8''…`。
+3. **`/api/notes/upload` 被自己的路由吃掉**：`notes.ts` 有个"非 ULID 就 400"的兜底，
+   排在前面，会把兄弟模块的合法路由一起打死。已删除该兜底。
+4. **`ModelRole`（7 个）vs `StoreKind`（3 个）漂移**：`model-mgmt` 把 role 扩到 7 个，
+   downloader 的 StoreKind 仍是 3 个。新建 `roleMap.ts` 做**显式映射 + 穷尽性检查**
+   （新增 role 而没处理会编译失败），而不是 `as StoreKind` 糊过去（那样 `vad` 会写进不存在的目录）。
+
+### 四、你要的「中文转写 → 中文搜索」连着跑了 ✅
+
+素材 `Zh-Twitter.ogg`（**CC BY 3.0**，Wikimedia Commons，337s 中文维基朗读，
+经 Commons API 确认许可证后下载）。模型 `large-v3-turbo-q5_0`。
+
+```
+转写: 53 段  时长=337038ms  rtf=2.388  模型=ggml-large-v3-turbo-q5_0.bin
+  [     0-  10720] Twitter,来自维基百科,自由的百科全书,网址zh.wikipedia.org
+  [  32780-  36720] 推特在2006年3月成立于旧金山
+  [ 329880- 335700] 都是在知识共享署名相同方式共享3.0协议下发布的
+```
+专有名词全对（维基百科/百科全书/旧金山），印证 `gpu-runtime` 的结论：**中文必须用 large-v3-turbo，base 不可用**。
+
+**中文搜索（在真实转写产物上，不是我播的种子）**：
+```
+「维基百科」→ 1 条  [0.0s]   bm25=-16.73
+「旧金山」  → 1 条  [32.8s]  bm25=-13.03
+「社交网络」→ 1 条  [12.1s]
+「推特」    → 5 条  [54.0s][32.8s][124.9s][276.9s]…
+「wjbk」    → 1 条  ← **拼音首字母命中「维基百科」**
+```
+
+### 五、剩余清单（我领域内）
+
+| 项 | 状态 |
+|---|---|
+| F3 `/ws/recorder` 接线 | 🔴 **仍未接**，等 `AsrStream` 冻结（ADR-011 决策 4） |
+| `mindmap.delta` 渐进事件 | 🔴 契约要 `mindmapUid`（落库后才有），需改设计或改契约 |
+| `job.created` for 流水线 job | 🔴 契约只为下载建模，**需 shared 补** |
+| F4 端到端真跑 | ⚪ runner + 端点已接、已编译，**但没在 daemon 里真跑过一次生成**（llama-server 在跑，但我没连着跑 F4 job） |
+| 向量检索 / embedding | ✂️ 已裁决 v1 不做 |
+| 笔记正文的 `body_json` → `body_text` 自动投影 | 🔴 目前要前端同时传两个字段；应由后端从 TipTap JSON 提取纯文本 |
+
+### 六、诚实声明
+- **`selectEngine()` 接了但只有一个候选**（whisper）。sherpa-onnx 的 `SherpaOnnxEngineOptions`
+  要的是 encoder/decoder/joiner 三个具体文件路径，需要模型安装记录才能构造。
+  我**刻意不编一个假配置** —— 宁可候选里只有 whisper，也不要让 selectEngine
+  在不存在的引擎上做出"看起来对"的选择。**所以按语言选引擎这条路径本轮没有真正生效。**
+- **F4 job 没在 daemon 里真跑过**：`packages/mindmap` 单测过、T-023 直连 llama-server 跑过，
+  但"POST /api/notes/:uid/mindmap → job → 落库"这条**完整链路未实跑**。
+- 路径穿越仍返 **404 而非 400**（`new URL()` 先规范化了）。拒绝有效，理由不同，已记录未改。
+- 上传端点的 415/413/400 分支由 subagent 的 17 个单测覆盖，**我没有逐个手工复验**。
+- 全量：`pnpm -r build` **9/9 Done**、测试 **135 pass / 0 fail**、eslint **EXIT=0**。
+
+派生 subagent 记录（未 kill，可复用）:
+- `af3292dd0d2e90f23` — settings/secrets/tags/star/folders 端点（已完成，含 24 个 repo 方法）
+- `a0360330beeb10f58` — multipart 流式上传（已完成，17/17 测试，400MB 实测 O(1) 内存）
