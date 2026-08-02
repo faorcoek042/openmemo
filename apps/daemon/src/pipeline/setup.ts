@@ -61,6 +61,8 @@ export interface PipelineBundle {
     pipeline: TranscribePipeline;
     engineId: string;
     reason: string;
+    /** **该引擎自己的**模型路径 —— 传错会让 sherpa 拿 ggml .bin 当 ONNX 加载而崩。 */
+    modelPath: string | null;
   };
   /**
    * F3 流式：打开一路会话。**引擎不可用时返回 undefined** ——
@@ -182,10 +184,12 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
    * 而且作为 F4 的 LLM 输入质量明显更差，所以能配就配上。
    */
   let paraformer: ParaformerEngine | undefined;
+  let paraformerModelPath: string | null = null;
   const paraDir = env['OPENMEMO_PARAFORMER_DIR'];
   if (paraDir) {
     const model = resolveParaformerModel(paraDir);
     if (model) {
+      paraformerModelPath = model.model;
       const punctDir = env['OPENMEMO_PUNCT_DIR'];
       const punctuation = punctDir ? resolvePunctuationModel(punctDir) : undefined;
       paraformer = new ParaformerEngine({
@@ -237,15 +241,46 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
   const pipelineCache = new Map<string, TranscribePipeline>();
   const pipelineFor = (
     language: string | undefined,
-  ): { pipeline: TranscribePipeline; engineId: string; reason: string } => {
+  ): {
+    pipeline: TranscribePipeline;
+    engineId: string;
+    reason: string;
+    modelPath: string | null;
+  } => {
     const sel = pickEngine(language);
-    if (!sel) return { pipeline, engineId: 'whisper.cpp', reason: 'fallback: 无可用候选' };
+    if (!sel) {
+      return {
+        pipeline,
+        engineId: 'whisper.cpp',
+        reason: 'fallback: 无可用候选',
+        modelPath,
+      };
+    }
     let p = pipelineCache.get(sel.engineId);
     if (!p) {
       p = new TranscribePipeline({ tools, dirs, registry, asr: sel.engine });
       pipelineCache.set(sel.engineId, p);
     }
-    return { pipeline: p, engineId: sel.engineId, reason: sel.reason };
+    /*
+     * ⚠️ **模型路径必须跟着引擎走**。
+     *
+     * `TranscribeChunkRequest.modelPath` 会**覆盖**引擎构造时的默认模型
+     * （上游刻意这么设计，为了支持"换模型重跑"）。
+     * 所以切到 Paraformer 却仍传 whisper 的 `ggml-*.bin`，
+     * sherpa 会拿它当 ONNX 加载并直接报
+     * `Please pass *.onnx ... Given '.../ggml-base.en.bin'` —— 实测踩过。
+     */
+    const enginePaths: Record<string, string | null> = {
+      'whisper.cpp': modelPath,
+      paraformer: paraformerModelPath,
+      'sherpa-onnx': streamDir ?? null,
+    };
+    return {
+      pipeline: p,
+      engineId: sel.engineId,
+      reason: sel.reason,
+      modelPath: enginePaths[sel.engineId] ?? modelPath,
+    };
   };
 
   const streamModelId = sherpa ? 'streaming-zipformer-zh-14M' : 'none';

@@ -285,7 +285,10 @@ function exportNote(
 }
 
 /** 毫秒整数 → `HH:MM:SS,mmm`。**无浮点误差**，这是 D-02 §1.1 选整数毫秒的直接收益。 */
-function msToSrtTime(ms: number): string {
+export function msToSrtTime(ms: number): string {
+  // 非有限值/负数一律夹到 0：一条 NaN 时间轴会让整个 .srt 在播放器里失效，
+  // 而在我们自己的 UI 里完全看不出来（架构侧同一处 bug 已由 export.test.ts 逮到过）。
+  if (!Number.isFinite(ms) || ms < 0) ms = 0;
   const h = Math.floor(ms / 3_600_000);
   const m = Math.floor((ms % 3_600_000) / 60_000);
   const s = Math.floor((ms % 60_000) / 1000);
@@ -294,7 +297,8 @@ function msToSrtTime(ms: number): string {
   return `${p(h)}:${p(m)}:${p(s)},${p(milli, 3)}`;
 }
 
-function msToClock(ms: number): string {
+export function msToClock(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) ms = 0;
   const total = Math.floor(ms / 1000);
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
@@ -303,22 +307,45 @@ function msToClock(ms: number): string {
   return h > 0 ? `${h}:${p(m)}:${p(s)}` : `${m}:${p(s)}`;
 }
 
-function toSrt(segments: readonly SegmentRow[]): string {
+/**
+ * 字幕正文清洗。
+ *
+ * SRT/VTT 用**空行分隔条目**，所以正文里的空行会把一条字幕劈成两条，
+ * 其后所有条目的时间轴全部错位 —— 而这在我们自己的界面上完全看不出来。
+ * VTT 还要处理 `-->`：它是时间轴行的标记，出现在正文里会让解析器误判。
+ */
+export function sanitizeCue(text: string, format: 'srt' | 'vtt'): string {
+  let out = text
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n{2,}/g, '\n')
+    .trim();
+  if (format === 'vtt') out = out.replace(/-->/g, '→');
+  return out;
+}
+
+export function toSrt(segments: readonly SegmentRow[]): string {
+  // 空正文的条目要跳过：一条没有正文的 SRT 条目会让部分解析器直接放弃整个文件。
+  // 跳过后序号仍必须从 1 连续 —— 跳号同样会让某些播放器停在跳号处。
   return segments
+    .map((s) => ({ ...s, body: sanitizeCue(s.text, 'srt') }))
+    .filter((s) => s.body.length > 0)
     .map(
       (s, i) =>
-        `${i + 1}\n${msToSrtTime(s.start_ms)} --> ${msToSrtTime(s.end_ms)}\n${s.text.trim()}\n`,
+        `${i + 1}\n${msToSrtTime(s.start_ms)} --> ${msToSrtTime(s.end_ms)}\n${s.body}\n`,
     )
     .join('\n');
 }
 
-function toVtt(segments: readonly SegmentRow[]): string {
+export function toVtt(segments: readonly SegmentRow[]): string {
   const body = segments
+    .map((s) => ({ ...s, body: sanitizeCue(s.text, 'vtt') }))
+    .filter((s) => s.body.length > 0)
     .map(
       (s) =>
-        `${msToSrtTime(s.start_ms).replace(',', '.')} --> ${msToSrtTime(s.end_ms).replace(',', '.')}\n${s.text.trim()}\n`,
+        `${msToSrtTime(s.start_ms).replace(',', '.')} --> ${msToSrtTime(s.end_ms).replace(',', '.')}\n${s.body}\n`,
     )
     .join('\n');
+  // WEBVTT 头之后必须有空行，否则首条 cue 会被吞掉
   return `WEBVTT\n\n${body}`;
 }
 
@@ -326,7 +353,7 @@ function toVtt(segments: readonly SegmentRow[]): string {
  * 文件名净化。**这个值会进 `Content-Disposition` 头**，
  * 不清理就能注入换行伪造响应头，也可能带路径分隔符。
  */
-function safeName(title: string): string {
+export function safeName(title: string): string {
   const cleaned = title
     // eslint-disable-next-line no-control-regex -- 控制字符能伪造响应头，必须剔除
     .replace(/[\u0000-\u001F]/g, '')

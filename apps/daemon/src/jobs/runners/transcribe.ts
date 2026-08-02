@@ -43,6 +43,7 @@ export interface TranscribeRunnerDeps {
     pipeline: TranscribePipeline;
     engineId: string;
     reason: string;
+    modelPath: string | null;
   };
   readonly modelPath: string | null;
   readonly mediaRoot: string;
@@ -75,7 +76,8 @@ export async function runTranscribeJob(
   if (!note) throw new Error(`note ${payload.noteId} 不存在`);
 
   // 缺模型/缺工具 → 转 blocked 而不是 failed（D-01 §4.1：可点击修复的等待态）
-  if (!deps.modelPath) {
+  const chosenEarly = deps.pipelineFor(payload.language ?? undefined);
+  if (!chosenEarly.modelPath) {
     const remediation = {
       action: 'installModel',
       params: { role: 'asr' },
@@ -97,7 +99,7 @@ export async function runTranscribeJob(
 
   // 按语言选引擎（ADR-013 决策 1：中文默认 Paraformer）。
   // engine_id 落库的是**实际用的**引擎，不是硬编码 —— 否则永远看不出选择有没有生效。
-  const chosen = deps.pipelineFor(payload.language ?? undefined);
+  const chosen = chosenEarly;
   const transcript = repos.createTranscript({
     noteId: note.id,
     engineId: chosen.engineId,
@@ -145,7 +147,7 @@ export async function runTranscribeJob(
   const result = await chosen.pipeline.run({
     input: payload.input,
     jobId: job.uid,
-    modelPath: deps.modelPath,
+    modelPath: chosen.modelPath as string, // 上面 chosenEarly.modelPath 已判空
     ...(payload.language ? { language: payload.language } : {}),
     priority: job.priority,
     signal,

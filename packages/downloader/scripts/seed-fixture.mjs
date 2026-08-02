@@ -119,7 +119,7 @@ for (const [seq, s, e, text] of SEGMENTS) insSeg.run(trId, seq, s, e, text, 0.95
 // Keep FTS in sync — these are external-content tables, so a plain INSERT does not
 // populate them. If the daemon uses triggers this is a no-op; if not, search would
 // silently return nothing and we would misreport it as a search bug.
-let ftsNote = 'n/a';
+let ftsNote;
 try {
   db.exec(
     `INSERT INTO segments_fts(segments_fts) VALUES('rebuild');

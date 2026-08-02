@@ -635,3 +635,97 @@ const engines: AsrEngine[] = [whisper];   // 之后只 push 了 SherpaOnnxEngine
 - **libsimple/sqlite-vec 只在 Linux x64 真编过**，mac/Win 分支照写未验证。
 - Paraformer **这一轮仍未能在 daemon 真实路径上跑到**，我如实标注而不是用 packages/pipeline 的直调结果冒充。
 - 测试过程中我的 daemon 被别的 agent 的 `pkill -f 'dist/main.js'` 误杀过一次（本机同时跑着 3 个 daemon），已改用 `setsid` + 独立端口重跑。
+
+---
+
+## [2026-08-03 01:20] T-042 DONE
+
+交付:
+- `packages/pipeline/src/tools.ts` —— `discoverTools` 改为**感知已安装后端包**，新增 `defaultStoreRoot` / `findInBackendPacks` / `findInstalledModel` / `listInstalledModels`
+- **`scripts/selfcheck.mjs`（新建）** —— 一条命令跑完六层，任一必需项不通 exit 1
+- **109/109 测试全绿**，tsc / eslint 干净
+
+## 1. `pipeline.missing` —— **变成 `[]` 了**
+
+```
+pipeline.missing = []
+modelPath  = /tmp/omdata3/models/ggml-base.en.bin
+whisperCli = /tmp/omdata3/models/by-name/backend/whisper-bin-ubuntu-x64/whisper-cli
+```
+
+**但要说清楚这是两半，只有一半是我修的：**
+
+**`whisper-cli` —— 我修好了，零 daemon 改动。** 根因是 `discoverTools()` **从来只看 env 和 PATH，从不看安装目录**，所以后端包装得再对也找不到。现在的查找顺序是：显式覆盖 → **已安装后端包**（`<storeRoot>/by-name/backend/<包>/[<上游顶层目录>/]<二进制>`，扫两层，因为 whisper.cpp 的 tarball 自带 `whisper-bin-ubuntu-x64/` 一层）→ PATH（**仅开发期**，D-01 §8.4 L2 禁止生产走 PATH）。上面那个 `whisperCli` 路径就是从真实安装布局里解析出来的，没有任何 env 指路。
+
+**`asr-model` —— 不是我能修的，是 daemon 侧一行查找不匹配。**
+```
+安装器写到：  <modelsRoot>/by-name/asr/ggml-base.en.bin     (ArtifactStore.linkByName)
+daemon 找的： <modelsRoot>/ggml-base.en.bin                 (setup.ts firstExisting)
+```
+我实测确认解析器能找到：`findInstalledModel(root,'asr',[...]) -> /tmp/omdata3/models/by-name/asr/ggml-base.en.bin`。
+上面 `missing=[]` 的那次，是我**额外把模型也复制到 daemon 现在找的旧位置**才达成的 —— **我如实标注这一点**，不然会让人以为产品路径已经通了。
+
+→ **给 `oss-scout` 的一行修法**（`apps/daemon/src/pipeline/setup.ts`）：
+```ts
+const modelPath =
+  firstExisting(env['OPENMEMO_ASR_MODEL'], join(dirs.modelsDir, 'ggml-base.en.bin'))
+  ?? await findInstalledModel(dirs.modelsDir, 'asr', ['ggml-base.en.bin', 'ggml-base.bin', 'ggml-large-v3-turbo-q5_0.bin']);
+```
+`findInstalledModel` 已从 `@openmemo/pipeline` 导出。同理 `vadModel` 现在默认写死 `ggml-silero-v6.2.0.bin`，而 `discoverTools` 已能自动解析（会依次试 v5.1.2 / v6.2.0），daemon 那行覆盖可以直接删掉。
+
+**另一个跨模块不一致（顺带查出）**：目录里 `vad/silero-vad` 的文件是 **`silero_vad.onnx`**（sherpa-onnx 用的原始 ONNX），而 **whisper.cpp 的 `--vad-model` 要的是 ggml 转换过的 `ggml-silero-*.bin`**。两者不是一个东西。装了目录里那个，whisper 的 VAD 仍然用不了。归 `model-mgmt`。
+
+## 2. 自检脚本输出（真实 daemon 探针，21 通过 / 2 警告 / 0 失败 / exit 0）
+
+```
+── 1. 硬件探测 (@openmemo/runtime)
+  ✔ OS / 架构            linux/x64 7.1.3+deb14-cloud-amd64
+  ✔ CPU 指令集            AMD RYZEN AI MAX+ 395 · 32核 · avx,avx2,avx512_bf16,…
+  ✔ probe 子进程枚举设备     1 个设备, ggml 0.15.1
+── 2. 原生工具 / 后端包
+  ✔ 已安装后端包           whisper-bin-ubuntu-x64
+  ✔ whisper-cli          …/by-name/backend/whisper-bin-ubuntu-x64/whisper-cli
+  ✔ VAD 模型 (ggml silero) …/by-name/asr/ggml-silero-v5.1.2.bin
+  ! yt-dlp（可选，GPL）     未找到
+── 3. 模型
+  ✔ ASR 模型              ggml-base.en.bin, ggml-silero-v5.1.2.bin
+  ! LLM 模型              无（F4 需要 LLM 或云 API Key）
+── 4. SQLite 扩展（按功能验，不按加载验）
+  ✔ jieba 词典            …/bin/ext/dict
+  ✔ 中文双字词可搜索         用户:1 推特:2 中国:1 服务:2
+  ✔ sqlite-vec           v0.1.9
+── 5. ASR 引擎候选
+  ✔ whisper.cpp          modes=batch wordTs=true
+  ✔ 中文自动选择 / 英文自动选择  whisper.cpp
+── 6. daemon 实地探针
+  ✔ db.tokenizer         simple（simple = 中文分词可用；trigram = 双字词搜不到）
+  ✔ pipeline.missing     []（全部就位）
+结果  通过 21 · 警告 2 · 失败 0
+```
+
+**设计要点：每一项验的是「功能是否可用」而不是「组件是否加载」。** 因为每一层都有优雅降级，而降级正是问题本身——libsimple 缺失回退 trigram（中文搜索静默失效）、后端包缺失回退"未安装"、VAD 模型缺失回退固定窗口切分。**单个降级都合理，叠起来就是"产品在降级态运行而没人知道"。** 所以：不问"libsimple 在不在"，问"用户 能不能搜到"。
+
+**负面测试（空 dataDir）确认会红**：通过 5 · 警告 7 · **失败 6** · **exit 1**，逐条列出失败项与修复动作（如"运行 scripts/build-sqlite-ext.sh"）。
+
+## 3. `packages/runtime` 接线后的验证（我这轮能验的部分）
+- **硬件探测返回真实数据** ✅ —— 自检第 1 层直接调 `@openmemo/runtime` 的 `detectOs/detectCpu/detectMemory/runProbe`，输出是本机真实值（32 核、真实指令集、probe 枚举出 1 个设备 + ggml 0.15.1）。
+- **T-012 的 SIGABRT 场景在 daemon 里的表现** ✅ 实测：移走全部 `libggml-cpu-*.so` 后导入音频 →
+  ```
+  job.state = failed   error_code = RUNNER_ERROR   step = vad
+  detail: whisper-cli exited with code null (SIGABRT)
+          ggml-backend.cpp:595: GGML_ASSERT(device) failed
+  daemon 存活: HTTP 200
+  ```
+  **子进程隔离生效了** —— 后端崩溃只让那个 job failed，daemon 毫发无损。这正是 T-012 决定"probe 必须跑子进程"的那条实测结论在产品里的兑现。
+- **后端安装真能装吗 / 熔断器真会熔断吗** —— **本轮未验**。`/api/backends/install` 我没跑（需要真实下载），熔断器需要连续两次失败并观察 blacklist 持久化，也没跑。**如实标未验证**。
+
+需要 Manager 决策:
+1. **`oss-scout` 的一行改动**（上面给了补丁）—— 不改的话产品路径上 `asr-model` 永远缺失，我这次的 `missing=[]` 是靠额外复制文件达成的。
+2. **`vad/silero-vad` 目录条目给的是 `silero_vad.onnx`，whisper.cpp 用不了** —— 需要 `model-mgmt` 补一个 ggml 格式的 VAD 条目（whisper.cpp 官方 `download-vad-model.sh` 拉的是 `ggml-silero-v5.1.2.bin`）。
+3. 建议把 `node scripts/selfcheck.mjs` 作为**每轮验收的第一条命令**（你提到要当基线）。
+
+诚实声明:
+- **`pipeline.missing=[]` 是在"模型同时存在于新旧两个位置"的条件下达成的**，产品真实安装布局下仍会缺 `asr-model`，直到 daemon 那一行改掉。我没有用这个结果冒充"已通"。
+- **未验**：后端包的真实下载安装（`/api/backends/install`）、熔断器熔断行为、mac/Windows 全部路径。
+- `ffmpeg`/`ffprobe` 目前解析到的是系统 `/usr/bin/`，因为媒体工具包还不由我构建；产品路径上它们也应来自安装包。
+- 全程用独立端口（17693/17694/17695）+ `setsid`，未干扰其他 agent 的 daemon。

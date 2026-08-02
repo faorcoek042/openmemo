@@ -36,6 +36,7 @@ import { Scheduler, type JobHandler } from './jobs/scheduler.js';
 import { runTranscribeJob } from './jobs/runners/transcribe.js';
 import { createNoteRoutes } from './http/rest/notes.js';
 import { createContentRoutes } from './http/rest/content.js';
+import { createRuntimeRoutes } from './http/rest/hardware.js';
 import { createSettingsRoutes } from './http/rest/settings.js';
 import { createOrganizeRoutes } from './http/rest/organize.js';
 import { createUploadRoutes } from './http/upload.js';
@@ -256,6 +257,8 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
 
     // ---- 路由装配 ----
     routers.push(
+      // 硬件探测 / probe 断路器 / 后端自检（@openmemo/runtime 真实实现，非 stub）
+      createRuntimeRoutes({ paths }),
       createNoteRoutes({
         repos,
         queue,

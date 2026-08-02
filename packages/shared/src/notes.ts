@@ -101,6 +101,13 @@ export interface NoteAsset {
   url: string;
 }
 
+/** A tag attached to a note. */
+export interface NoteTag {
+  uid: string;
+  name: string;
+  color: string | null;
+}
+
 export interface NoteDetail {
   uid: NoteUid;
   title: string;
@@ -113,6 +120,22 @@ export interface NoteDetail {
   transcriptUid: string | null;
   segmentCount: number;
   createdAt: string;
+
+  /**
+   * Tags on this note. ALWAYS an array — `[]` when there are none, never absent.
+   *
+   * Added after a real-browser run found the note detail page white-screening with
+   * "Cannot read properties of undefined (reading 'map')": `NoteDetailPage` renders
+   * `<TagEditor tags={n.tags} />`, the daemon never returned the field, and nothing in
+   * the contract declared it. Three parties, three different assumptions, one blank page.
+   * Declaring it here — and requiring [] rather than optional — is what stops that
+   * recurring: an absent array is indistinguishable from "no tags" at the call site,
+   * so the schema forbids absence.
+   */
+  tags: NoteTag[];
+
+  /** Whether the note is starred. Always present. */
+  starred: boolean;
 }
 
 /* ------------------------------- transcript ------------------------------- */

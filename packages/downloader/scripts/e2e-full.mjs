@@ -90,7 +90,6 @@ const rootHandoff = { status: handoffStatus, cookies: (await ctx.cookies()).leng
 
 // Re-enter on a route that does NOT redirect, so the remaining checks can run authenticated.
 if (rootHandoff.cookies === 0) {
-  handoffStatus = null;
   await page.goto(`${BASE}/models#t=${TOKEN}`, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(4000);
 }
@@ -258,6 +257,7 @@ console.log('\n【architect 的 14 项】');
   await page.waitForTimeout(1500);
   const fileInput = await page.locator('input[type="file"]').count();
   // Fire a real DataTransfer drop, not just check for a dropzone element.
+  /* eslint-disable no-undef -- runs inside the browser via page.evaluate() */
   const dropResult = await page.evaluate(() => {
     const zone =
       document.querySelector('[data-testid*="drop"]') ??
@@ -274,6 +274,7 @@ console.log('\n【architect 的 14 项】');
     zone.removeEventListener('drop', mark);
     return handled ? 'drop-dispatched' : 'no-drop-handler';
   });
+  /* eslint-enable no-undef */
   await page.waitForTimeout(2000);
   const after = await bodyText();
   const reacted = /上传|导入中|已加入|排队|test\.mp3/.test(after);
@@ -298,7 +299,6 @@ if (!noteUid) {
   await page.goto(`${BASE}/notes/${noteUid}`, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(3000);
   await shot('note-detail');
-  const detailBody = await bodyText();
 
   /* ── 1. 双击编辑转写段落 ── */
   {
@@ -311,10 +311,12 @@ if (!noteUid) {
       await seg.el.dblclick({ timeout: 5000 }).catch(() => {});
       await page.waitForTimeout(1200);
       const editable = await page.locator('textarea, [contenteditable="true"], input[type="text"]').count();
+      /* eslint-disable no-undef -- runs inside the browser via page.evaluate() */
       const focused = await page.evaluate(() => {
         const a = document.activeElement;
         return a ? `${a.tagName}${a.getAttribute('contenteditable') ? '[ce]' : ''}` : 'none';
       });
+      /* eslint-enable no-undef */
       const entered = /TEXTAREA|\[ce\]|INPUT/.test(focused);
       if (entered) {
         await page.keyboard.type('（已编辑）');
@@ -549,6 +551,7 @@ console.log('\n【暗色主题回归】');
   for (const [r, name] of routes) {
     await page.goto(`${BASE}${r}`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1200);
+    /* eslint-disable no-undef -- browser context */
     const res = await page.evaluate(() => {
       const read = () => getComputedStyle(document.documentElement).getPropertyValue('--surface-0').trim();
       const light = read();
@@ -558,6 +561,7 @@ console.log('\n【暗色主题回归】');
       document.documentElement.removeAttribute('data-theme');
       return { light, dark, bodyBg };
     });
+    /* eslint-enable no-undef */
     if (res.light === res.dark) bad.push(name);
   }
   record('K3', '暗色主题在新页面未退化', bad.length === 0 ? 'yes' : 'partial',
