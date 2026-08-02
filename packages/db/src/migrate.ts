@@ -144,6 +144,8 @@ export interface SearchIndexResult {
   readonly tokenizer: string;
   readonly rebuilt: boolean;
   readonly error?: string | undefined;
+  /** 每张 FTS 表的回填结果（`ok(N)` 或 `failed: …`）。可观测性：静默失效必须看得见。 */
+  readonly backfill?: Record<string, string> | undefined;
 }
 
 function readMeta(db: DatabaseHandle, key: string): string | undefined {
@@ -186,6 +188,33 @@ function dropSearchObjects(db: DatabaseHandle): void {
 }
 
 /**
+ * 从内容表回填全部 FTS5 影子表。
+ *
+ * 对每个 `*_fts` 表执行官方回填指令 `INSERT INTO t(t) VALUES('rebuild')`。
+ * 单表失败不影响其它表（比如某张表的 content 表还没建），失败会被记录但不抛。
+ *
+ * @returns 每张表的回填结果，便于诊断
+ */
+export function rebuildSearchIndexes(db: DatabaseHandle): Record<string, string> {
+  const out: Record<string, string> = {};
+  const tables = db
+    .prepare<{ name: string }>(
+      `select name from sqlite_master where type='table' and name like '%_fts'`,
+    )
+    .all();
+  for (const t of tables) {
+    try {
+      db.exec(`INSERT INTO "${t.name}"("${t.name}") VALUES('rebuild')`);
+      const n = db.prepare<{ c: number }>(`select count(*) c from "${t.name}"`).get()?.c ?? 0;
+      out[t.name] = `ok(${n})`;
+    } catch (err) {
+      out[t.name] = `failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+  return out;
+}
+
+/**
  * 搜索索引迁移。**永不抛出** —— 失败只是"检索降级"，不是"库打不开"。
  *
  * @param status 扩展加载结果，决定用 simple 还是 trigram 分词器
@@ -204,6 +233,7 @@ export function migrateSearchIndex(
     return { ok: true, version: target, tokenizer: status.tokenizer, rebuilt: false };
   }
 
+  let backfill: Record<string, string> = {};
   try {
     db.transaction(() => {
       dropSearchObjects(db);
@@ -211,9 +241,23 @@ export function migrateSearchIndex(
         const sql = applyTokenizer(readFileSync(f.path, 'utf8'), status.tokenizer);
         db.exec(sql);
       }
+      /*
+       * ★ 必须回填 ★
+       *
+       * DROP + CREATE 只建出**空**的 FTS5 影子表；触发器只对**此后**的写入生效。
+       * 已经存在的行不会自动进索引 —— 于是搜索会**静默返回 0 条**，不报错、不崩溃。
+       *
+       * 而触发重建的最常见原因恰恰是"扩展加载失败/恢复导致分词器变了"，
+       * 也就是说：**扩展一出问题，搜索就悄悄变成永远搜不到**。
+       * 静默错误比崩溃更糟，因为没人会报告它。
+       *
+       * FTS5 外部内容表的官方回填指令就是 `INSERT INTO <fts>(<fts>) VALUES('rebuild')`，
+       * 它会从 content 表重新读取全部行。
+       */
+      backfill = rebuildSearchIndexes(db);
       writeMeta(db, 'search_index_version', want);
     });
-    return { ok: true, version: target, tokenizer: status.tokenizer, rebuilt: true };
+    return { ok: true, version: target, tokenizer: status.tokenizer, rebuilt: true, backfill };
   } catch (err) {
     // 关键：吞掉异常。检索不可用 ≠ 产品不可用。
     return {

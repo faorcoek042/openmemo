@@ -214,6 +214,7 @@ export {
   PLAN_VERSION,
   TranscribePipeline,
   dedupeBoundarySegments,
+  stripDuplicatedPrefix,
   deriveResumeSet,
 } from './transcribe.js';
 export type {

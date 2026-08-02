@@ -19,6 +19,7 @@ import {
 } from '../merge.js';
 import type { MergeableSegment } from '../merge.js';
 import type { TranscriptSegment } from '../types.js';
+import { dedupeBoundarySegments } from '../../transcribe.js';
 import { SEGMENT_FLAG } from '../types.js';
 
 function seg(startMs: number, endMs: number, text: string): TranscriptSegment {
@@ -199,5 +200,57 @@ describe('buildDiff — the [查看改动] panel', () => {
     assert.equal(updated?.before, 'old');
     assert.equal(updated?.after, 'new');
     assert.ok(diffs.every((d, i, a) => i === 0 || d.startMs >= a[i - 1]!.startMs));
+  });
+});
+
+describe('dedupeBoundarySegments — duplicated opening (T-037)', () => {
+  const seg2 = (startMs: number, endMs: number, text: string): TranscriptSegment => ({
+    startMs, endMs, text,
+    confidence: null, noSpeechProb: null, words: null,
+    chunkIdx: 0, flags: 0, speakerLabel: null,
+  });
+
+  it('strips a repeated opening the ratio test lets through', () => {
+    // Verbatim from the real Chinese DB (T-035): seq5 is only 11% time-overlapped, so it
+    // is correctly kept — but it opens by repeating seq4 word for word.
+    const accepted = [seg2(28_480, 31_580, '输入最多140字的文字更新')];
+    const incoming = [
+      seg2(28_860, 52_920, '输入最多140字的文字更新,Twitter在2006年3月成立于旧金山,由Upvirus公司开发'),
+    ];
+    const kept = dedupeBoundarySegments(accepted, incoming);
+    assert.equal(kept.length, 1, 'the segment is mostly new; it must survive');
+    assert.ok(
+      !kept[0]!.text.startsWith('输入最多140字的文字更新'),
+      'the duplicated opening must be removed',
+    );
+    assert.ok(kept[0]!.text.startsWith('Twitter在2006年3月'), 'the new content must remain intact');
+  });
+
+  it('leaves a genuine spoken repetition alone when there is no time overlap', () => {
+    // Same words, but the segments do not overlap — the speaker really said it twice.
+    const accepted = [seg2(0, 5_000, '这一点非常重要请大家注意')];
+    const incoming = [seg2(5_000, 10_000, '这一点非常重要请大家注意')];
+    assert.equal(dedupeBoundarySegments(accepted, incoming).length, 1);
+    assert.equal(dedupeBoundarySegments(accepted, incoming)[0]!.text, '这一点非常重要请大家注意');
+  });
+
+  it('drops the segment when the repeat is all there is', () => {
+    const accepted = [seg2(0, 5_000, '输入最多140字的文字更新')];
+    const incoming = [seg2(4_800, 9_000, '输入最多140字的文字更新')];
+    assert.equal(dedupeBoundarySegments(accepted, incoming).length, 0);
+  });
+
+  it('ignores very short repeats — "好的" recurring is normal speech', () => {
+    const accepted = [seg2(0, 2_000, '好的')];
+    const incoming = [seg2(1_900, 8_000, '好的那么我们继续下一个话题')];
+    const kept = dedupeBoundarySegments(accepted, incoming);
+    assert.equal(kept[0]!.text, '好的那么我们继续下一个话题', 'too short to treat as duplication');
+  });
+
+  it('matches across differing punctuation between the two passes', () => {
+    const accepted = [seg2(0, 5_000, '用户可以经由SMS、即时通讯、电邮')];
+    const incoming = [seg2(4_500, 12_000, '用户可以经由SMS,即时通讯,电邮,Twitter网站获得更新')];
+    const kept = dedupeBoundarySegments(accepted, incoming);
+    assert.ok(kept[0]!.text.startsWith('Twitter网站'), `got: ${kept[0]!.text}`);
   });
 });

@@ -485,12 +485,16 @@ async function proxyUpstream(req, res, url, method) {
     up.headers.forEach((v, k) => {
       if (k !== 'content-encoding' && k !== 'content-length' && k !== 'transfer-encoding') out[k] = v;
     });
+    // Set-Cookie must go INTO the header object before writeHead. Calling
+    // res.setHeader() afterwards throws ERR_HTTP_HEADERS_SENT, which silently aborted the
+    // response and meant the browser never received its session cookie — every subsequent
+    // request then 401'd and the whole app looked broken.
     const sc = up.headers.getSetCookie?.();
+    if (sc?.length) out['set-cookie'] = sc;
     // SSE and other streaming responses must be piped, not buffered — buffering an
     // event stream would make the browser wait forever for a body that never ends.
     const ct = up.headers.get('content-type') ?? '';
     res.writeHead(up.status, out);
-    if (sc?.length) res.setHeader('set-cookie', sc);
     if (ct.includes('text/event-stream') && up.body) {
       const reader = up.body.getReader();
       for (;;) {

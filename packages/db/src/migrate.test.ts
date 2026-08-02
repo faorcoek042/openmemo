@@ -19,6 +19,7 @@ import {
   discoverMigrations,
   migrateSchema,
   migrateSearchIndex,
+  rebuildSearchIndexes,
 } from './migrate.js';
 import { applyConnectionPragmas } from './pragmas.js';
 
@@ -167,3 +168,60 @@ for (const driver of DRIVERS) {
     });
   });
 }
+
+// ---------------------------------------------------------------------------
+// P0-3 回归：FTS 重建后必须回填，否则搜索静默返回 0 条
+// ---------------------------------------------------------------------------
+describe('FTS 索引回填（P0-3 静默失效回归）', () => {
+  it('**重建后已有数据必须能搜到** —— 不回填就会静默零结果', () => {
+    const db = openDatabase({ filename: ':memory:' });
+    applyConnectionPragmas(db);
+    migrateSchema(db);
+
+    // 第一次：无扩展 → trigram
+    const noExt = loadExtensions(db, {});
+    migrateSearchIndex(db, noExt);
+
+    // 先塞数据（此时触发器已存在，正常入索引）
+    db.exec(`INSERT INTO folders(uid,name,sort_order,created_at,updated_at)
+             VALUES ('01F','f',1.0,0,0)`);
+    db.prepare(
+      `INSERT INTO notes(uid,folder_id,kind,title,body_text,status,created_at,updated_at)
+       VALUES (:u,1,'plain',:t,:b,'ready',0,0)`,
+    ).run({ u: '01NOTEBACKFILL0000000000AA', t: 'hello world', b: 'searchable body text' });
+
+    const before = db
+      .prepare<{ c: number }>(`select count(*) c from notes_fts where notes_fts match 'searchable'`)
+      .get()?.c;
+    assert.equal(before, 1, '写入后应能搜到');
+
+    // ★ 关键：分词器指纹变化 → 触发 DROP + CREATE。
+    // 不回填的话，这里之后就永远搜不到那一行了（且不报任何错）。
+    const fakeSimple = { ...noExt, tokenizer: 'simple' as const };
+    const res = migrateSearchIndex(db, fakeSimple);
+    assert.equal(res.rebuilt, true, '指纹变化应触发重建');
+
+    const after = db
+      .prepare<{ c: number }>(`select count(*) c from notes_fts where notes_fts match 'searchable'`)
+      .get()?.c;
+    assert.equal(after, 1, '重建后仍必须能搜到旧数据（这就是回填的意义）');
+
+    // 回填结果必须可观测
+    assert.ok(res.backfill, '应返回回填明细');
+    assert.match(res.backfill?.['notes_fts'] ?? '', /^ok\(/);
+    db.close();
+  });
+
+  it('rebuildSearchIndexes 对每张 FTS 表都返回结果', () => {
+    const db = openDatabase({ filename: ':memory:' });
+    applyConnectionPragmas(db);
+    migrateSchema(db);
+    migrateSearchIndex(db, loadExtensions(db, {}));
+    const out = rebuildSearchIndexes(db);
+    const names = Object.keys(out).sort();
+    assert.ok(names.includes('notes_fts'), names.join(','));
+    assert.ok(names.includes('segments_fts'), names.join(','));
+    for (const v of Object.values(out)) assert.match(String(v), /^ok\(/);
+    db.close();
+  });
+});

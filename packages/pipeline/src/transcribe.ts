@@ -334,15 +334,73 @@ export function dedupeBoundarySegments(
 ): TranscriptSegment[] {
   if (accepted.length === 0) return incoming;
   const lastEnd = Math.max(...accepted.map((s) => s.endMs));
+  const prevText = accepted[accepted.length - 1]?.text ?? '';
   const out: TranscriptSegment[] = [];
 
   for (const seg of incoming) {
     const duration = Math.max(1, seg.endMs - seg.startMs);
     const overlap = Math.max(0, Math.min(lastEnd, seg.endMs) - seg.startMs);
+
+    // Case 1: the segment is mostly a re-run of speech we already have. Drop it whole.
     if (overlap / duration > overlapRatio) continue;
+
+    /*
+     * Case 2 — the one the ratio test misses (measured in the real Chinese DB, T-035):
+     *   seq4 [28480-31580] "输入最多140字的文字更新"
+     *   seq5 [28860-52920] "输入最多140字的文字更新,Twitter在2006年3月成立于旧金山,…"
+     * seq5 is only 11% overlapped, so it is correctly KEPT — most of it is new. But it
+     * opens by repeating the previous segment verbatim. The duplicate then goes into the
+     * FTS index (inflating relevance for a sentence said once) and into the LLM prompt
+     * for the mind map (where repetition reads as emphasis).
+     *
+     * So when there is ANY time overlap and the new text literally begins with the
+     * previous segment's text, strip that prefix instead of dropping the segment.
+     * Requiring time overlap is what keeps a genuine spoken repetition intact.
+     */
+    if (overlap > 0 && prevText.length > 0) {
+      const trimmed = stripDuplicatedPrefix(seg.text, prevText);
+      if (trimmed !== null) {
+        // Timestamps are left untouched: we know the text was duplicated, we do NOT know
+        // where inside the window the new speech actually starts. Inventing a start time
+        // would look precise while being a guess.
+        if (trimmed.length === 0) continue;
+        out.push({ ...seg, text: trimmed });
+        continue;
+      }
+    }
+
     out.push(seg);
   }
   return out;
+}
+
+/** Normalise for comparison only — punctuation and spacing differ between passes. */
+function normaliseForCompare(s: string): string {
+  return s.replace(/[\s,.!?;:、，。！？；：""''()（）]/g, '');
+}
+
+/**
+ * If `text` opens with a repeat of `prevText`, return it with that prefix removed.
+ * Returns null when there is no duplication.
+ *
+ * Comparison ignores punctuation because the two decoding passes punctuate differently;
+ * the removal is then applied to the ORIGINAL string so surviving text keeps its own
+ * punctuation.
+ */
+export function stripDuplicatedPrefix(text: string, prevText: string): string | null {
+  const a = normaliseForCompare(text);
+  const b = normaliseForCompare(prevText);
+  // Too short to be a confident duplicate — "好的" repeating is plausible speech.
+  if (b.length < 6 || a.length === 0) return null;
+  if (!a.startsWith(b)) return null;
+
+  // Walk the original string until we have consumed `b.length` comparable characters.
+  let consumed = 0;
+  let i = 0;
+  for (; i < text.length && consumed < b.length; i++) {
+    if (normaliseForCompare(text[i] ?? '').length > 0) consumed += 1;
+  }
+  return text.slice(i).replace(/^[\s,.!?;:、，。！？；：]+/, '').trim();
 }
 
 /**

@@ -549,3 +549,89 @@ DB 里 `transcripts.rtf = 2.10`，而我 T-026 直测 large-v3-turbo 是 **0.377
 - **绕过的环节**：LLM 设置直接写库（因断裂 C）；导图导出直接调 `packages/mindmap`（因断裂 D）。均已标注。
 - **手工放的模型**：whisper large-v3-turbo-q5_0 与 silero VAD 是我手工放的，**UI 装不了**（B-1 未完成）。llama-server 是我手工下载的官方预编译二进制。
 - **Paraformer 这一环没能在 daemon 真实路径上验证**——它在 `packages/pipeline` 里是通的（T-030 已实测），但 daemon 到不了它。
+
+---
+
+## [2026-08-02 23:40] T-037 DONE
+
+交付:
+- **`scripts/build-sqlite-ext.sh`**（新建）—— 编译 libsimple + sqlite-vec，含自检与 manifest
+- `packages/pipeline/src/transcribe.ts` —— `dedupeBoundarySegments` 修复 + 新增 `stripDuplicatedPrefix`
+- `packages/pipeline/src/asr/__tests__/merge.test.ts` —— 5 个新回归用例
+- 产物：`dist/ext/{libsimple.so,vec0.so,dict/}` + `sqlite-ext-linux-x64.tar.gz`(4.5MB) + `.json` manifest
+- **109/109 测试全绿**，tsc / eslint 干净
+
+## 优先级 1：四个中文双字词 —— **修好了**
+
+**真实 daemon + 真实中文转写库**（`tokenizer=simple vec=on`，libsimple 与 sqlite-vec 均加载成功）：
+
+| 词 | 修复前 | **修复后** |
+|---|---|---|
+| 用户 | 0 命中 | **11 命中** |
+| 推特 | 0 命中 | **5 命中** |
+| 中国 | 0 命中 | **4 命中** |
+| 服务 | 0 命中 | **6 命中** |
+
+```
+[daemon] db=better-sqlite3 sqlite=3.53.4 schema=v1 tokenizer=simple vec=on
+health: libsimple=True sqliteVec=True tokenizer=simple failures={}
+```
+
+**构建过程中踩到的坑（值得记录）**：
+1. **`-DSQLITE_CORE=0` 会让 vec0.so 编译通过但一加载就段错误。** sqlite-vec.h 用 `#ifndef SQLITE_CORE` 判断走「可加载扩展」还是「静态编入 SQLite」两条路；`-DSQLITE_CORE=0` **定义了**这个宏（值为 0 不影响 ifndef），于是走静态路径、`SQLITE_EXTENSION_INIT1` 不生成、扩展 API 指针为空 → `db.loadExtension()` 时进程 SIGSEGV（实测 exit 139）。**又一个"编出来了但没在工作"**。
+2. **jieba 词典是数据不是构建产物**，libsimple 只把它放在 test 目录下；不带词典时 tokenizer 仍能加载（比 trigram 好），但分词退化。脚本会一并打包 5 个 `.utf8`。
+3. 自检脚本最初用 `node -e "..."` 内联 JS，嵌套引号被 shell 吃掉导致程序被回显而不是执行（shell 还 exit 139）。改成写临时 `.mjs` + argv 传参。
+
+**自检标准按你的要求定为「中文双字词能搜到」而非「扩展加载成功」** —— 脚本里写死了这四个词，任何一个返回 0 就 `exit 1`。理由写在脚本注释里：trigram 也能"加载成功"，而 trigram 正是坏的那个。
+
+**许可证**：libsimple 双授权 MIT / GPL-3.0-or-later，**本项目选 MIT**（R-03 §2 D9）；sqlite-vec 双授权 Apache-2.0 / MIT，**选 MIT**。两条都写进了 manifest 的 `licenseNote`，可审计。
+
+**manifest**：`dist/ext/sqlite-ext-linux-x64.json`，含 archive 与逐文件 sha256、`installPath: "bin/ext"`、`providesFiles`。**格式与 GPU 后端包一致**，可走同一套下载安装机制。
+⚠️ **我没有把它写进 `vendor/manifests/`** —— 那个目录属 `model-mgmt`。请他把 `sqlite-ext-*` 并入目录，用户就能网页点一下装中文分词器。
+
+**mac/Windows：未验证。** 脚本已按平台分支（`.dylib`/`.dll`、macOS ad-hoc codesign、`-undefined dynamic_lookup`），但**只在 Linux x64 真编过**。CI workflow 我这轮没加（`.github/workflows/` 仍无 remote 可跑）。
+
+## 优先级 2：chunk 边界去重 —— 已修
+
+原判定只有"时间重叠 >50% 则整段丢弃"，漏掉了 T-035 在真实库里看到的那类：
+```
+seq4 [28480-31580] 输入最多140字的文字更新
+seq5 [28860-52920] 输入最多140字的文字更新,Twitter在2006年3月成立于旧金山,…
+```
+seq5 只有 11% 时间重叠（**大部分是新内容，理应保留**），但开头逐字重复了 seq4。重复句会进 FTS 索引（让说过一次的话虚增相关度）和 LLM prompt（重复在提示词里读作强调）。
+
+**新增 `stripDuplicatedPrefix`**：当**存在时间重叠**且新文本以上一段文本开头时，**剥掉重复前缀而不是丢弃整段**。
+- 比较时忽略标点（两遍解码断句不同），剥离时作用于原串以保留自身标点
+- 前缀短于 6 个可比字符不处理（「好的」重复是正常口语）
+- **要求时间重叠**是关键：没有重叠说明说话人真的重复了，不能动
+- **时间戳保持不变**并注明理由：我们知道文字重复了，但不知道新语音在窗口内的确切起点，**编一个精确的起始时间会看起来精准而实为猜测**
+
+5 个新回归用例，含真实数据那条、"真重复不能动"那条、跨标点匹配那条。
+
+## 优先级 3：Paraformer —— **仍不可达，但阻塞点变了**
+
+`model-mgmt` 确实关闭了 B-1：`vendor/manifests/models-asr-support.json` 现在有 4 条
+（`vad/silero-vad`、`asr/sherpa-streaming-zh-14m`、`asr/paraformer-zh-small`、`punctuation/ct-transformer-zh-en`），
+`paraformer-zh-small` 的 files 是 `model.int8.onnx / tokens.txt / am.mvn`，**正好是 `ParaformerEngine` 要的形状**。
+
+但 **daemon 里 `ParaformerEngine` 一次都没被构造**：
+```
+grep -c "ParaformerEngine" apps/daemon/src/pipeline/setup.ts  ->  0
+const engines: AsrEngine[] = [whisper];   // 之后只 push 了 SherpaOnnxEngine（流式）
+```
+`oss-scout` 这轮接上了流式 `SherpaOnnxEngine`（走 `OPENMEMO_SHERPA_STREAM_DIR`），但**离线中文的 `ParaformerEngine` 没接**。
+
+→ **复跑结论：`engine_id` 仍是 `whisper.cpp`，不是 Paraformer。** 阻塞点已从「模型不在目录」变成「daemon 未构造该引擎」。
+`ParaformerEngine` 本身在 `packages/pipeline` 里是通的（T-030 实测：84x 实时、专有名词 12/13、标点模型 3–21ms/chunk）。
+**这一步归 `oss-scout`**，我不能改 `apps/daemon`。
+
+需要 Manager 决策:
+1. **`sqlite-ext-*` 进 `vendor/manifests/`** —— 归 `model-mgmt`，让中文分词器能像 GPU 后端一样网页安装。
+2. **daemon 构造 `ParaformerEngine`** —— 归 `oss-scout`，模型目录已就绪，只差接线。
+3. mac/Win 的 `.dylib`/`.dll` 仍缺（无 remote，CI 跑不了）。
+
+诚实声明:
+- 四个词的命中数是**真实 daemon + 真实中文转写库**测出来的（转写当时仍在进行，43 段；段数继续增长会让命中数继续上升）。
+- **libsimple/sqlite-vec 只在 Linux x64 真编过**，mac/Win 分支照写未验证。
+- Paraformer **这一轮仍未能在 daemon 真实路径上跑到**，我如实标注而不是用 packages/pipeline 的直调结果冒充。
+- 测试过程中我的 daemon 被别的 agent 的 `pkill -f 'dist/main.js'` 误杀过一次（本机同时跑着 3 个 daemon），已改用 `setsid` + 独立端口重跑。
