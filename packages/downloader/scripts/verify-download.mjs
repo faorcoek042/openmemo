@@ -19,11 +19,21 @@
  * Requires: `npx tsc -b packages/shared packages/downloader` first.
  */
 
+// Node globals are imported explicitly rather than relying on eslint env config:
+// eslint.config.js applies `globals.node` to `scripts/**` at the repo root only, and
+// ADR-005 decision 3 puts this file under packages/downloader/scripts/. Explicit
+// imports are better ESM practice anyway and keep this script config-independent.
+import { Buffer } from 'node:buffer';
+import console from 'node:console';
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+
+const { AbortController } = globalThis;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(here, '..', 'dist');
@@ -151,7 +161,6 @@ check('zero bytes transferred', r2.bytesTransferred === 0);
 console.log('\n[4] interrupt mid-download, then resume');
 const resumeDir = path.join(root, 'resume-blobs');
 const ac = new AbortController();
-let sawBytes = 0;
 const partialPath = path.join(resumeDir, `sha256-${TINY.sha256}.partial`);
 
 const interrupted = downloadFile({
@@ -162,7 +171,6 @@ const interrupted = downloadFile({
   maxParts: 4,
   signal: ac.signal,
   onProgress: (p) => {
-    sawBytes = p.completedBytes;
     // Abort once a meaningful chunk has landed.
     if (p.phase === 'downloading' && p.completedBytes > 12_000_000) ac.abort();
   },
@@ -181,14 +189,9 @@ const resumeFrom = sidecar ? completedBytes(sidecar) : 0;
 check('sidecar records real progress', resumeFrom > 0 && resumeFrom < TINY.sizeBytes,
   `${mb(resumeFrom)} already done`);
 // Actual disk usage of a sparse file, to prove we are not preallocating 77 MB of blocks.
-const { stdout: duOut } = await import('node:child_process').then(
-  (cp) =>
-    new Promise((res) => {
-      cp.execFile('du', ['-B1', '--apparent-size=0', partialPath], (e, so) =>
-        res({ stdout: e ? '' : so }),
-      );
-    }),
-);
+const duOut = await new Promise((res) => {
+  execFile('du', ['-B1', '--apparent-size=0', partialPath], (e, so) => res(e ? '' : so));
+});
 if (duOut) console.log(`      sparse on-disk usage: ${duOut.trim().split(/\s+/)[0]} bytes`);
 
 const r4 = await downloadFile({
@@ -248,7 +251,7 @@ check('failed over to a working mirror', r6.sha256 === TINY.sha256 && r6.provide
 console.log('\n[7] ModelScope mirror serves byte-identical content');
 const msDir = path.join(root, 'ms-blobs');
 let msOk = false;
-let msNote = '';
+let msNote;
 try {
   const r7 = await downloadFile({
     sha256: TINY.sha256,

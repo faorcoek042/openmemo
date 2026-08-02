@@ -20,7 +20,7 @@ import * as path from 'node:path';
 import type { ArtifactFile, PlatformSelector } from '@openmemo/shared';
 import { DownloadError, type DownloadSource, downloadFile } from './download.js';
 import { type ProbeOutcome, type ProbeTarget, orderSourcesForDownload } from './probe.js';
-import { ArtifactStore, type StoreKind } from './store.js';
+import type { ArtifactStore, StoreKind } from './store.js';
 
 export interface InstallTarget {
   id: string;

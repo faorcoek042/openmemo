@@ -6,49 +6,69 @@
  */
 
 /**
- * Job lifecycle.
+ * Coarse job lifecycle.
  *
- *   queued → resolving → downloading → verifying → installing → done
- *                            ↕ paused
- *                            ↓ cancelled            ↓ failed (retryable → resolving)
+ * ALIGNED WITH D-02 §1.7 `jobs.state` (ADR-006 decision 5). An earlier draft of this file
+ * used a download-specific vocabulary (`resolving`/`downloading`/`installing`/`done`)
+ * that collided with the generic job table. Rather than maintain two vocabularies and a
+ * lossy translation between them, the coarse lifecycle now matches D-02 exactly, and the
+ * download-specific detail moved to `JobStep` below (D-02 `jobs.current_step`).
  *
- * `verifying` is a first-class state, not an afterthought: nothing is installed until
- * its SHA-256 matches (GPT4All's model, the only one of nine surveyed apps that gets
- * this right). Ollama's download.go has no checksum step at all — we do not inherit that.
+ *   queued → leased → running → succeeded
+ *              ↓        ↕ paused
+ *           blocked     ↓ failed / cancelled
  */
 export const JOB_STATES = [
   'queued',
-  'resolving',
-  'downloading',
-  'verifying',
-  'installing',
-  'done',
+  'blocked',
+  'leased',
+  'running',
+  'paused',
+  'succeeded',
   'failed',
   'cancelled',
-  'paused',
 ] as const;
 export type JobState = (typeof JOB_STATES)[number];
 
-export const TERMINAL_JOB_STATES: readonly JobState[] = ['done', 'failed', 'cancelled'];
+export const TERMINAL_JOB_STATES: readonly JobState[] = ['succeeded', 'failed', 'cancelled'];
+
+/**
+ * Fine-grained step within `state === 'running'`. Persisted to D-02 `jobs.current_step`.
+ *
+ * `verifying` is a first-class step, not an afterthought: nothing is installed until its
+ * SHA-256 matches (GPT4All's model — the only one of nine apps surveyed in R-04 that gets
+ * this right). Ollama's download.go has no checksum step at all; ADR-004 decision 5
+ * requires we not inherit that gap.
+ */
+export const JOB_STEPS = ['resolving', 'downloading', 'verifying', 'installing'] as const;
+export type JobStep = (typeof JOB_STEPS)[number];
 
 export const JOB_KINDS = ['model', 'backend-pack'] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 
-/** Legal state transitions. Exported so the daemon and tests share one source of truth. */
+/** Legal transitions. Exported so the daemon, the queue and tests share one source of truth. */
 export const JOB_TRANSITIONS: Record<JobState, readonly JobState[]> = {
-  queued: ['resolving', 'cancelled'],
-  resolving: ['downloading', 'failed', 'cancelled'],
-  downloading: ['verifying', 'paused', 'failed', 'cancelled'],
-  verifying: ['installing', 'resolving', 'failed', 'cancelled'],
-  installing: ['done', 'failed'],
-  paused: ['resolving', 'downloading', 'cancelled'],
-  done: [],
-  failed: ['resolving'],
-  cancelled: ['resolving'],
+  queued: ['leased', 'running', 'blocked', 'cancelled'],
+  blocked: ['queued', 'cancelled', 'failed'],
+  leased: ['running', 'failed', 'cancelled'],
+  running: ['succeeded', 'failed', 'cancelled', 'paused', 'blocked'],
+  paused: ['queued', 'running', 'cancelled'],
+  succeeded: [],
+  // Retry re-queues rather than jumping straight back into running.
+  failed: ['queued'],
+  cancelled: ['queued'],
 };
 
 export function canTransition(from: JobState, to: JobState): boolean {
   return JOB_TRANSITIONS[from].includes(to);
+}
+
+/** D-02 `jobs.type` values this package produces. */
+export const DOWNLOAD_JOB_TYPES = ['download.model', 'download.backend'] as const;
+export type DownloadJobType = (typeof DOWNLOAD_JOB_TYPES)[number];
+
+export function jobTypeForKind(kind: JobKind): DownloadJobType {
+  return kind === 'model' ? 'download.model' : 'download.backend';
 }
 
 /**
@@ -133,12 +153,26 @@ export interface JobPart {
 }
 
 export interface DownloadJob {
+  /**
+   * ULID. This is D-02 `jobs.uid` — the ONLY job identifier the API exposes.
+   * The integer `jobs.id` primary key never leaves the daemon (ADR-006 decision 5:
+   * FTS5 `content_rowid` and sqlite-vec both require integer rowids).
+   */
   jobId: string;
   kind: JobKind;
-  /** Model id or backend-pack id. */
+  /** D-02 `jobs.type`. */
+  type: DownloadJobType;
+  /**
+   * Catalog slug, e.g. "asr/whisper-large-v3-turbo-q5_0".
+   * Deliberately NOT a ULID: it is a stable content identifier that must be identical
+   * across machines and across reinstalls, and it is what D-02 `model_installs.model_id`
+   * stores ("与 manifests/<role>/<id>.json 的 id 一致").
+   */
   targetId: string;
   displayName: string;
   state: JobState;
+  /** Fine-grained step; meaningful while state === 'running'. */
+  step: JobStep | null;
   /** Provider currently in use; null before resolution. */
   provider: string | null;
 

@@ -12,10 +12,9 @@
  * one at a time. Per-file part parallelism (4) is a separate, orthogonal knob.
  */
 
-import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import type { DownloadJob, JobState } from '@openmemo/shared';
-import { canTransition } from '@openmemo/shared';
+import type { DownloadJob, JobState, JobStep } from '@openmemo/shared';
+import { TERMINAL_JOB_STATES, canTransition, jobTypeForKind, ulid } from '@openmemo/shared';
 
 export interface QueueTaskContext {
   jobId: string;
@@ -27,8 +26,10 @@ export interface QueueTaskContext {
     speedBps: number;
     etaSeconds: number | null;
   }) => void;
-  /** Move the job to a new state, e.g. 'verifying'. */
+  /** Move the coarse lifecycle state (D-02 `jobs.state`). */
   setState: (s: JobState) => void;
+  /** Set the fine-grained step (D-02 `jobs.current_step`), e.g. 'verifying'. */
+  setStep: (s: JobStep) => void;
   setProvider: (p: string) => void;
   setFile: (name: string, index: number, count: number) => void;
 }
@@ -52,16 +53,22 @@ interface Entry {
   resolveDone: () => void;
 }
 
-export declare interface DownloadQueue {
-  on(e: 'job.created', l: (j: DownloadJob) => void): this;
-  on(e: 'job.progress', l: (j: DownloadJob) => void): this;
-  on(e: 'job.state', l: (j: DownloadJob, prev: JobState) => void): this;
-  on(e: 'job.failed', l: (j: DownloadJob) => void): this;
-  on(e: 'job.done', l: (j: DownloadJob) => void): this;
-  on(e: string, l: (...a: never[]) => void): this;
+/**
+ * Events emitted by {@link DownloadQueue}, as a payload map.
+ * Passed to EventEmitter's generic parameter so `on`/`emit` are type-checked without
+ * class/interface declaration merging (which eslint flags as unsafe, correctly — merging
+ * would let the declared signatures silently diverge from the implementation).
+ */
+export interface DownloadQueueEvents {
+  'job.created': [DownloadJob];
+  'job.progress': [DownloadJob];
+  'job.state': [DownloadJob, JobState];
+  'job.failed': [DownloadJob];
+  'job.done': [DownloadJob];
+  [k: string]: unknown[];
 }
 
-export class DownloadQueue extends EventEmitter {
+export class DownloadQueue extends EventEmitter<DownloadQueueEvents> {
   private entries = new Map<string, Entry>();
   private waiting: string[] = [];
   private running = new Set<string>();
@@ -86,10 +93,7 @@ export class DownloadQueue extends EventEmitter {
    */
   findActiveByTarget(targetId: string): DownloadJob | null {
     for (const e of this.entries.values()) {
-      if (
-        e.job.targetId === targetId &&
-        !['done', 'failed', 'cancelled'].includes(e.job.state)
-      ) {
+      if (e.job.targetId === targetId && !TERMINAL_JOB_STATES.includes(e.job.state)) {
         return e.job;
       }
     }
@@ -102,11 +106,15 @@ export class DownloadQueue extends EventEmitter {
 
     const now = new Date().toISOString();
     const job: DownloadJob = {
-      jobId: `job_${randomUUID().replace(/-/g, '').slice(0, 16)}`,
+      // ULID, not a random hex string: this is D-02 `jobs.uid`, and its embedded
+      // timestamp makes the job list sort by creation order with no extra column.
+      jobId: ulid(),
       kind: opts.kind,
+      type: jobTypeForKind(opts.kind),
       targetId: opts.targetId,
       displayName: opts.displayName,
       state: 'queued',
+      step: null,
       provider: null,
       totalBytes: opts.totalBytes,
       completedBytes: 0,
@@ -153,7 +161,8 @@ export class DownloadQueue extends EventEmitter {
 
   private async run(entry: Entry): Promise<void> {
     const { job } = entry;
-    this.transition(job, 'resolving');
+    this.transition(job, 'running');
+    job.step = 'resolving';
 
     const ctx: QueueTaskContext = {
       jobId: job.jobId,
@@ -167,6 +176,10 @@ export class DownloadQueue extends EventEmitter {
         this.emit('job.progress', job);
       },
       setState: (s) => this.transition(job, s),
+      setStep: (s) => {
+        job.step = s;
+        job.updatedAt = new Date().toISOString();
+      },
       setProvider: (p) => {
         job.provider = p;
       },
@@ -179,7 +192,8 @@ export class DownloadQueue extends EventEmitter {
 
     try {
       await entry.task(ctx);
-      this.transition(job, 'done');
+      job.step = null;
+      this.transition(job, 'succeeded');
       this.emit('job.done', job);
     } catch (e) {
       if (entry.controller.signal.aborted && job.state !== 'failed') {
@@ -187,11 +201,11 @@ export class DownloadQueue extends EventEmitter {
       } else {
         const err = e as { code?: string; message?: string; retryable?: boolean };
         job.error = {
-          code: (err.code as DownloadJob['error'] extends null ? never : string) ?? 'INTERNAL',
+          code: (err.code ?? 'INTERNAL') as NonNullable<DownloadJob['error']>['code'],
           message: err.message ?? String(e),
           messageZh: err.message ?? String(e),
           retryable: err.retryable ?? false,
-        } as DownloadJob['error'];
+        };
         this.forceState(job, 'failed');
         this.emit('job.failed', job);
       }
@@ -222,7 +236,7 @@ export class DownloadQueue extends EventEmitter {
   cancel(jobId: string): boolean {
     const e = this.entries.get(jobId);
     if (!e) return false;
-    if (['done', 'failed', 'cancelled'].includes(e.job.state)) return false;
+    if (TERMINAL_JOB_STATES.includes(e.job.state)) return false;
     e.controller.abort();
     const idx = this.waiting.indexOf(jobId);
     if (idx >= 0) {
@@ -259,7 +273,7 @@ export class DownloadQueue extends EventEmitter {
   prune(): number {
     let n = 0;
     for (const [id, e] of this.entries) {
-      if (['done', 'failed', 'cancelled'].includes(e.job.state)) {
+      if (TERMINAL_JOB_STATES.includes(e.job.state)) {
         this.entries.delete(id);
         n++;
       }

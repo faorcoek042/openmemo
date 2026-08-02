@@ -26,7 +26,6 @@ import {
   sleep,
 } from './http.js';
 import {
-  type Sidecar,
   canResume,
   completedBytes,
   isComplete,

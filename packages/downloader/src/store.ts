@@ -183,7 +183,7 @@ export class ArtifactStore {
     const refs = await this.referencedDigests();
     const orphanBlobs: { path: string; bytes: number }[] = [];
     const stalePartials: { path: string; bytes: number }[] = [];
-    let entries: string[] = [];
+    let entries: string[];
     try {
       entries = await fs.readdir(this.blobDir);
     } catch {

@@ -34,3 +34,52 @@
 - 我用 HTTP Range 实际下载并解析了 whisper.cpp 官方 zip 的 central directory，逐文件体积是**实测字节数**，非估算。
 - **未做任何编译、未跑任何 GPU 推理**。所有 RTF/性能数字：whisper.cpp 官方 bench 帖**只有 CPU/WASM 数据，无任何 GPU 数据**（已核实），transformers.js 官方文档**无任何速度数字**（已核实）。**Vulkan vs CUDA 的性能比例 = UNKNOWN，文档中未编造任何 benchmark。**
 - 16 项 UNKNOWN/未验证已在文档 §F.3 逐条列全，其中最关键 3 项：各 GPU 后端实际 RTF、macOS 15/26 上 quarantine 行为、llama.cpp 与 whisper.cpp 的 ggml ABI 能否共用后端包（whisper.cpp soname 已验证为 `0.15.1`）。
+
+---
+
+## [2026-08-02 13:35] T-012 DONE
+
+交付:
+- `docs/design/D-04-build-and-runtime.md`（id: D-04, status: ready, TL;DR 20 行）
+- `scripts/build-whisper.sh`（平台×后端参数化，**已实跑产出 cpu + vulkan 两个包**）
+- `scripts/build-probe.sh`（**已实跑**，带 smoke test）
+- `packages/runtime/src/native/probe.c`（**已编译并运行**）
+- `packages/runtime/src/{types.ts,index.ts,selfTest.ts,probe/runProbe.ts,detect/system.ts,detect/gpu.ts,backends/manager.ts}`
+- `.github/workflows/build-backends.yml`（**未验证：无 git remote，从未执行**）
+- 产物：`dist/packs/whispercpp-{cpu,vulkan}-linux-x64.{tar.gz,json}`
+
+要点（**重中之重已完成，全部实测**）:
+- **`GGML_BACKEND_DL` 论断已实证，不再是读源码的推断**：`ldd libwhisper.so` 只有 `libggml.so.0` + `libggml-base.so.0`，**12 个 CPU 后端一个都不链接**，全是运行时 dlopen。运行时自动从 12 个变体里选中 `zen4`（本机 Zen5 + AVX512_BF16，选得对）。
+- **第一批真实 RTF**（11.0s 音频 / 8 线程 / 各跑 3 次）：`tiny.en` wall **0.295–0.323s → RTF 0.027–0.029（~35x）**；`base.en` **0.439–0.450s → RTF 0.040（~25x）**；**强制最差 sse42 兜底 1.029–1.136s → RTF 0.094–0.103（~10x）**。→ **最优/最差 CPU 变体差 3.4 倍**，这是 `GGML_CPU_ALL_VARIANTS` 必开的量化理由，也说明**我们不必自己检测 AVX 等级**。
+- **Vulkan 编译成功**（无 GPU 的机器也能编 → CI runner 不需要 GPU）。**L2 加速包 = 恰好 1 个文件**，22.7 MB tar.gz，对照 R-02 从 llama.cpp 外推的 "~15–35 MB"，**外推成立**。
+- **要求 2.1 闭环实测跑通**：L1 core（7.70 MB tar.gz）→ 丢进 1 个 `libggml-vulkan.so` → 重新 probe → Vulkan 后端加载成功。**无重装、无重启、无改配置。** 包完全可重定位（`env -u LD_LIBRARY_PATH` 下正常）。
+- **两个新发现（R-02 没预料到）**：① 装 `vulkan-tools` 后 Mesa lavapipe 让**无 GPU 的机器报告 1 个 Vulkan 设备**（deviceType=CPU）→ **"枚举到设备>0" 同样不可信**，必须看 deviceType（ggml-vulkan 上游已正确过滤，我们再加一层）。② **删光 CPU 后端时 whisper.cpp 是 `ggml_abort()` + SIGABRT(exit 134)，不是返回错误** → 「probe 跑子进程」从"保守设计"变成**实证刚需**；**L1 CPU 包是承重墙，永不可卸载**。
+- **装了用不上的 Vulkan 包 = 零损耗**（0.277–0.354s，与纯 CPU 同档，无报错，静默回落）→ **降低了 ADR-003 决策 3 的风险**：给 NVIDIA 默认推 Vulkan 即使推错也不会让产品变坏。
+- **自己的测试抓到自己一个真 bug**：`selfTest` 初版报 `backendUsed:"Vulkan"` 而计算实际全在 CPU —— 我 grep 了第一条 `load_backend`，但 ggml **先加载全部后端再选**。已修（改用 `whisper_backend_init_gpu` 判定）并复测为 `"CPU"`。**"loaded" ≠ "used"**。若不真跑一遍，这个错数字会一路骗到 UI 上。
+- **ggml ABI 实测**：whisper.cpp v1.9.1 = **0.15.1**（master 已 0.18.0）→ 跨引擎复用后端包必须按此 gate。
+
+已处理 Manager 三条插播:
+1. **类型错误：在收到消息前已自行修复并验证**。根因确认与 `oss-scout` 一致（条件类型不分配到类型别名 → `never`）；我的修法是直接用 `ProbeFailureKind`（等价于他建议的 `Extract<...>`）。TS2367 是把 `signal` 当 `code` 比，已按 `string|number|null` 正确标注。
+2. **ADR-005/006 已读并落地**：CI 的 manifest job 加 `actions/setup-node@v6 node-version: '22'`；`manager.ts`/`index.ts` 的降级链注释已改为 **L1 → L2**（L0 移出 v1）；我只写了 `scripts/build-*`，**未碰 `scripts/license-report.mjs`**。
+3. **已改用 `vendor/whisper.cpp`**（v1.9.1，`f049fff9`）跑正式构建，`/tmp` 那份只用于最早的探索。
+
+⚠️ 观察（非 DISPUTE，只是提示）: `pnpm -r build` 目前 EXIT=1，卡在 **`packages/downloader/src/queue.ts(17,62): TS2305 Module '@openmemo/shared' has no exported member 'ulid'`** —— `model-mgmt` 新增了 `packages/shared/src/ulid.ts` 但尚未从 `index.ts` 导出，属其正在编辑中的中间态。**与我的文件无关**：`packages/runtime` 自身零错误、eslint exit=0、dist 已产出、两个 .sh `bash -n` 通过、workflow YAML 解析通过。
+
+下一步建议:
+- **[最高价值] 借一台有 NVIDIA 卡的机器跑 1 小时**：测 CUDA vs Vulkan 的 whisper RTF。这是唯一能证实/推翻 ADR-003 决策 3 的实验，目前该性能比**仍是 UNKNOWN**（本机无 GPU，本次既未证实也未推翻）。
+- **单架构 CUDA 瘦身实测**（`-DCMAKE_CUDA_ARCHITECTURES=86`）：决定 CUDA 包是 678 MB 还是 <100 MB。
+- **给仓库配 git remote**，让 CI 真跑一次拿到 mac/Win 产物；第一次一定会失败（预期：CUDA job 撞 14 GB 磁盘上限、SDK 路径漂移、MSVC generator 差异）。
+
+需要 Manager 决策:
+1. **是否安排有 GPU 的机器做 spike**（上面第一条）。不做的话 ADR-003 决策 3 会一直停在"临时立场"。
+2. **CI 无 remote 期间，mac/Win 产物如何获得** —— 目前 macOS 侧完全没有可分发二进制，要求 2.1 在 mac 上仍不成立（这正是 ADR-003 决策 2 批准自建 CI 的原因，但没有 remote 就落不了地）。
+3. 自检音频目前用 whisper.cpp 仓库的 `samples/jfk.wav`（11.000s）。**需确认是否可随产品分发**，否则我按 R-02 的建议换成自备素材（`selfTest.ts` 已把音频路径与时长参数化，换素材零成本）。
+
+派生 subagent 记录（未 kill，可复用）:
+- `acbd63ceb8a521e6c` — GitHub Actions runner label / CUDA·Vulkan·ROCm setup action / llama.cpp+whisper.cpp release CI 核实（sonnet5，已完成）
+- T-002 的 4 个仍可复用（见上一条回执）
+
+诚实声明:
+- 本次**真编译、真运行、真计时**。D-04 §10.1 列了 14 项实测验证（附命令与输出）。
+- D-04 §10.2 列了 10 项未验证/UNKNOWN，最关键 3 项：**CUDA vs Vulkan 性能比仍 UNKNOWN**、**mac/Windows 全部分支未验证（无机器）**、**CI workflow 从未执行（无 remote）**。
+- CUDA 与 ROCm 包**未编译**（无 SDK 与硬件），不是"应该能编"，是**没编**。
