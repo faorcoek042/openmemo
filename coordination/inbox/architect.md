@@ -811,3 +811,84 @@ jsdom /diagnostics         → 渲染正常
   那需要在 apps/web 建 jsdom 测试宿主（jsdom 依赖我已装上，但测试宿主没搭）。**没做就是没做。**
 - 诊断页只在 jsdom 渲染验证过，`[去修复]` 跳转、复制按钮**没在真浏览器点过**。
 - 待真浏览器补验项现为 **18 项**。
+
+---
+
+## [2026-08-03 11:40] T-046 DONE
+
+### 宿主搭起来了 —— 但**范围比预期窄，我如实标注了边界**
+
+`apps/web` 现在有**两条测试道**：
+
+| 道 | 命令 | 内容 | 结果 |
+|---|---|---|---|
+| 纯逻辑 | `test:unit`（tsc → CJS → node --test） | 选择器引用稳定性 | **7 pass / 0 fail** |
+| 组件 | `test:components`（vite SSR 打包 → node --test） | 渲染 + 点击 + 断言 | **18 pass / 0 fail / 2 skip** |
+
+`pnpm --filter @openmemo/web test` 两条一起跑，`EXIT=0`。
+
+### 覆盖了哪几项
+
+| 你点名的 | 覆盖情况 |
+|---|---|
+| **任务中心分组** | ✅ 4 条：**「需要处理」必须排在「已完成」之前**（用 `indexOf` 断言顺序）、running 有暂停/取消、blocked 有重试、点取消发出 `POST /jobs/j1/cancel`、中文 `messageZh` + 重试计数、已完成不显示进度条 |
+| **标签增删** | ✅ 3 条：点「加标签」出现输入框且 placeholder 正确、Esc 不产生任何请求、点 × 发出 `DELETE /notes/n1/tags/t1`。⚠️ 「输入文字→回车提交」这一条**跳过**，见下 |
+| **设置页 Key 输入** | ✅ 3 条：**明文告知用服务端下发的真实路径**（断言含 `/tmp/x/secrets.json`）、**本地 provider 不出现 Key 输入框**、云 provider 有 `type=password` 且 `autocomplete=off`。⚠️ 「填入 Key→保存」**跳过** |
+| **搜索输入** | 🟡 2 条，但都是弱断言（同样受下面那个限制影响） |
+| **星标点击** | ❌ **没做** —— 它在 `NotesListPage` 里，要连列表查询一起起来，成本高于本轮预算 |
+| 额外补的 | ✅ `StatusChip` **永远同时给出图标与文字**（"状态绝不只用颜色"的机器化断言）、`ProgressMeter` 的 aria 值与越界夹紧 |
+
+### ⚠️ 宿主的真实边界（这条我不想含糊过去）
+
+**文本输入引发的 setState 在这个宿主里不会提交。**
+现象：`onChange` 触发得到，但组件不重渲染，紧接着的 keydown 处理器仍持有旧闭包
+（探针实测：`ONCHANGE FIRED abc` / `RENDER 2 v="abc"` 都发生了，但 render 2 发生在**下一次事件派发时**，
+所以 keydown 拿到的是 render 1 的闭包）。
+
+试过且都无效：手写 `dispatchEvent`（原型原生 setter + input 事件）、act 包裹、act 回调内让出微任务、
+关掉 `IS_REACT_ACT_ENVIRONMENT` 改走真实定时器、多轮宏任务等待、最后换成 `@testing-library/react` 的 `fireEvent`。
+**点击引发的 setState 是正常提交的**（"点加标签出现输入框"这条就依赖它），所以问题只出在文本输入这条路径。
+
+→ 我把两条依赖"输入文字→提交"的用例**显式 skip 并写明原因**，
+**没有改断言去迁就宿主，也没有删掉它们假装覆盖了。** 这两条留给真浏览器 E2E。
+
+### 路上修掉的三个基础设施坑（都会让测试静默变绿）
+
+1. **`node --test` 默认跳过 `node_modules/`** —— 我一度把产物输出到 `node_modules/.test-out/`，
+   结果跑出 **0 个测试并返回 0（绿）**。假绿灯家族又一个。
+2. **主构建的 `vite build` 会清空 `dist/`** —— 测试产物放 `dist/test` 会被主构建删掉，
+   下次跑测试报 "Could not find"。最终落到 `.test-out/`（新增 `apps/web/.gitignore`）。
+3. **jsdom 里 React 退回 IE 时代的事件 polyfill** ——
+   React 用 `'oninput' in document` 做特性检测，jsdom 的 `document` 上没有这个属性 →
+   判定"不支持" → 走 `handleEventsForInputEventPolyfill` → 调用 IE 的 `attachEvent` → 一输入就抛异常。
+   报错栈全在 react-dom 内部，看起来像 React 的 bug，实际是特性检测被骗了。
+   修法：在 react-dom 被 import **之前**把这几个事件属性挂到 document 上。
+   → 这也是为什么 `dom-env.ts` 必须是**独立模块且第一个 import**：
+   ESM 里一个模块的所有 import 都先于它自己的语句执行，写在 `host.tsx` 顶层语句里**不起作用**。
+
+### 一个取舍我要说明
+
+我先手写宿主是为了不加依赖；卡在上面那个问题上之后，**换成了 `@testing-library/react`**。
+它没解决那个问题（说明不是我写错了），但它把 act 包装、清理、查询这些做得比我稳，
+而且这是别人已经解决过的问题域 —— **继续手写的成本已经超过一个依赖的成本**。
+新增依赖：`@testing-library/react` + `@testing-library/dom` + `jsdom`（devDependencies）。
+
+### 验证
+```
+pnpm --filter @openmemo/web test → 7 pass + 18 pass / 0 fail / 2 skip，EXIT=0
+npx eslint apps/web             → 0
+pnpm --filter @openmemo/web build → ✓ built in 484ms
+```
+⚠️ 全仓 `pnpm lint` 还有 2 个错，都在 `scripts/selfcheck.mjs`（`gpu-runtime` 的文件，未使用的 import），不在我域内。
+另：我给根 `eslint.config.js` 加了 `**/.test-out/**` 忽略（否则测试产物会被 lint 出 84 个假错误），**申报**。
+
+### 剩余
+1. 🔴 M-4/M-7 端点仍未落地 —— UI 继续悬空（等 `oss-scout` 的 P0）
+2. 🟡 **文本输入类交互仍需真浏览器**：标签输入提交、Key 输入保存、搜索输入跳转、TipTap 输入、段落双击编辑
+3. 🟡 星标点击的组件测试没做（在 `NotesListPage` 里，要连列表查询一起起）
+4. 🟢 D-07 复审 —— 已按你说的先记着；复审检查表我会在下轮给
+
+### 诚实声明
+- **18 项待补验没有因此清零。** 组件测试能覆盖的是点击/渲染/属性类，**文本输入类一项都没能覆盖**。
+  乐观估计减少 5–6 项，剩下的仍要真浏览器。
+- 两条 skip 的用例是**真的没跑**，不是变相通过。
