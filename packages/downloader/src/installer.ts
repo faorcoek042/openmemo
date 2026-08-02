@@ -45,6 +45,18 @@ export interface InstallOptions {
   signal?: AbortSignal;
   token?: string;
   maxParts?: number;
+  /**
+   * Where an archive should be expanded, relative to `dataRoot`.
+   *
+   * Manifests already declare this (`installPath: 'bin/ext'` for SQLite extensions), but
+   * the installer used to ignore it and always expand under `by-name/<bucket>/`. The
+   * files were correct and loadable; the daemon simply looked in `bin/ext` and found
+   * nothing. A manifest field that the installer silently ignores is worse than no field,
+   * because everything reports success while the component is unreachable.
+   */
+  installPath?: string;
+  /** Root that `installPath` is relative to. Defaults to the models root's parent. */
+  dataRoot?: string;
   onProgress?: (p: {
     completedBytes: number;
     totalBytes: number;
@@ -82,6 +94,8 @@ export interface InstallResult {
   files: InstalledFileRecord[];
   totalBytes: number;
   bytesTransferred: number;
+  /** Absolute directory an archive was expanded into, when one was. */
+  installedTo?: string;
 }
 
 /** Does this file apply to the current platform? */
@@ -151,6 +165,7 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
   const records: InstalledFileRecord[] = [];
   let completedBefore = 0;
   let bytesTransferred = 0;
+  let expandedTo: string | undefined;
 
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
@@ -209,14 +224,19 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
     // Temp-then-rename makes a partial directory impossible, so "directory exists" is
     // once again a truthful signal that the install completed.
     if (f.unpack) {
-      const finalDir = path.join(store.byNameDir(target.kind), stripExt(f.name));
+      // Honour the manifest's installPath when given; otherwise keep the by-name layout.
+      const finalDir = opts.installPath
+        ? path.resolve(opts.dataRoot ?? path.join(store.root, '..'), opts.installPath)
+        : path.join(store.byNameDir(target.kind), stripExt(f.name));
       const tmpDir = `${finalDir}.tmp-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
       try {
         await fs.rm(tmpDir, { recursive: true, force: true });
         await unpackArchive(linked, tmpDir, f.unpack, { signal: opts.signal });
         // Replace any previous (possibly incomplete) install atomically.
         await fs.rm(finalDir, { recursive: true, force: true });
+        await fs.mkdir(path.dirname(finalDir), { recursive: true });
         await fs.rename(tmpDir, finalDir);
+        expandedTo = finalDir;
       } catch (e) {
         // Leave nothing behind: no temp dir, no stale final dir that would make a retry
         // look unnecessary, and no by-name link to the archive either — a dangling link
@@ -254,7 +274,7 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
     opts.onFileDone?.(rec);
   }
 
-  return { id: target.id, files: records, totalBytes, bytesTransferred };
+  return { id: target.id, files: records, totalBytes, bytesTransferred, installedTo: expandedTo };
 }
 
 function stripExt(name: string): string {

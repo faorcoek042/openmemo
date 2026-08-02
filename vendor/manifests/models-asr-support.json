@@ -36,7 +36,7 @@
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.onnx",
+              "url": "https://raw.githubusercontent.com/snakers4/silero-vad/bfdc0193023f121ea5b3cc7b176dbed570a68a59/src/silero_vad/data/silero_vad.onnx",
               "official": true
             }
           ]
@@ -58,7 +58,7 @@
       "source": {
         "provider": "github",
         "repo": "snakers4/silero-vad",
-        "revision": "master"
+        "revision": "bfdc0193023f121ea5b3cc7b176dbed570a68a59"
       },
       "benchmark": null,
       "catalogVersion": "2026.08.02"
@@ -96,12 +96,12 @@
           "mirrors": [
             {
               "provider": "hf",
-              "url": "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin",
+              "url": "https://huggingface.co/ggml-org/whisper-vad/resolve/9ffd54a1e1ee413ddf265af9913beaf518d1639b/ggml-silero-v6.2.0.bin",
               "official": true
             },
             {
               "provider": "hf-mirror",
-              "url": "https://hf-mirror.com/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin",
+              "url": "https://hf-mirror.com/ggml-org/whisper-vad/resolve/9ffd54a1e1ee413ddf265af9913beaf518d1639b/ggml-silero-v6.2.0.bin",
               "official": false
             }
           ]
@@ -123,7 +123,7 @@
       "source": {
         "provider": "hf",
         "repo": "ggml-org/whisper-vad",
-        "revision": "main"
+        "revision": "9ffd54a1e1ee413ddf265af9913beaf518d1639b"
       },
       "benchmark": null,
       "catalogVersion": "2026.08.02"
@@ -161,12 +161,12 @@
           "mirrors": [
             {
               "provider": "hf",
-              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/main/encoder-epoch-99-avg-1.int8.onnx",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/204ad334e2e683fd295359930cc16fc0432a23ac/encoder-epoch-99-avg-1.int8.onnx",
               "official": true
             },
             {
               "provider": "hf-mirror",
-              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/main/encoder-epoch-99-avg-1.int8.onnx",
+              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/204ad334e2e683fd295359930cc16fc0432a23ac/encoder-epoch-99-avg-1.int8.onnx",
               "official": false
             }
           ]
@@ -179,12 +179,12 @@
           "mirrors": [
             {
               "provider": "hf",
-              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/main/decoder-epoch-99-avg-1.int8.onnx",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/204ad334e2e683fd295359930cc16fc0432a23ac/decoder-epoch-99-avg-1.int8.onnx",
               "official": true
             },
             {
               "provider": "hf-mirror",
-              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/main/decoder-epoch-99-avg-1.int8.onnx",
+              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/204ad334e2e683fd295359930cc16fc0432a23ac/decoder-epoch-99-avg-1.int8.onnx",
               "official": false
             }
           ]
@@ -197,12 +197,12 @@
           "mirrors": [
             {
               "provider": "hf",
-              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/main/joiner-epoch-99-avg-1.int8.onnx",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/204ad334e2e683fd295359930cc16fc0432a23ac/joiner-epoch-99-avg-1.int8.onnx",
               "official": true
             },
             {
               "provider": "hf-mirror",
-              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/main/joiner-epoch-99-avg-1.int8.onnx",
+              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/204ad334e2e683fd295359930cc16fc0432a23ac/joiner-epoch-99-avg-1.int8.onnx",
               "official": false
             }
           ]
@@ -215,12 +215,12 @@
           "mirrors": [
             {
               "provider": "hf",
-              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/main/tokens.txt",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/204ad334e2e683fd295359930cc16fc0432a23ac/tokens.txt",
               "official": true
             },
             {
               "provider": "hf-mirror",
-              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/main/tokens.txt",
+              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/204ad334e2e683fd295359930cc16fc0432a23ac/tokens.txt",
               "official": false
             }
           ]
@@ -284,12 +284,12 @@
           "mirrors": [
             {
               "provider": "hf",
-              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/main/model.int8.onnx",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/63ddc3cd0f2810b68289a7b3876e62ef5d53d6df/model.int8.onnx",
               "official": true
             },
             {
               "provider": "hf-mirror",
-              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/main/model.int8.onnx",
+              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/63ddc3cd0f2810b68289a7b3876e62ef5d53d6df/model.int8.onnx",
               "official": false
             }
           ]
@@ -302,12 +302,12 @@
           "mirrors": [
             {
               "provider": "hf",
-              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/main/tokens.txt",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/63ddc3cd0f2810b68289a7b3876e62ef5d53d6df/tokens.txt",
               "official": true
             },
             {
               "provider": "hf-mirror",
-              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/main/tokens.txt",
+              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/63ddc3cd0f2810b68289a7b3876e62ef5d53d6df/tokens.txt",
               "official": false
             }
           ]
@@ -320,12 +320,12 @@
           "mirrors": [
             {
               "provider": "hf",
-              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/main/am.mvn",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/63ddc3cd0f2810b68289a7b3876e62ef5d53d6df/am.mvn",
               "official": true
             },
             {
               "provider": "hf-mirror",
-              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/main/am.mvn",
+              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/63ddc3cd0f2810b68289a7b3876e62ef5d53d6df/am.mvn",
               "official": false
             }
           ]
@@ -391,12 +391,12 @@
           "mirrors": [
             {
               "provider": "hf",
-              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12/resolve/main/model.onnx",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12/resolve/432aeba669265e7aeb06b9359753419683b38597/model.onnx",
               "official": true
             },
             {
               "provider": "hf-mirror",
-              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12/resolve/main/model.onnx",
+              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12/resolve/432aeba669265e7aeb06b9359753419683b38597/model.onnx",
               "official": false
             }
           ]
@@ -409,12 +409,12 @@
           "mirrors": [
             {
               "provider": "hf",
-              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12/resolve/main/tokens.json",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12/resolve/432aeba669265e7aeb06b9359753419683b38597/tokens.json",
               "official": true
             },
             {
               "provider": "hf-mirror",
-              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12/resolve/main/tokens.json",
+              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12/resolve/432aeba669265e7aeb06b9359753419683b38597/tokens.json",
               "official": false
             }
           ]

@@ -23,6 +23,7 @@ import type { ComponentStatus, GetComponentsResponse, Provenance, UpstreamSource
 import { checkAllUpstreams } from './upstream.js';
 import { isUpdateAvailable } from './upstream.js';
 import type { ArtifactStore } from './store.js';
+import { STORE_KINDS } from './store.js';
 
 export interface ComponentRecord {
   id: string;
@@ -61,7 +62,7 @@ export async function loadComponentRegistry(manifestPath: string): Promise<Compo
  */
 async function readInstalledVersions(store: ArtifactStore): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  for (const kind of ['asr', 'llm', 'backend'] as const) {
+  for (const kind of STORE_KINDS) {
     const records = await store.listManifests<{ id?: string; version?: string; catalogVersion?: string }>(kind);
     for (const r of records) {
       if (r.id) out.set(r.id, r.version ?? r.catalogVersion ?? 'installed');
@@ -73,7 +74,7 @@ async function readInstalledVersions(store: ArtifactStore): Promise<Map<string, 
 /** Previous version kept on disk for rollback, if the installer retained one. */
 async function readRollbackVersions(store: ArtifactStore): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  for (const kind of ['asr', 'llm', 'backend'] as const) {
+  for (const kind of STORE_KINDS) {
     const dir = store.byNameDir(kind);
     let entries: string[];
     try {

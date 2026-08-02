@@ -37,7 +37,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(here, '..', 'dist');
 
 const { downloadFile } = await import(path.join(dist, 'download.js'));
-const { ArtifactStore } = await import(path.join(dist, 'store.js'));
+const { ArtifactStore, findInstalledByRole } = await import(path.join(dist, 'store.js'));
 const { DownloadQueue } = await import(path.join(dist, 'queue.js'));
 const { install } = await import(path.join(dist, 'installer.js'));
 
@@ -418,6 +418,108 @@ console.log('\n[9] 安装失败不得留下半个解压目录');
     partial.length === 0,
     partial.length ? `残留: ${partial.join(', ')}` : 'by-name/backend 干净',
   );
+}
+
+/* --- 10. role 与目录必须解耦（VAD 不得被当成 ASR）------------------------------ */
+/*
+ * Regression guard for a silent, high-consequence bug: a VAD model whose record was
+ * filed under manifests/asr/ was returned as the active ASR model, so whisper would have
+ * transcribed using a voice-activity net — and every health check stayed green, because
+ * the check only asked "is there a file under by-name/asr".
+ *
+ * The fix is that `role` lives IN the record and lookups filter on it. These cases pin
+ * that behaviour, including the deliberately hostile "misfiled record" case.
+ */
+console.log('\n[10] role 与目录解耦：VAD 不得被当成 ASR');
+{
+  const store = new ArtifactStore(path.join(root, 'store-roles'));
+  await store.init();
+
+  // 正常安装：各自进各自的桶
+  await store.writeManifest('asr', 'asr/whisper-tiny', {
+    id: 'asr/whisper-tiny', role: 'asr', integrity: 'ok',
+    files: [{ role: 'weights', name: 'ggml-tiny.bin', sha256: 'a'.repeat(64) }],
+  });
+  await store.writeManifest('vad', 'vad/silero-vad-ggml', {
+    id: 'vad/silero-vad-ggml', role: 'vad', integrity: 'ok',
+    files: [{ role: 'weights', name: 'ggml-silero.bin', sha256: 'b'.repeat(64) }],
+  });
+
+  const asr = await findInstalledByRole(store, 'asr');
+  const vad = await findInstalledByRole(store, 'vad');
+  check('ASR 查询只返回 ASR', asr.length === 1 && asr[0].id === 'asr/whisper-tiny', asr.map((r) => r.id).join(','));
+  check('VAD 查询只返回 VAD', vad.length === 1 && vad[0].id === 'vad/silero-vad-ggml', vad.map((r) => r.id).join(','));
+  check('VAD 没有混进 ASR 结果', !asr.some((r) => String(r.id).startsWith('vad/')));
+
+  // ★ 恶意/历史情况：VAD 记录被错误地写进了 manifests/asr/ 目录
+  await store.writeManifest('asr', 'vad/misfiled', {
+    id: 'vad/misfiled', role: 'vad', integrity: 'ok',
+    files: [{ role: 'weights', name: 'ggml-silero.bin', sha256: 'c'.repeat(64) }],
+  });
+  const asr2 = await findInstalledByRole(store, 'asr');
+  check(
+    '错放进 asr/ 目录的 VAD 记录仍不被当成 ASR',
+    !asr2.some((r) => r.role === 'vad'),
+    'asr 结果: ' + asr2.map((r) => `${r.id}(${r.role})`).join(', '),
+  );
+  const vad2 = await findInstalledByRole(store, 'vad');
+  check('且它仍能被 VAD 查询找到', vad2.some((r) => r.id === 'vad/misfiled'), vad2.map((r) => r.id).join(','));
+
+  // 没有 role 字段 → 不猜，直接不算候选
+  await store.writeManifest('asr', 'legacy/no-role', {
+    id: 'legacy/no-role', integrity: 'ok',
+    files: [{ role: 'weights', name: 'x.bin', sha256: 'd'.repeat(64) }],
+  });
+  const asr3 = await findInstalledByRole(store, 'asr');
+  check('缺 role 的旧记录不被猜成 ASR', !asr3.some((r) => r.id === 'legacy/no-role'),
+    '（宁可显示"未安装"，也不要拿一个类型不明的权重去推理）');
+
+  // 校验失败的记录不得被选用
+  await store.writeManifest('asr', 'asr/corrupt', {
+    id: 'asr/corrupt', role: 'asr', integrity: 'corrupt',
+    files: [{ role: 'weights', name: 'y.bin', sha256: 'e'.repeat(64) }],
+  });
+  const asr4 = await findInstalledByRole(store, 'asr');
+  check('integrity!=ok 的记录被排除', !asr4.some((r) => r.id === 'asr/corrupt'));
+}
+
+/* --- 11. installPath 必须被实现，不能只写在 manifest 里 ------------------------ */
+console.log('\n[11] installPath 生效（扩展装到 bin/ext 而不是 by-name）');
+{
+  const dataRoot = path.join(root, 'dataroot');
+  const store = new ArtifactStore(path.join(dataRoot, 'models'));
+  await store.init();
+  // a real tar.gz built on the fly
+  const { execFileSync } = await import('node:child_process');
+  const srcDir = path.join(root, 'ext-src');
+  await fs.mkdir(srcDir, { recursive: true });
+  await fs.writeFile(path.join(srcDir, 'libsimple.so'), Buffer.alloc(2048, 9));
+  const arc = path.join(root, 'ext.tar.gz');
+  execFileSync('tar', ['-czf', arc, '-C', srcDir, 'libsimple.so'], { stdio: 'ignore' });
+  const bytes = await fs.readFile(arc);
+  const arcSha = sha256(bytes);
+
+  server.removeAllListeners('request');
+  server.on('request', (req, res) => {
+    res.writeHead(200, { 'content-length': String(bytes.length), 'accept-ranges': 'bytes' });
+    res.end(bytes);
+  });
+
+  const res = await install({
+    store,
+    dataRoot,
+    installPath: 'bin/ext',
+    target: {
+      id: 'sqlite-ext', kind: 'backend', displayName: 'ext',
+      files: [{ role: 'archive', name: 'ext.tar.gz', sizeBytes: bytes.length, sha256: arcSha,
+                unpack: 'tar.gz', mirrors: [{ provider: 'local', url: `${base}/ext.tar.gz`, official: true }] }],
+    },
+    maxParts: 1,
+  });
+  const landed = path.join(dataRoot, 'bin', 'ext', 'libsimple.so');
+  const ok = await fs.stat(landed).then(() => true).catch(() => false);
+  check('解压到 manifest 指定的 installPath', ok, res.installedTo ?? '(未记录)');
+  check('installedTo 如实回报落点', res.installedTo === path.join(dataRoot, 'bin', 'ext'), res.installedTo ?? '');
 }
 
 /* -------------------------------- summary --------------------------------- */

@@ -23,7 +23,34 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { blobFileName, normalizeDigest } from './verify.js';
 
-export type StoreKind = 'asr' | 'llm' | 'backend';
+/**
+ * Physical storage bucket.
+ *
+ * ⚠️ A bucket is NOT a role, and must never be treated as one.
+ *
+ * These were previously collapsed into three values (asr|llm|backend), so a VAD model —
+ * whose role is `vad` — had nowhere to go and was filed under `asr`. `resolveActiveModel`
+ * then read the directory NAME as the role and handed a VAD net to whisper as if it were
+ * a transcription model, while every health check stayed green because a file did exist
+ * in `by-name/asr`.
+ *
+ * Two independent corrections, deliberately both:
+ *   1. one bucket per role, so a correctly-installed model lands in the right place;
+ *   2. `role` written INTO the record, so a misfiled record is still self-describing.
+ * (1) alone would be a rename; (2) is what makes the mistake unrepresentable, because
+ * consumers can stop inferring type from a path.
+ */
+export const STORE_KINDS = [
+  'asr',
+  'llm',
+  'vad',
+  'punctuation',
+  'diarization',
+  'embedding',
+  'tts',
+  'backend',
+] as const;
+export type StoreKind = (typeof STORE_KINDS)[number];
 
 /**
  * Default models root per platform.
@@ -98,7 +125,7 @@ export class ArtifactStore {
 
   async init(): Promise<void> {
     await fs.mkdir(this.blobDir, { recursive: true });
-    for (const k of ['asr', 'llm', 'backend'] as StoreKind[]) {
+    for (const k of STORE_KINDS) {
       await fs.mkdir(this.manifestDir(k), { recursive: true });
       await fs.mkdir(this.byNameDir(k), { recursive: true });
     }
@@ -188,7 +215,7 @@ export class ArtifactStore {
    */
   async referencedDigests(): Promise<Set<string>> {
     const refs = new Set<string>();
-    for (const kind of ['asr', 'llm', 'backend'] as StoreKind[]) {
+    for (const kind of STORE_KINDS) {
       const manifests = await this.listManifests<{ files?: { sha256?: string }[] }>(kind);
       for (const m of manifests) {
         for (const f of m.files ?? []) {
@@ -326,6 +353,51 @@ export function toPortableRecord(
   }
   // Always store POSIX separators so a record written on Windows resolves on Linux.
   return { root: 'models', relPath: rel.split(path.sep).join('/') };
+}
+
+/** An install record, as written by whoever completed the install. */
+export interface InstallRecordLike {
+  id?: string;
+  /** Authoritative type. Never infer this from the containing directory. */
+  role?: string;
+  integrity?: string;
+  files?: { role?: string; name?: string; sha256?: string; root?: string; relPath?: string; path?: string }[];
+}
+
+/**
+ * Find installed entries for a role, judged by the record's own `role` field.
+ *
+ * Scans EVERY bucket rather than just `manifests/<role>/`, then filters on `role`. That
+ * ordering is the whole point: a record misfiled into the wrong directory is still
+ * classified correctly, and — more importantly — a VAD model sitting in `manifests/asr/`
+ * can no longer be handed out as an ASR model.
+ *
+ * Records without a `role` are SKIPPED, not guessed from their location. Guessing is what
+ * produced a green health check while whisper was pointed at a VAD net; refusing to guess
+ * turns that silent mistype into a visible "not installed", which is the failure we want.
+ */
+export async function findInstalledByRole(
+  store: ArtifactStore,
+  role: string,
+  opts: { requireIntegrityOk?: boolean } = {},
+): Promise<InstallRecordLike[]> {
+  const requireOk = opts.requireIntegrityOk ?? true;
+  const out: InstallRecordLike[] = [];
+  for (const kind of STORE_KINDS) {
+    for (const rec of await store.listManifests<InstallRecordLike>(kind)) {
+      if (!rec || typeof rec !== 'object') continue;
+      if (rec.role == null) continue; // no role → unknown type → not a candidate
+      if (rec.role !== role) continue;
+      if (requireOk && rec.integrity !== 'ok') continue;
+      out.push(rec);
+    }
+  }
+  return out;
+}
+
+/** Bucket a role should be stored in. Identity for known roles; unknown roles go to their own name. */
+export function bucketForRole(role: string): StoreKind {
+  return (STORE_KINDS as readonly string[]).includes(role) ? (role as StoreKind) : 'backend';
 }
 
 /** Keep ids filesystem-safe; ids contain "/" to namespace by role. */

@@ -38,7 +38,7 @@
           "mirrors": [
             {
               "provider": "hf",
-              "url": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf",
+              "url": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/bc640142c66e1fdd12af0bd68f40445458f3869b/Qwen3-4B-Q4_K_M.gguf",
               "official": true
             },
             {
@@ -48,7 +48,7 @@
             },
             {
               "provider": "hf-mirror",
-              "url": "https://hf-mirror.com/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf",
+              "url": "https://hf-mirror.com/Qwen/Qwen3-4B-GGUF/resolve/bc640142c66e1fdd12af0bd68f40445458f3869b/Qwen3-4B-Q4_K_M.gguf",
               "official": false
             }
           ]
@@ -122,7 +122,7 @@
           "mirrors": [
             {
               "provider": "hf",
-              "url": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q5_K_M.gguf",
+              "url": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/bc640142c66e1fdd12af0bd68f40445458f3869b/Qwen3-4B-Q5_K_M.gguf",
               "official": true
             },
             {
@@ -132,7 +132,7 @@
             },
             {
               "provider": "hf-mirror",
-              "url": "https://hf-mirror.com/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q5_K_M.gguf",
+              "url": "https://hf-mirror.com/Qwen/Qwen3-4B-GGUF/resolve/bc640142c66e1fdd12af0bd68f40445458f3869b/Qwen3-4B-Q5_K_M.gguf",
               "official": false
             }
           ]
@@ -207,7 +207,7 @@
           "mirrors": [
             {
               "provider": "hf",
-              "url": "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
+              "url": "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/7c41481f57cb95916b40956ab2f0b139b296d974/Qwen3-8B-Q4_K_M.gguf",
               "official": true
             },
             {
@@ -217,7 +217,7 @@
             },
             {
               "provider": "hf-mirror",
-              "url": "https://hf-mirror.com/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
+              "url": "https://hf-mirror.com/Qwen/Qwen3-8B-GGUF/resolve/7c41481f57cb95916b40956ab2f0b139b296d974/Qwen3-8B-Q4_K_M.gguf",
               "official": false
             }
           ]
@@ -292,7 +292,7 @@
           "mirrors": [
             {
               "provider": "hf",
-              "url": "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf",
+              "url": "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/90862c4b9d2787eaed51d12237eafdfe7c5f6077/Qwen3-1.7B-Q8_0.gguf",
               "official": true
             },
             {
@@ -302,7 +302,7 @@
             },
             {
               "provider": "hf-mirror",
-              "url": "https://hf-mirror.com/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf",
+              "url": "https://hf-mirror.com/Qwen/Qwen3-1.7B-GGUF/resolve/90862c4b9d2787eaed51d12237eafdfe7c5f6077/Qwen3-1.7B-Q8_0.gguf",
               "official": false
             }
           ]
@@ -376,7 +376,7 @@
           "mirrors": [
             {
               "provider": "hf",
-              "url": "https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q4_K_M.gguf",
+              "url": "https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/d0976223747697cb51e056d85c532013931fe52e/gemma-3-4b-it-Q4_K_M.gguf",
               "official": true
             },
             {

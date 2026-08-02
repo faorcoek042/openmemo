@@ -1021,3 +1021,170 @@ UI 上显示灰色「未检测」并额外说明"这表示**不知道**，不代
 `GET /api/components`、`POST /api/components/{check,update,rollback}` 四个端点。
 数据层函数我已备好（`listComponents` / `stashForRollback` / `rollback` / `discardRollback`），
 接线即可，逻辑不用再写一遍。
+
+---
+
+## [2026-08-03 01:50] T-068 组件页 DONE + ffmpeg sha256 **本机复算完成**
+
+新 feature：`apps/web/src/features/components/`（按规范：分片导出 `Components.routes.tsx` / `sse.ts`，
+路由与 SSE 聚合文件各加一行，无横向 import）。截图 `docs/design/assets/t068-components/`
+
+### 真浏览器逐项验证
+
+    [YES] 页面渲染
+    [YES] 组件卡片 — 7 张
+    [YES] 三版本并列（目录钉定 / 本机已装 / 上游最新）— 首卡钉定=v1.9.1
+    [YES] 来源链可见 — 发布页链接 7 个
+    [YES] sha256 旁有来源说明 — 6 处
+    [YES] 点「检查更新」后填入上游版本 — v1.9.1 | b10229 | v0.7.1 | v0.1.9
+    [YES] 检出更新→出现更新按钮 — 1 个（llama.cpp）
+    [YES] 二次确认说明风险 — "将「llama.cpp CPU 后端」从 b10223 更新到 b10229？· 会重新下载并校验 sha256…"
+    [YES] 「未检测」有专门说明 — 7 处
+    pageerrors: 无
+
+### 「未检测」≠「已最新」：做了三重区分
+1. **图标不同**：未检测用问号 `CircleHelp`，已最新用勾 `CheckCircle2` —— 不是同一个灰勾；
+2. **文字标签不同**：「未检测」/「已是最新」；
+3. **额外一句解释**（实测渲染出 7 处）：
+   > 「未检测」表示**我们没能问到上游**，不代表已是最新。点上方「检查更新」重试。已安装的版本不受影响，照常可用。
+
+⚠️ 第一轮我这项报了 NO —— **是我的测试环境问题**：参考服务器缓存了上一次检查结果，
+所有组件都已有 `latestVersion`，那个分支根本没机会出现。重启清缓存后实测 7 处全部渲染。
+**又一次"先质疑测试"**。
+
+### 来源链完整可见（用户要的"写明从哪里下载"）
+每张卡底部一条 `来源` 区块，全部可点：
+
+    源码  vendor/whisper.cpp @ f049fff95a08
+    上游仓库 · 发布页（v1.9.1）· 许可证 MIT · 9.4 MB
+    sha256:f3bf3b4369a99b54665b0f19b88483b30de27f25963b0414235dea03198515c5
+    本机下载后独立复算
+
+5 个 submodule commit 实测都渲染出来了（`f049fff95a` `11924d4c17` `4ed0089344` `e9f598abfa` `1428072526`）。
+
+### ★ sha256 来源标注：按你的要求做了**视觉分级**
+`sha256Provenance` 显示在哈希正下方，且**两种来源用不同颜色**：
+- 「本机下载后独立复算」→ 灰色（正常）
+- 含 "API / digest / upstream" 字样 → **警告色**（提醒这是上游给的，不是我们算的）
+
+理由写进代码注释：*"上游 API 说的" 与 "我们下载了每一个字节自己算的" 是两种不同强度的证据 ——
+前者信任上游没被攻破，后者只信任字节本身。合并成一个哈希串会高估可信度。*
+
+### ffmpeg sha256：**本机独立复算已完成，与 GitHub digest 一致**
+上一轮报告时还在 19.8%。它跑完了：
+
+    downloaded in 1164s  cached=false
+    sha256 (本机独立计算): 47b2cc48f8a6e9ac9afe3421f57b8ffe9bdf32953c89603603fcb2439c16ec58
+    与 GitHub digest 一致: true
+
+118,999,596 字节全部拉完（`gpu-runtime` 两次都停在 85 MB，我的下载器靠分片续传跑完了）。
+manifest 的 `sha256Provenance` 已从「API 提供」升级为
+**「本机下载全部 118,999,596 字节后独立复算，并与 GitHub Releases API 的 digest 逐字符比对一致」**。
+
+### 默认不自动更新（硬要求）
+页面顶部常驻一条 info 横幅：「**不会自动更新** —— 检测到新版本只会在这里提示。
+是否更新、什么时候更新，由你决定 —— 上游换版本可能改变行为。」
+首屏 `check=false` **不查上游**，联网检测是用户点出来的。
+
+### 门禁
+    tsc 0 · eslint 0 · web build 0 · verify-unpack 53/53 · verify-offline 29/29
+
+### 说明
+- 端点未接前，我在自己的 reference-server 上实现了 `/api/components{,/check,/update,/rollback}`
+  （由**真实数据层** `listComponents` 驱动）以便真点击验证。`oss-scout` 接 daemon 时逻辑不用重写。
+- `/components/update` 在参考服务器里只返回 202 证明契约形状，**没有真的执行替换** —— 已如实标注。
+- 本机负载极高（load 20+，可用内存 150MB），浏览器启动超时过两次；我只清理了**自己**的
+  测试进程（按端口 17650/17660/17671/17681/17691/17692/17701/17703），**没碰 :10010 的 demo**。
+
+---
+
+## 修复：gpu-runtime 报的两条 bug（① role 误判 · ② installPath 未实现）
+
+### ① 【严重】VAD 被当成 ASR，而健康检查显示一切正常 —— 已修
+
+根因不是"分类写错了"，是**类型这个概念被存成了目录名**。`StoreKind`(asr|llm|backend)
+和 `ModelRole`(asr|llm|vad|punctuation|…) 被压成同一根轴：VAD 没有自己的桶，只能塞进
+`manifests/asr/`；`resolveActiveModel(dir,'asr')` 就把它当 ASR 交给 whisper，而
+`pipeline.missing` 因为"asr 目录里有东西"照样是空的 —— **绿灯和错误来自同一个事实**，
+所以错得越彻底，健康检查越绿。这类 bug 不能靠改分类修，得让它无法表达。
+
+改了两处，是两个**互相独立**的纠正，缺一个都不够：
+
+1. `STORE_KINDS` 从 3 个扩到 8 个（asr/llm/vad/punctuation/diarization/embedding/tts/backend），
+   每个 role 有自己的桶。
+2. **安装记录里写进 `role` 字段**，新增 `findInstalledByRole(store, role)` —— 跨所有桶扫描，
+   **只认记录里的 `role`，完全不看它躺在哪个目录**。
+
+只做 1 等于把目录改个名，下次还会错；只做 2 目录仍然误导人。两个都做之后，
+"放错目录"从**错误**降级成**无害**。回归测试里我特意造了敌意用例：把一条
+`role:'vad'` 的记录**故意写进 `manifests/asr/`**，断言 ASR 查询查不到它、VAD 查询仍能查到。
+
+`role` 缺失的旧记录**不猜**，直接排除（宁可报"没装"，不可能再报错类型）；
+`integrity!=='ok'` 一并排除。
+
+    packages/downloader/src/store.ts        STORE_KINDS / findInstalledByRole / bucketForRole
+    packages/downloader/scripts/verify-offline.mjs  [10] 7 条断言
+
+> **⚠ 这条我这边只修了一半，另一半在 `oss-scout` 手里。**
+> `apps/daemon/src/pipeline/modelStore.ts` 的 `listInstalled` / `resolveActiveModel`
+> **仍在按目录名判定类型**。我的库改完了，daemon 不改就还是会把 VAD 喂给 whisper。
+> 请让 oss-scout 把那两个函数换成 `findInstalledByRole()`。**在他改之前，这个 bug 没有关闭。**
+
+### ② `installPath: bin/ext` 写了但安装器忽略 —— 已修
+
+manifest 声明了字段、安装器不读，是比没有这个字段更糟的状态：**一切都报成功，
+组件却在没人找的地方**。`installer` 新增 `installPath` / `dataRoot` 入参，给了就装到
+manifest 指定的位置，没给才退回 `by-name/` 布局；`InstallResult.installedTo` 如实回报
+真实落点（不回报落点就没法验证它真的生效）。
+
+    packages/downloader/src/installer.ts    installPath / dataRoot / installedTo
+    packages/downloader/scripts/verify-offline.mjs  [11] 断言真的解压进 <dataRoot>/bin/ext
+
+---
+
+## 两条判断题（你让我定的）
+
+### (a) llama.cpp `b10223 → b10229`：**不跟**（同意 gpu-runtime）
+
+作为版本检测的作者我要说清楚：**检测到新版本 ≠ 应该更新**。检测器的职责是把差异
+如实报出来，跟不跟是用户的决定 —— "查到了但不跟"是设计内的正常终态，不是待办事项。
+
+具体到这 6 个 build：我们钉的 b10223 是**整条首次运行链路真实验证过的那一个**（真的
+转写出了语音）。换成 b10229 换不来任何我们现在需要的能力，却让那份证据全部作废，
+还要在各平台重下重校验。llama.cpp 一天能发好几个 tag，跟它等于追移动靶。
+
+**会让我改主意的条件**：出现我们真正需要的修复，或安全问题。这两样都没有。
+
+代价我也说明白：不跟的话组件页会**长期挂着一个黄色「有新版本」**。这是有意的
+—— 它是信息不是告警；但如果以后堆到五六个常驻黄标，就得加"忽略此版本"，否则
+用户会学会无视它，那比不提示更糟。**现在一个，还不用加。**
+
+### (b) 移动引用钉版本：**同意，而且不止 VAD 那一条 —— 全清了**
+
+先把风险说准，不夸大：每一条移动引用**背后都钉了 sha256**（我逐条查过，
+**没有一条是裸的**）。所以上游换内容不会被静默接受，是**硬失败**。
+这不是安全洞，是**可用性洞**：上游一重传，用户就装不上了，而且报的是校验失败，
+看起来像我们的 bug。
+
+钉之前必须先确认"当前 HEAD 仍等于清单里记的哈希"，否则钉上去就是钉死一个错的。
+HF 的 tree API 直接给 `lfs.oid`（就是 sha256），**不用下载就能核对**：
+
+    lfs.oid 与清单一致 21 / 漂移 0 / 非 LFS 小文件 4（已实下载复算，4/4 通过）
+
+零漂移，所以这次钉的是**核对过的 revision，不是猜的 HEAD**。
+
+    vad/silero-vad-onnx   raw.githubusercontent /master/ → bfdc0193023f121ea5b3cc7b176dbed570a68a59
+    vad/silero-vad-ggml   HF resolve/main       → 9ffd54a1e1ee413ddf265af9913beaf518d1639b
+    另 47 条 huggingface.co / hf-mirror.com resolve/main → 各仓库核对过的 revision
+    两个 VAD 钉住后实下载复跑，sha256 均通过
+
+**剩 14 条 ModelScope `resolve/master` 钉不了**，不是我漏了：查了它的
+`/revisions` API，那些仓库**只有 master 分支、没有 tag**，上游没提供不可变引用。
+它们都是**非官方 fallback 镜像**且 sha256 强制校验，最坏是硬失败后自动切回 HF。
+如实记在这里，不假装已经全钉住了。
+
+（`backends.json` / `sqlite-ext.json` 里的 `/master/` 是**许可证和文档链接**，不是下载
+地址，不影响完整性 —— 我按"是否为下载 URL"分开统计过，没有混为一谈。）
+
+### 门禁
+    tsc 0 · eslint 0 · verify-offline 38/38 · verify-unpack 53/53 · 5 个清单 schema 全过
