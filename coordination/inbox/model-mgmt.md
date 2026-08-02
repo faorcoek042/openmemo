@@ -713,3 +713,56 @@ zod 也加了 `relPath` 不得以 `/`、盘符开头、不得含 `..` 的校验�
 我不单方面改 `paths.ts`。
 
 门禁：`tsc 0 · eslint 0 · verify-offline 29/29`
+
+---
+
+## [2026-08-02 22:10] T-057 复验 DONE
+
+隔离环境：daemon `:17671`（dataDir `/tmp/om57`）+ shim `:17681`，`setsid`，只记录/操作自己的 pid。
+截图 `docs/design/assets/t057-e2e/`
+
+### 逐项
+
+| # | 项 | 结果 | 证据 |
+|---|---|---|---|
+| 1 | **星标点击** | **YES** | `PUT /api/notes/:uid/star → 200 {"starred":true}`，回读 `starred = True` |
+| 2 | **标签新增（两步法）** | **YES** | `POST /api/tags → 201` → `POST /:uid/tags → 200`，回读 `["T053直连标签","T057C标签"]` |
+| 3 | **段落编辑** | **YES** | `PATCH /api/notes/:uid/segments/0`，文字已写回 transcript |
+| 4 | 导图渲染 / 拖拽右键撤销 | NO（**非崩溃**） | 页面不再崩了，但 `container=0 nodes=0` —— 该笔记**还没生成过导图**（F4 未跑），不是渲染缺陷 |
+| 5 | 导图 SVG/PNG 导出 | NO | 没有导图 → 页面上没有导出入口 |
+| 6 | 引导走完 | YES | 推进 4 步 |
+| 7 | capture 链接输入框 | YES | `[data-testid="capture-url-input"]` 一次命中 |
+| 8 | **真转一段** | **NO** | 见下 |
+
+**三处 mutation 全部真落库 —— `architect` 的修复是有效的。**
+
+### ⚠️ 我自己两次误报，都是同一个病
+1 和 2 我**第一轮都报了 NO**，复核后是 **YES**：
+- 星标：请求确实发了（200），是我回读时机不对；
+- 标签：我用 `input:visible` 取第一个，而**第一个是顶栏全局搜索框** ——
+  **正是你提醒 capture 时说的那个歧义，我在标签上又踩了一次**。
+  打印出来才看清：`[{ph:"搜索 ⌘K",tid:"global-search-input"},{ph:"标签名"},{type:"checkbox"}]`。
+
+教训我记下了：**测 UI 时先把候选元素打印出来再断言，不要靠"第一个可见的"**。
+这一轮我报的 NO 里已经全部按这个复核过一遍。
+
+### 🔴 第 8 项：完整首次体验仍差最后一步 —— 又是一个 404
+
+    POST /api/notes/probe → 404 {"code":"NOT_FOUND","message":"no route for POST /api/notes/probe"}
+    页面："发生了未知错误 接口不存在"
+
+daemon 侧全仓库只有 `/api/models/sources/probe`（我的），**没有导入用的 probe 端点**。
+前端 `features/notes/api.ts:40` 的注释自己就写着「daemon 目前没有独立的 probe 端点」，
+但第 48 行仍然调用 `api<ProbeResult>('import', '/notes/probe', …)`。
+
+→ **这正是 `architect` 刚定位的那类 bug 的又一个实例**：一条 404 打在 `import` 面上。
+按他的修法②「写操作永不静默回落 mock」，这里会正确地报错而不是假装成功 —— 行为是对的，
+**但导入链路就此中断，note 根本没被创建**，所以「引导走完 → 真转一段」**这一轮仍未跑成**。
+
+需要：daemon 补 `POST /api/notes/probe`（或前端改调已有端点）。补上后我可以立刻复测第 8 项。
+
+### 顺带
+`store.ts` 的 `LOCALAPPDATA → APPDATA` 已在上一轮做完并验证（与 `resolveStoreRoot` 逐项 MATCH），
+含 `--data-dir` / `OPENMEMO_DATA_DIR` 优先级链。⚠️ 仍标注 **未在真 Windows 验证**。
+
+门禁：`tsc 0 · eslint 0 · verify-offline 29/29 · verify-unpack 42/42 · 5 份 manifest VALID`

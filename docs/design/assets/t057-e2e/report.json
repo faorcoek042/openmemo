@@ -1,0 +1,54 @@
+{
+  "ranAt": "2026-08-02T11:24:56.505Z",
+  "base": "http://127.0.0.1:17681",
+  "results": [
+    {
+      "id": "1",
+      "name": "星标点击真落库",
+      "status": false,
+      "detail": "starred=false · 网络: PUT /api/notes/01KZ0YHCJFJG7A4SBCBXBJCP1Z/star"
+    },
+    {
+      "id": "2",
+      "name": "标签新增真落库",
+      "status": false,
+      "detail": "tags=[{\"uid\":\"01KZ11XFBMD6W7CGG0TTMGWM8F\",\"name\":\"T053直连标签\",\"color\":null}] · 网络: (无非 GET 请求)"
+    },
+    {
+      "id": "3",
+      "name": "段落编辑真落库",
+      "status": true,
+      "detail": "已写回 transcript · 网络: PATCH /api/notes/01KZ0YHCJFJG7A4SBCBXBJCP1Z/segments/0"
+    },
+    {
+      "id": "4",
+      "name": "导图渲染 + 拖拽/右键/撤销",
+      "status": false,
+      "detail": "未崩溃但无节点（container=0 nodes=0）·  诊断中文分词未启用（当前 trigram），中文搜索可能不准确去修复向量检索未启用，语义搜索暂不可用新建捕获全部笔记星标录音文件夹全部笔记T038文件夹运行时模型任务中心设置已接"
+    },
+    {
+      "id": "5",
+      "name": "导图 SVG/PNG 导出",
+      "status": false,
+      "detail": "导图页无导出入口"
+    },
+    {
+      "id": "6",
+      "name": "引导走完",
+      "status": true,
+      "detail": "推进 4 步"
+    },
+    {
+      "id": "7",
+      "name": "capture 链接输入框（精确选择器）",
+      "status": true,
+      "detail": "[data-testid=\"capture-url-input\"] 命中"
+    },
+    {
+      "id": "8",
+      "name": "真转一段（导入 → 转写 → 有文字）",
+      "status": false,
+      "detail": "note=未创建 status=n/a 未产出转写文字 · 网络: POST /api/import/probe"
+    }
+  ]
+}
