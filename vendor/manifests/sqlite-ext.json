@@ -42,7 +42,7 @@
       "providesFiles": [
         "libsimple.dylib"
       ],
-      "installPath": "bin/ext",
+      "linkInto": "bin/ext",
       "priority": 100,
       "availability": "published",
       "benchmark": null,
@@ -87,7 +87,7 @@
       "providesFiles": [
         "libsimple.dylib"
       ],
-      "installPath": "bin/ext",
+      "linkInto": "bin/ext",
       "priority": 100,
       "availability": "published",
       "benchmark": null,
@@ -132,7 +132,7 @@
       "providesFiles": [
         "libsimple.so"
       ],
-      "installPath": "bin/ext",
+      "linkInto": "bin/ext",
       "priority": 100,
       "availability": "published",
       "benchmark": null,
@@ -177,7 +177,7 @@
       "providesFiles": [
         "libsimple.so"
       ],
-      "installPath": "bin/ext",
+      "linkInto": "bin/ext",
       "priority": 100,
       "availability": "published",
       "benchmark": null,
@@ -222,7 +222,7 @@
       "providesFiles": [
         "libsimple.dll"
       ],
-      "installPath": "bin/ext",
+      "linkInto": "bin/ext",
       "priority": 100,
       "availability": "published",
       "benchmark": null,
@@ -267,7 +267,7 @@
       "providesFiles": [
         "libsimple.dll"
       ],
-      "installPath": "bin/ext",
+      "linkInto": "bin/ext",
       "priority": 100,
       "availability": "published",
       "benchmark": null,
@@ -312,7 +312,7 @@
       "providesFiles": [
         "vec0.dylib"
       ],
-      "installPath": "bin/ext",
+      "linkInto": "bin/ext",
       "priority": 90,
       "availability": "published",
       "benchmark": null,
@@ -357,7 +357,7 @@
       "providesFiles": [
         "vec0.dylib"
       ],
-      "installPath": "bin/ext",
+      "linkInto": "bin/ext",
       "priority": 90,
       "availability": "published",
       "benchmark": null,
@@ -402,7 +402,7 @@
       "providesFiles": [
         "vec0.so"
       ],
-      "installPath": "bin/ext",
+      "linkInto": "bin/ext",
       "priority": 90,
       "availability": "published",
       "benchmark": null,
@@ -447,7 +447,7 @@
       "providesFiles": [
         "vec0.so"
       ],
-      "installPath": "bin/ext",
+      "linkInto": "bin/ext",
       "priority": 90,
       "availability": "published",
       "benchmark": null,
@@ -492,7 +492,7 @@
       "providesFiles": [
         "vec0.dll"
       ],
-      "installPath": "bin/ext",
+      "linkInto": "bin/ext",
       "priority": 90,
       "availability": "published",
       "benchmark": null,

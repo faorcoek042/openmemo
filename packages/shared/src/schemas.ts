@@ -323,7 +323,9 @@ export const BackendPackSchema = z
       .nullable(),
     license: LicenseInfoSchema,
     providesFiles: z.array(z.string()).min(1),
-    installPath: z.string().min(1),
+    // Optional: only sqlite-ext packs are linked into a shared directory. See
+    // BackendPack.linkInto for why backend packs must NOT declare one.
+    linkInto: z.string().min(1).optional(),
     priority: z.number().int(),
     availability: z.enum(['published', 'pending-ci']).default('published'),
     benchmark: z.null(),

@@ -483,7 +483,30 @@ console.log('\n[10] role 与目录解耦：VAD 不得被当成 ASR');
   check('integrity!=ok 的记录被排除', !asr4.some((r) => r.id === 'asr/corrupt'));
 }
 
-/* --- 11. installPath 必须被实现，不能只写在 manifest 里 ------------------------ */
+/* --- 11. unpackInto 必须被实现，不能只写在选项里 ------------------------ */
+console.log('\n[13] linkInto 只属于 sqlite-ext，后端包不许有');
+{
+  // 把 T-097 的结论钉住：一个名字曾经同时表示"引擎运行时布局"和"链接目标"，
+  // 而两者语义冲突时，执行它比忽略它更糟（后端包会被搬出 by-name/，ffmpeg 当场找不到；
+  // sqlite-ext 共用 bin/ext，解压式安装会把上一个扩展整个删掉）。
+  const read = async (f) =>
+    JSON.parse(await fs.readFile(new URL('../../../vendor/manifests/' + f, import.meta.url), 'utf8'));
+  const be = await read('backends.json');
+  const ext = await read('sqlite-ext.json');
+  const stale = [...be.packs, ...ext.packs].filter((p) => 'installPath' in p);
+  check('两份清单里都没有 installPath 残留', stale.length === 0, stale.map((p) => p.id).join(',') || '无');
+  check(
+    '后端包一律不带 linkInto（否则会被搬出 by-name/，工具发现失效）',
+    be.packs.every((p) => p.linkInto === undefined),
+    be.packs.filter((p) => p.linkInto).map((p) => p.id).join(',') || '无',
+  );
+  check(
+    'sqlite-ext 每个包都带 linkInto=bin/ext',
+    ext.packs.length > 0 && ext.packs.every((p) => p.linkInto === 'bin/ext'),
+    `${ext.packs.filter((p) => p.linkInto === 'bin/ext').length}/${ext.packs.length}`,
+  );
+}
+
 console.log('\n[12] 后端包里的可执行文件必须能被找到（含 bin/ 子目录）');
 {
   // 回归守卫：ffmpeg 曾经"装成功了也用不了" —— BtbN 的包把二进制放在 <top>/bin/ 下，
@@ -508,7 +531,7 @@ console.log('\n[12] 后端包里的可执行文件必须能被找到（含 bin/ 
   await fs.rm(root, { recursive: true, force: true });
 }
 
-console.log('\n[11] installPath 生效（扩展装到 bin/ext 而不是 by-name）');
+console.log('\n[11] unpackInto 生效（解压到指定目录而不是 by-name）');
 {
   const dataRoot = path.join(root, 'dataroot');
   const store = new ArtifactStore(path.join(dataRoot, 'models'));
@@ -532,7 +555,7 @@ console.log('\n[11] installPath 生效（扩展装到 bin/ext 而不是 by-name�
   const res = await install({
     store,
     dataRoot,
-    installPath: 'bin/ext',
+    unpackInto: 'bin/ext',
     target: {
       id: 'sqlite-ext', kind: 'backend', displayName: 'ext',
       files: [{ role: 'archive', name: 'ext.tar.gz', sizeBytes: bytes.length, sha256: arcSha,
@@ -542,7 +565,7 @@ console.log('\n[11] installPath 生效（扩展装到 bin/ext 而不是 by-name�
   });
   const landed = path.join(dataRoot, 'bin', 'ext', 'libsimple.so');
   const ok = await fs.stat(landed).then(() => true).catch(() => false);
-  check('解压到 manifest 指定的 installPath', ok, res.installedTo ?? '(未记录)');
+  check('解压到指定的 unpackInto', ok, res.installedTo ?? '(未记录)');
   check('installedTo 如实回报落点', res.installedTo === path.join(dataRoot, 'bin', 'ext'), res.installedTo ?? '');
 }
 

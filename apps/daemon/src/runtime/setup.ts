@@ -115,7 +115,7 @@ async function isDir(p: string): Promise<boolean> {
 /**
  * 在 runtimes 根下按层级找一个文件名。
  *
- * 后端包按 `installPath`（如 `llamacpp/b10223/vulkan`）展开，所以深度到 4 足够，
+ * 后端包解包后可能多嵌几层（如 `<archive>/<顶层>/bin/`），所以深度到 4 足够，
  * 又不至于把整个数据目录翻一遍。BFS 保证浅层（也就是更"正式"的安装位置）优先命中。
  */
 async function findUnder(root: string, fileName: string, maxDepth = 4): Promise<string | null> {

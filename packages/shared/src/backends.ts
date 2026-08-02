@@ -116,8 +116,34 @@ export interface BackendPack {
   /** Files that must exist after install for the pack to be considered functional. */
   providesFiles: string[];
 
-  /** Install target, relative to the engine's runtime directory. */
-  installPath: string;
+  /**
+   * Directory that this pack's loadable files must be LINKED INTO after unpacking,
+   * relative to the data directory. Only SQLite-extension packs set it (`bin/ext`).
+   *
+   * ## Why this is `linkInto` and not `installPath`
+   *
+   * The old name described a place to *install to*, and the obvious reading of that is
+   * "unpack the archive here". Acting on that reading is actively destructive: all
+   * eleven sqlite-ext packs share the single directory `bin/ext`, and unpacking is
+   * atomic-by-replacement (`rm -rf` the target, then rename into place). Installing
+   * libsimple and then sqlite-vec would therefore delete the first one — silently, with
+   * a successful job and a green checksum.
+   *
+   * `linkInto` names what actually has to happen: `materializeSqliteExtensions` ADDS
+   * links into the directory and never replaces it, which is what lets several
+   * extensions coexist there (verified on the demo: `libsimple.so` + `vec0.so` both
+   * present, `tokenizer=simple`).
+   *
+   * ## Why backend packs no longer carry it
+   *
+   * They used to, with values like `llamacpp/b10223/vulkan` — an *engine runtime
+   * layout*, a different concept wearing the same name, and one that nothing ever
+   * executed. Renaming those to `linkInto` would have replaced one lie with another,
+   * and honouring them would have moved binaries out of `by-name/` where
+   * `findInBackendPacks` looks for them. So the field is simply absent there: backend
+   * packs land in the content-addressed `by-name/` layout and are located by scanning.
+   */
+  linkInto?: string;
 
   /** Higher wins when several packs match the same hardware. */
   priority: number;
@@ -154,7 +180,8 @@ export interface InstalledBackendPack {
   installedAt: string;
   verifiedAt: string | null;
   integrity: 'ok' | 'unverified' | 'corrupt' | 'missing_files';
-  installPath: string;
+  /** Mirrors {@link BackendPack.linkInto}; absent for packs that are not linked anywhere. */
+  linkInto?: string;
   files: { name: string; sha256: string; sizeBytes: number; path: string }[];
   /** Result of the post-install self-test (ADR-003 decision 3). */
   selfTest: BackendSelfTest | null;

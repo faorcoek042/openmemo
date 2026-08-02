@@ -6,7 +6,7 @@
  * `tokenizer=trigram, vec=off` —— **中文双字词搜不到，且没有任何报错**。
  * 原因是 ADR-015 之后每个上游包解包到自己的 `by-name/backend/<archive>/`，
  * libsimple 的 zip 还多嵌一层，而所有消费方（`defaultExtensionPaths(root)`、
- * `OPENMEMO_EXT_DIR`、清单里的 `installPath: "bin/ext"`）都假设"一个目录装齐"。
+ * `OPENMEMO_EXT_DIR`、清单里的 `linkInto: "bin/ext"`）都假设"一个目录装齐"。
  *
  * 所以这里测的是**功能**：给一棵和真实解包结果同形的目录树，
  * 事后 `<extDir>/libsimple.so` 与 `<extDir>/vec0.so` 必须双双能读到真实内容。

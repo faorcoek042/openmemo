@@ -191,7 +191,7 @@ export function scanByName(
 interface InstalledBackendRecord {
   id?: string;
   engine?: string;
-  installPath?: string | null;
+  linkInto?: string | null;
   files?: InstallRecordFile[];
 }
 

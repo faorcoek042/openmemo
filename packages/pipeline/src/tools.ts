@@ -209,13 +209,14 @@ export interface MaterializedExtensions {
  * Every consumer assumes ONE directory holding `libsimple.so`, `vec0.so` and `dict/`:
  * `@openmemo/db`'s `defaultExtensionPaths(root)` takes a single root, `AppPaths.
  * extensionsDir` is `<dataDir>/bin/ext`, `OPENMEMO_EXT_DIR` overrides that one dir, and
- * the sqlite-ext manifests literally declare `installPath: "bin/ext"`.
+ * the sqlite-ext manifests literally declare `linkInto: "bin/ext"`.
  *
  * Reality after ADR-015 (upstream prebuilts instead of our own build) is the opposite:
  * each upstream archive lands in its OWN `by-name/backend/<archive>/` directory, with its
  * own internal layout — libsimple's zip nests one more level (`libsimple-…/libsimple-…/
  * libsimple.so`), sqlite-vec's tarball is flat. So the two extensions are never in the
- * same directory and `installPath` is honoured by nobody.
+ * same directory, which is precisely why `linkInto` is a LINK target and not an unpack
+ * target: linking adds files to a shared directory, unpacking would replace it.
  *
  * Measured consequence on a clean cold start (T-093): all packs download and verify OK,
  * yet the daemon comes up `tokenizer=trigram, vec=off` — i.e. **Chinese two-character

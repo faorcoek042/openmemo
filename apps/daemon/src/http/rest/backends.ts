@@ -119,16 +119,17 @@ export function startPackInstall(
       const probes = await state.probeMirrors(pack.files[0].mirrors);
 
       /*
-       * ⚠️ **这里刻意不把 `pack.installPath` 传给安装器。** 不是遗漏，是查过之后的决定。
+       * ⚠️ **这里刻意不把清单里的目录字段传给安装器的 `unpackInto`。** 不是遗漏，是查过之后的决定。
        * 谁要"顺手接上"，先读完这两条：
        *
-       * 1. **两份清单里的 `installPath` 根本不是同一个概念。**
+       * 1. **两份清单里的目录字段根本不是同一个概念**（正因如此，字段已按下述结论分家：
+       *    后端包不再有该字段，sqlite-ext 的改叫 `linkInto`）。
        *    `backends.json` 填的是 `llamacpp/b10223/vulkan` / `whispercpp/v1.9.1/cpu`
-       *    ——「引擎运行时目录」布局；而安装器的 `installPath` 语义是「相对 dataRoot」。
+       *    ——「引擎运行时目录」布局；而安装器 `unpackInto` 的语义是「相对 dataRoot 解压到此」。
        *    照传下去，包会落到 `<dataDir>/llamacpp/b10223/vulkan`，
        *    而 `findInBackendPacks` 扫的是 `by-name/` —— **刚验证通过的 ffmpeg 发现会当场失效**。
        *
-       * 2. **sqlite-ext 那 11 个包全都填 `bin/ext`（同一个目录）**，
+       * 2. **sqlite-ext 那 11 个包全都填同一个目录 `bin/ext`（现名 `linkInto`）**，
        *    而安装器为了保证原子性会 `fs.rm(finalDir, {recursive:true})` 再 rename。
        *    于是装完 libsimple 再装 sqlite-vec，**第二个会把第一个整个删掉** ——
        *    把一个能用的环境变成坏的，而且没有任何报错。
@@ -172,7 +173,7 @@ export function startPackInstall(
         installedAt: new Date().toISOString(),
         verifiedAt: new Date().toISOString(),
         integrity: 'ok',
-        installPath: pack.installPath,
+        ...(pack.linkInto ? { linkInto: pack.linkInto } : {}),
         files: result.files.map((f) => ({
           name: f.name,
           sha256: f.sha256,
@@ -188,7 +189,7 @@ export function startPackInstall(
 
       /*
        * sqlite 扩展：解包位置是 `by-name/backend/<archive>/…`，但 db / OPENMEMO_EXT_DIR /
-       * 清单的 `installPath` 都只认 `<dataDir>/bin/ext` 这一个目录。装完立刻链过去，
+       * 清单的 `linkInto` 都只认 `<dataDir>/bin/ext` 这一个目录。装完立刻链过去，
        * 否则 `restartRequirement` 看不到"磁盘上已有扩展"，用户永远等不到那句"需重启生效"
        * —— 这正是 T-093 冷启动实测到的：包装完了，中文搜索还是不工作且无人报错。
        */

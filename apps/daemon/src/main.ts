@@ -326,7 +326,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
    *
    * ADR-015 改走上游预编译后，libsimple 与 sqlite-vec 各自解包到自己的
    * `by-name/backend/<archive>/` 目录（libsimple 还多嵌一层），**两者永远不在同一个目录**，
-   * 而 `defaultExtensionPaths(root)` / `OPENMEMO_EXT_DIR` / 清单里的 `installPath: "bin/ext"`
+   * 而 `defaultExtensionPaths(root)` / `OPENMEMO_EXT_DIR` / 清单里的 `linkInto: "bin/ext"`
    * 全都假设"一个目录装齐"。T-093 冷启动实测：包全部下载校验成功，daemon 仍然
    * `tokenizer=trigram, vec=off` —— 中文双字词搜不到，且没有任何报错（"扩展缺失"是设计好的降级）。
    *

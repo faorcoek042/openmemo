@@ -1657,3 +1657,81 @@ BtbN 把二进制放在 `<顶层>/bin/` 下，whisper.cpp 则是平铺 ——
 ### 纪律
 自建实例 `17650`（dataDir `/tmp/om-t094`，全新），用完只杀自己的 pid；
 **没有触碰 `:10000` 的 demo**。
+
+---
+
+## T-097 `installPath` 改名 —— 结论：**改名 + 删除，分家处理**
+
+先说立场：**`oss-scout` 拒绝那个二选一是对的，我同意他的两条论证。**
+尤其第二条（11 个 sqlite-ext 包共用 `bin/ext`，而解压式安装是 `rm -rf` + rename
+→ 装完 libsimple 再装 sqlite-vec 会把前者整个删掉，且零报错）——
+我的安装器就是这么实现的，**"顺手接上"确实会造出一个新的同款 bug**。
+
+### 为什么不是单纯改名成 `linkInto`
+
+因为 `installPath` 底下其实藏着**三个不同的概念**，改一个名字只能救一个：
+
+| 出处 | 取值 | 真实含义 | 处置 |
+|---|---|---|---|
+| `sqlite-ext.json`（11 包） | `bin/ext` | 装完把文件**链接进**这个共享目录 | **改名 `linkInto`** |
+| `backends.json`（11 包） | `llamacpp/b10223/vulkan` | 「引擎运行时目录」布局，**从来没人执行** | **删除** |
+| `installer` 选项 | 相对 dataRoot | **解压到此并替换整个目录** | **改名 `unpackInto`** |
+
+把后端包那 11 条也叫 `linkInto`，是**用一个新谎替掉旧谎** —— 它们不是链接目标，
+也没有任何东西往那儿链。而且照传会把二进制搬出 `by-name/`，
+**上一轮刚验证通过的 ffmpeg 发现会当场失效**。所以那批直接删掉：
+后端包就是落在内容寻址的 `by-name/` 里、靠扫描发现，这才是事实。
+
+安装器那个选项**是被执行的**（我实现并测过），所以不删，但必须改名：
+`installPath` 读起来像"这个包住哪"，**而正是这个读法让那个破坏性操作看起来是对的**。
+`unpackInto` 直说它会替换目录，并在注释里写明"绝不可指向两个包共用的目录"，
+把 oss-scout 发现的那个坑固化在类型旁边。
+
+### 两份清单已对齐
+
+    backends.json     linkInto 0/11    残留 installPath 0    schema 过
+    sqlite-ext.json   linkInto 11/11   残留 installPath 0    schema 过
+
+`shared`：`BackendPack.installPath: string`（必填）→ **`linkInto?: string`（可选）**，
+`InstalledBackendPack` 同步；schema 相应改为 `z.string().min(1).optional()`。
+可选是关键 —— 两份清单共用同一个 `BackendPackSchema`，必填就等于强迫后端包也编一个值。
+
+连带改到的（编译必需，非我主动扩权）：`backends.ts` 写记录那行、`modelStore.ts` 的接口字段，
+以及 4 处会变成悬空引用的注释（`backends.ts` / `main.ts` / `runtime/setup.ts` /
+`pipeline/tools.ts` / `extensions.test.ts`）。**oss-scout 那段论证的原意我逐字保留，只改了字段名。**
+
+### 实测没打破任何东西
+
+    POST /api/backends/install  media-tools-linux-x64  → 202（ffmpeg 通道仍通）
+    POST /api/backends/install  libsimple-linux-x64    → 202 → succeeded
+    <dataDir>/bin/ext/ 下：
+      libsimple.so -> ../../models/by-name/backend/…/libsimple.so   （相对链接）
+      dict         -> ../../models/by-name/backend/…/dict
+    health: restartRequired = true, ['libsimple']   ← 正确要求重启后生效
+
+`linkInto` 这条链路端到端仍然成立，且**是链接不是替换** —— 这正是多扩展能共存的原因。
+
+### 回归守卫
+
+`verify-offline` 新增 `[13]`，把这次的结论钉死：
+
+    PASS  两份清单里都没有 installPath 残留
+    PASS  后端包一律不带 linkInto（否则会被搬出 by-name/，工具发现失效）
+    PASS  sqlite-ext 每个包都带 linkInto=bin/ext  — 11/11
+
+理由写在测试里：这个字段已经犯过两次同类错误（声明不执行、语义打架），
+光靠改名挡不住下一个人再加回去。**41 → 44 passed。**
+
+### 我采纳并想加一句的原则
+
+你写进提交信息那句我完全同意：
+> 「"声明了却不执行"要消灭，但方式不一定是"让它执行"——当声明与实现语义冲突时，执行它比忽略它更糟。」
+
+补一句这次学到的：**冲突往往不是"一个字段两种实现"，而是"一个名字三个概念"。**
+所以第三条路既不是执行也不是忽略，是**先把概念拆开，再分别给它们准确的名字**。
+
+### 门禁
+    tsc(packages+daemon) 0 · eslint 0 · verify-offline 44/44 · verify-unpack 53/53 · 两份清单 schema 全过
+
+### 纪律
+自建实例 `17650`（dataDir `/tmp/om-t097`，全新），用完只杀自己的 pid；**未触碰 `:10000` 的 demo**。

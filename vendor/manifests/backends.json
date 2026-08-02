@@ -44,7 +44,6 @@
         "ggml-vulkan.dll",
         "llama-server.exe"
       ],
-      "installPath": "llamacpp/b10223/vulkan",
       "priority": 80,
       "benchmark": null,
       "catalogVersion": "2026.08.02"
@@ -87,7 +86,6 @@
       "providesFiles": [
         "llama-server.exe"
       ],
-      "installPath": "llamacpp/b10223/cpu",
       "priority": 10,
       "benchmark": null,
       "catalogVersion": "2026.08.02"
@@ -148,7 +146,6 @@
         "llama-server.exe",
         "cudart64_13.dll"
       ],
-      "installPath": "llamacpp/b10223/cuda-13.3",
       "priority": 90,
       "benchmark": null,
       "catalogVersion": "2026.08.02"
@@ -194,7 +191,6 @@
         "libggml-vulkan.so",
         "llama-server"
       ],
-      "installPath": "llamacpp/b10223/vulkan",
       "priority": 80,
       "benchmark": null,
       "catalogVersion": "2026.08.02"
@@ -237,7 +233,6 @@
       "providesFiles": [
         "llama-server"
       ],
-      "installPath": "llamacpp/b10223/cpu",
       "priority": 10,
       "benchmark": null,
       "catalogVersion": "2026.08.02"
@@ -283,7 +278,6 @@
         "libggml-hip.so",
         "llama-server"
       ],
-      "installPath": "llamacpp/b10223/rocm-7.2",
       "priority": 70,
       "benchmark": null,
       "catalogVersion": "2026.08.02"
@@ -328,7 +322,6 @@
       "providesFiles": [
         "llama-server"
       ],
-      "installPath": "llamacpp/b10223/metal",
       "priority": 90,
       "benchmark": null,
       "catalogVersion": "2026.08.02"
@@ -371,7 +364,6 @@
       "providesFiles": [
         "whisper-cli"
       ],
-      "installPath": "whispercpp/v1.9.1/cpu",
       "priority": 10,
       "benchmark": null,
       "catalogVersion": "2026.08.02"
@@ -414,7 +406,6 @@
       "providesFiles": [
         "whisper-cli.exe"
       ],
-      "installPath": "whispercpp/v1.9.1/cpu",
       "priority": 10,
       "benchmark": null,
       "catalogVersion": "2026.08.02"
@@ -460,7 +451,6 @@
         "ggml-cuda.dll",
         "whisper-cli.exe"
       ],
-      "installPath": "whispercpp/v1.9.1/cuda-12.4",
       "priority": 90,
       "benchmark": null,
       "catalogVersion": "2026.08.02"
@@ -504,7 +494,6 @@
         "ffmpeg",
         "ffprobe"
       ],
-      "installPath": "media-tools/n7.1.5/cpu",
       "priority": 10,
       "benchmark": null,
       "catalogVersion": "2026.08.03"

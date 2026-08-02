@@ -46,16 +46,25 @@ export interface InstallOptions {
   token?: string;
   maxParts?: number;
   /**
-   * Where an archive should be expanded, relative to `dataRoot`.
+   * Expand the archive into this directory instead of `by-name/<bucket>/`,
+   * relative to `dataRoot`.
    *
-   * Manifests already declare this (`installPath: 'bin/ext'` for SQLite extensions), but
-   * the installer used to ignore it and always expand under `by-name/<bucket>/`. The
-   * files were correct and loadable; the daemon simply looked in `bin/ext` and found
-   * nothing. A manifest field that the installer silently ignores is worse than no field,
-   * because everything reports success while the component is unreachable.
+   * ⚠️ **This REPLACES the directory.** Extraction is made atomic by unpacking to a temp
+   * directory, deleting the target, then renaming into place — so whatever was there
+   * before is gone.
+   *
+   * Therefore it must never point at a directory that two packs share. This was almost
+   * wired up to the manifests' `bin/ext`, which all eleven SQLite-extension packs
+   * declare: installing libsimple and then sqlite-vec would have deleted libsimple, with
+   * a successful job, a matching checksum and no error anywhere. Extensions that must
+   * coexist are LINKED into place afterwards (`BackendPack.linkInto` +
+   * `materializeSqliteExtensions`), which adds files rather than replacing a directory.
+   *
+   * The name is deliberately not `installPath`: "install path" reads as "where this pack
+   * lives", which is exactly the reading that makes the destructive mistake look correct.
    */
-  installPath?: string;
-  /** Root that `installPath` is relative to. Defaults to the models root's parent. */
+  unpackInto?: string;
+  /** Root that `unpackInto` is relative to. Defaults to the models root's parent. */
   dataRoot?: string;
   onProgress?: (p: {
     completedBytes: number;
@@ -224,9 +233,9 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
     // Temp-then-rename makes a partial directory impossible, so "directory exists" is
     // once again a truthful signal that the install completed.
     if (f.unpack) {
-      // Honour the manifest's installPath when given; otherwise keep the by-name layout.
-      const finalDir = opts.installPath
-        ? path.resolve(opts.dataRoot ?? path.join(store.root, '..'), opts.installPath)
+      // Honour an explicit unpack target when given; otherwise keep the by-name layout.
+      const finalDir = opts.unpackInto
+        ? path.resolve(opts.dataRoot ?? path.join(store.root, '..'), opts.unpackInto)
         : path.join(store.byNameDir(target.kind), stripExt(f.name));
       const tmpDir = `${finalDir}.tmp-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
       try {
