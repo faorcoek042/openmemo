@@ -6,6 +6,7 @@ import { Activity, Cpu, FileAudio, Mic, Package, Plus, Settings, Star } from 'lu
 import { Banner } from './components/common/Banner';
 import { ConnectivitySummary } from './components/common/MockNotice';
 import { SearchBox } from './features/search';
+import { FolderTree } from './features/folders';
 import { Button } from './components/common/Button';
 import { TasksDrawer } from './features/tasks/TasksDrawer';
 import { useUiStore } from './lib/stores/ui.store';
@@ -51,6 +52,11 @@ export default function App() {
           <SideLink to="/notes" icon={<FileAudio className="size-4" />} label={t('nav.allNotes')} />
           <SideLink to="/notes?starred=1" icon={<Star className="size-4" />} label={t('nav.starred')} />
           <SideLink to="/record" icon={<Mic className="size-4" />} label={t('nav.record')} />
+
+          <hr className="my-2 border-line" />
+
+          {/* 文件夹树：此前是静态占位，现在是真数据 + 可新建/删除 */}
+          <FolderTree />
 
           <hr className="my-2 border-line" />
 

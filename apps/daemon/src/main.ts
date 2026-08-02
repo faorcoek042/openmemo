@@ -36,6 +36,9 @@ import { Scheduler, type JobHandler } from './jobs/scheduler.js';
 import { runTranscribeJob } from './jobs/runners/transcribe.js';
 import { createNoteRoutes } from './http/rest/notes.js';
 import { createContentRoutes } from './http/rest/content.js';
+import { createSettingsRoutes } from './http/rest/settings.js';
+import { createOrganizeRoutes } from './http/rest/organize.js';
+import { SecretStore } from '@openmemo/llm';
 import { MindMapRepo } from './db/mindmapRepo.js';
 import { runMindmapJob } from './jobs/runners/mindmap.js';
 import { resolveConfiguredProvider } from './llm/resolve.js';
@@ -243,6 +246,10 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         ],
       }),
       createContentRoutes({ db: database.db, repos, mindmaps, queue, sse }),
+      // 设置 / 密钥（ADR-006 决策 1：明文 0600 + disclosure 显式告知）
+      createSettingsRoutes({ db: database.db, secretStore: new SecretStore(paths.dataDir) }),
+      // 标签 / 星标 / 文件夹
+      createOrganizeRoutes({ repos }),
       createSearchRoutes({
         db: database.db,
         hasChineseTokenizer: database.extensions.libsimple,

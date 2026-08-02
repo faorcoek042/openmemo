@@ -13,8 +13,13 @@ import { join } from 'node:path';
 import {
   TranscribePipeline,
   WhisperCppEngine,
+  buildCandidates,
   buildDefaultRegistry,
   discoverTools,
+  selectEngine,
+  type AsrEngine,
+  type EngineCandidate,
+  type EngineId,
   type ManagedDirs,
   type MediaSourceRegistry,
   type ToolPaths,
@@ -30,6 +35,20 @@ export interface PipelineBundle {
   /** 缺哪些工具 —— 用于 /api/health 与 job 的 `blocked` 状态（D-01 §4.1）。 */
   readonly missing: readonly string[];
   readonly modelPath: string | null;
+  /** 可选引擎候选（已探测可用性）。用于 selectEngine 与 /api/health 展示。 */
+  readonly candidates: readonly EngineCandidate[];
+  /**
+   * 按语言挑引擎（`gpu-runtime` 的 `selectEngine`，T-033 接线）。
+   *
+   * 为什么要按语言挑：中文场景下 sherpa/paraformer 明显优于 whisper base，
+   * 但代价是失去词级时间戳。`selectEngine` 会把**理由与代价**一起返回，
+   * 这样 UI 能解释"为什么用了这个引擎"，而不是黑盒切换。
+   */
+  pickEngine(language: string | undefined): {
+    engine: AsrEngine;
+    engineId: string;
+    reason: string;
+  } | null;
 }
 
 function firstExisting(...candidates: Array<string | null | undefined>): string | null {
@@ -90,13 +109,46 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
     enableSiteExtractor: env['OPENMEMO_ENABLE_SITE_EXTRACTOR'] === '1',
   });
 
-  const asr = new WhisperCppEngine({
+  const whisper = new WhisperCppEngine({
     tools,
     cwd: paths.tmpDir,
     nice: true, // CPU 推理会吃满核，降优先级避免饿死 daemon（D-01 §4.2）
   });
 
-  const pipeline = new TranscribePipeline({ tools, dirs, registry, asr });
+  // sherpa-onnx 作为中文/流式的候选。模型没装时 buildCandidates 会把它标 unavailable，
+  // **不会抛** —— 缺引擎是正常状态，不该让 daemon 起不来。
+  /*
+   * sherpa-onnx（中文/流式候选）**当前不构造**。
+   *
+   * 它的 `SherpaOnnxEngineOptions` 要的是一个 `SherpaTransducerModel`（encoder/decoder/joiner
+   * 三个文件的具体路径），不是一个目录。要接它必须先有模型安装记录
+   * （ADR-004 的模型目录 → `model_installs`），那是 `model-mgmt` 的领域。
+   *
+   * 这里刻意**不编一个假配置**：宁可候选里只有 whisper，也不要让 selectEngine
+   * 在一个不存在的引擎上做出"看起来对"的选择。等模型管理接通后在这里加回来。
+   */
+  const engines: AsrEngine[] = [whisper];
+  const candidates = await buildCandidates(engines);
 
-  return { tools, dirs, registry, pipeline, missing, modelPath };
+  const pickEngine = (
+    language: string | undefined,
+  ): { engine: AsrEngine; engineId: string; reason: string } | null => {
+    const raw = env['OPENMEMO_ASR_ENGINE'];
+    // EngineId 是字面量联合，环境变量是任意字符串 —— 必须先收窄再传
+    const preferred: EngineId | undefined =
+      raw === 'whisper.cpp' || raw === 'paraformer' || raw === 'sherpa-onnx' ? raw : undefined;
+    const sel = selectEngine({
+      candidates: [...candidates],
+      mode: 'batch',
+      ...(language ? { language } : {}),
+      ...(preferred ? { preferredEngineId: preferred } : {}),
+    });
+    if (!sel) return null;
+    return { engine: sel.engine, engineId: sel.engineId, reason: sel.reason };
+  };
+
+  // 默认引擎仍是 whisper；按语言切换发生在 job 层（见 transcribe runner）
+  const pipeline = new TranscribePipeline({ tools, dirs, registry, asr: whisper });
+
+  return { tools, dirs, registry, pipeline, missing, modelPath, candidates, pickEngine };
 }

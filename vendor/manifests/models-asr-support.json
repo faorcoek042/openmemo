@@ -1,0 +1,248 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": "2026.08.02",
+  "generatedAt": "2026-08-02T16:10:00Z",
+  "models": [
+    {
+      "schemaVersion": 1,
+      "id": "vad/silero-vad-v4",
+      "groupId": "vad/silero-vad",
+      "role": "vad",
+      "family": "silero",
+      "arch": "silero-vad",
+      "format": "onnx",
+      "quantization": "f16",
+      "quantTier": "balanced",
+      "displayName": "Silero VAD",
+      "displayNameZh": "Silero VAD（语音活动检测）",
+      "descriptionZh": "语音活动检测模型。长音频分块的地基 —— 没有它无法把几十分钟的录音切成可转写的片段。体积极小，建议始终安装。",
+      "descriptionEn": "Voice activity detection. The foundation of long-audio chunking; without it multi-minute recordings cannot be segmented.",
+      "languages": [
+        "multi"
+      ],
+      "tags": [
+        "required-core",
+        "vad"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "silero_vad.onnx",
+          "sizeBytes": 2327524,
+          "sha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.onnx",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 2327524,
+      "requirements": {
+        "ramRequiredMB": 64,
+        "vramRequiredMB": 64,
+        "diskRequiredMB": 3,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://raw.githubusercontent.com/snakers4/silero-vad/master/LICENSE"
+      },
+      "source": {
+        "provider": "github",
+        "repo": "snakers4/silero-vad",
+        "revision": "asr-models"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.02"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/sherpa-streaming-zh-14m",
+      "groupId": "asr/sherpa-streaming-zh-14m",
+      "role": "asr",
+      "family": "sherpa-zipformer",
+      "arch": "zipformer",
+      "format": "onnx",
+      "quantization": "f16",
+      "quantTier": "balanced",
+      "displayName": "sherpa-onnx streaming zipformer zh-14M",
+      "displayNameZh": "sherpa 流式中文 zh-14M",
+      "descriptionZh": "F3 录音转文字的流式引擎。边说边出字，逐字时间戳。仅中文，仅流式；离线批量转写请用 Whisper 或 Paraformer。",
+      "descriptionEn": "The streaming engine behind live recording (F3). Emits text while you speak, with per-token timestamps. Chinese-only, streaming-only.",
+      "languages": [
+        "zh"
+      ],
+      "tags": [
+        "streaming",
+        "required-for-f3"
+      ],
+      "files": [
+        {
+          "role": "archive",
+          "name": "sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23.tar.bz2",
+          "sizeBytes": 74004050,
+          "sha256": "2cbd71b640d9c37d3784f29367333a4577b0398b62e9deeed418170b081cba8b",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23.tar.bz2",
+              "official": true
+            }
+          ],
+          "unpack": "tar.bz2"
+        }
+      ],
+      "totalSizeBytes": 74004050,
+      "requirements": {
+        "ramRequiredMB": 512,
+        "vramRequiredMB": 512,
+        "diskRequiredMB": 82,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "Apache-2.0",
+        "gated": false,
+        "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23"
+      },
+      "source": {
+        "provider": "github",
+        "repo": "k2-fsa/sherpa-onnx",
+        "revision": "asr-models"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.02",
+      "capabilityCaveats": [
+        "仅支持中文",
+        "仅流式，不能用于离线批量转写"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/paraformer-zh-small",
+      "groupId": "asr/paraformer-zh-small",
+      "role": "asr",
+      "family": "paraformer",
+      "arch": "paraformer",
+      "format": "onnx",
+      "quantization": "f16",
+      "quantTier": "balanced",
+      "displayName": "Paraformer Chinese small",
+      "displayNameZh": "Paraformer 中文（快）",
+      "descriptionZh": "中文默认离线引擎，比 Whisper 快很多。代价：无词级时间戳（只有段级）、数字输出为中文而非阿拉伯数字、英文一律小写。需要逐字对齐或中英混排排版时请切回 Whisper large-v3-turbo。",
+      "descriptionEn": "Default offline Chinese engine, much faster than Whisper. Trade-offs: no word-level timestamps (segment-level only), numbers written in Chinese rather than digits, English lower-cased.",
+      "languages": [
+        "zh"
+      ],
+      "tags": [
+        "recommended-default-zh",
+        "offline"
+      ],
+      "files": [
+        {
+          "role": "archive",
+          "name": "sherpa-onnx-paraformer-zh-small-2024-03-09.tar.bz2",
+          "sizeBytes": 77920048,
+          "sha256": "da92b3db5218c5be53aad53e57d1b6e63e7fc98a0e054fbdd6dbe18e9c6b1450",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-paraformer-zh-small-2024-03-09.tar.bz2",
+              "official": true
+            }
+          ],
+          "unpack": "tar.bz2"
+        }
+      ],
+      "totalSizeBytes": 77920048,
+      "requirements": {
+        "ramRequiredMB": 512,
+        "vramRequiredMB": 512,
+        "diskRequiredMB": 86,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "Apache-2.0",
+        "gated": false,
+        "url": "https://www.modelscope.cn/models/damo/speech_paraformer_asr_nat-zh-cn-16k-common-vocab8358-tensorflow1"
+      },
+      "source": {
+        "provider": "github",
+        "repo": "k2-fsa/sherpa-onnx",
+        "revision": "asr-models"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.02",
+      "capabilityCaveats": [
+        "无词级时间戳（只有段级）",
+        "数字输出为中文而非阿拉伯数字",
+        "英文一律小写"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "id": "punctuation/ct-transformer-zh-en",
+      "groupId": "punctuation/punct-ct-transformer-zh-en",
+      "role": "punctuation",
+      "family": "ct-transformer",
+      "arch": "ct-transformer",
+      "format": "onnx",
+      "quantization": "f16",
+      "quantTier": "balanced",
+      "displayName": "Chinese/English punctuation restoration",
+      "displayNameZh": "中文标点恢复",
+      "descriptionZh": "给转写结果补标点。不装的话中文输出会是一整段没有标点的文字，几乎没法读。中英双语词表。",
+      "descriptionEn": "Restores punctuation in transcripts. Without it Chinese output is one long unpunctuated run of characters.",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "punctuation",
+        "recommended-with-zh"
+      ],
+      "files": [
+        {
+          "role": "archive",
+          "name": "sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12.tar.bz2",
+          "sizeBytes": 279028058,
+          "sha256": "50f73f8cccffc2303999fda28b785ffcffbd7ea442c47385c30b9d045ee6afc3",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/punctuation-models/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12.tar.bz2",
+              "official": true
+            }
+          ],
+          "unpack": "tar.bz2"
+        }
+      ],
+      "totalSizeBytes": 279028058,
+      "requirements": {
+        "ramRequiredMB": 1024,
+        "vramRequiredMB": 1024,
+        "diskRequiredMB": 307,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "Apache-2.0",
+        "gated": false,
+        "url": "https://www.modelscope.cn/models/iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch"
+      },
+      "source": {
+        "provider": "github",
+        "repo": "k2-fsa/sherpa-onnx",
+        "revision": "punctuation-models"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.02"
+    }
+  ]
+}

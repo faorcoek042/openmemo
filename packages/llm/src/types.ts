@@ -70,6 +70,26 @@ export interface ProviderCapabilities {
   readonly vision: boolean;
 }
 
+/*
+ * ⚠️ 关于 `embed()` —— **已裁决 v1 不做**（T-033，Manager 裁决）。
+ *
+ * D-01 §6.2 的原始接口里有 `embed(req): Promise<Float32Array[]>`，用于 D-02 §4.3 的向量检索。
+ * 我在 T-023 没有实现它，T-028 自查时把这条报了出来 —— 它正是向量检索断链的直接成因。
+ *
+ * 裁决理由（可逆）：补齐向量检索需要三件事，都不小：
+ *   1. 再下一个 embedding 模型（bge-small-zh ~100MB / multilingual-e5-small ~470MB）
+ *   2. 新的推理运行时 —— **whisper.cpp 与 llama.cpp 都不做 embedding**
+ *      （llama-server 有 /v1/embeddings，但未验证；或需引入 onnxruntime）
+ *   3. 语义窗口切块 + 换模型/换稿后的重建队列（D-02 §4.3/§4.5）
+ * 而章程 F5 只要求"搜索"，FTS5 + libsimple 中文分词已端到端满足。
+ *
+ * **为什么这条决策可逆**：D-02 §4.5 把索引设计成**可重建缓存**，
+ * `embed_chunks.text` 保留原文 —— 将来补 embedding 时**不需要迁移任何数据**，
+ * 重跑一遍生成即可。
+ *
+ * 这里刻意**不留空实现**：留一个静默返回空数组的 `embed()` 会让人以为它坏了，
+ * 而不是"没做"。要做的时候在这里加回接口方法即可。
+ */
 export interface LlmProvider {
   readonly id: string;
   readonly kind: 'openai-compatible' | 'anthropic';

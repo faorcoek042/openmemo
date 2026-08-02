@@ -11,6 +11,8 @@ import { WordLevelBadge } from '../transcript';
 import { MindmapView, useMindmapQuery } from '../mindmap';
 import { NoteProgressLine } from './NoteProgressLine';
 import { TagEditor } from './TagEditor';
+import { NoteEditor } from './NoteEditor';
+import { ExportMenu } from './ExportMenu';
 import { TranscriptList } from '../transcript';
 import { PlayerBar } from '../player';
 import { usePlayerStore } from '../../lib/stores/player.store';
@@ -87,7 +89,14 @@ export default function NoteDetailPage() {
 
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
         <h1 className="min-w-0 truncate text-base font-semibold text-ink">{n.title}</h1>
-        <TagEditor noteUid={n.uid} tags={n.tags} />
+        <span className="flex items-center gap-2">
+          <TagEditor noteUid={n.uid} tags={n.tags} />
+          <ExportMenu
+            note={n}
+            segments={transcript.data?.segments ?? []}
+            speakerNames={speakerNames}
+          />
+        </span>
       </header>
 
       <div className="flex min-h-0 flex-1">
@@ -156,7 +165,7 @@ export default function NoteDetailPage() {
                 <p className="text-ink-muted">{t('mindmap.empty')}</p>
               )
             ) : (
-              <p className="text-ink-muted">笔记编辑器（TipTap）待接入。</p>
+              <NoteEditor noteUid={n.uid} initialJson={n.bodyJson ?? null} />
             )}
           </div>
         </aside>

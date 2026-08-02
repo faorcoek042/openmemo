@@ -42,8 +42,13 @@ export const ALLOWED_DOWNLOAD_HOSTS = [
   'www.modelscope.cn',
   'modelscope.cn',
   'github.com',
+  // Verified 2026-08-02: github.com/<o>/<r>/releases/download/... 302s to
+  // release-assets.githubusercontent.com, NOT the older objects.githubusercontent.com.
+  // Both are listed because older assets still use the latter.
   'objects.githubusercontent.com',
   'release-assets.githubusercontent.com',
+  // sherpa/silero canonical ONNX files are served from raw.
+  'raw.githubusercontent.com',
 ] as const;
 
 export const DownloadUrlSchema = z
@@ -160,7 +165,7 @@ export const ModelEntrySchema = z
     schemaVersion: z.literal(1),
     id: z.string().min(1),
     groupId: z.string().min(1),
-    role: z.enum(['asr', 'llm']),
+    role: z.enum(['asr', 'llm', 'vad', 'punctuation', 'diarization', 'embedding', 'tts']),
     family: z.string().min(1),
     arch: z.string().min(1),
     format: z.enum(['ggml', 'gguf', 'onnx', 'nemo', 'coreml']),
@@ -178,6 +183,8 @@ export const ModelEntrySchema = z
     totalSizeBytes: ByteSizeSchema,
     requirements: ResourceRequirementsSchema,
     gguf: GgufMetadataSchema.optional(),
+    // ADR-013 decision 1 — trade-offs must be stated, not discovered.
+    capabilityCaveats: z.array(z.string()).optional(),
     license: LicenseInfoSchema,
     source: z.object({
       provider: ProviderIdSchema,

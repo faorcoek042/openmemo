@@ -60,6 +60,50 @@ interface MockProvider {
   keyMask: string | null;
 }
 
+/**
+ * 演示用的持久任务。
+ *
+ * ⚠️ 这仍然是 mock —— 它证明的是**任务中心的数据源已经改成服务端列表**
+ * （而不是内存里的 `progressStore`），**不证明**真的持久化了。
+ * 真持久化要等 `/api/jobs` 上线；那时按面切换会自动接过去。
+ */
+const mockJobs: {
+  jobId: string; kind: string; type: string; targetId: string; displayName: string;
+  state: string; step: string | null; provider: string | null;
+  totalBytes: number; completedBytes: number; speedBps: number; etaSeconds: number | null;
+  parts: unknown[]; currentFile: string | null; fileIndex: number; fileCount: number;
+  attempt: number; maxAttempts: number; error: unknown;
+  startedAt: string; updatedAt: string;
+}[] = [
+  {
+    jobId: 'job_demo_1', kind: 'model', type: 'download.model',
+    targetId: 'asr/whisper-large-v3-turbo-q5_0',
+    displayName: 'Whisper large-v3-turbo (Q5_0)',
+    state: 'running', step: 'downloading', provider: 'modelscope',
+    totalBytes: 574_041_195, completedBytes: 412_000_000, speedBps: 8_200_000, etaSeconds: 20,
+    parts: [], currentFile: 'ggml-large-v3-turbo-q5_0.bin', fileIndex: 0, fileCount: 1,
+    attempt: 0, maxAttempts: 5, error: null,
+    startedAt: new Date(Date.now() - 60_000).toISOString(), updatedAt: new Date().toISOString(),
+  },
+  {
+    jobId: 'job_demo_2', kind: 'model', type: 'download.model',
+    targetId: 'llm/qwen3-4b-q4_k_m', displayName: 'Qwen3 4B (Q4_K_M)',
+    state: 'blocked', step: null, provider: null,
+    totalBytes: 2_500_000_000, completedBytes: 0, speedBps: 0, etaSeconds: null,
+    parts: [], currentFile: null, fileIndex: 0, fileCount: 1,
+    attempt: 1, maxAttempts: 5,
+    error: { code: 'RESOURCE_DISK_FULL', message: '需要 2.5 GB，可用 1.1 GB',
+             messageZh: '需要 2.5 GB，可用 1.1 GB', retryable: false },
+    startedAt: new Date(Date.now() - 300_000).toISOString(), updatedAt: new Date().toISOString(),
+  },
+];
+
+const mockFolders: { uid: string; name: string; parentUid: string | null; color: string | null; noteCount: number }[] = [
+  { uid: 'fld_course', name: '课程', parentUid: null, color: null, noteCount: 1 },
+  { uid: 'fld_dl', name: '深度学习', parentUid: 'fld_course', color: null, noteCount: 1 },
+  { uid: 'fld_podcast', name: '播客', parentUid: null, color: null, noteCount: 1 },
+];
+
 let mockActiveProvider: string | null = 'ollama';
 const mockProviders: MockProvider[] = [
   {
@@ -112,6 +156,7 @@ function seedNote(partial: Partial<MockNote> & { title: string }): MockNote {
       inputUrl: 'https://www.youtube.com/watch?v=demo',
     },
     summaryMd: partial.summaryMd ?? null,
+    bodyJson: null,
     bodyText: '',
     language: 'zh',
     assets: partial.assets ?? [],
@@ -413,8 +458,38 @@ const mockFetcher: Fetcher = async <T,>(path: string, opts: ApiOptions = {}): Pr
     } as T;
   }
 
+  if (method === 'GET' && path === '/folders') {
+    return { folders: mockFolders } as T;
+  }
+
+  if (method === 'POST' && path === '/folders') {
+    const b = opts.body as { name: string; parentUid?: string | null };
+    const f = { uid: nextId('fld'), name: b.name, parentUid: b.parentUid ?? null, color: null, noteCount: 0 };
+    mockFolders.push(f);
+    return f as T;
+  }
+
+  if (method === 'DELETE' && path.startsWith('/folders/')) {
+    const uid = path.split('/')[2];
+    const i = mockFolders.findIndex((f) => f.uid === uid);
+    if (i >= 0) mockFolders.splice(i, 1);
+    return { ok: true } as T;
+  }
+
   if (method === 'GET' && path === '/jobs') {
-    return { jobs: [], concurrencyLimit: 2 } as T;
+    return { jobs: mockJobs, concurrencyLimit: 2 } as T;
+  }
+
+  if (method === 'POST' && /^\/jobs\/[^/]+\/(cancel|pause|resume|retry)$/.test(path)) {
+    const [, , jobId, action] = path.split('/');
+    const j = mockJobs.find((x) => x.jobId === jobId);
+    if (j) {
+      if (action === 'cancel') j.state = 'cancelled';
+      else if (action === 'pause') j.state = 'paused';
+      else if (action === 'resume') j.state = 'running';
+      else if (action === 'retry') j.state = 'queued';
+    }
+    return { ok: true } as T;
   }
 
   // 未实现的接口显式抛 ApiError（而不是裸 Error）——

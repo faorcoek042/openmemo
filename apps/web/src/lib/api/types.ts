@@ -40,6 +40,8 @@ export interface NoteSummary {
 
 export interface NoteDetail extends NoteSummary {
   summaryMd: string | null;
+  /** TipTap 文档 JSON（保真）。`bodyText` 是它的纯文本投影，供 FTS5 索引。 */
+  bodyJson: unknown | null;
   bodyText: string;
   language: string | null;
   assets: MediaAssetDto[];

@@ -73,7 +73,16 @@
     "removeTag": "移除标签 {{name}}",
     "star": "加星标",
     "unstar": "取消星标",
-    "rename": "重命名"
+    "rename": "重命名",
+    "export": "导出",
+    "exportFormats": {
+      "txt": "纯文本 (.txt)",
+      "md": "Markdown (.md)",
+      "srt": "字幕 SRT",
+      "vtt": "字幕 VTT",
+      "json": "JSON（完整）"
+    },
+    "exportServerOnly": "DOCX / PDF 需服务端支持，暂未提供"
   },
   "detail": {
     "tabs": {
@@ -173,7 +182,9 @@
       "gpu.asr": "转写",
       "gpu.llm": "本地模型",
       "io.local": "磁盘"
-    }
+    },
+    "transient": "刚创建",
+    "transientHint": "服务端还没收录这条任务，稍后会自动同步"
   },
   "errors": {
     "title": "出错了",
@@ -321,5 +332,23 @@
     "back": "上一步",
     "next": "下一步",
     "done": "开始使用"
+  },
+  "editor": {
+    "bold": "加粗",
+    "italic": "斜体",
+    "bulletList": "无序列表",
+    "orderedList": "有序列表",
+    "saving": "保存中…",
+    "saved": "已保存",
+    "unsaved": "未保存"
+  },
+  "folders": {
+    "create": "新建文件夹",
+    "name": "文件夹名",
+    "empty": "还没有文件夹",
+    "collapse": "折叠",
+    "expand": "展开",
+    "delete": "删除文件夹 {{name}}",
+    "deleteHint": "删除文件夹；里面的笔记会移到「未分类」，不会被删除"
   }
 }

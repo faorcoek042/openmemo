@@ -38,6 +38,8 @@ const SP = 0x20;
 const TAB = 0x09;
 const HEADER_SEP = Buffer.from('\r\n\r\n');
 const EMPTY = Buffer.alloc(0);
+/** 分隔符与行尾之间允许的空白字节数上限（RFC 2046 的 transport padding）。 */
+const MAX_BOUNDARY_PADDING = 64;
 
 export class MultipartError extends Error {
   constructor(
@@ -211,16 +213,19 @@ export class MultipartParser {
 
     // RFC 2046 允许分隔符后跟 transport padding（空格/TAB），之后必须是 CRLF
     let i = after;
-    while (i < this.#buf.length && (this.#buf[i] === SP || this.#buf[i] === TAB)) i += 1;
-    if (i - after > 64) {
-      throw new MultipartError('boundary padding too long', 'BAD_BOUNDARY_PADDING');
-    }
-    if (i + 1 >= this.#buf.length) {
-      this.#buf = this.#buf.subarray(idx);
+    const paddingCap = Math.min(after + MAX_BOUNDARY_PADDING, this.#buf.length);
+    while (i < paddingCap && (this.#buf[i] === SP || this.#buf[i] === TAB)) i += 1;
+    if (i + 1 >= this.#buf.length && i - after < MAX_BOUNDARY_PADDING) {
+      this.#buf = this.#buf.subarray(idx); // padding 还没读完，等下一个 chunk
       return false;
     }
+
     if (this.#buf[i] !== CR || this.#buf[i + 1] !== LF) {
-      throw new MultipartError('malformed boundary terminator', 'BAD_BOUNDARY_TERMINATOR');
+      // 命中了 needle 但后面不是合法收尾 → 这只是**正文里恰好出现的相同字节串**，
+      // 不是真分隔符（正文完全可以包含 `\r\n--boundaryXXX`）。原样当数据吐出去继续扫。
+      this.#consumeBody(this.#buf.subarray(idx, after));
+      this.#buf = this.#buf.subarray(after);
+      return true;
     }
 
     this.#endPart();
@@ -376,11 +381,10 @@ const ENVELOPE_SLACK_BYTES = 64 * 1024;
 
 /** 落库只用到这两个方法 —— 收窄依赖，测试就不必造一个真 SQLite。真 `Repos` 结构上满足它。 */
 export interface UploadRepos {
-  createNote(p: {
-    title: string;
-    kind?: string;
-    language?: string | null;
-  }): { readonly id: number; readonly uid: string };
+  createNote(p: { title: string; kind?: string; language?: string | null }): {
+    readonly id: number;
+    readonly uid: string;
+  };
   createSource(p: {
     noteId: number;
     kind: string;
@@ -442,7 +446,7 @@ export function safeExtension(filename: string): string | undefined {
 export function sanitizeDisplayName(filename: string): string {
   const base = filename.split(/[\\/]/).pop() ?? '';
   // eslint-disable-next-line no-control-regex -- 就是要滤掉控制字符（含 NUL），别让它污染日志与前端渲染
-  const cleaned = base.replace(/[ -]/g, '').trim();
+  const cleaned = base.replace(/[\x00-\x1f\x7f]/g, '').trim();
   return cleaned.slice(0, 255) || '未命名文件';
 }
 
@@ -466,28 +470,28 @@ export function createUploadRoutes(deps: UploadRoutesDeps): {
 
       const boundary = parseBoundary(req.headers['content-type']);
       if (!boundary) {
-        sendError(
+        failFast(
+          req,
           res,
           415,
           'UNSUPPORTED_MEDIA_TYPE',
           'expected Content-Type: multipart/form-data with a boundary',
           '请用 multipart/form-data 上传文件',
         );
-        drainAndClose(req);
         return true;
       }
 
       // Content-Length 预检：能在读第一个字节之前就拒掉超大上传
       const declared = Number(req.headers['content-length']);
       if (Number.isFinite(declared) && declared > maxBytes + ENVELOPE_SLACK_BYTES) {
-        sendError(
+        failFast(
+          req,
           res,
           413,
           'PAYLOAD_TOO_LARGE',
           `body ${declared} bytes exceeds limit ${maxBytes}`,
           `文件超过上限（${formatBytes(maxBytes)}）`,
         );
-        drainAndClose(req);
         return true;
       }
 
@@ -526,7 +530,12 @@ export function createUploadRoutes(deps: UploadRoutesDeps): {
           },
           onFileStart: (info) => {
             if (sawFile) {
-              throw new UploadError(400, 'TOO_MANY_FILES', 'only one file part is accepted', '一次只能上传一个文件');
+              throw new UploadError(
+                400,
+                'TOO_MANY_FILES',
+                'only one file part is accepted',
+                '一次只能上传一个文件',
+              );
             }
             if (info.name !== 'file') {
               throw new UploadError(
@@ -592,7 +601,12 @@ export function createUploadRoutes(deps: UploadRoutesDeps): {
         parser.end();
 
         if (!sawFile || !ws || !tmpPath || !finalPath) {
-          throw new UploadError(400, 'MISSING_FILE', 'no "file" part in the body', '缺少 file 部件');
+          throw new UploadError(
+            400,
+            'MISSING_FILE',
+            'no "file" part in the body',
+            '缺少 file 部件',
+          );
         }
 
         await endStream(ws);
@@ -656,11 +670,12 @@ export function createUploadRoutes(deps: UploadRoutesDeps): {
           return true;
         }
         if (err instanceof UploadError) {
-          sendError(res, err.status, err.code, err.message, err.messageZh);
+          failFast(req, res, err.status, err.code, err.message, err.messageZh);
         } else if (err instanceof MultipartError) {
-          sendError(res, 400, err.code, err.message, '上传数据格式不正确');
+          failFast(req, res, 400, err.code, err.message, '上传数据格式不正确');
         } else {
-          sendError(
+          failFast(
+            req,
             res,
             500,
             'UPLOAD_FAILED',
@@ -668,7 +683,6 @@ export function createUploadRoutes(deps: UploadRoutesDeps): {
             '上传失败',
           );
         }
-        drainAndClose(req);
         return true;
       }
     },
@@ -766,14 +780,26 @@ function destroyStream(ws: WriteStream): Promise<void> {
 }
 
 /**
- * 早退（4xx）之后的收尾。
+ * 早退（4xx/5xx）之后的收尾 —— 这里的每一步都有具体原因：
  *
- * **不能立刻 destroy socket**：内核接收缓冲里还有未读数据时 close 会发 RST，
- * 客户端可能连我们刚写出去的 413 都读不到（经典的"上传超限却报 ECONNRESET"）。
- * 所以先 resume 把剩余字节丢弃（不占内存、不落盘），最多拖 2 秒，超时再硬断 ——
- * 不至于为了一个已经被拒的 2GB 上传把连接一直挂着。
+ * 1. `Connection: close`：连接上还挂着一个我们不打算读完的请求体，
+ *    复用它下一个请求就会错位。同时也让 Node 在响应发完后走"发 FIN 但继续读"的
+ *    半关闭路径，而不是直接 destroy。
+ * 2. `req.resume()` 丢弃剩余字节（不占内存、不落盘）。**不能直接 destroy socket**：
+ *    内核接收缓冲里还有未读数据时 close 会发 RST，客户端可能连我们刚写出去的 413
+ *    都读不到（经典的"上传超限却报 ECONNRESET"）。
+ * 3. 兜底 2 秒硬断：不至于为了一个已经被拒的 2GB 上传把连接一直挂着。
  */
-function drainAndClose(req: IncomingMessage): void {
+function failFast(
+  req: IncomingMessage,
+  res: ServerResponse,
+  status: number,
+  code: string,
+  message: string,
+  messageZh: string,
+): void {
+  if (!res.headersSent) res.setHeader('Connection', 'close');
+  sendError(res, status, code, message, messageZh);
   if (req.complete || req.destroyed) return;
   req.resume();
   const timer = setTimeout(() => req.destroy(), 2000);

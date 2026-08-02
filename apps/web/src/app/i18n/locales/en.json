@@ -73,7 +73,16 @@
     "removeTag": "Remove tag {{name}}",
     "star": "Star",
     "unstar": "Unstar",
-    "rename": "Rename"
+    "rename": "Rename",
+    "export": "Export",
+    "exportFormats": {
+      "txt": "Plain text (.txt)",
+      "md": "Markdown (.md)",
+      "srt": "Subtitles SRT",
+      "vtt": "Subtitles VTT",
+      "json": "JSON (full)"
+    },
+    "exportServerOnly": "DOCX / PDF need server support — not available yet"
   },
   "detail": {
     "tabs": {
@@ -173,7 +182,9 @@
       "gpu.asr": "transcription",
       "gpu.llm": "local model",
       "io.local": "disk"
-    }
+    },
+    "transient": "just created",
+    "transientHint": "The server has not registered this job yet; it will sync shortly"
   },
   "errors": {
     "title": "Something went wrong",
@@ -321,5 +332,23 @@
     "back": "Back",
     "next": "Next",
     "done": "Get started"
+  },
+  "editor": {
+    "bold": "Bold",
+    "italic": "Italic",
+    "bulletList": "Bullet list",
+    "orderedList": "Numbered list",
+    "saving": "Saving…",
+    "saved": "Saved",
+    "unsaved": "Unsaved"
+  },
+  "folders": {
+    "create": "New folder",
+    "name": "Folder name",
+    "empty": "No folders yet",
+    "collapse": "Collapse",
+    "expand": "Expand",
+    "delete": "Delete folder {{name}}",
+    "deleteHint": "Delete the folder; notes inside move to Unfiled and are not deleted"
   }
 }

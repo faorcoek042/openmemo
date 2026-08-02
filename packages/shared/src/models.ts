@@ -15,8 +15,21 @@ import type {
   ResourceRequirements,
 } from './artifacts.js';
 
-/** What the model is for. Drives which "active model" slot it can occupy. */
-export const MODEL_ROLES = ['asr', 'llm'] as const;
+/**
+ * What the model is for. Drives which "active model" slot it can occupy.
+ *
+ * Matches D-02 `model_installs.role` CHECK exactly — VAD and punctuation models are NOT
+ * ASR models, and filing them under 'asr' would put a VAD net in the transcription slot.
+ */
+export const MODEL_ROLES = [
+  'asr',
+  'llm',
+  'vad',
+  'punctuation',
+  'diarization',
+  'embedding',
+  'tts',
+] as const;
 export type ModelRole = (typeof MODEL_ROLES)[number];
 
 export const MODEL_FORMATS = ['ggml', 'gguf', 'onnx', 'nemo', 'coreml'] as const;
@@ -106,6 +119,16 @@ export interface ModelEntry {
   requirements: ResourceRequirements;
   /** Present for GGUF models; the source of the KV-cache term in `requirements`. */
   gguf?: GgufMetadata;
+
+  /**
+   * Known capability trade-offs, shown verbatim in the UI (ADR-013 decision 1).
+   *
+   * Exists because "faster" is never free and the costs are invisible until they bite:
+   * Paraformer has no word-level timestamps, writes numbers as Chinese characters, and
+   * lower-cases English. A user who picks it for speed and later needs word-level
+   * alignment must be able to learn that BEFORE downloading, not after.
+   */
+  capabilityCaveats?: string[];
 
   license: LicenseInfo;
   source: ModelSource;

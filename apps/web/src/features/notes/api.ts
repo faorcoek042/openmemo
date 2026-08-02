@@ -149,3 +149,24 @@ export function useRenameNoteMutation() {
     },
   });
 }
+
+/**
+ * 保存笔记正文（TipTap）。
+ *
+ * **两份一起送**：`bodyJson` 保真、`bodyText` 供 FTS5 索引（D-02 §1.3）。
+ * 投影在前端做 —— 服务端不该为了建索引去装一个 TipTap。
+ */
+export function useSaveNoteBodyMutation(noteUid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { bodyJson: unknown; bodyText: string }) =>
+      api<{ ok: true }>('notes', `/notes/${noteUid}`, {
+        method: 'PATCH',
+        body: { bodyJson: v.bodyJson, bodyText: v.bodyText },
+      }),
+    onSuccess: () => {
+      // 只失效详情，不动列表：正文改动不影响列表展示，省一次全量重拉
+      void qc.invalidateQueries({ queryKey: qk.notes.detail(noteUid) });
+    },
+  });
+}
