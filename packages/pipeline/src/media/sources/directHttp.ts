@@ -10,14 +10,12 @@
  * characters, length cap.
  */
 
-import { createWriteStream } from 'node:fs';
 import { stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Readable } from 'node:stream';
-import { pipeline as streamPipeline } from 'node:stream/promises';
 
 import { normalizeToPcm16k, probeMedia } from '../../audio/ffmpeg.js';
 import { assertHostNotPrivate, hasAllowedMediaExtension, validateHttpUrl } from '../../subprocess/argGuard.js';
+import { resumableFetch } from '../resumableFetch.js';
 import type { ToolPaths } from '../../tools.js';
 import type {
   Availability,
@@ -155,49 +153,26 @@ export class DirectHttpSource implements MediaSource {
       };
     }
 
-    const response = await this.fetchImpl(url, {
-      signal: req.signal,
-      redirect: 'follow',
-      headers: { 'user-agent': 'OpenMemo/0.1 (+local)' },
-    });
-    if (!response.ok) {
-      throw new Error(`download failed: HTTP ${String(response.status)}`);
-    }
-    if (response.body === null) throw new Error('response had no body');
-
-    const declared = Number(response.headers.get('content-length') ?? '');
-    if (Number.isFinite(declared) && declared > req.maxBytes) {
-      throw new Error(`file is ${String(declared)} bytes, over the ${String(req.maxBytes)} byte limit`);
-    }
-
-    const contentType = response.headers.get('content-type');
-    const ext = extensionFor(url, contentType);
+    /*
+     * Resumable transfer (T-031). Previously this was a single `fetch()` + pipe: any
+     * dropped connection meant starting the whole file again, which on a 300 MB podcast
+     * over a flaky link can mean never finishing. Reuses `@openmemo/downloader`'s
+     * Range primitives rather than reimplementing them — see resumableFetch.ts for why
+     * `downloadFile()` itself is not reusable here (it mandates a known SHA-256, which
+     * an arbitrary media URL does not have).
+     */
+    const ext = extensionFor(url, null);
     const outPath = join(req.destDir, `${req.destBasename}${ext}`);
 
-    let written = 0;
-    const counter = new TransformStream<Uint8Array, Uint8Array>({
-      transform: (chunk, controller) => {
-        written += chunk.byteLength;
-        // Enforce the cap even when the server lied about (or omitted) Content-Length.
-        if (written > req.maxBytes) {
-          throw new Error(`download exceeded the ${String(req.maxBytes)} byte limit`);
-        }
-        if (Number.isFinite(declared) && declared > 0) {
-          req.onProgress?.(Math.min(1, written / declared));
-        }
-        controller.enqueue(chunk);
-      },
+    const fetched = await resumableFetch({
+      url,
+      destPath: outPath,
+      maxBytes: req.maxBytes,
+      signal: req.signal,
+      onProgress: (fraction) => req.onProgress?.(fraction),
     });
 
-    try {
-      await streamPipeline(
-        Readable.fromWeb(response.body.pipeThrough(counter) as never),
-        createWriteStream(outPath),
-      );
-    } catch (err) {
-      await unlink(outPath).catch(() => undefined);
-      throw err;
-    }
+    const contentType = fetched.contentType;
 
     const st = await stat(outPath);
     // D-01 §8.5: trust ffprobe, not the extension or the server's Content-Type.
