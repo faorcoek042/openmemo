@@ -4,8 +4,7 @@
  * D-01 §4.2：**不设全局并发数**，按资源类别的 lane 信号量。
  * D-01 §4.6：lease + 续租，让"daemon 重启后判定这个 job 真的没人在跑"成立。
  */
-import type { SseEvent } from '@openmemo/shared';
-import { makeEvent, topics } from '@openmemo/shared';
+import { jobDoneEvent, jobFailedEvent, jobStateEvent } from './events.js';
 
 import type { SseHub } from '../http/sse.js';
 import type { Lane } from './lanes.js';
@@ -101,23 +100,22 @@ export class Scheduler {
 
     try {
       queue.markRunning(job.id, process.pid);
-      sse.publish(
-        makeEvent('job.state', topics.job(job.uid), {
-          jobUid: job.uid,
-          state: 'running',
-        }),
-      );
+      sse.publish(jobStateEvent(job.uid, 'running', 'leased'));
 
       const handler = handlers.get(job.type);
       if (!handler) {
         queue.fail(job.id, 'NO_HANDLER', `没有注册 job 类型 "${job.type}" 的处理器`, false);
         sse.publish(
-          makeEvent('job.failed', topics.job(job.uid), {
-            jobUid: job.uid,
-            code: 'NO_HANDLER',
-            messageZh: `未知任务类型：${job.type}`,
-            retryable: false,
-          }),
+          jobFailedEvent(
+            job.uid,
+            {
+              code: 'NO_HANDLER',
+              message: `no handler for job type "${job.type}"`,
+              messageZh: `未知任务类型：${job.type}`,
+              retryable: false,
+            },
+            false,
+          ),
         );
         return;
       }
@@ -132,10 +130,7 @@ export class Scheduler {
       const final = queue.byId(job.id);
       if (final?.state === 'succeeded') {
         sse.publish(
-          makeEvent('job.done', topics.job(job.uid), {
-            jobUid: job.uid,
-            result: final.result_json ? (JSON.parse(final.result_json) as unknown) : null,
-          }),
+          jobDoneEvent(job.uid, resultUidOf(final.result_json), resultKindOf(job.type)),
         );
       }
     } catch (err) {
@@ -146,12 +141,16 @@ export class Scheduler {
         ? (queue.requestCancel(job.id), 'cancelled')
         : queue.fail(job.id, 'RUNNER_ERROR', message, isRetryable(err));
       sse.publish(
-        makeEvent('job.failed', topics.job(job.uid), {
-          jobUid: job.uid,
-          code: aborted ? 'CANCELLED' : 'RUNNER_ERROR',
-          messageZh: aborted ? '任务已取消' : `任务失败：${message}`,
-          retryable: state === 'queued',
-        }),
+        jobFailedEvent(
+          job.uid,
+          {
+            code: aborted ? 'CANCELLED' : 'RUNNER_ERROR',
+            message: aborted ? 'cancelled by user' : message,
+            messageZh: aborted ? '任务已取消' : `任务失败：${message}`,
+            retryable: state === 'queued',
+          },
+          state === 'queued',
+        ),
       );
     } finally {
       clearInterval(renew);
@@ -159,6 +158,28 @@ export class Scheduler {
       release();
     }
   }
+}
+
+/** 从 result_json 里取出结果实体的 uid（没有就 null）。 */
+function resultUidOf(resultJson: string | null): string | null {
+  if (!resultJson) return null;
+  try {
+    const r = JSON.parse(resultJson) as Record<string, unknown>;
+    for (const k of ['transcriptUid', 'mindmapUid', 'noteUid']) {
+      const v = r[k];
+      if (typeof v === 'string') return v;
+    }
+  } catch {
+    /* 结果不是 JSON 就当没有 */
+  }
+  return null;
+}
+
+/** job 类型 → 结果实体种类（契约的 resultKind 枚举）。 */
+function resultKindOf(type: string): 'note' | 'transcript' | 'mindmap' | 'model' | 'backend' | null {
+  if (type === 'transcribe') return 'transcript';
+  if (type === 'mindmap') return 'mindmap';
+  return null;
 }
 
 /** 瞬时错误可重试；参数/格式类错误不重试（D-01 §4.7）。 */
