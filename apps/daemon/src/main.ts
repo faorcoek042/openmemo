@@ -10,7 +10,8 @@
  *   6. 写 runtime.json（0600，内含 token）
  *   7. 就绪
  */
-import { mkdirSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync } from 'node:fs';
 
 import { openAppDatabase, defaultExtensionPaths, type AppDatabase } from '@openmemo/db';
 
@@ -27,7 +28,7 @@ import {
 } from './bootstrap/single-instance.js';
 import { resolvePaths, type AppPaths } from './config/paths.js';
 import { reclaimOrphans } from './bootstrap/orphans.js';
-import { SessionStore, generateToken } from './http/auth.js';
+import { SessionStore, generateToken, type Session } from './http/auth.js';
 import { attachHttpHandlers } from './http/server.js';
 import { SseHub } from './http/sse.js';
 import { attachWebSocket } from './http/ws.js';
@@ -76,6 +77,18 @@ export interface RunningDaemon {
   /** 端口漂移时给用户看的警告；未漂移则为 undefined。 */
   readonly portWarning?: string | undefined;
   stop(): Promise<void>;
+  /**
+   * 自我重启：优雅停 → 拉起一个新进程接管同一个端口与数据目录 → 本进程退出。
+   *
+   * 存在的理由：SQLite 扩展（libsimple 中文分词 / sqlite-vec）是在**打开 DB 的那个连接**
+   * 上加载的，没法对已开连接补加载。用户在网页上装完扩展后必须换一个新连接才生效 ——
+   * 但**让用户去开终端重启 daemon 就等于没做到"全部通过网页完成"**。
+   * 让 daemon 自己重启，用户只点一下按钮，字面上仍然成立。
+   *
+   * 在途任务不会丢：T-054 把三个中止意图拆开了，这里走 `shutdown` →
+   * 任务置回 `queued`，新进程起来后自动续跑。
+   */
+  restart(reason: string): Promise<void>;
 }
 
 export class AlreadyRunningError extends Error {
@@ -104,8 +117,42 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
    */
   const dirLock = acquireDataDirLock(paths.dataDir);
 
-  const token = generateToken();
-  const sessions = new SessionStore(token);
+  /*
+   * 自我重启的接力棒：token 和会话必须**跨进程延续**。
+   *
+   * 否则点一下"立即重启"，浏览器那一页就废了 —— cookie 里的 sid 在新进程的内存里
+   * 不存在（SessionStore 是 Map），新进程又换了 token，而前端在握手时就把 URL 里的
+   * token 抹掉了（防截图泄露），刷新也救不回来。用户只能去终端读新地址，
+   * 正好是"用户不碰命令行"要消灭的场景。
+   *
+   * 走 env 不走 argv：/proc/<pid>/cmdline 同机任何用户可读，environ 只有 owner 能读。
+   * 读完立刻从 process.env 抹掉 —— daemon 会 spawn ffmpeg / whisper-cli，
+   * 不抹的话这些子进程会一路继承 token。
+   */
+  const inheritedToken = process.env['OPENMEMO_BOOT_TOKEN'];
+  delete process.env['OPENMEMO_BOOT_TOKEN'];
+  const inheritedSessionsRaw = process.env['OPENMEMO_SESSIONS'];
+  delete process.env['OPENMEMO_SESSIONS'];
+  /*
+   * 先取值再删，顺序不能反 —— 删掉之后下面 acquireSingleInstance 就读不到了，
+   * 同端口重试会**永远不生效**：平时端口释放得快看不出来，等到释放慢的那次
+   * （机器忙、连接没断干净、Windows）就悄悄漂到下一个端口，
+   * 而端口一变浏览器的麦克风授权就没了。这种"平时全绿、关键时刻失灵"最难查。
+   */
+  const waitForPortRaw = process.env['OPENMEMO_WAIT_FOR_PORT_MS'];
+  delete process.env['OPENMEMO_WAIT_FOR_PORT_MS'];
+
+  const token = inheritedToken && inheritedToken.length >= 16 ? inheritedToken : generateToken();
+  let inheritedSessions: Session[] = [];
+  if (inheritedSessionsRaw) {
+    try {
+      const parsed: unknown = JSON.parse(inheritedSessionsRaw);
+      if (Array.isArray(parsed)) inheritedSessions = parsed as Session[];
+    } catch {
+      /* 接力棒坏了不致命：退化成"要重新握手"，不要因此起不来 */
+    }
+  }
+  const sessions = new SessionStore(token, inheritedSessions);
   const sse = new SseHub();
   const server = createUnboundServer();
 
@@ -113,11 +160,47 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
   let instanceIdRef = '';
   let repos: Repos | undefined;
   let bundle: PipelineBundle | undefined;
+  let lastExtDir = '';
+  // 用 holder 而不是 let：restart 定义在 stop 之后，而 http handler 必须更早挂好
+  const restartHook: { run?: (reason: string) => Promise<void> } = {};
   let scheduler: Scheduler | undefined;
   const routers: RouteModule[] = [];
   let database: AppDatabase | undefined;
   let queue: JobQueue | undefined;
   const lanes = new LanePool();
+
+  /** 磁盘上已经有扩展、但当前连接没加载它 → 需要重启才能生效。 */
+  const restartRequirement = (): {
+    required: boolean;
+    extensions: string[];
+    messageZh: string;
+    endpoint: string;
+  } => {
+    const pending: string[] = [];
+    try {
+      if (database) {
+        const ext = defaultExtensionPaths(resolveExtensionDir(paths.modelsDir, paths.extensionsDir));
+        if (ext.libsimple && existsSync(ext.libsimple) && !database.extensions.libsimple) {
+          pending.push('libsimple');
+        }
+        if (ext.sqliteVec && existsSync(ext.sqliteVec) && !database.extensions.sqliteVec) {
+          pending.push('sqlite-vec');
+        }
+      }
+    } catch {
+      /* 探测失败就当"不需要重启"，绝不因为这个字段把状态接口搞挂 */
+    }
+    return {
+      required: pending.length > 0,
+      extensions: pending,
+      messageZh: pending.includes('libsimple')
+        ? '中文分词器已安装，需重启生效'
+        : pending.length > 0
+          ? '搜索扩展已安装，需重启生效'
+          : '',
+      endpoint: '/api/daemon/restart',
+    };
+  };
 
   // 先挂 handler 再绑定 —— 否则会有"端口已通但请求打到空 server"的窗口，
   // 而单实例探测正好靠 /api/health，这个窗口会让探测误判。
@@ -129,7 +212,22 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     dataDir: paths.dataDir,
     port: () => boundPort,
     routers,
+    requestRestart: (reason: string) => {
+      // 不 await：让 HTTP 响应先发出去，前端才能显示"正在重启"
+      void restartHook.run?.(reason);
+    },
     status: () => ({
+      /*
+       * 「装了但没生效」—— 前端那条横幅「中文分词器已安装，需重启生效 →[立即重启]」
+       * 的唯一触发源。
+       *
+       * 为什么非要有这个字段：SQLite 扩展是在**打开 DB 的那个连接**上加载的，
+       * model-mgmt 把 libsimple 装到磁盘上之后，本进程的 tokenizer 仍然是 trigram。
+       * 只看 extensions.libsimple=false，前端分不清"没装"和"装了但要重启" ——
+       * 前者该显示"去安装"，后者该显示"点一下重启"。这跟 T-060 那次
+       * 「检测中」和「检测过了但不可用」必须分开是同一类问题。
+       */
+      restartRequired: restartRequirement(),
       db: database
         ? {
             driver: database.driver,
@@ -173,6 +271,10 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     dataDir: paths.dataDir,
     ...(opts.port === undefined ? {} : { requestedPort: opts.port }),
     ...(opts.maxPort === undefined ? {} : { maxPort: opts.maxPort }),
+    // 自我重启拉起的新进程会带上它：在同一端口上等老进程退干净，绝不顺延
+    ...(waitForPortRaw && Number.isFinite(Number(waitForPortRaw))
+      ? { waitForPortMs: Number(waitForPortRaw) }
+      : {}),
   });
 
   if (outcome.kind === 'existing') {
@@ -226,6 +328,83 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     const mindmaps = new MindMapRepo(database.db);
 
     bundle = await buildPipeline(paths);
+
+    /**
+     * 取当前流水线。**所有消费方都必须走它，不能捕获快照** ——
+     * 装完模型/后端包后 `bundle` 会被整体替换，捕获了旧引用的地方会继续用旧工具表。
+     */
+    const getBundle = (): PipelineBundle => bundle as PipelineBundle;
+
+    /*
+     * ★ 热刷新工具表（T-060）★
+     *
+     * 此前 `buildPipeline()` 只在启动时跑一次，工具与模型路径**固化在启动那一刻**。
+     * 后果：用户在网页上把后端包和模型全装好（job succeeded、文件在盘、selfcheck 全 ✔），
+     * daemon 仍然认为"缺 whisper-cli / asr-model"，导入的笔记一直卡在 processing，
+     * **连 transcribe job 都排不上**；只有重启 daemon 才好。
+     * 「全部通过网页完成」在最后一步断掉 —— 让用户去重启 daemon 就等于没做到要求 2.1。
+     *
+     * 挂在 SSE 事件上而不是各安装点：生产方分散在 models.ts / backends.ts，
+     * 集中挂一处不会漏，也不需要改他们的文件。
+     */
+    let refreshTimer: NodeJS.Timeout | undefined;
+    const REFRESH_EVENTS = new Set([
+      'model.installed',
+      'model.removed',
+      'model.activated',
+      'backend.installed',
+      'backend.removed',
+    ]);
+    sse.observe((event) => {
+      if (!REFRESH_EVENTS.has(event.type)) return;
+      // 合并抖动：一次安装会连发多个事件，没必要重建多次
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        refreshTimer = undefined;
+        void (async () => {
+          try {
+            const before = bundle?.missing.join(',') ?? '';
+            const next = await buildPipeline(paths);
+            bundle = next;
+            const after = next.missing.join(',');
+            if (before !== after) {
+              console.log(
+                `[daemon] 工具表已热刷新: missing [${before || '无'}] → [${after || '无'}]`,
+              );
+            }
+            /*
+             * 扩展（libsimple / sqlite-vec）装上后要让检索从 trigram 切回 simple。
+             * 扩展是在**打开 DB 的连接上**加载的，没法对已开连接补加载 ——
+             * 这里如实提示需要重开连接，而不是假装已经生效。
+             */
+            /*
+             * 缺件而 blocked 的任务要**自动解除阻塞**。
+             * 否则用户装完模型，之前那条卡住的导入还是 blocked ——
+             * 他得自己找到那条任务点重试，这跟"让他重启 daemon"是同一类毛病。
+             */
+            if (next.missing.length === 0 && queue_) {
+              const unblocked = queue_.listBlocked(['MISSING_ASR_MODEL', 'LLM_NOT_CONFIGURED']);
+              for (const j of unblocked) queue_.unblock(j.id);
+              if (unblocked.length > 0) {
+                console.log(`[daemon] 缺件已补齐，自动解除 ${unblocked.length} 个任务的阻塞`);
+              }
+            }
+
+            const extDir = resolveExtensionDir(paths.modelsDir, paths.extensionsDir);
+            if (extDir !== lastExtDir) {
+              lastExtDir = extDir;
+              console.log(
+                `[daemon] 检测到 SQLite 扩展目录变化 (${extDir})；` +
+                  `中文分词将在下次打开数据库连接时生效`,
+              );
+            }
+          } catch (err) {
+            console.warn('[daemon] 工具表热刷新失败:', err);
+          }
+        })();
+      }, 800);
+      refreshTimer.unref?.();
+    });
     if (bundle.missing.length > 0) {
       console.warn(`[daemon] ⚠️  流水线缺少工具: ${bundle.missing.join(', ')} —— 相关任务会转 blocked`);
     }
@@ -233,7 +412,6 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     // ---- job 处理器注册表 ----
     const handlers = new Map<string, JobHandler>();
     const repos_ = repos;
-    const bundle_ = bundle;
     const queue_ = queue;
     handlers.set('transcribe', (job, signal) =>
       runTranscribeJob(
@@ -242,10 +420,10 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
           repos: repos_,
           sse,
           queue: queue_,
-          pipelineFor: (lang) => bundle_.pipelineFor(lang),
-          modelPath: bundle_.modelPath,
+          pipelineFor: (lang) => getBundle().pipelineFor(lang),
+          modelPath: getBundle().modelPath,
           mediaRoot: paths.mediaDir,
-          modelId: bundle_.modelPath ? bundle_.modelPath.split('/').pop() ?? 'unknown' : 'unknown',
+          modelId: getBundle().modelPath?.split('/').pop() ?? 'unknown',
         },
         signal,
       ),
@@ -308,8 +486,10 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         queue: queue_,
         sse,
         mediaDir: paths.mediaDir,
-        openStream: (req) => bundle_.openStream(req),
-        streamModelId: bundle_.streamModelId,
+        openStream: (req) => getBundle().openStream(req),
+        get streamModelId() {
+          return getBundle().streamModelId;
+        },
       },
     });
 
@@ -321,7 +501,9 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         repos,
         queue,
         sse,
-        registry: bundle_.registry,
+        get registry() {
+          return getBundle().registry;
+        },
         // 本地导入允许的根：数据目录 + 显式配置的额外目录
         importRoots: [
           paths.dataDir,
@@ -409,6 +591,59 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     dirLock.release();
   };
 
+  const restart = async (reason: string): Promise<void> => {
+    console.log(`[daemon] 自我重启（${reason}）…`);
+    /*
+     * 先拉新进程、确认它没当场死掉，再停自己。
+     *
+     * 反过来做（先 stop 再 spawn）有个要命的后果：万一新进程起不来，
+     * 用户就**一个 daemon 都不剩**了 —— 网页全白，只能去开终端，
+     * 比"提示他手动重启"还糟。而自我重启的全部意义就是别让他碰命令行。
+     *
+     * 新进程起来时端口还被本进程占着，所以它带 OPENMEMO_WAIT_FOR_PORT_MS
+     * 在**同一个端口**上等（绝不顺延：端口一变浏览器麦克风授权就没了）。
+     * 若本进程最后决定不退，它会探到一个健康的同 dataDir 实例，然后干净地退出。
+     */
+    const child = spawn(process.execPath, process.argv.slice(1), {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      env: {
+        ...process.env,
+        OPENMEMO_WAIT_FOR_PORT_MS: '15000',
+        // 接力棒：token + 会话必须跨进程延续，否则浏览器那一页当场被踢
+        OPENMEMO_BOOT_TOKEN: token,
+        OPENMEMO_SESSIONS: JSON.stringify(sessions.export()),
+      },
+    });
+
+    // 先不 unref：留一个窗口观察它是不是当场就死
+    const bornOk = await new Promise<boolean>((resolve) => {
+      let settled = false;
+      const done = (v: boolean): void => {
+        if (!settled) {
+          settled = true;
+          resolve(v);
+        }
+      };
+      child.once('error', () => done(false));
+      child.once('exit', () => done(false)); // 这么快就退了 = 起不来
+      setTimeout(() => done(true), 1000);
+    });
+
+    if (!bornOk) {
+      console.error('[daemon] ❌ 新进程没起来，取消重启（本进程继续服务，不让用户失去 daemon）');
+      return;
+    }
+    child.unref();
+    console.log(`[daemon] 新进程 pid=${child.pid ?? '?'} 已就位，本进程退出`);
+
+    await stop();
+    setTimeout(() => process.exit(0), 50);
+  };
+  // http 层通过这个 holder 触发重启（handler 早于 restart 定义就挂好了）
+  restartHook.run = restart;
+
   return {
     port: boundPort,
     token,
@@ -421,6 +656,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     portDrifted: outcome.portDrifted,
     portWarning,
     stop,
+    restart,
   };
 }
 

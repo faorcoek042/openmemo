@@ -40,6 +40,14 @@ export class SseHub {
   /** topic → 待发送的最新进度事件（节流用）。 */
   readonly #pending = new Map<string, SseEvent>();
   #throttleTimer: NodeJS.Timeout | undefined;
+  /**
+   * 事件观察者（**不是**订阅者，不影响广播）。
+   *
+   * 用途：让 daemon 内部对某些事件做出反应，而**不需要改每个事件生产方**。
+   * 目前唯一的用户是"装完模型/后端包后热刷新流水线工具表"——
+   * 生产方分散在 models.ts / backends.ts 里，在这里挂一处比在每个 publish 点加回调可靠。
+   */
+  readonly #observers: ((event: SseEvent) => void)[] = [];
   #keepaliveTimer: NodeJS.Timeout | undefined;
   #closed = false;
 
@@ -118,8 +126,20 @@ export class SseHub {
    * @param throttleTopic 传入则按 topic 做 250ms 合并（只保留最新值）。
    *   进度类事件必须节流；**`transcribe.segment` 这类增量结果不能丢，不要传 topic**。
    */
+  /** 注册事件观察者。观察者抛异常不得影响广播。 */
+  observe(fn: (event: SseEvent) => void): void {
+    this.#observers.push(fn);
+  }
+
   publish(event: SseEvent, throttleTopic?: string): void {
     if (this.#closed) return;
+    for (const fn of this.#observers) {
+      try {
+        fn(event);
+      } catch {
+        /* 观察者的问题不能影响事件广播 */
+      }
+    }
     if (throttleTopic === undefined) {
       this.#flushOne(event);
       return;

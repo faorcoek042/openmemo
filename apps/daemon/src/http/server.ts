@@ -41,6 +41,14 @@ export interface ServerDeps {
   /** 健康检查里暴露的运行时状态（不含任何 secret）。 */
   readonly status: () => Record<string, unknown>;
   /**
+   * 触发自我重启。
+   *
+   * SQLite 扩展只能在**新建连接**时加载，所以"网页装完中文分词器立刻生效"
+   * 只能靠换一个进程。让 daemon 自己重启，用户点一下按钮即可 ——
+   * 要求 2.1「用户不碰命令行」在字面上仍然成立。
+   */
+  readonly requestRestart?: (reason: string) => void;
+  /**
    * 业务路由模块。按顺序尝试，第一个返回 true 的即处理完毕。
    * 放在鉴权与 CSRF **之后**、404 **之前**。
    */
@@ -161,6 +169,25 @@ async function handleRequest(
   // ---- REST 骨架 ----
   if (path === '/api/daemon/status' && method === 'GET') {
     sendJson(res, 200, deps.status());
+    return;
+  }
+
+  if (path === '/api/daemon/restart' && method === 'POST') {
+    if (!deps.requestRestart) {
+      sendError(res, 501, 'NOT_IMPLEMENTED', 'restart not wired', '当前构建不支持自我重启');
+      return;
+    }
+    const body = (await readBody(req).catch(() => undefined)) as { reason?: unknown } | undefined;
+    const reason = typeof body?.reason === 'string' ? body.reason : 'user-requested';
+    // 先回 202，前端才能显示"正在重启"并等 SSE 重连；重启在响应之后发生
+    sendJson(res, 202, {
+      ok: true,
+      reason,
+      /** 重启后端口不变（新进程会在同一端口上等老进程退干净），前端可以直连原地址重试。 */
+      port: deps.port(),
+      hint: '重启中，SSE 会自动重连',
+    });
+    setTimeout(() => deps.requestRestart?.(reason), 50);
     return;
   }
 

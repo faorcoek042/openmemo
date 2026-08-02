@@ -40,8 +40,18 @@ export class SessionStore {
   readonly #sessions = new Map<string, Session>();
   readonly #bootToken: string;
 
-  constructor(bootToken: string) {
+  constructor(bootToken: string, seed?: readonly Session[]) {
     this.#bootToken = bootToken;
+    // 自我重启时把上一进程的会话接过来。不接的话：浏览器手里的 HttpOnly cookie
+    // 指向一个已经不存在的 sid → 全站 401，而前端早就把 URL 里的 token 抹掉了
+    // （防截图泄露），连重新握手都做不到 —— 用户只剩"去终端看新地址"这一条路，
+    // 那正是自我重启要消灭的东西。
+    for (const s of seed ?? []) this.#sessions.set(s.sid, s);
+  }
+
+  /** 导出会话，交给自我重启拉起的新进程（见 main.ts 的 restart）。 */
+  export(): Session[] {
+    return [...this.#sessions.values()];
   }
 
   /** 校验启动 token（来自 URL fragment 或 CLI 的 Bearer）。 */

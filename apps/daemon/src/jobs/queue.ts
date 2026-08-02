@@ -246,6 +246,13 @@ export class JobQueue {
       });
   }
 
+  /** 列出所有 `blocked` 的 job（可按 blocked_code 过滤）。 */
+  listBlocked(codes?: readonly string[]): JobRow[] {
+    const rows = this.db.prepare<JobRow>(`SELECT * FROM jobs WHERE state='blocked'`).all();
+    if (!codes || codes.length === 0) return rows;
+    return rows.filter((r) => r.blocked_code !== null && codes.includes(r.blocked_code));
+  }
+
   /** 前置条件满足后解除阻塞。 */
   unblock(id: number, now = Date.now()): void {
     this.db

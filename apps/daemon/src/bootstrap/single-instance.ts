@@ -103,6 +103,15 @@ export interface AcquireOptions {
   /** 传入已建好的 server（这样调用方可以先挂好 request handler 再绑定）。 */
   readonly server: Server;
   readonly maxPort?: number;
+  /**
+   * 请求的端口被占时，**先原地重试多久**再考虑顺延。
+   *
+   * 用于**自我重启**：新进程起来时老进程可能还在收尾，端口要过一会儿才释放。
+   * 这时绝不能顺延到下一个端口 —— 浏览器的麦克风授权按 origin 隔离，
+   * 端口一变用户就得重新授权一次（ADR-006 决策 2）。为了一次重启把授权弄丢，
+   * 比多等几秒糟糕得多。
+   */
+  readonly waitForPortMs?: number;
 }
 
 /**
@@ -123,6 +132,33 @@ export async function acquireSingleInstance(opts: AcquireOptions): Promise<BindO
    */
   const span = MAX_PORT - DEFAULT_PORT;
   const maxPort = opts.maxPort ?? Math.max(requested + span, MAX_PORT);
+
+  // 自我重启路径：先在**同一个端口**上等老进程退干净，等不到再走顺延阶梯
+  const waitMs = opts.waitForPortMs ?? 0;
+  if (waitMs > 0) {
+    const deadline = Date.now() + waitMs;
+    for (;;) {
+      const outcome = await tryBind(opts.server, requested);
+      if (outcome === 'ok') {
+        return {
+          kind: 'acquired',
+          server: opts.server,
+          port: requested,
+          instanceId: ulid(),
+          portDrifted: false,
+          requestedPort: requested,
+        };
+      }
+      // 端口上如果已经有一个**健康的、同 dataDir 的**实例，说明不是"老进程没退干净"，
+      // 而是真的已经有人在跑 —— 立刻走正常判定，不要傻等
+      const existing = await probeExisting(requested, 500);
+      if (existing && existing.dataDir === opts.dataDir) {
+        return { kind: 'existing', info: existing };
+      }
+      if (Date.now() >= deadline) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
 
   for (let port = requested; port <= maxPort; port++) {
     const outcome = await tryBind(opts.server, port);

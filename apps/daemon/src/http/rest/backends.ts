@@ -51,14 +51,48 @@ function currentPlatform(): PlatformSelector {
 function applicability(
   state: RestState,
   pack: BackendPack,
-): { applicable: boolean; reason: string | null } {
+): { applicable: boolean; reason: string | null; kind: InapplicableKind } {
   const platform = currentPlatform();
   const r = isPackApplicable(
     { id: pack.id, backend: pack.backend, os: pack.os, arch: pack.arch },
     platform,
     state.hardware,
   );
-  return { applicable: r.applicable, reason: r.reason };
+  return { applicable: r.applicable, reason: r.reason, kind: inapplicableKind(state, pack, r) };
+}
+
+/**
+ * 「不可用」的三种含义 —— **不能用同一个 `applicable=false` 表达**。
+ *
+ * 用户看到"不可用"会以为自己的机器不支持，然后就不装了。但在干净机器上，
+ * 绝大多数情况其实是**我们还没法判断**：probe 可执行文件装在后端包里，
+ * 包没装 → probe 跑不了 → 加速后端一律显示"不可用"。
+ * 这跟"探测完成、确认你没有这块卡"是完全不同的两件事，UI 该说的话也不同。
+ */
+export type InapplicableKind =
+  /** 可装 */
+  | 'applicable'
+  /** os/arch 就对不上，换台机器也没用 */
+  | 'platform'
+  /** **尚未探测**（probe 没跑成）——「检测中/待检测」，不是"不支持" */
+  | 'undetermined'
+  /** 探测完成，确认本机没有可用设备 */
+  | 'unsupported';
+
+function inapplicableKind(
+  state: RestState,
+  pack: BackendPack,
+  r: { applicable: boolean; reason: string | null },
+): InapplicableKind {
+  if (r.applicable) return 'applicable';
+  const platform = currentPlatform();
+  if (pack.os !== platform.os || pack.arch !== platform.arch) return 'platform';
+
+  const status = state.hardware.backends.find((b) => b.id === pack.backend);
+  const why = status?.unavailableReason ?? '';
+  // runtime 在 probe 没跑成时给的就是这句 —— 它代表"未知"，不代表"不支持"
+  if (/probe did not complete|probe skipped/i.test(why)) return 'undetermined';
+  return 'unsupported';
 }
 
 /**
@@ -160,11 +194,16 @@ export async function handleBackendRoutes(
       // ★ 诚实：内置目录，不是签名过的远端目录
       stale: true,
       packs: state.backendCatalog.packs.map((pack) => {
-        const { applicable, reason } = applicability(state, pack);
+        const { applicable, reason, kind } = applicability(state, pack);
         return {
           ...pack,
           installed: installedIds.has(pack.id),
           applicable,
+          /**
+           * 区分"还没测出来"和"测完了不支持"。UI 据此决定说
+           *「检测中 / 装上 CPU 包后可检测」还是「本机不支持」。
+           */
+          inapplicableKind: kind,
           inapplicableReason: reason,
           recommended: applicable && pack.backend === state.hardware.selectedBackend,
         };

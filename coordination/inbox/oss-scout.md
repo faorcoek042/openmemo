@@ -1095,3 +1095,122 @@ POST /api/notes/probe   { input: string }
   打开 `OPENMEMO_ENABLE_SITE_EXTRACTOR=1` 且装了 yt-dlp 后该走 ytdlp adapter，**这条分支我没验**。
 - `requiresAuth` 恒为 false（见上），**前端不应据它做任何拦截**。
 - probe 超时 30s 是我拍的值，没有依据数据；RSS 那条实测约 2s，直链约 1s。
+
+---
+
+## [2026-08-03 04:10] T-060 DONE —— 装完不重启即可转写
+
+### 复现 → 修复 → 实证（全程一个 daemon，从未重启）
+
+```
+[1] 启动（刻意不给模型，模拟全新机器）
+    [daemon] ⚠️  流水线缺少工具: asr-model —— 相关任务会转 blocked
+    missing: ['asr-model']  modelPath: None
+[2] 此时导入 → jobs: {'blocked': 1}          ← 复现了 model-mgmt 报的现象
+[3] 通过 API 装模型（模拟网页点击）
+    POST /api/models/pull {"id":"asr/whisper-base-q5_1"} → 202  totalBytes 59707625
+[4] 已安装模型数=1
+[5] ★ 不重启 daemon ★
+    [daemon] 工具表已热刷新: missing [asr-model] → [无]
+    missing: []  modelPath: /tmp/om-hot/models/by-name/asr/ggml-base-q5_1.bin
+    jobs: {'running': 1}                      ← blocked 的那条自动解除并跑起来了
+[6] 笔记状态=ready
+    engine=whisper.cpp  model=ggml-base-q5_1.bin  段数=44  rtf=0.0866
+      "Hello citizens of Africa, I preach in the name of the Univer…"
+```
+
+### 修法
+- `SseHub.observe()`：新增**事件观察者**（不影响广播）。挂在
+  `model.installed/removed/activated` + `backend.installed/removed` 上，800ms 去抖后
+  重建 `buildPipeline()`。**挂在事件上而不是各安装点** —— 生产方分散在
+  `models.ts`/`backends.ts`，集中一处不会漏，也不用改他们的文件。
+- 所有消费方从**捕获快照**改为 `getBundle()` 实时读取（此前 `const bundle_ = bundle`
+  捕获了启动那一刻的引用，热刷新后仍会用旧表 —— 这是同一个 bug 的第二层）。
+- **自动解除阻塞**：缺件补齐后把 `MISSING_ASR_MODEL`/`LLM_NOT_CONFIGURED` 的 job 拉回
+  `queued`。否则用户装完模型还得自己找到那条卡住的任务点重试 ——
+  跟"让他重启 daemon"是同一类毛病。
+
+### `selfcheck` 现在读 daemon 实际在用的表
+它本来就走 `bundle: () => bundle`（实时闭包），热刷新后自然跟着变：
+```
+ok  tool.whisperCli  /root/memo/.build/…/whisper-cli
+ok  model.asr        ggml-base-q5_1.bin
+ok=True counts={'ok':10,'warn':3,'fail':0}
+```
+> 你指出的那条缝我认同：**自检查"磁盘上有没有"、daemon 用"启动时记下的表"**，
+> 两者查的是不同状态源，所以能出现"全 ✔ 但不可用"。现在两者同源。
+
+### 「探测中」vs「不支持」
+新增 `inapplicableKind: 'applicable' | 'platform' | 'undetermined' | 'unsupported'`：
+```
+llamacpp-vulkan-linux-x64    applicable=False kind=undetermined   ← 尚未探测，不是"不支持"
+llamacpp-rocm-linux-x64      applicable=False kind=undetermined
+llamacpp-cpu-linux-x64       applicable=True  kind=applicable
+sqlite-ext-linux-x64         applicable=True  kind=applicable
+```
+判据：probe 没跑成（`probe did not complete|skipped`）→ `undetermined`；
+probe 跑完但没枚举到设备 → `unsupported`；os/arch 不符 → `platform`。
+**请 `model-mgmt` 把这个字段一并收编进 shared**，UI 据它区分"检测中/装上 CPU 包后可检测"与"本机不支持"。
+
+### 全量
+`pnpm -r build` **9/9**；测试 **167 pass / 0 fail**；eslint **EXIT=0**。
+
+### 诚实声明
+- **SQLite 扩展（libsimple/sqlite-vec）装上后无法热生效**：扩展是在**打开 DB 的那个连接**上
+  加载的，没法对已开连接补加载。我**没有假装它生效**，而是打印
+  「检测到 SQLite 扩展目录变化；中文分词将在下次打开数据库连接时生效」。
+  要真做到热生效得重开连接（涉及在途事务与 WAL，风险不小），**本轮未做**。
+  → 也就是说：**装完扩展后中文分词仍需重启 daemon**，这条"网页装完即用"还没闭合。
+- 热刷新的去抖是 800ms、拍的值，无数据依据。
+- 删除模型后的反向刷新**代码路径已覆盖**（`model.removed` 在监听列表里）但**没真跑过**。
+- `inapplicableKind` 只在 `/api/backends/catalog` 暴露；`/api/runtime/hardware` 那侧仍只有
+  `unavailableReason` 字符串，没做结构化。
+
+---
+
+## T-061 daemon 自我重启（用户只点一下，不碰命令行）
+
+**结论：可行，已实现并跑通。** 上一轮那条「装完扩展仍需重启 daemon」的缺口就此闭合。
+
+### 新增
+- `POST /api/daemon/restart` → 202（先回响应，再重启，前端才能显示"正在重启"）
+- `GET /api/daemon/status` 新增 **`restartRequired`**：
+  `{required, extensions:['libsimple'], messageZh:'中文分词器已安装，需重启生效', endpoint}`
+  这是横幅的**唯一触发源**。没有它前端分不清「没装」和「装了但要重启」——
+  前者该显示"去安装"，后者该显示"点一下重启"。同 T-060「检测中 vs 检测过了但不可用」。
+
+### 端到端实测（不是"接口回了 202"）
+装真 libsimple.so → `restartRequired.required=true`、tokenizer 仍 `trigram`
+→ 点重启 → **tokenizer=simple、vec=on、横幅消失、端口没变、旧会话仍有效**；
+`/api/selfcheck` `ext.chineseSearch` 与 `ext.sqliteVec` 双双转 ok（11 ok / 2 warn / 0 fail）。
+脚本：`apps/daemon/scripts/e2e-restart.mjs`。
+
+### 路上挖出的三个坑（都是"全绿但不能用"）
+1. **重启会把用户那一页踢下线（最严重）**。`SessionStore` 是纯内存 `Map`，boot token 每次
+   启动重新生成 → cookie 里的 sid 在新进程不存在 → 全站 401。而前端 `consumeHandoffToken()`
+   握手时就把 URL 里的 token **抹掉了**（防截图泄露），**刷新也救不回来**，用户只剩
+   "去终端读新地址"——正是本任务要消灭的场景。
+   → 修：token + 会话经 **env**（非 argv，`/proc/<pid>/cmdline` 全局可读）传给新进程，
+   读完立刻从 `process.env` 抹掉（否则 ffmpeg/whisper-cli 子进程会一路继承 token）。
+   实测：同一个 cookie 重启后读 200、写 202。
+2. **同端口重试从未生效**。我先 `delete process.env[...]` 再在下游读它，
+   `waitForPortMs` 永远是 undefined。平时端口释放快看不出来，**测试还是全绿的**；
+   等到释放慢的那次就悄悄漂到 17694，而端口一变浏览器麦克风授权就没了。
+   → 修：先取值再删。反证实测：占住端口 6s，带重试的守住 17693，
+   不带的漂到 17694 并自己打印「麦克风授权需要重新点一次」。
+3. **先 stop 再 spawn = 新进程起不来时用户一个 daemon 都不剩**，比"提示手动重启"更糟。
+   → 改为**先拉起、观察 1s 确认没当场死、再停自己**；起不来就取消重启继续服务。
+   代价：重启从 1.2s 变 2.7s。被放弃的子进程会探到健康的同 dataDir 实例后干净退出（实测退出码 5）。
+
+### 在途任务
+走 T-054 铺好的 `shutdown` 意图：`running → queued → 重启后自动续跑`。
+实测段数 4 →（重启）→ 8，**基准取的是重启前的段数**：第一版拿"刚回来那一刻读到的 -1"当基准，
+任何一次成功读取都 > -1，于是"没续跑"也会显示 ✅——我自己的脚本先绿了一次才发现。
+
+### 诚实声明（未验证项）
+- **Windows 完全没测**（本机 Linux）。`detached:true` + `windowsHide:true` 已加，
+  但新进程组语义、端口释放时机都只是按文档推断。**Windows 上首次跑必须实测。**
+- 若日后打包成 Electron，`process.execPath` 是 app 二进制、`argv.slice(1)` 未必对，
+  重启的 spawn 参数要重新推导。
+- 1s"没当场死"窗口是拍的值；它只挡得住"立刻崩"，挡不住"起来后 5s 才崩"。
+- 新进程 fork 失败/被安全软件拦截时的表现未测。
