@@ -101,9 +101,23 @@ export class WhisperCppEngine implements AsrEngine {
       '--no-prints',
     ];
 
-    if (req.language !== undefined && /^[a-z]{2,3}(-[A-Za-z]{2,4})?$|^auto$/.test(req.language)) {
-      flags.push('-l', req.language);
-    }
+    /*
+     * Language MUST always be passed.
+     *
+     * whisper-cli's default is `-l en` (see `--help`: "[en] spoken language"), and when
+     * it is told the audio is English but hears Mandarin it does not transcribe — it
+     * TRANSLATES. Measured on Chinese audio with no `-l` flag:
+     *     "The main point is to talk about the three questions. First of all, …"
+     * instead of 重点呢想谈三个问题…. For a Chinese-first product, a user who never opened
+     * the language setting would silently get English translations of their own notes.
+     *
+     * So an unset language becomes `auto` (whisper's own detection), never the default.
+     */
+    const language =
+      req.language !== undefined && /^[a-z]{2,3}(-[A-Za-z]{2,4})?$|^auto$/.test(req.language)
+        ? req.language
+        : 'auto';
+    flags.push('-l', language);
 
     // D-01 §8.4 L4 — the prompt is user-controlled. It is safe as ONE argv element, but
     // must be length-capped: Linux MAX_ARG_STRLEN is 128 KB and a huge prompt also

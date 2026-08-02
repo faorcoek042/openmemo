@@ -12,7 +12,7 @@
  */
 
 import { bus } from '../events/bus';
-import { setFetcher, type ApiOptions, type Fetcher } from './client';
+import { registerMockFetcher, type ApiOptions, type Fetcher } from './client';
 import type {
   ImportUrlRequest,
   NoteDetail,
@@ -346,13 +346,18 @@ const mockFetcher: Fetcher = async <T,>(path: string, opts: ApiOptions = {}): Pr
 
 let installed = false;
 
-/** 启用 mock。返回卸载函数。 */
+/**
+ * 注册 mock 作为**回落**（T-029）。
+ *
+ * 注意语义变化：它不再全局替换 fetcher。真假选择现在按 **surface** 决定
+ * （见 `client.ts` 的 `api()`）—— daemon 实现了哪个端点，那个面就自动走真的。
+ */
 export function installMockApi(): () => void {
   if (installed) return () => {};
   installed = true;
   seedDemoData();
-  setFetcher(mockFetcher);
-  console.warn('[OpenMemo] MOCK API 已启用 —— 数据是假的，daemon 未接通。');
+  registerMockFetcher(mockFetcher);
+  console.info('[OpenMemo] mock 回落已注册；具体哪个面用真/假由 surface 状态决定。');
   return () => {
     timers.forEach(clearTimeout);
     timers.clear();

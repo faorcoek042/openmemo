@@ -5,6 +5,7 @@ import { Link2, Loader2, Upload } from 'lucide-react';
 
 import { Button } from '../../components/common/Button';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
+import { MockNotice } from '../../components/common/MockNotice';
 import { useImportUrlMutation, useProbeMutation } from '../notes';
 import { humanDuration } from '../../lib/format/time';
 import type { ProbeResult } from '../../lib/api/types';
@@ -59,6 +60,7 @@ export default function CapturePage() {
       }}
     >
       <h1 className="text-xl font-semibold text-ink">{t('capture.title')}</h1>
+      <MockNotice surface="import" />
 
       <div>
         <label htmlFor="capture-url" className="mb-2 block text-sm text-ink-secondary">

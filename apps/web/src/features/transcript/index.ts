@@ -6,3 +6,4 @@
  * 这样内部结构可以随便重构，只要这个门面不变，别人就不会被打断。
  */
 export { TranscriptList } from './TranscriptList';
+export { WordLevelBadge } from './WordLevelBadge';

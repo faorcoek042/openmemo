@@ -133,6 +133,48 @@ export type {
   SherpaTransducerModel,
 } from './asr/sherpaOnnx.js';
 
+// Chinese offline default (ADR-013 decision 1).
+export { ParaformerEngine } from './asr/paraformer.js';
+export { loadSherpaModule, normalizeSherpaModule } from './asr/sherpaModule.js';
+export type { SherpaExports } from './asr/sherpaModule.js';
+export type {
+  ParaformerEngineOptions,
+  ParaformerModel,
+  ParaformerSherpaModule,
+  PunctuationModel,
+} from './asr/paraformer.js';
+
+// Paraformer post-processing (Chinese numerals, English casing).
+export {
+  hasChineseNumerals,
+  parseChineseNumber,
+  postprocessChinese,
+  restoreEnglishCasing,
+  zhNumeralsToArabic,
+} from './asr/postprocess.js';
+
+// Engine selection.
+export { buildCandidates, isChinese, selectEngine } from './asr/selectEngine.js';
+export type {
+  EngineCandidate,
+  EngineId,
+  EngineSelection,
+  EngineTradeoff,
+  SelectEngineInput,
+  TranscriptionMode,
+} from './asr/selectEngine.js';
+
+// In-product benchmark (ADR-004 decision 3).
+export { BENCHMARK_CLIPS, clipForLanguage } from './benchmark/clips.js';
+export type { BenchmarkClip } from './benchmark/clips.js';
+export {
+  decodeClip,
+  formatBenchmark,
+  runBenchmark,
+  toBenchmarkResult,
+} from './benchmark/runBenchmark.js';
+export type { BenchmarkOutcome, BenchmarkReport, RunBenchmarkOptions } from './benchmark/runBenchmark.js';
+
 // F3 two-phase merge (streaming draft -> offline re-run, preserving user edits).
 export {
   buildDiff,

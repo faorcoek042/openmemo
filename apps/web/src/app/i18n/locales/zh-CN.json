@@ -117,12 +117,22 @@
     "viewDiff": "查看改动",
     "undoReplace": "撤销这次更新",
     "twoPhaseNoticeWithEta": "实时字幕使用快速模型，停止后会自动用更准确的模型重听一遍，预计需要 {{eta}}。",
-    "twoPhaseNoticeSlowHint": "中文识别使用的 large-v3-turbo 在纯 CPU 上约为 2.7 倍速，装上 GPU 加速后端会快很多。",
+    "twoPhaseNoticeSlowHint": "",
     "rerunningWithEta": "正在用 {{model}} 重新识别，以获得更准确的结果，预计还需 {{eta}}…",
     "replacedNoCounterpart": "其中 {{count}} 段没有找到对应的新识别结果，已按原样保留。",
     "noCounterpartTag": "无对应更新",
     "mergeByTimeNote": "合并按时间轴对齐，不按段落序号 —— 两遍模型的断句本来就不同。",
-    "installBackend": "安装加速后端"
+    "installBackend": "安装加速后端",
+    "engineLabel": "识别引擎",
+    "engineParaformer": "Paraformer 中文（快）",
+    "engineTurbo": "large-v3-turbo（慢，更全）",
+    "paraformerNotice": "中文默认使用 Paraformer，1 小时录音约 43 秒转完。",
+    "paraformerTradeoff": "代价：**没有逐字时间戳**（字幕高亮到句、不到字）、数字会写成汉字（“二零二六”而非 “2026”）、英文全小写。",
+    "turboTradeoff": "large-v3-turbo 有逐字时间戳、阿拉伯数字、专有名词更准，代价是 1 小时录音约需 22 分钟。",
+    "switchToTurbo": "换成 large-v3-turbo",
+    "switchToParaformer": "换回 Paraformer",
+    "wordLevelUnavailable": "当前引擎无逐字时间戳，字幕按整句高亮",
+    "wordLevelAvailable": "逐字高亮已启用"
   },
   "tasks": {
     "title": "任务中心",
@@ -215,5 +225,35 @@
     "contractVersion": "契约版本",
     "exportDiagnostics": "导出诊断包",
     "telemetryNote": "本产品不做任何遥测上报，日志只写在本机。"
+  },
+  "mock": {
+    "notImplementedShort": "这部分还是模拟数据",
+    "notImplementedDetail": "本地服务已连上，但这个接口还没实现。接通后此提示会自动消失。",
+    "offlineShort": "本地服务未连接",
+    "offlineDetail": "当前显示的是演示数据。启动 OpenMemo 本地服务后会自动切换为真实数据。",
+    "summary": "已接通 {{live}} · 模拟 {{mocked}}"
+  },
+  "mindmap": {
+    "undo": "撤销",
+    "redo": "重做",
+    "editHint": "双击编辑 · 拖拽移动 · 右键更多",
+    "markmapLoss": "切到大纲视图将不显示 {{edges}} 条关联线与 {{summaries}} 个概要",
+    "empty": "还没有思维导图",
+    "emptyHint": "转写完成后可以让 AI 生成，也可以从空白开始手动整理。",
+    "open": "打开思维导图"
+  },
+  "search": {
+    "title": "搜索",
+    "placeholder": "搜索笔记、转写内容、思维导图节点…",
+    "mode": "搜索方式",
+    "modes": {
+      "hybrid": "混合",
+      "keyword": "关键词",
+      "semantic": "语义"
+    },
+    "idle": "输入关键词开始搜索",
+    "idleHint": "支持中文分词与拼音；命中转写内容时可直接跳到那一秒。",
+    "noResults": "没有找到匹配内容",
+    "noResultsHint": "换个关键词，或试试「语义」模式。"
   }
 }

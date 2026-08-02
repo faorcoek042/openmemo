@@ -33,6 +33,9 @@ export interface JobRow {
   progress: number;
   current_step: string | null;
   payload_json: string;
+  result_json: string | null;
+  error_code: string | null;
+  error_detail: string | null;
   blocked_code: string | null;
   cancel_requested: number;
   pause_requested: number;

@@ -30,6 +30,14 @@ import { SseHub } from './http/sse.js';
 import { attachWebSocket } from './http/ws.js';
 import { JobQueue } from './jobs/queue.js';
 import { LanePool } from './jobs/lanes.js';
+import { Repos } from './db/repos.js';
+import { buildPipeline, type PipelineBundle } from './pipeline/setup.js';
+import { Scheduler, type JobHandler } from './jobs/scheduler.js';
+import { runTranscribeJob } from './jobs/runners/transcribe.js';
+import { createNoteRoutes } from './http/rest/notes.js';
+import { createSearchRoutes } from './http/rest/search.js';
+import { createMediaRoutes } from './http/media.js';
+import type { RouteModule } from './http/server.js';
 
 export const VERSION = '0.1.0';
 
@@ -82,6 +90,10 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
 
   let boundPort = 0;
   let instanceIdRef = '';
+  let repos: Repos | undefined;
+  let bundle: PipelineBundle | undefined;
+  let scheduler: Scheduler | undefined;
+  const routers: RouteModule[] = [];
   let database: AppDatabase | undefined;
   let queue: JobQueue | undefined;
   const lanes = new LanePool();
@@ -95,6 +107,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     version: VERSION,
     dataDir: paths.dataDir,
     port: () => boundPort,
+    routers,
     status: () => ({
       db: database
         ? {
@@ -114,6 +127,15 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       jobs: queue ? queue.counts() : null,
       lanes: lanes.snapshot(),
       sseClients: sse.clientCount,
+      scheduler: scheduler ? { running: scheduler.runningCount } : null,
+      pipeline: bundle
+        ? {
+            missing: bundle.missing,
+            modelPath: bundle.modelPath,
+            ffmpeg: bundle.tools.ffmpeg || null,
+            whisperCli: bundle.tools.whisperCli,
+          }
+        : null,
     }),
   });
 
@@ -154,6 +176,62 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     if (recovered > 0) {
       console.log(`[daemon] 崩溃恢复：${recovered} 个中断的任务已重新入队`);
     }
+
+    repos = new Repos(database.db);
+    repos.ensureDefaultFolder();
+
+    bundle = await buildPipeline(paths);
+    if (bundle.missing.length > 0) {
+      console.warn(`[daemon] ⚠️  流水线缺少工具: ${bundle.missing.join(', ')} —— 相关任务会转 blocked`);
+    }
+
+    // ---- job 处理器注册表 ----
+    const handlers = new Map<string, JobHandler>();
+    const repos_ = repos;
+    const bundle_ = bundle;
+    const queue_ = queue;
+    handlers.set('transcribe', (job, signal) =>
+      runTranscribeJob(
+        job,
+        {
+          repos: repos_,
+          sse,
+          queue: queue_,
+          pipeline: bundle_.pipeline,
+          modelPath: bundle_.modelPath,
+          mediaRoot: paths.mediaDir,
+          modelId: bundle_.modelPath ? bundle_.modelPath.split('/').pop() ?? 'unknown' : 'unknown',
+        },
+        signal,
+      ),
+    );
+
+    scheduler = new Scheduler({ queue, lanes, sse, handlers });
+    scheduler.start();
+
+    // ---- 路由装配 ----
+    routers.push(
+      createNoteRoutes({
+        repos,
+        queue,
+        sse,
+        // 本地导入允许的根：数据目录 + 显式配置的额外目录
+        importRoots: [
+          paths.dataDir,
+          ...(process.env['OPENMEMO_IMPORT_ROOTS'] ?? '').split(':').filter(Boolean),
+        ],
+      }),
+      createSearchRoutes({
+        db: database.db,
+        hasChineseTokenizer: database.extensions.libsimple,
+        hasVectorIndex: database.extensions.sqliteVec,
+      }),
+      createMediaRoutes({
+        repos,
+        mediaRoot: paths.mediaDir,
+        extraRoots: [paths.tmpDir, paths.dataDir],
+      }),
+    );
   } catch (err) {
     server.close();
     sse.close();
@@ -192,6 +270,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
   const stop = async (): Promise<void> => {
     if (stopped) return;
     stopped = true;
+    await scheduler?.stop();
     sse.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     try {

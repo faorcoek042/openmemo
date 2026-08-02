@@ -4,6 +4,7 @@ import { FileAudio, Mic, Star } from 'lucide-react';
 
 import { useNotesQuery } from './api';
 import { EmptyState } from '../../components/common/EmptyState';
+import { MockNotice } from '../../components/common/MockNotice';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { StatusChip } from '../../components/common/StatusChip';
 import { Button } from '../../components/common/Button';
@@ -38,6 +39,7 @@ export default function NotesListPage() {
   return (
     <div className="px-6 py-6">
       <h1 className="mb-4 text-xl font-semibold text-ink">{t('notes.title')}</h1>
+      <MockNotice surface="notes" className="mb-3" />
       <ul className="flex flex-col gap-2" role="list">
         {notes.map((n) => (
           <li key={n.uid}>

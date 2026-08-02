@@ -13,7 +13,7 @@ import type {
 export function useNotesQuery() {
   return useQuery({
     queryKey: qk.notes.list(),
-    queryFn: () => api<{ notes: NoteSummary[] }>('/notes'),
+    queryFn: () => api<{ notes: NoteSummary[] }>('notes', '/notes'),
     select: (d) => d.notes,
   });
 }
@@ -21,7 +21,7 @@ export function useNotesQuery() {
 export function useNoteQuery(uid: string | undefined) {
   return useQuery({
     queryKey: qk.notes.detail(uid ?? ''),
-    queryFn: () => api<NoteDetail>(`/notes/${uid}`),
+    queryFn: () => api<NoteDetail>('notes', `/notes/${uid}`),
     enabled: Boolean(uid),
   });
 }
@@ -29,7 +29,7 @@ export function useNoteQuery(uid: string | undefined) {
 export function useTranscriptQuery(uid: string | undefined) {
   return useQuery({
     queryKey: qk.transcript(uid ?? ''),
-    queryFn: () => api<TranscriptDto | null>(`/notes/${uid}/transcript`),
+    queryFn: () => api<TranscriptDto | null>('transcript', `/notes/${uid}/transcript`),
     enabled: Boolean(uid),
   });
 }
@@ -37,7 +37,7 @@ export function useTranscriptQuery(uid: string | undefined) {
 /** probe：秒级返回，**先于下载**。让"认对了没有"和"需要登录"都提前暴露（D-01 §5 F1）。 */
 export function useProbeMutation() {
   return useMutation({
-    mutationFn: (url: string) => api<ProbeResult>('/import/probe', { method: 'POST', body: { url } }),
+    mutationFn: (url: string) => api<ProbeResult>('import', '/import/probe', { method: 'POST', body: { url } }),
   });
 }
 
@@ -50,7 +50,7 @@ export function useImportUrlMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (req: ImportUrlRequest) =>
-      api<AcceptedJob>('/import/url', {
+      api<AcceptedJob>('import', '/import/url', {
         method: 'POST',
         body: req,
         // SSE 断线重连后前端可能重发；用户也会狂点按钮

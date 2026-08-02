@@ -117,12 +117,22 @@
     "viewDiff": "View changes",
     "undoReplace": "Undo this update",
     "twoPhaseNoticeWithEta": "Live captions use a fast model. When you stop, a more accurate model re-listens automatically — about {{eta}}.",
-    "twoPhaseNoticeSlowHint": "Chinese uses large-v3-turbo, which runs at roughly 2.7x realtime on CPU alone. A GPU backend makes this much faster.",
+    "twoPhaseNoticeSlowHint": "",
     "rerunningWithEta": "Re-transcribing with {{model}} for better accuracy — about {{eta}} left…",
     "replacedNoCounterpart": "{{count}} of them had no matching new result and were kept as-is.",
     "noCounterpartTag": "no matching update",
     "mergeByTimeNote": "Merging aligns by timeline, not by segment index — the two models segment speech differently.",
-    "installBackend": "Install a backend"
+    "installBackend": "Install a backend",
+    "engineLabel": "Engine",
+    "engineParaformer": "Paraformer Chinese (fast)",
+    "engineTurbo": "large-v3-turbo (slow, richer)",
+    "paraformerNotice": "Chinese uses Paraformer by default — about 43 seconds for an hour of audio.",
+    "paraformerTradeoff": "Trade-off: no word-level timestamps (captions highlight per sentence, not per word), numbers are spelled out, and English comes out lowercase.",
+    "turboTradeoff": "large-v3-turbo gives word-level timestamps, digits and better proper nouns — at about 22 minutes per hour of audio.",
+    "switchToTurbo": "Switch to large-v3-turbo",
+    "switchToParaformer": "Switch back to Paraformer",
+    "wordLevelUnavailable": "This engine has no word-level timestamps — captions highlight per sentence",
+    "wordLevelAvailable": "Word-level highlighting on"
   },
   "tasks": {
     "title": "Tasks",
@@ -215,5 +225,35 @@
     "contractVersion": "Contract version",
     "exportDiagnostics": "Export diagnostics bundle",
     "telemetryNote": "This product sends no telemetry. Logs stay on your machine."
+  },
+  "mock": {
+    "notImplementedShort": "Still simulated data",
+    "notImplementedDetail": "The local service is connected, but this endpoint is not implemented yet. This notice disappears automatically once it lands.",
+    "offlineShort": "Local service not connected",
+    "offlineDetail": "Showing demo data. It switches to real data automatically once the OpenMemo local service is running.",
+    "summary": "{{live}} live · {{mocked}} simulated"
+  },
+  "mindmap": {
+    "undo": "Undo",
+    "redo": "Redo",
+    "editHint": "Double-click to edit · drag to move · right-click for more",
+    "markmapLoss": "The outline view will not show {{edges}} connections and {{summaries}} summaries",
+    "empty": "No mind map yet",
+    "emptyHint": "Generate one with AI after transcription, or start from a blank canvas.",
+    "open": "Open mind map"
+  },
+  "search": {
+    "title": "Search",
+    "placeholder": "Search notes, transcripts, mind map nodes…",
+    "mode": "Mode",
+    "modes": {
+      "hybrid": "Hybrid",
+      "keyword": "Keyword",
+      "semantic": "Semantic"
+    },
+    "idle": "Type to search",
+    "idleHint": "Chinese word segmentation and pinyin supported. Transcript hits jump straight to that second.",
+    "noResults": "No matches",
+    "noResultsHint": "Try different words, or switch to Semantic."
   }
 }

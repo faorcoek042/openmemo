@@ -12,7 +12,7 @@
  */
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 
-import { CONTRACT_VERSION, type ApiErrorBody } from '@openmemo/shared';
+import { CONTRACT_VERSION } from '@openmemo/shared';
 
 import {
   CSRF_HEADER,
@@ -22,6 +22,8 @@ import {
   checkCsrf,
 } from './auth.js';
 import { guardRequest } from './guard.js';
+import { readJsonBody as readBody, sendError, sendJson } from './respond.js';
+import { modelRoutesFor } from './rest/models.js';
 import type { SseHub } from './sse.js';
 
 export interface ServerDeps {
@@ -38,54 +40,24 @@ export interface ServerDeps {
   readonly port: () => number;
   /** 健康检查里暴露的运行时状态（不含任何 secret）。 */
   readonly status: () => Record<string, unknown>;
+  /**
+   * 业务路由模块。按顺序尝试，第一个返回 true 的即处理完毕。
+   * 放在鉴权与 CSRF **之后**、404 **之前**。
+   */
+  readonly routers?: readonly RouteModule[];
 }
 
-export function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  const buf = Buffer.from(JSON.stringify(body), 'utf8');
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': String(buf.length),
-    // 本地 API 一律不缓存，避免浏览器把状态查询缓存住
-    'Cache-Control': 'no-store',
-    'X-Content-Type-Options': 'nosniff',
-  });
-  res.end(buf);
+export interface RouteModule {
+  handle(
+    req: IncomingMessage,
+    res: ServerResponse,
+    url: URL,
+    method: string,
+  ): Promise<boolean>;
 }
 
-/** 错误信封以 `packages/shared` 的 `ApiErrorBody` 为准（D-01 §3.5 订正）。 */
-export function sendError(
-  res: ServerResponse,
-  status: number,
-  code: string,
-  message: string,
-  messageZh: string,
-  opts: { retryable?: boolean; details?: unknown } = {},
-): void {
-  const body: ApiErrorBody = {
-    error: {
-      code,
-      message,
-      messageZh,
-      retryable: opts.retryable ?? false,
-      ...(opts.details === undefined ? {} : { details: opts.details }),
-    },
-  };
-  sendJson(res, status, body);
-}
-
-/** 读取并限制大小的 JSON body。 */
-async function readJsonBody(req: IncomingMessage, limitBytes = 1024 * 1024): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  let total = 0;
-  for await (const chunk of req) {
-    const b = chunk as Buffer;
-    total += b.length;
-    if (total > limitBytes) throw new Error('request body too large');
-    chunks.push(b);
-  }
-  if (total === 0) return undefined;
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-}
+// 响应 helpers 统一放 respond.ts，各路由模块共用同一套信封
+export { readJsonBody, sendError, sendJson } from './respond.js';
 
 export function attachHttpHandlers(server: Server, deps: ServerDeps): void {
   server.on('request', (req, res) => {
@@ -186,24 +158,6 @@ async function handleRequest(
     return;
   }
 
-  // ---- /media/**：只接受 asset uid，绝不接受文件路径（D-01 §3.1 / §8.5）----
-  if (path.startsWith('/media/')) {
-    const m = /^\/media\/asset\/([A-Za-z0-9]{26})$/.exec(path);
-    if (!m) {
-      sendError(
-        res,
-        400,
-        'BAD_MEDIA_REF',
-        'media path must be /media/asset/<ulid>',
-        '媒体引用必须是 asset uid，不接受文件路径',
-      );
-      return;
-    }
-    // 骨架：真正的 Range 字节流在 T-020 接上 media_assets 表后实现
-    sendError(res, 501, 'NOT_IMPLEMENTED', 'media streaming lands in T-020', '媒体流尚未实现');
-    return;
-  }
-
   // ---- REST 骨架 ----
   if (path === '/api/daemon/status' && method === 'GET') {
     sendJson(res, 200, deps.status());
@@ -219,10 +173,19 @@ async function handleRequest(
 
   if (path === '/api/echo' && method === 'POST') {
     // 骨架自检用：验证 body 解析 + CSRF 链路通了
-    const body = await readJsonBody(req);
+    const body = await readBody(req);
     sendJson(res, 200, { echo: body ?? null });
     return;
   }
+
+  // ---- 业务路由（models / backends / jobs / notes / media …）----
+  for (const router of deps.routers ?? []) {
+    if (await router.handle(req, res, url, method)) return;
+  }
+
+  // 模型 / 后端 / 下载任务（shared ENDPOINTS 的 26 条 REST）。按 deps 记忆化，
+  // 不经由 deps.routers 是因为 main.ts 归属其他任务，不在本次改动范围内。
+  if (await modelRoutesFor(deps).handle(req, res, url, method)) return;
 
   sendError(res, 404, 'NOT_FOUND', `no route for ${method} ${path}`, '接口不存在');
 }

@@ -3,7 +3,9 @@ import type { RouteObject } from 'react-router';
 import App from './App';
 import { captureRoutes } from './features/capture/Capture.routes';
 import { modelsRoutes } from './features/models/Models.routes';
+import { mindmapRoutes } from './features/mindmap/Mindmap.routes';
 import { notesRoutes } from './features/notes/Notes.routes';
+import { searchRoutes } from './features/search/Search.routes';
 import { recorderRoutes } from './features/recorder/Recorder.routes';
 import { runtimeRoutes } from './features/runtime/Runtime.routes';
 import { settingsRoutes } from './features/settings/Settings.routes';
@@ -30,11 +32,12 @@ export const routes: RouteObject[] = [
       ...notesRoutes,
       ...captureRoutes,
       ...recorderRoutes,
+      ...searchRoutes,
       ...tasksRoutes,
       ...settingsRoutes,
       ...modelsRoutes,
       ...runtimeRoutes,
-      // ...mindmapRoutes,  // T-023
+      ...mindmapRoutes,
     ],
   },
 ];

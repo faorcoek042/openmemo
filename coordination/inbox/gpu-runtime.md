@@ -248,3 +248,83 @@
 - **Windows / macOS 继续未验证**（无机器，未假装）。**说话人分离按 ADR-011 决策 6 未做。**
 - `paraformer-zh` 完整版（234 MB）与 SenseVoice（1.05 GB）**未测**（下载超时/体积）；FunASR 原生 Python 栈**未测**（刻意不引入 Python 依赖，只走 sherpa-onnx 的 ONNX 路径）。
 - Paraformer 的 RTF 在两次运行中为 0.0027 与 0.0111（线程竞争差异），报告取**较保守的 0.0119（含标点）**。
+
+---
+
+## [2026-08-02 17:20] T-030 DONE（按新优先级：功能优先，性能靠后）
+
+交付:
+- `packages/pipeline/src/asr/paraformer.ts`（中文默认引擎）、`selectEngine.ts`（引擎选择）、`sherpaModule.ts`（**interop 修复**）、`postprocess.ts`
+- `packages/pipeline/src/benchmark/{clips.ts,runBenchmark.ts}`（已写完，按裁决**不再投入**）
+- 修改：`whisperCpp.ts`（语言默认）、`sherpaOnnx.ts`（interop）、`media/sources/ytdlp.ts`（**2 个功能 bug**）、`index.ts`
+- **104/104 测试全绿**，eslint / tsc 干净
+
+## ★ 最重要：我领域内的功能缺失清单
+
+### A. 矩阵标错的
+| 行 | 矩阵 | 实际 | 说明 |
+|---|---|---|---|
+| F1 yt-dlp 全链路 | ⚪ | **曾经是 🔴，现在 🟢** | 你标 ⚪ 是对的，而且比 ⚪ 更糟：**这条路径是坏的**，见下面 2 个 bug |
+| F1 播客 RSS | 🟢 | **应为 🟡** | 我只**解析过 feed**，**从没从 feed 里真的下载并转写一集**。和 yt-dlp「只测 probe」是同一个错误形状 |
+| F1 HLS | 🟢 | **应为 🟡** | 探测+拉流+归一化验证过，**没在 HLS 音频上真跑过 ASR** |
+| F3 流式 ASR | 🟢 | **🟢 但曾靠运气** | 见下面 interop bug |
+
+### B. ⚠️ 矩阵**漏掉**的功能点（比标错更重要）
+
+1. **【最严重】ASR 模型全都不在模型目录里。** `vendor/manifests/` 只有 whisper(9) + LLM(5) + backends(10)。**以下 4 个我的流水线必需的模型一个都没有**：
+   - `ggml-silero-v5.1.2.bin` — **VAD，D-01 §4.1 分块设计的地基**。没有它 → 退化成固定窗口切分
+   - `sherpa-onnx-streaming-zipformer-zh-14M`（74 MB）— **F3 流式唯一引擎**
+   - `sherpa-onnx-paraformer-zh-small`（78 MB）— **ADR-013 定的中文默认引擎**
+   - `sherpa-onnx-punct-ct-transformer`（279 MB）— 中文标点，没有它中文稿**全篇无标点**
+   → **后果：要求 2.2（网页管模型）装不了这些，于是 F3 和中文默认引擎在 UI 上根本交付不了。** 请派给 `model-mgmt`。
+2. **语言自动检测缺失**（我已修）—— 见 C.3，这曾是个静默的中文灾难。
+3. **引擎选择逻辑没人接线**：`selectEngine()` 已实现（按语言/设置/强制），但 daemon 没调用它。
+4. **`DirectHttpSource` 下载没有断点续传**：用的是普通 fetch，无 Range。播客动辄几百 MB，断网即从头再来。`packages/downloader` 有续传能力但**媒体下载没走它**。
+5. **取消后的「续跑」从未端到端验证**：`deriveResumeSet` / `completedChunkIndices` 管线写好了，**一次都没真跑过**（我只验证过取消本身）。
+6. **`whisper-server` 常驻模式未用**：每个 chunk 都 spawn 一次 `whisper-cli` 并重新加载模型。large 模型每块多几秒——用户会感觉"卡住"。属功能体验，不只是性能。
+7. **多 GPU 设备选择缺失**：runtime 的 probe 会报告多个设备，但没有任何地方能选 `device_index`。
+8. **F1 会员/登录内容**：矩阵标 🔴 正确。补充：我**故意不传** `--cookies`（那是任意读文件入口，见 SECURITY.md）。要做这个功能必须先做安全决策，不是单纯补代码。
+
+### C. 我这轮真跑出来的 5 个 bug（全部已修）
+
+1. **yt-dlp 退出码 101 被当成失败** —— yt-dlp 命中 `--max-downloads` 就返回 101，**哪怕文件已经下载完成**。日志明确写着 `[download] Download completed` 然后 `exit 101`。**F1 因此对每个视频都失败**。这就是「只测 probe 没测 fetch」的代价。
+2. **重试永远失败** —— 我用「目录里的新文件」判断产物，上一次失败留下的文件让第二次看不到"新文件"，于是 `the extractor produced no output file`。改为「新文件 ∪ 本次启动后修改过的 ∪ 目录内全部」三级回退。
+3. **【最严重】未指定语言时 whisper 把中文*翻译*成英文** —— whisper-cli 默认 `-l en`，喂中文时它不转写、直接**翻译**。实测：中文音频 → `"The main point is to talk about the three questions…"`。**中文用户没点过语言设置就会拿到自己笔记的英文翻译。** 已改为始终传 `-l`，未指定则 `auto`。复验：现在输出 `重點想談三個問題…`。
+4. **sherpa-onnx 的 ESM/CJS interop** —— Node 的 cjs-module-lexer 只把 `OnlineRecognizer` 提升到命名空间，`OfflineRecognizer`/`OfflinePunctuation` 只在 `.default` 下。**F3 之前能跑是运气**，Paraformer 一上来就炸。已抽出 `sherpaModule.ts` 统一处理。
+5. **`ParaformerEngine` 完全忽略 `req.modelPath`** —— 一直用构造函数里的模型。**「切换模型重跑」对 Paraformer 静默无效**。已改为 req 优先 + 模型路径变化时失效缓存。
+
+### D. 主动降级的一项（如实说不做）
+**中文数字→阿拉伯数字后处理：默认关闭，不再投入。** 实测我的规则**让文本变差**：`两千零六年 → 两千06年`（千是单位，digit-run 解析失败后单位词规则只吃掉了"零六"）。按我自己写在 SECURITY 里的原则「错误的修正比原样更糟，因为用户看不出是我们改的」——**宁可不改**。代码与用例保留，标注为待修。英文大小写还原**保持开启**（固定白名单，不可能让文本变差）。
+
+## yt-dlp 全链路真实输出（F1，端到端）
+```
+adapter    : yt-dlp | downloaded 252182 bytes -> /tmp/e2e/job-f1-full/jNQXAC9IVRw.webm
+title      : Me at the zoo   | uploader: jawed | duration 19s
+audio      : 19.0s | speech 17.7s | chunks 1 | segments 2
+timings ms : {"probe":7149,"fetch":5239,"normalize":125,"vad":541,"asr":751}   total 13.8s
+
+  [0.3s] All right, so here we are, one of the elephants, cool thing about these guys is that they have
+  [7.5s] really, really, really long fums, and that's cool, and that's pretty much all those to say.
+```
+（另跑了 Big Buck Bunny：30.7 MB 下载成功、635s 归一化成功，但**0 段** —— 该片无人声，VAD 正确返回 0。这是设计如此：不给静音喂模型、不编造。）
+
+## Paraformer 中文端到端（功能可用性，非性能）
+13 chunk / 13 段 / 段级时间戳 / 时间戳单调 / `words===null` 全部为真（F5 中文按段高亮的依据）：
+```
+[1.2-28.8s] Twitter来自维基百科自由的百科全书网址，…Twitter非官方中文名称推特是一个社交网络及微博客服务，
+            用户可以经由SMS即时通讯电游Twitter网站或Twitter用户端软件，如Twitter rific。
+[58.7-76.9s] RSS电邮或Twitter用户端软件获得文字更新。目前，手机SMS更新服务暂时只有在美国、加拿大及英国
+            可获得免费服务，除移动电话供应商的SMS费用。
+```
+引擎选择实测：`zh/batch → paraformer`（附 2 条 tradeoff 文案 + 可切换项）、`en/batch → whisper.cpp`、`forceEngineId` 生效、`requireWordTimestamps → whisper.cpp`（降级择优）。
+
+需要 Manager 决策:
+1. **ASR 模型目录缺 4 个模型**（B.1）—— 这是当前**我领域最大的交付阻塞**，F3 与中文默认引擎在 UI 上装不了。请派 `model-mgmt`。
+2. **谁把 `selectEngine()` 接进 daemon**（B.3）。
+3. **媒体下载是否改走 `packages/downloader`** 以获得断点续传（B.4）。
+4. `whisper-server` 常驻模式是否排期（B.6）——大模型下影响体感明显。
+
+诚实声明:
+- **未做**（按裁决降级）：benchmark 闭环虽已实现但未再投入验证；paraformer-zh 完整版 / SenseVoice 未测；RTF 对比未再做。
+- **未验证**：RSS 单集端到端、HLS 上跑 ASR、取消后续跑、Windows/macOS。
+- benchmark 代码里 `runBenchmark` 会传 `modelPath`，Paraformer 的忽略问题已修；但 **benchmark 本身在本轮之后未再复跑**。

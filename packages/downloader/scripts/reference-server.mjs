@@ -50,6 +50,15 @@ const { computeFit, makeEvent, topics, formatSseFrame, formatSseRetry } = await 
 
 const argv = process.argv.slice(2);
 const PORT = Number(argv[argv.indexOf('--port') + 1]) || 17650;
+/**
+ * Optional upstream daemon. Unmatched /api/* requests are forwarded there.
+ *
+ * This lets ONE origin serve: the built web app + the model/backend endpoints this file
+ * implements + whatever apps/daemon has actually shipped (notes, auth, media). Without it
+ * a browser test can only ever exercise one half of the API surface, because the SPA
+ * talks to a single origin.
+ */
+const PROXY = argv.includes('--proxy') ? argv[argv.indexOf('--proxy') + 1] : null;
 const ROOT = process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-refserver', 'models');
 
 const store = new ArtifactStore(ROOT);
@@ -603,7 +612,44 @@ const server = http.createServer(async (req, res) => {
       return apiError(res, 501, 'NOT_IMPLEMENTED', '基准测试需要已安装的推理后端，参考服务器未实现');
     }
 
-    if (p.startsWith('/api/')) return apiError(res, 404, 'NOT_FOUND', `参考服务器未实现 ${method} ${p}`);
+    if (p.startsWith('/api/') || p.startsWith('/ws/') || p.startsWith('/media/')) {
+      if (PROXY) {
+        // Forward verbatim (method, headers, body) so cookies/auth behave as same-origin.
+        const target = new URL(url.pathname + url.search, PROXY);
+        const chunks = [];
+        for await (const c of req) chunks.push(c);
+        const body = chunks.length ? Buffer.concat(chunks) : undefined;
+        const headers = { ...req.headers };
+        delete headers.host;
+        delete headers['content-length'];
+        // The daemon enforces a same-origin check. From its point of view this proxy IS
+        // the browser, so present the upstream's own origin — otherwise every POST is
+        // rejected with "请求来源不被信任" and no mutation can ever be tested.
+        if (headers.origin) headers.origin = PROXY;
+        if (headers.referer) headers.referer = PROXY + '/';
+        try {
+          const up = await fetch(target, {
+            method,
+            headers,
+            body: method === 'GET' || method === 'HEAD' ? undefined : body,
+            redirect: 'manual',
+          });
+          const buf = Buffer.from(await up.arrayBuffer());
+          const out = {};
+          up.headers.forEach((v, k) => {
+            if (k !== 'content-encoding' && k !== 'content-length' && k !== 'transfer-encoding') out[k] = v;
+          });
+          // Node lowercases and merges set-cookie; forward it explicitly.
+          const sc = up.headers.getSetCookie?.();
+          res.writeHead(up.status, out);
+          if (sc?.length) res.setHeader('set-cookie', sc);
+          return res.end(buf);
+        } catch (e) {
+          return apiError(res, 502, 'UPSTREAM_UNREACHABLE', `上游 daemon 无法访问: ${e?.message ?? e}`);
+        }
+      }
+      return apiError(res, 404, 'NOT_FOUND', `参考服务器未实现 ${method} ${p}`);
+    }
 
     /* ---- static web app ---- */
     let file = p === '/' ? '/index.html' : p;
@@ -627,6 +673,7 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`  models root : ${ROOT}`);
   console.log(`  web dist    : ${WEB_DIST}`);
   console.log(`  catalog     : ${MODELS.length} models, ${backendDoc.packs.length} backend packs`);
+  console.log(`  proxy       : ${PROXY ?? '(none — unmatched /api returns 404)'}`);
 });
 
 process.on('SIGTERM', () => server.close(() => process.exit(0)));

@@ -31,6 +31,7 @@ import type {
   TranscribeChunkRequest,
   TranscriptSegment,
 } from './types.js';
+import { loadSherpaModule } from './sherpaModule.js';
 import { detectRepetition } from './types.js';
 
 /** Paths to the four files every sherpa-onnx transducer model ships. */
@@ -192,13 +193,17 @@ export class SherpaOnnxEngine implements AsrEngine {
 
   private async loadModule(): Promise<SherpaModule> {
     if (this.module !== null) return this.module;
+    /*
+     * Goes through the shared loader, not a bare dynamic import.
+     *
+     * This path USED to do `await import('sherpa-onnx-node')` directly and appeared to
+     * work — but only because Node's cjs-module-lexer happens to hoist `OnlineRecognizer`
+     * onto the namespace while leaving the offline constructors reachable only via
+     * `.default`. It was passing by luck. See sherpaModule.ts.
+     */
     const loader =
       this.opts.loadModule ??
-      (async (): Promise<SherpaModule> => {
-        // Indirection keeps bundlers from trying to resolve an optional native package.
-        const spec = 'sherpa-onnx-node';
-        return (await import(spec)) as unknown as SherpaModule;
-      });
+      (async (): Promise<SherpaModule> => (await loadSherpaModule()) as unknown as SherpaModule);
     this.module = await loader();
     return this.module;
   }

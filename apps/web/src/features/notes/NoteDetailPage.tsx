@@ -6,6 +6,9 @@ import { useQuery } from '@tanstack/react-query';
 import { useNoteQuery, useTranscriptQuery } from './api';
 import { qk } from '../../app/query';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
+import { MockNotice } from '../../components/common/MockNotice';
+import { WordLevelBadge } from '../transcript';
+import { MindmapView, useMindmapQuery } from '../mindmap';
 import { NoteProgressLine } from './NoteProgressLine';
 import { TranscriptList } from '../transcript';
 import { PlayerBar } from '../player';
@@ -58,6 +61,8 @@ export default function NoteDetailPage() {
     }
   }, [note.data, peaksAsset]);
 
+  const mindmap = useMindmapQuery(tab === 'mindmap' ? noteUid : undefined);
+
   const speakerNames = useMemo(() => {
     const m: Record<string, string> = {};
     for (const s of transcript.data?.speakers ?? []) m[s.label] = s.displayName ?? s.label;
@@ -87,7 +92,11 @@ export default function NoteDetailPage() {
         {/* 左：转写稿 */}
         <section className="flex min-w-0 flex-1 flex-col border-r border-line">
           <div className="flex items-center justify-between border-b border-line px-3 py-1.5">
-            <h2 className="text-xs font-medium text-ink-secondary">{t('detail.transcript')}</h2>
+            <h2 className="flex items-center gap-2 text-xs font-medium text-ink-secondary">
+              {t('detail.transcript')}
+              <MockNotice surface="transcript" compact />
+              <WordLevelBadge segments={transcript.data?.segments ?? []} />
+            </h2>
             <label className="flex items-center gap-1.5 text-xs text-ink-secondary">
               <input
                 type="checkbox"
@@ -132,8 +141,13 @@ export default function NoteDetailPage() {
                 <p className="text-ink-muted">{t('detail.summaryEmpty')}</p>
               )
             ) : tab === 'mindmap' ? (
-              // 归 T-023：features/mindmap/ 见该目录 README 的契约
-              <p className="text-ink-muted">思维导图由 T-023 实现（features/mindmap/）。</p>
+              mindmap.data ? (
+                <div className="-m-4 h-[60vh]">
+                  <MindmapView doc={mindmap.data} />
+                </div>
+              ) : (
+                <p className="text-ink-muted">{t('mindmap.empty')}</p>
+              )
             ) : (
               <p className="text-ink-muted">笔记编辑器（TipTap）待接入。</p>
             )}

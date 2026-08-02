@@ -114,7 +114,15 @@ export interface AcquireOptions {
  */
 export async function acquireSingleInstance(opts: AcquireOptions): Promise<BindOutcome> {
   const requested = opts.requestedPort ?? DEFAULT_PORT;
-  const maxPort = opts.maxPort ?? MAX_PORT;
+  /*
+   * 扫描窗口是**相对请求端口**的，不是写死到 MAX_PORT。
+   *
+   * 写死会有一个很蠢的故障：`--port 17660` 时范围变成 `17660..17659`（空区间），
+   * 循环一次都不跑，直接报"全部被占用" —— 而实际上那个端口是空的。
+   * 这是我自己踩到的，只有在显式指定高于默认上限的端口时才会出现。
+   */
+  const span = MAX_PORT - DEFAULT_PORT;
+  const maxPort = opts.maxPort ?? Math.max(requested + span, MAX_PORT);
 
   for (let port = requested; port <= maxPort; port++) {
     const outcome = await tryBind(opts.server, port);

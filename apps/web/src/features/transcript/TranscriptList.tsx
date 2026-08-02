@@ -27,6 +27,17 @@ export function TranscriptList({
   segments: TranscriptSegmentDto[];
   speakerNames: Record<string, string>;
 }) {
+  /**
+   * ★ 逐字时间戳是否可用（ADR-013 §0）。
+   *
+   * Paraformer（中文默认引擎）**没有 words[]**，所以 F5 的卡拉 OK 式逐字高亮
+   * 在中文默认档下**不成立**，只能整句高亮。
+   * 这个降级必须**说出来**：否则用户只会觉得"高亮不准"，
+   * 而不知道那是引擎取舍的必然结果、更不知道换 large-v3-turbo 就能拿到。
+   */
+  const hasWordLevel = segments.some((s) => s.words && s.words.length > 0);
+  // 逐字数据缺失时，高亮粒度只能到句 —— 由 <WordLevelBadge/> 在标题栏说明。
+  const highlightGranularity: 'word' | 'sentence' = hasWordLevel ? 'word' : 'sentence';
   const { t } = useTranslation();
   const parentRef = useRef<HTMLDivElement>(null);
   const activeSeq = usePlayerStore((s) => s.activeSeq);
@@ -85,7 +96,13 @@ export function TranscriptList({
   }
 
   return (
-    <div ref={parentRef} className="h-full overflow-auto" role="list" aria-label={t('detail.transcript')}>
+    <div
+      ref={parentRef}
+      className="h-full overflow-auto"
+      role="list"
+      aria-label={t('detail.transcript')}
+      data-highlight={highlightGranularity}
+    >
       <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
         {virtualizer.getVirtualItems().map((row) => {
           const seg = segments[row.index];

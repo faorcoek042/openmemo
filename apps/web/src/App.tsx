@@ -4,12 +4,13 @@ import { useTranslation } from 'react-i18next';
 import { Activity, Cpu, FileAudio, Mic, Package, Plus, Settings, Star } from 'lucide-react';
 
 import { Banner } from './components/common/Banner';
+import { ConnectivitySummary } from './components/common/MockNotice';
+import { SearchBox } from './features/search';
 import { Button } from './components/common/Button';
 import { TasksDrawer } from './features/tasks/TasksDrawer';
 import { useUiStore } from './lib/stores/ui.store';
 import { useConnectionStore } from './lib/stores/connection.store';
 import { useProgressStore } from './lib/stores/progress.store';
-import { isMockEnabled } from './lib/api/mock';
 import { cn } from './lib/utils';
 
 /** 应用外壳：顶栏 + 侧栏 + 路由出口（D-05 §1.1）。 */
@@ -23,9 +24,11 @@ export default function App() {
   return (
     <div className="flex h-full flex-col">
       {/* ── 持久条幅区：全局降级态。可折叠不可关闭 —— 问题还在就不该消失 ── */}
-      {isMockEnabled() ? (
-        <Banner tone="mock" title={t('banner.mockTitle')} detail={t('banner.mockDetail')} />
-      ) : null}
+      {/* 不再有"全局 MOCK 条幅"：daemon 是逐个端点接通的，全局开关表达不了
+          "笔记已接通、转写还没有"这种真实中间态。改为
+          ① 顶栏一个连通性摘要（已接通 N / 模拟 M），
+          ② 每个页面在自己的数据区域挂 <MockNotice surface=…/>。
+          全部接通后两者都会自己消失，不需要谁记得回来删。 */}
       {conn === 'degraded' ? <Banner tone="warning" title={t('banner.sseDegraded')} /> : null}
       {conn === 'reconnecting' ? <Banner tone="info" title={t('banner.sseReconnecting')} /> : null}
       {multiTab ? <Banner tone="info" title={t('banner.multiTab')} /> : null}
@@ -65,7 +68,9 @@ export default function App() {
 
         {/* ── 主区 ── */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex h-11 shrink-0 items-center justify-end gap-2 border-b border-line bg-surface-1 px-4">
+          <header className="flex h-11 shrink-0 items-center justify-end gap-3 border-b border-line bg-surface-1 px-4">
+            <SearchBox />
+            <ConnectivitySummary className="mr-auto" />
             {activeCount > 0 ? (
               <Button size="sm" variant="ghost" onClick={() => setTasksDrawer(true)}>
                 <Activity className="size-3.5 text-accent" />

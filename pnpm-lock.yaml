@@ -164,6 +164,10 @@ importers:
       '@openmemo/shared':
         specifier: workspace:*
         version: link:../shared
+    devDependencies:
+      playwright:
+        specifier: ^1.56.0
+        version: 1.62.1
 
   packages/llm:
     dependencies:
@@ -197,6 +201,9 @@ importers:
       ffmpeg-static:
         specifier: ^5.3.0
         version: 5.3.0
+      sherpa-onnx-node:
+        specifier: ^1.13.4
+        version: 1.13.4
       youtube-dl-exec:
         specifier: ^3.1.9
         version: 3.1.9(debug@4.4.3)
@@ -1179,6 +1186,11 @@ packages:
   flatted@3.4.4:
     resolution: {integrity: sha512-5+ybhBZANEJxaH3X5evAFatUxLfEHSr7n6kYJ+1Qd0mUqr4eu9gIf6GDbWHf8RJijHrjjO8G+la14SlL2SeS1Q==}
 
+  fsevents@2.3.2:
+    resolution: {integrity: sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==}
+    engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
+    os: [darwin]
+
   fsevents@2.3.3:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
@@ -1602,6 +1614,16 @@ packages:
     resolution: {integrity: sha512-RvwwcruNjI1ncT5xRakeyS9Lf8lcItv34KD+aif+VH9kduAyfYBipGh12274xtenIPZ119/R9BdTBa8gAwSh0A==}
     engines: {node: '>=12'}
 
+  playwright-core@1.62.1:
+    resolution: {integrity: sha512-wPYSwEBJY9GHraISXqyqtx0na0LpO3XEX7jNDhntbex7tzUS7kLnZsOlFruFJB4Hi/rhDMjXGqHewDZ68nYZVw==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  playwright@1.62.1:
+    resolution: {integrity: sha512-0M+L3LAD8/nm554LOla9Ayx0j0tmFZ0FBcoQ7F1VuVHpM/XpiC8RcDzBQB8W5+hA8L22THxELzeF+2WcUzvcLg==}
+    engines: {node: '>=20'}
+    hasBin: true
+
   postcss@8.5.25:
     resolution: {integrity: sha512-DTPx3RWSSnWyzLxQnlH0rJP+EW5ekl16ZU4/psbIhA0e53kJfdgaN5vKM+xP7yJtXVu+nfdVFmlgFDEKAe4Pyw==}
     engines: {node: ^10 || ^12 || >=14}
@@ -1756,6 +1778,39 @@ packages:
   shebang-regex@3.0.0:
     resolution: {integrity: sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==}
     engines: {node: '>=8'}
+
+  sherpa-onnx-darwin-arm64@1.13.4:
+    resolution: {integrity: sha512-QcYKzyrTzGSx6aKCD6hUODgRS1LetqfG57Z/+i5LCyfMlrgCvDc1lRcl9cdB+TozBsLha9QwLTlI0vmDcf5JKg==}
+    cpu: [arm64]
+    os: [darwin]
+
+  sherpa-onnx-darwin-x64@1.13.4:
+    resolution: {integrity: sha512-6RGeis9K9gV/UQWOgd6Rf3iqXr2/YsBQswxHaCR4hrYkHfEIpHMfFmRWLt6nJJCOWgYW2xFxEd9yzjrafAV/Pw==}
+    cpu: [x64]
+    os: [darwin]
+
+  sherpa-onnx-linux-arm64@1.13.4:
+    resolution: {integrity: sha512-RMjMRqT82BgTXypNNGmLe6ZFYhc3WEvnAGl3DdkK7qB/kuXwkL3iHhV31wAecbnWPsnEpUoD+8cFovWSBzsCuw==}
+    cpu: [arm64]
+    os: [linux]
+
+  sherpa-onnx-linux-x64@1.13.4:
+    resolution: {integrity: sha512-WZh5NCkGPFHHpYSd78iN4OnmxQeSTGyt9uZskH+im/NFHQ7elQ7B0sLzCMeRpvJxiIKvd9C6WxIJ4hYaxClfsQ==}
+    cpu: [x64]
+    os: [linux]
+
+  sherpa-onnx-node@1.13.4:
+    resolution: {integrity: sha512-jHWWdY9f0dbvJpdsfR/C4WNhM57+jT9Os2RyC4/qUz8HKCtj2VYFmJ9s7tue9OCFRAmdoGBkgkqD6aBZ3I8BKw==}
+
+  sherpa-onnx-win-ia32@1.13.4:
+    resolution: {integrity: sha512-/JbPjldrfNv+t+uIS3MlkuhfIf5l3FHUGkRC2oRXgjRqOaVmEyP3vLlQ7dTa4J7raG5oB8c3GoPjuSWSqT9GOQ==}
+    cpu: [ia32]
+    os: [win32]
+
+  sherpa-onnx-win-x64@1.13.4:
+    resolution: {integrity: sha512-R0PWby1VxC14TDZPq7GcfSyXSY6SAFO8Y4JwdCdqouFmeXkZ1L7Is9m98C9KxQ0dN7ZtDzhAmE/43FUs/elXRQ==}
+    cpu: [x64]
+    os: [win32]
 
   signal-exit@4.1.0:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
@@ -2977,6 +3032,9 @@ snapshots:
 
   flatted@3.4.4: {}
 
+  fsevents@2.3.2:
+    optional: true
+
   fsevents@2.3.3:
     optional: true
 
@@ -3329,6 +3387,14 @@ snapshots:
 
   picomatch@4.0.5: {}
 
+  playwright-core@1.62.1: {}
+
+  playwright@1.62.1:
+    dependencies:
+      playwright-core: 1.62.1
+    optionalDependencies:
+      fsevents: 2.3.2
+
   postcss@8.5.25:
     dependencies:
       nanoid: 3.3.16
@@ -3502,6 +3568,33 @@ snapshots:
       shebang-regex: 3.0.0
 
   shebang-regex@3.0.0: {}
+
+  sherpa-onnx-darwin-arm64@1.13.4:
+    optional: true
+
+  sherpa-onnx-darwin-x64@1.13.4:
+    optional: true
+
+  sherpa-onnx-linux-arm64@1.13.4:
+    optional: true
+
+  sherpa-onnx-linux-x64@1.13.4:
+    optional: true
+
+  sherpa-onnx-node@1.13.4:
+    optionalDependencies:
+      sherpa-onnx-darwin-arm64: 1.13.4
+      sherpa-onnx-darwin-x64: 1.13.4
+      sherpa-onnx-linux-arm64: 1.13.4
+      sherpa-onnx-linux-x64: 1.13.4
+      sherpa-onnx-win-ia32: 1.13.4
+      sherpa-onnx-win-x64: 1.13.4
+
+  sherpa-onnx-win-ia32@1.13.4:
+    optional: true
+
+  sherpa-onnx-win-x64@1.13.4:
+    optional: true
 
   signal-exit@4.1.0: {}
 

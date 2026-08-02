@@ -37,6 +37,7 @@ import { join } from 'node:path';
 
 import { buildArgv, validateHttpUrl } from '../../subprocess/argGuard.js';
 import { run, runOrThrow } from '../../subprocess/runner.js';
+import { SubprocessError } from '../../subprocess/runner.js';
 import type { ToolPaths } from '../../tools.js';
 import { isExecutable } from '../../tools.js';
 import type {
@@ -143,8 +144,9 @@ export class YtDlpSource implements MediaSource {
     if (!argv.ok) throw new Error(`URL rejected (${argv.code}): ${argv.message}`);
 
     const before = new Set(await safeReaddir(req.destDir));
+    const startedAt = Date.now();
 
-    await runOrThrow({
+    const result = await run({
       bin,
       argv: argv.value,
       cwd: this.opts.cwd,
@@ -157,18 +159,69 @@ export class YtDlpSource implements MediaSource {
       },
     });
 
-    // yt-dlp picks the extension, so we discover the new file rather than assuming.
-    const after = await safeReaddir(req.destDir);
-    const created = after.filter((f) => !before.has(f));
-    if (created.length === 0) throw new Error('the extractor produced no output file');
+    /*
+     * EXIT CODE 101 IS SUCCESS HERE.
+     *
+     * yt-dlp returns 101 whenever `--max-downloads` is hit — including when it hit the
+     * limit *because it finished the one file we asked for*:
+     *     [download] Download completed
+     *     [info] Maximum number of downloads reached, stopping due to --max-downloads
+     *     Aborting remaining downloads
+     *     -> exit 101
+     * Treating non-zero as failure made the entire F1 import path fail on every video
+     * even though the media was on disk. This went unnoticed because only `probe` had
+     * ever been exercised end to end; `fetch` had not.
+     *
+     * We accept 0 and 101, then prove success the honest way — by checking that a new
+     * file actually appeared below.
+     */
+    const MAX_DOWNLOADS_REACHED = 101;
+    if (result.code !== 0 && result.code !== MAX_DOWNLOADS_REACHED) {
+      const why = result.timedOut
+        ? 'timed out'
+        : result.aborted
+          ? 'was cancelled'
+          : `exited with code ${String(result.code)}`;
+      throw new SubprocessError(`the site extractor ${why}\n${result.stderr.slice(-2000)}`, result);
+    }
 
-    // Largest new file is the media; the rest are sidecars (.info.json, thumbnails).
-    let best: { path: string; size: number } | null = null;
-    for (const name of created) {
+    /*
+     * Find the media file yt-dlp wrote. It chooses the extension itself (we only fix the
+     * basename template), so the file has to be discovered rather than assumed.
+     *
+     * "Files that were not there before" is the obvious rule and it is WRONG ON RETRY: a
+     * previous failed attempt leaves its output behind, so on the second run nothing is
+     * new and the import fails forever. Measured exactly that way — the F1 path failed on
+     * retry even though the media was sitting in the directory.
+     *
+     * So the candidate set is: newly-created files, PLUS anything touched since this
+     * invocation started, PLUS (as a last resort) whatever is already in the directory.
+     * The directory is per-job and created by us, so nothing else can be in it.
+     */
+    const after = await safeReaddir(req.destDir);
+    const withStats: { path: string; name: string; size: number; mtimeMs: number }[] = [];
+    for (const name of after) {
       const path = join(req.destDir, name);
       const st = await stat(path).catch(() => null);
       if (st === null || !st.isFile()) continue;
-      if (best === null || st.size > best.size) best = { path, size: st.size };
+      withStats.push({ path, name, size: st.size, mtimeMs: st.mtimeMs });
+    }
+
+    const isSidecar = (n: string): boolean => /\.(info\.json|jpg|jpeg|png|webp|vtt|srt|part|ytdl)$/i.test(n);
+
+    const tiers = [
+      withStats.filter((f) => !before.has(f.name) && !isSidecar(f.name)),
+      withStats.filter((f) => f.mtimeMs >= startedAt - 1000 && !isSidecar(f.name)),
+      withStats.filter((f) => !isSidecar(f.name)),
+    ];
+
+    let best: { path: string; size: number } | null = null;
+    for (const tier of tiers) {
+      // Largest in the tier: sidecars are excluded above, so the biggest file is the media.
+      for (const f of tier) {
+        if (best === null || f.size > best.size) best = { path: f.path, size: f.size };
+      }
+      if (best !== null) break;
     }
     if (best === null) throw new Error('the extractor produced no usable file');
 

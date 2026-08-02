@@ -41,6 +41,13 @@ export default function RecorderPage() {
   const [elapsed, setElapsed] = useState(0);
   const [captions, setCaptions] = useState<Caption[]>([]);
   const [rerunProgress, setRerunProgress] = useState(0);
+  /**
+   * 中文离线默认引擎 = Paraformer（ADR-013 §0：实测 84x 实时，1 小时录音 43 秒）。
+   * **但它没有逐字时间戳** —— 这个代价必须让用户看见并能自己换掉，
+   * 不能替他选了还不告诉他（F5 的逐字高亮会因此降级为整句高亮）。
+   */
+  const [engine, setEngine] = useState<'paraformer' | 'turbo'>('paraformer');
+
   const [replaced, setReplaced] = useState<{
     updated: number;
     preserved: number;
@@ -54,8 +61,10 @@ export default function RecorderPage() {
   // 实测速度比：应当来自已装后端的自检结果（backend_installs.selftest_json）。
   // daemon 未接通 → 用 gpu-runtime 实测的 CPU 值 2.7x，并标明这是 CPU-only 场景。
   // 拿不到实测值时 estimateRerunMs 返回 null，UI 就**不显示预期**（宁可不说也不编）。
-  const isCpuOnly = true;
-  const speedRatio = 2.7;
+  // 实测速度比（应来自 backend_installs.selftest_json；daemon 未接通时用 gpu-runtime 的实测值）
+  //   paraformer-zh-small: 84x 实时 → 1 小时录音约 43 秒
+  //   large-v3-turbo (CPU): 2.7x 实时 → 1 小时录音约 22 分钟
+  const speedRatio = engine === 'paraformer' ? 84 : 2.7;
   const rerunEtaMs = estimateRerunMs(elapsed || 3_600_000, speedRatio);
   // 用 humanDuration 而不是 approxEta：后者自带"约/about"前缀，
   // 而文案模板里已经有"预计需要/about"，叠加会出现"about about 22 min"。
@@ -211,21 +220,34 @@ export default function RecorderPage() {
           ⚠️ 必须**带时间预期**：gpu-runtime 实测中文用的 large-v3-turbo 在纯 CPU 上
           只有 2.7x 实时 —— 1 小时录音要跑 22 分钟。不给预期，用户会以为卡死然后关窗口。 */}
       {phase === 'recording' || phase === 'idle' ? (
-        <div className="text-xs text-ink-muted">
+        <div className="space-y-1 rounded-md border border-line bg-surface-1 p-3 text-xs text-ink-secondary">
+          <p className="flex flex-wrap items-center gap-2">
+            <span className="font-medium text-ink">{t('recorder.engineLabel')}:</span>
+            <span>
+              {engine === 'paraformer' ? t('recorder.engineParaformer') : t('recorder.engineTurbo')}
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-5 px-1.5 text-xs"
+              onClick={() => setEngine((e) => (e === 'paraformer' ? 'turbo' : 'paraformer'))}
+            >
+              {engine === 'paraformer' ? t('recorder.switchToTurbo') : t('recorder.switchToParaformer')}
+            </Button>
+          </p>
           <p>
             ⓘ{' '}
-            {rerunEtaLabel
-              ? t('recorder.twoPhaseNoticeWithEta', { eta: rerunEtaLabel })
-              : t('recorder.twoPhaseNotice')}
+            {engine === 'paraformer'
+              ? t('recorder.paraformerNotice')
+              : rerunEtaLabel
+                ? t('recorder.twoPhaseNoticeWithEta', { eta: rerunEtaLabel })
+                : t('recorder.twoPhaseNotice')}
           </p>
-          {isCpuOnly ? (
-            <p className="mt-1 flex flex-wrap items-center gap-2">
-              <span>{t('recorder.twoPhaseNoticeSlowHint')}</span>
-              <Button size="sm" variant="ghost" className="h-5 px-1.5 text-xs">
-                {t('recorder.installBackend')}
-              </Button>
-            </p>
-          ) : null}
+          {/* ★ 代价必须明示。选了快的就要说清楚失去了什么，
+              否则用户会在 F5 里发现"字幕不能逐字高亮"而不知道为什么。 */}
+          <p className="text-ink-muted">
+            {engine === 'paraformer' ? t('recorder.paraformerTradeoff') : t('recorder.turboTradeoff')}
+          </p>
         </div>
       ) : null}
 
