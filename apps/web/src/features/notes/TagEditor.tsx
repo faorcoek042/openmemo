@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { arr } from '../../lib/safe';
 import { useTranslation } from 'react-i18next';
 import { Plus, X } from 'lucide-react';
 
@@ -15,7 +16,8 @@ export function TagEditor({
   tags,
 }: {
   noteUid: string;
-  tags: { uid: string; name: string; color: string | null }[];
+  /** 服务端可能不给这个字段 —— 组件自己兜住，不要求调用方保证 */
+  tags: readonly { uid: string; name: string; color: string | null }[] | undefined;
 }) {
   const { t } = useTranslation();
   const [adding, setAdding] = useState(false);
@@ -32,7 +34,7 @@ export function TagEditor({
 
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5">
-      {tags.map((tag) => (
+      {arr(tags).map((tag) => (
         <span
           key={tag.uid}
           className="group inline-flex items-center gap-1 rounded bg-surface-0 px-1.5 py-0.5 text-xs text-ink-secondary"

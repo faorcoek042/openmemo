@@ -56,7 +56,9 @@
       "finalizing": "正在处理",
       "done": "已完成",
       "failed": "失败"
-    }
+    },
+    "dropZoneIdle": "或把音视频文件拖到这里",
+    "pickFile": "选择文件"
   },
   "notes": {
     "title": "全部笔记",

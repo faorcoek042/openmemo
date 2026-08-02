@@ -20,6 +20,7 @@ export interface NoteRow {
   status: string;
   language: string | null;
   duration_ms: number | null;
+  starred: number;
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
@@ -540,6 +541,43 @@ export class Repos {
 
   tagByUid(uid: string): TagRow | undefined {
     return this.db.prepare<TagRow>(`SELECT * FROM tags WHERE uid = :uid`).get({ uid });
+  }
+
+  /**
+   * 批量取多条笔记的标签。
+   *
+   * 列表页逐条查会变成 N+1；一次 IN 查询拿回来再分组。
+   * 返回的 Map **对每个传入的 noteId 都有条目**（没有标签就是空数组）——
+   * 调用方拿到的永远是数组，不会是 undefined。
+   */
+  tagsOfNotes(noteIds: readonly number[]): Map<number, TagRow[]> {
+    const out = new Map<number, TagRow[]>();
+    for (const id of noteIds) out.set(id, []);
+    if (noteIds.length === 0) return out;
+
+    const placeholders = noteIds.map((_, i) => `:n${String(i)}`).join(',');
+    const params: Record<string, number> = {};
+    noteIds.forEach((id, i) => (params[`n${String(i)}`] = id));
+
+    const rows = this.db
+      .prepare<TagRow & { note_id: number }>(
+        `SELECT nt.note_id, t.* FROM note_tags nt JOIN tags t ON t.id = nt.tag_id
+          WHERE nt.note_id IN (${placeholders})
+          ORDER BY t.name`,
+      )
+      .all(params);
+    for (const r of rows) out.get(r.note_id)?.push(r);
+    return out;
+  }
+
+  /** 取笔记所属文件夹的 uid（对外只暴露 uid，不暴露整数主键）。 */
+  folderUidOf(folderId: number | null): string | null {
+    if (folderId === null) return null;
+    return (
+      this.db
+        .prepare<{ uid: string }>(`SELECT uid FROM folders WHERE id = :id`)
+        .get({ id: folderId })?.uid ?? null
+    );
   }
 
   tagsOfNote(noteId: number): TagRow[] {

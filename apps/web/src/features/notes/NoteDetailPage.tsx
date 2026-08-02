@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { arr } from '../../lib/safe';
 import { useParams, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
@@ -44,8 +45,8 @@ export default function NoteDetailPage() {
     staleTime: Infinity,
   });
 
-  const audioAsset = note.data?.assets.find((a) => a.role === 'audio16k' && a.state === 'ready');
-  const peaksAsset = note.data?.assets.find((a) => a.role === 'peaks' && a.state === 'ready');
+  const audioAsset = arr(note.data?.assets).find((a) => a.role === 'audio16k' && a.state === 'ready');
+  const peaksAsset = arr(note.data?.assets).find((a) => a.role === 'peaks' && a.state === 'ready');
 
   useEffect(() => {
     if (!note.data) return;
@@ -68,7 +69,7 @@ export default function NoteDetailPage() {
 
   const speakerNames = useMemo(() => {
     const m: Record<string, string> = {};
-    for (const s of transcript.data?.speakers ?? []) m[s.label] = s.displayName ?? s.label;
+    for (const s of arr(transcript.data?.speakers)) m[s.label] = s.displayName ?? s.label;
     return m;
   }, [transcript.data]);
 
@@ -90,7 +91,7 @@ export default function NoteDetailPage() {
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
         <h1 className="min-w-0 truncate text-base font-semibold text-ink">{n.title}</h1>
         <span className="flex items-center gap-2">
-          <TagEditor noteUid={n.uid} tags={n.tags} />
+          <TagEditor noteUid={n.uid} tags={arr(n.tags)} />
           <ExportMenu note={n} />
         </span>
       </header>
@@ -102,7 +103,7 @@ export default function NoteDetailPage() {
             <h2 className="flex items-center gap-2 text-xs font-medium text-ink-secondary">
               {t('detail.transcript')}
               <MockNotice surface="transcript" compact />
-              <WordLevelBadge segments={transcript.data?.segments ?? []} />
+              <WordLevelBadge segments={arr(transcript.data?.segments)} />
             </h2>
             <label className="flex items-center gap-1.5 text-xs text-ink-secondary">
               <input
@@ -116,10 +117,9 @@ export default function NoteDetailPage() {
           </div>
           <div className="min-h-0 flex-1">
             <TranscriptList
-              segments={transcript.data?.segments ?? []}
+              segments={arr(transcript.data?.segments)}
               speakerNames={speakerNames}
               noteUid={noteUid}
-              transcriptUid={transcript.data?.uid}
             />
           </div>
         </section>

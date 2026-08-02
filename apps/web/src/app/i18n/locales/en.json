@@ -56,7 +56,9 @@
       "finalizing": "Processing",
       "done": "Done",
       "failed": "Failed"
-    }
+    },
+    "dropZoneIdle": "Or drop an audio/video file here",
+    "pickFile": "Choose a file"
   },
   "notes": {
     "title": "All notes",

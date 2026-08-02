@@ -134,13 +134,22 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
       // ---- GET /api/notes ----
       if (p === '/api/notes' && method === 'GET') {
         const limit = Math.min(200, Number(url.searchParams.get('limit') ?? 50) || 50);
-        const notes = repos.listNotes(limit).map((n) => ({
+        const rows = repos.listNotes(limit);
+        // 一次 IN 查询拿全部标签，避免列表页 N+1
+        const tagMap = repos.tagsOfNotes(rows.map((n) => n.id));
+        const notes = rows.map((n) => ({
           uid: n.uid,
           title: n.title,
           status: n.status,
           kind: n.kind,
           language: n.language,
           durationMs: n.duration_ms,
+          starred: n.starred === 1,
+          tags: (tagMap.get(n.id) ?? []).map((t) => ({
+            uid: t.uid,
+            name: t.name,
+            color: t.color,
+          })),
           createdAt: new Date(n.created_at).toISOString(),
           updatedAt: new Date(n.updated_at).toISOString(),
         }));
@@ -215,6 +224,19 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
             language: note.language,
             durationMs: note.duration_ms,
             summaryMd: note.summary_md,
+            /*
+             * ⚠️ `tags` **永远是数组，无标签时是 `[]` 而不是缺字段**。
+             * 少了它前端 `tags.map()` 直接整页崩（`undefined.map`），
+             * 而"没有标签"和"字段不存在"在契约上是两回事 ——
+             * 后者会让每个消费方都得写一次 `?? []`，漏一处就崩一次。
+             */
+            tags: repos.tagsOfNote(note.id).map((t) => ({
+              uid: t.uid,
+              name: t.name,
+              color: t.color,
+            })),
+            starred: note.starred === 1,
+            folderUid: repos.folderUidOf(note.folder_id),
             assets,
             transcriptUid: tr?.uid ?? null,
             segmentCount: tr?.segment_count ?? 0,

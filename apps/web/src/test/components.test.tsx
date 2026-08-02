@@ -20,6 +20,7 @@ import { LlmSettingsSection } from '../features/settings/LlmSettingsSection';
 import { StatusChip } from '../components/common/StatusChip';
 import { ProgressMeter } from '../components/common/ProgressMeter';
 import type { MergedJob } from '../features/tasks/api';
+import { arr } from '../lib/safe';
 
 /* ─────────────────────────── 标签增删 ─────────────────────────── */
 
@@ -316,6 +317,34 @@ describe('LlmSettingsSection（API Key 输入）', () => {
     await r.flush();
     assert.ok(text(r.container).includes('未设置 Key'));
     r.unmount();
+  });
+});
+
+/* ────────────────── 服务端坏数据的防御（真浏览器事故回归）────────────────── */
+
+describe('服务端数组缺失时不崩溃', () => {
+  /**
+   * 真浏览器实测里，服务端在没有标签时回的是 `tags: undefined` 而不是 `[]`，
+   * `n.tags.map(...)` 直接让**笔记详情整页崩溃**，连带挡住 6 项待验交互。
+   * 契约侧要修，但前端也必须兜住 —— 这条用例把"兜住"固化下来。
+   */
+  test('★ TagEditor 收到 undefined 也要正常渲染，不能整页炸', async () => {
+    stubApi({});
+    const r = await render(
+      <TagEditor noteUid="n1" tags={undefined as unknown as never} />,
+    );
+    assert.ok(buttonByText(r.container, '加标签'), '应正常渲染出「加标签」入口');
+    r.unmount();
+  });
+
+  test('arr() 对各种非数组输入都回退为空数组，且引用稳定', async () => {
+    assert.deepEqual([...arr(undefined)], []);
+    assert.deepEqual([...arr(null)], []);
+    assert.deepEqual([...arr('nope' as unknown as never[])], []);
+    assert.deepEqual([...arr({} as unknown as never[])], []);
+    // 引用稳定：每次返回新 [] 会让 useMemo/依赖数组失效，甚至引发重渲染循环
+    assert.strictEqual(arr(undefined), arr(null));
+    assert.deepEqual([...arr([1, 2])], [1, 2]);
   });
 });
 

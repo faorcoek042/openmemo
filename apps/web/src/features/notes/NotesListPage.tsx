@@ -1,4 +1,5 @@
 import { Link, useNavigate } from 'react-router';
+import { arr } from '../../lib/safe';
 import { useTranslation } from 'react-i18next';
 import { FileAudio, Mic, Star } from 'lucide-react';
 
@@ -81,7 +82,7 @@ export default function NotesListPage() {
                     {n.durationMs ? <span>{humanDuration(n.durationMs, i18n.language)}</span> : null}
                     {n.source?.site ? <span>{n.source.site}</span> : null}
                     <span>{relativeTime(Date.parse(n.updatedAt), i18n.language)}</span>
-                    {n.tags.map((tag) => (
+                    {arr(n.tags).map((tag) => (
                       <span key={tag.uid} className="rounded bg-surface-0 px-1.5 py-0.5 text-ink-secondary">
                         {tag.name}
                       </span>

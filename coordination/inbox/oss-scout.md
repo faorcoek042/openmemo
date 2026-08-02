@@ -870,3 +870,92 @@ chunk_idx   : [{0:3},{1:9},{2:3}]                          ← 每块恰好一�
   `packages/shared` 的 ENDPOINTS 里没有它 —— 又一处临时契约，需要 `model-mgmt` 收编。
 - 第 3 项（网页装 sqlite-ext 验中文分词）与第 4 项（锚点前端联调）本轮**未做**，
   按 Manager 分工分别归 `model-mgmt` 的冷启动与 `architect`。
+
+---
+
+## [2026-08-02 23:40] T-051 DONE
+
+### 〇、插队项：`NoteDetail` 缺 `tags` / `starred` —— ✅ 已补（解锁 6 项验证）
+
+```
+① 无标签时（前端整页崩的那个场景）
+   tags     : []      | 类型: list      ← 空数组，不是 undefined
+   starred  : False   | 类型: bool
+   folderUid: 01KZ1113NZ7P4AZA0BAZQBSAV5
+② 打标签 + 星标后
+   tags   : [{"uid":"01KZ1121M2GY9Z50K7XMKKQQ2S","name":"演讲","color":"#f66"}]
+   starred: True
+③ 列表页也带上（一次 IN 查询批量取，避免 N+1）
+   01KZ111949… starred=True tags=[{…"演讲"…}]
+```
+`NoteRow` 此前连 `starred` 字段都没声明（表里一直有）。顺带补了 `folderUid`
+（对外只暴露 uid，不暴露整数主键）。
+
+**同意你的契约判断**：`tags` 该给 `[]`。"没有标签"和"字段不存在"是两回事 ——
+后者会逼每个消费方各写一次 `?? []`，漏一处就崩一次；前端再加防御是第二道，不是第一道。
+
+### 一、`GET /api/selfcheck` —— ✅ 可用
+
+复用 `@openmemo/runtime` 的 `runSelfCheck()`，**一份实现两个出口**（CLI + HTTP）。
+6 个探针由 daemon 注入（runtime 刻意不 import pipeline，避免成环）。
+
+```
+ok=false  counts={'ok':10,'warn':3,'fail':1}
+  ✅ [必需] tools    tool.ffmpeg / ffprobe / whisperCli
+  ⚠️        tools    model.vad          未安装 → 切分降级为固定窗口
+  ❌ [必需] models   model.asr          无            → 在「模型」页下载一个语音识别模型
+  ⚠️        models   model.llm          无（思维导图需要本地 LLM 或云 API Key）
+  ✅ [必需] ext      ext.chineseSearch  用户:1 推特:1 中国:1 服务:1
+  ✅        ext      ext.sqliteVec      v0.1.9
+  ✅        engines  engine.whisper.cpp / engine.paraformer  可用
+  ✅ [必需] engines  engine.select.zh   paraformer
+  ✅ [必需] engines  engine.select.en   whisper.cpp
+```
+
+**接线时揪出两个问题**：
+
+1. **中文探针会在全新安装上误报 `required` 的 ❌**。我最初把它查在**用户的
+   `segments_fts`** 上，空库四个词全 0 → 红叉。**红灯不代表坏了** —— 这和"绿灯不代表能用"
+   是同一个病的两面，而且更糟：新用户第一次打开诊断页就看到红叉，久了就学会无视红灯。
+   → 改成建**临时表 + 自带句子**来测。"这四个词能不能被切出来并命中"是**分词器自身的性质**，
+   与用户有没有笔记无关。对照验证：有数据的库上 `用户:10 推特:16 中国:5 服务:3`。
+2. **FTS5 的 `MATCH` 左操作数必须是裸表名**：写 `temp.X MATCH …` 报
+   `no such column: temp.X`（FTS5 把带 schema 前缀的当成了列名）。
+
+### 二、跨 daemon 重启的续跑 —— ✅ 已验
+
+```
+[1] 强杀前已落段=6 (daemon pid=1834976)   ← kill -9，模拟用户强杀
+[3] 重启日志:
+    [daemon] 崩溃恢复：1 个中断的任务已重新入队
+    [transcribe] 续跑 transcript=01KZ114G696SW6PBW5AZ9TS1V2，已完成 chunk=0
+最终: transcripts 只有 1 份 status=done segment_count=49
+      chunk_idx [0:6,1:7,2:5,3:6,4:5,5:15,6:5]  ← 每块恰好一次，无重复劳动
+      jobs state=succeeded  段数=49  时间单调=true
+```
+
+**顺带补上一个文档里写了但从没实现的东西**：D-01 §2.7 B 的**孤儿子进程回收**。
+`grep process.kill` 全仓 **0 处** —— 之前那次强杀后 `whisper-cli` 还活着，
+只是因为它那个 30s chunk 自己跑完了，不是我们回收的。大模型/长 chunk 下就会真的一直吃 CPU。
+新建 `bootstrap/orphans.ts`：按 **dataDir 精确匹配** + 要求 `ppid===1`（已成孤儿），
+SIGTERM → 1.5s → SIGKILL。**刻意不按进程名匹配** —— 本机多个 daemon 并存，
+按名字杀会杀掉别人的任务（这正是我们已经踩过两次的事故）。
+
+### 三、契约收编等 `model-mgmt`
+`POST /api/notes/:uid/retranscribe` 保持现状不动，等他收编进 shared。
+
+### 四、全量
+`pnpm -r build` **9/9 Done**；测试 **167 pass / 0 fail**；
+`apps/daemon` + `packages/db` + `packages/llm` + `packages/mindmap` eslint **EXIT=0**。
+
+### 五、诚实声明
+- **孤儿回收只在 Linux 生效**（走 `/proc`）。macOS/Windows 直接返回空结果，
+  需要各自的进程枚举方式，**未实现也未验证**。
+- 孤儿回收**没有真正验到"回收发生"那一刻**：两次重启实验里，一次孤儿自己跑完了、
+  一次用的是快模型没有在途子进程。代码路径跑过（返回 killed:[]），但
+  **"确实杀掉了一个在途孤儿"这个场景没被实证**。
+- 有一次用 large-v3-turbo 做重启实验时**整条命令 10 分钟超时、daemon2 日志为空**，
+  **未复现、未定位**。换 base.en 后一切正常。可能是我的轮询脚本卡在 curl 上，
+  也可能是启动路径在某种条件下会挂 —— **记录在案，不假装没发生过**。
+- `ext.chineseSearch` 现在测的是分词器能力，**不再覆盖"用户数据是否进了索引"**。
+  后者由 T-028 修的回填逻辑与其回归测试守，两者互补，但诊断页上看不到后者。

@@ -107,6 +107,12 @@ export default function CapturePage() {
             <Link2 className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-muted" aria-hidden />
             <input
               id="capture-url"
+              // 显式 aria-label + testid：此前只靠 <label> 关联，而拖拽区用了**同一句**文案，
+              // 按文本定位会命中拖拽区的 <p> 而不是这个输入框 —— 真浏览器实测就卡在这里。
+              aria-label={t('capture.urlLabel')}
+              data-testid="capture-url-input"
+              name="url"
+              inputMode="url"
               value={url}
               onChange={(e) => {
                 setUrl(e.target.value);
@@ -194,9 +200,17 @@ export default function CapturePage() {
         ].join(' ')}
       >
         <Upload className="mx-auto mb-2 size-6 text-ink-muted" aria-hidden />
-        <p className="text-sm text-ink-secondary">{dragging ? t('capture.dropHint') : t('capture.urlLabel')}</p>
-        <Button size="sm" variant="secondary" className="mt-3" onClick={() => fileRef.current?.click()}>
-          {t('nav.newCapture')}
+        <p className="text-sm text-ink-secondary">
+          {dragging ? t('capture.dropHint') : t('capture.dropZoneIdle')}
+        </p>
+        <Button
+          size="sm"
+          variant="secondary"
+          className="mt-3"
+          data-testid="capture-pick-file"
+          onClick={() => fileRef.current?.click()}
+        >
+          {t('capture.pickFile')}
         </Button>
         <input
           ref={fileRef}

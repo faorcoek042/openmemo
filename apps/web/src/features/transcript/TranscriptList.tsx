@@ -23,13 +23,16 @@ export function TranscriptList({
   segments,
   speakerNames,
   noteUid,
-  transcriptUid,
   editable = true,
 }: {
-  segments: TranscriptSegmentDto[];
+  segments: readonly TranscriptSegmentDto[];
   speakerNames: Record<string, string>;
+  /**
+   * 段落编辑按 **noteUid** 寻址（`PATCH /api/notes/:uid/segments/:seq`）——
+   * 服务端从 note 取"当前活跃转写稿"，所以换稿之后同一个 URL 依然有效。
+   * 早先这里收的是 transcriptUid，那是我按设计猜的路径，实测 404（见 features/transcript/api.ts）。
+   */
   noteUid?: string;
-  transcriptUid?: string;
   editable?: boolean;
 }) {
   const edit = useEditSegmentMutation(noteUid);

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { arr } from '../../lib/safe';
 import { useTranslation } from 'react-i18next';
 import { Eye, EyeOff, KeyRound, ShieldAlert, Trash2 } from 'lucide-react';
 
@@ -54,9 +55,9 @@ export function LlmSettingsSection() {
   const activeId = readActiveProviderId(settings.data);
   const disclosure = secrets.data?.disclosure;
   const hasKey = (id: string) =>
-    secrets.data?.secrets.some((s) => s.key === secretKeyFor(id)) ?? false;
+    arr(secrets.data?.secrets).some((s) => s.key === secretKeyFor(id));
   const maskOf = (id: string) =>
-    secrets.data?.secrets.find((s) => s.key === secretKeyFor(id))?.masked ?? null;
+    arr(secrets.data?.secrets).find((s) => s.key === secretKeyFor(id))?.masked ?? null;
 
   const upsertProvider = (p: LlmProviderConfig) => {
     const next = providers.some((x) => x.id === p.id)
