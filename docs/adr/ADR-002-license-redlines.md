@@ -1,57 +1,65 @@
 ---
 id: ADR-002
-title: 许可证红线、shadcn/ui 豁免、思维导图库选型
+title: 许可证政策（个人自用档）、shadcn/ui 豁免、思维导图库选型
 status: accepted
 date: 2026-08-02
-decider: Meta Manager
-input: docs/research/R-03-oss-modules.md §2 §3 §6
+decider: 用户（分发意图 + yt-dlp）/ Meta Manager（其余）
+input: docs/research/R-03-oss-modules.md, R-01 §B
+revision: v2 — 用户已明确"仅个人/自用"，本文件相对 v1 大幅放宽
 ---
 
-## 决策 1：许可证黑名单（CI 强制，命中即 fail build）
+## 用户决定（2026-08-02，不可由 agent 推翻）
 
-以下组件**禁止进入发行物**，全部已由 `oss-scout` 于 2026-08-02 实地核实：
+1. **分发意图 = 仅个人/自用。** 不追求商用，不上应用商店。
+2. **F1 直接内置 yt-dlp，不做双路径区分。** 粘贴链接即用。
 
-| 组件 | 问题 | 替代方案 |
-|------|------|----------|
-| `ffmpeg-static` (npm) | 自报 **GPL-3.0-or-later** 二进制 | 自建 LGPL-2.1+ FFmpeg（vendor submodule + CI 矩阵编译） |
-| yt-dlp **官方 release 二进制** | PyInstaller 打包引入 **GPLv3+**（仅 git 仓库/PyPI 包是 Unlicense） | 见待决策项 D-2 |
-| `tldraw` | 专有许可证，生产需付费 | `mind-elixir-core` (MIT) |
-| `ten-vad` | 含"不得与 Agora 竞争"条款，非 OSI | `silero-vad` (MIT) |
-| `@blocknote/xl-*` | GPL-3.0 | TipTap core (MIT)，不碰 `@tiptap-pro/*` |
-| `@tiptap-pro/*` | 付费专有 | TipTap core (MIT) |
-| Meilisearch | 含 BUSL-1.1 | SQLite FTS5 + libsimple(MIT 支) + sqlite-vec |
-| Moonshine 非英语模型 | 非商用 | sherpa-onnx / whisper 系 |
-| FFmpeg `--enable-nonfree` | 官方明文 **unredistributable** | 绝不启用；`--enable-gpl` 我们也用不到（纯音频） |
+## 决策 1：许可证政策 = 个人自用档
 
-**FFmpeg 调用方式**：CLI 子进程调用 + 自建 LGPL-only 构建。依据 FSF 官方 FAQ `#MereAggregation`：
-pipes/exec/命令行参数通常使程序保持独立作品。→ 见 ADR-001 A 类。
+因不对外分发，GPL 的分发义务基本不触发（GPL 约束的是**分发**行为，不是自用）。因此：
 
-## 决策 2：shadcn/ui 的 C2 豁免（**唯一豁免项**）
+| 原 v1 红线 | v2 裁决 | 说明 |
+|---|---|---|
+| `ffmpeg-static` (GPL-3.0) | ✅ **允许使用** | 省掉自建 FFmpeg 的 CI 工作量，macOS 无 LGPL 预编译源的难题直接消失 |
+| yt-dlp 官方二进制 (GPLv3+) | ✅ **直接内置** | 用户明确决定 |
+| `@blocknote/xl-*` (GPL-3.0) | ✅ 允许 | |
+| `tldraw`（专有，生产需付费） | ❌ **仍禁止** | 专有许可证与"自用"无关，仍需付费 |
+| `@tiptap-pro/*`（付费专有） | ❌ **仍禁止** | 同上 |
+| `ten-vad`（非竞争条款） | ⚠️ 允许但不推荐 | `silero-vad` (MIT) 各方面更好，无理由用它 |
+| FFmpeg `--enable-nonfree` | ⚠️ 自用可，**绝不分发** | 若日后改变分发意图，此项是硬阻断 |
+| Moonshine 非英语模型（非商用） | ✅ 允许 | 自用属非商用 |
+| Meilisearch (BUSL-1.1) | ✅ 允许 | 但选型上仍推荐 SQLite FTS5 方案（更轻、无服务进程） |
 
-shadcn/ui 的分发模式**就是**源码复制进项目（MIT，设计意图如此，不存在"上游包"可依赖），
-与 C2「禁止复制粘贴源码」字面冲突。
+**保留的工程约束**（与许可证无关，纯质量要求）：
+- CI 仍跑 `license-checker`，但**降级为报告模式**（生成清单，不 fail build）。
+- 所有第三方组件的许可证记入 `vendor/manifests/*.json`，保持可追溯。
 
+> **升级路径**：若日后要商用，需回滚到 v1 红线——主要工作是自建 LGPL FFmpeg（见 R-03 §4）
+> 和把 yt-dlp 改为可选插件（R-03 §5.5）。这两处应保持**架构上可替换**（走适配层），
+> 使回滚成本可控。这是硬性设计要求，写入 D-01。
+
+## 决策 2：shadcn/ui 的 C2 豁免（唯一豁免项）
+
+shadcn/ui 的分发模式**就是**源码复制进项目（MIT，设计意图如此，无上游包可依赖）。
 **批准豁免**，条件：
-- 复制来的组件全部隔离在 `src/components/ui/` 单一目录下，不与业务代码混放。
-- 目录内保留 `SOURCE.md` 记录来源 URL + 复制时的 commit/版本 + 许可证，维持可追溯性（C2 本意）。
-- 该目录下的文件**允许本地修改**（这正是 shadcn 的使用方式），但修改需在 git 历史中可见。
+- 隔离在 `src/components/ui/` 单一目录，不与业务代码混放。
+- 目录内 `SOURCE.md` 记录来源 URL + 复制时的版本 + 许可证（维持 C2 本意：可追溯）。
 
-## 决策 3：思维导图库 = `mind-elixir-core` (MIT)
+## 决策 3：思维导图库 —— 裁决 R-01 与 R-03 的分歧
 
-理由：用户需求原文是"**整理**思维导图"——**编辑交互是主路径，导出是次要路径**。
-`mind-elixir-core` 编辑优先（内置撤销/拖拽/右键菜单），导出缺口（OPML/FreeMind）经评估约 110 行
-自研序列化器即可补齐；反向选择 `simple-mind-map` 则要自己补编辑体验，成本高得多。
+| 来源 | 主张 |
+|---|---|
+| R-03 (`oss-scout`) | `mind-elixir-core` (MIT)，编辑优先，内置撤销/拖拽/右键 |
+| R-01 (`memo-researcher`) | `markmap`——因为 **memo.ac 实际用的就是它**（已取证） |
 
-`simple-mind-map` 的导出矩阵（xmind/pdf/md）作为**参考实现**，我们照着补齐序列化器。
+**裁决：`mind-elixir-core` 为主编辑器，`markmap` 为可选只读视图。**
 
-**可逆性**：两者都是"数据结构 → 渲染"的库，我们的思维导图数据模型必须**库无关**
-（自有 schema + 适配层），使日后切换成本可控。这是硬性设计要求，写入 D-01 架构文档。
+理由：用户需求原文是"**整理**思维导图"，整理 = 编辑，是主路径。markmap 是
+"Markdown → 导图"的单向渲染器，编辑能力弱——这正是 memo.ac 的局限，
+且 `memo-researcher` 实测发现它还有导出模糊问题。我们没有理由继承竞品的短板。
 
-## 决策 4：法务咨询 —— 不阻塞开发，但列为发布前置
+**硬性设计要求**：思维导图数据模型必须**库无关**（自有 schema + 适配层），
+两个渲染器都是这个 schema 的消费者。切换成本必须可控。写入 D-01。
 
-R-03 §6.2 的 8 项法务事项中，**L-5（模型权重许可证）已移交 R-04 由 `model-mgmt` 核实**，
-这一项技术上可自行解决。其余（L-1 CLI 子进程边界、L-3 yt-dlp 分发风险等）属于真正的法律判断，
-**Meta Manager 无权代替用户决定是否付费咨询律师**，已上报用户。
+## 决策 4：法务咨询 —— 不启动
 
-开发按"保守假设"推进：即**假设需要保留商用可能性**，因此严格执行上述黑名单。
-若用户明确本项目仅个人/开源使用，可放宽并回滚部分限制。
+用户已明确仅个人自用，R-03 §6.2 的 8 项法务事项**全部降级为文档记录**，不阻塞开发。
