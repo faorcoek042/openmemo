@@ -22,6 +22,7 @@ import type {
 } from './models.js';
 import type { FitResult } from './fitness.js';
 import type { ProviderId } from './artifacts.js';
+import type { Remediation } from './events.js';
 
 /* ----------------------------- catalog ----------------------------------- */
 
@@ -234,12 +235,32 @@ export interface GetHardwareResponse {
 
 /* ------------------------------ errors ----------------------------------- */
 
+/**
+ * Error envelope.
+ *
+ * Shape is `{error:{code,message,messageZh,retryable,remediation}}` — deliberately not
+ * RFC 9457, because the client keys off `code` and needs `remediation` as a first-class
+ * field rather than an extension member.
+ *
+ * Copy policy (ADR-007 decision 3): the frontend looks `code` up in its own message table
+ * first and falls back to `messageZh`/`message`. The server strings exist so a code the
+ * frontend has never seen still renders something useful.
+ */
 export interface ApiErrorBody {
   error: {
     code: string;
     message: string;
     messageZh: string;
     retryable: boolean;
+    /**
+     * Machine-readable corrective action (ADR-007 decision 2).
+     *
+     * This field is what makes charter requirement 2.1 — "the user never touches a
+     * command line" — actually achievable. An error without it leaves the user with
+     * prose they cannot act on; with it the UI renders a button that fixes the problem
+     * ("Install the CUDA backend", "Free up disk", "Switch download source").
+     */
+    remediation?: Remediation | null;
     details?: unknown;
   };
 }

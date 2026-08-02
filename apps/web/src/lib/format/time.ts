@@ -1,0 +1,71 @@
+/**
+ * 时间格式化。全部走 `Intl`，禁止各 feature 自己写"3 分钟前"（D-05 §6.1）。
+ *
+ * 媒体时间一律 **毫秒整数**（D-02 §1.1）——浮点秒在字幕对齐上会累积误差。
+ */
+
+/** `754000` → `"12:34"`；超过 1 小时 → `"1:12:34"`。时间码不随 locale 变，是媒体惯例。 */
+export function timecode(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) ms = 0;
+  const total = Math.floor(ms / 1000);
+  const s = total % 60;
+  const m = Math.floor(total / 60) % 60;
+  const h = Math.floor(total / 3600);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+/** SRT/VTT 用的完整时间码 `HH:MM:SS.mmm`（整数毫秒 → 无浮点误差，D-02 §3.6）。 */
+export function timecodeFull(ms: number): string {
+  const t = Math.max(0, Math.floor(ms));
+  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
+  return `${pad(Math.floor(t / 3600000))}:${pad(Math.floor(t / 60000) % 60)}:${pad(
+    Math.floor(t / 1000) % 60,
+  )}.${pad(t % 1000, 3)}`;
+}
+
+/** 人类可读时长，用于列表页："1 小时 47 分" / "1 hr 47 min"。 */
+export function humanDuration(ms: number, locale: string): string {
+  const totalMin = Math.round(ms / 60000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  const nf = new Intl.NumberFormat(locale);
+  if (h === 0) return locale.startsWith('zh') ? `${nf.format(m)} 分钟` : `${nf.format(m)} min`;
+  return locale.startsWith('zh')
+    ? `${nf.format(h)} 小时 ${nf.format(m)} 分`
+    : `${nf.format(h)} hr ${nf.format(m)} min`;
+}
+
+const RTF_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
+  ['year', 31_536_000_000],
+  ['month', 2_592_000_000],
+  ['day', 86_400_000],
+  ['hour', 3_600_000],
+  ['minute', 60_000],
+  ['second', 1000],
+];
+
+/** "3 分钟前"。用 `Intl.RelativeTimeFormat`，无需 polyfill（已 Baseline 多年）。 */
+export function relativeTime(epochMs: number, locale: string, now = Date.now()): string {
+  const diff = epochMs - now;
+  const abs = Math.abs(diff);
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+  for (const [unit, size] of RTF_UNITS) {
+    if (abs >= size) return rtf.format(Math.round(diff / size), unit);
+  }
+  return rtf.format(0, 'second');
+}
+
+/**
+ * ETA。**只在有依据时显示，且四舍五入到"约 X 分钟"**（D-05 §4.1 规则 4）——
+ * 不显示"剩余 03:47"这种假精确，因为 RTF 会波动。
+ */
+export function approxEta(seconds: number | null | undefined, locale: string): string | null {
+  if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) return null;
+  const zh = locale.startsWith('zh');
+  if (seconds < 60) return zh ? '不到 1 分钟' : 'less than a minute';
+  const min = Math.round(seconds / 60);
+  if (min < 60) return zh ? `约 ${min} 分钟` : `about ${min} min`;
+  const hr = Math.round(seconds / 3600);
+  return zh ? `约 ${hr} 小时` : `about ${hr} hr`;
+}

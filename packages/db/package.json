@@ -22,18 +22,10 @@
     "test": "node --test dist/**/*.test.js"
   },
   "dependencies": {
-    "@openmemo/shared": "workspace:*"
+    "@openmemo/shared": "workspace:*",
+    "better-sqlite3": "^13.0.2"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^9.6.0",
-    "better-sqlite3": "^13.0.2"
-  },
-  "peerDependencies": {
-    "better-sqlite3": "^13.0.2"
-  },
-  "peerDependenciesMeta": {
-    "better-sqlite3": {
-      "optional": true
-    }
+    "@types/better-sqlite3": "^9.6.0"
   }
 }

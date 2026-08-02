@@ -93,7 +93,8 @@ export class WhisperCppEngine implements AsrEngine {
       '--offset-t', String(Math.round(req.offsetMs)),
       '--duration', String(Math.round(req.durationMs)),
       '-t', String(req.threads ?? this.opts.defaultThreads ?? 4),
-      // -ojf (full JSON) is what carries avg_logprob and no_speech_prob; plain -oj does not.
+      // Full JSON: the only mode that emits per-token probabilities (measured on
+      // v1.9.1 it does NOT emit avg_logprob/no_speech_prob — see parseWhisperJson).
       '--output-json-full',
       '--output-file', outputBase,
       // Keep stdout clean; we read the JSON file, not the console.
@@ -129,7 +130,22 @@ export class WhisperCppEngine implements AsrEngine {
       });
 
       const raw = await readFile(jsonPath, 'utf8');
-      return parseWhisperJson(raw, req.offsetMs, req.chunkIndex);
+      /*
+       * baseOffsetMs is 0 — NOT req.offsetMs.
+       *
+       * MEASURED on whisper.cpp v1.9.1: when `--offset-t` is used, the offsets in the
+       * JSON are already ABSOLUTE to the source file, not relative to the requested
+       * window. Verified directly:
+       *     whisper-cli --offset-t 60000 --duration 20000 …
+       *     -> first segment reports offsets.from = 60000
+       * Adding req.offsetMs on top double-counted, which is how a 220 s recording ended
+       * up with segments at 419 s. Caught by the multi-chunk end-to-end run in D-06 §6.
+       */
+      return parseWhisperJson(raw, req.chunkIndex, {
+        baseOffsetMs: 0,
+        windowStartMs: req.offsetMs,
+        windowEndMs: req.offsetMs + req.durationMs,
+      });
     } finally {
       await unlink(jsonPath).catch(() => undefined);
     }
@@ -145,19 +161,35 @@ interface WhisperJsonSegment {
   avg_logprob?: number;
 }
 
+export interface ParseWhisperOptions {
+  /**
+   * Milliseconds to ADD to every reported offset.
+   *
+   * For whisper.cpp driven with `--offset-t` this MUST be 0: measured on v1.9.1, its
+   * reported offsets are already absolute to the source file. The parameter exists for
+   * engines (or future versions) that report chunk-relative times.
+   */
+  baseOffsetMs?: number;
+  /** Drop segments falling wholly outside the requested window. */
+  windowStartMs?: number;
+  windowEndMs?: number;
+}
+
 /**
- * Map whisper.cpp's `-ojf` output onto our TranscriptSegment.
+ * Map whisper.cpp's `--output-json-full` output onto our TranscriptSegment.
  *
- * `offsets` are milliseconds RELATIVE TO THE CHUNK, so `chunkOffsetMs` must be added to
- * get media-absolute times. Forgetting that is how every segment ends up starting at
- * zero, and it is invisible in a single-chunk test — which is exactly why the end-to-end
- * run in D-06 uses a file long enough to produce several chunks.
+ * Two behaviours here come from observing the real binary rather than from its docs:
+ *   1. offsets are absolute (see ParseWhisperOptions.baseOffsetMs);
+ *   2. whisper decodes in 30 s windows and will happily emit a segment that runs past
+ *      the `--duration` we asked for, so segments outside the window are dropped —
+ *      otherwise adjacent chunks both claim the same speech.
  */
 export function parseWhisperJson(
   raw: string,
-  chunkOffsetMs: number,
   chunkIndex: number,
+  opts: ParseWhisperOptions = {},
 ): TranscriptSegment[] {
+  const { baseOffsetMs = 0, windowStartMs, windowEndMs } = opts;
   let parsed: { transcription?: WhisperJsonSegment[] };
   try {
     parsed = JSON.parse(raw) as typeof parsed;
@@ -171,10 +203,35 @@ export function parseWhisperJson(
     const text = (seg.text ?? '').trim();
     if (text.length === 0) continue;
 
-    const fromMs = seg.offsets?.from ?? 0;
-    const toMs = seg.offsets?.to ?? fromMs;
+    const fromMs = baseOffsetMs + (seg.offsets?.from ?? 0);
+    const toMs = baseOffsetMs + (seg.offsets?.to ?? (seg.offsets?.from ?? 0));
 
-    const confidence = logprobToConfidence(seg.avg_logprob ?? null);
+    // Outside the window we asked for: whisper over-ran into the next chunk's territory.
+    if (windowEndMs !== undefined && fromMs >= windowEndMs) continue;
+    if (windowStartMs !== undefined && toMs <= windowStartMs) continue;
+
+    /*
+     * Confidence.
+     *
+     * MEASURED against whisper.cpp v1.9.1: `--output-json-full` does NOT emit
+     * `avg_logprob` or `no_speech_prob` at the segment level. The real segment keys are
+     * exactly ['timestamps', 'offsets', 'text', 'tokens']. Only the per-token `p`
+     * probability is available.
+     *
+     * So we prefer avg_logprob when a build does provide it (older/newer versions and
+     * other ggml front-ends do), and otherwise derive confidence as the mean token
+     * probability over real tokens — special markers like [_BEG_] are excluded because
+     * they are always near-certain and would inflate the score.
+     */
+    const realTokens = (seg.tokens ?? []).filter(
+      (t) => typeof t.p === 'number' && !(t.text ?? '').startsWith('['),
+    );
+    const meanTokenProb =
+      realTokens.length > 0
+        ? realTokens.reduce((sum, t) => sum + (t.p ?? 0), 0) / realTokens.length
+        : null;
+
+    const confidence = logprobToConfidence(seg.avg_logprob ?? null) ?? meanTokenProb;
     const noSpeechProb = seg.no_speech_prob ?? null;
 
     let flags = 0;
@@ -189,14 +246,14 @@ export function parseWhisperJson(
             .filter((t) => (t.text ?? '').trim().length > 0 && !(t.text ?? '').startsWith('['))
             .map((t) => ({
               w: t.text ?? '',
-              s: chunkOffsetMs + (t.offsets?.from ?? fromMs),
-              e: chunkOffsetMs + (t.offsets?.to ?? toMs),
+              s: baseOffsetMs + (t.offsets?.from ?? fromMs),
+              e: baseOffsetMs + (t.offsets?.to ?? toMs),
               ...(t.p !== undefined ? { p: t.p } : {}),
             }));
 
     out.push({
-      startMs: chunkOffsetMs + fromMs,
-      endMs: chunkOffsetMs + toMs,
+      startMs: fromMs,
+      endMs: toMs,
       text,
       confidence,
       noSpeechProb,

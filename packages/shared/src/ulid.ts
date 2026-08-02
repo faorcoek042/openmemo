@@ -13,9 +13,14 @@
  * identifier format every package depends on.
  */
 
-import { randomFillSync } from 'node:crypto';
-
-/** Crockford base32: no I, L, O or U, so ids cannot be misread aloud or mistyped. */
+/**
+ * Randomness comes from Web Crypto (`globalThis.crypto`), NOT `node:crypto`.
+ *
+ * `@openmemo/shared` is imported by apps/web's browser bundle, so any `node:` import here
+ * makes Vite externalise the module and the code breaks at runtime in the browser. Web
+ * Crypto is available in both Node 18+ and every target browser, so it is the only
+ * correct choice for an isomorphic package.
+ */
 const ENCODING = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const TIME_LEN = 10;
 const RANDOM_LEN = 16;
@@ -39,7 +44,7 @@ function encodeTime(now: number): string {
 
 function encodeRandom(): string {
   const bytes = new Uint8Array(RANDOM_LEN);
-  randomFillSync(bytes);
+  globalThis.crypto.getRandomValues(bytes);
   let out = '';
   for (let i = 0; i < RANDOM_LEN; i++) out += ENCODING[bytes[i] % 32];
   return out;

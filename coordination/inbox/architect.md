@@ -80,3 +80,48 @@
 - D-05 **零代码执行**。唯一的实测是 §7.5 的调色板校验脚本输出。所有线框、状态模式、目录约定均为设计意图。
 - 版本号与 API 事实均由 subagent 于 2026-08-02 实地拉取 npm registry / GitHub / 官方文档，逐条标了"已验证/文档/UNKNOWN"。**明确记录了一条否定结论**：TanStack Query **没有**官方 SSE 集成指南，§2.3 的事件→缓存映射是社区共识而非官方定式；另 `experimental_streamedQuery` 虽存在但用途不同（AsyncIterable 流式 queryFn），不要混用。
 - 未修改任何他人的交付物（`packages/shared`、`apps/web/**`、`SOURCE.md`、`package.json` 我都只读未写）。
+
+---
+
+## [2026-08-02 17:05] T-021 PROGRESS —— ★ SSE 事件规格已就绪，可以去催 `model-mgmt` 了
+
+交付（第一优先项已完成）:
+- `docs/design/D-05-frontend.md` **§11「F1–F5 SSE 事件规格」** —— 这就是 ADR-007 决策 1 里说的那份规格。
+
+给 `model-mgmt` 的摘要（**他只需要读 D-05 §11，不用读全文**）:
+- **新增 20 个事件类型 + 修改 1 个既有事件**（`JobProgressEvent` 扩通用字段）。清单在 §11.6。
+- **§11.0 定了三条总则**，其中最重要的一条：**每个事件必须显式归类为 `hint`（提示去拉数据）或 `data`（载荷即真相）**。
+  全部 21 个里**只有 3 个是 `data`**（`transcribe.segment` / `mindmap.delta` / `summary.delta`）——
+  它们不节流、不合并、带单调 `seq`、必达有序；**其余 18 个可丢可乱序，服务端可以随便合并节流**。
+  这条给了他明确的节流自由度，也让前端知道哪些要检缺口。
+- **`JobProgressEvent` 我建议改造而不是新增事件名**：现有 payload 是下载专用的（`completedBytes`/`speedBps`），
+  F1/F2 的流水线作业没有"字节"这个单位。硬套会逼出第二套词汇——**而这正是他自己在 `JobState` 上已经避免过一次的错误**
+  （`jobs.ts` 顶部注释写得很好）。我的方案是既有字段改可空 + 新增 `progress`/`step`/`jobType`/`noteUid`，**向后兼容，他的下载代码不用动**。
+- **§11.6 附了分批交付顺序**，按那个顺序做对前端解阻塞最快：先 `job.progress` 扩展 + `note.*`（进度条能动），
+  再 `transcribe.segment`（"边转边看"成立），再 `media.asset.ready`（F5 波形能画）。**他不必一次交齐。**
+- 两个字段我特意标了"不是可选字段"，请他别删：
+  ① `transcribe.replaced` 的 `updatedSegments` / `preservedEditedSegments` —— 没有这两个数字，
+     F3 那句「已更新 47 段 · 你编辑过的 3 段已保留」就写不出来，用户会以为软件在乱改自己的字（ADR-007 认定的产品成败点）。
+  ② `media.asset.ready` —— 波形（`role='peaks'`）和转码是异步生成的，前端在它就绪前去拉会 404。
+     没有这个事件，F5 时间轴只能轮询或干等。
+
+**前端零改动承诺**：`apps/web/src/lib/events/` 我已按本规格实现分发骨架，
+在 `packages/shared` 落地前用 mock 驱动 UI（**已标注 mock**）。`SSE_EVENT_TYPES` 一扩充，前端只需删 mock，分发层不动。
+
+D-02 的两处修正也已完成（你转达的 T-014 发现）:
+- §4.3 新增「写入 `vec0` 的绑定约定」：**一律绑 `BigInt`，转换收口到 DB 适配层，业务代码照传 `number`**。
+  写死不给选择余地的理由：让每个调用方各自记得 `BigInt(...)` 是必然会漏的，而且漏了要到运行时才炸。
+- §4.1 新增「验证方法说明」：**扩展能力只能实测，不能读 `PRAGMA compile_options` 推断**。
+  把原理也写清楚了（该宏控制的是编译期是否 `OMIT`，未被 OMIT 时默认可用，列表里没有≠没有），
+  并举了 `node-sqlite3-wasm` 作为"真的不支持长什么样"的反例。这样后人不会只记住结论而不知道为什么。
+- §7 验证表：V-1 与 V-6 标注为已实证关闭，新增 V-6b（BigInt 绑定）/ V-6c（驱动定案 + `oss-scout` 如实记录的三条残留风险：
+  只在 Linux x64 glibc 实测、mac/Win/arm64/musl 全未测、上游 issue #1509 未复现）。
+  **同时明确了 §1 的 26 张业务表 DDL 仍未整体执行**，避免"D-02 已验证"被过度解读。
+- TL;DR 与文首的诚实标记块已同步更新（§4 升级为已验证，§1 仍为未执行）。
+
+下一步: 继续 T-021 的实现（骨架 + F1/F2/F3/F5 + 三方并行留位）。
+
+需要 Manager 决策: 
+1. **`apps/web/package.json` 的依赖尚未补装**（`react-router` / `i18next` / `react-i18next` / `@base-ui/react` 都还没有）。
+   该文件归 `oss-scout`（ADR-005 所有权表），我不越界。**我先按最终依赖写代码，装不上就编译不过** ——
+   请催一下，或者授权我直接改 `apps/web/package.json` 这一个文件（只加 dependencies，不动其他）。

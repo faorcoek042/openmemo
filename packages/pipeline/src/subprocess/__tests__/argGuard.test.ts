@@ -24,14 +24,16 @@ import {
 } from '../argGuard.js';
 
 /** Assert rejection AND that it was rejected for the expected reason. */
-function assertRejected(result: { ok: boolean }, expectedCode: string, label: string): void {
+function assertRejected(
+  result: { ok: true; value: unknown } | { ok: false; code: string; message: string },
+  expectedCode: string,
+  label: string,
+): void {
   assert.equal(result.ok, false, `${label}: expected rejection but it was ACCEPTED`);
   if (!result.ok) {
-    assert.equal(
-      (result as { code: string }).code,
-      expectedCode,
-      `${label}: rejected, but for the wrong reason`,
-    );
+    // Asserting the CODE, not just the rejection: a check that rejects for the wrong
+    // reason is a check that is not actually protecting what we think it protects.
+    assert.equal(result.code, expectedCode, `${label}: rejected, but for the wrong reason`);
   }
 }
 

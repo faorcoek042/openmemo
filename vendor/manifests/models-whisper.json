@@ -51,7 +51,7 @@
         "vramRequiredMB": 1394,
         "diskRequiredMB": 631,
         "cpuFeatures": [],
-        "computedAtContext": 0
+        "computedAtContext": null
       },
       "license": {
         "id": "MIT",
@@ -108,7 +108,7 @@
         "vramRequiredMB": 1694,
         "diskRequiredMB": 962,
         "cpuFeatures": [],
-        "computedAtContext": 0
+        "computedAtContext": null
       },
       "license": {
         "id": "MIT",
@@ -187,7 +187,7 @@
         "vramRequiredMB": 2445,
         "diskRequiredMB": 1787,
         "cpuFeatures": [],
-        "computedAtContext": 0
+        "computedAtContext": null
       },
       "license": {
         "id": "MIT",
@@ -250,7 +250,7 @@
         "vramRequiredMB": 1901,
         "diskRequiredMB": 1189,
         "cpuFeatures": [],
-        "computedAtContext": 0
+        "computedAtContext": null
       },
       "license": {
         "id": "MIT",
@@ -334,7 +334,7 @@
         "vramRequiredMB": 3915,
         "diskRequiredMB": 3405,
         "cpuFeatures": [],
-        "computedAtContext": 0
+        "computedAtContext": null
       },
       "license": {
         "id": "MIT",
@@ -396,7 +396,7 @@
         "vramRequiredMB": 1059,
         "diskRequiredMB": 593,
         "cpuFeatures": [],
-        "computedAtContext": 0
+        "computedAtContext": null
       },
       "license": {
         "id": "MIT",
@@ -458,7 +458,7 @@
         "vramRequiredMB": 570,
         "diskRequiredMB": 209,
         "cpuFeatures": [],
-        "computedAtContext": 0
+        "computedAtContext": null
       },
       "license": {
         "id": "MIT",
@@ -520,7 +520,7 @@
         "vramRequiredMB": 310,
         "diskRequiredMB": 66,
         "cpuFeatures": [],
-        "computedAtContext": 0
+        "computedAtContext": null
       },
       "license": {
         "id": "MIT",
@@ -583,7 +583,7 @@
         "vramRequiredMB": 278,
         "diskRequiredMB": 85,
         "cpuFeatures": [],
-        "computedAtContext": 0
+        "computedAtContext": null
       },
       "license": {
         "id": "MIT",

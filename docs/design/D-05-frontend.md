@@ -1004,3 +1004,167 @@ v4 是 CSS-first 配置，但有一个**关键限制会直接影响我们**：
 6. **路由前缀 `/api` 追认**与 D-01 相应订正（§8 差异 1/4/5）。
 7. **shadcn 底层库：Base UI（我建议，一个包）vs Radix（成熟，十几个包）**（§0.1）。
    附带：`apps/web/src/components/ui/SOURCE.md` 里"底层依赖：Radix UI Primitives"一行需按裁决结果订正（归 `oss-scout`）。
+
+---
+
+## §11 ★ F1–F5 SSE 事件规格（**交付给 `model-mgmt` 在 `packages/shared` 实现**）
+
+> **状态**：ADR-007 决策 1 —— 规格由 `architect` 出，实现归 `model-mgmt`（他独占 `packages/shared`）。
+> **本节即那份规格。** 现有 14 个模型/下载域事件保持不变，本节是**增量**。
+> **诚实标记**：以下全部是 `[设计]`，尚无任何实现。payload 字段名一旦落地即为契约。
+
+### 11.0 三条总则（先定规矩，再列事件）
+
+| # | 规则 | 理由 |
+|---|---|---|
+| **1** | **事件分两类：`hint`（提示去拉数据）与 `data`（载荷即真相）。每个事件必须显式归类。** | D-01 §3.3 的"SSE 是提示不是数据源"原则需要可执行的判据。归错类会导致要么白白多拉、要么状态不一致 |
+| **2** | **只有 `data` 类事件允许"必达且有序"，其余一律可丢可乱序。** 前端对 `hint` 类做去重合并即可 | 让服务端有明确的节流自由度：`hint` 随便合并，`data` 必须逐条发 |
+| **3** | **所有事件带 `noteUid`（若与笔记相关）** | 前端要按笔记路由到不同页面/组件；没有它就得反查，多一次往返 |
+
+**`data` 类事件只有三个**（其余全是 `hint`）：`transcribe.segment`、`mindmap.delta`、`summary.delta`。
+它们是"增量内容流"，丢了就少一段文字，无法靠重拉便宜地补（重拉要传整篇）。
+→ 这三个**不节流、不合并、带单调 `seq`**，前端按 `seq` 检测缺口，缺口则回退整篇重拉。
+
+### 11.1 通用作业进度（改造既有 `job.progress`）
+
+现有 `JobProgressEvent` 是**下载专用**的（`completedBytes`/`totalBytes`/`speedBps`）。
+F1/F2 的流水线作业（下载→抽音轨→切分→转写→结构化）没有"字节"这个单位，
+硬套会让前端要么显示 0 字节、要么另开一套事件——**两套词汇正是 `model-mgmt` 在 `JobState` 上已经避免过一次的错误**（见 `jobs.ts` 顶部注释）。
+
+**建议：向后兼容地扩展，不新增事件名。**
+
+```ts
+export interface JobProgressEvent {
+  type: 'job.progress';
+  jobId: string;
+  state: JobState;
+
+  /* ── 新增：所有 job 都有的通用字段 ── */
+  jobType: string;              // D-02 jobs.type，如 'import.url' | 'download.model'
+  noteUid?: string;             // 与笔记相关时必填（总则 3）
+  progress: number;             // 0..1，总体进度。前端进度条只认它
+  step: string | null;          // D-02 jobs.current_step，如 'downloading' | 'asr'
+  stepIndex?: number;           // 第几步 / 共几步，用于"3/7 抽取音轨"
+  stepCount?: number;
+
+  /* ── 既有：下载专用，改为可空 ── */
+  completedBytes: number | null;
+  totalBytes: number | null;
+  speedBps: number | null;
+  etaSeconds: number | null;
+}
+```
+
+- **`progress` 是必填的唯一进度真相**；`completedBytes` 等只在 `jobType` 以 `download.` 开头时非空。
+- 类别 `hint`。节流：**沿用既有 `PROGRESS_THROTTLE_HZ = 4`**，按 `jobId` 合并，只保留最新。
+- 前端落点：`progressStore`（不进 Query 缓存，D-05 §2.3）。
+
+### 11.2 转写域 `transcribe.*`（F1 / F2 / F3）
+
+```ts
+/** 转写稿的段落 DTO。建议放 packages/shared/src/transcripts.ts，对齐 D-02 §1.5。 */
+export interface TranscriptSegmentDto {
+  seq: number;                  // D-02 transcript_segments.seq，稳定
+  startMs: number;
+  endMs: number;
+  text: string;
+  speakerLabel: string | null;  // 'SPEAKER_00'；显示名前端自己查
+  confidence: number | null;
+  noSpeechProb: number | null;
+  words: { w: string; s: number; e: number; p: number }[] | null;  // 词级，可空
+  chunkIdx: number | null;
+  flags: number;                // 位图：bit0 疑似幻觉 / bit1 低置信 / bit2 人工确认 / bit3 静音
+}
+```
+
+| 事件 | 类别 | payload | 触发时机 | 频率 / 保证 |
+|---|---|---|---|---|
+| `transcribe.started` | hint | `{ transcriptUid, noteUid, jobId, engineId, modelId, backend, language, durationMs, totalChunks }` | ASR 步骤开始 | 每次转写 1 条 |
+| **`transcribe.segment`** | **data ★** | `{ transcriptUid, noteUid, seq, chunkIdx, segments: TranscriptSegmentDto[] }` | **每个 VAD chunk 落库后立刻发**（D-01 §4.1：chunk 边界 = 落库点） | **不节流、不合并、必达有序**。`seq` 为本次转写内单调递增的**批次号**（不是段序号），前端检缺口 |
+| `transcribe.chunk` | hint | `{ transcriptUid, noteUid, doneChunks, totalChunks, lastEndMs }` | 同上，与 segment 成对 | 4Hz 合并。给进度条用，**与 `transcribe.segment` 分开**，这样节流不会拖累内容流 |
+| `transcribe.done` | hint | `{ transcriptUid, noteUid, segmentCount, rtf, durationMs, speakers: {label,totalMs}[] }` | 转写完成并落库 | 1 条 |
+| `transcribe.failed` | hint | `{ transcriptUid, noteUid, error: JobError, partial: boolean, lastEndMs: number\|null }` | 失败终态 | 1 条。`partial=true` 时前端显示"前 N 段可用 + 从这里继续"（D-05 §4.1 规则 6） |
+| **`transcribe.replaced`** | hint | `{ noteUid, oldTranscriptUid, newTranscriptUid, updatedSegments, preservedEditedSegments, canUndo: boolean }` | **F3 两阶段重跑覆盖完成时** | 1 条 |
+
+> **`transcribe.replaced` 是 F3 产品成败点的数据来源**（D-05 §4.3 步骤 4）：
+> UI 要渲染「已更新 47 段 · 你编辑过的 3 段已保留 · [查看改动] [撤销这次更新]」。
+> 没有 `updatedSegments` / `preservedEditedSegments` 这两个数字，这句话就写不出来，
+> 用户就会认为软件在乱改自己的字。**这不是可选字段。**
+
+> **`recording.*` 不进 SSE**：录音过程中的 `partial`/`final` 走 `/ws/recorder`（D-01 §3.4，双向且带二进制音频帧）。
+> 只有停止后的"离线重跑"阶段回到 SSE，复用上面的 `transcribe.*`。**不要为录音再造一套 SSE 事件。**
+
+### 11.3 结构化域 `mindmap.*` / `summary.*`（F4）
+
+```ts
+/** LLM 增量产出的节点草稿。最终规范化由 packages/mindmap 的 normalize() 做。 */
+export interface MindMapNodeDraft {
+  key: string;
+  parentKey: string | null;
+  text: string;
+  refs?: { startMs: number; endMs: number; quote?: string }[];  // D-02 §2.1 的 refs
+}
+```
+
+| 事件 | 类别 | payload | 触发 | 频率 |
+|---|---|---|---|---|
+| `mindmap.started` | hint | `{ mindmapUid, noteUid, jobId, modelId, providerId }` | 结构化开始 | 1 条 |
+| **`mindmap.delta`** | **data ★** | `{ mindmapUid, noteUid, seq, nodes: MindMapNodeDraft[] }` | LLM 流式产出，**服务端按 ~250ms 批量成组**再发 | 有序必达；`seq` 单调。**不要每个 token 发一条** |
+| `mindmap.done` | hint | `{ mindmapUid, noteUid, nodeCount, edgeCount, revision }` | 落库后 | 1 条 |
+| `mindmap.failed` | hint | `{ mindmapUid, noteUid, error: JobError, degradedTo: 'heuristic' \| null }` | 失败 | 1 条。`degradedTo='heuristic'` 对应 D-01 §7.2 的"无 LLM 时启发式大纲" |
+| `summary.delta` | **data ★** | `{ noteUid, seq, textDelta: string }` | 摘要流式生成 | 同 `mindmap.delta` |
+| `summary.done` | hint | `{ noteUid, chars }` | | 1 条 |
+
+> **为什么 `mindmap.delta` 发结构化节点而不是原始 token**：D-01 §5 F4 已定 LLM 必须走强制结构化输出
+> （memo.ac 自陈"72B 以下模型思维导图转换有问题"，本质是自由文本解析太脆）。
+> 服务端解析好了再发，前端就不需要写一个增量 JSON 解析器 —— 那是必然出 bug 的地方。
+
+### 11.4 笔记与媒体域 `note.*` / `media.*`（F5）
+
+| 事件 | 类别 | payload | 触发 | 频率 |
+|---|---|---|---|---|
+| `note.created` | hint | `{ noteUid, title, kind, folderUid: string\|null }` | 笔记建行（F1 在 probe 前就建草稿） | 1 条 |
+| `note.updated` | hint | `{ noteUid, fields: string[] }` | 服务端侧改动（如 probe 回填标题/时长/封面） | 合并，≤2Hz。**`fields` 让前端只失效相关查询** |
+| `note.status` | hint | `{ noteUid, status: 'draft'\|'processing'\|'ready'\|'partial'\|'failed' }` | 状态流转 | 1 条/次 |
+| `note.deleted` | hint | `{ noteUid, purged: boolean }` | 删除 | 1 条 |
+| `media.asset.ready` | hint | `{ noteUid, assetUid, role, bytes, durationMs? }` | 某个媒体产物就绪 | 每产物 1 条 |
+
+> **`media.asset.ready` 是必需的**：`role='peaks'`（波形）与 `role='transcode'` 是**异步生成**的，
+> 前端在它们就绪前不能去 `/media/asset/<uid>` 拉（会 404 或拿到半个文件）。
+> 没有这个事件，前端只能轮询或者干等 —— 而波形直接决定 F5 时间轴能不能画（D-05 §4.4）。
+
+### 11.5 系统域
+
+| 事件 | 类别 | payload | 触发 | 前端动作 |
+|---|---|---|---|---|
+| `daemon.shutdown` | hint | `{ graceMs: number }` | 优雅退出开始（D-01 §2.5） | 顶部条幅"本地服务正在退出"，停止发起新请求 |
+| `sync.required` | hint | `{ reason: 'replay_gap' \| 'contract_mismatch' }` | `Last-Event-ID` 未命中重放缓冲（256 条已滚过） | **全量 `invalidateQueries()`** |
+| `index.progress` | hint | `{ kind: 'fts' \| 'vector', done: number, total: number }` | 后台重建检索索引（D-02 §4.5） | 设置页进度，不打扰主界面 |
+
+### 11.6 汇总：需要新增的事件类型（21 个）
+
+```ts
+// 建议追加到 packages/shared/src/events.ts 的 SSE_EVENT_TYPES
+'transcribe.started', 'transcribe.segment', 'transcribe.chunk',
+'transcribe.done',    'transcribe.failed',  'transcribe.replaced',
+'mindmap.started',    'mindmap.delta',      'mindmap.done',    'mindmap.failed',
+'summary.delta',      'summary.done',
+'note.created',       'note.updated',       'note.status',     'note.deleted',
+'media.asset.ready',
+'daemon.shutdown',    'sync.required',      'index.progress',
+// 外加 1 处**修改**（非新增）：JobProgressEvent 扩展通用字段，见 §11.1
+```
+
+**实现顺序建议**（若要分批交付，按这个顺序对前端解阻塞最快）：
+1. `job.progress` 扩展 + `note.created` / `note.status` → F1/F2 的进度条能动（**最小可用**）
+2. `transcribe.segment` / `transcribe.chunk` / `transcribe.done` → "边转边看"成立（**F1 的核心体验**）
+3. `media.asset.ready` → F5 波形与时间轴能画
+4. `transcribe.replaced` → F3 两阶段能说清楚
+5. `mindmap.delta` / `summary.delta` → F4 渐进渲染
+6. 系统域三个 → 健壮性
+
+### 11.7 前端侧的对应实现状态
+
+`apps/web/src/lib/events/` 已按本规格实现了**分发骨架**（逐类型 `addEventListener`、`data` 类的 `seq` 缺口检测、
+`hint` 类的合并失效）。在 `packages/shared` 落地前，前端用 `mockEventSource` 产生同形状事件驱动 UI —— **明确标注为 mock**。
+`SSE_EVENT_TYPES` 一旦扩充，前端只需删掉 mock，**分发层零改动**。

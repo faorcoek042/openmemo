@@ -133,7 +133,12 @@ export {
 export type { Lane, LaneCapacities, LaneStats, PreemptionCheck, Priority } from './queue/lanes.js';
 
 // -- pipeline ---------------------------------------------------------------------------------
-export { PLAN_VERSION, TranscribePipeline, deriveResumeSet } from './transcribe.js';
+export {
+  PLAN_VERSION,
+  TranscribePipeline,
+  dedupeBoundarySegments,
+  deriveResumeSet,
+} from './transcribe.js';
 export type {
   PipelineStep,
   StepProgress,

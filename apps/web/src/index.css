@@ -1,1 +1,84 @@
 @import 'tailwindcss';
+@import './styles/tokens.css';
+
+/**
+ * 第 2 层：把语义令牌转发给 Tailwind，生成工具类（D-05 §7.5）。
+ *
+ * ★ 必须是 `@theme inline` ★
+ * `inline` 让变量在**使用处**解析，于是 `bg-surface-1` 会跟随 :root / [data-theme] 作用域切换。
+ * 用普通 `@theme` 则在**定义处**求值 —— 暗色永远不生效，且不报错。
+ */
+@theme inline {
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+
+  --color-ink: var(--ink-primary);
+  --color-ink-secondary: var(--ink-secondary);
+  --color-ink-muted: var(--ink-muted);
+
+  --color-line: var(--line);
+  --color-edge: var(--border);
+
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-track: var(--accent-track);
+
+  --color-good: var(--status-good);
+  --color-warning: var(--status-warning);
+  --color-serious: var(--status-serious);
+  --color-critical: var(--status-critical);
+
+  --color-data-1: var(--data-1);
+  --color-data-2: var(--data-2);
+  --color-data-3: var(--data-3);
+  --color-data-4: var(--data-4);
+
+  --shadow-e1: var(--shadow-1);
+  --shadow-e2: var(--shadow-2);
+
+  /* 转写稿专用字号：长时间阅读，行高比正文更松（D-05 §7.4） */
+  --text-transcript: 15px;
+  --text-transcript--line-height: 1.75;
+
+  --font-sans:
+    system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC',
+    sans-serif;
+}
+
+/* v4 没有 darkMode:'class' 这个 JS 配置项了，手动主题必须重定义变体 */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--surface-0);
+    color: var(--ink-primary);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 焦点可见性是 a11y 基线（D-05 §6.3）：绝不 outline:none 而不补替代 */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* 尊重系统的减少动效偏好 */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

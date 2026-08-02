@@ -76,7 +76,6 @@ export class DirectHttpSource implements MediaSource {
 
     const head = await this.head(url, signal);
     const contentType = head.headers.get('content-type');
-    const contentLength = Number(head.headers.get('content-length') ?? '');
 
     const isHls = contentType !== null && HLS_CONTENT_TYPES.test(contentType);
     const looksMedia =

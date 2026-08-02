@@ -110,7 +110,8 @@ export const ResourceRequirementsSchema = z.object({
   vramRequiredMB: z.number().int().nonnegative(),
   diskRequiredMB: z.number().int().positive(),
   cpuFeatures: z.array(z.string()),
-  computedAtContext: z.number().int().positive(),
+  // null = requirement is context-independent (Whisper). Never 0.
+  computedAtContext: z.number().int().positive().nullable(),
 });
 
 export const GgufMetadataSchema = z.object({

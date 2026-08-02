@@ -88,12 +88,49 @@ export class MediaSourceRegistry {
     );
   }
 
-  /** Probe with the best adapter, falling back down the list on failure. */
+  /**
+   * Probe with fallback down the candidate list.
+   *
+   * D-01 §6.4 specifies the real resolution rule: "try DirectHttpSource.probe first (one
+   * HEAD, milliseconds); only if it is not a direct media link do we fall through to
+   * YtDlpSource." So the choice is settled by PROBING, not by `match` score alone — a
+   * score can only guess from the URL shape, and most watch-page URLs are
+   * indistinguishable from direct links until you ask the server.
+   *
+   * This is also what keeps the licence story honest: the GPL adapter is reached only
+   * after every cheaper, licence-clean option has actually been tried and declined.
+   */
   async probe(input: string, signal: AbortSignal): Promise<MediaInfo> {
-    const source = await this.resolve(input);
-    return source.probe(input, signal);
+    const candidates = this.candidates(input);
+    if (candidates.length === 0) {
+      throw new NoMediaSourceError(input, DEFAULT_REMEDIATION);
+    }
+
+    const failures: string[] = [];
+    for (const source of candidates) {
+      const availability = await safeAvailability(source);
+      if (!availability.ok) {
+        failures.push(`${source.id}: ${availability.reason}`);
+        continue;
+      }
+      try {
+        return await source.probe(input, signal);
+      } catch (err) {
+        if (signal.aborted) throw err;
+        failures.push(`${source.id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    throw new NoMediaSourceError(
+      input,
+      `${DEFAULT_REMEDIATION} (tried: ${failures.join('; ')})`,
+    );
   }
 }
+
+const DEFAULT_REMEDIATION =
+  'This link could not be read. Try a direct audio/video file URL, a podcast RSS feed, ' +
+  'or import the file from your computer.';
 
 /** A buggy adapter must not take the registry down with it. */
 function safeMatch(source: MediaSource, input: string): number {

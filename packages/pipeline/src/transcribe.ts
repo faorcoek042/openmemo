@@ -6,7 +6,7 @@
  * The bracketed loop is the whole design. After every chunk we:
  *   1. hand the segments to `onChunkComplete`, which the daemon commits in ONE
  *      transaction — so the DB is always consistent and always current;
- *   2. report真 progress (chunks done / chunks total), not a guess;
+ *   2. report real progress (chunks done / chunks total), not a guess;
  *   3. check for preemption and yield the lane if something more urgent arrived;
  *   4. leave a resume point — a crash here costs at most one chunk.
  *
@@ -186,7 +186,7 @@ export class TranscribePipeline {
       this.inLane('cpu.media', req.signal, async () => {
         req.onProgress?.({ step: 'vad', fraction: 0 });
         let plan: AsrChunk[];
-        let speech = 0;
+        let speech: number;
 
         const vadUsable = tools.whisperVad !== null && tools.vadModel !== null;
         if (vadUsable) {
@@ -254,12 +254,16 @@ export class TranscribePipeline {
           }),
         );
 
-        segments.push(...produced);
+        // Chunks overlap by design, and whisper over-runs its window, so the same
+        // speech can be transcribed twice at a boundary. Drop the duplicate before it
+        // reaches the database.
+        const deduped = dedupeBoundarySegments(segments, produced);
+        segments.push(...deduped);
         chunksDone += 1;
 
         // Persist BEFORE reporting progress: progress the user can see must never be
         // ahead of what survives a crash.
-        await req.onChunkComplete?.(chunk, produced);
+        await req.onChunkComplete?.(chunk, deduped);
 
         req.onProgress?.({
           step: 'asr',
@@ -300,6 +304,41 @@ export class TranscribePipeline {
     if (this.opts.lanes === undefined) return fn();
     return this.opts.lanes.withLane(lane, fn, signal);
   }
+}
+
+
+/**
+ * Drop segments that duplicate speech already captured by the previous chunk.
+ *
+ * WHY THIS IS NEEDED (observed in the real multi-chunk run, D-06 §6):
+ * chunk plans overlap slightly by design (VAD padding), and whisper additionally
+ * decodes in 30 s windows, so it will emit a segment that begins inside our window but
+ * runs well past it. The next chunk then transcribes the same speech again, and the
+ * transcript reads:
+ *
+ *     [26.5s ch0] with a 20 million because of the West Indies, the 40 million …
+ *     [26.4s ch1] with the 20 million equals of the West Indies, the 40 million …
+ *
+ * Near-identical text, non-monotonic timestamps, and F5's playback highlighting would
+ * flicker between the two. Text similarity alone is not a safe test — a speaker really
+ * can repeat themselves — so we require substantial TIME overlap as well.
+ */
+export function dedupeBoundarySegments(
+  accepted: TranscriptSegment[],
+  incoming: TranscriptSegment[],
+  overlapRatio = 0.5,
+): TranscriptSegment[] {
+  if (accepted.length === 0) return incoming;
+  const lastEnd = Math.max(...accepted.map((s) => s.endMs));
+  const out: TranscriptSegment[] = [];
+
+  for (const seg of incoming) {
+    const duration = Math.max(1, seg.endMs - seg.startMs);
+    const overlap = Math.max(0, Math.min(lastEnd, seg.endMs) - seg.startMs);
+    if (overlap / duration > overlapRatio) continue;
+    out.push(seg);
+  }
+  return out;
 }
 
 /**

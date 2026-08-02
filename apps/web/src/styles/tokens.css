@@ -1,0 +1,128 @@
+/**
+ * 设计令牌 —— D-05 §7。
+ *
+ * 这一层是**纯 CSS 变量，零 UI 库依赖**（D-05 §7 标题的硬要求）。
+ * Tailwind 只在 index.css 里通过 `@theme inline` 转发这些变量，
+ * 所以哪怕日后换掉 Tailwind，令牌层也不用动。
+ *
+ * ⚠️ 为什么明暗两套值写在这里而不是 `@theme` 里：
+ * Tailwind v4 的 `@theme{}` 变量**必须在顶层**，不能嵌套进选择器或媒体查询。
+ * 把暗色写进 `@theme` 会在「定义处」求值 → 暗色永远不生效，而且不报错。
+ * 这是 D-05 §7.5 记录的静默坑。
+ *
+ * 颜色不是目测的：取自经过校验的参考调色板，并跑过六项检查
+ * （明度带 / 彩度下限 / CVD 相邻分离 / 常视觉分离 / 对比度）。
+ * 明档 data-3(aqua 2.74:1) 与 data-4(yellow 2.11:1) 低于 3:1 →
+ * 触发「救济规则」：用到它们的地方**必须**配可见标签或表格视图（见 StorageBar）。
+ */
+
+:root {
+  color-scheme: light;
+
+  /* ── 表层 ── */
+  --surface-0: #f9f9f7; /* 页面底板 */
+  --surface-1: #fcfcfb; /* 卡片 / 面板 */
+  --surface-2: #ffffff; /* 抬升：弹层 / 抽屉 */
+
+  /* ── 墨色 ── */
+  --ink-primary: #0b0b0b;
+  --ink-secondary: #52514e;
+  --ink-muted: #898781;
+
+  /* ── 线 ── */
+  --line: #e1e0d9;
+  --border: rgb(11 11 11 / 10%);
+
+  /* ── 品牌 ── */
+  --accent: #2a78d6;
+  --accent-fg: #ffffff;
+  --accent-track: #cde2fb; /* 进度条轨道 = 同色系更浅一档 */
+  --ring: #2a78d6;
+
+  /* ── 状态色：四个都**不随主题变**（D-05 §7.2）── */
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+
+  /* ── 分类分段色：固定顺序，绝不循环、绝不新造（D-05 §7.3）── */
+  --data-1: #2a78d6; /* 模型 */
+  --data-2: #eb6834; /* 加速后端 */
+  --data-3: #1baf7a; /* 媒体文件 */
+  --data-4: #eda100; /* 缓存 / 临时 */
+
+  /* ── 尺度 ── */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 240ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  --shadow-1: 0 1px 2px rgb(11 11 11 / 6%);
+  --shadow-2: 0 8px 24px rgb(11 11 11 / 12%);
+}
+
+/* 暗色：两个作用域都要声明。
+   `:not([data-theme="light"])` 让手动切到亮色能压过系统暗色；
+   `:where()` 降低特异性，使下面的 [data-theme="dark"] 块能压过本块。 */
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme='light'])) {
+    color-scheme: dark;
+
+    --surface-0: #0d0d0d;
+    --surface-1: #1a1a19;
+    --surface-2: #242422;
+
+    --ink-primary: #ffffff;
+    --ink-secondary: #c3c2b7;
+    --ink-muted: #898781;
+
+    --line: #2c2c2a;
+    --border: rgb(255 255 255 / 10%);
+
+    --accent: #3987e5;
+    --accent-fg: #ffffff;
+    --accent-track: #184f95;
+    --ring: #3987e5;
+
+    --data-1: #3987e5;
+    --data-2: #d95926;
+    --data-3: #199e70;
+    --data-4: #c98500;
+
+    --shadow-1: 0 1px 2px rgb(0 0 0 / 40%);
+    --shadow-2: 0 8px 24px rgb(0 0 0 / 55%);
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --surface-0: #0d0d0d;
+  --surface-1: #1a1a19;
+  --surface-2: #242422;
+
+  --ink-primary: #ffffff;
+  --ink-secondary: #c3c2b7;
+  --ink-muted: #898781;
+
+  --line: #2c2c2a;
+  --border: rgb(255 255 255 / 10%);
+
+  --accent: #3987e5;
+  --accent-fg: #ffffff;
+  --accent-track: #184f95;
+  --ring: #3987e5;
+
+  --data-1: #3987e5;
+  --data-2: #d95926;
+  --data-3: #199e70;
+  --data-4: #c98500;
+
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-2: 0 8px 24px rgb(0 0 0 / 55%);
+}

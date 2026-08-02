@@ -8,6 +8,7 @@
   "include": ["src/**/*"],
   "references": [
     { "path": "../../packages/shared" },
+    { "path": "../../packages/db" },
     { "path": "../../packages/downloader" },
     { "path": "../../packages/runtime" },
     { "path": "../../packages/mindmap" },

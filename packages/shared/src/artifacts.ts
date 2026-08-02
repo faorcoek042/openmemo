@@ -121,10 +121,14 @@ export interface ResourceRequirements {
   /** Required CPU ISA features, e.g. ["avx2"]. */
   cpuFeatures: string[];
   /**
-   * Context length these numbers were computed at. Displaying a VRAM figure without
-   * the context length it assumes is meaningless — KV cache scales linearly with it.
+   * Context length these numbers were computed at. Displaying a VRAM figure without the
+   * context length it assumes is meaningless — KV cache scales linearly with it.
+   *
+   * `null` when the requirement does not depend on context at all (Whisper: its compute
+   * buffers are fixed by model dimensions). Deliberately null rather than 0, because 0
+   * would read as "computed at zero context", which is false.
    */
-  computedAtContext: number;
+  computedAtContext: number | null;
 }
 
 /** GGUF header metadata, extracted by an 8 MB Range request (no full download). */

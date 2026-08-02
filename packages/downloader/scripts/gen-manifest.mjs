@@ -29,6 +29,9 @@ import * as path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+// Web-standard globals, named explicitly so this file does not depend on eslint env config.
+const { fetch } = globalThis;
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..', '..', '..');
 const MANIFEST_DIR = path.join(REPO_ROOT, 'vendor', 'manifests');
@@ -140,7 +143,7 @@ export function parseGgufHeader(buf) {
 
 /* ------------------------------ HF helpers -------------------------------- */
 
-async function hfTree(repo, rev = 'main') {
+export async function hfTree(repo, rev = 'main') {
   const res = await fetch(`${HF}/api/models/${repo}/tree/${rev}?recursive=true`);
   if (!res.ok) throw new Error(`tree ${repo}: HTTP ${res.status}`);
   return res.json();
@@ -200,7 +203,7 @@ export function whisperRequirements(id, weightsBytes) {
     vramRequiredMB: mb,
     diskRequiredMB: Math.round((weightsBytes / 1e6) * 1.1),
     cpuFeatures: [],
-    computedAtContext: 0, // not applicable to whisper
+    computedAtContext: null, // whisper requirements are context-independent
   };
 }
 
