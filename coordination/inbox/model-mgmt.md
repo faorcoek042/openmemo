@@ -926,3 +926,98 @@ libsimple、sqlite-vec、llama.cpp、whisper.cpp 的 linux/win CPU+CUDA **全部
 ### 门禁
     tsc 0 · eslint 0 · verify-unpack 53/53 · verify-offline 29/29 · 5 份 manifest VALID
 新增依赖：`xz-decompress@^0.2.3`（MIT，零依赖，WASM）→ `packages/downloader`，按 ADR-011 决策 3 此处申报。
+
+---
+
+## [2026-08-03 01:10] T-066 上游版本检测 + 组件灵活更新 DONE
+
+### 1. 版本检测：**可用，已对 5 个真实上游实测**
+
+`packages/downloader/src/upstream.ts` + `packages/shared/src/components.ts`
+
+    whispercpp-cpu-linux-x64   pin=v1.9.1                      latest=v1.9.1                      已最新
+    llamacpp-cpu-linux-x64     pin=b10223                      latest=b10229                      ⬆ 有更新
+    libsimple-linux-x64        pin=v0.7.1                      latest=v0.7.1                      已最新
+    sqlite-vec-linux-x64       pin=v0.1.9                      latest=v0.1.9                      已最新
+    media-tools-linux-x64      pin=autobuild-2026-08-02-13-17  latest=同上                        已最新
+    sherpa-onnx-node (npm)     pin=v1.13.4                     latest=1.13.4                      已最新
+
+**真的检出了一个更新**：llama.cpp b10223 → b10229。
+
+版本比较要处理三种完全不同的上游命名法，我写了统一比较器并测了：
+
+    b10223 vs b10221                                        → 2   （构建号）
+    v0.7.1 vs v0.7.0                                        → 1   （semver）
+    autobuild-2026-08-02-13-17 vs autobuild-2026-07-30-12-00 → 1   （日期 tag）
+    weird vs other                                          → 0   （无法比较→报"无更新"，不瞎猜）
+
+**`tagPattern` 是关键**：BtbN 同一个仓库里既有会动的 `latest`，又有不可变的 `autobuild-<date>`。
+不做过滤地取"最新 release"会拿到 `latest` —— 那是移动靶，钉了等于没钉。
+
+**修掉一个我自己的 bug**：npm 查询原先带 GitHub 的 `Accept: application/vnd.github+json`，
+被 registry 以 **406** 拒绝。按 registry 分别设 Accept 后正常。
+
+### 2. `GET /api/components` 契约 + 数据层已就绪
+`ComponentStatus` 同时给出 **目录钉定 / 本机已装 / 上游最新** 三个版本（三者可能都不同，分开显示）。
+
+**离线必须完整可用**（实测）：`checkUpstream:false` → 7 个组件全部正常返回，
+`online=false`，全部 `updateAvailable=false`。**查不到上游绝不挡住安装。**
+
+**"未检测" ≠ "已最新"**：查询失败时 `latestVersion=null` + `checkError`，
+UI 上显示灰色「未检测」并额外说明"这表示**不知道**，不代表已是最新"。
+—— 按你转达的那条洞察（"绿灯不代表能用"），我把它落到了这个字段上。
+
+### 3. 网页一键更新：走同一个下载器
+`ComponentsPanel.tsx` 接进 `/runtime` 页。更新调 `/components/update` → 走**已有 installer**，
+校验/续传/去重/重试全复用，**没有新写一条更新路径**（新写一条就必然漏掉这些保证）。
+
+**默认不自动更新**（你的硬要求）：检测到只显示「有新版本」，点击弹二次确认，
+文案明说"上游换版本可能改变行为"。理由我写进了代码注释——**我自己踩过
+`silero_vad.onnx` vs ggml 那次格式不兼容**，静默更新会让用户的转写结果莫名其妙变化。
+
+### 4. 回滚：实测通过
+更新前把旧目录 `rename` 成 `<name>.prev-<version>`（rename 不是 copy：原子、瞬时、磁盘满也不会半成功）。
+配合 installer 已有的"临时目录→成功才 rename"，**更新只有两种结果：新版本就位，或旧版本原样还在**，
+不存在"换了一半"的状态。实测：
+
+    stash 后原目录还在吗: false        rollback 成功: true   内容 = OLD VERSION
+
+### 5. "写明从哪里下载"——已展示在网页上，不只在 json 里
+`vendor/manifests/components.json` 每条都有：**上游仓库 URL / release 页 URL / 许可证 / sha256**，
+`ComponentsPanel` 把它们渲染成可点链接。例：
+
+    whisper.cpp CPU 后端（Linux x64）
+      仓库    : https://github.com/ggml-org/whisper.cpp
+      release : https://github.com/ggml-org/whisper.cpp/releases/tag/v1.9.1
+      许可证  : MIT
+      源码 submodule: vendor/whisper.cpp @ f049fff95a08
+      sha256  : f3bf3b4369a99b54665b0f19…
+
+**submodule commit 从 `git submodule status` 实读**，不是手抄。5 个 submodule 的 pin
+与 manifest 钉的版本**完全一致**（v1.9.1 / b10223 / v0.7.1 / v0.1.9 / v1.13.4），
+所以网页上这条链是完整的：**源码 commit → release 页 → 二进制 → sha256**。
+这正好回应用户"一开始不就说了可以用 git submodule"——submodule 一直都在，
+只是按 ADR-001 它管的是**源码可追溯性**，现在这层可追溯性在网页上看得见了。
+
+### 6. ffmpeg sha256：**取到了，但要说清楚是哪种"取到"**
+
+    47b2cc48f8a6e9ac9afe3421f57b8ffe9bdf32953c89603603fcb2439c16ec58
+
+来源：**GitHub Releases API 的 `digest` 字段**，对应资产
+`ffmpeg-n7.1.5-12-g1fdbca85aa-linux64-gpl-7.1.tar.xz`（118,999,596 B），已填进 manifest，
+并加了 `sha256Provenance` 字段注明来源。
+
+⚠️ **我的本机独立复算还没跑完**：用我的下载器拉这 119 MB，到报告时 **19.8%**，
+实测速率约 **15 KB/s**（GitHub CDN 在本机确实极慢，这印证了 `gpu-runtime` 两次都没拉完）。
+**区别在于我的下载器在稳定续传**（sidecar 记录持续推进），不是卡死——但它确实还没到终点。
+→ 所以诚实说法是：**sha256 已从权威 API 取到并落地，本机逐字节复算仍在进行中。**
+我没有把 API 的 digest 说成"我自己算的"。之前几轮 GitHub digest 与我自算值**每次都一致**，
+但那不构成对这个文件的证明。
+
+### 门禁
+    tsc 0 · eslint 0 · web build 0 · verify-unpack 53/53 · verify-offline 29/29
+
+### 需要 daemon 侧配合（`oss-scout`）
+`GET /api/components`、`POST /api/components/{check,update,rollback}` 四个端点。
+数据层函数我已备好（`listComponents` / `stashForRollback` / `rollback` / `discardRollback`），
+接线即可，逻辑不用再写一遍。

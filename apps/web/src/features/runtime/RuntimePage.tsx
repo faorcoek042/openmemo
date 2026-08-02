@@ -13,9 +13,14 @@ import {
   useBackendSelfTestMutation,
   useBackendsCatalogQuery,
   useBackendsInstalledQuery,
+  useCheckUpdatesMutation,
+  useComponentsQuery,
   useHardwareQuery,
+  useRollbackComponentMutation,
+  useUpdateComponentMutation,
 } from './api';
 import { HardwareCard } from './components/HardwareCard';
+import { ComponentsPanel } from './components/ComponentsPanel';
 import { BackendPackCard } from './components/BackendPackCard';
 
 /**
@@ -34,6 +39,11 @@ export default function RuntimePage() {
   const hardware = useHardwareQuery();
   const catalog = useBackendsCatalogQuery();
   const installed = useBackendsInstalledQuery();
+
+  const components = useComponentsQuery(false);
+  const checkUpdates = useCheckUpdatesMutation();
+  const updateComponent = useUpdateComponentMutation();
+  const rollbackComponent = useRollbackComponentMutation();
 
   const install = useBackendInstallMutation();
   const remove = useBackendRemoveMutation();
@@ -129,6 +139,31 @@ export default function RuntimePage() {
           />
         ))}
       </section>
+
+      {components.data ? (
+        <ComponentsPanel
+          components={components.data.components}
+          online={components.data.online}
+          checkedAt={components.data.checkedAt}
+          locale={locale}
+          checking={checkUpdates.isPending}
+          updatingId={updateComponent.isPending ? (updateComponent.variables?.id ?? null) : null}
+          onCheck={() => void checkUpdates.mutateAsync({})}
+          onUpdate={(c) => {
+            // 明确告知代价：上游换版本可能改变行为，让用户自己决定
+            const ok = window.confirm(
+              `将 ${c.displayNameZh} 从 ${c.pinnedVersion} 更新到 ${c.latestVersion}？\n\n` +
+                `更新会重新下载并校验 sha256。若新版本有问题，可以回滚到当前版本。`,
+            );
+            if (ok) void updateComponent.mutateAsync({ id: c.id, toVersion: c.latestVersion ?? undefined });
+          }}
+          onRollback={(c) => {
+            if (window.confirm(`回滚 ${c.displayNameZh} 到 ${c.rollbackVersion}？`)) {
+              void rollbackComponent.mutateAsync(c.id);
+            }
+          }}
+        />
+      ) : null}
 
       <p className="text-[11px] text-ink-muted">
         提示：自检里的 RTF 是**本机实测值**；模型卡片上的"预计耗时"是由它外推的**估算**，

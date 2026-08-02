@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": "2026.08.02",
+  "generatedAt": "2026-08-03T00:00:00Z",
+  "note": "每条都写明上游仓库 / release 页面 / 许可证 / 源码 submodule commit —— 用户要能看到\"从哪来\"。",
+  "components": [
+    {
+      "id": "whispercpp-cpu-linux-x64",
+      "displayName": "whisper.cpp CPU backend (Linux x64)",
+      "displayNameZh": "whisper.cpp CPU 后端（Linux x64）",
+      "category": "backend-pack",
+      "pinnedVersion": "v1.9.1",
+      "provenance": {
+        "repoUrl": "https://github.com/ggml-org/whisper.cpp",
+        "releaseUrl": "https://github.com/ggml-org/whisper.cpp/releases/tag/v1.9.1",
+        "license": "MIT",
+        "licenseUrl": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE",
+        "submodulePath": "vendor/whisper.cpp",
+        "submoduleCommit": "f049fff95a089aa9969deb009cdd4892b3e74916"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "ggml-org/whisper.cpp",
+        "stableOnly": true
+      },
+      "sizeBytes": 9379235,
+      "sha256": "f3bf3b4369a99b54665b0f19b88483b30de27f25963b0414235dea03198515c5"
+    },
+    {
+      "id": "llamacpp-cpu-linux-x64",
+      "displayName": "llama.cpp CPU backend (Linux x64)",
+      "displayNameZh": "llama.cpp CPU 后端（Linux x64）",
+      "category": "backend-pack",
+      "pinnedVersion": "b10223",
+      "provenance": {
+        "repoUrl": "https://github.com/ggml-org/llama.cpp",
+        "releaseUrl": "https://github.com/ggml-org/llama.cpp/releases/tag/b10223",
+        "license": "MIT",
+        "licenseUrl": "https://github.com/ggml-org/llama.cpp/blob/master/LICENSE",
+        "submodulePath": "vendor/llama.cpp",
+        "submoduleCommit": "11924d4c17abc27383376a1ac6a24fa3e36c1c0c"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "ggml-org/llama.cpp",
+        "tagPattern": "^b\\d+$"
+      },
+      "sizeBytes": 16435963,
+      "sha256": "ef15f7c47c5ef8dc789fb7e8a00961b85bbba442da18ad18c820a16212c822b5"
+    },
+    {
+      "id": "libsimple-linux-x64",
+      "displayName": "libsimple Chinese FTS5 tokenizer (Linux x64)",
+      "displayNameZh": "中文分词器 libsimple（Linux x64）",
+      "category": "sqlite-ext",
+      "pinnedVersion": "v0.7.1",
+      "provenance": {
+        "repoUrl": "https://github.com/wangfenjin/simple",
+        "releaseUrl": "https://github.com/wangfenjin/simple/releases/tag/v0.7.1",
+        "license": "MIT",
+        "licenseUrl": "https://github.com/wangfenjin/simple/blob/master/LICENSE",
+        "submodulePath": "vendor/libsimple",
+        "submoduleCommit": "4ed008934495fc55ff4bf6620bba58311988b23e"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "wangfenjin/simple",
+        "stableOnly": true
+      },
+      "sizeBytes": 5337804,
+      "sha256": "0c9a7a578fc50ef5480e69e1e1880535ae68d75e1c1580f6bf106073087642a5"
+    },
+    {
+      "id": "sqlite-vec-linux-x64",
+      "displayName": "sqlite-vec vector search (Linux x64)",
+      "displayNameZh": "向量检索 sqlite-vec（Linux x64）",
+      "category": "sqlite-ext",
+      "pinnedVersion": "v0.1.9",
+      "provenance": {
+        "repoUrl": "https://github.com/asg017/sqlite-vec",
+        "releaseUrl": "https://github.com/asg017/sqlite-vec/releases/tag/v0.1.9",
+        "license": "MIT",
+        "licenseUrl": "https://github.com/asg017/sqlite-vec/blob/main/LICENSE",
+        "submodulePath": "vendor/sqlite-vec",
+        "submoduleCommit": "e9f598abfa0c06b328d8fe5da9c3760cce74be10"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "asg017/sqlite-vec",
+        "stableOnly": true
+      },
+      "sizeBytes": 61507,
+      "sha256": "b959baa1d8dc88861b1edb337b8587178cdcb12d60b4998f9d10b6a82052d5d7"
+    },
+    {
+      "id": "media-tools-linux-x64",
+      "displayName": "ffmpeg / ffprobe (Linux x64)",
+      "displayNameZh": "ffmpeg / ffprobe（Linux x64）",
+      "category": "media-tool",
+      "pinnedVersion": "autobuild-2026-08-02-13-17",
+      "provenance": {
+        "repoUrl": "https://github.com/BtbN/FFmpeg-Builds",
+        "releaseUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-08-02-13-17",
+        "license": "GPL-3.0-or-later",
+        "licenseUrl": "https://www.gnu.org/licenses/gpl-3.0.html"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "BtbN/FFmpeg-Builds",
+        "tagPattern": "^autobuild-"
+      },
+      "sizeBytes": 118999596,
+      "sha256": "47b2cc48f8a6e9ac9afe3421f57b8ffe9bdf32953c89603603fcb2439c16ec58",
+      "sha256Provenance": "GitHub Releases API `digest` field for this exact asset; independent local re-hash was still downloading at report time (see inbox)."
+    },
+    {
+      "id": "sherpa-onnx-node",
+      "displayName": "sherpa-onnx (streaming ASR / VAD)",
+      "displayNameZh": "sherpa-onnx（流式 ASR / VAD）",
+      "category": "backend-pack",
+      "pinnedVersion": "v1.13.4",
+      "provenance": {
+        "repoUrl": "https://github.com/k2-fsa/sherpa-onnx",
+        "releaseUrl": "https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.13.4",
+        "license": "Apache-2.0",
+        "licenseUrl": "https://github.com/k2-fsa/sherpa-onnx/blob/master/LICENSE",
+        "submodulePath": "vendor/sherpa-onnx",
+        "submoduleCommit": "142807252687d81b40d6315f23470a1512a00de3"
+      },
+      "upstream": {
+        "kind": "npm",
+        "repo": "sherpa-onnx-node"
+      },
+      "sizeBytes": 0,
+      "sha256": "n/a"
+    },
+    {
+      "id": "asr/whisper-large-v3-turbo-q5_0",
+      "displayName": "Whisper large-v3-turbo (Q5_0)",
+      "displayNameZh": "Whisper large-v3-turbo (Q5_0)",
+      "category": "model",
+      "pinnedVersion": "5359861c739e955e79d9a303bcbc70fb988958b1",
+      "provenance": {
+        "repoUrl": "https://huggingface.co/ggerganov/whisper.cpp",
+        "releaseUrl": "https://huggingface.co/ggerganov/whisper.cpp/tree/main",
+        "license": "MIT",
+        "licenseUrl": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "upstream": {
+        "kind": "huggingface",
+        "repo": "ggerganov/whisper.cpp"
+      },
+      "sizeBytes": 574041195,
+      "sha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+    }
+  ]
+}

@@ -259,7 +259,18 @@ function pidAlive(pid: number): boolean {
   }
 }
 
-export function acquireDataDirLock(dataDir: string): DataDirLock {
+/**
+ * @param handoverWaitMs 前任还在收尾时，**最多等多久再判定"已有实例"**。
+ *
+ * 只有**自我重启拉起的接班进程**会传它（见 main.ts 的 restart）。
+ * 不传 = 0 = 行为与从前完全一致：撞上活着的持有者立刻报错。
+ *
+ * 为什么非要有：自我重启是"先拉起接班人、确认它没当场死、再停自己"，
+ * 而父进程在那一秒里**仍然持有本锁**。接班人如果一撞锁就退（实测 633ms），
+ * 就一定死在父进程的 1s 确认窗口之内 → 每次重启都被判定为"新进程没起来"而取消。
+ * 我的 T-061 e2e 曾经跑绿过，那是**时序侥幸**，不是它真的对。
+ */
+export function acquireDataDirLock(dataDir: string, handoverWaitMs = 0): DataDirLock {
   const lockPath = join(dataDir, 'daemon.lock');
   mkdirSync(dataDir, { recursive: true });
 
@@ -282,7 +293,17 @@ export function acquireDataDirLock(dataDir: string): DataDirLock {
       holder = 0;
     }
     if (holder > 0 && holder !== process.pid && pidAlive(holder)) {
-      throw new DataDirLockedError(holder, lockPath);
+      // 接班模式：给前任一点时间退干净，而不是立刻判死
+      const deadline = Date.now() + handoverWaitMs;
+      let handedOver = false;
+      while (Date.now() < deadline) {
+        sleepSync(100);
+        if (!pidAlive(holder)) {
+          handedOver = true;
+          break;
+        }
+      }
+      if (!handedOver) throw new DataDirLockedError(holder, lockPath);
     }
     // stale lock（进程已死）→ 接管
     rmSync(lockPath, { force: true });

@@ -65,10 +65,13 @@ export function serveStatic(
   urlPath: string,
   method: string,
   res: ServerResponse,
+  isNavigation = false,
 ): boolean {
   if (method !== 'GET' && method !== 'HEAD') return false;
-  // /api/** 与 /ws/** 永远不走静态，避免静态文件意外遮蔽接口
-  if (urlPath.startsWith('/api/') || urlPath.startsWith('/ws/')) return false;
+  // 后端命名空间永远不走静态，避免静态文件意外遮蔽接口
+  if (urlPath.startsWith('/api/') || urlPath.startsWith('/ws/') || urlPath.startsWith('/media/')) {
+    return false;
+  }
 
   const rel = decodeURIComponent(urlPath.split('?')[0] ?? '/');
   let file = resolve(join(root, normalize(rel)));
@@ -86,8 +89,18 @@ export function serveStatic(
   }
 
   if (!st?.isFile()) {
-    // SPA 兜底：带扩展名的当作真·缺文件（404 交给调用方），
-    // 无扩展名的当作前端路由，回 index.html 让前端自己 render
+    /*
+     * SPA 兜底**只对浏览器导航生效**。
+     *
+     * 一开始我写成"任何无扩展名的路径都回 index.html"，结果把
+     * `/media/../../etc/passwd`（URL 规范化后变成 `/etc/passwd`）也回成了 200 ——
+     * 而 D-01 §8.5 的穿越防护用例要求这类请求必须 400/404。
+     * 没泄露任何文件内容，但**把本该 404 的东西变成 200 就是在遮蔽后端的拒绝**，
+     * 测试因此变红（它干得对）。
+     * 判据用 Sec-Fetch-Mode / Accept：只有真正的地址栏导航才吃兜底，
+     * fetch/curl 这类非导航请求照旧 404。
+     */
+    if (!isNavigation) return false;
     if (extOf(rel) !== '') return false;
     file = join(root, 'index.html');
     st = safeStat(file);

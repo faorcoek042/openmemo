@@ -128,7 +128,14 @@ async function handleRequest(
    * 放行范围仅限构建产物本身，/api/** 与 /ws/** 在 serveStatic 里被显式排除。
    */
   const webDist = resolveWebDist();
-  if (webDist && serveStatic(webDist, path, method, res)) return;
+  if (webDist) {
+    // 只有浏览器地址栏导航才吃 SPA 兜底（见 static.ts 里的说明）
+    const accept = req.headers['accept'];
+    const isNavigation =
+      req.headers['sec-fetch-mode'] === 'navigate' ||
+      (typeof accept === 'string' && accept.includes('text/html'));
+    if (serveStatic(webDist, path, method, res, isNavigation)) return;
+  }
 
   // ---- 建立会话：Bearer token → HttpOnly cookie（D-01 §2.4）----
   if (path === '/api/auth/session' && method === 'POST') {

@@ -5,6 +5,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   Backend,
+  CheckUpdatesRequest,
+  GetComponentsResponse,
+  UpdateComponentRequest,
   GetBackendCatalogResponse,
   GetHardwareResponse,
   GetInstalledBackendsResponse,
@@ -103,6 +106,66 @@ export function useBackendSelfTestMutation() {
       api<PullResponse>('/backends/selftest', { method: 'POST', body: { id } }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.backends.installed });
+    },
+  });
+}
+
+/**
+ * 组件清单：来源 + 钉定版本 + 上游最新版本。
+ *
+ * `check=false` 时**不查上游**，纯本地数据，离线完全可用 —— 版本检测是锦上添花，
+ * 绝不能成为看清单/装组件的前置条件。
+ */
+export function useComponentsQuery(check = false) {
+  return useQuery({
+    queryKey: [...qk.backends.catalog, 'components', check],
+    queryFn: () => api<GetComponentsResponse>(`/components${check ? '?check=true' : ''}`),
+    staleTime: check ? 60_000 : STALE_TIME_OVERRIDES.catalog,
+  });
+}
+
+/** 主动查一次上游。失败不抛给用户当错误 —— 查不到只是"未知"。 */
+export function useCheckUpdatesMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (req: CheckUpdatesRequest = {}) =>
+      api<GetComponentsResponse>('/components/check', { method: 'POST', body: req }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.backends.catalog });
+    },
+  });
+}
+
+/**
+ * 更新单个组件。
+ *
+ * 走的是**同一个下载器**（校验/续传/去重/重试全复用），不是另写一条更新路径 ——
+ * 另写一条就意味着那条路径会漏掉这些保证。
+ */
+export function useUpdateComponentMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (req: UpdateComponentRequest) =>
+      api<{ jobId: string }>('/components/update', {
+        method: 'POST',
+        body: req,
+        idempotencyKey: `component-update:${req.id}`,
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.jobs.all });
+      void qc.invalidateQueries({ queryKey: qk.backends.catalog });
+    },
+  });
+}
+
+/** 更新失败或新版本有问题时回滚到上一版。 */
+export function useRollbackComponentMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api<{ ok: true; version: string }>('/components/rollback', { method: 'POST', body: { id } }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.backends.catalog });
     },
   });
 }
