@@ -932,3 +932,124 @@ Metal 单列的理由写在代码注释里：Mac 自 10.13 起人人有 Metal、
 - 冷启动 selfcheck **仍然 EXIT=1**，失败数 7 未降。
 - 本轮测试期间 daemon 又被别的 agent 的 `pkill` 误杀一次（端口 17705），已换 17709 重跑；被杀不影响上述结论。
 - `ffmpeg`/`ffprobe` 仍来自系统 `/usr/bin/`，按要求保持记录、本轮未解决。
+
+---
+
+## [2026-08-03 07:40] T-050 DONE
+
+### ⚠️ 首先更正一条我上轮的错误结论（我把 `model-mgmt` 支去查一个不存在的 bug）
+
+T-048 我报告「解包只出 3/43 个文件，归 `model-mgmt` 的 `unpack.ts`」。**这个判断是错的。**
+
+本轮直接调用 `unpackArchive` 对同一个 tarball 测试：
+```
+tar entries: 43   ->  regular files: 35 + symlinks: 8 = 43  ✅ 完整
+  ✔ whisper-cli  ✔ whisper-server  ✔ libggml-base.so.0.15.1  ✔ libggml-cpu-zen4.so
+```
+本轮干净冷启动里 `whispercpp-cpu-linux-x64` 也**安装成功**（36 文件落盘）。
+
+真实原因是**我的 daemon 在安装过程中被别的 agent 的 `pkill` 打断**（`cold2.log` 里有
+`收到 SIGTERM`），残留 3 个文件被我误读成解包不完整。`unpack.ts` 没有问题。
+**请转告 `model-mgmt` 停止排查**，是我的误判，浪费了他的时间。
+
+教训：我确认了「文件没损坏」（摘要一致）就把责任推给了下一层，**却没有确认"进程有没有被杀"这个更平凡的解释**。
+
+---
+
+## 1. ffmpeg / ffprobe —— 选了 **(b) 后端包**
+
+**决定性理由（不是权衡，是硬约束）：`ffmpeg-static` 包里只有 `ffmpeg`，没有 `ffprobe`。**
+实测该包内容：`ffmpeg` 一个可执行文件，再无其它。而流水线在 **10 处**依赖 ffprobe，且都不是装饰性的：
+- D-01 §8.5 规定媒体真实类型必须由 ffprobe 判定，不信扩展名、不信服务器 Content-Type；
+- **T-026 的安全修复**靠 ffprobe 的 `format_name` 命中 `hls|applehttp` 来拒绝本地播放列表导入 —— 改名绕过只有这一道能拦。
+
+所以 (a) **根本满足不了产品**，得再引一个 `ffprobe-static`：两个包、两套许可证、两条更新路径。
+
+另两条支持 (b) 的理由：
+- ADR-001 C 类要求运行时下载的二进制在 git 里有 manifest + SHA256。`ffmpeg-static` 在 `npm install` 时从一个我们不记录的 URL 拉二进制，**完全在审计链之外**。
+- GPL 组件保持"独立下载包"形态，延续 yt-dlp 那套许可证隔离叙事：**不进构建树**。
+
+**交付 `scripts/build-media-tools.sh`**（与 build-whisper.sh / build-sqlite-ext.sh 同形）：
+```
+upstream sha256: ca77757a45bb14e023ba712598635e99ae874267bd4a4ccec3554605816fc134
+  ffmpeg  139,397,096 bytes     ffprobe 139,261,288 bytes
+self-test: ffmpeg version n7.1.5-12-g1fdbca85aa-20260801
+           ffprobe OK (sample_rate=16000 channels=1)      <- 真的转码 + 真的探测
+pack: dist/packs/media-tools-linux-x64.tar.gz (103M) + .json manifest
+```
+**为什么重新打包而不是直接指向上游**：上游是 `.tar.xz`（我们的解包器只支持 zip / tar.gz），
+且 release tag 就叫 `latest` —— **移动靶**，钉 SHA256 会在上游每次重建时失效，钉了等于没钉。
+所以取一次、记下**我们实际打包的那一版**的摘要、只留两个二进制（120MB 源包 → 只保留需要的）、
+产出我们自己的 tar.gz + manifest。自检标准是**「ffprobe 真能探测」**，不是「文件存在」。
+
+**实测走产品路径解析成功**：
+```
+ffmpeg  = /tmp/cold4/models/by-name/backend/media-tools-linux-x64/ffmpeg
+ffprobe = /tmp/cold4/models/by-name/backend/media-tools-linux-x64/ffprobe
+来自安装包而非 /usr/bin : YES ✅
+```
+⚠️ macOS 分支**未接**（evermeet.cx 把 ffmpeg / ffprobe 分成两个归档，需要两次抓取，且我没有 Mac 验证）—— 脚本里直接 `die` 并说明，不假装支持。
+
+## 2. 冷启动失败数：**7 → 3**
+
+全程只用 HTTP API 装（`/api/backends/install` + `/api/models/pull`），**媒体包这一个是我本地装的**（原因见下）：
+```
+pipeline.missing = []          ← 首次通过"真实产品路径"达成，不是靠复制文件或设 env
+  ffmpeg     = …/by-name/backend/media-tools-linux-x64/ffmpeg
+  whisperCli = …/by-name/backend/whisper-bin-ubuntu-x64/whisper-bin-ubuntu-x64/whisper-cli
+
+通过 14 · 警告 5 · 失败 3 · EXIT=1
+✘ libsimple 存在        ✘ 中文双字词可搜索        ✘ db.tokenizer trigram
+```
+**剩下 3 条是同一个根因**：`sqlite-ext-linux-x64` 安装失败在 `step=resolving`、0 字节。
+查 manifest 发现——
+```
+file: sqlite-ext-linux-x64.tar.gz
+  mirrors: []          ← 空数组，没有任何下载地址
+```
+**不是代码 bug，是发布缺口**：包能在本机构建出来（`dist/ext/`，4.5MB），但**没有 GitHub remote 可发布**，
+所以 manifest 里填不出 URL。media-tools 包同理（我是本地解压安装的）。
+
+→ **章程要求 2.1/2.2 的终极验收目前卡在"没有发布渠道"，而不是卡在任何一层代码。**
+一旦有 remote、CI 能发 release，这 3 条应当一起变绿。
+
+## 3. `GET /api/selfcheck` 接口说明（给 `oss-scout`）
+
+`packages/runtime/src/selfcheck.ts` 已导出：
+```ts
+runSelfCheck(input: SelfCheckInput): Promise<SelfCheckReport>
+
+interface SelfCheckInput {
+  dataDir: string; storeRoot: string; extensionsDir: string;
+  probes: SelfCheckProbes;   // 依赖注入
+}
+interface SelfCheckProbes {
+  tools(): Promise<{ffmpeg,ffprobe,whisperCli,whisperVad,vadModel,ytDlp: string|null}>;
+  installed(kind: 'asr'|'llm'|'backend'): Promise<string[]>;
+  chineseSearch(): Promise<Record<string,number> | null>;  // 四个双字词命中数；null=分词器不可用
+  vecVersion(): Promise<string | null>;
+  engines(): Promise<{id,available,reason?}[]>;
+  selectFor(language: string): Promise<{engineId,reason} | null>;
+}
+interface SelfCheckReport {
+  ok: boolean;            // 无 required 失败即 true
+  counts: {ok,warn,fail};
+  results: CheckResult[]; // 每项含 id / label / labelZh / status / detail / required / remediation
+}
+```
+**接线要点**：
+- `tools` 用 `@openmemo/pipeline` 的 `discoverTools({storeRoot})`；`installed` 用 `listInstalledModels`
+- `chineseSearch` 用现成的 db 连接建一张 `tokenize='simple'` 的临时 FTS5 表，搜 `CHINESE_PROBE_WORDS`（已导出）
+- **`runtime` 刻意不 import `pipeline`**（会成环），所以探针必须由 daemon 注入
+- 端点建议返回 `report.ok ? 200 : 503`，body 直接给 `SelfCheckReport` —— 诊断页即可从"组件是否加载"升到"功能是否可用"
+
+需要 Manager 决策:
+1. **发布渠道是当前唯一阻塞** —— 没有 GitHub remote 就没有下载 URL，`sqlite-ext` 与 `media-tools` 都装不了。这是 2.1/2.2 终极验收的最后一米。
+2. `vendor/manifests/sqlite-ext.json` 的 `mirrors: []` 需要在有 remote 后回填（归 `model-mgmt`）。
+3. macOS 的 media-tools 包需要 Mac 或 CI 才能做。
+
+诚实声明:
+- **我上轮的 unpack 结论是错的，已在本条开头更正并请求转告 `model-mgmt`。**
+- 冷启动 **仍然 EXIT=1**，3 条失败没消除。`pipeline.missing=[]` 这次是真实产品路径达成的（与 T-042 那次靠复制文件不同），但中文搜索仍不可用。
+- media-tools 包是我**本地解压安装**的（manifest 无 URL），不是走 API 装的 —— 这一点不能算作"API 装机成功"。
+- macOS media-tools 未接、Windows 未验证。

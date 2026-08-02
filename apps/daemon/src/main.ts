@@ -40,6 +40,7 @@ import { runTranscribeJob } from './jobs/runners/transcribe.js';
 import { createNoteRoutes } from './http/rest/notes.js';
 import { createContentRoutes } from './http/rest/content.js';
 import { createRuntimeRoutes } from './http/rest/hardware.js';
+import { createSelfCheckRoutes } from './http/rest/selfcheck.js';
 import { setPipelineJobHooks } from './http/rest/jobs.js';
 import { createSettingsRoutes } from './http/rest/settings.js';
 import { createOrganizeRoutes } from './http/rest/organize.js';
@@ -308,6 +309,17 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         ],
       }),
       createContentRoutes({ db: database.db, repos, mindmaps, queue, sse }),
+      // 功能级自检（一份实现两个出口：gpu-runtime 的 CLI + 这个端点）
+      createSelfCheckRoutes({
+        paths,
+        db: database.db,
+        extensions: {
+          libsimple: database.extensions.libsimple,
+          sqliteVec: database.extensions.sqliteVec,
+        },
+        bundle: () => bundle,
+        extensionsDir: resolveExtensionDir(paths.modelsDir, paths.extensionsDir),
+      }),
       // 设置 / 密钥（ADR-006 决策 1：明文 0600 + disclosure 显式告知）
       createSettingsRoutes({ db: database.db, secretStore: new SecretStore(paths.dataDir) }),
       // 标签 / 星标 / 文件夹

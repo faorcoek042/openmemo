@@ -1,5 +1,5 @@
 {
-  "ranAt": "2026-08-02T09:39:46.741Z",
+  "ranAt": "2026-08-02T09:54:29.842Z",
   "steps": [
     {
       "id": "0",
@@ -17,7 +17,7 @@
       "id": "2",
       "name": "网页检测硬件",
       "status": "yes",
-      "detail": "你的硬件显卡未检测到可用 GPU内存17 GB · 可用 1.4 GB处理器AMD RYZEN AI MAX+ 395 w/ Radeon 8060S · 32 核 / 32 线程模型目录/tmp/om-cold/mod"
+      "detail": "你的硬件显卡未检测到可用 GPU内存17 GB · 可用 1.1 GB处理器AMD RYZEN AI MAX+ 395 w/ Radeon 8060S · 32 核 / 32 线程模型目录/tmp/om-cold/mod"
     },
     {
       "id": "3",
