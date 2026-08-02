@@ -1363,3 +1363,73 @@ language 真进请求体 · 空语言不发键 · 无模型给安装入口 · �
   期间我曾想读 `daemon.lock` 里的 token 来实测，**被权限系统拦下，我没有绕**。
   因此上面两个契约裂缝都标 [读码]。
 - **重新转写的真实往返没跑过**：证据是契约读码 + 5 条组件测试，不是"真让 demo 重跑一条笔记"。
+
+---
+
+## T-084 换回「已保留」+ 逐字高亮真的亮起来（2026-08-03）
+
+### 1. 徽标已换回
+`RetranscribeButton` 的事前警告"你编辑过的 N 段**会被覆盖**"已删，换成
+「**已保留你编辑过的 N 段**」+ `recorder.mergeByTimeNote`（合并按时间轴不按序号）。
+判据用 `editedAt` 而**不是**"文本看起来没变" —— 你第 3 条说的正是这个：
+`editedAt` 丢了而文本还在时，**第一次重跑完全正常，第二次才把编辑吃掉**。
+
+原来那条断言"会被覆盖"的测试**没有删，改写了**并写明为什么翻面：
+措辞属实与否是一回事，**计数准不准是另一回事**（3 段编辑 2 段就得报 2），后者仍然值得钉。
+
+### 2. 逐字高亮：徽标会亮了，但**渲染本来就不存在**，我补了
+你让我确认"真的亮起来"，确认结果分两半：
+
+- **`WordLevelBadge` 逻辑一直是对的**（`segments.some(s => s.words?.length)`），
+  只是从来没有数据。现在 `words` 真发了，它会正确地：whisper 路径**隐藏**、Paraformer 路径**显示**。
+  两条路径各有测试压着，不再恒亮。
+- ⚠️ **但"不降级"的那一半从来没实现过**。`TranscriptList` 算出的 `highlightGranularity`
+  只落到一个 `data-highlight` 属性上，`SegmentRow` 里**没有任何按词渲染的代码** ——
+  它只给整段加个背景色。
+  **两个 bug 互相掩护**：后端不发 `words` → 徽标恒亮，谁也不会去点开看"不降级时长什么样"；
+  而就算发了，也没有代码去画。少修一个，另一个都显不出来。
+
+  → 新增 `features/transcript/WordHighlight.tsx`，按词切 `<span>`，
+  用 rAF 跟播放位置（`words[].s/e` 实测是**绝对毫秒**，与 `startMs` 同基准，见
+  `whisperCpp.ts:256` 的 `baseOffsetMs + offsets.from`）。
+  三个刻意的取舍：
+  - **只有当前活跃段挂 rAF**：一小时稿子上千段，全挂等于烧 CPU；
+  - **跨词才 setState**：同一个词内的 60 次 tick 不该产生 60 次渲染；
+  - **编辑过的段落走整句**：`words` 仍是 ASR 原始切分，与用户改后的文本对不上，
+    按词渲染会拼出与 `text` 不一致的句子 —— 这个坑不写测试很难想到。
+  - 落在词间静音里返回 `-1` **不吸附**：换气处不该有词滞留高亮。
+
+### 3. `canRetranscribe` 已接
+按钮事前禁用 + `title` 说明原因。**`undefined` 当成"可以"** ——
+老响应不带这个键，把"字段缺失"读成"不能重跑"会把功能对所有旧数据静默藏起来。
+409 分支**保留**：`canRetranscribe` 是打开页面那一刻的快照，源文件可能之后才被删，
+事前判断与事后拒绝防的不是同一件事。
+
+### 4. 顺手修了一个没人提过的裂缝（同一类病）
+`GET /api/notes/:uid/transcript` 的响应是**嵌套**的 `{transcript:{…}, segments:[…]}`，
+而前端 `TranscriptDto` 是**扁平**的。于是：
+- `segments` 恰好在顶层 → **列表能正常显示**，造成一切正常的假象；
+- 而 `transcript.data?.language` / `.uid` / `.rtf` / `.status` **全都恒为 `undefined`**。
+
+我这次的 `currentLanguage` 就中招（会永远显示"没有记录语言"），
+`ExportMenu` 拿到的 `transcriptUid` 也是 undefined。
+已在 `useTranscriptQuery` 里**一次性拍平**，而不是让每个消费方各写一遍 `?.transcript?.` ——
+漏一处就少一处，且下一个人无从知道该写哪种。
+**这和 `edited`/`editedAt` 是同一个病：字段名/层级对不上，测试不会红，功能悄悄没了。**
+
+### 测试宿主
+本轮无改动（上一轮加的"桩可返回 `Response` 以表达非 200"这次派上用场）。
+
+### 验证
+`tsc` 0 · `eslint apps/web` 0 · `vite build` ✓ ·
+测试 **52 条 / 50 pass / 0 fail / 2 skip**（新增 9 条：有 words 徽标消失 · 无 words 徽标亮 ·
+词边界归属 · 静音不吸附 · 逐词 span 且拼回原文一致 · 已保留措辞翻面 ·
+`editedAt` 为权威判据 · `canRetranscribe=false` 禁用且解释 · 缺失当可用）。
+
+### 诚实声明
+- **没碰 demo**，本轮一次网络请求都没发。
+- **逐字高亮的真实播放效果没在浏览器里看过**：证据是单测（`findActiveWord` 边界 + DOM 结构 +
+  文本拼回一致）与单位核对（`whisperCpp.ts` 的 `baseOffsetMs`），**不是"真的放一段音频看它跟着走"**。
+  rAF 与真实播放位置的联动请 `model-mgmt` 在真浏览器里复验 —— 这是本轮最需要人眼确认的一处。
+- `speakerLabel` daemon 如实发 `null`、且不发 `speakers` 表，所以我在拍平时给 `speakers: []`。
+  说话人名字**目前一定是空的**，这是接线未完成，不是前端 bug。

@@ -118,7 +118,8 @@
       "currentLangUnknown": "The current transcript has no recorded language (likely the cause of the problem)",
       "editsAtRisk": "⚠️ {{count}} segment(s) you edited will be overwritten",
       "editsAtRiskDetail": "On this path the daemon does not run the two-phase merge, so the re-run replaces the whole transcript. Export first if you need to keep your edits. (The recorder's re-run does preserve edits; this path does not yet — reported to the backend.)",
-      "noSource": "This note has no recorded source input, so it cannot be re-run. Re-transcription only works when the source is a re-fetchable link or file."
+      "noSource": "This note has no recorded source input, so it cannot be re-run. Re-transcription only works when the source is a re-fetchable link or file.",
+      "editsPreserved": "Your {{count}} edited segment(s) will be preserved"
     }
   },
   "progress": {

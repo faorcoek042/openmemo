@@ -26,10 +26,41 @@ export function useNoteQuery(uid: string | undefined) {
   });
 }
 
+/**
+ * `GET /api/notes/:uid/transcript` 的**真实响应形状**。
+ *
+ * ⚠️ 它是**嵌套**的 `{transcript: {...} | null, segments: [...]}`，
+ * 而前端的 `TranscriptDto` 是**扁平**的（`uid` / `language` / `status` 与 `segments` 平级）。
+ *
+ * 这个错位不会让任何东西报错，只会让 `transcript.data?.language`、
+ * `transcript.data?.uid` 这类读取**恒为 `undefined`` —— `segments` 恰好在顶层，
+ * 于是"列表能显示"造成一切正常的假象，而所有元信息静默失踪。
+ * 和刚修掉的 `edited` / `editedAt` 是同一类：**字段名对不上，测试不会红，功能悄悄没了。**
+ *
+ * 在这里一次性拍平，而不是让每个消费方各写一遍 `?.transcript?.` ——
+ * 漏一处就少一处，且下一个人无从知道该写哪种。
+ */
+interface TranscriptEnvelope {
+  transcript: Omit<TranscriptDto, 'segments' | 'noteUid' | 'backend' | 'speakers'> | null;
+  segments: TranscriptDto['segments'];
+}
+
 export function useTranscriptQuery(uid: string | undefined) {
   return useQuery({
     queryKey: qk.transcript(uid ?? ''),
-    queryFn: () => api<TranscriptDto | null>('transcript', `/notes/${uid}/transcript`),
+    queryFn: async (): Promise<TranscriptDto | null> => {
+      const raw = await api<TranscriptEnvelope | null>('transcript', `/notes/${uid}/transcript`);
+      if (!raw?.transcript) return null;
+      return {
+        ...raw.transcript,
+        noteUid: uid ?? '',
+        backend: null,
+        // 说话人分离尚未接线：daemon 逐段发 speakerLabel: null，且不发 speakers 表。
+        // 给 [] 而不是 undefined —— 消费方 `arr()` 之后行为一致，也不必判断"字段在不在"。
+        speakers: [],
+        segments: raw.segments ?? [],
+      };
+    },
     enabled: Boolean(uid),
   });
 }

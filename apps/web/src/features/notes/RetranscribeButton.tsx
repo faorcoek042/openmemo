@@ -34,28 +34,39 @@ import type { TranscriptSegmentDto } from '../../lib/events/types';
 /**
  * 判断一段是否被用户编辑过。
  *
- * ⚠️ **同一个类型在两条通道上形状不同**，所以这里必须同时认两种写法：
- * - `GET /api/notes/:uid/transcript`（REST）发的是 **`edited: boolean`**
- *   （`rest/notes.ts` 里 `edited: s.edited_at !== null`）
- * - 前端 `TranscriptSegmentDto` 声明的是 **`editedAt: number | null`**（SSE 增量走这个形状）
+ * 契约**已统一**：daemon 现在以 `editedAt` 为权威、并附带 `edited` 布尔投影，
+ * 两条通道不再分裂。这里仍然两个都认，是**刻意的向后兼容**而非遗留：
+ * SSE 增量与 REST 全量由不同代码路径构造，缓存里也可能残留旧形状的段。
  *
- * 只认其中一个，就会在另一条通道上**恒为"没人编辑过"** ——
- * 而这个判断的下游是"你的修改会不会丢"的警告，静默失效的代价是用户白丢编辑。
- * 契约该统一（已报 Manager），在统一之前**宁可两边都认**。
+ * 优先读 `editedAt` —— 它同时是 `mergeTranscripts` 判"要不要保留"的依据，
+ * 前后端用同一个事实，不必各自推导。
+ *
+ * ⚠️ 判据必须是 `editedAt` 而不是"文本看起来没变"：
+ * `editedAt` 丢了但文本还在时，**第一次重跑看着完全正常，第二次才把编辑覆盖掉**。
  */
 export function isSegmentEdited(seg: Partial<TranscriptSegmentDto> & { edited?: boolean }): boolean {
-  if (typeof seg.edited === 'boolean') return seg.edited;
-  return seg.editedAt != null;
+  if (seg.editedAt != null) return true;
+  return seg.edited === true;
 }
 
 export function RetranscribeButton({
   noteUid,
   segments,
   currentLanguage,
+  canRetranscribe,
 }: {
   noteUid: string;
   segments: readonly (Partial<TranscriptSegmentDto> & { edited?: boolean })[];
   currentLanguage: string | null;
+  /**
+   * 来自 `NoteDetail.canRetranscribe`（daemon 按 `input_url` 非空判定）。
+   *
+   * 之前没有这个字段，前端无从判断，只能让 409 事后暴露。现在能**事前**禁用了 ——
+   * 但 `undefined` 要当成"可以"：老响应里没有这个键，
+   * 把"字段缺失"读成"不能重跑"会把功能对所有旧数据藏起来。
+   * 宁可点下去吃一个说人话的 409，也不要静默隐藏一个本来能用的入口。
+   */
+  canRetranscribe?: boolean;
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -83,13 +94,11 @@ export function RetranscribeButton({
   });
 
   /**
-   * 409 `NO_SOURCE_INPUT`：这条笔记没记录原始输入，重跑无从跑起。
+   * 409 `NO_SOURCE_INPUT` 的兜底。
    *
-   * ⚠️ 本该**事前**就不显示按钮 —— `RetranscribeRequest` 的注释也是这么要求的
-   * （"the UI must not offer the button in that case"）。
-   * 但 `NoteDetail` **没有任何字段**表达"有没有可重新拉取的源"，前端无从判断。
-   * 与其按 `kind` 瞎猜（猜错就是把能用的功能藏了），不如让服务端的拒绝**可见** ——
-   * 已报 Manager：`NoteDetail` 需要补一个 `canRetranscribe`。
+   * 现在 `NoteDetail.canRetranscribe` 已经能**事前**禁用按钮，
+   * 但这条分支要留着：`canRetranscribe` 是**打开页面那一刻**的快照，
+   * 而源文件可能在此之后被删。事前判断与事后拒绝防的不是同一件事。
    */
   const noSource = run.error instanceof ApiError && run.error.code === 'NO_SOURCE_INPUT';
 
@@ -100,6 +109,9 @@ export function RetranscribeButton({
         variant="ghost"
         className="h-6 px-1.5 text-xs"
         data-testid="retranscribe-open"
+        disabled={canRetranscribe === false}
+        // 禁用的控件必须自己解释为什么，否则用户只会以为坏了
+        title={canRetranscribe === false ? t('detail.retranscribe.noSource') : ''}
         onClick={() => setOpen((v) => !v)}
       >
         <RefreshCw className="size-3.5" aria-hidden />
@@ -120,20 +132,28 @@ export function RetranscribeButton({
           <TranscribeOptions language={language} onLanguageChange={setLanguage} />
 
           {/*
-            ★ 编辑会不会丢，必须**在点之前**说清楚。
+            ★ 换回「已保留」—— 这句话现在是**真的**了。
+            `oss-scout` 把 `mergeWithTranscriptId` 接上（并加了 `!== transcript.id` 守卫
+            防止复用同一份稿时自己跟自己合并），实测连跑两次 `editedAt` 都还在。
 
-            ⚠️ 现状是**会丢**：两阶段合并只在 `payload.mergeWithTranscriptId !== undefined`
-            时才跑，而**只有录音会话**（`ws/recorder.ts`）传这个键；
-            REST 的 retranscribe **不传**，合并分支整段跳过。
-            所以这里不能沿用录音页那句"你编辑过的 N 段已保留" —— 那在这条路径上是假的。
-            等 daemon 补上（`repos.activeTranscriptOfNote(note.id)?.id` 一行的事），
-            这段文案改回"已保留"，徽标逻辑现成。
+            为什么强调"连跑两次"：修完之后测一次是会通过的 —— 文本还在，看起来已经好了。
+            但 `editedAt` 若没跟着保留，**第二次重跑就会把它当没编辑过覆盖掉**。
+            「测一次通过、测两次才暴露」正是这个项目反复栽跟头的那一类，
+            所以这里的判据用 `editedAt` 而不是"文本看起来没变"。
           */}
           {editedCount > 0 ? (
             <Banner
-              tone="warning"
-              title={t('detail.retranscribe.editsAtRisk', { count: editedCount })}
-              detail={t('detail.retranscribe.editsAtRiskDetail')}
+              tone="info"
+              title={t('detail.retranscribe.editsPreserved', { count: editedCount })}
+              detail={
+                <>
+                  {/* 合并按**时间轴**对齐而非段落序号：两遍模型的断句天然不同，
+                      按序号会把别人的句子塞进用户改过的地方。
+                      因此"编辑过但没有对应新结果"是正常情况，必须能表达出来，
+                      而不是让用户以为自己的修改被吞了。 */}
+                  <span className="block">{t('recorder.mergeByTimeNote')}</span>
+                </>
+              }
             />
           ) : null}
 

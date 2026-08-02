@@ -125,6 +125,7 @@ export default function NoteDetailPage() {
                 noteUid={noteUid ?? ''}
                 segments={arr(transcript.data?.segments)}
                 currentLanguage={transcript.data?.language ?? null}
+                canRetranscribe={note.data?.canRetranscribe}
               />
             </div>
           </div>

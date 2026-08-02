@@ -46,6 +46,14 @@ export interface NoteDetail extends NoteSummary {
   language: string | null;
   assets: MediaAssetDto[];
   transcriptUid: string | null;
+  /**
+   * 这条笔记能不能重新转写 —— daemon 按「主来源的 `input_url` 是否非空」判定。
+   *
+   * 没有它时前端只能让 409 事后暴露；有了它就能事前禁用按钮并说明原因。
+   * 声明为**可选**：老响应不带这个键，而"字段缺失"绝不能读成"不能重跑" ——
+   * 那会把一个本来能用的功能对所有旧数据静默藏起来。
+   */
+  canRetranscribe?: boolean;
 }
 
 export interface MediaAssetDto {

@@ -5,6 +5,7 @@ import { AlertTriangle, PencilLine, RotateCcw, ShieldCheck } from 'lucide-react'
 import { SEGMENT_FLAG, type TranscriptSegmentDto } from '../../lib/events/types';
 import { timecode } from '../../lib/format/time';
 import { cn } from '../../lib/utils';
+import { WordHighlight } from './WordHighlight';
 
 /**
  * 单条转写段落（M-4）。
@@ -109,7 +110,20 @@ export function SegmentRow({
             onDoubleClick={() => editable && setEditing(true)}
             title={editable ? t('detail.doubleClickToEdit') : undefined}
           >
-            {seg.text}
+            {/*
+              ★ 逐字高亮只在**当前活跃段**上跑（rAF 循环 60fps）。
+              非活跃段直接渲染整句：它们的高亮永远不会变，挂循环纯属烧 CPU，
+              而一篇一小时的转写稿有上千段。
+
+              另一个理由是正确性：用户**编辑过**的段落，`words` 仍是 ASR 原始切分，
+              和新文本对不上 —— 按词渲染会拼出与 `text` 不一致的句子。
+              所以编辑过的段一律走整句。
+            */}
+            {active && !edited ? (
+              <WordHighlight words={seg.words} fallbackText={seg.text} />
+            ) : (
+              seg.text
+            )}
           </span>
         )}
 

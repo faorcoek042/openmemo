@@ -31,6 +31,8 @@ import { AsrEngineStatus } from '../components/common/AsrEngineStatus';
 import { useImportUrlMutation } from '../features/notes';
 import { DataLocationSection } from '../features/settings/DataLocationSection';
 import { RetranscribeButton, isSegmentEdited } from '../features/notes/RetranscribeButton';
+import { WordLevelBadge } from '../features/transcript';
+import { WordHighlight, findActiveWord } from '../features/transcript/WordHighlight';
 
 /* ─────────────────────────── 标签增删 ─────────────────────────── */
 
@@ -699,15 +701,25 @@ describe('重新转写入口', () => {
     r.unmount();
   });
 
-  test('★ 编辑过的段落有风险时必须**事前**警告 —— 这条路径 daemon 不做两阶段合并', async () => {
+  /**
+   * 这条用例**改写过**（T-082 → T-084），保留在这里是有意的。
+   *
+   * 原来它断言的是"你编辑过的 N 段**会被覆盖**" —— 当时属实：REST 重跑不传
+   * `mergeWithTranscriptId`，合并分支整段跳过。后端补上并实测连跑两次编辑仍在之后，
+   * 那句警告就从"诚实"变成了"吓唬人"，断言必须跟着翻面。
+   *
+   * 没有删掉它，是因为**计数准确性**与措辞是两件事：3 段里编辑过 2 段就得报 2，
+   * 报错了的话，说"保留"还是说"覆盖"都一样没意义。
+   */
+  test('★ 编辑段数要报准 —— 3 段里编辑过 2 段就是 2', async () => {
     stubApi({ 'GET /models/installed': { models: [], active: { asr: null } } });
     const r = await render(
       <RetranscribeButton
         noteUid="n1"
         segments={[
-          { seq: 1, text: 'a', edited: true },
-          { seq: 2, text: 'b', edited: true },
-          { seq: 3, text: 'c', edited: false },
+          { seq: 1, text: 'a', editedAt: 1 },
+          { seq: 2, text: 'b', editedAt: 2 },
+          { seq: 3, text: 'c', editedAt: null },
         ]}
         currentLanguage="zh"
       />,
@@ -715,9 +727,8 @@ describe('重新转写入口', () => {
     await click(r.container.querySelector('[data-testid="retranscribe-open"]'));
     await r.flush();
     const shown = text(r.container);
-    assert.ok(shown.includes('2 段会被覆盖'), `应准确报出 2 段，实际：${shown.slice(0, 200)}`);
-    // 不能沿用录音页那句"已保留" —— 在这条路径上是假的
-    assert.ok(!shown.includes('已保留'), 'REST 重跑目前不保留编辑，不许说保留');
+    assert.ok(shown.includes('已保留你编辑过的 2 段'), `应准确报出 2 段，实际：${shown.slice(0, 200)}`);
+    assert.ok(!shown.includes('会被覆盖'), '后端已能保留，事前警告必须撤掉');
     r.unmount();
   });
 
@@ -768,6 +779,118 @@ describe('重新转写入口', () => {
       text(r.container).includes('没有记录原始输入'),
       '应给出可读解释，说明什么情况下才能重跑',
     );
+    r.unmount();
+  });
+});
+
+/* ──────────────── 逐字高亮 + 重跑保留编辑（T-084） ──────────────── */
+
+/**
+ * 这一组钉的是两个**互相掩护**的 bug：
+ * `words` 后端没发 → 降级徽标恒亮；而即使发了，前端也没有按词渲染的代码。
+ * 任何一个单独修好都看不出变化，所以两个都得有测试压着。
+ */
+describe('逐字高亮', () => {
+  const W = [
+    { w: 'Hello', s: 0, e: 500, p: 0.9 },
+    { w: ' world', s: 500, e: 1000, p: 0.9 },
+  ];
+
+  test('★ 有 words 时降级徽标必须消失 —— 之前它恒亮，用户从没见过词级高亮', async () => {
+    const r = await render(
+      <WordLevelBadge
+        segments={[{ seq: 1, startMs: 0, endMs: 1000, text: 'Hello world', words: W }] as never}
+      />,
+    );
+    assert.equal(text(r.container).trim(), '', '有词级时间戳就不该显示降级提示');
+    r.unmount();
+  });
+
+  test('★ words 为 null（中文 Paraformer）时降级徽标要亮 —— 这个降级得留着', async () => {
+    const r = await render(
+      <WordLevelBadge
+        segments={[{ seq: 1, startMs: 0, endMs: 1000, text: '你好世界', words: null }] as never}
+      />,
+    );
+    assert.ok(text(r.container).length > 0, 'Paraformer 路径必须说明为何不能逐字高亮');
+    r.unmount();
+  });
+
+  test('★ 按词切分渲染，播放位置落在哪个词就高亮哪个', () => {
+    assert.equal(findActiveWord(W, 0), 0);
+    assert.equal(findActiveWord(W, 499), 0);
+    assert.equal(findActiveWord(W, 500), 1, '边界归属后一个词，避免两个同时亮');
+    assert.equal(findActiveWord(W, 999), 1);
+  });
+
+  test('★ 落在词与词之间的静音里不吸附 —— 换气处不该有词滞留高亮', () => {
+    const gapped = [
+      { w: 'a', s: 0, e: 100, p: 1 },
+      { w: 'b', s: 900, e: 1000, p: 1 },
+    ];
+    assert.equal(findActiveWord(gapped, 500), -1);
+    assert.equal(findActiveWord(gapped, 1500), -1, '播完之后也不该有词亮着');
+  });
+
+  test('有 words 就逐词出 span；没有就整句一个节点', async () => {
+    const r = await render(<WordHighlight words={W} fallbackText="Hello world" />);
+    const host = r.container.querySelector('[data-testid="word-highlight"]');
+    assert.ok(host, '应进入逐字渲染分支');
+    assert.equal(host!.querySelectorAll('span').length, 2, '两个词应各自成 span');
+    // 拼回去必须和原句一致，否则用户看到的文本被渲染逻辑改写了
+    assert.equal(host!.textContent, 'Hello world');
+    r.unmount();
+
+    const r2 = await render(<WordHighlight words={null} fallbackText="你好世界" />);
+    assert.equal(r2.container.querySelector('[data-testid="word-highlight"]'), null);
+    assert.equal(text(r2.container), '你好世界');
+    r2.unmount();
+  });
+});
+
+describe('重跑保留编辑（换回「已保留」）', () => {
+  const edited = [
+    { seq: 1, text: 'a', editedAt: 1_785_700_531_018 },
+    { seq: 2, text: 'b', editedAt: null },
+  ];
+
+  test('★ 现在说「已保留」，不再说「会被覆盖」—— 后端实测连跑两次 editedAt 都还在', async () => {
+    stubApi({ 'GET /models/installed': { models: [], active: { asr: null } } });
+    const r = await render(
+      <RetranscribeButton noteUid="n1" segments={edited} currentLanguage="zh" />,
+    );
+    await click(r.container.querySelector('[data-testid="retranscribe-open"]'));
+    await r.flush();
+    const shown = text(r.container);
+    assert.ok(shown.includes('已保留你编辑过的 1 段'), `实际：${shown.slice(0, 200)}`);
+    assert.ok(!shown.includes('会被覆盖'), '事前警告必须撤掉，否则是在吓唬用户');
+    r.unmount();
+  });
+
+  test('★ editedAt 是权威判据（不是文本比对）—— 它丢了会在第二次重跑才暴露', () => {
+    assert.equal(isSegmentEdited({ editedAt: 1_785_700_531_018 }), true);
+    assert.equal(isSegmentEdited({ editedAt: null }), false);
+    // 旧形状仍认，缓存里可能残留
+    assert.equal(isSegmentEdited({ edited: true }), true);
+    assert.equal(isSegmentEdited({}), false);
+  });
+
+  test('★ canRetranscribe=false 时按钮事前禁用并说明原因', async () => {
+    stubApi({});
+    const r = await render(
+      <RetranscribeButton noteUid="n1" segments={[]} currentLanguage="zh" canRetranscribe={false} />,
+    );
+    const btn = r.container.querySelector('[data-testid="retranscribe-open"]') as HTMLButtonElement;
+    assert.equal(btn.disabled, true);
+    assert.ok((btn.getAttribute('title') ?? '').includes('没有记录原始输入'), '禁用要自带解释');
+    r.unmount();
+  });
+
+  test('★ canRetranscribe 缺失要当成「可以」—— 字段不在不等于不能重跑', async () => {
+    stubApi({});
+    const r = await render(<RetranscribeButton noteUid="n1" segments={[]} currentLanguage="zh" />);
+    const btn = r.container.querySelector('[data-testid="retranscribe-open"]') as HTMLButtonElement;
+    assert.equal(btn.disabled, false, '老响应不带这个键，不能把功能藏起来');
     r.unmount();
   });
 });
