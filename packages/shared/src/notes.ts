@@ -183,6 +183,59 @@ export interface GetTranscriptResponse {
   segments: TranscriptSegment[];
 }
 
+/* -------------------------------- probe ----------------------------------- */
+
+/**
+ * `POST /api/notes/probe` — look before you leap.
+ *
+ * Paste a link, get title/duration/source back in seconds, THEN decide whether to import.
+ * Without it the user has to download hundreds of MB just to discover they pasted the
+ * wrong link. Read-only: creates no note and enqueues no job (that is what `import` does).
+ */
+export interface ProbeRequest {
+  /** URL, or an absolute local path inside a configured import root. */
+  input: string;
+}
+
+export interface ProbeResult {
+  title: string;
+  author: string | null;
+  durationMs: number | null;
+  thumbnailUrl: string | null;
+  site: string | null;
+  /** Which media adapter claimed the input, e.g. "direct-http", "yt-dlp", "rss". */
+  adapterId: string;
+
+  /**
+   * ⚠️ READ THIS BEFORE USING: `false` means "we do not know", NOT "no login needed".
+   *
+   * `MediaInfo` carries no authentication signal and the probe stage cannot obtain one,
+   * so the daemon returns `false` rather than guessing. Guessing `true` would scare users
+   * away from links that work fine, and a fabricated `requiresAuth` is worse than not
+   * having the field at all.
+   *
+   * Therefore the UI MUST NOT render this as "no login required". At most, render
+   * something when it is `true` — and today nothing sets it to `true`. Making this
+   * meaningful requires each adapter to report it during probe (a pipeline-side change).
+   */
+  requiresAuth: boolean;
+
+  /** True for RSS feeds / playlists — one paste may import many items. */
+  isCollection: boolean;
+  /** How many media items this input yields; 1 for a single file. */
+  mediaCount: number;
+  sourceKind: 'url' | 'local';
+  publishedAt?: string | null;
+  description?: string | null;
+}
+
+/**
+ * 422 `NO_MEDIA_SOURCE` — no adapter could handle the input.
+ *
+ * Carries a `remediation` (e.g. `installSiteExtractor`) so the UI offers a fix rather
+ * than a dead end; see `Remediation` in events.ts.
+ */
+
 /* ----------------------------- retranscribe ------------------------------- */
 
 /**
@@ -261,6 +314,7 @@ export const NOTE_ERROR_CODES = [
   'PATH_NOT_ALLOWED',
   'NOTE_NOT_FOUND',
   'NO_SOURCE_INPUT',
+  'NO_MEDIA_SOURCE',
   'METHOD_NOT_ALLOWED',
   'UNAUTHENTICATED',
 ] as const;
@@ -276,6 +330,7 @@ export const NOTE_ENDPOINTS = [
   { method: 'GET', path: '/api/notes/:uid', name: 'getNote' },
   { method: 'DELETE', path: '/api/notes/:uid', name: 'deleteNote' },
   { method: 'GET', path: '/api/notes/:uid/transcript', name: 'getTranscript' },
+  { method: 'POST', path: '/api/notes/probe', name: 'probeInput' },
   { method: 'POST', path: '/api/notes/:uid/retranscribe', name: 'retranscribeNote' },
   { method: 'GET', path: '/api/search', name: 'search' },
   { method: 'GET', path: '/api/selfcheck', name: 'selfcheck' },

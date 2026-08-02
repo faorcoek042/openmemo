@@ -1,0 +1,64 @@
+{
+  "ranAt": "2026-08-02T12:10:42.947Z",
+  "base": "http://127.0.0.1:17692",
+  "audio": "https://download.samplelib.com/mp3/sample-15s.mp3",
+  "noteUid": null,
+  "realText": "",
+  "results": [
+    {
+      "id": "0",
+      "name": "打开网页并鉴权",
+      "ok": true,
+      "detail": "cookie=true"
+    },
+    {
+      "id": "1",
+      "name": "走完引导",
+      "ok": true,
+      "detail": "推进 4 步"
+    },
+    {
+      "id": "2",
+      "name": "网页装加速后端",
+      "ok": false,
+      "detail": "10 个按钮但无可点的 whisper 包"
+    },
+    {
+      "id": "3",
+      "name": "网页装 Whisper ASR 模型",
+      "ok": true,
+      "detail": "点「可跑但慢Whisper 微型模型最小的多语种模型。质量低，主要用于冒烟测试与下载 / 下载 78 MB」下载完成"
+    },
+    {
+      "id": "4",
+      "name": "probe 出标题/时长",
+      "ok": true,
+      "detail": "title=\"sample-15s.mp3\" durationMs=19174 adapter=direct-http mediaCount=1 · requiresAuth=false（=“未知”，非“不需要登录”）"
+    },
+    {
+      "id": "5",
+      "name": "导入 → 转写 → 出现真实文字",
+      "ok": false,
+      "detail": "note=未创建 status=n/a 无转写文字"
+    },
+    {
+      "id": "6",
+      "name": "F4 生成思维导图",
+      "ok": false,
+      "detail": "前置步骤未完成"
+    },
+    {
+      "id": "7",
+      "name": "导图拖拽/右键/撤销",
+      "ok": false,
+      "detail": "前置步骤未完成"
+    },
+    {
+      "id": "8",
+      "name": "导图 SVG/PNG 导出",
+      "ok": false,
+      "detail": "前置步骤未完成"
+    }
+  ],
+  "pageErrors": []
+}

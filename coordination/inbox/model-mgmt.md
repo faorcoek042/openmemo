@@ -766,3 +766,79 @@ daemon 侧全仓库只有 `/api/models/sources/probe`（我的），**没有导�
 含 `--data-dir` / `OPENMEMO_DATA_DIR` 优先级链。⚠️ 仍标注 **未在真 Windows 验证**。
 
 门禁：`tsc 0 · eslint 0 · verify-offline 29/29 · verify-unpack 42/42 · 5 份 manifest VALID`
+
+---
+
+## [2026-08-02 23:20] T-059 首次体验 —— **跑成了**
+
+隔离环境：daemon `:17691`（**全新空 dataDir** `/tmp/om59`）+ shim `:17692`，`setsid`，只杀自己 pid。
+截图 `docs/design/assets/t059-firstrun/`（9 张）
+
+### ★ 真实转写文字（网页上真的出现了）
+
+    [0-10600ms] And so my fellow Americans, ask not what your country can do for you,
+                ask what you can do for your country.
+
+    rtf=0.07 · segments=1 · language=en · 10.6 秒音频约 10 秒转完
+    浏览器复核：页面上确实渲染出 "ask not what your country can do for you" ✅
+
+第一次用的 `sample-15s.mp3` 转出 `(upbeat music)` —— 那是**正确**输出（纯音乐无人声），
+但不足以证明"能转人话"，所以我换了 whisper.cpp 官方的 `jfk.wav`（真人演讲）重跑。
+
+### 链路逐项
+
+| # | 步骤 | 结果 |
+|---|---|---|
+| 0 | 打开网页并鉴权 | YES |
+| 1 | 走完引导 | YES（推进 4 步） |
+| 2 | 网页装加速后端 | YES（`download.backend succeeded`，whisper-cli 落盘可执行） |
+| 3 | 网页装 Whisper ASR 模型 | YES（点「下载 78 MB」→ ggml-tiny.bin） |
+| 4 | **probe 出标题/时长** | YES `title="sample-15s.mp3" durationMs=19174 adapter=direct-http mediaCount=1` |
+| 5 | **导入 → 转写 → 真实文字** | **YES**（见上） |
+| 6 | F4 生成思维导图 | **NO —— 缺 LLM**（见下） |
+| 7 | 导图拖拽/右键/撤销 | 无法验证（没有导图数据） |
+| 8 | 导图 SVG/PNG 导出 | 无法验证（同上） |
+
+装完 selfcheck：**通过 12 · 警告 4 · 失败 2**，两条失败仍只是 libsimple（等发布渠道）。
+
+### 🔴 一个真 bug：**daemon 只在启动时探测流水线工具**
+
+这是本轮最有价值的发现，而且**直接打在要求 2.1/2.2 的要害上**。
+
+现象：网页上把后端包和 ASR 模型都装好了（job 都 `succeeded`，文件都在盘上，
+selfcheck 也确认 `whisper-cli ✔ ASR 模型 ✔`），但导入的笔记**卡在 `processing` 整整 10 分钟**，
+`/api/jobs` 里连 transcribe job 都没有。
+
+定位：daemon 启动横幅是
+`⚠️ 流水线缺少工具: whisper-cli, asr-model —— 相关任务会转 blocked`，
+**这个判断在启动时做一次就固化了**。我只做了一件事——重启 daemon（工具没变、盘上文件没动），
+同一条音频**立刻 12 秒转完**，横幅也消失了。
+
+→ **用户在网页上装完东西后，必须重启 daemon 才生效。**
+「全部通过网页完成」在最后一步断掉了——装是装上了，但用不了。
+建议：安装成功后重新探测一次（或在 `model.installed`/`backend.installed` 事件上刷新工具表）。
+**这一条修掉，首次体验才是真的闭环。**
+
+### F4 无法验证的原因（环境，不是缺陷）
+`POST /api/notes/:uid/mindmap → 202` 正常入队，但 `GET .../mindmap` 返回 `{"mindmap":null}`。
+selfcheck 显示 `LLM 模型 无（F4 思维导图需要 LLM 或云 API Key）`——
+**本机没装 LLM、也没有云 API Key**，所以导图生成不出来，7/8 自然没有数据可验。
+**我没有把它记成产品缺陷。** 装一个小 LLM（如 Qwen3-1.7B Q8_0，1.83 GB）或配一个 API Key 后即可复测。
+
+### 两处契约已收编
+`packages/shared/src/notes.ts` 新增 `ProbeRequest` / `ProbeResult`（含 `NO_MEDIA_SOURCE` 错误码），
+`retranscribe` 上轮已收编。endpoint 表同步。
+
+`requiresAuth` 我按 `oss-scout` 的原意在类型注释里写死了警示：
+**「`false` 表示"我们不知道"，不是"不需要登录"，UI 不得渲染成"无需登录"」** ——
+这个字段今天没有任何代码会把它置 true，把它当断言用就会误导。
+
+### 自查（我这轮的测试错误）
+- 步骤 2 我报了 NO「无可点的 whisper 包」，**其实装成功了**：页面加载早于硬件探测完成，
+  那一刻 `applicable=false`；几秒后再查是 `applicable=True`。
+  → 顺带暴露一个 UX 小问题：**探测未完成时后端包显示为不可用，且没有"检测中…"状态**。
+- 第一次 probe 报 403 CSRF——**是我的直连 fetch 漏了 CSRF 头**，不是产品问题（UI 自己带）。
+- 选模型时我用 card 文本匹配 `/Whisper/i`，结果选中了 sherpa 卡（文本含周边内容）；
+  改用 `[data-testid^="model-card-asr/whisper"]` 才对。**"先打印候选再断言"这条我这轮用上了，也确实救了场。**
+
+门禁：`tsc 0 · eslint 0 · verify-offline 29/29 · verify-unpack 42/42 · 5 份 manifest VALID`
