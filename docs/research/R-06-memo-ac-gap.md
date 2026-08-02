@@ -43,8 +43,9 @@ date: 2026-08-03
   **无认证、无用户可配 bypass**（只有一条硬编码的、仅护 LLM 本地端点的 bypass）；子进程侧只覆盖 yt-dlp，
   但**云 LLM/云 ASR/模型下载全部经 agent 走代理**。我们的 `proxy.ts` 校验与 loopback 保护比它强，
   **但 daemon/downloader 侧零接线 —— 模型下载走不了代理，而它能**；
-  ③ **memo.ac 没有为任何一家 LLM 装 SDK** —— ~31 家全靠一个 OpenAI 兼容客户端 + 每家一个 `baseURL`
-  （`nm.txt` 417 个包里无任何 `@ai-sdk/<厂商>`），**证明我们现有架构方向正确，缺的只是注册表与配置 UI**。
+  ③ 云 LLM 是**混合制**：**Claude / Gemini / Mistral / Ollama 用原生客户端**，其余约 20 家走 OpenAI 兼容 + 每家 `baseURL`。
+  → 我们的 `openai-compatible.ts` 方向对，但**接 Claude 与 Gemini 必须各写一个原生适配器**，不是加条注册表记录就行。
+  （⚠️ 我在附录 A-3.2 第一版把这条判反了，已推翻并记录错因：把"打包器内联导致依赖清单里看不见"误读成"没装"。）
 
 ## 详细内容
 
@@ -681,33 +682,57 @@ UI 成功显示 `preferences.network latency` + 毫秒数，失败显示 `prefer
 IPC 5 条：`llm:model-registry:{get-status, ensure-dir, check-update, update, reload}`
 → 注册表可**独立于主程序热更新**（新供应商上线不必发版）。
 
+补充细节 **[F]**：
+- `configFields` 的**字段键全集**只有 7 个：`apiKey`（password）· `model`（select）· `baseURL`（url）·
+  `temperature`（number）· `maxTokens`（number）· `deploymentId` · `apiVersion`。
+  后两个**只有 Azure 一家**用。没有 `topP` / `contextWindow` / `timeout` / `organization` 的表单项。
+- `modelListSource` 有**三种取值**：`official-doc`（注册表内置静态清单，条目带 `checkedAt` 日期，人工策展）·
+  `official-api`（实时打供应商的 `/models`，如 OpenRouter、SiliconCloud）·
+  `local-api`（打本地服务，如 Ollama 的 `/api/tags`、LM Studio）。
+- 注册表更新是**原子写**（`.tmp` + `.bak`），差异原因枚举 `version` / `updatedAt` / `missing` / `same`。
+- ⚠️ **表单的 label/help 文案是硬编码在注册表数据里的英文（部分是中文），完全没走 i18n** ——
+  这是它的一个**缺陷**，不要抄。我们做注册表时应把 label 存成 i18n key。
+
 ### A-3.4 自定义 / OpenAI 兼容端点 **[F]**
 
-- 注册表里有 `custom` → **"Custom Service"**，渲染层另有 `addCustomService` 动作与 `pendingAddCustomLLMService` 状态。
-  → **可以填任意 OpenAI 兼容 base URL。**
-- **非 OpenAI 家能否改 baseURL：本次未核实。** 描述符里人人都有 `baseURL` 字段，
-  **推测**都可覆盖，但我没找到 UI 层的可编辑证据。R-01 引用其 issue #353/#359 称"只有 OpenAI 能配自定义 base URL"
-  —— **该说法本次未复核，且与 `baseURL` 字段人人都有相矛盾，请勿当作事实引用。**
+- 注册表里有 `custom` → **"Custom Service"**，渲染层有 `addCustomService` 动作与 `pendingAddCustomLLMService` 状态，
+  主进程有 `llm:save-custom-service` / `llm:get-custom-services` / `llm:delete-custom-service` 三条 IPC。
+  → **可以填任意 OpenAI 兼容 base URL + 任意 model id。**
+- 自定义服务还支持 **`dynamicModelsEnabled` + `dynamicModelsUrl`** —— 指向用户自己的 `/models` 端点自动拉模型清单。
+  存储对象含 `maxContextToken` / `maxOutputToken` / `pricing` 等字段。
+- **「只有 OpenAI 能配自定义 base URL」这个说法已被推翻**（R-01 引其 issue #353/#359）：
+  实测 **24 家里 22 家的 `configFields` 都有可编辑的 `baseURL`**。
+  唯二例外：**Mistral**（整个字段都没有，因为走原生 SDK）与 **Azure**（`baseURL` 必填且无默认值，另需 `deploymentId` + `apiVersion`）。
+  → **R-01 的这条转述不成立，请勿再引用。**
 
 ### A-3.5 对照我们 **[O]**
 
 | 项 | memo.ac | OpenMemo |
 |---|---|---|
-| 架构 | OpenAI 兼容单客户端 + 每家 baseURL | **同**（`openai-compatible.ts`） |
-| 供应商数量 | ~31（数据驱动） | 注释列了 OpenAI/DeepSeek/Groq/xAI/Moonshot/SiliconCloud/OpenRouter/通义/智谱/Ollama/LM Studio/内置 llama-server；**清单硬编码在代码里，非注册表** |
-| 供应商注册表 | 远端 JSON + sha256 + 热更新 + `configFields` 动态表单 | **无** |
-| 模型下拉自动填充 | `modelListSource` | **无** |
-| 自定义端点 | `custom` 服务 | ✅ 有（任意 baseURL） |
-| Key 存储 | **未核实** | `secrets` 表 + `SecretStore`，`GET /api/secrets` 只返回掩码，且**强制向用户明示「明文存储在 <路径>，权限 0600」**（ADR-006 决策 1） |
+| 架构 | **混合**：Claude/Gemini/Mistral/Ollama 原生客户端 + 其余 ~20 家走 OpenAI 兼容 | 只有 OpenAI 兼容一条路 → **接 Claude/Gemini 需新写两个适配器** |
+| 供应商数量 | 24 内置 + 自定义（另有一份 24 项的旧枚举，并集约 31） | 注释列了 OpenAI/DeepSeek/Groq/xAI/Moonshot/SiliconCloud/OpenRouter/通义/智谱/Ollama/LM Studio/内置 llama-server；**清单硬编码在代码里，非注册表** |
+| 供应商注册表 | 远端 JSON + sha256 + 原子写 + 热更新 + `configFields` 动态表单 | **无** |
+| 模型下拉自动填充 | `modelListSource` 三模式 | **无** |
+| 每功能独立选模型 | ✅ chat / (summary+mindmap) / translate **各自独立**的 provider+model | **无**（只有全局一处） |
+| 自定义端点 | ✅ `custom` 服务 + 动态模型 URL | ✅ 有（任意 baseURL），**无动态模型拉取** |
+| **Key 存储** | ⚠️ **明文 JSON**（`conf/setting.conf`）。全 bundle **`safeStorage` 0 命中**。唯一的 AES-256-CBC 用了**硬编码静态密钥+IV**，且只加密 Notion 的 secret，**LLM key 不经过它** | `secrets` 表 + `SecretStore`，`GET /api/secrets` 只返回掩码，且**强制向用户明示「明文存储在 <路径>，权限 0600」**（ADR-006 决策 1） |
 | 本地 LLM | Ollama / LM Studio | 同 + **内置 llama.cpp**（用户指令 3 要求砍掉本地自接，此项将成为待裁撤项） |
 
-**给 Manager 的三条落地建议**：
-1. **架构不用改** —— `openai-compatible.ts` 的方向已被竞品验证。
-2. **把硬编码供应商清单改成一份 JSON 注册表**，字段直接对齐 A-3.3（尤其 `configFields` 与 `modelListSource`）。
-   我们可以做得更好的一点：**注册表进 git 仓库而非远端拉取**，避免引入一个新的云依赖（章程是 local-first）。
-3. **用户指令 3 与我们现有的本地 LLM 能力冲突**：`llm/*` 5 个 GGUF 模型 + llama.cpp 后端包 4 个（cpu/cuda/vulkan/rocm）
-   将失去用途。**这是一个需要你裁决的删除决策，我不替你做。**
-   注意：删掉本地 LLM 后，`vulkan`/`rocm` 后端包也随之无用 —— 那正是我们唯一的 AMD 加速路径（见 §3.6 #44），
+> Key 存储这条值得说清楚：**双方实质都是明文落盘，谁也不比谁安全**。
+> 差别在于**我们明确告诉用户**（ADR-006 强制 disclosure），而它不说。
+> 它那把硬编码静态密钥的 AES 属于**安全剧场**——密钥就在同一个二进制里，拆包即得。**不要抄。**
+
+**给 Manager 的四条落地建议（第 1 条已按新证据改写）**：
+1. ~~架构不用改~~ → **架构要补**。OpenAI 兼容覆盖约 20/24 没错，
+   但 **Claude 与 Gemini 必须各写一个原生适配器**（Anthropic Messages `/v1/messages` + `x-api-key` + `anthropic-version`；
+   Gemini 的 `generativelanguage.googleapis.com`）。这两家是主流，不接说不过去。**这是我上一版漏报的工作量。**
+2. **把硬编码供应商清单改成一份 JSON 注册表**，字段对齐 A-3.3（尤其 `configFields` 与 `modelListSource`），
+   但**两处要比它做得好**：① 注册表**进 git 仓库而非远端拉取**（章程 local-first，不宜新增云依赖）；
+   ② label/help **存 i18n key 而非硬编码英文**。
+3. **每功能独立选模型**（chat / 摘要+导图 / 翻译各自一套）是它的设计，我们目前只有全局一处 —— 值得跟进。
+4. **用户指令 3 触发的连锁删除**：`llm/*` 5 个 GGUF 模型 + llama.cpp 后端包 4 个（cpu/cuda/vulkan/rocm）将失去用途。
+   **这是需要你裁决的删除决策，我不替你做。**
+   注意：删掉本地 LLM 后 `vulkan`/`rocm` 后端包也随之无用 —— 那正是我们唯一的 AMD 加速路径（见 §3.6 #44），
    **删除后「真 AMD 支持」将彻底不成立，对外话术必须同步更正。**
 
 ---
@@ -720,7 +745,10 @@ IPC 5 条：`llm:model-registry:{get-status, ensure-dir, check-update, update, r
 | memo.ac 空间数量是否真无上限 | **未见上限判断**，但不排除在我没读到的代码路径里 |
 | 代理是否作用于云 LLM / 云 ASR 调用 | ✅ **已核实为「是」**（初版标未核实，后由 subagent 定位到调用点后更正） |
 | 「测试连接」测的是什么 | ✅ **已更正**：初版我写"只测下载源"是**错的**，实为两个独立测试，代理有专属的 `test-proxy`（打 `youtube.com` 测延迟） |
-| memo.ac 的 API Key 存储方式与是否加密 | **未核实** |
-| 非 OpenAI 供应商能否改 baseURL | **未核实**；R-01 引用的 issue #353/#359 说法**本次未复核**，且与实测的 `baseURL` 字段普遍存在相矛盾 |
+| memo.ac 的 API Key 存储方式与是否加密 | ✅ **已核实**：明文 JSON（`conf/setting.conf`），`safeStorage` 0 命中；唯一的静态密钥 AES 只用于 Notion secret，不覆盖 LLM key |
+| 非 OpenAI 供应商能否改 baseURL | ✅ **已核实并推翻 R-01**：24 家里 22 家的 `configFields` 都有可编辑 `baseURL`；例外只有 Mistral（走原生 SDK，无该字段）与 Azure（必填无默认）。R-01 引的 issue #353/#359 说法**不成立** |
+| **A-3.2「它没装任何厂商 SDK」（本报告第一版结论）** | ❌ **已推翻**。实测 bundle 内联了 `@anthropic-ai/sdk` / `@google/genai` / `@langchain/{anthropic,google-genai,ollama,mistralai}`，`/v1/messages` 28 处、`x-api-key` 11 处、`api.anthropic.com` 7 处。**错因：把"打包器内联后依赖清单里看不见"误当成"没装"，且把两个同源指标当成了独立双源。** |
+| `@alicloud/tingwu20230930`（阿里通义听悟）是否为第 5 条云 ASR 通路 | **推测，未核实**（仅 1 处命中） |
+| 甲/乙两份供应商名单里 `poe`/`perplexity`/`vertexai`/`meta`/`huggingface` 是否真的可用 | **未核实** —— 它们出现在 displayName 注册表里，但不在 24 项内置 registry 对象中 |
 | 甲/乙两份供应商名单的确切分工 | **推测**，未核实 |
 | 用户说的「空间管理」指逻辑分区还是每空间独立磁盘根 | **未知 —— 建议直接问用户** |

@@ -116,3 +116,47 @@
 有一处不一致已在文档里注明：subagent 称主进程 bundle 里 `HTTPS_PROXY` 0 命中，我实测 2 命中
 （两处均在第三方库内部，读 `process.env`）——**以我的直接 grep 为准**，两者方向一致：它不靠 env 传代理。
 LLM 侧的 subagent 仍在跑，其结论若与 A-3 冲突我会再发一次更正。
+
+## [2026-08-03 05:15] T-080 UPDATE 2（推翻我自己的一条核心结论）
+
+交付: `docs/research/R-06-memo-ac-gap.md` 附录 A-3 已重写
+
+**🛑 我在 04:10 回执里给你的第 ③ 条是错的，现推翻。**
+
+- ❌ 我写的：「**memo.ac 没有为任何一家 LLM 装 SDK**，~31 家全靠一个 OpenAI 兼容客户端 + 每家一个 baseURL」，
+  还标了「高置信，独立双源核实」。
+- ✅ 实际：**混合制**。我在 12 MB 主进程 bundle 里直接 grep 计数：
+  `/v1/messages` **28** 处、`x-api-key` **11** 处、`api.anthropic.com` **7** 处、`ChatAnthropic` **5** 处、
+  `generativelanguage.googleapis.com` **5** 处、`ChatGoogleGenerativeAI` **4** 处、`ChatOllama` **2**、
+  `ChatMistralAI` / `@anthropic-ai/sdk` / `@google/genai` 各 **1**。
+  → **Claude / Gemini / Mistral / Ollama 四家有原生客户端**；其余约 20 家（DeepSeek/xAI/智谱/Groq/Together/
+  通义/豆包/MiniMax/千帆/SiliconCloud/OpenRouter/LM Studio…，`ChatDeepSeek`/`ChatXAI`/`ChatGroq` 等均 0 命中）
+  才是走 OpenAI 兼容 + baseURL。
+
+**错因（方法论，请记下来）**：我查了 `app_package.json` 与 `nm.txt` 两处都没有 `@ai-sdk/<厂商>`，就断定没装。
+但这两处**不是独立双源** —— 它们量的是同一件事：**以独立目录形式随包分发的依赖**。
+纯 JS 库会被打包器内联进 `dist-electron/main/index-*.js`，从两处同时消失；只有原生模块才留在 `nm.txt`。
+**「两处都查不到」对纯 JS 库不构成证据。我把"没看见"当成了"不存在"。**
+
+**对我们的实际影响（比我上一版给的更贵）**：
+- `openai-compatible.ts` 方向没错，覆盖约 20/24。
+- **但 Claude 与 Gemini 覆盖不了，必须各写一个原生适配器**
+  （Anthropic Messages `/v1/messages` + `x-api-key` + `anthropic-version` 头；Gemini 的 generativelanguage 端点）。
+  这两家是最主流的两家。**上一版我说"缺的只是清单与 UI"，低估了工作量，请以此版为准。**
+
+**同批次另外四条已核实的（原标未核实）**：
+1. **Key 存储**：memo.ac 是**明文 JSON**（`conf/setting.conf`），全 bundle `safeStorage` **0 命中**；
+   唯一的 AES-256-CBC 用**硬编码静态密钥+IV**，且只加密 Notion secret，**LLM key 不经过它**。
+   → 双方实质都是明文落盘，**差别是我们明确告知用户（ADR-006 强制 disclosure），它不说**。
+   它那把静态密钥 AES 是安全剧场，**别抄**。
+2. **推翻 R-01 一条**：「只有 OpenAI 能配自定义 base URL」**不成立** —— 24 家里 **22 家**的 `configFields`
+   都有可编辑 `baseURL`；例外只有 Mistral（走原生 SDK 无此字段）与 Azure（必填无默认 + 需 deploymentId/apiVersion）。
+3. **每功能独立选模型**：chat / (摘要+导图) / 翻译**各自一套** provider+model。我们只有全局一处，值得跟进。
+4. `configFields` 键全集只有 7 个（apiKey/model/baseURL/temperature/maxTokens/deploymentId/apiVersion）；
+   `modelListSource` 三模式（official-doc 人工策展带 checkedAt / official-api 打厂商 /models / local-api 打本地）。
+   ⚠️ 它的表单 label/help **硬编码英文（部分中文）不走 i18n**，这是缺陷，我们做注册表时应存 i18n key。
+
+需要 Manager 决策: 无新增（A-3.5 第 4 条的本地 LLM 删除决策仍待你拍板）。
+
+诚实声明: 本次推翻由我派出的 LLM subagent 发现线索，**结论中的每一个命中数都是我自己重跑 grep 确认的**，非转述。
+两个 subagent 均已完成，我停不掉它们（归属限制），但已无待办。

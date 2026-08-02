@@ -3,8 +3,9 @@
  *
  * 优先级：`OPENMEMO_DATA_DIR` > `--data-dir` > OS 默认。
  */
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { resolveStoreRoot } from '@openmemo/pipeline';
 
@@ -35,8 +36,39 @@ export function defaultDataDir(): string {
   return join(xdg, 'openmemo');
 }
 
+/**
+ * 数据目录指针文件的位置：**永远在 OS 默认位置**，不在数据目录里面。
+ *
+ * 鸡生蛋问题：用户把数据搬走之后，我们得先知道搬到哪了才能去读 ——
+ * 所以这个指针不能跟着数据一起走，否则搬完就再也找不到了。
+ */
+export function pointerFile(): string {
+  return join(defaultDataDir(), 'datadir.json');
+}
+
+/** 读指针。坏了/没有都返回 undefined —— 绝不因为它让 daemon 起不来。 */
+export function readDataDirPointer(): string | undefined {
+  try {
+    const raw = JSON.parse(readFileSync(pointerFile(), 'utf8')) as { dataDir?: unknown };
+    return typeof raw.dataDir === 'string' && raw.dataDir.length > 0 ? raw.dataDir : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 写指针（移动完成后调用）。 */
+export function writeDataDirPointer(dataDir: string): void {
+  const f = pointerFile();
+  mkdirSync(dirname(f), { recursive: true });
+  writeFileSync(f, JSON.stringify({ dataDir, updatedAt: new Date().toISOString() }, null, 2), {
+    mode: 0o600,
+  });
+}
+
 export function resolvePaths(override?: string): AppPaths {
-  const dataDir = process.env['OPENMEMO_DATA_DIR'] ?? override ?? defaultDataDir();
+  // 优先级：环境变量 > 命令行 > **用户搬家后写下的指针** > OS 默认
+  const dataDir =
+    process.env['OPENMEMO_DATA_DIR'] ?? override ?? readDataDirPointer() ?? defaultDataDir();
   const runtimeDir = join(dataDir, 'runtime');
   return {
     dataDir,

@@ -62,6 +62,19 @@ export interface TranscribePayload {
   readonly noteId: number;
   readonly input: string;
   readonly language?: string | null;
+  /**
+   * 用户为**这一次**转写显式指定的引擎 / 模型 / 初始 prompt。
+   *
+   * 不设时按原来的逻辑走（`pipelineFor(language)` 选引擎、`active.json` 定模型），
+   * 所以老任务的行为一个字没变。
+   *
+   * `prompt` 是 whisper 的 initial prompt：实测中文初始 prompt 能纠正繁简（ADR-013）。
+   * 之前 `TranscribeRequest.prompt` 这个字段**存在但从没有人填过** ——
+   * 类型上看得见、实际永远是 undefined，属于"看起来支持其实没接"的那一类。
+   */
+  readonly engineId?: string | null;
+  readonly modelId?: string | null;
+  readonly prompt?: string | null;
   readonly sourceKind: string;
   /**
    * F3 两阶段：这是流式稿的离线重跑，跑完要与流式稿做 `mergeTranscripts`。
@@ -180,6 +193,8 @@ export async function runTranscribeJob(
     jobId: job.uid,
     modelPath: chosen.modelPath as string, // 上面 chosenEarly.modelPath 已判空
     ...(payload.language ? { language: payload.language } : {}),
+    // 用户指定的初始 prompt：真的传下去，不再是个永远为空的字段
+    ...(payload.prompt ? { prompt: payload.prompt } : {}),
     priority: job.priority,
     signal,
     planVersion: PLAN_VERSION,

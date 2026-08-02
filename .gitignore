@@ -7,8 +7,14 @@ target/
 *.log
 
 # 运行时产物 —— 绝不入库
-models/
-bin/runtime/
+#
+# ⚠️ 这些必须**锚定到仓库根**（前导 `/`）。不带前导斜杠的 `models/` 会匹配**任意层级**
+# 同名目录，曾经因此把 `apps/web/src/features/models/` 整个 11 个源文件排除在版本库外，
+# 并且连带导致 Tailwind v4 不扫描该目录（它遵守 .gitignore）—— 该目录独有的
+# `w-[26rem]` / `z-20` / `grid-cols-[…]` 从未被生成，量化下拉因此塌成窄条并被后面的卡片盖住。
+# 一条忽略规则同时造成"代码没进库"和"样式没生成"两种毫不相干的症状，且两者都不报错。
+/models/
+/bin/runtime/
 *.gguf
 *.bin
 *.onnx
