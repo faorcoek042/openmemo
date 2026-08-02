@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": "2026.08.02",
+  "generatedAt": "2026-08-02T17:00:00Z",
+  "packs": [
+    {
+      "schemaVersion": 1,
+      "id": "sqlite-ext-linux-x64",
+      "engine": "sqlite-ext",
+      "engineVersion": "libsimple-v0.7.1+sqlite-vec-v0.1.9",
+      "ggmlAbi": null,
+      "backend": "cpu",
+      "tier": "downloadable",
+      "os": "linux",
+      "arch": "x64",
+      "displayName": "SQLite extensions — Chinese tokenizer + vector search (Linux x64)",
+      "displayNameZh": "中文分词器 + 向量检索（Linux x64）",
+      "files": [
+        {
+          "role": "archive",
+          "name": "sqlite-ext-linux-x64.tar.gz",
+          "sizeBytes": 4668718,
+          "sha256": "443551eace8372ec1b9d70cd9316e540ca66d45922bad5745eff004c3726e1c5",
+          "unpack": "tar.gz",
+          "mirrors": []
+        }
+      ],
+      "totalSizeBytes": 4668718,
+      "requiresDriver": null,
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://github.com/wangfenjin/simple/blob/master/LICENSE"
+      },
+      "providesFiles": [
+        "libsimple.so",
+        "vec0.so",
+        "dict/jieba.dict.utf8"
+      ],
+      "installPath": "bin/ext",
+      "priority": 100,
+      "availability": "pending-ci",
+      "benchmark": null,
+      "catalogVersion": "2026.08.02"
+    }
+  ]
+}

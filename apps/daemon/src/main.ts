@@ -142,6 +142,12 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
             modelPath: bundle.modelPath,
             streamAvailable: bundle.streamAvailable,
             streamModelId: bundle.streamModelId,
+            paraformerAvailable: bundle.paraformerAvailable,
+            engines: bundle.candidates.map((c) => ({
+              id: c.engine.id,
+              available: c.available,
+              ...(c.unavailableReason ? { reason: c.unavailableReason } : {}),
+            })),
             ffmpeg: bundle.tools.ffmpeg || null,
             whisperCli: bundle.tools.whisperCli,
           }
@@ -206,7 +212,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
           repos: repos_,
           sse,
           queue: queue_,
-          pipeline: bundle_.pipeline,
+          pipelineFor: (lang) => bundle_.pipelineFor(lang),
           modelPath: bundle_.modelPath,
           mediaRoot: paths.mediaDir,
           modelId: bundle_.modelPath ? bundle_.modelPath.split('/').pop() ?? 'unknown' : 'unknown',

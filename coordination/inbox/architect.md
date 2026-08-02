@@ -639,3 +639,95 @@ D-07 §7 给了我的修复优先级建议，P0 三条：
 3. **FTS `'rebuild'` 回填** —— 静默丢搜索结果，且**不会被报告**（用户只会以为自己没记过那条笔记）
 
 另：`docs/design/D-07` 我标了 `status: ready`。它会过时 —— 建议 daemon 端点补齐后重跑一次同样的比对。
+
+---
+
+## [2026-08-03 07:30] T-041 DONE —— 三条断链的真实接线结果
+
+### 结论先行：**三条里真接上了一条，另两条服务端端点仍不存在**
+
+| # | 断链 | 结果 | 真实调用证据 |
+|---|---|---|---|
+| **B-3 设置页 API Key** | ✅ **真接上，端到端验过** | 见下 ① |
+| **TipTap 笔记正文** | ✅ **真落库，端到端验过** | 见下 ② |
+| **导出真下载** | ✅ **真下载，端到端验过** | 见下 ③ |
+| **M-4 转写段落编辑** | 🔴 **仍悬空** —— 服务端**没有**段落写入路由 | 见下 ④ |
+| **M-7 锚点** | 🔴 **仍悬空** —— `PATCH /api/notes/:uid` **不接受 `anchors` 字段** | 见下 ④ |
+
+（你在任务书里写"三条 UI 现在服务端有了"，实测**只有 B-3 那条有**。TipTap 与导出各自有端点，
+M-4 与 M-7 没有。我按实际情况报，不按预期报。）
+
+### 真实调用证据（对运行中的 daemon，dataDir=/tmp/openmemo-t038）
+
+**① B-3：密钥真写入，且回读只见掩码**
+```
+PUT /api/secrets/llm.openai.apiKey  {"value":"sk-test-T041-abcd1234"}
+→ {"secret":{"key":"llm.openai.apiKey","masked":"sk-t…1234","enc":"plain",…},
+   "disclosure":{"storage":"plaintext-file","path":"/tmp/openmemo-t038/secrets.json",
+                 "filePermission":"0600","dirPermission":"0700","messageZh":"API Key 以**明文**保存在…"}}
+GET /api/secrets → [{"key":"llm.openai.apiKey","masked":"sk-t…1234",…}]   ← 无明文 ✅
+PATCH /api/settings {"llm.providers":[…],"llm.activeProviderId":"openai"}
+→ {"settings":{"llm.activeProviderId":"openai","llm.providers":[{…}]}}    ← 真持久 ✅
+```
+
+**② TipTap：`PATCH /api/notes/:uid` 真落库** → `{"uid":"01KZ0SV1…","hasBody":true}`
+
+**③ 导出：真下载，响应头正确**
+```
+GET /api/notes/:uid/export?format=srt
+Content-Type: application/x-subrip; charset=utf-8
+Content-Disposition: attachment; filename="T-038 ________.srt";
+                     filename*=UTF-8''T-038%20%E4%B8%AD%E6%96%87%E8%BD%AC%E5%86%99…
+正文：1\n00:00:00,000 --> 00:00:04,200\n大家好，今天我们来聊一聊人工智能…
+```
+
+**④ M-4 / M-7 仍无端点**（读码 + grep）
+- `grep -rn "segments/" apps/daemon/src/http/rest/` → **无命中**；`edited_at` 全仓只在 `notes.ts:172` 被**读**，无 `UPDATE`
+- `content.ts` 的 PATCH 只接受 `title` / `bodyJson` / `bodyText` / `summaryMd` —— **没有 `anchors`**
+
+### 我改了什么
+
+1. **B-3 整体重写**。我原来按 `/settings/llm` 一个聚合端点写（当时没端点，我照设计猜的）。
+   实际是**两个正交端点**：`/api/settings`（可回显的键值）+ `/api/secrets`（**服务端刻意不提供 `get()`**）。
+   **他的拆分比我的设计好**：把"能回显的"和"永远不该回显的"放进不同存储与不同接口，
+   比在一个 DTO 里靠 `hasKey`/`keyMask` 字段自律可靠得多。前端按他的改。
+2. **明文告知改用服务端下发的原文**。我上一版**硬编码了路径**（`~/.local/share/openmemo/openmemo.db`），
+   实测真实位置是 `<dataDir>/secrets.json` —— **连文件都不是同一个**。路径只有 daemon 知道，前端硬编码必然说错。
+3. **`/api/folders` 形状对齐**（以他的实现为准）：裸树数组 `[{uid,name,parentUid,sortOrder,color,icon,noteCount,children}]`。
+   我的客户端已改为容忍两种形状，无法识别时返回空数组而不是抛异常。
+4. **导出改为优先走服务端**，前端那份（27 个测试）降级为**离线兜底**。
+   服务端版本更权威：握有完整数据、且 `Content-Disposition` 带 RFC 5987 `filename*`（中文名不会变下划线）。
+   ⚠️ **两份实现是重复的**（我先做、服务端后做）—— 如实登记，请裁决留哪份。
+5. **降级态可见**（你点名的那条，我认为也最重要）：新增 `HealthBanner`，
+   轮询 `/api/health`（公开端点）把三种降级变成用户可见的条幅 + `[去修复]` 按钮：
+   - 中文分词未启用（当前 trigram）→ 中文搜索可能不准 → 跳 `/runtime`
+   - 向量检索未启用 → 语义搜索不可用
+   - 转写组件缺失（whisper-cli / asr-model）→ 导入了也转不了 → 跳 `/models`
+   **数据源就是 health，所以 `gpu-runtime` 编好扩展、装上模型之后它会自己消失**，不需要谁回来删代码。
+6. **订正了我自己一处设计判断**：我原写"投影该由前端做，服务端不该为建索引装一个 TipTap"。
+   实际规则是**有 `bodyJson` 时 `body_text` 一律由服务端推导**，客户端传的被丢弃。
+   **他是对的**：投影是索引的一部分，两个实现各自推导必然漂移。注释已改。
+
+### 验证
+
+```
+pnpm --filter @openmemo/web build → ✓ built in 218ms
+pnpm --filter @openmemo/web test  → ℹ tests 27  ℹ pass 27  ℹ fail 0
+npx eslint apps/web               → LINT_EXIT=0
+```
+
+### 剩余
+
+| # | 项 | 阻塞方 |
+|---|---|---|
+| 1 | **M-4 段落编辑端点**（`PATCH /api/transcripts/:uid/segments/:seq` + `edited_at`/`text_raw` 写入） | daemon。**这条最值得先补**：`gpu-runtime` 实测跑通过的两阶段合并"保留用户编辑"分支，判定依据就是 `edited_at`，现在永远是 NULL → 那条验证过的逻辑**在真实使用中仍然走不到** |
+| 2 | **M-7 锚点写入**（`PATCH /api/notes/:uid` 接受 `anchors`） | daemon |
+| 3 | M-5 真持久化的**刷新验证** | 我：`/api/jobs` 已接通且返回 200，但当前实例队列为空，**没有真跑一个长任务再刷新页面验证过** |
+| 4 | 导出双实现二选一 | 需裁决 |
+| 5 | D-07 §1/§2 的其余条目（runtime 包接线、FTS rebuild、chunk 续跑…） | 他人 |
+
+### 诚实声明
+- ①②③ 是我**亲手 curl 打通的**，输出如实抄录。
+- **M-4 / M-7 我没有"接上"** —— 端点不存在，我不会为了交差把 UI 指向一个不存在的路由再说"接好了"。
+- `HealthBanner` 只在 jsdom 渲染验证过，**没在真浏览器看过**；它的三个分支我用真 health 响应对过字段名。
+- 待真浏览器补验项现为 **15 项**（新增：Key 输入与保存、provider 增删、降级条幅的 [去修复] 跳转）。

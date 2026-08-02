@@ -38,7 +38,12 @@ export interface TranscribeRunnerDeps {
   readonly repos: Repos;
   readonly sse: SseHub;
   readonly queue: JobQueue;
-  readonly pipeline: TranscribePipeline;
+  /** 按语言取流水线 —— 中文会切到 Paraformer（ADR-013 决策 1）。 */
+  readonly pipelineFor: (language: string | undefined) => {
+    pipeline: TranscribePipeline;
+    engineId: string;
+    reason: string;
+  };
   readonly modelPath: string | null;
   readonly mediaRoot: string;
   readonly modelId: string;
@@ -63,7 +68,7 @@ export async function runTranscribeJob(
   deps: TranscribeRunnerDeps,
   signal: AbortSignal,
 ): Promise<void> {
-  const { repos, sse, queue, pipeline } = deps;
+  const { repos, sse, queue } = deps;
   const payload = JSON.parse(job.payload_json) as TranscribePayload;
 
   const note = repos.noteById(payload.noteId);
@@ -90,9 +95,12 @@ export async function runTranscribeJob(
     return;
   }
 
+  // 按语言选引擎（ADR-013 决策 1：中文默认 Paraformer）。
+  // engine_id 落库的是**实际用的**引擎，不是硬编码 —— 否则永远看不出选择有没有生效。
+  const chosen = deps.pipelineFor(payload.language ?? undefined);
   const transcript = repos.createTranscript({
     noteId: note.id,
-    engineId: 'whisper.cpp',
+    engineId: chosen.engineId,
     modelId: deps.modelId,
     language: payload.language ?? null,
   });
@@ -134,7 +142,7 @@ export async function runTranscribeJob(
   let segSeq = 0;
   let mediaAnnounced = false;
 
-  const result = await pipeline.run({
+  const result = await chosen.pipeline.run({
     input: payload.input,
     jobId: job.uid,
     modelPath: deps.modelPath,

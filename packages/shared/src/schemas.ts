@@ -97,7 +97,9 @@ export const ArtifactFileSchema = z.object({
   sizeBytes: ByteSizeSchema,
   sha256: Sha256Schema,
   sha1: Sha1Schema.optional(),
-  mirrors: z.array(MirrorSchema).min(1, 'at least one mirror is required'),
+  // Normally >= 1. Zero is permitted ONLY for pending-ci backend packs, where the
+  // artifact is built and hashed but not yet published — enforced by BackendManifestSchema.
+  mirrors: z.array(MirrorSchema),
   optional: z.boolean().optional(),
   platforms: z.array(PlatformSelectorSchema).optional(),
   unpack: z.enum(['zip', 'tar.gz']).nullish(),
@@ -252,7 +254,7 @@ export const BackendPackSchema = z
   .object({
     schemaVersion: z.literal(1),
     id: z.string().min(1),
-    engine: z.enum(['whisper.cpp', 'llama.cpp', 'sherpa-onnx', 'ffmpeg', 'yt-dlp']),
+    engine: z.enum(['whisper.cpp', 'llama.cpp', 'sherpa-onnx', 'ffmpeg', 'yt-dlp', 'sqlite-ext']),
     engineVersion: z.string().min(1),
     ggmlAbi: z.string().nullable(),
     backend: BackendSchema,
@@ -276,6 +278,7 @@ export const BackendPackSchema = z
     providesFiles: z.array(z.string()).min(1),
     installPath: z.string().min(1),
     priority: z.number().int(),
+    availability: z.enum(['published', 'pending-ci']).default('published'),
     benchmark: z.null(),
     catalogVersion: z.string().min(1),
   })
@@ -289,6 +292,15 @@ export const BackendManifestSchema = z
     packs: z.array(BackendPackSchema),
   })
   .strict()
+  .superRefine((m, ctx) => {
+    // A published pack must be reachable; a pending-ci pack must NOT pretend to be.
+    for (const p of m.packs) {
+      const hasUrl = p.files.some((f) => f.mirrors.length > 0);
+      if (p.availability === 'published' && !hasUrl) {
+        ctx.addIssue({ code: 'custom', message: `pack ${p.id} is 'published' but has no mirror URL` });
+      }
+    }
+  })
   .refine((m) => new Set(m.packs.map((p) => p.id)).size === m.packs.length, {
     message: 'duplicate pack id',
   });

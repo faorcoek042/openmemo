@@ -5,6 +5,7 @@ import { Activity, Cpu, FileAudio, Mic, Package, Plus, Settings, Star } from 'lu
 
 import { Banner } from './components/common/Banner';
 import { ConnectivitySummary } from './components/common/MockNotice';
+import { HealthBanner } from './components/common/HealthBanner';
 import { SearchBox } from './features/search';
 import { FolderTree } from './features/folders';
 import { Button } from './components/common/Button';
@@ -30,6 +31,8 @@ export default function App() {
           ① 顶栏一个连通性摘要（已接通 N / 模拟 M），
           ② 每个页面在自己的数据区域挂 <MockNotice surface=…/>。
           全部接通后两者都会自己消失，不需要谁记得回来删。 */}
+      {/* 产品降级态（分词未启用/转写组件缺失…）—— 装好后会自己消失 */}
+      <HealthBanner />
       {conn === 'degraded' ? <Banner tone="warning" title={t('banner.sseDegraded')} /> : null}
       {conn === 'reconnecting' ? <Banner tone="info" title={t('banner.sseReconnecting')} /> : null}
       {multiTab ? <Banner tone="info" title={t('banner.multiTab')} /> : null}

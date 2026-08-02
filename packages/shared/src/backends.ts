@@ -21,7 +21,23 @@ import type { ArtifactFile, LicenseInfo } from './artifacts.js';
 import type { Arch, Backend, OsPlatform } from './hardware.js';
 
 /** Which native engine a pack belongs to. */
-export const ENGINES = ['whisper.cpp', 'llama.cpp', 'sherpa-onnx', 'ffmpeg', 'yt-dlp'] as const;
+export const ENGINES = [
+  'whisper.cpp',
+  'llama.cpp',
+  'sherpa-onnx',
+  'ffmpeg',
+  'yt-dlp',
+  /**
+   * Loadable SQLite extensions (libsimple FTS5 tokenizer, sqlite-vec).
+   *
+   * Structurally identical to a GPU backend pack — a native archive with a digest that
+   * gets unpacked into a runtime directory — so it reuses the same downloader and the
+   * same "install it from the web page" flow. Without libsimple, Chinese FTS falls back
+   * to trigram and every query shorter than 3 characters returns zero hits, which makes
+   * Chinese search not "worse" but broken.
+   */
+  'sqlite-ext',
+] as const;
 export type Engine = (typeof ENGINES)[number];
 
 /** Package tier, per ADR-003 decision 3's L0/L1/L2 degradation chain. */
@@ -80,6 +96,18 @@ export interface BackendPack {
 
   /** Higher wins when several packs match the same hardware. */
   priority: number;
+
+  /**
+   * Whether this pack can actually be downloaded right now.
+   *
+   * `pending-ci` means the artifact has been built and its digests verified locally, but
+   * it is NOT published anywhere yet (this repo has no git remote, so CI has never run).
+   * Such entries carry real hashes for auditability — ADR-001 requires the manifest be in
+   * git — but MUST NOT be offered as a download, and MUST NOT carry an invented URL.
+   * Publishing a URL that 404s is worse than admitting the gap: the failure surfaces at
+   * click time instead of at review time.
+   */
+  availability: 'published' | 'pending-ci';
 
   /**
    * DELIBERATELY ABSENT: any relative-performance number.

@@ -4,6 +4,7 @@ import { Download, Loader2 } from 'lucide-react';
 
 import { Button } from '../../components/common/Button';
 import { EXPORT_FORMATS, buildExport, safeName, type ExportFormat } from './export';
+import { surfaceState } from '../../lib/api/surfaces';
 import type { NoteDetail } from '../../lib/api/types';
 import type { TranscriptSegmentDto } from '../../lib/events/types';
 
@@ -38,9 +39,32 @@ export function ExportMenu({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  /**
+   * 优先走服务端导出，接不通才用前端生成。
+   *
+   * daemon 落地了 `GET /api/notes/:uid/export?format=` 之后，服务端版本更权威：
+   * 它握有完整数据（不受前端分页/懒加载影响），并且能给出正确的
+   * `Content-Disposition`（含 RFC 5987 的 `filename*`，中文文件名不会变成下划线）。
+   * 实测响应头：`Content-Type: application/x-subrip; charset=utf-8` +
+   * `filename*=UTF-8''T-038%20%E4%B8%AD%E6%96%87…`。
+   *
+   * 前端那份（`export.ts`，27 个测试）保留为**离线兜底**：daemon 没起时仍能导出。
+   * 两份实现是重复的 —— 这是我先做、服务端后做造成的。**如实记在 inbox，等 Manager 裁决留哪份。**
+   */
   const run = (format: ExportFormat) => {
     setBusy(true);
     try {
+      if (surfaceState('notes') === 'live') {
+        // 让浏览器自己处理下载（保留服务端给的文件名与 MIME）
+        const a = document.createElement('a');
+        a.href = `/api/notes/${encodeURIComponent(note.uid)}/export?format=${format}`;
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        return;
+      }
+
       const spec = EXPORT_FORMATS.find((f) => f.id === format)!;
       const blob = new Blob([buildExport({ note, segments, speakerNames: speakerNames ?? {} }, format)], {
         type: spec.mime,

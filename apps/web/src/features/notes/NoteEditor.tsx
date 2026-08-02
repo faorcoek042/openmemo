@@ -28,7 +28,11 @@ import { cn } from '../../lib/utils';
  * | `body_json` | TipTap 的文档 JSON | 保真：格式、层级、将来的时间戳锚点节点 |
  * | `body_text` | 纯文本投影 | **给 FTS5 索引用**。全文检索不可能去解析富文本 JSON |
  *
- * 所以保存时**两份一起送**，由前端做投影 —— 服务端不该为了建索引去装一个 TipTap。
+ * ⚠️ **订正（T-041 实测）**：我原以为投影该由前端做（"服务端不该为建索引装一个 TipTap"）。
+ * 实际落地的规则更好 —— `content.ts` 明确：**有 `bodyJson` 时 `body_text` 一律由服务端推导**，
+ * 客户端传的 `bodyText` 被降级为可选提示并直接丢弃。
+ * 理由是对的：投影是**索引的一部分**，让两个实现各自推导必然漂移。
+ * 前端仍然传 `bodyText`（daemon 没起时的 mock 路径要用），但**知道它在真实链路上会被忽略**。
  */
 export function NoteEditor({
   noteUid,

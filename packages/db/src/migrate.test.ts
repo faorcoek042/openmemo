@@ -195,10 +195,16 @@ describe('FTS 索引回填（P0-3 静默失效回归）', () => {
       .get()?.c;
     assert.equal(before, 1, '写入后应能搜到');
 
-    // ★ 关键：分词器指纹变化 → 触发 DROP + CREATE。
-    // 不回填的话，这里之后就永远搜不到那一行了（且不报任何错）。
-    const fakeSimple = { ...noExt, tokenizer: 'simple' as const };
-    const res = migrateSearchIndex(db, fakeSimple);
+    /*
+     * ★ 关键：强制指纹失配 → 触发 DROP + CREATE。
+     *
+     * 注意不能靠"把 tokenizer 假装成 simple"来触发 —— 没装 libsimple 时
+     * `tokenize='simple'` 建表会直接失败，那测的就不是回填路径了。
+     * 直接改存储的指纹，用**同一个可用的分词器**重建，才是干净的回归。
+     */
+    db.prepare(`UPDATE app_meta SET value='0:stale' WHERE key='search_index_version'`).run();
+    const res = migrateSearchIndex(db, noExt);
+    assert.equal(res.ok, true, `重建应成功：${res.error ?? ''}`);
     assert.equal(res.rebuilt, true, '指纹变化应触发重建');
 
     const after = db

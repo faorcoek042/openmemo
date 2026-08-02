@@ -275,7 +275,9 @@
     "testFailed": "连接失败",
     "active": "使用中",
     "setActive": "设为默认",
-    "edit": "编辑"
+    "edit": "编辑",
+    "noProviders": "还没有配置任何 AI 模型服务",
+    "removeProvider": "移除 {{name}}"
   },
   "mock": {
     "notImplementedShort": "这部分还是模拟数据",
@@ -352,5 +354,11 @@
     "expand": "展开",
     "delete": "删除文件夹 {{name}}",
     "deleteHint": "删除文件夹；里面的笔记会移到「未分类」，不会被删除"
+  },
+  "health": {
+    "tokenizerDegraded": "中文分词未启用（当前 {{tokenizer}}），中文搜索可能不准确",
+    "semanticDisabled": "向量检索未启用，语义搜索暂不可用",
+    "pipelineMissing": "转写组件缺失（{{items}}），导入的音视频暂时无法转写",
+    "fix": "去修复"
   }
 }

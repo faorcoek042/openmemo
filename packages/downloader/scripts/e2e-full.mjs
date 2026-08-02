@@ -79,14 +79,43 @@ const bodyText = async () =>
 console.log(`\nT-038 real-browser verification\nbase: ${BASE}\nshots: ${path.relative(REPO, SHOTS)}\n`);
 
 /* ── boot + auth handoff ───────────────────────────────────────────────── */
-await page.goto(`${BASE}/${TOKEN ? `#t=${TOKEN}` : ''}`, { waitUntil: 'domcontentloaded' });
-await page.waitForTimeout(2500);
-const noteUid = await page.evaluate(async () => {
-  const r = await fetch('/api/notes');
-  const j = await r.json();
-  return j.notes?.[0]?.uid ?? null;
+// ── K4: the daemon prints `http://127.0.0.1:17650/#t=<token>` — test THAT exact URL ──
+let handoffStatus = null;
+page.on('response', (r) => {
+  if (r.url().includes('/api/auth/session')) handoffStatus = r.status();
 });
-console.log(`  auth OK, fixture note = ${noteUid ?? '(none)'}\n`);
+await page.goto(`${BASE}/#t=${TOKEN}`, { waitUntil: 'domcontentloaded' });
+await page.waitForTimeout(5000);
+const rootHandoff = { status: handoffStatus, cookies: (await ctx.cookies()).length, url: page.url() };
+
+// Re-enter on a route that does NOT redirect, so the remaining checks can run authenticated.
+if (rootHandoff.cookies === 0) {
+  handoffStatus = null;
+  await page.goto(`${BASE}/models#t=${TOKEN}`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(4000);
+}
+const authedNow = (await ctx.cookies()).length > 0;
+const noteUid = await page.evaluate(async () => {
+  try {
+    const r = await fetch('/api/notes');
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j.notes?.[0]?.uid ?? null;
+  } catch {
+    return null;
+  }
+});
+console.log(`  auth cookie=${authedNow} · fixture note = ${noteUid ?? '(none)'}\n`);
+
+record(
+  'K4',
+  'daemon 交接 URL `/#t=<token>` 能否登录',
+  rootHandoff.cookies > 0 ? 'yes' : 'no',
+  rootHandoff.cookies > 0
+    ? '根路径交接成功'
+    : `根路径交接失败：auth/session=${rootHandoff.status}，未拿到 cookie（首启重定向到 ${rootHandoff.url.replace(BASE, '')} 时 fragment 被清掉）；` +
+      `改从 /models#t= 进入则成功 → 这是 daemon 打印的那条 URL 在首启时不可用`,
+);
 
 /* ═══════ 已知问题 1：/tasks React #185 ═══════ */
 console.log('【已知问题】');
@@ -140,6 +169,30 @@ await shot('tasks');
     res.map((r) => `${r.w}=${r.hits}`).join(' ') +
       ` · tokenizer=${res[0]?.tok ?? 'n/a'}（libsimple 未装 → trigram 回退，三字以下必 0 命中）`,
   );
+}
+
+/* ── K2b: 中文搜索走真实网页（不只是 daemon 层）── */
+{
+  const words = ['用户', '推特', '中国', '服务'];
+  const results = [];
+  for (const w of words) {
+    await page.goto(`${BASE}/search?q=${encodeURIComponent(w)}`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(2200);
+    const hits = await page
+      .locator('[data-testid*="search-hit"], a[href*="/notes/"]')
+      .count();
+    const txt = await bodyText();
+    const empty = /没有找到|无结果|No results/.test(txt);
+    results.push(`${w}=${hits}${empty ? '(空态)' : ''}`);
+  }
+  const anyHit = results.some((r) => /=[1-9]/.test(r));
+  record(
+    'K2b',
+    '中文搜索（从网页真搜）',
+    anyHit ? 'yes' : 'no',
+    results.join(' ') + ' · 网页端搜索结果条目数',
+  );
+  await shot('search-zh');
 }
 
 /* ═══════ 14 项待补验 ═══════ */

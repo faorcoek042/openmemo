@@ -55,7 +55,15 @@ export {
 export type { RunOptions, RunResult } from './subprocess/runner.js';
 
 // -- tools ---------------------------------------------------------------------------------
-export { discoverTools, fileExists, isExecutable } from './tools.js';
+export {
+  defaultStoreRoot,
+  discoverTools,
+  fileExists,
+  findInBackendPacks,
+  findInstalledModel,
+  isExecutable,
+  listInstalledModels,
+} from './tools.js';
 export type { ManagedDirs, ToolPaths } from './tools.js';
 
 // -- media sources -------------------------------------------------------------------------

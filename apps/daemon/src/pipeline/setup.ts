@@ -11,6 +11,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
+  ParaformerEngine,
   SherpaOnnxEngine,
   TranscribePipeline,
   WhisperCppEngine,
@@ -22,6 +23,8 @@ import {
   type AsrStream,
   type EngineCandidate,
   type EngineId,
+  type ParaformerModel,
+  type PunctuationModel,
   type SherpaTransducerModel,
   type StreamRequest,
   type ManagedDirs,
@@ -53,6 +56,12 @@ export interface PipelineBundle {
     engineId: string;
     reason: string;
   } | null;
+  /** 按语言取流水线（内部按引擎缓存）。中文会走 Paraformer（ADR-013 决策 1）。 */
+  pipelineFor(language: string | undefined): {
+    pipeline: TranscribePipeline;
+    engineId: string;
+    reason: string;
+  };
   /**
    * F3 流式：打开一路会话。**引擎不可用时返回 undefined** ——
    * D-06 §15.1 明确要求"`isAvailable()` 为假时不要调用 `openStream()`"，
@@ -61,6 +70,8 @@ export interface PipelineBundle {
   openStream(req: { language?: string; signal: AbortSignal }): AsrStream | undefined;
   readonly streamModelId: string;
   readonly streamAvailable: boolean;
+  /** 离线中文引擎是否可用（ADR-013 决策 1）。 */
+  readonly paraformerAvailable: boolean;
 }
 
 function firstExisting(...candidates: Array<string | null | undefined>): string | null {
@@ -160,9 +171,41 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
       missing.push('sherpa-stream-model');
     }
   }
+  /*
+   * Paraformer：**离线中文引擎**（ADR-013 决策 1 定的中文默认）。
+   *
+   * 之前只接了流式 SherpaOnnxEngine，离线中文一直落回 whisper —— 于是
+   * ADR-013 的中文默认引擎从来没生效过（`engine_id` 一直是 `whisper.cpp`）。
+   *
+   * 目录约定与 sherpa 官方发布包一致：`model.int8.onnx` + `tokens.txt`。
+   * 标点模型可选，但**没有它转写稿一个标点都没有** —— 读起来难受，
+   * 而且作为 F4 的 LLM 输入质量明显更差，所以能配就配上。
+   */
+  let paraformer: ParaformerEngine | undefined;
+  const paraDir = env['OPENMEMO_PARAFORMER_DIR'];
+  if (paraDir) {
+    const model = resolveParaformerModel(paraDir);
+    if (model) {
+      const punctDir = env['OPENMEMO_PUNCT_DIR'];
+      const punctuation = punctDir ? resolvePunctuationModel(punctDir) : undefined;
+      paraformer = new ParaformerEngine({
+        tools,
+        cwd: paths.tmpDir,
+        model,
+        ...(punctuation ? { punctuation } : {}),
+        provider: 'cpu',
+      });
+      engines.push(paraformer);
+    } else {
+      missing.push('paraformer-model');
+    }
+  }
+
   const candidates = await buildCandidates(engines);
   const sherpaAvailable =
     candidates.find((c) => c.engine === sherpa)?.available ?? false;
+  const paraformerAvailable =
+    candidates.find((c) => c.engine === paraformer)?.available ?? false;
 
   const pickEngine = (
     language: string | undefined,
@@ -181,8 +224,29 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
     return { engine: sel.engine, engineId: sel.engineId, reason: sel.reason };
   };
 
-  // 默认引擎仍是 whisper；按语言切换发生在 job 层（见 transcribe runner）
+  // 默认引擎 whisper；**按语言切换发生在 job 层** —— 见 pipelineFor()
   const pipeline = new TranscribePipeline({ tools, dirs, registry, asr: whisper });
+
+  /*
+   * 按语言取一条流水线。
+   *
+   * `TranscribePipeline` 的引擎是构造期注入的，没有 per-run 覆盖，
+   * 所以这里为选中的引擎现建一条（构造很轻，只是把几个引用装进对象）。
+   * 缓存一下避免每个 job 都重建。
+   */
+  const pipelineCache = new Map<string, TranscribePipeline>();
+  const pipelineFor = (
+    language: string | undefined,
+  ): { pipeline: TranscribePipeline; engineId: string; reason: string } => {
+    const sel = pickEngine(language);
+    if (!sel) return { pipeline, engineId: 'whisper.cpp', reason: 'fallback: 无可用候选' };
+    let p = pipelineCache.get(sel.engineId);
+    if (!p) {
+      p = new TranscribePipeline({ tools, dirs, registry, asr: sel.engine });
+      pipelineCache.set(sel.engineId, p);
+    }
+    return { pipeline: p, engineId: sel.engineId, reason: sel.reason };
+  };
 
   const streamModelId = sherpa ? 'streaming-zipformer-zh-14M' : 'none';
 
@@ -206,10 +270,47 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
     modelPath,
     candidates,
     pickEngine,
+    pipelineFor,
     openStream,
     streamModelId,
     streamAvailable: sherpaAvailable,
+    paraformerAvailable,
   };
+}
+
+/** 从 Paraformer 发布目录解析模型文件。**优先 int8**（CPU 上更快、体积更小）。 */
+function resolveParaformerModel(dir: string): ParaformerModel | undefined {
+  let files: string[];
+  try {
+    files = readdirSync(dir);
+  } catch {
+    return undefined;
+  }
+  const onnx =
+    files.find((f) => f === 'model.int8.onnx') ??
+    files.find((f) => f.endsWith('.int8.onnx')) ??
+    files.find((f) => f.endsWith('.onnx'));
+  const tokens = files.find((f) => f === 'tokens.txt');
+  if (!onnx || !tokens) return undefined;
+  return {
+    model: join(dir, onnx),
+    tokens: join(dir, tokens),
+    modelId: 'paraformer-zh-small',
+    languages: ['zh', 'en'],
+  };
+}
+
+/** 标点模型（CT-Transformer）。可选 —— 没有它转写稿零标点。 */
+function resolvePunctuationModel(dir: string): PunctuationModel | undefined {
+  let files: string[];
+  try {
+    files = readdirSync(dir);
+  } catch {
+    return undefined;
+  }
+  const onnx = files.find((f) => f.endsWith('.onnx'));
+  if (!onnx) return undefined;
+  return { model: join(dir, onnx), modelId: 'ct-punct-zh-en' };
 }
 
 /**
