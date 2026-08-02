@@ -1,7 +1,15 @@
 /**
- * 下载任务 REST（`/api/jobs**`）。
+ * 任务 REST（`/api/jobs**`）。
  *
- * 任务本身归 `DownloadQueue`（packages/downloader）；这里只做 HTTP 映射。
+ * ⚠️ 这里有**两套队列**，别混：
+ *   - `state.queue`  = `DownloadQueue`（packages/downloader）—— 模型/后端包下载
+ *   - `pipelineJobs` = daemon 自己的 `JobQueue` + `Scheduler` —— 转写 / 导图
+ *
+ * 原先只接了前者，于是**转写任务根本取消不掉**（`Scheduler.cancel()` 零调用方，
+ * UI 上的取消按钮是假的）。复合起来最难看：取消不了 → 用户杀 daemon →
+ * 子进程还活着吃 CPU → 重启从第 0 块重来 → 之前转好的还看不见了。
+ * 这正是 chunk 分层设计要避免的失败模式。
+ *
  * 进度**不在响应里返回**，一律走全局单条 SSE（D-01 §3.2 规则 2）。
  */
 import type { ServerResponse } from 'node:http';
@@ -23,6 +31,21 @@ export function toPullResponse(job: DownloadJob, deduplicated: boolean): PullRes
     eventsUrl: EVENTS_URL,
     deduplicated,
   };
+}
+
+/** 流水线任务（转写/导图）的取消与查询钩子。由 main.ts 注入。 */
+export interface PipelineJobHooks {
+  /** 返回 true 表示这个 uid 确实是流水线任务且已受理取消。 */
+  cancel(jobUid: string, hard: boolean): boolean;
+  pause(jobUid: string): boolean;
+  resume(jobUid: string): boolean;
+}
+
+let pipelineJobs: PipelineJobHooks | undefined;
+
+/** main.ts 在调度器建好之后调用一次。 */
+export function setPipelineJobHooks(hooks: PipelineJobHooks): void {
+  pipelineJobs = hooks;
 }
 
 export function handleJobRoutes(
@@ -82,9 +105,26 @@ function handleJobAction(
     if (state.queue.cancel(jobId)) {
       res.writeHead(204);
       res.end();
-    } else {
-      sendError(res, 409, 'CONFLICT', 'job is absent or already terminal', '任务不存在或已结束');
+      return true;
     }
+    // 下载队列不认识它 → 可能是流水线任务（转写/导图）
+    if (pipelineJobs?.cancel(jobId, false)) {
+      res.writeHead(204);
+      res.end();
+      return true;
+    }
+    sendError(res, 409, 'CONFLICT', 'job is absent or already terminal', '任务不存在或已结束');
+    return true;
+  }
+
+  if (action === 'pause' && pipelineJobs?.pause(jobId)) {
+    res.writeHead(204);
+    res.end();
+    return true;
+  }
+  if (action === 'resume' && pipelineJobs?.resume(jobId)) {
+    res.writeHead(204);
+    res.end();
     return true;
   }
 

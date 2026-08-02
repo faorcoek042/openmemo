@@ -17,6 +17,8 @@ import { openAppDatabase, defaultExtensionPaths, type AppDatabase } from '@openm
 import {
   BIND_HOST,
   DEFAULT_PORT,
+  DataDirLockedError,
+  acquireDataDirLock,
   acquireSingleInstance,
   createUnboundServer,
   removeRuntimeJson,
@@ -37,6 +39,7 @@ import { runTranscribeJob } from './jobs/runners/transcribe.js';
 import { createNoteRoutes } from './http/rest/notes.js';
 import { createContentRoutes } from './http/rest/content.js';
 import { createRuntimeRoutes } from './http/rest/hardware.js';
+import { setPipelineJobHooks } from './http/rest/jobs.js';
 import { createSettingsRoutes } from './http/rest/settings.js';
 import { createOrganizeRoutes } from './http/rest/organize.js';
 import { createUploadRoutes } from './http/upload.js';
@@ -91,6 +94,12 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
   for (const dir of [paths.dataDir, paths.runtimeDir, paths.logsDir, paths.tmpDir]) {
     mkdirSync(dir, { recursive: true });
   }
+
+  /*
+   * 数据目录锁必须在**打开数据库之前**拿到 —— 否则第二个实例已经写过库了才被拒。
+   * 端口锁挡不住"换端口、同 dataDir"这种情况（D-01 §2.3 第二道）。
+   */
+  const dirLock = acquireDataDirLock(paths.dataDir);
 
   const token = generateToken();
   const sessions = new SessionStore(token);
@@ -166,11 +175,13 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
   if (outcome.kind === 'existing') {
     server.close();
     sse.close();
+    dirLock.release();
     throw new AlreadyRunningError(outcome.info);
   }
   if (outcome.kind === 'conflict') {
     server.close();
     sse.close();
+    dirLock.release();
     throw new StartupConflictError(outcome.reason);
   }
 
@@ -241,6 +252,30 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     scheduler = new Scheduler({ queue, lanes, sse, handlers });
     scheduler.start();
 
+    // 把流水线任务的取消/暂停接到 /api/jobs/:id/*（此前 Scheduler.cancel 零调用方）
+    const sched = scheduler;
+    setPipelineJobHooks({
+      cancel: (uid, hard) => {
+        const job = queue_.byUid(uid);
+        if (!job) return false;
+        sched.cancel(job.id, hard);
+        return true;
+      },
+      pause: (uid) => {
+        const job = queue_.byUid(uid);
+        if (!job) return false;
+        queue_.requestPause(job.id);
+        sched.cancel(job.id, false); // 软停：worker 在 chunk 边界退出并保留 checkpoint
+        return true;
+      },
+      resume: (uid) => {
+        const job = queue_.byUid(uid);
+        if (!job) return false;
+        queue_.resume(job.id);
+        return true;
+      },
+    });
+
     // WS 必须在 pipeline 就绪之后挂 —— 录音会话依赖流式引擎
     attachWebSocket(server, {
       sessions,
@@ -290,6 +325,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
   } catch (err) {
     server.close();
     sse.close();
+    dirLock.release();
     throw err;
   }
 
@@ -335,6 +371,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     }
     database?.close();
     removeRuntimeJson(paths.runtimeJson);
+    dirLock.release();
   };
 
   return {
@@ -385,6 +422,11 @@ async function mainCli(): Promise<void> {
       console.error(`[daemon] ${err.message}`);
       console.error('[daemon] 单实例锁生效：不会启动第二个进程。');
       process.exit(3);
+    }
+    if (err instanceof DataDirLockedError) {
+      console.error(`[daemon] ${err.message}`);
+      console.error('[daemon] 数据目录锁生效：不会启动第二个实例。');
+      process.exit(5);
     }
     if (err instanceof StartupConflictError) {
       console.error(`[daemon] 启动冲突：${err.message}`);

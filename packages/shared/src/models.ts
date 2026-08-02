@@ -5,6 +5,7 @@
  * and one removal. See artifacts.ts for the full provenance note.
  */
 
+import type { Engine } from './backends.js';
 import type {
   ArtifactFile,
   BenchmarkResult,
@@ -93,6 +94,19 @@ export interface ModelEntry {
   languages: string[];
   /** Free-form catalog tags, e.g. ["recommended-default", "multilingual"]. */
   tags: string[];
+
+  /**
+   * Which inference engines can actually LOAD this file.
+   *
+   * Added after a cross-module bug: the VAD entry shipped `silero_vad.onnx` (sherpa-onnx
+   * format) while whisper.cpp requires a ggml `ggml-silero-*.bin`. The manifest validated,
+   * the SHA-256 matched, the download succeeded — and the engine still could not load it.
+   * "Installs fine" is not "works", and nothing in the schema could express the difference.
+   *
+   * Same weights in a different container are DIFFERENT entries, because the consumer
+   * differs. The pipeline must filter by engine before offering a model for a given role.
+   */
+  engines: Engine[];
 
   /**
    * Languages for which this model is NOT recommended (ADR-011 decision 1).

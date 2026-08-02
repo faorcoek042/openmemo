@@ -82,7 +82,8 @@
       "vtt": "字幕 VTT",
       "json": "JSON（完整）"
     },
-    "exportServerOnly": "DOCX / PDF 需服务端支持，暂未提供"
+    "exportServerOnly": "DOCX / PDF 需服务端支持，暂未提供",
+    "exportNeedsDaemon": "导出需要本地服务在运行"
   },
   "detail": {
     "tabs": {
@@ -360,5 +361,40 @@
     "semanticDisabled": "向量检索未启用，语义搜索暂不可用",
     "pipelineMissing": "转写组件缺失（{{items}}），导入的音视频暂时无法转写",
     "fix": "去修复"
+  },
+  "diagnostics": {
+    "title": "诊断",
+    "recheck": "重新检测",
+    "copy": "复制诊断信息",
+    "probeCaveat": "本页检查的是「组件是否加载」。更强的「功能是否真的可用」自检（例如中文词在 FTS5 里能否匹配）目前只有命令行版 scripts/selfcheck.mjs，尚无对应的接口，所以这里给不出功能级结论。绿灯不等于功能一定可用。",
+    "daemonDown": "连不上本地服务",
+    "daemonDownHint": "OpenMemo 的本地服务没有在运行，或端口已变更。",
+    "groupService": "服务",
+    "groupStorage": "存储与检索",
+    "groupPipeline": "转写流水线",
+    "groupApi": "接口连通性",
+    "daemon": "本地服务",
+    "dataDir": "数据目录",
+    "liveUpdates": "实时更新",
+    "sseClients": "{{n}} 个连接",
+    "database": "数据库",
+    "chineseTokenizer": "中文分词",
+    "vectorIndex": "向量索引",
+    "tokenizerOk": "已启用（{{tokenizer}}）",
+    "tokenizerFallback": "未启用，已退回 {{tokenizer}}，中文搜索可能不准",
+    "enabled": "已启用",
+    "semanticOff": "未启用，语义搜索不可用",
+    "asrEngine": "语音识别引擎",
+    "notFound": "未找到",
+    "ready": "就绪",
+    "missingItems": "缺少：{{items}}",
+    "scheduler": "任务调度",
+    "runningJobs": "{{n}} 个任务进行中",
+    "surface": {
+      "live": "已接通",
+      "mock": "接口未实现（模拟数据）",
+      "offline": "服务未连接",
+      "unknown": "尚未调用"
+    }
   }
 }

@@ -82,7 +82,8 @@
       "vtt": "Subtitles VTT",
       "json": "JSON (full)"
     },
-    "exportServerOnly": "DOCX / PDF need server support — not available yet"
+    "exportServerOnly": "DOCX / PDF need server support — not available yet",
+    "exportNeedsDaemon": "Export requires the local service to be running"
   },
   "detail": {
     "tabs": {
@@ -360,5 +361,40 @@
     "semanticDisabled": "Vector index is not enabled; semantic search is unavailable",
     "pipelineMissing": "Transcription components missing ({{items}}); imported media cannot be transcribed yet",
     "fix": "Fix"
+  },
+  "diagnostics": {
+    "title": "Diagnostics",
+    "recheck": "Re-check",
+    "copy": "Copy report",
+    "probeCaveat": "This page checks whether components are loaded. The stronger \"does the feature actually work\" self-check (e.g. whether a Chinese word matches in FTS5) currently exists only as the CLI scripts/selfcheck.mjs with no HTTP endpoint, so no feature-level verdict is shown here. A green light does not guarantee the feature works.",
+    "daemonDown": "Cannot reach the local service",
+    "daemonDownHint": "The OpenMemo local service is not running, or the port changed.",
+    "groupService": "Service",
+    "groupStorage": "Storage & search",
+    "groupPipeline": "Transcription pipeline",
+    "groupApi": "API connectivity",
+    "daemon": "Local service",
+    "dataDir": "Data directory",
+    "liveUpdates": "Live updates",
+    "sseClients": "{{n}} connection(s)",
+    "database": "Database",
+    "chineseTokenizer": "Chinese tokenizer",
+    "vectorIndex": "Vector index",
+    "tokenizerOk": "enabled ({{tokenizer}})",
+    "tokenizerFallback": "not enabled, fell back to {{tokenizer}}; Chinese search may be inaccurate",
+    "enabled": "enabled",
+    "semanticOff": "not enabled; semantic search unavailable",
+    "asrEngine": "Speech recognition engine",
+    "notFound": "not found",
+    "ready": "ready",
+    "missingItems": "missing: {{items}}",
+    "scheduler": "Scheduler",
+    "runningJobs": "{{n}} job(s) running",
+    "surface": {
+      "live": "live",
+      "mock": "endpoint not implemented (simulated)",
+      "offline": "service not connected",
+      "unknown": "not called yet"
+    }
   }
 }

@@ -236,7 +236,11 @@ export function createOrganizeRoutes(deps: OrganizeRoutesDeps): {
       // ---- GET /api/folders | POST /api/folders ----
       if (p === '/api/folders') {
         if (method === 'GET') {
-          sendJson(res, 200, buildFolderTree(repos.listFolders(), repos.folderNoteCounts()));
+          // 统一成 `{folders: [...]}` —— 与 /api/notes、/api/secrets、/api/tags
+          // 的信封一致。裸数组不利于以后加分页/元信息，也和其它端点不对称。
+          sendJson(res, 200, {
+            folders: buildFolderTree(repos.listFolders(), repos.folderNoteCounts()),
+          });
           return true;
         }
         if (method === 'POST') {

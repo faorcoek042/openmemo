@@ -24,6 +24,9 @@
         "recommended-default",
         "multilingual"
       ],
+      "engines": [
+        "whisper.cpp"
+      ],
       "files": [
         {
           "role": "weights",
@@ -101,6 +104,9 @@
       "tags": [
         "multilingual"
       ],
+      "engines": [
+        "whisper.cpp"
+      ],
       "files": [
         {
           "role": "weights",
@@ -161,6 +167,9 @@
       ],
       "tags": [
         "multilingual"
+      ],
+      "engines": [
+        "whisper.cpp"
       ],
       "files": [
         {
@@ -251,6 +260,9 @@
         "multilingual",
         "high-accuracy"
       ],
+      "engines": [
+        "whisper.cpp"
+      ],
       "files": [
         {
           "role": "weights",
@@ -318,6 +330,9 @@
       "tags": [
         "multilingual",
         "high-accuracy"
+      ],
+      "engines": [
+        "whisper.cpp"
       ],
       "files": [
         {
@@ -412,6 +427,9 @@
       "tags": [
         "multilingual"
       ],
+      "engines": [
+        "whisper.cpp"
+      ],
       "files": [
         {
           "role": "weights",
@@ -481,6 +499,9 @@
       "tags": [
         "multilingual",
         "cpu-friendly"
+      ],
+      "engines": [
+        "whisper.cpp"
       ],
       "files": [
         {
@@ -552,6 +573,9 @@
         "multilingual",
         "cpu-friendly",
         "benchmark-default"
+      ],
+      "engines": [
+        "whisper.cpp"
       ],
       "files": [
         {
@@ -633,6 +657,9 @@
         "multilingual",
         "cpu-friendly",
         "smoke-test"
+      ],
+      "engines": [
+        "whisper.cpp"
       ],
       "files": [
         {

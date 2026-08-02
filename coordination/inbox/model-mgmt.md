@@ -343,3 +343,148 @@ whisper 无 `-l` 会**静默把中文翻译成英文**，调用方必须显式�
   已改为用 `/api/jobs` 的 job state 判定完成，而不是猜 DOM。
 - daemon 在测试中途挂过两次，导致 notes/search/settings 的接口调用显示"上游无法访问"。
   那些 🔴 里**混有环境问题**，我没有把它们算作产品缺陷。
+
+---
+
+## [2026-08-02 18:05] T-038 DONE（含 libsimple/sqlite-vec 并入）
+
+脚本 `packages/downloader/scripts/e2e-full.mjs`（可重复跑）· 截图 → `docs/design/assets/t038-e2e/`
+后端：**真 apps/daemon**（隔离数据目录 `/tmp/openmemo-t038`）+ reference-server `--proxy-all` 仅托管 SPA。
+
+### 逐项结果
+
+| # | 项 | 结果 | 说明 |
+|---|---|---|---|
+| K1 | `/tasks` React #185 | **YES 已修** | 不再崩溃，13 个可交互元素；刷新后仍存活 |
+| 12 | 任务中心刷新后仍在 | YES | |
+| K2 | 中文搜索（daemon 层） | **YES** | `用户=3 推特=1 中国=1 服务=2 维基百科=1`，`tokenizer=simple vec=on` |
+| K2b | 中文搜索（网页层） | **YES**（见更正） | 网页真渲染出 3 条带时间点的结果 |
+| K3 | 暗色主题未退化 | YES | 引导/设置/笔记详情/模型/运行时 5 页 `--surface-0` 均随 `data-theme` 切换 |
+| K4 | **daemon 交接 URL `/#t=<token>`** | **NO（新发现）** | 见下 |
+| 6 | 首启引导跳转 | YES | 点击后页面推进 |
+| 2 | 拖拽上传 | PARTIAL | 有 `input[type=file]`，真实 `DragEvent+DataTransfer` drop 已派发但**界面无反应** |
+| 13 | 搜索结果直达时间点 | PARTIAL | 结果**带时间戳**（0:04/0:09/0:33），但点击跳到 `/notes?folder=…` 无时间参数 |
+| 1,3,4,7,8,14 | 段落编辑/标签/星标/TipTap/导出/锚点 | **全部被同一个崩溃挡住** | 见下 |
+| 9 | 文件夹树操作 | NO | 找不到新建入口（树上 0 项） |
+| 10,11 | 导图拖拽/右键/撤销、SVG/PNG 导出 | NO | 导图页整页崩溃 |
+| R1 | 模型页（真 daemon） | **YES** | 2 张卡 · 2 个 fit 徽标 · 2 个下载按钮 |
+| R2 | 运行时页（真 daemon） | **YES** | 硬件卡 1 · 后端包 10 |
+
+### 🔴 两个新发现（都只有真浏览器能抓到）
+
+**1. 笔记详情页 + 导图页整页白屏**
+```
+Unexpected Application Error!
+TypeError: Cannot read properties of undefined (reading 'map')
+  at ay (assets/ExportMenu-*.js)
+```
+**根因是三方契约缺口，我已定位到底**：
+`NoteDetailPage.tsx:93` 渲染 `<TagEditor tags={n.tags} />`；
+**daemon 的 `GET /api/notes/:uid` 从不返回 `tags`**（grep 零命中）；
+**我收编的 `shared/notes.ts` 也没声明 `tags`** —— 三边三个假设，结果是一张白页。
+→ **我已在 `shared` 补上 `NoteDetail.tags: NoteTag[]` 与 `starred: boolean`，并强制"永远是数组、`[]` 而非缺省"**
+（缺省与"没有标签"在调用点无法区分，所以 schema 不允许缺省）。
+请 `oss-scout` 让 daemon 返回这两个字段，`architect` 加空值兜底。
+**item 1/3/4/7/8/14 全部是被这个崩溃挡住的，不是功能缺失** —— 修好后需重测。
+
+**2. daemon 打印的交接 URL 首启不可用**
+daemon 启动打印 `http://127.0.0.1:17650/#t=<token>`，这正是用户要点的那条。
+实测：从 `/#t=` 进入 → 首启重定向 `/onboarding` **把 fragment 清掉了** →
+`POST /api/auth/session` 无 Authorization 头 → **401，拿不到 cookie，整个应用未认证**。
+从 `/onboarding#t=` 或 `/models#t=` 进入则 **200 正常**。
+→ 首次使用的用户会打开一个全是"未认证"的应用。属 `architect`（`connect.ts` 与路由重定向的竞态）。
+
+### ✅ 我自己的一处误报（已更正）
+K2b 我最初报"网页搜索 0 命中"。**是我的选择器错了，不是产品坏了。**
+用 `a[href*="/notes/"]` 找结果，而实际 DOM 不是这个结构。
+重新取真实 DOM 后确认：网页**确实渲染出 3 条结果并带时间点**
+（`0:04 首先要谈的是用户增长…` / `0:09 我在推特上…` / `0:33 用户体验…`）。
+**先质疑测试，再质疑代码 —— 这次又是测试的错。** 已在表中更正为 YES。
+
+### libsimple + sqlite-vec 并入 `vendor/manifests/`
+新增 `vendor/manifests/sqlite-ext.json`，采用 `gpu-runtime` 实测的 sha256（archive
+`443551eace…`, 4,668,718 B，含 5 个 jieba 词典 + `libsimple.so` + `vec0.so`）。
+许可证按 R-03 取 MIT 支，`licenseNote` 保留双授权说明。
+
+**为把它纳入统一下载器，扩了两处 schema：**
+1. `ENGINES` += `'sqlite-ext'` —— 它结构上就是"带摘要的原生归档解压到运行目录"，与 GPU 后端包同形，
+   因此复用同一个下载器与同一条"网页点一下装"的路径。
+2. **新增 `availability: 'published' | 'pending-ci'`** —— 这是关键的诚实字段。
+   本仓库**没有 git remote，CI 从未跑过**，所以这个包**根本没有可下载的 URL**。
+   我**拒绝编一个将来可能存在的 GitHub Release 链接**：那会让失败推迟到用户点击时才爆，
+   而不是在评审时就暴露。`pending-ci` 表示"已构建、摘要已核实、可审计，但尚不可下载"。
+   schema 加了强制校验：**`published` 却没有任何 mirror URL 直接判不合法**，已实测：
+   `guard test — published with no mirror: REJECTED (correct)`。
+   mac/Windows 的 `.dylib`/`.dll` **未构建**，因此**清单里根本没有这两条**（同 backends.json 的处理：
+   宁可没有，也不要一个指向不存在文件的条目）。
+
+### 验收门（真实 exit code）
+```
+pnpm -r build: 0      tsc(shared+downloader): 0     eslint(mine): 0
+5 份 manifest zod 全部 VALID（含新 sqlite-ext.json）
+```
+
+### 需要 Manager 决策 / 转达
+1. **`NoteDetail.tags`/`starred` 三方缺口** → daemon 补返回、UI 补兜底。修完我可立刻重测被挡住的 6 项。
+2. **`/#t=` 首启 401** → `architect`（路由重定向早于 token 消费）。这是用户拿到的第一条 URL。
+3. 拖拽上传 `onDrop` 仍无反应；文件夹树无新建入口；搜索结果点击不带时间参数。
+4. `sqlite-ext` 与全部后端包都卡在**没有 git remote**：manifest 齐了、hash 齐了，就是发布不了。
+   这是目前唯一挡住"网页点一下装中文分词器"的东西。
+
+### 自查
+- 我的 fixture 用**隔离数据目录**（`OPENMEMO_DATA_DIR=/tmp/openmemo-t038`），
+  没有写 `oss-scout` 的共享生产库（首次尝试被安全策略挡下，挡得对，我换了做法）。
+- 我的 proxy shim 自己有过两个 bug（`setHeader` 在 `writeHead` 之后 → cookie 丢失；SSE 断开后重复写 header
+  导致进程退出），都已修；**这两个是我的测试基建缺陷，没有算进产品缺陷**。
+- 性能一律未测（按用户指令）。
+
+---
+
+## [2026-08-02 18:40] VAD 格式错误 修复
+
+### 你报的问题：确认存在，已修
+`vad/silero-vad` 只给了 `silero_vad.onnx`（sherpa 格式），whisper.cpp 加载不了 —— 装得上、校验过、就是用不了。
+
+**已拆成两条，按引擎区分：**
+
+| id | 格式 | 文件 | 体积 | 引擎 |
+|---|---|---|---|---|
+| `vad/silero-vad-onnx` | ONNX | `silero_vad.onnx` | 2,327,524 B | `sherpa-onnx`（F3 流式） |
+| `vad/silero-vad-ggml` | ggml | `ggml-silero-v6.2.0.bin` | 885,098 B | `whisper.cpp`（离线转写） |
+
+ggml 版来源实测确认：`download-vad-model.sh` 里 `src="https://huggingface.co/ggml-org/whisper-vad"`，
+sha256 `2aa269b785eeb53a8298...`（v6.2.0）。两条描述里互相点名对方
+（「whisper.cpp 用不了这个文件，它要 ggml 那一个」），避免下一个人再踩。
+
+### 结构性修复：新增 `ModelEntry.engines`（必填，至少 1 个）
+只补这一条数据不够 —— **schema 里没有任何东西能表达"哪个引擎能加载它"**，
+所以这类 bug 一定会重现。现在每个模型都必须声明 `engines`，流水线按引擎过滤后才能提供选择。
+全部 3 份模型 manifest 已回填：whisper 系 `['whisper.cpp']`、LLM 系 `['llama.cpp']`、
+sherpa/paraformer/标点 `['sherpa-onnx']`。
+
+### 按你转达的原则验证：验「功能可用」不验「组件存在」
+我没有只校验 sha256（那正是这次漏掉问题的原因 —— **hash 对得上完全不代表引擎认得**）。
+改为真下载后**读容器魔数**：
+
+    vad/silero-vad-ggml   ggml-silero-v6.2.0.bin  885098B   magic="lmgg"  ggml-container=true
+    vad/silero-vad-onnx   silero_vad.onnx        2327524B   magic 非 ggml  ggml-container=false
+
+`lmgg` = 小端 `ggml`，确认确实是 ggml 容器；ONNX 那个不是。**两者格式真的不同，修复成立。**
+
+⚠️ 顺带一个佐证我们判重规则的巧合：`ggml-silero-v5.1.2.bin` 与 `v6.2.0.bin`
+**体积完全相同（都是 885,098 B），sha256 不同**。按体积判重会把两个版本混为一谈 ——
+ADR-004 决策 4 的"一律按 SHA256 判重"在这里刚好有了实例。
+
+### L1 CPU 包仍然禁止删除（现在有产品级证据了）
+`BackendPackCard.tsx:41` `isLoadBearing = tier==='builtin' || backend==='cpu'`，
+第 149 行 `disabled={isLoadBearing}` + 悬停说明为什么。
+`gpu-runtime` 的 SIGABRT 实证（删光 CPU 后端 → job failed、daemon HTTP 200 存活）
+让这条从"我读 ADR 得出的约束"变成"有实测后果的约束"，保持不变。
+
+### 验收门（真实 exit code）
+    tsc: 0   eslint: 0   web build: 0   verify-offline: 0   verify-unpack: 0   5 份 manifest: VALID
+
+### 自查
+- 这个 bug 我 T-038 时没抓到，因为我的验证止步于「sha256 对得上 + zod 通过」。
+  **"装得上"和"能用"之间的那一步，我当时没验。** `gpu-runtime` 的标准是对的，已采纳为我这边的默认做法。
+- `ggml-silero-v5.1.2.bin` 我**没有**收进目录（whisper.cpp 默认用 v6.2.0），避免给用户无谓的选择。

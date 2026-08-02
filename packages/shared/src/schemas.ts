@@ -179,6 +179,10 @@ export const ModelEntrySchema = z
     descriptionEn: z.string(),
     languages: z.array(z.string()).min(1),
     tags: z.array(z.string()),
+    // Which engines can load this file. Required: a model nobody can load is not a model.
+    engines: z
+      .array(z.enum(['whisper.cpp', 'llama.cpp', 'sherpa-onnx', 'ffmpeg', 'yt-dlp', 'sqlite-ext']))
+      .min(1, 'at least one engine must be able to load this model'),
     // ADR-011 decision 1 — languages where we MEASURED the output to be unacceptable.
     notRecommendedFor: z.array(z.string()).optional(),
     files: z.array(ArtifactFileSchema).min(1),

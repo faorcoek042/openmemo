@@ -5,7 +5,7 @@
   "models": [
     {
       "schemaVersion": 1,
-      "id": "vad/silero-vad",
+      "id": "vad/silero-vad-onnx",
       "groupId": "vad/silero-vad",
       "role": "vad",
       "family": "silero",
@@ -13,16 +13,19 @@
       "format": "onnx",
       "quantization": "f16",
       "quantTier": "small",
-      "displayName": "Silero VAD",
-      "displayNameZh": "Silero 语音活动检测",
-      "descriptionZh": "语音活动检测。长音频分块的地基 —— 没有它无法把几十分钟的录音切成可转写的片段。仅 2.3 MB，建议始终安装。",
-      "descriptionEn": "Voice activity detection. The foundation of long-audio chunking; without it multi-minute recordings cannot be segmented. Only 2.3 MB.",
+      "displayName": "Silero VAD (ONNX, for sherpa-onnx)",
+      "displayNameZh": "Silero 语音活动检测（ONNX · sherpa 引擎用）",
+      "descriptionZh": "语音活动检测，**sherpa-onnx 引擎专用格式**。F3 流式录音走这条路径。whisper.cpp 用不了这个文件，它要 ggml 格式的那一个。",
+      "descriptionEn": "VAD in ONNX format, for the sherpa-onnx engine (F3 streaming). whisper.cpp CANNOT load this file — it needs the ggml build.",
       "languages": [
         "multi"
       ],
       "tags": [
         "required-core",
         "vad"
+      ],
+      "engines": [
+        "sherpa-onnx"
       ],
       "files": [
         {
@@ -62,6 +65,71 @@
     },
     {
       "schemaVersion": 1,
+      "id": "vad/silero-vad-ggml",
+      "groupId": "vad/silero-vad",
+      "role": "vad",
+      "family": "silero",
+      "arch": "silero-vad",
+      "format": "ggml",
+      "quantization": "f16",
+      "quantTier": "small",
+      "displayName": "Silero VAD (ggml, for whisper.cpp)",
+      "displayNameZh": "Silero 语音活动检测（ggml · whisper.cpp 用）",
+      "descriptionZh": "语音活动检测，**whisper.cpp 专用 ggml 格式**（`whisper-cli --vad --vad-model`）。离线转写分块靠它。sherpa 引擎用不了这个文件，它要 ONNX 那一个。",
+      "descriptionEn": "VAD in ggml format, required by whisper.cpp (`--vad --vad-model`). The sherpa-onnx engine CANNOT load this file — it needs the ONNX build.",
+      "languages": [
+        "multi"
+      ],
+      "tags": [
+        "required-core",
+        "vad"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-silero-v6.2.0.bin",
+          "sizeBytes": 885098,
+          "sha256": "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 885098,
+      "requirements": {
+        "ramRequiredMB": 64,
+        "vramRequiredMB": 64,
+        "diskRequiredMB": 1,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://github.com/snakers4/silero-vad/blob/master/LICENSE"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggml-org/whisper-vad",
+        "revision": "main"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.02"
+    },
+    {
+      "schemaVersion": 1,
       "id": "asr/sherpa-streaming-zh-14m",
       "groupId": "asr/sherpa-streaming-zh-14m",
       "role": "asr",
@@ -80,6 +148,9 @@
       "tags": [
         "streaming",
         "required-for-f3"
+      ],
+      "engines": [
+        "sherpa-onnx"
       ],
       "files": [
         {
@@ -201,6 +272,9 @@
         "recommended-default-zh",
         "offline"
       ],
+      "engines": [
+        "sherpa-onnx"
+      ],
       "files": [
         {
           "role": "weights",
@@ -304,6 +378,9 @@
       "tags": [
         "punctuation",
         "recommended-with-zh"
+      ],
+      "engines": [
+        "sherpa-onnx"
       ],
       "files": [
         {

@@ -95,6 +95,14 @@ export function HealthBanner() {
 
   return (
     <div role="status" aria-live="polite">
+      {/* 条幅只报最要紧的几条；完整分层状态在诊断页 */}
+      {items.length > 0 ? (
+        <div className="flex justify-end border-b border-b-line bg-surface-1 px-4 py-0.5">
+          <Button size="sm" variant="ghost" className="h-5 px-1.5 text-xs" onClick={() => navigate('/diagnostics')}>
+            {t('diagnostics.title')}
+          </Button>
+        </div>
+      ) : null}
       {items.map((it) => (
         <div
           key={it.key}

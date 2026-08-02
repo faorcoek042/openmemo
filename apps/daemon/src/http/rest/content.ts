@@ -22,8 +22,16 @@ import type { DatabaseHandle } from '@openmemo/db';
 
 import type { MindMapRepo } from '../../db/mindmapRepo.js';
 import { updateNoteContent, type NoteContentPatch } from '../../db/noteContentRepo.js';
+import {
+  countEdited,
+  editSegment,
+  listAnchors,
+  replaceAnchors,
+  revertSegment,
+  type AnchorInput,
+} from '../../db/segmentRepo.js';
 import { extractPlainText } from '../../db/richText.js';
-import type { Repos, SegmentRow } from '../../db/repos.js';
+import type { Repos } from '../../db/repos.js';
 import type { JobQueue } from '../../jobs/queue.js';
 import { readJsonBody, sendError, sendJson } from '../respond.js';
 import type { SseHub } from '../sse.js';
@@ -45,6 +53,8 @@ interface PatchBody {
   bodyText?: unknown;
   summaryMd?: unknown;
   language?: unknown;
+  /** M-7 时间锚点（D-02 §1.10 的规范化反向索引）。 */
+  anchors?: unknown;
 }
 
 export function createContentRoutes(deps: ContentRoutesDeps): {
@@ -116,6 +126,24 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
         }
 
         const changed = updateNoteContent(deps.db, note.id, patch) as NoteChange[];
+
+        // M-7：锚点整体替换（正文里的内联节点才是真相，这张表是反向索引）
+        let anchorCount: number | undefined;
+        if (Array.isArray(body.anchors)) {
+          const parsed: AnchorInput[] = [];
+          for (const raw of body.anchors) {
+            const a = raw as { key?: unknown; startMs?: unknown; endMs?: unknown; quote?: unknown };
+            if (typeof a?.startMs !== 'number' || typeof a?.quote !== 'string') continue;
+            parsed.push({
+              ...(typeof a.key === 'string' ? { key: a.key } : {}),
+              startMs: a.startMs,
+              endMs: typeof a.endMs === 'number' ? a.endMs : null,
+              quote: a.quote,
+            });
+          }
+          anchorCount = replaceAnchors(deps.db, note.id, parsed);
+          if (!changed.includes('body')) changed.push('body');
+        }
         const updated = repos.noteById(note.id);
         sse.publish(
           makeEvent('note.updated', topics.note(note.uid), {
@@ -128,6 +156,79 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
           title: updated?.title,
           status: updated?.status,
           hasBody: !!updated?.body_text,
+          ...(anchorCount === undefined ? {} : { anchorCount }),
+        });
+        return true;
+      }
+
+      // ---- M-4：PATCH /api/notes/:uid/segments/:seq —— 编辑转写段落 ----
+      // ★ 这是 `edited_at` 的**唯一写入口**。没有它，D-06 §15.2 那条实测跑通的
+      //   两阶段合并逻辑在产品里永远走不到（edited_at 恒为 NULL）。
+      const segMatch = /^\/api\/notes\/([0-9A-HJKMNP-TV-Z]{26})\/segments\/(\d+)$/.exec(url.pathname);
+      if (segMatch) {
+        const note = repos.noteByUid(segMatch[1] as string);
+        if (!note) {
+          sendError(res, 404, 'NOTE_NOT_FOUND', 'no such note', '笔记不存在');
+          return true;
+        }
+        const tr = repos.activeTranscriptOfNote(note.id);
+        if (!tr) {
+          sendError(res, 404, 'NO_TRANSCRIPT', 'note has no transcript', '这条笔记还没有转写稿');
+          return true;
+        }
+        const seq = Number(segMatch[2]);
+
+        if (method === 'PATCH') {
+          const body = (await readJsonBody(req)) as { text?: unknown } | undefined;
+          if (typeof body?.text !== 'string') {
+            sendError(res, 400, 'BAD_TEXT', 'text must be a string', 'text 必须是字符串');
+            return true;
+          }
+          const r = editSegment(deps.db, tr.id, seq, body.text);
+          if (!r) {
+            sendError(res, 404, 'SEGMENT_NOT_FOUND', `no segment ${seq}`, '段落不存在');
+            return true;
+          }
+          sse.publish(
+            makeEvent('note.updated', topics.note(note.uid), {
+              noteUid: note.uid,
+              changed: ['transcript'],
+            }),
+          );
+          sendJson(res, 200, { ...r, editedCount: countEdited(deps.db, tr.id) });
+          return true;
+        }
+
+        // DELETE = 还原到 ASR 原文（清掉编辑标记，让重跑重新接管这一段）
+        if (method === 'DELETE') {
+          const r = revertSegment(deps.db, tr.id, seq);
+          if (!r) {
+            sendError(res, 404, 'SEGMENT_NOT_FOUND', `no segment ${seq}`, '段落不存在');
+            return true;
+          }
+          sendJson(res, 200, { ...r, editedCount: countEdited(deps.db, tr.id) });
+          return true;
+        }
+
+        sendError(res, 405, 'METHOD_NOT_ALLOWED', 'use PATCH or DELETE', '方法不允许');
+        return true;
+      }
+
+      // ---- M-7：GET /api/notes/:uid/anchors ----
+      const anchorMatch = /^\/api\/notes\/([0-9A-HJKMNP-TV-Z]{26})\/anchors$/.exec(url.pathname);
+      if (anchorMatch && method === 'GET') {
+        const note = repos.noteByUid(anchorMatch[1] as string);
+        if (!note) {
+          sendError(res, 404, 'NOTE_NOT_FOUND', 'no such note', '笔记不存在');
+          return true;
+        }
+        sendJson(res, 200, {
+          anchors: listAnchors(deps.db, note.id).map((a) => ({
+            key: a.anchor_key,
+            startMs: a.start_ms,
+            endMs: a.end_ms,
+            quote: a.quote,
+          })),
         });
         return true;
       }
@@ -242,10 +343,18 @@ function exportMindmap(doc: MindMapDoc, format: string): Exported | undefined {
   }
 }
 
+/** 导出只需要这几个字段；用窄类型而不是整行 `SegmentRow`，调用方与测试都更轻。 */
+export interface ExportableSegment {
+  readonly seq: number;
+  readonly start_ms: number;
+  readonly end_ms: number;
+  readonly text: string;
+}
+
 function exportNote(
   title: string,
   summaryMd: string | null,
-  segments: readonly SegmentRow[],
+  segments: readonly ExportableSegment[],
   format: string,
 ): Exported | undefined {
   switch (format) {
@@ -323,7 +432,7 @@ export function sanitizeCue(text: string, format: 'srt' | 'vtt'): string {
   return out;
 }
 
-export function toSrt(segments: readonly SegmentRow[]): string {
+export function toSrt(segments: readonly ExportableSegment[]): string {
   // 空正文的条目要跳过：一条没有正文的 SRT 条目会让部分解析器直接放弃整个文件。
   // 跳过后序号仍必须从 1 连续 —— 跳号同样会让某些播放器停在跳号处。
   return segments
@@ -336,7 +445,7 @@ export function toSrt(segments: readonly SegmentRow[]): string {
     .join('\n');
 }
 
-export function toVtt(segments: readonly SegmentRow[]): string {
+export function toVtt(segments: readonly ExportableSegment[]): string {
   const body = segments
     .map((s) => ({ ...s, body: sanitizeCue(s.text, 'vtt') }))
     .filter((s) => s.body.length > 0)

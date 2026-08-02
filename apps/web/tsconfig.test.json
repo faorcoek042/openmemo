@@ -27,8 +27,10 @@
   // 这里必须显式清空，否则继承下来会把测试文件一并排除、编出 0 个测试。
   "exclude": [],
   "include": [
-    "src/features/notes/export.ts",
-    "src/features/notes/export.test.ts",
+    "src/lib/stores/selectors.test.ts",
+    "src/lib/stores/progress.store.ts",
+    "src/lib/api/surfaces.ts",
+    "src/lib/utils.ts",
     "src/lib/format/time.ts",
     "src/lib/api/types.ts",
     "src/lib/events/types.ts"

@@ -1,97 +1,63 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Download, Loader2 } from 'lucide-react';
+import { Download } from 'lucide-react';
 
 import { Button } from '../../components/common/Button';
-import { EXPORT_FORMATS, buildExport, safeName, type ExportFormat } from './export';
 import { surfaceState } from '../../lib/api/surfaces';
 import type { NoteDetail } from '../../lib/api/types';
-import type { TranscriptSegmentDto } from '../../lib/events/types';
 
 /**
- * 笔记导出（此前**零入口**）。
+ * 笔记导出入口。
  *
- * ## 为什么在前端生成而不是调服务端
+ * ## 为什么这里只剩一个薄调用
  *
- * TXT / Markdown / SRT / VTT / JSON 这五种都只是**已在内存里的数据的重排**——
- * 转写稿、标题、摘要前端全都有。为它们各开一个服务端端点，等于把同一份数据
- * 再跑一趟网络、再写一套序列化，还多一个"服务端版本和前端显示不一致"的失配面。
+ * 我最初在前端实现了一整套导出（TXT/MD/SRT/VTT/JSON + 27 个测试），
+ * 后来服务端也实现了同样五种格式。**两份实现会漂移，而字幕格式漂移用户在播放器里才发现** ——
+ * 所以裁决是删掉前端那份，只保留服务端。
  *
- * 真正需要服务端的是 **DOCX / PDF / 烧字幕**（要排版引擎或 ffmpeg），
- * 那些留给后端，这里不假装能做。
+ * 我原来给前端那份的理由是"daemon 没起时的离线兜底"，这个理由站不住：
+ * **daemon 就是这个产品**，它不在的时候网页根本打不开，所谓离线场景不存在。
  *
- * ## 时间码用整数毫秒转换
+ * 那 27 个测试没有跟着消失 —— 它们迁到了
+ * `apps/daemon/src/http/rest/content.export.test.ts`，
+ * 并且**当场逮到服务端三个同类 bug**（NaN 时间码 / 空行劈开条目 / 空正文条目）。
  *
- * `timecodeFull` 从整数毫秒生成 `HH:MM:SS.mmm`，**不经过浮点秒**——
- * 这正是 D-02 §1.1 坚持整数毫秒的直接收益：字幕不会因为累积误差而越走越偏。
+ * 服务端那份还多两样前端给不了的：完整数据（不受前端分页影响）、
+ * 以及带 RFC 5987 `filename*` 的 `Content-Disposition`（中文文件名不会变成下划线）。
  */
 
-export function ExportMenu({
-  note,
-  segments,
-  speakerNames,
-}: {
-  note: NoteDetail;
-  segments: readonly TranscriptSegmentDto[];
-  speakerNames?: Record<string, string>;
-}) {
+export type ExportFormat = 'txt' | 'md' | 'srt' | 'vtt' | 'json';
+
+const FORMATS: ExportFormat[] = ['txt', 'md', 'srt', 'vtt', 'json'];
+
+export function ExportMenu({ note }: { note: Pick<NoteDetail, 'uid' | 'title'> }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
 
-  /**
-   * 优先走服务端导出，接不通才用前端生成。
-   *
-   * daemon 落地了 `GET /api/notes/:uid/export?format=` 之后，服务端版本更权威：
-   * 它握有完整数据（不受前端分页/懒加载影响），并且能给出正确的
-   * `Content-Disposition`（含 RFC 5987 的 `filename*`，中文文件名不会变成下划线）。
-   * 实测响应头：`Content-Type: application/x-subrip; charset=utf-8` +
-   * `filename*=UTF-8''T-038%20%E4%B8%AD%E6%96%87…`。
-   *
-   * 前端那份（`export.ts`，27 个测试）保留为**离线兜底**：daemon 没起时仍能导出。
-   * 两份实现是重复的 —— 这是我先做、服务端后做造成的。**如实记在 inbox，等 Manager 裁决留哪份。**
-   */
+  // daemon 不可达时导出无从谈起 —— 与其给一个点了没反应的按钮，不如禁用并说明
+  const live = surfaceState('notes') === 'live';
+
   const run = (format: ExportFormat) => {
-    setBusy(true);
-    try {
-      if (surfaceState('notes') === 'live') {
-        // 让浏览器自己处理下载（保留服务端给的文件名与 MIME）
-        const a = document.createElement('a');
-        a.href = `/api/notes/${encodeURIComponent(note.uid)}/export?format=${format}`;
-        a.rel = 'noopener';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        return;
-      }
-
-      const spec = EXPORT_FORMATS.find((f) => f.id === format)!;
-      const blob = new Blob([buildExport({ note, segments, speakerNames: speakerNames ?? {} }, format)], {
-        type: spec.mime,
-      });
-      const url = URL.createObjectURL(blob);
-      try {
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${safeName(note.title)}.${spec.ext}`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-    } finally {
-      setBusy(false);
-      setOpen(false);
-    }
+    // 交给浏览器处理下载，保留服务端给的文件名与 MIME
+    const a = document.createElement('a');
+    a.href = `/api/notes/${encodeURIComponent(note.uid)}/export?format=${format}`;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setOpen(false);
   };
-
-  const disabled = segments.length === 0 && !note.bodyText && !note.summaryMd;
 
   return (
     <span className="relative">
-      <Button size="sm" variant="ghost" onClick={() => setOpen((v) => !v)} disabled={disabled || busy}>
-        {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={() => setOpen((v) => !v)}
+        disabled={!live}
+        title={live ? undefined : t('notes.exportNeedsDaemon')}
+      >
+        <Download className="size-3.5" />
         {t('notes.export')}
       </Button>
 
@@ -100,19 +66,19 @@ export function ExportMenu({
           className="absolute right-0 z-40 mt-1 w-40 overflow-hidden rounded-md border border-line bg-surface-2 py-1 shadow-e2"
           role="menu"
         >
-          {EXPORT_FORMATS.map((f) => (
-            <li key={f.id}>
+          {FORMATS.map((f) => (
+            <li key={f}>
               <button
                 type="button"
                 role="menuitem"
-                onClick={() => run(f.id)}
+                onClick={() => run(f)}
                 className="w-full px-3 py-1.5 text-left text-xs text-ink-secondary hover:bg-surface-1 hover:text-ink"
               >
-                {t(`notes.exportFormats.${f.id}`)}
+                {t(`notes.exportFormats.${f}`)}
               </button>
             </li>
           ))}
-          {/* 需要排版引擎/ffmpeg 的格式不在前端假装能做 */}
+          {/* 需要排版引擎/ffmpeg 的格式不在这里假装能做 */}
           <li className="border-t border-line px-3 py-1.5 text-xs text-ink-muted">
             {t('notes.exportServerOnly')}
           </li>

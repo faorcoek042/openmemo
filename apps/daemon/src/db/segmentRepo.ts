@@ -116,14 +116,15 @@ export function countEdited(db: DatabaseHandle, transcriptId: number): number {
 // ---------------------------------------------------------------------------
 
 export interface AnchorInput {
+  /** 与正文 body_json 里 timeAnchor 节点的 attrs.key 一一对应；不传则生成一个。 */
+  readonly key?: string;
   readonly startMs: number;
   readonly endMs?: number | null;
   readonly quote: string;
-  readonly transcriptUid?: string | null;
 }
 
 export interface AnchorRow {
-  uid: string;
+  anchor_key: string;
   start_ms: number;
   end_ms: number | null;
   quote: string | null;
@@ -146,17 +147,22 @@ export function replaceAnchors(
     db.prepare(`DELETE FROM note_anchors WHERE note_id = :n`).run({ n: noteId });
     if (anchors.length === 0) return 0;
     const stmt = db.prepare(
-      `INSERT INTO note_anchors(uid, note_id, transcript_id, start_ms, end_ms, quote, created_at)
-       VALUES (:uid, :n, NULL, :s, :e, :q, :now)`,
+      `INSERT INTO note_anchors(note_id, anchor_key, transcript_id, start_ms, end_ms, quote, created_at)
+       VALUES (:n, :key, NULL, :s, :e, :q, :now)`,
     );
+    const seenKeys = new Set<string>();
     let n = 0;
     for (const a of anchors) {
       if (!Number.isFinite(a.startMs)) continue;
       // quote 必填是 D-02 §3.5 的硬要求：没有它，重转写后就没法重定位
       if (!a.quote || !a.quote.trim()) continue;
+      // anchor_key 有 UNIQUE(note_id, anchor_key) 约束，重复会整批回滚
+      let key = a.key && a.key.trim() ? a.key.trim().slice(0, 64) : ulid(now);
+      while (seenKeys.has(key)) key = ulid(now);
+      seenKeys.add(key);
       stmt.run({
-        uid: ulid(now),
         n: noteId,
+        key,
         s: Math.max(0, Math.round(a.startMs)),
         e: a.endMs === undefined || a.endMs === null ? null : Math.round(a.endMs),
         q: a.quote.slice(0, 200),
@@ -171,7 +177,7 @@ export function replaceAnchors(
 export function listAnchors(db: DatabaseHandle, noteId: number): AnchorRow[] {
   return db
     .prepare<AnchorRow>(
-      `SELECT uid, start_ms, end_ms, quote FROM note_anchors WHERE note_id = :n ORDER BY start_ms`,
+      `SELECT anchor_key, start_ms, end_ms, quote FROM note_anchors WHERE note_id = :n ORDER BY start_ms`,
     )
     .all({ n: noteId });
 }

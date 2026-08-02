@@ -6,8 +6,8 @@
  * `runtime.json` 只是元数据 sidecar，不承担互斥职责。
  */
 import { createServer, type Server } from 'node:http';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import { ulid } from '@openmemo/shared';
 
@@ -185,4 +185,89 @@ export function removeRuntimeJson(path: string): void {
 /** 建一个尚未绑定的 http server（调用方挂 handler 后交给 acquireSingleInstance）。 */
 export function createUnboundServer(): Server {
   return createServer();
+}
+
+/**
+ * **数据目录级互斥锁**（D-01 §2.3 第二道）。
+ *
+ * 端口绑定只挡住"同端口"的第二个实例。**换个端口起第二个、指向同一个 dataDir**，
+ * 端口锁完全不生效 —— 而 `recoverOnStartup()` 会把第一个实例**正在跑**的 job
+ * 无条件拉回 `queued`，两个实例于是同时跑同一个任务、写同一个库。
+ *
+ * 这里用 `O_CREAT|O_EXCL` 独占创建一个 lock 文件补上这道。
+ * 选它而不是 `flock(2)`：Node 标准库没有 flock，且 `O_EXCL` 在 Windows 上语义一致。
+ * 代价是**进程崩溃会留下 stale lock**，所以锁文件里记 pid，启动时校验：
+ * pid 不存在就认定是 stale 并接管（这正是端口锁天然免疫、而文件锁必须自己处理的问题）。
+ */
+export interface DataDirLock {
+  release(): void;
+}
+
+export class DataDirLockedError extends Error {
+  constructor(readonly holderPid: number, readonly path: string) {
+    super(
+      `另一个 OpenMemo 实例（pid ${holderPid}）正在使用同一个数据目录。` +
+        `同一个数据目录只能有一个实例，否则任务会被互相抢走、数据库会被并发写坏。`,
+    );
+    this.name = 'DataDirLockedError';
+  }
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM = 进程存在但不属于我们 → 仍算存活
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+export function acquireDataDirLock(dataDir: string): DataDirLock {
+  const lockPath = join(dataDir, 'daemon.lock');
+  mkdirSync(dataDir, { recursive: true });
+
+  const tryCreate = (): number | undefined => {
+    try {
+      return openSync(lockPath, 'wx', 0o600);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      return undefined;
+    }
+  };
+
+  let fd = tryCreate();
+  if (fd === undefined) {
+    // 已存在：看看持有者还活着吗
+    let holder: number;
+    try {
+      holder = Number(readFileSync(lockPath, 'utf8').trim()) || 0;
+    } catch {
+      holder = 0;
+    }
+    if (holder > 0 && holder !== process.pid && pidAlive(holder)) {
+      throw new DataDirLockedError(holder, lockPath);
+    }
+    // stale lock（进程已死）→ 接管
+    rmSync(lockPath, { force: true });
+    fd = tryCreate();
+    if (fd === undefined) {
+      // 极小概率的竞态：另一个实例刚好同时接管
+      throw new DataDirLockedError(holder, lockPath);
+    }
+  }
+
+  writeFileSync(fd, String(process.pid));
+  closeSync(fd);
+
+  return {
+    release(): void {
+      try {
+        const cur = Number(readFileSync(lockPath, 'utf8').trim()) || 0;
+        if (cur === process.pid) rmSync(lockPath, { force: true });
+      } catch {
+        /* 退出路径上的清理失败不值得让进程崩掉 */
+      }
+    },
+  };
 }

@@ -15,6 +15,5 @@ export {
 export { NoteProgressLine } from './NoteProgressLine';
 export { NoteEditor } from './NoteEditor';
 export { TagEditor } from './TagEditor';
-export { ExportMenu } from './ExportMenu';
-export { buildExport, safeName, EXPORT_FORMATS, type ExportFormat } from './export';
+export { ExportMenu, type ExportFormat } from './ExportMenu';
 export { TimeAnchor, collectAnchors, type TimeAnchorAttrs } from './TimeAnchor';

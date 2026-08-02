@@ -350,6 +350,30 @@ export class Repos {
     return this.db.prepare<TranscriptRow>(`SELECT * FROM transcripts WHERE id = :id`).get({ id });
   }
 
+  /**
+   * 找一份**可续跑**的转写稿：同 note、同引擎、同模型，且还没跑完。
+   *
+   * 没有这个查询，runner 每次都会新建一份 transcript，再去空表里查
+   * `completedChunks` —— 于是"续跑"永远从第 0 块重来，**而且旧稿会被置
+   * `is_active=0`，用户已经看到的内容还会消失**。D-01 §4.5 的分块续跑设计
+   * 是对的，但实现走了另一条路。
+   */
+  resumableTranscript(
+    noteId: number,
+    engineId: string,
+    modelId: string | null,
+  ): TranscriptRow | undefined {
+    return this.db
+      .prepare<TranscriptRow>(
+        `SELECT * FROM transcripts
+          WHERE note_id = :n AND engine_id = :e
+            AND (model_id IS :m OR model_id = :m)
+            AND status IN ('running','partial','pending')
+          ORDER BY id DESC LIMIT 1`,
+      )
+      .get({ n: noteId, e: engineId, m: modelId });
+  }
+
   activeTranscriptOfNote(noteId: number): TranscriptRow | undefined {
     return this.db
       .prepare<TranscriptRow>(

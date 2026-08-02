@@ -100,12 +100,30 @@ export async function runTranscribeJob(
   // 按语言选引擎（ADR-013 决策 1：中文默认 Paraformer）。
   // engine_id 落库的是**实际用的**引擎，不是硬编码 —— 否则永远看不出选择有没有生效。
   const chosen = chosenEarly;
-  const transcript = repos.createTranscript({
+  /*
+   * 续跑（D-01 §4.5）：先找有没有同引擎同模型、还没跑完的稿。
+   * 有就**接着写**，不新建 —— 新建会让 completedChunks 查到空表而全量重跑，
+   * 并且把用户已经看到的旧稿置为非活跃。
+   */
+  const modelId = chosen.modelPath
+    ? (chosen.modelPath.split('/').pop() ?? deps.modelId)
+    : deps.modelId;
+  const resumable = repos.resumableTranscript(note.id, chosen.engineId, modelId);
+  const transcript =
+    resumable ??
+    repos.createTranscript({
     noteId: note.id,
     engineId: chosen.engineId,
-    modelId: deps.modelId,
+    // modelId 也必须跟着引擎走 —— 否则 engine=paraformer 却记着 whisper 的 ggml 文件名，
+    // 排障时会把人带偏（实测出现过 engine=paraformer / model=ggml-base.en.bin）
+    modelId,
     language: payload.language ?? null,
   });
+  if (resumable) {
+    console.log(
+      `[transcribe] 续跑 transcript=${transcript.uid}，已完成 chunk=${[...repos.completedChunks(transcript.id)].join(',') || '(无)'}`,
+    );
+  }
 
   // 续跑：DB 里的段落才是真相，checkpoint 只是加速缓存（D-01 §4.5）
   const completed = repos.completedChunks(transcript.id);
@@ -141,7 +159,7 @@ export async function runTranscribeJob(
     }
   };
 
-  let segSeq = 0;
+  let segSeq = repos.segmentsOf(transcript.id).length;
   let mediaAnnounced = false;
 
   const result = await chosen.pipeline.run({

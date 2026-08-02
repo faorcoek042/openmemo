@@ -91,11 +91,7 @@ export default function NoteDetailPage() {
         <h1 className="min-w-0 truncate text-base font-semibold text-ink">{n.title}</h1>
         <span className="flex items-center gap-2">
           <TagEditor noteUid={n.uid} tags={n.tags} />
-          <ExportMenu
-            note={n}
-            segments={transcript.data?.segments ?? []}
-            speakerNames={speakerNames}
-          />
+          <ExportMenu note={n} />
         </span>
       </header>
 
