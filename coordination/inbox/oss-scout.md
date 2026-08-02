@@ -1586,3 +1586,47 @@ error_detail: UNIQUE constraint failed: media_assets.rel_path
   不让前端猜，也不让按钮亮着然后 409。
 
 移动测试仍 13/13，其余非端口测试全绿；demo 全程只读未重启；测试实例与临时目录已收尾。
+
+---
+
+## T-087 代理端点 + `node:fs` 泄漏
+
+### ① `/api/settings/proxy` 四个端点已接通，全部实测
+- `GET` → config（**凭据脱敏**）+ `active`（进程里真正装上的那份）+ `media` 提醒 + `modes`
+- `PATCH` → 校验 mode → 存设置表 → **立刻 `applyProxyConfig`，不要求重启**
+  （让用户改个代理还要重启，等于又把问题推回命令行那一侧）
+- `POST /test` → 代理**通不通**（实测代理指向不存在的 1080：`ok=false`
+  `proxyReachable=false` `proxy_unreachable`，**200 而不是 500** —— 报告"不通"不是 HTTP 错误）
+- `POST /sources` → **该从哪个源拉**（4 行，独立动作，不与上面合并：
+  合成一个按钮会把两个不同问题压成一个红/绿结论，跨源比较信息全丢）
+
+**ffmpeg 的 SOCKS 限制已透出**（每个响应都带 `media`）。实测填 SOCKS5 时：
+```
+media.supported = false
+media.reason    = ffmpeg 不支持 SOCKS 代理（libavformat 的 http 协议只读 http_proxy）…
+media.noteZh    = …模型下载会走代理，但**在线媒体拉流会直连**。如需媒体也走代理请改填 HTTP 代理。
+```
+`architect` 可直接据此渲染提示。**不会让用户以为全走代理了。**
+
+★ 顺带补了一个会"悄悄失效"的坑：原来只在 PATCH 里 apply，**重启后配置还显示着但不再生效**
+（表现为"昨天能下载今天又不行"，界面一切正常）。现在启动时读设置表并 apply，
+实测重启后 `active.mode` 仍是 `manual` ✅。
+
+### ② `node:fs` 泄漏已修
+根因：`packages/llm/src/index.ts` 里 `export * from './secrets.js'`，
+而 `packages/mindmap/src/generate.ts` 从本包**取值**（`chatStructured`）→ 进浏览器 bundle。
+修法：secrets 移出主入口，改为**子路径导出** `@openmemo/llm/secrets`（package.json 加 exports），
+daemon 的两处 import 改走子路径。这与之前 `shared` 误引 `node:crypto` 是同一形状：
+**Node-only API 不能出现在共享包主入口。**
+
+验证（写了个 import 图遍历器，从 mindmap 入口走真实依赖）：
+```
+✅ 从 mindmap 入口出发，import 图里没有任何 node: 内置模块
+```
+★ 但第一版检查器**误报了**：正则把我文档注释里写的示例
+`import { SecretStore } from '@openmemo/llm/secrets'` 当成真依赖。
+剥掉注释后才对。并且我做了**对照组**——直接以 `secrets.js` 为入口必须报红，
+确认这个检查器不是恒绿（exit=1，报出 node:fs / node:path）。
+**一个不会红的检查器等于没检查。**
+
+lint 干净；move 13/13、upload 17/17、lanes 7/7、llm 10/10；demo 全程只读未重启；测试实例已收尾。
