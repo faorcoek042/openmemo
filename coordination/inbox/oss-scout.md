@@ -788,3 +788,85 @@ store kind 只该用于"落到哪个磁盘目录"，已改回真实 `ModelRole`�
 4. **没有真的从网页装一次 sqlite-ext 再验证中文分词生效**。我验的是"目录里出现了、applicable=True"
    和"解析逻辑会去读安装记录"，**端到端装一次的闭环没跑**（需要真实下载 4.6MB）。
 5. 锚点端点仍无前端联调；Paraformer 单段问题已归 `gpu-runtime`。
+
+---
+
+## [2026-08-02 22:30] T-049 DONE —— 取消验证四项全过
+
+### 一、取消一个**正在转写**的任务（经 daemon 完整链路）
+
+素材：337s 中文音频 + `large-v3-turbo-q5_0`（慢到足以在中途取消）。
+跑到 chunk-1 时发 `POST /api/jobs/:uid/cancel`。
+
+```
+[3] POST /api/jobs/01KZ0XWNECP5ZQKNJE9C55QFTR/cancel → HTTP 204
+
+【验证 1】子进程回收: ✅ 已全部退出（562ms）
+    取消前实际在跑的进程：
+    1787920 whisper-cli -m ggml-large-v3-turbo-q5_0.bin -f .../audio16k.wav
+            --offset-t 29500 --duration 30000 -t 4 ... -l zh
+【验证 2】已完成 chunk 保留: ✅ 取消前 3 段 → 取消后 3 段
+    首段 "Twitter,来自维基百科,自由的百科全书,网址zh.wikipedia.org"
+    末段 "输入最多140字的文字更新。"
+【验证 3】lane permit 不泄漏: ✅ gpu.asr.inUse=0  gpu.exclusive.inUse=0
+【验证 4】续跑接得上: ✅ HTTP 202，3 → 12 段（在原有基础上增长）
+```
+
+**直接查库的深度核对**（比脚本断言更硬）：
+```
+jobs        : {"uid":"01KZ0XWNE…","state":"cancelled","cancel_requested":1,"progress":0.3117}
+              {"uid":"01KZ0XXDC…","state":"running"}      ← 续跑任务
+transcripts : 只有 1 份 {"id":1,"segment_count":15}        ← 续跑复用，没有新建
+chunk_idx   : [{0:3},{1:9},{2:3}]                          ← 每块恰好一次，没有重复劳动
+```
+`chunk_idx` 无重复是"真的跳过了已完成块"的硬证据 —— 只看段数增长是分辨不出
+"续跑"和"从头重来再追加"的。
+
+> D-07 那条复合失败（无法取消 → 杀 daemon → 子进程活着吃 CPU → 重启从第 0 块重来 →
+> 已转好的还看不见）**四个环节现在逐条被实证排除**。
+
+### 二、这轮修的 3 个 bug（都是真跑逼出来的）
+
+1. **被取消的任务永远卡在 `running`**。`requestCancel()` 只置意图标记、不改 state，
+   worker 停下来后没人收口 → UI 上转圈不停、`/api/jobs` 一直报它在跑。
+   加 `markCancelled()` 置终态。
+2. **"优雅取消"会被记成成功**。worker 在 chunk 边界看到 abort 后**正常返回**（不抛异常），
+   于是走不到 catch，被 `succeed()` 记成完成。已改为先看 `signal.aborted`。
+   —— 这两个都只有真取消一次才会暴露，编译和单测都拦不住。
+3. **本地导入没有记录原始输入**，`media_sources.input_url` 存的是 null（只有 URL 才存）。
+   后果：**取消后无法重跑** —— 不知道源文件在哪，续跑/换模型重跑/重新转写全都做不了。
+   D-02 对该列的定义本就是"用户原始输入"，不限 URL。已改为一律记录。
+
+### 三、新增 `POST /api/notes/:uid/retranscribe`
+
+验证 4 需要一个"同 note 重跑"的入口，此前不存在（只有 `/api/notes/import`，那会新建笔记）。
+它不新建 note，直接对同一 note 再排一次转写，由 runner 的 `resumableTranscript()`
+复用未完成的稿并跳过已完成 chunk。这也是产品本来就需要的"重试/换模型重跑"入口。
+
+### 四、给 `model-mgmt` 的建议（Manager 要的，我不改他的格式）
+
+**模型安装记录 `manifests/<role>/<id>.json` 的 `files[].path` 存的是绝对路径**，例如
+`/tmp/cold/models/by-name/asr/ggml-base-q5_1.bin`。我这边照读没问题，但有两个后果：
+
+1. **数据目录整体搬迁 / 改盘符后全部失效** —— 用户把 `~/openmemo` 挪到外置盘，
+   所有模型都会变成"找不到"，而 D-02 §1.1 对媒体资产明确要求相对路径正是为了避免这个。
+2. **备份/迁移到另一台机器不可用** —— 路径里含原机器的用户名。
+
+**建议**：改成 `{ root: 'models', relPath: 'by-name/asr/ggml-base-q5_1.bin' }`
+（根锚点 + 相对路径），读取时由 daemon 用当前 `modelsDir` 拼接。
+迁移成本很低：写入端加一次转换，读取端我这边的 `modelStore.ts` 已经收口在一个函数里，
+改一处即可，**不影响已安装的用户**（可在读取时兼容旧的绝对路径字段）。
+
+### 五、全量
+`pnpm -r build` **9/9 Done**；测试 **167 pass / 0 fail**；
+`apps/daemon` + `packages/db` + `packages/llm` + `packages/mindmap` eslint **EXIT=0**。
+
+### 六、诚实声明
+- 取消验证是在 **Linux + whisper.cpp** 上做的。**Windows 的 `taskkill /T` 路径没验过**
+  （D-01 §2.5 写了但本机跑不了），sherpa/Paraformer 引擎的取消也没单独验。
+- 验证 4 我判定"续跑接上"的依据是 **chunk_idx 无重复 + transcript 只有一份**，
+  这比"段数变多"硬；但**没有验证跨 daemon 重启的续跑**（只验了同进程内取消后重排）。
+- `POST /api/notes/:uid/retranscribe` 是我这轮**新加的端点**，
+  `packages/shared` 的 ENDPOINTS 里没有它 —— 又一处临时契约，需要 `model-mgmt` 收编。
+- 第 3 项（网页装 sqlite-ext 验中文分词）与第 4 项（锚点前端联调）本轮**未做**，
+  按 Manager 分工分别归 `model-mgmt` 的冷启动与 `architect`。

@@ -188,16 +188,42 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
 
     // Archives are expanded only after their digest has been verified — never unpack
     // unverified bytes.
+    //
+    // Extraction goes to a TEMP directory and is renamed into place only on success.
+    //
+    // Why: a failure partway through used to leave a half-extracted directory behind.
+    // That state is worse than no state at all — the blob is already verified and cached,
+    // so a retry skips the download, sees the directory exists, and the user is stuck
+    // permanently at "installed but unusable" with clicking again changing nothing.
+    // Observed for real: a 43-entry tarball left 3 files after aborting on the first
+    // symlink entry, and whisper-cli was simply absent with no way to recover from the UI.
+    // Temp-then-rename makes a partial directory impossible, so "directory exists" is
+    // once again a truthful signal that the install completed.
     if (f.unpack) {
+      const finalDir = path.join(store.byNameDir(target.kind), stripExt(f.name));
+      const tmpDir = `${finalDir}.tmp-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
       try {
-        await unpackArchive(linked, path.join(store.byNameDir(target.kind), stripExt(f.name)), f.unpack, {
-          signal: opts.signal,
-        });
+        await fs.rm(tmpDir, { recursive: true, force: true });
+        await unpackArchive(linked, tmpDir, f.unpack, { signal: opts.signal });
+        // Replace any previous (possibly incomplete) install atomically.
+        await fs.rm(finalDir, { recursive: true, force: true });
+        await fs.rename(tmpDir, finalDir);
       } catch (e) {
+        // Leave nothing behind: no temp dir, no stale final dir that would make a retry
+        // look unnecessary, and no by-name link to the archive either — a dangling link
+        // makes "is this installed?" ambiguous for both the UI and the GC scan.
+        // (The blob itself stays: it is verified, and keeping it makes the retry free.
+        // If the user never retries, GC reclaims it as an orphan because no manifest
+        // references it.)
+        await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+        await fs.rm(finalDir, { recursive: true, force: true }).catch(() => undefined);
+        await fs.rm(linked, { force: true }).catch(() => undefined);
         throw new DownloadError(
           `Archive extraction (${f.unpack}) failed for ${f.name}: ${(e as Error).message}`,
           'UNPACK_FAILED',
-          false,
+          // Retryable: the bytes are verified, so a retry is cheap and may well succeed
+          // (transient FS error, disk pressure). Marking it terminal would strand the user.
+          true,
         );
       }
     }

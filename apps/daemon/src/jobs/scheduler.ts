@@ -123,8 +123,15 @@ export class Scheduler {
       await handler(job, ac.signal);
 
       const after = queue.byId(job.id);
-      // runner 可能已自行置终态（succeed/block），别覆盖
-      if (after && (after.state === 'running' || after.state === 'leased')) {
+      /*
+       * ⚠️ 取消可能是"优雅"的：worker 在 chunk 边界看到 abort 后**正常返回**，不抛异常。
+       * 那样就走不到下面的 catch，如果这里无脑 succeed()，
+       * 一个被取消的任务会被记成**成功**。必须先看 abort 标志。
+       */
+      if (ac.signal.aborted) {
+        queue.markCancelled(job.id);
+      } else if (after && (after.state === 'running' || after.state === 'leased')) {
+        // runner 可能已自行置终态（succeed/block），别覆盖
         queue.succeed(job.id);
       }
       const final = queue.byId(job.id);
@@ -137,8 +144,10 @@ export class Scheduler {
       const aborted = ac.signal.aborted;
       const message = err instanceof Error ? err.message : String(err);
       // 用户取消不算失败
+      // 取消：worker 已经停了，这里把状态**收口成终态**。
+      // 只置 cancel_requested 而不改 state，任务会永远卡在 running（T-049 实测）。
       const state = aborted
-        ? (queue.requestCancel(job.id), 'cancelled')
+        ? (queue.markCancelled(job.id), 'cancelled')
         : queue.fail(job.id, 'RUNNER_ERROR', message, isRetryable(err));
       sse.publish(
         jobFailedEvent(

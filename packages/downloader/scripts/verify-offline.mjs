@@ -363,6 +363,63 @@ console.log('\n[8] installer: disk pre-check and by-name linking');
   check('second install deduplicated by digest', res2.files[0].cached === true);
 }
 
+/* --- 9. install: partial unpack must never survive a failure ------------------ */
+/*
+ * Regression guard for the bug that blocked cold start: extraction aborted partway
+ * through a 43-entry tarball, left 3 files behind, and every retry then short-circuited
+ * because the blob was cached and the directory existed. The user was permanently stuck
+ * at "installed but unusable" with no UI path out.
+ */
+console.log('\n[9] 安装失败不得留下半个解压目录');
+{
+  const store = new ArtifactStore(path.join(root, 'store-unpack'));
+  await store.init();
+  // A "tar.gz" whose bytes are not actually a valid archive → unpack must fail.
+  const bogus = Buffer.from('this is definitely not a gzip stream');
+  const bogusSha = sha256(bogus);
+  server.removeAllListeners('request');
+  server.on('request', (req, res) => {
+    res.writeHead(200, { 'content-length': String(bogus.length), 'accept-ranges': 'bytes' });
+    res.end(bogus);
+  });
+
+  let err = null;
+  try {
+    await install({
+      store,
+      target: {
+        id: 'backend/broken',
+        kind: 'backend',
+        displayName: 'Broken',
+        files: [
+          {
+            role: 'archive',
+            name: 'broken.tar.gz',
+            sizeBytes: bogus.length,
+            sha256: bogusSha,
+            unpack: 'tar.gz',
+            mirrors: [{ provider: 'local', url: `${base}/broken.tar.gz`, official: true }],
+          },
+        ],
+      },
+      maxParts: 1,
+    });
+  } catch (e) {
+    err = e;
+  }
+  check('解压失败会抛错', err != null, err?.code);
+  check('错误码是 UNPACK_FAILED', err?.code === 'UNPACK_FAILED', err?.code);
+  check('失败标记为可重试（字节已校验，重试很便宜）', err?.retryable === true, `retryable=${err?.retryable}`);
+
+  const leftovers = await fs.readdir(store.byNameDir('backend')).catch(() => []);
+  const partial = leftovers.filter((n) => n.startsWith('broken'));
+  check(
+    '没有留下半个解压目录或 .tmp 残留',
+    partial.length === 0,
+    partial.length ? `残留: ${partial.join(', ')}` : 'by-name/backend 干净',
+  );
+}
+
 /* -------------------------------- summary --------------------------------- */
 
 server.close();

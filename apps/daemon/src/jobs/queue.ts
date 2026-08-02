@@ -265,6 +265,24 @@ export class JobQueue {
       .run({ id, h: hard ? 1 : 0, now });
   }
 
+  /**
+   * 置终态 `cancelled`。
+   *
+   * `requestCancel()` 只是**置意图标记**（让 worker 在 chunk 边界自己停），
+   * 它不改 state。worker 真的停下来之后必须再调这个把状态收口 ——
+   * 否则任务会永远停在 `running`：UI 上转圈不停，`/api/jobs` 也一直报它在跑。
+   * 实测踩到过（T-049）。
+   */
+  markCancelled(id: number, now = Date.now()): void {
+    this.db
+      .prepare(
+        `UPDATE jobs SET state='cancelled', finished_at=:now, updated_at=:now,
+                         lease_owner=NULL, lease_expires_at=NULL, worker_pid=NULL
+         WHERE id=:id AND state IN ('queued','blocked','leased','running','paused')`,
+      )
+      .run({ id, now });
+  }
+
   requestPause(id: number, now = Date.now()): void {
     this.db
       .prepare(`UPDATE jobs SET pause_requested=1, updated_at=:now WHERE id=:id`)

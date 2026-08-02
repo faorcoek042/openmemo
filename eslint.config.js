@@ -19,6 +19,9 @@ export default tseslint.config(
       '**/.build/**',
       '**/node_modules/**',
       '**/*.tsbuildinfo',
+      // 测试编译产物（apps/web 的两条测试道各自的输出）。
+      // 不能放 dist/（主构建 emptyOutDir 会清空）也不能放 node_modules/（node --test 跳过该目录）。
+      '**/.test-out/**',
       // shadcn/ui 复制源码（ADR-002 决策 2 豁免），保持与上游一致
       'apps/web/src/components/ui/**',
     ],
