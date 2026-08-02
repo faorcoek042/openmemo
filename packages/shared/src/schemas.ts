@@ -390,6 +390,23 @@ function toResult<T>(parsed: SafeParseLike<T>): ValidationResult<T> {
   };
 }
 
+export const InstalledFileSchema = z.object({
+  role: z.string(),
+  name: z.string().min(1),
+  sha256: Sha256Schema,
+  sizeBytes: ByteSizeSchema,
+  root: z.enum(['models', 'runtimes', 'data']),
+  relPath: z
+    .string()
+    .min(1)
+    // A relative path that escapes its root is the same traversal bug as in archives.
+    .refine((p) => !p.startsWith('/') && !/^[A-Za-z]:/.test(p) && !p.split(/[\\/]+/).includes('..'), {
+      message: 'relPath must stay inside its root (no absolute paths, no "..")',
+    }),
+  /** @deprecated legacy absolute path */
+  path: z.string().optional(),
+});
+
 export function validateModelManifest(input: unknown) {
   return toResult(ModelManifestSchema.safeParse(input));
 }

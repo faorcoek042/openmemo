@@ -21,6 +21,7 @@ import type { ArtifactFile, PlatformSelector } from '@openmemo/shared';
 import { DownloadError, type DownloadSource, downloadFile } from './download.js';
 import { type ProbeOutcome, type ProbeTarget, orderSourcesForDownload } from './probe.js';
 import type { ArtifactStore, StoreKind } from './store.js';
+import { toPortableRecord } from './store.js';
 import { unpackArchive } from './unpack.js';
 
 export interface InstallTarget {
@@ -63,6 +64,14 @@ export interface InstalledFileRecord {
   name: string;
   sha256: string;
   sizeBytes: number;
+  /** Root for `relPath`. Portable across data-directory moves. */
+  root: 'models';
+  /** Path relative to the models root, POSIX separators. */
+  relPath: string;
+  /**
+   * @deprecated Absolute path, emitted only so consumers that have not migrated keep
+   * working. Read via `resolveInstalledFile()` instead.
+   */
   path: string;
   provider: string;
   cached: boolean;
@@ -228,11 +237,15 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
       }
     }
 
+    const portable = toPortableRecord(linked, store.root);
     const rec: InstalledFileRecord = {
       role: f.role,
       name: f.name,
       sha256: res.sha256,
       sizeBytes: res.sizeBytes,
+      root: portable.root,
+      relPath: portable.relPath,
+      // Kept during the migration window; see InstalledFile.path in @openmemo/shared.
       path: linked,
       provider: res.provider,
       cached: res.cached,

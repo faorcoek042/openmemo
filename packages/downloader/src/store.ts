@@ -252,6 +252,52 @@ export class ArtifactStore {
   }
 }
 
+/**
+ * Resolve an installed-file record to an absolute path.
+ *
+ * Handles both shapes so the migration is invisible to callers:
+ *   - new records: `root` + `relPath`  (portable)
+ *   - old records: `path`              (absolute, written before the change)
+ *
+ * Consumers should call this rather than reading either field, so that when the legacy
+ * field is finally dropped only this function changes.
+ */
+export function resolveInstalledFile(
+  rec: { root?: string; relPath?: string; path?: string },
+  roots: { models: string; runtimes?: string; data?: string },
+): string {
+  if (rec.root && rec.relPath) {
+    const base =
+      rec.root === 'models'
+        ? roots.models
+        : rec.root === 'runtimes'
+          ? (roots.runtimes ?? path.join(roots.models, '..', 'runtimes'))
+          : (roots.data ?? path.join(roots.models, '..'));
+    const abs = path.resolve(base, rec.relPath);
+    // Defence in depth: a record that escapes its root is corrupt, not merely odd.
+    const root = path.resolve(base);
+    if (abs !== root && !abs.startsWith(root + path.sep)) {
+      throw new Error(`Installed-file record escapes its root: ${rec.relPath}`);
+    }
+    return abs;
+  }
+  if (rec.path) return rec.path; // legacy
+  throw new Error('Installed-file record has neither root+relPath nor a legacy path');
+}
+
+/** Build a portable record from an absolute path under the models root. */
+export function toPortableRecord(
+  absPath: string,
+  modelsRoot: string,
+): { root: 'models'; relPath: string } {
+  const rel = path.relative(path.resolve(modelsRoot), path.resolve(absPath));
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error(`Path ${absPath} is not inside the models root ${modelsRoot}`);
+  }
+  // Always store POSIX separators so a record written on Windows resolves on Linux.
+  return { root: 'models', relPath: rel.split(path.sep).join('/') };
+}
+
 /** Keep ids filesystem-safe; ids contain "/" to namespace by role. */
 function sanitizeId(id: string): string {
   return id.replace(/[^a-zA-Z0-9._-]+/g, '_');

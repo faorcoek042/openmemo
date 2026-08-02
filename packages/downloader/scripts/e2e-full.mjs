@@ -25,7 +25,7 @@ import { chromium } from 'playwright';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..', '..');
-const SHOTS = path.join(REPO, 'docs', 'design', 'assets', 't038-e2e');
+const SHOTS = path.join(REPO, 'docs', 'design', 'assets', 't053-e2e');
 const DOWNLOADS = path.join(SHOTS, 'downloads');
 
 const argv = process.argv.slice(2);

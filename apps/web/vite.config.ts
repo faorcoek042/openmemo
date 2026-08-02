@@ -10,6 +10,22 @@ import { defineConfig } from 'vite';
  */
 const DAEMON = process.env['OPENMEMO_DAEMON'] ?? 'http://127.0.0.1:17650';
 
+/**
+ * 把 `Origin` 头也改写成 daemon 自己的源。
+ *
+ * `changeOrigin: true` 只改写 `Host`，**不改 `Origin`**。而 daemon 的 CSRF 防护
+ * 会单独校验 Origin（D-01 §8.2 第 3 道防线），实测：
+ * `403 FORBIDDEN_ORIGIN / Origin 端口不匹配: 5173`。
+ *
+ * 正确做法是在**代理侧**把它对齐，而不是让服务端把 5173 加进白名单 ——
+ * 那等于为了开发方便在产品里留一个永久的信任缺口。
+ */
+function rewriteOrigin(proxy: { on: (e: string, cb: (p: { setHeader: (k: string, v: string) => void }) => void) => void }): void {
+  proxy.on('proxyReq', (proxyReq) => {
+    proxyReq.setHeader('origin', DAEMON);
+  });
+}
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
@@ -46,9 +62,9 @@ export default defineConfig({
      * **这条防护本身是对的，不该为了开发方便去削弱服务端** —— 改代理侧才是正解。
      */
     proxy: {
-      '/api': { target: DAEMON, changeOrigin: true, ws: false },
-      '/media': { target: DAEMON, changeOrigin: true },
-      '/ws': { target: DAEMON, ws: true, changeOrigin: true },
+      '/api': { target: DAEMON, changeOrigin: true, ws: false, configure: rewriteOrigin },
+      '/media': { target: DAEMON, changeOrigin: true, configure: rewriteOrigin },
+      '/ws': { target: DAEMON, ws: true, changeOrigin: true, configure: rewriteOrigin },
     },
   },
   build: {

@@ -187,13 +187,38 @@ export interface InstalledModel {
   catalogVersion: string;
 }
 
+/** Root a stored path is relative to. Keeps records portable across machines. */
+export const PATH_ROOTS = ['models', 'runtimes', 'data'] as const;
+export type PathRoot = (typeof PATH_ROOTS)[number];
+
 export interface InstalledFile {
   role: string;
   name: string;
   sha256: string;
   sizeBytes: number;
-  /** Absolute path to the by-name hardlink view (the blob lives under blobs/). */
-  path: string;
+
+  /**
+   * Which configured root `relPath` hangs off.
+   *
+   * D-02 §1.1 already requires relative paths for media assets, for exactly the reason
+   * that applies here: an absolute path bakes in the current data directory, so moving
+   * the data dir, changing a Windows drive letter, or copying a profile to another
+   * machine silently invalidates every installed-model record. The blobs are still on
+   * disk and still verified — the records just stop pointing at them.
+   */
+  root: PathRoot;
+
+  /** Path relative to `root`, e.g. "by-name/asr/ggml-large-v3-turbo-q5_0.bin". */
+  relPath: string;
+
+  /**
+   * @deprecated Absolute path — write-only for backward compatibility.
+   *
+   * Kept so records written before the relative-path change keep resolving for users who
+   * already installed models: readers prefer `root`+`relPath` and fall back to this.
+   * Do not read it in new code; it will be dropped once no installs predate the change.
+   */
+  path?: string;
 }
 
 export const CATALOG_SOURCES = ['remote', 'cache', 'bundled'] as const;

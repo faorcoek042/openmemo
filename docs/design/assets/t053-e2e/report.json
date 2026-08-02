@@ -1,0 +1,135 @@
+{
+  "ranAt": "2026-08-02T10:53:40.204Z",
+  "base": "http://127.0.0.1:17660",
+  "browser": "chromium 151.0.7922.34",
+  "noteUid": "01KZ0YHCJFJG7A4SBCBXBJCP1Z",
+  "findings": [
+    {
+      "id": "K4",
+      "feature": "daemon 交接 URL `/#t=<token>` 能否登录",
+      "status": "no",
+      "detail": "根路径交接失败：auth/session=401，未拿到 cookie（首启重定向到 /onboarding 时 fragment 被清掉）；改从 /models#t= 进入则成功 → 这是 daemon 打印的那条 URL 在首启时不可用"
+    },
+    {
+      "id": "K1",
+      "feature": "/tasks React #185 是否已修",
+      "status": "yes",
+      "detail": "未崩溃，14 个可交互元素 · 诊断中文分词未启用（当前 trigram），中文搜索可能不准确去修复向量检索未启用，语义搜索暂不可用新建捕获全部笔记星标录音文件夹全部笔记运"
+    },
+    {
+      "id": "12",
+      "feature": "任务中心刷新后仍在",
+      "status": "yes",
+      "detail": "刷新后页面存活 · 诊断中文分词未启用（当前 trigram），中文搜索可能不准确去修复向量检索未启用，语义搜索暂不可用新建捕获全部笔记星标录音文件夹全部笔记运"
+    },
+    {
+      "id": "K2",
+      "feature": "中文搜索双字词命中",
+      "status": "no",
+      "detail": "用户=0 推特=0 中国=0 服务=0 维基百科=1 · tokenizer=n/a（libsimple 未装 → trigram 回退，三字以下必 0 命中）"
+    },
+    {
+      "id": "K2b",
+      "feature": "中文搜索（从网页真搜）",
+      "status": "no",
+      "detail": "用户=0(空态) 推特=0(空态) 中国=0(空态) 服务=0(空态) · 网页端搜索结果条目数"
+    },
+    {
+      "id": "6",
+      "feature": "首启引导跳转",
+      "status": "yes",
+      "detail": "点击后页面推进（/onboarding）"
+    },
+    {
+      "id": "5",
+      "feature": "API Key 输入与自测",
+      "status": "no",
+      "detail": "设置页找不到 Key 输入框 · 诊断中文分词未启用（当前 trigram），中文搜索可能不准确去修复向量检索未启用，语义搜索暂不可用新建捕获全部笔记星标录音文件夹全部笔记运行时模型任务中心设置"
+    },
+    {
+      "id": "2",
+      "feature": "拖拽上传",
+      "status": "partial",
+      "detail": "file input ×1 · drop=drop-dispatched · 界面无反应"
+    },
+    {
+      "id": "1",
+      "feature": "双击编辑转写段落",
+      "status": "partial",
+      "detail": "双击后未进入编辑态（focus=BODY，可编辑元素 0 个）"
+    },
+    {
+      "id": "4",
+      "feature": "星标点击",
+      "status": "no",
+      "detail": "详情页找不到星标按钮"
+    },
+    {
+      "id": "3",
+      "feature": "标签增删",
+      "status": "partial",
+      "detail": "有标签入口但未展开出输入框"
+    },
+    {
+      "id": "7",
+      "feature": "TipTap 编辑与自动保存",
+      "status": "no",
+      "detail": "详情页无 ProseMirror/contenteditable"
+    },
+    {
+      "id": "8",
+      "feature": "笔记导出 SRT/VTT 真下载并校验内容",
+      "status": "yes",
+      "detail": "SRT: 格式正确+含转写文字 (421B) | VTT: 格式正确+含转写文字 (415B)"
+    },
+    {
+      "id": "13",
+      "feature": "搜索结果直达时间点",
+      "status": "partial",
+      "detail": "跳到了笔记但 URL 无时间点参数：/notes?folder=01KZ0Y50JWXNVSJTXR3R24JASB"
+    },
+    {
+      "id": "14",
+      "feature": "M-7 锚点",
+      "status": "no",
+      "detail": "页面上 0 个段落锚点元素"
+    },
+    {
+      "id": "10",
+      "feature": "导图拖拽/右键/撤销",
+      "status": "no",
+      "detail": "无导图容器/节点（container=0 nodes=0）· Unexpected Application Error!Cannot convert undefined or null to objectTypeError"
+    },
+    {
+      "id": "11",
+      "feature": "导图 SVG/PNG 导出",
+      "status": "no",
+      "detail": "导图页找不到 SVG/PNG 导出入口"
+    },
+    {
+      "id": "9",
+      "feature": "文件夹树操作",
+      "status": "yes",
+      "detail": "新建文件夹成功并出现在树上"
+    },
+    {
+      "id": "K3",
+      "feature": "暗色主题在新页面未退化",
+      "status": "yes",
+      "detail": "5 个页面 --surface-0 均随 data-theme 切换"
+    },
+    {
+      "id": "R1",
+      "feature": "模型页（真 daemon）",
+      "status": "yes",
+      "detail": "4 张卡 · 4 个 fit 徽标 · 3 个下载按钮"
+    },
+    {
+      "id": "R2",
+      "feature": "运行时页（真 daemon）",
+      "status": "yes",
+      "detail": "硬件卡 1 · 后端包 11"
+    }
+  ],
+  "pageErrors": []
+}

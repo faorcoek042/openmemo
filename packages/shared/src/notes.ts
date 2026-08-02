@@ -136,6 +136,9 @@ export interface NoteDetail {
 
   /** Whether the note is starred. Always present. */
   starred: boolean;
+
+  /** Folder this note lives in, or null for the root. Always present. */
+  folderUid: string | null;
 }
 
 /* ------------------------------- transcript ------------------------------- */
@@ -180,6 +183,42 @@ export interface GetTranscriptResponse {
   segments: TranscriptSegment[];
 }
 
+/* ----------------------------- retranscribe ------------------------------- */
+
+/**
+ * `POST /api/notes/:uid/retranscribe` — re-run transcription on an EXISTING note.
+ *
+ * Adopted verbatim from `oss-scout`'s implementation (ADR-012 process: his shipped shape
+ * wins over my preference).
+ *
+ * Distinct from `POST /api/notes/import`, which creates a NEW note. This one reuses the
+ * note, its media and its recorded source input, so:
+ *   - the note's uid, tags, stars and folder survive
+ *   - `resumableTranscript()` reuses an unfinished transcript and skips completed chunks,
+ *     which is what makes "cancel, then continue later" work (D-01 §4.5)
+ *   - the user's edited segments are preserved by the two-pass time-based merge
+ *
+ * 409 `NO_SOURCE_INPUT` when the note has no recorded original input — e.g. a recording
+ * whose source was never a re-fetchable URL. There is nothing to re-run from, and the UI
+ * must not offer the button in that case.
+ */
+export interface RetranscribeRequest {
+  /**
+   * Language override for this run. Omit to reuse the note's stored language.
+   *
+   * Same hazard as import: whisper.cpp with no `-l` silently TRANSLATES non-English audio
+   * into English. The daemon falls back to `note.language`, so omitting this is safe here —
+   * but never send an empty string.
+   */
+  language?: string;
+}
+
+export interface RetranscribeResponse {
+  /** ULID of the new transcription job; progress arrives on the global SSE stream. */
+  jobUid: string;
+  noteUid: NoteUid;
+}
+
 /* --------------------------------- search --------------------------------- */
 
 export const SEARCH_SOURCES = ['segment', 'note'] as const;
@@ -221,6 +260,7 @@ export const NOTE_ERROR_CODES = [
   'BAD_PATH',
   'PATH_NOT_ALLOWED',
   'NOTE_NOT_FOUND',
+  'NO_SOURCE_INPUT',
   'METHOD_NOT_ALLOWED',
   'UNAUTHENTICATED',
 ] as const;
@@ -236,6 +276,8 @@ export const NOTE_ENDPOINTS = [
   { method: 'GET', path: '/api/notes/:uid', name: 'getNote' },
   { method: 'DELETE', path: '/api/notes/:uid', name: 'deleteNote' },
   { method: 'GET', path: '/api/notes/:uid/transcript', name: 'getTranscript' },
+  { method: 'POST', path: '/api/notes/:uid/retranscribe', name: 'retranscribeNote' },
   { method: 'GET', path: '/api/search', name: 'search' },
+  { method: 'GET', path: '/api/selfcheck', name: 'selfcheck' },
   { method: 'GET', path: '/media/asset/:uid', name: 'mediaAsset' },
 ] as const;
