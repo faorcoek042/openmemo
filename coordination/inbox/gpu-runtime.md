@@ -186,3 +186,65 @@
 - **未实现**：F3 接浏览器麦克风、F3 两阶段在 daemon 的调度、说话人分离、解压防护。
 - **未验证**：HLS 真实流、Windows/macOS、ffmpeg 协议白名单实测、FunASR 对比。
 - 测试脚手架自身出过一次**假红灯**（`pgrep` 数到了并行任务，误报孤儿进程泄漏），已改为按父进程归属。与 ADR-008 记的"假绿灯"是同一类问题的镜像。
+
+---
+
+## [2026-08-02 16:30] T-026 DONE
+
+交付:
+- `docs/design/D-06-pipeline.md` §15（**🔒 冻结契约**）、§16（ffmpeg 安全实测）、§17（HLS）、§18（**Paraformer 评估**）、§19（诚实清单）
+- `docs/SECURITY.md` §2.2 重写：真实攻击验证 + **新查出并修复的漏洞**
+- `packages/pipeline/src/subprocess/argGuard.ts`（新增 `PLAYLIST_EXTENSIONS` / `isPlaylistExtension` / `isLocalImportSafeExtension`）
+- `packages/pipeline/src/media/sources/localFile.ts`（拒绝本地播放列表导入 + ffprobe 双保险）
+- `packages/pipeline/src/index.ts`、`argGuard.test.ts`（新增 3 个攻击用例）
+- `packages/pipeline/package.json` 加 `sherpa-onnx-node@^1.13.4`（**依 ADR-011 决策 1 授权，特此申报**）
+
+**测试 101 → 104 全绿**，eslint / tsc / prettier 干净。
+
+## 1. 契约已冻结（D-06 §15）
+`AsrStream` 接口 + 8 条调用语义（`write` 同步排队、`close` **先排空再封死**、幂等、partial 单调增长、时间戳为绝对毫秒、中文 `words[]` 逐字…）；合并契约 `edited_at`（判定唯一依据）/ `text_raw` + 五行规则表。已标 **FROZEN**，我不再单方变更。
+
+## 2. ffmpeg 恶意播放列表实测（照打 yt-dlp 的方式打了一次）
+构造引用 `file:///tmp/attack/secret.ts` 的恶意 HLS，三种变体（`file:` / `concat:` / `subfile:`）：
+- **对照组（允许 file）**：`Opening 'file:///tmp/attack/secret.ts' for reading` → **攻击成立，真读了本地文件**
+- **我们的白名单**：`Protocol 'file' not on whitelist '…'!` → **全部挡住**
+
+⚠️ **方法论教训**：第一次用 `.txt` 金丝雀，攻击"失败"了——但挡住它的是 **ffmpeg 8.x 自己的 `allowed_segment_extensions`，不是我们的白名单**。换成 `.ts` 才隔离出真正起作用的那层。**与"假绿灯"同源：必须确认"挡住了"是被哪一层挡住的。**
+
+## 3. ⚠️ 由此查出我自己代码的一个真实漏洞（已修）
+远程路径安全，**本地路径不安全**：`LocalFileSource` 的扩展名白名单**包含 `.m3u8`**，而本地分支必须传 `-protocol_whitelist file`（否则普通媒体解不了）。实测本地恶意 `.m3u8` **成功越过受管根目录读文件** —— 协议白名单在这里救不了，因为播放列表是通过一个我们**故意启用**的协议读文件，直接绕过 `assertWithinRoot`。
+**已修**：本地导入拒绝所有播放列表扩展名 + ffprobe `format_name` 命中 `hls|applehttp|m3u` 双保险（防改名）+ `match()` 返回 0。远程 HLS 不受影响。复验：`match=0`，probe 抛明确错误。
+
+## 4. HLS 真实流 ✅
+`shaka-demo-assets/angel-one-hls`（公开 GCS，VOD 60s）：11 轨识别、拉流、归一化成 16kHz 单声道全部通过。备用流 `test-streams.mux.dev` 也已验证。
+
+## 5. ★ Paraformer 中文评估 —— 结论：**成立，而且差距比预期大**
+同一段 `Zh-Twitter.ogg`（337s）、同一套 VAD 切分、同一台无 GPU 机器：
+
+| | whisper base | **paraformer-zh-small + 标点** | large-v3-turbo-q5_0 |
+|---|---|---|---|
+| 体积 | 148 MB | **78+279 = 357 MB** | 547 MB |
+| **合计 RTF** | 0.055（18x） | **0.0119（84x）** | 0.377（2.7x） |
+| **1 小时录音** | 3.3 分钟 | **43 秒** | **22 分钟** |
+| 专有名词命中 | ~2/13 | **12/13** | 13/13 |
+| 标点 / 简体 | ✅ / 需 prompt 仍泄漏 | ✅（后处理 3–21ms）/ ✅原生 | ✅ / ✅ |
+| 阿拉伯数字 | ✅ | ❌ 中文数字 | ✅ |
+| 词级时间戳 | ✅ | ❌ **无** | ✅ |
+
+**Paraformer 比 turbo 快约 32 倍，专有名词 12/13**（维基百科/百科全书/华尔街日报/孟买/迈克尔杰克逊/谷歌/李开复/布什/柯林斯… 全对）。
+
+**⚠️ 这推翻了我上一轮结论的一半**：T-025 我说"中文必须 turbo → GPU 是中文可用性前提"。**现在不成立了** —— Paraformer 让无显卡中文用户拿到 84x 实时。**GPU 仍值得做**（turbo 质量更高、英文/多语种仍靠 whisper），但**不再是中文可用性的前提**。请据此重新评估 NVIDIA 机器的优先级。
+
+**三个诚实缺点**：中文数字（"两千零八年"）、**无词级时间戳**（F5 中文需降级为段级高亮）、英文全小写。前两者影响产品，均**未实现**后处理。
+
+需要 Manager 决策:
+1. **是否把"中文离线默认引擎"改为 Paraformer**（无 GPU 时）。这是本轮最大的产品含义。
+2. **F5 中文词级高亮如何处理** —— Paraformer 拿不到词级时间戳，只有段级。是接受段级降级，还是中文强制走 whisper？
+3. **中文数字→阿拉伯数字后处理归属**（会影响 LLM 抽取年份）。
+4. **NVIDIA 机器优先级是否下调**（依据见第 5 点）。
+
+诚实声明:
+- D-06 §19.1 列 6 项本轮实测，§19.2 列 **10 项仍未验证/未实现**。
+- **Windows / macOS 继续未验证**（无机器，未假装）。**说话人分离按 ADR-011 决策 6 未做。**
+- `paraformer-zh` 完整版（234 MB）与 SenseVoice（1.05 GB）**未测**（下载超时/体积）；FunASR 原生 Python 栈**未测**（刻意不引入 Python 依赖，只走 sherpa-onnx 的 ONNX 路径）。
+- Paraformer 的 RTF 在两次运行中为 0.0027 与 0.0111（线程竞争差异），报告取**较保守的 0.0119（含标点）**。

@@ -264,3 +264,132 @@ bm25、`simple_query/simple_highlight`、拼音（`swdt`/`zx`/`sjz` 全命中）
 
 派生 subagent 记录（未 kill，可复用）:
 - `a5de86382565434f7` — D-02 DDL 提取与验证（sonnet5，已完成）
+
+---
+
+## [2026-08-02 15:40] T-023 DONE + ADR-011 三条回应
+
+### ADR-011 回应（先答插播）
+
+**① F3 daemon 侧接线 —— 接口对齐确认，无 DISPUTE。**
+我负责「WS 音频接收 → `AsrStream` → 停止后自动排离线重跑 job」。
+现状：`apps/daemon/src/http/ws.ts` 的 `/ws/recorder` 已建好协议边界
+（二进制帧=音频、文本帧=控制，不混编；Origin 强校验；鉴权走 cookie），
+但**尚未接 `AsrStream`**（T-016 就标注为"归 T-020 接入"）。
+等 `gpu-runtime` 冻结 `AsrStream` 后我按契约接。**排离线重跑 job 的能力已就绪**：
+`JobQueue.enqueue({type,lane,payload,idempotencyKey})` + `lane='gpu.asr'` 已实现并测过。
+
+**② `edited_at` / `text_raw` —— 两列早已存在，且已实测验证。**
+⚠️ **更正一处事实**：`gpu-runtime` 报告的「`packages/db` 尚无 schema」不准确。
+T-016 就落了 `migrations/0001_init.sql`（26 表 / 57 索引），`transcript_segments` 共 14 列，
+两列从一开始就在（来自 D-02 §1.5，不是这次补的）：
+```
+edited_at   INTEGER  (nullable)   -- null = 未编辑，判定唯一依据
+text_raw    TEXT     (nullable)   -- 编辑前原文，供 diff / 还原
+```
+本轮**实跑验证了完整契约**（非仅看 SQL）：
+```
+未编辑判定 (edited_at is null): ✅
+编辑后: [{"seq":0,"text":"动荡","raw":"金融动能","edited":true},{"seq":1,...,"edited":false}]
+"你编辑过的 N 段" 可查询: ✅ N=1
+diff/还原可行 (text_raw 有原文): ✅
+is_active 多版本切换: ✅ 已切到 large-v3-turbo   旧稿仍在（可回退）: ✅
+```
+即 `gpu-runtime` 那句「已更新 0 段 · 你编辑过的 1 段已保留」在 DB 层是可支撑的。
+
+**③ 依赖字段所有权松绑 —— 收到，感谢。** 本轮我按新规则自行编辑了
+`packages/mindmap/package.json` 的 `dependencies`（加 `@openmemo/llm`）。
+根配置仍由我维护。
+
+---
+
+### T-023 交付
+
+- **`packages/llm/`（新建）**：`src/{types,errors,structured,detect,secrets,index}.ts`、
+  `src/providers/{openai-compatible,anthropic}.ts`、`src/structured.test.ts`、`package.json`、`tsconfig.json`
+- **`packages/mindmap/`**：`src/{types,validate,generate,index}.ts`、
+  `src/adapters/{mind-elixir,markmap}.ts`、`src/serialize/{markdown,opml,freemind,index}.ts`、
+  `src/mindmap.test.ts`、`src/serialize/serialize.test.ts`、`scripts/demo-f4.mjs`
+- 根 `tsconfig.json`（加 llm 引用）
+
+### 实测验收
+
+**LLM 适配层 —— 档 2 与档 3 都真跑通了**（不是"至少一档"）：
+```
+档 2 探测: ✅ 内置 llama.cpp @ 127.0.0.1:18080  latency=11ms  models=1
+          （真发 /v1/models 请求 + 要求至少有一个模型，不只看端口）
+档 3 实跑: llama-server b10223（官方预编译，未自建 CI）+ Qwen3-1.7B-Q8_0
+          structuredOutput=json_schema（实测探测，非假设）
+```
+**F4 端到端**（真实 38 段 Garvey 转写稿 → 真实本地 LLM）：
+```
+窗口数 2 · 每窗尝试 [1,1] · 12 节点 · 7.5s · schema 校验 ✅
+F5 三层引用核对: 时间戳落在真实段落内 + quote 为原文逐字 = 11/11 ✅
+```
+**序列化器往返（用真实生成的导图，非构造数据）**：
+```
+OPML      1600 字节 → 回读 31 节点  校验✅  文本集合一致✅
+FreeMind  1561 字节 → 回读 31 节点  校验✅  文本集合一致✅
+Markdown   663 字节 → 回读 31 节点  校验✅  文本集合一致✅
+```
+**全量**：`pnpm -r build` 9/9 包 Done；测试 **118 pass / 0 fail**；eslint EXIT=0。
+
+### 三个值得记录的实测发现
+
+1. **`json_object` 不是强约束，`json_schema` 才是。**
+   llama-server + Qwen3：`response_format:{type:"json_object"}` 返回 ```` ```json\n{...}\n``` ````
+   （带 markdown 围栏，`JSON.parse` 直接失败）；`json_schema` 才是真正的语法级约束。
+   → **任何档位都必须走鲁棒提取**，不能天真 `JSON.parse`。已写进 `extractJson()` 并加测试。
+
+2. **我自己写出并修掉了一个"误导性错误"bug。**
+   `extractJson` 在输出被截断时（外层 `{` 不闭合），会继续往后扫到内层那个恰好闭合的对象并"成功"返回，
+   于是报出 `缺少 topics 数组` —— 把人往"模型不听话"的方向带，**真实原因是 max_tokens 不够**。
+   第一次修的时候我**把截断检测放在了内层扫描之后**，等于没修；
+   是我自己写的那条断言把顺序问题逼出来的（顺序反了不会让任何用例变红，只会让错误信息误导人）。
+   现已修正 + 专项测试 + `remediation: increaseMaxTokens`。
+
+3. **模型档位的真实影响（ADR-004 决策 3：跑真实基准不编数字）**
+   同一转写稿、同一流水线，只换模型：
+   | 模型 | 条目 | 去重后 | 重复率 | 最高频重复 |
+   |---|---|---|---|---|
+   | Qwen3-0.6B-Q8_0 (610MB) | 30 | 17 | **43.3%** | ×9「非洲40000万人口是为世界和平和繁荣而团结的。」|
+   | Qwen3-1.7B-Q8_0 (1.83GB) | 11 | 10 | **9.1%** | ×2「组织目标」|
+   → 0.6B 能产出**结构合法**但内容大量复读的导图。**schema 校验拦不住语义垃圾**，
+   这是选型信息，不是 bug。
+
+### 关键设计决策（请 Manager 过目）
+
+**LLM 永远不产出时间戳。** 天真做法是让 LLM 直接输出 `startMs/endMs/quote`，
+但模型会编造时间戳，且 `quote` 一旦不是原文逐字，D-02 §3.5 的第 2 层重定位就失效
+（重转写后链接全废）。
+→ 改为**给 LLM 编号的段落，它只回引用哪几个编号**；时间与 quote 由我们从真实转写稿算出。
+这样时间戳**不可能**错、`quote` **必然**是原文逐字。
+有一条专门的测试用 mock provider 喂"故意编造 startMs=999999999 和假 quote"的输出，
+断言它被完全忽略、`refs` 仍取自真实段落。
+
+下一步建议:
+- `architect` 可以开始接 `apps/web/src/features/mindmap/` 了：
+  `toMindElixir()` / `toMarkmap()` 都已可用且测过，`markmapLoss()` 可直接驱动"切视图会丢什么"的提示。
+- F4 的**质量**取决于模型档位，建议模型管理页对 <2B 的模型标注"可能出现内容重复"。
+- SVG/PNG 导出（走序列化不截屏）尚未实现 —— 需要渲染器实例，属前端侧，建议归 `architect`。
+
+需要 Manager 决策 / 转达:
+1. **[转达 gpu-runtime]** 「`packages/db` 尚无 schema」这条不准确，26 表在 T-016 就已落地并 commit
+   （`0001_init.sql`），`edited_at`/`text_raw` 从一开始就在。若他没看到，可能是没跑 `pnpm -r build`
+   或看的是 `src/` 而非 `migrations/`。**契约无需改动，已实测通过。**
+2. **F3 接线等 `AsrStream` 冻结**。冻结后请通知我，我按契约接 `/ws/recorder`。
+3. `packages/mindmap` 的 owner 在 ADR-006 附注里指派给 T-023 —— 我已按此实现，**请确认所有权正式转到我名下**。
+
+诚实声明:
+- **未实现**：SVG/PNG 导出（需渲染器实例，属前端）、`AnthropicProvider` **未真跑**（无 API Key，
+  只有类型与实现，标记为未验证）、reduce 阶段的二次 LLM 归并（当前只做 map + 拼接，
+  窗口间主题重复靠传递上一窗标题缓解，**未做真正的语义去重**）。
+- **未验证**：只在 Linux x64 + 本地 llama-server 验过；云 provider（OpenAI/DeepSeek 等）**一次都没调过**；
+  `detect.ts` 里 Ollama/LM Studio 两个候选**本机没装，未真跑**（只有 llama-server 那条是实测的）。
+- **长稿分段合并质量未评测**：只测到 218s / 2 窗口。更长的稿（1 小时 = 20+ 窗口）会不会主题碎片化，UNKNOWN。
+- `repair()` 的"断环保留首次出现的边"是一个**任意选择**，没有语义依据；坏输出的最佳修复策略未做研究。
+
+派生 subagent 记录（未 kill，可复用）:
+- `adb0c250e9892e5e4` — llama-server + Qwen3-0.6B 搭建（sonnet5，已完成）
+- `a3d1a090de8202014` — 三个序列化器 + 往返测试（sonnet5，已完成，18/18 通过）
+- `ab7a4031d7afa1cbe` — 换 Qwen3-1.7B 模型（sonnet5，已完成）
