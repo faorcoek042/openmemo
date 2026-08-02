@@ -1565,3 +1565,95 @@ demo 的 token **已经失效**（`instanceId` 从 `01KZ1S3BFK…` 变成 `01KZ2
 自建实例：daemon `17650`（我自己的 dataDir `/tmp/om-t088`）、fixture `17820`、生产构建 `17822`，
 均绑 `127.0.0.1`；用完按端口只杀自己的 pid。**没有触碰 `:10000` 的 demo**。
 demo 的 token 这次没试 —— 上一轮已证明重启会换 token，而我不需要它。
+
+---
+
+## T-094 ffmpeg 装不上：**已修，现在真能装上**
+
+### 三个端点为什么拒 —— 一个根因，三种说法
+
+`media-tools-linux-x64` **只存在于 `components.json`**（版本检测面）——那份清单里
+只有 `sizeBytes` / `sha256` / `upstream`，**没有 `files[]`、没有下载 URL**。
+而三个安装端点全部从**后端目录 `backends.json`** 找包，那里 10 个包里**没有它**：
+
+    POST /api/components/media-tools-linux-x64/update
+      → 409 NO_INSTALL_CHANNEL "has no pack in the backend catalog"
+    POST /api/backends/install            {"id":"media-tools-linux-x64"}
+      → 404 NOT_FOUND "no backend pack media-tools-linux-x64"
+    POST /api/models/pull  {"id":"…","kind":"backend-pack"}
+      → 404 NOT_FOUND（同一句，同一处查表）
+
+你判断得对：**缺的不是下载，是安装路径**。资产在、tag 不可变、`.tar.xz` 支持在、
+sha256 也对得上 —— 只是**没有任何一条安装通道认识这个 id**。
+那句 409 甚至把原因写在脸上了（"has no pack in the backend catalog"），
+只是没人把它接到"所以 ffmpeg 装不上"这个后果上。
+
+### 修法一：把它加进 `backends.json`
+
+用 sha256 + 字节数**反查**出 BtbN 那个 tag 下唯一匹配的资产（49 个资产里精确命中一个）：
+
+    ffmpeg-n7.1.5-12-g1fdbca85aa-linux64-gpl-7.1.tar.xz
+    118,999,596 B   sha256 47b2cc48…c16ec58   ← 与我们清单里钉的完全一致
+    https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-02-13-17/…
+
+`ggmlAbi` 填 **null** 而不是编一个值 —— ffmpeg 不是 ggml 引擎，没有 ABI 可填；
+schema 本来就是 `nullable()`，是我第一版**漏了这个键**（不是值不对）。
+
+### 修法二（关键）：装上了 ≠ 找得到
+
+装完实测落点是：
+
+    by-name/backend/ffmpeg-….tar.xz/ffmpeg-n7.1.5-…-7.1/bin/ffmpeg   ← 三层
+
+而 `findInBackendPacks` **只扫两层裸目录**（`<包>/x` 和 `<包>/<嵌套>/x`）。
+BtbN 把二进制放在 `<顶层>/bin/` 下，whisper.cpp 则是平铺 ——
+**归档布局是上游的选择，不是我们的**。所以下载成功、校验通过、安装记录写好，
+`discoverTools` 仍然返回 `null`。我把这条也证明了，不是推测：
+
+    旧的两层裸目录扫描 → 【找不到】  ← 装成功了也用不了
+    加上 bin/ 之后    → ffmpeg-n7.1.5-…-7.1/bin/ffmpeg
+
+已给 `findInBackendPacks` / `findFileInBackendPacks` 每层补上 `bin/`（后者还补了 `lib/`，
+`.so` 通常在那儿）。**平铺布局没有因此失效**（有断言守着）。
+
+### 端到端实测（我自己的隔离实例，全新数据目录）
+
+    三个端点  404/404/409  →  202/202/202
+              后两个正确去重到同一个 job（deduplicated:true）
+    下载      118,999,596 B  succeeded  sha256 校验通过
+    ffmpeg -version → n7.1.5-12-g1fdbca85aa-20260802
+    真做一次 16k mono 归一化（转写第一步）→ 输出 16000,1  ✓
+
+**最关键的一条**：把 PATH 清成只剩 `node`（模拟用户机器上**没有系统 ffmpeg**），
+`discoverTools` 仍然解析到：
+
+    ffmpeg   /tmp/om-t094/models/by-name/backend/…/bin/ffmpeg
+    ffprobe  /tmp/om-t094/models/by-name/backend/…/bin/ffprobe
+
+这正是你说的"本机有所以看起来没问题"的反面测试 —— **没有系统 ffmpeg 也能用了**。
+
+### 回归守卫
+
+`verify-offline` 新增 `[12]`：造一个 `<包>/<顶层>/bin/ffmpeg` 的假布局断言能找到，
+同时断言平铺布局不回归、不存在的工具仍返回 null。**38 → 41 passed。**
+理由写在测试里：这条 bug 的特征是"装得上、校验过、selfcheck 还绿"，
+唯一能钉住它的就是把"找得到"单独断言出来。
+
+### 两个观察（不阻塞，如实记）
+
+1. 解包目录名保留了 `.tar.xz` 后缀（`by-name/backend/ffmpeg-….tar.xz/`）——
+   `stripExt` 只剥一级扩展名。不影响功能（查找按目录遍历），但难看，
+   下次动 `installer` 时一并处理，**这次不顺手改**，免得把一个已验证通过的安装路径又动一遍。
+2. `backends.json` 里我填了 `installPath: "media-tools/n7.1.5/cpu"`，但
+   `startPackInstall` **并不传 `installPath` 给安装器**，实际仍走 `by-name` 布局。
+   与 gpu-runtime 说的「以自检为准对齐」一致：**现在能用的是 `by-name` 这条**，
+   `installPath` 目前对后端包是**声明而未生效**的字段。
+   要么让 `startPackInstall` 传下去，要么把这个字段从后端包上去掉 ——
+   **声明了却不执行的字段正是这轮 bug 的同款**，建议尽快二选一。归 daemon 侧。
+
+### 门禁
+    tsc 0 · eslint 0 · verify-offline 41/41 · verify-unpack 53/53 · verify-proxy 43/43 · 5 清单 schema 全过
+
+### 纪律
+自建实例 `17650`（dataDir `/tmp/om-t094`，全新），用完只杀自己的 pid；
+**没有触碰 `:10000` 的 demo**。

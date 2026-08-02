@@ -484,6 +484,30 @@ console.log('\n[10] role 与目录解耦：VAD 不得被当成 ASR');
 }
 
 /* --- 11. installPath 必须被实现，不能只写在 manifest 里 ------------------------ */
+console.log('\n[12] 后端包里的可执行文件必须能被找到（含 bin/ 子目录）');
+{
+  // 回归守卫：ffmpeg 曾经"装成功了也用不了" —— BtbN 的包把二进制放在 <top>/bin/ 下，
+  // 而查找只扫两层裸目录，于是安装成功、校验通过、selfcheck 却因为本机恰好有
+  // /usr/bin/ffmpeg 而显示绿灯。装得上 ≠ 找得到，这里把后者也钉住。
+  const { findInBackendPacks } = await import('../../pipeline/dist/tools.js');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'om-toolscan-'));
+  const deep = path.join(root, 'by-name', 'backend', 'ffmpeg-x.tar.xz', 'ffmpeg-x', 'bin');
+  await fs.mkdir(deep, { recursive: true });
+  await fs.writeFile(path.join(deep, 'ffmpeg'), '#!/bin/sh\n');
+  await fs.chmod(path.join(deep, 'ffmpeg'), 0o755);
+  const found = await findInBackendPacks(root, 'ffmpeg');
+  check('嵌套在 <包>/<顶层>/bin/ 里的可执行文件能被找到', found !== null, found ?? '(null)');
+
+  // 老布局（whisper.cpp 那样平铺）不能因此失效
+  const flat = path.join(root, 'by-name', 'backend', 'whisper-x', 'whisper-x');
+  await fs.mkdir(flat, { recursive: true });
+  await fs.writeFile(path.join(flat, 'whisper-cli'), '#!/bin/sh\n');
+  await fs.chmod(path.join(flat, 'whisper-cli'), 0o755);
+  check('平铺布局仍然找得到（没有为了新布局牺牲旧的）', (await findInBackendPacks(root, 'whisper-cli')) !== null);
+  check('不存在的工具仍返回 null（不误报找到）', (await findInBackendPacks(root, 'nope-cli')) === null);
+  await fs.rm(root, { recursive: true, force: true });
+}
+
 console.log('\n[11] installPath 生效（扩展装到 bin/ext 而不是 by-name）');
 {
   const dataRoot = path.join(root, 'dataroot');
