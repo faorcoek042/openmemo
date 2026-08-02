@@ -24,6 +24,11 @@ import { arr } from '../lib/safe';
 import { ApiError, api } from '../lib/api/client';
 import { PanelBoundary } from '../components/common/PanelBoundary';
 import { resolveErrorText } from '../components/common/ErrorBlock';
+import { ASR_ENGINE_IDS } from '@openmemo/shared';
+import { ASR_ENGINE_LABELS, isValidAsrLanguage } from '../lib/asr';
+import { AsrModelPicker } from '../components/common/AsrModelPicker';
+import { AsrEngineStatus } from '../components/common/AsrEngineStatus';
+import { useImportUrlMutation } from '../features/notes';
 
 /* ─────────────────────────── 标签增删 ─────────────────────────── */
 
@@ -470,5 +475,130 @@ describe('状态呈现', () => {
     const r2 = await render(<ProgressMeter value={5} label="x" />);
     assert.equal(r2.container.querySelector('[role="progressbar"]')!.getAttribute('aria-valuenow'), '100');
     r2.unmount();
+  });
+});
+
+/* ───────────────── 引擎 / 模型 / 语言：选中的值必须真发出去 ───────────────── */
+
+/**
+ * T-075 的回归钉子。
+ *
+ * 原来的 `RecorderPage` 有一个 `useState<'paraformer' | 'turbo'>` 的引擎切换器，
+ * 三重假：列表写死（装再多模型也不变）、`'turbo'` 后端不存在、**选中的值从不发送**。
+ * 用户看到的是"识别引擎只有两个可选"。
+ *
+ * 这一组测试钉住的不是某个像素，而是这条规则本身：
+ * **UI 里能选的东西，要么真的进请求体，要么就别画成可选。**
+ */
+describe('转写选项：选中的值真的发给后端', () => {
+  test('★ 引擎标识来自 shared 联合，"turbo" 不是合法引擎', () => {
+    assert.ok(!(ASR_ENGINE_IDS as readonly string[]).includes('turbo'), '"turbo" 是模型名片段，不是引擎 id');
+    assert.deepEqual([...ASR_ENGINE_IDS], ['whisper.cpp', 'paraformer', 'sherpa-onnx']);
+    // 展示名的键就是联合本身 —— 编不出后端没有的引擎
+    for (const id of ASR_ENGINE_IDS) assert.ok(ASR_ENGINE_LABELS[id], `${id} 缺展示名`);
+  });
+
+  test('★ 语言校验与 daemon 正则一致 —— 非法值在后端会被静默改成 auto，所以前端必须先说', () => {
+    for (const ok of ['auto', 'zh', 'en', 'yue', 'zh-Hans', 'pt-BR']) {
+      assert.ok(isValidAsrLanguage(ok), `${ok} 应合法`);
+    }
+    for (const bad of ['', 'Chinese', '中文', 'zh_CN', 'z', 'auto-detect']) {
+      assert.ok(!isValidAsrLanguage(bad), `${bad} 应判为非法`);
+    }
+  });
+
+  test('★ 导入时 language 必须进请求体（这是本轮修的核心断链）', async () => {
+    const { calls } = stubApi({
+      'POST /notes/import': { noteUid: 'n1', jobUid: 'j1', status: 'queued' },
+    });
+
+    function Harness() {
+      const m = useImportUrlMutation();
+      return (
+        <button onClick={() => m.mutate({ url: 'https://example.com/a.mp4', language: 'zh' })}>
+          go
+        </button>
+      );
+    }
+    const r = await render(<Harness />);
+    await click(buttonByText(r.container, 'go'));
+    await r.flush();
+
+    const post = calls.find((c) => c.method === 'POST' && c.path === '/notes/import');
+    assert.ok(post, '应发出 import 请求');
+    assert.deepEqual(post!.body, { input: 'https://example.com/a.mp4', language: 'zh' });
+    r.unmount();
+  });
+
+  test('语言为空时不发 language 键 —— 空串会被 daemon 当成"用户指定了空语言"存起来', async () => {
+    const { calls } = stubApi({
+      'POST /notes/import': { noteUid: 'n1', jobUid: 'j1', status: 'queued' },
+    });
+    function Harness() {
+      const m = useImportUrlMutation();
+      return <button onClick={() => m.mutate({ url: 'https://e.com/a.mp4' })}>go</button>;
+    }
+    const r = await render(<Harness />);
+    await click(buttonByText(r.container, 'go'));
+    await r.flush();
+    const post = calls.find((c) => c.path === '/notes/import');
+    assert.ok(post && !('language' in (post.body as object)), '不该出现 language 键');
+    r.unmount();
+  });
+
+  test('★ 没装 ASR 模型时给"去安装"，而不是一个空下拉框', async () => {
+    stubApi({ 'GET /models/installed': { models: [], active: { asr: null } } });
+    const r = await render(<AsrModelPicker />);
+    await r.flush();
+    assert.equal(r.container.querySelector('select'), null, '没模型就不该有下拉框');
+    assert.ok(text(r.container).includes('去安装模型'), '应给出安装入口');
+    r.unmount();
+  });
+
+  test('★ 模型列表来自后端，且只列 role=asr 的已装模型', async () => {
+    stubApi({
+      'GET /models/installed': {
+        models: [
+          { id: 'asr/a', role: 'asr', displayName: 'Whisper A', quantization: 'q5_0', integrity: 'ok' },
+          { id: 'llm/b', role: 'llm', displayName: '不该出现的 LLM', integrity: 'ok' },
+          { id: 'asr/c', role: 'asr', displayName: 'Paraformer C', quantization: null, integrity: 'ok' },
+        ],
+        active: { asr: 'asr/c' },
+      },
+    });
+    const r = await render(<AsrModelPicker />);
+    await r.flush();
+
+    const opts = [...r.container.querySelectorAll('option')].map((o) => o.textContent ?? '');
+    assert.equal(opts.length, 2, `应只有两个 ASR 选项，实际 ${JSON.stringify(opts)}`);
+    assert.ok(opts.some((o) => o.includes('Whisper A')));
+    assert.ok(!opts.some((o) => o.includes('LLM')), 'LLM 不该混进识别模型列表');
+    assert.equal(r.container.querySelector('select')!.value, 'asr/c', '应选中后端的 active');
+    r.unmount();
+  });
+
+  test('★ 引擎可用性来自 daemon 实测；后端没给的引擎不显示，认不出的 id 丢弃', async () => {
+    stubApi({
+      'GET /daemon/status': {
+        pipeline: {
+          engines: [
+            { id: 'whisper.cpp', available: true },
+            { id: 'paraformer', available: false, reason: '未设置 OPENMEMO_PARAFORMER_DIR' },
+            { id: 'turbo', available: true },
+          ],
+        },
+      },
+    });
+    const r = await render(<AsrEngineStatus />);
+    await r.flush();
+    const shown = text(r.container);
+
+    assert.ok(shown.includes('Whisper.cpp'));
+    assert.ok(shown.includes('Paraformer'));
+    assert.ok(!shown.includes('turbo'), '认不出的引擎 id 应被丢弃，不能照抄进 UI');
+    // 用不了的要说原因 + 给出路，而不是灰掉了事
+    assert.ok(shown.includes('OPENMEMO_PARAFORMER_DIR'), '应展示 daemon 给的真实原因');
+    assert.ok(shown.includes('去安装运行时'));
+    r.unmount();
   });
 });

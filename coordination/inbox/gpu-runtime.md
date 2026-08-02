@@ -1261,3 +1261,98 @@ llama.cpp 一天出多个 build，b10223→b10229 是 6 个 build 的差距，**
 - **"装齐了"我不能说。** 上游直连这一层是通的（4/5 装成功，第 5 个只是网络没跑完），但 selfcheck 仍 EXIT=1，卡在放置位置。
 - 我**没有动 demo 实例**（`127.0.0.1:10010`），本轮用 17751/17755，`setsid` 启动。
 - 我这轮修的是**自己 selfcheck 的假绿灯**；daemon 侧那个同源问题我只报告、没改（跨两个人的文件）。
+
+---
+
+## [2026-08-03 15:10] T-078 DONE（含 T-076 回退）
+
+### 0. T-076 已按叫停回退
+我已经写好的 `sherpaFamilies.ts`（9 族分派）**整个删掉了**，`paraformer.ts` / `index.ts` `git checkout` 还原。
+理由：多族分派是为"扩 sherpa 目录"服务的，那件事停做后它就是纯增维护面。
+**保留的 Paraformer 与 sherpa 流式都不依赖它**——前者只用 `paraformer:` 单分支，后者在 `sherpaOnnx.ts` 里独立走 `transducer:`。
+→ 用户拍板"已做的那两个留着"，成本为零：**没有任何东西是专门为它们维护的**。
+
+### 1. 产物是否全部落在 dataDir 内 —— 是，但我修掉了一处违规
+
+**实测**：全新 dataDir + 只用 API 装（whisper.cpp / libsimple / sqlite-vec / VAD 模型），
+按时间戳扫全盘：**dataDir 内新增 66 个文件，dataDir 外零个运行时产物**
+（外面的命中全是别的 agent 正在编辑的 `apps/web` 源码）。
+
+布局全部收敛在 dataDir 下：
+```
+<dataDir>/models/{blobs,by-name,manifests}   后端包 + 模型 + 安装记录
+<dataDir>/bin/ext                            libsimple.so / vec0.so
+<dataDir>/bin/runtime                        运行时
+<dataDir>/tmp                                job 临时文件
+<dataDir>/logs
+```
+
+**修掉的违规**：`runBenchmark()` 原来用 `mkdtemp(os.tmpdir())` 建临时目录 —— **写到 dataDir 外面**。
+虽然 `finally` 会清理，但"删了数据目录也清不掉"和"只读 /tmp 环境直接失败"两条都不符合用户要求。
+已加 `workRoot` 入参，调用方传 `<dataDir>/tmp`，只有独立 CLI 不知道 dataDir 时才退回 OS 临时目录。
+
+**顺手修的脆弱点**：`runner.ts` 硬编码 `/usr/bin/nice`，缺这个二进制的系统（精简容器/Alpine）会让**整个转写失败**。
+`nice` 只是避免 CPU 推理饿死 daemon 的次要优化，**用次要优化换掉主功能是错的** → 改为找不到就直接跑。
+
+**单一定义确认**：`resolveStoreRoot(dataDir)` 现在被 `setup.ts` 与 `state.ts` 共用；
+`downloader/store.ts` 是独立实现但 `model-mgmt` 已把优先级对齐并在注释里标明同源。
+**实测最能暴露分歧的场景**——把 `OPENMEMO_MODELS` 指到 dataDir **之外**：
+```
+dataDir    = /tmp/audit2
+whisperCli = /tmp/audit2-models/by-name/backend/whisper-bin-ubuntu-x64/…/whisper-cli
+全部指向 OPENMEMO_MODELS : True
+```
+⚠️ 仍有两处各自推导（`apps/daemon/src/runtime/setup.ts:153`、`config/paths.ts:48`）。
+**优先级一致所以行为正确**，但 `paths.ts` 那处**不读 `OPENMEMO_MODELS`** —— 目前它已被 `setup.ts` 覆盖、够不到产品路径，
+建议 `oss-scout` 也换成 `resolveStoreRoot`，别再留第 4 份常量。
+
+### 2. selfcheck 在空/不存在的 dataDir 下 —— 正常报"未安装"，不崩
+```
+空 dataDir：      通过 5 · 警告 7 · 失败 6 · EXIT=1
+dataDir 不存在：  同样 EXIT=1，逐条给出安装引导，无异常抛出
+```
+顺手改掉一条**过时的引导**：libsimple 缺失时原本提示"运行 scripts/build-sqlite-ext.sh"，
+按 ADR-015 那个脚本已停用，**指过去会把用户引到一条我们自己都不走的路上** → 改为"在「运行时」页安装中文分词扩展"。
+
+### 3. 代理 —— 子进程侧接通，两条链路都端到端实证
+
+**根因**：`buildChildEnv()` 按设计**从白名单重建**子进程环境（D-01 §8.4 L5），不是过滤 `process.env` ——
+所以 `HTTP_PROXY` 从来就没进过 ffmpeg。加代理必须是**显式注入**，不能靠继承。
+
+新增 `packages/pipeline/src/subprocess/proxy.ts`：校验 → env → yt-dlp argv。
+
+**ffprobe（env 注入）实证**：
+```
+无代理        : 成功 duration=337.0s  (3204ms)
+死代理 :9     : 失败 (42ms) [tcp] Connection to tcp://127.0.0.1:9 failed: Connection refused
+```
+**yt-dlp（--proxy）实证**：
+```
+无代理                    : 成功 "Me at the zoo" (3232ms)
+死代理 socks5://127.0.0.1:9: 失败 (757ms) SocksHTTPSConnection(host='www.youtube.com'…) Failed to
+```
+两条都**真的改道了**，不是"配了参数没生效"。
+
+**安全**：代理 URL 是用户输入且会进 argv，按媒体 URL 同规格校验（scheme 白名单 / 拒控制字符 / 拒前导 `-` / 长度上限）。
+**但刻意不做私网检查** —— 本地代理（Clash/v2ray/SSH 隧道）就在 127.0.0.1，那是正常用法而非 SSRF；
+用户是在声明自己的出网路径，不是在指定要抓取的资源。凭据在日志里脱敏（`http://***@127.0.0.1:7890`）。
+`no_proxy` 强制包含 `localhost,127.0.0.1,::1` —— 否则我们自己的 API 会被绕进代理。
+
+**如实暴露的限制**：**ffmpeg 不支持 SOCKS**（libavformat 的 http 协议只读 `http_proxy`，不认 `ALL_PROXY`）。
+`ffmpegProxySupport()` 返回 `supported:false` + 原因，让上层能准确告警，
+而不是静默直连却让用户以为走了代理。→ SOCKS-only 用户：模型下载与站点解析正常，**直接拉 HLS 不走代理**。
+
+**124/124 测试全绿**（新增 16 条代理用例），eslint 干净，`packages/pipeline` tsc 干净。
+
+需要 Manager 决策:
+1. **档 3 其实没有实现可删** —— daemon **从不 spawn llama-server**，`packages/llm` 只对 OpenAI 兼容端点发 HTTP。
+   所谓"内置 llama.cpp"目前只存在于 **manifest 的 7 个 `llamacpp-*` 后端包 + `models-llm.json` 的 GGUF 条目 + `vendor/llama.cpp` submodule**。
+   要下线就是删这些目录条目（`model-mgmt`）+ 注释 submodule（`oss-scout`），**我这边没有代码要改**。
+   另：探测用户自己起的 `llama-server` 属档 2（复用），建议保留。
+2. `packages/downloader/src/proxy.ts` 当前有 undici 类型报错（`model-mgmt` 在做，非我）。
+3. `paths.ts:48` 建议改用 `resolveStoreRoot`（第 4 份常量）。
+
+诚实声明:
+- 代理**只验了子进程侧**（ffprobe/ffmpeg + yt-dlp）；下载器侧归 `model-mgmt`，我没测。
+- 我**没有在真实代理后面测**，用的是"死代理"反证法——证明流量确实改道了，但没证明"经代理能成功出网"。
+- demo（10000）全程只读，返回 200；我的测试实例用 17781/17783 并已按 pid 收尾，未用 `pkill -f`。

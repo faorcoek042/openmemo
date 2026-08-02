@@ -211,7 +211,9 @@ async function checkExtensions() {
   const dictDir = join(EXT_DIR, 'dict');
 
   if (!(await canRead(simplePath))) {
-    record('ext', 'libsimple 存在', 'fail', `缺失：${simplePath}（运行 scripts/build-sqlite-ext.sh）`);
+    // ADR-015 起 libsimple 走上游预编译，由「运行时」页安装；build-sqlite-ext.sh 已停用，
+    // 指向它会把用户引到一条我们自己都不再走的路上。
+    record('ext', 'libsimple 存在', 'fail', `缺失：${simplePath}（在「运行时」页安装中文分词扩展 libsimple）`);
     record('ext', '中文双字词可搜索', 'fail', '未测试：分词器缺失');
     return;
   }

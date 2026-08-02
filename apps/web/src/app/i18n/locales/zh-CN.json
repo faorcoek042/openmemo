@@ -56,7 +56,8 @@
       "failed": "失败"
     },
     "dropZoneIdle": "或把音视频文件拖到这里",
-    "pickFile": "选择文件"
+    "pickFile": "选择文件",
+    "optionsTitle": "转写选项"
   },
   "notes": {
     "title": "全部笔记",
@@ -285,7 +286,27 @@
     "setActive": "设为默认",
     "edit": "编辑",
     "noProviders": "还没有配置任何 AI 模型服务",
-    "removeProvider": "移除 {{name}}"
+    "removeProvider": "移除 {{name}}",
+    "dataDir": {
+      "title": "数据位置",
+      "current": "当前数据目录",
+      "copy": "复制路径",
+      "copied": "已复制",
+      "change": "更改位置…",
+      "newPath": "新的数据目录（绝对路径）",
+      "moveExisting": "把现有数据一并移动过去",
+      "moving": "正在移动数据…",
+      "needRestart": "已保存。**重启后生效**。",
+      "size": "占用大小",
+      "safeToDelete": "删除此目录不会影响程序运行，下次启动会自动重建（但笔记与已下载的模型会一起丢失）。",
+      "unsupported": "当前 daemon 尚未提供更改数据目录的接口，此处只读。",
+      "openFolder": "在文件管理器中打开",
+      "modelsUsed": "模型占用",
+      "volumeFree": "所在磁盘可用",
+      "volumeTotal": "所在磁盘总容量",
+      "apply": "应用",
+      "sizeScopeNote": "以上为**模型目录**及其所在磁盘的容量。笔记数据库、导入的音视频原件尚未计入 —— daemon 暂无整目录统计接口，宁可少说也不给一个会误导你清理磁盘的数字。"
+    }
   },
   "mock": {
     "notImplementedShort": "这部分还是模拟数据",
@@ -403,6 +424,30 @@
       "mock": "接口未实现（模拟数据）",
       "offline": "服务未连接",
       "unknown": "尚未调用"
+    }
+  },
+  "asr": {
+    "modelLabel": "识别模型",
+    "languageLabel": "语言",
+    "notSelected": "未选择",
+    "noModel": "尚未安装语音识别模型",
+    "goInstall": "去安装模型",
+    "goInstallRuntime": "去安装运行时",
+    "activeIsGlobal": "（切换后对之后所有转写生效）",
+    "languageInvalid": "语言代码格式不对（应为 zh、en、yue、zh-Hans 这类，或 auto）。后端会静默按“自动”处理。",
+    "autoHint": "自动识别下不会启用 Paraformer（后端按语言前缀选引擎）。中文录音明确选“中文”会更快更准。",
+    "lang": {
+      "auto": "自动识别",
+      "zh": "中文",
+      "yue": "粤语",
+      "en": "英语",
+      "ja": "日语",
+      "ko": "韩语",
+      "de": "德语",
+      "fr": "法语",
+      "es": "西班牙语",
+      "ru": "俄语",
+      "custom": "自定义…"
     }
   }
 }

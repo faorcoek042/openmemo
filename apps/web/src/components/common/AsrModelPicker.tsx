@@ -89,7 +89,7 @@ export function AsrModelPicker({ className }: { className?: string }) {
         {models.map((m) => (
           <option key={m.id} value={m.id}>
             {m.displayName}
-            {m.quantization && m.quantization !== 'none' ? ` (${m.quantization})` : ''}
+            {m.quantization ? ` (${m.quantization})` : ''}
           </option>
         ))}
       </select>

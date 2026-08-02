@@ -56,7 +56,8 @@
       "failed": "Failed"
     },
     "dropZoneIdle": "Or drop an audio/video file here",
-    "pickFile": "Choose a file"
+    "pickFile": "Choose a file",
+    "optionsTitle": "Transcription options"
   },
   "notes": {
     "title": "All notes",
@@ -285,7 +286,27 @@
     "setActive": "Set default",
     "edit": "Edit",
     "noProviders": "No AI model service configured yet",
-    "removeProvider": "Remove {{name}}"
+    "removeProvider": "Remove {{name}}",
+    "dataDir": {
+      "title": "Data location",
+      "current": "Current data directory",
+      "copy": "Copy path",
+      "copied": "Copied",
+      "change": "Change location…",
+      "newPath": "New data directory (absolute path)",
+      "moveExisting": "Move existing data there as well",
+      "moving": "Moving data…",
+      "needRestart": "Saved. **Takes effect after restart.**",
+      "size": "Disk usage",
+      "safeToDelete": "Deleting this directory will not break the app — it is recreated on next launch (your notes and downloaded models are lost, though).",
+      "unsupported": "This daemon does not expose an endpoint to change the data directory yet; shown read-only.",
+      "openFolder": "Reveal in file manager",
+      "modelsUsed": "Models",
+      "volumeFree": "Free on volume",
+      "volumeTotal": "Volume total",
+      "apply": "Apply",
+      "sizeScopeNote": "These figures cover the **models directory** and its volume. The notes database and imported media are not included yet — the daemon has no whole-directory size endpoint, and a misleading total is worse than an incomplete one."
+    }
   },
   "mock": {
     "notImplementedShort": "Still simulated data",
@@ -403,6 +424,30 @@
       "mock": "endpoint not implemented (simulated)",
       "offline": "service not connected",
       "unknown": "not called yet"
+    }
+  },
+  "asr": {
+    "modelLabel": "ASR model",
+    "languageLabel": "Language",
+    "notSelected": "Not selected",
+    "noModel": "No speech recognition model installed",
+    "goInstall": "Install a model",
+    "goInstallRuntime": "Install runtime",
+    "activeIsGlobal": "(applies to all future transcriptions)",
+    "languageInvalid": "Invalid language code (expected zh, en, yue, zh-Hans …, or auto). The backend will silently fall back to auto.",
+    "autoHint": "Auto-detect will not use Paraformer (the backend picks an engine from the language prefix). Choosing Chinese explicitly is faster and more accurate for Chinese audio.",
+    "lang": {
+      "auto": "Auto-detect",
+      "zh": "Chinese",
+      "yue": "Cantonese",
+      "en": "English",
+      "ja": "Japanese",
+      "ko": "Korean",
+      "de": "German",
+      "fr": "French",
+      "es": "Spanish",
+      "ru": "Russian",
+      "custom": "Custom…"
     }
   }
 }

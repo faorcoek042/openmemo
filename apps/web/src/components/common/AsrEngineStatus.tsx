@@ -36,18 +36,45 @@ function toEngineId(raw: string): AsrEngineId | null {
 export function useAsrEngines(): { engines: EngineState[]; isLoading: boolean; ready: boolean } {
   const { data, isLoading } = useQuery({
     queryKey: qk.daemon.status,
-    queryFn: () => api<DaemonStatus>('daemon', '/daemon/status'),
+    /**
+     * 用 `/api/health` 而不是 `/api/daemon/status`。
+     *
+     * 两者的 `pipeline` 块是**同一个对象**（`server.ts` 把 `deps.status()` 摊进了 health），
+     * 但 health 是**公开端点**（单实例探测要在拿到 token 之前调它），
+     * 而 `/api/daemon/status` 需要鉴权 —— 实测未认证时返回 401。
+     * 引擎可用性只是只读的能力描述，没有任何 secret，走公开那条更少一层失败可能。
+     *
+     * [实测 2026-08] `GET /api/health` 返回
+     * `pipeline.engines: [{id:"whisper.cpp", available:true}]`。
+     */
+    queryFn: () => api<DaemonStatus>('health', '/health'),
     // 引擎可用性会随"装完运行时"而变，但不需要秒级新鲜
     staleTime: 30_000,
   });
 
-  const engines = arr(data?.pipeline?.engines)
-    .map((e) => {
-      const id = toEngineId(e.id);
-      return id ? { id, available: e.available === true, ...(e.reason ? { reason: e.reason } : {}) } : null;
-    })
-    .filter((e): e is EngineState => e !== null);
+  const reported = new Map<AsrEngineId, EngineState>();
+  for (const e of arr(data?.pipeline?.engines)) {
+    const id = toEngineId(e.id);
+    if (id) reported.set(id, { id, available: e.available === true, ...(e.reason ? { reason: e.reason } : {}) });
+  }
 
+  /**
+   * ★ 把**没被 daemon 报告**的引擎也补进来，标成不可用。
+   *
+   * [实测] daemon 只列**构造成功的候选**：demo 上 `engines` 只有 `whisper.cpp` 一条，
+   * Paraformer 和 sherpa-onnx **根本不出现** —— 因为它们需要
+   * `OPENMEMO_PARAFORMER_DIR` / `OPENMEMO_SHERPA_STREAM_DIR` 指向模型目录，没设就不进候选。
+   *
+   * 如果照抄 daemon 的列表，用户看到的是"引擎：Whisper.cpp ✓"，
+   * 完全不知道还存在另外两个、更不知道怎么装 —— 那就又回到了
+   * "只能看见系统替你决定的结果"。所以这里以 shared 的联合为全集，
+   * 缺席即"未安装"，并给出安装入口。
+   */
+  const engines: EngineState[] = ASR_ENGINE_IDS.map(
+    (id) => reported.get(id) ?? { id, available: false, reason: undefined as string | undefined },
+  ).map((e) => (e.reason === undefined ? { id: e.id, available: e.available } : e));
+
+  // isLoading 期间还没有数据，不要把"全都没装"当成结论
   return { engines, isLoading, ready: engines.some((e) => e.available) };
 }
 

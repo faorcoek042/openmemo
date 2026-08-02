@@ -37,6 +37,12 @@ date: 2026-08-03
 - 对其他 agent 的影响：`model-mgmt` 应优先补 sherpa 离线分支 + SenseVoice；`architect` 应把引擎选择器从
   RecorderPage 提到导入/设置两处并改为 catalog 驱动；Manager 应把 FEATURE-COVERAGE 的 B-2（"daemon 只有 6 个端点"）
   作废 —— **实测 42 条 REST + 2 条 WS**。
+- **【T-080 追加，见文末附录 A】** 三条取证结论：① memo.ac 的「空间」= Workspace 一等公民，
+  且**与用户指定的磁盘目录一一绑定**（逻辑分区与存储位置是同一个功能的两面），我们**零实现**；
+  ② 代理是 `none/system/custom` 三态 + 可切换的多条目列表，**无认证、无 bypass**，
+  子进程侧只覆盖 yt-dlp，**我们的 `proxy.ts` 已比它做得好，但 daemon/downloader 侧零接线（模型下载走不了代理）**；
+  ③ **memo.ac 没有为任何一家 LLM 装 SDK** —— ~31 家全靠一个 OpenAI 兼容客户端 + 每家一个 `baseURL`
+  （`nm.txt` 417 个包里无任何 `@ai-sdk/<厂商>`），**证明我们现有架构方向正确，缺的只是注册表与配置 UI**。
 
 ## 详细内容
 
@@ -374,3 +380,319 @@ sherpa **27→2**（缺 25，这是最大单点缺口）；parakeet 4→0；funa
 | 我方"零遥测" | **未验证**（未做全量出网调用 grep） |
 | `RecorderPage` ↔ `/ws/recorder` 端到端 | **未跑通**（前端仍是 mock） |
 | demo 实例状态 | 审计期间被其他 agent 重启（pid 2066756 → 2075454，绑定由 0.0.0.0 变回 127.0.0.1）。**我全程只读，未写未重启。** |
+
+---
+
+# 附录 A（T-080 追加）：空间管理 · 代理配置 · 云 LLM 接入
+
+> 追加日期 2026-08-03，author memo-compare。触发：用户 5 条指令中的第 3/4/5 条。
+> 本节全部证据等级 **[F]**（`/root/memo-forensics/` 解包原文，我本人复核），
+> 少量标 **[F-推测]** 或 **NOT FOUND** 的已逐条注明。
+
+## A-1. 「空间管理」是什么 —— 答案：**Workspace，一等公民，且与磁盘目录一一绑定**
+
+**先回答 Manager 的歧义问题：两种含义在 memo.ac 里是同一个功能。**
+它的「空间」既是 Notion-space 式的**逻辑分区**，又**物理上就是一个用户指定的磁盘目录**，
+UI 里还直接显示该目录的**已用体积**与**可用空间**。不是两件事，是一件事的两面。
+
+### A-1.1 数据模型 **[F]**
+
+`workspace` 表字段（knex 建表语句）：
+`id` · `name`(NOT NULL) · **`folder`(NOT NULL —— 文件系统路径)** · `icon` · `thumbnail` ·
+`backgroundColor` · `description` · `created_at` / `updated_at`
+
+层级与外键（全部实读建表语句）：
+
+```
+workspace (id, name, folder=磁盘路径, icon, thumbnail, backgroundColor, description)
+   ├── folder.workspaceId      FK → workspace.id     （folder 另有 parentId → 子文件夹嵌套）
+   │      └── resource.folderId FK → folder.id
+   ├── resource.workspaceId    FK → workspace.id
+   └── doc.workspaceId         FK → workspace.id     （doc 另有 noteId FK → note.id）
+```
+
+> ⚠️ **`note` 表的建表语句里没有 `workspaceId` 列**，但渲染层确实向 `noteData("update", …)`
+> 传 `workspaceId` / `folderId`。**推测**由后续 migration 补列（R-01 记有 7 个 migration 文件），
+> 但我**在 bundle 里没找到 `alterTable("note"` 或 `hasColumn("note"`**，故此条标 **[F-推测]，未核实**。
+> 对我们的决策不影响：真正承载工作空间归属的是 `resource` / `doc` / `folder` 三张表。
+
+### A-1.2 用户可见形态 **[F]**
+
+| 维度 | 事实 |
+|---|---|
+| 入口 | 设置弹窗 12 个 tab 中的**第 2 个**，标签文案取自 i18n `workspace.manage workspace`（英文 "Workspace"） |
+| 切换 | 侧栏顶部下拉；选中 → `selectCurrentWorkspace(ws, true)` → 立即 `navigate("/home", {replace:true})` |
+| 新建表单字段 | **名称**（必填）· **存储文件夹**（必填，目录选择器）· **背景色**（取色器，默认随机）· **描述**（≤200 字） |
+| 提交约束 | 名称与文件夹**两者都填**才允许提交（实读 `setDisabled(!folder \|\| !name)` 等价逻辑） |
+| 数量上限 | **未见上限**（`workspaceList` 数组 + `unshift`，无容量判断） |
+| 保底 | `workspaceList` 为空时自动重新拉取并选中第一个 → **始终至少 1 个** |
+| 当前空间的持久化 | electron-store 键 `currentWorkspace`（不是数据库） |
+| 磁盘体积 | 切换器挂载时调 `getWorkspaceFolderSize(id)` 并显示 |
+| 删除 | `removeWorkspace({ id, deleteFolder: true })` —— **`deleteFolder` 硬编码为 true，连磁盘目录一起删**；文案明确警告不可撤销 |
+
+官方英文文案（i18n 原文，可直接证明产品意图）：
+- create → `Create a new workspace to consolidate all your resources.`
+- workspace → `Set the folder where the workspace is located.`
+- path → `Storage location`
+
+IPC 通道 5 条 **[F]**：
+`workspace-data`（CRUD 多路复用：`find`/`create`/`update`）· `remove-workspace` ·
+`get-workspace-folder-size`（已用体积）· `get-workspace-folder-space`（**剩余可用空间**）· `open-workspace-folder`
+
+> 产品动机 **[R1]**：R-01 引更新日志称 v1.0.4 引入「空间隔离」，为**共用电脑**场景设计；v1.5.3 加子文件夹（beta）。本次未复核更新日志。
+
+### A-1.3 另有一套**纯磁盘管理**面（与上面是两回事）**[F]**
+
+设置 → 通用里有独立的 `preferences.folder management` 分区，条目：
+`extension package`（扩展包目录）· `model folder`（模型目录，可改、可打开）· `config folder` · 临时目录 ·
+`language folder`，每条右侧都是「打开目录 / 更换目录」按钮。
+另有 IPC `check-download-folder-space` / `checkDownloadSpace` 做**下载前空间预检**。
+
+### A-1.4 对照我们 + 对 ADR-006 决策 4 的事实输入
+
+| 项 | memo.ac **[F]** | OpenMemo **[O]** |
+|---|---|---|
+| 工作空间层 | 有，一等公民，独占一个设置 tab | **无**（全仓 `apps/*/src` `packages/*/src` grep `workspace` **零命中**） |
+| 文件夹树 | 有（`folder.parentId` 嵌套） | 有（`folders.parent_id`），且已有 `color` / `icon` / `sort_order` / `deleted_at` |
+| 存储位置 | **每个空间一个目录**，用户可选 | **全局一个 `dataDir`**，模型目录可在 `/settings/storage` 看到（`modelsRoot`） |
+| 空间体积 / 剩余空间 | 有（两条 IPC） | 有 `GET /api/models/storage`（仅模型目录口径） |
+| 删除即删盘 | 是（硬编码 `deleteFolder:true`） | N/A |
+
+**给 Manager 的事实判断（不替你决策）**：
+- ADR-006 决策 4 说「日后加只需一列 + 一次迁移」—— **这个成本估计是对的**，而且比你想的还低：
+  我们的 `folders` 表已有 `parent_id` / `color` / `icon` / `deleted_at`，
+  补一张 `workspaces` 表 + `folders.workspace_id` 一列即可，`notes` 通过 `folder_id` 间接归属，**不需要动 notes**。
+- 但**有一处成本你的 ADR 没算到**：memo.ac 的空间**绑定磁盘目录**。
+  如果要 1:1 对齐，就不只是加一列，而是要把「每空间独立存储根」引入 daemon 的路径解析层
+  （目前 `resolvePaths(dataDir)` 是全局单例）。**这才是真正的工作量所在。**
+- **可拆**：逻辑分区（低成本）与每空间独立磁盘根（高成本）是两件事，可以只做前者。
+  用户说的「没有空间管理功能」**未指明**是哪一层 —— **建议先向用户确认，不要替他选。**
+
+---
+
+## A-2. 代理配置 —— memo.ac 的形态
+
+### A-2.1 三态模式 **[F]**
+
+设置 → `preferences.proxy setting`（英文 "Proxy"），一组 radio，三选一：
+
+| 值 | i18n key | 英文文案 |
+|---|---|---|
+| `none` | `preferences.disable proxy` | Disable proxy |
+| `system` | `preferences.use system settings` | System proxy settings |
+| `custom` | `preferences.use custom proxy` | Custom proxy |
+
+持久化形状（实读运行时读取逻辑）：
+
+```
+{ type: "none" | "system" | "custom",
+  proxy: [ { hostname, port, type, active }, … ] }     // custom 模式下是一个数组
+```
+
+- **`custom` 是一个列表，取其中 `active === true` 的那条生效** —— 即可以存多条代理配置来回切。
+- 条目字段只有 `hostname` / `port` / `type` / `active`；表单里**只有 hostname 与 port 两个输入框**
+  （占位符 `127.0.0.1` / `7890`）。
+- **存储位置不是 electron-store**，而是自建的 `conf/setting.conf` JSON（electron-store 在这个 App 里另有他用）。
+- **出厂默认值是 `{ type: "system" }`** —— 即开箱即跟随系统代理，不是 `none`。这个默认值选得好，值得抄。
+
+### A-2.2 协议与能力 **[F]**
+
+| 能力 | 结论 |
+|---|---|
+| HTTP 代理 | ✅ `type === "http"`（UI 标签 "Http(s)"）→ 构造 `http://host:port`，用 HttpsProxyAgent |
+| SOCKS 代理 | ✅ UI 标签 "Socks5"；非 http 条目拼 `socks://host:port`，走 SocksProxyAgent |
+| **UI 只暴露两种** | ⚠️ 协议选择是**两个 tab：`http` / `socks5`**。底层 vendored 的 SocksProxyAgent 支持 `socks4/4a/5/5h`，但**`socks4` 系没有入口** |
+| **代理认证（用户名/密码）** | **NOT FOUND** —— 条目结构无 `username`/`password`，表单无对应输入框。（bundle 里确有 `proxyAuth` → `Proxy-Authorization: Basic` 的代码，但那是**第三方 tunnel 库的未接线管道**，没接到它的设置项上） |
+| **用户可配的 bypass / no_proxy 列表** | **NOT FOUND** —— 没有这个设置项 |
+| **硬编码的内部 bypass** | ✅ **有，但只作用于 LLM 端点**：构造 LLM 客户端时，若 `baseURL` 的主机名属于 `localhost` / `127.0.0.1` / `0.0.0.0` / `::1` / `[::1]` 或以 `.local` 结尾，**跳过代理注入**（避免把本地 Ollama 的请求送进代理）。其余链路无此保护 |
+
+> 关于 `HTTP_PROXY` / `HTTPS_PROXY` 环境变量：我自己 grep 主进程 bundle 得到 `HTTPS_PROXY` **2 处命中**，
+> 但两处都在**第三方库内部**（一个 proxy-from-env 式的辅助函数、以及内置的 Mixpanel 遥测客户端），读的是 `process.env`。
+> **memo.ac 自己的代码从不设置这三个环境变量。**（我的 subagent 报告称 0 命中，与我的实测不符；
+> 以我的直接 grep 为准，两者结论方向一致：**它不靠 env 传代理**。）
+
+### A-2.3 system 模式怎么探测 **[F]**
+
+用 Electron 的 `session.resolveProxy("https://www.google.com")`：
+返回非 `"DIRECT"` 时按空格切出 `PROXY host:port` 再拆成 host / port，构造 `http://host:port`。
+探测期间向渲染层推两个事件：`proxy:check:system:start` → `proxy:check:system:stop`（1 秒后）。
+
+> ⚠️ **设计教训（值得我们避开）**：探测目标写死 `https://www.google.com`。
+> 而这个功能的主要受众正是**被墙的中国用户** —— 探测目标本身不可达。
+> 我们若做 system 探测，应改用可达且中立的目标，或直接读系统代理设置而非发探测请求。
+
+### A-2.4 代理作用到哪些链路 **[F]**
+
+| 链路 | 是否走代理 | 证据 |
+|---|---|---|
+| **yt-dlp 子进程** | ✅ **argv 显式传** `--proxy <url>` + `--socket-timeout 60`；SOCKS 时传 `--proxy socks://host:port` | 实读 `applyProxyArgs()` |
+| 自身 HTTP 客户端（模型下载 / API） | ✅ 通过 agent 注入（`{ httpAgent, httpsAgent }` 形式的 agent 包装） | 实读 agent 构造函数 |
+| **Electron 会话级**（`session.setProxy` / `--proxy-server` 开关） | **NOT FOUND** —— 两者在 12 MB 主进程 bundle 里 0 命中。**渲染层自身的网络请求不走用户配置的代理** | 实测 grep |
+| ffmpeg / whisper-cli 等其他子进程 | **NOT FOUND** —— 没找到为它们注入 `HTTP_PROXY` 的环境构造 | 实测 grep |
+| **云 LLM / 云 ASR 调用** | ✅ **走**（已核实）：云转写把 agent 塞进 `fetchOptions`；翻译与 LLM 客户端经同一个 agent 工厂注入 `httpAgent`（受 A-2.2 的本地 bypass 约束） | 实读调用点 |
+| 授权校验 / 插件与扩展下载 / RSS / GitHub 版本检查 / TTS | ✅ 全部走同一个 agent 工厂（约 37 处调用点） | 实读 |
+
+### A-2.5 有没有「测试连接」**[F]**
+
+> ⚠️ **本小节是对我自己前一版结论的更正。** 我最初写的是"测试连接测的不是代理，而是下载源"——**错了**。
+> 深挖后确认：**是两个独立的测试**，代理有自己专属的那一个。
+
+**（A）代理专属的「测试连接」** —— IPC `test-proxy`：
+用当前代理 agent 请求 **`https://youtube.com`**，测往返延迟并把毫秒数回给 UI；失败则报错。
+按钮文案 `preferences.test connection`，仅在 `type === "system"` 或（`custom` 且已有条目）时可用。
+> 选 `youtube.com` 作为探测目标是**合理**的（用户配代理多半就是为了访问它），
+> 与 A-2.3 里 system 探测选 `google.com` 的问题不同——后者是探测**系统设置**却依赖出网，那才是设计缺陷。
+
+**（B）下载源的域名延迟表** —— IPC `test-domain` / `get-domain-test-result`：
+对三个 whisper 模型镜像域名（`huggingface.co` / `hf-mirror.com` / `aifasthub.com`）逐个 ping（不可用则 HTTP HEAD），
+超时 5000 ms，每域返回 `{domain, latency, status, error, method}`。
+UI 成功显示 `preferences.network latency` + 毫秒数，失败显示 `preferences.connection error`；
+配套 `download source` / `current source` / `system choose`（"If no source is specified, the system will automatically select"）。
+→ 即：**多下载源 + 逐域名测延迟 + 自动选最快**。**注意它也会经过代理 agent。**
+
+**代理相关 IPC 通道**：`check-system-proxy` · `test-proxy` · `test-domain` · `get-domain-test-result` ·
+`check-network`（对 HuggingFace + GitHub 做 HEAD 探活）· 以及通用的 `change-setting` / `get-setting`。
+
+### A-2.6 对照我们 **[O]**
+
+**我们的子进程侧已经做得比 memo.ac 好，但只做了一半（下半截全缺）。**
+
+已有（`packages/pipeline/src/subprocess/proxy.ts`，189 行，`gpu-runtime` 交付）：
+
+| 能力 | 我们 | memo.ac |
+|---|---|---|
+| 协议 | http / https / **socks5 / socks5h / socks4 / socks4a**（`PROXY_SCHEMES`） | UI 只有 `http` 与 `socks5` 两档 |
+| **用户可配的 no_proxy / bypass** | ✅ 有 `noProxy` 字段 | ❌ NOT FOUND |
+| **loopback 保护** | ✅ **无条件强制预置** `localhost,127.0.0.1,::1`，覆盖**全部**链路 | ⚠️ 有，但**只保护 LLM 端点**（`localhost`/`127.0.0.1`/`0.0.0.0`/`::1`/`[::1]`/`*.local`），其余链路无 |
+| 输入校验 | ✅ scheme 白名单 / 控制字符 / 前导 `-`（防 argv 注入）/ 1024 字节上限；**先查控制字符再 `new URL()`**（避免解析器把恶意串洗白） | 未见等价校验 |
+| 凭据脱敏 | ✅ `redactProxyUrl()` 进日志前抹掉用户名密码 | 未见（但它也没有认证字段，无从泄露） |
+| yt-dlp | ✅ `ytDlpProxyArgs()` → `--proxy <url>` | ✅ 同（另加 `--socket-timeout 60`，**这一条值得抄**） |
+| **ffmpeg** | ✅ `ffmpegProxySupport()`，并**如实报告 ffmpeg 不支持 SOCKS**（libavformat 只读 `http_proxy`），返回 `{supported, reason}` 让上层能准确告警而不是静默直连 | ❌ 未处理 |
+| 大小写双写 env | ✅ `http_proxy`+`HTTP_PROXY`+…（两派工具各读一套）；SOCKS 时补 `ALL_PROXY` | ❌ 不走 env，全靠 agent 注入 + yt-dlp argv |
+| 默认值 | ⚠️ 无（还没有设置项） | ✅ 出厂即 `{type:"system"}` |
+
+**缺的下半截（全部实测确认）**：
+1. **daemon 侧零接线** —— `apps/daemon/src` 与 `packages/downloader/src` grep `proxy` 除一处无关注释外**零命中**。
+   即**模型下载根本走不了代理**，而这恰恰是最需要代理的链路。memo.ac 在这条链路上是覆盖到的（agent 注入）。
+2. **无持久化** —— `settings` 表当前为空，`settings.ts` 里没有 proxy 键。
+3. **设置页无 UI**。
+4. **无「测试连接」** —— memo.ac 有两个测试（代理专属的 `test-proxy` + 下载源域名延迟表）。
+   我们已有 `POST /api/models/sources/probe`（多镜像探活），**形态与它的下载源延迟表几乎一致，接上代理即可复用**；
+   但**代理专属的那一个（一次带 agent 的真实往返 + 报延迟）我们完全没有，需要新做**。
+
+**三条可直接抄的设计**：① 默认 `system` 而非 `none`；② yt-dlp 附带 `--socket-timeout 60`（代理慢时不会挂死）；
+③ 代理测试与下载源测试**分开两个按钮**——前者答"我的代理通不通"，后者答"哪个镜像最快"，混在一起用户无法定位问题。
+
+---
+
+## A-3. 云端 LLM 接入（用户指令 3：不做本地模型，改接在线 API）
+
+### A-3.1 供应商清单 —— **两份并存的名单，互不相等** **[F]**
+
+⚠️ 重要：bundle 里有**两套**供应商标识集合，**内容不一致**，不能当成一份用。
+
+**（甲）枚举常量，24 项**（编译后的 TS enum）：
+`gemini` · `openai` · `claude` · `ollama` · `deepseek` · `doubao` · `groq` · `xai` ·
+`siliconcloud` · `openrouter` · `together` · `zhipuai` · `zhipuaicodingplan` · `moonshot` ·
+`kimicodingplan` · `lmstudio` · `minimax` · `minimaxtokenplan` · `mistralai` · `qianfan` ·
+`qwen` · `xiaomimimo` · `aliyun` · `azura`
+
+**（乙）带 displayName/description 的服务注册表，24 项**：
+
+| id | 显示名 | | id | 显示名 |
+|---|---|---|---|---|
+| `openai` | OpenAI GPT | | `siliconcloud` | SiliconFlow |
+| `claude` | Anthropic Claude | | `xai` | xAI Grok |
+| `gemini` | Google Gemini | | `mistral` | Mistral AI |
+| `deepseek` | DeepSeek AI | | `meta` | Meta Llama |
+| `zhipuai` | ZhipuAI | | `moonshot` | Moonshot AI (Kimi) |
+| `zhipuaicodingplan` | ZhipuAI Coding Plan | | `poe` | Poe by Quora |
+| `kimicodingplan` | Kimi Coding Plan | | `volcengine` | Volcano Ark |
+| `huggingface` | Hugging Face | | `lmstudio` | LM Studio Local |
+| `openrouter` | OpenRouter | | `ollama` | Ollama Local |
+| `perplexity` | Perplexity AI | | `minimax` | MiniMax API |
+| `vertexai` | Google Vertex AI | | `minimaxtokenplan` | MiniMax Token Plan |
+| `alibaba` | Alibaba Cloud Bailian | | **`custom`** | **Custom Service** |
+
+两份并集约 **31 个**独立标识。甲表独有：`doubao` `groq` `together` `qianfan` `qwen` `xiaomimimo` `aliyun` `azura`；
+乙表独有：`huggingface` `perplexity` `vertexai` `meta` `poe` `volcengine` `custom`。
+**推测**甲是较早的翻译/转写 provider 枚举、乙是较新的 LLM 服务注册表，**未核实**。
+
+### A-3.2 ⭐ 最重要的发现：**它没有为任何一家装 SDK**
+
+我独立核对了 `app_package.json`（29 个 runtime 依赖）与 `nm.txt`（417 个打包进去的 node_modules）。
+与 LLM 相关的**全部**如下：
+
+```
+ai ^5.0.9                 @ai-sdk/react ^2.0.9      @ai-sdk/provider
+@ai-sdk/provider-utils    @ai-sdk/gateway           openai ^4.56.1
+langchain ^0.3.6          @langchain/core           @langchain/openai
+@langchain/mistralai      @mistralai/mistralai      @langchain/textsplitters
+```
+
+**`@ai-sdk/anthropic` / `@ai-sdk/google` / `@ai-sdk/deepseek` … 一个都没有。**
+
+→ **结论（高置信，我独立双源核实）：memo.ac 的 ~31 家"供应商"是靠一个 OpenAI 兼容客户端 + 每家一个 `baseURL` 实现的**，
+唯一例外是 Mistral（走 LangChain 专用包）。**这正是我们 `packages/llm/src/providers/openai-compatible.ts` 已有的做法。**
+也就是说：**用户要的「和 memo 一样接入在线模型 API」，我们的架构已经对了，缺的只是供应商清单与配置 UI。**
+（`@langchain/textsplitters` 的存在也印证了 R-01 关于本地 RAG 的判断。）
+
+### A-3.3 供应商描述符的 schema（这份值得抄）**[F]**
+
+远端注册表 `https://model.memo.ac/llm-models/manifest.json`，本地缓存在
+`conf/llm-models/manifest.json` + 每家一个 `<provider>.json`，带 **sha256** 校验。
+
+每个供应商描述符的字段：
+`name` · `description` · `provider` · `icon` · `homepage` · `documentation` ·
+**`modelListSource`** · **`baseURL`** · `capabilities` · `models` · `defaultModel` · **`configFields`**
+
+两个关键设计：
+- **`configFields`** = 配置表单由数据描述，不是每家写一个 React 组件。加一家 = 加一条 JSON。
+- **`modelListSource`** = 模型清单从哪来（供应商的 `/models` 端点 or 内置列表），做到**模型下拉自动填充**。
+
+IPC 5 条：`llm:model-registry:{get-status, ensure-dir, check-update, update, reload}`
+→ 注册表可**独立于主程序热更新**（新供应商上线不必发版）。
+
+### A-3.4 自定义 / OpenAI 兼容端点 **[F]**
+
+- 注册表里有 `custom` → **"Custom Service"**，渲染层另有 `addCustomService` 动作与 `pendingAddCustomLLMService` 状态。
+  → **可以填任意 OpenAI 兼容 base URL。**
+- **非 OpenAI 家能否改 baseURL：本次未核实。** 描述符里人人都有 `baseURL` 字段，
+  **推测**都可覆盖，但我没找到 UI 层的可编辑证据。R-01 引用其 issue #353/#359 称"只有 OpenAI 能配自定义 base URL"
+  —— **该说法本次未复核，且与 `baseURL` 字段人人都有相矛盾，请勿当作事实引用。**
+
+### A-3.5 对照我们 **[O]**
+
+| 项 | memo.ac | OpenMemo |
+|---|---|---|
+| 架构 | OpenAI 兼容单客户端 + 每家 baseURL | **同**（`openai-compatible.ts`） |
+| 供应商数量 | ~31（数据驱动） | 注释列了 OpenAI/DeepSeek/Groq/xAI/Moonshot/SiliconCloud/OpenRouter/通义/智谱/Ollama/LM Studio/内置 llama-server；**清单硬编码在代码里，非注册表** |
+| 供应商注册表 | 远端 JSON + sha256 + 热更新 + `configFields` 动态表单 | **无** |
+| 模型下拉自动填充 | `modelListSource` | **无** |
+| 自定义端点 | `custom` 服务 | ✅ 有（任意 baseURL） |
+| Key 存储 | **未核实** | `secrets` 表 + `SecretStore`，`GET /api/secrets` 只返回掩码，且**强制向用户明示「明文存储在 <路径>，权限 0600」**（ADR-006 决策 1） |
+| 本地 LLM | Ollama / LM Studio | 同 + **内置 llama.cpp**（用户指令 3 要求砍掉本地自接，此项将成为待裁撤项） |
+
+**给 Manager 的三条落地建议**：
+1. **架构不用改** —— `openai-compatible.ts` 的方向已被竞品验证。
+2. **把硬编码供应商清单改成一份 JSON 注册表**，字段直接对齐 A-3.3（尤其 `configFields` 与 `modelListSource`）。
+   我们可以做得更好的一点：**注册表进 git 仓库而非远端拉取**，避免引入一个新的云依赖（章程是 local-first）。
+3. **用户指令 3 与我们现有的本地 LLM 能力冲突**：`llm/*` 5 个 GGUF 模型 + llama.cpp 后端包 4 个（cpu/cuda/vulkan/rocm）
+   将失去用途。**这是一个需要你裁决的删除决策，我不替你做。**
+   注意：删掉本地 LLM 后，`vulkan`/`rocm` 后端包也随之无用 —— 那正是我们唯一的 AMD 加速路径（见 §3.6 #44），
+   **删除后「真 AMD 支持」将彻底不成立，对外话术必须同步更正。**
+
+---
+
+## A-4. 本节诚实清单
+
+| 事项 | 状态 |
+|---|---|
+| `note` 表是否由 migration 补了 `workspaceId` 列 | **未核实**（未找到 alterTable/hasColumn 证据） |
+| memo.ac 空间数量是否真无上限 | **未见上限判断**，但不排除在我没读到的代码路径里 |
+| 代理是否作用于云 LLM / 云 ASR 调用 | ✅ **已核实为「是」**（初版标未核实，后由 subagent 定位到调用点后更正） |
+| 「测试连接」测的是什么 | ✅ **已更正**：初版我写"只测下载源"是**错的**，实为两个独立测试，代理有专属的 `test-proxy`（打 `youtube.com` 测延迟） |
+| memo.ac 的 API Key 存储方式与是否加密 | **未核实** |
+| 非 OpenAI 供应商能否改 baseURL | **未核实**；R-01 引用的 issue #353/#359 说法**本次未复核**，且与实测的 `baseURL` 字段普遍存在相矛盾 |
+| 甲/乙两份供应商名单的确切分工 | **推测**，未核实 |
+| 用户说的「空间管理」指逻辑分区还是每空间独立磁盘根 | **未知 —— 建议直接问用户** |

@@ -4,6 +4,7 @@ import { CONTRACT_VERSION } from '@openmemo/shared';
 import { SUPPORTED_LOCALES, setLocale, type LocaleCode } from '../../app/i18n';
 import { useUiStore, type ThemeMode } from '../../lib/stores/ui.store';
 import { LlmSettingsSection } from './LlmSettingsSection';
+import { DataLocationSection } from './DataLocationSection';
 import { PanelBoundary } from '../../components/common/PanelBoundary';
 
 /** 设置（最小可用版）。运行时/模型/存储页归 T-022。 */
@@ -50,6 +51,11 @@ export default function SettingsPage() {
 
       <PanelBoundary name={t('settings.llm')}>
         <LlmSettingsSection />
+      </PanelBoundary>
+
+      {/* 数据位置：路径来自 daemon，容量来自 models/storage —— 都不是前端猜的 */}
+      <PanelBoundary name={t('settings.dataDir.title')}>
+        <DataLocationSection />
       </PanelBoundary>
 
       <section className="rounded-lg border border-line bg-surface-1 p-4 text-sm">

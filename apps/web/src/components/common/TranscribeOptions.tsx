@@ -77,7 +77,7 @@ export function TranscribeOptions({
       ) : null}
 
       {/*
-        auto 会让 Paraformer 落选 —— 后端的引擎自动选择只认 zh*/cmn*/yue* 前缀。
+        auto 会让 Paraformer 落选 —— 后端的引擎自动选择只认 zh / cmn / yue 前缀。
         这是用户完全看不见的因果链，不写出来他只会觉得"有时候快有时候慢"。
       */}
       {autoLanguageDowngradesEngine(language) ? (
