@@ -15,6 +15,7 @@ export * from './structured.js';
 export * from './detect.js';
 export { OpenAiCompatibleProvider, isLoopback } from './providers/openai-compatible.js';
 export { AnthropicProvider } from './providers/anthropic.js';
+export { GeminiProvider, toGeminiContents } from './providers/gemini.js';
 
 /*
  * ⚠️ **`./secrets.js` 刻意不在这里导出** —— 它 import 了 `node:fs` / `node:path`。

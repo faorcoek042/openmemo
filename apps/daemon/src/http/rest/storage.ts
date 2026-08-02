@@ -12,6 +12,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import type { AppPaths } from '../../config/paths.js';
 import { writeDataDirPointer } from '../../config/paths.js';
+import { stat } from 'node:fs/promises';
+
 import { measureTree, moveDataDir, planMove } from '../../storage/move.js';
 import { readJsonBody, sendError, sendJson } from '../respond.js';
 
@@ -43,7 +45,7 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
     async handle(req, res, url, method): Promise<boolean> {
       if (url.pathname !== '/api/settings/data-dir') return false;
 
-      // ---- 定义：当前在哪、每个子目录干什么 ----
+      // ---- 定义：当前在哪、每个子目录干什么、各占多大 ----
       if (method === 'GET') {
         let usage: { bytes: number; files: number } | null = null;
         try {
@@ -51,13 +53,35 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
         } catch {
           /* 读不到就报 null，不猜 */
         }
+        /*
+         * **逐目录统计**：用户要的"统计大小"不是一个总数就够了 ——
+         * 只给总数，他知道"占了 3GB"却不知道该删哪个；
+         * 而这几个目录的可删性差别极大（models 可重新下载、logs/tmp 随便删、
+         * openmemo.db 是全部笔记）。没有分解就等于没有可操作性。
+         * 成本很低：这个端点只在设置页打开时调一次，实测 421MB 的 models 目录瞬时返回。
+         */
+        const entries = await Promise.all(
+          layout(deps.paths).map(async (e) => {
+            try {
+              const st = await stat(e['path'] as string);
+              if (st.isDirectory()) {
+                const m = await measureTree(e['path'] as string);
+                return { ...e, bytes: m.bytes, files: m.files };
+              }
+              return { ...e, bytes: Number(st.size), files: 1 };
+            } catch {
+              // 目录还不存在（没用过这个功能）→ 如实报 0，而不是省掉字段
+              return { ...e, bytes: 0, files: 0 };
+            }
+          }),
+        );
         sendJson(res, 200, {
           dataDir: deps.paths.dataDir,
           /** 数据目录是**独立文件夹**，删掉它不影响程序本体 —— 用户明确问过这一点。 */
           selfContained: true,
           noteZh: '这是一个独立文件夹，删除它不会影响程序本体运行（下次启动会重建空目录）。',
           usage,
-          entries: layout(deps.paths),
+          entries,
         });
         return true;
       }

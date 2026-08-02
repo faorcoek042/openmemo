@@ -8,7 +8,14 @@
  * 没配置就返回 `undefined` —— 调用方会退到档 2（本机探测）或把 job 转 `blocked`。
  * **不在这里抛异常**：没配 LLM 是正常状态（F1/F2/F3 都不需要 LLM，只有 F4 需要）。
  */
-import { AnthropicProvider, OpenAiCompatibleProvider, type LlmProvider } from '@openmemo/llm';
+import {
+  AnthropicProvider,
+  GeminiProvider,
+  OpenAiCompatibleProvider,
+  type LlmProvider,
+  type LlmPurpose,
+  type PurposeBindings,
+} from '@openmemo/llm';
 import { SecretStore } from '@openmemo/llm/secrets';
 import type { DatabaseHandle } from '@openmemo/db';
 
@@ -28,19 +35,58 @@ function asString(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() ? v.trim() : undefined;
 }
 
+/**
+ * 读某个用途绑定的 provider/model；**缺项逐字段回退到默认配置**。
+ *
+ * 逐字段而不是整体回退：用户很可能只给"翻译"换了个便宜模型、provider 还用同一个。
+ * 整体回退会让"只填了 model"这种最常见的填法直接失效，而且没有任何提示。
+ */
+function bindingFor(
+  db: DatabaseHandle,
+  purpose: LlmPurpose | undefined,
+): { providerId?: string; model?: string } {
+  const defProvider = asString(readSetting(db, 'llm.defaultProviderId'));
+  const defModel = asString(readSetting(db, 'llm.defaultModelId'));
+  if (!purpose) return { ...(defProvider ? { providerId: defProvider } : {}), ...(defModel ? { model: defModel } : {}) };
+
+  const all = readSetting(db, 'llm.purposes');
+  const b = (all && typeof all === 'object' ? (all as PurposeBindings)[purpose] : undefined) ?? {};
+  const providerId = asString(b.providerId) ?? defProvider;
+  const model = asString(b.model) ?? defModel;
+  return { ...(providerId ? { providerId } : {}), ...(model ? { model } : {}) };
+}
+
 export function resolveConfiguredProvider(
   db: DatabaseHandle,
   dataDir: string,
+  /** 按用途取（chat / summarize / translate）。不传 = 用全局默认，老行为不变。 */
+  purpose?: LlmPurpose,
 ): Promise<LlmProvider | undefined> {
-  const providerId = asString(readSetting(db, 'llm.defaultProviderId'));
+  const bound = bindingFor(db, purpose);
+  const providerId = bound.providerId;
   if (!providerId) return Promise.resolve(undefined);
 
-  const model = asString(readSetting(db, 'llm.defaultModelId'));
+  const model = bound.model;
   if (!model) return Promise.resolve(undefined);
 
   const baseUrl = asString(readSetting(db, `llm.baseUrl.${providerId}`));
   const store = new SecretStore(dataDir);
   const apiKey = store.get(`llm.${providerId}.apiKey`);
+
+  if (providerId === 'gemini') {
+    // Gemini 同样没有本地形态，缺 key 等于没配
+    if (!apiKey) return Promise.resolve(undefined);
+    return Promise.resolve(
+      new GeminiProvider({
+        id: providerId,
+        label: 'Google Gemini',
+        baseUrl: baseUrl ?? 'https://generativelanguage.googleapis.com',
+        apiKey,
+        model,
+        timeoutMs: 300_000,
+      }),
+    );
+  }
 
   if (providerId === 'anthropic') {
     // Anthropic 没有本地形态，缺 key 就等于没配

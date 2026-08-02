@@ -1630,3 +1630,58 @@ daemon 的两处 import 改走子路径。这与之前 `shared` 误引 `node:cry
 **一个不会红的检查器等于没检查。**
 
 lint 干净；move 13/13、upload 17/17、lanes 7/7、llm 10/10；demo 全程只读未重启；测试实例已收尾。
+
+---
+
+## T-089 LLM 三条
+
+### ① 云 LLM 走代理：**已验证走了，无需改代码**
+providers 全部用全局 `fetch`，而 undici 的 global dispatcher 存在 `globalThis` 上，
+所以 `model-mgmt` 那一处 `setGlobalDispatcher` **确实自动覆盖了 `packages/llm`**。
+实测（本地假代理 + 真 provider 实例）：
+```
+CONNECT api.openai.com:443      ← OpenAiCompatibleProvider
+CONNECT api.anthropic.com:443   ← AnthropicProvider
+本机 Ollama(127.0.0.1:11434) 调用后代理新增 0 次   ← 回环正确绕过
+```
+**云调用走代理、本机服务绕过代理**，两条都对。
+
+★ 但我差点报了个假结论：第一版测试里两边都"没走代理"，我一度准备写
+"全局 fetch 不受 setGlobalDispatcher 影响，需显式接线"。
+根因是**我的测试写错了** —— undici 的 `ProxyAgent` 一律走 **CONNECT 隧道**，
+而我的假代理只处理普通请求、没监听 `connect` 事件，于是两边都超时、双双 0 命中。
+补上 `connect` 处理后立刻双双命中。**差一点就因为自己的坏测试去改一个没坏的东西。**
+
+### ② Gemini 原生适配器：**已实现，验证等级 = 协议形状（非真实 API）**
+`packages/llm/src/providers/gemini.ts`，8/8 测试通过（打本地 mock）。
+不复用 OpenAI 兼容层的实质理由（都在代码注释里）：
+- 鉴权 `x-goog-api-key` **头**（不用 `?key=`：query 里的密钥会进日志/Referer/错误上报）
+- 路径 `/v1beta/models/<model>:generateContent`
+- **没有 system role** → 走顶层 `systemInstruction`；**assistant 必须改成 model**
+- 结构化输出用 `responseSchema`，且是 OpenAPI 子集 ——
+  **必须剥掉 `additionalProperties`/`$schema`**，否则整个请求 400 且错误只说
+  "Invalid JSON payload"（测试里专门断言嵌套层也剥干净了）
+
+⚠️ **验证等级必须如实说**：我没有 Gemini API Key，跑的是**本地 mock**。
+能证明"请求形状符合文档、响应能正确解析"，**不能证明真实 Google 端点会接受**。
+`AnthropicProvider` 至今同样状态。测试文件头部写死了这条，**拿到 Key 前谁都别写"已验证可用"**。
+
+### ③ 每功能独立选模型：契约已出（UI 归 architect）
+```ts
+LLM_PURPOSES = ['chat', 'summarize', 'translate']   // summarize 同时覆盖摘要与导图
+ChatRequest.purpose?: LlmPurpose                     // 不传 = chat，老调用方行为不变
+settings 键 `llm.purposes` : Partial<Record<LlmPurpose, {providerId?, model?}>>
+```
+分档依据是 memo.ac 取证（chat / 摘要+导图 / 翻译 各一套）。摘要与导图**不拆**：
+两者都是"读全文吐结构"，能力要求同一类，拆开只会多一栏没人知道怎么填的东西。
+`resolveConfiguredProvider(db, dataDir, purpose?)` 已支持，且**逐字段回退**到默认配置 ——
+不是整体回退：用户最常见的填法是"只给翻译换个便宜模型、provider 不变"，
+整体回退会让这种填法直接失效且无提示。
+
+### 顺带：逐目录统计已补（我判断成本很低，值得做）
+`GET /api/settings/data-dir` 的 `entries` 现在每项带 `bytes` / `files`。
+只给总数的问题是**没有可操作性**：用户知道"占了 3GB"却不知道该删哪个，
+而这几个目录可删性差别极大（models 可重下、logs/tmp 随便删、openmemo.db 是全部笔记）。
+成本：该端点只在设置页打开时调一次，实测 421MB 的 models 目录瞬时返回。
+
+llm 测试 18/18，daemon 构建 0 错，lint 干净；demo 只读未重启；测试实例已收尾。

@@ -24,7 +24,36 @@ export interface JsonSchemaSpec {
   readonly strict?: boolean;
 }
 
+/**
+ * 用途标识 —— **每个用途可以配一套独立的 provider + 模型**。
+ *
+ * 分档依据是 `memo-compare` 对 memo.ac 的取证：那边是
+ * **chat / 摘要+导图 / 翻译 各配一套**，而不是全局一个模型。
+ * 这个分法有实际理由：翻译要的是便宜快速的小模型，导图要的是能稳定吐结构化 JSON 的，
+ * 对话要的是上下文长的 —— 强行共用一个，用户只能按最贵的那个需求配，然后为翻译多花十倍钱。
+ *
+ * `summarize` **同时覆盖摘要与思维导图**（与 memo.ac 一致）：两者都是"读全文吐结构"，
+ * 对模型能力的要求是同一类，拆开只会让设置页多一栏没人知道怎么填的东西。
+ */
+export const LLM_PURPOSES = ['chat', 'summarize', 'translate'] as const;
+export type LlmPurpose = (typeof LLM_PURPOSES)[number];
+
+/** 设置页每一栏的形状。任一为空 = 该用途回退到默认配置。 */
+export interface PurposeBinding {
+  readonly providerId?: string;
+  readonly model?: string;
+}
+
+/** `llm.purposes` 设置键的形状。缺项一律回退到 `llm.defaultProviderId/ModelId`。 */
+export type PurposeBindings = Partial<Record<LlmPurpose, PurposeBinding>>;
+
 export interface ChatRequest {
+  /**
+   * 这次调用属于哪个用途。**不传等于 `chat`**（保持既有调用方行为不变）。
+   * provider 本身不消费它 —— 它是**给上层选 provider 用的**，
+   * 放在请求里是为了让调用链上任何一层都能看出"这是在为哪个功能花钱"。
+   */
+  readonly purpose?: LlmPurpose;
   readonly messages: readonly ChatMessage[];
   /** 有 schema 则要求结构化输出。provider 不支持时降级为 prompt 约束 + 解析重试。 */
   readonly schema?: JsonSchemaSpec;
@@ -92,7 +121,7 @@ export interface ProviderCapabilities {
  */
 export interface LlmProvider {
   readonly id: string;
-  readonly kind: 'openai-compatible' | 'anthropic';
+  readonly kind: 'openai-compatible' | 'anthropic' | 'gemini';
   /** 展示给用户的名字（"本地 llama-server" / "OpenAI"）。 */
   readonly label: string;
   /** 是否是本地后端 —— 决定 UI 要不要显示"数据将发送到 <provider>"的隐私提示。 */
