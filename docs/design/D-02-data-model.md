@@ -868,10 +868,28 @@ CREATE INDEX idx_note_anchors_time ON note_anchors(transcript_id, start_ms);
 > （`sqlite3_load_extension` 的 entryPoint 参数传 NULL 即可）。
 > libsimple = `wangfenjin/simple`，**MIT OR GPL-3.0 双授权，我们选 MIT 支**（R-03 §L-6，必须写进 NOTICE）。
 >
-> `[已核实]` **`better-sqlite3` v13.0.2** 提供 `.loadExtension(path, [entryPoint])`；
-> v13 起改用 **N-API**（`node-addon-api`），预编译二进制理论上跨 Node/Electron 版本通用；
-> **但 `engines.node` 硬性要求 `>= 22`** —— 请 T-011/T-012 据此定 Node 版本基线。
-> （"Node 22 与 24 共用同一份预编译二进制"是基于 N-API ABI 稳定性的**推断**，非上游逐条声明。）
+> `[已验证：T-014 实测]` **`better-sqlite3` v13.0.2** 的 `.loadExtension(path, [entryPoint])`
+> 在本机成功加载了 `libsimple` 与 `sqlite-vec`，**全部 DDL 与查询跑通**（详见 §7 V-6）。
+> `engines.node >= 22`（ADR-006 决策 7 已据此定基线）。
+> **补充澄清**（ADR-005 决策 6）：v13 已迁到 **prebuildify**，8 平台预编译 `.node` 直接打在 npm tarball 里、
+> 无 install 脚本、装时不联网 → **不需要用户机器有编译工具链**（TD-003 因此关闭）。
+>
+> #### ⚠️ 验证方法说明：扩展能力**只能实测，不能读 `compile_options` 推断**
+>
+> `[已验证：T-014]` 本文早期版本把"bundled SQLite 是否编译了 `SQLITE_ENABLE_LOAD_EXTENSION`"
+> 列为待验证项，**这个提法本身建立在一个错误前提上**：
+>
+> > `PRAGMA compile_options` **不列出** `ENABLE_LOAD_EXTENSION`，扩展**照样能加载**。
+> > （`better-sqlite3` 与 Node 22 的 `node:sqlite` 都是如此。）
+>
+> 原因：该宏控制的是**编译期是否移除**该能力（对应的否定宏是 `SQLITE_OMIT_LOAD_EXTENSION`），
+> 未被 `OMIT` 掉时它是默认可用的，`compile_options` 里没有它**不代表没有它**。
+>
+> **规则（写给后来者，避免重犯）**：
+> 判断某个 SQLite 构建能否加载扩展，**唯一可靠的方法是真的去 `loadExtension()` 一次并看是否抛错**。
+> 反例可参考 `node-sqlite3-wasm`：它是编译期显式 `OMIT_LOAD_EXTENSION`，
+> **连 `loadExtension` 方法都不存在** —— 这种才是真的不支持，而且同样是"跑一次就知道"。
+> 这条方法论同样适用于本文其它"某构建是否支持某能力"类的判断。
 
 ```sql
 -- 扩展加载（连接建立后立即执行，失败则降级，见 §4.5）
@@ -1023,6 +1041,44 @@ CREATE VIRTUAL TABLE vec_chunks USING vec0(
 
 > **不用 `partition key`**：分区键与 rescore/IVF/DiskANN 索引互斥（上游源码限制），
 > 而我们更可能用到后者。`note_id` 作为**普通元数据列**已足够支撑按笔记过滤。`[设计]`
+
+#### ★ 写入 `vec0` 的绑定约定（**T-014 实测踩到的坑，必须遵守**）
+
+`[已验证：oss-scout 在 T-014 实测，两个驱动表现完全一致]`
+
+**把 JS 的 `number` 绑给 `vec0` 的 rowid / 主键列，必定失败**：
+
+```
+Error: Only integers are allows for primary key values
+```
+
+**这是 `sqlite-vec` v0.1.9 自身的行为，不是驱动 bug** —— `better-sqlite3` 与 `node:sqlite`
+表现一致，换驱动救不了。原因是 JS 的 `number` 到了 SQLite 绑定层是 `FLOAT`，
+而 `vec0` 对主键只接受 `INTEGER`。
+
+**四种可用写法（均已实测通过）**：
+
+| 写法 | 示例 |
+|---|---|
+| ✅ **绑 `BigInt`**（**我们的统一约定**） | `stmt.run(BigInt(chunkId), embJson, BigInt(noteId))` |
+| ✅ SQL 字面量 | `INSERT INTO vec_chunks(chunk_id, …) VALUES (123, …)` |
+| ✅ 省略 rowid 让其自增 | `INSERT INTO vec_chunks(embedding) VALUES (?)` |
+| ✅ `CAST(? AS INTEGER)` | `VALUES (CAST(? AS INTEGER), ?)` |
+| ❌ 绑 JS `number` | `stmt.run(123, …)` → 报上面的错 |
+
+**约定（写死，不给选择余地）**：
+
+> **凡是写入 `vec0` 虚拟表的整数列，一律绑 `BigInt`；
+> 转换在 DB 适配层内部完成，业务代码继续传普通 `number`。**
+
+理由：让每个调用方各自记得 `BigInt(...)` 是必然会漏的（漏了要到运行时才炸）。
+收口到适配层（ADR-005 决策 6 定的那一层）只有一处需要正确。
+适配层应提供 `vecInsert(table, {rowid, vector, meta})` 之类的窄接口，**内部统一做 `BigInt` 转换**，
+并在类型层面禁止直接把 `number` 传进 `vec0` 的语句。
+
+> 📌 这条约定同时是**双 ID 约定的落地细节**：D-02 §1.1 规定内部主键是 `INTEGER`，
+> 而 sqlite-vec 正是靠这个整数 rowid 与 `embed_chunks.id` 关联 —— 绑定方式错了，整条关联链就断。
+> 不写死的话 T-013 / T-016 会各写各的，跑起来才发现。
 
 分块策略 `[设计]`：转写按**语义窗口**切（约 300–500 字，按段落边界对齐，重叠 15%），
 每块记录其覆盖的 `start_ms/end_ms` → **语义搜索的结果也能直接 seek 到音频位置**（与 §3.3 一致）。
@@ -1220,12 +1276,14 @@ GC 是 `priority=30` 的维护 job，**只在空闲时跑**（无 running job �
 
 | # | 事项 | 影响 | 状态 |
 |---|---|---|---|
-| V-1 | **本文所有 DDL 未在任何 SQLite 实例上执行过** | 全局 | **未跑通**。T-011 建骨架时必须先跑通 `0001_init.sql` |
+| V-1 | 本文 DDL 是否能在真实 SQLite 上跑通 | 全局 | ✅ **已实证关闭（T-014，`oss-scout`）**：§4 的**全部 DDL 在真实 SQLite 上跑了一遍** —— 外部内容表、三组同步触发器、`tokenize='simple'`、bm25、`simple_query`/`simple_highlight`、**拼音检索**（`swdt`/`zx`/`sjz` 全命中）、WAL、外键、`vec0` 元数据列 KNN，**全部通过**。<br>⚠️ 仍未跑通的部分：§1 的 26 张业务表 DDL（jobs/notes/mindmap 等）尚未整体执行，T-016 落 `0001_init.sql` 时仍需实测 |
 | V-2 | `mind-elixir` 的包名/版本/`NodeObj` 字段名 | §2.3 映射表 | ✅ **已核实**（读源码 `src/types/index.ts`）。**订正：npm 包名是 `mind-elixir` v5.14.0，不是 `mind-elixir-core`**；`MindElixirData` **无 `linkData`** |
 | V-3 | `markmap-lib.transform()` 的输入 | §2.3 / 只读视图实现 | ✅ **已核实**：只吃 Markdown 字符串；但 `Markmap.create()` 吃 `IPureNode` → **改为直接构造 `IPureNode`** |
 | V-4 | libsimple 的加载与 `tokenize='simple'`、辅助函数、拼音 | §4.1/§4.2 | ✅ **已核实**（README 原文）。函数**形参级签名**仍 UNKNOWN，只有用法级示例 |
 | V-5 | `sqlite-vec` 的 `vec0` 语法/类型/元数据列/分区键 | §4.3 | ✅ **已核实**（README + `sqlite-vec.c` 源码交叉验证，v0.1.9） |
-| V-6 | `better-sqlite3` 的 `loadExtension()` 与 Node ABI | §4 全部 | ✅ **部分已核实**：v13.0.2 有 `loadExtension(path,[entryPoint])`，v13 起走 N-API，**`engines.node >= 22`**。但**「bundled SQLite 是否编译了 `SQLITE_ENABLE_LOAD_EXTENSION`」仍未验证** → R-03 §U-5 列的 T-011 实测项**依然必须做** |
+| V-6 | `better-sqlite3` 能否加载 libsimple / sqlite-vec | §4 全部 | ✅ **已实证关闭（T-014）**：两个扩展均加载成功、功能跑通。**R-03 §U-5 的实测项已完成。**<br>📌 本项原提法（"查 `compile_options` 是否有 `ENABLE_LOAD_EXTENSION`"）**基于错误前提**，已在 §4.1 写入方法论更正：**扩展能力只能实测，不能读 `compile_options` 推断** |
+| V-6b | `vec0` 主键/rowid 的绑定方式 | §4.3 | ✅ **已实证（T-014）**：绑 JS `number` **必失败**（`Only integers are allows for primary key values`），两驱动一致 → 是 sqlite-vec v0.1.9 的行为。**已在 §4.3 写死"一律绑 `BigInt`，转换收口到 DB 适配层"** |
+| V-6c | 驱动选型 | §1.0/§4 | ✅ **已定案（ADR-005 决策 6）**：`better-sqlite3` v13 为主 + `node:sqlite` 已验证备胎 + 薄 DB 适配层。**D-02 本就按 better-sqlite3 写，无需改动。**<br>⚠️ 残留风险（`oss-scout` 如实记录）：**只在 Linux x64 glibc 实测**；mac/Win/arm64/musl 的 prebuild 全未实测；上游 open issue **#1509**（`linux-arm64.node` 要求 GLIBC_2.38）未复现 |
 | V-7 | 重转写后 `quote` 相似度重定位的实际准确率与阈值（0.75/0.4） | §3.5 | 未验证，需 Wave 3 用真实数据调 |
 | V-8 | RRF 融合的检索效果 | §4.4 | 未做评测 |
 | V-9 | 波形格式的 `samplesPerPixel=256` 是否合适（体积 vs 精度） | §3.4 | 未验证 |

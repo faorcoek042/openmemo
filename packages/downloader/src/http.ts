@@ -81,6 +81,14 @@ function unquoteEtag(v: string | null): string | null {
  *
  * Uses GET with `Range: bytes=0-0` rather than HEAD: some CDNs and corporate proxies
  * mishandle HEAD, and a 1-byte GET proves Range support at the same time.
+ *
+ * IMPORTANT — why `redirect: 'manual'` on the first hop:
+ * HF and ModelScope put `x-linked-size` and `x-linked-etag` (the content SHA-256) on the
+ * *302*, not on the CDN response it points at. With `redirect: 'follow'` the runtime
+ * returns only the final 206 and both headers read back as null, silently disabling the
+ * "reject a wrong file before transferring a single byte" check. Verified directly:
+ *   follow → status=206, x-linked-size=null
+ *   manual → status=302, x-linked-size=2497280256, x-linked-etag="7485fe6f…"
  */
 export async function probeRemoteFile(
   url: string,
@@ -91,49 +99,73 @@ export async function probeRemoteFile(
   const onAbort = () => ac.abort();
   opts.signal?.addEventListener('abort', onAbort, { once: true });
   try {
-    const res = await fetch(url, {
+    const headers = {
+      'user-agent': USER_AGENT,
+      range: 'bytes=0-0',
+      ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
+    };
+
+    let res = await fetch(url, {
       method: 'GET',
-      headers: {
-        'user-agent': USER_AGENT,
-        range: 'bytes=0-0',
-        ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
-      },
-      redirect: 'follow',
+      headers,
+      redirect: 'manual',
       signal: ac.signal,
     });
-    // Drain so the socket can be reused rather than left dangling.
     await res.arrayBuffer().catch(() => undefined);
+
+    // Capture origin metadata from the redirect before following it.
+    let size: number | null = null;
+    let sha256: string | null = null;
+    let etag: string | null = null;
+    let lastModified: string | null = null;
+    let acceptRanges = false;
+
+    const absorb = (h: Headers, status: number) => {
+      const linkedSize = h.get('x-linked-size');
+      if (size == null && linkedSize) size = Number(linkedSize);
+      const linkedEtag = unquoteEtag(h.get('x-linked-etag'));
+      if (sha256 == null && linkedEtag && /^[a-f0-9]{64}$/.test(linkedEtag)) sha256 = linkedEtag;
+      if (etag == null) etag = unquoteEtag(h.get('etag'));
+      if (lastModified == null) lastModified = h.get('last-modified');
+      if (h.get('accept-ranges') === 'bytes' || status === 206) acceptRanges = true;
+      if (size == null) {
+        const cr = h.get('content-range');
+        if (cr) {
+          const m = /\/(\d+)\s*$/.exec(cr);
+          if (m) size = Number(m[1]);
+        }
+      }
+    };
+
+    absorb(res.headers, res.status);
+
+    // Follow up to a few hops ourselves so each hop's headers are inspected.
+    let hops = 0;
+    while (res.status >= 300 && res.status < 400 && hops < 5) {
+      const loc = res.headers.get('location');
+      if (!loc) break;
+      const next = new URL(loc, url).toString();
+      res = await fetch(next, { method: 'GET', headers, redirect: 'manual', signal: ac.signal });
+      await res.arrayBuffer().catch(() => undefined);
+      absorb(res.headers, res.status);
+      hops++;
+    }
 
     const err = classifyStatus(res.status, res.headers);
     if (err) throw err;
 
-    const h = res.headers;
-    let size: number | null = null;
-
-    const linked = h.get('x-linked-size');
-    if (linked) size = Number(linked);
-
     if (size == null) {
-      // 206 → parse "bytes 0-0/12345"; 200 → content-length is the whole file.
-      const cr = h.get('content-range');
-      if (cr) {
-        const m = /\/(\d+)\s*$/.exec(cr);
-        if (m) size = Number(m[1]);
-      } else {
-        const cl = h.get('content-length');
-        if (cl) size = Number(cl);
-      }
+      const cl = res.headers.get('content-length');
+      // Only trust content-length when it was NOT a partial response.
+      if (cl && res.status === 200) size = Number(cl);
     }
-
-    const linkedEtag = unquoteEtag(h.get('x-linked-etag'));
-    const sha256 = linkedEtag && /^[a-f0-9]{64}$/.test(linkedEtag) ? linkedEtag : null;
 
     return {
       sizeBytes: Number.isFinite(size as number) ? (size as number) : null,
       sha256,
-      etag: unquoteEtag(h.get('etag')),
-      lastModified: h.get('last-modified'),
-      acceptRanges: res.status === 206 || h.get('accept-ranges') === 'bytes',
+      etag,
+      lastModified,
+      acceptRanges,
       status: res.status,
     };
   } catch (e) {

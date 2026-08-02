@@ -146,11 +146,17 @@ async function hfTree(repo, rev = 'main') {
   return res.json();
 }
 
+/**
+ * Fetch size + content SHA-256 for one file.
+ *
+ * `redirect: 'manual'` is required: HF puts `x-linked-size` / `x-linked-etag` on the 302,
+ * and following the redirect returns only the CDN's 206, where both read back as null.
+ */
 async function hfHead(repo, file, rev = 'main') {
   const res = await fetch(`${HF}/${repo}/resolve/${rev}/${file}`, {
     method: 'GET',
     headers: { range: 'bytes=0-0' },
-    redirect: 'follow',
+    redirect: 'manual',
   });
   await res.arrayBuffer().catch(() => undefined);
   const etag = (res.headers.get('x-linked-etag') || '').replace(/^W\//, '').replace(/"/g, '');
