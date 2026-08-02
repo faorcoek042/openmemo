@@ -1,19 +1,175 @@
 /**
- * @openmemo/pipeline —— 占位骨架（T-011, oss-scout）
+ * @openmemo/pipeline — media import → transcription → structured segments (F1/F2/F3).
  *
- * ⚠️ 只建骨架，实现归 T-020（转写流水线）。
+ * Every native tool runs as a subprocess (ADR-003 decision 1). `subprocess/runner.ts` is
+ * the only module here permitted to import `node:child_process`.
  *
- * 依赖说明（每一项都对应一条 ADR，改动前先读）：
- *   - `ffmpeg-static`   GPL-3.0 —— ADR-002 v2 明确允许（仅个人自用）。
- *                       用法必须是 **CLI 子进程**（ADR-003 决策 1），不得链接 libav*。
- *   - `youtube-dl-exec` MIT 包装器；postinstall 拉 yt-dlp 官方二进制（GPLv3+）。
- *                       ADR-002 v2「F1 直接内置 yt-dlp」。
+ * Two design commitments worth knowing before reading further:
  *
- * ⚠️ **可替换性是硬性设计要求**（ADR-002 v2 升级路径）：
- *    这两个 GPL 组件必须藏在适配层后面。若日后恢复商用意图，
- *    要能只换适配层实现（FFmpeg → 自建 LGPL 构建；yt-dlp → 可选插件），
- *    业务代码零改动。禁止把 ffmpeg / yt-dlp 的 API 泄漏到上层。
+ *  1. TD-002 / ADR-002 — yt-dlp (GPLv3+) is ONE registry entry. Disable it and the
+ *     product still imports podcasts, RSS feeds, HLS streams and direct links. This is
+ *     asserted by a test, not by a comment.
+ *
+ *  2. D-01 §4.1 — transcription is chunked at VAD boundaries so that one completed chunk
+ *     is simultaneously a DB transaction, a preemption point, a resume point and a real
+ *     progress tick. Everything in `transcribe.ts` follows from that.
  */
 
-/** 包标识，供构建产物自检使用。占位实现将被 T-020 替换。 */
+import { DirectHttpSource } from './media/sources/directHttp.js';
+import { LocalFileSource } from './media/sources/localFile.js';
+import { RssSource } from './media/sources/rss.js';
+import { YtDlpSource } from './media/sources/ytdlp.js';
+import { MediaSourceRegistry } from './media/registry.js';
+import type { ToolPaths } from './tools.js';
+
 export const PACKAGE_NAME = '@openmemo/pipeline' as const;
+
+// -- subprocess + security ----------------------------------------------------------------
+export {
+  MAX_PROMPT_CHARS,
+  MAX_URL_BYTES,
+  MEDIA_EXTENSIONS,
+  assertHostNotPrivate,
+  assertWithinRoot,
+  buildArgv,
+  hasAllowedMediaExtension,
+  isPrivateOrReservedHost,
+  isSafeExecutable,
+  rejectsLeadingDash,
+  safePrompt,
+  validateHttpUrl,
+} from './subprocess/argGuard.js';
+export type { ArgvSpec, GuardFailureCode, GuardResult, SafeUrl } from './subprocess/argGuard.js';
+
+export {
+  KILL_GRACE_MS,
+  MAX_STREAM_BYTES,
+  SubprocessError,
+  buildChildEnv,
+  run,
+  runOrThrow,
+} from './subprocess/runner.js';
+export type { RunOptions, RunResult } from './subprocess/runner.js';
+
+// -- tools ---------------------------------------------------------------------------------
+export { discoverTools, fileExists, isExecutable } from './tools.js';
+export type { ManagedDirs, ToolPaths } from './tools.js';
+
+// -- media sources -------------------------------------------------------------------------
+export { MediaSourceRegistry } from './media/registry.js';
+export type { RegistryEntry } from './media/registry.js';
+export { NoMediaSourceError } from './media/types.js';
+export type {
+  Availability,
+  FetchRequest,
+  FetchedMedia,
+  MediaInfo,
+  MediaSource,
+  MediaSourceId,
+  MediaTrack,
+} from './media/types.js';
+
+export { LocalFileSource } from './media/sources/localFile.js';
+export { DirectHttpSource } from './media/sources/directHttp.js';
+export {
+  MAX_FEED_ITEMS,
+  RssSource,
+  looksLikeFeed,
+  parseFeed,
+  parseItunesDuration,
+} from './media/sources/rss.js';
+export type { FeedItem } from './media/sources/rss.js';
+/**
+ * The GPL fallback. This import site is deliberately the only place the identifier
+ * appears outside its own module — see D-06 §8 for the CI grep that keeps it that way.
+ */
+export { YtDlpSource } from './media/sources/ytdlp.js';
+
+// -- audio ----------------------------------------------------------------------------------
+export {
+  ASR_CHANNELS,
+  ASR_SAMPLE_RATE,
+  checkFfmpeg,
+  normalizeToPcm16k,
+  parseFfprobeJson,
+  probeMedia,
+  sliceWav,
+} from './audio/ffmpeg.js';
+export type { NormalizeResult, ProbeResult } from './audio/ffmpeg.js';
+
+export {
+  detectSpeechSegments,
+  parseVadOutput,
+  planChunks,
+  planFixedChunks,
+  totalSpeechMs,
+} from './audio/vad.js';
+export type { AsrChunk, ChunkPlanOptions, SpeechSegment, VadOptions } from './audio/vad.js';
+
+// -- ASR ------------------------------------------------------------------------------------
+export { SEGMENT_FLAG, detectRepetition, logprobToConfidence } from './asr/types.js';
+export type {
+  AsrAvailability,
+  AsrCapabilities,
+  AsrEngine,
+  AsrStream,
+  StreamRequest,
+  TranscribeChunkRequest,
+  TranscriptSegment,
+  WordTimestamp,
+} from './asr/types.js';
+
+export { WhisperCppEngine, parseWhisperJson } from './asr/whisperCpp.js';
+export type { WhisperCppEngineOptions } from './asr/whisperCpp.js';
+
+// -- queue -----------------------------------------------------------------------------------
+export {
+  LANES,
+  LaneManager,
+  PRIORITY,
+  PriorityTracker,
+  defaultCapacities,
+} from './queue/lanes.js';
+export type { Lane, LaneCapacities, LaneStats, PreemptionCheck, Priority } from './queue/lanes.js';
+
+// -- pipeline ---------------------------------------------------------------------------------
+export { PLAN_VERSION, TranscribePipeline, deriveResumeSet } from './transcribe.js';
+export type {
+  PipelineStep,
+  StepProgress,
+  TranscribePipelineOptions,
+  TranscribeRequest,
+  TranscribeResult,
+} from './transcribe.js';
+
+export interface BuildRegistryOptions {
+  tools: ToolPaths;
+  cwd: string;
+  /** Root that LocalFileSource is confined to. */
+  allowedRoot: string;
+  /**
+   * TD-002's kill switch. Set false and the GPL adapter is never consulted;
+   * everything else keeps working.
+   */
+  enableSiteExtractor?: boolean;
+}
+
+/**
+ * Standard registry.
+ *
+ * Registration order is irrelevant (resolution sorts by `match` score); what matters is
+ * that YtDlpSource scores lowest, so the licence-clean adapters always get first refusal.
+ */
+export function buildDefaultRegistry(opts: BuildRegistryOptions): MediaSourceRegistry {
+  const registry = new MediaSourceRegistry();
+  registry.register(
+    new LocalFileSource({ tools: opts.tools, allowedRoot: opts.allowedRoot, cwd: opts.cwd }),
+  );
+  registry.register(new DirectHttpSource({ tools: opts.tools, cwd: opts.cwd }));
+  registry.register(new RssSource());
+  registry.register(
+    new YtDlpSource({ tools: opts.tools, cwd: opts.cwd }),
+    opts.enableSiteExtractor ?? true,
+  );
+  return registry;
+}

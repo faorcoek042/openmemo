@@ -18,16 +18,21 @@ depends_on: D-01, ADR-001, ADR-002, ADR-003, ADR-004, R-01, R-03, R-04
 - **迁移策略**：单向递增迁移（无 down），每个迁移一个事务，升级前 `VACUUM INTO backups/` 自动备份保留 3 份；`user_version > 代码支持` 时**拒绝启动**（绝不"尽力打开"，那会静默损坏数据）。
 - **存储布局**：三大 OS 的标准 data 目录（**绝不用 Caches** —— 系统会清理，几 GB 模型被静默删掉是灾难，R-04 已定），媒体按 `media/<noteUid>/` 分目录、**文件名一律我们生成**（用户提供的名字只存 DB 的 `display_name`）→ 从根上消灭路径穿越与保留名问题。模型沿用 R-04 的内容寻址 `blobs/sha256-*`。
 - **本轮已核实的四处订正**（读上游源码/官方文档取得，详见 §7）：① **npm 包名是 `mind-elixir` v5.14.0，不是 `mind-elixir-core`**（ADR-002/R-03/BOARD 需订正），且 `MindElixirData` **没有 `linkData`**，只有 `arrows`；② markmap 的 `transform()` 只吃 Markdown，但 `Markmap.create()` 吃 `IPureNode` → **绕过 transform 直接构造节点树**，省掉两次有损转换；③ `tokenize='simple'` 写法与 `simple_query()/simple_highlight()` 用法已由 libsimple README 逐字确认，**且原生支持拼音检索**（memo.ac 没有）；④ `vec0` 支持**元数据列（可过滤）/ `+辅助列` / `partition key`**，且分区键与 rescore/IVF/DiskANN 互斥。
-- **未验证/存疑**：① 本文所有 DDL **未在任何 SQLite 实例上执行过**；② **better-sqlite3 的 bundled SQLite 是否编译了 `SQLITE_ENABLE_LOAD_EXTENSION` 仍未验证**（v13 要求 `node>=22`，已核实）—— 这是 T-011 的必测项，扩展加载不了则 §4 全部走降级路径；③ libsimple 辅助函数的形参级签名仍 UNKNOWN；④ 重转写后 `quote` 相似度重定位的阈值未调过。
+- **【2026-08-02 状态升级】§4 检索三件套已由 T-014 实证跑通**：外部内容表 + 三组触发器 + `tokenize='simple'` + bm25 + `simple_query`/`simple_highlight` + **拼音检索** + WAL + 外键 + `vec0` KNN **全部通过**。§4 从"设计意图"升级为**已验证**。驱动定案 `better-sqlite3` v13 + `node:sqlite` 备胎 + 薄适配层（ADR-005 决策 6），**D-02 无需改动**。
+- **由实测带回的两条硬约定（已写死在文中）**：① **写 `vec0` 的整数列一律绑 `BigInt`**——绑 JS `number` 必报 `Only integers are allows for primary key values`，两个驱动表现一致（是 sqlite-vec 的行为不是驱动 bug），转换收口到 DB 适配层，业务代码照传 `number`（§4.3）；② **扩展能力只能实测，不能读 `PRAGMA compile_options` 推断**——不列 `ENABLE_LOAD_EXTENSION` 也照样能加载，本文早期的 V-6 提法就错在这个前提上（§4.1 已写入方法论更正）。
+- **未验证/存疑**：① **§1 的 26 张业务表 DDL 仍未整体执行**（T-014 只跑了 §4 的检索部分），T-016 落 `0001_init.sql` 时必须实测；② 驱动**只在 Linux x64 glibc 实测**，mac/Win/arm64/musl 全未验证，上游 issue #1509（arm64 需 GLIBC_2.38）未复现；③ libsimple 辅助函数的形参级签名仍 UNKNOWN；④ 重转写后 `quote` 相似度重定位的阈值（0.75/0.4）未调过。
 - **对其他 agent 的影响**：T-011 请把 §1 的 DDL 落成 `0001_init.sql` 并**实测跑通**（含扩展加载），注意 **`mind-elixir` 包名订正**与 **Node ≥ 22 基线**，跑不通的地方回写 inbox；T-013 请注意 API 只暴露 `uid`、时间戳出入口转换（DB 毫秒整数 ↔ API ISO 字符串）、以及 §1.8 的 `model_installs` 只是**可重建索引**，权威源仍是 `manifests/*.json`；T-012 请对齐 §1.8 `backend_installs` 的 `selftest_json` 与熔断字段 `failure_count`。
 
 ---
 
 # 详细内容
 
-> **诚实标记**：`[已定]` = 上游 ADR/研究已裁决；`[设计]` = 我的决策，**未执行过任何 SQL**；
-> `[待核实]` = 需要实证；`UNKNOWN` = 查不到，不编。
-> **本文所有 DDL 均未在真实 SQLite 上运行过。** T-011 落地时以实测为准，冲突回写 inbox。
+> **诚实标记**：`[已定]` = 上游 ADR/研究已裁决；`[已验证]` = 已在真实 SQLite 上跑通（注明由谁在哪个任务里跑的）；
+> `[设计]` = 我的决策，未执行过 SQL；`[待核实]` = 需要实证；`UNKNOWN` = 查不到，不编。
+>
+> **DDL 的执行状态（2026-08-02 更新）**：
+> - ✅ **§4 检索部分（FTS5 + libsimple + sqlite-vec）已由 `oss-scout` 在 T-014 实测跑通**，见 §7 V-1/V-6。
+> - ⬜ **§1 的 26 张业务表 DDL 仍未整体执行** —— T-016 落 `0001_init.sql` 时以实测为准，冲突回写 inbox。
 
 ---
 

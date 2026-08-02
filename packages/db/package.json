@@ -1,0 +1,39 @@
+{
+  "name": "@openmemo/db",
+  "version": "0.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "type": "module",
+  "description": "DB 层：驱动适配层（better-sqlite3 ⇄ node:sqlite）+ 迁移执行器 + 扩展加载与降级",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "migrations"],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "test": "node --test dist/**/*.test.js"
+  },
+  "dependencies": {
+    "@openmemo/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "better-sqlite3": "^13.0.2"
+  },
+  "peerDependencies": {
+    "better-sqlite3": "^13.0.2"
+  },
+  "peerDependenciesMeta": {
+    "better-sqlite3": {
+      "optional": true
+    }
+  }
+}
