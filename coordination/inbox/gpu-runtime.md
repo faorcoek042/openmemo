@@ -1123,3 +1123,53 @@ ppid=1 的孤儿数: 0
 - D3 **未在真 Windows 上验证**，只统一了常量。
 - 孤儿回收**未实证**，我没有把"崩溃恢复入队成功"说成"孤儿被回收"——那是两件事。
 - 本轮我的改动被别的 agent 的 `git add -A` 一并提交进了 `0888e43`（T-053），非我提交。
+
+---
+
+## [2026-08-03 11:40] T-063 DONE —— 上游 vs 自建评估
+
+### ⚠️ 先认一条：我自建的两个组件，上游本来就有现成的
+
+`libsimple` 和 `sqlite-vec` 我在 T-037 写了 `scripts/build-sqlite-ext.sh` 从源码编译。
+**上游两者都发布了预编译产物，而且 libsimple 的比我打的还全**（多了 `dict/pos_dict/`，我只打了 5 个 `.utf8`）。
+**我当时没有去看上游 releases 就直接开始编。** 这正是本轮指令要纠正的习惯。
+
+### 那张表（判据 = 上游有没有**我们要的那个平台+后端**的产物）
+
+| 组件 | 上游产物（实地核实） | 结论 |
+|---|---|---|
+| **sqlite-vec** | `v0.1.9` 有 `loadable-{linux-x86_64,linux-aarch64,macos-aarch64,macos-x86_64,windows-x86_64}.tar.gz`，**另有官方 `checksums.txt`**<br>`sqlite-vec-0.1.9-loadable-linux-x86_64.tar.gz` 61,507B<br>sha256 `b959baa1d8dc88861b1edb337b8587178cdcb12d60b4998f9d10b6a82052d5d7`（**与官方 checksums.txt 逐字一致**）<br>内容：恰好一个 `vec0.so` | **改用上游** |
+| **libsimple** | `v0.7.1` 有 `linux-ubuntu-22.04 / ubuntu-24.04-arm / osx-arm64 / osx-x64 / windows-{x64,x86,arm64}` 等 12 个 zip<br>`libsimple-linux-ubuntu-22.04.zip` 5,337,804B sha256 `0c9a7a578fc50ef5480e69e1e1880535ae68d75e1c1580f6bf106073087642a5`<br>内容：`libsimple.so` + **完整 `dict/`（含 jieba.dict.utf8、idf.utf8、pos_dict/）** | **改用上游** |
+| **whisper.cpp** | `v1.9.1`：Linux `x64`/`arm64` CPU ✅、Win `x64`/`Win32` CPU+BLAS ✅、Win CUDA 11.8/12.4 ✅、iOS xcframework ✅<br>`whisper-bin-ubuntu-x64.tar.gz` 9,379,235B sha256 `f3bf3b4369a99b54665b0f19b88483b30de27f25963b0414235dea03198515c5`<br>**仍然没有：macOS CLI、Vulkan、ROCm、Linux CUDA** | **Linux/Win 改用上游**；Vulkan/ROCm/macOS-CLI **按新前提（个人自用 + 跑 Linux）暂不需要 → 自建 CI 先停** |
+| **llama.cpp** | 官方矩阵极完整（Win/Linux/macOS × cpu/cuda/vulkan/hip/sycl/openvino），R-02 已核实 | **上游，本来就不该自建** |
+| **sherpa-onnx** | npm 全平台预编译：`sherpa-onnx-node` / `-linux-x64` / `-darwin-arm64` / `-win-x64` 均 **1.13.4（2026-07-07）** | **上游（npm）**，已在用 |
+| **ffmpeg / ffprobe** | BtbN 有**不可变的日期 tag**（`autobuild-2026-08-02-13-17` 等，每个 49 个资产），资产名带完整版本号：<br>`ffmpeg-n7.1.5-12-g1fdbca85aa-linux64-gpl-7.1.tar.xz` 118,999,596B<br>T-050 我已实测过同款构建**同时含 ffmpeg 与 ffprobe**、且 ffprobe 真能探测 | **改用上游 + 钉日期 tag**（不用 `latest`） |
+| **yt-dlp** | `2026.07.04` 有 `yt-dlp_linux` / `yt-dlp.exe` / `yt-dlp_macos` / `yt-dlp` + **官方 `SHA2-256SUMS`** | **上游**，已在用 |
+
+### 能改用上游的：**7 个里 7 个**（当前需求下）
+
+**"移动靶"问题已解**：BtbN 除了 `latest` 还有**不可变的日期 tag**，钉它即可，sha256 就稳定了。
+**`.tar.xz` 解包**仍是唯一技术前置（归 `model-mgmt`）。sqlite-vec / libsimple / whisper.cpp / yt-dlp 都是 `.tar.gz`/`.zip`/裸二进制，**现有解包器就够**。
+
+### 这直接绕开了"发布渠道"阻塞
+上一轮我报告 2.1/2.2 终极验收卡在"没有 GitHub remote，manifest 的 `mirrors: []` 填不出 URL"。
+**改用上游后，manifest 直接填上游地址，我们不需要托管任何东西** ——
+`sqlite-ext` 与 `media-tools` 这两条正是卡住的那两条，现在都有真实可下载的上游 URL。
+
+### 建议的处置
+| 我的自建脚本 | 处置 |
+|---|---|
+| `scripts/build-sqlite-ext.sh` | **停用**（保留文件 + 注明"上游已有预编译，此脚本仅在需要自定义构建时使用"） |
+| `scripts/build-media-tools.sh` | **改为"可选重打包"**：默认走上游直连；仅当需要瘦身（上游 119MB 含大量我们不用的东西）时才用它 |
+| `scripts/build-whisper.sh` | **保留但不进默认流程**：只在将来真需要 Vulkan/ROCm/macOS-CLI 时启用 |
+| `.github/workflows/build-backends.yml` | **降级为按需触发**（本来也从未执行过，无 remote） |
+
+需要 Manager 决策:
+1. 请 `model-mgmt` 把 `vendor/manifests/` 的 `sqlite-ext` 换成**上游 sqlite-vec + libsimple 两条独立条目**（sha256 我已给出，sqlite-vec 那条还与官方 checksums.txt 对过），`media-tools` 换成 BtbN 钉死 tag。
+2. `.tar.xz` 解包支持（只有 ffmpeg 需要）——如果不想加，退路是继续用我的重打包脚本产出 tar.gz。
+3. 确认「自建 CI 暂停」：按"个人自用 + 跑 Linux"的前提，Vulkan/ROCm/macOS-CLI 都不在当前需求内。
+
+诚实声明:
+- **ffmpeg 钉死 tag 的 sha256 未取到** —— 119MB 下载在本机网络下两次都没跑完（停在 85MB）。资产**名称与大小**已从 GitHub API 核实，**内容含 ffmpeg+ffprobe 是 T-050 对同款构建实测的**，但**该文件的 sha256 我没算出来，manifest 落地前必须补**。
+- sqlite-vec / libsimple 两条是**下载后实算 sha256**，并且我用自己的"功能验收标准"跑过：上游 libsimple + 上游 vec0.so 在真 FTS5 上 `用户/推特/中国/服务` 全部命中（1/2/1/2），`vec_version v0.1.9`。
+- whisper.cpp 的"没有 macOS CLI / Vulkan / ROCm"是**再次实地核实最新 release 资产清单**得出的，不是引用旧结论。
