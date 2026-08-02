@@ -1,5 +1,5 @@
 {
-  "ranAt": "2026-08-02T09:28:07.462Z",
+  "ranAt": "2026-08-02T09:39:46.741Z",
   "steps": [
     {
       "id": "0",
@@ -17,19 +17,19 @@
       "id": "2",
       "name": "网页检测硬件",
       "status": "yes",
-      "detail": "你的硬件显卡未检测到可用 GPU内存17 GB · 可用 1.6 GB处理器AMD RYZEN AI MAX+ 395 w/ Radeon 8060S · 32 核 / 32 线程模型目录/tmp/om-cold/mod"
+      "detail": "你的硬件显卡未检测到可用 GPU内存17 GB · 可用 1.4 GB处理器AMD RYZEN AI MAX+ 395 w/ Radeon 8060S · 32 核 / 32 线程模型目录/tmp/om-cold/mod"
     },
     {
       "id": "3",
       "name": "网页装加速后端（whisper.cpp）",
-      "status": "no",
-      "detail": "点了「CPU可安装whisper.cpp · CPU 后端（Linux x64）推荐兜底后端whisper.cpp v1.9.」但未成功：UNPACK_FAILED: Archive extraction (tar.gz) failed for whisper-bin-ubuntu-x64.tar.gz: Archive contains a symlink/hardlink entry, which is rejected: \"whisper-bin-ubuntu-x64/libwhisper.so\""
+      "status": "yes",
+      "detail": "点「CPU可安装whisper.cpp · CPU 后端（Linux x64）推荐兜底后端whisper.cpp v1.9.」安装成功"
     },
     {
       "id": "4",
       "name": "网页装 ASR 模型",
       "status": "yes",
-      "detail": "点「下载 2.3 MB」下载完成（100%）"
+      "detail": "点「下载 25 MB」下载完成（100%）"
     },
     {
       "id": "5",

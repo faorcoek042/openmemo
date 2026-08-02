@@ -61,6 +61,7 @@ define(
     close(): void {}
   },
 );
+/** React 的 act 环境开关。交互全部包在 act 里，保证 setState 在返回前提交。 */
 define('IS_REACT_ACT_ENVIRONMENT', true);
 
 /**

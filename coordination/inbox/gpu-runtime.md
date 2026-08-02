@@ -837,3 +837,98 @@ POST /api/models/pull {"id":"asr/whisper-base-q5_1"}  ->  succeeded
 - 下载器（`packages/downloader`）这一层实测是**好的**：真下载、真校验、真硬链、`.partial` 续传文件也确实生成了。问题全在「目录里有没有这条」和「装完谁去找它」。
 - 熔断器是用 `packages/runtime` 的真实导出函数测的，非模拟。
 - 用独立端口 17701 + `setsid`，未干扰其他 agent。
+
+---
+
+## [2026-08-03 05:30] T-048 DONE
+
+交付:
+- `packages/runtime/src/backends/applicability.ts`（新建）—— L1/L2 适用性策略（ADR-014 决策 2）
+- `packages/runtime/src/selfcheck.ts`（新建）—— 自检核心库，供 daemon 开 HTTP 端点
+- `packages/pipeline/src/asr/{types,paraformer}.ts` + `transcribe.ts` —— `preferredChunkMs`
+- `apps/daemon/src/http/rest/backends.ts` —— **3 行调用点（见下方归属声明）**
+- **109/109 测试全绿**，tsc / eslint 干净
+
+## 1. L1 能装上了吗 —— **门禁解开了，但装的过程坏了**
+
+**门禁：解开了 ✅**
+```
+冷机（全新空 dataDir）上各包的 applicable：
+  whispercpp-cpu-linux-x64  | applicable=True    ← 原来是 False（死锁）
+  llamacpp-cpu-linux-x64    | applicable=True    ← 原来是 False
+  sqlite-ext-linux-x64      | applicable=True
+  llamacpp-vulkan-linux-x64 | applicable=False | 尚未探测到硬件能力；请先安装 CPU 基础包，安装后会自动重新探测
+  llamacpp-rocm-linux-x64   | applicable=False | 同上
+```
+L2 的拒绝理由现在是**可操作的引导**而不是一句 probe 报错。`POST /api/backends/install` 从 409 变成 202 排队。
+
+**但安装本身坏了 ❌ —— 新发现的阻塞点：解包不完整**
+```
+tarball 里的文件数: 43
+实际解压出来的:      3        ← libggml-cpu-sapphirerapids.so / libwhisper.so.1.9.1 / whisper-quantize
+缺失: ✘ whisper-cli  ✘ whisper-server  ✘ libggml-base.so.0.15.1  ✘ libggml-cpu-zen4.so
+```
+下载本身是对的（9,379,235 字节全部下完，**我另外重新下载上游核对过 sha256 与 manifest 完全一致**：
+`f3bf3b4369a99b54665b0f19b88483b30de27f25963b0414235dea03198515c5`）。job 报的是 `state=failed, step=verifying`，
+而目录里留下 3 个文件 —— 看起来是解包中途失败/被截断，残留物没清理，重试又被去重跳过。
+→ **归 `model-mgmt`（`packages/downloader/src/unpack.ts`）。** 我把摘要核对做完了，可以排除"文件损坏"这条。
+
+**另一个 T-044 阻塞点已被 `oss-scout` 修好**：`modelPath` 现在能解析到
+`/tmp/cold2/models/by-name/asr/ggml-base-q5_1.bin`（我上轮说"写死文件名列表本身就是错的"，他改了），
+`asr-model` 已从 `pipeline.missing` 消失。
+
+## 2. 冷启动 selfcheck 失败数：**7 → 7**（但内容变了）
+```
+通过 8 · 警告 7 · 失败 7 · EXIT=1
+✘ whisper-cli 未找到            ← 解包不完整（新阻塞点）
+✘ libsimple 缺失 / 中文双字词未测试 / db.tokenizer trigram   ← sqlite-ext 装不上（同一个解包问题）
+✘ 中文自动选择 / 英文自动选择 无可用引擎                      ← 上面的连锁
+✘ pipeline.missing ["whisper-cli"]                        ← 从 2 项减到 1 项
+```
+**通过数 7→8、`pipeline.missing` 从 `["whisper-cli","asr-model"]` 减到 `["whisper-cli"]`。**
+失败总数没降是因为**卡点从"装不了"变成了"装了但解包只出 3/43 个文件"** —— 前一个是我修的，后一个是新查出来的。
+
+## 3. 归属声明（Manager 要求对齐）
+`applicability()` 的**策略**放在 `packages/runtime`（我的），**调用点** `apps/daemon/src/http/rest/backends.ts` 只有 3 行。
+我查 `git status` 确认 `oss-scout` 当时在改 `manifests.ts`、**没动 `backends.ts`**，为不阻塞验证**我把这 3 行也改了**。
+`oss-scout` 如有异议请在 inbox 提 `DISPUTE:`，我立刻退出该文件。策略函数本身是纯函数、可单测、只有一处判定。
+
+规则实现：**L1（`cpu`，以及 macOS 上的 `metal`）无条件 `applicable=true`；L2 维持 probe gate。**
+Metal 单列的理由写在代码注释里：Mac 自 10.13 起人人有 Metal、无驱动可装、shader 已用
+`GGML_METAL_EMBED_LIBRARY` 编进二进制（零额外体积），拿一个还没跑过的 probe 去 gate 它，
+会在 macOS 上复现同一个死锁。
+
+## 4. Paraformer 30s 只出 1 段 —— 已修 ✅
+根因：离线 Paraformer **一次调用只返回一整块文本**，所以 chunk 长度就是时间轴分辨率。默认 30s chunk → 30s 一段。
+修法：`AsrCapabilities` 新增可选 `preferredChunkMs`，Paraformer 声明 **8000ms**，`TranscribePipeline` 按引擎能力规划 chunk（不再用固定常量）。
+```
+修复前: 337s 音频 -> 13 chunks / 13 segments（前 30 秒只有 1 段）
+修复后: 337s 音频 -> 47 chunks / 47 segments，前 30 秒 4 段：
+  [1.2-8.8s]   Twitter来自维基百科自由的百科全书网址，z h。
+  [8.7-15.7s]  dowiwikpedia not ork Twitter非官方中文名称推特。
+  [16.0-24.3s] 是一个社交网络及微博客服务，用户可以经由SMS即时通讯电邮。
+  [24.3-31.9s] Twitter网站或Twitter用户端软件，如Twitter rific输入最多一百四十字的文字更新。
+时间戳单调: true
+```
+代价可忽略：84x 实时下，30s 窗口切成 4 个 8s 窗口的算力几乎不变（都是约 0.36s）。
+**这直接救回了 F5 中文的时间轴** —— ADR-013 已把中文降级成段级高亮，再只有一段就等于没有时间轴。
+⚠️ `AsrCapabilities` 不在 D-06 §15 的冻结清单内（冻结的是 `AsrStream` 与合并契约），且新增的是**可选**字段，向后兼容。
+
+## 5. selfcheck HTTP 端点 —— 核心已抽成库 ✅
+`packages/runtime/src/selfcheck.ts` 导出 `runSelfCheck(input)`，返回结构化 `SelfCheckReport`
+（每项含 `id` / `status` / `detail` / `required` / **`remediation`**）。
+依赖用 `SelfCheckProbes` 注入，**刻意不让 `packages/runtime` import `packages/pipeline`**（会成环，pipeline 已依赖 runtime）。
+→ **daemon 加 `GET /api/selfcheck` 只需组装 probes 并调用**，诊断页即可从"组件是否加载"升级到"功能是否可用"。
+`architect` 自己标注过"绿灯不等于功能可用"，这就是补上那一层。**一份实现两个出口**，CLI 与端点不会各说各话。
+
+需要 Manager 决策:
+1. **解包只出 3/43 个文件** —— 当前 L1 装机的唯一阻塞。归 `model-mgmt`（`unpack.ts`）。我已排除文件损坏（摘要核对一致）。
+2. **失败的安装应清理残留并允许重试** —— 现在残留目录会让重试被去重跳过，用户会卡死在"装过但用不了"。
+3. `GET /api/selfcheck` 端点接线归 `oss-scout`（库已就绪）。
+4. `backends.ts` 那 3 行的归属请确认（见 §3）。
+
+诚实声明:
+- **L1 门禁我修好了并实测生效；L1 实际装机仍然失败**，卡在解包。我没有把"能排队了"说成"能装上了"。
+- 冷启动 selfcheck **仍然 EXIT=1**，失败数 7 未降。
+- 本轮测试期间 daemon 又被别的 agent 的 `pkill` 误杀一次（端口 17705），已换 17709 重跑；被杀不影响上述结论。
+- `ffmpeg`/`ffprobe` 仍来自系统 `/usr/bin/`，按要求保持记录、本轮未解决。

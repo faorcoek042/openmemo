@@ -92,7 +92,14 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
         repos.createSource({
           noteId: note.id,
           kind: looksLikeUrl ? 'url' : 'local',
-          originalUrl: looksLikeUrl ? input : null,
+          adapterId: looksLikeUrl ? null : 'local',
+          /*
+           * ⚠️ 本地路径**也要存**。
+           * D-02 对 `input_url` 的定义是"用户原始输入"，不限于 URL。
+           * 之前本地导入存 null，结果**取消后无法重跑**（不知道源文件在哪），
+           * 续跑、换模型重跑、重新转写全都做不了。
+           */
+          originalUrl: input,
           title,
         });
 

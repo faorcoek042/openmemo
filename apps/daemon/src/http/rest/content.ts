@@ -233,6 +233,51 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
         return true;
       }
 
+      // ---- POST /api/notes/:uid/retranscribe —— 同 note 重跑（取消后续跑的入口）----
+      const retryMatch = /^\/api\/notes\/([0-9A-HJKMNP-TV-Z]{26})\/retranscribe$/.exec(url.pathname);
+      if (retryMatch && method === 'POST') {
+        const note = repos.noteByUid(retryMatch[1] as string);
+        if (!note) {
+          sendError(res, 404, 'NOTE_NOT_FOUND', 'no such note', '笔记不存在');
+          return true;
+        }
+        const src = repos.primarySourceOf(note.id);
+        if (!src?.input_url) {
+          sendError(
+            res,
+            409,
+            'NO_SOURCE_INPUT',
+            'note has no recorded source input',
+            '这条笔记没有记录原始输入，无法重跑',
+          );
+          return true;
+        }
+        const body = (await readJsonBody(req)) as { language?: unknown } | undefined;
+        const language =
+          typeof body?.language === 'string' ? body.language : (note.language ?? null);
+
+        /*
+         * 不新建 note，直接对同一 note 再排一次转写。
+         * runner 里的 `resumableTranscript()` 会复用未完成的稿并跳过已完成的 chunk ——
+         * 这正是"取消之后接着跑"的路径（D-01 §4.5）。
+         */
+        const job = queue.enqueue({
+          type: 'transcribe',
+          lane: 'gpu.asr',
+          priority: 0, // 用户主动点的重跑，属交互式
+          noteId: note.id,
+          payload: {
+            noteId: note.id,
+            input: src.input_url,
+            language,
+            sourceKind: src.kind,
+          },
+        });
+        repos.updateNote(note.id, { status: 'processing' });
+        sendJson(res, 202, { jobUid: job.uid, noteUid: note.uid });
+        return true;
+      }
+
       const m = NOTE_RE.exec(url.pathname);
       if (!m) return false;
       const note = repos.noteByUid(m[1] as string);

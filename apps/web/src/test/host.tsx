@@ -59,45 +59,52 @@ export async function render(
     });
 
   let root: Root;
-  await act(async () => {
     root = createRoot(container);
-    root.render(
-      createElement(
-        QueryClientProvider,
-        { client: qc },
-        createElement(
-          MemoryRouter,
-          { initialEntries: [opts.route ?? '/'] },
-          ui as unknown as ReactNode,
-        ),
-      ),
-    );
+  root.render(
+    createElement(
+    QueryClientProvider,
+    { client: qc },
+    createElement(
+      MemoryRouter,
+      { initialEntries: [opts.route ?? '/'] },
+      ui as unknown as ReactNode,
+    ),
+    ),
+  );
   });
 
   const flush = async (): Promise<void> => {
-    // 两轮：第一轮让 setState 的更新提交，第二轮让因它产生的副作用
-    // （query/mutation 的 promise、useEffect）落地。一轮 setTimeout(0) 不够 ——
-    // 实测症状是"onChange 已触发但下一个事件处理器仍拿到旧 state"。
-    for (let i = 0; i < 2; i += 1) {
-      await act(async () => {
-        await new Promise((r) => setTimeout(r, 0));
-      });
-    }
+  // 两轮：第一轮让 setState 的更新提交，第二轮让因它产生的副作用
+  // （query/mutation 的 promise、useEffect）落地。一轮 setTimeout(0) 不够 ——
+  // 实测症状是"onChange 已触发但下一个事件处理器仍拿到旧 state"。
+  for (let i = 0; i < 2; i += 1) {
+    await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+    });
+  }
   };
   await flush();
 
   return {
-    container,
-    flush,
-    unmount: () => {
-      act(() => root.unmount());
-      container.remove();
-    },
+  container,
+  flush,
+  unmount: () => {
+    act(() => root.unmount());
+    container.remove();
+  },
   };
 }
 
 /* ── 4. 交互 ───────────────────────────────────────────────────────────── */
 
+/**
+ * 让 React 的调度器把待处理的更新跑完。
+ *
+ * 连续让出两个宏任务：第一个让事件产生的 setState 提交，
+ * 第二个让由它触发的 effect / query / mutation 的 promise 落地。
+ * 一个不够 —— 实测症状是"onChange 已触发，但下一个事件的处理器仍拿到旧 state"。
+ */
+/** 把 React 待处理的更新与随之产生的副作用排空。 */
 async function settle(): Promise<void> {
   await act(async () => {
     await new Promise((r) => setTimeout(r, 0));
@@ -115,8 +122,12 @@ export async function click(el: Element | null): Promise<void> {
 /**
  * 给受控 input/textarea 赋值。
  *
- * ⚠️ 必须走**原生 setter**：React 为了实现受控组件劫持了 `value` 的 setter 并记录
- * "上一次的值"，直接 `el.value = x` 会让 React 认为值没变、不触发 onChange。
+ * 两个必须做对的地方：
+ * 1. **用原型上的原生 setter**：React 在实例上装了自己的 `value` setter 来做受控输入，
+ *    直接 `el.value = x` 会被它拦下、`_valueTracker` 认为值没变 → onChange 不触发。
+ *    走原型 setter 才能让 tracker 看到差异。
+ * 2. **只派 `input`，不要补 `change`**：React 对文本输入只认 input，
+ *    多派一个 change 会让 tracker 在同一轮被二次读取并复位。
  */
 export async function type(el: Element | null, value: string): Promise<void> {
   if (!el) throw new Error('type: 元素不存在');
@@ -126,18 +137,13 @@ export async function type(el: Element | null, value: string): Promise<void> {
       : window.HTMLInputElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
   if (!setter) throw new Error('type: 拿不到原生 value setter');
-  // jsdom 不支持原生 input 事件检测，React 会退回 polyfill 路径，
-  // 而该路径依赖 document.activeElement —— 不 focus 就会在内部拿到 null 并抛异常。
+
+  // jsdom 里 React 的 input 事件路径依赖 document.activeElement，不 focus 会拿到 null
   (el as HTMLElement).focus();
   await act(async () => {
     setter.call(el, value);
-    // React 的受控输入靠 `_valueTracker` 判定"值变没变"。用原型 setter 赋值可以绕过
-    // React 在实例上装的 setter，让 tracker 看到差异；随后派发 input 事件触发 onChange。
-    // ⚠️ 只派 input，**不要**再补一个 change：React 对文本输入只认 input，
-    // 多派的 change 会让 tracker 在同一轮里被二次读取并复位，onChange 反而不触发。
     el.dispatchEvent(new window.Event('input', { bubbles: true }));
   });
-  // 必须等这次 setState 提交完再返回，否则下一个事件的处理器闭包仍持有旧 state
   await settle();
 }
 
