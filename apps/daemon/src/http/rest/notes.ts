@@ -40,6 +40,10 @@ interface ImportBody {
   input?: unknown;
   title?: unknown;
   language?: unknown;
+  /** 用户为这一次转写显式选的引擎/模型/初始 prompt（都可不传）。 */
+  engineId?: unknown;
+  modelId?: unknown;
+  prompt?: unknown;
   kind?: unknown;
 }
 
@@ -173,6 +177,9 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
             ? body.title.trim()
             : basenameOf(input);
         const language = typeof body?.language === 'string' ? body.language : null;
+        const engineId = typeof body?.engineId === 'string' ? body.engineId : null;
+        const modelId = typeof body?.modelId === 'string' ? body.modelId : null;
+        const prompt = typeof body?.prompt === 'string' ? body.prompt : null;
 
         const note = repos.createNote({ title, kind: 'media', language });
         repos.createSource({
@@ -194,7 +201,15 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
           lane: 'gpu.asr',
           priority: 10,
           noteId: note.id,
-          payload: { noteId: note.id, input, language, sourceKind: looksLikeUrl ? 'url' : 'local' },
+          payload: {
+            noteId: note.id,
+            input,
+            language,
+            engineId,
+            modelId,
+            prompt,
+            sourceKind: looksLikeUrl ? 'url' : 'local',
+          },
         });
 
         sse.publish(

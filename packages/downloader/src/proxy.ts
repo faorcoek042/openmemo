@@ -28,6 +28,8 @@ import {
   type ProxyProbe,
   type ProxyProbeResult,
   type ProxyTestReport,
+  type SourceLatency,
+  type SourceLatencyReport,
   proxyUrlFor,
   redactProxyUrl,
 } from '@openmemo/shared';
@@ -41,11 +43,32 @@ import {
   setGlobalDispatcher,
 } from 'undici';
 
-/** Targets we probe for "test connection". These are the hosts model downloads use. */
+/**
+ * Target for the proxy test proper.
+ *
+ * A neutral host that is blocked without a proxy on the networks this feature exists for.
+ * Deliberately NOT one of our download mirrors: if the proxy test used Hugging Face and
+ * it failed, the user could not tell whether their proxy is broken or Hugging Face is
+ * having a bad day. A separate host makes "is the proxy working" a question with one
+ * cause.
+ */
+export const PROXY_TEST_TARGET = { target: 'YouTube', url: 'https://www.youtube.com/generate_204' };
+
+/** Download sources, measured as a comparison table — a separate action from the above. */
+export const DOWNLOAD_SOURCE_TARGETS: ReadonlyArray<{
+  provider: string;
+  label: string;
+  url: string;
+}> = [
+  { provider: 'hf', label: 'Hugging Face', url: 'https://huggingface.co/api/models/ggerganov/whisper.cpp' },
+  { provider: 'hf-mirror', label: 'hf-mirror 镜像', url: 'https://hf-mirror.com/api/models/ggerganov/whisper.cpp' },
+  { provider: 'modelscope', label: 'ModelScope 魔搭', url: 'https://www.modelscope.cn/api/v1/models/Qwen/Qwen3-4B-GGUF/revisions' },
+  { provider: 'github', label: 'GitHub', url: 'https://api.github.com/repos/ggml-org/whisper.cpp' },
+];
+
+/** @deprecated Use `PROXY_TEST_TARGET` / `DOWNLOAD_SOURCE_TARGETS`. */
 export const DEFAULT_PROBE_TARGETS: ReadonlyArray<{ target: string; url: string }> = [
-  { target: 'Hugging Face', url: 'https://huggingface.co/api/models/ggerganov/whisper.cpp' },
-  { target: 'GitHub', url: 'https://api.github.com/repos/ggml-org/whisper.cpp' },
-  { target: 'ModelScope', url: 'https://www.modelscope.cn/api/v1/models/Qwen/Qwen3-4B-GGUF/revisions' },
+  PROXY_TEST_TARGET,
 ];
 
 /** Build an undici connector that tunnels through a SOCKS5 proxy. */
@@ -157,37 +180,89 @@ export function activeProxySummary(): { mode: string; proxy: string | null } | n
   return { mode: cfg.mode, proxy: redactProxyUrl(url) };
 }
 
+type ProxyHealth = 'ok' | 'unreachable' | 'auth_failed';
+
+const isSocks = (p: string) => p === 'socks5:' || p === 'socks:' || p === 'socks5h:';
+
 /**
- * TCP-connect to the proxy itself.
+ * Talk to the proxy itself and find out whether it will actually carry traffic for us.
  *
- * This is what makes "is it the proxy or the site?" answerable rather than guessed. If we
- * cannot open a socket to the proxy's host:port, nothing downstream is worth reporting —
- * every target would fail for the same reason and listing three red rows would imply the
- * sites are blocked when in fact the proxy is simply not running.
+ * This does a real CONNECT handshake rather than a bare TCP connect, because undici
+ * destroys the evidence we need: when a proxy answers `407 Proxy Authentication
+ * Required`, the error that reaches the caller is `TypeError: fetch failed` /
+ * `cause.message = "Request was cancelled."` / `cause.code = 0`. The status code is gone,
+ * so no amount of error-string matching can distinguish a wrong proxy password from an
+ * unreachable website — and those two send the user to completely different fixes.
+ * Reading the CONNECT status line ourselves is the only reliable source of that answer.
  */
-async function probeProxyEndpoint(proxyUrl: string, timeoutMs: number): Promise<boolean> {
+async function probeProxy(
+  proxyUrl: string,
+  timeoutMs: number,
+  sampleHost: string,
+): Promise<ProxyHealth> {
   let u: URL;
   try {
     u = new URL(proxyUrl);
   } catch {
-    return false;
+    return 'unreachable';
   }
-  const port =
-    Number(u.port) ||
-    (u.protocol === 'socks5:' || u.protocol === 'socks:' || u.protocol === 'socks5h:'
-      ? 1080
-      : u.protocol === 'https:'
-        ? 443
-        : 8080);
-  return new Promise((resolve) => {
+
+  if (isSocks(u.protocol)) {
+    try {
+      const { socket } = await SocksClient.createConnection({
+        proxy: {
+          host: u.hostname,
+          port: Number(u.port) || 1080,
+          type: 5,
+          userId: u.username ? decodeURIComponent(u.username) : undefined,
+          password: u.password ? decodeURIComponent(u.password) : undefined,
+        },
+        command: 'connect',
+        destination: { host: sampleHost, port: 443 },
+        timeout: timeoutMs,
+      });
+      socket.destroy();
+      return 'ok';
+    } catch (err) {
+      const m = (err instanceof Error ? err.message : '').toLowerCase();
+      // The socks library reports a failed method negotiation / bad credentials distinctly
+      // from a refused connection.
+      if (m.includes('authentication') || m.includes('auth')) return 'auth_failed';
+      return 'unreachable';
+    }
+  }
+
+  const port = Number(u.port) || (u.protocol === 'https:' ? 443 : 8080);
+  return new Promise<ProxyHealth>((resolve) => {
     const sock = net.connect({ host: u.hostname, port });
-    const done = (ok: boolean) => {
+    let buf = '';
+    const done = (r: ProxyHealth) => {
       sock.destroy();
-      resolve(ok);
+      resolve(r);
     };
-    sock.setTimeout(timeoutMs, () => done(false));
-    sock.once('connect', () => done(true));
-    sock.once('error', () => done(false));
+    sock.setTimeout(timeoutMs, () => done('unreachable'));
+    sock.once('error', () => done('unreachable'));
+    sock.once('connect', () => {
+      const auth =
+        u.username || u.password
+          ? 'Proxy-Authorization: Basic ' +
+            Buffer.from(
+              `${decodeURIComponent(u.username)}:${decodeURIComponent(u.password)}`,
+            ).toString('base64') +
+            '\r\n'
+          : '';
+      sock.write(`CONNECT ${sampleHost}:443 HTTP/1.1\r\nHost: ${sampleHost}:443\r\n${auth}\r\n`);
+    });
+    sock.on('data', (d) => {
+      buf += d.toString('latin1');
+      if (!buf.includes('\r\n')) return;
+      const status = Number(/^HTTP\/\d\.\d (\d{3})/.exec(buf)?.[1] ?? 0);
+      if (status === 407) return done('auth_failed');
+      if (status >= 200 && status < 300) return done('ok');
+      // Any other status means the proxy answered but refused this tunnel; the proxy is
+      // up, so the fault lies beyond it.
+      return done('ok');
+    });
   });
 }
 
@@ -219,15 +294,18 @@ export async function testProxyConnectivity(
     env?: Record<string, string | undefined>;
   } = {},
 ): Promise<ProxyTestReport> {
-  const targets = opts.targets ?? DEFAULT_PROBE_TARGETS;
+  const targets = opts.targets ?? [PROXY_TEST_TARGET];
   const timeoutMs = opts.timeoutMs ?? 12_000;
   const env = opts.env ?? process.env;
 
   // Which proxy would actually be used? Check it once, before blaming any website.
-  const sampleProxy = targets
-    .map((t) => proxyUrlFor(cfg, t.url, env))
-    .find((p): p is string => Boolean(p));
-  const proxyReachable = sampleProxy ? await probeProxyEndpoint(sampleProxy, timeoutMs) : null;
+  const sampleIdx = targets.findIndex((t) => proxyUrlFor(cfg, t.url, env));
+  const sampleProxy = sampleIdx >= 0 ? proxyUrlFor(cfg, targets[sampleIdx]!.url, env) : null;
+  const sampleHost = sampleIdx >= 0 ? new URL(targets[sampleIdx]!.url).hostname : 'example.com';
+  const health: ProxyHealth | null = sampleProxy
+    ? await probeProxy(sampleProxy, timeoutMs, sampleHost)
+    : null;
+  const proxyReachable = health === null ? null : health !== 'unreachable';
 
   const dispatcher = new RoutingDispatcher(cfg, env);
   const probes: ProxyProbe[] = [];
@@ -237,7 +315,10 @@ export async function testProxyConnectivity(
       const viaProxy = Boolean(proxyUrl);
       const started = Date.now();
 
-      if (viaProxy && proxyReachable === false) {
+      // Both short-circuits come from the CONNECT handshake, which is the only place the
+      // 407 still exists — by the time undici reports back, it has been flattened into a
+      // generic "Request was cancelled."
+      if (viaProxy && health === 'unreachable') {
         probes.push({
           target: t.target,
           url: t.url,
@@ -245,6 +326,17 @@ export async function testProxyConnectivity(
           viaProxy,
           elapsedMs: Date.now() - started,
           detail: `连不上代理 ${redactProxyUrl(proxyUrl)} —— 未向 ${t.target} 发出请求`,
+        });
+        continue;
+      }
+      if (viaProxy && health === 'auth_failed') {
+        probes.push({
+          target: t.target,
+          url: t.url,
+          result: 'proxy_auth_failed',
+          viaProxy,
+          elapsedMs: Date.now() - started,
+          detail: `代理 ${redactProxyUrl(proxyUrl)} 拒绝了凭据（407）—— 请检查用户名/密码，不是上游的问题`,
         });
         continue;
       }
@@ -292,4 +384,82 @@ export async function testProxyConnectivity(
     proxyReachable,
     probes,
   };
+}
+
+/**
+ * Measure latency to each download source — the second, separate action.
+ *
+ * Sources are probed CONCURRENTLY and reported as a table rather than a verdict. This is
+ * the piece that answers "which mirror should I use", and it is why ADR-004's multi-source
+ * probing and the proxy are orthogonal rather than competing: a proxied Hugging Face can
+ * genuinely beat a direct hf-mirror, and the only way to know on this user's network is to
+ * measure both under the proxy config that is actually in force. Ranking by measurement
+ * keeps working no matter which combination wins.
+ */
+export async function measureDownloadSources(
+  cfg: ProxyConfig,
+  opts: {
+    sources?: ReadonlyArray<{ provider: string; label: string; url: string }>;
+    timeoutMs?: number;
+    env?: Record<string, string | undefined>;
+  } = {},
+): Promise<SourceLatencyReport> {
+  const sources = opts.sources ?? DOWNLOAD_SOURCE_TARGETS;
+  const timeoutMs = opts.timeoutMs ?? 12_000;
+  const env = opts.env ?? process.env;
+  const dispatcher = new RoutingDispatcher(cfg, env);
+
+  try {
+    const rows = await Promise.all(
+      sources.map(async (s): Promise<SourceLatency> => {
+        const viaProxy = Boolean(proxyUrlFor(cfg, s.url, env));
+        const started = Date.now();
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), timeoutMs);
+        try {
+          const res = await undiciFetch(s.url, {
+            method: 'GET',
+            headers: { 'user-agent': 'openmemo-source-probe' },
+            signal: ac.signal,
+            dispatcher,
+          });
+          // Time to first byte, not full body: we are ranking reachability and round-trip,
+          // and the payloads differ in size across these APIs, so total time would compare
+          // the endpoints rather than the network path.
+          const latencyMs = Date.now() - started;
+          await res.arrayBuffer().catch(() => undefined);
+          return {
+            provider: s.provider,
+            label: s.label,
+            url: s.url,
+            reachable: res.ok,
+            latencyMs: res.ok ? latencyMs : null,
+            viaProxy,
+            httpStatus: res.status,
+            ...(res.ok ? {} : { detail: `HTTP ${res.status}` }),
+          };
+        } catch (err) {
+          return {
+            provider: s.provider,
+            label: s.label,
+            url: s.url,
+            reachable: false,
+            latencyMs: null,
+            viaProxy,
+            detail: err instanceof Error ? err.message : String(err),
+          };
+        } finally {
+          clearTimeout(timer);
+        }
+      }),
+    );
+
+    const best = rows
+      .filter((r) => r.reachable && r.latencyMs !== null)
+      .sort((a, b) => (a.latencyMs ?? Infinity) - (b.latencyMs ?? Infinity))[0];
+
+    return { measuredAt: new Date().toISOString(), rows, fastest: best?.provider ?? null };
+  } finally {
+    void dispatcher.close().catch(() => undefined);
+  }
 }

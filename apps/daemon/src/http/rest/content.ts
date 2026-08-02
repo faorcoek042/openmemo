@@ -253,7 +253,9 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
           );
           return true;
         }
-        const body = (await readJsonBody(req)) as { language?: unknown } | undefined;
+        const body = (await readJsonBody(req)) as
+          | { language?: unknown; engineId?: unknown; modelId?: unknown; prompt?: unknown }
+          | undefined;
         const language =
           typeof body?.language === 'string' ? body.language : (note.language ?? null);
 
@@ -271,6 +273,10 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
             noteId: note.id,
             input: src.input_url,
             language,
+            // 重新转写是"上次结果不对"的补救通道，用户往往正是要换引擎/模型/加 prompt
+            engineId: typeof body?.engineId === 'string' ? body.engineId : null,
+            modelId: typeof body?.modelId === 'string' ? body.modelId : null,
+            prompt: typeof body?.prompt === 'string' ? body.prompt : null,
             sourceKind: src.kind,
           },
         });

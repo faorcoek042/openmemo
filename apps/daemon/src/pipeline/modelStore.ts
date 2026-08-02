@@ -139,6 +139,24 @@ export async function resolveActiveModel(
 }
 
 /**
+ * 按**模型 id** 解析路径（用户在界面上显式选了某个模型时用）。
+ *
+ * 仍然按 `role` 过滤（走 findInstalledByRole），所以选不到别的 role 的权重 ——
+ * 这正是"VAD 被当成 ASR"那个 bug 的防线，显式选择路径同样受它保护。
+ */
+export async function resolveModelById(
+  modelsDir: string,
+  role: string,
+  id: string,
+): Promise<ResolvedModel | undefined> {
+  const installed = await listInstalled(modelsDir, role);
+  const rec = installed.find((r) => r.id === id);
+  if (!rec) return undefined;
+  const p = weightsPathOf(modelsDir, rec);
+  return p ? { id, role, path: p } : undefined;
+}
+
+/**
  * 兜底扫描：直接在 `by-name/<kind>/` 里找匹配的文件。
  *
  * 用于安装记录缺失但文件确实在的情况（例如用户手工拷了一个模型进去）。

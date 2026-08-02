@@ -41,13 +41,17 @@ import type { Repos } from '../../db/repos.js';
 import { mayRetitleNote } from './retitle.js';
 import type { SseHub } from '../../http/sse.js';
 import type { JobQueue, JobRow } from '../queue.js';
+import { resolveModelById } from '../../pipeline/modelStore.js';
 
 export interface TranscribeRunnerDeps {
   readonly repos: Repos;
   readonly sse: SseHub;
   readonly queue: JobQueue;
   /** 按语言取流水线 —— 中文会切到 Paraformer（ADR-013 决策 1）。 */
-  readonly pipelineFor: (language: string | undefined) => {
+  readonly pipelineFor: (
+    language: string | undefined,
+    override?: { engineId?: string | undefined; modelPath?: string | undefined },
+  ) => {
     pipeline: TranscribePipeline;
     engineId: string;
     reason: string;
@@ -56,6 +60,8 @@ export interface TranscribeRunnerDeps {
   readonly modelPath: string | null;
   readonly mediaRoot: string;
   readonly modelId: string;
+  /** 解析用户显式指定的 modelId 需要它。 */
+  readonly modelsDir: string;
 }
 
 export interface TranscribePayload {
@@ -102,7 +108,20 @@ export async function runTranscribeJob(
   if (!note) throw new Error(`note ${payload.noteId} 不存在`);
 
   // 缺模型/缺工具 → 转 blocked 而不是 failed（D-01 §4.1：可点击修复的等待态）
-  const chosenEarly = deps.pipelineFor(payload.language ?? undefined);
+  /*
+   * 用户显式指定的模型 id → 真实权重路径。解析不到就**不静默忽略**：
+   * 退回自动选择，但把这件事记进日志，否则"我选了 large-v3 却跑了 base"无从发现。
+   */
+  let overrideModelPath: string | undefined;
+  if (payload.modelId) {
+    const m = await resolveModelById(deps.modelsDir, 'asr', payload.modelId);
+    if (m) overrideModelPath = m.path;
+    else console.warn(`[transcribe] 指定的模型 ${payload.modelId} 未安装，回退到自动选择`);
+  }
+  const chosenEarly = deps.pipelineFor(payload.language ?? undefined, {
+    ...(payload.engineId ? { engineId: payload.engineId } : {}),
+    ...(overrideModelPath ? { modelPath: overrideModelPath } : {}),
+  });
   if (!chosenEarly.modelPath) {
     const remediation = {
       action: 'installModel',

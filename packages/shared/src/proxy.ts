@@ -44,8 +44,18 @@ export interface ProxyConfig {
   noProxy: string[];
 }
 
+/**
+ * Default is `system`, not `off`.
+ *
+ * The target user is on a Chinese network where Hugging Face and GitHub are unreachable
+ * without a proxy, and who — if they can browse at all — already has one configured at
+ * the OS level. Defaulting to `off` makes the single most confusing failure the default
+ * experience: the browser works, the app says "download failed", and nothing on screen
+ * connects the two. Inheriting the environment costs nothing when no proxy is set, since
+ * `proxyUrlFor` then finds no variables and returns null — identical to `off`.
+ */
 export const DEFAULT_PROXY_CONFIG: ProxyConfig = {
-  mode: 'off',
+  mode: 'system',
   httpProxy: null,
   httpsProxy: null,
   socks5: null,
@@ -100,6 +110,36 @@ export interface ProxyTestReport {
    */
   proxyReachable: boolean | null;
   probes: ProxyProbe[];
+}
+
+/**
+ * One row of the download-source latency table.
+ *
+ * This is deliberately a SEPARATE action from the proxy test, because the two answer
+ * different questions and imply different fixes. "Is my proxy working at all?" is
+ * answered once, against a neutral host. "Which mirror should I pull from?" is a
+ * comparison across sources where a slow-but-working row is useful information, not a
+ * failure. Folding them into one button forces both answers into a single red/green
+ * verdict and loses the comparison entirely.
+ */
+export interface SourceLatency {
+  /** Provider id, e.g. "hf" / "hf-mirror" / "modelscope" / "github". */
+  provider: string;
+  label: string;
+  url: string;
+  reachable: boolean;
+  /** Time to first byte, ms. Null when unreachable. */
+  latencyMs: number | null;
+  viaProxy: boolean;
+  httpStatus?: number;
+  detail?: string;
+}
+
+export interface SourceLatencyReport {
+  measuredAt: string;
+  rows: SourceLatency[];
+  /** Fastest reachable provider, or null when none responded. */
+  fastest: string | null;
 }
 
 /** Strip credentials so a proxy URL can be logged or shown in the UI. */

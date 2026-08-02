@@ -59,7 +59,11 @@ export interface PipelineBundle {
     reason: string;
   } | null;
   /** 按语言取流水线（内部按引擎缓存）。中文会走 Paraformer（ADR-013 决策 1）。 */
-  pipelineFor(language: string | undefined): {
+  pipelineFor(
+    language: string | undefined,
+    /** 用户为这一次转写显式指定的引擎/模型。不传 = 自动选择（老行为不变）。 */
+    override?: { engineId?: string | undefined; modelPath?: string | undefined },
+  ): {
     pipeline: TranscribePipeline;
     engineId: string;
     reason: string;
@@ -292,13 +296,29 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
   const pipelineCache = new Map<string, TranscribePipeline>();
   const pipelineFor = (
     language: string | undefined,
+    /**
+     * 用户为这一次转写显式指定的覆盖项。
+     * 不传 = 完全按原来的自动选择走（老行为一个字不变）。
+     */
+    override?: { engineId?: string | undefined; modelPath?: string | undefined },
   ): {
     pipeline: TranscribePipeline;
     engineId: string;
     reason: string;
     modelPath: string | null;
   } => {
-    const sel = pickEngine(language);
+    /*
+     * 显式指定引擎时**必须真的用它**，而且必须是**可用**的候选 ——
+     * 指定了却悄悄回退到别的引擎，就是 architect 说的"第二个假选择器"：
+     * 界面上选了 Paraformer，实际跑 whisper，用户永远不知道。
+     * 所以指定的引擎不可用时宁可让它落到下面的正常选择并在 reason 里说清楚。
+     */
+    const forced = override?.engineId
+      ? candidates.find((c) => c.engine.id === override.engineId && c.available)
+      : undefined;
+    const sel = forced
+      ? { engineId: forced.engine.id, engine: forced.engine, reason: `用户指定引擎 ${forced.engine.id}` }
+      : pickEngine(language);
     if (!sel) {
       return {
         pipeline,
@@ -330,7 +350,8 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
       pipeline: p,
       engineId: sel.engineId,
       reason: sel.reason,
-      modelPath: enginePaths[sel.engineId] ?? asrModelPath,
+      // 用户显式指定的模型路径优先于按引擎推导的默认值
+      modelPath: override?.modelPath ?? enginePaths[sel.engineId] ?? asrModelPath,
     };
   };
 

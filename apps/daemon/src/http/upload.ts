@@ -635,7 +635,16 @@ export function createUploadRoutes(deps: UploadRoutesDeps): {
           lane: 'gpu.asr',
           priority: 10,
           noteId: note.id,
-          payload: { noteId: note.id, input: finalPath, language, sourceKind: 'local' },
+          payload: {
+            noteId: note.id,
+            input: finalPath,
+            language,
+            // multipart 的这三个字段来自表单字段，缺省为 null = 自动选择
+            engineId: (fields.get('engineId') ?? '').trim() || null,
+            modelId: (fields.get('modelId') ?? '').trim() || null,
+            prompt: (fields.get('prompt') ?? '').trim() || null,
+            sourceKind: 'local',
+          },
         });
 
         // `as never`：shared 尚未提供 notes/upload 的事件载荷类型，与 rest/notes.ts 保持同一临时写法

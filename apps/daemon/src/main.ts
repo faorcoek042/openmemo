@@ -26,7 +26,7 @@ import {
   writeRuntimeJson,
   type RuntimeInfo,
 } from './bootstrap/single-instance.js';
-import { resolvePaths, type AppPaths } from './config/paths.js';
+import { readDataDirPointer, resolvePaths, type AppPaths } from './config/paths.js';
 import { reclaimOrphans } from './bootstrap/orphans.js';
 import { SessionStore, loadOrCreateToken, type Session } from './http/auth.js';
 import { attachHttpHandlers } from './http/server.js';
@@ -52,6 +52,7 @@ import { MindMapRepo } from './db/mindmapRepo.js';
 import { runMindmapJob } from './jobs/runners/mindmap.js';
 import { resolveConfiguredProvider } from './llm/resolve.js';
 import { createSearchRoutes } from './http/rest/search.js';
+import { createStorageRoutes } from './http/rest/storage.js';
 import { createMediaRoutes } from './http/media.js';
 import type { RouteModule } from './http/server.js';
 
@@ -432,7 +433,8 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
           repos: repos_,
           sse,
           queue: queue_,
-          pipelineFor: (lang) => getBundle().pipelineFor(lang),
+          pipelineFor: (lang, override) => getBundle().pipelineFor(lang, override),
+          modelsDir: paths.modelsDir,
           modelPath: getBundle().modelPath,
           mediaRoot: paths.mediaDir,
           modelId: getBundle().modelPath?.split('/').pop() ?? 'unknown',
@@ -523,6 +525,12 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         ],
       }),
       createContentRoutes({ db: database.db, repos, mindmaps, queue, sse }),
+      // 数据目录：定义 / 修改 / 移动（路径名与 architect 的设置页对齐）
+      createStorageRoutes({
+        paths,
+        runningJobs: () => scheduler?.runningCount ?? 0,
+        requestRestart: (reason) => void restartHook.run?.(reason),
+      }),
       // 功能级自检（一份实现两个出口：gpu-runtime 的 CLI + 这个端点）
       createSelfCheckRoutes({
         paths,
@@ -616,7 +624,23 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
      * 在**同一个端口**上等（绝不顺延：端口一变浏览器麦克风授权就没了）。
      * 若本进程最后决定不退，它会探到一个健康的同 dataDir 实例，然后干净地退出。
      */
-    const child = spawn(process.execPath, process.argv.slice(1), {
+    /*
+     * ⚠️ 搬完数据目录后必须**重写 argv 里的 `--data-dir`**。
+     *
+     * 自我重启是拿 `process.argv` 原样再跑一遍，而 `--data-dir` 的优先级高于指针文件。
+     * 不重写的话，新进程会回到**刚刚被搬空的旧路径**，然后在那里重建一个空目录 ——
+     * 用户会看到"笔记全没了"，而数据其实好端端躺在新位置。
+     * 这是这次改动里最容易造成"数据看起来丢了"的一条路径。
+     */
+    const argv = process.argv.slice(1);
+    const pointer = readDataDirPointer();
+    const dIdx = argv.indexOf('--data-dir');
+    if (pointer && dIdx >= 0 && argv[dIdx + 1] !== pointer) {
+      console.log(`[daemon] 数据目录已变更，重启参数由 ${argv[dIdx + 1]} 改为 ${pointer}`);
+      argv[dIdx + 1] = pointer;
+    }
+
+    const child = spawn(process.execPath, argv, {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,

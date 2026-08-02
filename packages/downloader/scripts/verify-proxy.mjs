@@ -18,7 +18,13 @@ import {
   redactProxyUrl,
   shouldBypassProxy,
 } from '../../shared/dist/index.js';
-import { applyProxyConfig, testProxyConnectivity } from '../dist/proxy.js';
+import {
+  DOWNLOAD_SOURCE_TARGETS,
+  PROXY_TEST_TARGET,
+  applyProxyConfig,
+  measureDownloadSources,
+  testProxyConnectivity,
+} from '../dist/proxy.js';
 
 let pass = 0;
 let fail = 0;
@@ -199,7 +205,10 @@ console.log('\n[5] 代理认证');
   check('带认证的代理 URL 能通过', r1.probes[0].result === 'ok', `status=${r1.probes[0].httpStatus}`);
   const bad = { ...DEFAULT_PROXY_CONFIG, mode: 'manual', httpsProxy: `http://u:wrong@127.0.0.1:${px.port}` };
   const r2 = await testProxyConnectivity(bad, { targets: TARGET, timeoutMs: 8000 });
-  check('密码错时不报成"上游挂了"', r2.probes[0].result !== 'ok' && r2.probes[0].result !== 'upstream_error', r2.probes[0].result);
+  // undici 把 407 压成了 "Request was cancelled."，所以这条只能靠我们自己读 CONNECT 状态行；
+  // 断言必须精确到 proxy_auth_failed，否则等于允许"密码错"继续被报成"上游挂了"。
+  check('密码错精确判定为 proxy_auth_failed', r2.probes[0].result === 'proxy_auth_failed', r2.probes[0].result);
+  check('提示直指凭据而不是上游', /凭据|407/.test(r2.probes[0].detail ?? ''), r2.probes[0].detail ?? '');
   check('代理端记录到认证失败', px.state.authFailures > 0, `${px.state.authFailures} 次`);
   px.close();
 }
@@ -223,6 +232,29 @@ console.log('\n[6] 全局生效：applyProxyConfig 之后连普通 fetch 也走�
   await res2.arrayBuffer().catch(() => undefined);
   check('切回 off 后不再走代理（可运行时切换，无需重启）', px.state.tunnels.length === after);
   px.close();
+}
+
+console.log('\n[7] 两个独立动作：代理测试 vs 下载源延迟表');
+{
+  check('代理测试打的是中立主机，不是我们的下载镜像', /youtube/i.test(PROXY_TEST_TARGET.url), PROXY_TEST_TARGET.url);
+  check('下载源表覆盖 4 个源', DOWNLOAD_SOURCE_TARGETS.length === 4, DOWNLOAD_SOURCE_TARGETS.map((s) => s.provider).join('/'));
+  const px = await startHttpProxy();
+  const cfg = { ...DEFAULT_PROXY_CONFIG, mode: 'manual', httpsProxy: `http://127.0.0.1:${px.port}` };
+  const rep = await measureDownloadSources(cfg, { timeoutMs: 20_000 });
+  check('延迟表逐源给出结果', rep.rows.length === 4);
+  for (const r of rep.rows) {
+    console.log(`        ${r.label.padEnd(16)} ${r.reachable ? String(r.latencyMs) + 'ms' : '不可达'}${r.viaProxy ? ' (经代理)' : ''}${r.detail ? '  ' + r.detail.slice(0, 40) : ''}`);
+  }
+  check('可达的源里选出最快的', rep.rows.some((r) => r.reachable) ? rep.fastest !== null : rep.fastest === null, String(rep.fastest));
+  check('不可达的源 latencyMs 为 null 而不是 0（0 会被读成"极快"）', rep.rows.every((r) => r.reachable || r.latencyMs === null));
+  check('每行都标注是否经代理', rep.rows.every((r) => typeof r.viaProxy === 'boolean'));
+  px.close();
+}
+
+console.log('\n[8] 默认值');
+{
+  check('默认 mode=system（跟随系统代理），不是 off', DEFAULT_PROXY_CONFIG.mode === 'system', DEFAULT_PROXY_CONFIG.mode);
+  check('system 模式下环境没配代理时等价于直连', proxyUrlFor(DEFAULT_PROXY_CONFIG, 'https://huggingface.co/x', {}) === null);
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed  (${((Date.now() - t0) / 1000).toFixed(1)}s)\n`);

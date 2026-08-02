@@ -13,6 +13,7 @@ import { WordLevelBadge } from '../transcript';
 import { MindmapView, useMindmapQuery } from '../mindmap';
 import { NoteProgressLine } from './NoteProgressLine';
 import { TagEditor } from './TagEditor';
+import { RetranscribeButton } from './RetranscribeButton';
 import { NoteEditor } from './NoteEditor';
 import { ExportMenu } from './ExportMenu';
 import { TranscriptList } from '../transcript';
@@ -106,15 +107,26 @@ export default function NoteDetailPage() {
               <MockNotice surface="transcript" compact />
               <WordLevelBadge segments={arr(transcript.data?.segments)} />
             </h2>
-            <label className="flex items-center gap-1.5 text-xs text-ink-secondary">
-              <input
-                type="checkbox"
-                checked={follow}
-                onChange={(e) => setFollow(e.target.checked)}
-                className="size-3.5 accent-[var(--accent)]"
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1.5 text-xs text-ink-secondary">
+                <input
+                  type="checkbox"
+                  checked={follow}
+                  onChange={(e) => setFollow(e.target.checked)}
+                  className="size-3.5 accent-[var(--accent)]"
+                />
+                {t('detail.followPlayback')}
+              </label>
+              {/*
+                ★ 重新转写入口。放在转写稿面板的头上 —— 用户是**看着那篇被翻译成英文的稿子**
+                想重跑的，入口就该在他视线所及之处，而不是埋进设置里。
+              */}
+              <RetranscribeButton
+                noteUid={noteUid ?? ''}
+                segments={arr(transcript.data?.segments)}
+                currentLanguage={transcript.data?.language ?? null}
               />
-              {t('detail.followPlayback')}
-            </label>
+            </div>
           </div>
           <div className="min-h-0 flex-1">
             <PanelBoundary name={t('detail.transcript')}>
