@@ -16,6 +16,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 
 import { isSafeExecutable } from './argGuard.js';
 import { proxyEnv, type ProxyConfig } from './proxy.js';
@@ -166,8 +167,16 @@ export async function run(options: RunOptions): Promise<RunResult> {
   let spawnBin = safeBin.value;
   let spawnArgs = argv;
   if (nice && process.platform !== 'win32') {
-    spawnBin = '/usr/bin/nice';
-    spawnArgs = ['-n', '10', safeBin.value, ...argv];
+    /*
+     * `nice` 是可选增益，不是必需品：它只是避免 CPU 推理把 daemon 自己饿死（D-01 §4.2）。
+     * 但硬编码 /usr/bin/nice 会让缺这个二进制的系统（精简容器、Alpine）**整个转写失败**
+     * —— 用一个次要优化换掉主功能是错的。找不到就直接跑，不降优先级。
+     */
+    const NICE = '/usr/bin/nice';
+    if (existsSync(NICE)) {
+      spawnBin = NICE;
+      spawnArgs = ['-n', '10', safeBin.value, ...argv];
+    }
   }
 
   return new Promise<RunResult>((resolvePromise, rejectPromise) => {

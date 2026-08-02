@@ -2,9 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Mic, MicOff, RefreshCw, Square } from 'lucide-react';
 
+import type { AsrEngineId } from '@openmemo/shared';
+
 import { Button } from '../../components/common/Button';
 import { Banner } from '../../components/common/Banner';
 import { ProgressMeter } from '../../components/common/ProgressMeter';
+import { AsrEngineStatus, useAsrEngines } from '../../components/common/AsrEngineStatus';
+import { TranscribeOptions } from '../../components/common/TranscribeOptions';
+import { ASR_LANGUAGE_AUTO } from '../../lib/asr';
 import { useConnectionStore } from '../../lib/stores/connection.store';
 import { estimateRerunMs, humanDuration, timecode } from '../../lib/format/time';
 import { cn } from '../../lib/utils';
@@ -42,11 +47,20 @@ export default function RecorderPage() {
   const [captions, setCaptions] = useState<Caption[]>([]);
   const [rerunProgress, setRerunProgress] = useState(0);
   /**
-   * 中文离线默认引擎 = Paraformer（ADR-013 §0：实测 84x 实时，1 小时录音 43 秒）。
-   * **但它没有逐字时间戳** —— 这个代价必须让用户看见并能自己换掉，
-   * 不能替他选了还不告诉他（F5 的逐字高亮会因此降级为整句高亮）。
+   * 转写语言 —— 这是录音页**唯一真的能影响后端行为**的转写参数。
+   *
+   * 原来这里是 `useState<'paraformer' | 'turbo'>('paraformer')`：
+   * 一个写死的两项切换器，`'turbo'` 在后端全仓不存在（那是模型名
+   * `whisper-large-v3-turbo` 的片段，不是引擎 id），而且选中的值**从不发给后端** ——
+   * 用户反馈的"识别引擎只有两个可选"就是它。
+   *
+   * 真实情况：引擎由 daemon 按语言自动选（`selectEngine`），
+   * per-task 覆盖后端尚未开放（`forceEngineId` 零调用方）。
+   * 所以这里让用户能选的是**语言**（真生效、且能间接决定中文走 Paraformer），
+   * 引擎则如实展示可用性，见 `AsrEngineStatus`。
    */
-  const [engine, setEngine] = useState<'paraformer' | 'turbo'>('paraformer');
+  const [language, setLanguage] = useState<string>(ASR_LANGUAGE_AUTO);
+  const { engines } = useAsrEngines();
 
   const [replaced, setReplaced] = useState<{
     updated: number;
@@ -64,7 +78,20 @@ export default function RecorderPage() {
   // 实测速度比（应来自 backend_installs.selftest_json；daemon 未接通时用 gpu-runtime 的实测值）
   //   paraformer-zh-small: 84x 实时 → 1 小时录音约 43 秒
   //   large-v3-turbo (CPU): 2.7x 实时 → 1 小时录音约 22 分钟
-  const speedRatio = engine === 'paraformer' ? 84 : 2.7;
+  /**
+   * 重跑会用哪个引擎 —— **按 daemon 的真实规则推算，不是用户在这里选的**。
+   *
+   * daemon 侧 `selectEngine()` 的中文判定只认 `zh*` / `cmn*` / `yue*` 前缀，
+   * 且 Paraformer 必须真的构造得起来（需要 `OPENMEMO_PARAFORMER_DIR`）。
+   * 两个条件都满足才会走 Paraformer，否则落到 whisper.cpp。
+   *
+   * 这里复刻这条判断只为**估算耗时**。它是推算而非后端回传的事实，
+   * 所以一旦推错，代价仅仅是 ETA 偏差，不会让用户以为自己选中了别的引擎。
+   */
+  const paraformerUsable = engines.some((e) => e.id === 'paraformer' && e.available);
+  const looksChinese = /^(zh|cmn|yue)/.test(language);
+  const rerunEngine: AsrEngineId = paraformerUsable && looksChinese ? 'paraformer' : 'whisper.cpp';
+  const speedRatio = rerunEngine === 'paraformer' ? 84 : 2.7;
   const rerunEtaMs = estimateRerunMs(elapsed || 3_600_000, speedRatio);
   // 用 humanDuration 而不是 approxEta：后者自带"约/about"前缀，
   // 而文案模板里已经有"预计需要/about"，叠加会出现"about about 22 min"。
@@ -220,33 +247,25 @@ export default function RecorderPage() {
           ⚠️ 必须**带时间预期**：gpu-runtime 实测中文用的 large-v3-turbo 在纯 CPU 上
           只有 2.7x 实时 —— 1 小时录音要跑 22 分钟。不给预期，用户会以为卡死然后关窗口。 */}
       {phase === 'recording' || phase === 'idle' ? (
-        <div className="space-y-1 rounded-md border border-line bg-surface-1 p-3 text-xs text-ink-secondary">
-          <p className="flex flex-wrap items-center gap-2">
-            <span className="font-medium text-ink">{t('recorder.engineLabel')}:</span>
-            <span>
-              {engine === 'paraformer' ? t('recorder.engineParaformer') : t('recorder.engineTurbo')}
-            </span>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-5 px-1.5 text-xs"
-              onClick={() => setEngine((e) => (e === 'paraformer' ? 'turbo' : 'paraformer'))}
-            >
-              {engine === 'paraformer' ? t('recorder.switchToTurbo') : t('recorder.switchToParaformer')}
-            </Button>
-          </p>
+        <div className="space-y-2 rounded-md border border-line bg-surface-1 p-3 text-xs text-ink-secondary">
+          {/* 引擎：如实展示可用性（来自 daemon 实测），不是可切换的假选项 */}
+          <AsrEngineStatus />
+
+          {/* 语言：真会发给后端的那个参数 */}
+          <TranscribeOptions language={language} onLanguageChange={setLanguage} showModel={false} />
+
           <p>
             ⓘ{' '}
-            {engine === 'paraformer'
+            {rerunEngine === 'paraformer'
               ? t('recorder.paraformerNotice')
               : rerunEtaLabel
                 ? t('recorder.twoPhaseNoticeWithEta', { eta: rerunEtaLabel })
                 : t('recorder.twoPhaseNotice')}
           </p>
-          {/* ★ 代价必须明示。选了快的就要说清楚失去了什么，
+          {/* ★ 代价必须明示：Paraformer 快但没有逐字时间戳，
               否则用户会在 F5 里发现"字幕不能逐字高亮"而不知道为什么。 */}
           <p className="text-ink-muted">
-            {engine === 'paraformer' ? t('recorder.paraformerTradeoff') : t('recorder.turboTradeoff')}
+            {rerunEngine === 'paraformer' ? t('recorder.paraformerTradeoff') : t('recorder.turboTradeoff')}
           </p>
         </div>
       ) : null}

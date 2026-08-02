@@ -12,7 +12,7 @@
  * per language and is not something to fake with a WER number copied from a README.
  */
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -71,6 +71,14 @@ export interface RunBenchmarkOptions {
   signal?: AbortSignal;
   /** Override the clip (tests). */
   clip?: BenchmarkClip;
+  /**
+   * Scratch directory root. **Pass the managed temp dir (`<dataDir>/tmp`).**
+   *
+   * 用户要求"数据存放是独立文件夹、删除不影响程序本体"。默认落在 OS 临时目录会让
+   * 产物散到 dataDir 外面 —— 删了数据目录也清不掉，且在只读 /tmp 的环境里直接失败。
+   * 只有在调用方确实不知道 dataDir 时（独立 CLI）才退回 OS 临时目录。
+   */
+  workRoot?: string;
 }
 
 /**
@@ -117,7 +125,7 @@ export async function decodeClip(
 export async function runBenchmark(options: RunBenchmarkOptions): Promise<BenchmarkReport> {
   const {
     engine, modelPath, tools, backend, deviceName,
-    language, threads, runs = 2, signal, clip: clipOverride,
+    language, threads, runs = 2, signal, clip: clipOverride, workRoot,
   } = options;
 
   const availability = await engine.isAvailable();
@@ -126,7 +134,9 @@ export async function runBenchmark(options: RunBenchmarkOptions): Promise<Benchm
   }
 
   const clip = clipOverride ?? clipForLanguage(language);
-  const workDir = await mkdtemp(join(tmpdir(), 'openmemo-bench-'));
+  const root = workRoot ?? tmpdir();
+  await mkdir(root, { recursive: true }).catch(() => undefined);
+  const workDir = await mkdtemp(join(root, 'openmemo-bench-'));
 
   try {
     const wavPath = await decodeClip(tools, clip, workDir);
