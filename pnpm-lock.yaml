@@ -41,6 +41,9 @@ importers:
       '@openmemo/downloader':
         specifier: workspace:*
         version: link:../../packages/downloader
+      '@openmemo/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm
       '@openmemo/mindmap':
         specifier: workspace:*
         version: link:../../packages/mindmap

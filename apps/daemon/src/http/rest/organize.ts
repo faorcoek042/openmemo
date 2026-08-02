@@ -281,7 +281,7 @@ export function createOrganizeRoutes(deps: OrganizeRoutesDeps): {
           }
 
           const folder = repos.createFolder({ name, parentId, color, icon });
-          sendJson(res, 201, toFolderNode(folder, 0));
+          sendJson(res, 201, toFolderNode(folder, 0, parentUidOf(repos, folder)));
           return true;
         }
         sendError(res, 405, 'METHOD_NOT_ALLOWED', 'use GET or POST', '方法不允许');
@@ -389,7 +389,15 @@ export function createOrganizeRoutes(deps: OrganizeRoutesDeps): {
             sendError(res, 404, 'FOLDER_NOT_FOUND', 'folder vanished', '文件夹不存在');
             return true;
           }
-          sendJson(res, 200, toFolderNode(updated, repos.folderNoteCounts().get(updated.id) ?? 0));
+          sendJson(
+            res,
+            200,
+            toFolderNode(
+              updated,
+              repos.folderNoteCounts().get(updated.id) ?? 0,
+              parentUidOf(repos, updated),
+            ),
+          );
           return true;
         }
 
@@ -469,6 +477,12 @@ function toFolderNode(f: FolderRow, noteCount: number, parentUid: string | null 
     noteCount,
     children: [],
   };
+}
+
+/** 单个文件夹的响应里也要带 parentUid —— 前端拿它决定插到树的哪一层。 */
+function parentUidOf(repos: Repos, folder: FolderRow): string | null {
+  if (folder.parent_id === null) return null;
+  return repos.folderById(folder.parent_id)?.uid ?? null;
 }
 
 /**

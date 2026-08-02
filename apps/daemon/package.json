@@ -21,6 +21,7 @@
   "dependencies": {
     "@openmemo/db": "workspace:*",
     "@openmemo/downloader": "workspace:*",
+    "@openmemo/llm": "workspace:*",
     "@openmemo/mindmap": "workspace:*",
     "@openmemo/pipeline": "workspace:*",
     "@openmemo/runtime": "workspace:*",
