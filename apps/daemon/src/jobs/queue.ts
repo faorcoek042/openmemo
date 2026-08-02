@@ -13,14 +13,7 @@ import { ulid } from '@openmemo/shared';
 import type { Lane } from './lanes.js';
 
 export type JobState =
-  | 'queued'
-  | 'blocked'
-  | 'leased'
-  | 'running'
-  | 'paused'
-  | 'succeeded'
-  | 'failed'
-  | 'cancelled';
+  'queued' | 'blocked' | 'leased' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
 
 export interface JobRow {
   id: number;

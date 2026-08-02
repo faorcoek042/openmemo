@@ -36,10 +36,7 @@ type BetterDb = {
   close: () => void;
 };
 
-type BetterCtor = new (
-  filename: string,
-  options?: { readonly?: boolean },
-) => BetterDb;
+type BetterCtor = new (filename: string, options?: { readonly?: boolean }) => BetterDb;
 
 /** better-sqlite3 是否真的可用（装上了且能 dlopen 到对应平台的 prebuild）。 */
 export function isBetterSqlite3Available(): boolean {

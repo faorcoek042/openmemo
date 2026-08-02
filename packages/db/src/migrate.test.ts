@@ -14,7 +14,12 @@ import { after, describe, it } from 'node:test';
 
 import { type DriverName, isBetterSqlite3Available, openDatabase } from './driver/index.js';
 import { loadExtensions } from './extensions.js';
-import { SchemaTooNewError, discoverMigrations, migrateSchema, migrateSearchIndex } from './migrate.js';
+import {
+  SchemaTooNewError,
+  discoverMigrations,
+  migrateSchema,
+  migrateSearchIndex,
+} from './migrate.js';
 import { applyConnectionPragmas } from './pragmas.js';
 
 const TMP = mkdtempSync(join(tmpdir(), 'omdb-mig-'));
@@ -33,7 +38,10 @@ describe('迁移文件发现', () => {
 
   it('版本号严格递增', () => {
     const versions = discoverMigrations().map((m) => m.version);
-    assert.deepEqual([...versions].sort((a, b) => a - b), versions);
+    assert.deepEqual(
+      [...versions].sort((a, b) => a - b),
+      versions,
+    );
   });
 });
 

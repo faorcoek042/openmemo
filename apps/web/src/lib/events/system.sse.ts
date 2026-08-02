@@ -16,11 +16,11 @@ export const systemSse: SseBinding = (qc: QueryClient) => [
     void qc.invalidateQueries();
   }),
 
-  bus.on('daemon.shutdown', () => {
+  bus.on('x.daemon.shutdown', () => {
     useConnectionStore.getState().setState('degraded');
   }),
 
-  bus.on('index.progress', () => {
+  bus.on('x.index.progress', () => {
     // 后台重建索引：只在设置页显示，不打扰主界面
   }),
 ];

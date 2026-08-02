@@ -189,3 +189,78 @@ bm25、`simple_query/simple_highlight`、拼音（`swdt`/`zx`/`sjz` 全命中）
   `Module '"@openmemo/shared"' has no exported member 'ulid'` —— `model-mgmt` 的在途代码，非我所有，未越界修改。
   我自己的改动（engines/.nvmrc/pnpm-workspace）已单独验证：`pnpm install` EXIT=0、
   `license-report.mjs` EXIT=0、`packages/shared` 与 `packages/mindmap` 构建 Done。
+  > ℹ️ 已于 T-016 期间自行恢复：`model-mgmt` 补上了 `ulid` 导出，该阻塞消失。
+
+---
+
+## [2026-08-02 14:55] T-016 DONE
+
+交付:
+- **`packages/db/`**（新建包）：`src/driver/{types,better-sqlite3,node-sqlite,index}.ts`、
+  `src/{pragmas,extensions,migrate,vec,open,index}.ts`、
+  测试 `src/{driver,migrate,extensions}.test.ts`、
+  迁移 `migrations/{0001_init.sql,0002_search.sql}`、`package.json`、`tsconfig.json`
+- **`apps/daemon/src/`**：`main.ts`、`index.ts`、`config/paths.ts`、
+  `bootstrap/single-instance.ts`、`http/{server,auth,guard,sse,ws}.ts`、
+  `jobs/{queue,lanes}.ts`、测试 `daemon.test.ts` + `jobs/lanes.test.ts`、
+  `scripts/demo-degraded-start.mjs`
+- 改动（均为我所有的文件）：`tsconfig.json`（加 db 引用）、`apps/daemon/{package.json,tsconfig.json}`、
+  `apps/web/tsconfig.json`（修 TS6307）、`eslint.config.js`（scripts glob）
+
+要点（**全部实跑验证，输出见下**）:
+- **验收 5 项全绿**：daemon 起得来 + 健康检查 ✅；第二个实例被挡住（退出码 3）✅；
+  迁移空库→最新且**三次调用幂等** ✅；**两个 DB 驱动适配层测试都过** ✅；
+  **扩展 .so 改名后 daemon 仍启动**（降级 simple→trigram→simple）✅
+- 测试合计 **76 个全过**（`packages/db` 55 + `apps/daemon` 21），
+  其中 driver/migrate 用例对 **better-sqlite3 与 node:sqlite 各跑一遍**。
+- 顺手把 D-02 §4 的全部 DDL 落成迁移：**26 张表 + 57 索引 + 3 个 FTS5 表 + 11 个触发器**，
+  `pragma foreign_key_check` 干净。
+- 队列**完全持久化在 SQLite**：重启后任务仍在，崩溃恢复把 `running`/`leased` 拉回 `queued`。
+- `gpu.asr` 与 `gpu.llm` 通过 `gpu.exclusive` 信号量**互斥**（显存不可超卖），有测试证明。
+
+下一步建议:
+- `gpu-runtime`：`packages/pipeline` 实现 `JobRunner` 接口（`apps/daemon/src/jobs/queue.ts` 已定义），
+  我这边只做持久化与调度骨架，执行逻辑归你。接口有异议请在 inbox 提，我改。
+- `/media/**` 的 Range 字节流与 SSE 的业务事件接入留给 T-020/T-021（现返回 501，路由与安全校验已就位）。
+- 扩展目录约定：`<dataDir>/bin/ext/{libsimple,vec0}.<so|dylib|dll>` + `dict/`，
+  可用 `OPENMEMO_EXT_DIR` 覆盖。**请 `gpu-runtime` 的构建脚本按这个布局产出**，否则默认降级。
+
+需要 Manager 决策 / 转达:
+
+1. **[请转达 architect，D-02 有两处缺陷]**（由 DDL 落地时发现）
+   ① **§4.1 的 `mindmap_nodes_fts` 三个触发器写的是"三个触发器同上模式（略）"** —— 不是可执行 SQL。
+      我按 `notes_fts_ai/ad/au` 的模式重建了 `mindmap_nodes_fts_ai/ad/au`（content_rowid=`id`，
+      列 `text, note_md`，UPDATE 触发器同时监听两列），已用增删改冒烟测试验证同步正确。
+      **请 architect 确认这个重建版本，或在文档里补全。**
+   ② **§1.1 的循环外键说明不完整**：文档只点了 `media_sources ⇄ media_assets` 一处，
+      实际还有 `notes.cover_asset_id ⇄ media_assets.note_id`、
+      `mindmaps.root_node_id ⇄ mindmap_nodes.mindmap_id` 两处未记载。
+      三处运行时都正常（`foreign_key_check` 为空），属**文档缺口**不是功能 bug。
+
+2. **`apps/daemon` 的依赖我做了两处调整**（都是我所有的文件，但影响架构叙述，报备）：
+   - **移除 `fastify`**，改用 `node:http` 裸实现。理由：四通道里 SSE / Range / WS upgrade
+     都需要对 socket 的直接控制，框架抽象反而碍事；且少一层依赖。路由骨架现在约 220 行。
+   - **加 `ws`**（MIT）做 WebSocket 帧处理。手写 RFC6455 不值得。
+
+3. **`better-sqlite3` 从 `apps/daemon` 移到 `packages/db` 作为直接依赖**，
+   并保留「装不上就自动回退 node:sqlite」的逻辑（对应 R-05 的 #1509 风险）。
+
+4. **越界申报（1 处，已修）**：`apps/web/tsconfig.json` 报 TS6307
+   （`src/**/*` 默认不匹配 `.json`，前端 i18n 语言包 import 失败）。
+   该文件按 BOARD 是我所有，我加了 `"src/**/*.json"`。**这解掉了前端 agent 的一个阻塞。**
+
+诚实声明:
+- **`pnpm -r build` 当前仍未全绿**：`apps/web/src/features/{notes,tasks}/sse.ts` 有 6 个 TS2345
+  （前端自定义的事件类型与 `packages/shared` 的 `*Event` 类型不兼容）。**非我所有，未越界修改。**
+  我负责的 `packages/db` 与 `apps/daemon` 单独构建 **EXIT=0**，eslint **EXIT=0**。
+- **未实现**（明确留给后续任务，不是遗漏）：`/media/**` 的 Range 字节流（现 501）、
+  SSE 的业务事件生产、WS 的音频处理、`job_steps`/`job_events` 的读写、
+  优雅退出中的子进程 SIGTERM 树（还没有子进程）、安全模式的崩溃计数（`crash.json` 未落地）。
+- **未验证**：只在 **Linux x64** 跑过；mac/Windows 的扩展加载、`runtime.json` 权限位、
+  Windows 的 SIGTERM 语义全部未测。`.so` 改名演示用的是 Linux 版扩展。
+- **未做压测**：SSE 重放环、lane 信号量在高并发下的表现未测；队列只测了单进程语义。
+- `packages/db/migrations/0001_init.sql` 的 DDL 由 sonnet5 子 agent 从 D-02 提取，
+  **我复核了执行结果（26 表 / 57 索引 / foreign_key_check 干净）但未逐列比对 D-02 原文**。
+
+派生 subagent 记录（未 kill，可复用）:
+- `a5de86382565434f7` — D-02 DDL 提取与验证（sonnet5，已完成）

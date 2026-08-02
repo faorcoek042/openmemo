@@ -5,12 +5,37 @@
  */
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { createServer, request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 
 import { CSRF_HEADER, SESSION_COOKIE } from './http/auth.js';
 import { AlreadyRunningError, StartupConflictError, startDaemon } from './main.js';
+
+/**
+ * 底层 http 请求。`fetch` 会忽略 Host 等 forbidden header，
+ * 要真正测 DNS rebinding 防护就必须绕开它。
+ */
+function rawRequest(
+  port: number,
+  path: string,
+  headers: Record<string, string>,
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = request(
+      { host: '127.0.0.1', port, path, method: 'GET', headers, setHost: false },
+      (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (c: string) => (body += c));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
 
 const ROOT = mkdtempSync(join(tmpdir(), 'omd-'));
 after(() => rmSync(ROOT, { recursive: true, force: true }));
@@ -40,17 +65,30 @@ describe('daemon 生命周期', () => {
     }
   });
 
-  it('只绑 127.0.0.1（ADR-003 硬要求：绝不 0.0.0.0）', async () => {
+  it('DNS rebinding 防护：伪造 Host 头被 403 拒绝', async () => {
     const port = nextPort();
     const d = await startDaemon({ port, dataDir: freshDir('bind'), maxPort: port });
     try {
-      // Host 头写成别的主机名 → 必须被 DNS rebinding 防护拒绝
+      // 注意：不能用 fetch —— Host 是 forbidden header，fetch 会忽略它。
+      // 必须用底层 http.request 才能真正伪造 Host（这正是 DNS rebinding 的形态）。
+      const { status, body } = await rawRequest(d.port, '/api/daemon/status', {
+        Host: 'evil.example.com',
+      });
+      assert.equal(status, 403, `伪造 Host 必须被拒，实际 ${status}: ${body}`);
+      assert.match(body, /FORBIDDEN_ORIGIN/);
+    } finally {
+      await d.stop();
+    }
+  });
+
+  it('跨源 Origin 被 403 拒绝（CSRF 面）', async () => {
+    const port = nextPort();
+    const d = await startDaemon({ port, dataDir: freshDir('origin'), maxPort: port });
+    try {
       const res = await fetch(`http://127.0.0.1:${d.port}/api/daemon/status`, {
-        headers: { Host: 'evil.example.com' },
+        headers: { Origin: 'http://evil.example.com' },
       });
       assert.equal(res.status, 403);
-      const body = (await res.json()) as { error: { code: string } };
-      assert.equal(body.error.code, 'FORBIDDEN_ORIGIN');
     } finally {
       await d.stop();
     }
@@ -88,26 +126,28 @@ describe('daemon 生命周期', () => {
     }
   });
 
-  it('端口被别人占用 → 递增，且**明确警告麦克风需重新授权**（不静默漂移）', async () => {
+  it('端口被**别人的服务**占用 → 递增，且明确警告麦克风需重新授权（不静默漂移）', async () => {
     const port = nextPort();
-    const blocker = await startDaemon({ port, dataDir: freshDir('blockerA'), maxPort: port });
+    // 用一个非 OpenMemo 的普通 http 服务占位 —— 这是 D-01 §2.2 阶梯第 2 步
+    // "其它响应/超时 → 是别人的服务，继续下一步" 的场景。
+    const blocker = createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('not openmemo');
+    });
+    await new Promise<void>((resolve) => blocker.listen(port, '127.0.0.1', () => resolve()));
+
     try {
-      // 换一个 dataDir 但允许扫描到下一个端口
-      const second = await startDaemon({
-        port,
-        dataDir: freshDir('drifted'),
-        maxPort: port + 3,
-      });
+      const d = await startDaemon({ port, dataDir: freshDir('drifted'), maxPort: port + 3 });
       try {
-        assert.equal(second.portDrifted, true);
-        assert.equal(second.port, port + 1);
-        assert.ok(second.portWarning, '漂移必须带警告');
-        assert.match(second.portWarning ?? '', /麦克风/, '警告必须提到麦克风重新授权');
+        assert.equal(d.portDrifted, true);
+        assert.equal(d.port, port + 1, '应顺延到下一个端口');
+        assert.ok(d.portWarning, '漂移必须带警告，绝不静默');
+        assert.match(d.portWarning ?? '', /麦克风/, '警告必须提到麦克风需重新授权');
       } finally {
-        await second.stop();
+        await d.stop();
       }
     } finally {
-      await blocker.stop();
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
     }
   });
 
@@ -241,7 +281,11 @@ describe('媒体端点的路径穿越防护（D-01 §8.5）', () => {
     const port = nextPort();
     const d = await startDaemon({ port, dataDir: freshDir('media'), maxPort: port });
     try {
-      for (const bad of ['/media/../../etc/passwd', '/media/asset/..%2f..%2fetc', '/media/file?p=/etc/passwd']) {
+      for (const bad of [
+        '/media/../../etc/passwd',
+        '/media/asset/..%2f..%2fetc',
+        '/media/file?p=/etc/passwd',
+      ]) {
         const res = await fetch(`http://127.0.0.1:${d.port}${bad}`, {
           headers: { Authorization: `Bearer ${d.token}` },
         });

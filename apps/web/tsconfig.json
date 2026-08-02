@@ -18,6 +18,8 @@
     "jsx": "react-jsx",
     "types": ["vite/client"]
   },
-  "include": ["src/**/*"],
+  // `src/**/*` 默认只匹配 .ts/.tsx/.d.ts —— JSON 必须显式列出，
+  // 否则 import 语言包会报 TS6307（配合 base 里的 resolveJsonModule）。
+  "include": ["src/**/*", "src/**/*.json"],
   "references": [{ "path": "../../packages/shared" }, { "path": "../../packages/mindmap" }]
 }

@@ -27,7 +27,12 @@ import type { SseHub } from './sse.js';
 export interface ServerDeps {
   readonly sessions: SessionStore;
   readonly sse: SseHub;
-  readonly instanceId: string;
+  /**
+   * 取 instanceId。**必须是函数而不是值** —— instanceId 在端口绑定成功之后才产生，
+   * 而 handler 必须在绑定之前就挂好（否则会有"端口已通但没有 handler"的窗口，
+   * 单实例探测正好打 /api/health，那个窗口会让探测误判）。
+   */
+  readonly instanceId: () => string;
   readonly version: string;
   readonly dataDir: string;
   readonly port: () => number;
@@ -116,9 +121,11 @@ async function handleRequest(
     sendJson(res, 200, {
       app: 'openmemo',
       version: deps.version,
-      instanceId: deps.instanceId,
+      instanceId: deps.instanceId(),
       contractVersion: CONTRACT_VERSION,
       dataDir: deps.dataDir,
+      // host 必须回传：单实例探测拿它拼「已在运行」的提示 URL（少了会显示 undefined）
+      host: '127.0.0.1',
       port: deps.port(),
       pid: process.pid,
       ...deps.status(),
@@ -147,7 +154,11 @@ async function handleRequest(
     const session = deps.sessions.create();
     res.setHeader('Set-Cookie', buildSessionCookie(session.sid));
     // CSRF token 走响应体（前端存 sessionStorage），非 GET 请求需回传该头
-    sendJson(res, 200, { csrf: session.csrf, csrfHeader: CSRF_HEADER, contractVersion: CONTRACT_VERSION });
+    sendJson(res, 200, {
+      csrf: session.csrf,
+      csrfHeader: CSRF_HEADER,
+      contractVersion: CONTRACT_VERSION,
+    });
     return;
   }
 
@@ -168,7 +179,7 @@ async function handleRequest(
       sendError(res, 405, 'METHOD_NOT_ALLOWED', 'use GET', '方法不允许');
       return;
     }
-    const sid = auth.session?.sid ?? `bearer:${deps.instanceId}`;
+    const sid = auth.session?.sid ?? `bearer:${deps.instanceId()}`;
     const lastIdRaw = req.headers['last-event-id'];
     const lastId = typeof lastIdRaw === 'string' ? Number(lastIdRaw) : undefined;
     deps.sse.attach(sid, res, Number.isFinite(lastId) ? lastId : undefined);

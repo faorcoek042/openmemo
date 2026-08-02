@@ -120,7 +120,31 @@ export type {
 } from './asr/types.js';
 
 export { WhisperCppEngine, parseWhisperJson } from './asr/whisperCpp.js';
-export type { WhisperCppEngineOptions } from './asr/whisperCpp.js';
+export type { ParseWhisperOptions, WhisperCppEngineOptions } from './asr/whisperCpp.js';
+
+// F3 live path.
+export { SHERPA_SAMPLE_RATE, SherpaOnnxEngine, int16ToFloat32 } from './asr/sherpaOnnx.js';
+export type {
+  SherpaModule,
+  SherpaOnnxEngineOptions,
+  SherpaTransducerModel,
+} from './asr/sherpaOnnx.js';
+
+// F3 two-phase merge (streaming draft -> offline re-run, preserving user edits).
+export {
+  buildDiff,
+  formatMergeSummary,
+  isEdited,
+  mergeTranscripts,
+  overlapFraction,
+} from './asr/merge.js';
+export type {
+  MergeDecision,
+  MergeOptions,
+  MergeResult,
+  MergeableSegment,
+  SegmentDiff,
+} from './asr/merge.js';
 
 // -- queue -----------------------------------------------------------------------------------
 export {

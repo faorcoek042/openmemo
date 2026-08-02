@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { AlertTriangle } from 'lucide-react';
 
 import { SEGMENT_FLAG, type TranscriptSegmentDto } from '../../lib/events/types';
-import { findActiveIndex, usePlayerStore } from '../../lib/stores/player.store';
+import { findActiveIndex, getPositionMs, usePlayerStore } from '../../lib/stores/player.store';
 import { useUiStore } from '../../lib/stores/ui.store';
 import { timecode } from '../../lib/format/time';
 import { cn } from '../../lib/utils';
@@ -32,7 +32,6 @@ export function TranscriptList({
   const activeSeq = usePlayerStore((s) => s.activeSeq);
   const setActiveSeq = usePlayerStore((s) => s.setActiveSeq);
   const requestSeek = usePlayerStore((s) => s.requestSeek);
-  const follow = useUiStore((s) => s.followPlayback);
   const setFollow = useUiStore((s) => s.setFollowPlayback);
 
   const starts = useMemo(() => segments.map((s) => s.startMs), [segments]);
@@ -50,7 +49,7 @@ export function TranscriptList({
     let raf = 0;
     let lastIdx = -2;
     const tick = () => {
-      const idx = findActiveIndex(starts, ends, usePlayerStore.getState().seekRequest?.ms ?? getPos());
+      const idx = findActiveIndex(starts, ends, getPositionMs());
       if (idx !== lastIdx) {
         lastIdx = idx;
         setActiveSeq(idx >= 0 ? segments[idx].seq : null);
@@ -62,7 +61,6 @@ export function TranscriptList({
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [starts, ends, segments]);
 
   // 手动滚动 → 关掉跟随
@@ -148,14 +146,4 @@ export function TranscriptList({
       </div>
     </div>
   );
-}
-
-/** 读 transient 播放位置（不订阅，避免每帧重渲染）。 */
-function getPos(): number {
-  // 延迟 import 以避免循环依赖
-  return posGetter();
-}
-let posGetter: () => number = () => 0;
-export function bindPositionGetter(fn: () => number) {
-  posGetter = fn;
 }

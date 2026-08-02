@@ -65,9 +65,10 @@ features/runtime/
 `@openmemo/shared`。
 
 不可以：import 其它 `features/*`（`features/models`、`features/mindmap` 等）。需要复用就走"提升到
-`components/common` + 在 `coordination/inbox/model-mgmt.md` 申报"。注意 `runtime` 和 `models` 虽然都归你
+`components/common` + 在 `coordination/inbox/<自己>.md` 申报"。注意 `runtime` 和 `models` 虽然都归你
 （T-022），但它们仍然是两个独立的 feature 目录，同样不能互相 import——两者的复用件（比如同时要显示"这台机器
-能跑什么"的逻辑）也要走提升，不要因为是"自己人"就走捷径,今天省一次申报,以后再拆分ownership时会很难查清谁依赖了谁。
+能跑什么"的逻辑）也要走提升，不要因为是"自己人"就走捷径：今天省一次申报，以后拆分 ownership 时会很难查清
+谁依赖了谁。
 
 ## 必须提升的组件：`BackendChip`
 
@@ -75,7 +76,7 @@ features/runtime/
 用哪个后端跑"，任务中心的失败任务里也可能要显示"因为后端未安装而 blocked"。从一开始就建在
 `components/common/BackendChip.tsx`，不要先放 `features/runtime/components/` 再挪
 （D-05 §3.1 目录树注释明确标出这一项：`BackendChip.tsx   ← 由 T-022 从 features/models 提升`）。
-提升动作要在 `coordination/inbox/model-mgmt.md` 写一行 `PROMOTE: ...` 申报。
+提升动作要在 `coordination/inbox/<自己>.md` 写一行 `PROMOTE: ...` 申报。
 
 ## 自检失败必须显示真实原因
 

@@ -6,7 +6,10 @@
  * 形状对齐 D-02 的表结构，字段名保持一致以便日后直接替换。
  */
 
-import type { NoteStatus, TranscriptSegmentDto } from '../events/types';
+import type { TranscriptSegmentDto } from '../events/types';
+
+/** D-02 §1.3 notes.status */
+export type NoteStatus = 'draft' | 'processing' | 'ready' | 'partial' | 'failed';
 
 export type NoteKind = 'media' | 'recording' | 'plain';
 

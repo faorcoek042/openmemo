@@ -97,8 +97,7 @@ export function clearSessionCookie(): string {
 }
 
 export type AuthResult =
-  | { ok: true; via: 'cookie' | 'bearer'; session?: Session }
-  | { ok: false; reason: string };
+  { ok: true; via: 'cookie' | 'bearer'; session?: Session } | { ok: false; reason: string };
 
 /**
  * 鉴权一个请求。两条通道：

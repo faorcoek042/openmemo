@@ -14,7 +14,6 @@
 import { bus } from '../events/bus';
 import { setFetcher, type ApiOptions, type Fetcher } from './client';
 import type {
-  AcceptedJob,
   ImportUrlRequest,
   NoteDetail,
   NoteSummary,

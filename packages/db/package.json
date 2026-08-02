@@ -15,7 +15,10 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "migrations"],
+  "files": [
+    "dist",
+    "migrations"
+  ],
   "scripts": {
     "build": "tsc -b",
     "clean": "tsc -b --clean",

@@ -4,7 +4,7 @@
  * Manager 在 T-016 的验收要求：
  *   「扩展加载失败时 daemon 仍能启动（把 .so 改名模拟，跑给我看）」
  *
- * 这里覆盖库层；daemon 层的端到端演示见 scripts/demo-degraded-start.mjs。
+ * 这里覆盖库层；daemon 层的端到端演示见 apps/daemon/scripts/demo-degraded-start.mjs。
  *
  * 需要真实扩展的用例通过环境变量 `OPENMEMO_TEST_EXT_DIR` 开启；
  * 未设置时这些用例会**显式 skip**（而不是静默通过 —— 那会掩盖回归）。

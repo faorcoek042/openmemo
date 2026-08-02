@@ -1,0 +1,2887 @@
+openapi: 3.1.0
+info:
+  title: OpenMemo Local Daemon API
+  version: 1.0.0
+  description: |
+    HTTP API contract for the OpenMemo local daemon.
+
+    Auth: the daemon mints a random token at startup; every request carries
+    `Authorization: Bearer <token>`. Without it any web page you visit could drive the
+    local API. Ollama leaves :11434 open by default and relies on OLLAMA_ORIGINS; this
+    daemon closes it from the start.
+
+servers:
+  - url: http://127.0.0.1:17650
+    description: >-
+      The daemon binds 127.0.0.1 ONLY, never 0.0.0.0 (ADR-003 decision 1). memo.ac's
+      bundled whisper-server binds 0.0.0.0 and that is exactly the mistake this project
+      avoids.
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: catalog
+    description: Model catalog browsing.
+  - name: models
+    description: Installed model management, activation, verification, import.
+  - name: storage
+    description: Disk usage and garbage collection.
+  - name: sources
+    description: Download-source (provider) selection and probing.
+  - name: jobs
+    description: Download/install job queue.
+  - name: backends
+    description: GPU backend / engine package management.
+  - name: hardware
+    description: Detected hardware.
+  - name: events
+    description: Realtime Server-Sent Events stream.
+
+paths:
+  /api/models/catalog:
+    get:
+      operationId: getCatalog
+      tags: [catalog]
+      summary: Get the model catalog
+      description: >-
+        Returns the model catalog grouped by logical model, with each variant carrying
+        a server-computed fit verdict. Fitness is computed server-side by fitness.ts;
+        the web UI renders `tier` + `reasonZh`/`reasonEn` and MUST NOT recompute the
+        rules — a second implementation would drift from the source of truth.
+      parameters:
+        - name: role
+          in: query
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/ModelRole'
+              - type: string
+                enum: [all]
+        - name: refresh
+          in: query
+          schema:
+            type: boolean
+        - name: lang
+          in: query
+          schema:
+            type: string
+            enum: [zh, en]
+      responses:
+        '200':
+          description: Catalog with fit verdicts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetCatalogResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/models/installed:
+    get:
+      operationId: getInstalled
+      tags: [models]
+      summary: List installed models
+      responses:
+        '200':
+          description: Installed models and the currently active model per role.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetInstalledResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/models/{id}:
+    get:
+      operationId: getModel
+      tags: [models]
+      summary: Get one installed model
+      parameters:
+        - $ref: '#/components/parameters/ModelId'
+      responses:
+        '200':
+          description: The installed model.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstalledModel'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteModel
+      tags: [models]
+      summary: Delete an installed model
+      description: >-
+        Fails with 409 MODEL_IN_USE if the model is currently active in its role; the
+        caller must switch the active model first.
+      parameters:
+        - $ref: '#/components/parameters/ModelId'
+      responses:
+        '200':
+          description: Model deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/models/pull:
+    post:
+      operationId: pullModel
+      tags: [models]
+      summary: Start (or join) a model/backend-pack download
+      description: >-
+        Starts a download/install job, or returns an existing job for the same target
+        if one is already running (`deduplicated: true`). Dedup is keyed by SHA-256 of
+        the artifact content, never by file size or name — two files can be extremely
+        close in size and still be different content. Requires `licenseAccepted: true`
+        when the model's license has `requiresAcceptance`/`gated` set, because
+        restricted weights are never re-hosted; the user must confirm they accepted
+        upstream terms.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PullRequest'
+      responses:
+        '202':
+          description: Job created or joined.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '507':
+          $ref: '#/components/responses/InsufficientStorage'
+
+  /api/models/activate:
+    post:
+      operationId: activateModel
+      tags: [models]
+      summary: Activate (or clear) the model for a role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivateRequest'
+      responses:
+        '200':
+          description: >-
+            Activation applied. `reloadRequired` indicates the inference process must
+            reload before the change takes effect.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/models/active:
+    get:
+      operationId: getActive
+      tags: [models]
+      summary: Get the currently active model per role
+      responses:
+        '200':
+          description: Active model ids, keyed by role.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetActiveResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/models/verify:
+    post:
+      operationId: verifyModel
+      tags: [models]
+      summary: Re-verify an installed model's integrity
+      description: >-
+        Re-hashes installed files and updates their `integrity` status. Nothing is
+        installed or reactivated until SHA-256 verification matches.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyRequest'
+      responses:
+        '202':
+          description: Verification job started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/models/import:
+    post:
+      operationId: importModel
+      tags: [models]
+      summary: Import a model from a local file or a Hugging Face repo file
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportRequest'
+      responses:
+        '202':
+          description: Import job started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/models/storage:
+    get:
+      operationId: getStorage
+      tags: [storage]
+      summary: Get storage breakdown and reclaimable space
+      responses:
+        '200':
+          description: Storage breakdown.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetStorageResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/models/gc:
+    post:
+      operationId: runGc
+      tags: [storage]
+      summary: Reclaim disk space
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GcRequest'
+      responses:
+        '200':
+          description: Space reclaimed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GcResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '507':
+          $ref: '#/components/responses/InsufficientStorage'
+
+  /api/models/sources:
+    get:
+      operationId: getSources
+      tags: [sources]
+      summary: Get download source selection and probe results
+      responses:
+        '200':
+          description: Source selection state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetSourcesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/models/sources/probe:
+    post:
+      operationId: probeSources
+      tags: [sources]
+      summary: Re-probe all download sources
+      responses:
+        '202':
+          description: Probe started; results are delivered via the `sources.probed` SSE event.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetSourcesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/models/sources/select:
+    post:
+      operationId: selectSource
+      tags: [sources]
+      summary: Select a download source
+      description: >-
+        `provider: "custom"` requires `baseUrl` to be set.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SelectSourceRequest'
+      responses:
+        '200':
+          description: Source selected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetSourcesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/jobs:
+    get:
+      operationId: getJobs
+      tags: [jobs]
+      summary: List download/install jobs
+      responses:
+        '200':
+          description: Jobs and the current global concurrency limit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetJobsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/jobs/{jobId}:
+    get:
+      operationId: getJob
+      tags: [jobs]
+      summary: Get one job
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: The job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadJob'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/jobs/{jobId}/cancel:
+    post:
+      operationId: cancelJob
+      tags: [jobs]
+      summary: Cancel a job
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Job cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadJob'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/jobs/{jobId}/retry:
+    post:
+      operationId: retryJob
+      tags: [jobs]
+      summary: Retry a failed job
+      description: Retry re-queues the job rather than jumping straight back into `running`.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '202':
+          description: Job re-queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadJob'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/jobs/{jobId}/pause:
+    post:
+      operationId: pauseJob
+      tags: [jobs]
+      summary: Pause a running job
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Job paused.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadJob'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/jobs/{jobId}/resume:
+    post:
+      operationId: resumeJob
+      tags: [jobs]
+      summary: Resume a paused job
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '202':
+          description: Job resumed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadJob'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/backends/catalog:
+    get:
+      operationId: getBackendCatalog
+      tags: [backends]
+      summary: Get the GPU backend pack catalog
+      responses:
+        '200':
+          description: Backend pack catalog, annotated with applicability to detected hardware.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetBackendCatalogResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/backends/installed:
+    get:
+      operationId: getInstalledBackends
+      tags: [backends]
+      summary: List installed backend packs
+      responses:
+        '200':
+          description: Installed backend packs and the currently selected backend.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetInstalledBackendsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/backends/install:
+    post:
+      operationId: installBackend
+      tags: [backends]
+      summary: Install a GPU backend pack
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PullRequest'
+      responses:
+        '202':
+          description: Install job started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '507':
+          $ref: '#/components/responses/InsufficientStorage'
+
+  /api/backends/{id}:
+    delete:
+      operationId: removeBackend
+      tags: [backends]
+      summary: Remove an installed backend pack
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Backend pack id, e.g. "whispercpp-vulkan-win-x64".
+      responses:
+        '200':
+          description: Backend pack removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/backends/select:
+    post:
+      operationId: selectBackend
+      tags: [backends]
+      summary: Select the active inference backend
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [backend]
+              properties:
+                backend:
+                  $ref: '#/components/schemas/Backend'
+                deviceIndex:
+                  type: [integer, 'null']
+                  description: Index into HardwareInfo.gpus; null for CPU-only.
+      responses:
+        '200':
+          description: Backend selected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetInstalledBackendsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/runtime/hardware:
+    get:
+      operationId: getHardware
+      tags: [hardware]
+      summary: Get detected hardware
+      responses:
+        '200':
+          description: Detected hardware and the snapshot id fit verdicts were computed against.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetHardwareResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/events:
+    get:
+      operationId: events
+      tags: [events]
+      summary: Realtime event stream (Server-Sent Events)
+      description: |
+        HARD CONSTRAINT: exactly ONE global stream. There is no per-download or
+        per-job stream — HTTP/1.1 caps concurrent connections at 6 per origin, and one
+        stream per download would exhaust that with a few downloads plus a
+        transcription in flight.
+
+        Every frame carries a named `event:` field equal to the event's `type`
+        (e.g. `event: job.progress`). Per the SSE spec, a named `event:` field means
+        the message dispatches ONLY to `addEventListener('<type>', …)` —
+        `EventSource.onmessage` NEVER fires for these messages. Clients must iterate
+        the event type list below and register a listener for each type they care
+        about.
+
+        Each frame also carries a monotonic `id:`. On reconnect, `EventSource`
+        automatically sends `Last-Event-ID`, and the server replays whatever was
+        missed from a 256-entry ring buffer (`SSE_REPLAY_BUFFER_SIZE`). If the
+        client's last id has fallen outside that buffer, the server instead emits a
+        `sync.required` event and the client must refetch the current view in full
+        rather than trying to replay further back.
+
+        A `: keepalive` comment (and periodic `keepalive` event) is sent every 15s to
+        keep proxies from closing an idle connection.
+
+        Event types (`SseEventType`):
+        `job.created`, `job.progress`, `job.state`, `job.done`, `job.failed`,
+        `job.blocked`, `model.installed`, `model.removed`, `model.activated`,
+        `backend.installed`, `backend.removed`, `storage.changed`, `catalog.updated`,
+        `sources.probed`, `hardware.changed`, `media.ready`, `transcribe.started`,
+        `transcribe.partial`, `transcribe.segment`, `transcribe.done`, `record.state`,
+        `mindmap.delta`, `mindmap.done`, `note.created`, `note.updated`,
+        `note.deleted`, `sync.required`, `keepalive`.
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+          description: >-
+            Id of the last event this client received. When present and still within
+            the 256-entry replay buffer, missed events are replayed before new events
+            resume.
+      responses:
+        '200':
+          description: >-
+            An open, unbounded `text/event-stream`. Each frame is
+            `id: <n>\nevent: <type>\ndata: <json>\n\n`. The `data` payload for each
+            named event type matches the corresponding schema in
+            `components.schemas` (e.g. `event: job.progress` carries a
+            `JobProgressEvent`).
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        Token minted by the daemon at startup and required on every request as
+        `Authorization: Bearer <token>`.
+
+  parameters:
+    ModelId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Stable model id, e.g. "asr/whisper-large-v3-turbo-q5_0".
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: ULID job id (D-02 `jobs.uid`) — the only job identifier the API exposes.
+
+  responses:
+    BadRequest:
+      description: The request was malformed or failed validation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorBody'
+    Unauthorized:
+      description: Missing or invalid bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorBody'
+    NotFound:
+      description: The requested resource does not exist. Error code `NOT_FOUND`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorBody'
+    Conflict:
+      description: >-
+        The request conflicts with the resource's current state, e.g. deleting a
+        model that is active (`MODEL_IN_USE`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorBody'
+    InsufficientStorage:
+      description: Not enough disk space to proceed. Error code `DISK_FULL`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorBody'
+
+  schemas:
+    # ---------------------------------------------------------------------
+    # hardware.ts
+    # ---------------------------------------------------------------------
+    Backend:
+      type: string
+      description: Accelerator backends. Widened from memo.ac's cuda/metal/coreml-only set.
+      enum: [cuda, vulkan, rocm, metal, coreml, cpu]
+
+    OsPlatform:
+      type: string
+      enum: [darwin, win32, linux]
+
+    Arch:
+      type: string
+      enum: [x64, arm64]
+
+    OsInfo:
+      type: object
+      required: [platform, arch, version]
+      properties:
+        platform:
+          $ref: '#/components/schemas/OsPlatform'
+        arch:
+          $ref: '#/components/schemas/Arch'
+        version:
+          type: string
+          description: Raw OS version string, e.g. "10.0.22631", "14.5", "6.8.0-40-generic".
+
+    CpuInfo:
+      type: object
+      required: [brand, physicalCores, logicalCores, features]
+      properties:
+        brand:
+          type: string
+        physicalCores:
+          type: integer
+        logicalCores:
+          type: integer
+        features:
+          type: array
+          description: >-
+            Lowercase ISA feature flags. MUST include "avx2" when supported — prebuilt
+            CPU backends for llama.cpp/whisper.cpp generally require it.
+          items:
+            type: string
+
+    MemoryInfo:
+      type: object
+      required: [totalMB, availableMB]
+      properties:
+        totalMB:
+          type: number
+        availableMB:
+          type: [number, 'null']
+          description: Best-effort currently-available memory; null if the platform cannot report it.
+
+    GpuDevice:
+      type: object
+      required:
+        - index
+        - vendor
+        - name
+        - vramTotalMB
+        - vramFreeMB
+        - driverVersion
+        - capabilities
+        - backends
+      properties:
+        index:
+          type: integer
+        vendor:
+          type: string
+          enum: [nvidia, amd, intel, apple, other]
+        name:
+          type: string
+        vramTotalMB:
+          type: [number, 'null']
+          description: Total VRAM; null on unified-memory systems where the concept does not apply.
+        vramFreeMB:
+          type: [number, 'null']
+          description: >-
+            Free VRAM at detection time; null if unavailable. Consumers MUST degrade
+            to `vramTotalMB * 0.85` when null — never assume total is free.
+        driverVersion:
+          type: [string, 'null']
+        capabilities:
+          type: object
+          description: 'e.g. { cudaComputeCapability: "8.9" } or { vulkanApiVersion: "1.3" }.'
+          additionalProperties:
+            type: string
+        backends:
+          type: array
+          description: Backends this specific device can serve, as proven by real enumeration.
+          items:
+            $ref: '#/components/schemas/Backend'
+
+    BackendStatus:
+      type: object
+      required: [id, available, installed, version, deviceIndex]
+      properties:
+        id:
+          $ref: '#/components/schemas/Backend'
+        available:
+          type: boolean
+          description: Device enumeration succeeded and returned >= 1 device. NOT a file-existence check.
+        installed:
+          type: boolean
+          description: The backend package is present on disk and loadable.
+        version:
+          type: [string, 'null']
+        deviceIndex:
+          type: [integer, 'null']
+          description: Index into HardwareInfo.gpus, when this backend is bound to a specific device.
+        isa:
+          type: [string, 'null']
+          description: For the CPU backend, which ISA build is active, e.g. "avx2".
+        unavailableReason:
+          type: [string, 'null']
+          description: Populated when available=false so the UI can explain why.
+
+    DiskInfo:
+      type: object
+      required: [mount, pathFor, path, freeMB, totalMB]
+      properties:
+        mount:
+          type: string
+          description: Mount point or drive root.
+        pathFor:
+          type: string
+          enum: [models_root, runtimes_root, other]
+        path:
+          type: string
+        freeMB:
+          type: number
+        totalMB:
+          type: number
+
+    HardwareInfo:
+      type: object
+      required:
+        - schemaVersion
+        - detectedAt
+        - os
+        - cpu
+        - ram
+        - unifiedMemory
+        - gpus
+        - backends
+        - selectedBackend
+        - selectedGpuIndex
+        - disks
+      properties:
+        schemaVersion:
+          type: integer
+          enum: [1]
+        detectedAt:
+          type: string
+          format: date-time
+        os:
+          $ref: '#/components/schemas/OsInfo'
+        cpu:
+          $ref: '#/components/schemas/CpuInfo'
+        ram:
+          $ref: '#/components/schemas/MemoryInfo'
+        unifiedMemory:
+          type: boolean
+          description: >-
+            True on Apple Silicon (and other UMA systems). When true, `gpus[].vramTotalMB`
+            is meaningless and the VRAM budget is derived from system RAM instead.
+        gpus:
+          type: array
+          items:
+            $ref: '#/components/schemas/GpuDevice'
+        backends:
+          type: array
+          items:
+            $ref: '#/components/schemas/BackendStatus'
+        selectedBackend:
+          $ref: '#/components/schemas/Backend'
+        selectedGpuIndex:
+          type: [integer, 'null']
+          description: Index into `gpus` for the selected device; null for CPU-only.
+        disks:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiskInfo'
+
+    # ---------------------------------------------------------------------
+    # artifacts.ts
+    # ---------------------------------------------------------------------
+    ProviderId:
+      type: string
+      description: Download source identifiers. "custom" is a user-supplied base URL.
+      enum: [hf, hf-mirror, modelscope, github, custom]
+
+    Mirror:
+      type: object
+      required: [provider, url, official]
+      properties:
+        provider:
+          $ref: '#/components/schemas/ProviderId'
+        url:
+          type: string
+          format: uri
+        official:
+          type: boolean
+          description: >-
+            True when published by the upstream author, verified byte-identical to
+            the canonical source. False for community re-uploads. Non-official
+            mirrors are still safe to use because `sha256` is enforced, but they are
+            ranked lower during source probing.
+
+    FileRole:
+      type: string
+      enum: [weights, coreml-encoder, mmproj, library, binary, archive]
+
+    PlatformSelector:
+      type: object
+      required: [os, arch]
+      properties:
+        os:
+          $ref: '#/components/schemas/OsPlatform'
+        arch:
+          $ref: '#/components/schemas/Arch'
+        backend:
+          $ref: '#/components/schemas/Backend'
+
+    ArtifactFile:
+      type: object
+      required: [role, name, sizeBytes, sha256, mirrors]
+      properties:
+        role:
+          $ref: '#/components/schemas/FileRole'
+        name:
+          type: string
+          description: Filename as it should land on disk (basename only, no path separators).
+        sizeBytes:
+          type: integer
+          format: int64
+          description: Integer bytes. NEVER a formatted string.
+        sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: >-
+            Lowercase 64-hex SHA-256 of the file content. REQUIRED — this is the trust
+            anchor and the ONLY dedup key. Files must never be deduplicated by size:
+            two distinct files can differ by only a few thousand bytes.
+        sha1:
+          type: string
+          description: >-
+            Optional SHA-1, purely as a cross-check against upstream-published tables.
+            Never used for integrity gating — SHA-256 is.
+        mirrors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Mirror'
+        optional:
+          type: boolean
+          description: If true, absence does not block install (e.g. the macOS CoreML encoder).
+        platforms:
+          type: array
+          description: Restricts this file to matching platforms. Absent = applies everywhere.
+          items:
+            $ref: '#/components/schemas/PlatformSelector'
+        unpack:
+          type: [string, 'null']
+          enum: [zip, tar.gz, null]
+          description: Archive to expand after verification.
+
+    LicenseInfo:
+      type: object
+      required: [id, gated, url]
+      properties:
+        id:
+          type: string
+          description: SPDX id where possible, else a short label.
+        gated:
+          type: boolean
+          description: Upstream requires login + license acceptance (HF "gated" repos).
+        url:
+          type: string
+          format: uri
+        requiresAcceptance:
+          type: boolean
+          description: >-
+            When true the UI must send the user to `url` to accept upstream terms
+            before downloading. Restricted weights are never re-hosted; the user
+            accepts upstream terms and downloads from upstream.
+
+    ResourceRequirements:
+      type: object
+      required: [ramRequiredMB, vramRequiredMB, diskRequiredMB, cpuFeatures, computedAtContext]
+      properties:
+        ramRequiredMB:
+          type: number
+          description: Peak system RAM needed to run. Computed, never hand-typed.
+        vramRequiredMB:
+          type: number
+          description: Peak VRAM needed for full GPU offload, INCLUDING KV cache.
+        diskRequiredMB:
+          type: number
+          description: Disk needed to install, including download headroom.
+        cpuFeatures:
+          type: array
+          items:
+            type: string
+          description: Required CPU ISA features, e.g. ["avx2"].
+        computedAtContext:
+          type: [integer, 'null']
+          description: >-
+            Context length these numbers were computed at. Null when the requirement
+            does not depend on context at all (e.g. Whisper). Deliberately null rather
+            than 0, because 0 would read as "computed at zero context", which is false.
+
+    GgufMetadata:
+      type: object
+      required:
+        - architecture
+        - blockCount
+        - embeddingLength
+        - headCount
+        - headCountKv
+        - keyLength
+        - valueLength
+        - contextLength
+        - kvBytesPerToken
+      properties:
+        architecture:
+          type: string
+        blockCount:
+          type: integer
+        embeddingLength:
+          type: integer
+        headCount:
+          type: integer
+        headCountKv:
+          type: integer
+        keyLength:
+          type: integer
+        valueLength:
+          type: integer
+        contextLength:
+          type: integer
+        kvBytesPerToken:
+          type: integer
+          format: int64
+          description: >-
+            KV cache bytes per token at f16: blockCount * headCountKv * (keyLength +
+            valueLength) * 2. Omitting this is why some competing estimators
+            mis-badge models as loadable.
+
+    BenchmarkResult:
+      type: object
+      required: [rtf, measuredAt, backend, deviceName, sampleDurationSec]
+      description: Locally measured benchmark. Null until the user runs it — never a fabricated number.
+      properties:
+        rtf:
+          type: number
+          description: Real-time factor, wallSeconds / audioSeconds. Lower is faster.
+        measuredAt:
+          type: string
+          format: date-time
+        backend:
+          $ref: '#/components/schemas/Backend'
+        deviceName:
+          type: string
+        sampleDurationSec:
+          type: number
+
+    # ---------------------------------------------------------------------
+    # models.ts
+    # ---------------------------------------------------------------------
+    ModelRole:
+      type: string
+      description: What the model is for. Drives which "active model" slot it can occupy.
+      enum: [asr, llm]
+
+    ModelFormat:
+      type: string
+      enum: [ggml, gguf, onnx, nemo, coreml]
+
+    Quantization:
+      type: string
+      description: >-
+        Quantization level. f16/f32 are "no quantization" sentinels rather than a
+        null, so the UI always has something concrete to show in the selector.
+      enum:
+        - f32
+        - f16
+        - bf16
+        - q8_0
+        - q6_k
+        - q5_k_m
+        - q5_1
+        - q5_0
+        - q4_k_m
+        - q4_k_s
+        - q4_0
+        - q3_k_m
+        - q2_k
+        - iq4_xs
+        - iq3_m
+        - iq2_m
+
+    QuantTier:
+      type: string
+      description: Human-facing grouping for the quantization selector.
+      enum: [small, balanced, large, full]
+
+    CatalogSource:
+      type: string
+      enum: [remote, cache, bundled]
+
+    ModelSource:
+      type: object
+      required: [provider, repo, revision]
+      properties:
+        provider:
+          $ref: '#/components/schemas/ProviderId'
+        repo:
+          type: string
+          description: e.g. "ggerganov/whisper.cpp" or "Qwen/Qwen3-4B-GGUF".
+        revision:
+          type: string
+          description: Pinned upstream revision. Pinning is what makes sha256 stable over time.
+
+    ModelEntry:
+      type: object
+      description: >-
+        One installable model variant. "Model" and "quantization" are two UI levels
+        but one registry entity: the same model at a different quantization is a
+        distinct entry, because it has a different digest, size and requirements.
+      required:
+        - schemaVersion
+        - id
+        - groupId
+        - role
+        - family
+        - arch
+        - format
+        - quantization
+        - quantTier
+        - displayName
+        - displayNameZh
+        - descriptionZh
+        - descriptionEn
+        - languages
+        - tags
+        - files
+        - totalSizeBytes
+        - requirements
+        - license
+        - source
+        - benchmark
+        - catalogVersion
+      properties:
+        schemaVersion:
+          type: integer
+          enum: [1]
+        id:
+          type: string
+          description: Stable unique id, e.g. "asr/whisper-large-v3-turbo-q5_0".
+        groupId:
+          type: string
+          description: Groups quantization variants of the same logical model, e.g. "asr/whisper-large-v3-turbo".
+        role:
+          $ref: '#/components/schemas/ModelRole'
+        family:
+          type: string
+          description: e.g. "whisper", "qwen3", "gemma3".
+        arch:
+          type: string
+          description: Model architecture as reported by the file format, e.g. "whisper", "qwen3".
+        format:
+          $ref: '#/components/schemas/ModelFormat'
+        quantization:
+          $ref: '#/components/schemas/Quantization'
+        quantTier:
+          $ref: '#/components/schemas/QuantTier'
+        displayName:
+          type: string
+        displayNameZh:
+          type: string
+        descriptionZh:
+          type: string
+        descriptionEn:
+          type: string
+        languages:
+          type: array
+          items:
+            type: string
+          description: BCP-47-ish codes, or "multi" for multilingual.
+        tags:
+          type: array
+          items:
+            type: string
+          description: Free-form catalog tags, e.g. ["recommended-default", "multilingual"].
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArtifactFile'
+        totalSizeBytes:
+          type: integer
+          format: int64
+          description: Sum of non-optional file sizes, in bytes.
+        requirements:
+          $ref: '#/components/schemas/ResourceRequirements'
+        gguf:
+          $ref: '#/components/schemas/GgufMetadata'
+        license:
+          $ref: '#/components/schemas/LicenseInfo'
+        source:
+          $ref: '#/components/schemas/ModelSource'
+        benchmark:
+          type: [object, 'null']
+          allOf:
+            - $ref: '#/components/schemas/BenchmarkResult'
+          description: >-
+            DELIBERATELY absent as fabricated speed/quality integers. Null until a
+            real measurement exists on this machine.
+        catalogVersion:
+          type: string
+          description: Set by the catalog build, used for staleness display.
+
+    InstalledFile:
+      type: object
+      required: [role, name, sha256, sizeBytes, path]
+      properties:
+        role:
+          type: string
+        name:
+          type: string
+        sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        sizeBytes:
+          type: integer
+          format: int64
+        path:
+          type: string
+          description: Absolute path to the by-name hardlink view (the blob lives under blobs/).
+
+    Integrity:
+      type: string
+      enum: [ok, unverified, corrupt, missing_files]
+
+    InstalledModel:
+      type: object
+      required:
+        - schemaVersion
+        - id
+        - groupId
+        - role
+        - displayName
+        - quantization
+        - totalSizeBytes
+        - installedAt
+        - verifiedAt
+        - integrity
+        - files
+        - requirements
+        - license
+        - source
+        - benchmark
+        - catalogVersion
+      properties:
+        schemaVersion:
+          type: integer
+          enum: [1]
+        id:
+          type: string
+        groupId:
+          type: string
+        role:
+          $ref: '#/components/schemas/ModelRole'
+        displayName:
+          type: string
+        quantization:
+          $ref: '#/components/schemas/Quantization'
+        totalSizeBytes:
+          type: integer
+          format: int64
+        installedAt:
+          type: string
+          format: date-time
+        verifiedAt:
+          type: [string, 'null']
+          format: date-time
+          description: Last time full content hashing succeeded.
+        integrity:
+          $ref: '#/components/schemas/Integrity'
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstalledFile'
+        requirements:
+          $ref: '#/components/schemas/ResourceRequirements'
+        gguf:
+          $ref: '#/components/schemas/GgufMetadata'
+        license:
+          $ref: '#/components/schemas/LicenseInfo'
+        source:
+          $ref: '#/components/schemas/ModelSource'
+        benchmark:
+          type: [object, 'null']
+          allOf:
+            - $ref: '#/components/schemas/BenchmarkResult'
+        catalogVersion:
+          type: string
+
+    CatalogGroup:
+      type: object
+      required:
+        - groupId
+        - role
+        - family
+        - displayName
+        - displayNameZh
+        - descriptionZh
+        - descriptionEn
+        - languages
+        - tags
+        - license
+        - variants
+      properties:
+        groupId:
+          type: string
+        role:
+          $ref: '#/components/schemas/ModelRole'
+        family:
+          type: string
+        displayName:
+          type: string
+        displayNameZh:
+          type: string
+        descriptionZh:
+          type: string
+        descriptionEn:
+          type: string
+        languages:
+          type: array
+          items:
+            type: string
+        tags:
+          type: array
+          items:
+            type: string
+        license:
+          $ref: '#/components/schemas/LicenseInfo'
+        variants:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelEntry'
+
+    # ---------------------------------------------------------------------
+    # fitness.ts
+    # ---------------------------------------------------------------------
+    FitTier:
+      type: string
+      enum: [recommended, slow_partial, slow_cpu, unsupported, blocked_disk]
+
+    FitReasonCode:
+      type: string
+      enum:
+        - full_gpu_offload
+        - cpu_ok
+        - partial_gpu_offload
+        - cpu_only_slow
+        - insufficient_ram
+        - missing_cpu_feature
+        - insufficient_disk
+        - borderline_vram
+
+    FitResult:
+      type: object
+      description: >-
+        "Can this machine run it?" verdict. This is computed by a single
+        implementation server-side (fitness.ts) and shipped in the catalog response;
+        the web UI renders `tier` + `reasonZh`/`reasonEn` and MUST NOT recompute the
+        rules — two implementations always drift.
+      required: [tier, reasonCode, reasonZh, reasonEn, estGpuLayers, estMinutesPerAudioHour, detail]
+      properties:
+        tier:
+          $ref: '#/components/schemas/FitTier'
+        reasonCode:
+          $ref: '#/components/schemas/FitReasonCode'
+        reasonZh:
+          type: string
+        reasonEn:
+          type: string
+        estGpuLayers:
+          type: [integer, 'null']
+          description: Estimated layers offloadable to GPU (LLM partial offload only).
+        estMinutesPerAudioHour:
+          type: [number, 'null']
+          description: Minutes to transcribe one hour of audio. Null until a real benchmark exists.
+        detail:
+          type: object
+          description: Diagnostic numbers, surfaced in the detail panel so users can sanity-check the verdict.
+          required: [needMB, vramBudgetMB, ramBudgetMB, diskFreeMB, diskNeededMB]
+          properties:
+            needMB:
+              type: number
+            vramBudgetMB:
+              type: number
+            ramBudgetMB:
+              type: number
+            diskFreeMB:
+              type: number
+            diskNeededMB:
+              type: number
+
+    # ---------------------------------------------------------------------
+    # backends.ts
+    # ---------------------------------------------------------------------
+    Engine:
+      type: string
+      enum: [whisper.cpp, llama.cpp, sherpa-onnx, ffmpeg, yt-dlp]
+
+    PackTier:
+      type: string
+      enum: [builtin, downloadable]
+
+    DriverRequirement:
+      type: object
+      properties:
+        nvidiaDriver:
+          type: string
+          description: e.g. "550" for NVIDIA.
+        vulkanApi:
+          type: string
+          description: e.g. "1.2".
+        rocmVersion:
+          type: string
+          description: e.g. "7.0".
+        macosVersion:
+          type: string
+          description: Minimum macOS version, e.g. "13.0".
+
+    BackendPack:
+      type: object
+      required:
+        - schemaVersion
+        - id
+        - engine
+        - engineVersion
+        - ggmlAbi
+        - backend
+        - tier
+        - os
+        - arch
+        - displayName
+        - displayNameZh
+        - files
+        - totalSizeBytes
+        - requiresDriver
+        - license
+        - providesFiles
+        - installPath
+        - priority
+        - benchmark
+        - catalogVersion
+      properties:
+        schemaVersion:
+          type: integer
+          enum: [1]
+        id:
+          type: string
+          description: e.g. "whispercpp-vulkan-win-x64".
+        engine:
+          $ref: '#/components/schemas/Engine'
+        engineVersion:
+          type: string
+        ggmlAbi:
+          type: [string, 'null']
+          description: >-
+            ggml ABI version this pack was built against. Cross-engine reuse is
+            UNVERIFIED, so this gates on an explicit match rather than assuming
+            compatibility.
+        backend:
+          $ref: '#/components/schemas/Backend'
+        tier:
+          $ref: '#/components/schemas/PackTier'
+        os:
+          $ref: '#/components/schemas/OsPlatform'
+        arch:
+          $ref: '#/components/schemas/Arch'
+        displayName:
+          type: string
+        displayNameZh:
+          type: string
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArtifactFile'
+        totalSizeBytes:
+          type: integer
+          format: int64
+        cudaArchitectures:
+          type: array
+          items:
+            type: string
+          description: >-
+            CUDA compute capabilities this pack was compiled for, e.g. ["86"]. Empty/absent
+            means a fat multi-architecture binary.
+        requiresDriver:
+          type: [object, 'null']
+          allOf:
+            - $ref: '#/components/schemas/DriverRequirement'
+        license:
+          $ref: '#/components/schemas/LicenseInfo'
+        providesFiles:
+          type: array
+          items:
+            type: string
+          description: Files that must exist after install for the pack to be considered functional.
+        installPath:
+          type: string
+          description: Install target, relative to the engine's runtime directory.
+        priority:
+          type: integer
+          description: Higher wins when several packs match the same hardware.
+        benchmark:
+          type: 'null'
+          description: >-
+            DELIBERATELY absent: any relative-performance number is unmeasured and
+            must not be fabricated.
+        catalogVersion:
+          type: string
+
+    InstalledBackendPackFile:
+      type: object
+      required: [name, sha256, sizeBytes, path]
+      properties:
+        name:
+          type: string
+        sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        sizeBytes:
+          type: integer
+          format: int64
+        path:
+          type: string
+
+    InstalledBackendPack:
+      type: object
+      required:
+        - schemaVersion
+        - id
+        - engine
+        - engineVersion
+        - backend
+        - installedAt
+        - verifiedAt
+        - integrity
+        - installPath
+        - files
+        - selfTest
+      properties:
+        schemaVersion:
+          type: integer
+          enum: [1]
+        id:
+          type: string
+        engine:
+          $ref: '#/components/schemas/Engine'
+        engineVersion:
+          type: string
+        backend:
+          $ref: '#/components/schemas/Backend'
+        installedAt:
+          type: string
+          format: date-time
+        verifiedAt:
+          type: [string, 'null']
+          format: date-time
+        integrity:
+          $ref: '#/components/schemas/Integrity'
+        installPath:
+          type: string
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstalledBackendPackFile'
+        selfTest:
+          type: [object, 'null']
+          allOf:
+            - $ref: '#/components/schemas/BackendSelfTest'
+          description: Result of the post-install self-test.
+
+    BackendSelfTest:
+      type: object
+      description: >-
+        Post-install verification via a REAL inference run on an embedded audio
+        sample, not merely a "files exist" check.
+      required: [passed, ranAt, devicesFound, rtf, errorMessage]
+      properties:
+        passed:
+          type: boolean
+        ranAt:
+          type: string
+          format: date-time
+        devicesFound:
+          type: integer
+          description: Devices actually enumerated by the probe. Loaders lie, enumeration doesn't.
+        rtf:
+          type: [number, 'null']
+          description: Measured real-time factor on the embedded sample; null if the run failed.
+        errorMessage:
+          type: [string, 'null']
+
+    # ---------------------------------------------------------------------
+    # jobs.ts
+    # ---------------------------------------------------------------------
+    JobState:
+      type: string
+      description: |
+        Coarse job lifecycle: queued -> leased -> running -> succeeded, with
+        running able to go to paused (and back), and failed/cancelled reachable
+        from several states. See JOB_TRANSITIONS for the legal transition table.
+      enum: [queued, blocked, leased, running, paused, succeeded, failed, cancelled]
+
+    JobStep:
+      type: string
+      description: >-
+        Fine-grained step within state === 'running'. `verifying` is a first-class
+        step: nothing is installed until its SHA-256 matches.
+      enum: [resolving, downloading, verifying, installing]
+
+    JobKind:
+      type: string
+      enum: [model, backend-pack]
+
+    DownloadJobType:
+      type: string
+      enum: [download.model, download.backend]
+
+    ErrorCode:
+      type: string
+      description: Error codes. `retryable` drives whether the downloader auto-retries and what the UI offers.
+      enum:
+        - NETWORK_TIMEOUT
+        - CONNECTION_RESET
+        - CHECKSUM_MISMATCH
+        - SIZE_MISMATCH
+        - DISK_FULL
+        - GATED_REPO
+        - RATE_LIMITED
+        - PROVIDER_UNREACHABLE
+        - INTEGRITY_ALL_SOURCES_FAILED
+        - RANGE_NOT_SUPPORTED
+        - CANCELLED
+        - UNPACK_FAILED
+        - PERMISSION_DENIED
+        - MODEL_IN_USE
+        - NOT_FOUND
+        - INTERNAL
+
+    JobError:
+      type: object
+      required: [code, message, messageZh, retryable]
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+        messageZh:
+          type: string
+        retryable:
+          type: boolean
+        provider:
+          type: string
+          description: Provider that produced the error, when applicable.
+
+    JobPart:
+      type: object
+      description: Per-part progress, mirrored from the on-disk resume sidecar.
+      required: [index, start, end, completed]
+      properties:
+        index:
+          type: integer
+        start:
+          type: integer
+          format: int64
+        end:
+          type: integer
+          format: int64
+        completed:
+          type: integer
+          format: int64
+
+    DownloadJob:
+      type: object
+      required:
+        - jobId
+        - kind
+        - type
+        - targetId
+        - displayName
+        - state
+        - step
+        - provider
+        - totalBytes
+        - completedBytes
+        - speedBps
+        - etaSeconds
+        - parts
+        - currentFile
+        - fileIndex
+        - fileCount
+        - attempt
+        - maxAttempts
+        - error
+        - startedAt
+        - updatedAt
+      properties:
+        jobId:
+          type: string
+          description: >-
+            ULID. This is D-02 `jobs.uid` — the ONLY job identifier the API exposes.
+        kind:
+          $ref: '#/components/schemas/JobKind'
+        type:
+          $ref: '#/components/schemas/DownloadJobType'
+        targetId:
+          type: string
+          description: >-
+            Catalog slug, e.g. "asr/whisper-large-v3-turbo-q5_0". Deliberately NOT a
+            ULID: it is a stable content identifier that must be identical across
+            machines and across reinstalls.
+        displayName:
+          type: string
+        state:
+          $ref: '#/components/schemas/JobState'
+        step:
+          type: [string, 'null']
+          allOf:
+            - $ref: '#/components/schemas/JobStep'
+          description: Fine-grained step; meaningful while state === 'running'.
+        provider:
+          type: [string, 'null']
+          description: Provider currently in use; null before resolution.
+        totalBytes:
+          type: integer
+          format: int64
+        completedBytes:
+          type: integer
+          format: int64
+          description: >-
+            Always present, even when zero. Unlike some competing APIs which omit this
+            field until data arrives (forcing every client to handle undefined), this
+            is normalised server-side.
+        speedBps:
+          type: number
+        etaSeconds:
+          type: [number, 'null']
+        parts:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobPart'
+        currentFile:
+          type: [string, 'null']
+        fileIndex:
+          type: integer
+        fileCount:
+          type: integer
+        attempt:
+          type: integer
+        maxAttempts:
+          type: integer
+        error:
+          type: [object, 'null']
+          allOf:
+            - $ref: '#/components/schemas/JobError'
+        startedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    # ---------------------------------------------------------------------
+    # events.ts
+    # ---------------------------------------------------------------------
+    SseEventType:
+      type: string
+      enum:
+        - job.created
+        - job.progress
+        - job.state
+        - job.done
+        - job.failed
+        - job.blocked
+        - model.installed
+        - model.removed
+        - model.activated
+        - backend.installed
+        - backend.removed
+        - storage.changed
+        - catalog.updated
+        - sources.probed
+        - hardware.changed
+        - media.ready
+        - transcribe.started
+        - transcribe.partial
+        - transcribe.segment
+        - transcribe.done
+        - record.state
+        - mindmap.delta
+        - mindmap.done
+        - note.created
+        - note.updated
+        - note.deleted
+        - sync.required
+        - keepalive
+
+    Remediation:
+      type: object
+      description: >-
+        A machine-readable corrective action the UI turns into a button. This is
+        what makes charter requirement 2.1 ("the user never touches a command line")
+        actually achievable.
+      required: [action, params, labelZh, label]
+      properties:
+        action:
+          type: string
+          description: >-
+            e.g. "install_model" | "install_backend" | "free_disk" | "switch_source"
+            | "configure_api_key".
+        params:
+          type: object
+          description: 'Action-specific arguments, e.g. { modelId: "asr/whisper-..." }.'
+          additionalProperties:
+            type: [string, number, boolean, 'null']
+        labelZh:
+          type: string
+        label:
+          type: string
+
+    SseEventBase:
+      type: object
+      required: [type, ts, topic]
+      properties:
+        type:
+          $ref: '#/components/schemas/SseEventType'
+        ts:
+          type: string
+          format: date-time
+          description: ISO-8601 emission time.
+        topic:
+          type: string
+          description: Coalescing / routing key, e.g. "job:01J8...", "transcript:01J9...".
+
+    JobCreatedEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, job]
+          properties:
+            type:
+              type: string
+              enum: [job.created]
+            job:
+              $ref: '#/components/schemas/DownloadJob'
+
+    JobProgressEvent:
+      description: >-
+        Generic progress, used by downloads AND pipeline jobs. Never written into a
+        durable cache — it goes to a transient store.
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, jobId, step, pct, completedBytes, totalBytes, speedBps, etaSeconds, state]
+          properties:
+            type:
+              type: string
+              enum: [job.progress]
+            jobId:
+              type: string
+            step:
+              type: [string, 'null']
+              description: Machine-readable stage, e.g. "probe" | "fetch" | "demux" | "vad" | "asr" | "structure".
+            pct:
+              type: [number, 'null']
+              description: 0..1. Null when the step genuinely cannot report a fraction.
+            completedBytes:
+              type: [integer, 'null']
+              format: int64
+              description: Byte counters, for transfer-shaped steps. Null for compute-shaped steps.
+            totalBytes:
+              type: [integer, 'null']
+              format: int64
+            speedBps:
+              type: [number, 'null']
+            etaSeconds:
+              type: [number, 'null']
+              description: >-
+                Seconds remaining. Only shown when there is a real basis, rounded to
+                "about X minutes" — never a false-precision countdown.
+            state:
+              $ref: '#/components/schemas/JobState'
+
+    JobStateEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, jobId, state, previousState]
+          properties:
+            type:
+              type: string
+              enum: [job.state]
+            jobId:
+              type: string
+            state:
+              $ref: '#/components/schemas/JobState'
+            previousState:
+              $ref: '#/components/schemas/JobState'
+
+    JobDoneEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, jobId, resultUid, resultKind]
+          properties:
+            type:
+              type: string
+              enum: [job.done]
+            jobId:
+              type: string
+            resultUid:
+              type: [string, 'null']
+              description: Primary entity produced, e.g. the note ULID.
+            resultKind:
+              type: [string, 'null']
+              enum: [note, transcript, mindmap, model, backend, null]
+
+    JobFailedEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, jobId, error, willRetry, nextProvider]
+          properties:
+            type:
+              type: string
+              enum: [job.failed]
+            jobId:
+              type: string
+            error:
+              $ref: '#/components/schemas/JobError'
+            willRetry:
+              type: boolean
+              description: Only toast when this is false — retries in flight should not nag.
+            nextProvider:
+              type: [string, 'null']
+
+    JobBlockedEvent:
+      description: >-
+        Job cannot proceed until a precondition is met (D-02 `jobs.blocked_code`).
+        `remediation` is what makes charter requirement 2.1 actually hold.
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, jobId, blockedCode, messageZh, message, remediation]
+          properties:
+            type:
+              type: string
+              enum: [job.blocked]
+            jobId:
+              type: string
+            blockedCode:
+              type: string
+            messageZh:
+              type: string
+            message:
+              type: string
+            remediation:
+              type: [object, 'null']
+              allOf:
+                - $ref: '#/components/schemas/Remediation'
+
+    ModelInstalledEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, modelId, active]
+          properties:
+            type:
+              type: string
+              enum: [model.installed]
+            modelId:
+              type: string
+            active:
+              type: boolean
+
+    ModelRemovedEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, modelId, freedBytes]
+          properties:
+            type:
+              type: string
+              enum: [model.removed]
+            modelId:
+              type: string
+            freedBytes:
+              type: integer
+              format: int64
+
+    ModelActivatedEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, role, modelId, previous]
+          properties:
+            type:
+              type: string
+              enum: [model.activated]
+            role:
+              type: string
+              enum: [asr, llm]
+            modelId:
+              type: [string, 'null']
+            previous:
+              type: [string, 'null']
+
+    BackendInstalledEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, packId, backend, selfTestPassed]
+          properties:
+            type:
+              type: string
+              enum: [backend.installed]
+            packId:
+              type: string
+            backend:
+              type: string
+            selfTestPassed:
+              type: [boolean, 'null']
+              description: null = self-test not run yet. false must raise a persistent warning.
+
+    BackendRemovedEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, packId, freedBytes]
+          properties:
+            type:
+              type: string
+              enum: [backend.removed]
+            packId:
+              type: string
+            freedBytes:
+              type: integer
+              format: int64
+
+    StorageChangedEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, usedBytes, freeBytes]
+          properties:
+            type:
+              type: string
+              enum: [storage.changed]
+            usedBytes:
+              type: integer
+              format: int64
+            freeBytes:
+              type: integer
+              format: int64
+
+    CatalogUpdatedEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, catalogVersion, source, stale]
+          properties:
+            type:
+              type: string
+              enum: [catalog.updated]
+            catalogVersion:
+              type: string
+            source:
+              type: string
+              enum: [remote, cache, bundled]
+            stale:
+              type: boolean
+
+    SourcesProbedEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, effective, probes]
+          properties:
+            type:
+              type: string
+              enum: [sources.probed]
+            effective:
+              type: string
+            probes:
+              type: array
+              items:
+                type: object
+                required: [id, ok, ttfbMs, throughputKbps]
+                properties:
+                  id:
+                    type: string
+                  ok:
+                    type: boolean
+                  ttfbMs:
+                    type: [number, 'null']
+                  throughputKbps:
+                    type: [number, 'null']
+
+    HardwareChangedEvent:
+      description: >-
+        Hardware or backend selection changed. Every cached fit verdict is now
+        stale — the client MUST refetch the model catalog, not just the hardware
+        panel.
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, hardware]
+          properties:
+            type:
+              type: string
+              enum: [hardware.changed]
+            hardware:
+              $ref: '#/components/schemas/HardwareInfo'
+
+    MediaReadyEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, noteUid, mediaUid, durationSec, title, hasVideo]
+          properties:
+            type:
+              type: string
+              enum: [media.ready]
+            noteUid:
+              type: string
+            mediaUid:
+              type: string
+            durationSec:
+              type: number
+            title:
+              type: [string, 'null']
+            hasVideo:
+              type: boolean
+
+    TranscribeStartedEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, transcriptUid, noteUid, modelId, durationSec, language]
+          properties:
+            type:
+              type: string
+              enum: [transcribe.started]
+            transcriptUid:
+              type: string
+            noteUid:
+              type: string
+            modelId:
+              type: string
+            durationSec:
+              type: number
+              description: Total audio duration, so the client can render a determinate progress bar.
+            language:
+              type: [string, 'null']
+
+    TranscribePartialEvent:
+      description: >-
+        Volatile in-progress hypothesis (F3 live capture). Explicitly NOT durable:
+        each partial REPLACES the previous one for the same `utteranceId` and is
+        superseded by the eventual `transcribe.segment`.
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, transcriptUid, utteranceId, text, startSec]
+          properties:
+            type:
+              type: string
+              enum: [transcribe.partial]
+            transcriptUid:
+              type: string
+            utteranceId:
+              type: string
+              description: Groups partials belonging to one utterance; replace-on-match.
+            text:
+              type: string
+            startSec:
+              type: number
+
+    TranscribeSegmentEvent:
+      description: >-
+        A finalised segment. Durable, ordered, append-only. `seq` must be respected:
+        apply strictly increasing, drop duplicates, and refetch the transcript on a gap.
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, transcriptUid, seq, startSec, endSec, text, speaker, confidence]
+          properties:
+            type:
+              type: string
+              enum: [transcribe.segment]
+            transcriptUid:
+              type: string
+            seq:
+              type: integer
+              description: Monotonic per transcript, starting at 0. A gap means events were missed.
+            startSec:
+              type: number
+            endSec:
+              type: number
+            text:
+              type: string
+            speaker:
+              type: [string, 'null']
+              description: Speaker label when diarization ran.
+            confidence:
+              type: [number, 'null']
+              description: Model confidence when the engine reports one.
+
+    TranscribeDoneEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, transcriptUid, noteUid, segmentCount, rtf, partial]
+          properties:
+            type:
+              type: string
+              enum: [transcribe.done]
+            transcriptUid:
+              type: string
+            noteUid:
+              type: string
+            segmentCount:
+              type: integer
+            rtf:
+              type: [number, 'null']
+              description: Measured real-time factor for this run; feeds the honest ETA.
+            partial:
+              type: boolean
+              description: >-
+                True when transcription ended early but earlier segments are still
+                valid; partial results must stay visible rather than being discarded.
+
+    RecordStateEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, recordingUid, state, elapsedSec, bytesWritten]
+          properties:
+            type:
+              type: string
+              enum: [record.state]
+            recordingUid:
+              type: string
+            state:
+              type: string
+              enum: [starting, recording, paused, finalizing, stopped, failed]
+            elapsedSec:
+              type: number
+            bytesWritten:
+              type: integer
+              format: int64
+              description: Bytes captured so far, for the disk-space warning.
+
+    MindmapDeltaEvent:
+      description: >-
+        Incremental mindmap construction: render progressively, do not spin for
+        60 seconds. Nodes arrive as the LLM streams structure.
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, mindmapUid, seq, nodes]
+          properties:
+            type:
+              type: string
+              enum: [mindmap.delta]
+            mindmapUid:
+              type: string
+            seq:
+              type: integer
+            nodes:
+              type: array
+              items:
+                type: object
+                required: [nodeKey, parentKey, text, sourceStartSec, sourceEndSec]
+                properties:
+                  nodeKey:
+                    type: string
+                    description: Stable in-document node key from D-02 `mindmap_nodes.node_key`.
+                  parentKey:
+                    type: [string, 'null']
+                  text:
+                    type: string
+                  sourceStartSec:
+                    type: [number, 'null']
+                    description: Source transcript segment range this node was derived from, when known.
+                  sourceEndSec:
+                    type: [number, 'null']
+
+    MindmapDoneEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, mindmapUid, noteUid, nodeCount]
+          properties:
+            type:
+              type: string
+              enum: [mindmap.done]
+            mindmapUid:
+              type: string
+            noteUid:
+              type: string
+            nodeCount:
+              type: integer
+
+    NoteCreatedEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, noteUid, title, folderUid]
+          properties:
+            type:
+              type: string
+              enum: [note.created]
+            noteUid:
+              type: string
+            title:
+              type: string
+            folderUid:
+              type: [string, 'null']
+
+    NoteUpdatedEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, noteUid, changed]
+          properties:
+            type:
+              type: string
+              enum: [note.updated]
+            noteUid:
+              type: string
+            changed:
+              type: array
+              description: Which aspects changed, so the client can invalidate narrowly.
+              items:
+                type: string
+                enum: [title, body, tags, folder, transcript, mindmap]
+
+    NoteDeletedEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, noteUid]
+          properties:
+            type:
+              type: string
+              enum: [note.deleted]
+            noteUid:
+              type: string
+
+    SyncRequiredEvent:
+      description: >-
+        The client's Last-Event-ID fell outside the replay buffer, so some events
+        are unrecoverable; the client must refetch the current view in full. A bulk
+        download can roll the 256-entry buffer quickly, so this is expected, not
+        exceptional.
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type, reason, oldestAvailableId]
+          properties:
+            type:
+              type: string
+              enum: [sync.required]
+            reason:
+              type: string
+              enum: [replay_buffer_overflow, server_restarted]
+            oldestAvailableId:
+              type: [integer, 'null']
+              description: Oldest id still replayable, for diagnostics.
+
+    KeepaliveEvent:
+      allOf:
+        - $ref: '#/components/schemas/SseEventBase'
+        - type: object
+          required: [type]
+          properties:
+            type:
+              type: string
+              enum: [keepalive]
+
+    # ---------------------------------------------------------------------
+    # api.ts
+    # ---------------------------------------------------------------------
+    CatalogVariant:
+      description: A catalog variant with its server-computed fit verdict attached.
+      allOf:
+        - $ref: '#/components/schemas/ModelEntry'
+        - type: object
+          required: [installed, fitness]
+          properties:
+            installed:
+              type: boolean
+            fitness:
+              $ref: '#/components/schemas/FitResult'
+              description: >-
+                Computed server-side. The web UI renders this and MUST NOT recompute
+                the rules — a second implementation would drift from fitness.ts.
+
+    CatalogGroupWithFitness:
+      type: object
+      required:
+        - groupId
+        - role
+        - family
+        - displayName
+        - displayNameZh
+        - descriptionZh
+        - descriptionEn
+        - languages
+        - tags
+        - license
+        - variants
+      properties:
+        groupId:
+          type: string
+        role:
+          $ref: '#/components/schemas/ModelRole'
+        family:
+          type: string
+        displayName:
+          type: string
+        displayNameZh:
+          type: string
+        descriptionZh:
+          type: string
+        descriptionEn:
+          type: string
+        languages:
+          type: array
+          items:
+            type: string
+        tags:
+          type: array
+          items:
+            type: string
+        license:
+          $ref: '#/components/schemas/LicenseInfo'
+        variants:
+          type: array
+          items:
+            $ref: '#/components/schemas/CatalogVariant'
+
+    GetCatalogResponse:
+      type: object
+      required: [catalogVersion, source, fetchedAt, stale, hardwareSnapshotId, groups]
+      properties:
+        catalogVersion:
+          type: string
+        source:
+          $ref: '#/components/schemas/CatalogSource'
+        fetchedAt:
+          type: string
+          format: date-time
+        stale:
+          type: boolean
+          description: True when serving a cached/bundled catalog; the UI shows an offline banner.
+        hardwareSnapshotId:
+          type: string
+          description: Identifies the hardware snapshot the fit verdicts were computed against.
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/CatalogGroupWithFitness'
+
+    GetInstalledResponse:
+      type: object
+      required: [models, active]
+      properties:
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstalledModel'
+        active:
+          type: object
+          description: Map of ModelRole to active model id (or null).
+          additionalProperties:
+            type: [string, 'null']
+
+    PullRequest:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+          description: Model id or backend-pack id.
+        kind:
+          type: string
+          enum: [model, backend-pack]
+        provider:
+          description: Force a specific source; "auto" runs the probe-ranked list.
+          oneOf:
+            - $ref: '#/components/schemas/ProviderId'
+            - type: string
+              enum: [auto]
+        includeOptional:
+          type: array
+          items:
+            type: string
+          description: Optional file roles to include, e.g. ["coreml-encoder"].
+        activateOnSuccess:
+          type: boolean
+        licenseAccepted:
+          type: boolean
+          description: >-
+            Required when the model's license has requiresAcceptance/gated set.
+            Restricted weights are never re-hosted, so the user must confirm they
+            have accepted upstream terms.
+
+    PullResponse:
+      type: object
+      required: [jobId, state, targetId, totalBytes, eventsUrl, deduplicated]
+      properties:
+        jobId:
+          type: string
+        state:
+          type: string
+        targetId:
+          type: string
+        totalBytes:
+          type: integer
+          format: int64
+        eventsUrl:
+          type: string
+        deduplicated:
+          type: boolean
+          description: True when an existing job for this target was returned instead of a new one.
+
+    GetJobsResponse:
+      type: object
+      required: [jobs, concurrencyLimit]
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/DownloadJob'
+        concurrencyLimit:
+          type: integer
+          description: Global concurrent-download limit currently in force.
+
+    ActivateRequest:
+      type: object
+      required: [role, id]
+      properties:
+        role:
+          $ref: '#/components/schemas/ModelRole'
+        id:
+          type: [string, 'null']
+          description: null clears the slot.
+
+    ActivateResponse:
+      type: object
+      required: [role, active, previous, reloadRequired]
+      properties:
+        role:
+          $ref: '#/components/schemas/ModelRole'
+        active:
+          type: [string, 'null']
+        previous:
+          type: [string, 'null']
+        reloadRequired:
+          type: boolean
+          description: Inference process must reload before the change takes effect.
+
+    GetActiveResponse:
+      type: object
+      required: [active]
+      properties:
+        active:
+          type: object
+          description: Map of ModelRole to active model id (or null).
+          additionalProperties:
+            type: [string, 'null']
+
+    StorageBreakdownItem:
+      type: object
+      required: [id, kind, displayName, bytes, active]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [model, backend-pack]
+        displayName:
+          type: string
+        bytes:
+          type: integer
+          format: int64
+        active:
+          type: boolean
+
+    GetStorageResponse:
+      type: object
+      required: [modelsRoot, volume, usedBytes, breakdown, reclaimable]
+      properties:
+        modelsRoot:
+          type: string
+        volume:
+          type: object
+          required: [freeBytes, totalBytes]
+          properties:
+            freeBytes:
+              type: integer
+              format: int64
+            totalBytes:
+              type: integer
+              format: int64
+        usedBytes:
+          type: integer
+          format: int64
+        breakdown:
+          type: array
+          items:
+            $ref: '#/components/schemas/StorageBreakdownItem'
+        reclaimable:
+          type: object
+          required: [orphanBlobsBytes, stalePartialsBytes, inactiveModelsBytes]
+          properties:
+            orphanBlobsBytes:
+              type: integer
+              format: int64
+            stalePartialsBytes:
+              type: integer
+              format: int64
+            inactiveModelsBytes:
+              type: integer
+              format: int64
+
+    GcRequest:
+      type: object
+      required: [targets]
+      properties:
+        targets:
+          type: array
+          items:
+            type: string
+            enum: [orphan_blobs, stale_partials]
+
+    GcResponse:
+      type: object
+      required: [freedBytes, removedFiles]
+      properties:
+        freedBytes:
+          type: integer
+          format: int64
+        removedFiles:
+          type: integer
+
+    SourceProbe:
+      type: object
+      required: [id, ok, ttfbMs, throughputKbps, probedAt, error]
+      properties:
+        id:
+          $ref: '#/components/schemas/ProviderId'
+        ok:
+          type: boolean
+        ttfbMs:
+          type: [number, 'null']
+        throughputKbps:
+          type: [number, 'null']
+        probedAt:
+          type: string
+          format: date-time
+        error:
+          type: [string, 'null']
+
+    GetSourcesResponse:
+      type: object
+      required: [selected, effective, probes]
+      properties:
+        selected:
+          description: User preference; "auto" means use probe ranking.
+          oneOf:
+            - $ref: '#/components/schemas/ProviderId'
+            - type: string
+              enum: [auto]
+        effective:
+          type: [string, 'null']
+          allOf:
+            - $ref: '#/components/schemas/ProviderId'
+          description: Provider actually in use right now.
+        probes:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceProbe'
+
+    SelectSourceRequest:
+      type: object
+      required: [provider]
+      properties:
+        provider:
+          oneOf:
+            - $ref: '#/components/schemas/ProviderId'
+            - type: string
+              enum: [auto]
+        baseUrl:
+          type: string
+          description: Base URL override, required when provider is "custom".
+
+    VerifyRequest:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+
+    ImportRequest:
+      description: Import a model from a local file, or a specific file within a Hugging Face repo.
+      oneOf:
+        - type: object
+          required: [kind, path, role]
+          properties:
+            kind:
+              type: string
+              enum: [local_file]
+            path:
+              type: string
+            role:
+              $ref: '#/components/schemas/ModelRole'
+        - type: object
+          required: [kind, repo, file, role]
+          properties:
+            kind:
+              type: string
+              enum: [hf_repo]
+            repo:
+              type: string
+            file:
+              type: string
+            role:
+              $ref: '#/components/schemas/ModelRole'
+            revision:
+              type: string
+      discriminator:
+        propertyName: kind
+
+    MigrateTargetCheckResponse:
+      type: object
+      required: [ok, path, freeBytes, requiredBytes, writable, sameVolume, reason]
+      properties:
+        ok:
+          type: boolean
+        path:
+          type: string
+        freeBytes:
+          type: integer
+          format: int64
+        requiredBytes:
+          type: integer
+          format: int64
+        writable:
+          type: boolean
+        sameVolume:
+          type: boolean
+        reason:
+          type: [string, 'null']
+
+    MigrateRequest:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+
+    BackendCatalogPack:
+      description: A backend pack annotated with catalog-serving fields.
+      allOf:
+        - $ref: '#/components/schemas/BackendPack'
+        - type: object
+          required: [installed, applicable, inapplicableReason, recommended]
+          properties:
+            installed:
+              type: boolean
+            applicable:
+              type: boolean
+              description: This pack matches the detected hardware.
+            inapplicableReason:
+              type: [string, 'null']
+              description: Why not applicable, when applicable=false.
+            recommended:
+              type: boolean
+
+    GetBackendCatalogResponse:
+      type: object
+      required: [catalogVersion, source, stale, packs]
+      properties:
+        catalogVersion:
+          type: string
+        source:
+          $ref: '#/components/schemas/CatalogSource'
+        stale:
+          type: boolean
+        packs:
+          type: array
+          items:
+            $ref: '#/components/schemas/BackendCatalogPack'
+
+    GetInstalledBackendsResponse:
+      type: object
+      required: [packs, selectedBackend]
+      properties:
+        packs:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstalledBackendPack'
+        selectedBackend:
+          $ref: '#/components/schemas/Backend'
+
+    GetHardwareResponse:
+      type: object
+      required: [hardware, snapshotId]
+      properties:
+        hardware:
+          $ref: '#/components/schemas/HardwareInfo'
+        snapshotId:
+          type: string
+
+    ApiErrorBody:
+      type: object
+      description: >-
+        Error envelope. Shape is {error:{code,message,messageZh,retryable,remediation}}
+        — deliberately not RFC 9457, because the client keys off `code` and needs
+        `remediation` as a first-class field rather than an extension member. The
+        frontend looks `code` up in its own message table first and falls back to
+        `messageZh`/`message`.
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, messageZh, retryable]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            messageZh:
+              type: string
+            retryable:
+              type: boolean
+            remediation:
+              type: [object, 'null']
+              allOf:
+                - $ref: '#/components/schemas/Remediation'
+              description: >-
+                Machine-readable corrective action. This is what makes charter
+                requirement 2.1 — "the user never touches a command line" — actually
+                achievable.
+            details: {}

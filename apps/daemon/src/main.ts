@@ -81,6 +81,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
   const server = createUnboundServer();
 
   let boundPort = 0;
+  let instanceIdRef = '';
   let database: AppDatabase | undefined;
   let queue: JobQueue | undefined;
   const lanes = new LanePool();
@@ -90,7 +91,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
   attachHttpHandlers(server, {
     sessions,
     sse,
-    instanceId: '', // 绑定成功后才有 instanceId，下面用闭包补上
+    instanceId: () => instanceIdRef,
     version: VERSION,
     dataDir: paths.dataDir,
     port: () => boundPort,
@@ -136,9 +137,8 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
 
   boundPort = outcome.port;
   const instanceId = outcome.instanceId;
+  instanceIdRef = instanceId;
 
-  // instanceId 在绑定后才产生 → 重挂一次 handler 的 status 闭包成本更高，
-  // 这里直接用一个可变引用（server.ts 通过 deps.status() 每次现算）。
   attachWebSocket(server, { sessions, port: () => boundPort });
 
   try {
