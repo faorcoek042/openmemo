@@ -45,6 +45,7 @@ import {
 import { sendError, sendJson } from '../respond.js';
 import type { SseHub } from '../sse.js';
 import { handleBackendRoutes, startPackInstall } from './backends.js';
+import { createComponentRoutes, resolveComponentRegistryPath } from './components.js';
 import { currentArch } from './hardware.js';
 import { handleJobRoutes, toPullResponse } from './jobs.js';
 import { resolveManifestDir } from './manifests.js';
@@ -87,7 +88,11 @@ function owns(pathname: string): boolean {
     pathname === '/api/runtime/hardware' ||
     pathname.startsWith('/api/models/') ||
     pathname.startsWith('/api/jobs') ||
-    pathname.startsWith('/api/backends/')
+    pathname.startsWith('/api/backends/') ||
+    // 组件清单与更新：**挂在这里而不是单独一个 router**，因为它要用同一个 RestState
+    // （同一个 ArtifactStore + 同一个下载队列）。再造一个会有两份 store 状态。
+    pathname === '/api/components' ||
+    pathname.startsWith('/api/components/')
   );
 }
 
@@ -104,6 +109,9 @@ export function createModelRoutes(deps: ModelRoutesDeps): ModelRoutes {
    * 不该在进程启动路径上做（daemon 的启动序列对时间敏感）。失败时清掉缓存，
    * 让下一次请求重试，而不是把一个 rejected promise 永久钉在这里。
    */
+  const componentRoutes = createComponentRoutes({
+    registryPath: resolveComponentRegistryPath(),
+  });
   let statePromise: Promise<RestState> | null = null;
   const getState = (): Promise<RestState> => {
     statePromise ??= RestState.create(deps).catch((err: unknown) => {
@@ -120,6 +128,9 @@ export function createModelRoutes(deps: ModelRoutesDeps): ModelRoutes {
 
       const state = await getState();
 
+      if (p === '/api/components' || p.startsWith('/api/components/')) {
+        return componentRoutes.handle(req, res, url, method, state);
+      }
       if (p.startsWith('/api/jobs')) return handleJobRoutes(state, res, p, method);
       if (p.startsWith('/api/backends/')) {
         return handleBackendRoutes(state, req, res, p, method);

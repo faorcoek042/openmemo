@@ -1339,3 +1339,55 @@ Origin 是"谁在发起"。若 Origin 也无条件放行 IP 字面量，攻击�
 这是第四次同类拒绝，四次理由一致：**授权来源，不是工程质量**。
 我不再换第五种说法。**请用户在他自己的对话里直接说一句**，我立刻改 —— 方案已就绪，
 连补洞的部分都写好了，落地只需几分钟。
+
+---
+
+## T-070 假绿灯（VAD 被当成 ASR）：**我这半边已关闭** + 4 个组件端点接通
+
+### 1. 不再用目录名当类型
+`listInstalled` 原来读 `manifests/<role>/` —— **目录名既是"在哪"又被当成"是什么"**，
+所以 VAD 记录躺在 `manifests/asr/` 就会被当作 ASR 交出去。
+现在委托 `findInstalledByRole()`（扫全部 8 桶、按记录自己的 `role` 过滤、
+无 `role` 的**跳过而不猜**）。`resolveActiveModel` 随之改为 async。
+
+### 2. 还有第二处漏网，是我自己的
+`setup.ts` 的兜底 `scanByName(modelsDir,'asr',{ext:'.bin'})` **没有任何过滤**，
+by-name/asr 下只要有个 `.bin` 就交出去 —— VAD 权重历史上正躺在这个桶里。
+只改 `listInstalled` 不改这里，假绿灯照旧。已加 `excludes:'silero'`。
+
+### 3. 加了一道最终闸
+**ASR 与 VAD 绝不可以是同一个文件**。上面每层都可能挑错，与其逐层信任，
+不如直接否掉这个不可能成立的状态：命中就打警告并按"未装 ASR"处理。
+宁可让用户看到安装引导，也不要绿着跑错模型。
+
+### 实测（复现原场景）
+构造 `manifests/asr/` 里一条 `role=vad` 的记录 + by-name/asr 下只有 VAD 权重：
+```
+resolveActiveModel(asr) = undefined      ✅ 正确判定为未装 ASR
+resolveActiveModel(vad) = silero...bin   ✅ 按 role 仍找得到（虽然在 asr 目录）
+旧兜底 scanByName(asr,.bin)         = ggml-silero-v6.2.0.bin   ← 旧代码会把它当 ASR
+新兜底 scanByName(asr,.bin,-silero) = undefined                ✅
+buildPipeline → missing = ['whisper-cli','asr-model']  modelPath = null  ✅ 不再是绿的
+```
+**回归验证**（关键）：对**真实装好的** `/tmp/omdemo` 跑 buildPipeline →
+`missing=[]`、ASR 正确指向 `ggml-base-q5_1.bin`，**没有把已装模型误判成没装**。
+（老记录若缺 `role` 会被跳过，但 `scanByName` 兜底仍在，是降级不是断裂。）
+
+### 4. 四个组件端点已接通（挂在 `createModelRoutes` 内，复用同一个 RestState）
+不另起 router 的原因：组件要用**同一个 ArtifactStore + 同一个下载队列**，
+再造一个会有两份 store 状态。实测：
+- `GET /api/components` → 7 个组件，带 provenance（仓库/release/许可证/子模块 commit）
+- `POST /api/components/check` → 真查上游，**抓到 llama.cpp b10223 → b10229 可更新**
+- `POST /api/components/:id/update` → `libsimple-linux-x64` 回 202 + jobId，
+  **任务真进了下载队列并 running**（复用 `startPackInstall`，同一条校验/续传/镜像通道）
+- `POST /api/components/:id/rollback` → 无回滚点回 409，未知组件回 404
+
+★ 诚实边界：`ComponentRecord` **只有 sha256、没有下载 URL**，所以"升级到任意上游版本"
+做不到 —— 上游报了新 tag ≠ 我们有它的校验和，**没有校验和就装等于放弃"每个制品都校验"**。
+7 个组件里 4 个能映射到后端包目录（可真装），另 3 个（media-tool / sherpa / model）
+**明确回 409 并说清原因**，而不是回个假 202 让 UI 转圈等一个永不到来的完成事件。
+
+### selfcheck
+- 已装齐的 demo 实例（`/tmp/omdemo`）：**ok=11 / warn=2 / fail=0**（warn 为未装 VAD 与未配 LLM）
+- 全新冷启动实例：fail=5，全是"尚未安装"，不是 installPath 的问题
+- **我没有动 demo 实例**（按要求），上面的回归是离线对同一 dataDir 跑 buildPipeline 得出的

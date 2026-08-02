@@ -22,6 +22,8 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { ArtifactStore, findInstalledByRole } from '@openmemo/downloader';
+
 /** `active.json` 的形状：role → 已激活的模型 id（未激活为 null）。 */
 type ActiveMap = Partial<Record<string, string | null>>;
 
@@ -57,23 +59,24 @@ function readJson<T>(file: string): T | undefined {
   }
 }
 
-/** 列出某 role 下所有**校验通过**的安装记录。 */
-export function listInstalled(modelsDir: string, role: string): InstallRecord[] {
-  const dir = join(modelsDir, 'manifests', role);
-  let names: string[];
-  try {
-    names = readdirSync(dir);
-  } catch {
-    return [];
-  }
-  const out: InstallRecord[] = [];
-  for (const n of names) {
-    if (!n.endsWith('.json')) continue;
-    const rec = readJson<InstallRecord>(join(dir, n));
-    // integrity 不是 'ok' 的记录一律不用 —— 宁可报"没装"，也不要拿一个校验失败的权重去推理
-    if (rec && rec.integrity === 'ok') out.push(rec);
-  }
-  return out;
+/**
+ * 列出某 role 下所有**校验通过**的安装记录。
+ *
+ * **判据是记录自己的 `role` 字段，不是它所在的目录名。**
+ *
+ * 原来这里读 `manifests/<role>/`，用目录名当类型。当时 StoreKind 只有 3 个桶、
+ * 而 ModelRole 有 7 个，VAD 没有自己的桶只能塞进 `manifests/asr/` ——
+ * 于是 `listInstalled(dir,'asr')` 会把 **VAD 模型当成 ASR 模型交出去**，
+ * whisper 拿着 VAD 网络去转写，而 `pipeline.missing` 一路是绿的。
+ * **绿灯和错误来自同一个事实**：目录名既是"在哪"又被当成"是什么"。
+ *
+ * 现在委托给 `findInstalledByRole()`：它扫**全部 8 个桶**再按 `role` 过滤，
+ * 放错目录的记录仍被正确分类，没有 `role` 的记录**直接跳过而不是猜** ——
+ * 猜正是这个 bug 的成因，宁可显式报"没装"。
+ */
+export async function listInstalled(modelsDir: string, role: string): Promise<InstallRecord[]> {
+  const store = new ArtifactStore(modelsDir);
+  return (await findInstalledByRole(store, role, { requireIntegrityOk: true })) as InstallRecord[];
 }
 
 /**
@@ -112,11 +115,14 @@ function weightsPathOf(modelsDir: string, rec: InstallRecord): string | undefine
  * 顺序：`active.json` 指定的 → 该 role 下任意一个已装且完好的。
  * 都没有则返回 undefined（调用方应把 job 转 `blocked` 并给出安装引导，而不是硬失败）。
  */
-export function resolveActiveModel(modelsDir: string, role: string): ResolvedModel | undefined {
+export async function resolveActiveModel(
+  modelsDir: string,
+  role: string,
+): Promise<ResolvedModel | undefined> {
   const active = readJson<ActiveMap>(join(modelsDir, 'active.json'));
   const wantedId = active?.[role] ?? null;
 
-  const installed = listInstalled(modelsDir, role);
+  const installed = await listInstalled(modelsDir, role);
 
   if (wantedId) {
     const rec = installed.find((r) => r.id === wantedId);
@@ -141,7 +147,7 @@ export function resolveActiveModel(modelsDir: string, role: string): ResolvedMod
 export function scanByName(
   modelsDir: string,
   kind: string,
-  opts: { readonly ext: string; readonly includes?: string },
+  opts: { readonly ext: string; readonly includes?: string; readonly excludes?: string },
 ): string | undefined {
   const dir = join(modelsDir, 'by-name', kind);
   let names: string[];
@@ -153,6 +159,9 @@ export function scanByName(
   const hit = names
     .filter((n) => n.endsWith(opts.ext))
     .filter((n) => (opts.includes ? n.toLowerCase().includes(opts.includes) : true))
+    // 排除项存在的理由：这个兜底是"没有安装记录时按文件名猜"，
+    // 而猜错的代价是把 VAD 权重当 ASR 交出去（静默跑错模型）。
+    .filter((n) => (opts.excludes ? !n.toLowerCase().includes(opts.excludes) : true))
     .sort();
   return hit[0] ? join(dir, hit[0]) : undefined;
 }

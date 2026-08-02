@@ -125,12 +125,14 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
    * VAD 模型：先读安装记录（role='vad'），再退到 by-name 扫描，最后才是环境变量/旧路径。
    * **不写死 `ggml-silero-v6.2.0.bin`** —— 版本一变就找不到了（ADR-014 ②）。
    */
-  const vadInstalled = resolveActiveModel(dirs.modelsDir, 'vad');
+  const vadInstalled = await resolveActiveModel(dirs.modelsDir, 'vad');
   const tools: ToolPaths = {
     ...discovered,
     vadModel:
       firstExisting(env['OPENMEMO_VAD_MODEL']) ??
       vadInstalled?.path ??
+      // 老布局里 VAD 曾被塞进 asr 桶，兜底时两个桶都看，但**必须带 silero 关键词**
+      scanByName(dirs.modelsDir, 'vad', { ext: '.bin', includes: 'silero' }) ??
       scanByName(dirs.modelsDir, 'asr', { ext: '.bin', includes: 'silero' }) ??
       firstExisting(join(dirs.modelsDir, 'ggml-silero-v6.2.0.bin')),
   };
@@ -147,13 +149,32 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
    * 而旧代码只找 `ggml-base.en.bin` / `ggml-base.bin`，于是"装成功了仍然找不到"。
    * 顺序：环境变量（开发用）> active.json 指定的 > 任意已装且完好的 > by-name 扫描。
    */
-  const asrInstalled = resolveActiveModel(dirs.modelsDir, 'asr');
+  const asrInstalled = await resolveActiveModel(dirs.modelsDir, 'asr');
   const modelPath =
     firstExisting(env['OPENMEMO_ASR_MODEL']) ??
     asrInstalled?.path ??
-    scanByName(dirs.modelsDir, 'asr', { ext: '.bin' }) ??
+    // **排除 silero**：没有安装记录时这里会把 by-name/asr 下任意 .bin 交出去，
+    // 而 VAD 权重历史上就躺在这个桶里 —— 不排除就等于把 VAD 当 ASR 发出去。
+    scanByName(dirs.modelsDir, 'asr', { ext: '.bin', excludes: 'silero' }) ??
     null;
-  if (!modelPath) missing.push('asr-model');
+
+  /*
+   * 最后一道闸：**ASR 与 VAD 绝不可以是同一个文件**。
+   *
+   * 这个 bug 的杀伤力全在"静默"上 —— whisper 拿 VAD 网络去转写，
+   * 而 pipeline.missing 是空的、健康检查全绿，用户只看到转写结果是垃圾。
+   * 与其相信上面每一层都挑对了，不如在这里直接否掉这个不可能成立的状态：
+   * 宁可显式报 `asr-model` 缺失（用户会看到安装引导），也不要绿着跑错模型。
+   */
+  const asrIsActuallyVad =
+    modelPath !== null && tools.vadModel !== undefined && modelPath === tools.vadModel;
+  if (asrIsActuallyVad) {
+    console.warn(
+      `[daemon] ⚠️ ASR 模型解析到了 VAD 权重（${modelPath}）—— 拒绝使用，按"未安装 ASR 模型"处理`,
+    );
+  }
+  const asrModelPath = asrIsActuallyVad ? null : modelPath;
+  if (!asrModelPath) missing.push('asr-model');
 
   const registry = buildDefaultRegistry({
     tools,
@@ -283,7 +304,7 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
         pipeline,
         engineId: 'whisper.cpp',
         reason: 'fallback: 无可用候选',
-        modelPath,
+        modelPath: asrModelPath,
       };
     }
     let p = pipelineCache.get(sel.engineId);
@@ -301,7 +322,7 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
      * `Please pass *.onnx ... Given '.../ggml-base.en.bin'` —— 实测踩过。
      */
     const enginePaths: Record<string, string | null> = {
-      'whisper.cpp': modelPath,
+      'whisper.cpp': asrModelPath,
       paraformer: paraformerModelPath,
       'sherpa-onnx': streamDir ?? null,
     };
@@ -309,7 +330,7 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
       pipeline: p,
       engineId: sel.engineId,
       reason: sel.reason,
-      modelPath: enginePaths[sel.engineId] ?? modelPath,
+      modelPath: enginePaths[sel.engineId] ?? asrModelPath,
     };
   };
 
@@ -332,7 +353,7 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
     registry,
     pipeline,
     missing,
-    modelPath,
+    modelPath: asrModelPath,
     candidates,
     pickEngine,
     pipelineFor,
