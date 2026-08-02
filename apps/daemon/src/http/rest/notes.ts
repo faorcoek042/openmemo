@@ -47,6 +47,22 @@ interface ImportBody {
   kind?: unknown;
 }
 
+/**
+ * `words_json` → 词级时间戳数组。
+ *
+ * 存的是 JSON 字符串，直接发出去前端拿到的是一根字符串而不是数组。
+ * 解析失败一律回 null（当作"没有词级时间戳"），**绝不把坏数据当成有效结果发出去**。
+ */
+function parseWords(raw: string | null): unknown[] | null {
+  if (!raw) return null;
+  try {
+    const v: unknown = JSON.parse(raw);
+    return Array.isArray(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 export function createNoteRoutes(deps: NoteRoutesDeps): {
   handle(req: IncomingMessage, res: ServerResponse, url: URL, method: string): Promise<boolean>;
 } {
@@ -286,7 +302,32 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
             confidence: s.confidence,
             chunkIdx: s.chunk_idx,
             flags: s.flags,
+            /*
+             * **`editedAt` 是权威字段**，`edited` 只是它的布尔投影。
+             *
+             * 之前只发 `edited`，而前端类型声明的是 `editedAt` —— 两边各认一个名字，
+             * 结果前端恒判"没人编辑过"。这类字段名裂缝不会让任何测试变红，
+             * 只会让功能悄悄失效（"已保留"徽标永远不亮）。
+             * 统一到 `editedAt` 的理由：它同时是 `mergeTranscripts` 判"要不要保留"的依据，
+             * 两边用同一个事实，不再需要各自推导。
+             */
+            editedAt: s.edited_at,
             edited: s.edited_at !== null,
+            /*
+             * `words` / `speakerLabel` 之前根本没发出去，于是前端的词级高亮徽标
+             * **恒判"无逐字时间戳"** —— whisper 路径本来是有词级时间戳的，
+             * 降级徽标却一直亮着，用户永远看不到词级高亮。
+             * ADR-013 说的是"中文 Paraformer 无词级时间戳要降级"，
+             * 不是"所有路径都没有"。null 与"字段不存在"必须区分开。
+             */
+            words: parseWords(s.words_json),
+            /*
+             * 说话人分离（`speakers` 表 + `segments.speaker_id`）**尚未接线** ——
+             * 所以这里如实发 `null`，而不是省掉字段。
+             * 省掉的话前端分不清"没有说话人信息"和"这条响应压根不带这个字段"，
+             * 上一个 bug（`edited` vs `editedAt`）就是这么来的。
+             */
+            speakerLabel: null,
           }));
           sendJson(res, 200, {
             transcript: {
@@ -341,6 +382,14 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
             assets,
             transcriptUid: tr?.uid ?? null,
             segmentCount: tr?.segment_count ?? 0,
+            /*
+             * 能不能重跑，**由 daemon 判定并明说**，前端不要自己猜。
+             *
+             * 真实前提只有一条：这条笔记记录了原始输入（`media_sources.input_url`）。
+             * 早期本地导入把它存成 null，那种笔记重跑必然 409 ——
+             * 让按钮亮着然后报错，不如一开始就告诉前端它不可用。
+             */
+            canRetranscribe: repos.primarySourceOf(note.id)?.input_url != null,
             createdAt: new Date(note.created_at).toISOString(),
           });
           return true;

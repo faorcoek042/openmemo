@@ -264,6 +264,17 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
          * runner 里的 `resumableTranscript()` 会复用未完成的稿并跳过已完成的 chunk ——
          * 这正是"取消之后接着跑"的路径（D-01 §4.5）。
          */
+        /*
+         * ★ 必须带上**上一份稿的 id**，否则重跑会整篇覆盖、用户的编辑被静默抹掉。
+         *
+         * 两阶段合并（`mergeTranscripts`）只在 `mergeWithTranscriptId` 有值时才跑，
+         * 而在此之前**全仓只有录音会话传它**，REST 这条重跑通道不传 ——
+         * 于是"编辑过的段落在重跑后保留"这条被实测验证过的规则，
+         * **在产品主路径上根本不成立**。用户改过的字，重跑一次就没了，且没有任何提示。
+         * 这是"验证过但走不到"的又一例，而这次的代价是用户数据。
+         */
+        const previous = repos.activeTranscriptOfNote(note.id);
+
         const job = queue.enqueue({
           type: 'transcribe',
           lane: 'gpu.asr',
@@ -273,6 +284,7 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
             noteId: note.id,
             input: src.input_url,
             language,
+            ...(previous ? { mergeWithTranscriptId: previous.id } : {}),
             // 重新转写是"上次结果不对"的补救通道，用户往往正是要换引擎/模型/加 prompt
             engineId: typeof body?.engineId === 'string' ? body.engineId : null,
             modelId: typeof body?.modelId === 'string' ? body.modelId : null,

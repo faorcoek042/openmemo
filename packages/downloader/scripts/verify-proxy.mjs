@@ -151,7 +151,7 @@ console.log('\n[2] 真 HTTP CONNECT 代理：流量确实走了代理');
 {
   const px = await startHttpProxy();
   const cfg = { ...DEFAULT_PROXY_CONFIG, mode: 'manual', httpsProxy: `http://127.0.0.1:${px.port}`, httpProxy: `http://127.0.0.1:${px.port}` };
-  const rep = await testProxyConnectivity(cfg, { targets: TARGET, timeoutMs: 25_000 });
+  const rep = await testProxyConnectivity(cfg, { targets: TARGET, timeoutMs: 15_000 });
   const p = rep.probes[0];
   check('通过 HTTP 代理访问 HF 成功', p.result === 'ok', `status=${p.httpStatus} ${p.elapsedMs}ms`);
   check('报告标明确实走了代理', p.viaProxy === true);
@@ -164,7 +164,7 @@ console.log('\n[3] 真 SOCKS5 代理');
 {
   const px = await startSocks5Proxy();
   const cfg = { ...DEFAULT_PROXY_CONFIG, mode: 'manual', socks5: `socks5://127.0.0.1:${px.port}` };
-  const rep = await testProxyConnectivity(cfg, { targets: TARGET, timeoutMs: 25_000 });
+  const rep = await testProxyConnectivity(cfg, { targets: TARGET, timeoutMs: 15_000 });
   const p = rep.probes[0];
   check('通过 SOCKS5 访问 HF 成功', p.result === 'ok', `status=${p.httpStatus} ${p.elapsedMs}ms`);
   check('SOCKS5 端真的看到了隧道', px.state.tunnels.length > 0, px.state.tunnels.join(','));
@@ -187,11 +187,13 @@ console.log('\n[4] 关键区分：代理挂了 ≠ 上游挂了');
 {
   const px = await startHttpProxy();
   const cfg = { ...DEFAULT_PROXY_CONFIG, mode: 'manual', httpsProxy: `http://127.0.0.1:${px.port}` };
+  const t = Date.now();
   const rep = await testProxyConnectivity(cfg, {
     targets: [{ target: '不存在的上游', url: 'https://no-such-host.invalid/x' }],
-    timeoutMs: 8000,
+    timeoutMs: 5000,
   });
   const p = rep.probes[0];
+  check('探针在限期内返回，不会挂死（按钮不能一直转）', Date.now() - t < 20_000, `${Date.now() - t}ms`);
   check('代理通、上游不通时判定为 upstream_unreachable', p.result === 'upstream_unreachable', p.detail?.slice(0, 60) ?? '');
   check('且 proxyReachable 仍为 true（不冤枉代理）', rep.proxyReachable === true);
   px.close();
@@ -201,7 +203,7 @@ console.log('\n[5] 代理认证');
 {
   const px = await startHttpProxy({ requireAuth: true });
   const good = { ...DEFAULT_PROXY_CONFIG, mode: 'manual', httpsProxy: `http://u:p@127.0.0.1:${px.port}` };
-  const r1 = await testProxyConnectivity(good, { targets: TARGET, timeoutMs: 25_000 });
+  const r1 = await testProxyConnectivity(good, { targets: TARGET, timeoutMs: 15_000 });
   check('带认证的代理 URL 能通过', r1.probes[0].result === 'ok', `status=${r1.probes[0].httpStatus}`);
   const bad = { ...DEFAULT_PROXY_CONFIG, mode: 'manual', httpsProxy: `http://u:wrong@127.0.0.1:${px.port}` };
   const r2 = await testProxyConnectivity(bad, { targets: TARGET, timeoutMs: 8000 });
@@ -240,7 +242,7 @@ console.log('\n[7] 两个独立动作：代理测试 vs 下载源延迟表');
   check('下载源表覆盖 4 个源', DOWNLOAD_SOURCE_TARGETS.length === 4, DOWNLOAD_SOURCE_TARGETS.map((s) => s.provider).join('/'));
   const px = await startHttpProxy();
   const cfg = { ...DEFAULT_PROXY_CONFIG, mode: 'manual', httpsProxy: `http://127.0.0.1:${px.port}` };
-  const rep = await measureDownloadSources(cfg, { timeoutMs: 20_000 });
+  const rep = await measureDownloadSources(cfg, { timeoutMs: 10_000 });
   check('延迟表逐源给出结果', rep.rows.length === 4);
   for (const r of rep.rows) {
     console.log(`        ${r.label.padEnd(16)} ${r.reachable ? String(r.latencyMs) + 'ms' : '不可达'}${r.viaProxy ? ' (经代理)' : ''}${r.detail ? '  ' + r.detail.slice(0, 40) : ''}`);

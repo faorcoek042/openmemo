@@ -1530,3 +1530,59 @@ while you were working」开头。**我从未收到过一条真正来自用户�
 云 LLM 代理接线、Gemini 原生适配器、每功能选模型（`purpose`）——本轮没动。
 其中**每功能选模型我认为值得做**（接口加 `purpose` 成本低），但要 `packages/llm` 与设置页同步改，
 建议单开一轮。
+
+---
+
+## T-083 ① 重跑抹掉用户编辑：**修好了，但根因不止 architect 指的那一处**
+
+按他说的补上 `mergeWithTranscriptId` 只是第一步。实测下来一共**三个 bug 叠在一起**，
+少修任何一个，用户的编辑都保不住。
+
+### bug 1：REST 重跑不传 `mergeWithTranscriptId`（architect 指出的）
+已补：`content.ts` 用 `repos.activeTranscriptOfNote(note.id)` 取上一份稿传下去。
+runner 侧同时加了 `!== transcript.id` 的守卫 —— 因为 `resumableTranscript()` 可能
+**复用同一份稿**继续写，那时 draft 和 rerun 会是同一批行，自己跟自己合并。
+
+### bug 2：★ 重跑**整条通道本来就是失败的**（没人发现过）
+补完 bug 1 后实测重跑，job 直接 `failed`：
+```
+error_code: RUNNER_ERROR
+error_detail: UNIQUE constraint failed: media_assets.rel_path
+```
+重跑会把媒体归一化到**完全相同的路径**，第二次插 `media_assets` 撞唯一约束。
+而且失败发生在**转写跑完之后** —— 用户看到的是"转了半天最后报错，稿子还是旧的"。
+修：`createAsset` 改为幂等（同一 `rel_path` 即同一份资产，已存在就返回）。
+**这条与合并无关，是重跑功能自身从来就没跑通过。**
+
+### bug 3：★★ 编辑只能活过**一次**重跑（最隐蔽的一个）
+修完 1+2 后测：改 → 重跑 → 文本还在 ✅。**看起来已经修好了。**
+但 `editedAt` 回来是 `null` —— 合并写回时把"这段是用户改过的"这个事实弄丢了。
+于是**第二次重跑就把它当成没人编辑过而覆盖**。我又跑了一次，果然没了：
+```
+第 1 次重跑 → 编辑✅仍在  第 2 次重跑 → ❌ 已丢
+```
+**只测一次重跑会以为已经修好**，这正是最难发现的那类数据丢失。
+修：`SegmentInput` 加 `editedAt` 并写进 INSERT；runner 从 `merged.decisions`
+（类型上就带 `MergeableSegment`）取 preserved 段的 `editedAt` 写回。
+**没有用 `as` 去读 `merged.segments` 上不存在的字段** —— 那是 SSE 那次把编译器消音的老路。
+
+### 最终实测（干净数据目录，完整走一遍）
+```
+编辑完成 editedAt=1785700531018
+第 1 次重跑 → 编辑✅仍在  editedAt=1785700531018
+第 2 次重跑 → 编辑✅仍在  editedAt=1785700531018
+```
+**编辑真的保住了，且 editedAt 原样保留** → `architect` 可以换回「已保留」徽标了。
+
+## ② 三条契约裂缝已补（他标的 [读码] 我都实测确认了）
+- `edited` vs `editedAt`：**两个都发**，`editedAt` 为权威（它也是 mergeTranscripts 的判据），
+  `edited` 保留为布尔投影，前端两种写法都不会恒假。
+- `words`：之前**根本没发**。实测 whisper 路径 `words` **确实是数组** ——
+  也就是说词级高亮徽标此前**恒判"无逐字时间戳"**，用户永远看不到词级高亮，
+  architect 的怀疑成立。已发出（`words_json` 解析失败一律回 null，不发坏数据）。
+- `speakerLabel`：说话人分离尚未接线，**如实发 `null` 而不是省掉字段** ——
+  省掉会让前端分不清"没有说话人"和"响应里压根没这个字段"，`edited` 那个 bug 就是这么来的。
+- `NoteDetail.canRetranscribe`：按**真实前提**判定（`media_sources.input_url` 非空），
+  不让前端猜，也不让按钮亮着然后 409。
+
+移动测试仍 13/13，其余非端口测试全绿；demo 全程只读未重启；测试实例与临时目录已收尾。

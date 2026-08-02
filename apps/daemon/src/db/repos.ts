@@ -132,6 +132,15 @@ export interface SegmentInput {
   words: unknown[] | null;
   chunkIdx: number;
   flags: number;
+  /**
+   * 编辑时间戳。**合并写回时必须带上**，否则"这段是用户改过的"这个事实会丢。
+   *
+   * 丢了的后果很隐蔽：第一次重跑编辑还在（合并逻辑保住了文本），
+   * 但写回时 `edited_at` 变 null，于是**第二次重跑就把它当成没人编辑过而覆盖掉**。
+   * 实测过：改 → 重跑 → 还在；再重跑 → 没了。
+   * 只测一次重跑会以为已经修好，这正是最难发现的那类数据丢失。
+   */
+  editedAt?: number | null;
 }
 
 export class Repos {
@@ -281,6 +290,20 @@ export class Repos {
     now?: number;
   }): AssetRow {
     const now = p.now ?? Date.now();
+    /*
+     * **幂等**：同一个 rel_path 就是同一份资产，已存在就直接返回它。
+     *
+     * 不做这一步会让「重新转写」整条通道死掉：重跑会把媒体归一化到**完全相同的路径**，
+     * 于是第二次插入撞 `UNIQUE constraint failed: media_assets.rel_path`，
+     * 整个 job 以 RUNNER_ERROR 失败 —— 而失败发生在转写**跑完之后**，
+     * 用户看到的是"转了半天最后报错，稿子还是旧的"。
+     * 实测：REST 重跑 100% 失败在这里（`error_detail` 就是这条约束）。
+     */
+    const existing = this.db
+      .prepare<AssetRow>(`SELECT * FROM media_assets WHERE rel_path = :rel`)
+      .get({ rel: p.relPath });
+    if (existing) return existing;
+
     const r = this.db
       .prepare(
         `INSERT INTO media_assets(uid, note_id, source_id, role, rel_path, display_name, mime,
@@ -446,8 +469,8 @@ export class Repos {
 
       const stmt = this.db.prepare(
         `INSERT INTO transcript_segments(transcript_id, seq, start_ms, end_ms, text, confidence,
-                                         no_speech_prob, words_json, chunk_idx, flags)
-         VALUES (:t, :seq, :s, :e, :text, :conf, :nsp, :words, :chunk, :flags)`,
+                                         no_speech_prob, words_json, chunk_idx, flags, edited_at)
+         VALUES (:t, :seq, :s, :e, :text, :conf, :nsp, :words, :chunk, :flags, :edited)`,
       );
       let seq = start;
       for (const s of segments) {
@@ -462,6 +485,7 @@ export class Repos {
           words: s.words ? JSON.stringify(s.words) : null,
           chunk: s.chunkIdx,
           flags: s.flags,
+          edited: s.editedAt ?? null,
         });
       }
       this.db

@@ -51,7 +51,19 @@ export function QuantSelector({ variants, selectedId, onSelect, locale }: QuantS
       {open ? (
         <div
           role="listbox"
-          className="absolute z-20 mt-1 w-[26rem] max-w-[85vw] rounded-lg border border-line bg-surface-2 p-1 shadow-lg"
+          className={cn(
+            'absolute z-20 mt-1 w-[26rem] rounded-lg border border-line bg-surface-2 p-1 shadow-lg',
+            /*
+             * Narrow screens: anchor to the viewport instead of to the button.
+             *
+             * The panel is 26rem wide and starts at the button's left edge, so on a phone
+             * it ran 178px past the right edge — `max-w-[85vw]` capped the WIDTH but a
+             * capped box still starts in the same place, so it clipped just the same.
+             * Below `sm` we switch to fixed with equal gutters, which also lifts it out of
+             * any clipping ancestor.
+             */
+            'max-sm:fixed max-sm:inset-x-3 max-sm:w-auto',
+          )}
         >
           <div className="grid grid-cols-[auto_5.5rem_5.5rem_1fr] gap-x-3 border-b border-line px-2 pb-1.5 text-[11px] text-ink-muted">
             <span>量化</span>

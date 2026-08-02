@@ -298,7 +298,16 @@ export async function runTranscribeJob(
    * 重跑新发现的新增。匹配按**时间重叠**不按索引 —— 两遍模型切分天然不同。
    */
   let mergeSummary: string | undefined;
-  if (payload.mergeWithTranscriptId !== undefined) {
+  /*
+   * `!== transcript.id` 这个判断不能省：REST 重跑传的是"当前活跃稿"的 id，
+   * 而 runner 可能通过 `resumableTranscript()` **复用同一份稿**继续写。
+   * 那种情况下 draft 和 rerun 会是同一行集合，自己跟自己合并没有意义，
+   * 还会把刚写进去的段落当成"草稿"再处理一遍。
+   */
+  if (
+    payload.mergeWithTranscriptId !== undefined &&
+    payload.mergeWithTranscriptId !== transcript.id
+  ) {
     const draftRows = repos.segmentsOf(payload.mergeWithTranscriptId);
     const rerunRows = repos.segmentsOf(transcript.id);
     if (draftRows.length > 0) {
@@ -327,6 +336,20 @@ export async function runTranscribeJob(
         speakerLabel: null,
       }));
       const merged = mergeTranscripts(draft, rerun);
+      /*
+       * 从 decisions 里取出"被保留（因为用户编辑过）"的那些段的 editedAt。
+       *
+       * 不直接对 `merged.segments` 做类型断言：它的静态类型是 `TranscriptSegment[]`，
+       * 上面并没有 `editedAt`。用 `as` 强行读一个类型上不存在的字段，
+       * 正是我在 SSE 事件那次踩过的坑（编译器被消音，契约错位没人发现）。
+       * `decisions` 是**类型上就带 `MergeableSegment` 的**，从它取是安全的。
+       */
+      const editedAtBySpan = new Map<string, number>();
+      for (const d of merged.decisions) {
+        if (d.action === 'preserved' && d.segment.editedAt != null) {
+          editedAtBySpan.set(`${d.segment.startMs}:${d.segment.endMs}`, d.segment.editedAt);
+        }
+      }
       repos.replaceSegments(
         transcript.id,
         merged.segments.map((sg) => ({
@@ -338,6 +361,8 @@ export async function runTranscribeJob(
           words: sg.words,
           chunkIdx: sg.chunkIdx,
           flags: sg.flags,
+          // ★ 把"用户改过"这个事实一起写回，否则下一次重跑会把它当新稿覆盖掉
+          editedAt: editedAtBySpan.get(`${sg.startMs}:${sg.endMs}`) ?? null,
         })),
       );
       mergeSummary = formatMergeSummary(merged.stats);

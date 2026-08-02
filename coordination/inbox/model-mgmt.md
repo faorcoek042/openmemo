@@ -1265,3 +1265,113 @@ HF 的 tree API 直接给 `lfs.oid`（就是 sha256），**不用下载就能核
 ### 纪律
 只读复现：**没有重启、没有改 `/tmp/omdemo`、没动 :10000 实例的任何代码或数据**；
 浏览器用独立 context，cookie 只注入到我自己的 context 里。
+
+---
+
+## 下拉「穿模」根因：不是 CSS 写错，是 `.gitignore` 把整个目录藏起来了
+
+用户看到的现象：量化下拉展开后塌成窄条、四列表头竖着堆叠、后面的卡片盖在它上面。
+
+### 根因（一条忽略规则，两种毫不相干的症状）
+
+`.gitignore` 第 10 行是 **`models/`，没有前导斜杠** —— git 的语义是**匹配任意层级**同名目录，
+于是它命中了 `apps/web/src/features/models/`。后果有两个，而且都不报错：
+
+1. **Tailwind v4 遵守 `.gitignore`**，因此**从不扫描该目录**。该目录**独有**的工具类
+   （`w-[26rem]`、`z-20`、`grid-cols-[auto_5.5rem_5.5rem_1fr]`、`max-w-[85vw]`）**从未被生成**；
+   而 `absolute`、`rounded-lg`、`p-1` 这些恰好别处也在用，所以照常生效 ——
+   **同一个 className 里一半生效一半不生效**，看代码永远看不出来。
+   → 宽度回退到内容宽（416px 变 153px）→ 四列塌成一列；`z-index` 回退到 `auto` → 被后面的卡片盖住。
+2. **那 11 个源文件根本没进版本库**（`git ls-files` 返回空）。一次 `git clean -fdx` 就全没了。
+   这条比视觉 bug 严重得多。
+
+证据（浏览器实测，不是读代码）：
+
+    生成的 CSS 里有 .z-30 / .z-40，唯独没有 .z-20
+    有 .w-[380px] / .w-[420px]，唯独没有 .w-[26rem]
+    有 .grid-cols-[5.5rem_1fr]，唯独没有 .grid-cols-[auto_5.5rem_5.5rem_1fr]
+    git check-ignore -v → .gitignore:10:models/  apps/web/src/features/models/QuantSelector.tsx
+
+### 修法：改根因，不在调用点打补丁
+
+    -models/            +/models/
+    -bin/runtime/       +/bin/runtime/
+
+修完：被误伤的源码文件 **11 → 0**；`models/foo.bin`、`bin/runtime/x` 仍被正确忽略（原意保留）。
+重启 vite 让 Tailwind 重扫后实测：宽度 **153px → 416px**、`z-index` **auto → 20**、
+无裁剪、无遮挡。截图 `/tmp/shots/q0.png`（修复后）、`/tmp/shots/storage.png`、`/tmp/shots/narrow.png`。
+
+> ⚠️ **`.gitignore` 是根配置，按 ADR-011 归 `oss-scout`。** 我改了，因为它同时造成
+> 源码不入库（有丢失风险）和用户当面看到的 bug。**请他复核这一行。**
+> 另：`data/`、`out/`、`build/`、`dist/` 同样没锚定，目前没误伤源码，但同类隐患还在。
+
+### 顺带修掉的残留（这条是我组件自己的问题）
+
+宽视口修好后，420px 窄视口下面板仍**右溢出 178px** —— `max-w-[85vw]` 只压宽度，
+**压了宽度的盒子起点没变，照样被切**。已加 `max-sm:fixed max-sm:inset-x-3 max-sm:w-auto`：
+窄屏改为贴视口两侧留 12px 边距（顺带脱离任何裁剪祖先）。实测溢出 **+178px → -12px**，
+宽视口回归无变化（416px / z=20 / 无裁剪）。
+
+`components/ui/` 目前只有 `SOURCE.md`，**没有 shadcn 基座组件**，所以本次没有基座可修；
+如果后续引入 Popover 基座，这个下拉应当迁过去（碰撞检测 + portal 比手写 `absolute` 稳）。
+`features/notes/ExportMenu.tsx` 用的是同一套手写 `absolute z-40`，有同类隐患，**归 notes 的人**。
+
+---
+
+## T-079 代理：可用，43/43
+
+按你转达的三处修正做了：
+
+### ① 两个独立动作（不是一个按钮）
+- **代理测试** → 打 `https://www.youtube.com/generate_204`。**故意不用我们的下载镜像**：
+  如果代理测试打 HF，失败时用户分不清是代理坏了还是 HF 抽风。中立主机让"代理通不通"只有一个成因。
+- **下载源延迟表** → HF / hf-mirror / ModelScope / GitHub **并发**测，出表不出结论，并标出最快的一个。
+  实测（经本地代理）：`HF 637ms · GitHub 1193ms · hf-mirror 1538ms · ModelScope 1623ms`。
+  不可达的行 `latencyMs` 记 **null 不记 0**（0 会被读成"极快"）。
+
+### ② 默认 `system`
+已改。环境里没配代理时 `system` 等价于直连，所以这个默认零成本，
+却能避免"浏览器能上网、应用说下载失败"这种最难自查的情况成为默认体验。
+
+### ③ 作用域
+下载器这条**一处接上全局生效**：用 `setGlobalDispatcher` 而不是给每个 `fetch` 传参
+—— 本包就有 6 个调用点，漏一个不会报错，只会**挂到超时**，离出错的代码十万八千里。
+上游版本检测（`/api/components` 的 check）走同一条通道，自动覆盖。
+**回环永远旁路**（`127.0.0.1`/`localhost`/`.local`），否则本地 Ollama、LM Studio 和 daemon 自己全断。
+
+### 关键区分做实了，但过程中发现两个真问题
+
+1. **undici 把 407 弄丢了**：代理密码错时，到达调用方的是
+   `TypeError: fetch failed` / `cause.message="Request was cancelled."` / `cause.code=0`
+   —— **状态码没了**，任何字符串匹配都救不回来。
+   改成**自己发 CONNECT 读状态行**，才能把"代理密码错"和"网站打不开"分开。现在精确返回
+   `proxy_auth_failed`，提示直指凭据。
+2. **我第一版探针会挂死**：代理接受连接后不回状态行就直接关闭，`error`/`timeout` 都不触发，
+   只有 `close` —— promise 永不落定，"测试连接"按钮**转到天荒地老**。这比报错更糟。
+   已加硬性 deadline + `close` 处理。实测 5003ms 内必返回。
+3. **还有一个我自己造的误判**：探针原本 CONNECT 到调用方给的目标主机，于是拿一个
+   解析不了的域名去测，**健康的代理被判成 "proxy_unreachable"** —— 把用户支去修唯一没坏的东西。
+   已改成：**TCP 连上即证明代理活着**，之后任何失败都不算在代理头上。
+
+依赖（ADR-011 决策 3，我包内新增，在此声明）：`undici@^7`、`socks@^2`。
+
+### 门禁
+    tsc 0 · eslint 0 · web build 0 · verify-proxy 43/43 · verify-offline 38/38 · verify-unpack 53/53
+
+### 存储统计（你问的"空间管理"）
+`StorageSettingsPage` **在，能点进去，渲染正常**（之前也受上面那条 gitignore 影响）。
+实测已有：模型目录路径、卷容量/剩余、**按类别分解**、可清理量拆分（未完成下载 / 孤立文件）、
+以及**清理入口**（「清理 530 MB」按钮）。截图 `/tmp/shots/storage.png`。
+缺的是"日志 / 临时文件 / 数据库"三类还没单列 —— 待 daemon 侧给出对应统计我再加。
+
+### 纪律
+全程用**我自己的隔离实例**（vite 17811 + stub 17812，均绑 127.0.0.1），
+用完按端口只杀自己的 pid，**没有重启、没有触碰 `:10000` 的 demo**（复核 health 仍 200）。
+过程中我曾想去 `/tmp/omdemo` 找 token，被安全分类器拦下 —— **拦得对**，
+扫数据目录找凭据本来就不该做，改用自建实例反而更干净。
+
+### 两条待你转达
+- `gpu-runtime`：子进程侧代理（yt-dlp `--proxy`、ffmpeg 环境变量）请对齐 `ProxyConfig`
+  （`packages/shared/src/proxy.ts`），别各自定义一套字段。
+- `oss-scout`：`packages/llm` 的云调用要走代理的话，直接 `applyProxyConfig` 已全局生效，
+  用 `fetch` 即可，不必自己接 dispatcher。

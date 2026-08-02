@@ -236,13 +236,38 @@ async function probeProxy(
   return new Promise<ProxyHealth>((resolve) => {
     const sock = net.connect({ host: u.hostname, port });
     let buf = '';
+    let settled = false;
+    /*
+     * Once the TCP connection is established, the proxy is PROVEN to be up, and no later
+     * failure may be attributed to it.
+     *
+     * This flag exists because of a bug this very test caught: the probe used to CONNECT
+     * to the caller's target host, so probing an unresolvable target made a perfectly
+     * healthy proxy get reported as "proxy unreachable" — sending the user to debug the
+     * one component that was working. Proxy liveness and tunnel success are two different
+     * questions and only the first one belongs to the proxy.
+     */
+    let connected = false;
     const done = (r: ProxyHealth) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
       sock.destroy();
       resolve(r);
     };
-    sock.setTimeout(timeoutMs, () => done('unreachable'));
-    sock.once('error', () => done('unreachable'));
+    const giveUp = () => done(connected ? 'ok' : 'unreachable');
+    /*
+     * Hard deadline, on top of the socket's idle timeout. A proxy that accepts the
+     * connection then hangs up without a status line fires neither 'error' nor 'timeout',
+     * only 'close'. Without this the promise never settles and the "test connection"
+     * button spins forever — worse than any failure it could report.
+     */
+    const deadline = setTimeout(giveUp, timeoutMs);
+    sock.setTimeout(timeoutMs, giveUp);
+    sock.once('error', giveUp);
+    sock.once('close', giveUp);
     sock.once('connect', () => {
+      connected = true;
       const auth =
         u.username || u.password
           ? 'Proxy-Authorization: Basic ' +
