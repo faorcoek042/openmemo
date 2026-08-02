@@ -38,6 +38,7 @@ import { createNoteRoutes } from './http/rest/notes.js';
 import { createContentRoutes } from './http/rest/content.js';
 import { createSettingsRoutes } from './http/rest/settings.js';
 import { createOrganizeRoutes } from './http/rest/organize.js';
+import { createUploadRoutes } from './http/upload.js';
 import { SecretStore } from '@openmemo/llm';
 import { MindMapRepo } from './db/mindmapRepo.js';
 import { runMindmapJob } from './jobs/runners/mindmap.js';
@@ -250,6 +251,8 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       createSettingsRoutes({ db: database.db, secretStore: new SecretStore(paths.dataDir) }),
       // 标签 / 星标 / 文件夹
       createOrganizeRoutes({ repos }),
+      // F2 主入口：浏览器拖拽上传（流式落盘，不进内存）
+      createUploadRoutes({ repos, queue, sse, uploadDir: paths.mediaDir }),
       createSearchRoutes({
         db: database.db,
         hasChineseTokenizer: database.extensions.libsimple,

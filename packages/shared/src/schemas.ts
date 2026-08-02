@@ -385,3 +385,61 @@ export function validateBackendManifest(input: unknown) {
 export function validateHardwareInfo(input: unknown) {
   return toResult(HardwareInfoSchema.safeParse(input));
 }
+
+
+/* ------------------------- F1/F2/F5 notes domain -------------------------- */
+/* Shapes adopted verbatim from oss-scout's shipped daemon (ADR-012). */
+
+export const UlidSchema = z
+  .string()
+  .regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/, 'must be a 26-character ULID');
+
+export const ImportNoteRequestSchema = z
+  .object({
+    input: z.string().min(1, 'input is required (absolute local path or URL)'),
+    title: z.string().optional(),
+    // Explicitly nullable, never absent-by-accident: an empty language makes whisper.cpp
+    // silently translate non-English audio to English.
+    language: z.string().nullish(),
+  })
+  .strict();
+
+export const TranscriptSegmentSchema = z.object({
+  seq: z.number().int().nonnegative(),
+  startMs: z.number().int().nonnegative(),
+  endMs: z.number().int().nonnegative(),
+  text: z.string(),
+  confidence: z.number().nullable(),
+  chunkIdx: z.number().int().nullable(),
+  flags: z.number().int().nonnegative(),
+  edited: z.boolean(),
+});
+
+export const SearchHitSchema = z.object({
+  noteUid: UlidSchema,
+  noteTitle: z.string(),
+  transcriptUid: UlidSchema.nullable(),
+  seq: z.number().int().nullable(),
+  startMs: z.number().int().nullable(),
+  endMs: z.number().int().nullable(),
+  snippet: z.string(),
+  score: z.number(),
+  source: z.enum(['segment', 'note']),
+});
+
+export const SearchResponseSchema = z.object({
+  query: z.string(),
+  hits: z.array(SearchHitSchema),
+  modes: z.object({
+    keyword: z.boolean(),
+    semantic: z.boolean(),
+    tokenizer: z.enum(['simple', 'trigram']),
+  }),
+});
+
+export function validateImportNoteRequest(input: unknown) {
+  return toResult(ImportNoteRequestSchema.safeParse(input));
+}
+export function validateSearchResponse(input: unknown) {
+  return toResult(SearchResponseSchema.safeParse(input));
+}

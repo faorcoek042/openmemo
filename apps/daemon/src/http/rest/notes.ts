@@ -36,8 +36,6 @@ interface ImportBody {
   kind?: unknown;
 }
 
-const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
-
 export function createNoteRoutes(deps: NoteRoutesDeps): {
   handle(req: IncomingMessage, res: ServerResponse, url: URL, method: string): Promise<boolean>;
 } {
@@ -112,15 +110,15 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
             noteUid: note.uid,
             title: note.title,
             folderUid: null,
-          } as never) as SseEvent,
+          }),
         );
-        sse.publish(
-          makeEvent('job.created', topics.job(job.uid), {
-            jobUid: job.uid,
-            kind: 'transcribe',
-            label: title,
-          } as never) as SseEvent,
-        );
+        /*
+         * ⚠️ **刻意不发 `job.created`**：契约里它要求一个完整的 `DownloadJob`
+         * （kind: 'model'|'backend-pack'、totalBytes、parts、fileIndex…），
+         * 那是为**下载**建模的，转写/导图这类流水线 job 填不进去。
+         * 前端从本响应的 202 body 拿 jobUid，后续状态走 job.state / job.progress。
+         * 已报 Manager：shared 需要补流水线 job 的表示。
+         */
 
         // 202：写操作异步化（D-01 §3.2 规则 2）
         sendJson(res, 202, { noteUid: note.uid, jobUid: job.uid, status: note.status });
@@ -225,7 +223,7 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
           sse.publish(
             makeEvent('note.deleted', topics.note(note.uid), {
               noteUid: note.uid,
-            } as never) as SseEvent,
+            }),
           );
           sendJson(res, 200, { ok: true });
           return true;

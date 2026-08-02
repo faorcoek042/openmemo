@@ -159,10 +159,10 @@ export function useRenameNoteMutation() {
 export function useSaveNoteBodyMutation(noteUid: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { bodyJson: unknown; bodyText: string }) =>
+    mutationFn: (v: { bodyJson: unknown; bodyText: string; anchors?: unknown[] }) =>
       api<{ ok: true }>('notes', `/notes/${noteUid}`, {
         method: 'PATCH',
-        body: { bodyJson: v.bodyJson, bodyText: v.bodyText },
+        body: { bodyJson: v.bodyJson, bodyText: v.bodyText, anchors: v.anchors ?? [] },
       }),
     onSuccess: () => {
       // 只失效详情，不动列表：正文改动不影响列表展示，省一次全量重拉

@@ -1,0 +1,36 @@
+{
+  "extends": "./tsconfig.json",
+  "_comment": [
+    "只为「纯逻辑单测」编译出可执行 JS。",
+    "apps/web 主构建是 emitDeclarationOnly（打包交给 Vite），跑不了 node --test；",
+    "本机的 Node 又没编译 TypeScript 支持（ERR_NO_TYPESCRIPT），不能直接跑 .ts。",
+    "所以单独编一份 JS 到 dist-test/ 再交给 node --test —— 与仓库其它包的做法一致。",
+    "只收录不依赖 React/DOM 的纯模块；组件测试要等真实浏览器 E2E。"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "incremental": false,
+    "emitDeclarationOnly": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": false,
+    "outDir": "dist/test",
+    "rootDir": "src",
+    "tsBuildInfoFile": null,
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "verbatimModuleSyntax": false,
+    "types": ["node"]
+  },
+  "references": [],
+  // 主 tsconfig 排除了 *.test.ts（它用 node:test，与浏览器 types 冲突），
+  // 这里必须显式清空，否则继承下来会把测试文件一并排除、编出 0 个测试。
+  "exclude": [],
+  "include": [
+    "src/features/notes/export.ts",
+    "src/features/notes/export.test.ts",
+    "src/lib/format/time.ts",
+    "src/lib/api/types.ts",
+    "src/lib/events/types.ts"
+  ]
+}

@@ -19,7 +19,14 @@
 import { basename } from 'node:path';
 import { relative } from 'node:path';
 
-import type { SseEvent } from '@openmemo/shared';
+import {
+  jobBlockedEvent,
+  jobProgressEvent,
+  mediaReadyEvent,
+  transcribeDoneEvent,
+  transcribeSegmentEvent,
+  transcribeStartedEvent,
+} from '../events.js';
 import { makeEvent, topics } from '@openmemo/shared';
 import { PLAN_VERSION, type StepProgress, type TranscribePipeline } from '@openmemo/pipeline';
 
@@ -72,12 +79,13 @@ export async function runTranscribeJob(
     };
     queue.block(job.id, 'MISSING_ASR_MODEL', remediation);
     sse.publish(
-      makeEvent('job.blocked', topics.job(job.uid), {
-        jobUid: job.uid,
-        code: 'MISSING_ASR_MODEL',
-        messageZh: '尚未安装语音识别模型',
+      jobBlockedEvent(
+        job.uid,
+        'MISSING_ASR_MODEL',
+        '尚未安装语音识别模型',
+        'ASR model not installed',
         remediation,
-      } as never) as SseEvent,
+      ),
     );
     return;
   }
@@ -99,13 +107,13 @@ export async function runTranscribeJob(
    * durationSec 此刻还不知道（probe 尚未跑），先发 0，media.ready 会带准确值。
    */
   sse.publish(
-    makeEvent('transcribe.started', topics.transcript(transcript.uid), {
+    transcribeStartedEvent({
       transcriptUid: transcript.uid,
       noteUid: note.uid,
       modelId: deps.modelId,
-      durationSec: 0,
+      durationMs: 0,
       language: payload.language ?? null,
-    } as never) as SseEvent,
+    }),
   );
 
   let lastProgress = -1;
@@ -117,13 +125,7 @@ export async function runTranscribeJob(
     if (Math.abs(overall - lastProgress) > 0.001) {
       lastProgress = overall;
       sse.publish(
-        makeEvent('job.progress', topics.job(job.uid), {
-          jobUid: job.uid,
-          phase: p.step,
-          fraction: overall,
-          ...(p.chunksDone === undefined ? {} : { chunksDone: p.chunksDone }),
-          ...(p.chunksTotal === undefined ? {} : { chunksTotal: p.chunksTotal }),
-        } as never) as SseEvent,
+        jobProgressEvent(job.uid, { step: p.step, fraction: overall, state: 'running' }),
         topics.job(job.uid),
       );
     }
@@ -165,15 +167,16 @@ export async function runTranscribeJob(
       // 增量结果**不能丢**，所以不传 throttleTopic（D-01 §3.3）
       for (const s of segments) {
         sse.publish(
-          makeEvent('transcribe.segment', topics.transcript(transcript.uid), {
+          transcribeSegmentEvent({
             transcriptUid: transcript.uid,
+            noteUid: note.uid,
             seq: segSeq++,
-            startSec: s.startMs / 1000,
-            endSec: s.endMs / 1000,
+            startMs: s.startMs,
+            endMs: s.endMs,
             text: s.text,
             speaker: s.speakerLabel,
             confidence: s.confidence,
-          } as never) as SseEvent,
+          }),
         );
       }
       void chunk;
@@ -200,13 +203,13 @@ export async function runTranscribeJob(
   });
 
   sse.publish(
-    makeEvent('media.ready', topics.note(note.uid), {
+    mediaReadyEvent({
       noteUid: note.uid,
       mediaUid: originalAsset.uid,
-      durationSec: result.durationMs / 1000,
+      durationMs: result.durationMs,
       title: result.info.title ?? null,
       hasVideo: false,
-    } as never) as SseEvent,
+    }),
   );
 
   // ---- 收尾 ----
@@ -224,19 +227,19 @@ export async function runTranscribeJob(
   });
 
   sse.publish(
-    makeEvent('transcribe.done', topics.transcript(transcript.uid), {
+    transcribeDoneEvent({
       transcriptUid: transcript.uid,
       noteUid: note.uid,
       segmentCount: segCount,
       rtf: result.rtf,
       partial: result.yielded,
-    } as never) as SseEvent,
+    }),
   );
   sse.publish(
     makeEvent('note.updated', topics.note(note.uid), {
       noteUid: note.uid,
       changed: ['transcript'],
-    } as never) as SseEvent,
+    }),
   );
 
   queue.succeed(job.id, {

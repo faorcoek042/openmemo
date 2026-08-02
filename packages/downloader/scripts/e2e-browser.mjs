@@ -15,7 +15,6 @@
  * Usage: node packages/downloader/scripts/e2e-browser.mjs --base http://127.0.0.1:17660 --token <t>
  */
 
-import { Buffer } from 'node:buffer';
 import console from 'node:console';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
@@ -417,6 +416,9 @@ console.log('\n[7] 真浏览器专属检查');
 
 // SSE：EventSource 是否真的建立，且逐类型 addEventListener 是否奏效
 await goto('/models', 2500);
+/* eslint-disable no-undef -- the callbacks below run INSIDE the browser via
+   page.evaluate(); EventSource/document/getComputedStyle are browser globals there,
+   not Node globals in this file. */
 const sseInfo = await page.evaluate(async () => {
   const out = { supported: typeof EventSource !== 'undefined', received: [], readyState: -1 };
   return await new Promise((resolve) => {
@@ -460,6 +462,8 @@ const themeCheck = await page.evaluate(() => {
   document.documentElement.removeAttribute('data-theme');
   return { before, after };
 });
+/* eslint-enable no-undef */
+
 record(
   '暗色主题真的切换',
   themeCheck.before !== themeCheck.after ? 'yes' : 'no',

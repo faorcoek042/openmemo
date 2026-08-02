@@ -48,11 +48,13 @@ export const SSE_EVENT_TYPES = [
   'hardware.changed',
   // ── F1/F2 media import ──
   'media.ready',
+  'media.asset.ready',
   // ── F1/F2/F3 transcription ──
   'transcribe.started',
   'transcribe.partial',
   'transcribe.segment',
   'transcribe.done',
+  'transcribe.replaced',
   // ── F3 recording ──
   'record.state',
   // ── F4 mindmap ──
@@ -253,7 +255,7 @@ export interface MediaReadyEvent extends SseEventBase {
   type: 'media.ready';
   noteUid: string;
   mediaUid: string;
-  durationSec: number;
+  durationMs: number;
   title: string | null;
   hasVideo: boolean;
 }
@@ -265,8 +267,13 @@ export interface TranscribeStartedEvent extends SseEventBase {
   transcriptUid: string;
   noteUid: string;
   modelId: string;
-  /** Total audio duration, so the client can render a determinate progress bar. */
-  durationSec: number;
+  /** Total audio duration in integer milliseconds. */
+  durationMs: number;
+  /**
+   * Resolved language. NEVER null in practice — whisper.cpp with no `-l` silently
+   * TRANSLATES non-English audio to English, so the pipeline always resolves a value
+   * ("auto" at minimum) before starting.
+   */
   language: string | null;
 }
 
@@ -281,10 +288,12 @@ export interface TranscribeStartedEvent extends SseEventBase {
 export interface TranscribePartialEvent extends SseEventBase {
   type: 'transcribe.partial';
   transcriptUid: string;
+  /** Present so clients never need a transcriptUid→noteUid lookup table. */
+  noteUid: string;
   /** Groups partials belonging to one utterance; replace-on-match. */
   utteranceId: string;
   text: string;
-  startSec: number;
+  startMs: number;
 }
 
 /**
@@ -298,10 +307,13 @@ export interface TranscribePartialEvent extends SseEventBase {
 export interface TranscribeSegmentEvent extends SseEventBase {
   type: 'transcribe.segment';
   transcriptUid: string;
+  /** Present so clients never need a transcriptUid→noteUid lookup table. */
+  noteUid: string;
   /** Monotonic per transcript, starting at 0. A gap means events were missed. */
   seq: number;
-  startSec: number;
-  endSec: number;
+  /** Integer milliseconds, matching D-02 §1.1 and the REST DTO. */
+  startMs: number;
+  endMs: number;
   text: string;
   /** Speaker label when diarization ran. */
   speaker: string | null;
@@ -323,13 +335,47 @@ export interface TranscribeDoneEvent extends SseEventBase {
   partial: boolean;
 }
 
+/**
+ * A re-run replaced the transcript (F3 two-pass: streaming draft → offline high quality).
+ *
+ * Without this event the UI cannot say「已更新 47 段 · 你编辑过的 3 段已保留」, and that
+ * sentence is what stops the two-pass design feeling like "the app rewrote my text".
+ * The merge matches by TIME, not index — two passes segment differently, so index-matching
+ * would hand a user's edit to someone else's sentence.
+ */
+export interface TranscribeReplacedEvent extends SseEventBase {
+  type: 'transcribe.replaced';
+  noteUid: string;
+  oldTranscriptUid: string;
+  newTranscriptUid: string;
+  updatedSegments: number;
+  /** Segments carrying SEGMENT_FLAG.CONFIRMED — never overwritten, even with no match. */
+  preservedEditedSegments: number;
+  canUndo: boolean;
+}
+
+/**
+ * One derived media artifact finished (waveform peaks, transcode…).
+ *
+ * Distinct from `media.ready`, which fires once for the media as a whole. Peaks and
+ * transcodes complete independently and the timeline needs each one as it lands, rather
+ * than polling or waiting for the slowest.
+ */
+export interface MediaAssetReadyEvent extends SseEventBase {
+  type: 'media.asset.ready';
+  noteUid: string;
+  assetUid: string;
+  role: string;
+  bytes: number;
+}
+
 /* -------------------------------- F3 record ------------------------------- */
 
 export interface RecordStateEvent extends SseEventBase {
   type: 'record.state';
   recordingUid: string;
   state: 'starting' | 'recording' | 'paused' | 'finalizing' | 'stopped' | 'failed';
-  elapsedSec: number;
+  elapsedMs: number;
   /** Bytes captured so far, for the disk-space warning. */
   bytesWritten: number;
 }
@@ -351,8 +397,8 @@ export interface MindmapDeltaEvent extends SseEventBase {
     parentKey: string | null;
     text: string;
     /** Source transcript segment range this node was derived from, when known. */
-    sourceStartSec: number | null;
-    sourceEndSec: number | null;
+    sourceStartMs: number | null;
+    sourceEndMs: number | null;
   }[];
 }
 
@@ -423,6 +469,8 @@ export type SseEvent =
   | TranscribePartialEvent
   | TranscribeSegmentEvent
   | TranscribeDoneEvent
+  | TranscribeReplacedEvent
+  | MediaAssetReadyEvent
   | RecordStateEvent
   | MindmapDeltaEvent
   | MindmapDoneEvent

@@ -340,7 +340,9 @@
     "orderedList": "Numbered list",
     "saving": "Saving…",
     "saved": "Saved",
-    "unsaved": "Unsaved"
+    "unsaved": "Unsaved",
+    "insertAnchor": "Cite this moment",
+    "insertAnchorHint": "Insert the current playback position; click it to jump back"
   },
   "folders": {
     "create": "New folder",

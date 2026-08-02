@@ -105,7 +105,7 @@ export class Scheduler {
         makeEvent('job.state', topics.job(job.uid), {
           jobUid: job.uid,
           state: 'running',
-        } as never) as SseEvent,
+        }),
       );
 
       const handler = handlers.get(job.type);
@@ -117,7 +117,7 @@ export class Scheduler {
             code: 'NO_HANDLER',
             messageZh: `未知任务类型：${job.type}`,
             retryable: false,
-          } as never) as SseEvent,
+          }),
         );
         return;
       }
@@ -135,7 +135,7 @@ export class Scheduler {
           makeEvent('job.done', topics.job(job.uid), {
             jobUid: job.uid,
             result: final.result_json ? (JSON.parse(final.result_json) as unknown) : null,
-          } as never) as SseEvent,
+          }),
         );
       }
     } catch (err) {
@@ -151,7 +151,7 @@ export class Scheduler {
           code: aborted ? 'CANCELLED' : 'RUNNER_ERROR',
           messageZh: aborted ? '任务已取消' : `任务失败：${message}`,
           retryable: state === 'queued',
-        } as never) as SseEvent,
+        }),
       );
     } finally {
       clearInterval(renew);

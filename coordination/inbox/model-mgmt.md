@@ -215,3 +215,131 @@ verify-unpack.mjs:       0 (38/38)   三份 manifest zod: VALID
 - 离线测试 `[3] 续传` 曾报"从零开始"，追查后确认是**测试不真实**（`write()` 后立刻
   `destroy()` 让 undici 零字节交付），非代码缺陷，已在 D-03 §8.6 记录。
 - `estimateGpuLayers` 与 RTF 外推系数仍**未标定**，UI 上一律写"估算/约"，未当确定值展示。
+
+---
+
+## [2026-08-02 17:10] T-027 DONE（含 B-1 与契约收编）
+
+### 1. 装浏览器：**成功**
+```
+pnpm dlx playwright install --with-deps chromium   → EXIT=0
+Chrome for Testing 151.0.7922.34 → /root/.cache/ms-playwright/chromium-1234
+node -e "chromium.launch()" → browser OK | chromium 151.0.7922.34
+```
+**不需要向用户要环境。** 你驳回我的建议是对的 —— 我不该在没试过之前就上报缺资源。
+已把 `playwright` 加为 `packages/downloader` 的 devDependency（ADR-011 决策 3 授权，此处申报）。
+
+### 2. 真实点击结果：**32 YES / 3 PARTIAL / 5 NO**
+脚本 `packages/downloader/scripts/e2e-browser.mjs`（可重复跑）
+截图 19 张 + `report.json` → **`docs/design/assets/t027-e2e/`**
+
+**要求 2.2 —— 真实点击已闭环**
+```
+点「下载 60 MB」→ 进度行出现 → 观察到 100% → job=succeeded
+量化选择器展开 3 档 · fit 徽标 9 个 · 磁盘分解含图例与字节标签
+中文默认过滤：卡片 2 张 →（点「仍要显示」）→ 6 张   ← ADR-011 真的生效
+```
+**要求 2.1 —— 页面真实渲染**：硬件卡显示真实 CPU/内存/无 GPU，10 个后端包、16 个状态芯片。
+
+**真浏览器专属检查（4/4 通过）**
+- SSE `EventSource` readyState=1，收到 7 条 `job.progress`
+- **`onmessage` 陷阱确认避开**：具名帧确实不触发 `onmessage`，逐类型 `addEventListener` 是必须的
+- **暗色主题真的生效**：`--surface-0` `#f9f9f7` → `#0d0d0d`（不是 architect 担心的"静默不生效"）
+- 无 pageerror
+
+### 3. ⚠️ 我的结论有一部分**已过期**，必须说明
+我的 E2E 跑于 **07:36 UTC**，而 `T-032`/`T-034` 在我跑的**同时**合入。
+我测的是**旧构建产物**。因此以下 3 条我报的 🔴 **是过期数据，不是当前状态**：
+
+| 我报的 | 真实情况（源码复核） |
+|---|---|
+| F5 TipTap 编辑器 🔴 | **已实现**：`NoteEditor.tsx` 存在且已接进 `NoteDetailPage.tsx:168` |
+| F5 笔记导出 🔴 | **已实现**：`ExportMenu.tsx` + `export.ts` + `export.test.ts`，接在 `:94` |
+| F5 标签 UI 🔴 | **已实现**：`TagEditor.tsx` 接在 `:93` |
+
+**我没有重新验证它们能不能点** —— 因为 web 构建当前是红的（见下）。
+把过期快照当成当前事实上报，就是这个项目反复出现的"假绿灯"，所以我明确标出来。
+
+**仍然可信的 🔴/PARTIAL（与 T-032/034 无关）**
+- **`/tasks` 崩溃**：`Minified React error #185`（= 无限 setState 循环），整页 0 个可交互元素，
+  React Router 捕获后显示 "Unexpected Application Error!"。截图 `10-route--tasks.png`。
+  ⚠️ 需确认 T-034 的 M-5 是否已修；**我测到的是崩的**。
+- 设置页无 API Key 输入框（B-3）—— 但 T-032 声称已关闭，同样可能过期。
+- F2 只有 `input[type=file]`，**没有任何拖拽提示文案**（`onDrop` 空函数那条对得上）。
+
+### 4. ⛔ web 构建当前是红的（两个原因，一个是我的）
+```
+apps/web/src/features/notes/sse.ts(109,23): Property 'startSec' does not exist … Did you mean 'startMs'?
+apps/web/src/features/notes/export.test.ts(1,32): Cannot find module 'node:test'
+```
+- **第 1 条是我造成的**，且是你裁决的 SSE 毫秒统一。**修法是 2 行**（`architect`）：
+  `startMs: toMs(e.startSec)` → `startMs: e.startMs`，`endMs: toMs(e.endSec)` → `endMs: e.endMs`，
+  然后可以**删掉 `toMs` 整个适配层** —— 这正是这次统一的收益。
+- 第 2 条是 `export.test.ts` 缺 `node:test` 类型（web tsconfig 未含 node types），**不是我的文件**。
+- **我没有改他们的文件**（所有权）。这两条修完 web 就绿，我可以立刻重跑 E2E 复验第 3 节。
+
+### 5. B-1 模型目录补齐：**已完成，且真下载验证过**
+`vendor/manifests/models-asr-support.json` —— 4 个模型，zod VALID：
+
+| id | role | 文件数 | 体积 | 许可 |
+|---|---|---|---|---|
+| `vad/silero-vad` | vad | 1 | 2.3 MB | MIT |
+| `asr/sherpa-streaming-zh-14m` | asr | 4 | 25.4 MB | Apache-2.0 |
+| `asr/paraformer-zh-small` | asr | 3 | 81.9 MB | Apache-2.0 |
+| `punctuation/ct-transformer-zh-en` | punctuation | 2 | 298.6 MB | Apache-2.0 |
+
+**真实下载 + SHA256 校验实跑通过**（不是只过 schema）：
+```
+vad/silero-vad (2.3 MB, 1 files) … OK 1 files verified in 5.6s
+asr/sherpa-streaming-zh-14m (25.4 MB, 4 files) … OK 4 files verified in 67.7s
+  encoder…int8.onnx 21621684 sha256 1c556ea57cec… ✓   （4 个文件逐个校验）
+```
+**三个关键决定**：
+1. **不用 sherpa 的 tar.bz2，改用 HF 上的散文件。** 原因：bzip2 不在 `node:zlib` 里，
+   支持它要么引依赖要么手写解码器。改用散文件后**完全不需要解压**，
+   而且只取 int8 权重，zh-14M 从 74 MB 降到 **25.4 MB**。是更好的方案，不是将就。
+2. **`ModelRole` 扩到 D-02 的 7 值**（`asr/llm/vad/punctuation/diarization/embedding/tts`）。
+   VAD 和标点模型**不是 ASR**，塞进 `asr` 会让 VAD 网occupy转写模型槽位。
+3. **新增 `capabilityCaveats`**（ADR-013 决策 1），Paraformer 三条代价已写死进目录：
+   「无词级时间戳，只有段级」「数字输出为中文而非阿拉伯数字」「英文一律小写」，UI 直接渲染。
+
+**host 白名单实测更正**：GitHub release 资源 302 跳到 **`release-assets.githubusercontent.com`**，
+**不是**常被假设的 `objects.githubusercontent.com`。已补进白名单（还补了 `raw.githubusercontent.com`）。
+
+**语言默认值**：`ImportNoteRequest.language` 的注释已写死警告 ——
+whisper 无 `-l` 会**静默把中文翻译成英文**，调用方必须显式传值。
+
+### 6. 契约收编：F1/F2/F5 已并入 `packages/shared`
+新增 `packages/shared/src/notes.ts` + zod schema。**以 `oss-scout` 的形状为准，逐字收编**：
+`POST /api/notes/import` → `{noteUid, jobUid, status}`、`GET /api/notes`、`GET /api/notes/:uid`、
+`GET /api/notes/:uid/transcript` → `{transcript, segments[]}`、`DELETE /api/notes/:uid`、
+`GET /api/search` → `{query, hits[], modes}`、`GET /media/asset/:uid`。
+**公告：以 `shared` 为准。** 我一处都没改他的形状 —— 跑通的实现优先于我的偏好。无 DISPUTE。
+时间单位在本文件统一为**整数毫秒**（对齐 D-02 §1.1）。
+
+### 7. SSE 收尾（你排的第 4 项，已一并做完）
+- `transcribe.{segment,partial,started}` 全部加 `noteUid` → `architect` 可删映射层
+- `transcribe.replaced`、`media.asset.ready` **升为一等事件**（从 `x.` 扩展区转正）
+- 时间单位全面改毫秒：`startMs/endMs/durationMs/elapsedMs/sourceStartMs/sourceEndMs`
+- 事件总数 28 → **30**
+
+### 8. 我自己代码里的真 bug（真浏览器抓出来的，已修）
+**下载完成后模型从列表里消失。** `base-q5_1` 在 zh 下被 `notRecommendedFor` 过滤，
+用户刚下完就看不见了 —— 看起来像"下载失败"，而且删不掉、切不了。
+修法：**已安装/正在使用的变体永不隐藏**。过滤器是"推荐该装哪个"的机制，
+不该剥夺用户对自己已装文件的可见性与控制权。截图 `06-models-installed.png` 是修复前的证据。
+
+### 需要 Manager 决策 / 转达
+1. **请 `architect` 改那 2 行**（`features/notes/sse.ts:109-110`）+ 修 `export.test.ts` 的 node 类型，
+   web 就绿。修完**我可以立刻重跑 E2E**，把第 3 节的过期结论换成当前事实。
+2. **`/tasks` 的 React #185 崩溃**请确认 T-034 是否已修 —— 我测到的版本是崩的。
+3. 我的 E2E 脚本已可重复运行，建议进 CI（需要 `reference-server.mjs` + daemon 同时起）。
+4. 本轮**未测性能**，按用户指令。
+
+### 自查（诚实规则）
+- 最大的一条：**我的部分结论是过期快照**，已在第 3 节逐条标出并用源码复核更正。
+  没有把"我跑的时候是这样"包装成"现在就是这样"。
+- 第一次 E2E 报"下载进度 0%"，追查后是**我的测试太早 reload**，任务其实 succeeded；
+  已改为用 `/api/jobs` 的 job state 判定完成，而不是猜 DOM。
+- daemon 在测试中途挂过两次，导致 notes/search/settings 的接口调用显示"上游无法访问"。
+  那些 🔴 里**混有环境问题**，我没有把它们算作产品缺陷。

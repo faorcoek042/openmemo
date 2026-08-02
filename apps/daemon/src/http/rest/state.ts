@@ -19,6 +19,7 @@ import {
   type ProbeTarget,
 } from '@openmemo/downloader';
 import {
+  MODEL_ROLES,
   computeFit,
   makeEvent,
   topics,
@@ -51,6 +52,7 @@ import {
   type BackendCatalog,
   type ModelCatalog,
 } from './manifests.js';
+import { roleToActivationSlot } from './roleMap.js';
 
 export const HARDWARE_SNAPSHOT_ID = 'hw-local';
 
@@ -101,7 +103,14 @@ export class RestState {
    */
   readonly queue = new DownloadQueue(2);
 
-  readonly active: Record<ModelRole, string | null> = { asr: null, llm: null };
+  /**
+   * 各 role 的当前激活模型。
+   * ⚠️ 必须覆盖 `MODEL_ROLES` 的**全部** 7 个 role ——
+   * shared 把它从 2 个扩到 7 个后，只写 `{asr, llm}` 会编译失败（这是好事：漏了会被逼出来）。
+   */
+  readonly active: Record<ModelRole, string | null> = Object.fromEntries(
+    MODEL_ROLES.map((r) => [r, null]),
+  ) as Record<ModelRole, string | null>;
   prefs: Prefs = { ...DEFAULT_PREFS };
   /** 最近一次探测结果；未探测过就是空数组（而不是编造的"全部可用"）。 */
   lastProbes: SourceProbe[] = [];
@@ -294,7 +303,7 @@ export class RestState {
         {
           totalSizeBytes: m.totalSizeBytes,
           requirements: m.requirements,
-          role: m.role,
+          role: roleToActivationSlot(m.role),
           modelId: m.id,
           blockCount: m.gguf?.blockCount,
           benchmarkRtf: m.benchmark?.rtf ?? null,
@@ -311,7 +320,7 @@ export class RestState {
       if (!group) {
         group = {
           groupId: m.groupId,
-          role: m.role,
+          role: roleToActivationSlot(m.role),
           family: m.family,
           // 组名去掉变体后缀：「Whisper large-v3 (q5_0)」→「Whisper large-v3」
           displayName: m.displayName.replace(/\s*\([^)]*\)\s*$/, ''),

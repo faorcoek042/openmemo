@@ -340,7 +340,9 @@
     "orderedList": "有序列表",
     "saving": "保存中…",
     "saved": "已保存",
-    "unsaved": "未保存"
+    "unsaved": "未保存",
+    "insertAnchor": "引用此刻",
+    "insertAnchorHint": "把当前播放位置插入正文，点击可跳回该秒"
   },
   "folders": {
     "create": "新建文件夹",

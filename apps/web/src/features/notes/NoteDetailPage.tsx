@@ -165,7 +165,17 @@ export default function NoteDetailPage() {
                 <p className="text-ink-muted">{t('mindmap.empty')}</p>
               )
             ) : (
-              <NoteEditor noteUid={n.uid} initialJson={n.bodyJson ?? null} />
+              <NoteEditor
+                noteUid={n.uid}
+                initialJson={n.bodyJson ?? null}
+                transcriptUid={transcript.data?.uid}
+                quoteAt={(ms) => {
+                  // 取该毫秒所在段的原文，作为锚点的重定位依据（D-02 §3.5 第 2 层）
+                  const segs = transcript.data?.segments ?? [];
+                  const hit = segs.find((sg) => sg.startMs <= ms && ms < sg.endMs);
+                  return hit ? hit.text.slice(0, 200) : null;
+                }}
+              />
             )}
           </div>
         </aside>

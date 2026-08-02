@@ -21,5 +21,7 @@
   // `src/**/*` 默认只匹配 .ts/.tsx/.d.ts —— JSON 必须显式列出，
   // 否则 import 语言包会报 TS6307（配合 base 里的 resolveJsonModule）。
   "include": ["src/**/*", "src/**/*.json"],
-  "references": [{ "path": "../../packages/shared" }, { "path": "../../packages/mindmap" }]
+  "references": [{ "path": "../../packages/shared" }, { "path": "../../packages/mindmap" }],
+  // 纯逻辑单测用 node:test，与浏览器 types 冲突；由 tsconfig.test.json 单独编译
+  "exclude": ["src/**/*.test.ts"]
 }

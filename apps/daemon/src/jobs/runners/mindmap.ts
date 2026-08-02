@@ -15,8 +15,9 @@ import {
   type LlmProvider,
 } from '@openmemo/llm';
 import { generateMindMap, validate, type TranscriptSegment } from '@openmemo/mindmap';
-import type { SseEvent } from '@openmemo/shared';
 import { makeEvent, topics } from '@openmemo/shared';
+
+import { jobBlockedEvent, jobProgressEvent } from '../events.js';
 
 import type { MindMapRepo } from '../../db/mindmapRepo.js';
 import type { Repos } from '../../db/repos.js';
@@ -75,12 +76,13 @@ export async function runMindmapJob(
     };
     queue.block(job.id, 'NO_TRANSCRIPT', remediation);
     sse.publish(
-      makeEvent('job.blocked', topics.job(job.uid), {
-        jobUid: job.uid,
-        code: 'NO_TRANSCRIPT',
-        messageZh: '这条笔记还没有转写稿，无法生成思维导图',
+      jobBlockedEvent(
+        job.uid,
+        'NO_TRANSCRIPT',
+        '这条笔记还没有转写稿，无法生成思维导图',
+        'No transcript for this note',
         remediation,
-      } as never) as SseEvent,
+      ),
     );
     return;
   }
@@ -106,12 +108,13 @@ export async function runMindmapJob(
     };
     queue.block(job.id, 'LLM_NOT_CONFIGURED', remediation);
     sse.publish(
-      makeEvent('job.blocked', topics.job(job.uid), {
-        jobUid: job.uid,
-        code: 'LLM_NOT_CONFIGURED',
-        messageZh: '尚未配置 LLM。可以填一个 API Key，或安装本地模型。',
+      jobBlockedEvent(
+        job.uid,
+        'LLM_NOT_CONFIGURED',
+        '尚未配置 LLM。可以填一个 API Key，或安装本地模型。',
+        'No LLM configured',
         remediation,
-      } as never) as SseEvent,
+      ),
     );
     return;
   }
@@ -126,24 +129,16 @@ export async function runMindmapJob(
     onProgress: (fraction, stage) => {
       queue.setProgress(job.id, fraction, stage);
       sse.publish(
-        makeEvent('job.progress', topics.job(job.uid), {
-          jobUid: job.uid,
-          phase: stage,
-          fraction,
-        } as never) as SseEvent,
+        jobProgressEvent(job.uid, { step: stage, fraction, state: 'running' }),
         topics.job(job.uid),
       );
     },
-    onPartial: (partial) => {
-      // 渐进式：每生成完一个窗口就推一次，前端可以边生成边看
-      sse.publish(
-        makeEvent('mindmap.delta', topics.note(note.uid), {
-          noteUid: note.uid,
-          nodeCount: Object.keys(partial.nodes).length,
-        } as never) as SseEvent,
-        topics.note(note.uid),
-      );
-    },
+    /*
+     * ⚠️ 这里**刻意不发 `mindmap.delta`**。
+     * 契约要求 `{ mindmapUid, seq, nodes[] }`，但 mindmapUid 要落库后才有，
+     * 而 delta 的意义正是"落库前的渐进展示"。凑一个假 uid 比不发更糟。
+     * 渐进反馈目前由 job.progress 承担；等 shared 支持"未落库的临时导图"再补。
+     */
   });
 
   // 写库前必校验（LLM 会生成环和悬空引用，D-02 §2.2 约束 5）
@@ -160,16 +155,16 @@ export async function runMindmapJob(
 
   sse.publish(
     makeEvent('mindmap.done', topics.note(note.uid), {
-      noteUid: note.uid,
       mindmapUid: row.uid,
+      noteUid: note.uid,
       nodeCount: Object.keys(result.doc.nodes).length,
-    } as never) as SseEvent,
+    }),
   );
   sse.publish(
     makeEvent('note.updated', topics.note(note.uid), {
       noteUid: note.uid,
       changed: ['mindmap'],
-    } as never) as SseEvent,
+    }),
   );
 
   queue.succeed(job.id, {

@@ -431,3 +431,121 @@ PASS 2 complete in 76.1s
 诚实声明:
 - 本轮 5 项要求做完 4 项，第 5 项（whisper-server）**做完了但结论是"不该用"**——我把测量结果如实报出来，而不是让实现去迁就我上一轮的说法。
 - RSS/HLS/续传/取消续跑均为**真跑**，输出与数字直接来自运行日志。
+
+---
+
+## [2026-08-02 21:05] T-035 DONE —— 中文完整主路径端到端
+
+**跑通了，但在 4 处断裂。** 每一环真实输出如下。
+
+### 环 1：daemon 导入 ✅
+```
+POST /api/notes/import {"input":"/tmp/omdata/media/zh-twitter.wav","language":"zh"}
+-> {"noteUid":"01KZ0QG2KAAQ3QF67A9D8BVCNR","jobUid":"...","status":"processing"}
+```
+
+### 环 2：转写 ⚠️ 跑通了，但**不是 Paraformer**
+```
+DB transcripts: engine_id=whisper.cpp  model_id=ggml-large-v3-turbo-q5_0.bin
+                language=zh  status=done  segment_count=55  duration_ms=337038
+```
+**断裂 A：ADR-013 定的中文默认引擎 Paraformer 在 daemon 上根本不可达。**
+`apps/daemon/src/pipeline/setup.ts` 的 `engines` 数组只有 `[whisper]`。`oss-scout` 在注释里说明了原因且做得对——`SherpaOnnxEngine` 需要 `SherpaTransducerModel`（三个文件的具体路径），而模型安装记录属 `model-mgmt` 领域，他**刻意不编假配置**。
+→ 结论：**这一环卡在 B-1（4 个 ASR 模型进目录）**，不是代码问题。在那之前，中文走的是 whisper 而非 ADR-013 的决策。
+
+**语言检测（重点 1）验证通过**：`language=zh` 从 API → job payload → pipeline → whisper `-l zh` 全程传到位；我在 T-030 修的 "未指定即 auto" 也在真实路径上生效（daemon 传 `language ?? null`，未指定时进 `auto` 分支）。
+
+### 环 3：落库 ✅（重点 2、3 均验证通过）
+```
+seq=0 [1180-10740ms]  conf=0.94 chunk=0 words=yes
+   Twitter,来自维基百科,自由的百科全书,网址zh.wikipedia.org
+seq=2 [18980-27000ms] conf=0.95 chunk=0 words=yes
+   用户可以经由SMS、即时通讯、电邮、Twitter网站或Twitter用户端软件
+seq=6 [53720-76600ms] conf=0.98 chunk=1 words=yes
+   用户可透过Twitter网站、即时通讯、SMS、RSS、电邮或Twitter用户端软件获得文字更新,目前手机SMS
+   更新服务暂时只有在美国、加拿大及英国可获得免费服务,除移动电话供应商的SMS费用。
+总段数 55 | 时间戳单调 True | maxEnd 335710 ≤ 337038 | 中文标点 ✅ | 词级时间戳 55/55
+```
+**标点确认加上了**（、。，全都有）。注意这是 whisper 路径自带标点；**若走 Paraformer 则依赖标点模型，而它同样卡在 B-1**。
+
+**断裂 E（质量）**：chunk 边界仍有**部分重复**——seq4 `[28480-31580]` 与 seq5 `[28860-52920]` 时间重叠，且 seq5 开头重复了 seq4 的整句「输入最多140字的文字更新」。我的 `dedupeBoundarySegments` 要求时间重叠 >50% 才判重，而 seq5 只有 11% 重叠（其余是新内容），所以放行了。**这会污染搜索与导图输入。**
+
+### 环 4：中文全文搜索 ⚠️ **严重断裂**
+```
+搜索「维基百科」 -> 1 命中 | startMs=1180
+搜索「旧金山」   -> 1 命中 | startMs=28860
+搜索「微博客」   -> 1 命中 | startMs=10740
+搜索「恐怖袭击」 -> 1 命中 | startMs=130170
+搜索「用户」     -> 0 命中   ← 但「用户」在 7 段文本中出现
+```
+**断裂 B：libsimple 没装，回退 trigram 分词，导致所有 1–2 字中文查询恒返回 0 命中。**
+```
+health: extensions.libsimple=false  failures.libsimple="文件不存在：/tmp/omdata/bin/ext/libsimple.so"
+        tokenizer="trigram"
+字数 → 命中：  用(1字)=0  用户(2字)=0  用户可(3字)=3  用户可以(4字)=1
+              推特(2字)=0  中国(2字)=0  中国大陆(4字)=5  服务(2字)=0  免费服务(4字)=1
+库内实际出现： 用户 7 段 · 推特 14 段 · 中国 6 段 · 服务 3 段
+```
+SQLite trigram 分词**结构上无法匹配 <3 字符的查询**，而中文最常用词恰恰是双字词。
+→ **没有 libsimple，中文搜索实质不可用**（不是"差一点"，是最常见的查询全部落空）。
+
+**重点 2 验证通过**：搜索结果正确带回 `startMs`（段级），**ADR-013 的"中文降级为段级高亮"这条路径真的能用**。
+
+### 环 5：F4 中文思维导图 ✅ 质量不错
+真跑本地 `llama-server`（官方预编译 b10224 + Qwen3-1.7B-Q8_0）。24 节点、4 个中文一级主题：
+```
+# zh-twitter
+- Twitter的历史与起源
+  - Twitter最初是Audio公司的一个研究项目，由Noah Glass及Jack Dorsey主理，2006年3月推出。
+  - Twitter在2008年用户数增长752%。
+- Twitter的影响力与传播
+  - 美国总统奥巴马、NBA球星奥尼尔、Google、白宫等在Twitter上开设账号。
+  - 中国当局指责Twitter、Facebook和YouTube为西方敌对势力的宣传工具。
+- Twitter的运营与技术
+  - Twitter允许用户通过SMS、即时通讯、电邮、网站或用户端软件发送文字更新。
+- Twitter的被封锁与争议
+  - 2009年6月2日，中国大陆封锁了Twitter。
+```
+**如实评价（重点 4）**：节点**全部是中文**，主题划分**合理**（历史/影响/技术/争议四分是这篇材料的正确切法），事实基本准确。**每个节点都带 `refs{transcriptUid,startMs,endMs,quote}` 指回转写段**——段级时间戳被导图正确引用 ✅。
+**缺点**：跨主题重复明显——「Ruby on Rails→Scatter语言」同时出现在 n3(历史) 和 n16(技术)；封锁解除同时出现在 n6/n11/n21。这印证了矩阵里「**reduce 阶段语义去重未做**」那条，现在有中文实证了。
+
+### 环 6：导出 ⚠️ **daemon 无端点**
+```
+GET /api/notes/{uid}/mindmap/export?format=markdown -> 404 no route
+```
+**断裂 D**：`packages/mindmap` 的 `toMarkdown`/`toOpml`/`toFreeMind` **都能用**（我直接调用产出了上面的 Markdown 与 OPML，807/1547 字节，中文正常），但 **daemon 没有暴露导出端点**，所以网页导不出来。
+
+### 断裂 C（额外发现，影响本地 LLM 可配置性）
+```
+PATCH /api/settings {"llm.baseUrl.llama-server": "..."}
+-> {"code":"BAD_SETTING_KEY","message":"invalid setting key: llm.baseUrl.llama-server"}
+```
+- `packages/llm/src/detect.ts` 定义 providerId = **`'llama-server'`**（带连字符）
+- `apps/daemon/src/llm/resolve.ts` 读取 key = `llm.baseUrl.${providerId}` = `llm.baseUrl.llama-server`
+- `apps/daemon/src/http/rest/settings.ts` `KEY_RE = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)*$/` —— **不允许连字符**
+
+→ **daemon 存不进它自己 resolver 要读的那个 key**。受影响的只有 `llama-server`（其余 provider 名无连字符），也就是 **ADR-003 第三档「内置本地 LLM」在 API 上不可配置**。同一正则也用于 secrets 端点（line 170）。
+我为了继续测试，**直接写库绕过**了校验并已标注。
+
+### 其它观察（性能，按裁决不深究）
+DB 里 `transcripts.rtf = 2.10`，而我 T-026 直测 large-v3-turbo 是 **0.377**，差约 5.6 倍。daemon 用了 `nice:true` 且线程数未显式指定，合理但差距值得知道。另 `GET /api/jobs/{mindmapJobUid}` 返回 "no such job"，与 import job 的查询行为不一致。
+
+## 断在哪 —— 汇总
+| # | 断裂 | 影响 | 归属 |
+|---|---|---|---|
+| **B** | **libsimple 缺失 → 1–2 字中文查询恒 0 命中** | **中文搜索实质不可用** | `oss-scout` / 扩展分发 |
+| **A** | Paraformer 在 daemon 不可达（引擎表只有 whisper） | ADR-013 中文默认引擎未生效 | 卡 B-1（`model-mgmt`）后 `oss-scout` 接 |
+| **C** | 设置 key 正则拒绝 `llm.baseUrl.llama-server` | 内置本地 LLM 无法通过 API 配置 | `oss-scout` |
+| **D** | 无思维导图导出端点（404） | 网页导不出 Markdown/OPML | `oss-scout` |
+| **E** | chunk 边界部分重复未去净 | 污染搜索与导图输入 | **我** |
+| F4 | 跨主题语义重复 | 导图有冗余分支 | 已知（reduce 去重未做） |
+
+需要 Manager 决策:
+1. **libsimple 的分发**是当前中文主路径最大阻塞——它不是"锦上添花"，缺了中文搜索就是坏的。请确认归属与排期。
+2. **断裂 E 归我**，我会在下一轮改进边界去重（目前按时间重叠 >50% 判重，漏掉"大部分是新内容但开头重复"这一类）。
+3. 断裂 C 的修法建议：把 `KEY_RE` 放宽到允许连字符，或把 providerId 统一改为 `llamaServer`——**两边必须一致**，现在是各自都对、连起来不对。
+
+诚实声明:
+- **绕过的环节**：LLM 设置直接写库（因断裂 C）；导图导出直接调 `packages/mindmap`（因断裂 D）。均已标注。
+- **手工放的模型**：whisper large-v3-turbo-q5_0 与 silero VAD 是我手工放的，**UI 装不了**（B-1 未完成）。llama-server 是我手工下载的官方预编译二进制。
+- **Paraformer 这一环没能在 daemon 真实路径上验证**——它在 `packages/pipeline` 里是通的（T-030 已实测），但 daemon 到不了它。

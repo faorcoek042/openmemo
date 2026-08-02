@@ -11,13 +11,15 @@
     "build": "tsc -b && vite build",
     "clean": "tsc -b --clean",
     "dev": "vite",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "tsc -p tsconfig.test.json && node -e \"require('fs').writeFileSync('dist/test/package.json','{\\\"type\\\":\\\"commonjs\\\"}')\" && node --test \"dist/test/**/*.test.js\""
   },
   "dependencies": {
     "@openmemo/mindmap": "workspace:*",
     "@openmemo/shared": "workspace:*",
     "@tanstack/react-query": "^5.101.4",
     "@tanstack/react-virtual": "^3.14.9",
+    "@tiptap/core": "^3.29.2",
     "@tiptap/pm": "^3.29.2",
     "@tiptap/react": "^3.29.2",
     "@tiptap/starter-kit": "^3.29.2",

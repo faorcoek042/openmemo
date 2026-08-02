@@ -15,9 +15,16 @@ export function timecode(ms: number): string {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
-/** SRT/VTT 用的完整时间码 `HH:MM:SS.mmm`（整数毫秒 → 无浮点误差，D-02 §3.6）。 */
+/**
+ * SRT/VTT 用的完整时间码 `HH:MM:SS.mmm`（整数毫秒 → 无浮点误差，D-02 §3.6）。
+ *
+ * ⚠️ **必须挡住 NaN/Infinity。**（本函数早期版本漏了这层，由 `export.test.ts` 逮到。）
+ * `Math.max(0, Math.floor(NaN))` 仍是 `NaN`，会产出 `NaN:NaN:NaN,NaN` 写进字幕文件 ——
+ * 而这在我们自己的 UI 里**完全看不出来**（转写稿照常显示），
+ * 只有用户把 .srt 拖进播放器、发现整个文件失效时才会暴露。
+ */
 export function timecodeFull(ms: number): string {
-  const t = Math.max(0, Math.floor(ms));
+  const t = Number.isFinite(ms) ? Math.max(0, Math.floor(ms)) : 0;
   const pad = (n: number, w = 2) => String(n).padStart(w, '0');
   return `${pad(Math.floor(t / 3600000))}:${pad(Math.floor(t / 60000) % 60)}:${pad(
     Math.floor(t / 1000) % 60,

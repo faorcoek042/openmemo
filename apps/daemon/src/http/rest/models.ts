@@ -50,6 +50,7 @@ import { handleJobRoutes, toPullResponse } from './jobs.js';
 import { resolveManifestDir } from './manifests.js';
 import { asString, asStringArray, decodePathSegment, readBody } from './request.js';
 import { HARDWARE_SNAPSHOT_ID, RestState } from './state.js';
+import { roleToActivationSlot, roleToStoreKind } from './roleMap.js';
 
 export interface ModelRoutesDeps {
   sse: SseHub;
@@ -387,7 +388,7 @@ function startModelPull(
         store: state.store,
         target: {
           id: model.id,
-          kind: model.role,
+          kind: roleToStoreKind(model.role),
           displayName: model.displayName,
           files: model.files,
         },
@@ -440,7 +441,7 @@ function startModelPull(
         catalogVersion: model.catalogVersion,
       };
       // blob 先落、manifest 最后写：中途崩溃只会留下可回收的孤儿 blob。
-      await state.store.writeManifest(model.role, model.id, record);
+      await state.store.writeManifest(roleToStoreKind(model.role), model.id, record);
 
       if (opts.activateOnSuccess || !state.active[model.role]) {
         const previous = state.active[model.role];
@@ -448,7 +449,7 @@ function startModelPull(
         await state.persistActive();
         state.publish(
           makeEvent('model.activated', topics.models(), {
-            role: model.role,
+            role: roleToActivationSlot(model.role),
             modelId: model.id,
             previous,
           }),
@@ -511,7 +512,11 @@ async function activateModel(
   state.active[role] = id;
   await state.persistActive();
   state.publish(
-    makeEvent('model.activated', topics.models(), { role, modelId: id, previous }),
+    makeEvent('model.activated', topics.models(), {
+      role: roleToActivationSlot(role),
+      modelId: id,
+      previous,
+    }),
   );
 
   const body_: ActivateResponse = {
@@ -557,7 +562,7 @@ async function deleteModel(
     return true;
   }
 
-  await state.store.removeManifest(record.role, id);
+  await state.store.removeManifest(roleToStoreKind(record.role), id);
   // manifest 没了，它引用的 blob 立刻变孤儿 —— 顺手回收
   const gc = await state.store.collectGarbage(['orphan_blobs']);
   state.publish(
@@ -624,7 +629,7 @@ async function verifyModel(
         integrity: mismatched.length === 0 ? 'ok' : 'corrupt',
         verifiedAt: new Date().toISOString(),
       };
-      await state.store.writeManifest(record.role, record.id, updated);
+      await state.store.writeManifest(roleToStoreKind(record.role), record.id, updated);
 
       if (mismatched.length > 0) {
         // 抛出去让队列走 job.failed，前端才能拿到具体是哪个文件坏了
@@ -754,7 +759,7 @@ async function importModel(
         await fs.copyFile(filePath, tmp);
         await fs.rename(tmp, blobPath);
       }
-      const linked = await state.store.linkByName(role, digest, fileName);
+      const linked = await state.store.linkByName(roleToStoreKind(role), digest, fileName);
 
       // 3. 内存需求用 shared 里的**真实公式**算，不手打数字
       const ramRequiredMB =
@@ -789,7 +794,7 @@ async function importModel(
         benchmark: null,
         catalogVersion: 'imported',
       };
-      await state.store.writeManifest(role, modelId, record);
+      await state.store.writeManifest(roleToStoreKind(role), modelId, record);
 
       state.publish(
         makeEvent('model.installed', topics.models(), {

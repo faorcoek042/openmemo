@@ -1,22 +1,22 @@
 {
   "schemaVersion": 1,
   "catalogVersion": "2026.08.02",
-  "generatedAt": "2026-08-02T16:10:00Z",
+  "generatedAt": "2026-08-02T16:20:00Z",
   "models": [
     {
       "schemaVersion": 1,
-      "id": "vad/silero-vad-v4",
+      "id": "vad/silero-vad",
       "groupId": "vad/silero-vad",
       "role": "vad",
       "family": "silero",
       "arch": "silero-vad",
       "format": "onnx",
       "quantization": "f16",
-      "quantTier": "balanced",
+      "quantTier": "small",
       "displayName": "Silero VAD",
-      "displayNameZh": "Silero VAD（语音活动检测）",
-      "descriptionZh": "语音活动检测模型。长音频分块的地基 —— 没有它无法把几十分钟的录音切成可转写的片段。体积极小，建议始终安装。",
-      "descriptionEn": "Voice activity detection. The foundation of long-audio chunking; without it multi-minute recordings cannot be segmented.",
+      "displayNameZh": "Silero 语音活动检测",
+      "descriptionZh": "语音活动检测。长音频分块的地基 —— 没有它无法把几十分钟的录音切成可转写的片段。仅 2.3 MB，建议始终安装。",
+      "descriptionEn": "Voice activity detection. The foundation of long-audio chunking; without it multi-minute recordings cannot be segmented. Only 2.3 MB.",
       "languages": [
         "multi"
       ],
@@ -50,12 +50,12 @@
       "license": {
         "id": "MIT",
         "gated": false,
-        "url": "https://raw.githubusercontent.com/snakers4/silero-vad/master/LICENSE"
+        "url": "https://github.com/snakers4/silero-vad/blob/master/LICENSE"
       },
       "source": {
         "provider": "github",
         "repo": "snakers4/silero-vad",
-        "revision": "asr-models"
+        "revision": "master"
       },
       "benchmark": null,
       "catalogVersion": "2026.08.02"
@@ -68,12 +68,12 @@
       "family": "sherpa-zipformer",
       "arch": "zipformer",
       "format": "onnx",
-      "quantization": "f16",
+      "quantization": "q8_0",
       "quantTier": "balanced",
       "displayName": "sherpa-onnx streaming zipformer zh-14M",
       "displayNameZh": "sherpa 流式中文 zh-14M",
-      "descriptionZh": "F3 录音转文字的流式引擎。边说边出字，逐字时间戳。仅中文，仅流式；离线批量转写请用 Whisper 或 Paraformer。",
-      "descriptionEn": "The streaming engine behind live recording (F3). Emits text while you speak, with per-token timestamps. Chinese-only, streaming-only.",
+      "descriptionZh": "F3 录音转文字的流式引擎：边说边出字，带逐字时间戳。仅中文、仅流式 —— 离线批量转写请用 Whisper 或 Paraformer。",
+      "descriptionEn": "The streaming engine behind live recording (F3): text appears while you speak, with per-token timestamps. Chinese-only and streaming-only.",
       "languages": [
         "zh"
       ],
@@ -83,25 +83,83 @@
       ],
       "files": [
         {
-          "role": "archive",
-          "name": "sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23.tar.bz2",
-          "sizeBytes": 74004050,
-          "sha256": "2cbd71b640d9c37d3784f29367333a4577b0398b62e9deeed418170b081cba8b",
+          "role": "weights",
+          "name": "encoder-epoch-99-avg-1.int8.onnx",
+          "sizeBytes": 21621684,
+          "sha256": "1c556ea57cec304e55ec4b72e52c1cc098bb01476ed7d90f3de939fe126487b1",
           "mirrors": [
             {
-              "provider": "github",
-              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23.tar.bz2",
+              "provider": "hf",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/main/encoder-epoch-99-avg-1.int8.onnx",
               "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/main/encoder-epoch-99-avg-1.int8.onnx",
+              "official": false
             }
-          ],
-          "unpack": "tar.bz2"
+          ]
+        },
+        {
+          "role": "weights",
+          "name": "decoder-epoch-99-avg-1.int8.onnx",
+          "sizeBytes": 1888682,
+          "sha256": "22f123bb8cba9b38974b3df18a3f45e7081f4985ebb2e075d9f21f618c468bbf",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/main/decoder-epoch-99-avg-1.int8.onnx",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/main/decoder-epoch-99-avg-1.int8.onnx",
+              "official": false
+            }
+          ]
+        },
+        {
+          "role": "weights",
+          "name": "joiner-epoch-99-avg-1.int8.onnx",
+          "sizeBytes": 1795562,
+          "sha256": "a7cf9d82757bdcf786059454495a9ca95e4bd7347f72473fc08d794475c36169",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/main/joiner-epoch-99-avg-1.int8.onnx",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/main/joiner-epoch-99-avg-1.int8.onnx",
+              "official": false
+            }
+          ]
+        },
+        {
+          "role": "weights",
+          "name": "tokens.txt",
+          "sizeBytes": 48697,
+          "sha256": "8b294db9045d6e5f94647f4c1eec1af4da143a75053c399611444b378ff966ac",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/main/tokens.txt",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/resolve/main/tokens.txt",
+              "official": false
+            }
+          ]
         }
       ],
-      "totalSizeBytes": 74004050,
+      "totalSizeBytes": 25354625,
       "requirements": {
         "ramRequiredMB": 512,
         "vramRequiredMB": 512,
-        "diskRequiredMB": 82,
+        "diskRequiredMB": 28,
         "cpuFeatures": [],
         "computedAtContext": null
       },
@@ -111,15 +169,15 @@
         "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23"
       },
       "source": {
-        "provider": "github",
-        "repo": "k2-fsa/sherpa-onnx",
-        "revision": "asr-models"
+        "provider": "hf",
+        "repo": "csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23",
+        "revision": "main"
       },
       "benchmark": null,
       "catalogVersion": "2026.08.02",
       "capabilityCaveats": [
         "仅支持中文",
-        "仅流式，不能用于离线批量转写"
+        "仅用于流式录音，不能做离线批量转写"
       ]
     },
     {
@@ -130,12 +188,12 @@
       "family": "paraformer",
       "arch": "paraformer",
       "format": "onnx",
-      "quantization": "f16",
+      "quantization": "q8_0",
       "quantTier": "balanced",
       "displayName": "Paraformer Chinese small",
       "displayNameZh": "Paraformer 中文（快）",
-      "descriptionZh": "中文默认离线引擎，比 Whisper 快很多。代价：无词级时间戳（只有段级）、数字输出为中文而非阿拉伯数字、英文一律小写。需要逐字对齐或中英混排排版时请切回 Whisper large-v3-turbo。",
-      "descriptionEn": "Default offline Chinese engine, much faster than Whisper. Trade-offs: no word-level timestamps (segment-level only), numbers written in Chinese rather than digits, English lower-cased.",
+      "descriptionZh": "中文默认离线引擎，比 Whisper 快很多。需要逐字对齐或中英混排排版时可一键切回 Whisper large-v3-turbo。",
+      "descriptionEn": "Default offline Chinese engine, much faster than Whisper. Switch back to Whisper large-v3-turbo when you need word-level alignment.",
       "languages": [
         "zh"
       ],
@@ -145,25 +203,65 @@
       ],
       "files": [
         {
-          "role": "archive",
-          "name": "sherpa-onnx-paraformer-zh-small-2024-03-09.tar.bz2",
-          "sizeBytes": 77920048,
-          "sha256": "da92b3db5218c5be53aad53e57d1b6e63e7fc98a0e054fbdd6dbe18e9c6b1450",
+          "role": "weights",
+          "name": "model.int8.onnx",
+          "sizeBytes": 81828675,
+          "sha256": "3ef6c19369b912f7caf3cef8e545c5ccd1a33d9d7ec792a46668dc41c4b229ec",
           "mirrors": [
             {
-              "provider": "github",
-              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-paraformer-zh-small-2024-03-09.tar.bz2",
+              "provider": "hf",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/main/model.int8.onnx",
               "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/main/model.int8.onnx",
+              "official": false
             }
-          ],
-          "unpack": "tar.bz2"
+          ]
+        },
+        {
+          "role": "weights",
+          "name": "tokens.txt",
+          "sizeBytes": 75352,
+          "sha256": "4b2d964e18b9cf139b473003b6698fb2ed9a2a5ec55b93daa677b28f578897aa",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/main/tokens.txt",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/main/tokens.txt",
+              "official": false
+            }
+          ]
+        },
+        {
+          "role": "weights",
+          "name": "am.mvn",
+          "sizeBytes": 11203,
+          "sha256": "29b3c740a2c0cfc6b308126d31d7f265fa2be74f3bb095cd2f143ea970896ae5",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/main/am.mvn",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/main/am.mvn",
+              "official": false
+            }
+          ]
         }
       ],
-      "totalSizeBytes": 77920048,
+      "totalSizeBytes": 81915230,
       "requirements": {
         "ramRequiredMB": 512,
         "vramRequiredMB": 512,
-        "diskRequiredMB": 86,
+        "diskRequiredMB": 91,
         "cpuFeatures": [],
         "computedAtContext": null
       },
@@ -173,14 +271,14 @@
         "url": "https://www.modelscope.cn/models/damo/speech_paraformer_asr_nat-zh-cn-16k-common-vocab8358-tensorflow1"
       },
       "source": {
-        "provider": "github",
-        "repo": "k2-fsa/sherpa-onnx",
-        "revision": "asr-models"
+        "provider": "hf",
+        "repo": "csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09",
+        "revision": "main"
       },
       "benchmark": null,
       "catalogVersion": "2026.08.02",
       "capabilityCaveats": [
-        "无词级时间戳（只有段级）",
+        "无词级时间戳，只有段级",
         "数字输出为中文而非阿拉伯数字",
         "英文一律小写"
       ]
@@ -188,7 +286,7 @@
     {
       "schemaVersion": 1,
       "id": "punctuation/ct-transformer-zh-en",
-      "groupId": "punctuation/punct-ct-transformer-zh-en",
+      "groupId": "punctuation/ct-transformer-zh-en",
       "role": "punctuation",
       "family": "ct-transformer",
       "arch": "ct-transformer",
@@ -197,8 +295,8 @@
       "quantTier": "balanced",
       "displayName": "Chinese/English punctuation restoration",
       "displayNameZh": "中文标点恢复",
-      "descriptionZh": "给转写结果补标点。不装的话中文输出会是一整段没有标点的文字，几乎没法读。中英双语词表。",
-      "descriptionEn": "Restores punctuation in transcripts. Without it Chinese output is one long unpunctuated run of characters.",
+      "descriptionZh": "给转写结果补标点。不装的话中文输出是一整段没有标点的文字，几乎没法读。中英双语词表。",
+      "descriptionEn": "Restores punctuation. Without it Chinese output is one unpunctuated run of characters.",
       "languages": [
         "zh",
         "en"
@@ -209,25 +307,47 @@
       ],
       "files": [
         {
-          "role": "archive",
-          "name": "sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12.tar.bz2",
-          "sizeBytes": 279028058,
-          "sha256": "50f73f8cccffc2303999fda28b785ffcffbd7ea442c47385c30b9d045ee6afc3",
+          "role": "weights",
+          "name": "model.onnx",
+          "sizeBytes": 294372519,
+          "sha256": "e93593a6dbd69a07f8734ef269dbe861a379755f8d1c8354719432116f2c44bd",
           "mirrors": [
             {
-              "provider": "github",
-              "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/punctuation-models/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12.tar.bz2",
+              "provider": "hf",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12/resolve/main/model.onnx",
               "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12/resolve/main/model.onnx",
+              "official": false
             }
-          ],
-          "unpack": "tar.bz2"
+          ]
+        },
+        {
+          "role": "weights",
+          "name": "tokens.json",
+          "sizeBytes": 4207480,
+          "sha256": "c960ab87bccea4aa15cf49a59f71973c2c330b46668048cd8da253749ec71ee3",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/csukuangfj/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12/resolve/main/tokens.json",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/csukuangfj/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12/resolve/main/tokens.json",
+              "official": false
+            }
+          ]
         }
       ],
-      "totalSizeBytes": 279028058,
+      "totalSizeBytes": 298579999,
       "requirements": {
         "ramRequiredMB": 1024,
         "vramRequiredMB": 1024,
-        "diskRequiredMB": 307,
+        "diskRequiredMB": 329,
         "cpuFeatures": [],
         "computedAtContext": null
       },
@@ -237,9 +357,9 @@
         "url": "https://www.modelscope.cn/models/iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch"
       },
       "source": {
-        "provider": "github",
-        "repo": "k2-fsa/sherpa-onnx",
-        "revision": "punctuation-models"
+        "provider": "hf",
+        "repo": "csukuangfj/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12",
+        "revision": "main"
       },
       "benchmark": null,
       "catalogVersion": "2026.08.02"

@@ -34,15 +34,11 @@ import type {
 } from '../../lib/events/types';
 
 /**
- * ② `transcribe.segment` / `transcribe.partial` **不带 `noteUid`**
- * （与 D-05 §11.0 总则 3 不一致，已上报）。
- * 这里用 `transcribe.started` 建立 transcriptUid → noteUid 的映射来补齐。
- * 若映射缺失（例如刷新页面后中途接上流），退化为全量失效，保证不出错。
+ * ✅ 两处适配已随契约更新删除（ADR-013 决策 2 / 决策 4）：
+ *   ① 秒 → 毫秒的转换 —— shared 的事件现在直接是整数毫秒，与 D-02 §1.1 一致；
+ *   ② transcriptUid → noteUid 的本地映射表 —— 事件已自带 `noteUid`。
+ * 少两处适配就少两处可能漂移的地方。
  */
-const transcriptToNote = new Map<string, string>();
-
-/** ① 秒 → 毫秒。内部一律整数毫秒（D-02 §1.1：浮点秒会在字幕对齐上累积误差）。 */
-const toMs = (sec: number) => Math.round(sec * 1000);
 
 function upsertSegment(qc: QueryClient, noteUid: string, seg: TranscriptSegmentDto) {
   qc.setQueryData<TranscriptDto | null>(qk.transcript(noteUid), (old) => {
@@ -87,7 +83,6 @@ export const notesSse: SseBinding = (qc: QueryClient) => [
 
   /* ── 转写域 ── */
   bus.on('transcribe.started', (e: TranscribeStartedEvent) => {
-    transcriptToNote.set(e.transcriptUid, e.noteUid);
     void qc.invalidateQueries({ queryKey: qk.notes.detail(e.noteUid) });
   }),
 
@@ -98,16 +93,10 @@ export const notesSse: SseBinding = (qc: QueryClient) => [
    * 若改成 invalidate，每个 chunk 都要整篇重拉（3000 段），既慢又会打断用户滚动。
    */
   bus.on('transcribe.segment', (e: TranscribeSegmentEvent) => {
-    const noteUid = transcriptToNote.get(e.transcriptUid);
-    if (!noteUid) {
-      // 映射缺失（中途接上流）→ 保守地全量失效，不猜
-      void qc.invalidateQueries({ queryKey: ['transcript'] });
-      return;
-    }
-    upsertSegment(qc, noteUid, {
+    upsertSegment(qc, e.noteUid, {
       seq: e.seq,
-      startMs: toMs(e.startSec),
-      endMs: toMs(e.endSec),
+      startMs: e.startMs,
+      endMs: e.endMs,
       text: e.text,
       speakerLabel: e.speaker,
       confidence: e.confidence,
@@ -131,7 +120,6 @@ export const notesSse: SseBinding = (qc: QueryClient) => [
   }),
 
   bus.on('transcribe.done', (e: TranscribeDoneEvent) => {
-    transcriptToNote.set(e.transcriptUid, e.noteUid);
     void qc.invalidateQueries({ queryKey: qk.transcript(e.noteUid) });
     void qc.invalidateQueries({ queryKey: qk.notes.detail(e.noteUid) });
     // partial=true：转写提前结束但前面的段落仍然有效，必须保持可见

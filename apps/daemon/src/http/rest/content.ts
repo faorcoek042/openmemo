@@ -14,8 +14,9 @@ import {
   toOpml,
   type MindMapDoc,
 } from '@openmemo/mindmap';
-import type { SseEvent } from '@openmemo/shared';
-import { makeEvent, topics } from '@openmemo/shared';
+import { makeEvent, topics, type NoteUpdatedEvent } from '@openmemo/shared';
+
+type NoteChange = NoteUpdatedEvent['changed'][number];
 
 import type { DatabaseHandle } from '@openmemo/db';
 
@@ -98,13 +99,13 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
           patch.language = body.language === null ? null : String(body.language);
         }
 
-        const changed = updateNoteContent(deps.db, note.id, patch);
+        const changed = updateNoteContent(deps.db, note.id, patch) as NoteChange[];
         const updated = repos.noteById(note.id);
         sse.publish(
           makeEvent('note.updated', topics.note(note.uid), {
             noteUid: note.uid,
             changed,
-          } as never) as SseEvent,
+          }),
         );
         sendJson(res, 200, {
           uid: note.uid,
@@ -133,13 +134,13 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
           noteId: note.id,
           payload: { noteId: note.id },
         });
-        sse.publish(
-          makeEvent('job.created', topics.job(job.uid), {
-            jobUid: job.uid,
-            kind: 'mindmap',
-            label: note.title,
-          } as never) as SseEvent,
-        );
+        /*
+         * ⚠️ **刻意不发 `job.created`**：契约里它要求一个完整的 `DownloadJob`
+         * （kind: 'model'|'backend-pack'、totalBytes、parts、fileIndex…），
+         * 那是为**下载**建模的，转写/导图这类流水线 job 填不进去。
+         * 前端从本响应的 202 body 拿 jobUid，后续状态走 job.state / job.progress。
+         * 已报 Manager：shared 需要补流水线 job 的表示。
+         */
         sendJson(res, 202, { jobUid: job.uid, noteUid: note.uid });
         return true;
       }

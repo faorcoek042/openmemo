@@ -12,6 +12,7 @@ export * from './ulid.js';
 export * from './hardware.js';
 export * from './artifacts.js';
 export * from './models.js';
+export * from './notes.js';
 export * from './backends.js';
 export * from './fitness.js';
 export * from './jobs.js';
