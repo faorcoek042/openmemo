@@ -118,6 +118,27 @@ export function startPackInstall(
       ctx.setStep('resolving');
       const probes = await state.probeMirrors(pack.files[0].mirrors);
 
+      /*
+       * ⚠️ **这里刻意不把 `pack.installPath` 传给安装器。** 不是遗漏，是查过之后的决定。
+       * 谁要"顺手接上"，先读完这两条：
+       *
+       * 1. **两份清单里的 `installPath` 根本不是同一个概念。**
+       *    `backends.json` 填的是 `llamacpp/b10223/vulkan` / `whispercpp/v1.9.1/cpu`
+       *    ——「引擎运行时目录」布局；而安装器的 `installPath` 语义是「相对 dataRoot」。
+       *    照传下去，包会落到 `<dataDir>/llamacpp/b10223/vulkan`，
+       *    而 `findInBackendPacks` 扫的是 `by-name/` —— **刚验证通过的 ffmpeg 发现会当场失效**。
+       *
+       * 2. **sqlite-ext 那 11 个包全都填 `bin/ext`（同一个目录）**，
+       *    而安装器为了保证原子性会 `fs.rm(finalDir, {recursive:true})` 再 rename。
+       *    于是装完 libsimple 再装 sqlite-vec，**第二个会把第一个整个删掉** ——
+       *    把一个能用的环境变成坏的，而且没有任何报错。
+       *
+       * sqlite 扩展落到 `bin/ext` 由下面的 `materializeSqliteExtensions` 完成：
+       * 它是**往目录里补文件**，不是替换整个目录，所以多个包可以共存。
+       *
+       * → 结论：这个字段在当前语义下**无法被安装器兑现**，已请 `model-mgmt` 改名或删除。
+       *   在那之前保持不传，并用这段注释挡住"看起来像漏了"的误修。
+       */
       const result = await install({
         store: state.store,
         target: { id: pack.id, kind: 'backend', displayName: pack.displayName, files: pack.files },

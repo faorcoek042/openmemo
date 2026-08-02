@@ -1774,3 +1774,48 @@ tmp 目录:  (空)  已入库资产不再留在这里
 
 lint 干净；move 13/13、upload 17/17、lanes 7/7；demo 只读未重启；
 测试实例与临时目录已收尾，**全局指针文件已确认删除**（避免悬空指针劫持他人实例）。
+
+---
+
+## T-096 `installPath`：**两者都不选 —— 传下去会当场弄坏两处，我选"记录裁决"**
+
+你和 `model-mgmt` 给的是"传下去 or 删掉"二选一。我查完数据后认为**两个都不对**，理由是硬的：
+
+### 1. 两份清单里的 `installPath` 不是同一个概念
+```
+backends.json (11 个):  llamacpp/b10223/vulkan · whispercpp/v1.9.1/cpu · media-tools/n7.1.5/cpu
+                        → 「引擎运行时目录」布局
+sqlite-ext.json (11 个): 全部 bin/ext
+安装器语义:              「相对 dataRoot」
+```
+照传：后端包会落到 `<dataDir>/llamacpp/b10223/vulkan`，而 `findInBackendPacks` 扫的是 `by-name/`
+→ **刚验证通过的 ffmpeg 发现会当场失效**。
+
+### 2. ★ sqlite-ext 那 11 个包**共用同一个 `bin/ext`**，而安装器为原子性会先删整个目录
+```ts
+await fs.rm(finalDir, { recursive: true, force: true });   // installer.ts:236
+await fs.rename(tmpDir, finalDir);
+```
+→ 装完 libsimple 再装 sqlite-vec，**第二个把第一个整个删掉**，
+把能用的环境变成坏的，**且零报错**。这正是我们这几轮一直在消灭的形状 ——
+所以"顺手接上"反而会造出一个新的同款 bug。
+
+### 我做的
+- **保持不传**，并把上面两条**写进 `startPackInstall` 的调用点**，
+  专门挡住"看起来像漏了"的误修。删字段的权在 `model-mgmt`（清单+shared 类型是他的），
+  **建议他改名（如 `linkInto`）或删除**，我不越界替他改。
+- 现行机制 `materializeSqliteExtensions` 是**往目录里补文件**、不替换整个目录，
+  所以多个扩展能共存 —— 这正是它必须存在的理由，不是冗余。
+  实测 demo：`bin/ext` 下 `libsimple.so` + `vec0.so` 并存，
+  `libsimple=True sqliteVec=True tokenizer=simple` ✅
+
+### 结论一句话
+**"声明了却不执行"确实要消灭，但消灭的方式不一定是"让它执行"** ——
+当声明本身与实现语义冲突时，执行它比忽略它更糟。这次记录裁决 + 挡住误修，
+比二选一里的任何一个都安全。
+
+### 记进清单（你交代的）
+- `stripExt` 只剥一级 → 解包目录名残留 `.tar.xz`（`model-mgmt` 克制未改，我不忘）
+- `BackendPack.installPath` 语义待 `model-mgmt` 改名或删除
+
+lint 干净；move 13/13、upload 17/17；demo 全程只读未重启。
