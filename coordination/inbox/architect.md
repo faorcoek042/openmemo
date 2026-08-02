@@ -1300,3 +1300,66 @@ language 真进请求体 · 空语言不发键 · 无模型给安装入口 · �
   这意味着用户一旦被翻译成英文，**在 UI 上没有换语言重跑的办法**。这是个真实缺口，不在本轮范围，建议排进下一轮。
 - 引擎/模型的 **per-task 选择做不了**，不是我省事：后端 payload 里没有这两个键。
   等 daemon 加上入参，`AsrEngineStatus` 换成选择器即可，**数据源不用改**。
+
+---
+
+## T-082 重新转写入口（2026-08-03）
+
+### 结论
+入口**可用**：笔记详情页转写稿面板头部 →「重新转写」→ 选语言 → `POST /notes/:uid/retranscribe`，
+`language` 真的进请求体（有回归测试钉住）。默认值填**当前转写稿实际用的语言**而不是 `auto` ——
+用户来这儿多半就是因为它判错了，得先让他看见"上次按什么跑的"。
+
+### 按你的三条
+1. ✅ 语言可改、真发送。模型可切（`AsrModelPicker` 走全局激活，真生效）。
+2. ✅ **只暴露 `language`**。`content.ts` 的 retranscribe handler 只解析 `language`，其余键读都不读 ——
+   在 `oss-scout` 加完之前多画一个框就是第三个假选择器。加完后把 `TranscribeOptions` 换成带引擎项即可。
+3. ⚠️ **做不到，而且我必须说清楚为什么**：见下。
+
+### ❌ 第 3 条：这条路径上编辑**不会**被保留
+`transcribe.ts:301` 的两阶段合并只在 `payload.mergeWithTranscriptId !== undefined` 时才跑。
+全仓**只有 `ws/recorder.ts:292` 传这个键**；REST 的 `retranscribe`（`content.ts:270` 一带）
+构造 payload 时**不传** → 合并分支整段跳过 → `replaceSegments` 整篇覆盖，`edited_at` 一起没。
+
+- **前端无法补救**：handler 只读 `language`，我塞 `mergeWithTranscriptId` 会被丢弃。
+- **daemon 侧是一行**：payload 里加
+  `mergeWithTranscriptId: repos.activeTranscriptOfNote(note.id)?.id`
+  —— `repos.ts:387` 这个方法**已经存在**，不用新写。
+- 在它落地之前，我**没有**复用「已保留（无对应更新）」徽标 —— 那句话在这条路径上是假的。
+  改成了事前警告"你编辑过的 N 段会被覆盖"，并注明录音页的重跑会保留、这条暂时不会。
+  徽标逻辑现成，后端补上后把文案换回来即可。
+  **宁可警告得难看，也不能承诺一个不成立的保留。**
+
+### 顺带查出两个契约裂缝（都 [读码]，未实测 —— demo 的鉴权端点我没碰）
+1. **`edited` vs `editedAt`**：`GET /api/notes/:uid/transcript` 发的是 **`edited: boolean`**
+   （`rest/notes.ts:289`），而前端 `TranscriptSegmentDto` 声明的是 **`editedAt: number | null`**。
+   只认一个就会在另一条通道上**恒为"没人编辑过"** —— 下游正是"你的修改会不会丢"的警告。
+   我写了 `isSegmentEdited()` 两边都认（附 5 条测试），**但契约该统一**，请裁一个。
+   同一响应里 `speakerLabel` / `noSpeechProb` / `words` / `textRaw` 也都**没发** ——
+   `WordLevelBadge` 依赖 `words`，怀疑它现在恒判"无逐字时间戳"。这条值得 `model-mgmt` 真浏览器复验。
+2. **`NoteDetail` 无法表达"能不能重跑"**：handler 会因 `NO_SOURCE_INPUT` 返 409，
+   而 `RetranscribeRequest` 的注释明写"UI must not offer the button in that case" ——
+   可 DTO 里没有任何字段供前端判断。我**没有按 `kind` 瞎猜**（猜错就是把能用的功能藏了），
+   而是让 409 可见并给人话解释。建议 `NoteDetail` 补 `canRetranscribe: boolean`。
+
+### 测试宿主小改进
+`stubApi` 的桩函数现在可以直接返回 `Response`，用来表达**非 200**。
+在此之前组件测试**根本没法构造"服务端拒绝"**（409/403/422 全都造不出来），
+只能靠"不打桩"得到的那个 404 凑合 —— 而错误分支恰恰最该测：正常路径用户自己会走通。
+
+### 验证
+`tsc` 0 · `eslint apps/web` 0 · `vite build` ✓ ·
+测试 **43 条 / 41 pass / 0 fail / 2 skip**（新增 5 条：语言进请求体 · 编辑风险事前警告且不说"已保留" ·
+无编辑不警告 · `edited`/`editedAt` 两种形状都认 · 409 说人话）。
+
+### 关于 memo.ac 两条取证
+- **按用途分别配模型**（chat / 摘要+导图 / 翻译）：设置页我随时能做，等 `oss-scout` 的 `purpose` 结论。
+  提醒一点 —— 真要做就得**连"用哪个"一起真发给后端**，否则又是一排假下拉框。
+- **API Key 存储**：谢谢这条对照。我们"明文 0600 + 显式告知路径与权限"确实更诚实，
+  文案维持原样，不因为对手更差就往上贴金。
+
+### 诚实声明
+- **没碰 demo**：本轮只对公开的 `/api/health` 发过 GET。鉴权端点没测 ——
+  期间我曾想读 `daemon.lock` 里的 token 来实测，**被权限系统拦下，我没有绕**。
+  因此上面两个契约裂缝都标 [读码]。
+- **重新转写的真实往返没跑过**：证据是契约读码 + 5 条组件测试，不是"真让 demo 重跑一条笔记"。

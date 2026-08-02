@@ -174,6 +174,17 @@ export function stubApi(routes: Record<string, unknown | ((c: StubCall) => unkno
     }
     const payload =
       typeof handler === 'function' ? (handler as (c: StubCall) => unknown)(calls.at(-1)!) : handler;
+
+    /**
+     * 桩函数可以直接返回一个 `Response`，用来表达**非 200**。
+     *
+     * 加这个之前，桩只会把返回值当 body 包成 200 —— 于是"服务端拒绝"这一整类
+     * 行为（409 冲突、403、422…）在组件测试里**根本没法构造**，
+     * 只能靠不打桩得到的那个 404 凑合。而错误分支恰恰是最该测的：
+     * 正常路径用户自己会走通，出错时说什么话才是产品差别所在。
+     */
+    if (payload instanceof Response) return payload;
+
     return new Response(JSON.stringify(payload ?? null), {
       status: 200,
       headers: { 'content-type': 'application/json' },

@@ -30,6 +30,7 @@ import { AsrModelPicker } from '../components/common/AsrModelPicker';
 import { AsrEngineStatus } from '../components/common/AsrEngineStatus';
 import { useImportUrlMutation } from '../features/notes';
 import { DataLocationSection } from '../features/settings/DataLocationSection';
+import { RetranscribeButton, isSegmentEdited } from '../features/notes/RetranscribeButton';
 
 /* ─────────────────────────── 标签增删 ─────────────────────────── */
 
@@ -666,6 +667,107 @@ describe('设置 · 数据位置', () => {
     assert.ok(shown.includes('自动重建'));
     // 只说"安全"是半句真话 —— 代价必须同时出现
     assert.ok(shown.includes('丢失'), '必须同时说明笔记与模型会丢失');
+    r.unmount();
+  });
+});
+
+/* ─────────────────────────── 重新转写 ─────────────────────────── */
+
+/**
+ * 这是"中文被翻译成英文"那个灾难的**唯一补救通道**。
+ * 端点一直在，只是没有路 —— 所以这里钉的第一条就是"点得到、且语言真的发出去"。
+ */
+describe('重新转写入口', () => {
+  const noEdits = [{ seq: 1, text: 'a', edited: false }];
+
+  test('★ 语言真的进请求体 —— 否则这个入口等于没补', async () => {
+    const { calls } = stubApi({
+      'POST /notes/n1/retranscribe': { jobUid: 'j9', noteUid: 'n1' },
+      'GET /models/installed': { models: [], active: { asr: null } },
+    });
+    const r = await render(
+      <RetranscribeButton noteUid="n1" segments={noEdits} currentLanguage="en" />,
+    );
+    await click(r.container.querySelector('[data-testid="retranscribe-open"]'));
+    await click(r.container.querySelector('[data-testid="retranscribe-submit"]'));
+    await r.flush();
+
+    const post = calls.find((c) => c.path === '/notes/n1/retranscribe');
+    assert.ok(post, '应发出 retranscribe 请求');
+    // 默认带上转写稿当前语言（用户来这儿就是因为它判错了，得让他看见并能改）
+    assert.deepEqual(post!.body, { language: 'en' });
+    r.unmount();
+  });
+
+  test('★ 编辑过的段落有风险时必须**事前**警告 —— 这条路径 daemon 不做两阶段合并', async () => {
+    stubApi({ 'GET /models/installed': { models: [], active: { asr: null } } });
+    const r = await render(
+      <RetranscribeButton
+        noteUid="n1"
+        segments={[
+          { seq: 1, text: 'a', edited: true },
+          { seq: 2, text: 'b', edited: true },
+          { seq: 3, text: 'c', edited: false },
+        ]}
+        currentLanguage="zh"
+      />,
+    );
+    await click(r.container.querySelector('[data-testid="retranscribe-open"]'));
+    await r.flush();
+    const shown = text(r.container);
+    assert.ok(shown.includes('2 段会被覆盖'), `应准确报出 2 段，实际：${shown.slice(0, 200)}`);
+    // 不能沿用录音页那句"已保留" —— 在这条路径上是假的
+    assert.ok(!shown.includes('已保留'), 'REST 重跑目前不保留编辑，不许说保留');
+    r.unmount();
+  });
+
+  test('没有编辑过就不弹警告，别制造无谓的恐慌', async () => {
+    stubApi({ 'GET /models/installed': { models: [], active: { asr: null } } });
+    const r = await render(
+      <RetranscribeButton noteUid="n1" segments={noEdits} currentLanguage="zh" />,
+    );
+    await click(r.container.querySelector('[data-testid="retranscribe-open"]'));
+    await r.flush();
+    assert.ok(!text(r.container).includes('会被覆盖'));
+    r.unmount();
+  });
+
+  test('★ 两条通道的"编辑过"字段名不同，必须都认', () => {
+    // REST 发 edited:boolean，SSE 增量发 editedAt:number|null —— 只认一个就会静默失效
+    assert.equal(isSegmentEdited({ edited: true }), true, 'REST 形状');
+    assert.equal(isSegmentEdited({ edited: false }), false);
+    assert.equal(isSegmentEdited({ editedAt: 1_700_000_000_000 }), true, 'SSE 形状');
+    assert.equal(isSegmentEdited({ editedAt: null }), false);
+    assert.equal(isSegmentEdited({}), false, '两个都没有时不能瞎猜成 true');
+  });
+
+  test('★ 409 NO_SOURCE_INPUT 要说人话，而不是抛一个原始错误', async () => {
+    stubApi({
+      'GET /models/installed': { models: [], active: { asr: null } },
+      // 真的返回一个 409 信封，让 client.ts 自己解析成 ApiError ——
+      // 手工 new 一个 ApiError 只会测到我自己的构造函数，测不到解析链路
+      'POST /notes/n1/retranscribe': () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              code: 'NO_SOURCE_INPUT',
+              message: 'note has no recorded source input',
+              messageZh: '这条笔记没有记录原始输入，无法重跑',
+            },
+          }),
+          { status: 409, headers: { 'content-type': 'application/json' } },
+        ),
+    });
+    const r = await render(
+      <RetranscribeButton noteUid="n1" segments={noEdits} currentLanguage="zh" />,
+    );
+    await click(r.container.querySelector('[data-testid="retranscribe-open"]'));
+    await click(r.container.querySelector('[data-testid="retranscribe-submit"]'));
+    await r.flush();
+    assert.ok(
+      text(r.container).includes('没有记录原始输入'),
+      '应给出可读解释，说明什么情况下才能重跑',
+    );
     r.unmount();
   });
 });
