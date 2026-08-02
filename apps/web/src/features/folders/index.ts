@@ -7,6 +7,7 @@ export {
   useDeleteFolderMutation,
   useMoveNoteMutation,
   buildTree,
+  normalizeFolders,
   type FolderDto,
   type FolderNode,
 } from './api';

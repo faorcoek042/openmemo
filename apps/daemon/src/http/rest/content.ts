@@ -22,6 +22,7 @@ import type { DatabaseHandle } from '@openmemo/db';
 
 import type { MindMapRepo } from '../../db/mindmapRepo.js';
 import { updateNoteContent, type NoteContentPatch } from '../../db/noteContentRepo.js';
+import { extractPlainText } from '../../db/richText.js';
 import type { Repos, SegmentRow } from '../../db/repos.js';
 import type { JobQueue } from '../../jobs/queue.js';
 import { readJsonBody, sendError, sendJson } from '../respond.js';
@@ -83,14 +84,29 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
             sendError(res, 400, 'BAD_BODY_JSON', 'bodyJson not serializable', '正文 JSON 无法序列化');
             return true;
           }
+          /*
+           * **权威规则：有 `bodyJson` 时，`body_text` 一律由服务端推导。**
+           *
+           * body_text 是 body_json 的纯文本投影，专供 FTS5（D-02 §1.3）。以前它由
+           * 前端一起传上来，两个字段就可能漂移 —— 而漂移不报错，只是搜索悄悄给出
+           * 过时结果。让唯一事实来源（body_json）自己推出投影，这类 bug 在结构上消失。
+           *
+           * 客户端仍可以传 `bodyText`：那被降级成一个可选的优化提示，此处直接被
+           * 推导值覆盖，**但不报错**（老客户端照常工作，不需要同步发版）。
+           *
+           * 提取器刻意做得很浅（只递归收 text 节点，见 db/richText.ts）：服务端不该
+           * 为了建索引就把整个 TipTap 运行时搬进 daemon。少收一点装饰性字符可以接受，
+           * 因为多引一坨前端 schema 依赖不可接受。
+           */
+          patch.bodyText = extractPlainText(body.bodyJson);
         }
         if (body.bodyText !== undefined) {
           if (typeof body.bodyText !== 'string') {
             sendError(res, 400, 'BAD_BODY_TEXT', 'bodyText must be a string', '正文纯文本必须是字符串');
             return true;
           }
-          // body_text 是 body_json 的纯文本投影，专供 FTS5（D-02 §1.3）
-          patch.bodyText = body.bodyText;
+          // 只有在没有 bodyJson 可推导时，才采信客户端给的投影（见上方权威规则）
+          if (body.bodyJson === undefined) patch.bodyText = body.bodyText;
         }
         if (body.summaryMd !== undefined) {
           patch.summaryMd = body.summaryMd === null ? null : String(body.summaryMd);

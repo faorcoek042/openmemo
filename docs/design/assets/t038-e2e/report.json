@@ -1,0 +1,123 @@
+{
+  "ranAt": "2026-08-02T08:42:44.517Z",
+  "base": "http://127.0.0.1:17660",
+  "browser": "chromium 151.0.7922.34",
+  "noteUid": null,
+  "findings": [
+    {
+      "id": "K1",
+      "feature": "/tasks React #185 是否已修",
+      "status": "yes",
+      "detail": "未崩溃，10 个可交互元素 · 新建捕获全部笔记星标录音文件夹还没有文件夹运行时模型任务中心设置已接通 1 · 模拟 2· daemon v0.1.0任务中心发生了未知错误"
+    },
+    {
+      "id": "12",
+      "feature": "任务中心刷新后仍在",
+      "status": "yes",
+      "detail": "刷新后页面存活 · 新建捕获全部笔记星标录音文件夹还没有文件夹运行时模型任务中心设置已接通 1 · 模拟 2· daemon v0.1.0任务中心发生了未知错误"
+    },
+    {
+      "id": "K2",
+      "feature": "中文搜索双字词命中",
+      "status": "no",
+      "detail": "用户=0 推特=0 中国=0 服务=0 维基百科=0 · tokenizer=n/a（libsimple 未装 → trigram 回退，三字以下必 0 命中）"
+    },
+    {
+      "id": "6",
+      "feature": "首启引导跳转",
+      "status": "yes",
+      "detail": "点击后页面推进（/onboarding）"
+    },
+    {
+      "id": "5",
+      "feature": "API Key 输入与自测",
+      "status": "no",
+      "detail": "设置页找不到 Key 输入框 · 新建捕获全部笔记星标录音文件夹还没有文件夹运行时模型任务中心设置已接通 1 · 模拟 2· daemon v0.1.0设置通用语言中文English主题syst"
+    },
+    {
+      "id": "2",
+      "feature": "拖拽上传",
+      "status": "partial",
+      "detail": "file input ×1 · drop=drop-dispatched · 界面无反应"
+    },
+    {
+      "id": "1",
+      "feature": "双击编辑转写段落",
+      "status": "no",
+      "detail": "无 fixture 笔记，无法验证"
+    },
+    {
+      "id": "3",
+      "feature": "标签增删",
+      "status": "no",
+      "detail": "无 fixture 笔记，无法验证"
+    },
+    {
+      "id": "4",
+      "feature": "星标点击",
+      "status": "no",
+      "detail": "无 fixture 笔记，无法验证"
+    },
+    {
+      "id": "7",
+      "feature": "TipTap 编辑与自动保存",
+      "status": "no",
+      "detail": "无 fixture 笔记，无法验证"
+    },
+    {
+      "id": "8",
+      "feature": "笔记导出 SRT/VTT 内容",
+      "status": "no",
+      "detail": "无 fixture 笔记，无法验证"
+    },
+    {
+      "id": "10",
+      "feature": "导图拖拽/右键/撤销",
+      "status": "no",
+      "detail": "无 fixture 笔记，无法验证"
+    },
+    {
+      "id": "11",
+      "feature": "导图 SVG/PNG 导出",
+      "status": "no",
+      "detail": "无 fixture 笔记，无法验证"
+    },
+    {
+      "id": "13",
+      "feature": "搜索结果直达时间点",
+      "status": "no",
+      "detail": "无 fixture 笔记，无法验证"
+    },
+    {
+      "id": "14",
+      "feature": "M-7 锚点",
+      "status": "no",
+      "detail": "无 fixture 笔记，无法验证"
+    },
+    {
+      "id": "9",
+      "feature": "文件夹树操作",
+      "status": "partial",
+      "detail": "点击了新建入口但未看到新文件夹（树上 0 项）"
+    },
+    {
+      "id": "K3",
+      "feature": "暗色主题在新页面未退化",
+      "status": "yes",
+      "detail": "5 个页面 --surface-0 均随 data-theme 切换"
+    },
+    {
+      "id": "R1",
+      "feature": "模型页（真 daemon）",
+      "status": "no",
+      "detail": "0 张卡 · 0 个 fit 徽标 · 0 个下载按钮"
+    },
+    {
+      "id": "R2",
+      "feature": "运行时页（真 daemon）",
+      "status": "no",
+      "detail": "硬件卡 0 · 后端包 0"
+    }
+  ],
+  "pageErrors": []
+}

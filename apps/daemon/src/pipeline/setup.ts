@@ -7,10 +7,11 @@
  * `discoverTools()` 会搜 PATH，那在 D-01 §8.4 L2 里是被禁止的注入面。
  * 因此这里**优先用环境变量显式指定的绝对路径**，只有在开发/自检时才回退到 PATH 搜索。
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
+  SherpaOnnxEngine,
   TranscribePipeline,
   WhisperCppEngine,
   buildCandidates,
@@ -18,8 +19,11 @@ import {
   discoverTools,
   selectEngine,
   type AsrEngine,
+  type AsrStream,
   type EngineCandidate,
   type EngineId,
+  type SherpaTransducerModel,
+  type StreamRequest,
   type ManagedDirs,
   type MediaSourceRegistry,
   type ToolPaths,
@@ -49,6 +53,14 @@ export interface PipelineBundle {
     engineId: string;
     reason: string;
   } | null;
+  /**
+   * F3 流式：打开一路会话。**引擎不可用时返回 undefined** ——
+   * D-06 §15.1 明确要求"`isAvailable()` 为假时不要调用 `openStream()`"，
+   * 所以这里先判可用性，把这条契约收口在一处。
+   */
+  openStream(req: { language?: string; signal: AbortSignal }): AsrStream | undefined;
+  readonly streamModelId: string;
+  readonly streamAvailable: boolean;
 }
 
 function firstExisting(...candidates: Array<string | null | undefined>): string | null {
@@ -127,8 +139,30 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
    * 这里刻意**不编一个假配置**：宁可候选里只有 whisper，也不要让 selectEngine
    * 在一个不存在的引擎上做出"看起来对"的选择。等模型管理接通后在这里加回来。
    */
+  /*
+   * sherpa-onnx：F3 流式引擎（中文主场景）。
+   *
+   * 它要的是 encoder/decoder/joiner/tokens 四个**具体文件路径**，不是一个目录。
+   * 目前从环境变量 `OPENMEMO_SHERPA_STREAM_DIR` 指向的目录里按约定文件名解析；
+   * ⚠️ 正式做法是从**模型安装记录**（ADR-004 的 `model_installs`）读出来 ——
+   * 等 `model-mgmt` 的模型目录接通后换成那条路径，这里只是过渡。
+   * 解析不到就**不构造引擎**（宁可没有流式，也不要编一个假配置）。
+   */
   const engines: AsrEngine[] = [whisper];
+  let sherpa: SherpaOnnxEngine | undefined;
+  const streamDir = env['OPENMEMO_SHERPA_STREAM_DIR'];
+  if (streamDir) {
+    const model = resolveSherpaModel(streamDir);
+    if (model) {
+      sherpa = new SherpaOnnxEngine({ model, provider: 'cpu' });
+      engines.push(sherpa);
+    } else {
+      missing.push('sherpa-stream-model');
+    }
+  }
   const candidates = await buildCandidates(engines);
+  const sherpaAvailable =
+    candidates.find((c) => c.engine === sherpa)?.available ?? false;
 
   const pickEngine = (
     language: string | undefined,
@@ -150,5 +184,61 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
   // 默认引擎仍是 whisper；按语言切换发生在 job 层（见 transcribe runner）
   const pipeline = new TranscribePipeline({ tools, dirs, registry, asr: whisper });
 
-  return { tools, dirs, registry, pipeline, missing, modelPath, candidates, pickEngine };
+  const streamModelId = sherpa ? 'streaming-zipformer-zh-14M' : 'none';
+
+  const openStream = (req: { language?: string; signal: AbortSignal }): AsrStream | undefined => {
+    // 契约：引擎不可用时不要调 openStream
+    if (!sherpa || !sherpaAvailable || !sherpa.openStream) return undefined;
+    const streamReq: StreamRequest = {
+      modelPath: streamDir ?? '',
+      ...(req.language ? { language: req.language } : {}),
+      signal: req.signal,
+    };
+    return sherpa.openStream(streamReq);
+  };
+
+  return {
+    tools,
+    dirs,
+    registry,
+    pipeline,
+    missing,
+    modelPath,
+    candidates,
+    pickEngine,
+    openStream,
+    streamModelId,
+    streamAvailable: sherpaAvailable,
+  };
+}
+
+/**
+ * 从一个 sherpa 模型目录解析出四个文件路径。
+ * 官方发布包的命名是 `encoder-epoch-XX-avg-Y[.int8].onnx` 这种，所以按前缀匹配。
+ * **优先 int8**（体积小、CPU 上更快），没有再退回 fp32。
+ */
+function resolveSherpaModel(dir: string): SherpaTransducerModel | undefined {
+  let files: string[];
+  try {
+    files = readdirSync(dir);
+  } catch {
+    return undefined;
+  }
+  const pick = (prefix: string): string | undefined => {
+    const cands = files.filter((f) => f.startsWith(prefix) && f.endsWith('.onnx'));
+    return cands.find((f) => f.includes('.int8.')) ?? cands[0];
+  };
+  const encoder = pick('encoder');
+  const decoder = pick('decoder');
+  const joiner = pick('joiner');
+  const tokens = files.find((f) => f === 'tokens.txt');
+  if (!encoder || !decoder || !joiner || !tokens) return undefined;
+  return {
+    encoder: join(dir, encoder),
+    decoder: join(dir, decoder),
+    joiner: join(dir, joiner),
+    tokens: join(dir, tokens),
+    modelId: 'streaming-zipformer-zh-14M',
+    languages: ['zh', 'en'],
+  };
 }

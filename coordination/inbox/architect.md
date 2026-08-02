@@ -564,3 +564,78 @@ jsdom 渲染 /notes（zh-CN）          → 侧栏真文件夹树（课程1/深�
 - 我给 `apps/web` 加了 `@tiptap/core`（TimeAnchor 需要，此前只是传递依赖不可直接 import）、
   改了 `tsconfig.json`（加 exclude）、新增 `tsconfig.test.json`、`package.json` 加 `test` 脚本。
   依赖与脚本按 ADR-011 决策 3 归我；`tsconfig.json` 那一行 exclude 属**必要的最小改动**，特此申报。
+
+---
+
+## [2026-08-03 05:40] T-039 DONE —— 设计 vs 实现 完整性审计
+
+交付：`docs/design/D-07-design-vs-reality.md`（id: D-07, status: **ready**）
+
+方法：两个 subagent 逐文件读码（daemon 39 个 .ts + packages 全量，每条带文件:行号）
++ **我本人对运行中的 daemon 做实地探针**（127.0.0.1:17650 真在跑）。
+证据分三级：`[实测]` / `[读码]` / `[推断]`，全文尽量避免第三级。
+
+### 最重的三条
+
+1. **`@openmemo/runtime` 整个包 daemon 从不 import** —— `grep "from '@openmemo/runtime'"` **零命中**。
+   硬件探测 / 后端安装 / GPU 降级链 / 熔断器全在里面，**全是死代码**。
+   **章程要求 2.1 的实现主体没有接线**，daemon 用自己的兜底，`gpus: []` 恒为空。
+   最阴的地方是：它有完整实现、有测试、`package.json` 里也声明了依赖 ——
+   **所有表面证据都指向"做完了"，唯独没有人 import 它。**
+2. **chunk 级续跑事实上失效**。每次重跑先 `createTranscript` 建新行（并把旧稿置 `is_active=0`），
+   再在这条**空的新行**上查已完成 chunk → 恒为空集 → 全量重跑，**且用户看不到之前转好的部分**。
+   D-01 §4.1 我把 chunk 层称为"整套设计的关键技巧"，四个收益里"续跑点"这一个是假的。
+3. **流水线 job 无法取消**。`Scheduler.cancel()` 全仓零调用方，`main.ts` 没把 scheduler 交给任何 router。
+   `/api/jobs/:id/cancel` 打的是下载队列。跑飞的 whisper 只能等超时或杀 daemon。
+
+### 实地探针（这部分只有跑起来才看得到）
+
+```
+GET /api/health（真实例）：
+  extensions: {libsimple:false, sqliteVec:false, tokenizer:"trigram"}   ← 扩展都没加载
+  pipeline:   {missing:["whisper-cli","asr-model"]}                     ← 转写本机不可用
+  lanes:      {...gpu.exclusive:{capacity:1}}                           ← 我设计的互斥真在跑 ✅
+端点实测：/api/notes 200 · /api/jobs 200 · /api/search 200(但 chineseTokenizer:false,semantic:false)
+         /api/folders 200(返回**已建好的树**) · /api/settings/llm **404**
+```
+
+→ **中文分词与语义检索在真实运行时是关的**（降级路径工作正常，但产品处于降级态而没人知道）。
+
+### 我自己的账（不客气版）
+
+- **`/api/folders` 形状不一致，会让整个侧栏白屏** —— 我按设计猜了 `{folders:[]}`，实际是裸树数组。
+  `d.folders` → `undefined` → `buildTree(undefined)` → TypeError。
+  讽刺的是我当初特意给 `buildTree` 加防环保护、理由正是"一条坏数据不该让侧栏白屏"，
+  **却把防御写在了错误的层级：防住了环，没防住形状**。已修（容忍两种形状，无法识别时返回空数组）。
+- **词级 karaoke 高亮从未实现** —— `hasWordLevel` 只用来显示徽标，从没按 `words[]` 逐字高亮过。
+- **契约版本不匹配的阻断对话框算了但从不渲染** —— D-05 只有两个"阻断对话框"场景，这是其一。
+- `/diagnostics` 未注册；`settings/:section` 不分支（四个 section 渲染同一页）；
+  段内搜索 / 批量折叠 / J·K·L 手势全无（文案 key 都写好了，UI 没做）。
+
+### 一类系统性问题（我认为这是最值得你写进最终报告的一条）
+
+**"前端就绪 + 服务端断链"**：
+- M-4 段落编辑：UI 完整 → 服务端**无 `UPDATE transcript_segments`**，`edited_at` 永远 NULL
+  → 连带 `gpu-runtime` **实测跑通过的**两阶段合并"保留用户编辑"分支**永远走不到**
+- M-7 锚点：`TimeAnchor` 完整 → `note_anchors` **零写入**
+- B-3 LLM 设置：整页 UI → `/api/settings/llm` **404**
+
+**两边的交付报告都是真的**（"UI 做完了" / "表建好了"），只有把两边放在一起看才发现中间断了。
+这解释了为什么功能矩阵会**系统性偏乐观**：矩阵从交付报告汇总，
+而**没有人会报告"我和对面之间那一段没人做"**。
+
+### 也写了做得扎实的部分（避免文档失衡）
+
+yt-dlp 七层防护逐条对上（还多加了本地 `.m3u8` 拒绝）· zip-slip 五重防护 · 文件名 ULID 化 ·
+SSE 单流+重放+挤旧连接 · lane 含 `gpu.exclusive` 互斥（实测可见）· 幻觉检测是真代码且四引擎全接 ·
+Anthropic provider 是真实现不是壳 · 26 张表与 D-02 一一对应无多无少 · `vec.ts` 的 BigInt 收口有回归测试 ·
+单实例三条件判定**实测有效**（我起第二个实例时被正确拦下）。
+
+### 需要 Manager 决策
+
+D-07 §7 给了我的修复优先级建议，P0 三条：
+1. **接线 `@openmemo/runtime`** —— 要求 2.1 的主体
+2. **补三条断链端点** —— 三个已完成的 UI 因此全部悬空，其中 `/api/settings/llm` 还卡着 F4
+3. **FTS `'rebuild'` 回填** —— 静默丢搜索结果，且**不会被报告**（用户只会以为自己没记过那条笔记）
+
+另：`docs/design/D-07` 我标了 `status: ready`。它会过时 —— 建议 daemon 端点补齐后重跑一次同样的比对。

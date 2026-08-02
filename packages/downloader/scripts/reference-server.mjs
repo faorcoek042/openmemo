@@ -415,6 +415,16 @@ async function startPull(model) {
 /* --------------------------------- HTTP ----------------------------------- */
 
 function json(res, status, body) {
+  // A streaming response (SSE) may already have flushed headers before an error surfaces;
+  // writing them again throws ERR_HTTP_HEADERS_SENT and kills the whole server process.
+  if (res.headersSent) {
+    try {
+      res.end();
+    } catch {
+      /* already closed */
+    }
+    return;
+  }
   const b = Buffer.from(JSON.stringify(body));
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': b.length });
   res.end(b);
@@ -495,6 +505,11 @@ async function proxyUpstream(req, res, url, method) {
     return apiError(res, 502, 'UPSTREAM_UNREACHABLE', `上游 daemon 无法访问: ${e?.message ?? e}`);
   }
 }
+
+// A crashed request handler must never take the server down mid-test-run.
+process.on('uncaughtException', (e) => {
+  console.error('[refserver] uncaught:', e?.message ?? e);
+});
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);

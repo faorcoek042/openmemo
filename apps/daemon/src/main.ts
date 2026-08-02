@@ -140,6 +140,8 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         ? {
             missing: bundle.missing,
             modelPath: bundle.modelPath,
+            streamAvailable: bundle.streamAvailable,
+            streamModelId: bundle.streamModelId,
             ffmpeg: bundle.tools.ffmpeg || null,
             whisperCli: bundle.tools.whisperCli,
           }
@@ -168,8 +170,6 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
   boundPort = outcome.port;
   const instanceId = outcome.instanceId;
   instanceIdRef = instanceId;
-
-  attachWebSocket(server, { sessions, port: () => boundPort });
 
   try {
     // ---- DB：业务 schema 失败 = 启动失败；扩展/索引失败只降级 ----
@@ -233,6 +233,20 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
 
     scheduler = new Scheduler({ queue, lanes, sse, handlers });
     scheduler.start();
+
+    // WS 必须在 pipeline 就绪之后挂 —— 录音会话依赖流式引擎
+    attachWebSocket(server, {
+      sessions,
+      port: () => boundPort,
+      recorder: {
+        repos: repos_,
+        queue: queue_,
+        sse,
+        mediaDir: paths.mediaDir,
+        openStream: (req) => bundle_.openStream(req),
+        streamModelId: bundle_.streamModelId,
+      },
+    });
 
     // ---- 路由装配 ----
     routers.push(

@@ -8,21 +8,62 @@ export interface FolderDto {
   name: string;
   parentUid: string | null;
   color: string | null;
+  /** 服务端实际还会给 sortOrder / icon —— 前端不用，但不要因为多字段而校验失败 */
+  sortOrder?: number;
+  icon?: string | null;
   noteCount: number;
 }
 
 /** 树节点：由扁平列表在前端组装（服务端不必关心展示形状）。 */
 export interface FolderNode extends FolderDto {
   children: FolderNode[];
+  /** 展示用缩进层级。服务端不下发，由前端补（见 `withDepth`）。 */
   depth: number;
 }
 
+/**
+ * ⚠️ **契约订正（T-039 实测发现）**
+ *
+ * 我最初按"服务端给扁平列表、前端组装成树"写，返回类型写的是 `{folders: FolderDto[]}`。
+ * 实际打 daemon（`GET /api/folders`，2026-08-03 实测）返回的是**已经建好的树数组**：
+ * `[{uid,name,parentUid,sortOrder,color,icon,noteCount,children:[]}]`。
+ *
+ * 后果本来会很难看：`d.folders` 是 `undefined` → `buildTree(undefined)` →
+ * `for (const f of flat)` 抛 TypeError → **整个侧栏白屏**。
+ * 讽刺的是我当初特意给 `buildTree` 加了防环保护、理由正是"一条坏数据不该让侧栏白屏"，
+ * 却没防住**形状本身不对**这种情况 —— 防御写在了错误的层级。
+ *
+ * 现在：直接消费服务端的树；`buildTree` 仅在拿到扁平数组时作为兼容路径。
+ */
 export function useFoldersQuery() {
   return useQuery({
     queryKey: qk.folders,
-    queryFn: () => api<{ folders: FolderDto[] }>('notes', '/folders'),
-    select: (d) => buildTree(d.folders),
+    queryFn: () => api<FolderNode[] | { folders: FolderDto[] }>('notes', '/folders'),
+    select: normalizeFolders,
   });
+}
+
+/**
+ * 容忍两种形状：已建好的树（daemon 实际返回）与扁平列表（早期设计）。
+ * 两者都不是时返回空数组 —— **宁可侧栏空着，也不让它整个崩掉**。
+ */
+export function normalizeFolders(d: unknown): FolderNode[] {
+  if (Array.isArray(d)) return withDepth(d as FolderNode[], 0);
+  if (d && typeof d === 'object' && Array.isArray((d as { folders?: unknown }).folders)) {
+    return buildTree((d as { folders: FolderDto[] }).folders);
+  }
+  console.warn('[folders] 无法识别的响应形状，按空处理', d);
+  return [];
+}
+
+/** 服务端不下发 `depth`（它是展示概念），这里补上用于缩进。 */
+function withDepth(nodes: readonly FolderNode[], depth: number): FolderNode[] {
+  if (depth > 8) return [];
+  return nodes.map((n) => ({
+    ...n,
+    depth,
+    children: withDepth(n.children ?? [], depth + 1),
+  }));
 }
 
 /**
