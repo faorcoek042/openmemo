@@ -58,6 +58,11 @@ export interface ConflictResult {
 
 export type BindOutcome = AcquireResult | ExistingResult | ConflictResult;
 
+/** 同步小睡。锁的获取是同步 API，这里不能用 await。 */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 /** 尝试绑定单个端口。成功即持锁。 */
 function tryBind(server: Server, port: number): Promise<'ok' | 'in-use'> {
   return new Promise((resolve, reject) => {

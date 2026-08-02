@@ -112,12 +112,6 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
   }
 
   /*
-   * 数据目录锁必须在**打开数据库之前**拿到 —— 否则第二个实例已经写过库了才被拒。
-   * 端口锁挡不住"换端口、同 dataDir"这种情况（D-01 §2.3 第二道）。
-   */
-  const dirLock = acquireDataDirLock(paths.dataDir);
-
-  /*
    * 自我重启的接力棒：token 和会话必须**跨进程延续**。
    *
    * 否则点一下"立即重启"，浏览器那一页就废了 —— cookie 里的 sid 在新进程的内存里
@@ -141,6 +135,19 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
    */
   const waitForPortRaw = process.env['OPENMEMO_WAIT_FOR_PORT_MS'];
   delete process.env['OPENMEMO_WAIT_FOR_PORT_MS'];
+  /*
+   * 接班等待：只有自我重启拉起的进程才有 OPENMEMO_WAIT_FOR_PORT_MS，
+   * 它同时意味着"前任正在退，别一撞锁就放弃"。普通启动 = 0 = 行为不变。
+   */
+  const handoverWaitMs =
+    waitForPortRaw && Number.isFinite(Number(waitForPortRaw)) ? Number(waitForPortRaw) : 0;
+
+  /*
+   * 数据目录锁必须在**打开数据库之前**拿到 —— 否则第二个实例已经写过库了才被拒。
+   * 端口锁挡不住"换端口、同 dataDir"这种情况（D-01 §2.3 第二道）。
+   */
+  const dirLock = acquireDataDirLock(paths.dataDir, handoverWaitMs);
+
 
   const token = inheritedToken && inheritedToken.length >= 16 ? inheritedToken : generateToken();
   let inheritedSessions: Session[] = [];
