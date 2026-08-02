@@ -39,15 +39,45 @@ export function defaultModelsRoot(platform: NodeJS.Platform = process.platform):
     return path.join(home, 'Library', 'Application Support', 'OpenMemo', 'models');
   }
   if (platform === 'win32') {
-    const local = process.env.LOCALAPPDATA ?? path.join(home, 'AppData', 'Local');
-    return path.join(local, 'OpenMemo', 'models');
+    // APPDATA (Roaming) — must match apps/daemon/src/config/paths.ts, which is canonical.
+    //
+    // This used to read LOCALAPPDATA. The mismatch was invisible on Linux/macOS and fatal
+    // on Windows: the downloader wrote packs to ...\AppData\Local\OpenMemo\models while
+    // the pipeline looked in ...\AppData\Roaming\OpenMemo\models, so every install
+    // "succeeded" and was then never found. Consistency wins over the original rationale
+    // (see the note in resolveModelsRoot) because a split-brain layout breaks outright.
+    const appData = process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming');
+    return path.join(appData, 'OpenMemo', 'models');
   }
   const xdg = process.env.XDG_DATA_HOME ?? path.join(home, '.local', 'share');
   return path.join(xdg, 'openmemo', 'models');
 }
 
-export function resolveModelsRoot(override?: string): string {
-  return override ?? process.env.OPENMEMO_MODELS ?? defaultModelsRoot();
+/**
+ * Resolve the artifact store root.
+ *
+ * Precedence is identical to `resolveStoreRoot()` in `packages/pipeline/src/tools.ts`,
+ * which is the single definition this mirrors:
+ *   1. OPENMEMO_MODELS      explicit store override
+ *   2. explicit dataDir     (`--data-dir`)
+ *   3. OPENMEMO_DATA_DIR
+ *   4. platform default
+ *
+ * NOT imported from there on purpose: `packages/pipeline` already depends on
+ * `packages/downloader`, so importing back would create a dependency cycle. The two
+ * implementations must therefore be kept in step by hand — if you change one, change the
+ * other. (Better long-term home: `packages/shared`, which both already depend on.)
+ */
+export function resolveModelsRoot(dataDir?: string): string {
+  const explicit = process.env.OPENMEMO_MODELS;
+  if (explicit) return explicit;
+  // NOTE: `dataDir` is the DATA directory (what `--data-dir` gives), not the models
+  // directory — the 'models' segment is appended here, exactly as resolveStoreRoot does.
+  // Named `dataDir` rather than `override` so the two cannot be confused at a call site.
+  if (dataDir) return path.join(dataDir, 'models');
+  const envDataDir = process.env.OPENMEMO_DATA_DIR;
+  if (envDataDir) return path.join(envDataDir, 'models');
+  return defaultModelsRoot();
 }
 
 export class ArtifactStore {

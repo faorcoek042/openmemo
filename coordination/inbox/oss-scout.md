@@ -959,3 +959,78 @@ SIGTERM → 1.5s → SIGKILL。**刻意不按进程名匹配** —— 本机多�
   也可能是启动路径在某种条件下会挂 —— **记录在案，不假装没发生过**。
 - `ext.chineseSearch` 现在测的是分词器能力，**不再覆盖"用户数据是否进了索引"**。
   后者由 T-028 修的回填逻辑与其回归测试守，两者互补，但诊断页上看不到后者。
+
+---
+
+## [2026-08-03 01:20] T-054 DONE —— D1/D2 已修并实证
+
+### D1：`pause` 是不可逆取消 —— ✅ 修掉
+
+你的诊断准确：**`state='paused'` 全仓没有任何写入方**。`requestPause()` 只置意图标记，
+worker 停下后走的是 `markCancelled()`，于是 `resume()` 的 `WHERE state='paused'`
+永远匹配 0 行，而接口回 204 告诉用户成功了。
+
+```
+[2] 暂停前已落段=9  jobs={"running":1}
+[3] POST /api/jobs/:uid/pause → HTTP 204
+[4] 暂停后 jobs={"paused":1} 段数=9
+    ★ 状态是 paused（不是 cancelled）: ✅
+[5] POST /api/jobs/:uid/resume → HTTP 204
+[6] resume 后段数: 9 → 15  ✅ 真的继续跑了
+```
+
+### D2：正常退出杀死在跑任务且重启不恢复 —— ✅ 修掉
+
+```
+[1] SIGTERM 前已落段=9
+[2] [daemon] 收到 SIGTERM，开始优雅退出（宽限 15000ms）
+[3] 退出后 job 状态: [{"state":"queued","progress":0.3425}]   ← 此前是 cancelled
+    段数: 9
+[4] 重启: [transcribe] 续跑 transcript=01KZ12E06RN…，已完成 chunk=0
+[5] 重启后 job: running  段数: 15  chunk_idx: [{0:9},{1:6}]  transcripts 只有 1 份
+```
+**正常关闭此前反而不如 `kill -9` 能恢复**（强杀来不及改状态，走的是崩溃恢复；
+优雅关闭却把任务标成 cancelled）。这个反直觉正是"三个意图共用一个 abort"的直接后果。
+
+### 三意图拆分（根因修复）
+
+新增 `StopIntent = 'cancel' | 'pause' | 'shutdown'`，scheduler 记 `#intents`，
+worker 停下后由 `#settleAborted()` 按意图收口：
+
+| 意图 | 终态 | 重启行为 | SSE |
+|---|---|---|---|
+| `cancel` 用户取消 | `cancelled` | 不恢复 | `job.failed(CANCELLED)` |
+| `pause` 用户暂停 | `paused` | 不自动跑，等 resume | `job.state(paused)` |
+| `shutdown` 进程退出 | `queued` | **自动续跑** | `job.state(queued)` |
+
+顺带修：三种中止此前**都报 `job.failed`** —— 暂停和进程退出报"失败"会吓到用户，
+它们根本不是失败。现在只有真取消与运行错误走 `job.failed`。
+另补 `pauseQueued()`：还没开始跑的任务没有 worker 要停，直接置 `paused`。
+
+### 契约核对（你点名的 5 条）
+
+| 条目 | 结论 |
+|---|---|
+| **`merge` 零调用方** | ✅ **属实，已接线**。录音会话在 payload 塞了 `mergeWithTranscriptId`，但 runner **从没读过它** → D-06 §15.2 那条实测验证过的两阶段合并在产品里走不到。现已在重跑收尾处调用 `mergeTranscripts` + `formatMergeSummary`，并加 `repos.replaceSegments()` 落库。⚠️ **代码路径已通但未真跑过一次录音→编辑→重跑→合并**。 |
+| **导图 PATCH 缺失** | ✅ **属实，已补**。前端 `useSaveMindmapMutation` 发 `PATCH .../mindmap {doc}` 期望 `{revision}`，我只有 POST/GET。实测：`{"revision":1,"mindmapUid":"01KZ12V8…"}`，回读 `generatedBy=user`；坏图被拦：`INVALID_MINDMAP … 检测到环：b → a`。 |
+| **星标动词错** | ❌ **已对齐，不是问题**。前端用 `PUT /notes/:uid/star {starred}`，我这侧就是 `PUT`。 |
+| **标签体形状错** | ❌ **已对齐**。前端注释里写明了两步法 + `{tagUids}` 整表替换，与我这侧一致（他注释里那句"第三次栽在没读实现就按设计猜形状"说明他已经改过来了）。 |
+| **import 面整面 404** | ⚠️ **我这侧未发现缺口**：`/api/notes/import`、`/api/notes/upload` 都在且验过。前端 `features/import/` 里我 grep 不到任何 `/api/notes` 调用 —— **要么他还没接，要么走了别的路径**。需要他给出具体 404 的 URL 才能定位，**我不猜**。 |
+
+### 顺带：`InstalledFile` 采纳了相对路径
+`model-mgmt` 把我上轮的建议落成了 `root: PathRoot` + `relPath`（保留 `path` 作废弃兼容）。
+我这侧 `models.ts` 与 `modelStore.ts` 同步适配：**写入两者都写、读取优先 relPath 回退 path**。
+兼容分支不能省 —— 已经装过模型的用户，记录里只有绝对路径。
+
+### 全量
+`pnpm -r build` **9/9**；测试 **167 pass / 0 fail**；`apps/daemon` eslint **EXIT=0**。
+
+### 诚实声明
+- **`mergeTranscripts` 只是接上了线，没有端到端跑过**：需要"录音 → 用户改一段 → 停止 → 重跑 → 看编辑是否保留"，
+  这轮没做。代码路径与类型都通，但**按本项目的标准这不算验证过**。
+- D1/D2 的验证都在 **Linux + whisper.cpp** 上；Windows 的退出信号路径仍未验。
+- 三意图拆分后，`requestCancel()`/`requestPause()` 的**意图标记位**与新的 `#intents` 内存表
+  有轻微重复（前者是给 worker 在 chunk 边界自查用的，后者是给收口用的）。目前一致，
+  但**两处真相**是将来漂移的隐患，记录在案。
+- 我**同意矩阵拆三列**。我这侧能负责的只有第一列与第三列的 daemon 半边；
+  "两者之间"要靠真正打一次请求才算数 —— 这正是这轮 import 面那条我无法自证的原因。

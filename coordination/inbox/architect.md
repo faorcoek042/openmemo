@@ -995,3 +995,94 @@ daemon 不托管静态文件，Vite 也没有代理 → 页面在 5173、API 在
 - D2 的"重启不恢复"**未实测**（需要一个真的长任务，本机 whisper-cli 缺失）。
 - 解包 bug 按你的更正记录：确实有真 bug，正确判据是**链接目标指向哪里**而非条目类型；
   我补充指出当前校验仍是**纯词法、缺 realpath 一闸**。
+
+---
+
+## [2026-08-03 22:10] T-056 DONE
+
+### 三处 mutation：**接上了，但根因不是"没接"**
+
+`model-mgmt` 的归因（"前端控件没接 mutation"）**方向对、层次差一层**。
+控件**是接了** `mutate()` 的 —— 请求发不出去的原因在传输层：
+
+**根因：一条缺失路由毒化了整个 API 面。**
+`lib/api/client.ts` 原来的回落逻辑是**按 surface 记账**：任何一条 404 就把整个面标成 mock，
+之后该面所有调用直接走内存实现、**一个网络请求都不发**。
+而 `PATCH /notes/:uid/mindmap` 不存在（daemon 只有 GET/POST）→ 一个 404 →
+**整个 `notes` 面被毒化** → 星标、标签、段落编辑全部改走 mock。
+
+**"渲染是绿的、点了没用、抓包空空、daemon 直连全 200" —— 这四个现象一次性全解释了。**
+
+⚠️ 这个失败模式**我在 D-08 §4.5 亲手写过**（"surface 一旦 404 就永久 mock…这是我设计的机制，
+它的失败模式我没写下来过"），但只写没修。**写了报告不等于修了问题**，这条教训我记下。
+
+**修法（`lib/api/client.ts`）**：
+1. **按端点记账**（`METHOD + 路径模板`，ULID/数字段位归一化），不再牵连同面其它端点
+2. **写操作永不静默回落 mock** —— 读回落只是显示假数据（有 MockNotice 标着），
+   写回落会让用户**以为改动保存了**。要么真成功，要么把错误抛到用户面前
+3. 端点可恢复：真接通一次就清掉"缺失"记录
+
+### 三处契约订正（这次**直接读了 `organize.ts` 的实现，没猜**）
+
+| 控件 | 我原来的 | daemon 实际 | 结果 |
+|---|---|---|---|
+| 星标 | `POST /notes/:uid/star` | **`PUT`** | 405。而 **405 不在"未实现"判定里**（只认 404/501）→ 不回落、直接抛错 |
+| 加标签 | `POST /notes/:uid/tags {name}` | **`{tagUids:[]}` 整表替换** | 400。已改成两步：`POST /api/tags {name}` 拿 uid → `POST /notes/:uid/tags {tagUids:[...已有, 新]}` |
+| 移除标签 | `DELETE /notes/:uid/tags/:tagUid` | 相同 | ✅ 本来就对 |
+
+（段落编辑上一轮已订正为 `PATCH /api/notes/:uid/segments/:seq`，并实测落库。）
+
+### 导图崩溃：已修，**同族但不是同一处**
+
+`Cannot convert undefined or null to object` 的根因是**契约信封**：
+GET 返回 `{mindmap:{…}, doc:MindMapDoc|null}`，我按**裸 doc** 解 →
+把整个信封当 doc 传进渲染器 → `toMindElixir()` 里 `Object.keys(doc.nodes)` 拿到 undefined → 崩。
+
+修了三处：
+1. `select: (d) => d?.doc?.nodes ? d.doc : null` —— 只把形状完整的 doc 交给渲染器
+2. `MindmapView` 加 `isRenderableDoc()` 守卫，缺形状就渲染空态而不是崩
+3. **停止对着不存在的路由发 PATCH** —— daemon 只有 GET/POST（POST = 重新生成，不是保存）。
+   现在编辑仍在渲染器内即时生效，但**页面上明确写"编辑尚未保存到本地服务（保存接口未实现）"**。
+   不假装保存了 —— 这也顺带拔掉了毒化整个面的那颗雷。
+
+### capture 输入框：**它一直在**，是定位歧义
+
+我用完整 App + 真实路由在 jsdom 里渲染 `/capture`，结果：
+```
+TESTID FOUND = true
+INPUTS = text, capture-url, file      ← 三个
+```
+**第一个 `text` 是顶栏的全局搜索框**，排在 DOM 顺序最前。
+按 `input[type=text]` 或"页面上第一个文本框"定位，命中的是它，不是捕获输入框。
+
+已给顶栏搜索框补 `data-testid="global-search-input"` 并显式 `type="text"`，两者现在可区分。
+
+**给 `model-mgmt` 的精确选择器**：
+- 链接输入框：`[data-testid="capture-url-input"]`（也可用 `#capture-url`）
+- 选择文件按钮：`[data-testid="capture-pick-file"]`
+- 顶栏搜索：`[data-testid="global-search-input"]`
+
+### 顺带修好一处**测试桩接错层**
+
+改成"写不回落 mock"之后，两条组件测试集体失败 —— 因为我的 `stubApi` 桩的是
+**mock 回落层**，写请求不再经过那里。**测试桩接错了层，被这次改动暴露出来。**
+已改为桩 `fetch` 本身：请求真的走完 `realFetch`（含 CSRF 头、credentials、错误信封解析、
+端点级记账），只是不出网。**比原来忠实得多。**
+
+新增 2 条回归测试锁住这次的不变量：
+- 一个 404 之后，同面其它写操作**仍然真的发出请求**
+- 写操作遇到不存在的路由**必须抛错，绝不静默"成功"**
+
+### 验证
+`pnpm --filter @openmemo/web test` → 7 + 22 pass / 0 fail / 2 skip；`eslint apps/web` → 0；build ✓。
+
+### 剩余 / 需 Manager 决策
+1. 🔴 **导图保存端点缺失**（daemon 无 PATCH）→ 导图编辑目前**改了不留**。
+   `model-mgmt` 复验"导图拖拽/右键/撤销"能通过（交互是真的），但**刷新即失**。请安排端点。
+2. 🟡 我这轮只在 jsdom 验证。**星标/标签/段落编辑的真浏览器复验仍需 `model-mgmt` 跑一遍** ——
+   我修的是传输层，能证明"请求会发出去"，不能证明"点击手感对"。
+
+### 诚实声明
+- 三处 mutation 我**没有在真浏览器点过**；证据是端点级记账的单测 + daemon 契约的逐行阅读。
+- `PUT /star` 与两步加标签的**真实往返我没跑**（本轮没起隔离 daemon，避免再次干扰他人实例）。
+  daemon 侧契约是我逐行读 `organize.ts` 确认的，不是猜的 —— 但**读代码不等于跑通**。

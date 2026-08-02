@@ -21,6 +21,7 @@ import { StatusChip } from '../components/common/StatusChip';
 import { ProgressMeter } from '../components/common/ProgressMeter';
 import type { MergedJob } from '../features/tasks/api';
 import { arr } from '../lib/safe';
+import { api } from '../lib/api/client';
 
 /* ─────────────────────────── 标签增删 ─────────────────────────── */
 
@@ -317,6 +318,49 @@ describe('LlmSettingsSection（API Key 输入）', () => {
     await r.flush();
     assert.ok(text(r.container).includes('未设置 Key'));
     r.unmount();
+  });
+});
+
+/* ────────────── 端点级回落（真浏览器"点了没用"事故回归）────────────── */
+
+describe('一条缺失路由不能毒化整个面', () => {
+  /**
+   * 真浏览器实测：星标/标签/段落编辑「渲染是绿的，点了没用，抓包一个非 GET 都没有」，
+   * 而 daemon 侧这三个端点直连全部 200。
+   *
+   * 根因：`PATCH /notes/:uid/mindmap` 不存在 → 一个 404 → **整个 notes 面被标成 mock**
+   * → 之后该面所有调用直接走内存实现、不发网络请求。
+   * 这两条用例把"按端点记账"和"写不回落"两个不变量锁住。
+   */
+  test('★ 一个 404 之后，同面的其它写操作仍然真的发出请求', async () => {
+    const { calls } = stubApi({
+      'DELETE /notes/n1/tags/t1': { ok: true },
+      // 故意不打桩 /notes/n1/mindmap → 触发 404
+    });
+
+    // 先制造一次 404（模拟导图保存打到不存在的路由）
+    await api('notes', '/notes/n1/mindmap', { method: 'PATCH', body: {} }).catch(() => {});
+
+    // 同一个面的另一个端点必须照常发出真实请求
+    const r = await render(
+      <TagEditor noteUid="n1" tags={[{ uid: 't1', name: '播客', color: null }]} />,
+    );
+    await click(r.container.querySelector('button[aria-label*="播客"]'));
+    await r.flush();
+
+    assert.ok(
+      calls.some((c) => c.method === 'DELETE' && c.path === '/notes/n1/tags/t1'),
+      `404 不应牵连同面其它端点，实际调用：${JSON.stringify(calls.map((c) => `${c.method} ${c.path}`))}`,
+    );
+    r.unmount();
+  });
+
+  test('★ 写操作遇到不存在的路由必须抛错，绝不静默"成功"', async () => {
+    stubApi({}); // 全部未打桩 → 一律 404
+    await assert.rejects(
+      () => api('notes', '/notes/n1/star', { method: 'PUT', body: { starred: true } }),
+      '写操作回落 mock 会让用户以为保存了，比报错糟得多',
+    );
   });
 });
 

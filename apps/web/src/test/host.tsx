@@ -36,7 +36,7 @@ import {
 } from '@testing-library/react';
 
 import { initI18n } from '../app/i18n';
-import { registerMockFetcher, type ApiOptions, type Fetcher } from '../lib/api/client';
+import { forgetMissingEndpoints } from '../lib/api/client';
 import { markSurface, SURFACES, type Surface } from '../lib/api/surfaces';
 
 initI18n();
@@ -145,16 +145,47 @@ export function stubApi(routes: Record<string, unknown | ((c: StubCall) => unkno
   calls: StubCall[];
 } {
   const calls: StubCall[] = [];
-  const fetcher: Fetcher = async <T,>(path: string, opts: ApiOptions = {}): Promise<T> => {
-    const method = (opts.method ?? 'GET').toUpperCase();
-    calls.push({ path, method, body: opts.body });
+
+  /**
+   * ★ 打桩打在 **`fetch`** 上，而不是 `registerMockFetcher`。
+   *
+   * 一开始我桩的是 mock 回落层，结果测的是"回落路径"而不是真实路径。
+   * 等 `client.ts` 改成「**写操作永不静默回落 mock**」之后，
+   * 写请求不再经过 mock 层，这些用例就集体拿不到调用记录了 ——
+   * **测试桩接错了层，这件事本身就被这次改动暴露出来了。**
+   *
+   * 桩在 fetch 上更忠实：请求真的走完 `realFetch`（含 CSRF 头、credentials、
+   * 错误信封解析、端点级记账），只是不出网。
+   */
+  const fetchStub = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = typeof input === 'string' ? input : String(input);
+    const method = (init?.method ?? 'GET').toUpperCase();
+    const path = url.replace(/^\/api/, '');
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    calls.push({ path, method, body });
+
     const handler = routes[`${method} ${path}`] ?? routes[path];
-    if (handler === undefined) throw new Error(`stubApi: 未打桩的调用 ${method} ${path}`);
-    return (
-      typeof handler === 'function' ? (handler as (c: StubCall) => unknown)(calls.at(-1)!) : handler
-    ) as T;
+    if (handler === undefined) {
+      // 未打桩 → 当作"该路由不存在"，正好覆盖端点级记账那条分支
+      return new Response(
+        JSON.stringify({ error: { code: 'NOT_FOUND', message: `no stub for ${method} ${path}` } }),
+        { status: 404, headers: { 'content-type': 'application/json' } },
+      );
+    }
+    const payload =
+      typeof handler === 'function' ? (handler as (c: StubCall) => unknown)(calls.at(-1)!) : handler;
+    return new Response(JSON.stringify(payload ?? null), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
   };
-  registerMockFetcher(fetcher);
-  for (const s of SURFACES) markSurface(s as Surface, 'mock');
+
+  Object.defineProperty(globalThis, 'fetch', {
+    value: fetchStub,
+    configurable: true,
+    writable: true,
+  });
+  forgetMissingEndpoints();
+  for (const s of SURFACES) markSurface(s as Surface, 'live');
   return { calls };
 }

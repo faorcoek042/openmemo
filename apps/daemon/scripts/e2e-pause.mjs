@@ -14,7 +14,7 @@ if (!base || !token || !audio) {
 const H = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const jobOf = async (uid) => {
+const jobOf = async () => {
   const r = await fetch(`${base}/api/daemon/status`, { headers: H });
   const d = await r.json();
   return d.jobs ?? {};
