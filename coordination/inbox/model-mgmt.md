@@ -683,3 +683,33 @@ zod 也加了 `relPath` 不得以 `/`、盘符开头、不得含 `..` 的校验�
 2. 导图页仍崩 `Cannot convert undefined or null to object`（10/11 被挡）。
 3. 设置页无 API Key 输入框（5）；capture 页链接输入框仍未找到，故"引导走完→真转一段"这条**本轮仍未跑通**。
 4. `InstalledFile` 迁移已含兼容层，`oss-scout` 那边按 `resolveInstalledFile()` 收口即可。
+
+---
+
+## [2026-08-02 21:00] Windows 路径分裂 修复（D3）
+
+**已改。** `packages/downloader/src/store.ts` 的 `LOCALAPPDATA` → `APPDATA`，与权威
+`apps/daemon/src/config/paths.ts` 对齐；并补齐 `--data-dir` / `OPENMEMO_DATA_DIR` 优先级链。
+
+**没有 import `resolveStoreRoot`**：`packages/pipeline` 已经依赖 `packages/downloader`，
+反向 import 会形成**循环依赖**。改为在本地实现同一套语义，并在注释里写明两处必须手改同步、
+以及更好的归宿是 `packages/shared`（两边都已依赖）。
+
+顺带修掉一个**参数语义不一致**（比常量更隐蔽）：原 `resolveModelsRoot(override)` 的入参是
+**models 目录**，而 `resolveStoreRoot(dataDir)` 的入参是**数据目录**（内部再拼 `models`）。
+无实际调用方，已统一为 dataDir 语义并改名，两者实测同源：
+
+    --data-dir /tmp/dd   downloader=/tmp/dd/models   pipeline=/tmp/dd/models   MATCH
+    (none)               两边都 = /root/.local/share/openmemo/models            MATCH
+    win32 默认           …/AppData/Roaming/OpenMemo/models
+
+⚠️ **D3 未在真 Windows 验证，只统一了常量与优先级**（同 `gpu-runtime` 的标注）。
+
+📌 **一个需要你裁决的设计冲突**：我在 R-04 §6.1 / D-03 §5 明确写过
+「**Windows 不用 Roaming** —— 域环境漫游配置文件会尝试同步，几 GB 模型会拖垮登录」。
+现在为对齐权威定义改成了 Roaming。**一致性优先于我的偏好**（分裂会让功能直接不可用），
+但"把几 GB 模型放进 Roaming"这个隐患是真的。建议后续把**权威定义**改成
+`LOCALAPPDATA`（模型/缓存类大文件）而非让下载器迁就 —— 这需要你和 `oss-scout` 一起定，
+我不单方面改 `paths.ts`。
+
+门禁：`tsc 0 · eslint 0 · verify-offline 29/29`

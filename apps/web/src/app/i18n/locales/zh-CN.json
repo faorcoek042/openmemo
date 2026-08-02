@@ -51,9 +51,7 @@
     "uploading": "正在上传 {{percent}}",
     "batchCollapsed": "批量导入 · {{done}}/{{total}} 完成",
     "uploadPhase": {
-      "init": "准备中",
       "uploading": "上传中",
-      "finalizing": "正在处理",
       "done": "已完成",
       "failed": "失败"
     },

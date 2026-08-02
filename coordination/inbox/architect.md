@@ -1086,3 +1086,70 @@ INPUTS = text, capture-url, file      ← 三个
 - 三处 mutation 我**没有在真浏览器点过**；证据是端点级记账的单测 + daemon 契约的逐行阅读。
 - `PUT /star` 与两步加标签的**真实往返我没跑**（本轮没起隔离 daemon，避免再次干扰他人实例）。
   daemon 侧契约是我逐行读 `organize.ts` 确认的，不是猜的 —— 但**读代码不等于跑通**。
+
+---
+
+## [2026-08-03 23:30] T-056 补充 —— "import 面整面 404" 的确切 URL（`oss-scout` 要的信息）
+
+### 他 grep 不到，是因为**目录名猜错了**：`features/import/` 从来不存在
+
+前端的 import 代码在 **`features/capture/upload.ts`** 与 **`features/notes/api.ts`**。
+（`ls apps/web/src/features/` 里没有 `import`。他没猜、直接要证据，是对的做法 —— 是我 D-08 里没写清位置。）
+
+### 确切的 404 URL 清单（前端发的 → daemon 实际有的）
+
+| # | 前端调用 | 触发路径 | daemon 实际 |
+|---|---|---|---|
+| 1 | `POST /api/import/probe` | `/capture` 粘链接点「开始」 | **不存在**（daemon 无独立 probe 端点） |
+| 2 | `POST /api/import/url` | 确认卡片点「开始转写」 | 应为 **`POST /api/notes/import`**，入参键是 **`input`** 不是 `url` |
+| 3 | `POST /api/import/file/init` | 拖文件 / 选文件 | **不存在** |
+| 4 | `PUT /api/import/file/:uid/part/:n` | 同上（分片） | **不存在** |
+| 5 | `POST /api/import/file/:uid/complete` | 同上（收尾） | **不存在** |
+
+`grep -rn "'/api/import" apps/daemon/src` → **零命中**。所以这 5 条全是真 404。
+
+### ⚠️ 但我 D-08 那条结论**需要修正**，而且我错得比想象的多
+
+我写的是"前端打 `/api/import/*`，实际是 `/api/notes/import` + `/api/notes/upload`"，
+暗示只是**路径前缀写错**。实际情况更严重：**上传的整套协议都是我自己造的。**
+
+我按 D-05 §4.2 设计了三步分块协议（init → part → complete）；
+daemon 提供的是 **`POST /api/notes/upload`：单次 `multipart/form-data` 流式上传**，
+响应 `202 {noteUid, jobUid, bytes, filename, storedAs}`。
+**不是路径对不上，是协议根本不是一回事。**
+
+而且**他的设计是对的，我的是过度设计**：
+- 浏览器发 `File` 本来就是流式，XHR/fetch 不会读进内存；
+- 断点续传在**本机回环**上价值接近于零（不跨公网、不掉线）；
+- 少一套 init/part/complete 状态机 = 少一整类"服务端半成品文件"的清理问题。
+
+**已按他的协议重写**（`features/capture/upload.ts`），并把 `POST /notes/import {input}` 也对齐了。
+用 `XMLHttpRequest` 而非 `fetch` —— **只有 XHR 能给出上传进度**，用户要传 500MB 视频，
+没有进度条的等待不可接受。这是少数"老 API 更合适"的场景。
+
+### 关于星标/标签：**他是对的，我错了**
+
+我在 D-08 §5 断言"星标动词不匹配（前端 POST / daemon PUT）"和"标签体形状不匹配"。
+`oss-scout` 核对后说两边一致 —— **我复查了自己的 git 记录：那两处是我在 T-056 早些时候
+刚刚改成 PUT / 两步法的，我却把"改之前的状态"当成"当前状态"写进了报告。**
+结合他抓包"一个非 GET 都没发出去"，真正原因**只有一个**：surface 被一条 404 毒化。
+**D-08 §5 那两行请删掉。** 我为此浪费了他的核对时间。
+
+### 本轮最终状态
+
+| 项 | 状态 |
+|---|---|
+| 三处 mutation（星标/标签/段落编辑） | ✅ 传输层根因已修（端点级记账 + 写不回落 mock）；契约本就正确 |
+| 导图页崩溃 | ✅ 已修（信封 `{mindmap,doc}` 解错 → 守卫 + select 取 `.doc`） |
+| 导图保存 | ✅ 你说 `oss-scout` 已补 PATCH → 我把 `MINDMAP_SAVE_SUPPORTED` 打开即可（**下轮做，本轮未验**） |
+| capture 输入框 | ✅ 一直都在；是**定位歧义**（顶栏搜索框 DOM 顺序在前）。已给两者加 testid |
+| import 五条 404 | ✅ 已按真实契约重写 |
+
+**验证**：`pnpm --filter @openmemo/web test` → 7 + 22 pass / 0 fail / 2 skip；`eslint apps/web` → 0；build ✓。
+
+### 诚实声明
+- 上述改动**全部只在 jsdom 与静态核对层面验证**。`POST /api/notes/upload` 的真实往返、
+  `POST /api/notes/import` 的真实 202、星标/标签的真实落库，**本轮一次都没跑**
+  （未起隔离 daemon，避免再次干扰他人实例）。
+- 我这轮**连续两次把"我自己刚改过的状态"当成"仓库当前状态"写进结论**（星标、标签）。
+  教训：**报告里的每一条"不匹配"，都必须以当次 grep 的输出为准，不能凭记忆。**

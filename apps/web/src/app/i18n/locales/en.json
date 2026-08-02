@@ -51,9 +51,7 @@
     "uploading": "Uploading {{percent}}",
     "batchCollapsed": "Batch import · {{done}}/{{total}} done",
     "uploadPhase": {
-      "init": "Preparing",
       "uploading": "Uploading",
-      "finalizing": "Processing",
       "done": "Done",
       "failed": "Failed"
     },

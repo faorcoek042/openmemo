@@ -97,4 +97,5 @@ export interface ImportUrlRequest {
 export interface AcceptedJob {
   jobUid: string;
   noteUid: string;
+  status?: string;
 }

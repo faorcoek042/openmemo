@@ -45,7 +45,7 @@ export default function CapturePage() {
 
       setUploads((prev) => [
         ...prev,
-        ...files.map((f) => ({ file: f, progress: 0, phase: 'init' as const })),
+        ...files.map((f) => ({ file: f, progress: 0, phase: 'uploading' as const })),
       ]);
 
       for (const file of files) {

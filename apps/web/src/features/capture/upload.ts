@@ -1,120 +1,135 @@
-import { api, rawFetch } from '../../lib/api/client';
-import { markSurface, surfaceState } from '../../lib/api/surfaces';
+import { markSurface } from '../../lib/api/surfaces';
 
 /**
- * F2 本地媒体分块上传（M-2）。
+ * F2 本地媒体上传。
  *
- * ## 为什么必须分块，而不是一个 `multipart/form-data` 了事
+ * ## ⚠️ 契约订正（T-056）—— 我原来整套协议都是猜的
  *
- * 用户会拖 2 GB 的会议录像。一次性上传：
- * - 显示不了进度（用户会以为卡死）
- * - 断了要从头再来
- * - Node 的 body parser 会把它整个缓冲进内存
+ * 我按 D-05 §4.2 的设计自造了一套**三步分块协议**：
+ * `POST /import/file/init` → `PUT /import/file/:uid/part/:n` → `POST /import/file/:uid/complete`。
+ * **daemon 里这三条路由一条都不存在**（`grep "'/api/import" apps/daemon` 零命中），
+ * 所以"把文件拖到网页上"在浏览器里必然 404 ——
+ * 这就是 D-08 §5 那条"import 面整面 404"的确切来源。
  *
- * 分块 + 直接写盘是唯一可行解（D-05 §4.2）。
+ * daemon 实际提供的是 **`POST /api/notes/upload`**：单次 `multipart/form-data` **流式**上传，
+ * 服务端边收边写盘（任何时刻内存里只有一个 chunk），响应
+ * `202 {noteUid, jobUid, bytes, filename, storedAs}`。
  *
- * ## 为什么本地文件还要"上传"
+ * **他的设计是对的，我的分块协议在这里属于过度设计**：
+ * - 浏览器发送 `File` 本来就是流式的，`fetch`/XHR 不会把它读进内存；
+ * - 断点续传的价值在**本机回环**上接近于零（不跨公网、不掉线）；
+ * - 少一套 init/part/complete 状态机，就少一整类"服务端半成品文件"的清理问题。
  *
- * 浏览器沙箱拿不到文件的真实路径 —— 这点必须在 UI 上解释，
- * 否则用户会困惑"我文件就在本机为什么还要传"。
+ * 所以这里**按他的协议重写**，不再坚持我的设计。
+ *
+ * ## 仍然保留的一条
+ * "为什么本地文件还要上传"必须在 UI 上解释 —— 浏览器沙箱拿不到真实路径
+ * （`<input type=file>` 与 drop 事件给的 `File` 都没有路径），
+ * 不解释用户会困惑"我文件就在本机，为什么还要传"。
  */
-
-/** 8 MB 一片：足够摊薄请求开销，又不会让单片重传代价过高。 */
-export const CHUNK_SIZE = 8 * 1024 * 1024;
-
-export interface UploadInit {
-  uploadUid: string;
-  /** 服务端可以覆盖分片大小（例如它更清楚磁盘/内存状况） */
-  chunkSize?: number;
-  /** 断点续传：服务端已经收到的分片序号 */
-  receivedParts?: number[];
-}
 
 export interface UploadResult {
   noteUid: string;
   jobUid: string;
+  bytes: number;
+  filename: string;
+  storedAs: string;
 }
 
 export interface UploadProgress {
   file: File;
   /** 0..1 */
   progress: number;
-  phase: 'init' | 'uploading' | 'finalizing' | 'done' | 'failed';
+  phase: 'uploading' | 'done' | 'failed';
   error?: unknown;
 }
 
 /**
  * 上传一个文件并触发导入。
  *
- * 失败时**不静默吞掉**：把 phase 置 failed 并把错误交给调用方渲染。
+ * 用 `XMLHttpRequest` 而不是 `fetch`：**只有 XHR 能给出上传进度**
+ * （`fetch` 的流式上传在多数浏览器仍不可用）。用户会传 500MB 的视频，
+ * 没有进度条的等待不可接受 —— 这是少数"老 API 更合适"的场景，不是没跟上新写法。
  */
-export async function uploadMediaFile(
+export function uploadMediaFile(
   file: File,
   onProgress: (p: UploadProgress) => void,
   signal?: AbortSignal,
 ): Promise<UploadResult> {
-  const report = (patch: Partial<UploadProgress>) =>
-    onProgress({ file, progress: 0, phase: 'init', ...patch } as UploadProgress);
+  return new Promise<UploadResult>((resolve, reject) => {
+    const form = new FormData();
+    // 字段名 `file`；磁盘名由服务端生成 ULID，原名只作展示元数据（D-01 §8.5）
+    form.append('file', file, file.name);
 
-  report({ phase: 'init' });
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', UPLOAD_ENDPOINT);
+    xhr.withCredentials = true;
 
-  const init = await api<UploadInit>('import', '/import/file/init', {
-    method: 'POST',
-    body: { name: file.name, size: file.size, mime: file.type || null },
-    signal,
+    const csrf = readCsrf();
+    if (csrf) xhr.setRequestHeader('X-OpenMemo-CSRF', csrf);
+
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable) return;
+      onProgress({ file, progress: e.loaded / e.total, phase: 'uploading' });
+    };
+
+    xhr.onload = () => {
+      if (xhr.status === 404 || xhr.status === 501) {
+        // 端点不存在：如实标注，绝不静默当成功（写操作永不假装成功）
+        markSurface('import', 'mock');
+        const err = new Error(`上传接口不存在（HTTP ${xhr.status}）`);
+        onProgress({ file, progress: 1, phase: 'failed', error: err });
+        reject(err);
+        return;
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        const err = parseError(xhr.responseText, xhr.status);
+        onProgress({ file, progress: 1, phase: 'failed', error: err });
+        reject(err);
+        return;
+      }
+      try {
+        const out = JSON.parse(xhr.responseText) as UploadResult;
+        markSurface('import', 'live');
+        onProgress({ file, progress: 1, phase: 'done' });
+        resolve(out);
+      } catch (err) {
+        onProgress({ file, progress: 1, phase: 'failed', error: err });
+        reject(err);
+      }
+    };
+
+    xhr.onerror = () => {
+      const err = new Error('连不上本地服务，上传未完成');
+      markSurface('import', 'offline');
+      onProgress({ file, progress: 0, phase: 'failed', error: err });
+      reject(err);
+    };
+
+    xhr.onabort = () => reject(new DOMException('aborted', 'AbortError'));
+    signal?.addEventListener('abort', () => xhr.abort(), { once: true });
+
+    onProgress({ file, progress: 0, phase: 'uploading' });
+    xhr.send(form);
   });
-
-  const chunkSize = init.chunkSize ?? CHUNK_SIZE;
-  const total = Math.max(1, Math.ceil(file.size / chunkSize));
-  const done = new Set(init.receivedParts ?? []);
-
-  for (let i = 0; i < total; i += 1) {
-    if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
-    if (done.has(i)) continue;
-
-    const slice = file.slice(i * chunkSize, Math.min(file.size, (i + 1) * chunkSize));
-    const res = await rawFetch(`/api/import/file/${init.uploadUid}/part/${i}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/octet-stream' },
-      body: slice,
-      signal,
-    });
-    if (!res.ok) {
-      report({ phase: 'failed', progress: i / total, error: new Error(`part ${i}: HTTP ${res.status}`) });
-      throw new Error(`分片 ${i} 上传失败：HTTP ${res.status}`);
-    }
-    report({ phase: 'uploading', progress: (i + 1) / total });
-  }
-
-  report({ phase: 'finalizing', progress: 1 });
-  const out = await api<UploadResult>('import', `/import/file/${init.uploadUid}/complete`, {
-    method: 'POST',
-    signal,
-  });
-  report({ phase: 'done', progress: 1 });
-  return out;
 }
 
-/**
- * daemon 的上传端点尚未实现时的**明确失败**。
- *
- * 刻意**不做 mock 上传** —— 假装传成功然后凭空变出一条笔记，
- * 会让"哪些接通了"这件事重新变得说不清。宁可让按钮明确报"还没接通"。
- */
-export function uploadSurfaceReady(): boolean {
-  return surfaceState('import') === 'live';
-}
+export const UPLOAD_ENDPOINT = '/api/notes/upload';
 
-export async function probeUploadSurface(): Promise<boolean> {
+function readCsrf(): string | null {
   try {
-    await api<unknown>('import', '/import/file/init', {
-      method: 'POST',
-      body: { probe: true },
-    });
-    return true;
+    return sessionStorage.getItem('openmemo.csrf');
   } catch {
-    markSurface('import', surfaceState('import') === 'offline' ? 'offline' : 'mock');
-    return false;
+    return null;
+  }
+}
+
+function parseError(text: string, status: number): Error {
+  try {
+    const body = JSON.parse(text) as { error?: { messageZh?: string; message?: string } };
+    return new Error(body.error?.messageZh ?? body.error?.message ?? `HTTP ${status}`);
+  } catch {
+    return new Error(`HTTP ${status}`);
   }
 }
 

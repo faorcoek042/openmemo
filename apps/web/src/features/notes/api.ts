@@ -34,10 +34,18 @@ export function useTranscriptQuery(uid: string | undefined) {
   });
 }
 
-/** probe：秒级返回，**先于下载**。让"认对了没有"和"需要登录"都提前暴露（D-01 §5 F1）。 */
+/**
+ * probe（解析链接元数据，先于下载）。
+ *
+ * ⚠️ **daemon 目前没有独立的 probe 端点**（读 `rest/notes.ts` 确认：只有
+ * `POST /api/notes/import`，它直接建 note + 排 job）。
+ * 在端点落地之前，这里会 404 → 端点级记账把这一条标为缺失、回落 mock（读操作可以回落），
+ * UI 上有 MockNotice 标着。**不再假装它接通了。**
+ */
 export function useProbeMutation() {
   return useMutation({
-    mutationFn: (url: string) => api<ProbeResult>('import', '/import/probe', { method: 'POST', body: { url } }),
+    mutationFn: (url: string) =>
+      api<ProbeResult>('import', '/notes/probe', { method: 'POST', body: { input: url } }),
   });
 }
 
@@ -50,9 +58,15 @@ export function useImportUrlMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (req: ImportUrlRequest) =>
-      api<AcceptedJob>('import', '/import/url', {
+      /**
+       * ⚠️ **契约订正**：路径是 `/api/notes/import`（不是我原来写的 `/api/import/url`），
+       * 入参键是 **`input`**（可为 URL 或服务端绝对路径），不是 `url`。
+       * 响应 `202 {noteUid, jobUid, status}`。
+       * 我原来那条路径 daemon **根本不存在** —— 这是 D-08 §5 "import 面整面 404" 的确切来源。
+       */
+      api<AcceptedJob>('import', '/notes/import', {
         method: 'POST',
-        body: req,
+        body: { input: req.url },
         // SSE 断线重连后前端可能重发；用户也会狂点按钮
         idempotencyKey: `import:${req.url}`,
       }),
