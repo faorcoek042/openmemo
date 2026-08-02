@@ -299,7 +299,25 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
             startMs: s.start_ms,
             endMs: s.end_ms,
             text: s.text,
+            /*
+             * ★ 编辑前的原始 ASR 文本。**PATCH 会返回它，但 GET 一直没带** ——
+             * 于是用户改完刷新一次，原文就没了。
+             *
+             * 契约里 textRaw 的用途是「查看改动」与「还原」：读到 null 的前端
+             * 只会**安静地不显示那两个按钮**，不报错、不留痕，
+             * 表现为"这两个功能从来就不存在"。用户改错了没法还原。
+             *
+             * 这和 `words` 是同一类缺陷（只在响应里存在、一落地就消失），
+             * 所以这次把整行 DB 列与序列化字段逐个比对了一遍，不是只补被报的那个。
+             */
+            textRaw: s.text_raw,
             confidence: s.confidence,
+            /*
+             * 第三个漏掉的字段（逐列比对查出来的，没人报过）。
+             * 无语音概率是"这段可能是静音/噪声"的唯一依据，
+             * 前端要用它把低置信段落做弱化显示；不发出去，那种显示就永远不会出现。
+             */
+            noSpeechProb: s.no_speech_prob,
             chunkIdx: s.chunk_idx,
             flags: s.flags,
             /*

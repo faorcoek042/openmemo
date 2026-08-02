@@ -1685,3 +1685,44 @@ settings 键 `llm.purposes` : Partial<Record<LlmPurpose, {providerId?, model?}>>
 成本：该端点只在设置页打开时调一次，实测 421MB 的 models 目录瞬时返回。
 
 llm 测试 18/18，daemon 构建 0 错，lint 干净；demo 只读未重启；测试实例已收尾。
+
+---
+
+## T-092 `textRaw` 落地即丢：已修，**并查出第三个漏字段**
+
+### 修复
+`GET /api/notes/:uid/transcript` 的段落序列化补上 `textRaw`（`text_raw`）。
+实测复现 `model-mgmt` 的步骤：
+```
+PATCH 段落        → textRaw = 'And so my fellow Americans, ask not what your country can d…'
+立刻 GET 同一段   → textRaw = 'And so my fellow Americans, ask not what your country can d…'  ✅
+                    text    = '【改过的文字】'   editedAt = 1785704315454
+```
+**「查看改动」与「还原」现在真的可用**（此前读到 null 的前端只会安静地不显示按钮，
+不报错也不留痕，表现为"这两个功能从来就不存在"）。
+
+### 第三个漏字段：`noSpeechProb`（没人报过，逐列比对查出来的）
+既然这个形状已经出现两次（`words`、`textRaw`），我没有只补被报的那个，
+而是把 `SegmentRow` 的**每一列**与序列化字段逐个比对：
+```
+seq startMs endMs text confidence chunkIdx flags editedAt edited words speakerLabel   ← 原有
+text_raw        → 缺（被报的那个）
+no_speech_prob  → 缺（第三个）
+id / transcript_id → 内部主键，本就不该外发 ✓
+```
+已补 `noSpeechProb`。
+
+★ **但必须如实说清它的实际价值**：补上之后实测该字段**仍然是 null** ——
+DB 里存的就是 null。管道确实读它（`whisperCpp.ts:249 seg.no_speech_prob ?? null`），
+但本次 whisper-cli 调用的 JSON 里没有这个字段。
+所以**补它修好的是"契约完整性"，不是立刻点亮某个功能**；
+低置信/静音的实际可用信号仍然是 `flags`（`SILENCE_OR_MUSIC` / `LOW_CONFIDENCE`），
+而 `flags` 本来就在序列化里。**我不会把这条写成"低置信弱化显示已可用"。**
+
+### transcript 层也比对了（结论：不补）
+`kind` / `backend` / `is_active` / `created_at` / `updated_at` 未外发。
+这几个与本次的缺陷形状**不同** —— 它们不是"接口写进去又读不回来"，
+而是纯内部/诊断字段，前端目前没有消费点。**没有需求就不加**，加了反而要长期维护契约。
+若 `architect` 需要 `backend`（显示"这条是用 CUDA 转的"），说一声我补。
+
+lint 干净；move 13/13、upload 17/17；demo 全程只读未重启；测试实例与临时目录已收尾。

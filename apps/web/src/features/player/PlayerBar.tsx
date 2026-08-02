@@ -43,11 +43,20 @@ export function PlayerBar({ peaks }: { peaks: DecodedPeaks | null }) {
     const tick = () => {
       const el = audioRef.current;
       if (el) {
+        /*
+         * ★ **每帧**写入位置值（不再在这里节流）。
+         *
+         * 节流已经下沉到 `setPositionMs` 内部，且只作用于"通知订阅者"这一半。
+         * 在这里节流会让**值本身**只有 100ms 分辨率，而逐字高亮是按帧拉取的 ——
+         * 比 100ms 短的词（实测 `' for'` 只有 60ms）会被整个跳过，一次都不亮。
+         */
+        const ms = el.currentTime * 1000;
+        setPositionMs(ms);
+
+        // 时间码是给人读的文本，60Hz 刷新纯属浪费，这里仍按 ~10Hz 更新
         const now = performance.now();
         if (now - last > 100) {
           last = now;
-          const ms = el.currentTime * 1000;
-          setPositionMs(ms);
           if (labelRef.current) labelRef.current.textContent = timecode(ms);
         }
       }

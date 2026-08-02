@@ -110,10 +110,19 @@ export async function pressKey(el: Element | null, key: string): Promise<void> {
   });
 }
 
+/**
+ * 触发失焦。
+ *
+ * ⚠️ **必须同时派发 `focusout`**：React 17 起把 `onBlur` 挂在**根容器**上，
+ * 监听的是会冒泡的 `focusout`，而不是不冒泡的 `blur`。
+ * 只发 `blur` 的话事件到不了根容器，`onBlur` **永远不会触发** ——
+ * 表现是"测试跑绿、回调一次没进"，属于最难发现的那种假绿灯。
+ */
 export async function blur(el: Element | null): Promise<void> {
   if (!el) throw new Error('blur: 元素不存在');
   await act(async () => {
     fireEvent.blur(el);
+    fireEvent.focusOut(el);
   });
 }
 

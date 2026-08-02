@@ -8,7 +8,7 @@
  * ⚠️ `./host` 必须是**第一个 import** —— 它在模块顶层装 jsdom 全局，
  * 而 react-dom 必须在全局就绪之后才被加载。
  */
-import { render, click, type, pressKey, text, buttonByText, stubApi } from './host';
+import { render, click, type, pressKey, text, buttonByText, stubApi, blur } from './host';
 
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,6 +35,8 @@ import { WordLevelBadge } from '../features/transcript';
 import { WordHighlight, findActiveWord } from '../features/transcript/WordHighlight';
 import { DEFAULT_PROXY_CONFIG } from '@openmemo/shared';
 import { ProxySettingsSection } from '../features/settings/ProxySettingsSection';
+import { getPositionMs, setPositionMs, subscribePosition } from '../lib/stores/player.store';
+import { PurposeBindingsSection } from '../features/settings/PurposeBindingsSection';
 
 /* ─────────────────────────── 标签增删 ─────────────────────────── */
 
@@ -962,7 +964,16 @@ describe('零宽词兜底', () => {
  * 而失败现象最坑：浏览器能上网，应用说"下载失败"，两者之间没有任何提示。
  */
 describe('代理配置', () => {
-  const cfgRoute = { 'GET /settings/proxy': DEFAULT_PROXY_CONFIG };
+  /*
+   * ⚠️ 真实响应是**带壳**的 `{config, active, media, modes, defaultModeZh}`，
+   * 而且 `config` 里的 URL 已被服务端 `redactProxyUrl()` 脱敏。
+   * 这些桩最初写成了裸 `ProxyConfig` —— 是我按想当然写的，
+   * 后来照 `rest/proxy.ts` 改组件时被测试直接顶出来了。桩的形状必须照抄实现。
+   */
+  const wrap = (config: unknown, media?: unknown) => ({
+    'GET /settings/proxy': { config, active: null, media: media ?? { supported: true, reason: null, noteZh: null } },
+  });
+  const cfgRoute = wrap(DEFAULT_PROXY_CONFIG);
 
   test('★ 默认跟随系统，不是"不使用代理"', async () => {
     stubApi(cfgRoute);
@@ -1022,31 +1033,39 @@ describe('代理配置', () => {
   });
 
   test('★ 选 SOCKS 要提示 ffmpeg 链路直连 —— 别让用户以为全走代理了', async () => {
-    stubApi({ 'GET /settings/proxy': { ...DEFAULT_PROXY_CONFIG, mode: 'manual', socks5: 'socks5://127.0.0.1:1080' } });
+    // media 判定由 daemon 给（ffmpegProxySupport），前端不再自己猜"填了 socks5 就降级"
+    stubApi(
+      wrap(
+        { ...DEFAULT_PROXY_CONFIG, mode: 'manual', socks5: 'socks5://127.0.0.1:1080' },
+        {
+          supported: false,
+          reason: 'ffmpeg does not support SOCKS',
+          noteZh:
+            'ffmpeg 不支持 SOCKS 代理（libavformat 只识别 http_proxy）。选择 SOCKS 时，模型下载会走代理，但**在线媒体拉流会直连**。如需媒体也走代理，请改填 HTTP 代理地址。',
+        },
+      ),
+    );
     const r = await render(<ProxySettingsSection />);
     await r.flush();
     const shown = text(r.container);
-    assert.ok(shown.includes('媒体拉流这条链路会直连'), 'SOCKS 的真实边界必须说出来');
-    assert.ok(shown.includes('yt-dlp'), '同时要说清哪条链路仍然走代理，否则像是整个功能坏了');
+    // 直接渲染 daemon 给的 noteZh —— 能力边界由做判定的那一方描述
+    assert.ok(shown.includes('在线媒体拉流会直连'), 'SOCKS 的真实边界必须说出来');
+    assert.ok(shown.includes('模型下载会走代理'), '同时要说清哪条链路仍然走代理，否则像是整个功能坏了');
     r.unmount();
   });
 
   test('HTTP 代理不该弹 SOCKS 警告', async () => {
-    stubApi({ 'GET /settings/proxy': { ...DEFAULT_PROXY_CONFIG, mode: 'manual', httpProxy: 'http://127.0.0.1:7890' } });
+    stubApi(wrap({ ...DEFAULT_PROXY_CONFIG, mode: 'manual', httpProxy: 'http://127.0.0.1:7890' }));
     const r = await render(<ProxySettingsSection />);
     await r.flush();
-    assert.ok(!text(r.container).includes('媒体拉流这条链路会直连'));
+    assert.ok(!text(r.container).includes('在线媒体拉流会直连'));
     r.unmount();
   });
 
   test('★ 展示当前生效地址时必须脱敏 —— 密码不能出现在界面上', async () => {
-    stubApi({
-      'GET /settings/proxy': {
-        ...DEFAULT_PROXY_CONFIG,
-        mode: 'manual',
-        httpProxy: 'http://alice:hunter2@127.0.0.1:7890',
-      },
-    });
+    stubApi(
+      wrap({ ...DEFAULT_PROXY_CONFIG, mode: 'manual', httpProxy: 'http://alice:hunter2@127.0.0.1:7890' }),
+    );
     const r = await render(<ProxySettingsSection />);
     await r.flush();
     const eff = r.container.querySelector('[data-testid="proxy-effective"]')?.textContent ?? '';
@@ -1064,6 +1083,212 @@ describe('代理配置', () => {
     // 表单仍可见（不藏不灰），且给出真能用的替代办法
     assert.ok(shown.includes('HTTPS_PROXY'), '应给出环境变量这条真能用的退路');
     assert.ok(r.container.querySelector('[data-testid="proxy-mode-manual"]'), '表单不该被藏起来');
+    r.unmount();
+  });
+});
+
+/* ────────── 位置分辨率：短词必须能亮（T-091） ────────── */
+
+/**
+ * `model-mgmt` 用 rAF 逐帧记录器实测出来的：
+ * - 段首零宽词兜底窗口 `[220, 300)` 只有 80ms，从 0 起播 8 次**只亮 7 次**；
+ * - 真实短词 `' for'` 只有 **60ms**（**不是**退化词，`effectiveEnd` 救不了）→ **一次都没亮过**。
+ *
+ * 根因不是阈值太小，是**位置值本身只有 100ms 分辨率** ——
+ * `PlayerBar` 在 rAF 里节流后才写值，比采样周期短的词会被整个跳过。
+ * 单纯调大 `MIN_WORD_MS` 会篡改 `' for'` 的真实时长，还是救不了它。
+ */
+describe('播放位置的分辨率', () => {
+  test('★ 值每帧都更新 —— 这是短词能被看见的前提', () => {
+    setPositionMs(1000);
+    assert.equal(getPositionMs(), 1000);
+    // 紧接着再写（远快于 100ms 通知周期），值必须立刻跟上而不是等节流窗口
+    setPositionMs(1016);
+    assert.equal(getPositionMs(), 1016, '值不该被通知节流拖住');
+    setPositionMs(1032);
+    assert.equal(getPositionMs(), 1032);
+  });
+
+  test('★ 通知仍然节流 —— 拆开的意义就在于只提高分辨率、不提高推送成本', () => {
+    let hits = 0;
+    const stop = subscribePosition(() => {
+      hits += 1;
+    });
+    /*
+     * 节流窗口是模块级状态，会跨用例残留 —— 先用 immediate 显式确立一个窗口起点，
+     * 否则本用例的通过与否取决于前面几个用例跑了多久（又一个"测一次通过"的坑）。
+     */
+    setPositionMs(5000, { immediate: true });
+    // 紧接着连写 50 帧（模拟同一个 100ms 窗口内的 rAF），不该再通知
+    for (let i = 1; i <= 50; i += 1) setPositionMs(5000 + i * 16);
+    stop();
+    assert.equal(hits, 1, `同一窗口内应只通知 1 次，实际 ${hits} 次`);
+  });
+
+  test('★ 60ms 的真实短词在逐帧分辨率下必然被采样到', () => {
+    // `' for'`：真实时长 60ms，非退化词
+    const words = [
+      { w: ' for', s: 9000, e: 9060, p: 1 },
+      { w: ' us', s: 9200, e: 9400, p: 1 },
+    ];
+    // 以 16ms 步长（rAF）扫过，必须至少命中一次
+    let seen = 0;
+    for (let t = 8950; t < 9100; t += 16) {
+      if (findActiveWord(words, t) === 0) seen += 1;
+    }
+    assert.ok(seen >= 3, `逐帧扫描只命中 ${seen} 次，60ms 的词应有 3 帧以上`);
+
+    /*
+     * 反面钉死：100ms 采样（旧的节流分辨率）下，命中与否**取决于相位**。
+     *
+     * 我第一版把它写成"必然一次都不中"，跑出来是 1 次 —— 断言错了，
+     * 因为从 8950 起步恰好在 9050 落进 [9000, 9060)。
+     * 真正的缺陷不是"一定miss"，而是"**能不能看见取决于起播时刻**"：
+     * 这正好解释了实测里同一个词有时亮有时不亮（段首词 8 次只亮 7 次）。
+     * 所以断言改成：**存在完全错过它的相位**。
+     */
+    const phasesThatMiss = [];
+    for (let phase = 0; phase < 100; phase += 10) {
+      let hit = false;
+      for (let t = 8900 + phase; t < 9100; t += 100) {
+        if (findActiveWord(words, t) === 0) hit = true;
+      }
+      if (!hit) phasesThatMiss.push(phase);
+    }
+    assert.ok(
+      phasesThatMiss.length > 0,
+      '100ms 采样下应存在完全看不见这个词的相位 —— 这就是"有时亮有时不亮"的来源',
+    );
+  });
+
+  test('seek 是跳变，必须绕过节流立刻通知', () => {
+    let last = -1;
+    const stop = subscribePosition((ms) => {
+      last = ms;
+    });
+    setPositionMs(2000); // 先占满一个节流窗口
+    setPositionMs(30_000, { immediate: true });
+    stop();
+    assert.equal(last, 30_000, 'seek 后游标不该滞后到下一个窗口才跟上');
+  });
+});
+
+/* ─────────────── 按用途分档 + LLM 键对齐（T-090） ─────────────── */
+
+/**
+ * ⚠️ 做这一屏时发现了一个更大的问题：**整个 LLM 配置界面是一次死写**。
+ *
+ * 全仓核对零重叠 —— 前端写 `llm.providers` / `llm.activeProviderId`，
+ * 而 daemon 的 `resolveConfiguredProvider()` 只读
+ * `llm.defaultProviderId` / `llm.defaultModelId` / `llm.purposes` / `llm.baseUrl.<id>`。
+ * 用户配好 provider、填了 Key、界面显示"已启用"，而 F4 的摘要与导图一直是"未配置"。
+ * 分档 UI 建在这之上，不先修等于在一个不通电的插座上加分路开关。
+ */
+describe('LLM 设置键必须与 daemon 对齐', () => {
+  test('★ 设为默认要写 daemon 真正读的三个键 —— 少一个就解析不出 provider', async () => {
+    const { calls } = stubApi({
+      'GET /settings': {
+        settings: {
+          'llm.providers': [
+            { id: 'openai', kind: 'openai-compatible', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', isLocal: false },
+          ],
+        },
+      },
+      'GET /secrets': { secrets: [], disclosure: null },
+      'PATCH /settings': { settings: {} },
+    });
+    const r = await render(<LlmSettingsSection />);
+    await r.flush();
+    await click(buttonByText(r.container, '设为默认'));
+    await r.flush();
+
+    const body = calls.find((c) => c.method === 'PATCH')?.body as Record<string, unknown>;
+    assert.ok(body, '应发出 PATCH');
+    assert.equal(body['llm.defaultProviderId'], 'openai', 'daemon 只认这个键，不认 activeProviderId');
+    assert.equal(body['llm.defaultModelId'], 'gpt-4o-mini', '模型缺了同样解析不出 provider');
+    assert.equal(body['llm.baseUrl.openai'], 'https://api.openai.com/v1');
+    r.unmount();
+  });
+});
+
+describe('按用途分档', () => {
+  const base = {
+    'llm.providers': [
+      { id: 'openai', kind: 'openai-compatible', label: 'OpenAI', baseUrl: 'u', model: 'gpt-4o-mini', isLocal: false },
+      { id: 'deepseek', kind: 'openai-compatible', label: 'DeepSeek', baseUrl: 'u2', model: 'deepseek-chat', isLocal: false },
+    ],
+    'llm.defaultProviderId': 'openai',
+    'llm.defaultModelId': 'gpt-4o-mini',
+  };
+
+  test('★ 三档都在，摘要与导图合成一档（不拆）', async () => {
+    stubApi({ 'GET /settings': { settings: base } });
+    const r = await render(<PurposeBindingsSection />);
+    await r.flush();
+    for (const p of ['chat', 'summarize', 'translate']) {
+      assert.ok(r.container.querySelector(`[data-testid="purpose-${p}"]`), `缺少 ${p} 档`);
+    }
+    assert.ok(text(r.container).includes('摘要 + 思维导图'), '两者能力要求同类，拆开只会多一栏没人会填的');
+    r.unmount();
+  });
+
+  test('★ 逐字段显示继承/覆盖 —— 只换 model 不换 provider 是最常见的填法', async () => {
+    stubApi({
+      'GET /settings': {
+        settings: { ...base, 'llm.purposes': { translate: { model: 'deepseek-chat' } } },
+      },
+    });
+    const r = await render(<PurposeBindingsSection />);
+    await r.flush();
+
+    const row = r.container.querySelector('[data-testid="purpose-translate"]')!;
+    const tags = [...row.querySelectorAll('[data-inherited]')].map((e) => e.getAttribute('data-inherited'));
+    // provider 继承、model 已覆盖 —— 两个字段各自独立，不是整体回退
+    assert.deepEqual(tags, ['true', 'false'], `translate 档应为 provider 继承 / model 覆盖，实际 ${tags}`);
+
+    // 最终生效值要写出来：provider 用的是全局的 openai，model 是自己填的
+    const eff = row.querySelector('[data-testid="purpose-translate-effective"]')!.textContent ?? '';
+    assert.ok(eff.includes('OpenAI'), `应显示继承来的 provider，实际：${eff}`);
+    assert.ok(eff.includes('deepseek-chat'), `应显示覆盖后的 model，实际：${eff}`);
+    r.unmount();
+  });
+
+  test('★ 没覆盖时三档都显示为继承，且生效值等于全局默认', async () => {
+    stubApi({ 'GET /settings': { settings: base } });
+    const r = await render(<PurposeBindingsSection />);
+    await r.flush();
+    const row = r.container.querySelector('[data-testid="purpose-chat"]')!;
+    const tags = [...row.querySelectorAll('[data-inherited]')].map((e) => e.getAttribute('data-inherited'));
+    assert.deepEqual(tags, ['true', 'true']);
+    assert.ok(row.textContent!.includes('gpt-4o-mini'));
+    r.unmount();
+  });
+
+  test('★ 全局默认为空时要明说"没有可继承的值"，别让人以为留空就行', async () => {
+    stubApi({ 'GET /settings': { settings: { 'llm.providers': [] } } });
+    const r = await render(<PurposeBindingsSection />);
+    await r.flush();
+    assert.ok(r.container.querySelector('[data-testid="purposes-no-default"]'));
+    // 每档也要说明这样凑不出可用配置 —— daemon 要求 provider 与 model 都有值
+    assert.ok(text(r.container).includes('配置不完整'));
+    r.unmount();
+  });
+
+  test('★ 只填 model 时写入的绑定只含 model —— 不替用户把 provider 也钉死', async () => {
+    const { calls } = stubApi({
+      'GET /settings': { settings: base },
+      'PATCH /settings': { settings: {} },
+    });
+    const r = await render(<PurposeBindingsSection />);
+    await r.flush();
+
+    const input = r.container.querySelector('[data-testid="purpose-translate-model"]') as HTMLInputElement;
+    input.value = 'deepseek-chat';
+    await blur(input);
+    await r.flush();
+
+    const body = calls.find((c) => c.method === 'PATCH')?.body as Record<string, unknown>;
+    assert.deepEqual(body?.['llm.purposes'], { translate: { model: 'deepseek-chat' } });
     r.unmount();
   });
 });

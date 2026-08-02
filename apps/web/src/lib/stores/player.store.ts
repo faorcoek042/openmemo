@@ -5,18 +5,52 @@ import { subscribeWithSelector } from 'zustand/middleware';
  * 播放器状态（D-05 §2.4：高频瞬时流）。
  *
  * **播放位置不进这个 store 的响应式路径。**
- * 位置以 ~10Hz 更新，若每次都 setState，3000 行的转写稿虚拟列表会掉帧。
- * 做法：位置写进模块级 ref（`positionRef`），由 canvas / 游标直接读；
+ * 若每次都 setState，3000 行的转写稿虚拟列表会掉帧。
+ * 做法：位置写进模块级 ref，由 canvas / 游标 / 逐字高亮直接读；
  * 只有"当前高亮段变了"这件事才进 store（低频，通常几秒一次）。
+ *
+ * ⚠️ 频率分两档，别混：
+ * - **值**（`getPositionMs`）**每帧**更新 —— 拉取方需要 rAF 级分辨率才看得见短词；
+ * - **通知**（`subscribePosition`）仍 ~10Hz —— 波形游标那类推送方不需要更快。
  */
 
 let positionMs = 0;
 const positionListeners = new Set<(ms: number) => void>();
 
-/** 高频写入：不触发 React 渲染。 */
-export function setPositionMs(ms: number) {
+/**
+ * 订阅者的通知节流周期。**只节流"推"，不节流"值"** —— 见 `setPositionMs`。
+ */
+const NOTIFY_INTERVAL_MS = 100;
+let lastNotifyAt = -Infinity;
+
+/**
+ * 高频写入：不触发 React 渲染。
+ *
+ * ## 为什么把"更新值"和"通知订阅者"拆开
+ *
+ * 原来两件事绑在一起，并由 `PlayerBar` 在 rAF 里以 100ms 节流后才调用本函数。
+ * 后果是**位置值本身只有 100ms 分辨率**，而逐字高亮是按 `getPositionMs()` 拉取的，
+ * 于是任何比采样周期短的词都可能被整个跳过：
+ *
+ * - 段首零宽词的兜底窗口 `[220, 300)` 只有 80ms → 实测从 0 起播 8 次**只亮 7 次**；
+ * - 真实短词 `' for'` 只有 **60ms**（**不是**退化词，`effectiveEnd` 帮不上）→ **一次都没亮过**。
+ *
+ * 所以根因不是阈值太小，是**高亮的时间分辨率被位置推送的节流周期封顶了**。
+ * 单纯把 `MIN_WORD_MS` 调大救不了 `' for'`：它的 60ms 是真实时长，不该被篡改。
+ *
+ * 现在：**值每帧都更新**（一次 O(1) 赋值，代价可忽略），
+ * 而**订阅者仍按 ~10Hz 通知**（波形游标那类消费者不需要 60Hz，且遍历监听器才是真开销）。
+ * 拉取方（逐字高亮、当前段判定）因此拿到 rAF 级分辨率，推送方的成本一点没变。
+ */
+export function setPositionMs(ms: number, opts?: { immediate?: boolean }) {
   positionMs = ms;
-  for (const fn of positionListeners) fn(ms);
+
+  const now = typeof performance === 'undefined' ? Date.now() : performance.now();
+  // seek 是跳变，必须立刻推给订阅者 —— 等到下一个节流窗口会让游标明显滞后
+  if (opts?.immediate === true || now - lastNotifyAt >= NOTIFY_INTERVAL_MS) {
+    lastNotifyAt = now;
+    for (const fn of positionListeners) fn(ms);
+  }
 }
 
 export function getPositionMs(): number {
@@ -65,7 +99,8 @@ export const usePlayerStore = create<PlayerStore>()(
     setActiveSeq: (activeSeq) => set({ activeSeq }),
     requestSeek: (ms) => {
       seekNonce += 1;
-      setPositionMs(ms);
+      // 跳变：绕过节流立刻通知，否则游标会滞后最多 100ms 才跟上
+      setPositionMs(ms, { immediate: true });
       set({ seekRequest: { ms, nonce: seekNonce } });
     },
   })),
