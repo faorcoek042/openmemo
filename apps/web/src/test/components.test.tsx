@@ -8,7 +8,7 @@
  * ⚠️ `./host` 必须是**第一个 import** —— 它在模块顶层装 jsdom 全局，
  * 而 react-dom 必须在全局就绪之后才被加载。
  */
-import { render, click, type, pressKey, text, buttonByText, stubApi, blur } from './host';
+import { render, click, type, pressKey, text, buttonByText, stubApi } from './host';
 
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,7 +36,8 @@ import { WordHighlight, findActiveWord } from '../features/transcript/WordHighli
 import { DEFAULT_PROXY_CONFIG } from '@openmemo/shared';
 import { ProxySettingsSection } from '../features/settings/ProxySettingsSection';
 import { getPositionMs, setPositionMs, subscribePosition } from '../lib/stores/player.store';
-import { PurposeBindingsSection } from '../features/settings/PurposeBindingsSection';
+import { PurposeBindingsSection, mergePurposeBinding } from '../features/settings/PurposeBindingsSection';
+import { resolvePurpose } from '@openmemo/shared';
 
 /* ─────────────────────────── 标签增删 ─────────────────────────── */
 
@@ -1274,21 +1275,48 @@ describe('按用途分档', () => {
     r.unmount();
   });
 
-  test('★ 只填 model 时写入的绑定只含 model —— 不替用户把 provider 也钉死', async () => {
-    const { calls } = stubApi({
-      'GET /settings': { settings: base },
-      'PATCH /settings': { settings: {} },
+  /**
+   * ⚠️ 这条本来想用"在输入框里打字 → onBlur → 断言 PATCH 体"来测，跑不通：
+   * 组件宿主里**文本输入到不了 React**（vite 打包 hoist 了 import，
+   * dom-env 的全局装配跑在 react-dom 模块初始化之后，React 于是走 IE 的
+   * `attachEvent` polyfill 路径）—— 与那两条早就 skip 的用例同一个根因。
+   *
+   * 所以改成直接测**规则本身**。这不是退而求其次：
+   * 容易写错的是合并规则，不是 `onBlur` 有没有接上。
+   */
+  test('★ 只填 model 时写入的绑定只含 model —— 不替用户把 provider 也钉死', () => {
+    const out = mergePurposeBinding({}, 'translate', { model: 'deepseek-chat' });
+    assert.deepEqual(out, { translate: { model: 'deepseek-chat' } });
+  });
+
+  test('★ 清空某一项 = 恢复继承，不留空串', () => {
+    const before = { translate: { providerId: 'deepseek', model: 'deepseek-chat' } };
+    // 只清 model，provider 的覆盖必须留着 —— 逐字段，与 daemon 的逐字段回退对称
+    const out = mergePurposeBinding(before, 'translate', { model: '   ' });
+    assert.deepEqual(out, { translate: { providerId: 'deepseek' } });
+  });
+
+  test('★ 整档清空就删掉这一档，不留 {} —— 免得"有没有覆盖"多一种等价形态', () => {
+    const before = { translate: { model: 'x' }, chat: { model: 'y' } };
+    const out = mergePurposeBinding(before, 'translate', { model: '' });
+    assert.deepEqual(out, { chat: { model: 'y' } });
+    assert.ok(!('translate' in out));
+  });
+
+  test('★ 逐字段回退的解析规则与 daemon 的 bindingFor() 一致', () => {
+    const defaults = { providerId: 'openai', model: 'gpt-4o-mini' };
+    // 只覆盖 model：provider 继承
+    const a = resolvePurpose({ translate: { model: 'cheap' } }, 'translate', defaults);
+    assert.deepEqual(a, {
+      providerId: 'openai',
+      model: 'cheap',
+      inherited: { providerId: true, model: false },
     });
-    const r = await render(<PurposeBindingsSection />);
-    await r.flush();
+    // 整体回退（错误做法）会得到 gpt-4o-mini —— 固化这个反面
+    assert.notEqual(a.model, 'gpt-4o-mini', '整体回退会让"只填 model"静默失效');
 
-    const input = r.container.querySelector('[data-testid="purpose-translate-model"]') as HTMLInputElement;
-    input.value = 'deepseek-chat';
-    await blur(input);
-    await r.flush();
-
-    const body = calls.find((c) => c.method === 'PATCH')?.body as Record<string, unknown>;
-    assert.deepEqual(body?.['llm.purposes'], { translate: { model: 'deepseek-chat' } });
-    r.unmount();
+    // 全局默认为空 + 只填 model → 凑不出可用配置，daemon 会当作没配
+    const b = resolvePurpose({ translate: { model: 'cheap' } }, 'translate', {});
+    assert.equal(b.providerId, null, 'provider 无处可继承时必须是 null，不能假装配好了');
   });
 });

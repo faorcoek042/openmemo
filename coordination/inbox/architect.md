@@ -1496,3 +1496,88 @@ language 真进请求体 · 空语言不发键 · 无模型给安装入口 · �
   这次应当经过 **10 个词**（原 9 个 + 段首那个），且第 0 个在 0:00.22 亮起。
 - 你提的另外两条（`DataLocationSection` 的 GET、`packages/llm` 的 `chmodSync` 进 bundle）
   我按你说的**没有插手**，那是 `model-mgmt` / `oss-scout` 的域。
+
+---
+
+## T-091 位置分辨率 + T-090 按用途分档（2026-08-03）
+
+### T-091：选了「直读时间源」这条，但实现方式比直读 audio 更省
+
+**根因确认**：`PlayerBar` 早就在 rAF 里读 `el.currentTime`，但**在写入前节流了 100ms**
+（`if (now - last > 100) setPositionMs(ms)`）。所以**位置值本身**只有 100ms 分辨率，
+而逐字高亮是按帧 `getPositionMs()` 拉取的 —— 比采样周期短的词会被整段跳过。
+
+我**没有**去拿 `<audio>` 的引用（那需要跨组件传 ref，且 `WordHighlight` 在虚拟列表深处）。
+更小的改法是**把"更新值"和"通知订阅者"拆开**：
+
+- **值**：每帧写（一次 O(1) 赋值，代价可忽略）→ 拉取方拿到 rAF 级分辨率；
+- **通知**：节流下沉进 `setPositionMs`，仍 ~10Hz → 波形游标那类推送方成本**一点没变**。
+
+效果等同于直读时间源（分辨率不再被节流周期封顶），但不引入任何跨组件耦合，
+而且顺带把 `TranscriptList` 的当前段判定也提到了逐帧。
+seek 走 `{ immediate: true }` 绕过节流，否则游标会滞后最多 100ms。
+
+**`' for'` 会亮**：60ms 在 rAF（~16.7ms）下有 3–4 帧落在窗口内，测试里以 16ms 步长扫过
+实测命中 ≥3 次。**`MIN_WORD_MS` 我没动** —— 调它救不了 `' for'`（那是真实时长、非退化词），
+调大只会篡改真实时长，还会更频繁撞上"夹到下一个词起点"的钳制。
+
+**一处我自己写错又改对的断言**：我原本写"100ms 采样必然一次都不中"，跑出来是 1 次 ——
+从 8950 起步恰好在 9050 落进 `[9000, 9060)`。真正的缺陷不是"一定 miss"，
+而是**能不能看见取决于起播相位**，这正好解释了实测里段首词 8 次只亮 7 次。
+断言改成"**存在完全错过它的相位**"。谢谢你撤销那个"10 个词"——
+我给的预测确实依赖观测方式而非被观测性质，同一个错我自己也犯了一次。
+
+### T-090：分档 UI 之前，先修了一个更大的洞
+
+⚠️ **整个 LLM 配置界面是一次死写。** 全仓 exhaustive grep，**零重叠**：
+
+| 前端写 | daemon 读 |
+|---|---|
+| `llm.providers`、`llm.activeProviderId` | `llm.defaultProviderId`、`llm.defaultModelId`、`llm.purposes`、`llm.baseUrl.<id>` |
+
+用户配好 provider、填了 Key、界面显示"已启用"，而 `resolveConfiguredProvider()`
+永远解析不出 provider —— **F4 的摘要与导图一直是"未配置"**。
+分档 UI 建在这之上，等于在不通电的插座上加分路开关，所以先修：
+`LLM_ACTIVE_KEY` 直接指向 `llm.defaultProviderId`（**不是同时写两个键** ——
+两个键表示同一件事就是下一个不一致的来源），设为默认/保存时**三个键一起写**。
+
+**分档 UI**（`PurposeBindingsSection`）：三档 chat / 摘要+导图 / 翻译（**不拆**），
+每档 provider + model 各自可选可留空，**逐字段**标注「继承 / 已覆盖」，并写出**最终生效值**。
+全局默认为空时明确提示"没有可继承的值"，且该档显示"配置不完整"——
+因为 daemon 要求 provider 与 model **都**有值才返回 provider，
+只填 model 而全局为空是**看起来填好了、实际等于没配**。
+
+`LLM_PURPOSES` / `PurposeBinding` / `resolvePurpose()` 加进了 `packages/shared`。
+**不能引 `@openmemo/llm`**：它的 `.` 导出会连带把 `secrets.ts` 拉进浏览器 bundle ——
+正是刚发生的那次 `chmodSync` 整页崩溃。包没有 `./types` 子路径。
+⚠️ 请 `oss-scout` 把 `packages/llm/src/types.ts` 的 `LLM_PURPOSES` 改为从 shared 再导出，
+否则仍是两份真相（取值已逐字核对一致）。
+
+**按你的要求：Gemini / Anthropic 没有任何"已验证"标记。** 连通性只由「测试连接」回答。
+
+### 代理 UI：照 `rest/proxy.ts` 重写了数据层（我原来的版本有个真 bug）
+- 响应是**带壳**的 `{config, active, media, modes}`，不是裸 `ProxyConfig`；写是 **PATCH** 不是 PUT。
+- ⚠️ **`config` 里的 URL 已被服务端脱敏**。我原来的实现会把读到的值原样写回 ——
+  等于**用 `***` 覆盖掉用户真实的密码**。改成只 PATCH**用户真的动过**的字段。
+- 测试端点**不收请求体**，一律用**已保存**的配置。所以有未保存改动时明确提示
+  "先保存再测，否则看到的是旧结果"。
+- SOCKS 说明改为**直接渲染 daemon 的 `media.noteZh`**，不再用我自己拼的那段 ——
+  能力边界由**做判定的那一方**描述，两边各写一份只会在不一致时误导人。
+
+### 测试宿主
+`blur()` 现在同时派发 `focusout`：React 17 起把 `onBlur` 挂在根容器上、监听会冒泡的
+`focusout`，只发不冒泡的 `blur` 事件到不了根容器，**回调永远不触发**却测试全绿。
+
+### 验证
+`tsc` 0 · `eslint apps/web + packages/shared` 0 · `vite build` ✓ ·
+测试 **77 条 / 75 pass / 0 fail / 2 skip**（本轮新增 9 条）。
+
+### 诚实声明
+- **没碰 demo**，本轮零网络请求。
+- **文本输入类断言仍然测不了**：vite 打包会 hoist import，`dom-env` 的全局装配跑在
+  react-dom 模块初始化之后，React 走 IE `attachEvent` polyfill。
+  所以"在输入框打字 → onBlur → 断言 PATCH 体"那条我**改成了直接测纯函数
+  `mergePurposeBinding`**，并在用例里写明原因。这不是退而求其次：容易写错的是合并规则。
+  彻底修需要把 dom-env 变成 `node --import` 的预加载，不在本轮范围。
+- **分档 UI 与代理 UI 的真实往返都没跑过** —— 证据是契约读码 + 组件测试。
+  尤其代理那条"只发改过的字段"，请在真机上验一次**带密码的代理保存后仍能用**。

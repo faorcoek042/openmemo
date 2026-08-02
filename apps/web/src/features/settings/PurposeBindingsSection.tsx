@@ -41,6 +41,40 @@ import {
  *
  * 所以每一栏都显式标注**继承 / 已覆盖**，并把**最终生效值**写出来。
  */
+
+/**
+ * 合并一次编辑到绑定表 —— **纯函数，单独导出以便直接测规则**。
+ *
+ * 抽出来不是为了复用，是因为组件测试宿主里**文本输入到不了 React**
+ * （vite 打包会 hoist import，dom-env 的全局装配跑在 react-dom 模块初始化之后，
+ * React 于是走 IE 的 `attachEvent` polyfill 路径）。
+ * 与其把断言挂在跑不通的 DOM 交互上、或者干脆不测，不如把**规则本身**测死 ——
+ * 真正容易写错的是合并规则，不是 `onBlur` 有没有接上。
+ *
+ * 规则：
+ * - 空白值 = **恢复继承**，不写空串。设置里留一个空串，下次读回来分不清
+ *   "没填"和"填了空"，而 daemon 的 `asString()` 对两者行为相同 —— 存下去只会误导人。
+ * - 整档都空就**删掉这一档**，不留 `{}`：留着会让"有没有覆盖"的判断多一种等价形态。
+ * - 只动传进来的字段，另一个字段保持原样 —— 逐字段覆盖，与 daemon 的逐字段回退对称。
+ */
+export function mergePurposeBinding(
+  bindings: PurposeBindings,
+  purpose: LlmPurpose,
+  next: { providerId?: string; model?: string },
+): PurposeBindings {
+  const merged: PurposeBindings = { ...bindings };
+  const entry = { ...(merged[purpose] ?? {}), ...next };
+
+  const cleaned: { providerId?: string; model?: string } = {};
+  if (entry.providerId?.trim()) cleaned.providerId = entry.providerId.trim();
+  if (entry.model?.trim()) cleaned.model = entry.model.trim();
+
+  if (Object.keys(cleaned).length === 0) delete merged[purpose];
+  else merged[purpose] = cleaned;
+
+  return merged;
+}
+
 export function PurposeBindingsSection() {
   const { t } = useTranslation();
   const settings = useSettingsQuery();
@@ -52,18 +86,7 @@ export function PurposeBindingsSection() {
   const bindings = readPurposeBindings(settings.data);
 
   const write = (purpose: LlmPurpose, next: { providerId?: string; model?: string }) => {
-    const merged: PurposeBindings = { ...bindings };
-    const entry = { ...(merged[purpose] ?? {}), ...next };
-    // 空字符串 = 恢复继承。不留空串，否则 daemon 那边 `asString()` 判空后行为一样，
-    // 但设置里会留下一个看不出意图的空值，下次读回来分不清"没填"和"填了空"
-    const cleaned: { providerId?: string; model?: string } = {};
-    if (entry.providerId?.trim()) cleaned.providerId = entry.providerId.trim();
-    if (entry.model?.trim()) cleaned.model = entry.model.trim();
-
-    if (Object.keys(cleaned).length === 0) delete merged[purpose];
-    else merged[purpose] = cleaned;
-
-    patch.mutate({ [LLM_PURPOSES_KEY]: merged });
+    patch.mutate({ [LLM_PURPOSES_KEY]: mergePurposeBinding(bindings, purpose, next) });
   };
 
   const anyOverride = LLM_PURPOSES.some((p) => bindings[p] !== undefined);
