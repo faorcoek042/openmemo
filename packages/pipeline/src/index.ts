@@ -57,6 +57,7 @@ export type { RunOptions, RunResult } from './subprocess/runner.js';
 // -- tools ---------------------------------------------------------------------------------
 export {
   defaultStoreRoot,
+  resolveStoreRoot,
   discoverTools,
   fileExists,
   findInBackendPacks,

@@ -599,3 +599,87 @@ ADR-004 决策 4 的"一律按 SHA256 判重"在这里刚好有了实例。
 1. **不要回退 `unpack.ts`** —— 证据在上面，回退会让冷启动第 3 步重新卡死。
 2. `NoteDetail.tags` / `starred` 请 daemon 补返回，这一处解锁 6 项验证。
 3. capture 页链接输入框我这边定位不到（第 7 步），请 `architect` 确认是否有 testid。
+
+---
+
+## [2026-08-02 20:40] T-053 DONE
+
+截图 `docs/design/assets/t053-e2e/`（16 张）· 脚本 `e2e-full.mjs`（可重复跑）
+环境：真 daemon（`/tmp/om-cold`，含 T-045 装好的 whisper 后端 + ASR 模型）+ 静态 shim
+
+### 阻塞确实解除了
+`GET /api/notes/:uid` 现在返回 `tags=[] starred=false folderUid=null` —— **笔记详情页不再整页崩溃**。
+
+### 逐项（14 项 + 3 个已知问题）
+
+| # | 项 | 结果 | 说明 |
+|---|---|---|---|
+| 8 | **导出 SRT/VTT 真下载 + 内容校验** | **YES** | SRT 421B / VTT 415B，**格式与内容都对**：`1\n00:00:00,000 --> 00:00:04,200\n大家好，今天我们来聊一聊人工智能在中国的发展现状。` |
+| 9 | 文件夹树操作 | **YES**（此前 NO） | 新建文件夹成功并出现在树上 |
+| 6 | 首启引导跳转 | YES | 推进 4 步 |
+| 12 / K1 | 任务中心刷新后仍在 / React #185 | YES | 14 个可交互元素，刷新后存活 |
+| K3 | 暗色主题未退化 | YES | 5 页全部随 `data-theme` 切换 |
+| R1 / R2 | 模型页 / 运行时页（真 daemon） | YES | 4 卡 4 徽标 3 按钮 / 硬件卡 1 + 11 个后端包 |
+| 1 | 段落编辑 | **PARTIAL** | UI 在（**是「编辑」按钮，不是双击**），点得开、能输入，**但保存不落库** |
+| 3 | 标签增删 | **PARTIAL** | 「加标签」在，点得开，**不落库** |
+| 4 | 星标点击 | **PARTIAL** | 按钮在，**不落库** |
+| 2 | 拖拽上传 | PARTIAL | 真实 DragEvent 已派发，界面无反应 |
+| 13 | 搜索结果直达时间点 | PARTIAL | 跳到笔记但 URL 无时间参数 |
+| 7 | TipTap 自动保存 | NO | media 类型笔记详情页无 contenteditable（需确认是否只用于 kind=plain） |
+| 14 | M-7 锚点 | NO | 无 `id^=seg`/`data-seq` 类锚点元素 |
+| 5 | API Key 输入自测 | NO | 设置页找不到 Key 输入框 |
+| 10/11 | 导图拖拽右键撤销 / SVG·PNG 导出 | NO | 导图页仍崩：`Cannot convert undefined or null to object` |
+| K2/K2b | 中文搜索 | NO（**环境所致**） | 这个 dataDir 本就没装 libsimple（trigram）。装了扩展的环境里是 `用户=3 推特=1 中国=1 服务=2` |
+
+### 🔴 1/3/4 的真正结论：**后端好的，前端没接线**
+
+我按你转发的"这个红是真的红吗"复核了三次，结论一路收窄：
+
+1. 第一次报 NO「找不到按钮」→ **是我的选择器错了**。真实 DOM 里有「编辑」「加标签」「导出」。
+2. 改用正确交互后仍失败 → 报「点得开但不落库」。
+3. 直连 daemon 验证端点：**全部正常工作、全部落库**
+
+       PUT  /api/notes/:uid/star   {"starred":true}          → 200，starred=true ✅
+       POST /api/tags              {"name":"…"}              → 200，返回 uid ✅
+       POST /api/notes/:uid/tags   {"tagUids":["…"]}         → 200，tags 已写入 ✅
+
+4. 最后抓网络：**在网页上点「加标签」和段落「编辑」，一个非 GET 请求都没发出去。**
+
+→ **daemon 侧完全没问题，是前端控件没接 mutation。** 这三项归 `architect`，
+且是"渲染出来了但点了没用"的典型 —— 正是 jsdom 测不出来的那一类。
+
+### `retranscribe` 契约已收编
+`packages/shared/src/notes.ts` 新增 `RetranscribeRequest`/`RetranscribeResponse`，
+逐字采用 `oss-scout` 的实现形状（`{jobUid, noteUid}`，409 `NO_SOURCE_INPUT`）。
+同时补了 `NoteDetail.folderUid`、`NO_SOURCE_INPUT` 错误码、endpoint 表加
+`retranscribe` 与 `GET /api/selfcheck`。注释里写清它与 `import` 的区别：
+**不新建 note**，复用 note/媒体/源输入，因而 uid、标签、星标、文件夹都能留住。
+
+### 模型安装记录改相对路径（`oss-scout` 建议，已实现）
+`InstalledFile` 从 `path: string`（绝对）改为 `root: 'models'|'runtimes'|'data'` + `relPath`，
+**旧的 `path` 保留为 deprecated**，读取一律走新函数 `resolveInstalledFile()`，
+写入走 `toPortableRecord()`（强制 POSIX 分隔符，Windows 写的记录到 Linux 也能解析）。
+实测：
+
+    write: {"root":"models","relPath":"by-name/asr/x.bin"}
+    同根读回     → /data/openmemo/models/by-name/asr/x.bin
+    换了根再读回 → /mnt/新位置/models/by-name/asr/x.bin      ← 搬迁不再失效
+    旧记录仍可解析 → /old/abs/y.bin                          ← 已装用户不受影响
+    relPath 逃逸  → 拒绝（"escapes its root"）               ← 顺带补上穿越防护
+
+zod 也加了 `relPath` 不得以 `/`、盘符开头、不得含 `..` 的校验。
+
+### 关于"这个红是真的红吗"
+我把它先用在了**自己身上**：本轮我报的 NO 里，**有 2 条是我的测试错**（选择器不对），
+1/3/4 的真实状态比"没有功能"精确得多。他那句"绿灯不代表能用"我这轮也吃到了 ——
+控件渲染出来（绿）但点了不发请求（不能用）。
+另：我的 UI 上 `pending-ci` 那个禁用按钮我复核过，**那个红是真红**（确实没有下载地址）。
+
+### 验收门
+    tsc: 0  eslint: 0  verify-offline: 0 (29/29)  verify-unpack: 0 (42/42)  5 份 manifest: VALID
+
+### 需要 Manager
+1. **1/3/4 归 `architect`**：控件已渲染但未接 mutation，daemon 端点已验证可用（形状见上）。
+2. 导图页仍崩 `Cannot convert undefined or null to object`（10/11 被挡）。
+3. 设置页无 API Key 输入框（5）；capture 页链接输入框仍未找到，故"引导走完→真转一段"这条**本轮仍未跑通**。
+4. `InstalledFile` 迁移已含兼容层，`oss-scout` 那边按 `resolveInstalledFile()` 收口即可。

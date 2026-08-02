@@ -28,6 +28,10 @@ type ActiveMap = Partial<Record<string, string | null>>;
 interface InstallRecordFile {
   role?: string;
   name?: string;
+  /** 新契约：根锚点 + 相对路径。 */
+  root?: string;
+  relPath?: string;
+  /** @deprecated 旧记录里的绝对路径，仅作兼容回退。 */
   path?: string;
 }
 
@@ -72,13 +76,34 @@ export function listInstalled(modelsDir: string, role: string): InstallRecord[] 
   return out;
 }
 
+/**
+ * 一条文件记录 → 绝对路径。
+ *
+ * **优先 `root`+`relPath`**（新契约），旧记录回退到废弃的绝对 `path`。
+ * 兼容分支不能省：已经装过模型的用户，记录里只有绝对路径；
+ * 而绝对路径正是搬目录/换盘符/换机器会失效的那个东西。
+ */
+function absOf(modelsDir: string, f: InstallRecordFile): string | undefined {
+  if (f.relPath) {
+    // 目前只有 models 根会出现在模型安装记录里；其它根出现时按 models 处理并不合适，
+    // 但契约上 role 决定不了根，只能信记录本身。
+    const p = join(modelsDir, f.relPath);
+    if (existsSync(p)) return p;
+  }
+  if (f.path && existsSync(f.path)) return f.path;
+  return undefined;
+}
+
 /** 从一条安装记录里取权重文件路径（优先 `role:'weights'`，否则取第一个存在的文件）。 */
-function weightsPathOf(rec: InstallRecord): string | undefined {
+function weightsPathOf(modelsDir: string, rec: InstallRecord): string | undefined {
   const files = rec.files ?? [];
-  const weights = files.find((f) => f.role === 'weights' && f.path && existsSync(f.path));
-  if (weights?.path) return weights.path;
-  const any = files.find((f) => f.path && existsSync(f.path));
-  return any?.path;
+  const weights = files.find((f) => f.role === 'weights' && absOf(modelsDir, f));
+  if (weights) return absOf(modelsDir, weights);
+  for (const f of files) {
+    const p = absOf(modelsDir, f);
+    if (p) return p;
+  }
+  return undefined;
 }
 
 /**
@@ -95,13 +120,13 @@ export function resolveActiveModel(modelsDir: string, role: string): ResolvedMod
 
   if (wantedId) {
     const rec = installed.find((r) => r.id === wantedId);
-    const p = rec ? weightsPathOf(rec) : undefined;
+    const p = rec ? weightsPathOf(modelsDir, rec) : undefined;
     if (rec && p) return { id: wantedId, role, path: p };
     // active.json 指着一个已经不在的模型（用户删了）→ 不报错，往下退到"任意已装"
   }
 
   for (const rec of installed) {
-    const p = weightsPathOf(rec);
+    const p = weightsPathOf(modelsDir, rec);
     if (rec.id && p) return { id: rec.id, role, path: p };
   }
   return undefined;
@@ -172,8 +197,9 @@ export function resolveExtensionDir(modelsDir: string, fallbackDir: string): str
 
     // 解包目录 = 归档文件所在目录下、去掉后缀的同名目录
     for (const f of rec.files ?? []) {
-      if (!f.path) continue;
-      const unpacked = f.path.replace(/\.(zip|tar\.gz|tgz)$/i, '');
+      const archive = f.relPath ? join(modelsDir, f.relPath) : f.path;
+      if (!archive) continue;
+      const unpacked = archive.replace(/\.(zip|tar\.gz|tgz)$/i, '');
       if (existsSync(join(unpacked, 'libsimple.so')) || existsSync(join(unpacked, 'libsimple.dylib'))) {
         return unpacked;
       }

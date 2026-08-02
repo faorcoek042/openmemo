@@ -283,6 +283,45 @@ export class JobQueue {
       .run({ id, now });
   }
 
+  /**
+   * 置终态 `paused`（用户暂停）。
+   *
+   * ⚠️ 在此之前 **`state='paused'` 全仓没有任何写入方** —— `requestPause()` 只置意图标记，
+   * 而 worker 停下来后走的是 `markCancelled()`。于是「暂停」实际是**不可逆的取消**：
+   * `resume()` 的 `WHERE state='paused'` 永远匹配 0 行，接口却回 204 说成功。
+   * 「接口说成功但什么都没发生」是最坏的一种失败。
+   *
+   * checkpoint（已落库的段落）**保留** —— resume 之后由 `resumableTranscript()` 接上。
+   */
+  markPaused(id: number, now = Date.now()): void {
+    this.db
+      .prepare(
+        `UPDATE jobs SET state='paused', pause_requested=0, updated_at=:now,
+                         lease_owner=NULL, lease_expires_at=NULL, worker_pid=NULL
+         WHERE id=:id AND state IN ('leased','running')`,
+      )
+      .run({ id, now });
+  }
+
+  /**
+   * 置回 `queued`（**进程退出导致的中断**，不是用户意图）。
+   *
+   * daemon 正常关闭时，在跑的任务此前被当成"用户取消"标成 `cancelled`，
+   * 而 `recoverOnStartup()` 只捞 `running`/`leased` —— 于是**正常退出的任务重启后永远不恢复**，
+   * 反而 `kill -9` 的能恢复（因为来不及改状态）。正常关闭比强杀更糟，这显然反了。
+   *
+   * 置回 `queued` 后重启即被调度器自动接走，checkpoint 完好。
+   */
+  markInterrupted(id: number, now = Date.now()): void {
+    this.db
+      .prepare(
+        `UPDATE jobs SET state='queued', cancel_requested=0, pause_requested=0, updated_at=:now,
+                         lease_owner=NULL, lease_expires_at=NULL, worker_pid=NULL
+         WHERE id=:id AND state IN ('leased','running')`,
+      )
+      .run({ id, now });
+  }
+
   requestPause(id: number, now = Date.now()): void {
     this.db
       .prepare(`UPDATE jobs SET pause_requested=1, updated_at=:now WHERE id=:id`)

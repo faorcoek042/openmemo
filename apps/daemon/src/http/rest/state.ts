@@ -10,6 +10,8 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 
+import { resolveStoreRoot } from '@openmemo/pipeline';
+
 import {
   ArtifactStore,
   DownloadQueue,
@@ -128,7 +130,8 @@ export class RestState {
   static async create(deps: RestStateDeps): Promise<RestState> {
     // 与 downloader 的 `resolveModelsRoot` 语义一致：OPENMEMO_MODELS 优先，
     // 否则落在 daemon 的 dataDir 里（AppPaths.modelsDir 的约定）。
-    const modelsRoot = process.env['OPENMEMO_MODELS'] ?? path.join(deps.dataDir, 'models');
+    // 与 pipeline 共用同一个定义（D-08 D4）——各算各的正是"装了却找不到"的成因。
+    const modelsRoot = resolveStoreRoot(deps.dataDir);
 
     const [modelCatalog, backendCatalog] = await Promise.all([
       loadModelCatalog(deps.manifestDir),

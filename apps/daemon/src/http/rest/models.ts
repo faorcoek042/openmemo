@@ -52,6 +52,25 @@ import { asString, asStringArray, decodePathSegment, readBody } from './request.
 import { HARDWARE_SNAPSHOT_ID, RestState } from './state.js';
 import { roleToActivationSlot, roleToStoreKind } from './roleMap.js';
 
+/** 绝对路径 → 相对 models 根的路径（写入安装记录用）。 */
+function toModelsRelPath(modelsRoot: string, abs: string): string {
+  const rel = path.relative(modelsRoot, abs);
+  // 落在根之外时退回 basename —— 记录里绝不放 `../` 这种能逃出根的相对路径
+  return rel.startsWith('..') ? path.basename(abs) : rel;
+}
+
+/**
+ * 安装记录 → 绝对路径。**优先 root+relPath**，旧记录回退到废弃的 `path`。
+ * 兼容分支是必须的：已经装过模型的用户，记录里只有绝对路径。
+ */
+function resolveInstalledFile(
+  modelsRoot: string,
+  f: { root?: string; relPath?: string; path?: string },
+): string {
+  if (f.relPath) return path.join(modelsRoot, f.relPath);
+  return f.path ?? '';
+}
+
 export interface ModelRoutesDeps {
   sse: SseHub;
   dataDir: string;
@@ -425,11 +444,19 @@ function startModelPull(
         installedAt: new Date().toISOString(),
         verifiedAt: new Date().toISOString(),
         integrity: 'ok',
+        /*
+         * 相对路径 + 根锚点（shared 新契约）。
+         * 绝对路径会把当前数据目录烤进记录里：搬数据目录、换 Windows 盘符、
+         * 把 profile 拷到另一台机器 —— blob 还在、校验也还对，记录却指不到它了。
+         * `path` 仍然写出，仅供尚未迁移的旧读取方兼容，新代码一律读 root+relPath。
+         */
         files: result.files.map((f) => ({
           role: f.role,
           name: f.name,
           sha256: f.sha256,
           sizeBytes: f.sizeBytes,
+          root: 'models' as const,
+          relPath: toModelsRelPath(state.store.root, f.path),
           path: f.path,
         })),
         requirements: model.requirements,
@@ -612,7 +639,8 @@ async function verifyModel(
       for (let i = 0; i < record.files.length; i++) {
         const f = record.files[i];
         ctx.setFile(f.name, i, record.files.length);
-        const result = await verifyFile(f.path, f.sha256, f.sizeBytes, (hashed) => {
+        const abs = resolveInstalledFile(state.store.root, f);
+        const result = await verifyFile(abs, f.sha256, f.sizeBytes, (hashed) => {
           ctx.progress({
             completedBytes: hashedBefore + hashed,
             totalBytes: record.totalSizeBytes,
@@ -778,7 +806,17 @@ async function importModel(
         installedAt: new Date().toISOString(),
         verifiedAt: new Date().toISOString(),
         integrity: 'ok',
-        files: [{ role: 'weights', name: fileName, sha256: digest, sizeBytes, path: linked }],
+        files: [
+          {
+            role: 'weights',
+            name: fileName,
+            sha256: digest,
+            sizeBytes,
+            root: 'models' as const,
+            relPath: toModelsRelPath(state.store.root, linked),
+            path: linked,
+          },
+        ],
         requirements: {
           ramRequiredMB,
           // 没跑过显存探测，也没有 GGUF 头 —— 0 表示"未知"，绝不编一个数

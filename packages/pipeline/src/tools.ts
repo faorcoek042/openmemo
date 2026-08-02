@@ -62,27 +62,54 @@ export async function fileExists(path: string | null | undefined): Promise<boole
 }
 
 /**
- * Default artifact store root, matching `@openmemo/downloader`'s `resolveModelsRoot()`.
+ * THE single definition of where installed artifacts live.
  *
- * Kept in sync by construction: if the two disagree, installed artifacts become
- * invisible to the pipeline and the product silently runs degraded — which is exactly
- * the failure this function exists to prevent.
+ * ── Why this takes an explicit `dataDir` (D-08 D4) ────────────────────────────────────
+ * The earlier version derived everything from environment variables. That works when the
+ * daemon is started via `OPENMEMO_DATA_DIR`, and silently breaks when it is started with
+ * `--data-dir`: the daemon installs into `<flag-dir>/models` while `discoverTools()` goes
+ * looking under the platform default and finds nothing. The user sees "installed
+ * successfully" followed by "not installed" — the exact bug T-042 fixed for the default
+ * directory and did NOT fix for a non-default one.
+ *
+ * So callers that know the data directory MUST pass it. The env/platform fallback is only
+ * for standalone use (CLI tools, tests) where nobody knows better.
+ *
+ * ── Windows: APPDATA, not LOCALAPPDATA (D-08 D3) ──────────────────────────────────────
+ * There were three derivations of this path and they disagreed: the daemon's
+ * `config/paths.ts` used `%APPDATA%` while this file and `@openmemo/downloader`'s
+ * `store.ts` used `%LOCALAPPDATA%`. On Windows that means the downloader writes to
+ * `…\Local\OpenMemo\models` and the pipeline searches `…\Roaming\OpenMemo\models` —
+ * an installed pack could never be found, on every Windows machine, always.
+ *
+ * The daemon's `paths.ts` is canonical (D-02 §6.1 defines the data dir), so this now
+ * follows APPDATA. Note that with `resolveStoreRoot(dataDir)` wired through, this
+ * fallback is not reached on the daemon path at all — which is the real fix; matching the
+ * constant is belt and braces.
  */
-export function defaultStoreRoot(): string {
+export function resolveStoreRoot(dataDir?: string): string {
   const explicit = process.env['OPENMEMO_MODELS'];
   if (explicit !== undefined && explicit.length > 0) return explicit;
 
-  const dataDir = process.env['OPENMEMO_DATA_DIR'];
   if (dataDir !== undefined && dataDir.length > 0) return join(dataDir, 'models');
+
+  const envDataDir = process.env['OPENMEMO_DATA_DIR'];
+  if (envDataDir !== undefined && envDataDir.length > 0) return join(envDataDir, 'models');
 
   const home = homedir();
   if (process.platform === 'win32') {
-    return join(process.env['LOCALAPPDATA'] ?? join(home, 'AppData', 'Local'), 'OpenMemo', 'models');
+    // APPDATA (Roaming) — matches apps/daemon/src/config/paths.ts, the canonical source.
+    return join(process.env['APPDATA'] ?? join(home, 'AppData', 'Roaming'), 'OpenMemo', 'models');
   }
   if (process.platform === 'darwin') {
     return join(home, 'Library', 'Application Support', 'OpenMemo', 'models');
   }
   return join(process.env['XDG_DATA_HOME'] ?? join(home, '.local', 'share'), 'openmemo', 'models');
+}
+
+/** @deprecated Pass the data directory explicitly via {@link resolveStoreRoot}. */
+export function defaultStoreRoot(): string {
+  return resolveStoreRoot();
 }
 
 /**
@@ -163,11 +190,16 @@ export async function listInstalledModels(
  * real invocations, so PATH stays last and is a development affordance, not the answer.
  */
 export async function discoverTools(
-  overrides: Partial<ToolPaths> & { storeRoot?: string } = {},
+  overrides: Partial<ToolPaths> & {
+    /** Explicit store root. Wins over everything. */
+    storeRoot?: string;
+    /** The daemon's data directory — pass this whenever it is known (D-08 D4). */
+    dataDir?: string;
+  } = {},
 ): Promise<ToolPaths> {
   const exe = (name: string): string => (process.platform === 'win32' ? `${name}.exe` : name);
 
-  const storeRoot = overrides.storeRoot ?? defaultStoreRoot();
+  const storeRoot = overrides.storeRoot ?? resolveStoreRoot(overrides.dataDir);
 
   const fromPath = async (name: string): Promise<string | null> => {
     const dirs = (process.env.PATH ?? '').split(delimiter).filter(Boolean);

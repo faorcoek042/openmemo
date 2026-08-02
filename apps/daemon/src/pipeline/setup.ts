@@ -18,6 +18,7 @@ import {
   buildCandidates,
   buildDefaultRegistry,
   discoverTools,
+  resolveStoreRoot,
   selectEngine,
   type AsrEngine,
   type AsrStream,
@@ -94,14 +95,25 @@ function firstExisting(...candidates: Array<string | null | undefined>): string 
 export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
   const env = process.env;
 
+  /*
+   * 单一来源（D-08 D4）：制品根目录只在 `resolveStoreRoot` 里定义一次。
+   *
+   * 之前这里用 `paths.modelsDir`、RestState 用 `OPENMEMO_MODELS ?? dataDir/models`、
+   * 而 `discoverTools()` 什么都不传 —— 三处各算各的。用 `--data-dir` 启动时前两处对、
+   * 第三处退回平台默认目录，于是"装成功了仍报没装"。
+   */
+  const storeRoot = resolveStoreRoot(paths.dataDir);
+
   const dirs: ManagedDirs = {
     tempDir: paths.tmpDir,
     runtimesDir: join(paths.dataDir, 'bin', 'runtime'),
-    modelsDir: paths.modelsDir,
+    modelsDir: storeRoot,
   };
 
   // 显式路径优先；找不到才退回 PATH 搜索（仅开发期）
   const discovered = await discoverTools({
+    // ← D-08 D4：必须显式传，否则非默认 dataDir 下找不到已装的包
+    storeRoot,
     ...(env['OPENMEMO_FFMPEG'] ? { ffmpeg: env['OPENMEMO_FFMPEG'] } : {}),
     ...(env['OPENMEMO_FFPROBE'] ? { ffprobe: env['OPENMEMO_FFPROBE'] } : {}),
     ...(env['OPENMEMO_WHISPER_CLI'] ? { whisperCli: env['OPENMEMO_WHISPER_CLI'] } : {}),
