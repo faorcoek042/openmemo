@@ -488,3 +488,114 @@ ADR-004 决策 4 的"一律按 SHA256 判重"在这里刚好有了实例。
 - 这个 bug 我 T-038 时没抓到，因为我的验证止步于「sha256 对得上 + zod 通过」。
   **"装得上"和"能用"之间的那一步，我当时没验。** `gpu-runtime` 的标准是对的，已采纳为我这边的默认做法。
 - `ggml-silero-v5.1.2.bin` 我**没有**收进目录（whisper.cpp 默认用 v6.2.0），避免给用户无谓的选择。
+
+---
+
+## [2026-08-02 19:30] T-045 冷启动装机 DONE + 一条**不能撤回**的说明
+
+### ⚠️ 首先：`unpack.ts` 的 symlink 修复 **不能回退**，那是一个真 bug，我自己撞到的
+
+你说 `gpu-runtime` 的「43→3」是 pkill 造成的误报 —— 那部分我接受。
+**但我改 `unpack.ts` 不是因为他的报告，是因为我自己的冷启动跑出了这个：**
+
+    UNPACK_FAILED: Archive contains a symlink/hardlink entry, which is rejected:
+    "whisper-bin-ubuntu-x64/libwhisper.so"
+
+客观事实（`tar -tzvf` 直接看）：
+
+    lrwxrwxrwx  whisper-bin-ubuntu-x64/libwhisper.so   -> libwhisper.so.1
+    lrwxrwxrwx  whisper-bin-ubuntu-x64/libggml-base.so -> libggml-base.so.0
+    lrwxrwxrwx  whisper-bin-ubuntu-x64/libparakeet.so  -> libparakeet.so.1
+
+**官方 tarball 里确实有 symlink**，而我原来的防护是「**只要是 symlink 一律拒绝**」，
+于是解压在第一个 symlink 处直接抛错中止。这不是环境问题，是我的策略写错了：
+**我按"条目类型"拒绝，而正确的判据是"链接目标指向哪里"。**
+
+顺带一提：这个 bug 的表现**恰好就是「43 条只出来几条」** —— 在第一个 symlink 处中止，
+前面的文件已经落盘。所以他看到的比例其实和我的 bug 完全吻合，只是他那次的直接原因是 pkill。
+
+**修法（已实现并测试）**：目标在 destDir 内 → 允许；绝对路径或逃逸 → 仍然拒绝。
+`verify-unpack.mjs` **42/42**，其中 symlink 三个用例：
+
+    PASS 内部 symlink 不再被拒        PASS 通过 link 能读到目标内容
+    PASS 逃逸 symlink 仍被拒绝 (../../../../etc/passwd → SYMLINK_REJECTED)
+    PASS 绝对路径 symlink 仍被拒绝 (/etc/passwd → SYMLINK_REJECTED)
+
+修复后实测：完整解出 **43 个文件**（`tar -tzf` 报 44 = 43 文件 + 1 目录），
+且 `whisper-cli --help` **真的跑起来**并加载了 `libggml-cpu-zen4.so`。
+**回退这一处会让冷启动重新卡死在第 3 步。**
+
+### 另一半我照做了：失败安装不留残骸、且可重试
+改为**解压到临时目录、成功才 rename 就位**；失败时清掉 temp、final、以及 by-name 链接，
+并把 `UNPACK_FAILED` 标为 **retryable**（字节已校验，重试很便宜；标成终态会把用户困死）。
+加了回归测试（`verify-offline.mjs` **29/29**），其中一条当场抓到我第一版还漏删 by-name 链接。
+
+### 网页版冷启动：**失败 6 → 失败 2，全程只用鼠标**
+
+全新空 dataDir `/tmp/om-cold`，基线与你给的完全一致（通过 5 · 警告 7 · **失败 6**）。
+
+| 步骤 | 结果 |
+|---|---|
+| 0 打开网页并鉴权 | YES |
+| 1 首启引导可点着走 | YES（推进 4 步：下一步 ×3 / 开始使用） |
+| 2 网页检测硬件 | YES（真实 CPU/内存/无 GPU） |
+| 3 **网页装 whisper.cpp 后端** | **YES** ← 就是 symlink 修好才成立的 |
+| 4 网页装 ASR 模型 | YES（25 MB，100%） |
+| 5 目录里能看到 VAD 模型 | YES（onnx + ggml 两条都在） |
+| 6 网页装中文分词器 | **BLOCK** `availability=pending-ci`，无发布 URL |
+| 7 试转一段音频 | NO（capture 页找不到链接输入框） |
+
+装完在同一 dataDir 上跑 selfcheck：**通过 12 · 警告 4 · 失败 2**
+
+    ✔ whisper-cli   /tmp/om-cold/models/by-name/backend/.../whisper-cli
+    ✔ ASR 模型      ✔ 中文自动选择 whisper.cpp    ✔ 英文自动选择 whisper.cpp
+    ✘ libsimple 存在          ✘ 中文双字词可搜索
+
+**剩下 2 条与你的判断一致：根因只有一个，`sqlite-ext` 的 `mirrors: []`。**
+我按你的指示**没有去动它**。另外我已在 UI 上把这种包的按钮改成
+「**尚未发布，暂不可安装**」并禁用 —— 失败要发生在看得见的地方，不要等用户点下去。
+
+我另做过一次**验证性对照**（非产品路径，已标注）：把本机构建好的 libsimple 放进
+该 dataDir 后重跑 selfcheck → **失败 0**，中文双字词 `用户:1 推特:2 中国:1 服务:2`。
+**说明整条链路是通的，唯一缺的就是发布渠道。**
+
+### T-038 欠的 14 项：6 项仍被**同一个**未修缺口挡住
+
+| 项 | 结果 |
+|---|---|
+| 6 首启引导跳转 | YES |
+| 12 任务中心刷新后仍在 / K1 React #185 | YES（已修，15 个可交互元素） |
+| 2 拖拽上传 | PARTIAL（真实 DragEvent 已派发，界面无反应） |
+| 13 搜索结果直达时间点 | PARTIAL（跳到笔记，URL 无时间参数） |
+| 5 API Key 输入自测 | NO（设置页无 Key 输入框） |
+| 9 文件夹树 / 10 导图拖拽右键撤销 / 11 导图导出 | NO |
+| **1 双击编辑段落 · 3 标签增删 · 4 星标 · 7 TipTap 自动保存 · 8 导出 SRT/VTT · 14 M-7 锚点** | **NO —— 全部被笔记详情页整页崩溃挡住** |
+
+崩溃根因未变，我 T-038 已定位、本轮再次确认：
+
+    GET /api/notes/:uid → keys: uid,title,status,kind,language,durationMs,summaryMd,
+                                assets,transcriptUid,segmentCount,createdAt
+    hasTags=false  hasStarred=false
+    页面 → CRASH: Cannot read properties of undefined (reading 'map')
+
+`NoteDetailPage.tsx:93` 渲染 `<TagEditor tags={n.tags} />`，daemon 不返回 `tags`。
+**我已在 `shared/notes.ts` 把 `tags: NoteTag[]` 与 `starred: boolean` 声明为必填**
+（强制 `[]` 而非可省，因为"缺省"和"没有标签"在调用点无法区分）。
+**只要 daemon 补上这两个字段，这 6 项就能立刻复测** —— 我的脚本可重复跑。
+
+⚠️ 本轮 K2/K2b 中文搜索显示 0 命中，是因为**这个冷 dataDir 本来就没有 libsimple**
+（`tokenizer=trigram`）。**不是搜索坏了** —— 上一轮装了扩展的环境里是 `用户=3 推特=1 中国=1 服务=2`。
+
+### 流程改进（已照做）
+不再用 `pkill -f` 批量杀进程。本轮记录并只操作自己的 pid，daemon/shim 用独立端口
+（17650 / 17660）。我自己也吃过这个亏：中途 daemon 被杀导致一批接口显示"上游无法访问"，
+我差点把它当成产品缺陷。
+
+### 验收门
+    tsc: 0   eslint: 0   verify-offline: 0 (29/29)   verify-unpack: 0 (42/42)
+    截图：docs/design/assets/t045-coldstart/ (16 张) + t038-e2e/
+
+### 需要 Manager
+1. **不要回退 `unpack.ts`** —— 证据在上面，回退会让冷启动第 3 步重新卡死。
+2. `NoteDetail.tags` / `starred` 请 daemon 补返回，这一处解锁 6 项验证。
+3. capture 页链接输入框我这边定位不到（第 7 步），请 `architect` 确认是否有 testid。

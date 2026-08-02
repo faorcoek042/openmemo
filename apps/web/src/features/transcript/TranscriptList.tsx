@@ -127,16 +127,14 @@ export function TranscriptList({
                 seg={seg}
                 speakerName={seg.speakerLabel ? (speakerNames[seg.speakerLabel] ?? seg.speakerLabel) : null}
                 active={active}
-                editable={editable && Boolean(transcriptUid)}
+                editable={editable && Boolean(noteUid)}
                 onSeek={() => {
                   suppress.current = true;
                   requestSeek(seg.startMs);
                   setTimeout(() => (suppress.current = false), 300);
                 }}
-                onSave={(text) =>
-                  transcriptUid && edit.mutate({ transcriptUid, seq: seg.seq, text })
-                }
-                onRevert={() => transcriptUid && revert.mutate({ transcriptUid, seq: seg.seq })}
+                onSave={(text) => edit.mutate({ seq: seg.seq, text })}
+                onRevert={() => revert.mutate({ seq: seg.seq })}
               />
             </div>
           );

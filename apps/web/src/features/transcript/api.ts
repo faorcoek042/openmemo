@@ -17,16 +17,31 @@ import type { TranscriptSegmentDto } from '../../lib/events/types';
  *
  * 编辑走**乐观更新**：本地毫秒级、几乎必然成功，等往返会让打字体验很差（D-05 §2.5）。
  */
+/**
+ * ⚠️ **契约订正（T-052 实测）**
+ *
+ * 我按设计猜的是 `PATCH /api/transcripts/:transcriptUid/segments/:seq`，
+ * 实际落地的是 **`PATCH /api/notes/:noteUid/segments/:seq`**（还原是 **DELETE** 同一路径，
+ * 不是我猜的 `POST .../revert`）。实测两条旧路径都返回 **404**。
+ *
+ * 服务端的选择更合理：段落属于"当前活跃转写稿"，而活跃稿是由 note 决定的
+ * （`repos.activeTranscriptOfNote`）。用 noteUid 寻址意味着**换稿之后同一个 URL 依然有效**，
+ * 用 transcriptUid 则每换一次模型就要换一批 URL。
+ *
+ * 这是我第二次因为"端点还不存在就先按设计猜形状"而猜错（上一次是 `/api/folders`）。
+ * 教训写在这里：**没有端点时写的客户端，必须在端点落地后立刻实测校对，不能假定猜对了。**
+ */
 export function useEditSegmentMutation(noteUid: string | undefined) {
   const qc = useQueryClient();
   const key = qk.transcript(noteUid ?? '');
 
   return useMutation({
-    mutationFn: (v: { transcriptUid: string; seq: number; text: string }) =>
-      api<{ editedAt: number }>('transcript', `/transcripts/${v.transcriptUid}/segments/${v.seq}`, {
-        method: 'PATCH',
-        body: { text: v.text },
-      }),
+    mutationFn: (v: { seq: number; text: string }) =>
+      api<{ editedAt: number; editedCount: number }>(
+        'transcript',
+        `/notes/${noteUid}/segments/${v.seq}`,
+        { method: 'PATCH', body: { text: v.text } },
+      ),
 
     onMutate: async (v) => {
       await qc.cancelQueries({ queryKey: key });
@@ -66,9 +81,10 @@ export function useRevertSegmentMutation(noteUid: string | undefined) {
   const key = qk.transcript(noteUid ?? '');
 
   return useMutation({
-    mutationFn: (v: { transcriptUid: string; seq: number }) =>
-      api<{ ok: true }>('transcript', `/transcripts/${v.transcriptUid}/segments/${v.seq}/revert`, {
-        method: 'POST',
+    // 还原 = DELETE 同一资源（清掉编辑标记，让重跑重新接管这一段）
+    mutationFn: (v: { seq: number }) =>
+      api<{ editedCount: number }>('transcript', `/notes/${noteUid}/segments/${v.seq}`, {
+        method: 'DELETE',
       }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: key }),
   });

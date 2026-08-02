@@ -89,7 +89,9 @@ export function createSelfCheckRoutes(deps: SelfCheckRoutesDeps): {
               for (const w of CHINESE_PROBE_WORDS) {
                 const row = deps.db
                   .prepare<{ c: number }>(
-                    `SELECT COUNT(*) c FROM temp.${table} WHERE temp.${table} MATCH simple_query(:q)`,
+                    // ⚠️ MATCH 左操作数必须是**裸表名**：写 `temp.X MATCH …` 会报
+                    // `no such column: temp.X`（FTS5 把带 schema 前缀的当成列名了）。
+                    `SELECT COUNT(*) c FROM temp.${table} WHERE ${table} MATCH simple_query(:q)`,
                   )
                   .get({ q: w });
                 out[w] = row?.c ?? 0;

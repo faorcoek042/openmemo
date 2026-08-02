@@ -26,6 +26,7 @@ import {
   type RuntimeInfo,
 } from './bootstrap/single-instance.js';
 import { resolvePaths, type AppPaths } from './config/paths.js';
+import { reclaimOrphans } from './bootstrap/orphans.js';
 import { SessionStore, generateToken } from './http/auth.js';
 import { attachHttpHandlers } from './http/server.js';
 import { SseHub } from './http/sse.js';
@@ -205,6 +206,19 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     const recovered = queue.recoverOnStartup();
     if (recovered > 0) {
       console.log(`[daemon] 崩溃恢复：${recovered} 个中断的任务已重新入队`);
+    }
+
+    /*
+     * 孤儿回收（D-01 §2.7 B）—— 必须在崩溃恢复**之后、调度器启动之前**。
+     * 顺序理由：先把上次强杀留下的子进程清掉，再让调度器重新派活，
+     * 否则新旧两个 whisper 会同时吃 CPU 抢同一块音频。
+     */
+    const orphans = await reclaimOrphans(paths.dataDir);
+    if (orphans.killed.length > 0) {
+      console.log(
+        `[daemon] 回收上次强杀残留的子进程 ${orphans.killed.length} 个: ` +
+          orphans.killed.map((k) => k.pid).join(', '),
+      );
     }
 
     repos = new Repos(database.db);
