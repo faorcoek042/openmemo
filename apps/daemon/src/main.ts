@@ -47,12 +47,14 @@ import { setPipelineJobHooks } from './http/rest/jobs.js';
 import { createSettingsRoutes } from './http/rest/settings.js';
 import { createOrganizeRoutes } from './http/rest/organize.js';
 import { createUploadRoutes } from './http/upload.js';
-import { SecretStore } from '@openmemo/llm';
+import { SecretStore } from '@openmemo/llm/secrets';
+import { applyProxyConfig } from '@openmemo/downloader';
 import { MindMapRepo } from './db/mindmapRepo.js';
 import { runMindmapJob } from './jobs/runners/mindmap.js';
 import { resolveConfiguredProvider } from './llm/resolve.js';
 import { createSearchRoutes } from './http/rest/search.js';
 import { createStorageRoutes } from './http/rest/storage.js';
+import { createProxyRoutes, readProxyConfig } from './http/rest/proxy.js';
 import { createMediaRoutes } from './http/media.js';
 import type { RouteModule } from './http/server.js';
 
@@ -507,6 +509,19 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       },
     });
 
+    /*
+     * 启动时把**已保存的**代理配置装上。
+     *
+     * 不做这一步的话：用户在设置页配好代理（PATCH 里已 applyProxyConfig，当场生效），
+     * 但**重启后就悄悄失效了** —— 配置还在设置页显示着，实际请求却不再走代理，
+     * 表现为"昨天还能下载，今天又不行了"，且界面上一切正常。
+     */
+    try {
+      applyProxyConfig(readProxyConfig(repos));
+    } catch (err) {
+      console.warn('[daemon] 代理配置应用失败，按直连继续:', err);
+    }
+
     // ---- 路由装配 ----
     routers.push(
       // 硬件探测 / probe 断路器 / 后端自检（@openmemo/runtime 真实实现，非 stub）
@@ -542,6 +557,8 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         bundle: () => bundle,
         extensionsDir: resolveExtensionDir(paths.modelsDir, paths.extensionsDir),
       }),
+      // 代理设置（中文网络刚需：不配代理 HF/GitHub 根本连不上）
+      createProxyRoutes({ repos }),
       // 设置 / 密钥（ADR-006 决策 1：明文 0600 + disclosure 显式告知）
       createSettingsRoutes({ db: database.db, secretStore: new SecretStore(paths.dataDir) }),
       // 标签 / 星标 / 文件夹

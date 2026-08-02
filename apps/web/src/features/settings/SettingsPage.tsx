@@ -5,6 +5,7 @@ import { SUPPORTED_LOCALES, setLocale, type LocaleCode } from '../../app/i18n';
 import { useUiStore, type ThemeMode } from '../../lib/stores/ui.store';
 import { LlmSettingsSection } from './LlmSettingsSection';
 import { DataLocationSection } from './DataLocationSection';
+import { ProxySettingsSection } from './ProxySettingsSection';
 import { PanelBoundary } from '../../components/common/PanelBoundary';
 
 /** 设置（最小可用版）。运行时/模型/存储页归 T-022。 */
@@ -51,6 +52,11 @@ export default function SettingsPage() {
 
       <PanelBoundary name={t('settings.llm')}>
         <LlmSettingsSection />
+      </PanelBoundary>
+
+      {/* 代理：中文网络下 HF/GitHub 直连不通，这是"下载模型"的前置条件 */}
+      <PanelBoundary name={t('settings.proxy.title')}>
+        <ProxySettingsSection />
       </PanelBoundary>
 
       {/* 数据位置：路径来自 daemon，容量来自 models/storage —— 都不是前端猜的 */}

@@ -321,6 +321,55 @@
       "fileCount": "{{n}} 个文件",
       "layoutTitle": "这个目录里都有什么",
       "perDirNote": "daemon 目前只报整个数据目录的总占用，尚未逐目录统计 —— 所以下面只列用途，不列各自大小，不写一个猜出来的数字。"
+    },
+    "proxy": {
+      "title": "网络代理",
+      "mode": "代理模式",
+      "save": "保存",
+      "testProxy": "测试代理",
+      "testSources": "测试下载源",
+      "modes": {
+        "off": "不使用代理",
+        "system": "跟随系统",
+        "manual": "手动配置"
+      },
+      "modeHint": {
+        "off": "所有请求直连。中国大陆网络下 Hugging Face 与 GitHub 通常不可达，模型将无法下载。",
+        "system": "读取系统的 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY / NO_PROXY 环境变量。没设时等同于直连，因此这是默认值。",
+        "manual": "使用下面填写的地址。三项都支持在 URL 里带用户名密码。"
+      },
+      "fields": {
+        "httpProxy": "HTTP 代理",
+        "httpsProxy": "HTTPS 代理",
+        "socks5": "SOCKS5",
+        "noProxy": "例外（no_proxy）"
+      },
+      "authHint": "需要认证就写进地址里：http://用户名:密码@127.0.0.1:7890",
+      "loopbackAlwaysBypassed": "本机地址（localhost / 127.x / .local）始终直连，无需在此列出 —— 本地大模型服务走代理必然失败。",
+      "socksFfmpegTitle": "选用 SOCKS 时，媒体拉流这条链路会直连",
+      "socksFfmpegDetail": "ffmpeg 不支持 SOCKS（libavformat 只读 http_proxy），所以远程媒体的拉流与转码会绕过代理直连。链接解析与下载走的是 yt-dlp，它支持 SOCKS、会正常走代理。要让全链路都走代理，请改填 HTTP/HTTPS 代理。",
+      "unsupported": "当前 daemon 尚未提供代理配置接口",
+      "unsupportedDetail": "下面的表单可以填写，但保存会失败（不会假装成功）。接口就绪后无需改动即可使用。在那之前可用环境变量 HTTPS_PROXY 启动 daemon。",
+      "verdictProxyDown": "代理本身连不上 —— 先检查代理地址、端口与客户端是否在运行。",
+      "verdictAllOk": "代理可用，且各目标站均可达。",
+      "verdictUpstreamBlocked": "代理是通的，但部分目标站不可达 —— 问题不在你的代理，而在目标站或它的线路。",
+      "probe": {
+        "ok": "可达",
+        "proxy_unreachable": "代理不可达",
+        "proxy_auth_failed": "代理认证失败",
+        "upstream_unreachable": "目标站不可达",
+        "upstream_error": "目标站返回异常",
+        "dns_failed": "域名解析失败",
+        "skipped": "已跳过（命中例外）"
+      },
+      "viaProxy": "经代理",
+      "direct": "直连",
+      "source": "下载源",
+      "latency": "延迟",
+      "route": "线路",
+      "fastest": "最快",
+      "unreachable": "不可达",
+      "effective": "当前生效"
     }
   },
   "mock": {

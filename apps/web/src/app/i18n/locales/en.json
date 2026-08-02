@@ -321,6 +321,55 @@
       "fileCount": "{{n}} files",
       "layoutTitle": "What's in this directory",
       "perDirNote": "The daemon reports the total for the whole data directory only; it does not yet measure each sub-directory. Purposes are listed below without sizes rather than showing a guessed number."
+    },
+    "proxy": {
+      "title": "Network proxy",
+      "mode": "Proxy mode",
+      "save": "Save",
+      "testProxy": "Test proxy",
+      "testSources": "Test download sources",
+      "modes": {
+        "off": "No proxy",
+        "system": "Follow system",
+        "manual": "Manual"
+      },
+      "modeHint": {
+        "off": "All requests go direct. On mainland-China networks Hugging Face and GitHub are usually unreachable, so model downloads will fail.",
+        "system": "Reads HTTP_PROXY / HTTPS_PROXY / ALL_PROXY / NO_PROXY from the environment. With none set this behaves exactly like a direct connection, which is why it is the default.",
+        "manual": "Use the addresses below. All three accept credentials embedded in the URL."
+      },
+      "fields": {
+        "httpProxy": "HTTP proxy",
+        "httpsProxy": "HTTPS proxy",
+        "socks5": "SOCKS5",
+        "noProxy": "Exceptions (no_proxy)"
+      },
+      "authHint": "For authentication, embed it in the URL: http://user:pass@127.0.0.1:7890",
+      "loopbackAlwaysBypassed": "Loopback addresses (localhost / 127.x / .local) always bypass the proxy — a locally hosted LLM behind a remote proxy could never work.",
+      "socksFfmpegTitle": "With SOCKS, media streaming goes direct",
+      "socksFfmpegDetail": "ffmpeg does not support SOCKS (libavformat only reads http_proxy), so fetching and transcoding remote media bypasses the proxy. Link resolution and downloading use yt-dlp, which does support SOCKS and will go through it. To route everything through the proxy, use an HTTP/HTTPS proxy instead.",
+      "unsupported": "This daemon does not expose a proxy settings endpoint yet",
+      "unsupportedDetail": "You can fill the form in, but saving will fail — it will not pretend to succeed. It will work unchanged once the endpoint ships. Until then, start the daemon with HTTPS_PROXY set.",
+      "verdictProxyDown": "The proxy itself is unreachable — check the address, port, and that your client is running.",
+      "verdictAllOk": "Proxy works, and every target was reachable.",
+      "verdictUpstreamBlocked": "The proxy works, but some targets were unreachable — the problem is the target or its route, not your proxy.",
+      "probe": {
+        "ok": "Reachable",
+        "proxy_unreachable": "Proxy unreachable",
+        "proxy_auth_failed": "Proxy auth failed",
+        "upstream_unreachable": "Target unreachable",
+        "upstream_error": "Target returned an error",
+        "dns_failed": "DNS lookup failed",
+        "skipped": "Skipped (matched an exception)"
+      },
+      "viaProxy": "via proxy",
+      "direct": "direct",
+      "source": "Source",
+      "latency": "Latency",
+      "route": "Route",
+      "fastest": "fastest",
+      "unreachable": "unreachable",
+      "effective": "In effect"
     }
   },
   "mock": {

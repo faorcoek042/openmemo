@@ -8,7 +8,8 @@
  * 没配置就返回 `undefined` —— 调用方会退到档 2（本机探测）或把 job 转 `blocked`。
  * **不在这里抛异常**：没配 LLM 是正常状态（F1/F2/F3 都不需要 LLM，只有 F4 需要）。
  */
-import { AnthropicProvider, OpenAiCompatibleProvider, SecretStore, type LlmProvider } from '@openmemo/llm';
+import { AnthropicProvider, OpenAiCompatibleProvider, type LlmProvider } from '@openmemo/llm';
+import { SecretStore } from '@openmemo/llm/secrets';
 import type { DatabaseHandle } from '@openmemo/db';
 
 function readSetting(db: DatabaseHandle, key: string): unknown {

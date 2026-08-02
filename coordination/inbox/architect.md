@@ -1433,3 +1433,66 @@ language 真进请求体 · 空语言不发键 · 无模型给安装入口 · �
   rAF 与真实播放位置的联动请 `model-mgmt` 在真浏览器里复验 —— 这是本轮最需要人眼确认的一处。
 - `speakerLabel` daemon 如实发 `null`、且不发 `speakers` 表，所以我在拍平时给 `speakers: []`。
   说话人名字**目前一定是空的**，这是接线未完成，不是前端 bug。
+
+---
+
+## T-086 零宽词 + 代理 UI（2026-08-03）
+
+### ① 零宽词已修（含末尾词）
+`findActiveWord` 的 `[s, e)` 在 `s === e` 时是**空集**，所以零宽 token 恒不亮 ——
+`model-mgmt` 实测的 `' And' = 220-220` 正是段首。**末尾词同样中招**（你让我顺带确认的那条：
+是的，只要零宽就永远不亮，与位置无关，我加了独立用例钉住）。
+
+修法：新增 `effectiveEnd()`，**只对退化的词**（`e <= s`，含 end 早于 start 的畸形数据）
+兜底 `MIN_WORD_MS = 80`，正常词一律保持原区间 —— 免得把"静音不吸附"那条性质一起改坏
+（有一条用例专门守它）。
+
+两个不那么显然的取舍：
+- **兜底要夹到下一个词的起点**。段首零宽词若硬撑 80ms 而下一个词 20ms 后就开始，
+  会出现**两个词同时亮**、并抢走后者的时间。夹紧后它只拿真正空着的那段。
+- **80ms 的取法**：低于约 60ms 人眼感知不到闪现；给太多则段首词明显"多亮一会儿"，
+  看起来反而像高亮滞后了一拍。
+
+### ② 代理 UI 已做，用户点得到了
+`features/settings/ProxySettingsSection.tsx`，挂在设置页（`PanelBoundary` 包着）。
+完全按 `packages/shared/src/proxy.ts` 的既有契约，**没有自造任何字段**。
+
+- **两个独立按钮**：「测试代理」→ `POST /settings/proxy/test`（`ProxyTestReport`）；
+  「测试下载源」→ `POST /settings/proxy/sources`（`SourceLatencyReport`）。
+  各自独立的 loading 与结果，互不覆盖。合成一个会把两个答案压成一个红/绿判定，
+  而**慢但可用**的镜像在延迟表里是有用信息、在红绿灯里只能算失败 —— 比较关系丢了找不回来。
+- **默认 `system`**（有用例钉住不是 `off`）。
+- **HTTP / HTTPS / SOCKS5 + 认证 + `no_proxy`**。认证按 curl 惯例写在 URL 里，不另造字段。
+- **`proxyReachable` 被真正用上**：「代理不通」与「代理通但目标站不可达」给**不同结论**，
+  因为这两者指向完全不同的修法 —— shared 里那段注释说这正是别的工具让人抓狂的原因。
+  每条探测的 `viaProxy` 也逐条显示（命中 `noProxy` 时是直连，不显示的话用户会误判）。
+- ⚠️ **SOCKS 提示**：选了 socks5 时明确告知**媒体拉流会直连**
+  （`ffmpegProxySupport()` 对 socks5 返回 `supported:false` 且**刻意返回空 env**，
+  因为 libavformat 只认 `http_proxy`，塞了也会被忽略）。
+  同时说清 **yt-dlp 支持 SOCKS、仍走代理** —— 只说前半句会让人以为整个功能坏了。
+  这条我当**隐私预期**问题处理，不只是功能问题。
+- **脱敏**：展示"当前生效"地址时走 `redactProxyUrl()`，有用例断言密码不出现在界面上。
+
+### 端点尚不存在（`oss-scout` 在做）
+我提出的契约：`GET/PUT /api/settings/proxy`（body = `ProxyConfig`）、
+`POST /api/settings/proxy/test` → `ProxyTestReport`、
+`POST /api/settings/proxy/sources` → `SourceLatencyReport`。
+**请他确认**，我这次同样是提出而不是猜完就接线。
+在那之前：读 404 → 回落 `DEFAULT_PROXY_CONFIG` 让形态可见 + 明说"接口未就绪"并给出
+**真能用的退路**（`HTTPS_PROXY` 环境变量启动 daemon）；
+写操作按 `client.ts` 的规则**永不静默回落**，所以"保存了其实没保存"不可能发生。
+表单**不藏不灰**（有用例守着）。
+
+### 验证
+`tsc` 0 · `eslint apps/web` 0 · `vite build` ✓ ·
+测试 **64 条 / 62 pass / 0 fail / 2 skip**（新增 12 条：零宽词 5 条 + 代理 7 条）。
+
+### 诚实声明
+- **没碰 demo**，本轮零网络请求。
+- **代理 UI 的真实往返没跑过** —— 端点还不存在，能测的只有前端行为。
+  等 `oss-scout` 上线后需要真机验一次：尤其是 `viaProxy` 逐条是否与实际一致。
+- 零宽词修复我**没有在真浏览器里回放**过；证据是 5 条边界单测 + 你转述的实测时间戳
+  （`' And' = 220-220`）。建议 `model-mgmt` 用同一份 25 词 fixture 复跑一次 ——
+  这次应当经过 **10 个词**（原 9 个 + 段首那个），且第 0 个在 0:00.22 亮起。
+- 你提的另外两条（`DataLocationSection` 的 GET、`packages/llm` 的 `chmodSync` 进 bundle）
+  我按你说的**没有插手**，那是 `model-mgmt` / `oss-scout` 的域。

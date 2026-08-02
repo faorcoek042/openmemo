@@ -33,6 +33,8 @@ import { DataLocationSection } from '../features/settings/DataLocationSection';
 import { RetranscribeButton, isSegmentEdited } from '../features/notes/RetranscribeButton';
 import { WordLevelBadge } from '../features/transcript';
 import { WordHighlight, findActiveWord } from '../features/transcript/WordHighlight';
+import { DEFAULT_PROXY_CONFIG } from '@openmemo/shared';
+import { ProxySettingsSection } from '../features/settings/ProxySettingsSection';
 
 /* ─────────────────────────── 标签增删 ─────────────────────────── */
 
@@ -891,6 +893,177 @@ describe('重跑保留编辑（换回「已保留」）', () => {
     const r = await render(<RetranscribeButton noteUid="n1" segments={[]} currentLanguage="zh" />);
     const btn = r.container.querySelector('[data-testid="retranscribe-open"]') as HTMLButtonElement;
     assert.equal(btn.disabled, false, '老响应不带这个键，不能把功能藏起来');
+    r.unmount();
+  });
+});
+
+/* ──────────── 零宽词：每段第一个词永远不亮（T-086 ①） ──────────── */
+
+/**
+ * 真浏览器实测暴露的：25 个真实词级时间戳里高亮只经过 9 个，
+ * 第 0 个 `' And'` 的时间戳是 **`220-220`** —— 零宽。
+ * 半开区间 `[s, e)` 在 `s === e` 时是空集，`pos >= 220 && pos < 220` 恒为 false。
+ * 这不是"边界差一毫秒"，是**整类词从来不亮**，而且专挑段首。
+ */
+describe('零宽词兜底', () => {
+  test('★ 段首零宽词必须能亮 —— 修的就是"每段第一个词永远不高亮"', () => {
+    const words = [
+      { w: ' And', s: 220, e: 220, p: 1 },
+      { w: ' so', s: 533, e: 700, p: 1 },
+    ];
+    assert.equal(findActiveWord(words, 220), 0, '零宽词在其起点必须亮');
+    assert.equal(findActiveWord(words, 260), 0, '最小显示时长内仍亮');
+    assert.equal(findActiveWord(words, 533), 1, '下一个词照常接管');
+  });
+
+  test('★ 末尾零宽词同样要修 —— 没有后继词也不能恒不亮', () => {
+    const words = [
+      { w: 'a', s: 0, e: 100, p: 1 },
+      { w: ' end', s: 900, e: 900, p: 1 },
+    ];
+    assert.equal(findActiveWord(words, 900), 1);
+    assert.equal(findActiveWord(words, 950), 1);
+    assert.equal(findActiveWord(words, 1200), -1, '兜底时长过后就该熄灭，不能永久滞留');
+  });
+
+  test('★ 兜底不能抢下一个词的时间 —— 否则会出现两个词同时亮', () => {
+    // 零宽词后 20ms 下一个词就开始，兜底 80ms 必须被夹到 20
+    const words = [
+      { w: 'x', s: 100, e: 100, p: 1 },
+      { w: 'y', s: 120, e: 300, p: 1 },
+    ];
+    assert.equal(findActiveWord(words, 110), 0);
+    assert.equal(findActiveWord(words, 120), 1, '到点必须交棒，不许并亮');
+    assert.equal(findActiveWord(words, 150), 1);
+  });
+
+  test('★ 正常词的行为一个都不许改 —— 静音仍然不吸附', () => {
+    const gapped = [
+      { w: 'a', s: 0, e: 100, p: 1 },
+      { w: 'b', s: 900, e: 1000, p: 1 },
+    ];
+    assert.equal(findActiveWord(gapped, 500), -1, '兜底只对零宽词生效，不许填平正常间隙');
+    assert.equal(findActiveWord(gapped, 1500), -1);
+    assert.equal(findActiveWord(gapped, 99), 0);
+  });
+
+  test('end 早于 start 的畸形数据也当退化处理，而不是直接不亮', () => {
+    const bad = [{ w: 'z', s: 500, e: 200, p: 1 }];
+    assert.equal(findActiveWord(bad, 500), 0);
+    assert.equal(findActiveWord(bad, 700), -1);
+  });
+});
+
+/* ─────────────────────── 代理配置（T-086 ②） ─────────────────────── */
+
+/**
+ * 用户点名的缺口 5：后端 43/43 全过，但**用户点不到**。
+ * 对中文用户这是刚需 —— 没代理 HF/GitHub 下不动，
+ * 而失败现象最坑：浏览器能上网，应用说"下载失败"，两者之间没有任何提示。
+ */
+describe('代理配置', () => {
+  const cfgRoute = { 'GET /settings/proxy': DEFAULT_PROXY_CONFIG };
+
+  test('★ 默认跟随系统，不是"不使用代理"', async () => {
+    stubApi(cfgRoute);
+    const r = await render(<ProxySettingsSection />);
+    await r.flush();
+    const system = r.container.querySelector('[data-testid="proxy-mode-system"]') as HTMLInputElement;
+    assert.equal(system.checked, true, 'off 作默认会让最难懂的失败成为默认体验');
+    r.unmount();
+  });
+
+  test('★ 测试代理与测试下载源是两个独立按钮 —— 合成一个会丢掉镜像间的比较', async () => {
+    const { calls } = stubApi({
+      ...cfgRoute,
+      'POST /settings/proxy/test': { ok: true, proxyReachable: true, probes: [] },
+      'POST /settings/proxy/sources': { measuredAt: 'now', rows: [], fastest: null },
+    });
+    const r = await render(<ProxySettingsSection />);
+    await r.flush();
+
+    await click(r.container.querySelector('[data-testid="proxy-test"]'));
+    await r.flush();
+    await click(r.container.querySelector('[data-testid="proxy-test-sources"]'));
+    await r.flush();
+
+    assert.ok(calls.some((c) => c.path === '/settings/proxy/test'), '「测试代理」应打中立主机');
+    assert.ok(calls.some((c) => c.path === '/settings/proxy/sources'), '「测试下载源」应出延迟表');
+    r.unmount();
+  });
+
+  test('★ "代理不通"与"代理通但目标站不可达"必须给不同结论 —— 两者指向完全不同的修法', async () => {
+    stubApi({
+      ...cfgRoute,
+      'POST /settings/proxy/test': {
+        ok: false,
+        proxyReachable: true,
+        probes: [
+          {
+            target: 'Hugging Face',
+            url: 'https://huggingface.co',
+            result: 'upstream_unreachable',
+            viaProxy: true,
+            elapsedMs: 5000,
+          },
+        ],
+      },
+    });
+    const r = await render(<ProxySettingsSection />);
+    await r.flush();
+    await click(r.container.querySelector('[data-testid="proxy-test"]'));
+    await r.flush();
+
+    const shown = text(r.container);
+    assert.ok(shown.includes('问题不在你的代理'), '代理是通的就不该让用户去查代理');
+    assert.ok(shown.includes('目标站不可达'), '逐条结果也要给出来');
+    assert.ok(shown.includes('经代理'), '每条探测走没走代理必须可见');
+    r.unmount();
+  });
+
+  test('★ 选 SOCKS 要提示 ffmpeg 链路直连 —— 别让用户以为全走代理了', async () => {
+    stubApi({ 'GET /settings/proxy': { ...DEFAULT_PROXY_CONFIG, mode: 'manual', socks5: 'socks5://127.0.0.1:1080' } });
+    const r = await render(<ProxySettingsSection />);
+    await r.flush();
+    const shown = text(r.container);
+    assert.ok(shown.includes('媒体拉流这条链路会直连'), 'SOCKS 的真实边界必须说出来');
+    assert.ok(shown.includes('yt-dlp'), '同时要说清哪条链路仍然走代理，否则像是整个功能坏了');
+    r.unmount();
+  });
+
+  test('HTTP 代理不该弹 SOCKS 警告', async () => {
+    stubApi({ 'GET /settings/proxy': { ...DEFAULT_PROXY_CONFIG, mode: 'manual', httpProxy: 'http://127.0.0.1:7890' } });
+    const r = await render(<ProxySettingsSection />);
+    await r.flush();
+    assert.ok(!text(r.container).includes('媒体拉流这条链路会直连'));
+    r.unmount();
+  });
+
+  test('★ 展示当前生效地址时必须脱敏 —— 密码不能出现在界面上', async () => {
+    stubApi({
+      'GET /settings/proxy': {
+        ...DEFAULT_PROXY_CONFIG,
+        mode: 'manual',
+        httpProxy: 'http://alice:hunter2@127.0.0.1:7890',
+      },
+    });
+    const r = await render(<ProxySettingsSection />);
+    await r.flush();
+    const eff = r.container.querySelector('[data-testid="proxy-effective"]')?.textContent ?? '';
+    assert.ok(!eff.includes('hunter2'), `密码泄漏到界面：${eff}`);
+    assert.ok(eff.includes('***'), '应显示脱敏占位而不是整段省略');
+    r.unmount();
+  });
+
+  test('★ 端点还没上线时如实说，且不假装保存成功', async () => {
+    stubApi({}); // GET 未打桩 → 404
+    const r = await render(<ProxySettingsSection />);
+    await r.flush();
+    const shown = text(r.container);
+    assert.ok(shown.includes('尚未提供代理配置接口'));
+    // 表单仍可见（不藏不灰），且给出真能用的替代办法
+    assert.ok(shown.includes('HTTPS_PROXY'), '应给出环境变量这条真能用的退路');
+    assert.ok(r.container.querySelector('[data-testid="proxy-mode-manual"]'), '表单不该被藏起来');
     r.unmount();
   });
 });

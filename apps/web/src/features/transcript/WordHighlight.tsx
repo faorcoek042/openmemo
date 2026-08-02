@@ -6,6 +6,38 @@ import type { TranscriptSegmentDto } from '../../lib/events/types';
 type Word = NonNullable<TranscriptSegmentDto['words']>[number];
 
 /**
+ * 零宽词的**最小显示时长**。
+ *
+ * 80ms 的取法：低于约 60ms 人眼基本感知不到闪现，而给太多会让段首词
+ * 明显"多亮一会儿"，反而看起来像高亮滞后了一拍。
+ */
+const MIN_WORD_MS = 80;
+
+/**
+ * 一个词的**有效结束时间**。
+ *
+ * ⚠️ whisper 会吐出**零宽 token**（`s === e`，段首尤其常见，实测 `' And'` 是 `220-220`）。
+ * 半开区间 `[s, e)` 在 s === e 时是**空集** —— `pos >= 220 && pos < 220` 恒为 false，
+ * 于是**每段的第一个词永远不会高亮**。真浏览器实测里 25 个词只经过 9 个，第 0 个从未亮起。
+ * 末尾词同理：只要是零宽就永远不亮，与位置无关。
+ *
+ * 兜底只对**退化的词**（`e <= s`，含 end 早于 start 的畸形数据）生效：
+ * 正常词一律保持原区间，免得把"静音不吸附"那条性质一起改坏。
+ *
+ * 还要**夹到下一个词的起点**：段首零宽词若硬撑 80ms 而下一个词 20ms 后就开始，
+ * 就会出现两个词同时亮 / 抢下一个词的时间。夹紧之后它只拿到真正空着的那段。
+ */
+function effectiveEnd(words: readonly Word[], i: number): number {
+  const w = words[i]!;
+  if (w.e > w.s) return w.e;
+  const next = words[i + 1];
+  const desired = w.s + MIN_WORD_MS;
+  // 下一个词起点更早时以它为准；连续零宽（next.s === w.s）会得到空区间，
+  // 那种词拿不到显示时间是可接受的 —— 总比抢别人的好。
+  return next !== undefined && next.s > w.s ? Math.min(desired, next.s) : desired;
+}
+
+/**
  * 找出当前播放位置落在哪个词上。
  *
  * 线性扫描：一段通常十几到几十个词，二分查找的收益还不如它的出错面。
@@ -14,8 +46,7 @@ type Word = NonNullable<TranscriptSegmentDto['words']>[number];
  */
 export function findActiveWord(words: readonly Word[], posMs: number): number {
   for (let i = 0; i < words.length; i += 1) {
-    const w = words[i]!;
-    if (posMs >= w.s && posMs < w.e) return i;
+    if (posMs >= words[i]!.s && posMs < effectiveEnd(words, i)) return i;
   }
   return -1;
 }
