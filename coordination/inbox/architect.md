@@ -471,3 +471,96 @@ jsdom 真实 DOM 渲染 /tasks（zh-CN）：
 - 文件夹的新建/删除只在 mock 上跑过。
 - 本轮所有交互同样**只在 jsdom 渲染验证过，没在真浏览器点过**。新增待补验项：
   文件夹新建/删除/折叠、TipTap 输入与自动保存、导出菜单点击下载、任务的暂停/重试/取消。
+
+---
+
+## [2026-08-03 03:05] T-036 DONE
+
+### 关了哪几条
+
+| # | 任务 | 状态 |
+|---|---|---|
+| 1 | **`buildExport` 测试** | ✅ 关闭 —— 27 个测试全绿，**并逮到一个真 bug** |
+| 2 | **M-7「引用此刻」锚点** | ✅ 关闭 |
+| 3 | 随端点上线做真实验证 | ❌ **做不了** —— daemon 仍只有 6 个基建端点（我刚 grep 过） |
+| 4 | M-8 / DOCX / 插入转写稿 | ❌ 未做（你说不强求） |
+
+### 1. 测试逮到的真 bug：`timecodeFull(NaN)` → `NaN:NaN:NaN,NaN`
+
+```
+✖ 负数与非法值夹紧到 0，不产出 NaN
+  actual:   'NaN:NaN:NaN.NaN'
+  expected: '00:00:00.000'
+```
+
+`Math.max(0, Math.floor(NaN))` 仍然是 `NaN`。短时间码 `timecode()` 当初写了
+`if (!Number.isFinite(ms)) ms = 0` 的守卫，**而字幕用的 `timecodeFull()` 漏了**。
+
+**这正是你说的那类问题**：一条 `NaN` 时间轴写进 .srt，在我们的 UI 里**完全看不出来**
+（转写稿照常显示、时间码照常渲染），只有用户把文件拖进播放器、
+发现整个字幕失效时才暴露。已修，并在函数注释里写明了为什么必须挡。
+
+**其余 26 个测试覆盖**：SRT 逗号 vs VTT 小数点（写反会让播放器静默忽略整个文件）、
+补零宽度、超 1 小时不溢出、空行会劈开字幕条目、CRLF、VTT 正文里的 `-->` 误判、
+序号连续不跳号（空段落跳过后仍从 1 连号）、时间码单调性、多行文本、
+`WEBVTT` 头后必须有空行（否则首条 cue 被吞）、零段落、JSON 特殊字符转义、文件名安全化 6 项。
+
+顺带把纯逻辑从 `ExportMenu.tsx` 抽到 `export.ts` —— 组件里塞着不可测的业务逻辑本身就是味道。
+
+**测试怎么跑起来的**（本机 Node 没编译 TS 支持，`ERR_NO_TYPESCRIPT`）：
+新增 `tsconfig.test.json` 把纯模块单独编成 CJS 到 `dist/test/`，再交给 `node --test` ——
+与仓库其它包 (`packages/db`、`apps/daemon`) 的做法一致。`pnpm --filter @openmemo/web test` 即可。
+
+⚠️ 踩到一个**自己给自己挖的坑**并修掉：给主 `tsconfig.json` 加 `exclude: ["src/**/*.test.ts"]` 后，
+`tsconfig.test.json` 继承了它 → 编出 0 个测试，而 `node --test` 对空集**返回 0（绿）**。
+差一点就变成"测试永远绿因为根本没跑" —— 这是假绿灯的又一变体。已在 test 配置里显式 `exclude: []` 并注释原因。
+
+### 2. M-7 锚点
+
+`TimeAnchor` 做成 TipTap 的 **atom inline node** 而不是纯文本 `[12:34]`：
+- 纯文本会被用户误编辑成 `[12:3 4]`、被复制粘贴打散，也带不了 `transcriptUid`；
+- atom 之后要么完整存在、要么整体被删，不会 half-broken；
+- `attrs` 带 `startMs` / `transcriptUid` / `quote`，点击即精确 seek（F5"笔记 → 时间轴"方向补齐）。
+
+两个容易漏的地方我做了：
+- **`renderText()`**：不实现的话 `editor.getText()` 会把锚点整个吞掉，
+  `body_text` 里就没有 `[12:34]` → **用户搜"12:34"搜不到，而他明明在正文里看得见**。
+- **`quote`**：保存时抓当前段原文存进锚点，作为重新转写后的重定位依据（D-02 §3.5 第 2 层）。
+  没有它，换一次模型所有锚点就全废。
+
+`collectAnchors(bodyJson)` 在保存时一并送给服务端同步 `note_anchors` 表。
+
+### 3. 顺带：契约更新后删掉了两处适配
+
+`model-mgmt` 按 ADR-013 决策 2/4 把 SSE 改成整数毫秒、并给 `transcribe.segment` 补了 `noteUid`。
+我把对应的 **秒→毫秒转换** 和 **`transcriptUid → noteUid` 本地映射表**都删了。
+少两处适配就少两处会漂移的地方 —— 这正是当初提这两条的目的。
+
+### 验证
+
+```
+pnpm --filter @openmemo/web test   → ℹ tests 27  ℹ pass 27  ℹ fail 0
+pnpm --filter @openmemo/web build  → ✓ built in 320ms
+npx eslint apps/web                → LINT_EXIT=0
+jsdom 渲染 /notes（zh-CN）          → 侧栏真文件夹树（课程1/深度学习1/播客1）+ 笔记列表 + 逐面 MOCK 提示
+```
+
+### 剩余清单
+
+| # | 项 | 优先级 | 说明 |
+|---|---|---|---|
+| 1 | **三条"只在 mock 上成立"仍未推进** | 🔴 **阻塞在 daemon** | M-5 真持久化 / TipTap 真落库 / 导出真下载。**daemon 仍只有 6 个端点**（`/api/health` `/api/auth/session` `/api/events` `/api/daemon/status` `/api/daemon/shutdown` `/api/echo`），`/api/jobs`、`PATCH /api/notes/:uid`、`/folders` 一个都还没有。端点一上线我这边**零改动自动接上**。 |
+| 2 | M-8 `/diagnostics` 诊断页 | 🟢 低 | daemon 的安全模式本身也没触发过 |
+| 3 | DOCX / PDF 导出 | 🟢 低 | 需服务端排版引擎，菜单里已明写"暂未提供" |
+| 4 | "插入转写稿到笔记正文" | 🟢 低 | 有了 TimeAnchor 之后是顺手的事 |
+| 5 | 组件级测试 | 🟡 中 | 现在只有纯逻辑有测试；组件交互仍靠真浏览器 E2E |
+
+### 诚实声明
+
+- **第 3 项我一次都没能验证** —— 不是没做，是 daemon 端点还不存在。我不会用 mock 冒充。
+- **新增的 M-7 锚点只在 jsdom 渲染验证过**：插入按钮、点击 seek、`getText()` 投影**都没在真浏览器点过**。
+  待补验项因此从 10 项增加到 **12 项**（新增：插入锚点、点击锚点跳转）。
+- `buildExport` 现在有 27 个测试，但**它们只覆盖纯函数**；`ExportMenu` 组件的 Blob 下载路径仍无测试。
+- 我给 `apps/web` 加了 `@tiptap/core`（TimeAnchor 需要，此前只是传递依赖不可直接 import）、
+  改了 `tsconfig.json`（加 exclude）、新增 `tsconfig.test.json`、`package.json` 加 `test` 脚本。
+  依赖与脚本按 ADR-011 决策 3 归我；`tsconfig.json` 那一行 exclude 属**必要的最小改动**，特此申报。

@@ -13,7 +13,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { isAbsolute, resolve } from 'node:path';
 
-import type { SseEvent } from '@openmemo/shared';
 import { makeEvent, topics } from '@openmemo/shared';
 
 import type { Repos } from '../../db/repos.js';

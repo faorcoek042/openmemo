@@ -144,12 +144,38 @@ if (audioAsset) {
   console.log(`      路径穿越尝试 → HTTP ${bad.status}（应为 400）`);
 }
 
+// ---- 7.5) SSE payload **字段名**校验 ----
+// T-033 的教训：上一轮 e2e 只断言了事件"类型"，没断言 payload 字段名，
+// 于是 daemon 发着 startSec/jobUid（契约其实是 startMs/jobId）也照样"通过"。
+// 契约漂移必须由测试抓到，不能只靠编译器。
+const REQUIRED = {
+  'note.created': ['noteUid', 'title', 'folderUid'],
+  'job.state': ['jobId', 'state', 'previousState'],
+  'job.progress': ['jobId', 'step', 'pct', 'state'],
+  'transcribe.started': ['transcriptUid', 'noteUid', 'modelId', 'durationMs', 'language'],
+  'transcribe.segment': ['transcriptUid', 'noteUid', 'seq', 'startMs', 'endMs', 'text'],
+  'transcribe.done': ['transcriptUid', 'noteUid', 'segmentCount', 'rtf', 'partial'],
+  'media.ready': ['noteUid', 'mediaUid', 'durationMs', 'title', 'hasVideo'],
+  'job.done': ['jobId', 'resultUid', 'resultKind'],
+};
+console.log(`\n[8] SSE payload 字段名校验（对齐 packages/shared 契约）`);
+let schemaOk = true;
+for (const [type, fields] of Object.entries(REQUIRED)) {
+  const sample = events.find((e) => e.event === type);
+  if (!sample) { console.log(`      ${type.padEnd(20)} —— 本轮未出现，跳过`); continue; }
+  const missing = fields.filter((f) => !(f in sample.data));
+  if (missing.length) { schemaOk = false; console.log(`      ${type.padEnd(20)} ❌ 缺字段: ${missing.join(', ')}`); }
+  else console.log(`      ${type.padEnd(20)} ✅ ${fields.join(', ')}`);
+}
+
 console.log(`\n=== 端到端结论 ===`);
 const ok =
   impRes.status === 202 &&
   events.some((e) => e.event === 'note.created') &&
   events.some((e) => e.event === 'transcribe.segment') &&
   events.some((e) => e.event === 'transcribe.done') &&
-  tr.segments.length > 0;
+  tr.segments.length > 0 &&
+  schemaOk;
 console.log(`  浏览器→daemon→ffmpeg→whisper→SQLite→SSE→回读: ${ok ? '✅ 打通' : '❌ 未打通'}`);
+console.log(`  SSE payload 契约一致: ${schemaOk ? '✅' : '❌'}`);
 process.exitCode = ok ? 0 : 1;
