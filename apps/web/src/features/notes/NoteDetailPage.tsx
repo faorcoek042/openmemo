@@ -8,6 +8,7 @@ import { useNoteQuery, useTranscriptQuery } from './api';
 import { qk } from '../../app/query';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { MockNotice } from '../../components/common/MockNotice';
+import { PanelBoundary } from '../../components/common/PanelBoundary';
 import { WordLevelBadge } from '../transcript';
 import { MindmapView, useMindmapQuery } from '../mindmap';
 import { NoteProgressLine } from './NoteProgressLine';
@@ -116,11 +117,13 @@ export default function NoteDetailPage() {
             </label>
           </div>
           <div className="min-h-0 flex-1">
+            <PanelBoundary name={t('detail.transcript')}>
             <TranscriptList
               segments={arr(transcript.data?.segments)}
               speakerNames={speakerNames}
               noteUid={noteUid}
             />
+            </PanelBoundary>
           </div>
         </section>
 
@@ -146,6 +149,7 @@ export default function NoteDetailPage() {
             ))}
           </nav>
           <div className="min-h-0 flex-1 overflow-auto p-4 text-sm text-ink-secondary">
+            <PanelBoundary name={t(`detail.tabs.${tab}`)}>
             {tab === 'summary' ? (
               (n.summaryMd ?? streamedSummary) ? (
                 <p className="whitespace-pre-wrap">{n.summaryMd || streamedSummary}</p>
@@ -173,11 +177,14 @@ export default function NoteDetailPage() {
                 }}
               />
             )}
+            </PanelBoundary>
           </div>
         </aside>
       </div>
 
-      <PlayerBar peaks={peaks} />
+      <PanelBoundary name={t('detail.transcript')} fallback={() => null}>
+        <PlayerBar peaks={peaks} />
+      </PanelBoundary>
     </div>
   );
 }

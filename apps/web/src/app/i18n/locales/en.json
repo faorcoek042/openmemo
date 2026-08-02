@@ -235,6 +235,13 @@
     "unknown": {
       "title": "Unknown error",
       "detail": ""
+    },
+    "reconnect": "Reconnect",
+    "reconnecting": "Reconnecting…",
+    "UNAUTHENTICATED": {
+      "title": "The session with the local service expired",
+      "detail": "Usually the local service restarted. Click Reconnect — no need to reopen the browser.",
+      "action": "Reconnect"
     }
   },
   "common": {

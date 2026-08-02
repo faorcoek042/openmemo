@@ -1188,3 +1188,80 @@ HF 的 tree API 直接给 `lfs.oid`（就是 sha256），**不用下载就能核
 
 ### 门禁
     tsc 0 · eslint 0 · verify-offline 38/38 · verify-unpack 53/53 · 5 个清单 schema 全过
+
+---
+
+## 阻断性问题定位：「未认证，请重新打开应用」+「设置/模型/运行时点不动」
+
+**一个根因，全部症状都是它的下游。** 不在服务端 —— 你排除得对；也不在跨 origin。
+
+### 失败请求（用户看到的那句话，逐字来自这里）
+
+    POST http://100.64.135.105:10000/api/auth/session   → 401
+    {"error":{"code":"UNAUTHENTICATED","message":"no credentials",
+              "messageZh":"未认证，请重新打开应用","retryable":false}}
+
+    连带 401（因为上面没换到 cookie）：
+    GET  http://100.64.135.105:10000/api/folders  → 401  同上 body
+    GET  http://100.64.135.105:10000/api/jobs     → 401  同上 body
+
+### 根因：**交接 token 在被读到之前，就被路由重定向从 URL 里抹掉了**
+
+抓到的 hash 变更时间线（在任何应用脚本之前注入的钩子）：
+
+    init             hash="#t=GHTnyQxy…P2w"
+    replaceState 后   hash="#t=GHTnyQxy…P2w"   → /
+    replaceState 后   hash=""                  → /onboarding    ← 就是这一步弄丢的
+
+同一次加载里 4 次 `POST /api/auth/session` 的请求头**全部 `Authorization: 【缺失】`**。
+
+`apps/web/src/lib/api/connect.ts` 的握手顺序是：先 `await rawFetch('/api/health')`，
+**之后**才 `consumeHandoffToken()` 读 `window.location.hash`。可是 react-router 首屏就把
+`/` 重定向到 `/onboarding`，这个重定向是渲染期同步发生的，而 health 是一个真实网络往返。
+**同步的路由重定向必然赢过一个 await 在网络后面的读取** —— 所以只要首屏发生重定向
+（新用户必然走 onboarding），token 100% 丢失。丢了之后 URL 里再也没有它，
+**刷新、重开页面都救不回来**，用户就永久卡在"未认证"。
+
+修法：**token 必须在模块加载时同步抓取**（React / router 跑起来之前），
+而不是在 health 往返之后。抓到先存内存，再慢慢用。
+
+### 排除项（我逐条验过，不是这些）
+
+- **不是一次性 token**：同一 token curl 连打 3 次都 200。
+- **不是跨 origin / SameSite**：带浏览器整套头（Origin + Sec-Fetch-*）curl 也 200。
+  （反倒验出 Origin 校验是**对的**：伪造 `Origin: 127.0.0.1` 打 `100.64.135.105` → 403 `FORBIDDEN_ORIGIN`。）
+- **不是没有 SPA fallback**。⚠️ **更正我自己的第一版判断**：我先用 curl 打 `/settings` 得到
+  401/404，差点报成"深链没兜底"。真相是**按 Accept 协商**：`Accept: text/html` → 200 index.html，
+  `Accept: application/json` → 401/404。浏览器一直是好的，是我的探针发错了头。
+  **先质疑测试，再质疑代码** —— 这次又救回来一条误报。
+
+### 「设置、模型、运行时点不动」= **不是路由问题，是被未认证挡住**（你问的那个二选一）
+
+未认证时侧边栏**根本没渲染出 Runtime / Models 这两个链接**，所以不是"点不动"，是"没有可点的东西"。
+手工把有效 cookie 塞进浏览器绕过握手后，同一实例上：
+
+    侧边栏  →  New capture | All notes | Starred | Record | 全部笔记2 | Runtime | Models | Tasks | Settings
+    /models →  8 张模型卡片      /settings → 正常渲染      /runtime → 正常渲染
+    错误文案 →  消失             surfaces →  1 live → 3 live
+
+**根因修掉，这一条自动消失，不用单独改路由。**
+
+### 顺带查到的 4 条（都在 `apps/web` / daemon，不归我，只报不改）
+
+1. **有 cookie 但没 Bearer 时 `POST /api/auth/session` 仍 401** → 应用把自己标成
+   `authed=false`，即使 session 其实是活的。这正是"重开也没用"的第二重原因，
+   建议：已有有效 cookie 就直接认。
+2. **握手被重复触发**：一次加载 2× health + 4× auth/session（StrictMode + 多处调用）。
+   即使修好顺序，也只有第一个调用者拿得到 token，其余照样 401 ——
+   握手要收敛成**单例 promise**。
+3. `connect.ts` 里 `const expected = 17650` 硬编码用于端口漂移检测，demo 跑在 10000，
+   任何非开发端口部署都会常驻一条假的"端口漂移"警告。
+4. `/api/models/installed` 返回 `engines: null`，但契约里 `engines: Engine[]` 是**必填**
+   （`packages/shared/src/models.ts:109`）。这条是我的契约被违反 —— 若引擎下拉从这里取值，
+   就会塌成空/极短列表，**很可能就是用户说的"识别引擎只有两个可选"**。
+   （该端点当前只返回 1 个已装模型 `asr/whisper-base-q5_1`。此条我标为**高度怀疑但未坐实**，
+   没找到那个下拉的确切来源就不下定论。）
+
+### 纪律
+只读复现：**没有重启、没有改 `/tmp/omdemo`、没动 :10000 实例的任何代码或数据**；
+浏览器用独立 context，cookie 只注入到我自己的 context 里。

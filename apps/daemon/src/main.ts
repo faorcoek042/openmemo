@@ -28,7 +28,7 @@ import {
 } from './bootstrap/single-instance.js';
 import { resolvePaths, type AppPaths } from './config/paths.js';
 import { reclaimOrphans } from './bootstrap/orphans.js';
-import { SessionStore, generateToken, type Session } from './http/auth.js';
+import { SessionStore, loadOrCreateToken, type Session } from './http/auth.js';
 import { attachHttpHandlers } from './http/server.js';
 import { SseHub } from './http/sse.js';
 import { attachWebSocket } from './http/ws.js';
@@ -149,7 +149,12 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
   const dirLock = acquireDataDirLock(paths.dataDir, handoverWaitMs);
 
 
-  const token = inheritedToken && inheritedToken.length >= 16 ? inheritedToken : generateToken();
+  // 自我重启的接力棒优先；否则复用磁盘上那个**跨重启稳定**的 token，
+  // 这样用户保存的 `#t=...` 链接不会因为一次重启就作废（见 loadOrCreateToken）
+  const token =
+    inheritedToken && inheritedToken.length >= 16
+      ? inheritedToken
+      : loadOrCreateToken(paths.runtimeDir);
   let inheritedSessions: Session[] = [];
   if (inheritedSessionsRaw) {
     try {

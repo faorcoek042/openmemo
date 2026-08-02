@@ -36,9 +36,17 @@ export function resolveErrorText(
   // 未知 code → 用服务端文案兜底
   if (err instanceof ApiError) {
     const server = locale.startsWith('zh') ? err.serverMessageZh || err.serverMessage : err.serverMessage;
-    return { title: t('errors.unknown.title'), detail: server || err.message };
+    return { title: server || err.message || t('errors.unknown.title'), detail: '' };
   }
-  return { title: t('errors.unknown.title'), detail: err instanceof Error ? err.message : String(err) };
+  /**
+   * 非 ApiError（代码里 `throw new Error('…')` 的那些）。
+   *
+   * 以前一律显示"发生了未知错误"，把**唯一有用的信息（message）降级成折叠详情**。
+   * 用户看到的就是一句无内容的报错。既然拿得到 message，就直接把它当标题 ——
+   * "ompk: magic 不匹配"虽然技术，但**比"未知错误"有用得多**。
+   */
+  const msg = err instanceof Error ? err.message : String(err);
+  return { title: msg || t('errors.unknown.title'), detail: '' };
 }
 
 export interface ErrorBlockProps {
@@ -52,8 +60,26 @@ export interface ErrorBlockProps {
 export function ErrorBlock({ error, onRetry, onRemediate, className }: ErrorBlockProps) {
   const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
   const { title, detail, action } = resolveErrorText(error, t, i18n.language);
   const api = error instanceof ApiError ? error : null;
+
+  /**
+   * 认证类错误给一个**可点的动作**，而不是"请重新打开应用"——
+   * 用户不知道那是指刷新、重启服务、还是重开浏览器。
+   * 我们自己有 token→cookie 的完整流程，能自己重来就别让用户猜（`remediation` 原则）。
+   */
+  const isAuth = api?.status === 401 || api?.code === 'UNAUTHENTICATED';
+  const reconnect = async () => {
+    setReconnecting(true);
+    try {
+      const { resetConnection } = await import('../../lib/api/connect');
+      await resetConnection();
+      onRetry?.();
+    } finally {
+      setReconnecting(false);
+    }
+  };
   const raw = api ? JSON.stringify({ code: api.code, status: api.status, details: api.details }, null, 2) : String(error);
 
   return (
@@ -65,6 +91,11 @@ export function ErrorBlock({ error, onRetry, onRemediate, className }: ErrorBloc
           {detail ? <p className="mt-1 text-sm text-ink-secondary">{detail}</p> : null}
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
+            {isAuth ? (
+              <Button size="sm" variant="primary" onClick={() => void reconnect()} disabled={reconnecting}>
+                {reconnecting ? t('errors.reconnecting') : t('errors.reconnect')}
+              </Button>
+            ) : null}
             {onRetry && api?.retryable !== false ? (
               <Button size="sm" variant="secondary" onClick={onRetry}>
                 {t('common.retry')}

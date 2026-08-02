@@ -235,6 +235,13 @@
     "unknown": {
       "title": "发生了未知错误",
       "detail": ""
+    },
+    "reconnect": "重新连接",
+    "reconnecting": "正在重连…",
+    "UNAUTHENTICATED": {
+      "title": "与本地服务的连接已失效",
+      "detail": "通常是本地服务重启过。点「重新连接」即可，无需重开浏览器。",
+      "action": "重新连接"
     }
   },
   "common": {

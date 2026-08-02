@@ -162,7 +162,20 @@ async function handleRequest(
   // ---- 其余一律需要鉴权 ----
   const auth = authenticate(req, deps.sessions);
   if (!auth.ok) {
-    sendError(res, 401, 'UNAUTHENTICATED', auth.reason, '未认证，请重新打开应用');
+    /*
+     * 文案要**可执行**。原来写"请重新打开应用"——用户根本不知道该重新打开什么：
+     * 前端握手时已经把 URL 里的 token 抹掉了（防截图泄露），地址栏里那串没了，
+     * 他"重新打开"的还是同一个没有 token 的地址，于是永远转不出来。
+     * 现在直接告诉他会话过期、点重新连接，并给出 retryable 让前端能自动重试握手。
+     */
+    sendError(
+      res,
+      401,
+      'UNAUTHENTICATED',
+      auth.reason,
+      '会话已过期或尚未建立。点击「重新连接」即可，无需重启应用。',
+      { retryable: true },
+    );
     return;
   }
   if (!checkCsrf(req, auth)) {

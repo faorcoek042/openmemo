@@ -4,6 +4,7 @@ import { CONTRACT_VERSION } from '@openmemo/shared';
 import { SUPPORTED_LOCALES, setLocale, type LocaleCode } from '../../app/i18n';
 import { useUiStore, type ThemeMode } from '../../lib/stores/ui.store';
 import { LlmSettingsSection } from './LlmSettingsSection';
+import { PanelBoundary } from '../../components/common/PanelBoundary';
 
 /** 设置（最小可用版）。运行时/模型/存储页归 T-022。 */
 export default function SettingsPage() {
@@ -47,7 +48,9 @@ export default function SettingsPage() {
         </label>
       </section>
 
-      <LlmSettingsSection />
+      <PanelBoundary name={t('settings.llm')}>
+        <LlmSettingsSection />
+      </PanelBoundary>
 
       <section className="rounded-lg border border-line bg-surface-1 p-4 text-sm">
         <h2 className="mb-3 font-medium text-ink">{t('settings.about')}</h2>

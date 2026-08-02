@@ -36,6 +36,40 @@ export interface ConnectResult {
   contractMismatch: boolean;
 }
 
+/**
+ * 握手的**单例 promise**。
+ *
+ * ## 为什么必须有
+ *
+ * 原来的写法是在 `Providers` 的 `useEffect` 里 `void connectToDaemon()` —— 发射后不管。
+ * 而 React 同一时刻就把页面渲染出来了，各页的 query 立刻开打 →
+ * **它们全都跑在 cookie 就位之前** → 一片 401 →
+ * 用户看到的就是"很多地方都报『未认证，请重新打开应用』"。
+ *
+ * 这不是偶发竞态，是**必然**：首屏的每一个 query 都比握手快。
+ *
+ * 解法：把握手做成单例 promise，`apiCall` 在真正发请求前 `await` 它。
+ * 并发调用只会触发一次握手；握手完成后开销是一次已 resolve 的 await。
+ */
+let handshake: Promise<ConnectResult> | null = null;
+
+/** 等待握手完成（幂等；未开始则立即开始）。 */
+export function ensureConnected(): Promise<ConnectResult> {
+  handshake ??= connectToDaemon();
+  return handshake;
+}
+
+/**
+ * 丢弃当前会话并重新握手。
+ *
+ * 用在两处：① 收到 401 时自愈重试；② 用户点「重新连接」。
+ * daemon 每次启动都会换 token，所以"重开浏览器"从来不是必须的 —— 重新握手就够了。
+ */
+export function resetConnection(): Promise<ConnectResult> {
+  handshake = connectToDaemon();
+  return handshake;
+}
+
 export async function connectToDaemon(): Promise<ConnectResult> {
   const store = useSurfaceStore.getState();
 

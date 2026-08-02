@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { AlertTriangle, CheckCircle2, Copy, RefreshCw, XCircle } from 'lucide-react';
 
-import { rawFetch } from '../../lib/api/client';
+import { ApiError, rawFetch } from '../../lib/api/client';
 import { Button } from '../../components/common/Button';
 import { EmptyState } from '../../components/common/EmptyState';
 import { useSurfaceStore } from '../../lib/api/surfaces';
@@ -75,7 +75,16 @@ export default function DiagnosticsPage() {
     queryKey: ['health', 'diagnostics'],
     queryFn: async (): Promise<Health> => {
       const res = await rawFetch('/api/health');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        // 抛裸 Error 会让错误文案表用不上（无 code）—— 这是我上一轮修过的同一类问题，
+        // 说明"别处还有裸 throw"这条排查没做干净。这次给它一个稳定 code。
+        throw new ApiError(res.status, {
+          code: 'HEALTH_UNAVAILABLE',
+          message: `health endpoint returned ${res.status}`,
+          messageZh: `本地服务健康检查返回 ${res.status}`,
+          retryable: true,
+        });
+      }
       return (await res.json()) as Health;
     },
     refetchInterval: 15_000,

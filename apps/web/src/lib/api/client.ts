@@ -218,6 +218,26 @@ export function forgetMissingEndpoints(): void {
   missingEndpoints.clear();
 }
 
+/**
+ * 握手闸门与 401 自愈。
+ *
+ * `connect.ts` 反过来要用 `rawFetch`，静态 import 会成环 —— 用惰性 import 打破。
+ */
+async function gate(): Promise<void> {
+  const { ensureConnected } = await import('./connect');
+  await ensureConnected().catch(() => undefined); // 握手失败不阻断：让请求自己去报真实错误
+}
+
+async function reHandshake(): Promise<boolean> {
+  const { resetConnection } = await import('./connect');
+  const r = await resetConnection().catch(() => null);
+  return Boolean(r?.authed);
+}
+
+function isUnauthenticated(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 401 || err.code === 'UNAUTHENTICATED');
+}
+
 async function apiCall<T>(surface: Surface, path: string, opts?: ApiOptions): Promise<T> {
   const method = (opts?.method ?? 'GET').toUpperCase();
   const isWrite = method !== 'GET' && method !== 'HEAD';
@@ -237,6 +257,9 @@ async function apiCall<T>(surface: Surface, path: string, opts?: ApiOptions): Pr
     return mockFetcher<T>(path, opts);
   }
 
+  // ★ 等握手完成再发请求 —— 首屏的每个 query 都比握手快，不等就是必然 401
+  await gate();
+
   try {
     const out = await realFetch<T>(path, opts);
     // 真接通了：既清掉该端点的"缺失"记录，也把该面标成 live
@@ -244,6 +267,17 @@ async function apiCall<T>(surface: Surface, path: string, opts?: ApiOptions): Pr
     if (surfaceState(surface) !== 'live') markSurface(surface, 'live');
     return out;
   } catch (err) {
+    /**
+     * ★ 401 自愈：daemon 重启会换 token、cookie 也可能过期。
+     * 这时应该**自己重新握手再试一次**，而不是让用户去猜"重新打开应用"是什么意思。
+     * 只重试一次，避免握手本身失败时打转。
+     */
+    if (isUnauthenticated(err) && (await reHandshake())) {
+      const out = await realFetch<T>(path, opts);
+      missingEndpoints.delete(key);
+      markSurface(surface, 'live');
+      return out;
+    }
     if (isNotImplemented(err)) {
       // 只记这一条端点，**不再牵连同面的其它端点**
       missingEndpoints.add(key);

@@ -13,7 +13,9 @@
  * → cookie 是唯一同时覆盖四者的方案；代价是引入 CSRF 面，用 guard.ts 的四重防护对冲。
  */
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage } from 'node:http';
+import { join } from 'node:path';
 
 export const SESSION_COOKIE = 'om_sid';
 export const CSRF_HEADER = 'x-openmemo-csrf';
@@ -93,6 +95,39 @@ export function parseCookies(header: string | undefined): Record<string, string>
     if (k) out[k] = decodeURIComponent(v);
   }
   return out;
+}
+
+/**
+ * 取一个**跨重启稳定**的启动 token：有就复用，没有就生成并存下来。
+ *
+ * ## 为什么必须稳定
+ * 原来每次启动都 `generateToken()`。后果是**用户保存的那个 `#t=...` 链接一重启就作废** ——
+ * 而前端握手时会把 fragment 里的 token 从地址栏抹掉（防截图泄露），
+ * 于是刷新也救不回来，整页只剩「未认证，请重新打开应用」。
+ * 用户这次报的"页面很多地方报未认证"就是这个，**不是校验太严**：
+ * 实测从外部 IP 走完整流程（导航→token 换 cookie→GET→带 CSRF 的写）全部 200，
+ * 唯独用旧 token 换会话是 401。放宽任何校验都修不好它，只有让 token 别再漂。
+ *
+ * ## 存盘安全吗
+ * 存在 `<dataDir>/runtime/token`，0600。**同目录下就是整个 SQLite 库**（用户所有笔记）——
+ * 能读到这个文件的人本来就能直接读走全部数据，多一个 token 不增加实际暴露面。
+ */
+export function loadOrCreateToken(runtimeDir: string): string {
+  const file = join(runtimeDir, 'token');
+  try {
+    const existing = readFileSync(file, 'utf8').trim();
+    if (existing.length >= 16) return existing;
+  } catch {
+    /* 没有就往下生成 */
+  }
+  const token = generateToken();
+  try {
+    mkdirSync(runtimeDir, { recursive: true });
+    writeFileSync(file, token, { mode: 0o600 });
+  } catch {
+    /* 存不下来不致命：退化成"本次启动有效"，不要因此起不来 */
+  }
+  return token;
 }
 
 export function buildSessionCookie(sid: string): string {

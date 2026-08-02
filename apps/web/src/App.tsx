@@ -6,6 +6,7 @@ import { Activity, Cpu, FileAudio, Mic, Package, Plus, Settings, Star } from 'lu
 import { Banner } from './components/common/Banner';
 import { ConnectivitySummary } from './components/common/MockNotice';
 import { HealthBanner } from './components/common/HealthBanner';
+import { PanelBoundary } from './components/common/PanelBoundary';
 import { SearchBox } from './features/search';
 import { FolderTree } from './features/folders';
 import { Button } from './components/common/Button';
@@ -32,7 +33,9 @@ export default function App() {
           ② 每个页面在自己的数据区域挂 <MockNotice surface=…/>。
           全部接通后两者都会自己消失，不需要谁记得回来删。 */}
       {/* 产品降级态（分词未启用/转写组件缺失…）—— 装好后会自己消失 */}
-      <HealthBanner />
+      <PanelBoundary name={t('diagnostics.title')} fallback={() => null}>
+        <HealthBanner />
+      </PanelBoundary>
       {conn === 'degraded' ? <Banner tone="warning" title={t('banner.sseDegraded')} /> : null}
       {conn === 'reconnecting' ? <Banner tone="info" title={t('banner.sseReconnecting')} /> : null}
       {multiTab ? <Banner tone="info" title={t('banner.multiTab')} /> : null}
@@ -59,7 +62,9 @@ export default function App() {
           <hr className="my-2 border-line" />
 
           {/* 文件夹树：此前是静态占位，现在是真数据 + 可新建/删除 */}
-          <FolderTree />
+          <PanelBoundary name={t('nav.folders')}>
+            <FolderTree />
+          </PanelBoundary>
 
           <hr className="my-2 border-line" />
 
@@ -69,8 +74,8 @@ export default function App() {
             竞品把它们埋在设置里，结果"模型下载卡 0%"成了它最高频的用户问题。
             这两页归 T-022（features/runtime、features/models，见各自 README 契约）。
           */}
-          <SideLink to="/runtime" icon={<Cpu className="size-4" />} label={t('nav.runtime')} pending />
-          <SideLink to="/models" icon={<Package className="size-4" />} label={t('nav.models')} pending />
+          <SideLink to="/runtime" icon={<Cpu className="size-4" />} label={t('nav.runtime')} />
+          <SideLink to="/models" icon={<Package className="size-4" />} label={t('nav.models')} />
           <SideLink to="/tasks" icon={<Activity className="size-4" />} label={t('nav.tasks')} />
           <SideLink to="/settings" icon={<Settings className="size-4" />} label={t('nav.settings')} />
         </nav>
@@ -79,7 +84,9 @@ export default function App() {
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="flex h-11 shrink-0 items-center justify-end gap-3 border-b border-line bg-surface-1 px-4">
             <SearchBox />
-            <ConnectivitySummary className="mr-auto" />
+            <PanelBoundary name={t('app.name')} fallback={() => null}>
+              <ConnectivitySummary className="mr-auto" />
+            </PanelBoundary>
             {activeCount > 0 ? (
               <Button size="sm" variant="ghost" onClick={() => setTasksDrawer(true)}>
                 <Activity className="size-3.5 text-accent" />
@@ -89,41 +96,43 @@ export default function App() {
           </header>
 
           <main className="min-h-0 flex-1 overflow-auto">
-            <Suspense fallback={<div className="p-6 text-sm text-ink-muted">{t('common.loading')}</div>}>
-              <Outlet />
-            </Suspense>
+            {/* 路由出口单独兜住：某一页崩了，侧栏与顶栏仍然可用，用户还能切走 */}
+            <PanelBoundary name={t('app.name')}>
+              <Suspense fallback={<div className="p-6 text-sm text-ink-muted">{t('common.loading')}</div>}>
+                <Outlet />
+              </Suspense>
+            </PanelBoundary>
           </main>
         </div>
       </div>
 
-      <TasksDrawer />
+      <PanelBoundary name={t('tasks.title')}>
+        <TasksDrawer />
+      </PanelBoundary>
     </div>
   );
 }
 
+/**
+ * 侧栏导航项。
+ *
+ * ⚠️ 这里**曾经**有一个 `pending` 分支，把还没人认领的页面渲染成不可点击的灰色 `<span>`
+ * （"灰显而不是隐藏，让 IA 完整可见"）。`/runtime` 与 `/models` 用的就是它。
+ * 后来 T-022 把两个页面做完、路由也注册了，**但没人回来删这两个 `pending`** ——
+ * 于是页面明明存在、路由明明通着，用户却**点不动**。
+ *
+ * 教训：**占位状态必须与"是否已实现"绑定，不能靠人记得回来删。**
+ * 该分支已整个移除 —— 没有它，这类"忘了删"就不可能再发生。
+ */
 function SideLink({
   to,
   icon,
   label,
-  pending,
 }: {
   to: string;
   icon: ReactNode;
   label: string;
-  /** 该页尚未认领（T-022 / T-023）。灰显而不是隐藏 —— 让 IA 完整可见。 */
-  pending?: boolean;
 }) {
-  if (pending) {
-    return (
-      <span
-        className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm text-ink-muted opacity-50"
-        title="Wave 3 · T-022"
-      >
-        {icon}
-        {label}
-      </span>
-    );
-  }
   return (
     <NavLink
       to={to}

@@ -21,7 +21,9 @@ import { StatusChip } from '../components/common/StatusChip';
 import { ProgressMeter } from '../components/common/ProgressMeter';
 import type { MergedJob } from '../features/tasks/api';
 import { arr } from '../lib/safe';
-import { api } from '../lib/api/client';
+import { ApiError, api } from '../lib/api/client';
+import { PanelBoundary } from '../components/common/PanelBoundary';
+import { resolveErrorText } from '../components/common/ErrorBlock';
 
 /* ─────────────────────────── 标签增删 ─────────────────────────── */
 
@@ -318,6 +320,53 @@ describe('LlmSettingsSection（API Key 输入）', () => {
     await r.flush();
     assert.ok(text(r.container).includes('未设置 Key'));
     r.unmount();
+  });
+});
+
+/* ─────────── 用户实测事故回归（T-074）─────────── */
+
+describe('局部失败不塌 + 错误信息可用', () => {
+  test('★ 面板内抛异常只坏那一块，兄弟面板照常渲染', async () => {
+    stubApi({});
+    const Boom = (): never => {
+      throw new Error('故意炸给你看');
+    };
+    const r = await render(
+      <div>
+        <PanelBoundary name="左栏">
+          <Boom />
+        </PanelBoundary>
+        <p>右栏还活着</p>
+      </div>,
+    );
+    const t = text(r.container);
+    assert.ok(t.includes('右栏还活着'), '兄弟面板必须不受影响');
+    assert.ok(t.includes('「左栏」加载失败'), '要说清是哪一块坏了');
+    assert.ok(t.includes('故意炸给你看'), '要显示真实 message，而不是"未知错误"');
+    assert.ok(buttonByText(r.container, '重试'), '必须给可点的动作');
+    r.unmount();
+  });
+
+  test('★ 未知错误不再吞掉 message —— "发生了未知错误"是最没用的一句话', () => {
+    const t = ((k: string, o?: { defaultValue?: string }) =>
+      o && 'defaultValue' in o ? (o.defaultValue as string) : k) as never;
+    const out = resolveErrorText(new Error('ompk: magic 不匹配'), t, 'zh-CN');
+    assert.equal(out.title, 'ompk: magic 不匹配');
+  });
+
+  test('★ 401 走认证文案，并告诉用户不必重开浏览器', () => {
+    const zh: Record<string, string> = {
+      'errors.UNAUTHENTICATED.title': '与本地服务的连接已失效',
+      'errors.UNAUTHENTICATED.detail': '通常是本地服务重启过。点「重新连接」即可，无需重开浏览器。',
+      'errors.UNAUTHENTICATED.action': '重新连接',
+    };
+    const t = ((k: string, o?: { defaultValue?: string }) =>
+      zh[k] ?? (o && 'defaultValue' in o ? (o.defaultValue as string) : '')) as never;
+    const err = new ApiError(401, { code: 'UNAUTHENTICATED', message: 'no credentials' });
+    const out = resolveErrorText(err, t, 'zh-CN');
+    assert.match(out.title, /连接已失效/);
+    assert.match(out.detail, /无需重开浏览器/);
+    assert.equal(out.action, '重新连接');
   });
 });
 
