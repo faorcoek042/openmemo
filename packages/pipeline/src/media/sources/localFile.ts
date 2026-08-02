@@ -11,7 +11,11 @@ import { stat } from 'node:fs/promises';
 import { basename, extname, isAbsolute } from 'node:path';
 
 import { probeMedia } from '../../audio/ffmpeg.js';
-import { assertWithinRoot, hasAllowedMediaExtension } from '../../subprocess/argGuard.js';
+import {
+  assertWithinRoot,
+  isLocalImportSafeExtension,
+  isPlaylistExtension,
+} from '../../subprocess/argGuard.js';
 import type { ToolPaths } from '../../tools.js';
 import { isExecutable } from '../../tools.js';
 import type {
@@ -45,7 +49,9 @@ export class LocalFileSource implements MediaSource {
   match(input: string): number {
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input)) return 0; // it is a URL
     if (!isAbsolute(input)) return 0;
-    return hasAllowedMediaExtension(input) ? 100 : 60;
+    // Playlists are refused outright — see resolveSafe for the measured attack.
+    if (isPlaylistExtension(input)) return 0;
+    return isLocalImportSafeExtension(input) ? 100 : 60;
   }
 
   async isAvailable(): Promise<Availability> {
@@ -125,14 +131,42 @@ export class LocalFileSource implements MediaSource {
     };
   }
 
-  /** D-01 §8.5 — realpath-based confinement plus a regular-file assertion. */
+  /**
+   * D-01 §8.5 — realpath-based confinement, a regular-file assertion, and a playlist ban.
+   *
+   * THE PLAYLIST BAN IS NOT REDUNDANT (measured, T-026). Importing a local `.m3u8`
+   * containing `file:///tmp/secret.ts` made ffmpeg log
+   * `Opening 'file:///tmp/attack/secret.ts' for reading`. The local branch must allow
+   * the `file` protocol for normal media to decode, so the protocol whitelist cannot
+   * catch this — the playlist reads local files through a protocol we deliberately
+   * enabled, and walks straight out of the managed root.
+   *
+   * Refusing local playlist imports closes it. Remote HLS is untouched: that path uses
+   * a whitelist with no `file` in it, which was verified to block the same attack.
+   */
   private async resolveSafe(input: string): Promise<string> {
+    if (isPlaylistExtension(input)) {
+      throw new Error(
+        'playlist files (.m3u8/.pls/…) cannot be imported from disk: they can reference ' +
+          'arbitrary local paths. Paste the stream URL instead.',
+      );
+    }
     const guarded = await assertWithinRoot(this.opts.allowedRoot, input);
     if (!guarded.ok) {
       throw new Error(`path rejected (${guarded.code}): ${guarded.message}`);
     }
     const st = await stat(guarded.value);
     if (!st.isFile()) throw new Error('not a regular file');
+
+    // Belt and braces: trust ffprobe's verdict, not the extension. A playlist renamed to
+    // .mp3 still demuxes as hls/applehttp.
+    const probed = await probeMedia(this.opts.tools, guarded.value, { cwd: this.opts.cwd });
+    if (probed.formatName !== null && /hls|applehttp|m3u/i.test(probed.formatName)) {
+      throw new Error(
+        `this file is a streaming playlist (${probed.formatName}), not a media file; ` +
+          'it cannot be imported from disk.',
+      );
+    }
     return guarded.value;
   }
 }

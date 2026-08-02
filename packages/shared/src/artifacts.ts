@@ -160,3 +160,30 @@ export interface BenchmarkResult {
   deviceName: string;
   sampleDurationSec: number;
 }
+
+/**
+ * A benchmark WE measured on a known reference machine, shipped in the catalog.
+ *
+ * Deliberately a separate type from `BenchmarkResult` so the two can never be confused:
+ * `benchmark` means "measured on the user's machine", this means "measured on ours".
+ * ADR-004 decision 3 bans fabricated numbers — it does not ban real measurements with
+ * honest provenance, and having *some* speed signal before the user downloads 2 GB is
+ * genuinely useful. The UI must always label it as a reference figure.
+ *
+ * Every field here exists to make the provenance auditable: which machine, which backend,
+ * which audio, how long. A number without those is exactly the kind of thing we refuse.
+ */
+export interface ReferenceBenchmark {
+  rtf: number;
+  backend: Backend;
+  /** Reference machine description, e.g. "AMD RYZEN AI MAX+ 395, 32 threads, CPU only". */
+  deviceName: string;
+  measuredAt: string;
+  /** Audio used, e.g. "Zh-Twitter.ogg (CC BY 3.0)". */
+  sampleName: string;
+  sampleDurationSec: number;
+  /** Language of the sample — RTF and accuracy both vary by language. */
+  sampleLanguage: string;
+  /** Mean model confidence over the sample, when the engine reports it. */
+  meanConfidence?: number;
+}

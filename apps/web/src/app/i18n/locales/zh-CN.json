@@ -63,7 +63,11 @@
     "untitled": "未命名"
   },
   "detail": {
-    "tabs": { "summary": "摘要", "mindmap": "思维导图", "notes": "笔记" },
+    "tabs": {
+      "summary": "摘要",
+      "mindmap": "思维导图",
+      "notes": "笔记"
+    },
     "transcript": "转写稿",
     "followPlayback": "跟随播放",
     "searchInNote": "段内搜索",
@@ -111,7 +115,14 @@
     "skipRerun": "跳过",
     "replaced": "已更新 {{updated}} 段转写 · 你编辑过的 {{preserved}} 段已保留",
     "viewDiff": "查看改动",
-    "undoReplace": "撤销这次更新"
+    "undoReplace": "撤销这次更新",
+    "twoPhaseNoticeWithEta": "实时字幕使用快速模型，停止后会自动用更准确的模型重听一遍，预计需要 {{eta}}。",
+    "twoPhaseNoticeSlowHint": "中文识别使用的 large-v3-turbo 在纯 CPU 上约为 2.7 倍速，装上 GPU 加速后端会快很多。",
+    "rerunningWithEta": "正在用 {{model}} 重新识别，以获得更准确的结果，预计还需 {{eta}}…",
+    "replacedNoCounterpart": "其中 {{count}} 段没有找到对应的新识别结果，已按原样保留。",
+    "noCounterpartTag": "无对应更新",
+    "mergeByTimeNote": "合并按时间轴对齐，不按段落序号 —— 两遍模型的断句本来就不同。",
+    "installBackend": "安装加速后端"
   },
   "tasks": {
     "title": "任务中心",
@@ -140,15 +151,48 @@
       "title": "该功能尚未接通",
       "detail": "本地服务还没有实现这个接口，当前处于 MOCK 模式。"
     },
-    "NOTE_NOT_FOUND": { "title": "笔记不存在", "detail": "它可能已被删除。" },
-    "INPUT_URL_INVALID": { "title": "链接格式不正确", "detail": "请粘贴一个 http 或 https 开头的完整链接。" },
-    "MISSING_ASR_MODEL": { "title": "还没有安装转写模型", "detail": "转写需要先安装一个语音识别模型。", "action": "去安装" },
-    "MISSING_BACKEND": { "title": "转写需要先安装加速后端", "detail": "", "action": "去安装" },
-    "RESOURCE_DISK_FULL": { "title": "磁盘空间不足", "detail": "需要 {{required}}，当前可用 {{free}}。", "action": "清理空间" },
-    "CHECKSUM_MISMATCH": { "title": "文件校验未通过，已丢弃", "detail": "下载的文件与预期的哈希不一致，为安全起见不会安装。", "action": "换源重下" },
-    "UPSTREAM_AUTH": { "title": "该内容需要登录才能访问", "detail": "", "action": "改为拖入本地文件" },
-    "CONTRACT_MISMATCH": { "title": "前端与本地服务版本不一致", "detail": "请刷新页面；若仍不一致，请升级应用。", "action": "刷新页面" },
-    "unknown": { "title": "发生了未知错误", "detail": "" }
+    "NOTE_NOT_FOUND": {
+      "title": "笔记不存在",
+      "detail": "它可能已被删除。"
+    },
+    "INPUT_URL_INVALID": {
+      "title": "链接格式不正确",
+      "detail": "请粘贴一个 http 或 https 开头的完整链接。"
+    },
+    "MISSING_ASR_MODEL": {
+      "title": "还没有安装转写模型",
+      "detail": "转写需要先安装一个语音识别模型。",
+      "action": "去安装"
+    },
+    "MISSING_BACKEND": {
+      "title": "转写需要先安装加速后端",
+      "detail": "",
+      "action": "去安装"
+    },
+    "RESOURCE_DISK_FULL": {
+      "title": "磁盘空间不足",
+      "detail": "需要 {{required}}，当前可用 {{free}}。",
+      "action": "清理空间"
+    },
+    "CHECKSUM_MISMATCH": {
+      "title": "文件校验未通过，已丢弃",
+      "detail": "下载的文件与预期的哈希不一致，为安全起见不会安装。",
+      "action": "换源重下"
+    },
+    "UPSTREAM_AUTH": {
+      "title": "该内容需要登录才能访问",
+      "detail": "",
+      "action": "改为拖入本地文件"
+    },
+    "CONTRACT_MISMATCH": {
+      "title": "前端与本地服务版本不一致",
+      "detail": "请刷新页面；若仍不一致，请升级应用。",
+      "action": "刷新页面"
+    },
+    "unknown": {
+      "title": "发生了未知错误",
+      "detail": ""
+    }
   },
   "common": {
     "retry": "重试",

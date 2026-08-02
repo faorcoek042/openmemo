@@ -11,6 +11,8 @@
  */
 
 import {
+  AUTHORITATIVE_EVENT_TYPES,
+  SEQUENCED_EVENT_TYPES,
   SSE_EVENT_TYPES as SHARED_SSE_EVENT_TYPES,
   type SseEvent as SharedSseEvent,
 } from '@openmemo/shared';
@@ -21,18 +23,27 @@ export type { SseEvent, SseEventType } from '@openmemo/shared';
 
 /**
  * - `hint`：提示"该去拉数据了"。可丢、可乱序、可合并节流。
- * - `data`：载荷即真相。**不节流、不合并、必达有序**，带单调 `seq`，前端检缺口。
+ * - `data`：载荷即真相，直接应用。
+ *
+ * ✅ **这个划分现在由 `packages/shared` 以常量编码**（`AUTHORITATIVE_EVENT_TYPES` /
+ * `SEQUENCED_EVENT_TYPES`），不再是"只写在文档里靠人记"。
+ * 前端直接消费这两个常量 —— 服务端加了新的权威事件，前端的缺口检测自动跟上，
+ * 不需要两边各维护一份名单（那种名单必然会漂移）。
  */
 export type EventClass = 'hint' | 'data';
 
-export const DATA_EVENTS = [
-  'transcribe.segment',
-  'mindmap.delta',
-  'x.summary.delta',
-] as const;
-
 export function classOf(type: string): EventClass {
-  return (DATA_EVENTS as readonly string[]).includes(type) ? 'data' : 'hint';
+  if ((AUTHORITATIVE_EVENT_TYPES as readonly string[]).includes(type)) return 'data';
+  // 本地扩展事件里唯一的 data 类
+  if (type === 'x.summary.delta') return 'data';
+  return 'hint';
+}
+
+/** 需要按单调 `seq` 应用、并检测缺口的事件。 */
+export function isSequenced(type: string): boolean {
+  return (
+    (SEQUENCED_EVENT_TYPES as readonly string[]).includes(type) || type === 'x.summary.delta'
+  );
 }
 
 /* ═════════════════════ 扩展事件（shared 尚未覆盖，见 §缺口）═════════════════════ */

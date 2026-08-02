@@ -29,7 +29,21 @@ export type FitReasonCode =
   | 'insufficient_ram'
   | 'missing_cpu_feature'
   | 'insufficient_disk'
-  | 'borderline_vram';
+  | 'borderline_vram'
+  | 'not_recommended_for_language';
+
+/**
+ * How fast this will feel, independently of whether it fits in memory.
+ *
+ * ADR-011 decision 2 made this necessary: Chinese requires `large-v3-turbo`, which on CPU
+ * runs at 2.7x realtime — one hour of audio takes 22 minutes. "Fits in memory" and
+ * "usable" are different questions, and answering only the first misleads the user.
+ */
+export const SPEED_TIERS = ['fast', 'moderate', 'slow', 'very_slow', 'unknown'] as const;
+export type SpeedTier = (typeof SPEED_TIERS)[number];
+
+/** Where the speed estimate came from. The UI must not present these identically. */
+export type SpeedSource = 'measured_here' | 'reference_machine' | 'none';
 
 export interface FitResult {
   tier: FitTier;
@@ -38,8 +52,14 @@ export interface FitResult {
   reasonEn: string;
   /** Estimated layers offloadable to GPU (LLM partial offload only). */
   estGpuLayers: number | null;
-  /** Minutes to transcribe one hour of audio. Null until a real benchmark exists. */
+  /** Minutes to transcribe one hour of audio. Null when no measurement exists at all. */
   estMinutesPerAudioHour: number | null;
+  /** Speed bucket, for a warning independent of the memory verdict. */
+  speedTier: SpeedTier;
+  /** Provenance of `estMinutesPerAudioHour` — never show a reference figure as if local. */
+  speedSource: SpeedSource;
+  /** True when the model is measured-unsuitable for the requested language (ADR-011). */
+  notRecommendedForLanguage: boolean;
   /** Diagnostic numbers, surfaced in the detail panel so users can sanity-check us. */
   detail: {
     needMB: number;
@@ -182,9 +202,42 @@ export interface FitInput {
   paramsB?: number;
   /** Transformer layer count, for the partial-offload estimate. */
   blockCount?: number;
-  /** Existing benchmark, if the user has run one. */
+  /** RTF measured on THIS machine. Highest-trust source. */
   benchmarkRtf?: number | null;
+  /** RTF we measured on a reference machine, shipped in the catalog. */
+  referenceRtf?: number | null;
+  /** Backend the reference figure was measured on — only comparable to a like backend. */
+  referenceBackend?: string | null;
+  /** Languages this model is measured-unsuitable for (ADR-011). */
+  notRecommendedFor?: string[];
+  /** Language the user actually wants to transcribe, e.g. "zh". */
+  targetLanguage?: string | null;
 }
+
+/**
+ * Minutes per audio-hour → speed bucket.
+ *
+ * Thresholds chosen against the real measurements in ADR-011:
+ *   base            RTF 0.055 →  3.3 min/hour → fast
+ *   large-v3-turbo  RTF 0.377 → 22.6 min/hour → slow
+ * 22 minutes for a one-hour recording is usable but demands a warning; an hour or more
+ * is where people abandon the task.
+ */
+export function speedTierFor(minutesPerHour: number | null): SpeedTier {
+  if (minutesPerHour == null) return 'unknown';
+  if (minutesPerHour <= 6) return 'fast';
+  if (minutesPerHour <= 15) return 'moderate';
+  if (minutesPerHour <= 40) return 'slow';
+  return 'very_slow';
+}
+
+const SPEED_NOTE_ZH: Record<SpeedTier, string> = {
+  fast: '速度快',
+  moderate: '速度中等',
+  slow: '较慢',
+  very_slow: '很慢',
+  unknown: '速度未测量',
+};
 
 export function computeFit(input: FitInput, hw: HardwareInfo): FitResult {
   const needMB = input.requirements.ramRequiredMB;
@@ -201,9 +254,41 @@ export function computeFit(input: FitInput, hw: HardwareInfo): FitResult {
     diskNeededMB: diskNeeded,
   };
 
-  const estMinutes = input.benchmarkRtf != null ? round1(input.benchmarkRtf * 60) : null;
+  // Speed. Locally measured always wins; a reference figure is used only as a fallback
+  // and is tagged so the UI can say where it came from.
+  let estMinutes: number | null = null;
+  let speedSource: SpeedSource = 'none';
+  if (input.benchmarkRtf != null) {
+    estMinutes = round1(input.benchmarkRtf * 60);
+    speedSource = 'measured_here';
+  } else if (
+    input.referenceRtf != null &&
+    // Only comparable when the backend matches; a CUDA figure says nothing about CPU.
+    (input.referenceBackend == null || input.referenceBackend === hw.selectedBackend)
+  ) {
+    estMinutes = round1(input.referenceRtf * 60);
+    speedSource = 'reference_machine';
+  }
+  const speedTier = speedTierFor(estMinutes);
+
+  const lang = input.targetLanguage ?? null;
+  const notRecommendedForLanguage =
+    lang != null && (input.notRecommendedFor ?? []).includes(lang);
+
+  const base = {
+    estMinutesPerAudioHour: estMinutes,
+    speedTier,
+    speedSource,
+    notRecommendedForLanguage,
+    detail,
+  };
 
   const gb = (mb: number) => (mb / 1000).toFixed(1);
+  /** Append the speed caveat so "fits" never reads as "will be pleasant". */
+  const withSpeed = (zh: string) =>
+    estMinutes != null && (speedTier === 'slow' || speedTier === 'very_slow')
+      ? `${zh} · ${SPEED_NOTE_ZH[speedTier]}（1 小时音频约 ${Math.round(estMinutes)} 分钟）`
+      : zh;
 
   // Rule 1 — disk. The only deterministic failure; everything else is an estimate.
   if (diskFree < diskNeeded) {
@@ -214,8 +299,24 @@ export function computeFit(input: FitInput, hw: HardwareInfo): FitResult {
       reasonZh: `磁盘空间不足，还需 ${gb(shortMB)} GB`,
       reasonEn: `Not enough disk space (need ${gb(shortMB)} GB more)`,
       estGpuLayers: null,
-      estMinutesPerAudioHour: estMinutes,
-      detail,
+      ...base,
+    };
+  }
+
+  // Rule 1b — measured-unsuitable for the requested language (ADR-011 decision 1).
+  //
+  // Placed before the memory rules deliberately: a model that fits perfectly but produces
+  // 危机摆科 for 维基百科 is not "recommended" by any useful definition. It is still
+  // downloadable — the UI filters it by default and lets the user unhide it, because the
+  // same model remains a fine choice for another language.
+  if (notRecommendedForLanguage) {
+    return {
+      tier: 'slow_cpu',
+      reasonCode: 'not_recommended_for_language',
+      reasonZh: `实测在该语言下识别质量不可接受，不建议使用（换用更大的模型）`,
+      reasonEn: `Measured output quality is unacceptable for this language — pick a larger model`,
+      estGpuLayers: null,
+      ...base,
     };
   }
 
@@ -230,8 +331,7 @@ export function computeFit(input: FitInput, hw: HardwareInfo): FitResult {
       reasonZh: `CPU 不支持所需指令集（${missing.join(', ')}）`,
       reasonEn: `CPU lacks required feature(s): ${missing.join(', ')}`,
       estGpuLayers: null,
-      estMinutesPerAudioHour: estMinutes,
-      detail,
+      ...base,
     };
   }
 
@@ -243,8 +343,7 @@ export function computeFit(input: FitInput, hw: HardwareInfo): FitResult {
       reasonZh: `内存不足，无法运行（需 ${gb(needMB)} GB / 可用 ${gb(ram)} GB）`,
       reasonEn: `Not enough memory (needs ${gb(needMB)} GB, ${gb(ram)} GB available)`,
       estGpuLayers: null,
-      estMinutesPerAudioHour: estMinutes,
-      detail,
+      ...base,
     };
   }
 
@@ -256,11 +355,10 @@ export function computeFit(input: FitInput, hw: HardwareInfo): FitResult {
       return {
         tier: 'recommended',
         reasonCode: 'full_gpu_offload',
-        reasonZh: `可全部载入显存（需 ${gb(needMB)} GB / 可用 ${gb(vram)} GB）`,
+        reasonZh: withSpeed(`可全部载入显存（需 ${gb(needMB)} GB / 可用 ${gb(vram)} GB）`),
         reasonEn: `Full GPU offload (needs ${gb(needMB)} GB of ${gb(vram)} GB available)`,
         estGpuLayers: input.blockCount ?? null,
-        estMinutesPerAudioHour: estMinutes,
-        detail,
+        ...base,
       };
     }
     return {
@@ -269,8 +367,7 @@ export function computeFit(input: FitInput, hw: HardwareInfo): FitResult {
       reasonZh: `显存刚好卡在临界（需 ${gb(needMB)} GB / 可用 ${gb(vram)} GB），建议选低一档量化`,
       reasonEn: `Borderline VRAM fit (${gb(needMB)} GB of ${gb(vram)} GB) — consider a smaller quantization`,
       estGpuLayers: input.blockCount ?? null,
-      estMinutesPerAudioHour: estMinutes,
-      detail,
+      ...base,
     };
   }
 
@@ -282,11 +379,10 @@ export function computeFit(input: FitInput, hw: HardwareInfo): FitResult {
       return {
         tier: 'recommended',
         reasonCode: 'cpu_ok',
-        reasonZh: `可在 CPU 上运行（需 ${gb(needMB)} GB / 可用 ${gb(ram)} GB）`,
+        reasonZh: withSpeed(`可在 CPU 上运行（需 ${gb(needMB)} GB / 可用 ${gb(ram)} GB）`),
         reasonEn: `Runs on CPU (needs ${gb(needMB)} GB of ${gb(ram)} GB)`,
         estGpuLayers: 0,
-        estMinutesPerAudioHour: estMinutes,
-        detail,
+        ...base,
       };
     }
   }
@@ -306,8 +402,7 @@ export function computeFit(input: FitInput, hw: HardwareInfo): FitResult {
         layers != null && input.blockCount ? ` (~${layers}/${input.blockCount} layers on GPU)` : ''
       }`,
       estGpuLayers: layers,
-      estMinutesPerAudioHour: estMinutes,
-      detail,
+      ...base,
     };
   }
 
@@ -315,11 +410,10 @@ export function computeFit(input: FitInput, hw: HardwareInfo): FitResult {
   return {
     tier: 'slow_cpu',
     reasonCode: 'cpu_only_slow',
-    reasonZh: `可以运行但很慢（纯 CPU，需 ${gb(needMB)} GB / 可用 ${gb(ram)} GB）`,
+    reasonZh: withSpeed(`可以运行但很慢（纯 CPU，需 ${gb(needMB)} GB / 可用 ${gb(ram)} GB）`),
     reasonEn: `Runs on CPU only, slow (needs ${gb(needMB)} GB of ${gb(ram)} GB)`,
     estGpuLayers: 0,
-    estMinutesPerAudioHour: estMinutes,
-    detail,
+    ...base,
   };
 }
 

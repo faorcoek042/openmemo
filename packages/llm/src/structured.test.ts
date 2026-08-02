@@ -1,0 +1,86 @@
+/**
+ * `extractJson` 的鲁棒性测试。
+ *
+ * 这些用例全部来自 **T-023 真跑本地 llama-server 时实际遇到的坏输出形态**，
+ * 不是想象出来的。
+ */
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+
+import { LlmError } from './errors.js';
+import { extractJson } from './structured.js';
+
+describe('extractJson', () => {
+  it('直接的合法 JSON', () => {
+    assert.deepEqual(extractJson('{"a":1}'), { a: 1 });
+    assert.deepEqual(extractJson('  \n {"a":[1,2]} \n '), { a: [1, 2] });
+  });
+
+  it('**剥 markdown 围栏** —— json_object 模式下的实测坏输出', () => {
+    // 实测：llama-server + Qwen3-0.6B 在 response_format:json_object 下返回这个形态
+    assert.deepEqual(extractJson('```json\n{"a": 1}\n```'), { a: 1 });
+    assert.deepEqual(extractJson('```\n{"a": 1}\n```'), { a: 1 });
+    assert.deepEqual(extractJson('好的：\n```json\n{"a":1}\n```\n以上。'), { a: 1 });
+  });
+
+  it('前后有解说文字时能捞出 JSON', () => {
+    assert.deepEqual(extractJson('这是结果 {"a":1} 希望有帮助'), { a: 1 });
+  });
+
+  it('字符串里含括号不会被截错', () => {
+    assert.deepEqual(extractJson('{"a":"}"}'), { a: '}' });
+    assert.deepEqual(extractJson('{"a":"{[}]"}'), { a: '{[}]' });
+    assert.deepEqual(extractJson('{"a":"转义\\"引号}"}'), { a: '转义"引号}' });
+  });
+
+  it('中文内容正常', () => {
+    assert.deepEqual(extractJson('{"标题":"思维导图 & 转写稿"}'), { 标题: '思维导图 & 转写稿' });
+  });
+
+  it('**截断的输出报"被截断"，而不是误导性的结构错误**', () => {
+    // 这正是 1.7B 模型 max_tokens 不够时的真实形态：
+    // 外层不闭合，但内层有一个恰好闭合的对象
+    const truncated = '{"topics":[{"title":"X","seg":[0],"points":[{"text":"Y","seg":[0]}]}';
+    assert.throws(
+      () => extractJson(truncated),
+      (err: unknown) => {
+        assert.ok(err instanceof LlmError);
+        assert.equal(err.code, 'LLM_STRUCTURED_OUTPUT_FAILED');
+        assert.match(err.message, /truncated/i, `应明确指出截断，实际：${err.message}`);
+        assert.equal(err.remediation?.action, 'increaseMaxTokens');
+        return true;
+      },
+    );
+  });
+
+  it('截断检测必须优先于内层对象扫描（顺序反了不会变红，只会误导人）', () => {
+    const truncated = '{"outer":[{"inner":1}';
+    let msg = '';
+    try {
+      extractJson(truncated);
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    assert.match(msg, /truncated/i);
+    assert.doesNotMatch(msg, /cannot extract/i);
+  });
+
+  it('数组截断同样被识别', () => {
+    assert.throws(() => extractJson('[{"a":1},{"b":2}'), /truncated/i);
+  });
+
+  it('完全不是 JSON 时报"没有合法 JSON"（与截断区分开）', () => {
+    assert.throws(
+      () => extractJson('抱歉，我无法完成这个请求。'),
+      (err: unknown) => {
+        assert.ok(err instanceof LlmError);
+        assert.match(err.message, /cannot extract JSON/i);
+        return true;
+      },
+    );
+  });
+
+  it('闭合但多余的尾随内容不影响', () => {
+    assert.deepEqual(extractJson('{"a":1}\n\n补充说明：无'), { a: 1 });
+  });
+});

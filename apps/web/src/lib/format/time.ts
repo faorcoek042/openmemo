@@ -69,3 +69,19 @@ export function approxEta(seconds: number | null | undefined, locale: string): s
   const hr = Math.round(seconds / 3600);
   return zh ? `约 ${hr} 小时` : `about ${hr} hr`;
 }
+
+/**
+ * 估算"离线重跑"要多久（F3 两阶段的预告文案用）。
+ *
+ * ⚠️ 这不是锦上添花的文案 —— `gpu-runtime` 实测：中文必须用 `large-v3-turbo`，
+ * 它在 **CPU 上只有 2.7x 实时**，也就是 **1 小时录音要跑 22 分钟**。
+ * 不给时间预期，用户会以为卡死了然后去关窗口。
+ *
+ * @param audioMs 音频时长
+ * @param speedRatio 相对实时的倍数（2.7 表示 2.7 倍速）。为 null 时返回 null —— 
+ *        **宁可不显示，也不编一个数字**（ADR-004 决策 3 的项目标准）。
+ */
+export function estimateRerunMs(audioMs: number, speedRatio: number | null): number | null {
+  if (!speedRatio || speedRatio <= 0 || !Number.isFinite(audioMs)) return null;
+  return Math.round(audioMs / speedRatio);
+}

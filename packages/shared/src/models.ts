@@ -11,6 +11,7 @@ import type {
   GgufMetadata,
   LicenseInfo,
   ProviderId,
+  ReferenceBenchmark,
   ResourceRequirements,
 } from './artifacts.js';
 
@@ -80,6 +81,23 @@ export interface ModelEntry {
   /** Free-form catalog tags, e.g. ["recommended-default", "multilingual"]. */
   tags: string[];
 
+  /**
+   * Languages for which this model is NOT recommended (ADR-011 decision 1).
+   *
+   * Not a capability flag — the model still runs. It records that we have MEASURED the
+   * output to be unacceptable for that language. For Whisper `base` on Chinese, the
+   * errors are not "slightly worse", they are wrong words:
+   *   维基百科 → 危机摆科, 华尔街日报 → 花耳街日报, 谷歌 → 古歌,
+   *   迈克尔杰克逊逝世 → 麦克尔结克训试事
+   * (`Zh-Twitter.ogg`, 337 s; `large-v3-turbo-q5_0` gets all of these right.)
+   *
+   * The UI filters these out BY DEFAULT when the audio/UI language matches, and says why.
+   * It must remain possible to unhide them: `base` is still a sensible choice for English
+   * on a weak machine, so removing the model outright would be an over-correction.
+   * The problem is the default, not the capability.
+   */
+  notRecommendedFor?: string[];
+
   files: ArtifactFile[];
   /** Sum of non-optional file sizes, in bytes. */
   totalSizeBytes: number;
@@ -99,6 +117,12 @@ export interface ModelEntry {
    * only by a real measurement on this machine.
    */
   benchmark: BenchmarkResult | null;
+
+  /**
+   * Speed measured by us on a reference machine. Distinct from `benchmark`
+   * (= measured on the user's machine). Always labelled as a reference figure in the UI.
+   */
+  referenceBenchmark?: ReferenceBenchmark | null;
 
   /** Set by the catalog build, used for staleness display. */
   catalogVersion: string;

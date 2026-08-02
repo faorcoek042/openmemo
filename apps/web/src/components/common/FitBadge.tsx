@@ -76,17 +76,28 @@ export function FitBadge({ fitness, showReason = false, className }: FitBadgePro
 /**
  * 预计耗时。
  *
- * ⚠️ `estMinutesPerAudioHour` 为 `null` 表示**尚未在本机实测**。
- * ADR-004 决策 3：宁可显示"未测量"，也不显示编造或外推的数字。
- * 有值时也标注"估算"——RTF 外推系数至今未标定（D-03 §11 第 4 项）。
+ * ADR-004 决策 3：宁可显示"未测量"，也不显示编造的数字。
+ * 但**真实测量 + 诚实出处**是允许的，所以这里区分三种来源，措辞各不相同：
+ *   - `measured_here`      本机实测 → 说"本机实测"
+ *   - `reference_machine`  我们在参考机上实测 → 必须说明"参考机"，不能冒充本机数据
+ *   - `none`               没有任何测量 → 说"未测量"，不外推
+ *
+ * ADR-011 决策 2 让这一栏变得重要：中文必须用 large-v3-turbo，而它在 CPU 上
+ * 1 小时录音要跑 22 分钟。"装得下"和"用得了"是两件事，只答前者会误导用户。
  */
 export function FitEta({ fitness }: { fitness: FitResult }) {
-  if (fitness.estMinutesPerAudioHour == null) {
+  const mins = fitness.estMinutesPerAudioHour;
+  if (mins == null || fitness.speedSource === 'none') {
     return <span className="text-xs text-ink-muted">速度未测量</span>;
   }
+  const slow = fitness.speedTier === 'slow' || fitness.speedTier === 'very_slow';
   return (
-    <span className="text-xs text-ink-secondary">
-      估算：1 小时音频约 {Math.round(fitness.estMinutesPerAudioHour)} 分钟
+    <span className={cn('text-xs', slow ? 'text-warning' : 'text-ink-secondary')}>
+      {slow ? <AlertTriangle className="mr-0.5 inline size-3" aria-hidden /> : null}
+      1 小时音频约 {Math.round(mins)} 分钟
+      <span className="text-ink-muted">
+        {fitness.speedSource === 'measured_here' ? '（本机实测）' : '（参考机实测，仅供参考）'}
+      </span>
     </span>
   );
 }

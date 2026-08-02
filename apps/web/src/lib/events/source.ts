@@ -22,7 +22,7 @@
 
 import { KEEPALIVE_INTERVAL_MS } from '@openmemo/shared';
 import { bus } from './bus';
-import { ALL_SSE_EVENT_TYPES, classOf } from './types';
+import { ALL_SSE_EVENT_TYPES, isSequenced } from './types';
 import { useConnectionStore } from '../stores/connection.store';
 
 const CHANNEL = 'openmemo-sse';
@@ -80,7 +80,7 @@ function dispatch(type: string, payload: unknown): void {
 
   if (type === 'keepalive') return; // 只用于喂看门狗，不派发
 
-  if (classOf(type) === 'data' && payload && typeof payload === 'object') {
+  if (isSequenced(type) && payload && typeof payload === 'object') {
     const p = payload as Record<string, unknown>;
     const seq = typeof p.seq === 'number' ? p.seq : null;
     if (seq !== null) {

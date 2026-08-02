@@ -122,10 +122,43 @@ NTFS ADS（`file.txt:evil`）、Unicode 同形字、尾随空格/点等一整族
 必须接受路径的少数入口（"从磁盘导入"）走 `assertWithinRoot`：
 **先 `realpath` 再比较** —— 只做 `path.resolve` 的词法比较会被 symlink 骗过（有对应测试）。
 
-### 2.2 媒体协议白名单
+### 2.2 媒体协议白名单 —— 已用真实攻击验证（T-026）
 
 ffmpeg 不只是转码器，它是一个**协议客户端**，认识 `concat:`、`subfile:`、`file:` 等。
 一个精心构造的 HLS 播放列表可以让它**读取本地任意文件并拼进输出**。
+
+**这不是理论风险，实测确认过。** 构造了引用 `file:///tmp/attack/secret.ts` 的恶意播放列表：
+
+```
+对照组（允许 file 协议）：
+  [in#0] Opening 'file:///tmp/attack/secret.ts' for reading      ← 攻击成立，真的读了本地文件
+
+我们的白名单：
+  [file @ …] Protocol 'file' not on whitelist 'http,https,tls,tcp,crypto,httpproxy'!
+```
+
+三种变体（`file:` / `concat:` / `subfile:`）全部被挡。
+
+> ⚠️ **测试方法论教训**：第一次用 `.txt` 金丝雀，攻击"失败"了——但挡住它的是 ffmpeg 8.x 自己的
+> `allowed_segment_extensions`，**不是我们的白名单**。换成 `.ts` 扩展名才隔离出真正起作用的层。
+> 与 ADR-008 记录的"假绿灯"同源：**必须确认"挡住了"是被哪一层挡住的。**
+
+#### ⚠️ 由此查出并修复的一个真实漏洞（本地播放列表导入）
+
+远程路径安全，**本地路径当时不安全**。`LocalFileSource` 的扩展名白名单包含 `.m3u8`，
+而本地分支必须传 `-protocol_whitelist file`（否则普通本地媒体解不了）。实测：
+
+```
+$ ffmpeg -protocol_whitelist file -i /tmp/attack/local_evil.m3u8 …
+[in#0] Opening 'file:///tmp/attack/secret.ts' for reading      ← 越过了受管根目录
+```
+
+**协议白名单在这里救不了我们** —— 播放列表是通过一个我们**故意启用**的协议读本地文件，
+直接绕过 `assertWithinRoot` 的保证。攻击路径：用户下载/收到恶意 `.m3u8`，当作本地媒体导入。
+
+**已修复**：① 本地导入拒绝一切播放列表扩展名（`.m3u8 .m3u .pls .xspf .asx .wpl`）；
+② 双保险——`ffprobe` 的 `format_name` 命中 `hls|applehttp|m3u` 也拒绝（防改名绕过）；
+③ `match()` 对播放列表返回 0。**远程 HLS 不受影响**（白名单里没有 `file`，已验证能挡住同一攻击）。
 
 - 处理本地文件：`-protocol_whitelist file`
 - 处理远程/HLS：`-protocol_whitelist https,tls,tcp,crypto,httpproxy` —— **不含 `file`**

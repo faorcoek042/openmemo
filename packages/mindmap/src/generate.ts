@@ -123,7 +123,9 @@ const SYSTEM_PROMPT = `你是一个专业的会议纪要与知识整理助手。
 3. 绝对不要输出时间戳。时间由系统根据段落编号自动计算。
 4. title 用简洁的名词短语（不超过 20 字），不要写成句子。
 5. points 是该主题下的要点，每条同样要给 seg。
-6. 用**中文**输出 title 和 text，即使原文是英文。`;
+6. 用**中文**输出 title 和 text，即使原文是英文。
+7. **seg 最多列 3 个编号**，只列最能代表该条内容的那几段。
+   列一大串编号既没用（F5 要精确跳转）又会把输出撑爆。`;
 
 function buildUserPrompt(
   segments: readonly TranscriptSegment[],
@@ -276,7 +278,7 @@ export async function generateMindMap(
         ],
         schema: OUTLINE_SCHEMA as unknown as { name: string; schema: Record<string, unknown> },
         temperature: 0.2,
-        maxTokens: 2048,
+        maxTokens: 4096,
         ...(opts.signal ? { signal: opts.signal } : {}),
       },
       {

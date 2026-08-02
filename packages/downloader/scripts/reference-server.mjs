@@ -44,7 +44,7 @@ const { ArtifactStore } = await import(path.join(DIST, 'store.js'));
 const { DownloadQueue } = await import(path.join(DIST, 'queue.js'));
 const { install } = await import(path.join(DIST, 'installer.js'));
 const { probeAll } = await import(path.join(DIST, 'probe.js'));
-const { computeFit, makeEvent, topics, formatSseFrame, formatSseRetry, ulid } = await import(
+const { computeFit, makeEvent, topics, formatSseFrame, formatSseRetry } = await import(
   path.join(SHARED, 'index.js')
 );
 
@@ -161,7 +161,7 @@ async function persistActive() {
 
 /* -------------------------------- catalog --------------------------------- */
 
-async function buildCatalog(roleFilter) {
+async function buildCatalog(roleFilter, targetLanguage) {
   const installed = await listInstalled();
   const installedIds = new Set(installed.map((m) => m.id));
   const groups = new Map();
@@ -179,6 +179,11 @@ async function buildCatalog(roleFilter) {
         paramsB: m.gguf ? undefined : undefined,
         blockCount: m.gguf?.blockCount,
         benchmarkRtf: m.benchmark?.rtf ?? null,
+        // ADR-011: reference speed + measured language suitability
+        referenceRtf: m.referenceBenchmark?.rtf ?? null,
+        referenceBackend: m.referenceBenchmark?.backend ?? null,
+        notRecommendedFor: m.notRecommendedFor ?? [],
+        targetLanguage,
       },
       hardware,
     );
@@ -456,7 +461,15 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/models/catalog') {
-      return json(res, 200, await buildCatalog(url.searchParams.get('role') ?? 'all'));
+      return json(
+        res,
+        200,
+        await buildCatalog(
+          url.searchParams.get('role') ?? 'all',
+          // 'lang' is the language the user intends to transcribe (ADR-011 decision 1)
+          url.searchParams.get('lang'),
+        ),
+      );
     }
 
     if (p === '/api/models/installed') {

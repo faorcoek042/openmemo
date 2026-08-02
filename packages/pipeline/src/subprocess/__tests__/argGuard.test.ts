@@ -18,6 +18,9 @@ import {
   assertWithinRoot,
   buildArgv,
   isPrivateOrReservedHost,
+  hasAllowedMediaExtension,
+  isLocalImportSafeExtension,
+  isPlaylistExtension,
   isSafeExecutable,
   safePrompt,
   validateHttpUrl,
@@ -248,5 +251,34 @@ describe('L7 (§8.5) — path traversal', () => {
     const r = await assertWithinRoot(root, 'escape/passwd');
     // If this ever starts passing, someone replaced realpath with path.resolve.
     assertRejected(r, 'path_escape', 'symlink escape');
+  });
+});
+
+describe('L4 — playlist indirection (measured attack, T-026)', () => {
+  it('refuses playlist extensions for LOCAL import', () => {
+    /*
+     * A local .m3u8 whose segment URI is `file:///tmp/secret.ts` makes ffmpeg open that
+     * path — verified in a real run:
+     *     Opening 'file:///tmp/attack/secret.ts' for reading
+     * The local branch must pass `-protocol_whitelist file` for ordinary media to
+     * decode, so the protocol whitelist cannot stop this. Refusing local playlist
+     * imports is what closes it.
+     */
+    for (const p of ['/tmp/evil.m3u8', '/tmp/evil.m3u', '/tmp/x.pls', '/tmp/x.xspf', '/tmp/x.asx']) {
+      assert.equal(isPlaylistExtension(p), true, `${p} must be recognised as a playlist`);
+      assert.equal(isLocalImportSafeExtension(p), false, `${p} must not be locally importable`);
+    }
+  });
+
+  it('still allows ordinary media for local import', () => {
+    for (const p of ['/tmp/a.mp3', '/tmp/a.wav', '/tmp/a.mp4', '/tmp/a.flac']) {
+      assert.equal(isLocalImportSafeExtension(p), true, `${p} should remain importable`);
+    }
+  });
+
+  it('keeps .m3u8 in the general media allowlist (remote HLS must still work)', () => {
+    // Remote HLS uses a protocol whitelist WITHOUT `file`, which was verified to block
+    // the same attack. Only LOCAL import is refused.
+    assert.equal(hasAllowedMediaExtension('/x/stream.m3u8'), true);
   });
 });

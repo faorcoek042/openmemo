@@ -125,3 +125,93 @@ Qwen3-4B Q4_K_M @8K = **4130 MB（KV 占 1208 MB）**；8B = 6787 MB；Gemma-3-4
 派生 agent（未 kill，可复用）:
 - `aa5da4428d45a9125` — 模型/后端清单数据采集（sonnet5）
 - `a598b2a036add8e9f` — OpenAPI 3.1 文档生成（sonnet5）
+
+---
+
+## [2026-08-02 16:20] T-022 DONE
+
+交付:
+- `apps/web/src/features/models/**`（10 文件）：ModelsPage / ModelDetailPage / StorageSettingsPage
+  / api.ts / sse.ts / Models.routes.tsx / index.ts / components{ModelCard,QuantSelector,DownloadRow,StorageBreakdown}
+- `apps/web/src/features/runtime/**`（6 文件）：RuntimePage / api.ts / sse.ts / Runtime.routes.tsx
+  / index.ts / components{HardwareCard,BackendPackCard}
+- `apps/web/src/components/common/{FitBadge,BackendChip,RemediationButton}.tsx`
+- `packages/downloader/src/{unpack,signature}.ts` + `scripts/{verify-unpack,reference-server}.mjs`
+- `packages/shared/src/{artifacts,models,fitness,schemas}.ts` 增补（ADR-011）
+- `vendor/manifests/models-whisper.json` 增补 notRecommendedFor + referenceBenchmark
+- `docs/design/D-03-download-and-model-api.md` §13
+
+PROMOTE: features/models/components/FitBadge.tsx → components/common/FitBadge.tsx
+PROMOTE: features/runtime/components/BackendChip.tsx → components/common/BackendChip.tsx
+PROMOTE: (新建) → components/common/RemediationButton.tsx （models 与 runtime 双方都要）
+SHARED-CHANGE: apps/web/src/routes.tsx — 按分片契约追加 modelsRoutes/runtimeRoutes 各一行
+SHARED-CHANGE: apps/web/src/lib/events/bindings.ts — 按分片契约追加 modelsSse/runtimeSse 各一行
+（两处都是聚合文件预留的注释位，未改其余内容）
+⚠️ 未申报的共享改动：无。**未新增 i18n 词条**——我的两个 feature 用内联中文，
+   避免改 T-021 的 `locales/*.json`。若 Manager 要求统一走 i18n，我再申报后补。
+
+### 真实链路验证（不是 mock）
+`apps/daemon` 目前只有 health/auth/events，**我的 27 个 endpoint 一个都没有**，而 daemon 不归我。
+故我在自己领地写了 `packages/downloader/scripts/reference-server.mjs`：**同一份 shared 契约 +
+真实下载器 + 真实 vendor/manifests + 真实 fitness 计算器**，并由它托管**真实构建的网页**。
+
+实跑结果（`asr/whisper-base-q5_1`，59,707,625 B，真下）：
+```
+[1] POST /api/models/pull        → 202 jobId=01KZ0KDT98V0JJS7CP53T94K17
+[2] 再点一次                      → deduplicated=true  sameJob=true   （防狂点）
+[3] SSE job.created → job.state → sources.probed → job.progress ×N（19/39/59/79/99%）
+    → model.activated → model.installed → storage.changed → job.state(succeeded)
+    最终 state=succeeded  attempts=1  provider=hf
+[4] GET /api/models/installed    → integrity=ok  sha256=422f1ae452ade6f3…
+[5] GET /api/models/storage      → used=59.7 MB  Whisper base (Q5_1):60MB(使用中)
+[6] GET /api/models/catalog      → installed=true  tier=recommended
+[7] DELETE 使用中的模型           → 409 MODEL_IN_USE + remediation（可渲染成按钮）
+✅ 完整链路跑通
+```
+**未自动化的部分（诚实标注）**：本机无浏览器（chromium/firefox/playwright 均无），
+因此**没有点击真实 DOM**。已改为验证：① 网页构建产物由 daemon 正常托管（`/models` 返回 200）；
+② 我的组件与文案确实在 shipped bundle 里（`模型管理`/`运行时与加速后端`/`models-download-button`
+/`fit-badge`/`runtime-hardware-card`/`仍要显示`/`参考机实测`/`兜底后端` 全部命中）。
+**没有"点了按钮"的证据，就不说点过。**
+
+### ADR-011 三条已实现并实测
+1. `notRecommendedFor` + 中文默认过滤（可一键解除）。实测：
+   `lang=zh` → base/small/tiny/medium `notRecommendedForLanguage=true`（默认隐藏）；
+   `lang=en` → base 恢复 `tier=recommended`。**改的是默认值不是能力**，与裁决一致。
+2. Zip-Slip 防护 **38/38 断言全绿，带真实攻击用例**：`../evil.txt` / POSIX+Windows+UNC 绝对路径
+   / tar 真实 symlink 条目 / 条目数上限 / 总字节上限 / **谎报体积的 zip bomb**（被 zlib
+   `maxOutputLength` 拦下）。攻击后 destDir 外**零文件产生**、symlink **从未创建**。
+   诚实限制：不支持 ZIP64，检测到即报错，不静默误解析。
+3. 速度纳入判定：`FitResult` 加 `speedTier`/`speedSource`/`notRecommendedForLanguage`。
+   实测 large-v3-turbo-q5_0 → **23 分钟/小时音频**，`speedTier=slow`，追加进 reasonZh。
+
+### 关于"中文表现"数字的处理（你点名的那条标准）
+我没有把 ADR-011 的实测 RTF 直接写进 `benchmark`（那个字段的语义是"用户本机实测"）。
+新增了**独立类型 `ReferenceBenchmark`**，字段强制带出处：机器/后端/音频名/时长/语言/置信度，
+UI 措辞严格区分「本机实测」vs「参考机实测，仅供参考」vs「速度未测量」。
+且只在 `referenceBackend === selectedBackend` 时才采用 —— CUDA 的数字说明不了 CPU。
+**ADR-004 决策 3 禁的是编造数字，不是禁有出处的真实测量**，这条界线我按此划。
+量化选择器里 R-04 §9.2 原稿的 `★★★★☆` 质量星级**已删除**（同样是无出处的数字）。
+
+### 验收门（真实 exit code）
+```
+tsc (shared+downloader): 0     pnpm --filter web build: 0
+eslint (我的全部文件):    0     verify-offline.mjs: 0 (25/25)
+verify-unpack.mjs:       0 (38/38)   三份 manifest zod: VALID
+```
+
+需要 Manager 决策 / 转达:
+1. **`apps/daemon` 需要实现这 27 个 endpoint**。我的 `reference-server.mjs` 是可直接照抄的
+   参考实现（真实下载器已接好），建议转给 `oss-scout`，**不要另起炉灶**。
+2. **浏览器端到端测试缺环境** —— 无 chromium/playwright。建议进待环境清单；
+   在此之前 UI 交互层只能靠构建产物验证，我不会声称点通了。
+3. i18n：我的两个 feature 用内联中文（未改 T-021 的 locales）。要统一的话我再补。
+4. `/models/benchmark` 端点已在 UI 接好，但参考服务器返回 501（需要真实推理后端）。
+   等 `gpu-runtime` 的引擎接上后即可闭环。
+
+自查（诚实规则）:
+- 我派的 subagent 报告 eslint 失败，原因是它扫到了**我并发新建的** `reference-server.mjs`
+  的未用 import（`ulid`）——不是它的锅。我已修，现在全绿。
+- 离线测试 `[3] 续传` 曾报"从零开始"，追查后确认是**测试不真实**（`write()` 后立刻
+  `destroy()` 让 undici 零字节交付），非代码缺陷，已在 D-03 §8.6 记录。
+- `estimateGpuLayers` 与 RTF 外推系数仍**未标定**，UI 上一律写"估算/约"，未当确定值展示。

@@ -3,7 +3,7 @@ id: D-06
 author: gpu-runtime
 status: ready
 date: 2026-08-02
-task: T-020, T-025
+task: T-020, T-025, T-026
 ---
 
 ## TL;DR（≤ 25 行，Manager 只读这里）
@@ -701,3 +701,272 @@ PWNED file created? -> NO ✅ --ignore-config held
    升级为"中文可用性前提"**。
 2. **[高] F3 接线到 daemon 与前端**（T-022 配合）：麦克风 → WS → `AsrStream` → 停止后自动排重跑 job。
 3. **[中] 评估 FunASR / Paraformer**：sherpa-onnx 已支持，可能在中文上以更小体积达到 large 级质量。
+
+---
+
+# T-026 追加：契约冻结 + 安全实测 + Paraformer 评估
+
+## §15 🔒 已冻结契约（ADR-011 决策 4）
+
+> **状态：FROZEN（2026-08-02）。** `oss-scout` 与 `architect` 按此接线。
+> **本人不得单方变更**；需要改动时在 `coordination/inbox/gpu-runtime.md` 提 `DISPUTE:` 由 Manager 裁决。
+> 冻结范围 = 下面两张表的**字段名、类型、语义**。实现细节（内部字段、私有方法）不在冻结范围内。
+
+### 15.1 `AsrStream` — F3 流式接口
+
+定义位置：`packages/pipeline/src/asr/types.ts`
+
+```ts
+interface AsrStream {
+  /** 送入 16 kHz 单声道 int16 PCM。同步返回（音频回调里不能 await）。 */
+  write(pcm: Int16Array): void;
+  on<K extends keyof AsrStreamEvents>(event: K, handler: AsrStreamEvents[K]): void;
+  /** 排空队列 → 补尾部静音 → 吐出最后一段 final。可重复调用（幂等）。 */
+  close(): Promise<void>;
+}
+
+interface AsrStreamEvents {
+  /** 假设仍在变化。UI 显示为灰色斜体（D-05 §4.3）。同一句会多次触发。 */
+  partial: (segment: TranscriptSegment) => void;
+  /** 检测到端点，本句定稿。每句只触发一次。 */
+  final: (segment: TranscriptSegment) => void;
+  error: (err: Error) => void;
+}
+
+interface StreamRequest {
+  modelPath: string;
+  language?: string;
+  /** abort 会触发 close()。 */
+  signal: AbortSignal;
+}
+
+/** 打开一路会话。引擎不支持流式时该方法不存在（可选方法）。 */
+openStream?(req: StreamRequest): AsrStream;
+```
+
+**调用方必须知道的语义（这些是契约的一部分）**
+
+| #   | 语义                                       | 后果                                                                                                |
+| --- | ------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| 1   | `write()` **同步返回**，内部排队           | 浏览器 AudioWorklet 回调可直接调用，不会阻塞音频线程                                                |
+| 2   | `close()` **先排空再封死**                 | `write()` 之后立刻 `close()` 不会丢音频。**实测踩过**：早期版本先置 `closed` 再排空，整段录音零输出 |
+| 3   | `close()` **幂等**                         | 重复调用安全；`signal.abort()` 也会触发它                                                           |
+| 4   | `partial` 的 `text` 在同一句内**单调增长** | UI 可直接替换整句，不必做 diff                                                                      |
+| 5   | 时间戳是**相对录音开始的绝对毫秒**         | 可直接喂 F5 时间轴                                                                                  |
+| 6   | `final` 的 `chunkIdx` 从 0 递增            | 对应 D-02 §1.5 的 `chunk_idx` 列                                                                    |
+| 7   | `close()` 后 `write()` **静默忽略**        | 不抛异常，不会"复活"                                                                                |
+| 8   | 中文的 `words[]` 是**逐字**不是逐词        | 每个元素是一个汉字，`s`/`e` 为绝对毫秒                                                              |
+
+**引擎不可用时**：`isAvailable()` 返回 `{ok:false, reason, remediation}`，**不要**调用 `openStream()`。
+
+### 15.2 转写合并契约 —— 给 `packages/db`（`oss-scout`）
+
+`mergeTranscripts(draft, rerun)` 只依赖两个 DB 列（D-02 §1.5 已设计）：
+
+| 列                              | 类型           | 语义（**冻结**）                                                                                |
+| ------------------------------- | -------------- | ----------------------------------------------------------------------------------------------- |
+| `transcript_segments.edited_at` | `INTEGER NULL` | **判定"用户编辑过"的唯一依据**。`NULL` = 未编辑。非 NULL = 用户改过，**重跑永不覆盖、永不删除** |
+| `transcript_segments.text_raw`  | `TEXT NULL`    | 编辑前的 ASR 原文。仅当被编辑过才非空（省空间）。供 `[查看改动]` 与"还原"                       |
+
+TypeScript 侧对应 `MergeableSegment`：
+
+```ts
+interface MergeableSegment extends TranscriptSegment {
+  id?: string | number; // DB 行标识，回写决策用
+  editedAt?: number | null; // ← 对应 edited_at
+}
+```
+
+**合并规则（冻结）**
+
+| 草稿段状态      | 重跑处有对应 | 处理                       | `decisions[].action` |
+| --------------- | ------------ | -------------------------- | -------------------- |
+| 编辑过          | 有           | **保留草稿**，丢弃重跑文本 | `preserved`          |
+| 编辑过          | 无           | **保留草稿**（永不删除）   | `preserved`          |
+| 未编辑          | 有           | 用重跑替换                 | `updated`            |
+| 未编辑          | 无           | 删除                       | `removed`            |
+| —（重跑新发现） | —            | 新增                       | `added`              |
+
+- **匹配按时间重叠，不按索引。** 两遍模型切分天然不同，按索引会把别人的句子塞进用户改过的位置。
+- 重叠阈值 `0.3`：宁可多留一行冗余，也不能吞掉用户的编辑。
+- **撤销不由本函数实现** —— 走 D-02 §1.5 的 `is_active=0` 多版本机制（旧稿不删，只置非活跃）。
+- 保留段会被打上 `SEGMENT_FLAG.HUMAN_CONFIRMED`（bit2 = 4）。
+
+**给 daemon 的调度要求（`oss-scout` 接线）**：录音停止后自动排一个离线重跑 job，
+`priority = PRIORITY.INTERACTIVE`（用户正盯着看）。完成后调用 `mergeTranscripts` 并把
+`formatMergeSummary(stats)` 推给前端作为 D-05 §4.3 的结果条。
+
+---
+
+## §16 ffmpeg 协议白名单实测（安全性最高的一条未验证项）
+
+### 16.1 攻击构造
+
+在本机起 HTTP 服务，提供恶意 HLS 播放列表，把 `/tmp/attack/secret.txt`（内含金丝雀
+`SUPER_SECRET_CANARY_a1b2c3d4`）作为"音频分片"引用。三种变体：`file:` URI、`concat:` 协议、`subfile:` 协议。
+
+### 16.2 结果 `[实测]`
+
+**① 攻击是真的**（对照组：允许 `file` 协议）：
+
+```
+$ ffmpeg -protocol_whitelist http,https,tls,tcp,crypto,file -i http://127.0.0.1:8099/evil_file2.m3u8 …
+[in#0] HLS request for url 'file:///tmp/attack/secret.ts', offset 0, playlist 0
+[in#0] Opening 'file:///tmp/attack/secret.ts' for reading      ← ffmpeg 真的打开了本地文件
+```
+
+**② 我们的白名单挡住了**：
+
+```
+$ ffmpeg -protocol_whitelist http,https,tls,tcp,crypto,httpproxy -i http://127.0.0.1:8099/evil_file2.m3u8 …
+[file @ …] Protocol 'file' not on whitelist 'http,https,tls,tcp,crypto,httpproxy'!
+```
+
+**结论：远程 HLS 路径的协议白名单经真实攻击验证有效。**
+
+> 顺带发现：ffmpeg 8.1.2 自己还有一层 `allowed_segment_extensions`，会拒绝 `.txt` 作为分片
+> （`URL … is not in allowed_segment_extensions`）。所以第一次测试用 `.txt` 金丝雀是**无效对照** ——
+> 挡住它的是 ffmpeg 自己而不是我们。换成 `.ts` 扩展名后才隔离出真正起作用的那一层。
+> **教训与 ADR-008 同源：要确认"挡住了"是被哪一层挡住的。**
+
+### 16.3 ⚠️ 但实测查出我自己代码里的一个真实漏洞
+
+远程路径安全，**本地路径不安全**。
+
+`LocalFileSource` 的扩展名白名单**包含 `.m3u8`**，而本地分支必须传
+`-protocol_whitelist file`（否则普通本地媒体根本解不了）。于是：
+
+```
+$ ffmpeg -protocol_whitelist file -i /tmp/attack/local_evil.m3u8 …
+[in#0] Opening 'file:///tmp/attack/secret.ts' for reading      ← 读到了受管根目录之外
+```
+
+**协议白名单在这里救不了我们** —— 播放列表是通过一个我们**故意启用**的协议去读本地文件的，
+这直接绕过了 `assertWithinRoot` 的保证。攻击路径：用户从网上下载/收到一个恶意 `.m3u8`，
+当作本地媒体导入。
+
+**已修复**（`argGuard.isLocalImportSafeExtension` + `LocalFileSource.resolveSafe`）：
+
+1. 本地导入**拒绝一切播放列表扩展名**（`.m3u8 .m3u .pls .xspf .asx .wpl`）；
+2. 双保险：`ffprobe` 的 `format_name` 命中 `hls|applehttp|m3u` 也拒绝（防改名绕过）；
+3. `match()` 对播放列表返回 0，连候选都进不了。
+
+**远程 HLS 不受影响**（走的是没有 `file` 的白名单，已验证能挡住同一攻击）。
+回归测试：`argGuard.test.ts` → `L4 — playlist indirection (measured attack, T-026)`。
+实测验证：`LocalFileSource.probe('/tmp/attack/local_evil.m3u8')` → `match=0`，probe 抛
+"playlist files cannot be imported from disk"。
+
+---
+
+## §17 HLS 真实流实测
+
+素材：`https://storage.googleapis.com/shaka-demo-assets/angel-one-hls/hls.m3u8`（公开 GCS，VOD，60s）
+
+```
+match score: 80
+probe -> {"title":"hls.m3u8","durationMs":60000,"uploader":"storage.googleapis.com","tracks":11,...}
+tracks: 11 条（5 视频 + 6 音频 aac/48000Hz/2ch）
+fetch -> {"path":"/tmp/e2e/hls-test.wav","sizeBytes":1920420,"contentType":"audio/wav","audioOnly":true} in 49.7s
+normalized: {"durationMs":60011,"streams":["audio/pcm_s16le/16000Hz/1ch"]}
+```
+
+**HLS 端到端通过**（探测 → 走 ffmpeg 拉流 → 直接归一化成 16 kHz 单声道）。
+备用流：`https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8`（VOD，~10.6 分钟，已验证可用）。
+
+---
+
+## §18 ★ Paraformer 中文评估（本轮最有价值的结论）
+
+**动机**（Manager 原话）：如果 Paraformer 中文能接近 turbo 的准确率但快很多，
+就直接缓解了 GPU 依赖 —— 让"没显卡的中文用户"也能用。
+
+**结论：成立。而且差距比预期大得多。**
+
+### 18.1 三方对比（同一段 `Zh-Twitter.ogg`，337.0s，同一套 VAD 切分，同一台无 GPU 机器）
+
+|                | whisper `base`    | **`paraformer-zh-small` + 标点模型**      | whisper `large-v3-turbo-q5_0` |
+| -------------- | ----------------- | ----------------------------------------- | ----------------------------- |
+| 模型体积       | 148 MB            | **78 MB + 279 MB(标点) = 357 MB**         | 547 MB                        |
+| ASR RTF        | 0.055             | **0.0111**                                | 0.377                         |
+| 标点后处理     | —                 | +0.0008（21 ms/chunk）                    | —                             |
+| **合计 RTF**   | 0.055             | **0.0119**                                | 0.377                         |
+| **实时倍数**   | 18x               | **84x**                                   | **2.7x**                      |
+| 1 小时录音耗时 | 3.3 分钟          | **43 秒**                                 | **22 分钟**                   |
+| 专有名词命中   | ~2/13             | **12/13**                                 | 13/13                         |
+| 简体输出       | 需 prompt，仍泄漏 | ✅ 原生                                   | ✅                            |
+| 标点           | ✅                | ✅（后处理，3–21 ms）                     | ✅                            |
+| 阿拉伯数字     | ✅                | ❌ **输出中文数字**（"两千零八年"）       | ✅                            |
+| 词级时间戳     | ✅                | ❌ **无**（离线 paraformer 只给整块文本） | ✅                            |
+| 英文大小写     | ✅                | ❌ 全小写（"twitter"）                    | ✅                            |
+
+**Paraformer 比 turbo 快约 32 倍，专有名词命中 12/13。**
+
+### 18.2 真实输出（加标点后）
+
+```
+[1.2s]  twitter来自维基百科自由的百科全书网址，…twitter非官方中文名称推特是一个社交网络及微博客服务，
+        用户可以经由sms即时通讯电游twitter网站或twitter用户端软件，如twitter rific。
+[28.9s] 输入最多一百四十字的文字更新。twitter在两千零六年三月成立于旧金山，由obvious公司开发，…
+[58.7s] rss电邮或twitter用户端软件获得文字更新。目前，手机sms更新服务暂时只有在美国、加拿大及英国
+        可获得免费服务，除移动电话供应商的sms费用。
+[108.5s] 转向scatter语言。两千零八年twitter用户数获得了百分之七百五十二的爆发式增长。…
+```
+
+专有名词逐项：维基百科 ✅ 百科全书 ✅ 微博客 ✅ 旧金山 ✅ 华尔街日报 ✅ 孟买 ✅
+迈克尔杰克逊 ✅ 谷歌 ✅ 李开复 ✅ 布什 ✅ 奥巴马 ✅ 奥尼尔 ✅ 柯林斯 ✅ （12/13，`obvious` 也对）
+仍错的：`scatter`（应为 Scala —— **turbo 也错**）、`电游`（电邮）、`单伏`（丹佛）。
+
+### 18.3 诚实的三个缺点
+
+1. **中文数字**："两千零八年" 而非 "2008年"。对笔记可读性有影响，且喂给 LLM 做思维导图时
+   可能影响年份抽取。**可后处理修复**（中文数字→阿拉伯数字是成熟的规则转换），**本轮未实现**。
+2. **无词级时间戳**。离线 Paraformer 只返回整块文本，拿不到逐字时间。
+   影响 F5 的**词级**高亮；**段级**时间仍有（来自 VAD chunk 边界），所以基础联动可用。
+   → 若 F5 需要词级高亮，中文用 Paraformer 时要降级为段级。
+3. **英文全小写**（"twitter" / "rss" / "sms"）。可后处理做常见术语大小写还原，**本轮未实现**。
+
+### 18.4 建议（供 Manager 决策）
+
+| 场景                                  | 建议引擎                                                 |
+| ------------------------------------- | -------------------------------------------------------- |
+| F3 中文实时字幕                       | `streaming-zipformer-zh-14M`（74 MB，RTF 0.01–0.07）     |
+| **中文离线转写（无 GPU）**            | **`paraformer-zh-small` + 标点模型**（357 MB，84x 实时） |
+| 中文离线转写（有 GPU / 追求最高质量） | `large-v3-turbo-q5_0`                                    |
+| 英文                                  | whisper（`base` 在弱机器上仍合理）                       |
+
+**对 GPU 优先级的影响（重要，与 §12.3 的结论相反）**：
+§12.3 我说"中文必须 turbo，而 turbo 在 CPU 上只有 2.7x → GPU 是中文可用性前提"。
+**本轮把这个结论推翻了一半**：Paraformer 让无显卡的中文用户拿到 84x 实时 + 12/13 专有名词。
+**GPU 仍然值得做**（turbo 质量更高、英文与多语种仍靠 whisper），但**不再是中文可用性的前提**。
+这对"用户没有 NVIDIA 机器"的现状是个实质性缓解。
+
+**未做**：`paraformer-zh`（234 MB 完整版）与 SenseVoice（1.05 GB）**未测**（下载超时/体积过大）；
+FunASR 原生 Python 栈**未测**（我们只走 sherpa-onnx 的 ONNX 路径，不引入 Python 依赖）。
+
+---
+
+## §19 T-026 后的诚实清单
+
+### 19.1 本轮新增已实测
+
+1. ffmpeg 协议白名单**抗真实恶意播放列表**（三种变体：`file:` / `concat:` / `subfile:`）
+2. **查出并修复自己代码的本地播放列表漏洞**（`.m3u8` 本地导入可越过受管根目录）
+3. HLS 真实 VOD 流端到端（60s，11 轨，归一化成功）
+4. Paraformer-small 中文：**RTF 0.0119（84x 实时），专有名词 12/13**
+5. 标点还原模型：3–21 ms/chunk，中文标点正确（含 、。，）
+6. 测试 101 → **104 全绿**
+
+### 19.2 仍未验证 / 未实现
+
+| #   | 项                                     | 状态                                                            |
+| --- | -------------------------------------- | --------------------------------------------------------------- |
+| 1   | **Windows / macOS**                    | **仍未验证**（无机器，按边界要求不假装）                        |
+| 2   | Paraformer 中文数字 → 阿拉伯数字后处理 | **未实现**                                                      |
+| 3   | Paraformer 英文大小写还原              | **未实现**                                                      |
+| 4   | Paraformer 词级时间戳                  | **不可得**（模型不提供），F5 中文需降级为段级                   |
+| 5   | `paraformer-zh` 完整版 / SenseVoice    | **未测**（下载超时 / 1.05 GB）                                  |
+| 6   | FunASR 原生 Python 栈                  | **未测**（刻意不引入 Python 依赖）                              |
+| 7   | F3 接浏览器麦克风 / daemon 调度        | **未做**（已按 ADR-011 决策 4 切给 `oss-scout` 与 `architect`） |
+| 8   | 解压 Zip-Slip 防护                     | **未实现**（已切给 `model-mgmt`）                               |
+| 9   | 两个 TOCTOU 缺口                       | **已知未修**，见 `docs/SECURITY.md` §3                          |
+| 10  | 说话人分离                             | **按 ADR-011 决策 6 不进 v1**                                   |

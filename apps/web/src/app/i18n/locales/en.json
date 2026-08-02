@@ -63,7 +63,11 @@
     "untitled": "Untitled"
   },
   "detail": {
-    "tabs": { "summary": "Summary", "mindmap": "Mind map", "notes": "Notes" },
+    "tabs": {
+      "summary": "Summary",
+      "mindmap": "Mind map",
+      "notes": "Notes"
+    },
     "transcript": "Transcript",
     "followPlayback": "Follow playback",
     "searchInNote": "Find in transcript",
@@ -111,7 +115,14 @@
     "skipRerun": "Skip",
     "replaced": "Updated {{updated}} segments · kept your {{preserved}} edited segments",
     "viewDiff": "View changes",
-    "undoReplace": "Undo this update"
+    "undoReplace": "Undo this update",
+    "twoPhaseNoticeWithEta": "Live captions use a fast model. When you stop, a more accurate model re-listens automatically — about {{eta}}.",
+    "twoPhaseNoticeSlowHint": "Chinese uses large-v3-turbo, which runs at roughly 2.7x realtime on CPU alone. A GPU backend makes this much faster.",
+    "rerunningWithEta": "Re-transcribing with {{model}} for better accuracy — about {{eta}} left…",
+    "replacedNoCounterpart": "{{count}} of them had no matching new result and were kept as-is.",
+    "noCounterpartTag": "no matching update",
+    "mergeByTimeNote": "Merging aligns by timeline, not by segment index — the two models segment speech differently.",
+    "installBackend": "Install a backend"
   },
   "tasks": {
     "title": "Tasks",
@@ -140,15 +151,48 @@
       "title": "Not wired up yet",
       "detail": "The local service has not implemented this endpoint. The app is running in MOCK mode."
     },
-    "NOTE_NOT_FOUND": { "title": "Note not found", "detail": "It may have been deleted." },
-    "INPUT_URL_INVALID": { "title": "Invalid link", "detail": "Paste a full http or https URL." },
-    "MISSING_ASR_MODEL": { "title": "No transcription model installed", "detail": "Transcription needs a speech recognition model first.", "action": "Install" },
-    "MISSING_BACKEND": { "title": "An acceleration backend must be installed first", "detail": "", "action": "Install" },
-    "RESOURCE_DISK_FULL": { "title": "Not enough disk space", "detail": "Needs {{required}}, only {{free}} available.", "action": "Free up space" },
-    "CHECKSUM_MISMATCH": { "title": "Checksum failed — file discarded", "detail": "The download did not match the expected hash, so it was not installed.", "action": "Retry from another source" },
-    "UPSTREAM_AUTH": { "title": "This content requires sign-in", "detail": "", "action": "Import a local file instead" },
-    "CONTRACT_MISMATCH": { "title": "Frontend and local service versions differ", "detail": "Reload the page. If the mismatch persists, update the app.", "action": "Reload" },
-    "unknown": { "title": "Unknown error", "detail": "" }
+    "NOTE_NOT_FOUND": {
+      "title": "Note not found",
+      "detail": "It may have been deleted."
+    },
+    "INPUT_URL_INVALID": {
+      "title": "Invalid link",
+      "detail": "Paste a full http or https URL."
+    },
+    "MISSING_ASR_MODEL": {
+      "title": "No transcription model installed",
+      "detail": "Transcription needs a speech recognition model first.",
+      "action": "Install"
+    },
+    "MISSING_BACKEND": {
+      "title": "An acceleration backend must be installed first",
+      "detail": "",
+      "action": "Install"
+    },
+    "RESOURCE_DISK_FULL": {
+      "title": "Not enough disk space",
+      "detail": "Needs {{required}}, only {{free}} available.",
+      "action": "Free up space"
+    },
+    "CHECKSUM_MISMATCH": {
+      "title": "Checksum failed — file discarded",
+      "detail": "The download did not match the expected hash, so it was not installed.",
+      "action": "Retry from another source"
+    },
+    "UPSTREAM_AUTH": {
+      "title": "This content requires sign-in",
+      "detail": "",
+      "action": "Import a local file instead"
+    },
+    "CONTRACT_MISMATCH": {
+      "title": "Frontend and local service versions differ",
+      "detail": "Reload the page. If the mismatch persists, update the app.",
+      "action": "Reload"
+    },
+    "unknown": {
+      "title": "Unknown error",
+      "detail": ""
+    }
   },
   "common": {
     "retry": "Retry",

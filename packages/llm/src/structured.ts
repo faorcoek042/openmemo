@@ -42,6 +42,31 @@ export function extractJson(text: string): unknown {
     }
   }
 
+  /*
+   * ⚠️ 截断专项检测 —— **必须在扫描内层对象之前**（T-023 实测踩到的坑）。
+   *
+   * 输出被 max_tokens 截断时形如：
+   *   {"topics":[{"title":"X","seg":[0],"points":[{"text":"Y","seg":[0]}]}
+   * 最外层的 `{` 永远不闭合。若先跑 findBalancedJson，它会**继续往后扫**，
+   * 命中内层那个恰好闭合的 `{"text":"Y",...}` 并"成功"返回 ——
+   * 调用方于是拿到一个合法但结构不对的对象，报出 "缺少 topics 数组"，
+   * 把人往"模型不听话"的方向带，**而真正原因是 token 不够**。
+   *
+   * 这个顺序错误我自己先写反过一次，是测试逼出来的：
+   * 顺序反了不会让任何用例变红，只会让错误信息误导人。
+   */
+  const first = trimmed[0];
+  if ((first === '{' || first === '[') && !isBalanced(trimmed)) {
+    throw new LlmError(
+      'LLM_STRUCTURED_OUTPUT_FAILED',
+      `model output looks truncated (unbalanced JSON, ${trimmed.length} chars). ` +
+        `Raise maxTokens or reduce the requested output size. Tail: ${trimmed.slice(-120)}`,
+      'LLM 输出被截断（JSON 未闭合）——通常是 max_tokens 不够，或要求它输出的内容太多',
+      true,
+      { action: 'increaseMaxTokens' },
+    );
+  }
+
   const balanced = findBalancedJson(trimmed);
   if (balanced !== undefined) {
     try {
@@ -57,6 +82,34 @@ export function extractJson(text: string): unknown {
     'LLM 没有返回合法的 JSON',
     true,
   );
+}
+
+/** 整串的括号是否闭合（同样要跳过字符串字面量与转义）。 */
+function isBalanced(s: string): boolean {
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (const ch of s) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      if (inString) escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === '{' || ch === '[') stack.push(ch);
+    else if (ch === '}' || ch === ']') {
+      const open = stack.pop();
+      if (open !== (ch === '}' ? '{' : '[')) return false;
+    }
+  }
+  return stack.length === 0 && !inString;
 }
 
 /**

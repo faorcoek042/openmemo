@@ -6,7 +6,7 @@ import { Button } from '../../components/common/Button';
 import { Banner } from '../../components/common/Banner';
 import { ProgressMeter } from '../../components/common/ProgressMeter';
 import { useConnectionStore } from '../../lib/stores/connection.store';
-import { timecode } from '../../lib/format/time';
+import { estimateRerunMs, humanDuration, timecode } from '../../lib/format/time';
 import { cn } from '../../lib/utils';
 
 type Perm = 'unknown' | 'granted' | 'denied';
@@ -35,16 +35,34 @@ interface Caption {
  *    否则"重跑让结果变差了"就无解。
  */
 export default function RecorderPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [perm, setPerm] = useState<Perm>('unknown');
   const [phase, setPhase] = useState<Phase>('idle');
   const [elapsed, setElapsed] = useState(0);
   const [captions, setCaptions] = useState<Caption[]>([]);
   const [rerunProgress, setRerunProgress] = useState(0);
-  const [replaced, setReplaced] = useState<{ updated: number; preserved: number } | null>(null);
+  const [replaced, setReplaced] = useState<{
+    updated: number;
+    preserved: number;
+    /** 编辑过、但重跑结果里找不到对应位置的段数（合并按时间对齐，不保证一一对应） */
+    noCounterpart: number;
+  } | null>(null);
   const portDrift = useConnectionStore((s) => s.portDrift);
   const levelRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // 实测速度比：应当来自已装后端的自检结果（backend_installs.selftest_json）。
+  // daemon 未接通 → 用 gpu-runtime 实测的 CPU 值 2.7x，并标明这是 CPU-only 场景。
+  // 拿不到实测值时 estimateRerunMs 返回 null，UI 就**不显示预期**（宁可不说也不编）。
+  const isCpuOnly = true;
+  const speedRatio = 2.7;
+  const rerunEtaMs = estimateRerunMs(elapsed || 3_600_000, speedRatio);
+  // 用 humanDuration 而不是 approxEta：后者自带"约/about"前缀，
+  // 而文案模板里已经有"预计需要/about"，叠加会出现"about about 22 min"。
+  const rerunEtaLabel = rerunEtaMs ? humanDuration(rerunEtaMs, i18n.language) : null;
+  const rerunRemainLabel = rerunEtaMs
+    ? humanDuration((1 - rerunProgress) * rerunEtaMs, i18n.language)
+    : null;
 
   useEffect(() => {
     if (typeof navigator === 'undefined' || !navigator.permissions) return;
@@ -94,7 +112,7 @@ export default function RecorderPage() {
       if (p >= 1) {
         clearInterval(iv);
         setPhase('done');
-        setReplaced({ updated: 47, preserved: 3 });
+        setReplaced({ updated: 47, preserved: 3, noCounterpart: 1 });
       }
     }, 220);
   };
@@ -189,16 +207,37 @@ export default function RecorderPage() {
         </section>
       ) : null}
 
-      {/* ★ 保险 1：录音时就预告，不等事后解释 */}
+      {/* ★ 保险 1：录音时就预告，不等事后解释。
+          ⚠️ 必须**带时间预期**：gpu-runtime 实测中文用的 large-v3-turbo 在纯 CPU 上
+          只有 2.7x 实时 —— 1 小时录音要跑 22 分钟。不给预期，用户会以为卡死然后关窗口。 */}
       {phase === 'recording' || phase === 'idle' ? (
-        <p className="text-xs text-ink-muted">ⓘ {t('recorder.twoPhaseNotice')}</p>
+        <div className="text-xs text-ink-muted">
+          <p>
+            ⓘ{' '}
+            {rerunEtaLabel
+              ? t('recorder.twoPhaseNoticeWithEta', { eta: rerunEtaLabel })
+              : t('recorder.twoPhaseNotice')}
+          </p>
+          {isCpuOnly ? (
+            <p className="mt-1 flex flex-wrap items-center gap-2">
+              <span>{t('recorder.twoPhaseNoticeSlowHint')}</span>
+              <Button size="sm" variant="ghost" className="h-5 px-1.5 text-xs">
+                {t('recorder.installBackend')}
+              </Button>
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
       {/* ★ 保险 3：重跑时不遮挡内容 */}
       {phase === 'rerunning' ? (
         <section className="rounded-lg border border-line bg-surface-1 p-4">
           <div className="mb-2 flex items-center justify-between text-sm">
-            <span className="text-ink">{t('recorder.rerunning', { model: 'large-v3-turbo' })}</span>
+            <span className="text-ink">
+              {rerunRemainLabel
+                ? t('recorder.rerunningWithEta', { model: 'large-v3-turbo', eta: rerunRemainLabel })
+                : t('recorder.rerunning', { model: 'large-v3-turbo' })}
+            </span>
             <Button size="sm" variant="ghost" onClick={() => setPhase('done')}>
               {t('recorder.skipRerun')}
             </Button>
@@ -213,6 +252,18 @@ export default function RecorderPage() {
         <Banner
           tone="info"
           title={t('recorder.replaced', { updated: replaced.updated, preserved: replaced.preserved })}
+          detail={
+            <>
+              {/* 合并按**时间轴**对齐而不是按段落序号 —— 两遍模型的断句天然不同，
+                  按序号会把别人的句子塞进用户改过的地方（gpu-runtime 实测结论）。
+                  因此"编辑过但没有对应新结果"是正常情况，必须能表达出来，
+                  而不是让用户以为自己的修改被吞了。 */}
+              {replaced.noCounterpart > 0 ? (
+                <span>{t('recorder.replacedNoCounterpart', { count: replaced.noCounterpart })}</span>
+              ) : null}
+              <span className="mt-0.5 block text-ink-muted">{t('recorder.mergeByTimeNote')}</span>
+            </>
+          }
           action={
             <div className="flex gap-2">
               <Button size="sm" variant="ghost">

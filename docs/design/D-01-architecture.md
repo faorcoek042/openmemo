@@ -11,7 +11,7 @@ depends_on: ADR-001, ADR-002, ADR-003, ADR-004, R-01, R-02, R-03, R-04
 - **单进程 daemon（Node+TS）+ 浏览器 SPA + 受管子进程**。daemon 内部按 8 个模块切分（http / db / jobs / pipeline / adapters / runtime / downloader / subprocess），**`SubprocessRunner` 是全项目唯一允许 `spawn` 的出口**——这是命令注入防线的架构强制点，不是编码规范建议。
 - **生命周期定案**：固定默认端口 **17650**（提议，待 Manager 拍板），冲突时在 17650–17669 扫描；**端口绑定本身即单实例锁**（原子、进程死后 OS 自动释放），`runtime.json`(0600) 仅作元数据 sidecar。token 通过 **URL fragment**（`/#t=…`，不进日志/不进 Referer；**订正**：写成裸 fragment 而非 `/#/auth?t=`，因为前端用 History 路由，fragment 不参与路由，见 D-05 §1.2）交给浏览器 → 立刻换成 `HttpOnly` cookie（SSE/WS/`<audio src>` 都无法带 Authorization header，这是必须换 cookie 的**技术原因**）→ 配 `Host`/`Origin` 双校验防 **DNS rebinding**。
 - **API 三通道分层**：`/api/**` REST（CRUD，短请求）· `/api/events` **全局唯一 SSE**（ADR-004）· `/ws/**` WebSocket（仅实时录音；浏览器 WebGPU worker 已按 ADR-006 决策 3 降为实验特性）· 外加**第四条 `/media/**` 字节流通道**（Range 请求，不走 JSON）。硬约束：HTTP/1.1 每 origin 6 连接，预算必须显式管理（1 SSE + 2 媒体 + 3 REST）。**具体 endpoint 由 T-013 (`packages/shared`) 定义，本文只定分层与前缀。**
-- **【2026-08-02 订正批次】** 本文 §3 已按 `packages/shared` 的落地实现对齐三处：前缀 `/api`（原 `/api/v1`）、SSE 帧用具名 `event: <type>`（原提议 `event: message`）、重放缓冲 256（原 2000）。错误信封改用实现版本但**仍缺 `remediation` 字段**，见 §3.5。
+- **【2026-08-02 订正批次】** 本文 §3 已按 `packages/shared` 的落地实现对齐**四处**：① 前缀 `/api`（原 `/api/v1`）；② SSE 帧用具名 `event: <type>`（原提议 `event: message`）；③ 重放缓冲 256（原 2000）；④ **SSE 信封改为扁平**（原嵌套 `payload`，ADR-010 决策 2）。错误信封改用实现版本，`remediation` 字段已由 ADR-007 决策 2 批准补入。每处订正均在正文标注了原设计与订正原因（ADR-007 决策 6）。
 - **任务队列核心技巧**：转写按 **VAD chunk 分批 + 每 chunk 落库**，于是"抢占点 = 续跑点 = 进度点"三合一。崩溃后不重跑已完成 chunk。并发按**资源 lane 信号量**（`asr`/`llm` 各 1，不可超卖显存）。job/step 双表持久化 + lease 心跳 + `plan_version` 防跨版本续跑错位。
 - **四个适配层**（可替换性是 ADR-002 的硬要求）：ASR（whisper.cpp / sherpa-onnx / **浏览器 WebGPU**）、LLM（**只需 2 个实现**：OpenAI-compatible 覆盖云+Ollama+LM Studio+llama-server，Anthropic 原生）、思维导图渲染（mind-elixir 编辑 / markmap 只读）、媒体源（yt-dlp / 直链 / RSS / 本地）。**关掉 `YtDlpSource` 产品仍能跑**——这就是 ADR-002 要的低成本回滚。
 - **命令注入防护**（用户粘贴的 URL 进 yt-dlp 命令行）：`shell:false` 只挡 shell 注入，**挡不住参数注入**。七层防护：URL 白名单解析 → 拒绝 `-` 开头 → `--` 终止符 → `--ignore-config` 关掉配置文件读取面 → 固定 `--paths`/`-o` 常量模板 → 二进制 allowlist（绝对路径，不查 PATH，**禁 .bat/.cmd**）→ 最小 env + 超时 + 进程组 kill。**规则：任何用户可控字符串只能是独立 argv 元素，绝不拼进另一个参数内部。**
@@ -356,15 +356,26 @@ SSE `EventSource` 自带重连；断线期间的事件通过 `Last-Event-ID` 从
 → **每多开一条常驻流就少一个 REST 槽位**，页面会随机卡死。因此：
 **全应用只有一条 `EventSource`**，所有主题复用，前端一个 reducer 分发（照抄 memo.ac 的 `renderer-message` 单通道设计，R-01 §C10 #5）。
 
-事件信封 `[设计，请 T-013 在 shared 中定义正式类型]`：
+事件信封 —— **【2026-08-02 订正批次 2：改为扁平，ADR-010 决策 2】**
 
 ```
 id: 000000000000123          <- 单调递增序号（重放游标）
-event: job.progress          <- 【2026-08-02 订正】具名类型，与 packages/shared 的
-                                formatSseFrame() 实现一致。⚠️ 后果：EventSource.onmessage
+event: job.progress          <- 具名类型（订正 1）。⚠️ 后果：EventSource.onmessage
                                 永不触发，前端必须逐类型 addEventListener（见 D-05 §2.3）
-data: {"type":"job.progress","ts":"…","topic":"job:01J…","payload":{…}}
+data: {"type":"job.progress","ts":"2026-08-02T…","topic":"job:01J…",
+       "jobId":"01J…","step":"asr","pct":0.29,"state":"running", …}
+                             ↑ 业务字段与信封字段**平铺在同一层**
 ```
+
+**订正留痕**（ADR-007 决策 6 要求：写明原设计 + 订正原因，否则后人无法判断是深思熟虑还是随手改）：
+
+| | 内容 |
+|---|---|
+| **原设计** | 嵌套式 `data: {type, ts, topic, payload:{…}}` —— 业务字段包在 `payload` 里 |
+| **现裁定** | **扁平**：`data: {type, ts, topic, ...业务字段}` |
+| **为什么改** | `packages/shared` 的实现与 D-05 的前端设计**都是扁平**，D-01 是唯一的嵌套。三处对齐时改一处成本最低（ADR-010 决策 2）。 |
+| **技术上也更好** | 扁平让 `SseEvent` 成为一个**可判别联合**（discriminated union，按 `type` 收窄），TS 能直接窄化到具体 payload 类型；嵌套则需要额外的泛型参数 `SseEvent<T>` 才能表达同样的东西，且每个消费点都要多解一层。 |
+| **代价** | 信封字段（`type`/`ts`/`topic`）与业务字段共享命名空间 → **业务字段不得叫这三个名字**。已在 shared 的类型里由 `SseEventBase` 约束住。 |
 
 - **主题命名**：`域.动作[.阶段]`，如 `job.created` / `job.progress` / `job.done` / `job.failed` /
   `download.progress` / `transcribe.segment` / `mindmap.delta` / `hardware.changed` / `backend.installed` / `daemon.shutdown`。

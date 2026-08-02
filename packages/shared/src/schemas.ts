@@ -126,6 +126,19 @@ export const GgufMetadataSchema = z.object({
   kvBytesPerToken: z.number().int().positive(),
 });
 
+export const ReferenceBenchmarkSchema = z.object({
+  rtf: z.number().positive(),
+  backend: BackendSchema,
+  deviceName: z.string().min(1),
+  measuredAt: z.string(),
+  // Provenance is mandatory: a speed number without the machine, audio and language it
+  // came from is exactly the kind of unsourced figure ADR-004 decision 3 bans.
+  sampleName: z.string().min(1),
+  sampleDurationSec: z.number().positive(),
+  sampleLanguage: z.string().min(1),
+  meanConfidence: z.number().min(0).max(1).optional(),
+});
+
 export const BenchmarkResultSchema = z.object({
   rtf: z.number().positive(),
   measuredAt: z.string(),
@@ -159,6 +172,8 @@ export const ModelEntrySchema = z
     descriptionEn: z.string(),
     languages: z.array(z.string()).min(1),
     tags: z.array(z.string()),
+    // ADR-011 decision 1 — languages where we MEASURED the output to be unacceptable.
+    notRecommendedFor: z.array(z.string()).optional(),
     files: z.array(ArtifactFileSchema).min(1),
     totalSizeBytes: ByteSizeSchema,
     requirements: ResourceRequirementsSchema,
@@ -170,6 +185,7 @@ export const ModelEntrySchema = z
       revision: z.string().min(1),
     }),
     benchmark: BenchmarkResultSchema.nullable(),
+    referenceBenchmark: ReferenceBenchmarkSchema.nullish(),
     catalogVersion: z.string().min(1),
   })
   // Reject the fabricated-metric fields memo.ac ships, so they cannot creep back in.

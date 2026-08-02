@@ -549,8 +549,8 @@ blas、cublas-11.8/12.4、xcframework）。这三个组合的包**现在不存�
 
 | # | 事项 | 状态 |
 |---|---|---|
-| 1 | 压缩包解压（zip / tar.gz）+ zip-slip 防护 | **未实现**，当前显式抛错不静默 → T-020 |
-| 2 | catalog Ed25519 验签 | **未实现**，`verifyCatalogSignature()` 抛错；规格已写 → T-020 |
+| 1 | 压缩包解压（zip / tar.gz）+ zip-slip 防护 | ✅ **已实现**（T-022，ADR-011 决策 5）。手写 ZIP/tar 解析器，零新依赖。38 项断言全绿，含真实攻击用例 |
+| 2 | catalog Ed25519 验签 | ✅ **已实现但生产未启用** —— 无签名密钥，`OPENMEMO_CATALOG_PUBLIC_KEY = null`，供签名却无密钥时**失败关闭**（抛错，绝不放行） |
 | 3 | `estimateGpuLayers` 系数标定 | 未验证，需实测 llama.cpp `-ngl` 行为 |
 | 4 | RTF 外推系数 | 未标定，首个真实转写后回写 |
 | 5 | whisper.cpp macOS/Vulkan/ROCm 包 | 上游不存在，待自建 CI |
@@ -568,3 +568,88 @@ blas、cublas-11.8/12.4、xcframework）。这三个组合的包**现在不存�
 双 ID 约定的**整数 PK 侧完全不出 daemon**，我这边只出现对外 ULID（`jobId`）与
 目录 slug（`model_installs.model_id`）。绑定发生在 `packages/db`，由该包负责用 BigInt。
 我在 `hardware.ts`/`jobs.ts` 中也未使用任何 `number` 型数据库主键。
+
+
+---
+
+## 13. T-022 增补：解压防护、中文模型策略、速度纳入判定
+
+### 13.1 解压与 Zip-Slip 防护（ADR-011 决策 5）
+
+`packages/downloader/src/unpack.ts` —— 手写 ZIP（EOCD → 中央目录 → 本地头，method 0/8）
+与 tar.gz（gunzip + 512 字节头，含 ustar / GNU longname / PAX）解析器。**零新增 npm 依赖。**
+
+拒绝的条目类型（每一条都有攻击用例证明，不是声称）：
+
+| 攻击 | 结果 |
+|---|---|
+| `../evil.txt` | `PATH_TRAVERSAL`，且 destDir 外**无任何文件产生** |
+| `/etc/evil-posix.txt` | `PATH_TRAVERSAL` |
+| `C:\evil-windows.txt` | `PATH_TRAVERSAL` |
+| `\\server\share\evil.txt`（UNC） | `PATH_TRAVERSAL` |
+| tar 中的**真实 symlink 条目** | `SYMLINK_REJECTED`，且**符号链接从未被创建** |
+| 50 条目 vs `maxEntries=10` | `LIMIT_EXCEEDED` |
+| 200 KB vs `maxTotalBytes=1000` | `LIMIT_EXCEEDED` |
+| **头部谎报体积**的 zip bomb | 被 zlib `maxOutputLength` 拦下 |
+
+两道闸门：`assertSafeEntryName()`（快速可读，按 `/` 与 `\` 双分隔符切分，防 Windows 重解释）
++ `path.resolve` 前缀比对（**权威判定**）。执行位按 ZIP external attrs / tar mode 还原
+（后端包里有 `llama-server` 这类可执行文件，丢了 +x 就跑不起来），Windows 上跳过 chmod。
+
+**已知限制（诚实记录）**：不支持 ZIP64 —— **检测到即明确报错**，不静默误解析。
+
+`packages/downloader/scripts/verify-unpack.mjs` **38/38 全绿**，fixtures 全部运行时构造
+（不提交二进制），ZIP 用手写 writer（本机无 `zip` 命令），tar.gz 用真实 GNU tar。
+
+### 13.2 中文模型策略（ADR-011 决策 1）
+
+catalog 新增 `notRecommendedFor?: string[]`。这**不是能力开关** —— 模型照样能跑，
+它记录的是我们**实测**过该语言下输出不可接受。base 在中文上不是"稍差"，是听错词：
+
+> 维基百科 → 危机摆科 · 华尔街日报 → 花耳街日报 · 谷歌 → 古歌
+> · 迈克尔杰克逊逝世 → 麦克尔结克训试事
+
+`fitness.ts` 新增 **规则 1b**，置于内存规则**之前**：装得下但把「维基百科」听成「危机摆科」的模型，
+按任何有用的定义都不叫"推荐"。
+
+UI（`ModelsPage.tsx`）：界面语言为中文时**默认隐藏**这些变体，并显示
+「已隐藏 N 个…（小模型会把「维基百科」听成「危机摆科」）[仍要显示]」。
+**必须可一键看回来** —— 静默隐藏会让用户以为产品没有这些模型；
+且英文转写时 base 在弱机器上仍是合理选择，一刀切会误伤。
+
+实测验证：
+
+```
+lang=zh:  base/small/tiny/medium → notRecommendedForLanguage=true（默认隐藏）
+lang=en:  base → tier=recommended, notRecommendedForLanguage=false（恢复可用）
+```
+
+### 13.3 速度纳入判定（ADR-011 决策 2）
+
+「装得下」与「用得了」是两个问题。中文必须用 large-v3-turbo，而它在 CPU 上
+1 小时录音要跑 22 分钟 —— 只答前者会误导用户。
+
+`FitResult` 新增三个字段：
+
+```ts
+speedTier: 'fast' | 'moderate' | 'slow' | 'very_slow' | 'unknown'
+speedSource: 'measured_here' | 'reference_machine' | 'none'
+notRecommendedForLanguage: boolean
+```
+
+阈值按真实测量定：≤6 分钟/小时 fast，≤15 moderate，≤40 slow，其余 very_slow
+（base RTF 0.055 → 3.3 分钟 → fast；large-v3-turbo RTF 0.377 → 22.6 分钟 → slow）。
+`slow`/`very_slow` 时把耗时**追加进 `reasonZh`**，让"能跑"不会被读成"体验好"。
+
+**新增 `ReferenceBenchmark` 类型**，与 `BenchmarkResult` **刻意分开**，两者永不混淆：
+
+| 类型 | 含义 | UI 措辞 |
+|---|---|---|
+| `benchmark` | 在**用户机器**上实测 | 「本机实测」 |
+| `referenceBenchmark` | 在**我们的参考机**上实测 | 「参考机实测，仅供参考」 |
+| 都没有 | — | 「速度未测量」 |
+
+ADR-004 决策 3 禁的是**编造数字**，不是禁**有出处的真实测量**。因此
+`ReferenceBenchmark` 的每个字段都是为了让出处可审计：哪台机器、哪个后端、
+哪段音频、多长、什么语言、平均置信度。**缺这些的数字才正是我们拒绝的那种。**
+且只有 `referenceBackend === selectedBackend` 时才采用 —— CUDA 的数字说明不了 CPU 的表现。
