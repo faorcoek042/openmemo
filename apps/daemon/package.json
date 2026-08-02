@@ -2,6 +2,9 @@
   "name": "@openmemo/daemon",
   "version": "0.0.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "description": "本地 daemon（Node.js + TS）：任务队列、硬件探测、下载器、DB。仅监听 127.0.0.1（ADR-003 安全硬要求）",
   "main": "./dist/index.js",

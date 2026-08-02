@@ -2,6 +2,9 @@
   "name": "@openmemo/mindmap",
   "version": "0.0.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "description": "库无关的思维导图数据模型 + 适配层（ADR-002 决策 3 硬性要求）",
   "main": "./dist/index.js",

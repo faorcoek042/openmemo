@@ -36,3 +36,47 @@
 - D-01/D-02 中**没有任何一行代码被执行过**，所有 DDL、时序图、接口签名均为设计意图。文中已逐条标注 `[已定]/[设计]/[待核实]/UNKNOWN`，两份文档各自末尾有独立的"待验证清单"（D-01 §10 共 9 条，D-02 §7 共 11 条）。
 - 未编造任何 API、版本号或性能数字。所有版本号（`mind-elixir` 5.14.0、`markmap-lib` 0.18.12、`sqlite-vec` v0.1.9、`libsimple` v0.7.1、`better-sqlite3` 13.0.2）均由 subagent 于 2026-08-02 直接从 npm registry / GitHub API / 上游源码取得。
 - 未修改任何他人的交付物；未创建 ADR；`/root/memo-forensics/` 只读引用，未复制其源码进本仓库。
+
+---
+
+## [2026-08-02 16:20] T-015 DONE
+
+交付:
+- `/root/memo/docs/design/D-05-frontend.md` （id: D-05，status: draft，约 900 行）
+- 附带订正 `/root/memo/docs/design/D-01-architecture.md`（我独占，见下"订正批次"）
+
+要点:
+- D-05 覆盖你要求的 7 项：IA 与路由表（18 条路由 + 归属）/ 状态管理（三分 + SSE 单流分发模式）/ 目录与所有权（含反冲突手法）/ F1·F2·F3·F5 关键交互 ASCII 线框 + 长任务后台化 / 错误与降级 UI（四层级 + 映射表）/ a11y 与 i18n 基线 / 无 UI 库依赖的设计令牌。
+- **最有实用价值的一条是 §3.4「把聚合点变成分片导出」**：`routes.tsx` 与 `lib/events/bindings.ts` 是三方必然冲突的热点 → 改为每个 feature 导出自己的路由片段与 SSE 绑定片段，聚合文件只在新增 feature 时动一行。配合 §3.5 的 eslint 禁止横向 import（`features/A` 不得 import `features/B`），把冲突结构性消灭，而不是靠约定君子协议。
+- **`model-mgmt` 的模型/运行时线框我一张都没重画**（按你的边界要求），只定了它们在 IA 中的一级导航位置 + 必须复用共享令牌与共享组件 + 需向 `components/common/` 提升的三个组件（ModelPicker / FitBadge / BackendChip，因为 `/settings/asr` 与 `/onboarding` 也要用）。
+- 设计令牌的颜色**不是目测的**：我实际运行了调色板校验脚本（六项检查），明暗双档输出记录在 §7.5。明档有一条 WARN（aqua 2.74:1、yellow 2.11:1 低于 3:1）→ 这把"存储分解条必须带图例和数字标签"从审美建议变成了硬性要求，已写进 §7.3。
+- 派生 1 个 sonnet subagent 核实前端事实（`a5041d803ac5ca4ce`，已完成可复用）。加上 T-010 的两个，共 3 个 agent 待命。
+
+**核实到 4 项事实，其中 1 项需要立刻处理**:
+1. ⚠️ **shadcn/ui 已于 2026-07-03 把默认底层库从 Radix 换成 Base UI**（`@base-ui/react` v1.6.0；出自 MUI 团队，**不是** Radix 的分支）。Radix 未废弃，但要继续用必须显式 `shadcn init -b radix`。
+   → **仓库里 `apps/web/src/components/ui/SOURCE.md` 仍写着"底层依赖：Radix UI Primitives"，需订正**（该文件归 `oss-scout`）。不订正的话 ADR-002 决策 2 的"可追溯"豁免条件不成立。
+   → 另有一个易混淆的旧包名 `@base-ui-components/react`（停在 1.0.0-rc.0），**装错会踩坑**。
+2. **`react-router` 已到 v8.3.0**，且 **v8 彻底移除了 `react-router-dom` 包**（`RouterProvider` 改从 `react-router/dom` 导入）。v8 基线要 Node **≥22.22.0** —— ADR-006 决策 7 写的是 `>=22`，根 package.json 现为 `>=24` 无冲突，但若日后放宽到 22 请写 `>=22.22.0`。
+3. **Tailwind v4 有个会静默坑人的限制**：`@theme{}` 里的变量不能嵌套进选择器/媒体查询 → 明暗双档必须用 `:root`/`[data-theme=dark]` 定义语义变量 + **`@theme inline`** 转发。写成普通 `@theme` 会在定义处求值，**暗色永远不生效**，且不报错。已在 §7.5 给出可直接抄的两层结构。
+4. **`react-i18next` 17.0.11 的 peer 强制要求 `i18next >= 26.2.0`** —— 版本联动，装错组合会在运行时静默出错。
+
+**D-01 订正批次（我独占该文件，已改）**：按 `packages/shared` 的落地实现对齐三处 —— 路由前缀 `/api`（原 `/api/v1`）、SSE 帧用具名 `event: <type>`（原提议 `event: message`）、重放缓冲 256（原 2000）；错误信封改用实现版本。另订正 token fragment 写法为 `/#t=<token>`（因前端用 History 路由，fragment 不参与路由）。**这些是我向实现让步，不是实现向我让步 —— 请追认。**
+
+下一步建议:
+1. **§8 差异 3 是 Wave 3 的真实阻塞点**，建议在 T-021/T-023 开工前解决，否则他们只能写轮询然后返工。
+2. D-05 状态仍是 `draft`。建议 T-021 把共享基建（`app/` `lib/` `styles/tokens.css`）建起来、跑通一条 SSE→UI 的端到端链路后，我再收敛一轮转 `ready`。
+3. 建议把 §3.2 的前端所有权矩阵并入 BOARD 的文件所有权表，与后端所有权同一处维护。
+
+需要 Manager 决策:
+1. **【最高优先级，阻塞 Wave 3】`packages/shared` 的 `SSE_EVENT_TYPES` 只有 14 个事件，全部是模型/下载/后端域，F1–F5 需要的实时事件一个都没有** —— `transcribe.segment`（边转边看）、`mindmap.delta`（渐进渲染导图）、通用 `job.progress` 的 pipeline 载荷、`note.*`。缺了它们，§4.1 的"14 秒后就有字"、§4.3 的流式字幕、§4.6 的渐进导图全部塌掉，T-021/T-023 只能退化成轮询。该文件归 `model-mgmt` 独占，我不能改。**需要你指派谁来扩、按什么时间点交。**
+2. **`ApiErrorBody` 是否补 `remediation?: {action, params}`**。它不是锦上添花：章程要求 2.1「用户不碰命令行」直接依赖它——错误若只能给一段文字，用户还是得去查文档。同样归 `model-mgmt`。
+3. **错误文案归属**：我建议前端按 `code` 查本地文案表，后端的 `message`/`messageZh` 仅作未知 code 的兜底；`details` 作为结构化插值参数。理由：现在的两语硬编码意味着加第三种语言要改后端，且同一个 `DISK_FULL` 在下载页和转写页该说的话不同。裁决前我已让两边都按"code 优先 + message 兜底"实现，两种结果都能兼容。
+4. **补装前端依赖**（`apps/web/package.json` 归 `oss-scout`）：`react-router@^8.3.0`、`i18next@^26.3.6` + `react-i18next@^17.0.11`（版本联动）、shadcn 底层库（见第 7 项）、虚拟滚动库（T-021 定后申报）。
+5. **多标签页策略**：我建议用 Web Locks 选主（全浏览器只有一个标签持有 EventSource，其余靠 BroadcastChannel 转播）。理由是 3 个标签 = 3 条 SSE，直接吃掉 HTTP/1.1 六连接预算的一半，且与 D-01 §3.3「第二条连接进来关掉旧的」冲突。备选：v1 只支持单标签（第二个标签显示提示）。Safari 的 Web Locks 支持我**未核实**。
+6. **追认 D-01 的订正批次**（见上）。
+7. **shadcn 底层库：Base UI（我建议）vs Radix**。我倾向 Base UI 的理由是工程性的而非追新：一个包 vs 十几个包，而 ADR-005 决策 4 刚确立"许可证必须逐依赖登记"，依赖面小一个数量级是实打实的成本；且它是 CLI 默认路径，少一个"CI 里忘了传 -b radix 拿到另一套组件"的静默出错机会。若你更看重 Radix 的成熟度，切换成本只是 `init -b radix`。
+
+诚实声明:
+- D-05 **零代码执行**。唯一的实测是 §7.5 的调色板校验脚本输出。所有线框、状态模式、目录约定均为设计意图。
+- 版本号与 API 事实均由 subagent 于 2026-08-02 实地拉取 npm registry / GitHub / 官方文档，逐条标了"已验证/文档/UNKNOWN"。**明确记录了一条否定结论**：TanStack Query **没有**官方 SSE 集成指南，§2.3 的事件→缓存映射是社区共识而非官方定式；另 `experimental_streamedQuery` 虽存在但用途不同（AsyncIterable 流式 queryFn），不要混用。
+- 未修改任何他人的交付物（`packages/shared`、`apps/web/**`、`SOURCE.md`、`package.json` 我都只读未写）。

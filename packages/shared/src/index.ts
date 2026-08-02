@@ -8,6 +8,7 @@
  * effects — so it is safe to import from both the daemon and the browser bundle.
  */
 
+export * from './ulid.js';
 export * from './hardware.js';
 export * from './artifacts.js';
 export * from './models.js';

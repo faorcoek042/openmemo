@@ -2,6 +2,9 @@
   "name": "@openmemo/web",
   "version": "0.0.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "description": "React SPA —— 唯一 UI（ADR-003 决策 1 web-first）。含运行时安装页与模型管理页（章程要求 2.1 / 2.2）",
   "scripts": {

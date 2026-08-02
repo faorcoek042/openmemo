@@ -2,6 +2,9 @@
   "name": "@openmemo/pipeline",
   "version": "0.0.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "description": "媒体导入 → 转写 → 结构化（F1/F2/F3）。原生工具一律子进程调用（ADR-003 决策 1）",
   "main": "./dist/index.js",

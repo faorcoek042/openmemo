@@ -4,9 +4,15 @@ packages:
 
 # pnpm 10 默认阻止依赖的 postinstall 脚本。以下包必须允许执行安装脚本，
 # 否则原生模块 / 二进制下载会静默失败。每一项都记录了原因（可追溯，呼应 ADR-001）。
+#
+# ⚠️ better-sqlite3 **刻意不在此列**（T-014 实测结论，见 docs/research/R-05）：
+#    v13.0.2 已迁移到 prebuildify —— 8 个平台的预编译 .node 直接打包在 npm tarball 里
+#    （linux/linuxmusl/darwin/win32 × x64/arm64），**没有 install 脚本**。
+#    放进 onlyBuiltDependencies 只会让 pnpm 因为 binding.gyp 存在而跑一次
+#    **空转的 node-gyp**（实测产出 0 个 .node，仅 TOUCH 两个 stamp），
+#    却平白要求用户机器有 make/gcc/Python。实测 `--ignore-scripts` 安装后
+#    require + loadExtension 全部正常。→ 不允许它跑脚本才是正确配置。
 onlyBuiltDependencies:
-  # 原生模块，需要 node-gyp 或 prebuild-install 拉预编译 .node
-  - better-sqlite3
   # ADR-002 v2 允许：GPL-3.0 的 FFmpeg 二进制，postinstall 下载对应平台产物
   - ffmpeg-static
   # ADR-002 v2 允许：postinstall 下载 yt-dlp 官方二进制（GPLv3+）

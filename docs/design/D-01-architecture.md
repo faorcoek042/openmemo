@@ -9,8 +9,9 @@ depends_on: ADR-001, ADR-002, ADR-003, ADR-004, R-01, R-02, R-03, R-04
 ## TL;DR（≤ 25 行，Manager 只读这里）
 
 - **单进程 daemon（Node+TS）+ 浏览器 SPA + 受管子进程**。daemon 内部按 8 个模块切分（http / db / jobs / pipeline / adapters / runtime / downloader / subprocess），**`SubprocessRunner` 是全项目唯一允许 `spawn` 的出口**——这是命令注入防线的架构强制点，不是编码规范建议。
-- **生命周期定案**：固定默认端口 **17650**（提议，待 Manager 拍板），冲突时在 17650–17669 扫描；**端口绑定本身即单实例锁**（原子、进程死后 OS 自动释放），`runtime.json`(0600) 仅作元数据 sidecar。token 通过 **URL fragment**（`/#/auth?t=…`，不进日志/不进 Referer）交给浏览器 → 立刻换成 `HttpOnly` cookie（SSE/WS/`<audio src>` 都无法带 Authorization header，这是必须换 cookie 的**技术原因**）→ 配 `Host`/`Origin` 双校验防 **DNS rebinding**。
-- **API 三通道分层**：`/api/v1/**` REST（CRUD，短请求）· `/api/v1/events` **全局唯一 SSE**（ADR-004）· `/ws/**` WebSocket（仅实时录音 + 浏览器 WebGPU worker）· 外加**第四条 `/media/**` 字节流通道**（Range 请求，不走 JSON）。硬约束：HTTP/1.1 每 origin 6 连接，预算必须显式管理（1 SSE + 2 媒体 + 3 REST）。**具体 endpoint 由 T-013 (`packages/shared`) 定义，本文只定分层与前缀。**
+- **生命周期定案**：固定默认端口 **17650**（提议，待 Manager 拍板），冲突时在 17650–17669 扫描；**端口绑定本身即单实例锁**（原子、进程死后 OS 自动释放），`runtime.json`(0600) 仅作元数据 sidecar。token 通过 **URL fragment**（`/#t=…`，不进日志/不进 Referer；**订正**：写成裸 fragment 而非 `/#/auth?t=`，因为前端用 History 路由，fragment 不参与路由，见 D-05 §1.2）交给浏览器 → 立刻换成 `HttpOnly` cookie（SSE/WS/`<audio src>` 都无法带 Authorization header，这是必须换 cookie 的**技术原因**）→ 配 `Host`/`Origin` 双校验防 **DNS rebinding**。
+- **API 三通道分层**：`/api/**` REST（CRUD，短请求）· `/api/events` **全局唯一 SSE**（ADR-004）· `/ws/**` WebSocket（仅实时录音；浏览器 WebGPU worker 已按 ADR-006 决策 3 降为实验特性）· 外加**第四条 `/media/**` 字节流通道**（Range 请求，不走 JSON）。硬约束：HTTP/1.1 每 origin 6 连接，预算必须显式管理（1 SSE + 2 媒体 + 3 REST）。**具体 endpoint 由 T-013 (`packages/shared`) 定义，本文只定分层与前缀。**
+- **【2026-08-02 订正批次】** 本文 §3 已按 `packages/shared` 的落地实现对齐三处：前缀 `/api`（原 `/api/v1`）、SSE 帧用具名 `event: <type>`（原提议 `event: message`）、重放缓冲 256（原 2000）。错误信封改用实现版本但**仍缺 `remediation` 字段**，见 §3.5。
 - **任务队列核心技巧**：转写按 **VAD chunk 分批 + 每 chunk 落库**，于是"抢占点 = 续跑点 = 进度点"三合一。崩溃后不重跑已完成 chunk。并发按**资源 lane 信号量**（`asr`/`llm` 各 1，不可超卖显存）。job/step 双表持久化 + lease 心跳 + `plan_version` 防跨版本续跑错位。
 - **四个适配层**（可替换性是 ADR-002 的硬要求）：ASR（whisper.cpp / sherpa-onnx / **浏览器 WebGPU**）、LLM（**只需 2 个实现**：OpenAI-compatible 覆盖云+Ollama+LM Studio+llama-server，Anthropic 原生）、思维导图渲染（mind-elixir 编辑 / markmap 只读）、媒体源（yt-dlp / 直链 / RSS / 本地）。**关掉 `YtDlpSource` 产品仍能跑**——这就是 ADR-002 要的低成本回滚。
 - **命令注入防护**（用户粘贴的 URL 进 yt-dlp 命令行）：`shell:false` 只挡 shell 注入，**挡不住参数注入**。七层防护：URL 白名单解析 → 拒绝 `-` 开头 → `--` 终止符 → `--ignore-config` 关掉配置文件读取面 → 固定 `--paths`/`-o` 常量模板 → 二进制 allowlist（绝对路径，不查 PATH，**禁 .bat/.cmd**）→ 最小 env + 超时 + 进程组 kill。**规则：任何用户可控字符串只能是独立 argv 元素，绝不拼进另一个参数内部。**
@@ -55,7 +56,7 @@ depends_on: ADR-001, ADR-002, ADR-003, ADR-004, R-01, R-02, R-03, R-04
 ╚═══════════════════════════════════╤══════════════════════════════════════════════╝
                                     │  HTTP/1.1 · 127.0.0.1:17650 · 严禁 0.0.0.0
         ┌───────────────────────────┼───────────────────────────┬─────────────────┐
-        │ REST /api/v1/**           │ SSE /api/v1/events (唯一)  │ WS /ws/**       │  Bytes /media/**
+        │ REST /api/**           │ SSE /api/events (唯一)  │ WS /ws/**       │  Bytes /media/**
         ▼                           ▼                           ▼                 ▼
 ╔══════════════════════════════════════════════════════════════════════════════════╗
 ║  apps/daemon —— 本地 daemon（Node.js + TypeScript，单进程）                        ║
@@ -171,7 +172,7 @@ apps/daemon/src/
 6. 生成 sessionToken（32 字节 CSPRNG）→ 写 runtime.json（0600）
 7. 启动调度器（lane 池按 CPU 核数与已装后端初始化）
 8. 异步：硬件探测（子进程 probe，10s 超时，结果缓存）
-9. --open 时打开浏览器：http://127.0.0.1:<port>/#/auth?t=<token>
+9. --open 时打开浏览器：http://127.0.0.1:<port>/#t=<token>
 10. 就绪，日志打印 URL（供 --no-open 时用户手动复制）
 ```
 
@@ -181,7 +182,7 @@ apps/daemon/src/
 - **端口必须尽量稳定**，原因不是美观而是**功能性**：浏览器的 `localStorage` / cookie / 权限授权（麦克风！）全部按 **origin**（scheme+host+port）隔离。端口一变，用户的登录态没了、**麦克风授权要重新点一遍**（直接影响 F3）、书签失效。
 - **冲突处理阶梯**
   1. 尝试 `bind(127.0.0.1, 17650)`。
-  2. `EADDRINUSE` → 先 `GET http://127.0.0.1:17650/api/v1/health`：
+  2. `EADDRINUSE` → 先 `GET http://127.0.0.1:17650/api/health`：
      - 返回 `{"app":"openmemo","instanceId":…,"version":…}` → **是我们自己**，走 §2.3 的"已有实例"分支。
      - 其它响应 / 超时 / 连接被拒 → 是别人的服务，继续下一步。
   3. 在 `17651..17669` 顺序扫描，第一个绑定成功的胜出。
@@ -203,7 +204,7 @@ apps/daemon/src/
   "dataDir": "/home/u/.local/share/openmemo" }
 ```
 
-- 判定"已有实例"必须**同时**满足：端口被占 **且** `/api/v1/health` 返回我们的应用标识 **且** 其 `dataDir` 与本次请求的一致。
+- 判定"已有实例"必须**同时**满足：端口被占 **且** `/api/health` 返回我们的应用标识 **且** 其 `dataDir` 与本次请求的一致。
 - `dataDir` 不一致 → 说明用户想跑第二个 profile → v1 **不支持**，明确报错"另一个数据目录的实例正在占用端口，请用 `--port` 指定"`[设计]`。
 - 数据目录级互斥另有一道：SQLite 打开后立即取一个**长期写事务外的 flock**（`daemon.lock` + `flock(LOCK_EX|LOCK_NB)`）防止两个不同端口的实例共用同一个 DB。Windows 用 `O_EXCL` 独占句柄。
 
@@ -212,7 +213,7 @@ apps/daemon/src/
 ```
 daemon 启动 → token = randomBytes(32).base64url          （每次启动重新生成）
             → 写 runtime.json (0600)
-            → 打开浏览器: http://127.0.0.1:17650/#/auth?t=<token>
+            → 打开浏览器: http://127.0.0.1:17650/#t=<token>
                                                  ▲
                                        放在 fragment，不是 query
 ```
@@ -223,7 +224,7 @@ fragment 不会被发送到服务器（不进 access log）、不会出现在 `R
 
 **前端拿到后**：
 1. `history.replaceState(null,'','/')` 立刻抹掉 fragment（防 URL 被截图/分享/进历史记录）。
-2. `POST /api/v1/auth/session`，`Authorization: Bearer <token>` →
+2. `POST /api/auth/session`，`Authorization: Bearer <token>` →
    daemon 校验后 `Set-Cookie: om_sid=<新随机 sid>; HttpOnly; SameSite=Strict; Path=/; Max-Age=…`
    同时响应体返回一个 **CSRF token**（存 `sessionStorage`）。
 3. 之后所有请求带 cookie；所有**非 GET** 请求额外带 `X-OpenMemo-CSRF` 头（双提交模式）。
@@ -248,7 +249,7 @@ Windows 优先用 `rundll32 url.dll,FileProtocolHandler <url>` 或 `explorer.exe
 
 ### 2.5 优雅退出 `[设计]`
 
-触发源：`SIGINT`/`SIGTERM`（Unix）、控制台关闭事件（Windows）、`openmemo down`（→ `POST /api/v1/daemon/shutdown`，需鉴权）、systemd/launchd 停止。
+触发源：`SIGINT`/`SIGTERM`（Unix）、控制台关闭事件（Windows）、`openmemo down`（→ `POST /api/daemon/shutdown`，需鉴权）、systemd/launchd 停止。
 
 ```
 T+0    停止 accept 新连接（server.close()），但不断开已有连接
@@ -321,8 +322,8 @@ SSE `EventSource` 自带重连；断线期间的事件通过 `Last-Event-ID` 从
 
 | 前缀 | 通道 | 承担什么 | 不承担什么 |
 |---|---|---|---|
-| `/api/v1/**` | REST / JSON | **短请求**：资源 CRUD、动作触发（返回 jobId）、查询、配置读写 | 长轮询、大文件、流式输出 |
-| `/api/v1/events` | **SSE（全局唯一一条）** | **所有**服务端→客户端的异步通知：任务进度、下载进度、转写增量、LLM 流式 token、硬件/后端状态变更、日志尾巴 | 客户端→服务端（SSE 是单向的） |
+| `/api/**` | REST / JSON | **短请求**：资源 CRUD、动作触发（返回 jobId）、查询、配置读写 | 长轮询、大文件、流式输出 |
+| `/api/events` | **SSE（全局唯一一条）** | **所有**服务端→客户端的异步通知：任务进度、下载进度、转写增量、LLM 流式 token、硬件/后端状态变更、日志尾巴 | 客户端→服务端（SSE 是单向的） |
 | `/ws/**` | WebSocket | **仅两种**双向低延迟场景：① `/ws/recorder` 浏览器麦克风音频上行 + 实时转写下行（F3）；② `/ws/asr-worker` 浏览器作为 WebGPU ASR worker 的反向通道 | 任何能用 REST+SSE 表达的东西 |
 | `/media/**` | HTTP 字节流 | 音视频回放（**必须支持 Range**）、波形数据、缩略图、导出文件下载 | JSON |
 | `/` `/assets/**` | 静态 | SPA 产物 | — |
@@ -359,7 +360,9 @@ SSE `EventSource` 自带重连；断线期间的事件通过 `Last-Event-ID` 从
 
 ```
 id: 000000000000123          <- 单调递增序号（重放游标）
-event: message               <- 固定，类型放在 data.type 里，避免 addEventListener 爆炸
+event: job.progress          <- 【2026-08-02 订正】具名类型，与 packages/shared 的
+                                formatSseFrame() 实现一致。⚠️ 后果：EventSource.onmessage
+                                永不触发，前端必须逐类型 addEventListener（见 D-05 §2.3）
 data: {"type":"job.progress","ts":"…","topic":"job:01J…","payload":{…}}
 ```
 
@@ -368,10 +371,10 @@ data: {"type":"job.progress","ts":"…","topic":"job:01J…","payload":{…}}
   （命名法沿用 memo.ac 的 `域:动作:阶段`，但用 `.` 分隔以便前端做前缀匹配。）
 - **节流**：进度类事件按 topic **250ms 合并**发送（memo.ac 的实测值，R-01 §B9），只保留最新值。
   **例外**：`transcribe.segment`（增量转写结果）不能丢，走无节流的有序队列。
-- **重放**：内存环形缓冲保留最近 **2000** 条事件；`Last-Event-ID` 命中则从该点重放，未命中（缓冲已滚过）则下发一条 `sync.required`，前端全量重拉当前视图。
+- **重放**：内存环形缓冲保留最近 **256** 条事件（**2026-08-02 订正**：与 `packages/shared` 的 `SSE_REPLAY_BUFFER_SIZE = 256` 对齐，原写 2000）；`Last-Event-ID` 命中则从该点重放，未命中（缓冲已滚过）则下发一条 `sync.required`，前端全量重拉当前视图。缓冲较小是可接受的 —— D-05 §2.3 已设计"重连后一律全量失效"作兜底。
   → **绝不把 SSE 当作可靠数据源**：任何事件都只是"该去拉数据了"的提示，真相永远在 REST/DB。这条原则能消灭一整类"前后端状态不一致"的 bug。
 - **保活**：每 15s 发一行注释 `:ka\n\n`，并设 `retry: 3000`。
-- **订阅过滤**（可选）：`GET /api/v1/events?topics=job,download`。默认全订阅。
+- **订阅过滤**（可选）：`GET /api/events?topics=job,download`。默认全订阅。
 - **单流强制**：daemon 侧对同一 session 只允许 **1 条** SSE 连接；第二条连接进来时**关闭旧的**（而不是拒绝新的）——这样浏览器刷新/复活场景才不会卡住。
 
 ### 3.4 WebSocket：只给真正需要双向的场景
@@ -389,16 +392,26 @@ data: {"type":"job.progress","ts":"…","topic":"job:01J…","payload":{…}}
 
 ### 3.5 通用约束
 
-- **错误信封**：RFC 9457 `application/problem+json`
-  ```jsonc
-  { "type": "https://openmemo.local/errors/ASR_BACKEND_MISSING",
-    "title": "所选加速后端未安装", "status": 409,
-    "code": "ASR_BACKEND_MISSING",              // 稳定字符串，前端按它做 i18n 与动作
-    "detail": "cuda 后端未安装", "instance": "/api/v1/jobs/01J…",
-    "remediation": { "action": "install_backend", "params": {"backend":"cuda"} } }
+- **错误信封** —— **【2026-08-02 订正：以 `packages/shared` 的实现为准】**
+
+  本文原提议 RFC 9457 `application/problem+json`；`model-mgmt` 在 T-013 实现的是：
+  ```ts
+  // packages/shared/src/api.ts（已落地）
+  interface ApiErrorBody {
+    error: { code: string; message: string; messageZh: string;
+             retryable: boolean; details?: unknown }
+  }
   ```
-  `remediation` 让 UI 能直接渲染一个"去安装"按钮，而不是给用户看一段死文本（§7.1）。
-- **版本化**：路径前缀 `/api/v1`。破坏性变更升 `v2` 并**并行提供**一个小版本周期。
+  **采用实现版本**，`code` 仍是稳定字符串（前端按它做 i18n 与动作，见 D-05 §5.2/§6.2）。
+
+  ⚠️ **但缺一个字段**：原设计的 `remediation: {action, params}` 没有对应物。
+  它不是锦上添花 —— **章程要求 2.1「用户不碰命令行」直接依赖它**：
+  错误若只能给一段文字，用户还是得去查文档。建议在 `error` 下补一个可选
+  `remediation?: { action: string; params?: Record<string, unknown> }`。
+  该文件归 `model-mgmt` 独占，**需 Manager 协调**（见 D-05 §8 差异 2）。
+- **版本化**：路径前缀 `/api`（**订正**：原写 `/api/v1`；实现无版本段）。
+  版本职责由 `packages/shared` 的 `CONTRACT_VERSION` 承担 —— 前端启动时比对，不匹配则阻断并提示刷新。
+  破坏性变更升 `CONTRACT_VERSION`；只有在需要新旧并存时才引入路径版本段。
 - **内容协商**：一律 UTF-8 JSON；不支持 XML/msgpack（省事，本地场景没必要）。
 - **时间**：所有时间戳 ISO-8601 UTC 字符串；**媒体时间一律用毫秒整数 `*_ms`**，不用浮点秒（浮点秒在字幕对齐上会累积误差且不能做主键/索引比较）。
 - **限流**：本地场景不做全局限流，但对**外网出站**（LLM 调用、下载）做并发限制（§4.2 lane）。
@@ -473,7 +486,7 @@ Job（用户可见）        "导入 https://… 并转写"
 | 30 | 后台维护：索引重建、缩略图补齐、GC |
 
 - 调度顺序：`state='queued' AND next_run_at<=now AND blocked=0` → `ORDER BY priority ASC, created_at ASC`。
-- **前台自动提优先级**：前端在打开某笔记时发 `POST /api/v1/notes/{uid}/focus`，daemon 把该笔记未完成的 job 的 `priority` 临时降到 0。这是很小的实现成本换很大的体感提升。
+- **前台自动提优先级**：前端在打开某笔记时发 `POST /api/notes/{uid}/focus`，daemon 把该笔记未完成的 job 的 `priority` 临时降到 0。这是很小的实现成本换很大的体感提升。
 - **不做硬抢占**（kill 正在跑的推理会丢算力）。抢占只在 **chunk 边界**发生：worker 每完成一个 chunk 就问一次调度器"有没有 priority 更高的在等"，有则主动让出 lane（自己转 `queued`，保留 checkpoint）。这就是 §4.1 要 chunk 层的第二个理由。
 
 ### 4.4 暂停 / 取消 `[设计]`
@@ -525,7 +538,7 @@ Job（用户可见）        "导入 https://… 并转写"
 sequenceDiagram
     autonumber
     participant U as 浏览器 SPA
-    participant API as daemon /api/v1
+    participant API as daemon /api
     participant Q as 调度器
     participant W as pipeline worker
     participant SP as SubprocessRunner
@@ -734,7 +747,7 @@ sequenceDiagram
     participant U as 浏览器（笔记页）
     participant A as <audio>/<video>
     participant M as /media/asset/{uid}
-    participant API as daemon /api/v1
+    participant API as daemon /api
     participant DB as SQLite
 
     U->>API: GET /notes/{uid}/transcript?cursor=…

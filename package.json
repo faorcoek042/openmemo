@@ -7,7 +7,7 @@
   "license": "UNLICENSED",
   "packageManager": "pnpm@10.15.0",
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=22"
   },
   "scripts": {
     "build": "tsc -b",
