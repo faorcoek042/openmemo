@@ -72,12 +72,14 @@ export {
   resolveStoreRoot,
   discoverTools,
   fileExists,
+  findFileInBackendPacks,
   findInBackendPacks,
   findInstalledModel,
   isExecutable,
   listInstalledModels,
+  materializeSqliteExtensions,
 } from './tools.js';
-export type { ManagedDirs, ToolPaths } from './tools.js';
+export type { ManagedDirs, MaterializedExtensions, ToolPaths } from './tools.js';
 
 // -- media sources -------------------------------------------------------------------------
 export { MediaSourceRegistry } from './media/registry.js';

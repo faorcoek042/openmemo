@@ -1356,3 +1356,160 @@ dataDir 不存在：  同样 EXIT=1，逐条给出安装引导，无异常抛出
 - 代理**只验了子进程侧**（ffprobe/ffmpeg + yt-dlp）；下载器侧归 `model-mgmt`，我没测。
 - 我**没有在真实代理后面测**，用的是"死代理"反证法——证明流量确实改道了，但没证明"经代理能成功出网"。
 - demo（10000）全程只读，返回 200；我的测试实例用 17781/17783 并已按 pid 收尾，未用 `pkill -f`。
+
+---
+
+## [2026-08-03 05:45] T-093 全面回归 DONE
+
+### ⚠️ 先说一件我造成的污染，需要你或用户点头才能清
+
+测"移动数据目录"时，产品把指针写到了 **`~/.local/share/openmemo/datadir.json`**，内容 `/tmp/t093-cold-m2`。
+这个指针是**全局的（每用户一份）**，而 `main.ts` 自重启时会**用它覆盖 `--data-dir`**（那段逻辑本身是对的，
+注释里写清了理由：不覆盖的话搬完家重启会回到被搬空的旧路径，用户会以为笔记丢了）。
+后果：**demo（10000）如果自重启，会被劫持到我的测试目录**。
+
+我删这个文件被权限拦了（判定为"改 home 下的全局配置"），**我没有绕过**。
+所以我做了次优但安全的处置：**保留 `/tmp/t093-cold-m2`（719MB）不删**，让指针不悬空。
+清理命令（请你或用户执行）：
+```
+rm -f ~/.local/share/openmemo/datadir.json && rm -rf /tmp/t093-cold-m2
+```
+demo 全程只读，现在仍返回 200、`dataDir=/tmp/omdemo`、`restartRequired:false`，未受影响。
+
+### ① 冷启动重跑 —— **0 失败**，但第一次跑是 3 失败，根因换了一个
+
+你说 `mirrors: []` 那条应该没了 —— **确认没了**：全新空 dataDir，只经 HTTP API，
+7 个安装（whisper 后端 + libsimple + sqlite-vec + turbo + 两个 VAD + paraformer）**全部 succeeded**。
+
+但第一次自检仍然 **3 失败**，而且是个**更隐蔽的假绿灯**：
+```
+包全部下载 + sha256 校验通过，daemon 起来是   tokenizer=trigram  vec=off
+→ 中文双字词搜不到，且没有任何报错
+```
+根因是 ADR-015（**我的决策**）留下的一个我自己没想到的后果：
+改走上游预编译后，每个包解包到**自己的** `by-name/backend/<archive>/`，libsimple 的 zip 还**多嵌一层**；
+而消费方全都假设"一个目录装齐"—— `defaultExtensionPaths(root)` 收单个 root、`OPENMEMO_EXT_DIR` 是单个目录、
+清单里那句 `installPath: "bin/ext"` **压根没人执行**。于是 libsimple 和 vec0 永远不在同一个目录，谁都找不到。
+daemon 里那个 `resolveExtensionDir()` 兜底也失效：它对嵌套包返回了**外层目录**（里面没有 .so）。
+
+修法我选了"**让大家共有的那个假设成真**"，而不是教三个包各自去按文件解析路径：
+装完之后把真实文件链进 `<dataDir>/bin/ext`。新增 `materializeSqliteExtensions()`（在我的 `pipeline/tools.ts`）。
+两个细节是被实测逼出来的：
+- **相对链接**，不是绝对。数据目录能搬家；绝对链接搬完仍指向旧路径，用户删掉旧目录后中文搜索会**再次悄悄失效**——
+  同一个故障只是延后发生。已实测搬家后仍解得开。
+- **装完立刻链**，不只在启动时链。否则 `restartRequirement` 看不到"磁盘上已有扩展"，
+  那句"中文分词器已安装，需重启生效"**永远不会弹**，用户装完了却不知道要重启。
+
+修完从头再来一遍（全新空目录 → 只用 API → 重启）：
+```
+空目录时          ：通过 8  · 警告 11 · 失败 8   EXIT=1
+装完并重启后      ：通过 23 · 警告 6  · 失败 0   EXIT=0
+db.tokenizer=simple  db.sqliteVec=true  pipeline.missing=[]  中文 用户:1 推特:2 中国:1 服务:2
+```
+
+**跨界声明**：这次我动了 3 个 `apps/daemon` 文件（`main.ts` 起库前链一次 + `state.ts` 加 `extensionsDir` 字段 +
+`backends.ts` 装完 sqlite-ext 后链一次）。理由是这条链路横跨 downloader/daemon/db 三个包，
+只改我这边等于把产品的主打功能继续挂着。`oss-scout` 原来的 `resolveExtensionDir()` **保留为兜底**没删。
+
+### ② 自检判据要不要改 —— 改了 3 处，都是往严了改
+
+**a) 本地 LLM 那条 warn**：原来查 `by-name/llm` 下有没有 GGUF —— ADR-016 之后那是查**产品已经不提供的东西**，
+永远 warn，纯噪音。拆成两条，因为**两档的可自检性根本不同**：
+- 档 2（本机 Ollama / LM Studio）：**能真验** → 调 `detectLocalBackends()` 真发 `/v1/models` 且要求至少一个模型
+  （端口开着但没下模型不算可用）。纯本机请求，不联外网。
+- 档 1（BYO Key）：**没法自检**，我不装能验。唯一验法是拿用户的 Key 去发一次真请求 ——
+  那要花他的钱，还可能在他不知情时把 Key 发出去。所以只报"**配没配**"，并在文案里明写
+  「★ 只表示配了，未代发请求验证可用性」。**不为了让这行变绿而去替用户发请求。**
+
+**b) 加了代理检查，但默认不联网**：自检必须能离线跑完，否则"没网"会被渲染成"产品坏了"。
+默认只读 `/api/settings/proxy`；真连一次要显式 `--proxy-test`。
+默认就报的只有一条**别处没人会说**的事实：**SOCKS 下 ffmpeg 不走代理**。实测：
+```
+mode=manual → socks5://***:***@127.0.0.1:7890
+! 代理覆盖 ffmpeg  ffmpeg 不支持 SOCKS（libavformat 只识别 http_proxy）…在线媒体拉流会直连
+```
+`--proxy-test` 实测死代理 `http://127.0.0.1:9` → `YouTube:proxy_unreachable(经代理)` EXIT=1；恢复后 `YouTube:ok(直连)` EXIT=0。
+**只有 mode=manual 时才算必需项** —— 用户明确填了代理却连不上 = 配置坏了该红；
+没配代理时探针失败可能只是这台机器离线，把"离线"说成"坏了"是另一种谎。
+
+**c) ffmpeg 那条绿灯是假的，降成 warn**：`discoverTools()` 第 3 顺位是 PATH（开发便利）。
+本机有 `/usr/bin/ffmpeg` 所以一直绿，但 **ffmpeg 目前没有任何 HTTP 安装通道** ——
+`media-tools-linux-x64` 只在 `components.json` 里有版本记录，实测三个端点全拒：
+`components/*/update` → `NO_INSTALL_CHANNEL`、`models/pull` → `NOT_FOUND`、`backends/install` → `NOT_FOUND`。
+现在判据是：装在 dataDir 里 = ok；只在系统 PATH 上 = **warn**；没有 = fail。
+→ **这是当前最大的可分发性缺口**：用户机器上没有 ffmpeg 就没有任何办法装上。归 `model-mgmt`（要进 backends 目录）。
+
+### ③ 产物是否仍全在 dataDir 内 —— 有**一个**在外面，而且它必须在外面
+
+全盘时间戳扫描（含一次真实转写 220s，25 段，RTF 0.94）：
+**dataDir 内 90 个文件；dataDir 外只有一个产品文件 —— `~/.local/share/openmemo/datadir.json`**
+（其余命中是 npm/codex/systemd 的噪音）。
+
+这个指针**没法放进 dataDir**：它的作用就是记住"用户把数据搬到哪去了"，放进去就跟着搬走、等于没有。
+所以它是一个**合理的例外**，但**没有被描述清楚** —— `GET /api/settings/data-dir` 现在回 `selfContained: true`
+且逐目录列了 7 项，唯独不含它。用户的要求原话是"独立文件夹且**描述清楚**"，这条正好卡在"描述"上。
+建议 `oss-scout` 在该响应里加一项：路径 + 用途 + 「删掉只会回到默认位置，不会丢数据」。
+
+**搬家之后呢 —— 实测搬了两次，发现一条真 bug：**
+```
+第 1 次搬（无笔记）：rename 原子，旧路径消失，bin/ext 相对链接在新位置全部解得开，自检 0 失败
+转写一条笔记后第 2 次搬：
+  original  资产 → HTTP 200
+  audio16k  资产 → HTTP 403   ← 搬家后直接不可用
+```
+根因：`apps/daemon/src/jobs/runners/transcribe.ts:273` 把 `audio16k` 存成
+`relPath(mediaRoot, result.normalizedPath)`，但 `normalizedPath` 在 `<dataDir>/tmp/job-*/` —— **不在 mediaRoot 下**，
+于是 relPath 退化成**绝对路径**落库。两个后果：
+1. 搬家后指向旧的绝对路径 → 403（403 而不是 404，是我这边的路径包含守卫在正确地**失败关闭**）。
+2. 它躺在 `<dataDir>/tmp` 里，而设置页把 tmp 描述成「转写中间产物（**可随时删**）」——
+   **按 UI 的说法删一次，就会删掉一个已入库的资产**。
+
+我**没有顺手修**（是 `oss-scout` 的资产模型 + 我今天已经跨界改了 3 个他们的文件）。
+修法应该是落库前把 16k 音频挪进 `mediaDir`，或者把它明确降级为"可再生的派生物、丢了就重算"。
+
+顺带：我因此给自检加了一条 **4b 数据目录自洽性** —— 把 `media_assets` 每条路径解析出来，
+看是不是落在 dataDir 内、文件在不在。就是这条把上面那个洞坐实的（`1/2 条指向 dataDir 外`）。
+只看目录结构、不看数据库引用，这类问题永远查不出来。
+
+### ④ `no_speech_prob` —— **拿得到，但不是 CLI 能给的**，`oss-scout` 的标注完全正确
+
+不是缺 flag。查上游源码 + 本机同一个包实测：
+```
+whisper-cli -oj -ojf     → segment 键只有 timestamps / offsets / text / tokens
+whisper-server verbose_json → …外加 avg_logprob = -0.134、no_speech_prob = 1.93e-05
+```
+源码对得上：`whisper_full_get_segment_no_speech_prob()` 是 libwhisper 的**公开 API**，
+但 `examples/cli/cli.cpp` 的 `output_json()` **从头到尾没调用过它**，
+而 `examples/server/server.cpp:1145` 调了。`-nth/--no-speech-thold` 是**输入**阈值，不是输出开关。
+→ **CLI 路径上这个字段永远是 null，没有任何 flag 能改，也不是我们的 bug。**
+
+但我顺着查出**自己的一个白扔**：`whisperServer.ts:306` 把 `noSpeechProb` **硬编码成 null** ——
+server 明明给了，我们扔了。已修：收下该值、按 0.6 阈值打 `SILENCE_OR_MUSIC`（与 CLI 分支同阈值），
+并让 server 分支的 confidence 也走 `logprobToConfidence(avg_logprob)` ——
+两边各算各的，会让 F3"流式草稿 vs 离线重跑"合并时比较**两个不同刻度**的 confidence，
+而那个比较是要决定保不保留用户已经看到的那一版的，刻度不一致等于按噪声决策。
+
+→ 给 `oss-scout`：**默认 CLI 路径就是拿不到**，契约保持 `null` 是对的。
+想要更准的静音/低置信判断，唯一的路是切到 whisper-server 引擎（已实现、非默认，
+因为 T-031 实测它并不更快 —— 我当时那句"像卡死"是推理不是实测，已经自我推翻过）。
+
+### 质量
+- `pnpm -r build` 全绿；`packages/pipeline` tsc 干净；eslint 干净。
+- 测试 **124 → 132**：新增 6 条 `materializeSqliteExtensions`（含"搬家后链接仍解得开""升级换目录要重指""坏链接要覆盖"）
+  + 2 条 CLI/server 字段差异（**用实跑得到的真实 JSON 形状**，不是我编的样例 ——
+  原来那个 SAMPLE 里带着 CLI 根本不输出的 `avg_logprob`/`no_speech_prob`，是建立在虚构上的）。
+
+### 诚实边界
+- 冷启动的 0 失败是**在这台 Linux x64 上**。Windows / macOS 仍然**一次都没验过**（`materializeSqliteExtensions`
+  在 Windows 走拷贝分支，**未验证**）。
+- 「ffmpeg 装不上」我只证明了当前没有安装通道，**没有**去补那个包（不是我的目录）。
+- 代理我仍然**没有在真实可用的代理后面测过**，用的是死代理反证法：证明流量确实改道，未证明"经代理能成功出网"。
+- 那条 403 是我搬了两次才撞出来的；**只搬一次（无笔记）是查不出来的** —— 这也是为什么加了 4b。
+
+需要 Manager 决策:
+1. **清污染**（上面那条命令），优先级最高，涉及 demo。
+2. **ffmpeg 没有安装通道** → `model-mgmt` 把 media-tools 放进 backends 目录（可分发性硬缺口）。
+3. **audio16k 资产存绝对路径、且躺在被标注"可随时删"的 tmp 里** → `oss-scout`。
+4. `GET /api/settings/data-dir` 应把 `~/.local/share/openmemo/datadir.json` 也描述出来 → `oss-scout`。
+5. `llamacpp-cpu-linux-x64` 与 4 组 GGUF（qwen3/gemma）**仍在目录里**，ADR-016 说砍 → `model-mgmt` / `oss-scout`。
+6. 次要：`measureTree` 不识别硬链接，`models` 被重复计数（实测报 1371MB，`du` 实为 705MB）→ `oss-scout`。

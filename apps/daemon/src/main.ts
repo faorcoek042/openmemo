@@ -12,8 +12,14 @@
  */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { openAppDatabase, defaultExtensionPaths, type AppDatabase } from '@openmemo/db';
+import { materializeSqliteExtensions } from '@openmemo/pipeline';
+
+/** 与 @openmemo/db 的 libSuffix() 一致；只为 restartRequirement 做一次存在性探测。 */
+const extSuffix = (): string =>
+  process.platform === 'win32' ? '.dll' : process.platform === 'darwin' ? '.dylib' : '.so';
 
 import {
   BIND_HOST,
@@ -194,7 +200,13 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     const pending: string[] = [];
     try {
       if (database) {
-        const ext = defaultExtensionPaths(resolveExtensionDir(paths.modelsDir, paths.extensionsDir));
+        // 装完扩展后 startPackInstall 会立刻链进 bin/ext，所以这里看 bin/ext 就够；
+        // 链不上（只读等）时才退回按安装记录猜解包位置。
+        const ext = defaultExtensionPaths(
+          existsSync(join(paths.extensionsDir, `libsimple${extSuffix()}`))
+            ? paths.extensionsDir
+            : resolveExtensionDir(paths.modelsDir, paths.extensionsDir),
+        );
         if (ext.libsimple && existsSync(ext.libsimple) && !database.extensions.libsimple) {
           pending.push('libsimple');
         }
@@ -309,13 +321,33 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
   const instanceId = outcome.instanceId;
   instanceIdRef = instanceId;
 
+  /*
+   * ---- 把 <dataDir>/bin/ext 变成"真的有东西"（gpu-runtime, T-093）----
+   *
+   * ADR-015 改走上游预编译后，libsimple 与 sqlite-vec 各自解包到自己的
+   * `by-name/backend/<archive>/` 目录（libsimple 还多嵌一层），**两者永远不在同一个目录**，
+   * 而 `defaultExtensionPaths(root)` / `OPENMEMO_EXT_DIR` / 清单里的 `installPath: "bin/ext"`
+   * 全都假设"一个目录装齐"。T-093 冷启动实测：包全部下载校验成功，daemon 仍然
+   * `tokenizer=trigram, vec=off` —— 中文双字词搜不到，且没有任何报错（"扩展缺失"是设计好的降级）。
+   *
+   * 这里在开库前把真实文件链接进那一个目录，让所有人共有的假设成立。失败只降级，不阻断启动。
+   */
+  let extensionRoot = paths.extensionsDir;
+  try {
+    const mat = await materializeSqliteExtensions(paths.modelsDir, paths.extensionsDir);
+    if (Object.keys(mat.linked).length === 0) {
+      // 一个都没链上（只读目录 / 还没装扩展）→ 退回按安装记录猜解包位置的老路径。
+      extensionRoot = resolveExtensionDir(paths.modelsDir, paths.extensionsDir);
+    }
+  } catch {
+    extensionRoot = resolveExtensionDir(paths.modelsDir, paths.extensionsDir);
+  }
+
   try {
     // ---- DB：业务 schema 失败 = 启动失败；扩展/索引失败只降级 ----
     database = openAppDatabase({
       filename: paths.dbFile,
-      // 扩展目录优先取**已安装的 sqlite-ext 包**的解包位置（ADR-014 ③），
-      // 找不到才退回 OPENMEMO_EXT_DIR / <dataDir>/bin/ext
-      extensions: defaultExtensionPaths(resolveExtensionDir(paths.modelsDir, paths.extensionsDir)),
+      extensions: defaultExtensionPaths(extensionRoot),
       backupDir: paths.backupsDir,
     });
 

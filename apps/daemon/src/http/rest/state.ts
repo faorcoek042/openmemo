@@ -120,6 +120,8 @@ export class RestState {
   private constructor(
     private readonly sse: SseHub,
     readonly modelsRoot: string,
+    /** `<dataDir>/bin/ext` —— sqlite 扩展装完后链接到这里，见 startPackInstall。 */
+    readonly extensionsDir: string,
     readonly modelCatalog: ModelCatalog,
     readonly backendCatalog: BackendCatalog,
     public hardware: HardwareInfo,
@@ -140,7 +142,18 @@ export class RestState {
     await fs.mkdir(modelsRoot, { recursive: true });
     const hardware = await detectLocalHardware(modelsRoot);
 
-    const state = new RestState(deps.sse, modelsRoot, modelCatalog, backendCatalog, hardware);
+    // 与 AppPaths.extensionsDir 同一个定义（config/paths.ts:91）。
+    const extensionsDir =
+      process.env['OPENMEMO_EXT_DIR'] ?? path.join(deps.dataDir, 'bin', 'ext');
+
+    const state = new RestState(
+      deps.sse,
+      modelsRoot,
+      extensionsDir,
+      modelCatalog,
+      backendCatalog,
+      hardware,
+    );
     await state.store.init();
     await state.loadPersisted();
     state.bridgeQueueToSse();

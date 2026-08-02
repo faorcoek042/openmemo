@@ -16,6 +16,7 @@ import { describe, it } from 'node:test';
 import { SEGMENT_FLAG, detectRepetition, logprobToConfidence } from '../types.js';
 import type { TranscriptSegment } from '../types.js';
 import { parseWhisperJson } from '../whisperCpp.js';
+import { parseServerResponse } from '../whisperServer.js';
 import { PLAN_VERSION, dedupeBoundarySegments, deriveResumeSet } from '../../transcribe.js';
 
 /** Shaped after real `whisper-cli --output-json-full` output. */
@@ -203,5 +204,73 @@ describe('dedupeBoundarySegments — chunk-overlap artifact', () => {
   it('passes the first chunk through untouched', () => {
     const incoming = [seg(0, 5_000, 'a')];
     assert.equal(dedupeBoundarySegments([], incoming), incoming);
+  });
+});
+
+/**
+ * CLI 与 server 的 JSON **不一样**，而且不是"少个 flag"的问题（T-093 实测）。
+ *
+ * 同一个 v1.9.1 包、同一个模型、同一段音频：
+ *   whisper-cli -oj -ojf → segment 键只有 timestamps / offsets / text / tokens
+ *   whisper-server verbose_json → …还有 avg_logprob 与 no_speech_prob
+ *
+ * 原因在上游源码：`whisper_full_get_segment_no_speech_prob()` 是 libwhisper 的公开 API，
+ * 但 `examples/cli/cli.cpp` 的 `output_json()` 从头到尾没调用过它，
+ * 而 `examples/server/server.cpp:1145` 调了。`-nth/--no-speech-thold` 是**输入**阈值，
+ * 不是输出开关 —— 没有任何 flag 能让 CLI 吐出这个字段。
+ *
+ * 所以 `noSpeechProb` 在 CLI 路径上**永远是 null**，这不是我们的 bug，也修不了；
+ * 但 server 路径上必须收下来，之前那里硬编码 null 是白扔。
+ */
+describe('CLI vs server 的字段差异（实测，非假设）', () => {
+  it('CLI 真实输出没有 avg_logprob / no_speech_prob → 解析器不能崩，只能报 null', () => {
+    // 逐字对应 T-093 实跑 `whisper-cli -m … -oj -ojf` 得到的 segment 形状。
+    const real = JSON.stringify({
+      transcription: [
+        {
+          timestamps: { from: '00:00:00,120', to: '00:00:10,380' },
+          offsets: { from: 120, to: 10_380 },
+          text: ' And so, my fellow Americans',
+          tokens: [{ text: ' And', offsets: { from: 220, to: 360 }, p: 0.910618 }],
+        },
+      ],
+    });
+    const segs = parseWhisperJson(real, 0);
+    assert.equal(segs.length, 1);
+    assert.equal(segs[0]!.noSpeechProb, null, 'CLI 给不了就是 null，不许编一个');
+    // avg_logprob 缺失时退回 token 概率均值，confidence 仍要有值。
+    assert.ok((segs[0]!.confidence ?? 0) > 0.9);
+    assert.equal(segs[0]!.flags & SEGMENT_FLAG.SILENCE_OR_MUSIC, 0, '拿不到就不该乱打静音标');
+  });
+
+  it('server 的 verbose_json 有 no_speech_prob → 必须收下并据此打静音标', () => {
+    const body = JSON.stringify({
+      segments: [
+        {
+          start: 0,
+          end: 2,
+          text: ' (silence)',
+          avg_logprob: -0.13,
+          no_speech_prob: 0.93,
+          words: [{ word: ' (silence)', start: 0, end: 2, probability: 0.8 }],
+        },
+        {
+          start: 2,
+          end: 5,
+          text: ' real speech here',
+          avg_logprob: -0.134,
+          // 实测值：1.93e-05
+          no_speech_prob: 0.0000192711,
+          words: [{ word: ' real', start: 2, end: 3, probability: 0.99 }],
+        },
+      ],
+    });
+    const segs = parseServerResponse(body, 0);
+    assert.equal(segs.length, 2);
+    assert.equal(segs[0]!.noSpeechProb, 0.93);
+    assert.ok((segs[0]!.flags & SEGMENT_FLAG.SILENCE_OR_MUSIC) !== 0);
+    assert.equal(segs[1]!.flags & SEGMENT_FLAG.SILENCE_OR_MUSIC, 0);
+    // confidence 与 CLI 分支同刻度：来自 avg_logprob，而不是词概率均值 0.99。
+    assert.equal(segs[1]!.confidence, logprobToConfidence(-0.134));
   });
 });

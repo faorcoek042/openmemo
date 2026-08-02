@@ -12,6 +12,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { install } from '@openmemo/downloader';
+import { materializeSqliteExtensions } from '@openmemo/pipeline';
 import { isPackApplicable } from '@openmemo/runtime';
 import {
   BACKENDS,
@@ -163,6 +164,18 @@ export function startPackInstall(
       // blob 先落、manifest 最后写：中途崩溃只会留下可回收的孤儿 blob，
       // 绝不会留下指向不存在文件的 manifest。
       await state.store.writeManifest('backend', pack.id, record);
+
+      /*
+       * sqlite 扩展：解包位置是 `by-name/backend/<archive>/…`，但 db / OPENMEMO_EXT_DIR /
+       * 清单的 `installPath` 都只认 `<dataDir>/bin/ext` 这一个目录。装完立刻链过去，
+       * 否则 `restartRequirement` 看不到"磁盘上已有扩展"，用户永远等不到那句"需重启生效"
+       * —— 这正是 T-093 冷启动实测到的：包装完了，中文搜索还是不工作且无人报错。
+       */
+      if (pack.engine === 'sqlite-ext') {
+        await materializeSqliteExtensions(state.modelsRoot, state.extensionsDir).catch(
+          () => undefined,
+        );
+      }
 
       state.publish(
         makeEvent('backend.installed', topics.backends(), {

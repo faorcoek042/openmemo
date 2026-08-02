@@ -12,9 +12,9 @@
  * paths explicitly from the installed-pack records.
  */
 
-import { access, constants, readdir } from 'node:fs/promises';
+import { access, constants, cp, mkdir, readdir, rm, symlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, relative } from 'node:path';
 
 export interface ToolPaths {
   ffmpeg: string;
@@ -148,6 +148,123 @@ export async function findInBackendPacks(
     if (await isExecutable(c)) return c;
   }
   return null;
+}
+
+/**
+ * Find a NON-executable file (or directory) inside an installed backend pack.
+ *
+ * Same two-level scan as {@link findInBackendPacks}; split out because a `.so` has no
+ * exec bit and a dictionary directory is not a file at all, so the `isExecutable`
+ * test there rejects exactly the things we need here.
+ */
+export async function findFileInBackendPacks(
+  storeRoot: string,
+  name: string,
+): Promise<string | null> {
+  const backendRoot = join(storeRoot, 'by-name', 'backend');
+  const listDirs = async (dir: string): Promise<string[]> => {
+    try {
+      const entries = await readdir(dir, { withFileTypes: true });
+      return entries.filter((e) => e.isDirectory()).map((e) => join(dir, e.name));
+    } catch {
+      return [];
+    }
+  };
+
+  const candidates: string[] = [];
+  for (const packDir of await listDirs(backendRoot)) {
+    candidates.push(join(packDir, name));
+    for (const nested of await listDirs(packDir)) candidates.push(join(nested, name));
+  }
+  for (const c of candidates) {
+    if (await fileExists(c)) return c;
+  }
+  return null;
+}
+
+export interface MaterializedExtensions {
+  /** Absolute paths that now exist under `extDir`, keyed by the name we created. */
+  linked: Record<string, string>;
+  /** Names we looked for and did not find in any installed pack. */
+  missing: string[];
+}
+
+/**
+ * Make `<dataDir>/bin/ext` actually contain the SQLite extensions.
+ *
+ * ── Why this function has to exist ───────────────────────────────────────────────
+ * Every consumer assumes ONE directory holding `libsimple.so`, `vec0.so` and `dict/`:
+ * `@openmemo/db`'s `defaultExtensionPaths(root)` takes a single root, `AppPaths.
+ * extensionsDir` is `<dataDir>/bin/ext`, `OPENMEMO_EXT_DIR` overrides that one dir, and
+ * the sqlite-ext manifests literally declare `installPath: "bin/ext"`.
+ *
+ * Reality after ADR-015 (upstream prebuilts instead of our own build) is the opposite:
+ * each upstream archive lands in its OWN `by-name/backend/<archive>/` directory, with its
+ * own internal layout — libsimple's zip nests one more level (`libsimple-…/libsimple-…/
+ * libsimple.so`), sqlite-vec's tarball is flat. So the two extensions are never in the
+ * same directory and `installPath` is honoured by nobody.
+ *
+ * Measured consequence on a clean cold start (T-093): all packs download and verify OK,
+ * yet the daemon comes up `tokenizer=trigram, vec=off` — i.e. **Chinese two-character
+ * search silently does not work**, which is the single most important feature for this
+ * product's users. Nothing reports an error, because "extension not found" is a designed
+ * graceful degradation.
+ *
+ * Fixing it by teaching every consumer to resolve per-file would spread pack-layout
+ * knowledge across three packages. Instead we make the shared assumption TRUE: after
+ * install, link the real files into the one directory everybody already looks in.
+ *
+ * Symlinks (not copies) on POSIX so an uninstall/upgrade of the pack is visible
+ * immediately and `du` does not double-count ~10 MB of jieba dictionary. Windows
+ * symlinks need elevation or developer mode, so there we copy. UNVERIFIED on Windows.
+ *
+ * Idempotent: safe to call on every startup, and re-linking after an upgrade is the point.
+ */
+export async function materializeSqliteExtensions(
+  storeRoot: string,
+  extDir: string,
+): Promise<MaterializedExtensions> {
+  const suffix =
+    process.platform === 'win32' ? '.dll' : process.platform === 'darwin' ? '.dylib' : '.so';
+  const wanted = [`libsimple${suffix}`, `vec0${suffix}`, 'dict'];
+
+  const linked: Record<string, string> = {};
+  const missing: string[] = [];
+
+  for (const name of wanted) {
+    const src = await findFileInBackendPacks(storeRoot, name);
+    if (src === null) {
+      missing.push(name);
+      continue;
+    }
+    const dst = join(extDir, name);
+    try {
+      await mkdir(extDir, { recursive: true });
+      // Replace unconditionally: a stale link from a previous pack version is worse
+      // than no link, and `existsSync` on a dangling symlink is false anyway.
+      await rm(dst, { recursive: true, force: true });
+      if (process.platform === 'win32') {
+        await cp(src, dst, { recursive: true });
+      } else {
+        /*
+         * RELATIVE, not absolute.
+         *
+         * The data directory is movable (`/api/settings/data-dir`). An absolute link
+         * survives the copy but keeps pointing at the OLD location, so after the user
+         * moves their data and deletes the old path, Chinese search silently breaks
+         * again — the exact failure this function exists to prevent, just delayed.
+         * A relative link moves with the tree. Verified by an actual move in T-093.
+         */
+        await symlink(relative(extDir, src), dst);
+      }
+      linked[name] = dst;
+    } catch {
+      // Read-only or otherwise unwritable dataDir: degrade to "not linked" rather than
+      // taking the daemon down. The caller still gets `missing` and can report it.
+      missing.push(name);
+    }
+  }
+  return { linked, missing };
 }
 
 /** Find an installed model file by name under `<storeRoot>/by-name/<kind>/`. */

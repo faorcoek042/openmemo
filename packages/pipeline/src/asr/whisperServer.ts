@@ -37,7 +37,7 @@ import type {
   TranscribeChunkRequest,
   TranscriptSegment,
 } from './types.js';
-import { SEGMENT_FLAG, detectRepetition } from './types.js';
+import { SEGMENT_FLAG, detectRepetition, logprobToConfidence } from './types.js';
 
 export interface WhisperServerEngineOptions {
   tools: ToolPaths;
@@ -247,6 +247,18 @@ interface ServerSegment {
   end?: number;
   text?: string;
   words?: { word?: string; start?: number; end?: number; probability?: number }[];
+  avg_logprob?: number;
+  /*
+   * ★ 只有 server 有，CLI 没有。
+   *
+   * `whisper_full_get_segment_no_speech_prob()` 是 libwhisper 的公开 API，但
+   * `examples/cli/cli.cpp` 的 `output_json()` **从头到尾没调用过它** —— 不是缺 flag，
+   * 是 CLI 的 JSON writer 根本不写这个字段（v1.9.1 实测，见 whisperCpp.ts 注释）。
+   * 而 `examples/server/server.cpp:1145` 在 verbose_json 里是写的。
+   * 所以同一个模型、同一份音频，走 server 能拿到静音概率，走 CLI 拿不到 —— 这不是我们的 bug，
+   * 是上游两个 example 的输出不一致。这里把 server 给的值收下，别再丢掉。
+   */
+  no_speech_prob?: number;
 }
 
 /**
@@ -289,21 +301,32 @@ export function parseServerResponse(
         ...(w.probability !== undefined ? { p: w.probability } : {}),
       }));
 
-    const confidence =
-      words.length > 0
-        ? words.reduce((sum, w) => sum + (w.p ?? 0), 0) / words.length
-        : null;
+    /*
+     * 与 CLI 分支用**同一个** confidence 定义。
+     *
+     * server 的 verbose_json 里有 `avg_logprob`（CLI 没有），而 CLI 分支正是
+     * `logprobToConfidence(avg_logprob) ?? 词概率均值`。两边各算各的，会让 F3 的
+     * "流式草稿 vs 离线重跑" 合并时比较两个不同刻度的 confidence —— 那个比较是要
+     * 决定保不保留用户看到的那一版的，刻度不一致等于按噪声决策。
+     */
+    const meanWordProb =
+      words.length > 0 ? words.reduce((sum, w) => sum + (w.p ?? 0), 0) / words.length : null;
+    const confidence = logprobToConfidence(seg.avg_logprob ?? null) ?? meanWordProb;
+
+    const noSpeechProb = typeof seg.no_speech_prob === 'number' ? seg.no_speech_prob : null;
 
     let flags = 0;
     if (detectRepetition(text)) flags |= SEGMENT_FLAG.SUSPECT_REPETITION;
     if (confidence !== null && confidence < 0.4) flags |= SEGMENT_FLAG.LOW_CONFIDENCE;
+    // 阈值与 CLI 分支保持一致（whisper 自己的 no_speech_thold 默认也是 0.6）。
+    if (noSpeechProb !== null && noSpeechProb > 0.6) flags |= SEGMENT_FLAG.SILENCE_OR_MUSIC;
 
     out.push({
       startMs,
       endMs,
       text,
       confidence,
-      noSpeechProb: null,
+      noSpeechProb,
       words: words.length > 0 ? words : null,
       chunkIdx: chunkIndex,
       flags,
