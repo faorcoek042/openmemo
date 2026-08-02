@@ -8,7 +8,8 @@ import type { SseEvent } from '@openmemo/shared';
 import { makeEvent, topics } from '@openmemo/shared';
 
 import type { SseHub } from '../http/sse.js';
-import { LanePool, type Lane } from './lanes.js';
+import type { Lane } from './lanes.js';
+import type { LanePool } from './lanes.js';
 import type { JobQueue, JobRow } from './queue.js';
 
 export type JobHandler = (job: JobRow, signal: AbortSignal) => Promise<void>;

@@ -7,3 +7,5 @@
  */
 export { TranscriptList } from './TranscriptList';
 export { WordLevelBadge } from './WordLevelBadge';
+export { SegmentRow } from './SegmentRow';
+export { useEditSegmentMutation, useRevertSegmentMutation, isEdited } from './api';

@@ -158,8 +158,15 @@ export interface TranscriptSegmentDto {
   noSpeechProb: number | null;
   words: { w: string; s: number; e: number; p: number }[] | null;
   chunkIdx: number | null;
-  /** 位图：bit0 疑似幻觉 / bit1 低置信 / bit2 人工确认 / bit3 静音 */
+  /** 位图：bit0 疑似幻觉 / bit1 低置信 / bit2 人工确认(=重跑时被保留) / bit3 静音 */
   flags: number;
+  /**
+   * 用户编辑时间。**这是"用户编辑过"的唯一判定依据**（D-06 §15.2 冻结契约）——
+   * 非 NULL 的段在离线重跑合并时**永不覆盖、永不删除**。
+   */
+  editedAt: number | null;
+  /** 编辑前的 ASR 原文。仅当被编辑过才非空，供"查看改动"与"还原"。 */
+  textRaw: string | null;
 }
 
 export const SEGMENT_FLAG = {

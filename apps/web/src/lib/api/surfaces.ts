@@ -32,6 +32,7 @@ export const SURFACES = [
   'models', // /api/models*      （features/models，归 model-mgmt）
   'backends', // /api/backends*  （features/runtime，归 model-mgmt）
   'runtime', // /api/runtime/*
+  'settings', // /api/settings*
   'recorderWs', // /ws/recorder
   /** 未声明 surface 的调用落点。**不计入"已接通/模拟"统计**，只用于回落逻辑。 */
   'generic',

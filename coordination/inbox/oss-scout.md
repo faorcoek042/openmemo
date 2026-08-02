@@ -393,3 +393,129 @@ Markdown   663 字节 → 回读 31 节点  校验✅  文本集合一致✅
 - `adb0c250e9892e5e4` — llama-server + Qwen3-0.6B 搭建（sonnet5，已完成）
 - `a3d1a090de8202014` — 三个序列化器 + 往返测试（sonnet5，已完成，18/18 通过）
 - `ab7a4031d7afa1cbe` — 换 Qwen3-1.7B 模型（sonnet5，已完成）
+
+---
+
+## [2026-08-02 16:40] T-028 DONE —— 端到端已打通 + 功能缺失清单
+
+### 一、端到端链路 ✅ 真的通了
+
+`浏览器(HTTP+SSE) → daemon → ffmpeg → VAD → whisper → SQLite → SSE → REST 回读 → /media Range`
+
+验收脚本 `apps/daemon/scripts/e2e-f2.mjs` **只用 HTTP 协议，不 import 任何 daemon 内部模块**
+（否则不算端到端）。真实输出见回复正文。要点：
+- `POST /api/notes/import` → **202** + `{noteUid, jobUid}`（写操作异步化，D-01 §3.2 规则 2）
+- **67 条真实 SSE 事件**：`note.created`×1 `job.created`×1 `job.state`×1 `job.progress`×11(已 250ms 合并)
+  `transcribe.segment`×**49**(未节流，增量不能丢) `media.ready`×1 `transcribe.done`×1 `note.updated`×1 `job.done`×1
+- **落库 49 段**，`transcripts.rtf=0.0729`（实测非估算），`jobs.state=succeeded`
+- `/media/asset/<uid>`：HEAD 200 / Range **206** `bytes 0-1023/7045198`
+
+### 二、⚠️ 我自己写的一个 bug —— 搜索永远返回 0 条
+
+Manager 让我端到端验一次搜索，**一验就炸**：FTS5 索引 49 行、直接 MATCH 有 7 条命中，
+但走 `/api/search` **一条都搜不到**。
+
+根因：**我把两套转义叠加了**。
+`simple_query()` 自己会做转义（实测 `simple_query('Africa')` → `( a+f+r+i+c+a* OR africa* )`，
+还会把 `a OR b` 里的 `OR` 中性化成普通词）。我为了防 FTS5 注入又自己加了一层引号，
+于是 `simple_query('"Africa"')` → `"""" AND (...) AND """"` —— **那两个空字符串短语永远匹配不到东西**。
+
+→ 已改成分两条路：libsimple 路传**原始串**（它负责转义），trigram 降级路才自己加引号。
+**这个 bug 不会让构建/类型/lint 任何一项变红**，只会让搜索静默失效 ——
+和 ADR-013 附录那三例是同一类。
+
+修复后实测（真实数据）：`Africa` 5 条、`Universal Negro` 1 条、
+**中文 `思维导图`/`转写稿`/`本地优先` 各 1 条**、`sxdt` 0 条（正确 —— 思维导图首字母是 `swdt`）。
+
+另修 2 个 bug：`--port 17660` 时扫描区间变成 `17660..17659`（空）导致"全部被占用"；
+`media_sources` 列名写成了 `original_url`（实为 `input_url`）。
+
+### 三、📋 我领域内的功能缺失清单（回答 Manager 的三个问题）
+
+#### 你标错的
+| 行 | 你标 | 实际 | 依据 |
+|---|---|---|---|
+| F5 转写稿↔时间轴联动 | 🟡「`/media` Range 未实现」 | **🟢 daemon 侧已实现** | HEAD 200 / Range 206 实测，含 ETag/304/416 |
+| F5 全文搜索 | 🟡「未端到端验证」 | **🟢 已端到端验证**（且因此揪出上面的 bug） | 见上 |
+| 端到端 | 🔴 | **🟢 F2 已打通** | 见一 |
+| F2 网页拖拽上传 | 🟡「daemon 端点未接」 | 🟡 **端点已接但只收路径不收字节** | 见下"我漏掉的" |
+
+#### 我漏掉的功能点（**我自己的锅，之前没报**）
+1. **`LlmProvider.embed()` 我没实现。** D-01 §6.2 的接口里明确写了 `embed(req)`，
+   我 T-023 只做了 `chat()`。→ **这就是向量检索断链的直接原因**（见下）。
+2. **`SecretStore` 写了但没有任何端点暴露。** T-023 我在 `packages/llm/src/secrets.ts`
+   实现了明文 0600 存储 + `disclosure()` 明示文案（ADR-006 决策 1 的强制条件），
+   但 **daemon 没有 `/api/settings` / `/api/secrets`**，前端拿不到 → **设置页存不了 API Key**。
+3. **上传端点只接受路径不接受字节流。** `POST /api/notes/import` 收的是绝对路径 +
+   allowlist 根校验。**浏览器拖拽上传需要 multipart/分块字节流端点，这个不存在。**
+   目前只能导入服务器本机已有的文件 —— 对本地单机场景够用，但"网页拖拽"这条严格说没通。
+4. **`transcribe.started` 事件我没发。** 28 个事件类型里我只用了 9 个；
+   `transcribe.started` 前端用来出确定性进度条，我漏了（只发了 `job.progress`）。
+
+#### 我领域内 🔴/⚪ 的真实状态（逐项核实过，非推测）
+| 功能 | 真实状态 | 核实方式 |
+|---|---|---|
+| **向量检索 embedding 生成** | 🔴 **全仓库无任何生产者** | grep `embed_chunks|vec_chunks|embedding` 只命中 schema/类型定义，无写入方 |
+| **设置页后端** | 🔴 daemon 无 `/api/settings`、无 `/api/secrets` | 路由清单实测（见下） |
+| **标签 / 星标 / 文件夹** | 🔴 **daemon 无任何端点**（表在、`notes.starred` 列在） | 路由清单：`/api/notes*` 只有 import/list/get/transcript/delete |
+| **笔记编辑（TipTap）** | 🔴 **前端 0 个文件用 TipTap**（package.json 有 3 处依赖，`src` 里 grep 命中 0） | 只读审计 |
+| **笔记正文写入** | 🔴 无 `PATCH /api/notes/:uid`，`body_json`/`body_text` 永远为空 | 路由清单 |
+| **笔记导出** | 🔴 daemon 无导出端点 | 路由清单 |
+| **F3 `/ws/recorder` 接线** | 🔴 **仍未接** —— 协议边界在（鉴权/Origin/帧类型），但不接音频 | `ws.ts` 只回 `ready`/`pong` |
+| **F4 导图生成没接进 daemon** | 🔴 `packages/mindmap` 跑通了，但**没有 job runner，没有端点** | handlers 只注册了 `transcribe` |
+| 云 LLM provider | 🔴 一次没跑过（无 Key） | 同前 |
+
+**daemon 实际注册的路由共 32 条**（`/api/models*` 15、`/api/backends*` 6、`/api/jobs*` 2、
+`/api/notes*` 3、`/api/search` 1、`/api/runtime/hardware`、`/api/events`、`/api/health`、
+`/api/auth/session`、`/api/daemon/*`、`/media/asset/:uid`）。
+
+### 四、关于向量检索的判断依据（Manager 要我给依据，不替你裁决）
+
+**现状**：`sqlite-vec` 扩展加载正常、`vec0` 表能建、KNN 能查（T-016 测过），
+但 **`embed_chunks` 与 `vec_chunks` 永远是空的**，因为没有任何代码生成 embedding。
+`/api/search` 已如实返回 `semantic:false` + 原因，**没有假装有混合检索**。
+
+**要补需要三件事**（都不小）：
+1. **embedding 模型**：本地跑要再下一个模型（bge-small-zh ~100MB / multilingual-e5-small ~470MB），
+   走 ADR-004 的模型目录；或调云 API（但用户已定 BYO Key 可选，不能强制）。
+2. **推理运行时**：whisper.cpp/llama.cpp **都不做 embedding**。
+   要么接 `sherpa-onnx`（已在 vendor，但没验过它的 embedding 能力），
+   要么给 `llama.cpp` 加 `--embedding` 模式（llama-server 支持 `/v1/embeddings`，**未验证**），
+   要么引入 onnxruntime。**都是新的运行时工作量，落在 `gpu-runtime` 领域。**
+3. **切块 + 增量重算**：D-02 §4.3 的语义窗口切块（300–500 字、重叠 15%），
+   以及换模型/换稿后的重建队列。
+
+**我的建议（供裁决，不是决定）**：**v1 砍掉语义/混合检索，只留关键词检索。**
+- 关键词检索已端到端可用，**中文分词 + 拼音都实测通过**，覆盖"找那句话"的主要诉求。
+- 语义检索的边际价值在**单机个人笔记**规模下不明显，但成本是"再下一个模型 + 一套新运行时 + 重建队列"。
+- D-02 §4.5 已经把索引设计成**可重建缓存**，所以**现在不做，将来补不需要迁移数据** —— 决策可逆。
+- 若要做，建议**先验证 `llama-server /v1/embeddings` 是否可用**（我本机有 llama-server，
+  可以顺手验；但这条属 `gpu-runtime` 领域，需要你指派）。
+
+### 五、需要 Manager 决策 / 转达
+
+1. **`packages/shared` 缺 notes/import/transcript/search 契约。** 27 条 `ENDPOINTS` 里
+   一条 F1/F2/F5 的都没有。我在 `apps/daemon/src/http/rest/notes.ts` 按 D-01 §3.2 定了**临时形状**，
+   并在文件头写明"一旦 shared 补上正式类型就改为 import"。
+   **`architect` 正在并行切真 API，会撞契约** → 建议尽快让 `model-mgmt` 补，或授权我提 PR。
+   **DISPUTE 风险点**：我用 `{noteUid, jobUid}`，前端若假设别的字段名就会对不上。
+2. **是否补上面"我漏掉的 4 项"**（embed()、settings/secrets 端点、上传字节流端点、`transcribe.started`）。
+   我判断优先级：**settings/secrets 端点 > 上传字节流 > transcribe.started > embed()**。
+   前两项直接卡住"用户能不能用"，后两项是体验与可选功能。
+3. **向量检索去留**（见四）。
+4. **F3 `/ws/recorder` 接线**仍等 `AsrStream` 冻结（ADR-011 决策 4），目前**没接**。
+
+### 诚实声明
+- **F2 端到端是真跑的**（真 ffmpeg / 真 whisper / 真 SQLite / 真 SSE），F1(URL) 用同一条 runner
+  但**本轮没跑过 URL 导入**；F3/F4 **完全没接进 daemon**。
+- 中文搜索用的是**我播进库的一条中文笔记**（非转写产物）—— 因为 Garvey 演讲是英文。
+  中文**转写**链路 `gpu-runtime` 验过，但**中文转写→搜索的完整链路本轮没连着跑**。
+- 路径穿越测试返回 **404 而非 400**：Node 的 `new URL()` 会把 `/media/asset/../../etc/passwd`
+  规范化成 `/etc/passwd`，根本进不了 `/media` 分支。**拒绝是有效的，但不是我断言的那个原因** ——
+  断言写松了，已记录。
+- 全量：`pnpm -r build` **9/9 包 Done**；测试 **118 pass / 0 fail**；
+  `apps/daemon` 的 tsc 与 eslint 均 EXIT=0。
+- **未做性能相关任何工作**（按用户指令降级）：无并发调优、无索引优化、无查询性能测量。
+
+派生 subagent 记录（未 kill，可复用）:
+- `aa4ba3daa1f6c8db2` — 把 reference-server 27 个端点移植成 TS（已完成，含真实 59.7MB 下载验证）

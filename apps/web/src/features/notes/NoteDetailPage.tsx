@@ -108,7 +108,12 @@ export default function NoteDetailPage() {
             </label>
           </div>
           <div className="min-h-0 flex-1">
-            <TranscriptList segments={transcript.data?.segments ?? []} speakerNames={speakerNames} />
+            <TranscriptList
+              segments={transcript.data?.segments ?? []}
+              speakerNames={speakerNames}
+              noteUid={noteUid}
+              transcriptUid={transcript.data?.uid}
+            />
           </div>
         </section>
 

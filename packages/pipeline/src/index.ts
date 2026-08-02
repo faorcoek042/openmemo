@@ -133,6 +133,14 @@ export type {
   SherpaTransducerModel,
 } from './asr/sherpaOnnx.js';
 
+// Resident-server mode: keeps the model loaded across chunks (D-01 §6.1).
+export { WhisperServerEngine, parseServerResponse } from './asr/whisperServer.js';
+export type { WhisperServerEngineOptions } from './asr/whisperServer.js';
+
+// Resumable media download.
+export { resumableFetch } from './media/resumableFetch.js';
+export type { ResumableFetchOptions, ResumableFetchResult } from './media/resumableFetch.js';
+
 // Chinese offline default (ADR-013 decision 1).
 export { ParaformerEngine } from './asr/paraformer.js';
 export { loadSherpaModule, normalizeSherpaModule } from './asr/sherpaModule.js';

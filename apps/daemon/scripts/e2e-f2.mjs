@@ -16,7 +16,6 @@ if (!base || !token || !audioPath) {
 }
 
 const events = [];
-let sseRaw = '';
 
 // ---- 1) 用 Bearer 换 session cookie（浏览器就是这么做的）----
 const sessRes = await fetch(`${base}/api/auth/session`, {
@@ -49,7 +48,6 @@ const ssePromise = (async () => {
       while ((i = buf.indexOf('\n\n')) >= 0) {
         const frame = buf.slice(0, i);
         buf = buf.slice(i + 2);
-        sseRaw += frame + '\n\n';
         const evLine = /^event:\s*(.+)$/m.exec(frame);
         const dataLine = /^data:\s*(.+)$/m.exec(frame);
         if (evLine && dataLine) {
@@ -96,7 +94,7 @@ console.log('    类型统计:', JSON.stringify(counts));
 console.log('    首 12 条:');
 for (const e of events.slice(0, 12)) {
   const d = e.data;
-  let extra = '';
+  let extra;
   if (e.event === 'job.progress') extra = `phase=${d.phase} fraction=${d.fraction?.toFixed(3)}`;
   else if (e.event === 'transcribe.segment') extra = `seq=${d.seq} ${d.startSec}s "${(d.text ?? '').trim().slice(0, 42)}"`;
   else if (e.event === 'transcribe.started') extra = `dur=${d.durationSec}s`;

@@ -1,0 +1,253 @@
+{
+  "ranAt": "2026-08-02T07:36:42.146Z",
+  "base": "http://127.0.0.1:17660",
+  "browser": "chromium 151.0.7922.34 (playwright)",
+  "findings": [
+    {
+      "feature": "应用启动",
+      "status": "yes",
+      "detail": "title=\"OpenMemo\" · token fragment 已抹除 ✓",
+      "shot": "docs/design/assets/t027-e2e/00-boot.png"
+    },
+    {
+      "feature": "侧栏/顶栏导航",
+      "status": "yes",
+      "detail": "6 个链接: 新建捕获 / 全部笔记 / 星标 / 录音 / 任务中心 / 设置",
+      "shot": null
+    },
+    {
+      "feature": "模型管理页渲染",
+      "status": "yes",
+      "detail": "已渲染",
+      "shot": "docs/design/assets/t027-e2e/01-models.png"
+    },
+    {
+      "feature": "模型卡片列表",
+      "status": "yes",
+      "detail": "2 张卡",
+      "shot": null
+    },
+    {
+      "feature": "中文默认过滤提示",
+      "status": "yes",
+      "detail": "「仍要显示」按钮存在",
+      "shot": null
+    },
+    {
+      "feature": "点「仍要显示」解除过滤",
+      "status": "yes",
+      "detail": "卡片 2 → 6",
+      "shot": "docs/design/assets/t027-e2e/02-models-unfiltered.png"
+    },
+    {
+      "feature": "量化选择器展开",
+      "status": "yes",
+      "detail": "3 个量化档可选",
+      "shot": "docs/design/assets/t027-e2e/03-quant-selector.png"
+    },
+    {
+      "feature": "「能不能跑」fit 徽标",
+      "status": "yes",
+      "detail": "9 个徽标",
+      "shot": null
+    },
+    {
+      "feature": "磁盘占用分解",
+      "status": "yes",
+      "detail": "含图例与字节标签",
+      "shot": null
+    },
+    {
+      "feature": "点击下载按钮",
+      "status": "yes",
+      "detail": "按钮文案「下载 60 MB」已点击",
+      "shot": null
+    },
+    {
+      "feature": "下载进度条真的走动",
+      "status": "yes",
+      "detail": "进度行出现，观察到 100% · job=succeeded · Whisper 基础模型（Q5_1 量化）正在选择下载源取消0 B / 60 MB · 0%",
+      "shot": "docs/design/assets/t027-e2e/05-download-progress-late.png"
+    },
+    {
+      "feature": "完成后列表显示「已安装」",
+      "status": "partial",
+      "detail": "页面上 0 处「已安装」标记",
+      "shot": "docs/design/assets/t027-e2e/06-models-installed.png"
+    },
+    {
+      "feature": "硬件探测卡片",
+      "status": "yes",
+      "detail": "已渲染真实硬件",
+      "shot": "docs/design/assets/t027-e2e/08-runtime.png"
+    },
+    {
+      "feature": "硬件信息内容",
+      "status": "yes",
+      "detail": "你的硬件显卡未检测到可用 GPU内存17 GB · 可用 745 MB处理器AMD RYZEN AI MAX+ 395 w/ Radeon 8060S · 16 核 / 32 线程模型目录/tmp/openmemo-refserver/mo",
+      "shot": null
+    },
+    {
+      "feature": "后端包列表",
+      "status": "yes",
+      "detail": "10 个包",
+      "shot": null
+    },
+    {
+      "feature": "后端状态芯片",
+      "status": "yes",
+      "detail": "16 个芯片",
+      "shot": null
+    },
+    {
+      "feature": "后端安装按钮",
+      "status": "yes",
+      "detail": "10 个可安装（本机无 GPU，多数不适用属预期）",
+      "shot": null
+    },
+    {
+      "feature": "F5 笔记列表",
+      "status": "yes",
+      "detail": "3 个可交互元素 · 新建捕获全部笔记星标录音运行时模型任务中心设置已接通 1 · 模拟 1· daemon v发生了未知错误上游 daemon 无法访问: fetch failed",
+      "shot": "docs/design/assets/t027-e2e/10-route--.png"
+    },
+    {
+      "feature": "F1 链接导入",
+      "status": "yes",
+      "detail": "6 个可交互元素 · 新建捕获全部笔记星标录音运行时模型任务中心设置已接通 1 · 模拟 1· daemon v新建捕获把链接粘到这里，或把文件拖进来开始支持 YouTube / B",
+      "shot": "docs/design/assets/t027-e2e/10-route--capture.png"
+    },
+    {
+      "feature": "F3 录音",
+      "status": "yes",
+      "detail": "4 个可交互元素 · 新建捕获全部笔记星标录音运行时模型任务中心设置已接通 1 · 模拟 1· daemon v录音转文字麦克风0:00开始录音识别引擎:Paraformer 中文（",
+      "shot": "docs/design/assets/t027-e2e/10-route--record.png"
+    },
+    {
+      "feature": "任务中心",
+      "status": "partial",
+      "detail": "0 个可交互元素 · Unexpected Application Error!Minified React error #185; visit https://react.dev/",
+      "shot": "docs/design/assets/t027-e2e/10-route--tasks.png"
+    },
+    {
+      "feature": "设置页",
+      "status": "yes",
+      "detail": "3 个可交互元素 · 新建捕获全部笔记星标录音运行时模型任务中心设置已接通 1 · 模拟 1· daemon v设置通用语言中文English主题systemlightdark发生了",
+      "shot": "docs/design/assets/t027-e2e/10-route--settings.png"
+    },
+    {
+      "feature": "设置-存储",
+      "status": "yes",
+      "detail": "3 个可交互元素 · 新建捕获全部笔记星标录音运行时模型任务中心设置已接通 2 · 模拟 1· daemon v存储模型与加速后端占用的磁盘空间。模型目录/tmp/openmemo-",
+      "shot": "docs/design/assets/t027-e2e/10-route--settings-storage.png"
+    },
+    {
+      "feature": "F1 链接输入框",
+      "status": "yes",
+      "detail": "可输入 · 提交按钮存在",
+      "shot": null
+    },
+    {
+      "feature": "F1 点击导入有反应",
+      "status": "yes",
+      "detail": " 新建捕获全部笔记星标录音运行时模型任务中心设置已接通 1 · 模拟 1· daemon v新建捕获把链接粘到这里，或把文件拖进来开始支持 YouTube / Bilibili / 播客 / RSS / 直链，或拖入本地音视频文件发生了未知错误上游 daemo",
+      "shot": "docs/design/assets/t027-e2e/11-f1-submit.png"
+    },
+    {
+      "feature": "F2 文件选择/拖拽入口",
+      "status": "yes",
+      "detail": "file input ×1 · 拖拽提示 ×0",
+      "shot": null
+    },
+    {
+      "feature": "F3 录音按钮可点",
+      "status": "yes",
+      "detail": "点击后:  新建捕获全部笔记星标录音运行时模型任务中心设置已接通 1 · 模拟 1· daemon v录音转文字录音中0:02停止并转写第一个是转写流水线，已经能跑通链接导入了。识别引擎:Paraformer 中文（快）换成 large-v3-turboⓘ 中文默认使用",
+      "shot": "docs/design/assets/t027-e2e/12-f3-record.png"
+    },
+    {
+      "feature": "F5 搜索框",
+      "status": "yes",
+      "detail": "可输入并回车 · 结果区:  新建捕获全部笔记星标录音运行时模型任务中心设置已接通 1 · 模拟 1· daemon v搜索混合关键词语义发生了未知错误上游 daemon 无法访问: fetch failed查看详情没有找到匹配内容换个关键词，或试",
+      "shot": "docs/design/assets/t027-e2e/13-f5-search.png"
+    },
+    {
+      "feature": "F5 标签 UI",
+      "status": "no",
+      "detail": "0 处标签相关文案（未验证可否新建）",
+      "shot": null
+    },
+    {
+      "feature": "F5 星标 UI",
+      "status": "partial",
+      "detail": "1 处星标相关元素",
+      "shot": null
+    },
+    {
+      "feature": "F5 笔记编辑器 (TipTap)",
+      "status": "no",
+      "detail": "详情页无任何 contenteditable/ProseMirror",
+      "shot": null
+    },
+    {
+      "feature": "F5 笔记导出入口",
+      "status": "no",
+      "detail": "0 个导出按钮",
+      "shot": null
+    },
+    {
+      "feature": "F4 导图渲染区",
+      "status": "no",
+      "detail": "0 个导图容器",
+      "shot": null
+    },
+    {
+      "feature": "设置-API Key",
+      "status": "no",
+      "detail": "0 个相关元素",
+      "shot": null
+    },
+    {
+      "feature": "设置-语言切换",
+      "status": "yes",
+      "detail": "3 个相关元素",
+      "shot": null
+    },
+    {
+      "feature": "设置页内容",
+      "status": "yes",
+      "detail": " 新建捕获全部笔记星标录音运行时模型任务中心设置已接通 1 · 模拟 1· daemon v设置通用语言中文English主题systemlightdark发生了未知错误上游 daemon 无法访问: fetch failed查看详情关于契",
+      "shot": "docs/design/assets/t027-e2e/15-settings.png"
+    },
+    {
+      "feature": "SSE EventSource 连接",
+      "status": "yes",
+      "detail": "readyState=1(1=OPEN) · 收到: job.progress,job.progress,job.progress,job.progress,job.progress,job.progress,job.progress",
+      "shot": null
+    },
+    {
+      "feature": "onmessage 陷阱",
+      "status": "yes",
+      "detail": "确认：具名帧不触发 onmessage，逐类型 addEventListener 是必须的",
+      "shot": null
+    },
+    {
+      "feature": "暗色主题真的切换",
+      "status": "yes",
+      "detail": "--surface-0: \"#f9f9f7\" → \"#0d0d0d\"",
+      "shot": null
+    },
+    {
+      "feature": "控制台无未捕获错误",
+      "status": "yes",
+      "detail": "无 pageerror",
+      "shot": null
+    }
+  ],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 502 (Bad Gateway)",
+    "Error: Minified React error #185; visit https://react.dev/errors/185 for the full message or use the non-minified dev environment for full errors and additional helpful warnings.\n    at di (http://127",
+    "React Router caught the following error during render Error: Minified React error #185; visit https://react.dev/errors/185 for the full message or use the non-minified dev environment for full errors "
+  ],
+  "pageErrors": []
+}

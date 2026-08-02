@@ -115,6 +115,9 @@ export const notesSse: SseBinding = (qc: QueryClient) => [
       words: null,
       chunkIdx: null,
       flags: 0,
+      // 新到的段一定是机器识别、未编辑 —— editedAt=null 才会被后续重跑正常覆盖
+      editedAt: null,
+      textRaw: null,
     });
   }),
 

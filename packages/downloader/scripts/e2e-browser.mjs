@@ -58,7 +58,12 @@ page.on('console', (m) => {
 });
 page.on('pageerror', (e) => pageErrors.push(String(e.message).slice(0, 200)));
 
+const _shots = new Set();
+async function fsExists(name) {
+  return _shots.has(name);
+}
 async function shot(name) {
+  _shots.add(name);
   const f = path.join(SHOTS, `${name}.png`);
   await page.screenshot({ path: f, fullPage: true });
   return path.relative(REPO, f);
@@ -192,10 +197,14 @@ if (modelsPage.found) {
     record('点击下载按钮', 'yes', `按钮文案「${label}」已点击`);
 
     // 进度行应出现并推进
+    // Poll the DOM for visible progress, but decide completion from the API — the row
+    // disappearing is ambiguous (could be a re-render), whereas job state is authoritative.
     let sawRow = false;
     let maxPct = 0;
     let lastText = '';
-    for (let i = 0; i < 150; i++) {
+    let jobDone = false;
+    const deadline = Date.now() + 900_000; // real 78 MB download at ~0.2 MB/s needs patience
+    while (Date.now() < deadline) {
       await page.waitForTimeout(2000);
       const row = page.locator('[data-testid^="models-download-row-"]').first();
       if (await row.count()) {
@@ -203,17 +212,31 @@ if (modelsPage.found) {
         lastText = ((await row.textContent()) ?? '').replace(/\s+/g, ' ').trim();
         const m = /(\d+)%/.exec(lastText);
         if (m) maxPct = Math.max(maxPct, Number(m[1]));
-        if (i === 3) await shot('04-download-progress');
-      } else if (sawRow) {
-        break; // row disappeared → finished
+        if (maxPct > 0 && maxPct < 95 && !(await fsExists('04-download-progress'))) {
+          await shot('04-download-progress');
+        }
       }
-      const installedChip = await page.locator('text=已安装').count();
-      if (sawRow && installedChip > 0 && maxPct > 50) break;
+      const jobs = await page.evaluate(async () => {
+        try {
+          const r = await fetch('/api/jobs');
+          return await r.json();
+        } catch {
+          return { jobs: [] };
+        }
+      });
+      const j = (jobs.jobs ?? []).find((x) => x.kind === 'model');
+      if (j && ['succeeded', 'failed', 'cancelled'].includes(j.state)) {
+        jobDone = j.state === 'succeeded';
+        if (j.totalBytes) maxPct = Math.max(maxPct, Math.round((j.completedBytes / j.totalBytes) * 100));
+        break;
+      }
     }
     record(
       '下载进度条真的走动',
       sawRow && maxPct > 0 ? 'yes' : sawRow ? 'partial' : 'no',
-      sawRow ? `观察到最高 ${maxPct}% · 最后一行: ${lastText.slice(0, 90)}` : '未出现进度行',
+      sawRow
+        ? `进度行出现，观察到 ${maxPct}% · job=${jobDone ? 'succeeded' : '未完成'} · ${lastText.slice(0, 70)}`
+        : '未出现进度行',
       await shot('05-download-progress-late'),
     );
 
@@ -378,8 +401,13 @@ if (noteLink.found) {
 console.log('\n[6e] 设置页');
 await goto('/settings', 1500);
 const settingsBody = ((await page.locator('body').textContent()) ?? '').replace(/\s+/g, ' ');
-const apiKey = await page.locator('input[type="password"], input[placeholder*="Key"], text=/API Key/i').count();
-const langSel = await page.locator('select, [role="combobox"], text=/语言|Language/').count();
+const apiKey =
+  (await page.locator('input[type="password"]').count()) +
+  (await page.locator('input[placeholder*="Key"]').count()) +
+  (await page.getByText(/API\s*Key/i).count());
+const langSel =
+  (await page.locator('select, [role="combobox"]').count()) +
+  (await page.getByText(/语言|Language/).count());
 record('设置-API Key', apiKey > 0 ? 'yes' : 'no', `${apiKey} 个相关元素`);
 record('设置-语言切换', langSel > 0 ? 'yes' : 'no', `${langSel} 个相关元素`);
 record('设置页内容', settingsBody.length > 60 ? 'yes' : 'partial', settingsBody.slice(0, 120), await shot('15-settings'));

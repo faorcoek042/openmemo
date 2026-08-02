@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle } from 'lucide-react';
 
-import { SEGMENT_FLAG, type TranscriptSegmentDto } from '../../lib/events/types';
+import type { TranscriptSegmentDto } from '../../lib/events/types';
+import { SegmentRow } from './SegmentRow';
+import { useEditSegmentMutation, useRevertSegmentMutation } from './api';
 import { findActiveIndex, getPositionMs, usePlayerStore } from '../../lib/stores/player.store';
 import { useUiStore } from '../../lib/stores/ui.store';
-import { timecode } from '../../lib/format/time';
-import { cn } from '../../lib/utils';
 
 /**
  * F5 转写稿（D-05 §4.4）。
@@ -23,10 +22,18 @@ import { cn } from '../../lib/utils';
 export function TranscriptList({
   segments,
   speakerNames,
+  noteUid,
+  transcriptUid,
+  editable = true,
 }: {
   segments: TranscriptSegmentDto[];
   speakerNames: Record<string, string>;
+  noteUid?: string;
+  transcriptUid?: string;
+  editable?: boolean;
 }) {
+  const edit = useEditSegmentMutation(noteUid);
+  const revert = useRevertSegmentMutation(noteUid);
   /**
    * ★ 逐字时间戳是否可用（ADR-013 §0）。
    *
@@ -107,8 +114,6 @@ export function TranscriptList({
         {virtualizer.getVirtualItems().map((row) => {
           const seg = segments[row.index];
           const active = seg.seq === activeSeq;
-          const hallucination = (seg.flags & SEGMENT_FLAG.HALLUCINATION) !== 0;
-          const lowConf = (seg.flags & SEGMENT_FLAG.LOW_CONFIDENCE) !== 0;
 
           return (
             <div
@@ -118,45 +123,21 @@ export function TranscriptList({
               ref={virtualizer.measureElement}
               style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${row.start}px)` }}
             >
-              <button
-                type="button"
-                onClick={() => {
+              <SegmentRow
+                seg={seg}
+                speakerName={seg.speakerLabel ? (speakerNames[seg.speakerLabel] ?? seg.speakerLabel) : null}
+                active={active}
+                editable={editable && Boolean(transcriptUid)}
+                onSeek={() => {
                   suppress.current = true;
                   requestSeek(seg.startMs);
                   setTimeout(() => (suppress.current = false), 300);
                 }}
-                className={cn(
-                  'flex w-full gap-3 rounded-md px-3 py-2 text-left transition-colors',
-                  active ? 'bg-accent-track/40' : 'hover:bg-surface-2',
-                  hallucination && 'border-l-2 border-l-warning',
-                )}
-              >
-                <span className="mt-0.5 shrink-0 tabular-nums text-xs text-ink-muted">
-                  {timecode(seg.startMs)}
-                </span>
-                <span className="min-w-0 flex-1">
-                  {seg.speakerLabel ? (
-                    <span className="mr-1.5 text-xs font-medium text-ink-secondary">
-                      {speakerNames[seg.speakerLabel] ?? seg.speakerLabel}
-                    </span>
-                  ) : null}
-                  <span
-                    className={cn(
-                      'text-transcript text-ink',
-                      // 低置信不用颜色单独表达（色觉障碍不可见），配合下方的图标+文字
-                      lowConf && 'opacity-80',
-                    )}
-                  >
-                    {seg.text}
-                  </span>
-                  {hallucination ? (
-                    <span className="mt-1 flex items-center gap-1 text-xs text-warning">
-                      <AlertTriangle className="size-3" aria-hidden />
-                      {t('detail.hallucination')}
-                    </span>
-                  ) : null}
-                </span>
-              </button>
+                onSave={(text) =>
+                  transcriptUid && edit.mutate({ transcriptUid, seq: seg.seq, text })
+                }
+                onRevert={() => transcriptUid && revert.mutate({ transcriptUid, seq: seg.seq })}
+              />
             </div>
           );
         })}

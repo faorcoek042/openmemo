@@ -3,7 +3,7 @@ import { CONTRACT_VERSION } from '@openmemo/shared';
 
 import { SUPPORTED_LOCALES, setLocale, type LocaleCode } from '../../app/i18n';
 import { useUiStore, type ThemeMode } from '../../lib/stores/ui.store';
-import { Banner } from '../../components/common/Banner';
+import { LlmSettingsSection } from './LlmSettingsSection';
 
 /** 设置（最小可用版）。运行时/模型/存储页归 T-022。 */
 export default function SettingsPage() {
@@ -47,20 +47,7 @@ export default function SettingsPage() {
         </label>
       </section>
 
-      <section className="rounded-lg border border-line bg-surface-1 p-4">
-        <h2 className="mb-3 text-sm font-medium text-ink">{t('settings.llm')}</h2>
-        {/*
-          ADR-006 决策 1 的**强制条件**：必须显式告知明文存储，不许含糊。
-          这不是可选的免责声明——用户有权知道自己的 Key 放在哪、谁能读到。
-        */}
-        <Banner
-          tone="warning"
-          title={t('settings.apiKeyPlaintextWarning', {
-            path: '~/.local/share/openmemo/openmemo.db',
-          })}
-          className="border-b-0"
-        />
-      </section>
+      <LlmSettingsSection />
 
       <section className="rounded-lg border border-line bg-surface-1 p-4 text-sm">
         <h2 className="mb-3 font-medium text-ink">{t('settings.about')}</h2>

@@ -112,7 +112,16 @@ function makeSegments(count: number, startSeq = 0): TranscriptSegmentDto[] {
       noSpeechProb: 0.01,
       words: null,
       chunkIdx: Math.floor(s / 4),
-      flags: s % 9 === 5 ? SEGMENT_FLAG.LOW_CONFIDENCE : s % 17 === 13 ? SEGMENT_FLAG.HALLUCINATION : 0,
+      flags:
+        s % 9 === 5
+          ? SEGMENT_FLAG.LOW_CONFIDENCE
+          : s % 17 === 13
+            ? SEGMENT_FLAG.HALLUCINATION
+            : s % 23 === 7
+              ? SEGMENT_FLAG.CONFIRMED // 演示"已保留（无对应更新）"这一态
+              : 0,
+      editedAt: s % 23 === 7 ? Date.now() - 3_600_000 : null,
+      textRaw: s % 23 === 7 ? '这里是识别原文，用户改过。' : null,
     });
   }
   return out;

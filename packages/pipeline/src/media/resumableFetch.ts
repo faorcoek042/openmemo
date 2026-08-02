@@ -88,6 +88,7 @@ export async function resumableFetch(opts: ResumableFetchOptions): Promise<Resum
 
   let attempts = 0;
   let lastError: unknown = null;
+  let observedContentType: string | null = null;
 
   while (attempts < maxAttempts) {
     attempts += 1;
@@ -98,7 +99,10 @@ export async function resumableFetch(opts: ResumableFetchOptions): Promise<Resum
 
     try {
       const end = total !== null ? total - 1 : startAt + maxBytes;
-      const { body } = await openRangeStream(url, startAt, end, { signal });
+      const { body, headers } = await openRangeStream(url, startAt, end, { signal });
+      // Captured from the real response rather than guessed from the extension; the
+      // caller still re-validates with ffprobe (D-01 §8.5) before trusting it.
+      observedContentType = headers.get('content-type') ?? observedContentType;
 
       let written = startAt;
       const counter = new TransformStream<Uint8Array, Uint8Array>({
@@ -130,7 +134,7 @@ export async function resumableFetch(opts: ResumableFetchOptions): Promise<Resum
       return {
         path: destPath,
         sizeBytes: got,
-        contentType: null,
+        contentType: observedContentType,
         attempts,
         resumedFromBytes,
         serverSupportsRanges: info.acceptRanges,
