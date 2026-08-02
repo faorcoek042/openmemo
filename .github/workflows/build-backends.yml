@@ -26,6 +26,17 @@
 
 name: build-backends
 
+# ⚠️ ADR-015（上游预编译优先）：本 workflow 已**降级为按需触发**，不再是默认路径。
+#
+# 现在 whisper.cpp / llama.cpp / sherpa-onnx / ffmpeg / libsimple / sqlite-vec / yt-dlp
+# 七个组件**全部直连上游预编译产物**（T-063 逐个实地核实过"上游有没有我们要的那个
+# 平台+后端的产物"）。少一套 CI 就少一类维护负担，也少一个"我们打的包和上游不一致"的风险。
+#
+# 只有在上游确实缺失时才手动触发本 workflow：
+#   - whisper.cpp 的 Vulkan / ROCm / macOS CLI（上游至今没有）
+#   - 需要自定义编译选项（例如单架构 CUDA 瘦身，见 D-04 §5）
+#
+# 触发方式仅保留 workflow_dispatch；原先的 tag push 触发已移除，避免它悄悄变回默认路径。
 on:
   workflow_dispatch:
     inputs:
@@ -38,8 +49,6 @@ on:
         type: boolean
         required: false
         default: false
-  push:
-    tags: ['runtime-v*']
 
 permissions:
   contents: write

@@ -173,8 +173,28 @@ async function checkModels(pl) {
   section('3. 模型');
   const asr = await pl.listInstalledModels(STORE_ROOT, 'asr');
   const llm = await pl.listInstalledModels(STORE_ROOT, 'llm');
-  record('models', 'ASR 模型', asr.length > 0 ? 'ok' : 'fail',
-    asr.length > 0 ? asr.join(', ') : `无（${join(STORE_ROOT, 'by-name/asr')} 为空）`);
+
+  /*
+   * "by-name/asr 下有文件" 不等于 "装了一个语音识别模型"。
+   *
+   * 实测（T-067）：VAD 模型 `ggml-silero-v6.2.0.bin` 也被存成 StoreKind='asr'
+   * （StoreKind 只有 asr|llm|backend，而 ModelRole 有 asr|llm|vad|punctuation|…，
+   * 两个轴被压成了一个），于是它被当成 ASR 模型，daemon 的 `pipeline.missing` 报 []，
+   * 而 whisper 拿到的其实是一个 VAD 模型 —— 假绿灯。
+   *
+   * 所以这里按文件名把已知的非 ASR 角色剔掉再判定。这不是完美的判据（真正的修法是让
+   * 安装记录带上 catalog 的 role），但至少不会把"只装了 VAD"报成"ASR 就绪"。
+   */
+  const NON_ASR = /silero|vad|punct|ct-transformer|speaker|diariz/i;
+  const realAsr = asr.filter((n) => !NON_ASR.test(n));
+  const misfiled = asr.filter((n) => NON_ASR.test(n));
+
+  record('models', 'ASR 模型', realAsr.length > 0 ? 'ok' : 'fail',
+    realAsr.length > 0
+      ? realAsr.join(', ')
+      : misfiled.length > 0
+        ? `无可用 ASR 模型（by-name/asr 下只有非 ASR 角色的文件：${misfiled.join(', ')}）`
+        : `无（${join(STORE_ROOT, 'by-name/asr')} 为空）`);
   record('models', 'LLM 模型', llm.length > 0 ? 'ok' : 'warn',
     llm.length > 0 ? llm.join(', ') : '无（F4 思维导图需要 LLM 或云 API Key）', false);
   return { asr, llm };

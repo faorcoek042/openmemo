@@ -3,6 +3,7 @@ import type { RouteObject } from 'react-router';
 import App from './App';
 import { diagnosticsRoutes } from './features/diagnostics/Diagnostics.routes';
 import { captureRoutes } from './features/capture/Capture.routes';
+import { componentsRoutes } from './features/components/Components.routes';
 import { modelsRoutes } from './features/models/Models.routes';
 import { mindmapRoutes } from './features/mindmap/Mindmap.routes';
 import { onboardingRoutes } from './features/onboarding/Onboarding.routes';
@@ -41,6 +42,7 @@ export const routes: RouteObject[] = [
       ...diagnosticsRoutes,
       ...modelsRoutes,
       ...runtimeRoutes,
+      ...componentsRoutes,
       ...mindmapRoutes,
     ],
   },

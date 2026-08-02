@@ -1,5 +1,22 @@
 #!/usr/bin/env bash
 #
+# ══════════════════════════════════════════════════════════════════════════════════════
+#  ⚠️  降级为「可选重打包」（ADR-015：上游预编译优先）
+#
+#  默认路径改为**直连上游** BtbN/FFmpeg-Builds 的不可变日期 tag，例如
+#    autobuild-2026-08-02-13-17 / ffmpeg-n7.1.5-12-g1fdbca85aa-linux64-gpl-7.1.tar.xz
+#  该构建同时含 ffmpeg 与 ffprobe（T-050 实测：ffprobe 真能探测，非仅存在）。
+#  这样我们不必自己托管任何东西，也就不需要 GitHub release —— 正是这一点解开了
+#  "发布渠道"阻塞。
+#
+#  **本脚本保留**，用途只剩两个：
+#    1. 瘦身 —— 上游包 119 MB，含大量我们用不到的东西；本脚本只留两个二进制；
+#    2. macOS —— evermeet.cx 把 ffmpeg / ffprobe 拆成两个归档，上游没有单一现成包。
+#
+#  前置条件说明：上游是 .tar.xz，需要解包器支持 xz（已转 model-mgmt）。
+#  若不加 xz 支持，退路就是用本脚本重打包成 tar.gz。
+# ══════════════════════════════════════════════════════════════════════════════════════
+#
 # build-media-tools.sh — package ffmpeg + ffprobe as an OpenMemo backend pack.
 #
 # OWNER: gpu-runtime (T-050). Companion to build-whisper.sh / build-sqlite-ext.sh.

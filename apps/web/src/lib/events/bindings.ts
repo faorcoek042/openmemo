@@ -17,6 +17,7 @@ import { notesSse } from '../../features/notes/sse';
 import { tasksSse } from '../../features/tasks/sse';
 import { systemSse } from './system.sse';
 
+import { componentsSse } from '../../features/components/sse';
 import { modelsSse } from '../../features/models/sse';
 import { runtimeSse } from '../../features/runtime/sse';
 // T-023 认领后在此追加一行 import + 一个数组项。
@@ -24,7 +25,7 @@ import { runtimeSse } from '../../features/runtime/sse';
 
 export type SseBinding = (qc: QueryClient) => (() => void)[];
 
-const BINDINGS: SseBinding[] = [systemSse, notesSse, tasksSse, modelsSse, runtimeSse];
+const BINDINGS: SseBinding[] = [systemSse, notesSse, tasksSse, modelsSse, runtimeSse, componentsSse];
 
 /** 注册全部绑定，返回统一的注销函数。 */
 export function registerAllSseBindings(qc: QueryClient): () => void {

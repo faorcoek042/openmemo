@@ -83,6 +83,15 @@ export interface ComponentStatus {
   upstream: UpstreamSource | null;
   sizeBytes: number;
   sha256: string;
+  /**
+   * Where this digest came from, in plain language.
+   *
+   * "upstream API said so" and "we downloaded every byte and hashed it ourselves" are
+   * different strengths of evidence — the first trusts that the upstream registry has not
+   * been compromised, the second trusts only the bytes. Collapsing them into one opaque
+   * hash string overstates how much we actually know, so the UI shows this next to it.
+   */
+  sha256Provenance?: string | null;
   /** Previous version retained on disk, enabling one-click rollback. */
   rollbackVersion: string | null;
 }

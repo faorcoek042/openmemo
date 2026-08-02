@@ -1173,3 +1173,91 @@ ppid=1 的孤儿数: 0
 - **ffmpeg 钉死 tag 的 sha256 未取到** —— 119MB 下载在本机网络下两次都没跑完（停在 85MB）。资产**名称与大小**已从 GitHub API 核实，**内容含 ffmpeg+ffprobe 是 T-050 对同款构建实测的**，但**该文件的 sha256 我没算出来，manifest 落地前必须补**。
 - sqlite-vec / libsimple 两条是**下载后实算 sha256**，并且我用自己的"功能验收标准"跑过：上游 libsimple + 上游 vec0.so 在真 FTS5 上 `用户/推特/中国/服务` 全部命中（1/2/1/2），`vec_version v0.1.9`。
 - whisper.cpp 的"没有 macOS CLI / Vulkan / ROCm"是**再次实地核实最新 release 资产清单**得出的，不是引用旧结论。
+
+---
+
+## [2026-08-03 12:50] T-067 DONE —— ADR-015 落地
+
+### 1–3. 三个脚本 + workflow 已降级（均加了"为什么"，未删）
+- `build-sqlite-ext.sh` **停用**：顶部写明上游 v0.7.1 / v0.1.9 已有现成产物（附实测 sha256），
+  并记下我的自我更正——"判据应当是上游有没有我们要的那个平台的产物，而不是能不能编出来"。保留作退路。
+- `build-media-tools.sh` **降为可选重打包**：默认直连 BtbN 不可变日期 tag；本脚本只剩两个用途——瘦身（上游 119MB）与 macOS（evermeet 把两个二进制拆成两个归档）。
+- `build-whisper.sh` **不进默认流程**：上游 v1.9.1 已覆盖 Linux/Win CPU+CUDA；仍缺 macOS CLI / Vulkan / ROCm，将来真需要时它是唯一途径。
+- `.github/workflows/build-backends.yml` **只保留 `workflow_dispatch`**，**删掉了 tag push 触发**（否则它会悄悄变回默认路径）。
+
+### 4. whisper.cpp manifest 已核实：上游直连 + 不可变 tag ✅
+```
+whispercpp-cpu-linux-x64      https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-bin-ubuntu-x64.tar.gz
+whispercpp-cpu-win-x64        …/v1.9.1/whisper-bin-x64.zip
+whispercpp-cuda-12.4-win-x64  …/v1.9.1/whisper-cublas-12.4.0-bin-x64.zip
+```
+我把**全部 manifest 的 mirrors 都扫了一遍**找可变引用，结论：**没有一条用 `/latest/`**。
+⚠️ 但有一类需要注意（不是 whisper）：`vad/silero-vad-onnx` 指向
+`raw.githubusercontent.com/snakers4/silero-vad/**master**/…` —— **master 是移动分支**。
+HF 的 `resolve/main/…` 同理。这些有 sha256 兜底（变了会校验失败而不是静默换内容），
+但**失败方式是"某天突然装不上"**。建议 `model-mgmt` 改成钉 commit / revision。
+
+### 5. 冷启动全上游直连 —— **装齐了吗：组件都装成功了，但还差最后一步"放对地方"**
+
+全新空 dataDir，**只用 HTTP API**，全部走上游：
+```
+whispercpp-cpu-linux-x64  succeeded  9,379,235 / 9,379,235
+libsimple-linux-x64       succeeded  5,337,804 / 5,337,804
+sqlite-vec-linux-x64      succeeded     61,507 /     61,507
+vad/silero-vad-ggml       succeeded    885,098 /    885,098
+asr/whisper-base-q5_1     running（本机网络慢，未跑完）
+pipeline.missing = []     whisperCli 从上游包解析成功
+```
+**ADR-015 的前提成立：上游直连能下、能校验、能解包。** 上游装下来的扩展我按功能标准验过——
+`用户/推特/中国/服务` 全命中（1/2/1/1）、`vec_version v0.1.9`。
+
+**但 selfcheck 仍 3 项失败（EXIT=1）**，且**没有一项是上游的问题**：
+
+| 失败项 | 真实原因 | 归属 |
+|---|---|---|
+| `libsimple 存在` | 装到了 `models/by-name/backend/…/libsimple.so`，而 daemon 找 `<dataDir>/bin/ext/libsimple.so`。**manifest 里写了 `installPath: bin/ext`，安装器没有遵守**（它一律解到 backend store）。文件是好的——我在原地直接 load 过，功能正常 | `model-mgmt`（installer 未实现 installPath） |
+| `中文双字词可搜索` | 上一条的连锁 | 同上 |
+| `ASR 模型` | 下载没跑完（网络） | 环境 |
+
+### ⚠️ 顺带查出一个**假绿灯**（这条比上面三条重要）
+`pipeline.missing = []`，但 `modelPath = ggml-silero-v6.2.0.bin` —— **那是 VAD 模型，被当成 ASR 模型了。**
+```
+active.json:  {"asr": null, "vad": "vad/silero-vad-ggml"}      ← 正确
+但 VAD 模型的安装记录落在 manifests/**asr**/ 下
+resolveActiveModel(dir,'asr'): active['asr']=null → 退到"任意已装" → 列出 manifests/asr/ 全部 → 拿到 VAD 模型
+```
+根因：**`StoreKind`（asr|llm|backend）与 `ModelRole`（asr|llm|vad|punctuation|…）是两个轴，被压成了一个。**
+后果：whisper 会拿到一个 VAD 模型，而 `/api/health` 显示一切正常。
+**修法建议**：安装记录带上 catalog 的 `role`，`listInstalled` 按 role 过滤。归 `model-mgmt` + `oss-scout`。
+
+**我自己的 selfcheck 犯了同一个错**（把 `by-name/asr` 下有文件等同于"ASR 就绪"），已修：
+```
+✘ ASR 模型  无可用 ASR 模型（by-name/asr 下只有非 ASR 角色的文件：ggml-silero-v6.2.0.bin）
+```
+按文件名剔除已知非 ASR 角色。**这不是完美判据**（真正的修法是记录带 role），注释里写明了。
+
+### 6. ffmpeg sha256 —— 独立复算完成 ✅
+```
+size 118,999,596
+独立复算 sha256: 47b2cc48f8a6e9ac9afe3421f57b8ffe9bdf32953c89603603fcb2439c16ec58
+与 model-mgmt 从 GitHub API digest 取到的值一致
+含 ffmpeg: 1   含 ffprobe: 1
+```
+→ 请 `model-mgmt` 把 `sha256Provenance` 从「API digest」改为「已由 gpu-runtime 逐字节复算确认」。
+（他没把 API 值说成自己算的，这个标注是对的；现在可以升级为实算。）
+
+### 7. llama.cpp b10223 → b10229：**建议不跟**
+llama.cpp 一天出多个 build，b10223→b10229 是 6 个 build 的差距，**没有我们需要的具体修复**。
+我们的 LLM 第一档是 BYO API Key，`llama-server` 还不在默认路径上。
+跟一次要重新核验 8 个资产的 sha256，换不到任何用户可见收益。
+**建议：只在有具体需求时才升**（某个我们撞上的 bug、或 GGUF 格式变更）。符合 ADR-015「默认不自动更新，只提示」。
+
+需要 Manager 决策:
+1. **installer 未实现 `installPath`** —— 这是当前冷启动最后一米（扩展装了但放错地方）。归 `model-mgmt`。
+2. **StoreKind / ModelRole 两轴压成一轴** → 假绿灯（VAD 被当 ASR）。归 `model-mgmt` + `oss-scout`。
+3. `vad/silero-vad-onnx` 指向 `master` 分支、HF 用 `resolve/main` —— 建议钉 revision。
+
+诚实声明:
+- **"装齐了"我不能说。** 上游直连这一层是通的（4/5 装成功，第 5 个只是网络没跑完），但 selfcheck 仍 EXIT=1，卡在放置位置。
+- 我**没有动 demo 实例**（`127.0.0.1:10010`），本轮用 17751/17755，`setsid` 启动。
+- 我这轮修的是**自己 selfcheck 的假绿灯**；daemon 侧那个同源问题我只报告、没改（跨两个人的文件）。

@@ -1,5 +1,21 @@
 #!/usr/bin/env bash
 #
+# ══════════════════════════════════════════════════════════════════════════════════════
+#  ⚠️  不进默认流程（ADR-015：上游预编译优先）
+#
+#  上游 whisper.cpp v1.9.1 已有我们当前需要的产物（T-063 再次实地核实资产清单）：
+#    Linux  x64 / arm64  CPU        ✅  whisper-bin-ubuntu-{x64,arm64}.tar.gz
+#    Windows x64 / Win32 CPU+BLAS   ✅
+#    Windows CUDA 11.8 / 12.4       ✅
+#  这些已按上游直连写进 vendor/manifests/backends.json（tag v1.9.1 不可变）。
+#
+#  上游**仍然没有**的：macOS CLI、Vulkan、ROCm、Linux CUDA。
+#  按当前前提（个人自用 + 实际跑 Linux），这几项都不在需求内，**因此自建 CI 暂停**。
+#
+#  **本脚本保留**：将来真需要 Vulkan / ROCm / macOS CLI 时，它是唯一途径
+#  （ADR-003 决策 2 的原始理由在那时才重新成立）。
+# ══════════════════════════════════════════════════════════════════════════════════════
+#
 # build-whisper.sh — parameterised whisper.cpp build (platform x backend).
 #
 # OWNER: gpu-runtime (T-012). See docs/design/D-04-build-and-runtime.md.

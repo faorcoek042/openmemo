@@ -36,6 +36,9 @@ export const qk = {
   runtime: {
     hardware: ['runtime', 'hardware'] as const,
   },
+  components: {
+    all: ['components'] as const,
+  },
   settings: ['settings'] as const,
 } as const;
 

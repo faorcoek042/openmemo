@@ -34,6 +34,7 @@ export interface ComponentRecord {
   upstream: UpstreamSource | null;
   sizeBytes: number;
   sha256: string;
+  sha256Provenance?: string | null;
 }
 
 export interface ComponentRegistry {
@@ -133,6 +134,7 @@ export async function listComponents(opts: ListComponentsOptions): Promise<GetCo
       upstream: c.upstream,
       sizeBytes: c.sizeBytes,
       sha256: c.sha256,
+      sha256Provenance: c.sha256Provenance ?? null,
       rollbackVersion: rollback.get(c.id) ?? null,
     };
   });

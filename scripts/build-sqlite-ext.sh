@@ -1,5 +1,28 @@
 #!/usr/bin/env bash
 #
+# ══════════════════════════════════════════════════════════════════════════════════════
+#  ⚠️  停用（ADR-015：上游预编译优先）—— 默认路径不再使用本脚本
+#
+#  上游已经发布了我们需要的现成产物，实地核实（T-063）：
+#    libsimple  v0.7.1  12 个平台包（linux/osx/windows/android/ios）
+#               libsimple-linux-ubuntu-22.04.zip  5,337,804 B
+#               sha256 0c9a7a578fc50ef5480e69e1e1880535ae68d75e1c1580f6bf106073087642a5
+#               内含 libsimple.so + 完整 dict/（含 jieba.dict.utf8、idf.utf8、pos_dict/）
+#               —— 比本脚本打出来的还全，本脚本只打了 5 个 .utf8、漏了 pos_dict/
+#    sqlite-vec v0.1.9  loadable-{linux,macos,windows}-*，另有官方 checksums.txt
+#               sqlite-vec-0.1.9-loadable-linux-x86_64.tar.gz  61,507 B
+#               sha256 b959baa1d8dc88861b1edb337b8587178cdcb12d60b4998f9d10b6a82052d5d7
+#               （与官方 checksums.txt 逐字一致）
+#
+#  两者都已按上游直连写进 vendor/manifests/，走与其它制品相同的下载安装机制。
+#
+#  **本脚本保留而非删除**，因为它仍是唯一的退路：上游哪天缺某个平台/架构（例如需要
+#  自定义编译选项、或上游停更某个平台）时，用它自建。日常不要跑。
+#
+#  自我更正记录：T-037 写这个脚本时我没有先去看上游 releases 就开始从源码编译。
+#  判据应当是"上游有没有我们要的那个平台的产物"，而不是"能不能编出来"。
+# ══════════════════════════════════════════════════════════════════════════════════════
+#
 # build-sqlite-ext.sh — build the two SQLite loadable extensions the product needs.
 #
 # OWNER: gpu-runtime (ADR-005 decision 3: scripts/build-* is mine).

@@ -47,6 +47,10 @@ const { probeAll } = await import(path.join(DIST, 'probe.js'));
 const { computeFit, makeEvent, topics, formatSseFrame, formatSseRetry } = await import(
   path.join(SHARED, 'index.js')
 );
+const { listComponents, rollback: rollbackComponent } = await import(path.join(DIST, 'components.js'));
+const COMPONENT_REGISTRY = path.join(REPO, 'vendor', 'manifests', 'components.json');
+/** Cache the last upstream sweep so the page does not re-hit GitHub on every render. */
+let componentCache = null;
 
 const argv = process.argv.slice(2);
 const PORT = Number(argv[argv.indexOf('--port') + 1]) || 17650;
@@ -550,6 +554,31 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/runtime/hardware') {
       return json(res, 200, { hardware, snapshotId: 'hw-local' });
+    }
+
+    /* ---- components: provenance + upstream version tracking (T-068) ---- */
+    if (p === '/api/components' && method === 'GET') {
+      const check = url.searchParams.get('check') === 'true';
+      if (!check && componentCache) return json(res, 200, componentCache);
+      const r = await listComponents({ registryPath: COMPONENT_REGISTRY, store, checkUpstream: check, timeoutMs: 15000 });
+      if (check) componentCache = r;
+      return json(res, 200, r);
+    }
+    if (p === '/api/components/check' && method === 'POST') {
+      await readBody(req);
+      const r = await listComponents({ registryPath: COMPONENT_REGISTRY, store, checkUpstream: true, timeoutMs: 15000 });
+      componentCache = r;
+      return json(res, 200, r);
+    }
+    if (p === '/api/components/update' && method === 'POST') {
+      const body = await readBody(req);
+      // Reference server does not perform the swap; it proves the contract shape.
+      return json(res, 202, { jobId: `job_${Date.now().toString(36)}`, id: body.id, toVersion: body.toVersion ?? null });
+    }
+    if (p === '/api/components/rollback' && method === 'POST') {
+      const body = await readBody(req);
+      const ok = await rollbackComponent(store, 'backend', String(body.id ?? ''), 'prev').catch(() => false);
+      return json(res, 200, { ok: true, version: ok ? 'prev' : 'none' });
     }
 
     if (p === '/api/models/catalog') {

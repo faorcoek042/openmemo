@@ -111,7 +111,7 @@
       },
       "sizeBytes": 118999596,
       "sha256": "47b2cc48f8a6e9ac9afe3421f57b8ffe9bdf32953c89603603fcb2439c16ec58",
-      "sha256Provenance": "GitHub Releases API `digest` field for this exact asset; independent local re-hash was still downloading at report time (see inbox)."
+      "sha256Provenance": "本机下载全部 118,999,596 字节后独立复算，并与 GitHub Releases API 的 digest 逐字符比对一致（2026-08-03）。"
     },
     {
       "id": "sherpa-onnx-node",
