@@ -48,10 +48,14 @@ shadcn/ui 的分发模式**就是**源码复制进项目（MIT，设计意图如
 
 | 来源 | 主张 |
 |---|---|
-| R-03 (`oss-scout`) | `mind-elixir-core` (MIT)，编辑优先，内置撤销/拖拽/右键 |
+| R-03 (`oss-scout`) | `mind-elixir` (MIT)，编辑优先，内置撤销/拖拽/右键 |
 | R-01 (`memo-researcher`) | `markmap`——因为 **memo.ac 实际用的就是它**（已取证） |
 
-**裁决：`mind-elixir-core` 为主编辑器，`markmap` 为可选只读视图。**
+> **事实订正（`architect` 2026-08-02 核实上游）**：npm 包名是 **`mind-elixir` v5.14.0**，
+> **不是 `mind-elixir-core`**（后者在 npm 上 404）。且 `MindElixirData` 无 `linkData` 字段。
+> 本 ADR v1/v2 初稿的包名有误，此处订正；决策实质不变。
+
+**裁决：`mind-elixir` 为主编辑器，`markmap` 为可选只读视图。**
 
 理由：用户需求原文是"**整理**思维导图"，整理 = 编辑，是主路径。markmap 是
 "Markdown → 导图"的单向渲染器，编辑能力弱——这正是 memo.ac 的局限，

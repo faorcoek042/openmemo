@@ -191,14 +191,38 @@ export async function downloadFile(opts: DownloadOptions): Promise<DownloadResul
         throw new DownloadError('Download cancelled', 'CANCELLED', false, source.provider);
       }
       lastError = toDownloadError(e, source.provider);
-      if (!lastError.retryable) throw lastError;
+
+      // Only conditions that make EVERY source pointless abort the loop. A per-source
+      // failure — 401/404/gated/rate-limited/bad bytes — must fall through to the next
+      // mirror, otherwise multi-source failover does nothing the moment the first
+      // source returns something non-retryable. (Caught by the live harness: a missing
+      // HF repo answers 401, which previously killed the whole job.)
+      if (isFatalForAllSources(lastError.code)) throw lastError;
     }
   }
 
+  // Every source was tried. Surface the last cause, but relabel when there were several
+  // so the UI can offer "all sources failed" rather than blaming one mirror.
+  if (lastError && opts.sources.length > 1) {
+    throw new DownloadError(
+      `All ${opts.sources.length} sources failed; last error from ${lastError.provider ?? 'unknown'}: ${lastError.message}`,
+      'INTEGRITY_ALL_SOURCES_FAILED',
+      false,
+      lastError.provider,
+    );
+  }
   throw (
     lastError ??
     new DownloadError('All download sources failed', 'INTEGRITY_ALL_SOURCES_FAILED', false)
   );
+}
+
+/**
+ * Errors where trying another mirror cannot help.
+ * Everything else is per-source and must fall through to the next candidate.
+ */
+function isFatalForAllSources(code: string): boolean {
+  return code === 'DISK_FULL' || code === 'CANCELLED' || code === 'PERMISSION_DENIED';
 }
 
 interface SourceResult {

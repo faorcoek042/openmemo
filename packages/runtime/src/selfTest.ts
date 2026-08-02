@@ -118,9 +118,7 @@ export async function runSelfTest(options: SelfTestOptions): Promise<SelfTestOut
       (error, stdout, stderr) => {
         const wallSeconds = (Date.now() - startedAt) / 1000;
 
-        // ggml logs which backend it loaded here — that is what we report to the user.
-        const backendUsed =
-          /load_backend: loaded (\S+) backend from .*?([\w.-]+)$/m.exec(stderr)?.[1] ?? null;
+        const backendUsed = parseBackendUsed(stderr);
         const devicesFound = (stderr.match(/whisper_backend_init_gpu: device \d+:/g) ?? []).length;
 
         if (error) {
@@ -192,6 +190,45 @@ function fail(
 function dirOf(p: string): string {
   const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
   return i > 0 ? p.slice(0, i) : '.';
+}
+
+/**
+ * Which backend did the compute ACTUALLY run on?
+ *
+ * BUG THIS FIXES (caught by running the real thing on the T-012 box): the obvious
+ * implementation greps the first `load_backend: loaded <X> backend from ...` line. That
+ * is wrong. ggml loads every backend it finds, in its own order, before deciding which
+ * to use. With a Vulkan pack installed on a GPU-less machine the log reads:
+ *
+ *     ggml_vulkan: No devices found.
+ *     load_backend: loaded Vulkan backend from .../libggml-vulkan.so
+ *     load_backend: loaded CPU backend from .../libggml-cpu-zen4.so
+ *     whisper_backend_init_gpu: no GPU found
+ *
+ * The naive regex reported "Vulkan" for a run that was 100% CPU — exactly the kind of
+ * confidently-wrong number ADR-004 decision 3 forbids. `load_backend` lines mean
+ * "loaded", never "used".
+ *
+ * whisper.cpp's `whisper_backend_init_gpu` lines are the authoritative signal.
+ */
+export function parseBackendUsed(stderr: string): string | null {
+  // Explicit and unambiguous: whisper fell back to CPU.
+  if (/whisper_backend_init_gpu:\s*no GPU found/.test(stderr)) return 'CPU';
+
+  // Otherwise whisper names the GPU device it selected.
+  const selected = /whisper_backend_init_gpu:\s*using\s+(\S+)/i.exec(stderr)?.[1];
+  if (selected !== undefined) return selected;
+
+  // A non-CPU device line (type != 0) means an accelerator was chosen.
+  // UNVERIFIED shape — no GPU machine was available to confirm the exact wording.
+  const deviceLine = /whisper_backend_init_gpu: device \d+:\s*(.+?)\s*\(type:\s*(\d+)\)/.exec(stderr);
+  if (deviceLine !== null && deviceLine[2] !== '0') return deviceLine[1] ?? null;
+
+  // Last resort: the CPU variant ggml settled on, e.g. "ggml-cpu-zen4".
+  const cpuVariant = /load_backend: loaded CPU backend from .*?(ggml-cpu-[a-z0-9]+)/i.exec(stderr)?.[1];
+  if (cpuVariant !== undefined) return `CPU (${cpuVariant})`;
+
+  return null;
 }
 
 /** Human-facing summary. Never invents a number it does not have. */

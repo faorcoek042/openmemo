@@ -1,7 +1,12 @@
 /**
  * Backend selection and the degradation chain.
  *
- * Implements ADR-003 decision 3. The chain is:
+ * Implements ADR-003 decision 3, as amended by ADR-006 decision 3: the chain is
+ * L1 (built-in CPU) -> L2 (on-demand accelerator packs). The former L0 browser-WebGPU
+ * tier was cut from v1 — the user must install the daemon before they can open the web
+ * UI at all, and the daemon already ships L1, so L0 added nothing over it.
+ *
+ * The chain is:
  *
  *   advisory detection  ->  candidate backend  ->  download pack  ->  probe (subprocess)
  *        -> self-test (real inference)  ->  READY

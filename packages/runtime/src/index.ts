@@ -5,6 +5,11 @@
  * downloads the matching prebuilt pack, installs it, self-tests, and shows status —
  * without the user ever touching a command line.
  *
+ * Degradation chain (ADR-003 decision 3, amended by ADR-006 decision 3):
+ *   L1 built-in CPU backend (ships in the installer, never fails)
+ *     -> L2 on-demand accelerator pack (metal / cuda / vulkan / rocm)
+ * The old L0 browser-WebGPU tier is out of v1.
+ *
  * The whole thing rests on one verified property of ggml (see docs/design/D-04 §2):
  * with `GGML_BACKEND_DL=ON`, each backend is a standalone shared library that ggml
  * dlopen's from the binary's own directory at startup, scoring candidates and silently
@@ -103,6 +108,7 @@ export {
   SIMILARITY_THRESHOLD,
   estimateDuration,
   formatSelfTest,
+  parseBackendUsed,
   runSelfTest,
   transcriptSimilarity,
 } from './selfTest.js';
