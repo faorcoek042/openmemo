@@ -1490,6 +1490,14 @@ POST /api/models/import            # 用户自带模型：本地文件 / 直链 
   ⚠ 安全：本地导入不校验 digest（用户自己的文件）；hf_repo 导入先 HEAD 取 x-linked-etag 作为期望 digest。
      UI 必须显示「自定义模型，非官方目录」标记。
 
+  ★ 落地口径修正（ADR-016）：`kind:"hf_repo"` **不实现，返回 501，且这是终态而非待办**。
+    上面那个"HEAD 取 x-linked-etag 当期望 digest"的设计有个说不通的地方：
+    x-linked-etag 是**同一次响应**里由**同一个来源**给的，拿它去校验它自己发来的字节，
+    等于让被验方自证 —— 与 ADR-004 决策 5「digest 必须来自 git 里的清单」直接冲突。
+    真正的权威 digest 只能来自我们仓库里钉死的 manifest，而任意 HF repo 没有这个前提。
+    用户已确认「本地转写有 whisper 就够了」，因此**不补实现、改口径**：
+    对外不再宣称"可导入任意 HF GGUF 模型"。`local_file` 保留（用户自己的文件，风险自负且已告知）。
+
 GET  /api/models/migrate/target-check?path=D:\\OpenMemoModels  -> 空间/权限预检
 POST /api/models/migrate           Req {"path":"…"} -> 202 {job_id}
 ```

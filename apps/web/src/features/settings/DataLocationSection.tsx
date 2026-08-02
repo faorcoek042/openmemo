@@ -17,6 +17,22 @@ interface HealthResponse {
 }
 
 /**
+ * `GET /api/settings/data-dir` —— daemon 侧的目录清单。
+ *
+ * `usage` 是**整个数据目录**的总量，这正是 `/models/storage` 给不了的那个数：
+ * 后者只统计模型目录，所以此前这一节只能一边显示"模型占用"一边写小字提醒
+ * "这不是总量"。现在总量有了权威来源，就该显示它。
+ *
+ * ⚠️ `entries` 只有 `purposeZh`，**没有各自的字节数**。所以下面只列用途不列大小 ——
+ * 按目录估一个数写上去，会让用户照着一个我们其实没测过的数字去清理磁盘。
+ */
+interface DataDirResponse {
+  dataDir?: string;
+  usage: { bytes: number; files: number } | null;
+  entries: { path: string; name: string; purposeZh: string }[];
+}
+
+/**
  * 数据位置 —— 定义 / 修改 / 移动 / 统计大小。
  *
  * ## 路径的权威来源只能是 daemon
@@ -51,6 +67,12 @@ export function DataLocationSection() {
   const storage = useQuery({
     queryKey: qk.models.storage,
     queryFn: () => api<GetStorageResponse>('models', '/models/storage'),
+    staleTime: 30_000,
+  });
+
+  const layout = useQuery({
+    queryKey: ['settings', 'data-dir'] as const,
+    queryFn: () => api<DataDirResponse>('settings', '/settings/data-dir'),
     staleTime: 30_000,
   });
 
@@ -115,25 +137,67 @@ export function DataLocationSection() {
       </div>
 
       {/* ── 统计大小：逐项标明各是什么，不合并成一个含糊的"总计" ── */}
-      {storage.data ? (
+      {storage.data || layout.data?.usage ? (
         <dl className="mb-4 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
+          {layout.data?.usage ? (
+            <div>
+              <dt className="text-ink-muted">{t('settings.dataDir.totalUsed')}</dt>
+              <dd className="text-ink" data-testid="data-dir-total-used">
+                {formatBytes(layout.data.usage.bytes, i18n.language)}
+                <span className="ml-1 text-ink-muted">
+                  {t('settings.dataDir.fileCount', { n: layout.data.usage.files })}
+                </span>
+              </dd>
+            </div>
+          ) : null}
+          {storage.data ? (
           <div>
             <dt className="text-ink-muted">{t('settings.dataDir.modelsUsed')}</dt>
             <dd className="text-ink" data-testid="data-dir-models-used">
               {formatBytes(storage.data.usedBytes, i18n.language)}
             </dd>
           </div>
-          <div>
-            <dt className="text-ink-muted">{t('settings.dataDir.volumeFree')}</dt>
-            <dd className="text-ink">{formatBytes(storage.data.volume.freeBytes, i18n.language)}</dd>
-          </div>
-          <div>
-            <dt className="text-ink-muted">{t('settings.dataDir.volumeTotal')}</dt>
-            <dd className="text-ink">{formatBytes(storage.data.volume.totalBytes, i18n.language)}</dd>
-          </div>
+          ) : null}
+          {storage.data ? (
+            <>
+              <div>
+                <dt className="text-ink-muted">{t('settings.dataDir.volumeFree')}</dt>
+                <dd className="text-ink">
+                  {formatBytes(storage.data.volume.freeBytes, i18n.language)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-ink-muted">{t('settings.dataDir.volumeTotal')}</dt>
+                <dd className="text-ink">
+                  {formatBytes(storage.data.volume.totalBytes, i18n.language)}
+                </dd>
+              </div>
+            </>
+          ) : null}
         </dl>
       ) : null}
       <p className="mb-4 text-xs text-ink-muted">{t('settings.dataDir.sizeScopeNote')}</p>
+
+      {/*
+        ── 目录清单：日志 / 临时文件 / 数据库 这三类此前完全没露过面 ──
+        用户问"这个目录能不能删、删了丢什么"，答案取决于里面是什么；
+        只报一个总字节数回答不了这个问题。用途文案来自 daemon，
+        与"凡是要明文告知用户的路径一律问 daemon"同一条理由。
+      */}
+      {layout.data?.entries?.length ? (
+        <div className="mb-4" data-testid="data-dir-layout">
+          <p className="mb-1.5 text-xs text-ink-secondary">{t('settings.dataDir.layoutTitle')}</p>
+          <ul className="divide-y divide-line rounded-md border border-line bg-surface-0">
+            {layout.data.entries.map((e) => (
+              <li key={e.path} className="flex flex-wrap items-baseline gap-x-2 px-2 py-1.5 text-xs">
+                <code className="font-mono text-ink">{e.name}</code>
+                <span className="text-ink-secondary">{e.purposeZh}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1.5 text-[11px] text-ink-muted">{t('settings.dataDir.perDirNote')}</p>
+        </div>
+      ) : null}
 
       {/* ── 修改 / 移动 ── */}
       {!showChange ? (

@@ -316,7 +316,11 @@
       "volumeFree": "Free on volume",
       "volumeTotal": "Volume total",
       "apply": "Apply",
-      "sizeScopeNote": "These figures cover the **models directory** and its volume. The notes database and imported media are not included yet — the daemon has no whole-directory size endpoint, and a misleading total is worse than an incomplete one."
+      "sizeScopeNote": "These figures cover the **models directory** and its volume. The notes database and imported media are not included yet — the daemon has no whole-directory size endpoint, and a misleading total is worse than an incomplete one.",
+      "totalUsed": "Total used by data directory",
+      "fileCount": "{{n}} files",
+      "layoutTitle": "What's in this directory",
+      "perDirNote": "The daemon reports the total for the whole data directory only; it does not yet measure each sub-directory. Purposes are listed below without sizes rather than showing a guessed number."
     }
   },
   "mock": {

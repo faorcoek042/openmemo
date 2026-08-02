@@ -1375,3 +1375,98 @@ HF 的 tree API 直接给 `lfs.oid`（就是 sha256），**不用下载就能核
   （`packages/shared/src/proxy.ts`），别各自定义一套字段。
 - `oss-scout`：`packages/llm` 的云调用要走代理的话，直接 `applyProxyConfig` 已全局生效，
   用 `fetch` 即可，不必自己接 dispatcher。
+
+---
+
+## T-085 真浏览器复验
+
+demo 的 token **已经失效**（`instanceId` 从 `01KZ1S3BFK…` 变成 `01KZ21AG7X…`，重启换了 token，
+`/api/auth/session` 一律 401）。**没去数据目录翻 token** —— 上一轮那次拦截是对的。
+改为自建隔离实例复验：`vite 17821` + fixture daemon `17820` + **生产构建** `17822`。
+
+### ① 逐字高亮：**真的跟着音频走 —— YES**
+
+不用编的时间戳。拿 `vendor/whisper.cpp/samples/jfk.wav` 真跑了一遍
+`whisper-cli -ojf`，取**真实词级时间戳**（25 个词）当 fixture，音频用同一个 wav
+（`/media/asset/…` 带 Range，206 正常），然后在真浏览器里按播放采样：
+
+     533ms  idx= 1  " so"          6173ms  idx=10  " country"
+    1238ms  idx= 3  " fellow"      6878ms  idx=12  " do"
+    1943ms  idx= 4  " Americans"   7582ms  idx=14  " you"
+    2648ms  idx= 5  ","            8286ms  idx=16  " ask"
+    3354ms  idx=-1  （词间静音）     9696ms  idx=21  " for"
+
+音频位置 533 → 9696ms 推进，高亮依次经过 **9 个不同的词且顺序与时间轴一致**。
+`-1` 的采样点落在词与词之间的静音里 —— 那是 `findActiveWord` 的设计（停顿时不该有词亮着），
+实测词区间只覆盖 76% 时长，所以出现 `-1` 是对的，不是断线。
+截图 `/tmp/shots/wordhighlight-playing.png`：播放头 0:10 时 "country" 亮着，
+**人眼确认卡拉 OK 效果成立**，且词间空格正常（whisper 的 token 自带前导空格，
+所以 `words.map` 不加分隔符也不会粘连 —— 这点我本来怀疑是 bug，实测不是）。
+
+**发现一个真缺陷（小）**：第 0 个词 `' And'` 的时间戳是 `220-220`，**零宽**。
+`findActiveWord` 用半开区间 `[s,e)`，`posMs >= 220 && posMs < 220` 恒为 false ——
+**整段的第一个词永远不会高亮**。25 个词里有 1 个这样。whisper 会吐零宽 token，
+建议 `e <= s` 时按 `[s, s+最小显示时长)` 兜底。归 `architect`，我没动他的组件。
+
+### ①附 中文降级徽标：**只在中文亮 —— YES**
+
+同一次会话里并排验的：英文笔记 `word-highlight` 存在、25 个词 span、**不显示降级文案**；
+中文笔记（`words: null`，Paraformer 路径）**没有 word-highlight 节点**，
+且显示 "This engine has no word-level timestamps — captions highlight per sentence"。
+**不是恒亮。** 截图 `/tmp/shots/zh-degraded.png`。
+
+### ② 逐项
+
+| 项 | 结果 |
+|---|---|
+| 逐字高亮跟播 | **YES** |
+| 中文降级徽标只在中文亮 | **YES** |
+| 下拉穿模（最新生产构建） | **YES 已修**：`w=416px · z-index=20 · 不右溢出 · 未被遮挡` |
+| 数据位置区块 | **YES**：路径 / 总占用 / 子目录用途 / 修改移动入口 四项齐全（用途那项是我这轮补的，见下） |
+| 重新转写入口 | **YES 有**（「已保留 N 段」文案在 `zh-CN.json:109 preserved` + `RetranscribeButton.tsx:135`，**但需要真跑一次重跑才能验到数字**，fixture 造不出，**这条我没验到，不敢报 YES**） |
+| 代理配置 UI | **NO —— 根本不存在** |
+
+### ⚠️ 代理只有后端，没有 UI
+
+`apps/web/src/features/settings/` 下**没有任何代理相关文件**，daemon 也**没有 `/api/settings/proxy` 端点**。
+我上一轮交付的是 `packages/shared/src/proxy.ts` 契约 + `packages/downloader/src/proxy.ts` 实现（43/43 过），
+**两个独立测试动作和 `mode:'system'` 默认都在代码里**，但用户点不到。
+需要：daemon 加 `GET|POST /api/settings/proxy` + `POST /api/settings/proxy/test`、
+设置页加区块。**端点归 `oss-scout`，UI 归 `architect`，我出契约随时可接。**
+
+### ③ 存储统计：已接上 `/api/settings/data-dir`
+
+`DataLocationSection` 之前**只 POST 不 GET** —— oss-scout 早就返回的目录清单**一直没人消费**。
+已补 GET，现在显示：
+
+- **数据目录总占用**（这正是 `/models/storage` 给不了的数 —— 后者只统计模型目录，
+  此前只能一边显示"模型占用"一边写小字提醒"这不是总量"；现在总量有权威来源了）
+- **目录清单**：`openmemo.db` / `media` / `models` / **`logs`** / **`tmp`** / `backups` / `runtime`
+  各自的用途文案（你点名缺的日志·临时文件·数据库三类，都在里面了）
+
+**没有伪造各目录大小**：端点只给总量和用途，不给逐目录字节数，所以只列用途不列大小，
+并明写「daemon 尚未逐目录统计」。按目录估个数写上去，会让用户照着我们没测过的数字去清磁盘。
+新增 i18n key 4 条（zh/en 同步）。
+
+### ③ `hf_repo` 501：**同意改口径，不补实现**
+
+而且理由比"用户说 whisper 够了"更硬：R-04 原设计写的是"HEAD 取 `x-linked-etag` 当期望 digest"，
+但那个 etag 是**同一次响应里由同一个来源给的** —— 拿它校验它自己发来的字节等于**让被验方自证**，
+与 ADR-004 决策 5「digest 必须来自 git 里钉死的清单」直接冲突。任意 HF repo 没有这个前提，
+**所以 501 是终态而非待办**。已在 `docs/research/R-04-model-mgmt.md` 就地标注修正口径
+（ADR-016 已记的那条现在有了出处）。`local_file` 保留。
+
+### 顺带发现（不是我的，但会咬人）
+
+**开发服务器下笔记详情页整页崩溃**：
+`NoteDetailPage → MindmapView → @openmemo/mindmap → @openmemo/llm → packages/llm/src/secrets.ts:13 `
+`import { chmodSync } from 'node:fs'` → 浏览器里 `Module "node:fs" has been externalized`。
+**生产构建不复现**（我两边都跑了），所以用户看不到，但**开发时笔记详情页是打不开的**。
+服务端专用包被拉进浏览器 bundle 这件事本身也不该留着。归 `oss-scout`（llm）/ mindmap 的人。
+
+### 门禁
+    tsc 0 · eslint 0 · web build 0 · verify-proxy 43/43 · verify-offline 38/38 · verify-unpack 53/53
+
+### 纪律
+全程自建实例（17820/17821/17822，均绑 127.0.0.1），用完按端口只杀自己的 pid；
+**没有重启、没有触碰 `:10000` 的 demo，也没有去它的数据目录找 token**。
