@@ -51,20 +51,48 @@ export const ALLOWED_DOWNLOAD_HOSTS = [
   'raw.githubusercontent.com',
 ] as const;
 
+/**
+ * Loopback hosts allowed to serve LOCALLY BUILT artifacts over plain http.
+ *
+ * Rationale: some components have no upstream build for a given platform (e.g. whisper.cpp
+ * has no official macOS CLI, Vulkan or ROCm binary), so they must be built on the user's
+ * own machine. Rather than require a publication channel for a personal-use install, the
+ * daemon can serve `<dataDir>/local-artifacts/**` on its own loopback port and the manifest
+ * points there.
+ *
+ * Why this is not a weakening of the https rule:
+ *   - loopback traffic never leaves the machine, so there is no transport to protect;
+ *   - the sha256 is still pinned in a git-committed manifest, so a compromised local
+ *     server cannot substitute content — the download would simply fail verification;
+ *   - it reuses the SAME download path (Range, resume, verify, dedup, retry) instead of
+ *     adding a second "local install" code path that would miss those guarantees.
+ *
+ * `file://` was rejected deliberately: Node's fetch cannot read it, so it would require a
+ * separate branch in the downloader — exactly the second code path this avoids.
+ */
+export const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '::1'] as const;
+
 export const DownloadUrlSchema = z
   .string()
   .url()
-  .refine((u) => u.startsWith('https://'), { message: 'download URLs must use https' })
-  .refine(
-    (u) => {
-      try {
-        return (ALLOWED_DOWNLOAD_HOSTS as readonly string[]).includes(new URL(u).hostname);
-      } catch {
-        return false;
-      }
-    },
-    { message: `host must be one of: ${ALLOWED_DOWNLOAD_HOSTS.join(', ')}` },
-  );
+  .superRefine((u, ctx) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(u);
+    } catch {
+      ctx.addIssue({ code: 'custom', message: 'not a valid URL' });
+      return;
+    }
+    const isLoopback = (LOOPBACK_HOSTS as readonly string[]).includes(parsed.hostname);
+    if (parsed.protocol === 'http:' && isLoopback) return; // locally served artifact
+    if (parsed.protocol !== 'https:') {
+      ctx.addIssue({ code: 'custom', message: 'download URLs must use https (or http on loopback)' });
+      return;
+    }
+    if (!(ALLOWED_DOWNLOAD_HOSTS as readonly string[]).includes(parsed.hostname)) {
+      ctx.addIssue({ code: 'custom', message: `host must be one of: ${ALLOWED_DOWNLOAD_HOSTS.join(', ')}` });
+    }
+  });
 
 export const ProviderIdSchema = z.enum(['hf', 'hf-mirror', 'modelscope', 'github', 'custom']);
 export const BackendSchema = z.enum(['cuda', 'vulkan', 'rocm', 'metal', 'coreml', 'cpu']);
@@ -102,7 +130,7 @@ export const ArtifactFileSchema = z.object({
   mirrors: z.array(MirrorSchema),
   optional: z.boolean().optional(),
   platforms: z.array(PlatformSelectorSchema).optional(),
-  unpack: z.enum(['zip', 'tar.gz']).nullish(),
+  unpack: z.enum(['zip', 'tar.gz', 'tar.xz']).nullish(),
 });
 
 export const LicenseInfoSchema = z.object({

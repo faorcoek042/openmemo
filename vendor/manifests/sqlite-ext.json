@@ -1,31 +1,38 @@
 {
   "schemaVersion": 1,
   "catalogVersion": "2026.08.02",
-  "generatedAt": "2026-08-02T17:00:00Z",
+  "generatedAt": "2026-08-02T23:59:00Z",
   "packs": [
     {
       "schemaVersion": 1,
-      "id": "sqlite-ext-linux-x64",
+      "id": "libsimple-darwin-arm64",
       "engine": "sqlite-ext",
-      "engineVersion": "libsimple-v0.7.1+sqlite-vec-v0.1.9",
+      "engineVersion": "v0.7.1",
       "ggmlAbi": null,
       "backend": "cpu",
       "tier": "downloadable",
-      "os": "linux",
-      "arch": "x64",
-      "displayName": "SQLite extensions — Chinese tokenizer + vector search (Linux x64)",
-      "displayNameZh": "中文分词器 + 向量检索（Linux x64）",
+      "os": "darwin",
+      "arch": "arm64",
+      "displayName": "libsimple — Chinese FTS5 tokenizer (darwin/arm64)",
+      "displayNameZh": "中文分词器 libsimple（darwin/arm64）",
       "files": [
         {
           "role": "archive",
-          "name": "sqlite-ext-linux-x64.tar.gz",
-          "sizeBytes": 4668718,
-          "sha256": "443551eace8372ec1b9d70cd9316e540ca66d45922bad5745eff004c3726e1c5",
-          "unpack": "tar.gz",
-          "mirrors": []
+          "name": "libsimple-osx-arm64.zip",
+          "sizeBytes": 5324657,
+          "sha256": "b699f0fca1e7d1f8776d067708ecf4d0bcc2d765e4b643862e129058583b885f",
+          "unpack": "zip",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/wangfenjin/simple/releases/download/v0.7.1/libsimple-osx-arm64.zip",
+              "official": true
+            }
+          ]
         }
       ],
-      "totalSizeBytes": 4668718,
+      "totalSizeBytes": 5324657,
+      "cudaArchitectures": [],
       "requiresDriver": null,
       "license": {
         "id": "MIT",
@@ -33,13 +40,461 @@
         "url": "https://github.com/wangfenjin/simple/blob/master/LICENSE"
       },
       "providesFiles": [
-        "libsimple.so",
-        "vec0.so",
-        "dict/jieba.dict.utf8"
+        "libsimple.dylib"
       ],
       "installPath": "bin/ext",
       "priority": 100,
-      "availability": "pending-ci",
+      "availability": "published",
+      "benchmark": null,
+      "catalogVersion": "2026.08.02"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "libsimple-darwin-x64",
+      "engine": "sqlite-ext",
+      "engineVersion": "v0.7.1",
+      "ggmlAbi": null,
+      "backend": "cpu",
+      "tier": "downloadable",
+      "os": "darwin",
+      "arch": "x64",
+      "displayName": "libsimple — Chinese FTS5 tokenizer (darwin/x64)",
+      "displayNameZh": "中文分词器 libsimple（darwin/x64）",
+      "files": [
+        {
+          "role": "archive",
+          "name": "libsimple-osx-x64.zip",
+          "sizeBytes": 5322912,
+          "sha256": "d6f7e9fc9dac3c2bcfb5389618d41f2f0db6ea5a83dd8b9a363cf9b02fa20f95",
+          "unpack": "zip",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/wangfenjin/simple/releases/download/v0.7.1/libsimple-osx-x64.zip",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 5322912,
+      "cudaArchitectures": [],
+      "requiresDriver": null,
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://github.com/wangfenjin/simple/blob/master/LICENSE"
+      },
+      "providesFiles": [
+        "libsimple.dylib"
+      ],
+      "installPath": "bin/ext",
+      "priority": 100,
+      "availability": "published",
+      "benchmark": null,
+      "catalogVersion": "2026.08.02"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "libsimple-linux-arm64",
+      "engine": "sqlite-ext",
+      "engineVersion": "v0.7.1",
+      "ggmlAbi": null,
+      "backend": "cpu",
+      "tier": "downloadable",
+      "os": "linux",
+      "arch": "arm64",
+      "displayName": "libsimple — Chinese FTS5 tokenizer (linux/arm64)",
+      "displayNameZh": "中文分词器 libsimple（linux/arm64）",
+      "files": [
+        {
+          "role": "archive",
+          "name": "libsimple-linux-ubuntu-24.04-arm.zip",
+          "sizeBytes": 5332634,
+          "sha256": "d2d6589f0fc144099d48105cb3d97c9939ef24c87b63b3f2b749a10a6922fa48",
+          "unpack": "zip",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/wangfenjin/simple/releases/download/v0.7.1/libsimple-linux-ubuntu-24.04-arm.zip",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 5332634,
+      "cudaArchitectures": [],
+      "requiresDriver": null,
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://github.com/wangfenjin/simple/blob/master/LICENSE"
+      },
+      "providesFiles": [
+        "libsimple.so"
+      ],
+      "installPath": "bin/ext",
+      "priority": 100,
+      "availability": "published",
+      "benchmark": null,
+      "catalogVersion": "2026.08.02"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "libsimple-linux-x64",
+      "engine": "sqlite-ext",
+      "engineVersion": "v0.7.1",
+      "ggmlAbi": null,
+      "backend": "cpu",
+      "tier": "downloadable",
+      "os": "linux",
+      "arch": "x64",
+      "displayName": "libsimple — Chinese FTS5 tokenizer (linux/x64)",
+      "displayNameZh": "中文分词器 libsimple（linux/x64）",
+      "files": [
+        {
+          "role": "archive",
+          "name": "libsimple-linux-ubuntu-22.04.zip",
+          "sizeBytes": 5337804,
+          "sha256": "0c9a7a578fc50ef5480e69e1e1880535ae68d75e1c1580f6bf106073087642a5",
+          "unpack": "zip",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/wangfenjin/simple/releases/download/v0.7.1/libsimple-linux-ubuntu-22.04.zip",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 5337804,
+      "cudaArchitectures": [],
+      "requiresDriver": null,
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://github.com/wangfenjin/simple/blob/master/LICENSE"
+      },
+      "providesFiles": [
+        "libsimple.so"
+      ],
+      "installPath": "bin/ext",
+      "priority": 100,
+      "availability": "published",
+      "benchmark": null,
+      "catalogVersion": "2026.08.02"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "libsimple-win32-arm64",
+      "engine": "sqlite-ext",
+      "engineVersion": "v0.7.1",
+      "ggmlAbi": null,
+      "backend": "cpu",
+      "tier": "downloadable",
+      "os": "win32",
+      "arch": "arm64",
+      "displayName": "libsimple — Chinese FTS5 tokenizer (win32/arm64)",
+      "displayNameZh": "中文分词器 libsimple（win32/arm64）",
+      "files": [
+        {
+          "role": "archive",
+          "name": "libsimple-windows-arm64.zip",
+          "sizeBytes": 5455695,
+          "sha256": "520c33aae3fab35cba963927d04f041f971eee71f01fa577fb1d51e171780687",
+          "unpack": "zip",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/wangfenjin/simple/releases/download/v0.7.1/libsimple-windows-arm64.zip",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 5455695,
+      "cudaArchitectures": [],
+      "requiresDriver": null,
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://github.com/wangfenjin/simple/blob/master/LICENSE"
+      },
+      "providesFiles": [
+        "libsimple.dll"
+      ],
+      "installPath": "bin/ext",
+      "priority": 100,
+      "availability": "published",
+      "benchmark": null,
+      "catalogVersion": "2026.08.02"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "libsimple-win32-x64",
+      "engine": "sqlite-ext",
+      "engineVersion": "v0.7.1",
+      "ggmlAbi": null,
+      "backend": "cpu",
+      "tier": "downloadable",
+      "os": "win32",
+      "arch": "x64",
+      "displayName": "libsimple — Chinese FTS5 tokenizer (win32/x64)",
+      "displayNameZh": "中文分词器 libsimple（win32/x64）",
+      "files": [
+        {
+          "role": "archive",
+          "name": "libsimple-windows-x64.zip",
+          "sizeBytes": 5473005,
+          "sha256": "7f03cc28cf307721f5621b5a52ef3bcb26c5215de012b09900492eb34d5bed0b",
+          "unpack": "zip",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/wangfenjin/simple/releases/download/v0.7.1/libsimple-windows-x64.zip",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 5473005,
+      "cudaArchitectures": [],
+      "requiresDriver": null,
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://github.com/wangfenjin/simple/blob/master/LICENSE"
+      },
+      "providesFiles": [
+        "libsimple.dll"
+      ],
+      "installPath": "bin/ext",
+      "priority": 100,
+      "availability": "published",
+      "benchmark": null,
+      "catalogVersion": "2026.08.02"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "sqlite-vec-darwin-arm64",
+      "engine": "sqlite-ext",
+      "engineVersion": "v0.1.9",
+      "ggmlAbi": null,
+      "backend": "cpu",
+      "tier": "downloadable",
+      "os": "darwin",
+      "arch": "arm64",
+      "displayName": "sqlite-vec — vector search (darwin/arm64)",
+      "displayNameZh": "向量检索 sqlite-vec（darwin/arm64）",
+      "files": [
+        {
+          "role": "archive",
+          "name": "sqlite-vec-0.1.9-loadable-macos-aarch64.tar.gz",
+          "sizeBytes": 50836,
+          "sha256": "8282126333399ddfe98bbbcc7a1936e7252625aac49df056a98be602e46bfd29",
+          "unpack": "tar.gz",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-macos-aarch64.tar.gz",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 50836,
+      "cudaArchitectures": [],
+      "requiresDriver": null,
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://github.com/asg017/sqlite-vec/blob/main/LICENSE"
+      },
+      "providesFiles": [
+        "vec0.dylib"
+      ],
+      "installPath": "bin/ext",
+      "priority": 90,
+      "availability": "published",
+      "benchmark": null,
+      "catalogVersion": "2026.08.02"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "sqlite-vec-darwin-x64",
+      "engine": "sqlite-ext",
+      "engineVersion": "v0.1.9",
+      "ggmlAbi": null,
+      "backend": "cpu",
+      "tier": "downloadable",
+      "os": "darwin",
+      "arch": "x64",
+      "displayName": "sqlite-vec — vector search (darwin/x64)",
+      "displayNameZh": "向量检索 sqlite-vec（darwin/x64）",
+      "files": [
+        {
+          "role": "archive",
+          "name": "sqlite-vec-0.1.9-loadable-macos-x86_64.tar.gz",
+          "sizeBytes": 51404,
+          "sha256": "53ad76e400786515e2edcaed2f01271dda846316390b761fadbd2dcf56aa4713",
+          "unpack": "tar.gz",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-macos-x86_64.tar.gz",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 51404,
+      "cudaArchitectures": [],
+      "requiresDriver": null,
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://github.com/asg017/sqlite-vec/blob/main/LICENSE"
+      },
+      "providesFiles": [
+        "vec0.dylib"
+      ],
+      "installPath": "bin/ext",
+      "priority": 90,
+      "availability": "published",
+      "benchmark": null,
+      "catalogVersion": "2026.08.02"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "sqlite-vec-linux-arm64",
+      "engine": "sqlite-ext",
+      "engineVersion": "v0.1.9",
+      "ggmlAbi": null,
+      "backend": "cpu",
+      "tier": "downloadable",
+      "os": "linux",
+      "arch": "arm64",
+      "displayName": "sqlite-vec — vector search (linux/arm64)",
+      "displayNameZh": "向量检索 sqlite-vec（linux/arm64）",
+      "files": [
+        {
+          "role": "archive",
+          "name": "sqlite-vec-0.1.9-loadable-linux-aarch64.tar.gz",
+          "sizeBytes": 61046,
+          "sha256": "ea03d39541e478fab5974253c461e1cb5d77742f69e40cf96e3fad5bc309a37c",
+          "unpack": "tar.gz",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-linux-aarch64.tar.gz",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 61046,
+      "cudaArchitectures": [],
+      "requiresDriver": null,
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://github.com/asg017/sqlite-vec/blob/main/LICENSE"
+      },
+      "providesFiles": [
+        "vec0.so"
+      ],
+      "installPath": "bin/ext",
+      "priority": 90,
+      "availability": "published",
+      "benchmark": null,
+      "catalogVersion": "2026.08.02"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "sqlite-vec-linux-x64",
+      "engine": "sqlite-ext",
+      "engineVersion": "v0.1.9",
+      "ggmlAbi": null,
+      "backend": "cpu",
+      "tier": "downloadable",
+      "os": "linux",
+      "arch": "x64",
+      "displayName": "sqlite-vec — vector search (linux/x64)",
+      "displayNameZh": "向量检索 sqlite-vec（linux/x64）",
+      "files": [
+        {
+          "role": "archive",
+          "name": "sqlite-vec-0.1.9-loadable-linux-x86_64.tar.gz",
+          "sizeBytes": 61507,
+          "sha256": "b959baa1d8dc88861b1edb337b8587178cdcb12d60b4998f9d10b6a82052d5d7",
+          "unpack": "tar.gz",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-linux-x86_64.tar.gz",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 61507,
+      "cudaArchitectures": [],
+      "requiresDriver": null,
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://github.com/asg017/sqlite-vec/blob/main/LICENSE"
+      },
+      "providesFiles": [
+        "vec0.so"
+      ],
+      "installPath": "bin/ext",
+      "priority": 90,
+      "availability": "published",
+      "benchmark": null,
+      "catalogVersion": "2026.08.02"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "sqlite-vec-win32-x64",
+      "engine": "sqlite-ext",
+      "engineVersion": "v0.1.9",
+      "ggmlAbi": null,
+      "backend": "cpu",
+      "tier": "downloadable",
+      "os": "win32",
+      "arch": "x64",
+      "displayName": "sqlite-vec — vector search (win32/x64)",
+      "displayNameZh": "向量检索 sqlite-vec（win32/x64）",
+      "files": [
+        {
+          "role": "archive",
+          "name": "sqlite-vec-0.1.9-loadable-windows-x86_64.tar.gz",
+          "sizeBytes": 143162,
+          "sha256": "51581189d52066b4dfc6631f6d7a3eab7dedc2260656ab09ca97ab3fb8165983",
+          "unpack": "tar.gz",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-windows-x86_64.tar.gz",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 143162,
+      "cudaArchitectures": [],
+      "requiresDriver": null,
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://github.com/asg017/sqlite-vec/blob/main/LICENSE"
+      },
+      "providesFiles": [
+        "vec0.dll"
+      ],
+      "installPath": "bin/ext",
+      "priority": 90,
+      "availability": "published",
       "benchmark": null,
       "catalogVersion": "2026.08.02"
     }

@@ -491,9 +491,6 @@ function parsePaxRecords(data: Buffer): Record<string, string> {
 
 export async function unpackTarGz(src: string, destDir: string, opts?: UnpackOptions): Promise<UnpackResult> {
   const budget = newBudget(opts);
-  const destRoot = path.resolve(destDir);
-  await fs.mkdir(destRoot, { recursive: true });
-
   const compressed = await fs.readFile(src);
   let raw: Buffer;
   try {
@@ -501,6 +498,26 @@ export async function unpackTarGz(src: string, destDir: string, opts?: UnpackOpt
   } catch (e) {
     throw new UnpackError(`Failed to gunzip "${src}": ${(e as Error).message}`, 'CORRUPT');
   }
+  return extractTar(raw, destDir, budget, opts);
+}
+
+/**
+ * Extract a decompressed tar stream.
+ *
+ * Deliberately shared by `.tar.gz` and `.tar.xz`: the compression codec is the ONLY
+ * difference between them, so routing both through one extractor means every guard
+ * (path traversal, absolute paths, symlink target checks, entry/byte limits) applies to
+ * a new format automatically. Adding a codec must never open a hole — the way that
+ * happens is a second, subtly different extraction path, so there isn't one.
+ */
+async function extractTar(
+  raw: Buffer,
+  destDir: string,
+  budget: Budget,
+  opts?: UnpackOptions,
+): Promise<UnpackResult> {
+  const destRoot = path.resolve(destDir);
+  await fs.mkdir(destRoot, { recursive: true });
 
   const files: string[] = [];
   let offset = 0;
@@ -588,13 +605,78 @@ export async function unpackTarGz(src: string, destDir: string, opts?: UnpackOpt
 
 /* ------------------------------- dispatch ---------------------------------- */
 
+/**
+ * `.tar.xz` — decompress with a pure-WASM xz decoder, then reuse the shared tar extractor.
+ *
+ * Why this matters beyond "one more format": several upstreams ship ONLY `.tar.xz`
+ * (ffmpeg being the notable one). Supporting it means we can point manifests straight at
+ * upstream release artifacts instead of repackaging and republishing them ourselves —
+ * which removes a whole publication step from the critical path.
+ *
+ * `xz-decompress` is WASM, not a native addon: no node-gyp, no per-platform prebuilds,
+ * works the same on Windows as on Linux. The system `xz` binary was rejected precisely
+ * because it does not exist on a default Windows install.
+ */
+export async function unpackTarXz(src: string, destDir: string, opts?: UnpackOptions): Promise<UnpackResult> {
+  const budget = newBudget(opts);
+  const compressed = await fs.readFile(src);
+
+  let raw: Buffer;
+  try {
+    // xz-decompress ships a CJS bundle: under ESM the named export lands on `.default`,
+    // not at the top level. Reading it from the top level yields undefined and fails with
+    // a misleading "not a constructor". Accept both shapes so a future ESM build of the
+    // package keeps working.
+    const mod = (await import('xz-decompress')) as unknown as {
+      XzReadableStream?: new (s: ReadableStream<Uint8Array>) => ReadableStream<Uint8Array>;
+      default?: { XzReadableStream?: new (s: ReadableStream<Uint8Array>) => ReadableStream<Uint8Array> };
+    };
+    const XzReadableStream = mod.XzReadableStream ?? mod.default?.XzReadableStream;
+    if (typeof XzReadableStream !== 'function') {
+      throw new UnpackError('xz-decompress did not expose XzReadableStream', 'UNSUPPORTED');
+    }
+    const source = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new Uint8Array(compressed));
+        c.close();
+      },
+    });
+    const reader = new XzReadableStream(source).getReader();
+    const chunks: Buffer[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.length;
+      // Enforce the byte ceiling DURING decompression, not after: an xz bomb that
+      // expands to hundreds of GB must not be fully materialised before we notice.
+      if (total > budget.maxTotalBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new UnpackError(
+          `Archive exceeds ${budget.maxTotalBytes} total uncompressed bytes — refusing to extract (xz-bomb guard)`,
+          'LIMIT_EXCEEDED',
+        );
+      }
+      chunks.push(Buffer.from(value));
+    }
+    raw = Buffer.concat(chunks);
+  } catch (e) {
+    if (e instanceof UnpackError) throw e;
+    throw new UnpackError(`Failed to xz-decompress "${src}": ${(e as Error).message}`, 'CORRUPT');
+  }
+
+  return extractTar(raw, destDir, budget, opts);
+}
+
 export async function unpackArchive(
   src: string,
   destDir: string,
-  kind: 'zip' | 'tar.gz',
+  kind: 'zip' | 'tar.gz' | 'tar.xz',
   opts?: UnpackOptions,
 ): Promise<UnpackResult> {
   if (kind === 'zip') return unpackZip(src, destDir, opts);
   if (kind === 'tar.gz') return unpackTarGz(src, destDir, opts);
+  if (kind === 'tar.xz') return unpackTarXz(src, destDir, opts);
   throw new UnpackError(`Unsupported archive kind: ${kind}`, 'UNSUPPORTED');
 }

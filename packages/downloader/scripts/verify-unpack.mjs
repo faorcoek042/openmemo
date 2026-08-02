@@ -205,6 +205,8 @@ console.log('[1] ZIP round-trip: nested dirs, stored + deflated, byte-for-byte c
 /* --- 2. tar.gz round-trip via real tar --------------------------------------- */
 console.log('\n[2] tar.gz round-trip (real GNU tar), including a subdirectory');
 let tarAvailable = hasCmd('tar');
+// xz is needed only to BUILD the fixtures; decoding under test is pure WASM.
+const xzAvailable = hasCmd('xz');
 if (!tarAvailable) {
   check('tar binary available', false, 'skipping tar.gz round-trip entirely');
 } else {
@@ -320,6 +322,91 @@ if (!tarAvailable) {
     const destDir = path.join(root, 'symlink-abs-out');
     const err = await mustThrow(() => unpackTarGz(archivePath, destDir));
     check('绝对路径 symlink 仍被拒绝', err instanceof UnpackError && err.code === 'SYMLINK_REJECTED', err?.code);
+  }
+}
+
+/* --- 5d. tar.xz: same guards must apply, not just a new decoder ---------------- */
+/*
+ * Adding a codec must not open a hole. `.tar.xz` shares the tar extractor with `.tar.gz`,
+ * so these cases exist to PROVE that sharing holds rather than assume it: if xz ever got
+ * its own extraction path, the traversal/symlink/limit checks below would be the ones to
+ * catch it.
+ */
+console.log('\n[5d] tar.xz：解码正确 + 全部防护同样生效');
+if (!tarAvailable || !xzAvailable) {
+  check('tar + xz available', false, 'skipping tar.xz tests');
+} else {
+  // 5d-1 round trip
+  {
+    const srcDir = path.join(root, 'xz-ok-src');
+    await fs.mkdir(path.join(srcDir, 'sub'), { recursive: true });
+    await fs.writeFile(path.join(srcDir, 'a.txt'), 'xz payload alpha\n');
+    await fs.writeFile(path.join(srcDir, 'sub', 'b.bin'), Buffer.alloc(4096, 7));
+    await fs.symlink('a.txt', path.join(srcDir, 'link.txt'));
+    const arc = path.join(root, 'ok.tar.xz');
+    execFileSync('tar', ['-cJf', arc, '-C', srcDir, '.'], { stdio: 'ignore' });
+
+    const dest = path.join(root, 'xz-ok-out');
+    let err = null, res = null;
+    try {
+      res = await unpackArchive(arc, dest, 'tar.xz');
+    } catch (e) {
+      err = e;
+    }
+    check('tar.xz 解压成功', err == null, err?.message);
+    const a = await fs.readFile(path.join(dest, 'a.txt'), 'utf8').catch(() => '');
+    check('内容正确', a.includes('xz payload alpha'), JSON.stringify(a.trim()));
+    const bst = await fs.stat(path.join(dest, 'sub', 'b.bin')).catch(() => null);
+    check('子目录文件正确', bst?.size === 4096, `${bst?.size} bytes`);
+    check('内部 symlink 同样被允许', (await fs.lstat(path.join(dest, 'link.txt')).catch(() => null)) != null);
+    check('files 计数非空', (res?.files.length ?? 0) > 0, `${res?.files.length} files`);
+  }
+
+  // 5d-2 zip-slip via xz
+  {
+    const srcDir = path.join(root, 'xz-slip-src');
+    await fs.mkdir(srcDir, { recursive: true });
+    await fs.writeFile(path.join(srcDir, 'evil.txt'), 'pwned\n');
+    const arc = path.join(root, 'slip.tar.xz');
+    // `-P` keeps the literal ../ path in the archive
+    execFileSync('tar', ['-cJf', arc, '-P', '-C', srcDir, '--transform', 's|evil.txt|../evil.txt|', 'evil.txt'], { stdio: 'ignore' });
+    const dest = path.join(root, 'xz-slip-out');
+    const err = await mustThrow(() => unpackArchive(arc, dest, 'tar.xz'));
+    check('tar.xz 中的 ../ 被拒绝', err instanceof UnpackError && err.code === 'PATH_TRAVERSAL', err?.code ?? err?.message?.slice(0, 60));
+    const escaped = await fs.stat(path.join(root, 'evil.txt')).then(() => true).catch(() => false);
+    check('destDir 外没有产生文件', !escaped);
+  }
+
+  // 5d-3 escaping symlink via xz
+  {
+    const srcDir = path.join(root, 'xz-link-src');
+    await fs.mkdir(srcDir, { recursive: true });
+    await fs.symlink('../../../../etc/passwd', path.join(srcDir, 'bad.txt'));
+    const arc = path.join(root, 'link.tar.xz');
+    execFileSync('tar', ['-cJf', arc, '-C', srcDir, 'bad.txt'], { stdio: 'ignore' });
+    const dest = path.join(root, 'xz-link-out');
+    const err = await mustThrow(() => unpackArchive(arc, dest, 'tar.xz'));
+    check('tar.xz 中的逃逸 symlink 被拒绝', err instanceof UnpackError && err.code === 'SYMLINK_REJECTED', err?.code);
+    check('逃逸链接未被创建', !(await fs.lstat(path.join(dest, 'bad.txt')).then(() => true).catch(() => false)));
+  }
+
+  // 5d-4 limits via xz
+  {
+    const srcDir = path.join(root, 'xz-limit-src');
+    await fs.mkdir(srcDir, { recursive: true });
+    await fs.writeFile(path.join(srcDir, 'big.bin'), Buffer.alloc(300_000, 3));
+    const arc = path.join(root, 'limit.tar.xz');
+    execFileSync('tar', ['-cJf', arc, '-C', srcDir, 'big.bin'], { stdio: 'ignore' });
+    const err = await mustThrow(() => unpackArchive(arc, path.join(root, 'xz-limit-out'), 'tar.xz', { maxTotalBytes: 1000 }));
+    check('tar.xz 超出字节上限被拒绝', err instanceof UnpackError && err.code === 'LIMIT_EXCEEDED', err?.code ?? err?.message?.slice(0, 70));
+  }
+
+  // 5d-5 corrupt payload
+  {
+    const bad = path.join(root, 'corrupt.tar.xz');
+    await fs.writeFile(bad, Buffer.from('this is not an xz stream at all'));
+    const err = await mustThrow(() => unpackArchive(bad, path.join(root, 'xz-corrupt-out'), 'tar.xz'));
+    check('损坏的 xz 报 CORRUPT 而非静默', err instanceof UnpackError && err.code === 'CORRUPT', err?.code);
   }
 }
 

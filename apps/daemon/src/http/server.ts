@@ -22,6 +22,7 @@ import {
   checkCsrf,
 } from './auth.js';
 import { guardRequest } from './guard.js';
+import { resolveWebDist, serveStatic } from './static.js';
 import { readJsonBody as readBody, sendError, sendJson } from './respond.js';
 import { modelRoutesFor } from './rest/models.js';
 import type { SseHub } from './sse.js';
@@ -119,6 +120,15 @@ async function handleRequest(
     sendError(res, 403, 'FORBIDDEN_ORIGIN', guard.reason ?? 'blocked', '请求来源不被信任');
     return;
   }
+
+  /*
+   * ---- 前端静态产物 ----
+   * 必须在鉴权**之前**：token 在 URL fragment 里，服务端根本收不到，
+   * 只有先把 index.html 和 JS 发出去，页面才有机会拿它去换会话。
+   * 放行范围仅限构建产物本身，/api/** 与 /ws/** 在 serveStatic 里被显式排除。
+   */
+  const webDist = resolveWebDist();
+  if (webDist && serveStatic(webDist, path, method, res)) return;
 
   // ---- 建立会话：Bearer token → HttpOnly cookie（D-01 §2.4）----
   if (path === '/api/auth/session' && method === 'POST') {

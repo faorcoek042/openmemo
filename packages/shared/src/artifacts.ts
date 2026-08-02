@@ -94,7 +94,11 @@ export interface ArtifactFile {
   /** Restricts this file to matching platforms. Absent = applies everywhere. */
   platforms?: PlatformSelector[];
   /** Archive to expand after verification. */
-  unpack?: 'zip' | 'tar.gz' | null;
+  /**
+   * Archive format. `tar.xz` is supported so manifests can point at upstream release
+   * artifacts directly (several projects ship xz only) instead of us repackaging them.
+   */
+  unpack?: 'zip' | 'tar.gz' | 'tar.xz' | null;
 }
 
 export interface LicenseInfo {

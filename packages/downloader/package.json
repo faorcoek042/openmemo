@@ -23,7 +23,8 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
-    "@openmemo/shared": "workspace:*"
+    "@openmemo/shared": "workspace:*",
+    "xz-decompress": "^0.2.3"
   },
   "devDependencies": {
     "playwright": "^1.56.0"

@@ -842,3 +842,87 @@ selfcheck 显示 `LLM 模型 无（F4 思维导图需要 LLM 或云 API Key）`�
   改用 `[data-testid^="model-card-asr/whisper"]` 才对。**"先打印候选再断言"这条我这轮用上了，也确实救了场。**
 
 门禁：`tsc 0 · eslint 0 · verify-offline 29/29 · verify-unpack 42/42 · 5 份 manifest VALID`
+
+---
+
+## [2026-08-03 00:20] T-064 DONE —— **sqlite-ext 的发布阻塞消失了**
+
+### 1. `.tar.xz` 已支持，且防护同样覆盖
+
+用 `xz-decompress`（**MIT · 零依赖 · WASM**，不是原生模块）。
+选它而不是系统 `xz` 二进制：**默认 Windows 装机没有 xz**，依赖 CLI 等于把 Windows 排除在外。
+
+关键设计：`.tar.xz` 与 `.tar.gz` **共用同一个 tar 提取器**，压缩编解码是唯一差别。
+这样新格式**自动**继承全部防护——因为根本不存在第二条提取路径。
+但按你的要求，我**没有只加解码器，而是加了攻击用例**（`verify-unpack.mjs` 现 **53/53**）：
+
+    [5d] tar.xz：解码正确 + 全部防护同样生效
+      PASS  tar.xz 解压成功 / 内容正确 / 子目录正确 / 内部 symlink 允许
+      PASS  tar.xz 中的 ../ 被拒绝            → PATH_TRAVERSAL
+      PASS  destDir 外没有产生文件
+      PASS  tar.xz 中的逃逸 symlink 被拒绝     → SYMLINK_REJECTED
+      PASS  tar.xz 超出字节上限被拒绝          → LIMIT_EXCEEDED
+      PASS  损坏的 xz 报 CORRUPT 而非静默
+
+xz 的字节上限是**边解压边算**的，不是解完再查——xz 炸弹展开到几百 GB 不能等落地才发现。
+
+### 2. **libsimple 和 sqlite-vec 上游都有现成产物，全平台。直连成立。**
+
+我核实了两个上游 release（**钉 tag，不用 `latest`**）：
+
+| 组件 | tag | 平台覆盖 |
+|---|---|---|
+| libsimple `wangfenjin/simple` | **v0.7.1** | linux x64/arm64 · macOS arm64/x64 · Windows x64/arm64 |
+| sqlite-vec `asg017/sqlite-vec` | **v0.1.9** | linux x64/arm64 · macOS arm64/x64 · Windows x64 |
+
+内容也对得上（下载后实际解包看的，不是看文件名猜的）：
+libsimple zip 内含 `libsimple.so` + 完整 `dict/`（含 jieba 词典）；sqlite-vec tar.gz 内含 `vec0.so`。
+
+`vendor/manifests/sqlite-ext.json` 已重写：**11 个包，全部 `availability: published`，直指上游**。
+**真实安装验证**（不是只过 schema）：
+
+    libsimple-linux-x64    OK 59.7s  sha256 ✓
+    sqlite-vec-linux-x64   OK  2.4s  sha256 ✓
+    解压产物: libsimple.so, vec0.so · jieba 词典 9 个文件
+
+→ **`pending-ci` 那条阻塞对 sqlite-ext 已经不存在了。**
+→ 顺带说明：`gpu-runtime` 之前从源码编译 libsimple **其实没必要**，上游有现成的。
+
+哈希来源我做了区分（诚实标注）：
+- `libsimple-linux-x64` 与 `sqlite-vec-linux-x64` 是**我本机下载后自己算的**；
+- 其余平台用 GitHub API 的 `digest` 字段（此前核对过：有我自算值的场合两者完全一致），
+  **标注为"未在本机独立复算"**。
+
+### 3. 本地托管方案评估：**推荐 `http://127.0.0.1:<port>/local-artifacts/…`，不要 `file://`**
+
+**结论：可行且推荐，我已把 schema 支持做好了。**
+
+| 方案 | 评估 |
+|---|---|
+| `file://` | ❌ **不推荐**。Node 的 `fetch` 读不了 `file://`，必须在下载器里开一条分支——而那条分支会绕过 Range/断点续传/校验/去重/重试。**第二条代码路径正是漏洞的来源。** |
+| `http://127.0.0.1:<port>/local-artifacts/…` | ✅ **推荐**。**复用同一条下载路径**，一行特判都不用加，校验/去重/重试全部照常 |
+
+安全上这不是放松 https 规则：
+1. 回环流量**不出本机**，没有传输层需要保护；
+2. **sha256 仍然钉在 git 里的 manifest**，本地服务器被换掉也过不了校验，只会失败；
+3. 只放行 `http` + 回环主机，其它一律照旧。
+
+已实现并实测策略：
+
+    ALLOW   http://127.0.0.1:17650/local-artifacts/a.zip
+    ALLOW   http://localhost:9/a.zip
+    REJECT  http://evil.com/a.zip        （非回环的 http）
+    REJECT  https://evil.com/a.zip       （不在白名单）
+    ALLOW   https://github.com/a.zip
+    REJECT  file:///tmp/a.zip
+
+**还需 daemon 侧配合**（`oss-scout`）：把 `<dataDir>/local-artifacts/**` 作为静态目录挂在
+已有回环端口上，只读、只允许该目录、拒绝路径穿越。构建脚本产物落到那里即可。
+
+**判据（回应你的"用上游还是自建"）**：这条本地方案现在**只剩 whisper.cpp 的
+macOS / Vulkan / ROCm** 需要——R-02 早已核实官方 release 没有这三个。
+libsimple、sqlite-vec、llama.cpp、whisper.cpp 的 linux/win CPU+CUDA **全部可以直连上游**。
+
+### 门禁
+    tsc 0 · eslint 0 · verify-unpack 53/53 · verify-offline 29/29 · 5 份 manifest VALID
+新增依赖：`xz-decompress@^0.2.3`（MIT，零依赖，WASM）→ `packages/downloader`，按 ADR-011 决策 3 此处申报。
