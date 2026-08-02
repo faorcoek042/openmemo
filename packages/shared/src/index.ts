@@ -19,6 +19,7 @@ export * from './fitness.js';
 export * from './jobs.js';
 export * from './events.js';
 export * from './api.js';
+export * from './proxy.js';
 export * from './schemas.js';
 
 export const PACKAGE_NAME = '@openmemo/shared' as const;

@@ -55,11 +55,24 @@ export function uploadMediaFile(
   file: File,
   onProgress: (p: UploadProgress) => void,
   signal?: AbortSignal,
+  /**
+   * BCP-47 或 `"auto"`。省略即不发该 part —— daemon 会存 `null`，
+   * 转写时降级为 `auto`，**绝不会退回 `en`**（`whisperCpp.ts` 无条件传 `-l`）。
+   */
+  language?: string,
 ): Promise<UploadResult> {
   return new Promise<UploadResult>((resolve, reject) => {
     const form = new FormData();
     // 字段名 `file`；磁盘名由服务端生成 ULID，原名只作展示元数据（D-01 §8.5）
     form.append('file', file, file.name);
+    /**
+     * daemon 的 multipart 解析器（`http/upload.ts`）收任意字段名（上限 16 个），
+     * 但**只读 `title` 和 `language`** 两个。这里只发它真读的那个 ——
+     * 多发的 part 不会报错，会被静默丢弃，那正是本轮要消灭的那种"看起来传了"。
+     *
+     * 空串要跳过：服务端 `rawLang.length > 0` 才采纳，发空串等于白发一个 part。
+     */
+    if (language) form.append('language', language);
 
     const xhr = new XMLHttpRequest();
     xhr.open('POST', UPLOAD_ENDPOINT);

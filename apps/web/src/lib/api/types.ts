@@ -84,13 +84,22 @@ export interface ProbeResult {
   requiresAuth: boolean;
 }
 
+/**
+ * ⚠️ 这个类型只保留**后端真会读的字段**。
+ *
+ * 原来还有 `modelId` / `diarize` / `keepVideo` / `generateStructure` 四个 ——
+ * 全部删除。daemon 的 `ImportBody`（`rest/notes.ts`）只解析 `input` / `title` / `language`，
+ * 而 `api.ts` 的 mutation 更是只发 `{input}`，那四个字段连请求体都没进过。
+ *
+ * 让它们留在类型里的危害不是"多几个没用的键"，而是**类型系统在替谎言背书**：
+ * 调用方看到 `diarize?: boolean` 会合理认为传了就生效，
+ * TS 也不会报错，于是 UI 上长出一排勾选框，勾了什么都不会发生。
+ * 类型能表达的东西必须与后端能接受的东西一致，否则它就是最贵的一种注释错误。
+ */
 export interface ImportUrlRequest {
   url: string;
-  modelId?: string;
+  /** BCP-47 或 `"auto"`。省略 = 后端按 `auto` 处理（**不是** `en`）。 */
   language?: string;
-  diarize?: boolean;
-  keepVideo?: boolean;
-  generateStructure?: boolean;
 }
 
 /** D-01 §3.2 规则 2：写操作一律异步化，返回 202 + jobId */

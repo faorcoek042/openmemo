@@ -11,6 +11,8 @@ import { humanDuration } from '../../lib/format/time';
 import { formatBytes, formatPercent } from '../../lib/format/bytes';
 import { looksLikeMedia, uploadMediaFile, type UploadProgress } from './upload';
 import { ProgressMeter } from '../../components/common/ProgressMeter';
+import { TranscribeOptions } from '../../components/common/TranscribeOptions';
+import { ASR_LANGUAGE_AUTO } from '../../lib/asr';
 import type { ProbeResult } from '../../lib/api/types';
 
 /**
@@ -28,7 +30,14 @@ export default function CapturePage() {
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const [opts, setOpts] = useState({ diarize: true, keepVideo: false, structure: true });
+  /**
+   * 转写语言。默认 `auto` —— 与 daemon 的降级值一致，不制造"前端默认"与"后端默认"两个真相。
+   *
+   * 这是 memo.ac 有而我们完全没有的一项。它不是锦上添花：
+   * whisper.cpp 缺 `-l` 会把中文**翻译成英文**返回，`gpu-runtime` 为此修过一次事故。
+   * 现在后端兜底成 `auto` 了，但"用户想明确指定 zh"依然无处可说 —— 补上的就是这个口子。
+   */
+  const [language, setLanguage] = useState<string>(ASR_LANGUAGE_AUTO);
   const [uploads, setUploads] = useState<UploadProgress[]>([]);
 
   /**
@@ -49,8 +58,12 @@ export default function CapturePage() {
       ]);
 
       for (const file of files) {
-        void uploadMediaFile(file, (p) =>
-          setUploads((prev) => prev.map((u) => (u.file === file ? p : u))),
+        void uploadMediaFile(
+          file,
+          (p) => setUploads((prev) => prev.map((u) => (u.file === file ? p : u))),
+          undefined,
+          // 本地文件与链接导入走同一个语言设置 —— 两条路径给出不同结果会很难解释
+          language,
         )
           .then((r) => navigate(`/notes/${r.noteUid}`))
           .catch((err) =>
@@ -60,7 +73,9 @@ export default function CapturePage() {
           );
       }
     },
-    [navigate],
+    // language 必须进依赖数组：漏了它，改语言后拖进来的文件仍会用旧值上传，
+    // 而这种"闭包捕获了过期状态"的 bug 在 UI 上完全看不出来
+    [navigate, language],
   );
 
   const probeMut = useProbeMutation();
@@ -74,7 +89,7 @@ export default function CapturePage() {
 
   const start = () => {
     importMut.mutate(
-      { url: url.trim(), diarize: opts.diarize, keepVideo: opts.keepVideo, generateStructure: opts.structure },
+      { url: url.trim(), language },
       // 立刻跳到笔记详情：笔记已建，只是还没内容。用户在那里看进度，
       // 而不是停在捕获页盯着一个转圈（D-05 §4.1）
       { onSuccess: (r) => navigate(`/notes/${r.noteUid}`) },
@@ -139,6 +154,19 @@ export default function CapturePage() {
         <p className="mt-2 text-xs text-ink-muted">{t('capture.supported')}</p>
       </div>
 
+      {/*
+        转写选项：**页面级**，链接导入与拖拽上传共用同一份设置。
+        两条路径给出不同的语言结果是没法向用户解释的。
+      */}
+      <section
+        className="rounded-lg border border-line bg-surface-1 p-4"
+        data-testid="capture-options"
+        aria-label={t('capture.optionsTitle')}
+      >
+        <h2 className="mb-3 text-sm font-medium text-ink">{t('capture.optionsTitle')}</h2>
+        <TranscribeOptions language={language} onLanguageChange={setLanguage} />
+      </section>
+
       {probeMut.isError ? <ErrorBlock error={probeMut.error} onRetry={runProbe} /> : null}
 
       {/* ── probe 结果卡片：秒级出现，先于下载 ── */}
@@ -165,19 +193,12 @@ export default function CapturePage() {
             </div>
           </div>
 
-          <div className="mt-4 flex flex-wrap gap-4 border-t border-line pt-4 text-sm">
-            {(['diarize', 'keepVideo', 'structure'] as const).map((k) => (
-              <label key={k} className="flex items-center gap-2 text-ink-secondary">
-                <input
-                  type="checkbox"
-                  checked={opts[k]}
-                  onChange={(e) => setOpts((o) => ({ ...o, [k]: e.target.checked }))}
-                  className="size-4 accent-[var(--accent)]"
-                />
-                {t(`capture.options.${k}`)}
-              </label>
-            ))}
-          </div>
+          {/*
+            这里原来是 diarize / keepVideo / structure 三个勾选框。
+            它们从未进入过请求体（mutation 只发 `{input}`），后端也无对应入参 —— 纯装饰，已删。
+            真正生效的转写选项上移到了页面级（见下方 `capture-options`），
+            因为它对**链接导入和拖拽上传两条路径都生效**，放在 probe 卡片里会让人以为只管链接。
+          */}
 
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setProbe(null)}>

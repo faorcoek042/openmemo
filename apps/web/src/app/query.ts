@@ -36,6 +36,18 @@ export const qk = {
   runtime: {
     hardware: ['runtime', 'hardware'] as const,
   },
+  /**
+   * `GET /api/daemon/status` —— ASR 引擎**可用性的唯一真实来源**。
+   *
+   * 不是 `/api/components`：那里的 `ComponentStatus` 没有 `engine` 字段，
+   * 只能靠 id 前缀猜（`whispercpp-*`），而且"组件包装了"≠"引擎构造得起来"——
+   * Paraformer 还需要 `OPENMEMO_PARAFORMER_DIR` 指向模型目录，没设就压根不进候选。
+   * `daemon/status` 的 `pipeline.engines[]` 是 daemon 自己构造引擎后的实测结果，
+   * 带 `available` 和 `reason`，这才是"能不能用"。
+   */
+  daemon: {
+    status: ['daemon', 'status'] as const,
+  },
   components: {
     all: ['components'] as const,
   },

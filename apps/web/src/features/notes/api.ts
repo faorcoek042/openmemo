@@ -66,9 +66,21 @@ export function useImportUrlMutation() {
        */
       api<AcceptedJob>('import', '/notes/import', {
         method: 'POST',
-        body: { input: req.url },
+        /**
+         * `language` 必须真的发出去（T-075）。
+         *
+         * 之前这里只有 `{input}`，页面上选的一切都到不了后端。
+         * 而 language 恰恰是最不能丢的那个：whisper.cpp 拿不到 `-l` 时
+         * 会把中文**翻译成英文**返回，用户拿到的不是转写而是译文。
+         *
+         * 空串不发 —— daemon 用 `typeof body.language === 'string'` 判断，
+         * 空串会被当成"用户指定了空语言"存进 note.language，
+         * 之后重新转写又会把这个空串当默认值继续用下去。
+         */
+        body: req.language ? { input: req.url, language: req.language } : { input: req.url },
         // SSE 断线重连后前端可能重发；用户也会狂点按钮
-        idempotencyKey: `import:${req.url}`,
+        // 语言参与 key：改了语言重导入是**另一次任务**，不该被幂等去重掉
+        idempotencyKey: `import:${req.url}:${req.language ?? ''}`,
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.notes.all });

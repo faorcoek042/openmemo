@@ -46,7 +46,19 @@ export interface Mirror {
   official: boolean;
 }
 
-/** Roles a file can play inside one logical artifact. */
+/**
+ * Roles a file can play inside one logical artifact.
+ *
+ * The last six exist because a sherpa-onnx model is not one file. A transducer ships
+ * encoder + decoder + joiner, Moonshine ships preprocess + encode + two decoders, and
+ * every one of them additionally needs `tokens.txt`. Before these values the only way
+ * to describe such a model was to mark every file `weights`, which loses the one thing
+ * the engine actually needs to know: WHICH file goes into WHICH slot of `modelConfig`.
+ *
+ * Consumers must therefore look files up by role, never by array position or filename
+ * pattern — filenames vary across upstream repos (`encoder.int8.onnx`, `encode.int8.onnx`,
+ * `encoder-epoch-99-avg-1.onnx` are all the same slot).
+ */
 export const FILE_ROLES = [
   'weights',
   'coreml-encoder',
@@ -54,6 +66,19 @@ export const FILE_ROLES = [
   'library',
   'binary',
   'archive',
+  /** Acoustic encoder half of a two/three-part model. */
+  'encoder',
+  /** Decoder half. For Moonshine there are two; the cached one is `decoder-cached`. */
+  'decoder',
+  'decoder-cached',
+  /** Transducer joiner network (zipformer/conformer/lstm transducers only). */
+  'joiner',
+  /** Feature pre-processing graph (Moonshine). */
+  'preprocess',
+  /** Token/vocabulary table — `tokens.txt`. Required by every sherpa-onnx model. */
+  'tokens',
+  /** Cepstral mean-variance normalisation stats — `am.mvn` (paraformer). */
+  'cmvn',
 ] as const;
 export type FileRole = (typeof FILE_ROLES)[number];
 

@@ -40,6 +40,31 @@ export const ENGINES = [
 ] as const;
 export type Engine = (typeof ENGINES)[number];
 
+/**
+ * ASR 引擎标识符 —— **语音识别运行时**，与上面的 `ENGINES` 不是一回事。
+ *
+ * `ENGINES` 是"**组件包**"枚举（下载什么原生包，含 ffmpeg / yt-dlp / sqlite 扩展）；
+ * 这里是"**哪个引擎在跑这段音频**"。两者恰好共享 `whisper.cpp` / `sherpa-onnx` 两个字面量，
+ * 但 `paraformer` 只存在于这里（它跑在 sherpa-onnx 包里，却是独立的引擎选择），
+ * 而 `ffmpeg` / `yt-dlp` 永远不会出现在这里。混用会让前端过滤出一堆不是引擎的东西。
+ *
+ * ## 为什么必须放在 shared
+ *
+ * 权威定义原本只在 `packages/pipeline/src/asr/selectEngine.ts` 的 `EngineId` 里，
+ * 而 pipeline 是 Node 侧包，前端引不动。结果前端**自己编了字符串**：
+ * `RecorderPage` 写死 `'paraformer' | 'turbo'` —— `'turbo'` 在后端全仓不存在
+ * （它是模型名 `whisper-large-v3-turbo` 的片段，不是引擎），
+ * 于是这个选择器既选不中真引擎，选中的值也从不发给后端。
+ *
+ * 类型层面消灭这类字面量的唯一办法，就是让**两端引用同一个联合**。
+ *
+ * ⚠️ 待办（`gpu-runtime` 域）：`selectEngine.ts:22` 的 `EngineId` 应改为
+ * `import type { AsrEngineId } from '@openmemo/shared'`，否则仍是两份真相。
+ * 在那之前，这里的取值必须与该文件逐字一致 —— 已核对（2026-08，三值相同）。
+ */
+export const ASR_ENGINE_IDS = ['whisper.cpp', 'paraformer', 'sherpa-onnx'] as const;
+export type AsrEngineId = (typeof ASR_ENGINE_IDS)[number];
+
 /** Package tier, per ADR-003 decision 3's L0/L1/L2 degradation chain. */
 export const PACK_TIERS = ['builtin', 'downloadable'] as const;
 export type PackTier = (typeof PACK_TIERS)[number];

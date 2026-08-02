@@ -18,6 +18,7 @@
 import { spawn } from 'node:child_process';
 
 import { isSafeExecutable } from './argGuard.js';
+import { proxyEnv, type ProxyConfig } from './proxy.js';
 
 /** D-01 §8.4 L5 — 1 MB ring buffer per stream. */
 export const MAX_STREAM_BYTES = 1024 * 1024;
@@ -35,6 +36,12 @@ export interface RunOptions {
   timeoutMs: number;
   /** Extra env on top of the minimal allowlist. Values are NOT parsed by any shell. */
   env?: Record<string, string>;
+  /**
+   * Outbound proxy. Injected here rather than inherited from `process.env` because
+   * `buildChildEnv` rebuilds the environment from an allowlist by design (§8.4 L5) —
+   * which is exactly why HTTP_PROXY never reached ffmpeg before.
+   */
+  proxy?: ProxyConfig | null;
   signal?: AbortSignal;
   /** Called for each complete stdout line — used for progress parsing. */
   onStdoutLine?: (line: string) => void;
@@ -75,7 +82,10 @@ export class SubprocessError extends Error {
  * child env from scratch instead of filtering process.env, so a variable we have never
  * heard of cannot ride along.
  */
-export function buildChildEnv(extra: Record<string, string> = {}): Record<string, string> {
+export function buildChildEnv(
+  extra: Record<string, string> = {},
+  proxy: ProxyConfig | null = null,
+): Record<string, string> {
   const base: Record<string, string> = {};
 
   const ALLOWED: string[] = process.platform === 'win32'
@@ -90,7 +100,9 @@ export function buildChildEnv(extra: Record<string, string> = {}): Record<string
   // Deterministic, locale-independent parsing of child output (ffmpeg/yt-dlp numbers).
   base.LC_ALL = 'C';
 
-  return { ...base, ...extra };
+  // Proxy vars are added deliberately, never inherited. `extra` still wins, so a call
+  // site that needs to force-disable the proxy can pass empty strings.
+  return { ...base, ...proxyEnv(proxy), ...extra };
 }
 
 /**
@@ -132,7 +144,7 @@ class RingBuffer {
  * the process could not be spawned.
  */
 export async function run(options: RunOptions): Promise<RunResult> {
-  const { bin, argv, cwd, timeoutMs, env, signal, onStdoutLine, onStderrLine, nice = false } = options;
+  const { bin, argv, cwd, timeoutMs, env, proxy = null, signal, onStdoutLine, onStderrLine, nice = false } = options;
 
   // Layer 2 — refuse anything that would need a shell to execute.
   const safeBin = isSafeExecutable(bin);
@@ -161,7 +173,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
   return new Promise<RunResult>((resolvePromise, rejectPromise) => {
     const child = spawn(spawnBin, spawnArgs, {
       cwd,
-      env: buildChildEnv(env),
+      env: buildChildEnv(env, proxy),
       // Layer 2, the load-bearing line of this file.
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],

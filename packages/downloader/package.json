@@ -24,6 +24,8 @@
   },
   "dependencies": {
     "@openmemo/shared": "workspace:*",
+    "socks": "^2.8.9",
+    "undici": "^7.29.0",
     "xz-decompress": "^0.2.3"
   },
   "devDependencies": {

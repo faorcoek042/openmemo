@@ -18,6 +18,7 @@ import { join } from 'node:path';
 
 import { buildArgv } from '../subprocess/argGuard.js';
 import { run, runOrThrow } from '../subprocess/runner.js';
+import { ffmpegProxySupport, type ProxyConfig } from '../subprocess/proxy.js';
 import type { ToolPaths } from '../tools.js';
 
 /** ASR input format: whisper.cpp and sherpa-onnx both want 16 kHz mono PCM. */
@@ -52,7 +53,14 @@ const REMOTE_PROTOCOLS = 'https,tls,tcp,crypto,httpproxy';
 export async function probeMedia(
   tools: ToolPaths,
   filePath: string,
-  opts: { cwd: string; timeoutMs?: number; remote?: boolean; signal?: AbortSignal },
+  opts: {
+    cwd: string;
+    timeoutMs?: number;
+    remote?: boolean;
+    signal?: AbortSignal;
+    /** Only meaningful for remote inputs; ffmpeg has no SOCKS support (see proxy.ts). */
+    proxy?: ProxyConfig | null;
+  },
 ): Promise<ProbeResult> {
   const argv = buildArgv({
     flags: [
@@ -78,6 +86,8 @@ export async function probeMedia(
     cwd: opts.cwd,
     timeoutMs: opts.timeoutMs ?? 30_000,
     signal: opts.signal,
+    // Env-based: ffprobe reads http_proxy the same way ffmpeg does.
+    env: opts.remote === true ? ffmpegProxySupport(opts.proxy ?? null).env : {},
   });
 
   return parseFfprobeJson(result.stdout);
@@ -162,6 +172,7 @@ export async function normalizeToPcm16k(
     onProgress?: (fraction: number) => void;
     /** Total duration, if known, so progress can be a fraction rather than a spinner. */
     totalDurationMs?: number | null;
+    proxy?: ProxyConfig | null;
   },
 ): Promise<NormalizeResult> {
   const outPath = join(opts.destDir, `${opts.destBasename}.wav`);
@@ -198,6 +209,7 @@ export async function normalizeToPcm16k(
     cwd: opts.cwd,
     timeoutMs: opts.timeoutMs ?? 30 * 60_000,
     signal: opts.signal,
+    env: opts.remote === true ? ffmpegProxySupport(opts.proxy ?? null).env : {},
     onStdoutLine: (line) => {
       if (opts.onProgress === undefined || total === null || total <= 0) return;
       // `-progress` emits `out_time_us=123456` lines.

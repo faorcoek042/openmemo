@@ -37,6 +37,7 @@ import { join } from 'node:path';
 
 import { buildArgv, validateHttpUrl } from '../../subprocess/argGuard.js';
 import { run, runOrThrow } from '../../subprocess/runner.js';
+import { ytDlpProxyArgs, type ProxyConfig } from '../../subprocess/proxy.js';
 import { SubprocessError } from '../../subprocess/runner.js';
 import type { ToolPaths } from '../../tools.js';
 import { isExecutable } from '../../tools.js';
@@ -65,6 +66,8 @@ export interface YtDlpSourceOptions {
   cwd: string;
   probeTimeoutMs?: number;
   fetchTimeoutMs?: number;
+  /** Outbound proxy. yt-dlp honours both http(s) and SOCKS. */
+  proxy?: ProxyConfig | null;
 }
 
 export class YtDlpSource implements MediaSource {
@@ -104,7 +107,7 @@ export class YtDlpSource implements MediaSource {
 
     // -J = dump metadata as JSON, implies --simulate: nothing is written to disk.
     const argv = buildArgv({
-      flags: [...HARDENING_FLAGS, '--dump-single-json', '--simulate'],
+      flags: [...HARDENING_FLAGS, ...ytDlpProxyArgs(this.opts.proxy ?? null), '--dump-single-json', '--simulate'],
       operands: [url],
     });
     if (!argv.ok) throw new Error(`URL rejected (${argv.code}): ${argv.message}`);
@@ -126,6 +129,7 @@ export class YtDlpSource implements MediaSource {
 
     const flags = [
       ...HARDENING_FLAGS,
+      ...ytDlpProxyArgs(this.opts.proxy ?? null),
       // Output stays inside the directory WE chose.
       '--paths', req.destDir,
       // Constant template. yt-dlp sanitises %(id)s itself.

@@ -114,7 +114,22 @@ export const PlatformSelectorSchema = z.object({
 });
 
 export const ArtifactFileSchema = z.object({
-  role: z.enum(['weights', 'coreml-encoder', 'mmproj', 'library', 'binary', 'archive']),
+  role: z.enum([
+    'weights',
+    'coreml-encoder',
+    'mmproj',
+    'library',
+    'binary',
+    'archive',
+    // Multi-part sherpa-onnx topologies — see FILE_ROLES in artifacts.ts for why.
+    'encoder',
+    'decoder',
+    'decoder-cached',
+    'joiner',
+    'preprocess',
+    'tokens',
+    'cmvn',
+  ]),
   name: z
     .string()
     .min(1)

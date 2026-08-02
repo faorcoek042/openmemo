@@ -449,6 +449,10 @@ function startModelPull(
         id: model.id,
         groupId: model.groupId,
         role: model.role,
+        // 随记录一起落盘：目录名不能表达类型（见 role 那次修复），
+        // 目录名同样不能表达"谁能加载它"和"该用哪套 modelConfig"。
+        engines: model.engines,
+        family: model.family,
         displayName: model.displayName,
         quantization: model.quantization,
         totalSizeBytes: model.totalSizeBytes,

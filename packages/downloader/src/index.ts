@@ -28,5 +28,6 @@ export * from './upstream.js';
 export * from './components.js';
 export * from './unpack.js';
 export * from './signature.js';
+export * from './proxy.js';
 
 export const PACKAGE_NAME = '@openmemo/downloader' as const;

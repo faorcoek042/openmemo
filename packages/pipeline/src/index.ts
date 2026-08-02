@@ -54,6 +54,18 @@ export {
 } from './subprocess/runner.js';
 export type { RunOptions, RunResult } from './subprocess/runner.js';
 
+// 出网代理（中文用户刚需：不走代理 HF/GitHub 根本下不动）
+export {
+  MAX_PROXY_URL_BYTES,
+  PROXY_SCHEMES,
+  ffmpegProxySupport,
+  proxyEnv,
+  redactProxyUrl,
+  validateProxyUrl,
+  ytDlpProxyArgs,
+} from './subprocess/proxy.js';
+export type { ProxyConfig, ProxyScheme, ProxyValidation } from './subprocess/proxy.js';
+
 // -- tools ---------------------------------------------------------------------------------
 export {
   defaultStoreRoot,

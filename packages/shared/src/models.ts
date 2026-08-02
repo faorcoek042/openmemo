@@ -171,6 +171,29 @@ export interface InstalledModel {
   id: string;
   groupId: string;
   role: ModelRole;
+
+  /**
+   * Which engines can load this model, and which family it belongs to.
+   *
+   * Carried on the INSTALL RECORD, not just the catalog entry, for the same reason
+   * `role` is: the record must stay self-describing after the catalog moves on. A user
+   * who installed a model six months ago still has the files; if the catalog entry was
+   * renamed or dropped, re-deriving `engines` by id lookup silently yields nothing, and
+   * "no engine can load this" is indistinguishable from "we forgot to write it down".
+   *
+   * `family` is what the engine dispatches on to build `modelConfig` — a sherpa-onnx
+   * transducer, a SenseVoice CTC model and a Moonshine model need three different
+   * config shapes from three different sets of files.
+   *
+   * Records written before this field existed have it `undefined`. Readers MUST treat
+   * `undefined` as "unknown, do not filter out" and NOT as the empty set — an empty
+   * `engines` array means "nothing can load this", which would hide the model instead
+   * of showing it. Same failure mode as the VAD/ASR mix-up: a wrong default that reads
+   * as a confident answer.
+   */
+  engines?: Engine[];
+  family?: string;
+
   displayName: string;
   quantization: Quantization;
   totalSizeBytes: number;
