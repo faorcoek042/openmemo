@@ -62,3 +62,90 @@ export function useImportUrlMutation() {
     },
   });
 }
+
+/* ────────────────── 标签 / 星标 / 文件夹的写入路径 ────────────────── */
+
+/**
+ * 这三个此前**只读**：星标只显示不能点、标签只显示不能加删。
+ * DB 表（`notes.starred` / `tags` / `note_tags`）和 API 形状早就在，缺的是 UI 写入口 ——
+ * 典型的"后端做完了但用户摸不到"。
+ *
+ * 全部走**乐观更新**：本地操作、毫秒级、几乎必然成功，等往返会显得很卡（D-05 §2.5）。
+ */
+export function useToggleStarMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { noteUid: string; starred: boolean }) =>
+      api<{ ok: true }>('notes', `/notes/${v.noteUid}/star`, {
+        method: 'POST',
+        body: { starred: v.starred },
+      }),
+    onMutate: async (v) => {
+      await qc.cancelQueries({ queryKey: qk.notes.all });
+      const prev = qc.getQueryData<{ notes: NoteSummary[] }>(qk.notes.list());
+      qc.setQueryData<{ notes: NoteSummary[] }>(qk.notes.list(), (old) =>
+        old
+          ? { notes: old.notes.map((n) => (n.uid === v.noteUid ? { ...n, starred: v.starred } : n)) }
+          : old,
+      );
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(qk.notes.list(), ctx.prev);
+    },
+    onSettled: () => void qc.invalidateQueries({ queryKey: qk.notes.all }),
+  });
+}
+
+export function useAddTagMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { noteUid: string; name: string }) =>
+      api<{ uid: string; name: string; color: string | null }>('notes', `/notes/${v.noteUid}/tags`, {
+        method: 'POST',
+        body: { name: v.name },
+      }),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: qk.notes.detail(v.noteUid) });
+      void qc.invalidateQueries({ queryKey: qk.notes.all });
+      void qc.invalidateQueries({ queryKey: qk.tags });
+    },
+  });
+}
+
+export function useRemoveTagMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { noteUid: string; tagUid: string }) =>
+      api<{ ok: true }>('notes', `/notes/${v.noteUid}/tags/${v.tagUid}`, { method: 'DELETE' }),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: qk.notes.detail(v.noteUid) });
+      void qc.invalidateQueries({ queryKey: qk.notes.all });
+    },
+  });
+}
+
+/** 软删除（D-02：`deleted_at`），配合 Toast 的「撤销」。 */
+export function useDeleteNoteMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (noteUid: string) =>
+      api<{ ok: true }>('notes', `/notes/${noteUid}`, { method: 'DELETE' }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.notes.all }),
+  });
+}
+
+export function useRenameNoteMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { noteUid: string; title: string }) =>
+      api<{ ok: true }>('notes', `/notes/${v.noteUid}`, {
+        method: 'PATCH',
+        body: { title: v.title },
+      }),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: qk.notes.detail(v.noteUid) });
+      void qc.invalidateQueries({ queryKey: qk.notes.all });
+    },
+  });
+}

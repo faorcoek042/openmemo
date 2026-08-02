@@ -232,15 +232,14 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
         }
       }
 
-      // ---- 非法 uid 形态的 /api/notes/xxx ----
-      if (p.startsWith('/api/notes/')) {
-        const seg = p.slice('/api/notes/'.length).split('/')[0] ?? '';
-        if (!ULID_RE.test(seg)) {
-          sendError(res, 400, 'BAD_NOTE_UID', `not a ULID: ${seg}`, '笔记 ID 格式不合法');
-          return true;
-        }
-      }
-
+      /*
+       * ⚠️ 这里**刻意不做** "非 ULID 就报 400" 的兜底。
+       *
+       * 路由是按顺序 try 的，本模块排在前面。若在这里对所有
+       * `/api/notes/<非ULID>` 直接 400，就会把兄弟模块的合法路由一起打死 ——
+       * 例如 `/api/notes/upload`（上传）会在 upload 路由拿到它之前就被拒。
+       * 让它 `return false` 落到后续路由，最终没人认领时由主路由 404。
+       */
       return false;
     },
   };

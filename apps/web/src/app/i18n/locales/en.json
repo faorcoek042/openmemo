@@ -49,7 +49,14 @@
     "cancel": "Cancel",
     "uploadExplain": "Browsers cannot read local file paths for security reasons, so the file is copied into the OpenMemo data directory.",
     "uploading": "Uploading {{percent}}",
-    "batchCollapsed": "Batch import · {{done}}/{{total}} done"
+    "batchCollapsed": "Batch import · {{done}}/{{total}} done",
+    "uploadPhase": {
+      "init": "Preparing",
+      "uploading": "Uploading",
+      "finalizing": "Processing",
+      "done": "Done",
+      "failed": "Failed"
+    }
   },
   "notes": {
     "title": "All notes",
@@ -60,7 +67,13 @@
     "processing": "Processing",
     "failed": "Failed",
     "partial": "Partial",
-    "untitled": "Untitled"
+    "untitled": "Untitled",
+    "addTag": "Add tag",
+    "newTag": "Tag name",
+    "removeTag": "Remove tag {{name}}",
+    "star": "Star",
+    "unstar": "Unstar",
+    "rename": "Rename"
   },
   "detail": {
     "tabs": {
@@ -282,5 +295,31 @@
     "idleHint": "Chinese word segmentation and pinyin supported. Transcript hits jump straight to that second.",
     "noResults": "No matches",
     "noResultsHint": "Try different words, or switch to Semantic."
+  },
+  "onboarding": {
+    "title": "Welcome to OpenMemo",
+    "subtitle": "Four steps, all skippable — the built-in CPU backend always works, skipping just means slower.",
+    "steps": {
+      "lang": "Language",
+      "hardware": "Acceleration",
+      "model": "Model",
+      "try": "Try it"
+    },
+    "langTitle": "Pick an interface language",
+    "hardwareTitle": "Detect hardware and install a backend",
+    "hardwareBody": "We detect your GPU and recommend a backend. It all happens in the browser — no command line.",
+    "hardwareSkipNote": "Skipping is fine: the built-in CPU backend always works, transcription is just slower.",
+    "openRuntime": "Open runtime page",
+    "modelTitle": "Install a speech model",
+    "modelBody": "For Chinese we recommend Paraformer (~43 s per hour of audio). Choose large-v3-turbo if you need word-level timestamps and digits.",
+    "openModels": "Open models page",
+    "tryTitle": "Transcribe something",
+    "tryBody": "Paste an audio or video link, or just record.",
+    "goCapture": "Paste a link",
+    "goRecord": "Record",
+    "skipAll": "Skip",
+    "back": "Back",
+    "next": "Next",
+    "done": "Get started"
   }
 }

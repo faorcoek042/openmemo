@@ -328,3 +328,106 @@ timings ms : {"probe":7149,"fetch":5239,"normalize":125,"vad":541,"asr":751}   t
 - **未做**（按裁决降级）：benchmark 闭环虽已实现但未再投入验证；paraformer-zh 完整版 / SenseVoice 未测；RTF 对比未再做。
 - **未验证**：RSS 单集端到端、HLS 上跑 ASR、取消后续跑、Windows/macOS。
 - benchmark 代码里 `runBenchmark` 会传 `modelPath`，Paraformer 的忽略问题已修；但 **benchmark 本身在本轮之后未再复跑**。
+
+---
+
+## [2026-08-02 19:10] T-031 DONE
+
+交付:
+- `packages/pipeline/src/media/resumableFetch.ts`（复用 `@openmemo/downloader` 的 Range 原语）
+- `packages/pipeline/src/asr/whisperServer.ts`（常驻服务模式，**但见下方负面结论**）
+- 修改：`media/sources/directHttp.ts`（接入断点续传）、`index.ts`
+- `docs/SECURITY.md` §4.1（`--cookies` 为何暂不支持）
+- **104/104 测试全绿**，tsc / eslint 干净
+
+## 优先级 1：两个"只验证前半段"的缺口 —— 已关闭
+
+**RSS 从 feed 真下载并转写一集** ✅
+```
+FEED: https://librivox.org/rss/47  -> "Count of Monte Cristo" | 128 episodes
+episode[0]: Marseilles–The Arrival
+  -> https://www.archive.org/download/count_monte_cristo_0711_librivox/count_of_monte_cristo_001_dumas_64kb.mp3
+adapter: direct-http | downloaded 9,436,391 bytes
+audio 1179.4s | chunks 50 | segments 281 | total 127.6s
+  [0.8s]  This is a LibraVox recording.
+  [2.8s]  All LibraVox recordings are in the public domain,
+  [5.8s]  and for more information or to volunteer, visit LibraVox.org.
+  [12.8s] Recording by Kristin Luoma.
+  [17.8s] Of the Count of Monte Cristo.
+```
+
+**HLS 上真跑 ASR** ✅
+```
+HLS: https://storage.googleapis.com/shaka-demo-assets/angel-one-hls/hls.m3u8
+adapter: direct-http | audio 60.0s | speech 50.2s | chunks 4 | segments 20 | total 57.0s
+  [1.1s]  "Captain's Lord, Star Day 4, 1636.9, Aspyr, our examination of the seven-year overdue Federation
+  [10.9s] freighter Odin, disabled by an asteroid collision, revealed no life signs. However, three escape
+  [17.4s] pods were missing, suggesting the possibility of survivors."
+  [21.9s] Ready to begin orbit of Angel 1, Captain.
+  [23.9s] Make it so, Mr. LaForge.
+  [27.0s] Angel 1 is a class M planet, sir.
+```
+
+## 优先级 2
+
+**3. 断点续传** ✅ 复用 `@openmemo/downloader` 的 `probeRemoteFile` / `openRangeStream` / `backoffMs` / `sleep`。
+**没有复用 `downloadFile()`，理由**：它**要求预先已知 SHA-256** 才能守住"verified == installed"——对目录制品完全正确，但任意播客 URL 没有摘要。强行套用只能二选一：编造摘要（不诚实），或在一个以校验为契约的函数内部关掉校验（更糟）。所以复用传输层，各自保留合适的完整性模型（目录制品=摘要校验；媒体=大小限制 + ffprobe 验证）。
+**真实中断验证**：
+```
+attempt 1 interrupted after 401,408 bytes
+.partial on disk: 393,216 bytes ✅          <- 崩溃点保留在磁盘上
+resumed from: 393,216 | final: 15,190,644 | attempts: 1 | ranges: true
+ffprobe 复验: duration=1898.709841 size=15190644   <- 断点续传没有损坏文件
+```
+`.partial` 的**文件长度本身就是续传偏移**，不用 sidecar，避免崩溃后两者不一致。
+
+**4. 取消后续跑** ✅ 真跑一次：
+```
+PASS 1 cancelled  -> persisted chunks: 0,1,2,3,4 | 23 segments | total 50
+resume set size: 5 (plan_version match)
+PASS 2 complete in 76.1s
+  已完成 chunk 被重算的数量: 0  ✅ 一个都没重跑
+  db 中 chunk 总数: 50 / 期望 50 ✅ | 0..N 连续 ✅ | segments 282
+  plan_version 不匹配 -> resume set = 0  ✅ 拒绝跨版本续跑
+```
+
+**5. `whisper-server` 常驻模式 —— ⚠️ 已实现，但实测证明我的前提是错的，故不设为默认**
+
+我上轮说"每 chunk 重载模型，大模型下像卡死"。**实测把这个前提推翻了**（large-v3-turbo-q5_0，547 MB，同机同参数）：
+
+| 文件 | CLI（每 chunk 重启） | SERVER（常驻） |
+|---|---|---|
+| jfk.wav 0.4 MB | 稳态 **5,950 ms** | 稳态 **9,303 ms** |
+| audio16k.wav 37.7 MB | 稳态 **6,228 ms** | 稳态 **11,094 ms** |
+
+**常驻模式反而慢 55–78%，且与文件大小无关**（小文件也慢，所以不是上传开销）。
+根因：**whisper.cpp 用 mmap 加载模型**，第二次之后 OS page cache 让"重载"几乎免费——
+我以为的主要成本根本不存在。"像卡死"的判断是我基于推理而非测量下的。
+
+→ **`WhisperServerEngine` 保留**（实现正确、绑定 127.0.0.1、`offset_t`/`duration` 逐请求生效、
+返回逐词时间戳、`dispose()` 杀进程组），但**不作为默认**。真正需要它的场景是"多个并发 job 共享一个已加载模型"，
+那要等 daemon 侧的调度接线后再评估。**我不会为了让自己上轮的判断成立而硬推它。**
+
+## 优先级 3
+- 多 GPU 选 device：**按裁决未做**。
+- `--cookies`：**按裁决未实现**，已在 `docs/SECURITY.md` §4.1 写明理由——它是**任意文件读取入口**，
+  `--cookies-from-browser` 更会读取**全部站点登录凭据**；还有凭据落盘、日志泄漏、最小化授权三个配套问题。
+  结论是"这不是补代码的功能，是需要先做安全设计的功能"。
+
+## 剩余未实现 / 未验证清单
+| 项 | 状态 |
+|---|---|
+| Windows / macOS 全部路径 | **未验证**（无机器） |
+| `whisper-server` 作为默认 | **不采用**（实测更慢，见上） |
+| 多 GPU device 选择 | 未做（裁决降级） |
+| 会员内容 cookie | 未做（裁决，需安全设计） |
+| `selectEngine()` 接进 daemon | 不归我（`oss-scout`） |
+| 4 个 ASR 模型进目录 | 不归我（已派 `model-mgmt`） |
+| 中文数字→阿拉伯数字 | **默认关闭**（我上轮实测它让文本变差，未修复） |
+| Paraformer 词级时间戳 | **模型不提供**，F5 中文只能按段高亮 |
+| benchmark 闭环复跑 | 未复跑（性能项，按裁决降级） |
+| 断点续传的"服务器不支持 Range"分支 | **未验证**（archive.org 支持 Range，没找到不支持的真实源） |
+
+诚实声明:
+- 本轮 5 项要求做完 4 项，第 5 项（whisper-server）**做完了但结论是"不该用"**——我把测量结果如实报出来，而不是让实现去迁就我上一轮的说法。
+- RSS/HLS/续传/取消续跑均为**真跑**，输出与数字直接来自运行日志。

@@ -75,6 +75,52 @@ export interface SegmentRow {
   flags: number;
 }
 
+export interface SettingRow {
+  key: string;
+  value_json: string;
+  updated_at: number;
+}
+
+/** `PATCH /api/settings` 的单条写入项；`value_json` 已由调用方 JSON.stringify 过。 */
+export interface SettingInput {
+  readonly key: string;
+  readonly valueJson: string;
+}
+
+export interface TagRow {
+  id: number;
+  uid: string;
+  name: string;
+  name_norm: string;
+  color: string | null;
+  parent_id: number | null;
+  usage_count: number;
+  created_at: number;
+}
+
+export interface FolderRow {
+  id: number;
+  uid: string;
+  parent_id: number | null;
+  name: string;
+  sort_order: number;
+  color: string | null;
+  icon: string | null;
+  created_at: number;
+  updated_at: number;
+  deleted_at: number | null;
+}
+
+/**
+ * 标签判重键（D-02 §1.3 `tags.name_norm` 注释：NFKC + casefold + trim）。
+ *
+ * JS 没有真正的 Unicode casefold，`toLowerCase()` 是最接近的可用近似；
+ * 关键是**写入与查询必须用同一个函数**，所以收口在这里，不许各处各写一遍。
+ */
+export function normalizeTagName(name: string): string {
+  return name.normalize('NFKC').toLowerCase().trim();
+}
+
 /** 落库用的段落（与 `packages/pipeline` 的 `TranscriptSegment` 对齐）。 */
 export interface SegmentInput {
   startMs: number;
@@ -413,5 +459,324 @@ export class Repos {
     const out = new Set<number>();
     for (const r of rows) if (r.chunk_idx !== null) out.add(r.chunk_idx);
     return out;
+  }
+
+  // -------------------------------------------------------------------------
+  // settings（D-02 §1.2：点分命名空间的 key + value_json TEXT）
+  // -------------------------------------------------------------------------
+
+  listSettings(): SettingRow[] {
+    return this.db
+      .prepare<SettingRow>(`SELECT key, value_json, updated_at FROM settings ORDER BY key`)
+      .all();
+  }
+
+  /**
+   * 批量 upsert 设置项。**整批一个事务** —— 设置项之间常常互相依赖
+   * （如 `runtime.selectedBackend` 与 `runtime.selectedGpuIndex`），
+   * 只写进去一半比一条都没写更糟。
+   */
+  upsertSettings(entries: readonly SettingInput[], now = Date.now()): void {
+    if (entries.length === 0) return;
+    this.db.transaction(() => {
+      const stmt = this.db.prepare(
+        `INSERT INTO settings(key, value_json, updated_at) VALUES (:k, :v, :now)
+         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json,
+                                        updated_at = excluded.updated_at`,
+      );
+      for (const e of entries) stmt.run({ k: e.key, v: e.valueJson, now });
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // tags / note_tags
+  //
+  // ⚠️ 0001_init.sql **已经有** `tags_usage_ai` / `tags_usage_ad` 两个触发器在
+  //    increment/decrement `usage_count`。但本层每次变更后仍显式 recompute：
+  //    触发器是"增量"的，一旦历史数据漂移就永远错下去；COUNT(*) 重算是幂等的，
+  //    与触发器叠加也不会算错（触发器先跑，重算把结果覆盖成真值）。
+  // -------------------------------------------------------------------------
+
+  listTags(): TagRow[] {
+    return this.db.prepare<TagRow>(`SELECT * FROM tags ORDER BY usage_count DESC, name`).all();
+  }
+
+  tagById(id: number): TagRow | undefined {
+    return this.db.prepare<TagRow>(`SELECT * FROM tags WHERE id = :id`).get({ id });
+  }
+
+  tagByUid(uid: string): TagRow | undefined {
+    return this.db.prepare<TagRow>(`SELECT * FROM tags WHERE uid = :uid`).get({ uid });
+  }
+
+  tagsOfNote(noteId: number): TagRow[] {
+    return this.db
+      .prepare<TagRow>(
+        `SELECT t.* FROM note_tags nt JOIN tags t ON t.id = nt.tag_id
+         WHERE nt.note_id = :n ORDER BY t.usage_count DESC, t.name`,
+      )
+      .all({ n: noteId });
+  }
+
+  /**
+   * 按 `name_norm` 判重的"取或建"。`idx_tags_norm` 是 UNIQUE 索引，
+   * 直接 INSERT 撞车会抛；先查后插并整体包事务，避免把约束异常漏给 HTTP 层。
+   */
+  findOrCreateTag(p: { name: string; color?: string | null; now?: number }): {
+    tag: TagRow;
+    created: boolean;
+  } {
+    const now = p.now ?? Date.now();
+    const norm = normalizeTagName(p.name);
+    return this.db.transaction(() => {
+      const existing = this.db
+        .prepare<TagRow>(`SELECT * FROM tags WHERE name_norm = :n`)
+        .get({ n: norm });
+      if (existing) return { tag: existing, created: false };
+      const r = this.db
+        .prepare(
+          `INSERT INTO tags(uid, name, name_norm, color, usage_count, created_at)
+           VALUES (:uid, :name, :norm, :color, 0, :now)`,
+        )
+        .run({ uid: ulid(now), name: p.name.trim(), norm, color: p.color ?? null, now });
+      return { tag: this.tagById(r.lastInsertRowid) as TagRow, created: true };
+    });
+  }
+
+  /** 删标签。显式先删关联再删主行 —— 不依赖 `PRAGMA foreign_keys` 是否开着。 */
+  deleteTag(tagId: number): void {
+    this.db.transaction(() => {
+      this.db.prepare(`DELETE FROM note_tags WHERE tag_id = :t`).run({ t: tagId });
+      this.db.prepare(`DELETE FROM tags WHERE id = :t`).run({ t: tagId });
+    });
+  }
+
+  recomputeTagUsage(tagId: number): void {
+    this.db
+      .prepare(
+        `UPDATE tags SET usage_count = (SELECT COUNT(*) FROM note_tags WHERE tag_id = :t)
+         WHERE id = :t`,
+      )
+      .run({ t: tagId });
+  }
+
+  /** 整表替换某笔记的标签集合。删+插+重算 usage 必须同一个事务，否则中途崩会留下空标签集。 */
+  replaceNoteTags(noteId: number, tagIds: readonly number[], now = Date.now()): TagRow[] {
+    return this.db.transaction(() => {
+      const before = this.db
+        .prepare<{ tag_id: number }>(`SELECT tag_id FROM note_tags WHERE note_id = :n`)
+        .all({ n: noteId });
+      // 旧标签也要重算 —— 被摘掉的那些 usage_count 同样变了
+      const affected = new Set<number>(before.map((r) => r.tag_id));
+      this.db.prepare(`DELETE FROM note_tags WHERE note_id = :n`).run({ n: noteId });
+      const ins = this.db.prepare(
+        `INSERT INTO note_tags(note_id, tag_id, source, created_at) VALUES (:n, :t, 'user', :now)`,
+      );
+      for (const t of new Set(tagIds)) {
+        ins.run({ n: noteId, t, now });
+        affected.add(t);
+      }
+      for (const t of affected) this.recomputeTagUsage(t);
+      return this.tagsOfNote(noteId);
+    });
+  }
+
+  detachNoteTag(noteId: number, tagId: number): boolean {
+    return this.db.transaction(() => {
+      const r = this.db
+        .prepare(`DELETE FROM note_tags WHERE note_id = :n AND tag_id = :t`)
+        .run({ n: noteId, t: tagId });
+      this.recomputeTagUsage(tagId);
+      return r.changes > 0;
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // star
+  // -------------------------------------------------------------------------
+
+  /** 置/取消星标，返回**落库后读回**的值（不回显入参，避免 UI 与库不一致）。 */
+  setNoteStarred(noteId: number, starred: boolean): boolean {
+    const now = Date.now();
+    this.db
+      .prepare(`UPDATE notes SET starred = :s, updated_at = :now WHERE id = :id`)
+      .run({ s: starred ? 1 : 0, now, id: noteId });
+    const row = this.db
+      .prepare<{ starred: number }>(`SELECT starred FROM notes WHERE id = :id`)
+      .get({ id: noteId });
+    return (row?.starred ?? 0) === 1;
+  }
+
+  // -------------------------------------------------------------------------
+  // folders
+  // -------------------------------------------------------------------------
+
+  listFolders(): FolderRow[] {
+    return this.db
+      .prepare<FolderRow>(
+        `SELECT * FROM folders WHERE deleted_at IS NULL ORDER BY sort_order, name`,
+      )
+      .all();
+  }
+
+  /** 不过滤 `deleted_at` —— 由调用方决定"已删"要回 404 还是照常处理。 */
+  folderById(id: number): FolderRow | undefined {
+    return this.db.prepare<FolderRow>(`SELECT * FROM folders WHERE id = :id`).get({ id });
+  }
+
+  folderByUid(uid: string): FolderRow | undefined {
+    return this.db.prepare<FolderRow>(`SELECT * FROM folders WHERE uid = :uid`).get({ uid });
+  }
+
+  /** 每个文件夹的**直属**笔记数（不含子文件夹，不含已删笔记）。 */
+  folderNoteCounts(): Map<number, number> {
+    const rows = this.db
+      .prepare<{ folder_id: number; n: number }>(
+        `SELECT folder_id, COUNT(*) AS n FROM notes
+         WHERE deleted_at IS NULL AND folder_id IS NOT NULL GROUP BY folder_id`,
+      )
+      .all();
+    return new Map(rows.map((r) => [r.folder_id, r.n]));
+  }
+
+  /** 新建时排在同级末尾。`parent_id IS :p` 而不是 `=` —— 根级的 parent 是 NULL。 */
+  nextFolderSortOrder(parentId: number | null): number {
+    const row = this.db
+      .prepare<{ n: number }>(
+        `SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM folders
+         WHERE parent_id IS :p AND deleted_at IS NULL`,
+      )
+      .get({ p: parentId });
+    return row?.n ?? 1;
+  }
+
+  createFolder(p: {
+    name: string;
+    parentId?: number | null;
+    color?: string | null;
+    icon?: string | null;
+    sortOrder?: number;
+    now?: number;
+  }): FolderRow {
+    const now = p.now ?? Date.now();
+    const parentId = p.parentId ?? null;
+    const r = this.db
+      .prepare(
+        `INSERT INTO folders(uid, parent_id, name, sort_order, color, icon, created_at, updated_at)
+         VALUES (:uid, :parent, :name, :sort, :color, :icon, :now, :now)`,
+      )
+      .run({
+        uid: ulid(now),
+        parent: parentId,
+        name: p.name,
+        sort: p.sortOrder ?? this.nextFolderSortOrder(parentId),
+        color: p.color ?? null,
+        icon: p.icon ?? null,
+        now,
+      });
+    return this.folderById(r.lastInsertRowid) as FolderRow;
+  }
+
+  /** 局部更新；`undefined` = 不动该列，`null`（parentId/color/icon）= 显式清空。 */
+  updateFolder(
+    id: number,
+    p: {
+      name?: string;
+      parentId?: number | null;
+      color?: string | null;
+      icon?: string | null;
+      sortOrder?: number;
+    },
+  ): FolderRow | undefined {
+    const now = Date.now();
+    const sets: string[] = ['updated_at = :now'];
+    const params: Record<string, string | number | null> = { id, now };
+    if (p.name !== undefined) {
+      sets.push('name = :name');
+      params['name'] = p.name;
+    }
+    if (p.parentId !== undefined) {
+      sets.push('parent_id = :parent');
+      params['parent'] = p.parentId;
+    }
+    if (p.color !== undefined) {
+      sets.push('color = :color');
+      params['color'] = p.color;
+    }
+    if (p.icon !== undefined) {
+      sets.push('icon = :icon');
+      params['icon'] = p.icon;
+    }
+    if (p.sortOrder !== undefined) {
+      sets.push('sort_order = :sort');
+      params['sort'] = p.sortOrder;
+    }
+    this.db.prepare(`UPDATE folders SET ${sets.join(', ')} WHERE id = :id`).run(params);
+    return this.folderById(id);
+  }
+
+  /**
+   * 自底向上的祖先链（不含自身），用于**移动文件夹时的环检测**（D-02 §1.3 要求应用层做）。
+   * `seen` + `maxDepth` 双保险：万一库里已有脏环，这里必须能停下来而不是死循环。
+   */
+  folderAncestorIds(folderId: number, maxDepth = 64): number[] {
+    const out: number[] = [];
+    const seen = new Set<number>([folderId]);
+    let cur = this.folderById(folderId)?.parent_id ?? null;
+    while (cur !== null && out.length < maxDepth) {
+      if (seen.has(cur)) break;
+      seen.add(cur);
+      out.push(cur);
+      cur = this.folderById(cur)?.parent_id ?? null;
+    }
+    return out;
+  }
+
+  /** 含自身的整棵子树 id。`UNION`（非 UNION ALL）自带去重，脏环也不会把 CTE 转成死循环。 */
+  folderSubtreeIds(folderId: number): number[] {
+    return this.db
+      .prepare<{ id: number }>(
+        `WITH RECURSIVE sub(id) AS (
+           SELECT id FROM folders WHERE id = :root
+           UNION
+           SELECT f.id FROM folders f JOIN sub s ON f.parent_id = s.id
+         )
+         SELECT id FROM sub`,
+      )
+      .all({ root: folderId })
+      .map((r) => r.id);
+  }
+
+  /**
+   * 软删整棵子树，并把其中的笔记移出到"无文件夹"。
+   *
+   * 为什么连子树一起删：`folders.parent_id` 的 `ON DELETE CASCADE` 只对**硬删**生效，
+   * 软删不触发。只标记父节点会留下一批 parent 指向已删节点的孤儿——它们在树视图里
+   * 既不是根也挂不上父，等于凭空消失。
+   */
+  softDeleteFolderTree(folderId: number, now = Date.now()): { folders: number; notes: number } {
+    const ids = this.folderSubtreeIds(folderId);
+    if (ids.length === 0) return { folders: 0, notes: 0 };
+    return this.db.transaction(() => {
+      const clearNotes = this.db.prepare(
+        `UPDATE notes SET folder_id = NULL, updated_at = :now WHERE folder_id = :f`,
+      );
+      const markDeleted = this.db.prepare(
+        `UPDATE folders SET deleted_at = :now, updated_at = :now WHERE id = :f AND deleted_at IS NULL`,
+      );
+      let notes = 0;
+      let folders = 0;
+      for (const id of ids) {
+        notes += clearNotes.run({ now, f: id }).changes;
+        folders += markDeleted.run({ now, f: id }).changes;
+      }
+      return { folders, notes };
+    });
+  }
+
+  setNoteFolder(noteId: number, folderId: number | null): void {
+    this.db
+      .prepare(`UPDATE notes SET folder_id = :f, updated_at = :now WHERE id = :id`)
+      .run({ f: folderId, now: Date.now(), id: noteId });
   }
 }

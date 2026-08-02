@@ -35,6 +35,10 @@ import { buildPipeline, type PipelineBundle } from './pipeline/setup.js';
 import { Scheduler, type JobHandler } from './jobs/scheduler.js';
 import { runTranscribeJob } from './jobs/runners/transcribe.js';
 import { createNoteRoutes } from './http/rest/notes.js';
+import { createContentRoutes } from './http/rest/content.js';
+import { MindMapRepo } from './db/mindmapRepo.js';
+import { runMindmapJob } from './jobs/runners/mindmap.js';
+import { resolveConfiguredProvider } from './llm/resolve.js';
 import { createSearchRoutes } from './http/rest/search.js';
 import { createMediaRoutes } from './http/media.js';
 import type { RouteModule } from './http/server.js';
@@ -179,6 +183,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
 
     repos = new Repos(database.db);
     repos.ensureDefaultFolder();
+    const mindmaps = new MindMapRepo(database.db);
 
     bundle = await buildPipeline(paths);
     if (bundle.missing.length > 0) {
@@ -206,6 +211,22 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       ),
     );
 
+    // F4：思维导图生成（gpu.llm lane —— 与 gpu.asr 通过 gpu.exclusive 互斥）
+    const database_ = database;
+    handlers.set('mindmap', (job, signal) =>
+      runMindmapJob(
+        job,
+        {
+          repos: repos_,
+          mindmaps,
+          sse,
+          queue: queue_,
+          resolveProvider: () => resolveConfiguredProvider(database_.db, paths.dataDir),
+        },
+        signal,
+      ),
+    );
+
     scheduler = new Scheduler({ queue, lanes, sse, handlers });
     scheduler.start();
 
@@ -221,6 +242,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
           ...(process.env['OPENMEMO_IMPORT_ROOTS'] ?? '').split(':').filter(Boolean),
         ],
       }),
+      createContentRoutes({ db: database.db, repos, mindmaps, queue, sse }),
       createSearchRoutes({
         db: database.db,
         hasChineseTokenizer: database.extensions.libsimple,

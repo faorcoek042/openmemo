@@ -4,6 +4,7 @@ import App from './App';
 import { captureRoutes } from './features/capture/Capture.routes';
 import { modelsRoutes } from './features/models/Models.routes';
 import { mindmapRoutes } from './features/mindmap/Mindmap.routes';
+import { onboardingRoutes } from './features/onboarding/Onboarding.routes';
 import { notesRoutes } from './features/notes/Notes.routes';
 import { searchRoutes } from './features/search/Search.routes';
 import { recorderRoutes } from './features/recorder/Recorder.routes';
@@ -29,6 +30,7 @@ export const routes: RouteObject[] = [
     path: '/',
     element: <App />,
     children: [
+      ...onboardingRoutes,
       ...notesRoutes,
       ...captureRoutes,
       ...recorderRoutes,

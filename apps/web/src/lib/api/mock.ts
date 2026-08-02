@@ -12,7 +12,7 @@
  */
 
 import { bus } from '../events/bus';
-import { registerMockFetcher, type ApiOptions, type Fetcher } from './client';
+import { ApiError, registerMockFetcher, type ApiOptions, type Fetcher } from './client';
 import type {
   ImportUrlRequest,
   NoteDetail,
@@ -48,6 +48,31 @@ interface MockNote extends NoteDetail {
 }
 
 const notes = new Map<string, MockNote>();
+
+interface MockProvider {
+  id: string;
+  kind: 'openai-compatible' | 'anthropic';
+  label: string;
+  baseUrl: string;
+  model: string;
+  isLocal: boolean;
+  hasKey: boolean;
+  keyMask: string | null;
+}
+
+let mockActiveProvider: string | null = 'ollama';
+const mockProviders: MockProvider[] = [
+  {
+    id: 'ollama',
+    kind: 'openai-compatible',
+    label: 'Ollama（本地）',
+    baseUrl: 'http://127.0.0.1:11434/v1',
+    model: 'qwen3:8b',
+    isLocal: true,
+    hasKey: false,
+    keyMask: null,
+  },
+];
 const transcripts = new Map<string, TranscriptDto>();
 const timers = new Set<ReturnType<typeof setTimeout>>();
 
@@ -342,13 +367,63 @@ const mockFetcher: Fetcher = async <T,>(path: string, opts: ApiOptions = {}): Pr
     return { jobUid, noteUid: note.uid } as unknown as T;
   }
 
+  if (method === 'GET' && path === '/settings/llm') {
+    return {
+      providers: mockProviders,
+      activeProviderId: mockActiveProvider,
+      secretsPath: '~/.local/share/openmemo/openmemo.db',
+      secretsEncryption: 'plain',
+    } as T;
+  }
+
+  if (method === 'PUT' && path === '/settings/llm/providers') {
+    const b = opts.body as { id: string; label: string; baseUrl: string; model: string; kind: string; isLocal: boolean; apiKey?: string };
+    const existing = mockProviders.find((p) => p.id === b.id);
+    const next = {
+      id: b.id,
+      kind: b.kind as 'openai-compatible' | 'anthropic',
+      label: b.label,
+      baseUrl: b.baseUrl,
+      model: b.model,
+      isLocal: b.isLocal,
+      hasKey: b.apiKey ? b.apiKey.trim().length > 0 : (existing?.hasKey ?? false),
+      // 只留尾四位：Key 明文永不回前端
+      keyMask: b.apiKey?.trim() ? `sk-…${b.apiKey.trim().slice(-4)}` : (existing?.keyMask ?? null),
+    };
+    if (existing) Object.assign(existing, next);
+    else mockProviders.push(next);
+    return { ok: true } as T;
+  }
+
+  if (method === 'POST' && path === '/settings/llm/active') {
+    mockActiveProvider = (opts.body as { id: string }).id;
+    return { ok: true } as T;
+  }
+
+  if (method === 'POST' && path === '/settings/llm/test') {
+    const id = (opts.body as { id: string }).id;
+    const p = mockProviders.find((x) => x.id === id);
+    const ok = Boolean(p && (p.isLocal || p.hasKey));
+    return {
+      ok,
+      latencyMs: ok ? 180 + Math.floor(Math.random() * 300) : null,
+      model: p?.model ?? null,
+      errorCode: ok ? null : 'MISSING_LLM_CONFIG',
+      errorMessage: ok ? null : '未设置 API Key',
+    } as T;
+  }
+
   if (method === 'GET' && path === '/jobs') {
     return { jobs: [], concurrencyLimit: 2 } as T;
   }
 
-  // 未实现的接口显式抛错，不静默返回空 —— 避免"看起来能用"的假象
-  throw Object.assign(new Error(`[MOCK] 未实现的接口: ${method} ${path}`), {
+  // 未实现的接口显式抛 ApiError（而不是裸 Error）——
+  // 只有 ApiError 才带 `code`，ErrorBlock 才能查到本地文案，
+  // 否则用户看到的是"发生了未知错误"，等于把信息丢了。
+  throw new ApiError(501, {
     code: 'MOCK_NOT_IMPLEMENTED',
+    message: `[MOCK] not implemented: ${method} ${path}`,
+    messageZh: `[MOCK] 尚未实现的接口：${method} ${path}`,
     retryable: false,
   });
 };

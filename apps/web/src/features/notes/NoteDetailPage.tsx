@@ -10,6 +10,7 @@ import { MockNotice } from '../../components/common/MockNotice';
 import { WordLevelBadge } from '../transcript';
 import { MindmapView, useMindmapQuery } from '../mindmap';
 import { NoteProgressLine } from './NoteProgressLine';
+import { TagEditor } from './TagEditor';
 import { TranscriptList } from '../transcript';
 import { PlayerBar } from '../player';
 import { usePlayerStore } from '../../lib/stores/player.store';
@@ -84,8 +85,9 @@ export default function NoteDetailPage() {
         </div>
       ) : null}
 
-      <header className="flex items-start justify-between gap-4 border-b border-line px-4 py-3">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
         <h1 className="min-w-0 truncate text-base font-semibold text-ink">{n.title}</h1>
+        <TagEditor noteUid={n.uid} tags={n.tags} />
       </header>
 
       <div className="flex min-h-0 flex-1">

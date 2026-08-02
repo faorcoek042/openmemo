@@ -8,6 +8,9 @@ import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { MockNotice } from '../../components/common/MockNotice';
 import { useImportUrlMutation, useProbeMutation } from '../notes';
 import { humanDuration } from '../../lib/format/time';
+import { formatBytes, formatPercent } from '../../lib/format/bytes';
+import { looksLikeMedia, uploadMediaFile, type UploadProgress } from './upload';
+import { ProgressMeter } from '../../components/common/ProgressMeter';
 import type { ProbeResult } from '../../lib/api/types';
 
 /**
@@ -26,6 +29,39 @@ export default function CapturePage() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [opts, setOpts] = useState({ diarize: true, keepVideo: false, structure: true });
+  const [uploads, setUploads] = useState<UploadProgress[]>([]);
+
+  /**
+   * M-2：把死掉的拖拽区接上。
+   *
+   * 之前 `onDrop` 是个空函数 —— 拖文件进去什么都不会发生，
+   * 而 F2「本地媒体导入」是章程功能之一，它的主入口就是这个拖拽区。
+   */
+  const handleFiles = useCallback(
+    (fileList: FileList | null) => {
+      if (!fileList) return;
+      const files = Array.from(fileList).filter(looksLikeMedia);
+      if (files.length === 0) return;
+
+      setUploads((prev) => [
+        ...prev,
+        ...files.map((f) => ({ file: f, progress: 0, phase: 'init' as const })),
+      ]);
+
+      for (const file of files) {
+        void uploadMediaFile(file, (p) =>
+          setUploads((prev) => prev.map((u) => (u.file === file ? p : u))),
+        )
+          .then((r) => navigate(`/notes/${r.noteUid}`))
+          .catch((err) =>
+            setUploads((prev) =>
+              prev.map((u) => (u.file === file ? { ...u, phase: 'failed', error: err } : u)),
+            ),
+          );
+      }
+    },
+    [navigate],
+  );
 
   const probeMut = useProbeMutation();
   const importMut = useImportUrlMutation();
@@ -56,7 +92,7 @@ export default function CapturePage() {
       onDrop={(e) => {
         e.preventDefault();
         setDragging(false);
-        // F2：分块上传由 uploader 负责；此处仅接文件（当前为 MOCK，未接通）
+        handleFiles(e.dataTransfer.files);
       }}
     >
       <h1 className="text-xl font-semibold text-ink">{t('capture.title')}</h1>
@@ -162,10 +198,48 @@ export default function CapturePage() {
         <Button size="sm" variant="secondary" className="mt-3" onClick={() => fileRef.current?.click()}>
           {t('nav.newCapture')}
         </Button>
-        <input ref={fileRef} type="file" accept="audio/*,video/*" multiple hidden />
+        <input
+          ref={fileRef}
+          type="file"
+          accept="audio/*,video/*"
+          multiple
+          hidden
+          onChange={(e) => {
+            handleFiles(e.target.files);
+            e.target.value = ''; // 允许重复选同一个文件
+          }}
+        />
         {/* 不解释的话用户会困惑"我文件就在本机为什么还要传"（D-05 §4.2） */}
         <p className="mt-3 text-xs text-ink-muted">{t('capture.uploadExplain')}</p>
       </section>
+
+      {uploads.length > 0 ? (
+        <ul className="flex flex-col gap-2" role="list">
+          {uploads.map((u, i) => (
+            <li key={`${u.file.name}-${i}`} className="rounded-lg border border-line bg-surface-1 p-3">
+              <div className="mb-1 flex items-center justify-between gap-2 text-sm">
+                <span className="min-w-0 truncate text-ink">{u.file.name}</span>
+                <span className="shrink-0 text-xs text-ink-muted">
+                  {formatBytes(u.file.size, i18n.language)}
+                </span>
+              </div>
+              {u.phase === 'failed' ? (
+                <ErrorBlock error={u.error} />
+              ) : (
+                <>
+                  <ProgressMeter
+                    value={u.progress}
+                    label={t('capture.uploading', { percent: formatPercent(u.progress, i18n.language) })}
+                  />
+                  <p className="mt-1 text-xs text-ink-muted">
+                    {t(`capture.uploadPhase.${u.phase}`, { defaultValue: u.phase })}
+                  </p>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }

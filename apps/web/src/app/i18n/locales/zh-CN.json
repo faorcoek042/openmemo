@@ -49,7 +49,14 @@
     "cancel": "取消",
     "uploadExplain": "浏览器出于安全限制无法直接读取本地路径，文件会被复制到 OpenMemo 数据目录。",
     "uploading": "正在上传 {{percent}}",
-    "batchCollapsed": "批量导入 · {{done}}/{{total}} 完成"
+    "batchCollapsed": "批量导入 · {{done}}/{{total}} 完成",
+    "uploadPhase": {
+      "init": "准备中",
+      "uploading": "上传中",
+      "finalizing": "正在处理",
+      "done": "已完成",
+      "failed": "失败"
+    }
   },
   "notes": {
     "title": "全部笔记",
@@ -60,7 +67,13 @@
     "processing": "处理中",
     "failed": "失败",
     "partial": "部分完成",
-    "untitled": "未命名"
+    "untitled": "未命名",
+    "addTag": "加标签",
+    "newTag": "标签名",
+    "removeTag": "移除标签 {{name}}",
+    "star": "加星标",
+    "unstar": "取消星标",
+    "rename": "重命名"
   },
   "detail": {
     "tabs": {
@@ -282,5 +295,31 @@
     "idleHint": "支持中文分词与拼音；命中转写内容时可直接跳到那一秒。",
     "noResults": "没有找到匹配内容",
     "noResultsHint": "换个关键词，或试试「语义」模式。"
+  },
+  "onboarding": {
+    "title": "欢迎使用 OpenMemo",
+    "subtitle": "四步准备好；每一步都可以跳过 —— 内置 CPU 后端始终可用，跳过只是慢一些。",
+    "steps": {
+      "lang": "语言",
+      "hardware": "加速",
+      "model": "模型",
+      "try": "试一试"
+    },
+    "langTitle": "先选个界面语言",
+    "hardwareTitle": "检测硬件并安装加速后端",
+    "hardwareBody": "我们会检测你的显卡并推荐合适的后端，整个过程在网页里完成，不需要碰命令行。",
+    "hardwareSkipNote": "跳过也没关系：内置的 CPU 后端永远可用，只是转写更慢。",
+    "openRuntime": "打开运行时页",
+    "modelTitle": "装一个语音识别模型",
+    "modelBody": "中文推荐 Paraformer（1 小时录音约 43 秒）；需要逐字时间戳和阿拉伯数字时可选 large-v3-turbo。",
+    "openModels": "打开模型页",
+    "tryTitle": "试着转写一段",
+    "tryBody": "粘贴一个音视频链接，或直接录一段声音。",
+    "goCapture": "粘贴链接",
+    "goRecord": "开始录音",
+    "skipAll": "跳过引导",
+    "back": "上一步",
+    "next": "下一步",
+    "done": "开始使用"
   }
 }

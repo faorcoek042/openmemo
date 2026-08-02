@@ -92,6 +92,22 @@ export async function runTranscribeJob(
   // 续跑：DB 里的段落才是真相，checkpoint 只是加速缓存（D-01 §4.5）
   const completed = repos.completedChunks(transcript.id);
 
+  /*
+   * transcribe.started 必须在任何 transcribe.segment 之前发出。
+   * 前端靠它建立 transcriptUid → noteUid 的映射；缺了这条，
+   * 后续的 segment 事件就成了没有归属的孤儿（T-028 我漏发过，architect 报的）。
+   * durationSec 此刻还不知道（probe 尚未跑），先发 0，media.ready 会带准确值。
+   */
+  sse.publish(
+    makeEvent('transcribe.started', topics.transcript(transcript.uid), {
+      transcriptUid: transcript.uid,
+      noteUid: note.uid,
+      modelId: deps.modelId,
+      durationSec: 0,
+      language: payload.language ?? null,
+    } as never) as SseEvent,
+  );
+
   let lastProgress = -1;
   const onProgress = (p: StepProgress): void => {
     const overall = stepFraction(p);

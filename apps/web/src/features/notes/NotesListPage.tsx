@@ -2,7 +2,7 @@ import { Link, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { FileAudio, Mic, Star } from 'lucide-react';
 
-import { useNotesQuery } from './api';
+import { useNotesQuery, useToggleStarMutation } from './api';
 import { EmptyState } from '../../components/common/EmptyState';
 import { MockNotice } from '../../components/common/MockNotice';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
@@ -10,12 +10,14 @@ import { StatusChip } from '../../components/common/StatusChip';
 import { Button } from '../../components/common/Button';
 import { NoteProgressLine } from './NoteProgressLine';
 import { humanDuration, relativeTime } from '../../lib/format/time';
+import { cn } from '../../lib/utils';
 
 /** F5 笔记列表。 */
 export default function NotesListPage() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const { data: notes, isLoading, isError, error, refetch } = useNotesQuery();
+  const toggleStar = useToggleStarMutation();
 
   if (isError) return <ErrorBlock error={error} onRetry={() => void refetch()} className="m-6" />;
   if (isLoading) return <div className="p-6 text-sm text-ink-muted">{t('common.loading')}</div>;
@@ -54,7 +56,26 @@ export default function NotesListPage() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <h2 className="truncate text-sm font-medium text-ink">{n.title || t('notes.untitled')}</h2>
-                    {n.starred ? <Star className="size-3.5 shrink-0 text-warning" aria-label={t('nav.starred')} /> : null}
+                    {/* 星标此前只显示不能点 —— 现在是真的写入路径（乐观更新） */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        toggleStar.mutate({ noteUid: n.uid, starred: !n.starred });
+                      }}
+                      aria-label={n.starred ? t('notes.unstar') : t('notes.star')}
+                      aria-pressed={n.starred}
+                      className="shrink-0 rounded p-0.5 hover:bg-surface-0"
+                    >
+                      <Star
+                        className={cn(
+                          'size-3.5',
+                          n.starred ? 'fill-current text-warning' : 'text-ink-muted',
+                        )}
+                        aria-hidden
+                      />
+                    </button>
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
                     {n.durationMs ? <span>{humanDuration(n.durationMs, i18n.language)}</span> : null}
