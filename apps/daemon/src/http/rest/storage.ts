@@ -11,7 +11,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import type { AppPaths } from '../../config/paths.js';
-import { writeDataDirPointer } from '../../config/paths.js';
+import { pointerFile, writeDataDirPointer } from '../../config/paths.js';
 import { stat } from 'node:fs/promises';
 
 import { measureTree, moveDataDir, planMove } from '../../storage/move.js';
@@ -32,7 +32,13 @@ function layout(paths: AppPaths): Array<Record<string, string>> {
     { path: paths.mediaDir, name: 'media', purposeZh: '导入与录制的音视频原件' },
     { path: paths.modelsDir, name: 'models', purposeZh: '下载的模型与后端包（可重新下载）' },
     { path: paths.logsDir, name: 'logs', purposeZh: '运行日志（可随时删）' },
-    { path: paths.tmpDir, name: 'tmp', purposeZh: '转写中间产物（可随时删）' },
+    {
+      path: paths.tmpDir,
+      name: 'tmp',
+      // 说"可随时删"必须是真的：转写产物现在会**归档进 media/**，
+      // 不再有已入库的资产留在这里（此前留了，照这句话删就会删掉笔记的音频）
+      purposeZh: '转写过程的临时文件（可随时删，不含已入库资产）',
+    },
     { path: paths.backupsDir, name: 'backups', purposeZh: '数据库备份' },
     { path: paths.runtimeDir, name: 'runtime', purposeZh: '运行时状态与访问令牌' },
   ];
@@ -77,9 +83,24 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
         );
         sendJson(res, 200, {
           dataDir: deps.paths.dataDir,
-          /** 数据目录是**独立文件夹**，删掉它不影响程序本体 —— 用户明确问过这一点。 */
+          /*
+           * 「自包含」要说得**准**：几乎全部数据都在这个目录里，但有**一个必须在外面**的例外。
+           * 只说 true 而不列出它，用户删完数据目录仍会被那个残留文件影响。
+           */
           selfContained: true,
-          noteZh: '这是一个独立文件夹，删除它不会影响程序本体运行（下次启动会重建空目录）。',
+          externalFiles: [
+            {
+              path: pointerFile(),
+              purposeZh: '记录"数据目录搬到哪了"的指针文件',
+              whyOutsideZh:
+                '它必须在数据目录**外面** —— 放进去就会跟着一起搬走，搬完就再也找不到新位置了。',
+              riskZh:
+                '如果它指向一个已被删除的目录，daemon 下次启动（含自我重启）会**按它去那个不存在的位置建空目录**，表现为"笔记全没了"。删除数据目录时请连同它一起删。',
+            },
+          ],
+          noteZh:
+            '这是一个独立文件夹，删除它不会影响程序本体运行（下次启动会重建空目录）。' +
+            '但请注意 externalFiles 里列出的那个指针文件也需要一并删除。',
           usage,
           entries,
         });

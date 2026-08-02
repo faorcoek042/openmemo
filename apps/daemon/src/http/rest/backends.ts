@@ -173,7 +173,18 @@ export function startPackInstall(
        */
       if (pack.engine === 'sqlite-ext') {
         await materializeSqliteExtensions(state.modelsRoot, state.extensionsDir).catch(
-          () => undefined,
+          (err: unknown) => {
+            /*
+             * 不静默吞：链接失败的后果是**包显示已安装、扩展却永远不生效**，
+             * 且 `restartRequirement` 也看不到磁盘上的扩展 → 连"需重启生效"都不会提示。
+             * 那正是 T-093 那个"装好了但中文搜不到、零报错"的形状。
+             * 安装本身已经成功，所以这里不改变返回结果，但**必须留下痕迹**。
+             */
+            console.warn(
+              `[backends] sqlite 扩展链接到 ${state.extensionsDir} 失败：${String(err)} —— ` +
+                `包已装好，但中文分词/向量检索不会生效，且不会提示"需重启"`,
+            );
+          },
         );
       }
 

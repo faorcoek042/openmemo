@@ -1726,3 +1726,51 @@ DB 里存的就是 null。管道确实读它（`whisperCpp.ts:249 seg.no_speech_
 若 `architect` 需要 `backend`（显示"这条是用 CUDA 转的"），说一声我补。
 
 lint 干净；move 13/13、upload 17/17；demo 全程只读未重启；测试实例与临时目录已收尾。
+
+---
+
+## T-095 搬家后资产 403：**已修，搬完实测两个资产都 200**
+
+### 根因（我自己的坑，两条叠加）
+`relPath()` 旧实现是「算相对路径，**带 `..` 就原样存绝对路径**」——注释里还写着这是有意的。
+后果：归一化音频落在 `<dataDir>/tmp/job-*`，于是 `audio16k` 存的是**绝对路径**，
+一搬家就失效 403；而 `original` 在别处仍 200，**更难察觉**。
+我在 `InstalledFile` 上做过 root+relPath 改造，`media_assets` 这条**没跟上**。
+
+### 修法：不"存绝对路径兜底"，而是真的把产物**归档进 `media/`**
+新增 `archiveIntoMedia()`：把产物 rename（跨设备回退 copy）到 `<mediaRoot>/<noteUid>/`，
+返回相对路径。**先归档再落库**，顺序不能反 —— 反了会先写一条指向 tmp 的记录，
+归档失败就留下一条永远读不到的资产。
+
+这一改**同时解决了 tmp 归属问题**（我选换目录，同意你的倾向）：
+```
+资产路径:  original  01KZ278…/jfk.wav        ← 相对 ✅
+          audio16k  01KZ278…/audio16k.wav   ← 相对 ✅
+tmp 目录:  (空)  已入库资产不再留在这里
+```
+`tmp` 的说明同步改成「转写过程的临时文件（可随时删，**不含已入库资产**）」——
+现在这句话是真的了。此前照它删一次就会删掉一个笔记的音频。
+
+### 实测（真搬一次）
+```
+搬家前:  /media/asset/<original> 200   /media/asset/<audio16k> 200
+搬到 /tmp/t095-moved（65 个文件，rename）→ 自我重启 pid 2141080
+搬家后:  /media/asset/<original> 200   /media/asset/<audio16k> 200   ✅
+```
+
+### `selfContained` 已说准
+响应新增 `externalFiles`，列出唯一那个例外并说清三件事：
+- **是什么**：记录"数据目录搬到哪了"的指针文件
+- **为何必须在外**：放进去就跟着搬走，搬完再也找不到新位置
+- **风险**（你手工清掉的那个悬空指针，我写进去了）：指向已删目录时
+  daemon 下次启动（含自我重启）会**按它去那个不存在的位置建空目录**，表现为"笔记全没了"
+
+### 复核 `gpu-runtime` 的跨界改动：**同意保留**
+`materializeSqliteExtensions` 装完立刻链到 `<dataDir>/bin/ext`，逻辑正确、
+`resolveExtensionDir` 的兜底也保留了，与我的 `restartRequirement` 设计一致。
+★ 但他写的是 `.catch(() => undefined)` —— **静默吞掉失败**。
+一旦链接失败，后果正是 T-093 那个形状：包显示已装、扩展不生效、
+连"需重启生效"都不会提示、零报错。已改成打一条明确 warn（不改变安装结果，但必须留痕）。
+
+lint 干净；move 13/13、upload 17/17、lanes 7/7；demo 只读未重启；
+测试实例与临时目录已收尾，**全局指针文件已确认删除**（避免悬空指针劫持他人实例）。

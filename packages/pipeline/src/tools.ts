@@ -137,10 +137,19 @@ export async function findInBackendPacks(
     }
   };
 
+  /*
+   * `bin/` is checked at every level because the archive layout is upstream's choice,
+   * not ours, and it differs per project: whisper.cpp's tarball puts `whisper-cli` at the
+   * root of its top directory, while BtbN's ffmpeg build puts `ffmpeg`/`ffprobe` under
+   * `<top>/bin/`. A scan that only walks bare directories finds the first and silently
+   * misses the second — and "silently" is the whole problem here: a missing ffmpeg does
+   * not fail loudly at install time, it fails much later as "every transcription is
+   * blocked", because every audio file has to be normalised to 16 kHz mono first.
+   */
   for (const packDir of await listDirs(backendRoot)) {
-    candidates.push(join(packDir, binaryName));
+    candidates.push(join(packDir, binaryName), join(packDir, 'bin', binaryName));
     for (const nested of await listDirs(packDir)) {
-      candidates.push(join(nested, binaryName));
+      candidates.push(join(nested, binaryName), join(nested, 'bin', binaryName));
     }
   }
 
@@ -172,9 +181,13 @@ export async function findFileInBackendPacks(
   };
 
   const candidates: string[] = [];
+  // Same `bin/` and `lib/` reasoning as findInBackendPacks: shared objects ship under
+  // `lib/` in most upstream archives, next to the `bin/` the executables live in.
   for (const packDir of await listDirs(backendRoot)) {
-    candidates.push(join(packDir, name));
-    for (const nested of await listDirs(packDir)) candidates.push(join(nested, name));
+    candidates.push(join(packDir, name), join(packDir, 'bin', name), join(packDir, 'lib', name));
+    for (const nested of await listDirs(packDir)) {
+      candidates.push(join(nested, name), join(nested, 'bin', name), join(nested, 'lib', name));
+    }
   }
   for (const c of candidates) {
     if (await fileExists(c)) return c;

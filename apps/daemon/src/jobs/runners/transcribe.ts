@@ -16,8 +16,8 @@
  * **`onChunkComplete` 必须在段落真正落盘后才 resolve** —— pipeline 把 resolve 当作
  * "这一块已安全持久化"，不会再重放（D-01 §4.5）。
  */
-import { basename } from 'node:path';
-import { relative } from 'node:path';
+import { copyFile, mkdir, rename } from 'node:fs/promises';
+import { basename, isAbsolute, join, relative } from 'node:path';
 
 import {
   jobBlockedEvent,
@@ -90,10 +90,41 @@ export interface TranscribePayload {
 }
 
 /** 把绝对路径转成相对 media 根的路径（D-02 §1.1：绝不存绝对路径，数据目录可搬迁）。 */
-function relPath(mediaRoot: string, abs: string): string {
+/**
+ * 把产物**归档进 media 根**，返回相对路径。
+ *
+ * ## 这里原来是个会丢数据的坑
+ * 旧实现是「算相对路径，带 `..` 就原样存绝对路径」。后果两条叠加：
+ * 1. 归一化音频落在 `<dataDir>/tmp/job-*`，于是 `audio16k` 存的是**绝对路径** ——
+ *    用户一搬数据目录，路径失效，音频 403（`original` 因为在别处仍 200，更难察觉）。
+ *    我在 `InstalledFile` 上做过 root+relPath 改造，`media_assets` 这条**没跟上**。
+ * 2. `tmp/` 在设置页里被标成「可随时删」，而里面躺着**已入库的资产** ——
+ *    用户照 UI 说的删一次，就删掉一个笔记的音频。
+ *
+ * 所以不再"存绝对路径兜底"，而是**真的把文件搬进 media/**：
+ * 相对路径天然成立，`tmp/` 也重新变回名副其实的"可随时删"。
+ */
+async function archiveIntoMedia(
+  mediaRoot: string,
+  noteUid: string,
+  abs: string,
+  name: string,
+): Promise<string> {
   const rel = relative(mediaRoot, abs);
-  // 产物落在 tmp 里时 relative 会带 ../ —— 那说明还没归档到 media/，原样记录绝对路径的 basename
-  return rel.startsWith('..') ? abs : rel;
+  // 已经在 media/ 里就别动它（重跑时会走到这里）
+  if (!rel.startsWith('..') && !isAbsolute(rel)) return rel;
+
+  const destDir = join(mediaRoot, noteUid);
+  await mkdir(destDir, { recursive: true });
+  const dest = join(destDir, name);
+  try {
+    await rename(abs, dest);
+  } catch (err) {
+    // 跨设备或源已不在：复制兜底；再失败就让调用方看到真错误，不要静默留下坏路径
+    if ((err as NodeJS.ErrnoException).code === 'EXDEV') await copyFile(abs, dest);
+    else throw err;
+  }
+  return relative(mediaRoot, dest);
 }
 
 export async function runTranscribeJob(
@@ -260,10 +291,27 @@ export async function runTranscribeJob(
   });
 
   // ---- 媒体资产落库 ----
+  /*
+   * 先归档再落库：**顺序不能反**。
+   * 反过来会先写一条指向 tmp 的记录，万一归档失败就留下一条永远读不到的资产。
+   */
+  const originalRel = await archiveIntoMedia(
+    deps.mediaRoot,
+    note.uid,
+    result.media.path,
+    basename(result.media.path),
+  );
+  const normalizedRel = await archiveIntoMedia(
+    deps.mediaRoot,
+    note.uid,
+    result.normalizedPath,
+    'audio16k.wav',
+  );
+
   const originalAsset = repos.createAsset({
     noteId: note.id,
     role: 'original',
-    relPath: relPath(deps.mediaRoot, result.media.path),
+    relPath: originalRel,
     displayName: basename(payload.input),
     durationMs: result.durationMs,
     bytes: result.media.sizeBytes,
@@ -271,7 +319,7 @@ export async function runTranscribeJob(
   repos.createAsset({
     noteId: note.id,
     role: 'audio16k',
-    relPath: relPath(deps.mediaRoot, result.normalizedPath),
+    relPath: normalizedRel,
     durationMs: result.durationMs,
     sampleRate: 16000,
     channels: 1,
