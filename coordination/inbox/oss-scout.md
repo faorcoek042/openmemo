@@ -1034,3 +1034,64 @@ worker 停下后由 `#settleAborted()` 按意图收口：
   但**两处真相**是将来漂移的隐患，记录在案。
 - 我**同意矩阵拆三列**。我这侧能负责的只有第一列与第三列的 daemon 半边；
   "两者之间"要靠真正打一次请求才算数 —— 这正是这轮 import 面那条我无法自证的原因。
+
+---
+
+## [2026-08-03 02:40] T-056 DONE —— `POST /api/notes/probe` 已可用
+
+### 实现
+复用 `gpu-runtime` 的 `registry.probeWithSource()`（T-025 修 TD-002 时加的完整回退链），
+**没有新写探测逻辑**。端点只读：不建 note、不排 job —— 与 `/api/notes/import` 的区别就在这里。
+形状对齐前端 `lib/api/types.ts` 的 `ProbeResult`（我照它实现，不另造）。
+
+### 真实 probe 输出（五条路径全过）
+
+```
+① 公网直链（Wikimedia 337s 中文）
+{ "title":"Zh-Twitter.ogg", "author":"upload.wikimedia.org", "durationMs":337038,
+  "site":"upload.wikimedia.org", "adapterId":"direct-http", "requiresAuth":false,
+  "isCollection":false, "mediaCount":1, "sourceKind":"url" }
+   —— durationMs 337038 与实际 337s 吻合
+
+② 本地文件
+{ title:'local', durationMs:220160, adapterId:'local-file', sourceKind:'local', site:None, mediaCount:1 }
+
+③ 播客 RSS（真实 feed）
+{ title:'A Problem Squared', adapterId:'rss', isCollection:True, mediaCount:142, sourceKind:'url' }
+
+④ YouTube（yt-dlp 默认关闭，TD-002）→ HTTP 422 + remediation
+{ "code":"NO_MEDIA_SOURCE", "messageZh":"没有适配器能处理这个链接",
+  "remediation":{ "action":"installSiteExtractor", "labelZh":"查看如何支持该站点" },
+  "details":{ "hint":"...(tried: direct-http: this URL does not look like a media file
+              (Content-Type: text/html); rss: feed contains a DOCTYPE ... and was rejected)" } }
+   —— hint 里能看到**回退链被完整走过**，这正是 probeWithSource 的价值
+
+⑤ 空 input → HTTP 400
+```
+
+### 一处我拒绝编造的字段
+前端 `ProbeResult` 有 `requiresAuth`（"该 URL 是否需要登录/cookie，别下了 400MB 才发现"）。
+**`MediaInfo` 里没有这个信息，探测阶段也拿不到**，所以我如实回 `false` 并在代码里写明理由：
+猜 `true` 会平白吓退用户，返回一个假的 `requiresAuth` 比没有这个字段更糟。
+要真支持，得让各 adapter 在 probe 时上报 —— 属 `gpu-runtime` 的 pipeline 侧改动。
+
+### 请 `model-mgmt` 收编进 shared 的契约
+```
+POST /api/notes/probe   { input: string }
+ 200 { title, author, durationMs, thumbnailUrl, site, adapterId, requiresAuth,
+       isCollection, mediaCount, sourceKind, publishedAt, description }
+ 400 BAD_REQUEST      缺 input
+ 422 NO_MEDIA_SOURCE  + remediation{action:'installSiteExtractor'} + details.hint（回退链诊断）
+ 502 PROBE_FAILED / 504 PROBE_TIMEOUT（30s）  retryable:true
+```
+连同上轮的 `POST /api/notes/:uid/retranscribe` 一起，是我这侧仅剩的两处临时契约。
+
+### 全量
+`pnpm -r build` **9/9**；测试 **167 pass / 0 fail**；
+`apps/daemon` + `packages/db` + `packages/llm` + `packages/mindmap` eslint **EXIT=0**。
+
+### 诚实声明
+- ④ 的 422 是**当前配置下的正确行为**（TD-002 默认关闭 GPL 站点提取器）。
+  打开 `OPENMEMO_ENABLE_SITE_EXTRACTOR=1` 且装了 yt-dlp 后该走 ytdlp adapter，**这条分支我没验**。
+- `requiresAuth` 恒为 false（见上），**前端不应据它做任何拦截**。
+- probe 超时 30s 是我拍的值，没有依据数据；RSS 那条实测约 2s，直链约 1s。

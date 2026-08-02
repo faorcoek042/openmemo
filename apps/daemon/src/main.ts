@@ -321,6 +321,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         repos,
         queue,
         sse,
+        registry: bundle_.registry,
         // 本地导入允许的根：数据目录 + 显式配置的额外目录
         importRoots: [
           paths.dataDir,

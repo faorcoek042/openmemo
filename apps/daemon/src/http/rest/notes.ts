@@ -15,6 +15,8 @@ import { isAbsolute, resolve } from 'node:path';
 
 import { makeEvent, topics } from '@openmemo/shared';
 
+import { NoMediaSourceError, type MediaSourceRegistry } from '@openmemo/pipeline';
+
 import type { Repos } from '../../db/repos.js';
 import type { JobQueue } from '../../jobs/queue.js';
 import type { SseHub } from '../sse.js';
@@ -22,6 +24,12 @@ import { readJsonBody, sendError, sendJson } from '../respond.js';
 
 export interface NoteRoutesDeps {
   readonly repos: Repos;
+  /**
+   * 媒体源注册表 —— probe 复用它的 `probeWithSource()`（走完整回退链）。
+   * `gpu-runtime` 在 T-025 修 TD-002 时加的：先 resolve 再 probe 会**静默绕过回退链**，
+   * 第一个候选网络抖一下就整单失败，GPL 兜底也永远engage 不了。
+   */
+  readonly registry: MediaSourceRegistry;
   readonly queue: JobQueue;
   readonly sse: SseHub;
   /** 本地导入允许的根目录 —— 路径穿越防护（D-01 §8.5）。 */
@@ -43,6 +51,84 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
   return {
     async handle(req, res, url, method): Promise<boolean> {
       const p = url.pathname;
+
+      /*
+       * ---- POST /api/notes/probe ----
+       *
+       * F1 的"先看清楚再决定"：粘贴链接 → 秒级返回标题/时长/来源 → 用户再点导入。
+       * 不是多余的一次请求 —— 没有它，用户得先下载几百 MB 才知道自己粘错了。
+       *
+       * **只读，不建 note、不排 job**（与 import 的区别就在这里）。
+       */
+      if (p === '/api/notes/probe' && method === 'POST') {
+        const body = (await readJsonBody(req)) as ImportBody | undefined;
+        const input = typeof body?.input === 'string' ? body.input.trim() : '';
+        if (!input) {
+          sendError(res, 400, 'BAD_REQUEST', 'input is required', '缺少 input（链接或本地路径）');
+          return true;
+        }
+
+        // probe 要快：超时短一些，卡住不如早报错让用户换个链接
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), 30_000);
+        try {
+          const { source, info } = await deps.registry.probeWithSource(input, ac.signal);
+          const result = {
+            title: info.title ?? basenameOf(input),
+            author: info.uploader,
+            durationMs: info.durationMs,
+            thumbnailUrl: info.thumbnailUrl,
+            site: siteOf(input),
+            adapterId: source.id,
+            /*
+             * ⚠️ `MediaInfo` 里**没有**"需不需要登录"这个信息，探测阶段也拿不到。
+             * 这里如实返回 false，**不猜** —— 猜 true 会平白吓退用户，
+             * 猜出一个假的 requiresAuth 比没有这个字段更糟。
+             * 真要支持得让各 adapter 在 probe 时上报，属 pipeline 侧改动。
+             */
+            requiresAuth: false,
+            // 集合类输入（RSS / 播放列表）：让用户知道这一下会导入多少条
+            isCollection: info.isCollection,
+            mediaCount: info.isCollection ? (info.children?.length ?? 0) : 1,
+            sourceKind: /^[a-z][a-z0-9+.-]*:\/\//i.test(input) ? 'url' : 'local',
+            publishedAt: info.publishedAt,
+            description: info.description,
+          };
+          sendJson(res, 200, result);
+        } catch (err) {
+          if (err instanceof NoMediaSourceError) {
+            sendError(
+              res,
+              422,
+              'NO_MEDIA_SOURCE',
+              `no adapter can handle: ${input}`,
+              '没有适配器能处理这个链接',
+              {
+                remediation: {
+                  action: 'installSiteExtractor',
+                  params: { input },
+                  labelZh: '查看如何支持该站点',
+                  label: 'How to support this site',
+                },
+                details: { hint: err.remediation },
+              },
+            );
+            return true;
+          }
+          const aborted = ac.signal.aborted;
+          sendError(
+            res,
+            aborted ? 504 : 502,
+            aborted ? 'PROBE_TIMEOUT' : 'PROBE_FAILED',
+            err instanceof Error ? err.message : String(err),
+            aborted ? '解析超时（30 秒）—— 该链接可能不可达' : '解析失败',
+            { retryable: true },
+          );
+        } finally {
+          clearTimeout(timer);
+        }
+        return true;
+      }
 
       // ---- POST /api/notes/import ----
       if (p === '/api/notes/import' && method === 'POST') {
@@ -269,6 +355,15 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
       return false;
     },
   };
+}
+
+/** 从 URL 取站点名（本地路径返回 null）。仅用于展示。 */
+function siteOf(input: string): string | null {
+  try {
+    return new URL(input).hostname.replace(/^www\./, '');
+  } catch {
+    return null;
+  }
 }
 
 function basenameOf(input: string): string {
