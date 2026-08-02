@@ -1,11 +1,13 @@
 {
   "extends": "./tsconfig.json",
   "_comment": [
-    "只为「纯逻辑单测」编译出可执行 JS。",
+    "测试专用编译产物。",
     "apps/web 主构建是 emitDeclarationOnly（打包交给 Vite），跑不了 node --test；",
-    "本机的 Node 又没编译 TypeScript 支持（ERR_NO_TYPESCRIPT），不能直接跑 .ts。",
-    "所以单独编一份 JS 到 dist-test/ 再交给 node --test —— 与仓库其它包的做法一致。",
-    "只收录不依赖 React/DOM 的纯模块；组件测试要等真实浏览器 E2E。"
+    "本机 Node 也没编译 TypeScript 支持（ERR_NO_TYPESCRIPT），不能直接跑 .ts。",
+    "所以单独编一份 CJS 到 dist/test/ 再交给 node --test —— 与仓库其它包一致。",
+    "整个 src 都编：组件测试需要真实组件及其依赖（已确认全仓无 import.meta，可安全编 CJS）。",
+    "注意 exclude 必须显式写全：主 tsconfig 排除了 *.test.ts（它用 node:test，与浏览器 types 冲突），",
+    "继承下来会把测试文件一并排除、编出 0 个测试 —— 而 node --test 对空集返回 0（绿），是个假绿灯。"
   ],
   "compilerOptions": {
     "composite": false,
@@ -17,22 +19,13 @@
     "outDir": "dist/test",
     "rootDir": "src",
     "tsBuildInfoFile": null,
+    "jsx": "react-jsx",
     "module": "CommonJS",
     "moduleResolution": "Node",
     "verbatimModuleSyntax": false,
     "types": ["node"]
   },
   "references": [],
-  // 主 tsconfig 排除了 *.test.ts（它用 node:test，与浏览器 types 冲突），
-  // 这里必须显式清空，否则继承下来会把测试文件一并排除、编出 0 个测试。
-  "exclude": [],
-  "include": [
-    "src/lib/stores/selectors.test.ts",
-    "src/lib/stores/progress.store.ts",
-    "src/lib/api/surfaces.ts",
-    "src/lib/utils.ts",
-    "src/lib/format/time.ts",
-    "src/lib/api/types.ts",
-    "src/lib/events/types.ts"
-  ]
+  "include": ["src/**/*", "src/**/*.json"],
+  "exclude": ["src/main.tsx", "src/__smoke__/**"]
 }

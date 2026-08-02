@@ -729,3 +729,111 @@ const modelPath =
 - **未验**：后端包的真实下载安装（`/api/backends/install`）、熔断器熔断行为、mac/Windows 全部路径。
 - `ffmpeg`/`ffprobe` 目前解析到的是系统 `/usr/bin/`，因为媒体工具包还不由我构建；产品路径上它们也应来自安装包。
 - 全程用独立端口（17693/17694/17695）+ `setsid`，未干扰其他 agent 的 daemon。
+
+---
+
+## [2026-08-03 03:10] T-044 DONE —— 冷启动装机验证
+
+**结论：只通过 HTTP API，一台干净机器装不起来。selfcheck 失败数 6 → 7（唯一装成功的是 ASR 模型）。**
+
+### 冷启动初始状态（全新空 dataDir，daemon 从零启动）
+```
+[daemon] ⚠️  流水线缺少工具: whisper-cli, asr-model
+pipeline.missing = ['whisper-cli', 'asr-model']
+tokenizer = trigram | libsimple = False | vec = False
+```
+
+### 卡在哪 —— 4 个阻塞点
+
+**① 【最严重】后端包安装是死锁 —— 要求 2.1 在第一步就断了**
+```
+POST /api/backends/install {"id":"whispercpp-cpu-linux-x64"}
+-> 409 CONFLICT
+   pack whispercpp-cpu-linux-x64 is not applicable to this machine:
+   probe did not complete: probe executable not found: /tmp/cold/bin/runtime/probe
+```
+本机 4 个 linux/x64 包**全部** `applicable=False`，理由都是这一条：
+```
+llamacpp-vulkan-linux-x64 | applicable=False | probe executable not found
+llamacpp-cpu-linux-x64    | applicable=False | probe executable not found
+llamacpp-rocm-linux-x64   | applicable=False | probe executable not found
+whispercpp-cpu-linux-x64  | applicable=False | probe executable not found
+```
+根因（`apps/daemon/src/http/rest/backends.ts:42 applicability()`）：
+```ts
+const status = state.hardware.backends.find((b) => b.id === pack.backend);
+if (!status?.available) return { applicable: false, ... };
+```
+`hardware.backends[].available` 来自 probe，**而 probe 可执行文件本身就装在后端包里**。
+→ **鸡生蛋：装不了包 → 没有 probe → 探测不出后端可用 → 装不了包。新机器永远迈不出第一步。**
+
+**建议修法**：**CPU 包必须豁免 probe 门禁。** ADR-003 决策 3 里 CPU 是 L1「永不失败的兜底」，它是让探测成为可能的前提，不该被探测结果反过来卡住。只有加速包（cuda/vulkan/rocm/metal）该按 probe 结果 gate。这正好对上我 T-012 的分层设计：L1 无条件可装，L2 探测后再装。
+
+**② manifest 文件名硬编码 —— `model-mgmt` 补的东西 daemon 从不读**
+```js
+// apps/daemon/src/http/rest/manifests.ts:49
+const MODEL_MANIFEST_FILES = ['models-whisper.json', 'models-llm.json'];
+const BACKEND_MANIFEST_FILE = 'backends.json';
+```
+磁盘上**已经有**但**从不加载**的两个文件：
+- `models-asr-support.json`（5 条：`vad/silero-vad-onnx`、**`vad/silero-vad-ggml`**、`asr/sherpa-streaming-zh-14m`、`asr/paraformer-zh-small`、`punctuation/ct-transformer-zh-en`）
+- `sqlite-ext.json`（`sqlite-ext-linux-x64`，`installPath: bin/ext`）
+
+→ 目录接口里 **0 条** ASR 支持模型、**0 条** 扩展包。VAD / Paraformer / 标点 / 中文分词器**全都装不了**。
+**顺带说明**：`model-mgmt` 已按我上轮的反馈补了 **`vad/silero-vad-ggml`**（whisper.cpp 要的 ggml 格式），他那边做对了，是 daemon 没读。
+**修法**：把这两个常量改成扫描 `manifestDir` 下的 `models-*.json` / `*.json`，或直接把两个文件名加进去。
+
+**③ ASR 模型装成功了，但 daemon 仍找不到 —— 且比我上轮说的更糟**
+```
+POST /api/models/pull {"id":"asr/whisper-base-q5_1"}  ->  succeeded
+下载 59,707,625 字节 → 校验 → 硬链到 /tmp/cold/models/by-name/asr/ggml-base-q5_1.bin  ✅
+```
+**下载器这一层是好的**（真下载、真校验、真硬链、断点续传的 `.partial` 也看到了）。
+但 daemon 的候选列表是 `ggml-base.en.bin` / `ggml-base.bin`，**装下来的叫 `ggml-base-q5_1.bin`，根本不在列表里**。
+→ 即使把上轮那个「查 `by-name/asr`」的补丁打上，**写死的文件名列表仍然会漏**。正确做法是列目录取任一 `ggml-*.bin`，或从 `model_installs` 记录里取路径。
+
+**④ 没有扩展安装端点**
+`/api/extensions` 404、`/api/extensions/install` 404。即使 ②修好让 `sqlite-ext.json` 进了目录，
+它的 `installPath: bin/ext` 也不是 backend store 的布局（backend 走 `by-name/backend/`），
+`/api/backends/install` 装不到 `bin/ext` 去。**需要一条扩展安装路径**。
+
+### 装成功的（API 全程，没手工 copy、没设 env）
+| 步骤 | 结果 |
+|---|---|
+| 后端包 | ❌ 409 死锁 |
+| **ASR 模型** | ✅ **59.7 MB 真下载 + 校验 + 硬链，job succeeded** |
+| 中文分词器 / 向量扩展 | ❌ 无目录条目、无端点 |
+
+### 顺带验掉的未验证项：熔断器 ✅ 真会熔断
+```
+阈值 = 2
+第1次失败 -> blacklisted: false | consecutive: 1
+第2次失败 -> blacklisted: true  | consecutive: 2      ✅
+驱动升级后(560.94→570.00) -> blacklisted: false        ✅ 新证据重新给机会
+探测成功后 -> blacklisted: false | consecutive: 0      ✅ 复位
+```
+这是我 T-012 标注「未验证」的两项之一，现在验掉了。另一项「后端安装真能装吗」——**答案是不能，见 ①**。
+
+### 最终 selfcheck（冷启动 + API 装完能装的）
+```
+通过 7 · 警告 8 · 失败 7 · EXIT=1
+✘ whisper-cli 未找到          ✘ libsimple 缺失
+✘ 中文双字词可搜索 未测试        ✘ 中文自动选择 无可用引擎
+✘ 英文自动选择 无可用引擎        ✘ db.tokenizer trigram
+✘ pipeline.missing ["whisper-cli","asr-model"]
+```
+（失败数从 6 涨到 7 是因为接了 daemon 探针后多了 2 项检查；模型那一项由红转绿。）
+
+需要 Manager 决策（按阻塞程度排序）:
+1. **CPU 后端包豁免 probe 门禁**（`backends.ts:42`）—— 不改则新用户永远装不上任何后端包，要求 2.1 无法成立。归 `oss-scout`。
+2. **manifest 文件名改为扫描目录**（`manifests.ts:49`）—— 不改则 `model-mgmt` 已经补好的 5 条 ASR 支持模型 + 扩展包永远不可见。归 `oss-scout`。
+3. **ASR 模型路径解析改为列目录**（不能写死文件名）—— 我上轮给的补丁不够，这轮发现写死列表本身就是错的。归 `oss-scout`。
+4. **扩展安装路径**（`bin/ext`）需要一条端点或复用 backend install 并支持自定义 installPath。归 `oss-scout` + `model-mgmt`。
+5. **`ffmpeg`/`ffprobe` 仍来自系统 `/usr/bin/`** —— 已按要求记入冷启动清单，本轮未解决（需要我构建 media 工具包）。
+
+诚实声明:
+- 全程**只用 HTTP API**，没有手工 copy 文件、没有设 env 指路 —— 这正是新用户的处境。
+- **我没有为了让数字好看去绕过阻塞**：后端包装不上就是装不上，selfcheck 仍然 EXIT=1。
+- 下载器（`packages/downloader`）这一层实测是**好的**：真下载、真校验、真硬链、`.partial` 续传文件也确实生成了。问题全在「目录里有没有这条」和「装完谁去找它」。
+- 熔断器是用 `packages/runtime` 的真实导出函数测的，非模拟。
+- 用独立端口 17701 + `setsid`，未干扰其他 agent。
