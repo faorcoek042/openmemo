@@ -5,7 +5,7 @@ import { Link2, Loader2, Upload } from 'lucide-react';
 
 import { Button } from '../../components/common/Button';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
-import { useImportUrlMutation, useProbeMutation } from '../notes/api';
+import { useImportUrlMutation, useProbeMutation } from '../notes';
 import { humanDuration } from '../../lib/format/time';
 import type { ProbeResult } from '../../lib/api/types';
 
