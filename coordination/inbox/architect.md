@@ -1226,3 +1226,77 @@ daemon 提供的是 **`POST /api/notes/upload`：单次 `multipart/form-data` �
 - 因此 **401 自愈的真实往返我没跑过**：证据是单例握手 + 重试分支的代码路径与单测，
   不是"真的让 daemon 重启一次看它自愈"。这条需要 `model-mgmt` 在真浏览器里复验。
 - 「识别引擎只有两个」按你说的没管。
+
+---
+
+## T-075 假引擎选择器 + 数据位置区块（2026-08-03）
+
+### 一句话
+引擎/模型/语言三件事里，**只有语言是后端真接受的** —— 所以我把语言做成了真选择器并接通，
+模型做成了真能生效的「切换当前模型」，引擎做成了**如实展示 + 去安装**，
+而不是再画一个选了会被丢掉的下拉框。
+
+### 后端契约（读了实现，不是猜的）
+| 前端想传 | `import` / `upload` / `retranscribe` | 判定 |
+|---|---|---|
+| `language` | 三个入口全收，一路到 whisper 的 `-l` | ✅ **唯一通的** |
+| `engineId` | body / payload / runner 三层都没有 | ❌ 后端需新增 |
+| `modelId` | 同上；模型由 `active.json` + 引擎硬映射决定 | ❌ 后端需新增 |
+| `prompt` | `TranscribeRequest.prompt` 已存在，但 runner 不填 | ❌ daemon 三层透传即可 |
+
+- ASR 引擎的权威联合在 `packages/pipeline/src/asr/selectEngine.ts:22`：
+  `'whisper.cpp' | 'paraformer' | 'sherpa-onnx'`。**`'turbo'` 全仓不存在**
+  （它是模型名 `whisper-large-v3-turbo` 的片段）。
+- `selectEngine()` 有 `forceEngineId`，但**整个 daemon 零调用方** ——
+  "本次任务换引擎重跑" 的挂载点已经就位，只差有人调。
+- 引擎当前唯一外部输入口是环境变量 `OPENMEMO_ASR_ENGINE`。
+
+### 我做了什么
+1. **`packages/shared/src/backends.ts` 新增 `ASR_ENGINE_IDS` / `AsrEngineId`**（越了域，只加不改）。
+   ⚠️ 请 `gpu-runtime` 把 `selectEngine.ts:22` 改成引用它，否则是两份真相 —— 我不动他的文件。
+   注意它与既有的 `ENGINES` **不是一回事**：后者是组件包枚举（含 ffmpeg / yt-dlp / sqlite-ext）。
+2. **删掉 `RecorderPage:49` 的 `useState<'paraformer'|'turbo'>`**，换成语言选择 + `AsrEngineStatus`。
+3. **`CapturePage` 补上语言选择**，链接导入与拖拽上传**共用同一份**（两条路径给不同结果没法解释）。
+4. **`language` 真的发出去了**：`/notes/import` body 加 `language`，upload 加 multipart part。
+   空串不发 —— daemon 用 `typeof === 'string'` 判断，空串会被当成"用户指定了空语言"存进 `note.language`。
+5. **顺手删了三个假勾选框**：`diarize` / `keepVideo` / `structure` 从没进过请求体
+   （mutation 只发 `{input}`），后端也无对应入参。同时把它们从 `ImportUrlRequest` 类型里删掉 ——
+   留在类型里等于**类型系统在替谎言背书**。
+6. **模型选择器**列 `/models/installed` 里 `role==='asr'` 的已装模型，切换走 `POST /models/activate`
+   （真生效：`active.json` 的 asr 槽就是 `setup.ts` 取 `asrModelPath` 的来源）。一个都没装 → 「去安装模型」。
+
+### 实测发现两条（只读探了 demo 的公开端点，没重启、没写）
+- **`GET /api/health` 是公开的，且已经带 `pipeline.engines`** —— `/api/daemon/status` 需鉴权（实测 401）。
+  所以引擎可用性走 health，少一层失败可能。
+- **daemon 只列构造成功的候选**：demo 上 `engines` 只有 `whisper.cpp` 一条，
+  Paraformer / sherpa-onnx **压根不出现**（缺 `OPENMEMO_PARAFORMER_DIR` 等）。
+  照抄这个列表的话，用户只会看到"引擎：Whisper.cpp ✓"，不知道还有别的、更不知道怎么装。
+  → 改成**以 shared 联合为全集，缺席即未安装**，并给「去安装运行时」。这才满足"没装的走跳转而不是灰掉"。
+
+### 数据位置区块（`features/settings/DataLocationSection.tsx`）
+- **定义**：路径来自 `GET /api/health` 的 `dataDir`（实测返回 `/tmp/omdemo`）。拿不到就显示"加载中"，
+  **绝不填一个看起来对的默认路径** —— 密钥那次就是这么说错的。
+- **统计大小**：接 `GET /api/models/storage`，但**逐项标明**是"模型占用 / 磁盘可用 / 磁盘总量"，
+  并明写笔记库与导入的音视频**未计入**。⚠️ 这个端点统计的是 `modelsRoot`，
+  **不是整个 dataDir** —— 合并成一个"总计"会让用户按错的数字去清磁盘。整目录统计需要后端新增。
+- **修改 / 移动**：UI 已就位（新路径输入 + "一并移动"勾选 + 进行中态 + 完成后提示需重启），
+  打到 `POST /api/settings/data-dir`。**该端点目前不存在**，我没有把按钮灰掉：
+  写操作永不静默回落 mock，404 会如实抛出，此时给出真能用的替代 `OPENMEMO_DATA_DIR=<path>`。
+  `oss-scout` 落地后这里不用改。**请他确认这个路径与 body `{path, moveExisting}` 是否可接受** ——
+  我这次是**提出**契约而不是猜完就接线。
+- **删除后果**：按你的实测写进文案："删除此目录不会影响程序运行，下次启动会自动重建
+  （但笔记与已下载的模型会一起丢失）"。**没写**删除窗口内写操作的行为（你说未验，我就不写）。
+
+### 验证
+`tsc` 0 · `eslint apps/web + packages/shared` 0 · `vite build` ✓ ·
+测试 **38 条 / 36 pass / 0 fail / 2 skip**（新增 11 条：引擎联合不含 turbo · 语言正则与 daemon 一致 ·
+language 真进请求体 · 空语言不发键 · 无模型给安装入口 · 模型列表只含 asr ·
+未知引擎 id 丢弃 · 缺席引擎显示为未安装 · 数据目录路径来自 daemon · 拿不到不编路径 · 删除后果文案完整）。
+
+### 诚实声明
+- **没碰 demo**，只对公开的 `/api/health` 发过 GET。
+- **`/api/settings/data-dir` 是我提出的契约，尚未与 `oss-scout` 对齐**，现在必然 404（这是可见的，不是静默的）。
+- **前端没有"重新转写"入口** —— 而 `POST /api/notes/:uid/retranscribe` 是收 `language` 的。
+  这意味着用户一旦被翻译成英文，**在 UI 上没有换语言重跑的办法**。这是个真实缺口，不在本轮范围，建议排进下一轮。
+- 引擎/模型的 **per-task 选择做不了**，不是我省事：后端 payload 里没有这两个键。
+  等 daemon 加上入参，`AsrEngineStatus` 换成选择器即可，**数据源不用改**。

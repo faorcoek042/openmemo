@@ -102,7 +102,8 @@ export function AsrEngineStatus({ className }: { className?: string }) {
   const navigate = useNavigate();
   const { engines, isLoading } = useAsrEngines();
 
-  if (isLoading || engines.length === 0) return null;
+  // 加载中不下结论：还没拿到 health 就渲染"三个都没装"是纯误报
+  if (isLoading) return null;
 
   const missing = engines.filter((e) => !e.available);
 

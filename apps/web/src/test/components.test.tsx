@@ -29,6 +29,7 @@ import { ASR_ENGINE_LABELS, isValidAsrLanguage } from '../lib/asr';
 import { AsrModelPicker } from '../components/common/AsrModelPicker';
 import { AsrEngineStatus } from '../components/common/AsrEngineStatus';
 import { useImportUrlMutation } from '../features/notes';
+import { DataLocationSection } from '../features/settings/DataLocationSection';
 
 /* ─────────────────────────── 标签增删 ─────────────────────────── */
 
@@ -579,7 +580,8 @@ describe('转写选项：选中的值真的发给后端', () => {
 
   test('★ 引擎可用性来自 daemon 实测；后端没给的引擎不显示，认不出的 id 丢弃', async () => {
     stubApi({
-      'GET /daemon/status': {
+      // 实测：daemon 只列构造成功的候选，缺席的引擎压根不出现
+      'GET /health': {
         pipeline: {
           engines: [
             { id: 'whisper.cpp', available: true },
@@ -599,6 +601,71 @@ describe('转写选项：选中的值真的发给后端', () => {
     // 用不了的要说原因 + 给出路，而不是灰掉了事
     assert.ok(shown.includes('OPENMEMO_PARAFORMER_DIR'), '应展示 daemon 给的真实原因');
     assert.ok(shown.includes('去安装运行时'));
+    r.unmount();
+  });
+
+  test('★ daemon 没报告的引擎要显示为"未安装"并给安装入口，而不是当它不存在', async () => {
+    // 实测 demo 上就是这样：engines 只有 whisper.cpp 一条
+    stubApi({ 'GET /health': { pipeline: { engines: [{ id: 'whisper.cpp', available: true }] } } });
+    const r = await render(<AsrEngineStatus />);
+    await r.flush();
+    const shown = text(r.container);
+
+    // 全集来自 shared 联合，不是 daemon 返回什么就只显示什么
+    assert.ok(shown.includes('Paraformer'), '缺席的引擎也要露出来，否则用户不知道它存在');
+    assert.ok(shown.includes('Sherpa-ONNX'));
+    assert.ok(shown.includes('去安装运行时'), '没装的要给出路，而不是灰掉或隐藏');
+    r.unmount();
+  });
+});
+
+/* ─────────────────────────── 数据位置 ─────────────────────────── */
+
+/**
+ * 路径是**要念给用户听**的东西，念错比不念更糟 ——
+ * 用户会照着去 `rm -rf` 一个不是数据目录的地方。
+ * 所以这一组钉的是：路径只能来自 daemon，拿不到就说拿不到。
+ */
+describe('设置 · 数据位置', () => {
+  test('★ 数据目录路径来自 daemon 的 /health，不是前端拼的默认值', async () => {
+    stubApi({
+      'GET /health': { dataDir: '/tmp/omdemo' },
+      'GET /models/storage': {
+        modelsRoot: '/tmp/omdemo/models',
+        volume: { freeBytes: 10_000_000_000, totalBytes: 50_000_000_000 },
+        usedBytes: 1_500_000_000,
+        breakdown: [],
+        reclaimable: { orphanBlobsBytes: 0, stalePartialsBytes: 0, inactiveModelsBytes: 0 },
+      },
+    });
+    const r = await render(<DataLocationSection />);
+    await r.flush();
+
+    assert.equal(r.container.querySelector('[data-testid="data-dir-path"]')?.textContent, '/tmp/omdemo');
+    // 容量分项要出现，且是模型占用而不是含糊的"总计"
+    assert.ok(text(r.container).includes('模型占用'));
+    assert.ok(text(r.container).includes('1.5 GB'), '应换算成人类可读单位');
+    r.unmount();
+  });
+
+  test('★ 拿不到 dataDir 时绝不编一个"看起来对"的路径', async () => {
+    stubApi({}); // /health 未打桩 → 404
+    const r = await render(<DataLocationSection />);
+    await r.flush();
+    const shown = r.container.querySelector('[data-testid="data-dir-path"]')?.textContent ?? '';
+    assert.ok(!shown.includes('/'), `不该出现任何猜测路径，实际渲染了 ${JSON.stringify(shown)}`);
+    r.unmount();
+  });
+
+  test('★ 明确告知"删掉这个目录不会弄坏程序"，但同时说清丢什么', async () => {
+    stubApi({ 'GET /health': { dataDir: '/tmp/omdemo' } });
+    const r = await render(<DataLocationSection />);
+    await r.flush();
+    const shown = text(r.container);
+    assert.ok(shown.includes('不会影响程序运行'), '实测结论要写进 UI');
+    assert.ok(shown.includes('自动重建'));
+    // 只说"安全"是半句真话 —— 代价必须同时出现
+    assert.ok(shown.includes('丢失'), '必须同时说明笔记与模型会丢失');
     r.unmount();
   });
 });

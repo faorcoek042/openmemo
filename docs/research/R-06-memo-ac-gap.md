@@ -39,8 +39,10 @@ date: 2026-08-03
   作废 —— **实测 42 条 REST + 2 条 WS**。
 - **【T-080 追加，见文末附录 A】** 三条取证结论：① memo.ac 的「空间」= Workspace 一等公民，
   且**与用户指定的磁盘目录一一绑定**（逻辑分区与存储位置是同一个功能的两面），我们**零实现**；
-  ② 代理是 `none/system/custom` 三态 + 可切换的多条目列表，**无认证、无 bypass**，
-  子进程侧只覆盖 yt-dlp，**我们的 `proxy.ts` 已比它做得好，但 daemon/downloader 侧零接线（模型下载走不了代理）**；
+  ② 代理是 `none/system/custom` 三态（**出厂默认 `system`**）+ 可切换的多条目列表，
+  **无认证、无用户可配 bypass**（只有一条硬编码的、仅护 LLM 本地端点的 bypass）；子进程侧只覆盖 yt-dlp，
+  但**云 LLM/云 ASR/模型下载全部经 agent 走代理**。我们的 `proxy.ts` 校验与 loopback 保护比它强，
+  **但 daemon/downloader 侧零接线 —— 模型下载走不了代理，而它能**；
   ③ **memo.ac 没有为任何一家 LLM 装 SDK** —— ~31 家全靠一个 OpenAI 兼容客户端 + 每家一个 `baseURL`
   （`nm.txt` 417 个包里无任何 `@ai-sdk/<厂商>`），**证明我们现有架构方向正确，缺的只是注册表与配置 UI**。
 
@@ -618,24 +620,50 @@ UI 成功显示 `preferences.network latency` + 毫秒数，失败显示 `prefer
 乙表独有：`huggingface` `perplexity` `vertexai` `meta` `poe` `volcengine` `custom`。
 **推测**甲是较早的翻译/转写 provider 枚举、乙是较新的 LLM 服务注册表，**未核实**。
 
-### A-3.2 ⭐ 最重要的发现：**它没有为任何一家装 SDK**
+### A-3.2 ⭐ 架构：**混合制 —— 4 家原生 SDK + 其余走 OpenAI 兼容**
 
-我独立核对了 `app_package.json`（29 个 runtime 依赖）与 `nm.txt`（417 个打包进去的 node_modules）。
-与 LLM 相关的**全部**如下：
+> 🛑 **本小节是对我自己前一版结论的推翻。** 我上一版写的是
+> **"它没有为任何一家装 SDK，~31 家全靠 OpenAI 兼容 + baseURL"**，并标了"高置信，独立双源核实"。
+> **这是错的**，而且**错在方法上**，值得记录下来。
 
-```
-ai ^5.0.9                 @ai-sdk/react ^2.0.9      @ai-sdk/provider
-@ai-sdk/provider-utils    @ai-sdk/gateway           openai ^4.56.1
-langchain ^0.3.6          @langchain/core           @langchain/openai
-@langchain/mistralai      @mistralai/mistralai      @langchain/textsplitters
-```
+**我的错误链条**：我查了 `app_package.json`（29 个 runtime 依赖）与 `nm.txt`（417 个 node_modules 目录），
+两处都没有 `@ai-sdk/anthropic` / `@ai-sdk/google` 之流，于是断定"没装"。
+**但这两个"来源"根本不独立** —— 它们量的是同一件事：**以独立目录形式随包分发的依赖**。
+纯 JS 的库会被打包器**内联进 `dist-electron/main/index-*.js`**，从两处同时消失；
+只有原生模块（`sqlite3`、`sherpa-onnx-node`…）才会留在 `nm.txt` 里。
+**「两处都查不到」对纯 JS 库不构成任何证据。我把"没看见"当成了"不存在"。**
 
-**`@ai-sdk/anthropic` / `@ai-sdk/google` / `@ai-sdk/deepseek` … 一个都没有。**
+**实际情况（我在 12 MB 主进程 bundle 里直接 grep 计数，非转述）**：
 
-→ **结论（高置信，我独立双源核实）：memo.ac 的 ~31 家"供应商"是靠一个 OpenAI 兼容客户端 + 每家一个 `baseURL` 实现的**，
-唯一例外是 Mistral（走 LangChain 专用包）。**这正是我们 `packages/llm/src/providers/openai-compatible.ts` 已有的做法。**
-也就是说：**用户要的「和 memo 一样接入在线模型 API」，我们的架构已经对了，缺的只是供应商清单与配置 UI。**
-（`@langchain/textsplitters` 的存在也印证了 R-01 关于本地 RAG 的判断。）
+| 标记 | 主进程 bundle 命中数 |
+|---|---|
+| `ChatOpenAI` | **19** |
+| `/v1/messages`（Anthropic Messages API 路径） | **28** |
+| `x-api-key`（Anthropic 认证头） | **11** |
+| `api.anthropic.com` | **7** |
+| `ChatAnthropic` | **5** |
+| `generativelanguage.googleapis.com` | **5** |
+| `ChatGoogleGenerativeAI` | **4** |
+| `ChatOllama` | **2** |
+| `anthropic-version` | **2** |
+| `ChatMistralAI` / `@anthropic-ai/sdk` / `@google/genai` | 各 **1** |
+| `ChatDeepSeek` / `ChatXAI` / `ChatZhipuAI` / `ChatGroq` / `ChatTogetherAI` | **各 0** |
+
+→ **修正后的结论**：memo.ac 是**混合制**。
+
+- **4 家有原生客户端**（协议不兼容 OpenAI，必须单独适配）：
+  **Claude**（Anthropic Messages API：`/v1/messages` + `x-api-key` + `anthropic-version` 头）、
+  **Gemini**（`generativelanguage.googleapis.com`）、**Mistral**、**Ollama**。
+- **其余约 20 家走同一个 OpenAI 兼容客户端 + 每家一个 `baseURL`**
+  （DeepSeek / xAI / 智谱 / Groq / Together / 通义 / 豆包 / MiniMax / 千帆 / SiliconCloud / OpenRouter / LM Studio … 均无专用类）。
+
+**对我们的真实含义（比我上一版给的建议更贵，请以此版为准）**：
+- OpenAI 兼容这条路**确实覆盖了大多数（约 20/24）**，我们 `openai-compatible.ts` 的方向没错。
+- **但 Claude 与 Gemini 覆盖不了** —— 这两家恰恰是最主流的两家。
+  想接它们，`packages/llm` **必须新增两个适配器**（Anthropic Messages 格式 + Gemini 格式），
+  这不是"加一条注册表记录"就能解决的。**上一版我说"缺的只是清单与 UI"，低估了工作量。**
+- 附带发现：bundle 里还内联了 `@alicloud/tingwu20230930`（阿里"通义听悟"，是**语音/会议转写**服务而非 LLM），
+  **推测**为第 5 条云 ASR 通路，但仅 1 处命中，**未核实**。
 
 ### A-3.3 供应商描述符的 schema（这份值得抄）**[F]**
 

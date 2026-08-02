@@ -6,6 +6,8 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { resolveStoreRoot } from '@openmemo/pipeline';
+
 export interface AppPaths {
   readonly dataDir: string;
   readonly dbFile: string;
@@ -45,7 +47,15 @@ export function resolvePaths(override?: string): AppPaths {
     logsDir: join(dataDir, 'logs'),
     tmpDir: join(dataDir, 'tmp'),
     mediaDir: join(dataDir, 'media'),
-    modelsDir: join(dataDir, 'models'),
+    /*
+     * 用 `@openmemo/pipeline` 的 `resolveStoreRoot` —— **不要在这里再推导一遍**。
+     *
+     * 这里曾经是第 4 份各自为政的 storeRoot 推导，且**不读 `OPENMEMO_MODELS`**。
+     * 目前它够不到产品路径（`setup.ts` 覆盖了），所以没造成故障 ——
+     * 但"现在恰好没事"和"对"是两回事：留着就是下一次踩坑的种子，
+     * 而这类不一致的代价已经付过（Windows 上 Roaming/Local 分叉让已装的包永远找不到）。
+     */
+    modelsDir: resolveStoreRoot(dataDir),
     extensionsDir: process.env['OPENMEMO_EXT_DIR'] ?? join(dataDir, 'bin', 'ext'),
   };
 }
