@@ -69,12 +69,33 @@ export function setCsrf(token: string): void {
  * 从 URL fragment 取出 daemon 交接的 token 并**立刻抹掉**。
  * 抹掉是为了防止 URL 被截图 / 分享 / 进浏览器历史记录。
  */
-export function consumeHandoffToken(): string | null {
+/**
+ * 交接 token 在**模块加载时同步抓取**，而不是等握手时再读。
+ *
+ * ## 为什么必须同步
+ *
+ * 原实现在 `connectToDaemon()` 里读 hash，而那之前有一个
+ * `await rawFetch('/api/health')` —— 一次**真实网络往返**。
+ * 而 react-router 首屏会**同步**地 `replaceState` 重定向
+ * （新用户 `/` → `/onboarding`），把 `#t=…` 一起抹掉。
+ *
+ * **同步的重定向必然赢过排在 await 后面的读取** —— 这不是竞态，是必然：
+ * 新用户 100% 丢 token，而且 URL 里再无副本，**刷新和重开浏览器都救不回来**。
+ *
+ * 所以捕获必须发生在任何路由代码运行之前 —— 模块顶层求值是最早的同步时机。
+ */
+const HANDOFF_TOKEN: string | null = (() => {
   if (typeof window === 'undefined') return null;
   const m = /^#t=([A-Za-z0-9_-]+)$/.exec(window.location.hash);
   if (!m) return null;
+  // 立刻抹掉，避免 token 停留在地址栏 / 被写进浏览器历史
   window.history.replaceState(null, '', window.location.pathname + window.location.search);
-  return m[1];
+  return m[1] ?? null;
+})();
+
+/** 取模块加载时抓到的交接 token（幂等，可重复调用）。 */
+export function consumeHandoffToken(): string | null {
+  return HANDOFF_TOKEN;
 }
 
 /** 裸 fetch：不做 surface 记账，供 connect.ts 的握手阶段使用。 */

@@ -110,7 +110,10 @@ export async function connectToDaemon(): Promise<ConnectResult> {
   }
 
   // ── 端口漂移检测（ADR-006 决策 2）：麦克风授权按 origin 隔离，端口变了要重新授权 ──
-  const expected = 17650;
+  // 「端口漂移」的判据必须是**我们实际是从哪个端口加载进来的**，不是硬编码的默认端口。
+  // 硬编码 17650 会让任何非默认端口部署（`--port` / 配置文件）常驻一条假警告 ——
+  // 而这条警告的本意是提醒"麦克风授权可能要重点一次"，喊狼来了会让用户学会无视它。
+  const expected = window.location.port ? Number(window.location.port) : 80;
   if (health.port !== expected) {
     useConnectionStore.getState().setPortDrift({ expected, actual: health.port });
   }
