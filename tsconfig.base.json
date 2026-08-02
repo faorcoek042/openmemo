@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "_comment": [
+    "全仓库共享的 TS 编译选项。各包/应用继承此文件并只覆盖必要项。",
+    "注意：module/moduleResolution = NodeNext，因此包内相对 import 必须写 .js 后缀",
+    "（例：import { x } from './foo.js'），这是 Node ESM 的硬要求，不是可选风格。",
+    "apps/web 例外：它走 bundler 解析（见 apps/web/tsconfig.json）。"
+  ],
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "incremental": true,
+
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    // 刻意不开 noUnusedLocals / noUnusedParameters：
+    // 未使用变量是 lint 关注点，不该阻断编译（尤其多 agent 并行开发期间）。
+    // 已由 eslint 的 @typescript-eslint/no-unused-vars 覆盖，且有 `^_` 前缀豁免。
+
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true
+  }
+}

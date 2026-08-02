@@ -21,3 +21,25 @@ media-cache/
 
 .env
 .env.local
+
+# TypeScript / 构建缓存（T-011）
+*.tsbuildinfo
+.tsbuildinfo/
+dist-types/
+
+# 原生组件（whisper.cpp / llama.cpp / sherpa-onnx / sqlite-vec / libsimple）的 CMake 构建目录
+.build/
+
+# 工具缓存
+.pnpm-store/
+.eslintcache
+.vite/
+.cache/
+coverage/
+
+# 许可证报告产物（scripts/license-report.mjs 生成，可随时重跑，不入库）
+/license-report.json
+/license-report.md
+
+# 注意：vendor/<submodule> 由 .gitmodules 管理，不要在此忽略。
+# vendor/manifests/*.json 必须入库（ADR-001 强制配套 1：C 类可追溯性）。

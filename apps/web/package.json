@@ -1,0 +1,40 @@
+{
+  "name": "@openmemo/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "React SPA —— 唯一 UI（ADR-003 决策 1 web-first）。含运行时安装页与模型管理页（章程要求 2.1 / 2.2）",
+  "scripts": {
+    "build": "tsc -b && vite build",
+    "clean": "tsc -b --clean",
+    "dev": "vite",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@openmemo/mindmap": "workspace:*",
+    "@openmemo/shared": "workspace:*",
+    "@tanstack/react-query": "^5.101.4",
+    "@tiptap/pm": "^3.29.2",
+    "@tiptap/react": "^3.29.2",
+    "@tiptap/starter-kit": "^3.29.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.28.0",
+    "markmap-lib": "^0.18.12",
+    "markmap-view": "^0.18.12",
+    "mind-elixir": "^5.14.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tailwind-merge": "^3.6.0",
+    "wavesurfer.js": "^7.12.11",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.2.0"
+  }
+}

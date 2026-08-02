@@ -1,0 +1,363 @@
+/**
+ * Runtime validation schemas (zod).
+ *
+ * These exist because a hand-maintained JSON registry rots. Concrete evidence from the
+ * products surveyed in R-04:
+ *   - GPT4All's models3.json:  `filesize` is a string, `disableGUI` is the string "true",
+ *                              `embeddingModel` is a real boolean. Three type conventions
+ *                              in one file.
+ *   - ComfyUI-Manager's model-list.json: `size` is "4.71MB", and there is no hash field.
+ *   - memo.ac's whisper-models.js: `size` is "77.7 MB", `sha` is a SHA-1.
+ *
+ * Every one of those is a hand-written JSON file with no schema gate. Ours is validated
+ * in CI (`validateModelManifest`) and at load time, so it cannot drift silently.
+ */
+
+import { z } from 'zod';
+
+/* ------------------------------ primitives -------------------------------- */
+
+export const Sha256Schema = z
+  .string()
+  .regex(/^[a-f0-9]{64}$/, 'sha256 must be 64 lowercase hex characters');
+
+export const Sha1Schema = z
+  .string()
+  .regex(/^[a-f0-9]{40}$/, 'sha1 must be 40 lowercase hex characters');
+
+/** Integer bytes, never a formatted string. */
+export const ByteSizeSchema = z
+  .number()
+  .int('size must be an integer number of bytes')
+  .nonnegative();
+
+/**
+ * Only https, and only from a compile-time host allowlist.
+ * ComfyUI-Manager's registry allows arbitrary URLs and has needed repeated security
+ * patches as a result; its own security_check.py is a post-hoc malware blocklist.
+ */
+export const ALLOWED_DOWNLOAD_HOSTS = [
+  'huggingface.co',
+  'hf-mirror.com',
+  'www.modelscope.cn',
+  'modelscope.cn',
+  'github.com',
+  'objects.githubusercontent.com',
+  'release-assets.githubusercontent.com',
+] as const;
+
+export const DownloadUrlSchema = z
+  .string()
+  .url()
+  .refine((u) => u.startsWith('https://'), { message: 'download URLs must use https' })
+  .refine(
+    (u) => {
+      try {
+        return (ALLOWED_DOWNLOAD_HOSTS as readonly string[]).includes(new URL(u).hostname);
+      } catch {
+        return false;
+      }
+    },
+    { message: `host must be one of: ${ALLOWED_DOWNLOAD_HOSTS.join(', ')}` },
+  );
+
+export const ProviderIdSchema = z.enum(['hf', 'hf-mirror', 'modelscope', 'github', 'custom']);
+export const BackendSchema = z.enum(['cuda', 'vulkan', 'rocm', 'metal', 'coreml', 'cpu']);
+export const OsPlatformSchema = z.enum(['darwin', 'win32', 'linux']);
+export const ArchSchema = z.enum(['x64', 'arm64']);
+
+/* ------------------------------- artifacts -------------------------------- */
+
+export const MirrorSchema = z.object({
+  provider: ProviderIdSchema,
+  url: DownloadUrlSchema,
+  official: z.boolean(),
+});
+
+export const PlatformSelectorSchema = z.object({
+  os: OsPlatformSchema,
+  arch: ArchSchema,
+  backend: BackendSchema.optional(),
+});
+
+export const ArtifactFileSchema = z.object({
+  role: z.enum(['weights', 'coreml-encoder', 'mmproj', 'library', 'binary', 'archive']),
+  name: z
+    .string()
+    .min(1)
+    // Path traversal guard. ComfyUI-Manager needed exactly this check after the fact.
+    .refine((n) => !n.includes('/') && !n.includes('\\') && !n.includes('..'), {
+      message: 'file name must be a bare basename with no path separators',
+    }),
+  sizeBytes: ByteSizeSchema,
+  sha256: Sha256Schema,
+  sha1: Sha1Schema.optional(),
+  mirrors: z.array(MirrorSchema).min(1, 'at least one mirror is required'),
+  optional: z.boolean().optional(),
+  platforms: z.array(PlatformSelectorSchema).optional(),
+  unpack: z.enum(['zip', 'tar.gz']).nullish(),
+});
+
+export const LicenseInfoSchema = z.object({
+  id: z.string().min(1),
+  gated: z.boolean(),
+  url: z.string().url(),
+  requiresAcceptance: z.boolean().optional(),
+});
+
+export const ResourceRequirementsSchema = z.object({
+  ramRequiredMB: z.number().int().positive(),
+  vramRequiredMB: z.number().int().nonnegative(),
+  diskRequiredMB: z.number().int().positive(),
+  cpuFeatures: z.array(z.string()),
+  computedAtContext: z.number().int().positive(),
+});
+
+export const GgufMetadataSchema = z.object({
+  architecture: z.string(),
+  blockCount: z.number().int().positive(),
+  embeddingLength: z.number().int().positive(),
+  headCount: z.number().int().positive(),
+  headCountKv: z.number().int().positive(),
+  keyLength: z.number().int().positive(),
+  valueLength: z.number().int().positive(),
+  contextLength: z.number().int().positive(),
+  kvBytesPerToken: z.number().int().positive(),
+});
+
+export const BenchmarkResultSchema = z.object({
+  rtf: z.number().positive(),
+  measuredAt: z.string(),
+  backend: BackendSchema,
+  deviceName: z.string(),
+  sampleDurationSec: z.number().positive(),
+});
+
+/* -------------------------------- models ---------------------------------- */
+
+export const QuantizationSchema = z.enum([
+  'f32', 'f16', 'bf16',
+  'q8_0', 'q6_k', 'q5_k_m', 'q5_1', 'q5_0', 'q4_k_m', 'q4_k_s', 'q4_0',
+  'q3_k_m', 'q2_k', 'iq4_xs', 'iq3_m', 'iq2_m',
+]);
+
+export const ModelEntrySchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    id: z.string().min(1),
+    groupId: z.string().min(1),
+    role: z.enum(['asr', 'llm']),
+    family: z.string().min(1),
+    arch: z.string().min(1),
+    format: z.enum(['ggml', 'gguf', 'onnx', 'nemo', 'coreml']),
+    quantization: QuantizationSchema,
+    quantTier: z.enum(['small', 'balanced', 'large', 'full']),
+    displayName: z.string().min(1),
+    displayNameZh: z.string().min(1),
+    descriptionZh: z.string(),
+    descriptionEn: z.string(),
+    languages: z.array(z.string()).min(1),
+    tags: z.array(z.string()),
+    files: z.array(ArtifactFileSchema).min(1),
+    totalSizeBytes: ByteSizeSchema,
+    requirements: ResourceRequirementsSchema,
+    gguf: GgufMetadataSchema.optional(),
+    license: LicenseInfoSchema,
+    source: z.object({
+      provider: ProviderIdSchema,
+      repo: z.string().min(1),
+      revision: z.string().min(1),
+    }),
+    benchmark: BenchmarkResultSchema.nullable(),
+    catalogVersion: z.string().min(1),
+  })
+  // Reject the fabricated-metric fields memo.ac ships, so they cannot creep back in.
+  .strict()
+  .refine(
+    (m) => m.totalSizeBytes === sumRequiredFileBytes(m.files),
+    { message: 'totalSizeBytes must equal the sum of non-optional file sizes' },
+  )
+  .refine((m) => m.gguf == null || m.format === 'gguf', {
+    message: 'gguf metadata is only valid on format="gguf" entries',
+  })
+  .refine(
+    (m) =>
+      m.gguf == null ||
+      m.gguf.kvBytesPerToken ===
+        m.gguf.blockCount * m.gguf.headCountKv * (m.gguf.keyLength + m.gguf.valueLength) * 2,
+    { message: 'kvBytesPerToken is inconsistent with the GGUF header fields' },
+  );
+
+function sumRequiredFileBytes(files: { sizeBytes: number; optional?: boolean }[]): number {
+  return files.filter((f) => !f.optional).reduce((a, f) => a + f.sizeBytes, 0);
+}
+
+export const ModelManifestSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    catalogVersion: z.string().min(1),
+    generatedAt: z.string(),
+    models: z.array(ModelEntrySchema),
+  })
+  .strict()
+  .refine((m) => new Set(m.models.map((x) => x.id)).size === m.models.length, {
+    message: 'duplicate model id',
+  })
+  .superRefine((m, ctx) => {
+    // One sha256 must never map to two different sizes — that means someone typed a
+    // number by hand. This is the check that would have caught conflating
+    // ggml-tiny.bin (77,691,713) with ggml-tiny.en.bin (77,704,715).
+    const bySha = new Map<string, number>();
+    for (const model of m.models) {
+      for (const f of model.files) {
+        const prev = bySha.get(f.sha256);
+        if (prev != null && prev !== f.sizeBytes) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `sha256 ${f.sha256.slice(0, 12)}… declared with two different sizes (${prev} vs ${f.sizeBytes})`,
+          });
+        }
+        bySha.set(f.sha256, f.sizeBytes);
+      }
+    }
+  });
+
+/* ------------------------------- backends --------------------------------- */
+
+export const BackendPackSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    id: z.string().min(1),
+    engine: z.enum(['whisper.cpp', 'llama.cpp', 'sherpa-onnx', 'ffmpeg', 'yt-dlp']),
+    engineVersion: z.string().min(1),
+    ggmlAbi: z.string().nullable(),
+    backend: BackendSchema,
+    tier: z.enum(['builtin', 'downloadable']),
+    os: OsPlatformSchema,
+    arch: ArchSchema,
+    displayName: z.string().min(1),
+    displayNameZh: z.string().min(1),
+    files: z.array(ArtifactFileSchema).min(1),
+    totalSizeBytes: ByteSizeSchema,
+    cudaArchitectures: z.array(z.string()).optional(),
+    requiresDriver: z
+      .object({
+        nvidiaDriver: z.string().optional(),
+        vulkanApi: z.string().optional(),
+        rocmVersion: z.string().optional(),
+        macosVersion: z.string().optional(),
+      })
+      .nullable(),
+    license: LicenseInfoSchema,
+    providesFiles: z.array(z.string()).min(1),
+    installPath: z.string().min(1),
+    priority: z.number().int(),
+    benchmark: z.null(),
+    catalogVersion: z.string().min(1),
+  })
+  .strict();
+
+export const BackendManifestSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    catalogVersion: z.string().min(1),
+    generatedAt: z.string(),
+    packs: z.array(BackendPackSchema),
+  })
+  .strict()
+  .refine((m) => new Set(m.packs.map((p) => p.id)).size === m.packs.length, {
+    message: 'duplicate pack id',
+  });
+
+/* ------------------------------- hardware --------------------------------- */
+
+export const HardwareInfoSchema = z.object({
+  schemaVersion: z.literal(1),
+  detectedAt: z.string(),
+  os: z.object({
+    platform: OsPlatformSchema,
+    arch: ArchSchema,
+    version: z.string(),
+  }),
+  cpu: z.object({
+    brand: z.string(),
+    physicalCores: z.number().int().positive(),
+    logicalCores: z.number().int().positive(),
+    features: z.array(z.string()),
+  }),
+  ram: z.object({
+    totalMB: z.number().int().positive(),
+    availableMB: z.number().int().nonnegative().nullable(),
+  }),
+  unifiedMemory: z.boolean(),
+  gpus: z.array(
+    z.object({
+      index: z.number().int().nonnegative(),
+      vendor: z.enum(['nvidia', 'amd', 'intel', 'apple', 'other']),
+      name: z.string(),
+      vramTotalMB: z.number().int().nonnegative().nullable(),
+      vramFreeMB: z.number().int().nonnegative().nullable(),
+      driverVersion: z.string().nullable(),
+      capabilities: z.record(z.string(), z.string()),
+      backends: z.array(BackendSchema),
+    }),
+  ),
+  backends: z.array(
+    z.object({
+      id: BackendSchema,
+      available: z.boolean(),
+      installed: z.boolean(),
+      version: z.string().nullable(),
+      deviceIndex: z.number().int().nullable(),
+      isa: z.string().nullish(),
+      unavailableReason: z.string().nullish(),
+    }),
+  ),
+  selectedBackend: BackendSchema,
+  selectedGpuIndex: z.number().int().nullable(),
+  disks: z.array(
+    z.object({
+      mount: z.string(),
+      pathFor: z.enum(['models_root', 'runtimes_root', 'other']),
+      path: z.string(),
+      freeMB: z.number().int().nonnegative(),
+      totalMB: z.number().int().positive(),
+    }),
+  ),
+});
+
+/* -------------------------------- helpers --------------------------------- */
+
+export interface ValidationResult<T> {
+  ok: boolean;
+  data: T | null;
+  errors: string[];
+}
+
+/** Structurally typed so it survives zod major-version renames of the result type. */
+type SafeParseLike<T> =
+  | { success: true; data: T }
+  | { success: false; error: { issues: { path: PropertyKey[]; message: string }[] } };
+
+function toResult<T>(parsed: SafeParseLike<T>): ValidationResult<T> {
+  if (parsed.success) return { ok: true, data: parsed.data, errors: [] };
+  return {
+    ok: false,
+    data: null,
+    errors: parsed.error.issues.map(
+      (i) => `${i.path.map(String).join('.') || '<root>'}: ${i.message}`,
+    ),
+  };
+}
+
+export function validateModelManifest(input: unknown) {
+  return toResult(ModelManifestSchema.safeParse(input));
+}
+
+export function validateBackendManifest(input: unknown) {
+  return toResult(BackendManifestSchema.safeParse(input));
+}
+
+export function validateHardwareInfo(input: unknown) {
+  return toResult(HardwareInfoSchema.safeParse(input));
+}

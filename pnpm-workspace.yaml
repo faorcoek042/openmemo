@@ -1,0 +1,16 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# pnpm 10 默认阻止依赖的 postinstall 脚本。以下包必须允许执行安装脚本，
+# 否则原生模块 / 二进制下载会静默失败。每一项都记录了原因（可追溯，呼应 ADR-001）。
+onlyBuiltDependencies:
+  # 原生模块，需要 node-gyp 或 prebuild-install 拉预编译 .node
+  - better-sqlite3
+  # ADR-002 v2 允许：GPL-3.0 的 FFmpeg 二进制，postinstall 下载对应平台产物
+  - ffmpeg-static
+  # ADR-002 v2 允许：postinstall 下载 yt-dlp 官方二进制（GPLv3+）
+  - youtube-dl-exec
+  # 构建工具链的原生二进制
+  - esbuild
+  - '@tailwindcss/oxide'

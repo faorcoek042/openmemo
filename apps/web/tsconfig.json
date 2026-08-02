@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "_comment": [
+    "web 是唯一走 bundler 解析的项目（其余包走 NodeNext）。",
+    "emitDeclarationOnly：composite 项目不允许 noEmit，但真正的打包由 Vite 负责，",
+    "所以 tsc 只做类型检查 + 产出 .d.ts 到 dist-types/（已 gitignore）。",
+    "vite.config.ts 刻意不纳入 include —— Vite 自己用 esbuild 编译它，无需进构建图。"
+  ],
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist-types",
+    "tsBuildInfoFile": "dist-types/.tsbuildinfo",
+    "emitDeclarationOnly": true,
+
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["vite/client"]
+  },
+  "include": ["src/**/*"],
+  "references": [{ "path": "../../packages/shared" }, { "path": "../../packages/mindmap" }]
+}

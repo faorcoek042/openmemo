@@ -1,0 +1,29 @@
+{
+  "name": "@openmemo/daemon",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "本地 daemon（Node.js + TS）：任务队列、硬件探测、下载器、DB。仅监听 127.0.0.1（ADR-003 安全硬要求）",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@openmemo/downloader": "workspace:*",
+    "@openmemo/mindmap": "workspace:*",
+    "@openmemo/pipeline": "workspace:*",
+    "@openmemo/runtime": "workspace:*",
+    "@openmemo/shared": "workspace:*",
+    "better-sqlite3": "^13.0.2",
+    "fastify": "^5.11.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0"
+  }
+}

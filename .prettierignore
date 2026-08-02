@@ -1,0 +1,15 @@
+# 第三方源码：绝不格式化（ADR-001 A 类，上游可追溯性优先）
+vendor/whisper.cpp/
+vendor/llama.cpp/
+vendor/sherpa-onnx/
+vendor/sqlite-vec/
+vendor/libsimple/
+
+# 构建产物
+**/dist/
+**/build/
+**/*.tsbuildinfo
+pnpm-lock.yaml
+
+# shadcn/ui 复制进来的源码（ADR-002 决策 2 豁免）—— 保持与上游一致，便于 diff
+apps/web/src/components/ui/

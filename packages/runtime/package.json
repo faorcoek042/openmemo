@@ -1,0 +1,26 @@
+{
+  "name": "@openmemo/runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "硬件探测 + GPU 后端包管理（章程要求 2.1：网页检测硬件 → 推荐后端 → 下载 → 安装 → 自检）",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@openmemo/downloader": "workspace:*",
+    "@openmemo/shared": "workspace:*"
+  }
+}

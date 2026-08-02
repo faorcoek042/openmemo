@@ -1,0 +1,25 @@
+{
+  "name": "@openmemo/downloader",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "统一下载器：GPU 后端包与模型权重共用（ADR-003 决策 6）。manifest + SHA256 + Range 断点续传 + 镜像切换",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@openmemo/shared": "workspace:*"
+  }
+}

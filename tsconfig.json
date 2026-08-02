@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "_comment": "解决方案根（solution-style）tsconfig。自身不编译任何文件，只负责 `tsc -b` 的构建拓扑。",
+  "files": [],
+  "references": [
+    { "path": "./packages/shared" },
+    { "path": "./packages/downloader" },
+    { "path": "./packages/runtime" },
+    { "path": "./packages/mindmap" },
+    { "path": "./packages/pipeline" },
+    { "path": "./apps/daemon" },
+    { "path": "./apps/web" }
+  ]
+}
