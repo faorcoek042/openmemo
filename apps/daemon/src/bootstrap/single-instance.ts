@@ -15,7 +15,24 @@ import { ulid } from '@openmemo/shared';
 export const DEFAULT_PORT = 17650;
 /** 冲突时的递增上限（D-01 §2.2 阶梯第 3 步）。 */
 export const MAX_PORT = 17659;
-export const BIND_HOST = '127.0.0.1';
+
+/**
+ * 监听地址。**默认 `127.0.0.1` —— 这个默认值不会因为任何配置而改变**（ADR-003）。
+ *
+ * 仅当用户**显式**设置 `OPENMEMO_HOST` 时才改变绑定地址。
+ * 典型场景：机器在 NAT 之后、只有特定端口能从外部访问，回环地址根本够不着。
+ *
+ * ⚠️ 设成非回环地址意味着**同网段任何设备都能打到这个端口**，
+ * 此时唯一的访问控制是 token。启动横幅会就此显式告警（见 main.ts）。
+ * Host 头仍然只接受 IP 字面量、拒绝一切域名，所以 DNS rebinding 防护**不受影响**。
+ */
+export const BIND_HOST = process.env['OPENMEMO_HOST']?.trim() || '127.0.0.1';
+
+/** 自探测/单实例握手一律走回环，与对外绑定地址无关（`0.0.0.0` 不是可连接地址）。 */
+export const PROBE_HOST = '127.0.0.1';
+
+/** 是否绑定在非回环地址 —— 用于启动告警与 Host 校验的日志说明。 */
+export const IS_PUBLIC_BIND = BIND_HOST !== '127.0.0.1' && BIND_HOST !== '::1';
 
 /**
  * 为什么端口必须尽量稳定：浏览器的 localStorage / cookie / **麦克风授权**
@@ -91,7 +108,8 @@ export async function probeExisting(
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
-    const res = await fetch(`http://${BIND_HOST}:${port}/api/health`, { signal: ac.signal });
+    // 走回环而非 BIND_HOST：`0.0.0.0` 是绑定通配符、不是可连接地址。
+    const res = await fetch(`http://${PROBE_HOST}:${port}/api/health`, { signal: ac.signal });
     if (!res.ok) return undefined;
     const body = (await res.json()) as Partial<RuntimeInfo> & { app?: string };
     return body.app === 'openmemo' ? (body as RuntimeInfo) : undefined;
