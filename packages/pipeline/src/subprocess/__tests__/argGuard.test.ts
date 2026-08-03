@@ -252,6 +252,76 @@ describe('L7 (§8.5) — path traversal', () => {
     // If this ever starts passing, someone replaced realpath with path.resolve.
     assertRejected(r, 'path_escape', 'symlink escape');
   });
+
+  /*
+   * ★ T-143 ② — the Windows half of this guard, executed on Linux for the first time.
+   *
+   * Until now `assertWithinRoot` read the host's `process.platform`, so on this machine
+   * the UNC / drive-relative branch was UNREACHABLE and no test had ever run it. That is
+   * bug #8 of the false-green family (`isSafeExecutable`) sitting untouched in the
+   * function next door — same shape, same fix: platform becomes an input.
+   *
+   * These cases pass the platform EXPLICITLY, so they pin the guard's behaviour on
+   * Windows regardless of where the suite happens to run.
+   */
+  describe('T-143 ② — win32 path forms (previously unreachable on Linux)', () => {
+    const WIN_ROOT = 'C:\\openmemo\\data';
+
+    it('★ UNC path is rejected under win32 rules', async () => {
+      assertRejected(
+        await assertWithinRoot(WIN_ROOT, '\\\\server\\share\\evil', 'win32'),
+        'path_escape',
+        'UNC',
+      );
+    });
+
+    it('★ drive-relative path is rejected under win32 rules', async () => {
+      assertRejected(await assertWithinRoot(WIN_ROOT, 'C:evil', 'win32'), 'path_escape', 'C:rel');
+      assertRejected(await assertWithinRoot(WIN_ROOT, 'd:evil', 'win32'), 'path_escape', 'd:rel');
+    });
+
+    it('★ absolute drive path outside the root is rejected under win32 rules', async () => {
+      assertRejected(
+        await assertWithinRoot(WIN_ROOT, 'C:\\Windows\\win.ini', 'win32'),
+        'path_escape',
+        'other absolute drive path',
+      );
+    });
+
+    it('★ backslash traversal is rejected under win32 rules (posix rules would miss it)', async () => {
+      assertRejected(
+        await assertWithinRoot(WIN_ROOT, '..\\..\\Windows\\win.ini', 'win32'),
+        'path_escape',
+        'backslash dot-dot',
+      );
+    });
+
+    it('★ a legitimate win32 child is still accepted (the guard must not reject everything)', async () => {
+      const r = await assertWithinRoot(WIN_ROOT, 'media\\ok.wav', 'win32');
+      assert.equal(r.ok, true, 'a normal Windows subpath must pass');
+      assert.equal(r.ok === true ? r.value : '', 'C:\\openmemo\\data\\media\\ok.wav');
+    });
+
+    /*
+     * The half that documents WHY this needed a parameter at all: run the exact same
+     * inputs under posix rules and the UNC form is NOT rejected — it becomes a file
+     * whose name contains backslashes, sitting inside the root.
+     *
+     * That is the honest scope of the bug: harmless on Linux, but it means the Windows
+     * branch had never been executed by anything, ever.
+     */
+    it('★ under posix rules the same UNC string is merely a weird filename — this is why the branch was invisible', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'openmemo-guard-'));
+      dirs.push(root);
+      const r = await assertWithinRoot(root, '\\\\server\\share\\evil', 'linux');
+      assert.equal(r.ok, true, 'posix treats backslashes as ordinary filename characters');
+      assert.equal(
+        r.ok === true ? r.value : '',
+        join(root, '\\\\server\\share\\evil'),
+        'it stays INSIDE the root — not an escape, just untested',
+      );
+    });
+  });
 });
 
 describe('L4 — playlist indirection (measured attack, T-026)', () => {

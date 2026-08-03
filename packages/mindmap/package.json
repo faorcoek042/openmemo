@@ -20,7 +20,9 @@
   ],
   "scripts": {
     "build": "tsc -b",
-    "clean": "tsc -b --clean"
+    "clean": "tsc -b --clean",
+    "_comment:test": "★ T-135 / T-142：**不要写成 `node --test dist/**/*.test.js`**。pnpm 用系统 sh 跑脚本，sh 不认 `**`，会把它展开成「恰好两层」。实测后果：`apps/daemon` 13 个测试文件**只跑到 9 个**，漏掉的里面有 **7 条是红的**，而 `pnpm -r test` 一路报绿；`packages/pipeline` 10 个只跑到 1 个；`packages/db` 此前「碰巧对」，原因是它的文件恰好都在一层、sh 匹配不到才把 pattern 原样透传给 node —— **依赖巧合的正确等于还没修**。改用 node 自己的默认发现（不给位置参数：递归扫本包、跳过 node_modules），「记得加引号」这条纪律就从脚本里消失了。前置的 `node -e` 是**必需**守卫，不是可选：`node --test` 对**空集返回 exit 0**（⑤A-2，本项目已发生三次），所以跑之前必须先证明「源码里有几个测试文件，dist 里就有几个」。**T-142 又在最前面加了 `check-test-scripts.mjs`**：上面那条守卫只能守**已经有脚本的包**，而 `runtime`(38) 与 `llm`+`mindmap`(60) 是「有测试文件、压根没 test 脚本」—— `pnpm -r test` 直接跳过，一个字都不说。那条跨包守卫必须挂在包的 test 脚本里，因为 `pnpm -r` **默认不含 workspace root**。db / pipeline / runtime / llm / mindmap / daemon **六个包共用这一行，别再出现第七种写法**。",
+    "test": "node ../../scripts/check-test-scripts.mjs && node -e \"const{globSync}=require('node:fs');const s=globSync('src/**/*.test.ts').length,d=globSync('dist/**/*.test.js').length;if(s===0||d!==s)throw new Error('test discovery broken: '+s+' source test files vs '+d+' compiled in dist —— 先 pnpm build:safe；node --test 对空集/漏集一律返回绿')\" && node --test"
   },
   "dependencies": {
     "@openmemo/llm": "workspace:*",
