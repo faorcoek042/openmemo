@@ -36,6 +36,8 @@
     "src/components/common/jobToastModel.ts",
     "src/lib/jobs/noteJobs.test.ts",
     "src/lib/jobs/noteJobs.ts",
+    "src/lib/nav/activeNav.test.ts",
+    "src/lib/nav/activeNav.ts",
     "src/lib/api/notesCache.test.ts",
     "src/lib/api/notesCache.ts",
     "src/lib/stores/progress.store.ts",
