@@ -290,8 +290,20 @@ export default function RecorderPage() {
           {/* 引擎：如实展示可用性（来自 daemon 实测），不是可切换的假选项 */}
           <AsrEngineStatus />
 
-          {/* 语言：真会发给后端的那个参数 */}
-          <TranscribeOptions language={language} onLanguageChange={setLanguage} showModel={false} />
+          {/*
+            语言：真会发给后端的那个参数。
+
+            ★ `showModel` 曾经写死为 `false`，注释理由是"不做可切换的假选项"。
+            那个判断在当时是对的 —— 选择器确实是假的（选中的值从不发给后端）。
+            但 `AsrModelPicker` 已经改成走 `POST /api/models/activate`、**选了真的生效**，
+            于是这个 `false` 变成了一个过时的保护：用户装了 2 个模型，
+            录音页仍然 0 个下拉，看起来像"这软件不让我选模型"。
+
+            教训与 App.tsx 里那个 `pending` 分支同源：**临时保护必须与它保护的条件绑定，
+            不能靠人记得回来删。** 这里改为常开，条件判断交给选择器自己 ——
+            它在"一个模型都没装"时会自动渲染成 [去安装模型]，而不是一个空下拉框。
+          */}
+          <TranscribeOptions language={language} onLanguageChange={setLanguage} showModel />
 
           <p>
             ⓘ{' '}

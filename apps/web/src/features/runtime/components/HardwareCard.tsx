@@ -1,4 +1,4 @@
-import { Cpu, HardDrive, MemoryStick, MonitorCog } from 'lucide-react';
+import { ChevronRight, Cpu, HardDrive, MemoryStick, MonitorCog } from 'lucide-react';
 import type { HardwareInfo } from '@openmemo/shared';
 import { BackendChip } from '../../../components/common/BackendChip';
 import { formatBytes } from '../../../lib/format/bytes';
@@ -101,17 +101,35 @@ export function HardwareCard({ hw, locale }: { hw: HardwareInfo; locale: string 
         ))}
       </div>
 
-      {/* 探测不可用时给出真实原因，而不是笼统的"不可用" */}
+      {/*
+        探测不可用时给出真实原因，而不是笼统的"不可用"。
+
+        ⚠️ 但**默认折叠**。这里原来是直接摊开的一个 `<ul>`，实测在本机渲染成 6 行：
+        `cuda：probe did not complete: probe executable not found: /tmp/…/bin/runtime/probe`
+        —— 英文、带绝对路径、六行几乎一模一样。它出现在整页最上方那张卡里，
+        成了用户进 `/runtime` 第一眼看到的东西。
+
+        D-05 §5.3 第 3 条写得很直白：**禁止把 `error.detail` 原样甩给用户，
+        技术细节折叠在 `[查看详情]` 里**。这就是那一条的落地 ——
+        信息一个字没少（点开就有，可复制去提 issue），但不再占据首屏。
+        芯片行上已经用 `不可用` 说明了结论，细节是给排查的人看的，不是给所有人看的。
+      */}
       {hw.backends.some((b) => !b.available && b.unavailableReason) ? (
-        <ul className="mt-2 space-y-0.5">
-          {hw.backends
-            .filter((b) => !b.available && b.unavailableReason)
-            .map((b) => (
-              <li key={b.id} className="text-[11px] text-ink-muted">
-                {b.id}：{b.unavailableReason}
-              </li>
-            ))}
-        </ul>
+        <details className="group mt-2">
+          <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[11px] text-ink-muted hover:text-ink-secondary">
+            <ChevronRight className="size-3 transition-transform group-open:rotate-90" aria-hidden />
+            为什么这些后端不可用（{hw.backends.filter((b) => !b.available && b.unavailableReason).length} 项）
+          </summary>
+          <ul className="mt-1.5 space-y-0.5 border-l-2 border-line pl-2.5">
+            {hw.backends
+              .filter((b) => !b.available && b.unavailableReason)
+              .map((b) => (
+                <li key={b.id} className="font-mono text-[11px] break-all text-ink-muted">
+                  {b.id}：{b.unavailableReason}
+                </li>
+              ))}
+          </ul>
+        </details>
       ) : null}
 
       <p className="mt-2 text-[11px] text-ink-muted">

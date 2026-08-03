@@ -1,13 +1,13 @@
 import { Suspense, type ReactNode } from 'react';
-import { NavLink, Outlet } from 'react-router';
+import { NavLink, Outlet, useLocation } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { Activity, Cpu, FileAudio, Mic, Package, Plus, Settings, Star } from 'lucide-react';
 
 import { Banner } from './components/common/Banner';
 import { ConnectivitySummary } from './components/common/MockNotice';
-import { HealthBanner } from './components/common/HealthBanner';
+import { JobToaster } from './components/common/JobToaster';
 import { PanelBoundary } from './components/common/PanelBoundary';
-import { SecureContextBanner } from './components/common/SecureContextBanner';
+import { ReadinessBanner } from './components/common/ReadinessBanner';
 import { SearchBox } from './features/search';
 import { FolderTree } from './features/folders';
 import { Button } from './components/common/Button';
@@ -22,8 +22,43 @@ export default function App() {
   const { t } = useTranslation();
   const setTasksDrawer = useUiStore((s) => s.setTasksDrawer);
   const conn = useConnectionStore((s) => s.state);
-  const multiTab = useConnectionStore((s) => s.multiTabDegraded);
   const activeCount = useProgressStore((s) => Object.keys(s.byJob).length);
+
+  /**
+   * 首启引导走**无外壳**布局。
+   *
+   * 之前 `/onboarding` 是套在完整外壳里渲染的：一个还没配置过任何东西的新用户，
+   * 第一屏同时看到三条黄色降级条幅（"中文分词未启用""向量检索未启用""转写组件缺失"）
+   * 和一整列他还没有权利用的导航（全部笔记 / 星标 / 录音 / 运行时 / 模型 / 任务中心 / 设置）。
+   *
+   * 这与引导本身的承诺直接矛盾 —— 引导第一句写的是"每一步都可以跳过"，
+   * 而背景里同时挂着三条"你这儿有问题"。R-04 §1.5 的经验是**第一次不要让用户做任何配置决策**，
+   * 那就更不该让他先读三条他还看不懂的降级告警。
+   *
+   * 引导页自己会把这些信息按顺序讲一遍（第 2 步讲加速、第 3 步讲模型），
+   * 所以这里不是"藏问题"，是**不要在同一屏把同一件事说两遍、还用告警的语气说**。
+   *
+   * 判据用 `startsWith` 而不是全等：引导以后加子步骤（`/onboarding/models`）不会悄悄失效。
+   */
+  const chromeless = useLocation().pathname.startsWith('/onboarding');
+  if (chromeless) {
+    return (
+      <div className="h-full overflow-auto bg-surface-0">
+        {/* 内容不足一屏时垂直居中，超过一屏时正常从顶部滚动 ——
+            `min-h-full` + `items-center` 的组合两种情况都成立，不需要 JS 测高。 */}
+        <div className="flex min-h-full items-center justify-center px-6 py-10">
+          <div className="w-full max-w-3xl">
+            <PanelBoundary name={t('app.name')}>
+              <Suspense fallback={<div className="p-6 text-sm text-ink-muted">{t('common.loading')}</div>}>
+                <Outlet />
+              </Suspense>
+            </PanelBoundary>
+          </div>
+        </div>
+        <JobToaster />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -33,20 +68,22 @@ export default function App() {
           ① 顶栏一个连通性摘要（已接通 N / 模拟 M），
           ② 每个页面在自己的数据区域挂 <MockNotice surface=…/>。
           全部接通后两者都会自己消失，不需要谁记得回来删。 */}
-      {/* 产品降级态（分词未启用/转写组件缺失…）—— 装好后会自己消失 */}
-      <PanelBoundary name={t('diagnostics.title')} fallback={() => null}>
-        <HealthBanner />
+      {/*
+        ★ 顶部**只剩一条**「能力未就绪」，且默认折叠（T-107）。
+
+        之前这里是三块：HealthBanner（分词/向量/转写，最多三行）
+        + SecureContextBanner（自己再展开四行）+ multiTab（一行）——
+        七八行堆在首屏，用户的原话是「打开页面顶部一堆报错」。
+        其中 multiTab 和安全上下文里的 "webLocks 不可用" **本来就是同一件事**。
+
+        现在合并进 <ReadinessBanner/>：全就绪时渲染 null，有问题时占一行，
+        点开才看明细，每项带可点的修复动作。
+      */}
+      <PanelBoundary name={t('readiness.title')} fallback={() => null}>
+        <ReadinessBanner />
       </PanelBoundary>
       {conn === 'degraded' ? <Banner tone="warning" title={t('banner.sseDegraded')} /> : null}
       {conn === 'reconnecting' ? <Banner tone="info" title={t('banner.sseReconnecting')} /> : null}
-      {/*
-        ★ 非安全上下文：放在 multiTab 之前 —— 它是**功能级**不可用（录音直接没法用），
-        而 multiTab 只是体验降级。而且前者往往是后者的真因，先说因再说果。
-      */}
-      <PanelBoundary name={t('secureContext.title')} fallback={() => null}>
-        <SecureContextBanner />
-      </PanelBoundary>
-      {multiTab ? <Banner tone="info" title={t('banner.multiTab')} /> : null}
 
       <div className="flex min-h-0 flex-1">
         {/* ── 侧栏 ── */}
@@ -117,6 +154,14 @@ export default function App() {
       <PanelBoundary name={t('tasks.title')}>
         <TasksDrawer />
       </PanelBoundary>
+
+      {/*
+        安装 / 下载的全局即时反馈层。
+        实测：点「安装后端包」之后整整 6 秒页面一个字都没变（详见 JobToaster.tsx 文件头）。
+        它挂在外壳而不是某一页里，因为作业活在 daemon 中、不属于任何一页 ——
+        用户点完就切走也照样看得见进度和结果。
+      */}
+      <JobToaster />
     </div>
   );
 }

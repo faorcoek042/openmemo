@@ -47,11 +47,67 @@ export function BackendPackCard({
   const pendingCi = (pack as { availability?: string }).availability === 'pending-ci';
   const selfTestFailed = selfTest != null && !selfTest.passed;
 
+  const actions = pack.installed ? (
+    <>
+      {!isActive ? (
+        <Button size="sm" variant="secondary" onClick={() => onSelect(pack)}>
+          设为当前后端
+        </Button>
+      ) : null}
+      <Button size="sm" variant="ghost" onClick={() => onSelfTest(pack.id)}>
+        <Play className="size-3.5" aria-hidden />
+        自检
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={isLoadBearing}
+        title={
+          isLoadBearing
+            ? 'CPU 后端是兜底，删除后在没有其它可用后端时会导致推理进程崩溃，因此不允许卸载'
+            : undefined
+        }
+        onClick={() => onRemove(pack.id)}
+        data-testid={`backend-remove-${pack.id}`}
+      >
+        <Trash2 className="size-3.5" aria-hidden />
+        卸载
+      </Button>
+    </>
+  ) : (
+    <Button
+      size="sm"
+      variant={pack.recommended ? 'primary' : 'secondary'}
+      disabled={installing || !pack.applicable || pendingCi}
+      title={pendingCi ? '该组件已构建并核实过摘要，但尚未发布下载地址（需要先跑 CI 发布）' : undefined}
+      onClick={() => onInstall(pack.id)}
+      data-testid={`backend-install-${pack.id}`}
+    >
+      <Download className="size-3.5" aria-hidden />
+      {pendingCi
+        ? '尚未发布，暂不可安装'
+        : installing
+          ? '正在开始…'
+          : `安装 ${formatBytes(pack.totalSizeBytes, locale)}`}
+    </Button>
+  );
+
   return (
     <article
-      className="rounded-lg border border-line bg-surface-1 p-4"
+      className="rounded-lg border border-line bg-surface-1 p-3.5"
       data-testid={`backend-pack-${pack.id}`}
     >
+      {/*
+        ★ 动作按钮从"卡片底部自成一行"挪到了标题行右侧。
+
+        原来的结构是：标题行（右半边完全空着）→ 元信息 → **一整行只放一个按钮**。
+        实测每张卡因此多出约 40px 纯空白，而这一页要渲染 14 张卡 ——
+        光这一处就在页面上白白撑开约 560px。卡片本身没有更多信息要放，
+        右上角却空着，这是典型的"布局没用上，高度却付了钱"。
+
+        自检结果块仍然留在下面独占区域：它是**多行的诊断信息**，
+        塞进标题行会把行高撑乱，而且它出现的频率远低于按钮。
+      */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -96,6 +152,8 @@ export function BackendPackCard({
             </p>
           ) : null}
         </div>
+
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">{actions}</div>
       </div>
 
       {/* 自检结果 —— 失败必须给真实原因，不能只说"自检失败" */}
@@ -136,53 +194,6 @@ export function BackendPackCard({
           )}
         </div>
       ) : null}
-
-      <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-        {pack.installed ? (
-          <>
-            {!isActive ? (
-              <Button size="sm" variant="secondary" onClick={() => onSelect(pack)}>
-                设为当前后端
-              </Button>
-            ) : null}
-            <Button size="sm" variant="ghost" onClick={() => onSelfTest(pack.id)}>
-              <Play className="size-3.5" aria-hidden />
-              自检
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={isLoadBearing}
-              title={
-                isLoadBearing
-                  ? 'CPU 后端是兜底，删除后在没有其它可用后端时会导致推理进程崩溃，因此不允许卸载'
-                  : undefined
-              }
-              onClick={() => onRemove(pack.id)}
-              data-testid={`backend-remove-${pack.id}`}
-            >
-              <Trash2 className="size-3.5" aria-hidden />
-              卸载
-            </Button>
-          </>
-        ) : (
-          <Button
-            size="sm"
-            variant={pack.recommended ? 'primary' : 'secondary'}
-            disabled={installing || !pack.applicable || pendingCi}
-            title={pendingCi ? '该组件已构建并核实过摘要，但尚未发布下载地址（需要先跑 CI 发布）' : undefined}
-            onClick={() => onInstall(pack.id)}
-            data-testid={`backend-install-${pack.id}`}
-          >
-            <Download className="size-3.5" aria-hidden />
-            {pendingCi
-              ? '尚未发布，暂不可安装'
-              : installing
-                ? '正在开始…'
-                : `安装 ${formatBytes(pack.totalSizeBytes, locale)}`}
-          </Button>
-        )}
-      </div>
 
       {isLoadBearing && pack.installed ? (
         <p className="mt-1.5 text-right text-[11px] text-ink-muted">

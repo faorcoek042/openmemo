@@ -24,7 +24,6 @@
     "mockDetail": "Data is simulated in the browser for UI review. It will switch to real data once the daemon is implemented.",
     "sseDegraded": "Live updates disconnected — falling back to polling",
     "sseReconnecting": "Reconnecting to the local service…",
-    "multiTab": "This address is not a secure context (needs https:// or localhost), so cross-tab leader election is unavailable. Each tab opened its own connection — keep only one tab open.",
     "portDrift": "The port changed from {{expected}} to {{actual}}. The browser treats this as a new site, so microphone access must be granted again.",
     "shutdown": "The local service is shutting down"
   },
@@ -138,7 +137,12 @@
     "resume": "Resume",
     "cancel": "Cancel",
     "stopping": "Stopping…",
-    "retry": "Retry"
+    "retry": "Retry",
+    "queued": "Queued",
+    "resolving": "Choosing a source",
+    "downloading": "Downloading",
+    "verifying": "Verifying checksum",
+    "installing": "Installing"
   },
   "recorder": {
     "title": "Record and transcribe",
@@ -483,7 +487,11 @@
     "tokenizerDegraded": "Chinese tokenizer is not enabled (currently {{tokenizer}}); Chinese search may be inaccurate",
     "semanticDisabled": "Vector index is not enabled; semantic search is unavailable",
     "pipelineMissing": "Transcription components missing ({{items}}); imported media cannot be transcribed yet",
-    "fix": "Fix"
+    "fix": "Fix",
+    "restartRequired": "{{items}} installed — restart the local service for it to take effect",
+    "restartNow": "Restart now",
+    "restarting": "Restarting…",
+    "restartFailed": "Restart failed; please restart the local service manually"
   },
   "diagnostics": {
     "title": "Diagnostics",
@@ -555,6 +563,45 @@
       "webLocks": "Cross-tab leader election is unavailable — each tab opens its own connection.",
       "clipboard": "Copy buttons are unavailable — the clipboard API also requires a secure context.",
       "storage": "Session storage is blocked — saving still works (the token is kept in memory), but each reload costs one extra handshake."
+    }
+  },
+  "jobToast": {
+    "startedModel": "Downloading model · {{name}}",
+    "startedBackend": "Installing component · {{name}}",
+    "backgroundHint": "You can leave this page — it keeps going in the background",
+    "verifyingHint": "Download finished; verifying SHA-256 byte by byte. For large models this takes tens of seconds and the bar does not move — that is normal, not a freeze.",
+    "installingHint": "Unpacking into the model directory, almost done.",
+    "queuedHint": "Waiting for a free download lane; it will start automatically.",
+    "doneModel": "Installed · {{name}}",
+    "doneBackend": "Installed · {{name}}",
+    "doneModelHint": "Ready to use — paste a link on the capture page to transcribe.",
+    "doneBackendHint": "Available now; running jobs keep their current backend.",
+    "doneRestartHint": "Installed, but the local service must restart before it takes effect.",
+    "gotoCapture": "Transcribe now",
+    "gotoModels": "View models",
+    "gotoRuntime": "View runtime",
+    "restartNow": "Restart now",
+    "restarting": "Restarting…",
+    "blockedTitle": "On hold · {{name}}",
+    "blockedHint": "Not a failure — it resumes automatically once the condition is met.",
+    "failedTitle": "Install failed · {{name}}",
+    "retryingHint": "Retrying automatically ({{attempt}}/{{max}}) — nothing to do.",
+    "viewTasks": "Tasks",
+    "dismiss": "Dismiss",
+    "title": "Install and download progress"
+  },
+  "readiness": {
+    "title": "Not ready",
+    "summary": "{{count}} capabilities not ready",
+    "details": "Details",
+    "hide": "Hide",
+    "items": {
+      "secureContext": "{{count}} browser capabilities unavailable at this address (including recording)",
+      "secureContextHint": "Browsers only expose the microphone, clipboard and cross-tab locks over https or localhost. Open http://127.0.0.1 instead (works if you are on the machine running OpenMemo). This is not browser-specific — switching browsers will not help. Everything else is unaffected.",
+      "multiTab": "Cross-tab leader election unavailable; each tab opens its own connection",
+      "tokenizer": "Chinese tokenizer not enabled — Chinese search may be inaccurate",
+      "vec": "Vector search not enabled — semantic search unavailable",
+      "pipeline": "Transcription components missing — imported media cannot be transcribed yet"
     }
   }
 }

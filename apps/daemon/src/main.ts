@@ -12,7 +12,7 @@
  */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { openAppDatabase, defaultExtensionPaths, type AppDatabase } from '@openmemo/db';
 import { materializeSqliteExtensions } from '@openmemo/pipeline';
@@ -118,6 +118,23 @@ export class StartupConflictError extends Error {
 
 export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemon> {
   const paths = resolvePaths(opts.dataDir);
+
+  /*
+   * ★ 显式旗标覆盖指针时**必须说出来**。
+   *
+   * 优先级本身是对的（显式 `--data-dir` 该赢），错在**一声不吭**：
+   * 用户刚把数据迁到 A，运维用写死的 `--data-dir B` 重启，daemon 就安静地
+   * 挂在那个几乎是空壳的 B 上 —— 界面表现为"转写组件缺失 / 中文分词未启用 /
+   * 向量未启用"，看起来像产品坏了，实际只是指错了地方。
+   * 这类"配置被静默覆盖"的排查成本极高，因为**每一层看起来都正常**。
+   */
+  const pointerTarget = readDataDirPointer();
+  if (pointerTarget && opts.dataDir && resolve(pointerTarget) !== resolve(opts.dataDir)) {
+    console.warn(
+      `[daemon] ℹ️  指针文件指向 ${pointerTarget}，但命令行 --data-dir 指定了 ${opts.dataDir}，本次使用 ${opts.dataDir}。\n` +
+        `[daemon]    若你想用迁移后的位置，去掉 --data-dir 即可（不传时会自动读指针）。`,
+    );
+  }
   for (const dir of [paths.dataDir, paths.runtimeDir, paths.logsDir, paths.tmpDir]) {
     mkdirSync(dir, { recursive: true });
   }

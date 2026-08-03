@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Cpu } from 'lucide-react';
+import { ChevronRight, Cpu } from 'lucide-react';
 import type { GetBackendCatalogResponse } from '@openmemo/shared';
 
 import { Banner } from '../../components/common/Banner';
@@ -60,10 +60,50 @@ export default function RuntimePage() {
     [packs],
   );
 
+  /**
+   * ★ 把"本机根本装不了的包"从主列表里分出去。
+   *
+   * 排序把它们排到了后面，**但它们仍然占着同等大小的卡片**。实测本机：目录里 14 个包，
+   * 其中 9 个是 darwin/arm64、win32/x64、linux/arm64 —— 一台 linux/x64 机器上
+   * 永远不可能装的东西，却占了整页约三分之二的高度，每个都长成"标题 + 元信息 +
+   * 一个灰掉的安装按钮"。用户要滚过九屏别人的平台包，才看得完自己的五个。
+   *
+   * 这是"界面看着乱"的第一成因，而且**是密度问题不是配色问题** ——
+   * 换任何颜色都救不了一页 14 张等重卡片。
+   *
+   * 不直接删掉的理由：目录里有什么应当可查（跨平台构建是否齐全是真实需求，
+   * 也便于用户判断"换台机器能不能用"）。所以是**折叠**，不是隐藏，
+   * 且摘要行写清楚折了几个、为什么折。
+   */
+  const applicable = useMemo(() => sorted.filter((p) => p.applicable), [sorted]);
+  const inapplicable = useMemo(() => sorted.filter((p) => !p.applicable), [sorted]);
+
   const anyFailed = (installed.data?.packs ?? []).some((p) => p.selfTest && !p.selfTest.passed);
 
   function handleSelect(pack: GetBackendCatalogResponse['packs'][number]) {
     void select.mutateAsync(pack.backend);
+  }
+
+  /** 两处（主列表 / 折叠区）渲染同一种卡片，抽出来免得两边漂移。 */
+  function renderPack(p: GetBackendCatalogResponse['packs'][number]) {
+    return (
+      <BackendPackCard
+        key={p.id}
+        pack={p}
+        locale={locale}
+        isActive={installed.data?.selectedBackend === p.backend && p.installed}
+        selfTest={selfTestById.get(p.id) ?? null}
+        installing={install.isPending && install.variables === p.id}
+        onInstall={(id) => void install.mutateAsync(id)}
+        onRemove={(id) => {
+          if (window.confirm('卸载这个加速后端？之后可以重新下载。')) {
+            void remove.mutateAsync(id);
+          }
+        }}
+        onSelect={handleSelect}
+        onSelfTest={(id) => void selfTest.mutateAsync(id)}
+      />
+    );
   }
 
   return (
@@ -110,24 +150,21 @@ export default function RuntimePage() {
           </p>
         ) : null}
 
-        {sorted.map((p) => (
-          <BackendPackCard
-            key={p.id}
-            pack={p}
-            locale={locale}
-            isActive={installed.data?.selectedBackend === p.backend && p.installed}
-            selfTest={selfTestById.get(p.id) ?? null}
-            installing={install.isPending && install.variables === p.id}
-            onInstall={(id) => void install.mutateAsync(id)}
-            onRemove={(id) => {
-              if (window.confirm('卸载这个加速后端？之后可以重新下载。')) {
-                void remove.mutateAsync(id);
-              }
-            }}
-            onSelect={handleSelect}
-            onSelfTest={(id) => void selfTest.mutateAsync(id)}
-          />
-        ))}
+        {applicable.map(renderPack)}
+
+        {/* 不适用于本机的：折叠，但说清楚折了几个 —— 隐藏而不说明会让人以为目录不全 */}
+        {inapplicable.length > 0 ? (
+          <details className="group rounded-lg border border-line bg-surface-1">
+            <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-xs text-ink-secondary hover:text-ink">
+              <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" aria-hidden />
+              不适用于这台机器的 {inapplicable.length} 个包
+              <span className="text-ink-muted">
+                （面向其它系统 / 架构，列在这里只是让你知道目录里有）
+              </span>
+            </summary>
+            <div className="space-y-3 border-t border-line p-3">{inapplicable.map(renderPack)}</div>
+          </details>
+        ) : null}
       </section>
 
       <p className="text-[11px] text-ink-muted">

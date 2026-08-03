@@ -12,9 +12,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import type { AppPaths } from '../../config/paths.js';
 import { pointerFile, writeDataDirPointer } from '../../config/paths.js';
-import { stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 
-import { measureTree, moveDataDir, planMove } from '../../storage/move.js';
+import { looksLikeDataDir, measureTree, moveDataDir, planMove } from '../../storage/move.js';
 import { readJsonBody, sendError, sendJson } from '../respond.js';
 
 export interface StorageRoutesDeps {
@@ -154,10 +154,24 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
         return true;
       }
 
-      const doMove = body?.move !== false; // 默认搬；显式 false = 只改指向
+      const doMove = body?.move !== false; // 默认搬；显式 false = 只改指向（"直接使用此目录"）
 
       if (!doMove) {
-        // 只改指向：不搬数据，下次启动去新位置（新位置可能是用户手工拷过去的）
+        /*
+         * 只改指向也要**先确认那边真的是我们的数据目录**。
+         * 指向一个随便的空目录，daemon 下次启动会在那儿建一套全新的空库，
+         * 用户看到的就是"笔记全没了"（他的数据其实还在旧位置，但没人告诉他）。
+         */
+        if (!(await looksLikeDataDir(plan.to))) {
+          sendError(
+            res,
+            409,
+            'NOT_A_DATA_DIR',
+            `${plan.to} does not contain openmemo.db`,
+            '该目录里没有 openmemo.db，不是一个 OpenMemo 数据目录。直接指过去会得到一个空的新库（原数据仍在旧位置）。',
+          );
+          return true;
+        }
         writeDataDirPointer(plan.to);
         sendJson(res, 202, {
           ok: true,
@@ -169,6 +183,63 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
         });
         setTimeout(() => deps.requestRestart?.('data-dir changed'), 50);
         return true;
+      }
+
+      /*
+       * ---- 「目标非空」必须分成两种，不能一律硬拒 ----
+       *
+       * 用户实际撞到的场景：他**上一次迁移已经成功了**，数据就在那边；
+       * 界面还显示旧路径，于是他又点了一次同样的迁移 → 目标非空 → 409，
+       * 而文案还说"原数据完好" —— 他完全不知道数据其实早就过去了。
+       *
+       * 所以：目标如果**就是一个有效的 OpenMemo 数据目录**，那不是错误，
+       * 是"你已经搬过了"，应该给他「直接使用此目录」；
+       * 目标如果装着**别的东西**，才是真的要拦（保护他的文件）。
+       */
+      if (await looksLikeDataDir(plan.to)) {
+        sendError(
+          res,
+          409,
+          'TARGET_ALREADY_DATA_DIR',
+          `${plan.to} already contains an OpenMemo data directory`,
+          '该位置已经是一个 OpenMemo 数据目录（很可能你上次已经迁移成功了）。可以直接使用它，无需再次搬运。',
+          {
+            retryable: false,
+            remediation: {
+              action: 'useExistingDataDir',
+              // UI 点「直接使用此目录」时按这个再发一次即可
+              // params 只能是标量：把"怎么再发一次"表达成扁平字段
+              params: { path: plan.to, move: false, endpoint: '/api/settings/data-dir' },
+              label: 'Use this directory',
+              labelZh: '直接使用此目录',
+            },
+          },
+        );
+        return true;
+      }
+
+      /*
+       * 目标非空、而且**不是**我们的目录 —— 拒绝，但要说清楚拦的是什么。
+       * 通用的"新位置已存在且不是空目录"没告诉用户里面是啥，
+       * 他会以为是我们的残留而去手动删掉，那可能删的是他自己的文件。
+       */
+      try {
+        const existing = await readdir(plan.to);
+        if (existing.length > 0) {
+          const sample = existing.slice(0, 3).join('、');
+          sendError(
+            res,
+            409,
+            'TARGET_NOT_EMPTY',
+            `${plan.to} is not empty and is not an OpenMemo data directory`,
+            `新位置里已经有别的内容（例如：${sample}${existing.length > 3 ? ' 等' : ''}），` +
+              `而且它不是 OpenMemo 数据目录。为避免覆盖你自己的文件，这里不做搬运。` +
+              `请换一个空目录，或先手动清空它。原数据完好，未做任何改动。`,
+          );
+          return true;
+        }
+      } catch {
+        /* 目标不存在 = 最好的情况，继续搬 */
       }
 
       const result = await moveDataDir(plan.from, plan.to);

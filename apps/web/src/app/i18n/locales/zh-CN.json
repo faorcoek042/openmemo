@@ -24,7 +24,6 @@
     "mockDetail": "当前数据由前端内存模拟，用于 UI 评审。daemon 实现后将自动切换为真实数据。",
     "sseDegraded": "实时更新已断开，正在轮询",
     "sseReconnecting": "正在重新连接本地服务…",
-    "multiTab": "当前地址不是安全上下文（需 https:// 或 localhost），标签页选主不可用，已为每个标签单独建立连接；建议只保留一个标签页。",
     "portDrift": "端口已从 {{expected}} 变更为 {{actual}}，浏览器会把它当作新站点，需要重新授权麦克风。",
     "shutdown": "本地服务正在退出"
   },
@@ -138,7 +137,12 @@
     "resume": "继续",
     "cancel": "取消",
     "stopping": "正在停止…",
-    "retry": "重试"
+    "retry": "重试",
+    "queued": "排队中",
+    "resolving": "正在选择下载源",
+    "downloading": "下载中",
+    "verifying": "正在校验完整性",
+    "installing": "正在安装"
   },
   "recorder": {
     "title": "录音转文字",
@@ -483,7 +487,11 @@
     "tokenizerDegraded": "中文分词未启用（当前 {{tokenizer}}），中文搜索可能不准确",
     "semanticDisabled": "向量检索未启用，语义搜索暂不可用",
     "pipelineMissing": "转写组件缺失（{{items}}），导入的音视频暂时无法转写",
-    "fix": "去修复"
+    "fix": "去修复",
+    "restartRequired": "{{items}} 已安装，需重启本地服务才会生效",
+    "restartNow": "立即重启",
+    "restarting": "正在重启…",
+    "restartFailed": "重启失败，请手动重启本地服务"
   },
   "diagnostics": {
     "title": "诊断",
@@ -555,6 +563,45 @@
       "webLocks": "多标签页选主不可用 —— 每个标签会各自建立一条连接。",
       "clipboard": "“复制”按钮不可用 —— 剪贴板 API 同样要求安全上下文。",
       "storage": "浏览器会话存储被拦截 —— 不影响保存（登录令牌已改存内存），但刷新后会多握手一次。"
+    }
+  },
+  "jobToast": {
+    "startedModel": "开始下载模型 · {{name}}",
+    "startedBackend": "开始安装组件 · {{name}}",
+    "backgroundHint": "可以离开此页面，安装会在后台继续",
+    "verifyingHint": "文件已下完，正在逐字节核对 SHA-256。大模型这一步要几十秒，进度条不动是正常的，不是卡死。",
+    "installingHint": "正在解压并写入模型目录，马上就好。",
+    "queuedHint": "正在等待下载通道空闲，稍后自动开始。",
+    "doneModel": "已安装 · {{name}}",
+    "doneBackend": "已安装 · {{name}}",
+    "doneModelHint": "已可直接使用，去捕获页粘一个链接就能转写。",
+    "doneBackendHint": "已可被发现并使用；正在跑的任务不会中途换后端。",
+    "doneRestartHint": "已装好，但需要重启本地服务才会生效。",
+    "gotoCapture": "去转写",
+    "gotoModels": "查看模型",
+    "gotoRuntime": "查看运行时",
+    "restartNow": "立即重启",
+    "restarting": "正在重启…",
+    "blockedTitle": "暂时无法继续 · {{name}}",
+    "blockedHint": "这不是失败，条件满足后会自动继续。",
+    "failedTitle": "安装失败 · {{name}}",
+    "retryingHint": "正在自动重试（第 {{attempt}}/{{max}} 次），不用管它。",
+    "viewTasks": "任务中心",
+    "dismiss": "关闭",
+    "title": "安装与下载进度"
+  },
+  "readiness": {
+    "title": "能力未就绪",
+    "summary": "有 {{count}} 项能力未就绪",
+    "details": "查看详情",
+    "hide": "收起",
+    "items": {
+      "secureContext": "当前地址下有 {{count}} 项浏览器能力不可用（含录音）",
+      "secureContextHint": "浏览器只在 https 或 localhost 下开放麦克风、剪贴板与标签页选主。改用 http://127.0.0.1 打开即可恢复（前提是你就在运行 OpenMemo 的这台机器上）。这与浏览器品牌无关，换浏览器不会有帮助；其余功能不受影响。",
+      "multiTab": "多标签页选主不可用，每个标签会各自建立一条连接",
+      "tokenizer": "中文分词未启用，中文搜索可能不准",
+      "vec": "向量检索未启用，语义搜索暂不可用",
+      "pipeline": "转写组件缺失，导入的音视频暂时无法转写"
     }
   }
 }

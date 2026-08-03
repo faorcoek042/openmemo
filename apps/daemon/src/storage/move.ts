@@ -140,6 +140,27 @@ export async function verifyTreesMatch(a: string, b: string): Promise<VerifyResu
   return { ok: mismatches.length === 0, mismatches };
 }
 
+/**
+ * 这个目录**是不是一个 OpenMemo 数据目录**。
+ *
+ * 用途：区分"目标非空"的两种完全不同的情况 ——
+ * 一种是**用户上次已经迁移成功了**（目录里就是他自己的数据，再搬一次毫无意义，
+ * 应该提供「直接使用此目录」）；另一种是**里面装着别人的东西**（必须拒绝，保护它）。
+ * 原来两种都一律硬拒 409，于是迁移成功过的用户再点一次就被卡死，
+ * 而报错文案还说"原数据完好" —— 他根本不知道数据其实已经在那边了。
+ *
+ * 判据取**主库文件**：`openmemo.db` 是这个应用独有且必然存在的产物。
+ * 只看目录名或只看"非空"都会误判。
+ */
+export async function looksLikeDataDir(dir: string): Promise<boolean> {
+  try {
+    const st = await fs.stat(join(dir, 'openmemo.db'));
+    return st.isFile() && st.size > 0;
+  } catch {
+    return false;
+  }
+}
+
 export interface MoveOptions {
   /** 强制走复制路径（用于测试跨设备分支，本机同盘时 rename 会成功而测不到）。 */
   readonly forceCopy?: boolean;

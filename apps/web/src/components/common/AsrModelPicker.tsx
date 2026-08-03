@@ -32,6 +32,24 @@ import { Button } from './Button';
  * 前者是真的、立刻生效；后者会是又一个假选择器。
  * 等后端支持按任务覆盖，再把它升级成 per-task 选择即可 —— 数据源不用改。
  */
+/**
+ * 下拉里那一行字。
+ *
+ * ⚠️ 不能无条件拼 `${displayName} (${quantization})`：manifest 里的 `displayName`
+ * 本身**往往已经含量化档**，于是实测出现过 `Whisper base (Q5_1) (q5_1)` ——
+ * 同一个信息写两遍，第二遍还是小写的，看起来像 bug（因为它就是 bug）。
+ *
+ * 判据是"名字里是否已经出现过这个量化标记"，大小写与分隔符（`_`/`-`）都归一化后再比，
+ * 因为目录里 `Q5_1` / `q5-1` 两种写法都出现过。
+ */
+function optionLabel(m: InstalledModel): string {
+  const name = m.displayName;
+  const q = m.quantization;
+  if (!q) return name;
+  const norm = (s: string) => s.toLowerCase().replace(/[_\-\s]/g, '');
+  return norm(name).includes(norm(q)) ? name : `${name} (${q})`;
+}
+
 export function AsrModelPicker({ className }: { className?: string }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -88,8 +106,7 @@ export function AsrModelPicker({ className }: { className?: string }) {
         {activeId === null ? <option value="">{t('asr.notSelected')}</option> : null}
         {models.map((m) => (
           <option key={m.id} value={m.id}>
-            {m.displayName}
-            {m.quantization ? ` (${m.quantization})` : ''}
+            {optionLabel(m)}
           </option>
         ))}
       </select>

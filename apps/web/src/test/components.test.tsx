@@ -36,8 +36,9 @@ import { WordHighlight, findActiveWord } from '../features/transcript/WordHighli
 import { DEFAULT_PROXY_CONFIG } from '@openmemo/shared';
 import { ProxySettingsSection } from '../features/settings/ProxySettingsSection';
 import { getPositionMs, setPositionMs, subscribePosition } from '../lib/stores/player.store';
+import { useConnectionStore } from '../lib/stores/connection.store';
 import { PurposeBindingsSection, mergePurposeBinding } from '../features/settings/PurposeBindingsSection';
-import { SecureContextBanner } from '../components/common/SecureContextBanner';
+import { ReadinessBanner } from '../components/common/ReadinessBanner';
 import RecorderPage from '../features/recorder/RecorderPage';
 import {
   copyText,
@@ -1388,42 +1389,91 @@ describe('非安全上下文', () => {
     }
   });
 
-  test('★ 安全上下文下横幅完全不出现 —— 不能对着 localhost 用户报警', async () => {
-    const r = await render(<SecureContextBanner />);
-    assert.equal(r.container.querySelector('[data-testid="secure-context-banner"]'), null);
+  test('★ 一切就绪时横幅一个像素都不占 —— 默认状态就该是"什么都不说"', async () => {
+    stubApi({ 'GET /health': { db: { extensions: { libsimple: true, sqliteVec: true } }, pipeline: { missing: [] } } });
+    const r = await render(<ReadinessBanner />);
+    await r.flush();
+    assert.equal(text(r.container), '', `不该渲染任何内容，实际：${text(r.container)}`);
     r.unmount();
   });
 
-  test('★ 非安全上下文下必须点名"录音不可用"，并给出可点的两条路', async () => {
+  test('★ 非安全上下文只占一行，且默认折叠 —— 七行文字不是动作，是墙', async () => {
     makeInsecure();
     try {
-      const r = await render(<SecureContextBanner />);
+      stubApi({ 'GET /health': { db: { extensions: { libsimple: true, sqliteVec: true } }, pipeline: { missing: [] } } });
+      const r = await render(<ReadinessBanner />);
       await r.flush();
-      const shown = text(r.container);
 
-      assert.ok(r.container.querySelector('[data-testid="secure-blocked-microphone"]'));
-      assert.ok(shown.includes('录音转文字不可用'), '功能级不可用必须点名');
-      // 给动作，不让用户猜
-      assert.ok(r.container.querySelector('[data-testid="secure-try-localhost"]'), '应给 localhost 入口');
-      // TLS 已按用户要求撤掉：不再把 https 作为按钮推给他（横幅是告知事实，不是推销方案）
-      assert.equal(r.container.querySelector('[data-testid="secure-try-https"]'), null);
-      // ★ 绝不能把锅推给浏览器 —— 那会让用户去换浏览器，换了也没用
-      assert.ok(!shown.includes('浏览器不支持'), '不许归因为"浏览器不支持"');
-      assert.ok(shown.includes('换浏览器不会有帮助'), '要主动挡掉"换个浏览器试试"这条弯路');
+      // 折叠态：只有一行摘要，明细一个字都不该出现
+      assert.equal(r.container.querySelector('[data-testid="readiness-details"]'), null, '默认必须折叠');
+      assert.ok(text(r.container).includes('未就绪'), '折叠态要给出结论');
+      assert.ok(!text(r.container).includes('麦克风'), '原因属于展开态，不该占首屏');
+
+      // 展开后才给明细与动作
+      await click(r.container.querySelector('[data-testid="readiness-toggle"]'));
+      await r.flush();
+      assert.ok(r.container.querySelector('[data-testid="readiness-details"]'), '点开要有明细');
+      assert.ok(text(r.container).includes('录音'), '展开后要点名录音不可用');
       r.unmount();
     } finally {
       restore();
     }
   });
 
-  test('★ multiTab 文案改为归因到安全上下文，不再说"浏览器不支持"', () => {
-    const zh = readLocale('zh-CN');
-    const msg = zh.banner.multiTab as string;
-    assert.ok(!msg.includes('浏览器不支持'), `旧归因仍在：${msg}`);
-    assert.ok(msg.includes('安全上下文'), '要说出真因');
-    assert.ok(msg.includes('localhost'), '要给出满足条件的地址形式');
+  test('★ 安全上下文的后果只说一遍 —— multiTab 不再单独占一行', async () => {
+    makeInsecure();
+    try {
+      // 即便 SSE 层也报了多标签降级，非安全上下文下也只应合并成一条
+      useConnectionStore.getState().setMultiTabDegraded(true);
+      stubApi({ 'GET /health': { db: { extensions: { libsimple: true, sqliteVec: true } }, pipeline: { missing: [] } } });
+      const r = await render(<ReadinessBanner />);
+      await r.flush();
+      await click(r.container.querySelector('[data-testid="readiness-toggle"]'));
+      await r.flush();
+      const rows = r.container.querySelectorAll('[data-testid="readiness-details"] > li');
+      assert.equal(rows.length, 1, `同一件事不许说两遍，实际 ${rows.length} 行`);
+      r.unmount();
+    } finally {
+      useConnectionStore.getState().setMultiTabDegraded(false);
+      restore();
+    }
   });
 
+  test('★ 后端能力未就绪时每项都带可点的修复动作，而不是只陈述', async () => {
+    stubApi({
+      'GET /health': {
+        db: { extensions: { tokenizer: 'trigram', libsimple: false, sqliteVec: false } },
+        pipeline: { missing: ['whisper-cli', 'asr-model'] },
+      },
+    });
+    const r = await render(<ReadinessBanner />);
+    await r.flush();
+    await click(r.container.querySelector('[data-testid="readiness-toggle"]'));
+    await r.flush();
+    for (const k of ['tokenizer', 'vec', 'pipeline']) {
+      assert.ok(
+        r.container.querySelector(`[data-testid="readiness-action-${k}"]`),
+        `${k} 缺少可点的修复动作 —— 只陈述等于让用户干着急`,
+      );
+    }
+    r.unmount();
+  });
+  /**
+   * 这条**换了断言目标**：顶层 `banner.multiTab` 已随横幅合并删除，
+   * 文案搬到 `readiness.items.secureContextHint`。
+   * 保留用例是因为要守的性质没变 —— **不许把真因归给"浏览器不支持"**，
+   * 那会把用户送去换浏览器，而换了也没用。归错因比不报更浪费时间。
+   */
+  test('★ 归因必须是安全上下文，不许说"浏览器不支持"', () => {
+    const zh = readLocale('zh-CN');
+    const items = (zh.readiness as Record<string, Record<string, string>>).items;
+    const hint = items.secureContextHint;
+    assert.ok(!hint.includes('浏览器不支持'), `旧归因仍在：${hint}`);
+    assert.ok(hint.includes('localhost'), '要给出满足条件的地址形式');
+    assert.ok(hint.includes('换浏览器不会有帮助'), '要主动挡掉"换个浏览器试试"这条弯路');
+    // 旧的顶层键必须真的没了，否则两处文案会各自漂移
+    assert.equal((zh.banner as Record<string, unknown>).multiTab, undefined, '旧键应随横幅一起删除');
+  });
   test('★ 录音页在点击之前就拦住，不是点了报 undefined', async () => {
     makeInsecure();
     try {

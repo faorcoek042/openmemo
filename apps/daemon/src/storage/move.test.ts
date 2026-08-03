@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 
-import { measureTree, moveDataDir, planMove, verifyTreesMatch } from './move.js';
+import { looksLikeDataDir, measureTree, moveDataDir, planMove, verifyTreesMatch } from './move.js';
 
 const roots: string[] = [];
 function tmp(prefix: string): string {
@@ -175,5 +175,34 @@ describe('moveDataDir', () => {
     assert.equal(r.ok, false);
     assert.equal(r.sourceIntact, true);
     assert.deepEqual(await measureTree(from), before);
+  });
+});
+
+describe('looksLikeDataDir —— 区分"我们自己的目录"与"别人的东西"', () => {
+  it('含 openmemo.db 的目录 → 是', async () => {
+    const d = tmp('is');
+    await seed(d);
+    assert.equal(await looksLikeDataDir(d), true);
+  });
+
+  it('★ 非空但没有 openmemo.db → 不是（必须保护用户的别的文件）', async () => {
+    const d = tmp('not');
+    await fs.mkdir(join(d, 'sub'), { recursive: true });
+    await fs.writeFile(join(d, '我的论文.docx'), 'x');
+    assert.equal(await looksLikeDataDir(d), false);
+  });
+
+  it('空目录 → 不是', async () => {
+    assert.equal(await looksLikeDataDir(tmp('empty')), false);
+  });
+
+  it('★ openmemo.db 是 0 字节（半途失败的残留）→ 不当作有效数据目录', async () => {
+    const d = tmp('zero');
+    await fs.writeFile(join(d, 'openmemo.db'), '');
+    assert.equal(await looksLikeDataDir(d), false);
+  });
+
+  it('目录不存在 → 不是（不抛）', async () => {
+    assert.equal(await looksLikeDataDir('/definitely/not/here'), false);
   });
 });
