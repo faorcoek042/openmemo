@@ -40,6 +40,19 @@
  * 让这个函数返回**一个** target，该性质就由类型保证，不再需要谁记得。
  */
 
+/**
+ * 代表**兄弟筛选视图**的查询串键名。
+ *
+ * 放在 `lib/` 而不是 `App.tsx`：一级导航（`App.tsx`）与文件夹树
+ * （`features/folders/FolderTree.tsx`）**必须用同一份**。两边各写一份的话，
+ * 谁多一个键谁少一个键都不会报错，只会让某个地址上高亮 0 项或 2 项 ——
+ * 而"至多一项"这条性质正是本模块存在的理由。
+ *
+ * ⚠️ 只有"代表另一个导航目标"的键才配进来。`tab` 是页内视图状态，**不在此列**：
+ * 写进来就会让 `/models?tab=llm` 退回「一项都不亮」（T-138b 那个没人报得上来的哑巴 bug）。
+ */
+export const NAV_FILTER_KEYS = ['starred', 'folder'] as const;
+
 /** 段边界前缀：`/notes` 管辖 `/notes/x`，但**不**管辖 `/notesomething`。 */
 function isUnder(pathname: string, base: string): boolean {
   if (pathname === base) return true;
@@ -62,12 +75,27 @@ function normalizeQuery(raw: string): string {
  * 从「侧栏全部条目 + 当前地址」算出**唯一**该高亮的那一条。
  *
  * @param targets `SideLink` 的 `to` 全集，顺序无关。
+ * @param filterKeys **指向兄弟筛选视图的查询串键名**（`['starred','folder']`）。
+ *
+ * 为什么需要显式声明这一个东西（T-138c）：
+ * `?starred=1` 不用声明也认得出来 —— 侧栏条目里就摆着 `/notes?starred=1`，
+ * 「这是个筛选视图」这件事从清单里就能看出来。
+ * 但**文件夹是动态的**（`/notes?folder=<uid>`，`FolderTree` 拿着数据、数量随用户变），
+ * 它们的 `to` 不可能出现在这张静态清单里。
+ * 于是「`folder` 这个键代表一个筛选视图」就成了清单**看不出来**的那部分 —— 只能说出来。
+ * 声明的是**键名**而不是具体地址：键名是稳定的，`uid` 不是。
+ *
+ * 不声明的后果很具体：在 `/notes?folder=<uid>` 上，`/notes` 会按「区域」赢下前缀匹配，
+ * 于是「全部笔记」和那个文件夹**同时**被标成当前页 —— 正是 T-138b 刚修掉的那个形状。
+ *
  * @returns 命中的 `to` 原样返回；一条都不该亮时返回 `undefined`
- *          （例如 `/capture` —— 它是侧栏顶部那个按钮，不是 SideLink）。
+ *          （例如 `/capture` —— 它是侧栏顶部那个按钮，不是 SideLink；
+ *          又如 `/notes?folder=x` —— 该亮的是文件夹树里那一条，不在这张清单里）。
  */
 export function activeNavTarget(
   targets: readonly string[],
   location: { pathname: string; search: string },
+  filterKeys: readonly string[] = [],
 ): string | undefined {
   const pathname = location.pathname;
   const query = normalizeQuery(location.search);
@@ -85,6 +113,17 @@ export function activeNavTarget(
    * 在 `/settings/advanced/x` 上必须是后者亮。写第一个匹配就会依赖数组顺序 ——
    * 一条只有改了顺序才会坏、且坏了不报错的规则。
    */
+  /*
+   * ★ 先问一句：当前地址是不是**某个兄弟筛选视图**？
+   *
+   * 是的话，区域就不该赢 —— 该亮的是那个筛选视图（可能在文件夹树里，不在这张清单上）。
+   * 判据是"查询串里有没有 filterKeys 里的键"，**不是"有没有查询串"**：
+   * `?tab=llm` 这类页内视图状态必须继续让区域亮着，
+   * 否则就退回 `/models?tab=llm` **一项都不亮**的那个哑巴 bug（T-138b）。
+   */
+  const hasFilterKey = filterKeys.some((k) => new URLSearchParams(location.search).has(k));
+  if (hasFilterKey) return undefined;
+
   let best: string | undefined;
   for (const to of targets) {
     if (to.includes('?')) continue;

@@ -502,3 +502,137 @@ git add apps/web/src/App.tsx \
 - ⚠️ **`apps/web/dist/index.html` 的 mtime 从 22:09 变成了 23:32**（我进场时是 22:09）。**不是我**：我这轮跑过的只有 `tsc -b`（web 是 `emitDeclarationOnly`）、`vite dev`（不写 dist）、`test:components`（package.json 里自带 `--outDir .test-out/components`）。时间点与你提交 `fda3e66` / 用真 key 复验那一段吻合，**但我只给事实，不替你确认**。
 - 未跑本地 whisper。未 commit。未派生 subagent。
 - **诚实声明**：§B 三段红灯是实际输出复制的。`/models?tab=llm` 那条**不是你报的**，是我按"别只为详情页打补丁"去枚举地址时撞出来的 —— 它在 `fda3e66` 之前就已经坏着，不是本轮引入的。§D 那条我**只测量、没修**。
+
+---
+
+## [2026-08-04 00:00] T-138c DONE —— FolderTree 同源修复
+
+### TL;DR（≤25 行）
+
+1. **`FolderTree.tsx:105` 已修**，判据原样搬过来：**筛选不向成员延伸**。文件夹是筛选视图，和「星标」同类 —— 只在**地址完全相同**时才是当前页。`NavLink` → `Link`（后者会自己按 `isActive` 写 `aria-current`，外面关不掉，T-138b 在侧栏踩过同一脚）。
+2. **⚠️ 修完之后我发现一件必须先说的事：这个链接的目的地是空的。** `[实测]` 点开「课程」（**0 条笔记**）→ 地址变成 `/notes?folder=<uid>` → 页面**照常列出全部 2 条**，发出的请求仍是裸 `/api/notes`。`?folder=` 在**全仓无人读取**：`NotesListPage`、`features/notes/api.ts`、daemon 的 `GET /api/notes` 三处都没有。详见 §D。
+3. **这件事让我的修复变得更需要被说清楚，而不是更好**：修之前所有文件夹**永远**高亮 —— 是噪音，用户学会无视；修之后**恰好一个**高亮且与 URL 一致 —— 用户会信它。**同一句谎话变得更可信了。** 我没有为了让截图好看而不提这一点。
+4. **判定要跨组件才成立，所以多了一个显式声明**：`/notes?folder=<uid>` 上，一级导航的 `/notes` 会按「区域」赢下前缀匹配 → 「全部笔记」和那个文件夹**同时**自称当前页，正是 T-138b 刚修掉的形状、只是跨了两个组件所以更难看见。修法是 `NAV_FILTER_KEYS = ['starred','folder']`：**代表兄弟筛选视图的查询串键名**。
+5. **为什么 `folder` 必须显式声明而 `starred` 不用**：`starred` 从侧栏清单里就看得出来（`/notes?starred=1` 明摆着）；**文件夹是动态的**，`to` 不可能出现在静态清单里，"folder 这个键代表一个筛选视图"就成了清单**看不出来**的那部分 —— 只能说出来。声明**键名**而不是地址：键名稳定，uid 不稳定。
+6. **`NAV_FILTER_KEYS` 放在 `lib/nav/`，两个组件共用同一份**。各写一份的话，谁多一个键少一个键都不报错，只会让某个地址上高亮 0 项或 2 项 —— 而"至多一项"正是这个模块存在的全部理由。
+7. **`tab` 被显式挡在这张表外面，并有专门一条用例钉住**：写进去就会让 `/models?tab=llm` 退回「一项都不亮」。你说得对，那个哑的比吵的活得久，所以我给它留了一条**会说话的**护栏。
+8. **反向验证 2 组，真实红灯**（§B）。RV-12 逐字复现了你给的那组数据：`/notes` 上整条侧栏 `["全部笔记","课程2","播客1"]`。
+9. **真浏览器 7 个地址全绿**（§C，真 daemon + 真建的两个文件夹）：**整条侧栏**（一级导航 + 文件夹树）恒为 1 项当前页。
+10. **门禁**：`tsc -b` 0 · `eslint .` 全仓 0 · **621 passed / 0 failed**（db 47 / pipeline 132 / daemon 196 / web 单测 51 + 宿主 10 + 组件 185）。本节新增 7 条（单测 3 + 组件 4）。
+
+---
+
+## §A 改了什么
+
+| 文件 | 改动 |
+|---|---|
+| `lib/nav/activeNav.ts` | 新增导出 `NAV_FILTER_KEYS`；`activeNavTarget` 加第三参 `filterKeys` —— 当前查询串里出现这些键时，「区域」不再赢下前缀匹配（该亮的是某个筛选视图，可能不在这张清单上） |
+| `App.tsx` | 调用处传 `NAV_FILTER_KEYS` |
+| `features/folders/FolderTree.tsx` | `NavLink` + 裸 `isActive` → `Link` + `activeNavTarget([to], location, NAV_FILTER_KEYS) === to`；抽出 `folderTo(uid)`，**地址只在一处拼**，判定与渲染共用同一个字符串 |
+
+判据仍然是那条：**`?tab=` 这种页内视图状态不许进 `NAV_FILTER_KEYS`**，否则就退回「一项都不亮」。
+
+---
+
+## §B 反向验证（2 组，真实输出）
+
+**RV-12 `FolderTree` 退回 `NavLink` + 裸 `isActive`**
+```
+✖ ★ 文件夹不许在"没选中任何文件夹"的地址上自称当前页
+  AssertionError: /notes 上文件夹自称当前页了（整条侧栏：["全部笔记","课程2","播客1"]）
+  —— NavLink 的 isActive 只比 pathname，所有文件夹的 pathname 都是 /notes
+✖ ★ 选中某个文件夹时：只有它一个当前页，一级导航要让位
+  AssertionError: 整条侧栏高亮了 2 项：["课程2","播客1"]
+✖ ★ 兄弟文件夹不许跟着一起亮
+✖ ★ 穷举：真实地址上**整条侧栏**高亮数永远 ≤ 1（含文件夹树）
+ℹ tests 185  ℹ pass 181  ℹ fail 4
+```
+> 第一条的实际输出**与你给的测量数据同形**（每个文件夹在每个 `/notes*` 上都自称当前页）。
+
+**RV-13 不声明 `folder` 是筛选视图**（`NAV_FILTER_KEYS` 去掉 `folder`）
+```
+✖ ★ 选中某个文件夹时：只有它一个当前页，一级导航要让位
+  AssertionError: 整条侧栏高亮了 2 项：["全部笔记","课程2"]
+✖ ★ 穷举：真实地址上**整条侧栏**高亮数永远 ≤ 1（含文件夹树）
+  AssertionError: /notes?folder=01FOLDER… 上整条侧栏有 2 项自称当前页：["全部笔记","课程2"]
+ℹ tests 185  ℹ pass 183  ℹ fail 2
+```
+> 这一组证明第 4/5 条那个显式声明是**承重的**：少了它，跨组件的双当前页立刻回来。
+> 单测那边还有一条配套的正例，断言"**不传** filterKeys 时就是旧行为"—— 免得这条护栏钉的是零。
+
+两组还原后复跑全绿。
+
+---
+
+## §C 真浏览器（自建 daemon `:17942` + 临时 dataDir + 真建的两个文件夹 + `vite dev :5207`）
+
+数的是**整条 `nav` 里**的 `aria-current="page"`（一级导航 + 文件夹树一起数）：
+
+```
+✅ /notes                                当前页 1 项 ["All notes"]
+✅ /notes?starred=1                      当前页 1 项 ["Starred"]
+✅ /notes?folder=01KZ45RF73…             当前页 1 项 ["课程"]        ← 修前：3 项
+✅ /notes/01KZ43C3VD…                    当前页 1 项 ["All notes"]   ← 修前：3 项
+✅ /notes/01KZ43C3VD…?tab=mindmap        当前页 1 项 ["All notes"]
+✅ /models?tab=llm                       当前页 1 项 ["Models"]
+✅ /settings/storage                     当前页 1 项 ["Settings"]
+```
+截图：`/tmp/wire-up/shots/7-folder-current.png`
+
+---
+
+## §D ⚠️ 必须报的：这个链接的目的地是空的（`?folder=` 全仓无人读取）
+
+`[实测]`（真浏览器 + 真 daemon，「课程」文件夹里**一条笔记都没有**）：
+
+```
+/notes                              列出 2 条笔记   发出的请求=["/api/notes"]
+/notes?folder=01KZ45RF739B8SBW…     列出 2 条笔记   发出的请求=["/api/notes"]
+```
+
+三处都没有读它：`features/notes/NotesListPage.tsx`（只读 `starred`）、
+`features/notes/api.ts`（`useNotesQuery` 只发 `?starred=1`）、
+`apps/daemon/src/http/rest/notes.ts` 的 `GET /api/notes`（只认 `limit` 与 `starred`）。
+
+**为什么这条必须现在说，而不是等下一轮：**
+
+修之前，所有文件夹**永远**高亮 —— 那是噪音，用户学会无视，"点了没反应"也就不显得奇怪。
+修之后，**恰好一个**高亮、且与地址一致 —— 用户会**相信**它。
+于是界面开始用一种可信的口气说「你在『课程』里」，同时列出全部笔记。
+**我把一句谎话变得更可信了。** 这正是本项目"假绿灯"那一族的形状，
+所以我不能只交一张好看的截图。
+
+**我没有顺手把它做掉**，理由不是范围洁癖，是**它不是一行、而且有一个真的产品决策**：
+`folders` 是自引用树（`FolderTree` 自己就在渲染 `node.children`），
+所以「点『课程』要不要连子文件夹里的笔记一起列」**必须有人拍板** ——
+选错了会得到一个"看起来能用、数字却一直对不上"的筛选。
+代码那一半与我这轮做的 `?starred=1` 几乎同型（`repos.listNotes` 加一个条件 + 端点收参 + 前端带上），
+成本很小；**要拍的是语义，不是代码。**
+
+**建议**：`GET /api/notes?folder=<uid>`，并在裁决时明确「含不含后代」。
+在它落地之前，可以考虑先把文件夹链接改成不可点（或标注"即将支持"）——
+**一个诚实的灰色链接，好过一个自信的错误高亮。** 这条也请你裁决，我没有擅自改。
+
+---
+
+## §E 本节改动清单（**请勿 `git add -A`**）
+
+```
+git add apps/web/src/App.tsx \
+        apps/web/src/lib/nav/activeNav.ts \
+        apps/web/src/lib/nav/activeNav.test.ts \
+        apps/web/src/features/folders/FolderTree.tsx \
+        apps/web/src/test/components.test.tsx \
+        coordination/inbox/wire-up.md
+```
+
+---
+
+## §F 收尾与诚实声明
+
+- 起过的进程：daemon `--port 17942 --data-dir /tmp/wire-up/data`、`vite dev :5207`。**按 pid 逐个 `kill`，未用 `pkill -f`**；两端口收尾 `curl` 均 `000`。
+- 我在**自己的临时库**上建了两个文件夹（`POST /api/folders` ×2）用于复验 —— `/root/data-memo` 零写入，`:10000` 只读（收尾一次 `GET /api/health` → 200）。
+- `~/.local/share/openmemo/datadir.json` 仍是 `{"dataDir":"/root/data-memo","updatedAt":"2026-08-03T14:15:00.000Z"}`。
+- `apps/web/dist/index.html` mtime 现为 `08-03 23:53`（你重启前重建的那次）；**我这轮没跑过任何写 dist 的命令**。
+- 未跑本地 whisper。未 commit。未派生 subagent。
+- **诚实声明**：§D 那条**不是被要求的范围**，是我修完之后自己去点了一下才发现的；我把它写在 TL;DR 第 2、3 条而不是埋在末尾，因为它直接影响该怎么看待本节这个"修好了"。§B 两段红灯是实际输出复制的。

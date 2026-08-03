@@ -1,7 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { activeNavTarget } from './activeNav';
+import { activeNavTarget, NAV_FILTER_KEYS } from './activeNav';
 
 /** 侧栏当前的全部条目（与 `App.tsx` 的 collectionNav + systemNav 同序无关）。 */
 const SIDEBAR = [
@@ -14,7 +14,9 @@ const SIDEBAR = [
   '/settings',
 ];
 
-const at = (pathname: string, search = '') => activeNavTarget(SIDEBAR, { pathname, search });
+/** 与 `App.tsx` 的调用形态一致 —— 少传 filterKeys 就测的是另一条路。 */
+const at = (pathname: string, search = '') =>
+  activeNavTarget(SIDEBAR, { pathname, search }, NAV_FILTER_KEYS);
 
 describe('T-138b 侧栏高亮：哪一项该亮', () => {
   test('★ 详情页只亮「全部笔记」—— 它是 /notes 的子路径，不属于「星标」这个筛选视图', () => {
@@ -89,6 +91,50 @@ describe('T-138b 侧栏高亮：哪一项该亮', () => {
     );
   });
 
+  test('★ 兄弟筛选视图的键出现时，区域不许抢高亮（文件夹树那条在别的组件里）', () => {
+    /*
+     * `/notes?folder=<uid>` 该亮的是文件夹树里那一条 —— 它是动态的，不在这张清单上。
+     * 区域若照常赢下前缀匹配，「全部笔记」就会和那个文件夹**同时**被标成当前页，
+     * 正是 T-138b 刚修掉的形状，只是跨了两个组件所以更难看见。
+     */
+    assert.equal(
+      activeNavTarget(SIDEBAR, { pathname: '/notes', search: '?folder=abc' }, NAV_FILTER_KEYS),
+      undefined,
+      '一级导航该让位给文件夹树那一条',
+    );
+    // 不传 filterKeys 时就是旧行为 —— 这条钉的是"声明确实起作用了"，不是零
+    assert.equal(
+      activeNavTarget(SIDEBAR, { pathname: '/notes', search: '?folder=abc' }),
+      '/notes',
+      '没有声明就认不出 folder 是筛选视图 —— 这正是必须显式声明的理由',
+    );
+  });
+
+  test('★ 页内视图状态的键不许被当成筛选视图（否则退回"一项都不亮"）', () => {
+    assert.equal(
+      activeNavTarget(SIDEBAR, { pathname: '/models', search: '?tab=llm' }, NAV_FILTER_KEYS),
+      '/models',
+      'tab 被写进 NAV_FILTER_KEYS 了？那 /models?tab=llm 又会一项都不亮',
+    );
+    assert.equal(
+      activeNavTarget(
+        SIDEBAR,
+        { pathname: '/notes/01KZ1H8YABCDEFGHJKMNPQRST', search: '?tab=mindmap' },
+        NAV_FILTER_KEYS,
+      ),
+      '/notes',
+    );
+  });
+
+  test('★ NAV_FILTER_KEYS 里只放"代表另一个导航目标"的键', () => {
+    assert.deepEqual([...NAV_FILTER_KEYS].sort(), ['folder', 'starred']);
+    assert.equal(
+      (NAV_FILTER_KEYS as readonly string[]).includes('tab'),
+      false,
+      'tab 是页内视图状态，进了这张表就会把区域的灯弄灭',
+    );
+  });
+
   /**
    * ★ 这条守的是**性质本身**，不是某一个地址。
    *
@@ -113,9 +159,10 @@ describe('T-138b 侧栏高亮：哪一项该亮', () => {
       ['/settings/storage', ''],
       ['/capture', ''],
       ['/search', '?q=x'],
+      ['/notes', '?folder=01FOLDERUID'],
     ];
     for (const [pathname, search] of ADDRESSES) {
-      const hit = activeNavTarget(SIDEBAR, { pathname, search });
+      const hit = activeNavTarget(SIDEBAR, { pathname, search }, NAV_FILTER_KEYS);
       // 返回值必须真的是侧栏里的一项（不能凭空造一个）
       assert.equal(
         hit === undefined || SIDEBAR.includes(hit),
@@ -125,9 +172,11 @@ describe('T-138b 侧栏高亮：哪一项该亮', () => {
     }
     // 有主区内容的地址不该"一项都不亮"（`/capture` `/search` 例外，它们没有侧栏项）
     for (const [pathname, search] of ADDRESSES) {
+      // `?folder=` 该亮的那一条在文件夹树里，不在这张清单上 —— 这里返回 undefined 是对的
       if (pathname.startsWith('/capture') || pathname.startsWith('/search')) continue;
+      if (new URLSearchParams(search).has('folder')) continue;
       assert.notEqual(
-        activeNavTarget(SIDEBAR, { pathname, search }),
+        activeNavTarget(SIDEBAR, { pathname, search }, NAV_FILTER_KEYS),
         undefined,
         `${pathname}${search} 上侧栏一项都不亮 —— 用户不知道自己在哪`,
       );

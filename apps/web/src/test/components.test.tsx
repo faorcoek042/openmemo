@@ -4143,6 +4143,81 @@ describe('T-138b 侧栏高亮不许在详情页上失灵', () => {
     assert.deepEqual(await sidebarCurrent('/settings/storage'), [NAV_LABELS['settings']]);
   });
 
+  /**
+   * ★ T-138c：判据要覆盖**整个侧栏**，不只是一级导航。
+   *
+   * 上一轮我把范围划在 `nav` 的直接子链接上，于是文件夹树漏在外面 ——
+   * `[实测]` 每个文件夹在每个 `/notes*` 地址上都被标成「当前页」。
+   * 这里改成数**整个 nav 里**的 `aria-current`：一级导航与文件夹树用的是同一份
+   * `activeNavTarget` + `NAV_FILTER_KEYS`，那"至多一项"就该跨组件成立。
+   */
+  const FOLDERS = {
+    folders: [
+      { uid: '01FOLDERAAAAAAAAAAAAAAAAAA', name: '课程', parentUid: null, color: null, noteCount: 2 },
+      { uid: '01FOLDERBBBBBBBBBBBBBBBBBB', name: '播客', parentUid: null, color: null, noteCount: 1 },
+    ],
+  };
+
+  async function wholeSidebarCurrent(route: string): Promise<string[]> {
+    stubApi({ '/folders': FOLDERS });
+    const r = await render(<App />, { route });
+    await r.flush();
+    const nav = r.container.querySelector('nav');
+    assert.ok(nav, '侧栏没渲染出来 —— 前提不成立');
+    const on = [...nav!.querySelectorAll('[aria-current="page"]')].map((el) =>
+      (el.textContent ?? '').trim(),
+    );
+    r.unmount();
+    return on;
+  }
+
+  test('★ 文件夹不许在"没选中任何文件夹"的地址上自称当前页', async () => {
+    for (const route of ['/notes', '/notes?starred=1', '/notes/01KZ1H8YABCDEFGHJKMNPQRST']) {
+      const on = await wholeSidebarCurrent(route);
+      assert.equal(
+        on.some((s) => s.startsWith('课程') || s.startsWith('播客')),
+        false,
+        `${route} 上文件夹自称当前页了（整条侧栏：${JSON.stringify(on)}）—— ` +
+          'NavLink 的 isActive 只比 pathname，所有文件夹的 pathname 都是 /notes',
+      );
+    }
+  });
+
+  test('★ 选中某个文件夹时：只有它一个当前页，一级导航要让位', async () => {
+    const on = await wholeSidebarCurrent('/notes?folder=01FOLDERAAAAAAAAAAAAAAAAAA');
+    assert.equal(on.length, 1, `整条侧栏高亮了 ${on.length} 项：${JSON.stringify(on)}`);
+    assert.equal(
+      on[0]?.startsWith('课程'),
+      true,
+      `当前页应该是被选中的那个文件夹，实际是 ${JSON.stringify(on[0])}`,
+    );
+  });
+
+  test('★ 兄弟文件夹不许跟着一起亮', async () => {
+    const on = await wholeSidebarCurrent('/notes?folder=01FOLDERAAAAAAAAAAAAAAAAAA');
+    assert.equal(on.some((s) => s.startsWith('播客')), false, '另一个文件夹也被标成了当前页');
+  });
+
+  test('★ 穷举：真实地址上**整条侧栏**高亮数永远 ≤ 1（含文件夹树）', async () => {
+    for (const route of [
+      '/notes',
+      '/notes?starred=1',
+      '/notes?folder=01FOLDERAAAAAAAAAAAAAAAAAA',
+      '/notes/01KZ1H8YABCDEFGHJKMNPQRST',
+      '/notes/01KZ1H8YABCDEFGHJKMNPQRST?tab=mindmap',
+      '/models?tab=llm',
+      '/settings/storage',
+      '/tasks',
+    ]) {
+      const on = await wholeSidebarCurrent(route);
+      assert.equal(
+        on.length <= 1,
+        true,
+        `${route} 上整条侧栏有 ${on.length} 项自称当前页：${JSON.stringify(on)}`,
+      );
+    }
+  });
+
   test('★ 穷举：真实地址上侧栏高亮数永远 ≤ 1', async () => {
     for (const route of [
       '/notes',

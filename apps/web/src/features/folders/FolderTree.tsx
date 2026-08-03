@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { NavLink } from 'react-router';
+import { Link, useLocation } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronRight, FolderPlus, Trash2 } from 'lucide-react';
 
@@ -9,6 +9,7 @@ import {
   useFoldersQuery,
   type FolderNode,
 } from './api';
+import { activeNavTarget, NAV_FILTER_KEYS } from '../../lib/nav/activeNav';
 import { cn } from '../../lib/utils';
 
 /**
@@ -80,11 +81,25 @@ export function FolderTree() {
   );
 }
 
+/** 文件夹的地址。**只在这一处拼**，判定与渲染共用同一个字符串。 */
+export function folderTo(uid: string): string {
+  return `/notes?folder=${encodeURIComponent(uid)}`;
+}
+
 function FolderRow({ node }: { node: FolderNode }) {
   const { t } = useTranslation();
+  const location = useLocation();
   const [expanded, setExpanded] = useState(true);
   const del = useDeleteFolderMutation();
   const hasChildren = node.children.length > 0;
+
+  /*
+   * 与侧栏共用 `activeNavTarget`：清单里只放**这一条**文件夹地址，
+   * 命中即当前页。`NAV_FILTER_KEYS` 也传过去，两边用的是同一份键名 ——
+   * 否则「至多一项高亮」会在两个组件之间的缝里漏掉。
+   */
+  const to = folderTo(node.uid);
+  const active = activeNavTarget([to], location, NAV_FILTER_KEYS) === to;
 
   return (
     <li>
@@ -102,17 +117,33 @@ function FolderRow({ node }: { node: FolderNode }) {
           {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
         </button>
 
-        <NavLink
-          to={`/notes?folder=${encodeURIComponent(node.uid)}`}
-          className={({ isActive }) =>
-            cn('min-w-0 flex-1 truncate py-1 text-sm', isActive ? 'text-ink' : 'text-ink-secondary')
-          }
+        {/*
+          ★ 文件夹是**筛选视图**，判据与侧栏「星标」完全同一条（T-138c）。
+
+          此前这里是 `NavLink` + 裸 `isActive`。`isActive` **只比 pathname**，
+          而所有文件夹的 pathname 都是 `/notes` —— 于是 `[实测]`
+          **每个文件夹在每个 `/notes*` 地址上都被标成「当前页」**，
+          包括 `/notes?starred=1` 这种一个文件夹都没选中的地方。
+          视觉上它只是 `text-ink` 与 `text-ink-secondary` 的差别，不如侧栏刺眼；
+          `aria-current` 那一面则是实打实错的，而且**没有人看得见**。
+
+          判据：**筛选不向成员延伸** —— 只在地址完全相同时才是当前页。
+          `Link` 而不是 `NavLink`：后者会自己按 `isActive` 写 `aria-current`，
+          外面传的只能改取值、关不掉（T-138b 在侧栏踩过同一脚）。
+        */}
+        <Link
+          to={to}
+          aria-current={active ? 'page' : undefined}
+          className={cn(
+            'min-w-0 flex-1 truncate py-1 text-sm',
+            active ? 'text-ink' : 'text-ink-secondary',
+          )}
         >
           {node.name}
           {node.noteCount > 0 ? (
             <span className="ml-1 text-xs text-ink-muted">{node.noteCount}</span>
           ) : null}
-        </NavLink>
+        </Link>
 
         <button
           type="button"
