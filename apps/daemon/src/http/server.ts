@@ -172,6 +172,38 @@ async function handleRequest(
     const auth = req.headers['authorization'];
     const hasBearer = typeof auth === 'string' && auth.startsWith('Bearer ');
 
+    /*
+     * ★ 鉴权关掉时，握手**不该失败**。
+     *
+     * 关掉 token 鉴权之后，各个端点确实都放行了，但这条握手仍然要求
+     * "有 Bearer 或有有效 cookie"，两个都没有就 401 —— 而**没人再发得出 Bearer**。
+     * 于是 `authed` 恒为 false，前端 `providers.tsx` 那句
+     * `if (reachable && authed) startSse()` 永远不成立：
+     * **SSE 端点开着 200，前端却从不去连**，所有"实时"能力（转写逐段出字、
+     * 下载进度、装完提示）全部静默失效 —— 而每个单独的端点测起来都是好的。
+     *
+     * 这是"删功能时留下的闸门"：开关翻了，但依赖这个开关的那道门没跟着翻。
+     *
+     * 修在 daemon 而不是前端加一句 `|| health.auth === 'none'`：
+     * 不变量应该是**"鉴权关了握手就不该失败"**，而不是
+     * **"每个调用方都要记得判断鉴权关没关"** —— 后者是在给未来每个新调用点
+     * 埋同一个坑。CSRF 令牌照发，因为写请求那侧的双提交校验在鉴权关闭时也会跳过，
+     * 发了无害，且前端不必为两种模式写两套流程。
+     */
+    if (!authRequired()) {
+      const session = deps.sessions.create();
+      res.setHeader('Set-Cookie', buildSessionCookie(session.sid));
+      sendJson(res, 200, {
+        csrf: session.csrf,
+        csrfHeader: CSRF_HEADER,
+        contractVersion: CONTRACT_VERSION,
+        renewed: false,
+        /** 让前端/诊断页能看出这是"鉴权已关"的握手，而不是误以为验过身份。 */
+        authMode: 'none',
+      });
+      return;
+    }
+
     if (hasBearer) {
       if (!deps.sessions.verifyBootToken(auth.slice(7))) {
         sendError(res, 401, 'UNAUTHENTICATED', 'invalid token', '启动令牌无效');
