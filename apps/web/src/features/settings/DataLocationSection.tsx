@@ -80,14 +80,12 @@ export function DataLocationSection() {
   /**
    * 修改数据目录。
    *
-   * ⚠️ **这个端点目前不存在** —— `oss-scout` 在做 daemon 侧的移动逻辑。
-   * 我没有把按钮灰掉或藏起来，因为：
-   * 1. 灰掉的控件不解释原因，用户只会以为坏了（上一轮刚因为这个把导航改成可点）
-   * 2. `client.ts` 对写操作**绝不静默回落 mock**，404 会如实抛出来，
-   *    所以这里的失败是**可见**的，不会变成"点了没反应"
+   * `GET|POST /api/settings/data-dir` **已经落地**（`rest/storage.ts`），
+   * 这段注释此前还写着"端点目前不存在" —— 已订正。
    *
-   * 端点落地后这里不用改，`ErrorBlock` 自动消失。
-   * 在那之前 `catch` 里给出**真的能用**的替代路径：环境变量。
+   * 保留的设计：写操作**绝不静默回落 mock**，失败会如实抛出并渲染成 `ErrorBlock`；
+   * 按钮不灰掉，因为灰掉的控件不解释原因，用户只会以为坏了。
+   * 端点若因版本差异缺席，`notImplemented` 分支仍会给出环境变量这条真能用的替代路径。
    */
   const changeDir = useMutation({
     mutationFn: (p: { path: string; moveExisting: boolean }) =>

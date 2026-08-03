@@ -52,7 +52,9 @@ export default defineConfig({
      * - daemon 的 `Host`/`Origin` 白名单校验（DNS rebinding 防护）会拒绝跨源请求；
      * - 跨源还要额外开 CORS，而 D-01 §8.1 明确"CORS 全部拒绝"是我们的安全姿态之一。
      *
-     * 生产环境不靠它：daemon 自己托管 SPA（同源，零 CORS 面）。**这一段目前尚未实现**。
+     * 生产环境不靠它：daemon 自己托管 SPA（同源，零 CORS 面）——
+     * **已实现**，见 `apps/daemon/src/http/server.ts` 的 `serveStatic(webDist, …)`
+     * （`/api/**` 与 `/ws/**` 在其中被显式排除）。这个 proxy 只服务 `vite dev`。
      *
      * ⚠️ `changeOrigin: true` 是**必需的**，不是可选优化。
      * daemon 的 DNS rebinding 防护会校验 `Host` 的端口必须是它自己的
