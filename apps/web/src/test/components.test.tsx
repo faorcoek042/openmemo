@@ -18,6 +18,8 @@ import { SearchBox } from '../features/search/SearchBox';
 import { JobList } from '../features/tasks/JobList';
 import { LlmSettingsSection } from '../features/settings/LlmSettingsSection';
 import { buildLlmSettingsPatch, LLM_PURPOSES_KEY } from '../features/settings/api';
+import { LLM_PRESETS } from '../features/settings/llm-catalog';
+import { useSaveMindmapMutation } from '../features/mindmap/api';
 import { StatusChip } from '../components/common/StatusChip';
 import { ProgressMeter } from '../components/common/ProgressMeter';
 import type { MergedJob } from '../features/tasks/api';
@@ -1770,6 +1772,147 @@ describe('保存后 daemon 读得到（键对齐）', () => {
     await r.flush();
     const eff = r.container.querySelector('[data-testid="llm-effective"]')?.textContent ?? '';
     assert.ok(eff.includes('未生效'), `清单里有 provider 但缺 default* 键时必须显示未生效，实际：${eff}`);
+    r.unmount();
+  });
+});
+
+/* ── 两处共用同一份模型数据 + 在线优先（T-108 ①②） ── */
+
+/**
+ * 用户原话：「**该统一和复用的地方要统一复用啊**」。
+ * 「AI 模型」的模型名与「按用途分别配置」里的模型此前**不是同一套** ——
+ * 前者是每个 provider 自带的字符串，后者是个自由文本框，两边毫无关系。
+ *
+ * 这就是我删 `HealthBanner`/`SecureContextBanner` 时说的那句话的数据版：
+ * **留着两处迟早各自漂移**。
+ */
+describe('LLM 服务商与模型：单一数据源', () => {
+  test('★ 在线优先：预设里在线服务数量与顺序都排在本地之前（ADR-016）', () => {
+    const online = LLM_PRESETS.filter((p) => p.tier === 'online');
+    const local = LLM_PRESETS.filter((p) => p.tier === 'local');
+    assert.ok(online.length > local.length, '在线是主路径，不该被本地淹没');
+    // 顺序：第一个必须是在线，最后一个才是本地
+    assert.equal(LLM_PRESETS[0]!.tier, 'online', '默认答案不该是本地');
+    assert.equal(LLM_PRESETS[LLM_PRESETS.length - 1]!.tier, 'local');
+    // base URL 一律可改（国内常走中转网关，写死会把人挡在门外）
+    for (const p of LLM_PRESETS) assert.ok(p.baseUrl.length > 0, `${p.id} 缺 baseUrl`);
+  });
+
+  test('★ 用户自己填的模型名必须出现在分档配置的候选里 —— 这正是"两处不统一"的本体', async () => {
+    stubApi({
+      'GET /settings': {
+        settings: {
+          'llm.providers': [
+            { id: 'deepseek', kind: 'openai-compatible', label: 'DeepSeek', baseUrl: 'u', model: 'my-custom-model', isLocal: false },
+          ],
+          'llm.defaultProviderId': 'deepseek',
+          'llm.defaultModelId': 'my-custom-model',
+        },
+      },
+      'GET /secrets': { secrets: [], disclosure: null },
+    });
+    const r = await render(<PurposeBindingsSection />);
+    await r.flush();
+    const opts = [...r.container.querySelectorAll('datalist option')].map((o) => o.getAttribute('value'));
+    assert.ok(
+      opts.includes('my-custom-model'),
+      `用户在「AI 模型」里填的模型必须能在分档里选到，实际候选：${JSON.stringify(opts)}`,
+    );
+    r.unmount();
+  });
+
+  test('★ 两个区块的候选来自同一个 modelsFor —— 不许那边有这边没有', async () => {
+    const settings = {
+      'llm.providers': [
+        { id: 'deepseek', kind: 'openai-compatible', label: 'DeepSeek', baseUrl: 'u', model: 'deepseek-reasoner', isLocal: false },
+      ],
+      'llm.defaultProviderId': 'deepseek',
+      'llm.defaultModelId': 'deepseek-reasoner',
+    };
+    stubApi({ 'GET /settings': { settings }, 'GET /secrets': { secrets: [], disclosure: null } });
+
+    const a = await render(<PurposeBindingsSection />);
+    await a.flush();
+    const purposeOpts = new Set(
+      [...a.container.querySelectorAll('datalist option')].map((o) => o.getAttribute('value')),
+    );
+    a.unmount();
+
+    const b = await render(<LlmSettingsSection />);
+    await b.flush();
+    await click(buttonByText(b.container, '编辑'));
+    await b.flush();
+    const llmOpts = [...b.container.querySelectorAll('datalist option')].map((o) => o.getAttribute('value'));
+    b.unmount();
+
+    assert.ok(llmOpts.length > 0, '「AI 模型」也要给候选');
+    for (const m of llmOpts) {
+      assert.ok(purposeOpts.has(m), `模型 ${m} 在「AI 模型」有、在分档里没有 —— 两处又漂了`);
+    }
+  });
+});
+
+/* ── 导图保存 + "临时关闭的开关"（T-108 ①②） ── */
+
+/**
+ * ★ 同一形状**今天第二次**：
+ * `showModel={false}`（录音页）和 `MINDMAP_SAVE_SUPPORTED = false`（导图页）——
+ * 都是"当时后端没有 → 关掉 → 后端做好了没人回来开"。
+ * 导图渲染 ✅ 拖拽 ✅ 导出 ✅，**只有保存零请求**，还挂着一条"编辑尚未持久化"误导用户。
+ *
+ * 我把常量**删掉**而不是改成 `true`：改成 true 只还这一次的债，下个功能还会重演。
+ * 让"后端有没有"自己说话 —— 直接发请求，端点不存在就如实报错。
+ * 与我删 `App.tsx` 那个 `pending` 分支同一条原则：
+ * **没有这个开关，"忘了打开"就不可能再发生。**
+ */
+describe('导图保存', () => {
+  const doc = { nodes: { root: { id: 'root', text: '根', children: [] } }, rootId: 'root' };
+
+  test('★ 保存必须真的发出 PATCH，且落在 daemon 实现的那条路由上', async () => {
+    const { calls } = stubApi({ 'PATCH /notes/n1/mindmap': { revision: 2, mindmapUid: 'm1' } });
+    function Harness() {
+      const m = useSaveMindmapMutation('n1');
+      return <button onClick={() => m.mutate(doc as never)}>save</button>;
+    }
+    const r = await render(<Harness />);
+    await click(buttonByText(r.container, 'save'));
+    await r.flush();
+
+    const patch = calls.find((c) => c.method === 'PATCH');
+    assert.ok(patch, '之前这里是零写请求 —— 一个布尔常量把它挡住了');
+    assert.equal(patch!.path, '/notes/n1/mindmap');
+    // daemon 的 PATCH 收 `{doc}`（`content.ts:329`），不是裸文档
+    assert.deepEqual(patch!.body, { doc });
+    r.unmount();
+  });
+
+  test('★ 不许再出现"等后端做好再手动打开"的布尔开关', async () => {
+    const mod = (await import('../features/mindmap/api')) as Record<string, unknown>;
+    assert.equal(
+      mod['MINDMAP_SAVE_SUPPORTED'],
+      undefined,
+      '这个常量必须保持删除状态 —— 它正是"后端好了却没人回来开"的载体',
+    );
+  });
+
+  test('★ 端点不存在时如实报错，绝不静默成功', async () => {
+    stubApi({}); // PATCH 未打桩 → 404
+    function Harness() {
+      const m = useSaveMindmapMutation('n1');
+      return (
+        <div>
+          <button onClick={() => m.mutate(doc as never)}>save</button>
+          {m.isError ? <span data-testid="save-err">err</span> : null}
+        </div>
+      );
+    }
+    const r = await render(<Harness />);
+    await click(buttonByText(r.container, 'save'));
+    await r.flush();
+    assert.ok(
+      r.container.querySelector('[data-testid="save-err"]'),
+      '写操作遇到不存在的端点必须抛错 —— 这正是删掉常量后仍然安全的原因',
+    );
     r.unmount();
   });
 });

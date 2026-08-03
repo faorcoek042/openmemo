@@ -25,8 +25,21 @@ export function useMindmapQuery(noteUid: string | undefined) {
   });
 }
 
-/** 服务端目前**没有**保存编辑的端点（只有 GET 与 POST 生成）。 */
-export const MINDMAP_SAVE_SUPPORTED = false;
+/*
+ * ⚠️ 这里原本有一个 `export const MINDMAP_SAVE_SUPPORTED = false`。**已删除，而不是改成 true。**
+ *
+ * 当时 daemon 确实没有 PATCH，关掉是对的；但 `content.ts:329` 早就把它做出来了
+ * （带 validate + revision），**而没有人回来把常量翻开** ——
+ * 于是渲染、拖拽、导出全好，只有保存零请求，还带着一条"编辑尚未持久化"的提示误导用户。
+ *
+ * 改成 `true` 只是把这次的债还了，**下一个功能还会重演**。
+ * 真正的修法是让"后端有没有"**自己说话**：直接发请求，端点不存在时
+ * `client.ts` 的端点级记账会 404 → 写操作**如实抛错**（写永不静默回落 mock），
+ * UI 照常显示错误。既不需要有人记得回来开，也不会再毒化整个面。
+ *
+ * 这与我删掉 `App.tsx` 那个 `pending` 分支是同一条原则：
+ * **没有这个开关，"忘了打开"就不可能再发生。**
+ */
 
 /**
  * 保存导图。

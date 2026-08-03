@@ -119,7 +119,9 @@
       "editsAtRiskDetail": "当前 daemon 在「重新转写」这条路径上不做两阶段合并，重跑结果会整篇替换现有转写稿。想保留请先导出。（录音页的重跑会保留编辑，这条路径暂时不会——已报后端修复。）",
       "noSource": "这条笔记没有记录原始输入，无法重跑。仅当来源是可重新获取的链接或文件时才能重新转写。",
       "editsPreserved": "已保留你编辑过的 {{count}} 段"
-    }
+    },
+    "mindmapReadonly": "此处为预览，改动不会保存",
+    "mindmapEdit": "去导图页编辑"
   },
   "progress": {
     "fetch": "下载中",
@@ -284,14 +286,14 @@
     "contractVersion": "契约版本",
     "exportDiagnostics": "导出诊断包",
     "telemetryNote": "本产品不做任何遥测上报，日志只写在本机。",
-    "llmIntro": "思维导图与摘要需要一个 AI 模型。云服务填 API Key；本地服务（Ollama / LM Studio）不需要 Key。",
+    "llmIntro": "思维导图与摘要需要一个大模型。**推荐用在线 API**（填 API Key 即可，无需下载任何东西）；已装 Ollama / LM Studio 的话也可以接本地服务。",
     "plaintextTitle": "API Key 以明文存储",
     "plaintextDetail": "保存在 {{path}}，文件权限 {{mode}}。任何能读取该文件的本地程序都能看到它。我们不做加密，也不假装做了。",
     "localBadge": "本地，无需 Key",
     "keySet": "已设置 {{mask}}",
     "keyMissing": "未设置 Key",
     "baseUrl": "接口地址（Base URL）",
-    "model": "模型名",
+    "model": "模型",
     "apiKey": "API Key",
     "keyKeepPlaceholder": "留空则保持不变",
     "keyKeepHint": "留空 = 不修改已保存的 Key。要清除请输入一个空格后保存。",
@@ -406,7 +408,9 @@
     "saved": "✓ 已保存到本地（刷新页面后仍在）",
     "saving": "保存中…",
     "effectiveLabel": "当前生效",
-    "effectiveNone": "未生效 —— 保存一个服务商即可启用（摘要/导图需要它）"
+    "effectiveNone": "未生效 —— 保存一个服务商即可启用（摘要/导图需要它）",
+    "localOptional": "或接本地服务（可选）：",
+    "provider": "服务商"
   },
   "mock": {
     "notImplementedShort": "这部分还是模拟数据",

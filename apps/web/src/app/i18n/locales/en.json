@@ -119,7 +119,9 @@
       "editsAtRiskDetail": "On this path the daemon does not run the two-phase merge, so the re-run replaces the whole transcript. Export first if you need to keep your edits. (The recorder's re-run does preserve edits; this path does not yet — reported to the backend.)",
       "noSource": "This note has no recorded source input, so it cannot be re-run. Re-transcription only works when the source is a re-fetchable link or file.",
       "editsPreserved": "Your {{count}} edited segment(s) will be preserved"
-    }
+    },
+    "mindmapReadonly": "Preview only — changes here are not saved",
+    "mindmapEdit": "Edit in mindmap page"
   },
   "progress": {
     "fetch": "Downloading",
@@ -284,7 +286,7 @@
     "contractVersion": "Contract version",
     "exportDiagnostics": "Export diagnostics bundle",
     "telemetryNote": "This product sends no telemetry. Logs stay on your machine.",
-    "llmIntro": "Mind maps and summaries need an AI model. Cloud services need an API key; local ones (Ollama / LM Studio) do not.",
+    "llmIntro": "Mindmaps and summaries need an LLM. **An online API is recommended** — just paste an API key, nothing to download. If you already run Ollama or LM Studio, you can point at those instead.",
     "plaintextTitle": "API keys are stored in plain text",
     "plaintextDetail": "Stored at {{path}} with file mode {{mode}}. Any local program that can read that file can read them. We do not encrypt them, and we do not pretend to.",
     "localBadge": "local, no key needed",
@@ -406,7 +408,9 @@
     "saved": "✓ Saved locally (survives a page refresh)",
     "saving": "Saving…",
     "effectiveLabel": "In effect",
-    "effectiveNone": "Not configured — save a provider to enable it (needed for summary/mindmap)"
+    "effectiveNone": "Not configured — save a provider to enable it (needed for summary/mindmap)",
+    "localOptional": "or use a local service (optional):",
+    "provider": "Provider"
   },
   "mock": {
     "notImplementedShort": "Still simulated data",

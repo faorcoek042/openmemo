@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { arr } from '../../lib/safe';
-import { useParams, useSearchParams } from 'react-router';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 
 import { useNoteQuery, useTranscriptQuery } from './api';
 import { qk } from '../../app/query';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
+import { Button } from '../../components/common/Button';
 import { MockNotice } from '../../components/common/MockNotice';
 import { PanelBoundary } from '../../components/common/PanelBoundary';
 import { WordLevelBadge } from '../transcript';
@@ -35,6 +36,7 @@ export default function NoteDetailPage() {
 
   const note = useNoteQuery(noteUid);
   const transcript = useTranscriptQuery(noteUid);
+  const navigate = useNavigate();
   const setSource = usePlayerStore((s) => s.setSource);
   const follow = useUiStore((s) => s.followPlayback);
   const setFollow = useUiStore((s) => s.setFollowPlayback);
@@ -171,8 +173,27 @@ export default function NoteDetailPage() {
               )
             ) : tab === 'mindmap' ? (
               mindmap.data ? (
-                <div className="-m-4 h-[60vh]">
-                  <MindmapView doc={mindmap.data} />
+                <div className="-m-4 flex h-[60vh] flex-col">
+                  {/*
+                    ★ 这个 tab **是只读的**（没传 onChange），此前界面对此一个字都不说 ——
+                    用户在这里拖动节点，会以为改动生效了。
+                    渲染器内部的乐观更新恰恰让它**看起来像成功了**，这是最坏的一种沉默。
+                    要么接上编辑，要么明说 + 给出能编辑的地方；这里选后者（保持详情页轻量）。
+                  */}
+                  <p className="flex items-center gap-2 px-4 py-1 text-xs text-ink-muted">
+                    <span data-testid="mindmap-readonly">{t('detail.mindmapReadonly')}</span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-5 px-1.5 text-xs text-accent hover:text-accent"
+                      onClick={() => navigate(`/notes/${n.uid}/mindmap`)}
+                    >
+                      {t('detail.mindmapEdit')}
+                    </Button>
+                  </p>
+                  <div className="min-h-0 flex-1">
+                    <MindmapView doc={mindmap.data} />
+                  </div>
                 </div>
               ) : (
                 <p className="text-ink-muted">{t('mindmap.empty')}</p>
