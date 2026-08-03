@@ -10,8 +10,9 @@ import {
   LLM_ACTIVE_KEY,
   LLM_DEFAULT_MODEL_KEY,
   LLM_PROVIDERS_KEY,
-  baseUrlKeyFor,
+  buildLlmSettingsPatch,
   readActiveProviderId,
+  readDefaultModelId,
   readProviders,
   secretKeyFor,
   useDeleteSecretMutation,
@@ -57,6 +58,12 @@ export function LlmSettingsSection() {
 
   const providers = readProviders(settings.data);
   const activeId = readActiveProviderId(settings.data);
+  /*
+   * daemon 解析 provider 需要 `llm.defaultProviderId` **和** `llm.defaultModelId` 都有值，
+   * 缺任一就返回 undefined → F4 报 LLM_NOT_CONFIGURED。所以两个都要读出来给用户看。
+   */
+  const effectiveProviderId = activeId;
+  const effectiveModel = readDefaultModelId(settings.data);
   const disclosure = secrets.data?.disclosure;
   const hasKey = (id: string) =>
     arr(secrets.data?.secrets).some((s) => s.key === secretKeyFor(id));
@@ -71,26 +78,12 @@ export function LlmSettingsSection() {
    * 少写任何一个，用户就会遇到"界面上配好了、功能说没配"。
    */
   const upsertProvider = (p: LlmProviderConfig) => {
-    const next = providers.some((x) => x.id === p.id)
-      ? providers.map((x) => (x.id === p.id ? p : x))
-      : [...providers, p];
-    patch.mutate({
-      [LLM_PROVIDERS_KEY]: next,
-      // baseUrl 是按 provider 存的，改哪个写哪个
-      [baseUrlKeyFor(p.id)]: p.baseUrl,
-      // 改的是当前默认 provider 的话，默认模型也要跟着走，
-      // 否则会出现"provider 换了、模型还是上一家的"这种解析不出来的组合
-      ...(activeId === p.id ? { [LLM_DEFAULT_MODEL_KEY]: p.model } : {}),
-    });
+    patch.mutate(buildLlmSettingsPatch({ providers, provider: p, activeId }));
   };
 
-  /** 设为默认：provider / model / baseUrl 三个键必须一起写，缺一个就解析不出 provider。 */
+  /** 设为默认。与保存**共用同一个 patch 生成器** —— 两个入口各拼各的就是上次漂移的原因。 */
   const setActive = (p: LlmProviderConfig) => {
-    patch.mutate({
-      [LLM_ACTIVE_KEY]: p.id,
-      [LLM_DEFAULT_MODEL_KEY]: p.model,
-      [baseUrlKeyFor(p.id)]: p.baseUrl,
-    });
+    patch.mutate(buildLlmSettingsPatch({ providers, provider: p, activeId, makeActive: true }));
   };
 
   const removeProvider = (id: string) => {
@@ -116,6 +109,24 @@ export function LlmSettingsSection() {
       <p className="mb-3 text-xs text-ink-secondary">{t('settings.llmIntro')}</p>
 
       <MockNotice surface="settings" className="mb-3" />
+
+      {/*
+        ★ **当前生效** —— 直接读 daemon 会读的那两个键，而不是读 `llm.providers`。
+        用户上次踩的坑就是"列表里配得好好的、daemon 却解析不出来"：
+        界面若照着自己的清单显示，永远显示正常，**永远发现不了缺键**。
+        照着对面读的键显示，缺了就一眼看得见。
+      */}
+      <p className="mb-3 text-xs" data-testid="llm-effective">
+        <span className="text-ink-secondary">{t('settings.effectiveLabel')}: </span>
+        {effectiveProviderId && effectiveModel ? (
+          <span className="text-ink">
+            {providers.find((p) => p.id === effectiveProviderId)?.label ?? effectiveProviderId} ·{' '}
+            {effectiveModel}
+          </span>
+        ) : (
+          <span className="text-warning">{t('settings.effectiveNone')}</span>
+        )}
+      </p>
 
       {/*
         ★ 保存反馈：成功看得见、失败**绝不静默**。
@@ -215,13 +226,10 @@ export function LlmSettingsSection() {
                      * 规则本身没用，得有人接住。
                      */
                     const jobs: Promise<unknown>[] = [
-                      patch.mutateAsync({
-                        [LLM_PROVIDERS_KEY]: providers.some((x) => x.id === next.id)
-                          ? providers.map((x) => (x.id === next.id ? next : x))
-                          : [...providers, next],
-                        [baseUrlKeyFor(next.id)]: next.baseUrl,
-                        ...(activeId === next.id ? { [LLM_DEFAULT_MODEL_KEY]: next.model } : {}),
-                      }),
+                      // ★ 走同一个生成器：没有默认 provider 时，保存即生效
+                      patch.mutateAsync(
+                        buildLlmSettingsPatch({ providers, provider: next, activeId }),
+                      ),
                     ];
                     if (apiKey !== undefined) {
                       const v = apiKey.trim();

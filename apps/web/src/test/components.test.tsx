@@ -17,6 +17,7 @@ import { TagEditor } from '../features/notes/TagEditor';
 import { SearchBox } from '../features/search/SearchBox';
 import { JobList } from '../features/tasks/JobList';
 import { LlmSettingsSection } from '../features/settings/LlmSettingsSection';
+import { buildLlmSettingsPatch, LLM_PURPOSES_KEY } from '../features/settings/api';
 import { StatusChip } from '../components/common/StatusChip';
 import { ProgressMeter } from '../components/common/ProgressMeter';
 import type { MergedJob } from '../features/tasks/api';
@@ -33,7 +34,7 @@ import { DataLocationSection } from '../features/settings/DataLocationSection';
 import { RetranscribeButton, isSegmentEdited } from '../features/notes/RetranscribeButton';
 import { WordLevelBadge } from '../features/transcript';
 import { WordHighlight, findActiveWord } from '../features/transcript/WordHighlight';
-import { DEFAULT_PROXY_CONFIG } from '@openmemo/shared';
+import { DEFAULT_PROXY_CONFIG, LLM_SETTING_KEYS } from '@openmemo/shared';
 import { ProxySettingsSection } from '../features/settings/ProxySettingsSection';
 import { getPositionMs, setPositionMs, subscribePosition } from '../lib/stores/player.store';
 import { useConnectionStore } from '../lib/stores/connection.store';
@@ -1694,5 +1695,81 @@ describe('CSRF 令牌', () => {
   test('★ sessionStorage 不可用要如实归类，不能栽给"非安全上下文"', () => {
     // 这一条是防止排查被引偏：http://<IP> 下 sessionStorage 其实照常可用
     assert.equal(isSessionStorageAvailable(), true, 'jsdom 环境下应可用');
+  });
+});
+
+/* ────── 保存后 daemon 读得到吗（T-108）：测对面，不测自己 ────── */
+
+/**
+ * ★ 这一组断言的**视角是反的，这正是重点**。
+ *
+ * 以往的测试问"我发了什么"，于是同一个形状栽了五次：
+ * `textRaw` / `words` / `installPath` / `settings` 嵌套 / `defaultProviderId`。
+ * 每次都是"我这边发得好好的、对面读的是另一个键"，而测试全绿。
+ *
+ * 所以这里改成问：**对面会读的那几个键，有没有被写上。**
+ * 键名来自 `@openmemo/shared` 的 `LLM_SETTING_KEYS` —— 与 daemon 的
+ * `resolveConfiguredProvider()` 同一份清单。daemon 以后新增一个必读键，
+ * 这条测试会**立刻变红**，而不是等用户去撞 `LLM_NOT_CONFIGURED`。
+ */
+describe('保存后 daemon 读得到（键对齐）', () => {
+  const provider = {
+    id: 'deepseek',
+    kind: 'openai-compatible' as const,
+    label: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    model: 'deepseek-chat',
+    isLocal: false,
+  };
+
+  test('★ 首次保存必须写上 daemon 唯一认的两个键 —— 否则 F4 直接 LLM_NOT_CONFIGURED', () => {
+    // 用户实际走的路：加一个 provider、填 key、点保存，**没有**另外点"设为默认"
+    const patch = buildLlmSettingsPatch({ providers: [], provider, activeId: null });
+
+    assert.equal(patch[LLM_SETTING_KEYS.defaultProviderId], 'deepseek', '缺它 daemon 解析不出 provider');
+    assert.equal(patch[LLM_SETTING_KEYS.defaultModelId], 'deepseek-chat', '缺它同样解析不出');
+    assert.equal(patch[`${LLM_SETTING_KEYS.baseUrlPrefix}deepseek`], 'https://api.deepseek.com/v1');
+  });
+
+  test('★ daemon 必读键清单一旦变化，这里要立刻红 —— 别再等用户去撞', () => {
+    const patch = buildLlmSettingsPatch({ providers: [], provider, activeId: null });
+    // 逐条对照 shared 的清单，而不是我手写的字符串
+    for (const [name, key] of Object.entries(LLM_SETTING_KEYS)) {
+      if (name === 'baseUrlPrefix' || name === 'purposes') continue;
+      assert.ok(key in patch, `daemon 会读 ${key}，但保存时没写 —— 这正是第五次栽的那个形状`);
+    }
+  });
+
+  test('已有默认 provider 时保存另一个，不许悄悄改默认', () => {
+    const other = { ...provider, id: 'openai', label: 'OpenAI', model: 'gpt-4o-mini' };
+    const patch = buildLlmSettingsPatch({ providers: [provider], provider: other, activeId: 'deepseek' });
+    assert.ok(!(LLM_SETTING_KEYS.defaultProviderId in patch), '编辑非默认项不该改动默认 provider');
+    // 但它自己的 baseUrl 仍要落库，否则换默认时又缺键
+    assert.equal(patch[`${LLM_SETTING_KEYS.baseUrlPrefix}openai`], 'https://api.deepseek.com/v1');
+  });
+
+  test('★ 改当前默认 provider 的模型，defaultModelId 必须跟着变', () => {
+    const edited = { ...provider, model: 'deepseek-reasoner' };
+    const patch = buildLlmSettingsPatch({ providers: [provider], provider: edited, activeId: 'deepseek' });
+    assert.equal(patch[LLM_SETTING_KEYS.defaultModelId], 'deepseek-reasoner', '否则会用着上一个模型名');
+  });
+
+  test('★ 分档配置写的键就是 daemon 读的 llm.purposes', () => {
+    assert.equal(LLM_PURPOSES_KEY, LLM_SETTING_KEYS.purposes);
+    const out = mergePurposeBinding({}, 'summarize', { model: 'deepseek-chat' });
+    // daemon 的 bindingFor() 期望 Partial<Record<purpose, {providerId?, model?}>>
+    assert.deepEqual(out, { summarize: { model: 'deepseek-chat' } });
+  });
+
+  test('★ UI 要显示"当前生效"，且它读的是 daemon 那两个键', async () => {
+    stubApi({
+      'GET /settings': { settings: { 'llm.providers': [provider] } }, // 只有清单，缺 default* 键
+      'GET /secrets': { secrets: [], disclosure: null },
+    });
+    const r = await render(<LlmSettingsSection />);
+    await r.flush();
+    const eff = r.container.querySelector('[data-testid="llm-effective"]')?.textContent ?? '';
+    assert.ok(eff.includes('未生效'), `清单里有 provider 但缺 default* 键时必须显示未生效，实际：${eff}`);
+    r.unmount();
   });
 });

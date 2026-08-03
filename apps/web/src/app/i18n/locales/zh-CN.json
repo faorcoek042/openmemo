@@ -404,7 +404,9 @@
       "resetAll": "全部恢复为继承全局"
     },
     "saved": "✓ 已保存到本地（刷新页面后仍在）",
-    "saving": "保存中…"
+    "saving": "保存中…",
+    "effectiveLabel": "当前生效",
+    "effectiveNone": "未生效 —— 保存一个服务商即可启用（摘要/导图需要它）"
   },
   "mock": {
     "notImplementedShort": "这部分还是模拟数据",

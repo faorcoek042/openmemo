@@ -180,3 +180,49 @@ export function readActiveProviderId(settings: SettingsMap | undefined): string 
   const raw = settings?.[LLM_ACTIVE_KEY];
   return typeof raw === 'string' ? raw : null;
 }
+
+/**
+ * 生成**一份完整的、daemon 真读得到的** LLM 设置补丁。
+ *
+ * ## 为什么必须收敛到一个函数
+ *
+ * 保存和「设为默认」原本各自拼各自的 patch，于是漂移了：
+ * 「设为默认」写全了三个键，而**保存只写 `providers` + `baseUrl`** ——
+ * 用户加了 provider、填了 key、点保存，`llm.defaultProviderId` **一次都没被写过**，
+ * 而那是 `resolveConfiguredProvider()` **唯一认的键**。
+ * 结果 F4 直接 `blocked / LLM_NOT_CONFIGURED`，而设置页显示得好好的。
+ *
+ * 两个入口拼同一组键，就一定会有一个先忘。所以只留一个函数。
+ *
+ * ## 首个 provider 自动成为默认
+ *
+ * 用户的心智是"我配好了就该能用"，而不是"我还得再点一次设为默认"。
+ * 没有任何 provider 生效时，保存哪个就让哪个生效 —— 这也正是用户实际走的那条路。
+ */
+export function buildLlmSettingsPatch(opts: {
+  providers: LlmProviderConfig[];
+  provider: LlmProviderConfig;
+  /** 当前生效的 provider id（`llm.defaultProviderId`），没有则为 null。 */
+  activeId: string | null;
+  /** true = 显式设为默认；省略时「当前没有默认」会自动把它设为默认。 */
+  makeActive?: boolean;
+}): SettingsMap {
+  const { providers, provider, activeId } = opts;
+  const next = providers.some((x) => x.id === provider.id)
+    ? providers.map((x) => (x.id === provider.id ? provider : x))
+    : [...providers, provider];
+
+  const becomesActive = opts.makeActive === true || activeId === null || activeId === provider.id;
+
+  const patch: SettingsMap = {
+    [LLM_PROVIDERS_KEY]: next,
+    // baseUrl 按 provider 存：daemon 取的是 `llm.baseUrl.<providerId>`
+    [baseUrlKeyFor(provider.id)]: provider.baseUrl,
+  };
+  if (becomesActive) {
+    // ★ 这两个键才是 daemon 唯一读的。少写任何一个都会 LLM_NOT_CONFIGURED
+    patch[LLM_ACTIVE_KEY] = provider.id;
+    patch[LLM_DEFAULT_MODEL_KEY] = provider.model;
+  }
+  return patch;
+}

@@ -404,7 +404,9 @@
       "resetAll": "Reset all to inherit"
     },
     "saved": "✓ Saved locally (survives a page refresh)",
-    "saving": "Saving…"
+    "saving": "Saving…",
+    "effectiveLabel": "In effect",
+    "effectiveNone": "Not configured — save a provider to enable it (needed for summary/mindmap)"
   },
   "mock": {
     "notImplementedShort": "Still simulated data",
