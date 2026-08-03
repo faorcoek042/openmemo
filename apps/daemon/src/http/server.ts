@@ -19,7 +19,7 @@ import {
   type SessionStore,
   authenticate,
   buildSessionCookie,
-  checkCsrf,
+  checkCsrfDetailed,
 } from './auth.js';
 import { guardRequest } from './guard.js';
 import { resolveWebDist, serveStatic } from './static.js';
@@ -178,7 +178,19 @@ async function handleRequest(
     );
     return;
   }
-  if (!checkCsrf(req, auth)) {
+  const csrf = checkCsrfDetailed(req, auth);
+  if (csrf.ok && csrf.via === 'same-origin-fallback') {
+    /*
+     * **info，不是 warn** —— 这是裁决允许的预期路径，不是异常。
+     * 但必须留痕：`architect` 正在修根因（前端 sessionStorage 不可用时静默丢 CSRF 头），
+     * 根因修好后这条应该基本不出现。**如果它天天刷屏，就说明根因没修好** ——
+     * 这条日志的唯一用途就是让我们发现"兜底变成了常态"。
+     */
+    console.info(
+      `[auth] CSRF 同源兜底放行：${req.method} ${path}（无 CSRF 头，Origin 与 Host 严格同源）`,
+    );
+  }
+  if (!csrf.ok) {
     /*
      * ★ 这条必须**可恢复且说得清**，否则表现为"页面正常、保存悄悄失败"。
      *

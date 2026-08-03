@@ -1735,3 +1735,102 @@ BtbN 把二进制放在 `<顶层>/bin/` 下，whisper.cpp 则是平铺 ——
 
 ### 纪律
 自建实例 `17650`（dataDir `/tmp/om-t097`，全新），用完只杀自己的 pid；**未触碰 `:10000` 的 demo**。
+
+---
+
+## T-102 「模型没得选」：真实成因是**三层**，不是"条目少"一条
+
+先按你说的**先看清楚再动手**。真浏览器 + 真 daemon（全新 dataDir），逐页数选项：
+
+| 页面 | 装 0 个模型时 | 装 2 个模型时 |
+|---|---|---|
+| `/models` | 8 张卡（含未安装，带「下载」按钮）✅ | 同上 |
+| `/capture` | 无下拉，显示「Install a model」CTA | **`asr-model-select` 出现，2 个选项** ✅ |
+| `/record` | 无下拉 | **仍然没有下拉** ❌ |
+
+### 三条成因，互相独立
+
+1. **录音页根本不给选** —— `RecorderPage.tsx:303` 显式写了 `showModel={false}`。
+   装再多模型那里都不会出现选择器，只有 `AsrEngineStatus`（只读状态）。
+   注释写的是"如实展示可用性，不是可切换的假选项" —— 在选择器还是假的那会儿这是对的，
+   **但 `architect` 已经把它改成真生效了（走 `POST /api/models/activate`），
+   这个 `false` 现在是过时的保护**。归 `architect`/`ui-polish` 决定要不要打开。
+2. **选择器只列已安装的**（`AsrModelPicker` 读 `/api/models/installed`）。
+   这本身合理 —— 没下载的模型选了也没法转写 —— 但意味着**用户装了几个就只有几个**。
+   我装 2 个就是 2 个，装 3 个就是 3 个，实测一一对应。
+3. **目录本身就窄**：ASR 只有 11 条（whisper 9 + sherpa 1 + paraformer 1），
+   所以"能装的"也没几个。
+
+**用户说的"没得选"三条都占**，其中第 1 条最直接（在他最可能用的录音页，选项数恒为 0）。
+
+### ② 目录补全：whisper **9 → 25 条**，ASR 合计 **11 → 27**
+
+按你说的范围：**只补 whisper，不碰 sherpa/paraformer**。
+多语种做到**完整的尺寸 × 量化矩阵**，`.en` 只挑每档一个代表（对中文用户无用，
+全加进去只会让每个列表长一倍）：
+
+    tiny      f16 · q5_1 · q8_0          large-v1  f16
+    base      q5_1 · q8_0 · f16          large-v2  q5_0 · q8_0 · f16
+    small     q5_1 · q8_0 · f16          large-v3  q5_0 · f16
+    medium    q5_0 · q8_0 · f16          large-v3-turbo  q5_0 · q8_0 · f16
+    仅英文    tiny.en/base.en/small.en(q5_1) · medium.en(q5_0)
+
+daemon 实测现在给 **14 组 / 27 个变体**（原 8 组 / 11 个）。
+
+**没有一个数字是手打的**：sha256 全部取自 HF tree API 的 `lfs.oid`（那个字段就是 sha256，
+所以 3 GB 的模型也只花一次 JSON 请求），体积、revision 同源；
+内存需求用 `shared` 里的 `whisperOverheadMB`**加性**表算（不是我另编一套）——
+whisper 的计算缓冲按模型维度定大小，**不随量化缩小**，乘法估法会系统性低估恰好是我们推荐的量化模型。
+生成器留在 `packages/downloader/scripts/gen-whisper-catalog.mjs`，可复跑。
+
+⚠️ **顺带撞到那个老陷阱**：`ggml-large-v1.bin` 与 `ggml-large-v2.bin`
+**字节数完全相同（3,094,623,691）**，sha256 不同。写入前我专门断言了这一条 ——
+**按体积去重会把两个不同的模型当成同一个**。全表复查：无重复 id、无重复 sha256。
+
+**新条目实跑验证**：`asr/whisper-tiny-q5_1` 走真实安装通道下载 → `succeeded`，
+sha256 校验通过，落盘 `by-name/asr/ggml-tiny-q5_1.bin`。不是只过 schema。
+
+### ③ 给 `ui-polish`：点了「安装」之后，系统依次做了什么
+
+契约里的阶段名（`JOB_STEPS`）就四个，UI 应当逐个对应文案，**不要合并成一句"安装中"**：
+
+| 阶段 | 后端真实动作 | 该告诉用户什么 | 可能停多久 |
+|---|---|---|---|
+| `queued` | 入队（有并发上限，默认 2） | 「已排队，前面还有 N 个」——**排队不是卡住** | 取决于前面的任务 |
+| `resolving` | 探测各镜像、按实测延迟排序 | 「正在挑选下载源」 | 秒级 |
+| `downloading` | 分块并发 + 断点续传 | **必须给出「已下载 X / 共 Y · 速度 · 剩余时间 · 来源(hf/hf-mirror/modelscope)」** | 几分钟～几十分钟 |
+| `verifying` | 全文件 SHA-256 复算 | 「正在校验完整性」——**大模型这一步要几十秒且进度条不动，不说会被当成卡死** | 10s～1min |
+| `installing` | 落盘 / 解包 / 建 by-name 链接 | 「正在安装」 | 秒级 |
+| `succeeded` | 写安装记录 | **见下面「装完之后」** | — |
+
+失败态也要分开说，因为**处置方式完全不同**：
+`failed` 且 `retryable=true`（网络/镜像问题）→ 给「重试」；
+`retryable=false`（磁盘满、权限、校验不符）→ 给具体补救，重试没有意义。
+`blocked` → **不是失败**，是缺前置条件（如没装 whisper-cli），文案应指向去装那个。
+
+#### ★ 装完之后：两类，必须区分（`oss-scout` 的 `restartRequired` 就是干这个的）
+
+    GET /api/health → restartRequired: { required, extensions[], messageZh, endpoint }
+
+- **模型类（asr/llm/vad…）→ 装完立刻可用。** 不要提重启，
+  文案应是「已安装，已设为当前使用」或「已安装，去启用」。
+- **SQLite 扩展类（libsimple / sqlite-vec）→ 装完必须重启才生效。**
+  这两个包装完后文件确实到位了，但**当前进程里的 SQLite 连接已经建好，加载不了新扩展** ——
+  实测装完 libsimple 后 `health` 立刻变成 `restartRequired.required=true, extensions:['libsimple']`，
+  而 `db.extensions.libsimple` 仍是 `false`。
+  **如果 UI 只说「安装成功」，用户会去搜中文、搜不到、以为功能是坏的** ——
+  这正是 T-093 冷启动踩过的那个"零报错的假成功"。
+  文案必须是「已安装，**需重启后生效**」+ 一个直接调 `restartRequired.endpoint` 的按钮。
+- **后端包类（whisper.cpp / llama.cpp / ffmpeg）→ 装完即可被发现**（下次任务就用得上），
+  不需要重启，但**当前正在跑的任务不会改用新后端**。
+
+#### 一个顺手能改的小瑕疵
+下拉选项文案重复了量化：`"Whisper base (Q5_1) (q5_1)"` ——
+`displayName` 里已经有 `(Q5_1)`，后面又拼了一次 `quantization`。归 `ui-polish`。
+
+### 门禁
+    tsc 0 · eslint 0 · verify-offline 44/44 · verify-unpack 53/53 · 5 清单 schema 全过
+
+### 纪律
+自建实例 `17650`（dataDir `/tmp/om-t102`，全新），用完只杀自己的 pid；**未触碰 `:10000` 的 demo**。
+截图：`/tmp/shots/t102-models-after.png`、`t102-capture-after.png`、`t102-record.png`。

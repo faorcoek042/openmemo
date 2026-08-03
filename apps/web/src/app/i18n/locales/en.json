@@ -553,7 +553,8 @@
     "caps": {
       "microphone": "**Recording is unavailable** — browsers only expose the microphone in a secure context.",
       "webLocks": "Cross-tab leader election is unavailable — each tab opens its own connection.",
-      "clipboard": "Copy buttons are unavailable — the clipboard API also requires a secure context."
+      "clipboard": "Copy buttons are unavailable — the clipboard API also requires a secure context.",
+      "storage": "Session storage is blocked — saving still works (the token is kept in memory), but each reload costs one extra handshake."
     }
   }
 }

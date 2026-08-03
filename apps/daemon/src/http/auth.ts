@@ -168,12 +168,79 @@ export function authenticate(req: IncomingMessage, store: SessionStore): AuthRes
  * CSRF 双提交校验：非 GET/HEAD 且走 cookie 鉴权的请求，必须额外带 CSRF 头。
  * Bearer 通道天然免疫（攻击页拿不到 token），故跳过。
  */
-export function checkCsrf(req: IncomingMessage, auth: AuthResult): boolean {
-  if (!auth.ok) return false;
+export type CsrfOutcome =
+  /** 带了正确的 CSRF 头，或本就不需要（GET / Bearer 通道）。 */
+  | { ok: true; via: 'token' | 'exempt' }
+  /** 没带 CSRF 头，但**严格同源**，按本地自用裁决放行。调用方应记一条 info。 */
+  | { ok: true; via: 'same-origin-fallback' }
+  | { ok: false; reason: string };
+
+/**
+ * CSRF 校验。
+ *
+ * ## 同源兜底是**显式裁决，不是遗漏**（ADR，勿当 bug 修掉）
+ * 本项目是本地自部署自用。用户明确要求"别搞那么多安全策略"。
+ * 现实是：前端在 `sessionStorage` 不可用时会丢掉 CSRF 头，于是
+ * **读全部 200、写全部 403** —— 用户填完 API Key 点保存，界面毫无异常，库里一行没有。
+ * 这一层挡不住真正的威胁（**能伪造同源 Origin 的攻击者，本来就能直接读 SQLite 文件**），
+ * 却天天挡住合法用户。
+ *
+ * 因此：**没带 CSRF 头时，若同时满足下面两条，放行**。
+ *   1. `Origin` 与本次请求**严格同源**（host:port 完全相等）
+ *   2. `Sec-Fetch-Site: same-origin` —— **浏览器强制附加、页面 JS 无法伪造**，
+ *      比 Origin 更可信；我在裁决基础上主动加的这一条。
+ *
+ * ## 三条边界，别削掉
+ * - **带了 CSRF 头就仍然严格校验**：有兜底不等于不看，带错的一律拒。
+ * - 兜底路径要让调用方记 **info**（预期路径，不是异常）。若日志显示它成了常态，
+ *   说明前端那个根因没修好 —— 这条日志就是用来发现这件事的。
+ * - token 鉴权**完全不动**：它才是真正的访问控制。
+ */
+export function checkCsrfDetailed(req: IncomingMessage, auth: AuthResult): CsrfOutcome {
+  if (!auth.ok) return { ok: false, reason: 'unauthenticated' };
   const method = (req.method ?? 'GET').toUpperCase();
-  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true;
-  if (auth.via === 'bearer') return true;
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+    return { ok: true, via: 'exempt' };
+  }
+  // Bearer 通道天然免疫（攻击页拿不到 token）
+  if (auth.via === 'bearer') return { ok: true, via: 'exempt' };
+
   const provided = req.headers[CSRF_HEADER];
-  if (typeof provided !== 'string' || !auth.session) return false;
-  return safeEqual(provided, auth.session.csrf);
+  if (typeof provided === 'string') {
+    // 带了就必须对 —— 兜底不适用于"带了个错的"
+    if (!auth.session) return { ok: false, reason: 'no session bound to request' };
+    return safeEqual(provided, auth.session.csrf)
+      ? { ok: true, via: 'token' }
+      : { ok: false, reason: 'CSRF token mismatch' };
+  }
+
+  // ---- 没带头：走同源兜底 ----
+  const site = req.headers['sec-fetch-site'];
+  if (site !== undefined && site !== 'same-origin') {
+    return { ok: false, reason: `no CSRF token and Sec-Fetch-Site=${String(site)}` };
+  }
+  const origin = req.headers['origin'];
+  const host = typeof req.headers['host'] === 'string' ? req.headers['host'].toLowerCase() : undefined;
+  if (typeof origin !== 'string' || !host) {
+    return { ok: false, reason: 'no CSRF token and no verifiable same-origin evidence' };
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return { ok: false, reason: 'no CSRF token and unparsable Origin' };
+  }
+  if (parsed.host.toLowerCase() !== host) {
+    return { ok: false, reason: `no CSRF token and cross-origin (${parsed.host} vs ${host})` };
+  }
+  /*
+   * 走到这里：Sec-Fetch-Site 要么明确是 same-origin、要么客户端根本没发（非浏览器）；
+   * 且 Origin 与 Host 严格相等。按裁决放行。
+   */
+  return { ok: true, via: 'same-origin-fallback' };
+}
+
+/** 旧签名保留，内部走同一套判定。 */
+export function checkCsrf(req: IncomingMessage, auth: AuthResult): boolean {
+  return checkCsrfDetailed(req, auth).ok;
 }

@@ -1,8 +1,717 @@
 {
   "schemaVersion": 1,
-  "catalogVersion": "2026.08.02",
+  "catalogVersion": "2026.08.03",
   "generatedAt": "2026-08-02T13:40:00Z",
   "models": [
+    {
+      "schemaVersion": 1,
+      "id": "asr/whisper-base-q5_1",
+      "groupId": "asr/whisper-base",
+      "role": "asr",
+      "family": "whisper",
+      "arch": "whisper",
+      "format": "ggml",
+      "quantization": "q5_1",
+      "quantTier": "small",
+      "displayName": "Whisper base (Q5_1)",
+      "displayNameZh": "Whisper 基础模型（Q5_1 量化）",
+      "descriptionZh": "最小可用档，主要用于快速预览与后端自检基准。中文质量较差。",
+      "descriptionEn": "Smallest usable tier; mainly for quick previews and the backend self-test benchmark. Weak on Chinese.",
+      "languages": [
+        "multi"
+      ],
+      "tags": [
+        "multilingual",
+        "cpu-friendly",
+        "benchmark-default"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-base-q5_1.bin",
+          "sizeBytes": 59707625,
+          "sha256": "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base-q5_1.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base-q5_1.bin",
+              "official": false
+            },
+            {
+              "provider": "modelscope",
+              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-base-q5_1.bin",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 59707625,
+      "requirements": {
+        "ramRequiredMB": 310,
+        "vramRequiredMB": 310,
+        "diskRequiredMB": 66,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.02",
+      "notRecommendedFor": [
+        "zh"
+      ],
+      "referenceBenchmark": {
+        "rtf": 0.055,
+        "backend": "cpu",
+        "deviceName": "AMD RYZEN AI MAX+ 395, 32 threads, CPU only",
+        "measuredAt": "2026-08-02T00:00:00Z",
+        "sampleName": "Zh-Twitter.ogg (CC BY 3.0)",
+        "sampleDurationSec": 337,
+        "sampleLanguage": "zh",
+        "meanConfidence": 0.81
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/whisper-base-q8_0",
+      "groupId": "asr/whisper-base",
+      "role": "asr",
+      "family": "whisper",
+      "arch": "whisper",
+      "format": "ggml",
+      "quantization": "q8_0",
+      "quantTier": "small",
+      "displayName": "Whisper base (Q8_0)",
+      "displayNameZh": "Whisper 基础模型（Q8_0 量化）",
+      "descriptionZh": "Whisper base 多语种模型，Q8_0 量化。体积 0.08 GB，运行约需 332 MB 内存。",
+      "descriptionEn": "Whisper base multilingual model, Q8_0. About 332 MB of RAM at runtime.",
+      "languages": [
+        "multi"
+      ],
+      "tags": [
+        "multilingual"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
+      "notRecommendedFor": [
+        "zh"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-base-q8_0.bin",
+          "sizeBytes": 81768585,
+          "sha256": "c577b9a86e7e048a0b7eada054f4dd79a56bbfa911fbdacf900ac5b567cbb7d9",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base-q8_0.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base-q8_0.bin",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 81768585,
+      "requirements": {
+        "ramRequiredMB": 332,
+        "vramRequiredMB": 332,
+        "diskRequiredMB": 90,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/whisper-base-f16",
+      "groupId": "asr/whisper-base",
+      "role": "asr",
+      "family": "whisper",
+      "arch": "whisper",
+      "format": "ggml",
+      "quantization": "f16",
+      "quantTier": "small",
+      "displayName": "Whisper base (F16)",
+      "displayNameZh": "Whisper 基础模型（F16 全精度）",
+      "descriptionZh": "Whisper base 多语种模型，F16 全精度。体积 0.15 GB，运行约需 398 MB 内存。",
+      "descriptionEn": "Whisper base multilingual model, F16. About 398 MB of RAM at runtime.",
+      "languages": [
+        "multi"
+      ],
+      "tags": [
+        "multilingual"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
+      "notRecommendedFor": [
+        "zh"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-base.bin",
+          "sizeBytes": 147951465,
+          "sha256": "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.bin",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 147951465,
+      "requirements": {
+        "ramRequiredMB": 398,
+        "vramRequiredMB": 398,
+        "diskRequiredMB": 163,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/whisper-base-en-q5_1",
+      "groupId": "asr/whisper-base-en",
+      "role": "asr",
+      "family": "whisper",
+      "arch": "whisper",
+      "format": "ggml",
+      "quantization": "q5_1",
+      "quantTier": "small",
+      "displayName": "Whisper base (English-only) (Q5_1)",
+      "displayNameZh": "Whisper 基础模型·仅英文（Q5_1 量化）",
+      "descriptionZh": "仅支持英文的专用版本，同尺寸下英文准确率略高于多语种版。中文请勿使用。",
+      "descriptionEn": "English-only build; slightly better English accuracy than the multilingual model of the same size. Not for Chinese.",
+      "languages": [
+        "en"
+      ],
+      "tags": [
+        "english-only"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
+      "notRecommendedFor": [
+        "zh"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-base.en-q5_1.bin",
+          "sizeBytes": 59721011,
+          "sha256": "4baf70dd0d7c4247ba2b81fafd9c01005ac77c2f9ef064e00dcf195d0e2fdd2f",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.en-q5_1.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.en-q5_1.bin",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 59721011,
+      "requirements": {
+        "ramRequiredMB": 310,
+        "vramRequiredMB": 310,
+        "diskRequiredMB": 66,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/whisper-large-v1-f16",
+      "groupId": "asr/whisper-large-v1",
+      "role": "asr",
+      "family": "whisper",
+      "arch": "whisper",
+      "format": "ggml",
+      "quantization": "f16",
+      "quantTier": "full",
+      "displayName": "Whisper large-v1 (F16)",
+      "displayNameZh": "Whisper 大模型 v1（F16 全精度）",
+      "descriptionZh": "Whisper large-v1 多语种模型，F16 全精度。体积 3.09 GB，运行约需 3915 MB 内存。",
+      "descriptionEn": "Whisper large-v1 multilingual model, F16. About 3915 MB of RAM at runtime.",
+      "languages": [
+        "multi"
+      ],
+      "tags": [
+        "multilingual"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-large-v1.bin",
+          "sizeBytes": 3094623691,
+          "sha256": "7d99f41a10525d0206bddadd86760181fa920438b6b33237e3118ff6c83bb53d",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v1.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v1.bin",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 3094623691,
+      "requirements": {
+        "ramRequiredMB": 3915,
+        "vramRequiredMB": 3915,
+        "diskRequiredMB": 3405,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/whisper-large-v2-q5_0",
+      "groupId": "asr/whisper-large-v2",
+      "role": "asr",
+      "family": "whisper",
+      "arch": "whisper",
+      "format": "ggml",
+      "quantization": "q5_0",
+      "quantTier": "full",
+      "displayName": "Whisper large-v2 (Q5_0)",
+      "displayNameZh": "Whisper 大模型 v2（Q5_0 量化）",
+      "descriptionZh": "Whisper large-v2 多语种模型，Q5_0 量化。体积 1.08 GB，运行约需 1901 MB 内存。",
+      "descriptionEn": "Whisper large-v2 multilingual model, Q5_0. About 1901 MB of RAM at runtime.",
+      "languages": [
+        "multi"
+      ],
+      "tags": [
+        "multilingual"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-large-v2-q5_0.bin",
+          "sizeBytes": 1080732091,
+          "sha256": "3a214837221e4530dbc1fe8d734f302af393eb30bd0ed046042ebf4baf70f6f2",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v2-q5_0.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v2-q5_0.bin",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 1080732091,
+      "requirements": {
+        "ramRequiredMB": 1901,
+        "vramRequiredMB": 1901,
+        "diskRequiredMB": 1189,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/whisper-large-v2-q8_0",
+      "groupId": "asr/whisper-large-v2",
+      "role": "asr",
+      "family": "whisper",
+      "arch": "whisper",
+      "format": "ggml",
+      "quantization": "q8_0",
+      "quantTier": "full",
+      "displayName": "Whisper large-v2 (Q8_0)",
+      "displayNameZh": "Whisper 大模型 v2（Q8_0 量化）",
+      "descriptionZh": "Whisper large-v2 多语种模型，Q8_0 量化。体积 1.66 GB，运行约需 2476 MB 内存。",
+      "descriptionEn": "Whisper large-v2 multilingual model, Q8_0. About 2476 MB of RAM at runtime.",
+      "languages": [
+        "multi"
+      ],
+      "tags": [
+        "multilingual"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-large-v2-q8_0.bin",
+          "sizeBytes": 1656129691,
+          "sha256": "fef54e6d898246a65c8285bfa83bd1807e27fadf54d5d4e81754c47634737e8c",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v2-q8_0.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v2-q8_0.bin",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 1656129691,
+      "requirements": {
+        "ramRequiredMB": 2476,
+        "vramRequiredMB": 2476,
+        "diskRequiredMB": 1822,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/whisper-large-v2-f16",
+      "groupId": "asr/whisper-large-v2",
+      "role": "asr",
+      "family": "whisper",
+      "arch": "whisper",
+      "format": "ggml",
+      "quantization": "f16",
+      "quantTier": "full",
+      "displayName": "Whisper large-v2 (F16)",
+      "displayNameZh": "Whisper 大模型 v2（F16 全精度）",
+      "descriptionZh": "Whisper large-v2 多语种模型，F16 全精度。体积 3.09 GB，运行约需 3915 MB 内存。",
+      "descriptionEn": "Whisper large-v2 multilingual model, F16. About 3915 MB of RAM at runtime.",
+      "languages": [
+        "multi"
+      ],
+      "tags": [
+        "multilingual"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-large-v2.bin",
+          "sizeBytes": 3094623691,
+          "sha256": "9a423fe4d40c82774b6af34115b8b935f34152246eb19e80e376071d3f999487",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v2.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v2.bin",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 3094623691,
+      "requirements": {
+        "ramRequiredMB": 3915,
+        "vramRequiredMB": 3915,
+        "diskRequiredMB": 3405,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/whisper-large-v3-q5_0",
+      "groupId": "asr/whisper-large-v3",
+      "role": "asr",
+      "family": "whisper",
+      "arch": "whisper",
+      "format": "ggml",
+      "quantization": "q5_0",
+      "quantTier": "balanced",
+      "displayName": "Whisper large-v3 (Q5_0)",
+      "displayNameZh": "Whisper 大模型 v3（Q5_0 量化）",
+      "descriptionZh": "准确率最高的多语种模型，比 turbo 慢但质量更好。量化后显存需求可控。",
+      "descriptionEn": "Highest-accuracy multilingual model. Slower than turbo but more accurate; quantization keeps VRAM manageable.",
+      "languages": [
+        "multi"
+      ],
+      "tags": [
+        "multilingual",
+        "high-accuracy"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-large-v3-q5_0.bin",
+          "sizeBytes": 1081140203,
+          "sha256": "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1",
+          "sha1": "e6e2ed78495d403bef4b7cff42ef4aaadcfea8de",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-q5_0.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-q5_0.bin",
+              "official": false
+            },
+            {
+              "provider": "modelscope",
+              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-large-v3-q5_0.bin",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 1081140203,
+      "requirements": {
+        "ramRequiredMB": 1901,
+        "vramRequiredMB": 1901,
+        "diskRequiredMB": 1189,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.02"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/whisper-large-v3-f16",
+      "groupId": "asr/whisper-large-v3",
+      "role": "asr",
+      "family": "whisper",
+      "arch": "whisper",
+      "format": "ggml",
+      "quantization": "f16",
+      "quantTier": "full",
+      "displayName": "Whisper large-v3 (F16)",
+      "displayNameZh": "Whisper 大模型 v3（F16 完整精度）",
+      "descriptionZh": "完整精度的 large-v3，质量上限。需要约 3.9 GB 内存。",
+      "descriptionEn": "Full-precision large-v3 — the quality ceiling. Needs roughly 3.9 GB.",
+      "languages": [
+        "multi"
+      ],
+      "tags": [
+        "multilingual",
+        "high-accuracy"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-large-v3.bin",
+          "sizeBytes": 3095033483,
+          "sha256": "64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2",
+          "sha1": "ad82bf6a9043ceed055076d0fd39f5f186ff8062",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3.bin",
+              "official": false
+            },
+            {
+              "provider": "modelscope",
+              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-large-v3.bin",
+              "official": false
+            }
+          ]
+        },
+        {
+          "role": "coreml-encoder",
+          "name": "ggml-large-v3-encoder.mlmodelc.zip",
+          "sizeBytes": 1175711232,
+          "sha256": "47837be7594a29429ec08620043390c4d6d467f8bd362df09e9390ace76a55a4",
+          "optional": true,
+          "unpack": "zip",
+          "platforms": [
+            {
+              "os": "darwin",
+              "arch": "arm64"
+            }
+          ],
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-encoder.mlmodelc.zip",
+              "official": true
+            },
+            {
+              "provider": "modelscope",
+              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-large-v3-encoder.mlmodelc.zip",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 3095033483,
+      "requirements": {
+        "ramRequiredMB": 3915,
+        "vramRequiredMB": 3915,
+        "diskRequiredMB": 3405,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.02"
+    },
     {
       "schemaVersion": 1,
       "id": "asr/whisper-large-v3-turbo-q5_0",
@@ -241,174 +950,6 @@
     },
     {
       "schemaVersion": 1,
-      "id": "asr/whisper-large-v3-q5_0",
-      "groupId": "asr/whisper-large-v3",
-      "role": "asr",
-      "family": "whisper",
-      "arch": "whisper",
-      "format": "ggml",
-      "quantization": "q5_0",
-      "quantTier": "balanced",
-      "displayName": "Whisper large-v3 (Q5_0)",
-      "displayNameZh": "Whisper 大模型 v3（Q5_0 量化）",
-      "descriptionZh": "准确率最高的多语种模型，比 turbo 慢但质量更好。量化后显存需求可控。",
-      "descriptionEn": "Highest-accuracy multilingual model. Slower than turbo but more accurate; quantization keeps VRAM manageable.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual",
-        "high-accuracy"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
-      "files": [
-        {
-          "role": "weights",
-          "name": "ggml-large-v3-q5_0.bin",
-          "sizeBytes": 1081140203,
-          "sha256": "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1",
-          "sha1": "e6e2ed78495d403bef4b7cff42ef4aaadcfea8de",
-          "mirrors": [
-            {
-              "provider": "hf",
-              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-q5_0.bin",
-              "official": true
-            },
-            {
-              "provider": "hf-mirror",
-              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-q5_0.bin",
-              "official": false
-            },
-            {
-              "provider": "modelscope",
-              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-large-v3-q5_0.bin",
-              "official": false
-            }
-          ]
-        }
-      ],
-      "totalSizeBytes": 1081140203,
-      "requirements": {
-        "ramRequiredMB": 1901,
-        "vramRequiredMB": 1901,
-        "diskRequiredMB": 1189,
-        "cpuFeatures": [],
-        "computedAtContext": null
-      },
-      "license": {
-        "id": "MIT",
-        "gated": false,
-        "url": "https://huggingface.co/ggerganov/whisper.cpp"
-      },
-      "source": {
-        "provider": "hf",
-        "repo": "ggerganov/whisper.cpp",
-        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
-      },
-      "benchmark": null,
-      "catalogVersion": "2026.08.02"
-    },
-    {
-      "schemaVersion": 1,
-      "id": "asr/whisper-large-v3-f16",
-      "groupId": "asr/whisper-large-v3",
-      "role": "asr",
-      "family": "whisper",
-      "arch": "whisper",
-      "format": "ggml",
-      "quantization": "f16",
-      "quantTier": "full",
-      "displayName": "Whisper large-v3 (F16)",
-      "displayNameZh": "Whisper 大模型 v3（F16 完整精度）",
-      "descriptionZh": "完整精度的 large-v3，质量上限。需要约 3.9 GB 内存。",
-      "descriptionEn": "Full-precision large-v3 — the quality ceiling. Needs roughly 3.9 GB.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual",
-        "high-accuracy"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
-      "files": [
-        {
-          "role": "weights",
-          "name": "ggml-large-v3.bin",
-          "sizeBytes": 3095033483,
-          "sha256": "64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2",
-          "sha1": "ad82bf6a9043ceed055076d0fd39f5f186ff8062",
-          "mirrors": [
-            {
-              "provider": "hf",
-              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3.bin",
-              "official": true
-            },
-            {
-              "provider": "hf-mirror",
-              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3.bin",
-              "official": false
-            },
-            {
-              "provider": "modelscope",
-              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-large-v3.bin",
-              "official": false
-            }
-          ]
-        },
-        {
-          "role": "coreml-encoder",
-          "name": "ggml-large-v3-encoder.mlmodelc.zip",
-          "sizeBytes": 1175711232,
-          "sha256": "47837be7594a29429ec08620043390c4d6d467f8bd362df09e9390ace76a55a4",
-          "optional": true,
-          "unpack": "zip",
-          "platforms": [
-            {
-              "os": "darwin",
-              "arch": "arm64"
-            }
-          ],
-          "mirrors": [
-            {
-              "provider": "hf",
-              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-encoder.mlmodelc.zip",
-              "official": true
-            },
-            {
-              "provider": "modelscope",
-              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-large-v3-encoder.mlmodelc.zip",
-              "official": false
-            }
-          ]
-        }
-      ],
-      "totalSizeBytes": 3095033483,
-      "requirements": {
-        "ramRequiredMB": 3915,
-        "vramRequiredMB": 3915,
-        "diskRequiredMB": 3405,
-        "cpuFeatures": [],
-        "computedAtContext": null
-      },
-      "license": {
-        "id": "MIT",
-        "gated": false,
-        "url": "https://huggingface.co/ggerganov/whisper.cpp"
-      },
-      "source": {
-        "provider": "hf",
-        "repo": "ggerganov/whisper.cpp",
-        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
-      },
-      "benchmark": null,
-      "catalogVersion": "2026.08.02"
-    },
-    {
-      "schemaVersion": 1,
       "id": "asr/whisper-medium-q5_0",
       "groupId": "asr/whisper-medium",
       "role": "asr",
@@ -478,6 +1019,201 @@
       "notRecommendedFor": [
         "zh"
       ]
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/whisper-medium-q8_0",
+      "groupId": "asr/whisper-medium",
+      "role": "asr",
+      "family": "whisper",
+      "arch": "whisper",
+      "format": "ggml",
+      "quantization": "q8_0",
+      "quantTier": "large",
+      "displayName": "Whisper medium (Q8_0)",
+      "displayNameZh": "Whisper 中模型（Q8_0 量化）",
+      "descriptionZh": "Whisper medium 多语种模型，Q8_0 量化。体积 0.82 GB，运行约需 1343 MB 内存。",
+      "descriptionEn": "Whisper medium multilingual model, Q8_0. About 1343 MB of RAM at runtime.",
+      "languages": [
+        "multi"
+      ],
+      "tags": [
+        "multilingual"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-medium-q8_0.bin",
+          "sizeBytes": 823369779,
+          "sha256": "42a1ffcbe4167d224232443396968db4d02d4e8e87e213d3ee2e03095dea6502",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium-q8_0.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium-q8_0.bin",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 823369779,
+      "requirements": {
+        "ramRequiredMB": 1343,
+        "vramRequiredMB": 1343,
+        "diskRequiredMB": 906,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/whisper-medium-f16",
+      "groupId": "asr/whisper-medium",
+      "role": "asr",
+      "family": "whisper",
+      "arch": "whisper",
+      "format": "ggml",
+      "quantization": "f16",
+      "quantTier": "large",
+      "displayName": "Whisper medium (F16)",
+      "displayNameZh": "Whisper 中模型（F16 全精度）",
+      "descriptionZh": "Whisper medium 多语种模型，F16 全精度。体积 1.53 GB，运行约需 2054 MB 内存。",
+      "descriptionEn": "Whisper medium multilingual model, F16. About 2054 MB of RAM at runtime.",
+      "languages": [
+        "multi"
+      ],
+      "tags": [
+        "multilingual"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-medium.bin",
+          "sizeBytes": 1533763059,
+          "sha256": "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium.bin",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 1533763059,
+      "requirements": {
+        "ramRequiredMB": 2054,
+        "vramRequiredMB": 2054,
+        "diskRequiredMB": 1688,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/whisper-medium-en-q5_0",
+      "groupId": "asr/whisper-medium-en",
+      "role": "asr",
+      "family": "whisper",
+      "arch": "whisper",
+      "format": "ggml",
+      "quantization": "q5_0",
+      "quantTier": "large",
+      "displayName": "Whisper medium (English-only) (Q5_0)",
+      "displayNameZh": "Whisper 中模型·仅英文（Q5_0 量化）",
+      "descriptionZh": "仅支持英文的专用版本，同尺寸下英文准确率略高于多语种版。中文请勿使用。",
+      "descriptionEn": "English-only build; slightly better English accuracy than the multilingual model of the same size. Not for Chinese.",
+      "languages": [
+        "en"
+      ],
+      "tags": [
+        "english-only"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
+      "notRecommendedFor": [
+        "zh"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-medium.en-q5_0.bin",
+          "sizeBytes": 539225533,
+          "sha256": "76733e26ad8fe1c7a5bf7531a9d41917b2adc0f20f2e4f5531688a8c6cd88eb0",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium.en-q5_0.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium.en-q5_0.bin",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 539225533,
+      "requirements": {
+        "ramRequiredMB": 1059,
+        "vramRequiredMB": 1059,
+        "diskRequiredMB": 594,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
     },
     {
       "schemaVersion": 1,
@@ -554,59 +1290,55 @@
     },
     {
       "schemaVersion": 1,
-      "id": "asr/whisper-base-q5_1",
-      "groupId": "asr/whisper-base",
+      "id": "asr/whisper-small-q8_0",
+      "groupId": "asr/whisper-small",
       "role": "asr",
       "family": "whisper",
       "arch": "whisper",
       "format": "ggml",
-      "quantization": "q5_1",
-      "quantTier": "small",
-      "displayName": "Whisper base (Q5_1)",
-      "displayNameZh": "Whisper 基础模型（Q5_1 量化）",
-      "descriptionZh": "最小可用档，主要用于快速预览与后端自检基准。中文质量较差。",
-      "descriptionEn": "Smallest usable tier; mainly for quick previews and the backend self-test benchmark. Weak on Chinese.",
+      "quantization": "q8_0",
+      "quantTier": "balanced",
+      "displayName": "Whisper small (Q8_0)",
+      "displayNameZh": "Whisper 小模型（Q8_0 量化）",
+      "descriptionZh": "Whisper small 多语种模型，Q8_0 量化。体积 0.26 GB，运行约需 644 MB 内存。",
+      "descriptionEn": "Whisper small multilingual model, Q8_0. About 644 MB of RAM at runtime.",
       "languages": [
         "multi"
       ],
       "tags": [
-        "multilingual",
-        "cpu-friendly",
-        "benchmark-default"
+        "multilingual"
       ],
       "engines": [
         "whisper.cpp"
       ],
+      "notRecommendedFor": [
+        "zh"
+      ],
       "files": [
         {
           "role": "weights",
-          "name": "ggml-base-q5_1.bin",
-          "sizeBytes": 59707625,
-          "sha256": "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898",
+          "name": "ggml-small-q8_0.bin",
+          "sizeBytes": 264464607,
+          "sha256": "49c8fb02b65e6049d5fa6c04f81f53b867b5ec9540406812c643f177317f779f",
           "mirrors": [
             {
               "provider": "hf",
-              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base-q5_1.bin",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small-q8_0.bin",
               "official": true
             },
             {
               "provider": "hf-mirror",
-              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base-q5_1.bin",
-              "official": false
-            },
-            {
-              "provider": "modelscope",
-              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-base-q5_1.bin",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small-q8_0.bin",
               "official": false
             }
           ]
         }
       ],
-      "totalSizeBytes": 59707625,
+      "totalSizeBytes": 264464607,
       "requirements": {
-        "ramRequiredMB": 310,
-        "vramRequiredMB": 310,
-        "diskRequiredMB": 66,
+        "ramRequiredMB": 644,
+        "vramRequiredMB": 644,
+        "diskRequiredMB": 291,
         "cpuFeatures": [],
         "computedAtContext": null
       },
@@ -621,20 +1353,275 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.02",
+      "catalogVersion": "2026.08.03"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/whisper-small-f16",
+      "groupId": "asr/whisper-small",
+      "role": "asr",
+      "family": "whisper",
+      "arch": "whisper",
+      "format": "ggml",
+      "quantization": "f16",
+      "quantTier": "balanced",
+      "displayName": "Whisper small (F16)",
+      "displayNameZh": "Whisper 小模型（F16 全精度）",
+      "descriptionZh": "Whisper small 多语种模型，F16 全精度。体积 0.49 GB，运行约需 868 MB 内存。",
+      "descriptionEn": "Whisper small multilingual model, F16. About 868 MB of RAM at runtime.",
+      "languages": [
+        "multi"
+      ],
+      "tags": [
+        "multilingual"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
       "notRecommendedFor": [
         "zh"
       ],
-      "referenceBenchmark": {
-        "rtf": 0.055,
-        "backend": "cpu",
-        "deviceName": "AMD RYZEN AI MAX+ 395, 32 threads, CPU only",
-        "measuredAt": "2026-08-02T00:00:00Z",
-        "sampleName": "Zh-Twitter.ogg (CC BY 3.0)",
-        "sampleDurationSec": 337,
-        "sampleLanguage": "zh",
-        "meanConfidence": 0.81
-      }
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-small.bin",
+          "sizeBytes": 487601967,
+          "sha256": "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.bin",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 487601967,
+      "requirements": {
+        "ramRequiredMB": 868,
+        "vramRequiredMB": 868,
+        "diskRequiredMB": 537,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/whisper-small-en-q5_1",
+      "groupId": "asr/whisper-small-en",
+      "role": "asr",
+      "family": "whisper",
+      "arch": "whisper",
+      "format": "ggml",
+      "quantization": "q5_1",
+      "quantTier": "balanced",
+      "displayName": "Whisper small (English-only) (Q5_1)",
+      "displayNameZh": "Whisper 小模型·仅英文（Q5_1 量化）",
+      "descriptionZh": "仅支持英文的专用版本，同尺寸下英文准确率略高于多语种版。中文请勿使用。",
+      "descriptionEn": "English-only build; slightly better English accuracy than the multilingual model of the same size. Not for Chinese.",
+      "languages": [
+        "en"
+      ],
+      "tags": [
+        "english-only"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
+      "notRecommendedFor": [
+        "zh"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-small.en-q5_1.bin",
+          "sizeBytes": 190098681,
+          "sha256": "bfdff4894dcb76bbf647d56263ea2a96645423f1669176f4844a1bf8e478ad30",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.en-q5_1.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.en-q5_1.bin",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 190098681,
+      "requirements": {
+        "ramRequiredMB": 570,
+        "vramRequiredMB": 570,
+        "diskRequiredMB": 210,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/whisper-tiny-q5_1",
+      "groupId": "asr/whisper-tiny",
+      "role": "asr",
+      "family": "whisper",
+      "arch": "whisper",
+      "format": "ggml",
+      "quantization": "q5_1",
+      "quantTier": "small",
+      "displayName": "Whisper tiny (Q5_1)",
+      "displayNameZh": "Whisper 超小模型（Q5_1 量化）",
+      "descriptionZh": "Whisper tiny 多语种模型，Q5_1 量化。体积 0.03 GB，运行约需 232 MB 内存。",
+      "descriptionEn": "Whisper tiny multilingual model, Q5_1. About 232 MB of RAM at runtime.",
+      "languages": [
+        "multi"
+      ],
+      "tags": [
+        "multilingual"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
+      "notRecommendedFor": [
+        "zh"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-tiny-q5_1.bin",
+          "sizeBytes": 32152673,
+          "sha256": "818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny-q5_1.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny-q5_1.bin",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 32152673,
+      "requirements": {
+        "ramRequiredMB": 232,
+        "vramRequiredMB": 232,
+        "diskRequiredMB": 36,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/whisper-tiny-q8_0",
+      "groupId": "asr/whisper-tiny",
+      "role": "asr",
+      "family": "whisper",
+      "arch": "whisper",
+      "format": "ggml",
+      "quantization": "q8_0",
+      "quantTier": "small",
+      "displayName": "Whisper tiny (Q8_0)",
+      "displayNameZh": "Whisper 超小模型（Q8_0 量化）",
+      "descriptionZh": "Whisper tiny 多语种模型，Q8_0 量化。体积 0.04 GB，运行约需 244 MB 内存。",
+      "descriptionEn": "Whisper tiny multilingual model, Q8_0. About 244 MB of RAM at runtime.",
+      "languages": [
+        "multi"
+      ],
+      "tags": [
+        "multilingual"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
+      "notRecommendedFor": [
+        "zh"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-tiny-q8_0.bin",
+          "sizeBytes": 43537433,
+          "sha256": "c2085835d3f50733e2ff6e4b41ae8a2b8d8110461e18821b09a15c40c42d1cca",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny-q8_0.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny-q8_0.bin",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 43537433,
+      "requirements": {
+        "ramRequiredMB": 244,
+        "vramRequiredMB": 244,
+        "diskRequiredMB": 48,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
     },
     {
       "schemaVersion": 1,
@@ -710,6 +1697,73 @@
       "notRecommendedFor": [
         "zh"
       ]
+    },
+    {
+      "schemaVersion": 1,
+      "id": "asr/whisper-tiny-en-q5_1",
+      "groupId": "asr/whisper-tiny-en",
+      "role": "asr",
+      "family": "whisper",
+      "arch": "whisper",
+      "format": "ggml",
+      "quantization": "q5_1",
+      "quantTier": "small",
+      "displayName": "Whisper tiny (English-only) (Q5_1)",
+      "displayNameZh": "Whisper 超小模型·仅英文（Q5_1 量化）",
+      "descriptionZh": "仅支持英文的专用版本，同尺寸下英文准确率略高于多语种版。中文请勿使用。",
+      "descriptionEn": "English-only build; slightly better English accuracy than the multilingual model of the same size. Not for Chinese.",
+      "languages": [
+        "en"
+      ],
+      "tags": [
+        "english-only"
+      ],
+      "engines": [
+        "whisper.cpp"
+      ],
+      "notRecommendedFor": [
+        "zh"
+      ],
+      "files": [
+        {
+          "role": "weights",
+          "name": "ggml-tiny.en-q5_1.bin",
+          "sizeBytes": 32166155,
+          "sha256": "c77c5766f1cef09b6b7d47f21b546cbddd4157886b3b5d6d4f709e91e66c7c2b",
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.en-q5_1.bin",
+              "official": true
+            },
+            {
+              "provider": "hf-mirror",
+              "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.en-q5_1.bin",
+              "official": false
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 32166155,
+      "requirements": {
+        "ramRequiredMB": 232,
+        "vramRequiredMB": 232,
+        "diskRequiredMB": 36,
+        "cpuFeatures": [],
+        "computedAtContext": null
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://huggingface.co/ggerganov/whisper.cpp"
+      },
+      "source": {
+        "provider": "hf",
+        "repo": "ggerganov/whisper.cpp",
+        "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+      },
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
     }
   ]
 }

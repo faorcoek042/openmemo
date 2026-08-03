@@ -106,3 +106,62 @@ describe('PUT /api/secrets/:key —— 密钥写入链路', () => {
     assert.ok(!hit.masked.includes('abcdef'), '掩码泄漏了明文');
   });
 });
+
+/**
+ * CSRF 同源兜底（ADR 裁决）的**边界**测试。
+ *
+ * 兜底本身能过很容易测；真正要钉住的是**它不该救哪些情况** ——
+ * 否则日后有人"顺手放宽一点"，兜底就悄悄变成了"CSRF 形同虚设"。
+ */
+describe('CSRF 同源兜底 —— 放行一种，拒绝四种', () => {
+  let cookie = '';
+  let csrf = '';
+  const origin = (): string => base;
+  const host = (): string => base.replace('http://', '');
+
+  before(async () => {
+    const r = await fetch(`${base}/api/auth/session`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    cookie = (r.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+    csrf = ((await r.json()) as { csrf: string }).csrf;
+  });
+
+  const write = async (h: Record<string, string>): Promise<number> => {
+    const r = await fetch(`${base}/api/settings`, {
+      method: 'PATCH',
+      headers: { cookie, 'Content-Type': 'application/json', ...h },
+      body: JSON.stringify({ 'ui.probe': Date.now() }),
+    });
+    return r.status;
+  };
+
+  it('无 CSRF 头 + 严格同源 + Sec-Fetch-Site:same-origin → 放行', async () => {
+    assert.equal(await write({ Origin: origin(), 'Sec-Fetch-Site': 'same-origin' }), 200);
+  });
+
+  it('★ 带了**错的** CSRF 头 → 仍然拒绝（兜底不救它）', async () => {
+    assert.equal(
+      await write({ Origin: origin(), 'Sec-Fetch-Site': 'same-origin', 'x-openmemo-csrf': 'WRONG' }),
+      403,
+    );
+  });
+
+  it('★ Sec-Fetch-Site: cross-site → 拒绝', async () => {
+    assert.equal(await write({ Origin: origin(), 'Sec-Fetch-Site': 'cross-site' }), 403);
+  });
+
+  it('★ Origin 与 Host 不同源 → 拒绝', async () => {
+    assert.equal(await write({ Origin: 'http://evil.example' }), 403);
+  });
+
+  it('★ 完全没有 Origin（无从证明同源）→ 拒绝', async () => {
+    assert.equal(await write({}), 403);
+  });
+
+  it('带正确 CSRF 头 → 放行（正常路径不受影响）', async () => {
+    assert.equal(await write({ 'x-openmemo-csrf': csrf, Origin: origin() }), 200);
+    assert.ok(host().length > 0);
+  });
+});

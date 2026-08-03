@@ -21,7 +21,7 @@ import { StatusChip } from '../components/common/StatusChip';
 import { ProgressMeter } from '../components/common/ProgressMeter';
 import type { MergedJob } from '../features/tasks/api';
 import { arr } from '../lib/safe';
-import { ApiError, api } from '../lib/api/client';
+import { ApiError, api, setCsrf, clearCsrf, hasCsrf } from '../lib/api/client';
 import { PanelBoundary } from '../components/common/PanelBoundary';
 import { resolveErrorText } from '../components/common/ErrorBlock';
 import { ASR_ENGINE_IDS } from '@openmemo/shared';
@@ -44,6 +44,7 @@ import {
   detectBlockedCapabilities,
   isMicrophoneAvailable,
   isSecureContext,
+  isSessionStorageAvailable,
 } from '../lib/secure-context';
 import zhLocale from '../app/i18n/locales/zh-CN.json';
 
@@ -1551,5 +1552,97 @@ describe('LLM 配置保存的可见反馈', () => {
     assert.equal(r.container.querySelector('[data-testid="llm-saved"]'), null, '端点不存在时绝不能显示已保存');
     assert.ok(r.container.querySelector('[data-testid="llm-save"]'), '表单保持打开');
     r.unmount();
+  });
+});
+
+/* ─────────── CSRF 令牌不许静默丢失（T-103）─────────── */
+
+/**
+ * ★ 事故复盘钉死在这里。
+ *
+ * 原实现把 CSRF 令牌**只**写进 `sessionStorage`，写失败就 `catch {}` 吞掉，
+ * 注释说「降级为无 CSRF 头，**由 Origin 校验兜底**」——
+ * **服务端没有这个兜底，它是硬拒**：持有效 cookie 但不带 CSRF 头时
+ * GET 200、PATCH/PUT 全 403（隔离实例实测）。
+ *
+ * 两个错必须同时存在才会酿成事故：
+ * ① 假设了一个**对端并不存在**的兜底；② 降级是**静默**的。
+ * 所以这一组同时钉住两件事：令牌不许丢、失败不许静默。
+ */
+describe('CSRF 令牌', () => {
+  test('★ sessionStorage 写失败也不能丢令牌 —— 权威副本必须在内存', () => {
+    const ss = globalThis.sessionStorage as unknown as Record<string, unknown>;
+    const realSet = ss.setItem;
+    const realGet = ss.getItem;
+    // 模拟无痕模式：读写都抛
+    ss.setItem = () => {
+      throw new Error('QuotaExceededError');
+    };
+    ss.getItem = () => {
+      throw new Error('SecurityError');
+    };
+    try {
+      setCsrf('tok-abc');
+      assert.equal(hasCsrf(), true, '存储不可用时令牌必须仍在内存中，否则所有写操作会静默 403');
+    } finally {
+      ss.setItem = realSet;
+      ss.getItem = realGet;
+      clearCsrf();
+    }
+  });
+
+  test('★ 清除后确实没有令牌 —— hasCsrf 不能只看内存而漏掉缓存', () => {
+    setCsrf('tok-xyz');
+    assert.equal(hasCsrf(), true);
+    clearCsrf();
+    assert.equal(hasCsrf(), false, 'clearCsrf 必须同时清内存与缓存');
+  });
+
+  test('★ CSRF 403 会自动重握手一次后重试成功 —— 用户不该被要求"重新打开应用"', async () => {
+    let attempt = 0;
+    const { calls } = stubApi({
+      'GET /settings': { settings: {} },
+      'GET /secrets': { secrets: [], disclosure: null },
+      // 重握手是完整链路：先 GET /health 再 POST /auth/session，两个都得打桩
+      'GET /health': { app: 'openmemo', version: '0.1.0', contractVersion: 1, instanceId: 'i', dataDir: '/tmp', host: '127.0.0.1', port: 17650, pid: 1 },
+      'POST /auth/session': { csrf: 'fresh-token' },
+      'PATCH /settings': () => {
+        attempt += 1;
+        // 第一次：令牌过期 → 403；重握手之后第二次应当放行
+        if (attempt === 1) {
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: 'CSRF_FAILED',
+                message: 'missing or bad CSRF token',
+                messageZh: 'CSRF 校验失败',
+                retryable: true,
+                remediation: { action: 'reauth' },
+              },
+            }),
+            { status: 403, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        return { settings: {} };
+      },
+    });
+
+    setCsrf('stale-token');
+    try {
+      await api('settings', '/settings', { method: 'PATCH', body: { 'ui.theme': 'dark' } });
+    } catch {
+      assert.fail('403 CSRF 应当自愈后成功，而不是抛给用户');
+    }
+    assert.equal(attempt, 2, '应当重试恰好一次');
+    assert.ok(
+      calls.some((c) => c.path === '/auth/session'),
+      '重试之前必须真的重新握手，否则带着同一个坏令牌重试毫无意义',
+    );
+    clearCsrf();
+  });
+
+  test('★ sessionStorage 不可用要如实归类，不能栽给"非安全上下文"', () => {
+    // 这一条是防止排查被引偏：http://<IP> 下 sessionStorage 其实照常可用
+    assert.equal(isSessionStorageAvailable(), true, 'jsdom 环境下应可用');
   });
 });

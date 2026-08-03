@@ -49,20 +49,65 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * CSRF 令牌的**权威副本在内存里**。
+ *
+ * ## 这一行改动对应一次真实事故
+ *
+ * 原实现把令牌**只**写进 `sessionStorage`，写失败就 `catch {}` 吞掉，
+ * 注释写着「降级为无 CSRF 头，**由 Origin 校验兜底**」——
+ * **服务端并没有这个兜底，它是硬拒**：持有效 cookie 但不带 CSRF 头时，
+ * GET 200、而 PATCH/PUT 全部 403。
+ *
+ * 于是现象是：界面一切正常（读全通），**所有保存静默失败**，库里 0 行。
+ * 用户设了 DeepSeek key，什么都没存下来，而屏幕上没有任何异常。
+ *
+ * 两个错叠在一起，缺一不可：
+ * 1. **假设了一个对端并不存在的兜底** —— 降级的前提是我方单方面想象出来的；
+ * 2. **降级是静默的** —— 没有任何一层把"我没带令牌"这件事说出来。
+ *
+ * 修法不是给 `sessionStorage` 加重试，而是**根本不该依赖它**：
+ * CSRF 令牌的生命周期就是"本页这次会话"，**内存变量完全够用**，
+ * 它不需要跨标签共享（每个标签各自握手），也不需要跨进程持久化。
+ * `sessionStorage` 降级为**可选加速**（刷新后省一次握手），
+ * 存不进去只是少一点便利，**不再影响正确性**。
+ */
+let csrfToken: string | null = null;
+
 function getCsrf(): string | null {
+  if (csrfToken !== null) return csrfToken;
+  // 内存里没有才去看缓存：刷新后能直接复用，省一次握手往返
   try {
-    return sessionStorage.getItem(CSRF_STORAGE_KEY);
+    const cached = sessionStorage.getItem(CSRF_STORAGE_KEY);
+    if (cached) csrfToken = cached;
   } catch {
-    return null;
+    /* 无痕模式 / 存储被策略拦截：不影响正确性，内存那份才是权威 */
   }
+  return csrfToken;
 }
 
 export function setCsrf(token: string): void {
+  // ★ 先写内存 —— 这一步不会失败，也就不存在"令牌丢了还继续发请求"
+  csrfToken = token;
   try {
     sessionStorage.setItem(CSRF_STORAGE_KEY, token);
   } catch {
-    /* 隐私模式下 sessionStorage 不可用 → 降级为无 CSRF 头，由 Origin 校验兜底 */
+    /* 可选加速失败而已，令牌已在内存中，写操作照常带头 */
   }
+}
+
+export function clearCsrf(): void {
+  csrfToken = null;
+  try {
+    sessionStorage.removeItem(CSRF_STORAGE_KEY);
+  } catch {
+    /* 同上 */
+  }
+}
+
+/** 供诊断页 / 测试查询令牌是否就位 —— **不回显令牌本身**。 */
+export function hasCsrf(): boolean {
+  return getCsrf() !== null;
 }
 
 /**
@@ -259,6 +304,18 @@ function isUnauthenticated(err: unknown): boolean {
   return err instanceof ApiError && (err.status === 401 || err.code === 'UNAUTHENTICATED');
 }
 
+/**
+ * CSRF 校验失败 —— 与 401 **同一形状**：都是"凭证过期了，重新握手就能好"。
+ *
+ * 之所以要单独认这个 code：403 本身还可能是 `FORBIDDEN_ORIGIN` 那类**重握手也没用**的拒绝，
+ * 全部当成可自愈会变成无意义的重试循环。
+ * `oss-scout` 已给这条加了 `retryable:true` + `remediation{action:'reauth'}`，两边对齐。
+ */
+function isCsrfFailure(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false;
+  return err.status === 403 && (err.code === 'CSRF_FAILED' || err.remediation?.action === 'reauth');
+}
+
 async function apiCall<T>(surface: Surface, path: string, opts?: ApiOptions): Promise<T> {
   const method = (opts?.method ?? 'GET').toUpperCase();
   const isWrite = method !== 'GET' && method !== 'HEAD';
@@ -281,6 +338,20 @@ async function apiCall<T>(surface: Surface, path: string, opts?: ApiOptions): Pr
   // ★ 等握手完成再发请求 —— 首屏的每个 query 都比握手快，不等就是必然 401
   await gate();
 
+  /*
+   * ★ **令牌不在手上就不发写请求** —— 明知会 403 还发，是这次事故的形状。
+   *
+   * 最常见的触发路径不是"storage 坏了"，而是**开了第二个标签页**：
+   * cookie 是 **per-origin**（跨标签共享），而 CSRF 令牌是 **per-tab** ——
+   * 新标签里 cookie 有效所以**读全通**，却没有令牌所以**写全 403**。
+   * 两半凭证存放范围不一致，界面就表现为"看起来登录着、但什么都保存不了"。
+   *
+   * 这里先补一次握手再发。补不上也照发 ——
+   * 让服务端给出**真实拒绝**并走下面的自愈/报错分支，
+   * 而不是我们自己在本地判定失败：本地判定会掩盖"其实服务端允许"的情况。
+   */
+  if (isWrite && !hasCsrf()) await reHandshake();
+
   try {
     const out = await realFetch<T>(path, opts);
     // 真接通了：既清掉该端点的"缺失"记录，也把该面标成 live
@@ -293,7 +364,12 @@ async function apiCall<T>(surface: Surface, path: string, opts?: ApiOptions): Pr
      * 这时应该**自己重新握手再试一次**，而不是让用户去猜"重新打开应用"是什么意思。
      * 只重试一次，避免握手本身失败时打转。
      */
-    if (isUnauthenticated(err) && (await reHandshake())) {
+    /*
+     * 401 / CSRF-403 自愈：重新握手一次再试。
+     * 403 这条是本次事故的收尾 —— 令牌丢了或过期了，用户不该被要求"重新打开应用"。
+     * 只重试一次：握手本身失败时不打转，把错误如实抛给 UI，由它给可点的动作。
+     */
+    if ((isUnauthenticated(err) || isCsrfFailure(err)) && (await reHandshake())) {
       const out = await realFetch<T>(path, opts);
       missingEndpoints.delete(key);
       markSurface(surface, 'live');

@@ -1926,3 +1926,46 @@ daemon 侧两条链路我都单独验通了（`PATCH /api/settings` 200、
 也就是说用户的 key **当前不在库里** —— 与上面的 403 结论一致。
 
 lint 干净；roundtrip 6/6、move 13/13、upload 17/17；demo 全程只读未重启。
+
+---
+
+## T-104 CSRF 同源兜底：**已生效，并按我的建议多加一条件**
+
+### 我加的条件：`Sec-Fetch-Site: same-origin`
+你问要不要更严 —— **要**，理由是它比 Origin 更硬：
+`Sec-Fetch-Site` 是**浏览器强制附加、页面 JS 无法伪造**的；而 `Origin` 任何非浏览器客户端
+都能随手写一个。放行条件因此是**两条同时成立**：
+1. `Origin` 与 `Host` **严格同源**（host:port 完全相等）
+2. `Sec-Fetch-Site` 是 `same-origin`，或客户端根本没发（非浏览器；这类客户端本来就走 Bearer）
+
+### 实测五个分支（放行一种、拒绝四种）
+```
+无 CSRF 头 + 同源 + Sec-Fetch-Site:same-origin   → 200  ← 用户的处境，通了
+无 CSRF 头 + Sec-Fetch-Site:cross-site           → 403
+无 CSRF 头 + Origin 与 Host 不同源                → 403
+无 CSRF 头 + 完全没有 Origin（无从证明同源）      → 403
+★ 带了**错的** CSRF 头                            → 403  ← 兜底不救它
+带正确 CSRF 头                                    → 200  ← 正常路径不受影响
+```
+用户真正要做的那两件事也实跑通了：
+`PATCH /api/settings` → `{llm.defaultProviderId:'deepseek', llm.defaultModelId:'deepseek-chat'}` 落库；
+`PUT /api/secrets/llm.deepseek.apiKey` → 200，`GET` 回读掩码 `sk-d…real`（明文不外泄）。
+
+### 三条边界都按你说的做了
+- **带了 CSRF 头仍严格校验** —— 兜底只覆盖"没带"，不覆盖"带错"。
+- **走兜底记 `console.info`（不是 warn）**，因为这是裁决允许的预期路径：
+  `[auth] CSRF 同源兜底放行：PATCH /api/settings（无 CSRF 头，Origin 与 Host 严格同源）`
+  **这条日志的唯一用途是发现"兜底变成常态"** —— 若 `architect` 修完根因它还天天刷屏，
+  说明根因没修好。
+- **token 鉴权一个字没动。**
+
+### 注释已写明这是裁决不是遗漏
+`checkCsrfDetailed` 头部写清：本地自部署自用的**显式裁决（ADR）**、
+为什么这层挡不住真威胁（**能伪造同源 Origin 的攻击者本来就能直接读 SQLite 文件**）、
+以及"三条边界别削掉"。免得下一个人当 bug 修掉，也免得有人顺手再放宽一点。
+
+### 回归测试
+`settings.roundtrip.test.ts` 扩到 **12/12**，其中 5 条专测**兜底不该救的情况** ——
+兜底本身能过很容易测，真正要钉住的是它的**边界**，否则日后一次"顺手放宽"就会让 CSRF 形同虚设。
+
+lint 干净；roundtrip 12/12、move 13/13、upload 17/17；demo 全程只读未重启。

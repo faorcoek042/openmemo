@@ -70,12 +70,44 @@ export function detectBlockedCapabilities(): SecureContextCapability[] {
       featureKey: 'multiTab',
     },
     {
+      key: 'storage',
+      /*
+       * 不是 secure context 的锅（见 `isSessionStorageAvailable` 的说明），
+       * 但放在同一张"能力清单"里，用户排查时只需要看一个地方。
+       */
+      blocked: !isSessionStorageAvailable(),
+      featureKey: 'storage',
+    },
+    {
       key: 'clipboard',
       // "复制路径" / "复制诊断信息" 会静默失效 —— 静默是这里最坏的部分
       blocked: !nav.clipboard,
       featureKey: 'copy',
     },
   ].filter((c) => c.blocked);
+}
+
+/**
+ * `sessionStorage` 能不能用。
+ *
+ * ⚠️ **它不是 secure-context-gated 的** —— 这一点必须说准，否则会把排查引向错误方向。
+ * `http://<IP>` 下 `sessionStorage` **照常可用**；挡住它的是无痕模式、
+ * "阻止所有 Cookie 和站点数据"这类设置、或被分区的第三方上下文。
+ *
+ * 之所以仍然纳入这套检测：CSRF 令牌曾经**只**存在这里，
+ * 存不进去就等于所有写操作静默失败。现在令牌的权威副本在内存里，
+ * 这一项已降级为"少一点便利"，但仍然值得**显式可见**——
+ * 诊断页能一眼看出"是不是存储被拦了"，比让人猜强。
+ */
+export function isSessionStorageAvailable(): boolean {
+  try {
+    const k = '__om_probe__';
+    sessionStorage.setItem(k, '1');
+    sessionStorage.removeItem(k);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** 麦克风是否可用。录音页在**点击之前**就要知道，而不是点了报 `undefined` 错误。 */
