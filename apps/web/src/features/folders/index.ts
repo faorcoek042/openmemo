@@ -7,6 +7,7 @@ export {
   useDeleteFolderMutation,
   useMoveNoteMutation,
   buildTree,
+  flattenFolders,
   normalizeFolders,
   type FolderDto,
   type FolderNode,

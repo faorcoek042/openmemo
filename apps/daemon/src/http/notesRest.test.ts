@@ -258,3 +258,168 @@ describe('T-138 ① POST /api/notes/:uid/mindmap 的生成入口', () => {
     }
   });
 });
+
+/**
+ * T-138 ④ —— `?folder=` 真的筛，且**计数与筛选结果同源**。
+ *
+ * ## 为什么这组测试的重点是「两个数字必须相等」
+ *
+ * 这个端点此前根本没人读（`[实测]` 点开一条笔记都没有的文件夹，页面照常列出全部）。
+ * 补上它本身不难，难的是**别造出第二个真相**：
+ * 侧栏那个 `课程 2` 与 `?folder=` 的返回如果各算各的，
+ * 就会出现「侧栏写 2、点进去 3」——**两个数字各自都算对了，没有任何一处会报错**，
+ * 只有用户觉得这软件有点怪。
+ *
+ * 所以判据不是"筛出来的都在这个文件夹里"（那条在两边分叉时照样绿），
+ * 而是 **侧栏计数 == 筛选返回条数 == 3**。
+ * 造一棵父子树、父级 1 条、子级 2 条：任一侧改成"不含子孙"，这条就会红。
+ */
+describe('T-138 ④ GET /api/notes?folder=', () => {
+  async function folder(s: Session, name: string, parentUid?: string): Promise<string> {
+    const res = await fetch(`${s.base}/api/folders`, {
+      method: 'POST',
+      headers: {
+        Cookie: `${SESSION_COOKIE}=${s.sid}`,
+        [CSRF_HEADER]: s.csrf,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(parentUid === undefined ? { name } : { name, parentUid }),
+    });
+    const body = await res.text();
+    assert.equal(res.status, 201, body);
+    return (JSON.parse(body) as { uid: string }).uid;
+  }
+
+  async function moveNote(s: Session, noteUid: string, folderUid: string): Promise<void> {
+    const res = await fetch(`${s.base}/api/notes/${noteUid}/folder`, {
+      method: 'PUT',
+      headers: {
+        Cookie: `${SESSION_COOKIE}=${s.sid}`,
+        [CSRF_HEADER]: s.csrf,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ folderUid }),
+    });
+    assert.equal(res.status, 200, await res.text());
+  }
+
+  it('★ 侧栏计数 == 筛选返回条数（父 1 + 子 2 = 3）—— 两边分叉就红', async () => {
+    const port = nextPort();
+    const d = await startDaemon({ port, dataDir: join(ROOT, `folder-${port}`), maxPort: port });
+    try {
+      const s = await handshake(d.port, d.token);
+
+      const parent = await folder(s, '课程');
+      const child = await folder(s, '深度学习', parent);
+      const a = await upload(s, 'a.wav');
+      const b = await upload(s, 'b.wav');
+      const c = await upload(s, 'c.wav');
+      await moveNote(s, a, parent);
+      await moveNote(s, b, child);
+      await moveNote(s, c, child);
+
+      // ① 侧栏计数（GET /api/folders 里那个 noteCount）
+      const tree = (await (
+        await fetch(`${s.base}/api/folders`, { headers: { Cookie: `${SESSION_COOKIE}=${s.sid}` } })
+      ).json()) as { folders: { uid: string; name: string; noteCount: number; children?: unknown[] }[] };
+      const flat: { uid: string; noteCount: number }[] = [];
+      const walk = (ns: { uid: string; noteCount: number; children?: unknown[] }[]) => {
+        for (const n of ns) {
+          flat.push(n);
+          walk((n.children ?? []) as typeof ns);
+        }
+      };
+      walk(tree.folders);
+      const counted = flat.find((f) => f.uid === parent)?.noteCount;
+
+      // ② 筛选返回条数
+      const listed = (await (
+        await fetch(`${s.base}/api/notes?folder=${parent}`, {
+          headers: { Cookie: `${SESSION_COOKIE}=${s.sid}` },
+        })
+      ).json()) as { notes: { uid: string }[] };
+
+      assert.equal(
+        listed.notes.length,
+        3,
+        '按文件夹筛应含子孙（父 1 + 子 2 = 3）—— 只筛直属的话用户会看到"父级空、子级有货"',
+      );
+      assert.equal(
+        counted,
+        listed.notes.length,
+        `侧栏计数(${String(counted)}) 与筛选返回条数(${listed.notes.length}) 不一致 —— ` +
+          '两处各算各的，于是侧栏写一个数、点进去是另一个数，而且没有任何一处会报错',
+      );
+      assert.deepEqual(
+        [...listed.notes.map((n) => n.uid)].sort(),
+        [a, b, c].sort(),
+        '返回的应当正好是这三条',
+      );
+
+      // 子文件夹自己只算自己那两条（"含子孙"不等于"含兄弟"）
+      const childListed = (await (
+        await fetch(`${s.base}/api/notes?folder=${child}`, {
+          headers: { Cookie: `${SESSION_COOKIE}=${s.sid}` },
+        })
+      ).json()) as { notes: { uid: string }[] };
+      assert.equal(childListed.notes.length, 2);
+      assert.equal(
+        flat.find((f) => f.uid === child)?.noteCount,
+        2,
+        '子文件夹的计数与它自己的筛选结果同样必须一致',
+      );
+    } finally {
+      await d.stop();
+    }
+  });
+
+  it('★ 筛选发生在 limit 之前（与 ?starred=1 同一条判据）', async () => {
+    const port = nextPort();
+    const d = await startDaemon({ port, dataDir: join(ROOT, `folderlimit-${port}`), maxPort: port });
+    try {
+      const s = await handshake(d.port, d.token);
+      const f = await folder(s, '课程');
+      const a = await upload(s, 'a.wav'); // 最早
+      await upload(s, 'b.wav');
+      await upload(s, 'c.wav'); // 最新两条都不在这个文件夹里
+      await moveNote(s, a, f);
+
+      const listed = (await (
+        await fetch(`${s.base}/api/notes?folder=${f}&limit=2`, {
+          headers: { Cookie: `${SESSION_COOKIE}=${s.sid}` },
+        })
+      ).json()) as { notes: { uid: string }[] };
+      assert.deepEqual(
+        listed.notes.map((n) => n.uid),
+        [a],
+        '?folder=…&limit=2 没返回那条笔记 —— limit 先切、folder 后筛：' +
+          '文件夹里的笔记一多就开始漏，而用户看不出少了什么',
+      );
+    } finally {
+      await d.stop();
+    }
+  });
+
+  it('★ 认不出的 folder uid 一律 400，绝不静默返回全部', async () => {
+    const port = nextPort();
+    const d = await startDaemon({ port, dataDir: join(ROOT, `folder400-${port}`), maxPort: port });
+    try {
+      const s = await handshake(d.port, d.token);
+      await upload(s, 'a.wav');
+      for (const bad of ['01ZZZZZZZZZZZZZZZZZZZZZZZZ', 'not-a-ulid', '']) {
+        const res = await fetch(`${s.base}/api/notes?folder=${encodeURIComponent(bad)}`, {
+          headers: { Cookie: `${SESSION_COOKIE}=${s.sid}` },
+        });
+        assert.equal(
+          res.status,
+          400,
+          `?folder=${JSON.stringify(bad)} 被静默忽略了 —— 用户会以为自己在看某个文件夹，` +
+            '实际拿到的是全部笔记',
+        );
+        assert.equal(((await res.json()) as { error?: { code?: string } }).error?.code, 'BAD_QUERY_PARAM');
+      }
+    } finally {
+      await d.stop();
+    }
+  });
+});

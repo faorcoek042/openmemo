@@ -48,7 +48,7 @@ import type { MergedJob } from '../features/tasks/api';
 import { arr } from '../lib/safe';
 import { ApiError, api, setCsrf, clearCsrf, hasCsrf } from '../lib/api/client';
 import { PanelBoundary } from '../components/common/PanelBoundary';
-import { resolveErrorText } from '../components/common/ErrorBlock';
+import { ErrorBlock, resolveErrorText } from '../components/common/ErrorBlock';
 import { ASR_ENGINE_IDS } from '@openmemo/shared';
 import { ASR_ENGINE_LABELS, isValidAsrLanguage } from '../lib/asr';
 import { AsrModelPicker } from '../components/common/AsrModelPicker';
@@ -4235,5 +4235,376 @@ describe('T-138b 侧栏高亮不许在详情页上失灵', () => {
       const on = await sidebarCurrent(route);
       assert.equal(on.length <= 1, true, `${route} 上有 ${on.length} 项同时高亮：${JSON.stringify(on)}`);
     }
+  });
+});
+
+describe('T-138 ④ 文件夹筛选：链接的目的地不能是空的', () => {
+  const FOLDER = '01FOLDERAAAAAAAAAAAAAAAAAA';
+  const zhNav = (zhLocale as unknown as { nav: Record<string, string> }).nav;
+  const zhNotes = (zhLocale as unknown as { notes: Record<string, string> }).notes;
+  const FOLDERS = [
+    { uid: FOLDER, name: '课程', parentUid: null, color: null, noteCount: 3, children: [] },
+  ];
+  const NOTE = {
+    uid: '01AAAAAAAAAAAAAAAAAAAAAAAA',
+    title: 'in folder',
+    status: 'ready',
+    kind: 'media',
+    language: 'zh',
+    durationMs: 1000,
+    starred: false,
+    tags: [],
+    createdAt: '2026-08-01T00:00:00.000Z',
+    updatedAt: '2026-08-01T00:00:00.000Z',
+  };
+
+  test('★ 点开文件夹要把 folder 交给端点 —— 此前这个查询串全仓无人读取', async () => {
+    const s = stubApi({
+      '/folders': FOLDERS,
+      '/notes': { notes: [NOTE, { ...NOTE, uid: '01BBBBBBBBBBBBBBBBBBBBBBBB', title: 'elsewhere' }] },
+      [`/notes?folder=${FOLDER}`]: { notes: [NOTE] },
+    });
+    const r = await render(<NotesListPage />, { route: `/notes?folder=${FOLDER}` });
+    await r.flush();
+    assert.equal(
+      s.calls.some((c) => c.method === 'GET' && c.path === `/notes?folder=${FOLDER}`),
+      true,
+      `筛选没交给端点（实际请求：${JSON.stringify(s.calls.map((c) => c.path))}）—— ` +
+        '点开一个空文件夹会照常列出全部笔记，而侧栏高亮却言之凿凿地说你在这个文件夹里',
+    );
+    assert.equal(r.container.querySelectorAll('[data-testid="notes-list"] > li').length, 1);
+    assert.equal(text(r.container).includes('elsewhere'), false, '不属于这个文件夹的笔记不该出现');
+    r.unmount();
+  });
+
+  test('★ 标题要跟着走 —— 在文件夹里却顶着「全部笔记」是同一种谎，只换了位置', async () => {
+    stubApi({ '/folders': FOLDERS, [`/notes?folder=${FOLDER}`]: { notes: [NOTE] } });
+    const r = await render(<NotesListPage />, { route: `/notes?folder=${FOLDER}` });
+    await r.flush();
+    const title = r.container.querySelector('[data-testid="notes-list-title"]');
+    assert.equal(title?.textContent, '课程');
+    assert.notEqual(title?.textContent, zhNotes['title'], '文件夹页的标题仍写着「全部笔记」');
+    assert.notEqual(title?.textContent, zhNav['starred']);
+    r.unmount();
+  });
+
+  test('★ 文件夹名还没拉回来时退到「文件夹」，而不是说「全部笔记」', async () => {
+    // 故意不打桩 /folders（404）：宁可笼统，不可说错
+    stubApi({ [`/notes?folder=${FOLDER}`]: { notes: [NOTE] } });
+    const r = await render(<NotesListPage />, { route: `/notes?folder=${FOLDER}` });
+    await r.flush();
+    const title = r.container.querySelector('[data-testid="notes-list-title"]')?.textContent;
+    assert.equal(title, zhNav['folders']);
+    assert.notEqual(title, zhNotes['title'], '拿不到名字就退回「全部笔记」= 又一次说错话');
+    r.unmount();
+  });
+
+  test('★ 空文件夹给它自己的空态（而不是"还没有笔记"）', async () => {
+    stubApi({ '/folders': FOLDERS, [`/notes?folder=${FOLDER}`]: { notes: [] } });
+    const r = await render(<NotesListPage />, { route: `/notes?folder=${FOLDER}` });
+    await r.flush();
+    /*
+     * ⚠️ 判据是**标题那一整句**，不是"页面里有没有出现『还没有笔记』这几个字"。
+     * 第一版就是后者，当场被自己的文案匹到：`notes.empty` = 「还没有笔记」
+     * 恰好是 `notes.folderEmpty` = 「『X』里还没有笔记」的子串 ——
+     * 与本轮那次 `/activeJobId/` 匹到注释、T-129b 那次 `/\bEmphasis\b/` 匹到注释同族。
+     * **钉整句、钉结构，别钉关键词。**
+     */
+    const title = r.container.querySelector('h2')?.textContent;
+    assert.equal(title, '「课程」里还没有笔记', `空态标题不对（实际：${String(title)}）`);
+    assert.notEqual(title, zhNotes['empty'], '不该说"还没有笔记" —— 他别处还有笔记');
+    assert.notEqual(title, zhNotes['starredEmpty']);
+    r.unmount();
+  });
+
+  test('★ 「含子孙」这件事要在界面上说出来，别让用户自己猜', async () => {
+    // 裁决定的是含子孙；用户看到父级列出子级的笔记时，界面得先讲过这件事
+    const hint = (zhLocale as unknown as { notes: Record<string, string> }).notes['folderEmptyHint'];
+    assert.ok(hint && /子文件夹/.test(hint), `文案没有交代"含子孙"：${String(hint)}`);
+    const en = (enLocale as unknown as { notes: Record<string, string> }).notes['folderEmptyHint'];
+    assert.ok(en && /sub-folder/i.test(en), `en 没有交代"含子孙"：${String(en)}`);
+  });
+});
+
+/* ══════════ T-140 补救链：从"服务端算好了"到"用户点得到" ══════════ */
+
+/**
+ * 这一族用例守的是**要求 2.1 的最后一米**。
+ *
+ * 修之前的现状（`[实测]`）：
+ * - 26 个 `<ErrorBlock>` 调用点，传 `onRemediate` 的是 **0 个** →
+ *   渲染条件 `api?.remediation && onRemediate` 恒假 → **一个补救按钮都不存在**；
+ * - `RemediationButton.tsx` 的 importer 是 **0 个**；
+ * - 两张 `action → 路由` 表加起来认识 5 个 action，daemon 真正会发的 15 个里
+ *   **只对得上 3 个**；`installSiteExtractor`（yt-dlp 缺失）两边都不认识。
+ *
+ * ⚠️ 断言里出现的错误信封**逐字照抄 daemon 源码**（`rest/notes.ts:120-136` /
+ * `rest/storage.ts:257-273`），不是我编的形状 —— 编一个形状出来测，
+ * 测的就是我自己的想象（⑤A-11 那次就是这么过的）。
+ */
+describe('T-140 ① /components 在界面上到得了', () => {
+  /* 形状照抄本文件 T-129b 那组（真实 `GET /api/hardware` 的字段名） —— 自己编一份就是测自己的想象 */
+  const RUNTIME_STUB = {
+    '/hardware': {
+      hardware: {
+        detectedAt: '2026-08-03T00:00:00.000Z',
+        os: { platform: 'linux', arch: 'x64', version: '6.1' },
+        cpu: { brand: 'Stub CPU', physicalCores: 4, logicalCores: 8, features: ['avx2'] },
+        ram: { totalMB: 16000, availableMB: 8000 },
+        gpus: [],
+        selectedGpuIndex: null,
+        unifiedMemory: false,
+        disks: [{ path: '/tmp/stub', pathFor: 'models_root', freeMB: 10000, totalMB: 50000 }],
+        backends: [{ id: 'cpu', installed: true, available: true, unavailableReason: null }],
+        selectedBackend: 'cpu',
+      },
+    },
+    '/backends/catalog': { stale: false, packs: [] },
+    '/backends/installed': { selectedBackend: 'cpu', packs: [] },
+    '/components': { components: [], online: false, checkedAt: null },
+  };
+
+  test('★ 从 /runtime 点得到 /components —— 且落地的真是那一页，不只是 URL 变了', async () => {
+    stubApi(RUNTIME_STUB);
+    const r = await render(
+      <div>
+        <RuntimePage />
+        <LocationProbe />
+      </div>,
+      { route: '/runtime' },
+    );
+    await r.flush();
+
+    const link = r.container.querySelector('[data-testid="runtime-components-link"]');
+    assert.ok(link, '/runtime 上没有通往 /components 的入口 —— 那一页又回到"只能手敲 URL"');
+    assert.equal(
+      link!.getAttribute('href'),
+      '/components',
+      `入口指向 ${String(link!.getAttribute('href'))}，不是 /components`,
+    );
+    r.unmount();
+  });
+
+  /**
+   * ★ 这一条钉的是**路由注册**，不是链接。
+   *
+   * `componentsRoutes` 从 `routes.tsx` 里删掉的话，上面那条仍然全绿（href 还在），
+   * 但点下去是一个空白页。两件事得分开钉。
+   */
+  test('★ /components 这个地址真的渲染出组件页（路由被摘掉时必须红）', async () => {
+    stubApi(RUNTIME_STUB);
+    const { routes } = await import('../routes');
+    const shell = routes[0]?.children ?? [];
+    const hit = shell.filter((rt) => rt.path === 'components');
+    assert.equal(hit.length, 1, `路由表里 path==='components' 的条目有 ${hit.length} 条，应为 1`);
+
+    const r = await render(<ComponentsPage />, { route: '/components' });
+    await r.flush();
+    assert.equal(
+      !!r.container.querySelector('[data-testid="components-page"]'),
+      true,
+      '路由指到的组件不是组件页',
+    );
+    r.unmount();
+  });
+
+  test('入口文案两种语言都有（只写中文 = en 界面上漏一个键名出来）', () => {
+    for (const [name, loc] of [
+      ['zh-CN', zhLocale],
+      ['en', enLocale],
+    ] as const) {
+      const rt = (loc as unknown as { runtime: Record<string, string> }).runtime;
+      assert.ok(rt['componentsLink'], `${name} 缺 runtime.componentsLink`);
+      assert.ok(rt['componentsLinkHint'], `${name} 缺 runtime.componentsLinkHint`);
+    }
+  });
+});
+
+describe('T-140 ② ErrorBlock 自己就把补救渲染出来（不再要求调用方传 prop）', () => {
+  /** 逐字照抄 `apps/daemon/src/http/rest/notes.ts:120-136` 的 422 信封。 */
+  const NO_MEDIA_SOURCE = {
+    code: 'NO_MEDIA_SOURCE',
+    message: 'no adapter can handle: https://www.youtube.com/watch?v=x',
+    messageZh: '没有适配器能处理这个链接',
+    remediation: {
+      action: 'installSiteExtractor',
+      params: { input: 'https://www.youtube.com/watch?v=x' },
+      labelZh: '查看如何支持该站点',
+      label: 'How to support this site',
+    },
+  };
+
+  test('★ 一个 prop 都不传，补救按钮就得在（这正是 26 处全都不传的那个前提）', async () => {
+    stubApi({});
+    const err = new ApiError(422, NO_MEDIA_SOURCE);
+    const r = await render(<ErrorBlock error={err} />);
+    await r.flush();
+    assert.equal(
+      !!r.container.querySelector('[data-testid="remediation-installSiteExtractor"]'),
+      true,
+      '没渲染补救按钮 —— 旧条件是 `api?.remediation && onRemediate`，26 个调用点无一传 onRemediate',
+    );
+    r.unmount();
+  });
+
+  test('★ 按钮上写的是服务端那句话（labelZh 一度在 ApiError 构造函数里被解析掉）', async () => {
+    stubApi({});
+    const r = await render(<ErrorBlock error={new ApiError(422, NO_MEDIA_SOURCE)} />);
+    await r.flush();
+    const btn = r.container.querySelector('[data-testid="remediation-installSiteExtractor"]');
+    assert.equal(
+      (btn?.textContent ?? '').trim(),
+      '查看如何支持该站点',
+      '按钮文案不是服务端给的那句 —— ApiError 把 labelZh 丢了就会退化成 action 原名',
+    );
+    r.unmount();
+  });
+
+  test('★ 点下去落到 /components（不是 /models，也不是 /tasks）', async () => {
+    stubApi({});
+    const r = await render(
+      <div>
+        <ErrorBlock error={new ApiError(422, NO_MEDIA_SOURCE)} />
+        <LocationProbe />
+      </div>,
+    );
+    await r.flush();
+    assert.equal(locOf(r.container), '/', '前提：还没跳转');
+    await click(r.container.querySelector('[data-testid="remediation-installSiteExtractor"]'));
+    await r.flush();
+    assert.equal(
+      locOf(r.container),
+      '/components',
+      '按钮点得动、跳得走，但到不了能装 yt-dlp 的那一页 —— 这正是修之前的状态',
+    );
+    r.unmount();
+  });
+
+  test('普通错误（服务端没给 remediation）不许凭空长出一个按钮', async () => {
+    stubApi({});
+    const r = await render(
+      <ErrorBlock error={new ApiError(500, { code: 'BOOM', message: 'boom', messageZh: '炸了' })} />,
+    );
+    await r.flush();
+    assert.equal(
+      r.container.querySelectorAll('[data-testid^="remediation-"]').length,
+      0,
+      '没有真实补救动作的地方就该没有按钮 —— 造一个点了没用的按钮比不给更糟',
+    );
+    r.unmount();
+  });
+
+  test('★ 明确"没有落点"的 action 不渲染按钮（reauth 由重新连接那条路管）', async () => {
+    stubApi({});
+    const r = await render(
+      <ErrorBlock
+        error={
+          new ApiError(403, {
+            code: 'CSRF_FAILED',
+            message: 'csrf',
+            messageZh: '会话校验失败',
+            remediation: { action: 'reauth', params: {}, labelZh: '重新握手', label: 'Re-auth' },
+          })
+        }
+      />,
+    );
+    await r.flush();
+    assert.equal(
+      !!r.container.querySelector('[data-testid="remediation-reauth"]'),
+      false,
+      'reauth 没有任何页面能修，跳过去只会带着同一个失效令牌再撞一次',
+    );
+    r.unmount();
+  });
+
+  test('★ 调用方说"我能就地办"时，即使没有落点也要渲染，并且不跳转', async () => {
+    stubApi({});
+    const seen: string[] = [];
+    const r = await render(
+      <div>
+        <ErrorBlock
+          error={
+            new ApiError(409, {
+              code: 'TARGET_ALREADY_DATA_DIR',
+              message: 'already',
+              messageZh: '该位置已经是一个 OpenMemo 数据目录',
+              remediation: {
+                action: 'useExistingDataDir',
+                params: { path: '/tmp/x', move: false, endpoint: '/api/settings/data-dir' },
+                label: 'Use this directory',
+                labelZh: '直接使用此目录',
+              },
+            })
+          }
+          onRemediate={(a) => seen.push(a)}
+        />
+        <LocationProbe />
+      </div>,
+    );
+    await r.flush();
+    await click(r.container.querySelector('[data-testid="remediation-useExistingDataDir"]'));
+    await r.flush();
+    assert.deepEqual(seen, ['useExistingDataDir'], '就地处理器没被调用');
+    assert.equal(locOf(r.container), '/', '就地动作不该把用户带离当前页');
+    r.unmount();
+  });
+});
+
+describe('T-140 ③ 走产品真实路径：粘一个链接 → yt-dlp 缺失 → 点到能装它的页面', () => {
+  /**
+   * ★ 这一条是本轮的验收判据，且**走的是产品自己的那条路**（规矩 3）：
+   * `CapturePage` 的输入框 → `POST /api/notes/probe` → daemon 422 → `<ErrorBlock>`。
+   *
+   * demo 上此刻 `GET /api/selfcheck` 里就是 `warn | tool.ytDlp | 未找到`，
+   * 而这条 422 是那句 warn 在**界面上唯一会显形的地方** ——
+   * 自检结果本身没有任何页面在读（`/diagnostics` 读的是 `/api/health`，
+   * 而 `health.pipeline.missing` 里没有 ytDlp）。
+   */
+  test('★ 点「开始」→ 422 → 「查看如何支持该站点」→ /components', async () => {
+    stubApi({
+      'POST /notes/probe': () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              code: 'NO_MEDIA_SOURCE',
+              message: 'no adapter can handle: https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+              messageZh: '没有适配器能处理这个链接',
+              retryable: false,
+              remediation: {
+                action: 'installSiteExtractor',
+                params: { input: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
+                labelZh: '查看如何支持该站点',
+                label: 'How to support this site',
+              },
+            },
+          }),
+          { status: 422, headers: { 'content-type': 'application/json' } },
+        ),
+    });
+
+    const { default: CapturePage } = await import('../features/capture/CapturePage');
+    const r = await render(
+      <div>
+        <CapturePage />
+        <LocationProbe />
+      </div>,
+      { route: '/capture' },
+    );
+    await r.flush();
+
+    await type(r.container.querySelector('[data-testid="capture-url-input"]'), 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    await click(buttonByText(r.container, '开始'));
+    await r.flush();
+    await r.flush();
+
+    const btn = r.container.querySelector('[data-testid="remediation-installSiteExtractor"]');
+    assert.ok(
+      btn,
+      'daemon 把「去装站点解析器」算出来发过来了，捕获页一个按钮都没渲染 —— 用户在界面上无路可走',
+    );
+    await click(btn);
+    await r.flush();
+    assert.equal(locOf(r.container), '/components', 'yt-dlp 装得回来的那一页到不了');
+    r.unmount();
   });
 });

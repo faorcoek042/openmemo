@@ -15,6 +15,15 @@ export interface NoteRow {
   folder_id: number | null;
   kind: string;
   title: string;
+  /**
+   * TipTap 文档 JSON（**字符串**，`content.ts` 的 PATCH 用 `JSON.stringify` 落的）。
+   *
+   * ⚠️ 这一列存在于 `0001_init.sql` 与 `SELECT *` 的结果里，但**此前不在这个接口上** ——
+   * 于是 `GET /api/notes/:uid` 的序列化里也没有它：正文 PATCH 真落库、GET 一个字都不回，
+   * 用户刷新一次编辑器就空了（T-139 A1b，⑤C「写得进读不回」第七例）。
+   * 类型少一个字段不会报错，只会让人以为"没有这个东西可发"。
+   */
+  body_json: string | null;
   body_text: string;
   summary_md: string | null;
   status: string;
@@ -143,6 +152,27 @@ export interface SegmentInput {
   editedAt?: number | null;
 }
 
+/**
+ * 文件夹的**传递闭包**：`anc` = 祖先（含自身），`node` = 它管辖的每一个文件夹。
+ *
+ * ★ 这段 SQL 是「一个文件夹包含哪些笔记」的**唯一定义**。
+ * 侧栏计数（`folderNoteCounts`）与 `?folder=` 筛选（`listNotes`）都从它来 ——
+ * 两处各写一份就必然分叉，而分叉的表现是**侧栏写 2、点进去 3，且永远对不上**。
+ * 那种缺陷没有任何一处会报错：两个数字各自都"算对了"，
+ * 只有用户会觉得这软件有点怪。所以定义只准有一份。
+ *
+ * `UNION`（不是 `UNION ALL`）自带去重：万一库里已有脏环，递归也会停下来而不是打死进程
+ * （`folderSubtreeIds` 的注释里记着同一条理由）。
+ * 已软删的文件夹不进闭包 —— 它在树上已经不存在，不该再"管辖"任何笔记。
+ */
+const FOLDER_CLOSURE_CTE = `WITH RECURSIVE folder_closure(anc, node) AS (
+           SELECT id, id FROM folders WHERE deleted_at IS NULL
+           UNION
+           SELECT c.anc, f.id FROM folders f
+             JOIN folder_closure c ON f.parent_id = c.node
+            WHERE f.deleted_at IS NULL
+         )`;
+
 export class Repos {
   constructor(private readonly db: DatabaseHandle) {}
 
@@ -200,23 +230,35 @@ export class Repos {
   /**
    * 列出笔记。
    *
-   * `starredOnly` **必须在 SQL 里筛，不能让调用方拿到一页再过滤**（T-138 ③）。
+   * `starredOnly` / `folderId` **必须在 SQL 里筛，不能让调用方拿到一页再过滤**（T-138 ③/④）。
    * 此前 `/notes?starred=1` 是前端对 `limit=50` 的那一页做 `filter(n => n.starred)` ——
    * 笔记超过 50 条之后，第 51 条之外的星标笔记**不会出现，而且不会有任何提示**：
    * 页面显示的内容是对的，只是不全，用户无从知道自己少看了什么。
    * "显示得不全且不说" 与 "显示错的" 在用户那里是同一件事。
    *
-   * 放在 WHERE 里之后，`limit` 限的是**星标笔记**的条数，语义才对得上。
+   * 放在 WHERE 里之后，`limit` 限的是**筛完之后**的条数，语义才对得上。
+   *
+   * `folderId` 按裁决**含子孙**（文件夹是树，用户点父级期待的是"这个主题下的全部"；
+   * 而"父级空、子级有货"是更难理解的失败）。子孙用 `FOLDER_CLOSURE_CTE` 在 SQL 里递归，
+   * **不在 Node 里拉全表再过滤** —— 那会让 `limit` 又一次形同虚设。
    */
-  listNotes(limit = 50, opts: { starredOnly?: boolean } = {}): NoteRow[] {
-    const where = opts.starredOnly
-      ? `deleted_at IS NULL AND starred = 1`
-      : `deleted_at IS NULL`;
+  listNotes(limit = 50, opts: { starredOnly?: boolean; folderId?: number } = {}): NoteRow[] {
+    const conds = ['n.deleted_at IS NULL'];
+    if (opts.starredOnly) conds.push('n.starred = 1');
+    if (opts.folderId !== undefined) {
+      conds.push('n.folder_id IN (SELECT node FROM folder_closure WHERE anc = :folderId)');
+    }
+    // 只有真的要按文件夹筛时才挂 CTE —— 其余查询不该为一个用不上的递归付钱
+    const cte = opts.folderId === undefined ? '' : `${FOLDER_CLOSURE_CTE}\n`;
     return this.db
       .prepare<NoteRow>(
-        `SELECT * FROM notes WHERE ${where} ORDER BY created_at DESC LIMIT :limit`,
+        `${cte}SELECT n.* FROM notes n
+         WHERE ${conds.join(' AND ')}
+         ORDER BY n.created_at DESC LIMIT :limit`,
       )
-      .all({ limit });
+      .all(
+        opts.folderId === undefined ? { limit } : { limit, folderId: opts.folderId },
+      );
   }
 
   updateNote(
@@ -752,12 +794,25 @@ export class Repos {
     return this.db.prepare<FolderRow>(`SELECT * FROM folders WHERE uid = :uid`).get({ uid });
   }
 
-  /** 每个文件夹的**直属**笔记数（不含子文件夹，不含已删笔记）。 */
+  /**
+   * 每个文件夹的笔记数，**含子孙**（不含已删笔记）。
+   *
+   * ⚠️ 它与 `listNotes({folderId})` **必须走同一份定义**（`FOLDER_CLOSURE_CTE`）。
+   * 这里原来是"只数直属"，而筛选按裁决是"含子孙" —— 两边各算各的，
+   * 结果就是**侧栏写着 2、点进去列出 3，而且永远对不上**。
+   * 那种缺陷最难查的地方在于：两个数字各自都"算对了"，
+   * 没有任何一处会报错，只有用户会觉得"这软件有点怪"。
+   * 所以闭包定义只有一份，两个查询都从它来。
+   */
   folderNoteCounts(): Map<number, number> {
     const rows = this.db
       .prepare<{ folder_id: number; n: number }>(
-        `SELECT folder_id, COUNT(*) AS n FROM notes
-         WHERE deleted_at IS NULL AND folder_id IS NOT NULL GROUP BY folder_id`,
+        `${FOLDER_CLOSURE_CTE}
+         SELECT c.anc AS folder_id, COUNT(n.id) AS n
+         FROM folder_closure c
+         JOIN notes n ON n.folder_id = c.node
+         WHERE n.deleted_at IS NULL
+         GROUP BY c.anc`,
       )
       .all();
     return new Map(rows.map((r) => [r.folder_id, r.n]));

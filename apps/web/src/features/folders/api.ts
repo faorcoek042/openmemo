@@ -67,6 +67,30 @@ function withDepth(nodes: readonly FolderNode[], depth: number): FolderNode[] {
 }
 
 /**
+/**
+ * 树 → 扁平（先序）。
+ *
+ * 放在 folders 这一侧而不是让调用方自己遍历：文件夹树的形状归本 feature 所有，
+ * 别处各写一次 `children` 递归，就多一处会忘记防环的地方。
+ * `depth` 已由 `withDepth` 补好，这里只做展开。
+ */
+export function flattenFolders(tree: readonly FolderNode[] | undefined): FolderNode[] {
+  const out: FolderNode[] = [];
+  const seen = new Set<string>();
+  const walk = (nodes: readonly FolderNode[]) => {
+    for (const n of nodes) {
+      // 防环：坏数据不该让一次"查文件夹名字"变成栈溢出（与 buildTree 同一条理由）
+      if (seen.has(n.uid)) continue;
+      seen.add(n.uid);
+      out.push(n);
+      walk(n.children);
+    }
+  };
+  walk(tree ?? []);
+  return out;
+}
+
+/**
  * 扁平 → 树。
  *
  * **必须防环**：`parentUid` 指回自己的祖先会让递归栈溢出。

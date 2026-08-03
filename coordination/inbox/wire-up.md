@@ -636,3 +636,145 @@ git add apps/web/src/App.tsx \
 - `apps/web/dist/index.html` mtime 现为 `08-03 23:53`（你重启前重建的那次）；**我这轮没跑过任何写 dist 的命令**。
 - 未跑本地 whisper。未 commit。未派生 subagent。
 - **诚实声明**：§D 那条**不是被要求的范围**，是我修完之后自己去点了一下才发现的；我把它写在 TL;DR 第 2、3 条而不是埋在末尾，因为它直接影响该怎么看待本节这个"修好了"。§B 两段红灯是实际输出复制的。
+
+---
+
+## [2026-08-04 00:35] T-138④ DONE —— `?folder=` 真的筛，且计数与筛选同源
+
+### TL;DR（≤25 行）
+
+1. **端点做了，语义按裁决含子孙**：`GET /api/notes?folder=<uid>`，递归用 **SQL 递归 CTE**（`FOLDER_CLOSURE_CTE`），不在 Node 里拉全表 —— 那会让 `limit` 又一次形同虚设。**过滤发生在 `limit` 之前**（同 `?starred=1` 那条判据），认不出的 uid **400**。
+2. **不变量②按你的要求钉住了**：`FOLDER_CLOSURE_CTE` 是「一个文件夹包含哪些笔记」的**唯一定义**，侧栏计数（`folderNoteCounts`）与筛选（`listNotes`）**都从它来**。⚠️ 修之前 `folderNoteCounts` 是**只数直属**的 —— 也就是说，如果我只加端点不动它，交付的第一天就是"侧栏写 1、点进去 3"。
+3. **那条测试写了，并且真的会红**：父 1 + 子 2，断言 **侧栏计数 == 筛选返回条数 == 3**。RV-14 把计数改回只数直属 → `AssertionError: 侧栏计数(1) 与筛选返回条数(3) 不一致`（§B）。遮住名字问"它什么时候失败"，答案就是这一句。
+4. **前端接上了**：`useNotesQuery({folderUid})`、`NotesListPage` 读 `?folder=`。查询串与 queryKey **从同一个对象拼**，否则缓存键与实际请求会在某个组合上错开，表现是"切了筛选内容没变"。
+5. **标题与空态也跟着走**：在文件夹里顶着「全部笔记」是同一种谎、只换了位置。文件夹名还没拉回来时退到「文件夹」而不是「全部笔记」——**宁可笼统，不可说错**。
+6. **「含子孙」在界面上说出来了**（`folderEmptyHint`：「这里会连子文件夹里的笔记一起显示」），并有一条用例钉住中英两份都得交代 —— 不让用户自己猜为什么父级里冒出子级的笔记。
+7. **反向验证 2 组，真实红灯**（§B）：RV-14 计数与筛选分叉、RV-15 前端不发 `?folder=`（4 条红，逐字复现"高亮准了、内容还是全部"那个状态）。
+8. **我又踩了一次自己的老坑，写出来**：空态断言原本写的是"页面里不许出现『还没有笔记』"，而 `notes.empty` = 「还没有笔记」**恰好是** `notes.folderEmpty` = 「『X』里还没有笔记」的子串 —— 被自己的文案匹到。改成**钉标题整句**。这是本任务内第三次同族（前两次：`/activeJobId/` 匹到注释、T-129b 的 `/\bEmphasis\b/`）。**钉整句、钉结构，别钉关键词。**
+9. **门禁**：`tsc -b` 0 · `eslint`（我的全部范围）0 · **641 passed / 0 failed**（db 47 / pipeline 132 / daemon 199 / web 单测 63 + 宿主 10 + 组件 190）。本轮我新增 **8 条**（daemon 3 + 组件 5）。
+10. **两件不是我的、但会影响你读门禁数字的事**，证据在 §D：`T-142` 的新守卫 `scripts/check-test-scripts.mjs` 目前**只接了 1 个包**，它的自检因此失败并**把 `packages/db` 的 test 整条带挂**（db 直接跑是 47/47）；同一文件还有 1 条 `no-irregular-whitespace` 让**全仓 `eslint .` 变红**。另外 `remediation` 的 `RuntimePage.tsx` 半保存状态一度让我的组件测试报 `ReferenceError: Link is not defined`，他们保存完就自愈了。
+
+---
+
+## §A 改法
+
+**daemon**
+- `db/repos.ts`：新增模块级 `FOLDER_CLOSURE_CTE`（`anc` 祖先含自身 → `node` 管辖的每个文件夹）。
+  `UNION` 而非 `UNION ALL`：脏环也会停下来（沿用 `folderSubtreeIds` 注释里那条理由）；已软删的文件夹不进闭包。
+  `folderNoteCounts()` 改为**含子孙**并走这份 CTE；`listNotes(limit, {starredOnly, folderId})` 也走它。
+  只有真要按文件夹筛时才挂 CTE —— 别的查询不该为一个用不上的递归付钱。
+- `http/rest/notes.ts`：解析 `?folder=`，查不到 / 已软删 → `400 BAD_QUERY_PARAM`。
+
+**web**
+- `features/notes/api.ts`：`useNotesQuery({starredOnly, folderUid})`，查询串与 queryKey 同源。
+- `features/notes/NotesListPage.tsx`：读 `?folder=`；标题用文件夹名；空文件夹给专属空态。
+- `features/folders/api.ts`：新增 `flattenFolders()`（树 → 扁平，带防环），从 barrel 导出。
+  放在 folders 这一侧而不是让调用方自己递归 `children` —— 别处各写一次就多一处会忘记防环的地方。
+- `lib/api/mock.ts`：同样认 `folder`；**并写明 mock 的文件夹是平的、不含子孙**，免得被下一个人当成契约。
+
+---
+
+## §B 反向验证（2 组，真实输出）
+
+**RV-14 侧栏计数退回"只数直属"，筛选仍含子孙**（先 `grep` 确认 dist 里坏行在）
+```
+✖ ★ 侧栏计数 == 筛选返回条数（父 1 + 子 2 = 3）—— 两边分叉就红
+  AssertionError: 侧栏计数(1) 与筛选返回条数(3) 不一致 —— 两处各算各的，
+  于是侧栏写一个数、点进去是另一个数，而且没有任何一处会报错
+  1 !== 3
+```
+> 这正是你要的那条：**两边分叉时它变红**。而且注意红的是"相等"这条断言，
+> 不是"筛出来的都在这个文件夹里" —— 后者在分叉时照样绿。
+
+**RV-15 前端不再把 `folder` 交给端点**
+```
+✖ ★ 点开文件夹要把 folder 交给端点 —— 此前这个查询串全仓无人读取
+  AssertionError: 筛选没交给端点（实际请求：["/notes","/folders","/jobs"]）——
+  点开一个空文件夹会照常列出全部笔记，而侧栏高亮却言之凿凿地说你在这个文件夹里
+✖ ★ 标题要跟着走 —— 在文件夹里却顶着「全部笔记」是同一种谎，只换了位置
+✖ ★ 文件夹名还没拉回来时退到「文件夹」，而不是说「全部笔记」
+✖ ★ 空文件夹给它自己的空态（而不是"还没有笔记"）
+ℹ tests 190  ℹ pass 186  ℹ fail 4
+```
+> 第一条的 `实际请求` 把 T-138c 之后那个状态**逐字复现**了出来：高亮是准的，内容是全部。
+
+两组还原后复跑全绿。
+
+---
+
+## §C 我第三次踩同一族坑（写出来，不掩盖）
+
+空态那条用例第一版是：
+```ts
+assert.equal(txt.includes(zhNotes['empty']), false, '不该说"还没有笔记"');
+```
+它**红了，但红得没道理** —— `notes.empty` = 「还没有笔记」恰好是我新写的
+`notes.folderEmpty` = 「『课程』里还没有笔记」的**子串**，于是断言被自己的文案匹到。
+
+前两次同族：本任务 ② 的 `/activeJobId/` 匹到自己旁边的注释；T-129b 的 `/\bEmphasis\b/` 同理。
+**三次的成因都是"钉关键词"**。改成钉**标题那一整句**（`querySelector('h2').textContent === '「课程」里还没有笔记'`）之后就没有这个面了。
+
+> 这次它表现为**假红**而不是假绿，所以我很快发现了。
+> 但成因与假绿完全相同 —— 只是这次运气好，站错了边。
+
+---
+
+## §D 不是我的，但会影响你读门禁（附证据）
+
+1. **`scripts/check-test-scripts.mjs`（`T-142` 在途，未跟踪，00:24 落盘）把 `packages/db` 的 test 整条带挂**：
+   ```
+   ✘ check-test-scripts:
+     本守卫只剩 1 个接线点了 —— 它是靠"挂在多个包的 test 脚本上"活着的（见文件头）。
+     少于 2 个接线点意味着再删一处它就彻底消失且无声。
+   ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @openmemo/db test
+   ```
+   目前只接了 `packages/db` 一个包，于是它的**自检**失败 → `&&` 短路 → db 的 47 条一条都没跑。
+   `[实测]` 绕过守卫直接 `node --test` → **47/47 全绿**。**db 本身没坏**，等他们把其余包接完就自愈。
+   （顺带说一句：这个守卫的设计我认同 —— 它守的正是"接线点被删光后自己无声消失"。只是安装过程中间态会红。）
+2. **同一文件 1 条 lint 错误让全仓 `eslint .` 变红**：`scripts/check-test-scripts.mjs:10:41 no-irregular-whitespace`。
+   我自己的全部范围（`apps/web/src`、`apps/daemon/src`、`packages`）单独跑 **rc=0**。
+3. **`remediation` 的 `RuntimePage.tsx` 半保存状态**一度让我的组件测试报
+   `ReferenceError: Link is not defined`（`<Link>` 已用、`import` 还没落盘）。
+   我**没有去改他们的文件**，等了一轮重新构建就绿了 ——
+   记在这里是因为它正好演示了那条纪律：**反向验证前要确认你跑的是刚改过的那份产物**；
+   这次不是我的产物旧，是别人的源码正处在两次保存之间。
+
+---
+
+## §E 本节改动清单（**请勿 `git add -A`**）
+
+```
+git add apps/daemon/src/db/repos.ts \
+        apps/daemon/src/http/rest/notes.ts \
+        apps/daemon/src/http/notesRest.test.ts \
+        apps/web/src/features/notes/api.ts \
+        apps/web/src/features/notes/NotesListPage.tsx \
+        apps/web/src/features/folders/api.ts \
+        apps/web/src/features/folders/index.ts \
+        apps/web/src/lib/api/mock.ts \
+        apps/web/src/app/i18n/locales/zh-CN.json \
+        apps/web/src/app/i18n/locales/en.json \
+        apps/web/src/test/components.test.tsx \
+        coordination/inbox/wire-up.md
+```
+
+⚠️ **`apps/web/tsconfig.test.json` 本轮不是我改的**（`remediation` 往里加了
+`lib/remediation/routes.test.ts` 两行）—— 前几轮我加过 nav/jobs/notesCache 那几行，**这轮没有**。
+⚠️ **申报重叠**：`NotesListPage.tsx` 你说 `notes-contract` 正在改附近的笔记契约
+（`state`/`bodyJson`/波形）。我这轮只动了**顶部的查询串读取、标题、空态**三处，
+没碰列表项的字段渲染；`lib/api/client.ts`、`ErrorBlock.tsx`、`JobToaster.tsx`、`RemediationButton.tsx`、
+`RuntimePage.tsx`、`vendor/**`、`.github/**` **一个都没碰**。
+
+---
+
+## §F 收尾与诚实声明
+
+- **本轮没起任何进程**（纯代码 + 测试；上一轮的 daemon/vite 已按 pid kill、端口确认释放）。
+- `:10000` 未访问；`/root/data-memo` 零写入；`~/.local/share/openmemo/datadir.json` 未碰。
+- `apps/web/dist` 未构建；验证构建走 `pnpm build:safe` / `pnpm --filter @openmemo/daemon build`。
+- 未跑本地 whisper。未 commit。未派生 subagent。
+- **诚实声明**：
+  - §B 两段红灯是实际输出复制的；§C 那次假红我如实写了，没有改完再贴。
+  - **`?folder=` 我只在测试与组件层验过，本轮没起真浏览器**（上一轮起过，验的是高亮那一半）。
+    daemon 侧是真 daemon + 真 HTTP + 真 SQLite 的端到端，前端侧是组件测试 —— **两者之间那一跳没有在真浏览器里连起来跑过**，如实标注。
+  - 本轮**新增 8 条**（daemon 3 + 组件 5），单测 0 条；web 单测从 51 涨到 63 **是 `remediation` 的**，不是我的。

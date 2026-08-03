@@ -22,12 +22,27 @@ import type {
  * 两种筛选是**两条缓存**（filter 参与 queryKey），否则点一次「星标」
  * 会把「全部笔记」的缓存也换成筛过的那一份。
  */
-export function useNotesQuery(opts: { starredOnly?: boolean } = {}) {
+export function useNotesQuery(opts: { starredOnly?: boolean; folderUid?: string } = {}) {
   const starredOnly = opts.starredOnly === true;
+  const folderUid = opts.folderUid;
+
+  /*
+   * 筛选条件既进查询串、又进 queryKey，**从同一个对象来** ——
+   * 两边各拼一次的话，缓存键与实际请求会在某个组合上错开，
+   * 表现是"切了筛选但内容没变"（缓存命中了另一条件的结果）。
+   */
+  const filter: Record<string, unknown> = {};
+  if (starredOnly) filter['starred'] = true;
+  if (folderUid) filter['folder'] = folderUid;
+
+  const qs = new URLSearchParams();
+  if (starredOnly) qs.set('starred', '1');
+  if (folderUid) qs.set('folder', folderUid);
+  const suffix = qs.size > 0 ? `?${qs.toString()}` : '';
+
   return useQuery({
-    queryKey: qk.notes.list(starredOnly ? { starred: true } : {}),
-    queryFn: () =>
-      api<{ notes: NoteSummary[] }>('notes', starredOnly ? '/notes?starred=1' : '/notes'),
+    queryKey: qk.notes.list(filter),
+    queryFn: () => api<{ notes: NoteSummary[] }>('notes', `/notes${suffix}`),
     select: (d) => d.notes,
   });
 }

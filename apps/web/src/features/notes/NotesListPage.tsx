@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next';
 import { FileAudio, Mic, Star } from 'lucide-react';
 
 import { useNotesQuery, useToggleStarMutation } from './api';
+// 跨 feature 只走门面（`../folders`，不是 `../folders/api`）—— eslint 的分层护栏放行的正是这一种
+import { flattenFolders, useFoldersQuery } from '../folders';
 import { EmptyState } from '../../components/common/EmptyState';
 import { MockNotice } from '../../components/common/MockNotice';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
@@ -37,9 +39,28 @@ export default function NotesListPage() {
    * 真正的筛选在哪没人知道。删掉之后，查询串是**唯一**的筛选依据，
    * 端点坏了页面就会立刻显形（组件测试断的正是"请求带上了 ?starred=1"）。
    */
+  /*
+   * ★ T-138 ④：`?folder=` 也是这一页的状态来源，和 `starred` 同类。
+   *
+   * 在这之前**全仓没有一处读它** —— 点开一个空文件夹，地址变了、侧栏高亮变了，
+   * 页面照常列出全部笔记。T-138c 把侧栏高亮修准之后这件事反而更糟：
+   * 界面开始用一种可信的口气说「你在『课程』里」，同时列出所有笔记。
+   * **修复提高了谎言的可信度** —— 所以这里必须一起接上，不能只修高亮。
+   *
+   * 筛选按裁决**含子孙**，递归在 daemon 的 SQL 里；侧栏那个计数与这里的返回
+   * 走的是同一份闭包定义（`repos.ts` 的 `FOLDER_CLOSURE_CTE`），不许一个含子孙一个不含。
+   */
   const [sp] = useSearchParams();
   const starredOnly = sp.get('starred') === '1';
-  const { data: notes, isLoading, isError, error, refetch } = useNotesQuery({ starredOnly });
+  const folderUid = sp.get('folder') ?? undefined;
+  const { data: notes, isLoading, isError, error, refetch } = useNotesQuery({
+    starredOnly,
+    ...(folderUid ? { folderUid } : {}),
+  });
+  const folders = useFoldersQuery();
+  const folderName = folderUid
+    ? (flattenFolders(folders.data).find((f) => f.uid === folderUid)?.name ?? null)
+    : null;
   const toggleStar = useToggleStarMutation();
   const visible = notes ?? [];
 
@@ -50,12 +71,24 @@ export default function NotesListPage() {
     return (
       <EmptyState
         icon={starredOnly ? <Star className="size-10" /> : <FileAudio className="size-10" />}
-        title={starredOnly ? t('notes.starredEmpty') : t('notes.empty')}
-        hint={starredOnly ? t('notes.starredEmptyHint') : t('notes.emptyHint')}
+        title={
+          folderUid
+            ? t('notes.folderEmpty', { name: folderName ?? '' })
+            : starredOnly
+              ? t('notes.starredEmpty')
+              : t('notes.empty')
+        }
+        hint={
+          folderUid
+            ? t('notes.folderEmptyHint')
+            : starredOnly
+              ? t('notes.starredEmptyHint')
+              : t('notes.emptyHint')
+        }
         // 空态即入口：直接把下一步动作放眼前，而不是只说"暂无数据"
-        // 星标空态的下一步不是"新建捕获"（他已经有笔记了），是"回去挑一条加星"
+        // 星标/文件夹空态的下一步不是"新建捕获"（他已经有笔记了），是"回到全部笔记"
         action={
-          starredOnly ? (
+          starredOnly || folderUid ? (
             <Button variant="secondary" onClick={() => navigate('/notes')}>
               {t('notes.title')}
             </Button>
@@ -72,7 +105,16 @@ export default function NotesListPage() {
   return (
     <div className="px-6 py-6">
       <h1 className="mb-4 text-xl font-semibold text-ink" data-testid="notes-list-title">
-        {starredOnly ? t('nav.starred') : t('notes.title')}
+        {/*
+          标题也得跟着筛选走。在文件夹里却顶着「全部笔记」，
+          与"高亮说你在课程里、内容却是全部"是同一种谎 —— 只是换了个位置。
+          文件夹名还没拉回来时退到「文件夹」而不是「全部笔记」：宁可笼统，不可说错。
+        */}
+        {folderUid
+          ? (folderName ?? t('nav.folders'))
+          : starredOnly
+            ? t('nav.starred')
+            : t('notes.title')}
       </h1>
       <MockNotice surface="notes" className="mb-3" />
       <ul className="flex flex-col gap-2" role="list" data-testid="notes-list">

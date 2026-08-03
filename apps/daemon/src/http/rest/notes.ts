@@ -275,7 +275,39 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
           );
           return true;
         }
-        const rows = repos.listNotes(limit, { starredOnly: starredRaw !== null });
+        /*
+         * ★ `?folder=<uid>` —— 侧栏文件夹树的数据源（T-138 ④）。
+         *
+         * 在这之前**全仓没有一处读它**：点开一个空文件夹，地址变了、侧栏高亮变了，
+         * 页面照常列出全部笔记（`[实测]` 0 条的文件夹显示 2 条）。
+         * T-138c 把高亮修准之后这件事反而更糟 —— 界面开始用可信的口气说错话。
+         *
+         * **含子孙**（裁决）：文件夹是树，点父级期待的是"这个主题下的全部"。
+         * 递归在 SQL 里（`FOLDER_CLOSURE_CTE`），与侧栏计数同一份定义。
+         *
+         * 认不出的 uid **400，不静默返回全部** —— 与 `starred` 同一条判据。
+         * 静默的话，一个手滑打错的 uid 会得到"全部笔记"，而用户以为自己在看某个文件夹。
+         */
+        const folderRaw = url.searchParams.get('folder');
+        let folderId: number | undefined;
+        if (folderRaw !== null) {
+          const folder = repos.folderByUid(folderRaw);
+          if (!folder || folder.deleted_at !== null) {
+            sendError(
+              res,
+              400,
+              'BAD_QUERY_PARAM',
+              `no such folder: ${JSON.stringify(folderRaw)}`,
+              '找不到这个文件夹（可能已被删除）',
+            );
+            return true;
+          }
+          folderId = folder.id;
+        }
+        const rows = repos.listNotes(limit, {
+          starredOnly: starredRaw !== null,
+          ...(folderId === undefined ? {} : { folderId }),
+        });
         // 一次 IN 查询拿全部标签，避免列表页 N+1
         const tagMap = repos.tagsOfNotes(rows.map((n) => n.id));
         const notes = rows.map((n) => ({
