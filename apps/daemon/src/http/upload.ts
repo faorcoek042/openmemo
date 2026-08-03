@@ -647,20 +647,26 @@ export function createUploadRoutes(deps: UploadRoutesDeps): {
           },
         });
 
-        // `as never`：shared 尚未提供 notes/upload 的事件载荷类型，与 rest/notes.ts 保持同一临时写法
+        /*
+         * 两处 `as never` 已删（T-130）。
+         *
+         * `note.created` 的载荷本来就是对的，断言纯属多余；
+         * 而 `job.created` 那条**载荷是错的**：契约要求 `{ job: … }`，这里发的是
+         * `{ jobUid, kind, label }`。`as never` 把编译器彻底消音，于是它一路发到了浏览器，
+         * 前端 `ev.job.jobId` 读到 undefined —— `[实测]` 控制台每次上传都抛一次
+         * `TypeError: Cannot read properties of undefined (reading 'jobId')`，
+         * 事件被 bus 的 try/catch 吞掉，**看起来像"这条事件没人管"**。
+         * 比不发更糟：不发只是缺反馈，发错还制造了一条假线索。
+         *
+         * 现在 `job.created` 由 `JobQueue` 的 onCreated 钩子统一发（main.ts），
+         * 这里只留 `note.created`，不再有第二个发送方。
+         */
         deps.sse?.publish(
           makeEvent('note.created', topics.note(note.uid), {
             noteUid: note.uid,
             title,
             folderUid: null,
-          } as never) as SseEvent,
-        );
-        deps.sse?.publish(
-          makeEvent('job.created', topics.job(job.uid), {
-            jobUid: job.uid,
-            kind: 'transcribe',
-            label: title,
-          } as never) as SseEvent,
+          }),
         );
 
         // 202：写操作异步化（D-01 §3.2 规则 2），进度走 SSE

@@ -32,6 +32,8 @@
   "include": [
     "src/lib/stores/selectors.test.ts",
     "src/styles/tokens.contrast.test.ts",
+    "src/components/common/jobToastModel.test.ts",
+    "src/components/common/jobToastModel.ts",
     "src/lib/stores/progress.store.ts",
     "src/lib/api/surfaces.ts",
     "src/lib/utils.ts",

@@ -5,16 +5,9 @@ import { useNavigate } from 'react-router';
 import { useShallow } from 'zustand/react/shallow';
 import { AlertTriangle, CheckCircle2, Clock, Download, RotateCw, ShieldCheck, X } from 'lucide-react';
 
-import type {
-  DownloadJob,
-  JobBlockedEvent,
-  JobCreatedEvent,
-  JobFailedEvent,
-  JobState,
-  JobStateEvent,
-} from '@openmemo/shared';
-
 import { bus } from '../../lib/events/bus';
+import type { Phase, Toast, ToastAction } from './jobToastModel';
+import { isPipelineKind, reduceToasts, toastActionFor } from './jobToastModel';
 import { rawFetch } from '../../lib/api/client';
 import { useProgressStore } from '../../lib/stores/progress.store';
 import { formatBytes, formatSpeed } from '../../lib/format/bytes';
@@ -80,25 +73,13 @@ import { ProgressMeter } from './ProgressMeter';
 
 /* ────────────────────────────── 类型 ────────────────────────────── */
 
-type Phase = 'active' | 'blocked' | 'failed' | 'done';
-
-interface Toast {
-  jobId: string;
-  kind: DownloadJob['kind'];
-  name: string;
-  totalBytes: number;
-  phase: Phase;
-  state: JobState;
-  /** blocked / failed 时的中文原因 */
-  reason?: string;
-  /** blocked 时服务端给的可执行补救 */
-  remediation?: JobBlockedEvent['remediation'];
-  attempt?: number;
-  maxAttempts?: number;
-  willRetry?: boolean;
-  /** 完成后是否需要重启才生效（由 /api/health 的 restartRequired 判定） */
-  needsRestart?: boolean;
-}
+/**
+ * ★ `Toast` 类型与"哪条事件能变成一条 toast"的规则住在 `./jobToastModel.ts`。
+ *
+ * 那条规则正是 T-130 的核心（`blocked` 到不了屏幕上），必须能被单测直接喂真实事件载荷 ——
+ * 而这个组件 import 了 react-router（纯 ESM），进不了仓库的 CommonJS 单测通道。
+ * 渲染、计时器、`/api/health` 复查留在这里。
+ */
 
 /** 同时最多显示几条 —— 再多就变成刷屏，反而看不见。溢出的靠"任务中心"看。 */
 const MAX_VISIBLE = 3;
@@ -106,14 +87,36 @@ const MAX_VISIBLE = 3;
 const SUCCESS_LINGER_MS = 8000;
 
 /**
- * `job.blocked` 没有标题字段（见上方 `bus.on('job.blocked')` 的注释）。
- * 按 `blockedCode` 给一个**说得出口**的名字，而不是渲染一个空标题或原始枚举值。
- * 未知 code 一律落到"后台任务" —— 宁可笼统，也不编一个具体但可能是错的名字。
+ * `job.blocked` / `job.failed` 只带 jobId，不带标题。
+ *
+ * 服务端补上 `job.created` 之后（T-130），正常情况下这里用不到 —— toast 已经有真实笔记标题了。
+ * 保留它是**冗余而不是主路径**：SSE 重连时重放缓冲只有 256 条，
+ * `job.created` 完全可能滚出去而 `job.blocked` 还在里面。那种时候宁可显示一个笼统的名字，
+ * 也不能把"需要用户动手"的状态整条丢掉 —— 后者正是 T-130 那个"零报错的卡住"。
+ * 未知 code 一律落到"后台任务"：宁可笼统，也不编一个具体但可能是错的名字。
  */
 function blockedFallbackName(code: string, t: TFunction): string {
   if (code === 'MISSING_ASR_MODEL') return t('jobToast.blockedTranscribe');
   if (code === 'NO_TRANSCRIPT' || code === 'LLM_NOT_CONFIGURED') return t('jobToast.blockedMindmap');
   return t('jobToast.blockedGeneric');
+}
+
+/** 每个阶段的标题。四种 kind × 四个 phase，散在 JSX 三元里写不下第三层。 */
+function titleFor(toast: Toast, t: TFunction): string {
+  const name = toast.name;
+  if (toast.phase === 'done') {
+    if (toast.kind === 'transcribe') return t('jobToast.doneTranscribe', { name });
+    if (toast.kind === 'mindmap') return t('jobToast.doneMindmap', { name });
+    return t(toast.kind === 'backend-pack' ? 'jobToast.doneBackend' : 'jobToast.doneModel', { name });
+  }
+  if (toast.phase === 'failed') {
+    // "安装失败"对一条转写任务是错的说法
+    return t(isPipelineKind(toast.kind) ? 'jobToast.failedJob' : 'jobToast.failedTitle', { name });
+  }
+  if (toast.phase === 'blocked') return t('jobToast.blockedTitle', { name });
+  if (toast.kind === 'transcribe') return t('jobToast.startedTranscribe', { name });
+  if (toast.kind === 'mindmap') return t('jobToast.startedMindmap', { name });
+  return t(toast.kind === 'backend-pack' ? 'jobToast.startedBackend' : 'jobToast.startedModel', { name });
 }
 
 /* ──────────────────────────── 容器 ──────────────────────────── */
@@ -132,21 +135,6 @@ export function JobToaster() {
     setToasts((prev) => prev.filter((x) => x.jobId !== jobId));
   }, []);
 
-  const upsert = useCallback((jobId: string, patch: Partial<Toast> & Pick<Toast, 'jobId'>) => {
-    setToasts((prev) => {
-      const i = prev.findIndex((x) => x.jobId === jobId);
-      if (i === -1) {
-        // 只有 job.created 会带齐必填字段；晚到的 state/failed 事件如果没见过这个 job，
-        // 说明它是本次会话之前就存在的（比如刷新页面），不补建 toast —— 那属于任务中心。
-        if (patch.name == null) return prev;
-        return [...prev, { phase: 'active', state: 'queued', totalBytes: 0, kind: 'model', ...patch } as Toast];
-      }
-      const next = [...prev];
-      next[i] = { ...next[i]!, ...patch };
-      return next;
-    });
-  }, []);
-
   /** 终态：成功的排队自动消失；需要用户处理的留着。 */
   const scheduleDismiss = useCallback(
     (jobId: string) => {
@@ -160,83 +148,44 @@ export function JobToaster() {
     [dismiss],
   );
 
+  /**
+   * 应用一条动作。
+   *
+   * 「这条事件能不能变成一条 toast」的规则住在 `jobToastModel.ts`（纯函数、可单测），
+   * 这里只把它接到 React 状态与计时器上 —— 那条规则正是 T-130 的核心，
+   * 埋在 useEffect 里就只能靠起浏览器点一遍来验证。
+   */
+  const apply = useCallback(
+    (action: ToastAction) => {
+      if (action.kind === 'dismiss') {
+        dismiss(action.jobId);
+        return;
+      }
+      setToasts((prev) => reduceToasts(prev, action));
+      // 需重启的那一类要等 health 查完才决定是否自动消失（见下方 effect）
+      if (action.kind === 'upsert' && action.settled) scheduleDismiss(action.jobId);
+    },
+    [dismiss, scheduleDismiss],
+  );
+
   useEffect(() => {
-    const offs = [
-      bus.on('job.created', (e) => {
-        const ev = e as JobCreatedEvent;
-        const j = ev.job;
-        upsert(j.jobId, {
-          jobId: j.jobId,
-          kind: j.kind,
-          name: j.displayName || j.targetId,
-          totalBytes: j.totalBytes,
-          state: j.state,
-          phase: 'active',
-          attempt: j.attempt,
-          maxAttempts: j.maxAttempts,
-        });
-      }),
-
-      bus.on('job.state', (e) => {
-        const ev = e as JobStateEvent;
-        if (ev.state === 'succeeded') {
-          upsert(ev.jobId, { jobId: ev.jobId, phase: 'done', state: ev.state });
-          // 需重启的那一类要等 health 查完才决定是否自动消失（见下方 effect）
-          scheduleDismiss(ev.jobId);
-        } else if (ev.state === 'cancelled') {
-          dismiss(ev.jobId);
-        } else if (ev.state !== 'blocked' && ev.state !== 'failed') {
-          upsert(ev.jobId, { jobId: ev.jobId, phase: 'active', state: ev.state });
-        }
-      }),
-
-      bus.on('job.blocked', (e) => {
-        const ev = e as JobBlockedEvent;
-        upsert(ev.jobId, {
-          jobId: ev.jobId,
-          phase: 'blocked',
-          state: 'blocked',
-          reason: ev.messageZh || ev.message,
-          remediation: ev.remediation,
-          /*
-           * ★ 必须自带 name，否则这条 toast **永远不会出现** —— T-114 实测出来的死路：
-           *
-           *   `job.blocked` 的**唯一**发送方是 transcribe / mindmap 两个 runner
-           *   （`apps/daemon/src/jobs/runners/*.ts`），
-           *   而这两类 job **刻意不发 `job.created`**（`jobs/events.ts` 有整段注释说明原因：
-           *   `JobCreatedEvent` 要求一个完整的 `DownloadJob`，流水线 job 填不进那个形状）。
-           *   `upsert` 又规定"没见过 job.created 就不补建"。
-           *   三条合起来 = **blocked 分支在真实运行中不可达**。
-           *
-           *   代价不是"少一条提示"：`[实测]` 没装 ASR 模型时导入媒体，
-           *   POST 返回 202、笔记停在 `processing`，**页面上一个字都没有** ——
-           *   正是这个项目反复在修的那种"零报错的卡住"。
-           *
-           *   给一个通用名就够了：用户刚刚点的就是这件事，缺的从来不是名字，是那句
-           *   "为什么停住了 + 怎么办"（`reason` + `remediation` 两个字段本身是齐的）。
-           *   等 shared 补上流水线 job 的表示，这里换成真实标题即可。
-           */
-          name: blockedFallbackName(ev.blockedCode, t),
-          kind: 'model',
-          totalBytes: 0,
-        });
-      }),
-
-      bus.on('job.failed', (e) => {
-        const ev = e as JobFailedEvent;
-        upsert(ev.jobId, {
-          jobId: ev.jobId,
-          // ★ 还在自动重试的失败**不升级为红色错误**（D-05 §2.3：重试中的失败不该打扰用户）。
-          //   但也不能一声不吭 —— 保持 active 并在副文案里说"正在自动重试"。
-          phase: ev.willRetry ? 'active' : 'failed',
-          state: 'failed',
-          willRetry: ev.willRetry,
-          reason: ev.error?.messageZh ?? ev.error?.message,
-        });
-      }),
-    ];
+    const names = {
+      /**
+       * `job.blocked` / `job.failed` 只带 jobId，不带标题。
+       *
+       * 服务端补上 `job.created` 之后（T-130），正常情况下这里用不到 —— toast 已经有真实笔记标题。
+       * 保留它是**冗余而不是主路径**：SSE 重放缓冲只有 256 条，`job.created` 完全可能滚出去
+       * 而 `job.blocked` 还在里面。那种时候宁可显示一个笼统的名字，
+       * 也不能把"需要用户动手"的状态整条丢掉 —— 后者正是 T-130 那个"零报错的卡住"。
+       */
+      blocked: (code: string) => blockedFallbackName(code, t),
+      failed: () => t('jobToast.failedFallback'),
+    };
+    const offs = (['job.created', 'job.state', 'job.blocked', 'job.failed'] as const).map((type) =>
+      bus.on(type, (e) => apply(toastActionFor(type, e, names))),
+    );
     return () => offs.forEach((off) => off());
-  }, [upsert, dismiss, scheduleDismiss, t]);
+  }, [apply, t]);
 
   /**
    * 成功之后再问一次 `/api/health`：装完的东西是**立刻可用**还是**要重启才生效**。
@@ -325,7 +274,6 @@ function ToastRow({ toast, onDismiss }: { toast: Toast; onDismiss: () => void })
   // ★ 进度只订阅自己那一个 jobId（D-05 §2.4）：别的任务刷新不会让这一条重渲染。
   const live = useProgressStore(useShallow((s) => s.byJob[toast.jobId]));
 
-  const isBackend = toast.kind === 'backend-pack';
   const step = live?.step ?? null;
   const completed = live?.completedBytes ?? 0;
   const total = live?.totalBytes ?? toast.totalBytes;
@@ -360,15 +308,7 @@ function ToastRow({ toast, onDismiss }: { toast: Toast; onDismiss: () => void })
       <div className="flex items-start gap-2">
         <ToastIcon phase={toast.phase} verifying={verifying} />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-ink">
-            {toast.phase === 'done'
-              ? t(isBackend ? 'jobToast.doneBackend' : 'jobToast.doneModel', { name: toast.name })
-              : toast.phase === 'failed'
-                ? t('jobToast.failedTitle', { name: toast.name })
-                : toast.phase === 'blocked'
-                  ? t('jobToast.blockedTitle', { name: toast.name })
-                  : t(isBackend ? 'jobToast.startedBackend' : 'jobToast.startedModel', { name: toast.name })}
-          </p>
+          <p className="truncate text-sm font-medium text-ink">{titleFor(toast, t)}</p>
 
           {/* 阶段名 + 字节 + 速度 + ETA。全部用 tabular-nums，数字跳动时不抖行宽。 */}
           {toast.phase === 'active' ? (
@@ -385,9 +325,10 @@ function ToastRow({ toast, onDismiss }: { toast: Toast; onDismiss: () => void })
             </p>
           ) : null}
 
-          {(toast.phase === 'blocked' || toast.phase === 'failed') && toast.reason ? (
+          {(toast.phase === 'blocked' || toast.phase === 'failed') && (toast.reason || toast.reasonEn) ? (
             <p className={cn('mt-0.5 text-xs', toast.phase === 'failed' ? 'text-critical' : 'text-ink-secondary')}>
-              {toast.reason}
+              {/* 服务端两份文案都给了；无条件取中文会让英文界面上冒出一句中文（实测见过） */}
+              {locale.startsWith('zh') ? (toast.reason ?? toast.reasonEn) : (toast.reasonEn ?? toast.reason)}
             </p>
           ) : null}
         </div>
@@ -441,6 +382,8 @@ function subtitleFor(toast: Toast, step: string | null, t: TFunction): string {
   if (toast.phase === 'failed') return t('jobToast.backgroundHint');
   if (toast.phase === 'done') {
     if (toast.needsRestart) return t('jobToast.doneRestartHint');
+    // 「去捕获页粘一个链接就能转写」对一条**刚转写完**的任务是句废话
+    if (isPipelineKind(toast.kind)) return t('jobToast.doneNoteHint');
     return t(toast.kind === 'backend-pack' ? 'jobToast.doneBackendHint' : 'jobToast.doneModelHint');
   }
   if (toast.willRetry) {
@@ -466,6 +409,27 @@ function ToastActions({
   const [restarting, setRestarting] = useState(false);
 
   if (toast.phase === 'done') {
+    /*
+     * 流水线任务完成后唯一有意义的出口是**那条笔记**，不是模型页。
+     * 没有 noteUid（理论上不该发生）就不给按钮，而不是给一个点了跳到模型页的假出口。
+     */
+    if (isPipelineKind(toast.kind)) {
+      return toast.noteUid ? (
+        <div className="mt-2 flex justify-end">
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => {
+              onDismiss();
+              navigate(`/notes/${toast.noteUid ?? ''}`);
+            }}
+            data-testid="job-toast-goto-note"
+          >
+            {t('jobToast.gotoNote')}
+          </Button>
+        </div>
+      ) : null;
+    }
     if (toast.needsRestart) {
       return (
         <div className="mt-2 flex justify-end">

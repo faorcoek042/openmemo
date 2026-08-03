@@ -224,3 +224,81 @@ export interface DownloadJob {
   startedAt: string;
   updatedAt: string;
 }
+
+/* ------------------------------ pipeline jobs ----------------------------- */
+
+/**
+ * Pipeline job kinds. Doubles as the discriminant against {@link DownloadJob}
+ * (`'model' | 'backend-pack'`), so the two literal unions must stay disjoint.
+ *
+ * Deliberately NOT added to `JOB_KINDS`: that constant means "kinds of download", and
+ * every exhaustive switch over it (mirror selection, byte accounting, resume sidecars)
+ * would become wrong the moment a transcribe job could appear in it.
+ */
+export const PIPELINE_JOB_KINDS = ['transcribe', 'mindmap'] as const;
+export type PipelineJobKind = (typeof PIPELINE_JOB_KINDS)[number];
+
+/**
+ * A transcription / mindmap job, as the API and the SSE stream expose it.
+ *
+ * ## Why this type has to exist (T-130)
+ *
+ * `JobCreatedEvent.job` used to be `DownloadJob`, which is modelled for downloads:
+ * `totalBytes`, `parts[]`, `fileIndex`, `provider`, a catalog-slug `targetId`. A
+ * transcribe job has none of those. The daemon therefore — correctly — refused to fake
+ * one and emitted **no `job.created` at all** for pipeline jobs
+ * (`apps/daemon/src/jobs/events.ts` documents the decision).
+ *
+ * The client's job toaster, equally correctly, refuses to materialise a toast for a job
+ * id it has never been introduced to (otherwise every reconnect replays historical jobs
+ * as fresh toasts).
+ *
+ * Both decisions are right; together they meant **every state a pipeline job can reach —
+ * `blocked` above all — was unreachable on screen**. Measured: importing media with no
+ * ASR model installed returned 202, left the note at `processing`, and put not one word
+ * on the page. The fix is not to relax either rule, it is to give a pipeline job an
+ * honest shape to be introduced with.
+ *
+ * Everything here is a field the daemon actually has (D-02 §1.7 `jobs`). Byte counters,
+ * parts and provider are **absent rather than zeroed** — a zero would render as
+ * "0 B / 0 B" and read like a stalled download.
+ */
+export interface PipelineJob {
+  /** D-02 `jobs.uid` (ULID). Same identifier space as `DownloadJob.jobId`. */
+  jobId: string;
+  /** Discriminant against `DownloadJob.kind`. */
+  kind: PipelineJobKind;
+  /** D-02 `jobs.type`, verbatim (`'transcribe' | 'mindmap'`). */
+  type: string;
+  /** What the user calls this thing — the note's title. Never the internal uid. */
+  displayName: string;
+  /** Owning note, so the UI can offer "open the note" without a lookup table. */
+  noteUid: string | null;
+  state: JobState;
+  /**
+   * D-02 `jobs.current_step`, e.g. "fetch" | "demux" | "vad" | "asr" | "structure".
+   * Free-form on purpose: pipeline steps are owned by `packages/pipeline` and adding one
+   * must not require editing a shared enum first.
+   */
+  step: string | null;
+  /** 0..1. The only progress a compute job can honestly report. */
+  progress: number;
+  attempt: number;
+  maxAttempts: number;
+  error: JobError | null;
+  /** D-02 `jobs.blocked_code`; non-null exactly when `state === 'blocked'`. */
+  blockedCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Anything the job APIs and `job.*` events can carry. */
+export type AnyJob = DownloadJob | PipelineJob;
+
+export function isPipelineJob(job: AnyJob): job is PipelineJob {
+  return (PIPELINE_JOB_KINDS as readonly string[]).includes(job.kind);
+}
+
+export function isDownloadJob(job: AnyJob): job is DownloadJob {
+  return !isPipelineJob(job);
+}

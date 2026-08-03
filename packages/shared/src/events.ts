@@ -25,7 +25,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import type { DownloadJob, JobError, JobState } from './jobs.js';
+import type { AnyJob, JobError, JobState } from './jobs.js';
 import type { HardwareInfo } from './hardware.js';
 
 export const SSE_EVENT_TYPES = [
@@ -103,9 +103,19 @@ export interface SseEventBase {
 
 /* ------------------------------ job lifecycle ----------------------------- */
 
+/**
+ * A job now exists. This is the ONLY event that introduces a job id — every later
+ * `job.state` / `job.progress` / `job.blocked` / `job.failed` carries just the id, so a
+ * client that never saw this event has nothing to attach them to.
+ *
+ * `job` is a union (`DownloadJob | PipelineJob`, discriminated on `kind`) because
+ * transcription and mindmap jobs cannot be described by `DownloadJob` — see `PipelineJob`
+ * in jobs.ts for the full account of what that cost us (T-130). Consumers must narrow
+ * with `isPipelineJob()` / `isDownloadJob()` rather than assume byte counters exist.
+ */
 export interface JobCreatedEvent extends SseEventBase {
   type: 'job.created';
-  job: DownloadJob;
+  job: AnyJob;
 }
 
 /**

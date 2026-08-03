@@ -43,6 +43,8 @@ import { attachHttpHandlers } from './http/server.js';
 import { SseHub } from './http/sse.js';
 import { attachWebSocket } from './http/ws.js';
 import { JobQueue } from './jobs/queue.js';
+import type { PipelineJob } from '@openmemo/shared';
+import { jobCreatedEvent, jobStateEvent, pipelineJobOf, pipelineKindOf } from './jobs/events.js';
 import { LanePool } from './jobs/lanes.js';
 import { Repos } from './db/repos.js';
 import { buildPipeline, type PipelineBundle } from './pipeline/setup.js';
@@ -477,7 +479,22 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       backupDir: paths.backupsDir,
     });
 
-    queue = new JobQueue(database.db, instanceId);
+    /*
+     * ★ 每个流水线 job 一落库就广播 `job.created`（T-130）。
+     *
+     * 这是**全局消费方**（右下角 toast 层、任务中心）唯一一次被告知"有这么个任务、它叫什么"。
+     * 缺了它，后续的 `job.state` / `job.blocked` 只是一串没有身份的 id，只能被丢掉 ——
+     * 于是"没装 ASR 模型 → 导入 → 页面零反馈"。
+     *
+     * 挂在队列上而不是各入队点：入队点有 5 处且还会增加，漏一处的代价是整条任务在界面上消失，
+     * 而且**不会有任何东西报错**。
+     */
+    queue = new JobQueue(database.db, instanceId, (row) => {
+      const note = row.note_id === null ? undefined : repos?.noteById(row.note_id);
+      const event = jobCreatedEvent(row, note ? { uid: note.uid, title: note.title } : undefined);
+      // 下载类 job 不走这条队列；认不出的类型 `jobCreatedEvent` 返回 undefined，宁可不发也不编。
+      if (event) sse.publish(event);
+    });
     const recovered = queue.recoverOnStartup();
     if (recovered > 0) {
       console.log(`[daemon] 崩溃恢复：${recovered} 个中断的任务已重新入队`);
@@ -557,7 +574,16 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
              */
             if (next.missing.length === 0 && queue_) {
               const unblocked = queue_.listBlocked(['MISSING_ASR_MODEL', 'LLM_NOT_CONFIGURED']);
-              for (const j of unblocked) queue_.unblock(j.id);
+              for (const j of unblocked) {
+                queue_.unblock(j.id);
+                /*
+                 * ★ 解除阻塞**必须发事件**（T-130）。
+                 * 否则页面上那条「暂时无法继续」会一直挂着：任务其实已经排回队列，
+                 * 而用户看到的还是"卡住了"。装完模型之后前端不动，正是他会去重启 daemon 的时刻。
+                 * 排在别人后面的任务可能要过很久才轮到，等 `job.state(running)` 来救不及。
+                 */
+                sse.publish(jobStateEvent(j.uid, 'queued', 'blocked'));
+              }
               if (unblocked.length > 0) {
                 console.log(`[daemon] 缺件已补齐，自动解除 ${unblocked.length} 个任务的阻塞`);
               }
@@ -647,6 +673,34 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         const job = queue_.byUid(uid);
         if (!job) return false;
         queue_.resume(job.id);
+        return true;
+      },
+      /*
+       * ★ 让流水线任务在 `GET /api/jobs` 里**存在**（T-130）。
+       * 在此之前该接口只返回下载队列，一条 blocked 的转写任务在任务中心里查无此人，
+       * 而 blocked 提示上的「任务中心」按钮正是指向那里。
+       */
+      list: (limit) => {
+        const out: PipelineJob[] = [];
+        for (const row of queue_.list(limit)) {
+          const note = row.note_id === null ? undefined : repos?.noteById(row.note_id);
+          const job = pipelineJobOf(row, note ? { uid: note.uid, title: note.title } : undefined);
+          // 认不出类型的（将来可能有别的 job.type）宁可不列，也不给它编一个 kind
+          if (job) out.push(job);
+        }
+        return out;
+      },
+      get: (uid) => {
+        const row = queue_.byUid(uid);
+        if (!row) return undefined;
+        const note = row.note_id === null ? undefined : repos?.noteById(row.note_id);
+        return pipelineJobOf(row, note ? { uid: note.uid, title: note.title } : undefined);
+      },
+      retry: (uid) => {
+        const row = queue_.byUid(uid);
+        if (!row || !pipelineKindOf(row.type)) return false;
+        if (!queue_.requeue(row.id)) return false;
+        sse.publish(jobStateEvent(row.uid, 'queued', row.state));
         return true;
       },
     });

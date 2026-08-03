@@ -316,11 +316,9 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
           payload: { noteId: note.id },
         });
         /*
-         * ⚠️ **刻意不发 `job.created`**：契约里它要求一个完整的 `DownloadJob`
-         * （kind: 'model'|'backend-pack'、totalBytes、parts、fileIndex…），
-         * 那是为**下载**建模的，转写/导图这类流水线 job 填不进去。
-         * 前端从本响应的 202 body 拿 jobUid，后续状态走 job.state / job.progress。
-         * 已报 Manager：shared 需要补流水线 job 的表示。
+         * `job.created` 由 `JobQueue` 的 onCreated 钩子统一发（main.ts）——
+         * 见 T-130：原来"刻意不发"的结论让导图任务的 `blocked`（没配 LLM）
+         * 同样在界面上不可达。
          */
         sendJson(res, 202, { jobUid: job.uid, noteUid: note.uid });
         return true;

@@ -20,6 +20,14 @@ export interface JobRow {
   uid: string;
   type: string;
   plan_version: number;
+  /**
+   * 归属笔记（D-02 §1.7 的 `jobs.note_id`）。
+   *
+   * 列一直都在、`SELECT *` 也一直带着它，只是这个接口没声明 —— 于是**类型上看不见**，
+   * 谁要用就得再查一次库或者自己 `as`。`job.created` 要给用户看的名字（笔记标题）
+   * 正是靠它取的，声明出来才能让编译器帮忙。
+   */
+  note_id: number | null;
   priority: number;
   lane: Lane;
   state: JobState;
@@ -73,15 +81,27 @@ export interface JobRunnerContext {
 const IDEMPOTENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export class JobQueue {
+  /**
+   * @param onCreated 新 job 落库后回调一次（**幂等命中已有 job 时不回调**）。
+   *
+   * 为什么是构造参数而不是让 5 个入队点各自发事件：入队点分散在
+   * `rest/notes.ts`（导入）、`rest/content.ts`（重跑 / 导图）、`http/upload.ts`（拖拽上传）、
+   * `ws/recorder.ts`（录音后离线重跑），**第 6 个迟早会有人加**。
+   * 靠"记得也发一条 job.created"是君子协议，而 T-130 的教训正是：漏掉的那一条
+   * 不会让任何东西报错，只会让整条任务在界面上**不存在** —— 用户点了导入，页面一个字都没有。
+   * 放在这里，忘不掉。
+   */
   constructor(
     private readonly db: DatabaseHandle,
     private readonly instanceId: string,
+    private readonly onCreated?: (job: JobRow) => void,
   ) {}
 
   /** 入队。带 idempotencyKey 时，24h 内重复提交返回原 job（D-01 §3.2）。 */
   enqueue(p: EnqueueParams): JobRow {
     const now = Date.now();
-    return this.db.transaction(() => {
+    let inserted = false;
+    const row = this.db.transaction(() => {
       if (p.idempotencyKey) {
         const existing = this.db
           .prepare<JobRow>(
@@ -91,6 +111,7 @@ export class JobQueue {
           .get({ k: p.idempotencyKey, since: now - IDEMPOTENCY_WINDOW_MS });
         if (existing) return existing;
       }
+      inserted = true;
 
       const uid = ulid(now);
       const res = this.db
@@ -114,6 +135,10 @@ export class JobQueue {
         });
       return this.byId(res.lastInsertRowid) as JobRow;
     });
+    // 事务提交之后才通知：订阅者可能立刻回头查库（`job.created` 的消费方就会），
+    // 在事务里发会让它读到尚未提交的状态。
+    if (inserted) this.onCreated?.(row);
+    return row;
   }
 
   byId(id: number): JobRow | undefined {
@@ -251,6 +276,27 @@ export class JobQueue {
     const rows = this.db.prepare<JobRow>(`SELECT * FROM jobs WHERE state='blocked'`).all();
     if (!codes || codes.length === 0) return rows;
     return rows.filter((r) => r.blocked_code !== null && codes.includes(r.blocked_code));
+  }
+
+  /**
+   * 用户在任务中心点「重试」：把终态/阻塞态的 job 放回队列。
+   *
+   * `attempt` 归零是有意的：自动退避已经用完了它的预算，而这次是**用户看着屏幕主动点的**，
+   * 不给新预算的话按钮会点了没反应（状态回到 queued，下一 tick 又立刻 failed）。
+   * `blocked` 也走这里 —— 用户装完模型可能不想等热刷新那一轮。
+   *
+   * @returns 是否真的改了一行（false = 状态不允许，调用方据此回 409 而不是假装成功）
+   */
+  requeue(id: number, now = Date.now()): boolean {
+    const r = this.db
+      .prepare(
+        `UPDATE jobs SET state='queued', attempt=0, next_run_at=0, blocked_code=NULL,
+                         remediation_json=NULL, error_code=NULL, error_detail=NULL,
+                         cancel_requested=0, pause_requested=0, updated_at=:now
+         WHERE id=:id AND state IN ('blocked','failed','cancelled','paused')`,
+      )
+      .run({ id, now });
+    return r.changes === 1;
   }
 
   /** 前置条件满足后解除阻塞。 */

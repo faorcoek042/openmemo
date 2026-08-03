@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { DownloadJob, JobState } from '@openmemo/shared';
+import type { AnyJob, DownloadJob, JobState } from '@openmemo/shared';
+import { isPipelineJob } from '@openmemo/shared';
 
 import { api } from '../../lib/api/client';
 import { qk } from '../../app/query';
@@ -29,7 +30,13 @@ import { useProgressStore, type JobProgressSnapshot } from '../../lib/stores/pro
  */
 
 export interface JobsResponse {
-  jobs: DownloadJob[];
+  /**
+   * 下载类 + 流水线类（转写/导图）。
+   *
+   * 这个接口原来只返回下载队列，于是一条**卡在 blocked 等模型**的转写任务
+   * 在任务中心里根本不存在 —— 而"需要处理"那一组正是为它准备的（T-130）。
+   */
+  jobs: AnyJob[];
   concurrencyLimit: number;
 }
 
@@ -60,7 +67,31 @@ export interface MergedJob {
   transientOnly: boolean;
 }
 
-function mergeOne(job: DownloadJob, live: JobProgressSnapshot | undefined): MergedJob {
+function mergeOne(job: AnyJob, live: JobProgressSnapshot | undefined): MergedJob {
+  /*
+   * 流水线 job 没有字节计数（`PipelineJob` 里根本没有这些字段，而不是填 0）——
+   * 所以进度取 `progress`（0..1），字节一律 null。
+   * 填 0 会让任务中心画出一条 "0 B / 0 B" 的下载条，像个卡住的下载。
+   */
+  if (isPipelineJob(job)) {
+    return {
+      jobId: job.jobId,
+      displayName: job.displayName,
+      type: job.type,
+      state: live?.state ? (live.state as JobState) : job.state,
+      step: live?.step ?? job.step,
+      progress: live?.progress ?? job.progress,
+      completedBytes: null,
+      totalBytes: null,
+      speedBps: null,
+      etaSeconds: live?.etaSeconds ?? null,
+      attempt: job.attempt,
+      maxAttempts: job.maxAttempts,
+      error: job.error,
+      transientOnly: false,
+    };
+  }
+
   const serverProgress =
     job.totalBytes > 0 ? Math.min(1, job.completedBytes / job.totalBytes) : 0;
   return {

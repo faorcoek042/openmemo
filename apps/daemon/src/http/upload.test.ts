@@ -438,7 +438,17 @@ describe('POST /api/notes/upload', () => {
       assert.equal(rec.jobs[0]?.type, 'transcribe');
       assert.equal(rec.jobs[0]?.lane, 'gpu.asr');
       assert.equal(rec.jobs[0]?.noteId, 1);
-      assert.equal(rec.events.length, 2, 'note.created + job.created');
+      /*
+       * 上传端点只发 `note.created`。
+       *
+       * 它以前还发了一条 `job.created` —— 用 `as never` 塞进去的 `{jobUid, kind, label}`，
+       * 与契约里的 `{ job: … }` 完全对不上，前端读 `ev.job.jobId` 每次上传都抛 TypeError。
+       * 而**这一行断言当时是绿的**：它只数了事件条数，没看载荷。
+       * 现在 `job.created` 由 `JobQueue` 的 onCreated 钩子统一发（main.ts + T-130 的端到端测试
+       * `jobs/pipelineJobEvents.test.ts` 断言其字段名），这里的假队列不会触发它。
+       */
+      assert.equal(rec.events.length, 1, '上传端点只负责 note.created');
+      assert.equal(rec.events[0]?.type, 'note.created');
     });
   });
 

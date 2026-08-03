@@ -13,29 +13,102 @@
  *
  * → 这里集中构造所有事件，**不使用任何类型断言**，让编译器成为契约的守门人。
  *
- * ## 已知契约缺口（已报 Manager）
+ * ## 契约缺口已补上（T-130）
  *
- * `JobCreatedEvent` 要求一个完整的 `DownloadJob`，而 `DownloadJob` 是**为下载建模的**
- * （`kind: 'model' | 'backend-pack'`、`totalBytes`、`parts`、`fileIndex`…）。
- * 转写/导图这类流水线 job **无法诚实地填进这个形状**。
- * 因此本模块**不发 `job.created`**：前端从 `POST` 的 202 响应拿到 jobUid，
- * 后续状态由 `job.state` / `job.progress` 提供。
- * 等 shared 补上流水线 job 的表示后再加回来。
+ * 这里原来写着：`JobCreatedEvent` 要求一个完整的 `DownloadJob`
+ * （`kind: 'model' | 'backend-pack'`、`totalBytes`、`parts`、`fileIndex`…），
+ * 转写/导图**填不进那个形状**，所以本模块**不发 `job.created`**，
+ * 让前端从 202 响应拿 jobUid、后续状态走 `job.state` / `job.progress`。
+ *
+ * 拒绝伪造一个假的 `DownloadJob` 是对的，**结论错在后半句**：
+ * 前端拿到的 jobUid 只活在发起那一次请求的调用点上，而 `job.state` / `job.blocked`
+ * 只带 id 不带身份 —— 全局 toast 层、任务中心这些**没参与那次请求**的消费方，
+ * 收到的是一串它从没被介绍过的 id，只能丢掉。于是流水线 job 的每一个状态
+ * （尤其 `blocked`）在界面上都不存在：`[实测]` 没装 ASR 模型时导入媒体，
+ * POST 返回 202、笔记停在 `processing`、**页面上一个字都没有**。
+ *
+ * 现在 shared 有了 `PipelineJob`（只含流水线 job 真有的字段，不含字节计数），
+ * `job.created` 因此可以**如实**发出。仍然不使用任何类型断言。
  */
 import type {
   JobBlockedEvent,
+  JobCreatedEvent,
   JobDoneEvent,
   JobFailedEvent,
   JobProgressEvent,
   JobState,
   JobStateEvent,
   MediaReadyEvent,
+  PipelineJob,
+  PipelineJobKind,
   Remediation,
   TranscribeDoneEvent,
   TranscribeSegmentEvent,
   TranscribeStartedEvent,
 } from '@openmemo/shared';
-import { makeEvent, topics } from '@openmemo/shared';
+import { PIPELINE_JOB_KINDS, makeEvent, topics } from '@openmemo/shared';
+
+import type { JobRow } from './queue.js';
+
+/**
+ * `jobs.type` → `PipelineJobKind`。
+ *
+ * 认不出的类型返回 `undefined`，调用方据此**不发** `job.created` ——
+ * 而不是随便归到 'transcribe'。给用户看一个名字错误的任务，比不给更难排查。
+ */
+export function pipelineKindOf(type: string): PipelineJobKind | undefined {
+  return (PIPELINE_JOB_KINDS as readonly string[]).includes(type)
+    ? (type as PipelineJobKind)
+    : undefined;
+}
+
+/**
+ * `JobRow` → 契约里的 `PipelineJob`。
+ *
+ * `displayName` 用**笔记标题**：用户刚刚点的就是那条笔记，任何内部 uid 对他都没有意义。
+ * 标题为空时回落到 uid 是有意的 —— 空字符串会渲染成一条没有主语的提示。
+ */
+export function pipelineJobOf(row: JobRow, note: { uid: string; title: string } | undefined): PipelineJob | undefined {
+  const kind = pipelineKindOf(row.type);
+  if (!kind) return undefined;
+  return {
+    jobId: row.uid,
+    kind,
+    type: row.type,
+    displayName: note?.title?.trim() || note?.uid || row.uid,
+    noteUid: note?.uid ?? null,
+    state: row.state,
+    step: row.current_step,
+    progress: row.progress,
+    attempt: row.attempt,
+    maxAttempts: row.max_attempts,
+    error: row.error_code
+      ? {
+          code: row.error_code,
+          message: row.error_detail ?? row.error_code,
+          messageZh: row.error_detail ?? row.error_code,
+          retryable: false,
+        }
+      : null,
+    blockedCode: row.blocked_code,
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
+}
+
+/**
+ * 流水线 job 的 `job.created`。
+ *
+ * 认不出的 job 类型返回 `undefined` —— 调用方**不发事件**，而不是编一个。
+ */
+export function jobCreatedEvent(
+  row: JobRow,
+  note: { uid: string; title: string } | undefined,
+): JobCreatedEvent | undefined {
+  const job = pipelineJobOf(row, note);
+  if (!job) return undefined;
+  return makeEvent('job.created', topics.job(row.uid), { job });
+}
 
 export function jobStateEvent(
   jobUid: string,

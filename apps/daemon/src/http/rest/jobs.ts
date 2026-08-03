@@ -14,7 +14,7 @@
  */
 import type { ServerResponse } from 'node:http';
 
-import type { DownloadJob, GetJobsResponse, PullResponse } from '@openmemo/shared';
+import type { DownloadJob, GetJobsResponse, PipelineJob, PullResponse } from '@openmemo/shared';
 
 import { sendError, sendJson } from '../respond.js';
 import { decodePathSegment } from './request.js';
@@ -39,6 +39,18 @@ export interface PipelineJobHooks {
   cancel(jobUid: string, hard: boolean): boolean;
   pause(jobUid: string): boolean;
   resume(jobUid: string): boolean;
+  /**
+   * 列出流水线任务，最近的在前。
+   *
+   * ★ 没有它，`GET /api/jobs` 只返回下载队列 —— 于是一条卡在 `blocked` 的转写任务
+   * **在任务中心里根本不存在**（`[实测]` 5 条 blocked job 在库里，接口返回 `jobs: []`）。
+   * 而 blocked 那条 toast 给的第二个按钮正是「任务中心」。把用户送到一个空列表，
+   * 比不给按钮更糟：他会以为任务已经没了。
+   */
+  list(limit: number): PipelineJob[];
+  get(jobUid: string): PipelineJob | undefined;
+  /** 前置条件已满足时把 blocked 任务放回队列（任务中心的「重试」）。 */
+  retry(jobUid: string): boolean;
 }
 
 let pipelineJobs: PipelineJobHooks | undefined;
@@ -59,8 +71,12 @@ export function handleJobRoutes(
       sendError(res, 405, 'METHOD_NOT_ALLOWED', 'use GET', '方法不允许');
       return true;
     }
+    /*
+     * 两套队列合并成一个列表（T-130）。
+     * 顺序：下载在前、流水线在后 —— 前端自己会按状态分组，这里不越俎代庖排序。
+     */
     const body: GetJobsResponse = {
-      jobs: state.queue.list(),
+      jobs: [...state.queue.list(), ...(pipelineJobs?.list(50) ?? [])],
       concurrencyLimit: state.queue.concurrency,
     };
     sendJson(res, 200, body);
@@ -82,7 +98,9 @@ export function handleJobRoutes(
       sendError(res, 405, 'METHOD_NOT_ALLOWED', 'use GET', '方法不允许');
       return true;
     }
-    const job = state.queue.get(decodePathSegment(single[1]));
+    const uid = decodePathSegment(single[1]);
+    // 列表里能看见的，详情就必须能拿到 —— 否则任务中心点进去 404
+    const job = state.queue.get(uid) ?? pipelineJobs?.get(uid);
     if (!job) {
       sendError(res, 404, 'NOT_FOUND', 'no such job', '任务不存在（可能已被清理）');
       return true;
@@ -129,6 +147,12 @@ function handleJobAction(
   }
 
   if (action === 'retry') {
+    // 流水线任务的「重试」= 解除阻塞 / 重新排队（下载队列不认识它）
+    if (pipelineJobs?.retry(jobId)) {
+      res.writeHead(204);
+      res.end();
+      return true;
+    }
     const job = state.queue.retry(jobId);
     if (!job) {
       sendError(

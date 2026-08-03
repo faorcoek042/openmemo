@@ -195,6 +195,15 @@ export class Scheduler {
       }
       const final = queue.byId(job.id);
       if (final?.state === 'succeeded') {
+        /*
+         * ★ `job.state(succeeded)` 与 `job.done` **都要发**（T-130）。
+         *
+         * 下载队列两条都发（`rest/state.ts` 的 bridge），流水线这边原来只发 `job.done` ——
+         * 而全局 toast 层的"完成"分支是挂在 `job.state === 'succeeded'` 上的。
+         * 结果：一条转写任务跑完了，右下角那条提示会**永远停在"转写中"**。
+         * 两个队列对同一套事件各发一半，谁都不算错，合起来就是个假状态。
+         */
+        sse.publish(jobStateEvent(job.uid, 'succeeded', 'running'));
         sse.publish(
           jobDoneEvent(job.uid, resultUidOf(final.result_json), resultKindOf(job.type)),
         );
@@ -215,7 +224,31 @@ export class Scheduler {
        *   - 进程退出 → 是 job.state(queued)，重启会自动接着跑，同样不是失败
        * 只有真正的用户取消与运行错误才走 job.failed。
        */
-      if (state === 'paused' || state === 'queued') {
+      if (!aborted && state === 'queued') {
+        /*
+         * ★ 退避重试**是一次失败**，只是还会再试（T-130）。
+         *
+         * `queue.fail()` 在可重试时把状态置回 `queued` 并返回 'queued'，这里原先与
+         * "进程退出导致的中断"走同一条分支，只发一个 `job.state(queued)`。
+         * 于是 `JobFailedEvent.willRetry` 这个字段、以及前端「正在自动重试（第 n/m 次）」
+         * 那句文案，对流水线 job **永远不会出现** —— 用户看到的是任务莫名回到排队，
+         * 不知道刚刚失败过、也不知道它还会自己再来一次。
+         * 这与"重试中的失败不要打扰用户"不冲突：契约里 `willRetry` 存在的意义就是
+         * 让前端**降级显示**而不是丢弃。
+         */
+        sse.publish(
+          jobFailedEvent(
+            job.uid,
+            {
+              code: 'RUNNER_ERROR',
+              message,
+              messageZh: `任务失败，正在自动重试：${message}`,
+              retryable: true,
+            },
+            true,
+          ),
+        );
+      } else if (state === 'paused' || state === 'queued') {
         sse.publish(jobStateEvent(job.uid, state, 'running'));
       } else {
         sse.publish(

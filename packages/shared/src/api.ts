@@ -12,7 +12,7 @@
 
 import type { BackendPack, InstalledBackendPack } from './backends.js';
 import type { Backend, HardwareInfo } from './hardware.js';
-import type { DownloadJob } from './jobs.js';
+import type { AnyJob } from './jobs.js';
 import type {
   CatalogGroup,
   CatalogSource,
@@ -95,8 +95,17 @@ export interface PullResponse {
 
 /* ------------------------------- jobs ------------------------------------ */
 
+/**
+ * The task centre's source of truth.
+ *
+ * `jobs` is `AnyJob[]`, not `DownloadJob[]`: this endpoint used to serve the download
+ * queue only, so a transcription that was `blocked` waiting for a model appeared
+ * **nowhere** — not in the list, and not behind the "view tasks" button that the blocked
+ * toast itself offers. A remediation button that leads to an empty page is worse than no
+ * button (T-130).
+ */
 export interface GetJobsResponse {
-  jobs: DownloadJob[];
+  jobs: AnyJob[];
   /** Global concurrent-download limit currently in force. */
   concurrencyLimit: number;
 }
