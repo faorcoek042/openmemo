@@ -116,17 +116,32 @@ export function defaultStoreRoot(): string {
  * Find an executable inside an installed backend pack.
  *
  * Layout comes from `@openmemo/downloader`'s ArtifactStore:
- *     <storeRoot>/by-name/backend/<archive-basename>/[<nested>/]<binary>
+ *     <storeRoot>/by-name/backend/<name>                              (pack = one binary)
+ *     <storeRoot>/by-name/backend/<archive-basename>/[<nested>/]<binary>   (pack = archive)
+ *
  * The nested level exists because upstream archives carry their own top-level directory
  * (whisper.cpp's Linux tarball unpacks to `whisper-bin-ubuntu-x64/`), so a fixed depth
  * would miss it. We scan two levels, newest first, and take the first hit.
+ *
+ * ── Why the FLAT case is checked too ──────────────────────────────────────────────────
+ * `ArtifactStore.linkByName()` hardlinks every installed file to
+ * `by-name/<kind>/<name>`, and only files with `unpack` set additionally get expanded
+ * into a directory. So a pack whose payload is a standalone executable — yt-dlp ships
+ * exactly that, one PyInstaller binary per platform with no archive — lands as a plain
+ * file directly under `by-name/backend/`. An implementation that only enumerates
+ * DIRECTORIES cannot see it: install succeeds, sha256 matches, the manifest is written,
+ * and `discoverTools()` still reports the tool as missing. That is the T-093 /
+ * media-tools failure shape again, and it is why this is a listed candidate rather than
+ * a lucky side effect of the directory scan.
  */
 export async function findInBackendPacks(
   storeRoot: string,
   binaryName: string,
 ): Promise<string | null> {
   const backendRoot = join(storeRoot, 'by-name', 'backend');
-  const candidates: string[] = [];
+  // Flat first: it is the exact, unambiguous location the installer wrote to. The
+  // directory scan below is a search; this is a lookup.
+  const candidates: string[] = [join(backendRoot, binaryName)];
 
   const listDirs = async (dir: string): Promise<string[]> => {
     try {

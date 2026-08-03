@@ -82,6 +82,38 @@ export interface PipelineBundle {
   readonly paraformerAvailable: boolean;
 }
 
+/**
+ * 站点提取器（yt-dlp）开关 —— **默认开，用 `OPENMEMO_ENABLE_SITE_EXTRACTOR=0` 关**。
+ *
+ * ## 为什么翻过来了（T-132）
+ *
+ * 这里原来写的是 `env['OPENMEMO_ENABLE_SITE_EXTRACTOR'] === '1'`，即**默认关闭**。
+ * 后果是：即使 yt-dlp 已经装好，`YtDlpSource` 也**根本不会被注册进 registry**，
+ * 于是粘贴一个 watch 页链接永远得到 `422 NO_MEDIA_SOURCE`。
+ * 装得上但产品路径走不到 —— 与 ⑤D「后端做好了、前端还关着」同族。
+ *
+ * 而 ADR-002「用户决定 2」原文是：
+ *   > **F1 直接内置 yt-dlp，不做双路径区分。粘贴链接即用。**
+ * 这是**用户决定，agent 不得推翻**。默认关闭直接与它冲突。
+ *
+ * ## 这不是把 TD-002 的逃生口拆掉
+ *
+ * TD-002 要求的是「**可以**不依赖 GPL 组件」，不是「默认不依赖」：
+ *   · 环境变量仍在，只是极性反过来 —— `=0` 一秒关掉，无需改代码；
+ *   · `buildDefaultRegistry()` 自己的默认值本来就是 `?? true`，
+ *     真正的偏差只在 daemon 这一处；
+ *   · `packages/pipeline` 的 TD-002 回归用例传的是显式 `enableSiteExtractor: false`，
+ *     不受本默认值影响，「关掉后播客/RSS/HLS/直链/本地文件照常」依旧被钉住；
+ *   · 没装 yt-dlp 时 `YtDlpSource.isAvailable()` 返回 false，
+ *     registry 会跳过它并给出可操作的 remediation —— 打开开关不会凭空造出一个假适配器。
+ *
+ * `docs/SECURITY.md` 写着「风险敏感的用户应关闭它」：关闭方式从
+ * 「什么都不做」变成「设 `OPENMEMO_ENABLE_SITE_EXTRACTOR=0`」，能力没有消失。
+ */
+export function siteExtractorEnabled(env: NodeJS.ProcessEnv): boolean {
+  return env['OPENMEMO_ENABLE_SITE_EXTRACTOR'] !== '0';
+}
+
 function firstExisting(...candidates: Array<string | null | undefined>): string | null {
   for (const c of candidates) {
     if (c && existsSync(c)) return c;
@@ -185,8 +217,8 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
     cwd: paths.tmpDir,
     // 本地导入只允许落在数据目录内 —— 防路径穿越（D-01 §8.5）
     allowedRoot: paths.dataDir,
-    // TD-002 的开关：默认关闭 GPL 站点提取器，需要时显式打开
-    enableSiteExtractor: env['OPENMEMO_ENABLE_SITE_EXTRACTOR'] === '1',
+    // TD-002 的开关。**默认开**，理由见 siteExtractorEnabled()。
+    enableSiteExtractor: siteExtractorEnabled(env),
   });
 
   const whisper = new WhisperCppEngine({

@@ -45,12 +45,24 @@ export default function ComponentsPage() {
   const unchecked = components.filter((c) => !c.updateAvailable && !c.latestVersion);
 
   async function handleUpdate(c: ComponentStatus) {
+    /*
+     * 同一个端点，两种语境：**没装过 = 安装，装过 = 更新**。
+     * 文案必须分开 —— 对一个从没装过的组件说"从 X 更新到 null"是句假话，
+     * 而 `latestVersion` 在没点过「检查更新」时本来就是 null。
+     */
+    const installing = c.installedVersion == null;
     const ok = window.confirm(
-      `将「${c.displayNameZh}」从 ${c.pinnedVersion} 更新到 ${c.latestVersion}？\n\n` +
-        `· 会重新下载并校验 sha256，校验不通过不会安装\n` +
-        `· 上游换版本可能改变行为（例如文件格式变化），不一定完全兼容\n` +
-        `· 旧版本会保留，出问题可以一键回滚\n\n` +
-        `确定现在更新吗？`,
+      installing
+        ? `安装「${c.displayNameZh}」${c.pinnedVersion}？\n\n` +
+            `· 从 ${c.provenance.repoUrl} 的官方发布页下载\n` +
+            `· 会校验 sha256，校验不通过不会安装\n` +
+            `· 许可证：${c.provenance.license}\n\n` +
+            `确定现在安装吗？`
+        : `将「${c.displayNameZh}」从 ${c.pinnedVersion} 更新到 ${c.latestVersion}？\n\n` +
+            `· 会重新下载并校验 sha256，校验不通过不会安装\n` +
+            `· 上游换版本可能改变行为（例如文件格式变化），不一定完全兼容\n` +
+            `· 旧版本会保留，出问题可以一键回滚\n\n` +
+            `确定现在更新吗？`,
     );
     if (!ok) return;
     setBusyId(c.id);

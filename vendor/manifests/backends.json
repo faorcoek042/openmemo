@@ -497,6 +497,174 @@
       "priority": 10,
       "benchmark": null,
       "catalogVersion": "2026.08.03"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "ytdlp-linux-x64",
+      "engine": "yt-dlp",
+      "engineVersion": "2026.07.04",
+      "ggmlAbi": null,
+      "backend": "cpu",
+      "tier": "downloadable",
+      "os": "linux",
+      "arch": "x64",
+      "displayName": "yt-dlp site extractor (Linux x64)",
+      "displayNameZh": "yt-dlp 站点解析器（Linux x64）",
+      "files": [
+        {
+          "role": "binary",
+          "name": "yt-dlp",
+          "sizeBytes": 39924536,
+          "sha256": "6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae",
+          "unpack": null,
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp_linux",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 39924536,
+      "requiresDriver": null,
+      "license": {
+        "id": "GPL-3.0-or-later",
+        "gated": false,
+        "url": "https://www.gnu.org/licenses/gpl-3.0.html"
+      },
+      "providesFiles": [
+        "yt-dlp"
+      ],
+      "priority": 10,
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "ytdlp-linux-arm64",
+      "engine": "yt-dlp",
+      "engineVersion": "2026.07.04",
+      "ggmlAbi": null,
+      "backend": "cpu",
+      "tier": "downloadable",
+      "os": "linux",
+      "arch": "arm64",
+      "displayName": "yt-dlp site extractor (Linux arm64)",
+      "displayNameZh": "yt-dlp 站点解析器（Linux arm64）",
+      "files": [
+        {
+          "role": "binary",
+          "name": "yt-dlp",
+          "sizeBytes": 39675904,
+          "sha256": "b6ce97646773070d7a7ffd6bbbdcaecb47c48483909c54c915bf08a7a9b5e0b1",
+          "unpack": null,
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp_linux_aarch64",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 39675904,
+      "requiresDriver": null,
+      "license": {
+        "id": "GPL-3.0-or-later",
+        "gated": false,
+        "url": "https://www.gnu.org/licenses/gpl-3.0.html"
+      },
+      "providesFiles": [
+        "yt-dlp"
+      ],
+      "priority": 10,
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "ytdlp-macos-arm64",
+      "engine": "yt-dlp",
+      "engineVersion": "2026.07.04",
+      "ggmlAbi": null,
+      "backend": "cpu",
+      "tier": "downloadable",
+      "os": "darwin",
+      "arch": "arm64",
+      "displayName": "yt-dlp site extractor (macOS universal2)",
+      "displayNameZh": "yt-dlp 站点解析器（macOS 通用二进制）",
+      "files": [
+        {
+          "role": "binary",
+          "name": "yt-dlp",
+          "sizeBytes": 38256544,
+          "sha256": "498bd0dae17855c599d371d68ec5bafc439a9d8640e838be25c765a9792f261b",
+          "unpack": null,
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp_macos",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 38256544,
+      "requiresDriver": null,
+      "license": {
+        "id": "GPL-3.0-or-later",
+        "gated": false,
+        "url": "https://www.gnu.org/licenses/gpl-3.0.html"
+      },
+      "providesFiles": [
+        "yt-dlp"
+      ],
+      "priority": 10,
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "ytdlp-win-x64",
+      "engine": "yt-dlp",
+      "engineVersion": "2026.07.04",
+      "ggmlAbi": null,
+      "backend": "cpu",
+      "tier": "downloadable",
+      "os": "win32",
+      "arch": "x64",
+      "displayName": "yt-dlp site extractor (Windows x64)",
+      "displayNameZh": "yt-dlp 站点解析器（Windows x64）",
+      "files": [
+        {
+          "role": "binary",
+          "name": "yt-dlp.exe",
+          "sizeBytes": 18226085,
+          "sha256": "52fe3c26dcf71fbdc85b528589020bb0b8e383155cfa81b64dd447bbe35e24b8",
+          "unpack": null,
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp.exe",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 18226085,
+      "requiresDriver": null,
+      "license": {
+        "id": "GPL-3.0-or-later",
+        "gated": false,
+        "url": "https://www.gnu.org/licenses/gpl-3.0.html"
+      },
+      "providesFiles": [
+        "yt-dlp.exe"
+      ],
+      "priority": 10,
+      "benchmark": null,
+      "catalogVersion": "2026.08.03"
     }
   ]
 }

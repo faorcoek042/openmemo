@@ -152,6 +152,27 @@
       },
       "sizeBytes": 574041195,
       "sha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+    },
+    {
+      "id": "ytdlp-linux-x64",
+      "displayName": "yt-dlp site extractor (Linux x64)",
+      "displayNameZh": "yt-dlp 站点解析器（Linux x64）",
+      "category": "media-tool",
+      "pinnedVersion": "2026.07.04",
+      "provenance": {
+        "repoUrl": "https://github.com/yt-dlp/yt-dlp",
+        "releaseUrl": "https://github.com/yt-dlp/yt-dlp/releases/tag/2026.07.04",
+        "license": "GPL-3.0-or-later",
+        "licenseUrl": "https://www.gnu.org/licenses/gpl-3.0.html"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "yt-dlp/yt-dlp",
+        "stableOnly": true
+      },
+      "sizeBytes": 39924536,
+      "sha256": "6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae",
+      "sha256Provenance": "本机下载全部 39,924,536 字节后独立复算，并与上游 SHA2-256SUMS 及 GitHub Releases API digest 三方逐字符比对一致（2026-08-03）。注：官方 PyInstaller 二进制按 GPLv3+ 分发，仓库源码本身是 Unlicense（ADR-002 决策 1）。"
     }
   ]
 }

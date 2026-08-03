@@ -82,6 +82,29 @@
 }
 ```
 
-> ℹ️ 注意：本骨架下 **yt-dlp 与 ffmpeg 实际都走 B 类**（npm `youtube-dl-exec` / `ffmpeg-static`
-> 的 postinstall 获取二进制），不需要 manifest。上面只是格式示例。
-> 若日后改回"运行时按需下载"（商用升级路径），再启用对应 manifest。
+> ⚠️ **上面这段骨架早就不是"示例"了 —— 它已经是现实**（订正于 T-132，2026-08-03）。
+>
+> 这里原来写着：「yt-dlp 与 ffmpeg 实际都走 B 类（npm `youtube-dl-exec` / `ffmpeg-static`
+> 的 postinstall 获取二进制），**不需要 manifest**」。这句话在两个方面都已失效：
+>
+> - 仓库里**没有** `youtube-dl-exec` / `ffmpeg-static` 依赖；ffmpeg 走的是
+>   `backends.json` 的 `media-tools-linux-x64`（BtbN 预编译包），yt-dlp 走
+>   `ytdlp-<平台>` 条目（官方 PyInstaller 二进制）。两者都是 C 类运行时下载。
+> - 这句"不需要 manifest"直接害过人：yt-dlp 长期两份清单里都没有条目，
+>   于是 **F1「粘链接导入」在网页上无法修复** —— 用户唯一的办法是去命令行，
+>   而那正是章程要求 2.1 明令排除的。
+>
+> ## ⚠️ 两份清单的分工（**都写才算数**）
+>
+> | 清单 | 回答什么 | 消费方 |
+> |---|---|---|
+> | `components.json` | 这是什么、从哪来、钉在哪个版本、许可证、上游怎么查 | `GET /api/components` → 组件与来源页 |
+> | `backends.json`（sqlite 扩展在 `sqlite-ext.json`） | **怎么下载**：URL / 镜像 / sha256 / 体积 / 解包方式 | `POST /api/backends/install`，也是 `POST /api/components/:id/update` **唯一**的安装通道 |
+>
+> **一个要下载的组件必须同时出现在两处。** 只写 `components.json` → 组件页看得见、
+> 点安装拿到 `409 NO_INSTALL_CHANNEL`（ffmpeg 踩过）；只写 `backends.json` → 装得上，
+> 但用户查不到来源与许可证。
+> 守卫：`apps/daemon/src/pipeline/ytdlpInstall.test.ts` 里那条
+> 「每个"要下载的"组件都在 backends.json 里有安装通道」——
+> 判据是**这条组件自己声称有制品**（真 sha256 + 非零体积），不是按 category 一刀切
+> （`sherpa-onnx-node` 是 npm 依赖，如实写着 `sha256: "n/a"`，本来就不该有下载通道）。

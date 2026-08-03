@@ -44,20 +44,43 @@ export function useCheckUpdatesMutation() {
 }
 
 /**
- * 更新单个组件。
+ * 组件动作的真实路径 —— **id 在路径里，不在 body 里**。
+ *
+ * daemon 的路由是 `POST /api/components/:id/(update|rollback)`
+ * （`http/rest/components.ts` 的 `/^\/api\/components\/([^/]+)\/(update|rollback)$/`）。
+ * 这里原来发的是 `POST /api/components/update` + `{ id }` ——
+ * **少一段路径，正则不匹配，handler 返回 false，主路由 404**（T-132 查出）。
+ * 又一次「测我发了什么，没测对面会读什么」：清单能拉出来、卡片渲染正常、
+ * 只有真按下按钮才会失败，而没人按过。
+ *
+ * 拼进路径的 id 必须 encode：目录里已经有 `asr/whisper-large-v3-turbo-q5_0`
+ * 这种带斜杠的 id，不 encode 会被切成两段而永远 404。
+ * （daemon 侧对应地做 `decodePathSegment`。）
+ */
+function componentActionPath(id: string, action: 'update' | 'rollback'): string {
+  return `/components/${encodeURIComponent(id)}/${action}`;
+}
+
+/**
+ * 安装或更新单个组件。
  *
  * 走**同一个下载器**（校验/续传/去重/重试/回滚全复用），不是另写一条更新路径 ——
  * 另写一条就意味着那条路径会漏掉这些保证。
+ * 「安装」与「更新」是**同一个端点**：daemon 侧两者都等于"装清单里钉死的那个版本"，
+ * 分成两条路只会多出一条没人测的分支。
  */
 export function useUpdateComponentMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (req: UpdateComponentRequest) =>
-      api<{ jobId: string }>('/components/update', {
-        method: 'POST',
-        body: req,
-        idempotencyKey: `component-update:${req.id}:${req.toVersion ?? 'latest'}`,
-      }),
+      api<{ ok: true; id: string; toVersion: string; jobId: string; deduplicated: boolean }>(
+        componentActionPath(req.id, 'update'),
+        {
+          method: 'POST',
+          body: req,
+          idempotencyKey: `component-update:${req.id}:${req.toVersion ?? 'latest'}`,
+        },
+      ),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.jobs.all });
       void qc.invalidateQueries({ queryKey: qk.components.all });
@@ -70,10 +93,12 @@ export function useRollbackComponentMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<{ ok: true; version: string }>('/components/rollback', {
-        method: 'POST',
-        body: { id },
-      }),
+      // 返回体是 `{ ok, id, restoredVersion }` —— 之前这里写的 `version` 字段
+      // daemon 一次都没发过，属于同一处契约漂移。
+      api<{ ok: true; id: string; restoredVersion: string }>(
+        componentActionPath(id, 'rollback'),
+        { method: 'POST', body: { id } },
+      ),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.components.all });
     },

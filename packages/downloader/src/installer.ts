@@ -266,6 +266,27 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
       }
     }
 
+    /*
+     * A standalone executable has to be marked executable, or installing it is a no-op.
+     *
+     * Blobs are written by `downloadFile` with the default 0644, and `linkByName` is a
+     * hardlink — it shares the inode, so the by-name view inherits 0644 too. Every
+     * consumer that looks for a native tool goes through `isExecutable()`
+     * (`access(X_OK)`), so a pack whose payload is a bare binary rather than an archive
+     * would download, verify, hardlink, write its manifest, report success — and then be
+     * invisible to tool discovery, forever, with no error anywhere. This is the same
+     * shape as T-093's "all packs installed, extension still not loaded".
+     *
+     * Archives are excluded on purpose: `unpackArchive` already restores each entry's
+     * recorded mode, and chmod'ing the archive blob itself would be meaningless.
+     *
+     * Windows has no exec bit; `access(X_OK)` there does not gate on one, so skipping is
+     * correct rather than a gap. (chmod on Windows can only toggle read-only.)
+     */
+    if (!f.unpack && f.role === 'binary' && process.platform !== 'win32') {
+      await fs.chmod(linked, 0o755);
+    }
+
     const portable = toPortableRecord(linked, store.root);
     const rec: InstalledFileRecord = {
       role: f.role,

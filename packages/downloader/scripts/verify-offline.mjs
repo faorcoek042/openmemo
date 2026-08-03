@@ -617,6 +617,17 @@ console.log('\n[12] 后端包里的可执行文件必须能被找到（含 bin/ 
   await fs.chmod(path.join(flat, 'whisper-cli'), 0o755);
   check('平铺布局仍然找得到（没有为了新布局牺牲旧的）', (await findInBackendPacks(root, 'whisper-cli')) !== null);
   check('不存在的工具仍返回 null（不误报找到）', (await findInBackendPacks(root, 'nope-cli')) === null);
+
+  // T-132：**包本身就是一个可执行文件**（yt-dlp 的官方发布物就是这样，没有归档）。
+  // 这时 `linkByName` 直接把它硬链成 `by-name/backend/<name>` —— 是文件不是目录，
+  // 只枚举目录的扫描看不见它：安装成功、sha256 通过、工具发现仍报"未找到"。
+  const bare = path.join(root, 'by-name', 'backend', 'yt-dlp');
+  await fs.writeFile(bare, '#!/bin/sh\n');
+  await fs.chmod(bare, 0o755);
+  check('单文件包（by-name/backend/<name> 是文件）也能被找到', (await findInBackendPacks(root, 'yt-dlp')) === bare);
+  // 没有可执行位 = 不算找到：否则会交出一个 spawn 必然 EACCES 的路径还报绿。
+  await fs.chmod(bare, 0o644);
+  check('单文件包缺可执行位时不算找到', (await findInBackendPacks(root, 'yt-dlp')) === null);
   await fs.rm(root, { recursive: true, force: true });
 }
 

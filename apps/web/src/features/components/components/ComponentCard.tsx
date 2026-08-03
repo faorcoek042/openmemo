@@ -2,6 +2,7 @@ import {
   ArrowUpCircle,
   CheckCircle2,
   CircleHelp,
+  Download,
   ExternalLink,
   FileDigit,
   GitCommitHorizontal,
@@ -52,6 +53,15 @@ export function ComponentCard({ component: c, locale, busy, onUpdate, onRollback
   const st = checkState(c);
   const ui = CHECK_UI[st];
   const installed = c.installedVersion != null;
+  /*
+   * 这条组件到底有没有"一份要下载的制品"。
+   *
+   * 有些登记在册的组件是 **B 类 npm 依赖**（`sherpa-onnx-node` 就是，随
+   * `pnpm install` 一起进来），清单里如实写着 `sha256: "n/a"` / `sizeBytes: 0`。
+   * 给它们画一个「安装」按钮，点下去只会拿到 409 `NO_INSTALL_CHANNEL` ——
+   * 那是把"没有按钮"换成"按了没用的按钮"，比原来更糟。
+   */
+  const downloadable = c.sha256 !== '' && c.sha256 !== 'n/a' && c.sizeBytes > 0;
 
   return (
     <article
@@ -103,7 +113,35 @@ export function ComponentCard({ component: c, locale, busy, onUpdate, onRollback
         </div>
 
         <div className="flex shrink-0 flex-col items-end gap-1.5">
-          {c.updateAvailable ? (
+          {/*
+            ★ 未安装 → 必须给得出「安装」这个动作（章程要求 2.1：网页里装，不碰命令行）。
+            这张卡以前只有「更新到 X」这一个按钮，而它的显示条件是 `updateAvailable`
+            —— 也就是说：一个**从没装过**的组件，卡片老老实实标着「未安装」，
+            却连一个能点的东西都没有。用户看得见问题、看得见来源、就是装不上。
+            （T-132 实测：yt-dlp 缺失导致 F1 断掉后，这一页正是用户唯一会去的地方。）
+            走的是与「更新」完全同一个端点/同一个下载器，不是新开一条安装路径。
+          */}
+          {!installed && downloadable ? (
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={busy}
+              onClick={() => onUpdate(c)}
+              data-testid={`component-install-${c.id}`}
+            >
+              <Download className="size-3.5" aria-hidden />
+              {busy ? '安装中…' : `安装 ${c.pinnedVersion}`}
+            </Button>
+          ) : null}
+          {!installed && !downloadable ? (
+            <span
+              className="max-w-[12rem] text-right text-[11px] text-ink-muted"
+              data-testid={`component-bundled-${c.id}`}
+            >
+              随应用一起安装，不单独下载
+            </span>
+          ) : null}
+          {installed && c.updateAvailable ? (
             <Button
               size="sm"
               variant="primary"
