@@ -81,7 +81,30 @@ export function ConnectivitySummary({ className }: { className?: string }) {
   const live = entries.filter(([, v]) => v === 'live').length;
   const mocked = entries.filter(([, v]) => isSurfaceMocked(v as never)).length;
 
-  if (mocked === 0) return null;
+  /*
+   * ★ 版本戳**不能**跟着"还有假数据"这个条件一起消失。
+   *
+   * 原来两者写在同一个 `if (mocked === 0) return null` 下面 —— 于是所有面都接通那天，
+   * 版本戳会**一起不见**。而那正是最需要它的时刻：产品看起来正常了，
+   * 用户判断"我刚让它重启的改动生效了没有"就只剩下猜。
+   *
+   * 这是「Tab 条嵌在 `tab === 'asr'` 的 hidden 分支里」的同族缺陷：
+   * **嵌套让 A 继承了 B 的消失条件**，而 A 和 B 本来毫无关系。
+   * 判据：一个元素的显示条件，必须是它自己的条件。
+   */
+  const buildStamp = health ? (
+    <span className="text-ink-muted/70" title={buildTitle(health.build)}>
+      daemon v{health.version} {buildLabel(health.build)}
+    </span>
+  ) : null;
+
+  if (mocked === 0) {
+    return buildStamp ? (
+      <span className={cn('inline-flex items-center gap-1.5 text-xs text-ink-muted', className)}>
+        {buildStamp}
+      </span>
+    ) : null;
+  }
 
   return (
     <span
@@ -90,11 +113,7 @@ export function ConnectivitySummary({ className }: { className?: string }) {
     >
       <FlaskConical className="size-3 text-serious" aria-hidden />
       {t('mock.summary', { live, mocked })}
-      {health ? (
-        <span className="text-ink-muted/70" title={buildTitle(health.build)}>
-          · daemon v{health.version} {buildLabel(health.build)}
-        </span>
-      ) : null}
+      {buildStamp ? <>· {buildStamp}</> : null}
     </span>
   );
 }
