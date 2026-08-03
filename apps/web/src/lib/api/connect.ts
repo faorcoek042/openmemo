@@ -26,6 +26,13 @@ export interface HealthResponse {
   host: string;
   port: number;
   pid: number;
+  build?: {
+    commit: string;
+    commitTime: string | null;
+    dirty: boolean;
+    builtAt: string | null;
+    startedAt: string;
+  };
 }
 
 export interface ConnectResult {
@@ -80,6 +87,8 @@ export async function connectToDaemon(): Promise<ConnectResult> {
     if (res.ok) {
       health = (await res.json()) as HealthResponse;
       markSurface('health', 'live');
+      // 逐字段手抄：新增字段**不会**自动流过来，也不会报错 —— build 就这么被
+      // 静默丢掉过一次（后端返回了，界面显示"构建信息未知"）。加字段时记得加这里。
       store.setHealth({
         version: health.version,
         instanceId: health.instanceId,
@@ -87,6 +96,7 @@ export async function connectToDaemon(): Promise<ConnectResult> {
         dataDir: health.dataDir,
         port: health.port,
         pid: health.pid,
+        build: health.build,
       });
     } else {
       markSurface('health', 'offline');
