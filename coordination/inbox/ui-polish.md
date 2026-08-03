@@ -199,3 +199,195 @@ t=+180600ms  已安装 · 已可直接使用，去捕获页粘一个链接就能
 - 期间为构造 `blocked` 真样本，**只对我自己的 `/tmp/ui-polish-data3`** 做过一次"把 models 目录挪走再挪回"，已还原。
 - 曾为截配色总览板临时放过 `apps/web/public/__ui-polish-board.html`，**已删除，`public/` 目录也已移除**（仓库无残留）。
 - 所有截图与取证产物写在 `/tmp/ui-polish/`（仓库外）。
+
+---
+
+## [2026-08-03 19:45] T-124 DONE — 表层与品牌配色（"看得出来变了"）
+
+### TL;DR
+
+1. **表层动了，四个位置的像素值都可复现** `[实测]`（同一台 Chromium、同一份数据、同两页取样）：
+   页底 `#f9f9f7→#edf0f5`（暗 `#0d0d0d→#14161d`）、卡片/侧栏/顶栏 `#fcfcfb→#ffffff`（暗 `#1a1a19→#242732`）、
+   侧栏选中项 `#ffffff→#e2e4fa`（暗 `#242422→#2a2e5c`）、主按钮 `#2570cd→#575bc7`（暗 `#6268d5`）。
+2. **取值照 memo.ac 收敛，不是自由发挥** `[取证]`：`--color-bg-content #f1f5f9` / `--color-bg-element #ffffff`
+   （暗 `#181921`/`#272934`）、品牌 `#575bc7` 用的是它的**原值**。
+3. **对比度校验没被放松，从 64 对加到 88 对，全过。** 新增的 24 条正是"两块背景之间没有差"这类缺陷的判据
+   （表层可分辨、淡底 vs 表层、**半透明 hover/active 合成之后**的底与压在上面的文字）。
+   新阈值 1.06 **明确标注为本仓库自定、不是 WCAG**。
+4. **新断言当场抓到两处不达标，改的是颜色不是阈值**：`--ink-muted` 压在按下态上明 4.17 / 暗 3.91
+   → 收紧 ink-muted + active 填充 10%/12%→9%/10% → 两档都 4.57。
+5. **暗档面色的上限是被 3:1 卡死的**：面亮到 `#262a36` 时主按钮块面与 critical 实心块**同时**跌到 2.98:1，
+   所以最终停在 `#242732`（比 memo.ac 的 `#272934` 略深）。**颜色让位判据。**
+6. 修掉三处"看不见的交互态"：hover 18 处（明档实测 **1.02:1**）、侧栏选中（同色于 hover）、量化选择器选中行。
+7. **副产品**：选中态一变醒目，立刻暴露侧栏「全部笔记」与「星标」**永远同时高亮**（`NavLink` 不比查询串）。已修。
+8. `tsc -b` 0 · `eslint apps/web/src` 0 · `apps/web` 测试 **124 项 / 122 通过 / 0 失败 / 2 skipped**。
+
+交付:
+- `docs/design/D-09-ui-gap.md` **§8（追加，§0–§7 一个字没改）**：改动量复盘 / 新令牌表 / 逐条改动量与实测 / 新断言 / 调用点 / 两个别人家的 bug
+- 代码（**精确文件清单见下方"提交清单"，22 个文件，全部在 `apps/web/src` 内**）
+- 截图（仓库外）：`/tmp/ui-polish/t124/{before,after,cmp}/` —— `cmp/` 是**前后并排**（左 BEFORE 右 AFTER），明暗各 4 张
+- 实测记录（仓库外）：`/tmp/ui-polish/contrast-report-t124.txt`（88 行 PASS / 0 FAIL）、`palette.py`（色板计算器）、`shot.cjs` / `shot-popover.cjs`
+
+要点:
+- **上一轮不是做错了，是范围选窄了。** T-114 的 diff 里表层改动**是 0**，而界面上占面积最大的就是表层
+  —— 所以"配色改了但看不出来"是必然结果，不是错觉。§7.9 当时白纸黑字写了"表层与 data 色没动"及其理由
+  （图表色板的六项校验是对着旧表层跑的）。本轮不是推翻那个理由，是**付掉它的代价**：动表层 → 重跑校验 → 该调的调。
+- **明暗两档现在都只有两级表层**（`--surface-2 == --surface-1`），弹层靠阴影+描边抬升。
+  明档是因为卡片已经是纯白（没有更亮的一档，memo.ac 同样只有两档）；暗档是因为再亮就压不住 3:1。
+  已在 `features/README.md` 的令牌速查里写清"**不要再用表层差一档表达 hover/选中**"。
+- `--accent-track` 更名 `--accent-tint`（6 处类名）：T-114 之后进度条轨道已改用 `--status-*-tint`，"track"这个名字不成立了。
+- **品牌换靛紫还有个语义收益**：旧的 accent 蓝与 info 蓝、`--data-1` 蓝是同一族，品牌色没有信息量。
+  现在 **靛紫 = 品牌与可点，蓝 = 正在发生**。
+- **`/models` 的 IA 复验**：Tab 两个都在、`?tab=` 进 URL、「当前使用」两行都渲染 —— **正常**。
+  但发现一个 bug，见下方 BUG 条目 ①。
+
+下一步建议:
+- **`apps/web/dist` 需要重建才能让 `:10000` 看到最终状态。** `[实测]` 当前 dist（19:33 构建，不是我建的）
+  **已经含新配色 CSS**（grep 到 `#edf0f5`/`#575bc7`/`#242732`/`--fill-hover`，旧的 `#f9f9f7` 已消失），
+  但**不含 19:35 之后的两处改动**：侧栏高亮修复（App.tsx）与 `<select>` 底色（index.css）。
+  重建命令 `pnpm --filter @openmemo/web build`。**我没跑，也没碰那个实例** —— 由 Manager 决定时机。
+- `model-mgmt`：`speedTier` 到位后叫我，`/models` 双轴卡片我接着做（本轮 25 条平铺按吩咐保持现状）。
+- `architect` / Manager：D-05 §7.1/§7.2 的回写（见下方"需要 Manager 决策"）。
+
+需要 Manager 决策:
+1. **D-05 §7.1（表层与墨色）、§7.2（品牌）两张表已经与代码不一致，请裁决回写。** 详见 SHARED-CHANGE 条目。
+2. dist 重建时机（见上）。
+3. 两个别人家的 bug 该派给谁（见 BUG 条目）。
+
+---
+
+## [2026-08-03 19:45] SHARED-CHANGE / 规则变更申报（先申报后改，已改）
+
+**① `apps/web/src/styles/tokens.css`（架构上属 `architect`，D-05 §7.5 指定）**
+表层、墨色、品牌三组值全部重写；四个状态锚点 `--status-{good,warning,serious,critical}`
+与 `--data-1..4` **一个字没动**。新增 `--fill-hover` / `--fill-active`，`--accent-track` 更名 `--accent-tint`。
+
+**② 与 D-05 的冲突：我选择"改文档"而不是"绕过"，但不改别人的交付物。**
+Manager 的指示是「要么改规则要么守规则，别偷偷例外」。D-05 §7.1/§7.2 是 `architect` 的交付物，
+PROTOCOL §1.3 又规定"绝不修改他人的交付物"。两条同时满足的做法是：
+**把新规则写进我自己的交付物 D-09 §8，并在文件头与本条目里明写"§8 取代 D-05 §7.1/§7.2 的对应表"，
+然后请 Manager 裁决回写。** 我没有偷偷例外，也没有代替 architect 改他的文档。
+（`tokens.css` 文件头第 61–67 行写明了这条关系，任何人打开文件就能看到，不用去翻 inbox。）
+
+**③ `apps/web/src/index.css`** —— 转发 `--color-fill-{hover,active}` / `--color-accent-tint`；
+`@layer base` 的 `<select>` 底色 `--surface-1` → `--surface-0`（它绝大多数出现在卡片里，同色等于只剩一条边框；
+与同页 `<input>` 已有的 `bg-surface-0` 对齐）。
+
+**④ `apps/web/src/App.tsx`** —— 侧栏选中态改品牌淡底 + 修 `NavLink` 不比查询串导致的双高亮。
+
+**⑤ `apps/web/src/features/README.md`（令牌速查，公共契约）** —— 三条更新：
+表层只剩两档、hover/选中改用 `bg-fill-hover` / `bg-accent-tint`、补上新令牌名。
+**这条必须改**：不改的话，别的 agent 会继续照旧文照抄 `hover:bg-surface-2`，而那个写法现在是明确失效的。
+
+**⑥ 18 处 `hover:bg-surface-*` → `hover:bg-fill-hover`，6 处 `bg-accent-track` → `bg-accent-tint`**
+（机械替换，跨 8 个 feature 文件，均为呈现层类名，未碰任何逻辑）。
+
+⚠️ **并发提示**：本轮期间 `apps/web/dist` 被别的 agent（或 Manager）在 19:33 重建过一次，
+当时我的 `tokens.css`/`index.css` 已落盘、`App.tsx` 还没改完 —— **产物因此是个中间态**（恰好无害，
+但下次谁重建 dist 前最好先看一眼有没有人正在改前端）。我**没有**碰 dist，也没有碰 `:10000`。
+
+---
+
+## [2026-08-03 19:45] BUG（**不是我的文件，只报不动**）
+
+**① `/models?tab=llm` 时 Tab 切换条自己消失了。** `[实测]`
+`apps/web/src/features/models/ModelsPage.tsx:285` 整段 `<section className={tab === 'asr' ? … : 'hidden'}>`，
+**而两个 Tab 按钮就写在这个 section 里面**（287–305 行）。于是切到「语言模型」之后，
+页面上**再没有切回「转写」的控件**（只能靠侧栏「模型」链接绕回默认 Tab）。
+修法：把那一条 `<div className="flex rounded-md border …">` 提到 section 外面。
+截图 `/tmp/ui-polish/t124/after/light-models-llm.png`。
+**我没动** —— 该文件本轮有 `model-mgmt` 在改（`speedTier`），怕撞车。
+
+**② 侧栏「星标」筛选根本没实现。** `[实测]`
+`/notes?starred=1` 的标题仍是「全部笔记」，列表也是全部笔记（两条都没加星）。
+`grep -rn starred features/notes/NotesListPage.tsx` 只有**渲染星标图标**与**切换星标**，
+**没有任何一处读查询参数**。也就是说侧栏那一项点进去和「全部笔记」完全一样。
+截图 `/tmp/ui-polish/t124/after/light-notes-starred.png`。属 notes 的 owner。
+
+> 这两条都是**这轮改配色才看见的**：①以前 Tab 条不显眼没人注意切不回去；
+> ②以前侧栏高亮是 1.02:1 的看不见，两项同时"亮"也发现不了，自然也没人去点。
+
+---
+
+## [2026-08-03 19:45] 提交清单（**请勿 `git add -A`**，本轮我的改动只有这 22 个文件）
+
+```
+apps/web/src/styles/tokens.css
+apps/web/src/styles/tokens.contrast.test.ts
+apps/web/src/index.css
+apps/web/src/App.tsx
+apps/web/src/features/README.md
+apps/web/src/components/common/Button.tsx
+apps/web/src/components/common/JobToaster.tsx
+apps/web/src/components/common/PanelBoundary.tsx
+apps/web/src/components/common/ProgressMeter.tsx
+apps/web/src/components/common/StatusChip.tsx
+apps/web/src/components/common/llm/LlmSettingsSection.tsx
+apps/web/src/features/capture/CapturePage.tsx
+apps/web/src/features/components/components/ComponentCard.tsx
+apps/web/src/features/folders/FolderTree.tsx
+apps/web/src/features/models/components/QuantSelector.tsx
+apps/web/src/features/models/components/StorageBreakdown.tsx
+apps/web/src/features/notes/ExportMenu.tsx
+apps/web/src/features/notes/NoteEditor.tsx
+apps/web/src/features/notes/NotesListPage.tsx
+apps/web/src/features/notes/TagEditor.tsx
+apps/web/src/features/search/SearchPage.tsx
+apps/web/src/features/transcript/SegmentRow.tsx
+apps/web/src/features/transcript/WordHighlight.tsx
+docs/design/D-09-ui-gap.md
+```
+（`git status` 里同时还有 daemon / downloader / shared / vendor 的改动，**那些不是我的**。）
+
+**我没有 commit** —— PROTOCOL §0 写着 Manager 是唯一合并者。
+
+---
+
+## [2026-08-03 19:45] 环境收尾
+
+- 我起过的进程：daemon `--port 17910 --data-dir /tmp/ui-polish-data4`（pid 2562646）、
+  vite `--port 5196`（pid 2579661/2579663）。**均按 pid 逐个 `kill`，全程未用 `pkill -f`，已确认全部退出。**
+- 临时数据目录 `/tmp/ui-polish-data4` 已删除。它是 `/root/data-memo` 的**部分拷贝**
+  （db + media + runtime + bin，74 MB），`models/` 用的是**软链**（只读，从未写入），
+  删除时先删链再删目录 —— 已复核 `/root/data-memo/models` 仍在、`/root/data-memo` 仍是 514 MB。
+  **未拷贝 `secrets.json`。**
+- 用户的 `:10000` 实例**全程只读**：未重启、未 kill、未占用该端口、未发任何写请求；
+  收尾时复核 `/api/health` 仍是 200。**我也没有重建 `apps/web/dist`。**
+- 指针文件 `~/.local/share/openmemo/datadir.json` **未被我修改**（daemon 只在"搬家"接口里写它，
+  我用的是 `--data-dir` 且没碰数据位置功能）—— 上一轮报的那条 daemon 缺陷本轮没有被触发。
+- 所有截图与取证产物写在 `/tmp/ui-polish/`（仓库外），`git status` 不受影响。
+
+---
+
+## [2026-08-03 19:55] T-124 更正 + 一条**已经发生**的串档事故（追加，不覆盖上面）
+
+**① 上面的"提交清单"要去掉一行。** `apps/web/src/components/common/llm/LlmSettingsSection.tsx`
+**已经不在我的未提交改动里了** —— 它被 **`e896e2b`（19:27，T-126「模型选择改真下拉」）** 提交带走了。
+`git show e896e2b -- .../LlmSettingsSection.tsx` 里有这两行，那正是我 19:22 做的机械替换：
+
+```
+-   activeId === p.id ? 'border-accent bg-accent-track/20' : 'border-line',
++   activeId === p.id ? 'border-accent bg-accent-tint/20'  : 'border-line',
+```
+
+**这不是那位 agent 的错**，是"我改了共享区、它同时在提交"这个时间窗的必然结果 ——
+和 Manager 说的"第三次同类事故"是同一件事，只是这次方向反过来（**我的改动被别人的提交带走**）。
+所以正确的清单是上面那 24 行**去掉这一行**（其余 23 项仍全部未提交、可精确 `git add`）。
+
+**② 由此产生了一个当前 HEAD 上真实存在的悬空引用** `[实测]`：
+
+| 查询 | 结果 |
+|---|---|
+| `git show HEAD:.../LlmSettingsSection.tsx \| grep -c bg-accent-tint` | **1**（用了） |
+| `git show HEAD:apps/web/src/index.css \| grep -c accent-tint` | **0**（没定义） |
+| `git show HEAD:apps/web/src/styles/tokens.css \| grep -c accent-tint` | **0**（没定义） |
+
+也就是说：**现在从 HEAD 干净检出，LLM 服务商卡片的"选中"底色会渲染成——没有底色。**
+Tailwind 对不存在的类**不报错**（和上一轮抓到的 `text-success` 是同一种失败模式）。
+**我的 `tokens.css` + `index.css` 一落地，这个洞就自动闭合**，不需要额外动作 ——
+但在合并之前它是真实存在的，所以写在这里而不是等谁去发现。
+
+**③ PROTOCOL §7（19:28 新增，禁止验证构建覆盖 `apps/web/dist`）我全程遵守**：
+本轮**一次 `vite build` 都没跑**（截图用的是 `vite dev` + 我自己的 5196 端口），
+`apps/web/dist` 我没写过。当前 dist 是 19:33 别人构建的中间态（含我的新配色 CSS，
+不含 19:35 之后的侧栏高亮修复与 `<select>` 底色）——**重建时机仍归 Manager**。

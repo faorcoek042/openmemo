@@ -62,7 +62,7 @@ export function StorageBreakdown({ storage, locale, onGc, gcPending }: StorageBr
       </div>
 
       {/* 色条：辅助信息，不是唯一载体 */}
-      <div className="mt-3 flex h-2 w-full overflow-hidden rounded-full bg-accent-track">
+      <div className="mt-3 flex h-2 w-full overflow-hidden rounded-full bg-accent-tint">
         {segments.map((s) => (
           <div
             key={s.label}

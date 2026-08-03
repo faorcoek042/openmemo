@@ -109,11 +109,19 @@ lib/*              ──禁止──> features/* · components/*
 `tokens.css` 里每个值都跑过对比度/明度带/CVD 分离校验（见文件头注释），硬编码颜色绕开了这层校验，
 主题切换（亮/暗）也会直接失效，因为这些颜色只有语义令牌层会跟着 `[data-theme]` 走。
 
-`bg-surface-0` / `bg-surface-1` / `bg-surface-2`（页面 / 卡片 / 弹层三级抬升）、
+`bg-surface-0`（页底，也是卡片内的**内嵌**字段：输入框 / pre / 标签片）/
+`bg-surface-1`（卡片、侧栏、顶栏）/ `bg-surface-2`（弹层、抽屉、toast）、
 `text-ink` / `text-ink-secondary` / `text-ink-muted`、`border-line`、
-`bg-accent` / `text-accent-fg` / `bg-accent-track`（进度条轨道）、
+`hover:bg-fill-hover` / `active:bg-fill-active`（交互填充）、
+`bg-accent` / `text-accent-fg` / `text-accent-ink`（链接与选中文字）/ `bg-accent-tint`（品牌淡底）、
 `text-good` / `text-warning` / `text-serious` / `text-critical`（状态色）、
 `bg-data-1` `bg-data-2` `bg-data-3` `bg-data-4`（分类色，固定顺序：模型/后端/媒体/缓存，超过 4 类归"其他"，不要新造颜色）。
+
+> **T-124 起表层只有两档**：`--surface-2` 与 `--surface-1` 同值，弹层靠 `shadow-e2` + `border-line` 抬升。
+> 明档卡片已经是纯白（没有更亮的一档），暗档再亮就压不住主按钮块面的 3:1。
+> 因此 **不要再用"表层差一档"表达 hover / 选中**：hover 用 `bg-fill-hover`，
+> 选中用 `bg-accent-tint text-accent-ink`（语义，不是层级）。旧写法 `hover:bg-surface-2`
+> 在明档实测只有 1.02:1，等于没有反馈。
 
 ### 状态色的硬规则
 

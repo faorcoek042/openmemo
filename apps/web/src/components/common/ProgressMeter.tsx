@@ -11,7 +11,8 @@ import { cn } from '../../lib/utils';
  *
  * ── T-114 修的是"轨道只有一种颜色"这个漏洞 ──
  *
- * 原来轨道写死 `--accent-track`（浅蓝），填充却会换成 warning / critical。
+ * 原来轨道写死 `--accent-track`（浅蓝，T-124 已更名为 `--accent-tint`），
+ * 填充却会换成 warning / critical。
  * 实测这条组合在明档是坏的：
  *
  *     填充 vs 轨道   warning **1.39:1** · good 2.53:1 · accent 3.34 · critical 3.63

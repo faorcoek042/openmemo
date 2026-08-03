@@ -40,7 +40,7 @@ export function FolderTree() {
           type="button"
           onClick={() => setAdding(true)}
           aria-label={t('folders.create')}
-          className="rounded p-0.5 text-ink-muted hover:bg-surface-2 hover:text-ink"
+          className="rounded p-0.5 text-ink-muted hover:bg-fill-hover hover:text-ink"
         >
           <FolderPlus className="size-3.5" aria-hidden />
         </button>
@@ -89,7 +89,7 @@ function FolderRow({ node }: { node: FolderNode }) {
   return (
     <li>
       <div
-        className="group flex items-center gap-1 rounded-md pr-1 hover:bg-surface-2"
+        className="group flex items-center gap-1 rounded-md pr-1 hover:bg-fill-hover"
         style={{ paddingLeft: `${node.depth * 12 + 6}px` }}
       >
         <button

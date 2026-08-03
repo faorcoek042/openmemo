@@ -34,7 +34,7 @@ export function QuantSelector({ variants, selectedId, onSelect, locale }: QuantS
         type="button"
         className={cn(
           'inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2.5 py-1',
-          'text-xs font-medium text-ink hover:bg-surface-2',
+          'text-xs font-medium text-ink hover:bg-fill-hover',
         )}
         aria-expanded={open}
         aria-haspopup="listbox"
@@ -79,7 +79,13 @@ export function QuantSelector({ variants, selectedId, onSelect, locale }: QuantS
               aria-selected={v.id === selectedId}
               className={cn(
                 'grid w-full grid-cols-[auto_5.5rem_5.5rem_1fr] items-center gap-x-3 rounded px-2 py-1.5 text-left text-xs',
-                v.id === selectedId ? 'bg-surface-1' : 'hover:bg-surface-1',
+                /* 选中项：品牌淡底 + 品牌文字。
+                   原来写 `bg-surface-1`，而这块面板本身是 `bg-surface-2` ——
+                   T-124 之后明档两者同为白（抬升靠阴影），选中项会**完全消失**。
+                   选中态本来就不该靠"表层差一档"来表达，它是语义不是层级。 */
+                v.id === selectedId
+                  ? 'bg-accent-tint text-accent-ink'
+                  : 'hover:bg-fill-hover',
               )}
               onClick={() => {
                 onSelect(v.id);

@@ -72,7 +72,7 @@ export function TagEditor({
         <button
           type="button"
           onClick={() => setAdding(true)}
-          className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-xs text-ink-muted hover:bg-surface-2 hover:text-ink-secondary"
+          className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-xs text-ink-muted hover:bg-fill-hover hover:text-ink-secondary"
         >
           <Plus className="size-3" aria-hidden />
           {t('notes.addTag')}

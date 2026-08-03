@@ -66,7 +66,7 @@ export function SegmentRow({
     <div
       className={cn(
         'group flex gap-3 rounded-md px-3 py-2 transition-colors',
-        active ? 'bg-accent-track/40' : 'hover:bg-surface-2',
+        active ? 'bg-accent-tint/40' : 'hover:bg-fill-hover',
         hallucination && 'border-l-2 border-l-warning',
       )}
     >

@@ -154,7 +154,7 @@ export function NoteEditor({
                 .insertContent(' ')
                 .run();
             }}
-            className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs text-ink-secondary transition-colors hover:bg-surface-2 hover:text-ink"
+            className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs text-ink-secondary transition-colors hover:bg-fill-hover hover:text-ink"
             title={t('editor.insertAnchorHint')}
           >
             <Clock className="size-3.5" aria-hidden />
@@ -206,7 +206,7 @@ function ToolbarButton({
       aria-pressed={active}
       className={cn(
         'rounded p-1 transition-colors',
-        active ? 'bg-accent text-accent-fg' : 'text-ink-secondary hover:bg-surface-2',
+        active ? 'bg-accent text-accent-fg' : 'text-ink-secondary hover:bg-fill-hover',
       )}
     >
       {children}

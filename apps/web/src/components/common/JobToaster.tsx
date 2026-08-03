@@ -396,7 +396,7 @@ function ToastRow({ toast, onDismiss }: { toast: Toast; onDismiss: () => void })
           type="button"
           onClick={onDismiss}
           aria-label={t('jobToast.dismiss')}
-          className="-m-1 shrink-0 rounded p-1 text-ink-muted transition-colors hover:bg-surface-1 hover:text-ink"
+          className="-m-1 shrink-0 rounded p-1 text-ink-muted transition-colors hover:bg-fill-hover hover:text-ink"
         >
           <X className="size-3.5" aria-hidden />
         </button>

@@ -48,7 +48,7 @@ export default function NotesListPage() {
           <li key={n.uid}>
             <Link
               to={`/notes/${n.uid}`}
-              className="block rounded-lg border border-line bg-surface-1 p-3 transition-colors hover:bg-surface-2"
+              className="block rounded-lg border border-line bg-surface-1 p-3 transition-colors hover:bg-fill-hover"
             >
               <div className="flex items-start gap-3">
                 <div className="mt-0.5 text-ink-muted" aria-hidden>
@@ -67,7 +67,7 @@ export default function NotesListPage() {
                       }}
                       aria-label={n.starred ? t('notes.unstar') : t('notes.star')}
                       aria-pressed={n.starred}
-                      className="shrink-0 rounded p-0.5 hover:bg-surface-0"
+                      className="shrink-0 rounded p-0.5 hover:bg-fill-hover"
                     >
                       <Star
                         className={cn(

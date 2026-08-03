@@ -52,7 +52,9 @@ const TONE_SOFT: Record<StatusChipTone, string> = {
   warning: 'bg-warning-tint border-warning-line/45',
   serious: 'bg-serious-tint border-serious-line/45',
   critical: 'bg-critical-tint border-critical-line/45',
-  neutral: 'bg-surface-2 border-line',
+  /* 中性档用**内嵌层**而不是抬升层：T-124 之后明档 surface-2 = 白 = 卡片底，
+     淡底会消失。芯片的底本来就该比它所在的面「凹」一点。 */
+  neutral: 'bg-surface-0 border-line',
   running: 'bg-info-tint border-info-line/45',
 };
 

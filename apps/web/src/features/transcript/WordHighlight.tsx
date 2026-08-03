@@ -107,7 +107,7 @@ export function WordHighlight({
         <span
           key={`${w.s}-${i}`}
           data-active={i === idx ? 'true' : undefined}
-          className={i === idx ? 'rounded-sm bg-accent-track text-ink' : undefined}
+          className={i === idx ? 'rounded-sm bg-accent-tint text-ink' : undefined}
         >
           {w.w}
         </span>

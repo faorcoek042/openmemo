@@ -1,5 +1,5 @@
 /**
- * 设计令牌 —— D-05 §7。
+ * 设计令牌 —— D-05 §7（表层与品牌部分已被 D-09 §8 取代，见下）。
  *
  * 这一层是**纯 CSS 变量，零 UI 库依赖**（D-05 §7 标题的硬要求）。
  * Tailwind 只在 index.css 里通过 `@theme inline` 转发这些变量，
@@ -10,11 +10,6 @@
  * 把暗色写进 `@theme` 会在「定义处」求值 → 暗色永远不生效，而且不报错。
  * 这是 D-05 §7.5 记录的静默坑。
  *
- * 颜色不是目测的：取自经过校验的参考调色板，并跑过六项检查
- * （明度带 / 彩度下限 / CVD 相邻分离 / 常视觉分离 / 对比度）。
- * 明档 data-3(aqua 2.74:1) 与 data-4(yellow 2.11:1) 低于 3:1 →
- * 触发「救济规则」：用到它们的地方**必须**配可见标签或表格视图（见 StorageBar）。
- *
  * ─────────────────────────────────────────────────────────────────────
  * ★ T-114（ui-polish）：状态色拆成「记号色 / 文字色 / 淡底 / 描边」四层
  * ─────────────────────────────────────────────────────────────────────
@@ -23,53 +18,106 @@
  * 选的，但整个应用把它们当**文字色**在用（`text-warning` 等 54 处）。
  * 文字要 4.5:1，实测明档：
  *     warning 1.74 · serious 2.50 · good 3.18 · accent 4.19  —— 四个全不达标
- *     暗档 critical 3.62 —— 也不达标（D-05 §7.2 只核过 3:1，没核过 4.5:1）
- * 其中 `--status-warning`（1.74:1）拿来写字，等于**没写**。
  *
  * 所以每个语义色现在有四个层次，各自有各自的达标线：
  *   --status-X          记号/锚点色，保持 D-05 §7.2 原值不动（图表侧的校验不受影响）
  *   --status-X-ink      文字与图标 —— 对表层、对自身淡底都 ≥ 4.5:1
- *   --status-X-tint     芯片淡底 / 进度条轨道 —— 与表层可分辨（≥1.1:1）
+ *   --status-X-tint     芯片淡底 / 进度条轨道 —— 与表层可分辨
  *   --status-X-line     芯片描边 / 左侧强调边 —— 对表层 ≥ 3:1
  *   --status-X-solid    实心块（白字压在上面）—— 白字 ≥ 4.5:1，块面对两档表层都 ≥ 3:1
  *
- * ⚠️ 与 D-05 §7.2「状态色四个都不随主题变」的关系：
- * **锚点 `--status-X` 确实没变**，变的是新加的 ink/tint/line 三层 —— 它们必须随主题变，
- * 因为"在浅底上能读"和"在深底上能读"是两件互斥的事（深红 #c12e2e 在暗底只有 2.7:1）。
- * 校验脚本：`apps/web/src/test/color-contrast.test.ts`（64 条断言，跑在 `pnpm test` 里）。
+ * ─────────────────────────────────────────────────────────────────────
+ * ★ T-124（ui-polish）：**表层与品牌换成 memo.ac 的冷灰蓝 + 靛紫**
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * T-114 只改了文字/状态色，**表层一处没动** —— 结果是"配色修了但看不出来"。
+ * 这一轮动的是真正决定第一眼观感的三样东西，取值全部来自 memo.ac 客户端
+ * v1.7.5 的解包取证（`/tmp/ui-polish/memoac-{visual,color}.md` §2a/§3）：
+ *
+ * ① **底板与卡片的关系反过来了。**
+ *    旧：页底 #f9f9f7（暖白）、卡片 #fcfcfb、抬升 #ffffff —— 三档实测两两 **1.03:1**，
+ *    也就是"三级抬升"在明档**根本不存在**，卡片边界全靠一条线撑着。
+ *    新：页底 #edf0f5（冷灰蓝，对应 memo.ac `--color-bg-content #f1f5f9`）、
+ *    卡片 #ffffff（对应 `--color-bg-element`）—— 页底↔卡片 **1.14:1**。
+ *    **明档的"抬升"从此由阴影表达，不由更亮的白表达**：白已经是天花板，
+ *    再往上没有第四档了（memo.ac 也只有两档：bg-content / bg-element）。
+ *
+ * ② **暗档从中性黑变成蓝紫向的冷黑**（页底 #0d0d0d → #14161d，面 #1a1a19 → #242732），
+ *    对应 memo.ac 的 #181921 / #272934。这是暗色下"看得出换了配色"的主要来源。
+ *    暗档同样收成**两档**：面比原来亮了一整格（OKLab L 0.204 → 0.252），
+ *    上限是被 3:1 卡死的 —— 面再亮到 #262a36，主按钮块面与 critical 实心块
+ *    会同时跌到 2.98:1（实测）。**颜色让位于判据，不是反过来。**
+ *
+ * ③ **品牌色 = memo.ac 的靛紫 `#575bc7`**（取证 §2a `--color-brand-color`，
+ *    与其 shadcn 层的 `--primary: 238 50% 56%` 一致）。旧的 #2570cd 是蓝色，
+ *    与"进行中"的状态蓝、与分类色 data-1 全部撞在一起 —— 品牌色和状态色同色，
+ *    等于品牌色没有信息量。换靛紫之后：**靛紫 = 品牌与可点，蓝 = 正在发生**。
+ *
+ * ④ 新增 `--fill-hover` / `--fill-active`：**hover 态此前用 `--surface-2` 表达，
+ *    而它与卡片底实测 1.02:1 —— 明档等于没有 hover 反馈**（18 处调用点）。
+ *    改成半透明叠加，好处是同一个值压在任何表层上都成立，不用为每层各配一个。
+ *
+ * ⑤ `--accent-track` 更名 `--accent-tint`：T-114 之后进度条轨道已改用
+ *    `--status-*-tint`，这个令牌的实际用途只剩"品牌淡底"（搜索命中高亮、
+ *    拖放目标、选中项、存储条底），名字与用途已经对不上。
+ *
+ * ⚠️ 与 D-05 §7.1/§7.2 的关系：**本文件的表层、墨色、品牌三组值已与 D-05 不一致，
+ * 以 D-09 §8 为准**（D-05 是别人的交付物，我不改；已在 inbox 申报请 Manager 回写）。
+ * 四个状态锚点 `--status-{good,warning,serious,critical}` 与 `--data-1..4`
+ * **仍是 D-05 §7.2/§7.3 原值，一个没动**。
+ *
+ * 所有数值都是跑出来的不是目测的：`tokens.contrast.test.ts` 从本文件现场解析、
+ * **88 对实测断言**跑在 CI 里（T-114 是 64 对，本轮新增 24 对：表层可分辨性、
+ * 淡底对表层、hover/active 合成后的底与压在上面的文字）。
+ * 表层一变，状态色对"最不利表层"的余量就跟着变 —— 本轮因此微调了
+ * 明档 5 个 -ink / 5 个 -tint / 3 个 -line、good-solid、两档的 ink-muted，
+ * 每一处都是"刚好重新达标"的最小改动（逐条改动量见 D-09 §8.3）。
  */
 
 :root {
   color-scheme: light;
 
-  /* ── 表层 ── */
-  --surface-0: #f9f9f7; /* 页面底板 */
-  --surface-1: #fcfcfb; /* 卡片 / 面板 */
-  --surface-2: #ffffff; /* 抬升：弹层 / 抽屉 */
+  /* ── 表层（T-124：冷灰蓝，memo.ac `--color-bg-content` / `--color-bg-element`）──
+     `--surface-2` 与 `--surface-1` **两档主题里都故意同值**：明档卡片已经是纯白、
+     没有更亮的一档；暗档再亮就压不住 3:1（见文件头 ②）。弹层靠 `--shadow-2` + `--line`
+     抬升，不靠提亮 —— memo.ac 本身也只有 bg-content / bg-element 两档。
+     保留 `--surface-2` 这个名字是为了让 7 处弹层调用点仍有语义：
+     将来若要给弹层单独上色，只改这一行，不用回去找调用点。 */
+  --surface-0: #edf0f5; /* 页面底板 / 卡片内的内嵌字段（输入框、pre、标签片） */
+  --surface-1: #ffffff; /* 卡片 / 侧栏 / 顶栏 */
+  --surface-2: #ffffff; /* 抬升：弹层 / 抽屉 / toast */
 
-  /* ── 墨色 ── */
-  --ink-primary: #0b0b0b;
-  --ink-secondary: #52514e;
-  /* 原 #898781 对页底只有 3.41:1。它承载的不是装饰而是**说明正文**
-     （"需显存 ~512 MB"、引擎缺失原因、时间戳…），按文字线 4.5:1 补到 4.90:1。 */
-  --ink-muted: #6f6d68;
+  /* ── 交互填充（T-124 新增）──
+     半透明，压在哪一层上都成立（旧的 hover=surface-2 在明档只有 1.02:1）。
+     实测（合成后 vs 底）：hover 1.13:1 · active 1.20:1。
+     ⚠️ 上限不是审美问题：填充越重，压在上面的弱化文字对比度越低 ——
+     active 到 10% 时 `--ink-muted` 在页底上跌到 4.17:1（不达标）。 */
+  --fill-hover: rgb(15 23 42 / 6%);
+  --fill-active: rgb(15 23 42 / 9%);
 
-  /* ── 线 ── */
-  /* 原 #e1e0d9 对卡片底只有 1.29:1，而卡片底 (#fcfcfb) 与页底 (#f9f9f7) 之间
-     只差 1.03:1 —— 也就是说**明档的卡片边界几乎只由这条线承担，而它太淡了**。
-     补到 1.42:1（GitHub 的 #d0d7de 是 1.45:1，同一量级）。 */
-  --line: #d7d6cb;
-  --border: rgb(11 11 11 / 10%);
+  /* ── 墨色（T-124：暖灰 → 冷灰，与表层同一族）── */
+  --ink-primary: #161a23;
+  --ink-secondary: #4a5263;
+  /* 它承载的不是装饰而是**说明正文**（"需显存 ~512 MB"、引擎缺失原因、时间戳…），
+     按文字线 4.5:1 核。判据取的是**最不利那一格**：不是"压在页底上"（5.49:1），
+     而是"压在页底的按下态上"（4.57:1）—— 带 hover 的行里正好有一堆弱化文字。
+     这条是 T-124 新加的断言逼出来的，原值 #5b6675 在按下态只有 4.25:1。 */
+  --ink-muted: #576170;
 
-  /* ── 品牌 ──
-     `--accent` 是**块面色**（主按钮底），判据是「白字压在上面要 ≥ 4.5:1」：
-     原 #2a78d6 只有 4.42:1 —— 主按钮的文案是全站点击最多的文字，先修它。
-     `--accent-ink` 是**文字色**（链接、选中项、进行中状态），判据是对表层 ≥ 4.5:1。
-     两者不能是同一个值：暗档要求它们往相反方向走（块面变深、文字变浅）。 */
-  --accent: #2570cd;
+  /* ── 线 ──
+     旧值 #d7d6cb 是暖灰；新值同为 1.35:1 vs 卡片（GitHub 的 #d0d7de 是 1.45:1，同量级），
+     但色相跟着表层走冷，否则线会在冷底上显出脏黄。 */
+  --line: #d8dee8;
+  --border: rgb(15 23 42 / 12%);
+
+  /* ── 品牌：memo.ac 靛紫 ──
+     `--accent` 是**块面色**（主按钮底），判据「白字压在上面 ≥ 4.5:1」→ 实测 5.64:1。
+     `--accent-ink` 是**文字色**（链接、选中项），判据「对最不利表层 ≥ 4.5:1」，
+     并且要压得住 `--accent-tint`（选中项的底）→ 比块面色深一格。 */
+  --accent: #575bc7; /* = memo.ac --color-brand-color，一字不差 */
   --accent-fg: #ffffff;
-  --accent-ink: #2267bd;
-  --accent-track: #cde2fb; /* 进度条轨道 = 同色系更浅一档 */
+  --accent-ink: #5457c4; /* 5.20:1 vs 页底 · 4.72:1 vs 自身淡底 */
+  --accent-tint: #e2e4fa; /* 品牌淡底：选中项 / 搜索命中 / 拖放目标 / 存储条底 */
   --ring: var(--accent-ink);
 
   /* ── 状态色锚点：四个都**不随主题变**（D-05 §7.2 原值，未改）── */
@@ -77,35 +125,38 @@
   --status-warning: #fab219;
   --status-serious: #ec835a;
   --status-critical: #d03b3b;
-  /* info = 「正在发生」的语义位。此前它一直借用 `--accent`，
-     导致"品牌主色"和"进行中状态色"是同一个变量，改一个就动另一个。 */
+  /* info = 「正在发生」的语义位。T-114 时它 = `--accent`；T-124 品牌换成靛紫后
+     两者**必须分家**：蓝仍然是"进行中"，靛紫是"品牌与可点"。 */
   --status-info: #2570cd;
 
   /* ── 状态色的四层展开（明档）──
-     实测值见文件头与 color-contrast.test.ts；每一行都跑过脚本，不是目测。 */
-  --status-good-ink: #097a09; /* 5.24:1 vs 页底 · 4.80:1 vs 自身淡底 */
-  --status-good-tint: #daf0da;
-  --status-good-line: #0ca30c; /* 3.18:1 */
-  --status-good-solid: #118011; /* 白字 5.10:1；块面 4.84:1(明) / 3.42:1(暗) */
+     T-124 把页底从 #f9f9f7 压到 #edf0f5，下面每一行都按新页底重算过；
+     变动都在个位数色阶内（如 #097a09 → #097809），因为原值本来就贴着及格线。 */
+  --status-good-ink: #097809; /* 4.97:1 vs 页底 · 4.60:1 vs 自身淡底 */
+  --status-good-tint: #d8edd8; /* 1.08:1 vs 页底 —— 芯片压在页底上也看得出是块底 */
+  --status-good-line: #0b9e0b; /* 3.11:1 */
+  --status-good-solid: #128512; /* 白字 4.78:1；块面 4.19(明) / 3.11(暗抬升) */
 
-  --status-warning-ink: #916403; /* 4.95:1 · 4.80:1 —— 琥珀要在白底可读只能走到棕金 */
-  --status-warning-tint: #fcefd2;
-  --status-warning-line: #bb8004; /* 3.21:1 */
+  --status-warning-ink: #895e03; /* 5.01:1 · 4.63:1 —— 琥珀要在白底可读只能走到棕金 */
+  --status-warning-tint: #f3e6ca; /* 旧值 #fcefd2 对新页底 **1.00:1**（纯粹看不见） */
+  --status-warning-line: #b67d04; /* 3.10:1 */
 
-  --status-serious-ink: #b94315; /* 5.14:1 · 4.83:1 */
-  --status-serious-tint: #faebe4;
-  --status-serious-line: #e76330; /* 3.20:1 */
+  --status-serious-ink: #b44114; /* 4.96:1 · 4.61:1 */
+  --status-serious-tint: #f3e5de;
+  --status-serious-line: #e1602f; /* 3.11:1 */
 
-  --status-critical-ink: #c12e2e; /* 5.39:1 · 4.82:1 */
+  --status-critical-ink: #bf2d2d; /* 5.07:1 · 4.62:1 */
   --status-critical-tint: #f6e1e0;
-  --status-critical-line: #d03b3b; /* 4.56:1 */
-  --status-critical-solid: #d03b3b; /* 白字 4.80:1；块面 4.56:1(明) / 3.62:1(暗) */
+  --status-critical-line: #d03b3b; /* 4.21:1 */
+  --status-critical-solid: #d03b3b; /* 白字 4.80:1；块面 4.21(明) / 3.10(暗抬升) */
 
-  --status-info-ink: var(--accent-ink); /* 5.32:1 · 4.80:1 —— 与链接同色，只有一种"可点的蓝" */
+  --status-info-ink: #2266bb; /* 4.99:1 · 4.60:1 */
   --status-info-tint: #dee8f5;
-  --status-info-line: #2570cd; /* 4.66:1 */
+  --status-info-line: #2570cd; /* 4.30:1 */
 
-  /* ── 分类分段色：固定顺序，绝不循环、绝不新造（D-05 §7.3）── */
+  /* ── 分类分段色：固定顺序，绝不循环、绝不新造（D-05 §7.3）──
+     T-124 未改这四个值；表层变了之后重跑过对比度：明档仍是 D-05 §7.5 记录的
+     那条 WARN（data-3 2.82 / data-4 2.17 vs 白卡），暗档四色对新表层最低 3.83:1。 */
   --data-1: #2a78d6; /* 模型 */
   --data-2: #eb6834; /* 加速后端 */
   --data-3: #1baf7a; /* 媒体文件 */
@@ -122,58 +173,68 @@
   --dur-slow: 240ms;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
 
-  --shadow-1: 0 1px 2px rgb(11 11 11 / 6%);
-  --shadow-2: 0 8px 24px rgb(11 11 11 / 12%);
+  /* 明档的抬升现在**只能**靠阴影（卡片已是纯白），所以阴影比原来稍微实一点，
+     并且带一点表层的蓝，避免纯黑阴影在冷底上发灰。 */
+  --shadow-1: 0 1px 2px rgb(15 23 42 / 8%);
+  --shadow-2: 0 8px 24px rgb(15 23 42 / 14%);
 }
 
 /* 暗色：两个作用域都要声明。
    `:not([data-theme="light"])` 让手动切到亮色能压过系统暗色；
-   `:where()` 降低特异性，使下面的 [data-theme="dark"] 块能压过本块。 */
+   `:where()` 降低特异性，使下面的 [data-theme="dark"] 块能压过本块。
+   ⚠️ 两块必须逐字相同 —— tokens.contrast.test.ts 有一条断言专门盯这件事。 */
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme='light'])) {
     color-scheme: dark;
 
-    --surface-0: #0d0d0d;
-    --surface-1: #1a1a19;
-    --surface-2: #242422;
+    /* 与明档同一条规则：两档表层 + 阴影抬升。
+       `--surface-1` 是能取到的最亮的一档 —— 再亮，主按钮块面（靛紫）与
+       critical 实心块就压不住 3:1 了（实测：面到 #262a36 时三处同时跌到 2.98）。 */
+    --surface-0: #14161d;
+    --surface-1: #242732;
+    --surface-2: #242732;
 
-    --ink-primary: #ffffff;
-    --ink-secondary: #c3c2b7;
-    --ink-muted: #a3a199; /* 原 #898781 对抬升面只有 4.33:1 */
+    --fill-hover: rgb(255 255 255 / 7%);
+    --fill-active: rgb(255 255 255 / 10%); /* 12% 时 --ink-muted 跌到 3.91:1 */
 
-    --line: #3a3a37; /* 原 #2c2c2a 对卡片底只有 1.24:1 */
-    --border: rgb(255 255 255 / 10%);
+    --ink-primary: #f2f4f9;
+    --ink-secondary: #c3c9d6;
+    --ink-muted: #9da9be; /* 6.27:1 vs 面 · 4.57:1 vs 面的按下态 */
 
-    /* 块面色明暗共用一档：暗档原来的 #3987e5 上压白字只有 3.64:1 —— 暗档反而更糟。
-       #2570cd 对暗档表层 3.17:1（块面 ≥3:1 达标），白字 4.91:1。 */
-    --accent: #2570cd;
+    --line: #383c4a; /* = memo.ac 暗档 --color-line #373948 同量级 */
+    --border: rgb(255 255 255 / 12%);
+
+    /* 暗档的块面色必须比明档亮一格：#575bc7 压在 #242732 上只有 2.56:1（<3:1，
+       按钮边界会糊在弹层里），而再亮一点白字又不够 4.5 —— 可行窗口很窄，
+       #6268d5 是同色相（OKLCh H=277.4，与品牌一致）里同时满足两条的取值。 */
+    --accent: #6268d5; /* 白字 4.71:1；块面 3.16:1 vs 面 */
     --accent-fg: #ffffff;
-    --accent-ink: #5a9be9; /* 5.41:1 vs 抬升面 */
-    --accent-track: #184f95;
+    --accent-ink: #a9aef5; /* 7.13:1 vs 面 —— 暗档文字必须反向走浅 */
+    --accent-tint: #2a2e5c;
     --ring: var(--accent-ink);
 
     --status-info: #3987e5;
 
-    --status-good-ink: #0db10d; /* 5.41:1 · 4.70:1 vs 自身淡底 */
+    --status-good-ink: #0db10d; /* 5.18:1 · 4.70:1 vs 自身淡底 */
     --status-good-tint: #173516;
-    --status-good-line: #0ca30c; /* 4.64:1 */
+    --status-good-line: #0ca30c; /* 4.44:1 */
 
-    --status-warning-ink: #fab219; /* 8.48:1 · 6.20:1 */
+    --status-warning-ink: #fab219; /* 8.11:1 · 6.20:1 */
     --status-warning-tint: #473819;
-    --status-warning-line: #fab219; /* 8.48:1 */
+    --status-warning-line: #fab219;
 
-    --status-serious-ink: #ec835a; /* 5.89:1 · 4.74:1 */
+    --status-serious-ink: #ec835a; /* 5.64:1 · 4.74:1 */
     --status-serious-tint: #442f26;
-    --status-serious-line: #ec835a; /* 5.89:1 */
+    --status-serious-line: #ec835a;
 
     /* 暗档必须换成浅红：#d03b3b 在暗底只有 3.24:1，当文字不达标 */
-    --status-critical-ink: #dd7373; /* 5.02:1 · 4.69:1 */
-    --status-critical-tint: #3e2120;
-    --status-critical-line: #d03b3b; /* 3.24:1 */
+    --status-critical-ink: #e17575; /* 4.96:1 · 4.60:1 */
+    --status-critical-tint: #442423; /* 旧值 #3e2120 对新抬升面只有 1.02:1 */
+    --status-critical-line: #d03b3b; /* 3.10:1 */
 
-    --status-info-ink: var(--accent-ink); /* 5.41:1 · 4.67:1 */
+    --status-info-ink: #5a9be9; /* 5.17:1 · 4.67:1 */
     --status-info-tint: #203042;
-    --status-info-line: #3987e5; /* 4.27:1 */
+    --status-info-line: #3987e5; /* 4.09:1 */
 
     --data-1: #3987e5;
     --data-2: #d95926;
@@ -188,21 +249,24 @@
 :root[data-theme='dark'] {
   color-scheme: dark;
 
-  --surface-0: #0d0d0d;
-  --surface-1: #1a1a19;
-  --surface-2: #242422;
+  --surface-0: #14161d;
+  --surface-1: #242732;
+  --surface-2: #242732;
 
-  --ink-primary: #ffffff;
-  --ink-secondary: #c3c2b7;
-  --ink-muted: #a3a199;
+  --fill-hover: rgb(255 255 255 / 7%);
+  --fill-active: rgb(255 255 255 / 10%);
 
-  --line: #3a3a37;
-  --border: rgb(255 255 255 / 10%);
+  --ink-primary: #f2f4f9;
+  --ink-secondary: #c3c9d6;
+  --ink-muted: #9da9be;
 
-  --accent: #2570cd;
+  --line: #383c4a;
+  --border: rgb(255 255 255 / 12%);
+
+  --accent: #6268d5;
   --accent-fg: #ffffff;
-  --accent-ink: #5a9be9;
-  --accent-track: #184f95;
+  --accent-ink: #a9aef5;
+  --accent-tint: #2a2e5c;
   --ring: var(--accent-ink);
 
   --status-info: #3987e5;
@@ -219,11 +283,11 @@
   --status-serious-tint: #442f26;
   --status-serious-line: #ec835a;
 
-  --status-critical-ink: #dd7373;
-  --status-critical-tint: #3e2120;
+  --status-critical-ink: #e17575;
+  --status-critical-tint: #442423;
   --status-critical-line: #d03b3b;
 
-  --status-info-ink: var(--accent-ink);
+  --status-info-ink: #5a9be9;
   --status-info-tint: #203042;
   --status-info-line: #3987e5;
 

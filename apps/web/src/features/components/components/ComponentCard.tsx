@@ -68,7 +68,7 @@ export function ComponentCard({ component: c, locale, busy, onUpdate, onRollback
               tone={installed ? 'good' : 'neutral'}
               label={installed ? '已安装' : '未安装'}
             />
-            <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[11px] text-ink-secondary">
+            <span className="rounded bg-surface-0 px-1.5 py-0.5 text-[11px] text-ink-secondary">
               {c.category}
             </span>
           </div>

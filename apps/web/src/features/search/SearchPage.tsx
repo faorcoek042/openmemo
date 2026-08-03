@@ -71,7 +71,7 @@ export default function SearchPage() {
             }
             className={cn(
               'rounded-md px-2.5 py-1 text-xs transition-colors',
-              mode === m ? 'bg-accent text-accent-fg' : 'text-ink-secondary hover:bg-surface-2',
+              mode === m ? 'bg-accent text-accent-fg' : 'text-ink-secondary hover:bg-fill-hover',
             )}
           >
             {t(`search.modes.${m}`)}
@@ -103,7 +103,7 @@ export default function SearchPage() {
                       : `/notes/${h.noteUid}`,
                   )
                 }
-                className="w-full rounded-lg border border-line bg-surface-1 p-3 text-left transition-colors hover:bg-surface-2"
+                className="w-full rounded-lg border border-line bg-surface-1 p-3 text-left transition-colors hover:bg-fill-hover"
               >
                 <div className="flex items-baseline gap-2">
                   <span className="truncate text-sm font-medium text-ink">{h.noteTitle}</span>
@@ -116,7 +116,7 @@ export default function SearchPage() {
                 {/* snippet 由服务端 simple_highlight 产出，含 <mark> 标签。
                     这里是**受控的服务端输出**，不是用户输入，故可安全渲染。 */}
                 <p
-                  className="mt-1 text-sm text-ink-secondary [&_mark]:bg-accent-track [&_mark]:text-ink"
+                  className="mt-1 text-sm text-ink-secondary [&_mark]:bg-accent-tint [&_mark]:text-ink"
                   dangerouslySetInnerHTML={{ __html: h.snippet }}
                 />
               </button>

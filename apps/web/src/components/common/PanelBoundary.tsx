@@ -71,7 +71,7 @@ export class PanelBoundary extends Component<Props, State> {
             <button
               type="button"
               onClick={this.#retry}
-              className="mt-2 inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-ink-secondary hover:bg-surface-2 hover:text-ink"
+              className="mt-2 inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-ink-secondary hover:bg-fill-hover hover:text-ink"
             >
               <RotateCcw className="size-3" aria-hidden />
               重试

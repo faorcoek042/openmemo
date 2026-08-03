@@ -217,7 +217,7 @@ export default function CapturePage() {
       <section
         className={[
           'rounded-lg border-2 border-dashed p-8 text-center transition-colors',
-          dragging ? 'border-accent bg-accent-track/30' : 'border-line',
+          dragging ? 'border-accent bg-accent-tint/30' : 'border-line',
         ].join(' ')}
       >
         <Upload className="mx-auto mb-2 size-6 text-ink-muted" aria-hidden />

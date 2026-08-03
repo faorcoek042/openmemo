@@ -72,7 +72,7 @@ export function ExportMenu({ note }: { note: Pick<NoteDetail, 'uid' | 'title'> }
                 type="button"
                 role="menuitem"
                 onClick={() => run(f)}
-                className="w-full px-3 py-1.5 text-left text-xs text-ink-secondary hover:bg-surface-1 hover:text-ink"
+                className="w-full px-3 py-1.5 text-left text-xs text-ink-secondary hover:bg-fill-hover hover:text-ink"
               >
                 {t(`notes.exportFormats.${f}`)}
               </button>

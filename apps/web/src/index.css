@@ -20,12 +20,25 @@
   --color-line: var(--line);
   --color-edge: var(--border);
 
+  /*
+   * ── 交互填充（T-124）──
+   *
+   * `hover:bg-fill-hover` / `active:bg-fill-active`。
+   * 在这之前 hover 一律写 `hover:bg-surface-2`，而明档 surface-1→surface-2
+   * 实测只有 **1.02:1** —— 鼠标移上去屏幕上什么都没发生（18 处调用点）。
+   * 半透明的好处：同一个值压在页底 / 卡片 / 弹层上都成立，
+   * 不需要"这一层用哪个 hover 色"这种每处都要判断一次的规则。
+   */
+  --color-fill-hover: var(--fill-hover);
+  --color-fill-active: var(--fill-active);
+
   /* `bg-accent` = 块面（主按钮底，白字压在上面）；`text-accent-ink` = 文字/链接。
-     两者在暗档必然分叉，所以是两个变量而不是一个。 */
+     两者在暗档必然分叉，所以是两个变量而不是一个。
+     `bg-accent-tint` = 品牌淡底（选中项 / 搜索命中 / 拖放目标 / 存储条底）。 */
   --color-accent: var(--accent);
   --color-accent-fg: var(--accent-fg);
   --color-accent-ink: var(--accent-ink);
-  --color-accent-track: var(--accent-track);
+  --color-accent-tint: var(--accent-tint);
 
   /*
    * ── 状态色（T-114）──
@@ -142,8 +155,12 @@
    * `input[type=text]` 不动 —— 它们已经在各自组件里有完整样式，
    * 再加一层 base 只会制造两套规则互相解释的麻烦。
    */
+  /* T-124：底色改用**内嵌层** `--surface-0`。
+     原来是 `--surface-1`，而 select 绝大多数出现在卡片（也是 surface-1）里 ——
+     两者同色，控件只剩一条边框。同一页里的 `<input>` 全部写的是 `bg-surface-0`，
+     所以这也是把原生控件与自绘控件对齐到同一条规则上。 */
   select {
-    background-color: var(--surface-1);
+    background-color: var(--surface-0);
     color: var(--ink-primary);
     border: 1px solid var(--line);
     border-radius: var(--radius-md);
@@ -171,7 +188,7 @@
 
   /* 下拉展开后的选项列表由系统渲染，只能靠 color-scheme + 这两条影响它 */
   select option {
-    background-color: var(--surface-2);
+    background-color: var(--surface-1);
     color: var(--ink-primary);
   }
 

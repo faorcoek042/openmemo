@@ -186,13 +186,40 @@ function SideLink({
   icon: ReactNode;
   label: string;
 }) {
+  const { pathname, search } = useLocation();
+
+  /*
+   * ★ NavLink 只比 pathname，**不比查询串**。
+   *
+   * 侧栏里「全部笔记」= `/notes`、「星标」= `/notes?starred=1` —— 同一个 pathname，
+   * 于是**两项永远同时高亮**。这个 bug 一直都在，只是此前选中态是
+   * `bg-surface-2`（对侧栏底 1.02:1，肉眼看不见），所以没人发现；
+   * T-124 把选中态改成品牌淡底之后它立刻变得刺眼。
+   * **让不可见的错误变可见，是换配色的附带收益，不是它造成的新问题。**
+   *
+   * 判据：pathname 相同时按查询串**精确**比对；pathname 不同则交回 NavLink
+   * （`/settings/*` 这类子路由仍需要它的前缀匹配语义）。
+   */
+  const [linkPath = '', linkQuery = ''] = to.split('?');
+  const exact = pathname === linkPath ? search.replace(/^\?/, '') === linkQuery : undefined;
+
   return (
     <NavLink
       to={to}
-      className={({ isActive }) =>
+      className={({ isActive: navActive }) =>
         cn(
           'flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors',
-          isActive ? 'bg-surface-2 text-ink' : 'text-ink-secondary hover:bg-surface-2 hover:text-ink',
+          /*
+           * 选中态 = 品牌淡底 + 品牌文字（T-124）。
+           *
+           * 原来是 `bg-surface-2`：侧栏底是 `--surface-1`，两者在明档实测 **1.02:1** ——
+           * "你现在在哪一页"这条信息在亮色主题里等于没有显示。
+           * hover 也是同一个 surface-2，于是**选中态和 hover 态还长得一模一样**。
+           * 现在两者分工：hover = 中性叠加，选中 = 品牌色（语义，不是层级）。
+           */
+          (exact ?? navActive)
+            ? 'bg-accent-tint font-medium text-accent-ink'
+            : 'text-ink-secondary hover:bg-fill-hover hover:text-ink',
         )
       }
     >
