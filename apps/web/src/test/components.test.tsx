@@ -5,13 +5,18 @@
  * （只证明"渲染出来了"，证明不了"点得动"）。中间空档让 18 项交互全被推给真实浏览器。
  * **其中大部分只需要一个 DOM 和一次事件派发，不需要浏览器。**
  *
- * ⚠️ `./host` 必须是**第一个 import** —— 它在模块顶层装 jsdom 全局，
- * 而 react-dom 必须在全局就绪之后才被加载。
+ * ⚠️ `./host` 保持**第一个 import**（它在模块顶层装 jsdom 全局）。
+ * 但**别把这一行当成保证**：T-133 实测，`vite build --ssr` 会把 `react` /
+ * `@testing-library/react` 这类**外部依赖**的 import 提升到包体最顶部，
+ * 排到 `dom-env` 的 `new JSDOM(...)` **前面**去 —— 源码里的 import 顺序管不住它们。
+ * 真正的保证在 `host.tsx` 里（RTL 改成动态 import + `type()` 的一次性自检），
+ * 详见那边的 T-133 一节。
  */
 import { render, click, type, pressKey, text, buttonByText, stubApi } from './host';
 
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { useLocation } from 'react-router';
 
 import { TagEditor } from '../features/notes/TagEditor';
 import { SearchBox } from '../features/search/SearchBox';
@@ -100,19 +105,46 @@ describe('TagEditor（标签增删）', () => {
   });
 
   /**
-   * ⚠️ 跳过原因（不是"以后再说"，是这个宿主真的做不到）：
+   * ★ 这条曾经是 `{ skip: true }` 的空壳（T-133 已恢复）。
    *
-   * 本宿主里**文本输入引发的 setState 不会提交** ——
-   * onChange 触发得到、但组件不重渲染，紧接着的 keydown 处理器仍持有旧闭包。
-   * 手写 dispatchEvent（原生 setter + input 事件）和 @testing-library 的 fireEvent 都试过，
-   * act 包裹 / act 内让出微任务 / 关掉 act 环境走真实定时器 / 多轮宏任务等待也都试过，均无效。
-   * 而**点击引发的 setState 是正常提交的**（上面那条用例就依赖它），
-   * 所以问题不在"更新不会提交"，而只出在文本输入这条路径上。
+   * **旧的跳过理由写错了根因，方向还是反的** —— 原文说「onChange **触发得到**、
+   * 但组件不重渲染，紧接着的 keydown 处理器仍持有旧闭包」，于是后来的人一直在
+   * `act` 包裹 / 让出微任务 / 真实定时器 这些"提交时机"的方向上试，全都无效。
+   * 实测：**onChange 一次都没触发**（调用次数 = 0），问题根本不在提交时机。
    *
-   * → 「输入文字 → 回车/失焦提交」这类流程**必须由真实浏览器 E2E 覆盖**，
-   *   本宿主只保证到"输入框出现且属性正确"。如实标注，不用 skip 掩盖成绿灯。
+   * 真正的根因在**事件到达之前**：`vite build --ssr` 把外部依赖的 import 提升到包体顶部，
+   * react-dom 于是在 `window` 还不存在时完成模块初始化（`canUseDOM=false`），
+   * 文本输入被路由进 IE 的 `onpropertychange` polyfill 分支，`input`/`change` 被整段丢弃。
+   * 详见 `test/host.tsx` 文件头 T-133 一节。宿主修好后这条用例**可以真的跑**。
+   *
+   * ⚠️ 断言必须钉到**请求真的发出去了**，不能只看输入框里有字：
+   * 缺陷状态下 `input.value` 照样是新值（原生 setter 写进去的），
+   * 而 `calls` 是**空数组** —— 那正是这个 bug 的形状。
    */
-  test('输入标签名后回车应 POST（本宿主不支持文本输入提交，交给真浏览器 E2E）', { skip: true }, () => {});
+  test('★ 输入标签名后回车：两条请求都要真的发出去', async () => {
+    const { calls } = stubApi({
+      // 真实链路是两步：先建标签拿 uid，再把整张 uid 表挂到笔记上
+      'POST /tags': { uid: 't9', name: '播客', color: null },
+      'POST /notes/n1/tags': { ok: true },
+    });
+    const r = await render(<TagEditor noteUid="n1" tags={[]} />);
+
+    await click(buttonByText(r.container, '加标签'));
+    const input = r.container.querySelector('input');
+    assert.ok(input, '点「加标签」后应出现输入框');
+
+    await type(input, '播客');
+    await pressKey(input, 'Enter');
+    await r.flush();
+
+    const posts = calls.filter((c) => c.method === 'POST');
+    assert.equal(posts.length, 2, `应发出两条 POST，实际：${JSON.stringify(calls)}`);
+    assert.equal(posts[0]!.path, '/tags');
+    assert.deepEqual(posts[0]!.body, { name: '播客' }, '建标签要带用户输入的名字');
+    assert.equal(posts[1]!.path, '/notes/n1/tags');
+    assert.deepEqual(posts[1]!.body, { tagUids: ['t9'] }, '挂载要用服务端回的 uid');
+    r.unmount();
+  });
 
   test('Esc 关闭输入框且不发任何请求 —— 误触不该产生副作用', async () => {
     const { calls } = stubApi({});
@@ -156,26 +188,71 @@ describe('TagEditor（标签增删）', () => {
 
 /* ─────────────────────────── 搜索输入 ─────────────────────────── */
 
+/**
+ * 读出当前 location 的探针 —— 用来断言"到底跳没跳"。
+ *
+ * ★ T-133：这两条用例原本**一条都没断言过 URL**。
+ * 第一条名叫「回车跳转到 `/search?q=…` 并对查询串做 URL 编码」，实际只断言了
+ * `input.value` 还在（原注释：「MemoryRouter 下用 location 断言不方便」）；
+ * 第二条名叫「空输入回车不跳转」，**整条用例一个 assert 都没有**。
+ *
+ * `[实测]` 把 `SearchBox` 里的 `navigate(...)` **整句删掉**，其余一字不改，
+ * 这两条**照样全绿** —— 它们钉住的是零。
+ * 换成下面这种断言 location 的写法，同一个变异体当场变红：
+ * `AssertionError: + '/' - '/search?q=%E5%8F%8D%E5%90%91…'`。
+ *
+ * 「MemoryRouter 下不方便」这个前提也是错的：往树里塞一个读 `useLocation` 的探针就行。
+ *
+ * → 由此立的规矩：**测试的名字不构成任何证据。**
+ *   名字说"跳转 + URL 编码"，断言里却连 `/search` 三个字都没出现过，
+ *   而没有任何机制会发现这件事 —— 名字和断言的偏离，编译器、类型、覆盖率全都看不见。
+ */
+function LocationProbe() {
+  const loc = useLocation();
+  return <i data-probe="loc">{loc.pathname + loc.search}</i>;
+}
+
+const locOf = (c: HTMLElement): string | undefined =>
+  c.querySelector('[data-probe="loc"]')?.textContent ?? undefined;
+
 describe('SearchBox（搜索входа）', () => {
-  test('回车跳转到 /search?q=… 并对查询串做 URL 编码', async () => {
+  test('★ 回车真的跳到 /search?q=…，且查询串被 URL 编码', async () => {
     stubApi({});
-    const r = await render(<SearchBox />);
+    const r = await render(
+      <div>
+        <SearchBox />
+        <LocationProbe />
+      </div>,
+    );
     const input = r.container.querySelector('input');
+    assert.equal(locOf(r.container), '/', '前提：还没跳转');
+
     await type(input, '反向传播 & 梯度');
     await pressKey(input, 'Enter');
     await r.flush();
-    // MemoryRouter 下用 location 断言不方便，这里断言不抛错且输入被保留
-    assert.equal((input as HTMLInputElement).value, '反向传播 & 梯度');
+
+    assert.equal(
+      locOf(r.container),
+      '/search?q=%E5%8F%8D%E5%90%91%E4%BC%A0%E6%92%AD%20%26%20%E6%A2%AF%E5%BA%A6',
+      '没跳转 —— 而旧断言（只看 input.value）在这种情况下照样是绿的',
+    );
     r.unmount();
   });
 
-  test('空输入回车不跳转（避免落到一个空搜索页）', async () => {
+  test('★ 只有空白的查询不跳转（跳过去只会得到一个空搜索页）', async () => {
     stubApi({});
-    const r = await render(<SearchBox />);
+    const r = await render(
+      <div>
+        <SearchBox />
+        <LocationProbe />
+      </div>,
+    );
     const input = r.container.querySelector('input');
     await type(input, '   ');
     await pressKey(input, 'Enter');
     await r.flush();
+
+    assert.equal(locOf(r.container), '/', '空白查询不该离开当前页 —— 旧用例这里一条断言都没有');
     r.unmount();
   });
 });
@@ -370,8 +447,69 @@ describe('LlmSettingsSection（API Key 输入）', () => {
     r.unmount();
   });
 
-  /** 跳过原因同上：本宿主不支持"文本输入 → 提交"，见 TagEditor 那条的说明。 */
-  test('填入 Key 后保存应 PUT /secrets/llm.<id>.apiKey（交给真浏览器 E2E）', { skip: true }, () => {});
+  /**
+   * ★ 这条也曾经是 `{ skip: true }` 的空壳（T-133 已恢复），根因同 TagEditor 那条。
+   *
+   * 值得单独说一句它为什么重要：这是**用户的 API Key 唯一的写入路径**。
+   * 它被 skip 掉的这段时间里，"填了 Key 点确定"这个动作
+   * **在任何自动化里都没有被走过一次** —— 包括"Key 有没有被 trim 掉"、
+   * "有没有发到对的 secret 键名"这些错了就直接导致用户配不通的细节。
+   */
+  test('★ 填入 Key 后保存：真的 PUT /secrets/llm.<id>.apiKey，且请求体是原样的 key', async () => {
+    const { calls } = stubApi({
+      ...baseRoutes,
+      'PATCH /settings': { ok: true },
+      'PUT /secrets/llm.openai.apiKey': { ok: true },
+    });
+    const r = await render(<LlmSettingsSection />);
+    await r.flush();
+
+    const openaiRow = Array.from(r.container.querySelectorAll('li')).find((li) =>
+      (li.textContent ?? '').includes('OpenAI'),
+    );
+    await click(
+      Array.from(openaiRow!.querySelectorAll('button')).find((b) => b.textContent?.includes('编辑')) ??
+        null,
+    );
+    await r.flush();
+
+    const keyInput = openaiRow!.querySelector('input[type="password"]');
+    assert.ok(keyInput, '前提：云 provider 要有 Key 输入框');
+
+    await type(keyInput, 'sk-test-12345');
+    await click(r.container.querySelector('[data-testid="llm-save"]'));
+    await r.flush();
+
+    const put = calls.find((c) => c.method === 'PUT');
+    assert.ok(put, `应发出 PUT，实际写请求：${JSON.stringify(calls.filter((c) => c.method !== 'GET'))}`);
+    assert.equal(put!.path, '/secrets/llm.openai.apiKey');
+    assert.deepEqual(put!.body, { value: 'sk-test-12345' }, 'Key 要原样写进去');
+    r.unmount();
+  });
+
+  test('★ 不填 Key 直接保存：不许发 PUT，也不许发 DELETE（别把已有的 Key 删了）', async () => {
+    const { calls } = stubApi({ ...baseRoutes, 'PATCH /settings': { ok: true } });
+    const r = await render(<LlmSettingsSection />);
+    await r.flush();
+
+    const openaiRow = Array.from(r.container.querySelectorAll('li')).find((li) =>
+      (li.textContent ?? '').includes('OpenAI'),
+    );
+    await click(
+      Array.from(openaiRow!.querySelectorAll('button')).find((b) => b.textContent?.includes('编辑')) ??
+        null,
+    );
+    await r.flush();
+    await click(r.container.querySelector('[data-testid="llm-save"]'));
+    await r.flush();
+
+    const writes = calls.filter((c) => c.method !== 'GET');
+    assert.ok(
+      !writes.some((c) => c.method === 'PUT' || c.method === 'DELETE'),
+      `留空 = 保持原样，实际写请求：${JSON.stringify(writes)}`,
+    );
+    r.unmount();
+  });
 
   test('未设置 Key 的云 provider 显示「未设置 Key」提示', async () => {
     stubApi(baseRoutes);

@@ -30,11 +30,8 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { useState } from 'react';
-import { useLocation } from 'react-router';
 
 import { blur, click, pressKey, render, stubApi, type } from './host';
-import { SearchBox } from '../features/search/SearchBox';
-import { LlmSettingsSection } from '../components/common/llm/LlmSettingsSection';
 
 /** 受控文本输入框：state 的唯一出口是 `<b data-probe="state">`，不是 input 自己。 */
 function ControlledInput({ onEnter }: { onEnter?: (v: string) => void } = {}) {
@@ -232,157 +229,14 @@ describe('宿主自证：其它交互仍然成立（防止修 type 时误伤）'
 });
 
 /**
- * 存量回收（T-133 §存量排查）。
+ * ★ 存量回收的去向（T-133，续办）：
  *
- * 这两条是 `components.test.tsx` 里因为本缺陷被写成 `{ skip: true }` 的用例
- * （原注释：「本宿主不支持文本输入提交，交给真浏览器 E2E」）。
- * 缺陷修好后它们**能跑了**，所以在这里重建等价版本，证明"跳过的理由已经不成立"。
+ * 这里原本还有两组用例 ——「因宿主缺陷被 skip 的用例现在能跑了」（TagEditor 回车 POST、
+ * 填 Key → PUT secrets）与「SearchBox 回车跳转断言 URL」。
+ * 当时 `components.test.tsx` 在别人手上，我只能在自己的文件里重建等价版本作为
+ * "跳过/弱断言的理由已经不成立"的证据。
  *
- * 我没有去改 `components.test.tsx` 里那两行 skip —— 那个文件 `models-page-fix` 正在改，
- * 处置权留给 Manager。这里的用例是**独立**的，不依赖那边怎么改。
+ * 文件释放后**它们已经被搬回 `components.test.tsx` 的对应 describe 里**
+ * （TagEditor 那组、LlmSettingsSection 那组、SearchBox 那组），此处删除以免重复覆盖。
+ * 本文件只留**宿主自证**：产品行为归产品测试，宿主行为归这里，两者不该混在一处。
  */
-describe('存量回收：因宿主缺陷被 skip 的用例现在能跑了', () => {
-  test('★ TagEditor：输入标签名后回车，两条请求都要真的发出去', async () => {
-    const { TagEditor } = await import('../features/notes/TagEditor');
-    const { calls } = stubApi({
-      // 真实链路是两步：先建标签拿 uid，再把整张 uid 表挂到笔记上
-      'POST /tags': { uid: 't9', name: '播客', color: null },
-      'POST /notes/n1/tags': { ok: true },
-    });
-    const r = await render(<TagEditor noteUid="n1" tags={[]} />);
-
-    const addBtn = Array.from(r.container.querySelectorAll('button')).find((b) =>
-      (b.textContent ?? '').includes('加标签'),
-    );
-    await click(addBtn ?? null);
-
-    const input = r.container.querySelector('input');
-    assert.ok(input, '点「加标签」后应出现输入框');
-
-    await type(input, '播客');
-    await pressKey(input, 'Enter');
-    await r.flush();
-
-    const posts = calls.filter((c) => c.method === 'POST');
-    assert.equal(posts.length, 2, `应发出两条 POST，实际：${JSON.stringify(calls)}`);
-    assert.equal(posts[0]!.path, '/tags');
-    assert.deepEqual(posts[0]!.body, { name: '播客' }, '建标签要带用户输入的名字');
-    assert.equal(posts[1]!.path, '/notes/n1/tags');
-    assert.deepEqual(posts[1]!.body, { tagUids: ['t9'] }, '挂载要用服务端回的 uid');
-    r.unmount();
-  });
-
-  test('★ LlmSettingsSection：填入 Key 后保存，真的 PUT /secrets/llm.<id>.apiKey', async () => {
-    const providers = [
-      {
-        id: 'openai',
-        kind: 'openai-compatible',
-        label: 'OpenAI',
-        baseUrl: 'https://api.openai.com/v1',
-        model: 'gpt-4o-mini',
-        isLocal: false,
-      },
-    ];
-    const { calls } = stubApi({
-      '/settings': { settings: { 'llm.providers': providers, 'llm.activeProviderId': 'openai' } },
-      '/secrets': {
-        secrets: [],
-        disclosure: {
-          storage: 'plaintext-file',
-          path: '/tmp/x/secrets.json',
-          filePermission: '0600',
-          dirPermission: '0700',
-          messageZh: 'x',
-          message: 'x',
-        },
-      },
-      'PATCH /settings': { ok: true },
-      'PUT /secrets/llm.openai.apiKey': { ok: true },
-    });
-    const r = await render(<LlmSettingsSection />);
-    await r.flush();
-
-    const row = Array.from(r.container.querySelectorAll('li')).find((li) =>
-      (li.textContent ?? '').includes('OpenAI'),
-    );
-    await click(
-      Array.from(row!.querySelectorAll('button')).find((b) => b.textContent?.includes('编辑')) ?? null,
-    );
-    await r.flush();
-
-    const keyInput = row!.querySelector('input[type="password"]');
-    assert.ok(keyInput, '前提：云 provider 要有 Key 输入框');
-
-    await type(keyInput, 'sk-test-12345');
-    await click(r.container.querySelector('[data-testid="llm-save"]'));
-    await r.flush();
-
-    const put = calls.find((c) => c.method === 'PUT');
-    assert.ok(put, `应发出 PUT，实际写请求：${JSON.stringify(calls.filter((c) => c.method !== 'GET'))}`);
-    assert.equal(put!.path, '/secrets/llm.openai.apiKey');
-    assert.deepEqual(put!.body, { value: 'sk-test-12345' }, 'Key 要原样写进去，不能被 trim 掉或改名');
-    r.unmount();
-  });
-});
-
-/**
- * 存量修补（T-133 §存量排查）。
- *
- * `components.test.tsx` 里那条「回车跳转到 /search?q=… 并对查询串做 URL 编码」
- * **从来没有断言过 URL** —— 它只断言了 `input.value` 还在
- * （原注释：「MemoryRouter 下用 location 断言不方便」）。
- * `[实测]` 把 `SearchBox` 的 `navigate(...)` 整句删掉，那条用例**依然是绿的**；
- * 换成下面这种断言 URL 的写法，同一个变异体当场变红（`'/' !== '/search?q=…'`）。
- * 这是「假绿灯家族 #5：只断言前置条件的测试」的又一例。
- *
- * 用 `MemoryRouter` 断言 location 其实很方便：往树里塞一个读 `useLocation` 的探针即可。
- * 我没有去改那条旧用例（那个文件 `models-page-fix` 正在改），在这里补一条真的会红的。
- */
-function LocationProbe() {
-  const loc = useLocation();
-  return <i data-probe="loc">{loc.pathname + loc.search}</i>;
-}
-
-describe('存量修补：SearchBox 回车跳转 —— 断言 URL，不是断言输入框还在', () => {
-  test('★ 回车真的跳到 /search?q=…，且查询串被 URL 编码', async () => {
-    stubApi({});
-    const r = await render(
-      <div>
-        <SearchBox />
-        <LocationProbe />
-      </div>,
-    );
-    const input = r.container.querySelector('input');
-    await type(input, '反向传播 & 梯度');
-    await pressKey(input, 'Enter');
-    await r.flush();
-
-    assert.equal(
-      r.container.querySelector('[data-probe="loc"]')?.textContent,
-      '/search?q=%E5%8F%8D%E5%90%91%E4%BC%A0%E6%92%AD%20%26%20%E6%A2%AF%E5%BA%A6',
-      '没跳转 —— 而旧断言（只看 input.value）在这种情况下照样是绿的',
-    );
-    r.unmount();
-  });
-
-  test('★ 只有空白的查询不跳转（跳过去只会得到一个空搜索页）', async () => {
-    stubApi({});
-    const r = await render(
-      <div>
-        <SearchBox />
-        <LocationProbe />
-      </div>,
-    );
-    const input = r.container.querySelector('input');
-    await type(input, '   ');
-    await pressKey(input, 'Enter');
-    await r.flush();
-
-    assert.equal(
-      r.container.querySelector('[data-probe="loc"]')?.textContent,
-      '/',
-      '空白查询不该离开当前页 —— 旧用例这里一条断言都没有，只要不抛错就算过',
-    );
-    r.unmount();
-  });
-});

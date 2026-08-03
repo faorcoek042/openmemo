@@ -397,3 +397,183 @@ pnpm --filter web test:unit                         27 tests / 27 pass / 0 fail
 - 全程**没有用 `pkill`**（`storage-fix` 上轮的教训）。没起任何服务、没占任何端口，
   `:10000`（pid 2992138）事后确认仍在。**没碰 `/root/data-memo`**。
 - **临时文件全部删干净**，`git status --short` 里属于我的只有 §1 那 5 个。
+
+---
+
+## [2026-08-03 22:10] T-133 续办 DONE（两个决策点执行 + 收进 HANDOFF 的判据）
+
+### TL;DR（≤25 行）
+
+1. **两个决策都执行了。** `components.test.tsx` 已释放，我直接改的：
+   2 行 `{skip:true}` 空壳 → **真用例**；2 条 SearchBox 弱断言 → **断言 URL 的版本**。
+2. **那段诊断错误的注释一并改掉了**（你点名的）。原文说「onChange **触发得到**、
+   但组件不重渲染」——方向反了，后来的人因此一直在"提交时机"上试。
+   新注释写的是实测事实（**onChange 调用次数 = 0**）+ 真正的根因 + 指向 `host.tsx` 的说明。
+3. **顺带把 `components.test.tsx` 文件头那句也改了**：它写着「`./host` 必须是第一个 import」
+   —— 这正是 T-133 证伪的那句话。留着它，下一个人还会以为顺序有保证。
+4. **`host.test.tsx` 里的重复覆盖已删**（我上一轮为了不碰他文件而重建的那 4 条）。
+   本文件现在**只剩宿主自证 10 条**：产品行为归产品测试，宿主行为归这里。
+5. **数字**：`151 tests / 151 pass / 0 fail / **0 skipped**`（上一轮是 150/148/0/**2 skipped**）。
+   宿主自证 10/10。`test:components` 真实 exit code = **0**。
+6. **反向验证做了两组，都贴真实输出（§续-3）**：
+   - **A：换回缺陷宿主** → 新恢复的两条**真的红**：`应发出两条 POST，实际：[]`（零请求）；
+     LLM 那条更说明问题 —— **`PATCH /settings` 发出去了、`PUT` 没有**，
+     也就是**设置写进去了而 API Key 静默没写**。断言只盯 PATCH 的话，它会是绿的。
+   - **B：把 `navigate(...)` 整句删掉** → 新的 SearchBox 断言**真的红**：
+     `+ '/'  - '/search?q=%E5%8F%8D%E5%90%91…'`。旧断言在同一个变异体上是绿的。
+7. **诚实标注**：A 组里 SearchBox 那两条**没有变红**（`SearchBox` 的 input 不受控，
+   直接从 DOM 读值）。它们钉的是**产品行为**不是宿主行为，我不把它们算进 A 组战果。
+8. **你要收进 HANDOFF 的判据写在 §续-4**，我把它归成家族第 18 例，并给了判据与配套动作。
+9. `pnpm build:safe` 收到，以后验证构建一律用它。**这一轮我一次构建都没跑**
+   （只有 `vite build --ssr --outDir .test-out/*` 的测试打包），`apps/web/dist` 未被触碰。
+10. 门禁：`tsc -p apps/web/tsconfig.json` 真实 **exit=0** · `eslint`（我的 4 个文件）**exit=0** ·
+    `test:components` **exit=0**。纪律照旧：无 `pkill`、未碰 `/root/data-memo`、`:10000` 只读。
+
+---
+
+### 续-1. 这一轮改了什么（`git add` 清单）
+
+```
+git add apps/web/src/test/components.test.tsx \
+        apps/web/src/test/host.test.tsx \
+        coordination/inbox/test-host.md
+```
+
+⚠️ `git status` 里另有 `apps/daemon/src/http/rest/storage.ts`、
+`apps/web/src/components/common/ReadinessBanner.tsx`、
+`apps/web/src/features/settings/DataLocationSection.tsx`、
+`packages/pipeline/package.json` 处于修改态 —— **不是我的**，是这一轮新开工的 agent
+（在做 `pickLocalized` 那条线）。我一个字没碰，别把它们加进我的提交。
+
+| 位置 | 原状 | 现状 |
+|---|---|---|
+| `components.test.tsx` TagEditor | `{skip:true}` 空壳 + 一段**诊断错误**的注释 | `★ 输入标签名后回车：两条请求都要真的发出去`（`POST /tags` → `POST /notes/n1/tags`，逐条核对 body） |
+| `components.test.tsx` LlmSettingsSection | `{skip:true}` 空壳 | `★ 填入 Key 后保存：真的 PUT …` + **新增**一条对照 `★ 不填 Key 直接保存：不许发 PUT，也不许发 DELETE` |
+| `components.test.tsx` SearchBox ×2 | 断言 `input.value` / **零断言** | 两条都改成断言 `useLocation()` 探针读到的真实 URL |
+| `components.test.tsx` 文件头 | 「`./host` 必须是第一个 import」 | 改成「保持第一，但**别把这一行当成保证**」+ 指向 `host.tsx` T-133 |
+| `host.test.tsx` | 14 条（含 4 条重复覆盖） | **10 条，只剩宿主自证**；删除处留了一段说明去向的注释 |
+
+**为什么多加了一条"不填 Key"的对照**（超出你列的两条）：恢复的那条只证明"填了会写"。
+而这个表单最容易出错的是**另一半** —— 留空的语义是"保持原样"，`LlmSettingsSection` 里
+是靠 `apiKey === '' ? undefined : apiKey` 表达的。写错一个字符就变成**每次保存都删掉用户的 Key**，
+而"填了能写"那条**照样绿**。两条合起来才算把这个分支钉住。
+
+### 续-2. 那段注释错在哪（你点名的，展开写一次）
+
+```
+原文：本宿主里**文本输入引发的 setState 不会提交** ——
+      onChange 触发得到、但组件不重渲染，紧接着的 keydown 处理器仍持有旧闭包。
+实测：onChange 调用次数 = 0。一次都没进。
+```
+
+差别不是措辞。**它把人指向了"提交时机"** —— 所以后面写着"act 包裹 / act 内让出微任务 /
+关掉 act 环境走真实定时器 / 多轮宏任务等待也都试过"，**四种尝试全在错误的方向上**，
+而且每一种都"合理"。真正的根因在**事件到达之前**（react-dom 初始化时 `canUseDOM=false`），
+从"提交时机"这个方向出发，试到天亮也碰不到它。
+
+**一段写错方向的注释比没有注释更糟**：没有注释的人会自己去查，
+有这段注释的人会接着往下试 —— 它把后来者的搜索空间**裁掉了正确的那一半**。
+
+### 续-3. 反向验证（两组，真实输出）
+
+#### A 组 —— 把宿主换回缺陷版本（`git show a99ef7b^:…/host.tsx`），源码其余部分一字不动
+
+```
+ℹ tests 151   ℹ pass 149   ℹ fail 2   ℹ skipped 0
+
+✖ ★ 输入标签名后回车：两条请求都要真的发出去
+  AssertionError: 应发出两条 POST，实际：[]
+  0 !== 2
+
+✖ ★ 填入 Key 后保存：真的 PUT /secrets/llm.<id>.apiKey，且请求体是原样的 key
+  AssertionError: 应发出 PUT，实际写请求：
+  [{"path":"/settings","method":"PATCH","body":{"llm.providers":[…],
+    "llm.baseUrl.openai":"https://api.openai.com/v1",
+    "llm.defaultProviderId":"openai","llm.defaultModelId":"gpt-4o-mini"}}]
+```
+
+**第二条的 `actual` 值得单独看**：`PATCH /settings` **发出去了**，`PUT /secrets/...` **没有**。
+点击是好的（`click` 不受这个 bug 影响），只有输入那一半是死的 ——
+所以缺陷状态下的真实后果是「**设置保存成功，API Key 静默丢失**」。
+如果当初那条用例写的是"点保存应该发 PATCH"，它会**一直是绿的**，
+而用户那边是"我明明填了 Key，怎么一直报未授权"。
+
+**诚实标注**：A 组里 SearchBox 那两条**没红**（`SearchBox` 的 input **不受控**，
+`onKeyDown` 直接 `(e.target as HTMLInputElement).value` 读 DOM，原生 setter 写进去的值它读得到）。
+它们钉的是产品行为，与宿主无关 —— 所以才需要 B 组。
+
+#### B 组 —— 把 `SearchBox` 里的 `navigate(...)` **整句删掉**（真文件、真变异，跑完已还原）
+
+```
+ℹ tests 151   ℹ pass 150   ℹ fail 1
+
+✖ ★ 回车真的跳到 /search?q=…，且查询串被 URL 编码
+  AssertionError: 没跳转 —— 而旧断言（只看 input.value）在这种情况下照样是绿的
+  + actual - expected
+  + '/'
+  - '/search?q=%E5%8F%8D%E5%90%91%E4%BC%A0%E6%92%AD%20%26%20%E6%A2%AF%E5%BA%A6'
+```
+
+对照：**同一个变异体下，被替换掉的两条旧用例是全绿的**（上一轮 §6-③ 已贴）。
+还原后 `git diff` 对 `SearchBox.tsx` 为空，`navigate(...)` 那行在位。
+
+（"空白查询不跳转"那条在 B 组不会红 —— 删掉 navigate 之后它本来就不跳。
+它防的是**反方向**的回归：哪天有人把 `if (v)` 去掉，空搜索就会跳到 `/search?q=`。
+我不声称它被 B 组验过。）
+
+### 续-4. ★ 请收进 HANDOFF「假绿灯家族」的判据（第 18 例）
+
+> **#18 测试的名字和它实际断言的东西可以完全无关，而且没有任何机制会发现。**
+>
+> `[实测]` `components.test.tsx` 有一条名叫「**回车跳转到 `/search?q=…` 并对查询串做 URL 编码**」
+> 的用例，断言里**从头到尾没有出现过 `/search` 三个字** —— 它只断言了 `input.value` 还在
+> （理由写在注释里：「MemoryRouter 下用 location 断言不方便」，而这个前提**也是错的**：
+> 塞一个读 `useLocation` 的探针就行）。把 `SearchBox` 的 `navigate(...)` **整句删掉**，
+> 它**照样绿**。同一个 describe 下的第二条「空输入回车不跳转」更彻底：**整条用例一个 assert 都没有**，
+> 只要不抛错就算过。
+>
+> 这是继 **#15「旧断言把 bug 写成了期望」** 之后的同族第二例。两者的共同点是
+> **测试文件本身在撒谎，而撒谎的那一部分不参与任何检查**：
+> #15 的谎在断言的**内容**里，#18 的谎在断言与名字的**落差**里。
+>
+> **为什么没有任何机制会发现**：名字是字符串，断言是代码，两者之间**不存在任何约束**。
+> 编译器不看、类型不看、lint 不看、覆盖率更不看 —— 覆盖率只问"这行代码跑没跑过"，
+> 而这条用例**确实跑过了** `SearchBox` 的每一行（包括 `navigate` 那行的所在函数）。
+> 它是覆盖率报告上的一条绿线。
+>
+> ### ★ 由此立的规矩
+> 1. **读测试先读断言，别读名字。** 名字是作者的**意图**，断言才是**证据**。
+>    评审一条用例时，把名字遮住，问"这些断言在什么情况下会失败"。
+> 2. **答不上"它什么时候会红"的用例，等于没写。** 最快的检验是**变异**：
+>    把被测行为**整句删掉**，跑一遍。不红 → 这条用例钉住的是零。
+>    （本轮两次都是这么定性的：删 `navigate(...)`、换回缺陷宿主。）
+> 3. **"不方便断言"要当成技术债记，不能当成降级断言的理由。**
+>    这条的注释诚实写了"不方便"，然后就地把断言降成了 `input.value` ——
+>    **诚实地记下妥协，不等于妥协是对的**。本例里那个"不方便"其实是 5 行代码的事。
+> 4. **零断言的用例必须显式标注**（`skip` 或注释说明它只测"不抛错"）。
+>    一条 `await` 完就 `unmount` 的用例，混在同一个 describe 里看不出来。
+
+### 续-5. 需要 Manager 决策
+
+**无。** 上一轮列的 4 条：①②（两处 skip、SearchBox 两条）**本轮已执行**；
+③（`PurposeBindingsSection` 的 `onBlur → PATCH` 现在可测了）仍**建议**由该模块的人补 ——
+它属于 `llm-picker` 的地盘，且现在有 `blur()` 只触发一次的保证，写起来是直的；
+④（`apps/web/dist`）你已查明并用 `pnpm build:safe` 从机制上关掉了，我这边照办。
+
+### 续-6. 自查（诚实规则）
+
+- **B 组变异改的是真文件**（`SearchBox.tsx`），不是复制品。跑完立刻还原并核对：
+  `git status` 中该文件已不在修改列表，`navigate(...)` 在第 43 行。
+  上一轮我用别名指到副本，是因为当时别人在改 web；**这一轮工作区干净，所以做了更忠实的那种**。
+- **A 组我没有改回源文件**，仍用别名指向 `git show a99ef7b^:` 的那份，理由同上一轮：
+  临时把共享文件改坏，别人这一刻正好跑测试就会读到一个假红。临时配置与副本**跑完即删**。
+- **`tsc` 中途见过一次红**（`DataLocationSection.tsx(281) TS2304: Cannot find name 'pickLocalized'`），
+  是新开工那位在途的状态，**几分钟后再跑就是 exit=0**。我**没有**把它算成自己的问题，
+  也没有去改他的文件 —— 如实记一笔，因为"看见红先问这个红是不是真的、是不是我的"是本项目的规矩。
+- **`host.test.tsx` 从 14 条减到 10 条**，减掉的是**重复**不是覆盖：
+  那 4 条已经原样搬进 `components.test.tsx` 的对应 describe，且本轮 A/B 两组反向验证都覆盖到了。
+  总用例数 150 → **151**（净增 1 条，是我多加的"不填 Key"对照）；**skipped 2 → 0**。
+- **仍未验的**：composition / IME 与 animation/transition 事件是否随 `canUseDOM` 一起恢复正常
+  （读码判断是，但没写测试，不声称）；`__smoke__/render.tsx` 那条独立的 jsdom 道没查。
+- 本轮**没有跑过任何构建**（`pnpm -r build` / `vite build` 不带 `--ssr` 的形态一次都没有）。
+  所有打包都是 `vite build --ssr <单文件> --outDir .test-out/*`。`apps/web/dist` 未被触碰。
