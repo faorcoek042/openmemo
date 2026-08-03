@@ -78,6 +78,7 @@ import enLocale from '../app/i18n/locales/en.json';
 import i18nInstance from '../app/i18n';
 import ModelsPage from '../features/models/ModelsPage';
 import NotesListPage from '../features/notes/NotesListPage';
+import App from '../App';
 import { GenerateMindmapButton } from '../features/mindmap/GenerateMindmapButton';
 import type { PipelineJob } from '@openmemo/shared';
 import RuntimePage from '../features/runtime/RuntimePage';
@@ -4083,6 +4084,81 @@ describe('T-138 ② 笔记进度行在真实响应下必须渲染', () => {
           '要让它真的存在，就得在笔记 DTO 里再答一遍"这条笔记在忙什么"，' +
           '而 /api/jobs 已经在答了 —— 两个来源迟早会互相矛盾（见 lib/jobs/noteJobs.ts 文件头）。',
       );
+    }
+  });
+});
+
+describe('T-138b 侧栏高亮不许在详情页上失灵', () => {
+  /**
+   * ⚠️ 这一条**必须渲染真的 `App`**，不能只测 `activeNavTarget`。
+   *
+   * 纯函数那 9 条（`lib/nav/activeNav.test.ts`）证明的是**规则对**；
+   * 这一条证明的是**规则被接上了**。上一版的缺陷恰恰不是规则写错，
+   * 而是判定散在每个 `SideLink` 里、谁也不管"至多一项"这条性质。
+   * 只测纯函数的话，把 `App.tsx` 改回逐项判断，纯函数那 9 条**照样全绿**。
+   *
+   * 判据用 `aria-current="page"`：它既是无障碍语义（读屏用户靠它知道"你在这一页"），
+   * 也是这里唯一不依赖配色类名的判据 —— 钉 `bg-accent-tint` 的话，
+   * 换一次主题就得改测试，而"高亮"这件事跟具体是哪个色号无关。
+   */
+  const NAV_LABELS = (zhLocale as unknown as { nav: Record<string, string> }).nav;
+
+  async function sidebarCurrent(route: string): Promise<string[]> {
+    stubApi({});
+    const r = await render(<App />, { route });
+    await r.flush();
+    const nav = r.container.querySelector('nav');
+    assert.ok(nav, '侧栏没渲染出来 —— 前提不成立');
+    const on = [...nav!.querySelectorAll('[aria-current="page"]')].map((el) =>
+      (el.textContent ?? '').trim(),
+    );
+    r.unmount();
+    return on;
+  }
+
+  test('★ 笔记详情页只高亮「全部笔记」（此前它和「星标」同时亮）', async () => {
+    const on = await sidebarCurrent('/notes/01KZ1H8YABCDEFGHJKMNPQRST?tab=mindmap');
+    assert.deepEqual(
+      on,
+      [NAV_LABELS['allNotes']],
+      `详情页上的侧栏高亮不对（实际：${JSON.stringify(on)}）。` +
+        '两项一起亮 = 判定交回了 NavLink 的前缀匹配；一项都不亮 = 判定把 ?tab= 当成了导航的一部分',
+    );
+  });
+
+  test('★ 「星标」页只高亮「星标」', async () => {
+    assert.deepEqual(await sidebarCurrent('/notes?starred=1'), [NAV_LABELS['starred']]);
+  });
+
+  test('★ /models?tab=llm 上「模型」不许自己灭掉', async () => {
+    const on = await sidebarCurrent('/models?tab=llm');
+    assert.deepEqual(
+      on,
+      [NAV_LABELS['models']],
+      '页内 Tab 状态把区域的灯弄灭了 —— 用户切个 Tab 就不知道自己在哪一页了',
+    );
+  });
+
+  test('★ /settings 的子路由仍然要高亮「设置」（前缀语义不许被改没）', async () => {
+    assert.deepEqual(await sidebarCurrent('/settings/storage'), [NAV_LABELS['settings']]);
+  });
+
+  test('★ 穷举：真实地址上侧栏高亮数永远 ≤ 1', async () => {
+    for (const route of [
+      '/notes',
+      '/notes?starred=1',
+      '/notes/01KZ1H8YABCDEFGHJKMNPQRST',
+      '/notes/01KZ1H8YABCDEFGHJKMNPQRST/mindmap',
+      '/record',
+      '/runtime',
+      '/models?tab=llm',
+      '/models/asr-whisper',
+      '/tasks',
+      '/settings/general',
+      '/capture',
+    ]) {
+      const on = await sidebarCurrent(route);
+      assert.equal(on.length <= 1, true, `${route} 上有 ${on.length} 项同时高亮：${JSON.stringify(on)}`);
     }
   });
 });

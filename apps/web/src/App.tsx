@@ -1,5 +1,5 @@
 import { Suspense, type ReactNode } from 'react';
-import { NavLink, Outlet, useLocation } from 'react-router';
+import { Link, NavLink, Outlet, useLocation } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { Activity, Cpu, FileAudio, Mic, Package, Plus, Settings, Star } from 'lucide-react';
 
@@ -15,6 +15,7 @@ import { TasksDrawer } from './features/tasks/TasksDrawer';
 import { useUiStore } from './lib/stores/ui.store';
 import { useConnectionStore } from './lib/stores/connection.store';
 import { useProgressStore } from './lib/stores/progress.store';
+import { activeNavTarget } from './lib/nav/activeNav';
 import { cn } from './lib/utils';
 
 /** 应用外壳：顶栏 + 侧栏 + 路由出口（D-05 §1.1）。 */
@@ -40,7 +41,38 @@ export default function App() {
    *
    * 判据用 `startsWith` 而不是全等：引导以后加子步骤（`/onboarding/models`）不会悄悄失效。
    */
-  const chromeless = useLocation().pathname.startsWith('/onboarding');
+  const location = useLocation();
+  const chromeless = location.pathname.startsWith('/onboarding');
+
+  /*
+   * ★ 侧栏条目是**数据**，不是散在 JSX 里的七个标签（T-138b）。
+   *
+   * 高亮判定要看"全部条目"才算得出来（见 `lib/nav/activeNav.ts`：至多一项高亮，
+   * 由"返回哪一个"而不是"逐项判是不是"来保证）。如果条目清单和渲染出来的链接是两份，
+   * 新加一个 SideLink 却忘了登记，那条链接会**永远不高亮，而且什么都不报**。
+   * 从同一份数据渲染，这种漂移在结构上就不成立。
+   */
+  const collectionNav = [
+    { to: '/notes', icon: <FileAudio className="size-4" />, label: t('nav.allNotes') },
+    { to: '/notes?starred=1', icon: <Star className="size-4" />, label: t('nav.starred') },
+    { to: '/record', icon: <Mic className="size-4" />, label: t('nav.record') },
+  ];
+  /*
+   * 运行时与模型是**一级导航**，不埋进设置。
+   * 章程要求 2.1/2.2 把"网页里装 GPU 后端、管模型"列为硬性功能；
+   * 竞品把它们埋在设置里，结果"模型下载卡 0%"成了它最高频的用户问题。
+   */
+  const systemNav = [
+    { to: '/runtime', icon: <Cpu className="size-4" />, label: t('nav.runtime') },
+    { to: '/models', icon: <Package className="size-4" />, label: t('nav.models') },
+    { to: '/tasks', icon: <Activity className="size-4" />, label: t('nav.tasks') },
+    { to: '/settings', icon: <Settings className="size-4" />, label: t('nav.settings') },
+  ];
+  const activeNav = activeNavTarget(
+    [...collectionNav, ...systemNav].map((i) => i.to),
+    location,
+  );
+
   if (chromeless) {
     return (
       <div className="h-full overflow-auto bg-surface-0">
@@ -49,7 +81,9 @@ export default function App() {
         <div className="flex min-h-full items-center justify-center px-6 py-10">
           <div className="w-full max-w-3xl">
             <PanelBoundary name={t('app.name')}>
-              <Suspense fallback={<div className="p-6 text-sm text-ink-muted">{t('common.loading')}</div>}>
+              <Suspense
+                fallback={<div className="p-6 text-sm text-ink-muted">{t('common.loading')}</div>}
+              >
                 <Outlet />
               </Suspense>
             </PanelBoundary>
@@ -100,9 +134,9 @@ export default function App() {
             )}
           </NavLink>
 
-          <SideLink to="/notes" icon={<FileAudio className="size-4" />} label={t('nav.allNotes')} />
-          <SideLink to="/notes?starred=1" icon={<Star className="size-4" />} label={t('nav.starred')} />
-          <SideLink to="/record" icon={<Mic className="size-4" />} label={t('nav.record')} />
+          {collectionNav.map((item) => (
+            <SideLink key={item.to} {...item} active={activeNav === item.to} />
+          ))}
 
           <hr className="my-2 border-line" />
 
@@ -119,10 +153,9 @@ export default function App() {
             竞品把它们埋在设置里，结果"模型下载卡 0%"成了它最高频的用户问题。
             这两页归 T-022（features/runtime、features/models，见各自 README 契约）。
           */}
-          <SideLink to="/runtime" icon={<Cpu className="size-4" />} label={t('nav.runtime')} />
-          <SideLink to="/models" icon={<Package className="size-4" />} label={t('nav.models')} />
-          <SideLink to="/tasks" icon={<Activity className="size-4" />} label={t('nav.tasks')} />
-          <SideLink to="/settings" icon={<Settings className="size-4" />} label={t('nav.settings')} />
+          {systemNav.map((item) => (
+            <SideLink key={item.to} {...item} active={activeNav === item.to} />
+          ))}
         </nav>
 
         {/* ── 主区 ── */}
@@ -143,7 +176,9 @@ export default function App() {
           <main className="min-h-0 flex-1 overflow-auto">
             {/* 路由出口单独兜住：某一页崩了，侧栏与顶栏仍然可用，用户还能切走 */}
             <PanelBoundary name={t('app.name')}>
-              <Suspense fallback={<div className="p-6 text-sm text-ink-muted">{t('common.loading')}</div>}>
+              <Suspense
+                fallback={<div className="p-6 text-sm text-ink-muted">{t('common.loading')}</div>}
+              >
                 <Outlet />
               </Suspense>
             </PanelBoundary>
@@ -177,54 +212,55 @@ export default function App() {
  * 教训：**占位状态必须与"是否已实现"绑定，不能靠人记得回来删。**
  * 该分支已整个移除 —— 没有它，这类"忘了删"就不可能再发生。
  */
+/**
+ * 侧栏的一项。**它自己不判断要不要高亮** —— `active` 由上面算好传进来。
+ *
+ * ⚠️ 这是本轮的结构性改动，不只是搬家（T-138b）：
+ * 判定原先写在这里，每一项各判各的，于是"至多一项高亮"这条性质**没有任何地方在管它**。
+ * 实测两个方向都破过：`/notes/<uid>` 上两项同时亮（详情页是 `/notes` 的子路径，
+ * 判据交回了 NavLink 的前缀匹配）；`/models?tab=llm` 上**一项都不亮**（pathname 相同、
+ * 查询串不同，被判成不匹配）。规则挪到 `lib/nav/activeNav.ts` 之后，它返回**一个** target，
+ * 这条性质由类型保证。
+ *
+ * ⚠️ **用 `Link` 而不是 `NavLink`，这一步是必须的，不是风格选择。**
+ * `NavLink` 会**自己**按 `isActive` 写 `aria-current="page"`，外面传的 `aria-current`
+ * 只能改它的取值、关不掉它。也就是说：同一个缺陷在**无障碍层也存在** ——
+ * `[实测]` 在 `/notes` 与 `/notes/<uid>` 上，「全部笔记」和「星标」**两项都被标成了当前页**，
+ * 读屏用户听到的是"你同时在两个地方"。视觉上的双高亮至少还能被看见并报上来，
+ * 这一条谁都看不见。既然已经不用它的 `isActive` 了，换成 `Link` 一并解决。
+ */
 function SideLink({
   to,
   icon,
   label,
+  active,
 }: {
   to: string;
   icon: ReactNode;
   label: string;
+  active: boolean;
 }) {
-  const { pathname, search } = useLocation();
-
-  /*
-   * ★ NavLink 只比 pathname，**不比查询串**。
-   *
-   * 侧栏里「全部笔记」= `/notes`、「星标」= `/notes?starred=1` —— 同一个 pathname，
-   * 于是**两项永远同时高亮**。这个 bug 一直都在，只是此前选中态是
-   * `bg-surface-2`（对侧栏底 1.02:1，肉眼看不见），所以没人发现；
-   * T-124 把选中态改成品牌淡底之后它立刻变得刺眼。
-   * **让不可见的错误变可见，是换配色的附带收益，不是它造成的新问题。**
-   *
-   * 判据：pathname 相同时按查询串**精确**比对；pathname 不同则交回 NavLink
-   * （`/settings/*` 这类子路由仍需要它的前缀匹配语义）。
-   */
-  const [linkPath = '', linkQuery = ''] = to.split('?');
-  const exact = pathname === linkPath ? search.replace(/^\?/, '') === linkQuery : undefined;
-
   return (
-    <NavLink
+    <Link
       to={to}
-      className={({ isActive: navActive }) =>
-        cn(
-          'flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors',
-          /*
-           * 选中态 = 品牌淡底 + 品牌文字（T-124）。
-           *
-           * 原来是 `bg-surface-2`：侧栏底是 `--surface-1`，两者在明档实测 **1.02:1** ——
-           * "你现在在哪一页"这条信息在亮色主题里等于没有显示。
-           * hover 也是同一个 surface-2，于是**选中态和 hover 态还长得一模一样**。
-           * 现在两者分工：hover = 中性叠加，选中 = 品牌色（语义，不是层级）。
-           */
-          (exact ?? navActive)
-            ? 'bg-accent-tint font-medium text-accent-ink'
-            : 'text-ink-secondary hover:bg-fill-hover hover:text-ink',
-        )
-      }
+      aria-current={active ? 'page' : undefined}
+      className={cn(
+        'flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors',
+        /*
+         * 选中态 = 品牌淡底 + 品牌文字（T-124）。
+         *
+         * 原来是 `bg-surface-2`：侧栏底是 `--surface-1`，两者在明档实测 **1.02:1** ——
+         * "你现在在哪一页"这条信息在亮色主题里等于没有显示。
+         * hover 也是同一个 surface-2，于是**选中态和 hover 态还长得一模一样**。
+         * 现在两者分工：hover = 中性叠加，选中 = 品牌色（语义，不是层级）。
+         */
+        active
+          ? 'bg-accent-tint font-medium text-accent-ink'
+          : 'text-ink-secondary hover:bg-fill-hover hover:text-ink',
+      )}
     >
       {icon}
       {label}
-    </NavLink>
+    </Link>
   );
 }

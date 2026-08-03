@@ -353,3 +353,152 @@ git add apps/daemon/src/http/rest/notes.ts \
 - **F4 的"重新生成"没做**，理由见 §7.2 —— 是明知而未做，不是漏了。
 - `en` 那 8 条新文案是我写的，**未经母语校对**。
 - 我改写了 `T-129` 那三条既有用例的桩。**不是因为旧断言写错了方向**（它们当时是对的），而是因为筛选的实现位置变了、桩必须跟着分成两条 —— 原委写在用例上方。
+
+---
+
+## [2026-08-03 23:40] T-138b DONE —— 侧栏高亮：判据只覆盖了列表页
+
+### TL;DR（≤25 行）
+
+1. **报上来的是详情页两项同时亮，查下去发现同一个成因有两个方向相反的症状**，逐地址枚举实测：
+
+   | 地址 | 修前高亮项数 | 症状 |
+   |---|---|---|
+   | `/notes/<uid>` · `/notes/<uid>?tab=mindmap` | **2** | 详情页是 `/notes` 的**子路径** → `pathname === linkPath` 不成立 → 交回 `NavLink` 前缀匹配 → 「全部笔记」与「星标」一起亮（你截图里那个） |
+   | **`/models?tab=llm`** | **0** | pathname 相同、查询串不同 → 精确比对判否 → **「模型」自己灭了**，用户切个 Tab 就不知道自己在哪一页 |
+
+   **这条是你没看到的另一半**，我没有只按报上来的那条修。
+2. **成因一句话**：那个判据问的是「**地址一样吗**」，而该问的是「**这个地址归谁管**」。
+3. **"什么时候前缀、什么时候精确"的答案不在"有没有查询串"，在"这个查询串是不是某个导航目标本身的一部分"**：
+   - **带查询串的条目 = 集合的「筛选视图」**（`/notes?starred=1`）→ **只在地址完全相同时亮**。筛选**不向下延伸到成员**：那条笔记加没加星不一定，用户也可能从「全部笔记」点进去。
+   - **不带查询串的条目 = 「区域」**（`/settings`、`/models`、`/notes`）→ **前缀匹配（按段边界）**。`/settings/*` 要的正是这个，没被改掉。
+   - **不属于任何导航目标的查询串 = 页内视图状态**（`?tab=llm`、`?tab=mindmap`）→ **一律不参与判定**。这就是 `/models?tab=llm` 那盏灯的修法。
+4. **结构上的改动，不只是换判据**：规则挪进纯函数 `lib/nav/activeNav.ts`，它返回**哪一个**该亮，而不是逐项判**是不是**。因为真正要守的性质是「**至多一项高亮**」—— 逐项独立判断时**没有任何地方在管这条性质**，全对只是巧合，而上面那张表说明巧合会破。返回单个 target 之后它由类型保证。
+5. **侧栏条目改成数据驱动**：`collectionNav` / `systemNav` 两个数组既用来渲染、也用来算高亮。**清单与链接不可能再漂移** —— 否则新加一个 `SideLink` 忘了登记，那条链接会永远不高亮且什么都不报。
+6. **顺带查出并修掉一个看不见的同源缺陷**：`NavLink` 会**自己**按 `isActive` 写 `aria-current="page"`，外面传的 `aria-current` 只能改取值、**关不掉**。也就是说这个 bug **在无障碍层也存在**：`[实测]` `/notes` 与 `/notes/<uid>` 上两项都被标成"当前页"，读屏用户听到"你同时在两个地方"。视觉上的双高亮至少能被看见并报上来，**这一条谁都看不见**。既然已经不用它的 `isActive`，`SideLink` 换成 `Link` 一并解决。
+7. **反向验证 3 组，全部贴真实红灯**（§B）。RV-9 把两个症状**逐字复现**了出来。
+8. **真浏览器复验 11 个地址全绿**（§C）：视觉高亮与 `aria-current` 逐个地址完全一致，且恒为 1 项。
+9. **门禁**：`tsc -b` 0 · `eslint .` 全仓 0 · **614 passed / 0 failed**（db 47 / pipeline 132 / daemon 196 / web 单测 48 + 宿主 10 + 组件 181）。本节新增 14 条（单测 9 + 组件 5）。
+10. **一条不是我的、但已被实测量化的同源缺陷**：`FolderTree` 也用 `NavLink` + 裸 `isActive`（`to={/notes?folder=<uid>}`），于是**每个文件夹在任意 `/notes*` 地址上都被标成"当前页"** —— 包括 `/notes?starred=1` 这种一个文件夹都没选中的地方。归 `folders`/`architect`，**我只报不动**，详见 §D。
+
+---
+
+## §A 改法
+
+**新增 `apps/web/src/lib/nav/activeNav.ts`**（纯函数，进 CJS 单测通道）：
+
+```
+activeNavTarget(targets, {pathname, search}) -> to | undefined
+  ① 地址完全命中（pathname 相同 且 查询串归一化后相同）→ 就是它     ← 筛选视图只认这一种
+  ② 否则：管辖范围覆盖当前 pathname 的、路径最长的那个「不带查询串」的条目
+  ③ 都没有 → undefined（例如 /capture —— 它是侧栏顶部那个按钮，不是 SideLink）
+```
+
+两处细节写了理由：
+- **段边界前缀**（`/notes` 管 `/notes/x`，不管 `/notesomething`）—— 裸 `startsWith` 会算进去。
+- **取最长而不是取第一个** —— 将来若同时有 `/settings` 与 `/settings/advanced`，写"第一个匹配"就变成一条**只有改了数组顺序才会坏、且坏了不报错**的规则。有用例把数组反过来跑一遍。
+- 查询串**归一化后**比较（`?a=1&b=2` 与 `?b=2&a=1` 是同一个地址）。
+
+**`App.tsx`**：条目变数据 → 一次算出 `activeNav` → `SideLink` 只收 `active: boolean`，自己不再判断；`NavLink` → `Link`（理由见 TL;DR 6）。
+
+---
+
+## §B 反向验证（3 组，真实输出）
+
+**RV-9 退回「逐项各判各的」（把 `App.tsx:203-204` 的原判据原样搬回来）**
+```
+✖ ★ 笔记详情页只高亮「全部笔记」（此前它和「星标」同时亮）
+  AssertionError: 详情页上的侧栏高亮不对（实际：["全部笔记","星标"]）。
+  两项一起亮 = 判定交回了 NavLink 的前缀匹配；一项都不亮 = 判定把 ?tab= 当成了导航的一部分
+✖ ★ /models?tab=llm 上「模型」不许自己灭掉
+  AssertionError: 页内 Tab 状态把区域的灯弄灭了 —— 用户切个 Tab 就不知道自己在哪一页了
+✖ ★ 穷举：真实地址上侧栏高亮数永远 ≤ 1
+  AssertionError: /notes/01KZ1H8YABCDEFGHJKMNPQRST 上有 2 项同时高亮：["全部笔记","星标"]
+ℹ tests 181  ℹ pass 178  ℹ fail 3
+```
+> **两个症状被逐字复现**，包括你截图里那条。
+
+**RV-10 `Link` 换回 `NavLink`**（证明第 6 条那个换法是**承重的**，不是顺手改风格）
+```
+✖ ★ 笔记详情页只高亮「全部笔记」 —— AssertionError: 实际：["全部笔记","星标"]
+✖ ★ 「星标」页只高亮「星标」
+✖ ★ 穷举：真实地址上侧栏高亮数永远 ≤ 1
+ℹ tests 181  ℹ pass 178  ℹ fail 3
+```
+> 视觉高亮此时是**对的**（`active` 属性还在起作用），红的是 `aria-current` —— `NavLink` 按自己的前缀匹配又把「星标」标成了当前页。**这正是那条看不见的缺陷。**
+
+**RV-11 让「筛选视图」也参与区域前缀匹配**（纯规则层）
+```
+✖ ★ 详情页只亮「全部笔记」—— 它是 /notes 的子路径，不属于「星标」这个筛选视图
+✖ ★ 页内视图状态（?tab=）不许把区域的灯弄灭
+ℹ tests 48  ℹ pass 46  ℹ fail 2
+```
+
+三组还原后复跑全绿。
+
+**为什么纯函数那 9 条不够、必须再有 5 条组件用例**：纯函数证明的是**规则对**，组件用例证明的是**规则被接上了**。上一版的缺陷恰恰不是规则写错，而是判定散在每个 `SideLink` 里没人管"至多一项"。RV-9 把 `App.tsx` 改回逐项判断时，**纯函数那 9 条照样全绿** —— 只有组件那 5 条会红。
+
+判据用 `aria-current="page"` 而不是 `bg-accent-tint`：前者既是无障碍语义，也不会因为换主题就得改测试 —— "高亮"这件事跟具体是哪个色号无关。
+
+---
+
+## §C 真浏览器复验（自建 daemon `:17942` + 临时 dataDir + `vite dev :5207`）
+
+侧栏一级导航（`nav` 的直接子链接），11 个地址逐个数灯 —— **视觉高亮与 `aria-current` 完全一致，且恒为 1 项**：
+
+```
+✅ /notes                             高亮=["All notes"]  aria-current=["All notes"]
+✅ /notes?starred=1                   高亮=["Starred"]    aria-current=["Starred"]
+✅ /notes/01KZ43C3VD…                 高亮=["All notes"]  aria-current=["All notes"]   ← 报上来的那条
+✅ /notes/01KZ43C3VD…?tab=mindmap     高亮=["All notes"]  aria-current=["All notes"]
+✅ /notes/01KZ43C3VD…/mindmap         高亮=["All notes"]  aria-current=["All notes"]
+✅ /record /runtime /models /tasks    各自 1 项
+✅ /models?tab=llm                    高亮=["Models"]     aria-current=["Models"]      ← 修前是 0 项
+✅ /settings/storage                  高亮=["Settings"]   aria-current=["Settings"]    ← 前缀语义没被改掉
+```
+截图：`/tmp/wire-up/shots/6-sidebar-detail.png`
+
+---
+
+## §D 不是我的，但已实测量化：`FolderTree` 同源
+
+`features/folders/FolderTree.tsx:105-108` 用 `NavLink to={/notes?folder=<uid>}` + 裸 `isActive` ——
+`isActive` 只比 pathname，于是**任意 `/notes*` 地址上每个文件夹都被标成"当前页"**：
+
+```
+/notes                      文件夹链接 1 条，其中被标成"当前页" 1 条
+/notes?starred=1            文件夹链接 1 条，其中被标成"当前页" 1 条     ← 一个文件夹都没选中
+/notes/01KZ43C3VD…          文件夹链接 1 条，其中被标成"当前页" 1 条
+```
+
+与侧栏那条**同一个根因**（`isActive` 表达不了筛选视图）。视觉上它只改 `text-ink`/`text-ink-secondary`，
+不如侧栏刺眼，但 `aria-current` 那一面是实打实错的。
+
+修法就是复用本轮的公共件：文件夹链接属于「筛选视图」那一类，
+`activeNavTarget([to], location) === to`（或直接 `Link` + 精确比对）。**一行的事。**
+
+**我没有动它** —— 那是 `folders`/`architect` 的地界，且你这次只点了侧栏那条。请裁决派给谁。
+
+---
+
+## §E 本节改动清单（**请勿 `git add -A`**）
+
+```
+git add apps/web/src/App.tsx \
+        apps/web/src/lib/nav/activeNav.ts \
+        apps/web/src/lib/nav/activeNav.test.ts \
+        apps/web/src/test/components.test.tsx \
+        apps/web/tsconfig.test.json \
+        coordination/inbox/wire-up.md
+```
+（前一节 T-138 的清单见 §6；`apps/daemon/src/db/repos.ts` 已被 `a33fe31` 带走，`fda3e66` 之后不必再加。）
+
+---
+
+## §F 收尾与诚实声明
+
+- 起过的进程：daemon `--port 17942 --data-dir /tmp/wire-up/data`、`vite dev :5207`。**按 pid 逐个 `kill`，未用 `pkill -f`**；两个端口收尾 `curl` 均为 `000`。
+- `:10000` 只读（收尾一次 `GET /api/health` → 200）；`/root/data-memo` 零写入；`~/.local/share/openmemo/datadir.json` 仍是 `{"dataDir":"/root/data-memo","updatedAt":"2026-08-03T14:15:00.000Z"}`，`cat` 核对过。
+- ⚠️ **`apps/web/dist/index.html` 的 mtime 从 22:09 变成了 23:32**（我进场时是 22:09）。**不是我**：我这轮跑过的只有 `tsc -b`（web 是 `emitDeclarationOnly`）、`vite dev`（不写 dist）、`test:components`（package.json 里自带 `--outDir .test-out/components`）。时间点与你提交 `fda3e66` / 用真 key 复验那一段吻合，**但我只给事实，不替你确认**。
+- 未跑本地 whisper。未 commit。未派生 subagent。
+- **诚实声明**：§B 三段红灯是实际输出复制的。`/models?tab=llm` 那条**不是你报的**，是我按"别只为详情页打补丁"去枚举地址时撞出来的 —— 它在 `fda3e66` 之前就已经坏着，不是本轮引入的。§D 那条我**只测量、没修**。
