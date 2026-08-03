@@ -368,7 +368,29 @@ export function DataLocationSection() {
               <code className="ml-1 font-mono">OPENMEMO_DATA_DIR=&lt;path&gt;</code>
             </p>
           ) : changeDir.isError ? (
-            <ErrorBlock error={changeDir.error} />
+            /*
+             * ★ T-140：26 个 `<ErrorBlock>` 里，**这一个**的补救不是"去某一页"，
+             * 是**就地重发一次请求**。
+             *
+             * daemon 在 `rest/storage.ts:266` 对着"目标已经是一个 OpenMemo 数据目录"
+             * 回 409 + `useExistingDataDir`，并在源码里写明「UI 点「直接使用此目录」时
+             * 按这个再发一次即可」，params 特意压平成 `{path, move:false}` 就是为了
+             * 让前端原样转发。`lib/remediation/routes.ts` 把它列进 `UNROUTED_ACTIONS`
+             * （没有落点），所以按钮只会因为这里传了 `onRemediate` 才出现 —— 这正是
+             * 那个 prop 现在的唯一职责：**"我能就地办"**。
+             *
+             * 只认 `move === false`：daemon 现在只发这一种，将来若发了 `move:true`
+             * （真搬运）也不该被这条无声地当成"直接使用"执行掉。宁可不渲染按钮。
+             */
+            <ErrorBlock
+              error={changeDir.error}
+              onRemediate={(action, params) => {
+                if (action !== 'useExistingDataDir') return;
+                const path = params?.['path'];
+                if (typeof path !== 'string' || !path || params?.['move'] !== false) return;
+                changeDir.mutate({ path, moveExisting: false });
+              }}
+            />
           ) : null}
         </div>
       )}

@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router';
-import { ArrowRight, HardDrive, KeyRound, PackagePlus, RefreshCw, Shuffle } from 'lucide-react';
+import { ArrowRight, HardDrive, KeyRound, PackagePlus, RefreshCw, Wrench } from 'lucide-react';
 import type { ReactNode } from 'react';
-import type { Remediation } from '@openmemo/shared';
+import { remediationTarget, type RemediationLike } from '../../lib/remediation/routes';
 import { Button } from './Button';
 
 /**
@@ -14,44 +14,47 @@ import { Button } from './Button';
  * `JobBlockedEvent.remediation` 携带的是**机器可读的动作**（ADR-007 决策 2），
  * 前端把它渲染成按钮，点一下就修好。
  *
- * 未知 `action` 不静默吞掉：仍然渲染按钮并跳到最可能相关的页面，
- * 因为"前端版本旧、后端加了新 action"时，什么都不显示是最差的结果。
+ * ## T-140：它此前有 0 个 importer
+ *
+ * 这个文件从写完那天起就没有任何人 import 过 —— 26 个 `<ErrorBlock>` 全部没传
+ * `onRemediate`，`JobToaster` 自己另写了一张路由表。「要求 2.1 的最后一环」
+ * 从来没有渲染进任何一个页面。现在 `ErrorBlock` 与 `JobToaster` 都走它，
+ * **路由表也收拢成 `lib/remediation/routes.ts` 一份**（原先两份给同一个 action 两个答案）。
+ *
+ * ## 两种模式
+ *
+ * - 默认：按表跳转。表里明确"没有落点"的 action（见 `UNROUTED_ACTIONS`）**不渲染**
+ *   —— 一个点了到不了任何地方的按钮，比没有按钮更糟。
+ * - 传了 `onAct`：就地处理，不跳转。`useExistingDataDir`（重发一次请求）这类
+ *   本来就不是"去某一页"的动作走这条。**此时无论表里有没有路由都会渲染** ——
+ *   调用方已经明确说了它能处理。
  */
 
 const ACTION_ICON: Record<string, ReactNode> = {
   install_model: <PackagePlus className="size-3.5" aria-hidden />,
+  installModel: <PackagePlus className="size-3.5" aria-hidden />,
   install_backend: <PackagePlus className="size-3.5" aria-hidden />,
+  installSiteExtractor: <PackagePlus className="size-3.5" aria-hidden />,
   free_disk: <HardDrive className="size-3.5" aria-hidden />,
-  switch_source: <Shuffle className="size-3.5" aria-hidden />,
-  configure_api_key: <KeyRound className="size-3.5" aria-hidden />,
-  retry: <RefreshCw className="size-3.5" aria-hidden />,
+  configureLlm: <KeyRound className="size-3.5" aria-hidden />,
+  retry_probe: <RefreshCw className="size-3.5" aria-hidden />,
+  useExistingDataDir: <Wrench className="size-3.5" aria-hidden />,
 };
 
-/** action → 应用内目标路由。未知 action 落到模型页（最常见的前置条件缺失来源）。 */
-function targetFor(r: Remediation): string {
-  const p = r.params ?? {};
-  switch (r.action) {
-    case 'install_model':
-      return p.modelId ? `/models/${encodeURIComponent(String(p.modelId))}` : '/models';
-    case 'install_backend':
-      return '/runtime';
-    case 'free_disk':
-      return '/settings/storage';
-    case 'switch_source':
-      return '/models?panel=sources';
-    case 'configure_api_key':
-      return '/settings';
-    default:
-      return '/models';
-  }
-}
-
 export interface RemediationButtonProps {
-  remediation: Remediation;
+  remediation: RemediationLike;
   /** 覆盖默认的路由跳转（例如就地重试，不必离开当前页） */
-  onAct?: (r: Remediation) => void;
+  onAct?: (r: RemediationLike) => void;
   size?: 'sm' | 'md';
   variant?: 'primary' | 'secondary';
+  /**
+   * 服务端没给 `labelZh`/`label` 时用的兜底文案。
+   *
+   * 服务端**总是**该给（daemon 现有 15 个发出点全都给了），所以这只是保险丝；
+   * 但兜底文案属于产品面，不该像原来那样在组件里硬编码一个中文串 ——
+   * 那在 en 界面上会漏出中文。由调用方从 i18n 取。
+   */
+  fallbackLabel?: string;
 }
 
 export function RemediationButton({
@@ -59,9 +62,17 @@ export function RemediationButton({
   onAct,
   size = 'sm',
   variant = 'primary',
+  fallbackLabel,
 }: RemediationButtonProps) {
   const navigate = useNavigate();
+  const target = remediationTarget(remediation);
+
+  // 没有落点、调用方也不接手 → 什么都不渲染（理由逐条写在 UNROUTED_ACTIONS 里）
+  if (!onAct && target === null) return null;
+
   const icon = ACTION_ICON[remediation.action] ?? <ArrowRight className="size-3.5" aria-hidden />;
+  // 最后一层兜底用原始 action 名：难看，但**看得见** —— 空按钮才是无从排查的那种
+  const label = remediation.labelZh || remediation.label || fallbackLabel || remediation.action;
 
   return (
     <Button
@@ -70,12 +81,12 @@ export function RemediationButton({
       data-testid={`remediation-${remediation.action}`}
       onClick={() => {
         if (onAct) onAct(remediation);
-        else void navigate(targetFor(remediation));
+        else if (target !== null) void navigate(target);
       }}
     >
       {icon}
       {/* labelZh 由服务端给，前端不猜文案 —— 后端最清楚缺的是什么 */}
-      {remediation.labelZh || remediation.label || '去处理'}
+      {label}
     </Button>
   );
 }

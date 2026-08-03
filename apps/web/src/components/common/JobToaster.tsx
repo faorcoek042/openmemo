@@ -15,6 +15,8 @@ import { approxEta } from '../../lib/format/time';
 import { cn } from '../../lib/utils';
 import { Button } from './Button';
 import { ProgressMeter } from './ProgressMeter';
+import { RemediationButton } from './RemediationButton';
+import { remediationTarget } from '../../lib/remediation/routes';
 
 /**
  * 安装 / 下载的**全局即时反馈层**（T-101 ②）。
@@ -486,16 +488,20 @@ function ToastActions({
         {/* 服务端给的 remediation 是一等公民：blocked 必须有可点按钮，
             否则"用户不碰命令行"就没做到（D-05 §5.3 第 2 条）。 */}
         {toast.remediation ? (
-          <Button
-            size="sm"
+          <RemediationButton
+            remediation={toast.remediation}
             variant="secondary"
-            onClick={() => {
+            /*
+             * 关掉提示条要在跳转**之前**发生，所以这里接管点击而不是让按钮自己跳。
+             * 但落点仍然来自那一份共享表 —— 接管的是"点完还要做什么"，
+             * 不是"该去哪"（该去哪只准有一个答案）。
+             */
+            onAct={(r) => {
               onDismiss();
-              navigate(remediationRoute(toast.remediation!.action));
+              const to = remediationTarget(r);
+              if (to !== null) void navigate(to);
             }}
-          >
-            {toast.remediation.labelZh || toast.remediation.label}
-          </Button>
+          />
         ) : null}
         <Button
           size="sm"
@@ -514,23 +520,14 @@ function ToastActions({
   return null;
 }
 
-/**
- * `remediation.action` → 路由。
+/*
+ * ⚠️ 这里原本有第二张 `remediation.action → 路由` 表（T-140 删）。
  *
- * 只做导航，**不替服务端做业务判定**（D-05 §2.6 第 2 条）。认不出的动作一律送到任务中心，
- * 那里有完整上下文与重试入口 —— 好过一个点了没反应的按钮。
+ * 它和 `RemediationButton` 那张对同一个 action 给不同答案：
+ * `configure_api_key` 这边去 `/settings/llm`、那边去 `/settings`；
+ * default 这边 `/tasks`、那边 `/models`。而**两张表加起来认识的 5 个 action 里，
+ * daemon 真正会发的只有 3 个** —— 它真正会发的 `installSiteExtractor`
+ * （yt-dlp 缺失）两边都不认识，一起落进各自的 default。
+ *
+ * 现在唯一一份在 `lib/remediation/routes.ts`，且有护栏扫 daemon 源码对表。
  */
-function remediationRoute(action: string): string {
-  switch (action) {
-    case 'install_model':
-      return '/models';
-    case 'install_backend':
-      return '/runtime';
-    case 'free_disk':
-      return '/settings/storage';
-    case 'configure_api_key':
-      return '/settings/llm';
-    default:
-      return '/tasks';
-  }
-}

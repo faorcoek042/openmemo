@@ -3,6 +3,7 @@ import { AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ApiError } from '../../lib/api/client';
 import { Button } from './Button';
+import { RemediationButton } from './RemediationButton';
 import { cn } from '../../lib/utils';
 
 /**
@@ -52,7 +53,23 @@ export function resolveErrorText(
 export interface ErrorBlockProps {
   error: unknown;
   onRetry?: () => void;
-  /** `remediation.action` 对应的处理器（ADR-007 决策 2） */
+  /**
+   * **可选的就地覆盖**（ADR-007 决策 2）。
+   *
+   * ⚠️ T-140 之前，remediation 按钮的渲染条件是 `api?.remediation && onRemediate`
+   * —— 也就是说**调用方不传这个 prop，服务端算好的补救动作就一个字都不显示**。
+   * `[实测]` 全仓 26 个 `<ErrorBlock>` 调用点，**传过它的是 0 个**，
+   * `RemediationButton.tsx` 的 importer 也是 0 个。整条补救链在生产里是死的。
+   *
+   * 根因不是"26 个地方都忘了"，是**这个 prop 要错了东西**：
+   * remediation 是**服务端随错误一起发来的**，调用点对它没有任何额外信息可提供
+   * —— 要它传，等于要它把 daemon 的 action→动作表再抄一遍。26 个人都不抄，
+   * 是因为抄不出来，不是因为懒。
+   *
+   * 所以现在**默认就渲染**（按 `lib/remediation/routes.ts` 跳转），
+   * 这个 prop 降级为"我能就地办、不必跳走"的覆盖点 ——
+   * 目前唯一的真实用户是 `DataLocationSection`（`useExistingDataDir` = 重发一次请求）。
+   */
   onRemediate?: (action: string, params?: Record<string, unknown>) => void;
   className?: string;
 }
@@ -102,15 +119,16 @@ export function ErrorBlock({ error, onRetry, onRemediate, className }: ErrorBloc
               </Button>
             ) : null}
             {/* remediation 是一等公民：让 UI 能直接渲染"去安装"按钮，
-                而不是给用户看一段死文本再让他去查文档（章程要求 2.1） */}
-            {api?.remediation && onRemediate ? (
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={() => onRemediate(api.remediation!.action, api.remediation!.params)}
-              >
-                {action ?? api.remediation.action}
-              </Button>
+                而不是给用户看一段死文本再让他去查文档（章程要求 2.1）。
+                按钮长什么样、跳哪里由 RemediationButton 一处决定 —— 不在这里再写一遍。 */}
+            {api?.remediation ? (
+              <RemediationButton
+                remediation={api.remediation}
+                {...(onRemediate
+                  ? { onAct: (r) => onRemediate(r.action, r.params) }
+                  : {})}
+                {...(action ? { fallbackLabel: action } : {})}
+              />
             ) : null}
             <button
               type="button"

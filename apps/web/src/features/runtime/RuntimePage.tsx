@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronRight, Cpu } from 'lucide-react';
+import { Link } from 'react-router';
+import { Boxes, ChevronRight, Cpu } from 'lucide-react';
 import type { GetBackendCatalogResponse } from '@openmemo/shared';
 
 import { Banner } from '../../components/common/Banner';
@@ -109,9 +110,45 @@ export default function RuntimePage() {
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-4 p-4" data-testid="runtime-page">
-      <header>
-        <h1 className="text-lg font-semibold text-ink">{t('runtime.title')}</h1>
-        <p className="mt-0.5 text-xs text-ink-secondary">{t('runtime.intro')}</p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold text-ink">{t('runtime.title')}</h1>
+          <p className="mt-0.5 text-xs text-ink-secondary">{t('runtime.intro')}</p>
+        </div>
+        {/*
+          ★ T-140：`/components` 的入口。此前它**在整个界面上不可达** ——
+          侧栏 7 项没有它、两张 remediation 路由表没有它、全仓零个 `to=` / `navigate()`，
+          只能手敲 URL。而 `ComponentCard.tsx` 自己写着「yt-dlp 缺失导致 F1 断掉后，
+          这一页正是用户唯一会去的地方」。
+
+          ## 为什么挂在这里，而不是再加一条侧栏
+
+          `/components` 不是第四类东西，它是 **`/runtime` 那批东西的另一个轴**：
+          `[实测]` `GET /api/components` 的 8 条里 6 条的 id 与
+          `GET /api/backends/catalog` 的包 id **逐字相同**（whispercpp / libsimple /
+          sqlite-vec / media-tools / ytdlp / llamacpp）。
+          两页问的是同一批二进制的两个问题：
+            · `/runtime`    —— 这台机器该装哪个？（按平台筛、装/选/自检）
+            · `/components` —— 这个东西从哪来、钉在哪版、有没有新版、能不能回滚？
+
+          按 D-10 §3.2 自己立的 R1 判据（"换掉它输出会变的才叫模型"）：
+          换 yt-dlp 的版本，转出来的字不变 → 它不是模型 → 不归 `/models`，归这一侧。
+          再按 D-10 的 R3（"同一问题只准一个出处"）：
+          "yt-dlp 装不装得上"如果在侧栏出现第二个一级入口，就是给同一个问题开了两个出处。
+
+          （D-10 §3.3 规划的 `/runtime` 页内「功能组件」分区，和这一页覆盖的是同一批东西 ——
+          D-10 写的时候没看见这一页，因为它当时**在界面上不可达**，取证是在 `:10000` 上做的。
+          两者合并归 `architect`，这里先把路走通，不替它做版面裁决。）
+        */}
+        <Link
+          to="/components"
+          className="shrink-0 rounded-md px-2 py-1 text-xs text-accent-ink hover:bg-fill-hover"
+          data-testid="runtime-components-link"
+        >
+          <Boxes className="mr-1 inline size-3.5" aria-hidden />
+          {t('runtime.componentsLink')}
+          <span className="ml-1 text-ink-muted">{t('runtime.componentsLinkHint')}</span>
+        </Link>
       </header>
 
       {anyFailed ? (
@@ -141,6 +178,17 @@ export default function RuntimePage() {
         {catalog.isError ? (
           <ErrorBlock error={catalog.error} onRetry={() => void catalog.refetch()} />
         ) : null}
+
+        {/*
+          ★ T-140：同 ModelsPage —— 「设为当前后端」与「自检」失败此前也是零渲染。
+          daemon 对这两条给的补救动作是有落点的：
+            · `rest/backends.ts:330` 409 CONFLICT          → `install_backend` → 本页
+            · `rest/hardware.ts:204` 409 SELF_TEST_BLOCKED → `install_backend` / `install_model`
+          （`runtime/setup.ts:574` 按缺的是模型还是后端二选一）
+          不渲染的话，用户点「自检」什么都不发生，而 daemon 已经算出了"缺哪一件、去哪装"。
+        */}
+        {select.isError ? <ErrorBlock error={select.error} /> : null}
+        {selfTest.isError ? <ErrorBlock error={selfTest.error} /> : null}
 
         {sorted.length === 0 && !catalog.isLoading ? (
           <p className="rounded-lg border border-line bg-surface-1 p-4 text-xs text-ink-secondary">

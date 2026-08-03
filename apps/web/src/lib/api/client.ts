@@ -33,7 +33,21 @@ export class ApiError extends Error {
   /** 服务端文案。**只作未知 code 的兜底**，不作首选（ADR-007 决策 3）。 */
   readonly serverMessage: string;
   readonly serverMessageZh: string;
-  readonly remediation: { action: string; params?: Record<string, unknown> } | null;
+  /**
+   * 服务端给的机器可读补救动作（ADR-007 决策 2）。
+   *
+   * ⚠️ T-140 修：这里原本**只留 `action` 和 `params`，把 `labelZh`/`label` 扔了**。
+   * daemon 15 个发出点每一个都写了中文按钮文案（"查看如何支持该站点" /
+   * "去接受许可" / "直接使用此目录"…），信封里也确实带着，
+   * 在这一行被解析掉 —— 于是就算 UI 渲染出按钮，按钮上也没有服务端那句话。
+   * 一句"后端最清楚缺的是什么"的文案，在离终点一行的地方丢掉了。
+   */
+  readonly remediation: {
+    action: string;
+    params?: Record<string, unknown>;
+    labelZh?: string;
+    label?: string;
+  } | null;
 
   constructor(status: number, body: Partial<ApiErrorBody['error']> & Record<string, unknown>) {
     super(String(body.message ?? `HTTP ${status}`));
@@ -44,8 +58,9 @@ export class ApiError extends Error {
     this.details = body.details;
     this.serverMessage = String(body.message ?? '');
     this.serverMessageZh = String(body.messageZh ?? '');
-    this.remediation =
-      (body.remediation as { action: string; params?: Record<string, unknown> } | undefined) ?? null;
+    // 不加类型断言：`ApiErrorBody['error'].remediation` 就是 `Remediation`，
+    // 而 `Remediation` 结构上就是上面那个更宽的形状（规矩 5：把契约交给编译器守）
+    this.remediation = body.remediation ?? null;
   }
 }
 

@@ -415,6 +415,20 @@ export default function ModelsPage() {
         ) : null}
 
         {catalog.isError ? <ErrorBlock error={catalog.error} onRetry={() => void catalog.refetch()} /> : null}
+        {/*
+          ★ T-140：安装 / 删除失败此前**一个字都不显示**。
+          `pull.error` 与 `del.error` 全仓零渲染点 —— 点「安装」磁盘不够、或模型受许可限制，
+          界面上没有任何反应，用户只会以为按钮坏了。
+
+          而 daemon 恰恰在这两条上算好了可执行的补救动作：
+            · `rest/models.ts:353` 403 GATED_REPO   → `accept_license`  → 模型详情页（有许可证链接）
+            · `rest/models.ts:369` 507 DISK_FULL    → `free_disk`       → `/settings/storage`
+            · `rest/models.ts:597` 409 MODEL_IN_USE → `activate_model`  → `/models`
+          三条都是**在建 job 之前**同步返回的，所以 JobToaster 也永远看不到它们。
+          没有这两行，那三个 remediation 在产品里不可能被渲染出来 —— 与 prop 传不传无关。
+        */}
+        {pull.isError ? <ErrorBlock error={pull.error} /> : null}
+        {del.isError ? <ErrorBlock error={del.error} /> : null}
         {catalog.isLoading ? (
           <p className="text-xs text-ink-muted">{t('models.loading')}</p>
         ) : null}
