@@ -14,7 +14,9 @@
     "preview": "vite preview",
     "test": "pnpm run test:unit && pnpm run test:components",
     "test:unit": "tsc -p tsconfig.test.json && node -e \"require('fs').writeFileSync('.test-out/unit/package.json','{\\\"type\\\":\\\"commonjs\\\"}')\" && node --test \".test-out/unit/**/*.test.js\"",
-    "test:components": "vite build --ssr src/test/components.test.tsx --outDir .test-out/components --logLevel warn && node --test .test-out/components/components.test.js"
+    "test:components": "pnpm run test:host && vite build --ssr src/test/components.test.tsx --outDir .test-out/components --logLevel warn && node --test .test-out/components/components.test.js",
+    "_comment:test:host": "★ T-133：宿主自证套件必须**跑在组件测试之前**。宿主一旦退化（type() 驱动不了受控输入框），后面那 150 条不会报错，只会静默地少测一大片 —— 先看到这条红，才不会去怀疑产品。",
+    "test:host": "vite build --ssr src/test/host.test.tsx --outDir .test-out/host --logLevel warn && node --test .test-out/host/host.test.js"
   },
   "dependencies": {
     "@openmemo/mindmap": "workspace:*",

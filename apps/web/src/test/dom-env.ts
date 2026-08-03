@@ -13,6 +13,17 @@
  *
  * → 只有把它拆成**独立模块**并作为第一个 import，ESM 的"深度优先、按 import 顺序执行"
  *   才能保证它先跑。
+ *
+ * ## ⚠️ T-133 更正：上面这条**在源码里成立，在打包产物里不成立**
+ *
+ * 组件测试跑的是 `vite build --ssr` 的产物。本文件是相对导入 → 被**内联进包体**；
+ * `@testing-library/react` 是外部依赖 → 保留成 `import` 语句并被 rollup **提升到最顶部**。
+ * 于是 react-dom 的模块初始化排在 `new JSDOM(...)` **前面** —— 正是本文件开头说
+ * "打包器还会进一步 hoist" 的那个坑，只不过它对**外部依赖**依旧存在，拆文件挡不住。
+ *
+ * 后果不是报错，是**静默失效**：`canUseDOM=false` → 受控文本输入框收不到 `onChange`。
+ * 真正的修法在 `host.tsx`（把 RTL 改成动态 import，见那边的 T-133 一节）。
+ * 本文件保持不变即可 —— 它的职责是"把全局装好"，而不是"保证自己排第一"。
  */
 
 import { JSDOM } from 'jsdom';
@@ -74,6 +85,13 @@ define('IS_REACT_ACT_ENVIRONMENT', true);
  *
  * 因为这个检测发生在**模块初始化时**，属性必须在 react-dom 被 import 之前挂好 ——
  * 这也正是本文件必须独立且最先执行的第二个理由。
+ *
+ * ⚠️ T-133 实测（jsdom 30.0.1）：`'oninput' in document` **现在已经是 `true`**，
+ * 下面这个循环因此一条都不会命中，是死代码。保留它有两个理由：
+ * ① 它是无副作用的兜底，jsdom 降级或换环境时仍然有用；
+ * ② 更重要的是**别把它当成修复**——当年那个 `attachEvent` 崩溃的真正病根是
+ *    `canUseDOM === false`（连 `isEventSupported` 都没被调用过），
+ *    把 `oninput` 挂上去在那种状态下**一点用都没有**。见本文件头 T-133 一节。
  */
 for (const evt of ['oninput', 'onchange', 'onkeydown', 'onkeyup', 'onfocusin', 'onfocusout']) {
   if (!(evt in jsdomWindow.document)) {
