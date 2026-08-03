@@ -173,13 +173,9 @@
     "mergeByTimeNote": "Merging aligns by timeline, not by segment index — the two models segment speech differently.",
     "installBackend": "Install a backend",
     "engineLabel": "Engine",
-    "engineParaformer": "Paraformer Chinese (fast)",
-    "engineTurbo": "large-v3-turbo (slow, richer)",
     "paraformerNotice": "Chinese uses Paraformer by default — about 43 seconds for an hour of audio.",
     "paraformerTradeoff": "Trade-off: no word-level timestamps (captions highlight per sentence, not per word), numbers are spelled out, and English comes out lowercase.",
-    "turboTradeoff": "large-v3-turbo gives word-level timestamps, digits and better proper nouns — at about 22 minutes per hour of audio.",
-    "switchToTurbo": "Switch to large-v3-turbo",
-    "switchToParaformer": "Switch back to Paraformer",
+    "turboTradeoff": "Whisper models give word-level timestamps and handle numerals and proper nouns better, at the cost of being far slower (about 22 minutes for an hour of audio on CPU only).",
     "wordLevelUnavailable": "This engine has no word-level timestamps — captions highlight per sentence",
     "wordLevelAvailable": "Word-level highlighting on",
     "insecureTitle": "Recording is unavailable at this address",
@@ -190,7 +186,8 @@
     "rerunFailed": "Offline re-run failed. The streaming result is kept.",
     "doneSummary": "Recording finished — {{segments}} segments",
     "preservedOnly": "{{count}} segment(s) you edited were preserved.",
-    "openNote": "Open note"
+    "openNote": "Open note",
+    "modelUnknown": "the active model"
   },
   "tasks": {
     "title": "Tasks",
@@ -284,9 +281,7 @@
   "settings": {
     "title": "Settings",
     "general": "General",
-    "asr": "Transcription",
     "llm": "AI models",
-    "storage": "Storage",
     "about": "About",
     "apiKeyPlaintextWarning": "API keys are stored in plain text at {{path}} (file mode 0600). Any local program that can read that file can read them.",
     "contractVersion": "Contract version",
@@ -416,7 +411,9 @@
     "effectiveLabel": "In effect",
     "effectiveNone": "Not configured — save a provider to enable it (needed for summary/mindmap)",
     "localOptional": "or use a local service (optional):",
-    "provider": "Provider"
+    "provider": "Provider",
+    "modelsLink": "Models & AI services",
+    "modelsLinkHint": "Transcription models · online AI services · per-purpose config"
   },
   "mock": {
     "notImplementedShort": "Still simulated data",

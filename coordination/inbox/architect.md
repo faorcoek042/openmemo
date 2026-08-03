@@ -2093,3 +2093,72 @@ final 定稿不留未定稿行 · overrun/error/stopped 不动字幕 · 采样�
   （`llm-catalog.ts` + `buildLlmSettingsPatch()` + 键对齐断言），
   你消息里列为"仍未结"，可能是我的交付报告与你的核对错开了 —— 请复核。
   `ia-design` 的 IA 规格出来后我照它调结构。
+
+---
+
+## T-123 写死模型名 + D-10 信息架构（2026-08-03）
+
+### ① 写死的模型名已修，并做了同型扫描
+`RecorderPage:422-423` 的 `{ model: 'large-v3-turbo' }` → 改为 `useActiveAsrModel()`
+（读 `/api/models/installed` 的 `active.asr`，取 `displayName`），拿不到就退到**引擎名**，
+**绝不退到某个猜的型号** —— 说错型号比不说更糟。
+
+**同型扫描又抓出一条**：i18n `recorder.turboTradeoff` 写着
+「**large-v3-turbo** 有逐字时间戳……」，同样是"说出一个没核对过的具体名字"。
+已改成不点名型号的表述（「Whisper 系模型有逐字时间戳……」）。
+顺带删了引擎切换器留下的 4 个孤儿键（`engineTurbo`/`switchToTurbo`/…，选择器 T-075 就删了）。
+
+其余命中都是**注释里把型号作为论据**（`WordLevelBadge`、`FitBadge`、`time.ts`）或 mock 数据 ——
+那些不是说给用户听的，保留。回归断言也据此收紧：只禁**非空字面量**
+（`model: ''` 是进度条标签故意留空，不算）。
+
+⚠️ 这一族我现在的判据是：**UI 里出现的每个具体名词，要么来自后端，要么根本不提。**
+
+### ② D-10 实现到哪一步
+
+**已完成（骨架 + 我域内的搬迁）**
+| D-10 # | 内容 | 状态 |
+|---|---|---|
+| §1.2 | `/models` **一个页面、页内两 Tab、不开子路由**，Tab 进 `?tab=asr\|llm` | ✅ |
+| #1 #6 | 「AI 模型」+「按用途分别配置」**从设置页搬到**语言模型 Tab | ✅ |
+| #4 #8 | 页顶常驻「当前使用」两行；**语言模型行改读 `llm.defaultProviderId/ModelId`** | ✅ |
+| #21 | 转写行的 `[更换]` **复用 `AsrModelPicker`**，没有新写第二个 | ✅ |
+| §4.3 | 设置页只剩 通用 · 网络代理 · 数据位置 · 关于 **+ 一行指路牌** | ✅ |
+| #20 | 删死键 `settings.asr` / `settings.storage` | ✅ |
+| INV-1 | 加了测试：任一 purpose 的下拉项集合 ⊆ 已配置服务商 id 集合 | ✅ |
+
+**#8 值得单说**：它不只是分类问题 —— `active.llm` **恒为 null**（在线 provider 从不进
+`installed` 表），所以那一行一直在写「未选择 —— 思维导图功能不可用」，
+**用户明明配好了 DeepSeek**。这是在谎报功能不可用，和写死模型名同族。
+
+**未做（如实列出，不含糊）**
+- #24 24 家服务商目录（现仍是写死的 11 个预设）· #27 `configFieldKeys` 驱动表单 ·
+  #26 `canRefreshModelList` 分流 · #28 完整空状态 —— 都依赖 `vendor/manifests/llm-providers.json`，
+  是一整块，我不想半做。
+- #9 #10 #29 转写 Tab 三分组 / 实时字幕组件 / `speedClass` 分档 + `superseded` 折叠。
+- #3 「本地模型」改探测式（**阻塞于 #23 的 `POST /api/llm/detect`，`oss-scout` 未交付**）。
+- #19 `/settings/storage` → 302。
+
+⚠️ 你转述的三条数据约束（`speedClass` vs `speedTier` 不许混、`multi×quality` 是 4 张要
+`superseded` 折成 `2 (+2)`、空档位兜底文案**不许写"暂无中文模型"**）我记下了，
+**都落在上面未做的 #29/#9 里** —— 做的时候按这三条来。
+
+### 顺带：我自己的 lint 规则拦住了我
+把两个 LLM 区块搬进 `/models` 时触发了 `no-restricted-imports`
+（features/A 不得 import features/B，D-05 §3.5）。
+**我没有豁免规则**，按规则要求把 `llm-catalog` / `LlmSettingsSection` /
+`PurposeBindingsSection` / 设置 API 层**提升到 `components/common/llm/`**。
+→ **SHARED-CHANGE：`features/settings/{api,llm-catalog,LlmSettingsSection,PurposeBindingsSection}`
+已迁至 `components/common/llm/`。** 谁引用了旧路径请改指向新位置（我已改完全仓现有引用）。
+
+### 验证
+`tsc` 0 · `eslint apps/web` 0 · `vite build` ✓ ·
+测试 **115 条 / 113 pass / 0 fail / 2 skip**（新增 5 条：禁写死模型名 · INV-1 子集关系 ·
+禁读 `active.llm` · 不许为 Tab 开子路由 · 死键必须删除）。
+
+### 诚实声明
+- **没碰 demo**，本轮零请求。
+- **IA 改动没在真浏览器里看过** —— Tab 切换、搬过来的两个区块在 `/models` 里的排版、
+  设置页指路牌，都只有 tsc/lint/build 与组件测试背书。
+  `ui-polish` 正在做视觉，建议他顺手复验一次 `?tab=llm` 的实际观感。
+- F3 那条谢谢 `model-mgmt` 验到 partial/final —— 那是我上一轮唯一不能自证的一环，现在补上了。

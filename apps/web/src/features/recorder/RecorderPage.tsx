@@ -9,8 +9,9 @@ import { Button } from '../../components/common/Button';
 import { Banner } from '../../components/common/Banner';
 import { ProgressMeter } from '../../components/common/ProgressMeter';
 import { AsrEngineStatus, useAsrEngines } from '../../components/common/AsrEngineStatus';
+import { useActiveAsrModel } from '../../components/common/AsrModelPicker';
 import { TranscribeOptions } from '../../components/common/TranscribeOptions';
-import { ASR_LANGUAGE_AUTO } from '../../lib/asr';
+import { ASR_ENGINE_LABELS, ASR_LANGUAGE_AUTO } from '../../lib/asr';
 import { isMicrophoneAvailable, localhostEquivalent } from '../../lib/secure-context';
 import { applyCaption, startRecording, type RecorderHandle } from './asrStream';
 import { useProgressStore } from '../../lib/stores/progress.store';
@@ -112,6 +113,13 @@ export default function RecorderPage() {
   const looksChinese = /^(zh|cmn|yue)/.test(language);
   const rerunEngine: AsrEngineId = paraformerUsable && looksChinese ? 'paraformer' : 'whisper.cpp';
   const speedRatio = rerunEngine === 'paraformer' ? 84 : 2.7;
+  /**
+   * 重跑会用的模型名：**优先真正激活的那个模型**，拿不到就退到引擎名。
+   * 永不写死型号 —— 说错型号比不说更糟（实测机器上激活的是 whisper-tiny，
+   * 而这里曾经写死 large-v3-turbo，同页下拉就显示着另一个名字）。
+   */
+  const activeAsr = useActiveAsrModel();
+  const rerunModelLabel = activeAsr.displayName ?? ASR_ENGINE_LABELS[rerunEngine];
   const rerunEtaMs = estimateRerunMs(elapsed || 3_600_000, speedRatio);
   // 用 humanDuration 而不是 approxEta：后者自带"约/about"前缀，
   // 而文案模板里已经有"预计需要/about"，叠加会出现"about about 22 min"。
@@ -418,9 +426,14 @@ export default function RecorderPage() {
         <section className="rounded-lg border border-line bg-surface-1 p-4">
           <div className="mb-2 flex items-center justify-between text-sm">
             <span className="text-ink">
+              {/*
+                ★ 模型名来自**真正激活的那个**，不再写死。
+                拿不到名字时退到引擎名（whisper.cpp / Paraformer），
+                而不是编一个具体型号 —— 说错型号比不说更糟。
+              */}
               {rerunRemainLabel
-                ? t('recorder.rerunningWithEta', { model: 'large-v3-turbo', eta: rerunRemainLabel })
-                : t('recorder.rerunning', { model: 'large-v3-turbo' })}
+                ? t('recorder.rerunningWithEta', { model: rerunModelLabel, eta: rerunRemainLabel })
+                : t('recorder.rerunning', { model: rerunModelLabel })}
             </span>
             <Button size="sm" variant="ghost" onClick={() => setPhase('done')}>
               {t('recorder.skipRerun')}

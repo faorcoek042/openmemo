@@ -1,4 +1,10 @@
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
+
+import { AsrModelPicker } from '../../components/common/AsrModelPicker';
+import { useLlmConfig } from '../../components/common/llm/llm-catalog';
+import { LlmSettingsSection } from '../../components/common/llm/LlmSettingsSection';
+import { PurposeBindingsSection } from '../../components/common/llm/PurposeBindingsSection';
 import { useTranslation } from 'react-i18next';
 import { Boxes, Cpu, Mic } from 'lucide-react';
 import type { CatalogVariant, ModelRole } from '@openmemo/shared';
@@ -36,16 +42,27 @@ import { StorageBreakdown } from './components/StorageBreakdown';
  * 或在快照与增量之间重复计数。这里三个 useQuery 天然并行，SSE 订阅在 App 层已建立。
  */
 
-const ROLE_TABS: { role: ModelRole; labelZh: string; icon: React.ReactNode }[] = [
-  { role: 'asr', labelZh: '转写模型', icon: <Mic className="size-4" aria-hidden /> },
-  { role: 'llm', labelZh: '语言模型', icon: <Boxes className="size-4" aria-hidden /> },
-];
 
 export default function ModelsPage() {
   const { i18n } = useTranslation();
   const locale = i18n.language;
 
-  const [role, setRole] = useState<ModelRole>('asr');
+  /**
+   * D-10 §1.2：**一个页面、页内两个 Tab、不开子路由**。
+   * Tab 状态进 URL query（`?tab=asr|llm`）以满足"URL 是可分享状态"，
+   * 而不是新增 `/models/asr`、`/models/llm` —— 拆成两条路由就同不了屏，
+   * 页顶「当前使用」两行会各自复述一遍，第二天必漂移
+   * （`llm.providers` vs `llm.baseUrl.*` 已是前车之鉴）。
+   */
+  const [sp, setSp] = useSearchParams();
+  const tab: 'asr' | 'llm' = sp.get('tab') === 'llm' ? 'llm' : 'asr';
+  const setTab = (t: 'asr' | 'llm') => {
+    const next = new URLSearchParams(sp);
+    next.set('tab', t);
+    setSp(next, { replace: true });
+  };
+  // 目录侧只剩转写：语言模型不再走 catalog（ADR-016 砍掉内置 llama.cpp）
+  const role: ModelRole = 'asr';
   const [onlyRunnable, setOnlyRunnable] = useState(false);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
@@ -154,7 +171,11 @@ export default function ModelsPage() {
   }
 
   const asrActive = installed.data?.models.find((m) => m.id === active.asr);
-  const llmActive = installed.data?.models.find((m) => m.id === active.llm);
+  /* D-10 #8：语言模型的"当前使用"必须读 settings，不是 `installed.active.llm`。 */
+  const llmCfg = useLlmConfig();
+  const llmModel = llmCfg.defaultModel;
+  const llmProviderLabel =
+    llmCfg.providers.find((p) => p.id === llmCfg.activeProviderId)?.label ?? llmCfg.activeProviderId;
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-4 p-4" data-testid="models-page">
@@ -194,20 +215,40 @@ export default function ModelsPage() {
             ) : (
               <StatusChip tone="warning" label="未选择 —— 无法转写" />
             )}
+            {/*
+              INV-2 / D-10 #21：**复用**既有的 `AsrModelPicker`，不要新写一个。
+              新写最容易犯的错是"从 catalog 里选" —— 那会让用户选中一个没下载的模型然后转写报错。
+              它已经只列 `installed` 且 `role==='asr'`，一个没装时给"去安装"。
+            */}
+            <span className="ml-auto">
+              <AsrModelPicker />
+            </span>
           </li>
           <li className="flex items-center gap-2">
             <Boxes className="size-4 shrink-0 text-ink-muted" aria-hidden />
             <span className="w-16 shrink-0 text-ink-secondary">语言模型</span>
-            {llmActive ? (
+            {/*
+              ★ D-10 #8：这里原本读 `active.llm`，而**在线 provider 从不进 `installed` 表**，
+              所以它恒为 null —— 用户明明配好了 DeepSeek，页面却一直写着
+              「未选择 —— 思维导图功能不可用」。**在谎报功能不可用。**
+              改读 daemon 真正解析用的那两个键（`llm.defaultProviderId` / `llm.defaultModelId`）。
+            */}
+            {llmProviderLabel && llmModel ? (
               <>
-                <span className="text-ink">{llmActive.displayName}</span>
-                <span className="text-ink-secondary">
-                  {formatBytes(llmActive.totalSizeBytes, locale)}
-                </span>
+                <span className="text-ink">{llmProviderLabel}</span>
+                <span className="text-ink-secondary">{llmModel}</span>
               </>
             ) : (
-              <StatusChip tone="warning" label="未选择 —— 思维导图功能不可用" />
+              <StatusChip tone="warning" label="未配置 —— 摘要与思维导图不可用" />
             )}
+            <button
+              type="button"
+              className="ml-auto text-xs text-accent underline"
+              onClick={() => setTab('llm')}
+              data-testid="current-llm-change"
+            >
+              更换
+            </button>
           </li>
         </ul>
       </section>
@@ -228,22 +269,38 @@ export default function ModelsPage() {
         </section>
       ) : null}
 
-      {/* 目录 */}
-      <section className="space-y-3">
+      {/*
+        D-10 #1/#6：语言模型 Tab 承接原本在**设置页**的两个区块。
+        它们搬过来而不是复制 —— 服务商下拉必须是同页上方清单的子集（INV-1），
+        跨页正是上次漂移的成因。
+      */}
+      {tab === 'llm' ? (
+        <div className="space-y-4" data-testid="models-llm-tab">
+          <LlmSettingsSection />
+          <PurposeBindingsSection />
+        </div>
+      ) : null}
+
+      {/* 目录（仅转写 Tab） */}
+      <section className={tab === 'asr' ? 'space-y-3' : 'hidden'}>
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex rounded-md border border-line bg-surface-1 p-0.5">
-            {ROLE_TABS.map((t) => (
+            {(
+              [
+                { id: 'asr' as const, label: '转写' },
+                { id: 'llm' as const, label: '语言模型' },
+              ]
+            ).map((t) => (
               <button
-                key={t.role}
+                key={t.id}
                 type="button"
-                onClick={() => setRole(t.role)}
+                onClick={() => setTab(t.id)}
                 className={`inline-flex items-center gap-1.5 rounded px-3 py-1 text-xs font-medium ${
-                  role === t.role ? 'bg-accent text-accent-fg' : 'text-ink-secondary'
+                  tab === t.id ? 'bg-accent text-accent-fg' : 'text-ink-secondary'
                 }`}
-                data-testid={`models-tab-${t.role}`}
+                data-testid={`models-tab-${t.id}`}
               >
-                {t.icon}
-                {t.labelZh}
+                {t.label}
               </button>
             ))}
           </div>

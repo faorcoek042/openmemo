@@ -16,9 +16,9 @@ import assert from 'node:assert/strict';
 import { TagEditor } from '../features/notes/TagEditor';
 import { SearchBox } from '../features/search/SearchBox';
 import { JobList } from '../features/tasks/JobList';
-import { LlmSettingsSection } from '../features/settings/LlmSettingsSection';
-import { buildLlmSettingsPatch, LLM_PURPOSES_KEY } from '../features/settings/api';
-import { LLM_PRESETS } from '../features/settings/llm-catalog';
+import { LlmSettingsSection } from '../components/common/llm/LlmSettingsSection';
+import { buildLlmSettingsPatch, LLM_PURPOSES_KEY } from '../components/common/llm/api';
+import { LLM_PRESETS } from '../components/common/llm/llm-catalog';
 import { useSaveMindmapMutation } from '../features/mindmap/api';
 import { applyCaption, RECORD_SAMPLE_RATE } from '../features/recorder/asrStream';
 import { readFileSync } from 'node:fs';
@@ -53,7 +53,7 @@ import { DEFAULT_PROXY_CONFIG, LLM_SETTING_KEYS } from '@openmemo/shared';
 import { ProxySettingsSection } from '../features/settings/ProxySettingsSection';
 import { getPositionMs, setPositionMs, subscribePosition } from '../lib/stores/player.store';
 import { useConnectionStore } from '../lib/stores/connection.store';
-import { PurposeBindingsSection, mergePurposeBinding } from '../features/settings/PurposeBindingsSection';
+import { PurposeBindingsSection, mergePurposeBinding } from '../components/common/llm/PurposeBindingsSection';
 import { ReadinessBanner } from '../components/common/ReadinessBanner';
 import RecorderPage from '../features/recorder/RecorderPage';
 import {
@@ -1999,5 +1999,72 @@ describe('实时字幕合并（D-06 §15 语义）', () => {
     assert.ok(!src.includes('MOCK_LINES'), '硬编码字幕轮播必须已删除');
     assert.ok(!/updated:\s*47/.test(src), '「已更新 47 段」这类写死数字不许再出现');
     assert.ok(src.includes('startRecording'), '必须走真实的 /ws/recorder 通道');
+  });
+});
+
+/* ────────── D-10 信息架构不变量（T-123） ────────── */
+
+describe('D-10 不变量', () => {
+  test('★ ① 录音页不许再写死具体模型名 —— 环境一变就成了谎', async () => {
+    const src = await readSource('features/recorder/RecorderPage.tsx');
+    /*
+     * 只查**非空字面量**：`model: ''` 是进度条标签故意留空（那里不需要名字），
+     * 真正的危险是 `model: 'large-v3-turbo'` 这种说出一个没核对过的具体名字。
+     * 注释里把型号作为论据提到则完全可以 —— 那不是说给用户听的。
+     */
+    assert.ok(
+      !/model:\s*'[^']+'/.test(src),
+      '重跑提示的 model 必须来自真实激活的模型，不能是非空字面量',
+    );
+    assert.ok(src.includes('useActiveAsrModel'), '应从后端取当前激活模型');
+  });
+
+  test('★ INV-1：按用途分档的服务商下拉 ⊆ 已配置服务商清单', async () => {
+    const providers = [
+      { id: 'deepseek', kind: 'openai-compatible', label: 'DeepSeek', baseUrl: 'u', model: 'm1', isLocal: false },
+      { id: 'openai', kind: 'openai-compatible', label: 'OpenAI', baseUrl: 'u2', model: 'm2', isLocal: false },
+    ];
+    stubApi({
+      'GET /settings': {
+        settings: { 'llm.providers': providers, 'llm.defaultProviderId': 'deepseek', 'llm.defaultModelId': 'm1' },
+      },
+      'GET /secrets': { secrets: [], disclosure: null },
+    });
+    const r = await render(<PurposeBindingsSection />);
+    await r.flush();
+
+    const configured = new Set(providers.map((p) => p.id));
+    const options = [...r.container.querySelectorAll('select option')]
+      .map((o) => (o as HTMLOptionElement).value)
+      .filter((v) => v !== ''); // 空值 = "继承全局"
+    assert.ok(options.length > 0, '应渲染出服务商选项');
+    for (const v of options) {
+      assert.ok(configured.has(v), `下拉里出现了未配置的服务商 ${v} —— INV-1 被破坏`);
+    }
+    r.unmount();
+  });
+
+  test('★ D-10 #8：语言模型的"当前使用"不许再读 active.llm（它恒为 null，在谎报不可用）', async () => {
+    const src = await readSource('features/models/ModelsPage.tsx');
+    assert.ok(
+      !src.includes('m.id === active.llm'),
+      '在线 provider 从不进 installed 表，读 active.llm 必然显示"未配置"',
+    );
+    assert.ok(src.includes('useLlmConfig'), '应改读 llm.defaultProviderId / llm.defaultModelId');
+  });
+
+  test('★ D-10 §1.2：/models 只有一条路由，Tab 走 ?tab=，不开子路由', async () => {
+    const src = await readSource('features/models/Models.routes.tsx');
+    assert.ok(!src.includes("'models/asr'"), '不许为 Tab 开子路由');
+    assert.ok(!src.includes("'models/llm'"), '不许为 Tab 开子路由');
+    const page = await readSource('features/models/ModelsPage.tsx');
+    assert.ok(page.includes("sp.get('tab')"), 'Tab 状态必须进 URL query（可分享）');
+  });
+
+  test('★ D-10 #20：D-05 规划过但从未实现的设置分页词条必须删除', () => {
+    const zh = readLocale('zh-CN');
+    const st = zh.settings as Record<string, unknown>;
+    assert.equal(st['asr'], undefined, '留着下一个人会照它建页');
+    assert.equal(st['storage'], undefined);
   });
 });

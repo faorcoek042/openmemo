@@ -8,7 +8,7 @@ import {
   type PurposeBindings,
 } from '@openmemo/shared';
 
-import { Button } from '../../components/common/Button';
+import { Button } from '../Button';
 import {
   LLM_PURPOSES_KEY,
   readPurposeBindings,

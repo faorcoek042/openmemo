@@ -173,13 +173,9 @@
     "mergeByTimeNote": "合并按时间轴对齐，不按段落序号 —— 两遍模型的断句本来就不同。",
     "installBackend": "安装加速后端",
     "engineLabel": "识别引擎",
-    "engineParaformer": "Paraformer 中文（快）",
-    "engineTurbo": "large-v3-turbo（慢，更全）",
     "paraformerNotice": "中文默认使用 Paraformer，1 小时录音约 43 秒转完。",
     "paraformerTradeoff": "代价：**没有逐字时间戳**（字幕高亮到句、不到字）、数字会写成汉字（“二零二六”而非 “2026”）、英文全小写。",
-    "turboTradeoff": "large-v3-turbo 有逐字时间戳、阿拉伯数字、专有名词更准，代价是 1 小时录音约需 22 分钟。",
-    "switchToTurbo": "换成 large-v3-turbo",
-    "switchToParaformer": "换回 Paraformer",
+    "turboTradeoff": "Whisper 系模型有逐字时间戳、阿拉伯数字与专有名词更准，代价是慢得多（纯 CPU 上 1 小时录音约需 22 分钟）。",
     "wordLevelUnavailable": "当前引擎无逐字时间戳，字幕按整句高亮",
     "wordLevelAvailable": "逐字高亮已启用",
     "insecureTitle": "此地址下无法录音",
@@ -190,7 +186,8 @@
     "rerunFailed": "离线重跑失败。流式识别的结果仍然保留。",
     "doneSummary": "录音完成，共 {{segments}} 段",
     "preservedOnly": "你编辑过的 {{count}} 段已保留。",
-    "openNote": "打开笔记"
+    "openNote": "打开笔记",
+    "modelUnknown": "当前模型"
   },
   "tasks": {
     "title": "任务中心",
@@ -284,9 +281,7 @@
   "settings": {
     "title": "设置",
     "general": "通用",
-    "asr": "转写",
     "llm": "AI 模型",
-    "storage": "存储",
     "about": "关于",
     "apiKeyPlaintextWarning": "API Key 以明文存储在 {{path}}（文件权限 0600）。任何能读取该文件的本地程序都能看到它。",
     "contractVersion": "契约版本",
@@ -416,7 +411,9 @@
     "effectiveLabel": "当前生效",
     "effectiveNone": "未生效 —— 保存一个服务商即可启用（摘要/导图需要它）",
     "localOptional": "或接本地服务（可选）：",
-    "provider": "服务商"
+    "provider": "服务商",
+    "modelsLink": "模型与 AI 服务",
+    "modelsLinkHint": "转写模型 · 在线 AI 服务 · 按用途分别配置"
   },
   "mock": {
     "notImplementedShort": "这部分还是模拟数据",

@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { arr } from '../../lib/safe';
+import { arr } from '../../../lib/safe';
 import { useTranslation } from 'react-i18next';
 import { Eye, EyeOff, KeyRound, ShieldAlert, Trash2 } from 'lucide-react';
 
-import { Button } from '../../components/common/Button';
-import { ErrorBlock } from '../../components/common/ErrorBlock';
-import { MockNotice } from '../../components/common/MockNotice';
+import { Button } from '../Button';
+import { ErrorBlock } from '../ErrorBlock';
+import { MockNotice } from '../MockNotice';
 import {
   LLM_ACTIVE_KEY,
   LLM_DEFAULT_MODEL_KEY,
@@ -21,7 +21,7 @@ import {
   useSettingsQuery,
   type LlmProviderConfig,
 } from './api';
-import { cn } from '../../lib/utils';
+import { cn } from '../../../lib/utils';
 import { useLlmConfig } from './llm-catalog';
 
 /**

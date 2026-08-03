@@ -1,12 +1,12 @@
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router';
+import { ChevronRight } from 'lucide-react';
 import { CONTRACT_VERSION } from '@openmemo/shared';
 
 import { SUPPORTED_LOCALES, setLocale, type LocaleCode } from '../../app/i18n';
 import { useUiStore, type ThemeMode } from '../../lib/stores/ui.store';
-import { LlmSettingsSection } from './LlmSettingsSection';
 import { DataLocationSection } from './DataLocationSection';
 import { ProxySettingsSection } from './ProxySettingsSection';
-import { PurposeBindingsSection } from './PurposeBindingsSection';
 import { PanelBoundary } from '../../components/common/PanelBoundary';
 
 /** 设置（最小可用版）。运行时/模型/存储页归 T-022。 */
@@ -51,14 +51,22 @@ export default function SettingsPage() {
         </label>
       </section>
 
-      <PanelBoundary name={t('settings.llm')}>
-        <LlmSettingsSection />
-      </PanelBoundary>
-
-      {/* 按用途分档：紧跟在 LLM 配置之后 —— 它是对上面那份全局配置的逐字段覆盖 */}
-      <PanelBoundary name={t('settings.purposes.title')}>
-        <PurposeBindingsSection />
-      </PanelBoundary>
+      {/*
+        D-10 §4.3：AI 模型与按用途分档**已搬到 `/models` → Tab「语言模型」**。
+        这里只留**一行指路牌**，不是区块 —— 复制一份到设置页就是 §0.1 那条
+        "两处对同一个问题给出相反答案"的成因。
+      */}
+      <Link
+        to="/models?tab=llm"
+        className="flex items-center justify-between rounded-lg border border-line bg-surface-1 px-4 py-3 text-sm hover:border-accent"
+        data-testid="settings-models-link"
+      >
+        <span>
+          <span className="font-medium text-ink">{t('settings.modelsLink')}</span>
+          <span className="mt-0.5 block text-xs text-ink-secondary">{t('settings.modelsLinkHint')}</span>
+        </span>
+        <ChevronRight className="size-4 text-ink-muted" aria-hidden />
+      </Link>
 
       {/* 代理：中文网络下 HF/GitHub 直连不通，这是"下载模型"的前置条件 */}
       <PanelBoundary name={t('settings.proxy.title')}>

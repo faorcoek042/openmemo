@@ -2250,3 +2250,50 @@ apps/daemon/src/llm/resolve.ts(163,13): error TS2322:
 构建是红的；他自己已经定义了 `reposForRoutes` 但没用上，我接过去了（**没有用 `!` 断言**）。
 
 lint 干净；migrateRecords 8/8、roundtrip 16/16、move 18/18；demo 全程只读未重启。
+
+---
+
+## T-122 `media_assets` 迁移：**副本上全部归位（4/4）**，真实库我没动
+
+### 实测（`/root/data-memo` 的**副本**，原目录只读）
+```
+迁移前: 1 long.wav ✅ / 2 /tmp/dd55/tmp/job-…/audio16k.wav / 3 /tmp/omdemo/jfk.wav / 4 /tmp/omdemo/tmp/job-…/audio16k.wav
+迁移后: #1 long.wav                                              文件存在✅ 相对✅
+        #2 media/legacy/job-01KZ12HV9M…-audio16k.wav             文件存在✅ 相对✅
+        #3 jfk.wav                                               文件存在✅ 相对✅
+        #4 media/legacy/job-01KZ1H8Y64…-audio16k.wav             文件存在✅ 相对✅
+仍在 tmp/ 的资产数: 0     第二遍迁移条数（幂等）: 0     unresolved: 0
+```
+**真实库我一行都没改**（仍是 4 条中 3 条绝对路径）——按你说的"先在副本上验"。
+切换时机你定，daemon 启动时会自动跑（幂等）。
+
+### ★ 途中炸出一个比原 bug 更危险的做法（差点是我造的）
+第一版按**文件名**匹配 → 两条不同笔记的 `audio16k.wav` 被指到同一个文件，
+直接撞 `UNIQUE constraint failed: media_assets.rel_path`，整批回滚。
+**撞约束是运气好**：语义上那等于**把一条笔记的音频挂到另一条笔记上**。
+改成按**最长路径后缀**匹配（`tmp/job-<id>/audio16k.wav` 在搬家前后是不变的），
+并加"目标已被占用就不猜、计入 unresolved"的保护。回归测试专门钉了这条。
+
+### 顺带修好了 tmp 那句话
+迁移后发现 #2/#4 落在 `tmp/`，而设置页写着「tmp 可随时删（不含已入库资产）」——
+**那句话对这个用户是假的**。已把历史遗留资产归档到 `media/legacy/`，现在这句话是真的了。
+（你今天清过一次 /tmp，只是恰好新目录里有副本才没出事。）
+
+### ② 根因已修：迁移现在是「文件 + 记录」一件事
+`POST /api/settings/data-dir` 搬完文件后、**写指针与重启之前**就地迁 `media_assets`，
+新进程起来读到的已经是正确路径。启动时也会再跑一次（幂等）兜底。
+
+### ③ 验收判据
+`gpu-runtime` 的 `datadir.assetsContained` 正是我用的同一条判据（路径都在 dataDir 内且文件存在），
+副本上跑完为 0 失败。
+
+### T-120 那两条**上一轮已交付**（我们的消息交叉了，详见上一条 inbox）
+1. `resolve.ts` 硬编码 id 已改为**按 `kind` 分派**；实测 `{id:'claude',kind:'anthropic'}` →
+   `AnthropicProvider` ✅；并加了**穷尽性断言**，我验证过新增 kind 会让构建变红
+   （`TS2322: Type '"native-mistral"' is not assignable to type 'never'`）。
+2. `/models` 与 `/settings` 的矛盾：**`/settings` 是对的**。真实数据上
+   `resolveConfiguredProvider()` → `OpenAiCompatibleProvider id=deepseek`，导图确实能跑；
+   `/models` 用的是本地模型库信号（`model.llm`），配云厂商时与能否跑导图无关。
+   daemon 权威已定在 `/api/daemon/status` 的 `llm` 字段，两处都读它。
+
+lint 干净；migrateAssets 4/4、migrateRecords 8/8、move 18/18、roundtrip 16/16；demo 只读未重启。

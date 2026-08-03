@@ -2,8 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type { PurposeBindings } from '@openmemo/shared';
 
-import { api } from '../../lib/api/client';
-import { qk } from '../../app/query';
+import { api } from '../../../lib/api/client';
+import { qk } from '../../../app/query';
 
 /**
  * 设置与密钥 —— **按 daemon 的真实契约重写**（T-041）。

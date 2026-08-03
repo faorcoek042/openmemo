@@ -50,6 +50,46 @@ function optionLabel(m: InstalledModel): string {
   return norm(name).includes(norm(q)) ? name : `${name} (${q})`;
 }
 
+/**
+ * 按 `groupId` 聚成族，保持后端给的顺序（后端已按推荐度排过，前端重排会把它推翻）。
+ * 组名取该族第一条的 `displayName` 去掉量化括号 —— manifest 没有单独的族显示名字段。
+ */
+function groupByFamily(models: InstalledModel[]): [string, InstalledModel[]][] {
+  const map = new Map<string, InstalledModel[]>();
+  for (const m of models) {
+    const key = m.groupId || m.id;
+    (map.get(key) ?? map.set(key, []).get(key)!).push(m);
+  }
+  return [...map.entries()].map(([key, list]) => {
+    const label = (list[0]?.displayName ?? key).replace(/\s*[（(][^）)]*[）)]\s*$/, '').trim();
+    return [label || key, list] as [string, InstalledModel[]];
+  });
+}
+
+
+/**
+ * 当前**真正激活**的 ASR 模型（`/api/models/installed` 的 `active.asr`）。
+ *
+ * 存在的理由是一次真实事故：录音页把重跑提示的模型名写死成 `large-v3-turbo`，
+ * 而实测机器上激活的是 `whisper-tiny-q5_1` —— **同一个页面的下拉里就显示着 Whisper tiny**，
+ * 提示条却在说另一个名字。i18n 用的是 `{{model}}` 占位，是调用点填了常量。
+ *
+ * 这类"**UI 说出一个它没核对过的具体名字**"和 `MINDMAP_SAVE_SUPPORTED`、
+ * `showModel={false}` 同族：**写的时候是对的，环境一变就成了谎**。
+ * 修法同样不是改个更准的常量，而是**让它没有常量可写** —— 名字只能从后端来。
+ */
+export function useActiveAsrModel(): { id: string | null; displayName: string | null } {
+  const { data } = useQuery({
+    queryKey: qk.models.installed,
+    queryFn: () => api<GetInstalledResponse>('models', '/models/installed'),
+    staleTime: 30_000,
+  });
+  const id = data?.active?.asr ?? null;
+  const m = arr(data?.models).find((x) => x.id === id);
+  // 拿不到就回 null，由调用点决定"说什么都不说" —— 绝不回退到某个猜的名字
+  return { id, displayName: m?.displayName ?? null };
+}
+
 export function AsrModelPicker({ className }: { className?: string }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -104,10 +144,25 @@ export function AsrModelPicker({ className }: { className?: string }) {
         className="h-8 rounded-md border border-line bg-surface-0 px-2 text-sm text-ink"
       >
         {activeId === null ? <option value="">{t('asr.notSelected')}</option> : null}
-        {models.map((m) => (
-          <option key={m.id} value={m.id}>
-            {optionLabel(m)}
-          </option>
+        {/*
+          按模型族分组（T-114）。目录里同一个族有 2～4 个量化档，装了几档就平铺几行 ——
+          `Whisper 基础模型 (Q5_1)` / `(Q8_0)` / `(F16)` 三行只差括号里那几个字符，
+          在一列等宽选项里靠"读到第几个字才不同"来区分是最慢的一种辨认方式。
+          `<optgroup>` 是原生分组，零依赖、读屏器天然支持。
+
+          ⚠️ 这只解决**已安装**列表。`/models` 目录页的 25 条平铺是另一件事：
+          memo.ac 的做法是「语言 × 速度」双轴筛选卡片，而我们的 manifest **缺速度轴**
+          （`quantTier` 是体积轴，tiny-f16 和 large-v3-f16 都落进 `full`，速度差几十倍）。
+          见 R-06 附录 B —— 该字段属 `model-mgmt`，我这一轮做不了。
+        */}
+        {groupByFamily(models).map(([family, list]) => (
+          <optgroup key={family} label={family}>
+            {list.map((m) => (
+              <option key={m.id} value={m.id}>
+                {optionLabel(m)}
+              </option>
+            ))}
+          </optgroup>
         ))}
       </select>
       {/* 说清楚这是全局切换，不是"本次任务用哪个" —— 免得用户以为可以按任务选 */}
