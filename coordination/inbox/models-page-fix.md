@@ -262,3 +262,159 @@ git add apps/web/src/features/models/ModelsPage.tsx \
 - `en.json` 里 **107 条新英文文案是我写的，未经母语校对**。
 - 原描述里「左侧栏是中文」一条**与实测不符**（英文档下侧栏也是英文，§2.2 有原始输出）。不影响结论，但我按实测写。
 - 星标那条：浏览器里只验到"星标页不再等于全部笔记"（库里 2 条都没星），正例由组件测试覆盖。**我没有为了截图去给用户的笔记加星。**
+
+---
+
+## [2026-08-03 21:05] T-129b DONE —— Manager 四条决策的回执
+
+### TL;DR（≤25 行）
+
+1. **决策 1（另外 4 处裸 `**`）已做完**，共接了 **5 个渲染点**（比报的 4 处多一个，见第 3 条）：
+   `RecorderPage`（正文，`<Emphasis>`）· `WordLevelBadge`（**`title=` 属性 → 新加的 `stripEmphasis()`**）· `ProxySettingsSection` · `DataLocationSection` ×2。
+2. **`secureContext.caps.microphone` 我没接线，因为它今天根本没有渲染点** —— 这不是我漏了，是另一个缺陷：`detectBlockedCapabilities()` 逐项算出了「你具体失去哪几项能力」（`lib/secure-context.ts:60-86`），而 `ReadinessBanner.tsx:103` **只用了 `blocked.length`** 去填一个计数文案，**每项的具体说明连同 `caps.*` 四条词条一起被丢掉了**。已写进登记表并标 `[]`，另立一条给 Manager（§B.4）。
+3. **决策 3（`/runtime` i18n）已做完**，过程中又抓出**两处报告里没有的**：① `RuntimePage` 底部那句 RTF 提示是**硬编码 JSX**，标记直接写在源码里（`是**本机实测值**` / `**估算**`）—— 连词条都不是，页面上一直显示着星号；② `BackendChip`（共享组件）的五个状态词全是硬编码中文，**是我新写的测试把它抓出来的**，不是我读出来的。
+4. **🔎 抓到第三类混语言，也修了**：`/runtime` 英文档跑完 i18n 后仍残留 13 个汉字，逐个追下去全是 **`pack.displayNameZh`** —— 而 `vendor/manifests/backends.json` 里 **15 个包每一个都同时有 `displayName` 与 `displayNameZh`**，`packages/shared` 的类型里两个字段也都在。**数据齐全、契约齐全，只是渲染时写死取了中文那一份。** 新增 `lib/format/localized.ts`（`localizedName` / `localizedDescription`，缺哪份就回落到另一份），接到 `ModelCard` / `ModelDetailPage` / `ModelsPage` / `BackendPackCard`。**修完英文档 `/runtime` 汉字数 13 → 0。**
+5. **决策 4 已照办**：`ModelsPage.tsx` 那行类型谓词旁加了 `⏳ 待 job-events 契约落地后可换` 的注释，并写明「**这不是最终形态**，别照着它在别处复制一份」。**没改它本身。**
+6. **决策 2（`?starred=1` 端点）我没动**，注释里那句「真修法在端点」按你说的保留了。
+7. **反向验证 6 条，全部真的变红，输出见 §A。** 其中第 4 条**第一次没红** —— 我写的 `/\bEmphasis\b/.test(src)` 匹到了自己旁边那句注释里的「走 `<Emphasis>`」。**一条断言被自己的文档骗过去了**，比不写更坏。已改成断 **import 语句**，再验证真红。
+8. **测试新增 12 条**（T-129b 组），组件测试 **150 条 / 148 通过 / 0 失败 / 2 skipped**；单测 27/27。
+9. **`test-host` 的文本输入缺陷不影响我**：本轮全部 25 条新增用例**没有一条用到 `type()` / `fireEvent.change` / 受控文本框**（只用 `click()` + `querySelector` + 源码断言）。已逐条 grep 确认。**我没有碰 `host.tsx`。**
+10. **验证**：`tsc -b`（全仓）**0** · `eslint`（我碰过的全部路径）**0** · 真浏览器两语言 × 4 页复核，**零裸 `**`**。
+11. **纪律**：没构建 `apps/web/dist`（21:00:11 那次不是我，我一次都没跑过 `vite build`）· `:10000` 只读，非 GET 只有 `POST /api/auth/session` 握手 · `/root/data-memo` 零写入 · vite dev 用完按 pid kill，端口已释放。
+12. **仍需 Manager**：见 §B（三条，都是别人地界的发现，我只报不动）。
+
+---
+
+## §A 反向验证（6 条，真实输出）
+
+**① `/runtime` 骨架改回硬编码中文**
+```
+ℹ tests 150  ℹ pass 147  ℹ fail 1
+✖ ★ 英文界面下 /runtime 不许渲染出硬编码中文 (13.73658ms)
+  AssertionError: 英文界面上出现了硬编码中文 → ["运行时与加速后端Detect hardware → recomm"]
+```
+
+**② `/runtime` 的 RTF 提示撤掉 `<Emphasis>`**
+```
+✖ ★ RTF 那句提示不许把裸 ** 吐给用户（它原本是硬编码在 JSX 里的）
+  AssertionError: 页面上仍能看到裸的 ** → …提示：自检里的 RTF 是**本机实测值**；模型卡片上的“预计耗时”是由它外推的**估算**，外推系数尚未标定，仅供参考。
+```
+
+**③ `title=` 撤掉 `stripEmphasis`**
+```
+✖ ★ title= 这类属性位置只能脱标记：tooltip 里绝不许出现星号
+  AssertionError: tooltip 里出现了裸标记：代价：**没有逐字时间戳**（字幕高亮到句、不到字）、…
+```
+
+**④ 撤掉 `DataLocationSection` 的两处 `<Emphasis>`** —— **第一次没红**：
+```
+ℹ tests 150  ℹ pass 148  ℹ fail 0        ← ⚠️ 假绿
+```
+成因：我的断言是 `/\bEmphasis\b/.test(src)`，而我在改动旁留了一句注释写着"走 `<Emphasis>`"，
+**正则匹到了注释**。改成断 import 之后重跑：
+```
+ℹ tests 150  ℹ pass 147  ℹ fail 1
+✖ ★ 登记的每个渲染点都必须真的 import Emphasis / stripEmphasis（不是注释里提一句）
+  AssertionError: features/settings/DataLocationSection.tsx 渲染了带 ** 的 settings.dataDir.needRestart，却没有 import Emphasis/stripEmphasis —— 用户会看到裸星号
+```
+> 这条和上一轮那个 OOM 是同一类：**验证手段自己有缺陷时，你拿到的绿灯是假的。**
+> 判据改成"import 在不在"之后就没有这个面了 —— 未使用的 import 过不了 eslint，所以 import 在 ⇒ 它一定被用了。
+
+**⑤ `BackendChip` 的状态词改回写死中文**
+```
+✖ ★ 英文界面下 /runtime 不许渲染出硬编码中文
+  AssertionError: → ["eration backend packsCPU使用中whisper.cpp CPURecomme"]
+```
+
+**⑥ 撤掉 `localizedName` / `localizedDescription`**（第三类混语言）
+```
+✖ ★ 英文界面下 /models 不许渲染出硬编码中文（两个 Tab 都查）
+  AssertionError: → ["chine can runRecommended假装的转写模型一段用来占位的中文描述Details"]
+```
+> 为了让这条真的能红，我把两个页面的桩数据改成了**目录的真实形状**
+> （`displayName` + `displayNameZh` 成对、`descriptionEn` + `descriptionZh` 成对）。
+> 原来的桩全是 ASCII，测的其实只有"我们自己的文案"，**测不到目录数据这一层**。
+
+---
+
+## §B 需要 Manager（三条，都是别人地界）
+
+1. **`secureContext.caps.*` 四条词条 + `featureKey` 全部算了但没渲染。**
+   `detectBlockedCapabilities()` 返回的是"具体哪几项能力被挡住"（麦克风 / Web Locks / sessionStorage / 剪贴板），
+   `ReadinessBanner` 只取了 `.length`。用户看到「有 N 项能力不可用」，**看不到是哪 N 项**，
+   而其中「麦克风」是唯一功能级不可用的一项。这是**信息算出来了又丢掉**，不是文案问题。归 `ReadinessBanner` 的 owner。
+2. **`/settings` 英文档仍有 81 个汉字，来源是 daemon 而不是前端**：
+   `apps/daemon/src/http/rest/storage.ts:38` 的 `purposeZh`（「笔记、转写稿、标签、导图（SQLite 主库）」等 5 条）
+   —— 这个字段**只有 Zh 一份，没有英文对应**，与 `displayName/displayNameZh` 成对的做法不一致。
+   前端无法修（没有可回落的英文）。要么 daemon 补 `purpose`，要么把这几条搬进前端词条。**归 daemon owner**（`storage-fix` 刚在改那个文件）。
+   （另：`/settings` 里的「中文」是语言切换器的选项名，**那是对的**，语言名本来就该用它自己的语言写。）
+3. **`features/components/components/ComponentCard.tsx` 也用 `displayNameZh`**，同第 4 类。
+   本轮没碰 —— 那个文件此刻有别的 agent 在改（`git status` 里是 M）。`localizedName()` 已是公共 helper，接上是一行。
+
+---
+
+## §C 本轮新增/修改文件（**请勿 `git add -A`**）
+
+```
+git add apps/web/src/features/runtime/RuntimePage.tsx \
+        apps/web/src/features/runtime/components/BackendPackCard.tsx \
+        apps/web/src/features/runtime/components/HardwareCard.tsx \
+        apps/web/src/components/common/BackendChip.tsx \
+        apps/web/src/components/common/Emphasis.tsx \
+        apps/web/src/lib/format/localized.ts \
+        apps/web/src/features/models/ModelsPage.tsx \
+        apps/web/src/features/models/ModelDetailPage.tsx \
+        apps/web/src/features/models/components/ModelCard.tsx \
+        apps/web/src/features/recorder/RecorderPage.tsx \
+        apps/web/src/features/transcript/WordLevelBadge.tsx \
+        apps/web/src/features/settings/DataLocationSection.tsx \
+        apps/web/src/features/settings/ProxySettingsSection.tsx \
+        apps/web/src/app/i18n/locales/zh-CN.json \
+        apps/web/src/app/i18n/locales/en.json \
+        apps/web/src/test/components.test.tsx \
+        coordination/inbox/models-page-fix.md
+```
+
+新增词条 `runtime.*` **54 条 × 2 语言**（两份键名已断言对称，全库 693 = 693）。
+
+⚠️ **`apps/web/src/test/components.test.tsx` 与 `apps/web/src/features/settings/DataLocationSection.tsx` 本轮仍是共享文件**
+（`test-host` 在同一个测试目录里加 `host.test.tsx` / `__mut*.test.tsx`，`storage-fix` 之前改过 DataLocationSection）。
+我复读过合并后的文件，共存无覆盖。
+
+`git status` 里的 daemon / packages / vendor / `features/components` / `features/tasks` / `JobToaster` / `test/host*.tsx` / `test/__mut*.tsx` 改动**不是我的**。
+
+---
+
+## §D 验证
+
+| 项 | 结果 |
+|---|---|
+| `tsc -b`（全仓） | **0** |
+| `eslint`（我碰过的全部路径） | **0** |
+| `apps/web` 单测 | **27 / 27** |
+| `apps/web` 组件测试 | **150 条 / 148 通过 / 0 失败 / 2 skipped**（本轮新增 12 条，累计 25 条） |
+
+⚠️ 全仓 `eslint apps/web/src` 此刻有 1 error + 3 warning，**全在 `test/host.test.tsx`、`test/__mut*.test.tsx`、`test/host.tsx`** —— `test-host` 在途，不是我的。我对自己碰过的路径单独跑过，rc=0。
+
+**真浏览器复核**（自建 `vite dev --port 5203` 代理 `:10000`，全程只 GET）：
+
+| 页面 | zh-CN 汉字 | en 汉字 | 裸 `**` |
+|---|---|---|---|
+| `/runtime` | 312 | **0** ✅（修 `displayNameZh` 前是 13） | 无 |
+| `/models?tab=llm` | 478 | 17（= 4 个服务商中文品牌名，属 `llm-catalog.ts`，未动） | 无 |
+| `/record` | 206 | **0** | 无 |
+| `/settings` | 387 | 81（daemon 的 `purposeZh` + 语言切换器的「中文」，见 §B.2） | 无 |
+
+截图：`/tmp/models-page-fix/shots2/{zh-CN,en}-{runtime,models-llm,recorder,settings}.png`
+反向验证日志：`/tmp/models-page-fix/rev2-*.log`
+
+---
+
+## §E 诚实声明
+
+- §A 的 6 段输出**是实际复制的**，包括第 ④ 条那次 **`fail 0` 的假绿** —— 我把它写出来而不是直接贴改好之后的红。
+- **`/runtime` 的 `runtime.*` 54 条英文文案是我写的，未经母语校对。**
+- **`secureContext.caps.microphone` 我没接线**，理由在 §B.1。**这一条 Manager 说的"4 处"里我只做了 3 处** —— 第 4 处不是"没做"，是"今天没有地方可做"，我没有为了凑数去顺手实现一个别人的功能。
+- 第三类混语言（`displayNameZh`）**不在 Manager 的四条决策里**，是我在浏览器复核时发现英文档还剩 13 个汉字才追出来的。它在 `/models` 与 `/runtime` 的范围内，所以我做了；`ComponentCard` 同型但在别人手上，我只报（§B.3）。
+- **没有碰 `host.tsx`**（`test-host` 在改，且你说要先打招呼）。本轮新增用例**零文本输入依赖**，已逐条 grep 确认，不受那个缺陷影响。
+- 未 commit。未派生 subagent。未跑 `vite build`。未跑本地 whisper 转写。

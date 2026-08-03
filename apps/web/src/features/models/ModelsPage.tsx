@@ -15,6 +15,7 @@ import { EmptyState } from '../../components/common/EmptyState';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { StatusChip } from '../../components/common/StatusChip';
 import { formatBytes } from '../../lib/format/bytes';
+import { localizedName } from '../../lib/format/localized';
 import {
   useGcMutation,
   useJobCancelMutation,
@@ -144,6 +145,11 @@ export default function ModelsPage() {
    * 而 TS 不会顺着普通 `filter` 收窄联合类型 —— 不写谓词，`DownloadRow`
    * 就会收到一个可能没有 `totalBytes` / `completedBytes` 的 job。
    * 这里判据仍是运行时那句 `kind === 'model'`，谓词只是把它告诉类型系统。
+   *
+   * ⏳ **待 `job-events` 的 job 契约落地后可换**：若那边统一出
+   * `isDownloadJob()` 作为收窄入口，这里应改用它而不是各写一遍谓词
+   * （替换由 Manager 协调，见 `coordination/inbox/models-page-fix.md` §8.4）。
+   * **这不是最终形态**，别照着它在别处复制一份。
    */
   const activeJobs = useMemo(
     () =>
@@ -157,14 +163,17 @@ export default function ModelsPage() {
     // unsupported 不禁用按钮，改为二次确认（R-04 §9.6 第 7 条）
     if (v.fitness.tier === 'unsupported') {
       const ok = window.confirm(
-        t('models.confirmUnsupported', { name: v.displayNameZh, reason: v.fitness.reasonZh }),
+        t('models.confirmUnsupported', {
+          name: localizedName(locale, v),
+          reason: v.fitness.reasonZh,
+        }),
       );
       if (!ok) return;
     }
     if (v.license.requiresAcceptance || v.license.gated) {
       const ok = window.confirm(
         t('models.confirmLicense', {
-          name: v.displayNameZh,
+          name: localizedName(locale, v),
           license: v.license.id,
           url: v.license.url,
         }),

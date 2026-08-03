@@ -216,6 +216,68 @@
       "upstream": "Upstream project and license"
     }
   },
+  "runtime": {
+    "title": "Runtime and acceleration backends",
+    "intro": "Detect hardware → recommend a backend → download and install → self-test → show status, all from the browser.",
+    "selfTestFailedTitle": "An acceleration backend failed its self-test",
+    "selfTestFailedDetail": "The card below spells out why. You can retry the self-test, or switch to the CPU backend (always available).",
+    "probing": "Probing hardware (devices are really enumerated, this can take a few seconds)…",
+    "packsTitle": "Acceleration backend packs",
+    "staleCatalog": "offline catalog",
+    "noPacks": "The catalog has no acceleration backend pack for this machine yet. The CPU backend is always available.",
+    "inapplicableSummary": "{{n}} pack(s) not applicable to this machine",
+    "inapplicableHint": "(built for other systems / architectures; listed so you know what the catalog holds)",
+    "rtfNote": "Note: the RTF in a self-test is **measured on this machine**; the “estimated time” on model cards is **extrapolated** from it, and the extrapolation factor is not calibrated yet — treat it as indicative.",
+    "installTarget": "Backend packs install onto the volume holding the models directory ({{free}} free).",
+    "confirmRemove": "Uninstall this acceleration backend? You can download it again later.",
+    "pack": {
+      "setActive": "Use this backend",
+      "selfTest": "Self-test",
+      "uninstall": "Uninstall",
+      "loadBearingTitle": "The CPU backend is the fallback. Removing it crashes the inference process whenever no other backend is usable, so it cannot be uninstalled.",
+      "pendingCiTitle": "This component is built and its digest verified, but no download URL has been published yet (CI has to publish it first).",
+      "pendingCi": "Not published yet",
+      "installing": "Starting…",
+      "install": "Install {{size}}",
+      "recommended": "Recommended",
+      "loadBearing": "Fallback backend",
+      "requiresDriver": "Requires driver: ",
+      "selfTestPassed": "Self-test passed",
+      "devicesFound": "{{n}} device(s) enumerated",
+      "rtfMeasured": " · measured RTF {{rtf}} (about {{minutes}} min per hour of audio)",
+      "selfTestProvenance": "Run at {{at}} with the bundled test clip, real inference",
+      "selfTestFailed": "Self-test failed",
+      "unknownReason": "reason unknown",
+      "retrySelfTest": "Retry self-test",
+      "switchToCpu": "Switch to CPU",
+      "loadBearingNote": "The CPU backend is the never-failing fallback and cannot be uninstalled"
+    },
+    "chip": {
+      "active": "In use",
+      "installed": "Installed",
+      "available": "Installable",
+      "notInstalled": "Unavailable",
+      "failed": "Self-test failed"
+    },
+    "hw": {
+      "title": "Your hardware",
+      "gpu": "GPU",
+      "ram": "Memory",
+      "cpu": "Processor",
+      "modelsDir": "Models directory",
+      "unknown": "unknown",
+      "vram": " · VRAM {{total}} ({{free}} free)",
+      "unifiedMemory": "Unified memory (VRAM shared with system RAM)",
+      "noGpu": "No usable GPU detected",
+      "ramAvailable": " · {{free}} available",
+      "cores": " · {{physical}} cores / {{logical}} threads",
+      "noAvx2": " · no AVX2 support",
+      "diskFree": "{{free}} free of {{total}}",
+      "backendsLabel": "Backends:",
+      "whyUnavailable": "Why these backends are unavailable ({{n}})",
+      "detectedAt": "Probed at {{at}} · {{platform}}/{{arch}} {{version}}"
+    }
+  },
   "detail": {
     "tabs": {
       "summary": "Summary",

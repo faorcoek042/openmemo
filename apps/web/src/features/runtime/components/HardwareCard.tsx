@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { ChevronRight, Cpu, HardDrive, MemoryStick, MonitorCog } from 'lucide-react';
 import type { HardwareInfo } from '@openmemo/shared';
 import { BackendChip } from '../../../components/common/BackendChip';
@@ -13,6 +14,7 @@ import { formatBytes } from '../../../lib/format/bytes';
  */
 
 export function HardwareCard({ hw, locale }: { hw: HardwareInfo; locale: string }) {
+  const { t } = useTranslation();
   const gpu = hw.selectedGpuIndex != null ? hw.gpus[hw.selectedGpuIndex] : null;
   const modelsDisk = hw.disks.find((d) => d.pathFor === 'models_root') ?? hw.disks[0];
 
@@ -21,69 +23,79 @@ export function HardwareCard({ hw, locale }: { hw: HardwareInfo; locale: string 
       className="rounded-lg border border-line bg-surface-1 p-4"
       data-testid="runtime-hardware-card"
     >
-      <h2 className="text-sm font-medium text-ink">你的硬件</h2>
+      <h2 className="text-sm font-medium text-ink">{t('runtime.hw.title')}</h2>
 
       <dl className="mt-3 grid grid-cols-1 gap-3 text-xs sm:grid-cols-2">
-        <Row icon={<MonitorCog className="size-4" />} label="显卡">
+        <Row icon={<MonitorCog className="size-4" />} label={t('runtime.hw.gpu')}>
           {gpu ? (
             <>
               <span className="text-ink">{gpu.name}</span>
               <span className="text-ink-secondary">
-                {' '}
-                · 显存{' '}
-                {gpu.vramTotalMB != null ? formatBytes(gpu.vramTotalMB * 1e6, locale) : '未知'}
-                （可用{' '}
-                {gpu.vramFreeMB != null ? formatBytes(gpu.vramFreeMB * 1e6, locale) : '未知'}）
+                {t('runtime.hw.vram', {
+                  total:
+                    gpu.vramTotalMB != null
+                      ? formatBytes(gpu.vramTotalMB * 1e6, locale)
+                      : t('runtime.hw.unknown'),
+                  free:
+                    gpu.vramFreeMB != null
+                      ? formatBytes(gpu.vramFreeMB * 1e6, locale)
+                      : t('runtime.hw.unknown'),
+                })}
               </span>
             </>
           ) : hw.unifiedMemory ? (
-            <span className="text-ink">统一内存架构（显存与内存共享）</span>
+            <span className="text-ink">{t('runtime.hw.unifiedMemory')}</span>
           ) : (
-            <span className="text-ink-secondary">未检测到可用 GPU</span>
+            <span className="text-ink-secondary">{t('runtime.hw.noGpu')}</span>
           )}
         </Row>
 
-        <Row icon={<MemoryStick className="size-4" />} label="内存">
+        <Row icon={<MemoryStick className="size-4" />} label={t('runtime.hw.ram')}>
           <span className="text-ink">{formatBytes(hw.ram.totalMB * 1e6, locale)}</span>
           {hw.ram.availableMB != null ? (
             <span className="text-ink-secondary">
-              {' '}
-              · 可用 {formatBytes(hw.ram.availableMB * 1e6, locale)}
+              {t('runtime.hw.ramAvailable', {
+                free: formatBytes(hw.ram.availableMB * 1e6, locale),
+              })}
             </span>
           ) : null}
         </Row>
 
-        <Row icon={<Cpu className="size-4" />} label="处理器">
+        <Row icon={<Cpu className="size-4" />} label={t('runtime.hw.cpu')}>
           <span className="text-ink">{hw.cpu.brand}</span>
           <span className="text-ink-secondary">
-            {' '}
-            · {hw.cpu.physicalCores} 核 / {hw.cpu.logicalCores} 线程
+            {t('runtime.hw.cores', {
+              physical: hw.cpu.physicalCores,
+              logical: hw.cpu.logicalCores,
+            })}
           </span>
           {!hw.cpu.features.includes('avx2') ? (
             // AVX2 缺失是硬约束：预编译的 CPU 后端普遍要求它
-            <span className="text-critical"> · 不支持 AVX2</span>
+            <span className="text-critical">{t('runtime.hw.noAvx2')}</span>
           ) : null}
         </Row>
 
-        <Row icon={<HardDrive className="size-4" />} label="模型目录">
+        <Row icon={<HardDrive className="size-4" />} label={t('runtime.hw.modelsDir')}>
           {modelsDisk ? (
             <>
               <span className="block truncate font-mono text-[11px] text-ink">
                 {modelsDisk.path}
               </span>
               <span className="text-ink-secondary">
-                剩余 {formatBytes(modelsDisk.freeMB * 1e6, locale)} /{' '}
-                {formatBytes(modelsDisk.totalMB * 1e6, locale)}
+                {t('runtime.hw.diskFree', {
+                  free: formatBytes(modelsDisk.freeMB * 1e6, locale),
+                  total: formatBytes(modelsDisk.totalMB * 1e6, locale),
+                })}
               </span>
             </>
           ) : (
-            <span className="text-ink-secondary">未知</span>
+            <span className="text-ink-secondary">{t('runtime.hw.unknown')}</span>
           )}
         </Row>
       </dl>
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-line pt-3">
-        <span className="text-xs text-ink-secondary">后端：</span>
+        <span className="text-xs text-ink-secondary">{t('runtime.hw.backendsLabel')}</span>
         {hw.backends.map((b) => (
           <BackendChip
             key={b.id}
@@ -118,7 +130,9 @@ export function HardwareCard({ hw, locale }: { hw: HardwareInfo; locale: string 
         <details className="group mt-2">
           <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[11px] text-ink-muted hover:text-ink-secondary">
             <ChevronRight className="size-3 transition-transform group-open:rotate-90" aria-hidden />
-            为什么这些后端不可用（{hw.backends.filter((b) => !b.available && b.unavailableReason).length} 项）
+            {t('runtime.hw.whyUnavailable', {
+              n: hw.backends.filter((b) => !b.available && b.unavailableReason).length,
+            })}
           </summary>
           <ul className="mt-1.5 space-y-0.5 border-l-2 border-line pl-2.5">
             {hw.backends
@@ -133,8 +147,12 @@ export function HardwareCard({ hw, locale }: { hw: HardwareInfo; locale: string 
       ) : null}
 
       <p className="mt-2 text-[11px] text-ink-muted">
-        探测于 {new Date(hw.detectedAt).toLocaleString(locale)} ·{' '}
-        {hw.os.platform}/{hw.os.arch} {hw.os.version}
+        {t('runtime.hw.detectedAt', {
+          at: new Date(hw.detectedAt).toLocaleString(locale),
+          platform: hw.os.platform,
+          arch: hw.os.arch,
+          version: hw.os.version,
+        })}
       </p>
     </section>
   );

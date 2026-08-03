@@ -8,6 +8,7 @@ import type { GetStorageResponse } from '@openmemo/shared';
 import { api, ApiError } from '../../lib/api/client';
 import { qk } from '../../app/query';
 import { Button } from '../../components/common/Button';
+import { Emphasis } from '../../components/common/Emphasis';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { formatBytes } from '../../lib/format/bytes';
 import { copyText } from '../../lib/secure-context';
@@ -254,7 +255,8 @@ export function DataLocationSection() {
           ) : null}
         </dl>
       ) : null}
-      <p className="mb-4 text-xs text-ink-muted">{t('settings.dataDir.sizeScopeNote')}</p>
+      {/* 带 `**模型目录**` —— 划定统计范围的那个词，必须看得出来（T-129b） */}
+      <Emphasis className="mb-4 block text-xs text-ink-muted" text={t('settings.dataDir.sizeScopeNote')} />
 
       {/*
         ── 目录清单：日志 / 临时文件 / 数据库 这三类此前完全没露过面 ──
@@ -323,8 +325,9 @@ export function DataLocationSection() {
             </Button>
           </div>
 
+          {/* 带 `**重启后生效**` —— 用户最需要看见的半句，走 <Emphasis>（T-129b） */}
           {changeDir.isSuccess ? (
-            <p className="text-xs text-good">{t('settings.dataDir.needRestart')}</p>
+            <Emphasis className="block text-xs text-good" text={t('settings.dataDir.needRestart')} />
           ) : null}
 
           {/*

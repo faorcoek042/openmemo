@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { Type } from 'lucide-react';
 
+import { stripEmphasis } from '../../components/common/Emphasis';
 import type { TranscriptSegmentDto } from '../../lib/events/types';
 
 /**
@@ -22,7 +23,12 @@ export function WordLevelBadge({ segments }: { segments: readonly TranscriptSegm
   return (
     <span
       className="inline-flex items-center gap-1 text-xs font-normal text-ink-muted"
-      title={t('recorder.paraformerTradeoff')}
+      /*
+       * 同一条词条在 `RecorderPage` 里是正文（走 `<Emphasis>` 加粗），
+       * 在这里是 `title=` **属性** —— 属性只收字符串，塞不进 `<strong>`。
+       * 所以这里只脱标记：宁可少一个加粗，也不要 tooltip 里蹦出两颗星号。
+       */
+      title={stripEmphasis(t('recorder.paraformerTradeoff'))}
     >
       <Type className="size-3" aria-hidden />
       {t('recorder.wordLevelUnavailable')}

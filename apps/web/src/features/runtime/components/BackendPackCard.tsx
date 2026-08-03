@@ -1,9 +1,11 @@
+import { useTranslation } from 'react-i18next';
 import { Download, Lock, Play, Trash2 } from 'lucide-react';
 import type { BackendSelfTest, GetBackendCatalogResponse } from '@openmemo/shared';
 import { Button } from '../../../components/common/Button';
 import { StatusChip } from '../../../components/common/StatusChip';
 import { BackendChip } from '../../../components/common/BackendChip';
 import { formatBytes } from '../../../lib/format/bytes';
+import { localizedName } from '../../../lib/format/localized';
 
 type Pack = GetBackendCatalogResponse['packs'][number];
 
@@ -37,6 +39,7 @@ export function BackendPackCard({
   onSelect,
   onSelfTest,
 }: BackendPackCardProps) {
+  const { t } = useTranslation();
   // 承重墙：内置 CPU 档不允许卸载
   const isLoadBearing = pack.tier === 'builtin' || pack.backend === 'cpu';
   /**
@@ -51,27 +54,25 @@ export function BackendPackCard({
     <>
       {!isActive ? (
         <Button size="sm" variant="secondary" onClick={() => onSelect(pack)}>
-          设为当前后端
+          {t('runtime.pack.setActive')}
         </Button>
       ) : null}
       <Button size="sm" variant="ghost" onClick={() => onSelfTest(pack.id)}>
         <Play className="size-3.5" aria-hidden />
-        自检
+        {t('runtime.pack.selfTest')}
       </Button>
       <Button
         size="sm"
         variant="ghost"
         disabled={isLoadBearing}
         title={
-          isLoadBearing
-            ? 'CPU 后端是兜底，删除后在没有其它可用后端时会导致推理进程崩溃，因此不允许卸载'
-            : undefined
+          isLoadBearing ? t('runtime.pack.loadBearingTitle') : undefined
         }
         onClick={() => onRemove(pack.id)}
         data-testid={`backend-remove-${pack.id}`}
       >
         <Trash2 className="size-3.5" aria-hidden />
-        卸载
+        {t('runtime.pack.uninstall')}
       </Button>
     </>
   ) : (
@@ -79,16 +80,16 @@ export function BackendPackCard({
       size="sm"
       variant={pack.recommended ? 'primary' : 'secondary'}
       disabled={installing || !pack.applicable || pendingCi}
-      title={pendingCi ? '该组件已构建并核实过摘要，但尚未发布下载地址（需要先跑 CI 发布）' : undefined}
+      title={pendingCi ? t('runtime.pack.pendingCiTitle') : undefined}
       onClick={() => onInstall(pack.id)}
       data-testid={`backend-install-${pack.id}`}
     >
       <Download className="size-3.5" aria-hidden />
       {pendingCi
-        ? '尚未发布，暂不可安装'
+        ? t('runtime.pack.pendingCi')
         : installing
-          ? '正在开始…'
-          : `安装 ${formatBytes(pack.totalSizeBytes, locale)}`}
+          ? t('runtime.pack.installing')
+          : t('runtime.pack.install', { size: formatBytes(pack.totalSizeBytes, locale) })}
     </Button>
   );
 
@@ -125,10 +126,14 @@ export function BackendPackCard({
                         : 'not-installed'
               }
             />
-            <h3 className="text-sm font-medium text-ink">{pack.displayNameZh}</h3>
-            {pack.recommended ? <StatusChip tone="good" label="推荐" /> : null}
+            <h3 className="text-sm font-medium text-ink">{localizedName(locale, pack)}</h3>
+            {pack.recommended ? <StatusChip tone="good" label={t('runtime.pack.recommended')} /> : null}
             {isLoadBearing ? (
-              <StatusChip tone="neutral" label="兜底后端" icon={<Lock className="size-3.5" />} />
+              <StatusChip
+                tone="neutral"
+                label={t('runtime.pack.loadBearing')}
+                icon={<Lock className="size-3.5" />}
+              />
             ) : null}
           </div>
           <p className="mt-1 text-xs text-ink-secondary">
@@ -140,7 +145,7 @@ export function BackendPackCard({
           ) : null}
           {pack.requiresDriver ? (
             <p className="mt-1 text-[11px] text-ink-muted">
-              需要驱动：
+              {t('runtime.pack.requiresDriver')}
               {[
                 pack.requiresDriver.nvidiaDriver && `NVIDIA ${pack.requiresDriver.nvidiaDriver}+`,
                 pack.requiresDriver.vulkanApi && `Vulkan ${pack.requiresDriver.vulkanApi}+`,
@@ -161,33 +166,36 @@ export function BackendPackCard({
         <div className="mt-3 rounded border border-line bg-surface-0 p-2.5 text-xs">
           {selfTest.passed ? (
             <>
-              <StatusChip tone="good" label="自检通过" />
+              <StatusChip tone="good" label={t('runtime.pack.selfTestPassed')} />
               <p className="mt-1 text-ink-secondary">
-                枚举到 {selfTest.devicesFound} 个设备
-                {selfTest.rtf != null ? (
-                  <>
-                    {' '}
-                    · 实测 RTF {selfTest.rtf.toFixed(2)}（1 小时音频约{' '}
-                    {Math.round(selfTest.rtf * 60)} 分钟）
-                  </>
-                ) : null}
+                {t('runtime.pack.devicesFound', { n: selfTest.devicesFound })}
+                {selfTest.rtf != null
+                  ? t('runtime.pack.rtfMeasured', {
+                      rtf: selfTest.rtf.toFixed(2),
+                      minutes: Math.round(selfTest.rtf * 60),
+                    })
+                  : ''}
               </p>
               <p className="mt-0.5 text-[11px] text-ink-muted">
-                于 {new Date(selfTest.ranAt).toLocaleString(locale)} 用内嵌测试音频真实推理得出
+                {t('runtime.pack.selfTestProvenance', {
+                  at: new Date(selfTest.ranAt).toLocaleString(locale),
+                })}
               </p>
             </>
           ) : (
             <>
-              <StatusChip tone="critical" label="自检失败" />
+              <StatusChip tone="critical" label={t('runtime.pack.selfTestFailed')} />
               {/* 透传服务端已知的具体原因（架构不兼容 / 驱动过旧 / 二进制损坏），
                   绝不用笼统的"出错了"把已知信息藏回黑箱 */}
-              <p className="mt-1 text-critical">{selfTest.errorMessage ?? '未知原因'}</p>
+              <p className="mt-1 text-critical">
+                {selfTest.errorMessage ?? t('runtime.pack.unknownReason')}
+              </p>
               <div className="mt-2 flex gap-2">
                 <Button size="sm" variant="secondary" onClick={() => onSelfTest(pack.id)}>
-                  重试自检
+                  {t('runtime.pack.retrySelfTest')}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => onSelect(pack)}>
-                  改用 CPU
+                  {t('runtime.pack.switchToCpu')}
                 </Button>
               </div>
             </>
@@ -197,7 +205,7 @@ export function BackendPackCard({
 
       {isLoadBearing && pack.installed ? (
         <p className="mt-1.5 text-right text-[11px] text-ink-muted">
-          CPU 后端是永不失败的兜底，不可卸载
+          {t('runtime.pack.loadBearingNote')}
         </p>
       ) : null}
     </article>

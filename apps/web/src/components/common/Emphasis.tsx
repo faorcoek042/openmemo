@@ -39,6 +39,23 @@ export function Emphasis({ text, className }: { text: string; className?: string
   );
 }
 
+/**
+ * 只去掉标记、不做强调 —— 给**渲染不了元素的位置**用。
+ *
+ * 典型是 `title=` / `aria-label=` / `placeholder=` 这类**属性**：它们只收字符串，
+ * 塞不进 `<strong>`。实例：`WordLevelBadge` 的 tooltip 用的是
+ * `recorder.paraformerTradeoff`，而同一条词条在 `RecorderPage` 里是正文
+ * —— **同一条文案，两个位置能力不同**，所以需要两个出口而不是把词条改掉。
+ *
+ * ⚠️ 这是**降级**不是等价：属性位置里强调信息确实丢了。
+ * 但"tooltip 里出现两颗星号"比"少一个加粗"更糟，且属性没有别的办法。
+ */
+export function stripEmphasis(text: string): string {
+  return splitEmphasis(text)
+    .map((p) => p.text)
+    .join('');
+}
+
 /** 导出以便直接测规则（比断言渲染结果稳）。 */
 export function splitEmphasis(text: string): { text: string; strong: boolean }[] {
   const out: { text: string; strong: boolean }[] = [];

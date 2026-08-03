@@ -7,6 +7,7 @@ import { Button } from '../../../components/common/Button';
 import { StatusChip } from '../../../components/common/StatusChip';
 import { FitBadge, FitEta, FitGpuLayers } from '../../../components/common/FitBadge';
 import { formatBytes } from '../../../lib/format/bytes';
+import { localizedDescription, localizedName } from '../../../lib/format/localized';
 import { QuantSelector } from './QuantSelector';
 
 /**
@@ -65,7 +66,7 @@ export function ModelCard({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <FitBadge fitness={variant.fitness} />
-            <h3 className="text-sm font-medium text-ink">{group.displayNameZh}</h3>
+            <h3 className="text-sm font-medium text-ink">{localizedName(locale, group)}</h3>
             {isDefault ? (
               <StatusChip tone="neutral" label={t('models.card.officialDefault')} icon={<Star className="size-3.5" />} />
             ) : null}
@@ -75,7 +76,7 @@ export function ModelCard({
               <StatusChip tone="good" label={t('models.card.inUse')} icon={<Zap className="size-3.5" />} />
             ) : null}
           </div>
-          <p className="mt-1 text-xs text-ink-secondary">{group.descriptionZh}</p>
+          <p className="mt-1 text-xs text-ink-secondary">{localizedDescription(locale, group)}</p>
         </div>
         <Link
           to={`/models/${encodeURIComponent(variant.id)}`}

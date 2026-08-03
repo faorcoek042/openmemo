@@ -216,6 +216,68 @@
       "upstream": "查看上游与许可证"
     }
   },
+  "runtime": {
+    "title": "运行时与加速后端",
+    "intro": "检测硬件 → 推荐后端 → 下载安装 → 自检 → 显示状态，全部在网页里完成。",
+    "selfTestFailedTitle": "有加速后端自检未通过",
+    "selfTestFailedDetail": "下面的卡片里写了具体原因。你可以重试自检，或改用 CPU 后端（永远可用）。",
+    "probing": "正在探测硬件（会真正枚举设备，可能需要几秒）…",
+    "packsTitle": "加速后端包",
+    "staleCatalog": "离线目录",
+    "noPacks": "目录里还没有适用于这台机器的加速后端包。CPU 后端始终可用。",
+    "inapplicableSummary": "不适用于这台机器的 {{n}} 个包",
+    "inapplicableHint": "（面向其它系统 / 架构，列在这里只是让你知道目录里有）",
+    "rtfNote": "提示：自检里的 RTF 是**本机实测值**；模型卡片上的“预计耗时”是由它外推的**估算**，外推系数尚未标定，仅供参考。",
+    "installTarget": "后端包会安装到模型目录所在卷（剩余 {{free}}）。",
+    "confirmRemove": "卸载这个加速后端？之后可以重新下载。",
+    "pack": {
+      "setActive": "设为当前后端",
+      "selfTest": "自检",
+      "uninstall": "卸载",
+      "loadBearingTitle": "CPU 后端是兜底，删除后在没有其它可用后端时会导致推理进程崩溃，因此不允许卸载",
+      "pendingCiTitle": "该组件已构建并核实过摘要，但尚未发布下载地址（需要先跑 CI 发布）",
+      "pendingCi": "尚未发布，暂不可安装",
+      "installing": "正在开始…",
+      "install": "安装 {{size}}",
+      "recommended": "推荐",
+      "loadBearing": "兜底后端",
+      "requiresDriver": "需要驱动：",
+      "selfTestPassed": "自检通过",
+      "devicesFound": "枚举到 {{n}} 个设备",
+      "rtfMeasured": " · 实测 RTF {{rtf}}（1 小时音频约 {{minutes}} 分钟）",
+      "selfTestProvenance": "于 {{at}} 用内嵌测试音频真实推理得出",
+      "selfTestFailed": "自检失败",
+      "unknownReason": "未知原因",
+      "retrySelfTest": "重试自检",
+      "switchToCpu": "改用 CPU",
+      "loadBearingNote": "CPU 后端是永不失败的兜底，不可卸载"
+    },
+    "chip": {
+      "active": "使用中",
+      "installed": "已安装",
+      "available": "可安装",
+      "notInstalled": "不可用",
+      "failed": "自检失败"
+    },
+    "hw": {
+      "title": "你的硬件",
+      "gpu": "显卡",
+      "ram": "内存",
+      "cpu": "处理器",
+      "modelsDir": "模型目录",
+      "unknown": "未知",
+      "vram": " · 显存 {{total}}（可用 {{free}}）",
+      "unifiedMemory": "统一内存架构（显存与内存共享）",
+      "noGpu": "未检测到可用 GPU",
+      "ramAvailable": " · 可用 {{free}}",
+      "cores": " · {{physical}} 核 / {{logical}} 线程",
+      "noAvx2": " · 不支持 AVX2",
+      "diskFree": "剩余 {{free}} / {{total}}",
+      "backendsLabel": "后端：",
+      "whyUnavailable": "为什么这些后端不可用（{{n}} 项）",
+      "detectedAt": "探测于 {{at}} · {{platform}}/{{arch}} {{version}}"
+    }
+  },
   "detail": {
     "tabs": {
       "summary": "摘要",

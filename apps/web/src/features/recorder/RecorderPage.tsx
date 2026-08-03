@@ -6,6 +6,7 @@ import { Mic, MicOff, RefreshCw, Square } from 'lucide-react';
 import type { AsrEngineId } from '@openmemo/shared';
 
 import { Button } from '../../components/common/Button';
+import { Emphasis } from '../../components/common/Emphasis';
 import { Banner } from '../../components/common/Banner';
 import { ProgressMeter } from '../../components/common/ProgressMeter';
 import { AsrEngineStatus, useAsrEngines } from '../../components/common/AsrEngineStatus';
@@ -415,9 +416,11 @@ export default function RecorderPage() {
           </p>
           {/* ★ 代价必须明示：Paraformer 快但没有逐字时间戳，
               否则用户会在 F5 里发现"字幕不能逐字高亮"而不知道为什么。 */}
-          <p className="text-ink-muted">
-            {rerunEngine === 'paraformer' ? t('recorder.paraformerTradeoff') : t('recorder.turboTradeoff')}
-          </p>
+          {/* 词条里带 `**没有逐字时间戳**` —— 走 <Emphasis>，别把裸星号吐给用户（T-129b） */}
+          <Emphasis
+            className="block text-ink-muted"
+            text={rerunEngine === 'paraformer' ? t('recorder.paraformerTradeoff') : t('recorder.turboTradeoff')}
+          />
         </div>
       ) : null}
 

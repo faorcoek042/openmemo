@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { CheckCircle2, CircleDashed, Cpu, Download, XCircle, Zap } from 'lucide-react';
 import type { Backend } from '@openmemo/shared';
 import { cn } from '../../lib/utils';
@@ -34,31 +35,35 @@ const BACKEND_LABEL: Record<Backend, string> = {
   cpu: 'CPU',
 };
 
-const STATE_STYLE: Record<BackendChipState, { text: string; label: string; icon: React.ReactNode }> =
+/** ⚠️ 表里存**词条 key** 不存文案：这是模块级常量，存文案的话切语言不会重算它（T-129b）。 */
+const STATE_STYLE: Record<
+  BackendChipState,
+  { text: string; labelKey: string; icon: React.ReactNode }
+> =
   {
     active: {
       text: 'text-good',
-      label: '使用中',
+      labelKey: 'runtime.chip.active',
       icon: <Zap className="size-3.5 shrink-0" aria-hidden />,
     },
     installed: {
       text: 'text-good',
-      label: '已安装',
+      labelKey: 'runtime.chip.installed',
       icon: <CheckCircle2 className="size-3.5 shrink-0" aria-hidden />,
     },
     available: {
       text: 'text-ink-secondary',
-      label: '可安装',
+      labelKey: 'runtime.chip.available',
       icon: <Download className="size-3.5 shrink-0" aria-hidden />,
     },
     'not-installed': {
       text: 'text-ink-muted',
-      label: '不可用',
+      labelKey: 'runtime.chip.notInstalled',
       icon: <CircleDashed className="size-3.5 shrink-0" aria-hidden />,
     },
     failed: {
       text: 'text-critical',
-      label: '自检失败',
+      labelKey: 'runtime.chip.failed',
       icon: <XCircle className="size-3.5 shrink-0" aria-hidden />,
     },
   };
@@ -70,6 +75,7 @@ export interface BackendChipProps {
 }
 
 export function BackendChip({ backend, state, className }: BackendChipProps) {
+  const { t } = useTranslation();
   const s = STATE_STYLE[state];
   return (
     <span
@@ -82,7 +88,7 @@ export function BackendChip({ backend, state, className }: BackendChipProps) {
     >
       {backend === 'cpu' ? <Cpu className="size-3.5 shrink-0" aria-hidden /> : s.icon}
       <span className="text-ink">{BACKEND_LABEL[backend]}</span>
-      <span className={cn('text-[11px]', s.text)}>{s.label}</span>
+      <span className={cn('text-[11px]', s.text)}>{t(s.labelKey)}</span>
     </span>
   );
 }

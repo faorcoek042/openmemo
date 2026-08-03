@@ -4,6 +4,7 @@ import { ChevronRight, Cpu } from 'lucide-react';
 import type { GetBackendCatalogResponse } from '@openmemo/shared';
 
 import { Banner } from '../../components/common/Banner';
+import { Emphasis } from '../../components/common/Emphasis';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { formatBytes } from '../../lib/format/bytes';
 import {
@@ -28,7 +29,7 @@ import { BackendPackCard } from './components/BackendPackCard';
  * 「模型下载卡 0%」因此成为它 FAQ 里最高频的问题。
  */
 export default function RuntimePage() {
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const locale = i18n.language;
 
   const hardware = useHardwareQuery();
@@ -96,7 +97,7 @@ export default function RuntimePage() {
         installing={install.isPending && install.variables === p.id}
         onInstall={(id) => void install.mutateAsync(id)}
         onRemove={(id) => {
-          if (window.confirm('卸载这个加速后端？之后可以重新下载。')) {
+          if (window.confirm(t('runtime.confirmRemove'))) {
             void remove.mutateAsync(id);
           }
         }}
@@ -109,17 +110,15 @@ export default function RuntimePage() {
   return (
     <div className="mx-auto w-full max-w-4xl space-y-4 p-4" data-testid="runtime-page">
       <header>
-        <h1 className="text-lg font-semibold text-ink">运行时与加速后端</h1>
-        <p className="mt-0.5 text-xs text-ink-secondary">
-          检测硬件 → 推荐后端 → 下载安装 → 自检 → 显示状态，全部在网页里完成。
-        </p>
+        <h1 className="text-lg font-semibold text-ink">{t('runtime.title')}</h1>
+        <p className="mt-0.5 text-xs text-ink-secondary">{t('runtime.intro')}</p>
       </header>
 
       {anyFailed ? (
         <Banner
           tone="critical"
-          title="有加速后端自检未通过"
-          detail="下面的卡片里写了具体原因。你可以重试自检，或改用 CPU 后端（永远可用）。"
+          title={t('runtime.selfTestFailedTitle')}
+          detail={t('runtime.selfTestFailedDetail')}
         />
       ) : null}
 
@@ -127,15 +126,15 @@ export default function RuntimePage() {
         <ErrorBlock error={hardware.error} onRetry={() => void hardware.refetch()} />
       ) : null}
       {hardware.isLoading ? (
-        <p className="text-xs text-ink-muted">正在探测硬件（会真正枚举设备，可能需要几秒）…</p>
+        <p className="text-xs text-ink-muted">{t('runtime.probing')}</p>
       ) : null}
       {hw ? <HardwareCard hw={hw} locale={locale} /> : null}
 
       <section className="space-y-3">
         <div className="flex items-baseline justify-between">
-          <h2 className="text-sm font-medium text-ink">加速后端包</h2>
+          <h2 className="text-sm font-medium text-ink">{t('runtime.packsTitle')}</h2>
           {catalog.data?.stale ? (
-            <span className="text-xs text-ink-muted">离线目录</span>
+            <span className="text-xs text-ink-muted">{t('runtime.staleCatalog')}</span>
           ) : null}
         </div>
 
@@ -146,7 +145,7 @@ export default function RuntimePage() {
         {sorted.length === 0 && !catalog.isLoading ? (
           <p className="rounded-lg border border-line bg-surface-1 p-4 text-xs text-ink-secondary">
             <Cpu className="mr-1 inline size-3.5" aria-hidden />
-            目录里还没有适用于这台机器的加速后端包。CPU 后端始终可用。
+            {t('runtime.noPacks')}
           </p>
         ) : null}
 
@@ -157,23 +156,31 @@ export default function RuntimePage() {
           <details className="group rounded-lg border border-line bg-surface-1">
             <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-xs text-ink-secondary hover:text-ink">
               <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" aria-hidden />
-              不适用于这台机器的 {inapplicable.length} 个包
-              <span className="text-ink-muted">
-                （面向其它系统 / 架构，列在这里只是让你知道目录里有）
-              </span>
+              {t('runtime.inapplicableSummary', { n: inapplicable.length })}
+              <span className="text-ink-muted">{t('runtime.inapplicableHint')}</span>
             </summary>
             <div className="space-y-3 border-t border-line p-3">{inapplicable.map(renderPack)}</div>
           </details>
         ) : null}
       </section>
 
-      <p className="text-[11px] text-ink-muted">
-        提示：自检里的 RTF 是**本机实测值**；模型卡片上的"预计耗时"是由它外推的**估算**，
-        外推系数尚未标定，仅供参考。
-        {hw?.disks[0]
-          ? ` 后端包会安装到模型目录所在卷（剩余 ${formatBytes(hw.disks[0].freeMB * 1e6, locale)}）。`
-          : ''}
-      </p>
+      {/*
+        这句原来是**硬编码**的，且里面就带着 `**本机实测值**` / `**估算**` 两处裸标记
+        —— 页面上真的显示星号。搬进词条之后照样带标记，靠 <Emphasis> 渲染（T-129b）。
+        「实测」与「估算」正是这句话要区分的两件事，删掉标记等于把重点抹平。
+      */}
+      <Emphasis
+        className="block text-[11px] text-ink-muted"
+        text={
+          t('runtime.rtfNote') +
+          (hw?.disks[0]
+            ? ' ' +
+              t('runtime.installTarget', {
+                free: formatBytes(hw.disks[0].freeMB * 1e6, locale),
+              })
+            : '')
+        }
+      />
     </div>
   );
 }

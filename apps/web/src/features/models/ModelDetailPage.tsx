@@ -9,6 +9,7 @@ import { StatusChip } from '../../components/common/StatusChip';
 import { FitBadge, FitEta } from '../../components/common/FitBadge';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { formatBytes } from '../../lib/format/bytes';
+import { localizedDescription, localizedName } from '../../lib/format/localized';
 import {
   useModelBenchmarkMutation,
   useModelVerifyMutation,
@@ -75,11 +76,11 @@ export default function ModelDetailPage() {
 
       <header>
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-lg font-semibold text-ink">{group.displayNameZh}</h1>
+          <h1 className="text-lg font-semibold text-ink">{localizedName(locale, group)}</h1>
           <StatusChip tone="neutral" label={variant.quantization.toUpperCase()} />
           {installedRec ? <StatusChip tone="good" label={t('models.detail.installed')} /> : null}
         </div>
-        <p className="mt-1 text-sm text-ink-secondary">{group.descriptionZh}</p>
+        <p className="mt-1 text-sm text-ink-secondary">{localizedDescription(locale, group)}</p>
       </header>
 
       <section className="grid grid-cols-2 gap-3 rounded-lg border border-line bg-surface-1 p-4 text-xs sm:grid-cols-3">

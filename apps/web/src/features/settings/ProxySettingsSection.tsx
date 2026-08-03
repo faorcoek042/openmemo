@@ -16,6 +16,7 @@ import {
 import { api, ApiError } from '../../lib/api/client';
 import { arr } from '../../lib/safe';
 import { Button } from '../../components/common/Button';
+import { Emphasis } from '../../components/common/Emphasis';
 import { Banner } from '../../components/common/Banner';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { StatusChip } from '../../components/common/StatusChip';
@@ -261,7 +262,8 @@ export function ProxySettingsSection() {
       {/* 测试用的是**已保存**的配置。有未保存改动时必须说，否则用户会对着新地址读旧结果 */}
       {dirty ? (
         <p className="mt-2 text-xs text-warning" data-testid="proxy-unsaved">
-          {t('settings.proxy.testUsesSaved')}
+          {/* 带 `**已保存**` —— 这个词恰恰是这句话的全部重点，不能删星号了事（T-129b） */}
+          <Emphasis text={t('settings.proxy.testUsesSaved')} />
         </p>
       ) : null}
 

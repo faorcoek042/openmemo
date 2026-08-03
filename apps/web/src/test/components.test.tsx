@@ -25,7 +25,7 @@ import {
 } from '../components/common/llm/llm-catalog';
 import { useSaveMindmapMutation } from '../features/mindmap/api';
 import { applyCaption, RECORD_SAMPLE_RATE } from '../features/recorder/asrStream';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 /**
  * 直接读源码断言"某段代码已被删除" —— 有些保证只能在源码层面表达。
@@ -55,6 +55,7 @@ import { WordLevelBadge } from '../features/transcript';
 import { WordHighlight, findActiveWord } from '../features/transcript/WordHighlight';
 import { DEFAULT_PROXY_CONFIG, LLM_SETTING_KEYS } from '@openmemo/shared';
 import { ProxySettingsSection } from '../features/settings/ProxySettingsSection';
+import ComponentsPage from '../features/components/ComponentsPage';
 import { getPositionMs, setPositionMs, subscribePosition } from '../lib/stores/player.store';
 import { useConnectionStore } from '../lib/stores/connection.store';
 import { PurposeBindingsSection, mergePurposeBinding } from '../components/common/llm/PurposeBindingsSection';
@@ -72,6 +73,7 @@ import enLocale from '../app/i18n/locales/en.json';
 import i18nInstance from '../app/i18n';
 import ModelsPage from '../features/models/ModelsPage';
 import NotesListPage from '../features/notes/NotesListPage';
+import RuntimePage from '../features/runtime/RuntimePage';
 import { splitEmphasis } from '../components/common/Emphasis';
 import { ConnectivitySummary } from '../components/common/MockNotice';
 import { useSurfaceStore, SURFACES } from '../lib/api/surfaces';
@@ -2440,8 +2442,11 @@ function stubModelsPage(opts: { withCatalog?: boolean } = {}) {
             {
               groupId: 'asr/dummy',
               role: 'asr',
-              displayNameZh: 'Dummy ASR',
-              descriptionZh: 'a stub group',
+              // ★ 真实形状：目录里 displayName/displayNameZh、descriptionEn/descriptionZh 成对
+              displayName: 'Dummy ASR',
+              displayNameZh: '假装的转写模型',
+              descriptionZh: '一段用来占位的中文描述',
+              descriptionEn: 'a stub group',
               tags: [],
               variants: [variant],
             },
@@ -2841,5 +2846,396 @@ describe('T-129 同族：显示条件不许被别人的条件包住', () => {
       assert.equal(text(r.container), '', '连不上 daemon 时这一格应当整块不出现');
       r.unmount();
     });
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════════
+ * T-132 组件页：未安装的组件必须装得上，而且要发到 daemon 真的在监听的那个地址
+ * ════════════════════════════════════════════════════════════════════════════ */
+describe('T-132 组件与来源页', () => {
+  const YTDLP = {
+    id: 'ytdlp-linux-x64',
+    displayName: 'yt-dlp site extractor (Linux x64)',
+    displayNameZh: 'yt-dlp 站点解析器（Linux x64）',
+    category: 'media-tool',
+    pinnedVersion: '2026.07.04',
+    installedVersion: null,
+    latestVersion: null,
+    updateAvailable: false,
+    checkError: null,
+    checkedAt: null,
+    provenance: {
+      repoUrl: 'https://github.com/yt-dlp/yt-dlp',
+      releaseUrl: 'https://github.com/yt-dlp/yt-dlp/releases/tag/2026.07.04',
+      license: 'GPL-3.0-or-later',
+      licenseUrl: 'https://www.gnu.org/licenses/gpl-3.0.html',
+    },
+    upstream: { kind: 'github-release' as const, repo: 'yt-dlp/yt-dlp' },
+    sizeBytes: 39924536,
+    sha256: '6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae',
+    sha256Provenance: null,
+    rollbackVersion: null,
+  };
+  /** npm 依赖：清单里如实写着没有制品，所以它**不该**有安装按钮。 */
+  const BUNDLED = {
+    ...YTDLP,
+    id: 'sherpa-onnx-node',
+    displayNameZh: 'sherpa-onnx（流式 ASR / VAD）',
+    category: 'backend-pack',
+    pinnedVersion: 'v1.13.4',
+    sizeBytes: 0,
+    sha256: 'n/a',
+  };
+
+  /**
+   * jsdom 的 `window.confirm` 是"未实现"存根：调用会往 stderr 打一条 Not implemented
+   * 并返回 `undefined`（假值）—— 于是被测代码在 `if (!ok) return;` 处静默退出，
+   * **一个请求都不会发**，测试看到的是"什么都没发生"而不是"发错了地址"。
+   * 必须显式替换，否则这条用例测的是 jsdom 的空实现，不是我们的代码。
+   */
+  function stubConfirm(answer: boolean): () => void {
+    const w = window as unknown as { confirm: (m?: string) => boolean };
+    const prev = w.confirm;
+    w.confirm = () => answer;
+    return () => {
+      w.confirm = prev;
+    };
+  }
+
+  test('★ 未安装的组件有「安装」按钮 —— 以前这里只有"未安装"三个字，没有任何可点的东西', async () => {
+    stubApi({ '/components': { components: [YTDLP], online: false, checkedAt: null } });
+    const r = await render(<ComponentsPage />);
+    await r.flush();
+    const btn = r.container.querySelector('[data-testid="component-install-ytdlp-linux-x64"]');
+    assert.ok(btn, `未安装的组件没有安装按钮，用户在网页上装不了它：${text(r.container)}`);
+    assert.ok((btn.textContent ?? '').includes('2026.07.04'), '按钮要说清装的是哪个版本');
+    r.unmount();
+  });
+
+  /*
+   * ★★ 这条钉的是**发到哪个地址** ★★
+   *
+   * daemon 的路由是 `POST /api/components/:id/update`；前端此前发的是
+   * `POST /api/components/update` + `{ id }` —— 少一段路径，实测 404
+   * （`{"code":"NOT_FOUND","message":"no route for POST /api/components/update"}`）。
+   * 清单拉得到、卡片渲染正常，只有真按下去才会失败，所以一直没人发现。
+   * 断言必须钉"我们发出的 path"，不能只钉"发生了一次请求"。
+   */
+  test('★ 点安装发到 /components/:id/update（旧的 /components/update 是 404）', async () => {
+    const restore = stubConfirm(true);
+    try {
+      const stub = stubApi({
+        '/components': { components: [YTDLP], online: false, checkedAt: null },
+        'POST /components/ytdlp-linux-x64/update': {
+          ok: true,
+          id: 'ytdlp-linux-x64',
+          toVersion: '2026.07.04',
+          jobId: 'job-1',
+          deduplicated: false,
+        },
+      });
+      const r = await render(<ComponentsPage />);
+      await r.flush();
+      await click(r.container.querySelector('[data-testid="component-install-ytdlp-linux-x64"]'));
+      await r.flush();
+
+      const posts = stub.calls.filter((c) => c.method === 'POST');
+      assert.deepEqual(
+        posts.map((c) => c.path),
+        ['/components/ytdlp-linux-x64/update'],
+        `安装请求发错地址了：${posts.map((c) => `${c.method} ${c.path}`).join(', ')}`,
+      );
+      r.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  test('★ 随应用一起装的 npm 组件不画安装按钮（画了也只会拿到 409，比没有更糟）', async () => {
+    stubApi({ '/components': { components: [BUNDLED], online: false, checkedAt: null } });
+    const r = await render(<ComponentsPage />);
+    await r.flush();
+    assert.equal(
+      r.container.querySelector('[data-testid="component-install-sherpa-onnx-node"]'),
+      null,
+      '没有下载制品的组件不该有安装按钮',
+    );
+    assert.ok(
+      r.container.querySelector('[data-testid="component-bundled-sherpa-onnx-node"]'),
+      '要说清它为什么没有按钮，而不是留一片空白',
+    );
+    r.unmount();
+  });
+});
+
+/* ─────────────── T-129b：裸 `**` 的其余实例（Manager 决策 1） ─────────────── */
+
+/**
+ * 一张**登记表**，不是白名单。
+ *
+ * 键 = locale 里仍带 `**…**` 的词条；值 = 它被渲染的源文件（空数组 = 目前**没有**渲染点）。
+ * 三条断言合起来的意思是：**写了强调标记，就必须有人负责渲染它**。
+ *
+ * 为什么用登记表而不是"全仓不许再出现 `**`"：
+ * 强调本身是有用的（「明文」「重启后生效」「模型目录」这些词就该跳出来），
+ * 禁掉标记等于把这些词降回正文。真正要挡的是**"写了没人渲染"**这个组合。
+ */
+const EMPHASIS_REGISTRY: Record<string, string[]> = {
+  'settings.llmIntro': ['components/common/llm/LlmSettingsSection.tsx'],
+  'models.detail.benchNone': ['features/models/ModelDetailPage.tsx'],
+  'recorder.paraformerTradeoff': [
+    'features/recorder/RecorderPage.tsx',
+    'features/transcript/WordLevelBadge.tsx', // title= 属性 → stripEmphasis
+  ],
+  'settings.dataDir.needRestart': ['features/settings/DataLocationSection.tsx'],
+  'settings.dataDir.sizeScopeNote': ['features/settings/DataLocationSection.tsx'],
+  'settings.proxy.testUsesSaved': ['features/settings/ProxySettingsSection.tsx'],
+  /*
+   * T-129b：这句原本是 `RuntimePage.tsx` 里**硬编码**的 JSX 文本，标记就写在源码里
+   * —— 也就是说它连"词条"都不是，页面上一直显示着两颗星号。
+   * 搬进词条时**保留了标记**并接上 <Emphasis>：「本机实测值」与「估算」正是这句话
+   * 要区分的两件事，删掉标记等于把它想说的重点抹平。
+   */
+  'runtime.rtfNote': ['features/runtime/RuntimePage.tsx'],
+  /*
+   * ⚠️ 这一条**没有渲染点**，而且不是我漏了 —— 是另一个缺陷：
+   * `detectBlockedCapabilities()` 逐项算出了"你具体失去哪几项能力"
+   * （`lib/secure-context.ts:60-86`，microphone / webLocks / storage / clipboard），
+   * 但 `ReadinessBanner.tsx:103` 只用了 `blocked.length` 去填一个计数文案，
+   * **每一项的具体说明连同 `caps.*` 四条词条一起被丢掉了**。
+   * 所以这里的 `**` 今天用户看不见 —— 但只要有人把它接出来，就会看见。
+   * 已报 Manager（inbox §8）。**不接线也不删词条**：删了等于替那个功能做决定。
+   */
+  'secureContext.caps.microphone': [],
+};
+
+describe('T-129b 写了 `**` 就必须有人渲染它', () => {
+  const flat = (o: unknown, p = ''): [string, string][] =>
+    typeof o === 'object' && o !== null
+      ? Object.entries(o as Record<string, unknown>).flatMap(([k, v]) => flat(v, p ? `${p}.${k}` : k))
+      : [[p, String(o)]];
+
+  /*
+   * ⚠️ 判据是**"每条带标记的都登记了"**（子集），不是"两份 locale 逐字相同"。
+   * 实测两份并不对称，而且那是对的：
+   *   - `settings.proxy.testUsesSaved` 中文用 `**已保存**`，英文用全大写 `SAVED`
+   *     —— 英文排版本来就用大写做强调，硬塞 `**` 反而不地道；
+   *   - `recorder.paraformerTradeoff` 英文干脆没做强调。
+   * 要求逐字相同会把这条断言变成"逼别人按中文的排版习惯写英文"，那不是它该管的事。
+   * 它要挡的只有一件：**有标记、却没人渲染。**
+   */
+  test('★ 任何带 `**` 的词条都必须在登记表里（新写一条就得在这里表态）', () => {
+    for (const [name, loc] of [
+      ['zh-CN', zhLocale],
+      ['en', enLocale],
+    ] as const) {
+      const withMarkers = flat(loc as unknown)
+        .filter(([, v]) => /\*\*[^*]+\*\*/.test(v))
+        .map(([k]) => k);
+      const registered = new Set(Object.keys(EMPHASIS_REGISTRY));
+      const orphans = withMarkers.filter((k) => !registered.has(k));
+      assert.deepEqual(
+        orphans,
+        [],
+        `${name}.json 里这些词条带 ** 却没登记渲染点 —— 用户会看到裸星号。登记到 EMPHASIS_REGISTRY 里并接上 <Emphasis>`,
+      );
+    }
+  });
+
+  test('★ 登记表里不许留过期条目（词条已经不带 ** 了就该删掉登记）', () => {
+    const marked = new Set(
+      [...flat(zhLocale as unknown), ...flat(enLocale as unknown)]
+        .filter(([, v]) => /\*\*[^*]+\*\*/.test(v))
+        .map(([k]) => k),
+    );
+    const stale = Object.keys(EMPHASIS_REGISTRY).filter((k) => !marked.has(k));
+    assert.deepEqual(stale, [], '登记表里这些条目在两份 locale 里都已经不带 ** 了');
+  });
+
+  /*
+   * ⚠️ 判据是 **import 语句**，不是"源码里出现过 Emphasis 这个词"。
+   *
+   * 第一版我写的是 `/\bEmphasis\b/.test(src)` —— 反向验证时把 DataLocationSection 的
+   * import 和两处 `<Emphasis>` 全撤掉，**它照样绿**：因为我在旁边留的那句注释里
+   * 写着"走 <Emphasis>"，正则匹到了注释。
+   * **一条断言可以被自己的文档骗过去**，这比没写更坏。
+   * 改成断 import 之后：import 在 ⇒ 它一定被用了（未使用的 import 过不了 eslint）。
+   */
+  test('★ 登记的每个渲染点都必须真的 import Emphasis / stripEmphasis（不是注释里提一句）', async () => {
+    for (const [key, files] of Object.entries(EMPHASIS_REGISTRY)) {
+      for (const f of files) {
+        const src = await readSource(f);
+        assert.ok(
+          /^import \{[^}]*\b(Emphasis|stripEmphasis)\b[^}]*\} from '[^']*\/Emphasis';$/m.test(src),
+          `${f} 渲染了带 ** 的 ${key}，却没有 import Emphasis/stripEmphasis —— 用户会看到裸星号`,
+        );
+      }
+    }
+  });
+
+  test('★ 登记为"无渲染点"的词条，必须真的没有任何地方引用（否则就是漏网的裸标记）', () => {
+    const unrendered = Object.entries(EMPHASIS_REGISTRY)
+      .filter(([, files]) => files.length === 0)
+      .map(([k]) => k);
+    assert.ok(unrendered.length > 0, '登记表结构变了？');
+
+    const root = `${process.cwd()}/src`;
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+        const p = `${dir}/${e.name}`;
+        if (e.isDirectory()) walk(p);
+        else if (/\.tsx?$/.test(e.name) && !p.includes('/test/')) files.push(p);
+      }
+    };
+    walk(root);
+
+    for (const key of unrendered) {
+      const hits = files.filter((p) => readFileSync(p, 'utf8').includes(`'${key}'`));
+      assert.deepEqual(
+        hits,
+        [],
+        `${key} 在登记表里写着"没有渲染点"，但 ${hits.join(', ')} 引用了它 —— 要么接上 Emphasis，要么更新登记表`,
+      );
+    }
+  });
+
+  test('★ title= 这类属性位置只能脱标记：tooltip 里绝不许出现星号', async () => {
+    const r = await render(
+      <WordLevelBadge segments={[{ seq: 0, startMs: 0, endMs: 1000, text: 'x', words: [] } as never]} />,
+    );
+    const badge = r.container.querySelector('span[title]');
+    assert.ok(badge, '徽标没渲染出来');
+    const title = badge!.getAttribute('title') ?? '';
+    assert.ok(title.length > 0, 'tooltip 是空的');
+    assert.ok(!title.includes('**'), `tooltip 里出现了裸标记：${title}`);
+    // 脱标记是**降级**不是删内容：那句话本身必须还在
+    assert.ok(title.includes('没有逐字时间戳'), `文案被吃掉了：${title}`);
+    r.unmount();
+  });
+});
+
+/* ─────────────── T-129b：/runtime 同样不许中英混排（Manager 决策 3） ─────────────── */
+
+/**
+ * 和 `/models` 是同一个缺陷的另一半（`ui-polish` 在 T-101 里报的 T-022）：
+ * 整页硬编码中文 + 侧栏走 i18n → 英文用户看到"英文外壳 + 中文正文"，
+ * 中文用户在非中文浏览器上看到的是反过来的那一半。
+ */
+describe('T-129b /runtime 不许中英混排', () => {
+  const CJK = /[一-鿿]/;
+
+  function stubRuntimePage() {
+    return stubApi({
+      '/hardware': {
+        hardware: {
+          detectedAt: '2026-08-03T00:00:00.000Z',
+          os: { platform: 'linux', arch: 'x64', version: '6.1' },
+          cpu: { brand: 'Stub CPU', physicalCores: 4, logicalCores: 8, features: ['avx2'] },
+          ram: { totalMB: 16000, availableMB: 8000 },
+          gpus: [],
+          selectedGpuIndex: null,
+          unifiedMemory: false,
+          disks: [{ path: '/tmp/stub', pathFor: 'models_root', freeMB: 10000, totalMB: 50000 }],
+          backends: [
+            { id: 'cpu', installed: true, available: true, unavailableReason: null },
+            { id: 'cuda', installed: false, available: false, unavailableReason: 'probe not found' },
+          ],
+          selectedBackend: 'cpu',
+        },
+      },
+      '/backends/catalog': {
+        stale: false,
+        packs: [
+          {
+            id: 'whispercpp-cpu-linux-x64',
+            backend: 'cpu',
+            engine: 'whisper.cpp',
+            engineVersion: '1.7.0',
+            os: 'linux',
+            arch: 'x64',
+            tier: 'builtin',
+            // ★ 真实形状：manifest 里 15 个包**每个都同时有**这两个字段
+            displayName: 'whisper.cpp — CPU (Linux x64)',
+            displayNameZh: 'whisper.cpp · CPU 后端（Linux x64）',
+            totalSizeBytes: 9_400_000,
+            installed: true,
+            applicable: true,
+            recommended: true,
+            priority: 10,
+            requiresDriver: null,
+            inapplicableReason: null,
+          },
+          {
+            id: 'whispercpp-cuda-win-x64',
+            backend: 'cuda',
+            engine: 'whisper.cpp',
+            engineVersion: '1.7.0',
+            os: 'win32',
+            arch: 'x64',
+            tier: 'optional',
+            displayName: 'whisper.cpp — CUDA (Windows x64)',
+            displayNameZh: 'whisper.cpp · CUDA 后端（Windows x64）',
+            totalSizeBytes: 120_000_000,
+            installed: false,
+            applicable: false,
+            recommended: false,
+            priority: 5,
+            requiresDriver: { nvidiaDriver: '535' },
+            inapplicableReason: 'built for win32/x64',
+          },
+        ],
+      },
+      '/backends/installed': {
+        selectedBackend: 'cpu',
+        packs: [
+          {
+            id: 'whispercpp-cpu-linux-x64',
+            selfTest: {
+              passed: true,
+              devicesFound: 1,
+              rtf: 0.38,
+              ranAt: '2026-08-03T00:00:00.000Z',
+              errorMessage: null,
+            },
+          },
+        ],
+      },
+    });
+  }
+
+  test('★ 英文界面下 /runtime 不许渲染出硬编码中文', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      stubRuntimePage();
+      const r = await render(<RuntimePage />, { route: '/runtime' });
+      await r.flush();
+      const shown = text(r.container);
+      assert.ok(shown.length > 0, '页面应渲染出内容');
+      const bad = shown.match(new RegExp(`.{0,24}${CJK.source}.{0,24}`, 'g'));
+      assert.equal(
+        bad,
+        null,
+        `英文界面上出现了硬编码中文 → ${JSON.stringify(bad?.slice(0, 4))}`,
+      );
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  test('★ RTF 那句提示不许把裸 ** 吐给用户（它原本是硬编码在 JSX 里的）', async () => {
+    stubRuntimePage();
+    const r = await render(<RuntimePage />, { route: '/runtime' });
+    await r.flush();
+    const shown = text(r.container);
+    assert.ok(!shown.includes('**'), `页面上仍能看到裸的 ** → ${shown.slice(-260)}`);
+    const strong = [...r.container.querySelectorAll('strong')].map((e) => e.textContent);
+    assert.ok(
+      strong.includes('本机实测值') && strong.includes('估算'),
+      `「实测」与「估算」应渲染成 <strong>，实际 strong = ${JSON.stringify(strong)}`,
+    );
+    r.unmount();
   });
 });
