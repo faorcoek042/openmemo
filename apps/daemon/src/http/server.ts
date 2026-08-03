@@ -48,7 +48,7 @@ export interface ServerDeps {
    * 只能靠换一个进程。让 daemon 自己重启，用户点一下按钮即可 ——
    * 要求 2.1「用户不碰命令行」在字面上仍然成立。
    */
-  readonly requestRestart?: (reason: string) => void;
+  readonly requestRestart?: (reason: string, opts?: { dataDir?: string }) => void;
   /**
    * 业务路由模块。按顺序尝试，第一个返回 true 的即处理完毕。
    * 放在鉴权与 CSRF **之后**、404 **之前**。

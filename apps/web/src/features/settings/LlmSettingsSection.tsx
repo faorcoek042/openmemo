@@ -13,7 +13,6 @@ import {
   buildLlmSettingsPatch,
   readActiveProviderId,
   readDefaultModelId,
-  readProviders,
   secretKeyFor,
   useDeleteSecretMutation,
   usePatchSettingsMutation,
@@ -23,6 +22,7 @@ import {
   type LlmProviderConfig,
 } from './api';
 import { cn } from '../../lib/utils';
+import { useLlmConfig } from './llm-catalog';
 
 /**
  * B-3：LLM provider 配置 —— **解开 F4 的那一把钥匙**（T-041 接真后端）。
@@ -37,13 +37,6 @@ import { cn } from '../../lib/utils';
  * 3. **Key 永不回显明文** —— 服务端的 `SecretStore` 接口**刻意不含 `get()`**，只回掩码。
  */
 
-const PRESETS: LlmProviderConfig[] = [
-  { id: 'openai', kind: 'openai-compatible', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', isLocal: false },
-  { id: 'anthropic', kind: 'anthropic', label: 'Anthropic', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-4-20250514', isLocal: false },
-  { id: 'deepseek', kind: 'openai-compatible', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', isLocal: false },
-  { id: 'ollama', kind: 'openai-compatible', label: 'Ollama（本地）', baseUrl: 'http://127.0.0.1:11434/v1', model: 'qwen3:8b', isLocal: true },
-  { id: 'lmstudio', kind: 'openai-compatible', label: 'LM Studio（本地）', baseUrl: 'http://127.0.0.1:1234/v1', model: 'local-model', isLocal: true },
-];
 
 export function LlmSettingsSection() {
   const { t, i18n } = useTranslation();
@@ -56,7 +49,7 @@ export function LlmSettingsSection() {
   /** 保存成功的时刻。用于给出**明确的成功信号**，而不是靠"表单关了"让用户自己猜。 */
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
-  const providers = readProviders(settings.data);
+  const { providers, modelsFor, availablePresets } = useLlmConfig();
   const activeId = readActiveProviderId(settings.data);
   /*
    * daemon 解析 provider 需要 `llm.defaultProviderId` **和** `llm.defaultModelId` 都有值，
@@ -211,6 +204,7 @@ export function LlmSettingsSection() {
                 <ProviderForm
                   provider={p}
                   hasKey={hasKey(p.id)}
+                  models={modelsFor(p.id)}
                   saving={patch.isPending || setSecret.isPending}
                   onSave={(next, apiKey) => {
                     /*
@@ -256,11 +250,29 @@ export function LlmSettingsSection() {
       )}
 
       <div className="flex flex-wrap gap-2">
-        {PRESETS.filter((preset) => !providers.some((p) => p.id === preset.id)).map((preset) => (
-          <Button key={preset.id} size="sm" variant="secondary" onClick={() => upsertProvider(preset)}>
-            + {preset.label}
-          </Button>
-        ))}
+        {/*
+          ★ 在线在前、本地在后（ADR-016：BYO API Key 是**主路径**，本地探测是可选便利）。
+          用户明确要的是"和 memo 一样用在线"，界面就不该让本地看起来是默认答案。
+        */}
+        {availablePresets
+          .filter((x) => x.tier === 'online')
+          .map((preset) => (
+            <Button key={preset.id} size="sm" variant="secondary" onClick={() => upsertProvider(preset)}>
+              + {preset.label}
+            </Button>
+          ))}
+        {availablePresets.some((x) => x.tier === 'local') ? (
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-ink-muted">{t('settings.localOptional')}</span>
+            {availablePresets
+              .filter((x) => x.tier === 'local')
+              .map((preset) => (
+                <Button key={preset.id} size="sm" variant="ghost" onClick={() => upsertProvider(preset)}>
+                  + {preset.label}
+                </Button>
+              ))}
+          </span>
+        ) : null}
       </div>
     </section>
   );
@@ -269,11 +281,14 @@ export function LlmSettingsSection() {
 function ProviderForm({
   provider,
   hasKey,
+  models,
   saving,
   onSave,
 }: {
   provider: LlmProviderConfig;
   hasKey: boolean;
+  /** 候选模型 —— 与「按用途分别配置」**同一个来源**，不再各画各的。 */
+  models: string[];
   saving: boolean;
   onSave: (next: LlmProviderConfig, apiKey?: string) => void;
 }) {
@@ -297,12 +312,23 @@ function ProviderForm({
 
       <label className="grid gap-1 text-xs text-ink-secondary">
         {t('settings.model')}
+        {/*
+          仍是自由输入，但配上 datalist 候选 —— 厂商上新模型比我们发版快，
+          写死下拉会把新模型挡在外面。候选与分档配置共用同一份 `modelsFor()`。
+        */}
         <input
           value={model}
+          list={`models-${provider.id}`}
           onChange={(e) => setModel(e.target.value)}
           spellCheck={false}
+          data-testid="llm-model-input"
           className="h-8 rounded-md border border-line bg-surface-0 px-2 text-sm text-ink"
         />
+        <datalist id={`models-${provider.id}`}>
+          {models.map((m) => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
       </label>
 
       {/* 本地 provider 不显示 Key 输入框 —— 绝不逼用户为 Ollama 编一个假 key */}

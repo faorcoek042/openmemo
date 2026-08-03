@@ -22,7 +22,7 @@ export interface StorageRoutesDeps {
   /** 有任务在跑就不能搬 —— 搬到一半任务还在写文件，必然不一致。 */
   readonly runningJobs: () => number;
   /** 搬完要重启才能挂到新位置（复用 T-061 的自我重启）。 */
-  readonly requestRestart?: (reason: string) => void;
+  readonly requestRestart?: (reason: string, opts?: { dataDir?: string }) => void;
 }
 
 /** 每个子目录**是干什么的** —— 用户要"描述清楚"才敢删。 */
@@ -181,7 +181,8 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
           restartRequired: true,
           messageZh: '已记录新位置（未搬运数据）。重启后生效。',
         });
-        setTimeout(() => deps.requestRestart?.('data-dir changed'), 50);
+        // 迁移场景：**显式**告诉重启走新路径，不让它去猜指针
+        setTimeout(() => deps.requestRestart?.('data-dir changed', { dataDir: plan.to }), 50);
         return true;
       }
 
@@ -268,7 +269,7 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
         restartRequired: true,
         messageZh: `已移动 ${result.files} 个文件到新位置，正在重启以生效。`,
       });
-      setTimeout(() => deps.requestRestart?.('data-dir moved'), 50);
+      setTimeout(() => deps.requestRestart?.('data-dir moved', { dataDir: plan.to }), 50);
       return true;
     },
   };

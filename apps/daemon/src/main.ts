@@ -99,7 +99,7 @@ export interface RunningDaemon {
    * 在途任务不会丢：T-054 把三个中止意图拆开了，这里走 `shutdown` →
    * 任务置回 `queued`，新进程起来后自动续跑。
    */
-  restart(reason: string): Promise<void>;
+  restart(reason: string, opts?: { dataDir?: string }): Promise<void>;
 }
 
 export class AlreadyRunningError extends Error {
@@ -213,7 +213,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
   let bundle: PipelineBundle | undefined;
   let lastExtDir = '';
   // 用 holder 而不是 let：restart 定义在 stop 之后，而 http handler 必须更早挂好
-  const restartHook: { run?: (reason: string) => Promise<void> } = {};
+  const restartHook: { run?: (reason: string, o?: { dataDir?: string }) => Promise<void> } = {};
   let scheduler: Scheduler | undefined;
   const routers: RouteModule[] = [];
   let database: AppDatabase | undefined;
@@ -269,9 +269,9 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     dataDir: paths.dataDir,
     port: () => boundPort,
     routers,
-    requestRestart: (reason: string) => {
+    requestRestart: (reason: string, o?: { dataDir?: string }) => {
       // 不 await：让 HTTP 响应先发出去，前端才能显示"正在重启"
-      void restartHook.run?.(reason);
+      void restartHook.run?.(reason, o);
     },
     status: () => ({
       /*
@@ -606,7 +606,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       createStorageRoutes({
         paths,
         runningJobs: () => scheduler?.runningCount ?? 0,
-        requestRestart: (reason) => void restartHook.run?.(reason),
+        requestRestart: (reason, o) => void restartHook.run?.(reason, o),
       }),
       // 功能级自检（一份实现两个出口：gpu-runtime 的 CLI + 这个端点）
       createSelfCheckRoutes({
@@ -725,7 +725,10 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     dirLock.release();
   };
 
-  const restart = async (reason: string): Promise<void> => {
+  const restart = async (
+    reason: string,
+    opts?: { dataDir?: string },
+  ): Promise<void> => {
     console.log(`[daemon] 自我重启（${reason}）…`);
     /*
      * 先拉新进程、确认它没当场死掉，再停自己。
@@ -746,12 +749,31 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
      * 用户会看到"笔记全没了"，而数据其实好端端躺在新位置。
      * 这是这次改动里最容易造成"数据看起来丢了"的一条路径。
      */
-    const argv = process.argv.slice(1);
-    const pointer = readDataDirPointer();
-    const dIdx = argv.indexOf('--data-dir');
-    if (pointer && dIdx >= 0 && argv[dIdx + 1] !== pointer) {
-      console.log(`[daemon] 数据目录已变更，重启参数由 ${argv[dIdx + 1]} 改为 ${pointer}`);
-      argv[dIdx + 1] = pointer;
+    /*
+     * ★ 重启用哪个 dataDir，由**显式意图**决定，绝不靠"读哪个源"隐式推断。
+     *
+     * 这里原来是「读全局指针、用它覆盖 argv 的 --data-dir」，而正常启动是
+     * 「--data-dir 覆盖指针」—— **两条启动路径对同一个输入给出相反答案**。
+     * 后果：用户点一下界面上的「立即重启」，daemon 可能跳到**另一个**数据目录，
+     * 表现就是"笔记全没了"，而数据其实好好地在原处。
+     * （实测发生过：某实例自我重启后跳进了另一个实例的目录。）
+     *
+     * 两个场景必须分开，不能合并成一条规则：
+     *   · 普通重启（装完扩展要生效）→ **保持当前 dataDir 原样**
+     *   · 迁移后重启              → 由调用方**显式**传入新路径
+     *
+     * 做法：无论哪种，都把最终 dataDir **显式写进 argv**。
+     * 这样子进程走的是"显式旗标"这条唯一优先级，与正常启动完全一致，
+     * 也不再受"重启这一刻指针恰好是什么"的影响。
+     */
+    const targetDataDir = opts?.dataDir ?? paths.dataDir;
+    const argv = process.argv.slice(1).filter((a, i, arr) => {
+      if (a === '--data-dir') return false;
+      return !(i > 0 && arr[i - 1] === '--data-dir');
+    });
+    argv.push('--data-dir', targetDataDir);
+    if (targetDataDir !== paths.dataDir) {
+      console.log(`[daemon] 重启后切换数据目录：${paths.dataDir} → ${targetDataDir}`);
     }
 
     const child = spawn(process.execPath, argv, {

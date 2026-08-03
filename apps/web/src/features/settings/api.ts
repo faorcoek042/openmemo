@@ -115,7 +115,12 @@ export function useDeleteSecretMutation() {
 
 export interface LlmProviderConfig {
   id: string;
-  kind: 'openai-compatible' | 'anthropic';
+  /**
+   * 协议族。daemon 的 `resolveConfiguredProvider()` 实际是按 **providerId**
+   * 分支的（`'gemini'` / `'anthropic'` 各有原生实现，其余走 OpenAI 兼容），
+   * 这里跟着把 `gemini` 列出来，免得类型比后端少认一种而挡住合法配置。
+   */
+  kind: 'openai-compatible' | 'anthropic' | 'gemini';
   label: string;
   baseUrl: string;
   model: string;

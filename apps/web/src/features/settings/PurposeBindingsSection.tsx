@@ -11,13 +11,11 @@ import {
 import { Button } from '../../components/common/Button';
 import {
   LLM_PURPOSES_KEY,
-  readProviders,
-  readActiveProviderId,
-  readDefaultModelId,
   readPurposeBindings,
   usePatchSettingsMutation,
   useSettingsQuery,
 } from './api';
+import { useLlmConfig } from './llm-catalog';
 
 /**
  * 按用途分别配置模型（chat / 摘要+导图 / 翻译）。
@@ -80,9 +78,12 @@ export function PurposeBindingsSection() {
   const settings = useSettingsQuery();
   const patch = usePatchSettingsMutation();
 
-  const providers = readProviders(settings.data);
-  const defaultProviderId = readActiveProviderId(settings.data);
-  const defaultModel = readDefaultModelId(settings.data);
+  /*
+   * ★ 与「AI 模型」区块**共用同一个数据源**（T-108 ②）。
+   * 之前这里的模型是个自由文本框，和上面那份 provider 清单毫无关系 ——
+   * 两处各维护一份，必然出现"那边有、这边没有"。
+   */
+  const { providers, activeProviderId: defaultProviderId, defaultModel, modelsFor } = useLlmConfig();
   const bindings = readPurposeBindings(settings.data);
 
   const write = (purpose: LlmPurpose, next: { providerId?: string; model?: string }) => {
@@ -145,8 +146,13 @@ export function PurposeBindingsSection() {
                     {t('settings.purposes.model')}
                     <InheritTag inherited={eff.inherited.model} />
                   </span>
+                  {/*
+                    候选来自 `modelsFor(该档实际生效的 provider)` —— 与「AI 模型」区块同一份。
+                    仍保留自由输入（datalist 而非 select）：厂商上新模型比我们发版快。
+                  */}
                   <input
                     defaultValue={bindings[purpose]?.model ?? ''}
+                    list={`purpose-models-${purpose}`}
                     onBlur={(e) => write(purpose, { model: e.target.value })}
                     placeholder={defaultModel ?? t('settings.purposes.inheritOption')}
                     spellCheck={false}
@@ -154,6 +160,11 @@ export function PurposeBindingsSection() {
                     data-testid={`purpose-${purpose}-model`}
                     className="h-8 rounded-md border border-line bg-surface-0 px-2 font-mono text-sm text-ink"
                   />
+                  <datalist id={`purpose-models-${purpose}`}>
+                    {modelsFor(eff.providerId).map((m) => (
+                      <option key={m} value={m} />
+                    ))}
+                  </datalist>
                 </label>
               </div>
 
