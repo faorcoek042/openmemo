@@ -87,7 +87,11 @@
         "revision": "main"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.02"
+      "catalogVersion": "2026.08.02",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "out_of_scope"
+      }
     },
     {
       "schemaVersion": 1,
@@ -172,7 +176,11 @@
         "revision": "main"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.02"
+      "catalogVersion": "2026.08.02",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "out_of_scope"
+      }
     },
     {
       "schemaVersion": 1,
@@ -258,7 +266,11 @@
         "revision": "main"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.02"
+      "catalogVersion": "2026.08.02",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "out_of_scope"
+      }
     },
     {
       "schemaVersion": 1,
@@ -344,7 +356,11 @@
         "revision": "main"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.02"
+      "catalogVersion": "2026.08.02",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "out_of_scope"
+      }
     },
     {
       "schemaVersion": 1,
@@ -425,7 +441,11 @@
         "revision": "main"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.02"
+      "catalogVersion": "2026.08.02",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "out_of_scope"
+      }
     }
   ]
 }

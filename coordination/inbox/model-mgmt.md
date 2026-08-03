@@ -2133,3 +2133,181 @@ i18n 文案本身是对的（`{{model}}` 占位），**是调用点填了常量*
 ### 纪律
 自建实例 `17650`（dataDir `/tmp/om-t121`，全新），用完只杀自己 pid；**未触碰 `:10000`**。
 截图：`/tmp/shots/t121-live.png`（录制中，partial 斜体 / final 正常字重）、`t121-record2.png`。
+
+---
+
+## [2026-08-03 19:55] T-125 DONE（含你报的 500 已修）
+
+### TL;DR
+
+1. **你报的 500 已修，可以重建重启了。** 35 条清单全部补上 `speedEvidence`，
+   `loadModelCatalog()` 实跑通过（35 models / catalogVersion 2026.08.03）。
+2. **我选了 B（保持必填），不是 A。** 理由一句话：**改成可选，等于把"缺失"重新变成一个
+   有三种含义的沉默** —— 而这个字段被加出来就是为了消灭那个沉默。你担心的"逼出假数据"
+   已经被类型挡死：`unmeasured` **结构上没有 `rtf` 字段**，放不下任何数字。详见下方 §2。
+3. **前提更正**：`speedClass` **早就有了，35/35 全带**。真正缺的不是"速度字段"而是**出处**。
+4. **实测覆盖 2/35 → 9/35。** 且这些 whisper 实测**在你的消息到达之前就已经跑完**，
+   之后我一次都没再跑（符合用户新指令）。
+5. **顺带发现：`:10000` 的 whisper 后端现在是坏的**（8 个悬空符号链接），**根因不是我的
+   `unpack.ts`，是 `apps/daemon/src/storage/move.ts:280`**。已实证复现。见 §6 —— 这条建议优先看。
+
+### 1. 我做了什么（数据层 + 类型 + 分档标准，未碰 UI）
+
+交付：
+- `packages/shared/src/models.ts` — 新增 `SpeedEvidence` 三态联合 + `describeSpeed()` +
+  `referenceSpeedOf()` + `SPEED_CLASS_LABEL_ZH/ORDER`；`ModelEntry.speedEvidence` **必填**，
+  退役 `referenceBenchmark`
+- `packages/shared/src/schemas.ts` — `SpeedEvidenceSchema`（discriminatedUnion + 三条 refine）
+- `vendor/manifests/{models-whisper,models-asr-support,models-llm}.json` — 35 条全部补齐
+- `packages/downloader/scripts/verify-offline.mjs` — 新增 8 条断言（60 passed / 0 failed）
+- `packages/downloader/scripts/gen-whisper-catalog.mjs` — 生成器补 `speedClass` + `speedEvidence`
+  （**它此前根本不输出 `speedClass`，生成出来就是不合法条目**，一并修了）
+- `docs/design/D-03-download-and-model-api.md` §14 —— **分档标准与全部证据**（TL;DR 已更新）
+
+SHARED-CHANGE（申报）：`apps/daemon/src/http/rest/state.ts` 改了 **2 行 + 1 个 import**，
+把 `m.referenceBenchmark?.rtf` 换成 `referenceSpeedOf(m.speedEvidence)?.rtf`。
+不改这里 `tsc` 就是红的；这是收口到单一出处的必要动作，没有动其它任何逻辑。
+
+### 2. 为什么选 B 而不是你倾向的 A
+
+你的理由是「必填的语义是'这个信息一定存在'，而真相是大部分模型没测过」。
+**我认为必填的那个信息不是"速度"，是"我们对速度知道什么"** —— 而"不知道"是一个
+**永远存在且有效**的答案。改成可选会立刻退回原状：
+
+> 字段缺失 = ①真没测过 / ②生成器漏了 / ③有人忘了。**三种里两种是 bug，读的人分不出。**
+
+这正是 `InstalledModel.engines` 那次踩过的坑（空数组读作"没引擎能加载"而非"不知道"）。
+
+而你担心的"必填逼出假数据"，在类型上已经不可能发生：
+
+```ts
+{ kind: 'unmeasured'; reason }   // ← 没有 rtf 字段。不是 rtf:null，是"放不下数字"
+```
+
+这就是你说的「结构化空值」，所以 **B 其实同时满足了你 A 的诉求**，只是把它写进类型而不是靠约定。
+另外 A 的"缺失即未测量"本身就是一次**静默走 default**，正是这轮要防的模式。
+
+**执行成本为零**：数据当时已经在手，补齐只花了一次脚本运行。
+
+### 3. 实测数据（9 条 measured）
+
+参考机 = **就是这台**（`/proc/cpuinfo`：AMD RYZEN AI MAX+ 395，32 线程），
+与 `gpu-runtime` 同机同素材（`Zh-Twitter.ogg` 337.038 s）。7 个模型 **sha256 逐个对上清单**后才计时。
+
+| 条目 | RTF | 分钟/音频小时 | 出处 |
+|---|---|---|---|
+| `whisper-tiny-q5_1` | 0.0418 | 2.51 | T-125 实测 |
+| `whisper-base-q8_0` | 0.0464 | 2.79 | T-125 实测 |
+| `whisper-base-f16` | 0.0575 | 3.45 | T-125 实测 |
+| `whisper-base-q5_1` | 0.0583 | 3.50 | T-125 实测 |
+| `whisper-small-q5_1` | 0.0879 | 5.28 | T-125 实测 |
+| `whisper-medium-q5_0` | 0.2386 | 14.32 | T-125 实测 |
+| `whisper-large-v3-turbo-q5_0` | **0.377** | 22.6 | `gpu-runtime`（见下） |
+| `paraformer-zh-small` | 0.0111 | 0.67 | `gpu-runtime` D-06 §18.1 |
+| `ct-transformer-zh-en` | 0.0008 | 0.05 | `gpu-runtime` D-06 §18.1 |
+
+**未测量 26 条**：`not_run` 20（多数 whisper 变体）、`out_of_scope` 5（全部 `role=llm`，
+ADR-016 已砍、D-10 #7 待下架）、`artifact_differs` 1（见下）。
+
+### 4. 三条值得你知道的实测结论
+
+**(1) 量化几乎不影响速度。** base 三种量化体积差 **2.5 倍**（59.7 / 81.8 / 148.0 MB），
+RTF 分别 0.0583 / 0.0464 / 0.0575 —— **差异小于运行间噪声**。
+→ 「量化是省磁盘/内存的，不是提速的」，UI 别暗示"选小的更快"。
+→ 顺带给 `verify-offline` 那条「同组 `speedClass` 必须一致」补上了实证（此前只是设计直觉）。
+
+**(2) 我没有抹平一处分歧。** turbo 我自己测到 **0.2092**，比 `gpu-runtime` 的 **0.377 快 1.8 倍**。
+两个数字都留着，清单**采用较保守的 0.377**：口径不同（我是 `whisper-cli` 裸跑，他是真实流水线），
+我那 4 次离散度 1.77 倍且**慢的一端正好落在他的数字上**。
+**平均掉只会得到一个两边都不认的数字；少承诺安全，多承诺会变成一次被放弃的两小时转写。**
+
+**(3) `artifact_differs` 抓到一个真的要踩的坑。** `sherpa-streaming-zh-14m` 上游有
+RTF 0.01–0.07，但**那是 74 MB 浮点版，我们发的是 25.4 MB int8 版**。同名不同文件，
+不标出来下一个人几乎必定抄过去。
+
+### 5. 编译期护栏：**真的验过，不是声称**
+
+按你的要求"故意加一档确认构建变红，再撤掉"，做了 3 个实验（均已还原，现 `tsc -b` = 0）：
+
+| 实验 | 结果 |
+|---|---|
+| `SPEED_CLASSES` 加 `'instant'` | **红** TS2741 ×2（两个 `Record` 缺 key） |
+| `SpeedEvidence` 加第 4 个成员 | **红** TS2741 + TS2345 ×2（`assertNever` 拿到非 `never`） |
+| `SPEED_TIERS` 加 `'glacial'` | **红** TS2741（既有护栏一并复验） |
+
+手法 = **全量 `Record<K,V>` + `switch` 配 `assertNever`**，缺一不可：前者挡"枚举加值"，
+后者挡"联合加成员"。**刻意不用** `default` 分支或 `?? '未知'` 兜底。
+
+⚠️ **诚实边界**：`tsc` 挡得住**代码**漏处理，**挡不住清单漏字段**（清单是运行时 JSON）。
+那一层靠 zod 必填 `.strict()` + `verify-offline` 8 条断言 —— **这次的 500 正好证明了这个边界是真的**。
+
+### 6. 🔴 优先看：`:10000` 的 whisper 后端现在装着也跑不了
+
+```
+$ /root/data-memo/models/by-name/backend/whisper-bin-ubuntu-x64/.../whisper-cli --version
+error while loading shared libraries: libwhisper.so.1: cannot open shared object file
+```
+
+**8 个 `.so` 符号链接全部悬空**，指向已被清空的 `/tmp/omdemo/...`。
+
+**根因不是我的 `unpack.ts`**（它写的是相对链接，我核过）。是
+**`apps/daemon/src/storage/move.ts:280`**：
+
+```ts
+await fs.cp(from, to, { recursive: true, force: true, preserveTimestamps: true });
+```
+
+Node 的 `fs.cp` **默认会把相对符号链接改写成指向【源目录】的绝对路径**，
+接着第 300 行 `fs.rm(from)` 删掉源 —— 链接当场全部悬空。**已实证复现**：
+
+```
+default   fs.cp -> /root/t125/reprodir/src/libwhisper.so.1.9.1   → 删源后 BROKEN (ENOENT)
+verbatim  fs.cp -> libwhisper.so.1.9.1                            → 删源后 READABLE
+```
+
+**修法一个选项**：`verbatimSymlinks: true`。
+
+**更值得警惕的是它为什么没被发现**：`measureTree()` 与 `verifyTreesMatch()` 都**显式跳过符号链接**
+（注释原话「符号链接等一律不计也不搬」），所以**搬完的自检必然报"两棵树一致"**。
+→ **移动数据目录 = 静默弄坏转写后端，且自检给绿灯。** 这是一个典型的假绿灯。
+
+归属 `oss-scout`/`architect`（`apps/daemon`），**我没有改**。
+我也**没有动 demo 目录**（你说了只读）。如果你要立刻救活 `:10000`，只需重建那 8 个相对链接，
+不必重启 daemon。
+
+### 7. 门禁（真实 exit code）
+
+```
+tsc -b: 0        eslint(我的全部文件 + state.ts): 0
+pnpm -r test: 0  （db 47 / web 18 / web-components 122 / daemon 81 = 268 passed, 0 failed）
+verify-offline.mjs: 0  （60 passed, 0 failed，含新增 8 条）
+35/35 ModelEntrySchema VALID     loadModelCatalog() 实跑 OK
+```
+
+**未构建 `apps/web/dist`**（新协议 §7）。我跑的 web 测试只写 `.test-out/`；
+`apps/web/dist` 的最后写入时间是 19:33:24，不是我的命令产生的
+（唯一会写它的是 `apps/web` 的 `build` 脚本，我全程没跑过）。
+
+### 8. 自查（诚实规则）
+
+- **我造成了那个 500 的一半**：我先收紧了 schema 才补数据，中间态在工作区里存在了约 20 分钟。
+  你说责任在你（在中间态构建），但**留下一个可被构建的中间态本身就是我的问题** ——
+  正确做法是把类型改动和 35 条数据补齐一次性落盘再离开键盘。已写进 D-03 §14.9。
+- **turbo 的分歧我没有藏也没有平均**（§4-2）。清单里是他的保守值，我的数字在 D-03 §14.6。
+- **我的测量是在争用严重的机器上做的**（实测到过 25.2 s → 148.9 s 的尖峰），
+  取 4 次最小值并保留全部原始耗时（`/root/t125/results.json`）。
+  这个取法对**模型间比较**是可靠的，但**不宜当作用户机器上的绝对耗时**。
+- **"whisper base"的归属我没敢照抄**：`gpu-runtime` 的 0.055 在 D-06 §18.1 里标着 148 MB
+  （= base **f16**），而清单原先把它挂在 **base-q5_1** 上。我没有去裁决他测的是哪个，
+  而是**三种量化各自实测一遍**，用自己的数字逐条归属，把这个歧义直接消掉了。
+- **未做**：估计值 0 条（刻意）；`role=llm` 的 5 条按 `out_of_scope` 标注，**下架动作我没做**
+  （D-10 #7 归我，但那是另一件事，没有指令我不擅自删）；UI 一行未碰。
+
+### 9. 需要 Manager
+
+1. **重建重启即可**，500 已修（先看 §6，决定要不要顺手救 `:10000` 的 8 个链接）。
+2. **`move.ts` 的 `verbatimSymlinks` 请派给 `oss-scout`** —— 这个 bug 会让任何一次
+   "更改数据位置"静默弄坏转写，而自检报绿。
+3. `ui-polish`/`architect` 做双轴卡片时，**速度轴必须走 `describeSpeed()`**，不要自己读 `.rtf`
+   （D-03 §14.2）。质量轴今天已有的实测信号是 `notRecommendedFor`（ADR-011）。
+4. `role=llm` 下架要不要我一并做（D-10 #7 + §8-D2 你尚未裁决停用范围）。

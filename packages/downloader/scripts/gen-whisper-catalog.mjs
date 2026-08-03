@@ -18,6 +18,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
 import { whisperOverheadMB } from '../../shared/dist/fitness.js';
+import { speedClassForSize } from '../../shared/dist/models.js';
 
 const REPO = 'ggerganov/whisper.cpp';
 const HF = 'https://huggingface.co';
@@ -113,6 +114,9 @@ for (const file of WANTED) {
     format: 'ggml',
     quantization: q.q,
     quantTier: s.tier,
+    // 档位来自体积（唯一不用测量就知道的属性），与用户机器无关。
+    // 注意它**不是速度承诺** —— 速度看 `speedEvidence`（D-03 §14 / D-10 R-M1）。
+    speedClass: speedClassForSize(size),
     displayName: `Whisper ${s.en}${en ? ' (English-only)' : ''} (${q.label})`,
     displayNameZh: `Whisper ${s.zh}${en ? '·仅英文' : ''}（${q.zh}）`,
     descriptionZh: en
@@ -152,6 +156,11 @@ for (const file of WANTED) {
     license: { id: 'MIT', gated: false, url: `${HF}/${REPO}` },
     source: { provider: 'hf', repo: REPO, revision: rev },
     benchmark: null,
+    // 生成器**不可能**知道速度：它只读上游文件列表，没有跑过任何一次推理。
+    // 因此新条目一律落在 `unmeasured`，要升级成 `measured` 必须有人真的拿秒表跑一遍
+    // （见 D-03 §14）。默认值选"诚实的空"而不是"看起来合理的估计"，
+    // 是因为后者会让一个从没跑过的数字长得和实测一模一样。
+    speedEvidence: { kind: 'unmeasured', reason: 'not_run' },
     catalogVersion: CATALOG_VERSION,
   });
 }

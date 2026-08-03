@@ -24,6 +24,7 @@ import {
   MODEL_ROLES,
   computeFit,
   makeEvent,
+  referenceSpeedOf,
   topics,
   type Backend,
   type BackendPack,
@@ -323,8 +324,11 @@ export class RestState {
           modelId: m.id,
           blockCount: m.gguf?.blockCount,
           benchmarkRtf: m.benchmark?.rtf ?? null,
-          referenceRtf: m.referenceBenchmark?.rtf ?? null,
-          referenceBackend: m.referenceBenchmark?.backend ?? null,
+          // ★ 只有 kind='measured' 的证据才会返回数字（`referenceSpeedOf` 保证）。
+          // 估计值一律返回 null → speedSource 保持 'none' → UI 显示「速度未测量」。
+          // 宁可少说，也不能把估计值渲染成「参考机实测」。
+          referenceRtf: referenceSpeedOf(m.speedEvidence)?.rtf ?? null,
+          referenceBackend: referenceSpeedOf(m.speedEvidence)?.backend ?? null,
           notRecommendedFor: m.notRecommendedFor ?? [],
           targetLanguage,
         },

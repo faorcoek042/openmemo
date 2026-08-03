@@ -44,9 +44,8 @@ const { ArtifactStore } = await import(path.join(DIST, 'store.js'));
 const { DownloadQueue } = await import(path.join(DIST, 'queue.js'));
 const { install } = await import(path.join(DIST, 'installer.js'));
 const { probeAll } = await import(path.join(DIST, 'probe.js'));
-const { computeFit, makeEvent, topics, formatSseFrame, formatSseRetry } = await import(
-  path.join(SHARED, 'index.js')
-);
+const { computeFit, makeEvent, referenceSpeedOf, topics, formatSseFrame, formatSseRetry } =
+  await import(path.join(SHARED, 'index.js'));
 const { listComponents, rollback: rollbackComponent } = await import(path.join(DIST, 'components.js'));
 const COMPONENT_REGISTRY = path.join(REPO, 'vendor', 'manifests', 'components.json');
 /** Cache the last upstream sweep so the page does not re-hit GitHub on every render. */
@@ -200,9 +199,11 @@ async function buildCatalog(roleFilter, targetLanguage) {
         paramsB: m.gguf ? undefined : undefined,
         blockCount: m.gguf?.blockCount,
         benchmarkRtf: m.benchmark?.rtf ?? null,
-        // ADR-011: reference speed + measured language suitability
-        referenceRtf: m.referenceBenchmark?.rtf ?? null,
-        referenceBackend: m.referenceBenchmark?.backend ?? null,
+        // ADR-011: reference speed + measured language suitability.
+        // Only `kind: 'measured'` yields a number — an estimate must not be shown as a
+        // reference measurement, so it deliberately degrades to 「速度未测量」.
+        referenceRtf: referenceSpeedOf(m.speedEvidence)?.rtf ?? null,
+        referenceBackend: referenceSpeedOf(m.speedEvidence)?.backend ?? null,
         notRecommendedFor: m.notRecommendedFor ?? [],
         targetLanguage,
       },

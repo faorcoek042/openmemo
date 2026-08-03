@@ -189,6 +189,49 @@ export const ReferenceBenchmarkSchema = z.object({
   meanConfidence: z.number().min(0).max(1).optional(),
 });
 
+/**
+ * Speed provenance. The three branches are deliberately NOT interchangeable shapes:
+ *
+ *   - `measured`   MUST carry the full benchmark record.
+ *   - `estimated`  MUST name the entry it came from, the method, and an uncertainty > 1.
+ *   - `unmeasured` is `.strict()` with no rtf key, so a number cannot be parked on it.
+ *
+ * `discriminatedUnion` (not a plain union) so a bad `kind` reports "unknown discriminator"
+ * instead of a pile of unrelated branch errors that hide which field is actually wrong.
+ */
+export const SpeedEvidenceSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('measured'),
+      rtf: z.number().positive(),
+      benchmark: ReferenceBenchmarkSchema,
+    })
+    .strict()
+    // The two rtf values describe the same stopwatch reading; letting them differ would
+    // recreate the two-sources-of-truth problem this field was added to remove.
+    .refine((e) => e.rtf === e.benchmark.rtf, {
+      message: 'speedEvidence.rtf must equal speedEvidence.benchmark.rtf',
+    }),
+  z
+    .object({
+      kind: z.literal('estimated'),
+      rtf: z.number().positive(),
+      basedOn: z.string().min(1),
+      // Free text on purpose: an estimate has to be challengeable in words, and an enum
+      // of blessed methods would just make the next unjustifiable estimate pick one.
+      method: z.string().min(10, 'state how the estimate was derived, in words'),
+      // Strictly > 1: an estimate with no uncertainty is claiming to be a measurement.
+      uncertaintyFactor: z.number().gt(1),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('unmeasured'),
+      reason: z.enum(['not_run', 'artifact_differs', 'engine_unavailable', 'out_of_scope']),
+    })
+    .strict(),
+]);
+
 export const BenchmarkResultSchema = z.object({
   rtf: z.number().positive(),
   measuredAt: z.string(),
@@ -244,7 +287,10 @@ export const ModelEntrySchema = z
       revision: z.string().min(1),
     }),
     benchmark: BenchmarkResultSchema.nullable(),
-    referenceBenchmark: ReferenceBenchmarkSchema.nullish(),
+    // Required, not optional: "we never measured it" must be stated, not inferred from a
+    // missing key. `.strict()` above additionally makes the retired `referenceBenchmark`
+    // key a hard validation error, so a stale manifest cannot half-migrate in silence.
+    speedEvidence: SpeedEvidenceSchema,
     catalogVersion: z.string().min(1),
   })
   // Reject the fabricated-metric fields memo.ac ships, so they cannot creep back in.

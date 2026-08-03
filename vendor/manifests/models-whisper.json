@@ -77,15 +77,18 @@
       "notRecommendedFor": [
         "zh"
       ],
-      "referenceBenchmark": {
-        "rtf": 0.055,
-        "backend": "cpu",
-        "deviceName": "AMD RYZEN AI MAX+ 395, 32 threads, CPU only",
-        "measuredAt": "2026-08-02T00:00:00Z",
-        "sampleName": "Zh-Twitter.ogg (CC BY 3.0)",
-        "sampleDurationSec": 337,
-        "sampleLanguage": "zh",
-        "meanConfidence": 0.81
+      "speedEvidence": {
+        "kind": "measured",
+        "rtf": 0.0583,
+        "benchmark": {
+          "rtf": 0.0583,
+          "backend": "cpu",
+          "deviceName": "AMD RYZEN AI MAX+ 395, 32 threads, CPU only",
+          "measuredAt": "2026-08-03T19:30:00Z",
+          "sampleName": "Zh-Twitter.ogg (CC BY 3.0)",
+          "sampleDurationSec": 337.038,
+          "sampleLanguage": "zh"
+        }
       }
     },
     {
@@ -154,7 +157,20 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.03"
+      "catalogVersion": "2026.08.03",
+      "speedEvidence": {
+        "kind": "measured",
+        "rtf": 0.0464,
+        "benchmark": {
+          "rtf": 0.0464,
+          "backend": "cpu",
+          "deviceName": "AMD RYZEN AI MAX+ 395, 32 threads, CPU only",
+          "measuredAt": "2026-08-03T19:30:00Z",
+          "sampleName": "Zh-Twitter.ogg (CC BY 3.0)",
+          "sampleDurationSec": 337.038,
+          "sampleLanguage": "zh"
+        }
+      }
     },
     {
       "schemaVersion": 1,
@@ -222,7 +238,20 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.03"
+      "catalogVersion": "2026.08.03",
+      "speedEvidence": {
+        "kind": "measured",
+        "rtf": 0.0575,
+        "benchmark": {
+          "rtf": 0.0575,
+          "backend": "cpu",
+          "deviceName": "AMD RYZEN AI MAX+ 395, 32 threads, CPU only",
+          "measuredAt": "2026-08-03T19:30:00Z",
+          "sampleName": "Zh-Twitter.ogg (CC BY 3.0)",
+          "sampleDurationSec": 337.038,
+          "sampleLanguage": "zh"
+        }
+      }
     },
     {
       "schemaVersion": 1,
@@ -290,7 +319,11 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.03"
+      "catalogVersion": "2026.08.03",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -356,7 +389,11 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.03"
+      "catalogVersion": "2026.08.03",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -422,7 +459,11 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.03"
+      "catalogVersion": "2026.08.03",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -488,7 +529,11 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.03"
+      "catalogVersion": "2026.08.03",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -554,7 +599,11 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.03"
+      "catalogVersion": "2026.08.03",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -626,7 +675,11 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.02"
+      "catalogVersion": "2026.08.02",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -724,7 +777,11 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.02"
+      "catalogVersion": "2026.08.02",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -797,15 +854,18 @@
       },
       "benchmark": null,
       "catalogVersion": "2026.08.02",
-      "referenceBenchmark": {
+      "speedEvidence": {
+        "kind": "measured",
         "rtf": 0.377,
-        "backend": "cpu",
-        "deviceName": "AMD RYZEN AI MAX+ 395, 32 threads, CPU only",
-        "measuredAt": "2026-08-02T00:00:00Z",
-        "sampleName": "Zh-Twitter.ogg (CC BY 3.0)",
-        "sampleDurationSec": 337,
-        "sampleLanguage": "zh",
-        "meanConfidence": 0.95
+        "benchmark": {
+          "rtf": 0.377,
+          "backend": "cpu",
+          "deviceName": "AMD RYZEN AI MAX+ 395, 32 threads, CPU only",
+          "measuredAt": "2026-08-02T00:00:00Z",
+          "sampleName": "Zh-Twitter.ogg (CC BY 3.0)",
+          "sampleDurationSec": 337.038,
+          "sampleLanguage": "zh"
+        }
       }
     },
     {
@@ -871,7 +931,11 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.02"
+      "catalogVersion": "2026.08.02",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -963,7 +1027,11 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.02"
+      "catalogVersion": "2026.08.02",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -1036,7 +1104,20 @@
       "catalogVersion": "2026.08.02",
       "notRecommendedFor": [
         "zh"
-      ]
+      ],
+      "speedEvidence": {
+        "kind": "measured",
+        "rtf": 0.2386,
+        "benchmark": {
+          "rtf": 0.2386,
+          "backend": "cpu",
+          "deviceName": "AMD RYZEN AI MAX+ 395, 32 threads, CPU only",
+          "measuredAt": "2026-08-03T19:30:00Z",
+          "sampleName": "Zh-Twitter.ogg (CC BY 3.0)",
+          "sampleDurationSec": 337.038,
+          "sampleLanguage": "zh"
+        }
+      }
     },
     {
       "schemaVersion": 1,
@@ -1101,7 +1182,11 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.03"
+      "catalogVersion": "2026.08.03",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -1166,7 +1251,11 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.03"
+      "catalogVersion": "2026.08.03",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -1234,7 +1323,11 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.03"
+      "catalogVersion": "2026.08.03",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -1308,7 +1401,20 @@
       "catalogVersion": "2026.08.02",
       "notRecommendedFor": [
         "zh"
-      ]
+      ],
+      "speedEvidence": {
+        "kind": "measured",
+        "rtf": 0.0879,
+        "benchmark": {
+          "rtf": 0.0879,
+          "backend": "cpu",
+          "deviceName": "AMD RYZEN AI MAX+ 395, 32 threads, CPU only",
+          "measuredAt": "2026-08-03T19:30:00Z",
+          "sampleName": "Zh-Twitter.ogg (CC BY 3.0)",
+          "sampleDurationSec": 337.038,
+          "sampleLanguage": "zh"
+        }
+      }
     },
     {
       "schemaVersion": 1,
@@ -1376,7 +1482,11 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.03"
+      "catalogVersion": "2026.08.03",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -1444,7 +1554,11 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.03"
+      "catalogVersion": "2026.08.03",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -1512,7 +1626,11 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.03"
+      "catalogVersion": "2026.08.03",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -1580,7 +1698,20 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.03"
+      "catalogVersion": "2026.08.03",
+      "speedEvidence": {
+        "kind": "measured",
+        "rtf": 0.0418,
+        "benchmark": {
+          "rtf": 0.0418,
+          "backend": "cpu",
+          "deviceName": "AMD RYZEN AI MAX+ 395, 32 threads, CPU only",
+          "measuredAt": "2026-08-03T19:30:00Z",
+          "sampleName": "Zh-Twitter.ogg (CC BY 3.0)",
+          "sampleDurationSec": 337.038,
+          "sampleLanguage": "zh"
+        }
+      }
     },
     {
       "schemaVersion": 1,
@@ -1648,7 +1779,11 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.03"
+      "catalogVersion": "2026.08.03",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -1724,7 +1859,11 @@
       "catalogVersion": "2026.08.02",
       "notRecommendedFor": [
         "zh"
-      ]
+      ],
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -1792,7 +1931,11 @@
         "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.03"
+      "catalogVersion": "2026.08.03",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     }
   ]
 }

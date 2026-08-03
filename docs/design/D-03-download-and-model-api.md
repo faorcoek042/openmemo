@@ -33,8 +33,20 @@ inputs: R-04, R-02 §C.3, D-01, D-02, D-05, /root/memo-forensics
 - **未验证/存疑**：archive 解压未实现（抛错不静默）；catalog Ed25519 验签未实现（已写规格）；
   `estimateGpuLayers` 与 RTF 外推系数仍未标定；backends.json 的 macOS/Vulkan whisper 包**上游不存在**
   （R-02 早已指出），需自建 CI 后补。
+- **【T-125 §14】速度维度：`speedClass` 本来就有（35/35），缺的是**出处**。**实测覆盖 2/35 → 9/35**，
+  新增**必填** `speedEvidence` 三态：`measured`（带完整出处）/ `estimated`（必须自证是估计）/
+  `unmeasured`（**结构上没有 rtf 字段，放不下假数字**，且必须写 `reason`）。**本版发出 0 条 estimated。**
+- **【T-125】两条被测量改变的结论**：① **量化几乎不影响速度**（base 三种量化体积差 2.5 倍、RTF 差异小于噪声）
+  → 「量化是省磁盘不是提速」，且为"同组 `speedClass` 必须一致"补上实证；② 体积在小端是差的速度预测器
+  → 按**架构名**分档正确，按字节数切阈值会判错。
+- **【T-125】一处分歧我没抹平**：turbo 我实测 0.2092，`gpu-runtime` 是 0.377（口径不同：裸跑 vs 真实流水线）。
+  **采用较保守的 0.377**，两个数字都留在 §14.6。**少承诺安全，多承诺会变成被放弃的两小时转写。**
+- **【T-125】编译期护栏已真的验过**（加档位→`tsc` 红→还原，A/B/C 三个实验，§14.8）。
+  诚实边界：`tsc` 挡代码漏处理，**挡不住清单漏字段**，那层靠 zod 必填 + `verify-offline` 8 条断言。
 - **对其他 agent**：`gpu-runtime` 按 §3 硬件契约实现并复核 §6 统一下载器；`architect` 确认 §4 事件 payload；
   T-021/T-022/T-023 按 §7 线框图与 §4 事件表开工。
+  **`ui-polish`/`architect` 做双轴卡片时：速度轴读 `describeSpeed(v.speedEvidence)`，
+  不要自己读 `.rtf`** —— 那个函数是唯一保证"实测/估计/未测量"措辞不混同的地方（§14.2）。
 
 ---
 
@@ -653,3 +665,177 @@ ADR-004 决策 3 禁的是**编造数字**，不是禁**有出处的真实测量
 `ReferenceBenchmark` 的每个字段都是为了让出处可审计：哪台机器、哪个后端、
 哪段音频、多长、什么语言、平均置信度。**缺这些的数字才正是我们拒绝的那种。**
 且只有 `referenceBackend === selectedBackend` 时才采用 —— CUDA 的数字说明不了 CPU 的表现。
+
+---
+
+## 14. T-125：速度维度的分档标准与证据（`speedClass` / `speedEvidence`）
+
+> 本节回答一件事：**卡片上的"速度"这一栏，凭什么写出那个字。**
+> 标准写在这里而不是只留在代码里，是为了让每个数字都能被人当场质疑。
+
+### 14.1 先澄清一个误解：`speedClass` 早就有了，缺的是**出处**
+
+`ModelEntry.speedClass`（`fast|balance|quality`）**在 T-125 之前就存在于全部 35 条清单里**。
+真正卡住双轴卡片的不是"没有速度字段"，而是：
+
+| | T-125 之前 | 问题 |
+|---|---|---|
+| `speedClass` | 35/35 有 | 按**体积**人工分档，**没有任何测量支撑** —— 它是分组用的档位，不是速度承诺 |
+| `referenceBenchmark` | **2/35** 有，且**可选** | 唯一带实测的字段。"没有这个字段"同时表示"没测过"/"生成器漏了"/"没人补"，**读的人分不出是哪一种** |
+
+所以 T-125 加的不是"速度"，是**速度的出处**：新增**必填**的 `speedEvidence`，
+把"未测量"从一种**沉默**变成一条**写出来的事实**。
+
+### 14.2 三态定义（不可混同，这是硬要求）
+
+```ts
+type SpeedEvidence =
+  | { kind: 'measured';   rtf; benchmark: ReferenceBenchmark }        // 我们拿秒表跑过这个文件
+  | { kind: 'estimated';  rtf; basedOn; method; uncertaintyFactor }   // 从别的条目外推
+  | { kind: 'unmeasured'; reason }                                    // 没跑过，并说明为什么
+```
+
+三条设计约束，每条都对应一次真实事故的教训：
+
+1. **`unmeasured` 结构上放不下数字。** 它**没有 `rtf` 字段**，不是 `rtf: null`。
+   一个"没测过"的条目**不可能**携带一个看起来像真的数字 —— 这是本节最要紧的一条。
+2. **`estimated` 必须自证是估计。** `basedOn`（来自哪条实测）、`method`（怎么算的，白话）、
+   `uncertaintyFactor`（必须 > 1，"没有误差的估计"就是测量）三项全部必填。
+   **一个没人能质疑的估计，就是加了几道手续的编造数字。**
+3. **估计值永远进不了 fit 计算。** `referenceSpeedOf()` 只对 `measured` 返回数字，
+   估计与未测量一律返回 `null` → `speedSource` 保持 `none` → UI 显示「速度未测量」。
+   **宁可少说，也不能把估计渲染成「参考机实测」。**
+
+> **本版实际发出的 `estimated` 条目：0 条。**
+> 这个分支存在的目的**不是**让我们便宜地把空格填满，而是让第一个想填的人被迫走诚实的路。
+
+### 14.3 分档边界与依据
+
+**`speedClass`（目录常量，按组，与用户机器无关）** —— 用于 `/models` 的「档位」筛选：
+
+| 档位 | 判据 | 实测区间（本次） |
+|---|---|---|
+| `fast` | tiny / base 级架构 | RTF 0.042 – 0.058（2.5 – 3.5 分钟/音频小时） |
+| `balance` | small / medium 级架构 | RTF 0.088 – 0.239（5.3 – 14.3 分钟/音频小时） |
+| `quality` | large / turbo 级架构 | RTF 0.377（22.6 分钟/音频小时） |
+
+三档**互不重叠**，边界由测量而非直觉支撑（数据见 §14.4）。
+
+**`FitResult.speedTier`（按机器算，5 值）** —— 阈值沿用 §13.3 不变：
+≤6 分钟 `fast`，≤15 `moderate`，≤40 `slow`，其余 `very_slow`，无数据 `unknown`。
+本次测量对它的回代：tiny/base/small → `fast`，medium(14.3) → `moderate`（**离 15 的边界只差 0.7 分钟**），
+turbo(22.6) → `slow`，paraformer(0.67) → `fast`。分布合理，**不改阈值**。
+
+> **D-10 R-M1 再强调一次**：UI 上 `speedClass` 叫**「档位」**，`speedTier` 叫**「在你的机器上」**，
+> **两者都不许叫"速度"**。
+
+### 14.4 证据：本次实测（9 条 measured / 35 条）
+
+**参考机**：AMD RYZEN AI MAX+ 395，32 线程，纯 CPU（`/proc/cpuinfo` 确认与 `gpu-runtime` 同一台）。
+**素材**：`Zh-Twitter.ogg`（CC BY 3.0，Wikimedia Commons），337.038 s，中文 —— 与 `gpu-runtime` 同一段。
+**方法**：`whisper-cli` 参数照抄 `packages/pipeline/src/asr/whisperCpp.ts`（`-t 32 -l zh --output-json-full`），
+每个模型跑 4 次。7 个模型的 sha256 **逐个对上清单**后才计时。
+
+| 条目 | 体积 | RTF | 实时倍数 | 分钟/音频小时 | `speedClass` | 出处 |
+|---|---|---|---|---|---|---|
+| `asr/whisper-tiny-q5_1` | 32.2 MB | 0.0418 | 23.9x | 2.51 | fast | T-125 实测 |
+| `asr/whisper-base-q8_0` | 81.8 MB | 0.0464 | 21.5x | 2.79 | fast | T-125 实测 |
+| `asr/whisper-base-f16` | 148.0 MB | 0.0575 | 17.4x | 3.45 | fast | T-125 实测 |
+| `asr/whisper-base-q5_1` | 59.7 MB | 0.0583 | 17.1x | 3.50 | fast | T-125 实测 |
+| `asr/whisper-small-q5_1` | 190.1 MB | 0.0879 | 11.4x | 5.28 | balance | T-125 实测 |
+| `asr/whisper-medium-q5_0` | 539.2 MB | 0.2386 | 4.2x | 14.32 | balance | T-125 实测 |
+| `asr/whisper-large-v3-turbo-q5_0` | 574.0 MB | **0.377** | 2.7x | 22.6 | quality | `gpu-runtime`（见 §14.6） |
+| `asr/paraformer-zh-small` | 81.9 MB | 0.0111 | 90x | 0.67 | fast | `gpu-runtime` D-06 §18.1 |
+| `punctuation/ct-transformer-zh-en` | 298.6 MB | 0.0008 | — | 0.05 | balance | `gpu-runtime` D-06 §18.1 |
+
+**取值规则**：本机为多 agent 共用，CPU 争用只会让某次跑得**更慢**，不可能更快，
+因此取 **4 次中的最小值**作为无争用成本的估计，并把每次原始耗时一并留在
+`/root/t125/results.json` 里备查（实测到过一次 25.2 s → 148.9 s 的争用尖峰）。
+
+### 14.5 ★ 两条被测量**改变**的结论
+
+**(1) 量化几乎不影响速度 —— `quantTier` 与 `speedClass` 确实是两根独立的轴。**
+同一个 base 架构的三种量化：
+
+```
+base-q5_1   59.7 MB  →  RTF 0.0583
+base-q8_0   81.8 MB  →  RTF 0.0464
+base-f16   148.0 MB  →  RTF 0.0575     ← 体积是 q5_1 的 2.5 倍，速度一样
+```
+
+体积差 2.5 倍，RTF 差异**小于本机的运行间噪声**。
+→ 这为 `verify-offline` 里那条「同一 `groupId` 内 `speedClass` 必须一致」的断言
+**补上了实测依据**，它此前只是一条设计直觉。
+→ 也说明**量化是省磁盘/内存的，不是提速的**，UI 文案不应暗示"选小的更快"。
+
+**(2) 体积在小端是很差的速度预测器。**
+tiny（32 MB）0.0418 与 base-q5_1（60 MB）0.0583 只差 1.4 倍，
+而 medium（539 MB）比 small（190 MB）慢 2.7 倍。
+→ `speedClassForSize()` 按**架构名**（tiny/base/small/medium/large）分档是对的；
+若改成按**字节数**切阈值，会把 base-f16(148 MB) 和 small-q5_1(190 MB) 判成同档，而它们实测差 1.5 倍。
+
+### 14.6 ⚠️ 一处我没有抹平的分歧：large-v3-turbo
+
+我自己测到的 turbo 是 **RTF 0.2092**（4 次：70.5 / 71.6 / 124.7 / 82.3 s），
+比 `gpu-runtime` 的 **0.377** 快 1.8 倍。**两个数字我都没有丢，也没有取平均。**
+
+清单里**采用较保守的 0.377**，三条理由：
+
+1. ADR-013 与面向用户的「1 小时录音约 22 分钟」都建立在它上面；
+2. 它出自**真实流水线**（VAD 切分 + 完整后处理），我的是 `whisper-cli` 单文件裸跑，
+   **两套口径本来就不测同一件事**；
+3. 我那 4 次跑的离散度达 1.77 倍，**慢的一端正好落在他的数字上** ——
+   在争用严重的机器上，我没有把握说我的更准。
+
+**少承诺的方向是安全的；多承诺会把「能跑」变成一次被放弃的两小时转写。**
+把 1.8 倍的分歧平均掉，只会得到一个两边都不认的数字。
+
+### 14.7 未测量的 26 条：为什么不补，以及各自的理由
+
+| `reason` | 条数 | 含义 |
+|---|---|---|
+| `not_run` | 20 | 没在参考机上跑过这个文件。**大多数 whisper 变体属于此类。** |
+| `out_of_scope` | 5 | 全部 `role=llm`（ADR-016 决策 3 砍掉本地 llama.cpp 线，D-10 #7 待下架），测了也要下架 |
+| `artifact_differs` | 1 | `asr/sherpa-streaming-zh-14m`：上游确有 RTF 0.01–0.07（D-06 §18.4），但**那是 74 MB 浮点版**，我们发的是 **25.4 MB int8 版**。**同名不同文件，数字不能挪用。** |
+
+`artifact_differs` 这一条正是这个字段存在的理由：
+**它是"有个数字很好用，但它不属于这个文件"的情形** ——
+不标出来，下一个人几乎一定会把 0.01–0.07 抄到 int8 条目上。
+（同型前车之鉴：`ggml-silero-v5.1.2.bin` 与 `v6.2.0.bin` **字节数完全相同、sha256 不同**。）
+
+### 14.8 编译期护栏（已实际验证，不是声称）
+
+要求是「新增一档而某处没处理，应该**编译报错**，而不是运行时静默走 default」。
+两个方向都**真的试过一次**（改完即还原）：
+
+| 实验 | 改动 | `tsc -b` 结果 |
+|---|---|---|
+| A | `SPEED_CLASSES` 加第 4 个值 `'instant'` | **红**：`SPEED_CLASS_LABEL_ZH` / `SPEED_CLASS_ORDER` 两个 `Record` 缺 key（TS2741） |
+| B | `SpeedEvidence` 加第 4 个成员 `VendorClaimedSpeed` | **红**：`SPEED_EVIDENCE_LABEL_ZH` 缺 key，且 `describeSpeed` / `referenceSpeedOf` 的 `assertNever` 拿到非 `never`（TS2345 ×2） |
+| C | `SPEED_TIERS` 加第 6 个值 `'glacial'` | **红**：`SPEED_NOTE_ZH` 缺 key（此护栏本来就在，一并复验） |
+
+手法是**全量 `Record<K,V>` 字面量 + `switch` 配 `assertNever`**，两者缺一不可：
+前者挡住"给枚举加值"，后者挡住"给联合加成员"。
+**刻意不用**带 `default` 的 `switch`，也不用 `Partial` + `?? '未知'` —— 那两种写法会让新档位
+悄悄渲染成一个兜底字符串，正是本节要防的事。
+
+> **诚实边界**：`tsc` 挡得住**代码**漏处理，**挡不住清单漏字段** ——
+> 清单是运行时读的 JSON。那一层由 `ModelEntrySchema`（必填 + `.strict()`）
+> 与 `verify-offline.mjs` 的 8 条断言兜住，两者都会在 CI 里红。
+
+### 14.9 教训：schema 收紧与数据补齐必须落在**同一个可运行状态**里
+
+本任务中途出过一次真实事故：`speedEvidence` 改成必填**已进工作区**，
+而 35 条清单**还没填**。此时有人从工作区构建并重启了 `:10000`，
+`/api/jobs` 当场 **500**（`models.0.speedEvidence: expected object, received undefined`）。
+
+两点值得记住：
+
+- **中间态一旦被人构建，就是线上故障。** 收紧 schema 和补齐数据必须是一次原子变更。
+- **报错只出现在被调用的那个端点，页面其它地方看起来一切正常** ——
+  这类故障不会自己嚷嚷，得靠有人正好点到。
+
+处置：选择**保持必填**并在同一次改动里补齐 35 条（而非退回可选）。
+理由见 §14.1：**改成可选，等于把"缺失"重新变成一个有三种含义的沉默**，
+而这正是这个字段被加出来要消灭的东西。`{kind:'unmeasured', reason}` 已经是
+"结构化的空值"，它既表达了"没测过"，又**结构上放不下**一个假数字。

@@ -508,6 +508,57 @@ console.log('\n[14] speedClass 双轴 + 供应商目录的出厂空状态');
   check('speedClass 不是 quantTier 的别名（组合数 > 各自取值数）', pairs.size > quant.size,
     `${pairs.size} 种组合 / ${quant.size} 种 quantTier`);
 
+  /* --- speedEvidence：实测 / 估计 / 未测量 三态不许混同（T-125） --------- */
+  const {
+    describeSpeed,
+    referenceSpeedOf,
+    SPEED_EVIDENCE_KINDS,
+  } = await import('../../shared/dist/index.js');
+
+  check('每条模型都有 speedEvidence（"未测量"是写出来的事实，不是缺字段）',
+    models.every((m) => m.speedEvidence && SPEED_EVIDENCE_KINDS.includes(m.speedEvidence.kind)),
+    `${models.length} 条`);
+
+  // 退役字段必须彻底消失：留着就又有两个出处，正是这次要消掉的东西
+  check('retired referenceBenchmark 已从清单里移除',
+    models.every((m) => !('referenceBenchmark' in m)),
+    models.filter((m) => 'referenceBenchmark' in m).map((m) => m.id).join(',') || '无残留');
+
+  // ★ 最要紧的一条：未测量的条目**不可能**携带速度数字
+  const unmeasured = models.filter((m) => m.speedEvidence.kind === 'unmeasured');
+  check('未测量的条目不携带任何 rtf（结构上就放不下）',
+    unmeasured.every((m) => m.speedEvidence.rtf === undefined),
+    `${unmeasured.length} 条未测量`);
+  check('未测量的条目都写了 reason（说明为什么没有，而不是沉默）',
+    unmeasured.every((m) => typeof m.speedEvidence.reason === 'string'));
+
+  const measured = models.filter((m) => m.speedEvidence.kind === 'measured');
+  check('实测条目的 rtf 与 benchmark.rtf 一致（单一出处，不可能漂移）',
+    measured.every((m) => m.speedEvidence.rtf === m.speedEvidence.benchmark.rtf),
+    `${measured.length} 条实测`);
+  check('实测条目的出处齐全（机器/后端/素材/时长/语言）',
+    measured.every((m) => {
+      const b = m.speedEvidence.benchmark;
+      return b.deviceName && b.backend && b.sampleName && b.sampleDurationSec > 0 && b.sampleLanguage;
+    }));
+
+  // 估计值绝不能被 fit 计算当成"参考机实测"
+  check('只有 measured 会喂给 fit 计算，估计/未测量一律 null',
+    models.every((m) =>
+      m.speedEvidence.kind === 'measured'
+        ? referenceSpeedOf(m.speedEvidence)?.rtf === m.speedEvidence.rtf
+        : referenceSpeedOf(m.speedEvidence) === null));
+
+  // 三态的 UI 文案必须互不相同，否则用户分不出哪个是承诺哪个是猜
+  const labels = new Set(
+    [
+      { kind: 'measured', rtf: 0.1, benchmark: { rtf: 0.1, backend: 'cpu', deviceName: 'd', measuredAt: '', sampleName: 's', sampleDurationSec: 1, sampleLanguage: 'zh' } },
+      { kind: 'estimated', rtf: 0.1, basedOn: 'x', method: 'm'.repeat(12), uncertaintyFactor: 2 },
+      { kind: 'unmeasured', reason: 'not_run' },
+    ].map((e) => describeSpeed(e).labelZh),
+  );
+  check('实测/估计/未测量三个措辞互不相同', labels.size === 3, [...labels].join(' | '));
+
   const cat = await read('llm-providers.json');
   check('供应商目录 24 家', cat.providers.length === 24, String(cat.providers.length));
   check('置顶六家齐全', ['openai','claude','gemini','deepseek','ollama','lmstudio']

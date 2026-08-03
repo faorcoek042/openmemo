@@ -62,7 +62,11 @@
         "revision": "bfdc0193023f121ea5b3cc7b176dbed570a68a59"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.02"
+      "catalogVersion": "2026.08.02",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -128,7 +132,11 @@
         "revision": "9ffd54a1e1ee413ddf265af9913beaf518d1639b"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.02"
+      "catalogVersion": "2026.08.02",
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "not_run"
+      }
     },
     {
       "schemaVersion": 1,
@@ -252,7 +260,11 @@
       "capabilityCaveats": [
         "仅支持中文",
         "仅用于流式录音，不能做离线批量转写"
-      ]
+      ],
+      "speedEvidence": {
+        "kind": "unmeasured",
+        "reason": "artifact_differs"
+      }
     },
     {
       "schemaVersion": 1,
@@ -359,7 +371,20 @@
         "无词级时间戳，只有段级",
         "数字输出为中文而非阿拉伯数字",
         "英文一律小写"
-      ]
+      ],
+      "speedEvidence": {
+        "kind": "measured",
+        "rtf": 0.0111,
+        "benchmark": {
+          "rtf": 0.0111,
+          "backend": "cpu",
+          "deviceName": "AMD RYZEN AI MAX+ 395, 32 threads, CPU only",
+          "measuredAt": "2026-08-02T00:00:00Z",
+          "sampleName": "Zh-Twitter.ogg (CC BY 3.0)",
+          "sampleDurationSec": 337.038,
+          "sampleLanguage": "zh"
+        }
+      }
     },
     {
       "schemaVersion": 1,
@@ -444,7 +469,20 @@
         "revision": "main"
       },
       "benchmark": null,
-      "catalogVersion": "2026.08.02"
+      "catalogVersion": "2026.08.02",
+      "speedEvidence": {
+        "kind": "measured",
+        "rtf": 0.0008,
+        "benchmark": {
+          "rtf": 0.0008,
+          "backend": "cpu",
+          "deviceName": "AMD RYZEN AI MAX+ 395, 32 threads, CPU only",
+          "measuredAt": "2026-08-02T00:00:00Z",
+          "sampleName": "Zh-Twitter.ogg (CC BY 3.0)",
+          "sampleDurationSec": 337.038,
+          "sampleLanguage": "zh"
+        }
+      }
     }
   ]
 }
