@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Check, ChevronDown } from 'lucide-react';
 import type { CatalogVariant } from '@openmemo/shared';
 import { formatBytes } from '../../../lib/format/bytes';
@@ -24,6 +25,7 @@ export interface QuantSelectorProps {
 }
 
 export function QuantSelector({ variants, selectedId, onSelect, locale }: QuantSelectorProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const selected = variants.find((v) => v.id === selectedId) ?? variants[0];
   if (!selected) return null;
@@ -41,7 +43,7 @@ export function QuantSelector({ variants, selectedId, onSelect, locale }: QuantS
         data-testid="models-quant-selector"
         onClick={() => setOpen((v) => !v)}
       >
-        <span>量化 {selected.quantization.toUpperCase()}</span>
+        <span>{t('models.quant.current', { quant: selected.quantization.toUpperCase() })}</span>
         <span className="text-ink-secondary">
           {formatBytes(selected.totalSizeBytes, locale)}
         </span>
@@ -66,10 +68,10 @@ export function QuantSelector({ variants, selectedId, onSelect, locale }: QuantS
           )}
         >
           <div className="grid grid-cols-[auto_5.5rem_5.5rem_1fr] gap-x-3 border-b border-line px-2 pb-1.5 text-[11px] text-ink-muted">
-            <span>量化</span>
-            <span>体积</span>
-            <span>需显存</span>
-            <span>这台机器</span>
+            <span>{t('models.quant.colQuant')}</span>
+            <span>{t('models.quant.colSize')}</span>
+            <span>{t('models.quant.colVram')}</span>
+            <span>{t('models.quant.colFit')}</span>
           </div>
           {variants.map((v) => (
             <button
@@ -109,11 +111,15 @@ export function QuantSelector({ variants, selectedId, onSelect, locale }: QuantS
             </button>
           ))}
           <p className="px-2 pt-1.5 text-[11px] text-ink-muted">
-            显存需求含 KV 缓存
-            {selected.requirements.computedAtContext
-              ? `（按 ${selected.requirements.computedAtContext} 上下文计算）`
-              : ''}
-            。本表不含质量星级 —— 我们没有可信的准确率数据源，不编造。
+            {/* ⚠️ 插值名不能叫 `context` —— 那是 i18next 的保留选项（用于 key 变体），
+                会被它吃掉而不是当变量插进去。这里用 `ctx`。 */}
+            {t('models.quant.vramNote', {
+              ctx: selected.requirements.computedAtContext
+                ? t('models.quant.vramNoteContext', {
+                    ctx: String(selected.requirements.computedAtContext),
+                  })
+                : '',
+            })}
           </p>
         </div>
       ) : null}

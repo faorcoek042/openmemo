@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { ArrowLeft, ExternalLink, Gauge, ShieldCheck } from 'lucide-react';
 
 import { Button } from '../../components/common/Button';
+import { Emphasis } from '../../components/common/Emphasis';
 import { StatusChip } from '../../components/common/StatusChip';
 import { FitBadge, FitEta } from '../../components/common/FitBadge';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
@@ -24,7 +25,7 @@ import {
  */
 export default function ModelDetailPage() {
   const { modelId = '' } = useParams();
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const locale = i18n.language;
 
   const catalog = useModelsCatalogQuery('all');
@@ -49,14 +50,14 @@ export default function ModelDetailPage() {
       </div>
     );
   }
-  if (catalog.isLoading) return <p className="p-4 text-xs text-ink-muted">加载中…</p>;
+  if (catalog.isLoading) return <p className="p-4 text-xs text-ink-muted">{t('models.detail.loading')}</p>;
   if (!found) {
     return (
       <div className="p-4">
         <Link to="/models" className="text-xs text-accent-ink hover:underline">
-          ← 返回模型管理
+          ← {t('models.detail.back')}
         </Link>
-        <p className="mt-3 text-sm text-ink">目录里没有这个模型（{modelId}）。</p>
+        <p className="mt-3 text-sm text-ink">{t('models.detail.notFound', { id: modelId })}</p>
       </div>
     );
   }
@@ -69,37 +70,39 @@ export default function ModelDetailPage() {
     <div className="mx-auto w-full max-w-3xl space-y-4 p-4" data-testid="model-detail-page">
       <Link to="/models" className="inline-flex items-center gap-1 text-xs text-accent-ink hover:underline">
         <ArrowLeft className="size-3.5" aria-hidden />
-        返回模型管理
+        {t('models.detail.back')}
       </Link>
 
       <header>
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-lg font-semibold text-ink">{group.displayNameZh}</h1>
           <StatusChip tone="neutral" label={variant.quantization.toUpperCase()} />
-          {installedRec ? <StatusChip tone="good" label="已安装" /> : null}
+          {installedRec ? <StatusChip tone="good" label={t('models.detail.installed')} /> : null}
         </div>
         <p className="mt-1 text-sm text-ink-secondary">{group.descriptionZh}</p>
       </header>
 
       <section className="grid grid-cols-2 gap-3 rounded-lg border border-line bg-surface-1 p-4 text-xs sm:grid-cols-3">
-        <Field label="架构" value={`${variant.arch} (${variant.format})`} />
-        <Field label="量化" value={variant.quantization.toUpperCase()} />
-        <Field label="体积" value={formatBytes(variant.totalSizeBytes, locale)} />
-        <Field label="语言" value={variant.languages.join(' / ')} />
-        <Field label="许可" value={variant.license.id} />
-        <Field label="目录版本" value={variant.catalogVersion} />
+        <Field label={t('models.detail.fieldArch')} value={`${variant.arch} (${variant.format})`} />
+        <Field label={t('models.detail.fieldQuant')} value={variant.quantization.toUpperCase()} />
+        <Field label={t('models.detail.fieldSize')} value={formatBytes(variant.totalSizeBytes, locale)} />
+        <Field label={t('models.detail.fieldLanguages')} value={variant.languages.join(' / ')} />
+        <Field label={t('models.detail.fieldLicense')} value={variant.license.id} />
+        <Field label={t('models.detail.fieldCatalogVersion')} value={variant.catalogVersion} />
       </section>
 
       {/* 文件与摘要 —— sha256 是唯一判重依据，展示出来便于排障 */}
       <section className="rounded-lg border border-line bg-surface-1 p-4">
-        <h2 className="text-sm font-medium text-ink">文件</h2>
+        <h2 className="text-sm font-medium text-ink">{t('models.detail.files')}</h2>
         <ul className="mt-2 space-y-2">
           {variant.files.map((f) => (
             <li key={f.sha256} className="text-xs">
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate text-ink">
                   {f.name}
-                  {f.optional ? <span className="ml-1 text-ink-muted">（可选）</span> : null}
+                  {f.optional ? (
+                    <span className="ml-1 text-ink-muted">{t('models.detail.fileOptional')}</span>
+                  ) : null}
                 </span>
                 <span className="shrink-0 tabular-nums text-ink-secondary">
                   {formatBytes(f.sizeBytes, locale)}
@@ -115,21 +118,28 @@ export default function ModelDetailPage() {
 
       {/* 这台机器 */}
       <section className="rounded-lg border border-line bg-surface-1 p-4">
-        <h2 className="text-sm font-medium text-ink">这台机器</h2>
+        <h2 className="text-sm font-medium text-ink">{t('models.detail.thisMachine')}</h2>
         <div className="mt-2 space-y-1">
           <FitBadge fitness={variant.fitness} showReason />
           <FitEta fitness={variant.fitness} />
           <p className="text-xs text-ink-muted">
-            需内存 {formatBytes(variant.requirements.ramRequiredMB * 1e6, locale)} · 需显存{' '}
-            {formatBytes(variant.requirements.vramRequiredMB * 1e6, locale)}
-            {variant.requirements.computedAtContext
-              ? `（按 ${variant.requirements.computedAtContext} 上下文，含 KV 缓存）`
-              : ''}
+            {t('models.detail.requirements', {
+              ram: formatBytes(variant.requirements.ramRequiredMB * 1e6, locale),
+              vram: formatBytes(variant.requirements.vramRequiredMB * 1e6, locale),
+              ctx: variant.requirements.computedAtContext
+                ? t('models.detail.requirementsContext', {
+                    ctx: String(variant.requirements.computedAtContext),
+                  })
+                : '',
+            })}
           </p>
           {variant.gguf ? (
             <p className="text-xs text-ink-muted">
-              KV 缓存 {(variant.gguf.kvBytesPerToken / 1024).toFixed(0)} KiB/token ·{' '}
-              {variant.gguf.blockCount} 层 · 最大上下文 {variant.gguf.contextLength}
+              {t('models.detail.ggufLine', {
+                kv: (variant.gguf.kvBytesPerToken / 1024).toFixed(0),
+                layers: variant.gguf.blockCount,
+                maxCtx: variant.gguf.contextLength,
+              })}
             </p>
           ) : null}
         </div>
@@ -137,24 +147,31 @@ export default function ModelDetailPage() {
 
       {/* ★ 准确率 / 速度：ADR-004 决策 3 */}
       <section className="rounded-lg border border-line bg-surface-1 p-4">
-        <h2 className="text-sm font-medium text-ink">准确率与速度</h2>
+        <h2 className="text-sm font-medium text-ink">{t('models.detail.accuracyTitle')}</h2>
         {bench ? (
           <div className="mt-2 space-y-1 text-xs">
             <p className="text-ink">
-              实测 RTF {bench.rtf.toFixed(2)} —— 1 小时音频约需{' '}
-              {Math.round(bench.rtf * 60)} 分钟
+              {t('models.detail.benchResult', {
+                rtf: bench.rtf.toFixed(2),
+                minutes: Math.round(bench.rtf * 60),
+              })}
             </p>
             <p className="text-ink-muted">
-              于 {new Date(bench.measuredAt).toLocaleString(locale)} 在本机 {bench.deviceName}（
-              {bench.backend}）上用 {bench.sampleDurationSec} 秒测试音频实测
+              {t('models.detail.benchProvenance', {
+                at: new Date(bench.measuredAt).toLocaleString(locale),
+                device: bench.deviceName,
+                backend: bench.backend,
+                seconds: bench.sampleDurationSec,
+              })}
             </p>
           </div>
         ) : (
           <div className="mt-2 space-y-2">
-            <p className="text-xs text-ink-secondary">
-              尚未测量。我们**不显示论文里的准确率数字** —— 那些数字在你的机器、你的音频上不成立。
-              点下面的按钮，用内嵌测试音频在本机实测。
-            </p>
+            {/* 这句同样带 `**…**` —— 走 `<Emphasis>`，别把裸标记吐给用户 */}
+            <Emphasis
+              className="block text-xs text-ink-secondary"
+              text={t('models.detail.benchNone')}
+            />
             <Button
               size="sm"
               variant="secondary"
@@ -163,10 +180,10 @@ export default function ModelDetailPage() {
               data-testid="model-benchmark-button"
             >
               <Gauge className="size-3.5" aria-hidden />
-              {benchmark.isPending ? '正在跑基准…' : '跑基准'}
+              {benchmark.isPending ? t('models.detail.benchRunning') : t('models.detail.benchRun')}
             </Button>
             {!installedRec ? (
-              <p className="text-xs text-ink-muted">需要先安装这个模型才能跑基准。</p>
+              <p className="text-xs text-ink-muted">{t('models.detail.benchNeedsInstall')}</p>
             ) : null}
           </div>
         )}
@@ -181,7 +198,7 @@ export default function ModelDetailPage() {
             disabled={verify.isPending}
           >
             <ShieldCheck className="size-3.5" aria-hidden />
-            {verify.isPending ? '校验中…' : '校验完整性'}
+            {verify.isPending ? t('models.detail.verifying') : t('models.detail.verify')}
           </Button>
         ) : null}
         <a
@@ -191,7 +208,7 @@ export default function ModelDetailPage() {
           className="inline-flex items-center gap-1 text-xs text-accent-ink hover:underline"
         >
           <ExternalLink className="size-3.5" aria-hidden />
-          查看上游与许可证
+          {t('models.detail.upstream')}
         </a>
       </section>
     </div>

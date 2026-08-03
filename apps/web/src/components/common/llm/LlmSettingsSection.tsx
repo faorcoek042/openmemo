@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Eye, EyeOff, KeyRound, ShieldAlert, Trash2 } from 'lucide-react';
 
 import { Button } from '../Button';
+import { Emphasis } from '../Emphasis';
 import { ErrorBlock } from '../ErrorBlock';
 import { MockNotice } from '../MockNotice';
 import {
@@ -100,7 +101,14 @@ export function LlmSettingsSection() {
         <KeyRound className="size-4" aria-hidden />
         {t('settings.llm')}
       </h2>
-      <p className="mb-3 text-xs text-ink-secondary">{t('settings.llmIntro')}</p>
+      {/*
+        ★ 文案里的 `**推荐用在线 API**` 此前是**原样渲染**的 —— 用户在页面上真的看到
+        两颗星号。同一屏还有第二处：下面 disclosure 的 `以**明文**保存`。
+        两处都用 `<Emphasis>` 渲染成 `<strong>`：写的人要的强调有了，
+        用户不再看见裸的 Markdown 记号。**去掉星号是另一种做法，但那会把
+        "在线"和"明文"这两个必须被看见的词降回正文**。
+      */}
+      <Emphasis className="mb-3 block text-xs text-ink-secondary" text={t('settings.llmIntro')} />
 
       <MockNotice surface="settings" className="mb-3" />
 
@@ -140,9 +148,15 @@ export function LlmSettingsSection() {
       {disclosure ? (
         <div className="mb-4 flex items-start gap-2 rounded-md border border-line border-l-4 border-l-warning bg-surface-0 px-3 py-2">
           <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
-          <p className="text-xs text-ink-secondary">
-            {i18n.language.startsWith('zh') ? disclosure.messageZh : disclosure.message}
-          </p>
+          {/*
+            服务端原文里带 `**明文**` / `**PLAINTEXT**`（`packages/llm/src/secrets.ts:68`）。
+            这句话必须由服务端给（路径随 dataDir 变，前端硬编码必然说错，见文件头第 1 条），
+            所以**只能在渲染侧处理标记**，不能去改那份字符串。
+          */}
+          <Emphasis
+            className="text-xs text-ink-secondary"
+            text={i18n.language.startsWith('zh') ? disclosure.messageZh : disclosure.message}
+          />
         </div>
       ) : null}
 

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Trash2 } from 'lucide-react';
 import type { GetStorageResponse } from '@openmemo/shared';
 import { Button } from '../../../components/common/Button';
@@ -26,6 +27,7 @@ export interface StorageBreakdownProps {
 }
 
 export function StorageBreakdown({ storage, locale, onGc, gcPending }: StorageBreakdownProps) {
+  const { t } = useTranslation();
   const { reclaimable } = storage;
   const reclaimableBytes =
     reclaimable.orphanBlobsBytes + reclaimable.stalePartialsBytes;
@@ -42,7 +44,7 @@ export function StorageBreakdown({ storage, locale, onGc, gcPending }: StorageBr
       active: x.active,
     })),
     ...(restBytes > 0
-      ? [{ label: '其他', bytes: restBytes, color: 'bg-ink-muted', active: false }]
+      ? [{ label: t('models.storage.other'), bytes: restBytes, color: 'bg-ink-muted', active: false }]
       : []),
   ];
   const total = segments.reduce((a, s) => a + s.bytes, 0) || 1;
@@ -50,14 +52,16 @@ export function StorageBreakdown({ storage, locale, onGc, gcPending }: StorageBr
   return (
     <section
       className="rounded-lg border border-line bg-surface-1 p-4"
-      aria-label="磁盘占用"
+      aria-label={t('models.storage.title')}
       data-testid="models-storage"
     >
       <div className="flex items-baseline justify-between">
-        <h2 className="text-sm font-medium text-ink">磁盘占用</h2>
+        <h2 className="text-sm font-medium text-ink">{t('models.storage.title')}</h2>
         <span className="text-xs text-ink-secondary">
-          模型共占用 {formatBytes(storage.usedBytes, locale)} · 卷剩余{' '}
-          {formatBytes(storage.volume.freeBytes, locale)}
+          {t('models.storage.summary', {
+            used: formatBytes(storage.usedBytes, locale),
+            free: formatBytes(storage.volume.freeBytes, locale),
+          })}
         </span>
       </div>
 
@@ -79,21 +83,23 @@ export function StorageBreakdown({ storage, locale, onGc, gcPending }: StorageBr
           <li key={s.label} className="flex items-center gap-2 text-xs">
             <span className={cn('size-2.5 shrink-0 rounded-sm', s.color)} aria-hidden />
             <span className="min-w-0 flex-1 truncate text-ink">{s.label}</span>
-            {s.active ? <span className="shrink-0 text-good">使用中</span> : null}
+            {s.active ? <span className="shrink-0 text-good">{t('models.storage.inUse')}</span> : null}
             <span className="shrink-0 tabular-nums text-ink-secondary">
               {formatBytes(s.bytes, locale)}
             </span>
           </li>
         ))}
         {segments.length === 0 ? (
-          <li className="text-xs text-ink-muted">还没有安装任何模型</li>
+          <li className="text-xs text-ink-muted">{t('models.storage.empty')}</li>
         ) : null}
       </ul>
 
       <div className="mt-3 flex items-center justify-between border-t border-line pt-3">
         <span className="text-xs text-ink-secondary">
-          可清理：未完成的下载 {formatBytes(reclaimable.stalePartialsBytes, locale)} · 孤立文件{' '}
-          {formatBytes(reclaimable.orphanBlobsBytes, locale)}
+          {t('models.storage.reclaimable', {
+            partials: formatBytes(reclaimable.stalePartialsBytes, locale),
+            orphans: formatBytes(reclaimable.orphanBlobsBytes, locale),
+          })}
         </span>
         <Button
           size="sm"
@@ -103,7 +109,7 @@ export function StorageBreakdown({ storage, locale, onGc, gcPending }: StorageBr
           data-testid="models-gc-button"
         >
           <Trash2 className="size-3.5" aria-hidden />
-          清理 {formatBytes(reclaimableBytes, locale)}
+          {t('models.storage.gc', { size: formatBytes(reclaimableBytes, locale) })}
         </Button>
       </div>
     </section>

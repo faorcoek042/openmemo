@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Download, Info, Star, Trash2, Zap } from 'lucide-react';
 import { Link } from 'react-router';
 import type { CatalogGroupWithFitness, CatalogVariant } from '@openmemo/shared';
@@ -37,6 +38,7 @@ export function ModelCard({
   onActivate,
   pendingId,
 }: ModelCardProps) {
+  const { t } = useTranslation();
   const [selectedId, setSelectedId] = useState(
     () =>
       group.variants.find((v) => v.fitness.tier === 'recommended')?.id ?? group.variants[0]?.id ?? '',
@@ -65,12 +67,12 @@ export function ModelCard({
             <FitBadge fitness={variant.fitness} />
             <h3 className="text-sm font-medium text-ink">{group.displayNameZh}</h3>
             {isDefault ? (
-              <StatusChip tone="neutral" label="官方默认" icon={<Star className="size-3.5" />} />
+              <StatusChip tone="neutral" label={t('models.card.officialDefault')} icon={<Star className="size-3.5" />} />
             ) : null}
-            {installed ? <StatusChip tone="good" label="已安装" /> : null}
+            {installed ? <StatusChip tone="good" label={t('models.card.installed')} /> : null}
             {/* 「使用中」与「已安装」同为 good：区分交给 ⚡ 图标与文字，不靠颜色（statusTone.ts） */}
             {isActive ? (
-              <StatusChip tone="good" label="使用中" icon={<Zap className="size-3.5" />} />
+              <StatusChip tone="good" label={t('models.card.inUse')} icon={<Zap className="size-3.5" />} />
             ) : null}
           </div>
           <p className="mt-1 text-xs text-ink-secondary">{group.descriptionZh}</p>
@@ -81,7 +83,7 @@ export function ModelCard({
         >
           <span className="inline-flex items-center gap-1">
             <Info className="size-3.5" aria-hidden />
-            详情
+            {t('models.card.details')}
           </span>
         </Link>
       </div>
@@ -94,7 +96,9 @@ export function ModelCard({
           locale={locale}
         />
         <span className="text-xs text-ink-secondary">
-          需显存 ~{formatBytes(variant.requirements.vramRequiredMB * 1e6, locale)}
+          {t('models.card.vramNeeded', {
+            size: formatBytes(variant.requirements.vramRequiredMB * 1e6, locale),
+          })}
         </span>
         <FitEta fitness={variant.fitness} />
       </div>
@@ -108,7 +112,7 @@ export function ModelCard({
             {!isActive ? (
               <Button size="sm" variant="secondary" onClick={() => onActivate(variant.id)}>
                 <Star className="size-3.5" aria-hidden />
-                设为默认
+                {t('models.card.setDefault')}
               </Button>
             ) : null}
             <Button
@@ -118,7 +122,7 @@ export function ModelCard({
               data-testid="model-delete"
             >
               <Trash2 className="size-3.5" aria-hidden />
-              删除
+              {t('models.card.delete')}
             </Button>
           </>
         ) : (
@@ -131,12 +135,16 @@ export function ModelCard({
           >
             <Download className="size-3.5" aria-hidden />
             {pending
-              ? '正在开始…'
+              ? t('models.card.starting')
               : hardBlocked
-                ? '空间不足'
+                ? t('models.card.noSpace')
                 : variant.fitness.tier === 'unsupported'
-                  ? `仍要下载 ${formatBytes(variant.totalSizeBytes, locale)}`
-                  : `下载 ${formatBytes(variant.totalSizeBytes, locale)}`}
+                  ? t('models.card.downloadAnyway', {
+                      size: formatBytes(variant.totalSizeBytes, locale),
+                    })
+                  : t('models.card.download', {
+                      size: formatBytes(variant.totalSizeBytes, locale),
+                    })}
           </Button>
         )}
       </div>

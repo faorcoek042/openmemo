@@ -1,5 +1,6 @@
 import { AlertTriangle, CheckCircle2, HardDrive, OctagonAlert, XCircle } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { FitResult, FitTier } from '@openmemo/shared';
 import { cn } from '../../lib/utils';
 
@@ -16,38 +17,39 @@ import { cn } from '../../lib/utils';
  * 所以图标 + 文字标签是必需的，不是装饰（同 `StatusChip` 的取舍）。
  */
 
-const TIER_STYLE: Record<FitTier, { text: string; icon: ReactNode; labelZh: string }> = {
+/** ⚠️ 表里存**词条 key** 而不是文案：存文案的话切语言不会重算这张模块级常量表。 */
+const TIER_STYLE: Record<FitTier, { text: string; icon: ReactNode; labelKey: string }> = {
   recommended: {
     text: 'text-good',
     icon: <CheckCircle2 className="size-3.5 shrink-0" aria-hidden />,
-    labelZh: '推荐',
+    labelKey: 'models.fit.recommended',
   },
   slow_partial: {
     text: 'text-warning',
     icon: <AlertTriangle className="size-3.5 shrink-0" aria-hidden />,
-    labelZh: '可跑但慢',
+    labelKey: 'models.fit.slow',
   },
   slow_cpu: {
     text: 'text-warning',
     icon: <AlertTriangle className="size-3.5 shrink-0" aria-hidden />,
-    labelZh: '可跑但慢',
+    labelKey: 'models.fit.slow',
   },
   unsupported: {
     text: 'text-critical',
     icon: <XCircle className="size-3.5 shrink-0" aria-hidden />,
-    labelZh: '跑不动',
+    labelKey: 'models.fit.unsupported',
   },
   blocked_disk: {
     text: 'text-serious',
     icon: <HardDrive className="size-3.5 shrink-0" aria-hidden />,
-    labelZh: '空间不足',
+    labelKey: 'models.fit.blockedDisk',
   },
 };
 
 const FALLBACK = {
   text: 'text-ink-muted',
   icon: <OctagonAlert className="size-3.5 shrink-0" aria-hidden />,
-  labelZh: '未知',
+  labelKey: 'models.fit.unknown',
 };
 
 export interface FitBadgeProps {
@@ -58,12 +60,13 @@ export interface FitBadgeProps {
 }
 
 export function FitBadge({ fitness, showReason = false, className }: FitBadgeProps) {
+  const { t } = useTranslation();
   const s = TIER_STYLE[fitness.tier] ?? FALLBACK;
   return (
     <div className={cn('flex flex-col gap-0.5', className)} data-testid="fit-badge">
       <span className={cn('inline-flex items-center gap-1 text-xs font-medium', s.text)}>
         {s.icon}
-        <span>{s.labelZh}</span>
+        <span>{t(s.labelKey)}</span>
       </span>
       {showReason ? (
         // reasonZh 来自服务端（fitness.ts 生成），前端不拼装这句话。
@@ -86,17 +89,20 @@ export function FitBadge({ fitness, showReason = false, className }: FitBadgePro
  * 1 小时录音要跑 22 分钟。"装得下"和"用得了"是两件事，只答前者会误导用户。
  */
 export function FitEta({ fitness }: { fitness: FitResult }) {
+  const { t } = useTranslation();
   const mins = fitness.estMinutesPerAudioHour;
   if (mins == null || fitness.speedSource === 'none') {
-    return <span className="text-xs text-ink-muted">速度未测量</span>;
+    return <span className="text-xs text-ink-muted">{t('models.fit.speedUnmeasured')}</span>;
   }
   const slow = fitness.speedTier === 'slow' || fitness.speedTier === 'very_slow';
   return (
     <span className={cn('text-xs', slow ? 'text-warning' : 'text-ink-secondary')}>
       {slow ? <AlertTriangle className="mr-0.5 inline size-3" aria-hidden /> : null}
-      1 小时音频约 {Math.round(mins)} 分钟
+      {t('models.fit.etaPerHour', { minutes: Math.round(mins) })}
       <span className="text-ink-muted">
-        {fitness.speedSource === 'measured_here' ? '（本机实测）' : '（参考机实测，仅供参考）'}
+        {fitness.speedSource === 'measured_here'
+          ? t('models.fit.sourceMeasuredHere')
+          : t('models.fit.sourceReference')}
       </span>
     </span>
   );
@@ -109,8 +115,11 @@ export function FitEta({ fitness }: { fitness: FitResult }) {
  * 因此这是**乐观估计**且未经标定（D-03 §11 第 3 项）。不许显示成确定值。
  */
 export function FitGpuLayers({ fitness }: { fitness: FitResult }) {
+  const { t } = useTranslation();
   if (fitness.estGpuLayers == null || fitness.tier !== 'slow_partial') return null;
   return (
-    <span className="text-xs text-ink-muted">约 {fitness.estGpuLayers} 层可载入显存（估算）</span>
+    <span className="text-xs text-ink-muted">
+      {t('models.fit.gpuLayers', { layers: fitness.estGpuLayers })}
+    </span>
   );
 }

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Ban, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import type { DownloadJob } from '@openmemo/shared';
@@ -15,19 +16,20 @@ import { formatBytes, formatSpeed } from '../../../lib/format/bytes';
  * store 内部已节流到 200ms，服务端也限流到 4 次/秒/job。
  */
 
-const STEP_LABEL: Record<string, string> = {
-  resolving: '正在选择下载源',
-  downloading: '下载中',
-  verifying: '正在校验完整性',
-  installing: '正在安装',
+/** 阶段 → 词条 key。**存 key 不存文案** —— 存文案的话切语言不会重算这张常量表。 */
+const STEP_KEY: Record<string, string> = {
+  resolving: 'models.download.resolving',
+  downloading: 'models.download.downloading',
+  verifying: 'models.download.verifying',
+  installing: 'models.download.installing',
 };
 
 /** ETA 文案：D-05 §4.1 规则 4 —— 只在有依据时显示，且四舍五入到"约 X 分钟"。
  *  不显示"剩余 03:47"这种假精确：实测速率波动很大。 */
-function formatEta(sec: number | null): string | null {
+function formatEta(t: (k: string, o?: Record<string, unknown>) => string, sec: number | null): string | null {
   if (sec == null || !Number.isFinite(sec) || sec <= 0) return null;
-  if (sec < 60) return '剩余不到 1 分钟';
-  return `剩余约 ${Math.round(sec / 60)} 分钟`;
+  if (sec < 60) return t('models.download.etaUnderMinute');
+  return t('models.download.etaMinutes', { minutes: Math.round(sec / 60) });
 }
 
 export interface DownloadRowProps {
@@ -38,6 +40,7 @@ export interface DownloadRowProps {
 }
 
 export function DownloadRow({ job, locale, onCancel, onRetry }: DownloadRowProps) {
+  const { t } = useTranslation();
   const live = useProgressStore(useShallow((s) => s.byJob[job.jobId]));
 
   const completed = live?.completedBytes ?? job.completedBytes;
@@ -45,7 +48,7 @@ export function DownloadRow({ job, locale, onCancel, onRetry }: DownloadRowProps
   const step = live?.step ?? job.step;
   const state = live?.state ?? job.state;
   const speed = live?.speedBps ?? job.speedBps;
-  const eta = formatEta(live?.etaSeconds ?? job.etaSeconds);
+  const eta = formatEta(t, live?.etaSeconds ?? job.etaSeconds);
   const ratio = total ? Math.min(1, (completed ?? 0) / total) : 0;
 
   const isVerifying = step === 'verifying';
@@ -62,25 +65,27 @@ export function DownloadRow({ job, locale, onCancel, onRetry }: DownloadRowProps
           <p className="mt-0.5 text-xs text-ink-secondary">
             {failed ? (
               <span className="text-critical">
-                {job.error?.messageZh ?? job.error?.message ?? '下载失败'}
-                {job.attempt > 1 ? `（第 ${job.attempt}/${job.maxAttempts} 次）` : ''}
+                {job.error?.messageZh ?? job.error?.message ?? t('models.download.failed')}
+                {job.attempt > 1
+                  ? t('models.download.attempt', { attempt: job.attempt, max: job.maxAttempts })
+                  : ''}
               </span>
             ) : (
               <>
-                {STEP_LABEL[step ?? ''] ?? '排队中'}
-                {job.provider ? ` · 来源 ${job.provider}` : ''}
+                {step && STEP_KEY[step] ? t(STEP_KEY[step]) : t('models.download.queued')}
+                {job.provider ? ` · ${t('models.download.source', { provider: job.provider })}` : ''}
               </>
             )}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {isVerifying ? (
-            <StatusChip tone="running" label="校验中" icon={<ShieldCheck className="size-3.5" />} />
+            <StatusChip tone="running" label={t('models.download.verifyingChip')} icon={<ShieldCheck className="size-3.5" />} />
           ) : null}
           {failed ? (
             <Button size="sm" variant="secondary" onClick={() => onRetry(job.jobId)}>
               <RefreshCw className="size-3.5" aria-hidden />
-              重试
+              {t('models.download.retry')}
             </Button>
           ) : (
             <Button
@@ -90,7 +95,7 @@ export function DownloadRow({ job, locale, onCancel, onRetry }: DownloadRowProps
               data-testid="models-download-cancel"
             >
               <Ban className="size-3.5" aria-hidden />
-              取消
+              {t('models.download.cancel')}
             </Button>
           )}
         </div>
@@ -102,7 +107,7 @@ export function DownloadRow({ job, locale, onCancel, onRetry }: DownloadRowProps
         tone={failed ? 'critical' : 'info'}
         // 校验阶段没有可信百分比 —— 显示脉动而不是假装有进度
         indeterminate={isVerifying}
-        label={`${job.displayName} 下载进度`}
+        label={t('models.download.progressLabel', { name: job.displayName })}
       />
 
       <div className="mt-1.5 flex items-center justify-between text-xs text-ink-secondary">

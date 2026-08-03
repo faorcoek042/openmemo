@@ -1,4 +1,4 @@
-import { Link, useNavigate } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { arr } from '../../lib/safe';
 import { useTranslation } from 'react-i18next';
 import { FileAudio, Mic, Star } from 'lucide-react';
@@ -20,20 +20,50 @@ export default function NotesListPage() {
   const { data: notes, isLoading, isError, error, refetch } = useNotesQuery();
   const toggleStar = useToggleStarMutation();
 
+  /*
+   * ★ 侧栏「星标」= `/notes?starred=1`，与「全部笔记」**共用这一个组件**。
+   *
+   * 在这之前这个组件**从不读查询串** —— 点「星标」和点「全部笔记」渲染的是同一批笔记，
+   * 标题也一样写着「全部笔记」（`ui-polish` 在 T-124 的真浏览器截图里抓到，`[实测]`）。
+   * 它和「两项永远同时高亮」是同一个疏漏的两半：那半是**导航层**没认查询串，
+   * 这半是**数据层**没认。**这一页的状态来源是 URL，导航高亮与列表内容都得认它。**
+   *
+   * 为什么在前端过滤而不是加一个 `GET /api/notes?starred=1`：
+   * daemon 的 `GET /api/notes` 今天**只接受 `limit`**（`http/rest/notes.ts:242`），
+   * 但**每条笔记都带 `starred`**（同文件 :264）—— 也就是说筛选所需的数据已经在手上了，
+   * 缺的只是"用它"。改端点要动 daemon + 重建才能让演示实例看到，
+   * 而前端这一步就能让功能真的可用。
+   *
+   * ⚠️ **它的代价我说清楚**：列表本身是 `limit=50` 的一页，所以这里筛的是
+   * **已取回的那一页**里的星标笔记，不是全库。笔记数超过 50 条之后，
+   * 第 51 条之外的星标笔记不会出现在这里 —— 真正的修法是端点支持 `starred`，
+   * 已作为后续项报给 Manager。今天这样**不会显示错的内容**，只可能显示得不全。
+   */
+  const [sp] = useSearchParams();
+  const starredOnly = sp.get('starred') === '1';
+  const visible = starredOnly ? (notes ?? []).filter((n) => n.starred) : (notes ?? []);
+
   if (isError) return <ErrorBlock error={error} onRetry={() => void refetch()} className="m-6" />;
   if (isLoading) return <div className="p-6 text-sm text-ink-muted">{t('common.loading')}</div>;
 
-  if (!notes || notes.length === 0) {
+  if (visible.length === 0) {
     return (
       <EmptyState
-        icon={<FileAudio className="size-10" />}
-        title={t('notes.empty')}
-        hint={t('notes.emptyHint')}
+        icon={starredOnly ? <Star className="size-10" /> : <FileAudio className="size-10" />}
+        title={starredOnly ? t('notes.starredEmpty') : t('notes.empty')}
+        hint={starredOnly ? t('notes.starredEmptyHint') : t('notes.emptyHint')}
         // 空态即入口：直接把下一步动作放眼前，而不是只说"暂无数据"
+        // 星标空态的下一步不是"新建捕获"（他已经有笔记了），是"回去挑一条加星"
         action={
-          <Button variant="primary" onClick={() => navigate('/capture')}>
-            {t('nav.newCapture')}
-          </Button>
+          starredOnly ? (
+            <Button variant="secondary" onClick={() => navigate('/notes')}>
+              {t('notes.title')}
+            </Button>
+          ) : (
+            <Button variant="primary" onClick={() => navigate('/capture')}>
+              {t('nav.newCapture')}
+            </Button>
+          )
         }
       />
     );
@@ -41,10 +71,12 @@ export default function NotesListPage() {
 
   return (
     <div className="px-6 py-6">
-      <h1 className="mb-4 text-xl font-semibold text-ink">{t('notes.title')}</h1>
+      <h1 className="mb-4 text-xl font-semibold text-ink" data-testid="notes-list-title">
+        {starredOnly ? t('nav.starred') : t('notes.title')}
+      </h1>
       <MockNotice surface="notes" className="mb-3" />
-      <ul className="flex flex-col gap-2" role="list">
-        {notes.map((n) => (
+      <ul className="flex flex-col gap-2" role="list" data-testid="notes-list">
+        {visible.map((n) => (
           <li key={n.uid}>
             <Link
               to={`/notes/${n.uid}`}

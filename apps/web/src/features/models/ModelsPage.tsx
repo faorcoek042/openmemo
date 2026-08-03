@@ -7,7 +7,7 @@ import { LlmSettingsSection } from '../../components/common/llm/LlmSettingsSecti
 import { PurposeBindingsSection } from '../../components/common/llm/PurposeBindingsSection';
 import { useTranslation } from 'react-i18next';
 import { Boxes, Cpu, Mic } from 'lucide-react';
-import type { CatalogVariant, ModelRole } from '@openmemo/shared';
+import type { CatalogVariant, DownloadJob, ModelRole } from '@openmemo/shared';
 
 import { Banner } from '../../components/common/Banner';
 import { Button } from '../../components/common/Button';
@@ -44,7 +44,7 @@ import { StorageBreakdown } from './components/StorageBreakdown';
 
 
 export default function ModelsPage() {
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const locale = i18n.language;
 
   /**
@@ -71,6 +71,9 @@ export default function ModelsPage() {
    * ADR-011 决策 1：中文场景下**默认过滤掉**实测不可用的模型。
    */
   const targetLanguage = locale.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  /** 「已隐藏 N 个在<这里>下…」的那个语言名。中文档说"中文"，其余说"该语言"。 */
+  const targetLanguageLabel =
+    targetLanguage === 'zh' ? t('models.language.zh') : t('models.language.other');
   /** 允许用户手动解除过滤 —— 英文转写时 base 在弱机器上仍然合理，一刀切会误伤。 */
   const [showNotRecommended, setShowNotRecommended] = useState(false);
 
@@ -133,11 +136,19 @@ export default function ModelsPage() {
       );
   }, [catalog.data, role, onlyRunnable, showNotRecommended, installedIds, active.asr, active.llm]);
 
-  // 只显示模型域的活跃下载（后端包下载在 /runtime 页展示）
+  /*
+   * 只显示模型域的活跃下载（后端包下载在 /runtime 页展示）。
+   *
+   * ⚠️ `filter` 的回调必须写成**类型谓词**：`jobs` 现在是 `AnyJob[]`
+   * （`DownloadJob | PipelineJob`，T-130 补了流水线 job 的表示），
+   * 而 TS 不会顺着普通 `filter` 收窄联合类型 —— 不写谓词，`DownloadRow`
+   * 就会收到一个可能没有 `totalBytes` / `completedBytes` 的 job。
+   * 这里判据仍是运行时那句 `kind === 'model'`，谓词只是把它告诉类型系统。
+   */
   const activeJobs = useMemo(
     () =>
       (jobs.data?.jobs ?? []).filter(
-        (j) => j.kind === 'model' && !['succeeded', 'cancelled'].includes(j.state),
+        (j): j is DownloadJob => j.kind === 'model' && !['succeeded', 'cancelled'].includes(j.state),
       ),
     [jobs.data],
   );
@@ -146,13 +157,17 @@ export default function ModelsPage() {
     // unsupported 不禁用按钮，改为二次确认（R-04 §9.6 第 7 条）
     if (v.fitness.tier === 'unsupported') {
       const ok = window.confirm(
-        `${v.displayNameZh}\n\n${v.fitness.reasonZh}\n\n这台机器很可能无法运行它，或者极慢。仍要下载吗？`,
+        t('models.confirmUnsupported', { name: v.displayNameZh, reason: v.fitness.reasonZh }),
       );
       if (!ok) return;
     }
     if (v.license.requiresAcceptance || v.license.gated) {
       const ok = window.confirm(
-        `${v.displayNameZh} 使用 ${v.license.id} 许可，需要你先到上游页面接受条款。\n\n${v.license.url}\n\n已接受并继续下载？`,
+        t('models.confirmLicense', {
+          name: v.displayNameZh,
+          license: v.license.id,
+          url: v.license.url,
+        }),
       );
       if (!ok) return;
       window.open(v.license.url, '_blank', 'noopener');
@@ -180,27 +195,27 @@ export default function ModelsPage() {
   return (
     <div className="mx-auto w-full max-w-4xl space-y-4 p-4" data-testid="models-page">
       <header>
-        <h1 className="text-lg font-semibold text-ink">模型管理</h1>
-        <p className="mt-0.5 text-xs text-ink-secondary">
-          浏览、下载、切换、删除、选择量化档 —— 全部在网页里完成，不需要命令行。
-        </p>
+        <h1 className="text-lg font-semibold text-ink">{t('models.title')}</h1>
+        <p className="mt-0.5 text-xs text-ink-secondary">{t('models.intro')}</p>
       </header>
 
       {catalog.data?.stale ? (
         <Banner
           tone="warning"
-          title="当前使用离线模型目录"
-          detail={`最后更新于 ${new Date(catalog.data.fetchedAt).toLocaleString(locale)}。联网后会自动更新。`}
+          title={t('models.staleTitle')}
+          detail={t('models.staleDetail', {
+            time: new Date(catalog.data.fetchedAt).toLocaleString(locale),
+          })}
         />
       ) : null}
 
       {/* 当前使用 */}
       <section className="rounded-lg border border-line bg-surface-1 p-4">
-        <h2 className="text-sm font-medium text-ink">当前使用</h2>
+        <h2 className="text-sm font-medium text-ink">{t('models.current.title')}</h2>
         <ul className="mt-2 space-y-2 text-xs">
           <li className="flex items-center gap-2">
             <Mic className="size-4 shrink-0 text-ink-muted" aria-hidden />
-            <span className="w-16 shrink-0 text-ink-secondary">转写模型</span>
+            <span className="w-16 shrink-0 text-ink-secondary">{t('models.current.asr')}</span>
             {asrActive ? (
               <>
                 <span className="text-ink">{asrActive.displayName}</span>
@@ -209,11 +224,15 @@ export default function ModelsPage() {
                 </span>
                 <StatusChip
                   tone={asrActive.integrity === 'ok' ? 'good' : 'warning'}
-                  label={asrActive.integrity === 'ok' ? '已校验' : '未校验'}
+                  label={
+                    asrActive.integrity === 'ok'
+                      ? t('models.current.verified')
+                      : t('models.current.unverified')
+                  }
                 />
               </>
             ) : (
-              <StatusChip tone="warning" label="未选择 —— 无法转写" />
+              <StatusChip tone="warning" label={t('models.current.noAsr')} />
             )}
             {/*
               INV-2 / D-10 #21：**复用**既有的 `AsrModelPicker`，不要新写一个。
@@ -226,7 +245,7 @@ export default function ModelsPage() {
           </li>
           <li className="flex items-center gap-2">
             <Boxes className="size-4 shrink-0 text-ink-muted" aria-hidden />
-            <span className="w-16 shrink-0 text-ink-secondary">语言模型</span>
+            <span className="w-16 shrink-0 text-ink-secondary">{t('models.current.llm')}</span>
             {/*
               ★ D-10 #8：这里原本读 `active.llm`，而**在线 provider 从不进 `installed` 表**，
               所以它恒为 null —— 用户明明配好了 DeepSeek，页面却一直写着
@@ -239,7 +258,7 @@ export default function ModelsPage() {
                 <span className="text-ink-secondary">{llmModel}</span>
               </>
             ) : (
-              <StatusChip tone="warning" label="未配置 —— 摘要与思维导图不可用" />
+              <StatusChip tone="warning" label={t('models.current.noLlm')} />
             )}
             <button
               type="button"
@@ -247,7 +266,7 @@ export default function ModelsPage() {
               onClick={() => setTab('llm')}
               data-testid="current-llm-change"
             >
-              更换
+              {t('models.current.change')}
             </button>
           </li>
         </ul>
@@ -255,8 +274,10 @@ export default function ModelsPage() {
 
       {/* 下载中 */}
       {activeJobs.length > 0 ? (
-        <section className="space-y-2" aria-label="下载中">
-          <h2 className="text-sm font-medium text-ink">下载中（{activeJobs.length}）</h2>
+        <section className="space-y-2" aria-label={t('models.downloadingLabel')}>
+          <h2 className="text-sm font-medium text-ink">
+            {t('models.downloadingCount', { n: activeJobs.length })}
+          </h2>
           {activeJobs.map((j) => (
             <DownloadRow
               key={j.jobId}
@@ -270,40 +291,54 @@ export default function ModelsPage() {
       ) : null}
 
       {/*
-        D-10 #1/#6：语言模型 Tab 承接原本在**设置页**的两个区块。
-        它们搬过来而不是复制 —— 服务商下拉必须是同页上方清单的子集（INV-1），
-        跨页正是上次漂移的成因。
-      */}
-      {tab === 'llm' ? (
-        <div className="space-y-4" data-testid="models-llm-tab">
-          <LlmSettingsSection />
-          <PurposeBindingsSection />
-        </div>
-      ) : null}
+        ★★ Tab 切换条属于**页面骨架**，不属于任何一个 Tab 的内容。
 
-      {/* 目录（仅转写 Tab） */}
-      <section className={tab === 'asr' ? 'space-y-3' : 'hidden'}>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex rounded-md border border-line bg-surface-1 p-0.5">
-            {(
-              [
-                { id: 'asr' as const, label: '转写' },
-                { id: 'llm' as const, label: '语言模型' },
-              ]
-            ).map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => setTab(t.id)}
-                className={`inline-flex items-center gap-1.5 rounded px-3 py-1 text-xs font-medium ${
-                  tab === t.id ? 'bg-accent text-accent-fg' : 'text-ink-secondary'
-                }`}
-                data-testid={`models-tab-${t.id}`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
+        它原本写在下面那个 `tab === 'asr' ? … : 'hidden'` 的 section **里面**，
+        于是切到「语言模型」之后，切换条**连同整个 section 一起被 hidden 了** ——
+        页面上再没有任何一个能切回「转写」的控件，用户只能手改 URL 或从侧栏绕回默认 Tab
+        （`ui-polish` 在 T-124 的真浏览器截图里抓到，`[实测]`）。
+
+        这不是样式问题：**tablist 与 tabpanel 必须是兄弟，不能是父子**。
+        `?tab=llm` 是一个可分享的 URL（D-10 §1.2），别人打开它就落在语言模型 Tab 上，
+        对他而言"切回去"的入口从来就没出现过。
+
+        顺带补齐 tablist/tab/tabpanel 的 ARIA 关系 —— 两个 Tab 面板本来就是
+        "同一块区域的两种内容"，读屏用户此前拿不到这层关系。
+      */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div
+          role="tablist"
+          aria-label={t('models.tabsLabel')}
+          className="flex rounded-md border border-line bg-surface-1 p-0.5"
+          data-testid="models-tabs"
+        >
+          {(
+            [
+              { id: 'asr' as const, label: t('models.tabs.asr') },
+              { id: 'llm' as const, label: t('models.tabs.llm') },
+            ]
+          ).map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === item.id}
+              aria-controls={`models-panel-${item.id}`}
+              onClick={() => setTab(item.id)}
+              className={`inline-flex items-center gap-1.5 rounded px-3 py-1 text-xs font-medium ${
+                tab === item.id ? 'bg-accent text-accent-fg' : 'text-ink-secondary'
+              }`}
+              data-testid={`models-tab-${item.id}`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        {/*
+          「只显示这台机器能跑的」筛的是**目录卡片**，只在转写 Tab 下有意义 ——
+          它跟着 Tab 走，切换条不跟着 Tab 走。这正是"骨架 vs 内容"的分界。
+        */}
+        {tab === 'asr' ? (
           <label className="ml-auto inline-flex cursor-pointer items-center gap-1.5 text-xs text-ink-secondary">
             <input
               type="checkbox"
@@ -311,10 +346,34 @@ export default function ModelsPage() {
               onChange={(e) => setOnlyRunnable(e.target.checked)}
               className="size-3.5 accent-[var(--accent)]"
             />
-            只显示这台机器能跑的
+            {t('models.onlyRunnable')}
           </label>
-        </div>
+        ) : null}
+      </div>
 
+      {/*
+        D-10 #1/#6：语言模型 Tab 承接原本在**设置页**的两个区块。
+        它们搬过来而不是复制 —— 服务商下拉必须是同页上方清单的子集（INV-1），
+        跨页正是上次漂移的成因。
+      */}
+      {tab === 'llm' ? (
+        <div
+          className="space-y-4"
+          id="models-panel-llm"
+          role="tabpanel"
+          data-testid="models-llm-tab"
+        >
+          <LlmSettingsSection />
+          <PurposeBindingsSection />
+        </div>
+      ) : null}
+
+      {/* 目录（仅转写 Tab） */}
+      <section
+        id="models-panel-asr"
+        role="tabpanel"
+        className={tab === 'asr' ? 'space-y-3' : 'hidden'}
+      >
         {/*
           ADR-011 决策 1：中文下 base/small 不是"稍差"，是把「维基百科」听成「危机摆科」。
           默认隐藏，但必须说明隐藏了什么、为什么，并且**可以一键看回来** ——
@@ -322,48 +381,44 @@ export default function ModelsPage() {
         */}
         {role === 'asr' && hiddenByLanguage > 0 && !showNotRecommended ? (
           <div className="rounded-md border border-line bg-surface-1 px-3 py-2 text-xs text-ink-secondary">
-            已隐藏 {hiddenByLanguage} 个在{targetLanguage === 'zh' ? '中文' : '该语言'}
-            下实测识别质量不可接受的模型（小模型会把「维基百科」听成「危机摆科」）。
+            {t('models.hidden.notice', { n: hiddenByLanguage, language: targetLanguageLabel })}
             <button
               type="button"
               className="ml-1 text-accent-ink hover:underline"
               onClick={() => setShowNotRecommended(true)}
               data-testid="models-show-not-recommended"
             >
-              仍要显示
+              {t('models.hidden.show')}
             </button>
           </div>
         ) : null}
         {showNotRecommended && hiddenByLanguage > 0 ? (
           <div className="rounded-md border border-line bg-surface-1 px-3 py-2 text-xs text-ink-secondary">
-            正在显示全部模型，含 {hiddenByLanguage} 个不适合
-            {targetLanguage === 'zh' ? '中文' : '该语言'}的。
+            {t('models.hidden.showingAll', { n: hiddenByLanguage, language: targetLanguageLabel })}
             <button
               type="button"
               className="ml-1 text-accent-ink hover:underline"
               onClick={() => setShowNotRecommended(false)}
             >
-              重新隐藏
+              {t('models.hidden.hideAgain')}
             </button>
           </div>
         ) : null}
 
         {catalog.isError ? <ErrorBlock error={catalog.error} onRetry={() => void catalog.refetch()} /> : null}
-        {catalog.isLoading ? <p className="text-xs text-ink-muted">正在读取模型目录…</p> : null}
+        {catalog.isLoading ? (
+          <p className="text-xs text-ink-muted">{t('models.loading')}</p>
+        ) : null}
 
         {!catalog.isLoading && groups.length === 0 ? (
           <EmptyState
             icon={<Cpu className="size-8" aria-hidden />}
-            title={onlyRunnable ? '这台机器暂时跑不动任何该类模型' : '目录里还没有该类模型'}
-            hint={
-              onlyRunnable
-                ? '取消勾选可以看到全部模型 —— 我们的估算可能偏保守，你仍然可以选择下载。'
-                : undefined
-            }
+            title={onlyRunnable ? t('models.emptyRunnable') : t('models.emptyNone')}
+            hint={onlyRunnable ? t('models.emptyRunnableHint') : undefined}
             action={
               onlyRunnable ? (
                 <Button variant="secondary" size="sm" onClick={() => setOnlyRunnable(false)}>
-                  显示全部
+                  {t('models.showAll')}
                 </Button>
               ) : undefined
             }
@@ -380,7 +435,7 @@ export default function ModelsPage() {
             pendingId={pendingId}
             onPull={(v) => void handlePull(v)}
             onDelete={(id) => {
-              if (window.confirm('删除这个模型？磁盘空间会被释放，需要时可以重新下载。')) {
+              if (window.confirm(t('models.confirmDelete'))) {
                 void del.mutateAsync(id);
               }
             }}
