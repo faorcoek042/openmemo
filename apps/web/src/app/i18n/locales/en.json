@@ -597,7 +597,10 @@
     "retryingHint": "Retrying automatically ({{attempt}}/{{max}}) — nothing to do.",
     "viewTasks": "Tasks",
     "dismiss": "Dismiss",
-    "title": "Install and download progress"
+    "title": "Install and download progress",
+    "blockedTranscribe": "Transcription paused",
+    "blockedMindmap": "Mind map paused",
+    "blockedGeneric": "Background task paused"
   },
   "readiness": {
     "title": "Not ready",

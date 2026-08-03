@@ -105,6 +105,17 @@ const MAX_VISIBLE = 3;
 /** 成功后停留多久自动消失。带动作的（blocked/failed/需重启）**永不自动消失**。 */
 const SUCCESS_LINGER_MS = 8000;
 
+/**
+ * `job.blocked` 没有标题字段（见上方 `bus.on('job.blocked')` 的注释）。
+ * 按 `blockedCode` 给一个**说得出口**的名字，而不是渲染一个空标题或原始枚举值。
+ * 未知 code 一律落到"后台任务" —— 宁可笼统，也不编一个具体但可能是错的名字。
+ */
+function blockedFallbackName(code: string, t: TFunction): string {
+  if (code === 'MISSING_ASR_MODEL') return t('jobToast.blockedTranscribe');
+  if (code === 'NO_TRANSCRIPT' || code === 'LLM_NOT_CONFIGURED') return t('jobToast.blockedMindmap');
+  return t('jobToast.blockedGeneric');
+}
+
 /* ──────────────────────────── 容器 ──────────────────────────── */
 
 export function JobToaster() {
@@ -187,6 +198,27 @@ export function JobToaster() {
           state: 'blocked',
           reason: ev.messageZh || ev.message,
           remediation: ev.remediation,
+          /*
+           * ★ 必须自带 name，否则这条 toast **永远不会出现** —— T-114 实测出来的死路：
+           *
+           *   `job.blocked` 的**唯一**发送方是 transcribe / mindmap 两个 runner
+           *   （`apps/daemon/src/jobs/runners/*.ts`），
+           *   而这两类 job **刻意不发 `job.created`**（`jobs/events.ts` 有整段注释说明原因：
+           *   `JobCreatedEvent` 要求一个完整的 `DownloadJob`，流水线 job 填不进那个形状）。
+           *   `upsert` 又规定"没见过 job.created 就不补建"。
+           *   三条合起来 = **blocked 分支在真实运行中不可达**。
+           *
+           *   代价不是"少一条提示"：`[实测]` 没装 ASR 模型时导入媒体，
+           *   POST 返回 202、笔记停在 `processing`，**页面上一个字都没有** ——
+           *   正是这个项目反复在修的那种"零报错的卡住"。
+           *
+           *   给一个通用名就够了：用户刚刚点的就是这件事，缺的从来不是名字，是那句
+           *   "为什么停住了 + 怎么办"（`reason` + `remediation` 两个字段本身是齐的）。
+           *   等 shared 补上流水线 job 的表示，这里换成真实标题即可。
+           */
+          name: blockedFallbackName(ev.blockedCode, t),
+          kind: 'model',
+          totalBytes: 0,
         });
       }),
 
@@ -204,7 +236,7 @@ export function JobToaster() {
       }),
     ];
     return () => offs.forEach((off) => off());
-  }, [upsert, dismiss, scheduleDismiss]);
+  }, [upsert, dismiss, scheduleDismiss, t]);
 
   /**
    * 成功之后再问一次 `/api/health`：装完的东西是**立刻可用**还是**要重启才生效**。

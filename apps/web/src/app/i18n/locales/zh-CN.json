@@ -597,7 +597,10 @@
     "retryingHint": "正在自动重试（第 {{attempt}}/{{max}} 次），不用管它。",
     "viewTasks": "任务中心",
     "dismiss": "关闭",
-    "title": "安装与下载进度"
+    "title": "安装与下载进度",
+    "blockedTranscribe": "转写任务已暂停",
+    "blockedMindmap": "思维导图任务已暂停",
+    "blockedGeneric": "后台任务已暂停"
   },
   "readiness": {
     "title": "能力未就绪",

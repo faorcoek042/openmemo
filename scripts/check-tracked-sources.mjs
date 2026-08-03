@@ -32,7 +32,7 @@ const ARTIFACT =
 
 /** 列出所有源码目录（排除产物目录）。 */
 function sourceDirs(root) {
-  let out = [];
+  let out;
   try {
     out = execFileSync('find', [root, '-type', 'd'], { encoding: 'utf8' }).split('\n').filter(Boolean);
   } catch {
