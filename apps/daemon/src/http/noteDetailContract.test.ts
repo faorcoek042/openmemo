@@ -151,6 +151,18 @@ function patch(f: Fixture, path: string, body: unknown): Promise<Response> {
   });
 }
 
+function put(f: Fixture, path: string, body: unknown): Promise<Response> {
+  return fetch(`${f.base}${path}`, {
+    method: 'PUT',
+    headers: {
+      Cookie: `${SESSION_COOKIE}=${f.sid}`,
+      [CSRF_HEADER]: f.csrf,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 describe('T-139 A1 —— GET /api/notes/:uid 的 assets 必须带 state', () => {
   it('★ 每条资产都要有 state，且值是 media_assets 那一列的真值', async () => {
     const f = await makeNote('a1');
@@ -340,6 +352,158 @@ describe('T-139 —— 这个端点整体（E1：此前一次都没被执行过�
       const res = await get(f, '/api/notes/01ARZ3NDEKTSV4RRFFQ69G5FAV');
       assert.equal(res.status, 404);
       assert.equal(((await res.json()) as { error: { code: string } }).error.code, 'NOTE_NOT_FOUND');
+    } finally {
+      await f.d.stop();
+    }
+  });
+});
+
+/*
+ * ────────────────────────────────────────────────────────────────────────────
+ * 以下并自 `http/rest/noteDetail.test.ts`（T-142 / test-gaps），该文件已删除。
+ *
+ * 两路当时**独立地**冲着同一条 E1（"整个端点从没被执行过"）去写，于是
+ * `state` / `bodyJson` / `assets[].url` / `tags` 是数组 / 404 这几组重复了。
+ * 重复的部分**保留本文件原有那份**（它更强：`url` 是与具体 asset uid 逐字相等，
+ * 而不是泛化的一致性；`state` 还额外验了按 url 真取得回字节）。
+ * 下面只并入那边**独有**的断言，一条不落也一条不重。
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+describe('T-142 并入 —— 详情端点上另外几条"坏了不会报错"的性质', () => {
+  it('★ 星标写进去，必须能从**详情**端点读回来（往返，不是"字段存在"）', async () => {
+    /*
+     * `starred` 在**列表**端点上是钉住的，在**详情**端点上此前是裸的。
+     * "这个字段有测试"和"这条路径有测试"是两件事 ——
+     * ⑤C「写得进读不回」那一族每一次都长在"另一条路径"上。
+     */
+    const f = await makeNote('starred');
+    try {
+      const before = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as {
+        starred: unknown;
+      };
+      assert.equal(typeof before.starred, 'boolean', `starred 不是布尔：${JSON.stringify(before.starred)}`);
+      assert.equal(before.starred, false, '前提：新建的笔记不该是星标的');
+
+      assert.equal((await put(f, `/api/notes/${f.noteUid}/star`, { starred: true })).status, 200);
+
+      const after_ = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as { starred: unknown };
+      assert.equal(after_.starred, true, '星标写进去了，详情端点读不回来');
+    } finally {
+      await f.d.stop();
+    }
+  });
+
+  it('★ 详情与列表必须对同一条笔记给出同一个答案（title / starred）', async () => {
+    /*
+     * 两个端点各自序列化一份，谁改了一边都不会有编译错误 ——
+     * `NoteStatus` 在 shared / web / daemon 三方分叉就是这么来的。
+     * 这条不是形状检查，是**一致性检查**：两边一开始各说各话它就红。
+     */
+    const f = await makeNote('consistency');
+    try {
+      await put(f, `/api/notes/${f.noteUid}/star`, { starred: true });
+      assert.equal((await patch(f, `/api/notes/${f.noteUid}`, { title: '改过的标题' })).status, 200);
+
+      const detail = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as {
+        title: string;
+        starred: boolean;
+      };
+      const { notes } = (await (await get(f, '/api/notes?limit=50')).json()) as {
+        notes: { uid: string; title: string; starred: boolean }[];
+      };
+      const fromList = notes.find((n) => n.uid === f.noteUid);
+      assert.notEqual(fromList, undefined, '列表端点里找不到这条笔记');
+      assert.equal(detail.title, fromList?.title, 'title 在两个端点上不一致');
+      assert.equal(detail.starred, fromList?.starred, 'starred 在两个端点上不一致');
+      // 前提自检：如果两边都恒为默认值，上面两条会变成恒真
+      assert.equal(detail.title, '改过的标题');
+      assert.equal(detail.starred, true);
+    } finally {
+      await f.d.stop();
+    }
+  });
+
+  it('★ `folderUid` 必须指向一个**真实存在的**文件夹', async () => {
+    /*
+     * 侧栏用这个 uid 去文件夹树里定位当前笔记。指到一个查不到的 uid，
+     * 就是"笔记待在一个界面上不存在的文件夹里"——而这条链上没有任何一层会报错。
+     *
+     * ⚠️ 这条**不许写成"null 就跳过"**：`createNote` 不给 folderId 时会落到
+     * `ensureDefaultFolder()`，所以这里必然非 null。写成可跳过的话，
+     * 哪天默认文件夹逻辑坏了、`folderUid` 变成 null，这条用例会**静默变成空跑**
+     * —— 那正是本轮我自己踩过的那盏假绿灯（空数组上的 for 循环）。
+     */
+    const f = await makeNote('folder');
+    try {
+      const body = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as {
+        folderUid: unknown;
+      };
+      assert.equal(
+        typeof body.folderUid,
+        'string',
+        `folderUid 不是字符串（${JSON.stringify(body.folderUid)}）—— 默认文件夹那条链断了`,
+      );
+
+      // `/api/folders` 回的是**树**，平着比会漏掉所有子文件夹
+      interface Node {
+        uid: string;
+        children?: Node[];
+      }
+      const { folders } = (await (await get(f, '/api/folders')).json()) as { folders: Node[] };
+      const uids: string[] = [];
+      const walk = (ns: Node[]): void => {
+        for (const n of ns) {
+          uids.push(n.uid);
+          walk(n.children ?? []);
+        }
+      };
+      walk(folders);
+      assert.equal(uids.length > 0, true, '前提：文件夹树不该是空的');
+      assert.equal(
+        uids.includes(body.folderUid as string),
+        true,
+        `folderUid=${String(body.folderUid)} 在 /api/folders 里查不到（现有 ${JSON.stringify(uids)}）`,
+      );
+    } finally {
+      await f.d.stop();
+    }
+  });
+
+  it('★ 非 ULID 的段位必须落到后续路由，不许被详情分支吃掉', async () => {
+    /*
+     * `rest/notes.ts` 结尾那段注释说明它**刻意不做** "非 ULID 就 400" 的兜底：
+     * 路由是按顺序 try 的，在这里 400 会把 `/api/notes/upload` 这类兄弟路由一起打死。
+     * 那条注释此前没有任何执行者。
+     *
+     * 期望值是**追出来的**，不是猜的：我先猜 404，实测 405 ——
+     * `upload.ts:465` 认领了这个路径、只是拒绝 GET 方法。
+     * **405 比 404 更能证明结论**：请求确实穿过了详情分支、落到下一条路由手里。
+     */
+    const f = await makeNote('fallthrough');
+    try {
+      const res = await get(f, '/api/notes/upload');
+      assert.equal(res.status, 405, `期望被 upload 路由以 405 认领，实际 ${res.status}`);
+      assert.equal(
+        ((await res.json()) as { error?: { code?: string } }).error?.code,
+        'METHOD_NOT_ALLOWED',
+        '405 得来自 upload 路由，不是别的什么东西',
+      );
+    } finally {
+      await f.d.stop();
+    }
+  });
+
+  it('`canRetranscribe` 是布尔、`createdAt` 是可解析的时间串', async () => {
+    // 顶层键那条只验"在不在"；这条验"是不是能用的类型"——前端拿 createdAt 直接格式化
+    const f = await makeNote('types');
+    try {
+      const body = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as Record<string, unknown>;
+      assert.equal(typeof body['canRetranscribe'], 'boolean');
+      assert.equal(
+        typeof body['createdAt'] === 'string' && !Number.isNaN(Date.parse(body['createdAt'] as string)),
+        true,
+        `createdAt 不是可解析的时间串：${JSON.stringify(body['createdAt'])}`,
+      );
     } finally {
       await f.d.stop();
     }

@@ -2,6 +2,247 @@
 
 ---
 
+## [2026-08-04 01:35] T-142d DONE —— 机器级状态全面审计（回答你"要不要派人"）
+
+门禁 **`856 passed / 0 failed / 0 todo`**，`tsc -b` 0 · `eslint` 0。
+覆盖范围：40 个 `src/**/*.test.ts(x)`、28 个 `*.mjs`（`scripts/` + 三个包的 scripts）、
+testkit 与 setup 文件。判据全程是你那条：**"kill -9 在最坏那一行，机器上留下什么"**。
+
+### 直接回答你的问题：**有一条形状比指针更危险，但今天的实际杀伤是 0 —— 因为一个巧合**
+
+**不用立刻派人。** 我已经修了它（在我的脚本层内），下面把"形状"和"今天的实际后果"分开说清楚 ——
+这两个数字差得很远，混在一起报会误导你的排期。
+
+#### 🔴 `packages/downloader/scripts/seed-fixture.mjs` —— **默认参数就是用户的真实数据库**
+
+```js
+const DB = argv.includes('--db') ? argv[argv.indexOf('--db')+1]
+                                 : '/root/.local/share/openmemo/openmemo.db';   // ← 默认值
+```
+
+它往这个库里 INSERT 一条笔记 + 资产 + 转写稿 + 7 条分段；`--reset` 还会
+`DELETE FROM notes WHERE title LIKE 'T-038%'`；最后对
+`segments_fts` / `notes_fts` 做一次**全量 rebuild**。
+
+**⚠️ 先做一条自我更正 —— 我上面这句话说重了，实测之后必须收回一半：**
+
+那个写死的路径是 **OS 默认位置**。而**用户已经搬过家**（指针 `dataDir = /root/data-memo`），
+所以今天在这台机器上跑它，写的是 `~/.local/share/openmemo/openmemo.db` ——
+`[实测]` 那个文件 **`notes` 总数 = 0**，是搬家前留下的**旧空库**，**不是**用户当前的真实库。
+（`/root/data-memo` 我没有打开，遵守边界。）
+
+**所以今天它的实际杀伤是 0。但这恰恰是本项目最不接受的那种"对"** ——
+`packages/db` 那条 glob "碰巧正确"是同一个形状：
+**它安全的原因是用户碰巧搬过家，不是因为脚本写对了。**
+- 用户哪天搬回来、或在任何**没搬过家**的机器上（也就是默认情形），那个路径**就是**真实库；
+- 而且它写死的是 `/root/...`，连 `homedir()` 都没用 —— 换个用户名当场指错人。
+
+**比指针那条仍然更糟的一点**（这半句我保留）：指针是**指着**数据
+（一个字节没丢，指回来就好），这个是**写进**数据、且 FTS rebuild 不可逆。
+而且**照它自己 Usage 那行原样敲一遍就会发生**，不需要任何异常路径 ——
+指针那条至少还要被 kill 才出事。
+
+**kill -9 会留下什么**：INSERT 没包在事务里，逐条自动提交。
+写完笔记、还没写转写稿时被杀 → 用户笔记列表里**永久多出一条没有转写稿的笔记**；
+FTS rebuild 中途被杀 → 搜索索引半重建，**从此静默返回错误结果，零报错**，
+直到用户哪天搜不到东西才发现。**和指针那次一样的"损坏不可见"形状。**
+
+**比指针轻的地方**：`packages/downloader` **没有 `test` 脚本**，所以 `pnpm -r test` 跑不到它，
+必须有人手动敲。这也是它至今没出事的唯一原因。
+
+**已修（判据同 §9-bis：不是"记得带 --db"，是"忘了带也不会有后果"）**：
+`--db` 改成**必填**，不带就 `exit 2` 并把老默认值原样印出来（真要写真库仍然写得了，
+但必须是**打出来的**）。顺带删掉写死的 `createRequire('/root/memo/packages/db/')`，
+改成从本文件位置推导。
+
+```
+$ node packages/downloader/scripts/seed-fixture.mjs
+这个脚本会往数据库里写 fixture（笔记/资产/转写稿/分段），并重建 FTS 索引。
+`--db` 是必填的 —— 它以前默认写用户的真实库，跑一次就污染真实笔记（T-142c 改）。
+  exit=2
+
+$ node packages/downloader/scripts/seed-fixture.mjs --db <真库的文件副本>
+seeded T-038 fixture … segments: 7 · fts: rebuilt          ← 功能完好
+  副本 T-038 笔记条数 = 1
+  用户真实库 T-038 笔记条数 = 0
+  ✔ 用户真实库 md5 不变
+```
+（正向验证用的是真库的**文件副本**，对原库全程只读。）
+
+#### 🟡 `packages/downloader/scripts/reference-server.mjs` —— **需要你派人，我没动**
+
+```js
+const PORT = Number(argv[argv.indexOf('--port')+1]) || 17650;                      // = DEFAULT_PORT
+const ROOT = process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-refserver', 'models');
+```
+
+三个问题叠在一起：
+1. **固定名** `openmemo-refserver`（不是 `mkdtemp`），跨并发运行共享、跨重启存活，
+   **全文件零 `rm`**；下次启动会把上次留下的 `active.json` 读回来当真（`:174`）。
+2. **`OPENMEMO_MODELS` 优先级最高** —— 那个变量产品代码自己也在读
+   （`packages/pipeline/src/tools.ts:91`）。谁把它导出指向真实模型库，
+   这个文件的 `DELETE /api/models/:id`（`:670`，会 `removeManifest` + `collectGarbage`）
+   和 `POST /api/models/gc`（`:660`）**就是在真删用户装好的模型包**。
+3. 默认端口 **17650 = `DEFAULT_PORT`**。它是长驻服务，关掉父终端会把它孤儿化，
+   **端口仍被占**，用户的 daemon 于是漂到 17651 —— 浏览器麦克风授权按 origin 隔离，**要重新授权**。
+
+**为什么我没动它**：改默认端口可能影响 downloader e2e 那几个脚本的假设，
+改 `ROOT` 语义要判断 `OPENMEMO_MODELS` 那条优先级是不是刻意设计的。
+**这两个都是设计裁决，不是我该顺手改的。** 建议：`ROOT` 兜底换 `mkdtempSync`，
+默认端口挪出 17650，`OPENMEMO_MODELS` 落在 `$HOME` 底下时拒绝启动。
+
+#### 🟢 端口撞真实例：**唯一一处，已修**（这条属于我的护栏层，顺手做了）
+
+`apps/daemon/src/http/rest/settings.roundtrip.test.ts:28` 是**唯一没遵守本仓库自己那条规矩**
+的 daemon 测试。`daemon.test.ts` 文件头原话：「用高位端口（19xxx）跑测试，避免与真实实例的 17650 打架」，
+另外四个都照做了，只有它是 `17_600 + rand(300)` 配 `maxPort +40` ⇒ 实际可达 **17600–17939，区间里就含 17650**。
+
+按你的判据它**够不上高危**：socket 随进程消失，kill -9 不留持久状态。
+但它是**跑的时候**就可能撞上用户的实例（约 1/300），撞上的两种结果分别是
+"红一格假红灯"和"用户 daemon 漂到 17651、麦克风授权失效"。而修它只要改一个数字。
+
+顺带把 `restart-datadir.test.ts` 三处也从 17xxx 挪到 19xxx —— 它们原本
+最高到 17629，**离 17650 只剩 21 个端口**，安全但太贴脸，而且它们是最后的例外。
+
+**改完我写了个检查器扫全仓复核，当场抓到我自己刚引入的重叠**（`maxPort` 跨度让每段宽 70，
+我按 60 间隔排的基数互相压住，第三段还压到了 `noteDetailContract` 的 19860）：
+```
+  ✘ 重叠: restart-datadir-c [19820..19889]  vs  noteDetailContract [19860..19880]
+```
+收窄后八个区间互不重叠、全部 ≥ 19340：
+```
+  daemon.test [19340..19400] · pipelineJobEvents [19510..19570] · notesRest [19610..19660]
+  restart-a [19700..19718] · restart-b [19730..19748] · restart-c [19760..19778]
+  noteDetailContract [19860..19880] · settings.roundtrip [19940..20019]
+  ✔ 八个区间互不重叠，且全部远离 17650
+```
+
+### 明确"查了、没有"的（这半边和找到的东西一样重要）
+
+| 类别 | 结果 |
+|---|---|
+| 测试里的 `homedir()` / `$HOME` / XDG / AppData / Library | **零处**。所有 homedir 相关的都是产品或 CLI 代码；每个测试的 `startDaemon()` 都传显式 mkdtemp `dataDir` |
+| `/root/data-memo` | **零处**。只在 `components.test.tsx` 的两条注释里出现 |
+| 端口 10000（你的 demo） | **零处**。只出现在 i18n 文案、一条注释、一条 usage 示例 |
+| `git config` / `npm config` / `.npmrc` / `.gitconfig` 写入 | **零处** |
+| lock / pid 文件、unix socket | **零处在临时目录之外**。唯一的锁是 dataDir 内的 `O_CREAT\|O_EXCL`，测试里 dataDir 全是 mkdtemp |
+| 临时目录之外建符号链接 | **零处**。全部创建点都在 mkdtemp 根里 |
+| 会关掉用户 daemon 的测试 | **零处**。`acquireSingleInstance` 只探活后让路或报错，从不请求对方退出 |
+| `process.env` 全局污染 | 3 处，**全部进程内**（`authMode.testkit.ts` 是 before/after 存取 —— 文本上正是失效的那个模式，但它是进程级 env，node:test 一文件一子进程，kill -9 带不走任何东西）|
+| 其余所有 `after()`/`finally` 清理 | 约 20 处，**每一处守的都是唯一的 `mkdtempSync` 目录**。kill -9 只留 `$TMPDIR` 垃圾，无共享名、无跨运行碰撞、不重定向任何产品路径 —— **结构上不是这个 bug 的形状** |
+
+### 剩下的（低危，git 可见，建议顺手不建议排期）
+
+- **5 个 e2e 脚本覆写 git 跟踪的 `docs/design/assets/*` 截图**（`e2e-full.mjs:28` 等，共 74 个已跟踪文件）。
+  kill -9 留下半套被覆写的 PNG + 上一轮的 `report.json`，**证据和图对不上**。
+  但 `git status` 会喊，`git checkout` 就能恢复。
+- **5 个 Playwright 脚本 `browser.close()` 没包 `try/finally`** —— 中途抛异常会漏浏览器进程。
+  进程泄漏，不是持久状态。
+- `packages/mindmap/scripts/demo-f4.mjs:133` 写固定名 `/tmp/mm/`（且没有 mkdir，目录不存在就 ENOENT）。
+- **一条值得记但我没动的耦合**：`resolveStoreRoot` 把 `OPENMEMO_MODELS` 排在显式 `dataDir`
+  **之前**（`tools.ts:91`）。谁导出了它，每个 daemon 测试的 `paths.modelsDir` 就是真实模型库。
+  我读了 `tools.ts:252-292`，那条路径对 storeRoot **只读**（只往临时 extDir 写符号链接），
+  所以今天没有后果 —— 但**没有任何东西断言它只读**，而这正是"一个环境变量静默重定向整个根"
+  的同一形状。**建议加一条断言，不建议改优先级**（改优先级要裁决）。
+
+### 需要 Manager 决策
+
+1. **`reference-server.mjs` 派谁修**（三个问题都要设计判断，我不该顺手改）
+2. `resolveStoreRoot` 的 `OPENMEMO_MODELS` 优先级 —— 加断言还是改语义
+3. e2e 截图写进 git 跟踪目录：接受现状 / 改写到 `/tmp` 再手工归档
+
+---
+
+## [2026-08-04 01:20] T-142c DONE —— §E 合并完成
+
+**门禁 `856 passed / 0 failed / 0 todo`**（`tsc -b` 0 · `eslint` 0 · 变异 **18/18 全红**）。
+
+**856 = 865 − 9，减的正好是去重掉的那 9 条**，没有任何断言在合并中丢失：
+我那份 14 条里，**9 条与他重复 → 保留他的**，**5 条独有 → 并入**。8 + 5 = 13。
+
+### 合并结果
+
+- **保留**：`apps/daemon/src/http/noteDetailContract.test.ts`（13 条）
+- **删除**：`apps/daemon/src/http/rest/noteDetail.test.ts`（连同 dist 里的残留产物）
+- **`mutation-check.mjs` 里 4 条 E1 变异的 `tests:` 已改指新文件**，重跑确认**仍然全红**
+  （改错了不会假绿 —— 对照组会报"测试文件不存在"）
+
+### 重复的 9 条一律保留他那份，理由是**他的更强**，不是先来后到
+
+| 重复项 | 为什么留他的 |
+|---|---|
+| `assets[].url` | 他是与**具体 asset uid 逐字相等**（`/media/asset/${f.audioUid}`），我是泛化的"url 与 uid 一致" |
+| `state` | 他额外验了**按那个 url 真的取回 64 字节** —— "字段在"不等于"能用" |
+| `bodyJson` 往返 / 是对象 | 等价，且他的 fixture 带 `timeAnchor` 节点，更接近真实文档 |
+| `tags` 是数组 / 404 / 端点被执行 | 等价，他在顶层键那条里一并覆盖 |
+
+### 并入的 5 条（他那边没有）
+
+1. **★ 星标写进去必须能从详情端点读回来** —— `starred` 在**列表**端点钉住了，
+   **详情**端点此前是裸的。"这个字段有测试"和"这条路径有测试"是两件事。
+2. **★ 详情与列表必须给出同一个答案**（`title`/`starred`）—— 两个端点各自序列化一份，
+   改一边不会有编译错误（`NoteStatus` 三方分叉就是这么来的）。
+   **附了前提自检**：断言改过的标题与星标确实生效，否则两边同为默认值时这条会恒真。
+3. **★ `folderUid` 必须在 `/api/folders` 的树里查得到** —— 指到查不到的 uid =
+   笔记待在一个界面上不存在的文件夹里，链上没有一层会报错。
+   ⚠️ **刻意没写成"null 就跳过"**：`createNote` 会落到 `ensureDefaultFolder()`，必然非 null；
+   写成可跳过的话，哪天默认文件夹那条链坏了，这条会**静默变成空跑** ——
+   正是我本轮自己踩过的那盏假绿灯（空数组上的 for 循环）。
+4. **★ 非 ULID 段位必须落到后续路由（405 + `METHOD_NOT_ALLOWED`）** ——
+   `rest/notes.ts` 结尾那条"刻意不做 400 兜底"的注释，此前没有任何执行者。
+5. `canRetranscribe` 是布尔、`createdAt` 是可解析时间串 —— 顶层键那条只验"在不在"。
+
+**没有为了凑数并入的两条**，明说：`tags` 无标签时是 `[]`、"端点真的被执行"的存在性探针 ——
+他的顶层键用例（`hasOwnProperty` + `Array.isArray`）已经覆盖同一个失效模式，
+再加一条只是把数字做大。
+
+### 并入的那 5 条不是"搬过去就算"，我用变异证明了它们真的钉住东西
+
+合并最容易出的问题是"断言搬过去了，但换了 fixture 之后不再钉任何东西"。
+所以给并入的部分补了**两条新变异**（清单 16 → **18，仍然全红**）：
+
+```
+✔ 红  E1-starred-detail-lies     starred: note.starred === 1  →  starred: false
+✔ 红  E1-folderUid-dangling      folderUid: repos.folderUidOf(...)  →  一个不存在的 ULID
+```
+
+对应的用户后果分别是：**详情页的星标恒为"未收藏"**（列表里亮着、进详情又灭，
+改一次亮一次、刷新又灭）；**笔记指向一个不存在的文件夹**（侧栏定位不到当前笔记）。
+两条以前都不会让任何东西变红。
+
+### 顺带：合并过程中护栏自己发挥了一次作用
+
+删掉源文件后 `dist/http/rest/noteDetail.test.js` **残留**（`tsc -b` 不清理孤儿产物）。
+`check-test-scripts` 前面那条发现守卫断的正是"源码里有几个测试文件，dist 里就有几个" ——
+它会因为 dist 多一个而红。我手工清掉了残留。**这正是那条守卫存在的理由**：
+否则一个已删除的测试文件会继续在门禁里跑，而且报绿。
+
+### ⑤ 那条我记下了，并且把我上次证明里的**缺口**补上了
+
+`apps/web/dist` 01:02:57 那次是你在 `01:03:02` 重启前的 `pnpm -r build`，`:10000` 托管的是统一构建产物。
+误报，抱歉占用了一次注意力。
+
+但复盘时发现**我上次那个"决定性实验"其实有个洞**：我只证了
+`pnpm build:safe` + 根 `tsc -b` 不写 `apps/web/dist`，**没证 `pnpm -r test`** ——
+而 web 的 `test:components` 里就有一条 `vite build`。
+我当时凭"它带了 `--outDir`"就放过了，那是**读代码得出的结论，不是实测**。
+既然 §7 的整条禁令就是针对"没人知道这条线存在"，这个洞必须堵：
+
+```
+实验前：            2026-08-04 01:17:34.809610827  md5=dc352549eda7cb2adfae7e5d8aae8afd
+跑完 web 全套测试后： 2026-08-04 01:17:34.809610827  md5=dc352549eda7cb2adfae7e5d8aae8afd  (rc=0)
+  ✔ pnpm -r test 不写 apps/web/dist（产物全落在 .test-out/{unit,host,components,…}）
+```
+
+**结论：`pnpm -r test` 是 §7 合规的，实测确认，可以放心跑。**
+（顺带：01:17:34 那次 mtime 变动的 md5 与 01:02:57 那次**逐字节相同** ——
+只是有人重跑了同一个构建，内容没变，不用管。）
+
+这个实验的形式我会继续用：**把"猜是谁"变成"能证明不是谁"**，代价只有两条命令。
+但教训是：**证明的范围要覆盖你实际跑过的每一条命令**，漏掉一条，结论就只是"看起来对"。
+
+---
+
 ## [2026-08-04 01:10] T-142b DONE —— 两个 bug 都修了
 
 **门禁 `865 passed / 0 failed / 0 todo`**（`tsc -b` 0 · `eslint` 0）。

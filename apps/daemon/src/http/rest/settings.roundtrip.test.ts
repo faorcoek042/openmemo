@@ -25,8 +25,25 @@ before(async () => {
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const dir = mkdtempSync(join(tmpdir(), 'om-settings-rt-'));
-  const port = 17_600 + Math.floor(Math.random() * 300);
-  const d = await startDaemon({ port, dataDir: dir, maxPort: port + 40 });
+  /*
+   * ★ 高位端口（19xxx）—— 这是本仓库自己立的规矩，本文件此前是**唯一一个没遵守的**。
+   *
+   * `daemon.test.ts` 的文件头原话：「用高位端口（19xxx）跑测试，避免与真实实例的 17650 打架」，
+   * 另外四个 daemon 测试文件都照做了（19340 / 19510 / 19610 / 19860）。
+   * 这里原来是 `17_600 + rand(300)`，配 `maxPort: port + 40` ⇒ 实际可达 **17600–17939**，
+   * **区间里就包含 `DEFAULT_PORT = 17650`**（`bootstrap/single-instance.ts:18`）。
+   *
+   * 后果分两种，都不算致命但都真实：用户的 daemon 在跑 → 测试拿到
+   * `StartupConflictError`，红一格（假红灯，会让人去查一个不存在的 bug）；
+   * 用户的 daemon 没跑而此刻要起 → 它漂到 17651，
+   * **浏览器的麦克风授权按 origin 隔离，端口一变就得重新授权**（`daemon.test.ts:145`）。
+   *
+   * 按 PROTOCOL §9-bis 的判据，端口占用**不是** kill -9 会留下的持久状态
+   * （socket 随进程消失），所以它的严重性远低于指针那条 —— 但它是**跑的时候**
+   * 就可能撞上用户的实例，而修它只要改一个数字。
+   */
+  const port = 19_940 + Math.floor(Math.random() * 40);
+  const d = await startDaemon({ port, dataDir: dir, maxPort: port + 20 });
   base = `http://127.0.0.1:${d.port}`;
   token = d.token;
   stop = d.stop;

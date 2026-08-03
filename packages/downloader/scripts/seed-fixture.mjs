@@ -13,19 +13,55 @@
  * two-character words `gpu-runtime` found returning 0 hits under the trigram fallback
  * (用户 / 推特 / 中国 / 服务), so the search check has something real to match.
  *
- * Usage: node packages/downloader/scripts/seed-fixture.mjs [--db <path>] [--reset]
+ * Usage: node packages/downloader/scripts/seed-fixture.mjs --db <path> [--reset]
+ *
+ * ## ⚠️ T-142c：`--db` 从"可选"改成了**必填**
+ *
+ * 这个脚本此前的默认值是 **`~/.local/share/openmemo/openmemo.db`** ——
+ * 也就是**用户的真实数据库**。不带参数跑一次，它就往用户的笔记列表里
+ * INSERT 一条笔记 + 资产 + 转写稿 + 7 条分段，`--reset` 还会
+ * `DELETE FROM notes WHERE title LIKE 'T-038%'`，最后对
+ * `segments_fts` / `notes_fts` 做一次**全量 rebuild**。
+ *
+ * 判据来自 PROTOCOL §9-bis：**"把它 kill -9 在最坏的那一行上，机器会留下什么"**。
+ * 这里的答案是：这些 INSERT 没有包在事务里，逐条自动提交 ——
+ * 在写完笔记、还没写转写稿时被杀，用户的笔记列表里就**永久多出一条没有转写稿的笔记**；
+ * 在 FTS rebuild 中途被杀，用户的搜索索引处于半重建状态，
+ * **搜索从此静默返回错误结果，没有任何报错，直到他哪天搜不到东西才发现**。
+ * 这正是数据目录指针那次"损坏不可见"的形状。
+ *
+ * 而且它比指针那次更糟的一点：**根本不需要 kill -9**。
+ * 按它自己 Usage 那行照抄一遍，就已经在改用户的真实数据了。
+ *
+ * 所以判据不是"记得带 --db"，是**"忘了带也不会有后果"**：
+ * 现在不带就直接退出，并且把老默认值原样印出来 ——
+ * 真想写那个库的人仍然写得了，但必须是**打出来的**，不是默认发生的。
  */
 
 import console from 'node:console';
 import process from 'node:process';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
-const require = createRequire('/root/memo/packages/db/');
+// 从本文件位置推导，不写死 `/root/memo` —— 硬编码的机器路径换台机器就不成立
+const require = createRequire(join(dirname(fileURLToPath(import.meta.url)), '../../db/'));
 const Database = require('better-sqlite3');
 
 const argv = process.argv.slice(2);
-const DB =
-  argv.includes('--db') ? argv[argv.indexOf('--db') + 1] : '/root/.local/share/openmemo/openmemo.db';
+const dbFlag = argv.indexOf('--db');
+const DB = dbFlag >= 0 ? argv[dbFlag + 1] : undefined;
+if (!DB) {
+  console.error(
+    '这个脚本会往数据库里写 fixture（笔记/资产/转写稿/分段），并重建 FTS 索引。\n' +
+      '`--db` 是必填的 —— 它以前默认写用户的真实库，跑一次就污染真实笔记（T-142c 改）。\n' +
+      '\n' +
+      '  node packages/downloader/scripts/seed-fixture.mjs --db /tmp/<你的目录>/openmemo.db\n' +
+      '\n' +
+      '确实要写真实库的话，把路径打出来：--db ~/.local/share/openmemo/openmemo.db',
+  );
+  process.exit(2);
+}
 
 const ENCODING = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 function ulid(t = Date.now()) {

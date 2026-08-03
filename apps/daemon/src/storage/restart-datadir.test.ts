@@ -100,8 +100,8 @@ describe('自我重启与 dataDir', () => {
   it('★ 普通重启：指针指向别处时，dataDir 仍必须**保持不变**', async () => {
     const mine = tmp('mine');
     const decoy = pointElsewhere();
-    const port = 17_400 + Math.floor(Math.random() * 100);
-    const d = await startDaemon({ port, dataDir: mine, maxPort: port + 30 });
+    const port = 19_700 + Math.floor(Math.random() * 10); // 19xxx 段：见 daemon.test.ts 文件头（避开真实实例的 17650）
+    const d = await startDaemon({ port, dataDir: mine, maxPort: port + 9 });
     try {
       assert.equal(d.paths.dataDir, mine);
       // 重启用的目标由显式意图决定：不传 = 当前目录
@@ -120,8 +120,8 @@ describe('自我重启与 dataDir', () => {
   it('正常启动：显式 --data-dir 必须赢过指针（与自我重启同一条优先级）', async () => {
     const mine = tmp('explicit');
     pointElsewhere();
-    const port = 17_500 + Math.floor(Math.random() * 100);
-    const d = await startDaemon({ port, dataDir: mine, maxPort: port + 30 });
+    const port = 19_730 + Math.floor(Math.random() * 10); // 同上
+    const d = await startDaemon({ port, dataDir: mine, maxPort: port + 9 });
     try {
       assert.equal(d.paths.dataDir, mine, '显式 --data-dir 被指针覆盖了 —— 两条路径又不一致了');
     } finally {
@@ -132,8 +132,8 @@ describe('自我重启与 dataDir', () => {
   it('不传 --data-dir 时才读指针', async () => {
     const decoy = pointElsewhere();
     mkdirSync(decoy, { recursive: true });
-    const port = 17_300 + Math.floor(Math.random() * 100);
-    const d = await startDaemon({ port, maxPort: port + 30 });
+    const port = 19_760 + Math.floor(Math.random() * 10); // 同上
+    const d = await startDaemon({ port, maxPort: port + 9 });
     try {
       assert.equal(d.paths.dataDir, decoy);
     } finally {
