@@ -90,7 +90,44 @@ export function ConnectivitySummary({ className }: { className?: string }) {
     >
       <FlaskConical className="size-3 text-serious" aria-hidden />
       {t('mock.summary', { live, mocked })}
-      {health ? <span className="text-ink-muted/70">· daemon v{health.version}</span> : null}
+      {health ? (
+        <span className="text-ink-muted/70" title={buildTitle(health.build)}>
+          · daemon v{health.version} {buildLabel(health.build)}
+        </span>
+      ) : null}
     </span>
   );
+}
+
+type BuildMeta = NonNullable<NonNullable<ReturnType<typeof useSurfaceStore.getState>['health']>['build']>;
+
+const hms = (iso: string) => new Date(iso).toLocaleTimeString('zh-CN', { hour12: false });
+const mdhms = (iso: string) =>
+  `${new Date(iso).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })} ${hms(iso)}`;
+
+/**
+ * 角落里那行版本号要同时回答两个问题：**跑的是哪份代码** 和 **刚才那次重启生效了没有**。
+ *
+ * commit 只答得了第一个 —— 同一个 commit 重启两次，commit 号一模一样。
+ * 所以启动时刻必须一起显示，否则"我改完让它重启了，页面没变，是没重启还是改动没生效"
+ * 这个问题无法从界面上回答，只能靠猜。
+ *
+ * `+dirty` = 构建时工作区有未提交改动，此时 commit 号不足以说明跑的是什么。
+ */
+function buildLabel(b: BuildMeta | undefined) {
+  if (!b) return '(构建信息未知)';
+  const commit = b.commitTime ? mdhms(b.commitTime) : b.commit;
+  return `· ${commit}${b.dirty ? '+dirty' : ''} · 起 ${hms(b.startedAt)}`;
+}
+
+function buildTitle(b: BuildMeta | undefined) {
+  if (!b) return '该 daemon 未提供构建信息（可能是旧版本，或未经构建脚本生成）';
+  return [
+    `commit: ${b.commit}${b.dirty ? ' (构建时工作区有未提交改动)' : ''}`,
+    b.commitTime ? `提交时间: ${mdhms(b.commitTime)}` : null,
+    b.builtAt ? `构建时间: ${mdhms(b.builtAt)}` : null,
+    `本次启动: ${mdhms(b.startedAt)}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
 }

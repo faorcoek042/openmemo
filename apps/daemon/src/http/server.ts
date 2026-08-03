@@ -40,6 +40,14 @@ export interface ServerDeps {
    */
   readonly instanceId: () => string;
   readonly version: string;
+  /** 构建来源（commit / 构建时刻）+ 本进程启动时刻。见 main.ts 的 BUILD_INFO。 */
+  readonly build?: {
+    readonly commit: string;
+    readonly commitTime: string | null;
+    readonly dirty: boolean;
+    readonly builtAt: string | null;
+    readonly startedAt: string;
+  };
   readonly dataDir: string;
   readonly port: () => number;
   /** 健康检查里暴露的运行时状态（不含任何 secret）。 */
@@ -105,6 +113,7 @@ async function handleRequest(
     sendJson(res, 200, {
       app: 'openmemo',
       version: deps.version,
+      build: deps.build,
       instanceId: deps.instanceId(),
       contractVersion: CONTRACT_VERSION,
       dataDir: deps.dataDir,

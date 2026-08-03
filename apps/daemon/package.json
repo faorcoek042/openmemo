@@ -13,7 +13,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && node ../../scripts/gen-build-info.mjs",
     "clean": "tsc -b --clean",
     "start": "node dist/main.js",
     "test": "node --test dist/**/*.test.js"

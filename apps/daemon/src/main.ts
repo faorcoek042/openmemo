@@ -11,7 +11,7 @@
  *   7. 就绪
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 import { openAppDatabase, defaultExtensionPaths, type AppDatabase } from '@openmemo/db';
@@ -69,6 +69,45 @@ import { createMediaRoutes } from './http/media.js';
 import type { RouteModule } from './http/server.js';
 
 export const VERSION = '0.1.0';
+
+/**
+ * 构建来源信息，由 `scripts/gen-build-info.mjs` 在构建时写进 `dist/build-info.json`。
+ *
+ * **读产物而不是读 git**：git 说的是工作区当前 commit，而我们跑的是上次构建出来的
+ * JS —— 提交了没重建，两者就分叉，页面会显示新 commit 却跑着旧代码。版本号一旦
+ * 会说谎就比没有更糟，因为用户正是拿它判断"我的改动生效了没有"。
+ *
+ * 文件缺失（没构建过 / 非 git 检出）时返回 unknown，不抛错也不猜。
+ */
+export interface BuildInfo {
+  readonly commit: string;
+  readonly commitTime: string | null;
+  readonly dirty: boolean;
+  readonly builtAt: string | null;
+}
+
+const UNKNOWN_BUILD: BuildInfo = { commit: 'unknown', commitTime: null, dirty: false, builtAt: null };
+
+function readBuildInfo(): BuildInfo {
+  try {
+    // import.meta.url → dist/main.js，同目录下就是 build-info.json
+    const p = new URL('./build-info.json', import.meta.url);
+    const raw = JSON.parse(readFileSync(p, 'utf8')) as Partial<BuildInfo>;
+    return {
+      commit: typeof raw.commit === 'string' ? raw.commit : 'unknown',
+      commitTime: typeof raw.commitTime === 'string' ? raw.commitTime : null,
+      dirty: raw.dirty === true,
+      builtAt: typeof raw.builtAt === 'string' ? raw.builtAt : null,
+    };
+  } catch {
+    return UNKNOWN_BUILD;
+  }
+}
+
+export const BUILD_INFO: BuildInfo = readBuildInfo();
+
+/** 本进程启动时刻。用户靠它判断"到底重启了没有" —— commit 没变时这是唯一的信号。 */
+export const STARTED_AT = new Date().toISOString();
 
 export interface StartOptions {
   readonly port?: number;
@@ -309,6 +348,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     sse,
     instanceId: () => instanceIdRef,
     version: VERSION,
+    build: { ...BUILD_INFO, startedAt: STARTED_AT },
     dataDir: paths.dataDir,
     port: () => boundPort,
     routers,

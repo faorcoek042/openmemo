@@ -21,7 +21,8 @@
     "submodules:init": "git submodule update --init --depth 1 --recommend-shallow",
     "check:sources": "node scripts/check-tracked-sources.mjs",
     "check:selfcheck": "node scripts/selfcheck.mjs",
-    "check": "node scripts/check-tracked-sources.mjs && pnpm -r build && eslint ."
+    "check": "node scripts/check-tracked-sources.mjs && pnpm -r build && eslint .",
+    "build:info": "node scripts/gen-build-info.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

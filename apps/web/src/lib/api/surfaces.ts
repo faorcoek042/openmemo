@@ -60,6 +60,14 @@ interface SurfaceStore {
     dataDir: string;
     port: number;
     pid: number;
+    /** 构建来源。老 daemon 没有这个字段，故可选 —— 缺失时界面显示"未知"而不是猜。 */
+    build?: {
+      commit: string;
+      commitTime: string | null;
+      dirty: boolean;
+      builtAt: string | null;
+      startedAt: string;
+    };
   } | null;
   /** 鉴权握手是否完成（cookie + CSRF 就位） */
   authed: boolean;
