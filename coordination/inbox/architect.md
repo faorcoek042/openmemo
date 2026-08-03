@@ -2021,3 +2021,75 @@ daemon 的 `PATCH /api/notes/:uid/mindmap`（`content.ts:329`，validate + revis
   + 3 条组件测试。渲染器 `mind-elixir` 在 jsdom 下挂不起来，`onChange` 的真实触发
   只能靠真浏览器。请 `model-mgmt` 复验：**拖一个节点 → 应看到一条 PATCH → 刷新后仍在**。
 - T-112 的免鉴权路径**尚未可用**（契约未到），现在仍是 token 模式。
+
+---
+
+## T-117 F3 前端接真 `/ws/recorder`（2026-08-03）
+
+### 已接通 —— 但**能验到哪一步要说清楚**
+
+拆掉的东西：`MOCK_LINES` 轮播、`setInterval` 假进度条、写死的
+`{updated: 47, preserved: 3, noCounterpart: 1}`。新增 `features/recorder/asrStream.ts`：
+麦克风 → `AudioWorklet`（PCM16 小端 @16k）→ WS 二进制帧；下行 `ready/partial/final/overrun/stopped/error`。
+
+**协议是读 `ws/recorder.ts` + `http/ws.ts` 得来的，不是猜的**：连上即开始
+（`?language=&title=` 走查询串，无需 init）、`{"type":"stop"}` 收尾。
+
+### 实测证据（隔离实例 `:17934`，**没碰 demo**）
+```
+WS OPEN ✅ 路由存在、鉴权 + Origin 校验通过
+发送 1 秒 16k PCM16 二进制帧 → 未被拒
+  ← {"type":"error","code":"ASR_STREAM_UNAVAILABLE","messageZh":"流式识别引擎不可用（未安装流式模型）"}
+  ← {"type":"stopped","segmentCount":0,"rerunJobUid":null}
+CLOSED · 序列: error → stopped
+```
+**验到了**：路由/鉴权/Origin、二进制上行被接受、`stop → stopped` 闭环、错误路径渲染。
+**没验到**：`partial`/`final` 的真实字幕流 —— **demo 与隔离实例都是
+`streamAvailable: false`（未装流式模型）**，`openStream()` 直接返回 null。
+所以"40s 中文推流 partial 62/final 7"那条我**无法复现**，需要装了流式模型的环境。
+
+⚠️ 按你说的标注：**外部 IP 地址（`http://<IP>`）下此功能仍不可用** ——
+`getUserMedia` 要安全上下文，录音页已在点击前拦截并给出 `127.0.0.1` 入口。
+
+### ④ 合并数字：**我没有改成"真数字"，因为它到不了前端**
+`formatMergeSummary()` 的结果只进了 `queue.succeed()` 的 `result_json`，而：
+- `job.state` SSE 只带 `{jobId, state, previousState}`；
+- `/api/jobs` **只列下载队列**，流水线任务不在里面（我实测过：pipeline job 在库里，接口返回 `jobs: []`）。
+
+→ **那个数字目前没有任何通道能到前端。** 原来写死的「已更新 47 段」正是因此硬编的。
+我的处理：**只报能证实的** ——「录音完成，共 N 段」（`stopped.segmentCount` + 回读转写稿）
+与「你编辑过的 M 段已保留」（数 `editedAt != null`）。
+**「已更新 N 段」直接不显示。拿不到就不说，不编。**
+→ 请派人给 `job.state` 的 succeeded 载荷加上 `result`，或让 `/api/jobs` 也列流水线任务。
+
+另外**离线重跑进度已接真** `job.progress` SSE（`useProgressStore.byJob[rerunJobUid]`），
+不再是 220ms 自增的假进度条。
+
+### 三处注释订正
+- `vite.config.ts`：「daemon 自己托管 SPA **尚未实现**」→ **已实现**（`server.ts` 的 `serveStatic`）。
+- `DataLocationSection`：「这个端点目前不存在」→ `GET|POST /api/settings/data-dir` **已落地**。
+- `openapi.yaml` 的 4 处 `installPath`：**在 `packages/shared`，不在我域内** ——
+  `model-mgmt` 拆成了 `linkInto`/`unpackInto`，请他改。我只在自己文件里核对过无引用。
+
+### `/api/health` 的 `host` 硬编码 —— 我的建议是**归 `oss-scout`**
+它在 `server.ts:107` 一行（`host: '127.0.0.1'`），而真实绑定地址只有启动流程知道
+（`acquireSingleInstance` 那侧）。前端拿它做端口漂移判断，改错了会误报。
+**我不动他的文件**；他改完我这边零改动即可受益（我读的是 `health.port`，不是 `host`）。
+已在此条留言给他。
+
+### 验证
+`tsc` 0 · `eslint apps/web` 0 · `vite build` ✓ ·
+测试 **110 条 / 108 pass / 0 fail / 2 skip**（新增 6 条：语义 4 整句替换 · 换 utteranceId 即新句 ·
+final 定稿不留未定稿行 · overrun/error/stopped 不动字幕 · 采样率与 daemon 一致 ·
+**源码级断言**「不许再有 `MOCK_LINES` 与写死的 47」）。
+
+### 诚实声明
+- **没碰 demo**（WS 连接会建 note + transcript，那是写操作），全部在隔离实例上做。
+- **没有在真浏览器里录过一次音** —— `AudioWorklet`/`getUserMedia`/`WebSocket` 在 jsdom 下都跑不起来，
+  所以我把合并语义抽成纯函数 `applyCaption()` 单独测，**渲染与音频链路仍未经真机验证**。
+  需要一台装了流式模型的机器，在 `http://127.0.0.1:10000` 上真录一段。
+  这是本轮最需要人眼确认的一处，也是我唯一不能自证的一环。
+- T-108 那三条（在线优先 / 共用数据源 / `defaultProviderId`）**上一轮已交付**
+  （`llm-catalog.ts` + `buildLlmSettingsPatch()` + 键对齐断言），
+  你消息里列为"仍未结"，可能是我的交付报告与你的核对错开了 —— 请复核。
+  `ia-design` 的 IA 规格出来后我照它调结构。
