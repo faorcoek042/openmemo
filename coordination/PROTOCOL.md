@@ -97,3 +97,28 @@ STATUS ∈ DONE | PROGRESS | BLOCKED | DISPUTE | QUESTION
 
 （此规则源于 `llm-picker` 的主动申报 —— 它构建完才意识到，并如实报了出来。
 规则针对的是"没人知道这条线存在"，不是针对它。）
+
+## 8. 断言 DOM 节点不许直接比对象 —— 会 OOM，而且假装成"测试挂了"
+
+`assert.equal(domNode, null)` **失败时**，node:test 要为两边算 diff，`util.inspect` 会顺着
+`parentNode` / React fiber **展开整棵树**。实测进程涨到 **10.5 GB**，表现是：
+
+- 不是"断言变红"，而是**整个测试文件炸掉**（57 秒后 `'test failed'`，同文件里其它 suite 一个没跑）
+- **同进程里别人的用例统计一起被带偏**
+
+**比"护栏没变红"更难查** —— 因为它看起来像环境问题、像超时、像别的 agent 把仓库弄坏了，
+而不像"我这条断言写错了"。
+
+所以：**断言 DOM 存在性一律先转成布尔或字符串再比**。
+
+```js
+assert.equal(el === null, true)          // ✅
+assert.equal(!!container.querySelector(sel), false)  // ✅
+assert.equal(el, null)                   // ✘ 失败时 OOM
+```
+
+同理适用于任何**可能持有父引用的对象**（DOM 节点、fiber、带 `parent` 指针的树节点、
+含循环引用的图）。判据不是"它是不是 DOM"，是"**它失败时会被 inspect 展开多大**"。
+
+（源于 `models-page-fix` 的反向验证 —— 它第一次没拿到红灯，追下去才发现是 OOM，
+并如实报了出来而不是重跑一次糊弄过去。）
