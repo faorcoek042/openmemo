@@ -21,8 +21,9 @@ import { TranscriptList } from '../transcript';
 import { PlayerBar } from '../player';
 import { usePlayerStore } from '../../lib/stores/player.store';
 import { useUiStore } from '../../lib/stores/ui.store';
-import { mockPeaks, type DecodedPeaks } from '../../lib/format/peaks';
-import { isMockEnabled } from '../../lib/api/mock';
+import { decodeOmpk, type DecodedPeaks } from '../../lib/format/peaks';
+import { mediaUrl } from '../../lib/api/client';
+import { pickAudioAsset, pickPeaksAsset } from './noteAssets';
 import { cn } from '../../lib/utils';
 
 type Tab = 'summary' | 'mindmap' | 'notes';
@@ -49,25 +50,58 @@ export default function NoteDetailPage() {
     staleTime: Infinity,
   });
 
-  const audioAsset = arr(note.data?.assets).find((a) => a.role === 'audio16k' && a.state === 'ready');
-  const peaksAsset = arr(note.data?.assets).find((a) => a.role === 'peaks' && a.state === 'ready');
+  const audioAsset = pickAudioAsset(note.data);
+  const peaksAsset = pickPeaksAsset(note.data);
 
   useEffect(() => {
     if (!note.data) return;
     setSource(audioAsset?.uid ?? null, note.data.durationMs ?? 0);
   }, [note.data, audioAsset?.uid, setSource]);
 
-  // 真实峰值需要 fetch `.ompk` 并 decodeOmpk()；daemon 未接通时用占位波形，
-  // 并在 UI 上标注（诚实规则：不许把 mock 说成真数据）
+  /*
+   * 波形：**有真 `.ompk` 才画，没有就不画**（T-139 A3）。
+   *
+   * 这里原来的逻辑是反的，而且反得很彻底：
+   *   有 peaks 资产 → `setPeaks(null)`（带一条 `TODO(T-021)`，也就是**真数据反而被丢掉**）
+   *   没有        → `setPeaks(mockPeaks(...))`（**凭空造一条随机波形**）
+   * 而 daemon 全仓零处产出 `peaks` 资产 —— 所以**每一位用户看到的每一条波形都是编的**。
+   * 同一段注释还写着"并在 UI 上标注（诚实规则：不许把 mock 说成真数据）"，
+   * 而那句标注**从来不存在**：一条描述了不存在行为的注释，比没有注释更坏。
+   *
+   * 现在：没有真峰值就交 `null` 给 `Waveform`，它会画一条基线 + 可点击定位的游标
+   * （那个诚实的降级分支本来就写好了，只是从来没被走到过）。
+   * 判据是 architect 立的那条：**用户看到的每一个具体东西，要么来自后端，要么根本不提。**
+   * 一条编出来的波形不是"占位符"，它是在对用户断言这段音频长这样。
+   *
+   * ⚠️ daemon 目前不产 peaks，所以这条 fetch 分支在今天的产品里走不到 ——
+   * 这是**如实的空**，不是把假数据留着装满。要让它有内容，得让 daemon 真的用 ffmpeg
+   * 预生成 `.ompk`（见回执 §A3 的取舍）。`decodeOmpk` 早就写好了，这里是它第一个调用方。
+   */
   const [peaks, setPeaks] = useState<DecodedPeaks | null>(null);
+  const peaksUrl = peaksAsset ? (peaksAsset.url ?? mediaUrl(peaksAsset.uid)) : null;
   useEffect(() => {
-    if (!note.data) return;
-    if (peaksAsset && !isMockEnabled()) {
-      setPeaks(null); // TODO(T-021): fetch mediaUrl(peaksAsset.uid) → decodeOmpk
-    } else {
-      setPeaks(mockPeaks(note.data.durationMs ?? 60_000));
+    if (!peaksUrl) {
+      setPeaks(null);
+      return;
     }
-  }, [note.data, peaksAsset]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        // 与 `<audio src>` 同一条通道：同源 + cookie（D-01 §2.4）
+        const res = await fetch(peaksUrl, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const decoded = decodeOmpk(await res.arrayBuffer());
+        if (!cancelled) setPeaks(decoded);
+      } catch (err) {
+        // 取不到/解不开就当没有波形 —— 绝不回落成一条编出来的
+        console.error('[peaks] 读取 .ompk 失败，按"无波形"处理', err);
+        if (!cancelled) setPeaks(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [peaksUrl]);
 
   const mindmap = useMindmapQuery(tab === 'mindmap' ? noteUid : undefined);
 

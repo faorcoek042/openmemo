@@ -20,8 +20,23 @@ import { systemSse } from './system.sse';
 import { componentsSse } from '../../features/components/sse';
 import { modelsSse } from '../../features/models/sse';
 import { runtimeSse } from '../../features/runtime/sse';
-// T-023 认领后在此追加一行 import + 一个数组项。
-// import { mindmapSse } from '../../features/mindmap/sse';
+/*
+ * ⚠️ 这里原来留着一行 `// import { mindmapSse } from '../../features/mindmap/sse';`
+ * 和一句"T-023 认领后在此追加"。**那个文件不需要存在**，注释已按实测更正（T-139）。
+ *
+ * 盘点把"`mindmap.done` 没有订阅者"记成了"导图生成完页面不刷新"的原因。
+ * 实测（真 daemon + 真浏览器）：daemon 在导图落库后**同时**发
+ * `mindmap.done` 与 `note.updated{changed:['mindmap']}`，
+ * 而 `notesSse` 一直订阅着后者并 invalidate `qk.mindmap(noteUid)` ——
+ * 浏览器网络日志里能看到那次 `GET /notes/:uid/mindmap` 真的发生了。
+ * 所以缓存这一层**没有断**；断的是渲染器（见 `features/mindmap/MindmapView.tsx`）。
+ *
+ * 那为什么不顺手补一个 `mindmapSse`？因为它会是**第二个**"导图变了"的触发源，
+ * 而 `note.updated` 还覆盖 `PATCH`（手工编辑保存）这条 `mindmap.done` 不发的路径 ——
+ * 留一个不完整的第二来源，正是本项目反复吃亏的形状（"两处对同一问题给出不同答案"）。
+ * `mindmap.done` / `mindmap.delta` 目前在前端**确实没有消费者**，这是如实的现状，
+ * 不是等着被补的洞。
+ */
 
 export type SseBinding = (qc: QueryClient) => (() => void)[];
 

@@ -63,6 +63,22 @@ function parseWords(raw: string | null): unknown[] | null {
   }
 }
 
+/**
+ * `notes.body_json`（TEXT）→ TipTap 文档对象。
+ *
+ * 与 `parseWords` 同一条约定：**解析不出来就当"没有"，绝不把坏数据当有效结果发出去**。
+ * 这一列是 `PATCH` 用 `JSON.stringify` 写进去的，正常情况下必然可解析；
+ * 会走到 catch 的只有手工改库或旧数据，那种时候"编辑器空着"远好过"编辑器崩了"。
+ */
+function parseJsonOrNull(raw: string | null): unknown {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 export function createNoteRoutes(deps: NoteRoutesDeps): {
   handle(req: IncomingMessage, res: ServerResponse, url: URL, method: string): Promise<boolean>;
 } {
@@ -428,6 +444,23 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
             mime: a.mime,
             bytes: a.bytes,
             durationMs: a.duration_ms,
+            /*
+             * ★ `state` —— **资产能不能用**（T-139 A1）。
+             *
+             * 这一列从 `0001_init.sql` 起就在（`pending|ready|missing|failed`，NOT NULL），
+             * 只是**从来没有被发出去过**。而前端筛的正是它：
+             * `NoteDetailPage` 的 `a.role === 'audio16k' && a.state === 'ready'`
+             * → `undefined === 'ready'` → **恒 false** → `<audio>` 元素根本不进 DOM。
+             * 表现是：波形画着、时间码走着、播放键亮着，**点了什么都不发生，零报错**。
+             * F5 的招牌能力「转写稿 ↔ 音频时间轴联动」在真实环境里因此从未工作过。
+             *
+             * ⚠️ 如实说明当前语义：**写入方（`createAsset`）一律写 `'ready'`**，
+             * 全仓没有任何一处把它改成别的值。所以今天它恒等于 `'ready'`。
+             * 那为什么还要发？因为它是**这条记录自己的事实**，前端已经在按它判断；
+             * 让服务端不发、前端瞎猜，正是这个 bug 的成因。哪天异步产物（peaks/转码）
+             * 真的先落 `pending` 再转 `ready`，消费方不需要改一行。
+             */
+            state: a.state,
             /** 前端播放器直接用这个（只接受 asset uid，绝不接受文件路径）。 */
             url: `/media/asset/${a.uid}`,
           }));
@@ -440,6 +473,22 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
             language: note.language,
             durationMs: note.duration_ms,
             summaryMd: note.summary_md,
+            /*
+             * ★ `bodyJson` —— 笔记正文（T-139 A1b），⑤C「写得进读不回」的**第七例**，
+             * 与该族第一例 `textRaw` 完全同形。
+             *
+             * 写路径一直是真的：TipTap 800ms 防抖 → `PATCH /api/notes/:uid` →
+             * `updateNoteContent` → `notes.body_json` **真落库**（PATCH 的响应甚至回
+             * `hasBody:true`）。读路径**从来没接上**：本对象里没有这个键，全仓也没有
+             * 第二个返回它的 GET。于是用户写完 → 自动保存成功 → **刷新/重进，编辑器是空的**。
+             * 数据一个字节没丢，但界面上完全看不出这一点 —— 用户只会认为"它没保存"。
+             *
+             * **发解析后的对象，不发字符串**：`NoteEditor` 把它直接喂给 TipTap 的
+             * `content`，那里要的是文档对象；发字符串会变成"一段显示为 JSON 的正文"。
+             * 解析失败一律回 `null`（同 `parseWords` 的约定）——
+             * 坏数据宁可当"没有正文"，也绝不原样发出去让编辑器崩在用户脸上。
+             */
+            bodyJson: parseJsonOrNull(note.body_json),
             /*
              * ⚠️ `tags` **永远是数组，无标签时是 `[]` 而不是缺字段**。
              * 少了它前端 `tags.map()` 直接整页崩（`undefined.map`），

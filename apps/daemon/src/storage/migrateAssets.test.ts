@@ -13,7 +13,7 @@ import { after, describe, it } from 'node:test';
 import { openAppDatabase, type AppDatabase } from '@openmemo/db';
 import { probeAssetFile } from '@openmemo/runtime';
 
-import { migrateMediaAssets } from './migrateAssets.js';
+import { migrateMediaAssets, __testing } from './migrateAssets.js';
 
 /**
  * 迁移完之后要断言的**不是** rel_path 长什么样，而是
@@ -186,5 +186,82 @@ describe('migrateMediaAssets', () => {
     assert.equal(r.migrated, 0, '读得到的记录不该被动');
     assert.equal(await readViaProduct(d, 'media/legacy/x.wav'), 'X');
     h.close();
+  });
+});
+
+/**
+ * ★ T-143 ④：`matchBySuffix` 对**文件系统路径**硬编码了 `/`。
+ *
+ * 这一组用 `path.win32` 的分隔符**在 Linux 上**把 Windows 那半边跑一遍 ——
+ * 因为「必须有一台 Windows 才能验证」等价于「永远不会被验证」
+ * （platform 报告实测：全仓 42 处平台分支，34 处在本机永远走不到）。
+ *
+ * 判据钉的是后果：**迁移后那条记录还找不找得回它的文件**。
+ */
+describe('★ T-143 ④ 路径匹配器的分隔符（Windows 那半边，在 Linux 上验）', () => {
+  const WIN = '\\';
+  const POSIX = '/';
+
+  /** Windows 上 `indexFiles` 产出的索引长这样：`relative()` 用的是宿主分隔符。 */
+  const winIndex = new Set([
+    'tmp\\job-AAA\\audio16k.wav',
+    'tmp\\job-BBB\\audio16k.wav',
+    'media\\legacy\\foo.wav',
+  ]);
+
+  it('★ 失效的 Windows 绝对路径 → 按最长后缀找回来（旧写法在这里永远返回 undefined）', () => {
+    const abs = 'C:\\old-datadir\\tmp\\job-AAA\\audio16k.wav';
+
+    // 先证明这条用例钉的不是零：旧写法（对文件系统路径 split('/')）在这里是瞎的
+    const legacy = ((): string | undefined => {
+      const parts = abs.split('/').filter(Boolean);
+      for (let i = 0; i < parts.length; i++) {
+        const cand = parts.slice(i).join('/');
+        if (winIndex.has(cand)) return cand;
+      }
+      return undefined;
+    })();
+    assert.equal(legacy, undefined, '旧写法本应在此失效；它若能命中，本用例证明不了任何东西');
+
+    assert.equal(__testing.matchBySuffix(abs, winIndex, WIN), 'tmp\\job-AAA\\audio16k.wav');
+  });
+
+  it('★ 返回的是**索引里的原始条目**（调用方要拿它 join，形态必须与文件系统一致）', () => {
+    const hit = __testing.matchBySuffix('C:\\x\\tmp\\job-BBB\\audio16k.wav', winIndex, WIN);
+    assert.equal(hit, 'tmp\\job-BBB\\audio16k.wav');
+    assert.equal(hit?.includes('/'), false, '不许把 Windows 路径改写成 / 形态');
+  });
+
+  it('★ 最长后缀优先：绝不能退化成"按文件名匹配"（两条笔记的 audio16k.wav 会互串）', () => {
+    // 只给文件名，两条都以它结尾 → 必须放弃，而不是随便挑一条
+    assert.equal(__testing.matchByTail('audio16k.wav', winIndex, WIN), undefined);
+    // 带上目录段就唯一了
+    assert.equal(
+      __testing.matchByTail('job-AAA\\audio16k.wav', winIndex, WIN),
+      'tmp\\job-AAA\\audio16k.wav',
+    );
+  });
+
+  it('★ 相对但指错（记录少了前缀）在 Windows 形态下同样救得回来', () => {
+    assert.equal(__testing.matchByTail('foo.wav', winIndex, WIN), 'media\\legacy\\foo.wav');
+  });
+
+  it('★ posix 行为一个字都不许变（这是用户库真正跑的那一条）', () => {
+    const idx = new Set(['tmp/job-AAA/audio16k.wav', 'media/legacy/foo.wav', 'jfk.wav']);
+    assert.equal(
+      __testing.matchBySuffix('/tmp/dd55/tmp/job-AAA/audio16k.wav', idx, POSIX),
+      'tmp/job-AAA/audio16k.wav',
+    );
+    assert.equal(__testing.matchBySuffix('/gone/nothing.wav', idx, POSIX), undefined);
+    assert.equal(__testing.matchByTail('foo.wav', idx, POSIX), 'media/legacy/foo.wav');
+    assert.equal(__testing.matchByTail('audio16k.wav', idx, POSIX), 'tmp/job-AAA/audio16k.wav');
+  });
+
+  it('★ 不给分隔符时用宿主的 —— 产品路径上的默认行为不变', () => {
+    const idx = new Set(['tmp/job-AAA/audio16k.wav']);
+    assert.equal(
+      __testing.matchBySuffix('/old/tmp/job-AAA/audio16k.wav', idx),
+      'tmp/job-AAA/audio16k.wav',
+    );
   });
 });

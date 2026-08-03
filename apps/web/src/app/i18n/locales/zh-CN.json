@@ -85,7 +85,9 @@
       "json": "JSON（完整）"
     },
     "exportServerOnly": "DOCX / PDF 需服务端支持，暂未提供",
-    "exportNeedsDaemon": "导出需要本地服务在运行"
+    "exportNeedsDaemon": "导出需要本地服务在运行",
+    "folderEmpty": "「{{name}}」里还没有笔记",
+    "folderEmptyHint": "这里会连子文件夹里的笔记一起显示。"
   },
   "models": {
     "title": "模型管理",
@@ -219,6 +221,8 @@
   "runtime": {
     "title": "运行时与加速后端",
     "intro": "检测硬件 → 推荐后端 → 下载安装 → 自检 → 显示状态，全部在网页里完成。",
+    "componentsLink": "组件与来源",
+    "componentsLinkHint": "从哪下载 · 钉在哪版 · 更新/回滚",
     "selfTestFailedTitle": "有加速后端自检未通过",
     "selfTestFailedDetail": "下面的卡片里写了具体原因。你可以重试自检，或改用 CPU 后端（永远可用）。",
     "probing": "正在探测硬件（会真正枚举设备，可能需要几秒）…",

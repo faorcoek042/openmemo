@@ -48,17 +48,24 @@ export function decodeOmpk(buf: ArrayBuffer): DecodedPeaks {
   return { channels: out, durationMs, samplesPerPixel };
 }
 
-/**
- * 在没有真实 `.ompk` 时生成一条占位波形，让 UI 能被看到与评审。
- * **调用处必须把它标成 mock**，不许假装是真数据（诚实规则）。
+/*
+ * ⚠️ 这里原本有一个 `mockPeaks(durationMs, buckets)`：在没有真 `.ompk` 时
+ * 用正弦函数生成一条"占位波形"。**已删除，而不是留着不用。**
+ *
+ * 它的注释写着"调用处必须把它标成 mock，不许假装是真数据（诚实规则）"——
+ * 而唯一的调用处（`NoteDetailPage`）**从来没有标注过**，并且逻辑是反的：
+ * 有真 peaks 资产时反而 `setPeaks(null)`，没有时才造一份。
+ * 又因为 daemon 全仓零处产出 peaks 资产，**每一位用户看到的每一条波形都是编的**，
+ * 界面上一个字都不说（T-139 A3）。
+ *
+ * 为什么是删掉而不是"加上标注"：**一条编出来的波形不是占位符，它是一个断言** ——
+ * 用户会据此判断哪里是安静段、哪里该拖过去。加个小字标注并不能收回这个断言。
+ * 判据（architect 立、已在项目内生效）：
+ * **用户看到的每一个具体东西，要么来自后端，要么根本不提。**
+ * 没有峰值时 `Waveform` 会画一条基线 + 可点击定位的游标 —— 那才是"我不知道这段长什么样"
+ * 的如实表达，而且定位功能一点不少。
+ *
+ * 留着函数不删同样不行：下一个人看到 `mockPeaks` 就会以为"没有数据时可以先用它顶上"，
+ * 于是这个 bug 会以另一种形式回来（本项目已有先例：`MINDMAP_SAVE_SUPPORTED`
+ * 就是被整个删掉而不是改成 true）。
  */
-export function mockPeaks(durationMs: number, buckets = 800): DecodedPeaks {
-  const arr = new Float32Array(buckets);
-  for (let i = 0; i < buckets; i += 1) {
-    const t = i / buckets;
-    const env = 0.35 + 0.4 * Math.sin(t * Math.PI * 6) ** 2;
-    const detail = 0.55 + 0.45 * Math.sin(i * 1.7) * Math.cos(i * 0.31);
-    arr[i] = Math.min(1, Math.abs(env * detail));
-  }
-  return { channels: [arr], durationMs, samplesPerPixel: 256 };
-}

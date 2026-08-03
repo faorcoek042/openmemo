@@ -122,9 +122,26 @@ export function createMediaRoutes(deps: MediaRoutesDeps): {
       }
 
       const probe = await probeAssetFile(roots, asset.rel_path);
+      /*
+       * 越界有两种形态，都必须报 403，**都不许报成 404**：
+       *   a) `tried.length === 0` —— 记录本身就指到所有根之外（词法即可判定）
+       *   b) `escaped.length > 0` 且没有别的候选能用 —— 候选落在根内，
+       *      但**顺着符号链接解析出去了**（T-143 ①）。文件是真的在，
+       *      所以说"文件不存在"就是一句假话（⑤A-20 规矩 3）。
+       */
       if (probe.tried.length === 0) {
         // 记录指到了所有根之外 —— 这是"越界"，与"文件不在"是两码事，别混报
         sendError(res, 403, 'ASSET_OUT_OF_ROOT', 'asset path escapes media root', '媒体路径越界');
+        return true;
+      }
+      if (probe.abs === null && probe.escaped.length > 0) {
+        sendError(
+          res,
+          403,
+          'ASSET_OUT_OF_ROOT',
+          `asset path escapes media root via symlink: ${probe.escaped.join(', ')}`,
+          '媒体路径越界（该路径上的符号链接指向数据目录之外）',
+        );
         return true;
       }
       const abs = probe.abs;

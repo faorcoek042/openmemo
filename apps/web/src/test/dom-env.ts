@@ -50,6 +50,14 @@ for (const k of [
   'HTMLTextAreaElement',
   'Element',
   'Node',
+  /*
+   * `HTMLCollection` / `NodeList` 是**运行时会被 instanceof 用到**的构造器，
+   * 不是只在类型里出现（mind-elixir 就写了 `x instanceof HTMLCollection`）。
+   * 少一个的表现是 `ReferenceError: HTMLCollection is not defined`，
+   * 栈全在第三方库里，看起来像"这个库跑不了"，实际是宿主少装了一个全局（T-139）。
+   */
+  'HTMLCollection',
+  'NodeList',
   'Event',
   'CustomEvent',
   'MouseEvent',
@@ -63,7 +71,31 @@ for (const k of [
 
 define('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(Date.now()), 0));
 define('cancelAnimationFrame', (id: number) => clearTimeout(id));
-define('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+/**
+ * ⚠️ `matchMedia` 要**挂两处**：`globalThis` 与 `window`。
+ *
+ * jsdom 自己不实现它。上面那个 `define('window', jsdomWindow)` 只是让
+ * `globalThis.window` 指向 jsdom 的 window —— 往 `globalThis` 上挂一个 `matchMedia`
+ * **不会**让 `window.matchMedia` 存在（两者是不同对象）。
+ * 于是 `globalThis.matchMedia()` 好好的，而任何写 `window.matchMedia(...)` 的第三方库
+ * 当场 `TypeError: window.matchMedia is not a function`（T-139 撞到的是 mind-elixir，
+ * 它在构造函数里就查暗色偏好）。
+ * 这类"看起来已经补过了"的缺口比完全没补更难查，所以两处都挂、并写清为什么。
+ */
+const matchMediaStub = (): unknown => ({
+  matches: false,
+  media: '',
+  addEventListener() {},
+  removeEventListener() {},
+  addListener() {},
+  removeListener() {},
+});
+define('matchMedia', matchMediaStub);
+Object.defineProperty(jsdomWindow, 'matchMedia', {
+  value: matchMediaStub,
+  configurable: true,
+  writable: true,
+});
 define(
   'BroadcastChannel',
   class {

@@ -34,6 +34,7 @@ import {
   type RuntimeInfo,
 } from './bootstrap/single-instance.js';
 import { readDataDirPointer, resolvePaths, type AppPaths } from './config/paths.js';
+import { isDirectRun } from './bootstrap/entrypoint.js';
 import { reclaimOrphans } from './bootstrap/orphans.js';
 import { ensureSelfSignedCert, tlsEnabled } from './bootstrap/tls.js';
 import { migrateInstallRecords } from './storage/migrateRecords.js';
@@ -1072,7 +1073,12 @@ async function mainCli(): Promise<void> {
 }
 
 // 仅在被直接执行时启动（被 import 时不自启，方便测试）
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+//
+// ★ T-143 ③：这里原来是 `import.meta.url === \`file://${process.argv[1]}\`` ——
+// 手拼 URL 而不是转换 URL。路径里只要有空格 / 中文 / `#` / `?` / `%`，
+// 或者入口是经由一条软链调用的，就永不匹配 → **进程静默退出 0，什么都不启动**。
+// 判据与证据全在 `bootstrap/entrypoint.ts` 的文件头，那里也是它唯一能被测试执行的地方。
+if (isDirectRun(import.meta.url, process.argv[1])) {
   void mainCli();
 }
 

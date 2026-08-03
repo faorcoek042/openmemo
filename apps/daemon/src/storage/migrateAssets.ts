@@ -84,16 +84,48 @@ async function indexFiles(dataDir: string, mediaRoot: string): Promise<Set<strin
 }
 
 /**
+ * 把一条文件系统路径切成段。
+ *
+ * ★ T-143 ④：**分隔符必须是参数，不能是宿主的 `sep`。**
+ * 这里原来是 `abs.split('/')` —— 对**文件系统路径**硬编码了 `/`。同文件的
+ * `matchByTail`（`:111,113`）用的是 `split(sep)`，也就是**作者知道这件事，漏了这一处**。
+ *
+ * 提成入参（默认宿主 `sep`）照抄的是 `downloader/store.ts:63` `defaultModelsRoot`
+ * 的写法 —— 那是全仓唯一把平台做成参数、因而能在 Linux 上把三个平台都测到的地方。
+ * 不这么写，Windows 那半边就只能靠一台 Windows 真机才能验证，也就是永远不会被验证。
+ */
+function segments(p: string, pathSep: string): string[] {
+  return p.split(pathSep).join('/').split('/').filter(Boolean);
+}
+
+/**
  * 用**最长后缀**把一个失效的绝对路径映射回新 dataDir 里的真实文件。
  *
  * `/tmp/dd55/tmp/job-XXX/audio16k.wav` → 后缀 `tmp/job-XXX/audio16k.wav`
  * 在新目录里存在 → 命中。逐段缩短、长的优先，因此永远取**最具体**的那个匹配。
+ *
+ * ★ T-143 ④ 这里有**两个**分隔符 bug，不是一个：
+ *   1. `abs.split('/')` 切不开 `C:\dd\tmp\job\a.wav`（只切出 1 段）；
+ *   2. 就算切开了，比对的一方 `all` 里存的是 `relative()` 产出的**宿主分隔符**路径
+ *      （Windows 上是 `tmp\job\a.wav`），而候选是用 `/` 拼的 —— `all.has()` 永不命中。
+ * 只修第 1 条**函数照样永远返回 undefined**，而且看起来像是修好了。
+ * 所以两边都归一化，再用归一化后的键去查，**返回的仍然是索引里的原始条目**
+ * （调用方要拿它 `join(dataDir, hit)`，形态必须与文件系统一致）。
  */
-function matchBySuffix(abs: string, all: ReadonlySet<string>): string | undefined {
-  const parts = abs.split('/').filter(Boolean);
+function matchBySuffix(
+  abs: string,
+  all: ReadonlySet<string>,
+  pathSep: string = sep,
+): string | undefined {
+  const byNormalized = new Map<string, string>();
+  for (const e of all) {
+    const key = segments(e, pathSep).join('/');
+    if (!byNormalized.has(key)) byNormalized.set(key, e);
+  }
+  const parts = segments(abs, pathSep);
   for (let i = 0; i < parts.length; i++) {
-    const cand = parts.slice(i).join('/');
-    if (all.has(cand)) return cand;
+    const hit = byNormalized.get(parts.slice(i).join('/'));
+    if (hit !== undefined) return hit;
   }
   return undefined;
 }
@@ -107,14 +139,27 @@ function matchBySuffix(abs: string, all: ReadonlySet<string>): string | undefine
  * **命中必须唯一**：`audio16k.wav` 在库里会有很多份，猜错的后果是
  * 把一条笔记的音频挂到另一条笔记上 —— 比不迁移糟得多（那次事故见文件头）。
  */
-function matchByTail(rel: string, all: ReadonlySet<string>): string | undefined {
-  const needle = rel.split(sep).join('/');
+function matchByTail(
+  rel: string,
+  all: ReadonlySet<string>,
+  pathSep: string = sep,
+): string | undefined {
+  const needle = segments(rel, pathSep).join('/');
   const hits = [...all].filter((e) => {
-    const u = e.split(sep).join('/');
+    const u = segments(e, pathSep).join('/');
     return u === needle || u.endsWith('/' + needle);
   });
   return hits.length === 1 ? hits[0] : undefined;
 }
+
+/**
+ * 只为测试导出：让 Windows 那半边在 Linux 上可验证。
+ *
+ * `migrateMediaAssets` 整条走的是真数据库 + 真文件系统，**没法在 Linux 上喂它
+ * 一个 `C:\…` 的库**；而这两个匹配器是纯函数。不导出，Windows 分支就只能靠
+ * 一台 Windows 真机 —— 也就是 platform 报告里那"34 条从写下来就没被执行过"的下场。
+ */
+export const __testing = { matchBySuffix, matchByTail, segments };
 
 /**
  * 迁移全部 `media_assets`。**幂等**：第二遍不会再改任何行。

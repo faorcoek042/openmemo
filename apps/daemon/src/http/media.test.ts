@@ -193,6 +193,68 @@ describe('★ 越界与真丢失是两码事，不许混报', () => {
   });
 });
 
+/**
+ * ★ T-143 ①：**根内的一条软链就能把整台机器上的文件从这个端点流出去。**
+ *
+ * 候选路径的越界剔除是**纯字符串**运算，而 `open()` 走文件系统、**跟随符号链接** ——
+ * 两者对 `<mediaRoot>/escape.wav -> /etc/passwd` 给出完全相反的答案。
+ * 修复前这里返回 **200 + 根外文件的原始字节**。
+ *
+ * 判据钉的是**后果**：断言 body 里**没有**那串只存在于根外文件里的内容。
+ * 光断言状态码不够 —— 状态码可以因为别的原因变对。
+ */
+describe('★ T-143 符号链接不许把数据目录外的文件流出去', () => {
+  const SECRET = 'SECRET-OUTSIDE-THE-DATA-DIR';
+
+  /** 在**所有根之外**造一份秘密文件。 */
+  async function secretOutside(): Promise<string> {
+    const outside = mkdtempSync(join(tmpdir(), 'om-media-OUTSIDE-'));
+    made.push(outside);
+    const p = join(outside, 'secret.txt');
+    await fs.writeFile(p, SECRET);
+    return p;
+  }
+
+  it('★ 资产本身是指向根外的软链 → 403，且一个字节都不许流出去', async () => {
+    const d = await seedDataDir({});
+    const secret = await secretOutside();
+    await fs.symlink(secret, join(d, 'media', 'escape.wav'));
+    // 先证明这条链真的能读到根外内容，否则本用例钉的是零
+    assert.equal(await fs.readFile(join(d, 'media', 'escape.wav'), 'utf8'), SECRET);
+
+    const r = await get(d, 'escape.wav');
+    assert.equal(r.body.includes(SECRET), false, '根外内容被流出去了');
+    assert.equal(r.status, 403);
+    assert.equal(JSON.parse(r.body).error.code, 'ASSET_OUT_OF_ROOT');
+  });
+
+  it('★ 祖先目录是软链 → 同样 403（realpath 要跟完整条路）', async () => {
+    const d = await seedDataDir({});
+    const secret = await secretOutside();
+    await fs.symlink(join(secret, '..'), join(d, 'media', 'outdir'));
+
+    const r = await get(d, 'outdir/secret.txt');
+    assert.equal(r.body.includes(SECRET), false);
+    assert.equal(r.status, 403);
+  });
+
+  it('★ 越界必须报 403，**不许**报成"文件不存在"（文件明明在，⑤A-20 规矩 3）', async () => {
+    const d = await seedDataDir({});
+    await fs.symlink(await secretOutside(), join(d, 'media', 'escape.wav'));
+    const err = JSON.parse((await get(d, 'escape.wav')).body).error;
+    assert.notEqual(err.code, 'ASSET_FILE_MISSING');
+    assert.equal(/不存在|已删除|丢失/.test(String(err.messageZh)), false, `不许说文件没了：${err.messageZh}`);
+  });
+
+  it('★ 合法的相对软链照常 200（别把产品自己的链接一起杀了）', async () => {
+    const d = await seedDataDir({ 'media/real.wav': 'REAL-CONTENT' });
+    await fs.symlink('real.wav', join(d, 'media', 'alias.wav'));
+    const r = await get(d, 'alias.wav');
+    assert.equal(r.status, 200);
+    assert.equal(r.body, 'REAL-CONTENT');
+  });
+});
+
 describe('parseRange', () => {
   it('普通区间 / 尾部 N 字节 / 越界', () => {
     assert.deepEqual(parseRange('bytes=0-3', 100), { start: 0, end: 3 });

@@ -72,7 +72,26 @@ export interface MediaAssetDto {
   mime: string | null;
   bytes: number | null;
   durationMs: number | null;
-  state: 'pending' | 'ready' | 'missing' | 'failed';
+  /**
+   * 资产可用性。**声明为可选**，理由与下面 `canRetranscribe` 完全相同：
+   * 老响应不带这个键，而"字段缺失"绝不能读成"不可用"。
+   *
+   * ⚠️ 历史：这里原来写的是**必填**，而 daemon 的 `GET /api/notes/:uid`
+   * 一次都没发过它 —— 两边没有任何东西对过一遍，`tsc` 也不可能发现
+   * （web 这份是手抄的镜像，与 daemon 之间根本没有类型连接）。
+   * 后果是 `a.state === 'ready'` 恒 false，播放器永远拿不到音源（T-139 A1）。
+   * daemon 侧已补发；判"能不能用"请一律走 `features/notes/noteAssets.ts`，
+   * 不要在调用点重新写一遍比较。
+   */
+  state?: 'pending' | 'ready' | 'missing' | 'failed';
+  /**
+   * 现成的媒体 URL，形如 `/media/asset/<ulid>`。
+   *
+   * daemon **一直在发**，而这份手抄类型里**一直没有**（同一次分叉的另一半）。
+   * 有了它，取 `.ompk` 这类资产就不必在前端再拼一次路径 ——
+   * 路径规则只该有一处，而那一处在服务端。
+   */
+  url?: string;
 }
 
 export interface TranscriptDto {

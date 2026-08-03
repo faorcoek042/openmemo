@@ -87,11 +87,22 @@ UI 要说清楚"未配置 AI 模型，已生成基础大纲"（D-05 §5.2 原文
 `summary.*` 事件（`summary.delta`/`summary.done`）虽然在 D-05 §11.3 和 `mindmap.*` 放在同一张表里（因为都是
 "结构化域"、都是流式产出），但那是纯文本摘要 Tab 的数据，**不属于这个 feature**，你的 `sse.ts` 不需要绑定它。
 
-## 必须导出的两个分片
+## 必须导出的分片
 
 - `Mindmap.routes.tsx` 导出 `/notes/:noteUid/mindmap` 的路由片段，由 `src/routes.tsx` 聚合。
-- `sse.ts` 导出 `mindmapSse: SseBinding`，绑定 `mindmap.started` / `mindmap.delta` / `mindmap.done` /
-  `mindmap.failed` 四个事件，由 `lib/events/bindings.ts` 聚合。
+
+> ⚠️ **订正（T-139，实测）**：这里原来还写着"`sse.ts` 导出 `mindmapSse`，绑定
+> `mindmap.started/delta/done/failed` 四个事件"。**那个文件不需要存在，那四个事件里有两个 daemon 从不发。**
+>
+> daemon 在导图落库后同时发 `mindmap.done` 与 `note.updated{changed:['mindmap']}`，
+> 而 `features/notes/sse.ts` 一直订阅着后者并 invalidate `qk.mindmap(noteUid)`；
+> `mindmap.started` / `mindmap.failed` 全仓无人发布，`mindmap.delta` 被 runner **刻意不发**
+> （`runners/mindmap.ts` 里写明理由：契约要求 `mindmapUid`，而它要落库后才有）。
+> 再补一个 `mindmapSse` 只会造出第二个"导图变了"的触发源，且它覆盖不到手工编辑的 `PATCH`
+> 那条路径（那条只发 `note.updated`）。
+>
+> "生成完页面不更新"的真正原因在 `MindmapView.tsx`（渲染器不换图），已修；
+> 取证过程见 `coordination/inbox/notes-contract.md` §C10。
 
 **为什么是分片导出而不是直接改聚合文件**：这两个聚合文件同时被 T-021/T-022/T-023 三方写，直接改会在几乎每次
 提交里产生"数组里加一行"式的合并冲突。分片模式下你只改 `features/mindmap/Mindmap.routes.tsx` 和

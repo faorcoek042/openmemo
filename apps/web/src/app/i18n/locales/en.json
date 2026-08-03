@@ -85,7 +85,9 @@
       "json": "JSON (full)"
     },
     "exportServerOnly": "DOCX / PDF need server support — not available yet",
-    "exportNeedsDaemon": "Export requires the local service to be running"
+    "exportNeedsDaemon": "Export requires the local service to be running",
+    "folderEmpty": "Nothing in “{{name}}” yet",
+    "folderEmptyHint": "This view includes notes in sub-folders too."
   },
   "models": {
     "title": "Model management",
@@ -219,6 +221,8 @@
   "runtime": {
     "title": "Runtime and acceleration backends",
     "intro": "Detect hardware → recommend a backend → download and install → self-test → show status, all from the browser.",
+    "componentsLink": "Components & sources",
+    "componentsLinkHint": "where from · pinned version · update / rollback",
     "selfTestFailedTitle": "An acceleration backend failed its self-test",
     "selfTestFailedDetail": "The card below spells out why. You can retry the self-test, or switch to the CPU backend (always available).",
     "probing": "Probing hardware (devices are really enumerated, this can take a few seconds)…",

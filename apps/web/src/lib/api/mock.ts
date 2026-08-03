@@ -410,9 +410,13 @@ const mockFetcher: Fetcher = async <T,>(path: string, opts: ApiOptions = {}): Pr
 
   if (method === 'GET' && pathname === '/notes') {
     const starredOnly = query.get('starred') === '1' || query.get('starred') === 'true';
+    const folderUid = query.get('folder');
     const list: NoteSummary[] = [...notes.values()]
-      // 与 daemon 一致：筛选发生在**取数那一层**，不是取完再过滤（T-138 ③）
+      // 与 daemon 一致：筛选发生在**取数那一层**，不是取完再过滤（T-138 ③/④）
       .filter((n) => !starredOnly || n.starred)
+      // mock 的文件夹是平的（没有子文件夹），所以这里只比自身；
+      // daemon 那边是含子孙的递归 —— **这一点不一样，写出来免得被当成契约**
+      .filter((n) => !folderUid || n.folderUid === folderUid)
       .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
     return { notes: list } as T;
   }

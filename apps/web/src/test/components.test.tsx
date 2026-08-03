@@ -14,6 +14,7 @@
  */
 import { render, click, type, pressKey, text, buttonByText, stubApi } from './host';
 
+import { useState } from 'react';
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { useLocation } from 'react-router';
@@ -80,6 +81,8 @@ import ModelsPage from '../features/models/ModelsPage';
 import NotesListPage from '../features/notes/NotesListPage';
 import App from '../App';
 import { GenerateMindmapButton } from '../features/mindmap/GenerateMindmapButton';
+import { MindmapView } from '../features/mindmap/MindmapView';
+import type { MindMapDoc } from '@openmemo/mindmap';
 import type { PipelineJob } from '@openmemo/shared';
 import RuntimePage from '../features/runtime/RuntimePage';
 import { splitEmphasis } from '../components/common/Emphasis';
@@ -4605,6 +4608,97 @@ describe('T-140 ③ 走产品真实路径：粘一个链接 → yt-dlp 缺失 �
     await click(btn);
     await r.flush();
     assert.equal(locOf(r.container), '/components', 'yt-dlp 装得回来的那一页到不了');
+    r.unmount();
+  });
+});
+
+/* ───────────────── MindmapView：重新生成之后屏幕要跟着换（T-139 C10）───────────────── */
+
+describe('MindmapView（T-139 C10）', () => {
+  /**
+   * ## 这条用例钉的是什么
+   *
+   * 盘点把「导图生成完页面不刷新」记在 `mindmap.done` 没有订阅者头上。
+   * 实测（真 daemon + 真浏览器）**那条链是通的**：daemon 在落库时同时发
+   * `mindmap.done` 与 `note.updated{changed:['mindmap']}`，`notesSse` 订阅后者并
+   * invalidate `qk.mindmap(noteUid)`，浏览器网络日志里那次
+   * `GET /notes/:uid/mindmap` **真的发生了**，回来的也确实是新 revision。
+   *
+   * 断的是**渲染器**：`MindmapView` 的实例只在 `doc.uid` 变化时重建，
+   * 而 `doc.uid` **是笔记的 uid**（生成时传的就是 `note.uid`），同一条笔记里恒定不变 ——
+   * 于是"数据换了、图没换"，只有手动刷新才看得到新的。
+   *
+   * 所以判据必须是：**换一份内容不同、uid 相同的文档进去，屏幕上的字要跟着变。**
+   * "组件没崩""渲染出来了"都不够 —— 出事那天它也渲染得好好的。
+   */
+  const docOf = (topic: string): MindMapDoc =>
+    ({
+      schemaVersion: 1,
+      uid: '01KZ47V1X2YB402JKD60KRHK97', // ★ 两份文档共用 —— 重新生成不会换这个
+      title: '一节课的录音',
+      rootKey: 'n0',
+      revision: 1,
+      nodes: {
+        n0: { key: 'n0', text: '一节课的录音', children: ['n1'] },
+        n1: { key: 'n1', text: topic, children: [] },
+      },
+    }) as unknown as MindMapDoc;
+
+  function Swapper({ a, b }: { a: MindMapDoc; b: MindMapDoc }) {
+    const [doc, setDoc] = useState(a);
+    return (
+      <div>
+        {/* 模拟 SSE → invalidate → 重取之后，react-query 把新文档交下来 */}
+        <button onClick={() => setDoc(b)}>refetched</button>
+        <MindmapView doc={doc} editable={false} />
+      </div>
+    );
+  }
+
+  test('★ 重新生成（uid 不变、内容变了）→ 屏幕上的主题必须跟着换', async () => {
+    const r = await render(<Swapper a={docOf('第一次生成的主题')} b={docOf('第二次生成的主题')} />);
+    await r.flush();
+    assert.ok(
+      text(r.container).includes('第一次生成的主题'),
+      '第一份文档就没渲染出来，后面的断言没有意义',
+    );
+
+    await click(buttonByText(r.container, 'refetched'));
+    await r.flush();
+
+    assert.ok(
+      text(r.container).includes('第二次生成的主题'),
+      '新文档到了，屏幕上还是旧的那张图 —— 这就是"生成成功但页面不更新"的真身：' +
+        '缓存换了、渲染器没换（重建条件 doc.uid 在同一条笔记里永远不变）',
+    );
+    assert.equal(
+      text(r.container).includes('第一次生成的主题'),
+      false,
+      '旧内容还留在屏幕上 —— 换图必须是替换，不是叠加',
+    );
+    r.unmount();
+  });
+
+  test('内容没变时不换图（用户正在编辑，不能被自己的保存往返打断）', async () => {
+    /*
+     * 这一半同样是判据的一部分：修法若改成"revision 变了就重建"，
+     * 用户拖一个节点 → 600ms 防抖 → PATCH → revision +1 → 重取 → **视图在手底下被重置**
+     * （缩放、选中、撤销栈全丢）。原代码那条注释担心的正是这个，担心是对的。
+     * 所以判据是内容签名：内容一样就一个字都不动。
+     */
+    const same = docOf('同一个主题');
+    const clone = JSON.parse(JSON.stringify(same)) as MindMapDoc; // 新对象、同内容
+    const r = await render(<Swapper a={same} b={{ ...clone, revision: 99 } as MindMapDoc} />);
+    await r.flush();
+    const root = r.container.querySelector('me-main, .map-container');
+    await click(buttonByText(r.container, 'refetched'));
+    await r.flush();
+    assert.equal(
+      r.container.querySelector('me-main, .map-container') === root,
+      true,
+      '内容没变却把渲染容器换掉了 —— 用户编辑时会被自己的保存往返打断',
+    );
+    assert.ok(text(r.container).includes('同一个主题'));
     r.unmount();
   });
 });

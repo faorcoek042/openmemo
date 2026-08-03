@@ -15,7 +15,7 @@ import { TasksDrawer } from './features/tasks/TasksDrawer';
 import { useUiStore } from './lib/stores/ui.store';
 import { useConnectionStore } from './lib/stores/connection.store';
 import { useProgressStore } from './lib/stores/progress.store';
-import { activeNavTarget } from './lib/nav/activeNav';
+import { activeNavTarget, NAV_FILTER_KEYS } from './lib/nav/activeNav';
 import { cn } from './lib/utils';
 
 /** 应用外壳：顶栏 + 侧栏 + 路由出口（D-05 §1.1）。 */
@@ -68,9 +68,21 @@ export default function App() {
     { to: '/tasks', icon: <Activity className="size-4" />, label: t('nav.tasks') },
     { to: '/settings', icon: <Settings className="size-4" />, label: t('nav.settings') },
   ];
+  /*
+   * `NAV_FILTER_KEYS`：这些查询串键**代表一个兄弟筛选视图**，出现时一级导航就不该抢高亮。
+   *
+   * - `starred` —— 就是上面那条 `/notes?starred=1`。
+   * - `folder`  —— 文件夹树里的链接（`/notes?folder=<uid>`）。它们是**动态**的，
+   *   不可能出现在上面那张静态清单里，所以「folder 代表一个筛选视图」这件事
+   *   只能在这里说出来。声明键名而不是地址：键名稳定，uid 不稳定。
+   *
+   * ⚠️ 只有"代表另一个导航目标"的键才配写进来。`tab` **不在此列** ——
+   * 它是页内视图状态，写进来就会让 `/models?tab=llm` 退回"一项都不亮"（T-138b 那个哑巴 bug）。
+   */
   const activeNav = activeNavTarget(
     [...collectionNav, ...systemNav].map((i) => i.to),
     location,
+    NAV_FILTER_KEYS,
   );
 
   if (chromeless) {
