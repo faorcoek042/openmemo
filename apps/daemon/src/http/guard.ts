@@ -95,9 +95,39 @@ export function checkOrigin(
   const rawHost = req.headers['host'] ?? '';
   const hm = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(rawHost);
   const reqHostname = hm?.[1] ?? '';
-  // URL.hostname 会剥掉 IPv6 的方括号，比较前统一形式
-  const originHostname = parsed.hostname.includes(':') ? `[${parsed.hostname}]` : parsed.hostname;
-  const normalizedReqHost = reqHostname.startsWith('[') ? reqHostname : reqHostname;
+
+  /*
+   * ★ 两边**各自剥掉 IPv6 方括号再比**（T-142 修）。
+   *
+   * 这里原本写的是「`URL.hostname` 会剥掉 IPv6 的方括号，比较前统一形式」，
+   * 于是在 hostname 含 `:` 时**再包一层**。`[实测]` Node 24：
+   *   `new URL('http://[::1]:17650').hostname === '[::1]'`  ← 方括号**还在**
+   * WHATWG 的 host 序列化器**规定**要带方括号，所以那条注释描述的是一个不存在的行为。
+   * 结果是 origin 侧被拼成 `[[::1]]`，而 host 侧是 `[::1]` —— **永不相等**。
+   *
+   * 后果不是"IPv6 支持不完整"，是**整个界面死掉**：`checkHost` 放行 `[::1]`
+   * （`ALLOWED_HOSTS` 里就有它），`checkOrigin` 对同一地址恒拒 ⇒
+   * 谁用 `http://[::1]:port` 打开，页面发出的**每一个带 Origin 的请求都 403**。
+   * 今天没显形只是因为 daemon 打印的启动地址是 IPv4。
+   *
+   * 旁证这一处当时就没写完：原来还有一行
+   *   `const normalizedReqHost = reqHostname.startsWith('[') ? reqHostname : reqHostname;`
+   * —— **三元的两个分支逐字相同**。写了一个不起任何作用的条件，
+   * 说明作者当时以为两边不一样。**代码在描述一个不存在的差别**，
+   * 和"注释描述一个不存在的行为"是同一族。
+   *
+   * 改成"两边都剥"而不是"两边都包"：剥法对**任何一边用哪种约定都成立**，
+   * 不依赖 `URL.hostname` 到底带不带方括号 —— 也就不会再被同一个假设坑一次。
+   * 顺带统一大小写（主机名大小写不敏感；`URL.hostname` 已经小写化了，Host 头未必）。
+   *
+   * ⚠️ **不做**的事：不把 `::1` 与 `0:0:0:0:0:0:0:1` 这类等价写法归一化。
+   * 同源的判据是"和我们自己那一页同一个 origin"，浏览器发的 Origin 与 Host
+   * 用的是同一个书写形式；跨形式的"等价"不该由这里猜。
+   */
+  const unbracket = (h: string): string =>
+    (h.startsWith('[') && h.endsWith(']') ? h.slice(1, -1) : h).toLowerCase();
+  const originHostname = unbracket(parsed.hostname);
+  const normalizedReqHost = unbracket(reqHostname);
   if (originHostname !== normalizedReqHost) {
     return {
       ok: false,

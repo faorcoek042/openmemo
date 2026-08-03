@@ -52,7 +52,7 @@
  * 退出码：有任何一条**存活**（改坏了测试还是绿的）、或任何锚点失效 → 1。
  */
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -136,6 +136,43 @@ const MUTATIONS = [
     find: '    if (originHostname !== normalizedReqHost) {',
     replace: '    if (false) {',
     why: '跨源 Origin 被放行 = CSRF 直接开门；WebSocket 不受 SameSite 完全保护，这是它唯一的拦截点',
+  },
+  {
+    id: 'E2-ipv6-sameorigin',
+    pkg: 'apps/daemon',
+    artifact: 'dist/http/guard.js',
+    tests: ['dist/http/guard.test.js'],
+    // 把 T-142 修掉的那个 bug 原样种回去：以为 URL.hostname 会剥方括号，于是再包一层
+    find: '    const originHostname = unbracket(parsed.hostname);',
+    replace:
+      "    const originHostname = parsed.hostname.includes(':') ? `[${parsed.hostname}]` : parsed.hostname;",
+    why: '同源的 IPv6 请求被恒拒：用 http://[::1]:port 打开界面，页面发出的每一个请求都 403，整页全死',
+  },
+  {
+    id: 'E2-ipv6-not-too-loose',
+    pkg: 'apps/daemon',
+    artifact: 'dist/http/guard.js',
+    tests: ['dist/http/guard.test.js'],
+    /*
+     * 反方向：修 IPv6 最容易做过头的地方是**归一化函数本身** ——
+     * 剥得太狠，把本来不同的主机名折叠成同一个，判据就被悄悄放松了。
+     * 这里让 `unbracket` 把一切都折叠成空串（"什么都同源"）。
+     * ⚠️ 第一版我把这条的锚点写成了和 `E2-origin-sameorigin` 同一行 ——
+     * 那是同一个变异写了两遍，只会把数字做大，不增加任何覆盖。
+     */
+    find:
+      "    const unbracket = (h) => (h.startsWith('[') && h.endsWith(']') ? h.slice(1, -1) : h).toLowerCase();",
+    replace: "    const unbracket = (_h) => '';",
+    why: '归一化把不同主机折叠成同源：任意站点带着"合法" Origin 打进来，CSRF 开门 —— 而 IPv6 那几条用例照样绿，看起来像是修对了',
+  },
+  {
+    id: 'POINTER-override-ignored',
+    pkg: 'apps/daemon',
+    artifact: 'dist/config/paths.js',
+    tests: ['dist/storage/restart-datadir.test.js'],
+    find: "    return process.env['OPENMEMO_POINTER_FILE'] ?? join(defaultDataDir(), 'datadir.json');",
+    replace: "    return join(defaultDataDir(), 'datadir.json');",
+    why: '测试重新开始写机器级的全局指针：跑测试跑到一半被 kill，用户的 demo 重启后挂到空壳上，界面上 key/模型/转写"全部消失"（已经真实发生过一次）',
   },
   {
     id: 'E2-secfetch',
@@ -222,12 +259,44 @@ if (listOnly) {
   process.exit(0);
 }
 
+/**
+ * 假 HOME —— **变异体是敌对代码，必须假设它会写机器级状态**。
+ *
+ * 这条是被真事逼出来的，记在这里：我给"指针位置可被覆盖"这条不变量加了一条变异
+ * （把 `pointerFile()` 改回硬编码全局位置），跑完发现
+ * **变异检查自己把用户的 `~/.local/share/openmemo/datadir.json` 写坏了** ——
+ * 因为那条变异干的正是"让代码去写全局指针"，而测试随后就写了一个诱饵进去。
+ *
+ * 也就是说：**一个用来防止事故的工具，自己复现了那场事故。**
+ * （已当场还原，并与开工备份逐字比对过。）
+ *
+ * 教训不是"这条变异不该加"，是**框错了威胁模型**：
+ * 变异体按定义就是"被拿掉了某条安全性质的代码"，
+ * 拿它当良民、只隔离产物目录是不够的 —— 还得隔离**它可能写到的机器级位置**。
+ * 所以每个变异体都跑在一个假 HOME 里：`homedir()` / `XDG_DATA_HOME` 全部落进沙箱。
+ *
+ * 副作用是好的：那条变异**照样红**（测试断言"指针路径不许在 $HOME 底下"，
+ * 假 HOME 也是 $HOME），但它再也够不到真实的那一份。
+ */
+function fakeHome(sandbox) {
+  const h = join(sandbox, '.fake-home');
+  mkdirSync(join(h, '.local', 'share'), { recursive: true });
+  return h;
+}
+
 /** 在隔离副本里跑一组测试文件，返回退出码。 */
 function runTests(sandbox, tests) {
+  const home = fakeHome(sandbox);
   const r = spawnSync(process.execPath, ['--test', ...tests], {
     cwd: sandbox,
     encoding: 'utf8',
     timeout: 300_000,
+    env: {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home, // Windows 上 os.homedir() 看这个
+      XDG_DATA_HOME: join(home, '.local', 'share'),
+    },
   });
   return { code: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
 }

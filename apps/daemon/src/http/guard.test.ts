@@ -158,36 +158,60 @@ describe('checkOrigin —— 必须与本次请求严格同源', () => {
     assert.equal(checkOrigin(req({ host: HOST, origin: 'not a url' }), PORTS).ok, false);
   });
 
-  it(
-    '🔴 同源的 IPv6 请求必须通过 —— **现在不通过，这是产品 bug，已单独报 Manager**',
-    { todo: 'guard.ts:98-100 假设 URL.hostname 会剥掉 IPv6 方括号；实测它不剥，于是拼成 [[::1]] 永不相等' },
-    () => {
-      /*
-       * ## 这条是"红了先别改测试"的产出，不是我写错了
-       *
-       * `guard.ts:98` 的注释写着「URL.hostname 会剥掉 IPv6 的方括号，比较前统一形式」，
-       * 于是 `:99` 在 hostname 含 `:` 时**再包一层方括号**。
-       * `[实测]` Node 24：`new URL('http://[::1]:17650').hostname === '[::1]'` —— **方括号还在**。
-       * 所以 originHostname 被拼成 `'[[::1]]'`，而 reqHostname 是 `'[::1]'`，**永不相等**。
-       *
-       * 佐证同一处未写完：`:100` 的
-       * `const normalizedReqHost = reqHostname.startsWith('[') ? reqHostname : reqHostname;`
-       * —— **三元的两个分支逐字相同**，是一次没做完的归一化留下的痕迹。
-       *
-       * 后果：`checkHost` **放行** `[::1]`（`ALLOWED_HOSTS` 里就有它），
-       * 而 `checkOrigin` 对同一个地址**恒拒** —— 两道闸门对 IPv6 回环给出相反答案。
-       * 谁用 `http://[::1]:17650` 打开界面，Host 过、Origin 挂，
-       * **每一个带 Origin 的请求（也就是页面发出的每一个请求）都 403**，整页全死。
-       * 今天没显形，只是因为 daemon 打印的启动地址是 IPv4。
-       *
-       * **标 todo 不是放过它**：断言原样留着（修好之后这条就是现成的回归），
-       * 但不让它变成一盏假红灯 —— 假红灯会训练人忽略告警，和假绿灯一样贵。
-       * 我不改产品代码：guard.ts 属于安全边界，该由 Manager 派人改 + 单独复核。
-       */
-      const h = `[::1]:${PORTS[0]}`;
-      assert.equal(checkOrigin(req({ host: h, origin: `http://${h}` }), PORTS).ok, true);
-    },
-  );
+  it('★ 同源的 IPv6 请求必须通过（T-142 修好的那个 bug 的回归）', () => {
+    /*
+     * ## 这条曾经是红的，红得对 —— 它抓到的是真 bug
+     *
+     * `guard.ts` 原来的注释写着「URL.hostname 会剥掉 IPv6 的方括号」，
+     * 于是在 hostname 含 `:` 时**再包一层**。`[实测]` Node 24：
+     * `new URL('http://[::1]:17650').hostname === '[::1]'` —— **方括号还在**
+     * （WHATWG 的 host 序列化器规定要带）。origin 侧成了 `[[::1]]`，永不相等。
+     *
+     * 后果不是"IPv6 支持不完整"，是**整页全死**：`checkHost` 放行 `[::1]`、
+     * `checkOrigin` 恒拒 ⇒ 用 `http://[::1]:port` 打开界面，
+     * 页面发出的每一个带 Origin 的请求都 403。
+     *
+     * 修法是"两边各自剥方括号"，不是"两边各自包" —— 剥法不依赖
+     * `URL.hostname` 到底带不带，也就不会再被同一个假设坑第二次。
+     */
+    const h = `[::1]:${PORTS[0]}`;
+    const r = checkOrigin(req({ host: h, origin: `http://${h}` }), PORTS);
+    assert.equal(r.ok, true, r.reason ?? '');
+  });
+
+  it('★ IPv6 修好之后，IPv4 必须**仍然**通过 —— 两个方向都验', () => {
+    /*
+     * `AUTH_MODE` 单向门那次的教训：只验"改的那个方向变好了"，
+     * 没验"另一个方向还在" —— 于是把开关焊死在一边，且没有一格变红。
+     * 归一化函数最容易出的错正是这种：为了让 IPv6 对上，
+     * 顺手把 IPv4 也剥/包了一层，`127.0.0.1` 从此不同源。
+     */
+    const h = `127.0.0.1:${PORTS[0]}`;
+    const r = checkOrigin(req({ host: h, origin: `http://${h}` }), PORTS);
+    assert.equal(r.ok, true, r.reason ?? '');
+  });
+
+  it('★ 归一化不许把不同的 IPv6 地址弄成同源（剥方括号 ≠ 放松判据）', () => {
+    /*
+     * "两边都剥方括号"这个修法，最坏的写法是剥完就不比了。
+     * 这条钉住：剥的是**包装**，不是**判据** —— 两个不同的 IPv6 地址仍然必须被拒。
+     */
+    const r = checkOrigin(
+      req({ host: `[::1]:${PORTS[0]}`, origin: `http://[2001:db8::1]:${PORTS[0]}` }),
+      PORTS,
+    );
+    assert.equal(r.ok, false, 'IPv6 跨源被放行了 —— 归一化把判据一起放松掉了');
+  });
+
+  it('IPv6 与 IPv4 之间不算同源（两种地址族不能互相顶替）', () => {
+    assert.equal(
+      checkOrigin(
+        req({ host: `[::1]:${PORTS[0]}`, origin: `http://127.0.0.1:${PORTS[0]}` }),
+        PORTS,
+      ).ok,
+      false,
+    );
+  });
 });
 
 describe('checkSecFetch —— 浏览器强制附加、页面伪造不了的那一层', () => {
