@@ -12,7 +12,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 
-import { looksLikeDataDir, measureTree, moveDataDir, planMove, verifyTreesMatch } from './move.js';
+import {
+  findStaleLinks,
+  looksLikeDataDir,
+  measureTree,
+  moveDataDir,
+  planMove,
+  verifyTreesMatch,
+} from './move.js';
 
 const roots: string[] = [];
 function tmp(prefix: string): string {
@@ -31,6 +38,37 @@ async function seed(dir: string): Promise<void> {
   await fs.writeFile(join(dir, 'openmemo.db'), 'X'.repeat(4096));
   await fs.writeFile(join(dir, 'media', '会议录音.m4a'), 'A'.repeat(2048));
   await fs.writeFile(join(dir, 'models', 'by-name', 'asr', 'ggml-base.bin'), 'B'.repeat(1024));
+}
+
+/**
+ * 后端目录的真实形状：**两级相对符号链接**。
+ * 这不是编出来的构造 —— whisper.cpp 官方 tarball 里就是
+ * `libwhisper.so → libwhisper.so.1 → libwhisper.so.1.9.1`，用户断掉的那 8 条正是这个样子。
+ * 只测一级链会漏掉"第二跳被改写"的情况。
+ */
+const BACKEND_DIR = join('models', 'by-name', 'backend', 'whisper-bin-ubuntu-x64');
+const SO_NAMES = ['libwhisper', 'libggml-base', 'libparakeet'] as const;
+
+async function seedBackendSymlinks(dir: string): Promise<void> {
+  const d = join(dir, BACKEND_DIR);
+  await fs.mkdir(d, { recursive: true });
+  await fs.writeFile(join(d, 'whisper-cli'), 'ELF'.repeat(64));
+  for (const so of SO_NAMES) {
+    await fs.writeFile(join(d, `${so}.so.1.9.1`), `${so}-REAL-BYTES`.repeat(16));
+    // 两级链，全部**相对**（unpack.ts 写出来就是相对的，这一点是对的，别改它）
+    await fs.symlink(`${so}.so.1.9.1`, join(d, `${so}.so.1`));
+    await fs.symlink(`${so}.so.1`, join(d, `${so}.so`));
+  }
+}
+
+/** 顺着两级链真读一次内容 —— 只看 `readlink` 不够，要的是"链还能用"。 */
+async function soIsLoadable(dir: string, so: string): Promise<boolean> {
+  try {
+    const body = await fs.readFile(join(dir, BACKEND_DIR, `${so}.so`), 'utf8');
+    return body.startsWith(`${so}-REAL-BYTES`);
+  } catch {
+    return false;
+  }
 }
 
 describe('planMove —— 纯路径校验', () => {
@@ -91,6 +129,120 @@ describe('verifyTreesMatch —— 敢不敢删源的依据', () => {
     const v = await verifyTreesMatch(a, b);
     assert.equal(v.ok, false);
     assert.ok(v.mismatches.some((m) => m.includes('大小不一致')));
+  });
+
+  /*
+   * ↓↓↓ T-128：符号链接必须被校验。
+   * 这几条钉的是那个**假绿灯**本身 —— 从前 verifyTreesMatch 显式跳过符号链接，
+   * 于是"链接被改写成绝对路径"这件事在校验里根本不存在，搬完必然报"两棵树一致"。
+   */
+
+  it('★ 符号链接被改写成绝对路径 → 必须报「链接目标不一致」（这正是 fs.cp 默认干的事）', async () => {
+    const a = tmp('la');
+    const b = tmp('lb');
+    await seed(a);
+    await seedBackendSymlinks(a);
+    // 用 fs.cp 的**默认行为**复制 = 精确复现缺陷：相对链接被改写成指向源目录的绝对路径
+    await fs.cp(a, b, { recursive: true, force: true, preserveTimestamps: true });
+
+    const v = await verifyTreesMatch(a, b);
+    assert.equal(v.ok, false, '符号链接被改写却报"一致" —— 假绿灯又回来了');
+    // 两级链两跳都要被抓到，共 3 个 .so × 2 跳 = 6 条
+    const targetMismatches = v.mismatches.filter((m) => m.includes('链接目标不一致'));
+    assert.equal(targetMismatches.length, 6, `实际: ${targetMismatches.join(' | ')}`);
+  });
+
+  it('★ 原样复制（verbatimSymlinks）→ 校验必须通过', async () => {
+    const a = tmp('lva');
+    const b = tmp('lvb');
+    await seed(a);
+    await seedBackendSymlinks(a);
+    await fs.cp(a, b, {
+      recursive: true,
+      force: true,
+      preserveTimestamps: true,
+      verbatimSymlinks: true,
+    });
+    const v = await verifyTreesMatch(a, b);
+    assert.deepEqual(v.mismatches, []);
+    assert.equal(v.ok, true);
+  });
+
+  it('★ 链接被复制成了真文件（dereference）→ 必须报「类型不一致」', async () => {
+    // 字节数甚至会"更对"（真文件比链接大），只比大小的校验会放行
+    const a = tmp('da');
+    const b = tmp('db');
+    await seed(a);
+    await seedBackendSymlinks(a);
+    await fs.cp(a, b, { recursive: true, force: true, dereference: true });
+    const v = await verifyTreesMatch(a, b);
+    assert.equal(v.ok, false);
+    assert.ok(v.mismatches.some((m) => m.includes('类型不一致')));
+  });
+
+  it('★ 目标少了一条符号链接 → 必须报「缺失」（从前是完全看不见的）', async () => {
+    const a = tmp('lma');
+    const b = tmp('lmb');
+    await seed(a);
+    await seedBackendSymlinks(a);
+    await fs.cp(a, b, { recursive: true, verbatimSymlinks: true });
+    await fs.unlink(join(b, BACKEND_DIR, 'libwhisper.so'));
+    const v = await verifyTreesMatch(a, b);
+    assert.equal(v.ok, false);
+    assert.ok(v.mismatches.some((m) => m.includes('缺失') && m.includes('libwhisper.so')));
+  });
+});
+
+describe('measureTree —— 符号链接不能当成不存在', () => {
+  it('★ 链接单独计数，且不并进 files', async () => {
+    const d = tmp('mt');
+    await seed(d);
+    await seedBackendSymlinks(d);
+    const m = await measureTree(d);
+    assert.equal(m.links, 6, '3 个 .so × 两级链 = 6 条'); // 从前这里是 0
+    // 3 个普通文件（seed） + whisper-cli + 3 个 .so.1.9.1 = 7
+    assert.equal(m.files, 7);
+    assert.ok(m.bytes > 0);
+  });
+
+  it('★ 不跟随指向目录的链接（跟随会重复计数，指向父目录还会死循环）', async () => {
+    const d = tmp('mtd');
+    await seed(d);
+    await fs.symlink('media', join(d, 'media-link')); // 指向同目录下的 media
+    await fs.symlink('..', join(d, 'media', 'up')); // 指向父目录 —— 跟随即死循环
+    const m = await measureTree(d);
+    assert.equal(m.links, 2);
+    assert.equal(m.files, 3); // 与不加链接时一致：目标没有被重复统计
+  });
+});
+
+describe('findStaleLinks —— 搬完之后链接还指着旧位置吗', () => {
+  it('★ 指向旧目录的绝对链接必须被找出来', async () => {
+    const base = tmp('sl');
+    const oldDir = join(base, 'old');
+    const newDir = join(base, 'new');
+    await fs.mkdir(join(newDir, 'models'), { recursive: true });
+    await fs.symlink(join(oldDir, 'models', 'x.so.1'), join(newDir, 'models', 'x.so'));
+    const stale = await findStaleLinks(newDir, oldDir);
+    assert.equal(stale.length, 1);
+    assert.equal(stale[0]?.rel, join('models', 'x.so'));
+  });
+
+  it('★ 同目录相对链接不算 stale（这是正确的形态，不能误报）', async () => {
+    const base = tmp('sl2');
+    const oldDir = join(base, 'old');
+    const newDir = join(base, 'new');
+    await fs.mkdir(newDir, { recursive: true });
+    await seedBackendSymlinks(newDir);
+    assert.deepEqual(await findStaleLinks(newDir, oldDir), []);
+  });
+
+  it('指向系统目录的链接不算 stale', async () => {
+    const base = tmp('sl3');
+    const newDir = join(base, 'new');
+    await fs.mkdir(newDir, { recursive: true });
+    await fs.symlink('/usr/lib/x86_64-linux-gnu/libm.so.6', join(newDir, 'libm.so'));
+    assert.deepEqual(await findStaleLinks(newDir, join(base, 'old')), []);
   });
 });
 
@@ -175,6 +327,95 @@ describe('moveDataDir', () => {
     assert.equal(r.ok, false);
     assert.equal(r.sourceIntact, true);
     assert.deepEqual(await measureTree(from), before);
+  });
+});
+
+/**
+ * T-128 端到端：**搬完之后 whisper 后端还能不能加载**。
+ *
+ * 这一组是全套里唯一验「功能可用」而不是「文件在不在」的 —— 用户遇到的正是
+ * 文件全在、字节数全对、自检全绿，而 `.so` 一条都读不出来。
+ * 所以断言必须是「顺着两级链真的读到目标内容」，不能是「链接存在」。
+ */
+describe('★ T-128 移动数据目录不能弄坏符号链接', () => {
+  for (const strategy of ['rename（同盘快路径）', 'copy（跨盘慢路径）'] as const) {
+    const forceCopy = strategy.startsWith('copy');
+
+    it(`★ ${strategy}：搬完源目录删掉后，两级 .so 链仍然可加载`, async () => {
+      const base = tmp(forceCopy ? 'soc' : 'sor');
+      const from = join(base, 'src');
+      const to = join(base, 'dst');
+      await fs.mkdir(from, { recursive: true });
+      await seed(from);
+      await seedBackendSymlinks(from);
+      // 前提自检：搬之前它本来是好的（不然这个测试什么都证明不了）
+      assert.equal(await soIsLoadable(from, 'libwhisper'), true, '测试前提不成立');
+
+      const r = await moveDataDir(from, to, forceCopy ? { forceCopy: true } : {});
+      assert.equal(r.ok, true);
+      assert.equal(r.links, 6);
+      await assert.rejects(() => fs.access(from), '源目录应已删除');
+
+      for (const so of SO_NAMES) {
+        // 第一跳必须仍是**相对**的：绝对路径指向的是已经不存在的旧位置
+        const hop1 = await fs.readlink(join(to, BACKEND_DIR, `${so}.so`));
+        assert.equal(hop1, `${so}.so.1`, `${so}.so 的链接目标被改写了`);
+        const hop2 = await fs.readlink(join(to, BACKEND_DIR, `${so}.so.1`));
+        assert.equal(hop2, `${so}.so.1.9.1`, `${so}.so.1 的链接目标被改写了`);
+        // 真正要的结论：顺着链读得到内容
+        assert.equal(await soIsLoadable(to, so), true, `${so}.so 在移动后已经断了`);
+      }
+      assert.deepEqual(r.staleLinks, [], '不该有指向旧位置的链接');
+    });
+  }
+
+  it('★ 复制路径若把链接改写了，校验必须**拦下来并回滚**，源一个字节不动', async () => {
+    // 直接对 verifyTreesMatch 施压：模拟"有人把 verbatimSymlinks 拿掉了"的产物
+    const base = tmp('rb');
+    const from = join(base, 'src');
+    const to = join(base, 'dst');
+    await fs.mkdir(from, { recursive: true });
+    await seed(from);
+    await seedBackendSymlinks(from);
+    await fs.cp(from, to, { recursive: true, force: true, preserveTimestamps: true }); // 默认=会改写
+
+    const v = await verifyTreesMatch(from, to);
+    assert.equal(v.ok, false, '校验放行了一棵链接已被改写的树 —— 源就会被删掉');
+    assert.ok(v.mismatches.some((m) => m.includes('链接目标不一致')));
+  });
+
+  it('★ 数据里本来就有**绝对路径**链接指向自己 → 搬完必须报出来（verbatim 修不了这种）', async () => {
+    const base = tmp('abs');
+    const from = join(base, 'src');
+    const to = join(base, 'dst');
+    await fs.mkdir(join(from, 'models'), { recursive: true });
+    await seed(from);
+    await fs.writeFile(join(from, 'models', 'libx.so.1'), 'REAL');
+    // 绝对路径指向源目录内部：原样搬过去 → 两棵树逐字相同 → 校验必然通过 → 而链接是断的
+    await fs.symlink(join(from, 'models', 'libx.so.1'), join(from, 'models', 'libx.so'));
+
+    const r = await moveDataDir(from, to, { forceCopy: true });
+    assert.equal(r.ok, true, '数据本身是搬成功的，不该因此回滚');
+    assert.equal(r.staleLinks.length, 1, '指向旧位置的链接必须被报出来，不能静默绿灯');
+    assert.equal(r.staleLinks[0]?.rel, join('models', 'libx.so'));
+    assert.match(r.warningZh ?? '', /仍指向旧位置/);
+    // 客观事实核对：它确实已经断了
+    await assert.rejects(() => fs.readFile(join(to, 'models', 'libx.so')));
+  });
+
+  it('★ rename 快路径也要查 stale 链接（它根本不调用 verifyTreesMatch）', async () => {
+    const base = tmp('absr');
+    const from = join(base, 'src');
+    const to = join(base, 'dst');
+    await fs.mkdir(join(from, 'models'), { recursive: true });
+    await seed(from);
+    await fs.writeFile(join(from, 'models', 'libx.so.1'), 'REAL');
+    await fs.symlink(join(from, 'models', 'libx.so.1'), join(from, 'models', 'libx.so'));
+
+    const r = await moveDataDir(from, to);
+    assert.equal(r.strategy, 'rename');
+    assert.equal(r.ok, true);
+    assert.equal(r.staleLinks.length, 1);
   });
 });
 
