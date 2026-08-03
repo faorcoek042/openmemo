@@ -10,6 +10,7 @@ import { qk } from '../../app/query';
 import { Button } from '../../components/common/Button';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { formatBytes } from '../../lib/format/bytes';
+import { copyText } from '../../lib/secure-context';
 
 interface HealthResponse {
   dataDir?: string;
@@ -53,7 +54,7 @@ interface DataDirResponse {
  */
 export function DataLocationSection() {
   const { t, i18n } = useTranslation();
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<'ok' | 'fail' | null>(null);
   const [newPath, setNewPath] = useState('');
   const [moveExisting, setMoveExisting] = useState(true);
   const [showChange, setShowChange] = useState(false);
@@ -124,14 +125,23 @@ export function DataLocationSection() {
             disabled={!dataDir}
             onClick={() => {
               if (!dataDir) return;
-              void navigator.clipboard?.writeText(dataDir).then(() => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1500);
+              /*
+               * 用 `copyText()` 而不是 `navigator.clipboard?.writeText()`：
+               * 后者在非安全上下文（http://<IP>）下会被可选链整条短路 ——
+               * 不复制、也不报错，按钮静默失效。
+               */
+              void copyText(dataDir).then((ok) => {
+                setCopied(ok ? 'ok' : 'fail');
+                setTimeout(() => setCopied(null), 2000);
               });
             }}
           >
             <Copy className="size-3.5" />
-            {copied ? t('settings.dataDir.copied') : t('settings.dataDir.copy')}
+            {copied === 'ok'
+              ? t('settings.dataDir.copied')
+              : copied === 'fail'
+                ? t('settings.dataDir.copyFailed')
+                : t('settings.dataDir.copy')}
           </Button>
         </div>
       </div>

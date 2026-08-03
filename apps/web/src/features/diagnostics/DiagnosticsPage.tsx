@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { copyText } from '../../lib/secure-context';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { AlertTriangle, CheckCircle2, Copy, RefreshCw, XCircle } from 'lucide-react';
@@ -213,7 +214,8 @@ export default function DiagnosticsPage() {
 
   const copyReport = () => {
     const text = JSON.stringify({ health: data, surfaces }, null, 2);
-    void navigator.clipboard?.writeText(text);
+    // 非安全上下文下 clipboard 是 undefined，copyText 会回退到 execCommand
+    void copyText(text);
   };
 
   return (

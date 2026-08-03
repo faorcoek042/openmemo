@@ -10,6 +10,11 @@ import { ProgressMeter } from '../../components/common/ProgressMeter';
 import { AsrEngineStatus, useAsrEngines } from '../../components/common/AsrEngineStatus';
 import { TranscribeOptions } from '../../components/common/TranscribeOptions';
 import { ASR_LANGUAGE_AUTO } from '../../lib/asr';
+import {
+  httpsEquivalent,
+  isMicrophoneAvailable,
+  localhostEquivalent,
+} from '../../lib/secure-context';
 import { useConnectionStore } from '../../lib/stores/connection.store';
 import { estimateRerunMs, humanDuration, timecode } from '../../lib/format/time';
 import { cn } from '../../lib/utils';
@@ -42,6 +47,13 @@ interface Caption {
 export default function RecorderPage() {
   const { t, i18n } = useTranslation();
   const [perm, setPerm] = useState<Perm>('unknown');
+  /*
+   * 麦克风能力在**渲染前**就确定，不等用户点。
+   * `navigator.mediaDevices` 只在安全上下文存在 —— `http://<IP>` 下任何浏览器都是 undefined。
+   */
+  const micAvailable = isMicrophoneAvailable();
+  const httpsUrl = httpsEquivalent();
+  const localUrl = localhostEquivalent();
   const [phase, setPhase] = useState<Phase>('idle');
   const [elapsed, setElapsed] = useState(0);
   const [captions, setCaptions] = useState<Caption[]>([]);
@@ -109,6 +121,8 @@ export default function RecorderPage() {
   }, []);
 
   const requestMic = async () => {
+    // 这里不该再被点到（按钮已禁用），但 API 缺失时也绝不能让 `undefined.getUserMedia` 抛出去
+    if (!isMicrophoneAvailable()) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((tr) => tr.stop());
@@ -166,7 +180,41 @@ export default function RecorderPage() {
       ) : null}
 
       {/* ── 权限三态 ── */}
-      {perm === 'denied' ? (
+      {/*
+        ★ **在点击之前**就拦住：非安全上下文下 `navigator.mediaDevices` 是 `undefined`，
+        点下去只会得到一个 `Cannot read properties of undefined` —— 用户会以为软件坏了，
+        而真因（地址不是 https / localhost）在报错里一个字都看不到。
+
+        这一整族问题在本机开发时**不可能被发现**：localhost 恰好被规范定为安全上下文。
+      */}
+      {!micAvailable ? (
+        <section
+          className="rounded-lg border border-line border-l-4 border-l-warning bg-surface-1 p-4"
+          data-testid="recorder-insecure"
+        >
+          <div className="flex gap-2">
+            <MicOff className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-ink">{t('recorder.insecureTitle')}</div>
+              <p className="mt-1 text-sm text-ink-secondary">{t('recorder.insecureHelp')}</p>
+              <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                {httpsUrl ? (
+                  <a className="text-accent underline" href={httpsUrl}>
+                    {t('secureContext.tryHttps')}
+                  </a>
+                ) : null}
+                {localUrl ? (
+                  <a className="text-accent underline" href={localUrl}>
+                    {t('secureContext.tryLocalhost')}
+                  </a>
+                ) : null}
+              </p>
+              {/* 录音之外的路仍然通：这条地址下导入音视频文件是完全正常的 */}
+              <p className="mt-2 text-xs text-ink-muted">{t('recorder.insecureAlternative')}</p>
+            </div>
+          </div>
+        </section>
+      ) : perm === 'denied' ? (
         <section className="rounded-lg border border-line bg-surface-1 p-4">
           <div className="flex items-start gap-2.5">
             <MicOff className="mt-0.5 size-4 text-critical" aria-hidden />

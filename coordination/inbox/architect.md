@@ -1581,3 +1581,78 @@ seek 走 `{ immediate: true }` 绕过节流，否则游标会滞后最多 100ms�
   彻底修需要把 dom-env 变成 `node --import` 的预加载，不在本轮范围。
 - **分档 UI 与代理 UI 的真实往返都没跑过** —— 证据是契约读码 + 组件测试。
   尤其代理那条"只发改过的字段"，请在真机上验一次**带密码的代理保存后仍能用**。
+
+---
+
+## T-099 非安全上下文（2026-08-03）
+
+### 1. 文案已改（归因改对了）
+`banner.multiTab` 原文「**当前浏览器不支持**标签页选主」→
+「**当前地址不是安全上下文（需 https:// 或 localhost）**，标签页选主不可用……」。
+并在新横幅里显式写了「**换浏览器不会有帮助**」——
+原文案最坏的地方不是不准确，而是它**给了一个错误的行动方向**：
+用户会去换浏览器，换完还是不行，然后开始怀疑整个软件。
+
+有一条测试直接读 locale 文件断言 `banner.multiTab` **不含"浏览器不支持"**、
+**必须含"安全上下文"** —— 归因错误是内容问题，不该只靠人眼复查。
+
+### 2. 录音页在**点击之前**就拦住了
+`RecorderPage` 现在渲染前就算 `isMicrophoneAvailable()`，不可用时显示
+「此地址下无法录音」+ 原因 + 两条可点的路（https / 127.0.0.1），
+录音按钮那一整块根本不渲染 —— 不会再出现"点了报 `Cannot read properties of undefined`"。
+`requestMic()` 里也加了兜底 return（按钮已经不可达，但 API 缺失时绝不让它抛出去）。
+
+**同时给出仍然通的那条路**：这条地址下「捕获」页导入本地文件/链接**完全正常**，
+转写、摘要、导图都不受影响。只说"不行"等于把人堵死 ——
+这条地址是用户 NAT 环境下**唯一能用的**，他不能"换一个地址"了事。
+
+### 3. 全量扫描结果（`apps/web/src` 全仓）
+| API | 用在哪 | 影响 | 处置 |
+|---|---|---|---|
+| `navigator.mediaDevices.getUserMedia` | `RecorderPage:113` | ⚠️ **功能级不可用**（F3 录音） | 渲染前拦截 + 说明 + 两条出路 |
+| `navigator.locks` | `lib/events/source.ts:174` | 体验降级（每标签各开一条 SSE） | 检测本来就对，**只改归因文案** |
+| `navigator.clipboard` | `DataLocationSection` / `DiagnosticsPage` | **静默失效** | 新增 `copyText()`，回退 `execCommand('copy')`，失败如实显示"复制失败" |
+| `navigator.permissions` | `RecorderPage:116` | **不是** secure-context-only | 已有 `!navigator.permissions` 守卫 + `.catch()`，无需改 |
+| Service Worker / `crypto.subtle` / WebAuthn / `caches` / Push | — | — | **全仓零使用** |
+
+剪贴板那条值得单独说：原写法 `navigator.clipboard?.writeText(t)` ——
+**可选链会让整条链短路**，不报错也不复制，按钮**静默失效**。
+用户以为复制成功了，粘贴出来是上一次的内容。
+回退用的 `document.execCommand('copy')` 确实已废弃，但它**在非安全上下文里可用**，
+而那正是我们唯一需要它的场景：**能用的废弃 API 胜过规范正确但在用户地址下不工作**。
+
+### 4. 按你的方法论，加了"非安全上下文"测试场景
+`describe('非安全上下文')` 6 条：把 `mediaDevices` / `locks` / `clipboard` 置为 `undefined`、
+`window.isSecureContext = false`，跑完 restore。覆盖：逐项能力报告 · 安全上下文下横幅
+**不出现**（不能对着 localhost 用户报警）· 点名录音不可用且给两条可点的路 ·
+文案不含"浏览器不支持" · 录音页事前拦截 · 复制走回退。
+
+**这条场景本身就是本轮最该留下的东西。** 这个 bug 的形状是
+「**开发环境（localhost）恰好满足了生产环境（http://IP）不满足的前提**」——
+和 ffmpeg 那个"一直绿是因为本机有 `/usr/bin/ffmpeg`"同族。
+这类前提**不可能靠本机测试发现**，只能靠**显式建模**。
+我把这个判断集中到 `lib/secure-context.ts` 一个文件，就是为了让它以后是个**可测的对象**，
+而不是散落在各处的隐含假设。
+
+### 5. 判定方式上的一个刻意选择
+一律用 `window.isSecureContext`，**不自己解析 URL**。
+规范里的可信来源不止 https 与 localhost（还有 `file:`、部分扩展页、被策略标记为可信的来源），
+自己写正则必然与浏览器不一致 —— 而不一致的方向通常是"我们说不行、浏览器说行"，
+那就变成无中生有地禁用功能。
+
+### 验证
+`tsc` 0 · `eslint apps/web` 0 · `vite build` ✓ ·
+测试 **83 条 / 81 pass / 0 fail / 2 skip**（新增 6 条）。
+
+### 诚实声明
+- **没碰 demo**（用户正在用），本轮零网络请求。
+- **没有在真实 `http://<IP>` 地址下用浏览器打开验证过** ——
+  证据是 API 契约（`getUserMedia`/`locks`/`clipboard` 均为 secure-context-only）
+  与 6 条把 `isSecureContext` 造成 false 的组件测试。
+  用户那边其实是**最好的验证环境**：他刷新后应当看到新横幅、
+  录音页显示"此地址下无法录音"、且 `multiTab` 不再提"浏览器"。
+- `execCommand` 回退**没在真浏览器里验过**（jsdom 里是我自己 stub 的）。
+  它在部分浏览器需要用户手势上下文中调用 —— 我们是在 onClick 里调的，应当满足，
+  但这条建议 `model-mgmt` 在 `http://<IP>` 下真点一次。
+- 自签 TLS 落地后，`httpsEquivalent()` 那个链接才真正可用；现在点了会连不上。
+  我**没有**因此把它藏起来 —— 它是正确的方向指引，且 `oss-scout` 正在做。

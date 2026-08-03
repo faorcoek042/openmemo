@@ -7,6 +7,7 @@ import { Banner } from './components/common/Banner';
 import { ConnectivitySummary } from './components/common/MockNotice';
 import { HealthBanner } from './components/common/HealthBanner';
 import { PanelBoundary } from './components/common/PanelBoundary';
+import { SecureContextBanner } from './components/common/SecureContextBanner';
 import { SearchBox } from './features/search';
 import { FolderTree } from './features/folders';
 import { Button } from './components/common/Button';
@@ -38,6 +39,13 @@ export default function App() {
       </PanelBoundary>
       {conn === 'degraded' ? <Banner tone="warning" title={t('banner.sseDegraded')} /> : null}
       {conn === 'reconnecting' ? <Banner tone="info" title={t('banner.sseReconnecting')} /> : null}
+      {/*
+        ★ 非安全上下文：放在 multiTab 之前 —— 它是**功能级**不可用（录音直接没法用），
+        而 multiTab 只是体验降级。而且前者往往是后者的真因，先说因再说果。
+      */}
+      <PanelBoundary name={t('secureContext.title')} fallback={() => null}>
+        <SecureContextBanner />
+      </PanelBoundary>
       {multiTab ? <Banner tone="info" title={t('banner.multiTab')} /> : null}
 
       <div className="flex min-h-0 flex-1">

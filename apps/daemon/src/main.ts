@@ -28,12 +28,14 @@ import {
   acquireDataDirLock,
   acquireSingleInstance,
   createUnboundServer,
+  IS_PUBLIC_BIND,
   removeRuntimeJson,
   writeRuntimeJson,
   type RuntimeInfo,
 } from './bootstrap/single-instance.js';
 import { readDataDirPointer, resolvePaths, type AppPaths } from './config/paths.js';
 import { reclaimOrphans } from './bootstrap/orphans.js';
+import { ensureSelfSignedCert, tlsEnabled } from './bootstrap/tls.js';
 import { SessionStore, loadOrCreateToken, type Session } from './http/auth.js';
 import { attachHttpHandlers } from './http/server.js';
 import { SseHub } from './http/sse.js';
@@ -175,7 +177,18 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
   }
   const sessions = new SessionStore(token, inheritedSessions);
   const sse = new SseHub();
-  const server = createUnboundServer();
+  /*
+   * TLS：只有显式 `OPENMEMO_TLS=self-signed` 才启用。
+   * 生成失败**直接抛**，不静默退回明文 —— 用户要 TLS 是为了让录音能用，
+   * 悄悄给他明文等于让他以为能用而实际不能（正是这次要消灭的形状）。
+   */
+  const tls = tlsEnabled()
+    ? ensureSelfSignedCert(
+        paths.runtimeDir,
+        (process.env['OPENMEMO_TLS_HOSTS'] ?? '').split(',').filter(Boolean),
+      )
+    : undefined;
+  const server = createUnboundServer(tls ? { key: tls.key, cert: tls.cert } : undefined);
 
   let boundPort = 0;
   let instanceIdRef = '';
@@ -636,7 +649,41 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     : undefined;
   if (portWarning) console.warn(`[daemon] ⚠️  ${portWarning}`);
 
-  console.log(`[daemon] 就绪 http://${BIND_HOST}:${boundPort}/#t=${token}`);
+  const scheme = tls ? 'https' : 'http';
+  console.log(`[daemon] 就绪 ${scheme}://${BIND_HOST}:${boundPort}/#t=${token}`);
+
+  /*
+   * ★ 非回环 + 明文时**必须显式警告**。
+   *
+   * 浏览器把 `http://<IP>` 判为**非安全上下文**，于是
+   * `navigator.mediaDevices`（录音）和 `navigator.locks`（标签页选主）都是 undefined。
+   * F3 录音转文字在这个地址下**根本用不了**，而界面只会说"当前浏览器不支持"——
+   * 用户会以为是自己浏览器的问题，功能就这么静默缺失了。
+   * 这条警告比 TLS 本身更重要：即使用户不开 TLS，也必须知道自己缺了什么。
+   */
+  if (IS_PUBLIC_BIND && !tls) {
+    console.warn(
+      `[daemon] ⚠️  当前是**明文 HTTP + 非回环地址**（${BIND_HOST}:${boundPort}）。\n` +
+        `[daemon]    浏览器只把 HTTPS 与 localhost 视为安全上下文，因此在这个地址下：\n` +
+        `[daemon]      · 录音转文字（F3）不可用 —— navigator.mediaDevices 为 undefined\n` +
+        `[daemon]      · 多标签页选主降级 —— navigator.locks 为 undefined\n` +
+        `[daemon]    这不是浏览器旧，任何浏览器都一样。\n` +
+        `[daemon]    启用 HTTPS： OPENMEMO_TLS=self-signed （证书自动生成）`,
+    );
+  }
+  if (tls) {
+    console.log(
+      `[daemon] TLS 已启用（自签证书）\n` +
+        `[daemon]    证书: ${tls.certPath}\n` +
+        `[daemon]    私钥: ${tls.keyPath}（0600）\n` +
+        `[daemon]    证书内的名字: ${tls.sans.join(', ')}\n` +
+        `[daemon]    ⚠️ 自签证书浏览器会拦一次，这是正常的，不是出错了：\n` +
+        `[daemon]       点「高级」→「继续前往…（不安全）」即可，之后录音功能就能用了。\n` +
+        `[daemon]       若你从 NAT 外部的地址访问（本机网卡上没有那个 IP），\n` +
+        `[daemon]       还会多一条"名称不匹配"，同样点继续即可；\n` +
+        `[daemon]       想消掉它可设 OPENMEMO_TLS_HOSTS=<你访问用的IP或域名> 后重启。`,
+    );
+  }
   console.log(
     `[daemon] db=${database.driver} sqlite=${database.sqliteVersion} ` +
       `schema=v${database.schema.to} tokenizer=${database.extensions.tokenizer} ` +

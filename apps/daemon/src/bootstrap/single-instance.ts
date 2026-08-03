@@ -6,10 +6,13 @@
  * `runtime.json` 只是元数据 sidecar，不承担互斥职责。
  */
 import { createServer, type Server } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { ulid } from '@openmemo/shared';
+
+import { tlsEnabled } from './tls.js';
 
 /** ADR-006 决策 2：固定端口。不是审美偏好，见下方注释。 */
 export const DEFAULT_PORT = 17650;
@@ -109,7 +112,23 @@ export async function probeExisting(
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
     // 走回环而非 BIND_HOST：`0.0.0.0` 是绑定通配符、不是可连接地址。
-    const res = await fetch(`http://${PROBE_HOST}:${port}/api/health`, { signal: ac.signal });
+    /*
+     * 协议必须跟着实际监听走：开了 TLS 还用 http:// 探测会永远失败，
+     * 于是单实例判定误以为"端口上没有我们的实例"，可能把用户的数据目录抢过来。
+     * 自签证书对**自己探自己**没有校验意义，所以显式放行（仅限回环这一跳）。
+     */
+    const scheme = tlsEnabled() ? 'https' : 'http';
+    const prevReject = process.env['NODE_TLS_REJECT_UNAUTHORIZED'];
+    if (scheme === 'https') process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';
+    let res: Response;
+    try {
+      res = await fetch(`${scheme}://${PROBE_HOST}:${port}/api/health`, { signal: ac.signal });
+    } finally {
+      if (scheme === 'https') {
+        if (prevReject === undefined) delete process.env['NODE_TLS_REJECT_UNAUTHORIZED'];
+        else process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = prevReject;
+      }
+    }
     if (!res.ok) return undefined;
     const body = (await res.json()) as Partial<RuntimeInfo> & { app?: string };
     return body.app === 'openmemo' ? (body as RuntimeInfo) : undefined;
@@ -241,9 +260,14 @@ export function removeRuntimeJson(path: string): void {
   }
 }
 
-/** 建一个尚未绑定的 http server（调用方挂 handler 后交给 acquireSingleInstance）。 */
-export function createUnboundServer(): Server {
-  return createServer();
+/**
+ * 建一个尚未绑定的 server（调用方挂 handler 后交给 acquireSingleInstance）。
+ *
+ * 传了 `tls` 就是 HTTPS。**默认仍是明文** —— 回环本来就是 secure context，
+ * 不该给所有人默认加上证书信任成本。
+ */
+export function createUnboundServer(tls?: { key: string; cert: string }): Server {
+  return tls ? (createHttpsServer({ key: tls.key, cert: tls.cert }) as unknown as Server) : createServer();
 }
 
 /**

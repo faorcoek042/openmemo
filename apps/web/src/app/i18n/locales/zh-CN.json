@@ -24,7 +24,7 @@
     "mockDetail": "当前数据由前端内存模拟，用于 UI 评审。daemon 实现后将自动切换为真实数据。",
     "sseDegraded": "实时更新已断开，正在轮询",
     "sseReconnecting": "正在重新连接本地服务…",
-    "multiTab": "当前浏览器不支持标签页选主，已为每个标签单独建立连接；建议只保留一个标签页。",
+    "multiTab": "当前地址不是安全上下文（需 https:// 或 localhost），标签页选主不可用，已为每个标签单独建立连接；建议只保留一个标签页。",
     "portDrift": "端口已从 {{expected}} 变更为 {{actual}}，浏览器会把它当作新站点，需要重新授权麦克风。",
     "shutdown": "本地服务正在退出"
   },
@@ -175,7 +175,10 @@
     "switchToTurbo": "换成 large-v3-turbo",
     "switchToParaformer": "换回 Paraformer",
     "wordLevelUnavailable": "当前引擎无逐字时间戳，字幕按整句高亮",
-    "wordLevelAvailable": "逐字高亮已启用"
+    "wordLevelAvailable": "逐字高亮已启用",
+    "insecureTitle": "此地址下无法录音",
+    "insecureHelp": "浏览器只在安全上下文（https:// 或 localhost）下开放麦克风。当前地址是 http://<IP>，`navigator.mediaDevices` 不存在——这与浏览器品牌无关，换浏览器不会有帮助。",
+    "insecureAlternative": "这条地址下其它功能不受影响：可以在「捕获」页导入本地音视频文件或链接，转写、摘要、导图都正常。"
   },
   "tasks": {
     "title": "任务中心",
@@ -320,7 +323,8 @@
       "totalUsed": "数据目录总占用",
       "fileCount": "{{n}} 个文件",
       "layoutTitle": "这个目录里都有什么",
-      "perDirNote": "daemon 目前只报整个数据目录的总占用，尚未逐目录统计 —— 所以下面只列用途，不列各自大小，不写一个猜出来的数字。"
+      "perDirNote": "daemon 目前只报整个数据目录的总占用，尚未逐目录统计 —— 所以下面只列用途，不列各自大小，不写一个猜出来的数字。",
+      "copyFailed": "复制失败"
     },
     "proxy": {
       "title": "网络代理",
@@ -536,6 +540,18 @@
       "es": "西班牙语",
       "ru": "俄语",
       "custom": "自定义…"
+    }
+  },
+  "secureContext": {
+    "title": "当前地址不是安全上下文，部分功能不可用",
+    "howTo": "改用以下任一方式访问即可恢复：",
+    "tryHttps": "用 https:// 打开",
+    "tryLocalhost": "用 127.0.0.1 打开",
+    "localhostCaveat": "注意：127.0.0.1 只在**你就是在运行 OpenMemo 的这台机器上**时有效；远程访问请用 https://。浏览器把 https 与 localhost 视为安全上下文，而 http://<IP> 不是——这与浏览器品牌无关，换浏览器不会有帮助。",
+    "caps": {
+      "microphone": "**录音转文字不可用** —— 浏览器只在安全上下文下开放麦克风。",
+      "webLocks": "多标签页选主不可用 —— 每个标签会各自建立一条连接。",
+      "clipboard": "“复制”按钮不可用 —— 剪贴板 API 同样要求安全上下文。"
     }
   }
 }

@@ -24,7 +24,7 @@
     "mockDetail": "Data is simulated in the browser for UI review. It will switch to real data once the daemon is implemented.",
     "sseDegraded": "Live updates disconnected — falling back to polling",
     "sseReconnecting": "Reconnecting to the local service…",
-    "multiTab": "This browser cannot elect a leader tab, so each tab opened its own connection. Keeping a single tab open is recommended.",
+    "multiTab": "This address is not a secure context (needs https:// or localhost), so cross-tab leader election is unavailable. Each tab opened its own connection — keep only one tab open.",
     "portDrift": "The port changed from {{expected}} to {{actual}}. The browser treats this as a new site, so microphone access must be granted again.",
     "shutdown": "The local service is shutting down"
   },
@@ -175,7 +175,10 @@
     "switchToTurbo": "Switch to large-v3-turbo",
     "switchToParaformer": "Switch back to Paraformer",
     "wordLevelUnavailable": "This engine has no word-level timestamps — captions highlight per sentence",
-    "wordLevelAvailable": "Word-level highlighting on"
+    "wordLevelAvailable": "Word-level highlighting on",
+    "insecureTitle": "Recording is unavailable at this address",
+    "insecureHelp": "Browsers only expose the microphone in a secure context (https:// or localhost). At an http://<IP> address `navigator.mediaDevices` does not exist — this is not browser-specific, switching browsers will not help.",
+    "insecureAlternative": "Everything else works here: import a local media file or a link from the Capture page — transcription, summary and mindmap are unaffected."
   },
   "tasks": {
     "title": "Tasks",
@@ -320,7 +323,8 @@
       "totalUsed": "Total used by data directory",
       "fileCount": "{{n}} files",
       "layoutTitle": "What's in this directory",
-      "perDirNote": "The daemon reports the total for the whole data directory only; it does not yet measure each sub-directory. Purposes are listed below without sizes rather than showing a guessed number."
+      "perDirNote": "The daemon reports the total for the whole data directory only; it does not yet measure each sub-directory. Purposes are listed below without sizes rather than showing a guessed number.",
+      "copyFailed": "Copy failed"
     },
     "proxy": {
       "title": "Network proxy",
@@ -536,6 +540,18 @@
       "es": "Spanish",
       "ru": "Russian",
       "custom": "Custom…"
+    }
+  },
+  "secureContext": {
+    "title": "This address is not a secure context — some features are unavailable",
+    "howTo": "Use either of these instead:",
+    "tryHttps": "Open over https://",
+    "tryLocalhost": "Open via 127.0.0.1",
+    "localhostCaveat": "Note: 127.0.0.1 only works if you are ON the machine running OpenMemo; for remote access use https://. Browsers treat https and localhost as secure contexts, http://<IP> is not — this is not browser-specific, switching browsers will not help.",
+    "caps": {
+      "microphone": "**Recording is unavailable** — browsers only expose the microphone in a secure context.",
+      "webLocks": "Cross-tab leader election is unavailable — each tab opens its own connection.",
+      "clipboard": "Copy buttons are unavailable — the clipboard API also requires a secure context."
     }
   }
 }

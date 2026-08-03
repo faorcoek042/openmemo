@@ -37,6 +37,20 @@ import { DEFAULT_PROXY_CONFIG } from '@openmemo/shared';
 import { ProxySettingsSection } from '../features/settings/ProxySettingsSection';
 import { getPositionMs, setPositionMs, subscribePosition } from '../lib/stores/player.store';
 import { PurposeBindingsSection, mergePurposeBinding } from '../features/settings/PurposeBindingsSection';
+import { SecureContextBanner } from '../components/common/SecureContextBanner';
+import RecorderPage from '../features/recorder/RecorderPage';
+import {
+  copyText,
+  detectBlockedCapabilities,
+  isMicrophoneAvailable,
+  isSecureContext,
+} from '../lib/secure-context';
+import zhLocale from '../app/i18n/locales/zh-CN.json';
+
+/** 直接读 locale 文件断言文案 —— 归因错误是内容问题，不是渲染问题。 */
+function readLocale(_code: string): Record<string, Record<string, unknown>> {
+  return zhLocale as unknown as Record<string, Record<string, unknown>>;
+}
 import { resolvePurpose } from '@openmemo/shared';
 
 /* ─────────────────────────── 标签增删 ─────────────────────────── */
@@ -1318,5 +1332,132 @@ describe('按用途分档', () => {
     // 全局默认为空 + 只填 model → 凑不出可用配置，daemon 会当作没配
     const b = resolvePurpose({ translate: { model: 'cheap' } }, 'translate', {});
     assert.equal(b.providerId, null, 'provider 无处可继承时必须是 null，不能假装配好了');
+  });
+});
+
+/* ────────── 非安全上下文（T-099）：本机测试永远看不见的一族 ────────── */
+
+/**
+ * ★ 这一组的存在本身就是结论。
+ *
+ * 用户从 `http://100.64.135.105:10000` 访问，看到「当前浏览器不支持标签页选主」——
+ * 这句话把他引向"换浏览器"，而换任何浏览器都没用：真因是 `http://<IP>`
+ * **不是安全上下文**。更要命的是它掩盖了 `getUserMedia` 同样不可用，
+ * **F3 录音在这个地址下根本跑不了，而产品一个字都没说**。
+ *
+ * 全员没发现的原因是：**开发与测试全在 127.0.0.1 上，而 localhost 恰好是安全上下文** ——
+ * 开发环境恰好满足了生产环境不满足的前提。
+ * 与"ffmpeg 自检一直绿是因为本机装了 /usr/bin/ffmpeg"同族。
+ * 所以这里显式把"非安全上下文"造出来，让它以后不能再靠运气躲过去。
+ */
+describe('非安全上下文', () => {
+  const nav = globalThis.navigator as unknown as Record<string, unknown>;
+  const win = globalThis.window as unknown as Record<string, unknown>;
+  let saved: Record<string, unknown> = {};
+
+  /** 造一个 `http://<IP>` 的浏览器：无 mediaDevices / locks / clipboard。 */
+  function makeInsecure() {
+    saved = {
+      mediaDevices: nav.mediaDevices,
+      locks: nav.locks,
+      clipboard: nav.clipboard,
+      isSecureContext: win.isSecureContext,
+    };
+    for (const k of ['mediaDevices', 'locks', 'clipboard']) {
+      Object.defineProperty(nav, k, { value: undefined, configurable: true });
+    }
+    Object.defineProperty(win, 'isSecureContext', { value: false, configurable: true });
+  }
+  function restore() {
+    for (const [k, v] of Object.entries(saved)) {
+      const target = k === 'isSecureContext' ? win : nav;
+      Object.defineProperty(target, k, { value: v, configurable: true });
+    }
+  }
+
+  test('★ 逐项报出失去的能力，且录音排在最前 —— 它是唯一功能级不可用的', () => {
+    makeInsecure();
+    try {
+      assert.equal(isSecureContext(), false);
+      const blocked = detectBlockedCapabilities().map((c) => c.key);
+      assert.deepEqual(blocked, ['microphone', 'webLocks', 'clipboard']);
+      assert.equal(isMicrophoneAvailable(), false);
+    } finally {
+      restore();
+    }
+  });
+
+  test('★ 安全上下文下横幅完全不出现 —— 不能对着 localhost 用户报警', async () => {
+    const r = await render(<SecureContextBanner />);
+    assert.equal(r.container.querySelector('[data-testid="secure-context-banner"]'), null);
+    r.unmount();
+  });
+
+  test('★ 非安全上下文下必须点名"录音不可用"，并给出可点的两条路', async () => {
+    makeInsecure();
+    try {
+      const r = await render(<SecureContextBanner />);
+      await r.flush();
+      const shown = text(r.container);
+
+      assert.ok(r.container.querySelector('[data-testid="secure-blocked-microphone"]'));
+      assert.ok(shown.includes('录音转文字不可用'), '功能级不可用必须点名');
+      // 给动作，不让用户猜
+      assert.ok(r.container.querySelector('[data-testid="secure-try-https"]'), '应给 https 入口');
+      assert.ok(r.container.querySelector('[data-testid="secure-try-localhost"]'), '应给 localhost 入口');
+      // ★ 绝不能把锅推给浏览器 —— 那会让用户去换浏览器，换了也没用
+      assert.ok(!shown.includes('浏览器不支持'), '不许归因为"浏览器不支持"');
+      assert.ok(shown.includes('换浏览器不会有帮助'), '要主动挡掉"换个浏览器试试"这条弯路');
+      r.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  test('★ multiTab 文案改为归因到安全上下文，不再说"浏览器不支持"', () => {
+    const zh = readLocale('zh-CN');
+    const msg = zh.banner.multiTab as string;
+    assert.ok(!msg.includes('浏览器不支持'), `旧归因仍在：${msg}`);
+    assert.ok(msg.includes('安全上下文'), '要说出真因');
+    assert.ok(msg.includes('localhost'), '要给出满足条件的地址形式');
+  });
+
+  test('★ 录音页在点击之前就拦住，不是点了报 undefined', async () => {
+    makeInsecure();
+    try {
+      stubApi({ 'GET /health': { pipeline: { engines: [] } } });
+      const r = await render(<RecorderPage />);
+      await r.flush();
+      assert.ok(r.container.querySelector('[data-testid="recorder-insecure"]'), '应显示不可用说明');
+      const shown = text(r.container);
+      assert.ok(shown.includes('此地址下无法录音'));
+      // 仍要告诉用户哪条路是通的 —— 只说"不行"等于把人堵死
+      assert.ok(shown.includes('导入本地音视频文件'), '要给出仍然可用的替代路径');
+      r.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  test('★ 复制在非安全上下文下走 execCommand 回退，而不是静默失败', async () => {
+    makeInsecure();
+    const doc = globalThis.document as unknown as { execCommand?: unknown };
+    const hadExec = 'execCommand' in doc;
+    let called = '';
+    Object.defineProperty(doc, 'execCommand', {
+      value: (cmd: string) => {
+        called = cmd;
+        return true;
+      },
+      configurable: true,
+    });
+    try {
+      const ok = await copyText('/tmp/omdemo');
+      assert.equal(ok, true, '有回退就该成功，而不是可选链短路后什么都没发生');
+      assert.equal(called, 'copy');
+    } finally {
+      if (!hadExec) delete (doc as Record<string, unknown>)['execCommand'];
+      restore();
+    }
   });
 });
