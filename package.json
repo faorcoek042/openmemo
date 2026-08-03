@@ -10,7 +10,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -b",
+    "build": "pnpm -r build",
     "build:clean": "tsc -b --clean",
     "typecheck": "tsc -b",
     "lint": "eslint .",
@@ -22,7 +22,8 @@
     "check:sources": "node scripts/check-tracked-sources.mjs",
     "check:selfcheck": "node scripts/selfcheck.mjs",
     "check": "node scripts/check-tracked-sources.mjs && pnpm -r build && eslint .",
-    "build:info": "node scripts/gen-build-info.mjs"
+    "build:info": "node scripts/gen-build-info.mjs",
+    "build:safe": "pnpm --filter \"!@openmemo/web\" -r build"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
