@@ -208,7 +208,7 @@ function InheritTag({ inherited }: { inherited: boolean }) {
       className={
         inherited
           ? 'rounded bg-surface-0 px-1 py-0.5 text-[10px] text-ink-muted'
-          : 'rounded bg-accent-track px-1 py-0.5 text-[10px] text-accent'
+          : 'rounded bg-info-tint px-1 py-0.5 text-[10px] text-info'
       }
       data-inherited={inherited ? 'true' : 'false'}
     >

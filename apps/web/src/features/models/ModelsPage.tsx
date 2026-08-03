@@ -269,7 +269,7 @@ export default function ModelsPage() {
             下实测识别质量不可接受的模型（小模型会把「维基百科」听成「危机摆科」）。
             <button
               type="button"
-              className="ml-1 text-accent hover:underline"
+              className="ml-1 text-accent-ink hover:underline"
               onClick={() => setShowNotRecommended(true)}
               data-testid="models-show-not-recommended"
             >
@@ -283,7 +283,7 @@ export default function ModelsPage() {
             {targetLanguage === 'zh' ? '中文' : '该语言'}的。
             <button
               type="button"
-              className="ml-1 text-accent hover:underline"
+              className="ml-1 text-accent-ink hover:underline"
               onClick={() => setShowNotRecommended(false)}
             >
               重新隐藏

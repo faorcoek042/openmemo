@@ -287,7 +287,7 @@ export default function RecorderPage() {
               {/* 只给 localhost 这一条 —— TLS 已按用户要求撤掉，不推销 https */}
               {localUrl ? (
                 <p className="mt-2 text-sm">
-                  <a className="text-accent underline" href={localUrl}>
+                  <a className="text-accent-ink underline" href={localUrl}>
                     {t('secureContext.tryLocalhost')}
                   </a>
                 </p>

@@ -20,14 +20,47 @@
   --color-line: var(--line);
   --color-edge: var(--border);
 
+  /* `bg-accent` = 块面（主按钮底，白字压在上面）；`text-accent-ink` = 文字/链接。
+     两者在暗档必然分叉，所以是两个变量而不是一个。 */
   --color-accent: var(--accent);
   --color-accent-fg: var(--accent-fg);
+  --color-accent-ink: var(--accent-ink);
   --color-accent-track: var(--accent-track);
 
-  --color-good: var(--status-good);
-  --color-warning: var(--status-warning);
-  --color-serious: var(--status-serious);
-  --color-critical: var(--status-critical);
+  /*
+   * ── 状态色（T-114）──
+   *
+   * ★ `text-good` / `bg-good` 指向的是 **ink 档而不是锚点档**，这是刻意的：
+   *   仓库里 54 处 `text-{good,warning,serious,critical}` 全部是**文字或图标**，
+   *   而锚点档是按图表记号（3:1）选的，明档 warning 只有 1.74:1 —— 拿来写字等于没写。
+   *   把工具类指向 ink 档，54 个调用点一行都不用改就全部达标。
+   *
+   * 需要**实心块 + 白字**的地方（主按钮的危险态、引导页的已完成步骤圆点）
+   *   用 `bg-{good,critical}-solid`：那一档的判据是"白字 ≥4.5:1"，与 ink 档正相反。
+   *
+   * `-tint` = 淡底（芯片底、进度条轨道），`-line` = 描边/左强调边。
+   */
+  --color-good: var(--status-good-ink);
+  --color-good-tint: var(--status-good-tint);
+  --color-good-line: var(--status-good-line);
+  --color-good-solid: var(--status-good-solid);
+
+  --color-warning: var(--status-warning-ink);
+  --color-warning-tint: var(--status-warning-tint);
+  --color-warning-line: var(--status-warning-line);
+
+  --color-serious: var(--status-serious-ink);
+  --color-serious-tint: var(--status-serious-tint);
+  --color-serious-line: var(--status-serious-line);
+
+  --color-critical: var(--status-critical-ink);
+  --color-critical-tint: var(--status-critical-tint);
+  --color-critical-line: var(--status-critical-line);
+  --color-critical-solid: var(--status-critical-solid);
+
+  --color-info: var(--status-info-ink);
+  --color-info-tint: var(--status-info-tint);
+  --color-info-line: var(--status-info-line);
 
   --color-data-1: var(--data-1);
   --color-data-2: var(--data-2);

@@ -2,12 +2,13 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
-import { AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, XCircle } from 'lucide-react';
 
 import { rawFetch } from '../../lib/api/client';
 import { useConnectionStore } from '../../lib/stores/connection.store';
 import { detectBlockedCapabilities, isSecureContext, localhostEquivalent } from '../../lib/secure-context';
 import { Button } from './Button';
+import { worstTone, type StatusTone } from './statusTone';
 
 /**
  * 「能力未就绪」**唯一一条**横幅（T-107）。
@@ -49,6 +50,15 @@ export interface ReadinessItem {
   hint?: string;
   actionLabel?: string;
   onAction?: () => void;
+  /**
+   * T-114：严重度必填。
+   *
+   * 之前折叠态的图标写死 `text-warning`（琥珀 = "该修一下"），
+   * 但同一件「流水线缺件」在诊断页是 `fail`（红 = "这坏了"）——
+   * **条幅报的严重度比真相轻**，用户据此判断"不急"，点进去才发现根本跑不了。
+   * 条幅的全部作用就是预警，报轻了等于没报。
+   */
+  tone: StatusTone;
 }
 
 export function ReadinessBanner() {
@@ -89,6 +99,7 @@ export function ReadinessBanner() {
        */
       items.push({
         key: 'secure-context',
+        tone: 'warning',
         text: t('readiness.items.secureContext', { count: blocked.length }),
         hint: t('readiness.items.secureContextHint'),
         ...(local
@@ -98,7 +109,7 @@ export function ReadinessBanner() {
     }
   } else if (multiTabDegraded) {
     // 安全上下文正常却仍然没有 Web Locks（很旧的浏览器）—— 这时才单独说
-    items.push({ key: 'multi-tab', text: t('readiness.items.multiTab') });
+    items.push({ key: 'multi-tab', tone: 'warning', text: t('readiness.items.multiTab') });
   }
 
   /* ── 2. 后端能力（health 轮询）── */
@@ -111,6 +122,7 @@ export function ReadinessBanner() {
   if (pendingRestart.length > 0) {
     items.push({
       key: 'restart',
+      tone: 'warning',
       text: t('health.restartRequired', { items: pendingRestart.join('、') }),
       actionLabel: restarting ? t('health.restarting') : t('health.restartNow'),
       onAction: () => {
@@ -124,6 +136,7 @@ export function ReadinessBanner() {
   if (ext?.libsimple === false && !awaits('libsimple')) {
     items.push({
       key: 'tokenizer',
+      tone: 'warning',
       text: t('readiness.items.tokenizer'),
       hint: t('health.tokenizerDegraded', { tokenizer: ext.tokenizer ?? 'trigram' }),
       actionLabel: t('health.fix'),
@@ -133,6 +146,7 @@ export function ReadinessBanner() {
   if (ext?.sqliteVec === false && !awaits('sqlite-vec') && !awaits('sqliteVec')) {
     items.push({
       key: 'vec',
+      tone: 'warning',
       text: t('readiness.items.vec'),
       hint: t('health.semanticDisabled'),
       actionLabel: t('health.fix'),
@@ -142,6 +156,8 @@ export function ReadinessBanner() {
   if (missing.length > 0) {
     items.push({
       key: 'pipeline',
+      // 缺 ffmpeg / ASR 引擎 = 转写这件事**根本跑不了**，与诊断页的 `fail` 对齐
+      tone: 'critical',
       text: t('readiness.items.pipeline'),
       hint: t('health.pipelineMissing', { items: missing.join(', ') }),
       actionLabel: t('health.fix'),
@@ -152,18 +168,25 @@ export function ReadinessBanner() {
   // ★ 一切就绪 = 一个像素都不占
   if (items.length === 0) return null;
 
+  // 汇总取最严重的一条，不取第一条也不写死（statusTone.ts）
+  const worst = worstTone(items.map((i) => i.tone));
+
   return (
     <div role="status" aria-live="polite" className="border-b border-b-line bg-surface-1 text-xs">
       {/* ── 折叠态：一行 ── */}
       <div className="mx-auto flex w-full max-w-5xl items-center gap-2 px-4 py-1">
-        <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden />
+        {worst === 'critical' ? (
+          <XCircle className="size-3.5 shrink-0 text-critical" aria-hidden />
+        ) : (
+          <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden />
+        )}
         <span className="min-w-0 truncate text-ink-secondary">
           {t('readiness.summary', { count: items.length })}
         </span>
         <Button
           size="sm"
           variant="ghost"
-          className="-my-0.5 h-5 shrink-0 px-1.5 text-xs text-accent hover:text-accent"
+          className="-my-0.5 h-5 shrink-0 px-1.5 text-xs text-accent-ink hover:text-accent-ink"
           data-testid="readiness-toggle"
           aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
@@ -186,6 +209,12 @@ export function ReadinessBanner() {
         <ul className="mx-auto w-full max-w-5xl px-4 pb-1.5" data-testid="readiness-details">
           {items.map((it) => (
             <li key={it.key} className="flex items-start gap-2 border-t border-line/60 py-1">
+              {/* 展开后每条也要带自己的严重度 —— 否则用户看不出四条里哪条是"坏了" */}
+              {it.tone === 'critical' ? (
+                <XCircle className="mt-0.5 size-3 shrink-0 text-critical" aria-hidden />
+              ) : (
+                <AlertTriangle className="mt-0.5 size-3 shrink-0 text-warning" aria-hidden />
+              )}
               <div className="min-w-0 flex-1">
                 <div className="text-ink-secondary">{it.text}</div>
                 {/* 原因只在展开后出现 —— 折叠态一个字都不占 */}
@@ -195,7 +224,7 @@ export function ReadinessBanner() {
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="-my-0.5 h-5 shrink-0 px-1.5 text-xs text-accent hover:text-accent"
+                  className="-my-0.5 h-5 shrink-0 px-1.5 text-xs text-accent-ink hover:text-accent-ink"
                   data-testid={`readiness-action-${it.key}`}
                   onClick={it.onAction}
                 >

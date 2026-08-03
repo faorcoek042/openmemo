@@ -2201,3 +2201,52 @@ OPENMEMO_AUTH=token → 同一请求 = 401
 ```
 
 构建 0 错、lint 干净；migrateRecords 8/8、move 18/18、roundtrip 16/16；demo 全程只读未重启。
+
+---
+
+## T-120 按 kind 分派 + /models 与 /settings 矛盾定位
+
+### ① 分派已改为按 `kind`，且**新增 kind 会让构建变红**
+`resolve.ts` 的 `=== 'anthropic'` / `=== 'gemini'` 全部删除，改为
+`providerKind(db, providerId)` → `switch (kind)`。`kind` 的权威来源是设置里的
+`llm.providers` 记录；记录里没有 kind 时才按 id 猜，**并打 warn 留痕**
+（猜测让老配置继续能用，但它正是这次 bug 的成因，不能静默）。
+
+**实测新目录的 id**：配 `{id:'claude', kind:'anthropic'}` →
+`resolveConfiguredProvider` 返回 **`AnthropicProvider` kind=anthropic** ✅
+（改之前这里会静默落进 OpenAI 兼容）。
+
+**穷尽性断言我验证过它真的会红**（这条比修好这一处重要）：
+临时把 `LlmProvider['kind']` 加一个 `'native-mistral'` →
+```
+apps/daemon/src/llm/resolve.ts(163,13): error TS2322:
+  Type '"native-mistral"' is not assignable to type 'never'.
+```
+还原后构建恢复 0 错。运行时同样**明确回错并打 error 日志，不回落 OpenAI 兼容**。
+
+### ② 矛盾出在 `/models` 这一侧，**`/settings` 是对的**
+实测真实 demo 数据：`resolveConfiguredProvider()` → **`OpenAiCompatibleProvider id=deepseek`**，
+也就是说 **DeepSeek 确实可用、思维导图确实能跑**。
+而 `/models` 的判据是**本地模型库**（selfcheck 的 `model.llm` = 有没有装本地 LLM 权重，实测 warn）——
+配了云厂商时这个信号**与能不能跑思维导图无关**。
+两边都没读错自己的源，**但在用同一句话回答不同的问题**；`/models` 那句话是假的。
+
+→ daemon 侧权威已定死一处：`GET /api/daemon/status` 新增
+```json
+"llm": { "configured": true, "providerId": "deepseek", "source": "cloud",
+         "reasonZh": "已配置语言模型提供方「deepseek」，思维导图与摘要可用。" }
+```
+**两处都读它，不要各自推断**。@architect 前端统一时请以此为准。
+
+### ★ 一条自我纠错（必须记）
+我第一版探针把 `openAppDatabase({ file })` 写成了 `file`，而真实参数名是 **`filename`** ——
+于是它打开了一个空库，我据此一度得出"daemon 读不到设置、resolve 恒 undefined"的**错误结论**，
+差点去改一段根本没坏的代码。用正确参数重测后：settings 7 行、DeepSeek 正常解析。
+**这是本会话第三次"坏探针差点冤枉好代码"**（假代理没监听 CONNECT、检查器没剥注释、这次参数名写错）。
+你写进项目规矩的那条——**怀疑代码之前先证明测试是对的**——我又交了一次学费。
+
+### 顺带
+`gpu-runtime` 新落的 selfcheck 代码里 `proxyConfig: () => readProxyConfig(repos)` 闭包拿不到收窄，
+构建是红的；他自己已经定义了 `reposForRoutes` 但没用上，我接过去了（**没有用 `!` 断言**）。
+
+lint 干净；migrateRecords 8/8、roundtrip 16/16、move 18/18；demo 全程只读未重启。

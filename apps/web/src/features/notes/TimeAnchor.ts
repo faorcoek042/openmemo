@@ -64,7 +64,7 @@ export const TimeAnchor = Node.create({
       mergeAttributes(HTMLAttributes, {
         'data-time-anchor': '',
         class:
-          'inline-flex items-center rounded bg-accent-track px-1 text-xs text-accent align-baseline cursor-pointer select-none',
+          'inline-flex items-center rounded bg-info-tint px-1 text-xs text-info align-baseline cursor-pointer select-none',
         role: 'button',
         tabindex: '0',
       }),

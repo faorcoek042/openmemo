@@ -60,7 +60,7 @@ export default function OnboardingPage() {
               className={cn(
                 'flex size-7 shrink-0 items-center justify-center rounded-full border text-xs',
                 i < step
-                  ? 'border-good bg-good text-white'
+                  ? 'border-good-solid bg-good-solid text-white'
                   : i === step
                     ? 'border-accent bg-accent text-accent-fg'
                     : 'border-line text-ink-muted',

@@ -153,7 +153,7 @@ export function ComponentCard({ component: c, locale, busy, onUpdate, onRollback
               href={c.provenance.repoUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-accent hover:underline"
+              className="inline-flex items-center gap-1 text-accent-ink hover:underline"
             >
               <ExternalLink className="size-3" aria-hidden />
               上游仓库
@@ -162,7 +162,7 @@ export function ComponentCard({ component: c, locale, busy, onUpdate, onRollback
               href={c.provenance.releaseUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-accent hover:underline"
+              className="inline-flex items-center gap-1 text-accent-ink hover:underline"
               data-testid="release-link"
             >
               <ExternalLink className="size-3" aria-hidden />

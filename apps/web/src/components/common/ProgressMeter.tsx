@@ -6,18 +6,38 @@ import { cn } from '../../lib/utils';
  * 规格不是随手定的：
  * - **填充端 4px 圆角、基线端方角** —— 数据端圆角、基线端方角是柱状标记的通用规范，
  *   让"从 0 长出来"这件事在视觉上成立。
- * - **轨道 = 同色系更浅一档**（`--accent-track`），不是灰色。这样整条 bar 都在讲同一件事。
- * - **填充随严重度换色** accent → warning → critical。
+ * - **轨道 = 同色系更浅一档**，不是灰色。这样整条 bar 都在讲同一件事。
  * - 颜色永远不是唯一信息载体：调用方必须同时给出文字标签（a11y 基线 D-05 §6.3）。
+ *
+ * ── T-114 修的是"轨道只有一种颜色"这个漏洞 ──
+ *
+ * 原来轨道写死 `--accent-track`（浅蓝），填充却会换成 warning / critical。
+ * 实测这条组合在明档是坏的：
+ *
+ *     填充 vs 轨道   warning **1.39:1** · good 2.53:1 · accent 3.34 · critical 3.63
+ *
+ * 也就是说**橙黄色的进度条压在浅蓝轨道上，几乎看不出走到哪了** ——
+ * 而进度条恰恰是"填充与轨道能否分辨"这一件事的全部意义。
+ * 现在轨道跟着 tone 走（`--status-*-tint`），填充用 ink 档，明暗两档全部 ≥ 4.5:1。
  */
 
-export type MeterTone = 'accent' | 'warning' | 'critical' | 'good';
+/** `accent` 是既有调用点的名字，等价于 `info`（进行中）。 */
+export type MeterTone = 'accent' | 'info' | 'warning' | 'critical' | 'good';
 
-const TONE_BG: Record<MeterTone, string> = {
-  accent: 'bg-accent',
+const TONE_FILL: Record<MeterTone, string> = {
+  accent: 'bg-info',
+  info: 'bg-info',
   warning: 'bg-warning',
   critical: 'bg-critical',
   good: 'bg-good',
+};
+
+const TONE_TRACK: Record<MeterTone, string> = {
+  accent: 'bg-info-tint',
+  info: 'bg-info-tint',
+  warning: 'bg-warning-tint',
+  critical: 'bg-critical-tint',
+  good: 'bg-good-tint',
 };
 
 export interface ProgressMeterProps {
@@ -51,14 +71,14 @@ export function ProgressMeter({
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={indeterminate ? undefined : Math.round(pct)}
-      className={cn('w-full overflow-hidden rounded-full bg-accent-track', h, className)}
+      className={cn('w-full overflow-hidden rounded-full', TONE_TRACK[tone], h, className)}
     >
       <div
         className={cn(
           'h-full transition-[width] duration-200 ease-out',
           // 基线端方角、数据端圆角
           'rounded-l-none rounded-r-[4px]',
-          TONE_BG[tone],
+          TONE_FILL[tone],
           indeterminate && 'animate-pulse',
         )}
         style={{ width: indeterminate ? '40%' : `${pct}%` }}

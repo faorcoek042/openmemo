@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Download, Info, Star, Trash2 } from 'lucide-react';
+import { Download, Info, Star, Trash2, Zap } from 'lucide-react';
 import { Link } from 'react-router';
 import type { CatalogGroupWithFitness, CatalogVariant } from '@openmemo/shared';
 import { Button } from '../../../components/common/Button';
@@ -68,13 +68,16 @@ export function ModelCard({
               <StatusChip tone="neutral" label="官方默认" icon={<Star className="size-3.5" />} />
             ) : null}
             {installed ? <StatusChip tone="good" label="已安装" /> : null}
-            {isActive ? <StatusChip tone="running" label="使用中" /> : null}
+            {/* 「使用中」与「已安装」同为 good：区分交给 ⚡ 图标与文字，不靠颜色（statusTone.ts） */}
+            {isActive ? (
+              <StatusChip tone="good" label="使用中" icon={<Zap className="size-3.5" />} />
+            ) : null}
           </div>
           <p className="mt-1 text-xs text-ink-secondary">{group.descriptionZh}</p>
         </div>
         <Link
           to={`/models/${encodeURIComponent(variant.id)}`}
-          className="shrink-0 text-xs text-accent hover:underline"
+          className="shrink-0 text-xs text-accent-ink hover:underline"
         >
           <span className="inline-flex items-center gap-1">
             <Info className="size-3.5" aria-hidden />

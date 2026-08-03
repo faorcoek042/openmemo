@@ -73,7 +73,7 @@ export function SegmentRow({
       <button
         type="button"
         onClick={onSeek}
-        className="mt-0.5 shrink-0 tabular-nums text-xs text-ink-muted hover:text-accent"
+        className="mt-0.5 shrink-0 tabular-nums text-xs text-ink-muted hover:text-accent-ink"
         title={t('detail.seekHere')}
       >
         {timecode(seg.startMs)}
@@ -129,7 +129,7 @@ export function SegmentRow({
 
         <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
           {edited ? (
-            <span className="inline-flex items-center gap-1 text-xs text-accent">
+            <span className="inline-flex items-center gap-1 text-xs text-accent-ink">
               <PencilLine className="size-3" aria-hidden />
               {t('detail.edited')}
             </span>

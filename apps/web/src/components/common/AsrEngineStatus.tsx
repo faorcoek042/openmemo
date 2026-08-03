@@ -118,7 +118,7 @@ export function AsrEngineStatus({ className }: { className?: string }) {
             title={e.reason ?? ''}
           >
             {e.available ? (
-              <CircleCheck className="size-3.5 text-success" aria-hidden />
+              <CircleCheck className="size-3.5 text-good" aria-hidden />
             ) : (
               <CircleAlert className="size-3.5 text-warning" aria-hidden />
             )}

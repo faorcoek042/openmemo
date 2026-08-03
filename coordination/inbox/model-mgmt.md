@@ -2033,3 +2033,103 @@ sha256 校验通过，落盘 `by-name/asr/ggml-tiny-q5_1.bin`。不是只过 sch
 demo 现在 `llm.defaultProviderId=deepseek` / `defaultModelId=deepseek-v4-flash` 都在了，
 配置保存链路看起来已修好。ASR 目录已是 14 组 / 27 变体（T-102 那批）。
 `speedClass` 在 demo 上还是 0/27 —— 它跑的是旧构建，**我没有重启它**。
+
+---
+
+## T-121 F3 真浏览器录音：**partial/final 全链路验到了**
+
+### 环境：先把 `streamAvailable` 打通
+
+`architect` 卡住的原因不是他的代码 —— 是**装了流式模型也不会自动启用**：
+`setup.ts:221` 只在 `OPENMEMO_SHERPA_STREAM_DIR` 这个环境变量存在时才构造 sherpa 引擎，
+**不会去模型库里找已安装的流式模型**。我装完 `asr/sherpa-streaming-zh-14m` 后，
+文件落在 `by-name/asr/`，文件名正好是 `resolveSherpaModel` 期望的
+（`encoder-*.int8.onnx` / `decoder-*` / `joiner-*` / `tokens.txt`），
+把环境变量指过去就通了：
+
+    streamAvailable: true   streamModelId: streaming-zipformer-zh-14M
+    engines: whisper.cpp=true, sherpa-onnx=true    missing: []
+
+**这条建议修**：模型库里装了流式模型 → 自动发现，别要求用户设环境变量。
+否则「目录里能装」和「装了能用」中间断了一截，且没有任何提示。
+
+### 容器里录不了真麦克风 —— 这条如实说
+
+    /dev/snd 不存在；enumerateDevices() 返回 []
+    --use-fake-device-for-media-capture           → NotFoundError
+    + --disable-features=AudioServiceOutOfProcess → 仍 NotFoundError
+    + ...,AudioServiceSandbox --alsa-input-device=default → 设备出现了，但 NotReadableError
+    换成完整 chromium（非 headless_shell）+ --headless=new 也一样
+
+所以**真实麦克风采集这一环在本容器里不可能验**。我改为**只替换"设备"这一层**：
+用 `addInitScript` 覆盖 `getUserMedia`，返回一个由**真实中文音频**
+（25s，16kHz mono，来自 `zh-twitter.ogg`）驱动的 `MediaStreamDestination` 流。
+**其余全部是应用自己的代码**：AudioWorklet → PCM16 → WS 二进制帧 → partial/final 渲染。
+证据是上行帧率恰好对得上 PCM16@16k：**256B × 125 帧/秒 = 32 KB/s = 16000 × 2 字节**。
+
+### ① partial 逐字推进 → final 落定：**验到了**
+
+同一个 `utteranceId` 内的 partial 逐字增长，`final` 落定后换新 id：
+
+    utt…B9704Y:  "来" → "来自" → "来自维"                    → final "来自维"
+    utt…P40BHG:  "自由的" → "自由的百科" → "自由的百科全书" → "自由的百科全书王"
+    utt…X9VTS8:  "威" → "威慑" → "威慑到" → "威慑到欧"        → final "威慑到欧"
+    stop 后收到  {"type":"stopped"}
+
+**视觉也对**（截图 `/tmp/shots/t121-live.png`，人眼确认）：
+前三行 `推特 / 来自维 / 自由的百科全书王` 是**正常字重**（final），
+最后一行 `威慑到欧` 是**灰色斜体**（partial）—— 与 `RecorderPage.tsx:367` 的
+`c.final ? 'text-ink' : 'text-ink-muted italic'` 完全一致。
+
+### ② 停止后自动排离线重跑：**验到了，且跑完了**
+
+停止后界面进入 `rerunning`，显示「Re-transcribing … / 1 task running」，
+重跑作业跑到 `idle`，笔记 `status=ready`：
+
+    重跑后 段数=2  编辑过的=0
+    seq=0     0-11340  推特来自为几百颗自由的百颗全书,王势ZH.wikipedia.org
+    seq=1 11340-19480  推特非官方中文名称推特是一个社交网络极微博克服务
+
+（识别质量差是**预期内**：我只装了 `whisper-tiny-q5_1`，它的 `notRecommendedFor: ['zh']`
+正是我们标注过的那条 —— 这次刚好把那条标注演示了一遍。）
+
+### ③ 「共 N 段 · 编辑过的 M 段已保留」：**N 对，M=0 属于正确隐藏，非零分支这条路径没验到**
+
+- `N`：服务端真值 **2 段**，与 `doneSummary` 取的 `segmentCount` 同源。
+- `M`：录音流程里**停止后立刻自动重跑**，中间**没有让用户编辑的窗口**，
+  所以 M 恒为 0，UI 按 `replaced.preserved > 0` 正确地**不显示那句话**。
+  **非零的保留计数我在 T-088 用「重新转写」路径验过**（编辑 3 段 → 横幅「Your 3 edited
+  segment(s) will be preserved」→ 连跑两次 `editedAt` 都在）。
+  **但那是另一条路径**；录音页这条路径的非零分支**至今没有人验过，我也没验到**。
+
+### ★ 顺带抓到一个真 bug（归 `architect`）
+
+`RecorderPage.tsx:422-423` 把重跑提示里的模型名**写死成 `large-v3-turbo`**：
+
+    t('recorder.rerunningWithEta', { model: 'large-v3-turbo', eta })
+    t('recorder.rerunning',        { model: 'large-v3-turbo' })
+
+而我这台机器上**激活的是 `whisper-tiny-q5_1`**（页面自己的 ASR model 下拉就显示
+「Whisper tiny (Q5_1)」），界面却说「Re-transcribing with **large-v3-turbo**」。
+i18n 文案本身是对的（`{{model}}` 占位），**是调用点填了常量**。
+这是「UI 说出一个它没有核对过的具体名字」—— 和当初写死
+`useState<'paraformer'|'turbo'>` 同一类。应当填**真正激活的那个模型 id**。
+
+（顺带：录音页现在**有** ASR 模型下拉了，显示正确，说明 T-102 报的 `showModel={false}` 已被打开。）
+
+### openapi 清干净了
+
+    installPath 残留 0（原 4 处：BackendPack / InstalledBackendPack 的 required + 属性各两处）
+    → BackendPack.linkInto（可选，带完整语义说明）· InstalledBackendPack.linkInto（可选）
+
+顺手补了同一份文档的另一处漂移：**`ModelEntry` 缺 `speedClass`** ——
+我上一轮把它设成了**必填**，契约文档却没有它。理由与你引我的那句一致：
+**把谎言留在契约文档里，等于让文档为它背书。** 现已加入 required + enum + 说明
+（含"为什么不叫 speedTier"）。YAML 解析通过。
+
+### 门禁
+    tsc 0 · eslint 0 · verify-offline 52/52 · backends/sqlite-ext schema 全过 · openapi YAML 解析通过
+
+### 纪律
+自建实例 `17650`（dataDir `/tmp/om-t121`，全新），用完只杀自己 pid；**未触碰 `:10000`**。
+截图：`/tmp/shots/t121-live.png`（录制中，partial 斜体 / final 正常字重）、`t121-record2.png`。

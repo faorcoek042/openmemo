@@ -116,13 +116,26 @@ export type {
 } from './backends/applicability.js';
 
 // -- functional self-check (ADR-014: verify the FEATURE, not the component) -----------------
-export { CHINESE_PROBE_WORDS, listByName, runSelfCheck } from './selfcheck.js';
+export {
+  CHINESE_PROBE_WORDS,
+  diffSelfCheckReports,
+  extensionFileName,
+  listByName,
+  runSelfCheck,
+} from './selfcheck.js';
 export type {
   CheckResult,
   CheckStatus,
+  DetectedLlmService,
+  LlmKeyConfig,
+  MediaAssetRef,
+  ProxyConnectivity,
+  ProxySummary,
+  SelfCheckDiffEntry,
   SelfCheckInput,
   SelfCheckProbes,
   SelfCheckReport,
+  SelfCheckToolPaths,
 } from './selfcheck.js';
 
 // -- self-test -----------------------------------------------------------------------------

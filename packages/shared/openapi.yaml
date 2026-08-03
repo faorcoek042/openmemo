@@ -1159,6 +1159,7 @@ components:
         - format
         - quantization
         - quantTier
+        - speedClass
         - displayName
         - displayNameZh
         - descriptionZh
@@ -1196,6 +1197,17 @@ components:
           $ref: '#/components/schemas/Quantization'
         quantTier:
           $ref: '#/components/schemas/QuantTier'
+        speedClass:
+          type: string
+          enum: [fast, balance, quality]
+          description: >-
+            Trade-off bucket and the second filter axis (quantTier is the size axis;
+            tiny-f16 and large-v3-f16 both land in "full" yet differ by orders of magnitude
+            in speed). Hand-assigned per model group from size alone, NOT extrapolated from
+            RTF — our RTF coefficients are uncalibrated and a number derived from one would
+            read as a measurement while being a guess. Deliberately not named "speedTier":
+            FitResult.speedTier already exists, is computed per machine, and carries a
+            speedSource; a CatalogVariant carries both objects.
         displayName:
           type: string
         displayNameZh:
@@ -1475,7 +1487,6 @@ components:
         - requiresDriver
         - license
         - providesFiles
-        - installPath
         - priority
         - benchmark
         - catalogVersion
@@ -1533,9 +1544,16 @@ components:
           items:
             type: string
           description: Files that must exist after install for the pack to be considered functional.
-        installPath:
+        linkInto:
           type: string
-          description: Install target, relative to the engine's runtime directory.
+          description: >-
+            Optional. Directory that this pack's loadable files are LINKED INTO after
+            unpacking, relative to the data directory. Only SQLite-extension packs set it
+            ("bin/ext"). It is a link target, not an unpack target: all eleven sqlite-ext
+            packs share that one directory, and unpacking is atomic-by-replacement, so
+            expanding into it would delete whichever extension was installed first.
+            Backend packs deliberately omit this field — they land in the content-addressed
+            by-name/ layout and are located by scanning.
         priority:
           type: integer
           description: Higher wins when several packs match the same hardware.
@@ -1573,7 +1591,6 @@ components:
         - installedAt
         - verifiedAt
         - integrity
-        - installPath
         - files
         - selfTest
       properties:
@@ -1596,8 +1613,9 @@ components:
           format: date-time
         integrity:
           $ref: '#/components/schemas/Integrity'
-        installPath:
+        linkInto:
           type: string
+          description: Mirrors BackendPack.linkInto; absent for packs that are not linked anywhere.
         files:
           type: array
           items:

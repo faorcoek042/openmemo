@@ -1513,3 +1513,121 @@ server 明明给了，我们扔了。已修：收下该值、按 0.6 阈值打 `
 4. `GET /api/settings/data-dir` 应把 `~/.local/share/openmemo/datadir.json` 也描述出来 → `oss-scout`。
 5. `llamacpp-cpu-linux-x64` 与 4 组 GGUF（qwen3/gemma）**仍在目录里**，ADR-016 说砍 → `model-mgmt` / `oss-scout`。
 6. 次要：`measureTree` 不识别硬链接，`models` 被重复计数（实测报 1371MB，`du` 实为 705MB）→ `oss-scout`。
+
+---
+
+## [2026-08-03 15:25] T-119 selfcheck 真正同源 DONE
+
+### 结论：同源，并且**有机器可验的证据**
+
+```
+── 同源校验
+  ✔ CLI 与 /api/selfcheck 同源     24 项逐 id 一致（本地 0 失败 / 端点 0 失败）
+```
+两边逐条对照（`--json` 与端点 JSON 并排）：**24 个 id、24 个 status、counts 全等**
+`{"ok":19,"warn":5,"fail":0}`。加 `--proxy-test` / `?proxyTest=1` 时两边同为 25 项。
+
+### 做法：CLI 里现在**一条判据都没有**
+
+`scripts/selfcheck.mjs` 从 552 行独立实现变成**只做两件事**：接探针 + 渲染。
+判据全部在 `packages/runtime/src/selfcheck.ts`，CLI 与端点调同一个 `runSelfCheck()`。
+
+上移进来的四类（原来端点没有）：
+| 层 | id |
+|---|---|
+| 硬件 | `hw.os` `hw.cpu` `hw.memory` `hw.probe` |
+| 数据目录自洽性 | `datadir.assetsContained` `datadir.assetsPresent` |
+| LLM（ADR-016 仅在线） | `llm.tier1` `llm.tier2` |
+| 代理 | `proxy.config` `proxy.ffmpeg` (+`proxy.connectivity`) |
+
+顺带补上原来只有 CLI 有的三条判据细节，端点现在也有：
+`tool.ytDlp`、`ext.jiebaDict`、工具来源区分（装在 storeRoot=ok / 只在系统 PATH=warn）、
+`model.asr` 的非 ASR 角色过滤（只装了 VAD ≠ ASR 就绪）。
+`model.llm`（查 `by-name/llm` 的 GGUF）**删了** —— ADR-016 之后它查的是产品不再提供的东西。
+
+### 你的两条约束都守住了
+
+**1. runtime 不 import pipeline。** `packages/runtime/package.json` 依赖仍然只有
+`{downloader, shared}`，没加任何一条。四类新检查里凡是需要别的包的（probe 路径要
+pipeline 的两层扫描、media_assets 要 DB、本机 LLM 要 `@openmemo/llm`、代理要
+`ffmpegProxySupport`）**全部走注入**。
+`@openmemo/llm` 其实不成环（它只依赖 shared），但我仍然让它走注入 ——
+runtime 只保留"硬件"这一件它真正拥有的事，是这个包能一直保持轻的原因。
+只有 `detectOs/detectCpu/detectMemory/runProbe` 是 runtime 直接调自己的。
+
+**2. 判据没有降级成"文件在不在"。** `ext.chineseSearch` 仍然是
+"那四个词能不能命中"（实测 `用户:1 推特:2 中国:1 服务:2`），不是"libsimple.so 存不存在"。
+有单测钉住：给它一个"扩展加载成功但四个词全 0"的输入 → 必须 `fail` 且 `required=true`。
+
+### 关键设计：**探针缺席不让检查项消失**
+
+这是"同源"能被验证的前提。缺探针只会让那一条报 `warn: 未探测（本次运行未提供该探针）`，
+id 集合在任何情况下都一样长 —— 否则两边根本无从比对，
+而"少一条"恰恰是最容易被当成"没问题"的漂移形态。单测钉住：全给和全不给，`idsOf()` 深等。
+
+### `diffSelfCheckReports()` —— 别只信我这句话
+
+比 **id 集合 + status + required**，**不比 detail**：detail 里有绝对路径、设备数、
+版本号这类天生就该不同的东西（CLI 在仓库根跑，daemon 在自己进程里跑），
+拿它做判据只会误报，而一条经常误报的红线很快就等于没有这条线。
+`required` 加进来的理由：它是纯逻辑推导、不受环境影响，两边不同就说明判据被改分叉了。
+
+**反证（证明这条不是空话）**：让 CLI 指向空目录、`--daemon` 指向装满的实例：
+```
+✘ CLI 与 /api/selfcheck 同源   backend.packs: 本地=warn 端点=ok · engine.select.zh: 本地=fail 端点=ok
+                              · ext.chineseSearch: 本地=fail 端点=ok · model.asr: 本地=fail 端点=ok …（共 14 条）
+EXIT=1
+```
+
+### ⚠️ 它上来就抓到了两件真事
+
+**a) demo（10000）正跑着一个"半新"构建，需要重启才能给完整报告。**
+我用 CLI 对 demo 做只读比对（**没重启、没写任何东西**）：
+```
+✘ 同源  datadir.assetsContained: 本地=fail 端点=warn(未探测) · 本地=required=true 端点=required=false
+        · ext.jiebaDict: 本地=ok 端点=warn · llm.tier1/proxy.config/proxy.ffmpeg: 本地=ok 端点=warn(未探测)
+```
+诊断得很干脆：demo 进程起于 15:04:30，`packages/runtime/dist` 已是新的（所以有 24 个 id），
+但 `apps/daemon/dist/main.js` 那一轮**编译失败**（`repos` 收窄的类型错，我已修）
+→ 它加载的是**新核心 + 旧路由**，四类新探针一个都没接上。
+**这正是这套机制要抓的形状**，而且因为"缺探针只降级不删项"，它能精确指出**是哪几个探针没接**。
+→ **我没有重启 demo**（你说了只读）。重启后这 6 条会自动一致；重启前 CLI 会一直红，这是对的行为不是 bug。
+
+**b) demo 的 media_assets 有 3/4 条指向 dataDir 外**（T-093 报过的洞，现在有实例了）：
+```
+original→/tmp/omdemo/jfk.wav
+audio16k→/tmp/dd55/tmp/job-01KZ12HV9M…/audio16k.wav
+audio16k→/tmp/omdemo/tmp/job-01KZ1H8Y64…/audio16k.wav
+```
+demo 从 `/tmp/omdemo` 迁到 `/root/data-memo` 之后，这些**绝对路径留在了旧位置**。
+现在文件还在所以能播（`assetsPresent` 是 ok），**`/tmp` 一清就全丢**。
+不只是我上次报的 `audio16k`，连 `original` 也有一条。归 `oss-scout`（资产模型 + 迁移）。
+
+### 三条环境变化的落点
+1. **鉴权默认关闭**：CLI 的 `--token` 保留但不再需要，注释已改。本次全程没传 token 就跑通了。
+2. **安装记录迁移**：`tool.ffmpeg` 这次是从 `by-name/backend/media-tools-linux-x64/ffmpeg` 解析出来的
+   （不再是 `/usr/bin/ffmpeg`）—— **T-093 我报的"ffmpeg 没有安装通道"这条已经被 `model-mgmt` 解决了**，
+   工具来源判据现在如实报 ok 而不是 warn。判据没动，是环境变好了。
+3. **`speedClass` vs `speedTier`**：自检里**一处都没有**（grep 两个词，零命中）。
+   我不打算加 —— 自检回答的是"能不能用"，速度分档是"该选哪个"，
+   把两个不同的问题塞进同一张表正是 `installPath` 那个坑的复现方式。
+
+### 质量
+- `packages/{shared,runtime,pipeline,llm,downloader,db}` + `apps/daemon` tsc 全绿；eslint 干净。
+- 新增 `packages/runtime/src/selfcheck.test.ts`，**13 条全过**。守的不是算得对不对，
+  而是"两个出口不会再分叉"：id 集合稳定、缺探针不删项、`proxyTest` 关闭时**一次外网请求都不发**、
+  diff 抓得到四种漂移（少项/结论不同/必需性不同/detail 不参与）。
+
+### 诚实边界
+- 我的同源实证跑在**自己的实例**（17911，克隆 demo 的 models/bin）。
+  demo 上跑的是只读比对，结论是"它需要重启"，不是"它已同源"。
+- 只在 Linux x64 上验过。
+- `proxy.connectivity` 仍是**默认不跑**：自检必须能离线跑完，
+  把"这台机器没网"渲染成"产品坏了"和"绿灯不代表能用"是同一个病的两面。
+
+需要 Manager 决策:
+1. **demo 需要一次重启**才会给完整的 24 项（我没动）。重启后 `ext.jiebaDict` 也会从 warn 转 ok
+   —— 端点现在用的是**开库时实际用的那个扩展目录**，不再自己算一遍（各算各的正是 T-093 那个洞的成因）。
+2. **demo 的 3 条资产指向 `/tmp`**，`/tmp` 一清就丢 → `oss-scout`（含 `original` 一条，比我上次报的范围大）。
+3. `apps/web/src/features/models/components/ModelCard.tsx:73` 有 `Cannot find name 'Zap'` 编译错误，
+   卡住 `apps/web` 构建（`architect` 在改，非我）。

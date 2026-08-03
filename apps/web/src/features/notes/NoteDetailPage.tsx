@@ -185,7 +185,7 @@ export default function NoteDetailPage() {
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-5 px-1.5 text-xs text-accent hover:text-accent"
+                      className="h-5 px-1.5 text-xs text-accent-ink hover:text-accent-ink"
                       onClick={() => navigate(`/notes/${n.uid}/mindmap`)}
                     >
                       {t('detail.mindmapEdit')}

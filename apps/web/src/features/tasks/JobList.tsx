@@ -1,8 +1,9 @@
 import { useTranslation } from 'react-i18next';
-import { Pause, Play, RotateCcw, X } from 'lucide-react';
+import { Pause, Play, RotateCcw, ShieldCheck, X } from 'lucide-react';
 
 import { ProgressMeter } from '../../components/common/ProgressMeter';
 import { StatusChip } from '../../components/common/StatusChip';
+import { jobStateTone } from '../../components/common/statusTone';
 import { Button } from '../../components/common/Button';
 import { approxEta } from '../../lib/format/time';
 import { formatBytes, formatPercent, formatSpeed } from '../../lib/format/bytes';
@@ -52,25 +53,34 @@ function JobRow({ job, compact }: { job: MergedJob; compact?: boolean }) {
   const stepLabel = job.step ? t(`progress.${job.step}`, { defaultValue: job.step }) : '';
   const eta = approxEta(job.etaSeconds, i18n.language);
   const running = job.state === 'running' || job.state === 'leased';
+  const verifying = running && job.step === 'verifying';
   const attention = job.state === 'blocked' || job.state === 'failed';
+
+  // 颜色判定不在这里做（T-114）：六个渲染点各写一份 switch 已经分叉过一次。
+  const tone = jobStateTone(job.state);
+  // fallback 分支原来把机器枚举值（queued / cancelled）直接当标签渲染 ——
+  // 用户看到的是英文单词。词条缺失时至少退回 tasks.* 的既有中文。
+  const label = running
+    ? stepLabel || t('tasks.running')
+    : job.state === 'failed'
+      ? t('notes.failed')
+      : job.state === 'blocked'
+        ? t('tasks.needsAttention')
+        : job.state === 'paused'
+          ? t('progress.pause')
+          : job.state === 'succeeded'
+            ? t('tasks.done')
+            : t(`jobState.${job.state}`, { defaultValue: job.state });
 
   return (
     <li className="rounded-lg border border-line bg-surface-0 p-3">
       <div className="mb-1 flex items-start justify-between gap-2">
         <span className="min-w-0 truncate text-sm text-ink">{job.displayName || job.type}</span>
-        {running ? (
-          <StatusChip tone="running" label={stepLabel || t('tasks.running')} />
-        ) : job.state === 'failed' ? (
-          <StatusChip tone="critical" label={t('notes.failed')} />
-        ) : job.state === 'blocked' ? (
-          <StatusChip tone="warning" label={t('tasks.needsAttention')} />
-        ) : job.state === 'paused' ? (
-          <StatusChip tone="neutral" label={t('progress.pause')} />
-        ) : job.state === 'succeeded' ? (
-          <StatusChip tone="good" label={t('tasks.done')} />
-        ) : (
-          <StatusChip tone="neutral" label={job.state} />
-        )}
+        <StatusChip
+          tone={running ? 'running' : tone}
+          label={label}
+          icon={verifying ? <ShieldCheck className="size-3.5" aria-hidden /> : undefined}
+        />
       </div>
 
       {job.state !== 'succeeded' && job.state !== 'cancelled' ? (
@@ -90,7 +100,10 @@ function JobRow({ job, compact }: { job: MergedJob; compact?: boolean }) {
           <ProgressMeter
             value={job.progress}
             size={compact ? 'sm' : 'md'}
-            tone={attention ? 'warning' : 'accent'}
+            tone={tone === 'critical' ? 'critical' : tone === 'warning' ? 'warning' : 'info'}
+            // 六个渲染点里这里原本是唯一漏掉 verifying 的：校验阶段没有可信百分比，
+            // 画一个卡在 87% 不动的条比画脉动更像故障（D-09 §1.3）。
+            indeterminate={verifying}
             label={stepLabel || job.type}
           />
         </>

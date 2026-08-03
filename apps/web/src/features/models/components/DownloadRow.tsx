@@ -99,7 +99,7 @@ export function DownloadRow({ job, locale, onCancel, onRetry }: DownloadRowProps
       <ProgressMeter
         className="mt-2"
         value={ratio}
-        tone={failed ? 'critical' : isVerifying ? 'good' : 'accent'}
+        tone={failed ? 'critical' : 'info'}
         // 校验阶段没有可信百分比 —— 显示脉动而不是假装有进度
         indeterminate={isVerifying}
         label={`${job.displayName} 下载进度`}

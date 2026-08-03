@@ -615,5 +615,15 @@
       "vec": "向量检索未启用，语义搜索暂不可用",
       "pipeline": "转写组件缺失，导入的音视频暂时无法转写"
     }
+  },
+  "jobState": {
+    "queued": "排队中",
+    "blocked": "等待条件",
+    "leased": "已派发",
+    "running": "进行中",
+    "paused": "已暂停",
+    "succeeded": "已完成",
+    "failed": "失败",
+    "cancelled": "已取消"
   }
 }

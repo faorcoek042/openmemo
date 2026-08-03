@@ -53,7 +53,7 @@ export default function ModelDetailPage() {
   if (!found) {
     return (
       <div className="p-4">
-        <Link to="/models" className="text-xs text-accent hover:underline">
+        <Link to="/models" className="text-xs text-accent-ink hover:underline">
           ← 返回模型管理
         </Link>
         <p className="mt-3 text-sm text-ink">目录里没有这个模型（{modelId}）。</p>
@@ -67,7 +67,7 @@ export default function ModelDetailPage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-4 p-4" data-testid="model-detail-page">
-      <Link to="/models" className="inline-flex items-center gap-1 text-xs text-accent hover:underline">
+      <Link to="/models" className="inline-flex items-center gap-1 text-xs text-accent-ink hover:underline">
         <ArrowLeft className="size-3.5" aria-hidden />
         返回模型管理
       </Link>
@@ -188,7 +188,7 @@ export default function ModelDetailPage() {
           href={variant.license.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
+          className="inline-flex items-center gap-1 text-xs text-accent-ink hover:underline"
         >
           <ExternalLink className="size-3.5" aria-hidden />
           查看上游与许可证

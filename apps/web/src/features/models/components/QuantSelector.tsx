@@ -88,7 +88,7 @@ export function QuantSelector({ variants, selectedId, onSelect, locale }: QuantS
             >
               <span className="inline-flex items-center gap-1 font-medium text-ink">
                 {v.id === selectedId ? (
-                  <Check className="size-3 text-accent" aria-hidden />
+                  <Check className="size-3 text-accent-ink" aria-hidden />
                 ) : (
                   <span className="size-3" />
                 )}

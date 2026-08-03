@@ -13,12 +13,19 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AppPaths } from '../../config/paths.js';
 import { pointerFile, writeDataDirPointer } from '../../config/paths.js';
 import { readdir, stat } from 'node:fs/promises';
+import { join } from 'node:path';
+
+import type { DatabaseHandle } from '@openmemo/db';
+
+import { migrateMediaAssets } from '../../storage/migrateAssets.js';
 
 import { looksLikeDataDir, measureTree, moveDataDir, planMove } from '../../storage/move.js';
 import { readJsonBody, sendError, sendJson } from '../respond.js';
 
 export interface StorageRoutesDeps {
   readonly paths: AppPaths;
+  /** 搬家后要就地迁 `media_assets` 的路径引用。 */
+  readonly db: DatabaseHandle;
   /** 有任务在跑就不能搬 —— 搬到一半任务还在写文件，必然不一致。 */
   readonly runningJobs: () => number;
   /** 搬完要重启才能挂到新位置（复用 T-061 的自我重启）。 */
@@ -254,6 +261,21 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
           `${result.errorZh ?? '移动失败'}${result.sourceIntact ? '（原数据完好，未做任何改动）' : ''}`,
         );
         return true;
+      }
+
+      /*
+       * ★ 搬完文件**必须同时迁数据库里的引用** —— 迁移是「文件 + 记录」一件事。
+       *
+       * 只搬文件的后果实测过：文件到了新家，`media_assets.rel_path` 还指着老家的
+       * 绝对路径；随后有人清理旧目录，用户的录音就真的没了，而且不报错。
+       * 这里在**重启之前**就地迁好，新进程起来读到的已经是正确路径。
+       */
+      try {
+        const am = await migrateMediaAssets(deps.db, plan.to, join(plan.to, 'media'));
+        if (am.migrated > 0) console.log(`[storage] 搬家后重挂媒体资产 ${am.migrated} 条`);
+        for (const u of am.unresolved) console.warn(`[storage] ⚠️ 媒体资产无法解析：${u}`);
+      } catch (err) {
+        console.warn('[storage] 搬家后迁移媒体资产失败:', err);
       }
 
       // 搬成功后才改指向。反过来会指向一个还没搬完的位置

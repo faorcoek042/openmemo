@@ -615,5 +615,15 @@
       "vec": "Vector search not enabled — semantic search unavailable",
       "pipeline": "Transcription components missing — imported media cannot be transcribed yet"
     }
+  },
+  "jobState": {
+    "queued": "Queued",
+    "blocked": "Waiting",
+    "leased": "Assigned",
+    "running": "Running",
+    "paused": "Paused",
+    "succeeded": "Done",
+    "failed": "Failed",
+    "cancelled": "Cancelled"
   }
 }

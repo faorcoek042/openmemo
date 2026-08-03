@@ -134,7 +134,7 @@ export default function App() {
             </PanelBoundary>
             {activeCount > 0 ? (
               <Button size="sm" variant="ghost" onClick={() => setTasksDrawer(true)}>
-                <Activity className="size-3.5 text-accent" />
+                <Activity className="size-3.5 text-accent-ink" />
                 {t('app.tasksBadge', { count: activeCount })}
               </Button>
             ) : null}

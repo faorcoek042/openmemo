@@ -14,6 +14,29 @@
  * （明度带 / 彩度下限 / CVD 相邻分离 / 常视觉分离 / 对比度）。
  * 明档 data-3(aqua 2.74:1) 与 data-4(yellow 2.11:1) 低于 3:1 →
  * 触发「救济规则」：用到它们的地方**必须**配可见标签或表格视图（见 StorageBar）。
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * ★ T-114（ui-polish）：状态色拆成「记号色 / 文字色 / 淡底 / 描边」四层
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * 起因是一条被实测戳破的前提：原来的四个状态色是按**图表记号**（非文字，3:1）
+ * 选的，但整个应用把它们当**文字色**在用（`text-warning` 等 54 处）。
+ * 文字要 4.5:1，实测明档：
+ *     warning 1.74 · serious 2.50 · good 3.18 · accent 4.19  —— 四个全不达标
+ *     暗档 critical 3.62 —— 也不达标（D-05 §7.2 只核过 3:1，没核过 4.5:1）
+ * 其中 `--status-warning`（1.74:1）拿来写字，等于**没写**。
+ *
+ * 所以每个语义色现在有四个层次，各自有各自的达标线：
+ *   --status-X          记号/锚点色，保持 D-05 §7.2 原值不动（图表侧的校验不受影响）
+ *   --status-X-ink      文字与图标 —— 对表层、对自身淡底都 ≥ 4.5:1
+ *   --status-X-tint     芯片淡底 / 进度条轨道 —— 与表层可分辨（≥1.1:1）
+ *   --status-X-line     芯片描边 / 左侧强调边 —— 对表层 ≥ 3:1
+ *   --status-X-solid    实心块（白字压在上面）—— 白字 ≥ 4.5:1，块面对两档表层都 ≥ 3:1
+ *
+ * ⚠️ 与 D-05 §7.2「状态色四个都不随主题变」的关系：
+ * **锚点 `--status-X` 确实没变**，变的是新加的 ink/tint/line 三层 —— 它们必须随主题变，
+ * 因为"在浅底上能读"和"在深底上能读"是两件互斥的事（深红 #c12e2e 在暗底只有 2.7:1）。
+ * 校验脚本：`apps/web/src/test/color-contrast.test.ts`（64 条断言，跑在 `pnpm test` 里）。
  */
 
 :root {
@@ -27,23 +50,60 @@
   /* ── 墨色 ── */
   --ink-primary: #0b0b0b;
   --ink-secondary: #52514e;
-  --ink-muted: #898781;
+  /* 原 #898781 对页底只有 3.41:1。它承载的不是装饰而是**说明正文**
+     （"需显存 ~512 MB"、引擎缺失原因、时间戳…），按文字线 4.5:1 补到 4.90:1。 */
+  --ink-muted: #6f6d68;
 
   /* ── 线 ── */
-  --line: #e1e0d9;
+  /* 原 #e1e0d9 对卡片底只有 1.29:1，而卡片底 (#fcfcfb) 与页底 (#f9f9f7) 之间
+     只差 1.03:1 —— 也就是说**明档的卡片边界几乎只由这条线承担，而它太淡了**。
+     补到 1.42:1（GitHub 的 #d0d7de 是 1.45:1，同一量级）。 */
+  --line: #d7d6cb;
   --border: rgb(11 11 11 / 10%);
 
-  /* ── 品牌 ── */
-  --accent: #2a78d6;
+  /* ── 品牌 ──
+     `--accent` 是**块面色**（主按钮底），判据是「白字压在上面要 ≥ 4.5:1」：
+     原 #2a78d6 只有 4.42:1 —— 主按钮的文案是全站点击最多的文字，先修它。
+     `--accent-ink` 是**文字色**（链接、选中项、进行中状态），判据是对表层 ≥ 4.5:1。
+     两者不能是同一个值：暗档要求它们往相反方向走（块面变深、文字变浅）。 */
+  --accent: #2570cd;
   --accent-fg: #ffffff;
+  --accent-ink: #2267bd;
   --accent-track: #cde2fb; /* 进度条轨道 = 同色系更浅一档 */
-  --ring: #2a78d6;
+  --ring: var(--accent-ink);
 
-  /* ── 状态色：四个都**不随主题变**（D-05 §7.2）── */
+  /* ── 状态色锚点：四个都**不随主题变**（D-05 §7.2 原值，未改）── */
   --status-good: #0ca30c;
   --status-warning: #fab219;
   --status-serious: #ec835a;
   --status-critical: #d03b3b;
+  /* info = 「正在发生」的语义位。此前它一直借用 `--accent`，
+     导致"品牌主色"和"进行中状态色"是同一个变量，改一个就动另一个。 */
+  --status-info: #2570cd;
+
+  /* ── 状态色的四层展开（明档）──
+     实测值见文件头与 color-contrast.test.ts；每一行都跑过脚本，不是目测。 */
+  --status-good-ink: #097a09; /* 5.24:1 vs 页底 · 4.80:1 vs 自身淡底 */
+  --status-good-tint: #daf0da;
+  --status-good-line: #0ca30c; /* 3.18:1 */
+  --status-good-solid: #118011; /* 白字 5.10:1；块面 4.84:1(明) / 3.42:1(暗) */
+
+  --status-warning-ink: #916403; /* 4.95:1 · 4.80:1 —— 琥珀要在白底可读只能走到棕金 */
+  --status-warning-tint: #fcefd2;
+  --status-warning-line: #bb8004; /* 3.21:1 */
+
+  --status-serious-ink: #b94315; /* 5.14:1 · 4.83:1 */
+  --status-serious-tint: #faebe4;
+  --status-serious-line: #e76330; /* 3.20:1 */
+
+  --status-critical-ink: #c12e2e; /* 5.39:1 · 4.82:1 */
+  --status-critical-tint: #f6e1e0;
+  --status-critical-line: #d03b3b; /* 4.56:1 */
+  --status-critical-solid: #d03b3b; /* 白字 4.80:1；块面 4.56:1(明) / 3.62:1(暗) */
+
+  --status-info-ink: var(--accent-ink); /* 5.32:1 · 4.80:1 —— 与链接同色，只有一种"可点的蓝" */
+  --status-info-tint: #dee8f5;
+  --status-info-line: #2570cd; /* 4.66:1 */
 
   /* ── 分类分段色：固定顺序，绝不循环、绝不新造（D-05 §7.3）── */
   --data-1: #2a78d6; /* 模型 */
@@ -79,15 +139,41 @@
 
     --ink-primary: #ffffff;
     --ink-secondary: #c3c2b7;
-    --ink-muted: #898781;
+    --ink-muted: #a3a199; /* 原 #898781 对抬升面只有 4.33:1 */
 
-    --line: #2c2c2a;
+    --line: #3a3a37; /* 原 #2c2c2a 对卡片底只有 1.24:1 */
     --border: rgb(255 255 255 / 10%);
 
-    --accent: #3987e5;
+    /* 块面色明暗共用一档：暗档原来的 #3987e5 上压白字只有 3.64:1 —— 暗档反而更糟。
+       #2570cd 对暗档表层 3.17:1（块面 ≥3:1 达标），白字 4.91:1。 */
+    --accent: #2570cd;
     --accent-fg: #ffffff;
+    --accent-ink: #5a9be9; /* 5.41:1 vs 抬升面 */
     --accent-track: #184f95;
-    --ring: #3987e5;
+    --ring: var(--accent-ink);
+
+    --status-info: #3987e5;
+
+    --status-good-ink: #0db10d; /* 5.41:1 · 4.70:1 vs 自身淡底 */
+    --status-good-tint: #173516;
+    --status-good-line: #0ca30c; /* 4.64:1 */
+
+    --status-warning-ink: #fab219; /* 8.48:1 · 6.20:1 */
+    --status-warning-tint: #473819;
+    --status-warning-line: #fab219; /* 8.48:1 */
+
+    --status-serious-ink: #ec835a; /* 5.89:1 · 4.74:1 */
+    --status-serious-tint: #442f26;
+    --status-serious-line: #ec835a; /* 5.89:1 */
+
+    /* 暗档必须换成浅红：#d03b3b 在暗底只有 3.24:1，当文字不达标 */
+    --status-critical-ink: #dd7373; /* 5.02:1 · 4.69:1 */
+    --status-critical-tint: #3e2120;
+    --status-critical-line: #d03b3b; /* 3.24:1 */
+
+    --status-info-ink: var(--accent-ink); /* 5.41:1 · 4.67:1 */
+    --status-info-tint: #203042;
+    --status-info-line: #3987e5; /* 4.27:1 */
 
     --data-1: #3987e5;
     --data-2: #d95926;
@@ -108,15 +194,38 @@
 
   --ink-primary: #ffffff;
   --ink-secondary: #c3c2b7;
-  --ink-muted: #898781;
+  --ink-muted: #a3a199;
 
-  --line: #2c2c2a;
+  --line: #3a3a37;
   --border: rgb(255 255 255 / 10%);
 
-  --accent: #3987e5;
+  --accent: #2570cd;
   --accent-fg: #ffffff;
+  --accent-ink: #5a9be9;
   --accent-track: #184f95;
-  --ring: #3987e5;
+  --ring: var(--accent-ink);
+
+  --status-info: #3987e5;
+
+  --status-good-ink: #0db10d;
+  --status-good-tint: #173516;
+  --status-good-line: #0ca30c;
+
+  --status-warning-ink: #fab219;
+  --status-warning-tint: #473819;
+  --status-warning-line: #fab219;
+
+  --status-serious-ink: #ec835a;
+  --status-serious-tint: #442f26;
+  --status-serious-line: #ec835a;
+
+  --status-critical-ink: #dd7373;
+  --status-critical-tint: #3e2120;
+  --status-critical-line: #d03b3b;
+
+  --status-info-ink: var(--accent-ink);
+  --status-info-tint: #203042;
+  --status-info-line: #3987e5;
 
   --data-1: #3987e5;
   --data-2: #d95926;

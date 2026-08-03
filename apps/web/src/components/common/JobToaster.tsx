@@ -311,10 +311,10 @@ function ToastRow({ toast, onDismiss }: { toast: Toast; onDismiss: () => void })
           : 'accent';
 
   const accentBar = {
-    critical: 'border-l-critical',
-    warning: 'border-l-warning',
-    good: 'border-l-good',
-    accent: 'border-l-accent',
+    critical: 'border-l-critical-line',
+    warning: 'border-l-warning-line',
+    good: 'border-l-good-line',
+    accent: 'border-l-info-line',
   }[tone];
 
   return (
@@ -376,7 +376,7 @@ function ToastRow({ toast, onDismiss }: { toast: Toast; onDismiss: () => void })
           value={ratio}
           // 校验阶段没有可信百分比 —— 脉动而不是假装有进度（D-05 §7.3 的"稀疏值不编数字"）
           indeterminate={verifying || step === 'resolving' || step == null}
-          tone={verifying ? 'good' : 'accent'}
+          tone="info"
           label={toast.name}
         />
       ) : null}
@@ -395,8 +395,8 @@ function ToastIcon({ phase, verifying }: { phase: Phase; verifying: boolean }) {
   if (phase === 'done') return <CheckCircle2 className={cn(cls, 'text-good')} aria-hidden />;
   if (phase === 'failed') return <AlertTriangle className={cn(cls, 'text-critical')} aria-hidden />;
   if (phase === 'blocked') return <Clock className={cn(cls, 'text-warning')} aria-hidden />;
-  if (verifying) return <ShieldCheck className={cn(cls, 'text-good')} aria-hidden />;
-  return <Download className={cn(cls, 'text-accent')} aria-hidden />;
+  if (verifying) return <ShieldCheck className={cn(cls, 'text-info')} aria-hidden />;
+  return <Download className={cn(cls, 'text-accent-ink')} aria-hidden />;
 }
 
 /**

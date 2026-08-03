@@ -37,6 +37,7 @@ import { readDataDirPointer, resolvePaths, type AppPaths } from './config/paths.
 import { reclaimOrphans } from './bootstrap/orphans.js';
 import { ensureSelfSignedCert, tlsEnabled } from './bootstrap/tls.js';
 import { migrateInstallRecords } from './storage/migrateRecords.js';
+import { migrateMediaAssets } from './storage/migrateAssets.js';
 import { SessionStore, loadOrCreateToken, type Session } from './http/auth.js';
 import { attachHttpHandlers } from './http/server.js';
 import { SseHub } from './http/sse.js';
@@ -221,6 +222,47 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
   let queue: JobQueue | undefined;
   const lanes = new LanePool();
 
+  /**
+   * LLM 是否真的可用（云 provider 或本地模型，任一即可）。
+   * **不要在别处重新推断这件事** —— 重新推断就是这次矛盾的来源。
+   */
+  const llmAvailability = (): {
+    configured: boolean;
+    providerId: string | null;
+    source: 'cloud' | 'local' | null;
+    reasonZh: string;
+  } => {
+    try {
+      const pid = database
+        ? (JSON.parse(
+            (
+              database.db
+                .prepare<{ value_json: string }>(
+                  `SELECT value_json FROM settings WHERE key = 'llm.defaultProviderId'`,
+                )
+                .get() ?? { value_json: 'null' }
+            ).value_json,
+          ) as string | null)
+        : null;
+      if (typeof pid === 'string' && pid.length > 0) {
+        return {
+          configured: true,
+          providerId: pid,
+          source: 'cloud',
+          reasonZh: `已配置语言模型提供方「${pid}」，思维导图与摘要可用。`,
+        };
+      }
+    } catch {
+      /* 读不到就按未配置处理，不猜 */
+    }
+    return {
+      configured: false,
+      providerId: null,
+      source: null,
+      reasonZh: '尚未配置语言模型提供方，思维导图与摘要不可用。请在设置中添加一个。',
+    };
+  };
+
   /** 磁盘上已经有扩展、但当前连接没加载它 → 需要重启才能生效。 */
   const restartRequirement = (): {
     required: boolean;
@@ -286,6 +328,19 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
        * 「检测中」和「检测过了但不可用」必须分开是同一类问题。
        */
       restartRequired: restartRequirement(),
+      /*
+       * ★ LLM 可用性的**唯一权威**。
+       *
+       * 此前是"两处各答各的"：`/models` 看**本地模型库**（`model.llm` 有没有装权重），
+       * `/settings` 看**已配置的 provider**。于是用户同时看到
+       * 「语言模型未选择 · 思维导图不可用」和「当前生效 DeepSeek」——
+       * 两边都没读错自己的源，**但它们在用同一句话回答不同的问题**。
+       *
+       * 真正决定思维导图能不能跑的，是 `resolveConfiguredProvider()` ——
+       * 配了云厂商就能跑，本地有没有装权重无关。所以权威口径定在这里，
+       * 前端两处都读它，不要各自推断。
+       */
+      llm: llmAvailability(),
       db: database
         ? {
             driver: database.driver,
@@ -598,11 +653,26 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       }
       // 解析不到的**必须说出来**：记录说"装了"、文件却不在，是典型的假绿灯
       for (const u of mig.unresolved) console.warn(`[daemon] ⚠️  安装记录无法解析：${u}`);
+
+      /*
+       * `media_assets` 同样要迁 —— 这条更要命：安装记录坏了顶多重装，
+       * **媒体资产坏了就是用户的录音找不回来**。
+       * 实测用户库里 4 条有 3 条指向已被删除的旧 dataDir。
+       */
+      const am = await migrateMediaAssets(database.db, paths.dataDir, paths.mediaDir);
+      if (am.migrated > 0) {
+        console.log(`[daemon] 媒体资产路径迁移：${am.migrated}/${am.scanned} 条已重新归位`);
+        for (const n of am.notes.slice(0, 8)) console.log(`[daemon]    ${n}`);
+      }
+      for (const u of am.unresolved) console.warn(`[daemon] ⚠️  媒体资产无法解析：${u}`);
     } catch (err) {
       console.warn('[daemon] 安装记录迁移失败（不影响启动）:', err);
     }
 
     // ---- 路由装配 ----
+    // 路由里的回调是延迟执行的，闭包里拿不到 `repos` 的收窄结果（它是 `Repos | undefined`），
+    // 所以在这里定一个已收窄的常量，与上面 handlers 用的 `repos_` 同理。
+    const reposForRoutes = repos;
     routers.push(
       // 硬件探测 / probe 断路器 / 后端自检（@openmemo/runtime 真实实现，非 stub）
       createRuntimeRoutes({ paths }),
@@ -623,6 +693,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       // 数据目录：定义 / 修改 / 移动（路径名与 architect 的设置页对齐）
       createStorageRoutes({
         paths,
+        db: database.db,
         runningJobs: () => scheduler?.runningCount ?? 0,
         requestRestart: (reason, o) => void restartHook.run?.(reason, o),
       }),
@@ -635,7 +706,15 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
           sqliteVec: database.extensions.sqliteVec,
         },
         bundle: () => bundle,
-        extensionsDir: resolveExtensionDir(paths.modelsDir, paths.extensionsDir),
+        /*
+         * 必须是**开库时实际用的那个目录**，不能再算一遍。
+         * 各算各的正是 T-093 那个洞的成因；而且 CLI 用的是 `<dataDir>/bin/ext`，
+         * 这里若算出别的路径，`ext.jiebaDict` 两边就会不一致 —— 同源校验会当场抓到。
+         */
+        extensionsDir: extensionRoot,
+        proxyConfig: () => readProxyConfig(reposForRoutes),
+        // 只把**键名**交出去；SecretStore.list() 返回的是掩码形状，明文永远不出这个边界。
+        secretKeys: () => new SecretStore(paths.dataDir).list().map((s) => s.key),
       }),
       // 代理设置（中文网络刚需：不配代理 HF/GitHub 根本连不上）
       createProxyRoutes({ repos }),

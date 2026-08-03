@@ -315,7 +315,7 @@ export function ProxySettingsSection() {
           </thead>
           <tbody>
             {arr(testSources.data.rows).map((r) => (
-              <tr key={r.provider} className={r.provider === testSources.data.fastest ? 'text-accent' : 'text-ink'}>
+              <tr key={r.provider} className={r.provider === testSources.data.fastest ? 'text-accent-ink' : 'text-ink'}>
                 <td>
                   {r.label}
                   {r.provider === testSources.data.fastest ? ` · ${t('settings.proxy.fastest')}` : ''}

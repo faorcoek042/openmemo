@@ -108,7 +108,7 @@ export default function SearchPage() {
                 <div className="flex items-baseline gap-2">
                   <span className="truncate text-sm font-medium text-ink">{h.noteTitle}</span>
                   {h.startMs != null ? (
-                    <span className="shrink-0 tabular-nums text-xs text-accent">
+                    <span className="shrink-0 tabular-nums text-xs text-accent-ink">
                       {timecode(h.startMs)}
                     </span>
                   ) : null}

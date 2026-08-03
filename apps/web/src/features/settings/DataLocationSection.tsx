@@ -254,7 +254,7 @@ export function DataLocationSection() {
           </div>
 
           {changeDir.isSuccess ? (
-            <p className="text-xs text-success">{t('settings.dataDir.needRestart')}</p>
+            <p className="text-xs text-good">{t('settings.dataDir.needRestart')}</p>
           ) : null}
 
           {/*
