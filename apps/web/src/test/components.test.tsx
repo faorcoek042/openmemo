@@ -1403,8 +1403,9 @@ describe('非安全上下文', () => {
       assert.ok(r.container.querySelector('[data-testid="secure-blocked-microphone"]'));
       assert.ok(shown.includes('录音转文字不可用'), '功能级不可用必须点名');
       // 给动作，不让用户猜
-      assert.ok(r.container.querySelector('[data-testid="secure-try-https"]'), '应给 https 入口');
       assert.ok(r.container.querySelector('[data-testid="secure-try-localhost"]'), '应给 localhost 入口');
+      // TLS 已按用户要求撤掉：不再把 https 作为按钮推给他（横幅是告知事实，不是推销方案）
+      assert.equal(r.container.querySelector('[data-testid="secure-try-https"]'), null);
       // ★ 绝不能把锅推给浏览器 —— 那会让用户去换浏览器，换了也没用
       assert.ok(!shown.includes('浏览器不支持'), '不许归因为"浏览器不支持"');
       assert.ok(shown.includes('换浏览器不会有帮助'), '要主动挡掉"换个浏览器试试"这条弯路');
@@ -1459,5 +1460,96 @@ describe('非安全上下文', () => {
       if (!hadExec) delete (doc as Record<string, unknown>)['execCommand'];
       restore();
     }
+  });
+});
+
+/* ─────────── 配置保存必须可见（T-100）─────────── */
+
+/**
+ * 用户设了 DeepSeek key，**库里 0 行**。四步收窄的结论：
+ *
+ * | 步骤 | 结论 |
+ * |---|---|
+ * | 请求形状对不对 | ✅ 对。daemon 的 PATCH 收**裸 map**，前端发的就是裸 map（隔离实例实测 200 且落库） |
+ * | 有没有发出去 | ✅ 发了 |
+ * | 服务端接不接受 | ⚠️ **缺 CSRF 头 → 403**（实测） |
+ * | 失败有没有告诉用户 | ❌ **完全没有** —— 三个写 mutation 的错误一个都没渲染，表单还无条件收起 |
+ *
+ * 所以用户看到的信号只有"表单关了"，他会合理理解为保存成功。
+ * `client.ts` 那条「写操作永不静默回落 mock」**是生效的**（错误确实抛出来了），
+ * 但**规则本身不够** —— 得有人把错误接住并画出来。
+ */
+describe('LLM 配置保存的可见反馈', () => {
+  const settingsRoute = {
+    'GET /settings': {
+      settings: {
+        'llm.providers': [
+          { id: 'deepseek', kind: 'openai-compatible', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', isLocal: false },
+        ],
+      },
+    },
+    'GET /secrets': { secrets: [], disclosure: null },
+  };
+
+  test('★ 保存失败（403）必须显示错误，且表单不许关 —— 关了就等于说"成功了"', async () => {
+    stubApi({
+      ...settingsRoute,
+      // 实测：缺 CSRF 头的写请求就是这个响应
+      'PATCH /settings': () =>
+        new Response(
+          JSON.stringify({
+            error: { code: 'CSRF_FAILED', message: 'missing or bad CSRF token', messageZh: 'CSRF 校验失败' },
+          }),
+          { status: 403, headers: { 'content-type': 'application/json' } },
+        ),
+    });
+    const r = await render(<LlmSettingsSection />);
+    await r.flush();
+
+    await click(buttonByText(r.container, '编辑'));
+    await click(r.container.querySelector('[data-testid="llm-save"]'));
+    await r.flush();
+
+    // 1) 错误必须可见
+    assert.ok(
+      text(r.container).includes('CSRF') || text(r.container).includes('校验失败'),
+      `保存失败必须说出来，实际渲染：${text(r.container).slice(0, 200)}`,
+    );
+    // 2) 表单必须还开着 —— 用户刚填的内容不能丢
+    assert.ok(r.container.querySelector('[data-testid="llm-save"]'), '失败后表单不该收起');
+    // 3) 绝不能同时显示成功
+    assert.equal(r.container.querySelector('[data-testid="llm-saved"]'), null, '失败了还报成功是最坏的情况');
+    r.unmount();
+  });
+
+  test('★ 保存成功要有明确信号，而不是靠"表单关了"让用户自己猜', async () => {
+    const { calls } = stubApi({ ...settingsRoute, 'PATCH /settings': { settings: {} } });
+    const r = await render(<LlmSettingsSection />);
+    await r.flush();
+
+    await click(buttonByText(r.container, '编辑'));
+    await click(r.container.querySelector('[data-testid="llm-save"]'));
+    await r.flush();
+
+    assert.ok(r.container.querySelector('[data-testid="llm-saved"]'), '成功要看得见');
+    // 顺带钉住请求体是**裸 map**（daemon 收的就是这个；包一层 {settings:…} 会存成嵌套键）
+    const body = calls.find((c) => c.method === 'PATCH')?.body as Record<string, unknown>;
+    assert.ok(body, '应发出 PATCH');
+    assert.ok(!('settings' in body), '不许多包一层 —— 那会存出 settings.settings 这种键');
+    assert.ok('llm.providers' in body, '应直接是设置键 → 值');
+    r.unmount();
+  });
+
+  test('★ 写操作遇到不存在的端点必须抛错，绝不回落 mock（这条规则要真的生效）', async () => {
+    stubApi({ ...settingsRoute }); // PATCH 未打桩 → 404
+    const r = await render(<LlmSettingsSection />);
+    await r.flush();
+    await click(buttonByText(r.container, '编辑'));
+    await click(r.container.querySelector('[data-testid="llm-save"]'));
+    await r.flush();
+
+    assert.equal(r.container.querySelector('[data-testid="llm-saved"]'), null, '端点不存在时绝不能显示已保存');
+    assert.ok(r.container.querySelector('[data-testid="llm-save"]'), '表单保持打开');
+    r.unmount();
   });
 });

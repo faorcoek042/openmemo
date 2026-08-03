@@ -661,16 +661,17 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
    * 用户会以为是自己浏览器的问题，功能就这么静默缺失了。
    * 这条警告比 TLS 本身更重要：即使用户不开 TLS，也必须知道自己缺了什么。
    */
+  /*
+   * 非回环 + 明文：只陈述**后果**，不推销 TLS。
+   * 用户明确说过"本地自用别搞那么复杂"，所以这里保留一句事实即可 ——
+   * 但这句不能删：否则录音功能就是在用户不知情的情况下静默缺失的。
+   */
   if (IS_PUBLIC_BIND && !tls) {
     console.warn(
-      `[daemon] ⚠️  当前是**明文 HTTP + 非回环地址**（${BIND_HOST}:${boundPort}）。\n` +
-        `[daemon]    浏览器只把 HTTPS 与 localhost 视为安全上下文，因此在这个地址下：\n` +
-        `[daemon]      · 录音转文字（F3）不可用 —— navigator.mediaDevices 为 undefined\n` +
-        `[daemon]      · 多标签页选主降级 —— navigator.locks 为 undefined\n` +
-        `[daemon]    这不是浏览器旧，任何浏览器都一样。\n` +
-        `[daemon]    启用 HTTPS： OPENMEMO_TLS=self-signed （证书自动生成）`,
+      `[daemon] ⚠️  此地址下录音功能不可用（浏览器仅将 HTTPS 与 localhost 视为安全上下文，与浏览器版本无关）。`,
     );
   }
+
   if (tls) {
     console.log(
       `[daemon] TLS 已启用（自签证书）\n` +

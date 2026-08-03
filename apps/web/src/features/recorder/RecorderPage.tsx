@@ -10,11 +10,7 @@ import { ProgressMeter } from '../../components/common/ProgressMeter';
 import { AsrEngineStatus, useAsrEngines } from '../../components/common/AsrEngineStatus';
 import { TranscribeOptions } from '../../components/common/TranscribeOptions';
 import { ASR_LANGUAGE_AUTO } from '../../lib/asr';
-import {
-  httpsEquivalent,
-  isMicrophoneAvailable,
-  localhostEquivalent,
-} from '../../lib/secure-context';
+import { isMicrophoneAvailable, localhostEquivalent } from '../../lib/secure-context';
 import { useConnectionStore } from '../../lib/stores/connection.store';
 import { estimateRerunMs, humanDuration, timecode } from '../../lib/format/time';
 import { cn } from '../../lib/utils';
@@ -52,7 +48,6 @@ export default function RecorderPage() {
    * `navigator.mediaDevices` 只在安全上下文存在 —— `http://<IP>` 下任何浏览器都是 undefined。
    */
   const micAvailable = isMicrophoneAvailable();
-  const httpsUrl = httpsEquivalent();
   const localUrl = localhostEquivalent();
   const [phase, setPhase] = useState<Phase>('idle');
   const [elapsed, setElapsed] = useState(0);
@@ -197,18 +192,14 @@ export default function RecorderPage() {
             <div className="min-w-0">
               <div className="text-sm font-medium text-ink">{t('recorder.insecureTitle')}</div>
               <p className="mt-1 text-sm text-ink-secondary">{t('recorder.insecureHelp')}</p>
-              <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-                {httpsUrl ? (
-                  <a className="text-accent underline" href={httpsUrl}>
-                    {t('secureContext.tryHttps')}
-                  </a>
-                ) : null}
-                {localUrl ? (
+              {/* 只给 localhost 这一条 —— TLS 已按用户要求撤掉，不推销 https */}
+              {localUrl ? (
+                <p className="mt-2 text-sm">
                   <a className="text-accent underline" href={localUrl}>
                     {t('secureContext.tryLocalhost')}
                   </a>
-                ) : null}
-              </p>
+                </p>
+              ) : null}
               {/* 录音之外的路仍然通：这条地址下导入音视频文件是完全正常的 */}
               <p className="mt-2 text-xs text-ink-muted">{t('recorder.insecureAlternative')}</p>
             </div>

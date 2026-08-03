@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next';
 import { Banner } from './Banner';
 import {
   detectBlockedCapabilities,
-  httpsEquivalent,
   isSecureContext,
   localhostEquivalent,
 } from '../../lib/secure-context';
@@ -26,7 +25,6 @@ export function SecureContextBanner() {
   const blocked = detectBlockedCapabilities();
   if (blocked.length === 0) return null;
 
-  const https = httpsEquivalent();
   const local = localhostEquivalent();
 
   return (
@@ -49,20 +47,20 @@ export function SecureContextBanner() {
             两条路都给：远程访问的用户换 localhost 没用（会打开他自己机器上的空端口），
             本机访问的用户又未必愿意折腾自签证书 —— 谁适用谁点。
           */}
-          <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="text-ink-secondary">{t('secureContext.howTo')}</span>
-            {https ? (
-              <a className="text-accent underline" href={https} data-testid="secure-try-https">
-                {t('secureContext.tryHttps')}
-              </a>
-            ) : null}
-            {local ? (
+          {/*
+            ★ 只给 **localhost** 一个可点的动作。
+            用户明确说过「既然是个本地自用的，不要搞 tls 那么复杂」，TLS 也已撤掉 ——
+            所以 https 不再作为按钮推给他，只在下面的说明里作为"事实"提一句。
+            横幅的职责是**告知事实**（此地址下录音不可用），不是推销一个他不想要的方案。
+          */}
+          {local ? (
+            <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="text-ink-secondary">{t('secureContext.howTo')}</span>
               <a className="text-accent underline" href={local} data-testid="secure-try-localhost">
                 {t('secureContext.tryLocalhost')}
               </a>
-            ) : null}
-          </p>
-          {/* 说清 localhost 这条路的适用范围，免得远程用户点了更困惑 */}
+            </p>
+          ) : null}
           <p className="text-ink-muted">{t('secureContext.localhostCaveat')}</p>
         </div>
       }

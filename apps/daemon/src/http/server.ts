@@ -179,7 +179,32 @@ async function handleRequest(
     return;
   }
   if (!checkCsrf(req, auth)) {
-    sendError(res, 403, 'CSRF_FAILED', 'missing or bad CSRF token', 'CSRF 校验失败');
+    /*
+     * ★ 这条必须**可恢复且说得清**，否则表现为"页面正常、保存悄悄失败"。
+     *
+     * 实测：持有有效 cookie 但缺 CSRF 头时，**读全部 200、写全部 403** ——
+     * 用户填完 API Key 点保存，界面看不出异常，库里却一行没有。
+     * 而前端在 sessionStorage 不可用时会主动降级成"不带 CSRF 头"
+     * （它注释里写的是"由 Origin 校验兜底"，但服务端并没有这个兜底 —— 契约对不上）。
+     *
+     * 服务端不放宽校验，但要给出**明确的自救路径**：重新握手就能拿到新的 CSRF token。
+     */
+    sendError(
+      res,
+      403,
+      'CSRF_FAILED',
+      'missing or bad CSRF token',
+      '写操作缺少 CSRF 令牌（读操作不受影响，所以页面看起来正常）。请重新连接以获取新令牌。',
+      {
+        retryable: true,
+        remediation: {
+          action: 'reauth',
+          params: { endpoint: '/api/auth/session', method: 'POST' },
+          label: 'Re-establish session',
+          labelZh: '重新连接',
+        },
+      },
+    );
     return;
   }
 

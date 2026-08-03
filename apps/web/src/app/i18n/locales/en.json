@@ -398,7 +398,9 @@
       "incomplete": "⚠️ Incomplete: both a provider and a model must resolve, otherwise this feature is treated as \"no LLM configured\".",
       "noDefault": "No default provider/model is configured above. Fields left blank here have nothing to inherit.",
       "resetAll": "Reset all to inherit"
-    }
+    },
+    "saved": "✓ Saved locally (survives a page refresh)",
+    "saving": "Saving…"
   },
   "mock": {
     "notImplementedShort": "Still simulated data",
@@ -547,7 +549,7 @@
     "howTo": "Use either of these instead:",
     "tryHttps": "Open over https://",
     "tryLocalhost": "Open via 127.0.0.1",
-    "localhostCaveat": "Note: 127.0.0.1 only works if you are ON the machine running OpenMemo; for remote access use https://. Browsers treat https and localhost as secure contexts, http://<IP> is not — this is not browser-specific, switching browsers will not help.",
+    "localhostCaveat": "Open http://127.0.0.1:10000 instead (works if you are on the machine running OpenMemo). For remote access, browsers only expose the microphone over https or localhost — this is not browser-specific, switching browsers will not help. Everything else is unaffected.",
     "caps": {
       "microphone": "**Recording is unavailable** — browsers only expose the microphone in a secure context.",
       "webLocks": "Cross-tab leader election is unavailable — each tab opens its own connection.",

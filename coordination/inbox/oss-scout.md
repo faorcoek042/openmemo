@@ -1867,3 +1867,62 @@ TLS 让页面成为 secure context 是**按规范推断**的；我没有真实�
 **没有实测过 `getUserMedia` 在自签 HTTPS 下真的可用**。切换后请让 `architect` 或用户确认一次录音。
 
 lint 干净；move 13/13、upload 17/17、lanes 7/7；demo 全程只读未重启（**TLS 未切，等你切**）。
+
+---
+
+## T-100 设置链路：嵌套已修 + **保存断点已定位（给 architect）**
+
+### ① 嵌套 bug：修了，但根因不是"前端发错"
+实测三种形状：
+```
+扁平 {"llm.defaultProviderId":"deepseek"}          → 正确（**前端发的就是这个，前端没错**）
+信封 {"settings":{...}}                            → 曾经产生字面名叫 settings 的键（协调者踩的）
+```
+根因是**我们自己造的不对称**：`GET` 回 `{settings:{…}}`，`PATCH` 只收扁平的。
+把 GET 的结果原样 PATCH 回去是最自然的用法，却会造出嵌套 blob。
+→ 修法不是"要求调用方记住不对称"，而是**让读写形状可以互换**：两种都接受；
+并把 `settings` 设为**保留键名**，双层信封直接 400 说清"你可能多套了一层"，
+而不是静默存成坏数据。
+
+### ② ★ 保存为什么没落库：**不是前端没发，是写请求被 403 挡了**
+daemon 侧两条链路我都单独验通了（`PATCH /api/settings` 200、
+`PUT /api/secrets/:key` 200 → secrets.json 0600 → GET 读回掩码）。
+所以断点不在端点本身。真正的断点是 **CSRF**：
+```
+持有效 cookie 但**不带 CSRF 头**：
+  GET  /api/settings            → 200      ← 页面一切正常
+  PATCH /api/settings           → 403 CSRF_FAILED
+  PUT  /api/secrets/llm.x.apiKey → 403 CSRF_FAILED
+带上 x-openmemo-csrf            → 200
+```
+**读全通、写全挂** —— 完全吻合"用户填完点保存、界面无异常、库里 0 行"。
+
+而前端 `client.ts` 在 sessionStorage 不可用时会**主动降级成不带 CSRF 头**，
+注释写的是「由 Origin 校验兜底」—— **但服务端没有这个兜底**，是硬拒。
+**这就是契约对不上的那一处。** @architect 请从这里查：
+用户是隐私模式 / sessionStorage 被拦 / 或握手失败导致 CSRF 没存下来，都会走进这条路。
+
+我做的（不放宽校验，但让它可自救）：CSRF 403 现在带
+`retryable:true` + `remediation{action:'reauth', endpoint:'/api/auth/session'}`
+和一句人话「写操作缺少 CSRF 令牌（读操作不受影响，所以页面看起来正常）。请重新连接」。
+前端据此可以自动重新握手拿到新令牌 —— 不需要放宽任何安全策略。
+
+**是否要让服务端在同源时免 CSRF，是一个安全决策，需要用户本人拍板，我不擅自改。**
+
+### ③ 通用回归断言（你要的那条）
+新增 `settings.roundtrip.test.ts`，6/6 通过。钉的不是这一个 bug，而是**性质本身**：
+「PATCH 什么，GET 就必须原样读到什么」，含
+**「GET 的输出直接喂回 PATCH 必须幂等」**（这条能一次性挡住整族"读写形状不对称"），
+以及密钥写入后必须读得到、且**掩码不得泄漏明文**。
+
+### ④ TLS 横幅已压成一行（不再推销）
+```
+⚠️ 此地址下录音功能不可用（浏览器仅将 HTTPS 与 localhost 视为安全上下文，与浏览器版本无关）。
+```
+只陈述后果、不提 TLS 怎么开。这句不能删 —— 删了录音就是在用户不知情下静默缺失。
+
+### 附：demo 现状（只读查的）
+`settings` 表 0 行；`secrets.json` 存在但**内容为空**（没有任何键）。
+也就是说用户的 key **当前不在库里** —— 与上面的 403 结论一致。
+
+lint 干净；roundtrip 6/6、move 13/13、upload 17/17；demo 全程只读未重启。

@@ -94,8 +94,45 @@ export function createSettingsRoutes(deps: SettingsRoutesDeps): {
             return true;
           }
 
+          /*
+           * ★ 同时接受两种形状：扁平 `{k: v}` 与信封 `{settings: {k: v}}`。
+           *
+           * 起因是一个**我们自己造的陷阱**：`GET` 回的是 `{settings: {...}}`，
+           * 而 `PATCH` 只收扁平的。任何人把 GET 的结果原样 PATCH 回去（最自然的用法），
+           * 都会得到一个**字面名叫 `settings` 的键**，于是读的人永远找不到
+           * `llm.defaultProviderId` —— 存进去了、也读回来了，但键名对不上。
+           * 协调者复现时正是踩的这个。前端发的是扁平的，所以前端没错。
+           *
+           * 修法不是"要求调用方记住不对称"，而是**让读写形状可以互换**。
+           */
+          const raw = body as Record<string, unknown>;
+          const keys = Object.keys(raw);
+          const inner =
+            keys.length === 1 &&
+            keys[0] === 'settings' &&
+            typeof raw['settings'] === 'object' &&
+            raw['settings'] !== null &&
+            !Array.isArray(raw['settings'])
+              ? (raw['settings'] as Record<string, unknown>)
+              : raw;
+
           const entries: { key: string; valueJson: string }[] = [];
-          for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+          for (const [key, value] of Object.entries(inner)) {
+            /*
+             * `settings` 作为**设置键名**一律拒绝：它只可能来自"信封套了两层"的误用，
+             * 而一旦存进去就会产生那个谁也查不出来的嵌套 blob。
+             * 宁可报一个说得清的 400，也不要静默生成坏数据。
+             */
+            if (key === 'settings') {
+              sendError(
+                res,
+                400,
+                'BAD_SETTING_KEY',
+                'the key "settings" is reserved (did you wrap the payload twice?)',
+                '「settings」是保留键名 —— 你可能把请求体多套了一层信封。直接发 {"键":"值"} 或 {"settings":{"键":"值"}} 均可。',
+              );
+              return true;
+            }
             if (key.length > MAX_KEY_LEN || !KEY_RE.test(key)) {
               sendError(
                 res,

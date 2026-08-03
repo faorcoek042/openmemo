@@ -52,6 +52,8 @@ export function LlmSettingsSection() {
   const setSecret = useSetSecretMutation();
   const delSecret = useDeleteSecretMutation();
   const [editing, setEditing] = useState<string | null>(null);
+  /** 保存成功的时刻。用于给出**明确的成功信号**，而不是靠"表单关了"让用户自己猜。 */
+  const [savedAt, setSavedAt] = useState<number | null>(null);
 
   const providers = readProviders(settings.data);
   const activeId = readActiveProviderId(settings.data);
@@ -114,6 +116,20 @@ export function LlmSettingsSection() {
       <p className="mb-3 text-xs text-ink-secondary">{t('settings.llmIntro')}</p>
 
       <MockNotice surface="settings" className="mb-3" />
+
+      {/*
+        ★ 保存反馈：成功看得见、失败**绝不静默**。
+        这一段之前完全不存在 —— 只有 `settings.isError`（读失败）被渲染，
+        三个写 mutation 的错误谁都没接。
+      */}
+      {patch.isError ? <ErrorBlock error={patch.error} /> : null}
+      {setSecret.isError ? <ErrorBlock error={setSecret.error} /> : null}
+      {delSecret.isError ? <ErrorBlock error={delSecret.error} /> : null}
+      {savedAt !== null && !patch.isError && !setSecret.isError ? (
+        <p className="mb-3 text-xs text-good" data-testid="llm-saved">
+          {t('settings.saved')}
+        </p>
+      ) : null}
 
       {/* ★ ADR-006 决策 1 的强制条件。文案取服务端原文 —— 路径只有 daemon 知道 */}
       {disclosure ? (
@@ -184,14 +200,45 @@ export function LlmSettingsSection() {
                 <ProviderForm
                   provider={p}
                   hasKey={hasKey(p.id)}
+                  saving={patch.isPending || setSecret.isPending}
                   onSave={(next, apiKey) => {
-                    upsertProvider(next);
+                    /*
+                     * ★ **不再无条件关闭表单**。
+                     *
+                     * 原来这里直接 `setEditing(null)` —— 无论保存成功还是 403/401 失败，
+                     * 表单都会收起来。用户看到的信号只有"表单关了"，
+                     * 他会合理地理解为"保存成功了"，然后刷新发现什么都没有。
+                     *
+                     * 实测：缺 CSRF 头的写请求返回 **403**，而这个界面对此**一个字都不说**。
+                     * `client.ts` 那条"写操作永不静默回落 mock"是对的、也生效了 ——
+                     * 错误确实被抛出来了，**只是没有任何人把它渲染出来**。
+                     * 规则本身没用，得有人接住。
+                     */
+                    const jobs: Promise<unknown>[] = [
+                      patch.mutateAsync({
+                        [LLM_PROVIDERS_KEY]: providers.some((x) => x.id === next.id)
+                          ? providers.map((x) => (x.id === next.id ? next : x))
+                          : [...providers, next],
+                        [baseUrlKeyFor(next.id)]: next.baseUrl,
+                        ...(activeId === next.id ? { [LLM_DEFAULT_MODEL_KEY]: next.model } : {}),
+                      }),
+                    ];
                     if (apiKey !== undefined) {
                       const v = apiKey.trim();
-                      if (v) setSecret.mutate({ key: secretKeyFor(p.id), value: v });
-                      else delSecret.mutate(secretKeyFor(p.id));
+                      jobs.push(
+                        v
+                          ? setSecret.mutateAsync({ key: secretKeyFor(p.id), value: v })
+                          : delSecret.mutateAsync(secretKeyFor(p.id)),
+                      );
                     }
-                    setEditing(null);
+                    void Promise.all(jobs)
+                      // 只有**全部**成功才收起表单并给出成功反馈
+                      .then(() => {
+                        setEditing(null);
+                        setSavedAt(Date.now());
+                      })
+                      // 失败：表单保持打开，错误就渲染在下面，用户的输入不会丢
+                      .catch(() => undefined);
                   }}
                 />
               ) : null}
@@ -214,10 +261,12 @@ export function LlmSettingsSection() {
 function ProviderForm({
   provider,
   hasKey,
+  saving,
   onSave,
 }: {
   provider: LlmProviderConfig;
   hasKey: boolean;
+  saving: boolean;
   onSave: (next: LlmProviderConfig, apiKey?: string) => void;
 }) {
   const { t } = useTranslation();
@@ -279,6 +328,8 @@ function ProviderForm({
         <Button
           size="sm"
           variant="primary"
+          disabled={saving}
+          data-testid="llm-save"
           onClick={() =>
             onSave(
               { ...provider, baseUrl, model },
@@ -286,7 +337,7 @@ function ProviderForm({
             )
           }
         >
-          {t('common.confirm')}
+          {saving ? t('settings.saving') : t('common.confirm')}
         </Button>
       </div>
     </div>
