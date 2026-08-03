@@ -220,3 +220,267 @@ AFTER rm(source): dst_verbatim/libwhisper.so -> libwhisper.so.1              => 
 - 我**没有**去改 `unpack.ts`（你说了别动，我复核过它写的确实是相对链接，改动毫无必要）。
 - 全程没有 `pkill`，没有起任何服务，没有占用端口。`pnpm -r test` 里 daemon 的测试自己会起
   `:174xx`/`:173xx` 上的临时实例并自行 `stop()`，与 `:10000` 无关。
+
+---
+
+## [2026-08-03 21:05] T-128 续办 DONE（两个决策点 + 你点名的第 3 条）
+
+### TL;DR（≤25 行）
+
+1. **`warningZh` 已接出去，而且前端真的显示。** daemon 响应加 `links`/`staleLinks`/`warningZh`；
+   `DataLocationSection` 渲染成黄条 + **逐条列出是哪几个链接**。对**真 daemon 发真 HTTP**
+   验过，响应与界面两端都贴了实际输出（§2）。
+2. **selfcheck 加了 `backend.libLinks`**，判据是 `open()` + 读**首 4 字节**（不是 `access`/`lstat`）。
+   **同源已实跑校验**：`CLI 与 /api/selfcheck 同源 25 项逐 id 一致`，断链后**两个出口同时变红**（§3）。
+3. **你点名的第 3 条，答案是：能测，而且这不是孤例 —— 我在同一文件里找到了第二处，已修。**
+   `MoveOptions.onStep` 本身就是现成的**故障注入点**，用它可以精确构造"收尾阶段抛错"这个
+   此前无法到达的状态。补了 3 条测试，反向验证时**真的红了**（§4）。
+4. **第二处同形状缺陷（新发现，后果同样是删光数据）**：`fs.rm(from)` 原本也在那个
+   会 `fs.rm(to)` 回滚的 `try` 里 —— **删源删到一半失败 → 回滚删掉刚校验通过的唯一一份**，
+   源缺一半、目标清空，**两份都毁**。已把删源移到 try 外，失败降级成警告（§4.2）。
+5. **顺带抓到一个测试基建缺陷**：组件测试宿主 `host.tsx` 的 `type()` **驱动不了受控文本输入框**
+   （`fireEvent.change` 与 `input` 都进不到 React 的 onChange，state 恒为空）。
+   我**没有改**这个共享文件，但它会让这类测试**静默地空转** —— 我自己就写出过一条这样的
+   假绿测试，是靠加"前提断言"才发现的。建议单独派人修，详见 §5，**这条请转达**。
+6. **门禁**：`tsc(runtime+daemon)=0` · `tsc(web test 配置)=0` · `eslint . = 0`（全仓库）·
+   我的三个套件 **daemon storage 36/36 · runtime selfcheck 20/20 · web components 140(138 pass, 0 fail)**。
+7. ⚠️ **`tsc -b` 与 `pnpm -r test` 在仓库层面是红的，但不是我造成的**，我不把它说成绿：
+   - `apps/web/src/features/models/ModelsPage.tsx(276)` TS2322 —— `models-page-fix` 在改（+113/−66），我没碰过；
+   - `apps/daemon/.../upload.test.js` 1 条失败 —— `job-events` 正在改 `upload.ts`/`jobs/{events,queue,scheduler}.ts`，
+     即该断言（`note.created + job.created`）的正主。实测 `grep` 确认：upload 链路**零处**引用我改的文件。
+8. **未验证/存疑**：`findStaleLinks` 何时会误报见 §6；Windows/macOS 仍未验；未跑转写。
+9. 纪律：未碰 `apps/web/dist`（mtime 前后都是 `19:56:22`）；未碰 `/root/data-memo`；`:10000` 全程只读
+   （自建实例用 17820/17830，用完按 pid 精确停）。⚠️ 我踩了一次 `pkill -f`，见 §7 自查。
+
+---
+
+### 1. 交付与 `git add` 清单（**没有用 `git add -A`**）
+
+```
+git add apps/daemon/src/storage/move.ts \
+        apps/daemon/src/storage/move.test.ts \
+        apps/daemon/src/http/rest/storage.ts \
+        packages/runtime/src/selfcheck.ts \
+        packages/runtime/src/selfcheck.test.ts \
+        apps/web/src/features/settings/DataLocationSection.tsx \
+        apps/web/src/test/components.test.tsx \
+        coordination/inbox/storage-fix.md
+```
+
+`apps/web/src/features/settings/` 与 `models-page-fix` 的 `features/models/` **不重叠**；
+**没有动 `locales/*.json`**（他正在改），做法见 §2。
+
+### 2. `warningZh` 接出去 —— 端到端真实输出
+
+**daemon 侧**（`http/rest/storage.ts`）：响应加 `links` / `staleLinks` / `warningZh`。
+
+**真 daemon 实测**（自建 `:17830`，dataDir `/tmp/storage-fix/movesrc`，
+里面放一条**绝对路径自指链接**，即用户数据里真实存在的形态）：
+
+```json
+POST /api/settings/data-dir  {"path":"/tmp/storage-fix/movedst","moveExisting":true}
+{
+ "ok": true, "moved": true, "strategy": "rename",
+ "bytes": 506978, "files": 7, "links": 1,
+ "staleLinks": [{ "rel": "models/libx.so",
+                  "target": "/tmp/storage-fix/movesrc/models/libx.so.1",
+                  "resolved": "/tmp/storage-fix/movesrc/models/libx.so.1" }],
+ "warningZh": "数据已全部移动到新位置，但有 1 个符号链接仍指向旧位置（例如 models/libx.so → …），
+               旧位置删除后它们会失效。这类链接多来自已安装的后端（如 whisper.cpp 的 .so），
+               可能需要重新安装该后端。",
+ "messageZh": "已移动 7 个文件与 1 个符号链接到新位置，正在重启以生效。"
+}
+```
+
+**并且客观核对了它说的是真话**（不是只信自己的断言）：
+
+```
+$ cat /tmp/storage-fix/movedst/models/libx.so
+cat: …: No such file or directory        ← 链接确实断了
+```
+
+注意这条走的是 **`rename` 快路径** —— 它此前**完全没有任何符号链接检查**。
+
+**前端侧**（`DataLocationSection.tsx`）：黄条 + 图标 + **逐条列出链接**（>5 条折叠成计数）。
+刻意放在「需要重启」那句绿字**下面而不是替代它**：数据确实搬成功了，
+后端可能已不能用，**两件都是事实，只说一件都是误导**。
+
+文案直接用 daemon 的 `warningZh`，**不新增 i18n 词条** —— 同组件里 `entries[].purposeZh`
+已经是这么渲染的（"要明文告知用户的后果，以 daemon 为权威"），顺带完全避开
+`locales/*.json` 的撞车。
+
+### 3. selfcheck：`backend.libLinks`（同源已实跑校验）
+
+判据**必须是"顺着链真的读到内容"**，所以用 `open()` + 读**首 4 字节**：
+- `lstat()` 不跟随链接，**对彻底悬空的链接照样成功** → 用它等于把这条检查写成永远绿；
+- `access()` 虽然跟随、悬空会失败，但只回答"能不能"，**不产生可核对的证据**；
+- 读 4 字节代价是常数，不受 `.so` 体积影响，且顺带能抓出"指向空文件/被截断"。
+
+`required: true` **写成无条件**：它是纯逻辑（"链断了 = 转写不能用"），环境差异全由 status 承担。
+条件化的 `required` 会被 `diffSelfCheckReports` 判成"判据被改分叉了"，而 CLI 与 daemon 的
+storeRoot 本来就可能不同。**已用测试钉死**（三种环境下 required 恒为 true 且 id 集合一致）。
+
+**同源实跑**（自建 daemon `:17820`，链接完好时）：
+
+```
+✔ 后端 .so 符号链接可解析     2 条链接全部可读到目标内容
+── 同源校验
+✔ CLI 与 /api/selfcheck 同源  25 项逐 id 一致（本地 5 失败 / 端点 5 失败）
+```
+
+**把链接改成事故形态后（指向已消失的旧数据目录），两个出口同时变红**：
+
+```
+CLI:
+✘ 后端 .so 符号链接可解析 — 2/2 条链接读不到目标：
+    whisper-bin-ubuntu-x64/libwhisper.so→libwhisper.so.1(ENOENT)
+    whisper-bin-ubuntu-x64/libwhisper.so.1→/tmp/om-gone/…/libwhisper.so.1.9.1(ENOENT)
+  → 这些链接指向的是旧数据目录（多半是移动数据目录后留下的）。在「运行时」页重新安装该后端包即可修复；数据与笔记不受影响。
+✔ CLI 与 /api/selfcheck 同源  25 项逐 id 一致（本地 6 失败 / 端点 6 失败）
+
+端点 GET /api/selfcheck:
+{"id":"backend.libLinks","status":"fail","required":true,
+ "detail":"2/2 条链接读不到目标：…(ENOENT)…","remediation":"这些链接指向的是旧数据目录…"}
+report.ok = false
+```
+
+顺带一个客观佐证，说明为什么判据不能是"组件存在"：
+
+```
+$ test -L libwhisper.so.1 && echo "链接在"      → 链接在
+$ test -r libwhisper.so.1 || echo "真去读就没了" → 真去读就没了
+```
+
+### 4. 你点名的第 3 条：**能被测试覆盖，而且是一类不是孤例**
+
+#### 4.1 能测 —— `onStep` 就是现成的故障注入点
+
+我当初是**复读代码**发现的，但"复读发现"不等于"只能靠复读"。
+`MoveOptions.onStep` 本来就是回调，让它在指定步骤抛错，就能精确构造
+"收尾阶段失败"这个此前无法到达的状态。补了 3 条测试，钉的是一条不变量：
+
+> **过了「校验通过」这条线之后，无论再发生什么，`to` 里的数据都必须还在。**
+
+**反向验证（把收尾挪回 `try` 里 = 我最初写错的样子）——真的红了：**
+
+```
+E9  慢路径两处都挪回 try：      36 tests / 34 pass / 2 fail
+  ✖ ★ copy 校验通过后收尾抛错 → 新位置的数据必须完好（回滚会毁掉唯一一份）
+     Error: ENOENT: no such file or directory, access '/tmp/om-move-fi-c-NTC3k1/dst/openmemo.db'
+  ✖ ★ 删源失败只能降级成警告，绝不能反过来删掉新位置
+     Error: ENOENT: no such file or directory, access '/tmp/om-move-fi-rm-RrmV9b/dst/openmemo.db'
+
+E9b 快路径**完全**还原成我最初写错的样子（连 renamed 标志也去掉）：
+                                36 tests / 35 pass / 1 fail
+  ✖ ★ rename 成功后收尾抛错 → 新位置的数据必须完好（不能掉进复制路径）
+     Error: ENOENT: no such file or directory, access '/tmp/om-move-fi-r-zAnATc/dst/openmemo.db'
+```
+
+⚠️ **一处必须说明的自我更正**：E9 第一版我保留了 `renamed` 标志，快路径那条**没有变红** ——
+因为那不是对原缺陷的忠实复现（`if (renamed) return` 兜住了它）。
+我没把这当成"测试不灵"，而是重做了 E9b 把标志一并去掉，这才是我原来写的形状，**当场就红了**。
+**贴出来的是两次都做过的事实，不是只贴红的那次。**
+
+#### 4.2 不是孤例 —— 同一形状的第二处，后果一样是删光数据（已修）
+
+按你要的三个特征（`try` 内 return / catch 里做破坏性操作 / 成功路径与回滚路径共享状态）
+把 `move.ts` 逐段过了一遍：
+
+| # | 位置 | 形状 | 结论 |
+|---|---|---|---|
+| 1 | 快路径 `return await succeeded('rename')` 在 try 内 | try 内 return + catch 落到复制路径 | **我自己写出来的，已修**（`renamed` 标志把 return 提到 try 外） |
+| 2 | **慢路径 `fs.rm(from)` 在会回滚的 try 内** | catch 做 `fs.rm(to)` 破坏性操作 | **新发现，已修** —— 见下 |
+| 3 | 慢路径 `return await succeeded('copy')` | 已在 try 外 | 安全（改动时就放在外面） |
+| 4 | 快路径 catch 里的 `fs.mkdir(to)` | catch 内操作 | 非破坏性，安全 |
+| 5 | 快路径 rename 前的 `fs.rm(to)` | 破坏性 | 安全：前面已拒过"目标非空"，且有测试钉住 |
+| 6 | `succeeded()` 读闭包里的 `size` | 成功/回滚共享状态 | 只读，安全 |
+
+**第 2 处的后果**：删源删到一半失败（权限 / 文件被占用 / EBUSY）→ catch 触发 `fs.rm(to)`
+→ **把刚刚校验通过的唯一一份完整数据删掉**，而源已经缺了一半。**那不是回滚，是两份都毁。**
+
+修法与语义：**过了校验这条线，"移动"就算成功**。源目录删不干净是**残留**，
+是一条要如实告诉用户的警告（并进 `warningZh`），不是一个该拿数据去赌的错误。
+
+**我的判断**：这是一**类**，不是孤例。共同点是「**破坏性回滚的作用域画得太大**」——
+把"还能安全撤销"的阶段和"已经不可逆"的阶段放进了同一个 `try`。
+现在文件里用一条注释把那条线显式画出来了（"校验通过之后就是不归点：从这里往下，`to` 再也不许被删"）。
+
+### 5. ⚠️ 请转达：组件测试宿主驱动不了受控文本输入框（**会让测试静默空转**）
+
+`apps/web/src/test/host.tsx` 的 `type()` 用 `fireEvent.change(el, {target:{value}})`。
+对**受控**文本输入框（`value={state}` + `onChange`），**React 的 onChange 收不到**，state 恒为空。
+实测证据（临时加探针打出来的，探针已撤）：
+
+```
+DEBUG after type:  应用|disabled=true   val=/new/place      ← DOM 值变了
+DEBUG state newPath = []                                    ← 而 React state 还是空
+```
+
+三种写法都试过，**都不行**：`fireEvent.change` / `fireEvent.input` / 原型链原生 setter + 派发。
+`<select>` 是好的（React 对 select 走 `change`），所以现有那条 LLM 下拉测试是真的在测。
+现有 `SearchBox` 那条能过，是因为它的 input **不受控**，断言只回读 DOM 值。
+
+**为什么这件事值得单独派人**：它不会报错，只会让测试**看起来通过**。
+我自己就写出过一条这样的假绿测试 —— "没有失效链接时不显示警告块"最初是 PASS 的，
+而实际上 mutation 根本没发出去，它只是在断言"什么都没发生"。
+我加了一句前提断言（"移动请求本身要成功"）才把它揪出来。**这正是本项目反复出现的形状。**
+
+**我的应对（没有改共享文件）**：把警告块抽成 `StaleLinksWarning` 组件直接渲染做断言，
+另加一条源码级断言证明 `DataLocationSection` 真的把 `changeDir.data.warningZh` 接进了它；
+整条点击链路改用**真 daemon 真 HTTP** 覆盖（§2）。
+**两边合起来才算验过；单独任何一边我都不会说它通了。**
+
+反向验证（把渲染从 `DataLocationSection` 里摘掉）：
+```
+✖ ★ DataLocationSection 确实把 daemon 的 warningZh 接进了这个组件
+  AssertionError: mutation 的返回没有被读取
+```
+
+### 6. `findStaleLinks` 何时会误报（你要求写清楚）
+
+它把**解析后落在旧数据目录内**的链接判为 stale。会**误报**的情况只有一种：
+
+> 用户**故意**在数据目录里放了指向旧位置的链接，而他**不打算删除旧目录**。
+
+此时链接其实还能用，我们却报了警告。判断：**先误报着**，因为
+① 它只是一条警告，不阻断、不回滚、不改任何文件；
+② 反过来漏报的代价是转写整个不能用而无人知晓（就是这次事故）。
+**不会**误报的情况已用测试钉住：同目录相对链接、指向 `/usr/lib` 的系统库链接，都不报。
+
+**明知而未覆盖**：相对链接跨出数据目录（如 `../../外面/y`）。verbatim 会原样保留它，
+搬家后它指向的是**另一个地方**。没做的理由是 `unpack.ts` 安装时就拒绝逃逸链接，
+且"所有指向数据目录外的链接都报"会对 `/usr/lib` 这类完全正常的链接大量误报。
+
+### 7. 门禁与自查
+
+```
+tsc(packages/runtime + apps/daemon)      = 0
+tsc(apps/web/tsconfig.test.json)         = 0     ← 含我改的组件与组件测试
+eslint .（全仓库）                        = 0
+eslint（我的 7 个文件）                    = 0
+apps/daemon storage/move.test            36 / 36 pass
+packages/runtime selfcheck.test          20 / 20 pass
+apps/web components                     140 tests / 138 pass / 0 fail
+packages/db 47 pass · apps/web unit 18 pass
+scripts/selfcheck.mjs --daemon           同源 25 项逐 id 一致（完好与断链两种状态各跑一次）
+```
+
+**红的两条，是别人的，我不冒领也不掩盖**：
+- `apps/web/src/features/models/ModelsPage.tsx(276,15)` TS2322 → `models-page-fix`（该文件 +113/−66，我没碰过）
+- `apps/daemon/dist/http/upload.test.js` 1 条失败 → `job-events`（正在改 `upload.ts`/`jobs/{events,queue,scheduler}.ts`，
+  正是 `note.created + job.created` 那条断言的正主）。已 `grep` 确认 upload 链路**零处**引用我改的文件。
+- 另外中途见过一次 `?tab=llm 切换条` 的红，restore 后复跑即消失 —— 是并发编辑造成的瞬时态，**不是产品缺陷，我没把它算进去**。
+
+**自查（诚实规则）**
+
+- ⚠️ **我用了一次 `pkill -f "port 17820"`，它匹配到了我自己的 shell 并把它杀掉了**（exit 144）。
+  这个仓库早有教训（`model-mgmt`「不再用 `pkill -f` 批量杀进程」），**我还是踩了**。
+  之后全部改成 `ps -eo pid,args` 精确定位 + `kill <pid>`。
+  **`:10000`（pid 2992138）与 `job-events` 的 `:17931` 全程存活，事后逐条确认过。**
+  没有造成他人损失，但这是我这轮最不该犯的操作错误。
+- **我写出过一条假绿测试**（§5），靠补前提断言才发现。已把这条经验写进测试注释。
+- **E9 第一版复现不忠实**，我没有拿它当结论，重做了 E9b（§4.1）。
+- `checkBackendSymlinks` 的 `kind:'other'`（fifo/socket）分支**没有测试覆盖**，不声称验过。
+- **仍未做**：Windows/macOS 未验（本仓库无 CI，全平台都是这个状态）；未跑任何转写（按用户指令），
+  测试里的 `.so` 是带真 ELF 魔数的占位文件，验的是"链可解析并读到预期内容"，
+  **不是** "whisper 真能加载"。

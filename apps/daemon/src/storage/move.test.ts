@@ -403,6 +403,29 @@ describe('★ T-128 移动数据目录不能弄坏符号链接', () => {
     await assert.rejects(() => fs.readFile(join(to, 'models', 'libx.so')));
   });
 
+  /**
+   * ★ 算出来了还得**送出去**。
+   *
+   * `staleLinks`/`warningZh` 的全部价值就是让"链接断了"这件事不再静默。
+   * 如果 HTTP 层不转发它，我们就只是把一盏假绿灯换成一盏**没接线的红灯** ——
+   * 这个仓库已经栽过同一形状的跟头（`build` 字段后端返回了、前端手抄时漏掉；
+   * `job.blocked` 的 toast 接收方一直在等一个没人发的事件）。
+   *
+   * ⚠️ 这是**源码级**断言，不是跑一次 HTTP。它能挡住"有人把字段从响应里删掉"，
+   * 挡不住"字段名拼错但两边一致地错"。真实 HTTP 响应我另外对着真 daemon 验过一次
+   * （输出贴在 inbox），两者合起来才算数；单独任何一条我都不会说它验过了。
+   */
+  it('★ HTTP 层必须把 staleLinks/warningZh 转发出去（算出来不送出去等于没修）', async () => {
+    // ⚠️ 用 **cwd 相对路径**而不是 `import.meta.url`：测试跑的是 `dist/` 里的产物，
+    // `import.meta.url` 会指到 `dist/storage/` 去，读不到源码。（第一版就这么写错了。）
+    const src = await fs.readFile(`${process.cwd()}/src/http/rest/storage.ts`, 'utf8');
+    // 用 includes 而不是 assert.match：断言失败时 match 会把整份源码打进报告，
+    // 几百行噪音会把真正的那一句结论淹掉。
+    assert.ok(src.includes('staleLinks: result.staleLinks'), '响应里没有 staleLinks');
+    assert.ok(src.includes('result.warningZh'), '响应里没有 warningZh');
+    assert.ok(src.includes('links: result.links'), '响应里没有链接计数');
+  });
+
   it('★ rename 快路径也要查 stale 链接（它根本不调用 verifyTreesMatch）', async () => {
     const base = tmp('absr');
     const from = join(base, 'src');
@@ -416,6 +439,88 @@ describe('★ T-128 移动数据目录不能弄坏符号链接', () => {
     assert.equal(r.strategy, 'rename');
     assert.equal(r.ok, true);
     assert.equal(r.staleLinks.length, 1);
+  });
+});
+
+/**
+ * ★ 「控制流位置」错误 —— 这一类**能不能被测试覆盖**？能。
+ *
+ * 起因：我把 `return await succeeded(...)` 写在了 `try` 里面。收尾一步一旦抛错，
+ * 就会被那个 `catch` 接住，而 catch 做的是**破坏性回滚**（`fs.rm(to)`）——
+ * 此刻源目录已经删了，于是回滚删掉的是**唯一一份数据**。
+ * 后果比本任务原本要修的符号链接严重一个量级：那个是弄坏 `.so`，这个是清空用户的笔记。
+ *
+ * 我最初是**复读代码**发现它的，不是测试。但复读发现 ≠ 只能靠复读：
+ * `MoveOptions.onStep` 本来就是一个回调，**它就是现成的故障注入点** ——
+ * 让它在指定步骤抛错，就能精确构造"收尾阶段失败"这个此前无法到达的状态。
+ *
+ * 所以这两条测试钉的不是某个字段的值，而是一条不变量：
+ *   **过了「校验通过」这条线之后，无论再发生什么，`to` 里的数据都必须还在。**
+ */
+describe('★ 收尾阶段抛错时，绝不能把已经搬好的数据删掉', () => {
+  /** 在指定步骤抛错的 onStep —— 故障注入。 */
+  const throwAt = (target: string) => (s: string) => {
+    if (s === target) throw new Error(`注入故障 @ ${target}`);
+  };
+
+  it('★ rename 成功后收尾抛错 → 新位置的数据必须完好（不能掉进复制路径）', async () => {
+    const base = tmp('fi-r');
+    const from = join(base, 'src');
+    const to = join(base, 'dst');
+    await fs.mkdir(from, { recursive: true });
+    await seed(from);
+    await seedBackendSymlinks(from);
+
+    // 收尾（checking-links）抛错。写在 try 里时，catch 会把它当成"rename 失败"
+    // 而落进复制路径 —— 可源目录此刻已经不存在了。
+    await moveDataDir(from, to, { onStep: throwAt('checking-links') }).catch(() => undefined);
+
+    // 唯一真正要紧的事：数据还在不在
+    await fs.access(join(to, 'openmemo.db'));
+    await fs.access(join(to, 'media', '会议录音.m4a'));
+    assert.equal(await soIsLoadable(to, 'libwhisper'), true, '后端链接也得完好');
+  });
+
+  it('★ copy 校验通过后收尾抛错 → 新位置的数据必须完好（回滚会毁掉唯一一份）', async () => {
+    const base = tmp('fi-c');
+    const from = join(base, 'src');
+    const to = join(base, 'dst');
+    await fs.mkdir(from, { recursive: true });
+    await seed(from);
+
+    await moveDataDir(from, to, {
+      forceCopy: true,
+      onStep: throwAt('checking-links'),
+    }).catch(() => undefined);
+
+    await fs.access(join(to, 'openmemo.db'));
+    assert.equal((await measureTree(to)).files, 3, '复制出来的文件一个都不能少');
+  });
+
+  /**
+   * 同一形状的**第二处**（复读时一并找出来的，不是同一个 bug）：
+   * `fs.rm(from)` 原本也在那个会回滚的 try 里。删源删到一半失败（权限 / 文件被占用），
+   * catch 就会 `fs.rm(to)` —— **源缺了一半，目标被删光，两份都毁**。
+   * 现在删源移到了 try 外，失败只降级成一条警告。
+   */
+  it('★ 删源失败只能降级成警告，绝不能反过来删掉新位置', async () => {
+    const base = tmp('fi-rm');
+    const from = join(base, 'src');
+    const to = join(base, 'dst');
+    await fs.mkdir(from, { recursive: true });
+    await seed(from);
+
+    const r = await moveDataDir(from, to, {
+      forceCopy: true,
+      onStep: throwAt('removing-source'),
+    }).catch(() => undefined);
+
+    // 数据在新位置，完整
+    await fs.access(join(to, 'openmemo.db'));
+    assert.equal((await measureTree(to)).files, 3);
+    // 而且源目录也还在（删源那一步根本没执行）—— 没有"两边各一半"
+    await fs.access(join(from, 'openmemo.db'));
+    if (r) assert.equal(r.ok, true, '删源失败不该把整次迁移判成失败');
   });
 });
 

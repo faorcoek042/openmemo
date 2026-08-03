@@ -13,9 +13,13 @@
  * Run: node --test packages/runtime/dist/selfcheck.test.js
  */
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { mkdtempSync, promises as fs } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, describe, it } from 'node:test';
 
 import {
+  checkBackendSymlinks,
   diffSelfCheckReports,
   runSelfCheck,
   type SelfCheckProbes,
@@ -51,6 +55,34 @@ function minimalProbes(over: Partial<SelfCheckProbes> = {}): SelfCheckProbes {
 
 const idsOf = (r: SelfCheckReport): string[] => r.results.map((x) => x.id);
 const byId = (r: SelfCheckReport, id: string) => r.results.find((x) => x.id === id);
+
+/* ---- T-128 用的临时后端目录 -------------------------------------------------------- */
+
+const tmpRoots: string[] = [];
+after(async () => {
+  for (const d of tmpRoots) await fs.rm(d, { recursive: true, force: true }).catch(() => {});
+});
+
+/**
+ * 造一个 `<storeRoot>/by-name/backend/<pack>/` —— **两级相对链**，
+ * 与 whisper.cpp 官方 tarball 的形状一致（`.so → .so.1 → .so.1.9.1`）。
+ */
+async function seedBackend(opts: { broken: boolean }): Promise<string> {
+  const storeRoot = mkdtempSync(join(tmpdir(), 'om-sc-so-'));
+  tmpRoots.push(storeRoot);
+  const pack = join(storeRoot, 'by-name', 'backend', 'whisper-bin-ubuntu-x64');
+  await fs.mkdir(pack, { recursive: true });
+  // 真 ELF 魔数：判据要读到内容，就得有内容可读
+  await fs.writeFile(join(pack, 'libwhisper.so.1.9.1'), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 1, 2, 3]));
+  await fs.symlink('libwhisper.so.1.9.1', join(pack, 'libwhisper.so.1'));
+  await fs.symlink('libwhisper.so.1', join(pack, 'libwhisper.so'));
+  if (opts.broken) {
+    // 精确复现事故形态：链接被改写成指向一个**已经不存在的旧数据目录**
+    await fs.unlink(join(pack, 'libwhisper.so.1'));
+    await fs.symlink('/tmp/om-gone/models/by-name/backend/x/libwhisper.so.1.9.1', join(pack, 'libwhisper.so.1'));
+  }
+  return storeRoot;
+}
 
 describe('检查项集合稳定（两个出口不会分叉）', () => {
   it('四类新检查在探针缺席时仍然出现，只是报"未探测"', async () => {
@@ -206,6 +238,96 @@ describe('工具来源要分开：装在 dataDir 里 vs 借系统 PATH 的', () 
     assert.equal(t?.status, 'warn');
     assert.equal(t?.required, false);
     assert.match(t?.detail ?? '', /系统 PATH/);
+  });
+});
+
+/**
+ * ★ T-128：后端 `.so` 符号链接。
+ *
+ * 用户那次 8 条链接全断、转写完全不可用，而**产品里没有任何地方会发现它** ——
+ * 这组测试就是那个"任何地方"。判据必须是**顺着链真的读到内容**：
+ * 悬空链接 `lstat()` 照样成功，用它做判据等于把这条检查写成永远绿。
+ */
+describe('★ T-128 后端 .so 符号链接可解析', () => {
+  it('两级相对链完好 → 全部读得到内容', async () => {
+    const links = await checkBackendSymlinks(await seedBackend({ broken: false }));
+    assert.equal(links.length, 2, '两级链应各算一条');
+    assert.ok(
+      links.every((l) => l.readable),
+      JSON.stringify(links),
+    );
+    // 读到的是真 ELF 魔数，不是"文件存在"这种间接证据
+    assert.equal(links.find((l) => l.rel.endsWith('libwhisper.so'))?.note, '7f454c46');
+  });
+
+  it('★ 链接指向已消失的旧数据目录 → 必须报读不到（事故的精确形态）', async () => {
+    const links = await checkBackendSymlinks(await seedBackend({ broken: true }));
+    const broken = links.filter((l) => !l.readable);
+    // 两级链断在第二跳，第一跳跟着一起用不了 —— 两条都要报出来
+    assert.equal(broken.length, 2, JSON.stringify(links));
+    assert.ok(broken.every((l) => l.note === 'ENOENT'), JSON.stringify(broken));
+  });
+
+  it('★ 悬空链接的 lstat 是成功的 —— 证明"组件存在"这个判据本身就是假绿灯', async () => {
+    const storeRoot = await seedBackend({ broken: true });
+    const p = join(storeRoot, 'by-name', 'backend', 'whisper-bin-ubuntu-x64', 'libwhisper.so.1');
+    // 这一条不是在测我们的代码，是在钉住"为什么不能用 lstat"这个理由
+    assert.equal((await fs.lstat(p)).isSymbolicLink(), true, 'lstat 对悬空链接照样成功');
+    await assert.rejects(() => fs.readFile(p), '而真去读就会失败');
+  });
+
+  it('★ 断链 → runSelfCheck 报 fail，且 remediation 指出是搬家造成的', async () => {
+    const r = await runSelfCheck({
+      ...BASE,
+      storeRoot: await seedBackend({ broken: true }),
+      probes: minimalProbes({ installed: () => Promise.resolve(['whisper-bin-ubuntu-x64']) }),
+    });
+    const c = byId(r, 'backend.libLinks');
+    assert.equal(c?.status, 'fail');
+    assert.equal(c?.required, true);
+    assert.match(c?.detail ?? '', /2\/2 条链接读不到目标/);
+    assert.match(c?.remediation ?? '', /旧数据目录/);
+    assert.equal(r.ok, false, 'required 的 fail 必须让整份报告变红');
+  });
+
+  it('链接完好 → ok', async () => {
+    const r = await runSelfCheck({
+      ...BASE,
+      storeRoot: await seedBackend({ broken: false }),
+      probes: minimalProbes({ installed: () => Promise.resolve(['whisper-bin-ubuntu-x64']) }),
+    });
+    const c = byId(r, 'backend.libLinks');
+    assert.equal(c?.status, 'ok');
+    assert.equal(c?.remediation, null);
+  });
+
+  it('★ 没装后端包 → warn 而不是 fail（"什么都没装"不是"装坏了"）', async () => {
+    const r = await runSelfCheck({ ...BASE, probes: minimalProbes() });
+    const c = byId(r, 'backend.libLinks');
+    assert.equal(c?.status, 'warn');
+    assert.match(c?.detail ?? '', /未安装后端包/);
+  });
+
+  it('★ required 恒为 true —— 它是纯逻辑，不许随 storeRoot 漂移（同源比对的前提）', async () => {
+    // CLI 与 daemon 的 storeRoot 可以不同；required 若跟着环境变，
+    // diffSelfCheckReports 会把它报成"判据被改分叉了"
+    const states = await Promise.all([
+      runSelfCheck({ ...BASE, probes: minimalProbes() }),
+      runSelfCheck({
+        ...BASE,
+        storeRoot: await seedBackend({ broken: false }),
+        probes: minimalProbes({ installed: () => Promise.resolve(['p']) }),
+      }),
+      runSelfCheck({
+        ...BASE,
+        storeRoot: await seedBackend({ broken: true }),
+        probes: minimalProbes({ installed: () => Promise.resolve(['p']) }),
+      }),
+    ]);
+    for (const r of states) assert.equal(byId(r, 'backend.libLinks')?.required, true);
+    // 三种环境下 id 集合也必须完全一致
+    assert.deepEqual(idsOf(states[0]!), idsOf(states[1]!));
+    assert.deepEqual(idsOf(states[1]!), idsOf(states[2]!));
   });
 });
 

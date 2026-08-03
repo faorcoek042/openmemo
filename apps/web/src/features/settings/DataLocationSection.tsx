@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Copy, FolderOpen, HardDrive, Loader2 } from 'lucide-react';
+import { AlertTriangle, Copy, FolderOpen, HardDrive, Loader2 } from 'lucide-react';
 
 import type { GetStorageResponse } from '@openmemo/shared';
 
@@ -31,6 +31,76 @@ interface DataDirResponse {
   dataDir?: string;
   usage: { bytes: number; files: number } | null;
   entries: { path: string; name: string; purposeZh: string }[];
+}
+
+/**
+ * `POST /api/settings/data-dir` 的返回。
+ *
+ * ★ `warningZh` / `staleLinks` 是 T-128 的产物，**必须渲染**。
+ *
+ * 背景：移动数据目录曾经会静默弄坏 whisper 后端的 `.so` 符号链接 —— 用户那次
+ * 8 条链接全断、转写完全不可用，而自检报告"一切正常"。daemon 现在会检测出
+ * "搬完之后还指着旧位置"的链接并回一条 `warningZh`。
+ *
+ * 检测到了却不显示，就只是把**假绿灯**换成一盏**没接线的红灯**，用户看到的
+ * 依然是"移动成功"。所以这个字段在这里不是可选的装饰，它就是修复本身的出口。
+ */
+interface MoveDataDirResponse {
+  restartRequired?: boolean;
+  moved?: boolean;
+  files?: number;
+  links?: number;
+  messageZh?: string;
+  /** 非致命警告：数据搬到位了，但有链接失效了。 */
+  warningZh?: string;
+  staleLinks?: { rel: string; target: string; resolved: string }[];
+}
+
+/**
+ * ★ T-128：搬完之后失效的符号链接，必须显示出来。
+ *
+ * **单独抽成组件是为了它能被真的渲染一次做断言。** 内联在 `DataLocationSection`
+ * 里时，要触发它就得先在受控输入框里打字 —— 而组件测试宿主驱动不了受控文本框
+ * （`fireEvent.change`/`input` 都进不到 React 的 onChange，状态始终为空，
+ * 见 `coordination/inbox/storage-fix.md`）。于是这段"修复的唯一出口"就会变成
+ * **没有任何测试覆盖**的一块 JSX —— 而它防的恰恰就是"没人看的东西会悄悄失效"。
+ */
+export function StaleLinksWarning({
+  warningZh,
+  staleLinks,
+}: {
+  warningZh: string;
+  staleLinks?: { rel: string; target: string }[];
+}) {
+  return (
+    <div
+      role="status"
+      data-testid="data-dir-stale-links"
+      className="rounded-md border border-warning/40 bg-warning/10 p-2"
+    >
+      <p className="flex items-start gap-1.5 text-xs text-warning">
+        <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
+        <span>{warningZh}</span>
+      </p>
+      {/*
+        只给一句概括不够：用户得知道**是哪几条**链接断了，
+        否则他既不知道该重装哪个后端，也无法自己核对。
+        超过 5 条折叠成计数，避免把整页刷满。
+      */}
+      {staleLinks?.length ? (
+        <ul className="mt-1.5 space-y-0.5 pl-5">
+          {staleLinks.slice(0, 5).map((l) => (
+            <li key={l.rel} className="truncate font-mono text-[11px] text-ink-secondary">
+              {l.rel} → {l.target}
+            </li>
+          ))}
+          {staleLinks.length > 5 ? (
+            <li className="text-[11px] text-ink-muted">…… 共 {staleLinks.length} 条</li>
+          ) : null}
+        </ul>
+      ) : null}
+    </div>
+  );
 }
 
 /**
@@ -89,7 +159,7 @@ export function DataLocationSection() {
    */
   const changeDir = useMutation({
     mutationFn: (p: { path: string; moveExisting: boolean }) =>
-      api<{ restartRequired?: boolean }>('settings', '/settings/data-dir', {
+      api<MoveDataDirResponse>('settings', '/settings/data-dir', {
         method: 'POST',
         body: p,
       }),
@@ -255,6 +325,25 @@ export function DataLocationSection() {
 
           {changeDir.isSuccess ? (
             <p className="text-xs text-good">{t('settings.dataDir.needRestart')}</p>
+          ) : null}
+
+          {/*
+            ★ T-128：搬完之后如果有符号链接失效，**必须让用户看见**。
+
+            刻意放在「需要重启」那句绿色提示的**下面而不是替代它** ——
+            数据确实搬成功了（绿的那句是真的），但转写后端可能已经不能用了，
+            两件事都是事实，只说其中一件都是误导。
+
+            文案直接用 daemon 给的 `warningZh`，不走 i18n：
+            同一个组件里 `entries[].purposeZh` 已经是这么渲染的（"凡是要明文告知
+            用户的路径/后果，一律以 daemon 为权威来源"）。这样也不必去动
+            `locales/*.json` —— 那两个文件此刻正被别的 agent 改着。
+          */}
+          {changeDir.data?.warningZh ? (
+            <StaleLinksWarning
+              warningZh={changeDir.data.warningZh}
+              {...(changeDir.data.staleLinks ? { staleLinks: changeDir.data.staleLinks } : {})}
+            />
           ) : null}
 
           {/*

@@ -49,7 +49,7 @@ import { ASR_ENGINE_LABELS, isValidAsrLanguage } from '../lib/asr';
 import { AsrModelPicker } from '../components/common/AsrModelPicker';
 import { AsrEngineStatus } from '../components/common/AsrEngineStatus';
 import { useImportUrlMutation } from '../features/notes';
-import { DataLocationSection } from '../features/settings/DataLocationSection';
+import { DataLocationSection, StaleLinksWarning } from '../features/settings/DataLocationSection';
 import { RetranscribeButton, isSegmentEdited } from '../features/notes/RetranscribeButton';
 import { WordLevelBadge } from '../features/transcript';
 import { WordHighlight, findActiveWord } from '../features/transcript/WordHighlight';
@@ -68,6 +68,13 @@ import {
   isSessionStorageAvailable,
 } from '../lib/secure-context';
 import zhLocale from '../app/i18n/locales/zh-CN.json';
+import enLocale from '../app/i18n/locales/en.json';
+import i18nInstance from '../app/i18n';
+import ModelsPage from '../features/models/ModelsPage';
+import NotesListPage from '../features/notes/NotesListPage';
+import { splitEmphasis } from '../components/common/Emphasis';
+import { ConnectivitySummary } from '../components/common/MockNotice';
+import { useSurfaceStore, SURFACES } from '../lib/api/surfaces';
 
 /** 直接读 locale 文件断言文案 —— 归因错误是内容问题，不是渲染问题。 */
 function readLocale(_code: string): Record<string, Record<string, unknown>> {
@@ -690,6 +697,61 @@ describe('设置 · 数据位置', () => {
     assert.ok(text(r.container).includes('模型占用'));
     assert.ok(text(r.container).includes('1.5 GB'), '应换算成人类可读单位');
     r.unmount();
+  });
+
+  /*
+   * ★ T-128：daemon 报了"链接失效"，界面就必须显示出来。
+   *
+   * 钉的是本项目反复出现的那个形状 —— **后端返回了，前端没读**：
+   * `build` 字段后端给了、前端逐字段手抄时漏掉，界面写着"构建信息未知"；
+   * `job.blocked` 的 toast 接收方一直在等一个从来没人发的事件。
+   * 移动数据目录这条更要紧：它是修复本身的唯一出口，不显示就等于没修 ——
+   * 用户看到的依然是一句"移动成功"，而转写已经不能用了。
+   *
+   * ⚠️ 这里**直接渲染 `StaleLinksWarning`**，而不是"打开表单→输路径→点应用"。
+   * 原因是宿主驱动不了受控文本输入框（`fireEvent.change`/`input` 都到不了 React 的
+   * onChange，state 恒为空 —— 已实测确认，见 inbox）。整条点击链路改为对
+   * **真 daemon 发真 HTTP** 验证（响应确实带 warningZh + staleLinks），
+   * 两边合起来才算真的验过；只做其中一边我都不会说它通了。
+   */
+  test('★ 有失效链接时：警告文案与具体是哪几条都要渲染出来', async () => {
+    const r = await render(
+      <StaleLinksWarning
+        warningZh="数据已全部移动到新位置，但有 1 个符号链接仍指向旧位置，旧位置删除后它们会失效。"
+        staleLinks={[{ rel: 'models/libx.so', target: '/old/models/libx.so.1' }]}
+      />,
+    );
+    const warn = r.container.querySelector<HTMLElement>('[data-testid="data-dir-stale-links"]');
+    assert.ok(warn, '警告块没有渲染 —— daemon 报了链接失效而界面只说"移动成功"');
+    assert.ok(text(warn).includes('仍指向旧位置'), `实际文案: ${text(warn)}`);
+    // 只给一句概括不够：用户要知道是哪一条，否则不知道该重装哪个后端
+    assert.ok(text(warn).includes('models/libx.so'), '必须列出具体是哪条链接');
+    assert.ok(text(warn).includes('/old/models/libx.so.1'), '要显示它指向了哪里');
+    r.unmount();
+  });
+
+  test('链接很多时折叠成计数，不把整页刷满（但不能把"还有多少条"藏掉）', async () => {
+    const many = Array.from({ length: 8 }, (_, i) => ({
+      rel: `models/lib${i}.so`,
+      target: `/old/lib${i}.so.1`,
+    }));
+    const r = await render(<StaleLinksWarning warningZh="8 个链接失效" staleLinks={many} />);
+    const shown = text(r.container);
+    assert.ok(shown.includes('models/lib0.so') && shown.includes('models/lib4.so'));
+    assert.ok(!shown.includes('models/lib5.so'), '超出 5 条应折叠');
+    assert.ok(shown.includes('共 8 条'), '折叠了也必须说清一共多少条');
+    r.unmount();
+  });
+
+  /**
+   * 上面那条证明"组件会显示"，这条证明"它真的被接上了"。
+   * 两者缺一不可 —— 本项目出过的正是"组件写好了但没人渲染它"这一类。
+   */
+  test('★ DataLocationSection 确实把 daemon 的 warningZh 接进了这个组件', async () => {
+    const src = await readSource('features/settings/DataLocationSection.tsx');
+    assert.match(src, /changeDir\.data\?\.warningZh/, 'mutation 的返回没有被读取');
+    assert.match(src, /<StaleLinksWarning/, '警告组件没有被渲染');
+    assert.match(src, /staleLinks: changeDir\.data\.staleLinks/, '具体链接列表没有传下去');
   });
 
   test('★ 拿不到 dataDir 时绝不编一个"看起来对"的路径', async () => {
@@ -2335,5 +2397,449 @@ describe('D-10 不变量', () => {
     const st = zh.settings as Record<string, unknown>;
     assert.equal(st['asr'], undefined, '留着下一个人会照它建页');
     assert.equal(st['storage'], undefined);
+  });
+});
+
+/* ───────────────────── T-129：/models Tab 切换条 + 混语言 ───────────────────── */
+
+/**
+ * `/models` 页的四个 query 的最小桩。
+ * 目录里刻意放**非中文**的展示名：下面要断言"英文界面上不许出现中文"，
+ * 如果桩数据自带中文，那条断言就永远红，测的也不是我们的文案。
+ */
+function stubModelsPage(opts: { withCatalog?: boolean } = {}) {
+  const variant = {
+    id: 'asr/dummy-q5',
+    groupId: 'asr/dummy',
+    role: 'asr',
+    arch: 'whisper',
+    format: 'ggml',
+    quantization: 'q5_1',
+    languages: ['multi'],
+    totalSizeBytes: 60_000_000,
+    catalogVersion: '2026.08.03',
+    license: { id: 'MIT', url: 'https://example.invalid', requiresAcceptance: false, gated: false },
+    files: [{ name: 'a.bin', sha256: 'x'.repeat(64), sizeBytes: 60_000_000, optional: false }],
+    requirements: { ramRequiredMB: 512, vramRequiredMB: 0, computedAtContext: null },
+    fitness: {
+      tier: 'recommended',
+      reasonZh: 'dummy reason',
+      notRecommendedForLanguage: false,
+      speedTier: 'unknown',
+      speedSource: 'none',
+      estMinutesPerAudioHour: null,
+      estGpuLayers: null,
+    },
+  };
+  return stubApi({
+    '/models/catalog?role=all&lang=en': {
+      stale: false,
+      fetchedAt: '2026-08-03T00:00:00.000Z',
+      groups: opts.withCatalog
+        ? [
+            {
+              groupId: 'asr/dummy',
+              role: 'asr',
+              displayNameZh: 'Dummy ASR',
+              descriptionZh: 'a stub group',
+              tags: [],
+              variants: [variant],
+            },
+          ]
+        : [],
+    },
+    '/models/catalog?role=all&lang=zh': {
+      stale: false,
+      fetchedAt: '2026-08-03T00:00:00.000Z',
+      groups: [],
+    },
+    '/models/installed': { models: [], active: { asr: null, llm: null } },
+    '/models/storage': {
+      usedBytes: 0,
+      volume: { freeBytes: 1_000_000_000, totalBytes: 2_000_000_000 },
+      breakdown: [],
+      reclaimable: { orphanBlobsBytes: 0, stalePartialsBytes: 0 },
+    },
+    '/jobs': { jobs: [] },
+    '/settings': {
+      settings: {
+        'llm.providers': [
+          {
+            id: 'deepseek',
+            kind: 'openai-compatible',
+            label: 'DeepSeek',
+            baseUrl: 'https://api.deepseek.com/v1',
+            model: 'deepseek-chat',
+            isLocal: false,
+          },
+        ],
+        'llm.defaultProviderId': 'deepseek',
+        'llm.defaultModelId': 'deepseek-chat',
+      },
+    },
+    '/secrets': { secrets: [], disclosure: null },
+  });
+}
+
+describe('T-129 /models Tab 切换条', () => {
+  test('★ ?tab=llm 时切换条必须仍在页面上，且不在任何被隐藏的面板里', async () => {
+    stubModelsPage();
+    const r = await render(<ModelsPage />, { route: '/models?tab=llm' });
+    await r.flush();
+
+    // 前提：确实落在「语言模型」Tab 上（不然下面断的是另一件事）
+    assert.ok(
+      r.container.querySelector('[data-testid="models-llm-tab"]'),
+      '?tab=llm 应渲染语言模型面板',
+    );
+
+    const tabs = r.container.querySelector('[data-testid="models-tabs"]');
+    assert.ok(tabs, '切换条整个不见了 —— 用户切过来就再也切不回去');
+
+    /*
+     * ★ 这两条才是真正的判据，不能只靠"点得动"。
+     *
+     * jsdom 不加载 CSS，Tailwind 的 `hidden`（display:none）对它**不生效** ——
+     * 于是"点一下切换按钮"在有 bug 的版本里**照样能通过**。
+     * 缺陷的本体是**结构**：tablist 被写成了某个 tabpanel 的后代，
+     * 所以断言必须断在结构上（已反向验证：把切换条塞回 section 内，这两条真的红）。
+     */
+    /*
+     * ⚠️ 用 `assert.ok(x === null)` 而不是 `assert.equal(x, null)`。
+     * `assert.equal` 失败时会把 `actual` 原样塞进 AssertionError，而这里的 actual 是一个
+     * **jsdom 元素** —— node:test 的报告器要为它算 diff，`util.inspect` 会顺着
+     * parentNode/ownerDocument/React fiber 把整棵 DOM 连同 window 一起展开。
+     * 实测：这一条断言一红，测试进程涨到 **10.5 GB** 后被 OOM killer 打死
+     * （`✖ components.test.js 'test failed'`，57 秒，后面的用例一个都没跑）。
+     * 于是"反向验证"看到的不是红，而是整个文件炸掉 —— 比不红更难查。
+     * 换成布尔比较后 actual 是 `false`，红得干干净净。
+     */
+    assert.ok(
+      tabs!.closest('.hidden') === null,
+      '切换条被一个 hidden 的祖先包住了（切到另一个 Tab 就会连它一起消失）',
+    );
+    assert.ok(
+      tabs!.closest('[role="tabpanel"]') === null,
+      '切换条被塞进了某个 Tab 面板内部 —— 它属于页面骨架，必须是面板的兄弟',
+    );
+
+    // 行为：点得回去，且面板真的换了
+    await click(r.container.querySelector('[data-testid="models-tab-asr"]'));
+    await r.flush();
+    assert.ok(
+      r.container.querySelector('[data-testid="models-llm-tab"]') === null,
+      '切回「转写」后语言模型面板应消失',
+    );
+    const asrPanel = r.container.querySelector('#models-panel-asr');
+    assert.ok(asrPanel, '转写面板应存在');
+    assert.ok(!asrPanel!.className.includes('hidden'), '切回「转写」后转写面板应可见');
+    r.unmount();
+  });
+
+  test('★ 两个 Tab 下切换条都在，且 aria-selected 跟着 ?tab= 走', async () => {
+    for (const [route, selected] of [
+      ['/models', 'asr'],
+      ['/models?tab=asr', 'asr'],
+      ['/models?tab=llm', 'llm'],
+    ] as const) {
+      stubModelsPage();
+      const r = await render(<ModelsPage />, { route });
+      await r.flush();
+      const asr = r.container.querySelector('[data-testid="models-tab-asr"]');
+      const llm = r.container.querySelector('[data-testid="models-tab-llm"]');
+      assert.ok(asr && llm, `${route}：两个 Tab 按钮都必须在`);
+      assert.equal(asr!.getAttribute('aria-selected'), String(selected === 'asr'), route);
+      assert.equal(llm!.getAttribute('aria-selected'), String(selected === 'llm'), route);
+      r.unmount();
+    }
+  });
+});
+
+describe('T-129 /models 不许中英混排', () => {
+  const CJK = /[一-鿿]/;
+
+  /*
+   * 成因不是"缺 zh-CN 词条"，也不是"键名对不上"，更不是"搬迁漏了 t()" ——
+   * 搬过来的 LLM 两块**恰恰是唯一做对了 i18n 的部分**。
+   * 混语言的来源是：`/models` 的页面骨架与卡片**整片硬编码中文、根本不走 i18n**，
+   * 而 `detectLocale()` 在非中文浏览器上返回 `en`（jsdom 的 navigator.language 就是 en-US）。
+   * 于是同一屏 = 硬编码的中文 + i18n 出来的英文。
+   *
+   * 所以判据只有一条：**英文界面下这一页不许出现任何汉字**（桩数据全是 ASCII）。
+   */
+  test('★ 英文界面下 /models 不许渲染出硬编码中文（两个 Tab 都查）', async () => {
+    /*
+     * 宿主被 `dom-env.ts:88` 钉死成 zh-CN（那是对的：别的用例断言中文文案），
+     * 所以这里**临时**切到 en，用完必还原 —— 不还原会让后面的用例莫名其妙变红。
+     */
+    await i18nInstance.changeLanguage('en');
+    try {
+      for (const route of ['/models', '/models?tab=llm']) {
+        stubModelsPage({ withCatalog: true });
+        const r = await render(<ModelsPage />, { route });
+        await r.flush();
+        /*
+         * ⚠️ 服务商的**品牌名**要摘掉再查：`月之暗面 Kimi` / `智谱 GLM` /
+         * `阿里云百炼（通义）` / `硅基流动` 是这些厂商的中文注册名，
+         * 英文界面下照写是对的（memo.ac 同样照写），把它们翻译过去反而认不出。
+         * 摘的是 `LLM_PRESETS` 里的**数据**，不是我手打的白名单 ——
+         * 名单变了这条断言自动跟着变，不会退化成一张过期的例外表。
+         * 品牌名归 `llm-catalog.ts` 的 owner，本轮一个字没动。
+         */
+        let t = text(r.container);
+        for (const p of LLM_PRESETS) t = t.split(p.label).join('');
+        assert.ok(t.length > 0, `${route}：页面应渲染出内容`);
+        const bad = t.match(new RegExp(`.{0,24}${CJK.source}.{0,24}`, 'g'));
+        assert.equal(
+          bad,
+          null,
+          `${route}：英文界面上出现了硬编码中文 → ${JSON.stringify(bad?.slice(0, 4))}`,
+        );
+        r.unmount();
+      }
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  test('★ zh-CN 与 en 的 models.* 词条必须一一对应（少一条就会静默回落成另一种语言）', () => {
+    const flat = (o: unknown, p = ''): string[] =>
+      typeof o === 'object' && o !== null
+        ? Object.entries(o as Record<string, unknown>).flatMap(([k, v]) =>
+            flat(v, p ? `${p}.${k}` : k),
+          )
+        : [p];
+    const zh = flat((zhLocale as Record<string, unknown>)['models']).sort();
+    const en = flat((enLocale as Record<string, unknown>)['models']).sort();
+    assert.ok(zh.length > 60, '词条数明显偏少，八成是没落盘');
+    assert.deepEqual(zh, en, 'models.* 两份词条不对称');
+  });
+});
+
+describe('T-129 `**强调**` 不许把裸 Markdown 吐给用户', () => {
+  test('★ 服务端下发的 disclosure 里的 ** 必须渲染成 <strong>，页面上看不到星号', async () => {
+    stubApi({
+      '/settings': { settings: {} },
+      '/secrets': {
+        secrets: [],
+        disclosure: {
+          message: 'API keys are stored in **PLAINTEXT** at /tmp/x/secrets.json.',
+          messageZh: 'API Key 以**明文**保存在 /tmp/x/secrets.json。',
+        },
+      },
+    });
+    const r = await render(<LlmSettingsSection />);
+    await r.flush();
+    // 宿主是中文界面（dom-env.ts:88）→ 渲染的是 messageZh 那一支
+    const t = text(r.container);
+    assert.ok(t.includes('secrets.json'), '告知原文必须仍然完整');
+    assert.ok(t.includes('明文'), '"明文"这个词一个字都不许丢');
+    assert.ok(!t.includes('**'), `页面上仍能看到裸的 ** → ${t.slice(0, 200)}`);
+    const strong = [...r.container.querySelectorAll('strong')].map((e) => e.textContent);
+    assert.ok(strong.includes('明文'), '强调段应渲染成 <strong>');
+    r.unmount();
+  });
+
+  test('★ splitEmphasis 规则', () => {
+    assert.deepEqual(splitEmphasis('a**b**c'), [
+      { text: 'a', strong: false },
+      { text: 'b', strong: true },
+      { text: 'c', strong: false },
+    ]);
+    // 两段强调，中间那段不许被吞成一整块
+    assert.deepEqual(
+      splitEmphasis('a**b**c**d**e').filter((p) => p.strong).map((p) => p.text),
+      ['b', 'd'],
+    );
+    // 未闭合：原样保留，宁可显示一个星号也不要吃掉半句话
+    assert.deepEqual(splitEmphasis('a**b'), [{ text: 'a**b', strong: false }]);
+    assert.deepEqual(splitEmphasis(''), []);
+  });
+
+  test('★ 词条里还带 ** 的地方必须都有渲染器接着（防下一处又变裸标记）', () => {
+    const flat = (o: unknown, p = ''): [string, string][] =>
+      typeof o === 'object' && o !== null
+        ? Object.entries(o as Record<string, unknown>).flatMap(([k, v]) =>
+            flat(v, p ? `${p}.${k}` : k),
+          )
+        : [[p, String(o)]];
+    const withMarkers = flat(zhLocale as unknown)
+      .filter(([, v]) => /\*\*[^*]+\*\*/.test(v))
+      .map(([k]) => k);
+    // 这一条不是"不许再写 **"，而是"写了就得有人渲染" ——
+    // 本轮接上的两处必须在名单里，别的属于别的页面（已在回执里列出，未动）。
+    assert.ok(
+      withMarkers.includes('settings.llmIntro'),
+      'settings.llmIntro 应仍带 **（它是被 <Emphasis> 渲染的，不是被删星号的）',
+    );
+    assert.ok(withMarkers.includes('models.detail.benchNone'));
+  });
+});
+
+describe('T-129 侧栏「星标」筛选', () => {
+  const zhNav = (zhLocale as unknown as { nav: Record<string, string> }).nav;
+  const zhNotes = (zhLocale as unknown as { notes: Record<string, string> }).notes;
+  const NOTES = {
+    notes: [
+      {
+        uid: '01AAAAAAAAAAAAAAAAAAAAAAAA',
+        title: 'starred one',
+        status: 'ready',
+        kind: 'media',
+        language: 'en',
+        durationMs: 1000,
+        starred: true,
+        tags: [],
+        createdAt: '2026-08-01T00:00:00.000Z',
+        updatedAt: '2026-08-01T00:00:00.000Z',
+      },
+      {
+        uid: '01BBBBBBBBBBBBBBBBBBBBBBBB',
+        title: 'plain one',
+        status: 'ready',
+        kind: 'media',
+        language: 'en',
+        durationMs: 1000,
+        starred: false,
+        tags: [],
+        createdAt: '2026-08-01T00:00:00.000Z',
+        updatedAt: '2026-08-01T00:00:00.000Z',
+      },
+    ],
+  };
+
+  test('★ /notes?starred=1 只列星标笔记；/notes 列全部', async () => {
+    stubApi({ '/notes': NOTES });
+    const all = await render(<NotesListPage />, { route: '/notes' });
+    await all.flush();
+    const allItems = [...all.container.querySelectorAll('[data-testid="notes-list"] > li')];
+    assert.equal(allItems.length, 2, '「全部笔记」应列出全部 2 条');
+    all.unmount();
+
+    stubApi({ '/notes': NOTES });
+    const starred = await render(<NotesListPage />, { route: '/notes?starred=1' });
+    await starred.flush();
+    const items = [...starred.container.querySelectorAll('[data-testid="notes-list"] > li')];
+    assert.equal(
+      items.length,
+      1,
+      '「星标」点进去和「全部笔记」一模一样 —— starred 查询参数没有被读',
+    );
+    assert.ok(text(starred.container).includes('starred one'));
+    assert.ok(
+      !text(starred.container).includes('plain one'),
+      '未加星的笔记不该出现在星标列表里',
+    );
+    starred.unmount();
+  });
+
+  test('★ 标题必须跟着查询串走，不能两个入口都写「全部笔记」', async () => {
+    stubApi({ '/notes': NOTES });
+    const r = await render(<NotesListPage />, { route: '/notes?starred=1' });
+    await r.flush();
+    const title = r.container.querySelector('[data-testid="notes-list-title"]');
+    assert.ok(title, '找不到列表标题');
+    assert.equal(title!.textContent, zhNav.starred);
+    assert.notEqual(title!.textContent, zhNotes.title, '星标页的标题仍写着「全部笔记」');
+    r.unmount();
+  });
+
+  test('★ 有笔记但一条都没加星时，给星标专属空态（而不是"还没有笔记"）', async () => {
+    stubApi({ '/notes': { notes: [NOTES.notes[1]] } });
+    const r = await render(<NotesListPage />, { route: '/notes?starred=1' });
+    await r.flush();
+    const t = text(r.container);
+    assert.ok(t.includes(zhNotes.starredEmpty), `空态文案不对：${t}`);
+    assert.ok(!t.includes(zhNotes.empty), '不该说"还没有笔记" —— 他明明有笔记');
+    r.unmount();
+  });
+});
+
+/**
+ * ★ 同族缺陷：**一个元素的显示条件，必须是它自己的条件。**
+ *
+ * 两个实例，形状一模一样 —— 嵌套让 A 继承了 B 的消失条件，而 A 与 B 本来毫无关系：
+ *
+ * | 实例 | A（被连累的） | B（条件的主人） | 后果 |
+ * |---|---|---|---|
+ * | T-129（本轮） | `/models` 的 Tab 切换条 | `tab === 'asr'` 的目录面板 | 切到「语言模型」后再也切不回来 |
+ * | T-127b（`4b6ad6c`） | 顶栏 daemon 版本戳 | `mocked === 0` 的假数据摘要 | **所有面接通那天**版本戳一起消失 |
+ *
+ * 两条都必须是**渲染断言**，不能只查源码：
+ * 结构断言挡得住有人把代码删回去，挡不住渲染层面的其他失效方式
+ * （T-127b 修完只留了一条正则查源码的断言，这里把它补成真的渲染）。
+ */
+describe('T-129 同族：显示条件不许被别人的条件包住', () => {
+  /** 逐面设状态 + 装 health，用完还原 —— 这个 store 是模块级单例，不还原会污染别的用例。 */
+  async function withSurfaces<T>(
+    states: Record<string, 'live' | 'mock'>,
+    health: unknown,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const before = useSurfaceStore.getState();
+    const prevStates = { ...before.states };
+    const prevHealth = before.health;
+    for (const [s, v] of Object.entries(states)) {
+      useSurfaceStore.getState().set(s as never, v as never);
+    }
+    useSurfaceStore.getState().setHealth(health as never);
+    try {
+      return await fn();
+    } finally {
+      useSurfaceStore.setState({ states: prevStates, health: prevHealth });
+    }
+  }
+
+  const HEALTH = {
+    version: '9.9.9',
+    instanceId: '01TESTTESTTESTTESTTESTTEST',
+    contractVersion: 1,
+    dataDir: '/tmp/never-real',
+    port: 65535,
+    pid: 1,
+    build: {
+      commit: 'deadbee',
+      commitTime: '2026-08-03T10:00:00.000Z',
+      dirty: false,
+      builtAt: '2026-08-03T10:05:00.000Z',
+      startedAt: '2026-08-03T10:06:00.000Z',
+    },
+  };
+
+  const allLive = Object.fromEntries(SURFACES.map((s) => [s, 'live' as const]));
+
+  test('★ 所有 API 面都接通（mocked === 0）时，daemon 版本戳仍然渲染', async () => {
+    await withSurfaces(allLive, HEALTH, async () => {
+      const r = await render(<ConnectivitySummary />);
+      await r.flush();
+      const shown = text(r.container);
+      assert.ok(
+        shown.includes('daemon v9.9.9'),
+        `全部接通后版本戳消失了 —— 而那正是最需要它的时刻（实际渲染："${shown}"）`,
+      );
+      // 同时确认前提成立：这一屏确实没有「假数据」摘要，不是"两个都还在"的假通过
+      assert.ok(!shown.includes('模拟'), `mocked === 0 时不该再有假数据摘要："${shown}"`);
+      r.unmount();
+    });
+  });
+
+  test('★ 还有面在模拟时，假数据摘要与版本戳两个都在（改法不许把另一半弄丢）', async () => {
+    await withSurfaces({ ...allLive, notes: 'mock' }, HEALTH, async () => {
+      const r = await render(<ConnectivitySummary />);
+      await r.flush();
+      const shown = text(r.container);
+      assert.ok(shown.includes('daemon v9.9.9'), `版本戳丢了："${shown}"`);
+      assert.ok(shown.includes('模拟'), `假数据摘要丢了："${shown}"`);
+      r.unmount();
+    });
+  });
+
+  test('★ daemon 没连上（health === null）时不渲染任何版本戳 —— 不编一个假版本号', async () => {
+    await withSurfaces(allLive, null, async () => {
+      const r = await render(<ConnectivitySummary />);
+      await r.flush();
+      assert.equal(text(r.container), '', '连不上 daemon 时这一格应当整块不出现');
+      r.unmount();
+    });
   });
 });

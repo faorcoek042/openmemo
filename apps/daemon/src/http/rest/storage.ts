@@ -280,16 +280,31 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
 
       // 搬成功后才改指向。反过来会指向一个还没搬完的位置
       writeDataDirPointer(plan.to);
+      /*
+       * ★ `staleLinks` / `warningZh` **必须回给前端**（T-128）。
+       *
+       * 这个字段存在的全部意义就是「移动数据目录会静默弄坏转写功能」这件事不再静默。
+       * 算出来却不透出去，等于把一盏假绿灯换成一盏没接线的红灯 —— 本项目已经栽过
+       * 同一形状的跟头（`build` 字段后端返回了、前端逐字段手抄时漏掉，界面写"构建信息未知"；
+       * `job.blocked` 的 toast 接收方一直在等一个从来没人发的事件）。
+       * 所以这里回、`DataLocationSection.tsx` 那边渲染，两头都必须有。
+       */
       sendJson(res, 202, {
         ok: true,
         moved: true,
         strategy: result.strategy,
         bytes: result.bytes,
         files: result.files,
+        links: result.links,
+        staleLinks: result.staleLinks,
+        ...(result.warningZh ? { warningZh: result.warningZh } : {}),
         from: plan.from,
         to: plan.to,
         restartRequired: true,
-        messageZh: `已移动 ${result.files} 个文件到新位置，正在重启以生效。`,
+        messageZh:
+          `已移动 ${result.files} 个文件` +
+          (result.links > 0 ? `与 ${result.links} 个符号链接` : '') +
+          '到新位置，正在重启以生效。',
       });
       setTimeout(() => deps.requestRestart?.('data-dir moved', { dataDir: plan.to }), 50);
       return true;

@@ -31,8 +31,8 @@
  * 检查项列表在任何情况下都是同一份、同一个顺序 —— 否则"两边一致"就无从比对。
  */
 
-import { access, constants, readdir } from 'node:fs/promises';
-import { dirname, join, resolve as resolvePath } from 'node:path';
+import { access, constants, open, readdir, readlink } from 'node:fs/promises';
+import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
 
 import { detectCpu, detectMemory, detectOs } from './detect/system.js';
 import { runProbe } from './probe/runProbe.js';
@@ -172,6 +172,85 @@ async function exists(p: string | null | undefined, mode: number): Promise<boole
   } catch {
     return false;
   }
+}
+
+export interface SymlinkHealth {
+  /** 相对 `by-name/backend/` 的路径 */
+  rel: string;
+  /** `readlink` 的原样结果 */
+  target: string;
+  /** 顺着链真的读到内容了吗 */
+  readable: boolean;
+  /** 读不到时的原因（errno），读得到时是首 4 字节的十六进制 */
+  note: string;
+}
+
+/**
+ * 检查后端包里的符号链接**是不是真的能用**。
+ *
+ * ─── 为什么这条检查必须存在（T-128）──────────────────────────────────────────────
+ * 用户移动数据目录后，whisper.cpp 的 8 条 `.so` 链接全部悬空（`fs.cp` 把相对链接
+ * 改写成了指向旧位置的绝对路径），转写完全不可用 —— 而**产品里没有任何地方会发现它**：
+ * 安装记录里没有链接的痕迹，模型校验只比 sha256（链接不是文件），
+ * 目录结构看起来完好无损。除了真去跑一次转写，无人知晓。
+ *
+ * ─── 判据为什么必须是"真的读到内容"────────────────────────────────────────────────
+ * **不能用 `lstat()`**：它根本不跟随链接，对一条彻底悬空的链接**照样返回成功**。
+ * **也不用 `access()`**：它虽然跟随链接、悬空时确实会失败，但它只回答"能不能"，
+ * 不产生任何可核对的证据。这里 `open()` + 读**首 4 字节**：
+ * 悬空 → ENOENT；指向空文件/被截断 → 读不满 4 字节。代价是常数级，不受 `.so` 体积影响。
+ *
+ * 这是 ADR-014 那条标准在这个位置的具体形态：**验功能可用，不验组件存在**。
+ */
+export async function checkBackendSymlinks(storeRoot: string): Promise<SymlinkHealth[]> {
+  const root = join(storeRoot, 'by-name', 'backend');
+  const out: SymlinkHealth[] = [];
+  const walk = async (d: string): Promise<void> => {
+    let entries;
+    try {
+      entries = await readdir(d, { withFileTypes: true });
+    } catch {
+      return; // 目录不存在 = 没装后端包，交给调用方判断，不在这里假装成功
+    }
+    for (const e of entries) {
+      const p = join(d, e.name);
+      if (e.isSymbolicLink()) {
+        const target = await readlink(p).catch(() => '<readlink 失败>');
+        let readable = false;
+        let note: string;
+        let fh;
+        try {
+          // open() 跟随符号链接 —— 悬空链接在这里就会抛 ENOENT
+          fh = await open(p, 'r');
+          const buf = Buffer.alloc(4);
+          const { bytesRead } = await fh.read(buf, 0, 4, 0);
+          readable = bytesRead === 4;
+          note = readable
+            ? buf.toString('hex')
+            : `只读到 ${bytesRead} 字节（文件为空或被截断）`;
+        } catch (err) {
+          note = (err as NodeJS.ErrnoException).code ?? String(err);
+        } finally {
+          await fh?.close().catch(() => {});
+        }
+        out.push({ rel: p.slice(root.length + 1), target, readable, note });
+      } else if (e.isDirectory()) {
+        await walk(p);
+      }
+    }
+  };
+  await walk(root);
+  return out;
+}
+
+/**
+ * 悬空链接指向的是不是"另一个数据目录"。
+ *
+ * 用来把 remediation 说准：如果断掉的目标里出现了 `by-name/backend`，
+ * 那几乎可以肯定是**搬过家**留下的（旧位置已被删），而不是安装本身出了错。
+ */
+function looksLikeMovedDataDir(links: SymlinkHealth[]): boolean {
+  return links.some((l) => !l.readable && isAbsolute(l.target) && l.target.includes('by-name'));
 }
 
 function libSuffix(): string {
@@ -352,6 +431,51 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
       });
     }
   }
+
+  /*
+   * ---- 后端 .so 符号链接（T-128）---------------------------------------------------
+   *
+   * `required: true` 是**无条件**的，不随环境变化 —— 判据是一句纯逻辑：
+   * "后端的 .so 链断了 = 转写不能用"。环境差异全部由 status 承担。
+   * 这一点对同源比对很要紧：`diffSelfCheckReports` 把 required 不一致直接判为
+   * "判据被改分叉了"，所以 required 不能写成依赖 storeRoot 内容的条件表达式
+   * （CLI 与 daemon 的 storeRoot 可以不同）。
+   */
+  const soLinks = await checkBackendSymlinks(input.storeRoot);
+  const brokenLinks = soLinks.filter((l) => !l.readable);
+  add({
+    layer: 'tools',
+    id: 'backend.libLinks',
+    label: 'backend shared-library symlinks resolve',
+    labelZh: '后端 .so 符号链接可解析',
+    status:
+      backendPacks.length === 0
+        ? 'warn'
+        : brokenLinks.length > 0
+          ? 'fail'
+          : soLinks.length === 0
+            ? 'warn'
+            : 'ok',
+    detail:
+      backendPacks.length === 0
+        ? '未安装后端包，无可检查的链接'
+        : brokenLinks.length > 0
+          ? `${brokenLinks.length}/${soLinks.length} 条链接读不到目标：` +
+            brokenLinks
+              .slice(0, 3)
+              .map((l) => `${l.rel}→${l.target}(${l.note})`)
+              .join('  ')
+          : soLinks.length === 0
+            ? '该后端包不含符号链接（未做检查，不代表后端可用）'
+            : `${soLinks.length} 条链接全部可读到目标内容`,
+    required: true,
+    remediation:
+      brokenLinks.length === 0
+        ? null
+        : looksLikeMovedDataDir(brokenLinks)
+          ? '这些链接指向的是旧数据目录（多半是移动数据目录后留下的）。在「运行时」页重新安装该后端包即可修复；数据与笔记不受影响。'
+          : '在「运行时」页重新安装该后端包 —— 链接的目标文件已不存在，whisper 会报 "cannot open shared object file" 而无法加载。',
+  });
 
   const vadOk = await exists(tools.vadModel, constants.R_OK);
   add({

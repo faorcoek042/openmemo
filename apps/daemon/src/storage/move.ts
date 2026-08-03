@@ -359,9 +359,26 @@ export async function moveDataDir(
    * 两条策略（rename / copy）都要走这一步 —— **快路径同样会踩到**，
    * 而它根本不调用 `verifyTreesMatch`，是原来完全没有任何符号链接检查的一条路。
    */
-  const succeeded = async (strategy: 'rename' | 'copy'): Promise<MoveResult> => {
+  const succeeded = async (
+    strategy: 'rename' | 'copy',
+    removeSourceError?: string,
+  ): Promise<MoveResult> => {
     step('checking-links');
     const staleLinks = await findStaleLinks(to, from);
+    const warnings: string[] = [];
+    if (staleLinks.length > 0) {
+      warnings.push(
+        `数据已全部移动到新位置，但有 ${staleLinks.length} 个符号链接仍指向旧位置` +
+          `（例如 ${staleLinks[0]?.rel} → ${staleLinks[0]?.target}），旧位置删除后它们会失效。` +
+          `这类链接多来自已安装的后端（如 whisper.cpp 的 .so），可能需要重新安装该后端。`,
+      );
+    }
+    if (removeSourceError !== undefined) {
+      warnings.push(
+        `数据已完整复制到新位置并校验通过，但旧目录 ${from} 没能删干净（${removeSourceError}）。` +
+          `新位置的数据是完整的，旧目录可以手动删除。`,
+      );
+    }
     return {
       ok: true,
       strategy,
@@ -369,14 +386,7 @@ export async function moveDataDir(
       files: size.files,
       links: size.links,
       staleLinks,
-      ...(staleLinks.length > 0
-        ? {
-            warningZh:
-              `数据已全部移动到新位置，但有 ${staleLinks.length} 个符号链接仍指向旧位置` +
-              `（例如 ${staleLinks[0]?.rel} → ${staleLinks[0]?.target}），旧位置删除后它们会失效。` +
-              `这类链接多来自已安装的后端（如 whisper.cpp 的 .so），可能需要重新安装该后端。`,
-          }
-        : {}),
+      ...(warnings.length > 0 ? { warningZh: warnings.join(' ') } : {}),
       sourceIntact: false,
     };
   };
@@ -483,8 +493,6 @@ export async function moveDataDir(
       };
     }
 
-    step('removing-source');
-    await fs.rm(from, { recursive: true, force: true });
   } catch (err) {
     step('rollback');
     await fs.rm(to, { recursive: true, force: true }).catch(() => {});
@@ -500,7 +508,26 @@ export async function moveDataDir(
       sourceIntact: true,
     };
   }
-  // 同快路径：收尾**放在 try 之外**，否则它抛错会触发回滚 —— 而此刻源目录已经删了，
-  // 回滚会把唯一一份数据也删掉。走到这里就说明复制与校验都过了。
-  return await succeeded('copy');
+
+  /*
+   * ───── 校验通过之后就是不归点：从这里往下，`to` 再也不许被删 ─────
+   *
+   * 删源**必须在上面那个 try 之外**。它原来在里面，而那个 catch 会 `fs.rm(to)` ——
+   * 于是"删源删到一半失败"（权限、文件被占用、EBUSY…）会触发回滚，
+   * 把**刚刚校验通过的唯一一份完整数据删掉**，而源已经缺了一半。
+   * 那不是回滚，那是两份都毁掉。
+   *
+   * 正确语义：过了校验这条线，"移动"就算成功了。源目录删不干净是**残留**，
+   * 是一条要如实告诉用户的警告，不是一个该拿数据去赌的错误。
+   */
+  step('removing-source');
+  let removeSourceError: string | undefined;
+  try {
+    await fs.rm(from, { recursive: true, force: true });
+  } catch (err) {
+    removeSourceError = String(err);
+  }
+
+  // 同快路径：收尾**放在 try 之外**，否则它抛错会触发回滚。
+  return await succeeded('copy', removeSourceError);
 }
