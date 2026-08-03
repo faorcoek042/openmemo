@@ -8,6 +8,7 @@ import { rawFetch } from '../../lib/api/client';
 import { useConnectionStore } from '../../lib/stores/connection.store';
 import { detectBlockedCapabilities, isSecureContext, localhostEquivalent } from '../../lib/secure-context';
 import { Button } from './Button';
+import { Emphasis } from './Emphasis';
 import { worstTone, type StatusTone } from './statusTone';
 
 /**
@@ -48,6 +49,15 @@ export interface ReadinessItem {
   /** 一行结论。**不含原因和办法** —— 那些进 `hint`，只在展开时出现。 */
   text: string;
   hint?: string;
+  /**
+   * T-135：**逐项明细**，只在展开态出现。
+   *
+   * 折叠态仍然是一行（上面那条约束没变），但"到底是哪几项"不能只活在
+   * 一个计数里 —— 见下面 `secure-context` 那一段的说明。
+   * 每一条按 `<Emphasis>` 渲染：词条里的 `**…**` 是写文案的人挑出来的重点，
+   * 直接吐给用户就是裸星号（`components/common/Emphasis.tsx`）。
+   */
+  details?: readonly string[];
   actionLabel?: string;
   onAction?: () => void;
   /**
@@ -102,6 +112,23 @@ export function ReadinessBanner() {
         tone: 'warning',
         text: t('readiness.items.secureContext', { count: blocked.length }),
         hint: t('readiness.items.secureContextHint'),
+        /*
+         * ★ T-135：**逐项列出来，而不是只给一个数字。**
+         *
+         * `detectBlockedCapabilities()` 一直就是逐项算的（`lib/secure-context.ts`
+         * 明写着"按实际 undefined 来报，用户看到的才是他真正失去的那几项"），
+         * 而这里此前**只取了 `blocked.length`** 去填计数文案 ——
+         * 逐项结论连同 `secureContext.caps.*` 四条词条一起被算出来又扔掉了。
+         *
+         * 这不是文案粗糙，是**信息算出来了不给**：四项里只有「麦克风」是
+         * **功能级不可用**（F3 录音在这个地址下根本跑不了），其余三项是体验降级。
+         * 用户看到「有 3 项能力不可用」时，没有任何办法知道自己撞上的是哪一档 ——
+         * 而这正是他要决定"要不要换地址"的唯一依据。
+         *
+         * 顺序就是 `detectBlockedCapabilities()` 的顺序：麦克风在最前，
+         * 那条既有断言（"录音排在最前 —— 它是唯一功能级不可用的"）在这里继续生效。
+         */
+        details: blocked.map((c) => t(`secureContext.caps.${c.key}`)),
         ...(local
           ? { actionLabel: t('secureContext.tryLocalhost'), onAction: () => window.location.assign(local) }
           : {}),
@@ -219,6 +246,19 @@ export function ReadinessBanner() {
                 <div className="text-ink-secondary">{it.text}</div>
                 {/* 原因只在展开后出现 —— 折叠态一个字都不占 */}
                 {it.hint ? <div className="mt-0.5 text-ink-muted">{it.hint}</div> : null}
+                {/* 逐项明细：算出来的东西必须给得出来，不能只剩一个计数 */}
+                {it.details && it.details.length > 0 ? (
+                  <ul className="mt-1 space-y-0.5" data-testid={`readiness-caps-${it.key}`}>
+                    {it.details.map((d) => (
+                      <li key={d} className="flex gap-1.5 text-ink-muted">
+                        <span className="select-none text-ink-muted" aria-hidden>
+                          ·
+                        </span>
+                        <Emphasis text={d} className="min-w-0" />
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </div>
               {it.onAction ? (
                 <Button

@@ -13,6 +13,7 @@ import type { ComponentStatus } from '@openmemo/shared';
 import { Button } from '../../../components/common/Button';
 import { StatusChip } from '../../../components/common/StatusChip';
 import { formatBytes } from '../../../lib/format/bytes';
+import { localizedName } from '../../../lib/format/localized';
 import { cn } from '../../../lib/utils';
 
 /**
@@ -72,7 +73,15 @@ export function ComponentCard({ component: c, locale, busy, onUpdate, onRollback
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <Package className="size-4 shrink-0 text-ink-muted" aria-hidden />
-            <h3 className="text-sm font-medium text-ink">{c.displayNameZh}</h3>
+            {/*
+              ★ T-135：走 `localizedName()`，不要写死 `displayNameZh`。
+              这条属于「第三类混语言」：**数据齐全、契约齐全，只是渲染时挑错了那一份**
+              —— `vendor/manifests/components.json` 里 8 条组件**每一条都同时有**
+              `displayName` 与 `displayNameZh`，`packages/shared` 的 `ComponentStatus`
+              两个字段也都在。所以这不是"缺翻译"，是"有翻译没用上"。
+              （同型的 `/models`、`/runtime` 已在 T-129b 接上同一个 helper。）
+            */}
+            <h3 className="text-sm font-medium text-ink">{localizedName(locale, c)}</h3>
             <StatusChip tone={ui.tone} label={ui.label} icon={ui.icon} />
             <StatusChip
               tone={installed ? 'good' : 'neutral'}

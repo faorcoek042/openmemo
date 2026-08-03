@@ -11,6 +11,7 @@ import { Button } from '../../components/common/Button';
 import { Emphasis } from '../../components/common/Emphasis';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { formatBytes } from '../../lib/format/bytes';
+import { pickLocalized } from '../../lib/format/localized';
 import { copyText } from '../../lib/secure-context';
 
 interface HealthResponse {
@@ -25,13 +26,19 @@ interface HealthResponse {
  * 后者只统计模型目录，所以此前这一节只能一边显示"模型占用"一边写小字提醒
  * "这不是总量"。现在总量有了权威来源，就该显示它。
  *
- * ⚠️ `entries` 只有 `purposeZh`，**没有各自的字节数**。所以下面只列用途不列大小 ——
+ * ⚠️ `entries` **没有各自的字节数**。所以下面只列用途不列大小 ——
  * 按目录估一个数写上去，会让用户照着一个我们其实没测过的数字去清理磁盘。
+ *
+ * T-135：`purpose` 是新补的英文对应（`rest/storage.ts` 的 `layout()`）。
+ * 在它存在之前，这一节是 `/settings` 英文界面上**全部 81 个汉字**的来源 ——
+ * 而且前端修不了：没有可回落的英文，删掉又等于不告诉用户哪个目录能删。
+ * 现在走 `pickLocalized()`，与 `displayName/displayNameZh` 同一套。
+ * 类型上仍是可选，因为**老版本 daemon 不会给这个字段**（前端可以比 daemon 新）。
  */
 interface DataDirResponse {
   dataDir?: string;
   usage: { bytes: number; files: number } | null;
-  entries: { path: string; name: string; purposeZh: string }[];
+  entries: { path: string; name: string; purposeZh: string; purpose?: string }[];
 }
 
 /**
@@ -271,7 +278,9 @@ export function DataLocationSection() {
             {layout.data.entries.map((e) => (
               <li key={e.path} className="flex flex-wrap items-baseline gap-x-2 px-2 py-1.5 text-xs">
                 <code className="font-mono text-ink">{e.name}</code>
-                <span className="text-ink-secondary">{e.purposeZh}</span>
+                <span className="text-ink-secondary">
+                  {pickLocalized(i18n.language, e.purposeZh, e.purpose)}
+                </span>
               </li>
             ))}
           </ul>

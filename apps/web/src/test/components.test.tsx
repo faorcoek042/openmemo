@@ -3377,3 +3377,335 @@ describe('T-129b /runtime 不许中英混排', () => {
     r.unmount();
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════════
+ * T-135 —— 三条「算出来了 / 数据齐了，却没给出去」
+ *
+ * 这三条是同一个形状的三种形态，都不是"文案没写好"：
+ *   ① `secureContext.caps.*`：逐项算出来了，渲染时只取了 `.length`
+ *   ② `purposeZh`：daemon 只给了一份中文，前端**没有可回落的东西**
+ *   ③ `displayNameZh`：两份都在手上，渲染时写死挑了中文那一份
+ * 判据统一是：**信息在系统里存在，用户却拿不到。**
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('T-135 ① 安全上下文：逐项说明必须真的渲染出来', () => {
+  const nav = globalThis.navigator as unknown as Record<string, unknown>;
+  const win = globalThis.window as unknown as Record<string, unknown>;
+  let saved: Record<string, unknown> = {};
+
+  /**
+   * 造一个 `http://<IP>` 的浏览器。
+   * （与上面「非安全上下文」那组同型，刻意各写一份：两组的生命周期互不干扰，
+   *   共用一份可变的 `saved` 反而会在并发/失败时互相污染。）
+   */
+  function makeInsecure() {
+    saved = {
+      mediaDevices: nav.mediaDevices,
+      locks: nav.locks,
+      clipboard: nav.clipboard,
+      isSecureContext: win.isSecureContext,
+    };
+    for (const k of ['mediaDevices', 'locks', 'clipboard']) {
+      Object.defineProperty(nav, k, { value: undefined, configurable: true });
+    }
+    Object.defineProperty(win, 'isSecureContext', { value: false, configurable: true });
+  }
+  function restore() {
+    for (const [k, v] of Object.entries(saved)) {
+      Object.defineProperty(k === 'isSecureContext' ? win : nav, k, { value: v, configurable: true });
+    }
+  }
+
+  const HEALTHY = {
+    'GET /health': { db: { extensions: { libsimple: true, sqliteVec: true } }, pipeline: { missing: [] } },
+  };
+
+  /** 展开横幅，返回明细区。 */
+  async function openBanner() {
+    stubApi(HEALTHY);
+    const r = await render(<ReadinessBanner />);
+    await r.flush();
+    await click(r.container.querySelector('[data-testid="readiness-toggle"]'));
+    await r.flush();
+    return r;
+  }
+
+  /**
+   * ★ 这条钉的是「信息算出来了又扔掉」。
+   *
+   * `detectBlockedCapabilities()` 逐项算出了"你具体失去哪几项能力"，
+   * 而横幅此前**只用了 `blocked.length`**：用户看到「有 3 项能力不可用」，
+   * 却看不到是哪 3 项 —— 而四项里只有「麦克风」是**功能级不可用**
+   * （F3 录音在这个地址下根本跑不了），其余三项只是体验降级。
+   * 一个数字回答不了"我到底还能不能用它"，而那正是用户唯一要问的问题。
+   */
+  test('★ 展开后逐项列出失去的能力，且与 detectBlockedCapabilities() 逐条对齐', async () => {
+    makeInsecure();
+    try {
+      const blocked = detectBlockedCapabilities();
+      assert.ok(blocked.length >= 3, `前提不成立：只算出 ${blocked.length} 项`);
+
+      const r = await openBanner();
+      const caps = r.container.querySelector('[data-testid="readiness-caps-secure-context"]');
+      assert.ok(caps, '展开后没有任何逐项明细 —— 计数之外一个字都没有');
+
+      // 只取说明本身，不含那颗装饰用的项目符号（它是 aria-hidden 的）
+      const rows = [...caps.querySelectorAll('li')].map(
+        (li) => li.querySelector('span:not([aria-hidden])')?.textContent ?? '',
+      );
+      assert.equal(
+        rows.length,
+        blocked.length,
+        `算出 ${blocked.length} 项、只渲染了 ${rows.length} 行：${JSON.stringify(rows)}`,
+      );
+
+      // 逐条比对**词条本身**，而不是我手打的一句话 —— 词条改了断言自动跟着改
+      const caps4 = (zhLocale as unknown as { secureContext: { caps: Record<string, string> } })
+        .secureContext.caps;
+      blocked.forEach((c, i) => {
+        const expected = (caps4[c.key] ?? '').replace(/\*\*/g, '');
+        assert.ok(expected.length > 0, `secureContext.caps.${c.key} 词条不存在`);
+        assert.equal(rows[i], expected, `第 ${i + 1} 行不是 caps.${c.key}`);
+      });
+
+      // 顺序即优先级：麦克风是唯一功能级不可用的一项，必须在最前
+      assert.equal(blocked[0]?.key, 'microphone', '麦克风不在第一项');
+      r.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  /**
+   * 词条里的 `**录音转文字不可用**` 是写文案的人挑出来的重点。
+   * 直接吐给用户就是两颗裸星号；删掉标记又会把"这一项是功能级不可用"
+   * 降回和其余三项一样平 —— 所以只能渲染它（`Emphasis.tsx` 的原话）。
+   */
+  test('★ 麦克风那条的 ** 必须渲染成 <strong>，页面上看不到裸星号', async () => {
+    makeInsecure();
+    try {
+      const r = await openBanner();
+      const shown = text(r.container);
+      assert.ok(!shown.includes('**'), `页面上仍能看到裸的 ** → ${shown.slice(0, 200)}`);
+      const strong = [...r.container.querySelectorAll('strong')].map((e) => e.textContent);
+      assert.ok(
+        strong.includes('录音转文字不可用'),
+        `「录音转文字不可用」应渲染成 <strong>，实际 strong = ${JSON.stringify(strong)}`,
+      );
+      r.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  /**
+   * 加明细不许把 T-107 那条约束吃掉：**折叠态仍然只占一行**。
+   * 「七行文字不是动作，是墙」—— 逐项说明属于展开态。
+   */
+  test('★ 折叠态一个字都不许多 —— 明细只在展开后出现', async () => {
+    makeInsecure();
+    try {
+      stubApi(HEALTHY);
+      const r = await render(<ReadinessBanner />);
+      await r.flush();
+      assert.ok(
+        !r.container.querySelector('[data-testid="readiness-caps-secure-context"]'),
+        '折叠态就把逐项明细铺出来了',
+      );
+      assert.ok(!text(r.container).includes('麦克风'), '原因属于展开态，不该占首屏');
+      r.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  /**
+   * ⚠️ 判据是 **import 语句**，不是"源码里出现过 Emphasis 这个词"。
+   * 上一轮 `models-page-fix` 写 `/\bEmphasis\b/.test(src)`，结果匹到了
+   * 自己旁边注释里的那句「走 `<Emphasis>`」—— 一条断言被自己的文档骗过去了。
+   */
+  test('★ ReadinessBanner 必须真的 import Emphasis（注释里提一句不算）', async () => {
+    const src = await readSource('components/common/ReadinessBanner.tsx');
+    // ⚠️ 用 assert.ok(regex.test(...))，不用 assert.match ——
+    // 后者失败时会把**整份源码**打进报告，几十 KB 的噪声会盖掉真正的结论。
+    assert.ok(
+      /^import \{[^}]*\bEmphasis\b[^}]*\} from '[^']*\/Emphasis';$/m.test(src),
+      '没有 import Emphasis —— 词条里的 ** 会原样吐给用户',
+    );
+    assert.ok(
+      /details:\s*blocked\.map/.test(src),
+      '逐项说明没有从 detectBlockedCapabilities() 接出来',
+    );
+  });
+});
+
+describe('T-135 ② 数据目录用途：daemon 必须给成对的 purpose / purposeZh', () => {
+  /**
+   * 桩用**目录的真实形状**（两份都给），否则测到的只有"我们自己的文案"。
+   * 上一轮的教训：原来的桩全是 ASCII，`displayNameZh` 那条缺陷因此测不出来。
+   */
+  const DATA_DIR = {
+    'GET /health': { dataDir: '/tmp/omdemo' },
+    'GET /settings/data-dir': {
+      dataDir: '/tmp/omdemo',
+      usage: { bytes: 1234, files: 7 },
+      entries: [
+        {
+          path: '/tmp/omdemo/openmemo.db',
+          name: 'openmemo.db',
+          purpose: 'Notes, transcripts, tags and mindmaps (the main SQLite database)',
+          purposeZh: '笔记、转写稿、标签、导图（SQLite 主库）',
+        },
+        {
+          path: '/tmp/omdemo/logs',
+          name: 'logs',
+          purpose: 'Runtime logs (safe to delete at any time)',
+          purposeZh: '运行日志（可随时删）',
+        },
+      ],
+    },
+  };
+
+  const CJK = /[一-鿿]/;
+
+  test('★ 英文界面下目录清单不许出现汉字 —— 它此前是 /settings 上 81 个汉字的来源', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      stubApi(DATA_DIR);
+      const r = await render(<DataLocationSection />);
+      await r.flush();
+      const box = r.container.querySelector<HTMLElement>('[data-testid="data-dir-layout"]');
+      assert.ok(box, '目录清单没渲染 —— 前提不成立');
+      const shown = text(box);
+      const bad = shown.match(new RegExp(`.{0,24}${CJK.source}.{0,24}`, 'g'));
+      assert.equal(bad, null, `英文界面上出现了 daemon 下发的中文 → ${JSON.stringify(bad?.slice(0, 3))}`);
+      assert.ok(shown.includes('Runtime logs'), `英文用途没渲染出来：${shown}`);
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  test('★ 中文界面下仍然是中文（回落方向不许反过来）', async () => {
+    stubApi(DATA_DIR);
+    const r = await render(<DataLocationSection />);
+    await r.flush();
+    const box = r.container.querySelector<HTMLElement>('[data-testid="data-dir-layout"]');
+    assert.ok(box, '目录清单没渲染 —— 前提不成立');
+    const shown = text(box);
+    assert.ok(shown.includes('运行日志'), `中文界面上该显示中文用途：${shown}`);
+    assert.ok(!shown.includes('Runtime logs'), `中文界面上不该出现英文用途：${shown}`);
+    r.unmount();
+  });
+
+  /**
+   * ★ 老 daemon 只会给 `purposeZh`。那时**中文才是唯一有的那一份**，
+   * 显示它远好过显示一片空白 —— `pickLocalized` 的空串回落就是为这个写的。
+   * 前端可以比 daemon 新，这条把那个前提钉住。
+   */
+  test('★ daemon 没有 purpose 字段时回落到中文，而不是渲染出一片空白', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      stubApi({
+        'GET /health': { dataDir: '/tmp/omdemo' },
+        'GET /settings/data-dir': {
+          dataDir: '/tmp/omdemo',
+          usage: null,
+          entries: [{ path: '/tmp/omdemo/logs', name: 'logs', purposeZh: '运行日志（可随时删）' }],
+        },
+      });
+      const r = await render(<DataLocationSection />);
+      await r.flush();
+      const box = r.container.querySelector<HTMLElement>('[data-testid="data-dir-layout"]');
+      assert.ok(box, '目录清单没渲染 —— 前提不成立');
+      const shown = text(box);
+      assert.ok(shown.includes('运行日志'), `缺英文时必须回落到中文，实际：${JSON.stringify(shown)}`);
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  /**
+   * ⚠️ 这条与 daemon 侧的 `apps/daemon/src/http/storageLayout.test.ts` 是**一对**。
+   * 只测前端等于只测"我发了什么"：桩里写着 `purpose`，daemon 真的给不给是另一回事
+   * —— 本项目「写得进读不回」出过五次，全是这个形状。
+   */
+  test('★ 前端确实走了 pickLocalized，而不是又写死一份', async () => {
+    const src = await readSource('features/settings/DataLocationSection.tsx');
+    assert.ok(
+      /^import \{[^}]*\bpickLocalized\b[^}]*\} from '[^']*\/localized';$/m.test(src),
+      '没有 import pickLocalized',
+    );
+    assert.ok(
+      !/\{e\.purposeZh\}/.test(src),
+      '仍有地方直接渲染 e.purposeZh —— 英文界面会退回中文',
+    );
+  });
+});
+
+describe('T-135 ③ 组件卡片：displayNameZh 是两份里的一份，不是唯一那份', () => {
+  /** 目录里的真实形状：8 条组件**每一条**都同时有 displayName / displayNameZh。 */
+  const COMP = {
+    id: 'libsimple-linux-x64',
+    displayName: 'libsimple Chinese FTS5 tokenizer (Linux x64)',
+    displayNameZh: '中文分词器 libsimple（Linux x64）',
+    category: 'sqlite-ext',
+    pinnedVersion: 'v0.5.2',
+    installedVersion: 'v0.5.2',
+    latestVersion: 'v0.5.2',
+    updateAvailable: false,
+    checkError: null,
+    checkedAt: null,
+    provenance: {
+      repoUrl: 'https://github.com/wangfenjin/simple',
+      releaseUrl: 'https://github.com/wangfenjin/simple/releases/tag/v0.5.2',
+      license: 'MIT',
+      licenseUrl: 'https://opensource.org/licenses/MIT',
+    },
+    upstream: { kind: 'github-release' as const, repo: 'wangfenjin/simple' },
+    sizeBytes: 1_234_567,
+    sha256: 'aa'.repeat(32),
+    sha256Provenance: null,
+    rollbackVersion: null,
+  };
+
+  test('★ 英文界面下卡片标题用 displayName，不是 displayNameZh', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      stubApi({ '/components': { components: [COMP], online: false, checkedAt: null } });
+      const r = await render(<ComponentsPage />);
+      await r.flush();
+      const h3 = r.container.querySelector(
+        '[data-testid="component-card-libsimple-linux-x64"] h3',
+      );
+      assert.ok(h3, '组件卡片没渲染出来 —— 前提不成立');
+      assert.equal(
+        h3.textContent,
+        COMP.displayName,
+        '英文界面上仍然显示中文名 —— 英文版一直就在目录里，只是没被挑出来',
+      );
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  test('★ 中文界面下仍然是中文名（这一半不许被改坏）', async () => {
+    stubApi({ '/components': { components: [COMP], online: false, checkedAt: null } });
+    const r = await render(<ComponentsPage />);
+    await r.flush();
+    const h3 = r.container.querySelector('[data-testid="component-card-libsimple-linux-x64"] h3');
+    assert.equal(h3?.textContent, COMP.displayNameZh);
+    r.unmount();
+  });
+
+  test('★ ComponentCard 真的 import 了 localizedName（不是注释里提一句）', async () => {
+    const src = await readSource('features/components/components/ComponentCard.tsx');
+    assert.ok(
+      /^import \{[^}]*\blocalizedName\b[^}]*\} from '[^']*\/localized';$/m.test(src),
+      '没有 import localizedName',
+    );
+    assert.ok(!/\{c\.displayNameZh\}/.test(src), '仍有地方直接渲染 c.displayNameZh');
+  });
+});

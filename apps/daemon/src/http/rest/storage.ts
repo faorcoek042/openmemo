@@ -32,22 +32,71 @@ export interface StorageRoutesDeps {
   readonly requestRestart?: (reason: string, opts?: { dataDir?: string }) => void;
 }
 
-/** 每个子目录**是干什么的** —— 用户要"描述清楚"才敢删。 */
-function layout(paths: AppPaths): Array<Record<string, string>> {
+/**
+ * 每个子目录**是干什么的** —— 用户要"描述清楚"才敢删。
+ *
+ * ## T-135：`purpose` / `purposeZh` **必须成对**
+ *
+ * 这里原来只有 `purposeZh` 一份。后果不在 daemon 这边，在界面上：
+ * `/settings` 跑完 i18n 之后，英文界面上**仍然剩着 81 个汉字**，逐条追下去
+ * 全部来自这个函数 —— 前端拿不到英文，**没有任何可回落的东西**，
+ * 它既不能翻译也不能省掉（少了这句用户就不知道哪个目录能删）。
+ *
+ * 仓库里既有的做法本来就是成对的：`vendor/manifests/*.json` 的
+ * `displayName` / `displayNameZh`、模型的 `descriptionEn` / `descriptionZh`，
+ * 前端用 `lib/format/localized.ts` 的 `pickLocalized()` 挑一份。
+ * 这条只是把 `purpose` 补齐，让它落进同一套。
+ *
+ * ⚠️ 判据是「**这段文字描述的是内容**」，不是「这段文字里有汉字」：
+ * 语言切换器里的选项名「中文」**本来就该是中文**（语言名用它自己的语言写），
+ * 那不是缺陷，不要顺手"修"掉。
+ */
+export function layout(paths: AppPaths): Array<Record<string, string>> {
   return [
-    { path: paths.dbFile, name: 'openmemo.db', purposeZh: '笔记、转写稿、标签、导图（SQLite 主库）' },
-    { path: paths.mediaDir, name: 'media', purposeZh: '导入与录制的音视频原件' },
-    { path: paths.modelsDir, name: 'models', purposeZh: '下载的模型与后端包（可重新下载）' },
-    { path: paths.logsDir, name: 'logs', purposeZh: '运行日志（可随时删）' },
+    {
+      path: paths.dbFile,
+      name: 'openmemo.db',
+      purpose: 'Notes, transcripts, tags and mindmaps (the main SQLite database)',
+      purposeZh: '笔记、转写稿、标签、导图（SQLite 主库）',
+    },
+    {
+      path: paths.mediaDir,
+      name: 'media',
+      purpose: 'Original audio/video you imported or recorded',
+      purposeZh: '导入与录制的音视频原件',
+    },
+    {
+      path: paths.modelsDir,
+      name: 'models',
+      purpose: 'Downloaded models and backend packs (can be downloaded again)',
+      purposeZh: '下载的模型与后端包（可重新下载）',
+    },
+    {
+      path: paths.logsDir,
+      name: 'logs',
+      purpose: 'Runtime logs (safe to delete at any time)',
+      purposeZh: '运行日志（可随时删）',
+    },
     {
       path: paths.tmpDir,
       name: 'tmp',
       // 说"可随时删"必须是真的：转写产物现在会**归档进 media/**，
       // 不再有已入库的资产留在这里（此前留了，照这句话删就会删掉笔记的音频）
+      purpose: 'Scratch files from transcription (safe to delete; holds no stored assets)',
       purposeZh: '转写过程的临时文件（可随时删，不含已入库资产）',
     },
-    { path: paths.backupsDir, name: 'backups', purposeZh: '数据库备份' },
-    { path: paths.runtimeDir, name: 'runtime', purposeZh: '运行时状态与访问令牌' },
+    {
+      path: paths.backupsDir,
+      name: 'backups',
+      purpose: 'Database backups',
+      purposeZh: '数据库备份',
+    },
+    {
+      path: paths.runtimeDir,
+      name: 'runtime',
+      purpose: 'Runtime state and the access token',
+      purposeZh: '运行时状态与访问令牌',
+    },
   ];
 }
 

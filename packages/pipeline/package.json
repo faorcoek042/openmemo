@@ -20,7 +20,9 @@
   ],
   "scripts": {
     "build": "tsc -b",
-    "clean": "tsc -b --clean"
+    "clean": "tsc -b --clean",
+    "_comment:test": "★ T-135：**故意不写 `node --test dist/**/*.test.js`**（daemon / db 用的那个形式）。sh 不认 `**`，会把它当成单个 `*` 展开成 `dist/*/*.test.js` —— 本包的测试有 9 个在 `dist/<域>/__tests__/` 三层深，只有 1 个在两层，实测那种写法**只跑到 10 个测试文件里的 1 个、报 132 条里的 6 条、然后 exit 0**。改用 node 自己的默认发现（不给位置参数，node 递归扫本包并跳过 node_modules），把「记得加引号」这条纪律**从脚本里删掉**而不是靠人记住。前置的 node -e 是护栏：`node --test` 对**空集返回 exit 0**（⑤A-2，本项目已发生三次），所以必须在跑之前先证明「源码里有几个测试文件，dist 里就有几个」。",
+    "test": "node -e \"const{globSync}=require('node:fs');const s=globSync('src/**/*.test.ts').length,d=globSync('dist/**/*.test.js').length;if(s===0||d!==s)throw new Error('test discovery broken: '+s+' source test files vs '+d+' compiled in dist —— 先 pnpm build:safe；node --test 对空集/漏集一律返回绿')\" && node --test"
   },
   "dependencies": {
     "@openmemo/downloader": "workspace:*",
