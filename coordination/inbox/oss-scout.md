@@ -1969,3 +1969,45 @@ lint 干净；roundtrip 6/6、move 13/13、upload 17/17；demo 全程只读未�
 兜底本身能过很容易测，真正要钉住的是它的**边界**，否则日后一次"顺手放宽"就会让 CSRF 形同虚设。
 
 lint 干净；roundtrip 12/12、move 13/13、upload 17/17；demo 全程只读未重启。
+
+---
+
+## T-105 仅凭 cookie 续签会话：**可用，第二标签页自愈实测通过**
+
+### 实测（完整复现 architect 定位的场景）
+```
+标签页1  带 #t= 握手      → 200  renewed:false  csrf=BwV-Uhpc…
+标签页2  只有共享 cookie   → 200  renewed:true   csrf=BwV-Uhpc…   ← 同一个令牌
+标签页2 用该令牌写：
+    PATCH /api/settings                  → 200
+    PUT   /api/secrets/llm.deepseek.apiKey → 200
+落库确认: settings={'llm.defaultProviderId':'deepseek'}  secrets=[('llm.deepseek.apiKey','sk-r…-key')]
+```
+**用户现在可以在任何标签页设 key 了。**
+
+### 两条边界也实测了
+```
+两者都无            → 401 + remediation:'openHandoffUrl'（指向启动横幅那条 #t= 链接）
+伪造/失效的 cookie  → 401   ← 续签不等于放行任何 cookie
+```
+
+### 一个刻意的设计选择：续签**复用同一个会话**，不新建
+所有标签页因此收敛到同一个 session + 同一个 CSRF 令牌。
+每个标签新建 session 会让会话表随标签数无限增长，退出登录时也清不干净。
+
+### ★ 附带证据：同源兜底触发 **0 次**
+这一轮实测里 `[auth] CSRF 同源兜底放行` 一条都没有 —— 因为第二标签页现在拿得到真正的
+CSRF 令牌、走的是正常路径。这正是你说的"根因修好后兜底不该天天响"，
+**现在有数据支持它，而不是只有推断**。日后若这条日志开始刷屏，就说明又有新的路径丢了令牌。
+
+### 关于"报了一次没人修"
+`model-mgmt` 在 T-045 报的正是这条，我当时没接。你写的那句我认：
+**被报告过但没进任务清单的缺陷，等于没被报告。**
+我把它和 `stripExt` 只剥一级、`BackendPack.installPath` 语义待改名一起留在我的清单里。
+
+### 回归测试
+`settings.roundtrip.test.ts` 扩到 **16/16**，新增 4 条覆盖续签，
+其中关键一条不是"返回 200"而是**"返回的 CSRF 令牌真的能写"** ——
+只断言 200 的话，发一个没用的令牌也能过。
+
+lint 干净；roundtrip 16/16、move 13/13、upload 17/17；demo 全程只读未重启。

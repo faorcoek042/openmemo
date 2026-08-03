@@ -165,3 +165,66 @@ describe('CSRF 同源兜底 —— 放行一种，拒绝四种', () => {
     assert.ok(host().length > 0);
   });
 });
+
+/**
+ * **仅凭 cookie 续签会话** —— 新标签页自愈的最后一环。
+ *
+ * 机制：cookie 是 per-origin（跨标签共享），CSRF 令牌是 per-tab。
+ * 第二个标签页（地址里没有 `#t=`）带得动 cookie、带不动 CSRF 令牌，
+ * 于是**读全通、界面正常、写全 403、库里 0 行** —— 不需要任何存储故障。
+ * 没有这条续签，新标签就无法自愈：它既没有 token 可重新握手，
+ * 又拿不到 CSRF 令牌，而原始链接早被前端从地址栏抹掉了（防截图泄露）。
+ */
+describe('POST /api/auth/session —— 仅凭 cookie 续签', () => {
+  it('★ 只带 cookie（无 Bearer）必须 200，且返回**可用的** CSRF 令牌', async () => {
+    // 标签页 1：正常握手拿 cookie
+    const first = await fetch(`${base}/api/auth/session`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+    assert.ok(cookie, '首次握手没有下发 cookie');
+
+    // 标签页 2：只有 cookie，没有 Bearer
+    const second = await fetch(`${base}/api/auth/session`, { method: 'POST', headers: { cookie } });
+    assert.equal(second.status, 200, '仅 cookie 续签被拒 —— 新标签页无法自愈');
+    const body = (await second.json()) as { csrf: string; renewed?: boolean };
+    assert.ok(body.csrf, '续签没有返回 CSRF 令牌');
+    assert.equal(body.renewed, true);
+
+    // 关键：拿到的令牌必须真的能写，否则"200"毫无意义
+    const w = await fetch(`${base}/api/settings`, {
+      method: 'PATCH',
+      headers: { cookie, 'Content-Type': 'application/json', 'x-openmemo-csrf': body.csrf },
+      body: JSON.stringify({ 'ui.renewProbe': 1 }),
+    });
+    assert.equal(w.status, 200, '续签返回的 CSRF 令牌不可用');
+  });
+
+  it('续签**复用同一个会话**（同一个 CSRF 令牌），不是每个标签新建一个', async () => {
+    const first = await fetch(`${base}/api/auth/session`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+    const csrf1 = ((await first.json()) as { csrf: string }).csrf;
+    const again = await fetch(`${base}/api/auth/session`, { method: 'POST', headers: { cookie } });
+    const csrf2 = ((await again.json()) as { csrf: string }).csrf;
+    assert.equal(csrf2, csrf1);
+  });
+
+  it('两者都无 → 仍 401，且带可执行的 remediation', async () => {
+    const r = await fetch(`${base}/api/auth/session`, { method: 'POST' });
+    assert.equal(r.status, 401);
+    const b = (await r.json()) as { error: { remediation?: { action: string } } };
+    assert.equal(b.error.remediation?.action, 'openHandoffUrl');
+  });
+
+  it('★ 伪造/失效的 cookie → 必须 401（续签不等于放行任何 cookie）', async () => {
+    const r = await fetch(`${base}/api/auth/session`, {
+      method: 'POST',
+      headers: { cookie: 'openmemo_sid=bogus-not-a-real-sid' },
+    });
+    assert.equal(r.status, 401);
+  });
+});
