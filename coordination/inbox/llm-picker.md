@@ -7,13 +7,13 @@
 - **候选来源与「按用途分别配置」是同一份**：两处都走 `useLlmConfig().modelsFor()`，只是 `modelsFor` 内部从"前端手写的 11 家 × 2~3 个"改成读 `vendor/manifests/llm-providers.json`。**没有分叉，没有第二份清单。**
 - **手写清单不是"少"的问题，是"错"的问题**：它只有 `deepseek-chat` / `deepseek-reasoner`，而**用户实际配的 `deepseek-v4-flash` 在旧下拉里根本不存在**。这就是"两处不统一"在型号层面的本体。
 - **最容易丢数据的那一步已经堵死并实测**：`<select>` 遇到不在 options 里的 value 会**显示成空**，用户再点一次保存就真写空了。做法是「值不在候选里 ⇒ 自动进自定义模式，原值一个字符不改」，有专门用例（`gateway/未来的型号-v9`）。
-- **用户真实配置实测未动**（`:10000` / `/root/data-memo`，全程只 GET）：`当前生效: DeepSeek · deepseek-v4-flash` 原样；编辑表单里下拉选中值仍是 `deepseek-chat`（= `llm.providers[0].model`，**它本来就与 defaultModelId 不同步**，见下方 ⚠️），候选 4 条 + 自定义，`datalist` 计数 0。截图 `/tmp/llm-picker/*.png`。
+- **用户真实配置实测未动**（`/root/data-memo`，全程只 GET，从未点过「确定」）：`当前生效: DeepSeek · deepseek-v4-flash` 原样；**追加修复后表单下拉也选中 `deepseek-v4-flash`**（修复前是 `deepseek-chat`，与上一行自相矛盾）；候选 4 条 + 自定义，`datalist` 计数 0。截图 `/tmp/llm-picker/*.png`。
 - **id 桥接**：目录里 Anthropic 叫 `claude`（另有 `zhipuai`/`qwen`/`siliconcloud`）。不桥接，用户给 Anthropic 打开下拉会看到**空清单**。加了 4 条别名 + 一条测试「任何预设都不许是空清单」。**这是临时桥，#24 落地后应删。**
 - **SHARED-CHANGE：`apps/web/vite.config.ts` 新增 `resolve.alias['@manifests'] → vendor/manifests`**（配 `apps/web/src/types/manifests.d.ts` ambient 声明）。理由与代价写在两处注释里；不这么做的话 `rootDir: "src"` 会让 tsc 报 TS6059。
-- **验证**：`tsc -b apps/web` **0** · `eslint apps/web/src` **0** · 组件测试 **123 条 / 121 pass / 0 fail / 2 skip**（新增 8 条，原 3 条断言 `datalist option` 的**改成断言新控件，没有删**）· 真 Chromium 实测 5 项。
+- **验证（含追加修复后）**：`tsc -p apps/web/tsconfig.json` **0** · `eslint apps/web/src` **0** · 测试 **124 条 / 122 pass / 0 fail / 2 skip**（新增 9 条，原 3 条断言 `datalist option` 的**改成断言新控件，没有删**；另 1 条既有断言写的是缺陷行为，已改正并说明）· 真 Chromium 实测两轮。
 - ⚠️ **仓库级 `tsc -b` 当前是红的，不是我造成的**：`model-mgmt` 正在改 `packages/shared/src/models.ts`（删掉了 `referenceBenchmark`），`apps/daemon/src/http/rest/state.ts:326-327` 还在用它。我这一侧 `tsc -b apps/web` 是 0。
 - ⚠️ **我必须报一件事**：`vite build` 会重写 `apps/web/dist`，而 **`:10000` 的 daemon 正是从这个目录托管 SPA**（`resolveWebDist()` → `apps/web/dist`）。所以**演示实例现在跑的是我这次的构建**。我**没有**重启/kill 它、没有占用该端口、没有发任何写请求（只有 SPA 自己的 `POST /api/auth/session` 握手 ×2）。19:18 那次重启不是我做的（daemon 被别人重新构建过，`builtAt` 19:18:16）。
-- ⚠️ **顺带发现一处既有不一致（我没动它）**：用户库里 `llm.defaultModelId = deepseek-v4-flash`，而 `llm.providers[0].model = deepseek-chat`。**只要有人打开 DeepSeek 的编辑表单点一次「确定」，`defaultModelId` 就会被静默改成 `deepseek-chat`**（`buildLlmSettingsPatch` 在 `activeId === provider.id` 时会一起写）。这不是本次引入的，但换成下拉之后更容易被误触。**要不要在这一轮修，请你裁决。**
+- ✅ **`defaultModelId` 静默覆盖已修（追加，见第二份回执）**：结论是 **`providers[i].model` 不该被删，但它从来不是权威** —— daemon 只读 `llm.defaultModelId`，`llm.providers[i].model` **它一个字都不读**（`llm/resolve.ts:51-52`），后者的唯一正当职责是"这家上次选的型号"的记忆，供切换 provider 时恢复。缺陷是**表单从记忆里取初值**。修法只有一句：**初值改成从权威那边读**，没有加任何"两者不同就同步"的双向猜测。回归测试已按你的要求**反向验证过**（撤回修复 → 2 条真的变红）。
 
 ---
 
@@ -204,3 +204,117 @@ git add apps/web/src/components/common/llm/LlmModelSelect.tsx \
 - 未派生任何 subagent。
 - 没有改 `className`（`ui-polish` 在并行做配色），没有改 `vendor/manifests/*.json`（`model-mgmt` 在做 `speedTier`），
   没有改 `packages/shared/**`，没有改 daemon。
+
+---
+
+## [2026-08-03 19:55] T-126 追加 DONE —— `defaultModelId` 静默覆盖
+
+交付（在 e896e2b 之上的新改动，**未提交**）:
+- `apps/web/src/components/common/llm/LlmSettingsSection.tsx`（`ProviderForm` 新增 `initialModel` 入参）
+- `apps/web/src/components/common/llm/llm-catalog.ts`（`modelsFor` 把权威值也并进候选）
+- `apps/web/src/test/components.test.tsx`（新增 1 条回归 + 改写 1 条既有断言）
+
+### 先回答你的判据：这两个字段谁是权威、`providers[i].model` 该不该存在
+
+我按 daemon **实际读什么**定，不按名字猜（`apps/daemon/src/llm/resolve.ts`）：
+
+| 键 | daemon 拿它做什么 | 结论 |
+|---|---|---|
+| `llm.defaultProviderId` / `llm.defaultModelId` | `bindingFor()` :51-52 —— **决定用哪家、哪个型号**；缺任一直接 `undefined` → `LLM_NOT_CONFIGURED` | **权威** |
+| `llm.providers[i].kind` | `providerKind()` :70 —— 决定用哪个协议适配器 | 有独立职责，必须留 |
+| `llm.providers[i].model` | **全仓 grep：daemon 一处都不读** | **不是权威** |
+| `llm.baseUrl.<id>` | :107 端点 | 有独立职责 |
+
+**所以 `providers[i].model` 是什么？** 它是「这家上次选的型号」的**记忆**，唯一的正当用途是
+「设为默认」切换 provider 时把 `defaultModelId` 恢复成**那家的**型号 ——
+没有它，从 DeepSeek 切到 OpenAI 会让 `defaultModelId` 留着 `deepseek-*`，必坏。
+
+**所以我的结论是：它不该被删，但它从来不该被当成"现在用哪个型号"的答案。**
+缺陷不在字段存在，在**表单从记忆里取初值**：
+
+```
+修复前：ProviderForm 的 model 初值 = provider.model          ← 记忆
+修复后：ProviderForm 的 model 初值 = 该家生效时取 defaultModelId，否则取 provider.model
+                                                             ← 权威优先
+```
+
+**这不是一层同步逻辑**（你明确不要的那种）。我没有比较两者、没有在保存时"发现不同就对齐"、
+没有任何隐藏写入。**只是把初值的读取方向改对了。** 两个后果都是自然结果：
+
+1. 「打开表单什么都不改直接确定」写回去的就是原值 → 静默覆盖消失；
+2. 用户**真的改了**型号时，记忆值跟着更新成新的权威值 —— 那是他显式点「确定」的结果。
+
+**顺带修掉一处同屏自相矛盾**（这才是这个 bug 最难堪的地方）：修复前同一屏上
+「当前生效: DeepSeek · **deepseek-v4-flash**」，下面表单的模型框写着 **deepseek-chat**。
+这就是 D-10 §0.1「两处对同一个问题给出相反答案」在**字段层**的复现。
+
+另外把 `modelsFor()` 也补齐：候选顺序改成 **权威值 → 记忆值 → 目录**。
+少了权威值那一项，界面会出现"当前生效 X，但下拉里找不到 X"。
+
+### 回归测试 + **反向验证**（你要求的那一步，我真的做了）
+
+新增 `★ 打开表单什么都不改直接「确定」，绝不许改掉 defaultModelId`：
+用用户库里的**真实漂移状态**（`defaultModelId=deepseek-v4-flash` / `providers[0].model=deepseek-chat`）
+渲染 → 点「编辑」→ **什么都不改** → 点「确定」→ 断言 PATCH body 里
+`llm.defaultModelId === 'deepseek-v4-flash'`。
+
+**反向验证过程（不是"我认为它会红"）**：
+把 `useState(initialModel)` 手工改回 `useState(provider.model)`，重跑组件测试：
+
+```
+✖ ★ 打开表单什么都不改直接「确定」，绝不许改掉 defaultModelId
+✖ ★ 真实用户配置换控件后仍在：当前生效与下拉都是 deepseek-v4-flash
+ℹ tests 124  ℹ pass 120  ℹ fail 2
+```
+
+**2 条真的红了**，然后从备份还原修复，再跑 → 124 / 122 pass / 0 fail / 2 skip。
+不是"永远绿的护栏"。
+
+同时**改写了一条既有断言**（不是删）：`★ 真实用户配置换控件后仍在` 原本断言
+`sel.value === 'deepseek-chat'`——那正是缺陷行为，我把它改成断言权威值 `deepseek-v4-flash`，
+并保留「记忆值不许从候选里消失」这一半。**旧断言写错了方向，我说明白了而不是悄悄换掉。**
+
+### 真浏览器实测（按新规矩：**没有重建 `apps/web/dist`**）
+
+起了 `vite dev --port 5199`（`OPENMEMO_DAEMON=http://127.0.0.1:10000`，只走代理读 demo 的真实数据），
+用完**按 pid `kill 2967635`**，端口已释放；`:10000` 期间 200 正常，`apps/web/dist` 我这轮**一次都没构建**
+（其 mtime 19:33 是你那次统一构建）。
+
+| 检查 | 结果 |
+|---|---|
+| 「当前生效」 | `DeepSeek · deepseek-v4-flash` |
+| 表单里模型下拉的选中值 | **`deepseek-v4-flash`** ← 修复前这里是 `deepseek-chat`，与上一行自相矛盾 |
+| 候选顺序 | `["deepseek-v4-flash","deepseek-chat","deepseek-v4-pro","deepseek-reasoner","__custom__"]` |
+| 非 GET 请求 | 只有 `POST /api/auth/session` ×3（握手）。**我没有点「确定」，用户的库一个字节没动。** |
+
+截图 `/tmp/llm-picker/06-authority-fixed.png`。
+
+### 验证
+
+`tsc -p apps/web/tsconfig.json` **0** · `eslint apps/web/src` **0** ·
+测试 **124 条 / 122 pass / 0 fail / 2 skip**。
+
+⚠️ **`tsc -b`（全仓）此刻又是红的，仍不是我**：`packages/shared/src/models.ts:220,274,306`
+（`vendor_claimed` / `VendorClaimedSpeed`）—— `model-mgmt` 正在改那个文件。
+我用 `tsc -p apps/web/tsconfig.json` 单独验证了自己这一侧，rc=0。
+
+### 仍未做 / 仍归别人
+
+- **「设为默认」切到另一家时**用的仍是那家的记忆值（`providers[i].model`）—— 这是**正确行为**，
+  不是遗漏：切到 OpenAI 就该用 OpenAI 的型号。
+- 那 13 家 / 237 条仍够不到（D-10 #24，归 `architect`）。我**没有碰 `LLM_PRESETS`**。
+
+精确 add 清单（3 个文件 + 本回执）:
+
+```
+git add apps/web/src/components/common/llm/LlmSettingsSection.tsx \
+        apps/web/src/components/common/llm/llm-catalog.ts \
+        apps/web/src/test/components.test.tsx \
+        coordination/inbox/llm-picker.md
+```
+
+诚实声明:
+- **反向验证是真跑的**，上面那 3 行 `✖ / fail 2` 是实际输出，不是我预期的样子。
+- 期间起过的进程只有 `vite --port 5199`（pid 2967635），**按 pid kill，没用 `pkill -f`**。
+- **没有重建 `apps/web/dist`**（新 PROTOCOL 规矩），没有重启/kill `:10000`，没对它发过写请求。
+- 未提交。未派生 subagent。未碰 `LLM_PRESETS`、`packages/shared/**`、`vendor/manifests/**`、daemon。

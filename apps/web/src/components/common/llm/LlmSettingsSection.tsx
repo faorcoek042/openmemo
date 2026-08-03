@@ -205,6 +205,24 @@ export function LlmSettingsSection() {
                 <ProviderForm
                   provider={p}
                   hasKey={hasKey(p.id)}
+                  /*
+                   * ★ **型号的初值取权威值，不取 `llm.providers[i].model`**（T-126 追加修复）。
+                   *
+                   * 这两个字段的分工，按 daemon 实际读什么定（`llm/resolve.ts:51-52,70`）：
+                   *   `llm.defaultModelId`      → **daemon 唯一认的"现在用哪个型号"**  = 权威
+                   *   `llm.providers[i].model`  → **daemon 从不读**，只是"这家上次选的型号"的记忆，
+                   *                                供切换 provider 时（`setActive`）恢复用
+                   *
+                   * 原来表单从**记忆**里取初值，于是用户库里那份真实漂移
+                   * （`defaultModelId=deepseek-v4-flash` vs `providers[0].model=deepseek-chat`）
+                   * 会在同一屏上自相矛盾：上面「当前生效」写 v4-flash，下面表单写 chat；
+                   * 更糟的是**只要点一次「确定」，权威值就被记忆值静默覆盖**。
+                   *
+                   * 这里不做"两者不同就同步"的双向猜测 —— **只是把初值改成从权威那边读**。
+                   * 于是「打开表单什么都不改直接确定」写回去的就是原值，
+                   * 而用户真的改了型号时，记忆值也顺带被更新成新的权威值（是他的显式动作，不是隐藏同步）。
+                   */
+                  initialModel={(activeId === p.id ? effectiveModel : null) || p.model}
                   models={modelsFor(p.id)}
                   note={catalogNoteFor(p.id)}
                   saving={patch.isPending || setSecret.isPending}
@@ -283,6 +301,7 @@ export function LlmSettingsSection() {
 function ProviderForm({
   provider,
   hasKey,
+  initialModel,
   models,
   note,
   saving,
@@ -290,6 +309,11 @@ function ProviderForm({
 }: {
   provider: LlmProviderConfig;
   hasKey: boolean;
+  /**
+   * 型号初值。**这家正生效时 = `llm.defaultModelId`（权威），否则 = 这家记住的型号。**
+   * 刻意不默认成 `provider.model`：那正是"点一次确定就静默换掉用户型号"的来源。
+   */
+  initialModel: string;
   /** 候选模型 —— 与「按用途分别配置」**同一个来源**，不再各画各的。 */
   models: string[];
   /** 候选清单的出处与时效（同一份目录）。 */
@@ -299,7 +323,7 @@ function ProviderForm({
 }) {
   const { t } = useTranslation();
   const [baseUrl, setBaseUrl] = useState(provider.baseUrl);
-  const [model, setModel] = useState(provider.model);
+  const [model, setModel] = useState(initialModel);
   const [apiKey, setApiKey] = useState('');
   const [reveal, setReveal] = useState(false);
 

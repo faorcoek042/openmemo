@@ -2030,12 +2030,75 @@ describe('LLM 模型选择：真下拉（T-126）', () => {
   });
 
   /**
+   * ★★ **一次无害的交互，不许静默改掉用户的配置。**
+   *
+   * 用户库里（`/root/data-memo`）是这个真实状态：
+   *   `llm.defaultModelId   = deepseek-v4-flash`   ← daemon 唯一认的，**权威**
+   *   `llm.providers[0].model = deepseek-chat`     ← daemon 从不读，只是"上次选的"记忆
+   *
+   * 修复前：表单从**记忆**取初值 → 同一屏上「当前生效」写 v4-flash、表单写 chat；
+   * 且**只要为别的事（改 base URL / 换 Key）打开表单点一次「确定」**，
+   * `buildLlmSettingsPatch` 就会把 `defaultModelId` 写成 `deepseek-chat` —— 无提示。
+   * 用户明说过"等环境稳定了再重新 set api key"，他不打算碰这个表单，可这一下就把他配的模型换了。
+   *
+   * 这与「`<select>` 遇到不认识的值渲染成空」是同一族缺陷：**一次无害交互静默改配置**。
+   *
+   * ⚠️ 这条用例做过**反向验证**：把修复（`initialModel` 取权威值）撤回成 `provider.model` 后，
+   * 它确实变红（实际收到 `deepseek-chat`）。不是一条永远绿的护栏。
+   */
+  test('★ 打开表单什么都不改直接「确定」，绝不许改掉 defaultModelId', async () => {
+    const { calls } = stubApi({
+      'GET /settings': {
+        settings: {
+          'llm.providers': [
+            { id: 'deepseek', kind: 'openai-compatible', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', isLocal: false },
+          ],
+          'llm.defaultProviderId': 'deepseek',
+          'llm.defaultModelId': 'deepseek-v4-flash',
+        },
+      },
+      'GET /secrets': { secrets: [], disclosure: null },
+      'PATCH /settings': { settings: {} },
+    });
+    const r = await render(<LlmSettingsSection />);
+    await r.flush();
+
+    // 表单的型号初值必须是**权威值**，不是 providers[].model —— 否则同屏自相矛盾
+    await click(buttonByText(r.container, '编辑'));
+    await r.flush();
+    const sel = r.container.querySelector('select[data-testid="llm-model-select"]') as HTMLSelectElement;
+    assert.equal(
+      sel.value,
+      'deepseek-v4-flash',
+      '表单该显示 daemon 真正在用的型号，而不是 llm.providers 里那份记忆',
+    );
+
+    // 什么都不改，直接确定
+    await click(r.container.querySelector('[data-testid="llm-save"]'));
+    await r.flush();
+
+    const patch = calls.find((c) => c.method === 'PATCH');
+    assert.ok(patch, '应发出 PATCH');
+    const body = patch!.body as Record<string, unknown>;
+    assert.equal(
+      body['llm.defaultModelId'],
+      'deepseek-v4-flash',
+      `一次"什么都没改"的保存把用户的模型换掉了 —— 实际写入 ${String(body['llm.defaultModelId'])}`,
+    );
+    // 顺带：记忆值被更新成权威值（是用户显式点了确定的结果，不是隐藏同步）
+    const savedProviders = body['llm.providers'] as Array<{ id: string; model: string }>;
+    assert.equal(savedProviders[0]!.model, 'deepseek-v4-flash', '记忆值应向权威值靠拢，而不是反过来');
+    r.unmount();
+  });
+
+  /**
    * ★ 用户 `:10000` 实例上的真实配置（`/root/data-memo`）：
    * `llm.defaultProviderId=deepseek` / `llm.defaultModelId=deepseek-v4-flash`，
    * 而 `llm.providers[0].model` 是 `deepseek-chat`（两者本就不同步，是既有状态）。
-   * 换控件之后这两个值都必须原样在，且都得是下拉里选得中的项。
+   * 换控件之后：**权威值必须仍然生效、且下拉里选得中**；记忆值也不许从候选里消失
+   * （它是"这家上次选的型号"，切换 provider 时还要用）。
    */
-  test('★ 真实用户配置换控件后仍在：deepseek-chat 选中、deepseek-v4-flash 仍是当前生效', async () => {
+  test('★ 真实用户配置换控件后仍在：当前生效与下拉都是 deepseek-v4-flash', async () => {
     stubApi({
       'GET /settings': {
         settings: {
@@ -2057,9 +2120,9 @@ describe('LLM 模型选择：真下拉（T-126）', () => {
     await click(buttonByText(r.container, '编辑'));
     await r.flush();
     const sel = r.container.querySelector('select[data-testid="llm-model-select"]') as HTMLSelectElement;
-    assert.equal(sel.value, 'deepseek-chat', '表单里原本填的值必须仍被选中，不许变空');
+    assert.equal(sel.value, 'deepseek-v4-flash', '表单必须选中权威值，且绝不许变空');
     const values = [...sel.querySelectorAll('option')].map((o) => (o as HTMLOptionElement).value);
-    assert.ok(values.includes('deepseek-v4-flash'), '真正生效的那个型号也必须可选得到');
+    assert.ok(values.includes('deepseek-chat'), '这家"上次选的型号"也不许从候选里消失');
     r.unmount();
   });
 });

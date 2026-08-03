@@ -146,11 +146,18 @@ export function useLlmConfig() {
   function modelsFor(providerId: string | null | undefined): string[] {
     if (!providerId) return [];
     const known = (catalogProviderFor(providerId)?.models ?? []).map((m) => m.id);
-    const configured = providers.find((p) => p.id === providerId)?.model;
-    // 用户配的排最前：他刚填过，最可能就是想用的那个。
-    // 它必须进候选 —— 否则换成真下拉之后，用户自己填的型号会在打开下拉的瞬间"消失"。
-    const all = configured ? [configured, ...known] : known;
-    return [...new Set(all.filter(Boolean))];
+    /*
+     * 两个"用户侧的值"必须进候选，顺序 = 权威性从高到低：
+     *
+     * 1. `llm.defaultModelId` —— **daemon 真正在用的那个型号**，只有这家正生效时才算数。
+     *    它必须能在自己的下拉里被选中，否则界面会说"当前生效 X"却在下拉里找不到 X。
+     * 2. `llm.providers[i].model` —— 这家上次选的型号（daemon 不读，只是记忆）。
+     *
+     * 少任何一个，换成真下拉之后那个值就会在打开下拉的瞬间"消失"。
+     */
+    const authoritative = providerId === activeProviderId ? defaultModel : null;
+    const remembered = providers.find((p) => p.id === providerId)?.model;
+    return [...new Set([authoritative, remembered, ...known].filter(Boolean) as string[])];
   }
 
   return {
