@@ -197,10 +197,24 @@ export class Repos {
     return this.db.prepare<NoteRow>(`SELECT * FROM notes WHERE uid = :uid`).get({ uid });
   }
 
-  listNotes(limit = 50): NoteRow[] {
+  /**
+   * 列出笔记。
+   *
+   * `starredOnly` **必须在 SQL 里筛，不能让调用方拿到一页再过滤**（T-138 ③）。
+   * 此前 `/notes?starred=1` 是前端对 `limit=50` 的那一页做 `filter(n => n.starred)` ——
+   * 笔记超过 50 条之后，第 51 条之外的星标笔记**不会出现，而且不会有任何提示**：
+   * 页面显示的内容是对的，只是不全，用户无从知道自己少看了什么。
+   * "显示得不全且不说" 与 "显示错的" 在用户那里是同一件事。
+   *
+   * 放在 WHERE 里之后，`limit` 限的是**星标笔记**的条数，语义才对得上。
+   */
+  listNotes(limit = 50, opts: { starredOnly?: boolean } = {}): NoteRow[] {
+    const where = opts.starredOnly
+      ? `deleted_at IS NULL AND starred = 1`
+      : `deleted_at IS NULL`;
     return this.db
       .prepare<NoteRow>(
-        `SELECT * FROM notes WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT :limit`,
+        `SELECT * FROM notes WHERE ${where} ORDER BY created_at DESC LIMIT :limit`,
       )
       .all({ limit });
   }

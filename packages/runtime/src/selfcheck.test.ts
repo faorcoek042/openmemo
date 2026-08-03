@@ -199,6 +199,140 @@ describe('判据没有被降级成"文件在不在"', () => {
   });
 });
 
+/* ---- T-136：datadir.assetsPresent ---------------------------------------------------- */
+
+/**
+ * 造一个**状态已知**的数据目录：哪几条真在、哪几条真不在，由这里说了算。
+ * 每份内容都不同 —— 报告里给的"首 4 字节"因此可以反查它到底读的是哪个文件。
+ */
+async function seedDataDir(files: Record<string, string>): Promise<string> {
+  const d = mkdtempSync(join(tmpdir(), 'om-sc-assets-'));
+  tmpRoots.push(d);
+  await fs.mkdir(join(d, 'media'), { recursive: true });
+  await fs.mkdir(join(d, 'tmp'), { recursive: true });
+  for (const [rel, body] of Object.entries(files)) {
+    const abs = join(d, rel);
+    await fs.mkdir(join(abs, '..'), { recursive: true });
+    await fs.writeFile(abs, body);
+  }
+  return d;
+}
+
+const assetsPresent = async (
+  dataDir: string,
+  rows: Array<{ role: string; relPath: string }>,
+): Promise<ReturnType<typeof byId>> => {
+  const r = await runSelfCheck({
+    ...BASE,
+    dataDir,
+    probes: minimalProbes({ mediaAssets: () => Promise.resolve(rows) }),
+  });
+  return byId(r, 'datadir.assetsPresent');
+};
+
+describe('★ T-136 datadir.assetsPresent —— 报出来的必须**就是**那几条，不多不少', () => {
+  it('★ 三种历史路径形态都算"在"，缺的那条才报 —— 一条不多一条不少', async () => {
+    /*
+     * 这就是用户库的形状：`rel_path` 三种约定并存。
+     * 旧实现只拿 `<dataDir>/media` 一个基准去拼，于是把**存在的 3 条报成"已不存在"**，
+     * 而真正缺的那条一个字没提 —— 红灯指错了人。
+     */
+    const d = await seedDataDir({
+      'media/N1/audio16k.wav': 'AAAA', // 相对 media 根
+      'media/legacy/job-X-audio16k.wav': 'BBBB', // 相对 dataDir
+      'jfk.wav': 'CCCC', // 裸文件名，文件在 dataDir 根上
+    });
+    const present = [
+      { role: 'audio16k', relPath: 'N1/audio16k.wav' },
+      { role: 'audio16k', relPath: 'media/legacy/job-X-audio16k.wav' },
+      { role: 'original', relPath: 'jfk.wav' },
+    ];
+    const missing = [
+      { role: 'original', relPath: 'really-gone.wav' },
+      { role: 'original', relPath: 'also-gone.wav' },
+    ];
+    const c = await assetsPresent(d, [...present, ...missing]);
+
+    assert.equal(c?.status, 'warn');
+    assert.match(c?.detail ?? '', /^2\/5 /, `应当只报 2 条，实际：${c?.detail ?? ''}`);
+    // 报出来的**就是**缺的那两条
+    for (const m of missing) {
+      assert.equal(
+        (c?.detail ?? '').includes(m.relPath),
+        true,
+        `真缺的 ${m.relPath} 没被报出来：${c?.detail ?? ''}`,
+      );
+    }
+    // 在盘上的一条都不许出现在告警里 —— 这正是 T-136 那盏假红灯
+    for (const p of present) {
+      assert.equal(
+        (c?.detail ?? '').includes(p.relPath),
+        false,
+        `${p.relPath} 明明在盘上却被报成读不到：${c?.detail ?? ''}`,
+      );
+    }
+  });
+
+  it('★ 读不到时必须列出**找过哪些位置**，且不许断言"文件已被删除"', async () => {
+    const d = await seedDataDir({});
+    const c = await assetsPresent(d, [{ role: 'original', relPath: 'gone.wav' }]);
+    assert.equal(c?.status, 'warn');
+    for (const root of [join(d, 'media'), join(d, 'tmp'), d]) {
+      assert.equal(
+        (c?.detail ?? '').includes(join(root, 'gone.wav')),
+        true,
+        `没说试过 ${join(root, 'gone.wav')}：${c?.detail ?? ''}`,
+      );
+    }
+    /*
+     * 旧文案是「对应的媒体文件已被删除，相关笔记无法回放」——
+     * 一句**说错了的红灯**：用户会去翻备份、会怀疑自己清理过什么。
+     * 这里钉的是"不许再出现这种断言"。
+     */
+    assert.equal(/已被删除/.test(c?.remediation ?? ''), false, c?.remediation ?? '');
+  });
+
+  it('★ 全都读得到 → ok，且 detail 里带**真读到的首 4 字节**（可核对的证据）', async () => {
+    const d = await seedDataDir({ 'media/a.wav': 'WXYZ' });
+    const c = await assetsPresent(d, [{ role: 'original', relPath: 'a.wav' }]);
+    assert.equal(c?.status, 'ok');
+    assert.equal(
+      (c?.detail ?? '').includes(Buffer.from('WXYZ').toString('hex')),
+      true,
+      `没有可核对的证据：${c?.detail ?? ''}`,
+    );
+  });
+
+  it('★ 悬空符号链接要报 —— lstat 会说它存在，open 不会（T-128 同一条判据）', async () => {
+    const d = await seedDataDir({});
+    await fs.symlink(join(d, 'media', 'nope.wav'), join(d, 'media', 'dangling.wav'));
+    const c = await assetsPresent(d, [{ role: 'original', relPath: 'dangling.wav' }]);
+    assert.equal(c?.status, 'warn');
+    assert.equal((c?.detail ?? '').includes('dangling.wav'), true);
+  });
+
+  it('★ 0 字节的资产要报：文件"在"但播不了，绿灯等于撒谎', async () => {
+    const d = await seedDataDir({ 'media/empty.wav': '' });
+    const c = await assetsPresent(d, [{ role: 'original', relPath: 'empty.wav' }]);
+    assert.equal(c?.status, 'warn');
+    assert.equal((c?.detail ?? '').includes('0 字节'), true, c?.detail ?? '');
+  });
+
+  it('越界的那条只记"越界"，不重复算成"读不到"', async () => {
+    const d = await seedDataDir({ 'media/a.wav': 'AAAA' });
+    const c = await assetsPresent(d, [
+      { role: 'original', relPath: 'a.wav' },
+      { role: 'audio16k', relPath: '/somewhere/else/x.wav' },
+    ]);
+    assert.equal(c?.status, 'ok', `越界应由 assetsContained 负责报：${c?.detail ?? ''}`);
+  });
+
+  it('没有资产 → ok', async () => {
+    const d = await seedDataDir({});
+    assert.equal((await assetsPresent(d, []))?.status, 'ok');
+  });
+});
+
 describe('工具来源要分开：装在 dataDir 里 vs 借系统 PATH 的', () => {
   it('从 storeRoot 里解析出来 = ok', async () => {
     const r = await runSelfCheck({

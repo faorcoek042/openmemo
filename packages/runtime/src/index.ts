@@ -115,6 +115,10 @@ export type {
   PackDescriptor,
 } from './backends/applicability.js';
 
+// -- media asset path resolution (T-136: one rule, shared by playback and self-check) -------
+export { assetCandidates, mediaAssetRoots, probeAssetFile } from './assetPaths.js';
+export type { AssetProbe } from './assetPaths.js';
+
 // -- functional self-check (ADR-014: verify the FEATURE, not the component) -----------------
 export {
   CHINESE_PROBE_WORDS,

@@ -11,9 +11,11 @@
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { isAbsolute, join, resolve, sep } from 'node:path';
+import { resolve } from 'node:path';
 
-import type { Repos } from '../db/repos.js';
+import { probeAssetFile } from '@openmemo/runtime';
+
+import type { AssetRow } from '../db/repos.js';
 import { sendError } from './respond.js';
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -63,8 +65,16 @@ export function parseRange(
   return { start, end: Math.min(end, size - 1) };
 }
 
+/**
+ * 只收窄到本路由真正用到的那一个方法 —— 测试因此可以喂一份**真 `Repos` 结构上兼容**
+ * 的假实现，而不必开一个数据库。`media.test.ts` 里有编译期护栏钉住这层兼容。
+ */
+export interface MediaRepos {
+  assetByUid(uid: string): AssetRow | undefined;
+}
+
 export interface MediaRoutesDeps {
-  readonly repos: Repos;
+  readonly repos: MediaRepos;
   readonly mediaRoot: string;
   /** 产物可能还在 tmp 里（尚未归档到 media/）→ 也允许从这里读。 */
   readonly extraRoots?: readonly string[];
@@ -75,18 +85,14 @@ export function createMediaRoutes(deps: MediaRoutesDeps): {
 } {
   const roots = [deps.mediaRoot, ...(deps.extraRoots ?? [])].map((r) => resolve(r));
 
-  /** 把 asset 的 rel_path 解析成一个**确认落在允许根内**的绝对路径。 */
-  function resolveAssetPath(relOrAbs: string): string | undefined {
-    const candidates = isAbsolute(relOrAbs)
-      ? [resolve(relOrAbs)]
-      : roots.map((r) => resolve(join(r, relOrAbs)));
-    for (const abs of candidates) {
-      // 即使 rel_path 是我们自己写的，也要再确认一次没跑出根
-      // （DB 可能被手工改过；纵深防御，成本为零）
-      if (roots.some((r) => abs === r || abs.startsWith(r + sep))) return abs;
-    }
-    return undefined;
-  }
+  /*
+   * ★ T-136：路径解析交给 `@openmemo/runtime` 的 `probeAssetFile` —— 与 `/api/selfcheck`
+   * **同一份实现**。这里原来的写法是「返回第一个落在根内的候选」，而候选①（`mediaRoot`）
+   * 对任何相对路径**永远落在根内**，于是 `extraRoots` 这两个根**一次都没被试过**：
+   * `migrateAssets` 写出来的 `media/legacy/x.wav` 被拼成 `<dataDir>/media/media/legacy/x.wav`
+   * （两个 media），实测用户库 4 条资产里 **3 条播放直接 404**。
+   * 现在改成「第一个**真能打开**的候选」，判据从"落在根内"变成"真的读到了字节"。
+   */
 
   return {
     async handle(req, res, url, method): Promise<boolean> {
@@ -115,9 +121,23 @@ export function createMediaRoutes(deps: MediaRoutesDeps): {
         return true;
       }
 
-      const abs = resolveAssetPath(asset.rel_path);
-      if (!abs) {
+      const probe = await probeAssetFile(roots, asset.rel_path);
+      if (probe.tried.length === 0) {
+        // 记录指到了所有根之外 —— 这是"越界"，与"文件不在"是两码事，别混报
         sendError(res, 403, 'ASSET_OUT_OF_ROOT', 'asset path escapes media root', '媒体路径越界');
+        return true;
+      }
+      const abs = probe.abs;
+      if (abs === null) {
+        sendError(
+          res,
+          404,
+          'ASSET_FILE_MISSING',
+          // 把**找过的每个位置**都列出来：只报一个路径时，用户无从判断
+          // 到底是文件没了还是我们找错了地方（T-136 就栽在这句话上）
+          `file missing: ${asset.rel_path} (tried: ${probe.tried.join(', ')})`,
+          '媒体文件读不到（可能是文件已移动，也可能是记录里的路径不对）',
+        );
         return true;
       }
 

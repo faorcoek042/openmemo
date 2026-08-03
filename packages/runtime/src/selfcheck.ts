@@ -32,8 +32,9 @@
  */
 
 import { access, constants, open, readdir, readlink } from 'node:fs/promises';
-import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 
+import { mediaAssetRoots, probeAssetFile } from './assetPaths.js';
 import { detectCpu, detectMemory, detectOs } from './detect/system.js';
 import { runProbe } from './probe/runProbe.js';
 
@@ -631,8 +632,9 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
    * 反过来说：**程序自己的引用也不许跑到那个文件夹外面**，
    * 否则"搬走数据目录"就等于"弄坏数据"，而这两件事在用户眼里毫不相干。
    *
-   * 这条查的是真东西：把 `media_assets` 每条路径解析出来，看它落不落在 dataDir 内、
-   * 文件在不在。T-093 就是靠它坐实了 `audio16k` 存的是**绝对路径**且指向
+   * 这条查的是真东西：把 `media_assets` 每条路径**按播放端那份规则**解析出来
+   * （`assetPaths.ts`，T-136 起同源），看它落不落在 dataDir 内、内容读不读得到。
+   * T-093 就是靠它坐实了 `audio16k` 存的是**绝对路径**且指向
    * `<dataDir>/tmp/job-*` —— 移动数据目录后该资产直接 403，而设置页还把 tmp
    * 描述成「可随时删」。只看目录结构、不看数据库引用，这种问题永远查不出来。
    */
@@ -663,15 +665,33 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         remediation: null,
       });
     } else {
-      const mediaRoot = join(input.dataDir, 'media');
+      /*
+       * ★ T-136：解析基准与**播放端完全同一份**（`assetPaths.ts`）。
+       *
+       * 上一版这里写死 `resolve(<dataDir>/media, relPath)` 一个基准，而 `rel_path`
+       * 实际有三种历史形态（见 `assetPaths.ts` 的表）。后果不是漏报，是**说错话**：
+       * 用户库里 3 条相对 `<dataDir>` 存的记录被算成 `…/media/media/legacy/…`，
+       * 于是报「3 条文件已不存在」「对应的媒体文件已被删除」——
+       * **那 3 个文件一个没少，全在盘上。** 用户会去翻备份、会怀疑自己删过东西。
+       *
+       * 判据也从 `access()` 换成**真的打开并读首 4 字节**（与 T-128 同一条标准）：
+       * `access` 只回答"能不能"，不产生任何可核对的证据；现在 detail 里给的是
+       * 真读到的字节，以及**程序到底找过哪几个位置**。
+       */
+      const roots = mediaAssetRoots(input.dataDir);
       const escaped: string[] = [];
       const dangling: string[] = [];
+      let evidence = '';
       for (const r of rows) {
-        const abs = resolvePath(mediaRoot, r.relPath);
-        if (abs !== input.dataDir && !abs.startsWith(input.dataDir + '/')) {
+        const probe = await probeAssetFile(roots, r.relPath);
+        if (probe.tried.length === 0) {
           escaped.push(`${r.role}→${r.relPath}`);
-        } else if (!(await exists(abs, constants.R_OK))) {
-          dangling.push(`${r.role}→${r.relPath}`);
+        } else if (probe.abs === null) {
+          dangling.push(`${r.role}→${r.relPath}（找过：${probe.tried.join('、')}）`);
+        } else if (probe.bytesRead === 0) {
+          dangling.push(`${r.role}→${r.relPath}（${probe.abs} 是 0 字节，播不了）`);
+        } else if (evidence === '') {
+          evidence = `${r.relPath} → ${probe.abs} 首 4 字节 ${probe.note}`;
         }
       }
       add({
@@ -698,10 +718,20 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         status: dangling.length === 0 ? 'ok' : 'warn',
         detail:
           dangling.length === 0
-            ? '无悬空引用'
-            : `${dangling.length} 条文件已不存在：${dangling.slice(0, 3).join(' ')}`,
+            ? rows.length === 0
+              ? '没有媒体资产'
+              : `${rows.length} 条资产都真的读到了内容（例：${evidence}）`
+            : `${dangling.length}/${rows.length} 条读不出来：${dangling.slice(0, 3).join('；')}`,
         required: false,
-        remediation: dangling.length === 0 ? null : '对应的媒体文件已被删除，相关笔记无法回放',
+        /*
+         * 措辞是这条检查最要命的地方 —— 旧文案直接断言"已被删除"，而实测中
+         * 更常见的成因是**记录里的路径和文件实际位置对不上**。
+         * 一句说错的红灯会让用户去翻备份、怀疑自己误删，还会淹没真正丢了的那条。
+         */
+        remediation:
+          dangling.length === 0
+            ? null
+            : '⚠️ 这**不等于**文件被删除：更常见的是记录里的路径与文件实际位置对不上（括号里就是程序真正找过的位置，可以自己去核对）。重启 daemon 会跑一次路径迁移，能自动修好一部分；仍然报的才需要找回文件。',
       });
     }
   }
