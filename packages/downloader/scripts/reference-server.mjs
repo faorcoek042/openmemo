@@ -20,7 +20,41 @@
  *   - backend self-test: requires the actual engine binaries; reported as null (never run),
  *     never as a fake pass.
  *
- * Usage: node packages/downloader/scripts/reference-server.mjs [--port 17650]
+ * Usage: node packages/downloader/scripts/reference-server.mjs --models-root <dir> [--port 19450]
+ *
+ * ## ⚠️ T-142e：这个工具被关进盒子里了，三条一起改
+ *
+ * 原则（Manager 裁定，沿用变异检查器立的那条）：
+ * **一个"故意不同于生产"的工具，安全边界与正常代码不是一回事。**
+ * 参考服务器存在的意义就是**假装成上游**，所以它比任何产品代码都更该被关起来。
+ *
+ * ① **`--models-root` 从"可选"变成必填。** 原来的兜底是
+ *    `process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-refserver', 'models')`：
+ *    一个**固定名**目录，跨并发运行共享、跨重启存活，而且全文件**没有一处 `rm`**。
+ *    现在必须自己敲路径进来 —— 同 `seed-fixture.mjs` 的处置，理由也一样：
+ *    **真想用的人必须自己把它敲进去。**
+ *
+ * ② **不再把上一次运行写下的 `active.json` 读回来当作真相。**
+ *    一个工具把**自己上一次的输出**当作事实来源，正是本项目反复撞见的形状
+ *    （mock 里有个 daemon 从来不发的字段、`extraRoots` 自加入之日就是死代码）。
+ *    现在每次启动都从 `{asr:null, llm:null}` 开始；文件仍然写（供人事后查看），
+ *    但**永远不读回来**，这一点在 `persistActive()` 上单独标了。
+ *
+ * ③ **删除类操作只在"本工具自己建的 store"上执行。**
+ *    这一条最重：`DELETE /api/models/:id` 会 `removeManifest` + `collectGarbage`，
+ *    `POST /api/models/gc` 会收垃圾。原来 `OPENMEMO_MODELS` 优先级最高，
+ *    而那个变量**产品代码自己也在读**（`packages/pipeline/src/tools.ts:91`）——
+ *    谁把它导出指向真实模型库，这两个端点就是在**真删用户已装好的模型包**。
+ *    判据不是"记得别导出那个变量"，是 **`store` 根目录里必须有本工具亲手放下的标记文件**；
+ *    标记不在就拒绝启动、并且每次删除前**重新检查一遍**（防止运行期间被换掉）。
+ *    这样就算有人导出了 `OPENMEMO_MODELS`、或者把 `--models-root` 指向真实 store，
+ *    **也删不动**。
+ *
+ * ④ **默认端口挪出 `DEFAULT_PORT`（17650）。** 原来的默认值正是它，
+ *    而这是个长驻服务：关掉父终端会把它孤儿化、端口仍被占，
+ *    用户的 daemon 于是漂到 17651 —— 浏览器麦克风授权按 origin 隔离，**要重新授权**。
+ *    现在默认 19450，落在 `apps/daemon/src/testPorts.test.ts` 统一管辖的 19xxx 区段里，
+ *    那条测试会连同全部 daemon 测试端口一起扫，撞上 17650 或互相重叠都当场红。
  */
 
 import { Buffer } from 'node:buffer';
@@ -52,7 +86,8 @@ const COMPONENT_REGISTRY = path.join(REPO, 'vendor', 'manifests', 'components.js
 let componentCache = null;
 
 const argv = process.argv.slice(2);
-const PORT = Number(argv[argv.indexOf('--port') + 1]) || 17650;
+/** 默认端口见文件头 ④：绝不能是 `DEFAULT_PORT`（17650）。`testPorts.test.ts` 钉住这一条。 */
+const PORT = Number(argv[argv.indexOf('--port') + 1]) || 19450;
 /**
  * Optional upstream daemon. Unmatched /api/* requests are forwarded there.
  *
@@ -70,7 +105,94 @@ const PROXY = argv.includes('--proxy') ? argv[argv.indexOf('--proxy') + 1] : nul
  * a static-file server plus a transparent proxy, so the browser exercises the daemon.
  */
 const PROXY_ALL = argv.includes('--proxy-all');
-const ROOT = process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-refserver', 'models');
+
+/* ------------------------- 沙箱闸门（见文件头 ①③）------------------------- */
+
+const rootFlag = argv.indexOf('--models-root');
+const ROOT = rootFlag >= 0 ? argv[rootFlag + 1] : undefined;
+if (!ROOT) {
+  console.error(
+    '`--models-root` 是必填的。\n' +
+      '\n' +
+      '这个服务会往 store 里真下载模型（可能几个 GB），并且带着两个**删除**端点\n' +
+      '（DELETE /api/models/:id 与 POST /api/models/gc）。它以前的兜底是\n' +
+      '  OPENMEMO_MODELS ?? /tmp/openmemo-refserver/models\n' +
+      '—— 一个固定名目录（跨运行共享、从不清理），而 OPENMEMO_MODELS 是产品代码\n' +
+      '自己也在读的变量：导出了它再跑这个服务，删除端点删的就是你真实装好的模型包。\n' +
+      '\n' +
+      '  node packages/downloader/scripts/reference-server.mjs --models-root /tmp/<你的目录>/models\n',
+  );
+  process.exit(2);
+}
+
+/**
+ * 沙箱标记 —— **删除类操作的唯一许可证**。
+ *
+ * 只在"目录不存在 / 存在但是空的"时由本工具亲手放下。
+ * 指向一个已有内容却没有标记的目录（例如用户真实的模型库）→ **拒绝启动**。
+ * 判据不是"记得别把 --models-root 指错"，是**指错了也删不动**。
+ */
+const SANDBOX_MARK = path.join(ROOT, '.openmemo-refserver-sandbox');
+
+async function isSandbox() {
+  try {
+    await fs.access(SANDBOX_MARK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+{
+  let entries = null;
+  try {
+    entries = await fs.readdir(ROOT);
+  } catch {
+    /* 不存在 —— 下面创建 */
+  }
+  if (entries === null) {
+    await fs.mkdir(ROOT, { recursive: true });
+    entries = [];
+  }
+  if (entries.length > 0 && !(await isSandbox())) {
+    console.error(
+      `拒绝启动：${ROOT} 里已经有东西，但没有本工具的沙箱标记。\n` +
+        '\n' +
+        '这个目录不是我建的，我不知道里面是什么 —— 而本服务带着两个删除端点。\n' +
+        '如果这是你真实的模型库，删除端点会真的把已装的包删掉（这正是这道闸门存在的原因）。\n' +
+        '\n' +
+        '要么换一个空目录 / 不存在的路径，要么确认它是沙箱后手工放下标记：\n' +
+        `  touch ${SANDBOX_MARK}\n`,
+    );
+    process.exit(2);
+  }
+  await fs.writeFile(
+    SANDBOX_MARK,
+    `openmemo reference-server sandbox\n` +
+      `本文件是删除类操作的许可证（见 reference-server.mjs 文件头 ③）。\n` +
+      `删掉它，DELETE /api/models/:id 与 POST /api/models/gc 就会被拒绝执行。\n` +
+      `created-by-pid: ${process.pid}\ncreated-at: ${new Date().toISOString()}\n`,
+    'utf8',
+  );
+}
+
+/**
+ * 每次删除前**重新读一遍磁盘**，不信任启动时那次检查 ——
+ * 进程可能已经跑了几个小时，`--models-root` 底下的东西可能已经不是启动时那份了
+ * （例如有人把它换成了指向真实 store 的符号链接）。
+ * 这一步很便宜（一次 `access`），而它挡住的是"删错了就没了"。
+ */
+async function assertDeletable(res) {
+  if (await isSandbox()) return true;
+  // apiError(res, status, code, messageZh, remediation?) —— 第 4 个就是给人看的那句
+  apiError(
+    res,
+    403,
+    'NOT_A_SANDBOX',
+    `拒绝删除：${ROOT} 里没有参考服务器的沙箱标记，它可能是真实的模型库`,
+  );
+  return false;
+}
 
 const store = new ArtifactStore(ROOT);
 await store.init();
@@ -168,13 +290,20 @@ async function listInstalled() {
   return out;
 }
 
+/**
+ * 当前选中的模型。**每次启动都从空开始 —— 刻意不读上一次留下的 `active.json`。**
+ *
+ * 原来这里是 `readJson(ROOT/active.json)` 然后 `Object.assign(activeState, s)`：
+ * 把**自己上一次运行写下的东西**当作这一次的事实来源。
+ * 那是本项目反复撞见的形状 —— 工具读回自己的输出，于是"上一次跑出的状态"
+ * 会悄悄影响"这一次的结论"，而两次之间发生过什么没有任何人知道。
+ * 参考服务器的用途是**每次给出可复现的起点**，读回历史正好毁掉这一点。
+ */
 const activeState = { asr: null, llm: null };
-try {
-  const s = await readJson(path.join(ROOT, 'active.json'));
-  Object.assign(activeState, s);
-} catch {
-  /* first run */
-}
+/**
+ * 仍然写，但**永远不读回来**（上面那段说明了原因）——
+ * 它是给人事后查看的产物，不是状态来源。改动这里之前先读文件头 ②。
+ */
 async function persistActive() {
   await fs.writeFile(path.join(ROOT, 'active.json'), JSON.stringify(activeState), 'utf8');
 }
@@ -660,6 +789,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/models/gc' && method === 'POST') {
+      if (!(await assertDeletable(res))) return; // 见文件头 ③
       const body = await readBody(req);
       const r = await store.collectGarbage(body.targets ?? ['orphan_blobs', 'stale_partials']);
       const st = await buildStorage();
@@ -669,6 +799,7 @@ const server = http.createServer(async (req, res) => {
 
     const delMatch = /^\/api\/models\/(.+)$/.exec(p);
     if (delMatch && method === 'DELETE') {
+      if (!(await assertDeletable(res))) return; // 见文件头 ③
       const id = decodeURIComponent(delMatch[1]);
       const all = await listInstalled();
       const rec = all.find((m) => m.id === id);

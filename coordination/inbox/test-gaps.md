@@ -2,6 +2,109 @@
 
 ---
 
+## [2026-08-04 01:35] T-142e DONE —— 参考服务器关进盒子 + 端口判据变成会红的东西
+
+门禁 **`867 passed / 0 failed / 0 todo`**（`tsc -b` 0 · `eslint` 0 · 变异 18/18 全红）。
+**867 = 856 + 11**，新增的全是护栏：`testPorts.test.ts` 5 条 + `storeRootPrecedence.test.ts` 6 条。
+
+**动过的文件（精确，未 `git add`）**：
+`packages/downloader/scripts/reference-server.mjs`（改）、
+`apps/daemon/src/testPorts.test.ts`（新）、
+`packages/pipeline/src/__tests__/storeRootPrecedence.test.ts`（新）。
+**在途核对**：动手前后各 `git status` 一次，工作区只有我这三个文件 ——
+`path-guard` 的 `assetPaths.ts`/`selfcheck.ts` 与 `notes-contract` 的笔记契约都已进 `a401d59`/`20987e3`，
+我一个字没碰。
+
+### ① 固定名 `/tmp/openmemo-refserver` → `--models-root` 必填
+
+不带就 `exit 2`，并把老兜底原样印出来说明它为什么危险。
+同时**去掉 `process.env.OPENMEMO_MODELS` 这条读取**（全文件现在只剩注释里那一处，描述的是旧代码）。
+
+顺带按你说的，**不再把上一次运行写下的 `active.json` 读回来当真相** ——
+每次启动都从 `{asr:null, llm:null}` 开始。文件仍然写（供人事后查看），
+但在 `persistActive()` 上单独标明**永远不读回来**，免得下一个人以为它是状态来源。
+
+### ② 删除许可证：标记文件（这条你说最重，我做成了"指错了也删不动"）
+
+不是"记得别导出那个变量"，判据是 **store 根目录里必须有本工具亲手放下的
+`.openmemo-refserver-sandbox`**。两道：
+- **启动时**：目录非空且无标记 → 拒绝启动（`exit 2`）；
+- **每次删除前重新读一遍磁盘** —— 不信任启动时那次检查，因为进程可能已经跑了几小时，
+  `--models-root` 底下的东西可能已经被换掉了（比如换成指向真实 store 的符号链接）。
+  一次 `access` 很便宜，而它挡的是"删错了就没了"。
+
+`[实测]` 四条路径全验：
+
+```
+① 不带 --models-root
+   `--models-root` 是必填的。…                                    exit=2
+
+② 指向「非空且无标记」的目录（模拟用户真实模型库）
+   拒绝启动：/tmp/…/fakestore-bQHn 里已经有东西，但没有本工具的沙箱标记。  exit=2
+   用户的假模型包还在吗: pretend-installed-pack          ← 一个字节没动
+
+③ 全新目录 → 自建 + 放标记 → 删除类端点正常
+   POST /api/models/gc → 200
+
+④ 运行中把标记删掉（模拟 --models-root 被换成真实 store）
+   POST /api/models/gc          → HTTP 403  NOT_A_SANDBOX
+   DELETE /api/models/:id       → HTTP 403  NOT_A_SANDBOX
+```
+
+（③④ 起的是 19451 端口，跑完按**精确 pid** 停掉，未用 `pkill`。）
+
+另：`OPENMEMO_MODELS=<真实库>` 现在对它**完全没有影响** —— 它压根不看那个变量了。
+
+### ③ 默认端口 17650 → 19450，并且**纳入了那个会红的检查器**
+
+新增 `apps/daemon/src/testPorts.test.ts`（5 条），扫全部 daemon 测试 + 参考服务器默认端口。
+
+判据我特意挑了**不可能误判**的那个：**所有端口基数 ≥ 19000** ——
+不是"不许等于 17650"。理由是 `maxPort` **只向上扫**，起点在 19000 以上就永远回不到 17650，
+于是这条判据**不需要算出每个区间到底多宽**，也就不会因为算错宽度而误红（假红灯同样要当 bug）。
+另外两条：基数两两至少隔 30（node:test 并行跑，两个文件挑同一段会互抢）、
+能静态算出宽度的写法必须真的放得下。
+
+**最重要的一条是它不许变瞎**：每一行 `const port = …` / `let portCursor = …`
+都必须被归入某一类，**归不了类就当场红**并打出原文。
+扫描器最坏的失败不是报错，是遇到没见过的写法就跳过、然后一直报绿。
+
+**四种失效都反向验过（`[实测]`，每次只坏一处，跑完还原）**：
+
+```
+P1 把 settings.roundtrip 改回撞 17650 的老写法  → fail 1  ✖ 端口基数必须 ≥ 19000
+P2 参考服务器默认端口改回 17650                 → fail 1  ✖ 参考服务器默认端口…
+P3 两个文件挑到挨太近的基数                     → fail 1  ✖ 各段之间不许挨太近
+P4 引入一种扫描器没见过的写法                   → fail 1  ✖ 扫描器必须认得每一处端口声明
+还原后                                          → pass 5 / fail 0
+```
+
+还加了一条**前提自检**：扫到的段数必须 ≥ 6。没有它的话，仓库结构一变、`walk()` 扫出空集，
+上面每条断言都变成"对空数组成立"—— 全绿且什么都没验（⑤A-2 那一族）。
+
+**明写的已知边界**（不假装覆盖）：`let portCursor = N` 这种游标写法的宽度
+取决于运行时调用了多少次，静态数不出来，这里按保留 30 个处理；
+某个文件真起了超过 30 个 daemon 就会漂进下一段，**本检查器测不出来**。
+
+### ④ `resolveStoreRoot` —— 按你说的加断言、不改语义
+
+新增 `packages/pipeline/src/__tests__/storeRootPrecedence.test.ts`（6 条），
+第一条就直接钉住那个可疑性质本身：**`OPENMEMO_MODELS` 压过显式 `dataDir`**。
+
+这条断言不是给可疑设计背书。它的作用是：这条性质今天确实成立，
+**谁要改它就必须在这里明确地改一次**，从而变成一个有人看见的决定，而不是一次没人注意的顺手。
+
+本文件只读 env、只比字符串，**不碰磁盘**。env 改动在 `finally` 里还原，
+但即使 finally 没跑到也无所谓 —— 一个测试文件一个子进程，env 随进程消失。
+**这正是"根本不写机器级状态"和"写完记得擦"的区别**，顺手把它写进注释了。
+
+### 需要 Manager 决策
+
+无。低危三条（覆盖 git 跟踪的截图 / 缺 `try/finally` 的 `browser.close()` / 固定名 `/tmp/mm/`）
+按你的裁定**记着不排期**。
+
+---
+
 ## [2026-08-04 01:35] T-142d DONE —— 机器级状态全面审计（回答你"要不要派人"）
 
 门禁 **`856 passed / 0 failed / 0 todo`**，`tsc -b` 0 · `eslint` 0。
