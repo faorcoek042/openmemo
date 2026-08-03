@@ -399,6 +399,7 @@
       "provider": "服务商",
       "model": "模型",
       "inheritOption": "继承全局",
+      "inheritOptionWith": "继承全局（{{model}}）",
       "inherited": "继承",
       "overridden": "已覆盖",
       "effective": "实际生效：{{provider}} · {{model}}",
@@ -413,7 +414,17 @@
     "localOptional": "或接本地服务（可选）：",
     "provider": "服务商",
     "modelsLink": "模型与 AI 服务",
-    "modelsLinkHint": "转写模型 · 在线 AI 服务 · 按用途分别配置"
+    "modelsLinkHint": "转写模型 · 在线 AI 服务 · 按用途分别配置",
+    "modelPicker": {
+      "custom": "自定义…",
+      "customLabel": "自定义模型名",
+      "customPlaceholder": "照厂商文档抄准，例 deepseek-v4-flash",
+      "customHint": "内置清单里没有的型号可以自己填 —— 但拼错不会有任何提示，请照厂商文档抄准。",
+      "unset": "请选择模型",
+      "note": "内置清单 {{n}} 个 · 核对于 {{date}}，可能已过时",
+      "noteNoDate": "内置清单 {{n}} 个",
+      "noCatalog": "这个服务商没有内置清单 —— 请选「自定义…」手动填写型号名"
+    }
   },
   "mock": {
     "notImplementedShort": "这部分还是模拟数据",

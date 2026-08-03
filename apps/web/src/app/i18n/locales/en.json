@@ -399,6 +399,7 @@
       "provider": "Provider",
       "model": "Model",
       "inheritOption": "Inherit global",
+      "inheritOptionWith": "Inherit global ({{model}})",
       "inherited": "inherited",
       "overridden": "overridden",
       "effective": "In effect: {{provider}} · {{model}}",
@@ -413,7 +414,17 @@
     "localOptional": "or use a local service (optional):",
     "provider": "Provider",
     "modelsLink": "Models & AI services",
-    "modelsLinkHint": "Transcription models · online AI services · per-purpose config"
+    "modelsLinkHint": "Transcription models · online AI services · per-purpose config",
+    "modelPicker": {
+      "custom": "Custom…",
+      "customLabel": "Custom model name",
+      "customPlaceholder": "Copy it exactly from the vendor docs, e.g. deepseek-v4-flash",
+      "customHint": "Anything missing from the bundled list can be typed in — but a typo gets no warning, so copy it from the vendor docs.",
+      "unset": "Select a model",
+      "note": "{{n}} bundled entries · checked {{date}}, may be out of date",
+      "noteNoDate": "{{n}} bundled entries",
+      "noCatalog": "No bundled list for this provider — pick “Custom…” and type the model name"
+    }
   },
   "mock": {
     "notImplementedShort": "Still simulated data",

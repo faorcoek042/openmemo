@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
@@ -28,6 +30,29 @@ function rewriteOrigin(proxy: { on: (e: string, cb: (p: { setHeader: (k: string,
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+
+  /**
+   * ★ `@manifests/*` → `vendor/manifests/*`（T-126）。
+   *
+   * LLM 服务商目录（24 家 / 520 个模型）是**随仓库分发的静态快照**，
+   * `packages/shared/src/providers.ts` 的文件头已经把这条定死了：
+   * *"not something fetched at runtime … a dropdown that is empty because the network
+   * is blocked is worse than one that is slightly out of date."*
+   * 所以它该**进包**，而不是再开一个可能失败的端点。
+   *
+   * 为什么必须是 alias 而不是相对路径 `../../../vendor/…`：
+   * `apps/web/tsconfig.json` 的 `rootDir` 是 `src`，任何 `src/` 之外的文件都会让
+   * tsc 报 TS6059。配一个别名 + 一份 `src/types/manifests.d.ts` 的 ambient 声明后：
+   * - **tsc 根本不去读那个 253 KB 的 JSON**（ambient 声明对该 specifier 优先），
+   *   既绕开 rootDir，也不用为 520 条模型推断字面量类型（那会明显拖慢类型检查）；
+   * - Vite（dev / build / `--ssr` 那条测试道）按 alias 解析到真文件，**只有一份数据**。
+   */
+  resolve: {
+    alias: {
+      '@manifests': fileURLToPath(new URL('../../vendor/manifests', import.meta.url)),
+    },
+  },
+
   server: {
     // ADR-003 安全硬要求：开发服务器同样只绑回环地址，绝不 0.0.0.0
     host: '127.0.0.1',

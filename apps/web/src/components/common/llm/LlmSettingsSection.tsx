@@ -22,7 +22,8 @@ import {
   type LlmProviderConfig,
 } from './api';
 import { cn } from '../../../lib/utils';
-import { useLlmConfig } from './llm-catalog';
+import { LlmModelSelect } from './LlmModelSelect';
+import { useLlmConfig, type ModelCatalogNote } from './llm-catalog';
 
 /**
  * B-3：LLM provider 配置 —— **解开 F4 的那一把钥匙**（T-041 接真后端）。
@@ -49,7 +50,7 @@ export function LlmSettingsSection() {
   /** 保存成功的时刻。用于给出**明确的成功信号**，而不是靠"表单关了"让用户自己猜。 */
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
-  const { providers, modelsFor, availablePresets } = useLlmConfig();
+  const { providers, modelsFor, catalogNoteFor, availablePresets } = useLlmConfig();
   const activeId = readActiveProviderId(settings.data);
   /*
    * daemon 解析 provider 需要 `llm.defaultProviderId` **和** `llm.defaultModelId` 都有值，
@@ -156,7 +157,7 @@ export function LlmSettingsSection() {
               key={p.id}
               className={cn(
                 'rounded-md border p-3',
-                activeId === p.id ? 'border-accent bg-accent-track/20' : 'border-line',
+                activeId === p.id ? 'border-accent bg-accent-tint/20' : 'border-line',
               )}
             >
               <div className="flex flex-wrap items-center gap-2">
@@ -205,6 +206,7 @@ export function LlmSettingsSection() {
                   provider={p}
                   hasKey={hasKey(p.id)}
                   models={modelsFor(p.id)}
+                  note={catalogNoteFor(p.id)}
                   saving={patch.isPending || setSecret.isPending}
                   onSave={(next, apiKey) => {
                     /*
@@ -282,6 +284,7 @@ function ProviderForm({
   provider,
   hasKey,
   models,
+  note,
   saving,
   onSave,
 }: {
@@ -289,6 +292,8 @@ function ProviderForm({
   hasKey: boolean;
   /** 候选模型 —— 与「按用途分别配置」**同一个来源**，不再各画各的。 */
   models: string[];
+  /** 候选清单的出处与时效（同一份目录）。 */
+  note: ModelCatalogNote | null;
   saving: boolean;
   onSave: (next: LlmProviderConfig, apiKey?: string) => void;
 }) {
@@ -313,22 +318,18 @@ function ProviderForm({
       <label className="grid gap-1 text-xs text-ink-secondary">
         {t('settings.model')}
         {/*
-          仍是自由输入，但配上 datalist 候选 —— 厂商上新模型比我们发版快，
-          写死下拉会把新模型挡在外面。候选与分档配置共用同一份 `modelsFor()`。
+          ★ T-126：真下拉，候选来自 `vendor/manifests/llm-providers.json`，
+          与「按用途分别配置」**是同一个组件、同一份数据**（`modelsFor()`）。
+          自由输入降级为下拉最后一项的「自定义…」—— 逃生口还在，但不再是默认路径。
         */}
-        <input
+        <LlmModelSelect
           value={model}
-          list={`models-${provider.id}`}
-          onChange={(e) => setModel(e.target.value)}
-          spellCheck={false}
-          data-testid="llm-model-input"
-          className="h-8 rounded-md border border-line bg-surface-0 px-2 text-sm text-ink"
+          models={models}
+          onChange={setModel}
+          note={note}
+          testId="llm-model-select"
+          ariaLabel={t('settings.model')}
         />
-        <datalist id={`models-${provider.id}`}>
-          {models.map((m) => (
-            <option key={m} value={m} />
-          ))}
-        </datalist>
       </label>
 
       {/* 本地 provider 不显示 Key 输入框 —— 绝不逼用户为 Ollama 编一个假 key */}

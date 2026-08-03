@@ -15,6 +15,7 @@ import {
   usePatchSettingsMutation,
   useSettingsQuery,
 } from './api';
+import { LlmModelSelect } from './LlmModelSelect';
 import { useLlmConfig } from './llm-catalog';
 
 /**
@@ -83,7 +84,13 @@ export function PurposeBindingsSection() {
    * 之前这里的模型是个自由文本框，和上面那份 provider 清单毫无关系 ——
    * 两处各维护一份，必然出现"那边有、这边没有"。
    */
-  const { providers, activeProviderId: defaultProviderId, defaultModel, modelsFor } = useLlmConfig();
+  const {
+    providers,
+    activeProviderId: defaultProviderId,
+    defaultModel,
+    modelsFor,
+    catalogNoteFor,
+  } = useLlmConfig();
   const bindings = readPurposeBindings(settings.data);
 
   const write = (purpose: LlmPurpose, next: { providerId?: string; model?: string }) => {
@@ -147,24 +154,26 @@ export function PurposeBindingsSection() {
                     <InheritTag inherited={eff.inherited.model} />
                   </span>
                   {/*
-                    候选来自 `modelsFor(该档实际生效的 provider)` —— 与「AI 模型」区块同一份。
-                    仍保留自由输入（datalist 而非 select）：厂商上新模型比我们发版快。
+                    ★ T-126：真下拉，且**与「AI 模型」区块是同一个组件**（`LlmModelSelect`）。
+                    候选仍是 `modelsFor(该档实际生效的 provider)` —— 同一份目录，不分叉。
+                    空值 = 继承全局，所以这里 `allowEmpty`；自由输入退到「自定义…」之后。
+                    `commit="blur"`：这一栏每次提交都会 PATCH 一次，不能每敲一个字就发一次。
                   */}
-                  <input
-                    defaultValue={bindings[purpose]?.model ?? ''}
-                    list={`purpose-models-${purpose}`}
-                    onBlur={(e) => write(purpose, { model: e.target.value })}
-                    placeholder={defaultModel ?? t('settings.purposes.inheritOption')}
-                    spellCheck={false}
-                    autoComplete="off"
-                    data-testid={`purpose-${purpose}-model`}
-                    className="h-8 rounded-md border border-line bg-surface-0 px-2 font-mono text-sm text-ink"
+                  <LlmModelSelect
+                    value={bindings[purpose]?.model ?? ''}
+                    models={modelsFor(eff.providerId)}
+                    onChange={(model) => write(purpose, { model })}
+                    commit="blur"
+                    allowEmpty
+                    emptyLabel={
+                      defaultModel
+                        ? t('settings.purposes.inheritOptionWith', { model: defaultModel })
+                        : t('settings.purposes.inheritOption')
+                    }
+                    note={catalogNoteFor(eff.providerId)}
+                    testId={`purpose-${purpose}-model`}
+                    ariaLabel={t('settings.purposes.model')}
                   />
-                  <datalist id={`purpose-models-${purpose}`}>
-                    {modelsFor(eff.providerId).map((m) => (
-                      <option key={m} value={m} />
-                    ))}
-                  </datalist>
                 </label>
               </div>
 

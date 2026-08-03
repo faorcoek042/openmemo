@@ -18,7 +18,11 @@ import { SearchBox } from '../features/search/SearchBox';
 import { JobList } from '../features/tasks/JobList';
 import { LlmSettingsSection } from '../components/common/llm/LlmSettingsSection';
 import { buildLlmSettingsPatch, LLM_PURPOSES_KEY } from '../components/common/llm/api';
-import { LLM_PRESETS } from '../components/common/llm/llm-catalog';
+import {
+  LLM_PRESETS,
+  LLM_CATALOG_STATS,
+  catalogProviderFor,
+} from '../components/common/llm/llm-catalog';
 import { useSaveMindmapMutation } from '../features/mindmap/api';
 import { applyCaption, RECORD_SAMPLE_RATE } from '../features/recorder/asrStream';
 import { readFileSync } from 'node:fs';
@@ -1826,7 +1830,7 @@ describe('LLM 服务商与模型：单一数据源', () => {
     });
     const r = await render(<PurposeBindingsSection />);
     await r.flush();
-    const opts = [...r.container.querySelectorAll('datalist option')].map((o) => o.getAttribute('value'));
+    const opts = modelOptions(r.container, 'purpose-chat-model');
     assert.ok(
       opts.includes('my-custom-model'),
       `用户在「AI 模型」里填的模型必须能在分档里选到，实际候选：${JSON.stringify(opts)}`,
@@ -1846,22 +1850,217 @@ describe('LLM 服务商与模型：单一数据源', () => {
 
     const a = await render(<PurposeBindingsSection />);
     await a.flush();
-    const purposeOpts = new Set(
-      [...a.container.querySelectorAll('datalist option')].map((o) => o.getAttribute('value')),
-    );
+    const purposeOpts = new Set(modelOptions(a.container, 'purpose-chat-model'));
     a.unmount();
 
     const b = await render(<LlmSettingsSection />);
     await b.flush();
     await click(buttonByText(b.container, '编辑'));
     await b.flush();
-    const llmOpts = [...b.container.querySelectorAll('datalist option')].map((o) => o.getAttribute('value'));
+    const llmOpts = modelOptions(b.container, 'llm-model-select');
     b.unmount();
 
     assert.ok(llmOpts.length > 0, '「AI 模型」也要给候选');
     for (const m of llmOpts) {
       assert.ok(purposeOpts.has(m), `模型 ${m} 在「AI 模型」有、在分档里没有 —— 两处又漂了`);
     }
+  });
+});
+
+/* ── T-126：模型选择 = 真下拉 + 逃生口，两处复用同一个组件 ── */
+
+/**
+ * 用户原话：「**模型的下拉框还是能选择也能填写，这个和 memo 里面还是不一样，也要改**」。
+ * 他看过 memo.ac 实物，那边是纯 `<select>`。
+ *
+ * 前任把它做成 `<input list=…>`（自由输入 + datalist 提示），注释里的理由是
+ * 「厂商上新模型比我们发版快」——**这个顾虑是真的**（24 家里 20 家的清单是人工从文档
+ * 转录的，没有端点可调），但它把**例外做成了默认**：既与 memo 不一致，
+ * 又让用户可以打错一个字符打出一个不存在的型号而**毫无反馈**。
+ *
+ * 所以这一族用例锁三件事：① 默认是真下拉；② 逃生口仍在但不是默认；
+ * ③ 两处是**同一个组件、同一份数据**（用户："该统一和复用的地方要统一复用啊"）。
+ */
+
+/** 某个模型下拉的候选值（排除空值项与「自定义…」这两个功能项）。 */
+function modelOptions(c: HTMLElement, testId: string): string[] {
+  const sel = c.querySelector(`select[data-testid="${testId}"]`);
+  assert.ok(sel, `找不到模型下拉 ${testId} —— 它必须是 <select>，不是 <input>`);
+  return [...sel!.querySelectorAll('option')]
+    .map((o) => (o as HTMLOptionElement).value)
+    .filter((v) => v !== '' && v !== '__custom__');
+}
+
+describe('LLM 模型选择：真下拉（T-126）', () => {
+  const settingsWith = (model: string, bindings?: Record<string, unknown>) => ({
+    'llm.providers': [
+      { id: 'deepseek', kind: 'openai-compatible', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model, isLocal: false },
+    ],
+    'llm.defaultProviderId': 'deepseek',
+    'llm.defaultModelId': model,
+    ...(bindings ? { 'llm.purposes': bindings } : {}),
+  });
+
+  test('★ 两处都必须是 <select>，且全仓不许再有 datalist 自由输入', async () => {
+    stubApi({
+      'GET /settings': { settings: settingsWith('deepseek-v4-flash') },
+      'GET /secrets': { secrets: [], disclosure: null },
+    });
+
+    const a = await render(<PurposeBindingsSection />);
+    await a.flush();
+    assert.ok(a.container.querySelector('select[data-testid="purpose-chat-model"]'), '分档配置的模型必须是下拉');
+    assert.equal(a.container.querySelectorAll('datalist').length, 0, '不许再有 datalist');
+    a.unmount();
+
+    const b = await render(<LlmSettingsSection />);
+    await b.flush();
+    await click(buttonByText(b.container, '编辑'));
+    await b.flush();
+    assert.ok(b.container.querySelector('select[data-testid="llm-model-select"]'), '「AI 模型」的模型必须是下拉');
+    assert.equal(b.container.querySelectorAll('datalist').length, 0, '不许再有 datalist');
+    b.unmount();
+  });
+
+  test('★ 两处复用同一个组件 —— 不许各写一遍（用户："该统一和复用的地方要统一复用"）', async () => {
+    const a = await readSource('components/common/llm/LlmSettingsSection.tsx');
+    const b = await readSource('components/common/llm/PurposeBindingsSection.tsx');
+    for (const [name, src] of [['LlmSettingsSection', a], ['PurposeBindingsSection', b]] as const) {
+      assert.ok(src.includes('LlmModelSelect'), `${name} 必须复用共享的 LlmModelSelect`);
+      assert.ok(!src.includes('<datalist'), `${name} 里还留着 datalist 自由输入`);
+    }
+  });
+
+  test('★ 候选来自 vendor/manifests 的目录，不是前端手写的第二份清单', async () => {
+    // `deepseek-v4-flash` 只存在于目录里；前任手写的那份只有 chat/reasoner 两个 ——
+    // 用户实际配的正是 v4-flash，也就是说他配的型号在旧下拉里**根本不存在**。
+    assert.ok(LLM_CATALOG_STATS.providers >= 24, '目录应有 24 家');
+    assert.ok(LLM_CATALOG_STATS.models >= 520, '目录应有 520 条模型');
+
+    stubApi({
+      'GET /settings': { settings: settingsWith('deepseek-v4-flash') },
+      'GET /secrets': { secrets: [], disclosure: null },
+    });
+    const r = await render(<PurposeBindingsSection />);
+    await r.flush();
+    const opts = modelOptions(r.container, 'purpose-chat-model');
+    assert.ok(opts.includes('deepseek-v4-flash'), `目录里的型号必须进候选，实际：${JSON.stringify(opts)}`);
+    assert.ok(opts.includes('deepseek-reasoner'), '目录里的其余型号也要在');
+    r.unmount();
+  });
+
+  test('★ id 桥接：目录里 Anthropic 叫 claude，前端预设叫 anthropic —— 不桥接就是空清单', () => {
+    assert.ok((catalogProviderFor('anthropic')?.models.length ?? 0) > 0, 'anthropic → claude');
+    assert.ok((catalogProviderFor('zhipu')?.models.length ?? 0) > 0, 'zhipu → zhipuai');
+    assert.ok((catalogProviderFor('dashscope')?.models.length ?? 0) > 0, 'dashscope → qwen');
+    assert.ok((catalogProviderFor('siliconflow')?.models.length ?? 0) > 0, 'siliconflow → siliconcloud');
+    // 不在目录里的一律回 undefined —— 不编一个"看起来像"的
+    assert.equal(catalogProviderFor('my-own-gateway'), undefined);
+  });
+
+  /**
+   * ★ 这条防的是**报喜不报忧**。
+   *
+   * 目录有 24 家 / 520 条，但真正能出现在下拉里的只有 `LLM_PRESETS` 那 11 家能覆盖到的
+   * （11 家 / 283 条）—— 剩下 13 家（237 条）用户**根本加不进来**，因为「+ 添加」按钮只有 11 个。
+   * 那一步是 D-10 #24，归 `architect`，本轮没做。
+   *
+   * 这里能锁死的是另一件事，也是真正会坏的那件：**任何一个预设都不许是空清单**。
+   * 预设 id 与目录 id 不一致（`anthropic`≠`claude` 等）时，用户打开下拉会看到零个候选，
+   * 看起来像"我们不支持这家" —— 加预设的人不会想到去核对目录 id，所以让测试去核对。
+   */
+  test('★ 每个预设都必须有候选 —— 预设 id 与目录 id 对不上就是一个空下拉', () => {
+    const empty = LLM_PRESETS.filter((p) => (catalogProviderFor(p.id)?.models.length ?? 0) === 0);
+    assert.deepEqual(
+      empty.map((p) => p.id),
+      [],
+      '这些预设在目录里找不到对应项（多半是 id 不一致），下拉会是空的',
+    );
+  });
+
+  test('★ 逃生口仍在，但不是默认：最后一项是「自定义…」，选中后才出现文本框', async () => {
+    stubApi({
+      'GET /settings': { settings: settingsWith('deepseek-v4-flash') },
+      'GET /secrets': { secrets: [], disclosure: null },
+    });
+    const r = await render(<PurposeBindingsSection />);
+    await r.flush();
+
+    const sel = r.container.querySelector('select[data-testid="purpose-chat-model"]') as HTMLSelectElement;
+    const values = [...sel.querySelectorAll('option')].map((o) => (o as HTMLOptionElement).value);
+    assert.equal(values.at(-1), '__custom__', '「自定义…」必须是最后一项');
+    assert.equal(
+      r.container.querySelector('[data-testid="purpose-chat-model-custom"]'),
+      null,
+      '没选「自定义…」时不该有文本框 —— 自由输入不是默认路径',
+    );
+
+    await type(sel, '__custom__');
+    await r.flush();
+    assert.ok(
+      r.container.querySelector('[data-testid="purpose-chat-model-custom"]'),
+      '选了「自定义…」之后才出现文本框',
+    );
+    r.unmount();
+  });
+
+  /**
+   * ★ 换控件最容易犯的错，也是这次唯一会**丢用户数据**的错。
+   *
+   * `<select>` 遇到不在 options 里的 value 会**显示成空**。用户配的若是清单里没有的
+   * 型号（自定义网关 / 刚上新的型号），换控件的瞬间他会看到一个空下拉，
+   * 再点一次保存就真的写空了。所以：不认识的值 ⇒ 自动进自定义模式，原值一个字符不改。
+   */
+  test('★ 值不在候选里时自动进自定义模式，绝不把它显示成空（= 悄悄丢配置）', async () => {
+    stubApi({
+      'GET /settings': {
+        settings: settingsWith('deepseek-v4-flash', { chat: { model: 'gateway/未来的型号-v9' } }),
+      },
+      'GET /secrets': { secrets: [], disclosure: null },
+    });
+    const r = await render(<PurposeBindingsSection />);
+    await r.flush();
+
+    const sel = r.container.querySelector('select[data-testid="purpose-chat-model"]') as HTMLSelectElement;
+    assert.equal(sel.value, '__custom__', '不认识的值必须落到自定义模式，而不是被显示成空');
+    const box = r.container.querySelector('[data-testid="purpose-chat-model-custom"]') as HTMLInputElement;
+    assert.ok(box, '必须出现文本框把原值托住');
+    assert.equal(box.value, 'gateway/未来的型号-v9', '原值必须一个字符都不改');
+    r.unmount();
+  });
+
+  /**
+   * ★ 用户 `:10000` 实例上的真实配置（`/root/data-memo`）：
+   * `llm.defaultProviderId=deepseek` / `llm.defaultModelId=deepseek-v4-flash`，
+   * 而 `llm.providers[0].model` 是 `deepseek-chat`（两者本就不同步，是既有状态）。
+   * 换控件之后这两个值都必须原样在，且都得是下拉里选得中的项。
+   */
+  test('★ 真实用户配置换控件后仍在：deepseek-chat 选中、deepseek-v4-flash 仍是当前生效', async () => {
+    stubApi({
+      'GET /settings': {
+        settings: {
+          'llm.providers': [
+            { id: 'deepseek', kind: 'openai-compatible', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', isLocal: false },
+          ],
+          'llm.defaultProviderId': 'deepseek',
+          'llm.defaultModelId': 'deepseek-v4-flash',
+        },
+      },
+      'GET /secrets': { secrets: [{ key: 'llm.deepseek.apiKey', masked: 'sk-b…0e11', enc: 'plain', updatedAt: 1 }], disclosure: null },
+    });
+    const r = await render(<LlmSettingsSection />);
+    await r.flush();
+
+    const eff = r.container.querySelector('[data-testid="llm-effective"]')?.textContent ?? '';
+    assert.ok(eff.includes('deepseek-v4-flash'), `当前生效必须仍是 deepseek-v4-flash，实际：${eff}`);
+
+    await click(buttonByText(r.container, '编辑'));
+    await r.flush();
+    const sel = r.container.querySelector('select[data-testid="llm-model-select"]') as HTMLSelectElement;
+    assert.equal(sel.value, 'deepseek-chat', '表单里原本填的值必须仍被选中，不许变空');
+    const values = [...sel.querySelectorAll('option')].map((o) => (o as HTMLOptionElement).value);
+    assert.ok(values.includes('deepseek-v4-flash'), '真正生效的那个型号也必须可选得到');
+    r.unmount();
   });
 });
 
@@ -2034,7 +2233,14 @@ describe('D-10 不变量', () => {
     await r.flush();
 
     const configured = new Set(providers.map((p) => p.id));
-    const options = [...r.container.querySelectorAll('select option')]
+    /*
+     * ⚠️ T-126 起这一栏有**两个** `<select>`（服务商 + 模型），
+     * 所以必须按 testid 定位到服务商那一个 —— 否则会把模型型号当成服务商 id 来断言，
+     * 断言看起来还在跑，测的却是另一件事（比直接报错更坏）。
+     */
+    const providerSelect = r.container.querySelector('select[data-testid="purpose-chat-provider"]');
+    assert.ok(providerSelect, '找不到服务商下拉');
+    const options = [...providerSelect!.querySelectorAll('option')]
       .map((o) => (o as HTMLOptionElement).value)
       .filter((v) => v !== ''); // 空值 = "继承全局"
     assert.ok(options.length > 0, '应渲染出服务商选项');
