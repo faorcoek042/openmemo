@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api/client';
+import { applyStarToPage, type NotesPage } from '../../lib/api/notesCache';
 import { qk } from '../../app/query';
 import type {
   AcceptedJob,
@@ -10,10 +11,23 @@ import type {
   TranscriptDto,
 } from '../../lib/api/types';
 
-export function useNotesQuery() {
+/**
+ * 笔记列表。
+ *
+ * `starredOnly` **走查询串交给 daemon 筛**，不在前端过滤（T-138 ③）。
+ * 前端过滤只能筛"已经取回的那一页"（`limit=50`）：笔记超过 50 条之后，
+ * 第 51 条之外的星标笔记不会出现，**而且页面上没有任何迹象**。
+ * `GET /api/notes?starred=1` 现在在 SQL 的 WHERE 里筛，`limit` 限的才是星标笔记的条数。
+ *
+ * 两种筛选是**两条缓存**（filter 参与 queryKey），否则点一次「星标」
+ * 会把「全部笔记」的缓存也换成筛过的那一份。
+ */
+export function useNotesQuery(opts: { starredOnly?: boolean } = {}) {
+  const starredOnly = opts.starredOnly === true;
   return useQuery({
-    queryKey: qk.notes.list(),
-    queryFn: () => api<{ notes: NoteSummary[] }>('notes', '/notes'),
+    queryKey: qk.notes.list(starredOnly ? { starred: true } : {}),
+    queryFn: () =>
+      api<{ notes: NoteSummary[] }>('notes', starredOnly ? '/notes?starred=1' : '/notes'),
     select: (d) => d.notes,
   });
 }
@@ -139,18 +153,28 @@ export function useToggleStarMutation() {
         method: 'PUT',
         body: { starred: v.starred },
       }),
+    /*
+     * 乐观更新要打到**每一条列表缓存**（`qk.notes.lists` 前缀）。
+     * 自 T-138 起「全部笔记」与「星标」是两个 filter、两条缓存 ——
+     * 只写 `list()` 的话，在星标页上点星星会一动不动，直到 onSettled 的 invalidate 才补上，
+     * 而"点了没反应"正是用户会连点第二次的那种反馈。
+     *
+     * ⚠️ 星标那条缓存还要**把取消了星标的那条移出去**：它是服务端按 `starred=1` 筛过的一页，
+     * 那条笔记已经不属于这一页了。这不是"前端又筛了一遍"——
+     * 它是对**服务端下一次会返回什么**的预测，紧接着就会被 onSettled 的 invalidate 纠正。
+     * （筛选本身仍然只有一个实现，在 daemon 的 SQL 里。）
+     */
     onMutate: async (v) => {
       await qc.cancelQueries({ queryKey: qk.notes.all });
-      const prev = qc.getQueryData<{ notes: NoteSummary[] }>(qk.notes.list());
-      qc.setQueryData<{ notes: NoteSummary[] }>(qk.notes.list(), (old) =>
-        old
-          ? { notes: old.notes.map((n) => (n.uid === v.noteUid ? { ...n, starred: v.starred } : n)) }
-          : old,
-      );
+      const prev = qc.getQueriesData<NotesPage>({ queryKey: qk.notes.lists });
+      for (const [key, old] of prev) {
+        const filter = key[2] as Record<string, unknown> | undefined;
+        qc.setQueryData<NotesPage>(key, applyStarToPage(old, filter, v.noteUid, v.starred));
+      }
       return { prev };
     },
     onError: (_e, _v, ctx) => {
-      if (ctx?.prev) qc.setQueryData(qk.notes.list(), ctx.prev);
+      for (const [key, data] of ctx?.prev ?? []) qc.setQueryData(key, data);
     },
     onSettled: () => void qc.invalidateQueries({ queryKey: qk.notes.all }),
   });

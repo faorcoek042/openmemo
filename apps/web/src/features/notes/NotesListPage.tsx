@@ -17,8 +17,6 @@ import { cn } from '../../lib/utils';
 export default function NotesListPage() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
-  const { data: notes, isLoading, isError, error, refetch } = useNotesQuery();
-  const toggleStar = useToggleStarMutation();
 
   /*
    * ★ 侧栏「星标」= `/notes?starred=1`，与「全部笔记」**共用这一个组件**。
@@ -28,20 +26,22 @@ export default function NotesListPage() {
    * 它和「两项永远同时高亮」是同一个疏漏的两半：那半是**导航层**没认查询串，
    * 这半是**数据层**没认。**这一页的状态来源是 URL，导航高亮与列表内容都得认它。**
    *
-   * 为什么在前端过滤而不是加一个 `GET /api/notes?starred=1`：
-   * daemon 的 `GET /api/notes` 今天**只接受 `limit`**（`http/rest/notes.ts:242`），
-   * 但**每条笔记都带 `starred`**（同文件 :264）—— 也就是说筛选所需的数据已经在手上了，
-   * 缺的只是"用它"。改端点要动 daemon + 重建才能让演示实例看到，
-   * 而前端这一步就能让功能真的可用。
+   * ✅ **T-138 ③：筛选已经挪进端点了。**
+   * T-129 那版在前端对已取回的一页做 `filter(n => n.starred)`，并在这里写着
+   * 「真正的修法是端点支持 starred」—— 那句话现在可以删掉了：
+   * `GET /api/notes?starred=1` 在 SQL 的 WHERE 里筛（`db/repos.ts:listNotes`），
+   * `limit=50` 限的是**星标笔记**的条数，笔记总数超过 50 条也不会再无声地漏。
    *
-   * ⚠️ **它的代价我说清楚**：列表本身是 `limit=50` 的一页，所以这里筛的是
-   * **已取回的那一页**里的星标笔记，不是全库。笔记数超过 50 条之后，
-   * 第 51 条之外的星标笔记不会出现在这里 —— 真正的修法是端点支持 `starred`，
-   * 已作为后续项报给 Manager。今天这样**不会显示错的内容**，只可能显示得不全。
+   * ⚠️ 前端那层 `.filter()` 是**故意删掉的，不是忘了**。留着它，
+   * 端点哪天回退成"不认这个参数"，页面看起来照样正确 —— 于是护栏测的是前端那层，
+   * 真正的筛选在哪没人知道。删掉之后，查询串是**唯一**的筛选依据，
+   * 端点坏了页面就会立刻显形（组件测试断的正是"请求带上了 ?starred=1"）。
    */
   const [sp] = useSearchParams();
   const starredOnly = sp.get('starred') === '1';
-  const visible = starredOnly ? (notes ?? []).filter((n) => n.starred) : (notes ?? []);
+  const { data: notes, isLoading, isError, error, refetch } = useNotesQuery({ starredOnly });
+  const toggleStar = useToggleStarMutation();
+  const visible = notes ?? [];
 
   if (isError) return <ErrorBlock error={error} onRetry={() => void refetch()} className="m-6" />;
   if (isLoading) return <div className="p-6 text-sm text-ink-muted">{t('common.loading')}</div>;
@@ -120,8 +120,12 @@ export default function NotesListPage() {
                       </span>
                     ))}
                   </div>
-                  {/* 未完成的任务在列表里也要能看到进度 —— 进度来自 jobs，与页面无关 */}
-                  {n.activeJobId ? <NoteProgressLine jobId={n.activeJobId} className="mt-2" /> : null}
+                  {/*
+                    未完成的任务在列表里也要能看到进度 —— 进度来自 jobs，与页面无关。
+                    条件不再由这里判断：`n.activeJobId` 是一个 daemon 从未返回过的字段，
+                    这一行因此**在真实环境里从来没渲染过**（T-138 ②）。
+                  */}
+                  <NoteProgressLine noteUid={n.uid} className="mt-2" />
                 </div>
                 <div className="shrink-0">
                   {n.status === 'processing' ? (

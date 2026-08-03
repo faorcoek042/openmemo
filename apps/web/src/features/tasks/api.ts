@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { AnyJob, DownloadJob, JobState } from '@openmemo/shared';
+import type { AnyJob, DownloadJob, JobState, PipelineJobKind } from '@openmemo/shared';
 import { isPipelineJob } from '@openmemo/shared';
 
 import { api } from '../../lib/api/client';
 import { qk } from '../../app/query';
 import { useProgressStore, type JobProgressSnapshot } from '../../lib/stores/progress.store';
+import { isActiveJobState, pickActiveNoteJob } from '../../lib/jobs/noteJobs';
 
 /**
  * M-5 任务中心持久化。
@@ -147,6 +148,60 @@ export function useMergedJobs(): { jobs: MergedJob[]; isLoading: boolean; isErro
   }
 
   return { jobs: merged, isLoading: q.isLoading, isError: q.isError, error: q.error };
+}
+
+/**
+ * 一条笔记上**还没结束**的流水线任务（转写 / 导图）。
+ *
+ * 服务端列表（刷新后仍在）+ 内存进度（4Hz 实时）两层合并，规则与上面的任务中心一致 ——
+ * **这是"这条笔记在忙什么"的唯一出处**：笔记页的进度行、导图的「生成中」都读它。
+ * 不再有第二个 `note.activeJobId` 字段（为什么，见 `lib/jobs/noteJobs.ts` 的文件头）。
+ */
+export interface ActiveNoteJob {
+  jobId: string;
+  kind: PipelineJobKind;
+  displayName: string;
+  state: JobState;
+  step: string | null;
+  progress: number;
+  stepIndex: number | undefined;
+  stepCount: number | undefined;
+  etaSeconds: number | null;
+  blockedCode: string | null;
+}
+
+export function useActiveNoteJob(
+  noteUid: string | undefined,
+  kind?: PipelineJobKind,
+): ActiveNoteJob | undefined {
+  const q = useJobsQuery();
+  const job = pickActiveNoteJob(q.data?.jobs ?? [], noteUid, kind);
+  /*
+   * ★ selector 只订阅**这一条** job 的快照（D-05 §2.4）。
+   * 订阅整张 `byJob` 表的话，笔记列表里每一行都会随任意任务的 4Hz 进度重渲染。
+   */
+  const live = useProgressStore((s) => (job ? s.byJob[job.jobId] : undefined));
+  if (!job) return undefined;
+
+  const state = (live?.state as JobState | undefined) ?? job.state;
+  /*
+   * 内存里已经是终态（刚跑完）而 REST 列表还没刷新时，**以内存为准**：
+   * 否则完成之后进度行还会挂几百毫秒，看起来像卡住。
+   */
+  if (!isActiveJobState(state)) return undefined;
+
+  return {
+    jobId: job.jobId,
+    kind: job.kind,
+    displayName: job.displayName,
+    state,
+    step: live?.step ?? job.step,
+    progress: live?.progress ?? job.progress,
+    stepIndex: live?.stepIndex,
+    stepCount: live?.stepCount,
+    etaSeconds: live?.etaSeconds ?? null,
+    blockedCode: job.blockedCode,
+  };
 }
 
 /** 分组：**"需要处理"排在"已完成"之前** —— blocked/failed 是唯一需要用户动作的一类。 */

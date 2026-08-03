@@ -337,7 +337,14 @@
     "resolving": "Choosing a source",
     "downloading": "Downloading",
     "verifying": "Verifying checksum",
-    "installing": "Installing"
+    "installing": "Installing",
+    "state": {
+      "queued": "Queued",
+      "blocked": "On hold",
+      "leased": "Starting",
+      "running": "Working",
+      "paused": "Paused"
+    }
   },
   "recorder": {
     "title": "Record and transcribe",
@@ -632,9 +639,17 @@
     "editHint": "Double-click to edit · drag to move · right-click for more",
     "markmapLoss": "The outline view will not show {{edges}} connections and {{summaries}} summaries",
     "empty": "No mind map yet",
-    "emptyHint": "Generate one with AI after transcription, or start from a blank canvas.",
+    "emptyHint": "Let an online language model read the transcript and turn it into an editable, exportable mind map in seconds.",
     "open": "Open mind map",
-    "editsNotPersisted": "Mind map edits apply on this page only and are not saved yet (the save endpoint is not implemented)."
+    "editsNotPersisted": "Mind map edits apply on this page only and are not saved yet (the save endpoint is not implemented).",
+    "generate": "Generate mind map",
+    "generating": "Generating…",
+    "generateBlocked": "On hold",
+    "blocked": {
+      "NO_TRANSCRIPT": "This note has no transcript yet. Transcribe it first, then come back and generate the mind map.",
+      "LLM_NOT_CONFIGURED": "No language model is available yet. Add an API key in Settings, or install a local model.",
+      "UNKNOWN": "The job is on hold. Open the task centre to see what it is waiting for."
+    }
   },
   "search": {
     "title": "Search",

@@ -337,7 +337,14 @@
     "resolving": "正在选择下载源",
     "downloading": "下载中",
     "verifying": "正在校验完整性",
-    "installing": "正在安装"
+    "installing": "正在安装",
+    "state": {
+      "queued": "排队中",
+      "blocked": "暂时无法继续",
+      "leased": "准备开始",
+      "running": "处理中",
+      "paused": "已暂停"
+    }
   },
   "recorder": {
     "title": "录音转文字",
@@ -632,9 +639,17 @@
     "editHint": "双击编辑 · 拖拽移动 · 右键更多",
     "markmapLoss": "切到大纲视图将不显示 {{edges}} 条关联线与 {{summaries}} 个概要",
     "empty": "还没有思维导图",
-    "emptyHint": "转写完成后可以让 AI 生成，也可以从空白开始手动整理。",
+    "emptyHint": "让在线语言模型读一遍转写稿，几秒钟整理成一张可编辑、可导出的导图。",
     "open": "打开思维导图",
-    "editsNotPersisted": "导图编辑目前只在本页生效，尚未保存到本地服务（保存接口未实现）。"
+    "editsNotPersisted": "导图编辑目前只在本页生效，尚未保存到本地服务（保存接口未实现）。",
+    "generate": "生成思维导图",
+    "generating": "正在生成…",
+    "generateBlocked": "暂时无法继续",
+    "blocked": {
+      "NO_TRANSCRIPT": "这条笔记还没有转写稿。先把它转写出来，再回来生成导图。",
+      "LLM_NOT_CONFIGURED": "还没有可用的语言模型。去设置里填一个 API Key，或者装一个本地模型。",
+      "UNKNOWN": "任务被挂起了。去任务中心看看它在等什么。"
+    }
   },
   "search": {
     "title": "搜索",

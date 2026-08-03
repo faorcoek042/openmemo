@@ -11,6 +11,8 @@
  * 只要删掉 mock，分发层与 UI 一行都不用改。这既是演示，也是对规格的一次自测。
  */
 
+import type { AnyJob, PipelineJob } from '@openmemo/shared';
+
 import { bus } from '../events/bus';
 import { ApiError, registerMockFetcher, type ApiOptions, type Fetcher } from './client';
 import type {
@@ -67,14 +69,7 @@ interface MockProvider {
  * （而不是内存里的 `progressStore`），**不证明**真的持久化了。
  * 真持久化要等 `/api/jobs` 上线；那时按面切换会自动接过去。
  */
-const mockJobs: {
-  jobId: string; kind: string; type: string; targetId: string; displayName: string;
-  state: string; step: string | null; provider: string | null;
-  totalBytes: number; completedBytes: number; speedBps: number; etaSeconds: number | null;
-  parts: unknown[]; currentFile: string | null; fileIndex: number; fileCount: number;
-  attempt: number; maxAttempts: number; error: unknown;
-  startedAt: string; updatedAt: string;
-}[] = [
+const mockJobs: AnyJob[] = [
   {
     jobId: 'job_demo_1', kind: 'model', type: 'download.model',
     targetId: 'asr/whisper-large-v3-turbo-q5_0',
@@ -97,6 +92,42 @@ const mockJobs: {
     startedAt: new Date(Date.now() - 300_000).toISOString(), updatedAt: new Date().toISOString(),
   },
 ];
+
+/**
+ * 把一条**流水线**任务放进 mock 的任务列表（T-138 ②）。
+ *
+ * ⚠️ 这里以前不是这么做的：mock 在 `note.activeJobId` 上记了一个 job id，
+ * 而 daemon 的笔记响应**从来没有这个字段**。于是 mock 里进度行好好的、真实环境里
+ * 一次都没出现过 —— **mock 比真后端多长了一个字段，正是这个 bug 藏了这么久的原因。**
+ * 现在 mock 与 daemon 走同一条路：任务在 `GET /api/jobs` 里，笔记 DTO 里没有它。
+ */
+function startMockPipelineJob(jobUid: string, kind: PipelineJob['kind'], note: MockNote): void {
+  const now = new Date().toISOString();
+  mockJobs.unshift({
+    jobId: jobUid,
+    kind,
+    type: kind,
+    displayName: note.title,
+    noteUid: note.uid,
+    state: 'queued',
+    step: null,
+    progress: 0,
+    attempt: 0,
+    maxAttempts: 5,
+    error: null,
+    blockedCode: null,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+function finishMockPipelineJob(jobUid: string): void {
+  const j = mockJobs.find((x) => x.jobId === jobUid);
+  if (j) {
+    j.state = 'succeeded';
+    j.updatedAt = new Date().toISOString();
+  }
+}
 
 const mockFolders: { uid: string; name: string; parentUid: string | null; color: string | null; noteCount: number }[] = [
   { uid: 'fld_course', name: '课程', parentUid: null, color: null, noteCount: 1 },
@@ -147,7 +178,6 @@ function seedNote(partial: Partial<MockNote> & { title: string }): MockNote {
     tags: partial.tags ?? [],
     createdAt: new Date(Date.now() - 86_400_000).toISOString(),
     updatedAt: new Date().toISOString(),
-    activeJobId: null,
     source: partial.source ?? {
       kind: 'url',
       adapterId: 'ytdlp',
@@ -344,7 +374,7 @@ function runImportPipeline(note: MockNote, jobId: string) {
     const tr = transcripts.get(transcriptUid);
     if (tr) { tr.status = 'done'; tr.progress = 1; tr.rtf = 0.38; }
     note.status = 'ready';
-    note.activeJobId = null;
+    finishMockPipelineJob(jobId);
     emit('transcribe.done', {
       transcriptUid, noteUid: note.uid, segmentCount: totalChunks * 4,
       rtf: 0.38, durationMs: note.durationMs,
@@ -370,8 +400,20 @@ const mockFetcher: Fetcher = async <T,>(path: string, opts: ApiOptions = {}): Pr
   await new Promise((r) => setTimeout(r, 60)); // 模拟本地往返
   const method = (opts.method ?? 'GET').toUpperCase();
 
-  if (method === 'GET' && path === '/notes') {
-    const list: NoteSummary[] = [...notes.values()].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+  /*
+   * ⚠️ 匹配时**必须先切掉查询串**：`api()` 传进来的 path 带着 `?starred=1`，
+   * 而 `path === '/notes'` 会漏判，落到文件末尾的"未实现"分支直接抛错 ——
+   * 表现是"离线/回落状态下笔记列表整页报错"，而真正的原因只是少写了一次 split。
+   */
+  const [pathname = path, queryString = ''] = path.split('?');
+  const query = new URLSearchParams(queryString);
+
+  if (method === 'GET' && pathname === '/notes') {
+    const starredOnly = query.get('starred') === '1' || query.get('starred') === 'true';
+    const list: NoteSummary[] = [...notes.values()]
+      // 与 daemon 一致：筛选发生在**取数那一层**，不是取完再过滤（T-138 ③）
+      .filter((n) => !starredOnly || n.starred)
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
     return { notes: list } as T;
   }
 
@@ -405,7 +447,7 @@ const mockFetcher: Fetcher = async <T,>(path: string, opts: ApiOptions = {}): Pr
     const req = opts.body as ImportUrlRequest;
     const note = seedNote({ title: req.url, status: 'processing', durationMs: null, assets: [] });
     const jobUid = nextId('job');
-    note.activeJobId = jobUid;
+    startMockPipelineJob(jobUid, 'transcribe', note);
     emit('note.created', { noteUid: note.uid, title: note.title, kind: 'media', folderUid: null });
     emit('note.status', { noteUid: note.uid, status: 'processing' });
     runImportPipeline(note, jobUid);

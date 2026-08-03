@@ -25,6 +25,45 @@ export function useMindmapQuery(noteUid: string | undefined) {
   });
 }
 
+/**
+ * F4 生成思维导图 —— **`POST /api/notes/:uid/mindmap`**。
+ *
+ * ## 为什么这个 hook 到今天才出现（T-138 ①）
+ *
+ * daemon 侧整条链路早就通了：端点在 `http/rest/content.ts:310`，
+ * runner 在 `jobs/runners/mindmap.ts`（LLM → 校验 → 落库 → `note.updated`），
+ * `[实测]` 4.3 秒出图、`generated_by = llm:deepseek`。
+ * 前端也有查看器（`MindmapView` / mind-elixir）与保存（PATCH）。
+ * **唯独没有人调这个 POST** —— `features/mindmap/api.ts` 只有 GET 与 PATCH，
+ * 导图空态只写着一句"还没有思维导图"。
+ * 于是 F4（章程点名的五项之一）在产品里**根本点不出来**：
+ * T-130 验证导图 `blocked` 时只能用 curl 直接打接口，回执里明写了这一点。
+ *
+ * ## 202 + jobUid，不是同步等结果
+ *
+ * 端点返回 `202 {jobUid, noteUid}`，真正的生成走任务队列（lane `gpu.llm`）。
+ * 所以**不能**用 `isPending` 当"正在生成"—— 那只覆盖到 HTTP 往返的几毫秒，
+ * 用户会看到按钮闪一下就恢复可点，然后开始重复点击。
+ * 进行中状态由 `useActiveNoteJob(noteUid, 'mindmap')` 从任务流里读（T-130 的契约）。
+ *
+ * ★ `onSuccess` **返回** invalidate 的 promise 是有意的：react-query 会等它 resolve
+ * 之后才把 mutation 判为 settled，于是 `isPending` 一直覆盖到"任务列表里已经能看见这条任务"，
+ * 中间没有一帧按钮是可点的 —— 这就是"重复点击"那个窗口被关掉的地方。
+ */
+export interface MindmapAccepted {
+  jobUid: string;
+  noteUid: string;
+}
+
+export function useGenerateMindmapMutation(noteUid: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api<MindmapAccepted>('notes', `/notes/${noteUid}/mindmap`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.jobs.all }),
+  });
+}
+
 /*
  * ⚠️ 这里原本有一个 `export const MINDMAP_SAVE_SUPPORTED = false`。**已删除，而不是改成 true。**
  *

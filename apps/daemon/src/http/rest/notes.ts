@@ -252,7 +252,30 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
       // ---- GET /api/notes ----
       if (p === '/api/notes' && method === 'GET') {
         const limit = Math.min(200, Number(url.searchParams.get('limit') ?? 50) || 50);
-        const rows = repos.listNotes(limit);
+        /*
+         * ★ `?starred=1` —— 侧栏「星标」的数据源（T-138 ③）。
+         *
+         * 在这之前这个端点**只认 `limit`**，于是前端只能对已取回的那一页做过滤
+         * （`NotesListPage` 的注释把这笔代价如实写着："真修法在端点"）。
+         * 代价不是"慢"，是**超过 50 条之后无声地漏**。
+         *
+         * 无法识别的取值一律 **400，不静默忽略**：`?starred=0` 最自然的读法是
+         * "只看没加星的"，而静默忽略会返回**全部**笔记 —— 一个既不报错、
+         * 又和调用方意图相反的结果。本项目最贵的一类 bug 正是这种。
+         * 要支持"只看未加星"就在这里显式加一个分支，而不是靠猜。
+         */
+        const starredRaw = url.searchParams.get('starred');
+        if (starredRaw !== null && starredRaw !== '1' && starredRaw !== 'true') {
+          sendError(
+            res,
+            400,
+            'BAD_QUERY_PARAM',
+            `starred must be "1" or "true" (got ${JSON.stringify(starredRaw)})`,
+            'starred 参数只接受 1 或 true',
+          );
+          return true;
+        }
+        const rows = repos.listNotes(limit, { starredOnly: starredRaw !== null });
         // 一次 IN 查询拿全部标签，避免列表页 N+1
         const tagMap = repos.tagsOfNotes(rows.map((n) => n.id));
         const notes = rows.map((n) => ({

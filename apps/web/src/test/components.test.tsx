@@ -78,6 +78,8 @@ import enLocale from '../app/i18n/locales/en.json';
 import i18nInstance from '../app/i18n';
 import ModelsPage from '../features/models/ModelsPage';
 import NotesListPage from '../features/notes/NotesListPage';
+import { GenerateMindmapButton } from '../features/mindmap/GenerateMindmapButton';
+import type { PipelineJob } from '@openmemo/shared';
 import RuntimePage from '../features/runtime/RuntimePage';
 import { splitEmphasis } from '../components/common/Emphasis';
 import { ConnectivitySummary } from '../components/common/MockNotice';
@@ -2851,17 +2853,48 @@ describe('T-129 侧栏「星标」筛选', () => {
     ],
   };
 
+  /**
+   * ⚠️ **T-138 ③ 改写了这三条的桩，说明原委**（"旧断言写错了方向"是本项目的老账，
+   * 所以这里写清楚哪一半是修正、哪一半原样保留）。
+   *
+   * T-129 那版是**前端过滤**：只打 `GET /notes`，拿回整页再 `filter(n => n.starred)`。
+   * 用例因此只需要一个 `/notes` 桩，断言"渲染出来的条数变少了"。
+   * 那一半仍然成立，**但它挡不住真正的缺陷** —— 列表是 `limit=50` 的一页，
+   * 第 51 条之外的星标笔记会被无声地漏掉，而用例喂的永远是 2 条。
+   *
+   * 现在筛选在端点里（`GET /api/notes?starred=1`，daemon 的 SQL WHERE），于是桩必须分成两条：
+   * **两条桩返回不同的内容，是这组用例唯一的红灯来源** ——
+   * 前端如果不带那个查询串，就会命中 `/notes` 那条桩、拿到全部 2 条，条数断言当场变红。
+   */
+  const STARRED_ONLY = { notes: [NOTES.notes[0]] };
+
   test('★ /notes?starred=1 只列星标笔记；/notes 列全部', async () => {
-    stubApi({ '/notes': NOTES });
+    const a = stubApi({ '/notes': NOTES, '/notes?starred=1': STARRED_ONLY });
     const all = await render(<NotesListPage />, { route: '/notes' });
     await all.flush();
     const allItems = [...all.container.querySelectorAll('[data-testid="notes-list"] > li')];
     assert.equal(allItems.length, 2, '「全部笔记」应列出全部 2 条');
+    assert.equal(
+      a.calls.some((c) => c.path === '/notes?starred=1'),
+      false,
+      '「全部笔记」不该带 starred 参数 —— 带了就意味着两个入口共用一条查询',
+    );
     all.unmount();
 
-    stubApi({ '/notes': NOTES });
+    const b = stubApi({ '/notes': NOTES, '/notes?starred=1': STARRED_ONLY });
     const starred = await render(<NotesListPage />, { route: '/notes?starred=1' });
     await starred.flush();
+    /*
+     * 先断"请求带上了参数"再断"渲染结果"。
+     * 只断渲染结果的话，一个"前端拿全部再自己过滤"的实现同样能通过 ——
+     * 而那正是这次要换掉的东西（它在 50 条之后会漏，且漏得无声无息）。
+     */
+    assert.equal(
+      b.calls.some((c) => c.method === 'GET' && c.path === '/notes?starred=1'),
+      true,
+      `星标页必须把筛选交给端点（实际请求：${JSON.stringify(b.calls.map((c) => c.path))}）` +
+        ' —— 在前端筛只能筛已取回的那一页，笔记超过 limit 之后会静默漏掉',
+    );
     const items = [...starred.container.querySelectorAll('[data-testid="notes-list"] > li')];
     assert.equal(
       items.length,
@@ -2877,7 +2910,7 @@ describe('T-129 侧栏「星标」筛选', () => {
   });
 
   test('★ 标题必须跟着查询串走，不能两个入口都写「全部笔记」', async () => {
-    stubApi({ '/notes': NOTES });
+    stubApi({ '/notes': NOTES, '/notes?starred=1': STARRED_ONLY });
     const r = await render(<NotesListPage />, { route: '/notes?starred=1' });
     await r.flush();
     const title = r.container.querySelector('[data-testid="notes-list-title"]');
@@ -2888,12 +2921,45 @@ describe('T-129 侧栏「星标」筛选', () => {
   });
 
   test('★ 有笔记但一条都没加星时，给星标专属空态（而不是"还没有笔记"）', async () => {
-    stubApi({ '/notes': { notes: [NOTES.notes[1]] } });
+    // 端点筛完是空的；`/notes` 那条桩仍有一条，用来区分"没有笔记"与"没有星标笔记"
+    stubApi({ '/notes': { notes: [NOTES.notes[1]] }, '/notes?starred=1': { notes: [] } });
     const r = await render(<NotesListPage />, { route: '/notes?starred=1' });
     await r.flush();
     const t = text(r.container);
     assert.ok(t.includes(zhNotes.starredEmpty), `空态文案不对：${t}`);
     assert.ok(!t.includes(zhNotes.empty), '不该说"还没有笔记" —— 他明明有笔记');
+    r.unmount();
+  });
+
+  /**
+   * ★ 星标页上点星星，请求必须真的发出去。
+   *
+   * 乐观更新之后缓存该怎么变（星标页要不要把它移出去）**不在这里断言** ——
+   * 那条规则被抽成了纯函数 `lib/api/notesCache.ts`，由单测逐条钉。
+   * 原因是诚实的：在组件里断言它必须"抢在 onSettled 的重取回来之前"看一眼，
+   * 那是一条依赖时序的用例，绿说明不了什么、红也未必是产品坏了。
+   * 这里只钉**组件确实把动作发出去了**这一半（它不依赖时序）。
+   */
+  test('★ 星标页上的星标按钮仍然是真的写入路径（PUT 真的发出去了）', async () => {
+    const s = stubApi({
+      '/notes': NOTES,
+      '/notes?starred=1': STARRED_ONLY,
+      'PUT /notes/01AAAAAAAAAAAAAAAAAAAAAAAA/star': { uid: '01AAAAAAAAAAAAAAAAAAAAAAAA', starred: false },
+    });
+    const r = await render(<NotesListPage />, { route: '/notes?starred=1' });
+    await r.flush();
+    assert.equal(
+      r.container.querySelectorAll('[data-testid="notes-list"] > li').length,
+      1,
+      '前置条件：星标页此刻应有 1 条',
+    );
+
+    await click(r.container.querySelector('button[aria-pressed="true"]'));
+    await r.flush();
+    const put = s.calls.find((c) => c.method === 'PUT');
+    assert.ok(put, `星标按钮没有发出任何写请求（实际请求：${JSON.stringify(s.calls.map((c) => `${c.method} ${c.path}`))}）`);
+    assert.equal(put!.path, '/notes/01AAAAAAAAAAAAAAAAAAAAAAAA/star');
+    assert.deepEqual(put!.body, { starred: false }, '点的是已加星的那条，应该是取消星标');
     r.unmount();
   });
 });
@@ -3707,5 +3773,316 @@ describe('T-135 ③ 组件卡片：displayNameZh 是两份里的一份，不是�
       '没有 import localizedName',
     );
     assert.ok(!/\{c\.displayNameZh\}/.test(src), '仍有地方直接渲染 c.displayNameZh');
+  });
+});
+
+/* ────────────────────────── T-138 三条「代码写了但用户到不了」 ────────────────────────── */
+
+/** 一条流水线 job，形状与 daemon 的 `PipelineJob` 一致（`GET /api/jobs` 就是这么发的）。 */
+function pipelineJob(over: Partial<PipelineJob> & { noteUid: string }): PipelineJob {
+  return {
+    jobId: 'job_1',
+    kind: 'transcribe',
+    type: 'transcribe',
+    displayName: 'demo note',
+    state: 'running',
+    step: 'asr',
+    progress: 0.42,
+    attempt: 0,
+    maxAttempts: 5,
+    error: null,
+    blockedCode: null,
+    createdAt: '2026-08-01T00:00:00.000Z',
+    updatedAt: '2026-08-01T00:00:00.000Z',
+    ...over,
+  };
+}
+
+describe('T-138 ① 思维导图的生成入口', () => {
+  const NOTE = '01AAAAAAAAAAAAAAAAAAAAAAAA';
+  const zhMindmap = (zhLocale as unknown as { mindmap: Record<string, string> }).mindmap;
+
+  test('★ 空闲时给出可点的按钮，点下去真的 POST /notes/:uid/mindmap', async () => {
+    const s = stubApi({
+      '/jobs': { jobs: [], concurrencyLimit: 2 },
+      [`POST /notes/${NOTE}/mindmap`]: { jobUid: 'job_1', noteUid: NOTE },
+    });
+    const r = await render(<GenerateMindmapButton noteUid={NOTE} />);
+    await r.flush();
+
+    const btn = r.container.querySelector('[data-testid="generate-mindmap"]') as HTMLButtonElement | null;
+    assert.ok(btn, 'F4 是章程点名的功能之一，界面上必须有地方能触发它');
+    assert.equal(btn!.hasAttribute('disabled'), false, '没有任务在跑时按钮应该是可点的');
+    assert.ok(text(r.container).includes(zhMindmap.generate));
+
+    await click(btn);
+    await r.flush();
+    const post = s.calls.find((c) => c.method === 'POST');
+    assert.ok(
+      post,
+      `点了生成按钮但一个写请求都没发出去（实际请求：${JSON.stringify(s.calls.map((c) => `${c.method} ${c.path}`))}）`,
+    );
+    assert.equal(post!.path, `/notes/${NOTE}/mindmap`, '路径必须是 daemon 真实存在的那条（content.ts:310）');
+    r.unmount();
+  });
+
+  test('★ 点完之后按钮立刻不可点 —— 生成要几秒，这几秒里必须挡住重复提交', async () => {
+    /*
+     * 桩会在 POST 之后才把这条 job 放进 `/jobs`：这正是真实时序
+     * （202 返回 → 前端 invalidate → 任务列表里才出现）。
+     * 如果"进行中"是靠 mutation 的 isPending 判的，它在这一刻已经结束了，
+     * 按钮会恢复可点 —— 而 LLM 还要跑几秒，用户必然再点一次，
+     * 每一次都会真的多排一条任务（端点没有幂等键，那是刻意的：重新生成是合法操作）。
+     */
+    let posted = false;
+    stubApi({
+      '/jobs': () => ({
+        jobs: posted ? [pipelineJob({ noteUid: NOTE, kind: 'mindmap', type: 'mindmap', state: 'queued', step: null, progress: 0 })] : [],
+        concurrencyLimit: 2,
+      }),
+      [`POST /notes/${NOTE}/mindmap`]: () => {
+        posted = true;
+        return { jobUid: 'job_1', noteUid: NOTE };
+      },
+    });
+    const r = await render(<GenerateMindmapButton noteUid={NOTE} />);
+    await r.flush();
+    await click(r.container.querySelector('[data-testid="generate-mindmap"]'));
+    await r.flush();
+
+    const btn = r.container.querySelector('[data-testid="generate-mindmap"]') as HTMLButtonElement;
+    assert.equal(btn.hasAttribute('disabled'), true, '生成已经排上队了，按钮却还可以点');
+    assert.ok(
+      text(r.container).includes(zhMindmap.generating),
+      `按钮上没有"进行中"的说法（实际：${text(r.container)}）—— 用户看不出它在干活`,
+    );
+    r.unmount();
+  });
+
+  test('★ 进行中状态来自任务流，所以刷新页面它还在（不是本地 state）', async () => {
+    // 全新挂载 + 从没点过：只要服务端说这条笔记有一条导图任务在跑，就得显示"正在生成"
+    stubApi({
+      '/jobs': {
+        jobs: [pipelineJob({ noteUid: NOTE, kind: 'mindmap', type: 'mindmap', state: 'running', step: 'structure' })],
+        concurrencyLimit: 2,
+      },
+    });
+    const r = await render(<GenerateMindmapButton noteUid={NOTE} />);
+    await r.flush();
+    const btn = r.container.querySelector('[data-testid="generate-mindmap"]') as HTMLButtonElement;
+    assert.equal(
+      btn.hasAttribute('disabled'),
+      true,
+      '生成中途刷新页面，按钮又变回"生成" —— 用户会再点一次，于是同一条笔记跑两遍 LLM',
+    );
+    r.unmount();
+  });
+
+  test('★ 别的笔记 / 别的类型的任务不许把这个按钮锁住', async () => {
+    stubApi({
+      '/jobs': {
+        jobs: [
+          // 同一条笔记，但那是转写任务
+          pipelineJob({ noteUid: NOTE, kind: 'transcribe' }),
+          // 导图任务，但那是别人的笔记
+          pipelineJob({ jobId: 'job_2', noteUid: '01BBBBBBBBBBBBBBBBBBBBBBBB', kind: 'mindmap', type: 'mindmap' }),
+        ],
+        concurrencyLimit: 2,
+      },
+    });
+    const r = await render(<GenerateMindmapButton noteUid={NOTE} />);
+    await r.flush();
+    const btn = r.container.querySelector('[data-testid="generate-mindmap"]') as HTMLButtonElement;
+    assert.equal(btn.hasAttribute('disabled'), false, '按钮被一条不相干的任务锁住了');
+    r.unmount();
+  });
+
+  test('★ blocked 要说出 daemon 给的原因，而不是干瞪着一个禁用按钮', async () => {
+    stubApi({
+      '/jobs': {
+        jobs: [
+          pipelineJob({
+            noteUid: NOTE,
+            kind: 'mindmap',
+            type: 'mindmap',
+            state: 'blocked',
+            step: null,
+            progress: 0,
+            blockedCode: 'LLM_NOT_CONFIGURED',
+          }),
+        ],
+        concurrencyLimit: 2,
+      },
+    });
+    const r = await render(<GenerateMindmapButton noteUid={NOTE} />);
+    await r.flush();
+    const t = text(r.container);
+    assert.ok(t.includes(zhMindmap.generateBlocked), `没说它被挂起了（实际：${t}）`);
+    const reason = (zhLocale as unknown as { mindmap: { blocked: Record<string, string> } }).mindmap.blocked;
+    assert.ok(
+      t.includes(reason['LLM_NOT_CONFIGURED']!),
+      `没说原因（实际：${t}）—— 一个不说为什么的禁用按钮和坏了没有区别`,
+    );
+    assert.ok(!t.includes(reason['NO_TRANSCRIPT']!), '原因不该串档');
+    r.unmount();
+  });
+
+  test('★ 认不出的 blockedCode 回落到通用说法，不许渲染成空白', async () => {
+    stubApi({
+      '/jobs': {
+        jobs: [pipelineJob({ noteUid: NOTE, kind: 'mindmap', type: 'mindmap', state: 'blocked', step: null, blockedCode: 'SOMETHING_NEW' })],
+        concurrencyLimit: 2,
+      },
+    });
+    const r = await render(<GenerateMindmapButton noteUid={NOTE} />);
+    await r.flush();
+    const hint = r.container.querySelector('[data-testid="generate-mindmap-blocked"]');
+    assert.equal(!!hint, true, '认不出的 code 让提示整块消失了');
+    const reason = (zhLocale as unknown as { mindmap: { blocked: Record<string, string> } }).mindmap.blocked;
+    assert.equal(hint!.textContent, reason['UNKNOWN']);
+    r.unmount();
+  });
+
+  test('★ 两个空态都真的接上了这个按钮（组件造出来没人用 = 入口仍然不存在）', async () => {
+    for (const rel of ['features/mindmap/MindmapPage.tsx', 'features/notes/NoteDetailPage.tsx']) {
+      const src = await readSource(rel);
+      assert.ok(
+        /^import \{[^}]*\bGenerateMindmapButton\b[^}]*\} from '[^']+';$/m.test(src),
+        `${rel} 没有 import GenerateMindmapButton —— 注释里提一句不算（T-129b 的教训）`,
+      );
+      assert.ok(
+        /<GenerateMindmapButton\b/.test(src),
+        `${rel} import 了但没渲染 —— 用户仍然点不到`,
+      );
+    }
+  });
+
+  test('★ 文案不许再承诺一个不存在的动作', async () => {
+    // 旧 emptyHint 写着"转写完成后可以让 AI 生成，也可以从空白开始手动整理"，
+    // 而当时**两件事都没有入口**。生成已经接上了；"从空白开始手动整理"仍然没有，
+    // 所以那半句必须从文案里消失，而不是留着等下一个人去实现。
+    const zhHint = zhMindmap.emptyHint ?? '';
+    assert.ok(!zhHint.includes('从空白开始'), `emptyHint 仍在承诺没有入口的动作：${zhHint}`);
+    assert.ok(
+      (enLocale as unknown as { mindmap: Record<string, string> }).mindmap['emptyHint'],
+      'en 少了 mindmap.emptyHint',
+    );
+  });
+});
+
+describe('T-138 ② 笔记进度行在真实响应下必须渲染', () => {
+  const NOTE = '01AAAAAAAAAAAAAAAAAAAAAAAA';
+  /**
+   * ⚠️ 这条 note **就是 daemon 真实返回的形状**（`http/rest/notes.ts` 的序列化逐字段对过）：
+   * **没有 `activeJobId`**。这正是缺陷的本体 —— 组件原来的渲染条件是 `n.activeJobId ?`，
+   * 而这个字段全仓只有 `lib/api/mock.ts` 提供，于是进度行**在生产环境里一次都没出现过**。
+   * 桩里绝不能补这个字段，补了就等于把 mock 的世界当成真实世界来测。
+   */
+  const NOTES = {
+    notes: [
+      {
+        uid: NOTE,
+        title: 'demo note',
+        status: 'processing',
+        kind: 'media',
+        language: 'zh',
+        durationMs: 1000,
+        starred: false,
+        tags: [],
+        createdAt: '2026-08-01T00:00:00.000Z',
+        updatedAt: '2026-08-01T00:00:00.000Z',
+      },
+    ],
+  };
+
+  test('★ 列表页：daemon 说这条笔记有任务在跑，进度行就必须出现', async () => {
+    stubApi({
+      '/notes': NOTES,
+      '/jobs': { jobs: [pipelineJob({ noteUid: NOTE })], concurrencyLimit: 2 },
+    });
+    const r = await render(<NotesListPage />, { route: '/notes' });
+    await r.flush();
+    assert.equal(
+      !!r.container.querySelector('[data-testid="note-progress-line"]'),
+      true,
+      '笔记响应里没有 activeJobId（daemon 从来就不发它），进度行于是一次都没渲染过 —— ' +
+        '"有没有任务在跑"必须去问任务流，不是问笔记 DTO',
+    );
+    const line = text(r.container);
+    assert.ok(line.includes('转写中'), `没显示当前步骤（实际：${line}）`);
+    assert.ok(/42\s*%/.test(line), `没显示进度百分比（实际：${line}）`);
+    r.unmount();
+  });
+
+  test('★ 没有任务时一个像素都不占', async () => {
+    stubApi({ '/notes': NOTES, '/jobs': { jobs: [], concurrencyLimit: 2 } });
+    const r = await render(<NotesListPage />, { route: '/notes' });
+    await r.flush();
+    assert.equal(!!r.container.querySelector('[data-testid="note-progress-line"]'), false);
+    r.unmount();
+  });
+
+  test('★ 终态任务不算"在跑"（否则转写完了进度条还挂着）', async () => {
+    stubApi({
+      '/notes': NOTES,
+      '/jobs': { jobs: [pipelineJob({ noteUid: NOTE, state: 'succeeded', progress: 1 })], concurrencyLimit: 2 },
+    });
+    const r = await render(<NotesListPage />, { route: '/notes' });
+    await r.flush();
+    assert.equal(!!r.container.querySelector('[data-testid="note-progress-line"]'), false);
+    r.unmount();
+  });
+
+  test('★ 排队中 / 阻塞中也要说话 —— 这两种状态一条 job.progress 都不会发', async () => {
+    /*
+     * 旧实现只读 `progressStore`（由 `job.progress` 喂养），所以就算补上 activeJobId，
+     * queued / blocked 的任务仍然什么都不显示 —— 而那正是用户最想知道"它在等什么"的时刻。
+     */
+    const zhState = (zhLocale as unknown as { progress: { state: Record<string, string> } }).progress.state;
+    for (const [state, expected] of [
+      ['queued', zhState['queued']!],
+      ['blocked', zhState['blocked']!],
+    ] as const) {
+      stubApi({
+        '/notes': NOTES,
+        '/jobs': {
+          jobs: [pipelineJob({ noteUid: NOTE, state, step: null, progress: 0 })],
+          concurrencyLimit: 2,
+        },
+      });
+      const r = await render(<NotesListPage />, { route: '/notes' });
+      await r.flush();
+      const t = text(r.container);
+      assert.equal(
+        !!r.container.querySelector('[data-testid="note-progress-line"]'),
+        true,
+        `state=${state} 时进度行整块消失了`,
+      );
+      assert.ok(t.includes(expected), `state=${state} 没有可读的状态说明（实际：${t}）`);
+      r.unmount();
+    }
+  });
+
+  test('★ `activeJobId` 不许回来 —— 它是这个 bug 的本体', async () => {
+    /*
+     * ⚠️ 断的是**代码**，不是"文件里出现过这个词"。
+     * 第一版写的是 `/activeJobId/.test(src)`，当场被自己旁边那句
+     * 「mock 在 note.activeJobId 上记了一个 job id」的注释匹到 —— 与 T-129b 那次
+     * `/\bEmphasis\b/` 匹到注释是同一个坑。两份注释都值得留着（它们记录了这个 bug 为什么藏得住），
+     * 所以正确的做法是**先把注释去掉再断**，而不是把注释改写成不像代码的样子。
+     */
+    const stripComments = (s: string): string =>
+      s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    for (const rel of ['lib/api/types.ts', 'lib/api/mock.ts']) {
+      const code = stripComments(await readSource(rel));
+      assert.equal(
+        /activeJobId/.test(code),
+        false,
+        `${rel} 里又出现了 activeJobId。daemon 从来不发这个字段：` +
+          '要让它真的存在，就得在笔记 DTO 里再答一遍"这条笔记在忙什么"，' +
+          '而 /api/jobs 已经在答了 —— 两个来源迟早会互相矛盾（见 lib/jobs/noteJobs.ts 文件头）。',
+      );
+    }
   });
 });

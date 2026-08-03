@@ -4,6 +4,7 @@ import { useRef } from 'react';
 import type { MindMapDoc } from '@openmemo/mindmap';
 
 import { MindmapView } from './MindmapView';
+import { GenerateMindmapButton } from './GenerateMindmapButton';
 import { useMindmapQuery, useSaveMindmapMutation } from './api';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { EmptyState } from '../../components/common/EmptyState';
@@ -28,7 +29,19 @@ export default function MindmapPage() {
 
   if (isError) return <ErrorBlock error={error} onRetry={() => void refetch()} className="m-6" />;
   if (isLoading) return <div className="p-6 text-sm text-ink-muted">{t('common.loading')}</div>;
-  if (!data) return <EmptyState title={t('mindmap.empty')} hint={t('mindmap.emptyHint')} />;
+  /*
+   * ★ 空态即入口（D-05 §5.4）。这里以前只有"还没有思维导图"这一句话 ——
+   * 而 hint 里还写着"可以让 AI 生成"，**界面上却没有任何地方能触发它**（T-138 ①）。
+   * 一句描述了不存在功能的文案，比没有文案更糟。
+   */
+  if (!data)
+    return (
+      <EmptyState
+        title={t('mindmap.empty')}
+        hint={t('mindmap.emptyHint')}
+        action={<GenerateMindmapButton noteUid={noteUid ?? ''} />}
+      />
+    );
 
   return (
     <div className="flex h-full flex-col">

@@ -1,0 +1,74 @@
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { applyStarToPage, type NotesPage } from './notesCache';
+import type { NoteSummary } from './types';
+
+function note(uid: string, starred: boolean): NoteSummary {
+  return {
+    uid,
+    title: uid,
+    kind: 'media',
+    status: 'ready',
+    folderUid: null,
+    durationMs: 1000,
+    coverAssetUid: null,
+    starred,
+    tags: [],
+    createdAt: '2026-08-01T00:00:00.000Z',
+    updatedAt: '2026-08-01T00:00:00.000Z',
+    source: null,
+  };
+}
+
+const PAGE: NotesPage = { notes: [note('a', true), note('b', false)] };
+
+describe('T-138 ③ 星标切换的乐观更新规则', () => {
+  test('★ 「全部笔记」那一页：只翻标记，一条都不许少', () => {
+    const out = applyStarToPage(PAGE, {}, 'a', false);
+    assert.deepEqual(
+      out?.notes.map((n) => [n.uid, n.starred]),
+      [
+        ['a', false],
+        ['b', false],
+      ],
+      '「全部笔记」不按星标筛，取消星标不该让那条笔记从列表里消失',
+    );
+  });
+
+  test('★ 「星标」那一页：取消星标要把它移出去（否则用户点了没反应）', () => {
+    const out = applyStarToPage(PAGE, { starred: true }, 'a', false);
+    assert.deepEqual(
+      out?.notes.map((n) => n.uid),
+      [],
+      '星标页是服务端按 starred=1 筛过的一页，取消星标之后它就不属于这一页了 —— ' +
+        '留在原地等 invalidate 回来才消失，用户看到的是"点了没反应"',
+    );
+  });
+
+  test('★ 「星标」那一页：加星是加星，别把别人的状态也改了', () => {
+    const out = applyStarToPage(PAGE, { starred: true }, 'b', true);
+    assert.deepEqual(
+      out?.notes.map((n) => [n.uid, n.starred]),
+      [
+        ['a', true],
+        ['b', true],
+      ],
+      '只有被点的那条该变',
+    );
+  });
+
+  test('★ 缓存还没建立时返回 undefined，而不是凭空造一页空列表', () => {
+    assert.equal(
+      applyStarToPage(undefined, { starred: true }, 'a', false),
+      undefined,
+      '把 undefined 变成 {notes:[]} 会让"还没加载"和"加载完是空的"变成同一件事 —— ' +
+        '页面会先闪一次空态',
+    );
+  });
+
+  test('★ 不认识的 filter 一律按"不筛"处理（宁可多显示一条，也不凭空藏东西）', () => {
+    const out = applyStarToPage(PAGE, { folder: 'x' }, 'a', false);
+    assert.equal(out?.notes.length, 2);
+  });
+});

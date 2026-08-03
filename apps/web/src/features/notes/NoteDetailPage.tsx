@@ -11,7 +11,7 @@ import { Button } from '../../components/common/Button';
 import { MockNotice } from '../../components/common/MockNotice';
 import { PanelBoundary } from '../../components/common/PanelBoundary';
 import { WordLevelBadge } from '../transcript';
-import { MindmapView, useMindmapQuery } from '../mindmap';
+import { GenerateMindmapButton, MindmapView, useMindmapQuery } from '../mindmap';
 import { NoteProgressLine } from './NoteProgressLine';
 import { TagEditor } from './TagEditor';
 import { RetranscribeButton } from './RetranscribeButton';
@@ -84,13 +84,19 @@ export default function NoteDetailPage() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* 进行中的任务：顶部进度条 + **主动告诉用户可以关页面** */}
-      {n.activeJobId ? (
-        <div className="border-b border-line bg-surface-1 px-4 py-2">
-          <NoteProgressLine jobId={n.activeJobId} />
-          <p className="mt-1 text-xs text-ink-muted">▸ {t('detail.backgroundHint')}</p>
-        </div>
-      ) : null}
+      {/*
+        进行中的任务：顶部进度条 + **主动告诉用户可以关页面**。
+
+        ⚠️ 这里原来的条件是 `n.activeJobId ?` —— 一个 daemon 从来没发过的字段，
+        所以这一块**在真实环境里一次都没显示过**（T-138 ②）。
+        "有没有在跑"现在由组件自己去问任务流（`GET /api/jobs` + 进度事件），
+        没有任务时它自己返回 null —— 也就不再需要外面这个包裹条件。
+      */}
+      <NoteProgressLine
+        noteUid={n.uid}
+        hint={t('detail.backgroundHint')}
+        className="border-b border-line bg-surface-1 px-4 py-2"
+      />
 
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
         <h1 className="min-w-0 truncate text-base font-semibold text-ink">{n.title}</h1>
@@ -196,7 +202,17 @@ export default function NoteDetailPage() {
                   </div>
                 </div>
               ) : (
-                <p className="text-ink-muted">{t('mindmap.empty')}</p>
+                /*
+                  ★ F4 的生成入口（T-138 ①）。这里以前只有一句"还没有思维导图"，
+                  用户在整个产品里**找不到任何地方**能让 AI 生成一张 ——
+                  而后端 `POST /api/notes/:uid/mindmap` 早就通了（实测 4.3 秒出图）。
+                  放在这里而不是别处：这是用户"想看导图却没有"的那一刻，
+                  和 memo.ac 把生成放在详情页 mindmap tab 里是同一个位置（R-01 §A2.4）。
+                */
+                <div className="flex flex-col items-start gap-3">
+                  <p className="text-ink-muted">{t('mindmap.empty')}</p>
+                  <GenerateMindmapButton noteUid={n.uid} size="sm" />
+                </div>
               )
             ) : (
               <NoteEditor

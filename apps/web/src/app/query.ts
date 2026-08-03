@@ -9,6 +9,16 @@ import { QueryClient } from '@tanstack/react-query';
 export const qk = {
   notes: {
     all: ['notes'] as const,
+    /**
+     * **所有**列表查询的公共前缀（不含 `detail`）。
+     *
+     * 存在的理由很具体：自 T-138 起「全部笔记」与「星标」是**两个不同的 filter**，
+     * 因此是两条缓存。乐观更新若只写 `list()`（= 空 filter 那一条），
+     * 在星标页上点星星会**什么都不动**，直到下一次 invalidate 才补上。
+     * 用这个前缀配 `setQueriesData` 才能一次改到全部列表。
+     * ⚠️ 不能用 `notes.all` —— 它还会匹配 `detail`，而那条的形状是 `NoteDetail` 不是 `{notes:[]}`。
+     */
+    lists: ['notes', 'list'] as const,
     list: (filter: Record<string, unknown> = {}) => ['notes', 'list', filter] as const,
     detail: (uid: string) => ['notes', 'detail', uid] as const,
   },
