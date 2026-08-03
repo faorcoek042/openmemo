@@ -36,6 +36,7 @@ import {
 import { readDataDirPointer, resolvePaths, type AppPaths } from './config/paths.js';
 import { reclaimOrphans } from './bootstrap/orphans.js';
 import { ensureSelfSignedCert, tlsEnabled } from './bootstrap/tls.js';
+import { migrateInstallRecords } from './storage/migrateRecords.js';
 import { SessionStore, loadOrCreateToken, type Session } from './http/auth.js';
 import { attachHttpHandlers } from './http/server.js';
 import { SseHub } from './http/sse.js';
@@ -582,6 +583,23 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       applyProxyConfig(readProxyConfig(repos));
     } catch (err) {
       console.warn('[daemon] 代理配置应用失败，按直连继续:', err);
+    }
+
+    /*
+     * 安装记录迁移（幂等）。
+     * 放在这里而不是"读时兼容"：读时兼容会让旧数据永远是旧的，
+     * 下次改格式就要兼容两代。迁移一次，之后所有代码只面对一种格式。
+     */
+    try {
+      const mig = await migrateInstallRecords(paths.modelsDir);
+      if (mig.migrated > 0) {
+        console.log(`[daemon] 安装记录迁移：${mig.migrated}/${mig.scanned} 条已升级为相对路径`);
+        for (const n of mig.notes.slice(0, 8)) console.log(`[daemon]    ${n}`);
+      }
+      // 解析不到的**必须说出来**：记录说"装了"、文件却不在，是典型的假绿灯
+      for (const u of mig.unresolved) console.warn(`[daemon] ⚠️  安装记录无法解析：${u}`);
+    } catch (err) {
+      console.warn('[daemon] 安装记录迁移失败（不影响启动）:', err);
     }
 
     // ---- 路由装配 ----

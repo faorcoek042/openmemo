@@ -20,6 +20,19 @@ import { LlmSettingsSection } from '../features/settings/LlmSettingsSection';
 import { buildLlmSettingsPatch, LLM_PURPOSES_KEY } from '../features/settings/api';
 import { LLM_PRESETS } from '../features/settings/llm-catalog';
 import { useSaveMindmapMutation } from '../features/mindmap/api';
+import { applyCaption, RECORD_SAMPLE_RATE } from '../features/recorder/asrStream';
+import { readFileSync } from 'node:fs';
+
+/**
+ * 直接读源码断言"某段代码已被删除" —— 有些保证只能在源码层面表达。
+ *
+ * ⚠️ 用 **cwd 相对路径**而不是 `import.meta.url`：组件测试是 vite 打包到
+ * `.test-out/` 之后再跑的，`import.meta.url` 指向产物目录而不是源码目录。
+ * （第一版就是这么写错的，报了 ENOENT 指着 `.test-out/features/...`。）
+ */
+async function readSource(rel: string): Promise<string> {
+  return readFileSync(`${process.cwd()}/src/${rel}`, 'utf8');
+}
 import { StatusChip } from '../components/common/StatusChip';
 import { ProgressMeter } from '../components/common/ProgressMeter';
 import type { MergedJob } from '../features/tasks/api';
@@ -1914,5 +1927,77 @@ describe('导图保存', () => {
       '写操作遇到不存在的端点必须抛错 —— 这正是删掉常量后仍然安全的原因',
     );
     r.unmount();
+  });
+});
+
+/* ──────── F3 实时录音接真通道（T-117） ──────── */
+
+/**
+ * ★ 章程五功能里**唯一 UI 层造假**的一处，已拆除。
+ *
+ * 原来 `RecorderPage` 用 `setInterval` 轮播 `MOCK_LINES`，
+ * 停止后弹「已更新 47 段 · 已保留 3 段」——**数字是常量**。
+ * 而 `/ws/recorder` 后端一直是真的。这一组钉住冻结契约（D-06 §15）的合并语义，
+ * 以及"拿不到的数字不许再编"。
+ */
+describe('实时字幕合并（D-06 §15 语义）', () => {
+  const partial = (uid: string, text: string, startMs = 0) =>
+    ({ type: 'partial', utteranceId: uid, text, startMs }) as const;
+
+  test('★ 语义 4：同一句内整句替换，不做 diff 拼接', () => {
+    let rows = applyCaption([], partial('u1', '今天'));
+    rows = applyCaption(rows, partial('u1', '今天我们'));
+    rows = applyCaption(rows, partial('u1', '今天我们讨论'));
+    assert.equal(rows.length, 1, '同一 utteranceId 只能占一行');
+    assert.equal(rows[0]!.text, '今天我们讨论', '必须整句替换');
+    assert.equal(rows[0]!.final, false);
+  });
+
+  test('★ 换了 utteranceId 就是新的一句', () => {
+    let rows = applyCaption([], partial('u1', '第一句'));
+    rows = applyCaption(rows, partial('u2', '第二句'));
+    assert.equal(rows.length, 2);
+  });
+
+  test('★ final 到达即定稿：未定稿行不许留下', () => {
+    let rows = applyCaption([], partial('u1', '今天我们讨'));
+    rows = applyCaption(rows, {
+      type: 'final',
+      seq: 0,
+      startMs: 0,
+      endMs: 1200,
+      text: '今天我们讨论。',
+    });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.final, true, '定稿行必须是 final —— UI 靠它决定灰斜体还是正常');
+    assert.equal(rows[0]!.text, '今天我们讨论。');
+
+    // 定稿之后来的新 partial 不能覆盖已定稿的内容
+    rows = applyCaption(rows, partial('u2', '下一句'));
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0]!.final, true);
+    assert.equal(rows[1]!.final, false);
+  });
+
+  test('★ overrun / error / stopped 不动字幕 —— 它们是状态，不是内容', () => {
+    const base = applyCaption([], partial('u1', 'x'));
+    for (const m of [
+      { type: 'overrun', droppedSamples: 100 } as const,
+      { type: 'error', code: 'E', messageZh: '出错' } as const,
+      { type: 'stopped', segmentCount: 3, rerunJobUid: null } as const,
+    ]) {
+      assert.deepEqual(applyCaption(base, m), base, `${m.type} 不该改动字幕`);
+    }
+  });
+
+  test('★ 采样率必须与 daemon 的 RECORD_SAMPLE_RATE 一致 —— 不一致会整体错位', () => {
+    assert.equal(RECORD_SAMPLE_RATE, 16_000);
+  });
+
+  test('★ 录音页不许再有写死的字幕与合并数字', async () => {
+    const src = await readSource('features/recorder/RecorderPage.tsx');
+    assert.ok(!src.includes('MOCK_LINES'), '硬编码字幕轮播必须已删除');
+    assert.ok(!/updated:\s*47/.test(src), '「已更新 47 段」这类写死数字不许再出现');
+    assert.ok(src.includes('startRecording'), '必须走真实的 /ws/recorder 通道');
   });
 });

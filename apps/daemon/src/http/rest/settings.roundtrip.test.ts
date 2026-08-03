@@ -114,6 +114,21 @@ describe('PUT /api/secrets/:key —— 密钥写入链路', () => {
  * 否则日后有人"顺手放宽一点"，兜底就悄悄变成了"CSRF 形同虚设"。
  */
 describe('CSRF 同源兜底 —— 放行一种，拒绝四种', () => {
+  /*
+   * ★ 这一组必须在 `OPENMEMO_AUTH=token` 下跑。
+   * 默认档（none）连鉴权带 CSRF 一起跳过，这些边界根本不存在 ——
+   * 若不显式切档，用例会"通过"得毫无意义，或像这次一样变红却让人误以为是回归。
+   * 显式切档同时也验证了**开关的另一半仍然work**（别把开关做成单向门）。
+   */
+  const prevMode = process.env['OPENMEMO_AUTH'];
+  before(() => {
+    process.env['OPENMEMO_AUTH'] = 'token';
+  });
+  after(() => {
+    if (prevMode === undefined) delete process.env['OPENMEMO_AUTH'];
+    else process.env['OPENMEMO_AUTH'] = prevMode;
+  });
+
   let cookie = '';
   let csrf = '';
   const origin = (): string => base;

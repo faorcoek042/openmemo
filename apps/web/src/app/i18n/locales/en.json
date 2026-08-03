@@ -184,7 +184,13 @@
     "wordLevelAvailable": "Word-level highlighting on",
     "insecureTitle": "Recording is unavailable at this address",
     "insecureHelp": "Browsers only expose the microphone in a secure context (https:// or localhost). At an http://<IP> address `navigator.mediaDevices` does not exist — this is not browser-specific, switching browsers will not help.",
-    "insecureAlternative": "Everything else works here: import a local media file or a link from the Capture page — transcription, summary and mindmap are unaffected."
+    "insecureAlternative": "Everything else works here: import a local media file or a link from the Capture page — transcription, summary and mindmap are unaffected.",
+    "streamError": "Live recognition connection failed; streaming stopped. The recording is still saved locally and can be re-transcribed later.",
+    "overrun": "The network could not keep up and some audio frames were dropped (words may be missing). The original recording is unaffected.",
+    "rerunFailed": "Offline re-run failed. The streaming result is kept.",
+    "doneSummary": "Recording finished — {{segments}} segments",
+    "preservedOnly": "{{count}} segment(s) you edited were preserved.",
+    "openNote": "Open note"
   },
   "tasks": {
     "title": "Tasks",

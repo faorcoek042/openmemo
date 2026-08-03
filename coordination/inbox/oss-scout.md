@@ -2146,3 +2146,58 @@ OPENMEMO_AUTH=token   → 现状
 ### 现状
 代码**已全部回退**（`AuthMode` / `resolveAuthMode` / `authMode` 残留均为 0），
 构建 0 错、lint 干净、roundtrip 16/16、move 18/18，demo 全程只读未重启、鉴权仍生效。
+
+---
+
+## T-118 陈旧记录迁移 / 死桩 / SECURITY.md / selfcheck 同源
+
+### ① 记录迁移：已实现并对**真实数据副本**实测
+新增 `storage/migrateRecords.ts`（幂等）+ 8 条测试，启动时自动跑。
+对 `/root/data-memo/models` 的**副本**（demo 未动）实测：
+```
+扫描 4 条，迁移 4 条
+  asr_whisper-base-q5_1: 原路径 /tmp/cold4/... 已失效 → 重新指向 by-name/asr/ggml-base-q5_1.bin
+  whispercpp-cpu-linux-x64: 移除残留 installPath；路径同样重新归位
+第二遍迁移条数（幂等）: 0
+```
+迁移做三件事：绝对路径→`root:'models'`+`relPath`；路径失效但同名文件在库里→重新指向
+（数据目录搬过家就是这种）；删掉残留 `installPath`。
+**找不到对应文件时不删记录、也不假装正常**，计入 `unresolved` 并在启动横幅 warn ——
+悄悄删掉用户的安装记录比留一条坏记录更糟。
+你说得对："读时兼容让旧数据永远是旧的，下次改格式就要兼容两代。"
+
+### ② 死桩已删
+`POST /api/backends/selftest` 的 501 桩在 `backends.ts`，被 `hardware.ts` 的真实现
+（在 routers 里注册更早）**永久遮蔽**。删它的理由不是"多余"而是**它会骗人**：
+下一个人会以为自检没实现，甚至去"修"这段死代码，而线上跑的是另一份。
+原位留了一条注释指明真实现在哪，避免下次有人又加回来。
+
+### ③ SECURITY.md 已更新（如实，不粉饰）
+原表里「绝不 0.0.0.0」「token 鉴权」两条标为**已被用户决定推翻**，新增「当前真实姿态」：
+逐条列出现状 + **用户原话** + 风险直述：
+> 任何能路由到该 IP:端口的人，都可以读取全部笔记、转写稿与音频，并可修改或删除它们。
+并写明「用户的表述前提是『反正也是本地运行的东西』，**该前提在当前部署下并不成立**」，
+以及恢复方式（两个变量）与"日后多用户/公网部署必须先做完的 5 件事"。
+**没有写成"这样很安全"。**
+
+### ④ selfcheck 同源：**尚未统一，但根因和你说的不一样**
+不是"端点是 CLI 的子集"，而是**两份完全独立的实现**：
+`scripts/selfcheck.mjs` 是 552 行独立脚本，**根本没有 import `runSelfCheck`**，
+自带 `checkHardware / checkModels / checkLlm / checkDataDirIntegrity / checkEngines / checkDaemon`；
+而共享核心 `packages/runtime/src/selfcheck.ts` 只覆盖
+`backend.packs / model.* / ext.*`。端点（我写的）**已经在用共享核心**。
+→ 要真同源，得把 CLI 那 4 类检查**上移进共享核心**，那是 `packages/runtime`（`gpu-runtime` 的包）。
+我没有动手：**半迁移比不迁移更糟**（会变成三份）。建议派给 `gpu-runtime`，我配合改端点侧。
+
+### ★ 顺手修了一个"单向门"
+你要求过"`OPENMEMO_AUTH=token` 下行为与现在完全一致，别把开关做成单向门"。
+实测发现 `AUTH_MODE` 是**模块加载时求值的 const** → 测试根本改不动它，
+于是 **`token` 那一档从来没被任何用例验证过**，两条 CSRF 边界用例还因此变红。
+改成 `authMode()` 每次读环境变量（开销可忽略），并让 CSRF 那组用例显式切到 `token` 档。
+两个方向都实测：
+```
+未设（默认） → GET /api/notes 无凭据 = 200
+OPENMEMO_AUTH=token → 同一请求 = 401
+```
+
+构建 0 错、lint 干净；migrateRecords 8/8、move 18/18、roundtrip 16/16；demo 全程只读未重启。

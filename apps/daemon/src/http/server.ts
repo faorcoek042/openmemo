@@ -17,7 +17,6 @@ import { CONTRACT_VERSION } from '@openmemo/shared';
 import {
   CSRF_HEADER,
   type SessionStore,
-  AUTH_MODE,
   type AuthResult,
   type CsrfOutcome,
   authRequired,

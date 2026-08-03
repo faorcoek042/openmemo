@@ -38,12 +38,23 @@ export const SESSION_COOKIE = 'om_sid';
  * ⚠️ 若日后改为多用户或公网部署，**必须**设回 `token`。
  */
 export type AuthMode = 'none' | 'token';
-export const AUTH_MODE: AuthMode =
-  (process.env['OPENMEMO_AUTH']?.trim() as AuthMode | undefined) === 'token' ? 'token' : 'none';
+
+/**
+ * 当前鉴权模式。**每次读环境变量，不在模块加载时定死。**
+ *
+ * 原来是 `export const AUTH_MODE = ...`，在模块加载那一刻求值。后果有两个：
+ * 1. **测试无法覆盖 `token` 档** —— 用例改不了它，于是"开关的另一半"永远没被验证过，
+ *    正是"把开关做成单向门"。实测发现时，两条 CSRF 边界用例已经变红。
+ * 2. 任何在进程内改 env 的场景（测试夹具、嵌入式启动）都会与它不一致。
+ * 每次读一个环境变量的开销可以忽略，换来的是**这个开关两个方向都可测**。
+ */
+export function authMode(): AuthMode {
+  return process.env['OPENMEMO_AUTH']?.trim() === 'token' ? 'token' : 'none';
+}
 
 /** 是否需要鉴权。所有鉴权判断点都应问它，不要各自读环境变量。 */
 export function authRequired(): boolean {
-  return AUTH_MODE === 'token';
+  return authMode() === 'token';
 }
 export const CSRF_HEADER = 'x-openmemo-csrf';
 

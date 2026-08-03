@@ -346,19 +346,15 @@ export async function handleBackendRoutes(
     return true;
   }
 
-  /* --------------------- POST /api/backends/selftest --------------------- */
-  if (pathname === '/api/backends/selftest') {
-    // 契约的 ENDPOINTS 里没有这条，但前端有按钮。真实自检要跑内嵌音频的推理，
-    // 需要引擎二进制 —— 没有就明确 501，绝不返回一个假的 passed。
-    sendError(
-      res,
-      501,
-      'NOT_IMPLEMENTED',
-      'self-test requires the engine binary and a real inference run (ADR-003 decision 3)',
-      '自检需要已安装的推理引擎并真实跑一次推理（ADR-003 决策 3），当前未实现 —— 绝不返回伪造的"通过"',
-    );
-    return true;
-  }
+  /*
+   * `POST /api/backends/selftest` **不在这里** —— 真实现在 `hardware.ts` 的
+   * `createRuntimeRoutes`（它在 main.ts 的 routers 里注册得更早，所以先命中）。
+   *
+   * 这里原来还留着一个 501 桩，被真实现**永久遮蔽、不可达**。删掉的理由不是"多余"，
+   * 而是**它会骗人**：下一个人读到它会以为自检没实现，甚至去"修"这段死代码，
+   * 而线上跑的根本是另一份。与 `MINDMAP_SAVE_SUPPORTED` 同一族 ——
+   * 临时占位没人回来清；没有这个死分支，就不会有人误改到它。
+   */
 
   /* ---------------------- DELETE /api/backends/:id ----------------------- */
   const single = /^\/api\/backends\/(.+)$/.exec(pathname);

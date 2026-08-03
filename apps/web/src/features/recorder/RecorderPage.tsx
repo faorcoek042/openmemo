@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router';
 import { Mic, MicOff, RefreshCw, Square } from 'lucide-react';
 
 import type { AsrEngineId } from '@openmemo/shared';
@@ -11,15 +12,20 @@ import { AsrEngineStatus, useAsrEngines } from '../../components/common/AsrEngin
 import { TranscribeOptions } from '../../components/common/TranscribeOptions';
 import { ASR_LANGUAGE_AUTO } from '../../lib/asr';
 import { isMicrophoneAvailable, localhostEquivalent } from '../../lib/secure-context';
+import { applyCaption, startRecording, type RecorderHandle } from './asrStream';
+import { useProgressStore } from '../../lib/stores/progress.store';
+import { useTranscriptQuery } from '../notes';
 import { useConnectionStore } from '../../lib/stores/connection.store';
 import { estimateRerunMs, humanDuration, timecode } from '../../lib/format/time';
 import { cn } from '../../lib/utils';
 
 type Perm = 'unknown' | 'granted' | 'denied';
-type Phase = 'idle' | 'recording' | 'rerunning' | 'done';
+type Phase = 'idle' | 'recording' | 'finalizing' | 'rerunning' | 'done';
 
 interface Caption {
   id: number;
+  /** partial 用服务端的 `utteranceId` 作键：一句定稿后服务端会换新的 id（语义 4）。 */
+  uid: string;
   text: string;
   final: boolean;
 }
@@ -53,6 +59,12 @@ export default function RecorderPage() {
   const [elapsed, setElapsed] = useState(0);
   const [captions, setCaptions] = useState<Caption[]>([]);
   const [rerunProgress, setRerunProgress] = useState(0);
+  const [streamError, setStreamError] = useState<string | null>(null);
+  const [rerunJobUid, setRerunJobUid] = useState<string | null>(null);
+  /** 服务端在 `ready` 里给的笔记 uid —— 录音会自动建一条笔记，结束后要能跳过去。 */
+  const [noteUid, setNoteUid] = useState<string | null>(null);
+  const [segmentCount, setSegmentCount] = useState(0);
+  const handleRef = useRef<RecorderHandle | null>(null);
   /**
    * 转写语言 —— 这是录音页**唯一真的能影响后端行为**的转写参数。
    *
@@ -76,6 +88,7 @@ export default function RecorderPage() {
     noCounterpart: number;
   } | null>(null);
   const portDrift = useConnectionStore((s) => s.portDrift);
+  const navigate = useNavigate();
   const levelRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -115,6 +128,44 @@ export default function RecorderPage() {
       .catch(() => setPerm('unknown'));
   }, []);
 
+  // 组件卸载必须放掉麦克风，否则浏览器标签页会一直亮着录音指示灯
+  useEffect(() => () => handleRef.current?.dispose(), []);
+
+  /*
+   * ★ 离线重跑进度用**真实** `job.progress`（SSE），不再是 220ms 自增的假进度条。
+   * `rerunJobUid` 来自服务端的 `stopped` 消息。
+   */
+  const rerunSnap = useProgressStore((st) => (rerunJobUid ? st.byJob[rerunJobUid] : undefined));
+  useEffect(() => {
+    if (!rerunSnap) return;
+    setRerunProgress(rerunSnap.progress);
+    if (rerunSnap.state === 'succeeded') setPhase('done');
+    if (rerunSnap.state === 'failed') {
+      setPhase('done');
+      setStreamError(t('recorder.rerunFailed'));
+    }
+  }, [rerunSnap, t]);
+
+  /*
+   * 重跑完成后回读转写稿，拿**真实**的段数与"编辑过仍保留"的段数。
+   *
+   * ⚠️ 「已更新 N 段」拿不到：daemon 把 `formatMergeSummary()` 的结果放进了
+   * `queue.succeed()` 的 result_json，而 **`job.state` SSE 只带 {jobId,state,previousState}**，
+   * `/api/jobs` 又只列下载队列（流水线任务不在里面）。
+   * 所以那个数字**目前没有任何通道能到前端** —— 我不编，只显示能证实的部分。
+   */
+  const finishedTranscript = useTranscriptQuery(phase === 'done' && noteUid ? noteUid : undefined);
+  useEffect(() => {
+    const segs = finishedTranscript.data?.segments;
+    if (!segs) return;
+    setSegmentCount(segs.length);
+    setReplaced({
+      updated: 0,
+      preserved: segs.filter((x) => x.editedAt != null).length,
+      noCounterpart: 0,
+    });
+  }, [finishedTranscript.data]);
+
   const requestMic = async () => {
     // 这里不该再被点到（按钮已禁用），但 API 缺失时也绝不能让 `undefined.getUserMedia` 抛出去
     if (!isMicrophoneAvailable()) return;
@@ -127,39 +178,80 @@ export default function RecorderPage() {
     }
   };
 
-  const start = () => {
-    setPhase('recording');
+  /**
+   * ★ 真实录音（T-117）。此前这里是一段 `setInterval` 轮播写死的字幕。
+   *
+   * 后端 `/ws/recorder` 一直是真的，**只有 UI 在演** ——
+   * 章程五功能里唯一 UI 层造假的一处。现在接的是真通道：
+   * 麦克风 → AudioWorklet → PCM16 → WS 二进制帧；下行 partial/final 渲染。
+   */
+  const start = async () => {
     setCaptions([]);
     setReplaced(null);
     setElapsed(0);
+    setStreamError(null);
+    setPhase('recording');
     timerRef.current = setInterval(() => setElapsed((e) => e + 1000), 1000);
-    // MOCK：真实实现走 /ws/recorder 的二进制音频帧上行 + partial/final 下行
-    let i = 0;
-    const feed = setInterval(() => {
-      i += 1;
-      setCaptions((c) => {
-        const next = c.map((x) => ({ ...x, final: true }));
-        return [...next, { id: i, text: MOCK_LINES[i % MOCK_LINES.length], final: false }];
+
+    try {
+      handleRef.current = await startRecording({
+        ...(language ? { language } : {}),
+        onLevel: (v) => {
+          // 直写 DOM：电平约 50Hz，进 React state 会让整页跟着重渲染
+          if (levelRef.current) levelRef.current.style.transform = `scaleX(${v.toFixed(3)})`;
+        },
+        onSocketError: () => setStreamError(t('recorder.streamError')),
+        onMessage: (msg) => {
+          switch (msg.type) {
+            case 'ready':
+              // 服务端已建好 note + transcript，从这里拿 uid（不是前端自己造）
+              setNoteUid(msg.noteUid);
+              break;
+            case 'partial':
+              /*
+               * 语义 4：同一句内 text **单调增长** → 整句替换，不要 diff 拼接。
+               * partial 用 utteranceId 作键：一句定稿后服务端会换新的 id。
+               */
+              setCaptions((c) => applyCaption(c, msg));
+              break;
+            case 'final':
+              // final 到来 = 该 utterance 定稿：把未定稿行替换成定稿行
+              setCaptions((c) => applyCaption(c, msg));
+              break;
+            case 'overrun':
+              // 丢帧要说出来 —— 静默丢帧会表现为"有几句话没识别出来"，无从解释
+              setStreamError(t('recorder.overrun'));
+              break;
+            case 'error':
+              setStreamError(msg.messageZh);
+              break;
+            case 'stopped':
+              setRerunJobUid(msg.rerunJobUid);
+              setSegmentCount(msg.segmentCount);
+              // 有重跑任务才进入第二阶段；没有就直接结束
+              setPhase(msg.rerunJobUid ? 'rerunning' : 'done');
+              break;
+            default:
+              break;
+          }
+        },
       });
-      if (i > 6) clearInterval(feed);
-    }, 1800);
+    } catch (err) {
+      // getUserMedia 被拒 / 无可用设备 —— 不能停在"录音中"那个假状态
+      setPhase('idle');
+      if (timerRef.current) clearInterval(timerRef.current);
+      setPerm('denied');
+      setStreamError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   const stop = () => {
     if (timerRef.current) clearInterval(timerRef.current);
     setCaptions((c) => c.map((x) => ({ ...x, final: true })));
-    setPhase('rerunning');
-    // 第二阶段：离线大模型重跑
-    let p = 0;
-    const iv = setInterval(() => {
-      p += 0.08;
-      setRerunProgress(Math.min(1, p));
-      if (p >= 1) {
-        clearInterval(iv);
-        setPhase('done');
-        setReplaced({ updated: 47, preserved: 3, noCounterpart: 1 });
-      }
-    }, 220);
+    setPhase('finalizing');
+    void handleRef.current?.stop().finally(() => {
+      handleRef.current = null;
+    });
   };
 
   return (
@@ -248,7 +340,7 @@ export default function RecorderPage() {
                 {t('recorder.stop')}
               </Button>
             ) : phase === 'idle' ? (
-              <Button variant="primary" size="sm" onClick={start}>
+              <Button variant="primary" size="sm" onClick={() => void start()}>
                 <Mic className="size-3.5" />
                 {t('recorder.start')}
               </Button>
@@ -340,31 +432,40 @@ export default function RecorderPage() {
       ) : null}
 
       {/* ★ 保险 4：说清楚改了什么、保住了什么，并且**可以撤销** */}
-      {replaced ? (
+      {/* 流式识别出错 / 丢帧 —— 必须说出来，静默丢帧表现为"有几句没识别出来"，无从解释 */}
+      {streamError ? <Banner tone="warning" title={streamError} /> : null}
+
+      {/*
+        ★ 完成后只报**能证实的数字**。
+
+        「已保留 N 段」= 转写稿里 `editedAt != null` 的段数，回读服务端得到，是真的。
+        ⚠️ 「已更新 N 段」**没有显示** —— daemon 的 `formatMergeSummary()` 结果只进了
+        `queue.succeed()` 的 result_json，而 `job.state` SSE 只带 {jobId,state,previousState}，
+        `/api/jobs` 又只列下载队列。那个数字**目前没有任何通道能到前端**。
+        原来这里写死的「已更新 47 段 · 已保留 3 段」就是拿不到而硬编的。
+        拿不到就不说，不编。
+      */}
+      {phase === 'done' ? (
         <Banner
           tone="info"
-          title={t('recorder.replaced', { updated: replaced.updated, preserved: replaced.preserved })}
+          title={t('recorder.doneSummary', { segments: segmentCount })}
           detail={
             <>
-              {/* 合并按**时间轴**对齐而不是按段落序号 —— 两遍模型的断句天然不同，
-                  按序号会把别人的句子塞进用户改过的地方（gpu-runtime 实测结论）。
-                  因此"编辑过但没有对应新结果"是正常情况，必须能表达出来，
-                  而不是让用户以为自己的修改被吞了。 */}
-              {replaced.noCounterpart > 0 ? (
-                <span>{t('recorder.replacedNoCounterpart', { count: replaced.noCounterpart })}</span>
+              {replaced && replaced.preserved > 0 ? (
+                <span className="block">
+                  {t('recorder.preservedOnly', { count: replaced.preserved })}
+                </span>
               ) : null}
+              {/* 合并按**时间轴**对齐而不是按段落序号 —— 两遍模型的断句天然不同 */}
               <span className="mt-0.5 block text-ink-muted">{t('recorder.mergeByTimeNote')}</span>
             </>
           }
           action={
-            <div className="flex gap-2">
-              <Button size="sm" variant="ghost">
-                {t('recorder.viewDiff')}
+            noteUid ? (
+              <Button size="sm" variant="secondary" onClick={() => navigate(`/notes/${noteUid}`)}>
+                {t('recorder.openNote')}
               </Button>
-              <Button size="sm" variant="secondary">
-                {t('recorder.undoReplace')}
-              </Button>
-            </div>
+            ) : undefined
           }
         />
       ) : null}
@@ -372,12 +473,3 @@ export default function RecorderPage() {
   );
 }
 
-const MOCK_LINES = [
-  '好，我们今天先过一下上周的进度。',
-  '第一个是转写流水线，已经能跑通链接导入了。',
-  '第二个是模型管理页，还在等后端接口。',
-  '那我这边补充一下，运行时检测的部分',
-  '已经能在 Linux 上实测出可用后端了。',
-  '好，那我们下周同步一次打包的进度。',
-  '另外提醒一下，录音这块要注意两阶段的提示。',
-];
