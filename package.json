@@ -18,7 +18,10 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "license:report": "node scripts/license-report.mjs",
-    "submodules:init": "git submodule update --init --depth 1 --recommend-shallow"
+    "submodules:init": "git submodule update --init --depth 1 --recommend-shallow",
+    "check:sources": "node scripts/check-tracked-sources.mjs",
+    "check:selfcheck": "node scripts/selfcheck.mjs",
+    "check": "node scripts/check-tracked-sources.mjs && pnpm -r build && eslint ."
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
