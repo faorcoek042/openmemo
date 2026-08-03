@@ -13,6 +13,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 
+import { pinAuthMode } from '../authMode.testkit.js';
 import { startDaemon } from '../../main.js';
 
 let base = '';
@@ -119,15 +120,13 @@ describe('CSRF 同源兜底 —— 放行一种，拒绝四种', () => {
    * 默认档（none）连鉴权带 CSRF 一起跳过，这些边界根本不存在 ——
    * 若不显式切档，用例会"通过"得毫无意义，或像这次一样变红却让人误以为是回归。
    * 显式切档同时也验证了**开关的另一半仍然work**（别把开关做成单向门）。
+   *
+   * T-135：原来这里是就地写的 before/after 一段。**这段话是对的，做法也是对的** ——
+   * 只是隔壁那一组（下面的"仅凭 cookie 续签"）没有照做，于是它红了几小时没人看见。
+   * 现在换成共用的 `pinAuthMode()`，钉完会**回读一次确认真的生效**
+   * （env 曾经改不动 —— `AUTH_MODE` 做成过模块加载时求值的常量）。
    */
-  const prevMode = process.env['OPENMEMO_AUTH'];
-  before(() => {
-    process.env['OPENMEMO_AUTH'] = 'token';
-  });
-  after(() => {
-    if (prevMode === undefined) delete process.env['OPENMEMO_AUTH'];
-    else process.env['OPENMEMO_AUTH'] = prevMode;
-  });
+  pinAuthMode('token');
 
   let cookie = '';
   let csrf = '';
@@ -191,6 +190,19 @@ describe('CSRF 同源兜底 —— 放行一种，拒绝四种', () => {
  * 又拿不到 CSRF 令牌，而原始链接早被前端从地址栏抹掉了（防截图泄露）。
  */
 describe('POST /api/auth/session —— 仅凭 cookie 续签', () => {
+  /*
+   * ★ T-135：这一组也必须钉 `token` 档 —— 它整组测的都是**续签的边界**
+   * （伪造 cookie 要 401、两者都无要 401、同一会话要复用同一个 CSRF 令牌），
+   * 而这些边界在 `none` 档下**根本不存在**：那时握手对谁都回 200。
+   *
+   * 它原来靠"鉴权默认开着"。默认值翻成 `none` 之后这 4 条一直是红的，
+   * 而上面那一组因为写了显式切档所以一直是绿的 —— **同一个文件里，
+   * 一组做对了、隔壁一组没做，红了也没人看见**（当时的 test 脚本扫不到这个文件）。
+   *
+   * `none` 档那一半的覆盖在 `daemon.test.ts` 的「鉴权关闭档」一组。
+   */
+  pinAuthMode('token');
+
   it('★ 只带 cookie（无 Bearer）必须 200，且返回**可用的** CSRF 令牌', async () => {
     // 标签页 1：正常握手拿 cookie
     const first = await fetch(`${base}/api/auth/session`, {

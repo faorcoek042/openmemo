@@ -426,3 +426,314 @@ pnpm -r test                → rc=0
   所以「英文界面下 /settings 汉字数 81 → 0」这句我**只从组件测试的断言层面说得准**，
   **整页汉字数我没有实测**，不声称。
 - `packages/pipeline` 与 `apps/daemon` 都不是我的常驻地界，两处改动都做了 SHARED-CHANGE 式的说明。
+
+---
+
+## [2026-08-03 22:35] T-135b DONE —— Manager 四条追加指令的回执
+
+## TL;DR (≤25 lines)
+
+- **1. `apps/daemon` 的 test 脚本已修。** 用的是 pipeline 里验证过的那套（node 默认发现 + 前置守卫），
+  **不是换个通配符**。效果：**116 → 177**（同一棵树、同一次构建，只是脚本换了）。
+  之前那 61 条不是新写的，是**一直存在、一直没被跑到**的。
+- **2. `packages/db` 一起修了，三个包用的是逐字相同的一行**（db / pipeline / daemon）。
+  `apps/web` 是**必须保留的例外**，理由是实测出来的：它不能用默认发现，
+  否则 `.test-out/{components,host}` 会被一起扫进来、组件套件在单测那一步再跑一遍。
+  它的 glob **一直是带引号的**（正确），我给它补了**另一个面**的守卫：
+  `tsconfig.test.json` 的 include 是显式白名单，**新写一个单测忘了加进去 = 永远不跑且零提示**。
+- **3. 那 7 条鉴权用例已改，判据按你给的那条来做的**：不是"让它变绿"，是
+  **"默认值再翻一次也不该让它红"**。新增 `pinAuthMode()`，用例**显式声明自己要哪一档**。
+  🔬 **判据实验（不是 env 覆盖，是真把默认值翻过去）**：把 `auth.ts` 的默认改成 `token` 后
+  跑**全部** daemon 测试 → **177/177 全绿**。两个方向 + 默认翻转，三种情况全跑了（§B）。
+- **同时补上了 T-134 的自动化覆盖。** 把那 7 条钉到 `token` 之后，`none` 档就一条覆盖都没有了 ——
+  **那等于把洞换个位置再挖一遍**。T-134 的反向验证当时是**手工**跑的、没留用例，
+  所以新增「鉴权关闭档」一组 3 条（握手必须 200 + `authMode:'none'` + 写请求免 CSRF）。daemon 14 → 17。
+- **4. TD-002 那段警告已经写进代码**：`ytdlpRemoval.test.ts` 文件头三节
+  （覆盖什么 / 不覆盖什么 / 从没被跑过），并在 `buildRegistry()` 上方单独标注
+  **"这是 `buildDefaultRegistry()` 的手抄副本，不是它本身"**。
+- **HANDOFF 两处已回写**：⑤J 补第五例 `d12ab1e`（含 commit 号与后果分析）；
+  ⑤A 补 **#19**（sh 吃掉 `**`）；「测试怎么跑」一节同步到 4 个包 + 新的基线数字，
+  并特别注明 **daemon 113→177 不是有人写了 64 条新测试**，拿旧数字做基线会对不上。
+- **反向验证 6 组，全部真的变红，真实输出见 §C。** 其中 [R-5] 重演了 `AUTH_MODE` 单向门：
+  让 `authMode()` 忽略环境变量，**pin 自己当场红**并说清"想要 token、实际 none"。
+- **门禁**：`tsc -b` 0 · `eslint .` rc=0 零输出 · `pnpm -r test` rc=0 ——
+  db 47 / pipeline 132 / web 27+10+162 / **daemon 177** = **555 passed, 0 failed**。
+- **纪律不变**：`apps/web/dist` mtime 仍是 21:00:11（一次都没构建）；`:10000` 只读、pid 2992138 存活；
+  `/root/data-memo` 零写入；未用 `pkill`；未 commit。**精确清单见 §E。**
+- **§D 是你点名要的那段教训**（`mv` 让 mtime 倒退 → `tsc -b` 增量判断被绕过 → 我跑的是旧产物）。
+
+---
+
+## §A 四件事分别做了什么
+
+### A1 · `apps/daemon` 的 test 脚本（最优先）
+
+```diff
+- "test": "node --test dist/**/*.test.js"
++ "_comment:test": "★ T-135：不要写成 node --test dist/**/*.test.js …（长注释，讲清三个包各自的实测后果）"
++ "test": "node -e \"<发现守卫>\" && node --test"
+```
+
+**同一棵树、同一次构建，只换脚本**：
+
+| | 旧脚本 | 新脚本 |
+|---|---|---|
+| 测试文件 | 9 | **13** |
+| 用例 | **116** pass | **177** pass |
+| exit code | 0 | 0 |
+
+**两个都是"绿"**，这正是它最坏的地方。你说的那句我原样记在 HANDOFF ⑤A-19 里了：
+**它污染的是判断依据本身**——据「门禁全绿」做过的每一次决定，当时都建立在一个漏跑 30% 的脚本上。
+
+守卫是**必需**不是可选，理由已实测：
+
+```
+$ node --test "dist/**/*.nosuchtest.js"
+ℹ tests 0 … ℹ fail 0
+rc=0                     ← 空集，绿
+```
+
+### A2 · `packages/db` 与全仓扫描
+
+全仓 10 个 workspace，有 `test` 脚本的是 **4 个**（其余 5 个包没有测试脚本，靠包内 `verify-*.mjs`）：
+
+| 包 | 改前 | 改后 | 说明 |
+|---|---|---|---|
+| `packages/db` | `node --test dist/**/*.test.js` | **统一** | 你的定性完全对：**它正确的原因是 sh 匹配不到、原样透传**，不是写对了 |
+| `packages/pipeline` | （T-135 我写的那版） | **统一**（逐字相同） | |
+| `apps/daemon` | 同 db | **统一**（逐字相同） | |
+| `apps/web` | `test:unit` + `test:components` | **保留结构，补守卫** | 见下 |
+
+**`apps/web` 为什么必须是例外 —— 这是实测出来的，不是我不想统一**：
+
+```
+$ node --test .test-out/unit          # 目录参数：Node 24 把它当模块去 require
+Error: Cannot find module '/root/memo/apps/web/.test-out/unit'
+$ node --test                          # 默认发现：会把 .test-out/{components,host} 一起扫进来
+                                       # → 组件套件在单测这一步被重复跑一遍
+```
+
+所以 web 必须显式指路径，而**它的 glob 一直是带引号的**（`\".test-out/unit/**/*.test.js\"`）——
+带引号 = sh 不碰 = node 自己的 glob 生效，**这一条本来就是对的，我没有动它**。
+
+但它有**另一个面**的漏集风险，而且是结构性的：`tsconfig.test.json` 的 `include` 是一张
+**显式白名单**（当前 3 个单测文件）。新写一个 `src/**/*.test.ts` 却忘了加进去，
+它**永远不会被编译、也永远不会被跑，一个字都不报** —— 该文件自己的注释里已经写着这条隐患。
+所以给它补的守卫断的是：`src/**/*.test.ts` 的数量必须等于 `.test-out/unit/**/*.test.js` 的数量。
+
+**没留第三个"碰巧"**：db / pipeline / daemon 三行逐字相同；web 是有实测理由的例外，
+理由写进了它自己的 `_comment:test:unit` 和 HANDOFF「测试怎么跑」。
+
+### A3 · 7 条鉴权用例（你授权后改的）
+
+新增 `apps/daemon/src/http/authMode.testkit.ts` → `pinAuthMode(mode)`：
+
+- 在 `describe` 里注册 `before`/`after`，**用例显式声明自己要哪一档**，默认值从此只是默认值；
+- **钉完立刻回读一次 `authMode()` 断言生效** —— 因为"设 env 这个动作本身可能不生效"
+  正是 `AUTH_MODE` 单向门那次的形态（那时它是模块加载时求值的 `export const`）。
+  前提不成立就**当场红**，而不是让后面几十条断言去表达它。
+
+改了三处：
+
+| 位置 | 改法 |
+|---|---|
+| `daemon.test.ts` 「鉴权链路」 | 加 `pinAuthMode('token')` + 一段说明为什么它红了却没人看见 |
+| `settings.roundtrip.test.ts` 「仅凭 cookie 续签」 | 加 `pinAuthMode('token')` + 说明 |
+| `settings.roundtrip.test.ts` 「CSRF 同源兜底」 | 就地写的 before/after **换成同一个 helper**（它原来的注释是对的、做法也是对的，**只是隔壁那组没照做**，我把这句写进注释了） |
+
+**断言一个字没改。** 没有把 401 改成"200 也算过"—— 那会把 token 档的全部边界一起删掉。
+
+### A3-bis · 顺带补上 T-134 的自动化覆盖（**这不是加戏，是不把洞换个位置再挖一遍**）
+
+把那 7 条钉到 `token` 之后，`none` 档（当前默认）就**一条覆盖都没有了**。
+而 T-134 的反向验证当时是**手工**跑的（两个方向都跑了，写在 commit message 里），
+**没有留下任何自动化用例**。所以新增 `daemon.test.ts` 的「鉴权关闭档」一组 3 条：
+
+- ★ 不带任何凭据的握手必须 200（否则前端 `authed` 恒 false，**全站 SSE 从不建立**）+ `authMode:'none'` + 仍发 CSRF 令牌
+- 未认证的 GET 直接放行（正是上面那条 401 断言的**反面**）
+- 写请求不带 CSRF 头也放行
+
+**开关的两个方向现在都有人守。**
+
+### A4 · TD-002 的警告落进代码
+
+`packages/pipeline/src/media/__tests__/ytdlpRemoval.test.ts` 文件头新增三节：
+
+1. **这 7 条不足以宣布「TD-002 已验证」** —— 点名它曾被过早关闭过一次，
+   并具体写出**今天仍带着同一个形状的缺口**：本文件的 `buildRegistry()` 是
+   `buildDefaultRegistry()`（`src/index.ts`）的**手抄副本**，所以产品那边改默认值 / 改注册顺序 /
+   少注册一个适配器 / daemon 把提取器整个关掉 —— **这 7 条全不变色**；
+   而最后那一条**真的发生过**（T-132：自检 `ok`、磁盘上装着、F1 回 422、`tried:` 里连 yt-dlp 都没有）。
+2. **它到底证明了什么**（✅ registry 这一层 / ❌ 产品真实装配、❌ daemon 会不会注册），
+   并指明另一半在 `apps/daemon/src/pipeline/ytdlpInstall.test.ts`：**两边合起来才算验过**。
+3. **这 7 条从写下来那天起一次都没被跑过** ——
+   「为一次事故补了回归测试」和「那些回归测试真的在跑」是两件事。
+
+另在 `buildRegistry()` 正上方单独标了一行：**「这是手抄副本，不是它本身；改它之前先读文件头」**
+—— 文件头容易被跳过，而改这个函数的人一定会看到紧挨着它的那句。
+
+---
+
+## §B 判据实验：**默认值再翻一次也不该让它们红**
+
+不是 env 覆盖，是**真的把 `auth.ts` 里的默认值翻过去**再跑全部 daemon 测试：
+
+```
+### 把 authMode() 的默认从 none 翻成 token（模拟"默认值再翻一次"）
+ℹ tests 177  ℹ suites 40  ℹ pass 177  ℹ fail 0
+```
+
+**全绿 —— 而且是整个 daemon 套件，不只是我改的那两个文件**，说明没有别的用例暗中依赖默认值。
+
+两个方向的 env 也都跑了（改动落地后）：
+
+```
+########## OPENMEMO_AUTH=token
+--- dist/daemon.test.js                  ℹ tests 17  ℹ pass 17  ℹ fail 0
+--- dist/http/rest/settings.roundtrip.test.js   ℹ tests 16  ℹ pass 16  ℹ fail 0
+########## OPENMEMO_AUTH=none
+--- dist/daemon.test.js                  ℹ tests 17  ℹ pass 17  ℹ fail 0
+--- dist/http/rest/settings.roundtrip.test.js   ℹ tests 16  ℹ pass 16  ℹ fail 0
+```
+
+**默认档（不设 env）** 同样 17/17 与 16/16。三种情况全绿。
+
+---
+
+## §C 反向验证（6 组，真实输出，每组都已还原）
+
+**[R-1] `apps/daemon` 换回旧的那一行**（就是今天一直在跑的那个）
+```
+ℹ tests 116  ℹ suites 25  ℹ pass 116  ℹ fail 0
+rc=0                                             ← 绿
+### 已还原
+ℹ tests 177  ℹ suites 40  ℹ pass 177  ℹ fail 0
+```
+**同一棵树、同一次构建，61 条用例的差别，两边都是 exit 0。**
+
+**[R-2] daemon：假装有个测试文件没编出来**
+```
+Error: test discovery broken: 14 source test files vs 13 compiled in dist —— 先 pnpm build:safe；node --test 对空集/漏集一律返回绿
+Exit status 1
+```
+
+**[R-3] db：同上**
+```
+Error: test discovery broken: 3 source test files vs 2 compiled in dist —— …
+Exit status 1
+```
+
+**[R-4] 撤掉两处 `pinAuthMode`（回到依赖默认值）**
+```
+ℹ tests 177  ℹ pass 170  ℹ fail 7
+✖ 未认证请求被 401 拒绝
+✖ 错误的 token 换不到 session
+✖ cookie 通道的非 GET 请求缺 CSRF 头 → 403；带上则通过
+✖ ★ 只带 cookie（无 Bearer）必须 200，且返回**可用的** CSRF 令牌
+✖ 续签**复用同一个会话**（同一个 CSRF 令牌），不是每个标签新建一个
+✖ 两者都无 → 仍 401，且带可执行的 remediation
+✖ ★ 伪造/失效的 cookie → 必须 401（续签不等于放行任何 cookie）
+```
+↑ **一模一样的 7 条**回来了。
+
+**[R-5] 让 `authMode()` 忽略环境变量（重演 `AUTH_MODE` 单向门）—— 看 pin 自己会不会红**
+```
+AssertionError [ERR_ASSERTION]: 钉鉴权档没有生效（想要 token，实际 none）—— 后面每一条断言都会在错误的前提下跑
+'none' !== 'token'
+```
+↑ 这正是 pin 里那句回读断言存在的理由：**没有它，症状会表现成"7 条业务断言莫名其妙全红"，
+而真因是"前提根本没设上"** —— 那会把人引向去改断言。
+
+**[R-6] web：新写一个单测但忘了加进 `tsconfig.test.json` 的 include**
+```
+Error: test discovery broken: 4 个 src/**/*.test.ts vs 3 个编进 .test-out/unit —— 新加的单测要写进 tsconfig.test.json 的 include；node --test 对空集/漏集一律返回绿
+ ELIFECYCLE  Command failed with exit code 1.
+```
+
+---
+
+## §D ⚠️ 教训：**反向验证时，先确认你跑的真是刚改过的那份产物**
+
+上一轮 [R-②b] 我被骗过一次：改坏 → 变红（对）→ 还原 → **重跑仍然红**。
+
+真因不是没还原干净，是 **`mv` 把备份文件还原回去时带的是更早的 mtime**，
+`tsc -b` 的增量判断因此认为"源码没变"，**根本没重新编译** —— 我跑的是**改坏那一版的 dist**。
+
+这和 `models-page-fix` 被自己注释里的一句话骗过、`test-host` 发现覆盖率看不出空断言，
+是**同一族：验证手段自己有缺陷**。它特别阴，因为表现是"修复没生效"，
+会把人推去改一个根本没坏的东西。
+
+**本轮的做法（已成为我每次还原后的固定动作）**：
+
+```bash
+/tmp/unrev.sh <file> && touch <file> && pnpm --filter <pkg> build
+grep -c "<改坏时才有的那行字面量>" <pkg>/dist/<对应产物>.js     # 必须是 0
+```
+
+§B / §C 里每一次还原后我都跑了这个 `grep -c … → 0` 的确认，输出在终端里。
+**判据：不要问"我还原了吗"，要问"我现在跑的这份产物里，改坏的那行还在不在"。**
+
+---
+
+## §E 精确提交清单（**请勿 `git add -A`**）
+
+```bash
+# 1 + 2 · 测试脚本统一
+git add apps/daemon/package.json
+git add packages/db/package.json
+git add packages/pipeline/package.json
+git add apps/web/package.json                       # 只改 test:unit + 加 _comment:test:unit
+
+# 3 · 7 条鉴权用例 + 开关的另一半
+git add apps/daemon/src/http/authMode.testkit.ts    # 新文件
+git add apps/daemon/src/daemon.test.ts
+git add apps/daemon/src/http/rest/settings.roundtrip.test.ts
+
+# 4 · TD-002 警告落进代码
+git add packages/pipeline/src/media/__tests__/ytdlpRemoval.test.ts
+
+# 回写
+git add HANDOFF.md                                  # ⑤J 第五例 + ⑤A #19 + 「测试怎么跑」
+git add coordination/inbox/loose-ends.md
+```
+
+⚠️ `apps/web/package.json` 上一次动它的是 `test-host`（`a99ef7b`）。
+我**只改了 `test:unit` 一条并新增一条 `_comment:test:unit`**，`test:host` / `test:components` 一个字没动。
+⚠️ `HANDOFF.md` 是 `handoff` 的交付物，我按你的指令改了三处（⑤J / ⑤A#19 / 「测试怎么跑」），
+**都是追加或订正过期事实，没有删改别人写的结论**。
+
+---
+
+## §F 门禁
+
+```
+tsc -b        → rc=0，0 错
+eslint .      → rc=0，零输出
+pnpm build:safe → rc=0（**全程没跑过 pnpm -r build / vite build**）
+pnpm -r test  → rc=0
+  packages/db               47
+  packages/pipeline        132
+  apps/web  test:unit       27
+  apps/web  test:host       10
+  apps/web  test:components 162
+  apps/daemon              177   ← 本轮 116 → 177（+61 是"回来了"，不是"新写的"）
+  ────────────────────────────
+  合计                      555 passed / 0 failed / 0 skipped
+```
+
+---
+
+## §G 诚实声明
+
+- §A/§B/§C 里每一段带 `ℹ tests` / `✖` / `Error:` 的输出**都是从终端复制的**。
+- **daemon 从 116 涨到 177，没有一条是"我新写的测试凑出来的"**：我新增的只有 3 条
+  （`none` 档那一组）+ 上一轮的 3 条（storageLayout）。剩下 **58 条是本来就存在、从没被跑到过的**。
+- **`apps/web` 我没有强行统一成和另外三个包一样** —— 理由是实测的（默认发现会把组件套件扫进来、
+  目录参数在 Node 24 上直接报 MODULE_NOT_FOUND），两条命令的原始输出在 §A2。
+  如果你认为仍应统一，请裁决，我不自作主张。
+- **TD-002 那个缺口我只写了注释，没有动那 7 条的实现**（改成调 `buildDefaultRegistry()` 归 `gpu-runtime`）。
+  注释里明写了"最小改进（尚未做）"，**没有把它说成已经修了**。
+- `pinAuthMode` 放在 `src/http/authMode.testkit.ts`（不是 `*.test.ts`，所以不会被当成测试文件、
+  也不会被发现守卫计数）—— 这一点我实测确认过：daemon 的守卫读到的是 **14 个源测试文件 / 14 个产物**。
+- **本轮没有开真浏览器，没有起任何长驻进程，因此一次 `kill` 都没执行。**
+- 未跑任何本地 whisper 转写。未派生 subagent。未 commit。

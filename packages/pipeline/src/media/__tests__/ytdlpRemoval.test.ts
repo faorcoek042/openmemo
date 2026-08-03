@@ -5,9 +5,52 @@
  * objected that this was only asserted in comments. These tests are the enforcement:
  * they disable the adapter and assert that real-world inputs still resolve.
  *
- * If someone makes yt-dlp load-bearing, these tests fail.
+ * Run: `pnpm --filter @openmemo/pipeline test`（T-135 之前本包**没有 test 脚本**，
+ * 见下面第 3 节 —— 这几条从写下来到 2026-08-03 为止，没有被任何人跑过一次）。
  *
- * Run: node --test packages/pipeline/dist/media/__tests__/ytdlpRemoval.test.js
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ⚠️ 读这个文件的人请先读完这一段：**它覆盖什么、不覆盖什么**（T-135 补写）
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ## 1. 这 7 条**不足以**宣布「TD-002 已验证」—— 这句话是用事故换来的
+ *
+ * TD-002 曾经被**过早关闭过一次**：当时基于一条通过的测试就宣布
+ * 「GPL 组件在架构上可替换」已验证，后来发现**产品的真实导入路径根本没走那条链**，
+ * GPL 兜底在真实路径上从未触发过（HANDOFF ⑤A-11）。
+ *
+ * **下面这 7 条仍然带着同一个形状的缺口。** 具体是：
+ *
+ * 本文件的 `buildRegistry()`（就在下面几行）是把产品的
+ * `buildDefaultRegistry()`（`packages/pipeline/src/index.ts`）**手抄了一份**，
+ * 并且把 `enableExtractor` 作为参数由用例自己传。于是：
+ *
+ * - 产品那边把 `enableSiteExtractor` 的默认值改掉 → **这 7 条全不变色**；
+ * - 产品那边改注册顺序、少注册一个适配器、换掉某个 `match()` 分数 → **同样不变色**；
+ * - 产品那边（daemon）把整个站点提取器默认关掉 → **同样不变色**。
+ *
+ * 而最后那一条**真的发生过**：T-132 实测查明，F1「粘链接导入」当时断掉的那道闸门
+ * 正是 daemon 侧的 `siteExtractorEnabled()` 默认关着 —— 自检报 `ok | tool.ytDlp`、
+ * 磁盘上 yt-dlp 装得好好的，而 `POST /api/notes/probe` 回 422，
+ * `tried:` 列表里**连 yt-dlp 都不出现**。**绿灯亮着，功能是死的。**
+ *
+ * ## 2. 所以这 7 条到底证明了什么（如实说清边界）
+ *
+ * ✅ 证明了：**`MediaSourceRegistry` 这一层**在没有 GPL 适配器时仍能解析全部核心输入，
+ *    且 licence-clean 的适配器在评分上永远排在 GPL 适配器前面（这是有价值的，别删）。
+ * ❌ **没有**证明：产品真实装配出来的那个 registry 是这么配的。
+ * ❌ **没有**证明：daemon 真的会把站点提取器注册进去。
+ *
+ * 后两条今天由 `apps/daemon/src/pipeline/ytdlpInstall.test.ts` 从 daemon 那一层补上了
+ * （T-132，**而且它真的会跑**）。**两边合起来才算验过；只看这一边就是重演当年那次事故。**
+ *
+ * ## 3. 顺带记一条同样重要的
+ *
+ * 这 7 条从写下来那天起**一次都没被跑过** —— `packages/pipeline` 当时没有 `test` 脚本，
+ * `pnpm -r test` 自然扫不到它（`ytdlp-install` 在 T-132 里顺手发现，T-135 补上）。
+ * **"为一次事故补了回归测试"和"那些回归测试真的在跑"是两件事。**
+ *
+ * → 最小改进（尚未做，需 `gpu-runtime` 裁决）：让下面的 `buildRegistry()` 改调
+ *   `buildDefaultRegistry()`，把"产品怎么装配"这件事也纳进来。
  */
 
 import assert from 'node:assert/strict';
@@ -35,6 +78,13 @@ const TOOLS_WITH_EXTRACTOR: ToolPaths = {
 /** The shipping-without-GPL configuration. */
 const TOOLS_WITHOUT_EXTRACTOR: ToolPaths = { ...TOOLS_WITH_EXTRACTOR, ytDlp: null };
 
+/**
+ * ⚠️ **这是 `buildDefaultRegistry()`（`../../index.ts`）的手抄副本，不是它本身。**
+ *
+ * 文件头第 1 节讲的缺口就在这里：产品那边改了装配（默认值、注册顺序、少注册一个），
+ * 这份副本**不会跟着变**，下面 7 条照样全绿。
+ * 改动这个函数之前请先读文件头 —— 那段话是一次已经发生过的事故换来的。
+ */
 function buildRegistry(tools: ToolPaths, enableExtractor: boolean): MediaSourceRegistry {
   const r = new MediaSourceRegistry();
   r.register(new LocalFileSource({ tools, allowedRoot: '/tmp', cwd: '/tmp' }));

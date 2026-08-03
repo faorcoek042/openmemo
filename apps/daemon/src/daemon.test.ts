@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 
 import { CSRF_HEADER, SESSION_COOKIE } from './http/auth.js';
+import { pinAuthMode } from './http/authMode.testkit.js';
 import { AlreadyRunningError, StartupConflictError, startDaemon } from './main.js';
 
 /**
@@ -172,7 +173,21 @@ describe('daemon 生命周期', () => {
   });
 });
 
+/**
+ * ★ 这一组测的是 `OPENMEMO_AUTH=token` 档的**访问控制边界**，所以必须把档位钉死。
+ *
+ * 它原来依赖"鉴权默认开着"这个前提。默认值后来被翻成 `none`（用户显式决定），
+ * 这一组**从那一刻起就是红的，而且没有任何人看得见** —— 当时的 test 脚本
+ * 用了一个被 sh 吃掉的 glob，`dist/daemon.test.js` 一次都没被跑到（T-135 同轮已修）。
+ *
+ * 判据不是"让它变绿"，是**"默认值再翻一次也不该让它红"**：
+ * 用例要什么档，用例自己说，不问默认值。
+ * 另一半（`none` 档）在下面那一组 —— **开关的两个方向都必须有人守**，
+ * 本项目在 `AUTH_MODE` 上吃过一次"单向门"的亏。
+ */
 describe('鉴权链路（token → cookie → CSRF）', () => {
+  pinAuthMode('token');
+
   it('未认证请求被 401 拒绝', async () => {
     const port = nextPort();
     const d = await startDaemon({ port, dataDir: freshDir('auth1'), maxPort: port });
@@ -270,6 +285,69 @@ describe('鉴权链路（token → cookie → CSRF）', () => {
         body: JSON.stringify({ b: 2 }),
       });
       assert.equal(res.status, 200);
+    } finally {
+      await d.stop();
+    }
+  });
+});
+
+/**
+ * ★ 开关的**另一半**：`OPENMEMO_AUTH=none`（当前的默认档）。
+ *
+ * 把上面那一组钉到 `token` 之后，`none` 档就一条覆盖都没有了 ——
+ * 那等于把刚补上的洞换个位置又挖一遍。所以这一组必须同时存在。
+ *
+ * 它守的是 **T-134** 那个修复：鉴权关掉时**握手不该失败**。
+ * 当时的现象是「SSE 端点开着 200，前端却从不去连」——
+ * `providers.tsx` 的 `if (reachable && authed) startSse()` 里 `authed` 恒 false，
+ * 因为握手要求"有 Bearer 或有有效 cookie"，而**没人再发得出 Bearer**。
+ * 转写逐段出字、下载进度、装完提示全部静默失效，
+ * **而每个单独的端点测起来都是好的**。
+ *
+ * ⚠️ T-134 的反向验证是**手工**跑的（两个方向都跑了，写在 commit message 里），
+ * 但**没有留下任何自动化用例**。下面这三条就是补这个。
+ */
+describe('鉴权关闭档（OPENMEMO_AUTH=none，当前默认）', () => {
+  pinAuthMode('none');
+
+  it('★ 不带任何凭据的握手必须 200 —— 否则前端的 authed 恒 false，全站 SSE 从不建立', async () => {
+    const port = nextPort();
+    const d = await startDaemon({ port, dataDir: freshDir('none1'), maxPort: port });
+    try {
+      const res = await fetch(`http://127.0.0.1:${d.port}/api/auth/session`, { method: 'POST' });
+      assert.equal(res.status, 200, '鉴权关了，握手就不该失败');
+      const body = (await res.json()) as { csrf?: string; authMode?: string };
+      // 让前端/诊断页能看出这是"鉴权已关"的握手，而不是误以为验过身份
+      assert.equal(body.authMode, 'none');
+      assert.ok(body.csrf, '仍要发 CSRF 令牌，前端不必为两种模式写两套流程');
+      assert.match(res.headers.get('set-cookie') ?? '', /HttpOnly/);
+    } finally {
+      await d.stop();
+    }
+  });
+
+  it('未认证的 GET 直接放行（这正是上面那条 401 断言的反面）', async () => {
+    const port = nextPort();
+    const d = await startDaemon({ port, dataDir: freshDir('none2'), maxPort: port });
+    try {
+      const res = await fetch(`http://127.0.0.1:${d.port}/api/daemon/status`);
+      assert.equal(res.status, 200);
+    } finally {
+      await d.stop();
+    }
+  });
+
+  it('写请求不带 CSRF 头也放行 —— CSRF 防的是"借用你已有的凭据"，而凭据不存在', async () => {
+    const port = nextPort();
+    const d = await startDaemon({ port, dataDir: freshDir('none3'), maxPort: port });
+    try {
+      const res = await fetch(`http://127.0.0.1:${d.port}/api/echo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ c: 3 }),
+      });
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), { echo: { c: 3 } });
     } finally {
       await d.stop();
     }

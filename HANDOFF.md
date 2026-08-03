@@ -158,18 +158,28 @@ OPENMEMO_DAEMON=http://127.0.0.1:10000 pnpm --filter @openmemo/web dev -- --port
 同一份配置里还有 T-126 加的 `resolve.alias['@manifests'] → vendor/manifests`。
 
 ### 测试怎么跑
-**根目录没有 `test` 脚本，也没有 `pnpm -r test` 的统一入口脚本**（但 `pnpm -r test` 本身能用，会跑有 test 的 3 个包）。`[读码]`
+**根目录没有 `test` 脚本，也没有 `pnpm -r test` 的统一入口脚本**（但 `pnpm -r test` 本身能用，会跑有 test 的 **4** 个包）。`[读码]`
 ```bash
-pnpm --filter @openmemo/daemon test   # node --test dist/**/*.test.js
-pnpm --filter @openmemo/db     test
-pnpm --filter @openmemo/web    test   # = test:unit + test:components
+pnpm build:safe                       # ★ 先 build：所有测试都跑编译产物（**不要** pnpm -r build，见 PROTOCOL §7 补充）
+pnpm --filter @openmemo/daemon   test
+pnpm --filter @openmemo/db       test
+pnpm --filter @openmemo/pipeline test  # 🆕 T-135 新加（此前本包**没有 test 脚本**，TD-002 的 7 条回归从没跑过）
+pnpm --filter @openmemo/web      test  # = test:unit + test:components（后者含 test:host）
 ```
-- ✅ **web 的两条测试都不写 `dist`**：`test:unit` 输出到 `.test-out/unit/`，`test:components` 是
-  `vite build --ssr … --outDir .test-out/components`。跑它们不违反 PROTOCOL §7。
-- `downloader` / `llm` / `mindmap` / `pipeline` / `runtime` / `shared` **没有 `test` 脚本** ——
-  它们的验证脚本是包内的 `verify-*.mjs` / `gen-*.mjs`（如 `packages/downloader/scripts/verify-offline.mjs`，60 条断言）。
+- ⚠️ **db / pipeline / daemon 三个包的 `test` 脚本必须保持同一行写法**，不要"顺手简化"回
+  `node --test dist/**/*.test.js` —— 那一行会被 sh 吃掉 `**`，**静默漏跑**（⑤A-19，实测漏 30%）。
+  现在的写法是 `node -e "<发现守卫>" && node --test`：不给位置参数（node 自己递归发现），
+  前置守卫断言"源码里有几个测试文件，dist 里就有几个"（因为 `node --test` 对空集返回 exit 0）。
+  **web 是例外且必须是例外**：它得显式指 `.test-out/unit/`，否则默认发现会把组件套件也扫进来；
+  它的 glob **一直是带引号的**（别去掉），另配了一条守卫挡"新写的单测忘了加进 `tsconfig.test.json` 的 include"。
+- ✅ **web 的三条测试都不写 `dist`**：`test:unit` → `.test-out/unit/`，`test:host` → `.test-out/host/`，
+  `test:components` → `vite build --ssr … --outDir .test-out/components`。跑它们不违反 PROTOCOL §7。
+- `downloader` / `llm` / `mindmap` / `runtime` / `shared` **没有 `test` 脚本** ——
+  它们的验证脚本是包内的 `verify-*.mjs` / `gen-*.mjs`（如 `packages/downloader/scripts/verify-offline.mjs`，62 条断言）。
 - **所有测试都跑编译产物**，必须先 build 再 test。
-- 最近一次全绿记录 `[报告]`（`storage-fix` T-128）：`db 47 / web 18 / web-components 122 / daemon 95 = 282 passed, 0 failed`。
+- 最近一次全绿记录 `[实测]`（T-135）：**`db 47 / pipeline 132 / web 单测 27 + 宿主 10 + 组件 162 / daemon 177 = 555 passed, 0 failed`**。
+  ⚠️ daemon 从 113 跳到 177 **不是有人写了 64 条新测试**，是 ⑤A-19 那个 glob 修好之后，
+  原本就存在却从没被跑过的 4 个文件回来了。**拿旧数字做基线的人会对不上。**
 
 ### 自检（最推荐的第一个命令）
 ```bash
@@ -348,6 +358,7 @@ node scripts/selfcheck.mjs --json
 | **16** | 🆕 **Tailwind 对不存在的类不报错** | 提交串档造成 `bg-accent-tint` 的悬空引用：`[实测]` `e896e2b` 那一刻 `LlmSettingsSection` 用了它，而 `index.css`/`tokens.css` 都**没有定义**（各 0 命中）。**从那个 commit 干净检出，LLM 服务商卡片的"选中"底色会渲染成没有底色，一个字都不提示。** 与更早那次 `text-success` 是同一种失败模式。（该洞已被 `6b1cac0` 闭合） |
 | **17** | 🆕 **对比度断言全在管"前景 vs 背景"** | 所以"背景 vs 背景"从没被看过：明档 `--surface-0/1/2` 三档两两只有 **1.03:1**，`hover:bg-surface-2` 压在卡片上 **1.02:1**（18 处调用点的鼠标反馈等于没有），侧栏选中态与 hover **完全同色**。**D-05 §7.2 承诺的"三级抬升"在亮色主题里从未真正存在过** —— 那不是一条被违反的规范，是**一条描述了不存在事实的规范**。已回写（见 ⑤K） |
 | **18** | 🆕 **测试的名字和它实际断言的东西可以完全无关** | 用例名叫「回车跳转到 `/search?q=…`」，**却从没断言过 URL**。`[实测]` 把 `navigate(...)` 整句删掉，两条**照样绿**；换成断言 location 后同一个变异体当场红。关键是**为什么没有机制能发现**：名字是字符串、断言是代码，**两者之间不存在任何约束** —— 编译器不看、类型不看、lint 不看、**覆盖率更不看**（覆盖率只问"这行跑没跑过"，而它确实跑过了 `SearchBox` 的每一行，包括 `navigate` 所在的那个函数）。**它是覆盖率报告上的一条绿线。**<br>**规矩 1：读测试先读断言** —— 把名字遮住，问"这些断言什么时候会失败"。<br>**规矩 2：答不上来就变异** —— 把被测行为整句删掉跑一遍，不红就说明钉住的是零。<br>**规矩 3：诚实地记下妥协，不等于妥协是对的** —— 该用例注释写着"不方便断言"然后就地降级，而那个"不方便"实际上是 5 行代码的事。（✅ 已换掉，T-133b / `8a48568`，组件测试现为 **151/151 零 skip**） |
+| **19** | 🆕 **测试脚本里的 `**` 被 shell 吃掉，于是「跑了一部分」看起来和「全跑了」一模一样** | `node --test dist/**/*.test.js` **没加引号**：pnpm 用系统 sh 跑脚本，而 **sh 不认 `**`**，它等价于 `dist/*/*.test.js`（**恰好两层**）。`[实测]` `apps/daemon` 13 个测试文件**只跑到 9 个**，报 `113 pass / 0 fail`；带引号跑全部则是 `174`，**其中 7 条是红的**（鉴权用例，见 ⑤J 第五例）。`packages/pipeline` 10 个文件**只跑到 1 个**（132 条只报 6 条，exit 0）。`packages/db` 当时是绿的，但**正确的原因是巧合** —— 它三个文件恰好都在一层，sh 匹配不到、按 POSIX 把 pattern 原样透传给 node，node 自己的 glob 才认 `**`；**任何人加一个两层深的测试文件，另外三个当场静默消失**。<br>**这一条最坏的地方是它污染的是判断依据本身**：Manager 据「门禁全绿」做过的每一次决定（含重启 demo），当时都建立在一个漏跑 30% 的脚本上。<br>**判据不是「要记得加引号」，是「写错了也不会有后果」**：改成 `node --test`（不给位置参数，用 node 自己的递归发现）+ 一条前置守卫断言「源码里有几个测试文件，dist 里就有几个」——因为 `node --test` **对空集返回 exit 0**（⑤A-2 的第四次）。db / pipeline / daemon 现已统一成同一行（T-135）。 |
 
 > ### ★ 由此立下的规矩（不可协商）
 > 1. **任何新加的检查，先证明它会红。** 没见过它红过，就不知道它在检查什么。
@@ -444,9 +455,10 @@ node scripts/selfcheck.mjs --json
 > **★ 规矩：只杀自己记录下来的 pid。起进程时就把 pid 记进 inbox。** 用独立端口 + `setsid`。
 > 这条已被所有 agent 遵守并在回执里显式声明。
 
-### J. 🆕 提交卫生：`git add -A` 已经**四次**把不相关的改动扫进别人的提交
+### J. 🆕 提交卫生：`git add -A` 已经**五次**把不相关的改动扫进别人的提交
 
-上一版记了两次。本轮 `git show --stat` 逐个核对，又查出两次，而且形式更隐蔽 —— **commit message 和内容完全对不上**：
+上一版记了两次。后来 `git show --stat` 逐个核对，又查出两次，而且形式更隐蔽 —— **commit message 和内容完全对不上**。
+**第五例（T-135 查出）是其中后果最重的一例，单列在表格下面。**
 
 | commit | message 说的 | 实际装的 `[实测]` |
 |---|---|---|
@@ -454,6 +466,7 @@ node scripts/selfcheck.mjs --json
 | `93310ea` (14:57) | 「fix: 安装记录迁移 + 删死桩 + SECURITY.md 如实 + AUTH_MODE 单向门 (T-118)」 | 只剩 `DataLocationSection.tsx` + `vite.config.ts` 两个文件 |
 | `18f205f` (14:59) | 「feat: F3 前端接真 WebSocket，拆掉 MOCK 轮播与写死数字 (T-117)」 | **只有 `coordination/inbox/architect.md`**，一行代码都没有 |
 | `9d57689` (15:26) | 「test: F3 真浏览器验证 (T-121)」 | 顺带装走了 T-114 的 `components/common/statusTone.ts` 等一大批配色代码（T-114 自己的提交 `2209b19` 里只剩 docs 和 i18n） |
+| **`d12ab1e` (14:16)** 🆕 | 「**docs**: memo.ac 内置清单取证 —— 24 家供应商 / 520 条模型 (T-113)」，正文通篇讲竞品的 LLM 目录、**一个字没提鉴权** | 除了 R-06 与两份 research 资产，还装着 `apps/daemon/src/http/{auth.ts,server.ts}` —— **即「鉴权默认关闭」（`AUTH_MODE` 默认值翻成 `none`）这条改动本身** |
 
 **成因**：14:55 有人用 `git add -A` 提交，把当时磁盘上**别人已写完但还没提交**的文件一并扫走。
 后面那两个"本人提交"就只剩残渣。
@@ -463,6 +476,23 @@ node scripts/selfcheck.mjs --json
   想知道 F3 是怎么接通的，`git log --oneline` 会把你指到一个只有 inbox 文件的提交。
 - 还制造了 ⑤A-16 那个**跨提交的悬空引用**：`bg-accent-tint` 的使用被 T-126 带走，定义留在 T-124，
   两者之间的每一个 commit 检出来都是坏的，而 Tailwind 一声不吭。
+
+> #### 🔴 第五例（`d12ab1e`）为什么单独说 —— 它污染的东西不一样
+>
+> 前四例污染的是「**F3 是怎么接通的**」这类实现问题：查起来绕路，但绕得过去。
+> **第五例污染的是「鉴权是何时、被谁、依据什么关掉的」** ——
+> 一条**安全相关的默认值变更**，被埋进了一个标题与正文都在讲竞品 LLM 目录的 `docs:` 提交里。
+> 任何人用 `git log --oneline | grep -i auth` 或者按 message 找"什么时候关的鉴权"，
+> **都会一无所获**，而这恰恰是接手时最该问清楚的一件事
+> （当前 demo 是 `OPENMEMO_AUTH=none` + 绑 `0.0.0.0`，dataDir 里有用户真实的 API Key，见 ⑥ 安全现状）。
+>
+> **连带后果（T-135 实测）**：同一批改动让 `daemon.test.ts` / `settings.roundtrip.test.ts` 里
+> **7 条鉴权用例的前提静默失效**（它们写于"鉴权强制开启"的年代，却没有显式声明档位）。
+> 而 `apps/daemon` 的 test 脚本当时用了一个被 sh 吃掉的 glob，**这两个文件根本没被跑到** ——
+> 于是 7 条红的用例存在了几小时，`pnpm -r test` 一路报绿。
+> **两个缺陷叠加的效果是"红灯存在但没有任何人看得见"。** 两者均已修（T-135）。
+>
+> Manager 已主动认领这一例的责任并要求记录在案：**历史里那条改不了，能改的是让后来的人查得到。**
 
 > **★ 规矩：提交前跑 `git status`，只 add 自己这轮改的路径，把精确清单写进 inbox 回执。**
 > 近几轮的 agent 已经在这么做了（`ui-polish` / `llm-picker` / `model-mgmt` / `storage-fix` 的回执里都有逐行 `git add` 清单，
