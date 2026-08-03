@@ -13,6 +13,7 @@
       "format": "ggml",
       "quantization": "q5_1",
       "quantTier": "small",
+      "speedClass": "fast",
       "displayName": "Whisper base (Q5_1)",
       "displayNameZh": "Whisper 基础模型（Q5_1 量化）",
       "descriptionZh": "最小可用档，主要用于快速预览与后端自检基准。中文质量较差。",
@@ -97,6 +98,7 @@
       "format": "ggml",
       "quantization": "q8_0",
       "quantTier": "small",
+      "speedClass": "fast",
       "displayName": "Whisper base (Q8_0)",
       "displayNameZh": "Whisper 基础模型（Q8_0 量化）",
       "descriptionZh": "Whisper base 多语种模型，Q8_0 量化。体积 0.08 GB，运行约需 332 MB 内存。",
@@ -164,6 +166,7 @@
       "format": "ggml",
       "quantization": "f16",
       "quantTier": "small",
+      "speedClass": "fast",
       "displayName": "Whisper base (F16)",
       "displayNameZh": "Whisper 基础模型（F16 全精度）",
       "descriptionZh": "Whisper base 多语种模型，F16 全精度。体积 0.15 GB，运行约需 398 MB 内存。",
@@ -231,6 +234,7 @@
       "format": "ggml",
       "quantization": "q5_1",
       "quantTier": "small",
+      "speedClass": "fast",
       "displayName": "Whisper base (English-only) (Q5_1)",
       "displayNameZh": "Whisper 基础模型·仅英文（Q5_1 量化）",
       "descriptionZh": "仅支持英文的专用版本，同尺寸下英文准确率略高于多语种版。中文请勿使用。",
@@ -298,6 +302,7 @@
       "format": "ggml",
       "quantization": "f16",
       "quantTier": "full",
+      "speedClass": "quality",
       "displayName": "Whisper large-v1 (F16)",
       "displayNameZh": "Whisper 大模型 v1（F16 全精度）",
       "descriptionZh": "Whisper large-v1 多语种模型，F16 全精度。体积 3.09 GB，运行约需 3915 MB 内存。",
@@ -306,7 +311,8 @@
         "multi"
       ],
       "tags": [
-        "multilingual"
+        "multilingual",
+        "superseded"
       ],
       "engines": [
         "whisper.cpp"
@@ -362,6 +368,7 @@
       "format": "ggml",
       "quantization": "q5_0",
       "quantTier": "full",
+      "speedClass": "quality",
       "displayName": "Whisper large-v2 (Q5_0)",
       "displayNameZh": "Whisper 大模型 v2（Q5_0 量化）",
       "descriptionZh": "Whisper large-v2 多语种模型，Q5_0 量化。体积 1.08 GB，运行约需 1901 MB 内存。",
@@ -370,7 +377,8 @@
         "multi"
       ],
       "tags": [
-        "multilingual"
+        "multilingual",
+        "superseded"
       ],
       "engines": [
         "whisper.cpp"
@@ -426,6 +434,7 @@
       "format": "ggml",
       "quantization": "q8_0",
       "quantTier": "full",
+      "speedClass": "quality",
       "displayName": "Whisper large-v2 (Q8_0)",
       "displayNameZh": "Whisper 大模型 v2（Q8_0 量化）",
       "descriptionZh": "Whisper large-v2 多语种模型，Q8_0 量化。体积 1.66 GB，运行约需 2476 MB 内存。",
@@ -434,7 +443,8 @@
         "multi"
       ],
       "tags": [
-        "multilingual"
+        "multilingual",
+        "superseded"
       ],
       "engines": [
         "whisper.cpp"
@@ -490,6 +500,7 @@
       "format": "ggml",
       "quantization": "f16",
       "quantTier": "full",
+      "speedClass": "quality",
       "displayName": "Whisper large-v2 (F16)",
       "displayNameZh": "Whisper 大模型 v2（F16 全精度）",
       "descriptionZh": "Whisper large-v2 多语种模型，F16 全精度。体积 3.09 GB，运行约需 3915 MB 内存。",
@@ -498,7 +509,8 @@
         "multi"
       ],
       "tags": [
-        "multilingual"
+        "multilingual",
+        "superseded"
       ],
       "engines": [
         "whisper.cpp"
@@ -554,6 +566,7 @@
       "format": "ggml",
       "quantization": "q5_0",
       "quantTier": "balanced",
+      "speedClass": "quality",
       "displayName": "Whisper large-v3 (Q5_0)",
       "displayNameZh": "Whisper 大模型 v3（Q5_0 量化）",
       "descriptionZh": "准确率最高的多语种模型，比 turbo 慢但质量更好。量化后显存需求可控。",
@@ -625,6 +638,7 @@
       "format": "ggml",
       "quantization": "f16",
       "quantTier": "full",
+      "speedClass": "quality",
       "displayName": "Whisper large-v3 (F16)",
       "displayNameZh": "Whisper 大模型 v3（F16 完整精度）",
       "descriptionZh": "完整精度的 large-v3，质量上限。需要约 3.9 GB 内存。",
@@ -722,6 +736,7 @@
       "format": "ggml",
       "quantization": "q5_0",
       "quantTier": "balanced",
+      "speedClass": "quality",
       "displayName": "Whisper large-v3-turbo (Q5_0)",
       "displayNameZh": "Whisper 大模型 v3 Turbo（Q5_0 量化）",
       "descriptionZh": "多语种识别，中文表现优秀。large-v3 的蒸馏版本，解码层由 32 减至 4，速度大幅提升而准确率接近 large-v3。体积与质量平衡最好，推荐作为默认。",
@@ -803,6 +818,7 @@
       "format": "ggml",
       "quantization": "q8_0",
       "quantTier": "large",
+      "speedClass": "quality",
       "displayName": "Whisper large-v3-turbo (Q8_0)",
       "displayNameZh": "Whisper 大模型 v3 Turbo（Q8_0 量化）",
       "descriptionZh": "large-v3-turbo 的高精度量化档，质量接近完整精度，体积仍远小于 large-v3。",
@@ -867,6 +883,7 @@
       "format": "ggml",
       "quantization": "f16",
       "quantTier": "full",
+      "speedClass": "quality",
       "displayName": "Whisper large-v3-turbo (F16)",
       "displayNameZh": "Whisper 大模型 v3 Turbo（F16 完整精度）",
       "descriptionZh": "large-v3-turbo 的完整精度版本。显存充足时可选。",
@@ -958,6 +975,7 @@
       "format": "ggml",
       "quantization": "q5_0",
       "quantTier": "balanced",
+      "speedClass": "balance",
       "displayName": "Whisper medium (Q5_0)",
       "displayNameZh": "Whisper 中模型（Q5_0 量化）",
       "descriptionZh": "中端平衡档。资源有限但仍需要较好中文识别时使用。",
@@ -1030,6 +1048,7 @@
       "format": "ggml",
       "quantization": "q8_0",
       "quantTier": "large",
+      "speedClass": "balance",
       "displayName": "Whisper medium (Q8_0)",
       "displayNameZh": "Whisper 中模型（Q8_0 量化）",
       "descriptionZh": "Whisper medium 多语种模型，Q8_0 量化。体积 0.82 GB，运行约需 1343 MB 内存。",
@@ -1094,6 +1113,7 @@
       "format": "ggml",
       "quantization": "f16",
       "quantTier": "large",
+      "speedClass": "balance",
       "displayName": "Whisper medium (F16)",
       "displayNameZh": "Whisper 中模型（F16 全精度）",
       "descriptionZh": "Whisper medium 多语种模型，F16 全精度。体积 1.53 GB，运行约需 2054 MB 内存。",
@@ -1158,6 +1178,7 @@
       "format": "ggml",
       "quantization": "q5_0",
       "quantTier": "large",
+      "speedClass": "balance",
       "displayName": "Whisper medium (English-only) (Q5_0)",
       "displayNameZh": "Whisper 中模型·仅英文（Q5_0 量化）",
       "descriptionZh": "仅支持英文的专用版本，同尺寸下英文准确率略高于多语种版。中文请勿使用。",
@@ -1225,6 +1246,7 @@
       "format": "ggml",
       "quantization": "q5_1",
       "quantTier": "small",
+      "speedClass": "balance",
       "displayName": "Whisper small (Q5_1)",
       "displayNameZh": "Whisper 小模型（Q5_1 量化）",
       "descriptionZh": "轻量档，适合纯 CPU 机器。中文识别质量一般但可用。",
@@ -1298,6 +1320,7 @@
       "format": "ggml",
       "quantization": "q8_0",
       "quantTier": "balanced",
+      "speedClass": "balance",
       "displayName": "Whisper small (Q8_0)",
       "displayNameZh": "Whisper 小模型（Q8_0 量化）",
       "descriptionZh": "Whisper small 多语种模型，Q8_0 量化。体积 0.26 GB，运行约需 644 MB 内存。",
@@ -1365,6 +1388,7 @@
       "format": "ggml",
       "quantization": "f16",
       "quantTier": "balanced",
+      "speedClass": "balance",
       "displayName": "Whisper small (F16)",
       "displayNameZh": "Whisper 小模型（F16 全精度）",
       "descriptionZh": "Whisper small 多语种模型，F16 全精度。体积 0.49 GB，运行约需 868 MB 内存。",
@@ -1432,6 +1456,7 @@
       "format": "ggml",
       "quantization": "q5_1",
       "quantTier": "balanced",
+      "speedClass": "balance",
       "displayName": "Whisper small (English-only) (Q5_1)",
       "displayNameZh": "Whisper 小模型·仅英文（Q5_1 量化）",
       "descriptionZh": "仅支持英文的专用版本，同尺寸下英文准确率略高于多语种版。中文请勿使用。",
@@ -1499,6 +1524,7 @@
       "format": "ggml",
       "quantization": "q5_1",
       "quantTier": "small",
+      "speedClass": "fast",
       "displayName": "Whisper tiny (Q5_1)",
       "displayNameZh": "Whisper 超小模型（Q5_1 量化）",
       "descriptionZh": "Whisper tiny 多语种模型，Q5_1 量化。体积 0.03 GB，运行约需 232 MB 内存。",
@@ -1566,6 +1592,7 @@
       "format": "ggml",
       "quantization": "q8_0",
       "quantTier": "small",
+      "speedClass": "fast",
       "displayName": "Whisper tiny (Q8_0)",
       "displayNameZh": "Whisper 超小模型（Q8_0 量化）",
       "descriptionZh": "Whisper tiny 多语种模型，Q8_0 量化。体积 0.04 GB，运行约需 244 MB 内存。",
@@ -1633,6 +1660,7 @@
       "format": "ggml",
       "quantization": "f16",
       "quantTier": "small",
+      "speedClass": "fast",
       "displayName": "Whisper tiny (F16)",
       "displayNameZh": "Whisper 微型模型（F16）",
       "descriptionZh": "最小的多语种模型。质量低，主要用于冒烟测试与下载器验证。",
@@ -1708,6 +1736,7 @@
       "format": "ggml",
       "quantization": "q5_1",
       "quantTier": "small",
+      "speedClass": "fast",
       "displayName": "Whisper tiny (English-only) (Q5_1)",
       "displayNameZh": "Whisper 超小模型·仅英文（Q5_1 量化）",
       "descriptionZh": "仅支持英文的专用版本，同尺寸下英文准确率略高于多语种版。中文请勿使用。",

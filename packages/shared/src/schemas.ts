@@ -216,6 +216,9 @@ export const ModelEntrySchema = z
     format: z.enum(['ggml', 'gguf', 'onnx', 'nemo', 'coreml']),
     quantization: QuantizationSchema,
     quantTier: z.enum(['small', 'balanced', 'large', 'full']),
+    // 第二根筛选轴。必填：可空的话 UI 就得为"没有档位"再写一条分支，
+    // 而那条分支永远只会因为清单漏填而触发。
+    speedClass: z.enum(['fast', 'balance', 'quality']),
     displayName: z.string().min(1),
     displayNameZh: z.string().min(1),
     descriptionZh: z.string(),

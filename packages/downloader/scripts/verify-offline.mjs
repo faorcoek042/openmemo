@@ -484,6 +484,44 @@ console.log('\n[10] role 与目录解耦：VAD 不得被当成 ASR');
 }
 
 /* --- 11. unpackInto 必须被实现，不能只写在选项里 ------------------------ */
+console.log('\n[14] speedClass 双轴 + 供应商目录的出厂空状态');
+{
+  const read = async (f) =>
+    JSON.parse(await fs.readFile(new URL('../../../vendor/manifests/' + f, import.meta.url), 'utf8'));
+  const models = [
+    ...(await read('models-whisper.json')).models,
+    ...(await read('models-asr-support.json')).models,
+    ...(await read('models-llm.json')).models,
+  ];
+  check('每条模型都有 speedClass', models.every((m) => ['fast', 'balance', 'quality'].includes(m.speedClass)),
+    `${models.length} 条`);
+
+  // 同一 groupId 内档位必须一致 —— 否则"按档位筛选"会把一个组劈成两半
+  const byGroup = new Map();
+  for (const m of models) (byGroup.get(m.groupId) ?? byGroup.set(m.groupId, new Set()).get(m.groupId)).add(m.speedClass);
+  const split = [...byGroup].filter(([, v]) => v.size > 1).map(([k]) => k);
+  check('同一组内 speedClass 一致（否则筛选会把组劈开）', split.length === 0, split.join(',') || '无');
+
+  // speedClass 与 quantTier 必须是两根独立的轴，否则加它就没有意义
+  const pairs = new Set(models.map((m) => `${m.quantTier}|${m.speedClass}`));
+  const quant = new Set(models.map((m) => m.quantTier));
+  check('speedClass 不是 quantTier 的别名（组合数 > 各自取值数）', pairs.size > quant.size,
+    `${pairs.size} 种组合 / ${quant.size} 种 quantTier`);
+
+  const cat = await read('llm-providers.json');
+  check('供应商目录 24 家', cat.providers.length === 24, String(cat.providers.length));
+  check('置顶六家齐全', ['openai','claude','gemini','deepseek','ollama','lmstudio']
+    .every((id) => cat.providers.some((p) => p.id === id && p.isMainstreamPinned)));
+  // ★ 出厂必须是"一个都没配"，而不是预置一个用不了的 provider
+  const { bucketProviders, canRefreshModelList } = await import('../../shared/dist/index.js');
+  check('出厂状态 configured 为空（不假装已配好）', bucketProviders(cat.providers, []).configured.length === 0);
+  check('只对有程序化来源的厂商允许「刷新」', cat.providers.filter(canRefreshModelList).length === 4,
+    cat.providers.filter(canRefreshModelList).map((p) => p.id).join(','));
+  check('人工转录的清单都带 checkedAt（时效可见）',
+    cat.providers.filter((p) => p.modelListSource.type === 'official-doc')
+      .every((p) => typeof p.modelListSource.checkedAt === 'string'));
+}
+
 console.log('\n[13] linkInto 只属于 sqlite-ext，后端包不许有');
 {
   // 把 T-097 的结论钉住：一个名字曾经同时表示"引擎运行时布局"和"链接目标"，

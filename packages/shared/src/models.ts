@@ -55,6 +55,30 @@ export type Quantization = (typeof QUANTIZATIONS)[number];
 export const QUANT_TIERS = ['small', 'balanced', 'large', 'full'] as const;
 export type QuantTier = (typeof QUANT_TIERS)[number];
 
+/**
+ * Trade-off bucket: the axis a user actually picks along ("I want it fast" /
+ * "I want it accurate"). Orthogonal to {@link QuantTier}, which is about file size.
+ * See `ModelEntry.speedClass` for why this is not named `speedTier`.
+ */
+export const SPEED_CLASSES = ['fast', 'balance', 'quality'] as const;
+export type SpeedClass = (typeof SPEED_CLASSES)[number];
+
+/**
+ * Bucket a Whisper-family model by size alone.
+ *
+ * Size is the only input on purpose: it is the one property we know without measuring
+ * anything. Everything speed-related we could compute instead (RTF x model size) rests on
+ * coefficients we have never calibrated, and dressing a guess up as arithmetic makes it
+ * harder to challenge, not easier.
+ */
+export function speedClassForSize(idOrFamily: string): SpeedClass {
+  const s = idOrFamily.toLowerCase();
+  if (s.includes('large') || s.includes('turbo')) return 'quality';
+  if (s.includes('medium') || s.includes('small')) return 'balance';
+  if (s.includes('base') || s.includes('tiny')) return 'fast';
+  return 'balance';
+}
+
 export interface ModelSource {
   provider: ProviderId;
   /** e.g. "ggerganov/whisper.cpp" or "Qwen/Qwen3-4B-GGUF". */
@@ -84,6 +108,38 @@ export interface ModelEntry {
   /** ADR-004 gap ①. */
   quantization: Quantization;
   quantTier: QuantTier;
+
+  /**
+   * Which trade-off bucket this model sits in — the SECOND filter axis.
+   *
+   * ## Why `quantTier` could not be reused
+   *
+   * `quantTier` is a SIZE axis: it says how heavily the weights were quantised. It says
+   * nothing about how long a transcription takes, because `tiny-f16` and `large-v3-f16`
+   * both land in `full` while differing by more than an order of magnitude in speed.
+   * Filtering a 25-entry catalog by size alone still leaves the user staring at a wall of
+   * cards where the fast and the slow ones look interchangeable.
+   *
+   * ## Why this is NOT called `speedTier`
+   *
+   * `FitResult.speedTier` already exists and means something different: it is COMPUTED
+   * per machine (`fast|moderate|slow|very_slow|unknown`) and carries a `speedSource`
+   * saying whether it was measured here, taken from a reference machine, or unknown. A
+   * `CatalogVariant` carries both objects, so `v.speedClass` and `v.fitness.speedTier`
+   * would have been the same word for a catalog constant and a per-machine measurement —
+   * the exact "one name, two concepts" failure that `installPath` just cost us a task to
+   * unwind. Different concept, different name.
+   *
+   * ## What it is and is not
+   *
+   * A hand-assigned BUCKET, one per model group, derived from model size only
+   * (tiny/base -> fast, small/medium -> balance, large* -> quality). It is deliberately
+   * NOT extrapolated from RTF: our RTF coefficients are uncalibrated, and a number
+   * derived from an uncalibrated coefficient would read as a measurement while being a
+   * guess. Anything claiming to be a measurement belongs in `FitResult`, with its
+   * `speedSource` attached.
+   */
+  speedClass: SpeedClass;
 
   displayName: string;
   displayNameZh: string;

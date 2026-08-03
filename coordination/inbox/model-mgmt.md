@@ -1935,3 +1935,101 @@ sha256 校验通过，落盘 `by-name/asr/ggml-tiny-q5_1.bin`。不是只过 sch
 ### 纪律
 自建实例 `17650`（dataDir `/tmp/om-t109`）+ fixture `17820` + 生产构建 `17822`，均绑 127.0.0.1，
 用完按端口只杀自己的 pid；**没有触碰 `:10000`，没有读取任何密钥文件**。
+
+---
+
+## T-116 采用 24 家供应商 + 补上第二根筛选轴
+
+### ① 供应商：24/24 全部采用，出厂状态是"一个都没配"
+
+`vendor/manifests/llm-providers.json` —— **24 家 / 520 个模型**，逐字段搬自
+`memo-compare` 的资产，`sourceNote` 里写明这是**互操作性参考快照、非其源码**，
+并注明 20/24 家是人工从官方文档转录的。
+
+契约在 `packages/shared/src/providers.ts`：`LlmProviderSpec` / `LlmModelSpec` /
+`bucketProviders()` / `canRefreshModelList()`。
+
+**那个坑照抄了**：`bucketProviders(all, [])` 在出厂时返回 `configured: []` ——
+**不预置任何 provider**。memo.ac 的 `openai/gpt-5.4-mini` 只是下拉框初始高亮、
+背后没有凭据，看起来像"已配好"，第一次生成导图才发现不能用。
+**清单值得抄，这个错觉不值得抄。** 已写进 `ProviderBuckets` 的注释，并有断言守着。
+
+    出厂（0 已配置） → configured=0  mainstreamUnconfigured=6  more=18
+    置顶顺序          openai > claude > gemini > deepseek > ollama > lmstudio
+    配了 deepseek 后  configured=[deepseek]  mainstreamUnconfigured=5  more=18
+
+### ② 快照 + 可刷新：**你的裁决可行，但「刷新」只对 4 家有意义**
+
+我按你定的混合方案做了，但有一条必须说清楚，否则 UI 会画出 20 个按不动的按钮：
+
+    modelListSource.type 分布：official-doc 20 家 · official-api 2 家 · local-api 2 家
+    能真刷新的只有 4 家：ollama · lmstudio（本地枚举）· openrouter · siliconcloud（官方 API）
+
+其余 **20 家是人工转录的文档快照，没有任何端点可调**。
+所以「刷新模型列表」按钮**只对这 4 家出现**；另外 20 家的诚实做法就是你说的那条 ——
+显示 `checkedAt`（分布：2026-04-28 / 05-02 / 05-13 / 05-31），让**过时是可见的**。
+`canRefreshModelList(p)` 已经把这个判断收敛成一个函数，UI 直接调，别自己判断 type。
+
+### ③ 第二根轴：**落地了，但我没有沿用 `speedTier` 这个名字**
+
+⚠️ **这条请转给 `ia-design`：字段名是 `speedClass`，不是 `speedTier`。**
+
+原因是我上一轮刚为 `installPath` 付过一次代价：**`FitResult.speedTier` 已经存在**，
+取值是 `fast|moderate|slow|very_slow|unknown`，而且是**按机器算出来的**，
+还带一个 `speedSource` 说明它是本机实测、参考机器、还是未知。
+而这根新轴是**与机器无关的人工分档**，取值 `fast|balance|quality`。
+一个 `CatalogVariant` 会同时带上两者 —— `v.speedTier` 和 `v.fitness.speedTier`
+将是同一个词指两个概念、取值还不一样。**这正是"一个名字两个概念"的复现**，
+所以我给它单独取名：
+
+    ModelEntry.speedClass : 'fast' | 'balance' | 'quality'   ← 目录常量，人工分档
+    FitResult.speedTier   : 'fast' | 'moderate' | ...        ← 本机计算，带 speedSource
+
+**按你的要求没有拿 RTF 外推**（我自己标注过那个系数未标定）。分档只看模型尺寸：
+`tiny/base → fast`、`small/medium → balance`、`large*/turbo → quality`，
+判断逻辑落在 `speedClassForSize()` 里，注释写明**这是分档不是测量**，
+任何自称测量的数字都该待在 `FitResult` 里、并带上它的 `speedSource`。
+
+全部 **35 条模型**（whisper 25 + asr-support 5 + llm 5）都已填，12 个 whisper 组各定一次，
+组内一致（有断言：组内档位不一致会把一个组从中间劈开）。
+
+### ④ 双轴矩阵：**我按真实数据算了一遍，你的「1–3 张」有一个格子不成立**
+
+    语言        fast      balance   quality
+    en          2         2         0
+    multi       2         2         4   ← 超了
+    zh          2         0         0
+
+`multi × quality` 有 4 张（large-v1 / v2 / v3 / v3-turbo）。
+我没有擅自改 IA，而是**给 `ia-design` 留了折叠钩子**：给 large-v1 / large-v2
+打上 `superseded` 标签（它们被 v3 完全取代，v1 还和 v2 同为 3.09 GB）。
+默认折叠后：
+
+    multi × quality → 2 (+2)
+
+**其余格子本来就 ≤2。** 另外 `zh` 只有 fast 档有货（sherpa/paraformer），
+`balance`/`quality` 是空的 —— 中文用户点到那两档会看到空列表，
+**这是目录的真实形状，不是 bug**，但 IA 上需要有"该档暂无中文模型，建议用多语种"的兜底文案。
+
+### 回归守卫
+
+`verify-offline` 新增 `[14]`，8 条断言，44 → **52 passed**：
+
+    每条模型都有 speedClass（35 条）
+    同一组内 speedClass 一致（否则筛选会把组劈开）
+    speedClass 不是 quantTier 的别名 —— 8 种组合 / 4 种 quantTier，证明确实是两根轴
+    供应商 24 家 · 置顶六家齐全
+    ★ 出厂状态 configured 为空（不假装已配好）
+    只对有程序化来源的 4 家允许「刷新」
+    人工转录的清单都带 checkedAt
+
+第三条是刻意加的：**如果新轴只是旧轴的别名，加它就没有意义** ——
+用组合数是否大于单轴取值数来证明它带来了新信息，而不是靠肉眼看着像两根轴。
+
+### 门禁
+    tsc 0 · eslint 0 · web build 0 · verify-offline 52/52 · verify-unpack 53/53 · verify-proxy 43/43 · 5 清单 schema 全过
+
+### 顺带（只读看了 demo，没动它）
+demo 现在 `llm.defaultProviderId=deepseek` / `defaultModelId=deepseek-v4-flash` 都在了，
+配置保存链路看起来已修好。ASR 目录已是 14 组 / 27 变体（T-102 那批）。
+`speedClass` 在 demo 上还是 0/27 —— 它跑的是旧构建，**我没有重启它**。
