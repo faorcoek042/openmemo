@@ -17,6 +17,10 @@ import { CONTRACT_VERSION } from '@openmemo/shared';
 import {
   CSRF_HEADER,
   type SessionStore,
+  AUTH_MODE,
+  type AuthResult,
+  type CsrfOutcome,
+  authRequired,
   authenticate,
   buildSessionCookie,
   checkCsrfDetailed,
@@ -215,8 +219,18 @@ async function handleRequest(
     return;
   }
 
-  // ---- 其余一律需要鉴权 ----
-  const auth = authenticate(req, deps.sessions);
+  /*
+   * ---- 鉴权闸门 ----
+   *
+   * `OPENMEMO_AUTH=none`（**默认**）时整段跳过 —— 用户显式决定，见 `auth.ts` 的 `AUTH_MODE` 注释。
+   *
+   * ⚠️ 跳过的是**鉴权与 CSRF**，**不包括** Host / Origin 校验：
+   * 那两条在上游已经跑过，且它们挡的是 DNS rebinding 与跨站请求 ——
+   * **与"有没有凭据"无关**，零成本，没有理由一起关掉。
+   */
+  const auth = authRequired()
+    ? authenticate(req, deps.sessions)
+    : ({ ok: true, via: 'disabled' } satisfies AuthResult);
   if (!auth.ok) {
     /*
      * 文案要**可执行**。原来写"请重新打开应用"——用户根本不知道该重新打开什么：
@@ -234,7 +248,11 @@ async function handleRequest(
     );
     return;
   }
-  const csrf = checkCsrfDetailed(req, auth);
+  // 无鉴权时 CSRF 无意义：它防的是"攻击页借用你已有的凭据"，而凭据根本不存在。
+  // Host / Origin 校验**不在此列**，它们在上游已跑过、挡的是与凭据无关的威胁。
+  const csrf = authRequired()
+    ? checkCsrfDetailed(req, auth)
+    : ({ ok: true, via: 'disabled' } satisfies CsrfOutcome);
   if (csrf.ok && csrf.via === 'same-origin-fallback') {
     /*
      * **info，不是 warn** —— 这是裁决允许的预期路径，不是异常。

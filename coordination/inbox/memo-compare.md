@@ -160,3 +160,49 @@ LLM 侧的 subagent 仍在跑，其结论若与 A-3 冲突我会再发一次更�
 
 诚实声明: 本次推翻由我派出的 LLM subagent 发现线索，**结论中的每一个命中数都是我自己重跑 grep 确认的**，非转述。
 两个 subagent 均已完成，我停不掉它们（归属限制），但已无待办。
+
+## [2026-08-03 14:20] T-113 DONE
+
+交付:
+- `docs/research/assets/memoac-llm-providers.json`（24 家 / 520 条模型 / 255 KB）
+- `docs/research/assets/memoac-asr-models.json`（whisper 15 条 + 三个越界引擎 + UI 呈现方案 / 36 KB）
+- `docs/research/R-06-memo-ac-gap.md` 新增「附录 B」（未动前文）
+
+要点:
+- **LLM 24 家 / 520 条内置模型**。默认选中 = **`openai` / `gpt-5.4-mini`**，
+  **但主进程默认设置对象里根本没有 LLM 供应商键 —— memo.ac 出厂状态没有任何可用 LLM**，
+  `openai` 只是下拉初始高亮。照抄时要连这个诚实的空状态一起抄。
+- **不像一堵墙的关键是三桶分组**：`configured` / `mainstreamUnconfigured` / `more`，
+  置顶名单硬编码为 `["openai","claude","gemini","deepseek","ollama","lmstudio"]` 六家，其余十几家收进 `more`。
+- kind 分布：`openai-compatible` **19** · anthropic-native 1(claude) · google-native 1(gemini) ·
+  mistral-native 1 · ollama-native 1 · anthropic-compatible 1(kimicodingplan)。
+  **24 家里 23 家 `baseURL` 可编辑**（唯一无该字段的是 mistralai；azura 必填无默认 + 需 deploymentId/apiVersion）。
+- 模型条目最多：千帆 82 · 通义 70 · siliconcloud 66 · azura 35 · openai/openrouter 各 30。
+  `modelListSource` 三模式：official-doc（人工策展带 checkedAt）/ official-api（打厂商 /models）/ local-api。
+- **ASR 呈现方案才是重点**：它的转写设置里是**双轴筛选卡片**（`lang` Select × `speedValue` Tabs），
+  任一时刻只显示 1～3 张卡而不是 15 行；每档配一句代价提示文案。
+
+**发现一处真实的 schema 缺口（这才是我们和 memo「对不上」的根因之一）**:
+我们 25 条 / 12 组，比它 15 条**长 67%**，还多一个量化维度 —— 它那套平铺我们照抄只会更糟。
+而要做双轴，**我们少一根轴**：`languages` 有，但**没有速度档**。
+我们的 `quantTier`（实测取值 `small`/`balanced`/`full`/`large`）是**量化体积轴，不是速度轴** ——
+tiny-f16 和 large-v3-f16 都落进「full」，可两者速度差几十倍。
+→ 建议给 manifest 加 `speedTier: fast|balance|quality`（按模型族定），**与 quantTier 并存**。
+
+下一步建议:
+1. `model-mgmt`：加 `speedTier` 字段（12 组各定一次，工作量很小），然后按附录 B-2.3 的三层结构改下拉——
+   卡片=groupId（双轴筛选）→ 量化=卡内分段控件 → fit/下载状态画在卡上。
+2. `architect`：LLM 下拉直接照三桶分组 + 六家置顶实现，JSON 里 `_meta.dropdownGrouping` 有完整判据。
+3. `ui-polish`：`icon` 是字符串 id（24 家都有），但**品牌色注册表里没有**，需自定，别说是抄的。
+
+需要 Manager 决策:
+- **模型 id 的时效性**：JSON 里的 520 条是 memo.ac 的人工策展快照（`checkedAt` 多为 2026-05-31）。
+  是直接照搬它的清单（快，但可能已过时/与厂商不符），还是只抄结构、清单走 `official-api` 动态拉取？
+  我倾向后者对主流几家用动态拉取，但这会引入出网依赖，**归你裁决**。
+
+诚实声明:
+- 24 家供应商对象**全部由程序逐层展开压缩变量后解析，24/24 成功 0 失败**，520 条为程序化统计非人工计数。
+  取证方法写进了 JSON 的 `_meta.evidence`——因为我上次犯过"把没看见当成不存在"的错，这次把路径留痕。
+- **品牌色 NOT FOUND**（明确查过 24 家全部字段，无 color/brandColor/theme）。
+- **未核实**：`icon` 字符串 id 映射到哪个图标包的哪个图形；甲/乙两份旧名单与本次 registry 的分工差异。
+- 两份 JSON 均为**事实性数据目录**（id/端点/模型名/体积/分组轴），非 memo.ac 源码，文件头 `_meta` 已注明。

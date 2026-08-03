@@ -752,3 +752,161 @@ IPC 5 条：`llm:model-registry:{get-status, ensure-dir, check-update, update, r
 | 甲/乙两份供应商名单里 `poe`/`perplexity`/`vertexai`/`meta`/`huggingface` 是否真的可用 | **未核实** —— 它们出现在 displayName 注册表里，但不在 24 项内置 registry 对象中 |
 | 甲/乙两份供应商名单的确切分工 | **推测**，未核实 |
 | 用户说的「空间管理」指逻辑分区还是每空间独立磁盘根 | **未知 —— 建议直接问用户** |
+
+---
+
+# 附录 B（T-113 追加）：memo.ac 内置清单逐条取证 —— 供对齐用
+
+> 追加日期 2026-08-03，author memo-compare。触发：用户「模型改成下拉了，但和 memo 内置几个选项不一样，我不是让你做统一吗」。
+> **交付物是两份 JSON，不是本节表格** —— `model-mgmt` 请直接读文件：
+> - `docs/research/assets/memoac-llm-providers.json`（24 家 / 520 条模型 / 255 KB）
+> - `docs/research/assets/memoac-asr-models.json`（whisper 15 条 + 三个越界引擎 + **UI 呈现方案**）
+>
+> **取证方法（因为我上次犯过"把没看见当成不存在"的错，这次说清楚）**：
+> 主进程 bundle 里的供应商注册表是一个被压缩过的对象 `hHn`，24 个键的值全是压缩变量名，
+> 每个变量的值又是压缩变量名，逐层套了 3～4 层。我写了一个**变量解析器**（`define`/`resolve`）
+> 沿 `<var>=<literal>` 逐层展开到字面量，再用 Node 求值成 JSON。
+> **24 家全部解析成功，0 失败**，`_meta.evidence` 里记了取证位置。
+> 分组逻辑取自渲染层函数 `YKt`；默认值取自渲染层 mobx store 初值与主进程默认设置对象。
+
+## B-1. LLM：24 家内置供应商
+
+**总量：24 家 / 520 条内置模型条目。**
+
+### B-1.1 默认选中的是哪家哪个 —— **答案有个坑，必须说清楚**
+
+- UI 初始高亮 = **`openai`**，其默认模型 = **`gpt-5.4-mini`**（该家 `defaultModel` 字段）。
+- **但主进程的默认设置对象 `pte` 里根本没有任何 LLM 供应商键**
+  （它只有 `themeSource` / `translateProvider:"Microsoft"` / `language` / `vad` / `proxy` 等）。
+- → **含义：memo.ac 出厂状态下没有任何可用的 LLM。** `openai` 只是下拉框的初始高亮，
+  在用户填 Key 之前它是不可用的。**"默认选中 openai"≠"开箱即用"。**
+  我们若照抄，要同步照抄这个诚实的空状态，而不是假装已经配好了。
+
+### B-1.2 六家「主流置顶」+ 三桶分组 —— **这是下拉不像一堵墙的关键**
+
+渲染层有一个硬编码的置顶序列（顺序即优先级）：
+
+```
+["openai", "claude", "gemini", "deepseek", "ollama", "lmstudio"]
+```
+
+分组函数 `YKt(services, models)` 把 24 家分成**三桶**：
+
+| 桶 | 规则 |
+|---|---|
+| `configured` | 已配好的（判据：`apiKeyRequired ? hasApiKey : (isConfigured \|\| hasUserConfig \|\| hasApiKey)`） |
+| `mainstreamUnconfigured` | 没配好、但在上面 6 家置顶名单里 |
+| `more` | 其余全部（折叠区） |
+
+`primary = configured + mainstreamUnconfigured`，排序键 = 置顶名单里的下标，其次是注册表原始顺序。
+→ **用户第一眼只看到「已配好的 + 6 家主流」，另外十几家收进 `more`。**
+
+### B-1.3 四家原生 + 十九家 OpenAI 兼容（`kind` 字段已写进 JSON）
+
+| kind | 家数 | 谁 |
+|---|---|---|
+| `openai-compatible` | **19** | deepseek / doubao / groq / lmstudio / minimax / minimaxtokenplan / moonshot / openai / openrouter / qianfan / qwen / aliyun / azura / siliconcloud / together / xai / xiaomimimo / zhipuai / zhipuaicodingplan |
+| `anthropic-native` | 1 | claude |
+| `google-native` | 1 | gemini |
+| `mistral-native` | 1 | mistralai |
+| `ollama-native` | 1 | ollama |
+| `anthropic-compatible` | 1 | kimicodingplan（`baseURL` 是 `…/anthropic`，走 Anthropic 协议） |
+
+**`baseURL` 可编辑：24 家里 23 家**（JSON 里 `baseUrl.editable`）。
+唯一没有该字段的是 **mistralai**（走原生 SDK）；**azura**（Azure）有该字段但**必填无默认**，另需 `deploymentId` + `apiVersion`。
+> 这再次确认附录 A-3.4 的结论：R-01 转述的"只有 OpenAI 能配 base URL"**不成立**。
+
+### B-1.4 模型条目最多的几家（说明为什么必须分组）
+
+| 家 | 内置模型条目 |
+|---|---|
+| qianfan（百度千帆） | **82** |
+| qwen（通义） | **70** |
+| siliconcloud | **66** |
+| azura（Azure） | 35 |
+| openai / openrouter | 各 30 |
+| together | 27 |
+| ollama | 25 |
+| mistralai | 22 |
+| zhipuai | 16 · groq 15 · claude 14 · gemini 14 · doubao 13 · moonshot 13 · xai 12 |
+| 其余 | ≤ 7 |
+
+→ **520 条模型如果平铺是不可用的。** 它的解法是三层：先选供应商（三桶分组）→ 再选该家的模型 →
+模型清单本身还分三种来源（`modelListSource.type`）：`official-doc`（注册表内置静态清单，带 `checkedAt` 日期，人工策展）/
+`official-api`（实时打厂商 `/models`，如 openrouter、siliconcloud）/ `local-api`（打本地服务，如 ollama、lmstudio）。
+
+### B-1.5 图标与品牌色（`ui-polish` 要的）
+
+每家有 `icon` 字段（字符串 id，如 `openai` / `claude` / `gemini` / `doubao` / `qianfan` …），JSON 里已逐条带上。
+**`icon` 只是名字，不是图片**；对应的图标资源来自渲染层依赖 `@icons-pack/react-simple-icons` + `lucide-react`。
+⚠️ **注册表里没有任何品牌色字段** —— 我查了 24 家的全部字段，`color` / `brandColor` / `theme` 一律 **NOT FOUND**。
+`ui-polish` 想要品牌色只能自己定，**不要说是从 memo.ac 抄的**。
+
+### B-1.6 配置表单
+
+`configFields` 键全集只有 7 个：`apiKey`(password) · `model`(select) · `baseURL`(url) ·
+`temperature`(number) · `maxTokens`(number) · `deploymentId` · `apiVersion`（后两个只有 Azure 用）。
+每家用其中 3～7 个，逐家清单见 JSON 的 `configFieldKeys`。
+⚠️ 它的 label/help **硬编码英文（部分中文）不走 i18n** —— 缺陷，别抄，我们应存 i18n key。
+
+## B-2. ASR：whisper 15 条 + 呈现方案
+
+⚠️ 按 ADR-016，sherpa / parakeet / funasr **我们不补**。JSON 里它们在 `outOfScopeEngines` 下，
+标了 `outOfScope: true` 与理由，只为存档完整，**不要拿去扩清单**。
+
+### B-2.1 它的 15 条 vs 我们的 25 条 —— **我们的更长，所以更需要分组**
+
+| | memo.ac | OpenMemo（实测 `models-whisper.json`） |
+|---|---|---|
+| 条目数 | **15** | **25** |
+| 逻辑模型组 | 15（无组概念） | **12 组**（`groupId`） |
+| 量化 | **全 f16，无选择** | f16 / q5_0 / q5_1 / q8_0 |
+| 分组轴 | `lang` × `speedValue` | `groupId` × `quantization` |
+
+**我们的清单比它长 67%，还多了一个量化维度。它那套 15 条的平铺方式我们照抄会更糟。**
+
+### B-2.2 它怎么让 15 条不像一堵墙（**这才是要抄的**）
+
+**面 A · 转写设置里的快速选择器** —— **是双轴筛选，不是列表**：
+- 轴 1 `lang`：`multi` / `en` / `zh` / `ja`，用 Select
+- 轴 2 `speedValue`：`fast` / `balance` / `quality`，用 Tabs
+- 只渲染 `lang === 选中语言 && speedValue === 选中档位` 的那几条，做成**固定尺寸卡片**（不是下拉行）
+- → **任一时刻画面上通常只有 1～3 张卡，而不是 15 行**
+- 每个档位配一句提示文案（`model.fast/balanced/quality mode hint`）——**档位名本身没有信息量，必须配一句代价说明**
+- 状态行：已装则显示「当前模型 + 名称」，未装则显示「下载模型」
+
+**面 B · 设置里的模型管理列表**：语言 Select（默认「全部模型」）+ 选「全部」时**按语言分节渲染**，
+每行 = 名称 + 「未下载」灰字 + 当前项打勾。
+
+**面 C · 额外引擎列表**：显示前**剥掉 `sherpa-onnx-streaming-` 前缀**，名称后括号里跟体积。
+
+### B-2.3 给 `model-mgmt` 的具体落地项（**发现一处真实的 schema 缺口**）
+
+要做成它那种双轴，我们的 manifest **少一根轴**：
+
+| 轴 | 我们有没有 | 说明 |
+|---|---|---|
+| 语言 | ✅ 有 `languages`（`["multi"]`），且已有 `-en` 分组 | 需归一成 `multi` / `en` 两档即可 |
+| **速度/质量档** | ❌ **没有** | 我们只有 `quantTier`（实测取值 `small` / `balanced` / `full` / `large`）—— 那是**量化体积轴，不是速度轴**。tiny-f16 与 large-v3-f16 都会落进「full」，但两者速度差几十倍 |
+
+→ **建议**：给 manifest 加一个 `speedTier: "fast" | "balance" | "quality"`，按模型族定
+（tiny/base → fast，small → balance，medium/large → quality），**与 `quantTier` 并存互不替代**。
+这样双轴筛选的两根轴才都齐。**这是我们与 memo.ac 对不齐的真正原因之一，不是选项抄漏了。**
+
+三层结构建议（因为我们比它多一个量化维度）：
+1. **卡片 = `groupId`**（12 个逻辑模型），按 `lang × speedTier` 双轴筛选 → 一屏 1～3 张
+2. **量化 = 卡片内的分段控件**（f16 / q5_0 / q8_0…），不占外层列表位
+3. 下载状态与 fit 徽标**画在卡上**，不做单独的「已安装」tab
+
+## B-3. 本节诚实清单
+
+| 事项 | 状态 |
+|---|---|
+| 24 家供应商对象解析 | ✅ **24/24 成功，0 失败**，逐层展开自压缩变量 |
+| 520 条模型条目 | ✅ 由解析结果程序化统计，非人工计数 |
+| 默认供应商 `openai` | ✅ 渲染层 store 初值；**但主进程默认设置里无 LLM 键**（即出厂无可用 LLM），两条都已核实 |
+| 6 家置顶名单与三桶分组 | ✅ 渲染层 `YKt` 原文 |
+| **品牌色** | ❌ **NOT FOUND** —— 注册表无 `color`/`brandColor`/`theme` 字段。`ui-polish` 需自定 |
+| 图标资源本体 | **未核实** —— 只拿到 `icon` 字符串 id，没去核对它映射到哪个图标包的哪个图形 |
+| 模型 id 的时效性 | ⚠️ 是 memo.ac 的**人工策展快照**（`modelListSource.checkedAt` 多为 2026-05-31）。**落地前必须对厂商官方文档复核**，不要直接当权威清单 |
+| 甲表（旧枚举 24 项）与乙表（displayName 注册表 24 项）的分工 | **仍未核实**（附录 A-3.1 已记）。本次 JSON 用的是**主进程的 24 家 registry 对象**，与那两份都不完全相同 |

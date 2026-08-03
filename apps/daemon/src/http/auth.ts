@@ -18,6 +18,33 @@ import type { IncomingMessage } from 'node:http';
 import { join } from 'node:path';
 
 export const SESSION_COOKIE = 'om_sid';
+
+/**
+ * 鉴权模式。**默认 `none`（不鉴权）** —— 这是用户在充分知情下做出的显式决定。
+ *
+ * ## 用户看到的事实（提问时逐条列出，他选择"一刀切关掉，我知道风险"）
+ * - 本实例绑 `0.0.0.0`，访问 IP **不在本机网卡上**，是经 **NAT 转发**进来的
+ * - 数据目录含 `secrets.json`，里面是他**真实的第三方 API Key**
+ * - 关闭鉴权后，**任何能路由到该 IP:端口的人**都能读走全部笔记与 Key、并删改数据
+ *
+ * 他的原话：**「删除 token 接入，反正也是本地运行的东西，不要这个安全阻拦了」**，
+ * 在被告知上述事实后仍选择**一刀切关闭**。
+ *
+ * ## 为什么保留开关而不是删掉整段代码
+ * `OPENMEMO_AUTH=token` 可完整恢复原行为。留一个开关成本为零，
+ * 而删干净则需要把会话、CSRF、握手、续签整套重写一遍。
+ * **用户要的是"不要这个阻拦"，不是"消灭这段代码"。**
+ *
+ * ⚠️ 若日后改为多用户或公网部署，**必须**设回 `token`。
+ */
+export type AuthMode = 'none' | 'token';
+export const AUTH_MODE: AuthMode =
+  (process.env['OPENMEMO_AUTH']?.trim() as AuthMode | undefined) === 'token' ? 'token' : 'none';
+
+/** 是否需要鉴权。所有鉴权判断点都应问它，不要各自读环境变量。 */
+export function authRequired(): boolean {
+  return AUTH_MODE === 'token';
+}
 export const CSRF_HEADER = 'x-openmemo-csrf';
 
 export function generateToken(): string {
@@ -142,7 +169,14 @@ export function clearSessionCookie(): string {
 }
 
 export type AuthResult =
-  { ok: true; via: 'cookie' | 'bearer'; session?: Session } | { ok: false; reason: string };
+  | { ok: true; via: 'cookie' | 'bearer'; session?: Session }
+  /**
+   * `OPENMEMO_AUTH=none`：整个鉴权闸门被用户显式关闭，没有会话也没有凭据。
+   * `session` 显式声明为 `undefined`（而不是省略），
+   * 这样下游 `auth.session?.sid` 无需在每个调用点加分支 —— 类型上就说明白了"这里永远没有会话"。
+   */
+  | { ok: true; via: 'disabled'; session?: undefined }
+  | { ok: false; reason: string };
 
 /**
  * 鉴权一个请求。两条通道：
@@ -173,6 +207,8 @@ export type CsrfOutcome =
   | { ok: true; via: 'token' | 'exempt' }
   /** 没带 CSRF 头，但**严格同源**，按本地自用裁决放行。调用方应记一条 info。 */
   | { ok: true; via: 'same-origin-fallback' }
+  /** 鉴权已关闭 → CSRF 无意义（它防的是"借用你已有的凭据"，而凭据不存在）。 */
+  | { ok: true; via: 'disabled' }
   | { ok: false; reason: string };
 
 /**
