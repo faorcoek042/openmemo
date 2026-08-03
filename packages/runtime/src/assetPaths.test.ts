@@ -118,3 +118,97 @@ describe('probeAssetFile —— 判据是"真的打开并读到字节"', () => {
     assert.equal(p.abs, null);
   });
 });
+
+/**
+ * ★ T-143 ①：**词法剔除挡不住 `open()` 跟随符号链接。**
+ *
+ * 这一组的判据一律是**后果**：不是"有没有调用 realpath"、不是"note 里有没有某个词"，
+ * 而是「**根外那份文件的字节有没有被交出来**」。所以每条用例都先把根外文件的内容
+ * 写成一个独一无二的串，再断言它**没有**出现在返回值里 —— 守卫整段删掉时，
+ * `abs` 会重新变成那条软链，`bytesRead` 会重新变成 4，两条断言同时变红。
+ */
+describe('probeAssetFile —— 符号链接不许把根外的内容交出来（T-143 ①）', () => {
+  /** 造一个**在所有根之外**的秘密文件，返回它的绝对路径与内容。 */
+  async function secretOutside(): Promise<{ path: string; body: string }> {
+    const outside = mkdtempSync(join(tmpdir(), 'om-ap-OUTSIDE-'));
+    made.push(outside);
+    const body = 'SECRET-OUTSIDE-ROOT';
+    const p = join(outside, 'secret.txt');
+    await fs.writeFile(p, body);
+    return { path: p, body };
+  }
+
+  it('★ 根内的软链指向根外 → 拒绝，且根外内容一个字节都不出来', async () => {
+    const d = await seed({ 'media/keep': 'x' });
+    const secret = await secretOutside();
+    const link = join(d, 'media', 'escape.wav');
+    await fs.symlink(secret.path, link);
+
+    // 先证明这条链**真的能打开**、且打开的就是根外那份 —— 否则本用例钉的是零
+    assert.equal(await fs.readFile(link, 'utf8'), secret.body);
+
+    const p = await probeAssetFile(mediaAssetRoots(d), 'escape.wav');
+    assert.equal(p.abs, null, '越界的软链不许被选中');
+    assert.equal(p.bytesRead, 0, '一个字节都不许读出来');
+    assert.deepEqual([...p.escaped], [link], '被拒的候选要如实列出来，供调用方报 403');
+    // 根外内容不许出现在返回值的任何一处（note 里也不行）
+    assert.equal(JSON.stringify(p).includes(Buffer.from(secret.body).toString('hex')), false);
+  });
+
+  it('★ 祖先**目录**是软链同样挡住（realpath 要跟完整条路，不是只看最后一段）', async () => {
+    const d = await seed({ 'media/keep': 'x' });
+    const secret = await secretOutside();
+    await fs.symlink(join(secret.path, '..'), join(d, 'media', 'outdir'));
+
+    assert.equal(await fs.readFile(join(d, 'media', 'outdir', 'secret.txt'), 'utf8'), secret.body);
+
+    const p = await probeAssetFile(mediaAssetRoots(d), 'outdir/secret.txt');
+    assert.equal(p.abs, null);
+    assert.equal(p.bytesRead, 0);
+    assert.deepEqual([...p.escaped], [join(d, 'media', 'outdir', 'secret.txt')]);
+  });
+
+  it('★ 越界候选之后还有能用的候选 → 不许因为前面那条被拒就整条记录失败', async () => {
+    const d = await seed({ 'tmp/both.wav': 'GOOD', 'media/keep': 'x' });
+    const secret = await secretOutside();
+    await fs.symlink(secret.path, join(d, 'media', 'both.wav'));
+
+    const p = await probeAssetFile(mediaAssetRoots(d), 'both.wav');
+    assert.equal(p.abs, join(d, 'tmp', 'both.wav'), '应当继续试下一个根');
+    assert.equal(p.note, Buffer.from('GOOD').toString('hex'));
+    assert.deepEqual([...p.escaped], [join(d, 'media', 'both.wav')]);
+  });
+
+  it('★ 合法的两级相对软链照常解析（`libwhisper.so → .so.1 → .so.1.9.1`，T-128 那 8 条）', async () => {
+    const d = await seed({ 'media/libwhisper.so.1.9.1': 'ELFW' });
+    await fs.symlink('libwhisper.so.1.9.1', join(d, 'media', 'libwhisper.so.1'));
+    await fs.symlink('libwhisper.so.1', join(d, 'media', 'libwhisper.so'));
+
+    const p = await probeAssetFile(mediaAssetRoots(d), 'libwhisper.so');
+    assert.equal(p.abs, join(d, 'media', 'libwhisper.so'), '按类型一刀切拒绝软链会把后端拆掉');
+    assert.equal(p.note, Buffer.from('ELFW').toString('hex'), '顺着链真的读到了目标内容');
+    assert.deepEqual([...p.escaped], []);
+  });
+
+  it('★ 指向根内**另一个根**的软链仍然放行（跨根不是越界）', async () => {
+    const d = await seed({ 'tmp/real.wav': 'CROS', 'media/keep': 'x' });
+    await fs.symlink(join(d, 'tmp', 'real.wav'), join(d, 'media', 'alias.wav'));
+    const p = await probeAssetFile(mediaAssetRoots(d), 'alias.wav');
+    assert.equal(p.abs, join(d, 'media', 'alias.wav'));
+    assert.equal(p.note, Buffer.from('CROS').toString('hex'));
+  });
+
+  it('★ 数据目录本身经由软链访问时**不许全盘误杀**（macOS 的 /var → /private/var 形态）', async () => {
+    const real = await seed({ 'media/a.wav': 'REAL' });
+    const box = mkdtempSync(join(tmpdir(), 'om-ap-box-'));
+    made.push(box);
+    const viaLink = join(box, 'datadir'); // <box>/datadir → <real>
+    await fs.symlink(real, viaLink);
+
+    // 用**软链形式的 dataDir** 算根，候选的 realpath 会落在 <real> 下而不是 <viaLink> 下
+    const p = await probeAssetFile(mediaAssetRoots(viaLink), 'a.wav');
+    assert.equal(p.abs, join(viaLink, 'media', 'a.wav'), '根也要 realpath，否则整个媒体库全 403');
+    assert.equal(p.note, Buffer.from('REAL').toString('hex'));
+    assert.deepEqual([...p.escaped], []);
+  });
+});

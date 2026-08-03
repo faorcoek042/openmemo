@@ -686,6 +686,14 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         const probe = await probeAssetFile(roots, r.relPath);
         if (probe.tried.length === 0) {
           escaped.push(`${r.role}→${r.relPath}`);
+        } else if (probe.abs === null && probe.escaped.length > 0) {
+          /*
+           * ★ T-143 ①：候选**落在根内**，但顺着符号链接解析出去了。
+           * 这必须算进"越界"这一档，不能算"读不到"—— 否则
+           * `assetsContained` 会一边报 "全部落在 dataDir 内" 一边指着一条
+           * 指向 /etc 的软链，那正是本项目定义的最贵的一种假红灯：**结论对、理由假**。
+           */
+          escaped.push(`${r.role}→${r.relPath}（软链指向根外：${probe.escaped.join('、')}）`);
         } else if (probe.abs === null) {
           dangling.push(`${r.role}→${r.relPath}（找过：${probe.tried.join('、')}）`);
         } else if (probe.bytesRead === 0) {

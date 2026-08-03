@@ -331,6 +331,49 @@ describe('★ T-136 datadir.assetsPresent —— 报出来的必须**就是**那
     const d = await seedDataDir({});
     assert.equal((await assetsPresent(d, []))?.status, 'ok');
   });
+
+  /**
+   * ★ T-143 ①：**顺着符号链接出界的那条，必须算「越界」，不能算「读不到」。**
+   *
+   * 判错这一档的后果是本项目定义的最贵那种假红灯（⑤A-20）：
+   * `assetsContained` 会一边报「N 条资产全部落在 dataDir 内」，一边指着一条
+   * 指向 `/etc` 的软链 —— **结论对、理由假**，而理由假的告警最难被推翻。
+   */
+  it('★ 根内的软链指向根外 → assetsContained 必须报 fail，不许说"全部落在 dataDir 内"', async () => {
+    const d = await seedDataDir({ 'media/a.wav': 'AAAA' });
+    const outside = mkdtempSync(join(tmpdir(), 'om-sc-OUTSIDE-'));
+    tmpRoots.push(outside);
+    await fs.writeFile(join(outside, 'secret.txt'), 'SECRET-OUTSIDE');
+    await fs.symlink(join(outside, 'secret.txt'), join(d, 'media', 'escape.wav'));
+
+    const r = await runSelfCheck({
+      ...BASE,
+      dataDir: d,
+      probes: minimalProbes({
+        mediaAssets: () =>
+          Promise.resolve([
+            { role: 'original', relPath: 'a.wav' },
+            { role: 'audio16k', relPath: 'escape.wav' },
+          ]),
+      }),
+    });
+
+    const contained = byId(r, 'datadir.assetsContained');
+    assert.equal(contained?.status, 'fail', `软链出界必须算越界：${contained?.detail ?? ''}`);
+    assert.equal(
+      (contained?.detail ?? '').includes('escape.wav'),
+      true,
+      `必须点名是哪一条：${contained?.detail ?? ''}`,
+    );
+    // 越界的那条不许再被 assetsPresent 重复算成"读不到"以外的东西：
+    // 它确实读不到（这是对的），但**证据不许包含根外文件的内容**
+    const present = byId(r, 'datadir.assetsPresent');
+    assert.equal(
+      (present?.detail ?? '').includes('SECRET'),
+      false,
+      '根外内容不许出现在自检报告里',
+    );
+  });
 });
 
 describe('工具来源要分开：装在 dataDir 里 vs 借系统 PATH 的', () => {
