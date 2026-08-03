@@ -137,25 +137,81 @@ async function handleRequest(
     if (serveStatic(webDist, path, method, res, isNavigation)) return;
   }
 
-  // ---- 建立会话：Bearer token → HttpOnly cookie（D-01 §2.4）----
+  /*
+   * ---- 建立 / 续签会话（D-01 §2.4）----
+   *
+   * 两条入口，缺一不可：
+   *   1. **Bearer**（来自 URL fragment 的启动令牌）→ 新建会话。首次进入走这条。
+   *   2. **仅 cookie 续签** → 发回**该会话现有的** CSRF 令牌。
+   *
+   * 为什么必须有第 2 条：**cookie 是 per-origin（跨标签共享），CSRF 令牌是 per-tab。**
+   * 用户在第二个标签页打开（地址里没有 `#t=`）时，cookie 带得过去、CSRF 令牌带不过去，
+   * 于是**读全通、界面完全正常、写全部 403、库里一行没有** ——
+   * 用户以为 key 设好了，其实什么都没落。这不需要任何存储故障，是正常语义下的必然结果。
+   *
+   * 没有这条续签，新标签页就**无法自愈**：它既没有 token 可以重新握手，
+   * 又拿不到 CSRF 令牌，只能让用户回去翻那条带 `#t=` 的原始链接 ——
+   * 而前端为了防截图泄露，早就把它从地址栏抹掉了。
+   *
+   * ★ 续签**复用同一个会话**、不新建：所有标签页因此收敛到同一个 session + 同一个 CSRF 令牌。
+   *   每个标签新建一个 session 会让会话表随标签数无限增长，且退出登录时清不干净。
+   */
   if (path === '/api/auth/session' && method === 'POST') {
     const auth = req.headers['authorization'];
-    if (typeof auth !== 'string' || !auth.startsWith('Bearer ')) {
-      sendError(res, 401, 'UNAUTHENTICATED', 'missing bearer token', '缺少启动令牌');
+    const hasBearer = typeof auth === 'string' && auth.startsWith('Bearer ');
+
+    if (hasBearer) {
+      if (!deps.sessions.verifyBootToken(auth.slice(7))) {
+        sendError(res, 401, 'UNAUTHENTICATED', 'invalid token', '启动令牌无效');
+        return;
+      }
+      const session = deps.sessions.create();
+      res.setHeader('Set-Cookie', buildSessionCookie(session.sid));
+      sendJson(res, 200, {
+        csrf: session.csrf,
+        csrfHeader: CSRF_HEADER,
+        contractVersion: CONTRACT_VERSION,
+        renewed: false,
+      });
       return;
     }
-    if (!deps.sessions.verifyBootToken(auth.slice(7))) {
-      sendError(res, 401, 'UNAUTHENTICATED', 'invalid token', '启动令牌无效');
+
+    // 无 Bearer：只要 cookie 指向一个仍然有效的会话，就把它的 CSRF 令牌发回去
+    const viaCookie = authenticate(req, deps.sessions);
+    if (viaCookie.ok && viaCookie.via === 'cookie' && viaCookie.session) {
+      // 顺手续一次 cookie，避免它比会话先过期
+      res.setHeader('Set-Cookie', buildSessionCookie(viaCookie.session.sid));
+      sendJson(res, 200, {
+        csrf: viaCookie.session.csrf,
+        csrfHeader: CSRF_HEADER,
+        contractVersion: CONTRACT_VERSION,
+        /** 告诉前端这是续签而非新建，便于它区分"新标签自愈"和"首次握手"。 */
+        renewed: true,
+      });
       return;
     }
-    const session = deps.sessions.create();
-    res.setHeader('Set-Cookie', buildSessionCookie(session.sid));
-    // CSRF token 走响应体（前端存 sessionStorage），非 GET 请求需回传该头
-    sendJson(res, 200, {
-      csrf: session.csrf,
-      csrfHeader: CSRF_HEADER,
-      contractVersion: CONTRACT_VERSION,
-    });
+
+    /*
+     * 两者都没有 → 只能让用户拿回启动令牌。
+     * 这里必须给**可执行的**指引：用户看不到 daemon 的终端时，
+     * "请重新打开应用"是句废话（他打开的还是同一个没有 token 的地址）。
+     */
+    sendError(
+      res,
+      401,
+      'UNAUTHENTICATED',
+      'no bearer token and no valid session cookie',
+      '尚未建立会话，且没有可续签的登录状态。请从 daemon 启动横幅里那条带 #t= 的完整链接重新打开一次。',
+      {
+        retryable: false,
+        remediation: {
+          action: 'openHandoffUrl',
+          params: { hint: 'daemon 启动日志中的 http://<host>:<port>/#t=<token>' },
+          label: 'Reopen the handoff URL',
+          labelZh: '用启动链接重新打开',
+        },
+      },
+    );
     return;
   }
 
