@@ -36,7 +36,7 @@
  *     [--dry-run]
  */
 import { appendFile, readdir, readFile, writeFile } from 'node:fs/promises';
-import { basename, join, resolve } from 'node:path';
+import { basename, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -113,9 +113,40 @@ async function main() {
   }
 
   /* ---------------- 2. fragments ---------------- */
-  const names = (await readdir(fragDir).catch(() => fail(`读不到 fragment 目录：${fragDir}`)))
-    .filter((f) => f.endsWith('.json'))
-    .sort();
+  /*
+   * ★★ T-145：**递归**扫，不能只扫一层。
+   *
+   * `merge-manifest` 这个 job 第一次真的跑起来是在 build-backends 第 4 轮
+   * （8 个构建 leg 全绿之后）。它下载了全部 8 个 artifact（日志逐个
+   * "Artifact download completed successfully"），然后报「一个 .json fragment 都没有」。
+   *
+   * 成因是 upload/download 两端的**目录结构**：upload-artifact 那边给的是
+   *     path: |
+   *       ${{ env.PACK_OUTPUT_DIR }}/*     → dist/packs/*
+   *       dist/probe/*
+   * 两条路径的**共同祖先是 `dist/`**，所以 artifact 内部保留的是 `packs/…` 与 `probe/…`。
+   * `download-artifact --merge-multiple` 合并到 `artifacts/` 之后，
+   * fragment 的真实位置是 **`artifacts/packs/*.json`**，而这里只扫了 `artifacts/*.json`。
+   *
+   * ★ 值得记的是**它红得对**：guard 没有写出一个空 manifest 然后绿灯 ——
+   *   它说"构建没有产出任何东西"。那句话在当时不准确（东西是有的，在下一层），
+   *   但**方向是安全的那一边**。这正是 C4 防线该有的失败方式。
+   */
+  async function collectJson(dir) {
+    const out = [];
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() =>
+      fail(`读不到 fragment 目录：${dir}`),
+    );
+    for (const e of entries) {
+      const full = join(dir, e.name);
+      if (e.isDirectory()) out.push(...(await collectJson(full)));
+      else if (e.isFile() && e.name.endsWith('.json')) out.push(full);
+    }
+    return out;
+  }
+  const paths = (await collectJson(fragDir)).sort();
+  // 下游按 `join(fragDir, name)` 读，所以这里回吐相对 fragDir 的路径。
+  const names = paths.map((p) => relative(fragDir, p));
 
   /*
    * ★ 这一条就是 C4（`if: always()` → `packs: []` → 绿灯）的正面防线。
