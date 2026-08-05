@@ -478,3 +478,141 @@ CLI 与 `GET /api/selfcheck` 给出的是同一份答案，没有"网页绿而 C
    第二版因为字段名写错（是 `uid` 不是 `id`）仍然没认出 job，
    但它**红得诚实**：说"我不认识这条"，而不是拿别人的成功顶上。
    **同一个地方、两种失败方式，差别就是有没有那个 `?? arr[0]`。**
+
+---
+
+# §7 冷启动审计第二轮：三平台 + 拉模型 + 删掉 npm 那条通道
+
+> 证据来源：`cold-start-audit` run 31028964565（三平台首跑）。
+
+## 7.1 ★★ 最重要的一条：**macOS 上产品真的会去借宿主的 ffmpeg**
+
+§6 的结论是「借宿主 PATH 的 = 0」。**那条结论只在 Linux 上成立。**
+同一份脚本、同样屏蔽宿主工具，在 `macos-26` 上：
+
+```
+tool.ffmpeg      warn   .../maskbin/ffmpeg（来自系统 PATH，非本产品安装）
+tool.ffprobe     warn   .../maskbin/ffprobe（来自系统 PATH，非本产品安装）
+tool.whisperCli  warn   .../maskbin/whisper-cli（来自系统 PATH，非本产品安装）
+tool.whisperVad  warn   未找到
+tool.ytDlp       ok     .../data/models/by-name/backend/yt-dlp
+```
+
+**三个工具解析到了 `maskbin/` —— 也就是我放的假二进制。**
+这不是脚本出错，这正是脚本要抓的东西：**产品在 macOS 上确实会回退到宿主 PATH。**
+
+成因在上一行就写着：
+
+```
+目录共 19 个包，适用于本机 3 个：
+  - ytdlp-macos-arm64
+  - libsimple-darwin-arm64
+  - sqlite-vec-darwin-arm64
+```
+
+**19 个包里只有 3 个适用于 macOS —— 没有 ffmpeg，没有 whisper-cli。**
+这正是 `platform` T-141 §1.2 第 1 行预测的那一格（"macOS 装不了任何转写引擎，也没有 ffmpeg"），
+**现在是从一次真实冷启动里量出来的，不是从 manifest 数出来的。**
+
+### 为什么这条只有屏蔽之后才看得见
+
+一台真实的 Mac 上大概率装着 Homebrew 的 ffmpeg。那么：
+
+> 产品会**安静地用上它**，selfcheck 会给一个 `warn`（不是 `fail`），
+> 而 `warn` 在一片绿里几乎不会有人细看。
+> 用户换一台没装 ffmpeg 的 Mac，同一个版本就突然不能用了 —— 而**没有任何东西变过**。
+
+**这就是用户那句「我怕了你」问的东西的准确形态**，而它：
+
+- 在 Linux 上**不存在**（19 个包里 5 个适用，ffmpeg/whisper 都有）；
+- 在 CI 上**不屏蔽就看不见**（ubuntu runner 恰好没装 ffmpeg，macOS runner 也没有 —— 
+  所以真机上是 `warn+未找到`，而用户机器上会是 `warn+悄悄可用`）。
+
+⚠️ **诚实边界**：runner 上 `tool.whisperVad` 是"未找到"，而不是借到了什么。
+我们观测到的是「**产品会去 PATH 找**」这个**行为**，
+至于用户机器上那个 ffmpeg 能不能真的完成转写，**没有验证过**。
+
+## 7.2 三分类（按平台）
+
+| | linux-x64 | darwin-arm64 |
+|---|---|---|
+| ✅ 产品自己下载并校验的 | **5**：ffmpeg / ffprobe / whisperCli / whisperVad / ytDlp | **1**：ytDlp |
+| ⚠️ 借宿主 PATH 的 | **0** | **3**：ffmpeg / ffprobe / whisperCli |
+| ❌ 装不上 / 不可用 | **0** | **1**：whisperVad |
+| 适用的后端包 | 5 / 19 | **3 / 19** |
+| `ext.chineseSearch` | **ok**（用户:1 推特:2 中国:1 服务:2） | 装上了扩展（`[warm] tokenizer=simple libsimple=true sqliteVec=true`） |
+
+**中文检索这条在两个平台都成立** —— libsimple / sqlite-vec 的 darwin-arm64 包
+真的装上并生效了（冷启动时 macOS 找的是 `libsimple.dylib` / `vec0.dylib`，与 Linux 的 `.so` 不同，
+这条路径也因此第一次被真机走过）。
+
+## 7.3 补上 `/api/models/pull` 之后，那个含糊的红变成了两条具名结论
+
+`[实测 linux]` 拉模型这一步现在真的跑了：
+
+```
+/api/models/catalog：20 个分组，展平后 35 个模型条目
+目录里 role in {asr,vad} 且 required-core 的模型 2 个
+  vad/silero-vad-onnx   succeeded (1.0s)
+  vad/silero-vad-ggml   succeeded (2.0s)
+── 独立核对：/api/models/installed 返回 2 条 ──
+```
+
+然后：
+
+```
+model.vad   ok    .../data/models/by-name/asr/ggml-silero-v6.2.0.bin
+model.asr   fail  required   无可用 ASR 模型
+                             （by-name/asr 下只有非 ASR 角色的文件：
+                              ggml-silero-v6.2.0.bin, silero_vad.onnx）
+```
+
+**两条产品结论（不是审计缺口了）：**
+
+1. 🔴 **目录里 `required-core` 的 asr/vad 模型一共 2 个，全是 VAD，没有一个 ASR。**
+   也就是说：**照着 `required-core` 装完，仍然不能转写。**
+   "冷装之后必须先自己挑一个 ASR 模型下载"——这是产品事实，应该写进首启引导，
+   而不是让 selfcheck 的一条 `fail` 去承担这个信息。
+2. 🟡 **两个 VAD 模型被链到了 `by-name/asr/` 底下**，`model.asr` 的报错原文
+   （"by-name/asr 下只有非 ASR 角色的文件"）说明检查器知道它们不该在那儿。
+   role → 目录 的映射疑似有问题。`[未定性]`
+
+⚠️ **一条自我更正**：我在本机 smoke 时看到过 `meta.sameSource fail —— model.vad: 本地=warn 端点=ok`，
+一度当成产品 bug。**CI 上是 `ok`（25 项逐 id 一致）。** 本机那次两个 VAD 只装成了一个
+（另一个 `INTEGRITY_ALL_SOURCES_FAILED`，本机网络问题），是**半装状态**下的瞬时不一致。
+**本机的红没有资格当结论 —— 这次它自己证明了这条规矩。**
+
+## 7.4 npm 那条通道已经删掉（不是加锁）
+
+`ffmpeg-static` 与 `youtube-dl-exec` **已从 `packages/pipeline` 的 dependencies
+和 `onlyBuiltDependencies` 中删除**。删除前实测三查全空（无 import、无路径引用、
+测试里零出现），删除后 `require.resolve` 双双 `MODULE_NOT_FOUND`，
+`pnpm install` 少 52 个包，`pnpm -r test` 874/0 不变。
+
+CI 上的反向断言（三平台）：
+
+```
+== ffmpeg-static / youtube-dl-exec 是否还在 node_modules 里 ==
+  ✔ ffmpeg-static 不存在
+  ✔ youtube-dl-exec 不存在
+```
+
+判据是**减少通道**而不是给每条通道加锁：「哪条是权威」这个问题
+今天已经在 `/models` vs `/settings`、`defaultModelId` vs `providers[i].model`、
+两张补救路由表上各栽过一次。
+
+许可证义务换了记录的地方（已核对 `backends.json` 的 `license` 字段全是 `GPL-3.0-or-later`），
+并且把 `license-report.mjs` 里那条**靠人记得**的纪律换成了守卫：
+`onlyBuiltDependencies` 里没被覆盖的包 → **exit 1**（反向验证过）。
+
+## 7.5 这一轮我自己犯的错（继续记账）
+
+| # | 错 | 后果 | 教训 |
+|---|---|---|---|
+| 3 | `/api/models/catalog` 是**分组**结构（`groups[].variants[]`），我按 `body.models` 取 | 拿到 0 个模型、照常往下走，打印出一句读起来像产品结论的话 | **本任务同一形状的第三次：工具安静地返回空集，被读成"没有"。** 现在空集会当场出声 |
+| 4 | job 的字段名是 **`jobId`**，我按 `uid` 比 | 每次都报"不认识这条 job" | `jobs.ts:182` 的注释写「This is D-02 `jobs.uid`」—— **那说的是数据库列名，字段名在下一行**。一条准确但指向别处的注释同样能把人带偏 |
+| 5 | `/tmp/install.log` 写在没有 `shell: bash` 的步骤里 | Windows pwsh 解析成 `D:\tmp\install.log` 当场炸 | 跨平台 workflow 里，**POSIX 路径 + 默认 shell = 只在两个平台上成立** |
+| 6 | 观测用的 `find -perm` 把整步拖红 | "反向核实"步骤红掉，**而它上面刚刚正确报出了结论** | **一个用来看的步骤，不该有能力决定红绿** |
+
+第 4 条修好之后，安装耗时立刻变得可信（14.1s / 52.3s / 28.1s），
+而第一版全是 `1.0s`——**正好是轮询间隔**。

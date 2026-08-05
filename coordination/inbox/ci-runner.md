@@ -527,3 +527,117 @@ macOS 上 `/var` 和 `/tmp` **本身就是软链**，默认 TMPDIR 就触发。
 2. `cold-start-audit` 加 `/api/models/pull`，把 paraformer + VAD 也纳入，
    然后 `model.asr` 才有资格从 fail 变 ok。
 3. 把 `cold-start-audit` 铺到 macOS / Windows —— 本节结论目前只覆盖 ubuntu-24.04。
+
+---
+
+## [2026-08-06 01:40] T-145 PROGRESS（两条决策都已执行）
+
+交付: `docs/design/D-11-ci-platform-facts.md` **新增 §7**、提交 `f313dca` `065d841`（已 push）
+
+# TL;DR
+
+## ★★ 最重要的一条：**§6 的「借宿主 PATH = 0」只在 Linux 上成立**
+
+同一份脚本、同样屏蔽宿主工具，在 `macos-26` 上：
+
+```
+tool.ffmpeg      warn   .../maskbin/ffmpeg（来自系统 PATH，非本产品安装）
+tool.ffprobe     warn   .../maskbin/ffprobe（来自系统 PATH，非本产品安装）
+tool.whisperCli  warn   .../maskbin/whisper-cli（来自系统 PATH，非本产品安装）
+tool.ytDlp       ok     .../data/models/by-name/backend/yt-dlp
+```
+
+**三个工具解析到了我放的假二进制** —— 产品在 macOS 上**确实会回退到宿主 PATH**。
+成因就在上一行：**19 个包里只有 3 个适用于 macOS，没有 ffmpeg、没有 whisper-cli。**
+
+**这正是用户那句「我怕了你」问的东西的准确形态**：
+一台真实的 Mac 上大概率装着 Homebrew 的 ffmpeg → 产品**安静地用上它** →
+selfcheck 给的是 `warn` 不是 `fail` → 一片绿里没人会细看 →
+用户换一台没装的 Mac，同一个版本突然不能用，**而没有任何东西变过**。
+
+**这条只有屏蔽之后才看得见**，而且它在 Linux 上根本不存在。
+—— 三平台这件事本身就已经付清了成本。
+
+⚠️ 诚实边界：runner 上是「借到了我的 shim」，我们观测到的是**「产品会去 PATH 找」这个行为**；
+至于用户机器上那个 Homebrew ffmpeg 能不能真的跑完转写，**没验过**。
+
+## 三分类（按平台）
+
+| | linux-x64 | darwin-arm64 |
+|---|---|---|
+| ✅ 产品自己下的 | **5** | **1**（只有 ytDlp） |
+| ⚠️ 借宿主 PATH | **0** | **3**（ffmpeg/ffprobe/whisperCli） |
+| ❌ 装不上 | **0** | **1**（whisperVad） |
+| 适用后端包 | 5/19 | **3/19** |
+
+中文检索**两个平台都成立**（macOS 找的是 `libsimple.dylib`/`vec0.dylib`，
+与 Linux 的 `.so` 不同，这条路径第一次被真机走过）。
+
+## ① npm 那条通道：**删掉了，不是加锁**
+
+先查"还用不用得上"，**实测三查全空**：无 import / 无路径引用 / 测试里零出现。
+删除后 `require.resolve` 双双 MODULE_NOT_FOUND、`pnpm install` 少 **52 个包**、
+`pnpm -r test` **874/0 不变**、冷启动仍然 5/5（Linux）。
+CI 三平台反向断言：`✔ ffmpeg-static 不存在 / ✔ youtube-dl-exec 不存在`。
+
+`ffmpeg-static` 的结论回答你的问题：**没人用，纯历史遗留** —— 所以删掉，不是加 integrity。
+
+★ 并把 `license-report.mjs` 里那条**靠人记得**的纪律换成了守卫
+（原注释：「每新增一个"会下载二进制"的依赖，都必须在这里补一行」）。
+现在 `onlyBuiltDependencies` 里没被覆盖的包 → **exit 1**（反向验证过）。
+许可证义务没丢：`backends.json` 里 yt-dlp/ffmpeg 全是 `GPL-3.0-or-later`。
+
+★ 顺带更正 `ci.yml` 一条**具体但虚假**的注释（「测试会用到那两个二进制」——假的）。
+**一条描述得很具体的错注释比没有注释更能误导人**：它会让下一个想删依赖的人以为动不得。
+
+## ② 补上 `/api/models/pull` —— 那个含糊的红变成两条具名结论
+
+```
+拉模型：vad/silero-vad-onnx succeeded (1.0s) / vad/silero-vad-ggml succeeded (2.0s)
+        独立核对 /api/models/installed 返回 2 条
+model.vad  ok
+model.asr  fail required  无可用 ASR 模型（by-name/asr 下只有非 ASR 角色的文件：
+                          ggml-silero-v6.2.0.bin, silero_vad.onnx）
+```
+
+1. 🔴 **目录里 `required-core` 的 asr/vad 模型一共 2 个，全是 VAD，没有一个 ASR。**
+   **照着 required-core 装完，仍然不能转写。** 这应该写进首启引导，
+   而不是让 selfcheck 的一条 fail 去承担这个信息。
+2. 🟡 **两个 VAD 模型被链到了 `by-name/asr/` 底下** —— role→目录 映射疑似有问题。`[未定性]`
+
+两条都是**产品问题不是 CI 问题**，我没有修（超出 T-145 范围）。
+
+⚠️ **一条自我更正**：我本机 smoke 时看到 `meta.sameSource fail（model.vad 本地=warn 端点=ok）`，
+一度当成产品 bug。**CI 上是 ok（25 项逐 id 一致）** —— 本机那次是"两个 VAD 只装成一个"的
+半装状态下的瞬时不一致。**本机的红没有资格当结论，这次它自己证明了这条规矩。**
+
+## 我这一轮又犯的四个错（继续记账，全在 D-11 §7.5）
+
+| # | 错 | 教训 |
+|---|---|---|
+| 3 | `/api/models/catalog` 是分组结构，我按 `body.models` 取 → 拿到 0 个还照常往下走 | **同一形状第三次：工具安静返回空集，被读成"没有"**。现在空集当场出声 |
+| 4 | job 字段名是 `jobId`，我按 `uid` 比 | `jobs.ts:182` 注释写的是**数据库列名**，字段名在下一行。**准确但指向别处的注释同样能带偏人** |
+| 5 | `/tmp/install.log` 写在没 `shell: bash` 的步骤里 | Windows pwsh 解析成 `D:\tmp\...` 当场炸 |
+| 6 | 观测用的 `find -perm` 把整步拖红 | **一个用来看的步骤，不该有能力决定红绿** |
+
+第 4 条修好后安装耗时立刻可信（14.1s/52.3s/28.1s），第一版全是 `1.0s` —— 正好是轮询间隔。
+
+## Windows 冷启动：**仍未跑通**
+
+第一轮死在我那两处 workflow 假设（第 5、6 条），已修并重新 dispatch，
+**结果我没等到**。Windows 的冷启动结论目前是 `[未验证]`。
+
+---
+
+需要 Manager 决策:
+1. **macOS 的 ffmpeg / whisper 缺口怎么办**（§7.1）。这是产品能力问题不是 CI 问题：
+   要么补 manifest（`platform` T-141 §2.2 给过 `eugeneware/ffmpeg-static` 的 darwin 条目，
+   host 已在允许名单里），要么在 macOS 上把"借到宿主 ffmpeg"从 `warn` 升成显式告知。
+   **现状是最坏的一种：能用，但用的是别人机器上的东西，而且只给了个 warn。**
+2. **`required-core` 里没有 ASR 模型** —— 首启引导要不要补一步"挑一个 ASR 模型"？
+3. VAD 模型落在 `by-name/asr/` 下，role 映射要不要查？
+
+下一步建议:
+1. 等最新一轮 cold-start-audit 出 Windows 结果。
+2. build-backends 第 4 轮只剩 windows-x64-cuda（其余 7 个已 success）。
+3. macOS 那条 ffmpeg 缺口，建议单独派人（它决定章程 §3 第 1/2 行成不成立）。
