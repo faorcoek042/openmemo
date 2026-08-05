@@ -49,3 +49,15 @@ coverage/
 
 # 注意：vendor/<submodule> 由 .gitmodules 管理，不要在此忽略。
 # vendor/manifests/*.json 必须入库（ADR-001 强制配套 1：C 类可追溯性）。
+
+# ── 密钥与运行时状态：任何层级都不许进版本库 ────────────────────────
+#
+# 这几个是**文件名**不是目录名，所以不带前导斜杠是刻意的 ——
+# 我们要它们在任何层级都被挡住（用户可能把 dataDir 指到仓库里的任意子目录）。
+# 与 `models/` 那次事故不同：那次是**目录名**不带斜杠，误伤了
+# `apps/web/src/features/models/`（见 scripts/check-tracked-sources.mjs）。
+#
+# 加规则前已核实：仓库里没有任何已跟踪的同名文件，`apps/` `packages/` 下也没有。
+secrets.json
+runtime.json
+datadir.json
