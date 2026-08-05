@@ -50,8 +50,11 @@ jobs:
           node-version: '22'
 
       # ★ 在装任何东西**之前**记录 runner 自带什么。
-      #   ubuntu runner 自带 ffmpeg —— 不先记下来，后面就分不清
-      #   "我们装上了" 和 "它本来就在"。
+      #   ⚠️ 我原本以为 ubuntu runner 自带 ffmpeg —— **第一次真跑证伪了**：
+      #      ffmpeg/ffprobe/yt-dlp/whisper-cli 全都不在 PATH 上，
+      #      自带的只有 sqlite3 / python3 / cmake。
+      #   这一步照留：结论不能建立在"这款镜像今天恰好没装"上，
+      #   而且它正是"我们装上了"与"它本来就在"的唯一分界线。
       - name: 宿主基线（装任何东西之前）
         run: |
           echo "== runner 自带的同名工具 =="

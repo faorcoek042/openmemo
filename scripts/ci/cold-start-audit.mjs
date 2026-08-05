@@ -23,8 +23,17 @@
  *
  * ## ★ 屏蔽宿主工具（这一步不能省）
  *
- * GitHub 的 ubuntu runner **自带 ffmpeg**。不屏蔽的话，产品会在 PATH 上找到它，
- * 于是「装上了」和「借到了」在最终效果上长得一模一样 —— 正是要查的那个形状。
+ * ⚠️ **更正一条我自己写错的前提**：我原本断言「GitHub 的 ubuntu runner 自带 ffmpeg」。
+ *    第一次真跑的宿主基线把它证伪了 —— ubuntu-24.04 上
+ *    `ffmpeg / ffprobe / yt-dlp / whisper-cli` **全部不在 PATH 上**，
+ *    自带的只有 `sqlite3` / `python3` / `cmake`。
+ *    （这条本身也是个好消息：ubuntu runner 上的"能用"不会被宿主 ffmpeg 冒名顶替。）
+ *
+ * 屏蔽这一步**仍然要做**，理由变了但没消失：
+ *   · 结论不能建立在"这一款 runner 镜像今天恰好没装 ffmpeg"上 —— 那又是一次
+ *     "靠机器状态成立的正确"，正是本任务在查的东西；
+ *   · macOS runner 自带的东西和 ubuntu 不一样，将来矩阵铺开就会碰上；
+ *   · 用户的机器上很可能**是有** ffmpeg 的，屏蔽这一轮才对得上"干净机器"这个问题。
  *
  * 屏蔽方式是**放一层同名的假二进制在 PATH 最前面**，而不是把目录从 PATH 里删掉：
  *   · 删目录会顺手把 node/pnpm 也删没
@@ -120,8 +129,10 @@ const childEnv = {
 };
 
 let proc = null;
+let daemonLogs = [];
 async function startDaemon(label) {
   const logs = [];
+  daemonLogs = logs;
   proc = spawn(process.execPath, [DAEMON, '--data-dir', DATA_DIR, '--port', String(PORT)], {
     env: childEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -189,6 +200,25 @@ try {
   for (const p of applicable) say(`     - ${p.id}`);
   say();
 
+  /*
+   * ★★ T-145 自陈：这一段的第一版**自己就是一个假绿**，而且是本任务在查的那个形状。
+   *
+   * 它当时打的是 `GET /api/jobs?id=<jobId>` —— 但那个端点**根本不认 `?id=`**
+   * （apps/daemon/src/http/rest/jobs.ts:69 直接返回整份列表），
+   * 而取 job 那行写的是 `arr.find(x => x.id === jobId) ?? arr[0]` ——
+   * **`?? arr[0]` 就是那个洞**：找不到自己那条，就拿列表里的第一条顶上。
+   *
+   * 第一次真跑的输出是这样的：
+   *     whispercpp-cpu-linux-x64   succeeded  (1.0s)
+   *     media-tools-linux-x64      succeeded  (1.0s)   ← 119 MB，1.0 秒
+   * 1.0s 恰好是我的轮询间隔 —— 也就是说**它第一次轮询就"看到成功了"**。
+   * 一个用来查"是不是真的下载了"的脚本，报了一串它根本没等过的成功。
+   *
+   * → 改成 `GET /api/jobs/<id>`（单条端点，jobs.ts:95 那条正则），
+   *   **找不到就如实说找不到，绝不回退到别的 job**。
+   *   并且最后用 `/api/backends/installed` 做一次**独立的地面真相核对** ——
+   *   判据不是"job 说它成功了"，是"这个包真的在已安装列表里"。
+   */
   const installResults = [];
   for (const p of applicable) {
     const t0 = Date.now();
@@ -199,20 +229,42 @@ try {
     });
     let status = `HTTP ${r.status}`;
     const jobId = r.body?.jobId ?? r.body?.id;
-    if (jobId) {
-      for (let i = 0; i < 600; i++) {
+    if (!jobId) {
+      status = `HTTP ${r.status} 且没有 jobId：${JSON.stringify(r.body).slice(0, 200)}`;
+    } else {
+      status = 'TIMEOUT（900s 内没到终态）';
+      for (let i = 0; i < 900; i++) {
         await new Promise((res) => setTimeout(res, 1000));
-        const jr = await j(`/api/jobs?id=${encodeURIComponent(jobId)}`);
-        const arr = Array.isArray(jr.body) ? jr.body : (jr.body?.jobs ?? []);
-        const job = arr.find?.((x) => x.id === jobId) ?? arr[0];
-        if (job && ['succeeded', 'failed', 'cancelled', 'error'].includes(job.state ?? job.status)) {
-          status = `${job.state ?? job.status}${job.error ? ` — ${JSON.stringify(job.error).slice(0, 200)}` : ''}`;
+        const jr = await j(`/api/jobs/${encodeURIComponent(jobId)}`);
+        if (jr.status !== 200) {
+          status = `轮询 /api/jobs/${jobId} 得到 HTTP ${jr.status}`;
+          break;
+        }
+        const job = jr.body?.job ?? jr.body;
+        if (!job || job.id !== jobId) {
+          // 绝不拿别的 job 顶上 —— 那正是第一版的 bug。
+          status = `端点返回的不是这个 job（拿到 id=${job?.id}）`;
+          break;
+        }
+        if (['succeeded', 'failed', 'cancelled'].includes(job.state)) {
+          status = `${job.state}${job.error ? ` — ${JSON.stringify(job.error).slice(0, 200)}` : ''}`;
           break;
         }
       }
     }
     installResults.push({ id: p.id, status, secs: ((Date.now() - t0) / 1000).toFixed(1) });
     say(`   ${p.id.padEnd(32)} ${status}  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  }
+
+  // ★ 地面真相：不信 job 的自述，直接问"到底装上了哪些"。
+  const inst = await j('/api/backends/installed');
+  const installedIds = new Set(
+    (Array.isArray(inst.body) ? inst.body : (inst.body?.packs ?? inst.body?.installed ?? [])).map((x) => x.id),
+  );
+  say();
+  say('   ── 独立核对：/api/backends/installed 怎么说 ──');
+  for (const p of applicable) {
+    say(`   ${p.id.padEnd(32)} ${installedIds.has(p.id) ? '✅ 真的在已安装列表里' : '❌ 不在已安装列表里'}`);
   }
 
   /* ─────────── 4. 重启（materializeSqliteExtensions 只在启动时跑）─────────────── */
@@ -280,6 +332,15 @@ try {
 } catch (e) {
   say('');
   say(`✘ 冷启动审计中断：${e.message}`);
+  // ★ `fetch failed` 通常意味着 daemon 死了。第一版到这里就结束了，
+  //   于是"为什么死的"完全看不到。把它最后的输出打出来。
+  if (proc) {
+    say('   daemon 进程状态：exitCode=' + proc.exitCode + ' signal=' + proc.signalCode);
+  }
+  if (daemonLogs.length) {
+    say('   daemon 最后 60 行输出：');
+    say(daemonLogs.join('').split('\n').slice(-60).map((l) => `      ${l}`).join('\n'));
+  }
   exitCode = 1;
 } finally {
   await stopDaemon();
