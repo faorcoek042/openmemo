@@ -8,7 +8,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
@@ -315,11 +315,93 @@ describe('L7 (§8.5) — path traversal', () => {
       dirs.push(root);
       const r = await assertWithinRoot(root, '\\\\server\\share\\evil', 'linux');
       assert.equal(r.ok, true, 'posix treats backslashes as ordinary filename characters');
+      /*
+       * ★ T-145: compare against realpath(root), not root.
+       *
+       * This line used to say `join(root, …)`. It passed on Linux and FAILED on the
+       * first ever macOS CI run, because macOS's TMPDIR lives under `/var`, which is
+       * a symlink to `/private/var`. `assertWithinRoot` returns realpath'd values, so
+       * the expectation has to be realpath'd too — otherwise the test is asserting
+       * "the host's tmpdir is not behind a symlink", which is a property of the
+       * machine, not of the guard.
+       */
       assert.equal(
         r.ok === true ? r.value : '',
-        join(root, '\\\\server\\share\\evil'),
+        join(await realpath(root), '\\\\server\\share\\evil'),
         'it stays INSIDE the root — not an escape, just untested',
       );
+    });
+  });
+
+  /*
+   * ★★ T-145 — the managed root itself sits behind a symlink.
+   *
+   * Found by CI: `packages/pipeline` was the only red on macos-26, and chasing it
+   * turned up a REAL product bug, not just a host-bound test.
+   *
+   * The symptom is unusually nasty because it is HALF working:
+   *   - a file that already exists  -> accepted
+   *   - a file about to be CREATED  -> rejected as path_escape
+   * i.e. reading works and writing does not, which reads like a permissions problem.
+   *
+   * Mechanism: `realpathOrResolve` falls back to the lexical path when the target does
+   * not exist yet (correct — you cannot realpath a file that is not there). So when the
+   * root is behind a symlink, the two sides of the comparison came from different
+   * branches: the root was realpath'd, the not-yet-existing target was not.
+   *
+   * Why macOS and not Linux: on macOS `/var` and `/tmp` ARE symlinks (-> /private/…),
+   * so the DEFAULT temp dir already triggers it. On Linux you have to build the symlink
+   * yourself — which is exactly what these cases do, so they pin the behaviour
+   * everywhere and would have caught it on this box.
+   */
+  describe('T-145 — managed root reached through a symlink (macOS default TMPDIR is)', () => {
+    async function symlinkedRoot(): Promise<{ link: string; real: string }> {
+      const base = await mkdtemp(join(tmpdir(), 'openmemo-symroot-'));
+      dirs.push(base);
+      const real = join(base, 'realroot');
+      await mkdir(real);
+      const link = join(base, 'linkroot');
+      await symlink(real, link);
+      return { link, real: await realpath(real) };
+    }
+
+    it('★ a file that does not exist yet is still INSIDE the root (this is the bug)', async () => {
+      const { link, real } = await symlinkedRoot();
+      const r = await assertWithinRoot(link, 'newfile.wav');
+      assert.equal(r.ok, true, 'an output path the pipeline is about to create must pass');
+      assert.equal(r.ok === true ? r.value : '', join(real, 'newfile.wav'));
+    });
+
+    it('★ nested not-yet-existing path too', async () => {
+      const { link, real } = await symlinkedRoot();
+      const r = await assertWithinRoot(link, 'sub/new.wav');
+      assert.equal(r.ok, true);
+      assert.equal(r.ok === true ? r.value : '', join(real, 'sub', 'new.wav'));
+    });
+
+    it('an existing file keeps working (it always did — that is why this hid)', async () => {
+      const { link, real } = await symlinkedRoot();
+      await writeFile(join(real, 'exists.wav'), 'x');
+      const r = await assertWithinRoot(link, 'exists.wav');
+      assert.equal(r.ok, true);
+      assert.equal(r.ok === true ? r.value : '', join(real, 'exists.wav'));
+    });
+
+    /* ★ The reverse half: the fix must NOT have loosened any of the three escapes. */
+    it('★ `..` traversal is still rejected through a symlinked root', async () => {
+      const { link } = await symlinkedRoot();
+      assertRejected(await assertWithinRoot(link, '../escape'), 'path_escape', 'dot-dot');
+    });
+
+    it('★ an absolute path is still rejected through a symlinked root', async () => {
+      const { link } = await symlinkedRoot();
+      assertRejected(await assertWithinRoot(link, '/etc/hostname'), 'path_escape', 'absolute');
+    });
+
+    it('★ a symlink INSIDE the root pointing outside is still rejected', async () => {
+      const { link, real } = await symlinkedRoot();
+      await symlink('/etc/hostname', join(real, 'escape.wav'));
+      assertRejected(await assertWithinRoot(link, 'escape.wav'), 'path_escape', 'inner symlink');
     });
   });
 });

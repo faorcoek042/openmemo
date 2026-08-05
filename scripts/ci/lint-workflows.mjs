@@ -173,7 +173,32 @@ for (const file of files.sort()) {
   must(!/choco install ninja/.test(allText), 'build-backends.yml: choco install ninja 回来了，而脚本仍然没有 -G Ninja（C6）');
 
   const ci = parse(await readFile(join(WF_DIR, 'ci.yml'), 'utf8'));
-  must(ci.on?.push === undefined, 'ci.yml: 不许自动 push 触发（用户要求第一次手动）');
+  /*
+   * ★ T-145：这条断言**方向反过来了**，而且是被用户的新指令翻的。
+   *
+   * T-144 写下它时的前提是「用户要求第一次手动跑并盯着」，那时候 `on.push` 存在
+   * 就是违规。2026-08-05 手动跑通（1m42s 绿）之后，用户指示改为自动触发 ——
+   * 理由是那句「一个只能手动触发的 CI 不是 CI」。
+   *
+   * 值得记一笔的是：**这条守卫在我改 ci.yml 的当天就红了，而且红得完全正确。**
+   * 它拦住的不是错误，是一个**已经过期的前提**。守卫该改，不是该删 ——
+   * 所以这里把它翻成正向断言：现在「没有自动触发」才是违规。
+   */
+  must(ci.on?.push !== undefined, 'ci.yml: 门禁必须自动触发（用户 2026-08-05 指令），on.push 不见了');
+  must(
+    Array.isArray(ci.on?.push?.branches) && ci.on.push.branches.includes('master'),
+    'ci.yml: on.push 应限定 branches: [master]（配合 pull_request，避免 PR 分支双触发）',
+  );
+  must('pull_request' in (ci.on ?? {}), 'ci.yml: 缺 pull_request 触发');
+  /*
+   * ★ 不许加 paths / paths-ignore 过滤。理由写在 ci.yml 的文件头，一句话版本：
+   *   被 paths 过滤掉的检查在分支保护里显示为「未运行」而不是「通过」，
+   *   而且它和本仓在清的假绿家族是同一个形状 ——「没跑」和「跑了并通过」长得一样。
+   */
+  must(
+    ci.on?.push?.paths === undefined && ci.on?.push?.['paths-ignore'] === undefined,
+    'ci.yml: on.push 上出现了 paths/paths-ignore 过滤 —— 理由见 ci.yml 文件头，别加',
+  );
   const runs = (ci.jobs?.gate?.steps ?? []).map((s) => String(s.run ?? '')).join('\n');
   for (const cmd of ['pnpm typecheck', 'pnpm lint', 'pnpm -r test', 'pnpm test:ci-scripts']) {
     must(runs.includes(cmd), `ci.yml: 门禁里没有 \`${cmd}\``);
