@@ -85,9 +85,26 @@ fi
 
 log "built: ${OUT} ($(du -h "${OUT}" | cut -f1))"
 log "smoke test:"
-if LD_LIBRARY_PATH="${GGML_LIB_DIR}" DYLD_LIBRARY_PATH="${GGML_LIB_DIR}" \
+# ★ T-145（第一次真跑 Windows 才看得见）：这条冒烟测试原本只设
+#   `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH` —— **在 Windows 上这两个变量都是死的**
+#   （platform T-141 §3 第 18 条早就点名了这一点，但当时是 `[读码]`）。
+#   Windows 的加载器按「exe 自己的目录 → PATH → …」找 DLL，而 ggml 的 DLL 在
+#   `${GGML_LIB_DIR}`（= .build/…/bin/Release），probe.exe 却被写到 dist/probe/ 。
+#   实测（run 31017917421, windows-x64-cpu）：
+#     ==> built: dist/probe/openmemo-probe.exe (60K)
+#     ==> smoke test:
+#     error: probe did not produce output
+#   —— 编得出来、跑不起来，而且**上一步刚刚成功打出了第一个 Windows 包**，
+#      所以这条是新暴露出来的下一层，不是回归。
+#   → Windows 上把库目录加进 PATH。三个变量都设是刻意的：**没有哪个平台会因为
+#     多了一个它不认识的环境变量而出错**，而"每个平台各设各的"要靠人记得。
+if PATH="${GGML_LIB_DIR}:${PATH}" \
+   LD_LIBRARY_PATH="${GGML_LIB_DIR}" DYLD_LIBRARY_PATH="${GGML_LIB_DIR}" \
    "${OUT}" "${GGML_LIB_DIR}" 2>/dev/null | head -8; then
   log "probe OK"
 else
-  die "probe did not produce output"
+  die "probe did not produce output
+  GGML_LIB_DIR=${GGML_LIB_DIR}
+  该目录的内容：
+$(ls -la "${GGML_LIB_DIR}" 2>&1 | sed 's/^/    /' || true)"
 fi

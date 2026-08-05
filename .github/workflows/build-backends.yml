@@ -226,7 +226,13 @@ jobs:
           #   （linux-arm64-cpu / linux-arm64-vulkan success）—— 删的不是坏的那些。
           - { runner: ubuntu-22.04,     arch: x64,   backend: cpu }
           - { runner: ubuntu-24.04,     arch: x64,   backend: vulkan }
-          - { runner: ubuntu-24.04,     arch: x64,   backend: cuda }
+          # ★ T-145 第二轮：**CUDA 必须留在 22.04**。
+          #   我第一轮把它一起挪到了 noble，第二轮当场证明那是错的：
+          #     Package 'cuda-nvcc-12-4' has no installation candidate
+          #     Package 'cuda-cudart-12-4' has no installation candidate
+          #   NVIDIA 的 ubuntu2404 仓库里**没有 12.4 这一代**。
+          #   jammy 上这三个包第一轮是装得上的，只有 cuBLAS 那两个名字错了。
+          - { runner: ubuntu-22.04,     arch: x64,   backend: cuda }
     steps:
       - uses: actions/checkout@v6
         with:
@@ -279,14 +285,17 @@ jobs:
         with:
           cuda: '12.4.0'
           method: 'network'
-          # ★ T-145 实测（run 31014564498，linux-x64-cuda）：`cublas` / `cublas-dev`
-          #   这两个名字**不存在**。该 action 把它们拼成 `cuda-cublas-12-4`，apt 说：
-          #     E: Unable to locate package cuda-cublas-12-4
-          #     E: Unable to locate package cuda-cublas-dev-12-4
-          #   CUDA 11 之后 cuBLAS 从 `cuda-*` 改名到 `libcublas-*`（它变成了独立于
-          #   CUDA toolkit 版本的数学库）。Windows job 那份写的是 `cublas_dev`
-          #   （下划线），同样是不存在的名字 —— 两处一起改。
-          sub-packages: '["nvcc","cudart","libcublas","libcublas-dev","nvrtc","nvrtc-dev"]'
+          # ★ T-145：cuBLAS 走 `non-cuda-sub-packages`，**不是** `sub-packages`。
+          #   两轮实测把这条钉死了 ——
+          #     第一轮 sub-packages 里写 "cublas"      → E: Unable to locate package cuda-cublas-12-4
+          #     第二轮 sub-packages 里写 "libcublas"   → E: Unable to locate package cuda-libcublas-12-4
+          #   因为该 action 对 `sub-packages` 的每一项都拼成 `cuda-<项>-<major>-<minor>`。
+          #   而 CUDA 11 之后 cuBLAS 的真实包名是 `libcublas-12-4`（不带 `cuda-` 前缀，
+          #   它已经是独立于 toolkit 版本的数学库）—— 这类包正是该 action 的
+          #   `non-cuda-sub-packages` 输入存在的理由。
+          #   ⚠️ **未验证**：这一条要看下一轮日志才算数。前两次我都改错了，这是第三次。
+          sub-packages: '["nvcc","cudart","nvrtc","nvrtc-dev"]'
+          non-cuda-sub-packages: '["libcublas","libcublas-dev"]'
 
       # --- ROCm ----------------------------------------------------------------------
       # No maintained setup action exists; this mirrors llama.cpp's apt route.

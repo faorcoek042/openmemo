@@ -303,22 +303,65 @@ case "${HOST_OS}" in
   *)      SO_EXT="so";    LIB_PREFIX="lib" ;;
 esac
 
+# ★★ T-145（**本轮最贵的一条，只有真 macOS runner 才看得见**）
+#
+# `-DGGML_BACKEND_DL=ON` 让每个后端变成一个**运行时加载的模块**，而 CMake 对
+# `add_library(... MODULE)` 用的是 `CMAKE_SHARED_MODULE_SUFFIX` —— 在 **Apple 平台上
+# 它是 `.so`，不是 `.dylib`**（dylib 是给 SHARED 库的）。真机日志逐行印证：
+#
+#     [ 21%] Linking CXX shared library ../../bin/libggml-base.dylib   ← SHARED → dylib
+#     [ 33%] Linking CXX shared module  ../../../bin/libggml-blas.so   ← MODULE → .so
+#     [ 46%] Linking CXX shared module  ../../../bin/libggml-metal.so  ← MODULE → .so
+#     [ 60%] Linking CXX shared module  ../../bin/libggml-cpu.so       ← MODULE → .so
+#
+# 后果分两种，**而危险的是绿的那种**：
+#   · macos-arm64-metal：只找 `libggml-metal.dylib` → 一个都没匹配 → 暂存目录空
+#     → `emit-pack-manifest` 报错 → **红**（被 ci-prep 的 C5 族守卫接住了）
+#   · macos-arm64-cpu ：`libggml-cpu.so` 同样没匹配上，**但别的 dylib 匹配上了**
+#     → 暂存目录非空 → 打出一个 1.4 MB 的 tar.gz → **job success，CI 全绿**
+#     实测内容只有 8 个文件、且**没有任何 ggml 后端模块**：
+#       libggml-base.0.15.1.dylib / libggml.0.15.1.dylib /
+#       libwhisper.1.9.1.dylib / libparakeet.1.9.1.dylib / whisper-cli
+#     对照 Windows 同一轮的包：17 个文件 3.8 MB，含 10 个 ggml-cpu-*.dll。
+#     **BACKEND_DL 模式下没有后端模块 = whisper-cli 起来后一个后端都注册不到 = 不能推理。**
+#     也就是说：**一个绿灯的、能下载的、装上去用不了的 macOS 包。**
+#
+# → 模块后缀与共享库后缀必须分开。
+MOD_EXT="${SO_EXT}"
+[[ "${HOST_OS}" == "darwin" ]] && MOD_EXT="so"
+
 copy_if_exists() { for f in "$@"; do [[ -e "$f" ]] && cp -a "$f" "${STAGE}/"; done; true; }
 
 if [[ "${BACKEND}" == "cpu" ]]; then
   copy_if_exists \
     "${BIN_DIR}/${LIB_PREFIX}ggml-base."*"${SO_EXT}"* \
     "${BIN_DIR}/${LIB_PREFIX}ggml."*"${SO_EXT}"* \
-    "${BIN_DIR}/${LIB_PREFIX}ggml-cpu-"*".${SO_EXT}" \
+    "${BIN_DIR}/${LIB_PREFIX}ggml-cpu.${MOD_EXT}" \
+    "${BIN_DIR}/${LIB_PREFIX}ggml-cpu-"*".${MOD_EXT}" \
+    "${BIN_DIR}/${LIB_PREFIX}ggml-blas.${MOD_EXT}" \
     "${BIN_DIR}/${LIB_PREFIX}whisper."*"${SO_EXT}"* \
     "${BIN_DIR}/${LIB_PREFIX}parakeet."*"${SO_EXT}"* \
     "${BIN_DIR}/whisper-cli"* \
     "${BIN_DIR}/whisper-server"* \
     "${BIN_DIR}/whisper-bench"* \
     "${BIN_DIR}/whisper-vad-speech-segments"*
+
+  # ★ 守卫：核心包里**必须**至少有一个 ggml CPU 后端模块。
+  #   上面那个 bug 的要害不是"少拷了一个文件"，是**少拷了它还报绿**。
+  #   判据不是"记得把后缀写对"，是"写错了会当场红"。
+  if ! ls "${STAGE}/${LIB_PREFIX}ggml-cpu"*".${MOD_EXT}" >/dev/null 2>&1; then
+    {
+      echo "==> BIN_DIR (${BIN_DIR}) 实际内容："
+      ls -la "${BIN_DIR}" 2>&1 || true
+    } >&2
+    die "核心包里没有任何 ggml CPU 后端模块（找的是 ${LIB_PREFIX}ggml-cpu*.${MOD_EXT}）。
+  GGML_BACKEND_DL=ON 下后端是运行时加载的模块，少了它 whisper-cli 一个后端都注册不到 ——
+  **而这种包在过去是能打出来并报绿的**（T-145 在 macos-arm64-cpu 上实测到）。"
+  fi
 else
   # Accelerator packs carry ONLY the delta over the core pack.
-  copy_if_exists "${BIN_DIR}/${LIB_PREFIX}ggml-${BACKEND}.${SO_EXT}"
+  # ★ T-145：加速后端也是 MODULE，darwin 上同样是 `.so`（见上面那段）。
+  copy_if_exists "${BIN_DIR}/${LIB_PREFIX}ggml-${BACKEND}.${MOD_EXT}"
   # Vendor runtime libraries that ggml links but the OS does not provide.
   # NOTE: libcuda / nvcuda ships with the NVIDIA *driver* and must NEVER be redistributed.
   case "${BACKEND}" in
