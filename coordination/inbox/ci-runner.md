@@ -338,3 +338,78 @@ emit-pack-manifest: archive not found: dist/packs/whispercpp-cpu-win-x64.zip
 
 **`ci-crossplatform` 第二轮与第一轮完全一致**（linux 绿，darwin/win 红），
 因为我没有动那 6 条测试 —— 它们的定性见 `D-11` §3.3，建议派 `test-gaps`。
+
+---
+
+## [2026-08-05 23:50] T-145 PROGRESS（第三轮：**3/12 → 5/8 绿**）
+
+### 第三轮（run 31019163756）
+
+| job | 第一轮 | 第二轮 | 第三轮 |
+|---|---|---|---|
+| linux-x64-cpu | ✅ | ✅ | ✅ |
+| linux-x64-vulkan | ❌ glslc | ✅ | ✅ |
+| linux-x64-cuda | ❌ 包名 | ❌ 包名 | **过了 apt，正在编译** |
+| macos-arm64-cpu | ❌ bash 3.2 | ⚠️ **绿但包是坏的** | ✅ **包是真的了** |
+| macos-arm64-metal | ❌ 空包 | ❌ 空包 | ❌ **包有了，卡在签名验证模式** |
+| windows-x64-cpu | ❌ zip | ❌ probe | ✅ |
+| windows-x64-vulkan | ❌ zip | ✅ | ✅ |
+| windows-x64-cuda | ❌ zip | （被我取消） | 编译中 |
+
+**已确认 5 绿 / 1 红（已修待验）/ 2 编译中。** 第一轮是 3 绿 / 8 红 / 1 skip（共 12）。
+
+### macos-arm64-cpu：从「绿灯的坏包」变成真包
+
+```
+第二轮   8 staged files / 1.4M / 没有任何 ggml 后端模块
+第三轮  10 staged files / 1.8M：
+   libggml-cpu.so                811952   ← 之前整个缺失
+   libggml-blas.so                72800   ← 之前整个缺失
+   whisper-server / whisper-bench / whisper-vad-speech-segments   ← 之前也都缺
+   libggml-base / libggml / libwhisper / libparakeet / whisper-cli
+```
+probe 冒烟测试也真的吐 JSON 了（`"schemaVersion": 1`）。
+
+### macos-arm64-metal：**第一次产出了非空的 metal 包**，然后被守卫拦下 —— 拦得对
+
+```
+emit-pack-manifest: wrote …/whispercpp-metal-macos-arm64.json (1 staged files)
+==> pack: …/whispercpp-metal-macos-arm64.tar.gz (160K)
+  libggml-metal.so   828512
+…
+verified 0 signed file(s)
+::error::checked 0 files under … — the pack is empty or the name patterns drifted
+```
+签名验证的模式是 `*.dylib|*whisper-cli|*whisper-server|*openmemo-probe`，
+而这个包里**只有一个 `libggml-metal.so`** —— 同一个 `.so` 根因的第三处显形。
+
+> 👍 **`ci-prep` 的 C5 守卫在这里第二次证明了自己**：它没有静默放过，
+> 而是明确说"我一个都没检查到"。**要改的是模式，不是守卫。**
+> （`build-whisper.sh` 的签名那步用 `-name '*.dylib' -o -perm -u+x`，
+> `.so` 带可执行位，所以它们**本来就被签了**，只是没被验。）
+
+已修（`ff99099`）：模式补上 `*.so` 与两个新二进制。**待第四轮验证。**
+
+### windows-x64-cpu：probe 的 PATH 修复生效
+
+```
+==> pack: D:/a/.../whispercpp-cpu-win-x64.zip (3.8M)
+==> built: dist/probe/openmemo-probe.exe (60K)
+==> smoke test:
+  "schemaVersion": 1,
+==> probe OK
+```
+
+### 一条流程说明
+
+第二轮的 `windows-x64-cuda` 跑了 32 分钟仍未结束，把第三轮**堵在队列里**
+（`concurrency.cancel-in-progress: false`）。我 `gh run cancel` 了**第二轮** ——
+第三轮跑的是同一份代码的超集，取消不丢信息。**没有取消过任何别人发起的 run。**
+
+### 交接状态（我停在这里）
+
+- **待验证**：第四轮（metal 签名模式 `*.so`）—— 我**没有**发起第四轮，
+  因为第三轮的两个 CUDA job 还在编译，发了也是排队。
+  **发起方式**：`gh workflow run build-backends.yml --ref master`。
+- **两个 CUDA job 的结果我没等到**，标 `[未验证]`。
+  linux-x64-cuda 已经**过了 apt 那一关**（前两轮都死在那里），这一条算部分验证。
