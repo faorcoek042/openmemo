@@ -164,14 +164,30 @@ async function stopDaemon() {
   proc = null;
 }
 
+/*
+ * ★ T-145：带重试。第二轮真跑里出现过 `fetch failed`，而 daemon **是活着的**
+ *   （exitCode=null，日志停在「就绪 http://127.0.0.1:19700/」）——
+ *   典型的 Node 全局 fetch keep-alive socket 被对端回收后复用。
+ *   这里重试的是**我这个客户端的脆弱**，不是在掩盖产品的失败：
+ *   连续 5 次都失败仍然会抛出去。
+ */
 const j = async (path, init) => {
-  const res = await fetch(`${BASE}${path}`, init);
-  const text = await res.text();
-  try {
-    return { status: res.status, body: JSON.parse(text) };
-  } catch {
-    return { status: res.status, body: text };
+  let lastErr;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const res = await fetch(`${BASE}${path}`, init);
+      const text = await res.text();
+      try {
+        return { status: res.status, body: JSON.parse(text) };
+      } catch {
+        return { status: res.status, body: text };
+      }
+    } catch (e) {
+      lastErr = e;
+      await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+    }
   }
+  throw new Error(`${path}: ${lastErr?.message ?? 'fetch failed'}（已重试 5 次）`);
 };
 
 function extLine(tag, health) {
@@ -241,9 +257,18 @@ try {
           break;
         }
         const job = jr.body?.job ?? jr.body;
-        if (!job || job.id !== jobId) {
+        /*
+         * ★ T-145 第二轮又踩了一次，值得记：**job 的标识字段是 `uid` 不是 `id`**。
+         *   packages/shared/src/jobs.ts:182 明写「ULID … the ONLY job identifier
+         *   the API exposes」，字段名是 D-02 的 `jobs.uid`。
+         *   我按 `job.id` 比，于是每次都判成"端点返回的不是这个 job（拿到 id=undefined）"。
+         *   —— 这一版至少**红得诚实**：它说不认识，而不是拿别人的成功顶上。
+         *   两个字段都收，哪个在用哪个。
+         */
+        const gotId = job?.uid ?? job?.id;
+        if (!job || gotId !== jobId) {
           // 绝不拿别的 job 顶上 —— 那正是第一版的 bug。
-          status = `端点返回的不是这个 job（拿到 id=${job?.id}）`;
+          status = `端点返回的不是这个 job（要 ${jobId}，拿到 ${gotId}）`;
           break;
         }
         if (['succeeded', 'failed', 'cancelled'].includes(job.state)) {
@@ -258,9 +283,9 @@ try {
 
   // ★ 地面真相：不信 job 的自述，直接问"到底装上了哪些"。
   const inst = await j('/api/backends/installed');
-  const installedIds = new Set(
-    (Array.isArray(inst.body) ? inst.body : (inst.body?.packs ?? inst.body?.installed ?? [])).map((x) => x.id),
-  );
+  const instArr = Array.isArray(inst.body) ? inst.body : (inst.body?.packs ?? inst.body?.installed ?? []);
+  const installedIds = new Set(instArr.map((x) => x.id ?? x.packId));
+  say(`   （/api/backends/installed 返回 ${instArr.length} 条）`);
   say();
   say('   ── 独立核对：/api/backends/installed 怎么说 ──');
   for (const p of applicable) {
