@@ -253,10 +253,29 @@ async function checkCoreMl(
     return;
   }
 
+  /*
+   * ★ 只有 whisper.cpp 的 ggml `.bin` 才谈得上 CoreML encoder。
+   *
+   * `by-name/asr` 下也躺着 sherpa 的 onnx 分片（`encoder-epoch-99-avg-1.int8.onnx` 之类）——
+   * 第一次真跑时这一项就对着它算出了 `缺 decoder-epoch-99-avg-1.int8-encoder.mlmodelc`，
+   * 一句**语法正确但毫无意义**的话。一条会对不相干的东西发表意见的检查，
+   * 说对的时候也不该被相信。
+   */
+  const ggml = realAsr.filter((n) => n.toLowerCase().endsWith('.bin'));
+  if (ggml.length === 0) {
+    emit(
+      'warn',
+      `没有 whisper.cpp 的 ggml 模型，ANE 不适用（CoreML encoder 只服务 whisper.cpp；`
+        + `当前 by-name/asr 下是：${realAsr.slice(0, 4).join(', ')}）`,
+      null,
+    );
+    return;
+  }
+
   const found: string[] = [];
   const shells: string[] = [];
   const missing: string[] = [];
-  for (const bin of realAsr) {
+  for (const bin of ggml) {
     const encName = coreMlEncoderNameFor(bin);
     const encDir = join(asrDir, encName);
     let entries: string[];

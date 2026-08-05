@@ -407,14 +407,27 @@ try {
    *   挑最小的那个：这一步证的是"这条路走得通"，不是"跑得多快"。
    */
   if (TRANSCRIBE) {
+    /*
+     * ★ 必须挑 **whisper.cpp 能加载的**那种，不能只按"最小"挑。
+     *
+     * 第一次真跑挑到的是 `asr/sherpa-streaming-zh-14m`（24 MB，确实最小）——
+     * 但它是 sherpa 的中文流式 onnx 模型，而样本 `jfk.wav` 是英语，
+     * 且本轮要证的正是 **whisper.cpp + ffmpeg 这条链**。
+     * 挑错引擎的话，这一步就算绿了也证明不了它该证明的东西。
+     */
+    const forWhisper = (m) =>
+      (m.engines ?? []).includes('whisper.cpp') || /^asr\/whisper-/.test(String(m.id ?? ''));
     const asr = models
-      .filter((m) => m.role === 'asr' && !pick.some((p) => p.id === m.id))
+      .filter((m) => m.role === 'asr' && forWhisper(m) && !pick.some((p) => p.id === m.id))
       .map((m) => ({ m, bytes: sizeOf(m) }))
       .filter((x) => x.bytes > 0)
       .sort((a, b) => a.bytes - b.bytes)[0];
     if (!asr) {
       // 空集必须出声（本仓同一形状已发生三次）。
-      say('   ⚠️ --transcribe：目录里挑不出任何 role=asr 的模型 —— 先怀疑 unwrap，再怀疑目录。');
+      say('   ⚠️ --transcribe：目录里挑不出任何 whisper.cpp 能加载的 asr 模型 —— 先怀疑 unwrap，再怀疑目录。');
+      for (const m of models.filter((x) => x.role === 'asr').slice(0, 8)) {
+        say(`      （role=asr 的有：${m.id} engines=${JSON.stringify(m.engines ?? null)}）`);
+      }
     } else {
       say(
         `   --transcribe：另挑最小的 ASR 模型 ${asr.m.id}（${(asr.bytes / 1024 / 1024).toFixed(0)} MB）`,

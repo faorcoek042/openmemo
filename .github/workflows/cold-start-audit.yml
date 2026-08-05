@@ -60,7 +60,15 @@ jobs:
           - { runner: macos-26, label: darwin-arm64 }
           - { runner: windows-2025, label: win32-x64 }
     steps:
+      # ★ T-146：`submodules: recursive` **不能省**。
+      #   转写可行性证明用的音频样本是 whisper.cpp submodule 自带的
+      #   `vendor/whisper.cpp/samples/jfk.wav` —— 不带 submodule 的 checkout 下，
+      #   第 7 节会如实报「样本不存在 —— submodule 没 checkout？」然后红。
+      #   （第一次真跑就是这么红的：三个平台一模一样的一行。**它诚实地说了自己缺什么**，
+      #     而不是跳过这一步报绿 —— 那才是这个仓库要防的形状。）
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - uses: actions/setup-node@v6
         with:
