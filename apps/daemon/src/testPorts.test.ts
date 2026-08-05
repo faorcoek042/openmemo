@@ -42,7 +42,7 @@
  */
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
@@ -96,10 +96,29 @@ const unparsed: string[] = [];
 const num = (s: string): number => Number(s.replace(/_/g, ''));
 
 for (const file of walk(join(REPO, 'apps', 'daemon', 'src'))) {
-  const rel = relative(REPO, file);
+  /*
+   * ★ T-147：路径要归一成 `/` 才能和 `SELF` 比 —— `relative()` 在 Windows 上给的是
+   * `apps\daemon\src\…`，于是本文件排除不掉、会开始扫描自己。
+   */
+  const rel = relative(REPO, file).split(sep).join('/');
   if (rel === SELF) continue;
   const src = readFileSync(file, 'utf8');
-  const lines = src.split('\n');
+  /*
+   * ★ T-147：**按 `\r?\n` 切，不能只按 `\n`。**
+   *
+   * git 在 Windows 上默认 `core.autocrlf=true`，检出的源码是 CRLF。只按 `\n` 切，
+   * 每行末尾会多一个 `\r`，而下面那条形态正则以 `(?:\/\/.*)?$` 收尾 ——
+   * `.` 不匹配 `\r`、`$` 又要求到串尾，于是**带行尾注释的那几行整个归不了类**。
+   *
+   * `[CI 实测]` ci-crossplatform run 31039060738，win32/x64：
+   *   `restart-datadir.test.ts` 的三行 `const port = 19_7x0 + …; // 同上`
+   *   全部落进 `unparsed`，`bands` 随之少 3 个、跌破前提自检的下限。
+   *
+   * 这条**不是** Windows 专属的怪癖：任何人在 CRLF 检出的仓库里跑它都会红。
+   * 而它坏的方式恰好是本文件文件头警告过的那种 ——「遇到没见过的写法就跳过」的反面：
+   * 这次是把见过的写法也认不出来了，好在它设计成了**认不出就红**。
+   */
+  const lines = src.split(/\r?\n/);
 
   // 本文件里 `maxPort: port + N` 的最大 N（算得出宽度的那种写法要用）
   let maxExtra = 0;
