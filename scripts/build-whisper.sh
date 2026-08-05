@@ -226,7 +226,19 @@ log "build=${BUILD_DIR}"
 # configure + build
 # --------------------------------------------------------------------------------------
 rm -rf "${BUILD_DIR}"
-cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" "${COMMON_FLAGS[@]}" "${BACKEND_FLAGS[@]}"
+# ★ T-145（第一次真跑 CI 才发现的，本机 Linux 永远看不见）：
+#   `set -u` + **空数组** + **bash 3.2** = `unbound variable`。
+#   macOS 的 /bin/bash 至今是 **3.2**（Apple 因 GPLv3 停在 2007 年那一版），
+#   而 bash 4.4 才把「空数组展开不算未绑定」修掉。BACKEND_FLAGS 在 backend=cpu 时
+#   **恰好是空的** —— 于是：
+#     macos-26 / macos-15-intel, backend=cpu
+#       scripts/build-whisper.sh: line 229: BACKEND_FLAGS[@]: unbound variable
+#   而同一行在 ubuntu（bash 5.x）上跑了几十次都是绿的。
+#   `${ARR[@]+"${ARR[@]}"}` 是 bash 3.2 下唯一安全的空数组展开写法。
+#   COMMON_FLAGS 今天非空，但一样加上 —— 判据是「以后有人把它清空也不会炸」。
+cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" \
+  ${COMMON_FLAGS[@]+"${COMMON_FLAGS[@]}"} \
+  ${BACKEND_FLAGS[@]+"${BACKEND_FLAGS[@]}"}
 cmake --build "${BUILD_DIR}" --config Release -j "${JOBS}"
 
 # ★ T-144 (platform C7): multi-config generators (Visual Studio, Xcode) append the
@@ -316,6 +328,23 @@ else
         "${BIN_DIR}/cublasLt64_"*.dll "${BIN_DIR}/nvrtc"*.dll
       ;;
   esac
+fi
+
+# ★ T-145：暂存目录空掉时，**把 BIN_DIR 的真实内容打出来**再让下游去红。
+#   第一次真跑 CI 时 macos-arm64-metal 完整编译成功（100% built whisper-cli/…），
+#   随后 emit-pack-manifest 报「stage dir is empty」——
+#   **而日志里没有任何东西能告诉我们 BIN_DIR 里到底有什么**，
+#   于是「libggml-metal.dylib 叫什么名字 / 在不在 bin 下」只能靠猜。
+#   这一段不改变红绿（它不 exit），只保证下一次失败自带证据。
+if [[ -z "$(find "${STAGE}" -type f -print -quit 2>/dev/null)" ]]; then
+  {
+    echo "==> stage is EMPTY: ${STAGE}"
+    echo "==> backend=${BACKEND} looked for: ${BIN_DIR}/${LIB_PREFIX}ggml-${BACKEND}.${SO_EXT}"
+    echo "==> actual contents of BIN_DIR (${BIN_DIR}):"
+    ls -la "${BIN_DIR}" 2>&1 || true
+    echo "==> any ggml* under ${BUILD_DIR}:"
+    find "${BUILD_DIR}" -name '*ggml*' -maxdepth 4 2>/dev/null | head -40 || true
+  } >&2
 fi
 
 if [[ "${DO_STRIP}" == "1" ]]; then
@@ -411,6 +440,18 @@ emit_manifest() {
 
 if [[ "${DO_PACKAGE}" == "1" ]]; then
   mkdir -p "${OUT_DIR}"
+  # ★ T-145（第一次真跑 CI 才发现的，**只在 Windows 上错**）：
+  #   `--out dist/packs` 是**相对路径**。下面 zip 那条要先 `cd "$(dirname STAGE)"`，
+  #   于是相对的 ARCHIVE 就相对到了 `.build/whisper-win32-x64-cpu/stage/` 底下 ——
+  #   zip **成功了**（exit 0），文件写在了没人看的地方，随后：
+  #     windows-x64-cpu
+  #       emit-pack-manifest: archive not found: dist/packs/whispercpp-cpu-win-x64.zip
+  #   tar 那条没这个毛病，纯属运气：`tar -C` 是在**打开归档文件之后**才切目录的。
+  #   → 先解析成绝对路径，两条分支都不再依赖 cwd。
+  #   `pwd -W`：Git Bash 下给出 `D:/a/...` 这种 Windows 形态的绝对路径。
+  #   7z / zip 是**原生 Windows 程序**，喂它 MSYS 形态的 `/d/a/...` 是在赌
+  #   Git-for-Windows 的参数路径转换 —— 不赌。其它平台没有 `-W`，回退到 `pwd`。
+  OUT_DIR="$(cd "${OUT_DIR}" && { pwd -W 2>/dev/null || pwd; })"
   if [[ "${HOST_OS}" == "win32" ]]; then
     ARCHIVE="${OUT_DIR}/${PACK_ID}.zip"
     rm -f "${ARCHIVE}"
