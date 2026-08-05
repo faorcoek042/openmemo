@@ -1,0 +1,96 @@
+# 跨平台探针：把 TypeScript 那一套（build / typecheck / test）**真的搬到 macOS 与 Windows 上跑一遍**。
+#
+# ── 为什么它和 ci.yml 是两个文件 ────────────────────────────────────────────────────
+#
+# `ci.yml` 是**门禁**：它只跑 ubuntu-24.04，必须是绿的，红了就是有人把主线弄坏了。
+# 本文件是**探针**：它第一次跑几乎肯定是红的 —— 因为 `platform` T-141 §3 数出来全仓
+# **42 处** `process.platform` / `os.platform()` 分支，其中 **34 处（81%）在开发机上
+# 永远走不到**，而 CI 在此之前只做二进制构建，**一行 TS 测试都没跑过**。
+# 那 34 条分支从写下来那天起没有被任何自动化执行过一次。
+#
+# 把两者分开是刻意的：**探针的红不能拖着门禁一起红**，否则唯一的结局是有人给它加
+# `continue-on-error` —— 那就正好变成本仓最贵的那类 bug（失败被写成成功）。
+#
+# ── 关于 `if: ${{ !cancelled() }}` ─────────────────────────────────────────────────
+#
+# 下面几步带了 `if: ${{ !cancelled() }}`。**这和 build-backends 的 C4 不是一回事**，
+# 区别必须写清楚，否则下一个人会照着 C4 的教训把它删掉（或者反过来照它写出一个 C4）：
+#
+#   · C4（真 bug）：`merge-manifest` 用 `if: always()` 让**产出步骤**在上游全挂时照跑，
+#     于是写出 `packs: []` 还 **upload 成功、workflow 绿灯** —— 失败被写成了成功。
+#   · 这里（不是 bug）：`!cancelled()` 只让**后面的观测步骤仍然执行**。
+#     失败的那一步**依然是失败**，job 的 conclusion **依然是 failure**，
+#     没有任何步骤是 `continue-on-error`，也没有任何产物被声称为"好的"。
+#
+# 目的很具体：一次 dispatch 想把 macOS / Windows 上**所有**坏点一次列全，
+# 而不是每轮只看到最靠前的那一个然后再排队 20 分钟。**探针的价值就在信息密度**。
+#
+# ⚠️ 判据：如果哪天有人想把这个 workflow 当门禁用，**必须先把 `!cancelled()` 全删掉**。
+
+name: ci-crossplatform
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-xplat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ubuntu 这一行是**对照组**，不是冗余：没有它，macOS/Windows 的红分不清是
+          # "平台问题"还是"这一版代码本来就坏"。
+          - { runner: ubuntu-24.04,   label: linux-x64 (control) }
+          - { runner: macos-26,       label: darwin-arm64 }
+          - { runner: macos-15-intel, label: darwin-x64 }
+          - { runner: windows-2025,   label: win32-x64 }
+    steps:
+      # submodules 不拉：TS 侧一行都不需要 vendor/ 里的 C++ 源码。
+      - uses: actions/checkout@v6
+
+      # ADR-006 决策 7：Node 基线 22。**必须和 ci.yml 一致** ——
+      # T-145 第一轮就是被这条咬到的：本机 Node 24 与 CI Node 22 的
+      # `node --test` 默认发现规则不同，本机 868 全绿而 CI 当场红。
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # ★ 放在 install **之前**：它只依赖 node，装依赖挂了也还能拿到这份事实表。
+      #   这是本仓第一次在真 macOS / 真 Windows 上取得这些数据。
+      - name: Platform facts (仪表，不是门禁)
+        run: node scripts/ci/platform-facts.mjs
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.15.0
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (workspace packages)
+        if: ${{ !cancelled() }}
+        run: pnpm build:safe
+
+      - name: Typecheck
+        if: ${{ !cancelled() }}
+        run: pnpm typecheck
+
+      - name: Test
+        if: ${{ !cancelled() }}
+        run: pnpm -r test
+
+      # T-141 §3 第 30 条预测：这一步用 POSIX `find`，Windows 的 `FIND.exe` 是 grep 类
+      # 工具，语义完全不同 → catch → 返回 [] → "没找到任何源码目录" → exit 1。
+      # 放在最后单独一步，就是为了让那条预测**要么被证实、要么被推翻**，
+      # 而不是混在别的失败里看不出来。
+      - name: Tracked-sources guard (预期在 Windows 上红 —— 见 T-141 §3 第 30 条)
+        if: ${{ !cancelled() }}
+        run: pnpm check:sources

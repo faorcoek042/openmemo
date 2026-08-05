@@ -61,6 +61,7 @@ function countTestFiles(dir) {
 }
 
 const offenders = [];
+const discovery = [];
 const covered = [];
 let wiring = 0;
 
@@ -93,8 +94,24 @@ for (const root of ROOTS) {
     const n = countTestFiles(join(pkgDir, 'src'));
     if (n === 0) continue;
     const where = `${root}/${name}`;
-    if (typeof scripts.test === 'string' && scripts.test.trim() !== '') covered.push(`${where}(${n})`);
-    else offenders.push(`${where} —— ${n} 个 *.test.ts(x)，但 package.json 没有 test 脚本`);
+    if (typeof scripts.test === 'string' && scripts.test.trim() !== '') {
+      covered.push(`${where}(${n})`);
+      // ★ T-145：`node --test` 的**发现范围**必须被钉死，不能交给 node 的默认规则。
+      //   第一次真跑 GitHub CI 时（Node 22.23.1，ADR-006 决策 7 钉的基线）：
+      //   光秃秃的 `node --test` 把 `src/**/*.test.ts` 也捞了进去 ——
+      //     ERR_MODULE_NOT_FOUND: Cannot find module .../packages/llm/src/errors.js
+      //   而本机 Node 24.18.0 不捞，所以本机 867 全绿、CI 当场红。
+      //   → 现在要求带引号的 dist 位置参数。两种错法各自的后果都是「假绿」：
+      //     · 掉引号 → sh 展开 `**` 成"恰好两层"，漏跑（T-135，daemon 13→9 个文件）
+      //     · 写成 `node --test dist` → Node 24 当成一个文件，`tests 1 / pass 1` 绿灯（实测）
+      //   所以判据不是"记得加引号"，是"没加会在这里当场红"。
+      if (/node --test/.test(scripts.test) && !/node --test "dist\/\*\*\/\*\.test\.js"/.test(scripts.test)) {
+        discovery.push(
+          `${where} —— scripts.test 里的 \`node --test\` 没有跟着 "dist/**/*.test.js"（含双引号）` +
+            `\n      实际写的是: ${scripts.test.slice(scripts.test.indexOf('node --test'))}`,
+        );
+      }
+    } else offenders.push(`${where} —— ${n} 个 *.test.ts(x)，但 package.json 没有 test 脚本`);
   }
 }
 
@@ -104,6 +121,13 @@ if (offenders.length > 0) {
     `有测试文件却没有 test 脚本的包（pnpm -r test 会静默跳过它们，然后报绿）：\n` +
       offenders.map((o) => `    - ${o}`).join('\n') +
       `\n  修法：照 packages/db 的 scripts.test 抄那一行（含前置发现守卫），别再发明第七种写法。`,
+  );
+}
+if (discovery.length > 0) {
+  problems.push(
+    `\`node --test\` 的发现范围没被钉死（会漏跑或多跑，两种都以"绿灯"收场）：\n` +
+      discovery.map((o) => `    - ${o}`).join('\n') +
+      `\n  修法：结尾写成 \`&& node --test "dist/**/*.test.js"\`（**双引号不能掉**）。理由见上方注释。`,
   );
 }
 if (wiring < 2) {
