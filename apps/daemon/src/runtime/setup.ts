@@ -65,9 +65,20 @@ import type {
  */
 const ACCELERATOR_BACKENDS: readonly Backend[] = ['cuda', 'vulkan', 'rocm', 'metal', 'coreml'];
 
-/** probe 由 `gpu-runtime` 的构建从 `packages/runtime/src/native/probe.c` 产出。 */
+/**
+ * probe 由 `gpu-runtime` 的构建从 `packages/runtime/src/native/probe.c` 产出。
+ *
+ * ★ T-144（platform C10）：这里**曾经**找的是 `probe` / `probe.exe`，而
+ * **产出方与其余全部使用方用的都是 `openmemo-probe`**：
+ *   产出 `scripts/build-probe.sh:3`、`.github/workflows/build-backends.yml:105,227,313`
+ *   消费 `http/rest/selfcheck.ts:94`、`packages/runtime/src/probe/runProbe.ts`、
+ *        `packages/runtime/src/selfcheck.ts:125,346`、`scripts/selfcheck.mjs:250`
+ * 全仓只有这一行是另一个名字 —— 后果是 `probeExists` 恒 false、
+ * `GET /api/runtime/hardware` 永远报"未探测"、**L2 加速包在所有平台上都装不上**
+ * （章程要求 2.1 的「检测硬件 → 推荐后端」整条链的总开关）。
+ */
 function probeBinaryName(): string {
-  return process.platform === 'win32' ? 'probe.exe' : 'probe';
+  return process.platform === 'win32' ? 'openmemo-probe.exe' : 'openmemo-probe';
 }
 
 function whisperCliName(): string {

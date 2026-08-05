@@ -112,6 +112,24 @@ case "$(uname -m)" in
   *) die "unsupported host arch: $(uname -m)" ;;
 esac
 
+# ★ T-144 (platform C9): the **pack id** uses a different OS token than the **schema
+# field**. This is not sloppiness, it is two namespaces that were already diverging:
+#
+#   schema `os` field  -> linux / darwin / win32   (OsPlatformSchema; matches process.platform)
+#   pack id token      -> linux / macos  / win     (what every hand-written entry in
+#                                                   vendor/manifests/backends.json uses:
+#                                                   whispercpp-cpu-win-x64, ytdlp-macos-arm64)
+#
+# The old script used HOST_OS for both, so CI would have produced
+# `whispercpp-cpu-win32-x64` next to the hand-written `whispercpp-cpu-win-x64`
+# -- **the same pack under two ids**, both shown in the UI, neither knowing about
+# the other. Nothing would have caught it: both are valid schema-wise.
+case "${HOST_OS}" in
+  linux)  PACK_OS="linux" ;;
+  darwin) PACK_OS="macos" ;;
+  win32)  PACK_OS="win"   ;;
+esac
+
 # --------------------------------------------------------------------------------------
 # backend -> cmake flags
 #
@@ -130,13 +148,31 @@ COMMON_FLAGS=(
   -DWHISPER_BUILD_TESTS=OFF
   -DWHISPER_BUILD_EXAMPLES=ON
   -DWHISPER_SDL2=OFF
-  # Make the pack relocatable: resolve sibling .so files relative to the binary itself,
-  # so an extracted pack runs from anywhere with no LD_LIBRARY_PATH. Same flags
-  # llama.cpp's release CI uses. Verified: extracted to a clean dir and run under
-  # `env -u LD_LIBRARY_PATH`, whisper-cli loaded libggml-cpu-zen4.so from its own folder.
-  -DCMAKE_INSTALL_RPATH='$ORIGIN'
   -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
 )
+
+# --------------------------------------------------------------------------------------
+# Relocatability: resolve sibling shared libraries relative to the binary itself, so an
+# extracted pack runs from anywhere with no LD_LIBRARY_PATH. Verified on Linux: extracted
+# to a clean dir and run under `env -u LD_LIBRARY_PATH`, whisper-cli loaded
+# libggml-cpu-zen4.so from its own folder.
+#
+# ★ T-144 (platform C8): `$ORIGIN` is an **ELF/Linux** concept. macOS's dyld does not
+# understand it -- it uses `@loader_path` / `@executable_path`. The old code passed
+# `$ORIGIN` unconditionally, so "the pack is fully relocatable" (D-04 §331) was simply
+# **not true on macOS**, and nothing would have said so: the build succeeds, the pack
+# tars up fine, and it only fails on a user's machine that does not happen to have the
+# libraries somewhere dyld looks.
+#
+# scripts/build-probe.sh:70-73 already had the per-platform split. Two scripts, one of
+# them right -- copying the right one over is the whole fix.
+# UNVERIFIED on macOS: no Mac available on this box. Linux behaviour is unchanged.
+# --------------------------------------------------------------------------------------
+case "${HOST_OS}" in
+  darwin) COMMON_FLAGS+=( -DCMAKE_INSTALL_RPATH='@loader_path' ) ;;
+  win32)  : ;;  # Windows resolves DLLs from the exe's own directory; no rpath concept.
+  *)      COMMON_FLAGS+=( -DCMAKE_INSTALL_RPATH='$ORIGIN' ) ;;
+esac
 
 # CPU variant fan-out is x86-only; on arm64 ggml uses runtime feature detection instead.
 if [[ "${HOST_ARCH}" == "x64" ]]; then
@@ -180,7 +216,7 @@ esac
   Run: git submodule update --init --depth 1 vendor/whisper.cpp"
 
 BUILD_DIR="${BUILD_ROOT}/whisper-${HOST_OS}-${HOST_ARCH}-${BACKEND}"
-PACK_ID="whispercpp-${BACKEND}-${HOST_OS}-${HOST_ARCH}"
+PACK_ID="whispercpp-${BACKEND}-${PACK_OS}-${HOST_ARCH}"
 
 log "host=${HOST_OS}/${HOST_ARCH} backend=${BACKEND} jobs=${JOBS}"
 log "src=${SRC_DIR}"
@@ -193,9 +229,34 @@ rm -rf "${BUILD_DIR}"
 cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" "${COMMON_FLAGS[@]}" "${BACKEND_FLAGS[@]}"
 cmake --build "${BUILD_DIR}" --config Release -j "${JOBS}"
 
-BIN_DIR="${BUILD_DIR}/bin"
-[[ -d "${BIN_DIR}" ]] || BIN_DIR="${BUILD_DIR}/Release/bin"
-[[ -d "${BIN_DIR}" ]] || die "cannot locate build output dir under ${BUILD_DIR}"
+# ★ T-144 (platform C7): multi-config generators (Visual Studio, Xcode) append the
+# configuration name to CMAKE_RUNTIME_OUTPUT_DIRECTORY, so whisper.cpp's `${BUILD}/bin`
+# actually becomes `${BUILD}/bin/Release`. The old code only tried `bin` and
+# `Release/bin` -- **neither of which is where MSVC puts things** -- and the workflow
+# then hard-coded a third path of its own. Try all three, in the order that puts the
+# single-config (Linux/macOS Makefile+Ninja) answer first.
+BIN_DIR=""
+for cand in "${BUILD_DIR}/bin" "${BUILD_DIR}/bin/Release" "${BUILD_DIR}/Release/bin"; do
+  # A directory that exists but holds no regular files is not the output dir -- on MSVC
+  # `${BUILD}/bin` exists as the *parent* of `bin/Release`, so `-d` alone picks the wrong one.
+  if [[ -d "${cand}" ]] && [[ -n "$(find "${cand}" -maxdepth 1 -type f -print -quit 2>/dev/null)" ]]; then
+    BIN_DIR="${cand}"; break
+  fi
+done
+[[ -n "${BIN_DIR}" ]] || die "cannot locate build output dir under ${BUILD_DIR}
+  tried: bin, bin/Release, Release/bin (all missing or empty)"
+
+# ★ T-144 (platform C7): tell the caller where things landed instead of making it guess.
+# The workflow used to hard-code `.build/whisper-win32-<arch>-cpu/bin`, which is both the
+# wrong OS token (see PACK_OS above) and the wrong sub-directory on MSVC. Exporting the
+# resolved values means the workflow can never drift from the script again.
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+  {
+    printf 'pack_id=%s\n' "${PACK_ID}"
+    printf 'bin_dir=%s\n' "${BIN_DIR}"
+    printf 'build_dir=%s\n' "${BUILD_DIR}"
+  } >> "${GITHUB_OUTPUT}"
+fi
 
 # --------------------------------------------------------------------------------------
 # record the ggml ABI.
@@ -222,6 +283,7 @@ log "ggml ABI: ${GGML_ABI}"
 # --------------------------------------------------------------------------------------
 STAGE="${BUILD_DIR}/stage/${PACK_ID}"
 rm -rf "${STAGE}"; mkdir -p "${STAGE}"
+[[ -n "${GITHUB_OUTPUT:-}" ]] && printf 'stage_dir=%s\n' "${STAGE}" >> "${GITHUB_OUTPUT}"
 
 case "${HOST_OS}" in
   win32)  SO_EXT="dll";   LIB_PREFIX="" ;;
@@ -288,46 +350,62 @@ fi
 # manifest fragment
 #
 # Emitted per pack and later merged into vendor/manifests/backends.json, which is the
-# input to the shared downloader (ADR-003 decision 6). SHA256 of every file is recorded
-# here so the downloader can verify -- Ollama's downloader famously does not, and
-# ADR-004 decision 5 requires us to fix that.
+# input to the shared downloader (ADR-003 decision 6).
+#
+# ★ T-144 (platform C2) — this used to be ~35 lines of `printf` right here, and what it
+# produced was **structurally incompatible with BackendPackSchema**:
+#     missing 8 required fields  (displayName / displayNameZh / totalSizeBytes /
+#                                 requiresDriver / license / providesFiles / priority /
+#                                 catalogVersion)
+#     4 undeclared fields        (engineCommit / buildHost / builtAt / archive)
+#                                -- the schema is `.strict()`, one extra key is fatal
+#     files[] missing            role / mirrors  (ArtifactFileSchema)
+#     zero URLs anywhere         -- so even with the fields fixed, the manifest-level
+#                                superRefine would reject it
+#
+# It had never been executed, so none of that had ever been noticed. The root cause is
+# not carelessness: **the schema lives in TypeScript and the fragment was assembled in
+# bash printf, and nothing existed that could ever compare the two.** The only checker
+# ran three jobs later, on a runner that had never run.
+#
+# Now the fragment is produced by scripts/ci/emit-pack-manifest.mjs (plain node, no
+# dependencies -- the build jobs deliberately do not `pnpm install`), and
+# scripts/ci/selftest-ci-manifest.mjs feeds that emitter's output through the **real**
+# `validateBackendManifest` on this machine. Run it with `pnpm test:ci-scripts`.
+#
+# NOTE: per-file SHA256 is no longer recorded. The downloadable unit is the archive, and
+# ArtifactFileSchema describes *that*; the per-file hashes had no consumer and no place
+# to live in the schema. Archive SHA256 is still recorded and still mandatory.
 # --------------------------------------------------------------------------------------
 emit_manifest() {
   local archive="$1"
   local mf="${OUT_DIR}/${PACK_ID}.json"
-  {
-    printf '{\n'
-    printf '  "schemaVersion": 1,\n'
-    printf '  "id": "%s",\n' "${PACK_ID}"
-    printf '  "engine": "whisper.cpp",\n'
-    printf '  "engineVersion": "%s",\n' "$(git -C "${SRC_DIR}" describe --tags --always 2>/dev/null || echo unknown)"
-    printf '  "engineCommit": "%s",\n' "$(git -C "${SRC_DIR}" rev-parse HEAD 2>/dev/null || echo unknown)"
-    printf '  "ggmlAbi": "%s",\n' "${GGML_ABI}"
-    printf '  "backend": "%s",\n' "${BACKEND}"
-    printf '  "tier": "%s",\n' "$([[ "${BACKEND}" == "cpu" ]] && echo builtin || echo downloadable)"
-    printf '  "os": "%s",\n' "${HOST_OS}"
-    printf '  "arch": "%s",\n' "${HOST_ARCH}"
-    printf '  "buildHost": "%s",\n' "$(uname -srm)"
-    printf '  "builtAt": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    [[ -n "${CUDA_ARCH}" ]] && printf '  "cudaArchitectures": ["%s"],\n' "${CUDA_ARCH//;/\",\"}"
-    printf '  "benchmark": null,\n'
-    printf '  "archive": {\n'
-    printf '    "name": "%s",\n' "$(basename "${archive}")"
-    printf '    "sizeBytes": %s,\n' "$(stat -c%s "${archive}" 2>/dev/null || stat -f%z "${archive}")"
-    printf '    "sha256": "%s"\n' "$(sha256sum "${archive}" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "${archive}" | cut -d' ' -f1)"
-    printf '  },\n'
-    printf '  "files": [\n'
-    local first=1
-    while IFS= read -r f; do
-      local rel; rel="${f#"${STAGE}/"}"
-      local sz;  sz="$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f")"
-      local sum; sum="$(sha256sum "$f" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$f" | cut -d' ' -f1)"
-      [[ ${first} -eq 0 ]] && printf ',\n'
-      printf '    { "name": "%s", "sizeBytes": %s, "sha256": "%s" }' "${rel}" "${sz}" "${sum}"
-      first=0
-    done < <(find "${STAGE}" -type f | sort)
-    printf '\n  ]\n}\n'
-  } > "${mf}"
+  local tier; tier="$([[ "${BACKEND}" == "cpu" ]] && echo builtin || echo downloadable)"
+  local engine_version; engine_version="$(git -C "${SRC_DIR}" describe --tags --always 2>/dev/null || echo unknown)"
+  # Catalog version = the build date. The merge step keeps the existing catalogVersion of
+  # backends.json by default, so this value only matters for a fragment inspected alone.
+  local catalog_version; catalog_version="$(date -u +%Y.%m.%d)"
+
+  command -v node >/dev/null || die "node is required to emit the manifest fragment
+  (scripts/ci/emit-pack-manifest.mjs). Install Node >= 22 on the build runner."
+
+  local args=(
+    --pack-id        "${PACK_ID}"
+    --engine         "whisper.cpp"
+    --engine-version "${engine_version}"
+    --ggml-abi       "${GGML_ABI}"
+    --backend        "${BACKEND}"
+    --os             "${HOST_OS}"
+    --arch           "${HOST_ARCH}"
+    --tier           "${tier}"
+    --archive        "${archive}"
+    --stage          "${STAGE}"
+    --catalog-version "${catalog_version}"
+    --out            "${mf}"
+  )
+  [[ -n "${CUDA_ARCH}" ]] && args+=( --cuda-arch "${CUDA_ARCH}" )
+
+  node "${REPO_ROOT}/scripts/ci/emit-pack-manifest.mjs" "${args[@]}"
   log "manifest: ${mf}"
 }
 

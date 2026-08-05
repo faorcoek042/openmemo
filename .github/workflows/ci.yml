@@ -1,0 +1,91 @@
+# TypeScript 门禁：typecheck + lint + 全量测试。
+#
+# ── 为什么这个文件到今天才出现（platform T-141 §4 C11 / debt-audit C4）─────────────────
+#
+# 在此之前仓库里**只有一个 workflow**，而它只做二进制构建 —— **没有任何 CI 跑过
+# `tsc` / `eslint` / `pnpm test`**。123 个提交，零自动门禁。
+#
+# 直接后果：`platform` 数出来全仓 **42 处** `process.platform` / `os.platform()` 分支，
+# 其中 **34 处（81%）在开发机（Linux x64）上永远走不到**。
+# → **这 34 条分支从写下来那天起，没有被任何自动化执行过一次。**
+# 本文件也不会执行它们（GitHub runner 上跑的仍是 Linux），但它至少让
+# **编译期**的跨平台错误（类型、未使用的分支、import 路径）在合并前就红。
+#
+# ── 触发方式：目前只有 workflow_dispatch ────────────────────────────────────────────
+#
+# 用户明确要求：**第一次必须由他手动发起并盯着**（仓库刚要首次公开推送）。
+# 确认跑通之后，把下面 `on:` 里注释掉的三行放开，它就变成每次 push / PR 自动跑。
+# 在那之前，**一个"手动才跑的 CI"等于没有 CI** —— 别忘了这一步。
+on:
+  workflow_dispatch:
+  # ↓ 第一次手动跑通后放开这三行（用户决定时机）
+  # push:
+  #   branches: [master]
+  # pull_request:
+
+name: ci
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: typecheck + lint + test
+    runs-on: ubuntu-24.04
+    steps:
+      # submodules 刻意**不拉**：TS 侧一行都不需要 vendor/ 里的 C++ 源码，
+      # 而 whisper.cpp / sherpa-onnx 加起来是几百 MB 的 checkout。
+      - uses: actions/checkout@v6
+
+      # ADR-006 决策 7：Node 基线 22（better-sqlite3 v13 要求 >= 22）。
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.15.0
+
+      # ⚠️ **不加 `--ignore-scripts`**（与 build-backends 的 merge job 不同）：
+      # 这里要跑真测试，而 `packages/pipeline` 的测试会用到 ffmpeg-static /
+      # youtube-dl-exec 在 postinstall 下载的二进制。pnpm-workspace.yaml 的
+      # `onlyBuiltDependencies` 列的就是这两个，理由都写在那里。
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # ★ `pnpm build:safe`，**不是 `pnpm -r build`**（PROTOCOL §7 补充）。
+      #
+      # 在 CI 上这条区别其实不要紧（runner 是一次性的），但**保持和本地同一条命令**
+      # 才有意义：本地跑 `pnpm -r build` 会覆盖 `apps/web/dist` —— 也就是用户
+      # 正在 `:10000` 上看的那个前端 —— 而且不会有任何东西报错。两名 agent 先后踩过。
+      # 前端的编译检查由下面的 `tsc -b` 覆盖（web 的 tsconfig 在 project references 里）。
+      - name: Build (workspace packages)
+        run: pnpm build:safe
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      # 源码目录被 .gitignore 误伤的防线（真实事故：11 个源文件从未进过版本库，
+      # 且 Tailwind 因此漏扫了整个目录）。它用 POSIX `find`，在 Linux runner 上没问题。
+      - name: Tracked-sources guard
+        run: pnpm check:sources
+
+      # CI 脚本自身的正反向自检（T-144）。放在 test 前面：它比较快，
+      # 而且它红的时候意味着 build-backends 那条线是坏的 —— 那是更要紧的信号。
+      - name: CI scripts self-test
+        run: pnpm test:ci-scripts
+
+      - name: Test
+        run: pnpm -r test
+
+      # ★ 不加 `if: always()`、不加 `continue-on-error`。
+      #
+      # 这个仓库的核心病症是「失败被写成成功」（build-backends 的 merge job 就是
+      # 一个现成的样本：三个构建全挂，它照样写出一个空 manifest 并绿灯）。
+      # 任何让步骤"失败了也往下走"的写法，都会把这个 job 变成同一个东西。

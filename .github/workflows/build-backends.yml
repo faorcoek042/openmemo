@@ -1,23 +1,56 @@
 # Build whisper.cpp backend packs for every platform x backend we support.
 #
 # OWNER: gpu-runtime (T-012). Design: docs/design/D-04-build-and-runtime.md.
+# T-144 (ci-prep): fixed the 11 defects `platform` catalogued in
+# coordination/inbox/platform.md §4. See "WHAT CHANGED IN T-144" below.
 #
 # ┌──────────────────────────────────────────────────────────────────────────────────────┐
-# │ ⚠️  UNVERIFIED: THIS WORKFLOW HAS NEVER BEEN EXECUTED.                                │
+# │ ⚠️  STILL UNVERIFIED: THIS WORKFLOW HAS NEVER BEEN EXECUTED ON A RUNNER.              │
 # │                                                                                       │
-# │ The repository has no git remote (ADR-003 decision 2 records this and it was          │
-# │ escalated to the user). Nothing here has run on a GitHub runner. Every job is         │
-# │ written from documentation plus the live-verified reference workflows in              │
-# │ ggml-org/llama.cpp and ggml-org/whisper.cpp.                                          │
+# │ What HAS been verified locally (Linux x64), by extracting each step into a real       │
+# │ script and running it — `pnpm test:ci-scripts`:                                       │
+# │   - manifest fragment generation -> passes the real BackendPackSchema                 │
+# │   - merge into backends.json     -> upserts, never overwrites, validates before write │
+# │   - every failure path           -> non-zero exit AND no file written                 │
+# │   - build-whisper.sh's non-compile logic under a stubbed cmake, incl. the MSVC        │
+# │     multi-config output layout and the win/macos pack-id tokens                       │
 # │                                                                                       │
-# │ VERIFIED ON THE T-012 LINUX BOX (these two jobs mirror commands that actually ran):   │
-# │   - linux/x64/cpu     -> pack built, extracted, executed, 7.7 MB tar.gz               │
-# │   - linux/x64/vulkan  -> pack built, 22.7 MB tar.gz containing exactly one file       │
-# │ EVERYTHING ELSE (macOS, Windows, CUDA, ROCm, arm64) IS UNVERIFIED.                    │
+# │ What has NOT been verified and cannot be from here:                                   │
+# │   - anything that requires a real compiler, GPU SDK, macOS, or Windows                 │
+# │   - the `needs:` / job-skipping semantics below (reasoned from GitHub docs only)       │
+# │   - toolchain installation steps (choco/apt/CUDA/ROCm/Vulkan actions)                  │
 # │                                                                                       │
-# │ First real run WILL need fixing. Expect: SDK path drift, disk exhaustion on the CUDA  │
-# │ job, and MSVC generator quirks.                                                       │
+# │ First real run WILL still need fixing. Expect: SDK path drift, disk exhaustion on     │
+# │ the CUDA job, and MSVC generator quirks.                                              │
 # └──────────────────────────────────────────────────────────────────────────────────────┘
+#
+# ── WHAT CHANGED IN T-144 ──────────────────────────────────────────────────────────────
+#   C1  merge-manifest overwrote backends.json wholesale (all upstream packs vanished)
+#       -> now `scripts/ci/merge-backend-manifest.mjs`, which upserts by id.
+#   C2  build-whisper.sh's printf fragment was schema-incompatible (8 missing required
+#       fields, 4 undeclared, zero URLs)
+#       -> now `scripts/ci/emit-pack-manifest.mjs`, with a local schema round-trip test.
+#   C3  merged manifest had no top-level `catalogVersion` -> daemon could not load it
+#       -> the merge script carries it over and validates before writing.
+#   C4  `if: always()` wrote `packs: []` and went GREEN when every build failed
+#       -> removed. Builds fail -> workflow is RED and merge never runs. Belt-and-braces:
+#          the merge script also exits 1 on zero fragments (download-artifact succeeds
+#          with nothing to download).
+#   C5  ad-hoc signature check `continue`d over an unmatched glob and passed silently
+#       -> counts what it checked and fails on zero.
+#   C6  `choco install ninja` but build-whisper.sh never passes `-G Ninja`
+#       -> removed the install. See the note on the windows job.
+#   C7  workflow hard-coded `.build/whisper-win32-<arch>-cpu/bin`
+#       -> build-whisper.sh exports bin_dir/stage_dir/pack_id via $GITHUB_OUTPUT.
+#   C8  `-DCMAKE_INSTALL_RPATH='$ORIGIN'` on macOS (dyld wants @loader_path)
+#       -> fixed in build-whisper.sh.
+#   C9  pack ids would have been `whispercpp-cpu-win32-x64` vs the hand-written
+#       `whispercpp-cpu-win-x64` -> same pack, two ids
+#       -> fixed in build-whisper.sh (PACK_OS).
+#   C10 daemon looked for `probe`, everything else produces `openmemo-probe`
+#       -> fixed in apps/daemon/src/runtime/setup.ts.
+#   C11 no CI ran tsc / eslint / tests -> see .github/workflows/ci.yml.
+# ───────────────────────────────────────────────────────────────────────────────────────
 #
 # Runner labels were verified against docs.github.com and actions/runner-images on
 # 2026-08-02: macos-13 has been REMOVED and macos-14 is deprecated, so Intel macOS builds
@@ -28,9 +61,10 @@ name: build-backends
 
 # ⚠️ ADR-015（上游预编译优先）：本 workflow 已**降级为按需触发**，不再是默认路径。
 #
-# 现在 whisper.cpp / llama.cpp / sherpa-onnx / ffmpeg / libsimple / sqlite-vec / yt-dlp
-# 七个组件**全部直连上游预编译产物**（T-063 逐个实地核实过"上游有没有我们要的那个
+# 现在 whisper.cpp / sherpa-onnx / ffmpeg / libsimple / sqlite-vec / yt-dlp
+# 六个组件**全部直连上游预编译产物**（T-063 逐个实地核实过"上游有没有我们要的那个
 # 平台+后端的产物"）。少一套 CI 就少一类维护负担，也少一个"我们打的包和上游不一致"的风险。
+# （原来这里还写着 llama.cpp —— T-144 已按 ADR-016 决策 3 整条摘除。）
 #
 # 只有在上游确实缺失时才手动触发本 workflow：
 #   - whisper.cpp 的 Vulkan / ROCm / macOS CLI（上游至今没有）
@@ -50,8 +84,17 @@ on:
         required: false
         default: false
 
+# T-144: was `contents: write`. Nothing in this workflow creates a release or pushes a
+# commit — the "publish" step only prints a reminder. Least privilege by default; widen
+# it deliberately if publishing is ever wired up.
 permissions:
-  contents: write
+  contents: read
+
+# Two concurrent full-matrix runs would race on the ccache keys and burn macOS minutes
+# for nothing. Manual dispatch makes that easy to do by accident (double-click).
+concurrency:
+  group: build-backends-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   # ADR-004 decision 5: our downloader verifies SHA256 (Ollama's does not). The build
@@ -82,6 +125,12 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      # scripts/ci/emit-pack-manifest.mjs is plain node with zero dependencies, so this
+      # is all the toolchain the build jobs need (no `pnpm install`).
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
       - name: Check out requested whisper.cpp ref
         if: inputs.whisper_ref != ''
         run: git -C vendor/whisper.cpp checkout "${{ inputs.whisper_ref }}"
@@ -91,6 +140,7 @@ jobs:
           key: macos-${{ matrix.arch }}-${{ matrix.backend }}
 
       - name: Build pack
+        id: build
         run: |
           bash scripts/build-whisper.sh \
             --backend ${{ matrix.backend }} \
@@ -99,25 +149,44 @@ jobs:
 
       - name: Build probe
         if: matrix.backend == 'cpu'
+        # C7: take the directory the build script actually used, not a guessed one.
         run: |
           bash scripts/build-probe.sh \
-            --ggml-lib-dir ".build/whisper-darwin-${{ matrix.arch }}-cpu/bin" \
+            --ggml-lib-dir "${{ steps.build.outputs.bin_dir }}" \
             --out "dist/probe/openmemo-probe"
 
       # ADR-003 decision 4: ad-hoc only. No Developer ID, no notarisation, no stapling —
-      # the user's brief is personal use and no certificates were purchased. The daemon
-      # compensates by clearing com.apple.quarantine after download. D-04 §7 documents
-      # the paid upgrade path.
+      # the user's brief is personal use and no certificates were purchased. D-04 §7
+      # documents the paid upgrade path.
+      #
+      # ⚠️ ADR-003:83 claims the daemon clears com.apple.quarantine after download.
+      # `platform` T-141 §3.0-③ grepped the whole repo: **there is no such code**. Three
+      # documents describe a function that does not exist. Do not rely on it.
+      #
+      # C5: the old version was `for f in .build/whisper-darwin-*/stage/*/*` with
+      # `[ -f "$f" ] || continue`. When the glob matches nothing bash leaves the literal
+      # pattern in place, every iteration `continue`s, and the step passes having checked
+      # **zero files**. A guard whose failure mode is "silently pass" is not a guard.
       - name: Verify ad-hoc signature
         run: |
-          set -e
-          find "${PACK_OUTPUT_DIR}" -name '*.tar.gz' -print
-          for f in .build/whisper-darwin-*/stage/*/*; do
-            [ -f "$f" ] || continue
-            case "$f" in *.dylib|*whisper-cli|*whisper-server|*openmemo-probe)
-              codesign --verify --verbose "$f" || { echo "UNSIGNED: $f"; exit 1; } ;;
+          set -euo pipefail
+          stage="${{ steps.build.outputs.stage_dir }}"
+          [ -n "$stage" ] || { echo "::error::build step did not report stage_dir"; exit 1; }
+          [ -d "$stage" ] || { echo "::error::stage dir does not exist: $stage"; exit 1; }
+          checked=0
+          while IFS= read -r f; do
+            case "$f" in
+              *.dylib|*whisper-cli|*whisper-server|*openmemo-probe)
+                codesign --verify --verbose "$f" || { echo "::error::UNSIGNED: $f"; exit 1; }
+                checked=$((checked + 1))
+                ;;
             esac
-          done
+          done < <(find "$stage" -type f)
+          echo "verified $checked signed file(s)"
+          if [ "$checked" -eq 0 ]; then
+            echo "::error::checked 0 files under $stage — the pack is empty or the name patterns drifted"
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v6
         with:
@@ -148,6 +217,10 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
 
       - name: Check out requested whisper.cpp ref
         if: inputs.whisper_ref != ''
@@ -202,6 +275,7 @@ jobs:
           echo "/opt/rocm/bin" >> "$GITHUB_PATH"
 
       - name: Build pack
+        id: build
         run: |
           EXTRA=""
           if [ "${{ matrix.backend }}" = "cuda" ]; then
@@ -223,18 +297,22 @@ jobs:
         if: matrix.backend == 'cpu'
         run: |
           bash scripts/build-probe.sh \
-            --ggml-lib-dir ".build/whisper-linux-${{ matrix.arch }}-cpu/bin" \
+            --ggml-lib-dir "${{ steps.build.outputs.bin_dir }}" \
             --out "dist/probe/openmemo-probe"
 
       # Smoke test: extract the pack somewhere else entirely and run it with no
       # LD_LIBRARY_PATH. This catches the rpath regressions that make a pack work on the
       # builder and nowhere else. Verified to pass locally during T-012.
+      # C7/C9: use the pack id the script reported instead of hard-coding it.
       - name: Smoke test pack relocatability
         if: matrix.backend == 'cpu' && matrix.arch == 'x64'
         run: |
-          set -e
-          mkdir -p /tmp/smoke && tar xzf "${PACK_OUTPUT_DIR}"/whispercpp-cpu-linux-x64.tar.gz -C /tmp/smoke
-          cd /tmp/smoke/whispercpp-cpu-linux-x64
+          set -euo pipefail
+          pack_id="${{ steps.build.outputs.pack_id }}"
+          [ -n "$pack_id" ] || { echo "::error::build step did not report pack_id"; exit 1; }
+          mkdir -p /tmp/smoke
+          tar xzf "${PACK_OUTPUT_DIR}/${pack_id}.tar.gz" -C /tmp/smoke
+          cd "/tmp/smoke/${pack_id}"
           env -u LD_LIBRARY_PATH ./whisper-cli --help > /dev/null
           echo "pack is relocatable"
 
@@ -251,6 +329,17 @@ jobs:
   # until it accrues download reputation; downloaded backend packs will not, because a
   # programmatic HTTP download does not attach a Mark-of-the-Web. See D-04 §7.
   # =====================================================================================
+  #
+  # C6: the old workflow ran `choco install ninja -y`, but build-whisper.sh has no
+  # `-G Ninja` anywhere — grep the whole repo, it is not there. Installing a generator
+  # the build never selects costs a minute and buys nothing; worse, it makes the file
+  # *look* like it builds with Ninja. Dropping the install (rather than adding -G Ninja)
+  # is the smaller change: switching to Ninja on Windows also requires importing the MSVC
+  # environment (vcvarsall / ilammy/msvc-dev-cmd) or cl.exe is not on PATH — a second
+  # untested moving part on a workflow that has never run at all.
+  # The consequence — a multi-config VS generator whose output lands in `bin/Release` —
+  # is handled by build-whisper.sh's BIN_DIR probe, which IS covered locally by
+  # `scripts/ci/selftest-build-whisper.sh` case ②.
   windows:
     name: windows-${{ matrix.arch }}-${{ matrix.backend }}
     runs-on: ${{ matrix.runner }}
@@ -267,6 +356,10 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
       - name: Check out requested whisper.cpp ref
         if: inputs.whisper_ref != ''
         run: git -C vendor/whisper.cpp checkout "${{ inputs.whisper_ref }}"
@@ -275,9 +368,6 @@ jobs:
       - uses: ggml-org/ccache-action@v1.2.21
         with:
           key: windows-${{ matrix.arch }}-${{ matrix.backend }}
-
-      - name: Install Ninja
-        run: choco install ninja -y
 
       - name: Install Vulkan SDK
         if: matrix.backend == 'vulkan'
@@ -295,6 +385,7 @@ jobs:
           sub-packages: '["nvcc","cudart","cublas","cublas_dev","nvrtc","nvrtc_dev","visual_studio_integration"]'
 
       - name: Build pack
+        id: build
         shell: bash
         run: |
           EXTRA=""
@@ -309,7 +400,7 @@ jobs:
         shell: bash
         run: |
           bash scripts/build-probe.sh \
-            --ggml-lib-dir ".build/whisper-win32-${{ matrix.arch }}-cpu/bin" \
+            --ggml-lib-dir "${{ steps.build.outputs.bin_dir }}" \
             --out "dist/probe/openmemo-probe.exe"
 
       - uses: actions/upload-artifact@v6
@@ -324,11 +415,24 @@ jobs:
   # Merge every per-pack manifest fragment into the single backends.json the downloader
   # reads. ADR-001 requires this file to be committed so that "what did we download" is
   # auditable and reproducible.
+  #
+  # ★ C4 — THE `if: always()` IS GONE, ON PURPOSE.
+  #
+  # It used to say `if: always()`, which meant: all three build job groups fail ->
+  # this job still runs -> `artifacts/` is empty -> it writes a backends.json with
+  # `packs: []` -> upload-artifact succeeds -> **the whole workflow is green and the
+  # product catalogue is empty**. That is this project's signature disease (failure
+  # written down as success) in its purest form.
+  #
+  # Without it: any failing build job makes the workflow conclusion `failure`, and this
+  # job is skipped, so **no manifest is produced at all**. That is the correct outcome —
+  # a partial catalogue is worse than no catalogue, because a partial one looks fine.
+  # (Reasoned from GitHub's `needs`/`always()` documentation. NOT executed — see the
+  # banner at the top. The second line of defence below IS locally tested.)
   # =====================================================================================
   manifest:
     name: merge-manifest
     needs: [macos, linux, windows]
-    if: always()
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -338,32 +442,40 @@ jobs:
         with:
           node-version: '22'
 
+      # The merge script validates with the REAL BackendManifestSchema, which lives in
+      # @openmemo/shared's dist. Without it the script refuses to run rather than
+      # skipping validation — see loadValidator() in the script.
+      #
+      # pnpm is installed with plain npm rather than pnpm/action-setup or corepack:
+      # this workflow has never run once, and every third-party moving part is another
+      # thing that can fail for a reason unrelated to what we are trying to build. The
+      # version is pinned to package.json's `packageManager` field — keep them in step.
+      #
+      # `--ignore-scripts` is deliberate: the workspace's onlyBuiltDependencies
+      # (ffmpeg-static, youtube-dl-exec) download hundreds of MB of binaries at install
+      # time, and building one TypeScript package needs none of it.
+      - name: Install and build @openmemo/shared
+        run: |
+          npm install -g pnpm@10.15.0
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm --filter @openmemo/shared build
+
       - uses: actions/download-artifact@v7
         with:
           path: artifacts
           merge-multiple: true
 
+      # ★ C1 / C3 / C4 — this used to be ~15 lines of inline `node -e` inside the YAML,
+      # which is precisely why nothing could ever test it. It is now a real file with a
+      # real self-test (`pnpm test:ci-scripts`).
+      #
+      # Behaviour: upsert by pack id into the committed backends.json; keep existing
+      # upstream entries; never let a URL-less CI artifact displace a published upstream
+      # pack (ADR-015); exit 1 on zero fragments; validate before writing anything.
+      # 合并结果的表格由脚本自己写进 $GITHUB_STEP_SUMMARY —— 不在这里另起一段
+      # inline `node -e`。`scripts/ci/lint-workflows.mjs` 有一条断言挡着它回来。
       - name: Merge manifest fragments
-        run: |
-          mkdir -p vendor/manifests
-          node -e '
-            const fs = require("node:fs");
-            const dir = "artifacts";
-            const packs = fs.readdirSync(dir)
-              .filter((f) => f.endsWith(".json"))
-              .map((f) => JSON.parse(fs.readFileSync(`${dir}/${f}`, "utf8")))
-              .sort((a, b) => a.id.localeCompare(b.id));
-            const out = {
-              schemaVersion: 1,
-              generatedAt: new Date().toISOString(),
-              // Deliberately no performance figures. R-02 refused to invent a
-              // CUDA-vs-Vulkan number and ADR-003 decision 3 depends on that honesty.
-              packs,
-            };
-            fs.writeFileSync("vendor/manifests/backends.json", JSON.stringify(out, null, 2) + "\n");
-            console.log(`merged ${packs.length} packs`);
-          '
-          cat vendor/manifests/backends.json
+        run: node scripts/ci/merge-backend-manifest.mjs --fragments artifacts
 
       - uses: actions/upload-artifact@v6
         with:
@@ -371,10 +483,14 @@ jobs:
           path: vendor/manifests/backends.json
           if-no-files-found: error
 
-      # NOTE: publishing is intentionally manual. There is no remote yet, and the
-      # manifest must be signed before anything trusts it (D-04 §6).
+      # NOTE: publishing is intentionally manual. The packs this workflow produces are
+      # `availability: "pending-ci"` — they have real SHA256 digests but **no download
+      # URL**, because the artifacts live in GitHub Actions storage, not on a public URL.
+      # The frontend disables the install button for those, which is the honest state.
+      # Turning them into `published` requires (a) a real hosting location and (b) the
+      # manifest to be signed with our minisign key, pinned client-side (D-04 §6).
       - name: Publishing reminder
         if: inputs.publish
         run: |
-          echo "::warning::Publishing is not wired up. The manifest must be signed with"
-          echo "::warning::our minisign key and the public key pinned in the client first."
+          echo "::warning::Publishing is not wired up. Packs are 'pending-ci' (no URL)."
+          echo "::warning::Needs: a hosting URL for each archive + minisign signature (D-04 §6)."

@@ -1,0 +1,267 @@
+#!/usr/bin/env bash
+#
+# 本机跑通 `scripts/build-whisper.sh` 的**全部非编译逻辑**，不真的编译 whisper.cpp。
+#
+# ## 为什么需要它
+#
+# `build-whisper.sh` 里除了两行 `cmake` 之外的每一件事 —— pack id 怎么拼、输出目录怎么找、
+# stage 怎么装、manifest fragment 长什么样 —— 都是**只有在 GitHub runner 上才会被执行**的
+# 代码，而那个 workflow 从来没跑过。`platform` T-141 §4 抓到的 C2/C7/C9 三条全在这一段里。
+#
+# 编译一次 whisper.cpp 要几分钟且占满共享机器的 CPU，而**要验的东西一行都不在编译器里**。
+# 所以这里把 `cmake` 换成一个桩：它按真实的目录布局造出假的产物，
+# 然后 build-whisper.sh **原封不动地跑它自己的逻辑**。
+#
+# 覆盖到：
+#   · PACK_OS 映射（C9：pack id 用 win/macos，schema 的 os 字段用 win32/darwin）
+#   · BIN_DIR 三候选（C7：MSVC 多配置生成器输出到 bin/Release）
+#   · GITHUB_OUTPUT 导出（C7：workflow 不再硬编码路径）
+#   · stage 装配 + 打包 + emit_manifest → 真 schema 校验（C2）
+#
+# 覆盖不到（老实说）：真编译、rpath 在 macOS 上的实际效果（C8）、codesign、
+# Windows 的 zip/7z 分支（本机没有 MINGW，`uname -s` 骗不过去）。
+#
+# 跑：`pnpm test:ci-scripts`（会先跑 selftest-ci-manifest.mjs）
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/om-bw-selftest-XXXXXX")"
+trap 'rm -rf "${WORK}"' EXIT
+
+pass=0; fail=0
+ok()   { printf '  \033[32m✔\033[0m %s\n' "$1"; pass=$((pass+1)); }
+bad()  { printf '  \033[31m✘\033[0m %s\n' "$1"; printf '      %s\n' "${2:-}"; fail=$((fail+1)); }
+
+# ──────────────────────────────────────────────────────────────────────────────
+# cmake 桩：`-B <dir>` 时记下构建目录；`--build` 时按 LAYOUT 造假产物。
+# ──────────────────────────────────────────────────────────────────────────────
+make_stub_cmake() {
+  local layout="$1" stubdir="$2"
+  mkdir -p "${stubdir}"
+  cat > "${stubdir}/cmake" <<STUB
+#!/usr/bin/env bash
+set -Eeuo pipefail
+LAYOUT="${layout}"
+STUB
+  cat >> "${stubdir}/cmake" <<'STUB'
+build_dir=""
+mode="configure"
+prev=""
+for a in "$@"; do
+  if [[ "$a" == "--build" ]]; then mode="build"; fi
+  if [[ "$prev" == "-B" ]]; then build_dir="$a"; fi
+  if [[ "$mode" == "build" && "$prev" == "--build" ]]; then build_dir="$a"; fi
+  prev="$a"
+done
+[[ -n "$build_dir" ]] || { echo "stub-cmake: no build dir in: $*" >&2; exit 1; }
+
+if [[ "$mode" == "configure" ]]; then
+  mkdir -p "$build_dir"
+  # 把 configure 时收到的旗标留下来，测试要检查 rpath 那条。
+  printf '%s\n' "$@" > "$build_dir/.stub-configure-args"
+  exit 0
+fi
+
+case "$LAYOUT" in
+  single) out="$build_dir/bin" ;;          # Linux / macOS：Makefile / Ninja
+  msvc)   out="$build_dir/bin/Release" ;;  # Visual Studio 多配置生成器
+  legacy) out="$build_dir/Release/bin" ;;  # 老脚本猜的那个位置
+  *) echo "stub-cmake: unknown layout $LAYOUT" >&2; exit 1 ;;
+esac
+mkdir -p "$out"
+# multi-config 下 bin/ 会作为父目录存在但没有文件 —— 正是老逻辑会挑错的那一步。
+[[ "$LAYOUT" == "msvc" ]] && mkdir -p "$build_dir/bin"
+printf 'fake\n' > "$out/libggml-base.so.0.15.1"
+printf 'fake\n' > "$out/libggml.so.0.15.1"
+printf 'fake\n' > "$out/libggml-cpu-haswell.so"
+printf 'fake\n' > "$out/libwhisper.so.1.9.1"
+printf 'fake\n' > "$out/whisper-cli"
+printf 'fake\n' > "$out/libggml-vulkan.so"
+chmod +x "$out/whisper-cli"
+exit 0
+STUB
+  chmod +x "${stubdir}/cmake"
+}
+
+run_case() {
+  local name="$1" layout="$2" backend="$3"
+  local case_dir="${WORK}/${name}"
+  local stub="${case_dir}/stub"
+  mkdir -p "${case_dir}"
+  make_stub_cmake "${layout}" "${stub}"
+
+  local gh_out="${case_dir}/gh_output"
+  : > "${gh_out}"
+
+  # `--src` 指向真的 whisper.cpp submodule（脚本要 `git -C` 它拿版本号），
+  # 但产物全部落在临时目录里 —— 不碰仓库的 .build / dist。
+  if ! PATH="${stub}:${PATH}" GITHUB_OUTPUT="${gh_out}" \
+      bash "${REPO_ROOT}/scripts/build-whisper.sh" \
+        --backend "${backend}" \
+        --out "${case_dir}/packs" \
+        --build-root "${case_dir}/build" \
+        --no-strip \
+        > "${case_dir}/log" 2>&1; then
+    bad "${name}: build-whisper.sh 退出非零" "$(tail -20 "${case_dir}/log")"
+    return 1
+  fi
+  echo "${case_dir}"
+}
+
+echo
+echo "① Linux 单配置布局（bin/）"
+if cd1="$(run_case linux-cpu single cpu)"; then
+  gh="${cd1}/gh_output"
+  pack_id="$(sed -n 's/^pack_id=//p' "${gh}")"
+  bin_dir="$(sed -n 's/^bin_dir=//p' "${gh}")"
+  stage_dir="$(sed -n 's/^stage_dir=//p' "${gh}")"
+
+  [[ "${pack_id}" == "whispercpp-cpu-linux-x64" ]] \
+    && ok "pack id = ${pack_id}（与手写 manifest 同一套命名）" \
+    || bad "pack id 不对" "得到 ${pack_id}"
+
+  [[ "${bin_dir}" == */bin ]] \
+    && ok "BIN_DIR 落在 bin/（${bin_dir##*/build/})" \
+    || bad "BIN_DIR 不对" "${bin_dir}"
+
+  [[ -n "${stage_dir}" && -d "${stage_dir}" ]] \
+    && ok "stage_dir 已导出给 workflow（C7：不再硬编码路径）" \
+    || bad "stage_dir 没导出" "${stage_dir}"
+
+  grep -q -- "-DCMAKE_INSTALL_RPATH=\$ORIGIN" "${cd1}/build"/*/.stub-configure-args \
+    && ok "Linux 用 \$ORIGIN 作 rpath" \
+    || bad "rpath 旗标不对" "$(grep -i rpath "${cd1}/build"/*/.stub-configure-args || echo '(无 rpath 旗标)')"
+
+  frag="${cd1}/packs/${pack_id}.json"
+  if [[ -f "${frag}" ]]; then
+    ok "emit_manifest 产出了 fragment"
+    if node -e '
+      const fs=require("node:fs");
+      const {pathToFileURL}=require("node:url");
+      const frag=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+      import(pathToFileURL(process.argv[2]).href).then(({validateBackendManifest})=>{
+        const v=validateBackendManifest({schemaVersion:1,catalogVersion:"2026.08.05",
+          generatedAt:new Date().toISOString(),packs:[frag]});
+        if(!v.ok){console.error(v.errors.join("\n"));process.exit(1);}
+        if(frag.os!=="linux"){console.error("os 字段应为 linux，得到 "+frag.os);process.exit(1);}
+        if(frag.availability!=="pending-ci"){console.error("availability 应为 pending-ci");process.exit(1);}
+        if(!frag.providesFiles.includes("whisper-cli")){console.error("providesFiles 里没有 whisper-cli");process.exit(1);}
+      }).catch(e=>{console.error(String(e));process.exit(1);});
+    ' "${frag}" "${REPO_ROOT}/packages/shared/dist/index.js" 2>"${cd1}/schema.err"; then
+      ok "fragment 通过真 BackendPackSchema（C2）"
+    else
+      bad "fragment 没通过 schema" "$(cat "${cd1}/schema.err")"
+    fi
+  else
+    bad "没有 fragment" "找不到 ${frag}"
+  fi
+fi
+
+echo
+echo "② MSVC 多配置布局（bin/Release/）—— C7 的正面验证"
+if cd2="$(run_case msvc-vulkan msvc vulkan)"; then
+  bin_dir="$(sed -n 's/^bin_dir=//p' "${cd2}/gh_output")"
+  [[ "${bin_dir}" == */bin/Release ]] \
+    && ok "BIN_DIR 找到了 bin/Release（老逻辑只试 bin 与 Release/bin，两个都会落空）" \
+    || bad "BIN_DIR 没找到 bin/Release" "得到 ${bin_dir}"
+  pack_id="$(sed -n 's/^pack_id=//p' "${cd2}/gh_output")"
+  [[ -f "${cd2}/packs/${pack_id}.json" ]] \
+    && ok "多配置布局下同样产出 fragment（${pack_id}）" \
+    || bad "多配置布局下没有 fragment" "${pack_id}"
+fi
+
+echo
+echo "③ 假的 uname —— C9（pack id 用 win/macos）与 C8（rpath 分平台）"
+# 本机是 Linux，`uname -s` 骗不过去就永远测不到另外两条分支 —— 而那两条分支正是
+# 「从写下来那天起没有被任何自动化执行过」的那一类。桩掉 uname 就能在本机走到。
+# 这两个 case 用 --no-package：打 zip 需要 zip/7z（本机都没有），
+# 而要验的 PACK_OS / rpath 都在打包之前就定下来了。
+uname_case() {
+  local name="$1" uname_s="$2" uname_m="$3"
+  local case_dir="${WORK}/${name}" stub="${WORK}/${name}/stub"
+  mkdir -p "${case_dir}"
+  make_stub_cmake single "${stub}"
+  cat > "${stub}/uname" <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+  -s) echo "${uname_s}" ;;
+  -m) echo "${uname_m}" ;;
+  *)  echo "${uname_s} 0.0 ${uname_m}" ;;
+esac
+STUB
+  chmod +x "${stub}/uname"
+  local gh="${case_dir}/gh_output"; : > "${gh}"
+  PATH="${stub}:${PATH}" GITHUB_OUTPUT="${gh}" \
+    bash "${REPO_ROOT}/scripts/build-whisper.sh" \
+      --backend cpu --out "${case_dir}/packs" --build-root "${case_dir}/build" \
+      --no-strip --no-sign --no-package > "${case_dir}/log" 2>&1
+  echo "${case_dir}"
+}
+
+for spec in "win:MINGW64_NT-10.0:x86_64:whispercpp-cpu-win-x64:" \
+            "macos:Darwin:arm64:whispercpp-cpu-macos-arm64:@loader_path"; do
+  IFS=: read -r cname us um want_id want_rpath <<< "${spec}"
+  if cdir="$(uname_case "${cname}" "${us}" "${um}")"; then
+    got_id="$(sed -n 's/^pack_id=//p' "${cdir}/gh_output")"
+    [[ "${got_id}" == "${want_id}" ]] \
+      && ok "${cname}: pack id = ${got_id}（不是 ${us%%_*} 那种 process.platform token）" \
+      || bad "${cname}: pack id 不对" "want ${want_id}, got ${got_id}"
+
+    cfg="$(cat "${cdir}/build"/*/.stub-configure-args 2>/dev/null || true)"
+    if [[ -z "${want_rpath}" ]]; then
+      grep -q -- '-DCMAKE_INSTALL_RPATH' <<< "${cfg}" \
+        && bad "${cname}: 不该有 rpath 旗标（Windows 没有 rpath 概念）" "$(grep -i rpath <<< "${cfg}")" \
+        || ok "${cname}: 没有传 rpath 旗标 —— 正确"
+    else
+      grep -qF -- "-DCMAKE_INSTALL_RPATH=${want_rpath}" <<< "${cfg}" \
+        && ok "${cname}: rpath = ${want_rpath}（C8：\$ORIGIN 是 ELF 概念，dyld 不认）" \
+        || bad "${cname}: rpath 不对" "$(grep -i rpath <<< "${cfg}" || echo '(无)')"
+    fi
+  else
+    bad "${cname}: build-whisper.sh 退出非零" "$(tail -20 "${cdir:-}/log" 2>/dev/null)"
+  fi
+done
+
+echo
+echo "④ ★反向：构建什么都没产出时必须失败，而不是打出一个空包"
+empty_case="${WORK}/empty"
+mkdir -p "${empty_case}/stub"
+cat > "${empty_case}/stub/cmake" <<'STUB'
+#!/usr/bin/env bash
+# 配置成功、构建"成功"，但一个产物都不产 —— 真实世界里这就是编译静默失败的形状。
+prev=""; build_dir=""
+for a in "$@"; do
+  [[ "$prev" == "-B" ]] && build_dir="$a"
+  [[ "$prev" == "--build" ]] && build_dir="$a"
+  prev="$a"
+done
+[[ -n "$build_dir" ]] && mkdir -p "$build_dir/bin"
+exit 0
+STUB
+chmod +x "${empty_case}/stub/cmake"
+if PATH="${empty_case}/stub:${PATH}" bash "${REPO_ROOT}/scripts/build-whisper.sh" \
+      --backend cpu --out "${empty_case}/packs" --build-root "${empty_case}/build" --no-strip \
+      > "${empty_case}/log" 2>&1; then
+  bad "空产物构建居然成功了" "$(tail -5 "${empty_case}/log")"
+else
+  if grep -qE "cannot locate build output dir|stage dir is empty" "${empty_case}/log"; then
+    ok "失败了，且理由指向「构建没产出东西」而不是别的"
+  else
+    bad "失败了但理由不对" "$(tail -5 "${empty_case}/log")"
+  fi
+  if [[ -n "$(find "${empty_case}/packs" -name '*.json' 2>/dev/null)" ]]; then
+    bad "失败路径下仍然写出了 fragment" "$(find "${empty_case}/packs" -name '*.json')"
+  else
+    ok "失败路径下一个 fragment 都没写"
+  fi
+fi
+
+echo
+if [[ ${fail} -eq 0 ]]; then
+  printf '\033[32m✔\033[0m %d passed, 0 failed\n' "${pass}"
+else
+  printf '\033[31m✘\033[0m %d passed, %d failed\n' "${pass}" "${fail}"
+  exit 1
+fi
