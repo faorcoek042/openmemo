@@ -250,3 +250,91 @@ emit-pack-manifest: archive not found: dist/packs/whispercpp-cpu-win-x64.zip
 1. 等第二轮（run 31017917421 / 31017923588）跑完，按真实日志继续迭代 —— 尤其是 metal 空包那条。
 2. `ci.yml` 放开自动触发。
 3. Windows 上 `0o600` → `666` 那条（token 对本机所有用户可读）现在**有实测证据**了，值得单独派人。
+
+---
+
+## [2026-08-05 23:15] T-145 PROGRESS（第二轮结果 + 第三轮已排队）
+
+### 第二轮（run 31017917421）：`4 success / 3 failure / 1 进行中`
+
+| job | 第一轮 | 第二轮 | 说明 |
+|---|---|---|---|
+| linux-x64-cpu | ✅ | ✅ | — |
+| **linux-x64-vulkan** | ❌ glslc | **✅** | 换 ubuntu-24.04 **生效** |
+| **macos-arm64-cpu** | ❌ bash 3.2 | **✅** | bash 3.2 修复**生效** ⚠️ **但包是坏的**，见下 |
+| **windows-x64-vulkan** | ❌ zip | **✅** | zip 修复**生效**。`whispercpp-vulkan-win-x64.zip (21M)`，含 `ggml-vulkan.dll` |
+| windows-x64-cpu | ❌ zip | ❌ **新的一层** | 包**打出来了**（17 files / 3.8M），死在下一步 probe 冒烟测试 |
+| macos-arm64-metal | ❌ 空包 | ❌ **已定性** | 见下 |
+| linux-x64-cuda | ❌ 包名 | ❌ **我改错了** | 见下 |
+| windows-x64-cuda | ❌ zip | 进行中 | — |
+
+### ★★ 第二轮最重要的发现：**macos-arm64-cpu 是绿的，包却是坏的**
+
+`-DGGML_BACKEND_DL=ON` 让后端变成运行时加载的 **MODULE**，而 CMake 对
+`add_library(... MODULE)` 在 **Apple 平台上用 `.so` 后缀，不是 `.dylib`**。
+真机日志逐行印证（这四行是同一个 job 里的连续输出）：
+
+```
+[ 21%] Linking CXX shared library ../../bin/libggml-base.dylib   ← SHARED → dylib
+[ 33%] Linking CXX shared module  ../../../bin/libggml-blas.so   ← MODULE → .so
+[ 46%] Linking CXX shared module  ../../../bin/libggml-metal.so  ← MODULE → .so
+[ 60%] Linking CXX shared module  ../../bin/libggml-cpu.so       ← MODULE → .so
+```
+
+脚本按 `SO_EXT=dylib` 去找，分裂成两种后果 —— **危险的是绿的那种**：
+
+- **metal**：一个都没匹配 → 暂存空 → **红**（被 `ci-prep` 的 C5 族守卫接住）
+- **cpu**：`libggml-cpu.so` 没匹配上，**但别的 dylib 匹配上了** → 暂存非空 →
+  打出 1.4 MB 的 tar.gz → **job success**。实测内容只有 8 个文件、
+  **没有任何 ggml 后端模块**：
+  ```
+  ==> pack: .../whispercpp-cpu-macos-arm64.tar.gz (1.4M)
+  ==> contents:
+    libggml-base.0.15.1.dylib   libggml.0.15.1.dylib
+    libwhisper.1.9.1.dylib      libparakeet.1.9.1.dylib     whisper-cli
+  ```
+  对照同一轮 Windows 的包：**17 个文件 3.8 MB，含 10 个 `ggml-cpu-*.dll`**。
+
+> **BACKEND_DL 模式下没有后端模块 = `whisper-cli` 一个后端都注册不到 = 不能推理。**
+> 也就是说，这条流水线在第二轮**打出了一个绿灯的、能下载的、装上去用不了的 macOS 包**。
+> 这正是本项目最贵的那类 bug，而且**只有真 macOS runner 才看得见**
+> —— 它在 Linux 上不可能发生（Linux 的 SHARED 与 MODULE 都是 `.so`）。
+
+已修（`de98f34`）：模块后缀与共享库后缀分开（`MOD_EXT`），
+**并加了守卫**：核心包里没有 `ggml-cpu*` 模块就 `die` 并打印 `BIN_DIR` 实际内容。
+判据不是"记得把后缀写对"，是"写错了会当场红"。
+
+### 其余两条
+
+- **windows-x64-cpu**：zip 修好了，**本仓第一个 Windows whisper 包成功产出**
+  （`whispercpp-cpu-win-x64.zip 3.8M`），随后死在**新的一层**：
+  ```
+  ==> built: dist/probe/openmemo-probe.exe (60K)
+  ==> smoke test:
+  error: probe did not produce output
+  ```
+  成因正是 `platform` T-141 §3 **第 18 条**点过名的那条（当时 `[读码]`，现在实测）：
+  冒烟测试只设 `LD_LIBRARY_PATH`/`DYLD_LIBRARY_PATH`，**在 Windows 上这两个变量都是死的**。
+  → 已修：三个变量一起设，失败时打印库目录内容。
+
+- **linux-x64-cuda：我连着改错两次，这是第三次改，标 `[未验证]`**
+  ```
+  第一轮 sub-packages "cublas"    → E: Unable to locate package cuda-cublas-12-4
+  第二轮 sub-packages "libcublas" → E: Unable to locate package cuda-libcublas-12-4
+  ```
+  该 action 把 `sub-packages` 每一项都拼成 `cuda-<项>-<major>-<minor>`，
+  所以改名字没用 —— cuBLAS 得走 `non-cuda-sub-packages`。
+  第二轮还顺带证明**CUDA 必须留在 22.04**：
+  `Package 'cuda-nvcc-12-4' has no installation candidate`（在 noble 上）——
+  NVIDIA 的 `ubuntu2404` 仓库里没有 12.4 这一代。已改回 `ubuntu-22.04`。
+
+### 第三轮
+
+`run 31019163756`，状态 **pending**（排在第二轮的 `windows-x64-cuda` 后面，
+`concurrency.cancel-in-progress: false`）。**我没有等到它出结果**，
+上面所有"已修"都要以第三轮日志为准。
+
+### 新增的一条给 Manager
+
+**`ci-crossplatform` 第二轮与第一轮完全一致**（linux 绿，darwin/win 红），
+因为我没有动那 6 条测试 —— 它们的定性见 `D-11` §3.3，建议派 `test-gaps`。
