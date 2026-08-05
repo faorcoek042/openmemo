@@ -78,8 +78,14 @@ export {
   isExecutable,
   listInstalledModels,
   materializeSqliteExtensions,
+  sqliteExtensionSources,
 } from './tools.js';
-export type { ManagedDirs, MaterializedExtensions, ToolPaths } from './tools.js';
+export type {
+  ManagedDirs,
+  MaterializedExtensions,
+  SqliteExtensionSource,
+  ToolPaths,
+} from './tools.js';
 
 // -- media sources -------------------------------------------------------------------------
 export { MediaSourceRegistry } from './media/registry.js';

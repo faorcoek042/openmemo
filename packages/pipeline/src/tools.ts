@@ -217,6 +217,72 @@ export interface MaterializedExtensions {
   missing: string[];
 }
 
+export interface SqliteExtensionSource {
+  /**
+   * The name that has to exist under `bin/ext` afterwards — i.e. exactly what
+   * `@openmemo/db`'s `defaultExtensionPaths(root)` will `existsSync()` and hand to
+   * `sqlite3_load_extension()`. This side of the mapping is OURS.
+   */
+  readonly dst: string;
+  /**
+   * The names to look for INSIDE the installed packs, in order. This side is UPSTREAM'S,
+   * and upstream does not have to agree with us — see the win32 row below.
+   */
+  readonly candidates: readonly string[];
+}
+
+/**
+ * What `bin/ext` must end up containing, and what to look for in the packs to get it.
+ *
+ * ── ★ Why this is a table and not `libsimple${suffix}` (measured, T-147) ───────────────
+ * The upstream libsimple release archives do NOT use one naming rule across platforms:
+ *
+ * ```
+ * libsimple-linux-ubuntu-22.04.zip → libsimple-linux-ubuntu-22.04/libsimple.so
+ * libsimple-osx-arm64.zip          → libsimple-osx-arm64/libsimple.dylib
+ * libsimple-windows-x64.zip        → libsimple-windows-x64/simple.dll     ← ★ no `lib`
+ * ```
+ * (`[实测]` v0.7.1, the three archives named in `vendor/manifests/sqlite-ext.json`,
+ * unzipped and listed. MSVC does not prefix `lib`; the CMake target is `simple`.)
+ *
+ * The old code derived one name for all three (`libsimple` + platform suffix), so on
+ * Windows it searched for a file that is not in any archive. Consequence measured on a
+ * clean win32 cold start (CI `cold-start-audit`, D-11 §7): every pack installs and
+ * verifies, `sqlite-vec` loads, and the daemon comes up
+ * `tokenizer=trigram libsimple=false` — **Chinese two-character search silently does not
+ * work, with no error anywhere**. That is T-093 reproduced on another platform, and it is
+ * why the mapping is written down per platform instead of being computed.
+ *
+ * ── Why `dst` may differ from the name we found ────────────────────────────────────────
+ * We copy `simple.dll` to `bin/ext/libsimple.dll` rather than teaching every consumer a
+ * second name. That is safe, and the reason is specific: with no explicit entry point,
+ * SQLite derives one from the FILE NAME — it strips the directory, skips a leading `lib`,
+ * and takes the alphabetic characters up to the first `.` (`sqlite3.c`, the
+ * `zAltEntry` block). Both `simple.dll` and `libsimple.dll` therefore derive
+ * `sqlite3_simple_init`, which is the ONLY `sqlite3_*` symbol the DLL exports
+ * (`[实测]` PE export table of v0.7.1 `simple.dll`: 2623 exports, exactly one matching
+ * `sqlite3*`). Renaming it to anything else — `chinese.dll`, `tokenizer.dll` — would
+ * break loading with "no entry point", which is what `__tests__/extensions.test.ts`
+ * pins down.
+ */
+export function sqliteExtensionSources(
+  platform: NodeJS.Platform = process.platform,
+): SqliteExtensionSource[] {
+  const suffix = platform === 'win32' ? '.dll' : platform === 'darwin' ? '.dylib' : '.so';
+  return [
+    {
+      dst: `libsimple${suffix}`,
+      // Canonical name first (that is what a future upstream may ship, and what our own
+      // builds produce), the real Windows archive name second.
+      candidates:
+        platform === 'win32' ? [`libsimple${suffix}`, `simple${suffix}`] : [`libsimple${suffix}`],
+    },
+    { dst: `vec0${suffix}`, candidates: [`vec0${suffix}`] },
+    // jieba dictionary — a directory, not a file. Same name on every platform.
+    { dst: 'dict', candidates: ['dict'] },
+  ];
+}
+
 /**
  * Make `<dataDir>/bin/ext` actually contain the SQLite extensions.
  *
@@ -245,23 +311,31 @@ export interface MaterializedExtensions {
  *
  * Symlinks (not copies) on POSIX so an uninstall/upgrade of the pack is visible
  * immediately and `du` does not double-count ~10 MB of jieba dictionary. Windows
- * symlinks need elevation or developer mode, so there we copy. UNVERIFIED on Windows.
+ * symlinks need elevation or developer mode, so there we copy.
+ *
+ * The name mapping (what to look for vs what to create) lives in
+ * {@link sqliteExtensionSources} — read the comment there before touching it, the Windows
+ * row is not guessable.
+ *
+ * `platform` is injectable so the Windows mapping and the copy branch are reachable from
+ * a test on any host. Production always calls it with two arguments.
  *
  * Idempotent: safe to call on every startup, and re-linking after an upgrade is the point.
  */
 export async function materializeSqliteExtensions(
   storeRoot: string,
   extDir: string,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<MaterializedExtensions> {
-  const suffix =
-    process.platform === 'win32' ? '.dll' : process.platform === 'darwin' ? '.dylib' : '.so';
-  const wanted = [`libsimple${suffix}`, `vec0${suffix}`, 'dict'];
-
   const linked: Record<string, string> = {};
   const missing: string[] = [];
 
-  for (const name of wanted) {
-    const src = await findFileInBackendPacks(storeRoot, name);
+  for (const { dst: name, candidates } of sqliteExtensionSources(platform)) {
+    let src: string | null = null;
+    for (const candidate of candidates) {
+      src = await findFileInBackendPacks(storeRoot, candidate);
+      if (src !== null) break;
+    }
     if (src === null) {
       missing.push(name);
       continue;
@@ -272,7 +346,7 @@ export async function materializeSqliteExtensions(
       // Replace unconditionally: a stale link from a previous pack version is worse
       // than no link, and `existsSync` on a dangling symlink is false anyway.
       await rm(dst, { recursive: true, force: true });
-      if (process.platform === 'win32') {
+      if (platform === 'win32') {
         await cp(src, dst, { recursive: true });
       } else {
         /*
