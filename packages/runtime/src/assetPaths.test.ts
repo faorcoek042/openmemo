@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync, promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { after, describe, it } from 'node:test';
 
 import { assetCandidates, mediaAssetRoots, probeAssetFile } from './assetPaths.js';
@@ -29,32 +29,65 @@ async function seed(files: Record<string, string>): Promise<string> {
   return d;
 }
 
+/*
+ * ★ T-147：这一组以前把期望值写成字面量 `'/d/media/a.wav'`。
+ *
+ * 产品代码用的是 `path.join`/`resolve`，所以在 Windows 上 `resolve('/d')` 是
+ * `D:\d`（当前盘符），三条断言全部 `'/d/media/a.wav' !== 'D:\d\media\a.wav'` 变红
+ * —— `[CI 实测]` ci-crossplatform run 31017923588，win32/x64 上就是这三条。
+ *
+ * 关键在于它们**不是"在 Windows 上失败"，是"在 Windows 上从来没测到过东西"**：
+ * 把 `assetCandidates` 整个换成 `return []` 也是同样的红，两种红分不开。
+ *
+ * 修法不是 skip（skip 之后 Windows 就永远没人测了），是**让期望值也走同一套路径语义**：
+ * `BASE` 用 `resolve()` 取本平台的绝对根，期望值用 `join()` 拼。
+ * 这样断言钉住的仍然是**结构**（候选顺序、去重、越界剔除），而不是某平台的字符串长相。
+ */
 describe('assetCandidates —— 纯函数：展开候选并挡住越界', () => {
-  const roots = mediaAssetRoots('/d');
+  /** 本平台上的一个绝对根：POSIX 上是 `/d`，Windows 上是 `<当前盘>:\d`。 */
+  const BASE = resolve('/d');
+  const roots = mediaAssetRoots(BASE);
 
   it('三个根的顺序就是优先级：media → tmp → dataDir', () => {
-    assert.deepEqual(assetCandidates(roots, 'a.wav'), ['/d/media/a.wav', '/d/tmp/a.wav', '/d/a.wav']);
+    assert.deepEqual(assetCandidates(roots, 'a.wav'), [
+      join(BASE, 'media', 'a.wav'),
+      join(BASE, 'tmp', 'a.wav'),
+      join(BASE, 'a.wav'),
+    ]);
   });
 
   it('绝对路径只有它自己一个候选，且必须落在根内', () => {
-    assert.deepEqual(assetCandidates(roots, '/d/media/x.wav'), ['/d/media/x.wav']);
-    assert.deepEqual(assetCandidates(roots, '/elsewhere/x.wav'), []);
+    const inside = join(BASE, 'media', 'x.wav');
+    assert.deepEqual(assetCandidates(roots, inside), [inside]);
+    assert.deepEqual(assetCandidates(roots, resolve('/elsewhere/x.wav')), []);
   });
 
   it('★ `..` 穿越出去的候选被剔除，剩下的仍然可用', () => {
-    // /d/media/../../etc/passwd → /etc/passwd（出界，剔除）
-    // /d/tmp/../../etc/passwd   → /etc/passwd（同上）
-    // /d/../etc/passwd          → /etc/passwd（同上）
+    // <BASE>/media/../../etc/passwd → <BASE 的上一级>/etc/passwd（出界，剔除）
+    // <BASE>/tmp/../../etc/passwd   → 同上
+    // <BASE>/../etc/passwd          → 同上
     assert.deepEqual(assetCandidates(roots, '../../etc/passwd'), []);
     /*
-     * `../jfk.wav`：从 media/ 和 tmp/ 退一级都落到 `/d/jfk.wav`（去重后只剩一个），
-     * 从 dataDir 退一级是 `/jfk.wav` —— 出界，剔除。
+     * `../jfk.wav`：从 media/ 和 tmp/ 退一级都落到 `<BASE>/jfk.wav`（去重后只剩一个），
+     * 从 dataDir 退一级是 `<BASE>/..` 之外 —— 出界，剔除。
      */
-    assert.deepEqual(assetCandidates(roots, '../jfk.wav'), ['/d/jfk.wav']);
+    assert.deepEqual(assetCandidates(roots, '../jfk.wav'), [join(BASE, 'jfk.wav')]);
   });
 
   it('空路径 → 没有候选（否则候选会变成"根目录本身"）', () => {
     assert.deepEqual(assetCandidates(roots, ''), []);
+  });
+
+  /*
+   * ★ 这条是新加的，专门钉住"期望值不许再退化成宿主写法"：
+   * 三个候选**必须**以本平台的分隔符拼接。写死 `/` 的实现在 Windows 上
+   * 会拼出 `D:\d/media/a.wav` 这种混合串 —— `resolve` 认得，
+   * 而 `assetPaths.ts:35` 的 `startsWith(root + sep)` 越界判据不认得。
+   */
+  it('★ 候选用的是本平台的路径分隔符（Windows 上不许拼出 `/`）', () => {
+    for (const c of assetCandidates(roots, 'a.wav')) {
+      assert.equal(c.startsWith(BASE + sep), true, `${c} 不是从 ${BASE}${sep} 长出来的`);
+    }
   });
 });
 

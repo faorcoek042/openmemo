@@ -376,45 +376,83 @@ describe('★ T-136 datadir.assetsPresent —— 报出来的必须**就是**那
   });
 });
 
+/*
+ * ★ T-147：这一组以前把 `/usr/bin/env` 当成"一个一定存在且可执行的文件"。
+ *
+ * 那是**宿主假设**，不是产品性质。`selfcheck.ts:398` 的判据是
+ * `access(path, X_OK)` —— Windows 上 `D:\usr\bin\env` 不存在，于是两条都得到
+ * `未找到 / fail`：`[CI 实测]` ci-crossplatform run 31017923588，win32/x64 上
+ * `'fail' !== 'ok'` 与 `'fail' !== 'warn'` 就是这两条。
+ *
+ * 修法不是 skip，是**自己造那个文件**：判据要分的是「路径在不在 storeRoot 里」，
+ * 文件从哪来根本不重要 —— 以前借宿主的，纯粹是图省事。
+ * 造出来之后这两条在三个平台上测的是同一件事。
+ */
 describe('工具来源要分开：装在 dataDir 里 vs 借系统 PATH 的', () => {
-  it('从 storeRoot 里解析出来 = ok', async () => {
-    const r = await runSelfCheck({
-      ...BASE,
-      storeRoot: '/usr',
-      probes: minimalProbes({
-        tools: () =>
-          Promise.resolve({
-            ffmpeg: '/usr/bin/env',
-            ffprobe: null,
-            whisperCli: null,
-            whisperVad: null,
-            vadModel: null,
-            ytDlp: null,
-          }),
+  /**
+   * 造一个真实存在、且**真的有可执行位**的假工具。
+   *
+   * `chmod(0o755)` 在 Windows 上读回来仍是 `666`（D-11 §3.1 实测），
+   * 但那里 `access(X_OK)` 对任何可读文件都返回 true（同表），
+   * 所以两边都能满足 `selfcheck.ts` 的 `exists(path, X_OK)` —— 判据成立的**理由**
+   * 各平台不同，而这条用例要钉的性质（ok vs warn 取决于路径落在哪儿）是同一个。
+   */
+  async function fakeTool(dir: string): Promise<string> {
+    await fs.mkdir(dir, { recursive: true });
+    const p = join(dir, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+    await fs.writeFile(p, '#!/bin/sh\nexit 0\n');
+    await fs.chmod(p, 0o755);
+    return p;
+  }
+
+  const withFfmpeg = (ffmpeg: string): Partial<SelfCheckProbes> => ({
+    tools: () =>
+      Promise.resolve({
+        ffmpeg,
+        ffprobe: null,
+        whisperCli: null,
+        whisperVad: null,
+        vadModel: null,
+        ytDlp: null,
       }),
-    });
-    assert.equal(byId(r, 'tool.ffmpeg')?.status, 'ok');
+  });
+
+  it('从 storeRoot 里解析出来 = ok', async () => {
+    const storeRoot = mkdtempSync(join(tmpdir(), 'om-sc-store-'));
+    tmpRoots.push(storeRoot);
+    const tool = await fakeTool(join(storeRoot, 'by-name', 'backend', 'media-tools'));
+
+    const r = await runSelfCheck({ ...BASE, storeRoot, probes: minimalProbes(withFfmpeg(tool)) });
+    const t = byId(r, 'tool.ffmpeg');
+    assert.equal(t?.status, 'ok', `装在 storeRoot 里的工具必须算 ok：${t?.detail ?? ''}`);
+    assert.equal(t?.required, true);
   });
 
   it('只在系统 PATH 上 = warn，且不再算必需项（能跑，但不可分发）', async () => {
-    const r = await runSelfCheck({
-      ...BASE,
-      probes: minimalProbes({
-        tools: () =>
-          Promise.resolve({
-            ffmpeg: '/usr/bin/env',
-            ffprobe: null,
-            whisperCli: null,
-            whisperVad: null,
-            vadModel: null,
-            ytDlp: null,
-          }),
-      }),
-    });
+    // 关键是这个文件**在 storeRoot 之外** —— 与它具体在哪个目录无关
+    const outside = mkdtempSync(join(tmpdir(), 'om-sc-hostpath-'));
+    tmpRoots.push(outside);
+    const tool = await fakeTool(outside);
+    const storeRoot = mkdtempSync(join(tmpdir(), 'om-sc-store-'));
+    tmpRoots.push(storeRoot);
+    // 先证明前置条件成立：文件真在、且真不在 storeRoot 底下
+    assert.equal(tool.startsWith(storeRoot), false);
+
+    const r = await runSelfCheck({ ...BASE, storeRoot, probes: minimalProbes(withFfmpeg(tool)) });
     const t = byId(r, 'tool.ffmpeg');
-    assert.equal(t?.status, 'warn');
+    assert.equal(t?.status, 'warn', `借宿主的工具必须算 warn：${t?.detail ?? ''}`);
     assert.equal(t?.required, false);
     assert.match(t?.detail ?? '', /系统 PATH/);
+  });
+
+  it('★ 路径为 null / 文件不存在 → fail（"没找到"和"借来的"必须分得开）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'om-sc-gone-'));
+    tmpRoots.push(dir);
+    const gone = join(dir, 'ffmpeg-that-was-never-installed');
+    const r = await runSelfCheck({ ...BASE, probes: minimalProbes(withFfmpeg(gone)) });
+    const t = byId(r, 'tool.ffmpeg');
+    assert.equal(t?.status, 'fail');
+    assert.equal(t?.detail, '未找到');
   });
 });
 
