@@ -442,3 +442,149 @@ D-11 是 `ci-runner` 的交付物，PROTOCOL §1 规则 3 说不改别人的交�
 | `scripts/ci/cold-start-audit.mjs`、`.github/workflows/cold-start-audit.yml` | **`ci-runner`（在途）** | 加 `--transcribe`（默认关）+ 3b 里多挑一个 ASR 模型 + 末尾新增第 7 节 | 🟡 **中** —— `ci-runner` 可能正在改同一个文件，请他 rebase 时留意 |
 | `scripts/build-whisper.sh` | `gpu-runtime` | cpu 分支加 darwin 条件；coreml 分支改成 die | 低 |
 | `vendor/manifests/*.json` | `model-mgmt` | 追加条目 | 低（数组末尾追加） |
+
+---
+
+## [2026-08-06 03:40] T-146 PROGRESS（CI 三轮跑完，**抓到三条真机结论 + 一条产品级 bug**）
+
+# TL;DR 追加
+
+## 🎉 ① Windows 第一次成为完整平台（`[CI 实测]`，屏蔽宿主 PATH）
+
+`cold-start-audit` run 31037964581 / `win32-x64`，全新数据目录：
+
+```
+✅ 产品自己下载并校验的 (5)：  tool.ffmpeg, tool.ffprobe, tool.whisperCli, tool.whisperVad, tool.ytDlp
+⚠️ 借宿主 PATH 的       (0)：  (无)
+❌ 装不上/不可用        (0)：  (无)
+ext.chineseSearch = ok（required=true）
+```
+补 ffmpeg 之前它是「引擎在、前置工具不在」。适用包 4/19 → **5/21**。
+
+## 🎉 ② macOS 的 ffmpeg 不再是"借来的"
+
+同一轮 `darwin-arm64`：`media-tools-macos-arm64 succeeded (5.3s)`（sha256 在真机上校验过），
+`tool.ffmpeg` / `tool.ffprobe` 从 `warn（来自系统 PATH）` 变成 `ok` + 路径落在数据目录里。
+**借宿主 PATH 从 3 个降到 1 个**（只剩 whisperCli，等 release）。适用包 3/19 → **4/21**。
+
+对照 D-11 §7.1 那三行 —— 用户那句「我怕了你」问的正是这个形状，现在它少了三分之二。
+
+## ✅ ③ CoreML 真的编进去了（`[CI 实测]`，我把包解开看的）
+
+`build-backends` run 31037981498 的 `macos-arm64-cpu` **success**，包里多了一个文件：
+
+```
+libwhisper.coreml.dylib                    87,600 B      ← 新增
+libwhisper.1.9.1.dylib 的 LC_LOAD_DYLIB：
+    @rpath/libggml.0.dylib
+    @rpath/libwhisper.coreml.dylib         ← 真的链上了
+    @rpath/libggml-base.0.dylib
+```
+`src/CMakeLists.txt:30-45` 那个「找不到 CoreML.framework 就 FATAL_ERROR」的关口通过了 ——
+我上一封标的风险**已排除**。
+
+**新的 sha256（release 要发的是这一版，不是上一封那两个）**：
+
+| 文件 | 字节 | sha256（我本机复算） |
+|---|---:|---|
+| `whispercpp-cpu-macos-arm64.tar.gz` | **1,847,186** | `cb9d6c5ddfd921424cf947e138f006edf12d08fb183d3d061f94c125f400db7c` |
+| `whispercpp-metal-macos-arm64.tar.gz` | **163,224** | `8e1ed22320c130a1b7ba53bebc67805b811fa5b3b9eadd266127a00e1629a652` |
+
+## 🔴 ④ **本轮最重要的发现：三个平台没有一个能在干净机器上完成转写**
+
+这是**第一次有人在干净机器上跑产品的真实转写路径**。判据从"文件下下来了"换成"拿到非空文本"，
+立刻问出了两条以前谁都没问过的事实。
+
+| 平台 | 卡在哪 | 定性 |
+|---|---|---|
+| linux-x64 | `whisper-vad-speech-segments exited with code 2` → `error: failed to initialize whisper context` | 🔴 **产品 bug（新）** |
+| win32-x64 | **同上，一字不差** | 🔴 **同一个 bug** |
+| darwin-arm64 | `maskbin/whisper-cli exited with code 127` | 🟡 **预期之中** —— macOS 还没有 whisper 包（等 release） |
+
+**Linux/Windows 那条的完整证据**（`[CI 实测]` run 31039460495，job.error 全文）：
+
+```
+whisper-vad-speech-segments exited with code 2
+load_backend: loaded CPU backend from .../libggml-cpu-haswell.so
+read_audio_data: reading audio data from '.../job-…/audio16k.wav' ...
+read_audio_data: trying to decode with miniaudio
+error: failed to initialize whisper context
+```
+
+**定位到具体那一行**：`vendor/whisper.cpp/examples/vad-speech-segments/speech.cpp` 里
+`return 2` 有两处 ——
+- `:104` 是「读音频失败」，配的文案是 `failed to read audio data from %s`；
+- `:116` 是「VAD 模型初始化失败」，配的文案正是我们拿到的 `failed to initialize whisper context`。
+
+日志里 `read_audio_data` 已经打到 `trying to decode with miniaudio`，**说明音频读到了**。
+→ **失败的是 `whisper_vad_init_from_file_with_params(ggml-silero-v6.2.0.bin)`。**
+
+**假设（未证实，明说）**：`whisper.cpp:4778` 的第一件事是校验 `GGML_FILE_MAGIC`，
+不匹配就 `invalid model data (bad magic)`。我们清单里钉的是
+`ggml-silero-**v6.2.0**.bin`，而 `packages/pipeline/src/tools.ts:449` 的查找列表
+**第一个写的是 `ggml-silero-v5.1.2.bin`** —— 像是「代码按 v5 写的，清单换成了 v6」。
+⚠️ **我没能证实**：这台机器直连 `huggingface.co` 被网络策略挡住（`curl` exit 7），
+下不到那个文件去比对 magic。**只能标假设，不能当结论。**
+
+**还有两条使它更难查的因素**：
+1. `vad.ts:70` 传了 `-np`，而 `speech.cpp:95-97` 收到 `-np` 就
+   `whisper_log_set(cb_log_disable)` —— **具体原因（bad magic / 打不开文件）被整个吞掉**，
+   只剩下例子自己 fprintf 的那句泛泛而谈。**与 CoreML 那条是同一族**（§3.2）。
+2. `transcribe.ts:211` 的降级只覆盖「VAD **没装**」，不覆盖「VAD **装了但跑不起来**」——
+   于是一个坏掉的 VAD 模型**直接把整单转写打死**，而不是退回固定窗口。
+   ⚠️ 这一条我**故意没改**：把响亮的失败改成安静的降级，正是本仓最该避免的动作。
+   要改也该是「降级 + 在 selfcheck/界面上明说」，那是产品决定，**请你裁**。
+
+**这条不是我引入的**：我没碰 pipeline 的任何一行。它一直在那儿，只是
+**从来没有人在干净机器上跑过一次真的转写**。
+
+## ✅ ⑤ Windows 上「本地文件导入 100% 不可用」—— 已修并在真机上确认
+
+run 31038554367 / win32-x64：一个**就放在 dataDir 里**的文件被拒
+```
+POST /api/notes/import → HTTP 403 PATH_NOT_ALLOWED
+path outside allowed roots: C:\Users\RUNNER~1\...\data\jfk.wav
+```
+`notes.ts` 原写法 `real.startsWith(root + '/')` 硬编码 POSIX 分隔符，
+Windows 上 `root + '/'` = `C:\…\data/`，**永远匹配不上**。
+（同族第二处：`main.ts:784` 用 `':'` 切 `OPENMEMO_IMPORT_ROOTS`，`C:\media` 会被切成两半。）
+
+修法照 `argGuard.isSafeExecutable` 的形状：**platform 作为入参**，抽成
+`isWithinImportRoots(roots, candidate, platform)` —— 宿主绑定的判断在本机 Linux 上测不出来，
+参数化之后本机能测两边（守卫 3 条）。
+
+**下一轮真机确认**（run 31039460495 / win32-x64）：`POST /api/notes/import → HTTP 202`。修好了。
+
+反向验证：把实现换回旧版 → `✖ ★ win32：dataDir 里的文件必须被接受（原实现在这里恒 false）`，
+其余 11 条仍绿。`grep -rn REVERSAL` 全仓 0 命中（已还原）。
+
+## ⑥ 我自己在这三轮里犯的错（继续记账）
+
+| # | 错 | 后果 | 教训 |
+|---|---|---|---|
+| 1 | 反向验证时给**被检查的那个量**也加了"集合非空"守卫 | 该说的那句「这些平台有转写引擎但装不到 ffmpeg」**一个字没印出来**，先炸的是守卫 | **空集守卫防的是"筛空了报绿"，不能加在被检查的量上** —— 加上去它会在真出问题时抢在真错误前面炸掉：守卫红了，但它没告诉你为什么 |
+| 2 | `cold-start-audit.yml` 的 checkout 没有 `submodules: recursive` | 三平台第 7 节同一行「样本不存在」 | 它**红得诚实**（说了自己缺什么），但确实什么都没证明 |
+| 3 | 挑"最小的 ASR 模型"挑到了 `asr/sherpa-streaming-zh-14m` | 那是中文流式 onnx，样本是英语，而本轮要证的是 whisper.cpp + ffmpeg 这条链 | **挑错引擎的话，绿了也证明不了它该证明的东西** |
+| 4 | 同一个错让 `asr.coreml` 对着 `decoder-epoch-99-avg-1.int8.onnx` 算出「缺 …-encoder.mlmodelc」 | 一句语法正确、毫无意义的话 | **一条会对不相干的东西发表意见的检查，说对的时候也不该被相信** |
+| 5 | `waitForJob` 把 error 截到 200 字符 | 第一次拿到的是 `…exited with code 2\nload_backend: l` ——**正好断在最关键的那个字上** | 摘要用的截断和定位用的全文是两件事。现在第 7 节会再取一次全文（只打印、不改红绿） |
+
+## ⑦ 一条顺带证实的（`[CI 实测 macOS]`）
+
+`asr.coreml warn … ggml-tiny-q5_1.bin → 缺 ggml-tiny-encoder.mlmodelc`
+—— **`-q5_1` 后缀真的被剥掉了**，`coreMlEncoderNameFor` 复刻上游规则的那一段在真机上行为正确。
+`meta.sameSource ok 26 项逐 id 一致` —— 新自检项在 CLI 与 HTTP 两条出口上没有分歧。
+
+---
+
+## 逐平台覆盖表（更新版，可以直接给用户）
+
+| 平台 | ffmpeg/ffprobe | 转写引擎 | 中文检索 | yt-dlp | **干净机器上能转写吗** |
+|---|---|---|---|---|---|
+| **Linux x64** | ✅ `[CI 实测]` | ✅ `[CI 实测]` | ✅ `[CI 实测]` | ✅ | 🔴 **不能** —— 卡在 VAD 模型（④，新发现的产品 bug） |
+| **Windows x64** | ✅ **本次补上** `[CI 实测]` | ✅ `[CI 实测]` | 🔴 libsimple 装了不加载（`ci-runner` 已报） | ✅ | 🔴 **不能** —— 同一个 VAD bug |
+| **macOS arm64** | ✅ **本次补上** `[CI 实测]` | 🔴 等 release | ✅ `[CI 实测]` | ✅ | 🔴 **不能** —— 引擎还没有下载地址 |
+
+> **口径**：这张表比上一版更红，**因为判据变严了** ——
+> 上一版问的是"工具装齐了吗"，这一版问的是"**真的转出字来了吗**"。
+> 前一个问题三个平台已经基本是绿的；后一个问题今天第一次被问出口，答案是三个都不行。
+> **这正是把判据从"文件下下来了"换成"拿到非空文本"的价值。**
