@@ -562,6 +562,21 @@ try {
         const st = await waitForJob(jobUid, 1200);
         say(`   转写 job：${st}  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
 
+        /*
+         * ★ `waitForJob` 把 error 截到 200 字符 —— 对轮询摘要够用，对**定位**远远不够：
+         *   第一次真跑拿到的是 `whisper-vad-speech-segments exited with code 2\nload_backend: l`
+         *   ——正好在最关键的那个字上断了。所以这里再取一次完整的。
+         *   （一个用来看的步骤不该有能力决定红绿，所以它只打印、不改 exitCode。）
+         */
+        const full = await j(`/api/jobs/${encodeURIComponent(jobUid)}`);
+        const fullErr = (full.body?.job ?? full.body)?.error;
+        if (fullErr) {
+          say('   ── job.error 全文 ──');
+          for (const line of JSON.stringify(fullErr, null, 2).slice(0, 4000).split('\n')) {
+            say(`      ${line}`);
+          }
+        }
+
         const tr = await j(`/api/notes/${encodeURIComponent(noteUid)}/transcript`);
         const segs = tr.body?.segments ?? [];
         const text = segs.map((s) => String(s.text ?? '')).join(' ').replace(/\s+/g, ' ').trim();

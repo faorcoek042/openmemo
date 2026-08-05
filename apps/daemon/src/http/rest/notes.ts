@@ -11,7 +11,7 @@
  * 返回 202 + jobUid，进度走 SSE。
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, posix, resolve, win32 } from 'node:path';
 
 import { makeEvent, topics } from '@openmemo/shared';
 
@@ -77,6 +77,45 @@ function parseJsonOrNull(raw: string | null): unknown {
   } catch {
     return null;
   }
+}
+
+/**
+ * 一个本地路径是不是落在允许导入的根里。
+ *
+ * ── 为什么它是一个带 `platform` 参数的独立函数（而不是三行内联） ──────────────────
+ *
+ * 原来的写法是 `real === root || real.startsWith(root + '/')` —— **硬编码 POSIX 分隔符**。
+ * 在 Windows 上 `resolve()` 给出 `C:\…\data\jfk.wav`，而 `root + '/'` 拼出
+ * `C:\…\data/`，**永远前缀匹配不上**。
+ *
+ * `[CI 实测]` cold-start-audit run 31038554367，win32-x64，一个**就放在 dataDir 里**的文件：
+ *
+ *     POST /api/notes/import → HTTP 403 PATH_NOT_ALLOWED
+ *     path outside allowed roots: C:\Users\RUNNER~1\...\data\jfk.wav
+ *
+ * 后果不是"少一个边角功能"，是 **Windows 上本地文件导入 100% 不可用** ——
+ * 而它长得像一条正常的权限拒绝，用户只会以为自己选错了目录。
+ * （`platform` T-141 #26「对文件系统路径硬编码 `/`」的同族。）
+ *
+ * **`platform` 是入参而不是读 `process.platform`**：这正是 `argGuard.isSafeExecutable`
+ * 修好之后立下的形状 —— 宿主绑定的判断在本机 Linux 上**测不出来**，
+ * 而这个 bug 恰恰只在别的平台上显形。参数化之后本机就能把两边都测到。
+ *
+ * 顺带堵掉一个与平台无关的老坑：`startsWith(root + sep)` 对
+ * `/data-x` vs `/data` 这种「前缀相同但不是子路径」是对的，但 `startsWith(root)`
+ * 不是；用 `relative()` 判据统一成「相对路径不以 `..` 开头且不是绝对路径」。
+ */
+export function isWithinImportRoots(
+  roots: readonly string[],
+  candidate: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const p = platform === 'win32' ? win32 : posix;
+  const real = p.resolve(candidate);
+  return roots.some((root) => {
+    const rel = p.relative(p.resolve(root), real);
+    return rel === '' || (!rel.startsWith('..') && !p.isAbsolute(rel));
+  });
 }
 
 export function createNoteRoutes(deps: NoteRoutesDeps): {
@@ -183,7 +222,7 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
             return true;
           }
           const real = resolve(input);
-          const ok = deps.importRoots.some((root) => real === root || real.startsWith(root + '/'));
+          const ok = isWithinImportRoots(deps.importRoots, input);
           if (!ok) {
             sendError(
               res,

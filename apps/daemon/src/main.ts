@@ -12,7 +12,7 @@
  */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 
 import { openAppDatabase, defaultExtensionPaths, type AppDatabase } from '@openmemo/db';
 import { materializeSqliteExtensions } from '@openmemo/pipeline';
@@ -778,10 +778,18 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         get registry() {
           return getBundle().registry;
         },
-        // 本地导入允许的根：数据目录 + 显式配置的额外目录
+        /*
+         * 本地导入允许的根：数据目录 + 显式配置的额外目录。
+         *
+         * ★ T-146：分隔符必须用 `path.delimiter`，**不能写死 `':'`**。
+         *   Windows 上 `OPENMEMO_IMPORT_ROOTS=C:\media` 按 `':'` 切会变成
+         *   `['C', '\media']` —— 两个都不是真实目录，于是"配了额外目录"这件事
+         *   静默失效（而且报出来的错会说"路径不在允许的目录内"，指向完全错误的方向）。
+         *   Windows 的 PATH 分隔符是 `;`，`path.delimiter` 会给对。
+         */
         importRoots: [
           paths.dataDir,
-          ...(process.env['OPENMEMO_IMPORT_ROOTS'] ?? '').split(':').filter(Boolean),
+          ...(process.env['OPENMEMO_IMPORT_ROOTS'] ?? '').split(delimiter).filter(Boolean),
         ],
       }),
       createContentRoutes({ db: database.db, repos, mindmaps, queue, sse }),

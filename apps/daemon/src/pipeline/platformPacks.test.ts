@@ -41,6 +41,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
 import { coreMlEncoderNameFor } from '@openmemo/runtime';
+
+import { isWithinImportRoots } from '../http/rest/notes.js';
 import { validateBackendManifest, type BackendPack } from '@openmemo/shared';
 
 /** 仓库根 —— dist/pipeline/ 上溯 4 层。 */
@@ -272,5 +274,44 @@ describe('T-146 ④ CoreML encoder 的路径规则', () => {
     }
     // 数了几个说几个：零个也能"全部通过"，那正是要避免的空集假绿。
     assert.ok(checked >= 2, `只核对了 ${checked} 个 coreml-encoder 条目`);
+  });
+});
+
+/* ═════════ ⑤ 本地导入的根检查：宿主绑定的路径判断，本机也要能测两边 ═════════ */
+
+describe('T-146 ⑤ importRoots 的路径判断在 Windows 语义下也成立', () => {
+  /*
+   * 这条是 CI 实测抓到的（cold-start-audit run 31038554367，win32-x64）：
+   * 一个**就放在 dataDir 里**的文件被 `403 PATH_NOT_ALLOWED` 拒了 ——
+   * 原实现是 `real.startsWith(root + '/')`，硬编码 POSIX 分隔符。
+   * 后果是 **Windows 上本地文件导入 100% 不可用**，而它长得像一条正常的权限拒绝。
+   *
+   * 平台作为入参（与 `argGuard.isSafeExecutable` 同形），所以本机 Linux 能把两边都测到。
+   */
+  const WIN_ROOT = 'C:\\Users\\r\\AppData\\Local\\Temp\\om\\data';
+  const POSIX_ROOT = '/tmp/om/data';
+
+  it('★ win32：dataDir 里的文件必须被接受（原实现在这里恒 false）', () => {
+    assert.equal(isWithinImportRoots([WIN_ROOT], `${WIN_ROOT}\\jfk.wav`, 'win32'), true);
+    assert.equal(isWithinImportRoots([WIN_ROOT], `${WIN_ROOT}\\sub\\a.mp3`, 'win32'), true);
+    // 根本身也算（用户直接选了那个目录）
+    assert.equal(isWithinImportRoots([WIN_ROOT], WIN_ROOT, 'win32'), true);
+  });
+
+  it('win32：根外的必须被拒（放宽了分隔符不等于放开了边界）', () => {
+    assert.equal(isWithinImportRoots([WIN_ROOT], 'C:\\Windows\\win.ini', 'win32'), false);
+    assert.equal(isWithinImportRoots([WIN_ROOT], `${WIN_ROOT}\\..\\evil.wav`, 'win32'), false);
+    // ★ 「前缀相同但不是子路径」—— 老的 startsWith 写法在这条上也是错的
+    assert.equal(isWithinImportRoots([WIN_ROOT], `${WIN_ROOT}-evil\\a.wav`, 'win32'), false);
+    // 另一个盘
+    assert.equal(isWithinImportRoots([WIN_ROOT], 'D:\\data\\a.wav', 'win32'), false);
+  });
+
+  it('posix：原有行为一条不变', () => {
+    assert.equal(isWithinImportRoots([POSIX_ROOT], `${POSIX_ROOT}/jfk.wav`, 'linux'), true);
+    assert.equal(isWithinImportRoots([POSIX_ROOT], POSIX_ROOT, 'linux'), true);
+    assert.equal(isWithinImportRoots([POSIX_ROOT], '/etc/hostname', 'linux'), false);
+    assert.equal(isWithinImportRoots([POSIX_ROOT], `${POSIX_ROOT}/../evil.wav`, 'linux'), false);
+    assert.equal(isWithinImportRoots([POSIX_ROOT], `${POSIX_ROOT}-evil/a.wav`, 'linux'), false);
   });
 });
