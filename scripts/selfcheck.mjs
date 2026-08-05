@@ -41,9 +41,32 @@ import { access, constants, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+/*
+ * ★★ T-145：动态 import 必须走 `pathToFileURL()`，**不能把绝对路径拼进模板字符串**。
+ *
+ * 这条是第一次在 Windows runner 上跑冷启动审计时抓到的（run 31029690089）——
+ * 整个 selfcheck 在 Windows 上**根本跑不起来**：
+ *
+ *   selfcheck crashed: Error [ERR_UNSUPPORTED_ESM_URL_SCHEME]:
+ *     Only URLs with a scheme in: file, data, and node are supported by the
+ *     default ESM loader. On Windows, absolute paths must be valid file:// URLs.
+ *     Received protocol 'd:'
+ *
+ * 因为 `${REPO_ROOT}/packages/...` 在 Windows 上是 `D:\a\openmemo\...`，
+ * ESM loader 把开头的 `D:` 当成了 URL scheme。
+ *
+ * ★ 这与 `platform` T-141 §3 第 1 条是**同一族**：`main.ts:1075` 手拼
+ *   `` `file://${process.argv[1]}` `` 而不用 `pathToFileURL()`。
+ *   同一个教训，同一个仓库，第二个文件 —— 修了被点名的那处，没有回头查同族。
+ *
+ * 后果的严重性值得单独说：**自检工具自己在 Windows 上是坏的。**
+ * 也就是说在 Windows 上，"产品有没有装好"这个问题**连问都问不出来**。
+ */
+const distUrl = (rel) => pathToFileURL(join(REPO_ROOT, rel)).href;
 
 // ---------------------------------------------------------------------------------------
 // args
@@ -204,9 +227,9 @@ function readSetting(appDb, key) {
 }
 
 async function main() {
-  const rt = await import(`${REPO_ROOT}/packages/runtime/dist/index.js`);
-  const pl = await import(`${REPO_ROOT}/packages/pipeline/dist/index.js`);
-  const shared = await import(`${REPO_ROOT}/packages/shared/dist/index.js`);
+  const rt = await import(distUrl('packages/runtime/dist/index.js'));
+  const pl = await import(distUrl('packages/pipeline/dist/index.js'));
+  const shared = await import(distUrl('packages/shared/dist/index.js'));
 
   const tools = await pl.discoverTools({ storeRoot: STORE_ROOT, dataDir: DATA_DIR });
   const Database = await loadSqlite();
@@ -282,7 +305,7 @@ async function main() {
 
       localLlmServices: async () => {
         try {
-          const llm = await import(`${REPO_ROOT}/packages/llm/dist/index.js`);
+          const llm = await import(distUrl('packages/llm/dist/index.js'));
           const found = await llm.detectLocalBackends({ timeoutMs: 1200 });
           return found.map((d) => ({ label: d.label, models: d.models?.length ?? 0 }));
         } catch {
