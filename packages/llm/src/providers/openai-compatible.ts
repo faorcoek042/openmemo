@@ -2,7 +2,7 @@
  * OpenAI 兼容 provider —— **一个实现覆盖绝大多数后端**。
  *
  * 覆盖：OpenAI、DeepSeek、Groq、xAI、Moonshot、SiliconCloud、OpenRouter、通义、智谱、
- * **Ollama**（`/v1`）、**LM Studio**（`/v1`）、**内置 llama.cpp `llama-server`**（`/v1`）。
+ * **Ollama**（`/v1`）、**LM Studio**（`/v1`）、**本机 `llama-server`**（`/v1`，用户自己装的 —— ADR-016 砍掉的是我们内置那档）。
  *
  * 设计要点：
  * - `apiKey` 可为空 —— 本地后端不该逼用户填假 key（memo.ac 的已知 bug，R-01 §C11 #12）。

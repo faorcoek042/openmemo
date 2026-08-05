@@ -44,7 +44,9 @@ const WATCHLIST = [
  */
 const SUBMODULE_LICENSES = {
   'vendor/whisper.cpp': { license: 'MIT', pin: 'v1.9.1' },
-  'vendor/llama.cpp': { license: 'MIT', pin: 'b10223' },
+  // vendor/llama.cpp 已于 T-144 摘除（ADR-016 决策 3：本地 LLM 线整体下线，
+  // 只留 BYO API Key 与探测已装的 Ollama / LM Studio）。submodule、7 个
+  // llamacpp-* 后端包与 components.json 条目一并删除，此处的 pin 也不再有对象。
   'vendor/sherpa-onnx': { license: 'Apache-2.0', pin: 'v1.13.4' },
   'vendor/sqlite-vec': { license: 'Apache-2.0', pin: 'v0.1.9' },
   'vendor/libsimple': {

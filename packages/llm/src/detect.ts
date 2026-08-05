@@ -28,7 +28,13 @@ export const DEFAULT_CANDIDATES: readonly DetectCandidate[] = [
     identityPath: '/api/tags',
   },
   { id: 'lmstudio', label: 'LM Studio', baseUrl: 'http://127.0.0.1:1234/v1' },
-  { id: 'llama-server', label: '内置 llama.cpp', baseUrl: 'http://127.0.0.1:18080/v1' },
+  /*
+   * ★ T-144：label 原来写的是「**内置** llama.cpp」，而 ADR-016 决策 3 已经把内置那条线
+   * 整条砍掉（T-144 连 submodule 与 7 个后端包一起摘了）。这个 label 是**会显示给用户的字符串**
+   * —— 它在说一个我们不再提供的东西，与 `mindmap.emptyHint` 同一族。
+   * 这一条本身要保留：它探的是**用户自己装的** llama-server，与 Ollama / LM Studio 同档。
+   */
+  { id: 'llama-server', label: 'llama-server（本机）', baseUrl: 'http://127.0.0.1:18080/v1' },
 ];
 
 export interface DetectedBackend {

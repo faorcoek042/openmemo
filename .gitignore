@@ -33,7 +33,7 @@ media-cache/
 .tsbuildinfo/
 dist-types/
 
-# 原生组件（whisper.cpp / llama.cpp / sherpa-onnx / sqlite-vec / libsimple）的 CMake 构建目录
+# 原生组件（whisper.cpp / sherpa-onnx / sqlite-vec / libsimple）的 CMake 构建目录
 .build/
 
 # 工具缓存

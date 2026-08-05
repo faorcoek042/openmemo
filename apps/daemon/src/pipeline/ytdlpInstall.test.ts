@@ -60,6 +60,35 @@ describe('T-132 ① yt-dlp 在下载清单里', () => {
     assert.equal(v.ok, true, v.ok ? '' : v.errors.slice(0, 5).join('\n'));
   });
 
+  /*
+   * ★ T-144 守卫：**已被 ADR-016 砍掉的东西不许留在用户看得见的目录里。**
+   *
+   * 事故形状（本轮实测，`GET :10000/api/backends/catalog`）：ADR-016 决策 3 明确砍掉
+   * 内置 llama.cpp（用户原话「语言模型我们不要本地自己接模型做」），但目录里
+   * **7 个 `llamacpp-*` 包一条没删**，而 `/api/backends/catalog` 不按 engine 过滤：
+   *
+   *     llamacpp-cpu-linux-x64 | applicable=true | kind=applicable | recommended=true
+   *
+   * `RuntimePage` 把 `applicable` 的包放**主列表**（不适用的才折叠），
+   * `BackendPackCard` 的按钮只在 `!pack.applicable || pendingCi` 时禁用 ——
+   * 于是 `/runtime` 页上有一个**可点击且被标为「推荐」**的按钮，
+   * 点下去会真的下载 16.4 MB 的 llama.cpp。**界面提供了一个已被否决的功能。**
+   *
+   * 判据钉的是 `engine`（结构）不是 id 前缀（关键词）：换个包名照样红。
+   */
+  it('目录里不得再出现本地 LLM 引擎的包（ADR-016 决策 3 砍掉内置 llama.cpp）', async () => {
+    const v = validateBackendManifest(await readJson('backends.json'));
+    assert.ok(v.ok);
+    const packs = (v.data as { packs: BackendPack[] }).packs;
+    // 集合非空，否则这条断言可以靠"目录是空的"永远通过。
+    assert.ok(packs.length >= 5, '目录里包太少，这条断言失去意义');
+    assert.deepEqual(
+      packs.filter((p) => p.engine === 'llama.cpp').map((p) => p.id),
+      [],
+      'ADR-016 砍掉了内置 LLM 线；这些包会出现在 /runtime 页上、可点、可下载',
+    );
+  });
+
   it('本机平台（linux/x64）有一个可安装的 yt-dlp 包', async () => {
     const v = validateBackendManifest(await readJson('backends.json'));
     assert.ok(v.ok);

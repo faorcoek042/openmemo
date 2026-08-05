@@ -4,7 +4,7 @@
  * **关键简化：只需要两个实现。**
  * | 实现 | 覆盖 |
  * |---|---|
- * | `OpenAiCompatibleProvider`（可配 baseUrl/apiKey/model） | OpenAI、DeepSeek、Groq、Moonshot、通义、智谱、**Ollama**、**LM Studio**、**内置 llama-server** |
+ * | `OpenAiCompatibleProvider`（可配 baseUrl/apiKey/model） | OpenAI、DeepSeek、Groq、Moonshot、通义、智谱、**Ollama**、**LM Studio**、**本机 llama-server**（用户自己装的，ADR-016 砍的是"我们内置"那档）|
  * | `AnthropicProvider` | Claude（Messages API 格式不同，必须独立实现） |
  *
  * 我们的规则（直接对冲 R-01 §C11 #12：memo.ac 只有 OpenAI 能配 baseURL）：

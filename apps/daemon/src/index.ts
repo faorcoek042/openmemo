@@ -10,8 +10,12 @@
  *   2. 启动时生成随机 token，网页调 API 必须带 token
  *      —— 防止其他本地进程 / 恶意网页打我们的端口。
  *   3. 需要沙箱时用 node:worker_threads + 权限白名单，**禁用 vm2**（已废弃 + 已知逃逸漏洞）。
- *   4. 原生组件（ffmpeg / yt-dlp / whisper-cli / llama-server / probe）一律子进程 spawn，
+ *   4. 原生组件（ffmpeg / yt-dlp / whisper-cli / probe）一律子进程 spawn，
  *      崩溃隔离 + 许可证隔离 + 可独立升级。
+ *      （T-144：`llama-server` 已从这张表里删除 —— ADR-016 决策 3 砍掉内置 llama.cpp，
+ *       我们**从不 spawn 它**；档 2 是对用户自己已装的 Ollama / LM Studio / llama-server
+ *       **发 HTTP 请求探测**，见 `jobs/runners/mindmap.ts`。ADR-003 的架构图仍是旧版，
+ *       但 ADR 是历史记录不回改。）
  *   5. 进度推送只开**一条全局 SSE 流**（ADR-004 决策 5），否则撞 HTTP/1.1 六连接上限；
  *      实时录音转写另开 WebSocket。
  */

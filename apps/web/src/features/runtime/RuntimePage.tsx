@@ -124,9 +124,11 @@ export default function RuntimePage() {
           ## 为什么挂在这里，而不是再加一条侧栏
 
           `/components` 不是第四类东西，它是 **`/runtime` 那批东西的另一个轴**：
-          `[实测]` `GET /api/components` 的 8 条里 6 条的 id 与
+          `[实测]` `GET /api/components` 的 7 条里 5 条的 id 与
           `GET /api/backends/catalog` 的包 id **逐字相同**（whispercpp / libsimple /
-          sqlite-vec / media-tools / ytdlp / llamacpp）。
+          sqlite-vec / media-tools / ytdlp）。
+          （T-144 前是 8 条里 6 条 —— 多出来的那条是 `llamacpp-cpu-linux-x64`，
+          随 ADR-016 决策 3 一起摘除。）
           两页问的是同一批二进制的两个问题：
             · `/runtime`    —— 这台机器该装哪个？（按平台筛、装/选/自检）
             · `/components` —— 这个东西从哪来、钉在哪版、有没有新版、能不能回滚？

@@ -124,9 +124,9 @@ export function startPackInstall(
        *
        * 1. **两份清单里的目录字段根本不是同一个概念**（正因如此，字段已按下述结论分家：
        *    后端包不再有该字段，sqlite-ext 的改叫 `linkInto`）。
-       *    `backends.json` 填的是 `llamacpp/b10223/vulkan` / `whispercpp/v1.9.1/cpu`
+       *    `backends.json` 填的是 `whispercpp/v1.9.1/cpu` 这种
        *    ——「引擎运行时目录」布局；而安装器 `unpackInto` 的语义是「相对 dataRoot 解压到此」。
-       *    照传下去，包会落到 `<dataDir>/llamacpp/b10223/vulkan`，
+       *    照传下去，包会落到 `<dataDir>/whispercpp/v1.9.1/cpu`，
        *    而 `findInBackendPacks` 扫的是 `by-name/` —— **刚验证通过的 ffmpeg 发现会当场失效**。
        *
        * 2. **sqlite-ext 那 11 个包全都填同一个目录 `bin/ext`（现名 `linkInto`）**，

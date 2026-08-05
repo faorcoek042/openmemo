@@ -2,7 +2,7 @@
 #
 # 规则（R-03 §1.3）：
 #   R-A 许可证隔离：GPL/AGPL/source-available 组件不得作为 submodule 进入构建树。
-#       —— 下列 5 个全部是 MIT / Apache-2.0，符合。
+#       —— 下列 4 个全部是 MIT / Apache-2.0，符合。
 #   R-B fork-before-patch：需要改代码时先 fork 到我们的 org，改 url 指向 fork，
 #       禁止直接修改 vendor/<name>/ 内的文件（`git submodule update` 会静默丢弃）。
 #   R-C 一律 pin 到 tag，禁止跟踪分支。升级走 PR + CI 全矩阵重编译。
@@ -18,14 +18,6 @@
 	url = https://github.com/ggml-org/whisper.cpp.git
 	shallow = true
 	# MIT | pin v1.9.1 | ASR 主引擎，需自建 CI（ADR-003 决策 2：官方 release 无 macOS/Vulkan/ROCm）
-
-[submodule "vendor/llama.cpp"]
-	path = vendor/llama.cpp
-	url = https://github.com/ggml-org/llama.cpp.git
-	shallow = true
-	# MIT | pin b10223 | 本地 LLM 推理（摘要/大纲/思维导图生成）
-	# 注：ADR-003 决策 2 说 LLM 线走官方预编译、不自建 CI；此 submodule 用于
-	#     版本对齐、GGUF 元数据解析参考与必要时的本地自建，非默认构建路径。
 
 [submodule "vendor/sherpa-onnx"]
 	path = vendor/sherpa-onnx

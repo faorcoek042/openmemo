@@ -23,7 +23,6 @@ pnpm submodules:init
 | 路径                 | 上游                 | 许可证                  | pin       | 用途                                    |
 | -------------------- | -------------------- | ----------------------- | --------- | --------------------------------------- |
 | `vendor/whisper.cpp` | ggml-org/whisper.cpp | MIT                     | `v1.9.1`  | ASR 主引擎；需自建 CI（ADR-003 决策 2） |
-| `vendor/llama.cpp`   | ggml-org/llama.cpp   | MIT                     | `b10223`  | 本地 LLM 推理（摘要/大纲/导图生成）     |
 | `vendor/sherpa-onnx` | k2-fsa/sherpa-onnx   | Apache-2.0              | `v1.13.4` | 副引擎：流式 ASR + VAD + 说话人分离     |
 | `vendor/sqlite-vec`  | asg017/sqlite-vec    | Apache-2.0              | `v0.1.9`  | SQLite 向量检索扩展                     |
 | `vendor/libsimple`   | wangfenjin/simple    | **MIT**（双授权中选定） | `v0.7.1`  | SQLite FTS5 中文分词（jieba + 拼音）    |
@@ -39,6 +38,27 @@ pnpm submodules:init
 
 **OpenMemo 明确选择 MIT 分支。**
 这条声明必须同时出现在最终分发物的第三方许可证清单里，否则可能被解读为 GPL-3.0。
+
+### 为什么 llama.cpp 不在这里（T-144 摘除）
+
+`vendor/llama.cpp`（pin `b10223`）曾在此列，**已删除**。依据是 **ADR-016 决策 3**
+（用户原话：「语言模型我们不要本地自己接模型做，要和 memo 一样，接入在线模型 API」）：
+本地 LLM 线整体下线，只保留档 1 **BYO API Key** 与档 2 **探测用户自己已装的
+Ollama / LM Studio / llama-server**。
+
+一并删除的（同一次提交）：
+
+- submodule 本体（工作副本 165 MB，`.git/modules` 36 MB）
+- `vendor/manifests/backends.json` 里的 **7 个 `llamacpp-*` 包**
+- `vendor/manifests/components.json` 里的 `llamacpp-cpu-linux-x64`
+- `scripts/license-report.mjs` 的 pin、`.prettierignore` 的忽略行
+
+**保留**（判据：它探的是用户自己装的东西，不依赖本 submodule）：
+`apps/daemon` 的运行时探测 —— 本机 `llama-server` 与 Ollama / LM Studio 同档，
+属于 ADR-016 明确保留的档 2。
+
+> 守卫：`apps/daemon/src/pipeline/ytdlpInstall.test.ts` 有一条断言
+> 「后端目录里不得再出现 `engine: "llama.cpp"` 的包」。想加回来会当场变红。
 
 ### 为什么 FFmpeg 不在这里
 

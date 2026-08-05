@@ -27,28 +27,6 @@
       "sha256": "f3bf3b4369a99b54665b0f19b88483b30de27f25963b0414235dea03198515c5"
     },
     {
-      "id": "llamacpp-cpu-linux-x64",
-      "displayName": "llama.cpp CPU backend (Linux x64)",
-      "displayNameZh": "llama.cpp CPU 后端（Linux x64）",
-      "category": "backend-pack",
-      "pinnedVersion": "b10223",
-      "provenance": {
-        "repoUrl": "https://github.com/ggml-org/llama.cpp",
-        "releaseUrl": "https://github.com/ggml-org/llama.cpp/releases/tag/b10223",
-        "license": "MIT",
-        "licenseUrl": "https://github.com/ggml-org/llama.cpp/blob/master/LICENSE",
-        "submodulePath": "vendor/llama.cpp",
-        "submoduleCommit": "11924d4c17abc27383376a1ac6a24fa3e36c1c0c"
-      },
-      "upstream": {
-        "kind": "github-release",
-        "repo": "ggml-org/llama.cpp",
-        "tagPattern": "^b\\d+$"
-      },
-      "sizeBytes": 16435963,
-      "sha256": "ef15f7c47c5ef8dc789fb7e8a00961b85bbba442da18ad18c820a16212c822b5"
-    },
-    {
       "id": "libsimple-linux-x64",
       "displayName": "libsimple Chinese FTS5 tokenizer (Linux x64)",
       "displayNameZh": "中文分词器 libsimple（Linux x64）",

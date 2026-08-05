@@ -1,6 +1,5 @@
 # 第三方源码：绝不格式化（ADR-001 A 类，上游可追溯性优先）
 vendor/whisper.cpp/
-vendor/llama.cpp/
 vendor/sherpa-onnx/
 vendor/sqlite-vec/
 vendor/libsimple/
