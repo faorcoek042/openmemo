@@ -177,6 +177,94 @@
     },
     {
       "schemaVersion": 1,
+      "id": "media-tools-win-x64",
+      "engine": "ffmpeg",
+      "engineVersion": "n7.1.5-12-g1fdbca85aa",
+      "ggmlAbi": null,
+      "backend": "cpu",
+      "tier": "downloadable",
+      "os": "win32",
+      "arch": "x64",
+      "displayName": "ffmpeg / ffprobe (Windows x64)",
+      "displayNameZh": "ffmpeg / ffprobe（Windows x64）",
+      "files": [
+        {
+          "role": "archive",
+          "name": "ffmpeg-n7.1.5-12-g1fdbca85aa-win64-gpl-7.1.zip",
+          "sizeBytes": 158697121,
+          "sha256": "5fef81d2a19752cafacb1bb396b3c7d64d31845d7ce4878ac65d24dd3abda00d",
+          "unpack": "zip",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-02-13-17/ffmpeg-n7.1.5-12-g1fdbca85aa-win64-gpl-7.1.zip",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 158697121,
+      "requiresDriver": null,
+      "license": {
+        "id": "GPL-3.0-or-later",
+        "gated": false,
+        "url": "https://www.gnu.org/licenses/gpl-3.0.html"
+      },
+      "providesFiles": [
+        "ffmpeg.exe",
+        "ffprobe.exe"
+      ],
+      "priority": 10,
+      "benchmark": null,
+      "catalogVersion": "2026.08.06"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "media-tools-macos-arm64",
+      "engine": "ffmpeg",
+      "engineVersion": "7.1.4-3",
+      "ggmlAbi": null,
+      "backend": "cpu",
+      "tier": "downloadable",
+      "os": "darwin",
+      "arch": "arm64",
+      "displayName": "ffmpeg / ffprobe (macOS Apple Silicon)",
+      "displayNameZh": "ffmpeg / ffprobe（macOS Apple Silicon）",
+      "files": [
+        {
+          "role": "archive",
+          "name": "jellyfin-ffmpeg_7.1.4-3_portable_macarm64-gpl.tar.xz",
+          "sizeBytes": 31063636,
+          "sha256": "99d689816a41075574928a0b3059101fd454fc58f465c99105a73b5c415ac86d",
+          "unpack": "tar.xz",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v7.1.4-3/jellyfin-ffmpeg_7.1.4-3_portable_macarm64-gpl.tar.xz",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 31063636,
+      "requiresDriver": {
+        "macosVersion": "12.0"
+      },
+      "license": {
+        "id": "GPL-3.0-or-later",
+        "gated": false,
+        "url": "https://www.gnu.org/licenses/gpl-3.0.html"
+      },
+      "providesFiles": [
+        "ffmpeg",
+        "ffprobe"
+      ],
+      "priority": 10,
+      "benchmark": null,
+      "catalogVersion": "2026.08.06"
+    },
+    {
+      "schemaVersion": 1,
       "id": "ytdlp-linux-x64",
       "engine": "yt-dlp",
       "engineVersion": "2026.07.04",

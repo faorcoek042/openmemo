@@ -122,6 +122,7 @@ export type { AssetProbe } from './assetPaths.js';
 // -- functional self-check (ADR-014: verify the FEATURE, not the component) -----------------
 export {
   CHINESE_PROBE_WORDS,
+  coreMlEncoderNameFor,
   diffSelfCheckReports,
   extensionFileName,
   listByName,

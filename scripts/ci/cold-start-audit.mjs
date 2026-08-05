@@ -46,7 +46,7 @@
  * `~/.local/share/openmemo/datadir.json`。端口用 19700 段，避开 :10000 与 17650。
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, chmodSync, rmSync, existsSync, accessSync, constants as fsConstants } from 'node:fs';
+import { mkdirSync, writeFileSync, chmodSync, rmSync, existsSync, accessSync, copyFileSync, statSync, constants as fsConstants } from 'node:fs';
 import { join, resolve, dirname, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -60,6 +60,20 @@ const arg = (name, dflt) => {
 const PORT = Number(arg('--port', '19700'));
 const ROOT = arg('--root', join(tmpdir(), `openmemo-coldstart-${process.pid}`));
 const MASK = !argv.includes('--no-mask');
+/*
+ * ★ T-146 `--transcribe`：**可行性证明**，不是性能测试。
+ *
+ * 用户 2026-08-06 的指示：「实测速度不重要，对于 CI 来说重要的是验证可行性」。
+ * 但"可行性"的下限**不能是"文件下下来了"** —— 这个项目已经栽过：
+ *   · macOS 打出过 1.4 MB、零个 ggml 后端模块、**却报告成功**的包；
+ *   · 7 个包全 `succeeded`、sha256 全过，而 daemon 起来是 `tokenizer=trigram vec=off`。
+ * 所以这一步走**产品真实路径**（`POST /api/notes/import` → transcribe job →
+ * `GET /api/notes/:uid/transcript`），判据是**拿到非空文本**。这是存在性证明。
+ *
+ * 默认关闭：它要多下一个 ASR 模型并真跑一次推理，而这个脚本在同一个 job 里跑两遍
+ * （屏蔽组 + 对照组）。workflow 只在屏蔽组那一遍打开它。
+ */
+const TRANSCRIBE = argv.includes('--transcribe');
 
 const DATA_DIR = join(ROOT, 'data');
 const POINTER = join(ROOT, 'pointer.json');
@@ -386,6 +400,28 @@ try {
     say('   目录里一个 required-core 的 asr/vad 模型都没有 —— 这本身就是个结论，记下来。');
     for (const m of models.slice(0, 10)) say(`     （目录里有：${m.id} role=${m.role} tags=${JSON.stringify(m.tags ?? [])}）`);
   }
+
+  /*
+   * ★ T-146：`required-core` 里**一个 ASR 模型都没有**（T-145 §7.3 实测的产品结论：
+   *   照着 required-core 装完仍然不能转写）。所以要做可行性证明，必须**显式**再挑一个。
+   *   挑最小的那个：这一步证的是"这条路走得通"，不是"跑得多快"。
+   */
+  if (TRANSCRIBE) {
+    const asr = models
+      .filter((m) => m.role === 'asr' && !pick.some((p) => p.id === m.id))
+      .map((m) => ({ m, bytes: sizeOf(m) }))
+      .filter((x) => x.bytes > 0)
+      .sort((a, b) => a.bytes - b.bytes)[0];
+    if (!asr) {
+      // 空集必须出声（本仓同一形状已发生三次）。
+      say('   ⚠️ --transcribe：目录里挑不出任何 role=asr 的模型 —— 先怀疑 unwrap，再怀疑目录。');
+    } else {
+      say(
+        `   --transcribe：另挑最小的 ASR 模型 ${asr.m.id}（${(asr.bytes / 1024 / 1024).toFixed(0)} MB）`,
+      );
+      pick.push(asr.m);
+    }
+  }
   say();
 
   for (const m of pick) {
@@ -473,6 +509,70 @@ try {
     if (sc.status !== 0) exitCode = 1;
   } else {
     exitCode = 1;
+  }
+
+  /* ─────────── 7. ★ 可行性证明：真的转写一次，判据是拿到非空文本 ─────────── */
+
+  if (TRANSCRIBE) {
+    hdr('7. ★ 可行性证明：走产品真实路径转写一次，判据是**非空文本**');
+    /*
+     * 样本用 whisper.cpp submodule 自带的 `samples/jfk.wav`（352,078 B，约 11 秒英语）。
+     * 它随 `submodules: recursive` 一起 checkout，**不需要联网另取**，也不需要造音频。
+     */
+    const sample = join(REPO, 'vendor', 'whisper.cpp', 'samples', 'jfk.wav');
+    if (!existsSync(sample)) {
+      say(`   ✘ 样本不存在：${sample} —— submodule 没 checkout？`);
+      exitCode = 1;
+    } else {
+      /*
+       * `importRoots` = [dataDir, ...OPENMEMO_IMPORT_ROOTS]（apps/daemon/src/main.ts:782），
+       * 所以样本必须先落进数据目录，否则 403 PATH_NOT_ALLOWED。
+       */
+      const dest = join(DATA_DIR, 'jfk.wav');
+      copyFileSync(sample, dest);
+      say(`   样本：${dest}（${statSync(dest).size} B）`);
+
+      const t0 = Date.now();
+      const imp = await j('/api/notes/import', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ input: dest, title: 'jfk (CI 可行性证明)', language: 'en' }),
+      });
+      say(`   POST /api/notes/import → HTTP ${imp.status} ${JSON.stringify(imp.body).slice(0, 300)}`);
+
+      const noteUid = imp.body?.noteUid;
+      const jobUid = imp.body?.jobUid;
+      if (imp.status !== 202 || !noteUid || !jobUid) {
+        say('   ✘ 导入没有排上队 —— 后面的转写无从谈起。');
+        exitCode = 1;
+      } else {
+        const st = await waitForJob(jobUid, 1200);
+        say(`   转写 job：${st}  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+
+        const tr = await j(`/api/notes/${encodeURIComponent(noteUid)}/transcript`);
+        const segs = tr.body?.segments ?? [];
+        const text = segs.map((s) => String(s.text ?? '')).join(' ').replace(/\s+/g, ' ').trim();
+        say(`   GET /api/notes/${noteUid}/transcript → HTTP ${tr.status}，${segs.length} 段`);
+        say(`   文本（前 300 字）：${text.slice(0, 300) || '(空)'}`);
+
+        /*
+         * ★ 判据写死在这里，不靠人看输出：
+         *   ① 段数 > 0        —— 没有段就等于没转出来
+         *   ② 去空白后长度 ≥ 20 —— 防"一个标点也算文本"的假绿
+         * 不断言具体内容：tiny 模型认错词是正常的，**这一步证的是"能跑通"不是"准不准"**。
+         */
+        if (segs.length === 0 || text.length < 20) {
+          say('   ✘ 转写没有产出可用文本 —— 这个平台上"能转写"这件事目前不成立。');
+          if (daemonLogs.length) {
+            say('   daemon 最后 40 行：');
+            say(daemonLogs.join('').split('\n').slice(-40).map((l) => `      ${l}`).join('\n'));
+          }
+          exitCode = 1;
+        } else {
+          say(`   ✔ 拿到 ${segs.length} 段、共 ${text.length} 字符的非空文本 —— 这条路走得通。`);
+        }
+      }
+    }
   }
 } catch (e) {
   say('');

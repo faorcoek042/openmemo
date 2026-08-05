@@ -165,6 +165,138 @@ export const CHINESE_PROBE_WORDS = ['用户', '推特', '中国', '服务'] as c
  */
 const NON_ASR_NAME = /silero|vad|punct|ct-transformer|speaker|diariz/i;
 
+/**
+ * whisper.cpp 自己算 CoreML encoder 路径的规则 —— **逐条复刻，不另发明**。
+ *
+ * `vendor/whisper.cpp/src/whisper.cpp:3326-3348`（v1.9.1 / f049fff）：
+ *   ① 去掉最后一个 `.` 之后的部分（`.bin`）
+ *   ② 若结尾正好是 5 个字符的 `-qX_X`，**再去掉它**
+ *   ③ 拼上 `-encoder.mlmodelc`
+ *
+ * ② 这一步很关键，它是上游**显式支持「量化模型 + CoreML encoder」**的证据：
+ * `ggml-large-v3-turbo-q5_0.bin` 找的是 `ggml-large-v3-turbo-encoder.mlmodelc`，
+ * 同一份 encoder 给该模型的所有量化档位共用 —— 所以"用 ANE 就得多发一份非量化模型"
+ * 这个说法不成立。
+ *
+ * 导出是为了让测试能拿同一条规则钉住它（而不是把期望值抄成字面量）。
+ */
+export function coreMlEncoderNameFor(modelFileName: string): string {
+  let s = modelFileName;
+  const dot = s.lastIndexOf('.');
+  if (dot !== -1) s = s.slice(0, dot);
+  const dash = s.lastIndexOf('-');
+  if (dash !== -1) {
+    const sub = s.slice(dash);
+    if (sub.length === 5 && sub[1] === 'q' && sub[3] === '_') s = s.slice(0, dash);
+  }
+  return `${s}-encoder.mlmodelc`;
+}
+
+/**
+ * `asr.coreml` —— **这台 Mac 到底走没走神经引擎（ANE）？**
+ *
+ * ─── 为什么必须有这一条 ───────────────────────────────────────────────────────
+ *
+ * macOS 的核心 whisper 包从 T-146 起带 `-DWHISPER_COREML=ON`
+ * **和 `-DWHISPER_COREML_ALLOW_FALLBACK=ON`**。后者的意思是：
+ * `.mlmodelc` 加载失败时 whisper.cpp **打一行 ERROR 然后照常跑**（whisper.cpp:3440-3452）。
+ *
+ * 而那一行 ERROR **谁也看不见** —— `packages/pipeline/src/asr/whisperCpp.ts:101`
+ * 传的是 `--no-prints`，whisper-cli 收到它做的第一件事就是
+ * `whisper_log_set(cb_log_disable, NULL)`（examples/cli/cli.cpp:1039-1040），
+ * 整个日志通道被关掉。
+ *
+ * 于是不加这一条的话，产品就会造出一个**新的假绿灯**：
+ * 用户以为在用神经引擎，实际一直在 CPU/GPU 上跑，而且没有任何地方会告诉他。
+ * 这正是本仓最贵的那类 bug（回退了却不说）的教科书形状 ——
+ * **判据不是"能不能回退"，是"回退了看不看得见"。**
+ *
+ * ─── 三档分别对应什么 ────────────────────────────────────────────────────────
+ *   ok    encoder 目录在，且里面有 `coremldata.bin`（= 真的是编译好的 mlmodelc）
+ *   warn  没装 encoder → ANE 没用上，转写走 Metal/CPU（**功能正常，只是慢**）
+ *   fail  目录在、但里面没有 `coremldata.bin` → **whisper 会静默回退**，
+ *         用户看到的是"装了 ANE 却没有变快"，而没有任何东西会报错
+ *
+ * `fail` 那一档不是假想：`ArtifactFile.unpack` 把 `<X>.mlmodelc.zip` 解到
+ * `by-name/asr/<X>.mlmodelc/`，而 zip 内部**自带一层同名顶层目录**，
+ * 于是真实结构是 `<X>.mlmodelc/<X>.mlmodelc/coremldata.bin` —— 外层是个空壳。
+ */
+async function checkCoreMl(
+  input: SelfCheckInput,
+  realAsr: string[],
+  add: (r: CheckResult) => void,
+): Promise<void> {
+  // ANE 只有 Apple Silicon 有。别的平台连这一项都不该出现，免得变成永久噪音。
+  if (process.platform !== 'darwin' || process.arch !== 'arm64') return;
+
+  const asrDir = join(input.storeRoot, 'by-name', 'asr');
+  const emit = (status: CheckResult['status'], detail: string, remediation: string | null): void => {
+    add({
+      layer: 'models',
+      id: 'asr.coreml',
+      label: 'CoreML encoder (Apple Neural Engine)',
+      labelZh: 'CoreML 编码器（神经引擎 ANE）',
+      status,
+      detail,
+      /*
+       * required=false 是有意的：**没有 ANE 不影响能不能转写**，只影响快不快
+       * （CoreML 只接管 encoder，whisper.cpp:2412）。把它标成 required 会让
+       * 一台完全正常的 Mac 报红，那是另一种谎。
+       */
+      required: false,
+      remediation,
+    });
+  };
+
+  if (realAsr.length === 0) {
+    emit('warn', '还没有 ASR 模型，无从判断 ANE 是否可用', '先在「模型」页装一个语音识别模型');
+    return;
+  }
+
+  const found: string[] = [];
+  const shells: string[] = [];
+  const missing: string[] = [];
+  for (const bin of realAsr) {
+    const encName = coreMlEncoderNameFor(bin);
+    const encDir = join(asrDir, encName);
+    let entries: string[];
+    try {
+      entries = await readdir(encDir);
+    } catch {
+      missing.push(`${bin} → 缺 ${encName}`);
+      continue;
+    }
+    /*
+     * 判据是**目录里有没有 `coremldata.bin`**，不是"目录在不在"。
+     * 「目录存在」正是那个空壳的表现 —— 只查存在性等于把 fail 读成 ok。
+     */
+    if (entries.includes('coremldata.bin')) found.push(`${bin} → ${encName}`);
+    else shells.push(`${encName}（里面是 ${entries.slice(0, 3).join(', ') || '空'}，不是编译好的 mlmodelc）`);
+  }
+
+  if (shells.length > 0) {
+    emit(
+      'fail',
+      `CoreML encoder 目录结构不对，whisper 会**静默回退**到 Metal/CPU：${shells.join('；')}`,
+      '删掉该目录重装；若重装后仍是这个结构，是解包多了一层同名目录（installer.ts 的 stripExt + zip 自带顶层目录）',
+    );
+    return;
+  }
+  if (found.length > 0) {
+    emit(
+      'ok',
+      `ANE 已就绪（encoder 只接管 whisper 的 encoder 部分，decoder 仍走 Metal/CPU）：${found.join('；')}`,
+      null,
+    );
+    return;
+  }
+  emit(
+    'warn',
+    `未启用 ANE —— 转写会走 Metal/CPU（功能正常，只是慢）：${missing.join('；')}`,
+    '在「模型」页为该模型安装可选的 CoreML encoder（role=coreml-encoder）',
+  );
+}
+
 async function exists(p: string | null | undefined, mode: number): Promise<boolean> {
   if (p === null || p === undefined || p.length === 0) return false;
   try {
@@ -509,6 +641,8 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
     required: true,
     remediation: realAsr.length > 0 ? null : '在「模型」页下载一个语音识别模型',
   });
+
+  await checkCoreMl(input, realAsr, add);
 
   /*
    * ---- LLM（ADR-016 之后只剩在线）------------------------------------------------

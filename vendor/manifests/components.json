@@ -151,6 +151,350 @@
       "sizeBytes": 39924536,
       "sha256": "6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae",
       "sha256Provenance": "本机下载全部 39,924,536 字节后独立复算，并与上游 SHA2-256SUMS 及 GitHub Releases API digest 三方逐字符比对一致（2026-08-03）。注：官方 PyInstaller 二进制按 GPLv3+ 分发，仓库源码本身是 Unlicense（ADR-002 决策 1）。"
+    },
+    {
+      "id": "whispercpp-cpu-win-x64",
+      "displayName": "whisper.cpp — CPU (Windows x64)",
+      "displayNameZh": "whisper.cpp · CPU 后端（Windows x64）",
+      "category": "backend-pack",
+      "pinnedVersion": "v1.9.1",
+      "provenance": {
+        "repoUrl": "https://github.com/ggml-org/whisper.cpp",
+        "releaseUrl": "https://github.com/ggml-org/whisper.cpp/releases/tag/v1.9.1",
+        "license": "MIT",
+        "licenseUrl": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE",
+        "submodulePath": "vendor/whisper.cpp",
+        "submoduleCommit": "f049fff95a089aa9969deb009cdd4892b3e74916"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "ggml-org/whisper.cpp",
+        "stableOnly": true
+      },
+      "sizeBytes": 7982101,
+      "sha256": "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539"
+    },
+    {
+      "id": "whispercpp-cuda-12.4-win-x64",
+      "displayName": "whisper.cpp — CUDA 12.4 (Windows x64)",
+      "displayNameZh": "whisper.cpp · CUDA 12.4 后端（Windows x64）",
+      "category": "backend-pack",
+      "pinnedVersion": "v1.9.1",
+      "provenance": {
+        "repoUrl": "https://github.com/ggml-org/whisper.cpp",
+        "releaseUrl": "https://github.com/ggml-org/whisper.cpp/releases/tag/v1.9.1",
+        "license": "MIT",
+        "licenseUrl": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE",
+        "submodulePath": "vendor/whisper.cpp",
+        "submoduleCommit": "f049fff95a089aa9969deb009cdd4892b3e74916"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "ggml-org/whisper.cpp",
+        "stableOnly": true
+      },
+      "sizeBytes": 677887125,
+      "sha256": "106a2030eff8998e4ef320fe72e263a78449e9040386ee27c41ea80b001b601b"
+    },
+    {
+      "id": "media-tools-win-x64",
+      "displayName": "ffmpeg / ffprobe (Windows x64)",
+      "displayNameZh": "ffmpeg / ffprobe（Windows x64）",
+      "category": "media-tool",
+      "pinnedVersion": "autobuild-2026-08-02-13-17",
+      "provenance": {
+        "repoUrl": "https://github.com/BtbN/FFmpeg-Builds",
+        "releaseUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-08-02-13-17",
+        "license": "GPL-3.0-or-later",
+        "licenseUrl": "https://www.gnu.org/licenses/gpl-3.0.html"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "BtbN/FFmpeg-Builds",
+        "tagPattern": "^autobuild-"
+      },
+      "sizeBytes": 158697121,
+      "sha256": "5fef81d2a19752cafacb1bb396b3c7d64d31845d7ce4878ac65d24dd3abda00d",
+      "sha256Provenance": "本机下载全部 158,697,121 字节后独立复算，并与 GitHub Releases API 的 digest 逐字符比对一致（2026-08-06）。与 Linux 包同一个不可变 tag。"
+    },
+    {
+      "id": "media-tools-macos-arm64",
+      "displayName": "ffmpeg / ffprobe (macOS Apple Silicon)",
+      "displayNameZh": "ffmpeg / ffprobe（macOS Apple Silicon）",
+      "category": "media-tool",
+      "pinnedVersion": "v7.1.4-3",
+      "provenance": {
+        "repoUrl": "https://github.com/jellyfin/jellyfin-ffmpeg",
+        "releaseUrl": "https://github.com/jellyfin/jellyfin-ffmpeg/releases/tag/v7.1.4-3",
+        "license": "GPL-3.0-or-later",
+        "licenseUrl": "https://www.gnu.org/licenses/gpl-3.0.html"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "jellyfin/jellyfin-ffmpeg",
+        "stableOnly": true
+      },
+      "sizeBytes": 31063636,
+      "sha256": "99d689816a41075574928a0b3059101fd454fc58f465c99105a73b5c415ac86d",
+      "sha256Provenance": "本机下载全部 31,063,636 字节后独立复算，并与 GitHub Releases API 的 digest 逐字符比对一致（2026-08-06）。⚠️ 这是 ffmpeg 的 **fork**（jellyfin 的 hwaccel 补丁），不是上游原版；BtbN 与 evermeet.cx 都不提供 Apple Silicon 产物（evermeet 官网原话：\"I do not plan to provide native ffmpeg binaries for Apple Silicon ARM.\"）。本机逐条解析 Mach-O load command：26 条 LC_LOAD_DYLIB 全部指向 Apple 系统框架与 /usr/lib，零 @rpath、零 /opt/homebrew，带 LC_CODE_SIGNATURE，LC_BUILD_VERSION minos=macOS 12.0。**未在 Mac 上运行过 —— 以上全部是静态分析。**"
+    },
+    {
+      "id": "ytdlp-linux-arm64",
+      "displayName": "yt-dlp site extractor (Linux arm64)",
+      "displayNameZh": "yt-dlp 站点解析器（Linux arm64）",
+      "category": "media-tool",
+      "pinnedVersion": "2026.07.04",
+      "provenance": {
+        "repoUrl": "https://github.com/yt-dlp/yt-dlp",
+        "releaseUrl": "https://github.com/yt-dlp/yt-dlp/releases/tag/2026.07.04",
+        "license": "GPL-3.0-or-later",
+        "licenseUrl": "https://www.gnu.org/licenses/gpl-3.0.html"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "yt-dlp/yt-dlp",
+        "stableOnly": true
+      },
+      "sizeBytes": 39675904,
+      "sha256": "b6ce97646773070d7a7ffd6bbbdcaecb47c48483909c54c915bf08a7a9b5e0b1"
+    },
+    {
+      "id": "ytdlp-macos-arm64",
+      "displayName": "yt-dlp site extractor (macOS universal2)",
+      "displayNameZh": "yt-dlp 站点解析器（macOS 通用二进制）",
+      "category": "media-tool",
+      "pinnedVersion": "2026.07.04",
+      "provenance": {
+        "repoUrl": "https://github.com/yt-dlp/yt-dlp",
+        "releaseUrl": "https://github.com/yt-dlp/yt-dlp/releases/tag/2026.07.04",
+        "license": "GPL-3.0-or-later",
+        "licenseUrl": "https://www.gnu.org/licenses/gpl-3.0.html"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "yt-dlp/yt-dlp",
+        "stableOnly": true
+      },
+      "sizeBytes": 38256544,
+      "sha256": "498bd0dae17855c599d371d68ec5bafc439a9d8640e838be25c765a9792f261b"
+    },
+    {
+      "id": "ytdlp-win-x64",
+      "displayName": "yt-dlp site extractor (Windows x64)",
+      "displayNameZh": "yt-dlp 站点解析器（Windows x64）",
+      "category": "media-tool",
+      "pinnedVersion": "2026.07.04",
+      "provenance": {
+        "repoUrl": "https://github.com/yt-dlp/yt-dlp",
+        "releaseUrl": "https://github.com/yt-dlp/yt-dlp/releases/tag/2026.07.04",
+        "license": "GPL-3.0-or-later",
+        "licenseUrl": "https://www.gnu.org/licenses/gpl-3.0.html"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "yt-dlp/yt-dlp",
+        "stableOnly": true
+      },
+      "sizeBytes": 18226085,
+      "sha256": "52fe3c26dcf71fbdc85b528589020bb0b8e383155cfa81b64dd447bbe35e24b8"
+    },
+    {
+      "id": "libsimple-darwin-arm64",
+      "displayName": "libsimple — Chinese FTS5 tokenizer (darwin/arm64)",
+      "displayNameZh": "中文分词器 libsimple（darwin/arm64）",
+      "category": "sqlite-ext",
+      "pinnedVersion": "v0.7.1",
+      "provenance": {
+        "repoUrl": "https://github.com/wangfenjin/simple",
+        "releaseUrl": "https://github.com/wangfenjin/simple/releases/tag/v0.7.1",
+        "license": "MIT",
+        "licenseUrl": "https://github.com/wangfenjin/simple/blob/master/LICENSE",
+        "submodulePath": "vendor/libsimple",
+        "submoduleCommit": "4ed008934495fc55ff4bf6620bba58311988b23e"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "wangfenjin/simple",
+        "stableOnly": true
+      },
+      "sizeBytes": 5324657,
+      "sha256": "b699f0fca1e7d1f8776d067708ecf4d0bcc2d765e4b643862e129058583b885f"
+    },
+    {
+      "id": "libsimple-darwin-x64",
+      "displayName": "libsimple — Chinese FTS5 tokenizer (darwin/x64)",
+      "displayNameZh": "中文分词器 libsimple（darwin/x64）",
+      "category": "sqlite-ext",
+      "pinnedVersion": "v0.7.1",
+      "provenance": {
+        "repoUrl": "https://github.com/wangfenjin/simple",
+        "releaseUrl": "https://github.com/wangfenjin/simple/releases/tag/v0.7.1",
+        "license": "MIT",
+        "licenseUrl": "https://github.com/wangfenjin/simple/blob/master/LICENSE",
+        "submodulePath": "vendor/libsimple",
+        "submoduleCommit": "4ed008934495fc55ff4bf6620bba58311988b23e"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "wangfenjin/simple",
+        "stableOnly": true
+      },
+      "sizeBytes": 5322912,
+      "sha256": "d6f7e9fc9dac3c2bcfb5389618d41f2f0db6ea5a83dd8b9a363cf9b02fa20f95"
+    },
+    {
+      "id": "libsimple-linux-arm64",
+      "displayName": "libsimple — Chinese FTS5 tokenizer (linux/arm64)",
+      "displayNameZh": "中文分词器 libsimple（linux/arm64）",
+      "category": "sqlite-ext",
+      "pinnedVersion": "v0.7.1",
+      "provenance": {
+        "repoUrl": "https://github.com/wangfenjin/simple",
+        "releaseUrl": "https://github.com/wangfenjin/simple/releases/tag/v0.7.1",
+        "license": "MIT",
+        "licenseUrl": "https://github.com/wangfenjin/simple/blob/master/LICENSE",
+        "submodulePath": "vendor/libsimple",
+        "submoduleCommit": "4ed008934495fc55ff4bf6620bba58311988b23e"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "wangfenjin/simple",
+        "stableOnly": true
+      },
+      "sizeBytes": 5332634,
+      "sha256": "d2d6589f0fc144099d48105cb3d97c9939ef24c87b63b3f2b749a10a6922fa48"
+    },
+    {
+      "id": "libsimple-win32-arm64",
+      "displayName": "libsimple — Chinese FTS5 tokenizer (win32/arm64)",
+      "displayNameZh": "中文分词器 libsimple（win32/arm64）",
+      "category": "sqlite-ext",
+      "pinnedVersion": "v0.7.1",
+      "provenance": {
+        "repoUrl": "https://github.com/wangfenjin/simple",
+        "releaseUrl": "https://github.com/wangfenjin/simple/releases/tag/v0.7.1",
+        "license": "MIT",
+        "licenseUrl": "https://github.com/wangfenjin/simple/blob/master/LICENSE",
+        "submodulePath": "vendor/libsimple",
+        "submoduleCommit": "4ed008934495fc55ff4bf6620bba58311988b23e"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "wangfenjin/simple",
+        "stableOnly": true
+      },
+      "sizeBytes": 5455695,
+      "sha256": "520c33aae3fab35cba963927d04f041f971eee71f01fa577fb1d51e171780687"
+    },
+    {
+      "id": "libsimple-win32-x64",
+      "displayName": "libsimple — Chinese FTS5 tokenizer (win32/x64)",
+      "displayNameZh": "中文分词器 libsimple（win32/x64）",
+      "category": "sqlite-ext",
+      "pinnedVersion": "v0.7.1",
+      "provenance": {
+        "repoUrl": "https://github.com/wangfenjin/simple",
+        "releaseUrl": "https://github.com/wangfenjin/simple/releases/tag/v0.7.1",
+        "license": "MIT",
+        "licenseUrl": "https://github.com/wangfenjin/simple/blob/master/LICENSE",
+        "submodulePath": "vendor/libsimple",
+        "submoduleCommit": "4ed008934495fc55ff4bf6620bba58311988b23e"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "wangfenjin/simple",
+        "stableOnly": true
+      },
+      "sizeBytes": 5473005,
+      "sha256": "7f03cc28cf307721f5621b5a52ef3bcb26c5215de012b09900492eb34d5bed0b"
+    },
+    {
+      "id": "sqlite-vec-darwin-arm64",
+      "displayName": "sqlite-vec — vector search (darwin/arm64)",
+      "displayNameZh": "向量检索 sqlite-vec（darwin/arm64）",
+      "category": "sqlite-ext",
+      "pinnedVersion": "v0.1.9",
+      "provenance": {
+        "repoUrl": "https://github.com/asg017/sqlite-vec",
+        "releaseUrl": "https://github.com/asg017/sqlite-vec/releases/tag/v0.1.9",
+        "license": "MIT",
+        "licenseUrl": "https://github.com/asg017/sqlite-vec/blob/main/LICENSE",
+        "submodulePath": "vendor/sqlite-vec",
+        "submoduleCommit": "e9f598abfa0c06b328d8fe5da9c3760cce74be10"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "asg017/sqlite-vec",
+        "stableOnly": true
+      },
+      "sizeBytes": 50836,
+      "sha256": "8282126333399ddfe98bbbcc7a1936e7252625aac49df056a98be602e46bfd29"
+    },
+    {
+      "id": "sqlite-vec-darwin-x64",
+      "displayName": "sqlite-vec — vector search (darwin/x64)",
+      "displayNameZh": "向量检索 sqlite-vec（darwin/x64）",
+      "category": "sqlite-ext",
+      "pinnedVersion": "v0.1.9",
+      "provenance": {
+        "repoUrl": "https://github.com/asg017/sqlite-vec",
+        "releaseUrl": "https://github.com/asg017/sqlite-vec/releases/tag/v0.1.9",
+        "license": "MIT",
+        "licenseUrl": "https://github.com/asg017/sqlite-vec/blob/main/LICENSE",
+        "submodulePath": "vendor/sqlite-vec",
+        "submoduleCommit": "e9f598abfa0c06b328d8fe5da9c3760cce74be10"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "asg017/sqlite-vec",
+        "stableOnly": true
+      },
+      "sizeBytes": 51404,
+      "sha256": "53ad76e400786515e2edcaed2f01271dda846316390b761fadbd2dcf56aa4713"
+    },
+    {
+      "id": "sqlite-vec-linux-arm64",
+      "displayName": "sqlite-vec — vector search (linux/arm64)",
+      "displayNameZh": "向量检索 sqlite-vec（linux/arm64）",
+      "category": "sqlite-ext",
+      "pinnedVersion": "v0.1.9",
+      "provenance": {
+        "repoUrl": "https://github.com/asg017/sqlite-vec",
+        "releaseUrl": "https://github.com/asg017/sqlite-vec/releases/tag/v0.1.9",
+        "license": "MIT",
+        "licenseUrl": "https://github.com/asg017/sqlite-vec/blob/main/LICENSE",
+        "submodulePath": "vendor/sqlite-vec",
+        "submoduleCommit": "e9f598abfa0c06b328d8fe5da9c3760cce74be10"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "asg017/sqlite-vec",
+        "stableOnly": true
+      },
+      "sizeBytes": 61046,
+      "sha256": "ea03d39541e478fab5974253c461e1cb5d77742f69e40cf96e3fad5bc309a37c"
+    },
+    {
+      "id": "sqlite-vec-win32-x64",
+      "displayName": "sqlite-vec — vector search (win32/x64)",
+      "displayNameZh": "向量检索 sqlite-vec（win32/x64）",
+      "category": "sqlite-ext",
+      "pinnedVersion": "v0.1.9",
+      "provenance": {
+        "repoUrl": "https://github.com/asg017/sqlite-vec",
+        "releaseUrl": "https://github.com/asg017/sqlite-vec/releases/tag/v0.1.9",
+        "license": "MIT",
+        "licenseUrl": "https://github.com/asg017/sqlite-vec/blob/main/LICENSE",
+        "submodulePath": "vendor/sqlite-vec",
+        "submoduleCommit": "e9f598abfa0c06b328d8fe5da9c3760cce74be10"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "asg017/sqlite-vec",
+        "stableOnly": true
+      },
+      "sizeBytes": 143162,
+      "sha256": "51581189d52066b4dfc6631f6d7a3eab7dedc2260656ab09ca97ab3fb8165983"
     }
   ]
 }
