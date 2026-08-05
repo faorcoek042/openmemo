@@ -42,6 +42,20 @@ const MANIFEST_DIR = join(REPO_ROOT, 'vendor', 'manifests');
 const readJson = async (name: string): Promise<unknown> =>
   JSON.parse(await readFile(join(MANIFEST_DIR, name), 'utf8'));
 
+/**
+ * ★ T-147：**落盘的文件名必须带平台后缀**，否则这一族用例在 Windows 上全是红的。
+ *
+ * `discoverTools()` 在 win32 上找的是 `yt-dlp.exe`（`tools.ts:346` 的 `exe()`），
+ * 而这几条以前一律写死 `'yt-dlp'` 造文件 —— 于是 `tools.ytDlp` 在 Windows 上是 null，
+ * 断言 `equal(tools.ytDlp, join(dir,'yt-dlp'))` 必然失败。
+ * 这与本文件自己第 ① 组的断言是同一件事：清单里 win32 包给的就是 `yt-dlp.exe`。
+ *
+ * ⚠️ 这几条**至今没有在 Windows 上真跑过**：`pnpm -r test` 在 `packages/runtime`
+ * 就 bail 了（D-11 §3.3 的 6 条红全在那儿），`apps/daemon` 一条都没轮到。
+ * 所以这属于**按实测的平台事实推出来的修**，标 `[未在 CI 上观测到红]`。
+ */
+const YTDLP = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
+
 const tmpDirs: string[] = [];
 async function tempDir(prefix: string): Promise<string> {
   const d = await mkdtemp(join(tmpdir(), prefix));
@@ -215,13 +229,13 @@ describe('T-132 ②③ 装上了要真的找得到', () => {
     const root = await tempDir('om-ytdlp-flat-');
     const dir = join(root, 'by-name', 'backend');
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, 'yt-dlp'), '#!/bin/sh\necho 2026.07.04\n');
-    await chmod(join(dir, 'yt-dlp'), 0o755);
+    await writeFile(join(dir, YTDLP), '#!/bin/sh\necho 2026.07.04\n');
+    await chmod(join(dir, YTDLP), 0o755);
 
-    assert.equal(await findInBackendPacks(root, 'yt-dlp'), join(dir, 'yt-dlp'));
+    assert.equal(await findInBackendPacks(root, YTDLP), join(dir, YTDLP));
     // discoverTools 是产品真正调用的入口，一起钉住（只钉底层函数会漏掉装配错误）。
     const tools = await discoverTools({ storeRoot: root });
-    assert.equal(tools.ytDlp, join(dir, 'yt-dlp'));
+    assert.equal(tools.ytDlp, join(dir, YTDLP));
   });
 
   it('没有可执行位就不算找到（否则会拿一个 spawn 必然 EACCES 的路径去报绿）', async () => {
@@ -229,10 +243,30 @@ describe('T-132 ②③ 装上了要真的找得到', () => {
     const dir = join(root, 'by-name', 'backend');
     await mkdir(dir, { recursive: true });
     // 这正是 `linkByName` 硬链出来的默认状态：0644。
-    await writeFile(join(dir, 'yt-dlp'), '#!/bin/sh\n', { mode: 0o644 });
-    await chmod(join(dir, 'yt-dlp'), 0o644);
+    await writeFile(join(dir, YTDLP), '#!/bin/sh\n', { mode: 0o644 });
+    await chmod(join(dir, YTDLP), 0o644);
 
-    assert.equal(await findInBackendPacks(root, 'yt-dlp'), null);
+    if (process.platform === 'win32') {
+      /*
+       * ★ 允许的 skip，而且**理由是可检验的**：Windows 上根本不存在"没有可执行位"
+       * 这个状态。D-11 §3.1 实测：`chmod(0o755)` 读回来仍是 `666`，
+       * 而 `access(X_OK)` 对任何可读文件都返回 true —— `installer.ts:283-284`
+       * 「Windows 跳过 chmod」的理由正是这条。
+       *
+       * 所以这里不 return 了事，而是**把那个前提本身钉住**：
+       * 哪天 Windows 真的开始认可执行位，这两句会红，
+       * 上面那段"理由"就会当场被推翻，而不是继续被下一个人当真。
+       */
+      await access(join(dir, YTDLP), constants.X_OK); // 不抛 = 前提成立
+      assert.notEqual(
+        await findInBackendPacks(root, YTDLP),
+        null,
+        'Windows 上 X_OK 恒真，所以它必然"找得到" —— 这正是上面那条 POSIX 性质无法成立的原因',
+      );
+      return;
+    }
+
+    assert.equal(await findInBackendPacks(root, YTDLP), null);
     assert.equal((await discoverTools({ storeRoot: root })).ytDlp, null);
   });
 
@@ -283,7 +317,8 @@ describe('T-132 ②③ 装上了要真的找得到', () => {
           files: [
             {
               role: 'binary',
-              name: 'yt-dlp',
+              // 清单里 win32 包给的就是 `yt-dlp.exe`（本文件第 ① 组已断言过这一点）
+              name: YTDLP,
               sizeBytes: body.length,
               sha256,
               mirrors: [{ provider: 'github', url: `http://127.0.0.1:${port}/yt-dlp`, official: true }],
@@ -326,8 +361,8 @@ describe('T-132 ④ 站点提取器默认是开的', () => {
     const root = await tempDir('om-ytdlp-registry-');
     const dir = join(root, 'by-name', 'backend');
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, 'yt-dlp'), '#!/bin/sh\n');
-    await chmod(join(dir, 'yt-dlp'), 0o755);
+    await writeFile(join(dir, YTDLP), '#!/bin/sh\n');
+    await chmod(join(dir, YTDLP), 0o755);
     const tools = await discoverTools({ storeRoot: root });
 
     const registry = buildDefaultRegistry({

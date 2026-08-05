@@ -25,20 +25,48 @@
  * 所以判据必须是：**源码目录本身不许被 `.gitignore` 匹配**（用 `git check-ignore` 直接问 git）。
  */
 import { execFileSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
 
 const ROOTS = ['apps', 'packages'];
 const ARTIFACT =
   /(^|\/)(node_modules|dist|dist-types|\.build|\.test-out|\.vite|\.cache|coverage|prebuilds)(\/|$)/;
 
-/** 列出所有源码目录（排除产物目录）。 */
+/**
+ * 列出所有源码目录（排除产物目录）。
+ *
+ * ★ T-147：这里原本是 `execFileSync('find', [root, '-type', 'd'])`。
+ * `[CI 实测]` 在 windows-2025 上 `find` 解析到的是 `C:\Windows\System32\find.exe`
+ * ——一个**文本搜索**工具，参数完全不同：
+ *
+ * ```
+ * win32:  FIND: Parameter format not correct     → catch → 返回 []
+ *         ✘ 没找到任何源码目录，检查脚本本身可能有问题   ← 步骤 failure
+ * darwin: 绿（BSD find 认 -type d，只是不认 --version）
+ * ```
+ *
+ * 也就是说 `pnpm check:sources` 这条守卫**在 Windows 上从来没有守过任何东西**。
+ * 它至少红得诚实（说"脚本本身可能有问题"而不是静默放行），但一条永远红的守卫
+ * 与一条被删掉的守卫等价 —— 而且会训练人忽略红灯（HANDOFF ⑤B）。
+ *
+ * 换成 Node 自己走目录：没有外部命令，各平台行为一致。
+ * 路径一律用 `/` 拼（**不是** `path.join`）—— 下一步要交给 `git check-ignore`，
+ * 而 gitignore 的模式语义就是 POSIX 分隔符；Windows 上 git 也认 `/`。
+ */
 function sourceDirs(root) {
-  let out;
-  try {
-    out = execFileSync('find', [root, '-type', 'd'], { encoding: 'utf8' }).split('\n').filter(Boolean);
-  } catch {
-    return [];
-  }
-  return out.filter((d) => !ARTIFACT.test(d));
+  const out = [];
+  const walk = (dir) => {
+    if (ARTIFACT.test(dir)) return;
+    out.push(dir);
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return; // 根不存在 / 读不了：如实当作没有，交给下面的非空守卫报
+    }
+    for (const e of entries) if (e.isDirectory()) walk(`${dir}/${e.name}`);
+  };
+  walk(root);
+  return out;
 }
 
 const dirs = ROOTS.flatMap(sourceDirs);
@@ -50,10 +78,14 @@ if (!dirs.length) {
 // `--no-index` 是关键：默认 check-ignore 会先看索引，
 // **已入库的文件会让它闭嘴** —— 而 Tailwind 的扫描只看 `.gitignore` 规则、不看索引。
 // 不加这个旗标，修复之后这条检查就永远是绿的，挡不住重犯。
+//
+// 路径走 `--stdin` 而不是命令行参数：目录数量随仓库增长，而 Windows 的命令行
+// 有 32 KB 上限 —— 超了不会给出"太长了"这种提示，而是一个看起来无关的失败。
 let ignored = [];
 try {
-  const out = execFileSync('git', ['check-ignore', '--no-index', '--', ...dirs], {
+  const out = execFileSync('git', ['check-ignore', '--no-index', '--stdin'], {
     encoding: 'utf8',
+    input: `${dirs.join('\n')}\n`,
   });
   ignored = out.split('\n').filter(Boolean);
 } catch (e) {

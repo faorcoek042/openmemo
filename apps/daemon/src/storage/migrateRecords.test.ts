@@ -10,10 +10,26 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { after, describe, it } from 'node:test';
 
 import { migrateInstallRecords, migrateRecord, listExistingRelPaths } from './migrateRecords.js';
+
+/*
+ * ★ T-147：这一组以前把 `relPath` 的期望值写成 `'by-name/asr/x.bin'`。
+ *
+ * 产品用的是 `relative(modelsDir, abs)`（`migrateRecords.ts:87`），
+ * 而 `listExistingRelPaths` 用的也是 `relative` —— **两边一致，产品没问题**；
+ * 出问题的是测试：Windows 上 `relative` 给的是 `by-name\asr\x.bin`，
+ * 于是第一条硬红，后面几条则退化成"用一个 Windows 上根本不会出现的形状去测"。
+ *
+ * 所以期望值改成用 `join()` 拼（各平台各自的形状），根用 `resolve()` 取绝对路径。
+ * 断言钉的仍然是结构：转没转、指没指对、幂等不幂等。
+ */
+/** 库根 —— POSIX 上是 `/store`，Windows 上是 `<当前盘>:\store`。 */
+const STORE = resolve('/store');
+/** 相对路径的**本平台**形状（这正是 `relative()` 会给出的那种）。 */
+const REL_X = join('by-name', 'asr', 'x.bin');
 
 const made: string[] = [];
 function tmp(p: string): string {
@@ -41,45 +57,43 @@ async function seedStore(root: string, recs: Record<string, unknown>): Promise<v
 describe('migrateRecord —— 单条记录', () => {
   it('绝对路径且在库内 → 转成 root+relPath', () => {
     const r = migrateRecord(
-      { files: [{ name: 'a', path: '/store/by-name/asr/x.bin' }] },
-      '/store',
-      new Set(['by-name/asr/x.bin']),
+      { files: [{ name: 'a', path: join(STORE, REL_X) }] },
+      STORE,
+      new Set([REL_X]),
     );
     assert.equal(r.changed, true);
-    assert.equal(r.record.files?.[0]?.relPath, 'by-name/asr/x.bin');
+    assert.equal(r.record.files?.[0]?.relPath, REL_X);
     assert.equal(r.record.files?.[0]?.root, 'models');
     assert.ok(!('path' in (r.record.files?.[0] ?? {})), '旧的绝对 path 应被移除');
   });
 
   it('★ 路径已失效但同名文件在库里 → 重新指向（数据目录搬过家就是这种）', () => {
-    const r = migrateRecord(
-      { files: [{ name: 'a', path: '/tmp/cold4/models/by-name/asr/x.bin' }] },
-      '/store',
-      new Set(['by-name/asr/x.bin']),
-    );
+    const stale = join(resolve('/tmp/cold4'), 'models', REL_X);
+    const r = migrateRecord({ files: [{ name: 'a', path: stale }] }, STORE, new Set([REL_X]));
     assert.equal(r.changed, true);
-    assert.equal(r.record.files?.[0]?.relPath, 'by-name/asr/x.bin');
+    assert.equal(r.record.files?.[0]?.relPath, REL_X);
   });
 
   it('★ 找不到对应文件 → **不改也不删**，计入 unresolved', () => {
-    const rec = { files: [{ name: 'gone', path: '/tmp/gone/y.bin' }] };
-    const r = migrateRecord(rec, '/store', new Set(['by-name/asr/x.bin']));
+    const gone = join(resolve('/tmp/gone'), 'y.bin');
+    const rec = { files: [{ name: 'gone', path: gone }] };
+    const r = migrateRecord(rec, STORE, new Set([REL_X]));
     assert.equal(r.changed, false);
-    assert.equal(r.record.files?.[0]?.path, '/tmp/gone/y.bin', '记录被改动了');
+    assert.equal(r.record.files?.[0]?.path, gone, '记录被改动了');
     assert.equal(r.unresolved.length, 1);
   });
 
   it('残留 installPath 被移除', () => {
-    const r = migrateRecord({ installPath: 'bin/ext', files: [] }, '/store', new Set());
+    const r = migrateRecord({ installPath: 'bin/ext', files: [] }, STORE, new Set());
     assert.equal(r.changed, true);
     assert.ok(!('installPath' in r.record));
   });
 
   it('已是新格式 → 不动（changed=false）', () => {
     const r = migrateRecord(
-      { files: [{ name: 'a', root: 'models', relPath: 'by-name/asr/x.bin' }] },
-      '/store',
-      new Set(['by-name/asr/x.bin']),
+      { files: [{ name: 'a', root: 'models', relPath: REL_X }] },
+      STORE,
+      new Set([REL_X]),
     );
     assert.equal(r.changed, false);
   });

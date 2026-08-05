@@ -65,14 +65,27 @@ import { NoMediaSourceError } from '../types.js';
 import type { MediaSource } from '../types.js';
 import type { ToolPaths } from '../../tools.js';
 
-/** yt-dlp present and executable (/bin/sh always is, and we never run it here). */
+/**
+ * yt-dlp present and executable.
+ *
+ * ★ T-147: this used to be the literal `'/bin/sh'`, with the comment
+ * "/bin/sh always is". That is a **host assumption**, not a fact: `registry.resolve()`
+ * → `isAvailable()` → `isExecutable()` → `access(path, X_OK)`, and on Windows
+ * `D:\bin\sh` does not exist, so every adapter reports unavailable and all four
+ * resolution tests below die with `NoMediaSourceError` — i.e. on Windows this file
+ * would not have been testing adapter selection at all.
+ *
+ * `process.execPath` is the node binary currently running this test: it exists and is
+ * executable **by construction** on every platform, and we never spawn it here either.
+ */
+const ANY_REAL_EXECUTABLE = process.execPath;
 const TOOLS_WITH_EXTRACTOR: ToolPaths = {
-  ffmpeg: '/bin/sh',
-  ffprobe: '/bin/sh',
+  ffmpeg: ANY_REAL_EXECUTABLE,
+  ffprobe: ANY_REAL_EXECUTABLE,
   whisperCli: null,
   whisperVad: null,
   vadModel: null,
-  ytDlp: '/bin/sh',
+  ytDlp: ANY_REAL_EXECUTABLE,
 };
 
 /** The shipping-without-GPL configuration. */

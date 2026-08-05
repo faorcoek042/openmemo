@@ -8,7 +8,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, realpath, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
@@ -245,8 +245,26 @@ describe('L7 (§8.5) — path traversal', () => {
   it('follows symlinks before deciding — a lexical check would be fooled', async () => {
     const root = await mkdtemp(join(tmpdir(), 'openmemo-guard-'));
     dirs.push(root);
-    // "inside/escape" LOOKS contained, but resolves to /etc.
-    await symlink('/etc', join(root, 'escape')).catch(() => undefined);
+    /*
+     * ★ T-147: this used to symlink to the host's `/etc`, with the failure swallowed by
+     * `.catch(() => undefined)`. Two problems, both of the "asserts nothing" kind:
+     *   · `/etc` does not exist on Windows, so the link was never created there and the
+     *     candidate resolved happily INSIDE the root — the test then failed for a reason
+     *     that has nothing to do with the guard.
+     *   · the swallowed error meant the precondition was never checked anywhere.
+     * So: build the outside target ourselves (works on every platform), and assert the
+     * precondition — the link really does lead out of the root and really is readable —
+     * before asserting that the guard rejects it. Otherwise this case can pin zero.
+     */
+    const outside = await mkdtemp(join(tmpdir(), 'openmemo-guard-OUTSIDE-'));
+    dirs.push(outside);
+    await writeFile(join(outside, 'passwd'), 'SECRET-OUTSIDE-ROOT');
+    await symlink(outside, join(root, 'escape'));
+    assert.equal(
+      await readFile(join(root, 'escape', 'passwd'), 'utf8'),
+      'SECRET-OUTSIDE-ROOT',
+      'precondition: the link must really reach outside the root',
+    );
 
     const r = await assertWithinRoot(root, 'escape/passwd');
     // If this ever starts passing, someone replaced realpath with path.resolve.
@@ -315,20 +333,39 @@ describe('L7 (§8.5) — path traversal', () => {
       dirs.push(root);
       const r = await assertWithinRoot(root, '\\\\server\\share\\evil', 'linux');
       assert.equal(r.ok, true, 'posix treats backslashes as ordinary filename characters');
+      const value = r.ok === true ? r.value : '';
       /*
-       * ★ T-145: compare against realpath(root), not root.
+       * ★ T-145: compare against realpath(root), not root — macOS's TMPDIR is under
+       *   `/var` → `/private/var`, and `assertWithinRoot` returns realpath'd values.
+       * ★ T-147: and then don't compare a full string at all.
        *
-       * This line used to say `join(root, …)`. It passed on Linux and FAILED on the
-       * first ever macOS CI run, because macOS's TMPDIR lives under `/var`, which is
-       * a symlink to `/private/var`. `assertWithinRoot` returns realpath'd values, so
-       * the expectation has to be realpath'd too — otherwise the test is asserting
-       * "the host's tmpdir is not behind a symlink", which is a property of the
-       * machine, not of the guard.
+       *   The call FORCES posix rules while `realpath` is unavoidably host-bound, so on
+       *   a Windows host the impl runs `posix.resolve()` over a `C:\…` string and the
+       *   result is neither a valid win32 path nor a valid posix one. Rebuilding that
+       *   with the host's `join()` gave `C:\…\server\share\evil` (win32 `join`
+       *   NORMALISES the backslashes away) — `[CI 实测]` ci-crossplatform run
+       *   31037387863, win32/x64.
+       *
+       *   What this case actually claims is a STRUCTURE, not a string: the UNC form is
+       *   not rejected, and it lands inside the root as a filename that still contains
+       *   the backslashes. So assert exactly that — plus one reverse case, because
+       *   "ok + ends with the candidate" would also be satisfied by a guard that let
+       *   everything through.
        */
       assert.equal(
-        r.ok === true ? r.value : '',
-        join(await realpath(root), '\\\\server\\share\\evil'),
-        'it stays INSIDE the root — not an escape, just untested',
+        value.endsWith('\\\\server\\share\\evil'),
+        true,
+        'the backslashes survive verbatim — it is just a weird filename',
+      );
+      assert.equal(
+        value.length > '\\\\server\\share\\evil'.length,
+        true,
+        'the root is still prefixed onto it — it stays INSIDE the root, not an escape',
+      );
+      assertRejected(
+        await assertWithinRoot(root, '../escape', 'linux'),
+        'path_escape',
+        'same posix rules still reject a real escape (otherwise the two lines above pin zero)',
       );
     });
   });
@@ -400,7 +437,22 @@ describe('L7 (§8.5) — path traversal', () => {
 
     it('★ a symlink INSIDE the root pointing outside is still rejected', async () => {
       const { link, real } = await symlinkedRoot();
-      await symlink('/etc/hostname', join(real, 'escape.wav'));
+      /*
+       * ★ T-147: this used to point at `/etc/hostname`. That file exists on Linux and
+       * NOT on macOS — `[CI 实测]` ci-crossplatform run 31037387863, darwin-arm64 was
+       * red on exactly this line, and win32 too. A dangling link makes
+       * `realpathOrResolve` fall back to the lexical path, which lands back inside the
+       * root, so the guard correctly does not reject it — i.e. the test was pinning
+       * "the host is Debian-shaped", not "the guard follows symlinks".
+       */
+      const outside = await mkdtemp(join(tmpdir(), 'openmemo-guard-OUTSIDE-'));
+      dirs.push(outside);
+      const secret = join(outside, 'secret.wav');
+      await writeFile(secret, 'OUTSIDE');
+      await symlink(secret, join(real, 'escape.wav'));
+      // precondition: the link must really be readable and really lead outside
+      assert.equal(await readFile(join(real, 'escape.wav'), 'utf8'), 'OUTSIDE');
+
       assertRejected(await assertWithinRoot(link, 'escape.wav'), 'path_escape', 'inner symlink');
     });
   });
