@@ -107,11 +107,18 @@ describe('自我重启与 dataDir', () => {
       // 重启用的目标由显式意图决定：不传 = 当前目录
       // （这里只断言决策本身，不真的 spawn —— 真重启在 e2e 里覆盖）
       assert.notEqual(mine, decoy, '测试前提：诱饵目录必须与本实例不同');
-      assert.equal(
-        readFileSync(pointerPath, 'utf8').includes(decoy),
-        true,
-        '测试前提：指针确实指向别处',
-      );
+      /*
+       * ★ T-147：读回来的是 **JSON**，要按 JSON 比，不能当字符串 `includes`。
+       *
+       * 指针文件是 `JSON.stringify({dataDir})`，而 JSON 会把反斜杠转义 ——
+       * Windows 上文件里是 `"C:\\Users\\...\\om-rd-decoy-x"`，而 `decoy` 变量里是
+       * 单反斜杠，`includes()` 永远为 false：`[CI 实测]` ci-crossplatform
+       * run 31038276704，win32/x64 红在「测试前提：指针确实指向别处」这一句上 ——
+       * **前提断言自己成了那个不成立的东西**。
+       * 按字段比同时也更强：`includes` 连"指针指向诱饵的子目录"都会算通过。
+       */
+      const written = JSON.parse(readFileSync(pointerPath, 'utf8')) as { dataDir?: string };
+      assert.equal(written.dataDir, decoy, '测试前提：指针确实指向别处');
     } finally {
       await d.stop();
     }

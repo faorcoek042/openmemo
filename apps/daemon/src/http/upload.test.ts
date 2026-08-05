@@ -325,6 +325,31 @@ function post(
     if (!opts.chunked) headers['content-length'] = String(body.length);
 
     let settled = false;
+    /*
+     * ★ T-147：拿到响应之后，写请求体时的 EPIPE / ECONNRESET **不算失败**。
+     *
+     * 超限那条路径上，服务端会在我们把 body 写完之前就回 413 并断开连接 ——
+     * 那正是本用例要的行为。写端何时观测到对端关闭是**内核的事，不是产品的事**：
+     * Linux 上这些字节进了 socket 缓冲区、悄无声息；macOS 与 Windows 上当场 EPIPE。
+     * `[CI 实测]` ci-crossplatform run 31038276704：darwin 与 win32 双双红在
+     * `error: 'write EPIPE'`，而**断言一条都没跑到**。
+     *
+     * 所以：响应头已经到手 → 按响应结算（该断的还是断）；响应头都没到 → 才是真错。
+     */
+    let response: { statusCode: number | undefined; chunks: Buffer[] } | null = null;
+    const settleFromResponse = (): void => {
+      if (settled || response === null) return;
+      settled = true;
+      const text = Buffer.concat(response.chunks).toString('utf8');
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        parsed = { raw: text };
+      }
+      resolvePromise({ status: response.statusCode ?? 0, body: parsed });
+    };
+
     const req = httpRequest(
       {
         host: '127.0.0.1',
@@ -335,26 +360,21 @@ function post(
       },
       (res) => {
         const chunks: Buffer[] = [];
+        response = { statusCode: res.statusCode, chunks };
         res.on('data', (c: Buffer) => void chunks.push(c));
-        res.on('end', () => {
-          if (settled) return;
-          settled = true;
-          const text = Buffer.concat(chunks).toString('utf8');
-          let parsed: Record<string, unknown>;
-          try {
-            parsed = JSON.parse(text) as Record<string, unknown>;
-          } catch {
-            parsed = { raw: text };
-          }
-          resolvePromise({ status: res.statusCode ?? 0, body: parsed });
-        });
+        res.on('end', settleFromResponse);
       },
     );
     req.on('error', (e) => {
-      if (!settled) {
-        settled = true;
-        reject(e);
+      if (settled) return;
+      const code = (e as NodeJS.ErrnoException).code;
+      if (response !== null && (code === 'EPIPE' || code === 'ECONNRESET')) {
+        // 服务端已经答复并主动断开 —— 用已经收到的那份响应结算
+        settleFromResponse();
+        return;
       }
+      settled = true;
+      reject(e);
     });
 
     // 即使服务端已经提前回了 4xx，也把请求体写完再 end()：
