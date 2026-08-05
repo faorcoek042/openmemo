@@ -105,9 +105,15 @@ jobs:
 
       # ③ npm 侧是**第二条获取通道**，不受本仓 manifest 的 sha256 约束。
       #    装完之后直接从 node_modules 里把真实 URL 抠出来 —— 这是运行期证据，不是读文档。
+      # ★ T-145：`shell: bash` **不能省**，`/tmp/…` 更不能用。
+      #   第一版没写 shell，Windows runner 的默认 shell 是 pwsh，于是这条
+      #   POSIX 写法当场炸：`Could not find a part of the path 'D:\tmp\install.log'`
+      #   —— pwsh 把 `/tmp/install.log` 解析成了 `D:\tmp\install.log`。
+      #   日志改写到工作区里的相对路径，三个平台都成立。
       - name: Install（并记录 postinstall 下载了什么）
         if: ${{ !cancelled() }}
-        run: pnpm install --frozen-lockfile 2>&1 | tee /tmp/install.log
+        shell: bash
+        run: pnpm install --frozen-lockfile 2>&1 | tee install.log
 
       # ★ T-145：这一步的语义变了。
       #   原本它是去把 ffmpeg-static / youtube-dl-exec 的真实下载 URL 抠出来当证据；
@@ -137,9 +143,17 @@ jobs:
             fi
           done
           echo
-          echo "== 有没有别的二进制混进来（>5MB 的可执行文件）=="
-          find node_modules -type f -size +5M \( -perm -u+x -o -name '*.node' -o -name '*.exe' \) 2>/dev/null \
-            | head -20 | while read -r f; do printf '   %10s  %s\n' "$(wc -c < "$f")" "$f"; done
+          # ★ 这一段是**观测**，不是判据：`-perm` 在不同 find 实现下行为不一，
+          #   Windows 上尤其不可靠。用 `|| true` 兜住，**绝不让观测步骤决定红绿** ——
+          #   红绿由上面那个 `bad` 决定（那才是真正的断言）。
+          #   第一版没兜，于是 Windows 上这一行把整步拖红，
+          #   而它上面刚刚正确地报了"两个包都不存在"。
+          echo "== 有没有别的二进制混进来（>5MB 的文件）=="
+          find node_modules -type f -size +5M 2>/dev/null | head -20 \
+            | while read -r f; do printf '   %10s  %s\n' "$(wc -c < "$f" 2>/dev/null || echo '?')" "$f"; done || true
+          echo
+          echo "== 断言结果 =="
+          if [ "$bad" -ne 0 ]; then echo "  ✘ 仍有被删掉的包残留在 node_modules 里"; else echo "  ✔ 两个包都不存在"; fi
           exit $bad
 
       - name: Build
