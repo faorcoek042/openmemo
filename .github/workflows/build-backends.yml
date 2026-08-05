@@ -117,8 +117,11 @@ jobs:
         include:
           - { runner: macos-26,       arch: arm64, backend: metal }
           - { runner: macos-26,       arch: arm64, backend: cpu }
-          # Intel Macs have no supported GPU backend in ggml — CPU/AVX2 only.
-          - { runner: macos-15-intel, arch: x64,   backend: cpu }
+          # ★ T-145 矩阵裁剪（用户 2026-08-05：「macos-x64 我用不到」）。原行：
+          #   # Intel Macs have no supported GPU backend in ggml — CPU/AVX2 only.
+          #   - { runner: macos-15-intel, arch: x64,   backend: cpu }
+          #   → macOS Intel 从此**没有任何 whisper 产物**（上游本来也没有，见
+          #     platform T-141 §1.2 第 2 行）。要恢复把上面两行放回来即可。
     steps:
       - uses: actions/checkout@v6
         with:
@@ -206,15 +209,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ★ T-145（第一次真跑才知道的）：**vulkan 与 rocm 在 jammy 上装不上**，
-          #   而同一份包列表在 noble 上是绿的 —— 见下面两个 install 步骤里的实测输出。
+          # ★ T-145（第一次真跑才知道的）：**vulkan 在 jammy 上装不上**
+          #   （E: Unable to locate package glslc），而同一份包列表在
+          #   `ubuntu-24.04-arm` 上**同一轮是绿的** —— 见下面 install 步骤里的实测输出。
           #   cpu 保留 22.04 是刻意的：它是**glibc 基线**，产物要能在老发行版上跑。
+          #
+          # ★ T-145 矩阵裁剪（用户 2026-08-05 当面指示：「linux-arm64 / macos-x64 /
+          #   linux-x64-rocm 这些我用不到」）。删掉的三行原样记在这里，
+          #   **因为它们不是"坏的"，是"用户不需要"** —— 日后要恢复直接放回来：
+          #     - { runner: ubuntu-24.04,     arch: x64,   backend: rocm }
+          #     - { runner: ubuntu-24.04-arm, arch: arm64, backend: cpu }
+          #     - { runner: ubuntu-24.04-arm, arch: arm64, backend: vulkan }
+          #   ⚠️ rocm 这一行就是章程要求 2.1 里的「AMD」。裁掉之后
+          #   **AMD 加速没有任何产物**。偏离已记入 docs/adr/…（见 T-145 回执）。
+          #   ⚠️ 讽刺的是 arm64 那两行是本轮**唯二全绿**的 linux job
+          #   （linux-arm64-cpu / linux-arm64-vulkan success）—— 删的不是坏的那些。
           - { runner: ubuntu-22.04,     arch: x64,   backend: cpu }
           - { runner: ubuntu-24.04,     arch: x64,   backend: vulkan }
           - { runner: ubuntu-24.04,     arch: x64,   backend: cuda }
-          - { runner: ubuntu-24.04,     arch: x64,   backend: rocm }
-          - { runner: ubuntu-24.04-arm, arch: arm64, backend: cpu }
-          - { runner: ubuntu-24.04-arm, arch: arm64, backend: vulkan }
     steps:
       - uses: actions/checkout@v6
         with:
@@ -410,10 +422,14 @@ jobs:
         with:
           cuda: '12.4.0'
           method: 'network'
-          # ★ T-145：与 linux job 同一处错名（见那边的实测输出）。Windows job 这一版
-          #   还多用了下划线形态 `cublas_dev` / `nvrtc_dev` —— 该 action 的
-          #   sub-package 名是连字符形态，下划线一样查不到。
-          sub-packages: '["nvcc","cudart","libcublas","libcublas-dev","nvrtc","nvrtc-dev","visual_studio_integration"]'
+          # ★ T-145 撤回说明：我一度按 linux job 的报错把这里也改成 libcublas*，
+          #   **然后发现没有证据支持**：run 31014564498 里 windows-x64-cuda 的
+          #   「Install CUDA toolkit」**是成功的**，编译也 100% 走完，
+          #   它只死在后面的 zip 那一步。也就是说 Windows 这条路径**现在是通的**。
+          #   Linux 上 apt 查不到 `cuda-cublas-12-4`，Windows 上该 action 走的是
+          #   NVIDIA 的网络安装器、名字映射是另一套 —— 两边不能互相推。
+          #   → 保持原样。**没坏就别按另一个平台的错误去"修"。**
+          sub-packages: '["nvcc","cudart","cublas","cublas_dev","nvrtc","nvrtc_dev","visual_studio_integration"]'
 
       - name: Build pack
         id: build

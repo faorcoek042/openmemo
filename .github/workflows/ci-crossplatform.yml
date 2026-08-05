@@ -51,8 +51,13 @@ jobs:
           # "平台问题"还是"这一版代码本来就坏"。
           - { runner: ubuntu-24.04,   label: linux-x64 (control) }
           - { runner: macos-26,       label: darwin-arm64 }
-          - { runner: macos-15-intel, label: darwin-x64 }
           - { runner: windows-2025,   label: win32-x64 }
+          # ★ T-145 第二轮裁掉（用户 2026-08-05：「macos-x64 我用不到」）：
+          #   - { runner: macos-15-intel, label: darwin-x64 }
+          #   第一轮它跑过一次，结论是**和 darwin-arm64 逐条一致**
+          #   （bash 3.2 / 大小写不敏感 / 同一条 pipeline 测试红），
+          #   没有任何一条事实是只有 Intel Mac 才看得到的 —— 删掉不丢信息。
+          #   要恢复把上面那行放回来即可。
     steps:
       # submodules 不拉：TS 侧一行都不需要 vendor/ 里的 C++ 源码。
       - uses: actions/checkout@v6
