@@ -641,3 +641,50 @@ model.asr  fail required  无可用 ASR 模型（by-name/asr 下只有非 ASR �
 1. 等最新一轮 cold-start-audit 出 Windows 结果。
 2. build-backends 第 4 轮只剩 windows-x64-cuda（其余 7 个已 success）。
 3. macOS 那条 ffmpeg 缺口，建议单独派人（它决定章程 §3 第 1/2 行成不成立）。
+
+---
+
+## [2026-08-06 01:55] T-145 — Windows 冷启动结果（两条产品 bug）
+
+Windows workflow 的两处假设修好后，`win32-x64` 第一次真的跑到了冷启动。**两条新发现：**
+
+### 🔴 ① `scripts/selfcheck.mjs` 在 Windows 上**根本跑不起来**（已修 `cb85a74`）
+
+```
+selfcheck crashed: Error [ERR_UNSUPPORTED_ESM_URL_SCHEME]:
+  On Windows, absolute paths must be valid file:// URLs. Received protocol 'd:'
+```
+`await import(`${REPO_ROOT}/packages/.../index.js`)` —— `D:\a\...` 的 `D:` 被当成 URL scheme。
+
+★ **与 `platform` T-141 §3 第 1 条同一族**（`main.ts:1075` 手拼 `file://`）。
+**同一个教训、同一个仓库、第二个文件。** 而 T-141 #1 那处**至今未修** ——
+现在它有了一个被实测证明的兄弟。建议派人扫一遍这一族（全仓 `import(` + 手拼路径）。
+
+后果：**在 Windows 上，「产品有没有装好」这个问题连问都问不出来** ——
+而 selfcheck 恰恰是本项目用来对抗静默降级的那件工具。
+
+### 🔴 ② Windows 上 libsimple 装了但没加载 —— **T-093 的形状在 Windows 复现**（未修）
+
+```
+装完 4 个适用包（job succeeded + /api/backends/installed 全部确认在列）→ 重启 →
+  [warm] tokenizer=trigram   libsimple=false   sqliteVec=true
+```
+**`sqlite-vec` 加载成功，`libsimple` 没有** → 中文检索静默退回 trigram。
+冷启动时它找的是 `...\data\bin\ext\libsimple.dll`。
+**Linux 与 macOS 上同一条路径都是 `libsimple=true`。**
+
+这正是你点名要我验的那一条（「要验到中文双字词真的搜得到，而不是文件下下来了」）：
+**Linux ✅ / macOS ✅（扩展装上了）/ Windows ❌**。
+产品问题，超出 T-145 范围，我没有修。
+
+### 三平台冷启动最终对照
+
+| | linux-x64 | darwin-arm64 | win32-x64 |
+|---|---|---|---|
+| 适用后端包 | 5/19 | **3/19** | 4/19 |
+| ✅ 产品自己下的 | 5 | 1 | *selfcheck 崩溃，测不出* |
+| ⚠️ 借宿主 PATH | 0 | **3**（ffmpeg/ffprobe/whisperCli） | *同上* |
+| 扩展（重启后） | `simple` / vec ✅ | `simple` / vec ✅ | **`trigram` / libsimple ❌** |
+| 宿主自带 | sqlite3, python3, cmake | — | python3 only |
+
+（Windows 的三分类要等 selfcheck 修复后重跑才有 —— 那个修复已 push，**结果我没等到**。）
