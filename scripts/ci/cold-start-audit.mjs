@@ -46,8 +46,8 @@
  * `~/.local/share/openmemo/datadir.json`。端口用 19700 段，避开 :10000 与 17650。
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, chmodSync, rmSync, existsSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { mkdirSync, writeFileSync, chmodSync, rmSync, existsSync, accessSync, constants as fsConstants } from 'node:fs';
+import { join, resolve, dirname, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 
@@ -81,11 +81,35 @@ mkdirSync(DATA_DIR, { recursive: true });
 
 hdr('0. 宿主基线（屏蔽之前）—— 这些就是"不屏蔽就会被悄悄借走"的东西');
 const HOST_TOOLS = ['ffmpeg', 'ffprobe', 'yt-dlp', 'youtube-dl', 'whisper-cli', 'sqlite3', 'python3'];
+
+/*
+ * ★ T-145：自己实现 which，**不要 shell 出去**。
+ *   第一版写的是 `spawnSync('sh', ['-c', 'command -v X'])` —— 在 ubuntu 上没问题，
+ *   但这个脚本现在要跑在 Windows runner 上，而那里 `sh` 是 Git Bash 的、
+ *   `command -v` 看到的 PATH 与 Node 看到的不完全是一回事。
+ *   纯 Node 实现顺便把 PATHEXT（Windows 上 .exe/.cmd/.bat）也处理对。
+ */
+const IS_WIN = process.platform === 'win32';
+const PATHEXT = IS_WIN ? (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';') : [''];
+function which(tool, pathStr = process.env.PATH ?? '') {
+  for (const dir of pathStr.split(delimiter).filter(Boolean)) {
+    for (const ext of PATHEXT) {
+      const full = join(dir, tool + ext);
+      try {
+        accessSync(full, fsConstants.X_OK);
+        return full;
+      } catch {
+        /* 下一个 */
+      }
+    }
+  }
+  return null;
+}
+
 const hostBaseline = {};
 for (const t of HOST_TOOLS) {
-  const w = spawnSync('sh', ['-c', `command -v ${t} || true`], { encoding: 'utf8' });
-  const p = (w.stdout || '').trim();
-  hostBaseline[t] = p || null;
+  const p = which(t);
+  hostBaseline[t] = p;
   say(`   ${t.padEnd(14)} ${p || '(不在 PATH 上)'}`);
 }
 
@@ -96,14 +120,30 @@ if (MASK) {
   hdr('1. 屏蔽宿主工具（在 PATH 最前面放同名假二进制）');
   mkdirSync(MASK_BIN, { recursive: true });
   for (const t of HOST_TOOLS) {
+    if (IS_WIN) {
+      /*
+       * ★ Windows 上一个 `#!/bin/sh` 的无扩展名文件**不是可执行文件** ——
+       *   加载器按 PATHEXT 找 .COM/.EXE/.BAT/.CMD。写 .cmd 才真的挡得住。
+       *   两个名字都写：`.cmd` 用于 PATH 查找，无扩展名那个用于
+       *   任何走 Git Bash 的路径。
+       */
+      writeFileSync(
+        join(MASK_BIN, `${t}.cmd`),
+        `@echo off\r\necho COLD-START-AUDIT: host '${t}' was invoked - MASKED shim, not a real tool 1>&2\r\nexit /b 127\r\n`,
+      );
+    }
     const shim = join(MASK_BIN, t);
     writeFileSync(
       shim,
       `#!/bin/sh\necho "COLD-START-AUDIT: host '${t}' was invoked — this is a MASKED shim, not a real tool" >&2\nexit 127\n`,
     );
-    chmodSync(shim, 0o755);
+    try {
+      chmodSync(shim, 0o755);
+    } catch {
+      /* Windows 上 chmod 是空操作，失败也无所谓 */
+    }
   }
-  PATH_FOR_DAEMON = `${MASK_BIN}:${PATH_FOR_DAEMON}`;
+  PATH_FOR_DAEMON = `${MASK_BIN}${delimiter}${PATH_FOR_DAEMON}`;
   say(`   已屏蔽 ${HOST_TOOLS.length} 个名字，shim 目录：${MASK_BIN}`);
   say('   ⚠️ shim 能通过 access(X_OK)，所以"产品会不会去借"这个行为照常发生 ——');
   say('      借到的东西一执行就带 COLD-START-AUDIT 标记失败。**借用变可见，不是被消除。**');
@@ -190,6 +230,41 @@ const j = async (path, init) => {
   throw new Error(`${path}: ${lastErr?.message ?? 'fetch failed'}（已重试 5 次）`);
 };
 
+/*
+ * ★★ T-145：等一个 job 到终态。**这个小函数被改了三次，每次都是同一类错。**
+ *
+ *   第 1 版：打 `GET /api/jobs?id=<id>`（该端点不认 ?id=，返回整份列表），
+ *            取 job 写成 `arr.find(...) ?? arr[0]` —— `?? arr[0]` 让它
+ *            **拿别人的 succeeded 顶上**：119 MB 的下载报 `succeeded (1.0s)`，
+ *            而 1.0s 正是轮询间隔。**假绿。**
+ *   第 2 版：改单条端点 + 不再回退，但按 `job.id` 比 —— 每次都说"不认识"。**诚实的红。**
+ *   第 3 版：改按 `job.uid` 比 —— 还是"不认识"。
+ *   第 4 版（本版）：字段其实叫 **`jobId`**。
+ *
+ *   ★ 第 3 版为什么会错，值得单独记：`packages/shared/src/jobs.ts:182` 的注释写的是
+ *     「This is D-02 `jobs.uid` — the ONLY job identifier the API exposes」。
+ *     **那句话说的是数据库列名，字段名在下一行**（`jobId: string`）。
+ *     我读了注释、没读那一行 —— 一条准确但指向别处的注释，同样能把人带偏。
+ *
+ *   三个名字都收，但**绝不回退到"随便哪个 job"**：认不出就如实报认不出。
+ */
+async function waitForJob(jobId, timeoutSec = 900) {
+  for (let i = 0; i < timeoutSec; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    const jr = await j(`/api/jobs/${encodeURIComponent(jobId)}`);
+    if (jr.status !== 200) return `轮询 /api/jobs/${jobId} 得到 HTTP ${jr.status}`;
+    const job = jr.body?.job ?? jr.body;
+    const gotId = job?.jobId ?? job?.uid ?? job?.id;
+    if (!job || gotId !== jobId) {
+      return `端点返回的不是这个 job（要 ${jobId}，拿到 ${gotId}；body keys=${JSON.stringify(Object.keys(job ?? {})).slice(0, 200)}）`;
+    }
+    if (['succeeded', 'failed', 'cancelled'].includes(job.state)) {
+      return `${job.state}${job.error ? ` — ${JSON.stringify(job.error).slice(0, 200)}` : ''}`;
+    }
+  }
+  return `TIMEOUT（${timeoutSec}s 内没到终态）`;
+}
+
 function extLine(tag, health) {
   const e = health?.db?.extensions ?? {};
   say(`   [${tag}] tokenizer=${e.tokenizer}  libsimple=${e.libsimple}  sqliteVec=${e.sqliteVec}`);
@@ -244,38 +319,11 @@ try {
       body: JSON.stringify({ id: p.id }),
     });
     let status = `HTTP ${r.status}`;
-    const jobId = r.body?.jobId ?? r.body?.id;
+    const jobId = r.body?.jobId ?? r.body?.uid ?? r.body?.id;
     if (!jobId) {
       status = `HTTP ${r.status} 且没有 jobId：${JSON.stringify(r.body).slice(0, 200)}`;
     } else {
-      status = 'TIMEOUT（900s 内没到终态）';
-      for (let i = 0; i < 900; i++) {
-        await new Promise((res) => setTimeout(res, 1000));
-        const jr = await j(`/api/jobs/${encodeURIComponent(jobId)}`);
-        if (jr.status !== 200) {
-          status = `轮询 /api/jobs/${jobId} 得到 HTTP ${jr.status}`;
-          break;
-        }
-        const job = jr.body?.job ?? jr.body;
-        /*
-         * ★ T-145 第二轮又踩了一次，值得记：**job 的标识字段是 `uid` 不是 `id`**。
-         *   packages/shared/src/jobs.ts:182 明写「ULID … the ONLY job identifier
-         *   the API exposes」，字段名是 D-02 的 `jobs.uid`。
-         *   我按 `job.id` 比，于是每次都判成"端点返回的不是这个 job（拿到 id=undefined）"。
-         *   —— 这一版至少**红得诚实**：它说不认识，而不是拿别人的成功顶上。
-         *   两个字段都收，哪个在用哪个。
-         */
-        const gotId = job?.uid ?? job?.id;
-        if (!job || gotId !== jobId) {
-          // 绝不拿别的 job 顶上 —— 那正是第一版的 bug。
-          status = `端点返回的不是这个 job（要 ${jobId}，拿到 ${gotId}）`;
-          break;
-        }
-        if (['succeeded', 'failed', 'cancelled'].includes(job.state)) {
-          status = `${job.state}${job.error ? ` — ${JSON.stringify(job.error).slice(0, 200)}` : ''}`;
-          break;
-        }
-      }
+      status = await waitForJob(jobId);
     }
     installResults.push({ id: p.id, status, secs: ((Date.now() - t0) / 1000).toFixed(1) });
     say(`   ${p.id.padEnd(32)} ${status}  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
@@ -291,6 +339,78 @@ try {
   for (const p of applicable) {
     say(`   ${p.id.padEnd(32)} ${installedIds.has(p.id) ? '✅ 真的在已安装列表里' : '❌ 不在已安装列表里'}`);
   }
+
+  /* ─────────────────── 3b. 拉模型（T-145 第二轮补上的覆盖缺口）──────────────── */
+
+  hdr('3b. 拉 ASR / VAD 模型');
+  say('   ★ 上一轮这一步是**没有的**，于是 selfcheck 的 model.asr 是 fail(required)。');
+  say('     那个红当时两种读法都成立：「产品的冷启动确实不含模型」与「我的审计没覆盖模型下载」。');
+  say('     现在把这条路也走一遍 —— 走完之后那个红要么变绿，要么变成一个有名有姓的产品结论。');
+  say();
+  /*
+   * ★ T-145：`/api/models/catalog` 返回的是**分组**结构，不是扁平的 models 数组：
+   *     { catalogVersion, source, fetchedAt, stale, hardwareSnapshotId,
+   *       groups: [ { groupId, role, tags, variants: [ …真正的模型条目… ] } ] }
+   *   我第一版按 `body.models` 取，于是**拿到 0 个模型然后照常往下走** ——
+   *   打印「目录里一个 required-core 的 asr/vad 模型都没有」，
+   *   而那句话读起来像个产品结论，其实只是我 unwrap 错了。
+   *   （这是本任务里同一个形状的第三次：工具安静地返回空集，被读成"没有"。）
+   *   → 现在展平 groups→variants，且**空集会当场出声**（见下面的 hardFact）。
+   *   `tags` 挂在 group 上，variant 上不一定有，两处都收。
+   */
+  const mcat = await j('/api/models/catalog');
+  const groups = mcat.body?.groups ?? [];
+  const models = groups.flatMap((g) =>
+    (g.variants ?? []).map((v) => ({ ...v, role: v.role ?? g.role, tags: v.tags ?? g.tags ?? [] })),
+  );
+  say(`   /api/models/catalog：${groups.length} 个分组，展平后 ${models.length} 个模型条目`);
+  if (models.length === 0) {
+    // ★ 空集必须出声。上一版就是在这里安静地走过去的。
+    say(`   ⚠️ 展平后是空的 —— 先怀疑 unwrap 写错了，别当成"目录里没有模型"。`);
+    say(`      原始 top-level keys: ${JSON.stringify(Object.keys(mcat.body ?? {}))}`);
+  }
+  const wanted = models.filter((m) => {
+    const tags = m.tags ?? [];
+    return (m.role === 'vad' || m.role === 'asr') && tags.includes('required-core');
+  });
+  const CAP = Number(arg('--model-cap-mb', '250')) * 1024 * 1024;
+  const sizeOf = (m) => (m.files ?? []).reduce((n, f) => n + (f.sizeBytes ?? 0), 0);
+  const pick = wanted.filter((m) => sizeOf(m) <= CAP);
+  const skipped = wanted.filter((m) => sizeOf(m) > CAP);
+  say(
+    `   目录里 role in {asr,vad} 且 required-core 的模型 ${wanted.length} 个；` +
+      `体积 <= ${(CAP / 1024 / 1024) | 0} MB 的 ${pick.length} 个`,
+  );
+  for (const m of skipped) say(`     [skip] ${(sizeOf(m) / 1024 / 1024).toFixed(0)} MB 超上限：${m.id}`);
+  if (wanted.length === 0) {
+    say('   目录里一个 required-core 的 asr/vad 模型都没有 —— 这本身就是个结论，记下来。');
+    for (const m of models.slice(0, 10)) say(`     （目录里有：${m.id} role=${m.role} tags=${JSON.stringify(m.tags ?? [])}）`);
+  }
+  say();
+
+  for (const m of pick) {
+    const t0 = Date.now();
+    const r = await j('/api/models/pull', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: m.id }),
+    });
+    let status = `HTTP ${r.status}`;
+    const jobId = r.body?.jobId ?? r.body?.uid ?? r.body?.id;
+    if (!jobId) {
+      status = `HTTP ${r.status} 且没有 jobId：${JSON.stringify(r.body).slice(0, 200)}`;
+    } else {
+      status = await waitForJob(jobId);
+    }
+    say(`   ${String(m.id).padEnd(34)} ${status}  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  }
+
+  const minst = await j('/api/models/installed');
+  const minstArr = Array.isArray(minst.body) ? minst.body : (minst.body?.models ?? minst.body?.installed ?? []);
+  say();
+  say(`   ── 独立核对：/api/models/installed 返回 ${minstArr.length} 条 ──`);
+  for (const m of minstArr.slice(0, 12)) say(`     ${m.id ?? m.modelId ?? JSON.stringify(m).slice(0, 60)}`);
+
 
   /* ─────────── 4. 重启（materializeSqliteExtensions 只在启动时跑）─────────────── */
 

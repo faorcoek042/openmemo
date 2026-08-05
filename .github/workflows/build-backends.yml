@@ -518,9 +518,16 @@ jobs:
       # thing that can fail for a reason unrelated to what we are trying to build. The
       # version is pinned to package.json's `packageManager` field — keep them in step.
       #
-      # `--ignore-scripts` is deliberate: the workspace's onlyBuiltDependencies
-      # (ffmpeg-static, youtube-dl-exec) download hundreds of MB of binaries at install
-      # time, and building one TypeScript package needs none of it.
+      # `--ignore-scripts` is deliberate: building one TypeScript package does not need
+      # any dependency's postinstall to run.
+      #
+      # ★ T-145: this used to say the workspace's onlyBuiltDependencies "(ffmpeg-static,
+      #   youtube-dl-exec) download hundreds of MB of binaries at install time". Both
+      #   packages have since been REMOVED -- they were a second, looser acquisition
+      #   channel (no checksums; youtube-dl-exec did not even pin a version, it hit
+      #   `releases/latest`), while the product only ever used the manifest channel
+      #   (pinned tag + sha256). Verified unused three ways before removal.
+      #   `onlyBuiltDependencies` is now just esbuild + @tailwindcss/oxide.
       - name: Install and build @openmemo/shared
         run: |
           npm install -g pnpm@10.15.0

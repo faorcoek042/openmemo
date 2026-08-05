@@ -71,13 +71,66 @@ const LICENSE_FILENAMES = ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'COPYING', 'C
  * 每新增一个"会下载二进制"的依赖，都必须在这里补一行，否则清单会漏报。
  */
 const BINARY_PAYLOAD_LICENSES = [
-  {
-    pkg: 'youtube-dl-exec',
-    payload: 'yt-dlp (官方 PyInstaller release 二进制)',
-    license: 'GPL-3.0-or-later',
-    note: 'npm 包本身是 MIT；下载的二进制是 GPLv3+。ADR-002 v2 明确允许内置。仅 git 仓库/PyPI 包是 Unlicense。',
-  },
+  /*
+   * ★ T-145：这里**空了**，因为唯一的那一条（`youtube-dl-exec`）连同 `ffmpeg-static`
+   *   一起被删掉了 —— 它们是第二条依赖获取通道，而且是松的那条（无校验和，
+   *   youtube-dl-exec 连版本都不钉）。理由全文见 packages/pipeline/package.json 的
+   *   `_comment:removed-deps`。
+   *
+   * ⚠️ **义务没有消失，它换了记录的地方。** yt-dlp 与 ffmpeg 现在只从 manifest 那条
+   *   通道装，GPLv3+ 记在 `vendor/manifests/backends.json` 每个包的 `license` 字段里
+   *   （已核对：ytdlp-linux-x64 / -linux-arm64 / -macos-arm64 / -win-x64 与
+   *   media-tools-linux-x64 全部是 `GPL-3.0-or-later`）——
+   *   而那条通道本来就在本报告的 A/B 类之外单独成表。
+   *
+   * ★ **这个数组空着不等于这条防线没用了。** 它盯的是
+   *   「npm 包自身宽松、但 postinstall 拉下来的 payload 许可证完全不同」这个盲区，
+   *   `pnpm licenses list` 永远看不见它。下面那条守卫就是替它站岗的：
+   *   只要 `onlyBuiltDependencies` 里出现了没被这里覆盖、也不在豁免名单里的包，
+   *   报告会当场说出来 —— 而不是安静地漏掉。
+   */
 ];
+
+/**
+ * 明确豁免：这些确实会拉平台二进制，但 payload 与包本身**同一个许可证**，
+ * 不存在"包宽松 / payload 严格"的错配，所以不需要在 BINARY_PAYLOAD_LICENSES 里单列。
+ */
+const PAYLOAD_SAME_LICENSE = new Set(['esbuild', '@tailwindcss/oxide']);
+
+/**
+ * ★ T-145 新增守卫：`onlyBuiltDependencies` 里的每一个包，
+ * 要么在 BINARY_PAYLOAD_LICENSES 里有一行，要么在 PAYLOAD_SAME_LICENSE 里被显式豁免。
+ *
+ * 起因是上面那句注释原文：「每新增一个"会下载二进制"的依赖，都必须在这里补一行，
+ * 否则清单会漏报」—— **那是一条要求人记得的纪律，而一条需要人时刻记住的规则，
+ * 等价于一条迟早会被违反的规则**（PROTOCOL §7 补充里的同一条判据）。
+ * 现在忘了补会当场被说出来。
+ */
+function auditBinaryPayloadCoverage() {
+  let onlyBuilt = [];
+  try {
+    const ws = readFileSync(join(ROOT, 'pnpm-workspace.yaml'), 'utf8').split('\n');
+    const start = ws.findIndex((l) => /^onlyBuiltDependencies:/.test(l));
+    if (start >= 0) {
+      for (let i = start + 1; i < ws.length; i++) {
+        if (/^\S/.test(ws[i])) break;
+        const m = /^\s*-\s*['"]?([^'"\s#]+)['"]?/.exec(ws[i]);
+        if (m) onlyBuilt.push(m[1]);
+      }
+    }
+  } catch {
+    return ['读不到 pnpm-workspace.yaml —— 无法核对二进制 payload 的许可证覆盖'];
+  }
+  const covered = new Set(BINARY_PAYLOAD_LICENSES.map((b) => b.pkg));
+  return onlyBuilt
+    .filter((p) => !covered.has(p) && !PAYLOAD_SAME_LICENSE.has(p))
+    .map(
+      (p) =>
+        `onlyBuiltDependencies 里的 \`${p}\` 会在 postinstall 拉二进制，` +
+        `但它既不在 BINARY_PAYLOAD_LICENSES 里、也不在 PAYLOAD_SAME_LICENSE 豁免名单里 —— ` +
+        `payload 的许可证没人记录（pnpm licenses list 看不见它）`,
+    );
+}
 
 function flagsFor(license) {
   const text = String(license ?? 'UNKNOWN');
@@ -304,6 +357,27 @@ if (packagesError) console.log(`  ⚠️  B 类采集失败：${packagesError}`)
 for (const e of flagged) {
   console.log(`  ⚠️  [${e.klass}] ${e.name}@${e.version} — ${e.license} (${e.flags.join('；')})`);
 }
+
+/*
+ * ★ T-145：二进制 payload 许可证的覆盖核对。
+ *
+ * ⚠️ 这里**刻意用 exit 1，而不是像上面那样只打印**。
+ *   本文件的其余部分是「报告模式，恒定成功退出」（ADR-002 v2 的决定，不动它）——
+ *   但那条决定针对的是「某个依赖的许可证进了关注名单」这类**需要人判断**的事。
+ *   这条不一样：它说的是「有一个会下载二进制的依赖，**没有任何地方记录它 payload 的许可证**」
+ *   —— 那是个**事实缺口**，不是判断题，而且 `pnpm licenses list` 永远看不见它。
+ *   打印一行 ⚠️ 混在别的 ⚠️ 里，等于没有。
+ */
+const coverageGaps = auditBinaryPayloadCoverage();
+if (coverageGaps.length > 0) {
+  console.error('');
+  console.error('✘ 二进制 payload 许可证覆盖不全：');
+  for (const g of coverageGaps) console.error(`    - ${g}`);
+  console.error('  修法：在 BINARY_PAYLOAD_LICENSES 补一行；');
+  console.error('        或确认 payload 与包同许可证后，加进 PAYLOAD_SAME_LICENSE 豁免。');
+  process.exit(1);
+}
+console.log(`  ✔ 二进制 payload 许可证覆盖完整（onlyBuiltDependencies 逐个核对过）`);
 
 // ADR-002 v2：报告模式，恒定成功退出。
 process.exit(0);

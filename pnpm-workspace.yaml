@@ -12,11 +12,16 @@ packages:
 #    **空转的 node-gyp**（实测产出 0 个 .node，仅 TOUCH 两个 stamp），
 #    却平白要求用户机器有 make/gcc/Python。实测 `--ignore-scripts` 安装后
 #    require + loadExtension 全部正常。→ 不允许它跑脚本才是正确配置。
+#
+# ★ T-145：`ffmpeg-static` 与 `youtube-dl-exec` 已从这里（和 packages/pipeline 的
+#   dependencies 里）**删除**，理由记在 packages/pipeline/package.json 的
+#   `_comment:removed-deps`。一句话版本：它们是**第二条获取通道，而且是松的那条**
+#   —— 都在 postinstall 下载二进制、**都没有校验和**，youtube-dl-exec 连版本都不钉
+#   （打的是 releases/latest）。而产品真正用的是 manifest 那条（钉死 tag + sha256）。
+#   实测三查全空：无 import、无路径引用、测试里一次都没出现。
+#   **判据是"减少通道"，不是"给每条通道加锁"** ——「哪条是权威」这个问题
+#   今天已经在三处栽过。
 onlyBuiltDependencies:
-  # ADR-002 v2 允许：GPL-3.0 的 FFmpeg 二进制，postinstall 下载对应平台产物
-  - ffmpeg-static
-  # ADR-002 v2 允许：postinstall 下载 yt-dlp 官方二进制（GPLv3+）
-  - youtube-dl-exec
   # 构建工具链的原生二进制
   - esbuild
   - '@tailwindcss/oxide'

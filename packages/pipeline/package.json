@@ -24,13 +24,12 @@
     "_comment:test": "★ T-135 / T-142：**不要写成 `node --test dist/**/*.test.js`**。pnpm 用系统 sh 跑脚本，sh 不认 `**`，会把它展开成「恰好两层」。实测后果：`apps/daemon` 13 个测试文件**只跑到 9 个**，漏掉的里面有 **7 条是红的**，而 `pnpm -r test` 一路报绿；`packages/pipeline` 10 个只跑到 1 个；`packages/db` 此前「碰巧对」，原因是它的文件恰好都在一层、sh 匹配不到才把 pattern 原样透传给 node —— **依赖巧合的正确等于还没修**。改用 node 自己的默认发现（不给位置参数：递归扫本包、跳过 node_modules），「记得加引号」这条纪律就从脚本里消失了。前置的 `node -e` 是**必需**守卫，不是可选：`node --test` 对**空集返回 exit 0**（⑤A-2，本项目已发生三次），所以跑之前必须先证明「源码里有几个测试文件，dist 里就有几个」。**T-142 又在最前面加了 `check-test-scripts.mjs`**：上面那条守卫只能守**已经有脚本的包**，而 `runtime`(38) 与 `llm`+`mindmap`(60) 是「有测试文件、压根没 test 脚本」—— `pnpm -r test` 直接跳过，一个字都不说。那条跨包守卫必须挂在包的 test 脚本里，因为 `pnpm -r` **默认不含 workspace root**。db / pipeline / runtime / llm / mindmap / daemon **六个包共用这一行，别再出现第七种写法**。 ★★ T-145（第一次真跑 GitHub CI 才抓到的）：这一行原本结尾就是光秃秃的 `node --test`（不给位置参数，靠 node 自己的默认发现）。**它在本机绿、在 CI 红**——本机 node 是 v24.18.0，CI 按 ADR-006 决策 7 钉的是 **Node 22**（v22.23.1），而 **Node 22 的默认发现会把 `src/**/*.test.ts` 也捞进来**，Node 24 不会。被捞进来的 .ts 用 NodeNext 写法 import `./errors.js`，类型剥离后解析成 `src/errors.js` —— 那个文件不存在：`ERR_MODULE_NOT_FOUND: Cannot find module .../packages/llm/src/errors.js`。`packages/llm` 20 条里当场红 2 条，`pnpm -r test` 在这里 bail，**后面几个包一条都没跑**。所以「不给位置参数」并不是一个平台/版本无关的写法，它只是把风险从 sh 的 glob 挪到了 node 的默认发现规则上。现在改成**加引号的** `\"dist/**/*.test.js\"`：引号让 sh 原样透传，glob 由 node 自己展开（实测 `sh -c` 下 18 条一条不少），发现范围被钉死在 dist，跟 node 版本无关。⚠️ 别写成 `node --test dist`——实测 Node 24 把它当成**一个文件**，输出 `tests 1 / pass 1` 然后**绿灯**，正是本仓最贵的那类假绿。引号掉了会被 scripts/check-test-scripts.mjs 当场拦下。",
     "test": "node ../../scripts/check-test-scripts.mjs && node -e \"const{globSync}=require('node:fs');const s=globSync('src/**/*.test.ts').length,d=globSync('dist/**/*.test.js').length;if(s===0||d!==s)throw new Error('test discovery broken: '+s+' source test files vs '+d+' compiled in dist —— 先 pnpm build:safe；node --test 对空集/漏集一律返回绿')\" && node --test \"dist/**/*.test.js\""
   },
+  "_comment:removed-deps": "★ T-145：ffmpeg-static (^5.3.0) 与 youtube-dl-exec (^3.1.9) 已删除。它们是**第二条依赖获取通道**，而且是松的那条：两者都在 postinstall 下载二进制、**都没有校验和**，其中 youtube-dl-exec 打的是 `api.github.com/repos/yt-dlp/yt-dlp/releases/latest` —— **连版本都不钉**。而产品真正用的是 manifest 那条：backends.json 里的 ytdlp-* 钉死 2026.07.04 + sha256，media-tools-linux-x64 钉死 BtbN 的不可变 tag + sha256。同一个工具两条通道，一严一松，而且**产物根本不是同一个东西**（npm 那条 yt-dlp 是 3,071,553 B 的纯 Python zipapp，运行时还要机器上有 Python；manifest 那条是 39,924,536 B 的自包含二进制）。删除依据是**实测三查全空**：全仓没有任何 import/require、没有任何按路径引用 node_modules 里那两个二进制、packages/pipeline 的测试里一次都没出现过。删掉之后 pnpm -r test 874/0 不变，冷启动审计仍然 5/5 工具来自数据目录。判据是**减少通道**，不是给每条通道加锁 —— 「哪条是权威」这个问题今天已经在 /models vs /settings、defaultModelId vs providers[i].model、两张补救路由表上各栽过一次。yt-dlp 的 GPLv3+ 义务没有消失，它记在 backends.json 每个 ytdlp-* 包的 license 字段里（GPL-3.0-or-later）。",
   "dependencies": {
     "@openmemo/downloader": "workspace:*",
     "@openmemo/mindmap": "workspace:*",
     "@openmemo/runtime": "workspace:*",
     "@openmemo/shared": "workspace:*",
-    "ffmpeg-static": "^5.3.0",
-    "sherpa-onnx-node": "^1.13.4",
-    "youtube-dl-exec": "^3.1.9"
+    "sherpa-onnx-node": "^1.13.4"
   }
 }

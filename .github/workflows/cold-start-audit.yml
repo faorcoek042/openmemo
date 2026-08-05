@@ -40,8 +40,25 @@ concurrency:
 
 jobs:
   audit:
-    name: 依赖来源 + 冷启动（干净 runner）
-    runs-on: ubuntu-24.04
+    # ★ T-145 第二轮：从只跑 ubuntu 扩到三平台。
+    #
+    #   用户接 GitHub 的**全部理由**就是「在别的系统上跑」，而 §6 当时只覆盖
+    #   ubuntu-24.04 —— 也就是说"依赖都是现场下载的"这个结论只在一个平台上成立。
+    #   而今天已经两次证明非 Linux 上有 Linux 永远看不见的东西：
+    #     · macOS 的 MODULE 用 `.so` 不是 `.dylib` → 打出一个**绿灯的空包**
+    #     · Windows 上 `{mode:0o600}` 写下去读回来是 `666`（token 全用户可读）
+    #   冷启动这条路径同样没理由假设三个平台一致。
+    #
+    #   fail-fast: false —— 一个平台红不该掩盖另外两个平台的事实。
+    name: 依赖来源 + 冷启动（${{ matrix.label }}）
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, label: linux-x64 }
+          - { runner: macos-26, label: darwin-arm64 }
+          - { runner: windows-2025, label: win32-x64 }
     steps:
       - uses: actions/checkout@v6
 
@@ -55,7 +72,11 @@ jobs:
       #      自带的只有 sqlite3 / python3 / cmake。
       #   这一步照留：结论不能建立在"这款镜像今天恰好没装"上，
       #   而且它正是"我们装上了"与"它本来就在"的唯一分界线。
+      # ★ 用 bash 显式指定 shell —— Windows runner 的默认 shell 是 pwsh，
+      #   而这段是 POSIX 写法。（cold-start-audit.mjs 里的 which 是纯 Node 实现的，
+      #   不依赖这一步；这里只是把镜像自带什么留个人可读的记录。）
       - name: 宿主基线（装任何东西之前）
+        shell: bash
         run: |
           echo "== runner 自带的同名工具 =="
           for t in ffmpeg ffprobe yt-dlp youtube-dl whisper-cli sqlite3 python3 cmake; do
@@ -88,25 +109,38 @@ jobs:
         if: ${{ !cancelled() }}
         run: pnpm install --frozen-lockfile 2>&1 | tee /tmp/install.log
 
-      - name: npm 侧获取通道的真实来源
+      # ★ T-145：这一步的语义变了。
+      #   原本它是去把 ffmpeg-static / youtube-dl-exec 的真实下载 URL 抠出来当证据；
+      #   **那两个包已经被删掉了**（它们是第二条、松的那条获取通道：无校验和，
+      #   youtube-dl-exec 连版本都不钉，打的是 releases/latest）。
+      #   所以现在它变成一条**反向断言**：这两个名字不该再出现在 node_modules 里。
+      #   留着它而不是删掉，是因为「装依赖时会不会有二进制偷偷进来」这个问题
+      #   本身没有过期 —— 过期的只是答案。
+      - name: 反向核实：npm 侧不该再下载任何二进制
         if: ${{ !cancelled() }}
+        shell: bash
         run: |
-          echo "== ffmpeg-static: 它去哪儿下、钉的哪个 tag =="
-          f=$(find . -path '*/ffmpeg-static/package.json' -not -path '*/dist/*' | head -1)
-          [ -n "$f" ] && node -e "const p=require('$PWD/'+'$f'.replace(/^\.\//,''));console.log('  version:',p.version);console.log('  binary-release-tag:',JSON.stringify(p[p.name]||null));console.log('  scripts:',JSON.stringify(p.scripts||{}))" || echo "  (没找到)"
-          i=$(find . -path '*/ffmpeg-static/install.js' | head -1)
-          [ -n "$i" ] && { echo "  install.js 里的 URL 拼法:"; grep -nE "https://|releases/download|binary-release-tag" "$i" | head -8 | sed 's/^/    /'; }
+          set -e
+          echo "== onlyBuiltDependencies 现在是什么 =="
+          sed -n '/^onlyBuiltDependencies:/,/^[^ #]/p' pnpm-workspace.yaml || true
           echo
-          echo "== youtube-dl-exec: 它去哪儿下 =="
-          c=$(find . -path '*/youtube-dl-exec/src/constants.js' | head -1)
-          [ -n "$c" ] && { grep -nE "https://|HOST|latest" "$c" | head -10 | sed 's/^/    /'; } || echo "  (没找到)"
+          echo "== ffmpeg-static / youtube-dl-exec 是否还在 node_modules 里 =="
+          bad=0
+          for p in ffmpeg-static youtube-dl-exec; do
+            hits=$(find . -path "*/node_modules/$p/package.json" 2>/dev/null | head -3)
+            if [ -n "$hits" ]; then
+              echo "  ✘ $p 仍然存在："
+              echo "$hits" | sed 's/^/      /'
+              bad=1
+            else
+              echo "  ✔ $p 不存在"
+            fi
+          done
           echo
-          echo "== 实际落地的二进制 =="
-          find . -path '*ffmpeg-static*' -name 'ffmpeg*' -type f -exec ls -la {} \; 2>/dev/null | head -5
-          find . -path '*youtube-dl-exec*' -name 'yt-dlp*' -type f -exec ls -la {} \; 2>/dev/null | head -5
-          echo
-          echo "== install.log 里出现过的下载相关行 =="
-          grep -inE "download|fetch|http|postinstall|preinstall" /tmp/install.log | head -25 || echo "  (无)"
+          echo "== 有没有别的二进制混进来（>5MB 的可执行文件）=="
+          find node_modules -type f -size +5M \( -perm -u+x -o -name '*.node' -o -name '*.exe' \) 2>/dev/null \
+            | head -20 | while read -r f; do printf '   %10s  %s\n' "$(wc -c < "$f")" "$f"; done
+          exit $bad
 
       - name: Build
         if: ${{ !cancelled() }}
@@ -117,12 +151,12 @@ jobs:
       #    "装上了" 和 "借到了" 在最终效果上就长得一模一样 —— 那正是要查的形状。
       - name: 冷启动（全新数据目录，屏蔽宿主工具）
         if: ${{ !cancelled() }}
-        timeout-minutes: 30
+        timeout-minutes: 45
         run: node scripts/ci/cold-start-audit.mjs --port 19700
 
       # ⑤ 对照组：**不屏蔽**再跑一次。两次的差集 = "如果用户机器上没有这些东西，
       #    会多坏掉哪些功能"。这一步单独存在，是为了让"借用"这件事有个可比的基准。
       - name: 对照组：不屏蔽宿主工具再跑一次
         if: ${{ !cancelled() }}
-        timeout-minutes: 30
+        timeout-minutes: 45
         run: node scripts/ci/cold-start-audit.mjs --port 19710 --no-mask

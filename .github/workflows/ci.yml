@@ -85,9 +85,17 @@ jobs:
         run: npm install -g pnpm@10.15.0
 
       # ⚠️ **不加 `--ignore-scripts`**（与 build-backends 的 merge job 不同）：
-      # 这里要跑真测试，而 `packages/pipeline` 的测试会用到 ffmpeg-static /
-      # youtube-dl-exec 在 postinstall 下载的二进制。pnpm-workspace.yaml 的
-      # `onlyBuiltDependencies` 列的就是这两个，理由都写在那里。
+      # 这里要跑真测试，`better-sqlite3` 之类的原生模块要能被 require 起来。
+      #
+      # ★ T-145 更正：这段注释原本写的是「`packages/pipeline` 的测试会用到
+      #   ffmpeg-static / youtube-dl-exec 在 postinstall 下载的二进制」——
+      #   **这句话是假的**，而且是在删掉那两个依赖时才发现的。实测三查全空：
+      #   全仓没有任何 import/require、没有按路径引用 node_modules 里那两个二进制、
+      #   `packages/pipeline/src/` 里一次都没出现过这两个名字。
+      #   两个包已在 T-145 删除（理由见 packages/pipeline/package.json 的
+      #   `_comment:removed-deps`），删完 `pnpm -r test` 仍是 874/0。
+      #   —— 记在这里是因为**一条描述得很具体的错注释，比没有注释更能误导人**：
+      #      它会让下一个想删依赖的人以为"测试要用，动不得"。
       - name: Install
         run: pnpm install --frozen-lockfile
 
