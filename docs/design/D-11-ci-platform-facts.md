@@ -294,3 +294,187 @@ emit-pack-manifest: archive not found: dist/packs/whispercpp-cpu-win-x64.zip
    放开 `push` / `pull_request` 三行的时机是用户的决定（`ci.yml` 文件头已写明）。
 5. **Windows 上 `0o600` 是 `666`** —— `runtime.json` 里的 auth token 对本机所有用户可读。
    这条现在**有实测证据**了，值得单独派人处理（需要 ACL 而不是 POSIX 位）。
+
+---
+
+# §6 冷启动依赖来源审计（用户提问：「是不是都是现场下载的各个依赖？」）
+
+> **全部结论来自干净 runner 的 CI 日志**（`cold-start-audit` run 31024880877 与 31026300122）。
+> 本机的任何"能用"在这一节里都不算证据 —— 那台机器已经装好了一切，而它正是不该信的那台。
+
+## 6.1 TL;DR
+
+**答案是肯定的，但有两条例外，都在 npm 那条通道上。**
+
+| | 结论 | 证据 |
+|---|---|---|
+| manifest 声明的下载 | **62 个文件，sha256 覆盖 100%，引用钉死 100%** | §6.2 |
+| 这些 URL 真的活着吗 | **62/62 HTTP 206**，且 8 MB 以下的**逐个重算 sha256 全部 MATCH** | §6.2 |
+| 冷启动后工具从哪来 | **5/5 来自数据目录（产品自己下的），借宿主 PATH 的 = 0** | §6.4 |
+| 中文双字词真的搜得到吗 | **`ext.chineseSearch = ok`：用户:1 推特:2 中国:1 服务:2** | §6.5 |
+| 仓库里有二进制吗 | **没有。**最大的已跟踪文件 255 KB（JSON/PNG/文档） | §6.2 |
+| ⚠️ 例外 1 | `ffmpeg-static` 在 `pnpm install` 期下 **79.8 MB** 的 ffmpeg，钉了 tag 但**无校验和** | §6.3 |
+| ⚠️ 例外 2 | `youtube-dl-exec` 打的是 `releases/**latest**` —— **不钉版本、无校验和** | §6.3 |
+
+## 6.2 静态 + 实测：manifest 那条通道（`scripts/ci/dependency-audit.mjs`）
+
+```
+backends.json            8 个文件   sha256 8/8    可变引用 0   host: github.com
+sqlite-ext.json         11 个文件   sha256 11/11  可变引用 0   host: github.com
+models-asr-support.json 11 个文件   sha256 11/11  可变引用 0   host: huggingface.co, raw.githubusercontent.com
+models-llm.json          5 个文件   sha256 5/5    可变引用 0   host: huggingface.co
+models-whisper.json     27 个文件   sha256 27/27  可变引用 0   host: huggingface.co
+                        ─────────
+                        62 个文件
+```
+
+`--live` 从干净 runner 发真实请求：**唯一 URL 62 | 可达 62 | 不可达 0**，全部 `HTTP 206`。
+`--verify-under 8` 把 8 MB 以下的**真下载下来重算 sha256**，逐条 `MATCH`，例如：
+
+```
+206  bytes 0-0/2327524   sha256 MATCH (2327524B)   vad/silero-vad-onnx/silero_vad.onnx
+     https://raw.githubusercontent.com/snakers4/silero-vad/bfdc0193023f121ea5b3cc7b176dbed570a68a59/src/silero_vad/data/silero_vad.onnx
+206  bytes 0-0/885098    sha256 MATCH (885098B)    vad/silero-vad-ggml/ggml-silero-v6.2.0.bin
+     https://huggingface.co/ggml-org/whisper-vad/resolve/9ffd54a1e1ee413ddf265af9913beaf518d1639b/ggml-silero-v6.2.0.bin
+206  bytes 0-0/75352     sha256 MATCH (75352B)     asr/paraformer-zh-small/tokens.txt
+     https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-small-2024-03-09/resolve/63ddc3cd0f2810b68289a7b3876e62ef5d53d6df/tokens.txt
+```
+
+**钉法**：GitHub 侧钉 release tag（`v1.9.1` / `2026.07.04` / `autobuild-2026-08-02-13-17` / `v0.7.1` / `v0.1.9`），
+HuggingFace 侧钉 **commit SHA**（`/resolve/<40 位>/`）。
+⚠️ 一条先前的存疑已排除：`models-llm.json` 的 `source.revision` 写的是 `"main"`，
+但**实际 mirror URL 里带的是 commit**（`/resolve/bc640142c66e1fdd12af0bd68f40445458f3869b/`），
+所以那是元数据漂移，不是真的没钉。
+
+**submodule**：4 个全部钉在 tag 上 —— `libsimple v0.7.1` / `sherpa-onnx v1.13.4` /
+`sqlite-vec v0.1.9` / `whisper.cpp v1.9.1`。
+
+**仓库里的二进制：没有。** 最大的 15 个已跟踪文件全部是 JSON / PNG 截图 / Markdown，
+最大 255 KB。
+
+## 6.3 ⚠️ 第二条通道：`pnpm install`（**不受本仓 sha256 约束**）
+
+`pnpm-workspace.yaml` 的 `onlyBuiltDependencies` 有 4 项，其中两项就是去下二进制的。
+下面是**在 runner 的 `node_modules` 里抠出来的运行期证据**，不是读文档：
+
+```
+== ffmpeg-static ==
+  version: 5.3.0
+  binary-release-tag: "b6.1.1"            ← 钉死了
+  scripts: {"install":"node install.js"}
+  实际落地: node_modules/.pnpm/ffmpeg-static@5.3.0/.../ffmpeg   79,826,272 B
+
+== youtube-dl-exec ==
+  const YOUTUBE_DL_HOST =
+    process.env.YOUTUBE_DL_HOST ??
+    'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest'   ← ★ 不钉版本
+  实际落地: node_modules/.pnpm/youtube-dl-exec@3.1.9.../bin/yt-dlp   3,071,553 B
+```
+
+三条要说清楚的：
+
+1. **两者都没有 sha256 校验** —— 它们走各自 npm 包的下载逻辑，
+   本仓 `packages/downloader` 那套「下完必校验、不过就换镜像、全失败就报错」**碰不到它们**。
+2. **`youtube-dl-exec` 不钉版本**：`releases/latest` 意味着**今天装和明天装可能拿到不同的 yt-dlp**。
+   而 `backends.json` 里那 4 个 `ytdlp-*` 包是**钉死 `2026.07.04` + 带 sha256** 的 ——
+   **同一个工具，两条通道，一条严一条松。**
+3. 落地大小也对不上：npm 那条是 **3.07 MB** 的纯 Python zipapp（运行时要机器上有 Python），
+   manifest 那条是 **39.9 MB** 的自包含 `yt-dlp_linux`。**它们不是同一个东西。**
+
+→ 建议（未实施，需 Manager 裁定）：`YOUTUBE_DL_SKIP_DOWNLOAD=1` +
+让运行期只认 manifest 装出来的那个；`ffmpeg-static` 同理。
+
+## 6.4 ★ 真跑一次冷启动：三分类表
+
+做法：全新数据目录 + **在 PATH 最前面放同名假二进制屏蔽宿主工具**，
+装完**重启**（`materializeSqliteExtensions()` 只在启动时跑），再跑 selfcheck。
+
+**先记一条把我自己的假设证伪的事实** —— `ubuntu-24.04` runner **并不自带 ffmpeg**：
+
+```
+ffmpeg      (不在 PATH 上)      ffprobe     (不在 PATH 上)
+yt-dlp      (不在 PATH 上)      whisper-cli (不在 PATH 上)
+sqlite3     /usr/bin/sqlite3    python3     /usr/bin/python3    cmake  /usr/local/bin/cmake
+```
+
+冷启动基线（什么都没装时）**精确复现了 T-093 的事故形态**：
+
+```
+[cold] tokenizer=trigram  libsimple=false  sqliteVec=false
+     failures.libsimple:  文件不存在：<data>/bin/ext/libsimple.so
+     failures.sqlite-vec: 文件不存在：<data>/bin/ext/vec0.so
+[daemon] db=better-sqlite3 sqlite=3.53.4 schema=v1 tokenizer=trigram vec=off
+```
+
+装 5 个包（目录里判定"适用于本机"的全部）→ **独立核对 `/api/backends/installed` 全部在列** →
+重启 → `[warm] tokenizer=simple libsimple=true sqliteVec=true`。
+
+**三分类（判据直接用产品自己的 `selfcheck.ts:390-434`，没另发明）：**
+
+| 分类 | 数量 | 是哪些 |
+|---|---|---|
+| ✅ **产品自己下载并校验的** | **5** | `tool.ffmpeg` `tool.ffprobe` `tool.whisperCli` `tool.whisperVad` `tool.ytDlp` |
+| ⚠️ **借宿主 PATH 的** | **0** | （无） |
+| ❌ **装不上 / 不可用** | **0** | （无） |
+
+每一条的路径都实打实落在数据目录里，例如：
+
+```
+tool.ffmpeg   ok  required  /tmp/openmemo-coldstart-2621/data/models/by-name/backend/ffmpeg-n7.1.5-…
+tool.whisperCli ok required  /tmp/openmemo-coldstart-2621/data/models/by-name/backend/whisper-bin-ubuntu-x64/…
+tool.ytDlp    ok            /tmp/openmemo-coldstart-2621/data/models/by-name/backend/yt-dlp
+backend.libLinks ok required 8 条链接全部可读到目标内容
+```
+
+**屏蔽组与不屏蔽组结果完全一致** —— 因为这台 runner 本来就没有那些工具。
+所以这一轮**没有观测到任何"悄悄回退到宿主"的行为**。
+⚠️ 但屏蔽这一步仍然必须保留：结论不能建立在"这款镜像今天恰好没装 ffmpeg"上。
+（第二轮的 daemon 日志顺带证明了**回退路径确实存在**：屏蔽时它报
+`缺少工具: asr-model`——即 ffmpeg/ffprobe/whisper-cli **都"找到了"**，找到的正是我放的 shim。）
+
+## 6.5 ★ 你点名要验的那条：libsimple / sqlite-vec 真的能用吗
+
+判据不是"文件下下来了"，是**中文双字词真的搜得到**：
+
+```
+ext.chineseSearch   ok    required=true    用户:1 推特:2 中国:1 服务:2
+ext.jiebaDict       ok                     <data>/bin/ext/dict
+ext.sqliteVec       ok                     v0.1.9
+```
+
+**T-093 那次事故（7 个包全 `succeeded`、sha256 全过，而 daemon 起来是
+`tokenizer=trigram vec=off`）在这一轮没有复现。** `materializeSqliteExtensions()`
+把两个来源不同、目录结构不同的扩展链进了同一个 `bin/ext`，重启后 tokenizer 变成 `simple`。
+
+## 6.6 这一轮**没有**验到的（如实列出）
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| `model.asr` | **fail（required）** | 冷启动**不会自动装 ASR 模型**。我的驱动只调了 `/api/backends/install`，**没有调 `/api/models/pull`** —— 所以这既是"产品的冷启动确实不含模型"，也是"我的审计没覆盖模型下载那条路"。两种读法都成立，别只取一种 |
+| `model.vad` | warn | 同上，VAD 模型没装 → 切分降级为固定窗口 |
+| `hw.probe` | warn | `openmemo-probe 未安装` —— 与 T-141 §2.6 一致 |
+| sherpa-onnx / paraformer 实际加载 | **未验** | 模型没装，引擎没跑起来过 |
+| macOS / Windows 上的冷启动 | **未验** | 本节全部结论只覆盖 `ubuntu-24.04` |
+| npm 那两个二进制的 sha256 | **不存在** | 不是"没验"，是上游就没提供校验（§6.3） |
+
+`meta.sameSource ok — 25 项逐 id 一致（本地 1 失败 / 端点 1 失败）`：
+CLI 与 `GET /api/selfcheck` 给出的是同一份答案，没有"网页绿而 CLI 红"。
+
+## 6.7 审计工具自己犯的两个错（写下来，因为它们正是本节要查的形状）
+
+1. **`dependency-audit.mjs` 第一版把 `onlyBuiltDependencies` 解析成了空**
+   （正则要求列表项连续，而真实文件每项前面有一行 `#` 注释）。
+   它**面不改色地打印「(空)」**，我差点把"pnpm install 期不下载任何二进制"当结论报上去 ——
+   而真实答案是 4 个包、其中两个就是去下二进制的（§6.3）。
+   → 改逐行解析 + 一条 sanity 断言：解析出 0 项就出声。
+
+2. **`cold-start-audit.mjs` 第一版自己就是一个假绿。**
+   它打 `GET /api/jobs?id=<id>`（该端点不认 `?id=`，直接返回整份列表），
+   取 job 那行写的是 `arr.find(...) ?? arr[0]` —— **`?? arr[0]` 就是那个洞**。
+   第一次真跑的输出是 `media-tools-linux-x64 succeeded (1.0s)`：**119 MB，1.0 秒**，
+   而 1.0s 恰好是轮询间隔。一个用来查"是不是真的下载了"的脚本，
+   报了一串它根本没等过的成功。
+   → 改单条端点 + 找不到就如实说找不到 + **最后用 `/api/backends/installed` 做独立地面真相核对**。
+   第二版因为字段名写错（是 `uid` 不是 `id`）仍然没认出 job，
+   但它**红得诚实**：说"我不认识这条"，而不是拿别人的成功顶上。
+   **同一个地方、两种失败方式，差别就是有没有那个 `?? arr[0]`。**

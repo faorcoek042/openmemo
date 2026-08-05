@@ -413,3 +413,117 @@ verified 0 signed file(s)
   **发起方式**：`gh workflow run build-backends.yml --ref master`。
 - **两个 CUDA job 的结果我没等到**，标 `[未验证]`。
   linux-x64-cuda 已经**过了 apt 那一关**（前两轮都死在那里），这一条算部分验证。
+
+---
+
+## [2026-08-06 00:55] T-145 PROGRESS（自动触发 + 冷启动依赖审计 + 产品 bug）
+
+交付: `docs/design/D-11-ci-platform-facts.md` **新增 §6**（冷启动依赖来源审计）、
+提交 `3628df2` `5f89833` `2d7774e` `1d2da8c` —— 均已 push。
+
+# TL;DR
+
+## ① 用户问的「是不是都是现场下载的」——**是，但有两条例外，都在 npm 那条通道上**
+
+**全部证据来自干净 runner 的 CI 日志**（`cold-start-audit` run 31026300122）。
+
+| | 结论 |
+|---|---|
+| manifest 那条通道 | **62 个下载文件，sha256 100%，钉死引用 100%，URL 62/62 可达（HTTP 206）**，8 MB 以下的**逐个重算 sha256 全部 MATCH** |
+| 冷启动后工具从哪来 | **✅ 产品自己下的 5 个 / ⚠️ 借宿主 PATH 的 0 个 / ❌ 装不上 0 个** |
+| 你点名要验的中文检索 | **`ext.chineseSearch = ok`（required）：用户:1 推特:2 中国:1 服务:2** —— T-093 那次事故**没有复现** |
+| 仓库里有二进制吗 | **没有**。最大的已跟踪文件 255 KB（JSON/PNG/文档）。你查的 0.2 MB 是对的 |
+| ⚠️ **例外 1** | `ffmpeg-static` 在 `pnpm install` 期下 **79,826,272 B** 的 ffmpeg，钉了 tag `b6.1.1` 但**无校验和** |
+| ⚠️ **例外 2** | `youtube-dl-exec` 打的是 `api.github.com/repos/yt-dlp/yt-dlp/releases/**latest**` —— **不钉版本、无校验和** |
+
+**例外 2 值得单独看**：同一个 yt-dlp，**两条通道一严一松** ——
+`backends.json` 里那条钉死 `2026.07.04` + 带 sha256（39.9 MB 自包含二进制），
+npm 那条不钉版本、不校验（3.07 MB 纯 Python zipapp，运行时还要机器上有 Python）。
+**它们不是同一个东西。**
+
+## ② 冷启动基线**精确复现了 T-093 的事故形态**，然后被修复路径解掉
+
+```
+[cold] tokenizer=trigram  libsimple=false  sqliteVec=false
+     failures.libsimple: 文件不存在：<data>/bin/ext/libsimple.so
+装 5 个包 → /api/backends/installed 独立核对全部在列 → 重启
+[warm] tokenizer=simple   libsimple=true   sqliteVec=true
+ext.chineseSearch ok  用户:1 推特:2 中国:1 服务:2
+```
+
+## ③ 一条把我自己的假设证伪的事实：**ubuntu runner 并不自带 ffmpeg**
+
+我在脚本和 workflow 注释里都断言过它自带。宿主基线实测：
+`ffmpeg/ffprobe/yt-dlp/whisper-cli` **全都不在 PATH 上**，自带的只有 `sqlite3/python3/cmake`。
+→ 已在两处更正。**屏蔽那一步照留**：结论不能建立在"这款镜像今天恰好没装"上。
+（不过第二轮的 daemon 日志顺带证明**回退路径确实存在**：屏蔽时它报「缺少工具: asr-model」，
+即 ffmpeg/ffprobe/whisper-cli 都"找到了"—— 找到的正是我放的 shim。）
+
+## ④ ★ 审计工具**自己犯了两次本任务在查的那个错**（必须写下来）
+
+1. `dependency-audit.mjs` 把 `onlyBuiltDependencies` 解析成空，**面不改色打印「(空)」**。
+   我差点把"pnpm install 期不下载任何二进制"当结论报上去。真实答案是 4 个包。
+2. `cold-start-audit.mjs` 第一版**自己就是假绿**：打了个不认 `?id=` 的端点，
+   然后 `arr.find(...) ?? arr[0]` —— 输出 `media-tools-linux-x64 succeeded (1.0s)`，
+   **119 MB，1.0 秒**，而 1.0s 恰好是轮询间隔。
+   → 改单条端点 + 找不到就说找不到 + **最后用 `/api/backends/installed` 做独立地面真相核对**。
+   第二版字段名还写错了（是 `uid` 不是 `id`），但它**红得诚实**。
+   **同一个地方、两种失败方式，差别就是有没有那个 `?? arr[0]`。**
+
+## ⑤ ci.yml 已改自动触发，**并且已被真实 push 触发验证过**
+
+`on: push(branches:[master]) + pull_request + workflow_dispatch`。
+实测：`event=push` 的 run 连续三次 success（1m3s / 1m1s / 58s）。
+`build-backends` 保持手动。`concurrency + cancel-in-progress: true` 本来就有。
+
+**刻意不加 `paths` 过滤**，三条理由（写进了 ci.yml 文件头）：
+① 只要 1m42s，省不下什么；
+② 被 `paths` 过滤掉的检查在分支保护里显示为「未运行」而不是「通过」，
+   docs-only 的 PR 会永远卡在 `Expected — waiting for status`；
+③ ★ **它和本仓在清的假绿家族是同一个形状**：「没跑」和「跑了并通过」长得一模一样。
+
+★ `lint-workflows.mjs` 里那条「ci.yml 不许自动 push 触发」**在我改的当天就红了，而且红得对** ——
+它拦住的不是错误，是一个**已经过期的前提**。我把它**翻成正向断言**（没有自动触发才是违规），
+并补了「branches 必须限定 master」「不许出现 paths 过滤」两条。**守卫该改，不是该删。**
+
+## ⑥ 那条产品相关的跨平台 bug 已修（比我上次说的更精确）
+
+`assertWithinRoot`：**托管根在软链后面时，任何「即将创建」的文件被判为越界。**
+上次我说的是"整体拒绝"，**不准确** —— 实测是**半好的**：
+```
+exists.wav     ok            ← 已存在的文件正常
+newfile.wav    path_escape   ← ★ 错：即将创建的
+sub/new.wav    path_escape   ← ★ 错
+../escape      path_escape   ← 对
+/etc/hostname  path_escape   ← 对
+```
+**读得了、写不了**，现场看起来像权限问题。
+机制：`realpathOrResolve` 对不存在的路径回退到词法路径（这是对的），
+于是 root realpath 过、target 没有，两边不在同一个坐标系。
+macOS 上 `/var` 和 `/tmp` **本身就是软链**，默认 TMPDIR 就触发。
+→ 候选相对**已 realpath 的 root** 展开。三条逃逸路径逐条反向验证仍然拦得住。
+→ 新增 6 条用例（3 正 3 反），用自造软链根，**在 Linux 上也能红** —— 本来就该在本机抓到。
+
+## ⑦ build-backends 第 4 轮：**8/8 全绿在望**
+
+`macos-arm64-metal` 的 `*.so` 签名模式修复**生效**，已 success。
+截至写这行：**7 success + windows-x64-cuda 仍在编译**（该 job 单独要 30+ 分钟）。
+第 1 轮是 3 绿 / 8 红 / 1 skip（共 12）。
+
+---
+
+需要 Manager 决策:
+1. **npm 那两条通道要不要收口？** 建议 `YOUTUBE_DL_SKIP_DOWNLOAD=1` +
+   运行期只认 manifest 装出来的 yt-dlp（那条是钉死且带 sha256 的）。
+   `ffmpeg-static` 同理。**我没有动**，因为它会改变 `pnpm install` 的行为，超出 T-145 范围。
+2. **`model.asr` 在冷启动后是 `fail(required)`** —— 冷启动不会自动装 ASR 模型。
+   这既是产品事实、也是我审计的覆盖缺口（我只调了 `/api/backends/install`，
+   **没调 `/api/models/pull`**）。要不要把模型下载也纳入冷启动审计？
+3. 跨平台那 6 条测试红里，**产品相关的那条已修**；其余 5 条是测试的宿主假设，
+   定性见 D-11 §3.3，建议派 `test-gaps`。
+
+下一步建议:
+1. 等 windows-x64-cuda 收尾，确认 build-backends 8/8。
+2. `cold-start-audit` 加 `/api/models/pull`，把 paraformer + VAD 也纳入，
+   然后 `model.asr` 才有资格从 fail 变 ok。
+3. 把 `cold-start-audit` 铺到 macOS / Windows —— 本节结论目前只覆盖 ubuntu-24.04。
