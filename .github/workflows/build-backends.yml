@@ -179,7 +179,18 @@ jobs:
           checked=0
           while IFS= read -r f; do
             case "$f" in
-              *.dylib|*whisper-cli|*whisper-server|*openmemo-probe)
+              # ★ T-145 第三轮：**加上 `*.so`**。
+              #   `-DGGML_BACKEND_DL=ON` 下 ggml 的后端是 CMake 的 MODULE 目标，
+              #   而 MODULE 在 Apple 平台上用 `.so` 后缀（不是 `.dylib`）——
+              #   实测 macos-arm64-metal 的包里**只有一个文件** `libggml-metal.so`，
+              #   于是这条模式一个都匹配不上：
+              #     verified 0 signed file(s)
+              #     ::error::checked 0 files under … — the pack is empty or the name patterns drifted
+              #   👍 **守卫本身是对的**：它没有静默放过，而是明确说"我一个都没检查到"。
+              #      这正是 C5 修复的意义 —— 要改的是模式，不是守卫。
+              #   （build-whisper.sh 的签名那步用的是 `-name '*.dylib' -o -perm -u+x`，
+              #     `.so` 带可执行位，所以**它们本来就被签了**，只是没被验。）
+              *.dylib|*.so|*whisper-cli|*whisper-server|*whisper-bench|*whisper-vad-speech-segments|*openmemo-probe)
                 codesign --verify --verbose "$f" || { echo "::error::UNSIGNED: $f"; exit 1; }
                 checked=$((checked + 1))
                 ;;
