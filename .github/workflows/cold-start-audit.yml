@@ -1,0 +1,125 @@
+# 冷启动依赖来源审计：**这些依赖到底是不是现场下载的？**
+#
+# ── 为什么这个 workflow 存在 ──────────────────────────────────────────────────────
+#
+# 用户原话：「鉴于之前经历，我怕了你，再检查下是不是都是现场下载的各个依赖？」
+#
+# 他的担心有实据。这台开发机上至少四次"能跑"靠的是**机器的历史沉积**：
+#   · whisper 靠搬迁前留下的 .so 链
+#   · 数据目录指针靠机器上一个全局文件
+#   · apps/web/dist 靠别人刚构建的产物
+#   · 867 条测试全绿，靠本机恰好只装了 node 24（CI 的 node 22 当场红）
+#
+# **在开发机上查这件事是循环论证** —— 那台机器已经装好了一切，而它正是不该信的那台。
+# 干净 runner 是接 GitHub 换来的能力，这个 workflow 就是来用它的。
+#
+# ── 三个问题 ────────────────────────────────────────────────────────────────────
+#
+#   1. 从哪个 URL 下载？        2. 版本钉死了吗？       3. 有没有 sha256 校验？
+#
+# 静态部分由 `scripts/ci/dependency-audit.mjs` 回答（读 manifest）；
+# `--live` 让它对每个 URL 发一次**真实请求**，并把 8 MB 以下的小文件**真下载下来重算
+# sha256** 与 manifest 比对 —— 那才叫证据，读代码推断的不算。
+#
+# ── 触发方式：手动 ──────────────────────────────────────────────────────────────
+#
+# 它要真下载几百 MB 并跑一次完整冷启动，不适合每次 push 都来一遍。
+# 值得重跑的时机：改了 manifest、改了 downloader、升级了 pnpm 依赖。
+
+name: cold-start-audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cold-start-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: 依赖来源 + 冷启动（干净 runner）
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # ★ 在装任何东西**之前**记录 runner 自带什么。
+      #   ubuntu runner 自带 ffmpeg —— 不先记下来，后面就分不清
+      #   "我们装上了" 和 "它本来就在"。
+      - name: 宿主基线（装任何东西之前）
+        run: |
+          echo "== runner 自带的同名工具 =="
+          for t in ffmpeg ffprobe yt-dlp youtube-dl whisper-cli sqlite3 python3 cmake; do
+            printf '%-14s %s\n' "$t" "$(command -v $t || echo '(不在 PATH 上)')"
+          done
+          echo
+          echo "== 版本 =="
+          ffmpeg -version 2>/dev/null | head -1 || true
+          python3 --version 2>/dev/null || true
+
+      # ① 静态审计：manifest 里每一个下载文件的 URL / 钉死情况 / sha256。
+      #    这一步不需要装依赖，所以放在最前面 —— 后面任何一步挂了，它的结论仍然成立。
+      - name: 依赖来源静态审计
+        run: node scripts/ci/dependency-audit.mjs
+
+      # ② 同一份审计 + 真实网络：每个 URL 发一次 Range 请求，
+      #    并把 8 MB 以下的文件**真下载重算 sha256**。
+      #    ⚠️ 网络失败不改变退出码（抖动不该变成门禁红），但会在报告里明确标出。
+      - name: 依赖来源实测（真实 HTTP + 小文件 sha256 复算）
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/dependency-audit.mjs --live --verify-under 8
+
+      - name: Install pnpm
+        if: ${{ !cancelled() }}
+        run: npm install -g pnpm@10.15.0
+
+      # ③ npm 侧是**第二条获取通道**，不受本仓 manifest 的 sha256 约束。
+      #    装完之后直接从 node_modules 里把真实 URL 抠出来 —— 这是运行期证据，不是读文档。
+      - name: Install（并记录 postinstall 下载了什么）
+        if: ${{ !cancelled() }}
+        run: pnpm install --frozen-lockfile 2>&1 | tee /tmp/install.log
+
+      - name: npm 侧获取通道的真实来源
+        if: ${{ !cancelled() }}
+        run: |
+          echo "== ffmpeg-static: 它去哪儿下、钉的哪个 tag =="
+          f=$(find . -path '*/ffmpeg-static/package.json' -not -path '*/dist/*' | head -1)
+          [ -n "$f" ] && node -e "const p=require('$PWD/'+'$f'.replace(/^\.\//,''));console.log('  version:',p.version);console.log('  binary-release-tag:',JSON.stringify(p[p.name]||null));console.log('  scripts:',JSON.stringify(p.scripts||{}))" || echo "  (没找到)"
+          i=$(find . -path '*/ffmpeg-static/install.js' | head -1)
+          [ -n "$i" ] && { echo "  install.js 里的 URL 拼法:"; grep -nE "https://|releases/download|binary-release-tag" "$i" | head -8 | sed 's/^/    /'; }
+          echo
+          echo "== youtube-dl-exec: 它去哪儿下 =="
+          c=$(find . -path '*/youtube-dl-exec/src/constants.js' | head -1)
+          [ -n "$c" ] && { grep -nE "https://|HOST|latest" "$c" | head -10 | sed 's/^/    /'; } || echo "  (没找到)"
+          echo
+          echo "== 实际落地的二进制 =="
+          find . -path '*ffmpeg-static*' -name 'ffmpeg*' -type f -exec ls -la {} \; 2>/dev/null | head -5
+          find . -path '*youtube-dl-exec*' -name 'yt-dlp*' -type f -exec ls -la {} \; 2>/dev/null | head -5
+          echo
+          echo "== install.log 里出现过的下载相关行 =="
+          grep -inE "download|fetch|http|postinstall|preinstall" /tmp/install.log | head -25 || echo "  (无)"
+
+      - name: Build
+        if: ${{ !cancelled() }}
+        run: pnpm build:safe
+
+      # ④ ★ 真跑一次冷启动：全新数据目录 + **屏蔽宿主同名工具**。
+      #    不屏蔽的话，产品在 PATH 上找到 runner 自带的 ffmpeg，
+      #    "装上了" 和 "借到了" 在最终效果上就长得一模一样 —— 那正是要查的形状。
+      - name: 冷启动（全新数据目录，屏蔽宿主工具）
+        if: ${{ !cancelled() }}
+        timeout-minutes: 30
+        run: node scripts/ci/cold-start-audit.mjs --port 19700
+
+      # ⑤ 对照组：**不屏蔽**再跑一次。两次的差集 = "如果用户机器上没有这些东西，
+      #    会多坏掉哪些功能"。这一步单独存在，是为了让"借用"这件事有个可比的基准。
+      - name: 对照组：不屏蔽宿主工具再跑一次
+        if: ${{ !cancelled() }}
+        timeout-minutes: 30
+        run: node scripts/ci/cold-start-audit.mjs --port 19710 --no-mask
