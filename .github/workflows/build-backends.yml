@@ -236,7 +236,18 @@ jobs:
           #   ⚠️ 讽刺的是 arm64 那两行是本轮**唯二全绿**的 linux job
           #   （linux-arm64-cpu / linux-arm64-vulkan success）—— 删的不是坏的那些。
           - { runner: ubuntu-22.04,     arch: x64,   backend: cpu }
-          - { runner: ubuntu-24.04,     arch: x64,   backend: vulkan }
+          # ★★ T-161：**vulkan 挪回 ubuntu-22.04**（原来是 `ubuntu-24.04`）。
+          #   T-145 把它挪走是因为 jammy 的 apt 里没有 `glslc`；那次挪动解决了编译问题，
+          #   **同时把产物的运行时下限从 GLIBC_2.34 抬到了 2.38，而没有人注意到**
+          #   （D-11 §8.2：三个 `__isoc23_strtol` 家族符号，Ubuntu 22.04 / Debian 12 上
+          #   `dlopen` 直接失败，且失败是静默的）。
+          #   现在两个问题一起解决：glslc 不走 apt，走 LunarG SDK（见下面那一步）。
+          #   `[实测]` 24.04 上是**压不掉**这条重定向的：触发源是 g++ driver 无条件注入的
+          #   `-D_GNU_SOURCE`（gcc/config/gnu-user.h 的 `CPLUSPLUS_CPP_SPEC`，
+          #   gcc-12 与 gcc-13 两个分支字节相同），不是语言标准版本 ——
+          #   C++ 侧 `-std=c++11/17/20/23` 逐个试过，**全部仍然产出 `__isoc23_strtol`**。
+          #   换编译器版本同样无效（重定向在 glibc 2.39 的头文件里）。
+          - { runner: ubuntu-22.04,     arch: x64,   backend: vulkan }
           # ★ T-145 第二轮：**CUDA 必须留在 22.04**。
           #   我第一轮把它一起挪到了 noble，第二轮当场证明那是错的：
           #     Package 'cuda-nvcc-12-4' has no installation candidate
@@ -279,12 +290,46 @@ jobs:
       #     E: Unable to locate package glslc
       #   `glslc` 在 jammy 的仓库里没有这个二进制包（它在 noble 才独立成包）。
       #   同一份列表在 `ubuntu-24.04-arm` 上**同一轮就是绿的**（linux-arm64-vulkan
-      #   success）—— 所以问题确定在发行版，不在包名。x64 已改用 ubuntu-24.04。
-      - name: Install Vulkan toolchain
+      #   success）—— 所以问题确定在发行版，不在包名。x64 曾因此改用 ubuntu-24.04。
+      #
+      # ★★ T-161：**apt 这条路整条换掉了，改用 LunarG 官方 SDK（与 Windows 腿同一个 action）。**
+      #
+      #   为什么不是"把包名修对"——`[实测]` jammy 上是**两个**坑，不是一个：
+      #     ① `glslc` 二进制包首次出现在 **noble**；jammy 连 `shaderc` 源码包都没有。
+      #        `packages.ubuntu.com` 按**文件名**搜 jammy/amd64 的 `glslc`：6 条命中全是
+      #        `SPIRVGLSLCanonicalization.h` 之类名字里碰巧含这几个字母的无关文件。
+      #        `glslang-tools` 只提供 `glslangValidator` + `spirv-remap`，**没有 glslc**。
+      #        jammy-backports / jammy-updates 同样没有。
+      #     ② 更隐蔽的一条：`ggml-vulkan/CMakeLists.txt:14` 要的是
+      #        `find_package(SPIRV-Headers CONFIG REQUIRED)` —— **CMake package config**。
+      #        而 jammy 的 `spirv-headers` 文件列表里**一个 cmake 文件都没有**
+      #        （只有 `/usr/share/pkgconfig/SPIRV-Headers.pc`）；noble 的才有
+      #        `/usr/share/cmake/SPIRV-Headers/SPIRV-HeadersConfig.cmake`。
+      #        → **就算凭空变出一个 glslc，jammy 的 stock 包仍然会在 configure 阶段红。**
+      #
+      #   LunarG 的 SDK 同时解决这两条，且**不引入新依赖**：`jakoch/install-vulkan-sdk-action`
+      #   正是下面 Windows 腿已经在用的那一个。它在 x86_64 Linux 上下的就是 LunarG 官方
+      #   tarball（`vulkansdk-linux-x86_64-<version>.tar.xz`），解到 `$VULKAN_SDK`：
+      #     `[实测]` tarball 里有 `x86_64/bin/glslc` 与
+      #              `x86_64/share/cmake/SPIRV-Headers/SPIRV-HeadersConfig.cmake`
+      #     `[实测]` 那个 glslc 自己的最高需求是 **GLIBC_2.29**，jammy(2.35) 上跑得动，
+      #              `objdump -T | grep -c isoc23` = 0
+      #   而 `ggml-vulkan/CMakeLists.txt:11-13` 恰好写着「`$VULKAN_SDK` 存在就
+      #   append 进 `CMAKE_PREFIX_PATH`」——两样东西一次到位。
+      #
+      #   ⚠️ **版本钉死**：`vulkan_version` 不传的话该 action 取"最新"，
+      #   那就是我们在别处费劲避免的那种可变引用。1.4.313.0 是**实测存在**的
+      #   （`sdk.lunarg.com/sdk/download/1.4.313.0/linux/vulkansdk-linux-x86_64-1.4.313.0.tar.xz`
+      #   HTTP 200, 341,756,484 B）。
+      #   ⚠️ **诚实边界**：该 action 作者自己的 CI 矩阵里**没有 `ubuntu-22.04` x64 这一格**
+      #   （只有 ubuntu-latest 与两个 arm）。代码路径与发行版无关（x86_64 分支不看发行版），
+      #   但"没人在这个组合上跑过"是事实 —— 第一次真跑要看日志。
+      - name: Install Vulkan SDK (LunarG)
         if: matrix.backend == 'vulkan'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y glslc libvulkan-dev spirv-headers spirv-tools glslang-tools
+        uses: jakoch/install-vulkan-sdk-action@v1.6.0
+        with:
+          vulkan_version: '1.4.313.0'
+          cache: true
 
       # --- CUDA ----------------------------------------------------------------------
       # Note: llama.cpp and whisper.cpp both hand-roll this by pulling individual
@@ -353,6 +398,24 @@ jobs:
             --out "${PACK_OUTPUT_DIR}" \
             --jobs $(nproc) $EXTRA
 
+      # ★★ T-161：**glibc 运行时下限守卫**（D-11 §8.0 那一族的 Linux 那一格）。
+      #
+      # 在此之前这条基线只是本文件里的一句注释（下面矩阵那行「cpu 保留 22.04 是刻意的：
+      # 它是 glibc 基线」）。**然后它被绕过了一次，而且是在解决另一个问题的过程中顺手绕的**：
+      # vulkan 为了拿 `glslc` 从 22.04 挪到 24.04（§4.2），运行时下限从 2.34 抬到 2.38，
+      # 没有任何一处会说话，直到有人把产物解开跑 objdump 才发现（D-11 §8.2）。
+      #
+      # D-11 §8.2 自己写的判据：「**一条靠"记得别动它"维持的基线，等价于一条迟早会被绕过的基线**」。
+      # 所以它现在是守卫，不是注释 —— 换 runner 会当场红，而不是等用户"装了没变快"。
+      #
+      # 2.34 = Ubuntu 22.04 上编出来的实测值，不是拍的。
+      # 发行版对照：Ubuntu 22.04=2.35 · Debian 12=2.36 · Ubuntu 24.04=2.39 · Debian 13=2.41。
+      - name: Guard glibc floor
+        run: |
+          node scripts/ci/check-elf-glibc.mjs \
+            --dir "${{ steps.build.outputs.stage_dir }}" \
+            --max 2.34
+
       - name: Build probe
         if: matrix.backend == 'cpu'
         run: |
@@ -364,17 +427,58 @@ jobs:
       # LD_LIBRARY_PATH. This catches the rpath regressions that make a pack work on the
       # builder and nowhere else. Verified to pass locally during T-012.
       # C7/C9: use the pack id the script reported instead of hard-coding it.
+      #
+      # ★★ T-161：**这一步以前只跑 cpu 那条腿**（`if: matrix.backend == 'cpu'`），
+      #   因为在那之前加速包里只有一个 `libggml-<backend>.so`，根本没有可执行文件可跑。
+      #   加速包自包含之后，这条烟雾测试**对每条腿都成立，而且它正是自包含的判据本身**：
+      #   解到别处、不给 LD_LIBRARY_PATH、`./whisper-cli --help` 能起来
+      #   = 这个包不依赖任何别的包。
       - name: Smoke test pack relocatability
-        if: matrix.backend == 'cpu' && matrix.arch == 'x64'
+        if: matrix.arch == 'x64'
         run: |
           set -euo pipefail
           pack_id="${{ steps.build.outputs.pack_id }}"
           [ -n "$pack_id" ] || { echo "::error::build step did not report pack_id"; exit 1; }
-          mkdir -p /tmp/smoke
+          rm -rf /tmp/smoke && mkdir -p /tmp/smoke
           tar xzf "${PACK_OUTPUT_DIR}/${pack_id}.tar.gz" -C /tmp/smoke
           cd "/tmp/smoke/${pack_id}"
           env -u LD_LIBRARY_PATH ./whisper-cli --help > /dev/null
           echo "pack is relocatable"
+
+          # ★ T-161：加速包还要多答一个问题 —— **那个加速模块自己的依赖解析得了吗**。
+          #   D-11 §8.3 实测过 Windows 侧 `ggml-vulkan.dll` 的导入表里有 `ggml-base.dll`，
+          #   而它在**另一个包的目录里** —— 也就是"就算 ggml 找到了这个模块，
+          #   模块自己也加载不起来"。自包含之后 `libggml-base.so` 就在同一个目录，
+          #   `ldd` 里不该再有任何 `not found`。
+          #   注意 runner 上没有显卡，`libvulkan.so.1` 由 apt 的 libvulkan-dev 提供，
+          #   用户机器上由显卡驱动提供 —— 所以这里只断言"不是 not found"，
+          #   **不断言 Vulkan 真的能跑**（runner 上无从验证，见 D-11 §3.4 的判据）。
+          #
+          #   ⚠️ **这条检查的能力边界，照 D-11 §3.4 的判据写清楚**：
+          #   「runner 上"能做到"不等于用户机器上"能做到"；只有 runner 上"做不到"才是硬结论。」
+          #   runner 上装了 Vulkan / CUDA 工具链，所以 `libcudart.so.12` / `libvulkan.so.1`
+          #   这类**由构建机提供**的依赖在这里一定解析得到，而用户机器上未必。
+          #   已知一条真实缺口：Linux 的 CUDA 包链的是 `CUDA::cudart`（**动态**，
+          #   ggml-cuda/CMakeLists.txt:176，我们没开 GGML_STATIC），
+          #   而打包时只拷了 Windows 命名的 `cudart64_*.dll` —— Linux 侧一个都没拷。
+          #   → **Linux CUDA 包在没装 CUDA 工具链的机器上仍然装了没用**，这条这里验不出来。
+          if [ "${{ matrix.backend }}" != "cpu" ]; then
+            mod="libggml-${{ matrix.backend }}.so"
+            [ -e "$mod" ] || { echo "::error::$mod 不在包里 —— 加速包没有加速器"; exit 1; }
+            echo "== ldd $mod =="
+            ldd "$mod" || true
+            # 只对 **我们自己应当随包出厂的** 那些库断言（`libggml-*`）。
+            # `libvulkan.so.1` / `libcudart.so.12` / `libstdc++.so.6` 由用户机器提供，
+            # 它们在 runner 上解析得到**不构成**用户机器上也解析得到的证据 ——
+            # 把它们算进红绿只会造出一条骗人的绿。
+            if ldd "$mod" | grep 'not found' | grep -q 'libggml'; then
+              echo "::error::$mod 依赖的某个 libggml-* 解析不到（见上面 ldd 输出）。"
+              echo "::error::这正是 D-11 §8.4 第 2 条：找到了模块，模块自己也加载不起来。"
+              echo "::error::修复前实测：dlopen 报 'libggml-base.so.0: cannot open shared object file'。"
+              exit 1
+            fi
+            echo "$mod 的 libggml-* 依赖全部解析得到（其余为宿主提供，见上）"
+          fi
 
       - uses: actions/upload-artifact@v6
         with:
@@ -429,10 +533,20 @@ jobs:
         with:
           key: windows-${{ matrix.arch }}-${{ matrix.backend }}
 
+      # ★ T-161：**加上 `vulkan_version`。** 不传的话该 action 取"最新" ——
+      #   也就是一条会随时间漂的引用，而本仓在别处（release tag / sha256 /
+      #   submodule commit / HuggingFace revision）为了消灭这种引用花了很大力气。
+      #   一个不钉版本的构建工具链就是 D-11 §8.0 那一族的入口：
+      #   「凡是不显式指定就取构建机当前值的东西，都会把构建机的新度焊进产物」。
+      #   取值与 Linux 腿**同一个**，两个平台的 Vulkan 才是同一次上游 SDK。
+      #   ⚠️ 这是对一条**当前编得过**的腿做的改动，如实标注：改之前它用的是浮动的
+      #   "latest"，改之后是 1.4.313.0。`ggml-vulkan.cpp` 里最高的版本门是
+      #   `VK_HEADER_VERSION >= 301`，313 > 301，特性集不会退化。第一次真跑要看日志。
       - name: Install Vulkan SDK
         if: matrix.backend == 'vulkan'
         uses: jakoch/install-vulkan-sdk-action@v1.6.0
         with:
+          vulkan_version: '1.4.313.0'
           install_runtime: true
           cache: true
 

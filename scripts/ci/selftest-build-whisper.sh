@@ -37,13 +37,18 @@ bad()  { printf '  \033[31m✘\033[0m %s\n' "$1"; printf '      %s\n' "${2:-}"; 
 # ──────────────────────────────────────────────────────────────────────────────
 # cmake 桩：`-B <dir>` 时记下构建目录；`--build` 时按 LAYOUT 造假产物。
 # ──────────────────────────────────────────────────────────────────────────────
+#
+# 第三个参数 OMIT（T-161）：**故意不产出**这几个文件名，空格分隔。
+# 用来把"编译看起来成功、但某个产物没出来"这件事做成可复现的输入 ——
+# 这正是 T-145 在 macos-arm64-cpu 上撞到的真实形状，只不过那次没人能复现它。
 make_stub_cmake() {
-  local layout="$1" stubdir="$2"
+  local layout="$1" stubdir="$2" omit="${3:-}"
   mkdir -p "${stubdir}"
   cat > "${stubdir}/cmake" <<STUB
 #!/usr/bin/env bash
 set -Eeuo pipefail
 LAYOUT="${layout}"
+OMIT="${omit}"
 STUB
   cat >> "${stubdir}/cmake" <<'STUB'
 build_dir=""
@@ -73,13 +78,14 @@ esac
 mkdir -p "$out"
 # multi-config 下 bin/ 会作为父目录存在但没有文件 —— 正是老逻辑会挑错的那一步。
 [[ "$LAYOUT" == "msvc" ]] && mkdir -p "$build_dir/bin"
-printf 'fake\n' > "$out/libggml-base.so.0.15.1"
-printf 'fake\n' > "$out/libggml.so.0.15.1"
-printf 'fake\n' > "$out/libggml-cpu-haswell.so"
-printf 'fake\n' > "$out/libwhisper.so.1.9.1"
-printf 'fake\n' > "$out/whisper-cli"
-printf 'fake\n' > "$out/libggml-vulkan.so"
-chmod +x "$out/whisper-cli"
+for f in libggml-base.so.0.15.1 libggml.so.0.15.1 libggml-cpu-haswell.so \
+         libwhisper.so.1.9.1 whisper-cli libggml-vulkan.so; do
+  skip=0
+  for o in ${OMIT}; do [[ "$f" == "$o" ]] && skip=1; done
+  [[ "$skip" == "1" ]] && continue
+  printf 'fake\n' > "$out/$f"
+done
+[[ -e "$out/whisper-cli" ]] && chmod +x "$out/whisper-cli"
 exit 0
 STUB
   chmod +x "${stubdir}/cmake"
@@ -170,6 +176,24 @@ if cd2="$(run_case msvc-vulkan msvc vulkan)"; then
   [[ -f "${cd2}/packs/${pack_id}.json" ]] \
     && ok "多配置布局下同样产出 fragment（${pack_id}）" \
     || bad "多配置布局下没有 fragment" "${pack_id}"
+
+  # ★★ T-161：加速包必须**自包含**。判据不是"包里有加速模块"，
+  #   是"包里同时有加速模块**和引擎本体**" —— ggml 只在 whisper-cli 自己的目录里
+  #   dlopen 后端模块（ggml-backend-reg.cpp:479-489），所以缺了引擎的那半边，
+  #   加速模块永远不会被任何进程看见（D-11 §8.4 的三条独立证据）。
+  if [[ -f "${cd2}/packs/${pack_id}.json" ]]; then
+    if node -e '
+      const frag=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8"));
+      const need=["whisper-cli","libggml-vulkan.so","libggml-cpu-haswell.so"];
+      const miss=need.filter((n)=>!frag.providesFiles.includes(n));
+      if(miss.length){console.error("providesFiles 缺: "+miss.join(", ")+
+        "\n实际: "+frag.providesFiles.join(", "));process.exit(1);}
+    ' "${cd2}/packs/${pack_id}.json" 2>"${cd2}/selfcontained.err"; then
+      ok "★ 加速包自包含：providesFiles 同时含 whisper-cli + 加速模块 + CPU 模块"
+    else
+      bad "加速包不自包含" "$(cat "${cd2}/selfcontained.err")"
+    fi
+  fi
 fi
 
 echo
@@ -257,6 +281,46 @@ else
     ok "失败路径下一个 fragment 都没写"
   fi
 fi
+
+echo
+echo "⑤ ★反向（T-161）：自包含改动把旧守卫的前提抽掉了，必须在原地把守卫补回来"
+# 在 T-161 之前，加速包只拷一个 `libggml-<backend>` —— 它没编出来时 stage 是空的，
+# `emit-pack-manifest` 会当场 die。**现在核心文件先进 stage，stage 永远非空**，
+# 于是同一个失败会打出一个"能下载、能安装、里面根本没有加速器"的包并报绿。
+# 这两条反向用例就是为了让那件事不可能悄悄发生。
+reverse_case() {
+  local name="$1" backend="$2" omit="$3" want_msg="$4" desc="$5"
+  local case_dir="${WORK}/rv-${name}" stub="${WORK}/rv-${name}/stub"
+  mkdir -p "${case_dir}"
+  make_stub_cmake single "${stub}" "${omit}"
+  if PATH="${stub}:${PATH}" bash "${REPO_ROOT}/scripts/build-whisper.sh" \
+        --backend "${backend}" --out "${case_dir}/packs" \
+        --build-root "${case_dir}/build" --no-strip \
+        > "${case_dir}/log" 2>&1; then
+    bad "${desc}" "居然成功了。stage 内容：$(tail -8 "${case_dir}/log")"
+    return
+  fi
+  if grep -qF "${want_msg}" "${case_dir}/log"; then
+    ok "${desc}"
+  else
+    bad "${desc}（红了，但理由不对）" "$(tail -8 "${case_dir}/log")"
+  fi
+  if [[ -n "$(find "${case_dir}/packs" -name '*.json' 2>/dev/null)" ]]; then
+    bad "${desc}：失败路径下仍然写出了 fragment" "$(find "${case_dir}/packs" -name '*.json')"
+  fi
+}
+
+reverse_case accel-missing vulkan libggml-vulkan.so \
+  "里没有 libggml-vulkan.so" \
+  "RV-A · 加速模块没编出来 → 红（此前靠「stage 为空」接住，现在接不住了）"
+
+reverse_case engine-missing vulkan whisper-cli \
+  "里没有 whisper-cli" \
+  "RV-B · 包里没有引擎本体 → 红（模块再全也永远不会被 dlopen 到）"
+
+reverse_case cpumod-missing vulkan libggml-cpu-haswell.so \
+  "里没有任何 ggml CPU 后端模块" \
+  "RV-C · 加速包里没有 CPU 后端模块 → 红（Vulkan 只接管一部分算子）"
 
 echo
 if [[ ${fail} -eq 0 ]]; then

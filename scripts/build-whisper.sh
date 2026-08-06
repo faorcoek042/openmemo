@@ -365,9 +365,13 @@ log "ggml ABI: ${GGML_ABI}"
 # assemble the pack
 #
 # L1 "core"  = engine + ALL cpu variants + CLI/server. Ships inside the installer.
-# L2 "accel" = ONLY the single ggml-<backend> shared library (+ vendor runtime libs).
-#              This is the on-demand download. Keeping it to just the delta is what
-#              makes requirement 2.1 cheap.
+# L2 "accel" = the same core PLUS the single ggml-<backend> shared library
+#              (+ vendor runtime libs). ★ T-161 改成这样的，理由见下。
+#
+#              这里原本写的是 “ONLY the single ggml-<backend> shared library …
+#              Keeping it to just the delta is what makes requirement 2.1 cheap”，
+#              **那句话描述的东西在本产品里结构上不可能生效** —— 见下面 T-146 的三条证据。
+#              T-161 没有再让它挂着，而是按证据把实现改成了自包含。
 #
 # ★★ T-146：**上面那句 L2 的设计与产品实际解析后端的方式对不上，从来没人对过。**
 #
@@ -385,8 +389,16 @@ log "ggml ABI: ${GGML_ABI}"
 #   `providesFiles` 是 `["ggml-cuda.dll","whisper-cli.exe"]` —— **它自带 whisper-cli**。
 #   本产品事实上的约定是「加速包必须自包含」。
 #
-# 这条债不在本脚本的范围内（要么补搬运机制、要么让加速包自包含），
-# 但 **macOS 的 Metal 是个例外，可以就地解决**：`GGML_METAL_EMBED_LIBRARY=ON`
+# ★★ T-161：**这条债已经在本脚本里还掉了 —— 选的是"让加速包自包含"那一条。**
+#   （原文写的是「这条债不在本脚本的范围内（要么补搬运机制、要么让加速包自包含）」。）
+#   两条路里选后者，是因为它只改构建、不改运行时，而运行时那条要动的是
+#   `discoverTools()` 的解析顺序 —— 那是另一个人的地盘，且**它本身另有一个未解的洞**：
+#   `findInBackendPacks()` 按 `readdir` 顺序取第一个命中，既不排序、也不看
+#   `BackendPack.priority`、也不看 `selectedBackend`。所以核心包与加速包
+#   **同时装着**时，跑起来的是哪一个 whisper-cli 是未定义的。
+#   → 自包含是**必要**条件，不是充分条件。见 coordination/inbox/amd-vulkan.md。
+#
+# 另外 **macOS 的 Metal 是个例外，可以就地解决**：`GGML_METAL_EMBED_LIBRARY=ON`
 # 把着色器编进二进制、不需要伴随资源文件，所以 `libggml-metal.so` 只要跟着核心包一起出厂
 # 就位置正确了 —— 这也正是 workflow 自己的注释早就写着的
 # 「Metal … 的 pack 其实装在核心包里」。见下面 cpu 分支里的 darwin 特判。
@@ -430,7 +442,19 @@ MOD_EXT="${SO_EXT}"
 
 copy_if_exists() { for f in "$@"; do [[ -e "$f" ]] && cp -a "$f" "${STAGE}/"; done; true; }
 
-if [[ "${BACKEND}" == "cpu" ]]; then
+# ★★ T-161：**每一个包都带上引擎本体**（原来只有 `cpu` 分支带）。
+#
+# 这是把上面那段「写着 A、实现是 B」的不一致按 **B 的方向**解决掉：
+# 设计注释说 L2 = 只带一个 `ggml-<backend>` 增量；而产品实际解析后端的方式
+# （ggml 只在 whisper-cli 自己的目录里 dlopen 模块）**让增量包结构上不可能生效**。
+# 两条路只能选一条 —— 要么给产品补一套"把模块搬到引擎旁边"的机制，
+# 要么让加速包自包含。选后者的理由是它**只改构建、不改运行时**，
+# 而且目录里那个唯一被认为"能用"的加速包 `whispercpp-cuda-12.4-win-x64`
+# （上游的）本来就是这个形状：它的 `providesFiles` 里有 `whisper-cli.exe`。
+#
+# 代价如实说：加速包从"增量"变成"核心 + 一个模块"，Linux vulkan 由此多出
+# 一个核心包的体积。这不是浪费 —— 一个装了不生效的 19 MB 才是浪费。
+copy_core_files() {
   copy_if_exists \
     "${BIN_DIR}/${LIB_PREFIX}ggml-base."*"${SO_EXT}"* \
     "${BIN_DIR}/${LIB_PREFIX}ggml."*"${SO_EXT}"* \
@@ -443,7 +467,11 @@ if [[ "${BACKEND}" == "cpu" ]]; then
     "${BIN_DIR}/whisper-server"* \
     "${BIN_DIR}/whisper-bench"* \
     "${BIN_DIR}/whisper-vad-speech-segments"*
+}
 
+copy_core_files
+
+if [[ "${BACKEND}" == "cpu" ]]; then
   # ★ T-146：macOS 的核心包把 Metal 模块一起带上（见上面 cpu 分支的理由）。
   #   放在这里而不是加进上面那串：它只在 darwin 上存在，混进公用列表会让人以为
   #   别的平台也该有。
@@ -462,23 +490,34 @@ if [[ "${BACKEND}" == "cpu" ]]; then
   要么 CMake 没编它，要么后缀又变了（MODULE 目标在 Apple 上是 .so 不是 .dylib，见 T-145）。"
     fi
   fi
+else
+  # ★ T-161：加速包 = 核心（上面 copy_core_files 已经拷了）+ 这一个后端模块。
+  #   **原来这里只有这一行**，包里除了 `libggml-vulkan.so` 什么都没有 ——
+  #   而 ggml 只在 whisper-cli 自己的目录里找模块，那个包因此结构上不可能生效。
+  # ★ T-145：加速后端也是 MODULE，darwin 上同样是 `.so`（见上面那段）。
+  copy_if_exists "${BIN_DIR}/${LIB_PREFIX}ggml-${BACKEND}.${MOD_EXT}"
 
-  # ★ 守卫：核心包里**必须**至少有一个 ggml CPU 后端模块。
-  #   上面那个 bug 的要害不是"少拷了一个文件"，是**少拷了它还报绿**。
-  #   判据不是"记得把后缀写对"，是"写错了会当场红"。
-  if ! ls "${STAGE}/${LIB_PREFIX}ggml-cpu"*".${MOD_EXT}" >/dev/null 2>&1; then
+  # ★★ T-161 守卫：加速包里**必须**有它自己那个后端模块。
+  #
+  #   这条守卫是随 copy_core_files 一起**必须**加的，不是锦上添花：
+  #   在此之前，加速模块没拷到 → 暂存目录是空的 → emit-pack-manifest 当场 die（红）。
+  #   现在核心文件先进了 stage，**stage 永远非空** —— 于是同一个失败会
+  #   打出一个"能下载、能安装、里面根本没有加速器"的包并报绿。
+  #   **正是 T-145 在 macos-arm64-cpu 上实测到的那个形状，只是换了一格。**
+  #   一个改动把旧守卫的前提抽掉了，就得在原地把守卫补回来。
+  if [[ ! -e "${STAGE}/${LIB_PREFIX}ggml-${BACKEND}.${MOD_EXT}" ]]; then
     {
       echo "==> BIN_DIR (${BIN_DIR}) 实际内容："
       ls -la "${BIN_DIR}" 2>&1 || true
+      echo "==> ${BUILD_DIR} 底下所有 ggml*："
+      find "${BUILD_DIR}" -name '*ggml*' -maxdepth 4 2>/dev/null | head -40 || true
     } >&2
-    die "核心包里没有任何 ggml CPU 后端模块（找的是 ${LIB_PREFIX}ggml-cpu*.${MOD_EXT}）。
-  GGML_BACKEND_DL=ON 下后端是运行时加载的模块，少了它 whisper-cli 一个后端都注册不到 ——
-  **而这种包在过去是能打出来并报绿的**（T-145 在 macos-arm64-cpu 上实测到）。"
+    die "加速包 ${PACK_ID} 里没有 ${LIB_PREFIX}ggml-${BACKEND}.${MOD_EXT}。
+  编译看起来成功了，但那个后端模块没有落到 BIN_DIR ——
+  没有它的话这个包 = 一份和核心包一模一样的引擎，装上去用户不会变快，
+  而 GGML_BACKEND_DL 下 whisper 不会为此报任何错。"
   fi
-else
-  # Accelerator packs carry ONLY the delta over the core pack.
-  # ★ T-145：加速后端也是 MODULE，darwin 上同样是 `.so`（见上面那段）。
-  copy_if_exists "${BIN_DIR}/${LIB_PREFIX}ggml-${BACKEND}.${MOD_EXT}"
+
   # Vendor runtime libraries that ggml links but the OS does not provide.
   # NOTE: libcuda / nvcuda ships with the NVIDIA *driver* and must NEVER be redistributed.
   case "${BACKEND}" in
@@ -488,6 +527,37 @@ else
         "${BIN_DIR}/cublasLt64_"*.dll "${BIN_DIR}/nvrtc"*.dll
       ;;
   esac
+fi
+
+# ★ 守卫：**任何**包里都必须至少有一个 ggml CPU 后端模块 + whisper-cli 本体。
+#   （T-146 时这两条只守着 cpu 分支；T-161 让每个包都自带引擎之后，
+#    它们对每个包都成立，所以移到分支外面 —— 判据没变，覆盖面变了。）
+#   上面那个 bug 的要害不是"少拷了一个文件"，是**少拷了它还报绿**。
+#   判据不是"记得把后缀写对"，是"写错了会当场红"。
+#
+#   CPU 模块对加速包同样是必需的：Vulkan/CUDA 只接管一部分算子，
+#   其余仍然落到 CPU 后端；而且设备不可用时 ggml 就是靠它兜底的。
+if ! ls "${STAGE}/${LIB_PREFIX}ggml-cpu"*".${MOD_EXT}" >/dev/null 2>&1; then
+  {
+    echo "==> BIN_DIR (${BIN_DIR}) 实际内容："
+    ls -la "${BIN_DIR}" 2>&1 || true
+  } >&2
+  die "包 ${PACK_ID} 里没有任何 ggml CPU 后端模块（找的是 ${LIB_PREFIX}ggml-cpu*.${MOD_EXT}）。
+  GGML_BACKEND_DL=ON 下后端是运行时加载的模块，少了它 whisper-cli 一个后端都注册不到 ——
+  **而这种包在过去是能打出来并报绿的**（T-145 在 macos-arm64-cpu 上实测到）。"
+fi
+
+# whisper-cli 是「自包含」的判据本身：ggml 只在**它自己的目录**里 dlopen 后端模块
+# （ggml-backend-reg.cpp:479-489），所以一个没有 whisper-cli 的包里的加速模块
+# 永远不会被任何进程看见。
+if ! ls "${STAGE}/whisper-cli"* >/dev/null 2>&1; then
+  {
+    echo "==> BIN_DIR (${BIN_DIR}) 实际内容："
+    ls -la "${BIN_DIR}" 2>&1 || true
+  } >&2
+  die "包 ${PACK_ID} 里没有 whisper-cli。
+  ggml 只在 whisper-cli 自己所在的目录里 dlopen 后端模块，
+  所以不带引擎的包 = 一堆永远不会被加载的 .so（D-11 §8.4 三条独立证据）。"
 fi
 
 # ★ T-145：暂存目录空掉时，**把 BIN_DIR 的真实内容打出来**再让下游去红。
