@@ -1,0 +1,60 @@
+# 把「只有一个真实来源」的模型文件下载下来、逐字节校验，产出可挂到我们自己 release 的镜像集。
+#
+# ── 为什么需要一个 workflow，而不是在开发机上跑一条命令 ──────────────────────────
+#
+# `[实测 2026-08-06，开发机]`：
+#     getent hosts huggingface.co  →  2001::c085:4d85（只有 IPv6，且到不了）
+#     TCP 443 huggingface.co       →  连不上
+#     hf-mirror.com                →  连得上，但对这些路径 308 → huggingface.co
+# **这台机器根本取不到这些文件**，也就无从复算 sha256，
+# 而「没复算过的摘要不许进 release」是硬条件。
+#
+# 所以：下载与校验在干净 runner 上做，产物走 artifact 交出去，由**人**挂到 release 上。
+# 这条分工是刻意的 —— 见下面 permissions 的注释。
+#
+# ── 触发方式：手动 ──────────────────────────────────────────────────────────────
+# 它要下 ~390 MiB，不适合每次 push 都跑。值得重跑的时机：清单里这几个模型的
+# URL 或 sha256 变了、或者要重新出一份镜像。
+name: mirror-model-blobs
+
+on:
+  workflow_dispatch:
+
+# ★ 刻意只给 read。
+#
+# 这个 workflow **不建 release、不上传 release 资产**，尽管技术上加一行 `contents: write`
+# 就能做到。理由不是权限洁癖：建 release 是对外动作，本项目要求它由人确认，
+# 而"让 CI 代劳"会把那道确认悄悄绕过去 —— 绕过的还是同一道闸，只是换了个执行者。
+# 产物走 artifact，人下载后自己挂上去。
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-model-blobs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mirror:
+    name: 下载 + 逐字节校验单一来源的模型文件
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      # 脚本是零依赖的纯 node（和 emit-pack-manifest 同样的理由：
+      # 为了下载几个文件去装整个 workspace 不划算）。
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: 下载并校验
+        run: node scripts/ci/mirror-model-blobs.mjs --out dist/model-mirror
+
+      # `if-no-files-found: error`：脚本校验失败时会把产物目录整个删掉，
+      # 那种情况下这一步必须红，而不是上传一个空 artifact 然后绿灯。
+      - uses: actions/upload-artifact@v6
+        with:
+          name: model-mirror
+          path: dist/model-mirror/*
+          if-no-files-found: error
+          retention-days: 90
