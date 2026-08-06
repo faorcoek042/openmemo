@@ -22,7 +22,6 @@
         "multi"
       ],
       "tags": [
-        "required-core",
         "vad"
       ],
       "engines": [
@@ -87,7 +86,6 @@
         "multi"
       ],
       "tags": [
-        "required-core",
         "vad"
       ],
       "engines": [
@@ -104,6 +102,11 @@
               "provider": "hf",
               "url": "https://huggingface.co/ggml-org/whisper-vad/resolve/9ffd54a1e1ee413ddf265af9913beaf518d1639b/ggml-silero-v6.2.0.bin",
               "official": true
+            },
+            {
+              "provider": "modelscope",
+              "url": "https://www.modelscope.cn/models/ggml-org/whisper-vad/resolve/master/ggml-silero-v6.2.0.bin",
+              "official": false
             },
             {
               "provider": "hf-mirror",

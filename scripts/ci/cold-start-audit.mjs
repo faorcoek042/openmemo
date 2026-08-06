@@ -383,27 +383,37 @@ try {
     say(`   ⚠️ 展平后是空的 —— 先怀疑 unwrap 写错了，别当成"目录里没有模型"。`);
     say(`      原始 top-level keys: ${JSON.stringify(Object.keys(mcat.body ?? {}))}`);
   }
-  const wanted = models.filter((m) => {
-    const tags = m.tags ?? [];
-    return (m.role === 'vad' || m.role === 'asr') && tags.includes('required-core');
-  });
+  /*
+   * ★ T-149：这里原来筛的是 `tags.includes('required-core')`。**那个标签已经从清单里删掉了。**
+   *   它一共标着 2 个模型、**全是 VAD、零个 ASR** —— 也就是说「照着"必需核心"装完仍然
+   *   不能转写」（D-11 §7.3 第 1 条就是这么发现的）。而且它**没有任何产品消费者**：
+   *   daemon 只把 tags 原样透传，网页只读 `recommended-default`，这个脚本是它唯一的消费方。
+   *   一个没人执行、名字却是承诺的标签，改对了也只是换成"没人兑现的承诺"，所以删掉。
+   *   定性全文见 `coordination/inbox/catalog-truth.md`。
+   *
+   *   改成**按 role 筛**：这一步要的是"流水线要用到的辅助权重"，那是 role 的事，不是标签的事。
+   *   两个 VAD 都收（各 1–2 MB）—— **同时装上正是 T-148 那个 bug 的现场**
+   *   （目录顺序里 onnx 在前，先装的赢槽位），保留它才守得住那条修复别退回去。
+   */
+  const wanted = models.filter((m) => m.role === 'vad');
   const CAP = Number(arg('--model-cap-mb', '250')) * 1024 * 1024;
   const sizeOf = (m) => (m.files ?? []).reduce((n, f) => n + (f.sizeBytes ?? 0), 0);
   const pick = wanted.filter((m) => sizeOf(m) <= CAP);
   const skipped = wanted.filter((m) => sizeOf(m) > CAP);
   say(
-    `   目录里 role in {asr,vad} 且 required-core 的模型 ${wanted.length} 个；` +
+    `   目录里 role=vad 的模型 ${wanted.length} 个；` +
       `体积 <= ${(CAP / 1024 / 1024) | 0} MB 的 ${pick.length} 个`,
   );
   for (const m of skipped) say(`     [skip] ${(sizeOf(m) / 1024 / 1024).toFixed(0)} MB 超上限：${m.id}`);
   if (wanted.length === 0) {
-    say('   目录里一个 required-core 的 asr/vad 模型都没有 —— 这本身就是个结论，记下来。');
+    // 空集必须出声（本仓同一形状已发生四次）：先怀疑 unwrap，再怀疑目录。
+    say('   ⚠️ 目录里一个 role=vad 的模型都没有 —— 先怀疑 unwrap 写错了，别当成"目录里没有 VAD"。');
     for (const m of models.slice(0, 10)) say(`     （目录里有：${m.id} role=${m.role} tags=${JSON.stringify(m.tags ?? [])}）`);
   }
 
   /*
-   * ★ T-146：`required-core` 里**一个 ASR 模型都没有**（T-145 §7.3 实测的产品结论：
-   *   照着 required-core 装完仍然不能转写）。所以要做可行性证明，必须**显式**再挑一个。
+   * ★ T-146：**目录里没有任何"装完就能转写"的成套集合**（上面那段说的就是这件事）。
+   *   所以要做可行性证明，必须**显式**再挑一个 ASR。
    *   挑最小的那个：这一步证的是"这条路走得通"，不是"跑得多快"。
    */
   if (TRANSCRIBE) {

@@ -108,3 +108,47 @@
 > 「每个"要下载的"组件都在 backends.json 里有安装通道」——
 > 判据是**这条组件自己声称有制品**（真 sha256 + 非零体积），不是按 category 一刀切
 > （`sherpa-onnx-node` 是 npm 依赖，如实写着 `sha256: "n/a"`，本来就不该有下载通道）。
+
+---
+
+## ⚠️ `mirrors` 里多一条，不等于多一份冗余（订正于 T-149，2026-08-06）
+
+**结论先说**：`mirrors: [hf, hf-mirror]` 这种写法**长期被读成"有备份"，而它不是**。
+清单里曾经有 **39 处** 这样的组合。
+
+`[本机实测 2026-08-06，境外出口]`：
+
+```
+$ curl -I https://hf-mirror.com/ggml-org/whisper-vad/resolve/9ffd54a…/ggml-silero-v6.2.0.bin
+HTTP/2 308
+location: https://huggingface.co/ggml-org/whisper-vad/resolve/9ffd54a…/ggml-silero-v6.2.0.bin
+
+$ curl -L …（跟着跳）
+final=https://huggingface.co/…   code=308   size=0      ← 落在主源上
+$ curl -I https://huggingface.co/…
+curl: (28) Connection timed out after 20002 ms          ← 主源本身不可达
+```
+
+`/resolve/<40 位 sha>/`、`/resolve/main/`、`/api/models/`、仓库页**四种路径全部 308**。
+
+⚠️ **但不要据此把 hf-mirror 条目删掉。** 它首页自述是「帮助**国内用户**无障碍访问
+Hugging Face」的公益镜像，`packages/downloader/src/probe.ts` 的注释也早写着它只把
+**non-CN** 流量 308 回源。所以准确的说法是：
+
+> **`hf-mirror` 是一条有地域条件的来源。对国内出口它是真镜像；对境外出口它与
+> `huggingface.co` 是同一个来源 —— 主源一挂，两条一起挂。**
+> 「我这台机器拿不到」和「这里没有这个东西」是两回事，两边都不能当成对方。
+
+### 写 mirror 时的判据
+
+1. **想加冗余，就加一个真正不同的来源**（`modelscope` / `github`），
+   而不是再加一条会跳回同一个主机的地址。
+2. **加之前先验**：ModelScope 的
+   `https://www.modelscope.cn/api/v1/models/<org>/<repo>/repo/files?Revision=master&Recursive=True`
+   会返回每个文件的 `Size` 与 `Sha256`，**`Sha256` 就是文件内容的 sha256**
+   （已用 `ggml-silero-v6.2.0.bin` 实下 + `sha256sum` 比对确认）。
+   与清单里的 `sha256` 逐字符相同才算数 —— **别按文件名匹配**。
+3. **守卫**：`apps/daemon/src/pipeline/modelCatalogTruth.test.ts`。
+   它把已知的别名（`hf-mirror.com → huggingface.co`）折叠掉之后，
+   断言「**只剩一个来源的文件**」这份名单逐字不变 ——
+   删掉一条真镜像会当场红，而**再加一条 `hf-mirror` 不会让任何文件从名单里消失**。

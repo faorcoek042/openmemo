@@ -212,6 +212,11 @@
               "official": true
             },
             {
+              "provider": "modelscope",
+              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-base.bin",
+              "official": false
+            },
+            {
               "provider": "hf-mirror",
               "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.bin",
               "official": false
@@ -293,6 +298,11 @@
               "official": true
             },
             {
+              "provider": "modelscope",
+              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-base.en-q5_1.bin",
+              "official": false
+            },
+            {
               "provider": "hf-mirror",
               "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.en-q5_1.bin",
               "official": false
@@ -363,6 +373,11 @@
               "official": true
             },
             {
+              "provider": "modelscope",
+              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-large-v1.bin",
+              "official": false
+            },
+            {
               "provider": "hf-mirror",
               "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v1.bin",
               "official": false
@@ -431,6 +446,11 @@
               "provider": "hf",
               "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v2-q5_0.bin",
               "official": true
+            },
+            {
+              "provider": "modelscope",
+              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-large-v2-q5_0.bin",
+              "official": false
             },
             {
               "provider": "hf-mirror",
@@ -571,6 +591,11 @@
               "provider": "hf",
               "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v2.bin",
               "official": true
+            },
+            {
+              "provider": "modelscope",
+              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-large-v2.bin",
+              "official": false
             },
             {
               "provider": "hf-mirror",
@@ -1225,6 +1250,11 @@
               "official": true
             },
             {
+              "provider": "modelscope",
+              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-medium.bin",
+              "official": false
+            },
+            {
               "provider": "hf-mirror",
               "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium.bin",
               "official": false
@@ -1295,6 +1325,11 @@
               "provider": "hf",
               "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium.en-q5_0.bin",
               "official": true
+            },
+            {
+              "provider": "modelscope",
+              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-medium.en-q5_0.bin",
+              "official": false
             },
             {
               "provider": "hf-mirror",
@@ -1528,6 +1563,11 @@
               "official": true
             },
             {
+              "provider": "modelscope",
+              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-small.bin",
+              "official": false
+            },
+            {
               "provider": "hf-mirror",
               "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.bin",
               "official": false
@@ -1600,6 +1640,11 @@
               "official": true
             },
             {
+              "provider": "modelscope",
+              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-small.en-q5_1.bin",
+              "official": false
+            },
+            {
               "provider": "hf-mirror",
               "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.en-q5_1.bin",
               "official": false
@@ -1670,6 +1715,11 @@
               "provider": "hf",
               "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny-q5_1.bin",
               "official": true
+            },
+            {
+              "provider": "modelscope",
+              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-tiny-q5_1.bin",
+              "official": false
             },
             {
               "provider": "hf-mirror",
@@ -1903,6 +1953,11 @@
               "provider": "hf",
               "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.en-q5_1.bin",
               "official": true
+            },
+            {
+              "provider": "modelscope",
+              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-tiny.en-q5_1.bin",
+              "official": false
             },
             {
               "provider": "hf-mirror",
