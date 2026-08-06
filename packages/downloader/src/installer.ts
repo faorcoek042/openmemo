@@ -253,14 +253,29 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
         if (source !== tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
         expandedTo = finalDir;
       } catch (e) {
-        // Leave nothing behind: no temp dir, no stale final dir that would make a retry
-        // look unnecessary, and no by-name link to the archive either — a dangling link
-        // makes "is this installed?" ambiguous for both the UI and the GC scan.
-        // (The blob itself stays: it is verified, and keeping it makes the retry free.
-        // If the user never retries, GC reclaims it as an orphan because no manifest
-        // references it.)
+        /*
+         * Leave nothing NEW behind: no temp dir, no by-name link to the archive (a dangling
+         * link makes "is this installed?" ambiguous for both the UI and the GC scan).
+         * The blob itself stays: it is verified, and keeping it makes the retry free.
+         *
+         * ★ T-157 ②：**这里原来还有一句 `fs.rm(finalDir)`，删掉了 —— 它会毁掉用户
+         * 当前能用的那一份安装。**
+         *
+         * 那句是 temp-then-rename 之前留下的：当时解包直接写进 `finalDir`，失败会留下
+         * 半个目录，所以要清。改成"先解到 temp、成功了才换入"之后，
+         * **失败时 `finalDir` 里躺着的是上一版完整的安装，不是半成品** ——
+         * 而它照样被删了。于是「更新一次，解包失败」= 组件从"旧版可用"直接变成"没装"。
+         *
+         * 逐条走一遍现在还需不需要清它：
+         *   · `unpackArchive` 抛      → 还没走到 `rm(finalDir)`，旧目录完整，**不该动**；
+         *   · `rm(finalDir)` 自己抛   → 旧目录还在（或部分删除，此时删也删不掉）；
+         *   · `collapse`/`rename` 抛  → `finalDir` 已经不存在了，删它是 no-op。
+         * 三条里没有一条需要它。**它唯一确定会做成的事，就是删掉那份还能用的安装。**
+         *
+         * 这条与 T-157 ② 拿掉"一键回滚"是同一件事的两半：回滚要救的是
+         * "更新成功但新版本坏了"，而"更新失败"本就不该需要回滚 —— 它不该破坏任何东西。
+         */
         await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
-        await fs.rm(finalDir, { recursive: true, force: true }).catch(() => undefined);
         await fs.rm(linked, { force: true }).catch(() => undefined);
         throw new DownloadError(
           `Archive extraction (${f.unpack}) failed for ${f.name}: ${(e as Error).message}`,

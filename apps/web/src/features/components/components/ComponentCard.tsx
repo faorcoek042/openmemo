@@ -7,7 +7,6 @@ import {
   FileDigit,
   GitCommitHorizontal,
   Package,
-  RotateCcw,
 } from 'lucide-react';
 import type { ComponentStatus } from '@openmemo/shared';
 import { Button } from '../../../components/common/Button';
@@ -47,10 +46,9 @@ export interface ComponentCardProps {
   locale: string;
   busy: boolean;
   onUpdate: (c: ComponentStatus) => void;
-  onRollback: (c: ComponentStatus) => void;
 }
 
-export function ComponentCard({ component: c, locale, busy, onUpdate, onRollback }: ComponentCardProps) {
+export function ComponentCard({ component: c, locale, busy, onUpdate }: ComponentCardProps) {
   const st = checkState(c);
   const ui = CHECK_UI[st];
   const installed = c.installedVersion != null;
@@ -162,18 +160,24 @@ export function ComponentCard({ component: c, locale, busy, onUpdate, onRollback
               {busy ? '更新中…' : `更新到 ${c.latestVersion}`}
             </Button>
           ) : null}
-          {c.rollbackVersion ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => onRollback(c)}
-              data-testid={`component-rollback-${c.id}`}
-            >
-              <RotateCcw className="size-3.5" aria-hidden />
-              回滚到 {c.rollbackVersion}
-            </Button>
-          ) : null}
+          {/*
+            ⚠️ **这里原本有一个「回滚到 {c.rollbackVersion}」按钮，T-157 ② 把它拿掉了。**
+
+            不是"回滚不重要"，是这个按钮**在结构上永远不会渲染**，而它旁边那句
+            「旧版本会保留，出问题可以一键回滚」**每次点更新都会说给用户听**。
+            `[实测]` 三处同时坏着：
+              ① `stashForRollback` 全仓零调用方 → `.prev-<version>` 目录从来没被创建过；
+              ② `readRollbackVersions` 按**目录名**建索引，而 `listComponents` 按**组件 id**
+                 查表 —— 这台机器上 4 个已装后端组件里 3 个两者不同
+                 （`whisper-bin-ubuntu-x64` vs `whispercpp-cpu-linux-x64`）；
+              ③ `rollback()` 用 `by-name/<kind>/<id>` 拼路径，同样对不上磁盘上的目录名。
+            于是 `rollbackVersion` 恒为 null，这个按钮一次都没渲染过。
+
+            **判据是"后果在不在"**：拿掉按钮，用户什么能力都没失去（它本来就不出现）；
+            而那句承诺留着，每次更新都在骗人。所以先把话说对。
+            要真的做回滚需要什么，逐条写在 `packages/downloader/src/components.ts`
+            的 `stashForRollback` 上方 —— 那是四件事，不是"接上一个调用"。
+          */}
         </div>
       </div>
 

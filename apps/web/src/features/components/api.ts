@@ -2,7 +2,15 @@
  * 组件域的 Query / Mutation hooks（T-068，model-mgmt 独占）。
  *
  * 端点契约见 `packages/shared/src/components.ts`；数据层实现见
- * `packages/downloader/src/components.ts`（`listComponents` / `stashForRollback` / `rollback`）。
+ * `packages/downloader/src/components.ts`（`listComponents`）。
+ *
+ * ⚠️ **这里原来还有一个 `useRollbackComponentMutation`，T-157 ② 删掉了。**
+ * daemon 的 `POST /api/components/:id/rollback` 仍然在，而且是诚实的（永远 409
+ * `NO_ROLLBACK_POINT`）—— 因为**从来没有任何东西创建过可回滚的备份**
+ * （`stashForRollback` 全仓零调用方，另有两处 id↔目录名对不上，逐条写在
+ * `packages/downloader/src/components.ts` 里）。
+ * 留着一个必然 409 的 hook + 一个恒不渲染的按钮，只会让下一个人以为这条路是通的。
+ * 真要做回滚，那边列的四件事得先做完，然后再把这个 hook 写回来（六行）。
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -47,7 +55,8 @@ export function useCheckUpdatesMutation() {
  * 组件动作的真实路径 —— **id 在路径里，不在 body 里**。
  *
  * daemon 的路由是 `POST /api/components/:id/(update|rollback)`
- * （`http/rest/components.ts` 的 `/^\/api\/components\/([^/]+)\/(update|rollback)$/`）。
+ * （`http/rest/components.ts` 的 `/^\/api\/components\/([^/]+)\/(update|rollback)$/`）；
+ * 前端今天只用得上 `update`（回滚见文件头）。
  * 这里原来发的是 `POST /api/components/update` + `{ id }` ——
  * **少一段路径，正则不匹配，handler 返回 false，主路由 404**（T-132 查出）。
  * 又一次「测我发了什么，没测对面会读什么」：清单能拉出来、卡片渲染正常、
@@ -57,7 +66,7 @@ export function useCheckUpdatesMutation() {
  * 这种带斜杠的 id，不 encode 会被切成两段而永远 404。
  * （daemon 侧对应地做 `decodePathSegment`。）
  */
-function componentActionPath(id: string, action: 'update' | 'rollback'): string {
+function componentActionPath(id: string, action: 'update'): string {
   return `/components/${encodeURIComponent(id)}/${action}`;
 }
 
@@ -83,23 +92,6 @@ export function useUpdateComponentMutation() {
       ),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.jobs.all });
-      void qc.invalidateQueries({ queryKey: qk.components.all });
-    },
-  });
-}
-
-/** 回滚到上一版本（更新前保留的那份）。 */
-export function useRollbackComponentMutation() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      // 返回体是 `{ ok, id, restoredVersion }` —— 之前这里写的 `version` 字段
-      // daemon 一次都没发过，属于同一处契约漂移。
-      api<{ ok: true; id: string; restoredVersion: string }>(
-        componentActionPath(id, 'rollback'),
-        { method: 'POST', body: { id } },
-      ),
-    onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.components.all });
     },
   });

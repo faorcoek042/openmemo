@@ -3180,6 +3180,92 @@ describe('T-132 组件与来源页', () => {
     }
   });
 
+  /**
+   * ★ T-157 ②：**「旧版本会保留，出问题可以一键回滚」是假话，而它每次点更新都会说。**
+   *
+   * 三处同时坏着：`stashForRollback` 零调用方（`.prev-` 目录从没被创建过）、
+   * `readRollbackVersions` 用目录名建索引而 `listComponents` 用组件 id 查表
+   * （这台机器上 4 个里 3 个对不上）、`rollback()` 也按 id 拼路径。
+   * 于是 `rollbackVersion` 恒为 null，那个回滚按钮**一次都没渲染过** ——
+   * 用户唯一能接触到的"回滚"，就是这句承诺。
+   *
+   * 判据钉的是**送到用户眼前的那串字**，不是"页面上有没有出现回滚两个字"。
+   */
+  const INSTALLED_WITH_UPDATE = {
+    ...YTDLP,
+    installedVersion: '2026.06.01',
+    latestVersion: '2026.07.04',
+    updateAvailable: true,
+  };
+
+  /** 替换 confirm 并把它收到的那句话录下来。 */
+  function captureConfirm(answer: boolean): { messages: string[]; restore: () => void } {
+    const w = window as unknown as { confirm: (m?: string) => boolean };
+    const prev = w.confirm;
+    const messages: string[] = [];
+    w.confirm = (m?: string) => {
+      messages.push(String(m ?? ''));
+      return answer;
+    };
+    return { messages, restore: () => { w.confirm = prev; } };
+  }
+
+  test('★ 更新确认框不许承诺"可以一键回滚"—— 那件事在代码里被保证永远做不到', async () => {
+    const cap = captureConfirm(false);
+    try {
+      stubApi({ '/components': { components: [INSTALLED_WITH_UPDATE], online: false, checkedAt: null } });
+      const r = await render(<ComponentsPage />);
+      await r.flush();
+      await click(r.container.querySelector('[data-testid="component-update-ytdlp-linux-x64"]'));
+      await r.flush();
+
+      assert.equal(cap.messages.length, 1, `确认框没被调用（拿到 ${cap.messages.length} 次）—— 这条用例就什么都没验`);
+      const msg = cap.messages[0] as string;
+      assert.equal(
+        /回滚/.test(msg),
+        false,
+        `更新确认框仍在承诺回滚，而回滚在代码里被保证永远不可用：\n${msg}`,
+      );
+      assert.equal(
+        /无法回退/.test(msg),
+        true,
+        `没有把"更新成功之后回不去"说出来 —— 用户会在不知情的前提下点下去：\n${msg}`,
+      );
+      r.unmount();
+    } finally {
+      cap.restore();
+    }
+  });
+
+  test('★ 卡片上不许再出现回滚按钮（它此前恒不渲染，是一张空头支票的另一半）', async () => {
+    stubApi({
+      '/components': {
+        // 连 daemon 真的报了 rollbackVersion 都不许画 —— 今天没有任何东西会产出它，
+        // 画出来点下去只会拿到 409。要恢复它，先做完 components.ts 上写的四件事。
+        components: [{ ...INSTALLED_WITH_UPDATE, rollbackVersion: '2026.06.01' }],
+        online: false,
+        checkedAt: null,
+      },
+    });
+    const r = await render(<ComponentsPage />);
+    await r.flush();
+    /*
+     * ⚠️ 先证明这条"不存在"断言不是空的：同一张卡上的**更新**按钮必须在。
+     * 缺了这一句，卡片根本没渲染出来时它照样绿 —— ⑤A 那一族，一条永远不会失败的断言。
+     */
+    assert.equal(
+      r.container.querySelector('[data-testid="component-update-ytdlp-linux-x64"]') === null,
+      false,
+      '卡片本身就没渲染出来 —— 下面那条"没有回滚按钮"于是什么都没验',
+    );
+    assert.equal(
+      r.container.querySelector('[data-testid="component-rollback-ytdlp-linux-x64"]') === null,
+      true,
+      '回滚按钮又回来了 —— 它对应的备份从来没有被任何代码创建过',
+    );
+    r.unmount();
+  });
+
   test('★ 随应用一起装的 npm 组件不画安装按钮（画了也只会拿到 409，比没有更糟）', async () => {
     stubApi({ '/components': { components: [BUNDLED], online: false, checkedAt: null } });
     const r = await render(<ComponentsPage />);

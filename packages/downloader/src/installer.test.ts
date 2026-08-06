@@ -147,13 +147,16 @@ after(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
-async function installZip(name: string, entries: ZipEntry[]): Promise<{ dir: string }> {
+async function installZip(
+  name: string,
+  entries: ZipEntry[],
+  reuseStore?: ArtifactStore,
+): Promise<{ dir: string }> {
   const zip = makeZip(entries);
   const sha = createHash('sha256').update(zip).digest('hex');
   served.set(`/${name}`, zip);
 
-  const root = await mkdtemp(join(tmpdir(), 'om-installer-'));
-  const store = new ArtifactStore(join(root, 'models'));
+  const store = reuseStore ?? new ArtifactStore(join(await mkdtemp(join(tmpdir(), 'om-installer-')), 'models'));
   const out = await install({
     store,
     target: {
@@ -235,5 +238,61 @@ describe('T-153 ② CoreML encoder：解包不许多出一层同名目录', () =
       { name: 'README.txt', data: Buffer.from('hi') },
     ]);
     assert.deepEqual((await readdir(dir)).sort(), ['README.txt', `two-${ENC}`]);
+  });
+});
+
+/**
+ * T-157 ② —— **更新失败绝不许毁掉当前能用的那份安装。**
+ *
+ * ## 为什么这条测试是这次改动的核心
+ *
+ * 组件页那句「旧版本会保留，出问题可以一键回滚」是假的（`stashForRollback` 零调用方）。
+ * 把它换成实话时要先确认：**剩下那半句是不是真的？**
+ * 追下去发现也不是 —— `install()` 的 catch 里有一句 `fs.rm(finalDir)`，
+ * 那是 temp-then-rename **之前**留下的清理逻辑。当时 `finalDir` 里可能是半个目录，
+ * 该清；改成"先解到 temp、成功才换入"之后，那里躺着的是**上一版完整的安装**。
+ *
+ * 于是「更新一次、解包失败」= 组件从"旧版可用"直接变成"没装"，
+ * 而用户以为自己只是更新失败了。
+ *
+ * 判据是**旧文件的字节还在不在**，不是"抛没抛错"——抛错在缺陷状态下也照样发生。
+ */
+describe('T-157 ② 更新失败不许破坏当前版本', () => {
+  it('★ 解包失败时，上一版的文件必须原封不动', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'om-keepold-'));
+    const store = new ArtifactStore(join(root, 'models'));
+    const NAME = 'keepold-pack.zip';
+
+    // ① 先装一版能用的
+    const { dir } = await installZip(NAME, [{ name: 'bin/whisper-cli', data: Buffer.from('V1-GOOD') }], store);
+    assert.equal(await fs.readFile(join(dir, 'bin/whisper-cli'), 'utf8'), 'V1-GOOD');
+
+    /*
+     * ② 同一个包名再装一次，但归档是坏的 —— 用一个越界条目名让 `unpackArchive` 拒掉。
+     *    包名相同 ⇒ `stripExt` 得到同一个 finalDir，这正是"更新"在磁盘上的形态。
+     */
+    let threw: unknown = null;
+    try {
+      await installZip(NAME, [{ name: '../escaped.txt', data: Buffer.from('EVIL') }], store);
+    } catch (e) {
+      threw = e;
+    }
+    assert.notEqual(threw, null, '坏归档本该让 install() 失败 —— 不失败的话这条用例什么都没验');
+
+    // ③ 判据：旧文件的字节还在
+    const survived = await fs.readFile(join(dir, 'bin/whisper-cli'), 'utf8').catch(() => null);
+    assert.equal(
+      survived,
+      'V1-GOOD',
+      '更新失败把上一版删掉了 —— 用户从"旧版可用"直接掉到"没装"，而他以为只是更新没成功',
+    );
+
+    // ④ 顺带：不许留下 .tmp- 残骸（它会被工具发现的两层扫描看见）
+    const byName = await readdir(store.byNameDir('asr'));
+    assert.deepEqual(
+      byName.filter((n) => n.includes('.tmp-')),
+      [],
+      `留下了临时目录：${JSON.stringify(byName)}`,
+    );
   });
 });

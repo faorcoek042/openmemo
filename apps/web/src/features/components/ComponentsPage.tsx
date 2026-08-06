@@ -7,12 +7,7 @@ import { Banner } from '../../components/common/Banner';
 import { Button } from '../../components/common/Button';
 import { EmptyState } from '../../components/common/EmptyState';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
-import {
-  useCheckUpdatesMutation,
-  useComponentsQuery,
-  useRollbackComponentMutation,
-  useUpdateComponentMutation,
-} from './api';
+import { useCheckUpdatesMutation, useComponentsQuery, useUpdateComponentMutation } from './api';
 import { ComponentCard } from './components/ComponentCard';
 
 /**
@@ -35,7 +30,6 @@ export default function ComponentsPage() {
   const q = useComponentsQuery(false);
   const check = useCheckUpdatesMutation();
   const update = useUpdateComponentMutation();
-  const rollbackMut = useRollbackComponentMutation();
 
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -58,26 +52,32 @@ export default function ComponentsPage() {
             `· 会校验 sha256，校验不通过不会安装\n` +
             `· 许可证：${c.provenance.license}\n\n` +
             `确定现在安装吗？`
-        : `将「${c.displayNameZh}」从 ${c.pinnedVersion} 更新到 ${c.latestVersion}？\n\n` +
+        : /*
+           * ⚠️ **最后一行原本写着「旧版本会保留，出问题可以一键回滚」。那是假的**（T-157 ②）。
+           *
+           * `stashForRollback` 全仓零调用方，`.prev-<version>` 目录从来没有被创建过；
+           * 就算创建了，索引键（目录名）与查表键（组件 id）也对不上。
+           * 于是 `rollbackVersion` 恒为 null，回滚按钮**一次都没渲染过** ——
+           * 而这句承诺**每次点更新都会说出来**。
+           *
+           * 换成两句真的：
+           *   · 失败**确实**不会破坏当前版本 —— `installer.ts` 先解压到 temp、
+           *     校验并解包成功后才 rm+rename 换上去；下载/校验/解包任一步失败，
+           *     旧目录原地未动（`install()` 的 catch 只清 temp 与刚建的链接）。
+           *   · 但更新**成功之后**没有退路：清单里只钉一个版本，没有第二个 sha256 可回。
+           *     说清楚，让用户在点之前就知道。
+           */
+          `将「${c.displayNameZh}」从 ${c.pinnedVersion} 更新到 ${c.latestVersion}？\n\n` +
             `· 会重新下载并校验 sha256，校验不通过不会安装\n` +
             `· 上游换版本可能改变行为（例如文件格式变化），不一定完全兼容\n` +
-            `· 旧版本会保留，出问题可以一键回滚\n\n` +
+            `· 下载或校验失败时，当前版本原地不动（新版本校验通过后才替换）\n` +
+            `· ⚠️ 但更新成功后**无法回退到旧版本** —— 清单里只钉了一个版本\n\n` +
             `确定现在更新吗？`,
     );
     if (!ok) return;
     setBusyId(c.id);
     try {
       await update.mutateAsync({ id: c.id, toVersion: c.latestVersion ?? undefined });
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function handleRollback(c: ComponentStatus) {
-    if (!window.confirm(`把「${c.displayNameZh}」回滚到 ${c.rollbackVersion}？`)) return;
-    setBusyId(c.id);
-    try {
-      await rollbackMut.mutateAsync(c.id);
     } finally {
       setBusyId(null);
     }
@@ -155,7 +155,6 @@ export default function ComponentsPage() {
             locale={locale}
             busy={busyId === c.id}
             onUpdate={(x) => void handleUpdate(x)}
-            onRollback={(x) => void handleRollback(x)}
           />
         ))}
       </section>
