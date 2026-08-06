@@ -32,6 +32,7 @@ import {
   topics,
   type MediaAssetState,
   type NoteAsset,
+  type ListNotesResponse,
   type NoteDetail,
   type NoteKind,
   type NoteListItem,
@@ -358,6 +359,35 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
       if (p === '/api/notes' && method === 'GET') {
         const limit = Math.min(200, Number(url.searchParams.get('limit') ?? 50) || 50);
         /*
+         * ★ `?offset=<n>` —— 翻页（T-157 ③）。
+         *
+         * 在这之前这个端点**只有 `limit`**（默认 50、上限 200），而前端连 `limit` 都不传。
+         * 后果不是"慢"，是**第 51 条笔记起在界面上永远不存在**：没有翻页、没有总数、
+         * 没有任何提示。上面 `starred` 那段写着"超过 50 条之后无声地漏"——
+         * 那句话对**总量**同样成立，而且更糟：过滤修对了，取不全照样看不到。
+         *
+         * 认不出的取值 **400，不静默当成 0** —— 与 `starred` / `folder` 同一条判据。
+         * `?offset=abc` 静默变成 0 会返回**第一页**，而调用方以为自己在看第三页：
+         * 一个既不报错、结果又与意图相反的响应。
+         */
+        const offsetRaw = url.searchParams.get('offset');
+        /*
+         * ⚠️ 用正则而不是 `Number(raw)`：**`Number('')` 是 0**。
+         * 也就是说 `?offset=` 会被静默当成第一页 —— 恰好是这段注释说不许发生的那件事。
+         * （这条是自己写的用例当场抓出来的：`?offset=` 返回了 200。）
+         */
+        const offset = offsetRaw === null ? 0 : Number(offsetRaw);
+        if (offsetRaw !== null && (!/^\d+$/.test(offsetRaw) || !Number.isSafeInteger(offset))) {
+          sendError(
+            res,
+            400,
+            'BAD_QUERY_PARAM',
+            `offset must be a non-negative integer (got ${JSON.stringify(offsetRaw)})`,
+            'offset 必须是不小于 0 的整数',
+          );
+          return true;
+        }
+        /*
          * ★ `?starred=1` —— 侧栏「星标」的数据源（T-138 ③）。
          *
          * 在这之前这个端点**只认 `limit`**，于是前端只能对已取回的那一页做过滤
@@ -409,10 +439,13 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
           }
           folderId = folder.id;
         }
-        const rows = repos.listNotes(limit, {
+        const filter = {
           starredOnly: starredRaw !== null,
           ...(folderId === undefined ? {} : { folderId }),
-        });
+        };
+        const rows = repos.listNotes(limit, { ...filter, offset });
+        // 总数与列表**共用同一份 WHERE**（`repos.notesFilter`），不许各算各的
+        const total = repos.countNotes(filter);
         // 一次 IN 查询拿全部标签，避免列表页 N+1
         const tagMap = repos.tagsOfNotes(rows.map((n) => n.id));
         // ★ 显式标注：少一个键或多一个键都在这里编译失败（见文件头那张表）
@@ -432,7 +465,16 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
           createdAt: new Date(n.created_at).toISOString(),
           updatedAt: new Date(n.updated_at).toISOString(),
         }));
-        sendJson(res, 200, { notes });
+        // ★ 显式标注成契约类型：少一个键或多一个键都在这里编译失败
+        const body: ListNotesResponse = {
+          notes,
+          total,
+          limit,
+          offset,
+          // 由服务端算，不让每个调用方各推一遍（前端推错一次就是"永远不显示加载更多"）
+          hasMore: offset + notes.length < total,
+        };
+        sendJson(res, 200, body);
         return true;
       }
 

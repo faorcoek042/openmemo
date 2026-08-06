@@ -173,6 +173,40 @@ const FOLDER_CLOSURE_CTE = `WITH RECURSIVE folder_closure(anc, node) AS (
             WHERE f.deleted_at IS NULL
          )`;
 
+/**
+ * 笔记列表的**排序** —— 分页的前提。
+ *
+ * `created_at` 是毫秒，同一毫秒建两条笔记是可能的（批量导入就会）。只按它排序时，
+ * 相同键的相对顺序由 SQLite 自己定，两次查询可以不一样 ——
+ * 于是 `LIMIT/OFFSET` 翻页会**重复一条、漏掉另一条**，而两页各自看起来都正常。
+ * 补一个唯一的次级键（`id`）把全序钉死，翻页才成立。
+ */
+const NOTES_ORDER = 'ORDER BY n.created_at DESC, n.id DESC';
+
+/**
+ * 列表与计数**共用的一份筛选定义**。
+ *
+ * 两处各写一份必然分叉，而分叉的表现是"总数说 12、翻到底只有 11 条"——
+ * 与 `FOLDER_CLOSURE_CTE` 的注释同一条判据：一个含义只准有一个实现。
+ */
+function notesFilter(opts: { starredOnly?: boolean; folderId?: number }): {
+  cte: string;
+  where: string;
+  params: Record<string, number>;
+} {
+  const conds = ['n.deleted_at IS NULL'];
+  if (opts.starredOnly) conds.push('n.starred = 1');
+  if (opts.folderId !== undefined) {
+    conds.push('n.folder_id IN (SELECT node FROM folder_closure WHERE anc = :folderId)');
+  }
+  return {
+    // 只有真的要按文件夹筛时才挂 CTE —— 其余查询不该为一个用不上的递归付钱
+    cte: opts.folderId === undefined ? '' : `${FOLDER_CLOSURE_CTE}\n`,
+    where: conds.join(' AND '),
+    params: opts.folderId === undefined ? {} : { folderId: opts.folderId },
+  };
+}
+
 export class Repos {
   constructor(private readonly db: DatabaseHandle) {}
 
@@ -242,23 +276,38 @@ export class Repos {
    * 而"父级空、子级有货"是更难理解的失败）。子孙用 `FOLDER_CLOSURE_CTE` 在 SQL 里递归，
    * **不在 Node 里拉全表再过滤** —— 那会让 `limit` 又一次形同虚设。
    */
-  listNotes(limit = 50, opts: { starredOnly?: boolean; folderId?: number } = {}): NoteRow[] {
-    const conds = ['n.deleted_at IS NULL'];
-    if (opts.starredOnly) conds.push('n.starred = 1');
-    if (opts.folderId !== undefined) {
-      conds.push('n.folder_id IN (SELECT node FROM folder_closure WHERE anc = :folderId)');
-    }
-    // 只有真的要按文件夹筛时才挂 CTE —— 其余查询不该为一个用不上的递归付钱
-    const cte = opts.folderId === undefined ? '' : `${FOLDER_CLOSURE_CTE}\n`;
+  listNotes(
+    limit = 50,
+    opts: { starredOnly?: boolean; folderId?: number; offset?: number } = {},
+  ): NoteRow[] {
+    const { cte, where, params } = notesFilter(opts);
     return this.db
       .prepare<NoteRow>(
         `${cte}SELECT n.* FROM notes n
-         WHERE ${conds.join(' AND ')}
-         ORDER BY n.created_at DESC LIMIT :limit`,
+         WHERE ${where}
+         ${NOTES_ORDER} LIMIT :limit OFFSET :offset`,
       )
-      .all(
-        opts.folderId === undefined ? { limit } : { limit, folderId: opts.folderId },
-      );
+      .all({ ...params, limit, offset: opts.offset ?? 0 });
+  }
+
+  /**
+   * 同一批筛选条件下**一共有多少条**。
+   *
+   * ★ 存在的理由不是"顺便给个数字"，是 T-157 ③：`GET /api/notes` 只有 `limit`（默认 50），
+   * 于是第 51 条起在界面上**永远看不到，而且没有任何提示**。
+   * "显示得不全且不说" 与 "显示错的" 在用户那里是同一件事
+   * —— `listNotes` 上面那段注释为 `starred` 写过一模一样的话，只是当时没有人把它套到总量上。
+   *
+   * ⚠️ 它与 `listNotes` **必须走同一份 WHERE**（`notesFilter`），否则会出现
+   * "说还有 3 条、翻过去是空的"这种两个数字各自都算对了、只有用户觉得这软件有点怪的缺陷
+   * —— 与 `FOLDER_CLOSURE_CTE` 那条注释是同一条判据。
+   */
+  countNotes(opts: { starredOnly?: boolean; folderId?: number } = {}): number {
+    const { cte, where, params } = notesFilter(opts);
+    const row = this.db
+      .prepare<{ n: number }>(`${cte}SELECT COUNT(*) AS n FROM notes n WHERE ${where}`)
+      .get(params);
+    return row?.n ?? 0;
   }
 
   updateNote(

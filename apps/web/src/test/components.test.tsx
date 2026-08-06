@@ -4352,6 +4352,101 @@ describe('T-138 ④ 文件夹筛选：链接的目的地不能是空的', () => 
   });
 });
 
+/* ══════════ T-157 ③ 笔记列表的翻页 ══════════ */
+
+/**
+ * 修之前：`GET /api/notes` 没有 offset/cursor，前端连 `limit` 都不传，端点默认 50 ——
+ * 列表**恒定只有前 50 条**，没有翻页、没有"加载更多"、没有总数、一个字的提示都没有。
+ * 第 51 条起在界面上永远不存在。
+ *
+ * 判据是「**要么真的能翻到第 51 条，要么明确告诉用户还有更多**」，
+ * 所以断言钉的是：① 第二页的笔记标题**真的进了 DOM**；② 请求里**真的带了 offset**。
+ * 只断言"按钮在"或"页脚有字"在缺陷状态下同样能绿。
+ */
+describe('T-157 ③ 笔记列表：一页装不下时', () => {
+  const mkNote = (uid: string, title: string) => ({
+    uid,
+    title,
+    status: 'ready' as const,
+    kind: 'media' as const,
+    language: 'zh',
+    durationMs: 1000,
+    starred: false,
+    tags: [],
+    createdAt: '2026-08-01T00:00:00.000Z',
+    updatedAt: '2026-08-01T00:00:00.000Z',
+  });
+
+  const PAGE1 = {
+    notes: [mkNote('01P1AAAAAAAAAAAAAAAAAAAAAA', '第一条'), mkNote('01P1BBBBBBBBBBBBBBBBBBBBBB', '第二条')],
+    total: 3,
+    limit: 2,
+    offset: 0,
+    hasMore: true,
+  };
+  const PAGE2 = {
+    notes: [mkNote('01P2CCCCCCCCCCCCCCCCCCCCCC', '第五十一条')],
+    total: 3,
+    limit: 2,
+    offset: 2,
+    hasMore: false,
+  };
+
+  test('★ 点「加载更多」要真的带着 offset 去拿下一页，并把它接到列表后面', async () => {
+    const s = stubApi({ '/notes': PAGE1, '/notes?offset=2': PAGE2, '/jobs': { jobs: [], concurrencyLimit: 2 } });
+    const r = await render(<NotesListPage />, { route: '/notes' });
+    await r.flush();
+
+    assert.equal(r.container.querySelectorAll('[data-testid="notes-list"] > li').length, 2);
+    assert.equal(
+      text(r.container).includes('第五十一条'),
+      false,
+      '第二页的内容不该在点之前就出现（那样这条用例证明不了任何事）',
+    );
+
+    const more = r.container.querySelector('[data-testid="notes-load-more"]');
+    assert.equal(more === null, false, '还有更多时必须给一个能翻页的入口');
+    await click(more);
+    await r.flush();
+
+    assert.equal(
+      s.calls.some((c) => c.method === 'GET' && c.path === '/notes?offset=2'),
+      true,
+      `没有带 offset 去拿下一页（实际请求：${JSON.stringify(s.calls.map((c) => c.path))}）` +
+        ' —— 那就还是"第 51 条永远看不到"',
+    );
+    assert.equal(r.container.querySelectorAll('[data-testid="notes-list"] > li').length, 3);
+    assert.equal(text(r.container).includes('第五十一条'), true, '第二页的笔记必须真的渲染出来');
+    // 翻到底之后不许再留着入口（否则会拉回空数组）
+    assert.equal(r.container.querySelector('[data-testid="notes-load-more"]') === null, true);
+    r.unmount();
+  });
+
+  test('★ 还有更多时页脚必须说出"已显示几 / 共几"—— 静默截断比显示错的更难发现', async () => {
+    stubApi({ '/notes': PAGE1, '/jobs': { jobs: [], concurrencyLimit: 2 } });
+    const r = await render(<NotesListPage />, { route: '/notes' });
+    await r.flush();
+    const footer = r.container.querySelector('[data-testid="notes-list-count"]')?.textContent ?? '';
+    assert.equal(footer.includes('2'), true, `页脚没说已显示几条：${footer}`);
+    assert.equal(footer.includes('3'), true, `页脚没说一共几条：${footer}`);
+    r.unmount();
+  });
+
+  test('★ 一页装得下时不许出现「加载更多」，但仍要说"已全部显示"', async () => {
+    // "刚好一页"和"被截断了"必须能分辨 —— 分不出来正是这条缺陷的本体。
+    stubApi({
+      '/notes': { ...PAGE1, notes: PAGE1.notes, total: 2, hasMore: false },
+      '/jobs': { jobs: [], concurrencyLimit: 2 },
+    });
+    const r = await render(<NotesListPage />, { route: '/notes' });
+    await r.flush();
+    assert.equal(r.container.querySelector('[data-testid="notes-load-more"]') === null, true);
+    const footer = r.container.querySelector('[data-testid="notes-list-count"]')?.textContent ?? '';
+    assert.equal(footer.length > 0, true, '一页装得下时页脚也要说话，否则用户分不出"就这些"和"被截断了"');
+    r.unmount();
+  });
+});
+
 /* ══════════ T-140 补救链：从"服务端算好了"到"用户点得到" ══════════ */
 
 /**

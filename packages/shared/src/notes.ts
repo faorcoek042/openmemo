@@ -144,8 +144,29 @@ export interface NoteListItem {
   updatedAt: string;
 }
 
+/**
+ * `GET /api/notes` 的响应。
+ *
+ * ★ T-157 ③：这里原本只有 `notes`。端点只认 `limit`（默认 50 / 上限 200）且没有
+ * `offset`，前端也不传 `limit` —— 于是**第 51 条起在界面上永远看不到，
+ * 没有翻页、没有"加载更多"、没有总数、一个字的提示都没有**。
+ * 静默截断比"显示错的"更难发现：页面上每一条都是对的，只是不全，
+ * 用户无从知道自己少看了什么。
+ *
+ * 三个新字段是**契约层面的**修复：`total` 让"还有更多"可说，`offset`+`hasMore`
+ * 让它可翻。daemon 的响应对象显式标注成这个类型，少一个键就编译不过
+ * （见 `rest/notes.ts` 文件头那张表）。
+ */
 export interface ListNotesResponse {
   notes: NoteListItem[];
+  /** 当前筛选条件下的**总条数**（不受 limit/offset 影响）。 */
+  total: number;
+  /** 本次实际使用的 limit（服务端会夹到上限，可能小于请求值）。 */
+  limit: number;
+  /** 本次的偏移量。 */
+  offset: number;
+  /** `offset + notes.length < total`。**由服务端算**，不让每个调用方各推一遍。 */
+  hasMore: boolean;
 }
 
 export interface NoteAsset {

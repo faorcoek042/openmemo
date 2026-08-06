@@ -91,7 +91,11 @@
     "exportServerOnly": "DOCX / PDF need server support — not available yet",
     "exportNeedsDaemon": "Export requires the local service to be running",
     "folderEmpty": "Nothing in “{{name}}” yet",
-    "folderEmptyHint": "This view includes notes in sub-folders too."
+    "folderEmptyHint": "This view includes notes in sub-folders too.",
+    "shownOfTotal": "Showing {{shown}} of {{total}}",
+    "loadMore": "Load more",
+    "loadingMore": "Loading…",
+    "allLoaded": "All {{total}} shown"
   },
   "models": {
     "title": "Model management",

@@ -1,6 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api/client';
-import { applyStarToPage, type NotesPage } from '../../lib/api/notesCache';
+import { applyStarToPages, type NotesPage, type NotesPages } from '../../lib/api/notesCache';
 import { qk } from '../../app/query';
 import type {
   AcceptedJob,
@@ -35,16 +35,45 @@ export function useNotesQuery(opts: { starredOnly?: boolean; folderUid?: string 
   if (starredOnly) filter['starred'] = true;
   if (folderUid) filter['folder'] = folderUid;
 
-  const qs = new URLSearchParams();
-  if (starredOnly) qs.set('starred', '1');
-  if (folderUid) qs.set('folder', folderUid);
-  const suffix = qs.size > 0 ? `?${qs.toString()}` : '';
-
-  return useQuery({
+  /*
+   * ★ T-157 ③：翻页。
+   *
+   * 在这之前这里**连 `limit` 都不传**，而端点默认 50、上限 200、没有 offset ——
+   * 于是列表恒定只有前 50 条，**第 51 条起在界面上永远不存在**：
+   * 没有翻页、没有"加载更多"、没有总数、一个字的提示都没有。
+   * 这与 `?starred=1` / `?folder=` 是同一族（那两条已经做对了：过滤发生在 limit 之前）
+   * —— **但如果总量就取不全，过滤对了也没用。**
+   *
+   * `hasMore` **由服务端算**（`offset + notes.length < total`），前端不自己推：
+   * 推错一次的表现是"加载更多"永远不出现，而那正是这条缺陷本来的样子。
+   *
+   * ★ 两个刻意的取舍：
+   *
+   * 1. **不发 `limit`。** 每页多少条是 daemon 的事（`rest/notes.ts` 默认 50 / 上限 200），
+   *    前端再写一个数就有了第二个出处，而两处一旦分叉没有任何东西会报错。
+   *    下面 `getNextPageParam` 按**这一页真实返回的条数**推进，所以 daemon 改默认值也不会错位
+   *    —— 换成 `offset + PAGE_SIZE` 就会在改默认值的那天开始跳着漏笔记。
+   * 2. **第一页不发 `offset=0`。** 请求与筛选那两条（`?starred=1` / `?folder=`）逐字保持原样，
+   *    翻页这件事只往后追加参数。
+   */
+  return useInfiniteQuery({
     queryKey: qk.notes.list(filter),
-    queryFn: () => api<{ notes: NoteSummary[] }>('notes', `/notes${suffix}`),
-    select: (d) => d.notes,
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => {
+      const qs = new URLSearchParams();
+      if (starredOnly) qs.set('starred', '1');
+      if (folderUid) qs.set('folder', folderUid);
+      if (pageParam > 0) qs.set('offset', String(pageParam));
+      return api<NotesPage>('notes', `/notes${qs.size > 0 ? `?${qs.toString()}` : ''}`);
+    },
+    getNextPageParam: (last: NotesPage) =>
+      last.hasMore ? last.offset + last.notes.length : undefined,
   });
+}
+
+/** 把翻页缓存拍平成一条列表 —— 消费方不该关心它是从几页拼出来的。 */
+export function flattenNotes(pages: NotesPage[] | undefined): NoteSummary[] {
+  return (pages ?? []).flatMap((p) => p.notes);
 }
 
 export function useNoteQuery(uid: string | undefined) {
@@ -181,10 +210,10 @@ export function useToggleStarMutation() {
      */
     onMutate: async (v) => {
       await qc.cancelQueries({ queryKey: qk.notes.all });
-      const prev = qc.getQueriesData<NotesPage>({ queryKey: qk.notes.lists });
+      const prev = qc.getQueriesData<NotesPages>({ queryKey: qk.notes.lists });
       for (const [key, old] of prev) {
         const filter = key[2] as Record<string, unknown> | undefined;
-        qc.setQueryData<NotesPage>(key, applyStarToPage(old, filter, v.noteUid, v.starred));
+        qc.setQueryData<NotesPages>(key, applyStarToPages(old, filter, v.noteUid, v.starred));
       }
       return { prev };
     },

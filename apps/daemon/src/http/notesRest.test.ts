@@ -183,6 +183,125 @@ describe('T-138 ③ GET /api/notes?starred=1', () => {
   });
 });
 
+/**
+ * T-157 ③ —— 笔记超过一页之后，剩下的在界面上**永远看不到**。
+ *
+ * `GET /api/notes` 只有 `limit`（默认 50 / 上限 200），**没有 offset/cursor**，
+ * 前端连 `limit` 都不传。于是列表恒定只有前 50 条：没有翻页、没有"加载更多"、
+ * 没有总数、一个字的提示都没有。这与 `?starred=1` 是同一族 ——
+ * 那两条的判据是「过滤发生在 limit 之前」，已经做对了；
+ * **但如果总量就取不全，过滤对了也没用。**
+ *
+ * 判据取「翻完所有页拿到的 uid 集合 == 全部笔记，且一条不重复」——
+ * 钉的是后果（第 N 条到底看不看得见），不是某个字段长什么样。
+ * 单看某一页"有 2 条、看起来对"在缺陷状态下同样是绿的。
+ */
+describe('T-157 ③ GET /api/notes 的翻页', () => {
+  it('★ 一页装不下时：total 说得出还有多少，offset 真的翻得到最后一条', async () => {
+    const port = nextPort();
+    const d = await startDaemon({ port, dataDir: join(ROOT, `page-${port}`), maxPort: port });
+    try {
+      const s = await handshake(d.port, d.token);
+      const uids: string[] = [];
+      for (let i = 0; i < 5; i++) uids.push(await upload(s, `n${i}.wav`));
+
+      const first = (await (await listNotes(s, '?limit=2')).json()) as {
+        notes: { uid: string }[];
+        total: number;
+        limit: number;
+        offset: number;
+        hasMore: boolean;
+      };
+      assert.equal(first.total, 5, 'total 必须是筛选后的**总条数**，不是这一页的条数');
+      assert.equal(first.notes.length, 2);
+      assert.equal(first.hasMore, true, 'hasMore=false 会让"加载更多"永远不出现');
+
+      // 一页页翻到底，收集全部 uid
+      const seen: string[] = [];
+      let offset = 0;
+      let guard = 0;
+      for (;;) {
+        if (++guard > 20) throw new Error('翻页没有终止 —— hasMore 恒 true 会让 UI 无限加载');
+        const page = (await (await listNotes(s, `?limit=2&offset=${offset}`)).json()) as {
+          notes: { uid: string }[];
+          hasMore: boolean;
+        };
+        seen.push(...page.notes.map((n) => n.uid));
+        if (!page.hasMore) break;
+        offset += page.notes.length;
+      }
+
+      assert.equal(
+        new Set(seen).size,
+        seen.length,
+        `翻页翻出了重复条目（${seen.length} 条里只有 ${new Set(seen).size} 个不同的 uid）——` +
+          '重复的另一面必然是漏掉，而两页各自看起来都正常',
+      );
+      assert.deepEqual(
+        [...seen].sort(),
+        [...uids].sort(),
+        '翻完所有页拿到的不是全部笔记 —— 这就是"第 51 条起永远看不到"的等价复现',
+      );
+      // 最后一页必须诚实地说"没有了"
+      const last = (await (await listNotes(s, '?limit=2&offset=4')).json()) as {
+        notes: unknown[];
+        hasMore: boolean;
+        total: number;
+      };
+      assert.equal(last.hasMore, false);
+      assert.equal(last.notes.length, 1);
+    } finally {
+      await d.stop();
+    }
+  });
+
+  it('★ total 跟着筛选走：star 了 1 条时，星标页的 total 必须是 1 而不是 5', async () => {
+    // total 与列表如果各写一份 WHERE，就会出现"说还有 4 条、翻过去是空的"。
+    const port = nextPort();
+    const d = await startDaemon({ port, dataDir: join(ROOT, `pagestar-${port}`), maxPort: port });
+    try {
+      const s = await handshake(d.port, d.token);
+      const uids: string[] = [];
+      for (let i = 0; i < 5; i++) uids.push(await upload(s, `n${i}.wav`));
+      await star(s, uids[0] as string);
+
+      const all = (await (await listNotes(s, '?limit=1')).json()) as { total: number };
+      const starred = (await (await listNotes(s, '?starred=1&limit=1')).json()) as {
+        total: number;
+        hasMore: boolean;
+        notes: { uid: string }[];
+      };
+      assert.equal(all.total, 5);
+      assert.equal(starred.total, 1);
+      assert.equal(starred.hasMore, false);
+      assert.deepEqual(
+        starred.notes.map((n) => n.uid),
+        [uids[0]],
+      );
+    } finally {
+      await d.stop();
+    }
+  });
+
+  it('★ 认不出的 offset 一律 400，绝不静默当成 0（那会返回第一页而调用方以为在看第三页）', async () => {
+    const port = nextPort();
+    const d = await startDaemon({ port, dataDir: join(ROOT, `page400-${port}`), maxPort: port });
+    try {
+      const s = await handshake(d.port, d.token);
+      await upload(s, 'a.wav');
+      for (const bad of ['abc', '-1', '1.5', '']) {
+        const res = await listNotes(s, `?offset=${bad}`);
+        assert.equal(res.status, 400, `?offset=${JSON.stringify(bad)} 被静默忽略了`);
+        const body = (await res.json()) as { error?: { code?: string } };
+        assert.equal(body.error?.code, 'BAD_QUERY_PARAM');
+      }
+      assert.equal((await listNotes(s, '?offset=0')).status, 200);
+    } finally {
+      await d.stop();
+    }
+  });
+});
+
 describe('T-138 ① POST /api/notes/:uid/mindmap 的生成入口', () => {
   it('★ 202 的 jobUid 必须能在 /api/jobs 里认领到，且带 kind=mindmap 与 noteUid', async () => {
     const port = nextPort();

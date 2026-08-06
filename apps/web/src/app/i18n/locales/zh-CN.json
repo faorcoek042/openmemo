@@ -91,7 +91,11 @@
     "exportServerOnly": "DOCX / PDF 需服务端支持，暂未提供",
     "exportNeedsDaemon": "导出需要本地服务在运行",
     "folderEmpty": "「{{name}}」里还没有笔记",
-    "folderEmptyHint": "这里会连子文件夹里的笔记一起显示。"
+    "folderEmptyHint": "这里会连子文件夹里的笔记一起显示。",
+    "shownOfTotal": "已显示 {{shown}} / {{total}} 条",
+    "loadMore": "加载更多",
+    "loadingMore": "加载中…",
+    "allLoaded": "共 {{total}} 条，已全部显示"
   },
   "models": {
     "title": "模型管理",

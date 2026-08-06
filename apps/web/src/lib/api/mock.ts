@@ -11,7 +11,7 @@
  * 只要删掉 mock，分发层与 UI 一行都不用改。这既是演示，也是对规格的一次自测。
  */
 
-import type { AnyJob, PipelineJob } from '@openmemo/shared';
+import type { AnyJob, ListNotesResponse, PipelineJob } from '@openmemo/shared';
 
 import { bus } from '../events/bus';
 import { ApiError, registerMockFetcher, type ApiOptions, type Fetcher } from './client';
@@ -480,7 +480,24 @@ const mockFetcher: Fetcher = async <T,>(path: string, opts: ApiOptions = {}): Pr
           updatedAt: n.updatedAt,
         }),
       );
-    return { notes: list } as T;
+    /*
+     * ★ T-157 ③：mock 也必须**真的翻页**。
+     *
+     * 只回 `{notes}` 的话，回落状态下 `hasMore` 恒 undefined → "加载更多"永远不出现，
+     * 而真 daemon 上它是出现的 —— 又一次"mock 比真响应窄/宽"造成的分叉。
+     * 这里照 `ListNotesResponse` 逐字段构造，少一个键就编译失败。
+     */
+    const limit = Math.min(200, Number(query.get('limit') ?? 50) || 50);
+    const offset = Number(query.get('offset') ?? 0) || 0;
+    const page = list.slice(offset, offset + limit);
+    const body: ListNotesResponse = {
+      notes: page,
+      total: list.length,
+      limit,
+      offset,
+      hasMore: offset + page.length < list.length,
+    };
+    return body as T;
   }
 
   if (method === 'GET' && path.startsWith('/notes/')) {

@@ -3,7 +3,7 @@ import { arr } from '../../lib/safe';
 import { useTranslation } from 'react-i18next';
 import { FileAudio, Mic, Star } from 'lucide-react';
 
-import { useNotesQuery, useToggleStarMutation } from './api';
+import { flattenNotes, useNotesQuery, useToggleStarMutation } from './api';
 // 跨 feature 只走门面（`../folders`，不是 `../folders/api`）—— eslint 的分层护栏放行的正是这一种
 import { flattenFolders, useFoldersQuery } from '../folders';
 import { EmptyState } from '../../components/common/EmptyState';
@@ -50,13 +50,36 @@ export default function NotesListPage() {
    * 筛选按裁决**含子孙**，递归在 daemon 的 SQL 里；侧栏那个计数与这里的返回
    * 走的是同一份闭包定义（`repos.ts` 的 `FOLDER_CLOSURE_CTE`），不许一个含子孙一个不含。
    */
+  /*
+   * ★ T-157 ③：翻页。
+   *
+   * 在这之前列表**恒定只有前 50 条**（端点默认 limit=50、无 offset，前端连 limit 都不传）：
+   * 第 51 条起在界面上永远不存在，没有翻页、没有总数、没有任何提示。
+   * 「显示得不全且不说」与「显示错的」在用户那里是同一件事 ——
+   * 这句话上面 `starred` 那段已经写过一遍，只是当时没有人把它套到**总量**上。
+   *
+   * 判据是「要么真的能翻到第 51 条，要么明确告诉用户还有更多」。
+   * 下面两样都给：底部常驻一行 `已显示 M / N 条`，还有更多时给一个真的会拉下一页的按钮。
+   */
   const [sp] = useSearchParams();
   const starredOnly = sp.get('starred') === '1';
   const folderUid = sp.get('folder') ?? undefined;
-  const { data: notes, isLoading, isError, error, refetch } = useNotesQuery({
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    refetch,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useNotesQuery({
     starredOnly,
     ...(folderUid ? { folderUid } : {}),
   });
+  const notes = flattenNotes(data?.pages);
+  // 总数取**最后一页**的：翻页期间前面几页的 total 是旧快照，用第一页会在有人新建笔记后长期偏小
+  const total = data?.pages.at(-1)?.total ?? notes.length;
   const folders = useFoldersQuery();
   const folderName = folderUid
     ? (flattenFolders(folders.data).find((f) => f.uid === folderUid)?.name ?? null)
@@ -195,6 +218,30 @@ export default function NotesListPage() {
           </li>
         ))}
       </ul>
+
+      {/*
+        ★ 这一块**永远渲染**，不是"只有还有更多时才出现"。
+        只在 hasMore 时才说话的话，用户在"刚好一页"和"全部"之间分不出来 ——
+        而分不出来正是这条缺陷的本体：页面从不说自己给全了没有。
+      */}
+      <div className="mt-4 flex items-center justify-center gap-3" data-testid="notes-list-footer">
+        <span className="text-xs text-ink-muted" data-testid="notes-list-count">
+          {hasNextPage
+            ? t('notes.shownOfTotal', { shown: visible.length, total })
+            : t('notes.allLoaded', { total })}
+        </span>
+        {hasNextPage ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={isFetchingNextPage}
+            onClick={() => void fetchNextPage()}
+            data-testid="notes-load-more"
+          >
+            {isFetchingNextPage ? t('notes.loadingMore') : t('notes.loadMore')}
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }
