@@ -69,6 +69,8 @@ import { resolveConfiguredProvider } from './llm/resolve.js';
 import { createSearchRoutes } from './http/rest/search.js';
 import { createStorageRoutes } from './http/rest/storage.js';
 import { createProxyRoutes, readProxyConfig } from './http/rest/proxy.js';
+import { createLlmRoutes } from './http/rest/llm.js';
+import { resolveManifestDir } from './http/rest/manifests.js';
 import { createMediaRoutes } from './http/media.js';
 import type { RouteModule } from './http/server.js';
 
@@ -828,6 +830,20 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       }),
       // 代理设置（中文网络刚需：不配代理 HF/GitHub 根本连不上）
       createProxyRoutes({ repos }),
+      /*
+       * 本地 LLM 探测（ADR-003 档 2）+ 模型列表枚举（D-10 #26）。
+       *
+       * ★ 这两条端点在 T-153 之前**不存在**，而 `detectLocalBackends()` 早就写好了 ——
+       *   只在 mindmap runner 与 selfcheck 内部被调用，前端够不着。
+       *   后果不是"少一个功能"，是**档 2 在界面上等于没做**：产品自己探得到用户的
+       *   Ollama，却要他去手填 IP 和端口。
+       */
+      createLlmRoutes({
+        db: database.db,
+        // SecretStore 的根。明文只在 `llm/enumerate.ts` 里存在，不进路由层。
+        dataDir: paths.dataDir,
+        manifestDir: resolveManifestDir(),
+      }),
       // 设置 / 密钥（ADR-006 决策 1：明文 0600 + disclosure 显式告知）
       createSettingsRoutes({ db: database.db, secretStore: new SecretStore(paths.dataDir) }),
       // 标签 / 星标 / 文件夹

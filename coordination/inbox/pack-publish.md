@@ -1039,3 +1039,131 @@ URL 的 basename 与它本来就允许不同 —— yt-dlp 那几条就是这样
 `:10000` 零请求 · `/root/data-memo` 与指针未碰 · `pnpm build:safe` · 无 `pkill -f` ·
 **没建/没改/没删 release** · `git add` 逐个文件
 （`git status` 里 `childEnv` / `peaks` / `transcribe.ts` 等一批是别人的在途改动，一个都没 add）。
+
+---
+
+## [2026-08-06 17:20] T-150 追加 —— path traversal 查清了（**不是我们的问题**）+ 产物改造完成
+
+提交 `efb4ce2` `bb7f877`，已 push。最新产物：run **31087370058**（`success`）。
+
+# ① 你那个 `path traversal` —— **artifact 是干净的，猜测不成立**
+
+你猜是 `upload-artifact` 的 `path:` 用了绝对路径、zip 里留了完整路径结构。
+**我没有顺着猜走**，而是直接把那个 zip 的**中央目录**读出来了
+（Range 抓尾部 70 KB，解析 EOCD + central directory，**没下那 366 MiB**）：
+
+```
+entries = 10
+  [0] MIRROR-MANIFEST.json
+  [1] asr__paraformer-zh-small__am.mvn
+  [2] asr__paraformer-zh-small__model.int8.onnx
+  [3] asr__paraformer-zh-small__tokens.txt
+  [4] asr__sherpa-streaming-zh-14m__decoder-epoch-99-avg-1.int8.onnx
+  [5] asr__sherpa-streaming-zh-14m__encoder-epoch-99-avg-1.int8.onnx
+  [6] asr__sherpa-streaming-zh-14m__joiner-epoch-99-avg-1.int8.onnx
+  [7] asr__sherpa-streaming-zh-14m__tokens.txt
+  [8] punctuation__ct-transformer-zh-en__model.onnx
+  [9] punctuation__ct-transformer-zh-en__tokens.json
+```
+
+**10 条全部是扁平裸文件名 —— 没有目录、没有 `..`、没有绝对路径。**
+本机 `gh 2.46.0` 也复现不出那个报错（只是下载慢；我另一次在非 git 目录下跑还撞到
+`gh` 报 `not a git repository` —— 那是**另一个**误导性错误，不是同一个）。
+
+→ **成因在下载端**（gh 版本 / 目标目录），不在产出端。所以我没有去"修"一个本来就对的 `path:`。
+
+> ⚠️ 值得单记一条：**报错文案指向的位置，和真正的成因可以完全无关。**
+> 「path traversal」听起来像产出方塞了坏路径，而产出方是干净的。
+> 我差点就去改那个 `path:` 了 —— 改完它照样会失败，而且我们会以为"修过了"。
+> **顺着一条错误的报错去修，比不修更糟。**
+
+# ② 但确实有该修的：**366 MiB 单包会断，而且断得像成功**
+
+你第一次只下到 66 MiB 就断了。断本身不可怕 —— 可怕的是
+解压出来文件数可能是对的、最后一个短几十 MB，而解压器不一定抱怨。
+
+**处置一：拆成三个 artifact（按模型）**
+
+```
+model-mirror-sherpa-streaming-zh-14m    20,860,555 B
+model-mirror-paraformer-zh-small        74,172,575 B
+model-mirror-ct-transformer-zh-en      271,800,567 B
+```
+两个小的不再被那个 294 MiB 的标点模型拖着，一次失败的代价从"整包重来"变成"重来一个"。
+（294 MiB 那个是**单个文件**，拆不开。）
+
+**处置二：`SHA256SUMS`（coreutils 标准格式，刻意不自造）**
+
+——**而这里我第一版做错了，实测才发现**：三个 artifact 都放同一份 9 行的 SHA256SUMS，
+于是单独拿一个去验时，**最显然的那条命令会失败**：
+
+```
+$ sha256sum -c SHA256SUMS
+punctuation__ct-transformer-zh-en__model.onnx: FAILED open or read
+sha256sum: WARNING: 5 listed files could not be read
+exit 1
+```
+
+那 5 个"缺失"只是不在这个 artifact 里，**文件一个都没坏** ——
+但输出长得和真损坏一模一样，退出码也是 1。
+
+> **一个把"完全正常"报成"看起来像损坏"的验证工具，比没有验证工具更糟**：
+> 它要么让人把好产物当坏的丢掉重下，要么让人学会忽略它的输出 —— 后者更贵。
+> 让人去记 `--ignore-missing` 是把成本转嫁给读者。
+> **正确的做法是让最显然的那条命令本来就是对的。**
+
+改法：每个 artifact 里的 `SHA256SUMS` **只列它自己那几个文件**；
+另有 `SHA256SUMS.all` 列全部 9 个（三个收齐、并到一个目录后一次验完）；
+`MIRROR-MANIFEST.json` 每个 artifact 各一份，单独拿走一个也能自证来源。
+
+**端到端实测（run 31087370058，`gh run download` 真的拿下来）**：
+```
+$ ls -1
+MIRROR-MANIFEST.json  SHA256SUMS  SHA256SUMS.all
+asr__sherpa-streaming-zh-14m__{encoder,decoder,joiner}-epoch-99-avg-1.int8.onnx
+asr__sherpa-streaming-zh-14m__tokens.txt
+$ sha256sum -c SHA256SUMS
+… 4 个全部 OK
+exit=0
+```
+
+# ③ 发布说明的措辞（你要我确认的那句）
+
+全文写在 `/tmp/pack-publish/model-mirror-notes.md`，可直接用。开头是引用块：
+
+> ## ⚠️ 这里的文件**不是本项目构建的**
+>
+> 它们是从上游**逐字节复制**过来的第三方模型权重。
+> 我们唯一保证的是：**每个文件与下表所列的上游地址逐字节相同**（sha256 已附）。
+> 模型的质量、行为、适用范围**均由上游负责，我们没有做任何改动，也没有做任何背书**。
+
+三处我刻意这么写的地方：
+
+1. **把"保证什么"和"不保证什么"分开写**。只说"这是镜像"不够 ——
+   用户真正需要知道的是**我们的保证到哪儿为止**：只到字节，不到模型质量。
+2. **写了为什么"只镜像这 9 个"**，并点名 4.87 GB 那批**没有**镜像及其理由
+   （有替代品）。不写的话，下一个人看到目录里别的单一来源文件会以为是漏了。
+3. **把 `hf-mirror` 那张两地实测表放进去了** —— 它直接回答"你们不是已经有两条 mirror 了吗"。
+   同时如实标注它能解决**访问**问题、解决不了**来源消失**问题。
+
+许可证按你核的写：三个上游均 Apache-2.0，允许再分发（保留署名），链接逐条给出。
+
+# ④ 请你做的（不变，只是产物换了）
+
+1. 下载 run **31087370058** 的三个 artifact。
+2. 每个解压后先 `sha256sum -c SHA256SUMS`（应当 exit 0）；
+   9 个并到一个目录后可再 `sha256sum -c SHA256SUMS.all`。
+3. 建 `model-mirror-2026.08.06`（**已发布 / 可 prerelease / 不能 draft**），
+   说明用 `/tmp/pack-publish/model-mirror-notes.md`。
+4. 上传那 9 个文件，**别改名**，**别传 `SHA256SUMS*` 与 `MIRROR-MANIFEST.json`**
+   （那几个是给传输过程用的，摘要已经写在说明表格里；多传只会让人不知道该信哪份）。
+5. 告诉我 tag 建好了，我填 manifest 的 mirror 条目 + 加守卫 + 反向验证。
+
+# 纪律
+
+`:10000` 零请求 · `/root/data-memo` 与指针未碰 · 无 `pkill -f` · **没建/改/删 release** ·
+`git add` 逐个文件。反向验证仍在 `/tmp` 隔离副本（本轮改的是 CI 脚本与 workflow，
+没有碰 `vendor/manifests`）。
+一次 `git push` 撞上 DNS 解析失败（`Could not resolve host: github.com`），
+重试后成功；期间那次 `gh workflow run` 跑的是**旧 commit**，已重新 dispatch 并确认
+新 run 的 `headSha=bb7f877` 与本地一致 —— **没有拿旧产物冒充新的**。
