@@ -8,6 +8,7 @@
 - `vendor/manifests/README.md`（新增「`mirrors` 里多一条，不等于多一份冗余」一节）
 - `apps/daemon/src/pipeline/modelCatalogTruth.test.ts`（**新增**，10 条守卫）
 - `scripts/ci/cold-start-audit.mjs`（VAD 选择由「按 tag」改「按 role」，SHARED-CHANGE 见 §6）
+- 提交 `e6cdb20`，**已 push**（6 个文件，逐个 `git add`，零 `-A`；`git show --stat` 核对过只有这 6 个）
 
 ---
 
