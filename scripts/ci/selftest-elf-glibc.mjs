@@ -36,6 +36,11 @@ const bad = (m, detail) => {
   if (detail) console.log(`      ${String(detail).split('\n').join('\n      ')}`);
   fail++;
 };
+/** `cond` 真 → 记一条通过；否则记一条失败并附上被检查者的真实输出。 */
+const expect = (cond, okMsg, badMsg, detail) => {
+  if (cond) ok(okMsg);
+  else bad(badMsg, detail);
+};
 
 const CHECKER = join(import.meta.dirname, 'check-elf-glibc.mjs');
 
@@ -70,11 +75,15 @@ for (const l of lines) console.log(l);
 };
 
 const runChecker = (args, stubDir) => {
+  const env =
+    stubDir === null
+      ? { ...process.env, PATH: '/nonexistent' }
+      : { ...process.env, PATH: `${stubDir}:${process.env.PATH}` };
   try {
     const stdout = execFileSync(process.execPath, [CHECKER, ...args], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: stubDir === null ? { ...process.env, PATH: '/nonexistent' } : { ...process.env, PATH: `${stubDir}:${process.env.PATH}` },
+      env,
     });
     return { code: 0, out: stdout };
   } catch (e) {
@@ -96,10 +105,8 @@ console.log('\n① 正向：全部 ≤ 上限时退出 0');
     'whisper-cli': [SYM('2.2.5', 'malloc'), SYM('2.34', 'dlopen')],
   });
   const r = runChecker(['--dir', dir, '--max', '2.34'], stub);
-  r.code === 0 ? ok('exit 0') : bad('应当 exit 0', r.out);
-  /^.*实测最高 GLIBC_2\.34/m.test(r.out)
-    ? ok('打印出了实测最高值（2.34）')
-    : bad('没打印实测最高值', r.out);
+  expect(r.code === 0, 'exit 0', '应当 exit 0', r.out);
+  expect(/实测最高 GLIBC_2\.34/m.test(r.out), '打印出了实测最高值（2.34）', '没打印实测最高值', r.out);
 }
 
 console.log('\n② ★反向：有一个超标就必须红，并**点名具体符号**');
@@ -118,14 +125,15 @@ console.log('\n② ★反向：有一个超标就必须红，并**点名具体�
     ],
   });
   const r = runChecker(['--dir', dir, '--max', '2.34'], stub);
-  r.code === 1 ? ok('exit 1') : bad('应当 exit 1', r.out);
-  r.out.includes('libggml-vulkan.so') ? ok('点名了是哪个文件') : bad('没说是哪个文件', r.out);
-  ['__isoc23_strtoul', '__isoc23_strtoull', '__isoc23_strtol'].every((s) => r.out.includes(s))
-    ? ok('★ 点名了三个 __isoc23_* 符号 —— 这让结论不是推测')
-    : bad('没点名符号', r.out);
-  !r.out.includes('libggml-cpu.so  需要')
-    ? ok('没有把合规的那个也一起报成超标')
-    : bad('误报了合规文件', r.out);
+  expect(r.code === 1, 'exit 1', '应当 exit 1', r.out);
+  expect(r.out.includes('libggml-vulkan.so'), '点名了是哪个文件', '没说是哪个文件', r.out);
+  expect(
+    ['__isoc23_strtoul', '__isoc23_strtoull', '__isoc23_strtol'].every((s) => r.out.includes(s)),
+    '★ 点名了三个 __isoc23_* 符号 —— 这让结论不是推测',
+    '没点名符号',
+    r.out,
+  );
+  expect(!r.out.includes('libggml-cpu.so  需要'), '没有把合规的那个也一起报成超标', '误报了合规文件', r.out);
 }
 
 console.log('\n③ ★反向：一个 ELF 都没数到 = 什么都没检查，必须红');
@@ -135,8 +143,8 @@ console.log('\n③ ★反向：一个 ELF 都没数到 = 什么都没检查，�
   writeFileSync(join(dir, 'README.txt'), '不是 ELF');
   const stub = stubObjdump(join(WORK, 'stub-empty'), {});
   const r = runChecker(['--dir', dir, '--max', '2.34'], stub);
-  r.code === 1 ? ok('exit 1（不许"数到 0 个还报绿"）') : bad('空目录居然绿了', r.out);
-  r.out.includes('一个 ELF 都没数到') ? ok('理由说的是"什么都没检查"') : bad('理由不对', r.out);
+  expect(r.code === 1, 'exit 1（不许"数到 0 个还报绿"）', '空目录居然绿了', r.out);
+  expect(r.out.includes('一个 ELF 都没数到'), '理由说的是"什么都没检查"', '理由不对', r.out);
 }
 
 console.log('\n④ 版本号按数字比，不按字符串比');
@@ -148,8 +156,8 @@ console.log('\n④ 版本号按数字比，不按字符串比');
     'a.so': [SYM('2.9', 'foo'), SYM('2.34', 'bar')],
   });
   const r = runChecker(['--dir', dir, '--max', '2.34'], stub);
-  r.code === 0 ? ok('2.9 与 2.34 并存时判为合规（2.9 < 2.34）') : bad('把 2.9 当成了大于 2.34', r.out);
-  r.out.includes('实测最高 GLIBC_2.34') ? ok('最高值取的是 2.34 而不是 2.9') : bad('最高值取错', r.out);
+  expect(r.code === 0, '2.9 与 2.34 并存时判为合规（2.9 < 2.34）', '把 2.9 当成了大于 2.34', r.out);
+  expect(r.out.includes('实测最高 GLIBC_2.34'), '最高值取的是 2.34 而不是 2.9', '最高值取错', r.out);
 }
 
 console.log('\n⑤ ★反向：objdump 不存在时必须红 ——「我拿不到」不等于「这里没有」');
@@ -157,12 +165,10 @@ console.log('\n⑤ ★反向：objdump 不存在时必须红 ——「我拿不�
   const dir = join(WORK, 'noobjdump');
   elfFile(dir, 'a.so');
   const r = runChecker(['--dir', dir, '--max', '2.34'], null);
-  r.code === 1 ? ok('exit 1') : bad('没有 objdump 却报绿', r.out);
-  r.out.includes('没法回答') ? ok('说清了"没法回答不等于没问题"') : bad('理由不对', r.out);
+  expect(r.code === 1, 'exit 1', '没有 objdump 却报绿', r.out);
+  expect(r.out.includes('没法回答'), '说清了"没法回答不等于没问题"', '理由不对', r.out);
   const r2 = runChecker(['--dir', dir, '--max', '2.34', '--allow-missing-objdump'], null);
-  r2.code === 0
-    ? ok('显式 --allow-missing-objdump 才跳过（CI 上不许传）')
-    : bad('显式豁免没生效', r2.out);
+  expect(r2.code === 0, '显式 --allow-missing-objdump 才跳过（CI 上不许传）', '显式豁免没生效', r2.out);
 }
 
 console.log('');

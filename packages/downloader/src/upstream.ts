@@ -92,9 +92,18 @@ function toRelease(r: GhRelease): UpstreamRelease {
  * Query an upstream for its newest release.
  *
  * `tagPattern` matters more than it looks: BtbN's FFmpeg-Builds publishes both a moving
- * `latest` tag and immutable `autobuild-<date>` tags from the same repo. Taking "the
+ * `latest` tag and dated `autobuild-<date>` tags from the same repo. Taking "the
  * latest release" blindly would hand back `latest` — a moving target whose sha256 changes
  * under us, which defeats pinning entirely.
+ *
+ * ★★ T-161 更正：**这里原来写的是「immutable `autobuild-<date>` tags」——那句是错的，
+ * 而且它直接导致我们钉了一个约 9 天后就会 404 的 tag。**
+ * `[实测]` 上游 `util/prunetags.sh` 只保留「最近 14 个日构建」+「每月最后一个（24 个月）」，
+ * 其余 `gh release delete --cleanup-tag`；GitHub API 上 BtbN 全仓库只剩 37 个 release
+ * （22 个月末 + 最近 14 个日构建）。
+ * → **只有「每月最后一天」的 autobuild tag 才是真的能长期存活的**，
+ *   所以 `components.json` 里的 `tagPattern` 现在带日期段（`(2[89]|3[01])`），
+ *   守卫在 `apps/daemon/src/pipeline/ffmpegPinRot.test.ts`。
  */
 export async function checkUpstream(
   src: UpstreamSource,

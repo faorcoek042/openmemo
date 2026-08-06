@@ -98,21 +98,21 @@
       "displayName": "ffmpeg / ffprobe (Linux x64)",
       "displayNameZh": "ffmpeg / ffprobe（Linux x64）",
       "category": "media-tool",
-      "pinnedVersion": "autobuild-2026-08-02-13-17",
+      "pinnedVersion": "autobuild-2026-07-31-14-10",
       "provenance": {
         "repoUrl": "https://github.com/BtbN/FFmpeg-Builds",
-        "releaseUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-08-02-13-17",
+        "releaseUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-07-31-14-10",
         "license": "GPL-3.0-or-later",
         "licenseUrl": "https://www.gnu.org/licenses/gpl-3.0.html"
       },
       "upstream": {
         "kind": "github-release",
         "repo": "BtbN/FFmpeg-Builds",
-        "tagPattern": "^autobuild-"
+        "tagPattern": "^autobuild-\\d{4}-\\d{2}-(2[89]|3[01])-"
       },
-      "sizeBytes": 118999596,
-      "sha256": "47b2cc48f8a6e9ac9afe3421f57b8ffe9bdf32953c89603603fcb2439c16ec58",
-      "sha256Provenance": "本机下载全部 118,999,596 字节后独立复算，并与 GitHub Releases API 的 digest 逐字符比对一致（2026-08-03）。"
+      "sizeBytes": 124917816,
+      "sha256": "09fc77be269c7053e438b7e96548e4af97604faf96a42c4a3c56a1ad74c22c0a",
+      "sha256Provenance": "本机下载全部 124,917,816 字节后独立复算，并与 GitHub Releases API 的 digest 逐字符比对一致（2026-08-07，T-161）。★ tag 必须是**每月最后一天**：上游 util/prunetags.sh 只保留「最近 14 个日构建」+「每月最后一个（24 个月）」，实测 BtbN 全仓库只剩 37 个 release（22 个月末 + 最近 14 个日构建）。此前钉的 autobuild-2026-08-02-13-17 是日构建，约 9 个日构建后会连同资产一起被删除、URL 变 404 —— 而清单校验与 sha256 全都不会有任何反应。守卫见 apps/daemon/src/pipeline/ffmpegPinRot.test.ts。"
     },
     {
       "id": "sherpa-onnx-node",
@@ -224,21 +224,21 @@
       "displayName": "ffmpeg / ffprobe (Windows x64)",
       "displayNameZh": "ffmpeg / ffprobe（Windows x64）",
       "category": "media-tool",
-      "pinnedVersion": "autobuild-2026-08-02-13-17",
+      "pinnedVersion": "autobuild-2026-07-31-14-10",
       "provenance": {
         "repoUrl": "https://github.com/BtbN/FFmpeg-Builds",
-        "releaseUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-08-02-13-17",
+        "releaseUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-07-31-14-10",
         "license": "GPL-3.0-or-later",
         "licenseUrl": "https://www.gnu.org/licenses/gpl-3.0.html"
       },
       "upstream": {
         "kind": "github-release",
         "repo": "BtbN/FFmpeg-Builds",
-        "tagPattern": "^autobuild-"
+        "tagPattern": "^autobuild-\\d{4}-\\d{2}-(2[89]|3[01])-"
       },
-      "sizeBytes": 158697121,
-      "sha256": "5fef81d2a19752cafacb1bb396b3c7d64d31845d7ce4878ac65d24dd3abda00d",
-      "sha256Provenance": "本机下载全部 158,697,121 字节后独立复算，并与 GitHub Releases API 的 digest 逐字符比对一致（2026-08-06）。与 Linux 包同一个不可变 tag。"
+      "sizeBytes": 167405723,
+      "sha256": "cc4156d51387566ea8ba653fc3a04897bdf812fddf652428d9030bbf7ae24835",
+      "sha256Provenance": "本机下载全部 167,405,723 字节后独立复算，并与 GitHub Releases API 的 digest 逐字符比对一致（2026-08-07，T-161）。与 Linux 包同一个 tag，且该 tag 是 7 月最后一天 —— 见 media-tools-linux-x64 那条里关于上游 prunetags.sh 的说明。"
     },
     {
       "id": "media-tools-macos-arm64",
