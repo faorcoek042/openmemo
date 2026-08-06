@@ -565,6 +565,14 @@ export class RestState {
       selected: this.prefs.sourceProvider,
       effective: this.effectiveProvider(),
       probes: this.lastProbes,
+      /*
+       * ★ T-157 ④：能选哪些源，**由清单说了算**，不由前端写死一张表。
+       *
+       * `probeTargets()` 已经是"目录里真实出现过的 provider"这一份定义；
+       * 让 UI 另写一份的话，清单加一个镜像它不会知道、删一个它会继续摆着一个
+       * 点了没用的选项 —— 而两边都不会有任何东西报错。
+       */
+      available: [...new Set(this.probeTargets().map((t) => t.provider as ProviderId))],
     };
   }
 }

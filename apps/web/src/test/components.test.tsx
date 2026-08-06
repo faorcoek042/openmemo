@@ -85,6 +85,7 @@ import enLocale from '../app/i18n/locales/en.json';
 import i18nInstance from '../app/i18n';
 import ModelsPage from '../features/models/ModelsPage';
 import NotesListPage from '../features/notes/NotesListPage';
+import { SourcesSection } from '../features/models/components/SourcesSection';
 import App from '../App';
 import { GenerateMindmapButton } from '../features/mindmap/GenerateMindmapButton';
 import { MindmapView } from '../features/mindmap/MindmapView';
@@ -3237,6 +3238,8 @@ const EMPHASIS_REGISTRY: Record<string, string[]> = {
    * 所以这里的 `**` 今天用户看不见 —— 但只要有人把它接出来，就会看见。
    * 已报 Manager（inbox §8）。**不接线也不删词条**：删了等于替那个功能做决定。
    */
+  /* T-157 ④：「优先」不是「只用」—— 这一句要防的正是"以为自己关掉了别的源"。 */
+  'models.sources.hint': ['features/models/components/SourcesSection.tsx'],
   'secureContext.caps.microphone': [],
 };
 
@@ -4349,6 +4352,144 @@ describe('T-138 ④ 文件夹筛选：链接的目的地不能是空的', () => 
     assert.ok(hint && /子文件夹/.test(hint), `文案没有交代"含子孙"：${String(hint)}`);
     const en = (enLocale as unknown as { notes: Record<string, string> }).notes['folderEmptyHint'];
     assert.ok(en && /sub-folder/i.test(en), `en 没有交代"含子孙"：${String(en)}`);
+  });
+});
+
+/* ══════════ T-157 ④ 下载源（镜像）UI ══════════ */
+
+/**
+ * 修之前：daemon 的三个端点全是真的（`GET /api/models/sources`、`POST …/probe`、
+ * `POST …/select`），而前端 `useModelsSourcesQuery` / `useSourceProbeMutation`
+ * **零调用方**，**连一个 select 的 hook 都没有**。
+ *
+ * 后果不是"少一个高级设置"：HuggingFace 连不上时用户看到「所有下载源均失败」，
+ * 而他既看不到自动回退到底选了谁、也没法钉一个能通的源。
+ * `[实测]` 这台机器就连不上 HuggingFace、自动回落到了 ModelScope ——
+ * **回退是有效的，只是用户看不到也选不了。**
+ *
+ * 断言一律钉后果：**请求真的发出去了**、**回退的结果真的渲染出来了**。
+ * "按钮在不在"在缺陷状态下也能绿。
+ */
+describe('T-157 ④ 下载源（镜像）', () => {
+  const SOURCES = {
+    selected: 'auto' as const,
+    effective: 'modelscope' as const,
+    available: ['hf', 'hf-mirror', 'modelscope'] as const,
+    probes: [
+      {
+        id: 'hf' as const,
+        ok: false,
+        ttfbMs: null,
+        throughputKbps: null,
+        probedAt: '2026-08-06T12:00:00.000Z',
+        error: 'timeout after 5000ms',
+      },
+      {
+        id: 'modelscope' as const,
+        ok: true,
+        ttfbMs: 120,
+        throughputKbps: 8800,
+        probedAt: '2026-08-06T12:00:00.000Z',
+        error: null,
+      },
+    ],
+  };
+
+  test('★ 自动回退到底选了谁必须看得见 —— 这是这块 UI 存在的主要理由', async () => {
+    stubApi({ '/models/sources': SOURCES });
+    const r = await render(<SourcesSection locale="zh-CN" />);
+    await r.flush();
+    const line = r.container.querySelector('[data-testid="models-sources-effective"]')?.textContent ?? '';
+    assert.equal(
+      line.includes('ModelScope'),
+      true,
+      `没有把实际生效的源说出来（实际：${line}）—— 用户只会看到"所有下载源均失败"而不知道发生了什么`,
+    );
+    r.unmount();
+  });
+
+  test('★ 没测过速就说没测过，不许拿"自动"充数', async () => {
+    // "不知道"和"就是它"是两件事，混在一起就是又一个假绿灯。
+    stubApi({ '/models/sources': { ...SOURCES, effective: null, probes: [] } });
+    const r = await render(<SourcesSection locale="zh-CN" />);
+    await r.flush();
+    const line = r.container.querySelector('[data-testid="models-sources-effective"]')?.textContent ?? '';
+    const zhSources = (zhLocale as unknown as { models: { sources: Record<string, string> } }).models.sources;
+    assert.equal(line, zhSources['effectiveUnknown'], `没测过时说了别的话：${line}`);
+    r.unmount();
+  });
+
+  test('★ 点一个源要真的把它发给 daemon（此前根本没有这个 hook）', async () => {
+    const s = stubApi({
+      '/models/sources': SOURCES,
+      'POST /models/sources/select': { ...SOURCES, selected: 'hf-mirror' },
+    });
+    const r = await render(<SourcesSection locale="zh-CN" />);
+    await r.flush();
+
+    await click(r.container.querySelector('[data-testid="models-source-hf-mirror"]'));
+    await r.flush();
+
+    const call = s.calls.find((c) => c.method === 'POST' && c.path === '/models/sources/select');
+    assert.equal(
+      call === undefined,
+      false,
+      `没有发出 select 请求（实际请求：${JSON.stringify(s.calls.map((c) => `${c.method} ${c.path}`))}）`,
+    );
+    assert.deepEqual(call?.body, { provider: 'hf-mirror' });
+    // 选中态要真的跟着服务端的回执走，而不是本地自己记一份
+    assert.equal(
+      r.container.querySelector('[data-testid="models-source-hf-mirror"]')?.getAttribute('aria-checked'),
+      'true',
+    );
+    r.unmount();
+  });
+
+  test('★ 「立即测速」要真的打 probe，并把每个源的结果（含失败原因原文）渲染出来', async () => {
+    const s = stubApi({
+      '/models/sources': { ...SOURCES, effective: null, probes: [] },
+      'POST /models/sources/probe': SOURCES,
+    });
+    const r = await render(<SourcesSection locale="zh-CN" />);
+    await r.flush();
+    assert.equal(r.container.querySelector('[data-testid="models-sources-probes"]') === null, true);
+
+    await click(r.container.querySelector('[data-testid="models-sources-probe"]'));
+    await r.flush();
+
+    assert.equal(
+      s.calls.some((c) => c.method === 'POST' && c.path === '/models/sources/probe'),
+      true,
+      `没有发出 probe 请求（实际：${JSON.stringify(s.calls.map((c) => `${c.method} ${c.path}`))}）`,
+    );
+    const body = text(r.container);
+    assert.equal(
+      body.includes('timeout after 5000ms'),
+      true,
+      '失败原因被翻成了一句废话 —— detail 是用户唯一的线索',
+    );
+    assert.equal(body.includes('8,800') || body.includes('8800'), true, '没把实测速度显示出来');
+    r.unmount();
+  });
+
+  test('★ 可选项来自 daemon 的 available，不是前端写死一张表', async () => {
+    // 清单里没有的源不该出现：一个点了没用的选项，和写死一张会漂移的表是同一个病。
+    stubApi({ '/models/sources': { ...SOURCES, available: ['hf', 'modelscope'] } });
+    const r = await render(<SourcesSection locale="zh-CN" />);
+    await r.flush();
+    assert.equal(r.container.querySelector('[data-testid="models-source-hf"]') === null, false);
+    assert.equal(r.container.querySelector('[data-testid="models-source-modelscope"]') === null, false);
+    assert.equal(
+      r.container.querySelector('[data-testid="models-source-hf-mirror"]') === null,
+      true,
+      'available 里没有的 provider 不该出现',
+    );
+    assert.equal(
+      r.container.querySelector('[data-testid="models-source-custom"]') === null,
+      true,
+      '不许提供「自定义源」—— sourceBaseUrl 全仓没有任何下载路径读它，做出来就是个填了必然无效的输入框',
+    );
+    r.unmount();
   });
 });
 

@@ -242,7 +242,28 @@
       "balance": "均衡",
       "quality": "高质量"
     },
-    "supersededCount": "已被新版本取代的 {{n}} 个"
+    "supersededCount": "已被新版本取代的 {{n}} 个",
+    "sources": {
+      "title": "下载源",
+      "auto": "自动（按实测速度）",
+      "provider": {
+        "hf": "HuggingFace",
+        "hf-mirror": "HF 镜像（hf-mirror.com）",
+        "modelscope": "ModelScope 魔搭",
+        "github": "GitHub",
+        "custom": "自定义"
+      },
+      "effective": "当前生效：{{provider}}",
+      "effectiveUnknown": "还没测过速 —— 下载时会自动挑一个能通的",
+      "hint": "选中的源只是**优先**使用；它连不上时仍会自动换到其他源，内容由 sha256 保证一致。",
+      "probe": "立即测速",
+      "probing": "测速中…",
+      "ok": "可用",
+      "unreachable": "连不上",
+      "speed": "{{kbps}} KB/s",
+      "ttfb": "首字节 {{ms}} ms",
+      "unknownError": "失败原因未知"
+    }
   },
   "runtime": {
     "title": "运行时与加速后端",

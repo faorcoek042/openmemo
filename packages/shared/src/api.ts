@@ -178,6 +178,19 @@ export interface GetSourcesResponse {
   /** Provider actually in use right now. */
   effective: ProviderId | null;
   probes: SourceProbe[];
+  /**
+   * Providers that the model catalog actually has mirrors for.
+   *
+   * ★ T-157 ④: without this the UI cannot offer a source picker at all. It would have to
+   * either hardcode a provider list (a second source of truth that drifts from the
+   * manifests, and offers sources no file is actually served from) or show nothing until
+   * the user has run a probe. Both were rejected; the daemon already computes this exact
+   * set for probing, so it says it out loud.
+   *
+   * Scope is the MODEL catalog, matching where the picker lives. Backend packs carry
+   * their own mirrors (`github`) and are installed from a different page.
+   */
+  available: ProviderId[];
 }
 
 export interface SelectSourceRequest {

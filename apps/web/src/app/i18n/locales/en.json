@@ -242,7 +242,28 @@
       "balance": "Balanced",
       "quality": "High quality"
     },
-    "supersededCount": "{{n}} superseded by newer versions"
+    "supersededCount": "{{n}} superseded by newer versions",
+    "sources": {
+      "title": "Download source",
+      "auto": "Automatic (by measured speed)",
+      "provider": {
+        "hf": "HuggingFace",
+        "hf-mirror": "HF mirror (hf-mirror.com)",
+        "modelscope": "ModelScope",
+        "github": "GitHub",
+        "custom": "Custom"
+      },
+      "effective": "In use: {{provider}}",
+      "effectiveUnknown": "Not measured yet — a reachable source is picked automatically at download time",
+      "hint": "The selected source is **preferred**, not exclusive: if it is unreachable the download still falls over to the others. Contents are identical, guaranteed by sha256.",
+      "probe": "Measure now",
+      "probing": "Measuring…",
+      "ok": "Reachable",
+      "unreachable": "Unreachable",
+      "speed": "{{kbps}} KB/s",
+      "ttfb": "TTFB {{ms}} ms",
+      "unknownError": "Reason unknown"
+    }
   },
   "runtime": {
     "title": "Runtime and acceleration backends",

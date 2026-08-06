@@ -19,6 +19,7 @@ import type {
   ModelRole,
   PullRequest,
   PullResponse,
+  SelectSourceRequest,
 } from '@openmemo/shared';
 
 import { api } from '../../lib/api/client';
@@ -132,12 +133,57 @@ export function useGcMutation() {
   });
 }
 
+/**
+ * 立即测速。
+ *
+ * ⚠️ 响应体**就是一份新的 `GetSourcesResponse`**（`rest/models.ts` 的
+ * `/api/models/sources/probe` 分支：`await state.probeMirrors(...)` 之后
+ * `sendJson(res, 200, state.buildSources())`）。这里原来标的是 `{jobId}` ——
+ * 一个 daemon 从来不发的形状。它能错这么久是因为**这个 hook 零调用方**：
+ * 没人走的路上的坑不会有人掉进去（T-155 在 `useMoveNoteMutation` 上记过同一件事）。
+ */
 export function useSourceProbeMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api<{ jobId: string }>('/models/sources/probe', { method: 'POST' }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.models.sources });
+    mutationFn: () => api<GetSourcesResponse>('/models/sources/probe', { method: 'POST' }),
+    /*
+     * 响应**就是**测完之后的完整快照，直接落缓存。
+     *
+     * ⚠️ 这里刻意**不再 `invalidateQueries`**：`setQueryData` 之后紧跟一次失效，
+     * 等于用一次新的 GET 把刚拿到的结果盖掉 —— 中间那一帧用户能看见测速结果闪一下再消失。
+     * （这是自己写的用例当场抓出来的：桩的 GET 返回"还没测过"，
+     *   于是点完测速表格立刻空掉。真 daemon 上因为 `lastProbes` 有状态而看不出来，
+     *   属于"只在 mock/测试里显形、但确实存在"的那一类。）
+     * daemon 侧的 `sources.probed` SSE 仍会独立失效一次，快照不会长期陈旧。
+     */
+    onSuccess: (data) => {
+      qc.setQueryData(qk.models.sources, data);
+    },
+  });
+}
+
+/**
+ * 钉一个下载源（或改回 `auto`）。
+ *
+ * ★ T-157 ④：daemon 的三个端点全是真的，而前端**一个 select 的 hook 都没有** ——
+ * 于是「所有下载源均失败」的时候用户没有任何自救入口。
+ *
+ * ⚠️ **它是"优先"，不是"只用"。** `orderSourcesForDownload` 把钉住的源排到最前，
+ * 其余的仍然留在后面当回退（`probe.ts` 的注释写明了理由：探测是 5 秒快照，
+ * 探测失败的源在真实传输里未必不通，全部丢掉会让用户一个源都不剩）。
+ * 界面上必须照这个说，不能让用户以为自己关掉了别的源。
+ *
+ * ⚠️ **不提供 `custom`。** 契约里有 `baseUrl`，daemon 也会把它存进 prefs
+ * （`models.ts:953`），但 `[实测 grep]` **全仓没有任何下载路径读过 `sourceBaseUrl`** ——
+ * 现在做出来就是一个填了必然无效的输入框，比没有更糟。
+ */
+export function useSelectSourceMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (req: SelectSourceRequest) =>
+      api<GetSourcesResponse>('/models/sources/select', { method: 'POST', body: req }),
+    onSuccess: (data) => {
+      qc.setQueryData(qk.models.sources, data);
     },
   });
 }

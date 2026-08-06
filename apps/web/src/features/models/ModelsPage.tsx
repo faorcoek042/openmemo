@@ -37,6 +37,7 @@ import {
 import { ModelCard } from './components/ModelCard';
 import { DownloadRow } from './components/DownloadRow';
 import { StorageBreakdown } from './components/StorageBreakdown';
+import { SourcesSection } from './components/SourcesSection';
 import { splitAsrSections } from './asrSections';
 
 /**
@@ -556,6 +557,13 @@ export default function ModelsPage() {
           </section>
         ) : null}
       </section>
+
+      {/*
+        ★ T-157 ④：下载源（镜像）。放在目录**之后、磁盘占用之前** ——
+        它既不是"选哪个模型"的一部分，也不该藏进设置页：用户会需要它的确切时刻，
+        是刚看到「所有下载源均失败」的时候，而那条横幅就出现在这一页上。
+      */}
+      <SourcesSection locale={locale} />
 
       {storage.data ? (
         <StorageBreakdown
