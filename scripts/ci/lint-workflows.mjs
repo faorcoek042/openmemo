@@ -58,6 +58,12 @@ const STEP_KEYS = new Set([
 const MUST_FAIL_LOUDLY = {
   'build-backends.yml': ['manifest'],
   'ci.yml': ['gate'],
+  /*
+   * T-154：上传与校验两个 job 都不许被绕开。
+   * 尤其是 `verify` —— 一个"挂了也不影响绿灯"的校验，等于把
+   * 「我们发出去的东西对不对」这件事变成装饰。
+   */
+  'release-upload.yml': ['upload', 'verify'],
 };
 
 const problems = [];
@@ -207,6 +213,155 @@ for (const file of files.sort()) {
     !/pnpm -r build/.test(runs),
     'ci.yml: 用了 `pnpm -r build` —— PROTOCOL §7 补充要求一律 `pnpm build:safe`，' +
       '本地跑同一条命令会覆盖用户正在看的 apps/web/dist',
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════
+ * T-154 · release-upload 的权限边界 —— 这一组断言就是那份"能做什么/不能做什么"的合同
+ *
+ * 背景：`pack-publish` T-150 拒绝给 workflow 加 `contents: write`，理由是
+ * 「让 CI 代劳会把那道闸悄悄绕过去 —— 绕过的还是同一道闸，只是换了个执行者」。
+ * 用户 2026-08-06 明确下令让 CI 传，于是闸开了 —— **但只开"上传"这一格**。
+ *
+ * GitHub 的权限刻度里没有"只能新增 release 资产"这一档：`contents: write` 一给，
+ * 建 release / 改 release / 删资产在 token 层面就全都可以了。
+ * **也就是说这条边界没法靠 scope 表达，只能靠"调用面收窄 + 守卫钉住"。**
+ * 下面这些断言就是那个守卫。它们钉的是结构（谁有写权限、脚本里出现了什么方法），
+ * 不钉措辞。
+ * ═══════════════════════════════════════════════════════════════════════════════════ */
+{
+  const RU = 'release-upload.yml';
+  const ru = parse(await readFile(join(WF_DIR, RU), 'utf8'));
+
+  /* ① 顶层不许有任何权限。写在顶层会同时落到 verify 上，而 verify 的全部意义是"没有凭证"。 */
+  must(
+    ru.permissions != null && typeof ru.permissions === 'object' && Object.keys(ru.permissions).length === 0,
+    `${RU}: 顶层 permissions 必须是空的（\`permissions: {}\`）—— 写权限只能挂在需要它的那一个 job 上`,
+  );
+
+  /* ② 全仓只允许 `upload` 这一个 job 拿 contents: write。 */
+  const writers = Object.entries(ru.jobs ?? {})
+    .filter(([, j]) => j?.permissions?.contents === 'write')
+    .map(([n]) => n);
+  must(
+    writers.length === 1 && writers[0] === 'upload',
+    `${RU}: 拿到 contents: write 的 job 应当**只有** upload，实得 [${writers.join(', ')}]`,
+  );
+
+  /* ③ verify 不许有任何 write 权限，也不许被喂 token。 */
+  const verify = ru.jobs?.verify;
+  must(verify != null, `${RU}: 没有 verify job —— 上传完不校验等于只证明了"我们以为传上去了"`);
+  must(
+    [].concat(verify?.needs ?? []).includes('upload'),
+    `${RU}: verify 必须 needs: [upload]`,
+  );
+  must(
+    Object.values(verify?.permissions ?? {}).every((v) => v !== 'write'),
+    `${RU}#verify: 拿到了 write 权限 —— 一个手里攥着写权限的校验者证明不了"匿名用户拿得到"`,
+  );
+  const verifyText = JSON.stringify(verify ?? {});
+  must(
+    !/GITHUB_TOKEN|GH_TOKEN|GH_ENTERPRISE_TOKEN|github\.token|secrets\./.test(verifyText),
+    `${RU}#verify: 出现了 token —— 这个 job 存在的全部理由就是"不带凭证也能下下来"。` +
+      `带着 token 它会继续绿，但再也证明不了任何东西（尤其发现不了 draft release）。` +
+      `修法是把 env 拿掉，不是把这条断言删掉`,
+  );
+
+  /* ④ 上传不许自动触发：往外发东西这件事必须有人按一下。 */
+  must(ru.on?.workflow_dispatch !== undefined, `${RU}: 必须保留 workflow_dispatch`);
+  must(
+    ru.on?.push === undefined && ru.on?.release === undefined && ru.on?.schedule === undefined,
+    `${RU}: 不许 push / release / schedule 自动触发 —— 上传是对外动作，必须有人按`,
+  );
+  must(
+    ru.concurrency?.['cancel-in-progress'] === false,
+    `${RU}: concurrency.cancel-in-progress 必须是 false。` +
+      `取消一次进行中的上传，留下的正是 state != uploaded 的半截资产，而本 job 没有删除能力去收拾它`,
+  );
+
+  /* ⑤ 三个 workflow 里都不许出现"建/改/删 release"的命令行形态。 */
+  for (const [file, doc] of [
+    [RU, ru],
+    ['build-backends.yml', parse(await readFile(join(WF_DIR, 'build-backends.yml'), 'utf8'))],
+    ['mirror-model-blobs.yml', parse(await readFile(join(WF_DIR, 'mirror-model-blobs.yml'), 'utf8'))],
+  ]) {
+    const text = JSON.stringify(doc);
+    for (const bad of ['release create', 'release delete', 'release edit', '--clobber', 'repo edit']) {
+      must(!text.includes(bad), `${file}: 出现了 \`${bad}\` —— 建/改/删 release 与改仓库设置不在本流水线的授权范围内`);
+    }
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════
+ * T-154 · 上传脚本的**调用面**：只允许 GET 与 POST-asset
+ *
+ * 这一条是上面那条的另一半。`contents: write` 一旦给出去，能不能建 release 完全取决于
+ * 脚本里写了什么请求 —— 所以把"脚本里出现了哪些 HTTP 方法"变成断言。
+ *
+ * ⚠️ 扫描前要先去掉注释：这两个脚本的注释里**大量**出现 `--clobber` / `DELETE` 这些词，
+ *    因为它们正是在解释"为什么不这么做"。一条会把解释文字当成违规的守卫，
+ *    只会逼人把解释删掉 —— 那正好毁掉这里最有价值的东西。
+ * ═══════════════════════════════════════════════════════════════════════════════════ */
+{
+  /* 块注释与整行 `//` 注释一律先去掉；行内的 `https://` 不会被误伤。 */
+  const stripComments = (src) =>
+    src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .filter((l) => !l.trimStart().startsWith('//'))
+      .join('\n');
+
+  const code = {};
+  for (const f of ['release-upload.mjs', 'release-verify.mjs']) {
+    code[f] = stripComments(await readFile(join(REPO_ROOT, 'scripts', 'ci', f), 'utf8'));
+
+    const methods = [...code[f].matchAll(/method:\s*['"]([A-Za-z]+)['"]/g)].map((m) => m[1]);
+    for (const m of methods) {
+      must(
+        m === 'POST',
+        `scripts/ci/${f}: 出现了 HTTP ${m}。本流水线只授权两种请求：` +
+          `GET releases/tags/… 与 POST …/releases/{id}/assets。` +
+          `DELETE / PATCH / PUT 分别对应"删资产 / 改 release（含 draft→published）/ 覆盖"，都在授权之外`,
+      );
+    }
+    /*
+     * ⚠️ `--clobber` **刻意不在这张表里**：它是 `gh` 的开关，而 `gh release` 已经被禁；
+     *    反过来，那两个字在本脚本的**失败消息**里出现过（"本脚本不会 --clobber，因为…"），
+     *    把它列进来会逼人把那句解释删掉 —— 守卫不该以毁掉解释为代价生效。
+     */
+    for (const bad of ['gh release', 'gh repo', 'gh api']) {
+      must(!code[f].includes(bad), `scripts/ci/${f}: 代码里出现了 \`${bad}\``);
+    }
+  }
+
+  /*
+   * 唯一那次 POST 必须打在 release 自己报出来的 `upload_url` 上。
+   * 这条挡的是**建 release** —— 那也是一次 POST（打到 `/repos/{o}/{r}/releases`），
+   * 光靠"方法必须是 POST"是拦不住的，得钉住它打在哪儿。
+   */
+  const posts = (code['release-upload.mjs'].match(/method:\s*'POST'/g) ?? []).length;
+  must(posts === 1, `scripts/ci/release-upload.mjs: 应当**恰好**有一次 POST（上传资产），实得 ${posts} 次`);
+  must(
+    /function postAsset\(uploadUrlTemplate[\s\S]{0,400}method:\s*'POST'/.test(code['release-upload.mjs']),
+    'scripts/ci/release-upload.mjs: 那次 POST 必须在 postAsset() 里、且 URL 来自 release 自己的 upload_url' +
+      '（打到 /repos/{o}/{r}/releases 上的 POST 就是"建 release"，那不在授权范围内）',
+  );
+  must(
+    !/method:/.test(code['release-verify.mjs']),
+    'scripts/ci/release-verify.mjs: 校验脚本里出现了非 GET 的请求 —— 它只该读，不该写',
+  );
+
+  /* verify 的凭证守卫本身不许被"顺手简化"掉 —— 它没了，这一步就变成一个永远绿的装饰。 */
+  const verifySrc = await readFile(join(REPO_ROOT, 'scripts', 'ci', 'release-verify.mjs'), 'utf8');
+  for (const k of ['GITHUB_TOKEN', 'GH_TOKEN', 'GH_ENTERPRISE_TOKEN']) {
+    must(
+      new RegExp(`CREDENTIAL_ENV[\\s\\S]{0,200}${k}`).test(verifySrc),
+      `scripts/ci/release-verify.mjs: CREDENTIAL_ENV 里少了 ${k} —— 那一条守卫是"匿名可下"这个结论的全部依据`,
+    );
+  }
+  must(
+    /const present = CREDENTIAL_ENV[\s\S]{0,900}process\.exit\(1\)/.test(verifySrc),
+    'scripts/ci/release-verify.mjs: 检测到凭证之后必须 process.exit(1)（只打印一行 warning 等于没有守卫）',
   );
 }
 

@@ -1,0 +1,208 @@
+# 把构建 / 镜像产物上传到一个**已经存在且已发布**的 GitHub Release，然后**从公开 URL
+# 不带凭证重新下载一遍**复算 sha256。
+#
+# ══════════════════════════════════════════════════════════════════════════════════════
+# ★★ 这个 workflow 能做什么、不能做什么（权限边界 —— 请把这一段当成合同来读）
+# ══════════════════════════════════════════════════════════════════════════════════════
+#
+#   能做：
+#     - 从**另一个 run** 的 artifact 里取产物（`actions: read`）
+#     - 往一个**已经存在、已发布**的 release 上**新增**资产（`contents: write`，且只有
+#       `upload` 这一个 job 有）
+#     - 不带任何凭证从公开 URL 重新下载并复算 sha256（`verify` job，**没有** write）
+#
+#   不能做（不是"约定不做"，是代码里根本没有这些调用，且有守卫钉着）：
+#     - 建 release（`POST /releases`）—— tag 不存在就失败，并告诉你去找人建
+#     - 改 release（`PATCH`）—— 包括把 draft 改成 published
+#     - 删资产 / `--clobber` 覆盖同名资产（`DELETE`）
+#     - 改仓库可见性、改分支保护、push 代码、改 tag
+#     `scripts/ci/lint-workflows.mjs` 有一组断言：
+#       ① 顶层 `permissions` 必须是空的；② 只有 `upload` job 允许 `contents: write`；
+#       ③ `verify` job 不许拿到 write，也不许被喂 token；
+#       ④ `scripts/ci/release-*.mjs` 里不许出现 `gh release create/edit/delete`、
+#          `--clobber`、`DELETE`/`PATCH`/`PUT`。
+#
+# ── 为什么这道闸是"开一格"而不是"开到最大" ────────────────────────────────────────────
+#
+# `pack-publish` 在 T-150 里**拒绝**给 mirror-model-blobs 加 `contents: write`：
+#
+#   > 建 release 是要人确认的对外动作，"让 CI 代劳"会把那道闸悄悄绕过去
+#   > —— 绕过的还是同一道闸，只是换了个执行者。
+#
+# **那个拒绝当时是对的，现在也仍然对。** 用户 2026-08-06 的指令「编写 CI 让 CI 传」
+# 开的是"上传"这一格。所以本 workflow 的设计目标不是"CI 拿到发布权"，而是
+# **"CI 拿到的权力刚好够把字节送上去，一点都不多"**。
+#
+# ── 为什么必须让 CI 传（动机是实打实撞出来的）────────────────────────────────────────
+#
+# 2026-08-06，从这台开发机传那个 294 MB 的模型**反复失败**：`gh` 静默不完成、
+# curl 直传报 `HTTP 404` 而请求体完整发出了 294,372,519 B。而 **runner 到 GitHub 的链路
+# 是内网级的** —— 让产出产物的那台机器顺手把它送上去，比让它绕地球一圈再送回去更可靠。
+#
+# ── ⚠️ 重试必须串行且互斥（一小时换来的教训，写在这里免得下一个人再犯）──────────────
+#
+# 同一次事故里，操作者**连开三路后台重试却没有杀掉前面的**，于是三个进程
+# **并发上传同一个文件并互相 `--clobber`**，跑了一个多小时都没有一次成功。
+# 清干净之后**单跑一次就成功了**。
+#
+#   > **并发重试会把一个可恢复的失败变成一个永久的失败。**
+#
+# 两处落实：
+#   - 脚本内：重试是 `for` + `await`，且每次重试前重新拉一遍资产列表（可能上一次已经成了）；
+#   - 这里：`concurrency` 按 tag 分组 + `cancel-in-progress: false`。
+#     ★ 特意**不**取消进行中的那一个 —— 取消一次进行中的上传，留下的正是
+#     `state != uploaded` 的半截资产，而本 job 没有删除能力去收拾它。
+name: release-upload
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '已存在且**已发布**的 release tag（本 workflow 不会创建它；draft 会失败）'
+        required: true
+        type: string
+      run_id:
+        description: '产出待上传 artifact 的那个 run 的 id（例如 build-backends / mirror-model-blobs 的 run）'
+        required: true
+        type: string
+      artifacts:
+        description: '要取哪些 artifact（逗号分隔；留空 = 该 run 的全部）'
+        required: false
+        default: ''
+        type: string
+      dry_run:
+        description: '只做检查与判定，不真的上传（用来先看一眼计划）'
+        required: false
+        default: false
+        type: boolean
+
+# ★ 顶层什么权限都不给。写权限只在下面那一个 job 上出现。
+#
+# 为什么不写在顶层：顶层的 `contents: write` 会**同时**落到 `verify` 上，
+# 而 verify 存在的全部理由就是"不带凭证也能下下来"。一个手里攥着写权限的校验者，
+# 证明不了匿名用户拿得到东西。**边界要能从 YAML 上一眼看出来，而不是靠读脚本。**
+permissions: {}
+
+concurrency:
+  group: release-upload-${{ github.event.inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    name: 上传到已存在的 release（唯一一个有写权限的 job）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      # ★ 这是整个仓库里唯一一处 `contents: write`。
+      #   GitHub 没有比它更细的 release 权限刻度 —— 也就是说，"只能新增资产、不能建/改/删
+      #   release" 这条**没法靠 token 的 scope 表达**，只能靠调用面收窄 + 守卫钉住。
+      #   所以：release-upload.mjs 里只有两种请求（GET releases/tags/… 与 POST …/assets），
+      #   lint-workflows.mjs 里有一条断言不许别的方法出现。
+      contents: write
+      # 取**另一个 run** 的 artifact 需要它。只读。
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+
+      # 脚本是零依赖的纯 node（和 emit-pack-manifest / mirror-model-blobs 同一个理由：
+      # 为了传几个文件去装整个 workspace 不划算）。
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: 取产物（来自 run ${{ github.event.inputs.run_id }}）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release-src
+          names=""
+          if [ -n "${{ github.event.inputs.artifacts }}" ]; then
+            IFS=',' read -ra arr <<< "${{ github.event.inputs.artifacts }}"
+            for a in "${arr[@]}"; do
+              a="$(echo "$a" | xargs)"          # 去掉两边空格
+              [ -n "$a" ] && names="$names -n $a"
+            done
+          fi
+          # shellcheck disable=SC2086
+          gh run download "${{ github.event.inputs.run_id }}" \
+            --repo "${{ github.repository }}" --dir dist/release-src $names
+          echo "── 取到的东西 ──"
+          find dist/release-src -type f -printf '%12s  %p\n' | sort -k2
+
+      # 这一步做四件事，任何一件不过就红：
+      #   ① 现场复算每个文件的 sha256，与产物自带的 SHA256SUMS / pack fragment 比对
+      #   ② 确认 release 存在、且不是 draft（不存在 / draft 都不替你修）
+      #   ③ 逐个资产判定：不存在→传；已存在且一致→跳过并说明；已存在但不同→**失败**
+      #   ④ 串行上传，重试前重新核对
+      - name: 校验产物 → 判定 → 上传
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/ci/release-upload.mjs \
+            --repo "${{ github.repository }}" \
+            --tag "${{ github.event.inputs.tag }}" \
+            --from dist/release-src \
+            --stage dist/release-stage \
+            ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}
+
+      # 只把**清单**交给下一 job（几 KB），不把产物再倒一次手：
+      # 校验那一步本来就该从 release 的公开 URL 取，而不是从我们手里的副本取。
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-upload-plan
+          path: |
+            dist/release-stage/SHA256SUMS
+            dist/release-stage/RELEASE-UPLOAD-PLAN.json
+          if-no-files-found: error
+          retention-days: 90
+
+  verify:
+    name: 不带凭证从公开 URL 重新下载并复算（会真的红）
+    needs: upload
+    # ★ dry_run 时上面没传任何东西，但**校验照跑** ——
+    #   它验的是"release 上现在到底是什么"，与我们这次传没传无关。
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      # ★ 只有 read，而且只是为了 checkout 出校验脚本本身。
+      #   真正的保证在脚本里：`release-verify.mjs` 启动时会断言自己的环境里
+      #   **没有** GITHUB_TOKEN / GH_TOKEN / GH_ENTERPRISE_TOKEN，有就当场失败。
+      #   为什么要机器检查而不是写条规矩：某天有人为了修一个 401 会"顺手"
+      #   在这一步补一行 `env: GITHUB_TOKEN: …` —— 那一刻这个 job 会继续绿，
+      #   但它再也证明不了匿名可下（也就再也发现不了 draft release）。
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-upload-plan
+          path: dist/release-stage
+
+      # ⚠️ 这一步**刻意不设任何 token 环境变量**。别加。
+      - name: 匿名重新下载 + 复算 sha256
+        run: |
+          node scripts/ci/release-verify.mjs \
+            --plan dist/release-stage \
+            --out dist/release-verify
+
+      # ★ 用 coreutils 自己再验一遍 —— 一次完全独立于我们任何代码的复核。
+      #
+      # 之所以这条命令在这里**本来就是对的**（不需要 --ignore-missing、不需要读文档）：
+      # `SHA256SUMS` 恰好列出这次要保证存在的那些资产，一个不多一个不少。
+      # `pack-publish` T-150 踩过反面：三个分包共用一份 9 行清单，单独验一包时
+      # `sha256sum -c` 输出 `5 listed files could not be read` + exit 1，
+      # **而文件一个都没坏**。
+      #   > 一个把"完全正常"报成"看起来像损坏"的验证工具，比没有验证工具更糟 ——
+      #   > 它要么让人丢掉好产物，要么让人学会忽略输出，后者更贵。
+      #   > **让最显然的那条命令本来就是对的。**
+      - name: sha256sum -c（独立复核，不依赖本仓任何代码）
+        working-directory: dist/release-verify
+        run: |
+          set -euo pipefail
+          sha256sum -c SHA256SUMS
