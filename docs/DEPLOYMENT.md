@@ -1,13 +1,37 @@
 # OpenMemo 部署手册
 
-> 面向**要真正把它跑起来并长期用下去**的人。想先知道这是什么，看 [`../README.md`](../README.md)。
+> 面向**要真正把它跑起来并长期用下去**的人。想先知道这是什么，看 [`../README.md`](../README.md)
+> —— README 只留结论，**每条结论的出处、边界与"没验过"的部分都在这里**。
 >
-> **证据标记**（与 README 同一套）：`[CI 实测 run N]` · `[本机实测]`（一台 Linux x64 开发机，
-> 2026-08-06 现跑）· `[读码 文件:行]` · `[未验证]`。**没核实过的不写。**
+> **证据标记**：`[CI 实测 run N]`（GitHub Actions 干净 runner，run 号可查）· `[本机实测]`
+> （一台 Linux x64 开发机，2026-08-06 现跑）· `[读码 文件:行]` · `[未验证]`（没人验过）。
+> **没核实过的一律不写**，`[未验证]` 出现很多次是故意的。
 >
-> ⚠️ 本文档里出现最多的一个词是「**它坏的时候什么都不说**」。
-> 本项目最贵的几类故障全是这个形状：装得上、校验过、自检绿，只有真正去用时才死。
-> 下面凡是标 🔴 的段落，都属于这一族。
+> ⚠️ 本项目最贵的几类故障是同一个形状：**装得上、sha256 校验过、安装记录成功、自检全绿，
+> 只有真正去执行时才死**。下面凡是标 🔴 的段落都属于这一族。
+>
+> ⛔ **一条贯穿全文的边界**：这台开发机上**从来没有跑过一次真实转写**（用户明确要求不要跑
+> whisper）。转写那条路的证据**全部**来自 CI run 31076010999，本文不会把它写成本机实测。
+
+---
+
+## §0 数据放在哪、什么会出网
+
+- **音视频原件、转写稿、笔记、思维导图、检索索引** —— 全部在本机一个数据目录里
+  （SQLite 主库 + 文件），位置与结构见 §3。
+- **转写全程不出网。** ffmpeg / whisper.cpp / VAD 都是本机子进程，音频不发给任何人。
+  `[CI 实测 run 31076010999]` 三个平台各跑了一次「屏蔽宿主 PATH 的全新机器 → 从网页装组件 →
+  拉模型 → 走产品真实路径转写 → 拿到非空文本」。
+- **会出网的只有三件事**：
+  1. **你自己粘的链接** —— yt-dlp / ffmpeg 去下载它（这是 F1 的定义）。
+  2. **组件与模型的下载** —— GitHub / HuggingFace / ModelScope，每个文件都有钉死的 sha256，
+     下完必校验（`[CI 实测]` 清单里 62 个文件 sha256 覆盖 **100%**，见
+     `docs/design/D-11-ci-platform-facts.md` §6.2）。
+  3. 🔴 **思维导图与摘要 —— 调你自己填的在线大模型 API。** 转写稿的相关片段会发到那个服务商
+     （DeepSeek / OpenAI 兼容接口 / …）。**这一半不是本地的，本文不粉饰它。**
+     ADR-016 记录了这是用户的明确决定（原话「语言模型我们不要本地自己接模型做，要和 memo 一样，
+     接入在线模型 API」）。不填 Key 时：导入、转写、检索、播放、笔记编辑照常，只有思维导图/摘要
+     不可用 —— `[本机实测]` 自检项 `llm.tier1` 会报 `warn 未配置（provider=无 key=无）`。
 
 ---
 
@@ -37,7 +61,7 @@
 
 #### ① macOS：必须 **≥ 13.3**
 
-`[CI 实测，解包读 `LC_BUILD_VERSION`]` 修复前 12 个二进制全部 `minos = 26.0.0`
+**[CI 实测]**（解包读 `LC_BUILD_VERSION`）修复前 12 个二进制全部 `minos = 26.0.0`
 （= runner 的系统版本，也就是**只能在最新版 macOS 上跑**）；修复后全部 `minos = 13.3.0`。
 
 - 13.3 不是拍脑袋定的：上游 `vendor/whisper.cpp/build-xcframework.sh:5` 写着
@@ -48,7 +72,7 @@
 
 #### ② Linux：glibc
 
-`[CI 实测，`objdump -T` 逐个 ELF 取最高 `GLIBC_x.y`]`：
+**[CI 实测]**（`objdump -T` 逐个 ELF 取最高 `GLIBC_x.y`）：
 
 | 包 | 构建机 | 最高 GLIBC 需求 | 判定 |
 |---|---|---|---|
@@ -62,9 +86,8 @@
 把构建腿挪回 ubuntu-22.04（但 jammy 没有 `glslc`，得另找 Vulkan SDK 装法），
 或者加一条运行期检测（比对本机 glibc / 装完真 `dlopen` 一次并报进自检）。
 
-> 顺带记一条更隐蔽的：`GGML_BACKEND_DL=ON` 下 `dlopen` 失败**不算错误**，只是"这个后端没注册上"。
-> whisper 会照常用 CPU 跑完，**用户只会觉得"装了加速包但没变快"**，
-> 安装记录是成功的、sha256 是对的、自检里也没有对应检查项。
+> 顺带记一条更隐蔽的：`GGML_BACKEND_DL=ON` 下 `dlopen` 失败**不算错误**，
+> 症状是"装了加速包但没变快"而没有任何东西报错 —— 展开见 §8.8。
 
 #### ③ Windows：VC++ 2015-2022 可再发行组件
 
@@ -85,21 +108,50 @@
 
 ### 1.3 平台矩阵（能装什么）
 
-`[CI 实测 run 31076010999]`，判据是「屏蔽宿主 PATH 的干净机器上真的转出非空文本」：
+来源：`cold-start-audit` **run 31076010999**（`conclusion: success`，三平台三个 job 全绿）。
+判据是「**屏蔽宿主 PATH 的干净机器上真的转出非空文本**」，不是「代码写完了」。
+每个平台跑两组：屏蔽宿主 PATH（保证不是借了机器上已有的 ffmpeg）与不屏蔽的对照组，两组结论一致。
 
-| 平台 | 适用包 | 后端 | 结论 |
-|---|---|---|---|
-| Linux x64 | 5 / 22 | 只有 CPU | ✅ 通 |
-| Windows x64 | 5 / 22 | 只有 CPU（CUDA 包见下） | ✅ 通 |
-| macOS arm64 | 5 / 22 | CPU + Metal + CoreML **同在核心包里** | ✅ 通 |
-| linux-arm64 / macOS Intel / Linux ROCm | — | — | ✂ 用户 2026-08-05 明确裁掉，无产物 |
+| 平台 | 目录里适用的包 | 产品自己下载并校验的 | 借宿主 PATH 的 | 后端 | 真的转出非空文本 |
+|---|---|---|---|---|---|
+| **Linux x64** | 5 / 22 | **5** | **0** | 只有 CPU | ✅ 2.1s |
+| **Windows x64** | 5 / 22 | **5** | **0** | 只有 CPU（CUDA 包见下） | ✅ 3.6s |
+| **macOS arm64** | 5 / 22 | **5** | **0** | CPU + Metal + CoreML **同在核心包里** | ✅ 106.1s（见 §8.3） |
+| linux-arm64 / macOS Intel / Linux ROCm | — | — | — | — | ✂ 用户 2026-08-05 明确裁掉，无产物 |
+
+那 5 个工具是 `ffmpeg` / `ffprobe` / `whisper-cli` / `whisper-vad-speech-segments` / `yt-dlp`。
+三个平台转出来的文本一字不差（108 字符，肯尼迪就职演说那句），切分方式都是「VAD（按静音）」。
+**中文双字词真的搜得到**（判据不是"扩展文件下下来了"）：三平台 `ext.chineseSearch = ok`，
+命中 `用户:1 推特:2 中国:1 服务:2`；`[本机实测]` 同一条在开发机上是 `用户:1 推特:1 中国:1 服务:1`。
+
+#### 明确不支持（有产物层面的事实，不是"暂时没做"）
+
+| 组合 | 状况 |
+|---|---|
+| **Linux + AMD（ROCm）** | 🔴 **没有任何产物。** 唯一的产物来源是 `linux-x64-rocm` 构建腿，用户 2026-08-05 明确裁掉；上游 whisper.cpp 至今也没有 ROCm 版本。章程 §3 那一行在产物层面是空的，章程里已加订正块。**不要对着章程去装一个不存在的包。** |
+| **Linux + NVIDIA（CUDA）** | 🔴 **目录里没有 CUDA 包。** 已经能编出来，但按 D-11 §8.4 的三条证据「纯增量的加速包在本产品里结构上不可用」（见 §8.8），**不接进目录**。Linux 上目前只有 CPU 后端。 |
+| **Windows + AMD（DirectML）** | 🔴 无产物。Vulkan 那条我们自己能编出来，但同样卡在 §8.4，**未接入**。 |
+| **macOS Intel（x64）** | ✂ 用户 2026-08-05 明确裁掉，不构建。 |
+| **linux-arm64** | ✂ 同上裁掉。（讽刺的一条：它那两个构建腿曾是唯二全绿的 Linux job，删的不是坏的那些，是用不到的那些。） |
 
 🔴 **Windows + NVIDIA CUDA 今天装不上。** 包（`whispercpp-cuda-12.4-win-x64`）在目录里，
 但它是 L2、需要硬件探针门控，而 **`openmemo-probe` 至今没有分发通道**
-（CI 会构建它，没有任何 manifest 提供下载地址）。
+（CI 会构建它，没有任何 manifest 提供下载地址；`grep openmemo-probe vendor/manifests/*.json` → 0 命中）。
 `[本机实测]` `GET /api/runtime/hardware` 里 cuda/vulkan/rocm/metal 四条全是
 `probe did not complete: probe executable not found`；
-`[CI 实测]` Windows runner 上"适用于本机"的包正好 5 个，不含 CUDA。
+`[读码 packages/runtime/src/backends/applicability.ts:91-97]` 探针为 null 时 L2 一律不适用；
+`[CI 实测]` Windows runner 上"适用于本机"的包正好 5 个，不含 CUDA（Windows 平台的包其实有 6 个）。
+→ **实际后果：Windows 上今天只有 CPU 后端能装。**
+
+### 1.4 五个基础功能今天的真实状态（章程 F1–F5）
+
+| # | 功能 | 状态 |
+|---|---|---|
+| F1 | 音视频**链接**导入（YouTube / Bilibili / 播客 / 直链） | yt-dlp 随产品下载并校验，`[CI 实测]` 三平台都装上了。全链路（真下载 → 转写）在 2026-08-02 被 `gpu-runtime` 在这台机器上真跑过一次（`adapter: yt-dlp \| downloaded 252182 bytes`）—— 这条是 `[报告]`，**没有人独立复核，CI 也不跑它**（会打真实站点）。同一轮还查出并修掉了「yt-dlp 命中 `--max-downloads` 返回 101 被当成失败」这个让 F1 对每个视频都失败的 bug |
+| F2 | **本地文件**导入（拖拽音频/视频） | ✅ 就是 `run 31076010999` 里那条路径（`/api/notes/import` → 转写 → 取转写稿） |
+| F3 | **录音转文字**（浏览器内录音 → 流式 ASR） | 前端已接通 `[读码 features/recorder/asrStream.ts]`：AudioWorklet 采集 → Int16 帧推 `/ws/recorder`。⚠️ **需要安全上下文**：`http://<局域网 IP>` 下浏览器不给麦克风，见 §2.2 |
+| F4 | 思维导图整理 | ✅ 已有真实产物；⚠️ **依赖在线 LLM**，没 Key 就不可用（§0） |
+| F5 | 笔记管理（列表/详情/搜索/标签/时间轴联动） | ✅ 全文检索含中文分词，见 §1.3 |
 
 ---
 
@@ -339,7 +391,8 @@ SQLite 扩展是个例外：它们被**汇聚**（软链/Windows 上拷贝）到
 因为两个扩展来源不同、目录结构也不同，而 SQLite 只认一个加载目录。
 这一步**只在启动时做**，所以装完扩展必须重启才生效 —— 网页会提示，点一下 daemon 自己重启。
 
-`[本机实测]` 整条链走通（只发 HTTP，没碰命令行）：
+`[本机实测]` 整条链走通（只发 HTTP，没碰命令行）。⚠️ 安装接口的字段名是 **`id`**，
+不是 `packId` —— 写错会拿到 `400 BAD_REQUEST / 缺少后端包 id`（`[本机实测 2026-08-06]` 两次都撞过）：
 
 ```
 POST /api/backends/install {"id":"sqlite-vec-linux-x64"}      → 202 · job succeeded
@@ -354,6 +407,10 @@ POST /api/models/pull      {"id":"asr/whisper-tiny-q5_1"}     → 202 · job suc
 ⚠️ **装完组件 ≠ 能转写。** 冷装之后目录里一个 ASR 模型都没有，
 这是产品事实（D-11 §7.3），不是 bug。自检会用 `model.asr fail` 明确说出来，
 并给出可点的去处。
+
+🔴 **下载来的二进制我们无法向你证明没被篡改。** 代码签名证书不买（ADR-003 决策 4）：
+macOS 只做 ad-hoc 签名，Windows 完全不签。完整性保障只有两层 —— HTTPS 传输，
+加上清单里逐文件钉死的 sha256（下完必校验，不过就换镜像）。
 
 ---
 
@@ -461,7 +518,7 @@ node apps/daemon/dist/main.js --data-dir /backup/openmemo-2026-08-06
 > 这是一个独立文件夹，删除它不会影响程序本体运行（下次启动会重建空目录）。
 > 但请注意 `externalFiles` 里列出的那个指针文件也需要一并删除。
 
-**完整卸载 = 三步**：
+**完整卸载 = 四步**：
 
 1. 停 daemon；
 2. 删数据目录；
@@ -527,7 +584,11 @@ libsimple-windows-x64.zip        → simple.dll     ← MSVC 不加 lib 前缀
 自检里写着原因：`asr.coreml warn 未启用 ANE —— 转写会走 Metal/CPU（功能正常，只是慢）：
 ggml-tiny-q5_1.bin → 缺 ggml-tiny-encoder.mlmodelc`。
 
-**两条诚实边界**：
+**产物这一半是好的**：macOS 核心包里**已经带了** `libwhisper.coreml.dylib`
+`[CI 实测，包解开数过]`，链路上原先的 3 处断点也都修好了（解包多一层同名目录 /
+前端不传 `includeOptional` / 默认推荐的量化档没挂 encoder）。
+
+**三条诚实边界**：
 
 - runner 是虚拟化的 3 核 M1，这个因素与 ANE 因素**没有被拆开过**，
   所以**不要把 48 倍差距全算到 ANE 头上**（`[未定性]`）。
@@ -632,3 +693,67 @@ macOS 的 Metal 是这一族里唯一能就地解决的一格，所以它**跟�
 [ ] 特别确认 tool.ffmpeg 不是「来自系统 PATH」——是的话，换一台机器就会坏
 [ ] 读一遍 docs/SECURITY.md 的「当前真实姿态」，确认你接受那个安全姿态
 ```
+
+---
+
+## 附录 A 许可证清单
+
+**本仓库**：`package.json` 写的是 **`UNLICENSED`**，且根目录**没有 LICENSE 文件** `[本机实测 ls]`。
+这是个人自用项目（ADR-002 v2：用户已明确"仅个人/自用，不追求商用、不上应用商店"）。
+**要分发它，先读 ADR-002 的「升级路径」** —— 主要工作是自建 LGPL 版 FFmpeg，
+以及把 yt-dlp 改回可选插件。
+
+事实来源是 `scripts/license-report.mjs`（`pnpm license:report`），产物 `license-report.md` / `.json`。
+
+**A 类 —— git submodule（`vendor/`，我们自己编译）** `[本机实测 git submodule status]`
+
+| 组件 | 版本 | 许可证 |
+|---|---|---|
+| whisper.cpp | v1.9.1 | **MIT** |
+| sherpa-onnx | v1.13.4 | **Apache-2.0** |
+| sqlite-vec | v0.1.9 | **Apache-2.0** |
+| libsimple（SQLite 中文分词） | v0.7.1 | 上游 MIT **OR** GPL-3.0 双授权 —— **本项目选择 MIT** |
+
+**C 类 —— 运行时下载的二进制**（`vendor/manifests/backends.json` 11 个 + `sqlite-ext.json` 11 个
+= 目录里的 **22** 个包，逐条带 sha256）。下表逐条读自各 pack 的 `license.id` 字段 `[本机实测]`：
+
+| 组件 | 包数 | 许可证 | 备注 |
+|---|---|---|---|
+| **ffmpeg / ffprobe**（`media-tools-*`） | 3 | 🔴 **GPL-3.0-or-later** | Linux/Windows 用 BtbN 的 gpl 构建，macOS 用 jellyfin-ffmpeg |
+| **yt-dlp**（`ytdlp-*`） | 4 | 🔴 **GPL-3.0-or-later** | 钉死 `engineVersion` = `2026.07.04` |
+| whisper.cpp 二进制包（`whispercpp-*`） | 4 | MIT | 含那个装不上的 `whispercpp-cuda-12.4-win-x64` |
+| libsimple | 6 | MIT | |
+| sqlite-vec | 5 | MIT | |
+
+**模型权重** —— **[本机实测]** 读自 `vendor/manifests/models-*.json` 的 `license` 字段
+
+| 来源 | 条数 | 许可证 |
+|---|---|---|
+| Whisper ggml | 25 | **MIT** |
+| silero-vad 等切分/标点支持模型 | 5 | 2 条 MIT + 3 条 **Apache-2.0**（sherpa 流式 zh-14M / Paraformer 中文 / ct-transformer 中英标点） |
+| 本地 LLM（ADR-016 后已不是主路径） | 5 | 4 条 Apache-2.0（Qwen3 系列）+ 1 条 **Gemma Terms of Use**（Gemma-3-4b，**不是 OSI 许可证**） |
+
+> ⚠️ **GPL 那两行是这份清单里唯一需要动脑子的地方。** 个人自用不触发 GPL 的分发义务
+> （GPL 约束的是分发行为），所以 ADR-002 v2 允许直接内置。
+> **一旦你要分发这个东西，这两条就是硬阻断。**
+
+> ⚠️ 报告脚本自身的两个已知偏差，如实说明：① `license-report.md` 里 C 类那 7 行显示 `UNKNOWN`，
+> 那是按**清单文件**粒度统计的结果，不是说这些组件没有许可证 —— 真实许可证在每个 pack 的
+> `license` 字段里，上表就是从那里读出来的。② 报告里的 B 类（npm 依赖）是空的，
+> 因为 `pnpm licenses list` 采集失败了，**不是"没有 npm 依赖"**。
+
+---
+
+## 附录 B 仓库结构
+
+```
+apps/daemon      本地 daemon（HTTP + WS + 任务队列 + SQLite）
+apps/web         React SPA（daemon 直接托管它的构建产物）
+packages/        shared / db / downloader / llm / mindmap / pipeline / runtime
+vendor/          4 个 git submodule + manifests/（组件与模型目录，逐条 sha256）
+scripts/         构建原生产物、许可证报告、自检、CI 自测
+docs/            章程 / ADR / 设计文档 / 安全说明 / 本文档
+coordination/    多 agent 协作产物（协议、任务卡、回执）
+```
+
+**仓库里没有二进制。** `[CI 实测]` 最大的已跟踪文件是 255 KB（JSON / PNG 截图 / Markdown）。
