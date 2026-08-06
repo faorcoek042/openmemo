@@ -18,8 +18,8 @@ depends_on: ADR-001, ADR-002, ADR-003, ADR-004, R-01, R-02, R-03, R-04
 - **降级链**：GPU 后端 CUDA→Vulkan→CPU；ASR whisper.cpp→sherpa-onnx→浏览器 WebGPU；LLM 云→本地 llama→**无 LLM 时用启发式大纲**（F4 必须永远产出点东西）；yt-dlp 失败→引导用户走 F2 拖文件。每条降级都带熔断（连续 3 次崩溃本会话禁用）。
 - **关键取舍**：把 L0 WebGPU 做成"浏览器注册为 ASR worker"，让**零安装体验**和**统一任务队列**同时成立，代价是该任务与浏览器标签页生命周期绑定（关页 → 任务自动 `paused`，不丢进度）。
 - **已核实的两处订正**：① **npm 包名是 `mind-elixir`（v5.14.0），不是 ADR-002/R-03 写的 `mind-elixir-core`**（后者是 GitHub 仓库名，npm 上 404）；② markmap 的 `transform()` 只吃 Markdown 字符串，但 `Markmap.create()` 吃 `IPureNode` 对象 → **我们直接生成 `IPureNode`，绕开"doc→Markdown→再解析"的两次有损转换**（§6.3）。
-- **未验证/存疑**：① 端口 17650 未做占用调研（仅确认在三大 OS 的临时端口段之外）；② llama-server / Ollama 的 OpenAI 兼容端点为**文档级**，未实测；③ 浏览器 WebGPU 转写的实际可用性未验证；④ 本文所有时序图为设计意图，**无任何代码跑通**。
-- **对其他 agent 的影响**：T-011 请按 §1.2 的 daemon 目录切分建骨架，并注意 `mind-elixir` 包名订正与 **`better-sqlite3` v13 要求 `node >= 22`**（已核实）；T-012 的 probe/后端安装器请实现 §6.1 的 `AsrEngine.capabilities()` 与 §7.3 的熔断契约；T-013 请认领 §3 的前缀分配、§3.5 的错误信封（RFC 9457）、§3.3 的 SSE 信封格式，并注意 **API 对外用 ULID `uid`，不用整数 PK**（见 D-02 §1.1）。
+- **未验证/存疑**：① 端口 17650 未做占用调研（仅确认在三大 OS 的临时端口段之外）；② llama-server / Ollama 的 OpenAI 兼容端点为**文档级**，未实测；③ 浏览器 WebGPU 转写的实际可用性未验证（ADR-006 决策 3 已把它降为实验特性，v1 不实现）；④ 本文所有时序图**在写作当时（2026-08-02）**为设计意图；此后 T-011~T-152 已按此实现并跑通（`apps/daemon/src` 10 个子目录、`apps/web/src` 15 个 feature，端到端脚本 `apps/daemon/scripts/e2e-f3.mjs` / `e2e-cancel.mjs`、`packages/downloader/scripts/verify-{offline,download,unpack}.mjs`），**与本文的偏差见 D-07/D-08**。**此前写着"无任何代码跑通"**。
+- **对其他 agent 的影响**：T-011 请按 §1.2 的 daemon 目录切分建骨架，并注意 `mind-elixir` 包名订正与 **`better-sqlite3` v13 要求 `node >= 22`**（已核实）；T-012 的 probe/后端安装器请实现 §6.1 的 `AsrEngine.capabilities()` 与 §7.3 的熔断契约；T-013 请认领 §3 的前缀分配、§3.5 的错误信封（**`ApiErrorBody`，不是 RFC 9457** —— **此前这里写着 RFC 9457**，与 §3.5 的 2026-08-02 订正冲突，以 §3.5 为准）、§3.3 的 SSE 信封格式，并注意 **API 对外用 ULID `uid`，不用整数 PK**（见 D-02 §1.1）。
 
 ---
 
@@ -117,29 +117,46 @@ depends_on: ADR-001, ADR-002, ADR-003, ADR-004, R-01, R-02, R-03, R-04
 
 ### 1.2 daemon 目录切分（给 T-011 建骨架用）
 
+**下面这棵树已按落地实际重写**（原设计树的偏差见树下说明）：
+
 ```
 apps/daemon/src/
 ├── main.ts                 引导与生命周期（§2）
-├── bootstrap/              单实例锁 · 端口选择 · runtime.json · 打开浏览器 · 崩溃恢复扫描
+├── index.ts                包入口
+├── bootstrap/              单实例锁 · 端口选择 · runtime.json · TLS · 打开浏览器 · 崩溃恢复扫描
 ├── config/                 路径解析（各 OS）· 环境变量覆盖 · 设置读写
 ├── http/
 │   ├── server.ts           监听、连接预算、优雅关闭
 │   ├── guard.ts            Host/Origin/Sec-Fetch 校验（DNS rebinding + CSRF）
 │   ├── auth.ts             Bearer ↔ cookie session
-│   ├── rest/               资源路由（薄）
-│   ├── sse/                单流广播器 + 重放环
-│   ├── ws/                 recorder · asr-worker
-│   ├── media/              Range 字节流
-│   └── static/             SPA 托管
-├── db/                     连接、迁移执行器、repositories、扩展加载与降级
+│   ├── rest/               资源路由（薄）—— 含 search.ts（原设计的 search/ 落在这里）
+│   ├── sse.ts              单流广播器 + 重放环（是**文件**，不是目录）
+│   ├── ws.ts               WS 路由分发（是**文件**；会话实现在顶层 ws/）
+│   ├── media.ts            Range 字节流（是**文件**）
+│   ├── upload.ts           上传接收
+│   ├── static.ts           SPA 托管（是**文件**）
+│   └── respond.ts          响应封装（错误信封，见 §3.5）
+├── ws/                     WS 会话实现：recorder.ts（实时录音，见 D-06 §15.1）
+├── db/                     连接、repositories（迁移执行器与 DDL 在 `packages/db`，见 D-02 §7）
 ├── jobs/                   队列、调度器、lane 信号量、lease、job plan 注册表、worker 宿主
-├── domain/                 notes / mindmaps / tags / folders / transcripts 领域服务
-├── search/                 FTS5 查询构造 · 向量检索 · 索引重建
-├── events/                 内部事件总线 → SSE 投递（含节流）
-├── subprocess/             SubprocessRunner（★ 唯一 spawn 出口）+ 二进制 allowlist
-├── adapters/               asr/ · llm/ · media-source/（注册表 + 各实现）
-└── logging/                结构化日志、脱敏、轮转（零遥测）
+│                           —— 含 events.ts（原设计的 events/ 落在这里）
+├── llm/                    LLM 适配装配（原设计 adapters/llm/）
+├── pipeline/               转写/媒体流水线装配（原设计 adapters/asr/ + media-source/）
+├── runtime/                硬件探测与后端安装的 daemon 侧装配
+└── storage/                受管根目录、迁移搬迁（move.ts）、布局
 ```
+
+> **此前这棵树写着 `domain/`、`search/`、`events/`、`subprocess/`、`adapters/`、`logging/` 六个目录，
+> 以及 `http/{sse,ws,media,static}/` 四个子目录 —— 这 10 项都不存在**（20 项里 10 项，50%）。落地时的实际去向：
+> - `http/sse`、`http/ws`、`http/media`、`http/static` 各是**一个文件**（`sse.ts` / `ws.ts` / `media.ts` / `static.ts`），不是目录；
+> - `search/` 落在 `http/rest/search.ts`；
+> - `events/` 落在 `jobs/events.ts`；
+> - `adapters/` 拆成了 `llm/` 与 `pipeline/` 两个目录；
+> - `subprocess/`（`SubprocessRunner`）按 D-06 §1 的意见移到了 **`packages/pipeline/src/subprocess/`**——spawn 的实际发生地（另见 §8.4 的订正）；
+> - `domain/` 与 `logging/` **从未建立**（领域逻辑直接在 `db/` 的 repositories 与 `http/rest/` 里）。
+>
+> 反过来，原树**没列出**但实有的目录是 `ws/`、`llm/`、`pipeline/`、`runtime/`、`storage/`。
+> 建骨架时请照上面这棵重写后的树，不要照抄本文旧版本。
 
 > `packages/pipeline`、`packages/mindmap` 里放**纯逻辑**（无 http、无全局状态），
 > 便于单测；daemon 只做装配。`packages/runtime`、`packages/downloader`、`packages/shared`
@@ -324,7 +341,7 @@ SSE `EventSource` 自带重连；断线期间的事件通过 `Last-Event-ID` 从
 |---|---|---|---|
 | `/api/**` | REST / JSON | **短请求**：资源 CRUD、动作触发（返回 jobId）、查询、配置读写 | 长轮询、大文件、流式输出 |
 | `/api/events` | **SSE（全局唯一一条）** | **所有**服务端→客户端的异步通知：任务进度、下载进度、转写增量、LLM 流式 token、硬件/后端状态变更、日志尾巴 | 客户端→服务端（SSE 是单向的） |
-| `/ws/**` | WebSocket | **仅两种**双向低延迟场景：① `/ws/recorder` 浏览器麦克风音频上行 + 实时转写下行（F3）；② `/ws/asr-worker` 浏览器作为 WebGPU ASR worker 的反向通道 | 任何能用 REST+SSE 表达的东西 |
+| `/ws/**` | WebSocket | **仅两种**双向低延迟场景：① `/ws/recorder` 浏览器麦克风音频上行 + 实时转写下行（F3）；② `/ws/asr-worker` 浏览器作为 WebGPU ASR worker 的反向通道 —— ⚠️ **v1 不实现**（ADR-006 决策 3 已降为实验特性；`apps/daemon/src/http/ws.ts` 认得这个路由但**直接拒握手**）。当前实际只有 ① | 任何能用 REST+SSE 表达的东西 |
 | `/media/**` | HTTP 字节流 | 音视频回放（**必须支持 Range**）、波形数据、缩略图、导出文件下载 | JSON |
 | `/` `/assets/**` | 静态 | SPA 产物 | — |
 
@@ -393,7 +410,11 @@ data: {"type":"job.progress","ts":"2026-08-02T…","topic":"job:01J…",
 | 端点 | 方向 | 载荷 |
 |---|---|---|
 | `/ws/recorder` | 上行：二进制音频帧（PCM16 16kHz 单声道，20~100ms 一帧）；下行：JSON `{partial|final, segment}` | F3 实时录音转写 |
-| `/ws/asr-worker` | 下行：`{chunkId, audioUrl, modelId, params}`；上行：`{chunkId, segments[] , progress}` | 浏览器 WebGPU 作为 ASR worker（§6.1 L0） |
+| `/ws/asr-worker` | 下行：`{chunkId, audioUrl, modelId, params}`；上行：`{chunkId, segments[] , progress}` | 浏览器 WebGPU 作为 ASR worker（§6.1 L0）—— ⚠️ **v1 不实现** |
+
+> ⚠️ **`/ws/asr-worker` 这一行是保留的协议设计，不是当前行为。** 按 **ADR-006 决策 3** 它已降级为实验特性、
+> **v1 不实现**：`apps/daemon/src/http/ws.ts` 的 `WS_ROUTES` 认得这个路径，但握手直接被拒（文件里两处注释写明了）。
+> 本文 TL;DR 第 3 行早已说"已降为实验特性"，**此前 §3.1 与本表没跟着同步**，看上去像个可用端点。
 
 约束：
 - 二进制帧走 `ArrayBuffer`，控制消息走 JSON 文本帧，**不混编**。
@@ -415,11 +436,11 @@ data: {"type":"job.progress","ts":"2026-08-02T…","topic":"job:01J…",
   ```
   **采用实现版本**，`code` 仍是稳定字符串（前端按它做 i18n 与动作，见 D-05 §5.2/§6.2）。
 
-  ⚠️ **但缺一个字段**：原设计的 `remediation: {action, params}` 没有对应物。
-  它不是锦上添花 —— **章程要求 2.1「用户不碰命令行」直接依赖它**：
-  错误若只能给一段文字，用户还是得去查文档。建议在 `error` 下补一个可选
-  `remediation?: { action: string; params?: Record<string, unknown> }`。
-  该文件归 `model-mgmt` 独占，**需 Manager 协调**（见 D-05 §8 差异 2）。
+  ✅ **`remediation` 已补入**：`packages/shared/src/api.ts:272` 现有
+  `remediation?: Remediation | null;`（同文件 `:258` 的 `ApiErrorBody`，注释写明形状是
+  `{error:{code,message,messageZh,retryable,remediation}}`），由 **ADR-007 决策 2 批准**。
+  它不是锦上添花 —— **章程要求 2.1「用户不碰命令行」直接依赖它**。
+  ⚠️ **此前这一段写着"但缺一个字段：原设计的 `remediation: {action, params}` 没有对应物…该文件归 `model-mgmt` 独占，需 Manager 协调" —— 已补，无需协调**（D-05 §8 差异 2 同步关闭）。
 - **版本化**：路径前缀 `/api`（**订正**：原写 `/api/v1`；实现无版本段）。
   版本职责由 `packages/shared` 的 `CONTRACT_VERSION` 承担 —— 前端启动时比对，不匹配则阻断并提示刷新。
   破坏性变更升 `CONTRACT_VERSION`；只有在需要新旧并存时才引入路径版本段。
@@ -814,7 +835,7 @@ interface Adapter {
 ```
 
 **共同硬规则**（ADR-001 §配套 2：禁止第三方 API 泄漏到业务代码）：
-- 业务代码只能 import 适配层接口，**不得 import 任何第三方 ASR/LLM/渲染库**。CI 用 `eslint no-restricted-imports` 强制（规则清单交 T-011/T-012 落地）。
+- 业务代码只能 import 适配层接口，**不得 import 任何第三方 ASR/LLM/渲染库**。这是**约定（尚未机器强制）**。⚠️ **此前写着"CI 用 `eslint no-restricted-imports` 强制（规则清单交 T-011/T-012 落地）" —— `eslint.config.js` 里没有这条规则**；该文件里的 `no-restricted-imports` 只有三处（`:64`/`:86`/`:104`），全是 D-05 §3.5 的前端分层护栏（`features/A` 不得 import `features/B`、`lib/`+`components/` 不得依赖 `features/`），与 ASR/LLM/渲染库无关。
 - 适配层的**数据结构必须是我们自己的**（`TranscriptSegment`、`MindMapDoc`…），不得直接透传上游的结构体。
 
 ### 6.1 ASR 适配层
@@ -1058,7 +1079,9 @@ interface MediaSource extends Adapter {
 **风险陈述**：用户粘贴的 URL、媒体标题、文件名、字幕内容都会流向 `yt-dlp` / `ffmpeg` 的命令行。
 
 **第一层：架构隔离**
-`SubprocessRunner` 是全项目**唯一**允许调 `child_process` 的模块（CI 用 `no-restricted-imports` 强制，`apps/daemon/src/subprocess/**` 之外禁止 import `node:child_process`）。所有防护集中在这一个文件里审计。
+`SubprocessRunner`（落地在 `packages/pipeline/src/subprocess/runner.ts`）**应当**是全项目唯一 `spawn` 出口，所有防护集中在这一个文件里审计。
+⚠️ **这是约定，尚未机器强制。此前这里写着"CI 用 `no-restricted-imports` 强制，`apps/daemon/src/subprocess/**` 之外禁止 import `node:child_process`" —— 这条 lint 规则从未存在于 `eslint.config.js`（全文 115 行，`child_process` 零命中），`apps/daemon/src/subprocess/` 这个目录也不存在。** 实测产品代码有 5 处 import `node:child_process`，其中 3 处在 runner 之外：`apps/daemon/src/bootstrap/tls.ts`、`apps/daemon/src/main.ts`、`packages/pipeline/src/asr/whisperServer.ts`（另两处在 `packages/runtime/src/selfTest.ts`、`packages/runtime/src/probe/runProbe.ts`）。
+**待办：要么补 `no-restricted-imports` 规则 + 显式白名单（这 5 处逐一定性），要么承认本节立论前提"所有防护集中在一个文件里"当前不成立。不要再把它当成已生效的 CI 护栏引用。**
 
 **第二层：绝不经过 shell**
 ```

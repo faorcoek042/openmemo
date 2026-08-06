@@ -11,15 +11,15 @@ depends_on: D-01, D-02, ADR-002, ADR-003, ADR-004, ADR-005, ADR-006, packages/sh
 - **本文的唯一目的是让 T-021 / T-022 / T-023 能并行开工而不互相踩踏。** 最关键的一节是 §3（目录与所有权），不是 UI 好不好看。
 - **反冲突的核心手法：把"聚合点"变成"分片导出"。** `routes.tsx` 与 SSE 的 `bindings.ts` 是天然的三方冲突热点 → 改为**每个 feature 导出自己的路由片段与 SSE 绑定片段**，聚合文件只在新增 feature 时动一行。`features/<x>/**` 各自独占，横向 import 由 eslint 禁止。
 - **状态三分**：服务端状态 = TanStack Query（唯一真相）；客户端 UI 状态 = Zustand 分片；**高频瞬时流（播放位置 10Hz、下载进度 4Hz、流式字幕）既不进 Query 也不进普通 React state**——走独立的 transient store + ref/canvas 直写，否则 3000 行转写稿必掉帧。
-- **SSE 分发有一个必须写进文档的坑**：`packages/shared` 的 `formatSseFrame()` 写的是 `event: <type>`，**因此 `EventSource.onmessage` 永远不会触发**，必须对 14 个类型逐一 `addEventListener`。三个任务只要有一个人踩到就会浪费半天。
+- **SSE 分发有一个必须写进文档的坑**：`packages/shared` 的 `formatSseFrame()` 写的是 `event: <type>`，**因此 `EventSource.onmessage` 永远不会触发**，必须对 **`SSE_EVENT_TYPES` 的全部 30 个**类型逐一 `addEventListener`——**别写死数字，遍历常量**（`packages/shared/src/events.ts:31`）。**此前写着"14 个"**。三个任务只要有一个人踩到就会浪费半天。⚠️ 顺带记一条契约漂移风险：前端在 `apps/web/src/lib/events/types.ts:130` 维护了**第二份** `ALL_SSE_EVENT_TYPES`，与 shared 那份是两条独立清单，需另行核对是否同步。
 - **多标签页会吃掉 HTTP/1.1 的 6 连接预算**（3 个标签 = 3 条 SSE）→ 用 **Web Locks 选主**，全浏览器只有一个标签持有 EventSource，其余靠 `BroadcastChannel` 转播。这同时解决了 D-01 §3.3"第二条连接进来就关掉旧的"与多标签页的冲突。
 - **F3 两阶段转写的 UI 呈现是本文的产品重点**：`partial` 用灰斜体、`final` 用正常字重，停止后明说"正在用更准确的模型重听"，完成时给"已更新 N 段，你编辑过的 3 段已保留"。不这么做用户会以为软件在乱改自己的字。
 - **长任务后台化**：任务在 daemon 里，前端只是观察者 —— 但用户不知道，所以 UI 必须**主动说**"可以关闭此页面，任务会继续"。全局任务中心 + 顶栏徽标 + 回访续看。
 - **设计令牌已用脚本实测校验**（非目测）：明/暗双档、状态色固定不随主题变、存储分解条的 4 个分段在明暗两档**全部 PASS**；明档 aqua/yellow 对比度 <3:1 → 强制配可见标签（图例已满足）。所有数值与校验输出见 §7。
 - 🔄 **§7.1 表层 / §7.2 品牌两张表已于 2026-08-03 回写更新**（T-124 实测 → T-131 裁决），原因是原表的"三级抬升"在明档实测两两只有 **1.03:1**，**从未真正存在过** —— 那不是一条被违反的规范，是一条描述了不存在事实的规范。变更说明与新判据见 **§7.1b**；四个状态锚点与 `--data-1..4` 未动。
-- **与 `packages/shared` 实际契约的 3 处差异需 Manager 裁决**：① 路由前缀实现为 `/api` 而 D-01 写的是 `/api/v1`；② 错误信封是 `{error:{code,message,messageZh,retryable}}` 而 D-01 写的是 RFC 9457；③ `SSE_EVENT_TYPES` 目前只有模型/下载域的 14 个事件，**F1–F5 需要的 `transcribe.segment`/`mindmap.delta`/`note.*` 等一个都没有**——文件归 `model-mgmt` 独占，我不能改。
+- **与 `packages/shared` 实际契约的 3 处差异 —— 全部已解决**：① 路由前缀 `/api` —— **D-01 已于 2026-08-02 订正**（D-01 §3.5，订正批次①），无分歧；② 错误信封 —— **D-01 §3.5 已改用实现版本** `{error:{code,message,messageZh,retryable,remediation}}`，不再是 RFC 9457；③ `SSE_EVENT_TYPES` **已补齐到 30 个**，F1–F5 全覆盖（`transcribe.started/partial/segment/done/replaced`、`mindmap.delta/done`、`note.created/updated/deleted`、`media.ready/media.asset.ready`、`record.state` 等均在，见 `packages/shared/src/events.ts:31`）。**此前这三条写着"需 Manager 裁决"，其中 ③ 写着"只有模型/下载域的 14 个事件，F1–F5 一个都没有"。**
 - **本次核实到一件必须上报的事**：**shadcn/ui 已于 2026-07-03 把默认底层库从 Radix 换成 Base UI**（`@base-ui/react` v1.6.0，一个包 vs Radix 的十几个包）。仓库里 `components/ui/SOURCE.md` 仍写着"底层依赖 Radix"，需订正，否则 ADR-002 决策 2 的"可追溯"豁免条件不成立。
-- **基建缺口**（`apps/web/package.json` 归 `oss-scout`，需补装）：路由库（建议 `react-router@8.3.0` **Data 模式**——v8 已移除 `react-router-dom`）、i18n（`i18next@26.3.6` + `react-i18next@17.0.11`，**peer 版本强制联动**）、shadcn 底层库、虚拟滚动库。
+- **基建缺口（已收敛到 1 项）**：路由库 ✅ 已装 `react-router@8.3.0`（**Data 模式**——v8 已移除 `react-router-dom`）；i18n ✅ 已装 `i18next@26.3.6` + `react-i18next@17.0.11`（**peer 版本强制联动**）；虚拟滚动 ✅ 已装 `@tanstack/react-virtual@3.14.9`。**仍缺 shadcn 底层库** —— `components/ui/` 至今只有 `SOURCE.md`，零组件，`pnpm-lock.yaml` 里 `base-ui`/`@radix-ui` 命中数为 0。**此前写着这四项全缺、全部"归 `oss-scout`，需补装"**。
 - **Tailwind v4 有个会静默坑人的限制**：`@theme{}` 里的变量不能嵌套在选择器/媒体查询中 → 明暗双档**必须**用 `:root`/`.dark` 定义语义变量 + **`@theme inline`** 转发；写成普通 `@theme` 会在定义处求值，**暗色永远不生效**（§7.5）。
 - **未验证/存疑**：本文无任何代码执行；Web Locks 在 Safari 的可用性、React 19 StrictMode 下的 EventSource 单例行为、虚拟滚动库选型仍未定（§9）。另已核实：**TanStack Query 没有官方 SSE 指南**，§2.3 的映射表是社区共识而非官方定式，已如实标注。
 - **对其他 agent 的影响**：T-021 首建 §3 的共享基建（`app/`、`lib/`、`styles/tokens.css`）后**即冻结**，后续改动走 `SHARED-CHANGE:` 申报；T-022 的模型/运行时页线框**仍以 R-04 §9 与 D-03 为准**，本文只定它们在 IA 中的位置与共用规范；T-023 只碰 `features/mindmap/**` 与 `packages/mindmap/**`。
@@ -49,7 +49,7 @@ depends_on: D-01, D-02, ADR-002, ADR-003, ADR-004, ADR-005, ADR-006, packages/sh
 | **路由** | ⚠️ **完全没有路由库** | §1 的路由表无法落地 → 需补装（选型见 §0.2） |
 | **i18n** | ⚠️ **完全没有 i18n 库** | §6.1 需补装（选型见 §6.1） |
 | 契约 | `packages/shared` 已产出 10 个文件、`CONTRACT_VERSION = 1` | §2/§5 全部对齐它 |
-| SSE | `GET /api/events`，`formatSseFrame()` → `event: <type>`，14 个事件类型，`PROGRESS_THROTTLE_HZ=4`，`SSE_REPLAY_BUFFER_SIZE=256`，`KEEPALIVE_INTERVAL_MS=15000` | §2.3 按此实现 |
+| SSE | `GET /api/events`，`formatSseFrame()` → `event: <type>`，**30** 个事件类型（**此前写着 14 个** —— 那是 2026-08-02 盘点时的数，F1–F5 域事件后续已补齐），`PROGRESS_THROTTLE_HZ=4`，`SSE_REPLAY_BUFFER_SIZE=256`，`KEEPALIVE_INTERVAL_MS=15000` | §2.3 按此实现；数量以 `SSE_EVENT_TYPES` 常量为准，别写死 |
 | 作业状态机 | `JOB_STATES` 8 态 + `JOB_TRANSITIONS`，已与 D-02 §1.7 对齐 | §4/§5 直接复用，**前端不得自造状态词汇** |
 | 错误 | `ApiErrorBody = {error:{code,message,messageZh,retryable,details?}}` | §5/§6 按此，但见 §8 差异 |
 | ULID | `packages/shared/src/ulid.ts` **故意未从 `index.ts` 导出** | ✅ 正确：它 `import 'node:crypto'`，进浏览器包会炸。**前端严禁 import 它**（§2.6） |
@@ -348,8 +348,10 @@ apps/web/src/
 ├── app/                         ⬛ 共享基建（T-021 首建后冻结）
 │   ├── providers.tsx            QueryClientProvider / ThemeProvider / I18nProvider / SseProvider
 │   ├── query.ts                 queryClient 配置 + qk 工厂（§2.2）
-│   ├── router.ts                路由实例
 │   └── i18n/                    i18n 初始化 + locales/{zh-CN,en}/*.json
+│                                （★ 路由**实例**在 `main.tsx`：`createBrowserRouter(routes)`；
+│                                  聚合表在仓库根 `src/routes.tsx`，见上。
+│                                  **此前这里写着 `app/router.ts` —— 该文件不存在**）
 │
 ├── lib/                         ⬛ 共享工具（纯函数 / 单例，无 UI）
 │   ├── api/                     REST 客户端；按 shared 的 ENDPOINTS 表组织，一域一文件
@@ -362,11 +364,12 @@ apps/web/src/
 │
 ├── components/
 │   ├── ui/                      ⬛ shadcn 豁免区（ADR-002 决策 2）——**只增不改**，改动须更新 SOURCE.md
-│   └── common/                  ⬛ 共享业务组件（跨 feature 复用的才放这）
-│       ├── EmptyState.tsx  ErrorBlock.tsx  ProblemBanner.tsx
-│       ├── JobStateChip.tsx  ProgressMeter.tsx  StorageBar.tsx
-│       ├── TimeCode.tsx  ByteSize.tsx  RelativeTime.tsx
-│       └── ModelPicker.tsx  BackendChip.tsx  FitBadge.tsx   ← 由 T-022 从 features/models 提升
+│   └── common/                  ⬛ 共享业务组件（跨 feature 复用的才放这）—— 下面是**实际清单**
+│       ├── EmptyState.tsx  ErrorBlock.tsx  Banner.tsx  ReadinessBanner.tsx
+│       ├── StatusChip.tsx  ProgressMeter.tsx  RemediationButton.tsx  PanelBoundary.tsx
+│       ├── Emphasis.tsx  Button.tsx  MockNotice.tsx  JobToaster.tsx
+│       ├── AsrEngineStatus.tsx  AsrModelPicker.tsx  TranscribeOptions.tsx
+│       └── BackendChip.tsx  FitBadge.tsx  statusTone.ts  llm/
 │
 ├── features/                    ★★ 并行主战场：一个目录一个 owner，互不越界 ★★
 │   ├── capture/      T-021   F1/F2 捕获
@@ -379,11 +382,29 @@ apps/web/src/
 │   ├── settings/     T-021   设置各页
 │   ├── runtime/      T-022   章程 2.1
 │   ├── models/       T-022   章程 2.2
-│   └── mindmap/      T-023   F4（渲染适配层消费 packages/mindmap 的 MindMapDoc）
+│   ├── mindmap/      T-023   F4（渲染适配层消费 packages/mindmap 的 MindMapDoc）
+│   ├── components/           组件目录页（★ 此前未列）
+│   ├── diagnostics/          自检/诊断页（★ 此前未列）
+│   ├── folders/              文件夹树（★ 此前未列）
+│   └── onboarding/           首次运行引导（★ 此前未列）
 │
 └── styles/
     └── tokens.css               ⬛ 设计令牌（§7；architect 定值，T-021 落地后冻结）
 ```
+
+> **两处结构订正（2026-08-06，照抄前请读这段）：**
+>
+> 1. **`components/common/` 的清单已按实际重写。此前这里列的 `ProblemBanner` / `JobStateChip` /
+>    `StorageBar` / `TimeCode` / `ByteSize` / `RelativeTime` / `ModelPicker` 七个文件从未存在**
+>    （12 个里 7 个是空的，58%）——不是改过名，是全仓 grep 零命中。它们的职责实际落在：
+>    时间/字节格式化在 **`lib/format/{time.ts,bytes.ts}`**（本来就该在 `lib/format/`，见上）；
+>    状态芯片在 **`StatusChip.tsx`**；问题横幅在 **`Banner.tsx` / `ReadinessBanner.tsx`**；
+>    模型选择器在 **`AsrModelPicker.tsx`** 与 `llm/` 子目录。
+>    反过来，实有而旧清单没列的有 `Banner` / `ReadinessBanner` / `StatusChip` / `RemediationButton` /
+>    `PanelBoundary` / `Emphasis` / `Button` / `MockNotice` / `JobToaster` / `AsrEngineStatus` /
+>    `AsrModelPicker` / `TranscribeOptions` / `statusTone.ts` / `llm/`。
+> 2. **`features/` 此前只列了 11 个**，实有 15 个目录：补上了 `components/`、`diagnostics/`、
+>    `folders/`、`onboarding/` 四个。
 
 **每个 feature 内部的标准形状**（统一后，三个任务读彼此的代码不用重新学）：
 
@@ -892,8 +913,31 @@ D-01 §5 F3 设计了"流式出稿 → 停止后用离线大模型重跑覆盖"�
 
 ### 7.3a 波形落地：wavesurfer.js v7 的两个关键选项 `[已核实]`
 
+> ### ⚠️ 2026-08-06 订正：**落地时没有用 wavesurfer，自己写了 canvas**
+>
+> 本节下面这句「**不需要我们自己写 canvas**」**已经不成立** —— 实现走的正是另一条路。
+>
+> `[实测]` HEAD `fca18f6`：`wavesurfer.js` 在 `apps/web/package.json:43` 里声明着，
+> 而**全仓零 import**（剥注释后 `.ts/.tsx` 全库 0 命中；只在本节、`peaks.ts` 的注释、
+> `R-03` 的许可证表里被"提到"）。这个依赖从**第一个脚手架提交**（`4018e23` T-011）就在，
+> 一次没被用过。
+>
+> 真正在画波形的是 `apps/web/src/features/player/Waveform.tsx`，**手写 canvas**，
+> 它的文件头写着刻意的理由：「**canvas 直写，完全不进 React。**
+> 播放位置以 ~10Hz 变化，走 React 会拖垮整页。」—— 这个约束 wavesurfer 的 React 用法满足不了，
+> 所以这不是"忘了用"，是**一个没有被写下来的相反决定**。
+>
+> 本节仍然成立的部分：**`.ompk` → 每声道归一化 −1..1 数组**这层转换（`lib/format/peaks.ts`）
+> 仍然存在、且现在真的在产品路径上（`NoteDetailPage.tsx:93` 是它的第一个调用方），
+> 只不过消费方是我们自己的 canvas，不是 wavesurfer。
+> **「不在浏览器解码音频」这条设计要求也仍然成立且做到了。**
+>
+> **待决**：`wavesurfer.js` 这个依赖要么用起来（唯一还说得通的理由是它的
+> `regions/timeline` 插件 —— 转写稿↔音频的段落高亮还没做），要么下掉。
+> 见 `coordination/inbox/debt-cleanup.md`。**本轮没有替 `apps/web` 做这个决定。**
+
 D-01/D-02 的设计要求"绝不在浏览器解码音频"（2 小时文件 `decodeAudioData` 会吃几百 MB 内存并阻塞主线程）。
-核实结果：**wavesurfer.js v7.12.11 原生支持这两点**，不需要我们自己写 canvas：
+核实结果（**写作当时**）：**wavesurfer.js v7.12.11 原生支持这两点**，不需要我们自己写 canvas：
 
 | 选项 | 类型 | 用途 |
 |---|---|---|
@@ -1036,13 +1080,13 @@ v4 是 CSS-first 配置，但有一个**关键限制会直接影响我们**：
 | # | 事项 | 影响 | 状态 |
 |---|---|---|---|
 | V-1 | Tailwind v4 `@theme` 写法、CSS 变量命名、暗色变体、是否需 `tailwind.config.js` | §7.5 | ✅ **已核实**（官方文档原文）。关键发现：`@theme` 不能嵌套 → 必须用 **`@theme inline` 两层结构**，否则暗色不生效 |
-| V-2 | 路由库选型与版本 | §0.2 / §1.2 | ✅ **已核实**：`react-router` **8.3.0**（v8 移除 `react-router-dom`，`RouterProvider` 改从 `react-router/dom` 导入）；`@tanstack/react-router` 1.170.18 可手写路由树。**建议 react-router v8 Data 模式**。仍需 `oss-scout` 补装 |
-| V-3 | i18n 库选型与版本 | §6.1 | ✅ **已核实**：`react-i18next` 17.0.11 + `i18next` 26.3.6（**peer 强制 i18next ≥26.2.0**）；lingui / typesafe-i18n 均需编译步骤。仍需补装 |
+| V-2 | 路由库选型与版本 | §0.2 / §1.2 | ✅ **已核实**：`react-router` **8.3.0**（v8 移除 `react-router-dom`，`RouterProvider` 改从 `react-router/dom` 导入）；`@tanstack/react-router` 1.170.18 可手写路由树。**建议 react-router v8 Data 模式**。**已补装并在用**（`apps/web/package.json` → `react-router@^8.3.0`；`apps/web/src/main.tsx:29` `createBrowserRouter(routes)`）。**此前写着"仍需 `oss-scout` 补装"** |
+| V-3 | i18n 库选型与版本 | §6.1 | ✅ **已核实**：`react-i18next` 17.0.11 + `i18next` 26.3.6（**peer 强制 i18next ≥26.2.0**）；lingui / typesafe-i18n 均需编译步骤。**已补装**（`i18next@^26.3.6` + `react-i18next@^17.0.11`，`apps/web/src/app/i18n/locales/{zh-CN,en}` 已建）。**此前写着"仍需补装"** |
 | V-4 | shadcn/ui 的底层依赖 | §0.1 | ✅ **已核实，且结论出人意料**：默认底层库 2026-07-03 起为 **Base UI（`@base-ui/react` 1.6.0）**，非 Radix。Radix 仍可用（`init -b radix`）。**SOURCE.md 需订正** |
 | V-5 | `navigator.locks`（Web Locks）跨浏览器支持，特别是 Safari | §2.3 多标签选主 | **仍待核实**；有 BroadcastChannel 降级与"仅支持单标签"两条退路 |
 | V-6 | `wavesurfer.js` v7 的 `peaks` / `media` 选项 | §4.4 / §7.3a | ✅ **已核实**：`peaks?: (Float32Array\|number[])[]`（二维，配 `duration`）与 `media?: HTMLMediaElement` 均存在 → 两项需求都满足。插件路径为 `[文档]` 级 |
 | V-7 | React 19 + StrictMode 下 EventSource 单例行为 | §2.3 | 未验证 |
-| V-8 | 虚拟滚动库选型（3000+ 段转写稿） | §4.4 性能 | **未选型**，需 T-021 定并向 `oss-scout` 申报依赖 |
+| V-8 | 虚拟滚动库选型（3000+ 段转写稿） | §4.4 性能 | ✅ **已定并已装：`@tanstack/react-virtual@^3.14.9`**。**此前写着"未选型，需 T-021 定并向 `oss-scout` 申报依赖"** |
 | V-9 | TanStack Query 的 SSE 官方模式 | §2.2/§2.3 | ✅ **已核实：不存在官方 SSE 指南**。`invalidateQueries` / `setQueryData` 两种手法是**社区共识而非官方定式**（我在 §2.3 的映射表按此诚实标注）。另：`experimental_streamedQuery` 确实存在，但它是给 `AsyncIterable` 流式 `queryFn` 用的（如 LLM 输出），**与"SSE 触发缓存失效"是两回事，不要混用** |
 | V-10 | 本文所有线框、令牌落地、状态模式 | 全局 | **零代码执行**。仅 §7.5 的调色板校验是脚本实测 |
 
@@ -1052,7 +1096,9 @@ v4 是 CSS-first 配置，但有一个**关键限制会直接影响我们**：
 
 见 `coordination/inbox/architect.md`。摘要：
 
-1. **`SSE_EVENT_TYPES` 缺 F1–F5 的全部事件**（§8 差异 3）—— 最高优先级，阻塞 T-021/T-023 的实时体验。
+1. ~~**`SSE_EVENT_TYPES` 缺 F1–F5 的全部事件**（§8 差异 3）—— 最高优先级，阻塞 T-021/T-023 的实时体验。~~
+   ✅ **已完成，无需决策**：`SSE_EVENT_TYPES` 现有 **30** 个事件，F1–F5 全覆盖（`packages/shared/src/events.ts:31`）。
+   **此前这条写着"缺 F1–F5 的全部事件"。**
 2. **`ApiErrorBody` 是否加 `remediation`**（§8 差异 2）—— 直接关系章程要求 2.1。
 3. **错误文案归属**：`code` 查前端表（我建议）vs 用后端 `message/messageZh`（§6.2）。
 4. **补装前端依赖**（`apps/web/package.json` 归 `oss-scout`）：
@@ -1194,34 +1240,45 @@ export interface MindMapNodeDraft {
 
 | 事件 | 类别 | payload | 触发 | 前端动作 |
 |---|---|---|---|---|
-| `daemon.shutdown` | hint | `{ graceMs: number }` | 优雅退出开始（D-01 §2.5） | 顶部条幅"本地服务正在退出"，停止发起新请求 |
-| `sync.required` | hint | `{ reason: 'replay_gap' \| 'contract_mismatch' }` | `Last-Event-ID` 未命中重放缓冲（256 条已滚过） | **全量 `invalidateQueries()`** |
-| `index.progress` | hint | `{ kind: 'fts' \| 'vector', done: number, total: number }` | 后台重建检索索引（D-02 §4.5） | 设置页进度，不打扰主界面 |
+| ⬜ `daemon.shutdown` | hint | `{ graceMs: number }` | 优雅退出开始（D-01 §2.5） | 顶部条幅"本地服务正在退出"，停止发起新请求 |
+| ✅ `sync.required` | hint | `{ reason: 'replay_gap' \| 'contract_mismatch' }` | `Last-Event-ID` 未命中重放缓冲（256 条已滚过） | **全量 `invalidateQueries()`** |
+| ⬜ `index.progress` | hint | `{ kind: 'fts' \| 'vector', done: number, total: number }` | 后台重建检索索引（D-02 §4.5） | 设置页进度，不打扰主界面 |
 
-### 11.6 汇总：需要新增的事件类型（21 个）
+> ⬜ = **从未加入 `SSE_EVENT_TYPES`**。本节三个系统域事件里只有 `sync.required` 落地了；
+> `daemon.shutdown` 与 `index.progress` 至今不存在，前端不要给它们注册监听。
+
+### 11.6 汇总：本节提议的事件类型（原写"需要新增的事件类型（21 个）"，实列 20 个）
+
+> ⚠️ **这块此前写得像一份已批准的实现清单，其实不是。** 下面按 `packages/shared/src/events.ts:31`
+> 的实际内容逐项标注：**✅ = 已落地，⬜ = 从未加入 `SSE_EVENT_TYPES`**。20 项里 **9 项是 ⬜**。
+> 以常量为准，不要照抄本清单去写监听。
 
 ```ts
-// 建议追加到 packages/shared/src/events.ts 的 SSE_EVENT_TYPES
-'transcribe.started', 'transcribe.segment', 'transcribe.chunk',
-'transcribe.done',    'transcribe.failed',  'transcribe.replaced',
-'mindmap.started',    'mindmap.delta',      'mindmap.done',    'mindmap.failed',
-'summary.delta',      'summary.done',
-'note.created',       'note.updated',       'note.status',     'note.deleted',
-'media.asset.ready',
-'daemon.shutdown',    'sync.required',      'index.progress',
+// 对照 packages/shared/src/events.ts 的 SSE_EVENT_TYPES（现共 30 个）
+✅ 'transcribe.started'  ✅ 'transcribe.segment'  ⬜ 'transcribe.chunk'
+✅ 'transcribe.done'     ⬜ 'transcribe.failed'   ✅ 'transcribe.replaced'
+⬜ 'mindmap.started'     ✅ 'mindmap.delta'       ✅ 'mindmap.done'    ⬜ 'mindmap.failed'
+⬜ 'summary.delta'       ⬜ 'summary.done'
+✅ 'note.created'        ✅ 'note.updated'        ⬜ 'note.status'     ✅ 'note.deleted'
+✅ 'media.asset.ready'
+⬜ 'daemon.shutdown'     ✅ 'sync.required'       ⬜ 'index.progress'
+// 另：本清单**漏了**一个实际已落地的事件 —— ✅ 'transcribe.partial'（F3 两阶段的灰斜体来源）
 // 外加 1 处**修改**（非新增）：JobProgressEvent 扩展通用字段，见 §11.1
 ```
 
-**实现顺序建议**（若要分批交付，按这个顺序对前端解阻塞最快）：
-1. `job.progress` 扩展 + `note.created` / `note.status` → F1/F2 的进度条能动（**最小可用**）
-2. `transcribe.segment` / `transcribe.chunk` / `transcribe.done` → "边转边看"成立（**F1 的核心体验**）
-3. `media.asset.ready` → F5 波形与时间轴能画
-4. `transcribe.replaced` → F3 两阶段能说清楚
-5. `mindmap.delta` / `summary.delta` → F4 渐进渲染
-6. 系统域三个 → 健壮性
+**实现顺序建议**（若要分批交付，按这个顺序对前端解阻塞最快；⬜ 的事件至今不存在，遇到就跳过）：
+1. `job.progress` 扩展 + ✅`note.created` / ~~⬜`note.status`~~ → F1/F2 的进度条能动（**最小可用**）
+2. ✅`transcribe.segment` / ~~⬜`transcribe.chunk`~~ / ✅`transcribe.done` → "边转边看"成立（**F1 的核心体验**）
+3. ✅`media.asset.ready` → F5 波形与时间轴能画
+4. ✅`transcribe.replaced` → F3 两阶段能说清楚
+5. ✅`mindmap.delta` / ~~⬜`summary.delta`~~ → F4 渐进渲染（摘要流式至今没有事件）
+6. 系统域三个 → 健壮性（其中只有 ✅`sync.required` 落地）
 
 ### 11.7 前端侧的对应实现状态
 
 `apps/web/src/lib/events/` 已按本规格实现了**分发骨架**（逐类型 `addEventListener`、`data` 类的 `seq` 缺口检测、
-`hint` 类的合并失效）。在 `packages/shared` 落地前，前端用 `mockEventSource` 产生同形状事件驱动 UI —— **明确标注为 mock**。
-`SSE_EVENT_TYPES` 一旦扩充，前端只需删掉 mock，**分发层零改动**。
+`hint` 类的合并失效）。**`packages/shared` 已落地，mock 也已删除：前端现在直接消费真事件**
+（`apps/web/src/lib/events/source.ts:102` 遍历 `ALL_SSE_EVENT_TYPES` 逐类型注册）。
+**此前这里写着"在 `packages/shared` 落地前，前端用 `mockEventSource` 产生同形状事件驱动 UI"**
+—— `mockEventSource` 这个标识符现在全仓零命中（含注释、含测试），照它去找会扑空。
+当初预言的"分发层零改动"成立了。

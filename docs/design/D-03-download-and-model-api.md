@@ -30,9 +30,11 @@ inputs: R-04, R-02 §C.3, D-01, D-02, D-05, /root/memo-forensics
   schema 当场抓到我自己的建模错误（Whisper 无 context 却填 0），已改为 `null`。
 - **修掉全仓库唯一红灯**：`shared` 未导出 `ulid` —— 已修；顺带发现并修掉 `ulid.ts` 误引 `node:crypto`
   导致 `apps/web` 浏览器包被 Vite externalize（改用 Web Crypto，shared 现在零 `node:` 依赖）。
-- **未验证/存疑**：archive 解压未实现（抛错不静默）；catalog Ed25519 验签未实现（已写规格）；
-  `estimateGpuLayers` 与 RTF 外推系数仍未标定；backends.json 的 macOS/Vulkan whisper 包**上游不存在**
-  （R-02 早已指出），需自建 CI 后补。
+- **未验证/存疑**：archive 解压 ✅ **已实现**（见 §11 第 1 行，`packages/downloader/src/unpack.ts`）；
+  catalog Ed25519 ✅ **已实现但生产未启用**（`OPENMEMO_CATALOG_PUBLIC_KEY = null`，供了签名却无密钥时**失败关闭**，见 §11 第 2 行）；
+  `estimateGpuLayers` 与 RTF 外推系数仍未标定；backends.json 的 macOS whisper 包 ✅ **已自建**（T-146），Vulkan 仍缺、ROCm 已裁掉。
+  ⚠️ **此前这一行写着"archive 解压未实现（抛错不静默）；catalog Ed25519 验签未实现（已写规格）；macOS/Vulkan whisper 包上游不存在，需自建 CI 后补"
+  —— 前两条与本文档自己的 §11 第 1/2 行直接冲突，以 §11 为准**（§11 那两格是对的）。
 - **【T-125 §14】速度维度：`speedClass` 本来就有（35/35），缺的是**出处**。**实测覆盖 2/35 → 9/35**，
   新增**必填** `speedEvidence` 三态：`measured`（带完整出处）/ `estimated`（必须自证是估计）/
   `unmeasured`（**结构上没有 rtf 字段，放不下假数字**，且必须写 `reason`）。**本版发出 0 条 estimated。**
@@ -143,18 +145,21 @@ disks[pathFor='models_root'].freeMB ★ 要模型目录所在卷，不是系统�
 
 ## 4. SSE 事件契约（ADR-007 决策 1）
 
-### 4.1 事件全集（28 个）
+### 4.1 事件全集（30 个）
 
 | 域 | 事件 |
 |---|---|
 | 任务生命周期 | `job.created` `job.progress` `job.state` `job.done` `job.failed` `job.blocked` |
 | 模型/后端/存储 | `model.installed` `model.removed` `model.activated` `backend.installed` `backend.removed` `storage.changed` `catalog.updated` `sources.probed` `hardware.changed` |
-| F1/F2 导入 | `media.ready` |
-| F1/F2/F3 转写 | `transcribe.started` `transcribe.partial` `transcribe.segment` `transcribe.done` |
+| F1/F2 导入 | `media.ready` `media.asset.ready` |
+| F1/F2/F3 转写 | `transcribe.started` `transcribe.partial` `transcribe.segment` `transcribe.done` `transcribe.replaced` |
 | F3 录音 | `record.state` |
 | F4 导图 | `mindmap.delta` `mindmap.done` |
 | F5 笔记 | `note.created` `note.updated` `note.deleted` |
 | 流控 | `sync.required` `keepalive` |
+
+> **此前这里写着"事件全集（28 个）"，且表里漏了 `media.asset.ready` 与 `transcribe.replaced`**
+> —— 以 `packages/shared/src/events.ts:31` 的 `SSE_EVENT_TYPES` 常量为准（现 30 个）。**前端别写死数字，遍历常量。**
 
 ### 4.2 信封
 
@@ -202,14 +207,21 @@ JobProgressEvent  { jobId, step: 'fetch'|'demux'|'vad'|'asr'|'structure'|…,
 JobBlockedEvent   { jobId, blockedCode, messageZh, remediation: Remediation | null }
 
 // 转写：partial 易失、segment 持久
-TranscribePartialEvent { transcriptUid, utteranceId, text, startSec }
-TranscribeSegmentEvent { transcriptUid, seq, startSec, endSec, text, speaker, confidence }
+TranscribePartialEvent { transcriptUid, noteUid, utteranceId, text, startMs }
+TranscribeSegmentEvent { transcriptUid, noteUid, seq, startMs, endMs, text, speaker, confidence }
 TranscribeDoneEvent    { transcriptUid, noteUid, segmentCount, rtf, partial }
 
 // 导图渐进构建；parentKey 用 D-02 的 mindmap_nodes.node_key，客户端可直接挂载
-MindmapDeltaEvent { mindmapUid, seq, nodes: [{ nodeKey, parentKey, text,
-                                               sourceStartSec, sourceEndSec }] }
+MindmapDeltaEvent { mindmapUid, noteUid, seq, nodes: [{ nodeKey, parentKey, text,
+                                                        sourceStartMs, sourceEndMs }] }
 ```
+
+> **三处订正（以 `packages/shared/src/events.ts` 为准）：**
+> ① **时间单位一律整数毫秒 `*Ms`。此前写着 `startSec` / `endSec` / `sourceStartSec` / `sourceEndSec`（浮点秒）**
+>    —— D-02 §1.1 规定媒体时间一律整数毫秒，这三个事件已按此对齐。照旧字段名写会拿到 `undefined`。
+> ② **`TranscribePartialEvent` / `TranscribeSegmentEvent` / `MindmapDeltaEvent` 各多一个必填 `noteUid`**，
+>    此前都没写。
+> ③ 其余字段与顺序与实现一致。
 
 `TranscribeDoneEvent.partial = true` 表示提前结束但**前面的段仍然有效** ——
 对应 D-05 §4.1 规则 6「转写在第 37 段失败，前 36 段仍完整显示」。
@@ -540,9 +552,13 @@ medium 520 / large 820 MB）。**加常数而非乘系数**：whisper 计算缓�
 
 | 文件 | 条目 | 说明 |
 |---|---|---|
-| `vendor/manifests/models-whisper.json` | 9 模型 / 11 文件 | turbo(q5_0/q8_0/f16)、v3(q5_0/f16)、medium、small、base、tiny；含 2 个 macOS CoreML encoder（可选） |
+| `vendor/manifests/models-whisper.json` | **25 模型 / 27 文件** | base/base.en、large-v1/v2/v3、turbo、medium/medium.en、small/small.en、tiny/tiny.en 的 q5_1/q5_0/q8_0/f16 各档；含 2 个 macOS CoreML encoder（可选，即多出的那 2 个文件）。**此前写着"9 模型 / 11 文件"** |
 | `vendor/manifests/models-llm.json` | 5 模型 | Qwen3 4B(q4_k_m/q5_k_m)、8B(q4_k_m)、1.7B(q8_0)、Gemma-3-4B(q4_k_m) |
-| `vendor/manifests/backends.json` | 10 包 | llama.cpp × {win,linux,mac} × {cpu,vulkan,cuda,rocm,metal}；whisper.cpp × {linux-cpu, win-cpu, win-cuda} |
+| `vendor/manifests/backends.json` | **11 包** | whisper.cpp × {linux-x64-cpu, macos-arm64-cpu（含 Metal+CoreML）, win-x64-cpu, win-x64-cuda12.4}；media-tools(ffmpeg/ffprobe) × {linux-x64, win-x64, macos-arm64}；yt-dlp × {linux-x64, linux-arm64, macos-arm64, win-x64} |
+
+> ⚠️ **`backends.json` 这一行是全表最危险的一处订正。此前写着"10 包 ｜ llama.cpp × {win,linux,mac} × {cpu,vulkan,cuda,rocm,metal}；whisper.cpp × {linux-cpu, win-cpu, win-cuda}"
+> —— `backends.json` 里现在 `llama` 零命中，那 7 个 llama.cpp 包已于 T-144① 整族摘掉**
+> （理由：它们在界面上真的能点，但装不出可用的东西）。照旧表去找一个不存在的整族包会白跑一趟。
 
 **Qwen 系全部三源**（HF / ModelScope 官方同名 repo / hf-mirror）。
 ModelScope 上 `Qwen/Qwen3-4B-GGUF` 与 HF **10/10 文件 size+sha256 逐字节相同**（已实测）
@@ -550,10 +566,12 @@ ModelScope 上 `Qwen/Qwen3-4B-GGUF` 与 HF **10/10 文件 size+sha256 逐字节�
 
 **Gemma** 标 `requiresAcceptance: true` + 跳转上游（ADR-004 决策 2：不自建镜像、不再分发受限权重）。
 
-⚠️ **backends.json 的诚实缺口**：whisper.cpp v1.9.1 官方 release **没有 macOS CLI、没有 Vulkan、
-没有 ROCm**（R-02 早已核实，我这次拉 release 资产列表再次确认：只有 ubuntu-x64/arm64、Win32/x64、
-blas、cublas-11.8/12.4、xcframework）。这三个组合的包**现在不存在**，需 `gpu-runtime` 自建 CI
-产出后才能补进清单。**清单里没有就是没有，不放占位条目。**
+⚠️ **backends.json 的诚实缺口（已收窄）**：whisper.cpp v1.9.1 **官方 release** 确实没有 macOS CLI、
+没有 Vulkan、没有 ROCm（R-02 早已核实：只有 ubuntu-x64/arm64、Win32/x64、blas、cublas-11.8/12.4、xcframework）。
+但**我们自己的 CI 已经把 macOS 那个补上了**：`whispercpp-cpu-macos-arm64`（CPU + Metal + CoreML/ANE 一包带齐，T-146），
+已进 `vendor/manifests/backends.json`。**仍缺的只有 Vulkan**；**ROCm 已按用户指示裁掉**（见 D-11 §2.2）。
+**此前这一段写着"这三个组合的包现在不存在，需 `gpu-runtime` 自建 CI 产出后才能补进清单"。**
+**清单里没有就是没有，不放占位条目** —— 这条规矩不变。
 
 ---
 
@@ -565,7 +583,7 @@ blas、cublas-11.8/12.4、xcframework）。这三个组合的包**现在不存�
 | 2 | catalog Ed25519 验签 | ✅ **已实现但生产未启用** —— 无签名密钥，`OPENMEMO_CATALOG_PUBLIC_KEY = null`，供签名却无密钥时**失败关闭**（抛错，绝不放行） |
 | 3 | `estimateGpuLayers` 系数标定 | 未验证，需实测 llama.cpp `-ngl` 行为 |
 | 4 | RTF 外推系数 | 未标定，首个真实转写后回写 |
-| 5 | whisper.cpp macOS/Vulkan/ROCm 包 | 上游不存在，待自建 CI |
+| 5 | whisper.cpp macOS/Vulkan/ROCm 包 | macOS ✅ **已自建**（`whispercpp-cpu-macos-arm64`，CPU+Metal+CoreML/ANE 一包带齐，T-146）；**Vulkan 仍缺**；ROCm 已按用户指示裁掉（D-11 §2.2）。**此前写着"上游不存在，待自建 CI"** |
 | 6 | SSE 信封扁平 vs D-01 嵌套 | **需 `architect` 裁决**（§4.2） |
 | 7 | F1–F5 事件 payload | 由我推导，**需 `architect` 确认**（§4.4） |
 | 8 | `vec0` rowid 必须 BigInt | 已知会；`packages/shared` 无 rowid 绑定，不受影响（§12） |

@@ -485,7 +485,7 @@ whisper 按自己的解码边界断句），段数天然不同。按索引匹配
 
 ### 11.5 与 `oss-scout`（`packages/db`）的契约
 
-我需要 DB 侧提供两个字段（D-02 §1.5 已设计，`packages/db` 尚未落 schema）：
+我需要 DB 侧提供两个字段（D-02 §1.5 已设计，**`packages/db` 已落 schema**：`packages/db/migrations/0001_init.sql:215-216` 的 `text_raw` / `edited_at`）。**此前写着"`packages/db` 尚未落 schema"**：
 
 | 字段                            | 用途                                            |
 | ------------------------------- | ----------------------------------------------- |
@@ -684,12 +684,12 @@ PWNED file created? -> NO ✅ --ignore-config held
 | #   | 项                                     | 状态                                                                           |
 | --- | -------------------------------------- | ------------------------------------------------------------------------------ |
 | 1   | **HLS `.m3u8` 真实流**                 | **仍未跑过**                                                                   |
-| 2   | **Windows / macOS** 全部分支           | **仍未验证**（无机器）                                                         |
-| 3   | **F3 端到端接浏览器麦克风**            | **未做** —— 只测到 `AsrStream` 层；`/ws/asr-worker` 协议与前端接线属 T-022     |
-| 4   | **F3 两阶段在 daemon 里的调度**        | **未做** —— 合并函数已就绪，但"停止录音后自动排一个离线重跑 job"需要队列层接线 |
-| 5   | `sherpa-onnx-node` 未进 `package.json` | **待 Manager 指派**（该文件不属我）                                            |
+| 2   | **Windows / macOS** 全部分支           | ⚠️ **已在 CI 真机验过，见 D-11 §3**（run 31016760141，`macos-26` / `windows-2025`）；已知红条见 D-11 §3.3。**此前写着"仍未验证（无机器）"** |
+| 3   | **F3 端到端接浏览器麦克风**            | ✅ **已接通**：`apps/daemon/src/ws/recorder.ts` + `apps/web/src/features/recorder/`，验收脚本 `apps/daemon/scripts/e2e-f3.mjs`。**此前写着"未做 —— 只测到 `AsrStream` 层"**。注：走的是 `/ws/recorder`，不是原文提的 `/ws/asr-worker`（后者按 ADR-006 决策 3，v1 不实现） |
+| 4   | **F3 两阶段在 daemon 里的调度**        | ✅ **已接线**：`apps/daemon/src/ws/recorder.ts` —— stop → 排 `PRIORITY.INTERACTIVE` 离线重跑 → `mergeTranscripts` 保住用户编辑。**此前写着"未做 —— 需要队列层接线"** |
+| 5   | `sherpa-onnx-node` 未进 `package.json` | ✅ **已加入** `packages/pipeline/package.json`（`^1.13.4`，Apache-2.0）。**此前写着"待 Manager 指派（该文件不属我）"** |
 | 6   | ffmpeg 协议白名单                      | **未构造恶意 HLS 播放列表实测**                                                |
-| 7   | 解压防护（Zip-Slip 等）                | **未实现**，属 `packages/downloader`（`model-mgmt`），见 SECURITY.md 附表      |
+| 7   | 解压防护（Zip-Slip 等）                | ✅ **已实现**：`packages/downloader/src/unpack.ts`（手写 ZIP/tar 解包器，零新依赖；PATH_TRAVERSAL / 绝对路径链接 / 符号链接逃逸 / zip-bomb 四类守卫，三处写盘前都过 `safeJoin`）。**此前写着"未实现，属 `packages/downloader`"** —— T-022 后已落地，D-03 §11 第 1 行同轮已订正，本表当时漏改 |
 | 8   | 两个 TOCTOU 缺口                       | **已知未修**，已按 ADR-008 决策 4 逐条记入 `docs/SECURITY.md` §3               |
 | 9   | 说话人分离（diarization）              | **未实现**（sherpa-onnx 有离线 API，未接）                                     |
 | 10  | FunASR / Paraformer 中文对比           | **未测**                                                                       |
@@ -960,13 +960,13 @@ FunASR 原生 Python 栈**未测**（我们只走 sherpa-onnx 的 ONNX 路径，
 
 | #   | 项                                     | 状态                                                            |
 | --- | -------------------------------------- | --------------------------------------------------------------- |
-| 1   | **Windows / macOS**                    | **仍未验证**（无机器，按边界要求不假装）                        |
-| 2   | Paraformer 中文数字 → 阿拉伯数字后处理 | **未实现**                                                      |
-| 3   | Paraformer 英文大小写还原              | **未实现**                                                      |
+| 1   | **Windows / macOS**                    | ⚠️ **已在 CI 真机验过，见 D-11 §3**（run 31016760141）；已知红条见 D-11 §3.3。**此前写着"仍未验证（无机器，按边界要求不假装）"** |
+| 2   | Paraformer 中文数字 → 阿拉伯数字后处理 | 🟡 **代码已实现但默认关闭**（`zhNumeralsToArabic` in `packages/pipeline/src/asr/postprocess.ts`，opt-in `normalizeNumerals`）—— 混合位置/数字串形式还没解对，ADR-013 已降级为 polish。**此前写着"未实现"** |
+| 3   | Paraformer 英文大小写还原              | ✅ **已实现且默认开启**（`restoreEnglishCasing`，固定 allowlist，未列词原样保留）。**此前写着"未实现"** |
 | 4   | Paraformer 词级时间戳                  | **不可得**（模型不提供），F5 中文需降级为段级                   |
 | 5   | `paraformer-zh` 完整版 / SenseVoice    | **未测**（下载超时 / 1.05 GB）                                  |
 | 6   | FunASR 原生 Python 栈                  | **未测**（刻意不引入 Python 依赖）                              |
-| 7   | F3 接浏览器麦克风 / daemon 调度        | **未做**（已按 ADR-011 决策 4 切给 `oss-scout` 与 `architect`） |
-| 8   | 解压 Zip-Slip 防护                     | **未实现**（已切给 `model-mgmt`）                               |
+| 7   | F3 接浏览器麦克风 / daemon 调度        | ✅ **已做**：`apps/daemon/src/ws/recorder.ts`（WS 录音会话 + stop 后自动排 INTERACTIVE 离线重跑）+ `apps/web/src/features/recorder/`，验收脚本 `apps/daemon/scripts/e2e-f3.mjs`。**此前写着"未做（已按 ADR-011 决策 4 切给 `oss-scout` 与 `architect`）"** |
+| 8   | 解压 Zip-Slip 防护                     | ✅ **已实现**：`packages/downloader/src/unpack.ts`，四类守卫（PATH_TRAVERSAL / 绝对路径链接 / 符号链接逃逸 / zip-bomb）。**此前写着"未实现（已切给 `model-mgmt`）"** |
 | 9   | 两个 TOCTOU 缺口                       | **已知未修**，见 `docs/SECURITY.md` §3                          |
 | 10  | 说话人分离                             | **按 ADR-011 决策 6 不进 v1**                                   |

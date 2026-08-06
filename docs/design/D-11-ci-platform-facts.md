@@ -171,12 +171,15 @@ docs/00-CHARTER.md:27  | Linux + AMD   | ROCm / Vulkan     |
 三台都跑到了 `Test` 这一步（**install / build:safe / typecheck 在 macOS 与 Windows 上全部成功**，
 这本身是个好消息：TS 那一套在非 Linux 上编得出来）。
 
+> ⚠️ **计数订正**：本节列的是 **6 条红**，但那是 `pnpm -r test` 被 `bail` **截断后**的计数。
+> T-147 全量重跑得到 **14 条**。**此前 §5 第 2 条也照抄了"6 条"。** 下表的性质判断不变，只是不全。
+
 | 平台 | 红在哪 | 我的判断 |
 |---|---|---|
-| darwin/arm64 | `packages/pipeline` `argGuard.test.ts:313`「★ under posix rules the same UNC string is merely a weird filename」`false !== true` | **测试自身的宿主假设**：它用 `mkdtemp(tmpdir())` 造根，而 **macOS 的 `/var` 是指向 `/private/var` 的软链**，`assertWithinRoot` 会 realpath 候选、却拿**没 realpath 的 root** 去比 → 判为越界。<br>⚠️ 但它顺带暴露了一条**产品事实**：**任何经过软链的 managed root，在 macOS 上会被整体拒绝** —— 而 macOS 的默认 TMPDIR 就在软链后面 |
+| darwin/arm64 | `packages/pipeline` `packages/pipeline/src/subprocess/__tests__/argGuard.test.ts:331`「★ under posix rules the same UNC string is merely a weird filename」`false !== true`（**此前写的是裸文件名 `argGuard.test.ts:313`；313 行是另一个用例 `backslash traversal is rejected under win32 rules` 里的 `assertRejected(`**） | **测试自身的宿主假设**：它用 `mkdtemp(tmpdir())` 造根，而 **macOS 的 `/var` 是指向 `/private/var` 的软链**，`assertWithinRoot` 会 realpath 候选、却拿**没 realpath 的 root** 去比 → 判为越界。<br>⚠️ 但它顺带暴露了一条**产品事实**：**任何经过软链的 managed root，在 macOS 上会被整体拒绝** —— 而 macOS 的默认 TMPDIR 就在软链后面 |
 | win32/x64 | `packages/runtime` `assetPaths.test.js` 3 条：期望 `/d/media/a.wav`，实得 `D:\d\media\a.wav` | **测试写死了 POSIX 字符串**，产品代码用的是 `join`（是对的）。后果：**这三条用例在 Windows 上什么都没断言到** |
-| win32/x64 | `packages/runtime` `selfcheck.test.js` 2 条：`'fail' !== 'ok'` / `'fail' !== 'warn'` | 未定性。**疑似**测试造的假二进制没有 `.exe` 后缀，而 `discoverTools` 在 Windows 上找的是带 `.exe` 的名字（`tools.ts:346`）。`[推测，未验证]` |
-| win32/x64 | `pnpm check:sources` → `✘ 没找到任何源码目录，检查脚本本身可能有问题` | **产品/工具链真 bug**，即 T-141 #30。**这条守卫在 Windows 上是坏的，而它坏的方式是"报告脚本自己有问题"** —— 至少它没有静默返回绿 |
+| win32/x64 | `packages/runtime` `selfcheck.test.js` 2 条：`'fail' !== 'ok'` / `'fail' !== 'warn'` | 未定性。**疑似**测试造的假二进制没有 `.exe` 后缀，而 `discoverTools` 在 Windows 上找的是带 `.exe` 的名字（`packages/pipeline/src/tools.ts:437`，`discoverTools` 本身在 `:429`；**此前写的是 `tools.ts:346`，那一行是 sqlite 扩展物化循环里的 `findFileInBackendPacks`**）。`[推测，未验证]` |
+| win32/x64 | `pnpm check:sources` → `✘ 没找到任何源码目录，检查脚本本身可能有问题` | **产品/工具链真 bug**，即 T-141 #30。**这条守卫在 Windows 上是坏的，而它坏的方式是"报告脚本自己有问题"** —— 至少它没有静默返回绿。<br>✅ **T-147 已修**：`scripts/check-tracked-sources.mjs` 改用 Node 递归走目录，不再调外部 `find` |
 
 **给 Manager 的一句话**：跨平台的红**大部分不是产品坏了，是测试从来没在那些平台上跑过**。
 但这两件事在后果上是同一件：**那些用例在 macOS / Windows 上等于不存在。**
@@ -228,10 +231,16 @@ scripts/build-whisper.sh: line 229: BACKEND_FLAGS[@]: unbound variable
 emit-pack-manifest: stage dir is empty: .../stage/whispercpp-metal-macos-arm64
 ```
 
-**没修好。** 已加诊断：暂存目录为空时打印 `BIN_DIR` 的真实内容与 `*ggml*` 的实际位置
-（不改红绿，只让下一轮自带证据）。
+✅ **后续已定性并修掉（本段标题的"未定性"已过期）**：暂存目录**不是空的** —— 里面有且只有一个文件
+`libggml-metal.so`。原因是 `GGML_BACKEND_DL=ON` 下 ggml 后端是 CMake **MODULE** 目标，
+而 MODULE 在 Apple 平台上的后缀是 **`.so` 而不是 `.dylib`**，签名守卫的文件名 glob 只匹配了
+`.dylib`/可执行文件 → 数出 0 个 → 报"stage dir is empty"。**要改的是模式，不是守卫**：
+`build-backends.yml` 的模式已加 `*.so`（见该文件 `:182-193` 的注释）。
+**此前这里写着"没修好。已加诊断：暂存目录为空时打印 `BIN_DIR` 的真实内容…（不改红绿，只让下一轮自带证据）"。**
+
 值得注意的是 workflow 自己的注释就写着「Metal … 的 pack 其实装在核心包里」——
-**矩阵却仍然单独构建一个 metal 包**。这个矛盾第一次真跑就撞上了。
+**矩阵却仍然单独构建一个 metal 包**。这个矛盾第一次真跑就撞上了；T-146 后已按注释办：
+Metal 并进 macOS 核心包（`whispercpp-cpu-macos-arm64`，CPU+Metal+CoreML 一包带齐），见 §8.4。
 
 **③ `ci-prep` 的 C5 修复在第一轮就救了场**：旧版那个"glob 不匹配就 `continue`、
 零文件也绿灯"的签名检查，换成了"数了几个、零个就红"。
@@ -287,13 +296,22 @@ emit-pack-manifest: archive not found: dist/packs/whispercpp-cpu-win-x64.zip
 
 # §5 遗留（按优先级）
 
-1. **macOS metal 包为空** —— 未定性，下一轮日志会自带 `BIN_DIR` 内容。
-2. **跨平台测试的 6 条红** —— §3.3，多数是测试的宿主假设，但后果是"那些用例在非 Linux 上等于不存在"。
-3. **`pnpm check:sources` 在 Windows 上是坏的** —— T-141 #30 已被证实。
-4. **`ci.yml` 目前仍只有 `workflow_dispatch`** —— 一个"手动才跑的 CI"等于没有 CI。
-   放开 `push` / `pull_request` 三行的时机是用户的决定（`ci.yml` 文件头已写明）。
+1. ~~**macOS metal 包为空**~~ —— ✅ **已定性并已修**：包里其实**有**一个文件 `libggml-metal.so`，
+   是签名守卫的 glob 少了 `*.so`（`GGML_BACKEND_DL=ON` 下 ggml 后端是 CMake MODULE 目标，
+   而 MODULE 在 Apple 平台上用 `.so` 后缀、不是 `.dylib`）→ **要改的是模式，不是守卫**，模式已加 `*.so`。
+   **此前写着"未定性，下一轮日志会自带 `BIN_DIR` 内容"。** 后续 T-146 进一步把 Metal 并进 macOS 核心包（见 §8.4）。
+2. **跨平台测试的 ~~6~~ → 14 条红** —— §3.3 列的 6 条是 `pnpm -r test` **被 `bail` 截断后**的计数；
+   T-147 全量重跑得到 **14** 条。**此前写着"6 条"。** 性质判断不变：多数是测试的宿主假设，
+   但后果是"那些用例在非 Linux 上等于不存在"。
+3. ~~**`pnpm check:sources` 在 Windows 上是坏的**~~ —— ✅ **T-147 已修**：`scripts/check-tracked-sources.mjs`
+   改用 Node 自己递归走目录，不再调外部 `find`（Windows 上 `find` 是 `System32\find.exe`，一个文本搜索工具），
+   各平台行为一致。**此前写着"T-141 #30 已被证实"。**
+4. ~~**`ci.yml` 目前仍只有 `workflow_dispatch`**~~ —— ✅ **T-145 已放开**：`on:` 现为
+   `workflow_dispatch` + `push: branches:[master]` + `pull_request:`（`build-backends.yml` 刻意保持手动）。
+   **此前写着"一个'手动才跑的 CI'等于没有 CI，放开 `push`/`pull_request` 三行的时机是用户的决定"** ——
+   用户已指示改为自动触发，`ci.yml` 文件头记了这件事。
 5. **Windows 上 `0o600` 是 `666`** —— `runtime.json` 里的 auth token 对本机所有用户可读。
-   这条现在**有实测证据**了，值得单独派人处理（需要 ACL 而不是 POSIX 位）。
+   这条现在**有实测证据**了，值得单独派人处理（需要 ACL 而不是 POSIX 位）。**仍未修**。
 
 ---
 
@@ -313,8 +331,14 @@ emit-pack-manifest: archive not found: dist/packs/whispercpp-cpu-win-x64.zip
 | 冷启动后工具从哪来 | **5/5 来自数据目录（产品自己下的），借宿主 PATH 的 = 0** | §6.4 |
 | 中文双字词真的搜得到吗 | **`ext.chineseSearch = ok`：用户:1 推特:2 中国:1 服务:2** | §6.5 |
 | 仓库里有二进制吗 | **没有。**最大的已跟踪文件 255 KB（JSON/PNG/文档） | §6.2 |
-| ⚠️ 例外 1 | `ffmpeg-static` 在 `pnpm install` 期下 **79.8 MB** 的 ffmpeg，钉了 tag 但**无校验和** | §6.3 |
-| ⚠️ 例外 2 | `youtube-dl-exec` 打的是 `releases/**latest**` —— **不钉版本、无校验和** | §6.3 |
+| ⚠️ ~~例外 1~~ | ~~`ffmpeg-static` 在 `pnpm install` 期下 **79.8 MB** 的 ffmpeg，钉了 tag 但**无校验和**~~ → ✅ **T-145 已删除整条通道**（不是加锁，是**减少通道**），见 §7.4 | §6.3 / **§7.4** |
+| ⚠️ ~~例外 2~~ | ~~`youtube-dl-exec` 打的是 `releases/**latest**` —— **不钉版本、无校验和**~~ → ✅ **T-145 已删除整条通道**，见 §7.4 | §6.3 / **§7.4** |
+
+> ⚠️ **此前上面这两行把 `ffmpeg-static` 与 `youtube-dl-exec` 列为活着的例外**（"在 `pnpm install` 期无校验和地下二进制"），
+> 而**同一份文档的 §7.4 已经宣布这两个包被删除** —— 这张 TL;DR 表当时没跟着改。
+> 现状：两个包已从 `packages/pipeline` 的 `dependencies` 与 `onlyBuiltDependencies` 中移除
+> （`package.json` 里只剩一条 `_comment:removed-deps` 说明串），CI 三平台反向断言 ✔ 不存在。
+> **读者只读 §6.1 这张表，所以这里必须与 §7.4 一致。**
 
 ## 6.2 静态 + 实测：manifest 那条通道（`scripts/ci/dependency-audit.mjs`）
 
@@ -409,7 +433,10 @@ sqlite3     /usr/bin/sqlite3    python3     /usr/bin/python3    cmake  /usr/loca
 装 5 个包（目录里判定"适用于本机"的全部）→ **独立核对 `/api/backends/installed` 全部在列** →
 重启 → `[warm] tokenizer=simple libsimple=true sqliteVec=true`。
 
-**三分类（判据直接用产品自己的 `selfcheck.ts:390-434`，没另发明）：**
+**三分类（判据直接用产品自己的 `packages/runtime/src/selfcheck.ts:551-596`，没另发明）：**
+
+> **此前这里写的是 `selfcheck.ts:390-434` —— 那一段在读符号链接、判悬空**，不是三分类判据。
+> 判据在 `:551-596`：「装在 storeRoot 里 = ok；只在系统 PATH 上 = warn；没有 = fail」。
 
 | 分类 | 数量 | 是哪些 |
 |---|---|---|
@@ -510,9 +537,22 @@ tool.ytDlp       ok     .../data/models/by-name/backend/yt-dlp
   - sqlite-vec-darwin-arm64
 ```
 
-**19 个包里只有 3 个适用于 macOS —— 没有 ffmpeg，没有 whisper-cli。**
+~~**19 个包里只有 3 个适用于 macOS —— 没有 ffmpeg，没有 whisper-cli。**~~
 这正是 `platform` T-141 §1.2 第 1 行预测的那一格（"macOS 装不了任何转写引擎，也没有 ffmpeg"），
 **现在是从一次真实冷启动里量出来的，不是从 manifest 数出来的。**
+
+> ✅ **T-146 已补齐（本节的计数与"没有 ffmpeg/whisper-cli"这半句已过期）**：
+> 目录现有 **22 个包**，macOS arm64 适用 **5** 个 ——
+> `whispercpp-cpu-macos-arm64`（转写引擎，CPU+Metal+CoreML 一包带齐）、
+> `media-tools-macos-arm64`（`providesFiles: ["ffmpeg","ffprobe"]`）、
+> `ytdlp-macos-arm64`、`libsimple-darwin-arm64`、`sqlite-vec-darwin-arm64`。
+> 相关提交：`2075a88`（补齐 Windows / macOS 的 ffmpeg）、`1b2a39d`（macOS 核心包一次带齐 CPU + ANE + Metal）、`830ada9`（macOS 终于有了转写引擎）。
+>
+> **此前写着"19 个包里只有 3 个适用于 macOS —— 没有 ffmpeg，没有 whisper-cli"** ——
+> 那是 run 31028964565 当时的事实。**但本节的产品结论不变**：
+> "macOS 上产品会安静地回退去借宿主 PATH 的 ffmpeg，只给 `warn` 不给 `fail`"这个**行为**依然存在，
+> 只是**触发条件已大幅收窄**（现在得是包装不上或被跳过时才会走到那条回退路径）。
+> 下面的分析（为什么只有屏蔽后才看得见、`warn` 淹没在绿里）原样有效。
 
 ### 为什么这条只有屏蔽之后才看得见
 
@@ -534,12 +574,16 @@ tool.ytDlp       ok     .../data/models/by-name/backend/yt-dlp
 
 ## 7.2 三分类（按平台）
 
+> 📅 **本表是 run 31028964565 当时（T-145 轮）的快照。** T-146 之后 macOS 侧已变：
+> 目录 19 → **22 包**，darwin-arm64 适用 3 → **5**（加了 `whispercpp-cpu-macos-arm64` 与 `media-tools-macos-arm64`）。
+> **表里的 macOS 列没有重测，不要当成当前值引用**；重测前请以 `vendor/manifests/*.json` 为准。
+
 | | linux-x64 | darwin-arm64 |
 |---|---|---|
 | ✅ 产品自己下载并校验的 | **5**：ffmpeg / ffprobe / whisperCli / whisperVad / ytDlp | **1**：ytDlp |
 | ⚠️ 借宿主 PATH 的 | **0** | **3**：ffmpeg / ffprobe / whisperCli |
 | ❌ 装不上 / 不可用 | **0** | **1**：whisperVad |
-| 适用的后端包 | 5 / 19 | **3 / 19** |
+| 适用的后端包 | 5 / 19 | **3 / 19**（T-146 后为 **5 / 22**） |
 | `ext.chineseSearch` | **ok**（用户:1 推特:2 中国:1 服务:2） | 装上了扩展（`[warm] tokenizer=simple libsimple=true sqliteVec=true`） |
 
 **中文检索这条在两个平台都成立** —— libsimple / sqlite-vec 的 darwin-arm64 包

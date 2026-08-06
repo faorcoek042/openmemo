@@ -27,8 +27,8 @@ supersedes_unknowns_in: R-02
 - **产物**：`scripts/build-whisper.sh`（平台×后端参数化，已跑通 cpu/vulkan 两个包）、`scripts/build-probe.sh`、`packages/runtime/src/**`（`pnpm -r build` **EXIT=0**）、`.github/workflows/build-backends.yml`。
 - **ggml ABI 实测**：v1.9.1 = **0.15.1**（master 已到 0.18.0）。跨引擎复用后端包必须按此值 gate。
 - **关键取舍**：ADR-003 决策 3 让 Vulkan 当 NVIDIA 默认，本次实测**没有推翻也没有证实**它——本机无 GPU，**CUDA vs Vulkan 的性能比仍是 UNKNOWN**，仍需有卡的机器做 spike。
-- **未验证/存疑**：mac/Windows 全部分支（无机器）；CI workflow **从未执行过**（无 git remote）；CUDA/ROCm 包**未编译**（无对应 SDK 与硬件）；单架构 CUDA 瘦身**未实测**。
-- **对其他 agent 的影响**：`model-mgmt` —— 我按 `packages/shared/hardware.ts` 契约实现了 producer 端，**字段全部对齐，无 DISPUTE**；`detectHardware()` 已可直接接 `GET /api/runtime/hardware`。`architect` —— probe 必须子进程 + 10s 超时是**实测结论**，请勿在 daemon 内联。
+- **未验证/存疑**：mac/Windows **已在 CI 真机上部分验过**（见 §10.2 #2/#3 与 D-11 §3/§4），仍未验的只剩 quarantine/Gatekeeper、SmartScreen/MOTW 与非管理员账户行为；CI workflow **已执行多轮**（run 31014564498 等，结论见 D-11 §4/§8）；CUDA 包**已在 CI 编出**（Windows CUDA 12.4，见 D-11 §4.3），ROCm 已按用户指示裁掉；单架构 CUDA 瘦身**仍未实测**。**此前这一行写着"mac/Windows 全部分支（无机器）；CI workflow 从未执行过（无 git remote）；CUDA/ROCm 包未编译"** —— `git remote -v` 现为 `origin https://github.com/faorcoek042/openmemo.git`。
+- **对其他 agent 的影响**：`model-mgmt` —— 我按 `packages/shared/src/hardware.ts`（**此前写着 `packages/shared/hardware.ts`，少了 `src/`**）契约实现了 producer 端，**字段全部对齐，无 DISPUTE**；`detectHardware()` 已可直接接 `GET /api/runtime/hardware`。`architect` —— probe 必须子进程 + 10s 超时是**实测结论**，请勿在 daemon 内联。
 
 ---
 
@@ -193,7 +193,9 @@ Vulkan Instance Version: 1.4.341
 
 如果我们的判定逻辑是「枚举到设备 > 0 → 装 Vulkan 包」，结果会是：装上 22.7 MB 的包，然后**用 CPU 软件光栅化跑矩阵乘法**，比原生 CPU 后端慢得多，而 UI 还会显示"GPU 加速已启用"。
 
-**好消息：ggml-vulkan 上游已经做对了。** 源码 `ggml/src/ggml-vulkan/ggml-vulkan.cpp:7208`：
+**好消息：ggml-vulkan 上游已经做对了。** 源码 `vendor/whisper.cpp/ggml/src/ggml-vulkan/ggml-vulkan.cpp:6641`（v1.9.1 = `f049fff`，即本文声明的被测 tag）：
+
+> **此前这里写的是 `ggml/src/ggml-vulkan/ggml-vulkan.cpp:7208` —— 7208 是 master 的行号，不是本文自己声明的被测 tag**；在 v1.9.1 里 7208 行是一段 pinned-memory free 的警告。
 
 ```cpp
 if ((new_props.properties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu ||
@@ -364,9 +366,10 @@ PACK RTF=0.0285 speedup=35.0x
 
 编译 `packages/runtime/src/native/probe.c`，链接 `ggml-base` + `ggml`，带自检 smoke test。
 
-### 7.3 `.github/workflows/build-backends.yml` — **未验证**
+### 7.3 `.github/workflows/build-backends.yml` — **已在 CI 执行过**
 
-⚠️ **本仓库无 git remote，此 workflow 从未执行过。** 矩阵：
+✅ **已执行多轮**（首轮 run 31014564498：12 job，3 success / 8 failure / 1 skipped），逐平台结论见 D-11 §4 与 §8。
+**此前这里写着"⚠️ 本仓库无 git remote，此 workflow 从未执行过"** —— remote 已配（T-145，`origin https://github.com/faorcoek042/openmemo.git`）。矩阵：
 
 | 平台 | runner | 后端 |
 |---|---|---|
@@ -489,12 +492,12 @@ whisper_backend_init_gpu: no GPU found                           ← 这才是�
 | # | 项 | 状态 |
 |---|---|---|
 | 1 | **CUDA vs Vulkan 性能比** | **仍是 UNKNOWN** —— 本机无 GPU。ADR-003 决策 3 的临时立场既未证实也未推翻 |
-| 2 | macOS 全部分支（Metal/CoreML/签名/quarantine） | **未验证 —— 无 Mac** |
-| 3 | Windows 全部分支（DXGI/CIM/SmartScreen/MOTW） | **未验证 —— 无 Windows 机器** |
+| 2 | macOS 全部分支（Metal/CoreML/签名/quarantine） | ⚠️ **部分已验**：Metal/CoreML 已在 `macos-26` runner 上编出并 ad-hoc 签名（`build-backends.yml` 有逐文件 `codesign --verify` 守卫），产物已进 `vendor/manifests/backends.json`（`whispercpp-cpu-macos-arm64`），见 D-11 §4.1/§8.1。**仍未验的只剩 quarantine/Gatekeeper 在真实用户机上的行为**（runner 不能代表用户机器）。**此前写着"未验证 —— 无 Mac"** |
+| 3 | Windows 全部分支（DXGI/CIM/SmartScreen/MOTW） | ⚠️ **部分已验**：三个 Windows 后端（cpu/vulkan/cuda）均在 `windows-2025` 编译成功（D-11 §4.3），平台探针 20 条见 D-11 §3.1。**仍未验的是 SmartScreen/MOTW，以及非管理员账户下的 symlink**（D-11 §3.4：runner 跑在管理员下）。**此前写着"未验证 —— 无 Windows 机器"** |
 | 4 | CUDA 包编译与体积 | **未编译** —— 无 CUDA SDK 与硬件 |
 | 5 | ROCm 包编译 | **未编译** —— 无 ROCm |
 | 6 | 单架构 CUDA 瘦身实际收益 | **未实测** |
-| 7 | `.github/workflows/build-backends.yml` | **从未执行** —— 无 git remote |
+| 7 | `.github/workflows/build-backends.yml` | ✅ **已执行**：run 31014564498（首轮 12 job，3 绿）等多轮，结论见 D-11 §4/§8。**此前写着"从未执行 —— 无 git remote"** |
 | 8 | llama.cpp 与 whisper.cpp 后端包能否共用 | **未验证** —— whisper.cpp v1.9.1 = ggml 0.15.1，llama.cpp b10223 侧 UNKNOWN |
 | 9 | arm64（Apple/Linux）上的 CPU 变体行为 | **未验证** —— arm64 走运行时特性检测而非 `CPU_ALL_VARIANTS` |
 | 10 | `whisper_backend_init_gpu` 在**有 GPU** 时的确切日志格式 | **未验证** —— `parseBackendUsed()` 里已标注 |
@@ -503,4 +506,4 @@ whisper_backend_init_gpu: no GPU found                           ← 这才是�
 1. **[最高] 借一台有 NVIDIA 卡的机器**，跑 CUDA vs Vulkan 的 whisper RTF 对比。这是唯一能推翻/确认 ADR-003 决策 3 的实验，且只需一台机器一小时。
 2. **[高] 单架构 CUDA 包瘦身实测**：`-DCMAKE_CUDA_ARCHITECTURES=86` 编一个，量 `ggml-cuda` 体积。决定 CUDA 包是 678 MB 还是 <100 MB。
 3. **[中] 一台 Mac 30 分钟**：验证 ad-hoc 签名 + 下载不带 quarantine 是否成立。决定整个 mac 分发形态。
-4. **[中] 给仓库配 git remote**，让 CI 真跑一次，把 mac/Win 产物拿到手。
+4. ~~**[中] 给仓库配 git remote**，让 CI 真跑一次，把 mac/Win 产物拿到手。~~ ✅ **已完成（T-145）**：remote 已配，CI 已跑多轮，mac/Win 产物已进 `vendor/manifests/backends.json`。**此前这条写着待办。**

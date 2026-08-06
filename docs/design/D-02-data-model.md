@@ -21,7 +21,7 @@ depends_on: D-01, ADR-001, ADR-002, ADR-003, ADR-004, R-01, R-03, R-04
 - **【2026-08-02 状态升级】§4 检索三件套已由 T-014 实证跑通**：外部内容表 + 三组触发器 + `tokenize='simple'` + bm25 + `simple_query`/`simple_highlight` + **拼音检索** + WAL + 外键 + `vec0` KNN **全部通过**。§4 从"设计意图"升级为**已验证**。驱动定案 `better-sqlite3` v13 + `node:sqlite` 备胎 + 薄适配层（ADR-005 决策 6），**D-02 无需改动**。
 - **由实测带回的两条硬约定（已写死在文中）**：① **写 `vec0` 的整数列一律绑 `BigInt`**——绑 JS `number` 必报 `Only integers are allows for primary key values`，两个驱动表现一致（是 sqlite-vec 的行为不是驱动 bug），转换收口到 DB 适配层，业务代码照传 `number`（§4.3）；② **扩展能力只能实测，不能读 `PRAGMA compile_options` 推断**——不列 `ENABLE_LOAD_EXTENSION` 也照样能加载，本文早期的 V-6 提法就错在这个前提上（§4.1 已写入方法论更正）。
 - **DDL 已整体实证（2026-08-02）**：`oss-scout` 在 `packages/db` 落地跑通 **26 表 + 57 索引 + 3 FTS5 + 11 触发器**，`foreign_key_check` 干净 → 本文 DDL 全部从"设计意图"升级为**已验证**。由此得到一条全项目规则（ADR-009）：**设计文档里的 DDL 不许写「（略）」** —— 下游会照抄，而省略号是个空洞，只有实现时才炸；§4.1 的 `mindmap_nodes_fts` 三个触发器已补全为可执行 SQL。
-- **未验证/存疑**：① 驱动与扩展**只在 Linux x64 glibc 实测**，mac/Win/arm64/musl 全未验证，上游 issue #1509（arm64 需 GLIBC_2.38）未复现；② libsimple 辅助函数的形参级签名仍 UNKNOWN（只有用法级示例）；③ 重转写后 `quote` 相似度重定位的阈值（0.75/0.4）未用真实数据调过；④ 混合检索 RRF 的实际效果未做评测。
+- **未验证/存疑**：① 驱动与扩展已在 **Linux x64 glibc 与 macOS arm64** 实测（后者见 D-11 §7.2 的冷启动审计：`libsimple.dylib` / `vec0.dylib` 的 `darwin-arm64` 包真的装上并生效，中文检索在两个平台都成立）；**Windows / linux-arm64 / musl 仍未验证**，上游 issue #1509（arm64 需 GLIBC_2.38）未复现。**此前写着"只在 Linux x64 glibc 实测，mac/Win/arm64/musl 全未验证"**；② libsimple 辅助函数的形参级签名仍 UNKNOWN（只有用法级示例）；③ 重转写后 `quote` 相似度重定位的阈值（0.75/0.4）未用真实数据调过；④ 混合检索 RRF 的实际效果未做评测。
 - **对其他 agent 的影响**：§1/§4 的 DDL 已由 `packages/db` 落地，后续改 schema **必须走迁移**（§5），不要直接改本文的建表语句而不加迁移；T-013 请注意 API 只暴露 `uid`、时间戳出入口转换（DB 毫秒整数 ↔ API ISO 字符串）、以及 §1.8 的 `model_installs` 只是**可重建索引**，权威源仍是 `manifests/*.json`；T-012 请对齐 §1.8 `backend_installs` 的 `selftest_json` 与熔断字段 `failure_count`。
 
 ---
@@ -1151,7 +1151,8 @@ RRF 只用**名次**，无量纲、无需调参、对异常分值鲁棒。`[设�
 ### 5.1 版本与执行
 
 - 版本号 = `PRAGMA user_version`（整数，单调递增）。同时冗余写入 `app_meta.schema_version` 便于 SQL 查询。
-- 迁移文件：`apps/daemon/src/db/migrations/NNNN_<slug>.sql`（复杂数据变换用同名 `.ts` 补充）。
+- 迁移文件：**`packages/db/migrations/NNNN_<slug>.sql`**（复杂数据变换用同名 `.ts` 补充），执行器在 `packages/db/src/migrate.ts`。
+  **此前写着 `apps/daemon/src/db/migrations/`** —— 落地时按 ADR-005 的包所有权放进了 `packages/db`；`apps/daemon/src/db/` 下现在只有 repositories，没有 migrations 目录。
 - 执行器：
   ```
   cur = PRAGMA user_version
@@ -1311,7 +1312,7 @@ GC 是 `priority=30` 的维护 job，**只在空闲时跑**（无 running job �
 
 | # | 事项 | 影响 | 状态 |
 |---|---|---|---|
-| V-1 | 本文 DDL 是否能在真实 SQLite 上跑通 | 全局 | ✅ **已实证关闭（T-014，`oss-scout`）**：§4 的**全部 DDL 在真实 SQLite 上跑了一遍** —— 外部内容表、三组同步触发器、`tokenize='simple'`、bm25、`simple_query`/`simple_highlight`、**拼音检索**（`swdt`/`zx`/`sjz` 全命中）、WAL、外键、`vec0` 元数据列 KNN，**全部通过**。<br>⚠️ 仍未跑通的部分：§1 的 26 张业务表 DDL（jobs/notes/mindmap 等）尚未整体执行，T-016 落 `0001_init.sql` 时仍需实测 |
+| V-1 | 本文 DDL 是否能在真实 SQLite 上跑通 | 全局 | ✅ **已实证关闭（T-014，`oss-scout`）**：§4 的**全部 DDL 在真实 SQLite 上跑了一遍** —— 外部内容表、三组同步触发器、`tokenize='simple'`、bm25、`simple_query`/`simple_highlight`、**拼音检索**（`swdt`/`zx`/`sjz` 全命中）、WAL、外键、`vec0` 元数据列 KNN，**全部通过**。<br>✅ **§1 的 26 张业务表 DDL 也已整体执行**：`packages/db/migrations/0001_init.sql` 落地 **26 表 / 57 索引 / 2 触发器**，`0002_search.sql` 再补 **3 个 FTS5 + 9 个同步触发器**（合计与 TL;DR 的"26 表 + 57 索引 + 3 FTS5 + 11 触发器"逐项对上）。<br>⚠️ **此前这一格的尾巴写着"仍未跑通的部分：§1 的 26 张业务表 DDL（jobs/notes/mindmap 等）尚未整体执行，T-016 落 `0001_init.sql` 时仍需实测"** —— 它与本文档 TL;DR 第 23 行（"DDL 已整体实证"）直接矛盾，**以已执行为准**。 |
 | V-2 | `mind-elixir` 的包名/版本/`NodeObj` 字段名 | §2.3 映射表 | ✅ **已核实**（读源码 `src/types/index.ts`）。**订正：npm 包名是 `mind-elixir` v5.14.0，不是 `mind-elixir-core`**；`MindElixirData` **无 `linkData`** |
 | V-3 | `markmap-lib.transform()` 的输入 | §2.3 / 只读视图实现 | ✅ **已核实**：只吃 Markdown 字符串；但 `Markmap.create()` 吃 `IPureNode` → **改为直接构造 `IPureNode`** |
 | V-4 | libsimple 的加载与 `tokenize='simple'`、辅助函数、拼音 | §4.1/§4.2 | ✅ **已核实**（README 原文）。函数**形参级签名**仍 UNKNOWN，只有用法级示例 |
