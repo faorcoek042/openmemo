@@ -17,6 +17,7 @@ import { bus } from '../events/bus';
 import { ApiError, registerMockFetcher, type ApiOptions, type Fetcher } from './client';
 import type {
   ImportUrlRequest,
+  MediaAssetDto,
   NoteDetail,
   NoteSummary,
   ProbeResult,
@@ -45,7 +46,19 @@ const SAMPLE_TEXT = [
   '我们先把基础的反向传播推导完整走一遍。',
 ];
 
-interface MockNote extends NoteDetail {
+/**
+ * mock 里的一条笔记 —— **同时要当详情响应和列表响应用**。
+ *
+ * ⚠️ T-151 ②：`NoteDetail` 现在直接是 `@openmemo/shared` 的那一份（= daemon 真发的东西），
+ * 而它**不再包含** `coverAssetUid` / `updatedAt` / `source` —— daemon 的详情端点不发这三个，
+ * 它们只出现在**列表**端点的 `NoteSummary` 上。所以这里显式把两份合起来，
+ * 而不是让详情类型继续假装自己有这些字段。
+ *
+ * 这一行本身就是这次收敛的收获之一：它把「mock 造得出、真 daemon 造不出」这件事
+ * 摆到了类型上。mock 之外从未渲染过的东西（T-139 A1 的 `<audio>` 是同一族），
+ * 靠的正是"mock 的形状比真响应宽"这条缝。
+ */
+interface MockNote extends NoteDetail, Pick<NoteSummary, 'coverAssetUid' | 'updatedAt' | 'source'> {
   __mock: true;
 }
 
@@ -187,13 +200,38 @@ function seedNote(partial: Partial<MockNote> & { title: string }): MockNote {
     },
     summaryMd: partial.summaryMd ?? null,
     bodyJson: null,
-    bodyText: '',
+    /*
+     * ⚠️ 这里原来还有一个 `bodyText: ''`。**删掉了，不是改名**（T-151 ②）：
+     * daemon 的 `GET /api/notes/:uid` **从来不发 `bodyText`**，全仓也没有任何一处读它 ——
+     * 唯一"提供"它的就是这个 mock。留着它只会让下一个人以为真实响应里也有。
+     * （`bodyText` 是 `bodyJson` 的纯文本投影，只在 **PATCH 请求体**里往上送、供 FTS5 索引。）
+     */
     language: 'zh',
     assets: partial.assets ?? [],
     transcriptUid: partial.transcriptUid ?? null,
+    segmentCount: partial.segmentCount ?? 0,
+    canRetranscribe: partial.canRetranscribe ?? true,
   };
   notes.set(uid, note);
   return note;
+}
+
+/**
+ * 造一条 mock 资产。**`url` 必须由 uid 算出来，不许手写、更不许留空**（T-151 ②）。
+ *
+ * daemon 的 `GET /api/notes/:uid` **一直在发** `url: /media/asset/<ulid>` ——
+ * 而 web 那份手抄 DTO 里从前连这个键都没声明，于是前端只好自己再拼一次路径，
+ * 「路径规则应该只有一处、且那一处在服务端」这条就此破掉。
+ * mock 也照同一条规则产出，才不会让"在 mock 下能播、真环境下不能"这类差异再冒出来。
+ */
+function mockAsset(a: {
+  role: string;
+  mime: string | null;
+  bytes: number | null;
+  durationMs: number | null;
+}): MediaAssetDto {
+  const uid = nextId('as');
+  return { uid, url: `/media/asset/${uid}`, state: 'ready', ...a };
 }
 
 function makeSegments(count: number, startSeq = 0): TranscriptSegmentDto[] {
@@ -237,8 +275,8 @@ function seedDemoData() {
   const tUid = nextId('tr');
   n1.transcriptUid = tUid;
   n1.assets = [
-    { uid: nextId('as'), role: 'audio16k', mime: 'audio/wav', bytes: 103_232_000, durationMs: n1.durationMs, state: 'ready' },
-    { uid: nextId('as'), role: 'peaks', mime: 'application/octet-stream', bytes: 451_000, durationMs: null, state: 'ready' },
+    mockAsset({ role: 'audio16k', mime: 'audio/wav', bytes: 103_232_000, durationMs: n1.durationMs }),
+    mockAsset({ role: 'peaks', mime: 'application/octet-stream', bytes: 451_000, durationMs: null }),
   ];
   transcripts.set(tUid, {
     uid: tUid,
@@ -307,10 +345,10 @@ function runImportPipeline(note: MockNote, jobId: string) {
   step('demux', 0.44, 2200);
 
   later(() => {
-    const asset = { uid: nextId('as'), role: 'peaks', mime: 'application/octet-stream', bytes: 380_000, durationMs: null, state: 'ready' as const };
+    const asset = mockAsset({ role: 'peaks', mime: 'application/octet-stream', bytes: 380_000, durationMs: null });
     note.assets = [
       ...note.assets,
-      { uid: nextId('as'), role: 'audio16k', mime: 'audio/wav', bytes: 81_920_000, durationMs: note.durationMs, state: 'ready' },
+      mockAsset({ role: 'audio16k', mime: 'audio/wav', bytes: 81_920_000, durationMs: note.durationMs }),
       asset,
     ];
     // 波形就绪前前端不能去拉，否则 404 —— 这就是这个事件存在的理由

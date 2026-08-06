@@ -39,7 +39,20 @@ const UNUSABLE: readonly string[] = ['pending', 'missing', 'failed'];
  * `state === 'ready'`   → 能用。
  * 其余三种                → 不能用。
  */
-export function isUsableAsset(a: Pick<MediaAssetDto, 'state'>): boolean {
+export function isUsableAsset(a: { state?: string | undefined }): boolean {
+  /*
+   * ⚠️ 参数类型**刻意比 `MediaAssetDto` 宽**（T-151 ②）。
+   *
+   * `MediaAssetDto` 现在直接是 `@openmemo/shared` 的 `NoteAsset`，那里 `state` 是**必填**的 ——
+   * 必须必填，否则 daemon 把序列化里那一行删掉不会有任何编译错误，A1 那个洞就还开着。
+   * 但**契约要求发** 与 **读的时候要不要设防** 是两件事：真实世界里还有
+   * 老版本 daemon 的响应、缓存里的旧 JSON、手工构造的载荷 —— 它们真的没有这个键。
+   * 参数写成 `Pick<MediaAssetDto,'state'>` 的话，`isUsableAsset({})` 连编译都过不去，
+   * 而那正是这个函数最该处理的输入；照着类型把这条分支删掉，就等于把
+   * 「字段缺失 = 不可用」这个恰好导致 T-139 A1 的行为又装回来一次。
+   *
+   * 所以：**契约那一侧收紧，消费那一侧放宽**，两条规矩各守一头。
+   */
   return a.state === undefined || !UNUSABLE.includes(a.state);
 }
 

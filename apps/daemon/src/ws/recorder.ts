@@ -23,11 +23,13 @@ import { join } from 'node:path';
 
 import type { AsrStream, TranscriptSegment } from '@openmemo/pipeline';
 import { PRIORITY } from '@openmemo/pipeline';
+import { canonicalAssetRelPath } from '@openmemo/runtime';
 import { makeEvent, topics, ulid, type SseEvent } from '@openmemo/shared';
 
 import type { Repos } from '../db/repos.js';
 import type { SseHub } from '../http/sse.js';
 import type { JobQueue } from '../jobs/queue.js';
+import { generatePeaksAsset } from '../media/peaksAsset.js';
 
 /** 16 kHz 单声道 int16 —— 与 `AsrStream.write()` 的契约一致。 */
 export const RECORD_SAMPLE_RATE = 16_000;
@@ -44,6 +46,15 @@ export interface RecorderDeps {
   readonly queue: JobQueue;
   readonly sse: SseHub;
   readonly mediaDir: string;
+  /**
+   * 数据目录本身。**只用来把落盘路径换算成 `media_assets.rel_path` 的规范形态**
+   * （`canonicalAssetRelPath`），不用来拼任何输出路径 —— 录音仍只写 `mediaDir` 底下。
+   *
+   * 为什么不由 `dirname(mediaDir)` 推：那是"两个地方各自约定 media 目录叫什么"，
+   * 而这个字段一旦与 `paths.mediaDir` 脱钩就会静默算错基准 —— T-136 的病根正是
+   * 「同一列每个人各挑各的基准」。让调用方把两个都传进来，两者的关系只在 `paths.ts` 定义一次。
+   */
+  readonly dataDir: string;
   /** 打开一路流式识别；引擎不可用时返回 undefined（**不要**调 openStream）。 */
   readonly openStream: (req: {
     language?: string;
@@ -263,11 +274,36 @@ export class RecorderSession {
       durationMs: Date.now() - this.#startedAt,
     });
 
-    // 录音本身作为媒体资产落库（F5 时间轴要用它回放）
+    /*
+     * 录音本身作为媒体资产落库（F5 时间轴要用它回放）。
+     *
+     * ★ `relPath` 必须是**规范形态的相对路径**（T-151 ①）。
+     *
+     * 这里原来写的是 `relPath: this.#wavPath` —— 一个**绝对路径**。
+     * 它就是 T-095 在 `transcribe.ts` 修掉的那个缺陷（见 `archiveIntoMedia` 的注释），
+     * 录音这条路径**漏了**，而且比那次更难发现：读取侧的候选式解析对绝对路径也认，
+     * 所以在**不搬家**的机器上它一直是好的 —— 宽容的读取把不一致的写入藏了起来。
+     *
+     * 藏不住的那一刻是数据目录搬家：老的绝对路径不在新根的任何一个之内，
+     * `assetCandidates` 返回**空数组**，播放 404、自检报「读不出来」，
+     * 而那个 wav 明明跟着搬过去了。用户看到的是"我的录音没了"。
+     * `media_assets.rel_path` 这一列存在的**全部理由**就是让数据目录可以搬迁（D-02 §1.1）。
+     *
+     * 算不出相对路径（文件不在 dataDir 内）时**宁可抛也不写绝对路径**：
+     * 写下去就是把这个缺陷静默地重新放进库里一次。录音永远写在 `mediaDir` 底下，
+     * 走到这一步只可能是有人改坏了 `mediaDir` 的来源，那是必须响亮失败的情形。
+     */
+    const relPath = canonicalAssetRelPath(this.deps.dataDir, this.#wavPath);
+    if (relPath === null) {
+      throw new Error(
+        `录音落盘路径不在数据目录内，拒绝把绝对路径写进 media_assets.rel_path：` +
+          `${this.#wavPath}（dataDir=${this.deps.dataDir}）`,
+      );
+    }
     const asset = this.deps.repos.createAsset({
       noteId: this.#noteId,
       role: 'original',
-      relPath: this.#wavPath,
+      relPath,
       displayName: `${this.recordingUid}.wav`,
       mime: 'audio/wav',
       bytes: this.#bytesWritten + 44,
@@ -275,6 +311,28 @@ export class RecorderSession {
       sampleRate: RECORD_SAMPLE_RATE,
       channels: 1,
     });
+
+    /*
+     * ★ 波形峰值（T-151 ③）。录音落的就是 16 kHz 单声道 PCM16 WAV，直接能算。
+     *
+     * 为什么录音这条也要自己算，而不是等离线重跑那一遍：
+     * 重跑要几十秒到几分钟，而**录完就能回放**是 F3 的基本预期 ——
+     * 那段时间里波形是空的，用户会以为"这条录音坏了"。
+     * 落点与重跑那一遍**完全相同**（`<mediaRoot>/<noteUid>/peaks.ompk`），
+     * 而 `createAsset` 对 rel_path 幂等，所以重跑只会刷新内容、不会长出第二条资产。
+     *
+     * 段落数为 0（一句话都没识别出来）时**照样生成** —— 有没有转写稿和有没有波形无关，
+     * 而"什么都没识别出来"恰恰是最需要让用户自己看波形去核对的时候。
+     */
+    await generatePeaksAsset(
+      {
+        repos: this.deps.repos,
+        sse: this.deps.sse,
+        mediaRoot: this.deps.mediaDir,
+        dataDir: this.deps.dataDir,
+      },
+      { noteId: this.#noteId, noteUid: this.#noteUid, wavPath: this.#wavPath },
+    );
 
     // D-06 §15.2：停止后自动排离线重跑，priority = INTERACTIVE（用户正盯着看）
     let rerunJobUid: string | null = null;

@@ -1,11 +1,22 @@
 /**
  * 笔记 / 导入 / 转写 的 REST 路由（F1/F2/F5）。
  *
- * ⚠️ **契约缺口（已在 inbox 报 Manager）**：`packages/shared` 的 `ENDPOINTS`
- * 目前只有 models/backends/jobs/runtime 27 条，**没有 notes/import/transcript 契约**。
- * 该文件归 `model-mgmt` 独占，我不能往里加。
- * → 这里的形状是按 D-01 §3.2 的分层原则实现的**临时契约**，
- *   一旦 shared 补上正式类型，本文件应改为 import 它们，而不是各写各的。
+ * ✅ **契约缺口已闭合（T-151 ②）。** 这里原来写着「shared 没有 notes 契约，本文件的形状
+ * 是临时契约，一旦 shared 补上就应改为 import 它们」—— 那句"一旦…就应该"**没有失效条件、
+ * 也没有任何检查器盯着**，于是 shared 补上之后它继续挂在这儿，谁都不知道该谁去做。
+ *
+ * 现在 `GET /api/notes` 与 `GET /api/notes/:uid` 的响应对象**被显式标注成
+ * `@openmemo/shared` 的 `NoteListItem` / `NoteDetail`**，而 `apps/web` 读的是同一份类型。
+ * 判据因此从"记得同步"变成"编译期挡得住"：
+ *
+ * | 分叉的形态 | 现在会发生什么 |
+ * |---|---|
+ * | daemon 少发一个字段 | 对象字面量缺键 → **本文件编译错误** |
+ * | daemon 多发一个字段 | 多余属性检查 → **本文件编译错误**（顺便逼人先去契约里加） |
+ * | web 读一个 daemon 不发的字段 | 该属性不在类型上 → **web 编译错误** |
+ *
+ * ⚠️ 这三条挡不住的是「字段还在、含义变了」。那种只能靠 `noteDetailContract.test.ts`
+ * 那类真跑一遍的端到端用例，两道都要有。
  *
  * D-01 §3.2 规则 2：**写操作一律异步化** —— 导入不阻塞 HTTP，
  * 返回 202 + jobUid，进度走 SSE。
@@ -13,7 +24,19 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { isAbsolute, posix, resolve, win32 } from 'node:path';
 
-import { makeEvent, topics } from '@openmemo/shared';
+import {
+  isMediaAssetState,
+  isNoteKind,
+  isNoteStatus,
+  makeEvent,
+  topics,
+  type MediaAssetState,
+  type NoteAsset,
+  type NoteDetail,
+  type NoteKind,
+  type NoteListItem,
+  type NoteStatus,
+} from '@openmemo/shared';
 
 import { NoMediaSourceError, type MediaSourceRegistry } from '@openmemo/pipeline';
 
@@ -78,6 +101,33 @@ function parseJsonOrNull(raw: string | null): unknown {
     return null;
   }
 }
+
+/**
+ * DB 的 `TEXT` 列 → 契约上的字面量联合。**认不出就抛，不兜底成某个"看起来合理"的值。**
+ *
+ * 为什么可以放心抛：这三列在 `0001_init.sql` 里都带 `CHECK (… IN (…))`，
+ * SQLite 在写入时就拒了越界值 —— 也就是说**走到 throw 那一行本身就是一个真 bug**
+ * （schema 被改过 / 有人绕过约束写库）。那种时候一条带原值的 500 远好过
+ * 一个"状态显示成 draft"的界面：后者会让用户以为笔记回到了草稿。
+ *
+ * 兜底成默认值是本仓反复吃亏的形状：**把一次响亮的失败换成一次安静的谎话**。
+ */
+function narrowColumn<T extends string>(
+  value: string,
+  is: (v: string) => v is T,
+  column: string,
+): T {
+  if (is(value)) return value;
+  throw new Error(
+    `${column} 的取值 ${JSON.stringify(value)} 不在契约的字面量联合里 —— ` +
+      `建表语句上的 CHECK 约束本该拦住它，走到这里说明 schema 或数据被绕过了`,
+  );
+}
+
+const noteStatusOf = (v: string): NoteStatus => narrowColumn(v, isNoteStatus, 'notes.status');
+const noteKindOf = (v: string): NoteKind => narrowColumn(v, isNoteKind, 'notes.kind');
+const assetStateOf = (v: string): MediaAssetState =>
+  narrowColumn(v, isMediaAssetState, 'media_assets.state');
 
 /**
  * 一个本地路径是不是落在允许导入的根里。
@@ -365,11 +415,12 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
         });
         // 一次 IN 查询拿全部标签，避免列表页 N+1
         const tagMap = repos.tagsOfNotes(rows.map((n) => n.id));
-        const notes = rows.map((n) => ({
+        // ★ 显式标注：少一个键或多一个键都在这里编译失败（见文件头那张表）
+        const notes: NoteListItem[] = rows.map((n) => ({
           uid: n.uid,
           title: n.title,
-          status: n.status,
-          kind: n.kind,
+          status: noteStatusOf(n.status),
+          kind: noteKindOf(n.kind),
           language: n.language,
           durationMs: n.duration_ms,
           starred: n.starred === 1,
@@ -477,7 +528,7 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
 
         // ---- GET /api/notes/:uid ----
         if (method === 'GET') {
-          const assets = repos.assetsOfNote(note.id).map((a) => ({
+          const assets: NoteAsset[] = repos.assetsOfNote(note.id).map((a) => ({
             uid: a.uid,
             role: a.role,
             mime: a.mime,
@@ -498,17 +549,28 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
              * 那为什么还要发？因为它是**这条记录自己的事实**，前端已经在按它判断；
              * 让服务端不发、前端瞎猜，正是这个 bug 的成因。哪天异步产物（peaks/转码）
              * 真的先落 `pending` 再转 `ready`，消费方不需要改一行。
+             *
+             * ✅ T-151 ②：这个字段现在**在共享契约里是必填的**（`shared` 的 `NoteAsset.state`），
+             * 上面那段历史里"两边没有任何东西对过一遍"的状态已经结束 ——
+             * 把这一行删掉会当场编译失败，而不是等到用户点播放没反应。
              */
-            state: a.state,
+            state: assetStateOf(a.state),
             /** 前端播放器直接用这个（只接受 asset uid，绝不接受文件路径）。 */
             url: `/media/asset/${a.uid}`,
           }));
           const tr = repos.activeTranscriptOfNote(note.id);
-          sendJson(res, 200, {
+          /*
+           * ★ 显式标注成共享契约（T-151 ②）。**这一行就是这次改动的全部要害。**
+           *
+           * A1（`state`）与 A1b（`bodyJson`）能各自静默活那么久，不是因为谁写漏了断言，
+           * 而是因为**这个对象字面量与前端读它的那份类型之间不存在任何连接** ——
+           * 编译器结构上看不见那条缝。把它标注上去之后，缝就归编译器管了。
+           */
+          const detail: NoteDetail = {
             uid: note.uid,
             title: note.title,
-            status: note.status,
-            kind: note.kind,
+            status: noteStatusOf(note.status),
+            kind: noteKindOf(note.kind),
             language: note.language,
             durationMs: note.duration_ms,
             summaryMd: note.summary_md,
@@ -553,7 +615,8 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
              */
             canRetranscribe: repos.primarySourceOf(note.id)?.input_url != null,
             createdAt: new Date(note.created_at).toISOString(),
-          });
+          };
+          sendJson(res, 200, detail);
           return true;
         }
 

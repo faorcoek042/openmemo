@@ -1,17 +1,50 @@
 /**
  * 笔记域 DTO。
  *
- * ⚠️ 同 `lib/events/types.ts`：这些的权威定义**应当在 `@openmemo/shared`**
- * （`model-mgmt` 独占）。这里是本地镜像，让前端能先跑。
- * 形状对齐 D-02 的表结构，字段名保持一致以便日后直接替换。
+ * ─── ✅ T-151 ②：`NoteDetail` / `MediaAssetDto` **不再是手抄的镜像** ───────────────
+ * 这里原来写着「权威定义应当在 `@openmemo/shared`，这里是本地镜像让前端能先跑，
+ * 字段名保持一致以便日后直接替换」。**那句"以便日后替换"没有失效条件**，
+ * 于是这份镜像和 daemon 之间**没有任何东西连着** —— 不是断言写松了，
+ * 是编译器**结构上看不见**这条缝。实测代价（T-139）：
+ *
+ * | | 这份镜像声明 | daemon 实际发 | 后果 |
+ * |---|---|---|---|
+ * | `state` | **必填** | 不发 | `a.state === 'ready'` 恒 false → `<audio>` **从未进过 DOM**，F5 招牌功能从未工作过 |
+ * | `bodyJson` | 必有 | 不发 | 编辑器初值恒空 → **用户写的正文自动保存了、刷新就没了** |
+ * | `url` | 没有 | **一直在发** | 前端只好自己再拼一次路径 |
+ *
+ * 现在 `NoteDetail` / `MediaAssetDto` 直接是 `@openmemo/shared` 的那一份，
+ * daemon 的 `rest/notes.ts` 也把响应对象标注成同一个类型。判据因此变成**编译期**的：
+ * daemon 少发一个字段 → daemon 编译失败；这里读一个 daemon 不发的字段 → web 编译失败。
+ *
+ * ⚠️ **没有被这层保护覆盖的**：`NoteSummary`（`GET /api/notes` 那份）仍是手抄的，
+ * 而且**已经在分叉**：`source` / `coverAssetUid` / `folderUid` 三个字段 daemon 的列表端点
+ * **一个都不发**（`[读码]` `rest/notes.ts` 的 `.map()` 只发 10 个键）。
+ * 于是 `NotesListPage.tsx:157` 的 `n.source?.site` 在真实环境里**恒不渲染** ——
+ * 与上表是同一族缺陷，只是用了可选链所以不崩。收敛它要连带改
+ * `NotesListPage.tsx`（属 `frontend-truth`），T-151 没有动，**已在 inbox 如实报出**。
  */
+
+import type {
+  NoteAsset,
+  NoteDetail as NoteDetailContract,
+  NoteKind as NoteKindContract,
+  NoteStatus as NoteStatusContract,
+} from '@openmemo/shared';
 
 import type { TranscriptSegmentDto } from '../events/types';
 
-/** D-02 §1.3 notes.status */
-export type NoteStatus = 'draft' | 'processing' | 'ready' | 'partial' | 'failed';
+/**
+ * D-02 §1.3 `notes.status`。**取值来自 shared，而 shared 抄的是建表语句的 CHECK 约束。**
+ *
+ * （顺带记一笔：shared 里这个联合原来写的是 `draft|importing|transcribing|structuring|ready|failed`，
+ * 中间三个**在 CHECK 约束里根本不存在**，写进库会被 SQLite 当场拒。
+ * 它能错这么久是因为**全仓没有任何一处 import 过它** —— 一份没人用的契约不会被证伪。
+ * T-151 ② 已按建表语句订正。）
+ */
+export type NoteStatus = NoteStatusContract;
 
-export type NoteKind = 'media' | 'recording' | 'plain';
+export type NoteKind = NoteKindContract;
 
 /** D-02 §1.3 notes + §1.4 media_sources 的投影 */
 export interface NoteSummary {
@@ -48,51 +81,33 @@ export interface NoteSummary {
   } | null;
 }
 
-export interface NoteDetail extends NoteSummary {
-  summaryMd: string | null;
-  /** TipTap 文档 JSON（保真）。`bodyText` 是它的纯文本投影，供 FTS5 索引。 */
-  bodyJson: unknown | null;
-  bodyText: string;
-  language: string | null;
-  assets: MediaAssetDto[];
-  transcriptUid: string | null;
-  /**
-   * 这条笔记能不能重新转写 —— daemon 按「主来源的 `input_url` 是否非空」判定。
-   *
-   * 没有它时前端只能让 409 事后暴露；有了它就能事前禁用按钮并说明原因。
-   * 声明为**可选**：老响应不带这个键，而"字段缺失"绝不能读成"不能重跑" ——
-   * 那会把一个本来能用的功能对所有旧数据静默藏起来。
-   */
-  canRetranscribe?: boolean;
-}
+/**
+ * `GET /api/notes/:uid` 的响应 —— **就是 daemon 那一份，不是"对齐了的另一份"**。
+ *
+ * ⚠️ 它**不再 `extends NoteSummary`**，这是刻意的、也是这次改动的要点：
+ * 详情端点与列表端点是两个不同的响应，daemon 的详情**不发** `updatedAt` /
+ * `coverAssetUid` / `source` / `bodyText`。让详情继承列表，等于**用类型系统
+ * 替四个不存在的字段背书** —— 调用方写 `note.updatedAt` 一路编译通过、
+ * 运行时永远是 `undefined`。那正是 A1/A1b 的形状。
+ *
+ * 现在它是 `@openmemo/shared` 的 `NoteDetail`：读一个 daemon 不发的字段 = 编译错误。
+ */
+export type NoteDetail = NoteDetailContract;
 
-export interface MediaAssetDto {
-  uid: string;
-  role: string;
-  mime: string | null;
-  bytes: number | null;
-  durationMs: number | null;
-  /**
-   * 资产可用性。**声明为可选**，理由与下面 `canRetranscribe` 完全相同：
-   * 老响应不带这个键，而"字段缺失"绝不能读成"不可用"。
-   *
-   * ⚠️ 历史：这里原来写的是**必填**，而 daemon 的 `GET /api/notes/:uid`
-   * 一次都没发过它 —— 两边没有任何东西对过一遍，`tsc` 也不可能发现
-   * （web 这份是手抄的镜像，与 daemon 之间根本没有类型连接）。
-   * 后果是 `a.state === 'ready'` 恒 false，播放器永远拿不到音源（T-139 A1）。
-   * daemon 侧已补发；判"能不能用"请一律走 `features/notes/noteAssets.ts`，
-   * 不要在调用点重新写一遍比较。
-   */
-  state?: 'pending' | 'ready' | 'missing' | 'failed';
-  /**
-   * 现成的媒体 URL，形如 `/media/asset/<ulid>`。
-   *
-   * daemon **一直在发**，而这份手抄类型里**一直没有**（同一次分叉的另一半）。
-   * 有了它，取 `.ompk` 这类资产就不必在前端再拼一次路径 ——
-   * 路径规则只该有一处，而那一处在服务端。
-   */
-  url?: string;
-}
+/**
+ * 一条媒体资产 —— 同样直接取自共享契约（`shared` 的 `NoteAsset`）。
+ *
+ * 与旧版的两处差别，都别再改回去：
+ * 1. `state` 是**必填**的。契约里必填 = **服务端没有"不发"这个选项**，
+ *    删掉 daemon 那一行会当场编译失败。这正是 T-139 A1 缺的那道闸。
+ * 2. `url` 是**必填**的。daemon 一直在发，旧镜像里连声明都没有 ——
+ *    于是前端只好自己再拼一次 `/media/asset/<uid>`，路径规则凭空多出第二处。
+ *
+ * ⚠️ **契约必填 ≠ 读取时可以不设防**。判"这份资产能不能用"一律走
+ * `features/notes/noteAssets.ts` 的 `isUsableAsset`，它对**真的没带这个键的老响应**
+ * 按"可用"处理 —— 「字段缺失」绝不能读成「不可用」。两条规矩分工不同，都要在。
+ */
+export type MediaAssetDto = NoteAsset;
 
 export interface TranscriptDto {
   uid: string;

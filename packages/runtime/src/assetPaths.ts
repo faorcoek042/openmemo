@@ -23,7 +23,7 @@
  * 读到了 → 把那 4 字节的十六进制原样返回，**报告里可以拿去核对**。
  */
 import { open, realpath } from 'node:fs/promises';
-import { isAbsolute, join, resolve, sep } from 'node:path';
+import { isAbsolute, join, posix, resolve, sep, win32 } from 'node:path';
 
 /**
  * 「这个**已经解析过的绝对路径**落在允许的根内吗」——唯一那份判据。
@@ -59,6 +59,53 @@ export function assetCandidates(roots: readonly string[], relOrAbs: string): str
   const out: string[] = [];
   for (const p of raw) if (insideAnyRoot(rs, p) && !out.includes(p)) out.push(p);
   return out;
+}
+
+/**
+ * **写入侧**唯一那份「`rel_path` 该写成什么」——与上面的读取规则严格配对（T-151 ①）。
+ *
+ * ─── 为什么读取侧统一了还不够 ──────────────────────────────────────────────────
+ * T-136 把**读**的规则收敛成了这一个文件（播放端 / 自检 / 迁移三方共用），
+ * 但**写**的一侧当时原封没动：`transcribe.ts` 写相对 media 根、`migrateAssets.ts`
+ * 写相对 `dataDir`、`ws/recorder.ts` 写**绝对路径**。
+ * 读取侧的候选式解析很宽容，于是三种形态**碰巧**都读得回来 ——
+ * 这正是它能活这么久的原因：**宽容的读取会把不一致的写入藏起来**。
+ *
+ * 绝对路径那一种藏不住的地方只有一个，而且它是这个字段存在的全部理由：
+ * **数据目录一搬家，记录立刻失效**（D-02 §1.1「绝不存绝对路径」）。
+ * 老路径不在新根的任何一个之内 ⇒ `assetCandidates` 返回**空数组** ⇒ 播放 404、
+ * 自检报「读不出来」，而文件明明跟着搬过去了。`transcribe.ts` 的 `audio16k`
+ * 曾经就是这个形态并真的炸过（见该文件 `archiveIntoMedia` 的注释），
+ * T-095 修了它那一条，**录音这一条漏了**。
+ *
+ * 返回 `null` 而不是"兜底返回绝对路径"：兜底就等于把这个缺陷重新放进来一次，
+ * 而且是静默的。调用方拿到 `null` 必须自己决定（归档进 media 根，或者报错），
+ * **不许把绝对路径写进库**。
+ *
+ * ─── `platform` 是入参，不是 `process.platform` ────────────────────────────────
+ * 与 `argGuard.isSafeExecutable` / `argGuard.assertWithinRoot` /
+ * `rest/notes.ts` 的 `isWithinImportRoots` 同一形状（HANDOFF ⑤A-8）：
+ * 宿主绑定的路径语义在本机 Linux 上**测不出来**，而这类 bug 恰恰只在别的平台显形
+ * （`[CI 实测]` win32 上 `root + '/'` 前缀匹配永远不成立 → 本地导入 100% 403）。
+ * 参数化之后 Linux 上就能把 win32 语义也测到。
+ *
+ * 判据用 `relative()` 而不是 `startsWith(root + sep)`：后者对
+ * `/data-x` vs `/data` 这种「前缀相同但不是子路径」的形状会误判。
+ */
+export function canonicalAssetRelPath(
+  dataDir: string,
+  abs: string,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  const p = platform === 'win32' ? win32 : posix;
+  const d = p.resolve(dataDir);
+  const target = p.resolve(abs);
+  // 顺序即优先级，且必须与 `mediaAssetRoots` 的第一档一致：能相对 media 根就相对 media 根
+  for (const root of [p.join(d, 'media'), d]) {
+    const rel = p.relative(root, target);
+    if (rel !== '' && !rel.startsWith('..') && !p.isAbsolute(rel)) return rel;
+  }
+  return null;
 }
 
 export interface AssetProbe {

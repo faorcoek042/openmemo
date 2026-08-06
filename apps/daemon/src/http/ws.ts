@@ -82,6 +82,32 @@ function onRecorder(ws: WebSocket, url: URL, deps: WsDeps): void {
       ws.close();
     });
 
+  /**
+   * 收尾失败必须**说出来**，不能变成一条 unhandled rejection（T-151 ①）。
+   *
+   * `stop()` 现在会在"落盘路径算不出规范相对路径"时抛 —— 那是必须响亮失败的情形
+   * （写绝对路径进 `media_assets.rel_path` = 数据目录一搬家录音就找不回来）。
+   * 但三个调用点原来都是光秃秃的 `void session.stop()` / `void session.abandon()`：
+   * 一旦真抛出来，Node 会按 unhandled rejection 处理 —— **默认直接终止整个 daemon 进程**，
+   * 而用户看到的只是"录音停止时应用突然退出"，与真正的原因毫无关系。
+   * 所以三处统一收口到这里：告诉前端 + 记日志 + 让会话正常关闭。
+   */
+  const finish = (p: Promise<void>, then?: () => void): void => {
+    p.then(
+      () => then?.(),
+      (err: unknown) => {
+        const messageZh = `录音收尾失败：${err instanceof Error ? err.message : String(err)}`;
+        console.error(`[ws/recorder] ${messageZh}`);
+        send({ type: 'error', code: 'RECORD_FINALIZE_FAILED', messageZh });
+        try {
+          ws.close();
+        } catch {
+          /* 已经关了就算了 */
+        }
+      },
+    );
+  };
+
   ws.on('message', (data: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
     if (isBinary) {
       // 音频帧：同步送入（语义 1 —— 不能 await，否则阻塞浏览器音频线程）
@@ -93,7 +119,7 @@ function onRecorder(ws: WebSocket, url: URL, deps: WsDeps): void {
     try {
       const msg = JSON.parse(String(data)) as { type?: string };
       if (msg.type === 'stop') {
-        void session.stop().then(() => ws.close());
+        finish(session.stop(), () => ws.close());
       }
     } catch {
       send({ type: 'error', code: 'BAD_JSON', messageZh: '控制消息不是合法 JSON' });
@@ -102,10 +128,10 @@ function onRecorder(ws: WebSocket, url: URL, deps: WsDeps): void {
 
   // 断线 = 停止录音。stop() 幂等（语义 3），与显式 stop 竞争也安全
   ws.on('close', () => {
-    void session.abandon();
+    finish(session.abandon());
   });
   ws.on('error', () => {
-    void session.abandon();
+    finish(session.abandon());
   });
 }
 
