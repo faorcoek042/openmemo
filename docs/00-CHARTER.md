@@ -15,12 +15,24 @@
 
 ## 3. 平台与硬件矩阵（硬性要求）
 
-> ⚠️ **产物现状（2026-08-06 实测 `vendor/manifests/backends.json`）**：上表有 **5 行在产物层面为空**。
-> 已交付的只有 macOS-arm64 CPU（含 Metal/CoreML 编进核心包）、Linux x64 CPU、Win x64 CPU、Win x64 CUDA 12.4、Win x64 Vulkan。
-> Windows+AMD（DirectML）、Linux+NVIDIA(CUDA)、Linux+AMD(ROCm) **无任何产物**；
-> `linux-arm64` / `macos-x64` / `linux-x64-rocm` 已被用户 2026-08-05 明确裁掉。
-> ADR-016 已停「AMD ASR 自建 CI」，**所以补产物这条路已被砍，剩下的只能是改口径** ——
-> 这几行要么标注「规划中，v1 无产物」，要么下调。**不能继续对外宣称「真 AMD 支持」。**
+> ⚠️ **产物现状（2026-08-06 实测）—— 分两层看，此前本块把这两层混为一谈**
+>
+> **第一层：CI 能不能编出来。** `build-backends` run 31067558923 **9 个 job 全绿**，
+> 含 macOS metal / Linux vulkan / Linux cuda / Win vulkan 四条腿。**路已经走通了。**
+> `backend-packs-2026.08.06` 里有 5 个资产（含 145 MB 的 Linux CUDA）。
+>
+> **第二层：用户能不能在网页上装。** 5 个资产里**只有 1 个进了 `backends.json`**，
+> 另外 4 个的下载数是 **0** —— 因为加速增量包在当前安装布局下装了必然无效
+> （ggml 只在 whisper-cli 自身目录与 cwd 里找后端模块），故意没接进目录。
+>
+> **所以逐平台的实话是**：macOS-arm64（CPU+Metal+ANE 打进同一个自包含核心包）、
+> Linux x64 CPU、Win x64 CPU 三行**网页可装**；Win x64 CUDA **在目录里但今天装不上**
+> （L2 门禁 + `openmemo-probe` 无分发通道）；Win/Linux Vulkan 与 Linux CUDA **有产物、未进目录**；
+> AMD ROCm **无产物且已被用户 2026-08-05 裁掉**，`linux-arm64` / `macos-x64` 同。
+>
+> ⚠️ **本块此前写着**「Win Vulkan 已交付」「Linux CUDA 无任何产物」「补产物这条路已被砍」
+> —— 三条都错。根因是**把「有产物」和「网页可装」当成了一件事**。
+> **对外口径请用第二层，不是第一层。**
 必须在以下组合可用，且**加速后端由网页 UI 检测并配置**，不要求用户碰命令行：
 
 | 平台 | 加速后端 |
