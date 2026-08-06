@@ -902,3 +902,140 @@ run 31075515732 里**对照组三平台全红**，原因都是
 是别人的在途改动，**一个都没 add**。
 
 **D-11 §8 是追加**：节首标明了作者与来源，`ci-runner` 的正文一个字没改。
+
+---
+
+## [2026-08-06 16:25] T-150 —— 9 个单一来源模型文件的镜像：**校验完成，等你上传**
+
+交付：`scripts/ci/mirror-model-blobs.mjs`（新）、`.github/workflows/mirror-model-blobs.yml`（新）。
+提交 `c00a476`，已 push。产物：run **31083710161** 的 artifact `model-mirror`（366,828,317 B）。
+
+# TL;DR
+
+## ★ 做法必须改：**这台开发机根本取不到这些文件**
+
+任务书的硬条件是「每个文件下载后**本机**复算 sha256」。我照做，然后发现做不到：
+
+```
+getent hosts huggingface.co  →  2001::c085:4d85   （只有 IPv6，且是个到不了的地址）
+TCP 443 huggingface.co       →  连不上/超时
+hf-mirror.com                →  连得上，但对这些路径 308 → huggingface.co
+```
+
+**没复算过的摘要不许进 release** 这条不能让步，所以让步的是"在哪台机器上复算"：
+**下载与校验改在干净 runner 上做**，产物走 artifact 交出来，由你挂到 release 上。
+这与本仓一贯的判据其实是同一条 —— **开发机上的"能用"不算证据，那台机器恰恰是最不该信的一台**。
+
+## ✅ 9/9 全部通过（`[CI 实测]` run 31083710161，`success`）
+
+```
+✔ asr__sherpa-streaming-zh-14m__encoder-epoch-99-avg-1.int8.onnx   21,621,684 B  0.8s
+✔ asr__sherpa-streaming-zh-14m__decoder-epoch-99-avg-1.int8.onnx    1,888,682 B  0.4s
+✔ asr__sherpa-streaming-zh-14m__joiner-epoch-99-avg-1.int8.onnx     1,795,562 B  0.3s
+✔ asr__sherpa-streaming-zh-14m__tokens.txt                             48,697 B  0.1s
+✔ asr__paraformer-zh-small__model.int8.onnx                        81,828,675 B  3.4s
+✔ asr__paraformer-zh-small__tokens.txt                                 75,352 B  0.1s
+✔ asr__paraformer-zh-small__am.mvn                                     11,203 B  0.1s
+✔ punctuation__ct-transformer-zh-en__model.onnx                   294,372,519 B  5.6s
+✔ punctuation__ct-transformer-zh-en__tokens.json                    4,207,480 B  0.1s
+
+9 个文件，合计 405,849,854 B（387.0 MiB）
+每一条的 sha256 都是**下载后重算**的，且与仓库清单里那个**逐字符相同**。
+```
+
+完整表格（资产名 / 字节 / sha256 / 上游不可变 URL）在 run 的日志第 3 节，
+以及 artifact 里的 `MIRROR-MANIFEST.json`。
+
+## 🔴 顺带测出一件与本任务直接相关的事：**`hf-mirror` 不是第二个来源**
+
+脚本第 1 节会对每个 mirror host 真发一次请求。**两个独立观测点，结论一致**：
+
+| host | 开发机（境内出口） | ubuntu-24.04 runner（us-west） |
+|---|---|---|
+| `huggingface.co` | 连不上 | `HTTP 302 → us.aws.cdn.hf.co` |
+| `hf-mirror.com` | `HTTP 308 → huggingface.co` | **`HTTP 308 → huggingface.co`** |
+
+也就是说清单里那条 `hf-mirror` **对"上游消失"这件事提供的冗余是 0** —— 它是同一个来源的别名，
+不是副本。`catalog-truth` §② 说「冗余是 0 只在境外出口成立」，**从 runner 上看它在境外出口也是 0**。
+
+⚠️ **边界**：308 是"永久重定向"，客户端跟随之后仍会去 huggingface.co。
+从中国大陆 IP 发起时它**可能**返回代理后的字节（那正是 hf-mirror 存在的理由），
+**我没有中国大陆出口可以验**，所以不下"它完全无用"的结论 ——
+它可能解决**访问**问题，但它解决不了**来源消失**问题。这正好说明我们自己这份镜像是必要的。
+
+→ **这条不改清单**，只记录。要不要动 `hf-mirror` 条目是 `catalog-truth` 的地盘。
+
+## 我独立复核了你点名的那条（①）
+
+`catalog-truth` 自陈第一版正则太窄误报过 `silero_vad.onnx`，让我别只信数字。
+我没有复用它的正则，**判据取反向**：URL 里出现 `main|master|latest|HEAD|refs/heads/` 即算未钉，
+且必须真有一段 40 位 hex。**18 个 URL（9 文件 × 2 mirror）逐个核过，未钉死 0 个。**
+它的结论成立。
+
+# 我的判断：**建一个新 tag，不要挂到 `backend-packs-2026.08.06` 上**
+
+你让我判断哪种对用户更清楚。建议 **`model-mirror-2026.08.06`**，四条理由：
+
+1. **两者的性质不同，而这正是 ADR-001 要回答的问题。**
+   `backend-packs` 的说明第一句就是「本项目自建的 whisper.cpp 后端包」——
+   **那些是我们编的**。这 9 个**一行代码都不是我们的**，是逐字节复制的第三方权重。
+   混在一个 tag 里，"哪些是我们构建的、哪些是我们转存的"就再也分不出来了。
+2. **许可证不同**：whisper.cpp 是 MIT；这几个模型的上游是另一套（sherpa / FunASR 系）。
+   同一个 release 页面挂两套许可证义务，是给日后查证的人埋雷。
+3. **更新节奏不同**：后端包会随 whisper.cpp 升级重编；这 9 个钉死在 commit sha 上，
+   除非我们主动换模型，否则**永远不会有第二版**。
+4. **发布说明要说的话完全不同**：这一份要写的是「这些不是我们构建的，是镜像；
+   原始地址与 sha256 逐条列出；我们只保证逐字节相同」。
+
+# 请你做的事（我不建 release）
+
+1. 下载 run **31083710161** 的 artifact `model-mirror`（9 个文件 + `MIRROR-MANIFEST.json`）。
+2. 建 tag `model-mirror-2026.08.06`（**已发布，可 prerelease，不能是 draft** —— draft 附件不能匿名下载）。
+3. 上传那 9 个文件（**别传 `MIRROR-MANIFEST.json` 之外的东西，也别改名** ——
+   资产名带模型 id 前缀是有原因的，见下）。
+4. 告诉我 tag 建好了，我来填 manifest 的 mirror 条目 + 加守卫 + 反向验证。
+
+⚠️ **资产名为什么带前缀**：这 9 个文件里 **`tokens.txt` 出现两次**
+（sherpa-streaming 一份、paraformer 一份，**内容不同**）。用原名上传会让后一个
+**覆盖前一个，而且不会有任何报错**。前缀是为了让这件事不可能发生。
+（落盘名不受影响：`ArtifactFile.name` 才决定装到磁盘上叫什么，
+URL 的 basename 与它本来就允许不同 —— yt-dlp 那几条就是这样。）
+
+# 脚本的判据（都反向验证过，按 §10 跑在 /tmp 隔离副本上）
+
+| 判据 | 反向验证 |
+|---|---|
+| 选中的模型数对不上 → 当场失败 | `RV1`：把一个 id 写错 → `exit 1` + 明确列出缺哪个 |
+| 任一文件 sha256/字节数不符 → 失败并**删掉全部产物** | 本机 HF 不通，这组**只能在 runner 上真正显形**，如实标注为未直接观测 |
+| `if-no-files-found: error` | 不许上传空 artifact 然后绿灯 |
+
+**部分正确的镜像比没有镜像更糟**：它看起来是成功的，而缺的那一半要等用户装到一半才发现。
+所以失败时是**整个目录删掉**，不是"跳过坏的那个"。
+
+## workflow 刻意只给 `permissions: contents: read`
+
+加一行 `contents: write` 它就能自己建 release 并上传 —— **我没有加**。
+理由不是权限洁癖：**建 release 是要人确认的对外动作，"让 CI 代劳"会把那道闸悄悄绕过去，
+绕过的还是同一道闸，只是换了个执行者。** 这条我写进 workflow 注释了。
+
+# ⚠️ 一条我要主动认的（PROTOCOL §10 是在我之后才成文的，但事实照说）
+
+**T-146 期间我的反向验证（R1–R5、R3–R5）是在共享工作树里做的** ——
+我改了 `vendor/manifests/backends.json` / `components.json`，跑测试，再还原，
+每次窗口大约 5–15 秒，**没有在 inbox 里申报时间窗**。
+
+`vendor/manifests/*.json` 是**运行时读取**的，所以那几个窗口里别的 agent 如果正好在跑
+`pnpm -r test`，会看到清单缺条目导致的红。我最终状态是干净的
+（`grep -rn REVERSAL` 全仓 0、`git status` 只有我要提交的文件），
+但按 §10 的判据 ——「**最终状态干净救不了过程中别人跑了一次**」——
+**这仍然是越界的**。时间点大致在 T-146 的两个批次里，如果那几分钟有人撞上
+`backends.json`/`components.json` 相关的红，那是我。
+
+本轮（T-150）的反向验证已经按 §10 跑在 `/tmp/mirror-rv{,2}/` 的隔离副本上，
+共享树的 `vendor/manifests` 全程未被改动（已用 `git status` 确认）。
+
+# 纪律
+
+`:10000` 零请求 · `/root/data-memo` 与指针未碰 · `pnpm build:safe` · 无 `pkill -f` ·
+**没建/没改/没删 release** · `git add` 逐个文件
+（`git status` 里 `childEnv` / `peaks` / `transcribe.ts` 等一批是别人的在途改动，一个都没 add）。
