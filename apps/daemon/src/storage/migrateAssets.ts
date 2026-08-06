@@ -34,7 +34,7 @@ import { promises as fs } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import type { DatabaseHandle } from '@openmemo/db';
-import { probeAssetFile } from '@openmemo/runtime';
+import { canonicalAssetRelPath, probeAssetFile } from '@openmemo/runtime';
 
 export interface AssetMigrationResult {
   readonly scanned: number;
@@ -196,10 +196,22 @@ export async function migrateMediaAssets(
    *
    * 这一条是 T-136 的直接教训：旧迁移把归档结果写成 `media/legacy/…`（相对 dataDir），
    * 而写入侧（`transcribe.ts`）写的是相对 media 根 —— 同一列两种约定，
-   * 读取方只要挑错基准就会把好文件报成"已删除"。**统一由这里产出唯一一种形态。**
+   * 读取方只要挑错基准就会把好文件报成"已删除"。**只能有一种形态。**
+   *
+   * ✅ T-151 ①：这里原来是这个模块自己的一行实现，与 `transcribe.ts` 的
+   * `archiveIntoMedia`、`ws/recorder.ts` 各写各的 —— 也就是说 T-136 收敛的是**读**的规则，
+   * **写**的规则当时还是三份。现在统一走 `@openmemo/runtime` 的 `canonicalAssetRelPath`
+   * （与 `mediaAssetRoots` / `assetCandidates` 同一个文件，读写严格配对）。
+   *
+   * 调用点已保证 `abs` 落在 dataDir 内（③ 走 `probeAssetFile` 的结果，
+   * ④ 有显式的 `startsWith` 前置判断），所以 `null` 分支到不了；
+   * 真到了就抛 —— **绝不退回去写绝对路径**，那正是这次要消灭的东西。
    */
-  const canonicalRel = (abs: string): string =>
-    abs.startsWith(mediaRoot + sep) ? relative(mediaRoot, abs) : relative(dataDir, abs);
+  const canonicalRel = (abs: string): string => {
+    const rel = canonicalAssetRelPath(dataDir, abs);
+    if (rel === null) throw new Error(`路径不在数据目录内，拒绝规范化：${abs}`);
+    return rel;
+  };
 
   /*
    * 已被占用的 rel_path —— 迁移**绝不能把两行指到同一个文件**。

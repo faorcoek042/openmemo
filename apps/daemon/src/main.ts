@@ -633,6 +633,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
           modelsDir: paths.modelsDir,
           modelPath: getBundle().modelPath,
           mediaRoot: paths.mediaDir,
+          dataDir: paths.dataDir,
           modelId: getBundle().modelPath?.split('/').pop() ?? 'unknown',
         },
         signal,
@@ -724,6 +725,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         queue: queue_,
         sse,
         mediaDir: paths.mediaDir,
+        dataDir: paths.dataDir,
         openStream: (req) => getBundle().openStream(req),
         get streamModelId() {
           return getBundle().streamModelId;

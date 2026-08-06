@@ -38,6 +38,7 @@ import {
 } from '@openmemo/pipeline';
 
 import type { Repos } from '../../db/repos.js';
+import { generatePeaksAsset } from '../../media/peaksAsset.js';
 import { mayRetitleNote } from './retitle.js';
 import type { SseHub } from '../../http/sse.js';
 import type { JobQueue, JobRow } from '../queue.js';
@@ -60,6 +61,11 @@ export interface TranscribeRunnerDeps {
   };
   readonly modelPath: string | null;
   readonly mediaRoot: string;
+  /**
+   * 数据目录本身。**只用来把落盘路径换算成 `media_assets.rel_path` 的规范形态**
+   * （T-151 ①/③），不用来拼输出路径 —— 产物仍只写 `mediaRoot` 底下。
+   */
+  readonly dataDir: string;
   readonly modelId: string;
   /** 解析用户显式指定的 modelId 需要它。 */
   readonly modelsDir: string;
@@ -341,6 +347,31 @@ export async function runTranscribeJob(
     sampleRate: 16000,
     channels: 1,
   });
+
+  /*
+   * ★ 波形峰值（T-151 ③）—— **daemon 这边第一次真的产出 `role='peaks'`**。
+   *
+   * 在这之前全仓零处写这个角色，而前端有一整套解码 + 绘制。后果不是"没有波形"，
+   * 是 `NoteDetailPage` 用 `mockPeaks()` **凭空编了一条**，每个用户看到的每条波形都是假的
+   * （T-139 A3 已把假的删掉，缺的就是这里）。D-07 #18 / D-08 #18 两次盘点都记的 🔴。
+   *
+   * **不需要再调一次 ffmpeg**：上面这个 `audio16k` 就是 16 kHz 单声道 PCM16 WAV，
+   * 而且刚刚被归档进 media 根 —— 盘上躺着的已经是解码后的 PCM，
+   * 再 spawn 一个 ffmpeg 去解一遍是把做完的事重做。所以这里直接读它。
+   *
+   * 放在转写**之后**：波形只用来看，稿子才是用户等的东西；
+   * 而且这一步失败了也只降级成"无波形"（`generatePeaksAsset` 自己吞掉并打日志），
+   * 绝不让一单已经转好的稿子因为画不出波形而失败。
+   */
+  const peaks = await generatePeaksAsset(
+    { repos, sse, mediaRoot: deps.mediaRoot, dataDir: deps.dataDir },
+    { noteId: note.id, noteUid: note.uid, wavPath: join(deps.mediaRoot, normalizedRel) },
+  );
+  if (peaks) {
+    console.log(
+      `[transcribe] 波形已生成：${peaks.relPath}（${peaks.buckets} 桶 / ${peaks.bytes} 字节）`,
+    );
+  }
 
   sse.publish(
     mediaReadyEvent({
