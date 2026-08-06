@@ -1,10 +1,24 @@
 ---
 id: D-09
 author: ui-polish
-status: ready
+status: ready（正文有效；TL;DR 的 🚨 已闭合，见下方订正块）
 date: 2026-08-03
+corrected_at: 2026-08-06（debt-cleanup / T-152：逐条复核 TL;DR 的高优先级断言）
 depends_on: D-05（前端规范）, R-06（memo.ac 功能对比）, ADR-002/005（shadcn 豁免区）
 ---
+
+> # ⚠️ TL;DR 里那条 🚨 **已经修好了**，别照它重开 P0
+>
+> `[实测]` 2026-08-06（读码 + 剥注释 grep，HEAD `2896562`）：
+>
+> | TL;DR 的断言 | 今天 | 证据 |
+> |---|---|---|
+> | 🚨「自我重启会用机器全局的 `~/.local/share/openmemo/datadir.json` **覆盖**命令行 `--data-dir`」（原指 `main.ts:750`） | ✅ **已修** | `apps/daemon/src/main.ts` 的 `restart()` 路径**不再读指针文件**（在 `restart` 函数体内 `pointer` / `datadir.json` 零命中）。这条当初的定性是对的、也确实很严重 —— 它后来还促成了 PROTOCOL §9 / §9-bis 那两条规矩 |
+> | 「`components/common/HealthBanner.tsx` 已成死文件，留着不删等 Manager 裁决」 | ✅ **已删** | `git log --diff-filter=D` → 删于 `70210a0`。**此前写着"留着不删"** |
+> | 「`verifying` 阶段与 `blocked` 状态的 toast 未在真实场景触发过」 | ⚪ **判不了** | 属"跑没跑过某次实验"，静态核不出来。原文自己标了 `[未跑通]`，保持原状 |
+>
+> 逐帧实测、密度改造（`/runtime` 4047px→约 2100px）、memo.ac 取证那几段**仍然有效**，
+> 那是本文最有价值的部分。
 
 ## TL;DR（≤ 25 行，Manager 只读这里）
 

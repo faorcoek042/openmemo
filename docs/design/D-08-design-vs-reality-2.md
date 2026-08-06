@@ -1,11 +1,32 @@
 ---
 id: D-08
 author: architect
-status: ready
+status: superseded
+superseded_by: coordination/inbox/debt-audit.md（同一套检查表的第三次执行，2026-08-03 晚，更全）
+superseded_at: 2026-08-06
 date: 2026-08-03
-supersedes_report: D-07（不作废 D-07，本文是同一套检查表的第二次执行）
+supersedes_report: D-07（本文是同一套检查表的第二次执行；D-07 已于 2026-08-06 补上反向标记）
 method: 逐条读码复审 + 对运行中的隔离实例打探针 + 端到端链路实证
 ---
+
+> # ⛔ 先读这一段：本文 TL;DR 里那 4 个"严重度高于它们修掉的部分"的新问题，**四条全修好了**
+>
+> **别照着下面的 TL;DR 重开 P0。** 本文写于 2026-08-03。
+> `[实测]` 2026-08-06（剥注释 grep + 读码，HEAD `2896562`）：
+>
+> | 本文 TL;DR 的断言 | 今天 | 证据 |
+> |---|---|---|
+> | ①「`pause` 变成不可逆取消 —— `state='paused'` 全仓无写入方」 | ✅ **已修** | `apps/daemon/src/jobs/queue.ts:342-344` 的注释逐字记着**此前**是这样，现在 `:296/:316/:334` 三处 SQL 都把 `paused` 纳入状态机 |
+> | ②「正常退出把在跑的 job 打成 `cancelled`，重启后永不续跑」 | ✅ **已修** | `apps/daemon/src/jobs/scheduler.ts:28` 引入 `StopIntent = 'cancel' \| 'pause' \| 'shutdown'`，`:75` 退出时置 `'shutdown'`，`:113 #settleAborted()` 按意图分流；`:23` 的注释就是在讲这条 |
+> | ③「Windows 数据目录两套默认值（`APPDATA` vs `LOCALAPPDATA`）」 | ✅ **已修** | 统一到 `APPDATA`：`apps/daemon/src/config/paths.ts:29`（canonical）、`packages/downloader/src/store.ts:69-76`（注释写明"This used to read LOCALAPPDATA"）、`packages/pipeline/src/tools.ts:86` 点名 D-08 D3 |
+> | ④「`discoverTools()` 不传 `storeRoot` → 装成功了仍报没装」 | ✅ **已修** | `apps/daemon/src/pipeline/setup.ts:218-221` 的注释逐字复述这个 bug，`:221` 已 `resolveStoreRoot(paths.dataDir)` |
+> | ★「浏览器从来就够不到 daemon（没有 vite 代理）」 | ✅ **本文自己修的，仍在** | `apps/web/vite.config.ts:91` 的 `proxy:` 与 `:25 rewriteOrigin()` |
+> | 「`/api/selfcheck` 2 ok / 6 warn / **5 fail**」 | ⚪ **判不了** | 那是当时那台机器的运行时状态，不是代码事实 |
+>
+> **仍然值得看的**：§5「两端都有、中间对不上」那一节的**判据**（不是它的具体条目）——
+> 它总结出的形状（前端就绪、服务端断链，两边各自以为对方会做）后来又发生了多次。
+> **不要再引用本文的 `file:line`** —— 抽样复核约 1/3 已经指不到所述代码。
+> 需要当前的缺口清单，去 `coordination/inbox/debt-audit.md`。
 
 ## TL;DR（≤ 25 行，Manager 只读这里）
 

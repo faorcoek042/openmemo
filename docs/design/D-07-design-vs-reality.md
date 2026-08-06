@@ -1,11 +1,38 @@
 ---
 id: D-07
 author: architect
-status: ready
+status: superseded
+superseded_by: D-08（同一套检查表的第二次执行）+ coordination/inbox/debt-audit.md（第三次，更全）
+superseded_at: 2026-08-06
 date: 2026-08-03
 inputs: D-01, D-02, D-05, 00-CHARTER.md, apps/daemon/src/**, apps/web/src/**, packages/**
 method: 逐条读码比对 + 对运行中的 daemon 实地探针
 ---
+
+> # ⛔ 先读这一段：本文 TL;DR 里点名的"最重的几条"**大部分已经修好了**
+>
+> **别照着下面的 TL;DR 重开 P0。** 本文写于 2026-08-03，此后约 30 个提交把它点名的问题
+> 逐条修掉了。一份自称"最重的一条"的文档如果不说自己已经过期，**它的成本是让人去重做一件做完的事**。
+>
+> 逐条复核（`[实测]` 2026-08-06，剥注释 grep + 读码，HEAD `2896562`）：
+>
+> | 本文 TL;DR 的断言 | 今天 | 证据 |
+> |---|---|---|
+> | ①「`@openmemo/runtime` 整个包 daemon 从不 import，全是死代码」 | ✅ **已修** | daemon 里 **10 处** import，如 `apps/daemon/src/http/media.ts:16`、`http/rest/backends.ts:16`、`storage/migrateAssets.ts:37`、`ws/recorder.ts:26` |
+> | ②「chunk 级续跑事实上失效 —— 每次重跑建新行导致恒为空集」 | ✅ **已修** | `apps/daemon/src/jobs/runners/transcribe.ts:188-197` 改成"有就接着写，不新建"，注释里逐字记着原来的坏法 |
+> | ③「流水线 job 无法取消，`Scheduler.cancel()` 全仓零调用方」 | ✅ **已修** | `apps/daemon/src/main.ts:666`、`http/rest/jobs.ts:129`；`rest/jobs.ts:8` 的注释就是在讲这次修复 |
+> | 「M-4 段落编辑：服务端无 `UPDATE transcript_segments`」 | ✅ **已修** | `apps/daemon/src/db/segmentRepo.ts:68` 与 `:95` |
+> | 「M-7 锚点：`note_anchors` 零写入」 | ✅ **已修** | `apps/daemon/src/db/segmentRepo.ts:147-150`（DELETE + INSERT） |
+> | 「FTS 重建缺 `'rebuild'` 回填 → 搜索静默返回 0 条」 | ✅ **已修** | `packages/db/src/migrate.ts:207` |
+> | 「`daemon.lock` + flock 完全没实现」 | ✅ **已修（做法不同）** | `apps/daemon/src/bootstrap/single-instance.ts:321`；`:281` 说明**刻意**用 `O_EXCL` 而不是 `flock(2)`（Node 标准库没有 flock，且 `O_EXCL` 在 Windows 上语义一致） |
+> | 「B-3 LLM 设置 `/api/settings/llm` 实测 404」 | ⚠️ **路径本身仍零命中** | 但设置面已改成 `/api/settings`（`http/rest/settings.ts:78`）+ `/api/settings/{proxy,data-dir}`。**本文写的那个路径是猜的，不是服务端曾有过的** |
+> | 「`/api/health` 在 guard 之前返回，无鉴权泄露 `dataDir`」 | 🔴 **仍然成立** | `apps/daemon/src/http/server.ts:109-112`「**公开**，不需要鉴权」 |
+> | 「CSP 响应头全仓零命中」 | 🔴 **仍然成立** | 剥注释后 `content-security-policy` 全仓 0 命中 |
+> | 「libsimple / sqlite-vec 都没加载成功，tokenizer 降级 trigram」 | ⚪ **判不了** | 那是**当时那台机器**的运行时状态，不是代码事实。装没装取决于数据目录，静态核不出来 |
+>
+> **仍然值得看的**：本文 §1–§3 的逐条清单方法本身、以及最后两条 🔴。
+> **不要再引用本文的 `file:line`** —— 抽样复核约 1/3 已经指不到所述代码。
+> 需要当前的缺口清单，去 `coordination/inbox/debt-audit.md`（2026-08-03 的第三次执行，更全，且带证据等级）。
 
 ## TL;DR（≤ 25 行，Manager 只读这里）
 

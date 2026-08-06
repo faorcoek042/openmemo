@@ -1,11 +1,28 @@
 ---
 id: D-10
 author: ia-design
-status: draft
+status: draft（规格仍有效；TL;DR 的两条 🚨 已闭合，见下方订正块）
 date: 2026-08-03
+corrected_at: 2026-08-06（debt-cleanup / T-152：逐条复核 TL;DR 的高优先级断言）
 depends_on: D-05（前端 IA/路由/分片导出）, D-09（视觉对比）, ADR-016（范围裁剪）, ADR-004/011/012/013（模型域）, R-04 §9, R-06
 scope: 只写规格，零代码。实现归 `architect`（`apps/web/src/**`）/ `model-mgmt`（目录与 manifests）/ `gpu-runtime`（后端包）
 ---
+
+> # ⚠️ TL;DR 里两条最急的**已经修好了**，别照它重开 P0
+>
+> 本文自我描述里有「**最急**」「**必须先拆的雷**」这类措辞，正是最容易被照单重开的一类。
+> `[实测]` 2026-08-06（读码 + 剥注释 grep，HEAD `2896562`）：
+>
+> | TL;DR 的断言 | 今天 | 证据 |
+> |---|---|---|
+> | 「`/models` 读 `active.llm`（**永远 null**）→ **在谎报功能不可用**」（§0.1，自称"最重要的发现"） | ✅ **已修** | `apps/web/src/features/models/ModelsPage.tsx:198` 与 `:259-262` 直接引用「D-10 #8」并改读 `llm.defaultProviderId` / `llm.defaultModelId`，注释里逐字记着"这里原本读 `active.llm`" |
+> | 🚨「daemon 靠**硬编码 id** 分派协议（`=== 'anthropic'`，`llm/resolve.ts:89`），一旦改吃 24 家目录 Anthropic 会静默坏掉」（§8-D1，自称"最急"） | ✅ **已修** | `apps/daemon/src/llm/resolve.ts:63-76` 已改成读 `kind` 分派；`:114` 的注释写着"这里原来是 `providerId === 'anthropic'`"。`:82` 残留的 id 判断是**老配置没有 `kind` 字段时的兜底**，且 `:88` 会打警告，不是原来那条雷 |
+> | 「`POST /api/llm/detect` 端点不存在」（#23） | 🔴 **仍然成立** | daemon 全仓 `llm/detect` 剥注释后 0 命中。[探测本机] 仍依赖一个不存在的端点 |
+> | 「`role=vad`(2) + `role=punctuation`(1) 在 UI 里完全不可见」（#10） | 🔴 **仍然成立** | `ModelsPage.tsx` 里 `'vad'` / `'punctuation'` 零命中 |
+> | 「`/models` 的语言模型 Tab 装的是 ADR-016 已砍掉的 GGUF，整条线下架」（#7 #12 #22） | 🟡 **只做了一半** | `vendor/manifests/models-llm.json` 仍有 **5** 条 GGUF；`llama.cpp` 的后端包已于 `07584d9`（T-144①）整族摘掉。**目录条目还在，后端包没了** |
+>
+> §1–§7 的信息架构规格、定名三规则、五槽状态表、§7 的 memo.ac 取证**全部仍然有效**，
+> 那是本文的主体价值。上表只订正 TL;DR 里会被当成待办重开的那几条。
 
 ## TL;DR（≤ 25 行，Manager 只读这里）
 
