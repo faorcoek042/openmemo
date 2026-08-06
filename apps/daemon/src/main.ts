@@ -27,6 +27,7 @@ import {
   DataDirLockedError,
   acquireDataDirLock,
   acquireSingleInstance,
+  boundAddress,
   createUnboundServer,
   IS_PUBLIC_BIND,
   removeRuntimeJson,
@@ -255,6 +256,15 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
   const server = createUnboundServer(tls ? { key: tls.key, cert: tls.cert } : undefined);
 
   let boundPort = 0;
+  /*
+   * 实际绑定到的监听地址。**在 `server.address()` 之前先用 BIND_HOST 兜底** ——
+   * 那是我们请求绑定的地址，绑定成功后再换成内核实际给的那个（两者只在
+   * `localhost` / 主机名这类会解析的输入上才不同）。
+   *
+   * 绝不能像以前那样在 `/api/health` 里写死 `'127.0.0.1'`：那是**安全结论的输入**，
+   * 见 `http/server.ts` 的 `ServerDeps.host`。
+   */
+  let boundHost = BIND_HOST;
   let instanceIdRef = '';
   let repos: Repos | undefined;
   let bundle: PipelineBundle | undefined;
@@ -357,6 +367,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     build: { ...BUILD_INFO, startedAt: STARTED_AT },
     dataDir: paths.dataDir,
     port: () => boundPort,
+    host: () => boundHost,
     routers,
     requestRestart: (reason: string, o?: { dataDir?: string }) => {
       // 不 await：让 HTTP 响应先发出去，前端才能显示"正在重启"
@@ -413,11 +424,26 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
             streamAvailable: bundle.streamAvailable,
             streamModelId: bundle.streamModelId,
             paraformerAvailable: bundle.paraformerAvailable,
-            engines: bundle.candidates.map((c) => ({
-              id: c.engine.id,
-              available: c.available,
-              ...(c.unavailableReason ? { reason: c.unavailableReason } : {}),
-            })),
+            /*
+             * ★ 必须把**没构造出来**的引擎也列进来（T-160）。
+             *
+             * 只列 `candidates` 的话，模型没装的引擎在这份列表里根本不存在 ——
+             * 前端 `AsrEngineStatus` 会把它补成"未安装"，但**说不出原因、也给不出下一步**。
+             * 而真实原因（"未安装流式中文模型，去模型页装 X"）daemon 是知道的。
+             * 不说出来，就是把一次可操作的缺失变成一个用户查不下去的哑巴状态。
+             */
+            engines: [
+              ...bundle.candidates.map((c) => ({
+                id: c.engine.id,
+                available: c.available,
+                ...(c.unavailableReason ? { reason: c.unavailableReason } : {}),
+              })),
+              ...bundle.unavailableEngines.map((e) => ({
+                id: e.id,
+                available: false,
+                reason: e.reasonZh,
+              })),
+            ],
             ffmpeg: bundle.tools.ffmpeg || null,
             whisperCli: bundle.tools.whisperCli,
             /*
@@ -456,6 +482,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
   }
 
   boundPort = outcome.port;
+  boundHost = boundAddress(server) ?? BIND_HOST;
   const instanceId = outcome.instanceId;
   instanceIdRef = instanceId;
 
@@ -877,7 +904,8 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     pid: process.pid,
     instanceId,
     startedAt: new Date().toISOString(),
-    host: BIND_HOST,
+    // 与 /api/health 同一个来源：两条路径都会喂给 AlreadyRunningError 的提示 URL
+    host: boundHost,
     port: boundPort,
     token,
     dataDir: paths.dataDir,

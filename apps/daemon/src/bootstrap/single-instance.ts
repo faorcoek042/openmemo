@@ -38,6 +38,20 @@ export const PROBE_HOST = '127.0.0.1';
 export const IS_PUBLIC_BIND = BIND_HOST !== '127.0.0.1' && BIND_HOST !== '::1';
 
 /**
+ * 内核**实际**绑定到的地址（`server.address().address`）。
+ *
+ * 为什么不直接用 `BIND_HOST`：那只是我们**请求**的地址。`/api/health` 的 `host`
+ * 字段是安全结论的输入（谁在读它判断"是不是只绑回环"），所以要报实际发生的事，
+ * 不是报意图。UNIX 域套接字 / Windows 命名管道下 `address()` 返回路径字符串，
+ * 那种情形根本没有"主机"，返回 null 让调用方自己兜底而不是编一个。
+ */
+export function boundAddress(server: Server): string | null {
+  const addr = server.address();
+  if (addr === null || typeof addr === 'string') return null;
+  return addr.address.length > 0 ? addr.address : null;
+}
+
+/**
  * 为什么端口必须尽量稳定：浏览器的 localStorage / cookie / **麦克风授权**
  * 全部按 origin（scheme+host+port）隔离。端口一变，
  * **用户的麦克风授权要重新点一遍**（直接影响 F3 录音转文字）。

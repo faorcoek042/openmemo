@@ -619,7 +619,26 @@ export function createUploadRoutes(deps: UploadRoutesDeps): {
         deps.repos.createSource({
           noteId: note.id,
           kind: 'local',
-          originalUrl: null,
+          /*
+           * ⚠️ **落盘路径必须存进 `input_url`**，这里原来写的是 `null`。
+           *
+           * 修法早就写在隔壁：`rest/notes.ts` 的本地导入分支为这件事专门修过一次，
+           * 原文「本地路径**也要存**…之前本地导入存 null，结果取消后无法重跑
+           * （不知道源文件在哪），续跑、换模型重跑、重新转写全都做不了」。
+           * **upload 没跟上**，于是后果链闭合在 F2 的每一条笔记上：
+           *   `rest/notes.ts` 的 `canRetranscribe: input_url != null` → 恒 false
+           *   → 「重新转写」按钮永久 disabled；绕过按钮 `rest/content.ts` 也回 409
+           *     `NO_SOURCE_INPUT`。换语言、换模型、失败重跑，对**每一个拖进来的文件**都不可用。
+           *
+           * 存的是 `finalPath`（`<mediaDir>/<ULID><白名单扩展名>`）而**不是**客户端给的
+           * 文件名：与 `input` 传给 job 的完全是同一个值，且落在受管根目录内
+           * （`buildDefaultRegistry` 的 `allowedRoot = dataDir`），重跑走的是同一条路径。
+           *
+           * **为什么此前没人抓到**：`upload.test.ts` 的假 Recorder 根本不记这个字段，
+           * 于是那条 `assert.deepEqual(rec.sources, …)` **不管写什么都是绿的**。
+           * 本次已把 `originalUrl` 补进 Recorder 并断言它等于落盘路径。
+           */
+          originalUrl: finalPath,
           // 原始文件名只活在元数据里（display_name），不参与任何路径拼接
           title: displayName,
         });

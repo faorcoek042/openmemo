@@ -244,7 +244,22 @@ describe('MultipartParser', () => {
 
 interface Recorder {
   readonly notes: { title: string; language: string | null }[];
-  readonly sources: { noteId: number; kind: string; title: string | null }[];
+  /**
+   * ★ `originalUrl` 是**后补上的字段**，而它的缺席正是一个真缺陷能藏一整轮的原因。
+   *
+   * 这个假 Recorder 原来只记 `{noteId, kind, title}`，于是下面那条
+   * `assert.deepEqual(rec.sources, …)` **无论产品代码往 `originalUrl` 里写什么都是绿的**
+   * —— 包括写死的 `null`，也就是"F2 上传的笔记永远不能重新转写"那条。
+   * `[实测]` `grep originalUrl upload.test.ts` 在修复前是空集。
+   *
+   * 判据：**一个断言看不见的字段，等于没有断言。**
+   */
+  readonly sources: {
+    noteId: number;
+    kind: string;
+    title: string | null;
+    originalUrl: string | null;
+  }[];
   readonly jobs: EnqueueParams[];
   readonly events: SseEvent[];
 }
@@ -263,7 +278,12 @@ function makeDeps(
         return { id: nextId, uid: `NOTE00000000000000000000${nextId}` };
       },
       createSource: (p) => {
-        rec.sources.push({ noteId: p.noteId, kind: p.kind, title: p.title ?? null });
+        rec.sources.push({
+          noteId: p.noteId,
+          kind: p.kind,
+          title: p.title ?? null,
+          originalUrl: p.originalUrl ?? null,
+        });
         return rec.sources.length;
       },
     },
@@ -435,6 +455,7 @@ describe('POST /api/notes/upload', () => {
         { name: 'file', filename: '我的 录音(1).MP3', contentType: 'audio/mpeg', data: payload },
       ]);
 
+      let storedAs = '';
       await withServer(deps, async (port) => {
         // 4KB 一片写入，逼出真实的多 chunk + 背压路径
         const res = await post(port, body, { contentType: ct, chunkSize: 4096 });
@@ -446,6 +467,7 @@ describe('POST /api/notes/upload', () => {
 
         // 磁盘名 = ULID + 白名单扩展名，与客户端给的名字**毫无关系**
         const stored = res.body['storedAs'];
+        storedAs = String(stored);
         assert.match(String(stored), /^[0-9A-HJKMNP-TV-Z]{26}\.mp3$/);
         assert.deepEqual(await storedFiles(dir), [String(stored)]);
         assert.deepEqual(await partialFiles(dir), [], '半成品目录必须是空的');
@@ -455,7 +477,28 @@ describe('POST /api/notes/upload', () => {
       });
 
       assert.deepEqual(rec.notes, [{ title: '会议录音', language: 'zh' }]);
-      assert.deepEqual(rec.sources, [{ noteId: 1, kind: 'local', title: '我的 录音(1).MP3' }]);
+      /*
+       * ★ `originalUrl` 必须是**落盘的绝对路径**，不能是 null。
+       *
+       * `rest/notes.ts` 的 `canRetranscribe` 判据就是 `input_url != null`：
+       * 存 null → F2 的每一条笔记「重新转写」永久 disabled，绕过按钮也 409。
+       * 而且它必须**等于喂给 job 的那个 `input`** —— 两者一旦分叉，
+       * 重跑读到的就不是第一次转写的那个文件。
+       */
+      assert.deepEqual(rec.sources, [
+        {
+          noteId: 1,
+          kind: 'local',
+          title: '我的 录音(1).MP3',
+          originalUrl: join(dir, storedAs),
+        },
+      ]);
+      const firstPayload = rec.jobs[0]?.payload as { input?: string } | undefined;
+      assert.equal(
+        rec.sources[0]?.originalUrl,
+        firstPayload?.input,
+        '重跑用的源必须与首次转写用的 input 完全一致',
+      );
       assert.equal(rec.jobs.length, 1);
       assert.equal(rec.jobs[0]?.type, 'transcribe');
       assert.equal(rec.jobs[0]?.lane, 'gpu.asr');

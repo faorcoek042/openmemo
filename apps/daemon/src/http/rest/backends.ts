@@ -48,6 +48,12 @@ function currentPlatform(): PlatformSelector {
  * **probe 可执行文件本身装在后端包里** → 干净机器上装不了任何包（T-044 实测：
  * 4 个 linux/x64 包全部 409）。现在 L1（CPU / macOS Metal）无条件可装，
  * L2 加速包维持 probe gate。
+ *
+ * ★ T-160：ADR-014 只把死锁**挪**了一格，没解开 —— `available` 要求 probe 枚举到该
+ * 后端的设备，而 probe 只枚举**其 ggml 库已经装了**的后端，那个库就在包里。
+ * 于是"没装"成了"不该装"的理由。解法是把 `state.advisoryBackends`（nvidia-smi /
+ * sysfs / DXGI 探到的、**不依赖任何包**的证据）也交给策略函数 ——
+ * 少传这个参数，死锁就原样还在，所以它不是可选的锦上添花。
  */
 function applicability(
   state: RestState,
@@ -58,6 +64,7 @@ function applicability(
     { id: pack.id, backend: pack.backend, os: pack.os, arch: pack.arch },
     platform,
     state.hardware,
+    state.advisoryBackends,
   );
   return { applicable: r.applicable, reason: r.reason, kind: inapplicableKind(state, pack, r) };
 }

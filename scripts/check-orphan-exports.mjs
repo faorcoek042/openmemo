@@ -49,6 +49,33 @@
  * `pinAuthMode`）本来就该只有测试引用，把它们卷进棘轮只会逼人往基线里灌水。
  * 它们仍然打出来 —— 里面确实藏着真缺陷（导图的三个 `from*` 解析器没有产品入口），
  * 但那是**人看**的清单，不是机器判据。
+ *
+ * ## ★ 第三档：**只被再导出**（T-160 补回）
+ *
+ * 这个扫描固化进 `scripts/` 时**丢了一档**。`backlog-sweep §7` 的 `/tmp` 原型区分三档：
+ * 「零引用」/「只有测试引用」/**「只有 index 再导出」**，第三档没跟过来。
+ *
+ * 后果是**门禁绿着，而它该抓的东西从名单里消失**：下面统计 `prod` 命中时，
+ * barrel `index.ts` 里的一句 `export { X } from './api'` 也算一次真引用，
+ * 于是任何被 barrel 转出去的导出，哪怕真实消费方为 0，也**永远进不了红名单**。
+ * `progress-audit` 按同口径重扫的量化结果：**28 个导出只被再导出、零真实产品调用方，
+ * 其中 18 个连测试都没有** —— 里面就有 `useMoveNoteMutation`（笔记移动到文件夹）
+ * 与 `useRenameFolderMutation`（文件夹改名），形状与门禁修好过的
+ * `useDeleteNoteMutation` **一模一样**。
+ *
+ * ### 判据钉的是**语句**，不是文件名
+ *
+ * 原型说的是"只有 index 再导出"，但"叫不叫 index.ts"是**命名约定**，不是事实。
+ * 这里改成：把每个文件里的 `export … from '…'` / `export * from '…'` 语句**整段挖掉**，
+ * 再数一次命中。命中归零 = 这个文件对它的引用**只是一次转发**。
+ * 于是放在任何文件里的再导出都算数，改名 barrel 也骗不过它。
+ *
+ * ### 为什么只打印不判红
+ *
+ * 28 条一次性判红会逼人往基线里灌水，而灌过水的名单没人再信。
+ * 更要紧的是：**这一档与 `orphans` 的口径必须彼此独立** —— `orphans` 仍然按
+ * 「含再导出在内的 `prod === 0`」算，所以本次改动**不会挪动棘轮基线一个字**
+ * （两档在定义上不相交：`orphans` 要求 `prod === 0`，本档要求 `prod > 0`）。
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -98,21 +125,55 @@ function stripComments(src) {
 const DECL_RE =
   /export\s+(?:async\s+)?(?:function|class|const|let|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g;
 
+/**
+ * 再导出语句 —— `export { … } from '…'`、`export type { … } from '…'`、
+ * `export * from '…'`、`export * as ns from '…'`。
+ *
+ * **不含**本地 `export { X }`（没有 `from`）：那是"把本文件里的东西导出去"，
+ * 不是转发别人的，且它出现在声明所在文件里，本来就会被算进 `self`。
+ */
+const REEXPORT_RE =
+  /export\s+(?:type\s+)?(?:\{[^}]*\}|\*(?:\s+as\s+[A-Za-z_$][\w$]*)?)\s+from\s*(['"])[^'"]*\1\s*;?/g;
+
+/** 把再导出语句整段挖成空白，保留其余代码。用于区分"真引用"与"只是转发"。 */
+function stripReexports(body) {
+  REEXPORT_RE.lastIndex = 0;
+  return body.replace(REEXPORT_RE, ' ');
+}
+
 const isTestFile = (p) => p.includes('.test.') || p.includes('/__tests__/') || p.includes('/test/');
 
-function scan() {
-  const files = sourceFiles();
-  const bodies = new Map();
-  for (const f of files) {
-    try {
-      bodies.set(f, stripComments(readFileSync(join(REPO, f), 'utf8')));
-    } catch {
-      /* 读不了就跳过；非空守卫会兜住"全都读不了"这种情况 */
-    }
+/**
+ * 分档。**参数是文件内容表**，不是从磁盘读 —— 这样自检可以拿一段写死的样本
+ * 跑**同一段代码**，而不是复述一遍它的逻辑（复述出来的对照组只能证明复述本身）。
+ */
+function classify(bodies) {
+  /** 同一份 body，但再导出语句被挖空 —— 用来分辨"真引用"与"只是转发"。 */
+  const bodiesNoReexport = new Map();
+  let reexportStatements = 0;
+  for (const [f, body] of bodies) {
+    REEXPORT_RE.lastIndex = 0;
+    reexportStatements += (body.match(REEXPORT_RE) || []).length;
+    bodiesNoReexport.set(f, stripReexports(body));
+  }
+
+  /**
+   * 有几个文件的"挖空版"**真的和原文不同**。
+   *
+   * ⚠️ 判据必须读**存进 map 的那个值**，不能读 `stripReexports()` 的返回值 ——
+   * 两者看起来等价，但要抓的回归恰恰是"算对了、存错了"：
+   * `[实测]` 反向验证时把 `bodiesNoReexport.set(f, stripReexports(body))` 改成
+   * `set(f, body)`，这一档从 21 条变成 0 条，而按返回值计数的那版自检**一格都没响** ——
+   * 它证明的是"剥离函数还活着"，不是"剥离结果被用上了"。
+   */
+  let strippedFiles = 0;
+  for (const [f, body] of bodies) {
+    if (bodiesNoReexport.get(f) !== body) strippedFiles += 1;
   }
 
   const orphans = [];
   const testOnly = [];
+  const reexportOnly = [];
   let declCount = 0;
 
   for (const [f, body] of bodies) {
@@ -128,28 +189,126 @@ function scan() {
       let prod = 0;
       let test = 0;
       let self = 0;
+      /** 剔掉再导出语句之后，产品代码里还剩几次命中。 */
+      let prodReal = 0;
+      /** 哪些文件只是把它转发出去。 */
+      const forwarders = [];
       for (const [g, gb] of bodies) {
         const hits = (gb.match(re) || []).length;
         if (!hits) continue;
-        if (g === f) self += hits - 1; // 减掉声明本身
-        else if (isTestFile(g)) test += hits;
-        else prod += hits;
+        if (g === f) {
+          self += hits - 1; // 减掉声明本身
+          continue;
+        }
+        if (isTestFile(g)) {
+          test += hits;
+          continue;
+        }
+        prod += hits;
+        const real = ((bodiesNoReexport.get(g) ?? gb).match(re) || []).length;
+        prodReal += real;
+        if (real === 0) forwarders.push(g);
       }
       if (prod === 0 && self === 0) {
         (test === 0 ? orphans : testOnly).push({ file: f, name: n, test });
+      } else if (prod > 0 && prodReal === 0 && self === 0) {
+        /*
+         * 产品代码里对它的**每一次**命中都发生在再导出语句里 —— 也就是说
+         * 「有人把它转出去了，但没有任何人接」。`orphans` 看不到这一档，
+         * 因为它的 `prod` 把转发也算成了引用（这正是丢掉的那一档）。
+         */
+        reexportOnly.push({ file: f, name: n, test, forwarders: forwarders.sort() });
       }
     }
   }
 
   const cmp = (a, b) => a.file.localeCompare(b.file) || a.name.localeCompare(b.name);
-  return { files, orphans: orphans.sort(cmp), testOnly: testOnly.sort(cmp), declCount };
+  return {
+    orphans: orphans.sort(cmp),
+    testOnly: testOnly.sort(cmp),
+    reexportOnly: reexportOnly.sort(cmp),
+    declCount,
+    reexportStatements,
+    strippedFiles,
+  };
+}
+
+function scan() {
+  const files = sourceFiles();
+  const bodies = new Map();
+  for (const f of files) {
+    try {
+      bodies.set(f, stripComments(readFileSync(join(REPO, f), 'utf8')));
+    } catch {
+      /* 读不了就跳过；非空守卫会兜住"全都读不了"这种情况 */
+    }
+  }
+  return { files, ...classify(bodies) };
+}
+
+/**
+ * 探针的探针：拿一段**写死的**样本跑一遍 `classify()`，证明"只被再导出"这一档真的看得见。
+ *
+ * 两条设计上的讲究：
+ *
+ * · **跑的是 `classify()` 本身**，不是复述一遍它的规则。复述出来的对照组只能证明复述
+ *   自己是对的 —— `[实测]` 第一版就是复述的，于是"把分档那个 else-if 整段删掉"这条变异
+ *   照样全绿。
+ * · **阳性对照是写死的样本，不是仓库里某个真实条目。** 真实条目随时会被人接上
+ *   （那正是我们想要的结果），到那天自检会红在一件好事上，然后被顺手删掉。
+ *   阳性对照必须是不会腐烂的。
+ */
+function selfTestReexportTier() {
+  const sample = new Map([
+    [
+      'pkg/src/api.ts',
+      'export function useThing() { return 1 }\nexport function useUsed() { return 2 }',
+    ],
+    ['pkg/src/index.ts', "export { useThing, useUsed } from './api';"],
+    ['pkg/src/Page.tsx', "import { useUsed } from './index';\nuseUsed();"],
+  ]);
+  const r = classify(sample);
+  const problems = [];
+  const tier = r.reexportOnly.map((o) => o.name);
+  if (!tier.includes('useThing')) {
+    problems.push(
+      `阳性对照失败：只被 index 再导出的 useThing 没有落进"只被再导出"这一档（实际 ${JSON.stringify(tier)}）` +
+        ' —— 这一档已经丢过一次（固化进 scripts/ 时），所以它必须有人守',
+    );
+  }
+  if (tier.includes('useUsed')) {
+    problems.push('阴性对照失败：真的有人 import 的 useUsed 被误判成"只被再导出"');
+  }
+  if (r.orphans.length !== 0) {
+    problems.push(`阴性对照失败：样本里不该有零引用导出，实际 ${JSON.stringify(r.orphans)}`);
+  }
+  return problems;
 }
 
 /* ────────────────────────────── 自检（先跑） ────────────────────────────── */
 
-const { files, orphans, testOnly, declCount } = scan();
+const { files, orphans, testOnly, reexportOnly, declCount, reexportStatements, strippedFiles } =
+  scan();
 const selfCheckFailures = [];
 if (files.length === 0) selfCheckFailures.push('文件清单是空的');
+if (reexportStatements === 0) {
+  selfCheckFailures.push(
+    '全仓一条 `export … from …` 都没扫到 —— 这个仓库满是 barrel，' +
+      '所以只可能是再导出正则失效了（那样"只被再导出"这一档会永远是空的，' +
+      '和"真的没有"长得一模一样）',
+  );
+}
+if (reexportStatements > 0 && strippedFiles === 0) {
+  selfCheckFailures.push(
+    '扫到了再导出语句，却没有任何一个文件在"挖掉再导出"之后发生变化 —— ' +
+      '说明这一步没有真的接上（`bodiesNoReexport` 被简化掉了？）。' +
+      '这条变异实测会让"只被再导出"从 21 条变成 0 条，而其它每一格都照常绿。',
+  );
+}
+if (reexportOnly.some((o) => o.name === PROBE_EXPORT)) {
+  selfCheckFailures.push(`${PROBE_EXPORT} 被报成"只被再导出" —— 它有真实调用方，说明分档瞎了`);
+}
+selfCheckFailures.push(...selfTestReexportTier());
 if (!files.includes(PROBE_FILE)) {
   selfCheckFailures.push(
     `文件清单里没有 ${PROBE_FILE} —— 这正是当年那个残缺 glob 漏掉的那一类（src/ 第一层）`,
@@ -191,12 +350,33 @@ const current = new Set(orphans.map(key));
 const added = orphans.filter((o) => !allowed.has(key(o)));
 const stale = [...allowed.keys()].filter((k) => !current.has(k));
 
-console.log(`ℹ 扫描 ${files.length} 个源文件 / ${declCount} 个导出`);
-console.log(`ℹ 零引用导出 ${orphans.length} 个（基线 ${allowed.size} 个）· 只有测试引用 ${testOnly.length} 个`);
+console.log(`ℹ 扫描 ${files.length} 个源文件 / ${declCount} 个导出 / ${reexportStatements} 条再导出语句`);
+console.log(
+  `ℹ 零引用导出 ${orphans.length} 个（基线 ${allowed.size} 个）· 只有测试引用 ${testOnly.length} 个` +
+    ` · 只被再导出 ${reexportOnly.length} 个`,
+);
 
 if (testOnly.length) {
   console.log('\nℹ 只有测试引用（不判红，供人看 —— 里面确实藏过真缺陷）：');
   for (const o of testOnly) console.log(`   ${o.file} :: ${o.name}  (test=${o.test})`);
+}
+
+if (reexportOnly.length) {
+  const noTest = reexportOnly.filter((o) => o.test === 0);
+  console.log(
+    `\nℹ 只被再导出、零真实产品调用方（不判红，供人看）：${reexportOnly.length} 个，` +
+      `其中 ${noTest.length} 个**连测试都没有**`,
+  );
+  console.log(
+    '   这一档是 T-160 补回来的。上面那份"零引用"名单看不见它们 —— barrel 的一句\n' +
+      '   `export { X } from …` 被算成了一次真引用。形状与门禁修好过的\n' +
+      '   `useDeleteNoteMutation`（笔记建出来就删不掉）完全相同：**功能只做了一半，\n' +
+      '   出口开好了、没有人走进去**。带 ⚠ 的是连测试都没有的那些，优先看。',
+  );
+  for (const o of reexportOnly) {
+    const mark = o.test === 0 ? '⚠ ' : '  ';
+    console.log(`   ${mark}${o.file} :: ${o.name}  (test=${o.test}, 转发方: ${o.forwarders.join(', ')})`);
+  }
 }
 
 let failed = false;

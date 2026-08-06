@@ -19,7 +19,8 @@
  * ```
  * `active.json` 说用哪个，安装记录说它在哪。**两者都不需要我们猜文件名。**
  */
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { copyFile, link, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { ArtifactStore, findInstalledByRole } from '@openmemo/downloader';
@@ -30,6 +31,8 @@ type ActiveMap = Partial<Record<string, string | null>>;
 interface InstallRecordFile {
   role?: string;
   name?: string;
+  /** 内容寻址摘要。**它是唯一不会被同名文件覆盖的锚点** —— 见 materializeModelDir。 */
+  sha256?: string;
   /** 新契约：根锚点 + 相对路径。 */
   root?: string;
   relPath?: string;
@@ -40,6 +43,11 @@ interface InstallRecordFile {
 interface InstallRecord {
   id?: string;
   role?: string;
+  /**
+   * 引擎按它决定 `modelConfig` 的形状（transducer / paraformer / …）。
+   * 老记录里没有这个字段，契约明写「`undefined` = 不知道，**不要**当成空集过滤掉」。
+   */
+  family?: string;
   files?: InstallRecordFile[];
   integrity?: string;
 }
@@ -226,6 +234,129 @@ export function scanByName(
     .filter((n) => (opts.excludes ? !n.toLowerCase().includes(opts.excludes) : true))
     .sort();
   return hit[0] ? join(dir, hit[0]) : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// 多文件模型（sherpa transducer / Paraformer / 标点）的解析（T-160）
+//
+// whisper 的模型是**一个** ggml 文件，所以上面那套「role → 一个权重路径」够用。
+// sherpa 系不是：一条流式模型是 encoder + decoder + joiner + tokens **四个文件**，
+// Paraformer 是 model + tokens（+ am.mvn）。它们要的是"一组文件"，而且引擎按
+// **扩展名**校验（实测：喂 `.bin` 会被拒 `Please pass *.onnx`），所以不能直接交 blob 路径。
+// ---------------------------------------------------------------------------
+
+/** 一条安装记录的最小视图 —— 只暴露解析用得到的部分。 */
+export interface InstalledModelRecord {
+  readonly id: string;
+  /** 老记录可能没有；契约明写 `undefined` = 未知，不得当成"没有引擎能加载它"。 */
+  readonly family: string | undefined;
+  /** **记录里声明的**文件名（不是从磁盘 readdir 猜的）。 */
+  readonly fileNames: readonly string[];
+  /** @internal 交回给 materializeModelDir 用。 */
+  readonly raw: unknown;
+}
+
+/** 列出某 role 下所有校验通过的安装记录（多文件模型用）。 */
+export async function listInstalledModelRecords(
+  modelsDir: string,
+  role: string,
+): Promise<InstalledModelRecord[]> {
+  const recs = await listInstalled(modelsDir, role);
+  const out: InstalledModelRecord[] = [];
+  for (const rec of recs) {
+    if (!rec.id) continue;
+    out.push({
+      id: rec.id,
+      family: rec.family,
+      fileNames: (rec.files ?? []).map((f) => f.name).filter((n): n is string => !!n),
+      raw: rec,
+    });
+  }
+  return out;
+}
+
+/** id → 文件系统安全的目录名（与 ArtifactStore.sanitizeId 同一口径）。 */
+function sanitizeId(id: string): string {
+  return id.replace(/[^a-zA-Z0-9._-]+/g, '_');
+}
+
+async function linkOrCopy(src: string, dest: string): Promise<void> {
+  await rm(dest, { force: true });
+  try {
+    await link(src, dest);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    // 跨文件系统 / 权限 / 不支持硬链 —— 退回复制（与 ArtifactStore.linkByName 同一处理）
+    if (code === 'EXDEV' || code === 'EPERM' || code === 'ENOTSUP') await copyFile(src, dest);
+    else throw e;
+  }
+}
+
+function sameInode(a: string, b: string): boolean {
+  try {
+    const sa = statSync(a);
+    const sb = statSync(b);
+    return sa.ino === sb.ino && sa.dev === sb.dev && sa.ino !== 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 把一条安装记录摊成**这个模型独占的一个目录**：`<modelsDir>/by-model/<id>/<原文件名>`。
+ *
+ * ## 为什么必须这么做，而不是直接用 `by-name/<kind>/<name>`
+ *
+ * `by-name` 是**按文件名**的视图，而文件名在模型之间**会撞**。目录里现成的一对：
+ *
+ * ```
+ * asr/sherpa-streaming-zh-14m  →  tokens.txt  48697 B  sha256 8b294db9…
+ * asr/paraformer-zh-small      →  tokens.txt  75352 B  sha256 4b2d964e…
+ * ```
+ *
+ * 两条都是 `role: asr`，于是都硬链到 `by-name/asr/tokens.txt`，而 `linkByName()`
+ * 是 `rm(target)` 之后再 `link()` —— **后装的那个把先装的那个顶掉**，
+ * 且两条安装记录的 `relPath` 仍然都指着这一个路径。后果不是"装不上"，
+ * 是**装上了、跑起来了、吐出来的字是错的**：ADR-013 的中文默认引擎与 F3 流式引擎
+ * 只要同时装，就一定有一个拿着别人的词表。这是"绿灯与错误来自同一个事实"那一族。
+ *
+ * ## 锚点用 blob，不用 by-name
+ *
+ * blob 是**内容寻址**的（文件名就是 sha256），从定义上不可能被同名文件覆盖。
+ * 所以这里优先从 `blobs/sha256-…` 硬链过来；blob 不在（老库、手工塞进来的文件）
+ * 才退回记录里的 `relPath`。硬链不额外占磁盘，跨卷失败时退回复制。
+ *
+ * ## 为什么不直接把 blob 路径交给引擎
+ *
+ * sherpa 按**扩展名**校验（实测报错原文 `Please pass *.onnx ... Given '.../ggml-base.en.bin'`），
+ * 而 blob 文件名是 `sha256-<hex>`，没有扩展名。所以必须有一层带真实文件名的视图。
+ *
+ * @returns 目录绝对路径；一个文件都摊不出来时返回 undefined（**不返回半个目录**）。
+ */
+export async function materializeModelDir(
+  modelsDir: string,
+  rec: InstalledModelRecord,
+): Promise<string | undefined> {
+  const raw = rec.raw as InstallRecord;
+  const files = raw.files ?? [];
+  if (files.length === 0) return undefined;
+
+  const dir = join(modelsDir, 'by-model', sanitizeId(rec.id));
+  const store = new ArtifactStore(modelsDir);
+  let linked = 0;
+
+  await mkdir(dir, { recursive: true });
+  for (const f of files) {
+    if (!f.name) continue;
+    const blob = f.sha256 ? store.blobPath(f.sha256) : undefined;
+    const src = blob && existsSync(blob) ? blob : absOf(modelsDir, f);
+    if (!src) continue;
+    const dest = join(dir, f.name);
+    // 已经是同一个 inode 就什么都不用做（每次启动都会跑，必须幂等且便宜）
+    if (!sameInode(src, dest)) await linkOrCopy(src, dest);
+    linked += 1;
+  }
+  return linked > 0 ? dir : undefined;
 }
 
 // ---------------------------------------------------------------------------

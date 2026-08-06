@@ -17,7 +17,7 @@
 import { promises as fs } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import type { Arch, Backend, GetHardwareResponse, HardwareInfo } from '@openmemo/shared';
+import type { Arch, Backend, GetHardwareResponse } from '@openmemo/shared';
 
 import type { AppPaths } from '../../config/paths.js';
 import {
@@ -56,6 +56,11 @@ export { volumeBytes };
 /**
  * 一次性探测（`RestState.create` 在启动时调一次并缓存）。
  *
+ * ★ 返回**整份 `RuntimeDetection`** 而不只是 `HardwareInfo`：L2 适用性判定还需要
+ * `advisoryBackends`（那是解开"要先装才能被发现"那个环的唯一独立证据，
+ * 见 `packages/runtime/src/backends/applicability.ts`）。只回 `HardwareInfo`
+ * 就等于在这一层把它丢掉，而丢掉它正是死锁至今没解开的原因之一。
+ *
  * @param modelsRoot 模型根目录 —— 调用方（state.ts）手里只有这一个路径。
  * @param dataDir    数据目录。不传时按 `<dataDir>/models` 的约定从 modelsRoot 反推：
  *   runtime 包需要 `<dataDir>/bin/runtime` 才能找到 probe 与 ggml 后端库，
@@ -65,12 +70,11 @@ export { volumeBytes };
 export async function detectLocalHardware(
   modelsRoot: string,
   dataDir?: string,
-): Promise<HardwareInfo> {
-  const detection = await detectRuntimeHardware({
+): Promise<RuntimeDetection> {
+  return detectRuntimeHardware({
     dataDir: dataDir ?? inferDataDir(modelsRoot),
     modelsDir: modelsRoot,
   });
-  return detection.hardware;
 }
 
 function inferDataDir(modelsRoot: string): string {

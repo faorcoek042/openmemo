@@ -24,6 +24,21 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { ArtifactStore } from '@openmemo/downloader';
+/*
+ * ★ 用 `packages/pipeline` 的**同一个**发现函数，不要在这里再写一个。
+ *
+ * `[用户实测]` 同一台实例上，"whisper-cli 在不在"有四个出口给了两种答案：
+ *   1. `discoverTools()` → `findInBackendPacks()`      找得到（976,312 B，在盘上）
+ *   2. `/api/selfcheck` 读 bundle                       找得到，路径一字不差
+ *   3. 磁盘                                             在
+ *   4. `runBackendSelfTest()`（本文件）                  **null** → 点「自测」得到
+ *      `409 SELF_TEST_BLOCKED missing:["whisper-cli"]`
+ * 第 4 个之所以不同，是因为它**自己解析、不吃流水线那份答案**，而且只搜 `bin/runtime`。
+ * 修法不是给它补一条搜索路径（那是第五个实现），是让它去问 1 号 ——
+ * 与 `canonicalAssetRelPath` 那次"读取侧/写入侧各归一一次"同一条判据：
+ * **同一个问题只准有一个回答的人。**
+ */
+import { findInBackendPacks } from '@openmemo/pipeline';
 import {
   CIRCUIT_BREAKER_THRESHOLD,
   PROBE_TIMEOUT_MS,
@@ -44,6 +59,7 @@ import {
   recordProbeOutcome,
   runProbe,
   runSelfTest,
+  type AdvisoryDetection,
   type BreakerState,
   type ProbeFailureKind,
   type ProbeResult,
@@ -124,12 +140,19 @@ async function isDir(p: string): Promise<boolean> {
 }
 
 /**
- * 在 runtimes 根下按层级找一个文件名。
+ * 在一个根目录下按层级找**第一个满足谓词的文件**。
  *
  * 后端包解包后可能多嵌几层（如 `<archive>/<顶层>/bin/`），所以深度到 4 足够，
  * 又不至于把整个数据目录翻一遍。BFS 保证浅层（也就是更"正式"的安装位置）优先命中。
+ *
+ * 谓词而不是固定文件名：ggml 后端库的文件名带版本号（`libggml-base.0.15.1.dylib`），
+ * 写死名字就等于每次上游改版都静默失效 —— 与"写死 `ggml-silero-v6.2.0.bin`"同一个坑。
  */
-async function findUnder(root: string, fileName: string, maxDepth = 4): Promise<string | null> {
+async function findUnder(
+  root: string,
+  match: (name: string) => boolean,
+  maxDepth = 4,
+): Promise<string | null> {
   let level = [root];
   for (let depth = 0; depth <= maxDepth && level.length > 0; depth += 1) {
     const next: string[] = [];
@@ -142,7 +165,7 @@ async function findUnder(root: string, fileName: string, maxDepth = 4): Promise<
       }
       for (const entry of entries) {
         const full = path.join(dir, entry.name);
-        if (entry.isFile() && entry.name === fileName) return full;
+        if (entry.isFile() && match(entry.name)) return full;
         if (entry.isDirectory()) next.push(full);
       }
     }
@@ -151,25 +174,81 @@ async function findUnder(root: string, fileName: string, maxDepth = 4): Promise<
   return null;
 }
 
+const named = (fileName: string) => (n: string) => n === fileName;
+
+/**
+ * 一个 ggml 后端动态库？
+ *
+ * 判据是"ggml 会 dlopen 的那类文件"，不是某个具体名字：
+ * `libggml-cpu.so` / `libggml-base.0.15.1.dylib` / `ggml-cuda.dll` 都算。
+ */
+function isGgmlLibrary(name: string): boolean {
+  if (!/^lib?ggml|^ggml/i.test(name)) return false;
+  return /\.(so|dylib|dll)(\.\d+)*$/i.test(name);
+}
+
 /**
  * 解析 runtime 需要的四个路径。
  *
- * runtimes 根与 `pipeline/setup.ts` 的 `runtimesDir` 保持一致（`<dataDir>/bin/runtime`），
- * 两处指向同一个目录，不能各写各的。
+ * ## ★ T-160：安装器写的目录和这里读的目录**不是同一个**
+ *
+ * `[本机实测]` live `GET /api/runtime/hardware` → `backendDirExists: false`，
+ * 而 `whispercpp-cpu-linux-x64` **已装、`integrity: "ok"`**。原因是两边各写各的：
+ *
+ * ```
+ * 安装器落点   <modelsRoot>/by-name/backend/<archive>/…      （backends.json 的包没有 linkInto）
+ * 这里只搜     <dataDir>/bin/runtime                          （空目录）
+ * ```
+ *
+ * 于是 probe 永远"找不到"、ggml 后端库永远"没装"、L2 加速包永远不可装 ——
+ * 而**每一层都没有报错**：安装成功、校验 ok、健康检查绿，只有加速功能静默缺席。
+ * 这与 T-093（网页装好中文分词器、搜索仍是 trigram 降级）是同一个形状，
+ * 那次的修法也一样：**读安装器真正写下的位置，而不是读一个约定俗成的位置**。
+ *
+ * `packages/pipeline` 的 `findInBackendPacks()` 早就在做这件事了（whisper-cli / ffmpeg
+ * 就是这么找到的），只有 runtime 这一路没跟上。这里补上同一条搜索路径。
+ *
+ * 顺序：环境变量（开发/自检覆盖）> `bin/runtime`（正式布局，将来 linkInto 生效时用）
+ *       > `by-name/backend`（安装器**今天**真正写下的位置）。
  */
 export async function resolveRuntimeLayout(input: RuntimePathsInput): Promise<RuntimeLayout> {
   const runtimesRoot = path.join(input.dataDir, 'bin', 'runtime');
   // 与 downloader 的 `resolveModelsRoot` 同序：OPENMEMO_MODELS > AppPaths.modelsDir
   const modelsRoot =
     process.env['OPENMEMO_MODELS'] ?? input.modelsDir ?? path.join(input.dataDir, 'models');
+  const backendPacksRoot = path.join(modelsRoot, 'by-name', 'backend');
 
   // 显式环境变量优先（开发/自检用），与 pipeline/setup.ts 的工具解析约定一致
   const envProbe = process.env['OPENMEMO_PROBE'];
   const envBackendDir = process.env['OPENMEMO_BACKEND_DIR'];
 
-  const found = envProbe ?? (await findUnder(runtimesRoot, probeBinaryName()));
+  const found =
+    envProbe ??
+    (await findUnder(runtimesRoot, named(probeBinaryName()))) ??
+    // ← 与 discoverTools() 用的是同一个函数，所以两边对"它在不在"不可能给出不同答案
+    (await findInBackendPacks(modelsRoot, probeBinaryName()));
   const probePath = found ?? path.join(runtimesRoot, probeBinaryName());
-  const backendDir = envBackendDir ?? (found !== null ? path.dirname(found) : runtimesRoot);
+
+  /*
+   * backendDir 的定义是「ggml 从哪里 dlopen 后端库」，而 ggml 找的是**二进制自身所在目录**。
+   * 所以 probe 找得到时就用它的同级目录（那才是 ggml 真正会看的地方）。
+   *
+   * probe 还没有分发通道（章程要求 2.1 断点①，见 inbox/gates-fix.md）时，
+   * 退而求其次指向**真的装了 ggml 库的那个目录** —— 这样 `backendDirExists` 与
+   * 断路器的驱动指纹（它 readdir 这个目录数动态库）说的都是实话，而不是恒 false。
+   */
+  const ggmlLib =
+    found !== null
+      ? null
+      : ((await findUnder(runtimesRoot, isGgmlLibrary)) ??
+        (await findUnder(backendPacksRoot, isGgmlLibrary)));
+  const backendDir =
+    envBackendDir ??
+    (found !== null
+      ? path.dirname(found)
+      : ggmlLib !== null
+        ? path.dirname(ggmlLib)
+        : runtimesRoot);
 
   return {
     probePath,
@@ -272,6 +351,18 @@ export interface RuntimeDetection {
   /** 降级链（ADR-003 决策 3）：还值得一试的后端，cpu 恒为最后一环。 */
   readonly degradationChain: Backend[];
   readonly installedBackends: Backend[];
+  /**
+   * **advisory 探测**（nvidia-smi / sysfs DRM / system_profiler / DXGI）认为本机
+   * 可能支持的后端，取所有探到的 GPU 的 `candidateBackends` 并集。
+   *
+   * 它是 L2 适用性判定里**唯一不依赖"包已经装了"的证据**，也就是解开
+   * 「要先有 A 才能装 B，而 A 要 B 装好才能被发现」那个环的东西
+   * （见 `packages/runtime/src/backends/applicability.ts` 的文件头）。
+   *
+   * ⚠️ 它**不是**"这个后端能用"的结论 —— 那个结论只能来自 probe。
+   * 空数组的含义是"没有独立证据"，不是"本机没有 GPU"。
+   */
+  readonly advisoryBackends: Backend[];
 }
 
 /** 已装后端包 = store 里真实存在的 backend manifest。cpu 是内置 L1，恒为已装。 */
@@ -321,12 +412,12 @@ function toDiagnostics(probe: ProbeResult, layout: RuntimeLayout, ran: boolean):
 async function composeHardware(
   layout: RuntimeLayout,
   probe: ProbeResult,
+  advisory: AdvisoryDetection,
   installedBackends: Set<Backend>,
   blacklistedBackends: Set<Backend>,
 ): Promise<HardwareInfo> {
-  const [cpu, advisory, disks] = await Promise.all([
+  const [cpu, disks] = await Promise.all([
     detectCpu(),
-    detectGpus(),
     detectDisks({ modelsRoot: layout.modelsRoot, runtimesRoot: layout.runtimesRoot }),
   ]);
   return buildHardwareInfo({
@@ -372,6 +463,12 @@ export async function detectRuntimeHardware(
   const installed = new Set<Backend>(
     options.installedBackends ?? (await installedBackendsFromStore(layout.modelsRoot)),
   );
+  /*
+   * advisory 探测在这里跑**一次**，然后同时喂给 `detectHardware()` 与
+   * `composeHardware()`。它是 L2 解环用的独立证据（见 RuntimeDetection.advisoryBackends），
+   * 而 macOS 上 `system_profiler` 要几秒 —— 探两遍是实打实的成本。
+   */
+  const advisory = await detectGpus();
 
   let breaker = breakers.get(layout.backendDir) ?? emptyBreaker();
   let ran = true;
@@ -408,10 +505,12 @@ export async function detectRuntimeHardware(
         runtimesRoot: layout.runtimesRoot,
         installedBackends: installed,
         blacklistedBackends: blacklisted,
+        advisory,
       })
-    : await composeHardware(layout, probe, installed, blacklisted);
+    : await composeHardware(layout, probe, advisory, installed, blacklisted);
 
-  const primaryVendor = hardware.gpus[0]?.vendor ?? null;
+  const primaryVendor = hardware.gpus[0]?.vendor ?? advisory.gpus[0]?.vendor ?? null;
+  const advisoryBackends = [...new Set(advisory.gpus.flatMap((g) => g.candidateBackends))];
 
   return {
     hardware,
@@ -428,6 +527,7 @@ export async function detectRuntimeHardware(
     blacklistedBackends: [...blacklisted],
     degradationChain: nextCandidates(hardware.os, primaryVendor, blacklisted),
     installedBackends: [...installed],
+    advisoryBackends,
   };
 }
 
@@ -528,9 +628,20 @@ export async function runBackendSelfTest(
   const layout = await resolveRuntimeLayout(options);
   const env = process.env;
 
+  /*
+   * ★ T-160：这里原来**只搜 `bin/runtime`**，而安装器把后端包解到
+   * `<modelsRoot>/by-name/backend/<archive>/`。用户点「自测」拿到的
+   * `409 SELF_TEST_BLOCKED missing:["whisper-cli"]` 就是这一行，
+   * 而**同一台实例**上 `/api/daemon/status` 报 `missing: []`、`/api/selfcheck` 报
+   * `tool.whisperCli ok` 并给出了完整路径、文件也确实在盘上（976,312 B）。
+   * 后果：`selfTest` 永远是 null →「自检结果」「anyFailed 横幅」三条 UI 分支永不亮。
+   *
+   * 修法**不是**给它补一条搜索路径，是让它去问 `findInBackendPacks()` —— 见文件头。
+   */
   const whisperCli = await firstExistingFile(
     env['OPENMEMO_WHISPER_CLI'],
-    (await findUnder(layout.runtimesRoot, whisperCliName())) ?? undefined,
+    (await findUnder(layout.runtimesRoot, named(whisperCliName()))) ?? undefined,
+    (await findInBackendPacks(layout.modelsRoot, whisperCliName())) ?? undefined,
   );
 
   const model = await firstExistingFile(

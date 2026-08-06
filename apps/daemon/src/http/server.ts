@@ -50,6 +50,19 @@ export interface ServerDeps {
   };
   readonly dataDir: string;
   readonly port: () => number;
+  /**
+   * **实际绑定到的监听地址**，不是一个字面量。
+   *
+   * 这里原来写死 `'127.0.0.1'`。它不是显示错误，是**安全结论的输入**：
+   *   · 单实例探测用它拼「已在运行 http://<host>:<port>」的提示（`AlreadyRunningError`）；
+   *   · 任何读这个字段判断"是不是只绑回环"的人或脚本，在
+   *     `OPENMEMO_HOST=0.0.0.0` 的部署上会得到**恰好相反**的结论。
+   * `[本机实测]` `ss -ltnp` 显示当前实例绑在 `0.0.0.0`，而 `/api/health` 回 `127.0.0.1`。
+   *
+   * 与 `port` 同理必须是函数：地址在端口绑定成功之后才由 `server.address()` 确定，
+   * 而 handler 必须在绑定之前就挂好。
+   */
+  readonly host: () => string;
   /** 健康检查里暴露的运行时状态（不含任何 secret）。 */
   readonly status: () => Record<string, unknown>;
   /**
@@ -117,8 +130,9 @@ async function handleRequest(
       instanceId: deps.instanceId(),
       contractVersion: CONTRACT_VERSION,
       dataDir: deps.dataDir,
-      // host 必须回传：单实例探测拿它拼「已在运行」的提示 URL（少了会显示 undefined）
-      host: '127.0.0.1',
+      // host 必须回传：单实例探测拿它拼「已在运行」的提示 URL（少了会显示 undefined）。
+      // **必须是真实绑定地址** —— 见 ServerDeps.host 的说明。
+      host: deps.host(),
       port: deps.port(),
       pid: process.pid,
       ...deps.status(),

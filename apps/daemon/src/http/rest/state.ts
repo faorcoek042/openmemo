@@ -129,6 +129,15 @@ export class RestState {
     readonly modelCatalog: ModelCatalog,
     readonly backendCatalog: BackendCatalog,
     public hardware: HardwareInfo,
+    /**
+     * advisory 探测（nvidia-smi / sysfs / system_profiler / DXGI）认为本机可能支持的后端。
+     *
+     * **不是"能用"的结论**（那只能来自 probe），但它是 L2 适用性判定里唯一
+     * **不依赖"包已经装了"** 的证据 —— 也就是解开
+     * 「要先有 A 才能装 B，而 A 要 B 装好才能被发现」那个环的东西。
+     * 见 `packages/runtime/src/backends/applicability.ts` 的文件头。
+     */
+    public advisoryBackends: readonly Backend[],
   ) {
     this.store = new ArtifactStore(modelsRoot);
   }
@@ -144,7 +153,7 @@ export class RestState {
       loadBackendCatalog(deps.manifestDir),
     ]);
     await fs.mkdir(modelsRoot, { recursive: true });
-    const hardware = await detectLocalHardware(modelsRoot);
+    const detection = await detectLocalHardware(modelsRoot);
 
     // 与 AppPaths.extensionsDir 同一个定义（config/paths.ts:91）。
     const extensionsDir =
@@ -156,7 +165,8 @@ export class RestState {
       extensionsDir,
       modelCatalog,
       backendCatalog,
-      hardware,
+      detection.hardware,
+      detection.advisoryBackends,
     );
     await state.store.init();
     await state.loadPersisted();

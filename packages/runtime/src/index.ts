@@ -29,6 +29,7 @@
 import type { Backend, HardwareInfo } from '@openmemo/shared';
 
 import { buildHardwareInfo } from './backends/manager.js';
+import type { AdvisoryDetection } from './types.js';
 import { detectGpus } from './detect/gpu.js';
 import {
   detectCpu,
@@ -169,6 +170,14 @@ export interface DetectHardwareOptions {
   runtimesRoot: string;
   installedBackends?: Set<Backend>;
   blacklistedBackends?: Set<Backend>;
+  /**
+   * Advisory GPU detection, if the caller already ran it. Omitted -> detected here.
+   *
+   * Exists because the caller needs the same result for L2 applicability
+   * (`evaluateApplicability`'s `advisoryCandidates`), and running `system_profiler`
+   * twice per detection is a real, measurable cost on macOS.
+   */
+  advisory?: AdvisoryDetection;
 }
 
 /**
@@ -181,7 +190,12 @@ export interface DetectHardwareOptions {
 export async function detectHardware(options: DetectHardwareOptions): Promise<HardwareInfo> {
   const [cpu, advisory, probe, disks] = await Promise.all([
     detectCpu(),
-    detectGpus(),
+    /*
+     * Reuse an already-computed advisory result when the caller has one. macOS pays
+     * `system_profiler` (seconds, 8 s timeout) for this, and the daemon needs the same
+     * data for L2 applicability — detecting twice per request was the alternative.
+     */
+    options.advisory ? Promise.resolve(options.advisory) : detectGpus(),
     runProbe({ probePath: options.probePath, backendDir: options.backendDir }),
     detectDisks({ modelsRoot: options.modelsRoot, runtimesRoot: options.runtimesRoot }),
   ]);
