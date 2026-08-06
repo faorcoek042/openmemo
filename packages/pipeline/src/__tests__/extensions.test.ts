@@ -340,10 +340,13 @@ describe('★ T-147 sqliteExtensionSources —— 名字映射', () => {
  * 也可能写 `bin/ext` 里的名字（`libsimple.dll`）—— **两种读法都说得通**，
  * 所以这里两边都接受，只拦住"两个名字都对不上"的漂移（比如后缀写错、平台写错）。
  *
- * ⚠️ 现状（如实记）：win32 那两行写的是 `libsimple.dll`，而**归档里不存在这个文件**。
- * 按"归档提供什么"的读法它是假的；按"装完 bin/ext 里有什么"的读法它是真的
- * （T-147 修完之后才真）。改成 `simple.dll` 会更准确，但 `vendor/manifests/`
- * 是 `pack-publish` 的领地 —— 已在 `coordination/inbox/win-fixes.md` 申报，**未擅自改**。
+ * ⚠️ 现状（如实记，2026-08-06）：win32 那两行写的是 `libsimple.dll`，而**归档里不存在
+ * 这个文件**。按"归档提供什么"的读法它是假的；按"装完 bin/ext 里有什么"的读法它是真的
+ * （T-147 修完之后才真）。**Manager 已裁定改成 `simple.dll`**，但 `vendor/manifests/`
+ * 是 `pack-publish` 的领地且它正在收尾 release，所以**改动内容已交出、尚未执行**
+ * （见 `coordination/inbox/win-fixes.md` 的 SHARED-CHANGE 条目）。
+ *
+ * 执行之后这里**不需要改**：`simple.dll` 本来就在候选里，两种读法都仍然被接受。
  * 拦住重犯的那条断言在上面（`三个平台上游归档里的真实文件名…`），不依赖这份清单。
  */
 describe('★ T-147 vendor/manifests/sqlite-ext.json 与代码对得上', () => {

@@ -92,10 +92,18 @@ jobs:
         if: ${{ !cancelled() }}
         run: pnpm -r test
 
-      # T-141 §3 第 30 条预测：这一步用 POSIX `find`，Windows 的 `FIND.exe` 是 grep 类
-      # 工具，语义完全不同 → catch → 返回 [] → "没找到任何源码目录" → exit 1。
-      # 放在最后单独一步，就是为了让那条预测**要么被证实、要么被推翻**，
-      # 而不是混在别的失败里看不出来。
-      - name: Tracked-sources guard (预期在 Windows 上红 —— 见 T-141 §3 第 30 条)
+      # T-141 §3 第 30 条预测过：这一步用 POSIX `find`，而 Windows 的 `FIND.exe` 是
+      # grep 类工具，语义完全不同 → catch → 返回 [] → "没找到任何源码目录" → exit 1。
+      # 放在最后单独一步，就是为了让那条预测**要么被证实、要么被推翻**。
+      #
+      # ★ 那条预测已经被证实、并且**已经修好**（T-147，`0588091`）：
+      #   `check-tracked-sources.mjs` 不再调宿主 `find`，改用 Node 自己走目录 +
+      #   `git check-ignore --stdin`。三平台实测同一个数：`✔ 95 个源码目录`
+      #   （win32 见 run 31038276704）。所以这一步**现在应当是绿的，三个平台都是**。
+      #
+      # 这行说明本身是被更新过的 —— 它曾经写着「预期在 Windows 上红」，而它已经绿了。
+      # 一句描述得很具体的过期说明比没有说明更能误导人：下一个看见它的人会以为
+      # 这里的红是正常的，从而**不去查一个真的红**。过期的说明要更新，不是留着。
+      - name: Tracked-sources guard (三平台都应为绿 —— T-141 §3 第 30 条已由 T-147 修复)
         if: ${{ !cancelled() }}
         run: pnpm check:sources
