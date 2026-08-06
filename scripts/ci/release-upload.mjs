@@ -542,8 +542,14 @@ async function main() {
   say(`   上传 ${nUp} 个 · 跳过（已存在且一致）${nSkip} 个 · 合计 ${plan.length} 个资产`);
   say(`   计划与清单写在 ${STAGE}/{RELEASE-UPLOAD-PLAN.json,SHA256SUMS}`);
   say('');
-  say('   ⚠️ 到这里为止，只证明了"我们以为传上去了"。**下一 job 会不带任何凭证重新下一遍**');
-  say('      —— 那一步同时证明了：匿名下得到（draft 的附件下不到）、且字节没变。');
+  if (DRY_RUN) {
+    say('   ⚠️ **这是 dry-run：一个字节都没传，校验那一步也不会跑。**');
+    say('      所以这一轮**不对 release 的现状作任何断言** —— 上面那张表只是"打算做什么"。');
+    say('      要拿到结论就跑一次 dry_run=false 的。');
+  } else {
+    say('   ⚠️ 到这里为止，只证明了"我们以为传上去了"。**下一 job 会不带任何凭证重新下一遍**');
+    say('      —— 那一步同时证明了：匿名下得到（draft 的附件下不到）、且字节没变。');
+  }
 
   await summary(
     [
@@ -551,6 +557,9 @@ async function main() {
       '',
       `- 仓库 \`${REPO}\` · release id \`${release.id}\` · draft=\`${release.draft}\` · prerelease=\`${release.prerelease}\``,
       `- 上传 **${nUp}** 个 · 跳过（已存在且 sha256 一致）**${nSkip}** 个`,
+      ...(DRY_RUN
+        ? ['', '> ⚠️ **dry-run：什么都没传，校验那一步也不会跑。这一轮不对 release 的现状作任何断言。**']
+        : []),
       '',
       '| 资产 | 字节 | sha256 | 处置 |',
       '|---|---:|---|---|',

@@ -160,8 +160,23 @@ jobs:
   verify:
     name: 不带凭证从公开 URL 重新下载并复算（会真的红）
     needs: upload
-    # ★ dry_run 时上面没传任何东西，但**校验照跑** ——
-    #   它验的是"release 上现在到底是什么"，与我们这次传没传无关。
+    # ★ dry_run 时**不跑**校验。这一行是实测出来的，不是设计洁癖：
+    #
+    #   第一版让它照跑，理由听起来很对（"它验的是 release 现在是什么，与我们传没传无关"）。
+    #   `[CI 实测 run 31099024189]` 一跑就红：dry-run 计划里那个"本来要传"的资产当然
+    #   不在 release 上，于是 verify 报 `HTTP 404`，整个 workflow failure ——
+    #   **而什么问题都没有发生**。
+    #
+    #   也就是说：任何一次"有东西要传"的 dry-run 都会稳定地红。
+    #   而「稳定红且原因已知」是最坏的一种红 —— 它训练所有人忽略这个 workflow，
+    #   那正是本仓最贵的那类失败得以长期存活的土壤（`pack-publish` T-146 记过同一条）。
+    #
+    #   所以 dry-run 的语义收紧为：**只出计划，不对 release 的现状作任何断言。**
+    #   要断言就跑真的那一次。
+    #
+    #   `success() &&` 是显式写出来的：一个 job 上有了 `if:` 之后，"依赖失败就跳过"
+    #   这件事最好别靠记忆里的默认语义。
+    if: ${{ success() && github.event.inputs.dry_run != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:

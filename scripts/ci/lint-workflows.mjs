@@ -259,6 +259,18 @@ for (const file of files.sort()) {
     Object.values(verify?.permissions ?? {}).every((v) => v !== 'write'),
     `${RU}#verify: 拿到了 write 权限 —— 一个手里攥着写权限的校验者证明不了"匿名用户拿得到"`,
   );
+  /*
+   * verify 的 `if:` 只允许挡 dry-run 那一种情况。
+   * 挡别的（比如 `if: false`、`if: inputs.skip_verify != 'true'`）等于给"不校验"开一个后门，
+   * 而这个 workflow 的价值一半在于"传完真的会去看一眼"。
+   * `[实测 run 31099024189]`：这一行本身就是 dry-run 稳定红逼出来的，见 YAML 里的注释。
+   */
+  const verifyIf = String(verify?.if ?? '');
+  must(
+    verifyIf === '' || verifyIf.includes('dry_run'),
+    `${RU}#verify: if 表达式是 \`${verifyIf}\` —— 只允许用它挡 dry-run，别用来给"不校验"开后门`,
+  );
+
   const verifyText = JSON.stringify(verify ?? {});
   must(
     !/GITHUB_TOKEN|GH_TOKEN|GH_ENTERPRISE_TOKEN|github\.token|secrets\./.test(verifyText),
