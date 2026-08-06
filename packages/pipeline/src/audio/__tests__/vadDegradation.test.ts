@@ -146,20 +146,35 @@ describe('buildVadFlags —— 失败原因不许被开关吞掉', () => {
     assert.deepEqual(pairs(flags)['-f'], '/tmp/audio16k.wav');
   });
 
-  it('★ min-speech-duration 必须发 `-vsd`，发 `-vspd` 会换来一份空转写 + 绿灯', () => {
+  it('★ min-speech-duration 走长写法：`-vspd` 不存在，`-vsd` 含义会翻', () => {
     /*
-     * `-vspd` 出现在例子自己的 --help 里，parser 里却没有它。
-     * `[本机实测]`：`-vspd 250` → `error: unknown argument` → **exit 0 + 空 stdout**。
-     * 那读起来正好等于"这段音频没有语音" —— 零 chunk、空转写、job 成功。
+     * 两个坑，一个比一个安静：
+     * ① `-vspd` 出现在例子自己的 --help 里（speech.cpp:37），parser 里**没有这个分支**。
+     *    `[本机实测]`：`-vspd 250` → `error: unknown argument` → **exit 0 + 空 stdout**，
+     *    读起来正好等于"这段音频没有语音" —— 零 chunk、空转写、job 成功。
+     * ② `-vsd` 今天是 min-**speech**（parser:67 先命中），而 usage:38 说它是 min-**silence**。
+     *    上游无论往哪边对齐，这个短写法都可能**改变含义而不改变形状**（两边都收整数、都 exit 0）。
+     * 长写法在现状与任何一种修法下都只有一个意思，所以它是唯一不会在我们脚下翻的拼法。
      */
     const flags = buildVadFlags('/m.bin', '/a.wav', { minSpeechDurationMs: 250 });
-    assert.equal(flags.includes('-vspd'), false);
-    assert.equal(pairs(flags)['-vsd'], '250');
+    assert.equal(flags.includes('-vspd'), false, 'parser 里没有它 → exit(0) + 空 stdout');
+    assert.equal(flags.includes('-vsd'), false, '含义与它自己的 --help 相反，会在升级时静默翻转');
+    assert.equal(pairs(flags)['--vad-min-speech-duration-ms'], '250');
   });
 
-  it('只发 parser 真的认识的那几个开关', () => {
-    // speech.cpp:62-72 的**完整**集合（-h/-ug/-vo 我们用不到）
-    const SUPPORTED = new Set(['-f', '-t', '-ug', '-vm', '-vt', '-vsd', '-vmsd', '-vp', '-vo', '-np', '-h']);
+  it('只发 parser 真的认识、且**只有一个意思**的开关', () => {
+    /*
+     * 允许集 = speech.cpp:62-72 里**长写法唯一绑定**的那些，加上三个无歧义的短写法。
+     * 刻意**不**放 `-vsd` / `-vspd`：前者一名两义，后者根本不存在。
+     * `--vad-min-silence-duration-ms` 也不在里面 —— 它被绑到了 min-speech 那个变量上。
+     */
+    const SUPPORTED = new Set([
+      '-f', '-t', '-vm',
+      '--vad-threshold',
+      '--vad-min-speech-duration-ms',
+      '--vad-max-speech-duration-s',
+      '--vad-speech-pad-ms',
+    ]);
     const flags = buildVadFlags('/m.bin', '/a.wav', {
       threshold: 0.4,
       minSpeechDurationMs: 100,
@@ -168,7 +183,9 @@ describe('buildVadFlags —— 失败原因不许被开关吞掉', () => {
       threads: 8,
     });
     const unknown = flags.filter((f) => f.startsWith('-') && !SUPPORTED.has(f));
-    assert.deepEqual(unknown, [], `这些 flag 例子不认识，会让它 exit(0) 并吐空 stdout：${unknown.join(' ')}`);
+    assert.deepEqual(unknown, [], `这些 flag 要么例子不认识（exit 0 + 空 stdout），要么一名两义：${unknown.join(' ')}`);
+    // 前提自检：真的发出了那四个可调项，否则上面那条对空集恒真
+    assert.equal(flags.filter((f) => f.startsWith('--')).length, 4);
   });
 });
 

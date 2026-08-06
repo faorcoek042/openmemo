@@ -44,24 +44,40 @@ export interface AsrChunk {
 export interface VadOptions {
   threshold?: number;
   /**
-   * Sent as `-vsd`, NOT `-vspd`.
+   * Sent as the LONG form `--vad-min-speech-duration-ms`. Neither short flag is safe.
    *
-   * `-vspd` is what the example's own `--help` advertises (`speech.cpp:37`) — and the
-   * parser has **no branch for it** (`speech.cpp:62-72`). `[本机实测]` on the upstream
-   * v1.9.1 binary CI uses: `-vspd 250` prints `error: unknown argument` and then calls
-   * `exit(0)` — **exit code 0, empty stdout**. Downstream that reads as "VAD ran and
-   * found no speech", which produces zero chunks and an EMPTY TRANSCRIPT under a green
-   * job. We shipped `-vspd` until T-148; nothing set this option, which is the only
-   * reason it never fired.
+   * Upstream `speech.cpp` disagrees with itself about the two duration knobs:
+   *
+   * ```
+   * :37  usage says   -vspd  = min SPEECH duration      ← parser has NO branch for -vspd
+   * :38  usage says   -vsd   = min SILENCE duration
+   * :67  parser says  -vsd | --vad-min-speech-duration-ms   → vad_min_speech_duration_ms
+   * :68  parser says  -vsd | --vad-min-silence-duration-ms  → vad_min_speech_duration_ms (!)
+   * ```
+   *
+   * Two consequences, both measured on the upstream v1.9.1 binary CI installs:
+   *
+   * 1. `-vspd 250` → `error: unknown argument` then **`exit(0)` with empty stdout**.
+   *    Downstream that reads as "VAD ran and found no speech" → zero chunks → an EMPTY
+   *    TRANSCRIPT under a green job. We shipped `-vspd` until T-148; the only reason it
+   *    never fired is that nothing ever set this option.
+   * 2. `-vsd` currently means min-SPEECH (line 67 wins) while the usage text says it
+   *    means min-SILENCE. Whichever way upstream reconciles that, the short flag can
+   *    change meaning — and it would do so **silently**, since both values are plausible
+   *    integers. The long form is unambiguous under the current code AND under the
+   *    obvious fix, so it is the only spelling that cannot flip under us.
+   *
+   * `[本机实测]` all four long forms accepted by the pinned binary (result header present,
+   * no `unknown argument`).
    */
   minSpeechDurationMs?: number;
   /*
    * ⚠️ There is deliberately no `minSilenceDurationMs`.
    *
-   * `speech.cpp:67-68` binds `-vsd` twice — the second branch (`--vad-min-silence-duration-ms`)
-   * is unreachable, and it assigns to `vad_min_speech_duration_ms` anyway. The pinned
-   * example therefore CANNOT express min-silence-duration at all. A field that silently
-   * does nothing (or worse, sets a different knob) is worse than no field.
+   * Both branches at `speech.cpp:67-68` assign to `vad_min_speech_duration_ms`, so
+   * `--vad-min-silence-duration-ms` sets the WRONG knob and `min_silence_duration_ms` is
+   * unreachable from the command line entirely. A field that silently does nothing — or
+   * worse, moves a different knob — is worse than no field.
    */
   maxSpeechDurationSec?: number;
   speechPadMs?: number;
@@ -109,10 +125,20 @@ export function buildVadFlags(
     '-vm', vadModel,
     '-t', String(opts.threads ?? 4),
   ];
-  if (opts.threshold !== undefined) flags.push('-vt', String(opts.threshold));
-  if (opts.minSpeechDurationMs !== undefined) flags.push('-vsd', String(opts.minSpeechDurationMs));
-  if (opts.maxSpeechDurationSec !== undefined) flags.push('-vmsd', String(opts.maxSpeechDurationSec));
-  if (opts.speechPadMs !== undefined) flags.push('-vp', String(opts.speechPadMs));
+  /*
+   * Tuning knobs go out in LONG form. The short aliases are where upstream's usage text
+   * and its parser contradict each other (see `minSpeechDurationMs`), and a short flag
+   * that changes meaning is indistinguishable from one that does not — both take an
+   * integer and both exit 0.
+   */
+  if (opts.threshold !== undefined) flags.push('--vad-threshold', String(opts.threshold));
+  if (opts.minSpeechDurationMs !== undefined) {
+    flags.push('--vad-min-speech-duration-ms', String(opts.minSpeechDurationMs));
+  }
+  if (opts.maxSpeechDurationSec !== undefined) {
+    flags.push('--vad-max-speech-duration-s', String(opts.maxSpeechDurationSec));
+  }
+  if (opts.speechPadMs !== undefined) flags.push('--vad-speech-pad-ms', String(opts.speechPadMs));
   return flags;
 }
 

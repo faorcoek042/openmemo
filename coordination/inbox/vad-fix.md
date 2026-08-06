@@ -362,3 +362,139 @@ stdout 0 字节                            ← ★ 空
 | `packages/runtime/src/selfcheck.test.ts` | 同上 | 在既有 describe 里**插入**一个子 describe | 低 |
 | `apps/daemon/src/http/rest/models.ts` | `model-mgmt` | **没改**（只读了 `:488` 那条激活规则并在 §6 说明为什么不动） | 无 |
 | `apps/web/.../DiagnosticsPage.tsx` + 2 份 i18n | 前端线 | 加一行 Row + 3 个 key（插在 `asrEngine` 之后） | 低 |
+
+---
+
+## [2026-08-06 12:10] T-148 ADDENDUM —— 裁决 ③ 的交付 + 一处**我自己埋的定时炸弹**
+
+### ⚠️ 先说我自己的：`-vsd` 是个会在升级时静默翻转的短写法，我已经拆掉
+
+写裁决 ③ 的复现步骤时，我在核对上游行号的过程中发现**我上一版的修复本身留了一颗雷**。
+
+我把 `-vspd` 改成了 `-vsd`（因为 v1.9.1 的 parser 里 `-vsd` 确实命中 min-speech）。
+但把 usage 与 parser 并排放，它们**互相矛盾**：
+
+```
+speech.cpp:37  usage：  -vspd  = min SPEECH duration      ← parser 里根本没有这个分支
+speech.cpp:38  usage：  -vsd   = min SILENCE duration
+speech.cpp:67  parser： -vsd | --vad-min-speech-duration-ms   → vad_min_speech_duration_ms
+speech.cpp:68  parser： -vsd | --vad-min-silence-duration-ms  → vad_min_speech_duration_ms  ← 写错变量
+```
+
+也就是说 **`-vsd` 今天是 min-speech（67 先命中），而文档说它是 min-silence**。
+上游无论往哪边对齐，这个短写法都可能**改变含义而不改变形状** ——
+两边都收整数、都 exit 0、都有结果头。**我加的那三道闸一道也拦不住它**：
+它不是"没跑起来"，是"跑起来了，只是拧的是另一个旋钮"。
+
+> 判据不是"今天这个 flag 对不对"，是"**上游把它修好的那一天，我们会不会静默地换个语义**"。
+
+**改法**：四个可调项一律发**长写法**（`--vad-threshold` / `--vad-min-speech-duration-ms` /
+`--vad-max-speech-duration-s` / `--vad-speech-pad-ms`）。长写法在**现状与任何一种修法下都只有一个意思**。
+
+`[本机实测]` 六个长写法逐个喂 CI 装的那个上游二进制，全部 `rc=0 / 有结果头 / 无 unknown argument`；
+再走**产品自己的** `detectSpeechSegments` 把四个可调项全打开跑一遍：
+
+```
+argv: -f jfk.wav -vm …/m.bin -t 4 --vad-threshold 0.5 --vad-min-speech-duration-ms 250
+      --vad-max-speech-duration-s 30 --vad-speech-pad-ms 30
+✔ 4 段: 320-2270 3270-4410 5380-7680 8160-10620
+```
+
+护栏同步收紧（允许集里**刻意不放** `-vsd`/`-vspd`，并加了"确实发出了 4 个可调项"的前提自检，
+否则那条断言对空集恒真）。反向验证：把长写法换回 `-vsd` → 该用例当场红。
+
+### 裁决 ③ 的交付：**复现步骤 + 一份现成的 patch**
+
+你说「顺手写得出来就写，写不出来就把复现步骤留在 D-11 里」。两个都给了。
+**D-11 我没有动**（PROTOCOL §1 规则 3：不改别人的交付物；而且 `ci-runner` 可能正在写）——
+下面这一整块**可以原样搬进 D-11**，或者由 `ci-runner` 自己收。
+
+补丁在 `/tmp/vad-fix/upstream-speech-cpp.patch`（4 行），**`vendor/whisper.cpp` 一个字节没改**
+（`git status --short` 空）。
+
+---
+
+#### 【可整段搬进 D-11】上游 whisper.cpp v1.9.1 `examples/vad-speech-segments/speech.cpp` 三个缺陷
+
+> 版本：`f049fff release : v1.9.1 (#3892)`。全部结论为 `[本机实测]`，
+> 用的是产品在 CI 上真实安装的那个上游包里的 `whisper-vad-speech-segments`
+> （`whisper-bin-ubuntu-x64`，非自编）。
+
+**缺陷 1（最危险）：参数出错时 `exit(0)`**
+
+`:48-51` 与 `:73-77` 两处错误路径都是 `exit(0)`。于是"用错了参数"在退出码上
+**与"完全成功"无法区分**，而 stdout 是空的：
+
+```
+$ whisper-vad-speech-segments -f jfk.wav -vm ggml-silero-v6.2.0.bin -t 4 -vspd 250
+error: unknown argument: -vspd        ← stderr
+rc=0                                   ← ★
+stdout 0 字节                          ← ★
+```
+
+对任何按"退出码 + stdout"消费它的调用方，这读起来正好等于
+**"这段音频里没有语音"** —— 也就是一个语法正确、完全静默的空结果。
+
+**缺陷 2：`-vspd` 出现在 `--help` 里，parser 里没有**
+
+`:37` 的 usage 写着 `-vspd N, --vad-min-speech-duration-ms N`，
+而 `:62-72` 的分支表里**没有 `-vspd`**。照着自己的帮助信息敲，就会触发缺陷 1。
+
+**缺陷 3：`-vsd` 一名两义，且 min-silence 永远设不上**
+
+`:67` 与 `:68` 都以 `-vsd` 起头（`:68` 的 `-vsd` 分支不可达），
+**并且两条都赋给 `vad_min_speech_duration_ms`**。后果两条：
+- `--vad-min-silence-duration-ms` 拧的是 **min-speech**（写错变量）；
+- `vad_min_silence_duration_ms` **没有任何命令行路径能设置**，
+  尽管 `:130` 会把它传给 `whisper_vad_params`。
+
+另：`:37` 的说明文字 `VAD min speech duration (0.0-1.0)` 也不对 —— 该字段是毫秒（默认 250）。
+
+**最小复现（不需要编译，用官方发布的二进制即可）**
+
+```bash
+./models/download-vad-model.sh silero-v6.2.0
+./build/bin/whisper-vad-speech-segments \
+    -f samples/jfk.wav -vm models/ggml-silero-v6.2.0.bin -vspd 250; echo "rc=$?"
+# 期望：非零退出；实际：rc=0，stdout 为空
+```
+
+**建议补丁（4 行）**
+
+```diff
+ static char * requires_value_error(const std::string & arg) {
+     fprintf(stderr, "error: argument %s requires value\n", arg.c_str());
+-    exit(0);
++    exit(1);
+ }
+@@
+-        else if (arg == "-vsd"  || arg == "--vad-min-speech-duration-ms")  { params.vad_min_speech_duration_ms  = std::stoi(ARGV_NEXT); }
+-        else if (arg == "-vsd"  || arg == "--vad-min-silence-duration-ms") { params.vad_min_speech_duration_ms  = std::stoi(ARGV_NEXT); }
++        else if (arg == "-vspd" || arg == "--vad-min-speech-duration-ms")  { params.vad_min_speech_duration_ms  = std::stoi(ARGV_NEXT); }
++        else if (arg == "-vsd"  || arg == "--vad-min-silence-duration-ms") { params.vad_min_silence_duration_ms = std::stoi(ARGV_NEXT); }
+@@
+             fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
+             vad_print_usage(argc, argv, params);
+-            exit(0);
++            exit(1);
+         }
+```
+
+⚠️ **兼容性提醒（提 PR 时要写进去）**：这会把 `-vsd` 从 min-speech 改成 min-silence
+（与该文件自己的 `--help` 一致）。已经在用 `-vsd` 的脚本会**静默改变行为** ——
+这正是我们自己改用长写法的原因。
+
+**我们这边不等这个 PR**：四个可调项已全部改用长写法，
+在打补丁前后语义都唯一，所以上游怎么裁都不影响我们。
+
+---
+
+### 对三条裁决的回执
+
+| 裁决 | 我的动作 |
+|---|---|
+| ① 诊断页数据源 → 你建任务 | ✅ 不动。补一条给那张任务单的事实：诊断页顶部那段注释里「selfcheck 只是 CLI、没有 HTTP 端点」**这句话本身也要删** —— 留着它会让下一个人重新得出同一个错误结论 |
+| ② `hf-mirror` → 你协调 `pack-publish` | ✅ 不动 `vendor/manifests/`。证据在本文件 §1：`https://hf-mirror.com/…/resolve/{main,<40位sha>}/…` 一律 `HTTP/2 308` + `location: https://huggingface.co/…`，两种 ref 都试过 |
+| ③ 上游 PR | ✅ 复现步骤 + 4 行 patch 见上，可整段搬进 D-11。`vendor/` 未改 |
+
+门禁（addendum 之后重跑）：`tsc -b` 0 · `eslint` 0 · `pnpm -r test` **931 / 0**
