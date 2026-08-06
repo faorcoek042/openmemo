@@ -1,0 +1,339 @@
+{
+  "_readme": [
+    "这是 `scripts/check-orphan-exports.mjs` 的**豁免名单**，不是白名单。",
+    "判据：**只准变短**。新增一条零引用导出会红；这里的条目被接上/删掉之后，它也会红，逼人来删这一行。",
+    "往这里加条目之前先问一遍：它是\"契约形状\"，还是\"功能只做了一半\"？后者应该去接上，不是来这里登记。",
+    "带 ⚠️ 的 note 是**已知开着的缺陷**，登记在这里是为了不丢，不是为了豁免。"
+  ],
+  "generatedAt": "2026-08-06",
+  "generatedBy": "T-157 sweep-fix",
+  "accepted": [
+    {
+      "file": "apps/daemon/src/bootstrap/single-instance.ts",
+      "name": "readRuntimeJson"
+    },
+    {
+      "file": "apps/daemon/src/http/auth.ts",
+      "name": "checkCsrf",
+      "note": "遗留别名，真实现是 checkCsrfDetailed。backlog-sweep 核实过：**纯死码，不是安全洞**。"
+    },
+    {
+      "file": "apps/daemon/src/http/auth.ts",
+      "name": "clearSessionCookie"
+    },
+    {
+      "file": "apps/daemon/src/http/rest/storage.ts",
+      "name": "StorageRoutesDeps"
+    },
+    {
+      "file": "apps/daemon/src/jobs/queue.ts",
+      "name": "JobRunner"
+    },
+    {
+      "file": "apps/daemon/src/pipeline/vadStatus.ts",
+      "name": "resetVadRuntimeStatus"
+    },
+    {
+      "file": "apps/daemon/src/runtime/setup.ts",
+      "name": "backendPreference"
+    },
+    {
+      "file": "apps/web/src/__smoke__/render.tsx",
+      "name": "renderRoute"
+    },
+    {
+      "file": "apps/web/src/app/i18n/index.ts",
+      "name": "currentLocale"
+    },
+    {
+      "file": "apps/web/src/components/common/BackendChip.tsx",
+      "name": "backendLabel"
+    },
+    {
+      "file": "apps/web/src/components/common/StatusChip.tsx",
+      "name": "PausedIcon"
+    },
+    {
+      "file": "apps/web/src/components/common/statusTone.ts",
+      "name": "capabilityTone",
+      "note": "同 jobStepTone。"
+    },
+    {
+      "file": "apps/web/src/components/common/statusTone.ts",
+      "name": "installStateTone",
+      "note": "同 jobStepTone。"
+    },
+    {
+      "file": "apps/web/src/components/common/statusTone.ts",
+      "name": "jobStepTone",
+      "note": "⚠️ **开着的缺陷**：T-114 立的「状态色收拢成一份」没有落地，各渲染点仍各挑各的颜色 ——正是该文件头警告过的那种不一致。"
+    },
+    {
+      "file": "apps/web/src/lib/api/auth-mode.ts",
+      "name": "getAuthMode"
+    },
+    {
+      "file": "apps/web/src/lib/api/auth-mode.ts",
+      "name": "readDeclaredMode"
+    },
+    {
+      "file": "apps/web/src/lib/api/auth-mode.ts",
+      "name": "resetAuthMode"
+    },
+    {
+      "file": "apps/web/src/lib/api/auth-mode.ts",
+      "name": "setAuthMode"
+    },
+    {
+      "file": "apps/web/src/lib/api/mock.ts",
+      "name": "isMockEnabled"
+    },
+    {
+      "file": "apps/web/src/lib/api/mock.ts",
+      "name": "MOCK_ENABLED_KEY"
+    },
+    {
+      "file": "apps/web/src/lib/api/surfaces.ts",
+      "name": "liveSurfaces"
+    },
+    {
+      "file": "apps/web/src/lib/api/surfaces.ts",
+      "name": "mockedSurfaces"
+    },
+    {
+      "file": "apps/web/src/lib/events/source.ts",
+      "name": "sseDebugInfo"
+    },
+    {
+      "file": "apps/web/src/lib/events/types.ts",
+      "name": "classOf"
+    },
+    {
+      "file": "apps/web/src/lib/format/time.ts",
+      "name": "timecodeFull"
+    },
+    {
+      "file": "apps/web/src/lib/secure-context.ts",
+      "name": "httpsEquivalent"
+    },
+    {
+      "file": "apps/web/src/lib/stores/progress.store.ts",
+      "name": "peekProgress"
+    },
+    {
+      "file": "packages/db/src/extensions.ts",
+      "name": "buildMatchExpression"
+    },
+    {
+      "file": "packages/db/src/pragmas.ts",
+      "name": "readPragmaState"
+    },
+    {
+      "file": "packages/db/src/vec.ts",
+      "name": "vecDelete"
+    },
+    {
+      "file": "packages/downloader/src/components.ts",
+      "name": "discardRollback",
+      "note": "同上（stashForRollback 的另一半）。没有备份就没有什么可丢弃的。"
+    },
+    {
+      "file": "packages/downloader/src/components.ts",
+      "name": "stashForRollback",
+      "note": "T-157 ② 裁决：**刻意不接**。接上会让 findInBackendPacks 在 .prev-* 目录里挑到旧二进制、且几百 MB 无人回收。要做完的四件事写在该函数上方的注释里。"
+    },
+    {
+      "file": "packages/downloader/src/manifest.ts",
+      "name": "loadBackendManifest"
+    },
+    {
+      "file": "packages/downloader/src/manifest.ts",
+      "name": "loadModelManifest"
+    },
+    {
+      "file": "packages/downloader/src/proxy.ts",
+      "name": "DEFAULT_PROBE_TARGETS"
+    },
+    {
+      "file": "packages/downloader/src/store.ts",
+      "name": "resolveModelsRoot",
+      "note": "pipeline 的 resolveStoreRoot() 是同一段逻辑的另一份拷贝（该函数注释里写明了为什么不能互相 import）。合并这三份是一次独立改动。"
+    },
+    {
+      "file": "packages/downloader/src/verify.ts",
+      "name": "isValidSha256"
+    },
+    {
+      "file": "packages/llm/src/detect.ts",
+      "name": "providerFromDetected"
+    },
+    {
+      "file": "packages/llm/src/errors.ts",
+      "name": "notConfiguredError"
+    },
+    {
+      "file": "packages/mindmap/src/types.ts",
+      "name": "reachableCount"
+    },
+    {
+      "file": "packages/shared/src/api.ts",
+      "name": "CatalogQuery",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/api.ts",
+      "name": "ENDPOINTS",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/api.ts",
+      "name": "ImportRequest",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/api.ts",
+      "name": "MigrateRequest",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/api.ts",
+      "name": "MigrateTargetCheckResponse",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/api.ts",
+      "name": "VerifyRequest",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/events.ts",
+      "name": "PROGRESS_THROTTLE_HZ",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/fitness.ts",
+      "name": "llmMemoryMB",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/hardware.ts",
+      "name": "FITNESS_REQUIRED_FIELDS",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/jobs.ts",
+      "name": "isDownloadJob",
+      "note": "ModelsPage 里有一处 `j is DownloadJob` 谓词等着换成它（那里的注释写着「待 job-events 契约落地后可换」）。"
+    },
+    {
+      "file": "packages/shared/src/media-extensions.ts",
+      "name": "hasPlaylistExtension",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/models.ts",
+      "name": "describeSpeed",
+      "note": "⚠️ **开着的缺陷**：HANDOFF ③「三条唯一出处约定」第 2 条写着「读 rtf 要走 describeSpeed()」，而 UI 全走 speedClass。T-125 实测出的 9/35 条 measured 证据一条都没进 UI。要么补断言，要么改规范。"
+    },
+    {
+      "file": "packages/shared/src/models.ts",
+      "name": "SPEED_CLASS_LABEL_ZH",
+      "note": "同 describeSpeed。"
+    },
+    {
+      "file": "packages/shared/src/models.ts",
+      "name": "SPEED_CLASS_ORDER",
+      "note": "同 describeSpeed。"
+    },
+    {
+      "file": "packages/shared/src/models.ts",
+      "name": "speedClassForSize",
+      "note": "同 describeSpeed。"
+    },
+    {
+      "file": "packages/shared/src/notes.ts",
+      "name": "GetTranscriptResponse",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/notes.ts",
+      "name": "ImportNoteRequest",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/notes.ts",
+      "name": "ImportNoteResponse",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/notes.ts",
+      "name": "MediaAssetRole",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/notes.ts",
+      "name": "NOTE_ENDPOINTS",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/notes.ts",
+      "name": "NoteErrorCode",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/notes.ts",
+      "name": "ProbeRequest",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/notes.ts",
+      "name": "RetranscribeRequest",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/notes.ts",
+      "name": "RetranscribeResponse",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/notes.ts",
+      "name": "SearchResponse",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/schemas.ts",
+      "name": "InstalledFileSchema",
+      "note": "zod 校验器：与它对应的端点还没有人调用它做入参校验。"
+    },
+    {
+      "file": "packages/shared/src/schemas.ts",
+      "name": "TranscriptSegmentSchema",
+      "note": "zod 校验器：与它对应的端点还没有人调用它做入参校验。"
+    },
+    {
+      "file": "packages/shared/src/schemas.ts",
+      "name": "validateHardwareInfo",
+      "note": "zod 校验器：与它对应的端点还没有人调用它做入参校验。"
+    },
+    {
+      "file": "packages/shared/src/schemas.ts",
+      "name": "validateImportNoteRequest",
+      "note": "zod 校验器：与它对应的端点还没有人调用它做入参校验。"
+    },
+    {
+      "file": "packages/shared/src/schemas.ts",
+      "name": "validateSearchResponse",
+      "note": "zod 校验器：与它对应的端点还没有人调用它做入参校验。"
+    },
+    {
+      "file": "packages/shared/src/ulid.ts",
+      "name": "isUlid",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/ulid.ts",
+      "name": "ulidTime",
+      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    }
+  ]
+}
