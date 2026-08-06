@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check, ChevronDown } from 'lucide-react';
 import type { CatalogVariant } from '@openmemo/shared';
+import { arr } from '../../../lib/safe';
 import { formatBytes } from '../../../lib/format/bytes';
 import { cn } from '../../../lib/utils';
 import { FitBadge } from '../../../components/common/FitBadge';
@@ -30,6 +31,26 @@ export function QuantSelector({ variants, selectedId, onSelect, locale }: QuantS
   const selected = variants.find((v) => v.id === selectedId) ?? variants[0];
   if (!selected) return null;
 
+  /*
+   * ★ T-150：**同一组里的变体不一定只差量化档。**
+   *
+   * `vad/silero-vad` 那一组有两个变体，`quantization` 都是 `f16`，
+   * 但一个是 sherpa-onnx 的 `.onnx`、另一个是 whisper.cpp 的 ggml ——
+   * **互相加载不了**。只按量化档标注的话，用户看到的是两行一模一样的「F16」，
+   * 而选错那一个的后果 T-148 已经付过一次：whisper 报 `bad magic`，整单转写死。
+   * （daemon 的 `model.vad` remediation 现在明确让用户装 `vad/silero-vad-ggml`，
+   * 而这个选择器正是他要在上面做出那个选择的地方。）
+   *
+   * 判据是**这一组里 `engines` 是否真的不同**，不是"role 是不是 vad" ——
+   * 前者是"这两个东西不可互换"的直接证据，后者只是它今天恰好的载体。
+   */
+  const enginesOf = (v: CatalogVariant) => [...arr(v.engines)].sort();
+  const engineDiffers = new Set(variants.map((v) => enginesOf(v).join('+'))).size > 1;
+  const labelOf = (v: CatalogVariant) =>
+    engineDiffers && enginesOf(v).length > 0
+      ? `${v.quantization.toUpperCase()} · ${enginesOf(v).join(' / ')}`
+      : v.quantization.toUpperCase();
+
   return (
     <div className="relative">
       <button
@@ -43,7 +64,7 @@ export function QuantSelector({ variants, selectedId, onSelect, locale }: QuantS
         data-testid="models-quant-selector"
         onClick={() => setOpen((v) => !v)}
       >
-        <span>{t('models.quant.current', { quant: selected.quantization.toUpperCase() })}</span>
+        <span>{t('models.quant.current', { quant: labelOf(selected) })}</span>
         <span className="text-ink-secondary">
           {formatBytes(selected.totalSizeBytes, locale)}
         </span>
@@ -100,7 +121,7 @@ export function QuantSelector({ variants, selectedId, onSelect, locale }: QuantS
                 ) : (
                   <span className="size-3" />
                 )}
-                {v.quantization.toUpperCase()}
+                {labelOf(v)}
               </span>
               <span className="text-ink-secondary">{formatBytes(v.totalSizeBytes, locale)}</span>
               {/* 显存数字由 CI 从 GGUF 头算出（含 KV cache），不是手填 */}

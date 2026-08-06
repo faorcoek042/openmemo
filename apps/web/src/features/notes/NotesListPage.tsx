@@ -154,7 +154,19 @@ export default function NotesListPage() {
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
                     {n.durationMs ? <span>{humanDuration(n.durationMs, i18n.language)}</span> : null}
-                    {n.source?.site ? <span>{n.source.site}</span> : null}
+                    {/*
+                      ⚠️ 这里原来有一个站点徽章 `{n.source?.site ? <span>{n.source.site}</span> : null}`。
+                      **删掉了，不是改名**（T-150）：`GET /api/notes` 的 `.map()` 从来不发 `source`
+                      —— 全仓唯一提供它的是 `lib/api/mock.ts`。于是这个徽章
+                      **在真实环境里一次都没渲染过**，只是因为用了可选链所以不崩。
+                      与 `n.activeJobId`（见下面那条）、与 `<audio>` 从未进过 DOM（T-139 A1）
+                      是同一族：**mock 的形状比真响应宽**。
+
+                      没有"把它补进 daemon 的响应"，是因为列表页要的是"这条是从哪来的"，
+                      而那个事实在详情页已经有出处；给列表端点再加一份就是第二个出处。
+                      真要在列表上显示来源，正确做法是先在 `NoteListItem` 契约里加字段
+                      （加了这里就会编译报错提醒有人来渲染它），而不是先在界面上摆一个空位。
+                    */}
                     <span>{relativeTime(Date.parse(n.updatedAt), i18n.language)}</span>
                     {arr(n.tags).map((tag) => (
                       <span key={tag.uid} className="rounded bg-surface-0 px-1.5 py-0.5 text-ink-secondary">

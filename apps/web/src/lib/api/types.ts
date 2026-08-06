@@ -17,18 +17,18 @@
  * daemon 的 `rest/notes.ts` 也把响应对象标注成同一个类型。判据因此变成**编译期**的：
  * daemon 少发一个字段 → daemon 编译失败；这里读一个 daemon 不发的字段 → web 编译失败。
  *
- * ⚠️ **没有被这层保护覆盖的**：`NoteSummary`（`GET /api/notes` 那份）仍是手抄的，
- * 而且**已经在分叉**：`source` / `coverAssetUid` / `folderUid` 三个字段 daemon 的列表端点
- * **一个都不发**（`[读码]` `rest/notes.ts` 的 `.map()` 只发 10 个键）。
- * 于是 `NotesListPage.tsx:157` 的 `n.source?.site` 在真实环境里**恒不渲染** ——
- * 与上表是同一族缺陷，只是用了可选链所以不崩。收敛它要连带改
- * `NotesListPage.tsx`（属 `frontend-truth`），T-151 没有动，**已在 inbox 如实报出**。
+ * ✅ **T-150 补完了 T-151 留下的那一半**：`NoteSummary`（`GET /api/notes` 那份）
+ * 原来仍是手抄的，而且**已经在分叉** —— `source` / `coverAssetUid` / `folderUid`
+ * 三个字段 daemon 的列表端点一个都不发，于是 `NotesListPage` 的站点徽章
+ * **在真实环境里恒不渲染**（用了可选链所以不崩，安静得多）。
+ * 现在它直接是 `@openmemo/shared` 的 `NoteListItem`，理由与上表逐条对应。
  */
 
 import type {
   NoteAsset,
   NoteDetail as NoteDetailContract,
   NoteKind as NoteKindContract,
+  NoteListItem,
   NoteStatus as NoteStatusContract,
 } from '@openmemo/shared';
 
@@ -46,40 +46,31 @@ export type NoteStatus = NoteStatusContract;
 
 export type NoteKind = NoteKindContract;
 
-/** D-02 §1.3 notes + §1.4 media_sources 的投影 */
-export interface NoteSummary {
-  uid: string;
-  title: string;
-  kind: NoteKind;
-  status: NoteStatus;
-  folderUid: string | null;
-  durationMs: number | null;
-  coverAssetUid: string | null;
-  starred: boolean;
-  tags: { uid: string; name: string; color: string | null }[];
-  createdAt: string;
-  updatedAt: string;
-  /*
-   * ⚠️ 这里原来有一个 `activeJobId: string | null`，**已删除，不是改名**（T-138 ②）。
-   *
-   * daemon 的 `GET /api/notes` 与 `GET /api/notes/:uid` **从来没有返回过它** ——
-   * 全仓唯一提供这个字段的是 `lib/api/mock.ts`。于是依赖它的 `NoteProgressLine`
-   * 在真实环境里一次都没渲染过，而在测试与 mock 下"工作正常"。
-   *
-   * 没有把它补进 daemon 的响应，是因为那会造出**第二个**"这条笔记在忙什么"的来源
-   * （第一个是 T-130 之后已经如实列出流水线任务的 `GET /api/jobs`）。
-   * 完整理由写在 `lib/jobs/noteJobs.ts` 的文件头。
-   * 现在要问"这条笔记有没有任务在跑"，用 `useActiveNoteJob(noteUid)`。
-   */
-  source: {
-    kind: 'url' | 'local' | 'recording' | 'rss_item';
-    /** 'ytdlp' | 'direct-http' | 'rss' | 'local' —— 可替换性可审计（D-01 §6.4） */
-    adapterId: string | null;
-    site: string | null;
-    author: string | null;
-    inputUrl: string | null;
-  } | null;
-}
+/**
+ * `GET /api/notes` 的一行 —— **就是 daemon 那一份**（`@openmemo/shared` 的 `NoteListItem`）。
+ *
+ * ─── ✅ T-150：这里原来是**手抄件，而且已经分叉** ────────────────────────────────
+ *
+ * 上面文件头那段注释（T-151 ② 写的）把这条列成了"没有被编译期保护覆盖"的剩余项，
+ * 并写明"收敛它要连带改 `NotesListPage.tsx`"。这一轮把它收了。
+ *
+ * 手抄件多出来的三个字段，daemon 的列表端点**一个都不发**：
+ *
+ * | 手抄件声明 | daemon 的 `.map()` | 后果 |
+ * |---|---|---|
+ * | `source: {...} \| null` | 不发 | `NotesListPage.tsx:157` 的站点徽章（`n.source?.site`）**在真实产品里从不渲染** |
+ * | `coverAssetUid` | 不发 | 只有 mock 造得出来 |
+ * | `folderUid` | 不发 | 同上；筛文件夹靠的是 `?folder=` 查询串，不是这个字段 |
+ *
+ * 它们没崩，是因为都用了可选链 —— **和 `<audio>` 从未进过 DOM 是同一族缺陷**，
+ * 只是这一族的症状是"一个徽章永远不出现"，安静得多。
+ *
+ * 换成共享类型之后判据变成**编译期**的：读一个 daemon 不发的字段 = web 编译失败；
+ * daemon 少发一个字段 = daemon 编译失败。
+ *
+ * ⚠️ 反过来也补上了两个手抄件漏掉的：`language`（daemon 一直在发）与 `tags` 的元素类型。
+ */
+export type NoteSummary = NoteListItem;
 
 /**
  * `GET /api/notes/:uid` 的响应 —— **就是 daemon 那一份，不是"对齐了的另一份"**。

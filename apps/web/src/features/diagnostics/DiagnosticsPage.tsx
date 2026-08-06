@@ -21,13 +21,24 @@ import { cn } from '../../lib/utils';
  *
  * 条幅只报最要紧的两三条；这一页把每一层摊开，并且**如实标注它检查的是"存在性"还是"功能"**。
  *
- * ## 一个必须说清的局限
+ * ## 两个数据源，各答各的问题（T-150 ①）
  *
- * 本页的数据源是 `/api/health`，它报的是**组件是否加载**（`libsimple: false`）。
- * 而 `scripts/selfcheck.mjs`（`gpu-runtime` 的跨模块自检）问的是**功能是否可用**
- * （"`用户` 这个词在 FTS5 里能不能匹配到"）—— 那才是更强的判据。
- * 目前 selfcheck 只是 CLI，**没有对应的 HTTP 端点**，所以这一页给不出功能级结论。
- * 我在页面上明确写出了这个区别，而不是让用户以为绿灯等于功能可用。
+ * | 区块 | 端点 | 它问的问题 |
+ * |---|---|---|
+ * | 「功能自检」（页首） | `GET /api/selfcheck` | **功能到底能不能用** —— "`用户` 这个词在 FTS5 里能不能被匹配到"、
+ *   "交给 whisper 的那份 VAD 权重它加载得了吗"、"yt-dlp 在不在" |
+ * | 下面几组 | `GET /api/health` | **组件在不在、加载没加载** —— 定位到具体是哪个零件 |
+ *
+ * ⚠️ **本文件此前那段注释写着「selfcheck 只是 CLI、没有对应的 HTTP 端点」——
+ * 那句话在写下之后就过期了**（`apps/daemon/src/http/rest/selfcheck.ts` 早已落地，
+ * `[实测]` demo 上返回 25 条 200）。它的代价是具体的：自检里 20 多条结论
+ * （转写引擎缺失 / 中文分词退化 / ANE 没启用 / 音频切分方式）**用户在界面上一条都看不到**，
+ * 而那正是"我的东西为什么不工作"的答案。两名 agent 先后据这句注释重新得出了同一个错误结论
+ * （见 `coordination/inbox/{remediation,vad-fix}.md`）——
+ * 所以这里保留"曾经写着什么"，而不是抹掉（HANDOFF ⑤D-bis 的做法）。
+ *
+ * `/api/selfcheck` 与 CLI `scripts/selfcheck.mjs` 调**同一个** `runSelfCheck()`
+ * （`packages/runtime/src/selfcheck.ts`），差异只允许在渲染层。
  */
 
 interface Health {
@@ -69,6 +80,32 @@ interface Health {
 
 type Level = 'ok' | 'warn' | 'fail';
 
+/**
+ * `GET /api/selfcheck` 的一条结果。
+ *
+ * 形状与 `packages/runtime/src/selfcheck.ts` 的 `CheckResult` 一一对应 ——
+ * 刻意在前端重述一遍而不是 import：`@openmemo/runtime` 有 `node:fs` 依赖，
+ * 打包进浏览器会炸（同 `packages/shared` 文件头那条"no node: imports"的理由）。
+ */
+interface SelfCheckResult {
+  layer: string;
+  id: string;
+  label: string;
+  labelZh: string;
+  status: Level;
+  detail: string;
+  /** 这一条挂了 = 产品坏了，不只是降级。 */
+  required: boolean;
+  remediation: string | null;
+}
+
+interface SelfCheckReport {
+  ok: boolean;
+  ranAt: string;
+  counts: { ok: number; warn: number; fail: number };
+  results: SelfCheckResult[];
+}
+
 interface Row {
   label: string;
   level: Level;
@@ -78,10 +115,24 @@ interface Row {
   action?: { label: string; to: string };
 }
 
+/**
+ * 三档共用同一套图标 —— 自检区块与下面几组必须长得一样。
+ *
+ * D-10 §5.4 R-S1 的同一条道理：用户扫这一页只想回答"哪里坏了"，
+ * 同一个语义在同一页出现两套画法，他就得先学会两套。
+ */
+function LevelIcon({ level }: { level: Level }) {
+  if (level === 'ok') return <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-good" aria-hidden />;
+  if (level === 'warn')
+    return <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />;
+  return <XCircle className="mt-0.5 size-3.5 shrink-0 text-critical" aria-hidden />;
+}
+
 export default function DiagnosticsPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const surfaces = useSurfaceStore((s) => s.states);
+  const zh = i18n.language.toLowerCase().startsWith('zh');
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['health', 'diagnostics'],
@@ -100,6 +151,33 @@ export default function DiagnosticsPage() {
       return (await res.json()) as Health;
     },
     refetchInterval: 15_000,
+  });
+
+  /*
+   * ★ T-150 ①：功能自检。
+   *
+   * **不设 `refetchInterval`。** 这一条会在 daemon 里真跑子进程枚举设备、真建 FTS5 临时表、
+   * 真读 8 条 .so 符号链接 —— 每 15 秒替用户跑一遍是拿他的 CPU 换一个他没在看的数字。
+   * 它跟着页面上那颗「重新检测」按钮走（下面 `refetch` 两个一起点）。
+   *
+   * 端点不在（老 daemon）时**不许让整页塌掉**：下面几组仍然有价值，
+   * 所以这里的失败只在自检区块内显形，并说清"下面那些只查组件在不在"。
+   */
+  const selfcheck = useQuery({
+    queryKey: ['selfcheck', 'diagnostics'],
+    queryFn: async (): Promise<SelfCheckReport> => {
+      const res = await rawFetch('/api/selfcheck');
+      if (!res.ok) {
+        throw new ApiError(res.status, {
+          code: 'SELFCHECK_UNAVAILABLE',
+          message: `selfcheck endpoint returned ${res.status}`,
+          messageZh: `功能自检接口返回 ${res.status}`,
+          retryable: true,
+        });
+      }
+      return (await res.json()) as SelfCheckReport;
+    },
+    staleTime: 30_000,
   });
 
   if (isLoading) return <div className="p-6 text-sm text-ink-muted">{t('common.loading')}</div>;
@@ -245,10 +323,34 @@ export default function DiagnosticsPage() {
     },
   ];
 
+  /*
+   * 自检结果按 `layer` 分组。
+   *
+   * **顺序取数据里的首次出现顺序**，不写死一张 layer 白名单：
+   * `runSelfCheck()` 是"检查项列表在任何情况下都是同一份、同一个顺序"（该文件头有此承诺），
+   * 照着它渲染就永远不会漏掉一个新加的 layer。写死白名单则会让
+   * "daemon 新增一层" = "界面上悄悄少一层"，那正是本轮要修的那类洞的翻版。
+   */
+  const selfcheckLayers: { layer: string; rows: SelfCheckResult[] }[] = [];
+  for (const r of selfcheck.data?.results ?? []) {
+    const bucket = selfcheckLayers.find((g) => g.layer === r.layer);
+    if (bucket) bucket.rows.push(r);
+    else selfcheckLayers.push({ layer: r.layer, rows: [r] });
+  }
+
   const copyReport = () => {
-    const text = JSON.stringify({ health: data, surfaces }, null, 2);
+    const text = JSON.stringify(
+      { health: data, selfcheck: selfcheck.data ?? null, surfaces },
+      null,
+      2,
+    );
     // 非安全上下文下 clipboard 是 undefined，copyText 会回退到 execCommand
     void copyText(text);
+  };
+
+  const recheck = () => {
+    void refetch();
+    void selfcheck.refetch();
   };
 
   return (
@@ -260,31 +362,123 @@ export default function DiagnosticsPage() {
             <Copy className="size-3.5" />
             {t('diagnostics.copy')}
           </Button>
-          <Button size="sm" variant="secondary" onClick={() => void refetch()} disabled={isFetching}>
-            <RefreshCw className={cn('size-3.5', isFetching && 'animate-spin')} />
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={recheck}
+            disabled={isFetching || selfcheck.isFetching}
+          >
+            <RefreshCw
+              className={cn('size-3.5', (isFetching || selfcheck.isFetching) && 'animate-spin')}
+            />
             {t('diagnostics.recheck')}
           </Button>
         </span>
       </header>
 
-      {/* 必须说清楚：这一页查的是"组件在不在"，不是"功能能不能用" */}
+      {/* 说清楚两个区块各答什么 —— 上面问"功能能不能用"，下面问"组件在不在" */}
       <p className="rounded-md border border-line bg-surface-1 px-3 py-2 text-xs text-ink-secondary">
         ⓘ {t('diagnostics.probeCaveat')}
       </p>
+
+      {/*
+        ★ T-150 ①：功能自检。**放在最前面**，因为它是更强的判据 ——
+        下面几组回答"零件在不在"，这一组回答"东西能不能用"。
+      */}
+      <section
+        className="rounded-lg border border-line bg-surface-1 p-4"
+        data-testid="selfcheck-section"
+      >
+        <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-sm font-medium text-ink">{t('diagnostics.selfcheck.title')}</h2>
+          {selfcheck.data ? (
+            <span className="text-xs text-ink-muted" data-testid="selfcheck-counts">
+              {t('diagnostics.selfcheck.counts', selfcheck.data.counts)}
+              {' · '}
+              {t('diagnostics.selfcheck.ranAt', {
+                time: new Date(selfcheck.data.ranAt).toLocaleString(i18n.language),
+              })}
+            </span>
+          ) : null}
+        </div>
+        <p className="mb-2 text-xs text-ink-secondary">{t('diagnostics.selfcheck.hint')}</p>
+
+        {selfcheck.isLoading ? (
+          <p className="text-xs text-ink-muted">{t('diagnostics.selfcheck.loading')}</p>
+        ) : selfcheck.isError ? (
+          /*
+           * 端点拿不到 ≠ 一切正常。这里必须画成 warn 并说清"下面那些只查组件在不在" ——
+           * 静默留白会让这一整块的缺席看起来像"没什么可报的"。
+           */
+          <p
+            className="flex items-start gap-2 text-xs text-warning"
+            data-testid="selfcheck-unavailable"
+          >
+            <LevelIcon level="warn" />
+            <span className="text-ink-secondary">
+              <span className="block text-ink">{t('diagnostics.selfcheck.unavailable')}</span>
+              {t('diagnostics.selfcheck.unavailableHint')}
+            </span>
+          </p>
+        ) : selfcheckLayers.length === 0 ? (
+          <p className="text-xs text-warning" data-testid="selfcheck-empty">
+            {t('diagnostics.selfcheck.empty')}
+          </p>
+        ) : (
+          selfcheckLayers.map((g) => (
+            <div key={g.layer} className="mt-3" data-testid={`selfcheck-layer-${g.layer}`}>
+              <h3 className="text-xs font-medium text-ink-secondary">
+                {t(`diagnostics.selfcheck.layer.${g.layer}`, { defaultValue: g.layer })}
+              </h3>
+              <ul className="flex flex-col divide-y divide-line" role="list">
+                {g.rows.map((r) => (
+                  <li
+                    key={r.id}
+                    className="flex items-start gap-2 py-2"
+                    data-testid="selfcheck-row"
+                    data-check-id={r.id}
+                    data-level={r.status}
+                  >
+                    <LevelIcon level={r.status} />
+                    <span className="min-w-0 flex-1">
+                      <span className="text-sm text-ink">{zh ? r.labelZh : r.label}</span>
+                      {r.required && r.status !== 'ok' ? (
+                        <span className="ml-1.5 rounded bg-surface-0 px-1.5 py-0.5 text-[10px] text-critical">
+                          {t('diagnostics.selfcheck.required')}
+                        </span>
+                      ) : null}
+                      {/*
+                        `detail` / `remediation` 是**服务端原文**（路径、设备名、修复建议
+                        只有 daemon 知道），与 `secrets.disclosure` 同一条理由：
+                        前端自己编必然说错。这里只负责显示。
+                      */}
+                      <span className="mt-0.5 block break-all text-xs text-ink-muted">
+                        {r.detail}
+                      </span>
+                      {r.remediation ? (
+                        <span
+                          className="mt-0.5 block text-xs text-ink-secondary"
+                          data-testid="selfcheck-remediation"
+                        >
+                          → {r.remediation}
+                        </span>
+                      ) : null}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))
+        )}
+      </section>
 
       {groups.map((g) => (
         <section key={g.title} className="rounded-lg border border-line bg-surface-1 p-4">
           <h2 className="mb-2 text-sm font-medium text-ink">{g.title}</h2>
           <ul className="flex flex-col divide-y divide-line" role="list">
             {g.rows.map((r) => (
-              <li key={r.label} className="flex items-start gap-2 py-2">
-                {r.level === 'ok' ? (
-                  <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-good" aria-hidden />
-                ) : r.level === 'warn' ? (
-                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
-                ) : (
-                  <XCircle className="mt-0.5 size-3.5 shrink-0 text-critical" aria-hidden />
-                )}
+              <li key={r.label} className="flex items-start gap-2 py-2" data-level={r.level}>
+                <LevelIcon level={r.level} />
                 <span className="min-w-0 flex-1">
                   <span className="text-sm text-ink">{r.label}</span>
                   <span className="mt-0.5 block break-all text-xs text-ink-muted">{r.detail}</span>

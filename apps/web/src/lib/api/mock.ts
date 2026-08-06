@@ -49,17 +49,26 @@ const SAMPLE_TEXT = [
 /**
  * mock 里的一条笔记 —— **同时要当详情响应和列表响应用**。
  *
- * ⚠️ T-151 ②：`NoteDetail` 现在直接是 `@openmemo/shared` 的那一份（= daemon 真发的东西），
- * 而它**不再包含** `coverAssetUid` / `updatedAt` / `source` —— daemon 的详情端点不发这三个，
- * 它们只出现在**列表**端点的 `NoteSummary` 上。所以这里显式把两份合起来，
- * 而不是让详情类型继续假装自己有这些字段。
- *
- * 这一行本身就是这次收敛的收获之一：它把「mock 造得出、真 daemon 造不出」这件事
+ * ⚠️ T-151 ②：`NoteDetail` 现在直接是 `@openmemo/shared` 的那一份（= daemon 真发的东西）。
+ * 这一行本身就是那次收敛的收获之一：它把「mock 造得出、真 daemon 造不出」这件事
  * 摆到了类型上。mock 之外从未渲染过的东西（T-139 A1 的 `<audio>` 是同一族），
  * 靠的正是"mock 的形状比真响应宽"这条缝。
+ *
+ * ★ T-150 又收窄了一次：`NoteSummary` 现在也是共享契约（`NoteListItem`），
+ * 而 `coverAssetUid` / `source` **daemon 的列表端点从来不发** ——
+ * 于是它们从这里彻底去掉了。留着的话，mock 会继续比真响应宽一圈，
+ * 而"只有 mock 造得出来"的字段正是站点徽章从未渲染过的成因。
+ *
+ * `folderUid` 保留，但**明确标成 mock 内部字段**：daemon 的文件夹筛选发生在
+ * SQL 那一层（`?folder=` 查询串），响应体里没有这个键。mock 也得有个东西
+ * 让 `?folder=` 筛得动，但它**不进任何响应**（见 `/notes` 那一段的投影）。
  */
-interface MockNote extends NoteDetail, Pick<NoteSummary, 'coverAssetUid' | 'updatedAt' | 'source'> {
+interface MockNote extends NoteDetail {
   __mock: true;
+  /** ⚠️ **mock 内部用，绝不出现在响应里。** daemon 在 SQL 层筛，不发这个字段。 */
+  folderUid: string | null;
+  /** daemon 的**列表**端点发它，详情端点不发 —— 所以它不在 `NoteDetail` 里。 */
+  updatedAt: string;
 }
 
 const notes = new Map<string, MockNote>();
@@ -186,18 +195,10 @@ function seedNote(partial: Partial<MockNote> & { title: string }): MockNote {
     status: partial.status ?? 'ready',
     folderUid: null,
     durationMs: partial.durationMs ?? 6_452_000,
-    coverAssetUid: null,
     starred: partial.starred ?? false,
     tags: partial.tags ?? [],
     createdAt: new Date(Date.now() - 86_400_000).toISOString(),
     updatedAt: new Date().toISOString(),
-    source: partial.source ?? {
-      kind: 'url',
-      adapterId: 'ytdlp',
-      site: 'youtube',
-      author: '某某大学',
-      inputUrl: 'https://www.youtube.com/watch?v=demo',
-    },
     summaryMd: partial.summaryMd ?? null,
     bodyJson: null,
     /*
@@ -299,13 +300,11 @@ function seedDemoData() {
   seedNote({
     title: '播客 EP.42 — 本地优先软件的未来',
     durationMs: 3_180_000,
-    source: { kind: 'url', adapterId: 'direct-http', site: 'podcast', author: 'Local First FM', inputUrl: 'https://example.com/ep42.mp3' },
   });
   seedNote({
     title: '周会录音 2026-07-29',
     kind: 'recording',
     durationMs: 2_640_000,
-    source: { kind: 'recording', adapterId: null, site: null, author: null, inputUrl: null },
   });
 }
 
@@ -455,7 +454,32 @@ const mockFetcher: Fetcher = async <T,>(path: string, opts: ApiOptions = {}): Pr
       // mock 的文件夹是平的（没有子文件夹），所以这里只比自身；
       // daemon 那边是含子孙的递归 —— **这一点不一样，写出来免得被当成契约**
       .filter((n) => !folderUid || n.folderUid === folderUid)
-      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+      /*
+       * ★ T-150：**逐字段投影，不是把整条 MockNote 直接扔出去。**
+       *
+       * `MockNote` 身上还挂着详情端点的字段（`segments` / `assets` / `bodyJson` …）
+       * 与一个 mock 内部的 `folderUid`。原来这里 `as T` 一转，它们全都进了列表响应 ——
+       * 于是「mock 比真响应宽」这条缝又开着：任何一个前端只要读到了它们，
+       * 在 mock 下工作正常、接上真 daemon 就恒 undefined，**而且不报错**。
+       * 这正是站点徽章从未渲染过的形状。
+       *
+       * 写成显式对象之后，`NoteListItem` 加字段这里会编译失败，多发字段也过不去。
+       */
+      .map(
+        (n): NoteSummary => ({
+          uid: n.uid,
+          title: n.title,
+          status: n.status,
+          kind: n.kind,
+          language: n.language,
+          durationMs: n.durationMs,
+          starred: n.starred,
+          tags: n.tags,
+          createdAt: n.createdAt,
+          updatedAt: n.updatedAt,
+        }),
+      );
     return { notes: list } as T;
   }
 

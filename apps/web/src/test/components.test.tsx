@@ -25,9 +25,13 @@ import { JobList } from '../features/tasks/JobList';
 import { LlmSettingsSection } from '../components/common/llm/LlmSettingsSection';
 import { buildLlmSettingsPatch, LLM_PURPOSES_KEY } from '../components/common/llm/api';
 import {
-  LLM_PRESETS,
+  CATALOG_PRESETS,
   LLM_CATALOG_STATS,
+  WIRE_KIND_BY_CATALOG_KIND,
+  adapterBaseUrl,
+  baseUrlFieldMode,
   catalogProviderFor,
+  presetConfigFor,
 } from '../components/common/llm/llm-catalog';
 import { useSaveMindmapMutation } from '../features/mindmap/api';
 import { applyCaption, RECORD_SAMPLE_RATE } from '../features/recorder/asrStream';
@@ -59,7 +63,7 @@ import { DataLocationSection, StaleLinksWarning } from '../features/settings/Dat
 import { RetranscribeButton, isSegmentEdited } from '../features/notes/RetranscribeButton';
 import { WordLevelBadge } from '../features/transcript';
 import { WordHighlight, findActiveWord } from '../features/transcript/WordHighlight';
-import { DEFAULT_PROXY_CONFIG, LLM_SETTING_KEYS } from '@openmemo/shared';
+import { DEFAULT_PROXY_CONFIG, LLM_SETTING_KEYS, MAINSTREAM_PROVIDER_IDS, PROVIDER_KINDS } from '@openmemo/shared';
 import { ProxySettingsSection } from '../features/settings/ProxySettingsSection';
 import ComponentsPage from '../features/components/ComponentsPage';
 import { getPositionMs, setPositionMs, subscribePosition } from '../lib/stores/player.store';
@@ -2012,15 +2016,27 @@ describe('保存后 daemon 读得到（键对齐）', () => {
  * **留着两处迟早各自漂移**。
  */
 describe('LLM 服务商与模型：单一数据源', () => {
-  test('★ 在线优先：预设里在线服务数量与顺序都排在本地之前（ADR-016）', () => {
-    const online = LLM_PRESETS.filter((p) => p.tier === 'online');
-    const local = LLM_PRESETS.filter((p) => p.tier === 'local');
-    assert.ok(online.length > local.length, '在线是主路径，不该被本地淹没');
-    // 顺序：第一个必须是在线，最后一个才是本地
-    assert.equal(LLM_PRESETS[0]!.tier, 'online', '默认答案不该是本地');
-    assert.equal(LLM_PRESETS[LLM_PRESETS.length - 1]!.tier, 'local');
-    // base URL 一律可改（国内常走中转网关，写死会把人挡在门外）
-    for (const p of LLM_PRESETS) assert.ok(p.baseUrl.length > 0, `${p.id} 缺 baseUrl`);
+  /*
+   * ⚠️ **这条断言换过一次方向，说明一下免得下一个人以为是弄丢了**（HANDOFF ⑤A-15 的做法）。
+   *
+   * 旧版断的是写死的 `LLM_PRESETS` 里 `tier==='online'` 排在 `'local'` 前面 ——
+   * 那张写死清单在 T-150 已经**整个作废**（D-10 #24 / R-P1：24 家 > 11 家）。
+   * 「在线优先」这条取向没有变，只是它的出处换成了目录的 `MAINSTREAM_PROVIDER_IDS`
+   * （openai → claude → gemini → deepseek → ollama → lmstudio，与 memo.ac 那份数组逐字相同），
+   * 本地两家天然排在置顶六家的**最后两位**。所以判据改成断那个顺序。
+   */
+  test('★ 在线优先：置顶六家里本地服务排在最后（ADR-016）', () => {
+    const pinned = MAINSTREAM_PROVIDER_IDS;
+    const localIds = new Set(
+      CATALOG_PRESETS.filter((p) => p.config?.isLocal).map((p) => p.spec.id),
+    );
+    assert.ok(localIds.size > 0, '前提不成立：目录里一个本地服务都认不出来');
+    const firstLocal = pinned.findIndex((id) => localIds.has(id));
+    assert.ok(firstLocal > 0, '默认答案不该是本地');
+    // 第一个本地之后不许再出现在线的 —— 本地必须是连续的尾巴
+    for (let i = firstLocal; i < pinned.length; i++) {
+      assert.ok(localIds.has(pinned[i]!), `置顶顺序里 ${pinned[i]} 排在本地服务后面`);
+    }
   });
 
   test('★ 用户自己填的模型名必须出现在分档配置的候选里 —— 这正是"两处不统一"的本体', async () => {
@@ -2169,20 +2185,22 @@ describe('LLM 模型选择：真下拉（T-126）', () => {
   /**
    * ★ 这条防的是**报喜不报忧**。
    *
-   * 目录有 24 家 / 520 条，但真正能出现在下拉里的只有 `LLM_PRESETS` 那 11 家能覆盖到的
-   * （11 家 / 283 条）—— 剩下 13 家（237 条）用户**根本加不进来**，因为「+ 添加」按钮只有 11 个。
-   * 那一步是 D-10 #24，归 `architect`，本轮没做。
+   * 它上一版的注释里写着「目录 24 家 / 520 条，能进下拉的只有写死的 11 家 …
+   * 剩下 13 家 237 条用户根本加不进来 —— 那是 D-10 #24，本轮没做」。
+   * **T-150 把 #24 做了**，所以这条断言的范围从"11 个预设"扩到"整份目录"。
    *
-   * 这里能锁死的是另一件事，也是真正会坏的那件：**任何一个预设都不许是空清单**。
-   * 预设 id 与目录 id 不一致（`anthropic`≠`claude` 等）时，用户打开下拉会看到零个候选，
+   * 它锁死的性质没变，而且现在管得更宽：**任何一家都不许是空清单**。
+   * 预设 id 与目录 id 对不上（`anthropic`≠`claude` 等）时，用户打开下拉会看到零个候选，
    * 看起来像"我们不支持这家" —— 加预设的人不会想到去核对目录 id，所以让测试去核对。
    */
-  test('★ 每个预设都必须有候选 —— 预设 id 与目录 id 对不上就是一个空下拉', () => {
-    const empty = LLM_PRESETS.filter((p) => (catalogProviderFor(p.id)?.models.length ?? 0) === 0);
+  test('★ 目录里每一家都必须有候选 —— id 对不上就是一个空下拉', () => {
+    const empty = CATALOG_PRESETS.filter(
+      (p) => (catalogProviderFor(p.spec.id)?.models.length ?? 0) === 0,
+    );
     assert.deepEqual(
-      empty.map((p) => p.id),
+      empty.map((p) => p.spec.id),
       [],
-      '这些预设在目录里找不到对应项（多半是 id 不一致），下拉会是空的',
+      '这些服务商在目录里找不到模型（多半是 id 不一致），下拉会是空的',
     );
   });
 
@@ -2736,7 +2754,7 @@ describe('T-129 /models 不许中英混排', () => {
          * 品牌名归 `llm-catalog.ts` 的 owner，本轮一个字没动。
          */
         let t = text(r.container);
-        for (const p of LLM_PRESETS) t = t.split(p.label).join('');
+        for (const p of CATALOG_PRESETS) t = t.split(p.spec.displayName).join('');
         assert.ok(t.length > 0, `${route}：页面应渲染出内容`);
         const bad = t.match(new RegExp(`.{0,24}${CJK.source}.{0,24}`, 'g'));
         assert.equal(
@@ -4699,6 +4717,965 @@ describe('MindmapView（T-139 C10）', () => {
       '内容没变却把渲染容器换掉了 —— 用户编辑时会被自己的保存往返打断',
     );
     assert.ok(text(r.container).includes('同一个主题'));
+    r.unmount();
+  });
+});
+
+/* ══════════════ T-150 ① 诊断页必须真的展示功能自检（ok / warn / fail 三档）══════════════ */
+
+/**
+ * ## 这一族钉的是什么
+ *
+ * `GET /api/selfcheck` **早已存在**（`apps/daemon/src/http/rest/selfcheck.ts`，
+ * `[实测]` demo 上返回 25 条 200），而在这几条用例之前，
+ * **web 全仓没有任何一处读它**（两名 agent 各自实测到同一个洞）。
+ * `/diagnostics` 读的是 `/api/health`，而 `health.pipeline.missing` 在 demo 上恒为 `[]`。
+ *
+ * 后果很具体：自检里那 20 多条结论（转写引擎缺失 / 中文分词退化 /
+ * VAD 权重 whisper 加载不了 / yt-dlp 没装）**用户在界面上一条都看不到** ——
+ * 而那正是"我的东西为什么不工作"的答案。
+ *
+ * 判据不是"页面渲染出来了"，是三条：
+ *   ① 请求**真的发出去了**（行为，不是源码里出现过这个字符串）；
+ *   ② 每一条的**档位**（ok/warn/fail）都渲染出来，且三档在视觉上互不相同；
+ *   ③ **只靠 `/api/health` 看不到的那条**（`tool.ytDlp` warn）现在看得到 ——
+ *      这条是"为什么必须换数据源"的判据，把自检区块整块删掉它就红。
+ */
+describe('T-150 ① /diagnostics 读 /api/selfcheck', () => {
+  const REPORT = {
+    ok: false,
+    ranAt: '2026-08-06T05:50:23.158Z',
+    dataDir: '/tmp/t150/data',
+    storeRoot: '/tmp/t150/data/models',
+    extensionsDir: '/tmp/t150/data/bin/ext',
+    counts: { ok: 1, warn: 1, fail: 1 },
+    results: [
+      {
+        layer: 'tools',
+        id: 'tool.ytDlp',
+        label: 'yt-dlp (optional, GPL)',
+        labelZh: 'yt-dlp（可选，GPL）',
+        status: 'warn',
+        detail: '未找到',
+        required: false,
+        remediation: '在「运行时」页安装对应组件',
+      },
+      {
+        layer: 'tools',
+        id: 'model.vad',
+        label: 'VAD model',
+        labelZh: 'VAD 模型',
+        status: 'fail',
+        detail: '交出来的那份权重 whisper.cpp 加载不了',
+        required: true,
+        remediation: '在「模型」页安装 silero VAD（ggml 格式）',
+      },
+      {
+        layer: 'ext',
+        id: 'ext.chineseSearch',
+        label: 'Chinese two-character search',
+        labelZh: '中文双字词可搜索',
+        status: 'ok',
+        detail: '4/4 命中',
+        required: true,
+        remediation: null,
+      },
+    ],
+  };
+
+  /**
+   * `/api/health` 的桩**刻意让每一项都正常**：`pipeline.missing` 为空、扩展都加载上了。
+   * 于是"屏幕上出现 yt-dlp 那条 warn"只可能来自自检，不可能来自 health ——
+   * 判据因此是干净的。
+   */
+  const HEALTH = {
+    version: '0.1.0',
+    instanceId: 'i',
+    contractVersion: 1,
+    dataDir: '/tmp/t150/data',
+    port: 17650,
+    pid: 1,
+    db: {
+      driver: 'better-sqlite3',
+      sqliteVersion: '3.46',
+      journalMode: 'wal',
+      schemaVersion: 9,
+      extensions: { libsimple: true, sqliteVec: true, tokenizer: 'simple' },
+    },
+    pipeline: { missing: [], ffmpeg: '/x/ffmpeg', whisperCli: '/x/whisper-cli', vad: { chunking: 'vad' } },
+    scheduler: { running: 0 },
+    sseClients: 1,
+  };
+
+  async function renderDiagnostics(routes: Record<string, unknown>) {
+    const stub = stubApi(routes);
+    const { default: DiagnosticsPage } = await import('../features/diagnostics/DiagnosticsPage');
+    const r = await render(<DiagnosticsPage />, { route: '/diagnostics' });
+    await r.flush();
+    await r.flush();
+    return { r, stub };
+  }
+
+  test('★ 页面真的发出了 GET /api/selfcheck（此前全仓零调用点）', async () => {
+    const { r, stub } = await renderDiagnostics({ '/health': HEALTH, '/selfcheck': REPORT });
+    /*
+     * 断的是**请求**，不是源码里出现过 `/api/selfcheck` 这几个字 ——
+     * 源码正则会被自己旁边的注释匹到（本仓已经在 `\bEmphasis\b` 上吃过一次）。
+     */
+    assert.ok(
+      stub.calls.some((c) => c.method === 'GET' && c.path === '/selfcheck'),
+      `诊断页没有请求过 /api/selfcheck，实际请求：${JSON.stringify(stub.calls.map((c) => `${c.method} ${c.path}`))}`,
+    );
+    r.unmount();
+  });
+
+  test('★ 三档必须逐条渲染出来，且 ok/warn/fail 在视觉上互不相同', async () => {
+    const { r } = await renderDiagnostics({ '/health': HEALTH, '/selfcheck': REPORT });
+
+    const rows = [...r.container.querySelectorAll('[data-testid="selfcheck-row"]')];
+    assert.equal(rows.length, REPORT.results.length, '自检结果的条数与渲染出来的行数对不上');
+
+    // ① 每一条的 id → 档位，逐条对齐（顺序也要对：runSelfCheck 承诺顺序稳定）
+    assert.deepEqual(
+      rows.map((el) => [el.getAttribute('data-check-id'), el.getAttribute('data-level')]),
+      REPORT.results.map((x) => [x.id, x.status]),
+    );
+
+    /*
+     * ② 三档不能长成一个样。
+     *
+     * 只断 `data-level` 是不够的：那是我自己写上去的属性，
+     * 把三档的图标全画成绿勾它照样绿 —— 而"分不出哪个是坏的"正是这条要挡的事。
+     * 所以再断一次**图标的 class**：三档必须给出三个互不相同的值。
+     */
+    const iconClass = rows.map((el) => el.querySelector('svg')?.getAttribute('class') ?? '');
+    assert.equal(iconClass.filter((c) => c.length > 0).length, 3, '有行没渲染出状态图标');
+    assert.equal(new Set(iconClass).size, 3, `三档共用了同一种画法 → ${JSON.stringify(iconClass)}`);
+    r.unmount();
+  });
+
+  test('★ 只读 /api/health 时看不到的那条，现在看得到（含修复建议与必需项标记）', async () => {
+    const { r } = await renderDiagnostics({ '/health': HEALTH, '/selfcheck': REPORT });
+    const shown = text(r.container);
+
+    // health 桩里一个字都没提 yt-dlp / VAD 权重 —— 它们只可能来自自检
+    assert.ok(shown.includes('yt-dlp（可选，GPL）'), 'warn 档的自检项没出现在界面上');
+    assert.ok(shown.includes('未找到'), '自检给的 detail 没显示');
+    assert.ok(
+      shown.includes('在「运行时」页安装对应组件'),
+      'daemon 连修复建议都算好发过来了，界面上一个字都不显示',
+    );
+    assert.ok(shown.includes('交出来的那份权重 whisper.cpp 加载不了'), 'fail 档的 detail 没显示');
+
+    // required 的失败项要标出来 —— "坏了"和"降级了"不是一回事
+    const failRow = r.container.querySelector('[data-check-id="model.vad"]');
+    assert.ok(failRow, '找不到 model.vad 那一行');
+    assert.ok(
+      (failRow!.textContent ?? '').includes('必需项'),
+      'required 的失败项没有任何标记，读起来和一条普通告警一样',
+    );
+
+    // 计数也要出来：用户先看总数再决定要不要往下读
+    const counts = r.container.querySelector('[data-testid="selfcheck-counts"]');
+    assert.ok(counts, '没有计数');
+    assert.ok(/1.*1.*1/s.test(counts!.textContent ?? ''), `计数没渲染 → ${counts!.textContent}`);
+    r.unmount();
+  });
+
+  test('★ 端点拿不到时不许静默留白，而且不许把整页带塌（老 daemon）', async () => {
+    // 只桩 /health：/selfcheck 未打桩 ⇒ 桩层回 404，正是老 daemon 的样子
+    const { r } = await renderDiagnostics({ '/health': HEALTH });
+
+    assert.ok(
+      !!r.container.querySelector('[data-testid="selfcheck-unavailable"]'),
+      '自检拿不到时页面上一个字都没说 —— 空白会被读成「没什么可报的」',
+    );
+    // 整页没塌：下面那几组仍在
+    assert.ok(text(r.container).includes('ffmpeg'), '自检挂了不该带走 /api/health 那几组');
+    assert.equal(
+      !!r.container.querySelector('[data-testid="selfcheck-row"]'),
+      false,
+      '拿不到结果却渲染出了行',
+    );
+    r.unmount();
+  });
+
+  test('★ 自检返回空集不算「一切正常」', async () => {
+    const { r } = await renderDiagnostics({
+      '/health': HEALTH,
+      '/selfcheck': { ok: true, ranAt: REPORT.ranAt, counts: { ok: 0, warn: 0, fail: 0 }, results: [] },
+    });
+    assert.ok(
+      !!r.container.querySelector('[data-testid="selfcheck-empty"]'),
+      '零条结果被当成了绿灯 —— 这是 ⑤A-2「node --test 对空集返回绿」的同族',
+    );
+    r.unmount();
+  });
+
+  test('★ 点「重新检测」两个数据源都要重新拉（只刷一半 = 半张过期的报告）', async () => {
+    const { r, stub } = await renderDiagnostics({ '/health': HEALTH, '/selfcheck': REPORT });
+    const before = stub.calls.filter((c) => c.path === '/selfcheck').length;
+    assert.ok(before > 0, '前提不成立：初次渲染就没请求过自检');
+
+    await click(buttonByText(r.container, '重新检测'));
+    await r.flush();
+    await r.flush();
+
+    assert.ok(
+      stub.calls.filter((c) => c.path === '/selfcheck').length > before,
+      '「重新检测」只刷了 /api/health，自检那一半停在旧结果上',
+    );
+    r.unmount();
+  });
+});
+
+/* ═══════════ T-150 ② D-10 #24 / #26 / #27 / #28 —— 服务商目录接进界面 ═══════════ */
+
+/**
+ * ## 这一族钉的是什么
+ *
+ * HANDOFF 的原话：「「+ 添加服务商」只有 11 个预设 —— 目录 24 家 / 520 条，
+ * 实际接进下拉的是 11 家 / 283 条。**够不到的 13 家 / 237 条不是漏了，是用户加不进去**」。
+ *
+ * 判据不是"按钮变多了"，是几条各自独立的性质：
+ *   #24 目录里**每一家**都在界面上有落点（能加，或者说明为什么不能加）；
+ *   #24-bis 写进设置的那条记录，daemon **认得出来**（协议族要翻译，不能原样搬）；
+ *   #27 表单字段由这家自己声明的 `configFieldKeys` 决定，不是三件套写死；
+ *   #26 「清单从哪来」按 `canRefreshModelList()` 分流措辞，且**任何一档都不给假按钮**；
+ *   #28 出厂空状态要说清为什么空，且**不预选任何一家**。
+ */
+describe('T-150 ② 服务商目录（D-10 #24 #26 #27 #28）', () => {
+  const NO_PROVIDERS = {
+    'GET /settings': { settings: {} },
+    'GET /secrets': { secrets: [], disclosure: null },
+  };
+
+  const withProviders = (providers: unknown[], activeId?: string) => ({
+    'GET /settings': {
+      settings: {
+        'llm.providers': providers,
+        ...(activeId ? { 'llm.defaultProviderId': activeId } : {}),
+      },
+    },
+    'GET /secrets': { secrets: [], disclosure: null },
+  });
+
+  /* ── #24 ────────────────────────────────────────────────────────────────── */
+
+  test('★ #24：目录里的每一家在界面上都有落点（差额就是"用户加不进来的那几家"）', async () => {
+    stubApi(NO_PROVIDERS);
+    const r = await render(<LlmSettingsSection />);
+    await r.flush();
+
+    // 「更多服务商」默认折叠 —— 先证明它折叠着，再展开（否则下面数到的是别的东西）
+    assert.equal(
+      !!r.container.querySelector('[data-testid="llm-more"]'),
+      false,
+      '18 家应默认折叠，平铺 24 个按钮会把置顶六家淹掉',
+    );
+    await click(r.container.querySelector('[data-testid="llm-more-toggle"]'));
+    await r.flush();
+
+    const idsOf = (prefix: string) =>
+      [...r.container.querySelectorAll(`[data-testid^="${prefix}"]`)].map(
+        (el) => el.getAttribute('data-testid')!.slice(prefix.length),
+      );
+    const addable = idsOf('llm-add-');
+    const explained = idsOf('llm-unsupported-');
+
+    const missing = CATALOG_PRESETS.map((p) => p.spec.id).filter(
+      (id) => !addable.includes(id) && !explained.includes(id),
+    );
+    assert.deepEqual(
+      missing,
+      [],
+      '这些服务商在界面上没有任何落点 —— 用户加不进来，也没有一句话解释为什么',
+    );
+    assert.equal(
+      addable.length + explained.length,
+      CATALOG_PRESETS.length,
+      '落点数与目录家数对不上（多半是重复渲染了）',
+    );
+    // 前提自检：目录本身得比旧的写死清单大，否则这条断言在证明一件已经成立的事
+    assert.ok(CATALOG_PRESETS.length >= 24, `目录只有 ${CATALOG_PRESETS.length} 家，桩数据错了？`);
+    r.unmount();
+  });
+
+  test('★ #24：已配置的那家不许在「常用」里再冒出一颗「加号」（老 id 也要认出来）', async () => {
+    // 库里存的是**旧 id** `anthropic`，目录 id 是 `claude` —— 不桥接就会配出第二份
+    stubApi(
+      withProviders([
+        {
+          id: 'anthropic',
+          kind: 'anthropic',
+          label: 'Anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          model: 'x',
+          isLocal: false,
+        },
+      ]),
+    );
+    const r = await render(<LlmSettingsSection />);
+    await r.flush();
+    assert.equal(
+      !!r.container.querySelector('[data-testid="llm-add-claude"]'),
+      false,
+      '库里已经有 Anthropic 了（老 id），「常用」还列着 Claude —— 点下去就是第二份配置',
+    );
+    // 前提：别的家仍然该在（否则"什么都没渲染"也能过）
+    assert.ok(r.container.querySelector('[data-testid="llm-add-openai"]'), '其余置顶家应仍可添加');
+    r.unmount();
+  });
+
+  test('★ #24-bis：写进设置的 kind 必须是 daemon 认得的那三种，不是目录里的协议族名', async () => {
+    const stub = stubApi(NO_PROVIDERS);
+    const r = await render(<LlmSettingsSection />);
+    await r.flush();
+    await click(r.container.querySelector('[data-testid="llm-add-claude"]'));
+    await r.flush();
+
+    const patchCall = stub.calls.find((c) => c.method === 'PATCH' && c.path === '/settings');
+    assert.ok(patchCall, '点了添加 Claude 却什么都没写');
+    const body = patchCall!.body as Record<string, unknown>;
+    const written = (body['llm.providers'] as { id: string; kind: string }[]).find(
+      (p) => p.id === 'claude',
+    );
+    assert.ok(written, `写进去的清单里没有 claude → ${JSON.stringify(body['llm.providers'])}`);
+    /*
+     * ★ 这一条是 D-10 §8-D1 那颗雷的**前端一半**。
+     *
+     * 目录里 Claude 的 kind 是 `anthropic-native`；而 daemon 的
+     * `resolveConfiguredProvider()` 只 `switch` 三种（`anthropic`/`gemini`/`openai-compatible`），
+     * 其余一律走 default：打一条 error 然后返回 undefined ——
+     * 用户看到的是"没配 LLM"，**而他明明刚配完**。
+     * daemon 侧已经改成按 kind 分派了，这半边（谁来翻译）到现在才补上。
+     */
+    assert.equal(written!.kind, 'anthropic', '把目录的协议族名原样写进去了，daemon 认不出来');
+    assert.equal(body['llm.defaultProviderId'], 'claude', '第一家应当直接生效');
+    r.unmount();
+  });
+
+  test('★ 目录 kind 到行为契约：全表覆盖，且确实做了翻译（不是恰好同名）', () => {
+    // 总表：目录新增一种协议族而没人表态 → 这里当场红（TS 那层也会红，双保险）
+    for (const k of PROVIDER_KINDS) {
+      assert.ok(k in WIRE_KIND_BY_CATALOG_KIND, `协议族 ${k} 没有表态要映到哪个行为契约`);
+    }
+    const wire = new Set(['openai-compatible', 'anthropic', 'gemini']);
+    for (const p of CATALOG_PRESETS) {
+      if (!p.config) continue;
+      assert.ok(
+        wire.has(p.config.kind),
+        `${p.spec.id} 写进设置的 kind=${p.config.kind}，daemon 的 switch 认不出来`,
+      );
+    }
+    /*
+     * 前提自检：**必须真的有需要翻译的**。
+     * 目录里如果恰好每一家都是 `openai-compatible`，上面那条断言就是恒真的空话。
+     */
+    const translated = CATALOG_PRESETS.filter(
+      (p) => p.config && (p.config.kind as string) !== (p.spec.kind as string),
+    );
+    assert.ok(translated.length > 0, '一家需要翻译的都没有 —— 那上面那条断言什么都没证明');
+  });
+
+  test('★ 目录给的接口地址与我们适配器要的地址不同，两处已知差异必须已经校正', () => {
+    /*
+     * 这两条各自钉一个**具体会坏的后果**，不是"字段存在"：
+     *  · gemini：`GeminiProvider` 自己拼 `/v1beta`（gemini.ts:164）。
+     *    目录给的地址已经带着它，原样用会拼成 `…/v1beta/v1beta/models/…`。
+     *  · ollama：`OpenAiCompatibleProvider` 拼 `/chat/completions`（openai-compatible.ts:119），
+     *    而 Ollama 的 OpenAI 兼容面在 `/v1` 下。少这一段就是 404。
+     */
+    const spec = (id: string) => {
+      const s = catalogProviderFor(id);
+      assert.ok(s, `目录里没有 ${id}`);
+      return s!;
+    };
+    const gemini = spec('gemini');
+    assert.ok(
+      (gemini.baseUrl.default ?? '').endsWith('/v1beta'),
+      '前提变了：目录里 gemini 的地址不再带 /v1beta，这条校正可能已经多余，请复核',
+    );
+    assert.equal(
+      adapterBaseUrl(gemini).endsWith('/v1beta'),
+      false,
+      'GeminiProvider 会再拼一次 /v1beta —— 原样用会请求 …/v1beta/v1beta/models/…',
+    );
+
+    const ollama = spec('ollama');
+    assert.ok(
+      adapterBaseUrl(ollama).endsWith('/v1'),
+      `Ollama 的 OpenAI 兼容面在 /v1 下，实际写进去的是 ${adapterBaseUrl(ollama)}`,
+    );
+    assert.equal(presetConfigFor(ollama)!.isLocal, true, '回环地址应认成本地服务');
+  });
+
+  test('★ 驱动不了的那家照样看得见，并且当场说明原因（不是悄悄抹掉）', async () => {
+    const unsupported = CATALOG_PRESETS.filter((p) => !p.support.supported);
+    assert.ok(
+      unsupported.length > 0,
+      '目录里每一家我们都驱动得了 —— 那这条用例没有被测对象，删掉它或换一个',
+    );
+    stubApi(NO_PROVIDERS);
+    const r = await render(<LlmSettingsSection />);
+    await r.flush();
+    await click(r.container.querySelector('[data-testid="llm-more-toggle"]'));
+    await r.flush();
+
+    for (const p of unsupported) {
+      const el = r.container.querySelector(`[data-testid="llm-unsupported-${p.spec.id}"]`);
+      assert.ok(el, `${p.spec.id} 从清单里消失了 —— 用户会以为"这个产品不支持它"`);
+      assert.ok(
+        (el!.textContent ?? '').includes(p.spec.displayName),
+        `${p.spec.id} 只剩一句错误，连名字都没有`,
+      );
+      // 它不能是个点得动的按钮 —— 点下去必然配出一份坏配置
+      assert.equal(el!.querySelector('button') === null, true, `${p.spec.id} 不该是可点的`);
+    }
+    r.unmount();
+  });
+
+  /* ── #27 configFieldKeys 驱动表单 ─────────────────────────────────────────── */
+
+  async function openForm(providerId: string) {
+    const preset = CATALOG_PRESETS.find((p) => p.spec.id === providerId);
+    assert.ok(preset, `目录里没有 ${providerId}`);
+    stubApi(withProviders([preset!.config], providerId));
+    const r = await render(<LlmSettingsSection />);
+    await r.flush();
+    await click(buttonByText(r.container, '编辑'));
+    await r.flush();
+    return r;
+  }
+
+  test('★ #27：Ollama 的表单里不许有 API Key 输入框（它的 configFieldKeys 里就没有）', async () => {
+    // 前提取自数据，不是我记住的：目录说它不要 key
+    const ollama = CATALOG_PRESETS.find((p) => p.spec.id === 'ollama')!;
+    assert.equal(ollama.fields.includes('apiKey'), false, '前提变了：目录现在说 Ollama 要 key');
+
+    const r = await openForm('ollama');
+    assert.equal(
+      !!r.container.querySelector('[data-testid="llm-field-apiKey"]'),
+      false,
+      '逼用户给 Ollama 编一个假 key —— 这正是竞品的已知 bug（R-01 §C11 #12）',
+    );
+    // 对照：它要的那两个字段得在（否则"整个表单没渲染"也能让上面那条过）
+    assert.ok(r.container.querySelector('[data-testid="llm-field-baseURL"]'), 'baseURL 该在');
+    assert.ok(r.container.querySelector('[data-testid="llm-model-select"]'), 'model 该在');
+    // 卡片上也不许写「未设置 Key」—— 那对一个不收 key 的服务是撒谎
+    const card = r.container.querySelector('[data-testid="llm-provider-ollama"]');
+    assert.ok(card, '找不到 ollama 的卡片');
+    assert.equal(
+      (card!.textContent ?? '').includes('未设置 Key'),
+      false,
+      '给一个不收 Key 的本地服务写「未设置 Key」是撒谎',
+    );
+    r.unmount();
+  });
+
+  /**
+   * ★ **这条才是 #27 真正的判据** —— 上一条（Ollama）其实分不开新旧两套规则。
+   *
+   * 旧规则是「`isLocal` 就不给 Key 框」，而 Ollama 恰好两条规则给出同一个答案
+   * （它既是本地服务、目录里也确实没有 `apiKey`）。把实现退回旧规则跑一遍，
+   * 上一条**照样绿** —— 那说明它钉住的是零（HANDOFF ⑤A-18 规矩 2）。
+   *
+   * LM Studio 是把两条规则分开的那个：**它是本地服务，但目录里它声明了 `apiKey`**
+   * （较新的版本真的支持给 server 设 key）。
+   *   · 旧规则 → Key 框被藏掉，设了 key 的用户配不上，界面一个字不说；
+   *   · 新规则（R-P3）→ 照它自己声明的字段渲染。
+   */
+  test('★ #27：LM Studio 是本地服务但目录说它收 Key —— 判据是 configFieldKeys，不是 isLocal', async () => {
+    const lm = CATALOG_PRESETS.find((p) => p.spec.id === 'lmstudio')!;
+    // 前提两条都取自数据：它是本地的，而且目录说它收 key
+    assert.equal(lm.config?.isLocal, true, '前提变了：LM Studio 不再是回环地址');
+    assert.equal(lm.fields.includes('apiKey'), true, '前提变了：目录说 LM Studio 不收 key');
+
+    const r = await openForm('lmstudio');
+    assert.ok(
+      r.container.querySelector('[data-testid="llm-field-apiKey"]'),
+      '按 isLocal 把 Key 框藏掉了 —— 给 LM Studio 设过 key 的用户在界面上无路可走',
+    );
+    // 卡片上的 Key 状态同理：它收 key，就该说 key 配没配
+    const card = r.container.querySelector('[data-testid="llm-provider-lmstudio"]');
+    assert.ok(card, '找不到 lmstudio 的卡片');
+    assert.ok(
+      (card!.textContent ?? '').includes('未设置 Key'),
+      `一家收 Key 的服务商没显示 Key 状态 → ${card!.textContent}`,
+    );
+    r.unmount();
+  });
+
+  test('★ #27 对照：要 Key 的那家必须有 Key 输入框', async () => {
+    const deepseek = CATALOG_PRESETS.find((p) => p.spec.id === 'deepseek')!;
+    assert.equal(deepseek.fields.includes('apiKey'), true, '前提变了：目录说 DeepSeek 不要 key');
+    const r = await openForm('deepseek');
+    assert.ok(
+      r.container.querySelector('[data-testid="llm-field-apiKey"]'),
+      'DeepSeek 没有 Key 输入框，用户配不上',
+    );
+    r.unmount();
+  });
+
+  test('★ #27：不许出现一个"改了不生效"的接口地址栏', async () => {
+    const locked = CATALOG_PRESETS.filter((p) => !p.spec.baseUrl.editable);
+    assert.ok(locked.length > 0, '目录里没有 editable=false 的了 —— 这条用例没有被测对象');
+    const target = locked[0]!;
+    /*
+     * 这一家我们驱动不了（`config` 是 null），添加按钮加不进来 ——
+     * 但用户库里可能已经存着一条（手改设置 / 老版本留下的）。
+     * 表单**照样得按目录的规矩渲染**。
+     *
+     * ⚠️ 判据是**后果**（"不许有一个可编辑但改了不生效的地址栏"），
+     * 不是形式（"必须有一个 readOnly 的 input"）：当前目录里这一家的
+     * `configFieldKeys` 连 `baseURL` 都没有，正确做法是**根本不画**。
+     * 上一版我把判据写成了后者，红在"地址栏不在" —— 而"地址栏不在"恰恰是对的行为。
+     */
+    stubApi(
+      withProviders([
+        {
+          id: target.spec.id,
+          kind: 'openai-compatible',
+          label: target.spec.displayName,
+          baseUrl: 'https://whatever.invalid',
+          model: 'm',
+          isLocal: false,
+        },
+      ]),
+    );
+    const r = await render(<LlmSettingsSection />);
+    await r.flush();
+    await click(buttonByText(r.container, '编辑'));
+    await r.flush();
+    // 前提：表单确实打开了（否则下面那条对空表单恒真）
+    assert.ok(r.container.querySelector('[data-testid="llm-save"]'), '表单没打开');
+    const input = r.container.querySelector('[data-testid="llm-field-baseURL"]');
+    assert.equal(
+      input !== null && !(input as HTMLInputElement).readOnly,
+      false,
+      `${target.spec.id} 不接受自定义接口地址，界面却给了一个可编辑的框 —— 改了也不会生效`,
+    );
+    r.unmount();
+  });
+
+  test('★ #27：地址栏三档由两个正交字段决定（readonly 那档目前没有活体，单独测）', () => {
+    const fake = (
+      fields: readonly string[],
+      editable: boolean,
+    ): Parameters<typeof baseUrlFieldMode>[0] =>
+      ({
+        fields,
+        spec: { baseUrl: { editable } },
+      }) as unknown as Parameters<typeof baseUrlFieldMode>[0];
+
+    assert.equal(baseUrlFieldMode(fake([], true)), 'hidden', '不收地址就别画那一栏');
+    assert.equal(
+      baseUrlFieldMode(fake(['baseURL'], false)),
+      'readonly',
+      '收地址但不许改 → 只读；给可编辑的框就是一个改了不生效的输入框',
+    );
+    assert.equal(baseUrlFieldMode(fake(['baseURL'], true)), 'editable');
+    // 认不出这家（自定义网关 / 老 id）时宁可多给一栏，否则他配不上
+    assert.equal(baseUrlFieldMode(null), 'editable');
+
+    // 前提自检：目录里当前那一家走的确实是 hidden 而不是 readonly
+    const locked = CATALOG_PRESETS.filter((p) => !p.spec.baseUrl.editable);
+    assert.deepEqual(
+      locked.map((p) => baseUrlFieldMode(p)),
+      locked.map(() => 'hidden'),
+      '目录变了：现在有一家"收地址但不许改"，组件层该给它补一条用例了',
+    );
+  });
+
+  /* ── #26 刷新分流 ───────────────────────────────────────────────────────── */
+
+  test('★ #26：人工转录的清单与可枚举的清单，说的话必须不一样；两档都不给假按钮', async () => {
+    const doc = CATALOG_PRESETS.find(
+      (p) =>
+        p.spec.modelListSource.type === 'official-doc' &&
+        p.support.supported &&
+        p.spec.configFieldKeys.includes('model'),
+    );
+    const api = CATALOG_PRESETS.find(
+      (p) => p.refreshable && p.support.supported && p.spec.configFieldKeys.includes('model'),
+    );
+    assert.ok(doc, '目录里一家人工转录的都没有');
+    assert.ok(api, '目录里一家可枚举的都没有 —— 这条用例没有被测对象');
+    assert.equal(doc!.refreshable, false);
+
+    const noteTextOf = async (id: string) => {
+      const r = await openForm(id);
+      const note = r.container.querySelector('[data-testid="llm-model-select-note"]');
+      assert.ok(note, `${id} 的候选清单旁边一个字都没有`);
+      const buttons = [...r.container.querySelectorAll('button')].map((b) => b.textContent ?? '');
+      const txt = note!.textContent ?? '';
+      r.unmount();
+      return { txt, buttons };
+    };
+
+    const a = await noteTextOf(doc!.spec.id);
+    const b = await noteTextOf(api!.spec.id);
+    /*
+     * ⚠️ **上一版这里只写了 `assert.notEqual(a.txt, b.txt)`，而它钉住的是零。**
+     * 两家的条目数与核对日期本来就不同（30 / 2026-05-31 vs 4 / 2026-05-02），
+     * 所以哪怕把分流整条拿掉、两边走同一句模板，这条断言**照样绿** ——
+     * 反向验证时它真的没红。换成下面按"说了什么"断的两条。
+     */
+    assert.ok(
+      a.txt.includes(doc!.spec.modelListSource.checkedAt ?? '__no_checked_at__'),
+      `人工转录的那档必须把核对日期说出来 → ${a.txt}`,
+    );
+    assert.equal(
+      b.txt.includes(api!.spec.modelListSource.checkedAt ?? '__no_checked_at__'),
+      false,
+      `可枚举的那档被套上了"人工核对于 X"的说法 → ${b.txt}`,
+    );
+    assert.notEqual(a.txt, b.txt, '两档说成了同一句话');
+    /*
+     * ★ **两档都不许有刷新按钮。**
+     * R-P2 只说"不给那 20 家"，实际情况更硬：全仓没有任何端点能替前端枚举
+     * （daemon 路由表里没有 /api/llm/models）。给那 4 家按钮同样是按不动的。
+     */
+    for (const { buttons } of [a, b]) {
+      assert.deepEqual(
+        buttons.filter((x) => x.includes('刷新')),
+        [],
+        '渲染了一颗「刷新模型列表」按钮，而本机没有任何端点能让它动',
+      );
+    }
+  });
+
+  /* ── #28 出厂空状态 ─────────────────────────────────────────────────────── */
+
+  test('★ #28：出厂空状态说清为什么空、下一步点哪，且一家都不预选', async () => {
+    const stub = stubApi(NO_PROVIDERS);
+    const r = await render(<LlmSettingsSection />);
+    await r.flush();
+
+    const box = r.container.querySelector('[data-testid="llm-empty"]');
+    assert.ok(box, '出厂什么都没配时，界面上只有一句"还没有配置"是不够的');
+    const emptyCopy = (zhLocale as unknown as { settings: { empty: Record<string, string> } })
+      .settings.empty;
+    const boxText = box!.textContent ?? '';
+    // 三条判据逐条对着词条查，不手抄文案（手抄的白名单会过期）
+    assert.ok(boxText.includes(emptyCopy['title']!), '没说"还没配"');
+    assert.ok(boxText.includes(emptyCopy['why']!), '没说清为什么空 —— 用户会以为是加载失败');
+    assert.ok(boxText.includes(emptyCopy['local']!), '没给已装 Ollama/LM Studio 的人指路');
+
+    // 下一步点哪：置顶六家就在眼前
+    for (const id of MAINSTREAM_PROVIDER_IDS) {
+      assert.ok(
+        r.container.querySelector(`[data-testid="llm-add-${id}"]`),
+        `置顶六家里的 ${id} 不在眼前`,
+      );
+    }
+    // ★ 不预选、不假装：渲染一次没有发出过任何写请求
+    assert.deepEqual(
+      stub.calls.filter((c) => c.method !== 'GET').map((c) => `${c.method} ${c.path}`),
+      [],
+      '出厂空状态发出了写请求 —— 那就是在替用户做决定',
+    );
+    // 「当前生效」必须说"未生效"，不许挑一个出来假装
+    const eff = r.container.querySelector('[data-testid="llm-effective"]');
+    assert.ok(eff, '没有"当前生效"这一行');
+    assert.equal(
+      /deepseek|openai|claude|gemini/i.test(eff!.textContent ?? ''),
+      false,
+      `一家都没配，"当前生效"却写了一个服务商名 → ${eff!.textContent}`,
+    );
+    r.unmount();
+  });
+});
+
+/* ═══════════ T-150 ② D-10 #9 / #10 / #29 —— 转写 Tab 三分组与档位 ═══════════ */
+
+/**
+ * ## 这一族钉的是什么
+ *
+ * 分组规则本身由 `features/models/asrSections.test.ts` 逐条钉死（纯函数，10 条）。
+ * 这里只钉**它真的被接上了**，以及三件只有渲染层能出错的事：
+ *
+ * ① `role=vad` / `role=punctuation` 的卡片**真的出现在页面上**。
+ *    此前 `ModelsPage` 写死 `g.role === 'asr'` —— 它们一张都不渲染，
+ *    而 daemon 的 `model.vad` 自检项发的 remediation 是
+ *    「在「模型」页安装 `vad/silero-vad-ggml`」：**一条具体但无法执行的指引**。
+ * ② `superseded` 是**折叠**不是删除：默认不平铺，但数得出来、展得开。
+ * ③ VAD 那一组两个变体的 `quantization` **都是 f16**，差的是 engine。
+ *    只按量化档标注 = 两行一模一样的「F16」，而选错的后果 T-148 已经付过一次
+ *    （whisper 报 `bad magic`，整单转写死）。
+ */
+describe('T-150 ② 转写 Tab 三分组（D-10 #9 #10 #29）', () => {
+  /** 一个覆盖三组的目录桩。**用真实标签**，不用 id 白名单 —— 判据本身就不看 id。 */
+  function catalogGroups() {
+    const v = (
+      id: string,
+      speedClass: string,
+      tags: string[],
+      extra: Record<string, unknown> = {},
+    ) => ({
+      id,
+      groupId: id,
+      role: 'asr',
+      arch: 'whisper',
+      format: 'ggml',
+      quantization: 'q5_1',
+      speedClass,
+      languages: ['multi'],
+      tags,
+      engines: ['whisper.cpp'],
+      totalSizeBytes: 1_000_000,
+      catalogVersion: '2026.08.06',
+      license: { id: 'MIT', url: 'https://example.invalid', requiresAcceptance: false, gated: false },
+      files: [{ name: 'a.bin', sha256: 'x'.repeat(64), sizeBytes: 1_000_000, optional: false }],
+      requirements: { ramRequiredMB: 512, vramRequiredMB: 0, computedAtContext: null },
+      fitness: {
+        tier: 'recommended',
+        reasonZh: 'stub reason',
+        notRecommendedForLanguage: false,
+        speedTier: 'unknown',
+        speedSource: 'none',
+        estMinutesPerAudioHour: null,
+        estGpuLayers: null,
+      },
+      ...extra,
+    });
+    const g = (
+      groupId: string,
+      role: string,
+      displayName: string,
+      variants: ReturnType<typeof v>[],
+    ) => ({
+      groupId,
+      role,
+      displayName,
+      displayNameZh: displayName,
+      descriptionZh: 'stub',
+      descriptionEn: 'stub',
+      tags: [],
+      variants: variants.map((x) => ({ ...x, groupId, role })),
+    });
+
+    return [
+      g('asr/paraformer-zh-small', 'asr', 'Paraformer', [
+        v('asr/paraformer-zh-small', 'fast', ['recommended-default-zh']),
+      ]),
+      g('asr/sherpa-streaming-zh-14m', 'asr', 'sherpa streaming', [
+        v('asr/sherpa-streaming-zh-14m', 'fast', ['required-for-f3'], { engines: ['sherpa-onnx'] }),
+      ]),
+      // ★ 两个变体 quantization 完全相同，差的是 engine —— 这正是 T-148 那次事故的形状
+      g('vad/silero-vad', 'vad', 'Silero VAD', [
+        v('vad/silero-vad-onnx', 'fast', ['vad'], {
+          quantization: 'f16',
+          engines: ['sherpa-onnx'],
+        }),
+        v('vad/silero-vad-ggml', 'fast', ['vad'], {
+          quantization: 'f16',
+          engines: ['whisper.cpp'],
+        }),
+      ]),
+      g('punctuation/ct-transformer-zh-en', 'punctuation', 'punctuation restore', [
+        v('punctuation/ct-transformer-zh-en', 'balance', ['punctuation'], {
+          engines: ['sherpa-onnx'],
+        }),
+      ]),
+      g('asr/whisper-large-v3', 'asr', 'large v3', [v('asr/whisper-large-v3-q5_0', 'quality', [])]),
+      g('asr/whisper-large-v2', 'asr', 'large v2', [
+        v('asr/whisper-large-v2-q5_0', 'quality', ['superseded']),
+      ]),
+      g('asr/whisper-large-v1', 'asr', 'large v1', [
+        v('asr/whisper-large-v1-f16', 'quality', ['superseded']),
+      ]),
+      g('asr/whisper-tiny', 'asr', 'tiny', [v('asr/whisper-tiny-q5_1', 'fast', [])]),
+    ];
+  }
+
+  function stubAsrTab() {
+    const groups = catalogGroups();
+    return stubApi({
+      '/models/catalog?role=all&lang=zh': {
+        stale: false,
+        fetchedAt: '2026-08-06T00:00:00.000Z',
+        groups,
+      },
+      '/models/catalog?role=all&lang=en': {
+        stale: false,
+        fetchedAt: '2026-08-06T00:00:00.000Z',
+        groups,
+      },
+      '/models/installed': { models: [], active: { asr: null, llm: null } },
+      '/models/storage': {
+        usedBytes: 0,
+        volume: { freeBytes: 1_000_000_000, totalBytes: 2_000_000_000 },
+        breakdown: [],
+        reclaimable: { orphanBlobsBytes: 0, stalePartialsBytes: 0 },
+      },
+      '/jobs': { jobs: [] },
+      '/settings': { settings: {} },
+      '/secrets': { secrets: [], disclosure: null },
+    });
+  }
+
+  const cardIds = (root: Element | null) =>
+    [...(root?.querySelectorAll('[data-testid^="model-card-"]') ?? [])].map((el) =>
+      el.getAttribute('data-testid')!.replace('model-card-', ''),
+    );
+
+  test('★ #10：VAD 与标点的卡片真的渲染出来了（daemon 的修复指引指向这一页）', async () => {
+    stubAsrTab();
+    const r = await render(<ModelsPage />, { route: '/models' });
+    await r.flush();
+
+    const realtime = r.container.querySelector('[data-testid="models-section-realtime"]');
+    assert.ok(realtime, '「实时字幕组件」那一组整块不在');
+    /*
+     * ⚠️ 上一版这里把期望值按 actual 的下标排了一次序 —— **那让它对任何排列都恒真**，
+     * 也就是钉住了零。直接比数组，顺序跟着目录走。
+     */
+    assert.deepEqual(
+      cardIds(realtime),
+      ['asr/sherpa-streaming-zh-14m', 'vad/silero-vad', 'punctuation/ct-transformer-zh-en'],
+      '这一组该装的是一条链路上的三个零件',
+    );
+    assert.ok(
+      cardIds(realtime).includes('vad/silero-vad'),
+      'daemon 让用户来这一页装 vad/silero-vad-ggml，而这一页上没有它 —— ' +
+        '一条具体但无法执行的指引比没有指引更糟',
+    );
+
+    // 另一半：它们不许跑到别的组里去（"随手放宽过滤器"会让这条红）
+    for (const other of ['models-section-recommended', 'models-section-more']) {
+      const el = r.container.querySelector(`[data-testid="${other}"]`);
+      assert.equal(
+        cardIds(el).some((id) => id.startsWith('vad/') || id.startsWith('punctuation/')),
+        false,
+        `${other} 里出现了 VAD/标点 —— 它们不是可以替代 Whisper 的转写模型`,
+      );
+    }
+    r.unmount();
+  });
+
+  test('★ #9：推荐只有两张卡，且不与别的组重复', async () => {
+    stubAsrTab();
+    const r = await render(<ModelsPage />, { route: '/models' });
+    await r.flush();
+    const rec = r.container.querySelector('[data-testid="models-section-recommended"]');
+    assert.ok(rec, '「推荐」那一组不在');
+    assert.deepEqual(cardIds(rec), ['asr/paraformer-zh-small']);
+
+    const all = cardIds(r.container);
+    assert.equal(
+      new Set(all).size,
+      all.length,
+      `同一个组渲染了两次 → ${JSON.stringify(all)}（用户会以为是两个不同的模型）`,
+    );
+    r.unmount();
+  });
+
+  test('★ #29：档位三档都在，且 superseded 默认折叠、数得出来、展得开', async () => {
+    stubAsrTab();
+    const r = await render(<ModelsPage />, { route: '/models' });
+    await r.flush();
+
+    for (const c of ['fast', 'quality']) {
+      assert.ok(
+        r.container.querySelector(`[data-testid="models-speed-${c}"]`),
+        `档位 ${c} 整块不在`,
+      );
+    }
+
+    const quality = r.container.querySelector('[data-testid="models-speed-quality"]');
+    assert.deepEqual(cardIds(quality), ['asr/whisper-large-v3'], '被取代的两个不该平铺');
+
+    // 折叠 ≠ 隐藏：数字必须写出来，否则用户不知道自己没看见什么
+    const toggle = r.container.querySelector('[data-testid="models-superseded-toggle-quality"]');
+    assert.ok(toggle, '没有「已被新版本取代的 N 个」这一行');
+    assert.ok(
+      (toggle!.textContent ?? '').includes('2'),
+      `折叠行必须说出有几个 → ${toggle!.textContent}`,
+    );
+    assert.equal(toggle!.getAttribute('aria-expanded'), 'false', '默认应折叠');
+
+    await click(toggle);
+    await r.flush();
+    const after = cardIds(r.container.querySelector('[data-testid="models-speed-quality"]'));
+    assert.deepEqual(
+      after,
+      ['asr/whisper-large-v3', 'asr/whisper-large-v2', 'asr/whisper-large-v1'],
+      '展开后必须真的看得到 —— 折叠是表态"别选这个"，不是替用户删掉',
+    );
+    r.unmount();
+  });
+
+  test('★ 同一组里两个变体只差 engine 时，选择器必须把 engine 说出来', async () => {
+    stubAsrTab();
+    const r = await render(<ModelsPage />, { route: '/models' });
+    await r.flush();
+
+    const vadCard = r.container.querySelector('[data-testid="model-card-vad/silero-vad"]');
+    assert.ok(vadCard, 'VAD 卡片不在');
+    await click(vadCard!.querySelector('[data-testid="models-quant-selector"]'));
+    await r.flush();
+
+    const options = [...vadCard!.querySelectorAll('[role="option"]')].map((el) =>
+      (el.textContent ?? '').replace(/\s+/g, ' ').trim(),
+    );
+    assert.equal(options.length, 2, `应有两个变体 → ${JSON.stringify(options)}`);
+    /*
+     * ★ 判据是**分得开**，不是"出现了某个字符串"。
+     * 这两个变体的 quantization 都是 f16 —— 只标量化档的话两行逐字相同，
+     * 而 daemon 恰恰让用户来这里挑出 ggml 那一个。选错 = whisper 报 bad magic，整单转写死。
+     */
+    assert.equal(
+      new Set(options).size,
+      2,
+      `两个互相加载不了的变体在选择器里长得一模一样 → ${JSON.stringify(options)}`,
+    );
+    assert.ok(
+      options.some((o) => o.includes('whisper.cpp')) && options.some((o) => o.includes('sherpa')),
+      `分得开还不够，得让用户知道分的是什么 → ${JSON.stringify(options)}`,
+    );
+    r.unmount();
+  });
+
+  test('★ 目录描述里的 Markdown 强调不许把裸星号吐给用户', async () => {
+    /*
+     * 实测：`vad/silero-vad` 的 `descriptionZh` 是
+     * 「语音活动检测，**sherpa-onnx 引擎专用格式**。…whisper.cpp 用不了这个文件」。
+     * 与 T-129 修掉的 `settings.llmIntro` 是同一族，只是这次文字来自 manifest ——
+     * `EMPHASIS_REGISTRY` 那条护栏只扫 locale 文件，**扫不到 manifest**。
+     */
+    const groups = catalogGroups().map((g) =>
+      g.groupId === 'vad/silero-vad'
+        ? { ...g, descriptionZh: '语音活动检测，**sherpa-onnx 引擎专用格式**。' }
+        : g,
+    );
+    stubApi({
+      '/models/catalog?role=all&lang=zh': { stale: false, fetchedAt: 'x', groups },
+      '/models/installed': { models: [], active: { asr: null, llm: null } },
+      '/models/storage': {
+        usedBytes: 0,
+        volume: { freeBytes: 1, totalBytes: 2 },
+        breakdown: [],
+        reclaimable: { orphanBlobsBytes: 0, stalePartialsBytes: 0 },
+      },
+      '/jobs': { jobs: [] },
+      '/settings': { settings: {} },
+      '/secrets': { secrets: [], disclosure: null },
+    });
+    const r = await render(<ModelsPage />, { route: '/models' });
+    await r.flush();
+
+    const card = r.container.querySelector('[data-testid="model-card-vad/silero-vad"]');
+    assert.ok(card, 'VAD 卡片不在');
+    const shown = card!.textContent ?? '';
+    assert.ok(shown.includes('sherpa-onnx 引擎专用格式'), '描述原文一个字都不许丢');
+    assert.equal(shown.includes('**'), false, `页面上仍能看到裸的 ** → ${shown}`);
+    assert.ok(
+      [...card!.querySelectorAll('strong')].some((e) =>
+        (e.textContent ?? '').includes('sherpa-onnx'),
+      ),
+      '强调段应渲染成 <strong>',
+    );
     r.unmount();
   });
 });

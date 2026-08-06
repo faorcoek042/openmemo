@@ -6,8 +6,14 @@ import { useLlmConfig } from '../../components/common/llm/llm-catalog';
 import { LlmSettingsSection } from '../../components/common/llm/LlmSettingsSection';
 import { PurposeBindingsSection } from '../../components/common/llm/PurposeBindingsSection';
 import { useTranslation } from 'react-i18next';
-import { Boxes, Cpu, Mic } from 'lucide-react';
-import type { CatalogVariant, DownloadJob, ModelRole } from '@openmemo/shared';
+import { Boxes, ChevronDown, ChevronRight, Cpu, Mic } from 'lucide-react';
+import type {
+  CatalogGroupWithFitness,
+  CatalogVariant,
+  DownloadJob,
+  ModelRole,
+  SpeedClass,
+} from '@openmemo/shared';
 
 import { Banner } from '../../components/common/Banner';
 import { Button } from '../../components/common/Button';
@@ -31,6 +37,7 @@ import {
 import { ModelCard } from './components/ModelCard';
 import { DownloadRow } from './components/DownloadRow';
 import { StorageBreakdown } from './components/StorageBreakdown';
+import { splitAsrSections } from './asrSections';
 
 /**
  * 模型管理页 —— 章程要求 2.2 的主界面。
@@ -43,6 +50,27 @@ import { StorageBreakdown } from './components/StorageBreakdown';
  * 或在快照与增量之间重复计数。这里三个 useQuery 天然并行，SSE 订阅在 App 层已建立。
  */
 
+
+/**
+ * 转写 Tab 上会出现哪些 role。
+ *
+ * ★ T-150（D-10 #10）：**这里原本写死成 `'asr'` 一个值**，
+ * 而 `role=vad`（2 变体）与 `role=punctuation`（1 变体）**一直在目录里** ——
+ * 于是它们在网页上一个都看不到，用户没有任何途径装上它们。
+ *
+ * 后果不止"少了两张卡"：daemon 的 `model.vad` 自检项算好了一句 remediation
+ * 「在「模型」页安装 `vad/silero-vad-ggml`」，**而那一页不渲染 VAD** ——
+ * 一条具体但无法执行的指引比没有指引更糟，用户会照着去做然后怀疑是自己没找到。
+ * （`catalog-truth` 与 D-10 #10 各自独立记到了同一处。）
+ *
+ * ⚠️ **它们不是"另一类 ASR"，不能直接混进转写列表。** 用户心智里
+ * "识别引擎"和"切句子的""补标点的"不是同一类东西。它们进的是
+ * 「实时字幕组件」那一组 —— 一条链路上的三个零件，不是彼此的替代品
+ * （分组规则在 `asrSections.ts`，那里写了每一组的判据）。
+ *
+ * 语言模型的目录条目 ADR-016 已砍，这一页一条都不该出现。
+ */
+const ASR_TAB_ROLES: readonly ModelRole[] = ['asr', 'vad', 'punctuation'];
 
 export default function ModelsPage() {
   const { t, i18n } = useTranslation();
@@ -62,8 +90,6 @@ export default function ModelsPage() {
     next.set('tab', t);
     setSp(next, { replace: true });
   };
-  // 目录侧只剩转写：语言模型不再走 catalog（ADR-016 砍掉内置 llama.cpp）
-  const role: ModelRole = 'asr';
   const [onlyRunnable, setOnlyRunnable] = useState(false);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
@@ -99,10 +125,10 @@ export default function ModelsPage() {
   const hiddenByLanguage = useMemo(
     () =>
       (catalog.data?.groups ?? [])
-        .filter((g) => g.role === role)
+        .filter((g) => ASR_TAB_ROLES.includes(g.role))
         .flatMap((g) => g.variants)
         .filter((v) => v.fitness.notRecommendedForLanguage && !installedIds.has(v.id)).length,
-    [catalog.data, role, installedIds],
+    [catalog.data, installedIds],
   );
 
   const active = installed.data?.active ?? { asr: null, llm: null };
@@ -110,7 +136,7 @@ export default function ModelsPage() {
   const groups = useMemo(() => {
     const all = catalog.data?.groups ?? [];
     return all
-      .filter((g) => g.role === role)
+      .filter((g) => ASR_TAB_ROLES.includes(g.role))
       .map((g) => ({
         ...g,
         // ADR-011：默认隐藏实测在该语言下不可用的变体。
@@ -135,7 +161,10 @@ export default function ModelsPage() {
           ? g.variants.some((v) => v.fitness.tier === 'recommended' || v.fitness.tier === 'slow_partial')
           : true,
       );
-  }, [catalog.data, role, onlyRunnable, showNotRecommended, installedIds, active.asr, active.llm]);
+  }, [catalog.data, onlyRunnable, showNotRecommended, installedIds, active.asr, active.llm]);
+
+  /** D-10 #9 / #10 / #29：推荐 / 实时字幕组件 / 更多档位（按 `speedClass` 分三挡）。 */
+  const sections = useMemo(() => splitAsrSections(groups), [groups]);
 
   /*
    * 只显示模型域的活跃下载（后端包下载在 /runtime 页展示）。
@@ -193,6 +222,25 @@ export default function ModelsPage() {
       setPendingId(null);
     }
   }
+
+  /** 一张卡的渲染。三组共用同一个 —— 分组只改归属，不改卡片本身。 */
+  const card = (g: CatalogGroupWithFitness) => (
+    <ModelCard
+      key={g.groupId}
+      group={g}
+      locale={locale}
+      installedIds={installedIds}
+      activeId={g.role === 'asr' ? active.asr : null}
+      pendingId={pendingId}
+      onPull={(v) => void handlePull(v)}
+      onDelete={(id) => {
+        if (window.confirm(t('models.confirmDelete'))) {
+          void del.mutateAsync(id);
+        }
+      }}
+      onActivate={(id) => void activate.mutateAsync({ role: g.role, id })}
+    />
+  );
 
   const asrActive = installed.data?.models.find((m) => m.id === active.asr);
   /* D-10 #8：语言模型的"当前使用"必须读 settings，不是 `installed.active.llm`。 */
@@ -388,7 +436,7 @@ export default function ModelsPage() {
           默认隐藏，但必须说明隐藏了什么、为什么，并且**可以一键看回来** ——
           静默隐藏会让用户以为产品没有这些模型。
         */}
-        {role === 'asr' && hiddenByLanguage > 0 && !showNotRecommended ? (
+        {hiddenByLanguage > 0 && !showNotRecommended ? (
           <div className="rounded-md border border-line bg-surface-1 px-3 py-2 text-xs text-ink-secondary">
             {t('models.hidden.notice', { n: hiddenByLanguage, language: targetLanguageLabel })}
             <button
@@ -448,23 +496,57 @@ export default function ModelsPage() {
           />
         ) : null}
 
-        {groups.map((g) => (
-          <ModelCard
-            key={g.groupId}
-            group={g}
-            locale={locale}
-            installedIds={installedIds}
-            activeId={g.role === 'asr' ? active.asr : active.llm}
-            pendingId={pendingId}
-            onPull={(v) => void handlePull(v)}
-            onDelete={(id) => {
-              if (window.confirm(t('models.confirmDelete'))) {
-                void del.mutateAsync(id);
-              }
-            }}
-            onActivate={(id) => void activate.mutateAsync({ role: g.role, id })}
-          />
-        ))}
+        {/*
+          ★ D-10 #9 / #10 / #29：三分组 + 档位。
+
+          此前是 8 张卡**平铺**，排序按目录顺序 —— 于是"边说边出字要装哪三个"
+          和"我要更准该换哪个"混在同一列里，而 large-v1/v2 这些被新版严格支配的
+          也和 v3-turbo 并排站着。分组规则是纯函数（`asrSections.ts`），这里只排版。
+        */}
+        <AsrGroupSection
+          title={t('models.section.recommended')}
+          hint={t('models.section.recommendedHint')}
+          testId="models-section-recommended"
+          groups={sections.recommended}
+          render={card}
+        />
+        <AsrGroupSection
+          title={t('models.section.realtime')}
+          hint={t('models.section.realtimeHint')}
+          testId="models-section-realtime"
+          groups={sections.realtime}
+          render={card}
+        />
+
+        {sections.more.length > 0 ? (
+          <section className="space-y-3" data-testid="models-section-more">
+            <div>
+              <h2 className="text-sm font-medium text-ink">{t('models.section.more')}</h2>
+              {/*
+                ★ D-10 R-M1：这里写的是**档位**，不是"速度"。
+                档位是目录常量（按体积人工分档，与你的机器无关）；
+                "在你的机器上大约多久"是卡内那一行（`FitEta`，daemon 按硬件算）。
+                两个都叫"速度"，用户就没法知道哪个是承诺、哪个是估计。
+              */}
+              <p className="mt-0.5 text-xs text-ink-secondary">{t('models.section.moreHint')}</p>
+            </div>
+            {sections.more.map((bucket) => (
+              <div key={bucket.speedClass} data-testid={`models-speed-${bucket.speedClass}`}>
+                <h3 className="mb-2 text-xs font-medium text-ink-secondary">
+                  {t(`models.speedClass.${bucket.speedClass}`)}
+                </h3>
+                <div className="space-y-3">{bucket.groups.map(card)}</div>
+                {bucket.superseded.length > 0 ? (
+                  <SupersededRow
+                    speedClass={bucket.speedClass}
+                    groups={bucket.superseded}
+                    render={card}
+                  />
+                ) : null}
+              </div>
+            ))}
+          </section>
+        ) : null}
       </section>
 
       {storage.data ? (
@@ -475,6 +557,73 @@ export default function ModelsPage() {
           onGc={() => void gc.mutateAsync({ targets: ['orphan_blobs', 'stale_partials'] })}
         />
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * 一组卡片。**组是空的就整块不渲染** —— 画一个空标题只会让人问"是不是还没做完"。
+ */
+function AsrGroupSection({
+  title,
+  hint,
+  testId,
+  groups,
+  render,
+}: {
+  title: string;
+  hint: string;
+  testId: string;
+  groups: CatalogGroupWithFitness[];
+  render: (g: CatalogGroupWithFitness) => React.ReactNode;
+}) {
+  if (groups.length === 0) return null;
+  return (
+    <section className="space-y-3" data-testid={testId}>
+      <div>
+        <h2 className="text-sm font-medium text-ink">{title}</h2>
+        <p className="mt-0.5 text-xs text-ink-secondary">{hint}</p>
+      </div>
+      {groups.map(render)}
+    </section>
+  );
+}
+
+/**
+ * 「已被新版本取代的 N 个」（D-10 §4.1.2）。
+ *
+ * **折叠不是隐藏**：复现旧结果、跑对照实验是真实需求，而且这些条目一直在目录里 ——
+ * 悄悄消失比折叠更让人困惑。折叠 = 我们表态"别选这个"；删除 = 我们替用户做决定。
+ * 数字必须写出来（`2 (+2)` 里的那个 `+2`），否则用户不知道自己没看见什么。
+ */
+function SupersededRow({
+  speedClass,
+  groups,
+  render,
+}: {
+  speedClass: SpeedClass;
+  groups: CatalogGroupWithFitness[];
+  render: (g: CatalogGroupWithFitness) => React.ReactNode;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-2" data-testid={`models-superseded-${speedClass}`}>
+      <button
+        type="button"
+        className="flex items-center gap-1 text-xs text-accent-ink hover:underline"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        data-testid={`models-superseded-toggle-${speedClass}`}
+      >
+        {open ? (
+          <ChevronDown className="size-3.5" aria-hidden />
+        ) : (
+          <ChevronRight className="size-3.5" aria-hidden />
+        )}
+        {t('models.supersededCount', { n: groups.length })}
+      </button>
+      {open ? <div className="mt-2 space-y-3">{groups.map(render)}</div> : null}
     </div>
   );
 }

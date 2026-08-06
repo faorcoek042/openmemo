@@ -153,18 +153,30 @@ export function LlmModelSelect({
       ) : null}
 
       {/*
-        清单出处与时效。**不给「刷新」按钮** —— 24 家里只有 4 家有可枚举端点，
-        一律给按钮就是 20 个按不动的按钮（D-10 §4.2.1 R-P2）。
+        ★ D-10 #26「刷新分流」——**分的是措辞，不是按钮**。
+
+        R-P2 的原话是"「刷新模型列表」按钮只对 `canRefreshModelList(p) === true` 的 4 家渲染"。
+        实际做的时候撞上一条更硬的事实：**本机根本没有任何端点能替前端去枚举**
+        （daemon 路由表里没有 `/api/llm/models` 一类的东西，全仓 grep 为 0）。
+        所以那 4 家的按钮同样是按不动的 —— R-P2 想挡的正是这个，
+        对 20 家成立的理由对 4 家一样成立。
+
+        于是分流落在文案上，三档各说各的真话：
+          · 20 家 `official-doc` → 人工转录 + 核对日期，**可能已过期**
+          · 4 家 `official-api`/`local-api` → 协议上刷得了，**只是还没接上**
+          · 不在目录里 → 没有内置清单，请用「自定义…」
         把"可能过时"如实写出来，比一个假按钮诚实；也是"自定义…"存在的理由。
       */}
-      <span className="text-ink-muted">
+      <span className="text-ink-muted" data-testid={`${testId}-note`}>
         {custom
           ? t('settings.modelPicker.customHint')
           : note && note.count > 0
-            ? note.checkedAt
-              ? // ⚠️ 占位符刻意不叫 `count` —— i18next 会把它当复数选择器去找 `note_other`
-                t('settings.modelPicker.note', { n: note.count, date: note.checkedAt })
-              : t('settings.modelPicker.noteNoDate', { n: note.count })
+            ? note.refreshable
+              ? t('settings.modelPicker.noteApi', { n: note.count })
+              : note.checkedAt
+                ? // ⚠️ 占位符刻意不叫 `count` —— i18next 会把它当复数选择器去找 `note_other`
+                  t('settings.modelPicker.note', { n: note.count, date: note.checkedAt })
+                : t('settings.modelPicker.noteNoDate', { n: note.count })
             : t('settings.modelPicker.noCatalog')}
       </span>
     </>

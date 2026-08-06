@@ -216,7 +216,21 @@
       "verifying": "校验中…",
       "verify": "校验完整性",
       "upstream": "查看上游与许可证"
-    }
+    },
+    "section": {
+      "recommended": "推荐",
+      "recommendedHint": "只想转个中文或多语种的话，装这里的就够了。",
+      "realtime": "实时字幕组件",
+      "realtimeHint": "录音页边说边出字要用这几个，它们是一条链路上的零件、不是彼此的替代品：缺流式引擎就退回\"录完再转\"，缺 VAD 就退回固定窗口切分，缺标点恢复则中文输出是一整段没有标点的字。",
+      "more": "更多档位",
+      "moreHint": "档位是目录里写死的常量，按模型体积人工分，与你的机器无关。\"在你的机器上大约要多久\"是卡片里的那一行。"
+    },
+    "speedClass": {
+      "fast": "快",
+      "balance": "均衡",
+      "quality": "高质量"
+    },
+    "supersededCount": "已被新版本取代的 {{n}} 个"
   },
   "runtime": {
     "title": "运行时与加速后端",
@@ -627,7 +641,24 @@
       "unset": "请选择模型",
       "note": "内置清单 {{n}} 个 · 核对于 {{date}}，可能已过时",
       "noteNoDate": "内置清单 {{n}} 个",
-      "noCatalog": "这个服务商没有内置清单 —— 请选「自定义…」手动填写型号名"
+      "noCatalog": "这个服务商没有内置清单 —— 请选「自定义…」手动填写型号名",
+      "noteApi": "内置清单 {{n}} 个 · 这家支持程序化刷新，但本地服务还没有对应接口，所以清单仍是随版本发布的快照"
+    },
+    "noKeyNeeded": "这家不需要 API Key",
+    "baseUrlLocked": "这家不接受自定义接口地址（目录里 baseUrl.editable = false），所以这一栏只读。",
+    "unwiredFields": "目录里这家还声明了 {{fields}} —— 本地服务现在不读这几个字段，所以这里不给控件（给了也不会生效）。",
+    "bucket": {
+      "mainstream": "常用",
+      "more": "更多服务商（{{n}}）"
+    },
+    "empty": {
+      "title": "还没有配置任何 AI 服务",
+      "why": "这不是加载失败 —— 出厂就是空的，我们不预置任何一家。摘要与思维导图需要一个大模型：从下面选一家，填上 API Key 就能用，不需要下载任何东西，也不占磁盘。",
+      "local": "已经装了 Ollama 或 LM Studio？在「常用」里选它 —— 接口地址已经填好本机端口，不需要 Key。"
+    },
+    "unsupported": {
+      "kind": "暂不支持（协议 {{kind}} 还没有适配器）",
+      "noBaseUrl": "暂不支持（目录里没有可用的接口地址，且不允许自定义）"
     }
   },
   "mock": {
@@ -729,7 +760,7 @@
     "title": "诊断",
     "recheck": "重新检测",
     "copy": "复制诊断信息",
-    "probeCaveat": "本页检查的是「组件是否加载」。更强的「功能是否真的可用」自检（例如中文词在 FTS5 里能否匹配）目前只有命令行版 scripts/selfcheck.mjs，尚无对应的接口，所以这里给不出功能级结论。绿灯不等于功能一定可用。",
+    "probeCaveat": "这一页有两个数据源：上面的「功能自检」问的是「功能到底能不能用」（例如「用户」这个词在 FTS5 里能不能被匹配到、交给 whisper 的那份 VAD 权重它加载得了吗）；下面几组问的是「组件在不在、加载没加载」。后者定位得到具体是哪个零件，但它的绿灯不等于功能一定可用。",
     "daemonDown": "连不上本地服务",
     "daemonDownHint": "OpenMemo 的本地服务没有在运行，或端口已变更。",
     "groupService": "服务",
@@ -761,6 +792,27 @@
       "mock": "接口未实现（模拟数据）",
       "offline": "服务未连接",
       "unknown": "尚未调用"
+    },
+    "selfcheck": {
+      "title": "功能自检",
+      "hint": "判据只有一份：命令行 scripts/selfcheck.mjs 与 GET /api/selfcheck 调的是同一个实现，差异只允许在显示上。",
+      "counts": "{{ok}} 通过 · {{warn}} 告警 · {{fail}} 失败",
+      "ranAt": "检测于 {{time}}",
+      "required": "必需项",
+      "loading": "正在自检…",
+      "unavailable": "拿不到功能自检结果",
+      "unavailableHint": "GET /api/selfcheck 没有正常返回（本地服务版本较旧时会这样）。下面几组仍然可用，但它们只检查组件在不在 —— 别把这里的空白读成「一切正常」。",
+      "empty": "自检一条结果都没返回。这本身就不正常，不要当成「一切正常」。",
+      "layer": {
+        "hardware": "硬件",
+        "tools": "本机工具与后端包",
+        "models": "模型",
+        "llm": "语言模型服务",
+        "ext": "数据库扩展",
+        "datadir": "数据目录",
+        "engines": "转写引擎",
+        "proxy": "网络代理"
+      }
     }
   },
   "asr": {

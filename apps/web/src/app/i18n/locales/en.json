@@ -216,7 +216,21 @@
       "verifying": "Verifying…",
       "verify": "Verify integrity",
       "upstream": "Upstream project and license"
-    }
+    },
+    "section": {
+      "recommended": "Recommended",
+      "recommendedHint": "If you just want Chinese or multilingual transcription, one of these is enough.",
+      "realtime": "Live-caption components",
+      "realtimeHint": "Live captions while recording need these. They are parts of one chain, not alternatives to each other: without the streaming engine you fall back to \"transcribe after recording\", without VAD to fixed-window chunking, and without punctuation restoration Chinese output is one long unpunctuated block.",
+      "more": "More tiers",
+      "moreHint": "A tier is a catalog constant, assigned by model size and independent of your machine. \"About how long it takes on your machine\" is the line inside each card."
+    },
+    "speedClass": {
+      "fast": "Fast",
+      "balance": "Balanced",
+      "quality": "High quality"
+    },
+    "supersededCount": "{{n}} superseded by newer versions"
   },
   "runtime": {
     "title": "Runtime and acceleration backends",
@@ -627,7 +641,24 @@
       "unset": "Select a model",
       "note": "{{n}} bundled entries · checked {{date}}, may be out of date",
       "noteNoDate": "{{n}} bundled entries",
-      "noCatalog": "No bundled list for this provider — pick “Custom…” and type the model name"
+      "noCatalog": "No bundled list for this provider — pick “Custom…” and type the model name",
+      "noteApi": "{{n}} bundled entries · this vendor can be enumerated programmatically, but the local service has no endpoint for it yet, so the list is still the snapshot shipped with this build"
+    },
+    "noKeyNeeded": "no API key needed",
+    "baseUrlLocked": "This vendor rejects a custom endpoint (baseUrl.editable = false in the catalog), so the field is read-only.",
+    "unwiredFields": "The catalog also declares {{fields}} for this provider — the local service does not read those fields yet, so no control is shown (one would not take effect).",
+    "bucket": {
+      "mainstream": "Common",
+      "more": "More providers ({{n}})"
+    },
+    "empty": {
+      "title": "No AI service configured yet",
+      "why": "This is not a loading failure — it ships empty on purpose and we pre-select nobody. Summaries and mindmaps need an LLM: pick one below and paste an API key. Nothing is downloaded and nothing takes disk space.",
+      "local": "Already running Ollama or LM Studio? Pick it under “Common” — the endpoint is pre-filled with the local port and no key is needed."
+    },
+    "unsupported": {
+      "kind": "not supported yet (no adapter for the {{kind}} protocol)",
+      "noBaseUrl": "not supported yet (the catalog gives no usable endpoint and forbids a custom one)"
     }
   },
   "mock": {
@@ -729,7 +760,7 @@
     "title": "Diagnostics",
     "recheck": "Re-check",
     "copy": "Copy report",
-    "probeCaveat": "This page checks whether components are loaded. The stronger \"does the feature actually work\" self-check (e.g. whether a Chinese word matches in FTS5) currently exists only as the CLI scripts/selfcheck.mjs with no HTTP endpoint, so no feature-level verdict is shown here. A green light does not guarantee the feature works.",
+    "probeCaveat": "This page has two data sources. The self-check above asks whether the FEATURE works (does a Chinese word actually match in FTS5; can whisper actually load the VAD weights we hand it). The groups below ask whether a COMPONENT is present and loaded — useful for pinpointing which part is missing, but a green light there does not guarantee the feature works.",
     "daemonDown": "Cannot reach the local service",
     "daemonDownHint": "The OpenMemo local service is not running, or the port changed.",
     "groupService": "Service",
@@ -761,6 +792,27 @@
       "mock": "endpoint not implemented (simulated)",
       "offline": "service not connected",
       "unknown": "not called yet"
+    },
+    "selfcheck": {
+      "title": "Feature self-check",
+      "hint": "One implementation, two surfaces: the CLI scripts/selfcheck.mjs and GET /api/selfcheck call the same runSelfCheck(); only the rendering may differ.",
+      "counts": "{{ok}} ok · {{warn}} warning · {{fail}} failed",
+      "ranAt": "checked at {{time}}",
+      "required": "required",
+      "loading": "Running self-check…",
+      "unavailable": "Self-check results unavailable",
+      "unavailableHint": "GET /api/selfcheck did not return successfully (an older local service does this). The groups below still work, but they only check whether components are present — do not read this blank as \"everything is fine\".",
+      "empty": "The self-check returned zero checks. That is itself abnormal; do not read it as \"everything is fine\".",
+      "layer": {
+        "hardware": "Hardware",
+        "tools": "Local tools & backend packs",
+        "models": "Models",
+        "llm": "Language model services",
+        "ext": "Database extensions",
+        "datadir": "Data directory",
+        "engines": "Transcription engines",
+        "proxy": "Network proxy"
+      }
     }
   },
   "asr": {

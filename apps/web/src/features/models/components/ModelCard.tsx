@@ -4,6 +4,7 @@ import { Download, Info, Star, Trash2, Zap } from 'lucide-react';
 import { Link } from 'react-router';
 import type { CatalogGroupWithFitness, CatalogVariant } from '@openmemo/shared';
 import { Button } from '../../../components/common/Button';
+import { Emphasis } from '../../../components/common/Emphasis';
 import { StatusChip } from '../../../components/common/StatusChip';
 import { FitBadge, FitEta, FitGpuLayers } from '../../../components/common/FitBadge';
 import { formatBytes } from '../../../lib/format/bytes';
@@ -76,7 +77,19 @@ export function ModelCard({
               <StatusChip tone="good" label={t('models.card.inUse')} icon={<Zap className="size-3.5" />} />
             ) : null}
           </div>
-          <p className="mt-1 text-xs text-ink-secondary">{localizedDescription(locale, group)}</p>
+          {/*
+            ★ T-150：目录里的描述**带 Markdown 强调记号**，必须渲染成 `<strong>`。
+            实测：`vad/silero-vad` 的 `descriptionZh` 是
+            「语音活动检测，**sherpa-onnx 引擎专用格式**。…whisper.cpp 用不了这个文件」——
+            照直渲染，用户在页面上看到的是两颗裸星号（与 T-129 修掉的
+            `settings.llmIntro` / disclosure 是同一族，只是这次的文字来自 manifest 而不是 i18n）。
+            `EMPHASIS_REGISTRY` 那条护栏只扫 locale 文件，**扫不到 manifest**，
+            所以这一处只能在渲染侧接住。
+          */}
+          <Emphasis
+            className="mt-1 block text-xs text-ink-secondary"
+            text={localizedDescription(locale, group)}
+          />
         </div>
         <Link
           to={`/models/${encodeURIComponent(variant.id)}`}

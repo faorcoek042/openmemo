@@ -4,20 +4,24 @@ import assert from 'node:assert/strict';
 import { applyStarToPage, type NotesPage } from './notesCache';
 import type { NoteSummary } from './types';
 
+/**
+ * ⚠️ T-150：这个夹具原来还写着 `folderUid` / `coverAssetUid` / `source` 三个字段。
+ * 它们**从来不在 `GET /api/notes` 的响应里** —— `NoteSummary` 换成共享契约
+ * `NoteListItem` 之后编译当场报错，于是这里也一并去掉。
+ * 一个比真实响应宽的测试夹具，测的就是一个不存在的形状。
+ */
 function note(uid: string, starred: boolean): NoteSummary {
   return {
     uid,
     title: uid,
     kind: 'media',
     status: 'ready',
-    folderUid: null,
+    language: null,
     durationMs: 1000,
-    coverAssetUid: null,
     starred,
     tags: [],
     createdAt: '2026-08-01T00:00:00.000Z',
     updatedAt: '2026-08-01T00:00:00.000Z',
-    source: null,
   };
 }
 

@@ -1,5 +1,5 @@
 /**
- * 波形峰值：`.ompk` → wavesurfer 期望的格式（D-05 §7.3a）。
+ * 波形峰值：`.ompk` → 归一化到 −1..1 的每声道数组（D-05 §7.3a）。
  *
  * 为什么要预计算：浏览器 `decodeAudioData` 一个 2 小时的文件会占数百 MB 内存
  * 并阻塞主线程（D-01 §5 F5）。所以峰值由 daemon 用 ffmpeg 预生成，前端只解析二进制。
@@ -8,15 +8,31 @@
  *   [magic "OMPK"(4B)][version u8][channels u8][samplesPerPixel u32][durationMs u32]
  *   [数据: Int8 × N × 2 (min,max) × channels]
  *
- * wavesurfer v7 的 `peaks` 选项要的是**每声道一个归一化到 −1..1 的数组**，
- * 所以这里做 `v / 127` 的转换。
+ * `v / 127` 这层归一化最初是照 **wavesurfer v7 的 `peaks` 选项**做的。
  *
- * ⚠️ 这层转换故意放在共享工具里而不是 player feature 里：
- * 日后换掉 wavesurfer 只有这一个文件 + player 受影响，`.ompk` 格式本身不绑任何库。
+ * ─── ★ T-150 的裁决：**不接 wavesurfer，那个依赖该删** ─────────────────────────
+ *
+ * 现状：`wavesurfer.js` 在 `apps/web/package.json` 里挂了很久，**全仓零 import**，
+ * 而 `features/player/Waveform.tsx` 已经用 112 行 canvas 直接把这份峰值画出来了
+ * （T-151 之后 `.ompk` 真的有数据了，`NoteDetailPage` 是 `decodeOmpk` 的第一个调用方）。
+ *
+ * 判据不是"哪个更好看"，是**它能替我们做的那件事，我们刚好不要**：
+ *
+ * 1. wavesurfer 的核心价值是"在浏览器里解码音频 + 画 + 交互"。**解码那一半我们
+ *    明确不做**（上面第二段就是理由），所以接进来也只用得上它的绘制层。
+ * 2. 绘制层这边我们有两条它给不了的性质：**完全不进 React**（播放位置以 ~10Hz 变化，
+ *    走 React 会拖垮整页）与**直接读 CSS 变量**（明暗主题切换零 JS 参与）。
+ *    换成 wavesurfer 这两条都得自己再补一遍。
+ * 3. 留着一个零 import 的依赖，最贵的不是 1.5 MB 和许可证清单里那一行，
+ *    而是**它让读代码的人以为波形是它画的** —— 与本轮修的那几处过期注释同一种成本。
+ *
+ * → **结论：从 `apps/web/package.json` 删掉 `wavesurfer.js`。** 归 `debt-cleanup` 执行
+ *   （要动 `pnpm-lock.yaml`，那是全仓共享文件，我在途不碰）。
+ *   `.ompk` 格式本身**不绑任何库**，删掉它这个文件一个字节都不用改。
  */
 
 export interface DecodedPeaks {
-  /** 每声道一个数组，值域 −1..1。直接喂 wavesurfer 的 `peaks` 选项。 */
+  /** 每声道一个数组，值域 −1..1。`Waveform.tsx` 的 canvas 直接按这个值域画。 */
   channels: Float32Array[];
   durationMs: number;
   samplesPerPixel: number;
