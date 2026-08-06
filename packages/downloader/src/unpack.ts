@@ -13,10 +13,16 @@
  *     resolved path against the destination root with `path.resolve` + a `path.sep`-aware
  *     prefix comparison (catches anything the segment check missed — e.g. a segment that
  *     is legal on its own but combines with others in a surprising way).
- *   - symlinks: never created. A symlink entry is a path-traversal primitive by another
- *     name (point it outside destDir, then a later "regular file" entry writes through it).
- *     Rejected outright rather than "safely" resolved, because there is no upstream use
- *     case for a backend pack or model archive shipping a symlink.
+ *   - symlinks: created, but only after the target has been resolved AGAINST THE REAL
+ *     FILESYSTEM and shown to stay inside destDir. Blanket rejection was tried and is
+ *     wrong: upstream whisper.cpp ships `libwhisper.so -> libwhisper.so.1.9.1`, and a
+ *     guard that stops the product from installing its own backend is a broken guard.
+ *     Purely lexical target validation is ALSO wrong, and was a real, reproduced sandbox
+ *     escape — `path.resolve` cancels `s/..` as text while the kernel follows `s` first.
+ *     Every entry destination and every link target therefore goes through
+ *     `resolveWithinRoot()`, which walks `lstat`/`readlink` itself. Read the long comment
+ *     there before touching any of it: three separate ways to get this wrong are recorded
+ *     with measurements, and two of them look correct.
  *   - zip/tar bombs: two independent caps. `maxEntries` bounds entry COUNT, checked as
  *     central-directory / tar-header records are discovered (before we act on any of
  *     them — a crafted archive cannot even get us to allocate per-entry state past the
@@ -135,6 +141,23 @@ function checkAborted(signal: AbortSignal | undefined): void {
 const WINDOWS_ABS_RE = /^[a-zA-Z]:[\\/]/;
 const UNC_RE = /^[\\/]{2}/;
 
+/**
+ * The lexical (string-only) half of every path check takes `platform` as an ARGUMENT.
+ *
+ * Not for portability — for testability. `path.resolve`/`path.sep` bind to the host, so
+ * the win32 branch of a path guard written on Linux is a branch that has never executed
+ * once. That is the exact shape of this repo's "false green light #8" (`isSafeExecutable`)
+ * and of T-143 ② (`assertWithinRoot`): the guard looked right, was never run, and nobody
+ * could tell. With `platform` as a parameter, `path.win32` rules are reachable from a
+ * Linux test run, so "wrong on Windows" fails here rather than on a user's machine.
+ *
+ * Defaulting to `process.platform` keeps behaviour byte-identical on both hosts
+ * (`path === path.posix` on Linux/macOS, `path === path.win32` on Windows).
+ */
+function lex(platform: NodeJS.Platform): path.PlatformPath {
+  return platform === 'win32' ? path.win32 : path.posix;
+}
+
 function assertSafeEntryName(rawName: string): void {
   if (rawName.length === 0) {
     throw new UnpackError('Archive entry has an empty name', 'CORRUPT');
@@ -152,22 +175,29 @@ function assertSafeEntryName(rawName: string): void {
 
 /**
  * Resolve an entry name against destDir, rejecting anything that would land outside it.
- * `assertSafeEntryName` is the fast, readable gate; the resolve+prefix check below is the
- * authoritative one and is what actually has to be correct.
+ *
+ * ⚠️ This is the LEXICAL gate only. It is fast, readable and pure — and on its own it is
+ * NOT sufficient, because `path.resolve` folds `..` as string arithmetic while the kernel
+ * folds it after following symlinks. See {@link resolveWithinRoot} for the check that
+ * actually decides.
  */
-function safeJoin(destDir: string, rawName: string): string {
+export function lexicalEntryPath(
+  destDir: string,
+  rawName: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
   assertSafeEntryName(rawName);
-  const destRoot = path.resolve(destDir);
-  const resolved = path.resolve(destRoot, rawName);
-  if (resolved !== destRoot && !resolved.startsWith(destRoot + path.sep)) {
+  const p = lex(platform);
+  const destRoot = p.resolve(destDir);
+  const resolved = p.resolve(destRoot, rawName);
+  if (resolved !== destRoot && !resolved.startsWith(destRoot + p.sep)) {
     throw new UnpackError(`Archive entry resolves outside destination: "${rawName}"`, 'PATH_TRAVERSAL');
   }
   return resolved;
 }
 
-
 /**
- * Decide whether an archive link entry is safe, and where it points.
+ * The LEXICAL half of the link-target check.
  *
  * Rejecting EVERY symlink is too blunt and breaks real software: the official
  * whisper.cpp tarball ships `libwhisper.so -> libwhisper.so.1.7.6`, which is ordinary
@@ -176,15 +206,16 @@ function safeJoin(destDir: string, rawName: string): string {
  *
  * The actual threat is a link that ESCAPES the destination — `evil -> /etc/passwd`, or
  * `evil -> ../../../home/user/.ssh/id_rsa` — because a later write through that path
- * lands outside the sandbox. So the rule is target-based, not type-based:
- *   - absolute target            → reject
- *   - resolves outside destRoot  → reject
- *   - resolves inside destRoot   → allow
+ * lands outside the sandbox. So the rule is target-based, not type-based.
+ *
+ * ⚠️ Again: lexical only. It stops the blunt forms early and produces a readable error;
+ * {@link resolveWithinRoot} is what makes the guard true.
  */
-function resolveLinkTarget(
+export function lexicalLinkTarget(
   destRoot: string,
   entryName: string,
   linkTarget: string,
+  platform: NodeJS.Platform = process.platform,
 ): string {
   if (linkTarget.length === 0) {
     throw new UnpackError(`Archive link "${entryName}" has an empty target`, 'CORRUPT');
@@ -195,16 +226,184 @@ function resolveLinkTarget(
       'SYMLINK_REJECTED',
     );
   }
-  const linkDir = path.dirname(path.resolve(destRoot, entryName));
-  const resolved = path.resolve(linkDir, linkTarget);
-  const root = path.resolve(destRoot);
-  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+  const p = lex(platform);
+  const root = p.resolve(destRoot);
+  const linkDir = p.dirname(p.resolve(root, entryName));
+  const resolved = p.resolve(linkDir, linkTarget);
+  if (resolved !== root && !resolved.startsWith(root + p.sep)) {
     throw new UnpackError(
       `Archive link "${entryName}" escapes the destination: "${linkTarget}"`,
       'SYMLINK_REJECTED',
     );
   }
   return resolved;
+}
+
+/* ------------------- resolve-then-check (the authoritative half) ------------------- */
+
+/**
+ * ★ Why a lexical check is not a containment check.
+ *
+ * `path.resolve` cancels `s/..` as *text*. The kernel does not: it follows `s` first and
+ * then applies `..` to wherever that landed. Feed both the same string and they disagree:
+ *
+ * ```
+ * destRoot/s          ->  "."                      (a link to destRoot itself; lexically OK)
+ * destRoot/evil       ->  "s/../OUTSIDE.txt"       lexical: destRoot/OUTSIDE.txt   ✅ allowed
+ *                                                  kernel : <parent>/OUTSIDE.txt   🔴 escaped
+ * ```
+ *
+ * `[实测]` against the pre-fix build this was not merely a read primitive: a third entry,
+ * an ordinary file also named `evil`, was written THROUGH the link and overwrote a file
+ * outside destRoot. Arbitrary write, not arbitrary read.
+ *
+ * ── Three traps this function exists to avoid, each one hit for real while writing it ──
+ *
+ * 1. **`path.join`/`path.resolve` destroy the evidence.** `path.join(d,'s','..','x')`
+ *    returns `d/x` — the escape is gone before any syscall happens. So the walk below
+ *    splits the raw string and never joins across a `..`.
+ * 2. **`fs.realpath` is not the kernel.** `[实测]` on the exact shape above, Node's
+ *    `fs.realpathSync` throws ENOENT while `fs.realpathSync.native` returns the escaped
+ *    path and `readFileSync` happily reads it. A guard built on `fs.realpath` would
+ *    therefore fail *closed* here by accident and fail *open* elsewhere. We walk
+ *    `lstat`/`readlink` ourselves instead, which also lets us resolve a path whose tail
+ *    does not exist yet — mandatory, because tar hands us `libwhisper.so ->
+ *    libwhisper.so.1.9.1` before the target file has been written.
+ * 3. **The root must be resolved the same way.** Comparing a resolved candidate against a
+ *    *lexical* root nukes the whole media/backend tree the moment the data directory is
+ *    itself reached through a link (macOS `/var -> /private/var`). T-143 ① hit this.
+ */
+const MAX_LINK_HOPS = 40;
+
+async function walk(
+  startReal: string,
+  rest: string,
+  hops: { n: number },
+): Promise<string> {
+  let cur = startReal;
+  // Split on BOTH separators: a tar written on Windows can embed `\`, and on a Windows
+  // host that is a separator. Splitting on both everywhere is strictly more conservative.
+  for (const seg of rest.split(/[\\/]+/)) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') {
+      cur = path.dirname(cur); // dirname('/') === '/', so this cannot climb past the root
+      continue;
+    }
+    const next = path.join(cur, seg);
+    let st;
+    try {
+      st = await fs.lstat(next);
+    } catch {
+      // Does not exist (yet). Everything from here on is purely nominal — which is
+      // correct and is why `fs.realpath` cannot be used: it would just throw.
+      cur = next;
+      continue;
+    }
+    if (!st.isSymbolicLink()) {
+      cur = next;
+      continue;
+    }
+    if (++hops.n > MAX_LINK_HOPS) {
+      throw new UnpackError(
+        `Too many symbolic links while resolving "${rest}" (loop?)`,
+        'PATH_TRAVERSAL',
+      );
+    }
+    const target = await fs.readlink(next);
+    cur = path.isAbsolute(target)
+      ? await walk(path.parse(target).root, target, hops)
+      : await walk(cur, target, hops);
+  }
+  return cur;
+}
+
+/**
+ * Resolve `rel` against `rootReal` following symlinks, and assert the result is inside.
+ *
+ * @param rootReal destination root, ALREADY put through {@link resolveRoot}.
+ * @param rel      path relative to the root; may contain `..` and either separator.
+ */
+async function resolveWithinRoot(
+  rootReal: string,
+  rel: string,
+  what: string,
+  code: UnpackErrorCode,
+): Promise<string> {
+  const real = await walk(rootReal, rel, { n: 0 });
+  if (real !== rootReal && !real.startsWith(rootReal + path.sep)) {
+    throw new UnpackError(
+      `${what} resolves outside the destination once symlinks are followed: ` +
+        `"${rel}" → "${real}" (destination is "${rootReal}")`,
+      code,
+    );
+  }
+  return real;
+}
+
+/** Resolve the destination root itself with the same walker (see trap 3 above). */
+async function resolveRoot(destDir: string): Promise<string> {
+  const abs = path.resolve(destDir);
+  return walk(path.parse(abs).root, abs, { n: 0 });
+}
+
+/** Directory part of an archive entry name, in the archive's own (separator-agnostic) terms. */
+function entryDir(name: string): string {
+  const idx = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+  return idx === -1 ? '' : name.slice(0, idx);
+}
+
+/**
+ * Where this entry will REALLY be created, once every symlink on the way is followed.
+ *
+ * Called for files AND directories, before `mkdir`/`writeFile` — not after. An earlier
+ * entry can have installed a directory symlink, and `fs.mkdir(..., {recursive:true})`
+ * follows it, so "check afterwards" would mean checking a directory we already created
+ * outside the sandbox.
+ */
+function resolveEntryDest(rootReal: string, entryName: string): Promise<string> {
+  return resolveWithinRoot(rootReal, entryName, `Archive entry "${entryName}"`, 'PATH_TRAVERSAL');
+}
+
+/**
+ * Final sweep: every link we created must STILL resolve inside the root.
+ *
+ * Per-entry checks alone are order-dependent, and the archive picks the order. Given
+ * `evil -> "s/../OUTSIDE.txt"` FIRST and `s -> "."` second, the check on `evil` runs while
+ * `s` does not exist yet, so `evil` legitimately resolves inside at that instant — and the
+ * second entry silently re-points it outside. `[实测]` on the pre-sweep build the archive
+ * unpacked with exit status "success" and left a link pointing out of the sandbox, which
+ * anything later walking the pack directory would follow.
+ *
+ * So the per-entry check is not replaced by this one; both are needed. The per-entry check
+ * is what stops a write from landing outside *during* extraction; this is what stops the
+ * finished tree from containing a door.
+ */
+async function assertLinksStillInside(rootReal: string, linkNames: string[]): Promise<void> {
+  for (const name of linkNames) {
+    await resolveWithinRoot(
+      rootReal,
+      name,
+      `Archive link "${name}" (re-checked after extraction)`,
+      'SYMLINK_REJECTED',
+    );
+  }
+}
+
+/** Lexical gate + resolve-then-check for a link entry. Returns the REAL target path. */
+async function resolveLinkEntry(
+  destRoot: string,
+  rootReal: string,
+  entryName: string,
+  linkTarget: string,
+): Promise<string> {
+  lexicalLinkTarget(destRoot, entryName, linkTarget);
+  const dir = entryDir(entryName);
+  return resolveWithinRoot(
+    rootReal,
+    dir === '' ? linkTarget : `${dir}/${linkTarget}`,
+    `Archive link "${entryName}" -> "${linkTarget}"`,
+    'SYMLINK_REJECTED',
+  );
 }
 
 /**
@@ -350,8 +549,10 @@ function parseCentralDirectory(cdBuf: Buffer, budget: Budget): ZipCentralEntry[]
 export async function unpackZip(src: string, destDir: string, opts?: UnpackOptions): Promise<UnpackResult> {
   const budget = newBudget(opts);
   const files: string[] = [];
+  const links: string[] = [];
   const destRoot = path.resolve(destDir);
   await fs.mkdir(destRoot, { recursive: true });
+  const rootReal = await resolveRoot(destRoot);
 
   const fh = await fs.open(src, 'r');
   try {
@@ -367,7 +568,8 @@ export async function unpackZip(src: string, destDir: string, opts?: UnpackOptio
       checkAborted(opts?.signal);
 
       const isDir = entry.name.endsWith('/');
-      const dest = safeJoin(destRoot, entry.name);
+      const dest = lexicalEntryPath(destRoot, entry.name);
+      await resolveEntryDest(rootReal, entry.name);
 
       const isSymlink =
         entry.isUnix && ((entry.externalAttrs >>> 16) & S_IFMT) === S_IFLNK;
@@ -415,9 +617,10 @@ export async function unpackZip(src: string, destDir: string, opts?: UnpackOptio
       if (isSymlink) {
         // In ZIP, a symlink's file CONTENT is its target path.
         const linkTarget = data.toString('utf8').trim();
-        const resolved = resolveLinkTarget(destRoot, entry.name, linkTarget);
+        const resolved = await resolveLinkEntry(destRoot, rootReal, entry.name, linkTarget);
         await materialiseLink(dest, linkTarget, resolved, false);
         files.push(dest);
+        links.push(entry.name);
         continue;
       }
 
@@ -436,6 +639,7 @@ export async function unpackZip(src: string, destDir: string, opts?: UnpackOptio
     await fh.close();
   }
 
+  await assertLinksStillInside(rootReal, links);
   return { files, totalBytes: budget.totalBytes };
 }
 
@@ -518,8 +722,10 @@ async function extractTar(
 ): Promise<UnpackResult> {
   const destRoot = path.resolve(destDir);
   await fs.mkdir(destRoot, { recursive: true });
+  const rootReal = await resolveRoot(destRoot);
 
   const files: string[] = [];
+  const links: string[] = [];
   let offset = 0;
   let pendingLongName: string | null = null;
 
@@ -569,10 +775,12 @@ async function extractTar(
     if (typeFlag === '2' || typeFlag === '1') {
       // linkname field, bytes 157..257
       const linkTarget = readCString(header.subarray(157, 257));
-      const dest = safeJoin(destRoot, name);
-      const resolved = resolveLinkTarget(destRoot, name, linkTarget);
+      const dest = lexicalEntryPath(destRoot, name);
+      await resolveEntryDest(rootReal, name);
+      const resolved = await resolveLinkEntry(destRoot, rootReal, name, linkTarget);
       await materialiseLink(dest, linkTarget, resolved, typeFlag === '1');
       files.push(dest);
+      links.push(name);
       continue;
     }
 
@@ -582,7 +790,8 @@ async function extractTar(
       continue;
     }
 
-    const dest = safeJoin(destRoot, name);
+    const dest = lexicalEntryPath(destRoot, name);
+    await resolveEntryDest(rootReal, name);
 
     if (isDir) {
       await fs.mkdir(dest, { recursive: true });
@@ -600,6 +809,7 @@ async function extractTar(
     files.push(dest);
   }
 
+  await assertLinksStillInside(rootReal, links);
   return { files, totalBytes: budget.totalBytes };
 }
 
