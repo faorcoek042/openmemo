@@ -60,8 +60,17 @@ interface Fixture {
  * 造一个与真实冷启动**同构**的模型目录。
  *
  * 布局照抄 `/tmp/ci-runner/localsmoke3/data/models`（真实产品写出来的那一份）：
- * 两个 VAD 都落在 `by-name/asr/`（`roleToStoreKind('vad') === 'asr'`，是有意的），
- * 安装记录带 `role` 与 `engines`，`active.json` 是七个槽位的完整对象。
+ * 两个 VAD 都落在 `by-name/asr/`，安装记录带 `role` 与 `engines`，
+ * `active.json` 是七个槽位的完整对象。
+ *
+ * ⚠️ **订正于 T-149**：这里原本写着「`roleToStoreKind('vad') === 'asr'`，**是有意的**」——
+ * 那句话是错的。`store.ts:37-42` 早就声明"一个 role 一个桶"是既定修复，
+ * 只是 daemon 的写盘路径一直没接上（`bucketForRole` 当时 0 个调用方）。
+ * T-149 已把它接上，**新装的 VAD 会落在 `by-name/vad/`**。
+ *
+ * 这个夹具**故意保留旧布局**：它现在的身份是「老机器上真实存在的历史状态」，
+ * 而解析器必须对新旧两种布局一视同仁（判据是记录里的 `role` + 文件内容的魔数，
+ * 从来不是目录名）。换句话说，这份夹具留着是在钉**向后兼容**，不是在钉那句错话。
  */
 async function makeStore(f: Fixture): Promise<string> {
   const root = join(await mkdtemp(join(tmpdir(), 'vadfix-store-')), 'models');

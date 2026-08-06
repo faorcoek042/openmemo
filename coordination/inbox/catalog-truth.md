@@ -319,3 +319,285 @@ sha256 逐字符相同（`2aa269b785…`，885,098 B，本机复核过）。**�
 - 外网请求只发给 `hf-mirror.com` / `huggingface.co` / `www.modelscope.cn` / `api.github.com`，
   全是 GET/HEAD；唯一下载的是 885 KB 的 VAD 权重，落在 `/tmp/catalog-truth/`（为了验 sha256 预言机）。
 - 临时文件全在 `/tmp/catalog-truth/`。
+
+---
+
+## [2026-08-06 15:45] T-149 追加交付（三条决策 + 一次我造成的在途红灯）
+
+交付:
+- `apps/daemon/src/http/rest/roleMap.ts`（`roleToStoreKind` 委托给 `bucketForRole`；槽位改自己穷举）
+- `apps/daemon/src/http/rest/state.ts`（`listInstalled()` 扫全部桶 + 新增 `bucketOfInstalled` / `dropInstalledRecord`）
+- `apps/daemon/src/http/rest/models.ts`（删 / 校验 / 安装 / 导入四处不再按 role 反算桶）
+- `packages/runtime/src/selfcheck.ts`（**删掉两条按文件名判类型的正则**；新增 `listInstalledNamesByRole`；`model.vad` 指引改指新落点；一处错文案订正）
+- `packages/runtime/src/index.ts` · `apps/daemon/src/http/rest/selfcheck.ts` · `scripts/selfcheck.mjs`（新探针的两个出口）
+- `apps/daemon/src/pipeline/roleBucket.test.ts`（**新增**，16 条）· `packages/runtime/src/selfcheck.test.ts`（+2，改 3）
+- `apps/daemon/src/pipeline/vadResolve.test.ts`（一处**今天已经是假的**的注释订正）
+
+---
+
+# TL;DR
+
+## ★ 先认一件我造成的事：`packages/runtime` 那 25 条红是我的
+
+`frontend-truth` 撞上的红**确实是我造成的**，成因有两条，都值得记：
+
+1. **我在共享工作树里做反向验证。** R7–R11 每一组都要「把修复拆掉 → `pnpm build:safe` → 跑 → 还原」。
+   在那几分钟里 `dist` 里装着**故意坏掉的代码**，而这台机器上同时有别的 agent 在跑 `pnpm -r test`。
+   我每次都还原了、`grep -rn REVERSAL` 也一直是 0，**但"最终状态干净"救不了"过程中别人跑了一次"**。
+2. **接口改成必填的那一刻，红是必然的。** `installedByRole` 我做成非可选（理由见下），
+   于是 `selfcheck.test.ts` 的 `minimalProbes` 在我补上它之前**必然编译失败**。
+   我确实在同一轮补上了，但**中间存在一个窗口**。
+
+> **判据不是"我最后有没有还原"，是"在最坏的那一秒，别人看到的是什么"** —— 与 PROTOCOL §9-bis
+> 那条（把测试 `kill -9` 在最坏的一行上，机器会留下什么）是同一条判据的另一个面。
+> **可操作的教训**：反向验证应当在**独立 worktree / 独立 `--outDir`** 里做，或者至少
+> 在开始前后各发一次公告。这一条我建议进 PROTOCOL，由你裁。
+
+**现在的状态**：`tsc -b` 0 · `eslint` 0（全仓）· `test:ci-scripts` 15+14 · `pnpm -r test` **1028 / 0**。
+
+## ① `roleToStoreKind` + `listInstalled()` 联动 —— 做完了，判据钉住了
+
+`[本机实测]` 改前：
+
+```
+daemon      roleToStoreKind('vad')  = asr      ← 写盘走这条
+downloader  bucketForRole('vad')    = vad      ← 本该走这条
+bucketForRole 的调用方数量           = 0
+```
+
+改后 `roleToStoreKind` **不再持有自己的映射表**，直接 `return bucketForRole(role)`。
+
+**你批准的联动我做了，而且比原计划多两处** —— 因为查下去发现同一个形状不止一处：
+
+| 处 | 原来 | 不改会怎样 |
+|---|---|---|
+| `state.ts` `listInstalled()` | 写死扫 `['asr','llm']` | **已装的 VAD 从 `/api/models/installed` 里整个消失**（你给的判据） |
+| `models.ts` 删除 | `removeManifest(roleToStoreKind(role))` | 旧布局下删的是**空桶**，而 `fs.rm` 是 `{force:true}` —— **返回 204、事件也发了、记录还在** |
+| `models.ts` 校验 | `writeManifest(roleToStoreKind(role))` | 旧布局下会在新桶写出**第二份**记录 → 同一个模型列两次 |
+| `models.ts` 安装/导入 | 直接写新桶 | 旧机器上重装一次会留下**两份**记录 → 现在先 `dropInstalledRecord` 再写（就地自愈） |
+
+**⚠️ 还有一处差点被我改坏，记在这里**：`roleToActivationSlot` 原来是
+`roleToStoreKind(role) === 'llm' ? 'llm' : 'asr'`。桶恒等之后
+`bucketForRole('embedding') === 'embedding' ≠ 'llm'`，这句话会把 **embedding / tts
+从 llm 槽悄悄挪到 asr 槽** —— 形状没变、编译不报错、行为反了。
+改成自己穷举 + 穷尽性检查，并单独一条用例钉住。**这是"改一处、翻另一处"的典型，
+它不会以任何形式报错。**
+
+### 不迁移，改成"读的时候不看目录"
+
+旧记录（VAD 躺在 `manifests/asr/`）**原地不动**。理由：搬文件才需要迁移，
+而每一个读取方现在都扫全部桶、按记录里的 `role` 判断。
+迁移会动 `by-name/` 硬链与记录里的 `relPath`，那是一次可能把用户装好的东西弄丢的写操作 ——
+**为了目录名好看去冒那个险，不值。**
+
+## ② `model.vad` 的指引 —— 对准了 `frontend-truth` 的新落点，并加了一条防漂移守卫
+
+新文案（`selfcheck.ts`）：
+
+> 在「模型」页→转写→**「实时字幕组件」**一组里安装 `vad/silero-vad-ggml`
+> （直达：`/models/vad%2Fsilero-vad-ggml`）。两个 VAD 变体体积与量化都一样，
+> 差别在**引擎**：ggml 那个给 whisper.cpp，`vad/silero-vad-onnx` 给 sherpa 流式，**两者不能互换**。
+
+三件事各有理由：
+- **分组名逐字对齐** `asrSections.ts` 的 `realtime` 组 + i18n `models.section.realtime`。
+- **直达地址保留**：那是不依赖列表分组的第二条路（`ModelDetailPage` 查 `catalog('all')`，不过滤 role）。
+- **写明"不能互换"**：`frontend-truth` 发现两个变体 `quantization` 都是 `f16`、
+  真正差的是 engine —— **选错的代价 T-148 已经付过一次**（sherpa 的 ONNX 被喂给 whisper）。
+
+★ **守卫**：`roleBucket.test.ts` 里那条会**从 `apps/web` 的 i18n JSON 里读**分组名，
+再断言 `runSelfCheck()` 吐出来的 remediation 里真的有这几个字。
+期望值不抄字面量 —— 任何一边改名都会红。反向验证（把分组名改成「语音活动检测」）：
+
+```
+✖ ★ 指引里的分组名必须与 i18n 里那一条逐字相同（两处字符串必然漂移）
+  AssertionError: 指引里没有提到界面上那一组的名字「实时字幕组件」，用户照做会找不到：
+                  在「模型」页→转写→**「语音活动检测」**一组里安装 `vad/silero-vad-ggml`
+```
+
+> 这条守的是一种**不会让任何东西变红**的错：daemon 说去 A 组找，界面上那一组叫 B。
+> 用户照做、找不到、怀疑是自己的问题 —— 与它要修的那个 bug 一模一样，只是换了个名字。
+
+## ③ 那条正则删了，而且**它真的会误杀**，不是理论风险
+
+删掉的两条：
+```
+NON_ASR_NAME    = /silero|vad|punct|ct-transformer|speaker|diariz/i   （T-067）
+VAD_WEIGHT_NAME = /silero|vad/i                                       （T-148）
+```
+`NON_ASR_NAME` **自己的注释就写着**「真正的修法是让安装记录带上 catalog 的 role」——
+而那条修法在 `9683ae3` 就落地了。**又一例"写好了没人调用"。**
+
+`[本机实测]` 用真 CLI（`node scripts/selfcheck.mjs --data-dir <tmp>`）跑一遍，
+数据目录里放一条 `role:'asr'` 但名字叫 `silero-asr-en-v1.bin` 的记录：
+
+```
+改前判据（正则）→ 被 /silero/ 剔掉 → model.asr = ✘ 无        ← 装好了却报没装（假红灯）
+改后判据（role）→ ✔ ASR 模型  silero-asr-en-v1.bin
+```
+同一次跑还证实**旧布局照样读得到**（记录在 `manifests/asr/` 下，role=vad 一样找得到）。
+
+### ★ 顺带抓到一句我自己差点放过去的错文案
+
+同一次 CLI 实跑里，一条 **ggml** 的 VAD 记录被这句话描述成：
+
+```
+已装的 VAD 权重 whisper.cpp 用不了（ggml-silero-v6.2.0.bin，那是 sherpa 引擎的 ONNX 格式）
+                                    ↑ 它就是 ggml 那一份
+```
+原文案把「解析器没交出可加载权重」直接说成「你装的是 ONNX」—— **那是猜的**：
+也可能是 ggml 但文件读不到 / 被截断 / 权限不对。
+改成只说观测到的事实：「已装的 VAD 权重 whisper.cpp **一个都加载不了**（已装：…）」。
+**一句描述得很具体的错话，比不说更能把人带偏**（HANDOFF D-bis 同族）。
+⚠️ 这条**是我这轮改动才让它变得可达的**（旧正则只挑得出 ONNX），如实记账。
+
+## ④ 17 个单一来源文件 —— **评估完了：值得做，但只做其中 406 MB 的 9 个；上传不由我做**
+
+你要的两个数：
+
+**总共多大**：5.33 GB / 17 个文件。**但风险完全不均匀**，拆开看结论就变了：
+
+| 组 | 文件 | 体积 | 主源挂了会怎样 |
+|---|---|---|---|
+| A：whisper q8_0 档 + turbo 的 CoreML zip | 8 | **4.87 GB** | **有替代**。每一个都有同模型的 q5_0/q5_1/f16 兄弟，而那些**已经有 ModelScope 镜像**（本轮加的）。用户仍装得上同一档位能用的模型 |
+| B：sherpa 流式三件套 + Paraformer + 中文标点 | 9 | **406 MB** | ★ **一个替代都没有**，而且整组都在**中文路径**上：F3 实时字幕、`recommended-default-zh` 的离线引擎、以及"不装中文输出就是一整段没标点的字"的标点模型 |
+
+**谁来保证同步**：**没有同步问题**，这条我实测核过了 ——
+17 个的下载 URL **全部钉在不可变引用上**（HF 的 40 位 commit sha / GitHub 的 commit sha），
+清单里还有 sha256。**镜像一份钉死的 blob 不会"变旧"：它要么逐字节相同，要么校验当场失败。**
+需要人维护的是"上游出了新版我们跟不跟"，而**那件事今天已经是人工改清单**，与镜不镜像无关。
+
+⚠️ 一处自我更正：我第一版的"是否钉死"正则只认 `/resolve/<40hex>/` 与 `/raw/<40hex>/`，
+把 `raw.githubusercontent.com/<owner>/<repo>/<sha>/<path>` 形式的 `silero_vad.onnx`
+误报成"未钉"。**实际 17 个全部钉死。** 正则太窄，不是数据有问题。
+
+**结论：做 B 组（406 MB / 9 个），不做 A 组。** 为一个已经有替代品的东西建 4.87 GB 的影子仓库，
+收益低、体积大。
+
+**但上传不是我做** —— 纪律明写「不建/不改/不删 release」。→ §5 决策 1，请派给 `pack-publish`；
+需要的清单（id / 文件名 / sha256 / 上游 URL）在 `vendor/manifests/models-asr-support.json` 里齐全，
+9 个文件就是 `asr/sherpa-streaming-zh-14m`(4) + `asr/paraformer-zh-small`(3) + `punctuation/ct-transformer-zh-en`(2)。
+
+---
+
+# §A 反向验证（六组，全部贴真实输出，全部先 `grep` 过 **dist**）
+
+⚠️ **上一轮我在这里踩过坑（只 grep 清单没 grep dist），这一轮六组全部先 grep 产物。**
+
+**R6 · `listInstalled()` 退回只扫 `['asr','llm']`**（`grep dist/http/rest/state.js:207` 命中）
+```
+✖ ★★ 判据：已装的 VAD 必须仍然出现在 /api/models/installed 里
+  AssertionError: 改桶之后旧记录读不到了 —— 用户会看到"我装过的东西没了"，而且没有任何报错
+  -   'vad/silero-vad-onnx'
+✖ ★ 同一个 id 在新旧两个桶里都有（重装过的旧机器）→ 只出现一次
+  + 'old-copy.bin'   - 'ggml-silero-v6.2.0.bin'
+ℹ tests 15 / pass 13 / fail 2
+```
+
+**R7 · `roleToStoreKind` 退回 T-027 的自有映射表**（`grep dist/http/rest/roleMap.js:8` 命中）
+```
+✖ ★ 七个 role 逐个对齐 —— 两处映射表必然漂移，所以只许有一处
+  AssertionError: vad 的桶两边算出来不一样 —— 这正是 VAD 落进 by-name/asr 的成因
+ℹ tests 15 / pass 14 / fail 1
+```
+
+**R8 · 桶恒等 + 槽位退回"由桶推导"**（这才是那个危险组合；`grep dist:56` 命中）
+```
+✖ ★ 激活槽位**不能**跟着桶一起变：embedding / tts 仍归 llm 槽
+ℹ tests 15 / pass 14 / fail 1
+```
+⚠️ 我第一次把 R7 与 R8 一起打，**R8 没红** —— 因为老映射表下 `roleToStoreKind('embedding')==='llm'`，
+推导出来仍然对。**两个 bug 互相掩盖，与 ① 里那对是同一种形状。** 拆开单独打才红。
+
+**R9 · 删除退回"按 role 算桶"**（`grep dist/http/rest/state.js:241` 命中）
+```
+✖ ★ 删除必须把旧桶里的那条也删掉（否则 204 之后模型还在）
+ℹ tests 15 / pass 14 / fail 1
+```
+
+**R10 · 把 `NON_ASR_NAME` 正则放回去**（`grep packages/runtime/dist/selfcheck.js:554` 命中）
+```
+✖ ★ 名字里带 silero 的**真** ASR 模型必须算 ASR（旧正则在这里会误杀）
+  AssertionError: 记录里 role=asr，就该算 ASR —— 名字里有什么字与它无关
+✖ ★ 没写 role 的老记录：不猜，但必须把"跳过了几条"说出来
+  AssertionError: 跳过的范围要如实进返回值，不能静默吞掉
+ℹ tests 35 / pass 33 / fail 2
+```
+
+**R11 · 把指引里的分组名改成一个界面上不存在的名字**（见 TL;DR ②）
+
+**还原确认**：`grep -rn REVERSAL` 源码 **0**、`dist` **0**。
+
+# §B 两处"我跳过了 N 条"必须出声
+
+`findInstalledByRole` 对**没写 `role`** 的老记录一律跳过（`store.ts` 的规矩：不从目录名猜）。
+那条规矩是对的，但**跳过 ≠ 没有** —— 不报出来的话，一个装满模型的旧库会被自检说成「无」，
+用户会去重装已经装好的东西。所以 `listInstalledNamesByRole` 返回
+`{ names, skippedWithoutRole }`，`model.asr` 的 detail 里会多一句
+「另有 N 条安装记录没写 role，一律不猜类型（重装一次即可补上）」。（HANDOFF ⑤A 规矩 6。）
+
+# §C 一处设计取舍：为什么 `installedByRole` 是**必填**探针
+
+做成可选（`installedByRole?:`）等于留了一条「没实现时悄悄退回按文件名猜」的暗道，
+而那条暗道正是这次要拆掉的东西。做成必填的代价是**接口变更那一刻会红**（就是本次那 25 条），
+收益是**两个出口（daemon / CLI）不可能有一个忘了接** —— 而"两个出口给出不同答案"
+正是 T-148 里 `model.vad` 两边都绿的机制（vad-fix §2）。
+`[本机实测]` 两个出口都真跑过：daemon 走 `roleBucket.test.ts`（16 条），
+CLI 走 `node scripts/selfcheck.mjs --data-dir <tmp>` 真实输出（见 TL;DR ③）。
+
+# §D 门禁
+
+| | 结果 |
+|---|---|
+| `tsc -b` | **0** |
+| `eslint .`（**全仓**，不只是我的文件） | **0** |
+| `pnpm test:ci-scripts` | 15 + 14 全过 |
+| `pnpm -r test` | **1028 / 0**（llm 18 · db 53 · mindmap 51 · runtime 53 · pipeline 187 · web 103+10+226 · daemon 327） |
+
+上一轮回执里记的那两条红（`components.test.tsx` 的 NUL 字节、`noteAssets.test.ts` 的 TS2345）
+**已被 `debt-cleanup` 与 `daemon-contract` 各自修掉**，现在全仓是干净的。
+
+`prettier --check` 对我改的文件仍报 warn，与上一轮同因：**它们在 HEAD 就已经不合规**
+（逐个 `git show HEAD:<f> | prettier --check --stdin-filepath <f>` 验过），
+`.github/workflows/` 里 `prettier|format:check` 命中 **0**。**不是我引入的回归。**
+
+# §E 关于 `debt-cleanup` 那条控制字节（你点名要我看的）
+
+我这轮所有新建/改动的 **16 个文件**逐字节扫过：**字面控制字节 0 个**，
+`git diff --stat` 全部能正常渲染行数（不是 `Bin ... 0 insertions(+)`）。
+
+你说的"同一族的另一种形态"我认：我那次是 **grep 了错的目标**（清单而不是 dist），
+`argGuard.ts` 那次是 **grep 被目标本身骗过**（NUL 让它静默跳过）。
+两者的共同点是**"我以为我查过了"这句话本身没有任何东西在守**。
+→ 这轮六组反向验证我把 "先 grep 即将运行的产物" 写进了每一组的步骤，输出贴在 §A。
+
+# §F 需要 Manager 决策
+
+1. **B 组 9 个文件（406 MB）镜像到自家 release，派给 `pack-publish`。**
+   我做完了评估（无同步负担、总量可控、是唯一没有替代品的一组），但**不建 release** 是纪律。
+2. **反向验证要不要规定在独立 worktree 里做？**（见 TL;DR 开头那条我造成的在途红灯）
+   我建议进 PROTOCOL：**判据不是"最后有没有还原"，是"在最坏的那一秒别人看到什么"。**
+3. **老记录的 `role` 要不要补一次迁移？** `migrateRecords.ts` 今天不补 `role`，
+   于是没写 role 的旧记录在自检里会被算进 `skippedWithoutRole`（会出声，但不会自愈）。
+   补它的正确做法是从 catalog 按 id 回填，属于 `model-mgmt` 的活。
+
+# §G 纪律申报（本轮追加部分）
+
+- **`git add` 逐个文件**，零 `-A`；提交前 `git status` 对过在途改动。
+- 构建**全程 `pnpm build:safe`**；`apps/web/dist` 一次都没写过。
+- **`:10000` 一次请求都没发**；`/root/data-memo` 没读没写。
+- **`~/.local/share/openmemo/datadir.json` 没碰** —— 已核对时间戳仍是 `2026-08-04 01:06:59`。
+  新测试 `roleBucket.test.ts` 在**模块顶层**设 `OPENMEMO_MODELS` / `OPENMEMO_EXT_DIR` 到 tmp（窗口为零），
+  并**自带两条断言**守着这个重定向（PROTOCOL §9-bis 那条"覆盖要有人守"）。
+  跑 CLI 自检时一律显式 `--data-dir /tmp/...`。
+- 没有 `pkill -f`；没建/改/删 release；没改仓库可见性、分支保护；**本机没跑过 whisper 转写**。
+- 外网请求：本轮 0 次（镜像验证在上一轮已完成）。
+
+## SHARED-CHANGE 申报（追加）
+
+| 文件 | 归属 | 我做了什么 | 冲突风险 |
+|---|---|---|---|
+| `packages/runtime/src/selfcheck.ts` · `.test.ts` · `index.ts` | `storage-fix` / `gpu-runtime` / `pack-publish` / `vad-fix` | 删两条正则、加一个探针与一个导出、改 `model.asr`/`model.vad` 两项 | 🟡 中 —— **本轮那 25 条红就出在这里**，已修完 |
+| `apps/daemon/src/http/rest/{state,models,roleMap,selfcheck}.ts` | `model-mgmt`（已不在） | 见交付清单 | 🟢 低 |
+| `apps/daemon/src/pipeline/vadResolve.test.ts` | `vad-fix`（已 DONE） | **只改一段注释**：原文说 `roleToStoreKind('vad')==='asr'`「是有意的」，那句话今天是假的。夹具本身一行未动（它现在的身份是"老机器的历史布局"，钉的是向后兼容） | 🟢 低 |
+| `scripts/selfcheck.mjs` | `ci-runner` / 通用 | 加一个探针接线（纯追加 8 行） | 🟢 低 |
+| `apps/web/**` | `frontend-truth` | **一个字节都没动**（只**读**了 `asrSections.ts` 与 i18n 来对齐文案，并把 i18n 当成测试的期望值来源） | — |

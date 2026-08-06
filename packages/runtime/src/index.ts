@@ -116,7 +116,12 @@ export type {
 } from './backends/applicability.js';
 
 // -- media asset path resolution (T-136: one rule, shared by playback and self-check) -------
-export { assetCandidates, mediaAssetRoots, probeAssetFile } from './assetPaths.js';
+export {
+  assetCandidates,
+  canonicalAssetRelPath,
+  mediaAssetRoots,
+  probeAssetFile,
+} from './assetPaths.js';
 export type { AssetProbe } from './assetPaths.js';
 
 // -- functional self-check (ADR-014: verify the FEATURE, not the component) -----------------
@@ -126,12 +131,14 @@ export {
   diffSelfCheckReports,
   extensionFileName,
   listByName,
+  listInstalledNamesByRole,
   runSelfCheck,
 } from './selfcheck.js';
 export type {
   CheckResult,
   CheckStatus,
   DetectedLlmService,
+  InstalledByRole,
   LlmKeyConfig,
   MediaAssetRef,
   ProxyConnectivity,

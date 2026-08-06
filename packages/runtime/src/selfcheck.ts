@@ -40,7 +40,12 @@ import { dirname, isAbsolute, join } from 'node:path';
  * `store.ts` 里那条"两处实现必须手工保持同步"的注释就是前车之鉴 ——
  * 一条要靠人记得同步的规则，等价于一条迟早会漂移的规则。
  */
-import { isGgmlModelFile } from '@openmemo/downloader';
+import {
+  ArtifactStore,
+  STORE_KINDS,
+  findInstalledByRole,
+  isGgmlModelFile,
+} from '@openmemo/downloader';
 
 import { mediaAssetRoots, probeAssetFile } from './assetPaths.js';
 import { detectCpu, detectMemory, detectOs } from './detect/system.js';
@@ -114,8 +119,21 @@ export interface ProxyConnectivity {
 export interface SelfCheckProbes {
   /** Resolved native tool paths, as the pipeline would resolve them. */
   tools: () => Promise<SelfCheckToolPaths>;
-  /** Installed artifact names by store kind. */
+  /**
+   * Installed artifact names by store **kind** (= directory).
+   *
+   * ⚠️ 只用来回答"那个目录里有什么文件"这种观测性问题（后端包、以及把
+   * `model.asr` 的 detail 说具体）。**绝不能用它推断模型的 role** —— 目录名不是类型，
+   * 那正是"只装了 VAD 却报 ASR 就绪"的成因。要按类型问，用 `installedByRole`。
+   */
   installed: (kind: 'asr' | 'llm' | 'backend') => Promise<string[]>;
+  /**
+   * 按**安装记录里的 `role`** 列出已装模型（T-149）。
+   *
+   * 非可选：做成可选就等于留了一条"没实现时悄悄退回按文件名猜"的路，
+   * 而那条路正是这次要拆掉的东西。两个入口（daemon 与 CLI）都必须给。
+   */
+  installedByRole: (role: string) => Promise<InstalledByRole>;
   /**
    * Run the four-word Chinese FTS5 test.
    * Returns hit counts, or null when the tokenizer could not even be loaded.
@@ -162,25 +180,20 @@ export interface SelfCheckInput {
 /** The words that were silently returning zero before libsimple shipped (T-035). */
 export const CHINESE_PROBE_WORDS = ['用户', '推特', '中国', '服务'] as const;
 
-/**
- * `by-name/asr` 下这些名字**不是**语音识别模型。
+/*
+ * ★ T-149：这里曾经有两条按**文件名**判类型的正则，**两条都已删除**：
  *
- * 实测（T-067）：VAD 模型 `ggml-silero-v6.2.0.bin` 也被存成 StoreKind='asr'
- * —— StoreKind 只有 asr|llm|backend，而 ModelRole 有 asr|llm|vad|punctuation|…，
- * 两个轴被压成了一个。于是"只装了 VAD"会被报成"ASR 就绪"，是个假绿灯。
- * 按名字剔除不是完美判据（真正的修法是让安装记录带上 catalog 的 role），
- * 但它至少不会把"什么都没装"说成"装好了"。
- */
-const NON_ASR_NAME = /silero|vad|punct|ct-transformer|speaker|diariz/i;
-
-/**
- * `by-name/asr` 下这些名字是 **VAD 权重**（T-148）。
+ *   NON_ASR_NAME   = /silero|vad|punct|ct-transformer|speaker|diariz/i   （T-067）
+ *   VAD_WEIGHT_NAME = /silero|vad/i                                      （T-148）
  *
- * 只在 `model.vad` 拿不到可加载权重时用来把话说具体：
- * 「一个都没装」和「装了但 whisper.cpp 用不了那一个」在用户那里是完全不同的两件事，
- * 而前一版这条自检把两者都说成「未安装」。
+ * 它们是给一个**早就修好的问题**打的补丁 —— `NON_ASR_NAME` 自己的注释里就写着
+ * 「真正的修法是让安装记录带上 catalog 的 role」，而那条修法在 `9683ae3`
+ * （`store.ts` 两条修正之②）就落地了，只是从来没人调用。
+ *
+ * 代价很具体：一个名字里带 `silero` 的**真** ASR 模型会被 `NON_ASR_NAME` 判成"不是 ASR"；
+ * 每新增一个 role 都得回来改这条正则，改漏一次就是一盏假绿灯。
+ * 现在类型一律由 `probes.installedByRole()` 回答 —— 它读安装记录里的 `role`，不看目录。
  */
-const VAD_WEIGHT_NAME = /silero|vad/i;
 
 /**
  * whisper.cpp 自己算 CoreML encoder 路径的规则 —— **逐条复刻，不另发明**。
@@ -669,8 +682,8 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
    * by-name/asr 里那份 ONNX 仍然在，用户仍然需要知道"你装的那个 whisper 用不了"。
    * 只看 tools.vadModel 会让这条永远说"未安装"，那是一句正确但没用的话。
    */
-  const asrBucket = await input.probes.installed('asr');
-  const strandedVad = vadLoadable ? [] : asrBucket.filter((n) => VAD_WEIGHT_NAME.test(n));
+  const vadInstalled = await input.probes.installedByRole('vad');
+  const strandedVad = vadLoadable ? [] : vadInstalled.names;
   add({
     layer: 'tools',
     id: 'model.vad',
@@ -689,18 +702,62 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
       : vadPresent
         ? `${tools.vadModel as string} 不是 ggml 格式，whisper.cpp 加载不了（会报 bad magic）→ 切分降级为固定窗口`
         : strandedVad.length > 0
-          ? `已装的 VAD 权重 whisper.cpp 用不了（${strandedVad.join('、')}，那是 sherpa 引擎的 ONNX 格式）→ 切分降级为固定窗口`
+          ? /*
+             * ⚠️ T-149 订正：这句原来写的是「…（${名字}，**那是 sherpa 引擎的 ONNX 格式**）」。
+             * 那是一句**猜出来的具体话**：走到这里只说明"解析器没能交出一份 whisper 能加载的
+             * ggml 权重"，并不说明已装的那份就是 ONNX —— 它也可能是 ggml 但文件读不到、
+             * 被截断、或权限不对。`[本机实测]` 用一条 role=vad 的 ggml 记录跑 CLI 自检，
+             * 旧文案当场把 `ggml-silero-v6.2.0.bin` 说成"sherpa 引擎的 ONNX 格式"。
+             * **一句描述得很具体的错话，比不说更能把人带偏**（HANDOFF D-bis）。
+             * 现在只说观测到的事实：这些装了，而 whisper 一个都加载不了。
+             */
+            `已装的 VAD 权重 whisper.cpp 一个都加载不了（已装：${strandedVad.join('、')}）→ 切分降级为固定窗口`
           : '未安装 → 切分降级为固定窗口',
     required: false,
+    /*
+     * ★ T-149：这条以前写的是「在「模型」页安装 `vad/silero-vad-ggml`」，
+     * 而当时 `/models` 的列表只渲染 `role === 'asr'` —— 用户照做会**空手而归**，
+     * 然后怀疑是自己的问题。**一条具体但无法执行的指引，比没有指引更糟。**
+     *
+     * `frontend-truth` 已经把渲染那半补上了（D-10 #9/#10/#29）：
+     * `asrSections.ts` 的 `splitAsrSections()` 按 `g.role === 'vad' || 'punctuation'`
+     * 把它们收进转写 Tab 的**「实时字幕组件」**一组（i18n `models.section.realtime`），
+     * **没有混进 ASR 列表** —— 它们是一条链路上的零件，不是 ASR 的替代品。
+     * 所以这句话现在指得出一个真实的落点：**分组名与用户看见的字逐字一致**，
+     * 否则"去某某组找"又会变成另一条找不到的指引。
+     *
+     * 直达地址仍然保留：那是不依赖列表分组的第二条路，且 `ModelDetailPage`
+     * 查的是 `catalog('all')`、不过滤 role，任何时候都打得开。
+     */
     remediation: vadLoadable
       ? null
-      : '在「模型」页安装 `vad/silero-vad-ggml`（whisper.cpp 用的 ggml 格式；`vad/silero-vad-onnx` 是 sherpa 引擎用的，两者不能互换）',
+      : '在「模型」页→转写→**「实时字幕组件」**一组里安装 `vad/silero-vad-ggml`' +
+        '（直达：`/models/vad%2Fsilero-vad-ggml`）。' +
+        '两个 VAD 变体体积与量化都一样，差别在**引擎**：ggml 那个给 whisper.cpp，' +
+        '`vad/silero-vad-onnx` 给 sherpa 流式，**两者不能互换**。',
   });
 
-  // ---- models -----------------------------------------------------------------------
-  const asr = asrBucket;
-  const realAsr = asr.filter((n) => !NON_ASR_NAME.test(n));
-  const misfiled = asr.filter((n) => NON_ASR_NAME.test(n));
+  /* ---- models ---------------------------------------------------------------------
+   *
+   * ★ T-149：判据从「`by-name/asr/` 下的文件名，减去一条正则」换成
+   * **「安装记录里 `role === 'asr'`」**。那条正则
+   * （`/silero|vad|punct|ct-transformer|speaker|diariz/i`）是给一个已经修好的问题
+   * 打的补丁，代价是一个名字里带 `silero` 的**真** ASR 模型会被判成不是 ASR。
+   * 现在同一个问题由 role 回答，而 role 是安装时从目录抄进记录的事实。
+   */
+  const asrInstalled = await input.probes.installedByRole('asr');
+  const realAsr = asrInstalled.names;
+  const otherRoleFiles = (await input.probes.installed('asr')).filter(
+    (n) => !realAsr.includes(n),
+  );
+  /*
+   * 「跳过了几条」必须说出来，不能吞：没写 `role` 的老记录一律不猜（`store.ts` 的规矩），
+   * 但那不等于"你什么都没装" —— 不报出来的话，一个装满模型的旧库会被说成"无"。
+   */
+  const skipNote =
+    asrInstalled.skippedWithoutRole > 0
+      ? `；另有 ${asrInstalled.skippedWithoutRole} 条安装记录没写 role，一律不猜类型（重装一次即可补上）`
+      : '';
   add({
     layer: 'models',
     id: 'model.asr',
@@ -709,11 +766,17 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
     status: realAsr.length > 0 ? 'ok' : 'fail',
     detail:
       realAsr.length > 0
-        ? realAsr.join(', ')
-        : misfiled.length > 0
-          ? `无可用 ASR 模型（by-name/asr 下只有非 ASR 角色的文件：${misfiled.join(', ')}）`
-          : '无',
+        ? `${realAsr.join(', ')}${skipNote}`
+        : otherRoleFiles.length > 0
+          ? `无可用 ASR 模型（by-name/asr 下的文件都不是 ASR 角色：${otherRoleFiles.join(', ')}）${skipNote}`
+          : `无${skipNote}`,
     required: true,
+    /*
+     * ⚠️ T-149：这条 remediation 说的是「模型」页，而那一页**目前只渲染 role='asr'**
+     * （`ModelsPage.tsx` 的 `.filter(g => g.role === role)`，role 写死 'asr'）。
+     * 对 ASR 来说这条指引是可执行的 —— 用户去那一页确实找得到 ASR 模型。
+     * **`model.vad` 那条不是**，见上面那一条的注释。
+     */
     remediation: realAsr.length > 0 ? null : '在「模型」页下载一个语音识别模型',
   });
 
@@ -1075,6 +1138,65 @@ export async function listByName(storeRoot: string, kind: string): Promise<strin
   } catch {
     return [];
   }
+}
+
+/** 一个 role 的安装情况：文件名 + 那些"记录里没写 role"的条数。 */
+export interface InstalledByRole {
+  /** 该 role 下已装的权重文件名（去重、排序）。 */
+  names: string[];
+  /**
+   * **没写 `role` 字段的记录条数**（全部桶合计）。
+   *
+   * 必须报出来，不能吞掉：这类记录一律**不猜**（`store.ts` 的规矩 ——
+   * 从目录名猜 role 正是"whisper 拿到 VAD 网络而自检全绿"的成因）。
+   * 但"我跳过了 N 条"和"这里什么都没有"在用户那儿是两件事，
+   * 所以把跳过的范围如实带进返回值（HANDOFF ⑤A 规矩 6）。
+   */
+  skippedWithoutRole: number;
+}
+
+/**
+ * 按**安装记录里的 `role`** 列出已装模型 —— 不看它躺在哪个目录。
+ *
+ * ## 为什么不能看目录（T-149）
+ *
+ * 这条判据以前是「`by-name/asr/` 下的文件名，再用一条正则
+ * `/silero|vad|punct|ct-transformer|speaker|diariz/i` 把非 ASR 的剔出去」。
+ * 那条正则是给一个**已经修好的问题**打的补丁：`store.ts` 的两条修正之②
+ * （role 写进安装记录）早就落地了，只是没人用它。它的代价很具体：
+ * 一个名字里带 `silero` 的**真** ASR 模型会被判成"不是 ASR"，
+ * 而每新增一个 role（说话人分离、标点…）都要回来改这条正则，改漏了就是一盏假绿灯。
+ *
+ * ## 复用 downloader 的 `findInstalledByRole()`，**不另写一份规则**
+ *
+ * 那个函数已经把规则定死了：扫**全部**桶、`role` 缺失就跳过（不猜）、
+ * `integrity !== 'ok'` 不算数。这里只加一件它没做的事 —— **把"跳过了几条"数出来**，
+ * 因为「我跳过了 N 条」和「这里什么都没有」在用户那儿是两件事（HANDOFF ⑤A 规矩 6）。
+ */
+export async function listInstalledNamesByRole(
+  storeRoot: string,
+  role: string,
+): Promise<InstalledByRole> {
+  const store = new ArtifactStore(storeRoot);
+  const recs = await findInstalledByRole(store, role, { requireIntegrityOk: true });
+
+  const names = new Set<string>();
+  for (const rec of recs) {
+    for (const f of (rec as { files?: { name?: unknown }[] }).files ?? []) {
+      if (typeof f?.name === 'string') names.add(f.name);
+    }
+  }
+
+  // 同一条规则的另一半：记录里没写 role 的，`findInstalledByRole` 会静默丢掉，这里把它数出来。
+  let skippedWithoutRole = 0;
+  for (const kind of STORE_KINDS) {
+    if (kind === 'backend') continue;
+    for (const rec of await store.listManifests<{ role?: unknown }>(kind)) {
+      if (rec && typeof rec === 'object' && rec.role == null) skippedWithoutRole += 1;
+    }
+  }
+
+  return { names: [...names].sort(), skippedWithoutRole };
 }
 
 /** `<extensionsDir>/libsimple.so` 等的平台后缀。CLI 与 daemon 都要用同一份。 */

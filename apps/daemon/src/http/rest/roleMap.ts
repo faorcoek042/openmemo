@@ -1,33 +1,61 @@
 /**
- * `ModelRole`（shared，7 个）→ `StoreKind`（downloader，3 个）的显式收窄。
+ * `ModelRole`（shared，7 个）→ 落盘桶 / 激活槽位 的两个显式收窄。
  *
- * ## 为什么需要这个文件
+ * ## 这个文件的开头曾经写着一句今天是假的话（订正于 T-149，2026-08-06）
  *
- * 两个包的枚举在 T-033 期间**发生了漂移**：
- * - `packages/shared` 的 `MODEL_ROLES` 被 `model-mgmt` 扩到 7 个
- *   （`asr | llm | vad | punctuation | diarization | embedding | tts`）
- * - `packages/downloader` 的 `StoreKind` 仍是 3 个（`asr | llm | backend`），
- *   它决定的是**磁盘上按类别分目录**的落盘结构
+ * 原文：「`packages/downloader` 的 `StoreKind` 仍是 3 个（`asr | llm | backend`）」。
+ * **实际是 8 个**（`asr llm vad punctuation diarization embedding tts backend`），
+ * 从 `9683ae3`「ModelRole 独立桶 + 安装记录带 role」起就是。
+ * `store.ts:37-42` 的注释明写那次修复有**两条**：
+ *   ① 一个 role 一个桶，让装对的模型落在对的地方；
+ *   ② `role` 写进安装记录，让放错地方的记录仍然自描述。
+ * `[本机实测]` T-149 当时的真实状态是 **②落地了、①没有**：
  *
- * 这两者本来就不是一回事：`ModelRole` 描述"模型是干什么的"，
- * `StoreKind` 描述"存到哪个目录"。多个 role 落到同一个 store 目录是合理的。
+ * ```
+ * daemon      roleToStoreKind('vad')  = asr     ← 写盘走这条（本文件，T-027 时代）
+ * downloader  bucketForRole('vad')    = vad     ← 本该走这条
+ * bucketForRole 的调用方数量           = 0
+ * ```
  *
- * ## 为什么不直接 `as StoreKind` 糊过去
+ * 于是 VAD / 标点权重一直落在 `by-name/asr/` 下，而 `selfcheck` 只好用
+ * 一条按**文件名**打的正则（`/silero|vad|punct|…/i`）把它们剔出去 ——
+ * 那条正则会把一个叫 `silero-asr-*` 的**真** ASR 模型判成"不是 ASR"。
+ * **一个写好了却没人调用的修法，和没写是一样的。**
  *
- * 那样 `vad` 会被写进一个**不存在的目录**，而且是运行时才炸。
- * 这里做显式映射，并且**新增 role 时会因为缺 case 而编译失败** —— 逼人做决定，而不是静默错。
+ * 现在 `roleToStoreKind` 直接委托给 `bucketForRole`，**本文件不再持有自己的映射表**
+ * —— 两处映射必然漂移，上面那段历史就是证据。
+ *
+ * ## 旧布局怎么办：不迁移，改成"读的时候不看目录"
+ *
+ * 已经装在 `manifests/asr/` 下的 VAD 记录**原地不动**，因为每一个读取方都已经
+ * （或在 T-149 里被改成）扫全部桶、按记录里的 `role` 判断：
+ *   - `findInstalledByRole()`（downloader）→ `modelStore.ts` 的流水线解析
+ *   - `RestState.listInstalled()`      → `/api/models/installed`
+ *   - `RestState.bucketOfInstalled()`  → 删除 / 校验时定位记录**实际**在哪个桶
+ *   - `listInstalledNamesByRole()`（runtime）→ 自检
+ * **搬文件才需要迁移；不看目录就不需要。**
  */
-import type { StoreKind } from '@openmemo/downloader';
+import { bucketForRole, type StoreKind } from '@openmemo/downloader';
 import type { ModelRole } from '@openmemo/shared';
 
 /**
- * 落盘归类。
+ * 落盘桶。**一个 role 一个桶** —— 直接用 downloader 的那份实现，不再复制一张表。
  *
- * 判断依据：这些辅助模型（VAD / 标点 / 说话人分离）都是**转写流水线**的组成部分，
- * 与 ASR 模型同属一条使用链，放同一个目录便于一起 GC 与一起迁移。
- * `embedding` / `tts` 目前 v1 不用（embedding 已裁决 v1 不做），先归到 llm 侧。
+ * ⚠️ 桶不是 role 的同义词，只是"存到哪个目录"。**任何消费方都不许从目录名反推 role**，
+ * role 一律读安装记录里的 `role` 字段（`store.ts` 那两条修正之②）。
  */
 export function roleToStoreKind(role: ModelRole): StoreKind {
+  return bucketForRole(role);
+}
+
+/**
+ * 激活槽位。**刻意不再由 `roleToStoreKind` 推导。**
+ *
+ * 桶变成一个 role 一个之后，`bucketForRole('embedding') === 'embedding'`，
+ * 老写法（`roleToStoreKind(role) === 'llm' ? 'llm' : 'asr'`）会把 embedding / tts
+ * 从 llm 槽**悄悄挪到 asr 槽**：形状没变、编译不报错、行为反了。所以这里自己穷举。
+ */
+export function roleToActivationSlot(role: ModelRole): 'asr' | 'llm' {
   switch (role) {
     case 'asr':
     case 'vad':
@@ -44,9 +72,4 @@ export function roleToStoreKind(role: ModelRole): StoreKind {
       throw new Error(`未处理的 ModelRole: ${String(never)}`);
     }
   }
-}
-
-/** 某些旧接口只认 `'asr' | 'llm'`（激活槽位）。同样显式收窄。 */
-export function roleToActivationSlot(role: ModelRole): 'asr' | 'llm' {
-  return roleToStoreKind(role) === 'llm' ? 'llm' : 'asr';
 }

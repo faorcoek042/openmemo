@@ -23,7 +23,12 @@ import { testProxyConnectivity } from '@openmemo/downloader';
 import { detectLocalBackends } from '@openmemo/llm';
 import { ffmpegProxySupport, findInBackendPacks } from '@openmemo/pipeline';
 import type { DatabaseHandle } from '@openmemo/db';
-import { CHINESE_PROBE_WORDS, listByName, runSelfCheck } from '@openmemo/runtime';
+import {
+  CHINESE_PROBE_WORDS,
+  listByName,
+  listInstalledNamesByRole,
+  runSelfCheck,
+} from '@openmemo/runtime';
 import { redactProxyUrl, type ProxyConfig } from '@openmemo/shared';
 
 import type { AppPaths } from '../../config/paths.js';
@@ -86,6 +91,14 @@ export function createSelfCheckRoutes(deps: SelfCheckRoutesDeps): {
             }),
 
           installed: (kind) => listByName(deps.paths.modelsDir, kind),
+
+          /*
+           * T-149：按记录里的 `role` 问，而不是按目录名猜。
+           * **必须与 CLI 版（`scripts/selfcheck.mjs`）调同一个函数** ——
+           * 两个出口各自解析出不同答案、而同源校验只比 id 与 status 看不出来，
+           * 那正是 T-148 事故里 `model.vad` 两边都绿的机制（vad-fix §2）。
+           */
+          installedByRole: (role) => listInstalledNamesByRole(deps.paths.modelsDir, role),
 
           // probe 挨着 libggml-base 装在后端包**内部**，固定路径永远找不到它。
           probePath: () =>

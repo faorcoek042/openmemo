@@ -266,6 +266,14 @@ async function main() {
       tools: () => Promise.resolve(tools),
       installed: (kind) => pl.listInstalledModels(STORE_ROOT, kind),
 
+      /*
+       * T-149：按安装记录里的 `role` 问，不按目录名猜。
+       * **必须与 daemon 那个出口调同一个函数**（`rest/selfcheck.ts` 里也是它）——
+       * 两个出口各自解析、而 `meta.sameSource` 只比 id 与 status，
+       * 那正是 T-148 里两边都报绿的机制（vad-fix §2）。
+       */
+      installedByRole: (role) => rt.listInstalledNamesByRole(STORE_ROOT, role),
+
       // probe 藏在后端包里（挨着 libggml-base），只有 pipeline 的两层扫描找得到。
       probePath: () =>
         pl.findInBackendPacks(

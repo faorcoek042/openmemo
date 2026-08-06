@@ -482,6 +482,12 @@ function startModelPull(
         benchmark: null,
         catalogVersion: model.catalogVersion,
       };
+      /*
+       * ★ T-149 就地自愈：旧布局里同一个 id 可能已经躺在 `manifests/asr/` 下。
+       * 先把所有桶里的旧记录清掉，再写进正确的桶 —— 否则重装一次就会留下两份记录。
+       * 顺序不能反：先删后写，中途崩溃最多退回"没装"，不会留下两条互相矛盾的记录。
+       */
+      await state.dropInstalledRecord(model.id);
       // blob 先落、manifest 最后写：中途崩溃只会留下可回收的孤儿 blob。
       await state.store.writeManifest(roleToStoreKind(model.role), model.id, record);
 
@@ -604,7 +610,13 @@ async function deleteModel(
     return true;
   }
 
-  await state.store.removeManifest(roleToStoreKind(record.role), id);
+  /*
+   * ★ T-149：**从所有桶里删**，不是从 `roleToStoreKind(record.role)` 算出来的那个桶删。
+   * 旧布局把 VAD / 标点记录写在 `manifests/asr/` 下；按 role 算会去 `manifests/vad/` 删，
+   * 而 `removeManifest` 是 `fs.rm(..., {force:true})` —— **找不到不报错**。
+   * 后果：HTTP 返回 204、事件也发了、记录还在，模型看起来"删不掉"。
+   */
+  await state.dropInstalledRecord(id);
   // manifest 没了，它引用的 blob 立刻变孤儿 —— 顺手回收
   const gc = await state.store.collectGarbage(['orphan_blobs']);
   state.publish(
@@ -672,7 +684,12 @@ async function verifyModel(
         integrity: mismatched.length === 0 ? 'ok' : 'corrupt',
         verifiedAt: new Date().toISOString(),
       };
-      await state.store.writeManifest(roleToStoreKind(record.role), record.id, updated);
+      /*
+       * ★ T-149：写回**记录原来所在的那个桶**。按 role 算的话，旧布局下这一次校验会
+       * 在新桶里写出**第二份**记录 —— 同一个模型在 `/api/models/installed` 里出现两次。
+       */
+      const bucket = (await state.bucketOfInstalled(record.id)) ?? roleToStoreKind(record.role);
+      await state.store.writeManifest(bucket, record.id, updated);
 
       if (mismatched.length > 0) {
         // 抛出去让队列走 job.failed，前端才能拿到具体是哪个文件坏了
@@ -847,6 +864,8 @@ async function importModel(
         benchmark: null,
         catalogVersion: 'imported',
       };
+      // T-149：与下载安装同一条纪律 —— 先把旧布局遗留的同 id 记录清掉，再写正确的桶。
+      await state.dropInstalledRecord(modelId);
       await state.store.writeManifest(roleToStoreKind(role), modelId, record);
 
       state.publish(

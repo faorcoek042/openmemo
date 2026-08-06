@@ -47,6 +47,9 @@ function minimalProbes(over: Partial<SelfCheckProbes> = {}): SelfCheckProbes {
         ytDlp: null,
       }),
     installed: () => Promise.resolve([]),
+    // T-149：按 role 问的那条同样是"必答"探针 —— 做成可选就等于留了一条
+    // "没实现时退回按文件名猜"的暗道，而那条暗道正是这次要拆掉的东西。
+    installedByRole: () => Promise.resolve({ names: [], skippedWithoutRole: 0 }),
     chineseSearch: () => Promise.resolve(null),
     vecVersion: () => Promise.resolve(null),
     engines: () => Promise.resolve([]),
@@ -170,17 +173,74 @@ describe('判据没有被降级成"文件在不在"', () => {
     assert.equal(byId(hit, 'ext.chineseSearch')?.status, 'ok');
   });
 
-  it('by-name/asr 里只有 VAD 模型 ≠ ASR 就绪', async () => {
+  /*
+   * ★ T-149：这一条原来喂的是 `installed('asr') → ['ggml-silero-v6.2.0.bin']`，
+   * 也就是**按文件名**触发那条 `NON_ASR_NAME` 正则。正则删掉之后夹具也得跟着换 ——
+   * 但**钉的后果一个字没变**：「目录里只躺着别的 role 的权重 ≠ ASR 就绪」。
+   * 换的是提问方式（问记录里的 role，不问文件叫什么），不是判据。
+   */
+  it('by-name/asr 里只有别的 role 的权重 ≠ ASR 就绪', async () => {
     const r = await runSelfCheck({
       ...BASE,
       probes: minimalProbes({
-        installed: (kind) =>
-          Promise.resolve(kind === 'asr' ? ['ggml-silero-v6.2.0.bin'] : []),
+        // 目录里确实有文件……
+        installed: (kind) => Promise.resolve(kind === 'asr' ? ['ggml-silero-v6.2.0.bin'] : []),
+        // ……但没有一条安装记录说自己是 ASR
+        installedByRole: (role) =>
+          Promise.resolve(
+            role === 'vad'
+              ? { names: ['ggml-silero-v6.2.0.bin'], skippedWithoutRole: 0 }
+              : { names: [], skippedWithoutRole: 0 },
+          ),
       }),
     });
     const m = byId(r, 'model.asr');
     assert.equal(m?.status, 'fail', '把 VAD 当 ASR 报绿就是假绿灯');
-    assert.match(m?.detail ?? '', /非 ASR 角色/);
+    assert.match(m?.detail ?? '', /都不是 ASR 角色/);
+    assert.match(m?.detail ?? '', /ggml-silero-v6\.2\.0\.bin/, '要说出目录里到底躺着什么');
+  });
+
+  /*
+   * ★ T-149 —— 删掉的那条正则**具体会误伤什么**，用一条用例钉住。
+   *
+   * `NON_ASR_NAME = /silero|vad|punct|ct-transformer|speaker|diariz/i` 按文件名判类型，
+   * 于是一个**真的** ASR 模型只要名字里带 `silero`（上游确实有 silero 系的 ASR 模型）
+   * 就会被判成"不是 ASR" → `model.asr` fail → 一个装好了的产品被报成装不了。
+   * 这是**假红灯**，与假绿灯同样要当 bug 修（HANDOFF ⑤B）。
+   */
+  it('★ 名字里带 silero 的**真** ASR 模型必须算 ASR（旧正则在这里会误杀）', async () => {
+    const r = await runSelfCheck({
+      ...BASE,
+      probes: minimalProbes({
+        installed: (kind) => Promise.resolve(kind === 'asr' ? ['silero-asr-en-v1.bin'] : []),
+        installedByRole: (role) =>
+          Promise.resolve(
+            role === 'asr'
+              ? { names: ['silero-asr-en-v1.bin'], skippedWithoutRole: 0 }
+              : { names: [], skippedWithoutRole: 0 },
+          ),
+      }),
+    });
+    const m = byId(r, 'model.asr');
+    assert.equal(m?.status, 'ok', '记录里 role=asr，就该算 ASR —— 名字里有什么字与它无关');
+    assert.match(m?.detail ?? '', /silero-asr-en-v1\.bin/);
+  });
+
+  /*
+   * ★ T-149：「我跳过了 N 条」不许被吞成「你什么都没装」。
+   * 没写 `role` 的老记录一律不猜（`store.ts` 的规矩），但那是**跳过**，不是**没有** ——
+   * 不报出来的话，一个装满模型的旧库会被自检说成"无"，用户会去重装已经装好的东西。
+   */
+  it('★ 没写 role 的老记录：不猜，但必须把"跳过了几条"说出来', async () => {
+    const r = await runSelfCheck({
+      ...BASE,
+      probes: minimalProbes({
+        installedByRole: () => Promise.resolve({ names: [], skippedWithoutRole: 3 }),
+      }),
+    });
+    const m = byId(r, 'model.asr');
+    assert.equal(m?.status, 'fail');
+    assert.match(m?.detail ?? '', /3 条/, '跳过的范围要如实进返回值，不能静默吞掉');
   });
 
   /*
@@ -209,7 +269,12 @@ describe('判据没有被降级成"文件在不在"', () => {
       b.writeUInt32LE(GGML_FILE_MAGIC, 0);
       return b;
     })();
-    const vadCheck = async (vadModel: string | null, asrBucket: string[] = []) =>
+    /*
+     * ★ T-149：第二个参数原来是「`by-name/asr` 里有哪些文件名」，靠 `VAD_WEIGHT_NAME`
+     * 正则从里面挑出 VAD。正则删了，现在直接说「哪些**记录的 role 是 vad**」——
+     * 与产品新的提问方式一致。用例钉的后果没变。
+     */
+    const vadCheck = async (vadModel: string | null, installedVad: string[] = []) =>
       byId(
         await runSelfCheck({
           ...BASE,
@@ -223,7 +288,12 @@ describe('判据没有被降级成"文件在不在"', () => {
                 vadModel,
                 ytDlp: null,
               }),
-            installed: (kind) => Promise.resolve(kind === 'asr' ? asrBucket : []),
+            installedByRole: (role) =>
+              Promise.resolve(
+                role === 'vad'
+                  ? { names: installedVad, skippedWithoutRole: 0 }
+                  : { names: [], skippedWithoutRole: 0 },
+              ),
           }),
         }),
         'model.vad',
@@ -245,15 +315,45 @@ describe('判据没有被降级成"文件在不在"', () => {
     });
 
     it('★ 解析器已经拒绝交出坏文件时，仍要说清"你装的那个 whisper 用不了"', async () => {
-      // 修复后的真实状态：tools.vadModel = null，而 by-name/asr 里那份 ONNX 还在
-      const c = await vadCheck(null, ['silero_vad.onnx', 'ggml-tiny-q5_1.bin']);
+      // 修复后的真实状态：tools.vadModel = null，而那份 sherpa 的 ONNX 记录还在
+      const c = await vadCheck(null, ['silero_vad.onnx']);
       assert.equal(c?.status, 'warn');
       assert.match(c?.detail ?? '', /silero_vad\.onnx/);
       assert.match(c?.remediation ?? '', /silero-vad-ggml/);
+      /*
+       * ★ T-149：指引必须指向一个**今天真的到得了**的地方。
+       * 原文是「在「模型」页安装 `vad/silero-vad-ggml`」，而当时 `/models` 的列表
+       * 只渲染 `role === 'asr'` —— 用户照做会空手而归，然后怀疑是自己的问题。
+       *
+       * 现在两条路都要有，各守一半：
+       *   ① 分组名 —— 必须与 `asrSections.ts` 真的会放它的那一组、以及用户看见的字一致
+       *      （i18n `models.section.realtime` = 「实时字幕组件」）。
+       *      写错分组名 = 又一条"照做找不到"的指引，而它不会让任何东西变红，所以在这里钉住。
+       *   ② 直达地址 —— 不依赖列表分组的第二条路。
+       */
+      assert.match(
+        c?.remediation ?? '',
+        /实时字幕组件/,
+        '要说清在哪一组，而且要与界面上那个分组名逐字一致',
+      );
+      assert.match(
+        c?.remediation ?? '',
+        /\/models\/vad%2Fsilero-vad-ggml/,
+        '指引里必须有一个今天点得开的落点，而不是只有一句"去某某页"',
+      );
+      // 两个变体不能互换这件事必须说出来：选错的代价 T-148 已经付过一次
+      assert.match(c?.remediation ?? '', /不能互换/);
     });
 
     it('一个 VAD 都没装 → warn，且**不能**说成"装了个用不了的"（那是假红灯）', async () => {
-      const c = await vadCheck(null, ['ggml-tiny-q5_1.bin']);
+      /*
+       * ★ T-149：这里原来传的是 `['ggml-tiny-q5_1.bin']` —— 一个 **ASR** 权重，
+       * 因为当时第二个参数是「`by-name/asr` 目录里有什么」，靠正则从中挑 VAD，
+       * ASR 那个名字挑不中，于是等价于"没有 VAD"。
+       * 新签名问的是「哪些**记录的 role 是 vad**」，所以"一个都没装"就写成空集
+       * —— 把 ASR 的文件名塞进来反而是在声称它是个 VAD，那是夹具在撒谎。
+       */
+      const c = await vadCheck(null, []);
       assert.equal(c?.status, 'warn');
       assert.match(c?.detail ?? '', /未安装/);
     });

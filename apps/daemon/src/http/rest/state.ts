@@ -15,10 +15,13 @@ import { resolveStoreRoot } from '@openmemo/pipeline';
 import {
   ArtifactStore,
   DownloadQueue,
+  STORE_KINDS,
+  bucketForRole,
   orderSourcesForDownload,
   probeAll,
   type ProbeOutcome,
   type ProbeTarget,
+  type StoreKind,
 } from '@openmemo/downloader';
 import {
   MODEL_ROLES,
@@ -286,12 +289,56 @@ export class RestState {
     return this.backendCatalog.packs.find((p) => p.id === id) ?? null;
   }
 
+  /**
+   * 已安装的模型 —— **扫全部桶**，不是只扫 `asr` 与 `llm`。
+   *
+   * ★ T-149：这里原来写死 `['asr','llm']`，而它与 `roleToStoreKind` 把七个 role
+   * 压成两个桶**恰好互相掩盖**：因为没有东西写进 `vad/`，所以没有东西读不到。
+   * 一旦落盘桶改成"一个 role 一个"（那才是 `store.ts` 一直声称的状态），
+   * 这一行就会让**已装的 VAD / 标点模型从 `/api/models/installed` 里整个消失**
+   * —— 界面上表现为"我明明装过，它没了"，而且没有任何报错。
+   * 两个 bug 必须同一次改掉，所以它们在同一个提交里。
+   *
+   * 旧布局（VAD 记录躺在 `manifests/asr/`）**照样列得出来**：判据是记录里的 `role`，
+   * 不是它在哪个目录。同一个 id 万一两个桶里都有（重装过一次的旧机器），
+   * 取**桶与 role 对得上**的那一条 —— 而不是"先读到谁算谁"。
+   */
   async listInstalled(): Promise<InstalledModel[]> {
-    const out: InstalledModel[] = [];
-    for (const role of ['asr', 'llm'] as const) {
-      out.push(...(await this.store.listManifests<InstalledModel>(role)));
+    const byId = new Map<string, { kind: StoreKind; rec: InstalledModel }>();
+    for (const kind of STORE_KINDS) {
+      if (kind === 'backend') continue; // 后端包走 listInstalledBackends()
+      for (const rec of await this.store.listManifests<InstalledModel>(kind)) {
+        if (!rec?.id) continue;
+        const prev = byId.get(rec.id);
+        if (prev && bucketForRole(prev.rec.role) === prev.kind) continue;
+        byId.set(rec.id, { kind, rec });
+      }
     }
-    return out;
+    return [...byId.values()].map((v) => v.rec);
+  }
+
+  /**
+   * 某个 id 的安装记录**实际**躺在哪个桶里。
+   *
+   * 删除与校验必须用它，不能用 `bucketForRole(record.role)` 算：旧布局把 VAD 记录
+   * 写在 `manifests/asr/` 下，按 role 算会去 `manifests/vad/` 找 ——
+   * `removeManifest` 用的是 `fs.rm(..., {force:true})`，**找不到不报错**，
+   * 于是删除返回 204、记录还在、模型看起来没删掉；校验则会在新桶里写出**第二份**记录。
+   */
+  async bucketOfInstalled(id: string): Promise<StoreKind | null> {
+    for (const kind of STORE_KINDS) {
+      if (kind === 'backend') continue;
+      if (await this.store.readManifest<InstalledModel>(kind, id)) return kind;
+    }
+    return null;
+  }
+
+  /** 把某个 id 的安装记录从**所有**桶里删干净（旧布局可能不止一处）。 */
+  async dropInstalledRecord(id: string): Promise<void> {
+    for (const kind of STORE_KINDS) {
+      if (kind === 'backend') continue;
+      await this.store.removeManifest(kind, id);
+    }
   }
 
   async listInstalledBackends(): Promise<InstalledBackendPack[]> {
