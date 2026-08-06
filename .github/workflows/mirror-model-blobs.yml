@@ -66,29 +66,20 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: model-mirror-sherpa-streaming-zh-14m
-          path: |
-            dist/model-mirror/asr__sherpa-streaming-zh-14m__*
-            dist/model-mirror/SHA256SUMS
-            dist/model-mirror/MIRROR-MANIFEST.json
+          path: dist/model-mirror/sherpa-streaming-zh-14m/*
           if-no-files-found: error
           retention-days: 90
 
       - uses: actions/upload-artifact@v6
         with:
           name: model-mirror-paraformer-zh-small
-          path: |
-            dist/model-mirror/asr__paraformer-zh-small__*
-            dist/model-mirror/SHA256SUMS
-            dist/model-mirror/MIRROR-MANIFEST.json
+          path: dist/model-mirror/paraformer-zh-small/*
           if-no-files-found: error
           retention-days: 90
 
       - uses: actions/upload-artifact@v6
         with:
           name: model-mirror-ct-transformer-zh-en
-          path: |
-            dist/model-mirror/punctuation__ct-transformer-zh-en__*
-            dist/model-mirror/SHA256SUMS
-            dist/model-mirror/MIRROR-MANIFEST.json
+          path: dist/model-mirror/ct-transformer-zh-en/*
           if-no-files-found: error
           retention-days: 90

@@ -90,6 +90,9 @@ const hdr = (s) => {
  */
 const assetName = (modelId, fileName) => `${modelId.replace(/\//g, '__')}__${fileName}`;
 
+/** 打包用的子目录名（`asr/paraformer-zh-small` → `paraformer-zh-small`）。 */
+const slugOf = (modelId) => modelId.split('/').pop();
+
 async function sha256(buf) {
   return createHash('sha256').update(buf).digest('hex');
 }
@@ -198,7 +201,15 @@ async function main() {
       say(`   ✘ ${label.padEnd(56)} 校验不符（${secs}s）`);
       continue;
     }
-    await writeFile(join(OUT, label), buf);
+    /*
+     * 按模型分子目录存放 —— **只为打包，不影响最终资产名**。
+     * 每个 artifact 因此可以自带一份"只列它自己那几个文件"的 SHA256SUMS，
+     * 于是**最显然的那条命令**（`sha256sum -c SHA256SUMS`）在单独拿一个 artifact 时
+     * 就是对的。理由见下面写 SHA256SUMS 那段。
+     */
+    const dir = join(OUT, slugOf(j.modelId));
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, label), buf);
     verified.push({ ...j, assetName: label, sha256: gotSha, sizeBytes: buf.length });
     say(`   ✔ ${label.padEnd(56)} ${String(buf.length).padStart(10)} B  ${secs}s`);
   }
@@ -230,27 +241,51 @@ async function main() {
   say('   **每一条的 sha256 都是下载后重算的，且与仓库清单里那个逐字符相同。**');
   say('');
   say('   收到产物之后先验一遍再上传（不依赖本仓任何工具）：');
-  say('       sha256sum -c SHA256SUMS');
+  say('       单独一个 artifact：  cd <解压目录> && sha256sum -c SHA256SUMS');
+  say('       三个都收齐之后：    sha256sum -c SHA256SUMS.all   （把 9 个文件放同一个目录）');
 
   /*
-   * ★ `SHA256SUMS`：**让"传过来的东西没坏"这件事一条命令就能验，而且不依赖我们的工具。**
+   * ★ `SHA256SUMS`：**让"传过来的东西没坏"一条命令就能验，且不依赖我们的任何工具。**
    *
    * 起因是一次真实的失败：366 MiB 的单个 artifact 第一次传到 66 MiB 就断了。
-   * 断了本身不可怕 —— 可怕的是**断得像成功**：解压出来的文件数可能是对的，
-   * 最后一个文件短了几十 MB，而 zip 解压器不一定会抱怨。
-   * 有了这个文件，收到产物的人在自己那台机器上 `sha256sum -c SHA256SUMS` 就能定论，
-   * 不需要读我们的 JSON、不需要跑我们的脚本。
+   * 断了本身不可怕 —— 可怕的是**断得像成功**：解压出来文件数可能是对的，
+   * 最后一个短了几十 MB，而解压器不一定抱怨。
+   * 格式用 coreutils 的标准格式（两个空格），刻意不自造。
    *
-   * 格式是 coreutils 的标准格式（两个空格分隔），刻意不自造。
+   * ★★ **每个 artifact 里那份只列它自己的文件**，另有一份 `SHA256SUMS.all` 列全部 9 个。
+   *
+   * 为什么要分两份 —— 这条是实测出来的，不是设计洁癖：
+   * 第一版每个 artifact 都放同一份 9 行的 SHA256SUMS，于是单独拿一个 artifact 去验时，
+   * **最显然的那条命令会失败**：
+   *
+   *     $ sha256sum -c SHA256SUMS
+   *     punctuation__ct-transformer-zh-en__model.onnx: FAILED open or read
+   *     sha256sum: WARNING: 5 listed files could not be read
+   *     exit 1
+   *
+   * 5 个"缺失"其实只是不在这个 artifact 里，**文件一个都没坏** ——
+   * 但输出长得和真损坏一模一样，而且退出码是 1。
+   * 让人去记 `--ignore-missing` 是把成本转嫁给读者；
+   * **正确的做法是让最显然的那条命令本来就是对的。**
    */
-  await writeFile(
-    join(OUT, 'SHA256SUMS'),
-    `${verified.map((v) => `${v.sha256}  ${v.assetName}`).join('\n')}\n`,
-  );
+  const total9 = `${verified.map((v) => `${v.sha256}  ${v.assetName}`).join('\n')}\n`;
+  await writeFile(join(OUT, 'SHA256SUMS.all'), total9);
+  for (const slug of new Set(verified.map((v) => slugOf(v.modelId)))) {
+    const mine = verified.filter((v) => slugOf(v.modelId) === slug);
+    await writeFile(
+      join(OUT, slug, 'SHA256SUMS'),
+      `${mine.map((v) => `${v.sha256}  ${v.assetName}`).join('\n')}\n`,
+    );
+    /*
+     * `SHA256SUMS.all` 也放进每个子目录：三个 artifact 收齐、9 个文件并到同一个目录之后，
+     * 用它一次验全部。放进子目录（而不是只放 OUT 根）是为了让每个 artifact 的
+     * 内容保持**扁平** —— upload-artifact 取被匹配文件的最近公共祖先做根，
+     * 一旦把根目录的文件也纳进来，压缩包里就会多出一层目录。
+     */
+    await writeFile(join(OUT, slug, 'SHA256SUMS.all'), total9);
+  }
 
-  await writeFile(
-    join(OUT, 'MIRROR-MANIFEST.json'),
-    `${JSON.stringify(
+  const manifestJson = `${JSON.stringify(
       {
         generatedAt: new Date().toISOString(),
         note: '逐字节镜像自上游不可变引用；sha256 由本文件的生成过程重新计算并与仓库清单比对通过。',
@@ -265,9 +300,13 @@ async function main() {
       },
       null,
       2,
-    )}\n`,
-  );
-  say(`   清单同时写到 ${join(OUT, 'MIRROR-MANIFEST.json')}`);
+    )}\n`;
+  await writeFile(join(OUT, 'MIRROR-MANIFEST.json'), manifestJson);
+  // 每个子目录也放一份：单独拿走一个 artifact 时它仍然能自证来源。
+  for (const slug of new Set(verified.map((v) => slugOf(v.modelId)))) {
+    await writeFile(join(OUT, slug, 'MIRROR-MANIFEST.json'), manifestJson);
+  }
+  say(`   清单写到 ${join(OUT, 'MIRROR-MANIFEST.json')}（每个子目录各一份副本）`);
 }
 
 await main();
