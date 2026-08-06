@@ -12,6 +12,7 @@
  * （`\\`/`\n`/`\r`），保证每个节点在源文件里始终是恰好一行——`fromMarkdown` 按行解析
  * 才可能成立。这是我们自己的私有转义，不是 CommonMark 语法的一部分。
  */
+import { formatTimestamp } from '../timecode.js';
 import {
   MINDMAP_SCHEMA_VERSION,
   walk,
@@ -44,14 +45,13 @@ function unescapeMdText(s: string): string {
   });
 }
 
-function formatTimestamp(ms: number): string {
-  const totalSeconds = Math.max(0, Math.round(ms / 1000));
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = totalSeconds % 60;
-  const pad = (v: number): string => String(v).padStart(2, '0');
-  return h >= 1 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
-}
+/*
+ * ⚠️ 这里此前有一份**本地的** `formatTimestamp`，用的是 `Math.round(ms/1000)` +
+ * 分钟位补零，与 `adapters/markmap.ts` 那份（`Math.floor` + 分钟位不补零）**输出不同**：
+ * 90500ms → 这份给 `01:31`、那份给 `1:30`；3599999ms → `1:00:00` vs `59:59`。
+ * 同一张导图导出成 Markdown 和渲染成 markmap，时间码对不上。
+ * 现已统一到 `../timecode.js`（保留的是 markmap 那份的语义 —— 它与播放器一致）。
+ */
 
 function timestampSuffix(node: MindMapNode, includeTimestamps: boolean): string {
   if (!includeTimestamps) return '';

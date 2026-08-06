@@ -151,11 +151,19 @@ describe('markdown 序列化', () => {
     const doc = buildDoc(nodes, 'root');
     assertValid(doc, 'timestamp doc');
     const md = toMarkdown(doc, { includeTimestamps: true });
-    assert.match(md, /A \[01:23\]/);
+    // ⚠️ **旧断言写错了方向**（HANDOFF ⑤A-15 同族）：这两行此前写的是
+    //   assert.match(md, /A \[01:23\]/)   ← 分钟位补零
+    // 而 `adapters/markmap.ts` 对同一个 ref 渲染出来的是 `1:23`（不补零），
+    // 播放器（`apps/web/src/lib/format/time.ts` 的 `timecode()`）也是 `1:23`。
+    // 也就是说：这条测试**一直在保护一个用户可见的不一致** ——
+    // 同一张导图，看到的时间码和导出的时间码不是同一个数。
+    // 两份实现已并到 `../timecode.js`，这里改成断言权威值。
+    // （不是"顺手改绿"：另一半差异 round vs floor 由 `timecode.test.ts` 的基准向量钉住。）
+    assert.match(md, /A \[1:23\]/);
     assert.match(md, /B \[1:02:03\]/);
 
     const mdWithout = toMarkdown(doc);
-    assert.doesNotMatch(mdWithout, /\[01:23\]/);
+    assert.doesNotMatch(mdWithout, /\[1:23\]/);
   });
 
   it('宽树（50 子节点）往返保持顺序与数量', () => {

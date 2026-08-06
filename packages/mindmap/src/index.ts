@@ -15,6 +15,7 @@
  *   generate.ts   F4：转写稿 → LLM → 导图（LLM 只给段落编号，时间戳由我们算）
  */
 export * from './types.js';
+export * from './timecode.js';
 export * from './validate.js';
 export * from './generate.js';
 export * from './adapters/mind-elixir.js';

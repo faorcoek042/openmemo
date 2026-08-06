@@ -9,6 +9,7 @@
  *   避免 "doc → Markdown → markdown-it → HTML → buildTree" 这条**四段有损**链路。
  *   `toMarkdown()` 只用于导出与"编辑 Markdown 源"入口，**不在渲染路径上**。
  */
+import { formatTimestamp } from '../timecode.js';
 import type { MindMapDoc, MindMapNode, NodeKey } from '../types.js';
 
 /**
@@ -44,14 +45,11 @@ export interface ToMarkmapOptions {
   readonly showTimestamps?: boolean;
 }
 
-export function formatTimestamp(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  const two = (n: number): string => String(n).padStart(2, '0');
-  return h > 0 ? `${h}:${two(m)}:${two(s)}` : `${m}:${two(s)}`;
-}
+/*
+ * `formatTimestamp` 此前**在这里有一份本地实现**，`serialize/markdown.ts` 里还有另一份，
+ * 两份输出不同（90500ms → `1:30` vs `01:31`）。现在两处都从 `../timecode.js` 取，
+ * 那个文件的注释里记着两份原本的差异与保留哪一份的理由。
+ */
 
 function build(
   doc: MindMapDoc,
