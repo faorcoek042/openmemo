@@ -280,3 +280,91 @@ web 94+10+202 · daemon 278/278` —— 加上 `check:sources ✔ 95` 与 typech
 
 （另：`apps/daemon` 的用例数 273 → 278，多出来的 5 条里有我加的
 `selfcheck` fail 档 1 条与 `assetPaths` 分隔符 1 条，其余来自并发的 `pack-publish`。）
+
+---
+
+## [2026-08-06 05:10] T-147 —— 三条决策的执行结果
+
+### ③ `ci-crossplatform.yml:99` 的过期步骤名 → **已改**（`75e662a`，已 push）
+
+```
+旧  Tracked-sources guard (预期在 Windows 上红 —— 见 T-141 §3 第 30 条)
+新  Tracked-sources guard (三平台都应为绿 —— T-141 §3 第 30 条已由 T-147 修复)
+```
+
+只动了步骤名与上面那段注释，`run:` 一个字没动。注释里写清了**为什么这句被改**
+（它曾经是对的、现在不是了；留着会让下一个人以为这里的红是正常的，从而不去查一个真的红）。
+动之前确认 `pack-publish` 不在同一文件里：它改的是 `cold-start-audit.yml`，
+`ci-crossplatform.yml` 上一次改动是 `0d4536b`（ci-runner / T-145）。
+`pnpm test:ci-scripts` 15+14 全过（含 `lint-workflows` 那组守卫）。
+
+顺带把 `extensions.test.ts` 里关于清单的那段说明改成**当前**状态
+（原文写着"待裁定"，而你已经裁定了）—— 同一条理由：**一条过期的说明也是错的说明。**
+
+### ① `sqlite-ext.json` 那两行 → **我改不了，原样交给你或 `pack-publish`**
+
+**结论先说：改动内容在下面，一行不差，谁有权限谁执行。**
+
+我按你说的两条路都试了：
+
+1. **跟 `pack-publish` 协调** —— `SendMessage` 返回
+   `No agent named 'pack-publish' is reachable`。它是你的 agent、不是我的 teammate，
+   我够不着它，协调只能走 inbox 文件（异步，它不一定会读我的）。
+2. **直接改** —— **权限层拦了两次**，理由是「`vendor/manifests/` 是 pack-publish 的
+   活跃领地，而它无法验证边界是否真的被解除」。**这个拦截是对的**，我没有绕。
+
+我做过的非重叠核对（供你判断，不构成授权）：
+- `sqlite-ext.json` 自 `1b4df88`（T-097）起**没有任何人动过**；
+- `pack-publish` 的 T-146 改的是 `backends.json` / `components.json`（`2075a88`）；
+- 它回执里写的下一步是「release 批下来后补 **macOS whisper 的两条 manifest**」——
+  那是 `backends.json`，与这两行零重叠。
+
+**要执行的改动（全部，就这两处）：**
+
+```
+vendor/manifests/sqlite-ext.json
+  packs[id="libsimple-win32-x64"].providesFiles    ["libsimple.dll"] → ["simple.dll"]
+  packs[id="libsimple-win32-arm64"].providesFiles  ["libsimple.dll"] → ["simple.dll"]
+```
+
+一条命令（在仓库根跑，带自检，改错会当场断）：
+
+```bash
+python3 - <<'EOF'
+p='vendor/manifests/sqlite-ext.json'
+s=open(p,encoding='utf-8').read()
+assert s.count('"libsimple.dll"')==2, s.count('"libsimple.dll"')   # 只有那两处
+open(p,'w',encoding='utf-8').write(s.replace('"libsimple.dll"','"simple.dll"'))
+EOF
+```
+
+**执行后不需要改任何测试**：`packages/pipeline` 那条清单对表守卫两种读法都接受
+（`simple.dll` 本来就在查找候选里）。执行前后 `pnpm -r test` 都应是绿的。
+**也不会让 Windows 重新变坏** —— 产品代码两个名字都找；变的只是清单不再描述一个不存在的文件。
+
+⚠️ 如果最后决定**不改**，请把 `extensions.test.ts:323` 那段说明一起改掉 ——
+它现在写着"Manager 已裁定改成 simple.dll，尚未执行"。**留着它就又造出一条过期说明。**
+
+### ② upload 早退那条 → **不派人，已记进清单**
+
+收到，理由我认同（间歇性、有明确症状、不阻断功能，而 `vad-fix` T-148 是
+"三个平台没有一个能完成转写"）。我不动它。**测试保持严格**：
+它现在只会为那个真原因红（客户端确实没拿到响应），不会因为记账问题红。
+
+---
+
+## 你收进 HANDOFF 的那两条，我这边的原始材料
+
+**「测试和被测代码共享同一个错误假设时，测试不会失败——它会确认那个错误。」**
+原始形态在 `packages/pipeline/src/__tests__/extensions.test.ts`：
+旧 fixture 写的是 `writeFile(join(nested, \`libsimple${suffix}\`), 'LIBSIMPLE')` ——
+和产品代码**同一个表达式**。所以它在 Windows 上造出一个 `libsimple.dll`，
+产品去找 `libsimple.dll`，**找到了**，绿灯。而真实归档里那个文件叫 `simple.dll`。
+👉 这一族的判据我建议写成：**fixture 里凡是"上游给什么"的部分，都不许由被测代码的
+同一个表达式生成，必须来自独立观测**（下载、unzip、抄清单、抄真机日志）。
+现在那张 `ARCHIVE` 表就是这么来的，并且注释里明写了「不要把这张表改成用 `${suffix}` 拼」。
+
+**「bail 模式下"还剩 N 条"这个数字本身不可信」** —— 补一个可操作的推论：
+`pnpm -r test` 报的是"**到目前为止撞到的**"，不是"总共有的"。
+想知道总数，要么 `--no-bail`，要么像这次一样**一层一层修着走**
+（我这轮走了四层：runtime 5 → pipeline 5 → daemon 3 → daemon 2，共 14，起点报的是 6）。
