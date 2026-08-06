@@ -13,8 +13,15 @@
  */
 
 import { EventEmitter } from 'node:events';
-import type { DownloadJob, JobState, JobStep } from '@openmemo/shared';
-import { TERMINAL_JOB_STATES, canTransition, jobTypeForKind, ulid } from '@openmemo/shared';
+import type { DownloadJob, ErrorCode, JobState, JobStep } from '@openmemo/shared';
+import {
+  ERROR_MESSAGES_ZH,
+  ERROR_RETRYABLE,
+  TERMINAL_JOB_STATES,
+  canTransition,
+  jobTypeForKind,
+  ulid,
+} from '@openmemo/shared';
 
 export interface QueueTaskContext {
   jobId: string;
@@ -200,11 +207,31 @@ export class DownloadQueue extends EventEmitter<DownloadQueueEvents> {
         this.forceState(job, 'cancelled');
       } else {
         const err = e as { code?: string; message?: string; retryable?: boolean };
+        const code = (err.code ?? 'INTERNAL') as NonNullable<DownloadJob['error']>['code'];
+        const detail = err.message ?? String(e);
+        /*
+         * ★ `messageZh` 以前就是 `err.message` —— 也就是**把英文原样当成中文交出去**。
+         *
+         * 这不是"少翻译了一句"：`JobList.tsx:115` 是
+         * `i18n.language.startsWith('zh') ? job.error.messageZh : job.error.message`，
+         * 两个分支读的是同一个英文串。中文用户下载模型失败时看到的是
+         * `All download sources failed` / `Access denied (403)` / `Disk full`。
+         *
+         * 而 `ERROR_MESSAGES_ZH` 这 16 条中文**从写下那天起就是零调用方** ——
+         * 一份没有调用方的文案不会被任何东西证伪（与 T-151 那份"全仓零 import 的契约"同一形状）。
+         *
+         * `INTERNAL` 是刻意的例外：它的字面意思是"我不知道发生了什么"，
+         * 这时 `detail` 就是**唯一**的信息，翻成"内部错误"是把仅有的线索换成一句废话。
+         * 未登记的码同理走 detail。英文 `message` 一律保留原样，诊断信息不丢。
+         */
+        const zh = ERROR_MESSAGES_ZH[code as ErrorCode];
         job.error = {
-          code: (err.code ?? 'INTERNAL') as NonNullable<DownloadJob['error']>['code'],
-          message: err.message ?? String(e),
-          messageZh: err.message ?? String(e),
-          retryable: err.retryable ?? false,
+          code,
+          message: detail,
+          messageZh: zh && code !== 'INTERNAL' ? zh : detail,
+          // 抛出方没说 retryable 时，按码本查 —— 而不是一律当成"不可重试"。
+          // 说错了的后果是可重试的失败（超时/限流/换源可救的校验失败）拿不到重试入口。
+          retryable: err.retryable ?? ERROR_RETRYABLE[code as ErrorCode] ?? false,
         };
         this.forceState(job, 'failed');
         this.emit('job.failed', job);
