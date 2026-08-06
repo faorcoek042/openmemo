@@ -764,3 +764,141 @@ Keeping it to just the delta is what makes requirement 2.1 cheap」**与实现�
 2. **从 release URL 重新下载并复算 sha256**，与写进 manifest 的那个比对；
 3. 跑 `platformPacks.test.ts` 全部守卫 + `pnpm -r test`；
 4. 重跑 `cold-start-audit --transcribe`，看 macOS 那格的「借宿主 PATH」从 1 降到 **0**。
+
+---
+
+## [2026-08-06 14:10] T-146 DONE
+
+交付（本轮追加）：`vendor/manifests/{backends,components}.json`（+`whispercpp-cpu-macos-arm64`）、
+`apps/daemon/src/pipeline/platformPacks.test.ts`（12 → **15** 条）、
+`docs/design/D-11-ci-platform-facts.md` **§8**（追加，正文其余部分一字未改）、
+`.github/workflows/cold-start-audit.yml`。提交 `830ada9` `98d2fa3` `1f49530`，已 push。
+
+# ★★ 三个平台，全部在干净机器上真的转出了字
+
+`cold-start-audit` run **31075515732**，屏蔽宿主 PATH，全新数据目录，**三平台全绿**：
+
+```
+linux-x64      转写 job：succeeded  (2.1s)
+darwin-arm64   转写 job：succeeded  (101.7s)
+win32-x64      转写 job：succeeded  (3.7s)
+
+三个平台的文本一字不差：
+  "And so, my fellow Americans, ask not what your country can do for you,
+   ask what you can do for your country."
+  ✔ 拿到 1 段、共 108 字符的非空文本 —— 这条路走得通。
+```
+
+**三分类（三平台完全一致）**：
+
+```
+✅ 产品自己下载并校验的 (5)：  tool.ffmpeg, tool.ffprobe, tool.whisperCli, tool.whisperVad, tool.ytDlp
+⚠️ 借宿主 PATH 的       (0)：  (无)
+❌ 装不上/不可用        (0)：  (无)
+```
+
+**macOS 那格「借宿主 PATH」从 3 → 1 → 0。** 适用包 3/19 → **5/22**。
+
+⚠️ **转写这一半的功劳不是我的**：Linux/Windows 卡住的那个 VAD 根因是 `vad-fix`（T-148）
+在 `a7b96b7` / `2cc5610` 修的（sherpa 的 ONNX 被当成 whisper 的 VAD 权重）。
+我这边负责的是**让它有东西可跑**（macOS 的引擎与三平台的 ffmpeg）+ **把判据从"文件下下来了"
+换成"真的转出字来了"** —— 两件事凑齐才有上面这个结果。
+
+---
+
+# ★ 逐平台覆盖表（最终版，可直接给用户）
+
+| 平台 | ffmpeg/ffprobe | 转写引擎 | 加速 | 中文检索 | yt-dlp | **干净机器上真的转出字了吗** |
+|---|---|---|---|---|---|---|
+| **Linux x64** | ✅ BtbN 7.1.5 | ✅ 上游 v1.9.1 | 🟡 CUDA/Vulkan 已编出**未接入**（D-11 §8.4） | ✅ | ✅ | ✅ **是** `[CI 实测 2.1s]` |
+| **Windows x64** | ✅ **本轮补上**（BtbN 同一已钉 tag） | ✅ 上游 v1.9.1 | 🟡 同上；CUDA 12.4 有上游自包含包 | ✅（`win-fixes` 修好） | ✅ | ✅ **是** `[CI 实测 3.7s]` |
+| **macOS arm64** | ✅ **本轮补上**（jellyfin 7.1.4-3） | ✅ **本轮补上**（我们自建，上游根本不发） | ✅ **Metal + ANE 都在核心包里** | ✅ | ✅ | ✅ **是** `[CI 实测 101.7s]` |
+| linux-arm64 / macos-x64 / linux-x64-rocm | — | — | — | — | — | 用户 2026-08-05 明确不需要，**没补** |
+
+> **口径没有放松过**：判据是「屏蔽宿主 PATH 的干净机器上，从网页装 → 拉模型 → 走
+> `/api/notes/import` 真实路径 → `/api/notes/:uid/transcript` 拿到非空文本」。
+> 上一版这张表三个平台全红，**不是因为退步，是因为这个问题当时第一次被问出口**。
+
+⚠️ **macOS 101.7s vs Linux 2.1s** —— 差 48 倍。原因写在自检里：
+`asr.coreml warn 未启用 ANE …：ggml-tiny-q5_1.bin → 缺 ggml-tiny-encoder.mlmodelc`。
+**这条 warn 正是它该起的作用** —— 慢是有名有姓的，不是"macOS 就是慢"。
+（另有 runner 是虚拟化 M1、3 核的因素，两者未拆分，`[未定性]`。）
+
+---
+
+# release 与 manifest（步骤 3、4 已完成）
+
+**我独立复验过，没有只信转达**：
+
+```
+env -u GITHUB_TOKEN -u GH_TOKEN curl -sSL <release URL>
+  → HTTP 200 · 2,012,304 B
+  → 302 落到 release-assets.githubusercontent.com（该 host 已在 ALLOWED_DOWNLOAD_HOSTS）
+本机复算  c473de000a64c509486cd9df48ad28467dcaf604813187b72f7a8815df3393bc
+CI 声明   c473de000a64c509486cd9df48ad28467dcaf604813187b72f7a8815df3393bc     ✅ 三方一致
+```
+
+`backends.json` 只加了**一条**（另外 4 个增量包按 D-11 §8.4 的三条证据不接）。
+两处判断值得记：
+- `backend: "cpu"` 是**有意**的：`applicability.ts:33` 的 L1 无条件适用，L2 要等硬件探针，
+  而 `openmemo-probe` 至今没有分发通道 → 把 macOS 唯一的引擎挂 L2 上等于让它永远装不上。
+- `tier: "downloadable"`：CI fragment 写的是 `builtin`（`build-whisper.sh` 按 `backend==cpu` 推的），
+  **那是错的** —— 它不随安装器出厂。`builtin` 只影响"能不能卸载"，所以不改也能装，
+  但它会让用户以为这东西是内置的。
+
+# 新增守卫 3 条（共 15 条），逐条反向验证
+
+| 反向操作 | 真实输出 |
+|---|---|
+| 删掉 macOS 的 whisper 包 | `AssertionError: macOS 上没有任何转写引擎 —— 上游不发 macOS CLI，这条只能靠我们自己发布` |
+| URL 换成 Actions artifact | `AssertionError: whispercpp-cpu-macos-arm64 指向了会过期的 Actions artifact：…` |
+| 拿掉 `requiresDriver.macosVersion` | `AssertionError: … 用户不会知道自己的 Mac 太旧` |
+
+`grep -rn REVERSAL` 全仓 0 命中（全部已还原）。
+
+## ⚠️ 同一个错我犯了第二次（记账）
+
+新守卫的"集合非空"阈值取成了 `>= 3`，于是删掉引擎时**先炸的是守卫本身**
+（「darwin/arm64 的可下载包只有 2 个」），而真正该说的那句一个字都没印出来 ——
+**与本文件早先记的那条一模一样**。已改成 `>= 2` 并把理由写进注释。
+
+> **阈值只用来挡"一个都没匹配到"，不能高到盖住被检查的量。**
+> 我第一次犯它时写了注释，第二次仍然犯了 —— 说明**注释不够，它需要是个可复用的判据**：
+> 写非空守卫时先问一句「**我要报告的那个量，会不会正好把这条守卫压破？**」
+
+# 另一条：让一个"稳定红"的 workflow 变回有意义
+
+run 31075515732 里**对照组三平台全红**，原因都是
+`model.asr fail(required) 无可用 ASR 模型` —— 这不是 bug，是产品事实（D-11 §7.3），
+只有 `--transcribe` 才会另挑 ASR 模型，而对照组当时没带它。
+
+「稳定红且原因已知」是最坏的一种红：**它训练所有人忽略这个 workflow**，
+而那正是本仓最贵的那类失败得以长期存活的土壤。
+→ 对照组也带上 `--transcribe`（两组只差"屏不屏蔽"这一个变量，本来就该如此）。
+**修法是真的把模型装上，让那条 required 检查有资格是绿的，不是给它加豁免。**
+已重新触发：run **31076010999**。
+
+# 门禁
+
+`tsc -b` 0 · `eslint` 0 · `verify-offline` 62/62 · `pnpm -r test` **934 / 0**
+
+# 剩下的（都不在本任务范围，已交出去或已记档）
+
+| 项 | 状态 |
+|---|---|
+| ANE 真的用上（3 处断点：解包多一层同名目录 / 前端不传 `includeOptional` / q5_0 没挂 encoder） | 🔴 **未接通**，自检项 `asr.coreml` 会如实报 warn，不会假绿 |
+| `vulkan-linux` 的 GLIBC_2.38 | 🔴 未修，**已写进 D-11 §8.2**，含给下一个人的二选一前置条件 |
+| Windows 的 VC++ 运行时依赖 | 🟡 未修，**已写进 D-11 §8.3**（与 `win-fixes` 的 `simple.dll` 是同一条） |
+| 4 个加速增量包接入 | ⛔ 按判据不接，**已写进 D-11 §8.4**（三条独立证据） |
+| `openmemo-probe` 的分发通道 | ⛔ 没碰，老债还在（`probeExists` 恒 false） |
+
+# 纪律
+
+`:10000` **全程零请求**（用户在用它预览）；`/root/data-memo` 与
+`~/.local/share/openmemo/datadir.json` 一个字节没碰；构建全程 `pnpm build:safe`；
+没有 `pkill -f`；**release 我没有建也没有改**（权限系统拒绝转达授权，我没绕过 —— 由 Manager 执行）；
+没改仓库可见性、没删 release、没动分支保护。
+`git add` 逐个文件 —— `git status` 里 `daemon-contract` / `mindmap` / `recorder` 那一批
+是别人的在途改动，**一个都没 add**。
+
+**D-11 §8 是追加**：节首标明了作者与来源，`ci-runner` 的正文一个字没改。
