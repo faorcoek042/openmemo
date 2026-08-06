@@ -50,11 +50,45 @@ jobs:
       - name: 下载并校验
         run: node scripts/ci/mirror-model-blobs.mjs --out dist/model-mirror
 
-      # `if-no-files-found: error`：脚本校验失败时会把产物目录整个删掉，
-      # 那种情况下这一步必须红，而不是上传一个空 artifact 然后绿灯。
+      # ── 为什么拆成三个 artifact 而不是一个 ────────────────────────────────────
+      #
+      # 第一版是单个 366 MiB 的 `model-mirror`。**实际发生的事**：取产物的人第一次
+      # 只下到 66 MiB 就断了。断了本身不可怕，可怕的是**断得像成功** ——
+      # 解压出来文件数可能是对的，最后一个短了几十 MB，而解压器不一定抱怨。
+      #
+      # 拆开之后：两个小模型（~25 MiB 与 ~82 MiB）不再被那个 294 MiB 的标点模型拖着，
+      # 一次失败的代价从"整包重来"变成"重来一个"。
+      # （294 MiB 那个是**单个文件**，拆不开 —— 所以配套给了 `SHA256SUMS`：
+      #   传完 `sha256sum -c SHA256SUMS` 一条命令定论，不依赖本仓任何工具。）
+      #
+      # `if-no-files-found: error` 三处都要有：脚本校验失败时会把产物目录整个删掉，
+      # 那种情况下必须红，而不是上传空 artifact 然后绿灯。
       - uses: actions/upload-artifact@v6
         with:
-          name: model-mirror
-          path: dist/model-mirror/*
+          name: model-mirror-sherpa-streaming-zh-14m
+          path: |
+            dist/model-mirror/asr__sherpa-streaming-zh-14m__*
+            dist/model-mirror/SHA256SUMS
+            dist/model-mirror/MIRROR-MANIFEST.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: model-mirror-paraformer-zh-small
+          path: |
+            dist/model-mirror/asr__paraformer-zh-small__*
+            dist/model-mirror/SHA256SUMS
+            dist/model-mirror/MIRROR-MANIFEST.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: model-mirror-ct-transformer-zh-en
+          path: |
+            dist/model-mirror/punctuation__ct-transformer-zh-en__*
+            dist/model-mirror/SHA256SUMS
+            dist/model-mirror/MIRROR-MANIFEST.json
           if-no-files-found: error
           retention-days: 90

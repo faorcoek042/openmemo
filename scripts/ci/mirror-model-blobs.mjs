@@ -228,6 +228,25 @@ async function main() {
   say('');
   say(`   ${verified.length} 个文件，合计 ${total} B（${(total / 1024 / 1024).toFixed(1)} MiB）`);
   say('   **每一条的 sha256 都是下载后重算的，且与仓库清单里那个逐字符相同。**');
+  say('');
+  say('   收到产物之后先验一遍再上传（不依赖本仓任何工具）：');
+  say('       sha256sum -c SHA256SUMS');
+
+  /*
+   * ★ `SHA256SUMS`：**让"传过来的东西没坏"这件事一条命令就能验，而且不依赖我们的工具。**
+   *
+   * 起因是一次真实的失败：366 MiB 的单个 artifact 第一次传到 66 MiB 就断了。
+   * 断了本身不可怕 —— 可怕的是**断得像成功**：解压出来的文件数可能是对的，
+   * 最后一个文件短了几十 MB，而 zip 解压器不一定会抱怨。
+   * 有了这个文件，收到产物的人在自己那台机器上 `sha256sum -c SHA256SUMS` 就能定论，
+   * 不需要读我们的 JSON、不需要跑我们的脚本。
+   *
+   * 格式是 coreutils 的标准格式（两个空格分隔），刻意不自造。
+   */
+  await writeFile(
+    join(OUT, 'SHA256SUMS'),
+    `${verified.map((v) => `${v.sha256}  ${v.assetName}`).join('\n')}\n`,
+  );
 
   await writeFile(
     join(OUT, 'MIRROR-MANIFEST.json'),
