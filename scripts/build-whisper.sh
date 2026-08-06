@@ -234,8 +234,17 @@ case "${BACKEND}" in
     # （whisper.cpp:2412 用 whisper_coreml_encode 替掉 encoder；
     #  models/generate-coreml-model.sh 结尾写着 `# TODO: decoder`），
     # decoder 仍然走 ggml 的后端（Metal 包或 CPU）。
+    # ★ T-146：**macOS 的核心包同时带 Metal**。
+    #   理由见下面「assemble the pack」那段：纯增量的加速包在本产品里找不到 ——
+    #   ggml 只在 whisper-cli 自己的目录里找后端模块，而增量包解在另一个目录。
+    #   `GGML_METAL_EMBED_LIBRARY=ON` 让着色器编进二进制，所以 Metal 是唯一一个
+    #   "跟着核心包出厂就位置正确"的加速后端。
+    #   于是一台 Mac 装一个包就同时拿到：ANE（encoder）+ Metal（GPU）+ CPU 兜底。
     if [[ "${HOST_OS}" == "darwin" ]]; then
-      BACKEND_FLAGS+=( -DWHISPER_COREML=ON -DWHISPER_COREML_ALLOW_FALLBACK=ON )
+      BACKEND_FLAGS+=(
+        -DWHISPER_COREML=ON -DWHISPER_COREML_ALLOW_FALLBACK=ON
+        -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON
+      )
     fi
     ;;
   vulkan)
@@ -359,6 +368,28 @@ log "ggml ABI: ${GGML_ABI}"
 # L2 "accel" = ONLY the single ggml-<backend> shared library (+ vendor runtime libs).
 #              This is the on-demand download. Keeping it to just the delta is what
 #              makes requirement 2.1 cheap.
+#
+# ★★ T-146：**上面那句 L2 的设计与产品实际解析后端的方式对不上，从来没人对过。**
+#
+# ggml 找后端模块只看三个地方（`ggml/src/ggml-backend-reg.cpp:479-489`）：
+#   ① 编译期的 GGML_BACKEND_DIR   ② `get_executable_path()`   ③ `fs::current_path()`
+# 也就是**只找 whisper-cli 自己所在的目录**和 cwd。
+# 而安装器把每个包解到 `by-name/backend/<各自的归档名>/` —— 增量包里的
+# `libggml-vulkan.so` 与 whisper-cli **永远不在同一个目录**；cwd 是 job 的临时目录，也不是。
+# `GGML_BACKEND_PATH` 环境变量存在，但 `runner.ts:92-94` 的 env 白名单里没有它。
+# 全仓也没有任何东西把后端模块搬到引擎目录旁边（`materializeSqliteExtensions()`
+# 只服务 SQLite 扩展）。
+#
+# → **纯增量的加速包装上去会 succeeded，然后什么都不会发生。**
+#   反证：目录里那个**能用**的加速包 `whispercpp-cuda-12.4-win-x64`，
+#   `providesFiles` 是 `["ggml-cuda.dll","whisper-cli.exe"]` —— **它自带 whisper-cli**。
+#   本产品事实上的约定是「加速包必须自包含」。
+#
+# 这条债不在本脚本的范围内（要么补搬运机制、要么让加速包自包含），
+# 但 **macOS 的 Metal 是个例外，可以就地解决**：`GGML_METAL_EMBED_LIBRARY=ON`
+# 把着色器编进二进制、不需要伴随资源文件，所以 `libggml-metal.so` 只要跟着核心包一起出厂
+# 就位置正确了 —— 这也正是 workflow 自己的注释早就写着的
+# 「Metal … 的 pack 其实装在核心包里」。见下面 cpu 分支里的 darwin 特判。
 # --------------------------------------------------------------------------------------
 STAGE="${BUILD_DIR}/stage/${PACK_ID}"
 rm -rf "${STAGE}"; mkdir -p "${STAGE}"
@@ -412,6 +443,25 @@ if [[ "${BACKEND}" == "cpu" ]]; then
     "${BIN_DIR}/whisper-server"* \
     "${BIN_DIR}/whisper-bench"* \
     "${BIN_DIR}/whisper-vad-speech-segments"*
+
+  # ★ T-146：macOS 的核心包把 Metal 模块一起带上（见上面 cpu 分支的理由）。
+  #   放在这里而不是加进上面那串：它只在 darwin 上存在，混进公用列表会让人以为
+  #   别的平台也该有。
+  if [[ "${HOST_OS}" == "darwin" ]]; then
+    copy_if_exists "${BIN_DIR}/${LIB_PREFIX}ggml-metal.${MOD_EXT}"
+    # 守卫与 CPU 那条同形：**少拷了它不许报绿**。
+    # 少了它 macOS 用户拿到的是一个"以为有 GPU、实际纯 CPU"的包，
+    # 而 whisper.cpp 不会为此报错 —— 它只是注册不到 Metal 后端然后照常跑。
+    if [[ ! -e "${STAGE}/${LIB_PREFIX}ggml-metal.${MOD_EXT}" ]]; then
+      {
+        echo "==> BIN_DIR (${BIN_DIR}) 实际内容："
+        ls -la "${BIN_DIR}" 2>&1 || true
+      } >&2
+      die "macOS 核心包里没有 ${LIB_PREFIX}ggml-metal.${MOD_EXT}。
+  cpu 分支在 darwin 上传了 -DGGML_METAL=ON，编出来却没落到 BIN_DIR ——
+  要么 CMake 没编它，要么后缀又变了（MODULE 目标在 Apple 上是 .so 不是 .dylib，见 T-145）。"
+    fi
+  fi
 
   # ★ 守卫：核心包里**必须**至少有一个 ggml CPU 后端模块。
   #   上面那个 bug 的要害不是"少拷了一个文件"，是**少拷了它还报绿**。
