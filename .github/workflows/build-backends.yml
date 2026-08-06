@@ -442,7 +442,15 @@ jobs:
           rm -rf /tmp/smoke && mkdir -p /tmp/smoke
           tar xzf "${PACK_OUTPUT_DIR}/${pack_id}.tar.gz" -C /tmp/smoke
           cd "/tmp/smoke/${pack_id}"
-          env -u LD_LIBRARY_PATH ./whisper-cli --help > /dev/null
+          # `--help` 走的是 **stderr**（whisper.cpp 的 `whisper_print_usage`），
+          # 只重定向 stdout 的话它会把 100 多行用法信息灌进 job 日志，
+          # 正好淹掉紧接着那段 `ldd` 输出 —— 而 `ldd` 那几行才是这一步要留的证据。
+          # 但**不能直接丢掉**：失败时那段输出就是唯一的线索。所以存文件，只在失败时打。
+          if ! env -u LD_LIBRARY_PATH ./whisper-cli --help > /tmp/smoke.out 2>&1; then
+            echo "::error::whisper-cli 在解压目录里跑不起来 —— 这个包不是自包含的"
+            cat /tmp/smoke.out
+            exit 1
+          fi
           echo "pack is relocatable"
 
           # ★ T-161：加速包还要多答一个问题 —— **那个加速模块自己的依赖解析得了吗**。
