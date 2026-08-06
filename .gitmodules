@@ -10,7 +10,10 @@
 # 初始化：pnpm submodules:init
 #   （= git submodule update --init --depth 1 --recommend-shallow）
 #
-# FFmpeg 不在此列 —— ADR-002 v2 放宽后改用 npm `ffmpeg-static`（GPL-3.0，B 类）。
+# FFmpeg 不在此列 —— 从上游预编译包安装（BtbN / jellyfin-ffmpeg，GPL-3.0，B 类），
+# 见 `vendor/manifests/backends.json` 的 `media-tools-*` 条目。
+# ⚠️ 此前写着「改用 npm `ffmpeg-static`」——那个依赖已在 T-145 整个删除
+#    （实测全仓零 import，纯历史遗留），留着会让人以为 ffmpeg 来自 npm。
 # 若日后恢复商用意图，需按 R-03 §4.5 把 FFmpeg 源码重新加回本文件并自建 LGPL 构建。
 
 [submodule "vendor/whisper.cpp"]
