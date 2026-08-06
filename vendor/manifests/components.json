@@ -27,6 +27,29 @@
       "sha256": "f3bf3b4369a99b54665b0f19b88483b30de27f25963b0414235dea03198515c5"
     },
     {
+      "id": "whispercpp-cpu-macos-arm64",
+      "displayName": "whisper.cpp — CPU + Metal + CoreML/ANE (macOS Apple Silicon)",
+      "displayNameZh": "whisper.cpp · CPU + Metal + 神经引擎（macOS Apple Silicon）",
+      "category": "backend-pack",
+      "pinnedVersion": "v1.9.1",
+      "provenance": {
+        "repoUrl": "https://github.com/ggml-org/whisper.cpp",
+        "releaseUrl": "https://github.com/faorcoek042/openmemo/releases/tag/backend-packs-2026.08.06",
+        "license": "MIT",
+        "licenseUrl": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE",
+        "submodulePath": "vendor/whisper.cpp",
+        "submoduleCommit": "f049fff95a089aa9969deb009cdd4892b3e74916"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "faorcoek042/openmemo",
+        "stableOnly": false
+      },
+      "sizeBytes": 2012304,
+      "sha256": "c473de000a64c509486cd9df48ad28467dcaf604813187b72f7a8815df3393bc",
+      "sha256Provenance": "★ 这是**本项目自己构建**的产物，不是上游发布的 —— 上游 whisper.cpp v1.9.1 的 9 个资产里，Apple 平台只有 xcframework.zip，那是**库**不是可执行程序，而流水线 spawn 的是 whisper-cli 进程。构建来源：.github/workflows/build-backends.yml run 31067558923，whisper.cpp submodule 钉在 f049fff95a089aa9969deb009cdd4892b3e74916（= v1.9.1 发布提交）。摘要三方一致：CI 生成的 manifest fragment、本机对 artifact 的复算、以及**不带任何凭证从 release URL 重新下载后的复算**（2026-08-06）。最低系统版本 macOS 13.3 —— 取自包内 12 个二进制逐个核对的 LC_BUILD_VERSION.minos，不是抄来的；全部二进制带 ad-hoc 签名（Apple Silicon 上未签名的 Mach-O 不会启动）。一个包自带三种后端：CPU、Metal（GGML_METAL_EMBED_LIBRARY，着色器编进二进制）、CoreML/ANE（WHISPER_COREML_ALLOW_FALLBACK，缺 .mlmodelc 时自动回退）。"
+    },
+    {
       "id": "libsimple-linux-x64",
       "displayName": "libsimple Chinese FTS5 tokenizer (Linux x64)",
       "displayNameZh": "中文分词器 libsimple（Linux x64）",

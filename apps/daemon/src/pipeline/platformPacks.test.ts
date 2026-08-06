@@ -315,3 +315,96 @@ describe('T-146 ⑤ importRoots 的路径判断在 Windows 语义下也成立', 
     assert.equal(isWithinImportRoots([POSIX_ROOT], `${POSIX_ROOT}-evil/a.wav`, 'linux'), false);
   });
 });
+
+/* ═════════ ⑥ macOS 这一格：引擎终于有了，别再让它消失 ═════════ */
+
+describe('T-146 ⑥ macOS Apple Silicon 的转写链是完整的', () => {
+  /*
+   * 在 2026-08-06 之前，`ci-runner` 在真 macOS runner 上屏蔽宿主 PATH 之后量到的是
+   * （D-11 §7.1）：19 个包里只有 3 个适用于 macOS，ffmpeg / ffprobe / whisper-cli
+   * **三个全部解析到假二进制** —— 也就是产品会安静地借用宿主 Homebrew 的 ffmpeg，
+   * 自检给 `warn` 不是 `fail`。这条守卫钉住"那一格补上了"，删掉任何一半都会红。
+   */
+  it('★ darwin/arm64 同时有 ffmpeg 和转写引擎（缺任一条都等于不能用）', async () => {
+    const packs = await backendPacks();
+    const mac = packs.filter(
+      (p) => p.os === 'darwin' && p.arch === 'arm64' && p.availability === 'published',
+    );
+    /*
+     * ⚠️ 阈值取 2 而不是 3：ffmpeg 与 yt-dlp 与引擎无关，永远在。
+     * 取 3 的话，**引擎被删掉时先炸的是这条守卫**，而下面那句
+     * 「macOS 上没有任何转写引擎」一个字都印不出来 —— 我在本任务里已经犯过一次
+     * （见本文件 ① 里那段注释）。守卫防的是"筛空了报绿"，不能盖住被检查的量。
+     */
+    assert.ok(mac.length >= 2, `darwin/arm64 的可下载包只有 ${mac.length} 个`);
+
+    const engine = mac.find((p) => p.engine === 'whisper.cpp');
+    assert.ok(engine, 'macOS 上没有任何转写引擎 —— 上游不发 macOS CLI，这条只能靠我们自己发布');
+    const ffmpeg = mac.find((p) => p.engine === 'ffmpeg');
+    assert.ok(ffmpeg, 'macOS 上没有 ffmpeg —— 产品会回退去借宿主的 Homebrew（D-11 §7.1 实测过）');
+
+    /*
+     * `backend: 'cpu'` 不是凑数：`applicability.ts:33` 的 L1 是无条件适用，
+     * 而 L2 要等硬件探针跑过 —— 而 `openmemo-probe` 至今没有分发通道（probeExists 恒 false）。
+     * 把 macOS 唯一的引擎挂在 L2 上，等于让它永远装不上。
+     */
+    assert.equal(engine.backend, 'cpu', 'macOS 的核心引擎包必须是 L1（无条件适用）那一档');
+
+    /*
+     * ★ 自包含判据：ggml 只在 whisper-cli 自己的目录和 cwd 里找后端模块
+     * （ggml/src/ggml-backend-reg.cpp:479-489），所以「只含一个 libggml-<backend>」的
+     * 增量包装上去也不会被加载。macOS 这个包必须**自己带齐**：
+     *   引擎可执行文件 + CPU 后端模块 + Metal 后端模块。
+     */
+    for (const needed of ['whisper-cli', 'libggml-cpu.so', 'libggml-metal.so']) {
+      assert.ok(
+        engine.providesFiles.includes(needed),
+        `${engine.id} 里没有 ${needed} —— 加速包必须自包含，增量包在本产品里找不到`,
+      );
+    }
+  });
+
+  it('下载地址必须是 release 资产（Actions artifact 会过期，等于没有地址）', async () => {
+    const packs = await backendPacks();
+    let checked = 0;
+    for (const p of packs) {
+      for (const f of p.files) {
+        for (const m of f.mirrors) {
+          /*
+           * `.../actions/runs/<id>/artifacts/...` 有保留期（本轮那批是 90 天）。
+           * 指过去的清单条目会在某一天**毫无征兆地**开始 404 —— 而那时没有任何提交发生过。
+           */
+          assert.equal(
+            /\/actions\/(runs|artifacts)\//.test(m.url),
+            false,
+            `${p.id} 指向了会过期的 Actions artifact：${m.url}`,
+          );
+          checked += 1;
+        }
+      }
+    }
+    assert.ok(checked >= 10, `只检查了 ${checked} 个 URL`);
+  });
+
+  it('macOS 包必须声明最低系统版本（它是量出来的，不是可选的装饰）', async () => {
+    const packs = await backendPacks();
+    const mac = packs.filter(
+      (p) => p.os === 'darwin' && p.availability === 'published' && p.engine !== 'yt-dlp',
+    );
+    // 同上：阈值只用来挡"一个都没匹配到"，不能高到盖住被检查的内容。
+    assert.ok(mac.length >= 1, `参与检查的 macOS 包只有 ${mac.length} 个`);
+    for (const p of mac) {
+      /*
+       * 不写死具体版本号（那会在下一次调部署目标时变成噪音），只要求"必须有"。
+       * 理由是 T-146 那次事故：不显式设 CMAKE_OSX_DEPLOYMENT_TARGET 时，产物的
+       * LC_BUILD_VERSION.minos 会取**构建机自己的系统版本**（runner 是 macos-26），
+       * 于是包在低于 macOS 26 的机器上 dyld 直接拒绝加载 ——
+       * 而它会「下载成功 → sha256 通过 → 安装 succeeded → 一执行就死」。
+       */
+      assert.ok(
+        typeof p.requiresDriver?.macosVersion === 'string' && p.requiresDriver.macosVersion.length > 0,
+        `${p.id} 没有声明 requiresDriver.macosVersion —— 用户不会知道自己的 Mac 太旧`,
+      );
+    }
+  });
+});

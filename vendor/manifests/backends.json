@@ -47,6 +47,61 @@
     },
     {
       "schemaVersion": 1,
+      "id": "whispercpp-cpu-macos-arm64",
+      "engine": "whisper.cpp",
+      "engineVersion": "v1.9.1",
+      "ggmlAbi": "0.15.1",
+      "backend": "cpu",
+      "tier": "downloadable",
+      "os": "darwin",
+      "arch": "arm64",
+      "displayName": "whisper.cpp — CPU + Metal + CoreML/ANE (macOS Apple Silicon)",
+      "displayNameZh": "whisper.cpp · CPU + Metal + 神经引擎（macOS Apple Silicon）",
+      "files": [
+        {
+          "role": "archive",
+          "name": "whispercpp-cpu-macos-arm64.tar.gz",
+          "sizeBytes": 2012304,
+          "sha256": "c473de000a64c509486cd9df48ad28467dcaf604813187b72f7a8815df3393bc",
+          "unpack": "tar.gz",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/backend-packs-2026.08.06/whispercpp-cpu-macos-arm64.tar.gz",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 2012304,
+      "requiresDriver": {
+        "macosVersion": "13.3"
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE"
+      },
+      "providesFiles": [
+        "libggml-base.0.15.1.dylib",
+        "libggml-blas.so",
+        "libggml-cpu.so",
+        "libggml-metal.so",
+        "libggml.0.15.1.dylib",
+        "libparakeet.1.9.1.dylib",
+        "libwhisper.1.9.1.dylib",
+        "libwhisper.coreml.dylib",
+        "whisper-bench",
+        "whisper-cli",
+        "whisper-server",
+        "whisper-vad-speech-segments"
+      ],
+      "priority": 10,
+      "benchmark": null,
+      "catalogVersion": "2026.08.06"
+    },
+    {
+      "schemaVersion": 1,
       "id": "whispercpp-cpu-win-x64",
       "engine": "whisper.cpp",
       "engineVersion": "v1.9.1",
