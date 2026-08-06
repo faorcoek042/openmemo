@@ -60,10 +60,16 @@ export {
   PROXY_SCHEMES,
   ffmpegProxySupport,
   proxyEnv,
-  redactProxyUrl,
   validateProxyUrl,
   ytDlpProxyArgs,
 } from './subprocess/proxy.js';
+/*
+ * `redactProxyUrl` 转发 shared 那份，**不是**本包自己实现的。
+ * 本包此前有一份输出不同的副本（见 `subprocess/proxy.ts` 里那段说明）；
+ * 保留这个转发是为了 `import { redactProxyUrl } from '@openmemo/pipeline'`
+ * 仍然拿得到东西，且拿到的一定是唯一那份。
+ */
+export { redactProxyUrl } from '@openmemo/shared';
 export type { ProxyConfig, ProxyScheme, ProxyValidation } from './subprocess/proxy.js';
 
 // -- tools ---------------------------------------------------------------------------------

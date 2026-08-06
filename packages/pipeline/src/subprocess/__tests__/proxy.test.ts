@@ -7,13 +7,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import {
-  ffmpegProxySupport,
-  proxyEnv,
-  redactProxyUrl,
-  validateProxyUrl,
-  ytDlpProxyArgs,
-} from '../proxy.js';
+// ⚠️ `redactProxyUrl` **刻意从包的公开出口 index.js 取**，不从 `../proxy.js` 取：
+// 它现在是转发 `@openmemo/shared` 的那一份，本包内已无实现。
+// 从 index 取才能钉住"外面 import @openmemo/pipeline 拿到的是权威那份"。
+import { redactProxyUrl } from '../../index.js';
+import { ffmpegProxySupport, proxyEnv, validateProxyUrl, ytDlpProxyArgs } from '../proxy.js';
 
 describe('validateProxyUrl', () => {
   it('accepts http and every SOCKS flavour', () => {
@@ -117,8 +115,36 @@ describe('ytDlpProxyArgs', () => {
   });
 });
 
-describe('redactProxyUrl', () => {
-  it('strips credentials before they reach a log', () => {
-    assert.equal(redactProxyUrl('http://user:secret@127.0.0.1:7890'), 'http://***@127.0.0.1:7890');
+describe('redactProxyUrl —— 现在转发的是 @openmemo/shared 那份', () => {
+  /*
+   * ⚠️ **旧断言钉住的是一份分叉的副本**（HANDOFF ⑤A-15 同族）。
+   * 本包此前有一份自己的 `redactProxyUrl`，与 shared 那份输出不同，
+   * 而三个真消费方（daemon rest/proxy、daemon selfcheck、downloader proxy）
+   * import 的**全都是 shared 那份** —— 也就是说这条测试一直在钉一段
+   * 生产里没人跑的代码，同时让"有两份实现"这件事看起来是被测试覆盖的。
+   *
+   * 旧断言写的是：redactProxyUrl('http://user:secret@127.0.0.1:7890')
+   *                 === 'http://***@127.0.0.1:7890'
+   * 权威那份给的是 'http://***:***@127.0.0.1:7890/'（密码位也打码、保留末尾斜杠）。
+   * 这里改成断言权威值，并补上当初两份分叉得最厉害的那两个输入。
+   */
+  it('凭据在进日志之前被抹掉（值取自 @openmemo/shared 的权威实现）', () => {
+    assert.equal(
+      redactProxyUrl('http://user:secret@127.0.0.1:7890'),
+      'http://***:***@127.0.0.1:7890/',
+    );
+  });
+
+  it('★ 只有密码没有用户名时，端口不许丢 —— 旧的本地副本会丢', () => {
+    // 旧副本：'http://***@h'（:80 被 URL 规范化吃掉，且看起来像"只有用户名"）
+    assert.equal(redactProxyUrl('http://:pass@h:80'), 'http://:***@h/');
+  });
+
+  it('★ 空值返回 null，不返回 "<invalid proxy url>" —— 没配代理不是配错了代理', () => {
+    // 旧副本对 '' / null 一律给 '<invalid proxy url>'，那会让"未配置"显示成"配错了"。
+    assert.equal(redactProxyUrl(''), null);
+    assert.equal(redactProxyUrl(null), null);
+    // 真的写错了才给占位符
+    assert.equal(redactProxyUrl('not a url'), '<invalid proxy url>');
   });
 });

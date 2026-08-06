@@ -174,16 +174,24 @@ export function ffmpegProxySupport(config: ProxyConfig | null): {
   return { env: proxyEnv(config), supported: true, reason: null };
 }
 
-/** Redact credentials before a proxy URL reaches a log or an error message. */
-export function redactProxyUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    if (u.username !== '' || u.password !== '') {
-      u.username = '***';
-      u.password = '';
-    }
-    return u.href.replace(/\/$/, '');
-  } catch {
-    return '<invalid proxy url>';
-  }
-}
+/*
+ * `redactProxyUrl` 此前**在这里有一份本地实现**，与 `@openmemo/shared` 那份
+ * （`packages/shared/src/proxy.ts`）输出不同。`[实测]` 7 个输入里 6 个不一样：
+ *
+ *   http://user:pass@proxy:3128  → 这份 `http://***@proxy:3128`
+ *                                  shared `http://***:***@proxy:3128/`
+ *   http://:pass@h:80            → 这份 `http://***@h`   ← 端口没了，且看起来像"只有用户名"
+ *                                  shared `http://:***@h/`
+ *   ''                           → 这份 `<invalid proxy url>` / shared `null`
+ *
+ * `[实测]` 这份**没有任何生产调用方** —— 三个真消费方
+ * （`apps/daemon/src/http/rest/proxy.ts`、`.../selfcheck.ts`、
+ * `packages/downloader/src/proxy.ts`）**全部** import 的是 shared 那份，
+ * 只有本包的测试在用它。所以这里是直接删掉、由 `index.ts` 转发 shared 的那份，
+ * 而不是去挑"哪份对"——挑哪份对是个产品决定，而这里根本没有第二个答案在生产里跑。
+ *
+ * ⚠️ 顺带记下**没动**的一处：本文件还导出一个 `ProxyConfig`（`{url, noProxy?}`），
+ * 与 shared 的 `ProxyConfig`（`{mode, httpProxy?, httpsProxy?, socks5?, noProxy?}`）
+ * 同名不同形状。那个是真在用的（`proxyEnv`/`ytDlpProxyArgs` 的入参），
+ * 改名要动 daemon，不在本轮范围内 —— 已在 inbox 报出。
+ */
