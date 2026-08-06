@@ -616,3 +616,145 @@ CI 上的反向断言（三平台）：
 
 第 4 条修好之后，安装耗时立刻变得可信（14.1s / 52.3s / 28.1s），
 而第一版全是 `1.0s`——**正好是轮询间隔**。
+
+---
+
+# §8 ★ 「产物被构建机的版本钉死」—— 同一族，三个平台各有一条
+
+> **本节由 `pack-publish` 追加（T-146，2026-08-06）。** 正文其余部分属 `ci-runner`，我一个字没改。
+> 起因：发布 macOS 包之前解包核对 `LC_BUILD_VERSION`，发现产物被钉在了构建机自己的系统版本上。
+> Manager 指出这可能是一族而不是一条，让顺着查 Linux —— 查了，**三个平台各有一条**。
+
+## 8.0 这一族的共同形状（**这一条才是要记住的**）
+
+> **构建机总是那个"最新、装得最全"的环境，而用户的机器不是。**
+> 凡是「不显式指定就取构建机当前值」的东西，都会把构建机的新度**焊进产物**，
+> 而后果一律是**在用户机器上才显形**，且**一律不报错**：
+> 装得上、校验过、自检看得见的那一层全绿，只有真正去执行时才死。
+>
+> 判据不是"能不能编出来"，是**"编出来的东西声明了什么下限"**。
+> 这三条都不是靠读代码发现的，是**解开产物去读它的元数据**发现的。
+
+| 平台 | 被钉死的东西 | 谁定的 | 后果 |
+|---|---|---|---|
+| macOS | `LC_BUILD_VERSION.minos` | `CMAKE_OSX_DEPLOYMENT_TARGET` 缺省 = 构建机系统版本 | 低版本 macOS 上 **dyld 直接拒绝加载** |
+| Linux | 最高 `GLIBC_x.y` 符号版本 | 构建机的 glibc / GCC 版本 | 老发行版上 **`dlopen` 失败** |
+| Windows | `MSVCP140` / `VCRUNTIME140*` 导入 | MSVC 工具链 | 没装 VC++ 可再发行组件的机器上**加载失败** |
+
+## 8.1 macOS：`minos` = 构建机的系统版本（**已修**）
+
+`[实测]` 解开 `whispercpp-cpu-macos-arm64.tar.gz`，逐个二进制读 `LC_BUILD_VERSION`：
+
+```
+修复前：12 个二进制全部  minos = 26.0.0   sdk = 26.5.0
+修复后：12 个二进制全部  minos = 13.3.0   sdk = 26.5.0
+```
+
+runner 是 `macos-26`，而 CMake 不显式设部署目标时就取构建机自己的版本。
+→ 那个包**只能在 macOS 26 上跑**，而 macOS 26 是最新版。
+症状：下载成功 → sha256 通过 → 安装 `succeeded` → **一执行就死**，
+而 selfcheck 只看得到"文件在"。
+
+修法：`-DCMAKE_OSX_DEPLOYMENT_TARGET=13.3`（`scripts/build-whisper.sh`）。
+**13.3 不是拍的**：上游自己的 `vendor/whisper.cpp/build-xcframework.sh:5` 写着
+`MACOS_MIN_OS_VERSION=13.3` —— 同一份代码、上游测过的下限。
+
+## 8.2 🔴 Linux：`whispercpp-vulkan-linux-x64` 需要 **GLIBC_2.38**（**未修**）
+
+`[实测]` 三个 Linux 包逐个 ELF 跑 `objdump -T`，取最高 `GLIBC_x.y`：
+
+| 包 | 构建机（§2.1 矩阵） | 最高 GLIBC 需求 | 判定 |
+|---|---|---|---|
+| `whispercpp-cpu-linux-x64` | **ubuntu-22.04** | **2.34** | ✅ Ubuntu 22.04 / Debian 12 都能跑 |
+| `whispercpp-cuda-linux-x64` | ubuntu-24.04 | 2.27 | ✅ **碰巧**安全（只有一个 `.so`，用到的符号少） |
+| `whispercpp-vulkan-linux-x64` | ubuntu-24.04 | **2.38** | 🔴 **Ubuntu 22.04(2.35) / Debian 12(2.36) 上加载失败** |
+
+**具体是哪三个符号**（这让它不是推测）：
+
+```
+(GLIBC_2.38) __isoc23_strtoul
+(GLIBC_2.38) __isoc23_strtoull
+(GLIBC_2.38) __isoc23_strtol
+```
+
+C23 的 `strtol` 家族 —— GCC 13+ / glibc 2.38 起，编译器会把普通的 `strtol`
+**自动重定向**到 `__isoc23_*` 变体。**源码一个字没改，换台机器编就多了一条运行时下限。**
+
+发行版对照：`Ubuntu 22.04 = 2.35` · `Debian 12 = 2.36` · `Ubuntu 24.04 = 2.39` · `Debian 13 = 2.41`。
+
+### 成因可以指名道姓，就在本文件里
+
+- §2.1 的矩阵注释写着 `linux-x64-cpu` 「**刻意留 22.04 = glibc 基线**」；
+- §4.2 记录 `linux-x64-vulkan` 因为 jammy 没有 `glslc` 包而**从 22.04 改到 24.04**。
+
+**那次改动解决了编译问题，同时把运行时下限从 2.34 抬到了 2.38 —— 而没有人注意到。**
+基线是刻意留的，偏离它却是顺手的：**一条靠"记得别动它"维持的基线，等价于一条迟早会被绕过的基线。**
+
+### 为什么它比 macOS 那条更隐蔽
+
+`GGML_BACKEND_DL=ON` 下，`dlopen` 失败**不是错误** —— 只是"这个后端没注册上"。
+whisper 会照常用 CPU 跑完，**用户只会觉得"装了 Vulkan 包但没变快"**。
+没有任何一处会说话：安装记录是成功的，sha256 是对的，自检里也没有对应的检查项。
+
+### ⚠️ 给下一个想接这个包的人
+
+`whispercpp-vulkan-linux-x64` **目前不在 `backends.json` 里**（另有原因，见 §8.4），
+所以这条**眼下不伤用户**。但要接它之前，**必须先做下面二选一**：
+
+1. **把 `linux-x64-vulkan` / `linux-x64-cuda` 两条构建腿挪回 `ubuntu-22.04`**
+   —— 但 jammy 没有 `glslc`（§4.2 就是为此才挪走的），得另找 Vulkan SDK 的装法；**或者**
+2. **加一条运行期检测把这件事说出来** —— 装之前比对本机 glibc 与包声明的下限，
+   或装完真的 `dlopen` 一次并把结果报进 selfcheck。
+
+**不要只看到"这个包能用"就接进去** —— 在 24.04 的机器上它确实能用，
+而那正是这类 bug 每次都能溜过去的原因。
+
+## 8.3 🟡 Windows：所有自建原生产物都依赖 VC++ 运行时（**未修**）
+
+`[实测]` `objdump -p ggml-vulkan.dll`：
+
+```
+DLL Name: ggml-base.dll          ← ★ 跨包依赖，见 §8.4
+DLL Name: vulkan-1.dll           （随显卡驱动安装，正常）
+DLL Name: MSVCP140.dll
+DLL Name: VCRUNTIME140.dll
+DLL Name: VCRUNTIME140_1.dll     ← ★ VC++ 2015-2022 可再发行组件，干净 Windows 不自带
+DLL Name: api-ms-win-crt-*.dll   （Universal CRT，Win10+ 自带，正常）
+DLL Name: KERNEL32.dll
+```
+
+**这与 `win-fixes` 对 `simple.dll` 的实测结论是同一条**（他标注了「runner 一定有，
+用户机器不一定」）。两边各查到一半，拼起来是：
+**本产品所有自建的 Windows 原生产物都依赖 VC++ 运行时，而产品没有任何地方检查它在不在。**
+
+## 8.4 🔴 顺带证实：**纯增量的加速包在本产品里结构上不可用**
+
+三条**独立**证据指向同一结论 —— **加速包必须自包含**：
+
+1. **ggml 只在两个地方找后端模块**（`vendor/whisper.cpp/ggml/src/ggml-backend-reg.cpp:479-489`）：
+   `get_executable_path()`（whisper-cli 自己的目录）与 `fs::current_path()`。
+   而安装器把每个包解到 `by-name/backend/<各自的归档名>/` —— 增量包的
+   `libggml-vulkan.so` 与 whisper-cli **永远不在同一个目录**；cwd 是 job 的临时目录，也不是。
+   `GGML_BACKEND_PATH` 环境变量存在，但 `packages/pipeline/src/subprocess/runner.ts:92-94`
+   的 env 白名单里**没有它**。
+2. **模块自己也解析不了依赖**：`ggml-vulkan.dll` 的导入表里有 `ggml-base.dll`，
+   而它在**另一个包的目录里**。也就是说不只是"找不到这个模块"，
+   是"**就算找到了，模块自己也加载不起来**"。
+3. **反证**：目录里唯一**能用**的加速包 `whispercpp-cuda-12.4-win-x64`，
+   它的 `providesFiles` 是 `["ggml-cuda.dll", "whisper-cli.exe"]` —— **它自带 whisper-cli**。
+
+而 `scripts/build-whisper.sh` 里那句设计注释写的是
+「L2 accel = **ONLY** the single ggml-`<backend>` shared library … Keeping it to just the
+delta is what makes requirement 2.1 cheap」—— **写着 A，实现是 B，从来没人对过**。
+该不一致已原样写进脚本注释（不是绕过它）。
+
+**macOS 的 Metal 是这一族里唯一能就地解决的一格**：`GGML_METAL_EMBED_LIBRARY=ON`
+把着色器编进二进制、不需要伴随资源文件，所以只要跟着核心包一起出厂位置就对了 ——
+这也正是 `build-backends.yml` 自己的注释早就写着的「Metal … 的 pack 其实装在核心包里」，
+以及 `packages/runtime/src/backends/applicability.ts:36-42` 那段
+「Metal 看起来像 L2、行为像 L1」的依据。已实施：macOS 核心包现在自带
+`libggml-cpu.so` + `libggml-metal.so` + `libwhisper.coreml.dylib`。
+
+→ **Linux/Windows 的 Vulkan 与 CUDA 增量包因此暂不进目录**（§8.2 那条 glibc 也就暂时不伤用户）。
+要接它们，得先让加速包自包含，或者补一条"把后端模块搬到引擎目录旁边"的机制
+（`materializeSqliteExtensions()` 对 SQLite 扩展做的正是这件事，后端模块没有对应物）。
