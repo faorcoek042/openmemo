@@ -17,6 +17,7 @@ import { TagEditor } from './TagEditor';
 import { RetranscribeButton } from './RetranscribeButton';
 import { NoteEditor } from './NoteEditor';
 import { ExportMenu } from './ExportMenu';
+import { NoteActionsMenu } from './NoteActionsMenu';
 import { TranscriptList } from '../transcript';
 import { PlayerBar } from '../player';
 import { usePlayerStore } from '../../lib/stores/player.store';
@@ -73,9 +74,12 @@ export default function NoteDetailPage() {
    * 判据是 architect 立的那条：**用户看到的每一个具体东西，要么来自后端，要么根本不提。**
    * 一条编出来的波形不是"占位符"，它是在对用户断言这段音频长这样。
    *
-   * ⚠️ daemon 目前不产 peaks，所以这条 fetch 分支在今天的产品里走不到 ——
-   * 这是**如实的空**，不是把假数据留着装满。要让它有内容，得让 daemon 真的用 ffmpeg
-   * 预生成 `.ompk`（见回执 §A3 的取舍）。`decodeOmpk` 早就写好了，这里是它第一个调用方。
+   * ✅ **daemon 现在真的产 peaks 了**（T-151 ③：录音路径 `ws/recorder.ts`，
+   * 导入/转写路径 `jobs/runners/transcribe.ts`；后者的接线在 `b97bed6` 之前一直没被提交，
+   * 所以有一段时间只有浏览器录音有波形）。此处此前写的是
+   * 「daemon 目前不产 peaks，所以这条 fetch 分支在今天的产品里走不到」——
+   * **已过期，保留这句是为了让下一个人知道这里改过。**
+   * `decodeOmpk` 早就写好了，这里是它第一个调用方，现在它真的会被走到。
    */
   const [peaks, setPeaks] = useState<DecodedPeaks | null>(null);
   const peaksUrl = peaksAsset ? (peaksAsset.url ?? mediaUrl(peaksAsset.uid)) : null;
@@ -137,6 +141,11 @@ export default function NoteDetailPage() {
         <span className="flex items-center gap-2">
           <TagEditor noteUid={n.uid} tags={arr(n.tags)} />
           <ExportMenu note={n} />
+          {/*
+            重命名 / 删除（T-155）。三条 mutation 早就写好了，此前**全仓零调用方** ——
+            一条笔记建出来就删不掉、改不了名，而侧栏的文件夹反倒有删除按钮。
+          */}
+          <NoteActionsMenu note={n} />
         </span>
       </header>
 

@@ -76,6 +76,10 @@
     "star": "Star",
     "unstar": "Unstar",
     "rename": "Rename",
+    "actions": "More actions",
+    "delete": "Delete",
+    "deleteConfirm": "Delete \"{{title}}\"?",
+    "deleteHint": "It will disappear from lists and search. There is no restore action in the UI today.",
     "export": "Export",
     "exportFormats": {
       "txt": "Plain text (.txt)",

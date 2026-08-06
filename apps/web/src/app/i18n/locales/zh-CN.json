@@ -76,6 +76,10 @@
     "star": "加星标",
     "unstar": "取消星标",
     "rename": "重命名",
+    "actions": "更多操作",
+    "delete": "删除",
+    "deleteConfirm": "删除「{{title}}」？",
+    "deleteHint": "删除后它不再出现在列表与搜索里；当前界面上没有恢复入口。",
     "export": "导出",
     "exportFormats": {
       "txt": "纯文本 (.txt)",

@@ -160,13 +160,28 @@ export function useDeleteFolderMutation() {
   });
 }
 
-/** 把笔记移到某个文件夹（`null` = 移出到未分类）。 */
+/**
+ * 把笔记移到某个文件夹（`null` = 移出到未分类）。
+ *
+ * ⚠️ **端点是 `PUT /api/notes/:uid/folder`，不是 `PATCH /api/notes/:uid`**（T-155 订正）。
+ *
+ * 这里原来发的是后者。它不会报错 —— `rest/content.ts` 的 PATCH 处理器只认
+ * `title` / `bodyJson` / `bodyText` / `summaryMd` / `language` / `anchors`，
+ * **`folderUid` 连读都不读**，然后照样回 `200 {ok:true}`。
+ * 也就是说这个 hook 一旦有人接上，用户点"移动到某文件夹"会看到成功、笔记原地不动。
+ *
+ * 它能错这么久是因为它**零调用方**（与 `useDeleteNoteMutation` / `useRenameNoteMutation`
+ * 同一批，见 `features/notes/NoteActionsMenu.tsx` 的文件头）——
+ * 一条没人走的路上的坑，不会有人掉进去，也就不会有人发现。
+ * 真实端点见 `apps/daemon/src/http/rest/organize.ts:419`（`PUT /api/notes/:uid/folder`，
+ * body `{folderUid}`，目标文件夹不存在时回 400 `FOLDER_NOT_FOUND`）。
+ */
 export function useMoveNoteMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (v: { noteUid: string; folderUid: string | null }) =>
-      api<{ ok: true }>('notes', `/notes/${v.noteUid}`, {
-        method: 'PATCH',
+      api<{ uid: string; folderUid: string | null }>('notes', `/notes/${v.noteUid}/folder`, {
+        method: 'PUT',
         body: { folderUid: v.folderUid },
       }),
     onSuccess: (_d, v) => {

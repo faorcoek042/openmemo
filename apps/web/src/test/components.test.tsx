@@ -20,6 +20,8 @@ import assert from 'node:assert/strict';
 import { useLocation } from 'react-router';
 
 import { TagEditor } from '../features/notes/TagEditor';
+import { NoteActionsMenu } from '../features/notes/NoteActionsMenu';
+import { useMoveNoteMutation } from '../features/folders/api';
 import { SearchBox } from '../features/search/SearchBox';
 import { JobList } from '../features/tasks/JobList';
 import { LlmSettingsSection } from '../components/common/llm/LlmSettingsSection';
@@ -5970,6 +5972,131 @@ describe('T-150 ② 转写 Tab 三分组（D-10 #9 #10 #29）', () => {
       false,
       '判据成了"是不是 Mac"而不是"这个模型有没有 encoder" —— 勾了会下载一个不存在的文件',
     );
+    r.unmount();
+  });
+});
+
+/* ───────────────── T-155 笔记的删除 / 重命名 —— 三条 mutation 的第一个调用方 ───────────────── */
+
+/**
+ * `useDeleteNoteMutation` / `useRenameNoteMutation` / `useMoveNoteMutation` 三条早就写好了，
+ * daemon 端点也都是真的，**但全仓零调用方** —— 一条笔记建出来就删不掉、改不了名，
+ * 而侧栏的「文件夹」反倒有删除按钮。连文案都写好了：`notes.rename` 在两份 locale 里
+ * 躺了很多轮，零处 `t()` 读它。
+ *
+ * ★ 断言钉的是**请求真的发出去了**（`calls` 里有那一条），不是"菜单里有个删除字样"。
+ *   后者在缺陷状态下也能绿：把 onClick 换成空函数，菜单照样长那样。
+ */
+describe('T-155 笔记的删除 / 重命名入口', () => {
+  const NOTE = { uid: 'n1', title: '一条笔记' };
+  /*
+   * `surfaceState()` 会打一次 `GET /health` 探活（判断 daemon 在不在），
+   * 它与"用户点了什么"无关。滤掉它，否则断言钉的就不是本组件的行为了。
+   * **只滤这一条**：滤 `startsWith('/notes')` 之外的一切会把真正该被看见的请求也藏起来。
+   */
+  const acted = (calls: { path: string; method: string }[]) =>
+    calls.filter((c) => c.path !== '/health');
+
+  test('★ 点「删除」→ 二次确认 → 真的发出 DELETE /notes/:uid', async () => {
+    const { calls } = stubApi({ 'DELETE /notes/n1': { ok: true } });
+    const r = await render(<NoteActionsMenu note={NOTE} />);
+
+    await click(r.container.querySelector('[data-testid="note-actions"]') as HTMLElement);
+    await click(r.container.querySelector('[data-testid="note-delete"]') as HTMLElement);
+
+    // 确认之前一个请求都不许发 —— 否则"二次确认"只是装饰
+    assert.equal(acted(calls).length, 0, '还没确认就已经删了');
+
+    await click(r.container.querySelector('[data-testid="note-delete-confirm"]') as HTMLElement);
+    await r.flush();
+
+    assert.deepEqual(
+      acted(calls).map((c) => `${c.method} ${c.path}`),
+      ['DELETE /notes/n1'],
+    );
+    r.unmount();
+  });
+
+  test('★ 确认框里必须出现这条笔记的标题 —— 删错东西是不可撤销的', async () => {
+    stubApi({});
+    const r = await render(<NoteActionsMenu note={NOTE} />);
+    await click(r.container.querySelector('[data-testid="note-actions"]') as HTMLElement);
+    await click(r.container.querySelector('[data-testid="note-delete"]') as HTMLElement);
+    assert.equal(text(r.container).includes('一条笔记'), true);
+    r.unmount();
+  });
+
+  test('★ 重命名：输入新标题回车 → PATCH /notes/:uid 且 body.title 是新值', async () => {
+    const { calls } = stubApi({ 'PATCH /notes/n1': { uid: 'n1', title: '改过的名字' } });
+    const r = await render(<NoteActionsMenu note={NOTE} />);
+
+    await click(r.container.querySelector('[data-testid="note-actions"]') as HTMLElement);
+    await click(r.container.querySelector('[data-testid="note-rename"]') as HTMLElement);
+    const input = r.container.querySelector('[data-testid="note-rename-input"]') as HTMLInputElement;
+    assert.ok(input, '点重命名后应出现输入框');
+    assert.equal(input.value, '一条笔记', '输入框初值必须是当前标题，否则用户得从零打一遍');
+
+    await type(input, '改过的名字');
+    await pressKey(input, 'Enter');
+    await r.flush();
+
+    const sent = acted(calls);
+    assert.equal(sent.length, 1, `期望恰好一条请求，实际：${JSON.stringify(sent)}`);
+    assert.equal(sent[0]!.method, 'PATCH');
+    assert.equal(sent[0]!.path, '/notes/n1');
+    assert.deepEqual((sent[0] as { body?: unknown }).body, { title: '改过的名字' });
+    r.unmount();
+  });
+
+  test('标题没改 / 改成空白 → 不发请求（那是误操作，不是"把标题清空"）', async () => {
+    const { calls } = stubApi({ 'PATCH /notes/n1': { ok: true } });
+    const r = await render(<NoteActionsMenu note={NOTE} />);
+    await click(r.container.querySelector('[data-testid="note-actions"]') as HTMLElement);
+    await click(r.container.querySelector('[data-testid="note-rename"]') as HTMLElement);
+    const input = r.container.querySelector('[data-testid="note-rename-input"]') as HTMLInputElement;
+    await type(input, '   ');
+    await pressKey(input, 'Enter');
+    await r.flush();
+    assert.equal(acted(calls).length, 0);
+    r.unmount();
+  });
+
+  test('前提自检：不点那个「⋯」按钮时，菜单里的两项一个都不在 DOM 上', async () => {
+    stubApi({});
+    const r = await render(<NoteActionsMenu note={NOTE} />);
+    assert.equal(!!r.container.querySelector('[data-testid="note-delete"]'), false);
+    assert.equal(!!r.container.querySelector('[data-testid="note-rename"]'), false);
+    r.unmount();
+  });
+
+  /**
+   * ★ 这条钉的是 `useMoveNoteMutation` 的端点。
+   *
+   * 它原来发 `PATCH /api/notes/:uid {folderUid}` —— 而 `rest/content.ts` 的 PATCH
+   * 处理器**根本不读 `folderUid`**（只认 title/bodyJson/bodyText/summaryMd/language/anchors），
+   * 然后照样回 200 `{ok:true}`。真实端点是 `PUT /api/notes/:uid/folder`
+   * （`rest/organize.ts:419`）。**用一个最小组件把 hook 真的调一次**，
+   * 而不是去 grep 源码里的字符串 —— 后者钉的是形式。
+   */
+  test('★ 移动笔记打的是 PUT /notes/:uid/folder，不是 PATCH /notes/:uid', async () => {
+    const { calls } = stubApi({ 'PUT /notes/n1/folder': { uid: 'n1', folderUid: 'f1' } });
+    function Probe() {
+      const move = useMoveNoteMutation();
+      return (
+        <button type="button" onClick={() => move.mutate({ noteUid: 'n1', folderUid: 'f1' })}>
+          移动
+        </button>
+      );
+    }
+    const r = await render(<Probe />);
+    await click(buttonByText(r.container, '移动'));
+    await r.flush();
+    const sent = acted(calls);
+    assert.deepEqual(
+      sent.map((c) => `${c.method} ${c.path}`),
+      ['PUT /notes/n1/folder'],
+    );
+    assert.deepEqual((sent[0] as { body?: unknown }).body, { folderUid: 'f1' });
     r.unmount();
   });
 });
