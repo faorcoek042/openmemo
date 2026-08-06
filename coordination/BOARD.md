@@ -3,6 +3,11 @@
 > 仅 Meta Manager 写。Agent 只读。进展写到自己的 `coordination/inbox/<name>.md`。
 
 ## 已生效的决策（**所有 agent 必读**）
+
+> ⚠️ 此前本清单只列到 ADR-004。实测 `docs/adr/` 现有 **16 份**，且其中两条已被后续 ADR 收窄：
+> - **ADR-003 决策 2**（自建 whisper.cpp CI）适用范围已被 **ADR-015** 收窄为「仅 macOS/Vulkan/ROCm 按需」
+> - **ADR-004** 的「可导入任意 HF GGUF」已被 `rest/models.ts:728-733` 的硬 501 推翻
+> - 另有 **ADR-015 上游预编译优先**、**ADR-016 用户范围裁剪**（停 SenseVoice / AMD ASR 自建 CI）
 - `docs/adr/ADR-001` 依赖引入三分法（submodule / 包管理器 / 运行时下载）
 - `docs/adr/ADR-002` 许可证政策 **v2 = 个人自用档**（用户已定：仅自用 + 直接内置 yt-dlp）
 - `docs/adr/ADR-003` **进程模型 = 本地 daemon + 浏览器 UI（web-first）**、GPU 后端策略、ad-hoc 签名
@@ -10,7 +15,10 @@
 
 ## 仓库布局（Manager 定，不得擅改）
 ```
-apps/daemon/      Node.js + TS 本地服务（127.0.0.1 ONLY）
+apps/daemon/      Node.js + TS 本地服务（默认 0.0.0.0，可用 OPENMEMO_HOST 收回回环）
+
+> 📝 **此前写着「127.0.0.1 ONLY」**。已被用户 2026-08 的决定推翻，
+> 见 `docs/SECURITY.md` §0 与 `apps/daemon/src/bootstrap/single-instance.ts` 的 `BIND_HOST`。
 apps/web/         React SPA —— 唯一 UI
 packages/shared/  共享契约：API schema + 数据模型 + TS 类型
 packages/runtime/ 硬件探测 + GPU 后端包管理
@@ -30,7 +38,10 @@ scripts/          构建脚本
 | T-003 | 开源选型 + 许可证 | `oss-scout` | `R-03-oss-modules.md` | 🟢 |
 | T-004 | 模型管理方案 | `model-mgmt` | `R-04-model-mgmt.md` | 🟢 |
 
-## Wave 2 — 架构与骨架（进行中，4 并发跑满）
+## Wave 2 — 架构与骨架 ~~（进行中，4 并发跑满）~~ → ✅ **早已完成（本表停在 2026-08-02）**
+
+> 📝 **此前 T-010…T-013 全标 🔵 进行中。** 实测四项交付物均已存在，项目已跑到 **T-153**，
+> `coordination/inbox/` 有 32 份报告。**本表仅供追溯。**
 | ID | 任务 | agent | 交付物 | 状态 |
 |----|------|-------|--------|------|
 | T-010 | 总体架构 + 数据模型 | `architect` 🆕 | `docs/design/D-01`, `D-02` | 🔵 |
@@ -46,7 +57,10 @@ scripts/          构建脚本
 | `gpu-runtime` | `packages/runtime/src/**`、`scripts/**`、`.github/workflows/**`、`docs/design/D-04*` |
 | `model-mgmt` | `packages/shared/src/**`、`packages/downloader/src/**`、`vendor/manifests/*.json`、`docs/design/D-03*` |
 
-## Wave 3 — 开发（待启动）
+## Wave 3 — 开发 ~~（待启动）~~ → ✅ **全部已交付（本表停在 2026-08-02）**
+
+> 📝 **此前 T-020…T-024 全标 ⚪ 待启动。** 实测 `apps/web/src/features/` 15 个 feature、
+> `packages/mindmap/`、`.github/workflows/` 已就位。**本表仅供追溯。**
 | ID | 任务 | 状态 |
 |----|------|------|
 | T-020 | 转写流水线（F1/F2/F3） | ⚪ |

@@ -37,6 +37,10 @@ input: R-01 §B6/§B7, R-02 全文, R-04 §7
 
 ## 决策 2：ASR 引擎 = whisper.cpp 自建 CI（**批准**）
 
+> ⚠️ **适用范围已被 `ADR-015-upstream-first.md:7,47-51` 收窄**：manifest 一律填上游地址，
+> 自建 whisper.cpp CI 仅在用户实际需要 macOS / Vulkan / ROCm 时才启用。
+> **此前本决策要求无条件自建。**
+
 `gpu-runtime` 的核心请求（约 1 人周）**批准**。依据：官方 v1.9.1 release **无 macOS CLI、
 无 Vulkan、无 ROCm**（已核实 `release.yml`），不自建则章程要求 2.1 在 mac 上直接不成立。
 

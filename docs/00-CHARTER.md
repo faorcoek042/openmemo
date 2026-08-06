@@ -14,6 +14,13 @@
 | F5 | 笔记管理 | 列表/详情/搜索/标签；转写稿与原音频时间轴联动 |
 
 ## 3. 平台与硬件矩阵（硬性要求）
+
+> ⚠️ **产物现状（2026-08-06 实测 `vendor/manifests/backends.json`）**：上表有 **5 行在产物层面为空**。
+> 已交付的只有 macOS-arm64 CPU（含 Metal/CoreML 编进核心包）、Linux x64 CPU、Win x64 CPU、Win x64 CUDA 12.4、Win x64 Vulkan。
+> Windows+AMD（DirectML）、Linux+NVIDIA(CUDA)、Linux+AMD(ROCm) **无任何产物**；
+> `linux-arm64` / `macos-x64` / `linux-x64-rocm` 已被用户 2026-08-05 明确裁掉。
+> ADR-016 已停「AMD ASR 自建 CI」，**所以补产物这条路已被砍，剩下的只能是改口径** ——
+> 这几行要么标注「规划中，v1 无产物」，要么下调。**不能继续对外宣称「真 AMD 支持」。**
 必须在以下组合可用，且**加速后端由网页 UI 检测并配置**，不要求用户碰命令行：
 
 | 平台 | 加速后端 |

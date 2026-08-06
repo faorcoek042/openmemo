@@ -67,3 +67,7 @@ Gemma 等权重受限的模型 → 走"用户自行接受上游条款后下载"�
 3. 真实 Linux 支持（memo.ac 无）
 4. 真实 AMD 支持（memo.ac 首页宣称有，代码里 provider 枚举只有 `["cpu","cuda"]`，宣传不实）
 5. 可导入任意 HF GGUF 模型（memo.ac 不支持，是其用户抱怨热点）
+
+> ⚠️ **2026-08-06 订正：本句已不成立。** `apps/daemon/src/http/rest/models.ts:728-733` 对
+> `kind === 'hf_repo'` **硬返回 501**。当前实际能力是「从固定 manifest 目录里选」，不是「任意 HF」。
+> 要么补上「用户手工提供 SHA-256」的导入路径，要么把这句从对外话术里撤掉。
