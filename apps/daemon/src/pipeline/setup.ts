@@ -33,6 +33,8 @@ import {
   type ToolPaths,
 } from '@openmemo/pipeline';
 
+import { isGgmlModelFile } from '@openmemo/downloader';
+
 import type { AppPaths } from '../config/paths.js';
 import { resolveActiveModel, scanByName } from './modelStore.js';
 
@@ -44,6 +46,12 @@ export interface PipelineBundle {
   /** 缺哪些工具 —— 用于 /api/health 与 job 的 `blocked` 状态（D-01 §4.1）。 */
   readonly missing: readonly string[];
   readonly modelPath: string | null;
+  /**
+   * 切分方式的真实状态。**必须一路露到界面上**：
+   * VAD 不可用时转写仍会完成（退回固定窗口），断句变差却一个字都不提示 ——
+   * 那是「假绿灯」的镜像：结果给了，但系统在悄悄用较差的路径。
+   */
+  readonly vad: VadModelResolution;
   /** 可选引擎候选（已探测可用性）。用于 selectEngine 与 /api/health 展示。 */
   readonly candidates: readonly EngineCandidate[];
   /**
@@ -121,6 +129,78 @@ function firstExisting(...candidates: Array<string | null | undefined>): string 
   return null;
 }
 
+/** VAD 权重的解析结果 —— 带上"为什么"，因为没有它时这条降级是完全静默的。 */
+export interface VadModelResolution {
+  /** whisper.cpp 真的能加载的 ggml VAD 权重；`null` = 本次一定走固定窗口切分。 */
+  readonly path: string | null;
+  /**
+   * 存在、但 whisper.cpp 加载不了的候选（典型：sherpa 专用的 `silero_vad.onnx`）。
+   * **非空 + `path === null` 是最要命的那一格**：用户以为自己装了 VAD，实际没装上能用的。
+   */
+  readonly rejected: readonly string[];
+  readonly reasonZh: string;
+}
+
+/**
+ * 挑一份 **whisper.cpp 能加载** 的 VAD 权重（T-148）。
+ *
+ * ## 修的是什么
+ *
+ * 旧代码是 `resolveActiveModel(modelsDir, 'vad')` —— 只按 role 挑，谁先装谁赢。
+ * 而 `role: 'vad'` 底下有两个**互相加载不了**的文件：
+ * `silero_vad.onnx`（sherpa 专用）与 `ggml-silero-v6.2.0.bin`（whisper.cpp 专用）。
+ * 目录里 onnx 排在前面 → 冷装 `required-core` 后 `active.json.vad` 恒为 onnx →
+ * 这里把 ONNX 交给 `whisper-vad-speech-segments` → `bad magic` →
+ * `error: failed to initialize whisper context` → **exit 2，整单转写死**。
+ *
+ * `[本机实测]` 用仓库自带的同一份权重（`vendor/whisper.cpp/models/for-tests-silero-v6.2.0-ggml.bin`，
+ * sha256 与清单逐字符一致）+ CI 用的同一个上游二进制复现过：喂 ONNX 的输出与
+ * CI 日志逐字节相同。
+ *
+ * ## 判据为什么是"读头四字节"
+ *
+ * 见 `isGgmlModelFile` 的注释：老安装记录里没有 `engines` 字段，按字段过滤会误伤；
+ * 按内容判则新旧记录、手工拷进来的文件一视同仁，而且钉的正是 whisper 自己会检查的东西。
+ */
+export async function resolveWhisperVadModel(
+  modelsDir: string,
+  env: NodeJS.ProcessEnv,
+): Promise<VadModelResolution> {
+  const rejected: string[] = [];
+  const consider = async (p: string | null | undefined): Promise<string | null> => {
+    if (!p) return null;
+    if (await isGgmlModelFile(p)) return p;
+    if (existsSync(p)) rejected.push(p);
+    return null;
+  };
+
+  const fromRecords = await resolveActiveModel(modelsDir, 'vad', {
+    accept: (p) => isGgmlModelFile(p),
+    onRejected: (recs) => {
+      for (const r of recs) rejected.push(r.path);
+    },
+  });
+
+  const path =
+    (await consider(firstExisting(env['OPENMEMO_VAD_MODEL']))) ??
+    fromRecords?.path ??
+    // 老布局里 VAD 曾被塞进 asr 桶，兜底时两个桶都看，但**必须带 silero 关键词**
+    (await consider(scanByName(modelsDir, 'vad', { ext: '.bin', includes: 'silero' }))) ??
+    (await consider(scanByName(modelsDir, 'asr', { ext: '.bin', includes: 'silero' }))) ??
+    (await consider(join(modelsDir, 'ggml-silero-v6.2.0.bin')));
+
+  const reasonZh =
+    path !== null
+      ? 'VAD 可用：按静音切分'
+      : rejected.length > 0
+        ? `已安装的 VAD 权重 whisper.cpp 加载不了（${rejected
+            .map((p) => p.split(/[\\/]/).pop() ?? p)
+            .join('、')}）—— 切分降级为固定窗口，转写仍可完成但断句会变差`
+        : '未安装 VAD 模型 → 切分降级为固定窗口';
+
+  return { path, rejected, reasonZh };
+}
+
 /**
  * 组装流水线。
  *
@@ -160,18 +240,16 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
   /*
    * VAD 模型：先读安装记录（role='vad'），再退到 by-name 扫描，最后才是环境变量/旧路径。
    * **不写死 `ggml-silero-v6.2.0.bin`** —— 版本一变就找不到了（ADR-014 ②）。
+   *
+   * ★ T-148：候选还必须**真的能被 whisper.cpp 加载**。只按 role 挑会把 sherpa 专用的
+   *   `silero_vad.onnx` 交出去，那是 CI 上三平台一个都转不出字来的直接原因。
    */
-  const vadInstalled = await resolveActiveModel(dirs.modelsDir, 'vad');
-  const tools: ToolPaths = {
-    ...discovered,
-    vadModel:
-      firstExisting(env['OPENMEMO_VAD_MODEL']) ??
-      vadInstalled?.path ??
-      // 老布局里 VAD 曾被塞进 asr 桶，兜底时两个桶都看，但**必须带 silero 关键词**
-      scanByName(dirs.modelsDir, 'vad', { ext: '.bin', includes: 'silero' }) ??
-      scanByName(dirs.modelsDir, 'asr', { ext: '.bin', includes: 'silero' }) ??
-      firstExisting(join(dirs.modelsDir, 'ggml-silero-v6.2.0.bin')),
-  };
+  const vad = await resolveWhisperVadModel(dirs.modelsDir, env);
+  const tools: ToolPaths = { ...discovered, vadModel: vad.path };
+  if (vad.rejected.length > 0) {
+    // 这条**必须**出声：它的形态是"用户装了 VAD，结果比没装更糟"。
+    console.warn(`[daemon] ⚠️ ${vad.reasonZh}`);
+  }
 
   const missing: string[] = [];
   if (!tools.ffmpeg) missing.push('ffmpeg');
@@ -407,6 +485,7 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
     pipeline,
     missing,
     modelPath: asrModelPath,
+    vad,
     candidates,
     pickEngine,
     pipelineFor,

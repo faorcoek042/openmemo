@@ -42,6 +42,7 @@ import { mayRetitleNote } from './retitle.js';
 import type { SseHub } from '../../http/sse.js';
 import type { JobQueue, JobRow } from '../queue.js';
 import { resolveModelById } from '../../pipeline/modelStore.js';
+import { noteVadRuntimeFailure, noteVadRuntimeSuccess } from '../../pipeline/vadStatus.js';
 
 export interface TranscribeRunnerDeps {
   readonly repos: Repos;
@@ -290,6 +291,22 @@ export async function runTranscribeJob(
     },
   });
 
+  /*
+   * ---- 切分方式：**只要不是无声无息地过去** ----------------------------------------
+   *
+   * T-148 之前，VAD 跑失败会让整单转写死掉。现在它退回固定窗口继续跑 ——
+   * 那就必须在三个地方说出来，否则这个修复本身就是一次"把响亮的失败换成安静的降级"：
+   *   ① daemon 日志（下面这行）
+   *   ② `/api/health` → 诊断页那一行（靠 `vadStatus` 这一格）
+   *   ③ job 的成功结果里带上原文（`queue.succeed` 的 payload）
+   */
+  if (result.warningsZh.length > 0) {
+    noteVadRuntimeFailure(result.warningsZh[0] as string);
+    for (const w of result.warningsZh) console.warn(`[transcribe] ⚠️ ${w}`);
+  } else if (result.chunking === 'vad') {
+    noteVadRuntimeSuccess();
+  }
+
   // ---- 媒体资产落库 ----
   /*
    * 先归档再落库：**顺序不能反**。
@@ -471,6 +488,8 @@ export async function runTranscribeJob(
     segmentCount: segCount,
     rtf: result.rtf,
     durationMs: result.durationMs,
+    chunking: result.chunking,
+    ...(result.warningsZh.length > 0 ? { warningsZh: result.warningsZh } : {}),
     ...(mergeSummary === undefined ? {} : { mergeSummary }),
   });
 }

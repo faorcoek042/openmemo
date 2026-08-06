@@ -43,13 +43,111 @@ export interface AsrChunk {
 
 export interface VadOptions {
   threshold?: number;
+  /**
+   * Sent as `-vsd`, NOT `-vspd`.
+   *
+   * `-vspd` is what the example's own `--help` advertises (`speech.cpp:37`) — and the
+   * parser has **no branch for it** (`speech.cpp:62-72`). `[本机实测]` on the upstream
+   * v1.9.1 binary CI uses: `-vspd 250` prints `error: unknown argument` and then calls
+   * `exit(0)` — **exit code 0, empty stdout**. Downstream that reads as "VAD ran and
+   * found no speech", which produces zero chunks and an EMPTY TRANSCRIPT under a green
+   * job. We shipped `-vspd` until T-148; nothing set this option, which is the only
+   * reason it never fired.
+   */
   minSpeechDurationMs?: number;
-  minSilenceDurationMs?: number;
+  /*
+   * ⚠️ There is deliberately no `minSilenceDurationMs`.
+   *
+   * `speech.cpp:67-68` binds `-vsd` twice — the second branch (`--vad-min-silence-duration-ms`)
+   * is unreachable, and it assigns to `vad_min_speech_duration_ms` anyway. The pinned
+   * example therefore CANNOT express min-silence-duration at all. A field that silently
+   * does nothing (or worse, sets a different knob) is worse than no field.
+   */
   maxSpeechDurationSec?: number;
   speechPadMs?: number;
   threads?: number;
   timeoutMs?: number;
   signal?: AbortSignal;
+}
+
+/**
+ * Build the argv flags for `whisper-vad-speech-segments`.
+ *
+ * Exported so the two properties below are testable without a binary, a model file or a
+ * subprocess — the whole point of T-148 is that those properties were unobservable.
+ *
+ * ★ `-np` is deliberately NOT passed. T-148.
+ *
+ * It used to be here with the comment "machine-readable: suppress everything except the
+ * results". That comment described something that is not true: the segment list goes to
+ * STDOUT via printf (`speech.cpp:136-143`) and `parseVadOutput` only ever reads stdout,
+ * while `-np` calls `whisper_log_set(cb_log_disable)` (`speech.cpp:95-97`) which only
+ * silences the DIAGNOSTIC channel. So it bought us nothing and cost us this:
+ *
+ * whisper.cpp has five distinct ways to fail to load a VAD model — file will not
+ * open, bad magic, unknown tensor, wrong tensor shape, backend init — and every one
+ * of them logs its real reason through `WHISPER_LOG_ERROR` and then returns nullptr.
+ * The example turns all five into one sentence on stderr:
+ * `error: failed to initialize whisper context`, exit 2.
+ *
+ * `[本机实测]` with the same upstream binary CI uses: empty `-vm`, a nonexistent path
+ * and an ONNX file produce BYTE-IDENTICAL output under `-np`. That is why a real
+ * product bug survived until someone ran a transcription on a clean machine.
+ *
+ * Keeping the log on costs a few dozen stderr lines that nobody reads on success
+ * (`runOrThrow` discards stderr when the exit code is 0) and gives the failure path its
+ * reason back — which is the trade this repo has got wrong most expensively.
+ * Same family as `--no-prints` hiding the CoreML fallback (T-146 §3.2).
+ */
+export function buildVadFlags(
+  vadModel: string,
+  wavPath: string,
+  opts: VadOptions = {},
+): string[] {
+  const flags = [
+    '-f', wavPath,
+    '-vm', vadModel,
+    '-t', String(opts.threads ?? 4),
+  ];
+  if (opts.threshold !== undefined) flags.push('-vt', String(opts.threshold));
+  if (opts.minSpeechDurationMs !== undefined) flags.push('-vsd', String(opts.minSpeechDurationMs));
+  if (opts.maxSpeechDurationSec !== undefined) flags.push('-vmsd', String(opts.maxSpeechDurationSec));
+  if (opts.speechPadMs !== undefined) flags.push('-vp', String(opts.speechPadMs));
+  return flags;
+}
+
+/**
+ * Turn one finished VAD run into segments — **or refuse to pretend it answered**.
+ *
+ * ★ "exit 0" is NOT proof that the VAD ran. T-148.
+ *
+ * `vad_params_parse` responds to any argument it does not recognise with
+ * `vad_print_usage(); exit(0);` (`speech.cpp:73-77`) — **zero exit code, empty stdout**.
+ * `parseVadOutput` then returns `[]`, which the caller cannot distinguish from a
+ * legitimate "this file contains no speech", and the pipeline goes on to produce an EMPTY
+ * TRANSCRIPT under a green job. `[本机实测]` on the upstream v1.9.1 binary: `-vspd 250`
+ * (a flag the example's own `--help` advertises but its parser does not implement) does
+ * exactly this.
+ *
+ * So require the header the example always prints on the success path
+ * (`printf("Detected %d speech segments:\n", …)`, `speech.cpp:137`). Zero segments WITH
+ * the header is a real answer; no header means it never got that far.
+ *
+ * This pins the CONSEQUENCE — "did we get an answer" — instead of enumerating arguments,
+ * so it keeps working when upstream renames a flag.
+ */
+export function interpretVadRun(run: {
+  stdout: string;
+  stderr: string;
+  code: number | null;
+}): SpeechSegment[] {
+  if (!/Detected\s+\d+\s+speech segments/i.test(run.stdout)) {
+    throw new Error(
+      `VAD produced no result header — it exited ${String(run.code)} without answering. ` +
+        `stdout=${JSON.stringify(run.stdout.slice(0, 200))} stderr=${run.stderr.slice(-500)}`,
+    );
+  }
+  return parseVadOutput(run.stdout);
 }
 
 /**
@@ -63,23 +161,22 @@ export async function detectSpeechSegments(
   wavPath: string,
   opts: VadOptions & { cwd: string },
 ): Promise<SpeechSegment[]> {
-  if (tools.whisperVad === null || tools.vadModel === null) {
+  /*
+   * `!tools.vadModel`, not `=== null`. An EMPTY STRING is not "installed" either, and it
+   * is the exact value a `??` chain produces when an upstream default is `''`. Letting it
+   * through means spawning `-vm ""`, which whisper reports as the same one-line
+   * `failed to initialize whisper context` as every other load failure — `[本机实测]`
+   * empty path, missing path and wrong-format file are byte-identical there.
+   */
+  if (tools.whisperVad === null || !tools.vadModel) {
     throw new Error('VAD component or model is not installed');
   }
 
-  const flags = [
-    '-f', wavPath,
-    '-vm', tools.vadModel,
-    '-np', // machine-readable: suppress everything except the results
-    '-t', String(opts.threads ?? 4),
-  ];
-  if (opts.threshold !== undefined) flags.push('-vt', String(opts.threshold));
-  if (opts.minSpeechDurationMs !== undefined) flags.push('-vspd', String(opts.minSpeechDurationMs));
-  if (opts.minSilenceDurationMs !== undefined) flags.push('-vsd', String(opts.minSilenceDurationMs));
-  if (opts.maxSpeechDurationSec !== undefined) flags.push('-vmsd', String(opts.maxSpeechDurationSec));
-  if (opts.speechPadMs !== undefined) flags.push('-vp', String(opts.speechPadMs));
-
-  const argv = buildArgv({ flags, operands: [], useDoubleDash: false });
+  const argv = buildArgv({
+    flags: buildVadFlags(tools.vadModel, wavPath, opts),
+    operands: [],
+    useDoubleDash: false,
+  });
   if (!argv.ok) throw new Error(`VAD argument rejected: ${argv.message}`);
 
   const result = await runOrThrow({
@@ -90,7 +187,9 @@ export async function detectSpeechSegments(
     signal: opts.signal,
   });
 
-  return parseVadOutput(result.stdout);
+  // The header check lives inside `interpretVadRun` on purpose: a caller cannot get the
+  // segments without also getting the "did it actually answer" check.
+  return interpretVadRun(result);
 }
 
 /**
@@ -226,4 +325,119 @@ export function planFixedChunks(totalDurationMs: number, chunkMs = 30_000, overl
 /** Total speech time, for "this file is 3 hours but only 40 minutes of talking". */
 export function totalSpeechMs(segments: SpeechSegment[]): number {
   return segments.reduce((sum, s) => sum + (s.endMs - s.startMs), 0);
+}
+
+// =========================================================================================
+// The VAD step of the pipeline, as one function
+// =========================================================================================
+
+export interface ChunkPlan {
+  chunks: AsrChunk[];
+  speechMs: number;
+  /** Which planner actually ran. `'fixed'` is the degraded path. */
+  chunking: 'vad' | 'fixed';
+  /** Non-fatal problems worth showing a human. Empty on the happy path. */
+  warningsZh: string[];
+}
+
+export interface PlanAudioChunksArgs {
+  tools: ToolPaths;
+  /**
+   * The VAD runner. Injected rather than imported so the failure branch is testable
+   * WITHOUT a whisper binary, a model file, or a subprocess — the branch that was missing
+   * until T-148 is precisely the one that is expensive to reach through the real thing.
+   */
+  detect: typeof detectSpeechSegments;
+  wavPath: string;
+  cwd: string;
+  signal: AbortSignal;
+  durationMs: number;
+  threads?: number;
+  targetChunkMs?: number;
+  maxChunkMs?: number;
+  onProgress?: (p: { step: 'vad'; fraction: number; message?: string }) => void;
+}
+
+/**
+ * Decide how to cut the audio, and be honest about which way it got cut.
+ *
+ * ## Why the failure branch exists (T-148)
+ *
+ * The degradation used to cover only "VAD is not installed". It did NOT cover "VAD is
+ * installed but will not run" — so a VAD model whisper.cpp could not load killed the
+ * ENTIRE transcription instead of falling back. `[CI 实测]` run 31039460495: linux-x64 and
+ * win32-x64 both died here with `whisper-vad-speech-segments exited with code 2`, and the
+ * user got nothing.
+ *
+ * That made **installing VAD strictly worse than not installing it**, which is how the
+ * bug survived: the demo machine had no VAD model, so it took the fallback and worked.
+ *
+ * ## Why falling back is not enough on its own
+ *
+ * Turning a loud failure into a quiet degradation is the move this repo most needs to
+ * avoid. So the fallback is paired with `chunking` + `warningsZh` in the RESULT: the
+ * caller is handed the fact and cannot fail to receive it. Producing a transcript while
+ * silently using the worse splitter is its own kind of lie.
+ */
+export async function planAudioChunks(args: PlanAudioChunksArgs): Promise<ChunkPlan> {
+  const { tools, detect, wavPath, cwd, signal, durationMs, targetChunkMs, maxChunkMs } = args;
+  const warningsZh: string[] = [];
+  args.onProgress?.({ step: 'vad', fraction: 0 });
+
+  const fixed = (why: string): ChunkPlan => {
+    // Degradation, not failure: fixed windows still produce a usable transcript.
+    const chunks = planFixedChunks(durationMs, targetChunkMs ?? 30_000);
+    args.onProgress?.({ step: 'vad', fraction: 1, message: `${String(chunks.length)} chunks · ${why}` });
+    return { chunks, speechMs: durationMs, chunking: 'fixed', warningsZh };
+  };
+
+  if (tools.whisperVad === null || !tools.vadModel) {
+    return fixed('VAD 未安装 → 固定窗口切分');
+  }
+
+  let segments: SpeechSegment[];
+  try {
+    segments = await detect(tools, wavPath, {
+      cwd,
+      signal,
+      ...(args.threads === undefined ? {} : { threads: args.threads }),
+    });
+  } catch (err) {
+    /*
+     * Cancellation is NOT a degradation — an aborted job must stay aborted, otherwise
+     * "stop" silently turns into "carry on with worse settings".
+     */
+    if (signal.aborted) throw err;
+    const why = err instanceof Error ? err.message : String(err);
+    warningsZh.push(
+      `VAD 未能运行，本次已退回固定窗口切分（断句会变差，转写内容仍完整）：${firstLine(why)}`,
+    );
+    return fixed('VAD 运行失败 → 固定窗口切分');
+  }
+
+  const speechMs = totalSpeechMs(segments);
+  const chunks =
+    segments.length > 0
+      ? planChunks(segments, {
+          totalDurationMs: durationMs,
+          ...(targetChunkMs === undefined ? {} : { targetChunkMs }),
+          ...(maxChunkMs === undefined ? {} : { maxChunkMs }),
+        })
+      : // VAD ran and found no speech. Do not silently transcribe silence — whisper
+        // hallucinates on it. Zero chunks is the honest answer.
+        [];
+
+  args.onProgress?.({ step: 'vad', fraction: 1, message: `${String(chunks.length)} chunks` });
+  return { chunks, speechMs, chunking: 'vad', warningsZh };
+}
+
+/**
+ * First non-empty line, trimmed and length-capped.
+ *
+ * A VAD failure message carries up to 2000 bytes of captured stderr — invaluable in the
+ * job error and the logs, far too long for a UI banner. Keep the headline for humans.
+ */
+function firstLine(message: string, max = 200): string {
+  const line = message.split('\n').find((l) => l.trim().length > 0)?.trim() ?? message.trim();
+  return line.length > max ? `${line.slice(0, max)}…` : line;
 }

@@ -50,7 +50,18 @@ interface Health {
     };
     search?: { ok?: boolean; tokenizer?: string };
   };
-  pipeline?: { missing?: string[]; ffmpeg?: string | null; whisperCli?: string | null };
+  pipeline?: {
+    missing?: string[];
+    ffmpeg?: string | null;
+    whisperCli?: string | null;
+    /** T-148 —— 切分方式。`fixed` 是降级态：转写仍会完成，但断句变差。 */
+    vad?: {
+      model?: string | null;
+      chunking?: 'vad' | 'fixed';
+      reasonZh?: string;
+      rejected?: string[];
+    };
+  };
   lanes?: Record<string, { capacity: number; inUse: number }>;
   scheduler?: { running?: number };
   sseClients?: number;
@@ -190,6 +201,28 @@ export default function DiagnosticsPage() {
                 },
               }
             : {}),
+        },
+        /*
+         * ★ 本文件开头那段注释把「VAD 模型缺失 → 退回固定分块」列为本页存在的理由之一，
+         * 而这一行**在 T-148 之前根本不存在** —— 一页专门用来揭示静默降级的诊断页，
+         * 漏掉了它自己点名的那条降级。
+         *
+         * 判据钉的是 `chunking`（实际用了哪种切分），不是「VAD 文件在不在」：
+         * 出事那次文件确实在，只是格式不对（sherpa 的 ONNX），
+         * 而按"在不在"判会给出一盏绿灯。
+         */
+        {
+          label: t('diagnostics.chunking'),
+          level: data.pipeline?.vad?.chunking === 'vad' ? 'ok' : 'warn',
+          detail:
+            data.pipeline?.vad?.reasonZh ??
+            (data.pipeline?.vad?.chunking === 'vad'
+              ? t('diagnostics.chunkingVad')
+              : t('diagnostics.chunkingFixed')),
+          probe: 'presence',
+          ...(data.pipeline?.vad?.chunking === 'vad'
+            ? {}
+            : { action: { label: t('health.fix'), to: '/models' } }),
         },
         {
           label: t('diagnostics.scheduler'),

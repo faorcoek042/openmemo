@@ -599,6 +599,32 @@ try {
         } else {
           say(`   ✔ 拿到 ${segs.length} 段、共 ${text.length} 字符的非空文本 —— 这条路走得通。`);
         }
+
+        /*
+         * ★ T-148：**"转出字来了"还不够，要知道它是用哪种切分转出来的。**
+         *
+         * VAD 跑不起来时产品现在会退回固定窗口继续跑（此前是整单转写死）。
+         * 那个降级如果不报出来，这一节就会变成一盏新的假绿灯：
+         * 文本有了、判据过了，而系统在悄悄用较差的切分。
+         *
+         * 红绿规则刻意分两档：
+         *   · `rejected` 非空 = 装了一份 whisper.cpp 用不了的 VAD 权重 → **红**
+         *     （这正是 run 31039460495 那次事故的状态）
+         *   · 单纯没装 VAD → 只打印。那是合法的降级，报红就是假红灯。
+         */
+        const health = await j('/api/health');
+        const vad = health.body?.pipeline?.vad;
+        if (!vad) {
+          say('   ⚠️ /api/health 没有 pipeline.vad —— 切分方式无从判断（daemon 版本对不上？）');
+        } else if (vad.chunking === 'vad') {
+          say(`   ✔ 切分方式 = VAD（按静音切分），权重 ${vad.model}`);
+        } else {
+          say(`   ⚠️ 切分方式 = 固定窗口：${vad.reasonZh}`);
+          if ((vad.rejected ?? []).length > 0) {
+            say(`   ✘ 装上的 VAD 权重 whisper.cpp 加载不了：${vad.rejected.join(', ')}`);
+            exitCode = 1;
+          }
+        }
       }
     }
   }

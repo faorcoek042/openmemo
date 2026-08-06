@@ -110,31 +110,75 @@ function weightsPathOf(modelsDir: string, rec: InstallRecord): string | undefine
 }
 
 /**
+ * 调用方对候选模型的额外要求。
+ *
+ * ## 这个参数是 T-148 的根因修复，不是可选的锦上添花
+ *
+ * `role` 只说"它是干什么用的"，**不说"谁能加载它"**。目录里同一个 `role: 'vad'` 底下
+ * 躺着两个**互相加载不了**的文件，而且两条清单条目自己就写着这件事：
+ *
+ * ```
+ * vad/silero-vad-onnx  engines:["sherpa-onnx"]  "whisper.cpp CANNOT load this file"
+ * vad/silero-vad-ggml  engines:["whisper.cpp"]  "The sherpa-onnx engine CANNOT load this file"
+ * ```
+ *
+ * 而 `models.ts:488` 是 `if (activateOnSuccess || !state.active[role])` —— **先装的那个赢**。
+ * 目录里 onnx 排在 ggml 前面，于是任何一次冷装 `required-core` 都会让
+ * `active.json.vad = "vad/silero-vad-onnx"`，这里再把那个 ONNX 文件交给
+ * whisper.cpp 的 VAD 二进制 → `bad magic` → `failed to initialize whisper context` →
+ * **整单转写死掉**（`[CI 实测]` run 31039460495，Linux 与 Windows 一字不差）。
+ *
+ * 所以调用方**必须**能说出"我要能被我这个引擎加载的那一个"，而不是只说 role。
+ */
+export interface ModelAcceptance {
+  /** 逐个候选问一次；返回 false 就继续找下一个。判据应当钉后果（能不能加载），而不是钉文件名。 */
+  readonly accept: (path: string, rec: InstallRecord) => boolean | Promise<boolean>;
+  /** 全部候选都被否掉时，把被否掉的路径交回给调用方，用于写出一条**说得出原因**的诊断。 */
+  readonly onRejected?: (rejected: readonly ResolvedModel[]) => void;
+}
+
+/**
  * 解析某个 role 当前该用哪个模型。
  *
  * 顺序：`active.json` 指定的 → 该 role 下任意一个已装且完好的。
  * 都没有则返回 undefined（调用方应把 job 转 `blocked` 并给出安装引导，而不是硬失败）。
+ *
+ * `opts.accept` 见 {@link ModelAcceptance}：**`active.json` 指定的那个同样要过这一关**。
+ * 只在兜底分支上过滤是不够的 —— 出事的那次恰恰就是 `active.json` 指着错的那一个。
  */
 export async function resolveActiveModel(
   modelsDir: string,
   role: string,
+  opts?: ModelAcceptance,
 ): Promise<ResolvedModel | undefined> {
   const active = readJson<ActiveMap>(join(modelsDir, 'active.json'));
   const wantedId = active?.[role] ?? null;
 
   const installed = await listInstalled(modelsDir, role);
 
+  // active.json 指定的排最前，其余按原顺序跟在后面；去重靠 id。
+  const ordered: InstallRecord[] = [];
   if (wantedId) {
-    const rec = installed.find((r) => r.id === wantedId);
-    const p = rec ? weightsPathOf(modelsDir, rec) : undefined;
-    if (rec && p) return { id: wantedId, role, path: p };
-    // active.json 指着一个已经不在的模型（用户删了）→ 不报错，往下退到"任意已装"
+    const first = installed.find((r) => r.id === wantedId);
+    if (first) ordered.push(first);
+  }
+  for (const rec of installed) {
+    if (rec.id !== undefined && rec.id === wantedId) continue;
+    ordered.push(rec);
   }
 
-  for (const rec of installed) {
+  const rejected: ResolvedModel[] = [];
+  for (const rec of ordered) {
     const p = weightsPathOf(modelsDir, rec);
-    if (rec.id && p) return { id: rec.id, role, path: p };
+    if (!rec.id || !p) continue;
+    const resolved: ResolvedModel = { id: rec.id, role, path: p };
+    if (opts && !(await opts.accept(p, rec))) {
+      rejected.push(resolved);
+      continue;
+    }
+    return resolved;
   }
+  if (rejected.length > 0) opts?.onRejected?.(rejected);
   return undefined;
 }
 

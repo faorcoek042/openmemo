@@ -18,6 +18,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 
+import { GGML_FILE_MAGIC } from '@openmemo/downloader';
+
 import {
   checkBackendSymlinks,
   diffSelfCheckReports,
@@ -179,6 +181,82 @@ describe('判据没有被降级成"文件在不在"', () => {
     const m = byId(r, 'model.asr');
     assert.equal(m?.status, 'fail', '把 VAD 当 ASR 报绿就是假绿灯');
     assert.match(m?.detail ?? '', /非 ASR 角色/);
+  });
+
+  /*
+   * ★ T-148 —— 这一条以前查的是 `access(R_OK)`：**"有没有一个文件"**。
+   *
+   * `by-name/asr` 里合法地同时躺着 whisper.cpp 的 ggml 权重与 sherpa 的
+   * `silero_vad.onnx`，两者互相加载不了。存在性检查对二者一视同仁，于是
+   * daemon 把 ONNX 交给 whisper、整单转写死掉的同时，这条自检是 **ok**
+   * （`[CI 实测]` cold-start-audit run 31039460495）。
+   *
+   * 判据现在是「whisper.cpp 真的加载得了吗」—— 读头四字节比 ggml 魔数，
+   * 与 `whisper_vad_init_with_params` 的第一步逐字对应。
+   */
+  describe('★ model.vad 判的是"whisper.cpp 加载得了吗"，不是"文件在不在"', () => {
+    const seedVad = async (
+      name: string,
+      bytes: Buffer,
+    ): Promise<string> => {
+      const d = mkdtempSync(join(tmpdir(), 'om-sc-vad-'));
+      tmpRoots.push(d);
+      await fs.writeFile(join(d, name), bytes);
+      return join(d, name);
+    };
+    const ggmlMagic = ((): Buffer => {
+      const b = Buffer.alloc(4);
+      b.writeUInt32LE(GGML_FILE_MAGIC, 0);
+      return b;
+    })();
+    const vadCheck = async (vadModel: string | null, asrBucket: string[] = []) =>
+      byId(
+        await runSelfCheck({
+          ...BASE,
+          probes: minimalProbes({
+            tools: () =>
+              Promise.resolve({
+                ffmpeg: null,
+                ffprobe: null,
+                whisperCli: null,
+                whisperVad: null,
+                vadModel,
+                ytDlp: null,
+              }),
+            installed: (kind) => Promise.resolve(kind === 'asr' ? asrBucket : []),
+          }),
+        }),
+        'model.vad',
+      );
+
+    it('★ 文件在、但不是 ggml → fail（旧判据在这里给的是 ok）', async () => {
+      // ONNX 是 protobuf，头一字节是字段 tag 0x08
+      const onnx = await seedVad('silero_vad.onnx', Buffer.from([0x08, 0x07, 0x12, 0x0c]));
+      const c = await vadCheck(onnx);
+      assert.equal(c?.status, 'fail', '存在性检查会把它读成 ok —— 那正是事故那天的样子');
+      assert.match(c?.detail ?? '', /bad magic|ggml/);
+    });
+
+    it('★ 是 ggml → ok', async () => {
+      const good = await seedVad('ggml-silero-v6.2.0.bin', Buffer.concat([ggmlMagic, Buffer.alloc(32)]));
+      const c = await vadCheck(good);
+      assert.equal(c?.status, 'ok');
+      assert.equal(c?.detail, good);
+    });
+
+    it('★ 解析器已经拒绝交出坏文件时，仍要说清"你装的那个 whisper 用不了"', async () => {
+      // 修复后的真实状态：tools.vadModel = null，而 by-name/asr 里那份 ONNX 还在
+      const c = await vadCheck(null, ['silero_vad.onnx', 'ggml-tiny-q5_1.bin']);
+      assert.equal(c?.status, 'warn');
+      assert.match(c?.detail ?? '', /silero_vad\.onnx/);
+      assert.match(c?.remediation ?? '', /silero-vad-ggml/);
+    });
+
+    it('一个 VAD 都没装 → warn，且**不能**说成"装了个用不了的"（那是假红灯）', async () => {
+      const c = await vadCheck(null, ['ggml-tiny-q5_1.bin']);
+      assert.equal(c?.status, 'warn');
+      assert.match(c?.detail ?? '', /未安装/);
+    });
   });
 
   it('资产路径逃出 dataDir = fail（搬家后会取不到）', async () => {

@@ -18,7 +18,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { AsrChunk } from './audio/vad.js';
-import { detectSpeechSegments, planChunks, planFixedChunks, totalSpeechMs } from './audio/vad.js';
+import { detectSpeechSegments, planAudioChunks } from './audio/vad.js';
 import { normalizeToPcm16k, probeMedia } from './audio/ffmpeg.js';
 import type { AsrEngine, TranscriptSegment } from './asr/types.js';
 import type { MediaSourceRegistry } from './media/registry.js';
@@ -99,6 +99,20 @@ export interface TranscribeResult {
   yielded: boolean;
   /** Chunks not attempted because we yielded — the resume set for next time. */
   remainingChunks: number[];
+  /**
+   * How the audio was actually split.
+   *
+   * `'vad'` = silence-aware (the good path). `'fixed'` = 30 s windows, which still yields
+   * a usable transcript but cuts words at boundaries and feeds whisper silence.
+   *
+   * This is REPORTED rather than inferred because the caller cannot tell from the
+   * segments alone, and a degradation nobody can observe is the same class of lie as a
+   * false green: the user asked for a transcript, got one, and was never told the system
+   * quietly used the worse path (T-148, Manager ruling).
+   */
+  chunking: 'vad' | 'fixed';
+  /** Non-fatal problems worth showing a human. Empty on the happy path. */
+  warningsZh: string[];
 }
 
 export interface TranscribePipelineOptions {
@@ -202,39 +216,21 @@ export class TranscribePipeline {
         : undefined);
 
     // ---- 4. VAD --------------------------------------------------------------------
-    const { chunks, speechMs } = await time('vad', () =>
-      this.inLane('cpu.media', req.signal, async () => {
-        req.onProgress?.({ step: 'vad', fraction: 0 });
-        let plan: AsrChunk[];
-        let speech: number;
-
-        const vadUsable = tools.whisperVad !== null && tools.vadModel !== null;
-        if (vadUsable) {
-          const segments = await detectSpeechSegments(tools, normalized.path, {
-            cwd: scratch,
-            signal: req.signal,
-            threads: req.threads,
-          });
-          speech = totalSpeechMs(segments);
-          plan =
-            segments.length > 0
-              ? planChunks(segments, {
-                  totalDurationMs: durationMs,
-                  ...(targetChunkMs !== undefined ? { targetChunkMs } : {}),
-                  ...(maxChunkMs !== undefined ? { maxChunkMs } : {}),
-                })
-              : // VAD ran and found no speech. Do not silently transcribe silence —
-                // whisper hallucinates on it. Zero chunks is the honest answer.
-                [];
-        } else {
-          // Degradation, not failure: fixed windows still produce a usable transcript.
-          plan = planFixedChunks(durationMs, targetChunkMs ?? 30_000);
-          speech = durationMs;
-        }
-
-        req.onProgress?.({ step: 'vad', fraction: 1, message: `${String(plan.length)} chunks` });
-        return { chunks: plan, speechMs: speech };
-      }),
+    const { chunks, speechMs, chunking, warningsZh } = await time('vad', () =>
+      this.inLane('cpu.media', req.signal, () =>
+        planAudioChunks({
+          tools,
+          detect: detectSpeechSegments,
+          wavPath: normalized.path,
+          cwd: scratch,
+          signal: req.signal,
+          durationMs,
+          ...(req.threads === undefined ? {} : { threads: req.threads }),
+          ...(targetChunkMs === undefined ? {} : { targetChunkMs }),
+          ...(maxChunkMs === undefined ? {} : { maxChunkMs }),
+          ...(req.onProgress === undefined ? {} : { onProgress: req.onProgress }),
+        }),
+      ),
     );
 
     // ---- 5. ASR, chunk by chunk ----------------------------------------------------
@@ -317,6 +313,8 @@ export class TranscribePipeline {
       timings,
       yielded,
       remainingChunks: remaining,
+      chunking,
+      warningsZh,
     };
   }
 

@@ -16,6 +16,8 @@ import { access, constants, cp, mkdir, readdir, rm, symlink } from 'node:fs/prom
 import { homedir } from 'node:os';
 import { delimiter, join, relative } from 'node:path';
 
+import { isGgmlModelFile } from '@openmemo/downloader';
+
 export interface ToolPaths {
   ffmpeg: string;
   ffprobe: string;
@@ -23,7 +25,13 @@ export interface ToolPaths {
   whisperCli: string | null;
   /** whisper.cpp VAD segmenter, also from the L1 core pack. */
   whisperVad: string | null;
-  /** ggml Silero VAD model. */
+  /**
+   * Silero VAD weights **in ggml format** — the only thing whisper.cpp's VAD can load.
+   *
+   * NOT "any installed model whose role is vad": the catalog also ships
+   * `silero_vad.onnx` for sherpa-onnx, and its own description says whisper.cpp cannot
+   * load it. Whoever fills this field owes the reader that guarantee (T-148).
+   */
   vadModel: string | null;
   /**
    * yt-dlp. Nullable BY DESIGN — TD-002 requires the product to work without it.
@@ -375,10 +383,19 @@ export async function findInstalledModel(
   storeRoot: string,
   kind: 'asr' | 'llm',
   names: string[],
+  /**
+   * Extra requirement on the candidate. Defaults to "it exists and is readable".
+   *
+   * T-148: existence is NOT enough for the VAD model. `by-name/asr` legitimately holds
+   * both `ggml-silero-v6.2.0.bin` (whisper.cpp) and `silero_vad.onnx` (sherpa-onnx), and
+   * handing whisper.cpp the wrong one kills the whole transcription with a message that
+   * says nothing about which file was wrong.
+   */
+  accept: (path: string) => Promise<boolean> = fileExists,
 ): Promise<string | null> {
   for (const name of names) {
     const p = join(storeRoot, 'by-name', kind, name);
-    if (await fileExists(p)) return p;
+    if (await accept(p)) return p;
   }
   // Fall back to any file in the directory matching a caller-supplied predicate shape.
   return null;
@@ -433,14 +450,26 @@ export async function discoverTools(
   const resolve = async (name: string): Promise<string | null> =>
     (await findInBackendPacks(storeRoot, exe(name))) ?? (await fromPath(name));
 
-  // VAD model ships as a ggml file inside the whisper.cpp pack's sibling model store.
+  /*
+   * VAD model ships as a ggml file inside the whisper.cpp pack's sibling model store.
+   *
+   * The acceptance test is the ggml magic, NOT the file name (T-148). Two reasons, both
+   * measured rather than imagined:
+   *   1. the name list below is a guess about upstream's release naming — it was written
+   *      for `v5.1.2` and the catalog now pins `v6.2.0`; a third version breaks it again;
+   *   2. `whisper-vad-speech-segments` reports EVERY load failure as the same sentence
+   *      (`error: failed to initialize whisper context`, exit 2) — wrong file, missing
+   *      file and empty path are indistinguishable downstream, so the check has to happen
+   *      here, where we still know which candidate we picked.
+   */
   const vadModel =
     overrides.vadModel ??
-    (await findInstalledModel(storeRoot, 'asr', [
-      'ggml-silero-v5.1.2.bin',
-      'ggml-silero-v6.2.0.bin',
-      'silero-vad.bin',
-    ]));
+    (await findInstalledModel(
+      storeRoot,
+      'asr',
+      ['ggml-silero-v6.2.0.bin', 'ggml-silero-v5.1.2.bin', 'silero-vad.bin'],
+      isGgmlModelFile,
+    ));
 
   return {
     ffmpeg: overrides.ffmpeg ?? (await resolve('ffmpeg')) ?? '',

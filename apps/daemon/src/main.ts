@@ -50,6 +50,7 @@ import { LanePool } from './jobs/lanes.js';
 import { Repos } from './db/repos.js';
 import { buildPipeline, type PipelineBundle } from './pipeline/setup.js';
 import { resolveExtensionDir } from './pipeline/modelStore.js';
+import { vadHealth } from './pipeline/vadStatus.js';
 import { Scheduler, type JobHandler } from './jobs/scheduler.js';
 import { runTranscribeJob } from './jobs/runners/transcribe.js';
 import { createNoteRoutes } from './http/rest/notes.js';
@@ -417,6 +418,12 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
             })),
             ffmpeg: bundle.tools.ffmpeg || null,
             whisperCli: bundle.tools.whisperCli,
+            /*
+             * 切分方式必须露到界面上（T-148）。
+             * VAD 不可用时转写照样完成，只是断句变差 —— 一个用户看不见的降级，
+             * 与假绿灯是同一类问题：结果给了，代价没说。
+             */
+            vad: vadHealth(bundle.vad),
           }
         : null,
     }),

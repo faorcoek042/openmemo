@@ -34,6 +34,14 @@
 import { access, constants, open, readdir, readlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 
+/*
+ * ★ 唯一一处 import 别的工作区包（`@openmemo/downloader` 早已在 package.json 的
+ * dependencies 里，只是此前没被用过）。**刻意不在这里重写一份魔数判定**：
+ * `store.ts` 里那条"两处实现必须手工保持同步"的注释就是前车之鉴 ——
+ * 一条要靠人记得同步的规则，等价于一条迟早会漂移的规则。
+ */
+import { isGgmlModelFile } from '@openmemo/downloader';
+
 import { mediaAssetRoots, probeAssetFile } from './assetPaths.js';
 import { detectCpu, detectMemory, detectOs } from './detect/system.js';
 import { runProbe } from './probe/runProbe.js';
@@ -164,6 +172,15 @@ export const CHINESE_PROBE_WORDS = ['用户', '推特', '中国', '服务'] as c
  * 但它至少不会把"什么都没装"说成"装好了"。
  */
 const NON_ASR_NAME = /silero|vad|punct|ct-transformer|speaker|diariz/i;
+
+/**
+ * `by-name/asr` 下这些名字是 **VAD 权重**（T-148）。
+ *
+ * 只在 `model.vad` 拿不到可加载权重时用来把话说具体：
+ * 「一个都没装」和「装了但 whisper.cpp 用不了那一个」在用户那里是完全不同的两件事，
+ * 而前一版这条自检把两者都说成「未安装」。
+ */
+const VAD_WEIGHT_NAME = /silero|vad/i;
 
 /**
  * whisper.cpp 自己算 CoreML encoder 路径的规则 —— **逐条复刻，不另发明**。
@@ -629,20 +646,59 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
           : '在「运行时」页重新安装该后端包 —— 链接的目标文件已不存在，whisper 会报 "cannot open shared object file" 而无法加载。',
   });
 
-  const vadOk = await exists(tools.vadModel, constants.R_OK);
+  /*
+   * ★ T-148 —— 这条以前查的是 `access(R_OK)`，也就是**"有没有一个文件"**。
+   *
+   * 而 `by-name/asr` 底下合法地同时躺着两个 VAD 权重：
+   * `ggml-silero-v6.2.0.bin`（whisper.cpp 用）与 `silero_vad.onnx`（sherpa 用），
+   * 两条清单条目自己都写着"另一个引擎加载不了我"。存在性检查对这两者一视同仁 ——
+   * 于是 daemon 把 ONNX 交给 whisper 的 VAD 二进制、整单转写死掉的同时，
+   * **这条自检是绿的**（`[CI 实测]` run 31039460495）。
+   *
+   * 现在判据换成"whisper.cpp 真的能加载它吗"（读头四字节比 GGML 魔数，
+   * 与 `whisper_vad_init_with_params` 的第一步逐字对应）。三档的分工：
+   *   ok   —— 是 ggml 权重，按静音切分
+   *   warn —— 一个都没装：**正常状态**，退回固定窗口，功能可用只是断句差
+   *   fail —— 装了、文件也在，但 whisper.cpp 加载不了。**这一档才是本次要抓的那格**，
+   *           它比 warn 更糟：用户以为自己装好了。
+   */
+  const vadPresent = await exists(tools.vadModel, constants.R_OK);
+  const vadLoadable = await isGgmlModelFile(tools.vadModel);
+  /*
+   * 兜底观测：即使解析器已经拒绝交出坏文件（tools.vadModel === null），
+   * by-name/asr 里那份 ONNX 仍然在，用户仍然需要知道"你装的那个 whisper 用不了"。
+   * 只看 tools.vadModel 会让这条永远说"未安装"，那是一句正确但没用的话。
+   */
+  const asrBucket = await input.probes.installed('asr');
+  const strandedVad = vadLoadable ? [] : asrBucket.filter((n) => VAD_WEIGHT_NAME.test(n));
   add({
     layer: 'tools',
     id: 'model.vad',
     label: 'VAD model',
     labelZh: 'VAD 模型',
-    status: vadOk ? 'ok' : 'warn',
-    detail: vadOk ? (tools.vadModel as string) : '未安装 → 切分降级为固定窗口',
+    /*
+     * `fail` 只留给"解析器把一个加载不了的文件当成了 VAD 权重交出来" ——
+     * 修好之后这一档在正常运行里不可达，它存在的意义是**反向验证时会红**，
+     * 以及万一将来又有人绕过解析器时当场出声。
+     * 「装错了那一个」是 `warn`：功能仍然可用（退回固定窗口），
+     * 而且只装 sherpa ONNX 对流式用户是完全合法的选择 —— 报红会是假红灯。
+     */
+    status: vadLoadable ? 'ok' : vadPresent ? 'fail' : 'warn',
+    detail: vadLoadable
+      ? (tools.vadModel as string)
+      : vadPresent
+        ? `${tools.vadModel as string} 不是 ggml 格式，whisper.cpp 加载不了（会报 bad magic）→ 切分降级为固定窗口`
+        : strandedVad.length > 0
+          ? `已装的 VAD 权重 whisper.cpp 用不了（${strandedVad.join('、')}，那是 sherpa 引擎的 ONNX 格式）→ 切分降级为固定窗口`
+          : '未安装 → 切分降级为固定窗口',
     required: false,
-    remediation: vadOk ? null : '在「模型」页安装 silero VAD（ggml 格式）',
+    remediation: vadLoadable
+      ? null
+      : '在「模型」页安装 `vad/silero-vad-ggml`（whisper.cpp 用的 ggml 格式；`vad/silero-vad-onnx` 是 sherpa 引擎用的，两者不能互换）',
   });
 
   // ---- models -----------------------------------------------------------------------
-  const asr = await input.probes.installed('asr');
+  const asr = asrBucket;
   const realAsr = asr.filter((n) => !NON_ASR_NAME.test(n));
   const misfiled = asr.filter((n) => NON_ASR_NAME.test(n));
   add({
