@@ -239,6 +239,25 @@ console.log('① 正向：release 已存在且已发布，资产还没有 → �
   stub.server.close();
 }
 
+/* ①b · 没有清单的目录整个被跳过 —— 但必须**出声**（build artifact 里的 probe 就是这个形状）。 */
+{
+  const stub = await startStub();
+  const src = await makeSrc({ 'pack-a.tar.gz': 'AAAA' });
+  tmpDirs.push(src);
+  await mkdir(join(src, 'probe'), { recursive: true });
+  await writeFile(join(src, 'probe', 'openmemo-probe'), 'ELF-ish');
+  const r = await run(UPLOAD, [
+    '--repo', REPO, '--tag', TAG, '--from', src, '--stage', stage(),
+    '--api-base', stub.base, '--download-base', stub.base,
+  ], { GITHUB_TOKEN: 'stub-token' });
+  await check('①b 没有清单的目录整个跳过，且逐个报出文件名（不许一个字不说地跳过）', () => {
+    assert.equal(r.status, 0, r.out);
+    assert.match(r.out, /⏭ 整个跳过[\s\S]*openmemo-probe/);
+    assert.equal(stub.state.uploads.length, 1, '只该传 pack-a');
+  });
+  stub.server.close();
+}
+
 console.log('');
 console.log('② 反向验证 —— 每一条都必须红');
 
@@ -464,4 +483,4 @@ if (failures.length > 0) {
   for (const f of failures) console.log(`  - ${f}`);
   process.exit(1);
 }
-console.log(`✔ selftest-release-upload: ${passed} 个用例全部通过（1 组正向 + 10 组反向）`);
+console.log(`✔ selftest-release-upload: ${passed} 个用例全部通过（2 组正向 + 10 组反向）`);

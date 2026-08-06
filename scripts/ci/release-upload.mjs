@@ -181,9 +181,20 @@ async function readPackFragment(path) {
   return null;
 }
 
-/** 找出所有"够格当一个 artifact 目录"的目录：自带 SHA256SUMS，或者含 pack fragment。 */
+/**
+ * 找出所有"够格当一个 artifact 目录"的目录：自带 SHA256SUMS，或者含 pack fragment。
+ *
+ * ★ 同时把**有文件但两种清单都没有**的目录收集起来（`ignored`）。
+ *   这些目录会被整个跳过 —— 那本身是对的（`gh run download` 下来的每个
+ *   `packs-<平台>` 底下有一个 `probe` 子目录，里面是 `openmemo-probe`，
+ *   它至今没有分发通道，本来就不该上传），
+ *   **但"跳过"必须出声**。一个"没有清单 ⇒ 一个字不说地什么都不传"的实现，
+ *   会让"我忘了写 SHA256SUMS"和"我压根没有东西要传"长得一模一样 ——
+ *   而那正是本仓一直在清的那个家族。
+ */
 async function collectSourceDirs(root) {
   const found = [];
+  const ignored = [];
   const walk = async (dir) => {
     let entries;
     try {
@@ -205,10 +216,11 @@ async function collectSourceDirs(root) {
       found.push({ dir, mode: hasSums ? 'sha256sums' : 'pack-fragment' });
       return; /* 不再往下钻：这一层就是一个 artifact */
     }
+    if (files.length > 0) ignored.push({ dir, files: files.map((e) => e.name) });
     for (const e of entries.filter((x) => x.isDirectory())) await walk(join(dir, e.name));
   };
   await walk(root);
-  return found;
+  return { found, ignored };
 }
 
 /**
@@ -217,7 +229,8 @@ async function collectSourceDirs(root) {
  * - `sha256sums`：这份清单是**为了上传而写的**，所以"目录里有、清单里没有"= 有人漏列了，
  *   直接失败。（清单族文件除外 —— 它们没法列出自己。）
  * - `pack-fragment`：fragment 描述的是**一个 pack 是什么**，而 build 的 artifact 里
- *   本来就刻意带着别的构建产物（`openmemo-probe` 至今没有分发通道，见 D-11 §5）。
+ *   本来就刻意带着别的构建产物（`openmemo-probe` 至今没有分发通道 ——
+ *   `probeExists` 恒 false 是仓里记着的老债，不是本流水线要顺手解决的事）。
  *   所以这里"多出来的文件"是预期内的，**逐个打印名字**但不失败。
  */
 async function stageOne(src, mode, seen) {
@@ -371,7 +384,11 @@ async function main() {
   await rm(STAGE, { recursive: true, force: true });
   await mkdir(STAGE, { recursive: true });
 
-  const sources = await collectSourceDirs(FROM);
+  const { found: sources, ignored } = await collectSourceDirs(FROM);
+  for (const ig of ignored) {
+    say(`   ⏭ 整个跳过 ${ig.dir}（既没有 SHA256SUMS 也没有 pack fragment）：${ig.files.join(', ')}`);
+  }
+  if (ignored.length > 0) say('');
   if (sources.length === 0) {
     fatal(
       `${FROM} 下没有找到任何可上传的 artifact 目录（需要自带 SHA256SUMS，或含 emit-pack-manifest 的 fragment）。` +
