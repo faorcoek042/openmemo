@@ -184,7 +184,17 @@ jobs:
 
       # ⑤ 对照组：**不屏蔽**再跑一次。两次的差集 = "如果用户机器上没有这些东西，
       #    会多坏掉哪些功能"。这一步单独存在，是为了让"借用"这件事有个可比的基准。
+      #
+      #    ★ T-146：对照组**也要带 `--transcribe`**，两组必须只差"屏不屏蔽"这一个变量。
+      #
+      #    不带的话对照组会稳定红在 `model.asr fail(required) 无可用 ASR 模型` ——
+      #    那不是 bug，是**产品事实**（目录里 required-core 的 asr/vad 模型全是 VAD，
+      #    照着装完仍然不能转写，D-11 §7.3）：`--transcribe` 才会另挑一个 ASR 模型来拉。
+      #    但一个**永远红**的 workflow 等于没有 workflow —— 它训练所有人忽略它，
+      #    而这正是本仓最贵的那类失败得以长期存活的土壤。
+      #    修法是**真的把模型装上**（让那条 required 检查有资格是绿的），
+      #    不是给它加豁免。
       - name: 对照组：不屏蔽宿主工具再跑一次
         if: ${{ !cancelled() }}
-        timeout-minutes: 45
-        run: node scripts/ci/cold-start-audit.mjs --port 19710 --no-mask
+        timeout-minutes: 60
+        run: node scripts/ci/cold-start-audit.mjs --port 19710 --no-mask --transcribe
