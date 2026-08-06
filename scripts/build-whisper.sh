@@ -151,6 +151,28 @@ COMMON_FLAGS=(
   -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
 )
 
+# ★★ T-146（**发布前最后一刻抓到的，差一点就发出去了**）
+#
+# macOS 上不显式设部署目标，CMake 就取**构建机自己的系统版本**。
+# runner 是 `macos-26`，于是产物的 `LC_BUILD_VERSION.minos` = **26.0.0**：
+#
+#   $ 解析 whispercpp-cpu-macos-arm64/whisper-cli 的 LC_BUILD_VERSION
+#     platform 1  minos 26.0.0  sdk 26.5.0
+#
+# 后果：**在任何低于 macOS 26 的 Mac 上，dyld 直接拒绝加载** —— 而 macOS 26 是最新版，
+# 绝大多数用户的机器都不是。也就是说那个包会「下载成功、校验通过、一执行就死」，
+# 而 selfcheck 只看得到"文件在"。**这正是本仓最贵的那类形状，只是换了一层皮。**
+#
+# 对照：我们选的那个 macOS ffmpeg（jellyfin）minos 是 **12.0**。
+# 我们自己编的东西反而是三个平台里唯一挑机器的那个。
+#
+# 13.3 不是我拍的：**是上游自己 `build-xcframework.sh:5` 写的
+# `MACOS_MIN_OS_VERSION=13.3`** —— 同一份代码，上游测过的下限。
+# （所有 Apple Silicon 机器都能跑 macOS 13。）
+if [[ "${HOST_OS}" == "darwin" ]]; then
+  COMMON_FLAGS+=( -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3 )
+fi
+
 # --------------------------------------------------------------------------------------
 # Relocatability: resolve sibling shared libraries relative to the binary itself, so an
 # extracted pack runs from anywhere with no LD_LIBRARY_PATH. Verified on Linux: extracted
