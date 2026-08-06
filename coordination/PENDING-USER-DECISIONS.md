@@ -5,9 +5,34 @@
 
 ---
 
-## 🔴 A. 一个硬阻塞：**没有发布渠道**
+## 🚩 2026-08-06 复核：两条最重要的已经变了
 
-### A-1  GitHub 仓库（或任意可放二进制的地址）
+> | 条目 | 此前写着 | 现在 |
+> |---|---|---|
+> | **A-1** | 「**唯一硬阻塞**：没有发布渠道，`sqlite-ext` 的 `mirrors: []`」 | **已于 ADR-015 明文撤销** —— `docs/adr/ADR-015-upstream-first.md:56-57`：「`PENDING-USER-DECISIONS.md` 的 A-1（GitHub 仓库）**撤销**」（用户原话大意：自用不一定要发布）。且 remote 已有、`vendor/manifests/sqlite-ext.json` 11 个 pack 的 mirrors **全部填满** |
+> | **C-2** | 「两个 TOCTOU 缺口可接受，**依据**：个人自用 + 绑 `127.0.0.1` + token 鉴权」 | **两个依据前提都已被你在 2026-08 推翻** —— 现绑 `0.0.0.0`、鉴权默认关闭（`docs/SECURITY.md` §0「当前真实姿态」、`apps/daemon/src/http/auth.ts:52`）。`SECURITY.md` §3 缺口 1 自己写的「🚨 必须立即修复的条件 ②」**已经达成**。**需要重新裁决** |
+>
+> 其余：B-1 的 mac 部分已部分证伪（见下）；B-4 / B-5 仍需硬件与网络环境，**未复核，原样保留**。
+
+---
+
+## ~~🔴 A. 一个硬阻塞：没有发布渠道~~ → ✅ **已于 ADR-015 撤销**
+
+### ~~A-1  GitHub 仓库（或任意可放二进制的地址）~~ —— **本条作废**
+
+> 📝 **此前本节写着**：「**这是目前唯一挡住章程要求 2.1/2.2 成立的东西**」「`sqlite-ext` 的 manifest →
+> `mirrors: []`，中文分词器点不动」「mac/Win 的 whisper.cpp CI 写了但**从未执行**」。**三句今天都不成立**：
+>
+> - **撤销依据**：`docs/adr/ADR-015-upstream-first.md:56-57` 明文写「`PENDING-USER-DECISIONS.md` 的
+>   A-1（GitHub 仓库）**撤销**」——用户反问「自用不一定要发布」，于是改为**上游预编译优先**，
+>   manifest 一律填上游地址，不再依赖我们自己的发布渠道。
+> - **`mirrors: []` 已填满**：`vendor/manifests/sqlite-ext.json` 的 **11 个 pack 各有 1 个 mirror**
+>   （libsimple v0.7.1 上游 release）。
+> - **remote 已有**：`git remote -v` → `https://github.com/faorcoek042/openmemo.git`。
+> - **CI 已真跑**：见下方对 `.github/workflows/` 那句的订正。
+>
+> 原文保留在下方，仅供追溯，**不要再按它行动**。
+
 **这是目前唯一挡住章程要求 2.1/2.2 成立的东西，且不卡在任何一层代码。**
 
 冷启动实测（全新空目录，只用 HTTP API）：失败数已从 **7 → 3**，
@@ -22,6 +47,12 @@ sqlite-ext 的 manifest → mirrors: []   ← 空数组，没有下载地址
 
 **同时受阻的还有**：mac / Windows 的 whisper.cpp 后端二进制（`.github/workflows/` 写了但**从未执行**）。
 
+> 📝 **订正**：**此前写着「写了但从未执行」。已执行** —— CI 于 T-145/T-146 首次真跑，
+> `docs/design/D-11-ci-platform-facts.md:9-11`「CI 第一次真的跑起来了…此前 138 个提交、零次 workflow 运行」；
+> `ci-crossplatform.yml:53-54` 的 matrix 里 `macos-26` / `windows-2025` 都在。
+> mac arm64 的 CPU 后端包已发布（`backends.json` 的 `whispercpp-cpu-macos-arm64`）。
+> **仍然为零的是 Vulkan / ROCm / Metal / CoreML / Linux-CUDA 产物**（见 `D-11:15-18`）。
+
 **需要你给**：一个 GitHub 仓库地址（或任意能放 release 资产的地方）。
 给了之后这 3 条应当一起变绿，mac/Win 的 CI 也能跑。
 
@@ -31,7 +62,7 @@ sqlite-ext 的 manifest → mirrors: []   ← 空数组，没有下载地址
 
 | # | 事项 | 现状 | 不解决的后果 |
 |---|------|------|-------------|
-| B-1 | **macOS 机器** | Gatekeeper 行为、Metal/CoreML 后端、`better-sqlite3` mac prebuild **全未验证**；`build-media-tools.sh` 的 mac 分支直接 `die` 不假装支持 | mac 分发形态无法定案 |
+| B-1 | **macOS 机器** | ~~Gatekeeper 行为、Metal/CoreML 后端、`better-sqlite3` mac prebuild **全未验证**~~ → **部分已验证**：mac **CPU** 后端已发布并经 CI 真机（`backends.json` 的 `whispercpp-cpu-macos-arm64` + `media-tools-macos-arm64`，`D-11`）；**Metal / CoreML 仍未验证**（`backends.json` 无 metal/coreml 包）。**此前写"全未验证"**。`build-media-tools.sh` 的 mac 分支直接 `die` 不假装支持 | mac 分发形态无法定案 |
 | B-2 | **Windows 机器** | SmartScreen、CUDA/Vulkan 后端、`taskkill /T` 取消路径 **全未验证** | 同上 |
 | B-3 | **NVIDIA 显卡机器** | CUDA vs Vulkan 性能比 = UNKNOWN | ADR-003 决策 3「Vulkan 为默认」一直挂"临时立场"。**优先级已降低**——Paraformer 实测 84x 实时，无显卡的中文用户已够用 |
 | B-4 | **arm64 / musl** | 上游 issue #1509（`better-sqlite3` 的 `linux-arm64.node` 要 GLIBC_2.38）**未复现** | Apple Silicon / Alpine 用户可能装不上 |
@@ -49,10 +80,27 @@ memo.ac 有这个能力。我们没做，理由写进了 `docs/SECURITY.md`：
 
 **你要的话我可以做**，但需要你知道上面这些代价。
 
-### C-2  两个 TOCTOU 缺口 —— **已记录，判定为可接受**
-依据：个人自用 + daemon 绑 `127.0.0.1` + token 鉴权，攻击面需要本机已有恶意进程。
-`docs/SECURITY.md` 里逐条写明了位置、触发前提、**以及"若改为多用户或联网部署则必须修复"**。
-**如果你打算联网部署，现在告诉我。**
+### C-2  两个 TOCTOU 缺口 —— 🚨 **裁决依据已于 2026-08 失效，需要重新裁决**
+
+**此前写着**：「已记录，判定为可接受。依据：个人自用 + daemon 绑 `127.0.0.1` + **token 鉴权**，
+攻击面需要本机已有恶意进程。如果你打算联网部署，现在告诉我。」
+
+**订正**：**那两个依据前提都已经被你推翻了**，而结论一直还挂在这里没人动：
+
+| 依据 | 当时 | 现在 |
+|---|---|---|
+| daemon 绑 `127.0.0.1` | 是 | **默认绑 `0.0.0.0`**（`docs/SECURITY.md` §0「当前真实姿态」；`OPENMEMO_HOST` 可收回回环） |
+| token 鉴权 | 开 | **默认关闭**（`apps/daemon/src/http/auth.ts:52` 默认 `none`；同上 §0） |
+
+- **两个缺口的技术事实已复核，仍然成立**（`argGuard.ts` 的 `assertHostNotPrivate()` 与
+  `assertWithinRoot()` 都在，代码注释自己也还记着这两个窗口）。
+- **但 `SECURITY.md` 缺口 1 自己写的「🚨 必须立即修复的条件 ②：daemon 监听地址改为非 `127.0.0.1`」
+  今天已经满足。** 缺口 2 的依据「本机其它进程视为可信」建立在同一组前提上。
+- 另有一条**此前从未记录**的相关事实（现已补进 `SECURITY.md §0`）：即使切回 `OPENMEMO_AUTH=token`，
+  写请求在不带 CSRF 头时仍会被 `auth.ts:287` 的**同源兜底**放行 —— 恢复的是"token 鉴权 + 打折的 CSRF"。
+
+**→ 需要你重新拍板：** 维持"可接受"（那就把依据改写成新前提），还是改配置（`OPENMEMO_HOST=127.0.0.1`
++ SSH 端口转发），还是真去修那两个缺口（`SECURITY.md §3` 已给出修复方案）。
 
 ---
 

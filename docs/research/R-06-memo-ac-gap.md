@@ -1,9 +1,27 @@
 ---
 id: R-06
 author: memo-compare
-status: ready
+status: ready-with-corrections
 date: 2026-08-03
+corrected-date: 2026-08-06
 ---
+
+# ⚠️ 读之前先看：§6 的六条优先项里，**三条已经不该做了**（2026-08-06 订正）
+
+> **此前本文标 `status: ready`**，其 §6「建议优先级（给 Manager）」是当前最年轻、也**最可能被直接照做**
+> 的一份待办清单。逐条复核后：**6 条里 3 条已作废** —— 照原文做会白白花掉约一周。
+>
+> | §6 条目 | 此前写着 | 复核结论（2026-08-06） |
+> | --- | --- | --- |
+> | 1【最高】引擎/模型选择器改 catalog 驱动 + 删 `'turbo'` | 待办 | ❌ **已完成**。`apps/web/src/components/common/AsrModelPicker.tsx:18-21` 自陈替换了写死的 `'paraformer'\|'turbo'`；`features/recorder/RecorderPage.tsx:73-74`；回归测试 `apps/web/src/test/components.test.tsx:692`「★ 引擎标识来自 shared 联合，"turbo" 不是合法引擎」 |
+> | 2【高】sherpa 离线分支 + SenseVoice 进目录 | 待办 | ❌ **已被 ADR-016 推翻**。`ADR-016-user-scope-cuts.md:31`：「❌ 停：sherpa 多模型族分派、**SenseVoice** / Qwen3-ASR / Omnilingual、AMD ASR 自建 CI」。全仓 `SenseVoice` 剥注释后仅 `packages/shared/src/models.ts:477` 一处**注释**提及 |
+> | 3【高】接通 RecorderPage ↔ `/ws/recorder` | 待办 | ❌ **已完成**。`apps/web/src/features/recorder/asrStream.ts:2`（自陈「F3 实时录音的**真实**上行通道」）、`:72`（`new URL(…/ws/recorder)`）、`:108-122`（真 `WebSocket`，非 mock） |
+> | 4【中】whisper.cpp 的 Vulkan/ROCm：自建 or 改口径 | 待办 | ✅ **仍然成立，而且更急**。`backends.json` 零个 vulkan/rocm；ADR-016 已停 AMD ASR 自建 CI → **"自建"这一半被砍，"改口径"那一半从未做**（`docs/00-CHARTER.md:24,27` 原文未动，`D-11:15-18` 已就此发过警告） |
+> | 5【中】把"可导入任意 HF GGUF"从对外话术撤掉 | 待办 | ✅ **仍然成立**。`apps/daemon/src/http/rest/models.ts:728-733` 对 `kind === 'hf_repo'` 硬 501，而 `coordination/BOARD.md:9` 仍把 ADR-004 列为必读、ADR-004 里那句"可导入任意 HF GGUF"未加任何标注 |
+> | 6【低】回收站 / 摘要 / prompt 模板 | 待办 | ⚠️ **拿不准，本轮未定**。`R-06:262` 说 `DELETE /api/notes/:uid` 是**直接删**，而 `apps/web/src/features/notes/api.ts:245` 的注释写的是**软删除（D-02：`deleted_at`）** —— 两说冲突，**需要单独核一轮 DB 层**才能判 |
+>
+> **连带作废**：§5 的 **N-2「`RecorderPage` 的字幕流是 MOCK」** 随第 3 条一起作废（已就地标注）。
+> §1–§4 的对标事实（引擎数 8 vs 3、ASR 模型条目 47 vs 11 等）本轮未复核，按原样引用请自行验证时点。
 
 ## TL;DR（≤ 25 行，Manager 只读这里）
 
@@ -352,18 +370,31 @@ sherpa **27→2**（缺 25，这是最大单点缺口）；parakeet 4→0；funa
 
 **新增两条矩阵里没有的阻塞**：
 - **N-1**：前端引擎选择器与后端 `EngineId` 完全脱节（§1.2）。这是用户当前最直接的痛点。
-- **N-2**：`RecorderPage` 的字幕流是 MOCK，而 `/ws/recorder` 后端是真的 —— **F3 端到端从未跑通过**，
-  只是两头各自能跑。矩阵把 F3 流式 ASR 标 🟢 属于**偏乐观**。
+- ~~**N-2**：`RecorderPage` 的字幕流是 MOCK，而 `/ws/recorder` 后端是真的 —— **F3 端到端从未跑通过**，
+  只是两头各自能跑。矩阵把 F3 流式 ASR 标 🟢 属于**偏乐观**。~~ **← 已作废（2026-08-06）**
+  > 📝 **此前本条写着「`RecorderPage` 的字幕流是 MOCK」。已不成立**：
+  > `apps/web/src/features/recorder/asrStream.ts:2` 自陈是「F3 实时录音的**真实**上行通道」，
+  > `:72` 连 `new URL(…/ws/recorder)`，`:108-122` 是真 `WebSocket`；后端 `apps/daemon/src/ws/recorder.ts`（366 行）。
+  > 两端已接通，矩阵把 F3 流式 ASR 标 🟢 **不再是偏乐观**。（N-1 见 §6 第 1 条，同样已完成。）
 
 ---
 
 ### 6. 建议优先级（给 Manager）
 
-1. **【最高】引擎/模型选择器改为 catalog 驱动，并从 RecorderPage 提到导入页 + 设置页**。
+1. ~~**【最高】引擎/模型选择器改为 catalog 驱动，并从 RecorderPage 提到导入页 + 设置页**~~ **← 已完成**。
    数据源现成：`GET /api/models/catalog` 已按 `role`/`engines` 分组，直接渲染即可。
    同时删掉 `'turbo'` 这个不存在的引擎值。
-2. **【高】sherpa 离线分支 + SenseVoice 进目录**。中文体验的最大单点缺口，一个模型条目 + 一个 `senseVoice` 分支。
-3. **【高】接通 RecorderPage ↔ `/ws/recorder`**，把 F3 从"两头各自能跑"变成端到端。
+   > 📝 **此前本条是【最高】优先待办。已交付**：`apps/web/src/components/common/AsrModelPicker.tsx:18-21`
+   > 自陈替换了写死的 `'paraformer'|'turbo'`；`features/recorder/RecorderPage.tsx:73-74` 已改为 catalog 驱动；
+   > `apps/web/src/test/components.test.tsx:692` 有回归测试锁住「"turbo" 不是合法引擎」。
+2. ~~**【高】sherpa 离线分支 + SenseVoice 进目录**~~ **← 已被 ADR-016 停做**。中文体验的最大单点缺口，一个模型条目 + 一个 `senseVoice` 分支。
+   > 📝 **此前本条是【高】优先待办。已被用户裁掉**：`docs/adr/ADR-016-user-scope-cuts.md:31`
+   > 「❌ 停：sherpa 多模型族分派、**SenseVoice** / Qwen3-ASR / Omnilingual、AMD ASR 自建 CI」。
+   > 全仓 `SenseVoice` 剥注释后只剩 `packages/shared/src/models.ts:477` 一处**注释**。**不要再做这条。**
+3. ~~**【高】接通 RecorderPage ↔ `/ws/recorder`**~~ **← 已完成**，把 F3 从"两头各自能跑"变成端到端。
+   > 📝 **此前本条是【高】优先待办。已交付**：`apps/web/src/features/recorder/asrStream.ts:2` 自陈是
+   > 「F3 实时录音的**真实**上行通道」，`:72` 连的是 `new URL(…/ws/recorder)`，`:108-122` 是真 `WebSocket`。
+   > **§5 的 N-2「RecorderPage 字幕流是 MOCK」随本条一并作废。**
 4. **【中】whisper.cpp 的 Vulkan/ROCm**：上游没产物，要么自建（ADR-015 刚决定不自建），
    要么**改口径**——在文档与 UI 里明说"AMD GPU 目前只加速本地 LLM，ASR 走 CPU"。**不能继续宣称"真 AMD 支持"。**
 5. **【中】把"可导入任意 HF GGUF"从对外话术里撤掉**，或补上"用户手工提供 SHA-256"的导入路径

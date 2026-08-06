@@ -1,6 +1,13 @@
 # OpenMemo 安全说明
 
-> 维护者：`gpu-runtime` · 最后更新：2026-08-02 · 依据：ADR-003、ADR-008 决策 4、D-01 §8
+> 维护者：`gpu-runtime` · 最后更新：2026-08-02 · **逐条复核订正：2026-08-06** · 依据：ADR-003、ADR-008 决策 4、D-01 §8
+>
+> **2026-08-06 这一轮改了什么**（每处正文里都留了「此前写着 X」）：拓扑图的监听地址与 yt-dlp 口径 ·
+> **补记了此前一字未提的 CSRF 同源兜底** · L1「全包唯一 import `child_process`」如实降级为约定 ·
+> 攻击用例 25 → 38 · §2.4 解压的链接条目策略 · §3 两个缺口的裁决依据已失效的提示 ·
+> 附录验证状态表的 3 行（L3 用例数 / ffmpeg 协议白名单 / 解压防护）。
+> **未改动**：§3 两个 TOCTOU 缺口本身（技术事实复核后仍成立）· TLS 默认关闭 · `secrets.json` 0600 ·
+> TD-002 已关闭 · L7 symlink 测试 · L5 env 白名单未写测试 —— 这几条复核后仍然准确。
 >
 > **本文件存在的理由（ADR-008 决策 4 原话）**：
 > **「风险被记录下来才叫接受风险，没记录就是忽略风险。」**
@@ -15,13 +22,23 @@
 OpenMemo 当前的部署形态（ADR-003 决策 1）：
 
 ```
-浏览器（本机）──HTTP/SSE/WS──> daemon（监听 127.0.0.1，随机 token 鉴权）
+浏览器（本机）──HTTP/SSE/WS──> daemon（默认监听 0.0.0.0、鉴权默认关闭，见下方「当前真实姿态」）
                                    │ 子进程
                                    ├─ ffmpeg / ffprobe
-                                   ├─ yt-dlp（可选，GPLv3+）
+                                   ├─ yt-dlp（内置，GPLv3+）
                                    ├─ whisper-cli / whisper-vad-speech-segments
                                    └─ llama-server
 ```
+
+> 📝 **本图的两处订正（保留此前写法以便对照）**：
+>
+> - **此前写着**「daemon（监听 `127.0.0.1`，随机 token 鉴权）」。那是**原始设计意图**，
+>   已被用户 2026-08 的决定推翻 —— 实际默认绑 `0.0.0.0`、鉴权默认 `none`（`apps/daemon/src/http/auth.ts:52`，
+>   `BIND_HOST` / `OPENMEMO_HOST` 见 `apps/daemon/src/bootstrap/single-instance.ts`）。
+>   下方「当前真实姿态」一节早已如实记录，但本图一直没跟上，**同一份文档自相矛盾**。
+> - **此前写着**「yt-dlp（**可选**，GPLv3+）」。那是 ADR-002 **v1** 红线时期的口径；
+>   `ADR-002-license-redlines.md:14,23`（v2）已改为「**F1 直接内置 yt-dlp，不做双路径区分**」，
+>   `vendor/manifests/backends.json` 里 4 个 `ytdlp-*` 包已发货。
 
 > ⚠️ **以下两条假设已被用户显式推翻，见下方「当前真实姿态」。本表保留的是原始设计意图。**
 
@@ -41,8 +58,40 @@ OpenMemo 当前的部署形态（ADR-003 决策 1）：
 | ------------- | ----------------------- | ------------------------------------------------------------------------ |
 | 监听地址      | `0.0.0.0`（可配置）     | 「本机环境特殊我只能通过这个 IP 访问」（NAT 后只有特定端口可从外部访问） |
 | token 鉴权    | **默认关闭**            | 「删除 token 接入，反正也是本地运行的东西，不要这个安全阻拦了」          |
-| CSRF          | 随鉴权一同关闭          | 无凭据可借用时，CSRF 只剩摩擦（详见 `auth.ts` 注释）                     |
+| CSRF          | 随鉴权一同关闭          | 无凭据可借用时，CSRF 只剩摩擦（详见 `auth.ts` 注释）。**`token` 档下也有一层同源兜底 —— 见下一小节** |
 | Host / Origin | **保留**                | 与凭据无关，挡 DNS rebinding，成本为零                                   |
+
+#### CSRF 同源兜底（`OPENMEMO_AUTH=token` 档下**也**生效）
+
+> 📝 **此前本文档全文一字未提这条兜底**（`grep "same-origin\|兜底\|Sec-Fetch"` 只命中三处无关内容）。
+> 而本文件头引的立论原话是「**风险被记录下来才叫接受风险，没记录就是忽略风险**」——
+> 这是一条**刻意接受**的风险（`auth.ts` 注释明写「同源兜底是**显式裁决，不是遗漏**（ADR，勿当 bug 修掉）」），
+> 漏记等于本文档在自己的核心规矩上自我违反。现补记如下。
+
+**位置**：`apps/daemon/src/http/auth.ts:225-288`（`checkCsrfDetailed()`），放行点在 `:287`
+（`return { ok: true, via: 'same-origin-fallback' }`）。类型分支声明在 `:219-220`。
+
+**它做什么**：写请求（POST/PUT/PATCH/DELETE）**没带 CSRF 头**时，只要同时满足下面两条就放行：
+
+1. `Sec-Fetch-Site` **不是** `cross-site`/`same-site`——注意：**该头缺失（`undefined`）也算通过**，
+   因为非浏览器客户端（curl / 脚本）根本不发这个头；
+2. `Origin` 可解析，且 `Origin.host` 与 `Host` 头**严格相等**（小写比较，含端口）。
+
+**它不做什么（三条边界，来自 `auth.ts:242-245`，别削掉）**：
+
+- **带了 CSRF 头就仍然严格校验**——有兜底不等于不看，带错的一律拒（`auth.ts:257-263`）；
+- 兜底路径要让调用方记一条 **info** 日志；若它成了常态，说明前端 `sessionStorage` 那个根因没修好；
+- **token 鉴权完全不动**——它才是真正的访问控制。
+
+**裁决理由（`auth.ts:227-234` 原话摘要）**：前端在 `sessionStorage` 不可用时会丢掉 CSRF 头，
+于是「读全部 200、写全部 403」——用户填完 API Key 点保存，界面毫无异常，库里一行没有。
+而这一层挡不住真正的威胁：**能伪造同源 `Origin` 的攻击者，本来就能直接读 SQLite 文件**。
+
+**⚠️ 由此产生的一条必须写明的后果**：
+下面「恢复方式（一个变量）」里的 `OPENMEMO_AUTH=token`，**恢复的是「token 鉴权 + 打了折的 CSRF」，
+不是原始形态**。恶意网页会被 `Sec-Fetch-Site: cross-site` 挡住，但**任何能自设 `Origin` 与 `Host` 头的
+非浏览器客户端**（能路由到该 `IP:端口` 的任何人）在 token 档下仍可绕过 CSRF 这一层，
+只剩 token 本身作为防线。照那一行做联网加固的人，会得到一个**比他以为的弱**的姿态。
 
 #### 风险（如实陈述，不加修饰）
 
@@ -58,9 +107,12 @@ OpenMemo 当前的部署形态（ADR-003 决策 1）：
 #### 恢复方式（一个变量）
 
 ```bash
-OPENMEMO_AUTH=token   # 恢复 token 鉴权与 CSRF
+OPENMEMO_AUTH=token   # 恢复 token 鉴权与 CSRF（CSRF 只恢复到"带同源兜底"的形态，见上一小节）
 OPENMEMO_HOST=127.0.0.1   # 恢复只绑回环
 ```
+> ⚠️ **此前这一小节写着「恢复方式（一个变量）」并暗示 `OPENMEMO_AUTH=token` 能完整恢复原防护。**
+> 订正：token 鉴权确实完整恢复，但 CSRF 恢复的是**打了折的**形态 —— 见上面「CSRF 同源兜底」一节。
+
 更推荐的组合：绑回环 + SSH 端口转发 —— 那样「本地运行」是真的，关掉鉴权也没有暴露面。
 
 #### 若日后改为多用户或公网部署，**必须**先做完这些
@@ -92,7 +144,10 @@ OPENMEMO_HOST=127.0.0.1   # 恢复只绑回环
 **这是本项目最高风险点**：用户粘贴的 URL 会进入 `yt-dlp` / `ffmpeg` 的命令行。
 
 实现：`packages/pipeline/src/subprocess/{argGuard,runner}.ts`
-测试：`packages/pipeline/src/subprocess/__tests__/argGuard.test.ts`（**25 个攻击用例，全绿**）
+测试：`packages/pipeline/src/subprocess/__tests__/argGuard.test.ts`（**38 个攻击用例 / 9 个 `describe`，全绿**）
+
+> 📝 **此前写着「25 个攻击用例」** —— 那是 ADR-008 时点的数字。之后 T-143 补了 win32 路径族 6 条
+> （`argGuard.test.ts:285-334`）、T-145 补了 symlink 根族 6 条（`:394-441`），实测 `it(` 计数为 **38**。
 
 ### 关键认识：`shell: false` 挡不住参数注入
 
@@ -106,13 +161,46 @@ OPENMEMO_HOST=127.0.0.1   # 恢复只绑回环
 
 | 层                    | 措施                                                                                                                                                                      | 实现位置                                  |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| **L1 架构隔离**       | `runner.ts` 是全包**唯一**允许 import `node:child_process` 的模块                                                                                                         | `subprocess/runner.ts`                    |
+| **L1 架构隔离**       | `runner.ts` 是**媒体子进程**的唯一入口（**约定，当前无机器执行者 —— 见下方「L1 的真实状态」**）                                                                            | `subprocess/runner.ts`                    |
 | **L2 绝不过 shell**   | `spawn(absBin, argv, {shell:false})`。Windows 拒绝 `.bat/.cmd/.ps1/.com/.vbs/.js`                                                                                         | `runner.ts` + `argGuard.isSafeExecutable` |
 | **L3 URL 校验**       | scheme 白名单 / 拒凭据 / 拒私网 / 拒前导 `-` / 拒控制字符 / 长度上限（按**字节**）                                                                                        | `argGuard.validateHttpUrl`                |
 | **L4 关掉工具危险面** | yt-dlp 强制 `--ignore-config --no-config-locations --no-exec --no-playlist`；ffmpeg `-protocol_whitelist`；prompt 截断 1024                                               | `sources/ytdlp.ts`、`audio/ffmpeg.ts`     |
 | **L5 进程环境与资源** | env **白名单重建**（不是过滤）；剔除 `LD_PRELOAD`/`LD_LIBRARY_PATH`/`DYLD_*`/`NODE_OPTIONS`/`PYTHONPATH`；强制 timeout；SIGTERM→5s→SIGKILL 整个进程组；stdio 1MB 环形缓冲 | `runner.ts`                               |
 | **L6 argv 不变量**    | 用户串只能是**一个完整独立的 argv 元素**，永不拼进别的参数、永不成为参数名                                                                                                | `argGuard.buildArgv`                      |
 | **L7 路径穿越**       | `realpath` 后确认在受管根目录内；Windows 拒 UNC / 盘符相对路径                                                                                                            | `argGuard.assertWithinRoot`               |
+
+### ⚠️ L1 的真实状态：是**约定**，不是被执行的控制
+
+> 📝 **此前 L1 那一行写着**「`runner.ts` 是全包**唯一**允许 import `node:child_process` 的模块」。
+> 实测（剥掉注释后的全仓静态扫描，22 处命中 → **19 处真实 import**，分布在 19 个文件）**这句话不成立**，
+> 而且**没有任何机器在执行它**。如实记录如下，以免下一个人把它当成已生效的防线。
+
+**① 例外清单（19 处真实 import，`runner.ts` 只是其中之一）**
+
+| 口径 | 数量 | 具体位置 |
+| --- | --- | --- |
+| **`packages/pipeline` 包内** | **2** | `subprocess/runner.ts:18`（白名单本身）、**`asr/whisperServer.ts:25`**（`:161` 真的 `spawn(bin, argv, …)`） |
+| **产品代码（排除 scripts/tests）** | **7** | 上面 2 处 + `apps/daemon/src/main.ts:13`、`apps/daemon/src/bootstrap/tls.ts:19`、`packages/runtime/src/selfTest.ts:19`、`packages/runtime/src/probe/runProbe.ts:19`、`packages/runtime/src/detect/system.ts:13` |
+| **全仓** | **19** | 上面 7 处 + 12 个 `scripts/` 与 `verify-*.mjs`，其中 `packages/downloader/scripts/verify-offline.mjs:640` 是 **`await import('node:child_process')` 动态 import —— 任何静态 lint 规则都抓不到** |
+
+（另有 3 处**仅出现在注释里**的字符串：`packages/pipeline/src/index.ts:5`、`runner.ts:3`、`runner.ts:7`。
+做这类审计时必须剥注释，否则会数成 22。）
+
+**② 没有任何 CI / lint 在强制它**
+
+- `eslint.config.js` 里 `no-restricted-imports` 恰好出现 **3 处**（`:64-79`、`:86-97`、`:104`），
+  **全是 `apps/web` 的前端分层护栏**（features/A ↮ features/B、lib/components ↮ features），
+  **无一处提到 `child_process` 或任何 node 内置模块**。
+- `grep -rn "child_process" .github/workflows/ scripts/`（排除 scripts 自身的 import 行）**零输出**。
+- `docs/design/D-06-pipeline.md:330-333` 里有一段 `grep -rn "node:child_process" … && exit 1` 的**代码块**，
+  但它**只存在于 markdown 里**，没有任何 workflow 或脚本调用它；而且那条 grep 今天跑会直接 FAIL。
+- `docs/design/D-01-architecture.md:1061` 更进一步写「CI 用 `no-restricted-imports` 强制，
+  `apps/daemon/src/subprocess/**` 之外禁止 import」——**该目录根本不存在**（真实位置是
+  `packages/pipeline/src/subprocess/`）。三份文档互相引用同一条**并不存在**的控制，
+  形成「看起来被三处证实」的假象。
+
+**③ 处置**：要么在 `eslint.config.js` 真加一条 `no-restricted-imports`（并把上面 19 处逐个豁免或整改），
+要么就把 L1 如实降级为「约定」——本文已按后者措辞。**在加上机器执行者之前，不要再把 L1 当作防线计入。**
 
 ### L2 的 Windows 细节（CVE-2024-27980）
 
@@ -131,9 +219,11 @@ Node 在 Windows 上执行 `.bat`/`.cmd` **必须**经过 `cmd.exe`，这会重�
 1. **控制字符必须在 `new URL()` 之前检查。** `new URL()` 会**静默剥离** `\n`、`\t`、`\r`。
    先 parse 再查，等于把恶意串洗成看起来干净的串。
 2. **长度必须按字节算。** `'😀'.repeat(1000)` 是 1000 字符但 **4000 字节**。按 `.length` 判会放行 4KB argv。
-3. **我们自己就是 SSRF 的靶子。** daemon 绑在 `127.0.0.1`，所以
+3. **我们自己就是 SSRF 的靶子。** daemon 监听本机（**当前默认 `0.0.0.0`**，见 §0），所以
    "让下载器访问 `http://127.0.0.1:<port>/api/v1/settings`" 是针对我们自己 API 的
    confused-deputy 攻击。私网地址过滤里**必须包含回环**。
+   （📝 **此前这句写着「daemon 绑在 `127.0.0.1`」** —— 论证本身仍然成立，但**前提句已过期**：
+   实际默认绑 `0.0.0.0`，而绑 `0.0.0.0` 只会让这条更重要，不会让它失效。）
 
 ### L4 的实测验证（不是声称，是真跑过）
 
@@ -218,9 +308,24 @@ feed 里的每个 enclosure URL **都要重新过一遍 `validateHttpUrl`** —�
 
 ### 2.4 解压（GPU 后端包）
 
-Zip-Slip、symlink/hardlink 条目、绝对路径条目、`..` 条目一律拒绝；限制总解压大小、条目数、
-单文件压缩比（防 zip bomb）；**解压前先校验整包 SHA256**（ADR-004 决策 5 —— Ollama 的下载器
-没做校验，我们必须补上）。
+实现：`packages/downloader/src/unpack.ts`（742 行）；独立验证脚本
+`packages/downloader/scripts/verify-unpack.mjs`（**53/53**，见 ADR-015:44）。
+
+- **Zip-Slip / 绝对路径 / `..` 段**：一律拒绝。绝对路径覆盖 POSIX `/`、Windows `C:\` 与 UNC `\\`
+  三种写法（`unpack.ts:131-143`）；`..` 段单独拒（`:148-149`）；resolve 之后**再做一次前缀比对**
+  作为纵深防御（`:165`）。
+- **链接条目（symlink/hardlink）：按目标判定，不是一律拒绝。**
+  绝对目标 → 拒；解析后逃出 `destRoot` → 拒；落在根内 → 放行（`unpack.ts:169-208`）。
+  > 📝 **此前这一节写着「symlink/hardlink 条目…一律拒绝」。** 订正原因写在 `unpack.ts:169-183` 的注释里：
+  > 「Rejecting EVERY symlink is too blunt and breaks real software」——**官方 whisper.cpp tarball
+  > 自带 `libwhisper.so -> libwhisper.so.1.7.6`，一律拒绝会让我们自己的 ASR 后端装不上。**
+  > ⚠️ 附带一条代码侧的债（不在本次文档订正范围，但值得同批修）：`unpack.ts:16-19` 的文件头注释
+  > **自己也还写着 "never created / Rejected outright"**，与 `:169-183` 的实现打架。
+- **资源上限**：条目数上限 `maxEntries`（默认 20000，`:60-61, 96, 104-107`）、未压缩总字节上限
+  （默认 4 GiB，`:58-59, 119`）、`zlib.maxOutputLength` 解压中途中止（`:401`）、
+  xz 解压中途字节天花板（`:652-657`）——防 zip bomb。
+- **解压前先校验整包 SHA256**（`packages/downloader/src/verify.ts` + `install()` 路径；
+  ADR-004 决策 5 —— Ollama 的下载器没做校验，我们必须补上）。
 
 ### 2.5 崩溃隔离
 
@@ -234,6 +339,13 @@ whisper.cpp 在后端库缺失时会调 `ggml_abort()` 直接 SIGABRT 退出（e
 
 > 以下两个缺口 **Manager 已明确裁决"不阻塞 v1"**，依据是 §0 的威胁模型。
 > 记录在此，任何人在改变部署形态前必须先读这一节。
+>
+> 🚨 **裁决依据已不完整，需 Manager 重裁（2026-08）**：下面缺口 1 的「必须立即修复的条件 ②
+> （daemon 监听地址改为非 `127.0.0.1`）」**今天已经满足** —— §0 自陈默认绑 `0.0.0.0`、鉴权默认关闭。
+> 缺口 2 的依据「本机其它进程视为可信」也建立在同一组前提上。
+> **两个缺口的技术事实仍然成立（已复核），但「当前可接受」这个结论所依据的前提已被用户改变，
+> 而本节此前一直挂在"判定当前可接受"之下、未作任何标注。** 参见
+> `coordination/PENDING-USER-DECISIONS.md` 的 C-2。
 
 ### 缺口 1：DNS Rebinding（TOCTOU）
 
@@ -313,15 +425,19 @@ memo.ac 有这个能力，我们**明确暂不实现**（Manager 已列入给用
 | 防护                        | 验证方式                       | 状态                                                                     |
 | --------------------------- | ------------------------------ | ------------------------------------------------------------------------ |
 | L2 Windows `.bat` 拒绝      | 单元测试（指定 platform 参数） | ✅ 测试通过；**真实 Windows 未验证**                                     |
-| L3 URL 校验（全部 6 条）    | 25 个攻击用例                  | ✅ 实测全绿                                                              |
+| L3 URL 校验（全部 6 条）    | **38** 个攻击用例              | ✅ 实测全绿（**此前本行写 25，是 ADR-008 时点的数字**；T-143 补 win32 路径族 6 条、T-145 补 symlink 根族 6 条） |
 | L4 yt-dlp `--ignore-config` | **植入恶意 config 实跑**       | ✅ **真实攻击验证通过**                                                  |
 | L5 env 白名单               | 代码审查                       | ⚠️ 未写针对性测试                                                        |
 | L5 进程组 kill              | 中途取消实测（0 孤儿进程）     | ✅ 实测通过（Linux）                                                     |
 | L6 argv 不变量              | 单元测试                       | ✅                                                                       |
 | L7 symlink 逃逸             | 单元测试（真建 symlink）       | ✅                                                                       |
 | 子进程崩溃隔离              | T-012 实测 SIGABRT 场景        | ✅                                                                       |
-| ffmpeg 协议白名单           | 代码审查                       | ⚠️ **未构造恶意 HLS 播放列表实测**                                       |
+| ffmpeg 协议白名单           | **构造恶意 HLS 播放列表实跑（T-026）** | ✅ **真实攻击验证通过** + 3 条回归用例（`argGuard.test.ts:461-487`）。**此前本行写"代码审查 / ⚠️ 未构造恶意 HLS 播放列表实测"，与本文 §2.2 自相矛盾** —— §2.2 标题就是「已用真实攻击验证（T-026）」并贴了真实 ffmpeg 输出 |
 | RSS XXE 拒绝                | 单元测试（DOCTYPE 拒绝）       | ✅                                                                       |
-| 解压防护（Zip-Slip 等）     | —                              | ❌ **未实现**（后端包解压逻辑在 `packages/downloader`，属 `model-mgmt`） |
+| 解压防护（Zip-Slip 等）     | 单元测试 + `verify-unpack` 脚本实跑 | ✅ **53/53**（`packages/downloader/src/unpack.ts`）。**此前本行写"❌ 未实现"，是漏核** —— 同一份文档 §2.4 当时就已描述该实现，`ADR-015:44` 与 `coordination/FEATURE-COVERAGE.md:60` 也各记过一次通过 |
 
-**未验证的三项已如实标出**，其中"解压防护未实现"需要 Manager 确认归属与排期。
+**仍未验证的两项已如实标出**（L2 真实 Windows、L5 env 白名单）。
+
+> 📝 **此前这一段写着「未验证的三项已如实标出，其中"解压防护未实现"需要 Manager 确认归属与排期」。**
+> 该条作废：解压防护的归属早已明确（`packages/downloader`，`model-mgmt`）且**已经交付**
+> （`packages/downloader/src/unpack.ts` + `scripts/verify-unpack.mjs`），无需 Manager 再确认。

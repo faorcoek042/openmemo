@@ -1,11 +1,50 @@
 ---
 id: R-03
 author: oss-scout
-status: ready
+status: superseded
 date: 2026-08-02
+superseded-date: 2026-08-06
+superseded-by: ADR-002 v2 · ADR-003 决策 1
+retained-sections: §3（许可证风险分级矩阵）· §4（FFmpeg LGPL 专题）· §5（yt-dlp 分级）
+---
+
+# ⚠️ 本文状态：`superseded`（2026-08-06）—— 但 §3 / §4 / §5 必须保留
+
+> **此前本文标 `status: ready`，被当作现行选型依据引用。** 现改标 `superseded`。
+> **正文一行未删**，因为其中三节是全仓唯一来源（见下）。读本文前请先看清哪些前提已经不成立。
+
+## ❌ 已不成立的前提（不要照本文的技术栈做事）
+
+| 前提 | 出现位置 | 真实情况 |
+| --- | --- | --- |
+| **技术栈 = Tauri v2 + Rust crates**（rusqlite / Symphonia / rubato / tokio / `reqwest` + `feed-rs`） | `:24`（D11 选型）、`:25`（sidecar 论证）、`:88`（【B】包管理器分类）、§1/§2/§7 各处 | **仓库里零行 Rust**：`find . -name "*.rs"` → **0**，`find . -name "Cargo.toml"` → **0**。**ADR-003 决策 1 改为 Node daemon + 浏览器 SPA（web-first）**，Tauri 外壳被 `PENDING-USER-DECISIONS.md` D 节裁决为"后置" |
+| **红线 1：`ffmpeg-static` npm 禁用** | `:379`（§3 表）、`:567`（§6.1 表第 1 行） | **ADR-002 v2 明文 ✅ 允许使用**（个人自用档）。当前依赖里确实没有它，但删除理由是 T-145 的"减少第二条依赖通道"，**不是本条红线** |
+| **红线 4：不得捆绑 yt-dlp 官方 release 二进制** | `:380`（§3 表）、`:570`（§6.1 表第 4 行） | **已被推翻且已发货**：`ADR-002:14,23`「F1 **直接内置** yt-dlp，不做双路径区分」；`vendor/manifests/backends.json` 里 `ytdlp-{linux-x64,linux-arm64,macos-arm64,win-x64}` 4 个包全部指向 yt-dlp 官方 release |
+| **「yt-dlp 做成默认关闭的可选插件，默认路径走 RSS/直链」** | `:21`（TL;DR）、§2 D1 推荐（`:105-108`）、§5.4 | 同上 —— 已改为直接内置 |
+| **「不要用 `youtube-dl-exec`」** | §2 D1 表（`:105-108`） | 该依赖**曾被真的引入过**，后于 T-145 删除（见 `packages/pipeline/package.json:27` 的 `_comment:removed-deps`：`youtube-dl-exec (^3.1.9) 已删除`）。红线曾被违反后自愈 |
+
+> 另外两条红线（`--enable-nonfree` / `--enable-gpl` 的 FFmpeg 构建）**未被推翻，仍然有效**。
+
+## ✅ 仍然有效，且是**全仓唯一来源** —— 不得删
+
+这三节已实测确认在 `docs/adr/*.md` + `docs/design/*.md` + 其余 `docs/research/R-0*.md` + `docs/SECURITY.md`
+里**没有第二份**（搜 `许可证矩阵|LGPL|GPLv3|Unlicense|MereAggregation` 共 9 条命中，
+逐条看下来全是裁决表、一句话结论或架构图标签，无一含分析）。`vendor/README.md:33` 还在引用本文。
+
+| 节 | 内容 | 为什么独家 |
+| --- | --- | --- |
+| **§3** | 36 行**许可证风险分级矩阵**，含 `@blocknote/xl-*` / Moonshine 非英语模型 / Meilisearch EE / ten-vad 非竞争条款的**原文引用** | `ADR-002:22-23` 只是 allow/deny 裁决表，无分析；`license-report.md` 是 npm 依赖清单，不含二进制 |
+| **§4** | **FFmpeg 专题**：LGPL vs GPL 的构建分界、FSF `#MereAggregation` 官方 FAQ、预编译源可得性调查 | 全仓无第二份 LGPL 分析 |
+| **§5** | **yt-dlp 分级**：README 分层许可证（仓库/PyPI = Unlicense，release 二进制 = GPLv3+）、OLG Hamburg 2024 判决、Apple 5.2.3 | 全仓无第二份 |
+
+> 注意：§3/§4/§5 的**事实与分析**有效；其中若干**行动建议**（"禁止"/"不随产品分发"）已被 ADR-002 v2 放行，
+> 上表已逐条标出。**读结论看 ADR-002，读理由看这里。**
+
 ---
 
 ## TL;DR（≤ 25 行，Manager 只读这里）
+
+> ⚠️ 以下 TL;DR 写于 2026-08-02，**其中的 D11 Tauri v2 与 yt-dlp「可选插件」结论已不成立**，见上方状态块。
 
 - **C2「一律 submodule」不可照做**，会毁掉依赖解析和许可证隔离。建议改为三分法：
   **(A) 需要我们自己 CI 编译的 C/C++ → git submodule**（whisper.cpp / sherpa-onnx / llama.cpp / ffmpeg / sqlite-vec / libsimple）；
@@ -103,7 +142,7 @@ Q3. X 是否是「独立可执行文件 / 平台相关预编译二进制 / 模�
 | ✅ **yt-dlp**（可选插件） | `yt-dlp/yt-dlp` | **Unlicense**（仓库/PyPI）<br>**GPLv3+**（release 二进制） | 181.8k | 2026-07-23 | Python；官方 24 个 release 资产（win/mac/linux 单文件） | **【C】运行时下载**，默认不启用 |
 | ⚠️ streamlink | `streamlink/streamlink` | BSD-2-Clause | 11.7k | 2026-08-01 | Python | 【C】；偏直播流，站点覆盖远少于 yt-dlp |
 | ❌ youtube-dl | `ytdl-org/youtube-dl` | Unlicense | 140.8k | 2026-02-19 | Python | 维护明显放缓（半年无提交），站点提取器落后 |
-| ⚠️ youtube-dl-exec (npm) | `microlinkhq/youtube-dl-exec` | MIT | 614 | 2026-07-14 | npm 3.1.9 (2026-07-06) | 只是 yt-dlp 的 Node 包装器；**它会帮你下载 yt-dlp 二进制**，等于把 GPLv3 拉进 node_modules |
+| ⚠️ youtube-dl-exec (npm) | `microlinkhq/youtube-dl-exec` | MIT | 614 | 2026-07-14 | npm 3.1.9 (2026-07-06) | 只是 yt-dlp 的 Node 包装器；**它会帮你下载 yt-dlp 二进制**，等于把 GPLv3 拉进 node_modules。<br>📝 **后续实况**：本文写"不要用"，但该依赖**曾被真的引入过**（`^3.1.9`），后于 T-145 删除 —— 见 `packages/pipeline/package.json:27` 的 `_comment:removed-deps`。**红线曾被违反后自愈** |
 | ❌ yt-dlp-wrap (npm) | — | MIT | — | **npm 最后发布 2023-09-13** | 已停更 | 弃用 |
 | ❌ @distube/ytdl-core | `distubejs/ytdl-core` | MIT | 515 | **仓库已 archived** | — | 已归档 |
 
@@ -111,6 +150,12 @@ Q3. X 是否是「独立可执行文件 / 平台相关预编译二进制 / 模�
 1. **默认路径（随产品分发）**：播客 RSS enclosure + 通用直链，用 Rust `reqwest` + `feed-rs`/`rss` crate 自己实现。零法律风险。
 2. **可选路径（用户主动启用）**：yt-dlp 作为**运行时下载的外部工具**，我们只写 CLI 包装层（子进程 + JSON 输出解析）。UI 上明确提示"由用户自行决定用途"。
    *不要*用 `youtube-dl-exec`——它把二进制下载埋进 npm install，破坏我们"不分发 GPLv3"的边界。
+
+> ⚠️ **以上「分两条路径」的推荐已不成立（2026-08-06 订正，原文保留在上）**：
+> ① Rust 实现从未采纳（ADR-003 决策 1 = Node daemon，仓库零行 Rust）；
+> ② ADR-002 v2 决策 2 改为「**F1 直接内置 yt-dlp，不做双路径区分**」，不再有"默认关闭的可选插件"这一档。
+> **仍然成立的是 §5 的分级事实本身**（仓库/PyPI = Unlicense、release 二进制 = GPLv3+、
+> OLG Hamburg 2024、Apple 5.2.3）——那是全仓唯一来源，见文首状态块。
 
 ---
 
@@ -376,8 +421,8 @@ Q3. X 是否是「独立可执行文件 / 平台相关预编译二进制 / 模�
 | SQLCipher 社区版 | BSD-3-Clause | 🟡 | 可选 | 商业版条款**未核实** |
 | **FFmpeg（GPL 构建）** | **GPL-2.0+** | 🔴 | **避免** | 含 x264/x265/frei0r/librubberband/libvidstab/libxvid 等（已核实 LICENSE.md 清单） |
 | **FFmpeg（nonfree 构建）** | 不兼容 | 🔴 | **绝对禁止** | 官方原文："This will cause the resulting binary to be **unredistributable**" |
-| **ffmpeg-static (npm)** | **GPL-3.0-or-later** | 🔴 | **禁止** | 包自报 license；二进制源自 gyan.dev/evermeet（均为 GPL 构建） |
-| **yt-dlp release 二进制** | **GPLv3+** | 🔴 | **不随产品分发** | README 原文："the PyInstaller-bundled executables include GPLv3+ licensed code, and as such the combined work is licensed under GPLv3+" |
+| **ffmpeg-static (npm)** | **GPL-3.0-or-later** | 🔴→⚠️ | ~~**禁止**~~ → **ADR-002 v2 已放行** | 包自报 license；二进制源自 gyan.dev/evermeet（均为 GPL 构建）。**许可证事实仍准确**；但 `ADR-002:22` 在个人自用档下 ✅ 允许。当前依赖里没有它，删除理由是 T-145 的"减少第二条依赖通道"，不是本条 |
+| **yt-dlp release 二进制** | **GPLv3+** | 🔴→⚠️ | ~~**不随产品分发**~~ → **已决定直接内置** | README 原文："the PyInstaller-bundled executables include GPLv3+ licensed code, and as such the combined work is licensed under GPLv3+"。**许可证事实仍准确**；但 `ADR-002:14,23`（v2 决策 2）改为直接内置，`backends.json` 4 个 `ytdlp-*` 包已发货，GPLv3+ 义务记在各包的 `license` 字段 |
 | yt-dlp git 仓库 / PyPI 包 | Unlicense | 🟡 | 见 §5 | README："The git repository, the PyPI source distribution and the PyPI built distribution (wheel) only contain code licensed under the Unlicense" |
 | **tldraw** | **专有 tldraw license** | 🔴 | **禁止** | "Production Environment" 使用需另购许可 |
 | **ten-vad** | Apache-2.0 + **非竞争附加条款** | 🔴 | **禁止** | "You may not Deploy the ten-vad in a way that competes with Agora's offerings" — 非 OSI，field-of-use 限制 |
@@ -564,10 +609,10 @@ F1「音视频链接导入」拆成两个能力：
 
 | # | 项目 | 原因 |
 |---|------|------|
-| 1 | **`ffmpeg-static` npm 包** | 包自报 `GPL-3.0-or-later`；二进制来自 gyan.dev/evermeet 的 GPL 构建。装了就等于分发 GPLv3 二进制 |
+| 1 | ~~**`ffmpeg-static` npm 包**~~ **← 已被 ADR-002 v2 放行** | 包自报 `GPL-3.0-or-later`；二进制来自 gyan.dev/evermeet 的 GPL 构建。装了就等于分发 GPLv3 二进制。<br>📝 **此前本行是硬红线。** `ADR-002:22`（v2）在"个人自用、不对外分发"档下明文 **✅ 允许使用**。当前依赖里确实没有它，但那是 T-145 以"减少第二条依赖通道"为由删的，**不是执行本条红线** |
 | 2 | **任何 `--enable-nonfree` 的 FFmpeg 构建** | 官方明文：**unredistributable**。任何形式的分发都是侵权 |
 | 3 | **`--enable-gpl` 的 FFmpeg 构建**（x264/x265/frei0r/librubberband/libvidstab/libxvid…） | 我们只做音频，根本不需要；用了就是 GPL |
-| 4 | **捆绑 yt-dlp 官方 release 二进制** | PyInstaller 打包引入 GPLv3+，污染整个分发物 |
+| 4 | ~~**捆绑 yt-dlp 官方 release 二进制**~~ **← 已被 ADR-002 v2 推翻，且已发货** | PyInstaller 打包引入 GPLv3+，污染整个分发物。<br>📝 **此前本行是硬红线。** 用户明确决定直接内置（`ADR-002:14,23` v2 决策 2「F1 直接内置 yt-dlp，不做双路径区分」）；`vendor/manifests/backends.json` 里 `ytdlp-{linux-x64,linux-arm64,macos-arm64,win-x64}` 4 个包全部指向 yt-dlp 官方 release 2026.07.04。GPLv3+ 义务记在各包的 `license` 字段 |
 | 5 | **tldraw** | 专有 tldraw license，Production Environment 需另购授权 |
 | 6 | **ten-vad** | Apache-2.0 + "may not Deploy... in a way that competes with Agora's offerings" 非竞争条款，非 OSI 开源 |
 | 7 | **`@blocknote/xl-*` 系列包** | GPL-3.0（core 的 MPL-2.0 可用，但必须在 lockfile 层面确保 xl-* 不被间接引入） |

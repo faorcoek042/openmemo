@@ -1,20 +1,45 @@
 ---
 id: R-02
 author: gpu-runtime
-status: ready
+status: ready-with-corrections
 date: 2026-08-02
+corrected-date: 2026-08-06
 ---
+
+# ⚠️ 读之前先看：一条核心结论已被 ADR-015 推翻（2026-08-06 订正）
+
+> **此前本文标 `status: ready`**，其「**必须自建 whisper.cpp CI（约 1 人周）**」的结论
+> （`:11` 与 `:17` 两处）被当作待办引用。**该结论已被 `ADR-015-upstream-first.md` 明文推翻。**
+>
+> | 项 | 此前写着 | 现在 |
+> | --- | --- | --- |
+> | whisper.cpp 二进制来源 | **一律自建**（GitHub Actions 矩阵） | **上游预编译优先**：`ADR-015:47-51`「manifest 一律填上游地址」。`ADR-015:7` 明写 `supersedes: ADR-003 决策 2（自建 whisper.cpp CI）的适用范围` |
+> | 自建的适用范围 | 全平台 | **收窄为：仅当用户实际需要 macOS / Vulkan / ROCm 时才启用** |
+> | 成本估算「约 1 人周」 | 作为必付成本列出 | 变成**按需成本**；Linux / Windows 路径不再需要它 |
+>
+> **⚠️ 但本文的论据事实上仍然成立** —— 官方 release 覆盖确实窄（v1.9.1 只有 Win cpu/blas/cublas +
+> Linux cpu + iOS xcframework，无 macOS CLI / 无 Vulkan / 无 ROCm）。**变的是结论，不是事实。**
+> 后果今天仍在：`vendor/manifests/backends.json` **零个** vulkan / rocm / metal / coreml 包，
+> 见 `docs/design/D-11-ci-platform-facts.md:15-18` 与 `docs/research/R-06-memo-ac-gap.md` §6 第 4 条。
+>
+> 本文其余部分（`GGML_BACKEND_DL` 机制、CUDA 体积实测、分层降级链、签名调研、LLM 三档）未发现失效。
 
 ## TL;DR（≤ 25 行，Manager 只读这里）
 
 - **决定性发现（已验证）**：ggml 的 `GGML_BACKEND_DL=ON` 让后端编译成独立 `.dll/.so`，运行时扫描目录、打分、失败静默跳过。whisper.cpp 官方 release CI 已启用。我实测拆开官方 zip：CPU 包与 CUDA 包**目录结构完全一致**，CUDA 包只是多了 `ggml-cuda.dll` + CUDA 运行时 DLL。→ **要求 2.1「网页下载对应后端」= 往同一目录再丢一个 dll**，是 ggml 一等公民能力，不是 hack。
-- **ASR 明确推荐：whisper.cpp（ggml）为主引擎，但二进制我们自己在 GitHub Actions 出**。理由：官方 release 覆盖太窄（已核实 v1.9.1 只有 Win cpu/blas/cublas + Linux cpu + iOS xcframework，**无 macOS CLI、无 Vulkan、无 ROCm**），而源码 `-DGGML_VULKAN=1 / -DGGML_HIP=1 / -DWHISPER_COREML=1` 全部支持。
+- **ASR 明确推荐：whisper.cpp（ggml）为主引擎，~~但二进制我们自己在 GitHub Actions 出~~**。理由：官方 release 覆盖太窄（已核实 v1.9.1 只有 Win cpu/blas/cublas + Linux cpu + iOS xcframework，**无 macOS CLI、无 Vulkan、无 ROCm**），而源码 `-DGGML_VULKAN=1 / -DGGML_HIP=1 / -DWHISPER_COREML=1` 全部支持。
+  > 📝 **此前本行写「二进制我们自己在 GitHub Actions 出」**（无条件自建）。**已被 ADR-015 推翻**：改为
+  > **上游预编译优先**，Linux/Windows 走上游地址，macOS/Vulkan/ROCm **按需**才自建。**括号里的覆盖窄事实仍成立。**
 - **淘汰 faster-whisper/CTranslate2**：已核实 Apple Silicon **不支持 Metal/MPS**（`device="mps"` 直接报错），且 cuBLAS/cuDNN **不打包**、要用户装 `nvidia-*` pip 包 + 配 `LD_LIBRARY_PATH`。违反"不碰命令行"。
 - **CUDA 体积是最大现实问题（已实测）**：官方 `whisper-cublas-12.4.0-bin-x64.zip` = **677.9 MB**，解压 1.21 GB；其中 `cublasLt64_12.dll` 328 MB、`ggml-cuda.dll` 251 MB（多架构 fat binary）。对比 llama.cpp `win-vulkan-x64` 仅 **32.51 MB**。→ 建议**自建单架构 CUDA 包**（按检测到的 compute capability 分发）+ **把 Vulkan 作为 NVIDIA 用户的"小包"选项**。
 - **分层降级链（推荐方案）**：`L0 浏览器 WebGPU（零安装兜底）` → `L1 随安装包内置 CPU（~10-20 MB，永远可用）` → `L2 按需下载加速后端包（Metal 内置/CUDA/Vulkan/ROCm）`。探测用**独立子进程**跑我们自建的 `ggml probe`，超时 + 崩溃隔离。
 - **签名是能落地的关键，结论如下**：macOS 上 Apple Silicon **所有可执行文件必须至少 ad-hoc 签名才能运行**（Apple 官方声明）；`stapler` **不能** staple 裸 Mach-O（Apple DTS 工程师原话），只支持 .app/.dmg/.pkg。→ 我们必须用**自己的 Developer ID 重签所有下载的二进制**（否则 hardened runtime 的 library validation 会拒绝加载），notarize zip，靠"自己下载不打 quarantine xattr"绕开 Gatekeeper 首次运行拦截 + `xattr -dr` 兜底。Windows 侧：程序化下载不带 MOTW，SmartScreen 只拦用户浏览器下载的安装包 → 签安装包即可；**EV 证书已不再给即时 SmartScreen 信誉**（微软 2024 根程序变更）。
 - **LLM 明确推荐三档**：① BYO API Key（Anthropic/OpenAI/DeepSeek/任意 OpenAI 兼容 base_url）为默认；② 探测复用已装的 Ollama(`:11434`)/LM Studio(`:1234`)；③ 内置 llama.cpp `llama-server`——它的官方预编译矩阵**极其完整**（Win: cpu/cuda/vulkan/hip/sycl/openvino；Linux: cpu/vulkan/rocm/sycl/openvino；macOS: arm64+x64），可直接用，不必自建。
-- **关键取舍**：为了 macOS + Vulkan + ROCm 覆盖，我们必须自建 whisper.cpp CI（约 1 人周），换来完整的要求 2.1 落地能力。不自建则 mac 用户没有可下载的 CLI 二进制。
+- **关键取舍**：为了 macOS + Vulkan + ROCm 覆盖，~~我们必须自建 whisper.cpp CI（约 1 人周）~~，换来完整的要求 2.1 落地能力。不自建则 mac 用户没有可下载的 CLI 二进制。
+  > 📝 **此前本行写「必须自建（约 1 人周）」并把它当作必付成本。** ADR-015 把它改成**按需成本**：
+  > `ADR-015:47-51` 「manifest 一律填上游地址…适用范围收窄为：仅当用户实际需要 macOS/Vulkan/ROCm 时才启用」。
+  > **今天的实况**：macOS-arm64 CPU 后端已发布（`backends.json` 的 `whispercpp-cpu-macos-arm64`），
+  > 而 **Vulkan / ROCm / Metal / CoreML 仍然零产物** —— 本行的警告在那三条上依然有效。
 - **未验证/存疑**：① Vulkan vs CUDA 在 whisper 推理上的相对性能 —— **UNKNOWN，无可信数据，必须做 spike 实测**；② whisper.cpp 官方 bench 帖里**没有任何 GPU 数字**（只有 CPU/WASM）；③ 单架构 CUDA 包能压到多小 —— 未实测；④ llama.cpp 编出的 `ggml-cuda.dll` 能否被 whisper.cpp 直接复用（ggml soname 已验证为 `0.15.1`，ABI 需实测）；⑤ macOS 15/26 上"自己下载不打 quarantine"是否仍成立 —— **无 mac 机器，未验证**；⑥ Azure Trusted Signing 具体美元价格（页面动态渲染，UNKNOWN）。
 - **对其他 agent 的影响**：架构组请按「本地 daemon（Node 或 Rust）+ 子进程 probe + 后端包管理器」设计；网页只跟 daemon 的 REST/WS 通；模型下载（要求 2.2）与后端包下载共用同一套 manifest/sha256/断点续传组件。CI 组请预留 GitHub Actions self-built whisper.cpp 矩阵。
 

@@ -1,9 +1,20 @@
 ---
 id: R-01
 author: memo-researcher
-status: ready
+status: ready-with-corrections
 date: 2026-08-02
+corrected-date: 2026-08-06
 ---
+
+# ⚠️ 读之前先看：一条「值得抄」的建议与我们自己的裁决相反（2026-08-06 订正）
+
+> **此前本文标 `status: ready`**，其 §C10「值得抄」清单被当作待办来源引用。
+> 本文的**取证事实部分**（二进制解包所得的技术栈、ASR 栈、后端矩阵、注册表 schema、IPC 通道命名、定价）
+> 本轮复核**未发现失效**，仍可放心引用。**下面这一条例外**：
+>
+> | 位置 | 此前写着 | 我们的裁决 |
+> | --- | --- | --- |
+> | §C10 第 7 条（`:475`） | 【值得抄】URL 导入 = yt-dlp + **浏览器 cookie** + JS runtime | **cookie 部分已被明确否决**：`docs/SECURITY.md §4.1` 整节论证了为何不做（`--cookies <path>` 是**任意文件读取入口**，`--cookies-from-browser` 会读**全部站点的登录凭据**）；`packages/pipeline/src/media/sources/ytdlp.ts:31` 的 `NEVER passed` 清单里就有 `--cookies`。**yt-dlp + JS runtime 那两半仍然成立。**<br>该事项仍挂在 `coordination/PENDING-USER-DECISIONS.md` 的 C-1 等用户拍板 |
 
 ## TL;DR（≤ 25 行，Manager 只读这里）
 - memo.ac = **MemoAI**，Pemo LLC 出品的**闭源** Electron 桌面应用（仅 Windows x64 / macOS arm64，**无 Linux**）。定位：音视频 → 转写 → 字幕/翻译/摘要/思维导图。当前版本 v1.7.5（2026-06-24）。
@@ -472,8 +483,14 @@ https://download.memo.ac/<url>             # 下载代理/镜像
 6. **【必抄】whisper-server 常驻 + 真实音频健康检查。**
    不是简单 ping 端口，而是**发一段内嵌的 base64 测试音频跑一次真实推理**，通过才算就绪。这正好可以当作章程 2.1 要求的"自检"——安装完后端后跑一次 2 秒基准音频，同时能顺手给出实测速度。
 
-7. **【值得抄】URL 导入 = yt-dlp + 浏览器 cookie + JS runtime。**
+7. **【值得抄】URL 导入 = yt-dlp + ~~浏览器 cookie~~ + JS runtime。**
    `useCookies` / `cookieBrowser:"chrome"` 让用户能下会员内容；捆绑 bun/deno 解 YouTube nsig challenge 是当前必需项。另外 yt-dlp 版本本身可在线升级（IPC `ytdlp:download-version`）——因为站点反爬变化快，**yt-dlp 必须能独立于主程序更新**。
+   > ⚠️ **cookie 那一半已被否决（2026-08-06 订正，原文保留在上）。** 依据 `docs/SECURITY.md §4.1`：
+   > `--cookies <path>` 是**任意文件读取入口**，`--cookies-from-browser` 会直接读**用户全部站点的登录凭据**；
+   > 另有凭据落盘、日志泄漏、最小化授权三个配套问题。`packages/pipeline/src/media/sources/ytdlp.ts:31`
+   > 把 `--cookies` / `--cookies-from-browser` 列入 **`NEVER passed`** 清单。
+   > **yt-dlp 本体 + JS runtime + 可独立升级** 这三点仍然成立、仍值得抄。
+   > 会员内容是否要做，挂在 `coordination/PENDING-USER-DECISIONS.md` 的 **C-1** 等用户拍板。
 
 8. **【值得抄】思维导图 = LLM 产出 Markdown → markmap 渲染 → SVG/PNG 导出。**
    markmap 是 MIT 协议、体积小、天然可编辑（改 Markdown 即改图）、天然可导出 SVG。配合 `html2canvas` 出图。比 G6/React Flow 便宜太多。**注意 memo.ac issue #133「导出图片文字看不清」——导出时应直接用 markmap 的 SVG 序列化 + 指定 scale，而不是截屏。**

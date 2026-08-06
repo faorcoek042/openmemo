@@ -12,8 +12,13 @@ date: 2026-08-02
 - **存储**：内容寻址 `blobs/sha256-<hex>` + `manifests/<role>/<id>.json` + `by-name/` 硬链接视图。
   已验证：HF 与 ModelScope 的同一 ggml 文件**字节完全一致**（sha256 相同，`cmp` 通过）→ 换镜像不需重下，天然去重。
 - **进度推送选 SSE，不选 WebSocket**。理由：严格单向、走同一条 HTTP 鉴权/CORS 路径、`EventSource` 自带
-  重连 + `Last-Event-ID` 重放。用**一条** `/api/models/events` 复用全部任务，规避 HTTP/1.1 六连接上限。
-  实时 ASR 那种双向低延迟场景另开 `/ws/transcribe`，不要为了统一而统一。
+  重连 + `Last-Event-ID` 重放。用**一条** ~~`/api/models/events`~~ 复用全部任务，规避 HTTP/1.1 六连接上限。
+  实时 ASR 那种双向低延迟场景另开 ~~`/ws/transcribe`~~，不要为了统一而统一。
+  > 📝 **落地时两个端点都改名了（2026-08-06 订正，原名保留在上）**：
+  > `/api/models/events` → **全局唯一的 `/api/events`**（ADR-004 SSE 单流，见 `apps/daemon/src/http/server.ts:338`
+  > 与 `docs/design/D-01-architecture.md:326`）；`/ws/transcribe` → **`/ws/recorder`**（`apps/daemon/src/ws/recorder.ts`）。
+  > `grep -rn "api/models/events" apps packages` **零命中**。**照本文原名接 UI 会 404。**
+  > 决策本身（SSE 而非 WS、单流复用）仍然成立。
 - **国内下载（已实测）**：`hf-mirror.com` 从美国 IP 对 `/api/*` 和 `/resolve/*` 一律 308 跳回 huggingface.co
   → 它是地理围栏的，**本机无法验证其在国内的代理行为**（§5.4 附大陆复测脚本，请找人跑）。
 - **重大利好（已验证）**：**Qwen 官方在 ModelScope 有同名 repo `Qwen/Qwen3-{4B,8B}-GGUF`，
@@ -1402,6 +1407,12 @@ POST /api/models/jobs/:job_id/resume  -> 202
 GET /api/models/events            # 全局流，复用所有 job + 目录 + 硬件事件
 GET /api/models/events?job=<id>   # 可选过滤
 ```
+
+> 📝 **端点名已在落地时改掉（2026-08-06 订正，原名保留在上）**：真实端点是**全局唯一的
+> `/api/events`**（`apps/daemon/src/http/server.ts:338`），不是 `/api/models/events` ——
+> 后者全仓 grep **零命中**。ADR-004 把 SSE 收敛成**一条全局流**（见 `docs/design/D-01-architecture.md:326`），
+> 比本文设想的"每个域一条"更进一步。同理，下文提到的实时 ASR 通道 `/ws/transcribe`
+> 实际叫 **`/ws/recorder`**（`apps/daemon/src/ws/recorder.ts`）。**照本文原名接 UI 会 404。**
 
 ```
 id: 1042

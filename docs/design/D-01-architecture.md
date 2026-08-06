@@ -1080,7 +1080,23 @@ interface MediaSource extends Adapter {
 
 **第一层：架构隔离**
 `SubprocessRunner`（落地在 `packages/pipeline/src/subprocess/runner.ts`）**应当**是全项目唯一 `spawn` 出口，所有防护集中在这一个文件里审计。
-⚠️ **这是约定，尚未机器强制。此前这里写着"CI 用 `no-restricted-imports` 强制，`apps/daemon/src/subprocess/**` 之外禁止 import `node:child_process`" —— 这条 lint 规则从未存在于 `eslint.config.js`（全文 115 行，`child_process` 零命中），`apps/daemon/src/subprocess/` 这个目录也不存在。** 实测产品代码有 5 处 import `node:child_process`，其中 3 处在 runner 之外：`apps/daemon/src/bootstrap/tls.ts`、`apps/daemon/src/main.ts`、`packages/pipeline/src/asr/whisperServer.ts`（另两处在 `packages/runtime/src/selfTest.ts`、`packages/runtime/src/probe/runProbe.ts`）。
+⚠️ **这是约定，尚未机器强制。此前这里写着"CI 用 `no-restricted-imports` 强制，`apps/daemon/src/subprocess/**` 之外禁止 import `node:child_process`" —— 这条 lint 规则从未存在于 `eslint.config.js`（全文 115 行，`child_process` 零命中），`apps/daemon/src/subprocess/` 这个目录也不存在。** `[实测]` 2026-08-06（AST 剥注释后全仓扫描，非 grep）：**产品代码 7 处** import `node:child_process`，**除 `runner.ts` 自己外还有 6 处**：
+
+| 文件 | 性质 |
+|---|---|
+| `packages/pipeline/src/subprocess/runner.ts` | ✅ 权威出口（本段说的那一个） |
+| `apps/daemon/src/main.ts` | detached 自重启，runner 没有对应能力 —— 合理例外 |
+| `apps/daemon/src/bootstrap/tls.ts` | 启动时 `execFileSync('openssl')`，同步/异步差异让复用别扭 |
+| `packages/pipeline/src/asr/whisperServer.ts` | **违反本包自己的不变量**（长驻服务 vs run-to-completion），已 import runner 的 `buildChildEnv` 并传 `shell:false` |
+| `packages/runtime/src/probe/runProbe.ts` | ⚠️ **架构上修不了**：`pipeline` 依赖 `runtime`，反过来不行 |
+| `packages/runtime/src/detect/system.ts` | 同上 |
+| `packages/runtime/src/selfTest.ts` | 同上 |
+
+**全仓 19 处**（上面 7 处 + 12 个 `scripts/` 与 `verify-*.mjs`），其中
+`packages/downloader/scripts/verify-offline.mjs` 用的是 **`await import('node:child_process')` 动态 import —— 任何静态 lint 规则都抓不到**。
+
+⚠️ 所以真要补规则，**必须带白名单**（`packages/runtime` 那三处架构上就修不了），
+否则加上去就是一盏假红灯 —— 而假红灯会训练人忽略告警（HANDOFF ⑤B）。
 **待办：要么补 `no-restricted-imports` 规则 + 显式白名单（这 5 处逐一定性），要么承认本节立论前提"所有防护集中在一个文件里"当前不成立。不要再把它当成已生效的 CI 护栏引用。**
 
 **第二层：绝不经过 shell**
