@@ -679,6 +679,32 @@
               "official": false
             }
           ]
+        },
+        {
+          "role": "coreml-encoder",
+          "name": "ggml-large-v3-encoder.mlmodelc.zip",
+          "sizeBytes": 1175711232,
+          "sha256": "47837be7594a29429ec08620043390c4d6d467f8bd362df09e9390ace76a55a4",
+          "optional": true,
+          "unpack": "zip",
+          "platforms": [
+            {
+              "os": "darwin",
+              "arch": "arm64"
+            }
+          ],
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-encoder.mlmodelc.zip",
+              "official": true
+            },
+            {
+              "provider": "modelscope",
+              "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-large-v3-encoder.mlmodelc.zip",
+              "official": false
+            }
+          ]
         }
       ],
       "totalSizeBytes": 1081140203,
@@ -857,6 +883,27 @@
               "official": false
             }
           ]
+        },
+        {
+          "role": "coreml-encoder",
+          "name": "ggml-large-v3-turbo-encoder.mlmodelc.zip",
+          "sizeBytes": 1173393014,
+          "sha256": "84bedfe895bd7b5de6e8e89a0803dfc5addf8c0c5bc4c937451716bf7cf7988a",
+          "optional": true,
+          "unpack": "zip",
+          "platforms": [
+            {
+              "os": "darwin",
+              "arch": "arm64"
+            }
+          ],
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-encoder.mlmodelc.zip",
+              "official": true
+            }
+          ]
         }
       ],
       "totalSizeBytes": 574041195,
@@ -933,6 +980,27 @@
               "provider": "hf-mirror",
               "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q8_0.bin",
               "official": false
+            }
+          ]
+        },
+        {
+          "role": "coreml-encoder",
+          "name": "ggml-large-v3-turbo-encoder.mlmodelc.zip",
+          "sizeBytes": 1173393014,
+          "sha256": "84bedfe895bd7b5de6e8e89a0803dfc5addf8c0c5bc4c937451716bf7cf7988a",
+          "optional": true,
+          "unpack": "zip",
+          "platforms": [
+            {
+              "os": "darwin",
+              "arch": "arm64"
+            }
+          ],
+          "mirrors": [
+            {
+              "provider": "hf",
+              "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-encoder.mlmodelc.zip",
+              "official": true
             }
           ]
         }

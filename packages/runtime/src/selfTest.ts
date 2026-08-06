@@ -19,6 +19,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
+import { CHILD_KILL_SIGNAL, libraryPathEnv } from './childEnv.js';
 import type { SelfTestOutcome } from './types.js';
 
 /** Generous: a first run on a cold cache with a large model on a slow CPU is slow. */
@@ -110,10 +111,17 @@ export async function runSelfTest(options: SelfTestOptions): Promise<SelfTestOut
       {
         timeout: timeoutMs,
         maxBuffer: 16 * 1024 * 1024,
-        killSignal: 'SIGKILL',
+        killSignal: CHILD_KILL_SIGNAL,
         windowsHide: true,
-        // Resolve the co-located ggml backends.
-        env: { ...process.env, LD_LIBRARY_PATH: dirOf(whisperCliPath), DYLD_LIBRARY_PATH: dirOf(whisperCliPath) },
+        /*
+         * Resolve the co-located ggml backends **without throwing away what the user
+         * already had**. This used to be `LD_LIBRARY_PATH: dirOf(whisperCliPath)` — a
+         * plain overwrite. On a machine that sets LD_LIBRARY_PATH itself (conda, nix,
+         * HPC modules) that silently drops every other search path, so the self-test
+         * and the real transcribe path resolve libraries differently — and the
+         * self-test is exactly the thing that is supposed to predict the real path.
+         */
+        env: { ...process.env, ...libraryPathEnv(process.env, dirOf(whisperCliPath)) },
       },
       (error, stdout, stderr) => {
         const wallSeconds = (Date.now() - startedAt) / 1000;

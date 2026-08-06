@@ -169,11 +169,18 @@ OPENMEMO_HOST=127.0.0.1   # 恢复只绑回环
 | **L6 argv 不变量**    | 用户串只能是**一个完整独立的 argv 元素**，永不拼进别的参数、永不成为参数名                                                                                                | `argGuard.buildArgv`                      |
 | **L7 路径穿越**       | `realpath` 后确认在受管根目录内；Windows 拒 UNC / 盘符相对路径                                                                                                            | `argGuard.assertWithinRoot`               |
 
-### ⚠️ L1 的真实状态：是**约定**，不是被执行的控制
+### L1 的真实状态：**产品源码已由 lint 强制（带白名单）；构建脚本与动态 import 不在强制范围内**
 
+> ✅ **2026-08-06 / T-153 更新**：`eslint.config.js` 现在**真的有**这条 `no-restricted-imports`
+> （`files: apps/daemon/src/** + packages/*/src/**`，外加一个 **7 文件白名单**），
+> 由 `pnpm lint` 执行，并由 `packages/pipeline/src/subprocess/__tests__/childProcessAllowlist.test.ts`
+> **真的 spawn 一次 eslint** 来验证它生效（走 `pnpm -r test` 这条事实上的门禁）。
+> **但它的覆盖面小于本节标题曾经声称的那个** —— 三条边界见下面的 ③。
+>
 > 📝 **此前 L1 那一行写着**「`runner.ts` 是全包**唯一**允许 import `node:child_process` 的模块」。
 > 实测（剥掉注释后的全仓静态扫描，22 处命中 → **19 处真实 import**，分布在 19 个文件）**这句话不成立**，
-> 而且**没有任何机器在执行它**。如实记录如下，以免下一个人把它当成已生效的防线。
+> 而且**当时没有任何机器在执行它**。下面这份记录原样保留 —— 三份文档曾互相引用同一条并不存在的
+> 控制，下一个人需要知道**这里改过**，而不是看到一段没有历史的新文字。
 
 **① 例外清单（19 处真实 import，`runner.ts` 只是其中之一）**
 
@@ -186,7 +193,7 @@ OPENMEMO_HOST=127.0.0.1   # 恢复只绑回环
 （另有 3 处**仅出现在注释里**的字符串：`packages/pipeline/src/index.ts:5`、`runner.ts:3`、`runner.ts:7`。
 做这类审计时必须剥注释，否则会数成 22。）
 
-**② 没有任何 CI / lint 在强制它**
+**② 当时（T-153 之前）没有任何 CI / lint 在强制它**
 
 - `eslint.config.js` 里 `no-restricted-imports` 恰好出现 **3 处**（`:64-79`、`:86-97`、`:104`），
   **全是 `apps/web` 的前端分层护栏**（features/A ↮ features/B、lib/components ↮ features），
@@ -198,6 +205,15 @@ OPENMEMO_HOST=127.0.0.1   # 恢复只绑回环
   `apps/daemon/src/subprocess/**` 之外禁止 import」——**该目录根本不存在**（真实位置是
   `packages/pipeline/src/subprocess/`）。三份文档互相引用同一条**并不存在**的控制，
   形成「看起来被三处证实」的假象。
+
+**③ T-153 之后的准确口径（这一段才是今天的状态）**
+
+| 问题 | 答案 |
+| --- | --- |
+| 规则在哪 | `eslint.config.js`：一个 `files: ['apps/daemon/src/**', 'packages/*/src/**']` 的禁令块 + 一个 **7 文件**的 `off` 白名单块。7 个文件与上表「产品代码」那一行**逐个对应**，性质写在配置旁边 |
+| 谁在跑 | `pnpm lint`（根 `lint` / `check` 脚本）。另有护栏测试**真的起一次 eslint** 断言四件事：产品代码会报 / 白名单不报 / 前端两条分层护栏没被覆盖掉 / **动态 import 报不了** |
+| 🔴 **它拦不住什么** | **① `await import('node:child_process')`** —— `packages/downloader/scripts/verify-offline.mjs:640` 就是这个形状。静态规则对它无能为力，护栏测试里有一条断言**专门钉住这个盲区**。**② `scripts/**` 与 `verify-*.mjs`**（12 处）**不在范围内**：它们不随产品分发、spawn 的是钉死的命令；一并禁掉只会逼出十几条 `eslint-disable`。**③ `apps/web/**` 不在范围内**：flat config 同名规则是整体覆盖不是合并，圈进来会**悄悄吃掉**两条前端分层护栏（已实测：改成含 web，护栏测试当场红） |
+| 所以能怎么说 | ✅「产品源码里 `child_process` 只能出现在这 7 个文件，由 lint 强制」<br>❌「全项目唯一 spawn 出口」—— 这句今天**仍然不成立**（`whisperServer.ts` 那条真债 + `packages/runtime` 的依赖方向） |
 
 **③ 处置**：要么在 `eslint.config.js` 真加一条 `no-restricted-imports`（并把上面 19 处逐个豁免或整改），
 要么就把 L1 如实降级为「约定」——本文已按后者措辞。**在加上机器执行者之前，不要再把 L1 当作防线计入。**

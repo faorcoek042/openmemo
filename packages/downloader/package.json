@@ -20,7 +20,9 @@
   ],
   "scripts": {
     "build": "tsc -b",
-    "clean": "tsc -b --clean"
+    "clean": "tsc -b --clean",
+    "_comment:test": "★ 与 db / pipeline / runtime / llm / mindmap / daemon **逐字相同的那一行**（第七个包）。别在这里发明第八种写法：三条理由都写在 `packages/runtime/package.json` 的 `_comment:test` 与 `scripts/check-test-scripts.mjs` 的文件头里 —— 引号不能掉（sh 会把 `**` 展开成\"恰好两层\"）、不能写成 `node --test dist`（Node 24 会当成一个文件并报 `tests 1 / pass 1` 绿灯）、前置的 `node -e` 守卫是必需的（`node --test` 对空集返回 exit 0）。⚠️ T-153 之前本包**没有 test 脚本**：`installer.test.ts` 是它的第一个测试文件，而 `check-test-scripts.mjs` 恰恰就是为了让这种情况当场红才存在的 —— 加文件的同一刻它就把我拦下了。",
+    "test": "node ../../scripts/check-test-scripts.mjs && node -e \"const{globSync}=require('node:fs');const s=globSync('src/**/*.test.ts').length,d=globSync('dist/**/*.test.js').length;if(s===0||d!==s)throw new Error('test discovery broken: '+s+' source test files vs '+d+' compiled in dist —— 先 pnpm build:safe；node --test 对空集/漏集一律返回绿')\" && node --test \"dist/**/*.test.js\""
   },
   "dependencies": {
     "@openmemo/shared": "workspace:*",

@@ -81,3 +81,60 @@ export function resolvePurpose(
     inherited: { providerId: ownProvider === null, model: ownModel === null },
   };
 }
+
+/* ────────────────── T-153：`POST /api/llm/detect` 与 `POST /api/llm/models` ────────────────── */
+
+/**
+ * 探测本机 LLM 服务（ADR-003 档 2）的一个候选。
+ *
+ * ★ **判据是"真发请求确认"，不是"端口开着"。** 端口开着可能是别的服务、
+ * 可能是个僵尸进程、可能是代理 —— `packages/llm/src/detect.ts` 的文件头记着这条教训，
+ * `jobs/runners/mindmap.ts:9` 的注释也写着同一句。所以每个候选都要：
+ * `GET {baseUrl}/models` 返回 2xx → 是合法 JSON 且有 `data` 数组 → **`data` 里至少有一个模型**。
+ * 装了 Ollama 但一个模型都没下 ⇒ 对用户来说等于不可用，**不给假阳性**。
+ */
+export interface DetectedLocalLlm {
+  /** 候选 id（`ollama` / `lmstudio` / `llama-server`）。 */
+  id: string;
+  label: string;
+  /** 已经是我们的适配器直接能用的那个地址（含 `/v1`）。 */
+  baseUrl: string;
+  /** 真的从它那里列出来的模型。**至少一个**，否则这条根本不会出现。 */
+  models: string[];
+  /** 探测耗时，UI 据此把快的排前面。 */
+  latencyMs: number;
+}
+
+/**
+ * `POST /api/llm/detect` 的响应。
+ *
+ * ⚠️ **`probed` 必须一起回，不能只回 `detected`。**
+ * 只回一个空数组的话，界面只能说"没探到"，而用户最需要知道的是
+ * **"我们去敲了哪几个门"** —— 他才判断得出"我的 Ollama 改过端口"还是"我压根没装"。
+ * 这与 `⑤A-2`「空集不等于一切正常」是同一条：**空结果必须自带它的量程**。
+ */
+export interface LlmDetectResponse {
+  /** 逐个探过的候选（无论探没探到）。 */
+  probed: { id: string; label: string; baseUrl: string }[];
+  /** 真的确认可用的。`probed` 的子集。 */
+  detected: DetectedLocalLlm[];
+  /** 单个候选的超时（毫秒）。写进响应是为了让界面能如实说"各 N 秒超时"。 */
+  timeoutMs: number;
+  probedAt: string;
+}
+
+/**
+ * `POST /api/llm/models` 的响应 —— **枚举某家真正现在有哪些模型**。
+ *
+ * 只有 `canRefreshModelList(spec) === true` 的 4 家（openrouter / siliconcloud /
+ * ollama / lmstudio）能调；其余 20 家是 `official-doc`（人工从文档转录），
+ * **没有端点可调**，服务端会 400 并说明原因，而不是回一个空清单假装成功。
+ */
+export interface LlmModelsResponse {
+  providerId: string;
+  /** 实际请求的地址（已脱敏：绝不含 Key）。让用户看得出刷新用的是哪个地址。 */
+  endpoint: string;
+  /** 枚举到的模型 id，已去重并排序。 */
+  models: string[];
+  fetchedAt: string;
+}

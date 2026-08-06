@@ -277,6 +277,21 @@ const SINGLE_ORIGIN_FILES: readonly string[] = [
   'asr/whisper-base-q8_0  ggml-base-q8_0.bin  [huggingface.co]',
   'asr/whisper-large-v2-q8_0  ggml-large-v2-q8_0.bin  [huggingface.co]',
   'asr/whisper-large-v3-turbo-f16  ggml-large-v3-turbo-encoder.mlmodelc.zip  [huggingface.co]',
+  /*
+   * ★ T-153：turbo 的 CoreML encoder 现在挂在**三个**量化档上（f16 / q5_0 / q8_0）。
+   *
+   * 这不是新增文件，是**同一个归档**（sha256、字节数、镜像全部逐字相同）挂到了另外两个条目上 ——
+   * 上游拼 `.mlmodelc` 路径时会剥掉 `-qX_X` 后缀（`whisper.cpp:3336-3342`），
+   * 所以一份 encoder 服务该模型的所有量化档。此前只有 f16 挂了它，而产品默认推荐的是
+   * `whisper-large-v3-turbo-q5_0` —— **装了默认模型的 Mac 用户拿不到 ANE**。
+   *
+   * 它仍然是"只有一个来源"：那个 zip 在 ModelScope 上没有对应文件（`-q5_0` 的那份也是同一个），
+   * 所以这两行是**新增的单来源条目**，不是丢了镜像。
+   * （非 turbo 的 `ggml-large-v3-encoder.mlmodelc.zip` 有 hf + modelscope 两个来源，
+   *  所以 `whisper-large-v3-q5_0` 挂上之后不会出现在这份清单里 —— 那正是这条断言的价值。）
+   */
+  'asr/whisper-large-v3-turbo-q5_0  ggml-large-v3-turbo-encoder.mlmodelc.zip  [huggingface.co]',
+  'asr/whisper-large-v3-turbo-q8_0  ggml-large-v3-turbo-encoder.mlmodelc.zip  [huggingface.co]',
   'asr/whisper-large-v3-turbo-q8_0  ggml-large-v3-turbo-q8_0.bin  [huggingface.co]',
   'asr/whisper-medium-q8_0  ggml-medium-q8_0.bin  [huggingface.co]',
   'asr/whisper-small-q8_0  ggml-small-q8_0.bin  [huggingface.co]',

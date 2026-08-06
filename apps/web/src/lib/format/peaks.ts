@@ -26,9 +26,14 @@
  * 3. 留着一个零 import 的依赖，最贵的不是 1.5 MB 和许可证清单里那一行，
  *    而是**它让读代码的人以为波形是它画的** —— 与本轮修的那几处过期注释同一种成本。
  *
- * → **结论：从 `apps/web/package.json` 删掉 `wavesurfer.js`。** 归 `debt-cleanup` 执行
- *   （要动 `pnpm-lock.yaml`，那是全仓共享文件，我在途不碰）。
+ * → **结论：从 `apps/web/package.json` 删掉 `wavesurfer.js`。**
  *   `.ompk` 格式本身**不绑任何库**，删掉它这个文件一个字节都不用改。
+ *
+ * ✅ **T-153 已执行**：`pnpm --filter @openmemo/web remove wavesurfer.js`
+ *   （`apps/web/package.json` −1 行、`pnpm-lock.yaml` −8 行）。上面这段判决**保留原文**，
+ *   因为它记录的是"为什么不接"，而不是"待办" —— 下一个想引入波形库的人应该先读它。
+ *   护栏：`peaks.test.ts` 断言 `apps/web/package.json` 的依赖里不许再出现 `wavesurfer`
+ *   （零 import 的依赖不会被 tsc / eslint / 任何测试发现，只能直接钉清单）。
  */
 
 export interface DecodedPeaks {

@@ -17,6 +17,8 @@ import { promisify } from 'node:util';
 
 import type { Arch, CpuInfo, DiskInfo, MemoryInfo, OsInfo, OsPlatform } from '@openmemo/shared';
 
+import { CHILD_KILL_SIGNAL } from '../childEnv.js';
+
 const execFileAsync = promisify(execFile);
 
 /** Short-lived shell-outs only; anything slower than this is not worth blocking startup. */
@@ -31,6 +33,16 @@ export async function run(
     const { stdout } = await execFileAsync(cmd, args, {
       timeout: timeoutMs,
       maxBuffer: 8 * 1024 * 1024,
+      /*
+       * ★ 没有这一行，上面那个 `timeout` **不是一个上界**（T-153）。
+       *
+       * 默认信号是 SIGTERM，可被子进程忽略；忽略之后 `execFile` 的回调永不触发、
+       * promise 永不 settle。这条 `run()` 上跑的是 `lspci` / `wmic` / `sw_vers`
+       * 之类的**硬件探测**，而硬件探测在**启动时**跑 —— 于是 daemon 卡在启动上，
+       * 而唯一本该救它的东西（超时）正是坏掉的那个。
+       * 另两处（`probe/runProbe.ts`、`selfTest.ts`）一直都带着它，只有这里漏了。
+       */
+      killSignal: CHILD_KILL_SIGNAL,
       windowsHide: true,
     });
     return { ok: true, stdout };

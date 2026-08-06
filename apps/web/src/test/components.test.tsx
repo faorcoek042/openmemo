@@ -3208,6 +3208,9 @@ describe('T-132 组件与来源页', () => {
  */
 const EMPHASIS_REGISTRY: Record<string, string[]> = {
   'settings.llmIntro': ['components/common/llm/LlmSettingsSection.tsx'],
+  /* T-153：D-10 #3「本地模型」折叠组的两句说明（`POST /api/llm/detect` 的消费方）。 */
+  'settings.local.intro': ['components/common/llm/LocalLlmSection.tsx'],
+  'settings.local.falsePositiveNote': ['components/common/llm/LocalLlmSection.tsx'],
   'models.detail.benchNone': ['features/models/ModelDetailPage.tsx'],
   'recorder.paraformerTradeoff': [
     'features/recorder/RecorderPage.tsx',
@@ -4941,7 +4944,8 @@ describe('T-150 ① /diagnostics 读 /api/selfcheck', () => {
  *   #24 目录里**每一家**都在界面上有落点（能加，或者说明为什么不能加）；
  *   #24-bis 写进设置的那条记录，daemon **认得出来**（协议族要翻译，不能原样搬）；
  *   #27 表单字段由这家自己声明的 `configFieldKeys` 决定，不是三件套写死；
- *   #26 「清单从哪来」按 `canRefreshModelList()` 分流措辞，且**任何一档都不给假按钮**；
+ *   #26 「清单从哪来」按 `canRefreshModelList()` 分流措辞；**按钮只给可枚举的那 4 家**
+ *       （T-153 之前是"任何一档都不给"，因为当时没有 `POST /api/llm/models` —— 见该条用例）；
  *   #28 出厂空状态要说清为什么空，且**不预选任何一家**。
  */
 describe('T-150 ② 服务商目录（D-10 #24 #26 #27 #28）', () => {
@@ -5289,7 +5293,9 @@ describe('T-150 ② 服务商目录（D-10 #24 #26 #27 #28）', () => {
 
   /* ── #26 刷新分流 ───────────────────────────────────────────────────────── */
 
-  test('★ #26：人工转录的清单与可枚举的清单，说的话必须不一样；两档都不给假按钮', async () => {
+  // ⚠️ 用例名跟着断言一起改（⑤A-18：名字与断言之间没有任何机制在约束，
+  //    改了断言不改名字，下一个人读到的就是一句假话）。
+  test('★ #26：两档说的话必须不一样；刷新按钮只给可枚举的那 4 家', async () => {
     const doc = CATALOG_PRESETS.find(
       (p) =>
         p.spec.modelListSource.type === 'official-doc' &&
@@ -5332,17 +5338,27 @@ describe('T-150 ② 服务商目录（D-10 #24 #26 #27 #28）', () => {
     );
     assert.notEqual(a.txt, b.txt, '两档说成了同一句话');
     /*
-     * ★ **两档都不许有刷新按钮。**
-     * R-P2 只说"不给那 20 家"，实际情况更硬：全仓没有任何端点能替前端枚举
-     * （daemon 路由表里没有 /api/llm/models）。给那 4 家按钮同样是按不动的。
+     * ★ **按钮只给可枚举的那 4 家 —— T-153 把这条改回了 R-P2 的原样。**
+     *
+     * 📝 **此前这里断的是"两档都不许有刷新按钮"**，理由写着：
+     * > R-P2 只说"不给那 20 家"，实际情况更硬：全仓没有任何端点能替前端枚举
+     * > （daemon 路由表里没有 /api/llm/models）。给那 4 家按钮同样是按不动的。
+     *
+     * 那个判断是对的 —— 在它成立的那一天。T-153 补上了 `POST /api/llm/models`，
+     * **前提消失了**，所以这条断言换成 R-P2 的原文。
+     * 保留旧文是因为它记录的是一次正确的克制，不是一个错误
+     * （⑤A-15：旧断言写错方向时要说明白，这次是旧断言的**前提**变了）。
      */
-    for (const { buttons } of [a, b]) {
-      assert.deepEqual(
-        buttons.filter((x) => x.includes('刷新')),
-        [],
-        '渲染了一颗「刷新模型列表」按钮，而本机没有任何端点能让它动',
-      );
-    }
+    assert.deepEqual(
+      a.buttons.filter((x) => x.includes('刷新')),
+      [],
+      '人工转录的那 20 家不许有刷新按钮 —— 它们没有端点可调，按了也不会有任何事发生',
+    );
+    assert.equal(
+      b.buttons.filter((x) => x.includes('刷新')).length,
+      1,
+      `可枚举的那 4 家必须有刷新按钮（${api!.spec.id}）—— daemon 侧 POST /api/llm/models 已经存在`,
+    );
   });
 
   /* ── #28 出厂空状态 ─────────────────────────────────────────────────────── */
@@ -5383,6 +5399,138 @@ describe('T-150 ② 服务商目录（D-10 #24 #26 #27 #28）', () => {
       false,
       `一家都没配，"当前生效"却写了一个服务商名 → ${eff!.textContent}`,
     );
+    r.unmount();
+  });
+
+  /* ── T-153 #3 「本地模型」折叠组（`POST /api/llm/detect` 的消费方）─────────── */
+
+  /**
+   * D-10 #3 在 T-150 时**整条卡死**：`POST /api/llm/detect` 不存在，
+   * 做出来只能是个假按钮。T-153 补上了端点，这一组钉的是那个消费方。
+   *
+   * 三条判据，各挡一种"看起来做了"：
+   *   ① 首屏说"还没探测过"，**不许说"未检测到"**（我们还没资格下这个结论）；
+   *   ② 探不到时必须列出**探过哪几个地址** —— 只说"没探到"，用户分不清
+   *      "我的 Ollama 改过端口"和"我压根没装"；
+   *   ③ 探到的每条必须显示"它报了几个模型" —— 那是"真发请求确认"这条判据的证据。
+   */
+  const DETECT_EMPTY = {
+    probed: [
+      { id: 'ollama', label: 'Ollama', baseUrl: 'http://127.0.0.1:11434/v1' },
+      { id: 'lmstudio', label: 'LM Studio', baseUrl: 'http://127.0.0.1:1234/v1' },
+    ],
+    detected: [],
+    timeoutMs: 2000,
+    probedAt: '2026-08-06T00:00:00.000Z',
+  };
+
+  const openLocal = async (routes: Record<string, unknown>) => {
+    const stub = stubApi({ ...NO_PROVIDERS, ...routes });
+    const r = await render(<LlmSettingsSection />);
+    await r.flush();
+    await click(r.container.querySelector('[data-testid="llm-local-toggle"]') as HTMLElement);
+    await r.flush();
+    return { r, stub };
+  };
+
+  test('★ T-153 #3：还没点探测之前，不许说"未检测到" —— 那是我们还没资格下的结论', async () => {
+    const { r, stub } = await openLocal({});
+    const status = r.container.querySelector('[data-testid="llm-detect-status"]');
+    assert.ok(status, '「本地模型」组里没有状态文字');
+    const copy = (zhLocale as unknown as { settings: { local: Record<string, string> } }).settings
+      .local;
+    assert.equal(status!.textContent, copy['notProbedYet']);
+    /*
+     * ⚠️ 判据取"说了什么"，不取"有没有字" —— `none` 与 `notProbedYet` 都非空，
+     * 只断非空的话把两者写成同一句照样绿。
+     */
+    assert.notEqual(copy['notProbedYet'], copy['none'], '「还没探」与「没探到」被写成了同一句话');
+    // 而且**展开一个折叠组不该发请求**：探测要花 2 秒 × 3 个端口，只该在用户按下时发生
+    assert.deepEqual(
+      stub.calls.filter((c) => c.path.startsWith('/llm/')).map((c) => c.path),
+      [],
+      '光是展开「本地模型」就去敲了本机端口',
+    );
+    r.unmount();
+  });
+
+  test('★ T-153 #3：探不到时必须列出"探过哪几个地址"，且地址来自响应而不是文案', async () => {
+    const { r, stub } = await openLocal({ 'POST /llm/detect': DETECT_EMPTY });
+    await click(r.container.querySelector('[data-testid="llm-detect"]') as HTMLElement);
+    await r.flush();
+
+    assert.deepEqual(
+      stub.calls.filter((c) => c.path === '/llm/detect').map((c) => c.method),
+      ['POST'],
+      'GET 会被浏览器/中间层预取与缓存 —— 一个"被预取就会敲三个端口"的端点不该是 GET',
+    );
+
+    const probed = r.container.querySelector('[data-testid="llm-detect-probed"]');
+    assert.ok(probed, '探完了却没说探过哪几个地址');
+    const txt = probed!.textContent ?? '';
+    for (const c of DETECT_EMPTY.probed) {
+      assert.ok(txt.includes(c.baseUrl), `没有把 ${c.baseUrl} 列出来 → ${txt}`);
+    }
+    // 超时值也来自响应：文案里写死"2 秒"就会变成第二处事实
+    assert.ok(txt.includes('2'), `没有把超时值说出来 → ${txt}`);
+    r.unmount();
+  });
+
+  test('★ T-153 #3：探到的每一条都要显示"它报了几个模型"，并且能一键加进列表', async () => {
+    const { r, stub } = await openLocal({
+      'POST /llm/detect': {
+        ...DETECT_EMPTY,
+        detected: [
+          {
+            id: 'ollama',
+            label: 'Ollama',
+            baseUrl: 'http://127.0.0.1:11434/v1',
+            models: ['qwen3:8b', 'llama3.2'],
+            latencyMs: 12,
+          },
+        ],
+      },
+      'PATCH /settings': { settings: {} },
+    });
+    await click(r.container.querySelector('[data-testid="llm-detect"]') as HTMLElement);
+    await r.flush();
+
+    const row = r.container.querySelector('[data-testid="llm-detected-ollama"]');
+    assert.ok(row, '探到了却没列出来');
+    /*
+     * ★ "它报了几个模型"是**这条判据的证据**：探测的定义就是"真的问出了模型列表"
+     * （端口开着不算）。只显示"检测到 Ollama"的话，用户没法区分
+     * "探到了服务"和"探到了能用的服务"。
+     *
+     * ⚠️ **第一版我写的是 `.includes('2')`，它钉住的是零** —— 反向验证时把整段
+     * "报了几个模型"删掉，这条**照样绿**：同一行里的 `http://127.0.0.1:11434/v1`
+     * 自带一个 `2`（在 `127` 里）。换成整句词条渲染后的原文，那个变异当场红。
+     * （今天第三次撞上同一族：断言必须钉住"说了什么"，不是"出现过某个字符"。）
+     */
+    const localCopy = (zhLocale as unknown as { settings: { local: Record<string, string> } })
+      .settings.local;
+    const expectModels = localCopy['models']!.replace('{{n}}', '2');
+    assert.ok(
+      (row!.textContent ?? '').includes(expectModels),
+      `没说它报了几个模型（期望包含「${expectModels}」）→ ${row!.textContent}`,
+    );
+
+    await click(r.container.querySelector('[data-testid="llm-detected-add-ollama"]') as HTMLElement);
+    await r.flush();
+
+    const patch = stub.calls.find((c) => c.method === 'PATCH' && c.path === '/settings');
+    assert.ok(patch, '点「+ 添加」什么都没发出去');
+    const body = patch!.body as Record<string, unknown>;
+    /*
+     * ★ 写进去的必须是 **daemon 真读的那几个键**（HANDOFF ⑤C 的 `llm.defaultProviderId`
+     * 那一条：前端曾经把 providers 写全了、唯独没写这个键，于是"填了等于没填"）。
+     */
+    assert.equal(body[LLM_SETTING_KEYS.defaultProviderId], 'ollama');
+    assert.equal(body[LLM_SETTING_KEYS.defaultModelId], 'qwen3:8b');
+    assert.equal(body[`${LLM_SETTING_KEYS.baseUrlPrefix}ollama`], 'http://127.0.0.1:11434/v1');
+    // 协议族要能被 daemon 的 switch 认出来（D-10 §8-D1 那颗雷）
+    const providers = body['llm.providers'] as { id: string; kind: string }[];
+    assert.equal(providers.find((p) => p.id === 'ollama')?.kind, 'openai-compatible');
     r.unmount();
   });
 });
@@ -5489,8 +5637,9 @@ describe('T-150 ② 转写 Tab 三分组（D-10 #9 #10 #29）', () => {
     ];
   }
 
-  function stubAsrTab() {
+  function stubAsrTab(extra: Record<string, unknown> = {}, mutate?: (g: unknown[]) => void) {
     const groups = catalogGroups();
+    mutate?.(groups);
     return stubApi({
       '/models/catalog?role=all&lang=zh': {
         stale: false,
@@ -5502,6 +5651,7 @@ describe('T-150 ② 转写 Tab 三分组（D-10 #9 #10 #29）', () => {
         fetchedAt: '2026-08-06T00:00:00.000Z',
         groups,
       },
+      ...extra,
       '/models/installed': { models: [], active: { asr: null, llm: null } },
       '/models/storage': {
         usedBytes: 0,
@@ -5675,6 +5825,150 @@ describe('T-150 ② 转写 Tab 三分组（D-10 #9 #10 #29）', () => {
         (e.textContent ?? '').includes('sherpa-onnx'),
       ),
       '强调段应渲染成 <strong>',
+    );
+    r.unmount();
+  });
+
+  /* ── T-153 ② CoreML encoder：用户第一次有办法装上它 ───────────────────────── */
+
+  /**
+   * ANE 那条链上的第 2 处断点（`pack-publish` T-146 §3.3 #2）。
+   *
+   * `libwhisper.coreml.dylib` 早就编进 macOS 包里了，清单里也有 encoder 条目 ——
+   * 但它是 `optional`，daemon 只在收到 `includeOptional:['coreml-encoder']` 时才下载
+   * （`installer.ts:129`），而 T-153 之前**全仓没有任何地方传过这个值**。
+   * 净效果：`asr.coreml` 一直如实报 `warn 未启用 ANE`，
+   * 而用户在界面上**没有任何办法**去装它。
+   *
+   * 三条判据：给不给这个选项 / 勾了传不传 / 不勾传不传。
+   */
+  const MAC_HARDWARE = {
+    snapshotId: 'stub',
+    hardware: {
+      schemaVersion: 1,
+      detectedAt: '2026-08-06T00:00:00.000Z',
+      os: { platform: 'darwin', arch: 'arm64', version: '14.5' },
+      cpu: { brand: 'Apple M1', physicalCores: 8, logicalCores: 8, features: [] },
+      ram: { totalMB: 16384, availableMB: 8192 },
+      unifiedMemory: true,
+      gpus: [],
+      backends: [],
+      selectedBackend: 'cpu',
+      selectedGpuIndex: null,
+      disks: [],
+    },
+  };
+  const LINUX_HARDWARE = {
+    ...MAC_HARDWARE,
+    hardware: {
+      ...MAC_HARDWARE.hardware,
+      os: { platform: 'linux', arch: 'x64', version: '6.1' },
+      unifiedMemory: false,
+    },
+  };
+
+  /** 给 tiny 那个组挂一份 coreml-encoder（形状照 `models-whisper.json` 里的真条目）。 */
+  const withEncoder = (groups: unknown[]) => {
+    const g = (groups as { groupId: string; variants: { files: unknown[] }[] }[]).find(
+      (x) => x.groupId === 'asr/whisper-tiny',
+    )!;
+    g.variants[0]!.files.push({
+      role: 'coreml-encoder',
+      name: 'ggml-tiny-encoder.mlmodelc.zip',
+      sha256: 'e'.repeat(64),
+      sizeBytes: 15_000_000,
+      optional: true,
+      unpack: 'zip',
+      platforms: [{ os: 'darwin', arch: 'arm64' }],
+      mirrors: [],
+    });
+  };
+
+  const tinyCard = (root: Element) =>
+    root.querySelector('[data-testid="model-card-asr/whisper-tiny"]');
+
+  test('★ T-153：Apple Silicon 上，挂了 encoder 的模型必须给出"同时下载 CoreML 编码器"的选项', async () => {
+    stubAsrTab({ '/runtime/hardware': MAC_HARDWARE }, withEncoder);
+    const r = await render(<ModelsPage />, { route: '/models' });
+    await r.flush();
+
+    const card = tinyCard(r.container);
+    assert.ok(card, 'tiny 卡片不在');
+    assert.equal(
+      !!card!.querySelector('[data-testid="model-coreml-optin"]'),
+      true,
+      '用户在界面上没有任何办法装 CoreML encoder —— ANE 那条链在这里断掉',
+    );
+    // 默认**不勾**：它是额外的一大坨字节，勾上等于替用户决定花掉这份流量与磁盘
+    const box = card!.querySelector('[data-testid="model-coreml-checkbox"]') as HTMLInputElement;
+    assert.equal(box.checked, false, '默认勾上了 —— 那是替用户做决定');
+    r.unmount();
+  });
+
+  test('★ T-153：勾上之后，POST /models/pull 必须真的带 includeOptional', async () => {
+    const stub = stubAsrTab(
+      { '/runtime/hardware': MAC_HARDWARE, 'POST /models/pull': { jobId: 'j1' } },
+      withEncoder,
+    );
+    const r = await render(<ModelsPage />, { route: '/models' });
+    await r.flush();
+
+    const card = tinyCard(r.container)!;
+    await click(card.querySelector('[data-testid="model-coreml-checkbox"]') as HTMLElement);
+    await r.flush();
+    await click(card.querySelector('[data-testid="models-download-button"]') as HTMLElement);
+    await r.flush();
+
+    const pull = stub.calls.find((c) => c.method === 'POST' && c.path === '/models/pull');
+    assert.ok(pull, '点了下载却没有发出 POST /models/pull');
+    /*
+     * ★ 判据是**请求体里那个字段**，不是"勾选框变蓝了"。
+     * `installer.ts:129` 的规则是「optional 且不在 includeOptional 里 ⇒ 跳过」——
+     * 少了这个字段，勾选框就是一个纯粹的装饰品，而且不会有任何东西报错。
+     */
+    assert.deepEqual((pull!.body as { includeOptional?: unknown }).includeOptional, [
+      'coreml-encoder',
+    ]);
+    r.unmount();
+  });
+
+  test('★ T-153：不勾就不许传 —— 免得替用户下载一大坨他没要的东西', async () => {
+    const stub = stubAsrTab(
+      { '/runtime/hardware': MAC_HARDWARE, 'POST /models/pull': { jobId: 'j1' } },
+      withEncoder,
+    );
+    const r = await render(<ModelsPage />, { route: '/models' });
+    await r.flush();
+    await click(
+      tinyCard(r.container)!.querySelector('[data-testid="models-download-button"]') as HTMLElement,
+    );
+    await r.flush();
+    const pull = stub.calls.find((c) => c.method === 'POST' && c.path === '/models/pull');
+    assert.deepEqual((pull!.body as { includeOptional?: unknown }).includeOptional, []);
+    r.unmount();
+  });
+
+  test('★ T-153：非 Apple Silicon 上不许出现这个选项（勾了也会被 daemon 按 platforms 滤掉）', async () => {
+    stubAsrTab({ '/runtime/hardware': LINUX_HARDWARE }, withEncoder);
+    const r = await render(<ModelsPage />, { route: '/models' });
+    await r.flush();
+    assert.equal(
+      !!tinyCard(r.container)!.querySelector('[data-testid="model-coreml-optin"]'),
+      false,
+      '在 Linux 上画了一个"勾了什么都不会发生"的框，比不画更糟',
+    );
+    r.unmount();
+  });
+
+  test('★ T-153：清单里没挂 encoder 的模型，不许凭空长出这个选项', async () => {
+    // 同一台 Mac，只是这个模型的 files 里没有 coreml-encoder —— 判据必须来自清单
+    stubAsrTab({ '/runtime/hardware': MAC_HARDWARE });
+    const r = await render(<ModelsPage />, { route: '/models' });
+    await r.flush();
+    assert.equal(
+      !!tinyCard(r.container)!.querySelector('[data-testid="model-coreml-optin"]'),
+      false,
+      '判据成了"是不是 Mac"而不是"这个模型有没有 encoder" —— 勾了会下载一个不存在的文件',
     );
     r.unmount();
   });

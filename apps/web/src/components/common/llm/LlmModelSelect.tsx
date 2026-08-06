@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { RefreshCw } from 'lucide-react';
 
+import { Button } from '../Button';
+import { useLlmModelsMutation } from './api';
 import type { ModelCatalogNote } from './llm-catalog';
 
 /**
@@ -61,6 +64,16 @@ export interface LlmModelSelectProps {
   emptyLabel?: string;
   /** 候选清单的出处与时效。`null` = 这家不在内置目录里。 */
   note?: ModelCatalogNote | null;
+  /**
+   * 这个下拉是**哪一家**的。给「刷新模型列表」用（D-10 #26）。
+   *
+   * ⚠️ 不传 = 不渲染刷新按钮。「按用途分别配置」那一处就不传：
+   * 它的候选是**已配置服务商的子集**（约束 ②），在那里刷新会让人以为
+   * 刷的是那一栏的东西，而实际刷的是整家的清单。
+   */
+  providerId?: string | null;
+  /** 刷新拿到新清单后的回调（调用方决定是并进候选还是替换）。 */
+  onModelsRefreshed?: (models: string[]) => void;
   disabled?: boolean;
   /** 下拉用 `${testId}`，自定义输入框用 `${testId}-custom`。 */
   testId: string;
@@ -75,11 +88,14 @@ export function LlmModelSelect({
   allowEmpty = false,
   emptyLabel,
   note,
+  providerId,
+  onModelsRefreshed,
   disabled,
   testId,
   ariaLabel,
 }: LlmModelSelectProps) {
   const { t } = useTranslation();
+  const refresh = useLlmModelsMutation();
 
   /** 用户主动选了「自定义…」。**只有这一个 state 决定模式**，其余全是派生的。 */
   const [forcedCustom, setForcedCustom] = useState(false);
@@ -153,20 +169,58 @@ export function LlmModelSelect({
       ) : null}
 
       {/*
-        ★ D-10 #26「刷新分流」——**分的是措辞，不是按钮**。
+        ★ D-10 #26「刷新分流」——**按钮只给 4 家，措辞三档各说各的真话**。
 
-        R-P2 的原话是"「刷新模型列表」按钮只对 `canRefreshModelList(p) === true` 的 4 家渲染"。
-        实际做的时候撞上一条更硬的事实：**本机根本没有任何端点能替前端去枚举**
-        （daemon 路由表里没有 `/api/llm/models` 一类的东西，全仓 grep 为 0）。
-        所以那 4 家的按钮同样是按不动的 —— R-P2 想挡的正是这个，
-        对 20 家成立的理由对 4 家一样成立。
+        📝 **此前这里写着**（保留原文，因为那是一个正确的判断，不是遗漏）：
+        > 分的是措辞，不是按钮 …… 撞上一条更硬的事实：**本机根本没有任何端点能替前端去枚举**
+        > （daemon 路由表里没有 `/api/llm/models` 一类的东西，全仓 grep 为 0）。
+        > 所以那 4 家的按钮同样是按不动的 —— R-P2 想挡的正是这个。
 
-        于是分流落在文案上，三档各说各的真话：
-          · 20 家 `official-doc` → 人工转录 + 核对日期，**可能已过期**
-          · 4 家 `official-api`/`local-api` → 协议上刷得了，**只是还没接上**
+        **T-153 补上了 `POST /api/llm/models`**，那条事实不再成立，于是按钮回到 R-P2 的原样：
+        只对 `canRefreshModelList(p) === true` 的 4 家（openrouter / siliconcloud /
+        ollama / lmstudio）渲染。**判据一个字没改**，改的是那 4 家现在真的按得动。
+
+        三档措辞（仍然必须互不相同）：
+          · 20 家 `official-doc` → 人工转录 + 核对日期，**可能已过期**，且**没有按钮**
+          · 4 家 `official-api`/`local-api` → 有按钮，刷完显示刷到了几个
           · 不在目录里 → 没有内置清单，请用「自定义…」
-        把"可能过时"如实写出来，比一个假按钮诚实；也是"自定义…"存在的理由。
       */}
+      {!custom && note?.refreshable && providerId ? (
+        <span className="flex items-center gap-1">
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={refresh.isPending || disabled}
+            data-testid={`${testId}-refresh`}
+            onClick={() => {
+              refresh.mutate(providerId, {
+                onSuccess: (r) => onModelsRefreshed?.(r.models),
+              });
+            }}
+          >
+            <RefreshCw className="mr-1 size-3.5" aria-hidden />
+            {refresh.isPending
+              ? t('settings.modelPicker.refreshing')
+              : t('settings.modelPicker.refresh')}
+          </Button>
+          {/*
+            结果必须说话：刷到了几个、或者为什么没刷到。
+            静默成功（下拉悄悄变了）与静默失败（什么都没变）在界面上长得一模一样。
+          */}
+          <span className="text-xs" data-testid={`${testId}-refresh-result`}>
+            {refresh.isError ? (
+              <span className="text-critical">
+                {refresh.error instanceof Error ? refresh.error.message : String(refresh.error)}
+              </span>
+            ) : refresh.data ? (
+              <span className="text-good">
+                {t('settings.modelPicker.refreshed', { n: refresh.data.models.length })}
+              </span>
+            ) : null}
+          </span>
+        </span>
+      ) : null}
+
       <span className="text-ink-muted" data-testid={`${testId}-note`}>
         {custom
           ? t('settings.modelPicker.customHint')

@@ -188,7 +188,7 @@ export default function ModelsPage() {
     [jobs.data],
   );
 
-  async function handlePull(v: CatalogVariant) {
+  async function handlePull(v: CatalogVariant, includeOptional: string[] = []) {
     // unsupported 不禁用按钮，改为二次确认（R-04 §9.6 第 7 条）
     if (v.fitness.tier === 'unsupported') {
       const ok = window.confirm(
@@ -217,6 +217,14 @@ export default function ModelsPage() {
         kind: 'model',
         provider: 'auto',
         licenseAccepted: true,
+        /*
+         * ★ T-153：可选文件（今天只有 `coreml-encoder`）必须原样传给 daemon。
+         * `installer.ts:129` 的规则是「optional 且不在 includeOptional 里 ⇒ 跳过」，
+         * 而 T-153 之前**全仓没有任何地方传过这个字段** —— 也就是说
+         * 用户在界面上没有任何办法装 CoreML encoder，ANE 那条链在这里断掉。
+         * 空数组也照传：形状恒定，读代码的人一眼看得出这个字段是活的。
+         */
+        includeOptional,
       });
     } finally {
       setPendingId(null);
@@ -232,7 +240,7 @@ export default function ModelsPage() {
       installedIds={installedIds}
       activeId={g.role === 'asr' ? active.asr : null}
       pendingId={pendingId}
-      onPull={(v) => void handlePull(v)}
+      onPull={(v, includeOptional) => void handlePull(v, includeOptional)}
       onDelete={(id) => {
         if (window.confirm(t('models.confirmDelete'))) {
           void del.mutateAsync(id);

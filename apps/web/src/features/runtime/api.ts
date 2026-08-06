@@ -6,7 +6,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   Backend,
   GetBackendCatalogResponse,
-  GetHardwareResponse,
   GetInstalledBackendsResponse,
   PullResponse,
 } from '@openmemo/shared';
@@ -17,16 +16,13 @@ import { qk, STALE_TIME_OVERRIDES } from '../../app/query';
 /**
  * 硬件探测结果。
  *
- * `staleTime` 放宽到 5 分钟（`app/query.ts` 的约定）：R-02 实测 `system_profiler`
- * 可达数秒级，而且探测要起独立子进程真正枚举设备 —— 不该每次挂载都重跑。
+ * ★ T-153 **实现已提升到 `lib/api/hardware.ts`**，这里只是再导出。
+ * 原因：`features/models` 也要用它（`ModelCard` 判断该不该给 CoreML encoder 的选项），
+ * 而分层护栏禁止 `features/A` import `features/B`（D-05 §3.5）。
+ * **再导出而不是复制**：两处共用同一个 `queryKey`，硬件不会被多探一次
+ * （R-02 实测 `system_profiler` 可达数秒级，探测要起独立子进程真正枚举设备）。
  */
-export function useHardwareQuery() {
-  return useQuery({
-    queryKey: qk.runtime.hardware,
-    queryFn: () => api<GetHardwareResponse>('/runtime/hardware'),
-    staleTime: STALE_TIME_OVERRIDES.hardware,
-  });
-}
+export { useHardwareQuery } from '../../lib/api/hardware';
 
 export function useBackendsCatalogQuery() {
   return useQuery({

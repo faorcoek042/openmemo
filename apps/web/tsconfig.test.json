@@ -51,6 +51,8 @@
     "src/features/mindmap/docSignature.ts",
     "src/lib/format/peaks.test.ts",
     "src/lib/format/peaks.ts",
+    "src/features/capture/upload.test.ts",
+    "src/features/capture/upload.ts",
     "src/lib/api/client.test.ts",
     "src/lib/api/client.ts",
     "src/lib/api/connect.ts",

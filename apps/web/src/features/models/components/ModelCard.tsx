@@ -9,6 +9,7 @@ import { StatusChip } from '../../../components/common/StatusChip';
 import { FitBadge, FitEta, FitGpuLayers } from '../../../components/common/FitBadge';
 import { formatBytes } from '../../../lib/format/bytes';
 import { localizedDescription, localizedName } from '../../../lib/format/localized';
+import { useIsAppleSilicon } from '../../../lib/api/hardware';
 import { QuantSelector } from './QuantSelector';
 
 /**
@@ -24,7 +25,14 @@ export interface ModelCardProps {
   locale: string;
   installedIds: Set<string>;
   activeId: string | null;
-  onPull: (variant: CatalogVariant) => void;
+  /**
+   * @param includeOptional 用户勾选的可选文件 role（今天只有 `coreml-encoder`）。
+   *   **必须显式传出去**：daemon 的 `selectFiles()` 只有收到
+   *   `includeOptional:['coreml-encoder']` 才会下载它（`installer.ts:129`），
+   *   而 T-153 之前**全仓没有任何地方传过这个值** —— 也就是说
+   *   「用户在界面上根本没有办法装 CoreML encoder」，ANE 那条链在这里断掉。
+   */
+  onPull: (variant: CatalogVariant, includeOptional: string[]) => void;
   onDelete: (id: string) => void;
   onActivate: (id: string) => void;
   pendingId: string | null;
@@ -45,6 +53,16 @@ export function ModelCard({
     () =>
       group.variants.find((v) => v.fitness.tier === 'recommended')?.id ?? group.variants[0]?.id ?? '',
   );
+  /**
+   * 勾选"同时下载 CoreML encoder"。
+   *
+   * **默认不勾**：它是另外 ~1.1 GB，而且不装也能正常转写（只是走 Metal/CPU 慢一些）。
+   * 默认勾上等于替用户决定花掉一个多 GB 的流量与磁盘。
+   */
+  const [wantCoreMl, setWantCoreMl] = useState(false);
+  /** 三态：`null` = 硬件还没探回来（此时什么都不渲染，不先当成"不是 Mac"）。 */
+  const appleSilicon = useIsAppleSilicon();
+
   const variant = group.variants.find((v) => v.id === selectedId) ?? group.variants[0];
   if (!variant) return null;
 
@@ -57,6 +75,14 @@ export function ModelCard({
   // 其余档位（含 unsupported）都可点，弹二次确认：估算必然有误差，
   // 硬禁用会把"估算可能错"变成"功能缺失"，用户没法自救（R-04 §9.6 第 7 条）。
   const hardBlocked = variant.fitness.tier === 'blocked_disk';
+
+  /*
+   * 这个变体到底有没有 CoreML encoder，**问清单，不猜**。
+   * `role === 'coreml-encoder'` 是契约里的枚举值（`FILE_ROLES`），
+   * 按文件名匹配 `.mlmodelc` 会在上游换命名时静默失效。
+   */
+  const coreMlFile = variant.files.find((f) => f.role === 'coreml-encoder');
+  const offerCoreMl = appleSilicon === true && coreMlFile !== undefined && !installed;
 
   return (
     <article
@@ -120,6 +146,39 @@ export function ModelCard({
       <p className="mt-2 text-xs text-ink-secondary">{variant.fitness.reasonZh}</p>
       <FitGpuLayers fitness={variant.fitness} />
 
+      {/*
+        ★ T-153：CoreML encoder（Apple 神经引擎）。**这是 ANE 链路上断掉的那一环。**
+
+        `libwhisper.coreml.dylib` 早就编进 macOS 包里了（T-146 `[CI 实测]` 解包确认），
+        清单里也有 encoder 条目，但它是 `optional` —— daemon 只在收到
+        `includeOptional:['coreml-encoder']` 时才下载，而**全仓没有任何地方传过这个值**。
+        于是自检一直如实报 `asr.coreml warn 未启用 ANE`，而用户在界面上
+        **没有任何办法**去装它。这个勾选框就是那个办法。
+
+        只在 Apple Silicon 上渲染：其它平台勾了也会被 daemon 按 `platforms` 过滤掉，
+        画一个"勾了什么都不会发生"的框比不画更糟。
+      */}
+      {offerCoreMl ? (
+        <label
+          className="mt-2 flex items-start gap-2 text-xs text-ink-secondary"
+          data-testid="model-coreml-optin"
+        >
+          <input
+            type="checkbox"
+            checked={wantCoreMl}
+            onChange={(e) => setWantCoreMl(e.target.checked)}
+            className="mt-0.5"
+            data-testid="model-coreml-checkbox"
+          />
+          <span>
+            {t('models.card.coreml.label', {
+              size: formatBytes(coreMlFile!.sizeBytes, locale),
+            })}
+            <span className="block text-ink-muted">{t('models.card.coreml.hint')}</span>
+          </span>
+        </label>
+      ) : null}
+
       <div className="mt-3 flex items-center justify-end gap-2">
         {installed ? (
           <>
@@ -144,7 +203,7 @@ export function ModelCard({
             size="sm"
             variant={variant.fitness.tier === 'recommended' ? 'primary' : 'secondary'}
             disabled={hardBlocked || pending}
-            onClick={() => onPull(variant)}
+            onClick={() => onPull(variant, wantCoreMl && offerCoreMl ? ['coreml-encoder'] : [])}
             data-testid="models-download-button"
           >
             <Download className="size-3.5" aria-hidden />

@@ -244,7 +244,13 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
         // Replace any previous (possibly incomplete) install atomically.
         await fs.rm(finalDir, { recursive: true, force: true });
         await fs.mkdir(path.dirname(finalDir), { recursive: true });
-        await fs.rename(tmpDir, finalDir);
+        /*
+         * ★ 归档自带一层同名顶层目录时，把它压掉（见 `collapseRedundantTopLevel` 的说明）。
+         * 不压的话结果是 `<X>/<X>/…`，外层是个空壳 —— 而消费方按 `<X>/…` 去找。
+         */
+        const source = await collapseRedundantTopLevel(tmpDir, path.basename(finalDir));
+        await fs.rename(source, finalDir);
+        if (source !== tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
         expandedTo = finalDir;
       } catch (e) {
         // Leave nothing behind: no temp dir, no stale final dir that would make a retry
@@ -309,4 +315,52 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
 
 function stripExt(name: string): string {
   return name.replace(/\.(zip|tar\.gz|tgz)$/i, '');
+}
+
+/**
+ * Collapse `tmp/<name>/…` down to `tmp/…` when the archive shipped a redundant
+ * same-named top-level directory. Returns the directory that should be renamed into
+ * place — `tmpDir` itself when there is nothing to collapse.
+ *
+ * ─── 这是一个真 bug，不是整洁问题（T-146 §3.3 #1 → T-153）─────────────────────────
+ *
+ * `install()` 把 `<X>.mlmodelc.zip` 解到 `by-name/asr/<X>.mlmodelc/`（目录名由
+ * `stripExt(f.name)` 得到）。而上游那个 zip **内部自带一层同名顶层目录**，
+ * 于是磁盘上真实结构是：
+ *
+ *     by-name/asr/ggml-large-v3-encoder.mlmodelc/
+ *                 └── ggml-large-v3-encoder.mlmodelc/
+ *                     ├── coremldata.bin
+ *                     └── …
+ *
+ * whisper.cpp 从 `-m` 参数推出来的路径是**外层**那个（`whisper.cpp:3326-3348`），
+ * 而外层是个只含一个子目录的空壳 → CoreML 加载失败。
+ * 加载失败之后 **`WHISPER_COREML_ALLOW_FALLBACK=ON` 会打一行 ERROR 然后照常跑**
+ * （`whisper.cpp:3440-3452`），而那行 ERROR 被 `--no-prints` 关掉的日志通道吞了
+ * （`whisperCpp.ts:101` → `cli.cpp:1039-1040`）。
+ * 结果就是**装了 ANE 却没变快，且没有任何地方会说话** —— 本仓最贵的那类 bug。
+ * （`packages/runtime` 的 `asr.coreml` 自检项现在会把这个空壳报成 `fail`，
+ *  所以它至少不再是静默的；这里修的是让它根本不发生。）
+ *
+ * ─── 判据为什么收得这么窄 ────────────────────────────────────────────────────────
+ *
+ * 只在**三个条件同时成立**时才压：顶层恰好一个条目、它是目录、且它的名字**逐字等于**
+ * 我们要落地的目录名。任何更宽的规则（比如"只有一个目录就压"）都会改变别的包的布局 ——
+ * 比如一个正当地把所有内容放在 `bin/` 下的后端包，压掉之后 `providesFiles` 里
+ * 记的路径就全错了，而且同样不会有任何东西报错。
+ * **这条修复必须只对它真正要修的那个形状生效。**
+ *
+ * 归档没有这层冗余目录时它是彻底的 no-op，所以对既有包零影响。
+ */
+async function collapseRedundantTopLevel(tmpDir: string, finalName: string): Promise<string> {
+  let entries;
+  try {
+    entries = await fs.readdir(tmpDir, { withFileTypes: true });
+  } catch {
+    return tmpDir;
+  }
+  if (entries.length !== 1) return tmpDir;
+  const only = entries[0];
+  if (!only || !only.isDirectory() || only.name !== finalName) return tmpDir;
+  return path.join(tmpDir, only.name);
 }

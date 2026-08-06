@@ -19,6 +19,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
+import { CHILD_KILL_SIGNAL, libraryPathEnv } from '../childEnv.js';
 import type { ProbeFailureKind, ProbeOutput, ProbeResult } from '../types.js';
 import { isProbeOutput } from '../types.js';
 
@@ -68,13 +69,12 @@ export async function runProbe(options: RunProbeOptions): Promise<ProbeResult> {
         timeout: timeoutMs,
         // The probe prints one small JSON object; anything larger means something is wrong.
         maxBuffer: 4 * 1024 * 1024,
-        killSignal: 'SIGKILL',
+        killSignal: CHILD_KILL_SIGNAL,
         windowsHide: true,
         env: {
           ...process.env,
           // Resolve co-located ggml libraries without polluting the daemon's own env.
-          LD_LIBRARY_PATH: joinPathVar(process.env.LD_LIBRARY_PATH, backendDir),
-          DYLD_LIBRARY_PATH: joinPathVar(process.env.DYLD_LIBRARY_PATH, backendDir),
+          ...libraryPathEnv(process.env, backendDir),
           ...options.env,
         },
       },
@@ -187,11 +187,6 @@ function failure(
 function tail(s: string | undefined, max = 4000): string {
   if (!s) return '';
   return s.length <= max ? s : `…${s.slice(s.length - max)}`;
-}
-
-function joinPathVar(existing: string | undefined, dir: string): string {
-  const sep = process.platform === 'win32' ? ';' : ':';
-  return existing && existing.length > 0 ? `${dir}${sep}${existing}` : dir;
 }
 
 /**

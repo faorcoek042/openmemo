@@ -17,11 +17,13 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
 import type { SseEvent } from '@openmemo/shared';
+import { PLAYLIST_EXTENSIONS, UPLOAD_MEDIA_EXTENSIONS } from '@openmemo/shared';
 
 import type { Repos } from '../db/repos.js';
 import type { EnqueueParams, JobQueue } from '../jobs/queue.js';
 import type { SseHub } from './sse.js';
 import {
+  ALLOWED_UPLOAD_EXTENSIONS,
   MultipartParser,
   createUploadRoutes,
   parseBoundary,
@@ -592,5 +594,103 @@ describe('POST /api/notes/upload', () => {
       );
       assert.equal(handled, false);
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // ★ T-152 —— 白名单收敛后的拒绝侧 / 接受侧
+  // -------------------------------------------------------------------------
+
+  it('★ .m3u8 上传 → 415（播放列表是间接寻址原语，T-026 实测攻击），且不留任何文件', async () => {
+    /*
+     * 一个本地 `.m3u8`，segment URI 写成 `file:///tmp/secret.ts`，就能让 ffmpeg 去读
+     * 那个路径（真实日志：`Opening 'file:///tmp/attack/secret.ts' for reading`）。
+     * 本地导入这条路必须带 `-protocol_whitelist file`，所以协议白名单挡不住它 ——
+     * **唯一的挡法就是根本不让这种文件落到数据目录里**。
+     * 注意 `.m3u8` 是合法的扩展名**形态**（safeExtension 会原样返回它），
+     * 拒它的是白名单本身，不是形态检查。
+     */
+    await withTmpDir(async (dir) => {
+      const { deps, rec } = makeDeps(dir);
+      const body = buildBody(boundary, [
+        { name: 'file', filename: 'stream.m3u8', data: '#EXTM3U\nfile:///etc/hostname\n' },
+      ]);
+      await withServer(deps, async (port) => {
+        const res = await post(port, body, { contentType: ct });
+        assert.equal(res.status, 415, JSON.stringify(res.body));
+      });
+      assert.deepEqual(await storedFiles(dir), [], '播放列表绝不能落到数据目录里');
+      assert.deepEqual(await partialFiles(dir), []);
+      assert.equal(rec.notes.length, 0, '被拒的上传绝不能落库');
+    });
+  });
+
+  it('★ .flv / .wmv 上传 → 202（收敛前 web 放行、daemon 415，用户看得见上传行然后失败）', async () => {
+    // `[实测]` 收敛前 `web ∖ daemon = {flv, wmv}`：apps/web 的 looksLikeMedia 正则里有它们，
+    // 而这里的白名单没有。两侧现在逐字用 @openmemo/shared 的同一个常量。
+    for (const filename of ['clip.flv', 'clip.wmv']) {
+      await withTmpDir(async (dir) => {
+        const { deps } = makeDeps(dir);
+        const body = buildBody(boundary, [{ name: 'file', filename, data: 'FLV\x01\x05' }]);
+        await withServer(deps, async (port) => {
+          const res = await post(port, body, { contentType: ct });
+          assert.equal(res.status, 202, `${filename} 必须被接受：${JSON.stringify(res.body)}`);
+        });
+      });
+    }
+  });
+});
+
+describe('★ 上传白名单 = @openmemo/shared 的那一份（T-152 收敛）', () => {
+  it('逐字等于 UPLOAD_MEDIA_EXTENSIONS —— 不许再有第二份手抄件', () => {
+    assert.equal(
+      UPLOAD_MEDIA_EXTENSIONS.size >= 19,
+      true,
+      `共享白名单只剩 ${UPLOAD_MEDIA_EXTENSIONS.size} 项，被筛空了`,
+    );
+    assert.deepEqual(
+      [...ALLOWED_UPLOAD_EXTENSIONS],
+      [...UPLOAD_MEDIA_EXTENSIONS],
+      'daemon 的上传白名单又变回手抄件了。它必须直接由 @openmemo/shared 构造 ——' +
+        '收敛前正是这份手抄件与 apps/web 的正则分叉出 {flv, wmv}',
+    );
+  });
+
+  it('★ 播放列表扩展名一个都不许在上传白名单里', () => {
+    assert.equal(
+      PLAYLIST_EXTENSIONS.size >= 6,
+      true,
+      `播放列表集合只剩 ${PLAYLIST_EXTENSIONS.size} 项，被筛空了`,
+    );
+    const leaked = [...PLAYLIST_EXTENSIONS].filter((e) => ALLOWED_UPLOAD_EXTENSIONS.includes(e));
+    assert.deepEqual(leaked, [], `播放列表漏进了上传白名单：${leaked.join(', ')}`);
+  });
+
+  it('★ 一批非媒体扩展名必须全部不在白名单里', () => {
+    // 守卫只加在样本集（输入）上；offenders 是要报告的量，不给它加非空守卫。
+    const NON_MEDIA = [
+      '.exe',
+      '.sh',
+      '.dll',
+      '.bat',
+      '.cmd',
+      '.ps1',
+      '.so',
+      '.py',
+      '.jar',
+      '.msi',
+      '.deb',
+      '.apk',
+      '.zip',
+      '.pdf',
+      '.txt',
+      '.json',
+      '.iso',
+      '.lnk',
+      '.m3u8',
+      '.m3u',
+    ];
+    assert.equal(NON_MEDIA.length >= 20, true, `样本集只剩 ${NON_MEDIA.length} 个，被筛空了`);
+    const offenders = NON_MEDIA.filter((e) => ALLOWED_UPLOAD_EXTENSIONS.includes(e));
+    assert.deepEqual(offenders, [], `这些非媒体扩展名进了上传白名单：${offenders.join(', ')}`);
   });
 });

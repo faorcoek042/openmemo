@@ -41,7 +41,8 @@ task: T-020, T-025, T-026
 packages/pipeline/src/
 ├── subprocess/
 │   ├── argGuard.ts      D-01 §8.4 L3/L6 + §8.5 —— URL/argv/路径校验（纯函数，好测）
-│   └── runner.ts        D-01 §8.4 L1/L2/L5 —— 全包唯一允许 import child_process 的模块
+│   └── runner.ts        D-01 §8.4 L1/L2/L5 —— child_process 的权威出口（⚠️ 此前写「全包唯一」，
+│                        实为 2 处，另一处是 asr/whisperServer.ts；T-153 起由 lint + 白名单强制）
 ├── tools.ts             工具路径解析（一律绝对路径，绝不搜 PATH）
 ├── media/
 │   ├── types.ts         MediaSource 契约（我们自己的类型，不透传上游）
@@ -71,7 +72,7 @@ packages/pipeline/src/
 
 | 层                      | 措施                                                                                                                                                    | 攻击用例                                                                         | 结果                                 |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------ |
-| **L1 架构隔离**         | `runner.ts` 是本包唯一 import `node:child_process` 的模块                                                                                               | CI grep（§8）                                                                    | ✅                                   |
+| **L1 架构隔离**         | ⚠️ **本包内实为 2 处**：`runner.ts` + `asr/whisperServer.ts`（长驻服务，`:161` 真的 spawn）。此前这一行写「本包唯一」，不成立。**T-153 起由 `eslint.config.js` 的 `no-restricted-imports` + 7 文件白名单强制**（`whisperServer.ts` 在白名单里，债还在） | `pnpm lint` + `subprocess/__tests__/childProcessAllowlist.test.ts`（真起一次 eslint） | 🟡 **有强制，但覆盖面小于字面**：动态 import / `scripts/**` / `apps/web` 都在范围外，见 `docs/SECURITY.md` L1 ③ |
 | **L2 绝不过 shell**     | `spawn(bin, argv, {shell:false})`；Windows 拒 `.bat/.cmd/.ps1/.com/.vbs/.js`                                                                            | `C:\tools\yt-dlp.bat`                                                            | ✅ `unsafe_executable`               |
 | **L2b 绝对路径**        | 拒绝裸命令名（否则 PATH 抢跑）                                                                                                                          | `ffmpeg`                                                                         | ✅ `path_escape`                     |
 | **L3.1 scheme**         | 只允许 http/https                                                                                                                                       | `file:///etc/passwd`、`data:`、`javascript:`、`ftp:`                             | ✅ `bad_scheme`                      |
@@ -328,6 +329,15 @@ grep -rn "yt-dlp" --include=*.ts packages/ apps/ \
   && echo "FAIL: yt-dlp identifier escaped the adapter" && exit 1
 
 # ② child_process 只允许在 SubprocessRunner 里出现
+# ⚠️ 2026-08-06 / T-153 订正：这段 grep **从来没有任何 workflow 或脚本调用过**，
+#    它只活在这个 markdown 代码块里；而且今天照跑必然 FAIL（产品代码有 7 处合法例外）。
+#    它还有两个方法上的毛病，正好是本仓踩过的两个坑：
+#      - `grep -rn` 会把**注释里**的字符串一起数进来（实测多数 3 处）；
+#      - `grep -r` 对含控制字节的文件**静默跳过**（`sourceIsGreppable.test.ts` 那条）。
+#    → **已被真正的执行者取代**：`eslint.config.js` 的 `no-restricted-imports` +
+#      7 文件白名单，由 `pnpm lint` 跑；生效性由
+#      `packages/pipeline/src/subprocess/__tests__/childProcessAllowlist.test.ts` 断言。
+#    下面这四行**保留原文**（此前写着什么，是可查的），但不要再照抄进 CI。
 grep -rn "node:child_process" --include=*.ts packages/ apps/ \
   | grep -v "packages/pipeline/src/subprocess/runner.ts" \
   && echo "FAIL: child_process used outside SubprocessRunner" && exit 1

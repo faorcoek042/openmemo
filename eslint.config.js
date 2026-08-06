@@ -103,6 +103,93 @@ export default tseslint.config(
     files: ['apps/web/src/lib/events/bindings.ts', 'apps/web/src/routes.tsx'],
     rules: { 'no-restricted-imports': 'off' },
   },
+  // ───────────────────────────────────────────────────────────────────────────
+  // D-01 §8.4 L1「子进程只从一个出口出去」—— T-153 补上的机器执行者。
+  //
+  // ⚠️ 这条规则**此前不存在**，而 `D-01:1061`、`docs/SECURITY.md:109`、`D-06:330`
+  // 三份文档都声称它是「CI 强制的架构点」。三份互相交叉引用，读起来像被三处证实，
+  // 实际上一处都没有。补规则的同时那三处文档已改成如实（见 D-01 §8.4）。
+  //
+  // ── 三条必须一起读的边界 ──────────────────────────────────────────────────
+  //
+  // ① **必须带白名单，否则是一盏假红灯。** `packages/runtime` 那三处**架构上修不了**：
+  //    `pipeline` 依赖 `runtime`，反过来不行，所以它们用不了 `runner.ts`。
+  //    假红灯会训练人忽略告警（HANDOFF ⑤B），和假绿灯一样要当 bug 修。
+  //
+  // ② **它拦不住动态 import。** `packages/downloader/scripts/verify-offline.mjs:640`
+  //    是 `await import('node:child_process')` —— 静态规则对它无能为力。
+  //    这一点被 `childProcessAllowlist.test.ts` 显式钉住（一条断言专门证明"这里拦不住"），
+  //    免得下一个人因为"有规则了"再把文档写回"已强制"。
+  //
+  // ③ **范围只到产品源码**（`apps/*/src/**` 与 `packages/*/src/**`）。
+  //    `scripts/**` 与 `verify-*.mjs` 是构建/验证工具，不随产品分发，
+  //    它们 spawn 的是我们自己钉死的命令，不接触用户输入 —— 把它们一起禁掉
+  //    只会逼出 12 条 eslint-disable 注释，而那等于没有规则。
+  //    同理排除 `*.test.ts` / `__tests__/**`：测试要起子进程来**证明**这条规则生效
+  //    （`packages/pipeline/src/subprocess/__tests__/childProcessAllowlist.test.ts`
+  //    真的 spawn 一次 eslint），把它们一起禁掉就是让守卫无法存在。
+  //    这也与三份文档里「产品代码 7 处（排除 scripts/tests）」那个口径对齐。
+  //
+  // ⚠️ **`apps/web/**` 刻意不在范围内**，原因是机制而不是偏好：flat config 里
+  //    同名规则是**整体覆盖**不是合并，把 web 一起圈进来会让这一块把上面两条
+  //    前端分层护栏（features/A ↮ features/B、lib/components ↮ features）悄悄吃掉。
+  //    web 是浏览器包，`node:child_process` 在那里会被 vite 当场打断，不需要这条。
+  //    ★ 守卫测试里有一条专门断言那两条前端护栏**仍然会报错**。
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    files: ['apps/daemon/src/**/*.{ts,tsx,mts,cts}', 'packages/*/src/**/*.{ts,tsx,mts,cts}'],
+    ignores: ['**/*.test.{ts,tsx,mts,cts}', '**/__tests__/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'node:child_process',
+              message:
+                '子进程只能从 packages/pipeline/src/subprocess/runner.ts 出去（D-01 §8.4 L1）。' +
+                '那里集中了 shell:false、argv 不变量、env 白名单重建、超时与进程组回收。' +
+                '确有架构原因绕不开的，请加进 eslint.config.js 的白名单并写清性质 —— ' +
+                '不要就地 eslint-disable（那会让例外从此不可清点）。',
+            },
+            {
+              name: 'child_process',
+              message:
+                '同上；另外请用 `node:` 前缀写法（裸 `child_process` 可被同名 npm 包顶掉）。',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    /*
+     * L1 白名单 —— **7 处，逐条定性**（`[实测]` AST 剥注释后全仓扫描，2026-08-06）。
+     *
+     * | 文件 | 性质 |
+     * |---|---|
+     * | `pipeline/src/subprocess/runner.ts` | ✅ 权威出口本身 |
+     * | `pipeline/src/asr/whisperServer.ts` | ⚠️ 违反本包自己的不变量（长驻服务 vs run-to-completion）；已 import runner 的 `buildChildEnv` 并传 `shell:false`。**债还在** |
+     * | `apps/daemon/src/main.ts`           | detached 自重启，runner 没有对应能力 —— 合理例外 |
+     * | `apps/daemon/src/bootstrap/tls.ts`  | 启动时 `execFileSync('openssl')`，同步/异步差异让复用别扭 |
+     * | `runtime/src/probe/runProbe.ts`     | ⚠️ **架构上修不了**：pipeline → runtime 单向依赖 |
+     * | `runtime/src/detect/system.ts`      | 同上 |
+     * | `runtime/src/selfTest.ts`           | 同上 |
+     *
+     * 这张表就是这条规则的全部例外。**改它必须同时改 D-01 §8.4 的同一张表** ——
+     * 守卫测试会断言"能通过 lint 的文件集合"恰好是这 7 个，多一个少一个都红。
+     */
+    files: [
+      'packages/pipeline/src/subprocess/runner.ts',
+      'packages/pipeline/src/asr/whisperServer.ts',
+      'apps/daemon/src/main.ts',
+      'apps/daemon/src/bootstrap/tls.ts',
+      'packages/runtime/src/probe/runProbe.ts',
+      'packages/runtime/src/detect/system.ts',
+      'packages/runtime/src/selfTest.ts',
+    ],
+    rules: { 'no-restricted-imports': 'off' },
+  },
   {
     // 根 scripts/ 与各包自己的 scripts/（如 apps/daemon/scripts/）都是 Node 环境
     files: ['**/scripts/**/*.{js,mjs,cjs}', '**/*.config.{js,mjs,ts}'],

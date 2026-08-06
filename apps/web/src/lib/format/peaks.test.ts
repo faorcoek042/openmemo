@@ -16,6 +16,7 @@
  * 这里钉的是解码规则本身。
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
 import * as peaksModule from './peaks';
@@ -98,5 +99,44 @@ describe('T-139 A3 —— mockPeaks 已删除', () => {
       'mockPeaks 又回来了 —— 详情页没有真 .ompk 时必须如实不画波形（Waveform 会画基线 + 可点击游标）',
     );
     assert.deepEqual(Object.keys(peaksModule).sort(), ['decodeOmpk']);
+  });
+});
+
+describe('T-153 —— wavesurfer.js 不许回到 apps/web 的依赖里', () => {
+  /*
+   * 为什么这条护栏只能钉 package.json：
+   *
+   * 一个**零 import** 的依赖不会被 tsc 发现（没人引它）、不会被 eslint 发现
+   * （没有 import 语句可查）、不会被任何现有测试发现（它不产生行为）。
+   * `wavesurfer.js` 就是这么从第一个脚手架提交（`4018e23`）一路活到 T-153 的：
+   * 三年零调用，唯一的成本是**让读代码的人以为波形是它画的**。
+   *
+   * 判据不是"有没有人 import 它"（那恒为 false，钉住的是零），
+   * 是"**它在不在依赖清单里**" —— 那才是它唯一的存在形式。
+   * 裁决理由写在 `peaks.ts` 文件头，不在这里重复。
+   */
+  const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as {
+    name?: string;
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+
+  it('读到的确实是 apps/web 的 package.json（cwd 变了就当场说，别静默通过）', () => {
+    /*
+     * 这条守卫只挡"读错文件 ⇒ 下一条恒绿"，**不碰被检查的那个量**
+     * （`pack-publish` 记过两次的坑：把非空守卫加在要报告的量上，
+     * 真出问题时先炸的是守卫，而它不告诉你为什么）。
+     */
+    assert.equal(pkg.name, '@openmemo/web');
+  });
+
+  it('★ dependencies / devDependencies 里都不许出现 wavesurfer', () => {
+    const all = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
+    const hits = all.filter((d) => d.toLowerCase().includes('wavesurfer'));
+    assert.deepEqual(
+      hits,
+      [],
+      `wavesurfer 又回到依赖清单里了：${hits.join(', ')} —— 见 peaks.ts 文件头的裁决`,
+    );
   });
 });

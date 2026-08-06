@@ -22,6 +22,11 @@
 import { posix, win32 } from 'node:path';
 import { realpath } from 'node:fs/promises';
 
+import {
+  PIPELINE_MEDIA_EXTENSIONS,
+  PLAYLIST_EXTENSIONS as SHARED_PLAYLIST_EXTENSIONS,
+} from '@openmemo/shared';
+
 /** D-01 §8.4 L3.6 — URLs longer than this are rejected outright. */
 export const MAX_URL_BYTES = 2048;
 
@@ -444,15 +449,24 @@ async function realpathOrResolve(absolute: string): Promise<string> {
  * These are NOT media files — they are lists of URIs that ffmpeg will go and fetch. That
  * makes them an indirection primitive, which is why they get separate treatment from
  * every other extension (see isLocalImportSafeExtension).
+ *
+ * ★ T-152: the list itself now lives in `@openmemo/shared/media-extensions.ts`. Re-exported
+ * here under the historical name because `packages/pipeline/src/index.ts` exports it and
+ * there are callers outside this package.
  */
-export const PLAYLIST_EXTENSIONS = new Set(['.m3u8', '.m3u', '.pls', '.xspf', '.asx', '.wpl']);
+export const PLAYLIST_EXTENSIONS = SHARED_PLAYLIST_EXTENSIONS;
 
-/** Extension allowlist. D-01 §8.5 — true type is confirmed later by ffprobe. */
-export const MEDIA_EXTENSIONS = new Set([
-  '.mp3', '.m4a', '.aac', '.wav', '.flac', '.ogg', '.oga', '.opus', '.wma', '.aiff', '.aif',
-  '.mp4', '.m4v', '.mkv', '.webm', '.mov', '.avi', '.wmv', '.flv', '.ts', '.m3u8',
-  '.srt', '.vtt', '.ass',
-]);
+/**
+ * Extension allowlist. D-01 §8.5 — true type is confirmed later by ffprobe.
+ *
+ * ★ T-152: this used to be a hand-copied 24-entry literal, one of THREE diverging copies
+ * in the repo. `[实测]` `daemon ∖ pipeline = {mpeg, mpg}` — files the upload endpoint
+ * happily accepted were not in this allowlist. It is now the union built in
+ * `@openmemo/shared` (UPLOAD ∪ PLAYLIST ∪ SUBTITLE ∪ pipeline-only), so that particular
+ * one-way gap is **structurally impossible**: anything the upload endpoint accepts is in
+ * here by construction, not by somebody remembering to sync a second list.
+ */
+export const MEDIA_EXTENSIONS = PIPELINE_MEDIA_EXTENSIONS;
 
 export function hasAllowedMediaExtension(name: string): boolean {
   const dot = name.lastIndexOf('.');

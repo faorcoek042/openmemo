@@ -24,6 +24,7 @@ import {
 } from './api';
 import { cn } from '../../../lib/utils';
 import { LlmModelSelect } from './LlmModelSelect';
+import { LocalLlmSection } from './LocalLlmSection';
 import {
   baseUrlFieldMode,
   useLlmConfig,
@@ -53,12 +54,21 @@ import {
  * | #26 | 模型下拉旁只有一句"清单更新于…" | 按 `canRefreshModelList()` **分流措辞**（详见 `LlmModelSelect`） |
  * | #28 | 出厂只有一句 `settings.noProviders` | 完整空状态：说清为什么空 + 六个按钮就在眼前 + 不预选任何一家 |
  *
- * **不做的两件事，理由写在这里免得被当成漏掉**：
- * - 「刷新模型列表」**没有按钮**。全仓没有任何端点能替前端枚举某家的模型
- *   （daemon 路由表里无 `/api/llm/models`）。给按钮 = 24 个按不动的按钮。
- * - 「本地模型」还不是 D-10 §4.2 那个折叠的 **[探测本机]** 组，仍旧混在「常用」里
- *   （Ollama / LM Studio 本来就在目录的置顶六家里）。那条卡在 D-10 #23 的
- *   `POST /api/llm/detect` 上 —— **端点至今不存在**，做出来只能是个假按钮。
+ * ## ★ T-153：上面那两条"不做"，现在做了 —— 因为缺的那两个端点补上了
+ *
+ * 📝 **此前这里写着**（保留原文，因为它记录的是一个真实的判断，不是遗漏）：
+ * > 「刷新模型列表」**没有按钮**。全仓没有任何端点能替前端枚举某家的模型
+ * > （daemon 路由表里无 `/api/llm/models`）。给按钮 = 24 个按不动的按钮。
+ * > 「本地模型」还不是 D-10 §4.2 那个折叠的 **[探测本机]** 组…… 那条卡在 D-10 #23 的
+ * > `POST /api/llm/detect` 上 —— **端点至今不存在**，做出来只能是个假按钮。
+ *
+ * 那个判断是对的：**没有端点就不该有按钮。** T-153 把两个端点都补上了，
+ * 于是这两条的前提消失了：
+ *
+ * | # | 现在 |
+ * |---|---|
+ * | #3 | `<LocalLlmSection>` —— 折叠的「本地模型」组，`POST /api/llm/detect` 真去敲三个本机端口 |
+ * | #26 | `LlmModelSelect` 对 `canRefreshModelList()===true` 的 **4 家**渲染「刷新」，其余 20 家仍然只显示 `checkedAt`。**判据没变，变的是那 4 家的按钮现在真的按得动** |
  */
 
 export function LlmSettingsSection() {
@@ -344,6 +354,14 @@ export function LlmSettingsSection() {
           </>
         ) : null}
       </div>
+
+      {/*
+        ★ D-10 §4.2 / #3「本地模型」折叠组。**默认折叠**，与线框一致：
+        档 2 是"可选便利"，不是主路径（ADR-016 保留档 1 为主路径）。
+        它与上面的「常用」不重复：Ollama / LM Studio 在「常用」里是**照目录预填地址**，
+        这里是**真去本机问过**——后者能回答"我到底装没装、装了几个模型"。
+      */}
+      <LocalLlmSection configuredIds={providers.map((p) => p.id)} onAdd={upsertProvider} />
     </section>
   );
 }
@@ -444,6 +462,14 @@ function ProviderForm({
   const [model, setModel] = useState(initialModel);
   const [apiKey, setApiKey] = useState('');
   const [reveal, setReveal] = useState(false);
+  /**
+   * 「刷新模型列表」刚从对面问回来的清单（D-10 #26，T-153）。
+   *
+   * **并进候选，不替换掉内置清单** —— 用户当前选的那个型号可能不在刷新结果里
+   * （下架了、或者是自定义网关的别名），替换会让它在下拉里**当场消失**，
+   * 而那正是 `LlmModelSelect` 文件头第一条约束在防的事。
+   */
+  const [refreshed, setRefreshed] = useState<string[]>([]);
 
   /*
    * 认不出这家（自定义网关 / 老 id）时退回三件套：**宁可多给一个字段，
@@ -494,9 +520,11 @@ function ProviderForm({
           */}
           <LlmModelSelect
             value={model}
-            models={models}
+            models={[...new Set([...models, ...refreshed])]}
             onChange={setModel}
             note={note}
+            providerId={provider.id}
+            onModelsRefreshed={setRefreshed}
             testId="llm-model-select"
             ariaLabel={t('settings.model')}
           />

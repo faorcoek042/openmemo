@@ -13,8 +13,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 
+import { UPLOAD_MEDIA_EXTENSIONS } from '@openmemo/shared';
+
 import {
   MAX_URL_BYTES,
+  MEDIA_EXTENSIONS,
+  PLAYLIST_EXTENSIONS,
   assertWithinRoot,
   buildArgv,
   isPrivateOrReservedHost,
@@ -484,5 +488,177 @@ describe('L4 — playlist indirection (measured attack, T-026)', () => {
     // Remote HLS uses a protocol whitelist WITHOUT `file`, which was verified to block
     // the same attack. Only LOCAL import is refused.
     assert.equal(hasAllowedMediaExtension('/x/stream.m3u8'), true);
+  });
+
+  it('★ 本地导入必须拒掉 .m3u8（T-026 那条实测攻击的最小钉子）', () => {
+    assert.equal(isLocalImportSafeExtension('x.m3u8'), false, '.m3u8 不许本地导入');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ★ T-152 —— 扩展名白名单的**拒绝侧**
+// ---------------------------------------------------------------------------
+
+/**
+ * ★★ 这一组补的是"拒绝"，不是"接受"。
+ *
+ * `[变异实测]`（收敛之前，`debt-cleanup` T-152 §2.3）：把 `hasAllowedMediaExtension`
+ * 的函数体改成 `return true;` —— 也就是 `evil.exe` / `payload.sh` **全部放行** ——
+ * `packages/pipeline` **187 条测试全绿**。把同一行换成 `throw` 则当场红 6 条。
+ *
+ * 两个结果合起来说明一件事：这个函数**确实被执行到**（行覆盖很好看），
+ * 但**没有任何一条测试依赖过它拒绝什么**。行覆盖测的是"跑没跑到"，
+ * 不是"判据对不对" —— 一个只有接受侧断言的白名单，等于没有白名单。
+ *
+ * 所以下面每一条钉的都是**后果**（"这个名字必须进不来"），不是关键词。
+ */
+describe('★ 媒体扩展名白名单 —— 拒绝侧（T-152：收敛前这一层行覆盖好看、断言全无）', () => {
+  /**
+   * 已知的非媒体扩展名样本。混了三类：
+   *  · 可执行 / 脚本（白名单存在的首要理由）
+   *  · 原生库与安装包
+   *  · 形态畸形的名字：无扩展名、只有前导点、双扩展名、点结尾
+   */
+  const NON_MEDIA_NAMES = [
+    'evil.exe',
+    'payload.sh',
+    'x.dll',
+    'a.bat',
+    'a.cmd',
+    'a.com',
+    'a.scr',
+    'a.ps1',
+    'a.vbs',
+    'x.so',
+    'x.dylib',
+    'a.py',
+    'a.rb',
+    'a.jar',
+    'a.msi',
+    'a.deb',
+    'a.apk',
+    'a.zip',
+    'a.pdf',
+    'a.txt',
+    'a.json',
+    'a.iso',
+    'a.desktop',
+    'a.lnk',
+    'no-extension',
+    '.hidden',
+    'x.m3u8.exe', // 双扩展名：判据取**最后**一个点之后，骗不过它
+    'evil.exe.', // 点结尾 → 扩展名是 '.'
+  ];
+
+  it('★ 一批已知的非媒体扩展名必须**全部**被拒（这条就是那个恒真变异的钉子）', () => {
+    /*
+     * 守卫只挡"样本集被筛空了 → 下面那条永远绿"（⑤A-2）。
+     * ⚠️ 守卫**只能加在样本集（输入）上，绝不能加在 accepted（要报告的量）上**：
+     *    给要报告的量加非空守卫，真出问题时先炸的是守卫，而守卫不告诉你为什么。
+     *    本项目已经因此犯错两次。
+     */
+    assert.equal(
+      NON_MEDIA_NAMES.length >= 25,
+      true,
+      `样本集只剩 ${NON_MEDIA_NAMES.length} 个，样本被筛空了 —— 这条断言此刻钉的是零`,
+    );
+
+    const accepted = NON_MEDIA_NAMES.filter((n) => hasAllowedMediaExtension(n));
+    assert.deepEqual(
+      accepted,
+      [],
+      '这些名字被媒体白名单**放行**了。若 accepted 是完整样本集，说明 ' +
+        'hasAllowedMediaExtension 退化成了恒真（历史上这个变异让 187 条测试全绿）：\n  ' +
+        accepted.join('\n  '),
+    );
+  });
+
+  it('★ 函数有判别力：既不是恒真也不是恒假', () => {
+    // 恒假同样是一种坏法（把所有媒体都挡在外面，产品直接不可用），
+    // 而只写"拒绝"断言的话恒假是绿的。两侧都钉才关得住。
+    const mustAccept = ['a.mp3', 'a.mp4', 'a.wav', 'a.flv', 'a.wmv', 'a.ts', 'a.mpeg', 'a.mpg'];
+    const mustReject = ['evil.exe', 'payload.sh', 'x.dll', 'a.bat'];
+
+    assert.deepEqual(
+      mustAccept.filter((n) => !hasAllowedMediaExtension(n)),
+      [],
+      '这些是货真价实的媒体，被拒了 —— 白名单退化成恒假',
+    );
+    assert.deepEqual(
+      mustReject.filter((n) => hasAllowedMediaExtension(n)),
+      [],
+      '这些是可执行文件，被放行了 —— 白名单退化成恒真',
+    );
+  });
+
+  it('★ 播放列表扩展名一个都不许出现在 UPLOAD_MEDIA_EXTENSIONS 里（安全边界）', () => {
+    // T-026：本地 .m3u8 的 segment URI 写 file:///… 就能让 ffmpeg 读任意本地文件。
+    // 一旦它进了上传白名单，用户就能直接把这个原语传到服务器上。
+    assert.equal(
+      PLAYLIST_EXTENSIONS.size >= 6,
+      true,
+      `播放列表集合只剩 ${PLAYLIST_EXTENSIONS.size} 项，被筛空了`,
+    );
+    const leaked = [...PLAYLIST_EXTENSIONS].filter((e) => UPLOAD_MEDIA_EXTENSIONS.has(e));
+    assert.deepEqual(
+      leaked,
+      [],
+      '播放列表扩展名漏进了上传白名单 —— 这不是口味问题，是把间接寻址原语开放给了上传：\n  ' +
+        leaked.join('\n  '),
+    );
+  });
+
+  it('★ 由构造相等：上传端点收得下的，pipeline 必须全都认（收敛前 {mpeg,mpg} 那个洞）', () => {
+    assert.equal(
+      UPLOAD_MEDIA_EXTENSIONS.size >= 19,
+      true,
+      `上传白名单只剩 ${UPLOAD_MEDIA_EXTENSIONS.size} 项，被筛空了`,
+    );
+    const missing = [...UPLOAD_MEDIA_EXTENSIONS].filter((e) => !MEDIA_EXTENSIONS.has(e));
+    assert.deepEqual(
+      missing,
+      [],
+      '这些扩展名上传端点收得下、pipeline 的媒体白名单却不认 —— ' +
+        '就是收敛前 `daemon ∖ pipeline = {mpeg, mpg}` 那个洞。' +
+        'MEDIA_EXTENSIONS 必须由并集构造，不能手抄：\n  ' +
+        missing.join('\n  '),
+    );
+  });
+
+  it('★ T-153：pipeline 的集合相对收敛前恰好只多了 {mpeg,mpg} —— 收敛不许顺手把口子开大', () => {
+    /*
+     * `debt-cleanup` T-152 §2.3 实测记录下来的**收敛前**那 24 项（HEAD `fca18f6`）。
+     * 这是本条断言的锚点：收敛的目标是"三份变一份"，不是"趁机放宽"。
+     *
+     * ⚠️ 第一版并集写成了 `∪ PLAYLIST_EXTENSIONS`，于是 `.m3u/.pls/.xspf/.asx/.wpl`
+     * 五个也进了 pipeline 的媒体白名单 —— 后果不是多五个字符串，是
+     * `directHttp.match()` 对它们的评分 30→80、`probe()` 的 `looksMedia` 直接成立，
+     * **产品会去抓的远程 URL 范围变大了**，而那是一次没人要求过的行为变更。
+     */
+    const BEFORE_T152 = [
+      '.aac', '.aif', '.aiff', '.ass', '.avi', '.flac', '.flv', '.m3u8', '.m4a', '.m4v',
+      '.mkv', '.mov', '.mp3', '.mp4', '.oga', '.ogg', '.opus', '.srt', '.ts', '.vtt',
+      '.wav', '.webm', '.wma', '.wmv',
+    ];
+    assert.equal(BEFORE_T152.length, 24, '锚点自己被改坏了');
+    const now = [...MEDIA_EXTENSIONS].sort();
+    const added = now.filter((e) => !BEFORE_T152.includes(e));
+    const removed = BEFORE_T152.filter((e) => !MEDIA_EXTENSIONS.has(e));
+    assert.deepEqual(added, ['.mpeg', '.mpg'], `多出来的不止 {mpeg,mpg}：${added.join(' ')}`);
+    assert.deepEqual(removed, [], `丢了：${removed.join(' ')}`);
+  });
+
+  it('收敛决策的具体取值（改动它们要连注释一起改）', () => {
+    // web 早就放行、daemon 漏了的两个
+    assert.equal(UPLOAD_MEDIA_EXTENSIONS.has('.flv'), true, 'flv：web 早就放行，daemon 漏了');
+    assert.equal(UPLOAD_MEDIA_EXTENSIONS.has('.wmv'), true, 'wmv：web 早就放行，daemon 漏了');
+    // daemon 早就收、web 漏了的那个。⚠️ 与 TypeScript 源文件同扩展名：
+    // 拖一个 .ts 源码进来会过扩展名预检，由服务端 ffprobe 当场认出不是媒体并拒掉（D-01 §8.5）。
+    assert.equal(UPLOAD_MEDIA_EXTENSIONS.has('.ts'), true, 'ts：daemon 早就收，web 漏了');
+    // 字幕/播放列表只在 pipeline 超集里，不在上传白名单里
+    assert.equal(UPLOAD_MEDIA_EXTENSIONS.has('.srt'), false, '字幕不走上传端点');
+    assert.equal(MEDIA_EXTENSIONS.has('.srt'), true, '但 pipeline 认字幕');
+    assert.equal(UPLOAD_MEDIA_EXTENSIONS.has('.m3u8'), false, '★ 播放列表绝不许上传');
+    assert.equal(MEDIA_EXTENSIONS.has('.m3u8'), true, '但远程 HLS 必须还能用');
   });
 });

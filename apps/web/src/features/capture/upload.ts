@@ -1,3 +1,5 @@
+import { hasUploadMediaExtension } from '@openmemo/shared';
+
 import { markSurface } from '../../lib/api/surfaces';
 
 /**
@@ -146,10 +148,19 @@ function parseError(text: string, status: number): Error {
   }
 }
 
-/** 客户端侧的类型白名单。真正的判定以服务端 ffprobe 实探为准（D-01 §8.5）。 */
+/**
+ * 客户端侧的类型白名单。真正的判定以服务端 ffprobe 实探为准（D-01 §8.5）。
+ *
+ * ★ T-152：这里原本写死了一条 18 项的正则，与 daemon 的 17 项白名单分叉。
+ * `[实测]` `web ∖ daemon = {flv, wmv}` —— 用户拖一个 `.flv` 进来，**这条正则放行、
+ * 界面上出现上传行、服务端回 415**；反向 `daemon ∖ web = {ts}` —— 服务端收得下，
+ * 这条正则不认。现在两边**逐字用 `@openmemo/shared` 的同一个 `UPLOAD_MEDIA_EXTENSIONS`**，
+ * 相等由构造保证，不靠谁记得同步。⚠️ 要加扩展名请改 shared 那一份，别在这里写正则。
+ *
+ * `file.type` 快路径保留：浏览器已经认出 `audio/*` / `video/*` 时不必再看扩展名
+ * （很多相机/录音 App 导出的文件没有扩展名，只有 MIME）。
+ */
 export function looksLikeMedia(file: File): boolean {
   if (file.type.startsWith('audio/') || file.type.startsWith('video/')) return true;
-  return /\.(mp3|m4a|wav|flac|ogg|opus|aac|wma|mp4|mkv|mov|avi|webm|flv|wmv|m4v|mpeg|mpg)$/i.test(
-    file.name,
-  );
+  return hasUploadMediaExtension(file.name);
 }

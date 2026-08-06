@@ -141,7 +141,11 @@
       "starting": "Starting…",
       "noSpace": "Not enough space",
       "downloadAnyway": "Download anyway ({{size}})",
-      "download": "Download {{size}}"
+      "download": "Download {{size}}",
+      "coreml": {
+        "label": "Also download the CoreML encoder (+{{size}}) — enables the Apple Neural Engine",
+        "hint": "Transcription works fine without it, just slower on Metal/CPU. After installing, check that asr.coreml turns ok on the Diagnostics page — whisper falls back silently when the encoder fails to load, so self-check is the only place it shows."
+      }
     },
     "download": {
       "resolving": "Choosing a download source",
@@ -642,7 +646,10 @@
       "note": "{{n}} bundled entries · checked {{date}}, may be out of date",
       "noteNoDate": "{{n}} bundled entries",
       "noCatalog": "No bundled list for this provider — pick “Custom…” and type the model name",
-      "noteApi": "{{n}} bundled entries · this vendor can be enumerated programmatically, but the local service has no endpoint for it yet, so the list is still the snapshot shipped with this build"
+      "noteApi": "{{n}} in the bundled list · this provider exposes an enumerable endpoint — press Refresh to ask what it actually has now",
+      "refresh": "Refresh",
+      "refreshing": "Refreshing…",
+      "refreshed": "Just fetched {{n}}"
     },
     "noKeyNeeded": "no API key needed",
     "baseUrlLocked": "This vendor rejects a custom endpoint (baseUrl.editable = false in the catalog), so the field is read-only.",
@@ -659,6 +666,20 @@
     "unsupported": {
       "kind": "not supported yet (no adapter for the {{kind}} protocol)",
       "noBaseUrl": "not supported yet (the catalog gives no usable endpoint and forbids a custom one)"
+    },
+    "local": {
+      "title": "Local models (Ollama / LM Studio)",
+      "intro": "Connect a local service you **already installed**. We no longer ship downloadable local models (ADR-016), so this does exactly one thing: ask this machine whether anything is running.",
+      "probe": "Scan this machine",
+      "probing": "Scanning…",
+      "notProbedYet": "Not scanned yet — press the button",
+      "none": "Nothing is running at any of these addresses",
+      "found": "Found {{n}}",
+      "probedList": "Probed: {{list}}, {{seconds}}s timeout each. If you changed the port, add Ollama / LM Studio from Popular above and type the address.",
+      "models": "reports {{n}} models",
+      "add": "+ Add",
+      "alreadyAdded": "Already in the list above",
+      "falsePositiveNote": "The test is **an actual request that returns a model list**, not an open port — an open port could be another service, a zombie process or a proxy. Installed but with no models pulled counts as unusable here; no false positives."
     }
   },
   "mock": {

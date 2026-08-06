@@ -1080,7 +1080,9 @@ interface MediaSource extends Adapter {
 
 **第一层：架构隔离**
 `SubprocessRunner`（落地在 `packages/pipeline/src/subprocess/runner.ts`）**应当**是全项目唯一 `spawn` 出口，所有防护集中在这一个文件里审计。
-⚠️ **这是约定，尚未机器强制。此前这里写着"CI 用 `no-restricted-imports` 强制，`apps/daemon/src/subprocess/**` 之外禁止 import `node:child_process`" —— 这条 lint 规则从未存在于 `eslint.config.js`（全文 115 行，`child_process` 零命中），`apps/daemon/src/subprocess/` 这个目录也不存在。** `[实测]` 2026-08-06（AST 剥注释后全仓扫描，非 grep）：**产品代码 7 处** import `node:child_process`，**除 `runner.ts` 自己外还有 6 处**：
+✅ **T-153 起这条真的有机器在执行了**（`eslint.config.js`，规则 + 显式白名单）。
+⚠️ **在此之前它只是约定。此前这里写着"CI 用 `no-restricted-imports` 强制，`apps/daemon/src/subprocess/**` 之外禁止 import `node:child_process`" —— 那条 lint 规则从未存在于 `eslint.config.js`（当时全文 115 行，`child_process` 零命中），`apps/daemon/src/subprocess/` 这个目录也不存在。** 保留这句是因为 `SECURITY.md:109` 与 `D-06:330` 曾与它互相引用，形成"看起来被三处证实"的假象；下一个人需要知道**这里改过**。
+`[实测]` 2026-08-06（AST 剥注释后全仓扫描，非 grep）：**产品代码 7 处** import `node:child_process`，**除 `runner.ts` 自己外还有 6 处** —— 这 7 处就是白名单的全部内容：
 
 | 文件 | 性质 |
 |---|---|
@@ -1095,9 +1097,22 @@ interface MediaSource extends Adapter {
 **全仓 19 处**（上面 7 处 + 12 个 `scripts/` 与 `verify-*.mjs`），其中
 `packages/downloader/scripts/verify-offline.mjs` 用的是 **`await import('node:child_process')` 动态 import —— 任何静态 lint 规则都抓不到**。
 
-⚠️ 所以真要补规则，**必须带白名单**（`packages/runtime` 那三处架构上就修不了），
+⚠️ 补规则时**必须带白名单**（`packages/runtime` 那三处架构上就修不了），
 否则加上去就是一盏假红灯 —— 而假红灯会训练人忽略告警（HANDOFF ⑤B）。
-**待办：要么补 `no-restricted-imports` 规则 + 显式白名单（这 5 处逐一定性），要么承认本节立论前提"所有防护集中在一个文件里"当前不成立。不要再把它当成已生效的 CI 护栏引用。**
+**（T-153 已按这条办：白名单就是上表那 7 行，性质逐条写在 `eslint.config.js` 旁边。）**
+
+#### T-153：规则落地后的真实边界（**读到这里请连这三条一起读**）
+
+| | |
+|---|---|
+| **规则位置** | `eslint.config.js`，一个 `files: ['apps/daemon/src/**', 'packages/*/src/**']` 的块 + 一个 7 文件的白名单块 |
+| **执行者** | `pnpm lint`（根 `package.json` 的 `lint` / `check`）。护栏测试 `packages/pipeline/src/subprocess/__tests__/childProcessAllowlist.test.ts` 会**真的 spawn 一次 eslint** 来验证它生效，走的是 `pnpm -r test` 这条事实上的门禁 |
+| **① 范围只到产品源码** | `scripts/**`、`verify-*.mjs`、`*.test.ts`、`__tests__/**` **不在范围内**。它们不随产品分发、spawn 的是钉死的命令。把它们一起禁掉只会逼出十几条 `eslint-disable`，而那等于没有规则 |
+| **② `apps/web/**` 刻意不在范围内** | 不是遗漏：flat config 里同名规则是**整体覆盖不是合并**，把 web 圈进来会让这一块**悄悄吃掉**两条前端分层护栏（`D-05 §3.5`）。护栏测试里有一条专门断言那两条仍然会报错 —— `[实测]` 把范围改成含 web，那条当场红 |
+| **③ 🔴 它拦不住动态 import** | `packages/downloader/scripts/verify-offline.mjs:640` 是 `const { execFileSync } = await import('node:child_process')`。**任何静态 lint 规则都抓不到它**，`[实测]` 该文件在新规则下零命中（而且它本来也在范围外）。护栏测试里有一条断言**专门钉住这个盲区**，就是为了防止下一份文档因为"有规则了"再次把这一格写成满格 |
+
+**所以本节 L1 现在的准确说法是**：「产品源码里 `node:child_process` 只能出现在上表 7 个文件中，由 lint 强制；构建脚本与动态 import 不在强制范围内。」
+**不是**「全项目唯一 spawn 出口」。那句话今天仍然不成立 —— 差的是 `whisperServer.ts` 那条真债（长驻服务 vs run-to-completion）与 `packages/runtime` 的依赖方向，两条都在上表里记着。
 
 **第二层：绝不经过 shell**
 ```

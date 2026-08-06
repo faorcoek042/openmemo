@@ -141,7 +141,11 @@
       "starting": "正在开始…",
       "noSpace": "空间不足",
       "downloadAnyway": "仍要下载 {{size}}",
-      "download": "下载 {{size}}"
+      "download": "下载 {{size}}",
+      "coreml": {
+        "label": "同时下载 CoreML 编码器（+{{size}}）—— 启用 Apple 神经引擎（ANE）",
+        "hint": "不装也能正常转写，只是走 Metal/CPU 会慢一些。装完请在「诊断」页确认 asr.coreml 变成 ok —— 加载失败时 whisper 会静默回退，只有自检看得出来。"
+      }
     },
     "download": {
       "resolving": "正在选择下载源",
@@ -642,7 +646,10 @@
       "note": "内置清单 {{n}} 个 · 核对于 {{date}}，可能已过时",
       "noteNoDate": "内置清单 {{n}} 个",
       "noCatalog": "这个服务商没有内置清单 —— 请选「自定义…」手动填写型号名",
-      "noteApi": "内置清单 {{n}} 个 · 这家支持程序化刷新，但本地服务还没有对应接口，所以清单仍是随版本发布的快照"
+      "noteApi": "内置清单 {{n}} 个 · 这家有可枚举的接口，点「刷新」问一次它现在真正有哪些",
+      "refresh": "刷新",
+      "refreshing": "刷新中…",
+      "refreshed": "刚刷到 {{n}} 个"
     },
     "noKeyNeeded": "这家不需要 API Key",
     "baseUrlLocked": "这家不接受自定义接口地址（目录里 baseUrl.editable = false），所以这一栏只读。",
@@ -659,6 +666,20 @@
     "unsupported": {
       "kind": "暂不支持（协议 {{kind}} 还没有适配器）",
       "noBaseUrl": "暂不支持（目录里没有可用的接口地址，且不允许自定义）"
+    },
+    "local": {
+      "title": "本地模型（Ollama / LM Studio）",
+      "intro": "接上你**已经装好**的本地服务。我们不再分发可下载的本地模型（ADR-016），所以这里只做一件事：去本机问一下有没有正在跑的。",
+      "probe": "探测本机",
+      "probing": "正在探测…",
+      "notProbedYet": "还没探测过 —— 点左边的按钮",
+      "none": "这几个地址上都没有正在运行的本地服务",
+      "found": "探到 {{n}} 个",
+      "probedList": "探过：{{list}}，各 {{seconds}} 秒超时。改过端口的话，请用上面「常用」里的 Ollama / LM Studio 手动填地址。",
+      "models": "它报了 {{n}} 个模型",
+      "add": "+ 添加",
+      "alreadyAdded": "已在上面的列表里",
+      "falsePositiveNote": "判据是**真发一次请求并列出模型**，不是「端口开着」—— 端口开着可能是别的服务、僵尸进程或代理。装了但一个模型都没下的，这里视为不可用，不给假阳性。"
     }
   },
   "mock": {

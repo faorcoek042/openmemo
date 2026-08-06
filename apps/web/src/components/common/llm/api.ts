@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import type { PurposeBindings } from '@openmemo/shared';
+import type { LlmDetectResponse, LlmModelsResponse, PurposeBindings } from '@openmemo/shared';
 
 import { api } from '../../../lib/api/client';
 import { qk } from '../../../app/query';
@@ -230,4 +230,38 @@ export function buildLlmSettingsPatch(opts: {
     patch[LLM_DEFAULT_MODEL_KEY] = provider.model;
   }
   return patch;
+}
+
+/* ───────────── T-153：本地服务探测 + 模型列表枚举（daemon 端点终于存在了）───────────── */
+
+/**
+ * 探测本机 LLM 服务（ADR-003 档 2 / D-10 #3）。
+ *
+ * **用 mutation 不是 query，是有意的**：它会让 daemon 真去敲三个本机端口。
+ * `useQuery` 天生带重取（挂载、窗口聚焦、重连），那等于用户每切一次标签页
+ * 就替他敲一遍端口 —— 与 T-150 给自检定的那条同一个理由
+ * （「每 15 秒替用户跑一遍，是拿他的 CPU 换一个他没在看的数字」）。
+ * 这件事只该在他**按下按钮**时发生。
+ */
+export function useLlmDetectMutation() {
+  return useMutation({
+    mutationFn: () => api<LlmDetectResponse>('settings', '/llm/detect', { method: 'POST' }),
+  });
+}
+
+/**
+ * 枚举某家现在真正有哪些模型（D-10 #26 的按钮打的就是它）。
+ *
+ * ⚠️ **不传 baseUrl**：daemon 一律用**已保存的**地址（`llm.baseUrl.<id>` 或目录默认值）。
+ * 一个"接受任意 URL 然后带着你的 Key 去 fetch"的端点是从浏览器可达的 SSRF 原语，
+ * 服务端因此拒绝读请求体里的地址 —— 前端也就不要发它，免得下一个人以为发了有用。
+ */
+export function useLlmModelsMutation() {
+  return useMutation({
+    mutationFn: (providerId: string) =>
+      api<LlmModelsResponse>('settings', '/llm/models', {
+        method: 'POST',
+        body: { providerId },
+      }),
+  });
 }

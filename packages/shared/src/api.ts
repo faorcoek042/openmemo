@@ -305,5 +305,14 @@ export const ENDPOINTS = [
   { method: 'DELETE', path: '/api/backends/:id', name: 'removeBackend' },
   { method: 'POST', path: '/api/backends/select', name: 'selectBackend' },
   { method: 'GET', path: '/api/runtime/hardware', name: 'getHardware' },
+  /*
+   * T-153 —— ADR-003 档 2（复用已装的本地 LLM）与 D-10 #26 的「刷新模型列表」。
+   * 这两条此前**只有契约的名字、没有实现**：`detectLocalBackends()` 只在
+   * mindmap runner 与 selfcheck 内部被调用，前端够不着；`/api/llm/models` 全仓不存在，
+   * 于是「刷新模型列表」按钮**做出来也按不动**（frontend-truth T-150 §7 因此没做它）。
+   * 响应形状见 `./llm.js` 的 `LlmDetectResponse` / `LlmModelsResponse`。
+   */
+  { method: 'POST', path: '/api/llm/detect', name: 'detectLocalLlm' },
+  { method: 'POST', path: '/api/llm/models', name: 'listProviderModels' },
   { method: 'GET', path: '/api/events', name: 'events' },
 ] as const;

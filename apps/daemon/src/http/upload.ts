@@ -22,7 +22,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join, resolve } from 'node:path';
 
 import type { SseEvent } from '@openmemo/shared';
-import { makeEvent, topics, ulid } from '@openmemo/shared';
+import { UPLOAD_MEDIA_EXTENSIONS, makeEvent, topics, ulid } from '@openmemo/shared';
 
 import type { EnqueueParams } from '../jobs/queue.js';
 import { sendError, sendJson } from './respond.js';
@@ -355,26 +355,20 @@ export function parseBoundary(contentType: string | undefined): string | undefin
 /** 默认单文件上限 2 GiB。够一部电影，又不至于让手滑拖进来的磁盘镜像撑爆数据目录。 */
 export const DEFAULT_MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 
-/** 允许的扩展名白名单（音视频）。白名单而非黑名单 —— 这是文件写入路径。 */
-export const ALLOWED_UPLOAD_EXTENSIONS: readonly string[] = [
-  '.mp3',
-  '.m4a',
-  '.wav',
-  '.flac',
-  '.ogg',
-  '.opus',
-  '.aac',
-  '.wma',
-  '.mp4',
-  '.mkv',
-  '.mov',
-  '.avi',
-  '.webm',
-  '.m4v',
-  '.mpg',
-  '.mpeg',
-  '.ts',
-];
+/**
+ * 允许的扩展名白名单（音视频）。白名单而非黑名单 —— 这是文件写入路径。
+ *
+ * ★ T-152：清单本体已经搬到 `@openmemo/shared` 的 `UPLOAD_MEDIA_EXTENSIONS`，
+ * **apps/web 的拖拽预检 `looksLikeMedia()` 用的是同一个常量**。
+ * 收敛前这里是手抄的 17 项，而 web 那边写死了另一条 18 项的正则，
+ * `[实测]` `web ∖ daemon = {flv, wmv}`：用户拖一个 `.flv` 进来，前端放行、
+ * 界面上出现上传行、然后服务端在这里回 415。
+ *
+ * 这里保留导出名不变（`apps/daemon/dist/http/upload.d.ts` 里有它），
+ * 也保留 `readonly string[]` 这个类型不变 —— 变的只有"值从哪来"。
+ * ⚠️ 要加扩展名请改 shared 那一份，别在这里补，否则三份分叉当场复活。
+ */
+export const ALLOWED_UPLOAD_EXTENSIONS: readonly string[] = [...UPLOAD_MEDIA_EXTENSIONS];
 
 /** 文件之外的部分（字段、header、分隔符）留的余量，用于 Content-Length 预检。 */
 const ENVELOPE_SLACK_BYTES = 64 * 1024;
