@@ -18,20 +18,20 @@
       "files": [
         {
           "role": "archive",
-          "name": "whisper-bin-ubuntu-x64.tar.gz",
-          "sizeBytes": 9379235,
-          "sha256": "f3bf3b4369a99b54665b0f19b88483b30de27f25963b0414235dea03198515c5",
+          "name": "whispercpp-cpu-linux-x64.tar.gz",
+          "sizeBytes": 6752275,
+          "sha256": "7075ef1ce24087798d2a7f4ddaaf7506559560d5b35ec8af49a5a6854dca6ba8",
           "unpack": "tar.gz",
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-bin-ubuntu-x64.tar.gz",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/backend-packs-2026.08.07b/whispercpp-cpu-linux-x64.tar.gz",
               "official": true
             }
           ]
         }
       ],
-      "totalSizeBytes": 9379235,
+      "totalSizeBytes": 6752275,
       "requiresDriver": null,
       "license": {
         "id": "MIT",
@@ -39,11 +39,33 @@
         "url": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE"
       },
       "providesFiles": [
-        "whisper-cli"
+        "libggml-base.so.0.15.1",
+        "libggml-cpu-alderlake.so",
+        "libggml-cpu-cannonlake.so",
+        "libggml-cpu-cascadelake.so",
+        "libggml-cpu-cooperlake.so",
+        "libggml-cpu-haswell.so",
+        "libggml-cpu-icelake.so",
+        "libggml-cpu-ivybridge.so",
+        "libggml-cpu-piledriver.so",
+        "libggml-cpu-sandybridge.so",
+        "libggml-cpu-sapphirerapids.so",
+        "libggml-cpu-skylakex.so",
+        "libggml-cpu-sse42.so",
+        "libggml-cpu-x64.so",
+        "libggml-cpu-zen4.so",
+        "libggml.so.0.15.1",
+        "libparakeet.so.1.9.1",
+        "libwhisper.so.1.9.1",
+        "openmemo-probe",
+        "whisper-bench",
+        "whisper-cli",
+        "whisper-server",
+        "whisper-vad-speech-segments"
       ],
       "priority": 10,
       "benchmark": null,
-      "catalogVersion": "2026.08.02"
+      "catalogVersion": "2026.08.07"
     },
     {
       "schemaVersion": 1,
@@ -61,19 +83,19 @@
         {
           "role": "archive",
           "name": "whispercpp-vulkan-linux-x64.tar.gz",
-          "sizeBytes": 29491623,
-          "sha256": "62187d4a9610e2806a07fe0cd00cc27e68aaa7b026805c74e1896470e4ce9473",
+          "sizeBytes": 29499386,
+          "sha256": "5bad8cf2384069942972b67d408f2f9835daf4ecd0a16bed0fbf2edf95cc2d22",
           "unpack": "tar.gz",
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/faorcoek042/openmemo/releases/download/backend-packs-2026.08.07/whispercpp-vulkan-linux-x64.tar.gz",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/backend-packs-2026.08.07b/whispercpp-vulkan-linux-x64.tar.gz",
               "official": true
             }
           ]
         }
       ],
-      "totalSizeBytes": 29491623,
+      "totalSizeBytes": 29499386,
       "requiresDriver": {
         "vulkanApi": "1.2"
       },
@@ -102,6 +124,7 @@
         "libggml.so.0.15.1",
         "libparakeet.so.1.9.1",
         "libwhisper.so.1.9.1",
+        "openmemo-probe",
         "whisper-bench",
         "whisper-cli",
         "whisper-server",
@@ -127,19 +150,19 @@
         {
           "role": "archive",
           "name": "whispercpp-cpu-macos-arm64.tar.gz",
-          "sizeBytes": 2012304,
-          "sha256": "c473de000a64c509486cd9df48ad28467dcaf604813187b72f7a8815df3393bc",
+          "sizeBytes": 2015162,
+          "sha256": "b33060e6c00be7ab6dbc00949e4c34ec52c2037802c3d331c38a3cee0c10a257",
           "unpack": "tar.gz",
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/faorcoek042/openmemo/releases/download/backend-packs-2026.08.06/whispercpp-cpu-macos-arm64.tar.gz",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/backend-packs-2026.08.07b/whispercpp-cpu-macos-arm64.tar.gz",
               "official": true
             }
           ]
         }
       ],
-      "totalSizeBytes": 2012304,
+      "totalSizeBytes": 2015162,
       "requiresDriver": {
         "macosVersion": "13.3"
       },
@@ -157,6 +180,7 @@
         "libparakeet.1.9.1.dylib",
         "libwhisper.1.9.1.dylib",
         "libwhisper.coreml.dylib",
+        "openmemo-probe",
         "whisper-bench",
         "whisper-cli",
         "whisper-server",
@@ -164,7 +188,7 @@
       ],
       "priority": 10,
       "benchmark": null,
-      "catalogVersion": "2026.08.06"
+      "catalogVersion": "2026.08.07"
     },
     {
       "schemaVersion": 1,
@@ -181,20 +205,20 @@
       "files": [
         {
           "role": "archive",
-          "name": "whisper-bin-x64.zip",
-          "sizeBytes": 7982101,
-          "sha256": "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539",
+          "name": "whispercpp-cpu-win-x64.zip",
+          "sizeBytes": 3951207,
+          "sha256": "a1d101cbe2f12636d23cdf43ea8f0faa014306230ddb8b4597e53fae48497e86",
           "unpack": "zip",
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-bin-x64.zip",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/backend-packs-2026.08.07b/whispercpp-cpu-win-x64.zip",
               "official": true
             }
           ]
         }
       ],
-      "totalSizeBytes": 7982101,
+      "totalSizeBytes": 3951207,
       "requiresDriver": null,
       "license": {
         "id": "MIT",
@@ -202,11 +226,28 @@
         "url": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE"
       },
       "providesFiles": [
-        "whisper-cli.exe"
+        "ggml-base.dll",
+        "ggml-cpu-alderlake.dll",
+        "ggml-cpu-cannonlake.dll",
+        "ggml-cpu-cascadelake.dll",
+        "ggml-cpu-haswell.dll",
+        "ggml-cpu-icelake.dll",
+        "ggml-cpu-sandybridge.dll",
+        "ggml-cpu-skylakex.dll",
+        "ggml-cpu-sse42.dll",
+        "ggml-cpu-x64.dll",
+        "ggml.dll",
+        "openmemo-probe.exe",
+        "parakeet.dll",
+        "whisper-bench.exe",
+        "whisper-cli.exe",
+        "whisper-server.exe",
+        "whisper-vad-speech-segments.exe",
+        "whisper.dll"
       ],
       "priority": 10,
       "benchmark": null,
-      "catalogVersion": "2026.08.02"
+      "catalogVersion": "2026.08.07"
     },
     {
       "schemaVersion": 1,

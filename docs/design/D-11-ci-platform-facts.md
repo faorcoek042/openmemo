@@ -974,3 +974,49 @@ GitHub 的 `windows-2025` runner 没有 NVIDIA 驱动 → 没有 `nvidia-smi` �
 两个包我们本来就在编、CI 每轮都产出，只是目录一直指向上游。
 换与不换的取舍、以及 Windows CUDA 那条（上游包没有探针，装上之后会落进 §9.3 那个缺口）
 写在 `coordination/inbox/platform-backlog.md`，**需要 Manager 拍板 + 一次 release**。
+
+## 9.7 §9.6 那一步已经落地（2026-08-07）—— 以及 Windows CUDA 为什么**刻意不动**
+
+**§9.6 说的"还差的那一步"做完了。** Manager 2026-08-07 裁定「Linux / Windows 核心包
+换成我们自建的」，依据就是 §9.1–§9.2：上游归档里永远不会有我们的探针。
+例外写进了 **ADR-015 §7**（含代价与未知的逐条清单，不是一句"换了"）。
+
+`[本机实测 2026-08-07]` **走产品真实安装路径**验完整条链
+（真 manifest 条目 → 真 `install()` 分片下载 → 校验 sha256 → 解包 → 硬链 →
+真 `resolveRuntimeLayout()` → 真 `runProbe()` 子进程；数据目录是 `mkdtemp`，
+不启 daemon、不写指针）：
+
+```
+url  https://github.com/faorcoek042/openmemo/releases/download/backend-packs-2026.08.07b/whispercpp-cpu-linux-x64.tar.gz
+install() → 1 个文件，4.6s
+resolveRuntimeLayout()  probeExists=true  backendDir=<models>/by-name/backend/whispercpp-cpu-linux-x64
+runProbe()              ok=true   ggml 0.15.1 / f049fff9   deviceCount=1   CPU/type=cpu
+自检 hw.probe           status=ok  detail='1 个设备, ggml 0.15.1'      ← 此前是 warn「openmemo-probe 未安装」
+findInBackendPacks(whisper-cli) = <models>/by-name/backend/whispercpp-cpu-linux-x64/whisper-cli
+```
+
+⚠️ **只在 Linux x64 上验到了这一步。** Windows / macOS 的同一条链是
+`[未验证]` —— 要一轮 `cold-start-audit --transcribe`，判据仍是
+「屏蔽宿主 PATH 的干净机器上真的转出非空文本」。
+
+### Windows CUDA：**状态是「可能已经好了，但验不了」，不是「坏的」**
+
+Manager 2026-08-07 裁定**先不动它**，理由是 §9.5 那张表：
+
+- 判据（「适用包 5 变 6」）本身站不住 —— **有 N 卡的 Windows 今天就是 6/6**，
+  `gates-fix` T-160 的 advisory 逃生口已经解开它；
+- **任何 GitHub 托管 runner 都验不了这一格**：把它从 5 变到 6 需要一块真 NVIDIA 卡。
+
+所以它现在的准确状态是：
+
+> 🟡 **`whispercpp-cuda-12.4-win-x64` 在有 NVIDIA 驱动的 Windows 上"应该"可装且可用，
+> 但没有任何人在真硬件上看到过。** 要收这一格，**必须一台带 NVIDIA GPU 的 Windows**，
+> CI 替代不了。
+
+同时如实记下**它没有探针**（上游包，我们加不进去），因此装上它之后会落进 §9.3
+那个 `backendDir` 单值缺口：探针会从我们的 CPU 包解析出来，看不到 cuda，
+于是把它报成 `installed but enumerated no devices (driver missing or too old)`
+—— **一句具体的、而且是错的诊断**。这一条已转给 `daemon-backlog`。
+
+**刻意不做的**：不为了让某个数字变好看去换成我们自建的 Windows CUDA 包
+（我们只编 `--cuda-arch 86;89`，比上游的 fat 包窄；换了会让老/新卡的用户一无所有）。
