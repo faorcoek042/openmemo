@@ -615,3 +615,32 @@ daemon 一起来就把 Metal 捂热了**，这正是 §6b 在结构上量不到�
 1. **`PROBE_TIMEOUT_MS` 的去留**：数已经在上面。我的建议是**不动常量、把那一发挪到安装流程里**（①-3），但这是产品行为，我不自己裁。
 2. **`SelectSourceRequest` 是一次契约收窄**（删了 `baseUrl`，`custom` 从"有条件接受"变成一律 400）。
    已同步改 `openapi.yaml`。**若你认为"自定义源"仍要留作未来入口，这条可以整个 revert**（`142ea90`）。
+
+---
+
+#### 追记（同轮，`8ae4d7e`）—— **我上面那句"门禁全绿"漏了一格，CI 抓到了**
+
+`142ea90` 推上去之后 **CI 红了**（run 31193446451），红在 `Orphan-exports ratchet`：
+
+```
+✘ 基线里有 1 个条目已经**不再是**零引用导出：
+   packages/downloader/src/store.ts :: resolveModelsRoot
+```
+
+**是我的**：新测试里 `import { resolveModelsRoot }` 只是为了拼出 `prefs.json` 的路径。
+那个导出**生产零调用方**，躺在基线里并带着一条说明「三份重复实现之一，合并是独立改动」（本文 ⛔#14）。
+
+两条修法，选了第二条：
+- ① 从基线里删掉那条 —— 基线变短，方向合法，**但代价是**：一个仍然没有生产调用方的导出
+  **从此对棘轮隐形**，那条债的说明也被一起擦掉。等于用一次 import 把门禁放松，还顺手抹了账。
+- ② **不 import 它** —— 改成在 `dataDir` 底下递归找 `prefs.json`（布局无关，仍然不手写 `models/prefs.json`），
+  **一个字都不动基线**。
+
+> **判据：测试可以证明产品是对的，但不该改变门禁在数什么。**
+
+复跑全绿，且 **`orphan-exports-baseline.json` 原样未动**：
+`pnpm -r test` **1349/0**、`tsc -b`、`eslint`、`build:safe`、`lint-workflows` 605、`test:ci-scripts` 22、`check:orphans` ✔。
+CI 在 HEAD 上绿（run **31194326508**）。
+
+**这一格是我自己报错了**：我在本地跑 `check:orphans` 拿到过一次 ✔，之后没有在**最终提交态**上复跑就写了"全绿"。
+`[教训]` 门禁结论必须绑在**最后一次提交的那个树**上，不是"我中途跑过一次"。
