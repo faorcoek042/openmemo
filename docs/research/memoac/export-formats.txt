@@ -1,0 +1,473 @@
+================================================================================
+MemoAI / memo.ac v1.7.5 (Windows, unpacked Electron app)
+EXPORT / OUTPUT FORMAT INVENTORY  -- STATIC ANALYSIS ONLY
+================================================================================
+Analysed artifacts (read-only):
+  MAIN     /root/memoac-fx/win-app/dist-electron/main/index-f11e3e4b.js   (11.9 MB)
+  RENDERER /root/memoac-fx/win-app/dist/assets/index-d5bec8ed.js          (12.6 MB)
+  OTHER RENDERER CHUNKS /root/memoac-fx/win-app/dist/assets/*.js
+  LOCALES  /root/memoac-fx/win/resources/locales/en.json
+  PRELOAD  /root/memoac-fx/win-app/dist-electron/preload/index.js (+ index.jsc)
+
+No binary was executed. No network request was made. Nothing under /root/memo was
+touched. Only this file was written.
+
+--------------------------------------------------------------------------------
+TOTALS
+--------------------------------------------------------------------------------
+DISTINCT FILE FORMATS THE APP CAN WRITE ............ 17
+NON-FILE EXPORT TARGETS (integrations) ............. 2   (Notion, Obsidian)
+TOTAL DISTINCT EXPORT TARGETS ...................... 19
+PRESENT BUT DISABLED IN UI ......................... 1   (pdf)
+
+--------------------------------------------------------------------------------
+KEY EVIDENCE STRUCTURE: the single export-format registry (renderer)
+--------------------------------------------------------------------------------
+Two adjacent arrays in the renderer define the whole "Export" dialog:
+  gce = document/subtitle formats (keys 01..10)
+  g5  = media formats             (keys 11..13)
+
+COUNT = 13 entries
+  CMD: grep -o -E '\{key:"[0-9]{2}",value:"[a-z0-9]+",label:"[^"]*"' \
+       /root/memoac-fx/win-app/dist/assets/index-d5bec8ed.js | wc -l
+  OUTPUT: 13
+Verbatim entry list produced by the same command without `| wc -l`:
+  {key:"01",value:"srt",label:"SRT"          (fullLabel:"SubRip Text")
+  {key:"02",value:"vtt",label:"WebVTT"       (fullLabel:"Web Video Text Tracks")
+  {key:"03",value:"ass",label:"ASS"          (fullLabel:"Advanced SubStation Alpha")
+  {key:"04",value:"lrc",label:"LRC"          (fullLabel:"LyRiCs")
+  {key:"05",value:"md",label:"Markdown"
+  {key:"06",value:"txt",label:"TXT"
+  {key:"07",value:"notion",label:"Notion"
+  {key:"08",value:"docx",label:"Word"
+  {key:"09",value:"obsidian",label:"Obsidian"
+  {key:"10",value:"fcpxml",label:"FCPXML"    (fullLabel:"Final Cut Pro XML")
+  {key:"11",value:"mp4",label:"MP4"          (type:"video")
+  {key:"12",value:"mp3",label:"MP3"          (type:"audio")
+  {key:"13",value:"wav",label:"WAV"          (type:"audio")
+
+Serializer table backing the text formats:
+  X1={srt:dn.tools.outputSrt,vtt:dn.tools.outputVtt,lrc:dn.tools.outputLrc,
+      md:dn.tools.outputMarkdown,docx:dn.tools.outputTxt,txt:dn.tools.outputTxt,
+      ass:dn.tools.outputAss,fcpxml:...}
+COUNT = 7 dn.tools.output* handlers
+  CMD: grep -o -E 'X1=\{[^}]*' /root/memoac-fx/win-app/dist/assets/index-d5bec8ed.js \
+       | head -1 | grep -o -E '[a-z]+:dn\.tools\.output[A-Za-z]+' | wc -l
+  OUTPUT: 7
+
+================================================================================
+FORMAT-BY-FORMAT
+================================================================================
+
+--- CATEGORY: TRANSCRIPT / SUBTITLE export -------------------------------------
+
+[1] srt  (SubRip)
+    Category: TRANSCRIPT export
+    Evidence: {key:"01",value:"srt",label:"SRT",fullLabel:"SubRip Text",handler:X1.srt}
+    Evidence: X1={srt:dn.tools.outputSrt,...}
+    Evidence: main-process module export `outputSrt:OD` in the `tools` module.
+
+[2] vtt  (WebVTT)
+    Category: TRANSCRIPT export
+    Evidence: {key:"02",value:"vtt",label:"WebVTT",fullLabel:"Web Video Text Tracks"}
+    Evidence: X1={...,vtt:dn.tools.outputVtt,...}
+    UI: exposed under the "common.more format" submenu -> `_e("vtt")`.
+
+[3] ass  (Advanced SubStation Alpha)
+    Category: TRANSCRIPT export  (also used internally for burn-in, see [15])
+    Evidence: {key:"03",value:"ass",label:"ASS",fullLabel:"Advanced SubStation Alpha"}
+    Evidence: X1={...,ass:dn.tools.outputAss}
+    Evidence (burn-in intermediate, main): `const nt=li.resolve(K,`subtitle${rt}.ass`)`
+    Locale corroboration: `preferences.use ass` = "Uses ASS player".
+
+[4] lrc  (LyRiCs)
+    Category: TRANSCRIPT export
+    Evidence: {key:"04",value:"lrc",label:"LRC",fullLabel:"LyRiCs",handler:X1.lrc}
+    Evidence: X1={...,lrc:dn.tools.outputLrc,...}
+
+[5] txt  (plain text)
+    Category: TRANSCRIPT export (also NOTE/DOCUMENT: AI-summary export, see [6])
+    Evidence: {key:"06",value:"txt",label:"TXT",handler:X1.txt}
+    Evidence: X1={...,txt:dn.tools.outputTxt,...}
+    Evidence (AI summary): Blob type "text/plain;charset=utf-8" then
+             `P.download=`${R.replace(/[<>:"/\\|?*]/g,"-")}.txt``
+
+[6] md  (Markdown)
+    Category: TRANSCRIPT export + NOTE/DOCUMENT export
+    Evidence: {key:"05",value:"md",label:"Markdown",handler:X1.md}
+    Evidence: X1={...,md:dn.tools.outputMarkdown,...}
+    Evidence (AI summary): Blob type "text/markdown;charset=utf-8" then `.download=...md`
+    Locale: `ai.markdown` = "Markdown"
+
+[7] docx  (Microsoft Word, OOXML)
+    Category: NOTE/DOCUMENT export
+    Evidence: {key:"08",value:"docx",label:"Word",handler:X1.docx}
+    Evidence: async function GFn(n){const e=dn.tools.outputTxt(n); ... return await
+              zFt.toBase64String(t)}   (docx lib Packer -> base64)
+    Evidence: `if(F==="docx"){We(F,!0).then(je=>{window.AIM.file.saveFile([F],je,...,!0,!0)`
+              i.e. saveFile with the base64 flag set.
+
+[8] fcpxml  (Final Cut Pro XML)
+    Category: TRANSCRIPT export (NLE interchange)
+    Evidence: {key:"10",value:"fcpxml",label:"FCPXML",fullLabel:"Final Cut Pro XML"}
+    Evidence: builder emits `<title name="Basic Title" lane="1" ...>` ... `</fcpxml>`
+    UI: "common.more format" submenu -> `_e("fcpxml")`.
+
+--- CATEGORY: NOTE / DOCUMENT / PROJECT export ---------------------------------
+
+[9] json  (single note / transcription data dump)
+    Category: NOTE/DOCUMENT export
+    IPC: ipcMain.handle("export-note-data", ...)
+    Evidence: showSaveDialog(t,{defaultPath:bP(i[0].ogFilename),
+              filters:[{name:"",extensions:["json"]}],properties:[]})
+    Renderer call site: `window.AIM.exportNoteData(qn(n))`
+
+[10] memo  (whole-project archive; a ZIP container renamed .memo)
+    Category: NOTE/DOCUMENT export (project bundle)
+    IPC: ipcMain.handle("export-note-project", ...)
+    Evidence: filters:[{name:"",extensions:["memo"]}]
+    Evidence: `console.log("[project] zip folder: ",y)` then
+              `console.log(`[project] .memo file created: ${S}`)`
+    Contents are option-driven; locale keys confirm the option set:
+      export.only project data / export.whole project / export.notes /
+      export.transcriptions / export.screenshots / export.tts
+    Renderer call site: `window.AIM.exportNoteProject(as(I),O)` with
+      {[Oc.tts]:!0,[Oc.screenshots]:!0,[Oc.transcriptions]:!0,[Oc.notes]:!0}
+    Inner payload is a `project.json` + a `resources/` folder before zipping.
+
+[11] zip  (diagnostic log bundle)
+    Category: OTHER (support/diagnostics export)
+    IPC: ipcMain.handle("export-logs", ...)
+    Evidence: showSaveDialog(t,{defaultPath:"export_log.zip",
+              filters:[{name:"",extensions:["zip"]}],properties:[]})
+
+--- CATEGORY: MIND-MAP export (and AI-summary image export) --------------------
+
+The mind map is rendered with markmap into an <svg>; export goes through a local
+anchor download named `mindmap.<ext>`.
+COUNT = 3 mind-map download menu items
+  CMD: grep -o -E 'onClick:\(\)=>I\("[a-z]+"\),children:"[A-Z]+"' \
+       /root/memoac-fx/win-app/dist/assets/index-d5bec8ed.js | wc -l
+  OUTPUT: 3
+  Verbatim: onClick:()=>I("jpg"),children:"JPG"
+            onClick:()=>I("png"),children:"PNG"
+            onClick:()=>I("svg"),children:"SVG"
+
+[12] png
+    Category: MIND-MAP export + OTHER (screenshots)
+    Evidence (mind map): `Z.download=`mindmap.${q}`` with q from the menu above;
+             raster path uses html2canvas-style `F.toDataURL()` (default image/png).
+    Evidence (AI summary): `onClick:()=>g("png"),children:[...,"PNG"]`
+    Evidence (note/insert image): main `saveImageFile` writes `note_<id>.png`
+    Evidence (video screenshots): main writes `screenshot_${P}.png` via ffmpeg
+             (IPC "screenshots", -vframes 1 -q:v 2)
+    Evidence (player frame grab): `.download="DPlayer.png"`
+    Locale: `export.screenshots` = "Screenshots"
+
+[13] jpg
+    Category: MIND-MAP export (+ AI-summary image export)
+    Evidence (mind map): `const Z=q==="jpg"?F.toDataURL("image/jpeg",1):F.toDataURL()`
+    Evidence (AI summary): `E==="jpg"?k.toDataURL("image/jpeg",.9):k.toDataURL("image/png")`
+    Evidence: `onClick:()=>g("jpg"),children:[...,"JPG"]`
+
+[14] svg
+    Category: MIND-MAP export
+    Evidence: `if(q==="svg"){const F=new XMLSerializer().serializeToString(i.current);
+              return new Blob([F],{type:"image/svg"})}`
+    NOTE: SVG is offered for the mind map only, not for the AI summary panel
+          (the summary menu has PNG / JPG / Markdown / TXT only).
+
+--- CATEGORY: MEDIA (audio/video) export ---------------------------------------
+
+All three go through one handler:
+  ipcMain.handle("export-video",async(e,{data,transcriptFile,subtitle,extensions:o,
+    filename:u,subtitleSettings,mediaInfo:f,tts,watermark})=>{ ...
+    dialog.showSaveDialog(t,{...,filters:[{name:"",extensions:o}],...})
+The extension array `o` is supplied by the renderer as `extensions:[x]` where x is
+the g5 value (mp4 | mp3 | wav).
+
+[15] mp4  (video, optional burned-in subtitles + watermark + TTS audio)
+    Category: MEDIA (video) export
+    Evidence: {key:"11",value:"mp4",label:"MP4",type:"video"}
+    Evidence: `(f?.currentFormat)==="mp4"&&s&&s.length&&(f?.subtitleType)!==""` then
+              writes `subtitle${rt}.ass` files used as the burn-in source.
+    Locale: `export.burning subtitles` = "Burning subtitles"
+    Export size selector default "1080P" (`exportSize`), GPU flag `useGPU`.
+
+[16] mp3  (audio)
+    Category: MEDIA (audio) export
+    Evidence: {key:"12",value:"mp3",label:"MP3",type:"audio"}
+    Evidence: `if((f?.currentFormat)==="mp3"){const le=$9(ae);await Vx(Ve,le,"");ge(le);return}`
+    Also the default recording container: main `save-recording` builds
+      `(o??"recording_")+(s||f)+(i?"."+i:".mp3")`, renderer passes `ext:"mp3"`.
+
+[17] wav  (audio)
+    Category: MEDIA (audio) export
+    Evidence: {key:"13",value:"wav",label:"WAV",type:"audio"}
+    Evidence: `((f?.currentFormat)==="mp3"||(f?.currentFormat)==="wav"?fai:dai)({...})`
+
+--- CATEGORY: OTHER -- non-file export targets (integrations) ------------------
+
+[18] notion  (publish to Notion via API; no local file is produced)
+    Category: OTHER (integration export)
+    Evidence: {key:"07",value:"notion",label:"Notion",handler:X1.md}
+    Evidence: `await window.AIM.publishToNotion((n?.split(".")[0])||"New document
+              from Memo",se,pe)` then a toast with `Ne?.url`
+    Locale: `common.config notion` = "Please configure Notion"
+
+[19] obsidian  (hands the text to Obsidian over the obsidian:// URI scheme)
+    Category: OTHER (integration export)
+    Evidence: {key:"09",value:"obsidian",label:"Obsidian",handler:X1.txt}
+    Evidence: `window.AIM.common.openExternal(`obsidian://new?vault=${x.obsidianVault}
+              &name=${c?.ogFilename}&content=${encodeURIComponent(Ze)}`)`
+    Locale: `export.export vault` = "Vault";
+            `export.input export vault` = "Input export vault to Obsidian"
+
+--------------------------------------------------------------------------------
+PRESENT IN CODE BUT NOT PRODUCIBLE
+--------------------------------------------------------------------------------
+pdf
+    Category: would be NOTE/DOCUMENT export -- NOT IMPLEMENTED / DISABLED.
+    Evidence 1 (menu item is hard-disabled):
+       T(Yn,{disabled:!0,children:[m(B4n,{size:16,className:"mr-2"}),"PDF"]})
+    Evidence 2 (appears only in an options-gating list, never in the format registry):
+       Lxr=["srt","vtt","lrc","txt","docx","pdf","md","notion"]
+       -- Lxr only decides which per-format checkboxes (speaker / index / timestamp /
+          paragraph) are shown; it is NOT the export selector.
+    Evidence 3 (no PDF engine is bundled):
+       COUNT = 0
+       CMD: grep -o -iE 'jsPDF|html2pdf|pdfmake|pdfkit|printToPDF' \
+            /root/memoac-fx/win-app/dist/assets/index-d5bec8ed.js \
+            /root/memoac-fx/win-app/dist-electron/main/index-f11e3e4b.js | wc -l
+       OUTPUT: 0
+    => pdf is counted as DISABLED, not as a producible format.
+
+--------------------------------------------------------------------------------
+FORMAT TOKENS EXPLICITLY SEARCHED FOR AND *NOT* FOUND AS EXPORTS
+--------------------------------------------------------------------------------
+ssa, sbv, ttml, sub, stl, opml, xmind, freemind/.mm, html, epub, xlsx, csv, tsv,
+doc (legacy), m4a, aac, flac, ogg, mov, mkv
+  Method: every literal occurrence was pulled with +/-110 chars of context and any
+  hit whose context matched application/|text/|image/|audio/|video/|mime was
+  discarded as mime-db / Prism-language-list noise.
+  CMD (representative):
+    python3 -c "import re;s=open('/root/memoac-fx/win-app/dist/assets/index-d5bec8ed.js',
+      encoding='utf-8',errors='replace').read()
+      [print(repr(s[max(0,m.start()-110):m.start()+110])) for m in re.finditer('xmind',s,re.I)]"
+  RESULTS:
+    xmind   -> COUNT 0 occurrences of any kind
+    opml    -> COUNT 0 after mime-db filtering (only "text/x-opml":["opml"])
+    ttml    -> COUNT 0 occurrences of any kind
+    sbv     -> only 1 hit, inside an unrelated Irish-language token table ("0SBV")
+    ssa     -> ~1893 raw hits, all substrings of unrelated identifiers
+               (postMessage, MessageChannel, ...); 0 as a subtitle format
+    csv/tsv -> present ONLY as glossary IMPORT formats, never as export:
+               locale `translate.glossary.supported file types`
+                 = "Supports .json, .csv, .tsv, .txt"
+               DOM: <input type="file" accept=".json,.csv,.tsv,.txt">
+    xlsx    -> only inside Prism syntax-highlighter aliases
+               (`sqe.aliases=["xls","xlsx"]`)
+    epub    -> 0 after filtering (all hits are substrings of "...Public..." etc.)
+  Note on the giant `extensions:[...]` dump in the main bundle: it is the bundled
+  `mime-db` table, NOT dialog filters.
+    COUNT = 1012 distinct extension arrays
+    CMD: grep -o -E 'extensions:\[[^]]{0,200}\]' \
+         /root/memoac-fx/win-app/dist-electron/main/index-f11e3e4b.js | sort -u | wc -l
+    OUTPUT: 1012
+  Only the 5 real save-dialog sites below matter.
+
+--------------------------------------------------------------------------------
+FILE-SAVE DIALOG SITES (main process)
+--------------------------------------------------------------------------------
+COUNT = 5 showSaveDialog call sites
+  CMD: grep -o 'showSaveDialog' \
+       /root/memoac-fx/win-app/dist-electron/main/index-f11e3e4b.js | wc -l
+  OUTPUT: 5
+
+COUNT = 3 of them have a HARD-CODED extension filter
+  CMD: grep -o -E 'showSaveDialog\(t,\{defaultPath:[^}]{0,60}filters:\[\{name:"",extensions:\["[a-z]+"\]' \
+       /root/memoac-fx/win-app/dist-electron/main/index-f11e3e4b.js | wc -l
+  OUTPUT: 3
+  1) extensions:["zip"]   -- ipcMain.handle("export-logs")
+  2) extensions:["json"]  -- ipcMain.handle("export-note-data")
+  3) extensions:["memo"]  -- ipcMain.handle("export-note-project")
+
+The remaining 2 take the extension list from the renderer:
+  4) ipcMain.handle("saveFile",(e,n,i,s,o,u)=>dialog.showSaveDialog(t,
+       {defaultPath:s||"",filters:[{name:"",extensions:n}],properties:[]})
+     -- `n` is the caller-supplied array. Only call sites in the renderer bundle are
+        `window.AIM.file.saveFile([F],...)` where F is a gce value
+        (srt|vtt|ass|lrc|md|txt|docx|fcpxml).
+     COUNT = 2 saveFile call sites in the renderer
+       CMD: grep -o -E 'saveFile\(\[[^]]{0,120}\]' \
+            /root/memoac-fx/win-app/dist/assets/index-d5bec8ed.js | sort | uniq -c
+       OUTPUT: "2 saveFile([F]"
+  5) ipcMain.handle("export-video", ... filters:[{name:"",extensions:o}] ...)
+     -- `o` comes from the renderer as `extensions:[x]`, x in {mp4, mp3, wav}.
+
+An OPEN dialog (import, NOT export) also exists and should not be mistaken for one:
+  ipcMain.handle("select-subtitle") -> showOpenDialogSync(... extensions:["srt","vtt"])
+  Renderer counterpart: eG=["srt","vtt","ass"] used to classify DROPPED input files.
+
+--------------------------------------------------------------------------------
+SECONDARY EXPORT SURFACES (all resolve to formats already counted)
+--------------------------------------------------------------------------------
+A) Quick "Export" dropdown on the transcript view. Verbatim menu order:
+     Copy text / TXT / SRT / LRC / Markdown / DOCX / PDF(disabled)
+     -- Media --      MP4 (`mt("11")`) / MP3 (`mt("12")`)
+     -- Integration -- Notion / Obsidian
+     -- "common.more format" submenu -- WebVTT / FCPXML / ASS
+   (`mt("11")` / `mt("12")` are the g5 keys for MP4 / MP3.)
+
+B) Batch-task auto-export (task queue) format dropdown:
+     [{value:"",label:"task.not export"},{value:"srt",label:".srt"},
+      {value:"vtt",label:".vtt"},{value:"lrc",label:".lrc"},
+      {value:"md",label:".md"},{value:"txt",label:".txt"}]
+   COUNT = 5 real formats (plus the empty "not export" option)
+     CMD: grep -o -E '\{value:"[a-z0-9]+",label:"\.[a-z0-9]+"\}' \
+          /root/memoac-fx/win-app/dist/assets/index-d5bec8ed.js | sort -u | wc -l
+     OUTPUT: 5
+   Locale: task.export format / task.subtitle export format / task.select export format
+           / task.not export
+
+C) Batch transcode ("convert") output dropdown:
+     value:"mp3",children:".mp3" / value:"wav",children:".wav" / value:"mp4",children:".mp4"
+   COUNT = 3
+     CMD: grep -o -E 'value:"(mp3|wav|mp4)",children:"\.[a-z0-9]+"' \
+          /root/memoac-fx/win-app/dist/assets/index-d5bec8ed.js | sort -u | wc -l
+     OUTPUT: 3
+   Locale: convert.start transcoding / convert.transcoding video
+
+D) AI-summary panel export menu: PNG / JPG / Markdown / TXT
+   COUNT = 2 image entries
+     CMD: grep -o -E 'onClick:\(\)=>g\("(png|jpg)"\)' \
+          /root/memoac-fx/win-app/dist/assets/index-d5bec8ed.js | wc -l
+     OUTPUT: 2
+   The Markdown and TXT entries are separate callbacks (`onClick:v` / `onClick:b`)
+   that build Blobs of type "text/markdown;charset=utf-8" and "text/plain;charset=utf-8".
+
+E) TTS: no separate file format. `exportTTS` / `exportTTSMode` ("audio"|"video") only
+   steer the export-video handler, which still emits mp4 / mp3 / wav.
+   Locale: tts.export tts, task.export synthesized, pro.export tts text.
+
+--------------------------------------------------------------------------------
+EXPORT / CONVERT / SAVE IPC CHANNEL NAMES (ipcMain.handle, main process)
+--------------------------------------------------------------------------------
+COUNT = 342 total ipcMain.handle channels
+  CMD: grep -o -E 'ipcMain\.handle\("[^"]{1,80}"' \
+       /root/memoac-fx/win-app/dist-electron/main/index-f11e3e4b.js | sort -u | wc -l
+  OUTPUT: 342
+
+COUNT = 21 channels matching export|convert|save|transcode
+  CMD: grep -o -E 'ipcMain\.handle\("[^"]{1,80}"' \
+       /root/memoac-fx/win-app/dist-electron/main/index-f11e3e4b.js \
+       | sed 's/ipcMain.handle("//; s/"$//' | sort -u \
+       | grep -icE 'export|convert|save|transcode'
+  OUTPUT: 21
+Names (same command without -c):
+  abort-export-video                  -- cancels an in-flight mp4/mp3/wav export
+  cancelTranscodeTranscriptFileVideo  -- internal playback transcode cancel
+  createExportTask                    -- queues batch export tasks (writes task JSON)
+  export-logs                         -- .zip                       [FORMAT 11]
+  export-note-data                    -- .json                      [FORMAT 9]
+  export-note-project                 -- .memo                      [FORMAT 10]
+  export-video                        -- .mp4 / .mp3 / .wav         [FORMATS 15-17]
+  llm:save-custom-service             -- internal config
+  save-configuration                  -- internal plugin config
+  save-recording                      -- .mp3 recording into the workspace
+  save-user-json-data                 -- internal app data (memo.json), optionally encrypted
+  saveChatMessage                     -- internal <timestamp>.json under embeddings/
+  saveFile                            -- GENERIC save; extensions supplied by caller
+  saveImageFile                       -- .png (note image / screenshot)
+  savePluginFile                      -- GENERIC save for plugins (see UNKNOWN below)
+  saveSpeakerData                     -- internal *.spk JSON sidecar
+  saveSpeakerSettings                 -- internal settings
+  saveTemoLibrary                     -- internal temp/temo/library.json
+  transcriptFileTranscodeAudio        -- internal working audio for transcription
+  transcriptFileTranscodeVideo        -- internal proxy video for playback
+  ytdlp:export-cookies                -- Netscape cookies.txt for yt-dlp (see OTHER)
+
+Related non-matching but export-relevant channels:
+  screenshots / abort-screenshots     -- writes screenshot_<ts>.png via ffmpeg [FORMAT 12]
+  extractAudioWithSegments, extractAudioWithSegment, cutAudioSegments,
+  startVadCut, mergeTemo              -- intermediate media processing, no new
+                                         user-visible container format found
+  select-subtitle                     -- IMPORT (openDialog), not export
+
+Renderer-side export message channels observed (webContents.send("renderer-message")):
+  video:export:select:file, video:export:complete, video:cut:progress,
+  video:tts:process:start, video:tts:process:completed,
+  export:note:project:start, export:note:project:progress, export:note:project:complete,
+  media:encode:audio:progress, media:encode:audio:complete,
+  media:encode:video:progress, send:file:completed, save:recording:completed
+
+--------------------------------------------------------------------------------
+OTHER OUTPUT ARTIFACTS (internal, not user-facing "export" features)
+--------------------------------------------------------------------------------
+- youtube-cookies.txt (Netscape HTTP Cookie File) written to the OS temp dir by
+  `async exportNetscapeCookies(e)` for the bundled yt-dlp. Header literal:
+  "# Netscape HTTP Cookie File". Extension is .txt, so it adds no distinct format.
+- subtitle<N>.ass intermediates written under the temp dir during mp4 burn-in.
+- project.json + resources/ tree written before being zipped into .memo.
+- *.spk JSON speaker sidecars, library.json, memo.json, embeddings/*.json --
+  all internal application state.
+
+--------------------------------------------------------------------------------
+UNKNOWN
+--------------------------------------------------------------------------------
+UNKNOWN: export formats of the in-app Note editor plugin.
+  Why: the renderer calls
+    window.AIM.browser.execChildWindowMethod({appId:"memo-plugin-app-note",
+      data:{method:"export-note",params:f}})
+  but that plugin is not shipped in this build, so its format list cannot be read.
+  COUNT = 0 matches for the plugin id in the packed-app listing
+    CMD: grep -c -i 'memo-plugin-app-note' /root/memoac-fx/win-asar-listing.txt
+    OUTPUT: 0
+  Only 5 .memox plugins are bundled (3 translate, 1 TTS edge) under
+  /root/memoac-fx/win/resources/plugins -- none of them is the note app.
+
+UNKNOWN: formats writable through `ipcMain.handle("savePluginFile")`.
+  Why: it takes `{filename, isBase64, data, open}` straight from a plugin and writes
+  it verbatim, so the extension is entirely plugin-determined and is not enumerable
+  from this build.
+
+UNKNOWN: formats writable through `ipcMain.handle("saveFile")` by third-party code.
+  Why: the extension array is a parameter (`extensions:n`). Within the shipped
+  renderer it is only ever called with a gce format value, but a plugin could pass
+  anything.
+
+UNKNOWN: whether the preload script exposes any additional export bridge.
+  Why: /root/memoac-fx/win-app/dist-electron/preload/index.js is a 192-byte bytenode
+  loader (`require('bytenode'); ... require('./index.jsc')`); the actual API surface
+  is compiled V8 bytecode in index.jsc and was not decompiled. All export channels
+  reachable from the renderer were instead recovered from the main-process
+  ipcMain.handle registry, which is complete for the main process.
+
+================================================================================
+SUMMARY TABLE
+================================================================================
+ #   FORMAT    CATEGORY                                 PRIMARY EVIDENCE
+ 1   srt       TRANSCRIPT export                        value:"srt" in gce / X1.srt
+ 2   vtt       TRANSCRIPT export                        value:"vtt" in gce / X1.vtt
+ 3   ass       TRANSCRIPT export (+ mp4 burn-in)        value:"ass" in gce / X1.ass
+ 4   lrc       TRANSCRIPT export                        value:"lrc" in gce / X1.lrc
+ 5   txt       TRANSCRIPT + NOTE/DOCUMENT export        value:"txt" in gce / X1.txt
+ 6   md        TRANSCRIPT + NOTE/DOCUMENT export        value:"md" in gce / X1.md
+ 7   docx      NOTE/DOCUMENT export                     value:"docx" / GFn -> base64
+ 8   fcpxml    TRANSCRIPT export (NLE interchange)      value:"fcpxml" / </fcpxml>
+ 9   json      NOTE/DOCUMENT export                     export-note-data + ["json"]
+10   memo      NOTE/DOCUMENT export (project zip)       export-note-project + ["memo"]
+11   zip       OTHER (log bundle)                       export-logs + ["zip"]
+12   png       MIND-MAP export + OTHER (screenshots)    I("png") / screenshot_*.png
+13   jpg       MIND-MAP export (+ summary image)        I("jpg") / toDataURL image/jpeg
+14   svg       MIND-MAP export                          I("svg") / XMLSerializer Blob
+15   mp4       MEDIA (video) export                     value:"mp4" type:"video"
+16   mp3       MEDIA (audio) export                     value:"mp3" type:"audio"
+17   wav       MEDIA (audio) export                     value:"wav" type:"audio"
+18   notion    OTHER (integration, no local file)       value:"notion" / publishToNotion
+19   obsidian  OTHER (integration, obsidian:// URI)     value:"obsidian" / openExternal
+--   pdf       DISABLED (menu item has disabled:!0)     no PDF engine bundled (count 0)
+
+TOTAL DISTINCT FILE FORMATS ............ 17   (rows 1-17)
+TOTAL DISTINCT EXPORT TARGETS .......... 19   (rows 1-19)
+================================================================================

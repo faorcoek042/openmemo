@@ -1,0 +1,184 @@
+MemoAI (memo.ac) v1.7.5 - settings / preferences schema
+Sources:
+  MAIN     /root/memoac-fx/win-app/dist-electron/main/index-f11e3e4b.js   (11,970,728 bytes on disk; 11,185,506 chars after UTF-8 decode; minified single line)
+  RENDERER /root/memoac-fx/win-app/dist/assets/index-d5bec8ed.js          (12,673,602 bytes, minified)
+  LOCALE   /root/memoac-fx/win/resources/locales/en.json
+
+=====================================================================
+0. WHERE SETTINGS LIVE (facts from MAIN bundle)
+=====================================================================
+  Settings file        : <userData>/conf/setting.conf   (JSON; evidence token: u8("conf/setting.conf"))
+  Keyword/glossary file: <userData>/conf/keywords.json  (evidence token: u8("conf/keywords.json"))
+  Workspace store      : electron-store  {fileExtension:"json", name:"index", cwd:"workspaces"}
+  In-memory accessor   : gu(key) -> settings[key];  gu() -> whole settings object
+  Mutation IPC         : ipcMain.handle("change-setting", (e, key, value) => ...)
+  Read IPC             : ipcMain.handle("get-setting", (e, key) => ...)
+  Validation IPC       : ipcMain.handle("check-setting", (e, serviceId) => ...)   (returns bool: is this
+                         provider configured; special-cases "ernie" -> apiKey+secretKey, "notion" -> secretKey+pageId)
+  On change, main broadcasts webContents.send("renderer-message", {type:"setting:change", data})
+
+  IMPORTANT CAVEAT: setting.conf is an UNTYPED JSON blob. There is no JSON-Schema / zod / TS
+  interface left in the shipped bundles, so an exhaustive key list is not statically derivable.
+  Everything below is evidenced by an actual literal in the bundles.
+
+=====================================================================
+1. DEFAULT SETTINGS OBJECT (the literal seeded into conf/setting.conf)
+=====================================================================
+Found by:  grep -o -E '.{300}proxy:\{.{400}' index-f11e3e4b.js
+Evidence token (identifier of the literal in the bundle): `fte`
+Written on first run by: fte.modelDir = <paths>.model.path; writeLocalJSON("conf/setting.conf", fte)
+
+  KEY                              DEFAULT VALUE
+  themeSource                      "system"
+  translateProvider                "Microsoft"
+  llmTranslateGlossaryIds          []            (array)
+  llmTranslatePromptEnabled        false
+  llmTranslatePromptTemplateId     "faithful-subtitle"
+  llmCorrectionGlossaryIds         []            (array)
+  language                         "en"
+  receivePrereleaseUpdates         false
+  vad                              { enabled: false, threshold: 0.6 }
+  externalResourceMode             "1"
+  proxy                            { type: "system" }
+  modelDir                         (injected at first run = <userData>/model path; no static default)
+
+  COUNT: 11 static default keys + 1 injected (modelDir).
+  Command:  python3 -c "import re;d=open('index-f11e3e4b.js',...).read();
+            print(d[d.find('fte={themeSource'):][:340])"     -> the literal above
+
+  WORKSPACE STORE DEFAULTS (separate electron-store, not setting.conf):
+    currentWorkspace : undefined
+    default          : { id:"default", name:"Default", backgroundColor:"#575BC7", folder:<temp path> }
+
+=====================================================================
+2. SETTINGS KEYS WRITTEN BY THE UI  (window.AIM.changeSetting("<key>", v))
+=====================================================================
+Command:  python3 -c "import re;d=open('index-d5bec8ed.js',encoding='utf-8',errors='replace').read();
+          k=set(re.findall(r'changeSetting\(\s*[\"\x27]([A-Za-z0-9_.]+)[\"\x27]',d));print(len(k))"
+COUNT: 30 distinct literal keys.
+
+  correctionModel                  string  "provider:model" (split on ":" to derive correctionProvider)
+  correctionPrompt                 string
+  correctionProvider               string  (LLM service id)
+  downloadDir                      string  path; fallback = app.getPath("downloads")/<appdir>
+  enableCoreML                     boolean (macOS only UI: label "CoreML")
+  enableRSS                        boolean (locale key rss.enable rss)
+  extensionDir                     string  path (plugin/extension install folder)
+  externalResourceMode             "1" = quality priority | "2" = speed priority
+  language                         string  UI locale code
+  llmCorrectionGlossaryIds         string[]
+  llmTranslateGlossaryIds          string[]
+  llmTranslatePromptEnabled        boolean
+  llmTranslatePromptTemplateId     string  (default "faithful-subtitle")
+  macOSWhisperMode                 "CPU" | "coreML" | "Metal"     (Metal is labelled "GPU" in the UI)
+  modelDir                         string  path
+  modelDownloadSource              string  mirror domain, "" = auto-select
+  notion                           { secretKey: string, pageId: string }  (both encrypted at rest;
+                                     main decrypts via $we() on load)
+  ollama                           { baseURL: string, model: string }
+  proxy                            { type: "system"|"none"|<custom>, proxy: [{hostname,port,active,...}] }
+  receivePrereleaseUpdates         boolean
+  showWelcome                      boolean
+  subtitle                         { enabledASS: boolean, enabledSpeakerColor: boolean }
+  translateModel                   string
+  translateProvider                string  (default "Microsoft")
+  tray                             { enabled: boolean }   (default enabled !== false)
+  useGPU                           boolean (video-encoding hardware acceleration)
+  useSubtitleWindow                boolean (external floating subtitle window)
+  vad                              { enabled: boolean, threshold: number }
+  whisperParams                    { flash_attn: boolean, ... }  (also max_len, split_on_word, prompt,
+                                     temperature, no_speech_thold, use_gpu, language, model seen in main)
+  windowsWhisperMode               "CPU" | "GPU" | "cuBLAS"
+
+=====================================================================
+3. SETTINGS KEYS READ BY NAME IN THE MAIN PROCESS  (gu("<key>"))
+=====================================================================
+Command:  python3 -c "... re.findall(r'gu\(\"([A-Za-z0-9_.]+)\"\)', d) ..."   -> 12
+  aliyun, downloadDir, extensionDir, language, llmTranslateGlossaryIds, modelDir,
+  modelDownloadSource, notion, proxy, receivePrereleaseUpdates, translateProvider, whisperServer
+
+  Two keys appear ONLY here (never written via changeSetting literal):
+    aliyun         - Aliyun credential block
+    whisperServer  - local whisper-server config (see ipc "checkWhisperServerHealth")
+
+=====================================================================
+4. PER-LLM-PROVIDER SETTINGS SUB-OBJECTS
+=====================================================================
+Command:  python3 -c "... sorted(set(re.findall(r'settingsKey:\"([A-Za-z0-9_]+)\"', d))) ..."  -> 24
+Each provider stores its config at settings[<settingsKey>] with the shape
+  { apiKey: string, model: string, baseURL: string, temperature: number, maxTokens: number }
+(evidence: Itt(t,e) merges apiKey/model/baseURL/temperature/maxTokens over provider `defaults`).
+
+  24 built-in settingsKeys:
+    aliyunLLM, azura, claude, deepseek, doubao, gemini, groq, kimicodingplan, lmStudio,
+    minimax, minimaxtokenplan, mistralai, moonshot, ollama, openAI, openrouter, qianfan,
+    qwen, siliconcloud, together, xai, xiaomimimo, zhipuai, zhipuaicodingplan
+
+  Global provider defaults observed: temperature 0.7, maxTokens 4096
+  (MiniMax overrides: temperature 1, maxTokens 2048, with validators enforcing 0<t<=1 and maxTokens<=2048)
+
+  USER-DEFINED providers: stored in a separate file, not setting.conf ->
+    <userData>/.memo-ai/data/json/memo.json ; per-service settingsKey is generated as
+    `custom_llm_<slug>` (evidence token: `custom_llm_${...}`). Shape adds
+    { dynamicModelsEnabled, dynamicModelsUrl, models[], capabilities[] }.
+
+=====================================================================
+5. OTHER SETTINGS KEYS SEEN AS READS (not written by a literal changeSetting call)
+=====================================================================
+  legacyLLMTranslatePluginMigration   { status: "migrated" | ... }  (renderer read)
+  ernie                              { apiKey, secretKey }  (evidence: check-setting special case)
+  model / prompt / use_gpu / flash_attn / temperature / no_speech_thold / split_on_word / max_len
+                                     nested inside whisperParams (renderer transcriptSetStore sync)
+
+=====================================================================
+6. SETTINGS DIALOG TABS (renderer, definitive array)
+=====================================================================
+Found by: grep -o -E 'const c=\[\{value:"common",label:a\("preferences.general setting"\).{0,1400}' index-d5bec8ed.js
+COUNT: 12 tabs (1 conditionally hidden).
+
+  #   value           label locale key                       notes
+  1   common          preferences.general setting
+  2   workspace       workspace.manage workspace
+  3   llm             preferences.llm
+  4   prompt          ai.prompt template
+  5   transcription   preferences.transcription setting
+  6   translate       preferences.translation setting
+  7   tts             preferences.tts setting
+  8   integration     preferences.integration
+  9   proxy           preferences.proxy setting
+  10  permission      preferences.permission setting          hidden: window.AIM.isWindows (macOS-only tab)
+  11  lab             preferences.lab
+  12  pro             preferences.pro
+
+  Dialog geometry literal: className "h-[600px] max-w-[900px]"; title locale key menu.setting
+
+=====================================================================
+7. SETTINGS-RELATED LOCALE SECTION
+=====================================================================
+Command: python3 - flatten en.json, count keys whose first segment == "preferences"  -> 109
+Sub-group labels present in en.json `preferences` (evidence of setting groups rendered in tabs):
+  general setting, appearance setting, theme (light/dark/system), change language, language Setting,
+  storage setting, model folder, temp folder, config folder, logs, language folder,
+  embedding models folder, extension install folder, extension package, system folders, folder,
+  download source, download source hint, current source,
+  transcription setting, transcription vad, threshold, vad hint, enable gpu, enable flash attention,
+  view cuda, performance, quality priority, speed priority,
+  translation setting, tts setting, llm, integration, note apps, apps, extensions, install extension,
+  proxy setting, proxy, use system settings, use custom proxy, disable proxy, test connection,
+  network latency, connection error,
+  player, external subtitle window, use ass, subtitle color,
+  permission setting, lab, advanced features, pro, upgrade pro,
+  update, check update, receive prerelease updates, pre-release, select version, reset version,
+  ytdlp update, use browser cookies, link resource, enable gpu acceleration,
+  cache, clear history, clear localstorage, clear transcription, remove cache tips,
+  reset database, rebuild database, database reset, show tray icon, folder management
+
+=====================================================================
+8. UNKNOWNS
+=====================================================================
+  UNKNOWN: the preload API surface (window.AIM.*) cannot be enumerated - the preload is shipped as
+           V8 bytecode (/root/memoac-fx/win-app/dist-electron/preload/index.jsc, 86,128 bytes); the
+           plain index.js is a 192-byte loader stub only.
+  UNKNOWN: full set of valid values for `modelDownloadSource` - the UI populates it from a runtime
+           domain-latency test (`test-domain` / `get-domain-test-result` IPC), not from a static list.
+  UNKNOWN: exhaustive setting.conf key list - see caveat in section 0 (untyped JSON, no schema shipped).

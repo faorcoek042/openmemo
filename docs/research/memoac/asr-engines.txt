@@ -1,0 +1,468 @@
+MemoAI / memo.ac v1.7.5 (Windows build) - ASR ENGINE & MODEL INVENTORY
+=====================================================================
+Method: STATIC read-only forensics on the already-unpacked tree under /root/memoac-fx.
+No binary was executed, no network request was made, nothing under /root/memo was touched.
+Every count below is followed by the exact shell command that produced it.
+
+FILES READ
+  /root/memoac-fx/win/resources/presets/whisper-models.js
+  /root/memoac-fx/win/resources/presets/sherpa-onnx-config.js
+  /root/memoac-fx/win/resources/plugins/extra-transcription-plugins.json
+  /root/memoac-fx/win/resources/plugins/plugins.json
+  /root/memoac-fx/win/resources/locales/en.json
+  /root/memoac-fx/win-app/dist-electron/main/index-f11e3e4b.js      (main process bundle, 11,970,728 bytes)
+  /root/memoac-fx/win-app/dist/assets/index-d5bec8ed.js             (renderer bundle, 12,673,602 bytes)
+  /root/memoac-fx/win-listing.txt                                   (installer file listing)
+
+
+=====================================================================
+SECTION 0 - HEADLINE COUNTS (each with the command that produced it)
+=====================================================================
+
+[1] LOCAL ASR ENGINE IDS ...................................... 4
+    ids: whisper, sherpa-onnx, funasr-cli, parakeet-cli
+    cmd: for t in '"whisper"' '"sherpa-onnx"' '"funasr-cli"' '"parakeet-cli"'; do printf "%s main=%s renderer=%s\n" "$t" "$(grep -o -F -- "$t" /root/memoac-fx/win-app/dist-electron/main/index-f11e3e4b.js | wc -l)" "$(grep -o -F -- "$t" /root/memoac-fx/win-app/dist/assets/index-d5bec8ed.js | wc -l)"; done
+    result: "whisper" main=5 renderer=32 | "sherpa-onnx" main=6 renderer=14 | "funasr-cli" main=4 renderer=5 | "parakeet-cli" main=3 renderer=1
+
+[2] LOCAL WHISPER MODELS (whisper.cpp ggml catalogue) .......... 15
+    cmd: grep -c '"downloadLink"' /root/memoac-fx/win/resources/presets/whisper-models.js
+    result: 15
+    cross-check cmd: python3 -c "import json;s=open('/root/memoac-fx/win/resources/presets/whisper-models.js').read();print(len(json.loads(s[s.index('['):])))"
+    result: 15
+
+[3] SHERPA-ONNX RUNTIME CONFIG TEMPLATES shipped in presets .... 11
+    cmd: grep -c -E '^  "sherpa-onnx' /root/memoac-fx/win/resources/presets/sherpa-onnx-config.js
+    result: 11
+
+[4] SHERPA-ONNX MODEL-CONFIG CASES compiled into main bundle ... 36
+    cmd: grep -o -E 'case"sherpa-onnx-[^"]*"' /root/memoac-fx/win-app/dist-electron/main/index-f11e3e4b.js | sed 's/^case"//;s/"$//' | grep -v -E '^sherpa-onnx-(darwin|linux|win)-' | sort -u | wc -l
+    result: 36
+    (a further 6 case labels are platform binary folder names, not models)
+    cmd: grep -o -E 'case"sherpa-onnx-[^"]*"' /root/memoac-fx/win-app/dist-electron/main/index-f11e3e4b.js | sed 's/^case"//;s/"$//' | grep -E '^sherpa-onnx-(darwin|linux|win)-' | sort -u | wc -l
+    result: 6
+
+[5] EXTRA (downloadable) TRANSCRIPTION ENGINES ................. 3
+    ids: parakeet-cli, funasr-cli, sherpa-onnx
+    cmd: python3 -c "import json;print(len(json.load(open('/root/memoac-fx/win/resources/plugins/extra-transcription-plugins.json'))))"
+    result: 3
+
+[6] TOTAL MODEL ENTRIES inside extra-transcription-plugins.json  37
+    cmd: python3 -c "import json;j=json.load(open('/root/memoac-fx/win/resources/plugins/extra-transcription-plugins.json'));print(sum(len(e.get('models',[])) for e in j))"
+    result: 37   (parakeet-cli 4 + funasr-cli 1 + sherpa-onnx 32)
+
+[7] SHERPA-ONNX MODELS BY CATEGORY ............................ asr=27, punctuation=3, tts=2 (32 total)
+    cmd: python3 -c "import json,collections;j=json.load(open('/root/memoac-fx/win/resources/plugins/extra-transcription-plugins.json'));e=[x for x in j if x['id']=='sherpa-onnx'][0];print(collections.Counter(m['category'] for m in e['models']))"
+    result: Counter({'asr': 27, 'punctuation': 3, 'tts': 2})
+
+[8] CLOUD ASR PROVIDERS shipped in the plugin catalogue ........ 4
+    ids: memo-plugin-asr-deepgram, memo-plugin-asr-elevenlabs, memo-plugin-asr-groq, memo-plugin-asr-openai
+    cmd: python3 -c "import json;j=json.load(open('/root/memoac-fx/win/resources/plugins/plugins.json'));print(sum(1 for p in j['plugins'] if p.get('type')=='transcription'))"
+    result: 4
+    (total plugins in that catalogue = 33)
+    cmd: python3 -c "import json;j=json.load(open('/root/memoac-fx/win/resources/plugins/plugins.json'));print(len(j['plugins']))"
+    result: 33
+
+[9] NO CLOUD ASR PROVIDER IS HARD-CODED IN EITHER BUNDLE.
+    cmd: for t in deepgram assemblyai elevenlabs gladia speechmatics revai soniox xunfei iflytek; do printf "%-14s main=%s renderer=%s\n" "$t" "$(grep -o -i -- "$t" /root/memoac-fx/win-app/dist-electron/main/index-f11e3e4b.js | wc -l)" "$(grep -o -i -- "$t" /root/memoac-fx/win-app/dist/assets/index-d5bec8ed.js | wc -l)"; done
+    result: every one of those 9 tokens = 0 occurrences in BOTH bundles.
+    The bundles resolve cloud ASR purely through the plugin registry (see SECTION 5).
+
+
+=====================================================================
+SECTION 1 - ENGINE: whisper   (type: LOCAL, built in, always present)
+=====================================================================
+engine id           : whisper            (default value of transcriptSetStore.localEngine)
+user-visible name   : "Whisper" / "Local Whisper"
+                      locales/en.json -> transcription.local transcription = "Whisper"
+                      locales/en.json -> transcription.local whisper       = "Local Whisper"
+runtime             : whisper.cpp native addon shipped inside the installer, NOT a download.
+                      /root/memoac-fx/win/resources/addon/whisper/bin/1.8.6
+                      /root/memoac-fx/win/resources/addon/whisper/bin/gpu
+                      /root/memoac-fx/win/resources/addon/whisper/cublas/whisper-cuda-bin-x64.7z (18,201,462 bytes)
+platforms           : win32 x64 confirmed from this Windows build's own file listing.
+                      Windows has a CPU/GPU switch: setting key `windowsWhisperMode` with value "GPU"
+                      (5 occurrences in main bundle, 12 in renderer).
+                      darwin support is NOT provable from this Windows tree -> UNKNOWN for darwin
+                      (reason: only the win32 installer payload was unpacked here).
+model catalogue     : /root/memoac-fx/win/resources/presets/whisper-models.js  (15 entries)
+catalogue refresh   : the shipped file is a baseline; main bundle overwrites it from
+                      https://models.memo.ac/all-models  and reads single models from
+                      https://models.memo.ac/models/<id>
+download mirrors    : main bundle holds a 3-host mirror map for ggml files:
+                      huggingface.co  -> https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{model}
+                      hf-mirror.com   -> https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/{model}
+                      aifasthub.com   -> https://aifasthub.com/ggerganov/whisper.cpp/resolve/main/{model}
+quantization        : NO quantized (q5/q8) variants in the shipped catalogue.
+                      cmd: grep -c -E 'q5|q8|quant' /root/memoac-fx/win/resources/presets/whisper-models.js
+                      result: 0
+disk size on disk   : UNKNOWN - the catalogue only carries a single `size` string
+                      (download size); no separate install/disk-size field exists.
+
+MODEL LIST (15) - columns: file id | label | size | language | speed tier | quality | download host
+   1. ggml-tiny.bin               | Tiny               | 77.7 MB  | multi | fast     | q=2 | huggingface.co
+   2. ggml-tiny.en.bin            | Tiny.en            | 77.7 MB  | en    | fast     | q=2 | huggingface.co
+   3. ggml-base.bin               | Base               | 148 MB   | multi | fast     | q=3 | huggingface.co
+   4. ggml-base.en.bin            | Base.en            | 148 MB   | en    | fast     | q=3 | huggingface.co
+   5. ggml-small.bin              | Small              | 488 MB   | multi | balance  | q=4 | huggingface.co
+   6. ggml-small.en.bin           | Small.en           | 488 MB   | en    | balance  | q=4 | huggingface.co
+   7. ggml-medium.bin             | Medium             | 1.53 GB  | multi | quality  | q=5 | huggingface.co
+   8. ggml-medium.en.bin          | Medium.en          | 1.53 GB  | en    | quality  | q=5 | huggingface.co
+   9. ggml-large-v1.bin           | Large(v1)          | 3.09 GB  | multi | quality  | q=6 | huggingface.co
+  10. ggml-large-v2.bin           | Large(v2)          | 3.09 GB  | multi | quality  | q=6 | huggingface.co
+  11. ggml-large-v3.bin           | Large(v3)          | 3.09 GB  | multi | quality  | q=6 | huggingface.co
+  12. ggml-large-v3-turbo.bin     | Large(v3)-turbo    | 1.62 GB  | multi | quality  | q=6 | huggingface.co
+  13. ggml-distil-large-v3.bin    | Distil Large(v3)   | 1.52 GB  | en    | quality  | q=6 | huggingface.co
+  14. Memo-large.zh.bin           | Memo-large.zh      | 2.88 GB  | zh    | quality  | q=6 | model.memo.ac
+  15. Memo-large.ja.bin           | Memo-large.ja      | 2.88 GB  | ja    | quality  | q=6 | model.memo.ac
+
+  sha1 checksums are present for all 15 entries (field `sha`), e.g.
+    ggml-tiny.bin -> bd577a113a864445d4c299885e0cb97d4ba92b5f
+  Full download URLs:
+    12 entries: https://huggingface.co/ggerganov/whisper.cpp/resolve/main/<file>
+     1 entry  : https://huggingface.co/distil-whisper/distil-large-v3-ggml/resolve/main/ggml-distil-large-v3.bin
+     2 entries: https://model.memo.ac/<file>        (Memo-large.zh.bin, Memo-large.ja.bin)
+  cmd: grep -o -E 'https://[a-z0-9.-]+' /root/memoac-fx/win/resources/presets/whisper-models.js | sort | uniq -c
+  result: 13 https://huggingface.co , 2 https://model.memo.ac
+  NOTE: every entry ships with "disabled": true and "download": false; the main process flips
+  those flags by scanning the local model directory, so they are install-state, not availability.
+
+
+=====================================================================
+SECTION 2 - ENGINE: sherpa-onnx   (type: LOCAL, runtime bundled, models downloaded)
+=====================================================================
+engine id           : sherpa-onnx
+pluginId            : plugin:sherpa-onnx
+displayName         : "Sherpa ONNX"
+declared categories : ["asr", "tts", "punctuation"]
+binaryName          : "" ; archiveType "none" ; engine-level `platforms` array ABSENT
+                      -> no engine binary download; the renderer explicitly skips the
+                         install check for this engine id (only models are downloaded).
+native runtime      : shipped pre-installed inside the app (app.asar.unpacked/node_modules):
+                      sherpa-onnx-node, sherpa-onnx-win-x64, sherpa-onnx-darwin-arm64, sherpa-onnx-darwin-x64
+                      (from /root/memoac-fx/win-listing.txt)
+platform ids the main bundle accepts (6, from the switch on `sherpa-onnx-<plat>-<arch>`):
+                      sherpa-onnx-win-x64, sherpa-onnx-win-ia32,
+                      sherpa-onnx-darwin-arm64, sherpa-onnx-darwin-x64,
+                      sherpa-onnx-linux-arm64, sherpa-onnx-linux-x64
+config templates    : /root/memoac-fx/win/resources/presets/sherpa-onnx-config.js - 11 templates:
+                       1. sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17
+                       2. sherpa-onnx-streaming-paraformer-bilingual-zh-en
+                       3. sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20
+                       4. sherpa-onnx-streaming-zipformer-ctc-small-2024-03-18
+                       5. sherpa-onnx-streaming-zipformer-ctc-multi-zh-hans-2023-12-13
+                       6. sherpa-onnx-streaming-zipformer-en-20M-2023-02-17
+                       7. sherpa-onnx-whisper-base.en
+                       8. sherpa-onnx-zh-wenet-aishell
+                       9. sherpa-onnx-zh-wenet-aishell2
+                      10. sherpa-onnx-en-wenet-librispeech
+                      11. sherpa-onnx-en-wenet-gigaspeech
+                      (template families seen: senseVoice, paraformer, transducer/zipformer,
+                       zipformer2Ctc, whisper encoder+decoder int8, wenetCtc)
+worker scripts      : /root/memoac-fx/win/resources/sherpa/{asr_file_process.js, asr_offline_process.js,
+                      asr_online_process.js, asr_vad_process.js, server.js, sherpa_loader.js}
+extra options       : sherpaVadMode = "full-timeline" | "speech-only" (renderer default "full-timeline")
+default asr model   : chosen from an ordered preference list of 4 ids in the main bundle:
+                      sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17,
+                      sherpa-onnx-streaming-paraformer-bilingual-zh-en,
+                      sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25,
+                      sherpa-onnx-whisper-base.en
+                      (first entry that resolves to an "offline" mode wins)
+default punctuation : sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12
+mode classification : an id containing "streaming" is treated as "online", otherwise "offline".
+download host       : all 32 models -> https://github.com/k2-fsa/sherpa-onnx/releases/download/
+                        .../asr-models/<id>.tar.bz2          (27 asr)
+                        .../tts-models/<id>.tar.bz2          (2 tts)
+                        .../punctuation-models/<id>.tar.bz2  (3 punctuation)
+per-model platform  : every one of the 32 models declares platform "all" / arch "all".
+disk size after untar: UNKNOWN - only `sizeBytes` (compressed archive) is present in the JSON.
+
+--- 2A. SHERPA-ONNX ASR MODELS (27) ---
+columns: id | displayName | archive bytes | languages
+   1. sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17                 | SenseVoice-zh-en-ja-ko-yue     |   1047870769 | zh,en,ja,ko,yue
+   2. sherpa-onnx-zipformer-korean-2024-06-24                            | Zipformer-Korean               |    329740690 | ko
+   3. sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25                         | Qwen3-ASR-0.6B-Int8            |    878702423 | zh,en,ja,ko
+   4. sherpa-onnx-moonshine-tiny-ko-quantized-2026-02-27                 | Moonshine-Tiny-Ko              |     49153415 | ko
+   5. sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12 | Omnilingual-300M-Int8          |    292571207 | multi
+   6. sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04-01              | Cohere-Transcribe-14Lang-Int8  |   1699791751 | zh,en,ja,ko
+   7. sherpa-onnx-streaming-paraformer-bilingual-zh-en                   | Paraformer-bilingual-zh-en     |   1047319737 | zh,en
+   8. sherpa-onnx-streaming-zipformer-korean-2024-06-16                  | Streaming-Zipformer-Korean     |    418218652 | ko
+   9. sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20         | Zipformer-bilingual-zh-en      |    511279104 | zh,en
+  10. sherpa-onnx-streaming-zipformer-ctc-small-2024-03-18               | Zipformer-ctc-small            |    184604253 | en
+  11. sherpa-onnx-streaming-zipformer-ctc-multi-zh-hans-2023-12-13       | Zipformer-multi-zh-hans        |    247200045 | zh,hans
+  12. sherpa-onnx-streaming-zipformer-en-20M-2023-02-17                  | Zipformer-en-20M               |    127887156 | en
+  13. sherpa-onnx-whisper-base.en                                        | Whisper-base.en                |    208576005 | en
+  14. sherpa-onnx-whisper-distil-large-v2                                | Whisper-Distil-Large-v2        |    576607838 | en
+  15. sherpa-onnx-whisper-turbo                                          | Whisper-Turbo                  |    563790207 | en,zh,de,es,ru,ko,fr,ja ... (100 langs)
+  16. sherpa-onnx-whisper-distil-large-v3                                | Whisper-Distil-Large-v3        |    529350808 | en
+  17. sherpa-onnx-whisper-medium                                         | Whisper-Medium                 |   1931372882 | en,zh,de,es,ru,ko,fr,ja ... (100 langs)
+  18. sherpa-onnx-whisper-medium.en                                      | Whisper-Medium.en              |   1905872689 | en
+  19. sherpa-onnx-whisper-small.en                                       | Whisper-Small.en               |    635693775 | en
+  20. sherpa-onnx-whisper-tiny                                           | Whisper-Tiny                   |    116204861 | en,zh,de,es,ru,ko,fr,ja ... (100 langs)
+  21. sherpa-onnx-whisper-small                                          | Whisper-Small                  |    639387718 | en,zh,de,es,ru,ko,fr,ja ... (100 langs)
+  22. sherpa-onnx-whisper-tiny.en                                        | Whisper-Tiny.en                |    118071777 | en
+  23. sherpa-onnx-whisper-large-v3                                       | Whisper-Large-v3               |   1068482488 | en,zh,de,es,ru,ko,fr,ja ... (100 langs)
+  24. sherpa-onnx-whisper-large-v2                                       | Whisper-Large-v2               |   1134475725 | en,zh,de,es,ru,ko,fr,ja ... (100 langs)
+  25. sherpa-onnx-whisper-large-v1                                       | Whisper-Large-v1               |   1066424971 | en,zh,de,es,ru,ko,fr,ja ... (100 langs)
+  26. sherpa-onnx-zh-wenet-aishell                                       | Zh-Wenet-Aishell               |    355342084 | zh
+  27. sherpa-onnx-en-wenet-gigaspeech                                    | En-Wenet-Gigaspeech            |    933151114 | en
+
+--- 2B. SHERPA-ONNX PUNCTUATION MODELS (3) - not ASR, listed for completeness ---
+  1. sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12-int8 | punct-ct-transformer-zh-en  |   64717756 | zh,en
+  2. sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12      | punct-ct-transformer-zh-en  |  279028058 | zh,en
+  3. sherpa-onnx-online-punct-en-2024-08-06                             | online-punct-en             |   30667839 | en
+
+--- 2C. SHERPA-ONNX TTS MODELS (2) - not ASR, listed for completeness ---
+  1. kokoro-multi-lang-v1_0                                             | Kokoro-multi-lang-v1_0      |  349418188 | multi
+  2. kokoro-int8-multi-lang-v1_0                                        | Kokoro-int8-multi-lang-v1_0 |  131839838 | multi
+
+--- 2D. QUANTIZED / REDUCED-PRECISION VARIANTS present in the sherpa catalogue (6) ---
+    cmd: python3 -c "import json;j=json.load(open('/root/memoac-fx/win/resources/plugins/extra-transcription-plugins.json'));e=[x for x in j if x['id']=='sherpa-onnx'][0];print(len([m for m in e['models'] if 'int8' in m['id'] or 'quantized' in m['id']]))"
+    result: 6
+      sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25
+      sherpa-onnx-moonshine-tiny-ko-quantized-2026-02-27
+      sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12
+      sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04-01
+      kokoro-int8-multi-lang-v1_0                                    (tts)
+      sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12-int8  (punctuation)
+    Additionally, several shipped config templates hard-code ".int8.onnx" file names
+    (streaming-paraformer, zipformer-ctc-small, whisper-base.en, all three wenet templates),
+    i.e. the int8 weights are selected inside the archive rather than as a separate model id.
+
+--- 2E. SHERPA-ONNX MODEL IDS KNOWN TO THE MAIN BUNDLE BUT NOT IN THE SHIPPED JSON (9) ---
+    The main bundle's config switch covers 36 model ids while the JSON catalogue lists 27 asr
+    models. Ids present only in the compiled switch (no download entry ships with the app):
+      sherpa-onnx-paraformer-zh-2024-03-09
+      sherpa-onnx-paraformer-zh-small-2024-03-09
+      sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23
+      sherpa-onnx-whisper-base
+      sherpa-onnx-whisper-distil-medium.en
+      sherpa-onnx-whisper-distil-small.en
+      sherpa-onnx-whisper-medium-aishell
+      sherpa-onnx-zipformer-cantonese-2024-03-13
+      sherpa-onnx-zipformer-multi-zh-hans-2023-9-2
+    cmd used to build the switch list:
+      grep -o -E 'case"sherpa-onnx-[^"]*"' /root/memoac-fx/win-app/dist-electron/main/index-f11e3e4b.js | sed 's/^case"//;s/"$//' | sort -u
+    Note: 2 of the 11 shipped config templates are NOT in the switch list and NOT in the
+    downloadable JSON catalogue: sherpa-onnx-en-wenet-librispeech and sherpa-onnx-zh-wenet-aishell2.
+    cmd: python3 -c "import json,re;s=open('/root/memoac-fx/win-app/dist-electron/main/index-f11e3e4b.js',encoding='utf8',errors='replace').read();sw={x for x in re.findall(r'case\"(sherpa-onnx-[^\"]*)\"',s) if not re.match(r'^sherpa-onnx-(darwin|linux|win)-',x)};j=json.load(open('/root/memoac-fx/win/resources/plugins/extra-transcription-plugins.json'));cat={m['id'] for e in j for m in e.get('models',[])};tpl=set(re.findall(r'\"(sherpa-onnx-[^\"]*)\"',open('/root/memoac-fx/win/resources/presets/sherpa-onnx-config.js').read()));print(len(sw), len(sw-cat), sorted(tpl-sw))"
+    result: 36 9 ['sherpa-onnx-en-wenet-librispeech', 'sherpa-onnx-zh-wenet-aishell2']
+
+
+=====================================================================
+SECTION 3 - ENGINE: parakeet-cli   (type: LOCAL PLUGIN, downloadable)
+=====================================================================
+engine id           : parakeet-cli
+pluginId            : plugin:parakeet
+displayName         : Parakeet
+version             : 1.0.0
+category            : asr
+binaryName          : parakeet (resolved as parakeet.exe on win32, parakeet elsewhere)
+archiveType         : zip
+engine languages    : ['transcription.lang multi']
+description key     : transcription.parakeet description
+locale text         : transcription.parakeet description = "NVIDIA Parakeet for audio and video transcription"
+                      transcription.parakeet hint = "Parakeet does not currently support Chinese
+                      transcription and generally works better for English. The V3 model supports
+                      more languages than V2."
+default model       : main bundle picks parakeet-tdt-0.6b-v3-coreml on macOS, parakeet-tdt-0.6b-v3 otherwise
+ENGINE BINARY PLATFORMS (2):
+  - darwin/arm64 | 5242880 bytes | https://github.com/YuQian2015/memo-build/releases/download/v1.0.0/parakeet-darwin-arm64-1.0.0.zip
+    sha256 fe038f0646aa6ca20164dc503d807515272a35e38f3df978069016e9a2d54405
+  - win32/x64 | 1803762556 bytes | https://github.com/YuQian2015/memo-build/releases/download/v1.0.0/parakeet-win32-x64-1.0.0.zip
+    sha256 5cdb61deebf0b2b4a441a46420dc992e9179bae4e59f46058a3ceaf6d47e4211
+MODELS (4):
+  1. id=parakeet-tdt-0.6b-v2           display=Parakeet V2  ver=1.0.0
+     platform=win32/x64  bytes=450887680
+     langs=en
+     url=https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2/resolve/main/parakeet-tdt-0.6b-v2.nemo
+     sha256=d99e39955c9d3d0350d8fb7c75e40c64a2b2eaeb003883d7c941fd2e8747b28c
+  2. id=parakeet-tdt-0.6b-v3           display=Parakeet V3  ver=1.0.0
+     platform=win32/x64  bytes=466616320
+     langs=bg,hr,cs,da,nl,en,et,fi ... (25 langs)
+     url=https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/main/parakeet-tdt-0.6b-v3.nemo
+     sha256=3cbdc85877e668ca7b82d0d56770eb1fac76691f55d6b97545e8d61ca588d10d
+  3. id=parakeet-tdt-0.6b-v2-coreml    display=Parakeet V2  ver=1.0.0
+     platform=darwin/arm64  bytes=450887680
+     langs=en
+     url=https://github.com/YuQian2015/memo-build/releases/download/v1.0.0/parakeet-tdt-0.6b-v2-coreml-1.0.0.zip
+     sha256=a408e947a4eac6480677d0c8c2ed8cce76c0ca769cfecc695dfbeba176ccb455
+  4. id=parakeet-tdt-0.6b-v3-coreml    display=Parakeet V3  ver=1.0.0
+     platform=darwin/arm64  bytes=466616320
+     langs=bg,hr,cs,da,nl,en,et,fi ... (25 langs)
+     url=https://github.com/YuQian2015/memo-build/releases/download/v1.0.0/parakeet-tdt-0.6b-v3-coreml-1.0.0.zip
+     sha256=90540ae5797428d351801907833e554b1f729a98735ceea5d646a6712553a188
+  -> v2/v3 exist as two builds each: raw .nemo for win32/x64 and a CoreML zip for darwin/arm64.
+  -> no win32 build of v2-coreml / v3-coreml and no darwin build of the .nemo variants.
+  -> disk size after extraction: UNKNOWN (only sizeBytes of the download is recorded).
+
+
+=====================================================================
+SECTION 4 - ENGINE: funasr-cli   (type: LOCAL PLUGIN, downloadable)
+=====================================================================
+engine id           : funasr-cli
+pluginId            : plugin:funasr
+displayName         : FunASR
+version             : 1.0.0
+category            : asr
+binaryName          : funasr
+archiveType         : zip
+engine languages    : ['transcription.lang zh']
+description key     : transcription.funasr description
+locale text         : transcription.funasr description = "FunASR CLI for speech recognition,
+                      voice activity detection, and punctuation restoration"
+device selector     : setting key `funASRDevice`; option arrays found in the renderer:
+                      [{label:"CPU",value:"cpu"},{label:"CUDA",value:"cuda"}]   (Windows)
+                      [{label:"CPU",value:"cpu"},{label:"MPS",value:"mps"}]     (macOS)
+                      [{label:"CPU",value:"cpu"}]                               (fallback)
+                      cmd: grep -o -E '\[\{label:"CPU",value:"cpu"\}[^]]{0,200}\]' /root/memoac-fx/win-app/dist/assets/index-d5bec8ed.js | head -3
+default model       : main bundle hard-codes "funasr-models"
+ENGINE BINARY PLATFORMS (2):
+  - darwin/arm64 | 10485760 bytes | https://github.com/YuQian2015/memo-build/releases/download/v1.0.0/funASR-darwin-arm64-1.0.1.zip
+    sha256 704fb5e5a9f2928683d58d2804905a843426ad98cd056bd69e08f9e0e07e43c4
+  - win32/x64 | 1393630090 bytes | https://github.com/YuQian2015/memo-build/releases/download/v1.0.0/funASR-win32-x64-1.0.0.zip
+    sha256 25f0db0ac0d34e7df7a40d76f42bb901e377ddf720568f8dd91cb2b8037e39b6
+MODELS (1 bundle, 2 platform builds):
+  1. id=funasr-models  display=FunASR Models  ver=1.0.0
+     description=FunASR 模型包（包含 ASR、VAD、PUNC、SPK 模型）
+     langs=['transcription.lang zh']
+     - darwin/arm64 | 1073741824 bytes | https://github.com/YuQian2015/memo-build/releases/download/v1.0.0/Funasr-models.zip
+       sha256 afc343746e253de2b8aafa3ffbfd4b5beb33acf2016932fd98055326ee46bd9c
+     - win32/x64 | 1072879560 bytes | https://github.com/YuQian2015/memo-build/releases/download/v1.0.0/Funasr-models-win32.zip
+       sha256 b011d46b0f6217841577c933e53add5dd7a36353cddb6685dfb0ea5f1b48bca2
+  -> one combined model pack containing ASR + VAD + PUNC + SPK models (per its own description).
+  -> individual sub-model ids inside the pack: UNKNOWN (the pack is a single opaque archive entry).
+  -> the darwin engine archive is version 1.0.1 while the win32 archive is 1.0.0 (both listed under
+     the engine `version` 1.0.0).
+
+
+=====================================================================
+SECTION 5 - CLOUD ASR ("online") PROVIDERS
+=====================================================================
+HOW CLOUD ASR WORKS IN THIS BUILD
+  There is NO built-in / hard-coded cloud ASR provider table. Cloud transcription is dispatched
+  entirely through the plugin system:
+    - renderer builds its dropdown from  pluginProviders.filter(t => t.type === "transcription")
+      and stores the result in transcriptSetStore.transcriptionProviders (initial value []).
+    - main process, on transcriptType === "cloud", does
+        ae.findIndex(Fe => Fe.value === A && Fe.type === "transcription")
+      over getPluginProviders(); if nothing matches it throws
+        "no provider found" / "no plugin found".
+    - the selected plugin module is instantiated with its defaultsConfiguration merged with the
+      user's stored configuration, and the audio path is passed in.
+  Consequence: the set of cloud ASR providers is DYNAMIC and depends on which plugins the user has
+  installed; it is not enumerable from the binary alone.
+  Evidence tokens: transcriptionProviders (12 hits renderer), asrProvider* (14 hits renderer),
+  asrInput (2 hits renderer), pluginProviders (12 main / 5 renderer), engine:"cloud".
+
+SHIPPED CLOUD ASR PLUGIN CATALOGUE - 4 providers
+  source: /root/memoac-fx/win/resources/plugins/plugins.json  (key "plugins", type == "transcription")
+  - pluginId   : memo-plugin-asr-deepgram
+    title      : Deepgram ASR
+    version    : 1.0.0  (version_name: beta)
+    file       : memo-plugin-asr-deepgram@1.0.0.memox
+    platforms  : ['win32', 'darwin']   arch: ['arm64', 'x64']
+    author     : Memo Team
+    link       : https://plugins.memo.ac/transcription/memo-plugin-asr-deepgram@1.0.0.memox
+    sha256     : a877bf1e02d061c826f1ab88efdf2d933c0ada42f787c9348195ef0a6a327e49
+  - pluginId   : memo-plugin-asr-elevenlabs
+    title      : ElevenLabs ASR
+    version    : 1.0.0  (version_name: beta)
+    file       : memo-plugin-asr-elevenlabs@1.0.0.memox
+    platforms  : ['win32', 'darwin']   arch: ['arm64', 'x64']
+    author     : Memo Team
+    link       : https://plugins.memo.ac/transcription/memo-plugin-asr-elevenlabs@1.0.0.memox
+    sha256     : 99cf6da4c7ceb4042537241c966cd3756d9be52e5f4321d3eabce3403fcafc42
+  - pluginId   : memo-plugin-asr-groq
+    title      : Groq API
+    version    : 1.0.0  (version_name: beta)
+    file       : memo-plugin-asr-groq@1.0.0.memox
+    platforms  : ['win32', 'darwin']   arch: ['arm64', 'x64']
+    author     : Memo Team
+    link       : https://plugins.memo.ac/transcription/memo-plugin-asr-groq@1.0.0.memox
+    sha256     : 36b07523fe5c0795fb687039ea61fd142a7a4190fcd14c0527b5633f23785ad6
+    description: Groq API is the fastest speech-to-text solution available, offering OpenAI-compatible endpoints that enable real-time transcriptions and translations.
+  - pluginId   : memo-plugin-asr-openai
+    title      : OpenAI Whisper
+    version    : 1.0.3  (version_name: beta)
+    file       : memo-plugin-asr-openai@1.0.3.memox
+    platforms  : ['win32', 'darwin']   arch: ['arm64', 'x64']
+    author     : Memo Team
+    link       : https://plugins.memo.ac/transcription/memo-plugin-asr-openai@1.0.3.memox
+    sha256     : df2d09143f2e281f3a48bd5ec66f3129b1610ce7087b5a502ab2e9a6fd07dac6
+
+  MODELS OFFERED BY EACH CLOUD PROVIDER: UNKNOWN.
+  Reason: the model list lives inside each provider's own .memox plugin bundle (manifest field
+  `asrInput` / `defaultsConfiguration`), and none of the four ASR .memox archives ship with the
+  app. Only 7 .memox files are present under resources/plugins and all 7 are translate/tts:
+    memo-plugin-translate-{deepl,google,microsoft}, memo-plugin-tts-{edge,elevenlabs,openai,volcengine}
+  cmd: ls /root/memoac-fx/win/resources/plugins/*.memox | wc -l   ->  7
+
+  PLUGIN REGISTRY ENDPOINT (the live source of the provider list):
+    https://integrations.memo.ac/plugins/v2
+    Response is cached to <userdata>/plugins.json; the file shipped in resources is the seed.
+  PLUGIN DOWNLOAD HOST: https://plugins.memo.ac/transcription/<file>.memox
+
+  PROVIDER TOKENS THAT DO **NOT** EXIST IN EITHER BUNDLE (0 hits each, case-insensitive):
+    deepgram, assemblyai, elevenlabs, gladia, speechmatics, revai, soniox, xunfei, iflytek
+  Tokens that DO appear in the bundles but belong to the LLM / translation / TTS subsystems,
+  NOT to ASR (verified by reading their surrounding context):
+    openai, groq, azure/azura, aliyun, tencent, volcengine, baidu(qianfan), siliconcloud, dashscope
+  Specifically the compiled LLM provider enum is:
+    gemini, openai, claude, ollama, deepseek, doubao, groq, xai, siliconcloud, openrouter, together,
+    zhipuai, zhipuaicodingplan, moonshot, kimicodingplan, lmstudio, minimax, minimaxtokenplan,
+    mistralai, qianfan, qwen, xiaomimimo, aliyun, azura     (24 entries - LLM, not ASR)
+  api.groq.com in the main bundle belongs to that LLM config block (apiKey/baseURL/model fields),
+  not to a transcription path.
+
+
+=====================================================================
+SECTION 6 - REAL-TIME / STREAMING TRANSCRIPTION
+=====================================================================
+  A local whisper.cpp HTTP server mode exists (IPC handlers startWhisperServer / stopWhisperServer /
+  getWhisperServerStatus, setting key `whisperServer` with a `port`). The renderer's RealtimeSTT
+  component consumes it via `whisperServerUrl`.
+  Sherpa also ships an online/streaming path (resources/sherpa/asr_online_process.js and the
+  "streaming" model ids classified as mode "online").
+  These are transport modes of the whisper and sherpa-onnx engines, not additional engine ids.
+  Whether real-time mode can use cloud providers: UNKNOWN (no provider dispatch was found on the
+  realtime code path in either bundle).
+
+
+=====================================================================
+SECTION 7 - DOWNLOAD / MIRROR HOSTS SUMMARY
+=====================================================================
+  whisper ggml models   : huggingface.co | hf-mirror.com | aifasthub.com   (3-host mirror map)
+                          plus https://model.memo.ac/ for the two Memo-large.* models
+  whisper catalogue     : https://models.memo.ac/all-models , https://models.memo.ac/models/<id>
+  sherpa-onnx models    : https://github.com/k2-fsa/sherpa-onnx/releases/download/{asr-models,
+                          tts-models,punctuation-models}/<id>.tar.bz2
+  parakeet + funasr     : https://github.com/YuQian2015/memo-build/releases/download/v1.0.0/...
+                          plus https://huggingface.co/nvidia/parakeet-tdt-0.6b-v{2,3}/... for the
+                          two .nemo model files
+  plugin registry       : https://integrations.memo.ac/plugins/v2
+  plugin binaries       : https://plugins.memo.ac/transcription/<file>.memox
+  generic proxy prefix  : https://download.memo.ac/<absolute-url>   (observed wrapping api.github.com)
+  cmd (extra json hosts): grep -o -E 'https://[a-zA-Z0-9.-]+' /root/memoac-fx/win/resources/plugins/extra-transcription-plugins.json | sort | uniq -c
+  result: 40 https://github.com , 2 https://huggingface.co
+  cmd (.memox shipped)  : ls /root/memoac-fx/win/resources/plugins/*.memox | wc -l
+  result: 7   (all translate/tts; zero ASR .memox present)
+
+
+=====================================================================
+SECTION 8 - EXPLICIT UNKNOWNS
+=====================================================================
+  1. Cloud ASR model lists (per provider)            -> UNKNOWN. The four ASR .memox bundles are not
+     shipped; model ids live inside those archives.
+  2. Total number of cloud ASR providers actually available to a user -> UNKNOWN. The live list comes
+     from https://integrations.memo.ac/plugins/v2; only the shipped seed (4) can be counted offline.
+  3. macOS support matrix for the built-in whisper engine -> UNKNOWN. Only the win32 payload was
+     unpacked under /root/memoac-fx/win; the extra-plugin JSON does prove darwin/arm64 support for
+     parakeet-cli and funasr-cli.
+  4. Installed (on-disk, uncompressed) size of every ASR model -> UNKNOWN. Only download size is
+     recorded (`size` string for whisper, `sizeBytes` for extra-plugin models). The only installSize
+     fields in the bundle belong to the non-ASR pyannote/spleeter integrations.
+  5. FunASR sub-model ids inside the "funasr-models" pack -> UNKNOWN. Distributed as one archive.
+  6. Whether the 9 sherpa ids present only in the compiled switch are reachable in the UI -> UNKNOWN.
+     They have config templates but no catalogue/download entry in this build.
+  7. Language lists for whisper local models beyond the coarse `lang` field (multi/en/zh/ja) ->
+     UNKNOWN; the catalogue does not enumerate per-language codes for whisper.cpp models.

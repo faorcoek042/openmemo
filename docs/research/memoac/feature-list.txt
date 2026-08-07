@@ -1,0 +1,497 @@
+MemoAI (memo.ac) v1.7.5 - user-visible feature inventory
+Primary source : /root/memoac-fx/win/resources/locales/en.json
+Secondary      : renderer bundle /root/memoac-fx/win-app/dist/assets/index-d5bec8ed.js
+                 main bundle     /root/memoac-fx/win-app/dist-electron/main/index-f11e3e4b.js
+                 DB migrations   /root/memoac-fx/win/resources/migrations/*.js
+                 shipped addons  /root/memoac-fx/win-listing.txt , mac .../Contents/Resources/addon/
+
+=====================================================================
+HEADLINE COUNTS (each produced by a command actually run)
+=====================================================================
+  en.json leaf keys ......................... 2170
+      cmd: python3 - json.load(en.json) + recursive flatten, len(flat)          -> 2170
+  en.json top-level sections ................ 41
+      cmd: collections.Counter(k.split('.')[0] for k in flat)                   -> 41 sections
+  React routes .............................. 12
+      cmd: re.findall(r'vm,\{path:"([^"]+)"', <route array slice>)              -> 12
+  Left-sidebar nav entries .................. 6
+      cmd: grep -o -E '.{250}path:"/batch-tasks".{500}' index-d5bec8ed.js       -> array x2i, 6 items
+  "Applications" sub-apps ................... 2
+      cmd: grep -o -E '.{900}path:"kokoro",label:"tts.kokoro"' index-d5bec8ed.js -> array S2i, 2 items
+  Settings dialog tabs ...................... 12
+  IPC channels .............................. 342  (see ipc-channels.txt)
+  SQLite tables ............................. 9
+      cmd: re.findall(r'(?:createTable|hasTable|dropTableIfExists)\("([a-zA-Z_]+)"', main)
+           -> doc, doc_tag, download, folder, note, note_tag, resource, tag, workspace
+  Built-in LLM providers .................... 24 (see settings-schema.txt sec.4)
+  UI locales shipped ........................ 8
+      cmd: ls /root/memoac-fx/win/resources/locales/ -> de,en,es,it,ja,ko,zh-CN,zh-TW
+
+  Per-section locale key counts (cmd: Counter over flattened en.json):
+    ai 293 | transcript 281 | subtitle 212 | transcription 193 | translate 161 | common 116
+    preferences 109 | summaryTemplate 106 | task 76 | action 69 | vad 62 | tts 60 | model 41
+    recorder 40 | pro 35 | speaker 33 | menu 28 | export 26 | welcome 19 | home 19 | workspace 18
+    player 17 | status 16 | error 16 | correction 16 | docs 15 | search 13 | tray 10 | rss 9
+    $metadata 8 | plugins 8 | changelog 8 | trash 7 | convert 6 | success 6 | lab 6
+    whisper_presets 4 | transcribe 3 | msg 2 | config 1 | (+2 standalone license strings)
+
+  ROUTES (12):  /  /home  /batch-tasks  /convert  /all  /edit/:id  /subtitle/:id  /docs
+                /trash  /rss/:id  /folder/:id  /applications
+  SIDEBAR (6):  /home "Memo" | /batch-tasks "menu.batch tasks" (pro:true) | /all "menu.media"
+                | /docs "menu.notes" | /applications "menu.application" | /trash "menu.trash"
+  APPS (2):     accompaniment (label menu.accompaniment, permission useAccompaniment)
+                kokoro        (label tts.kokoro,        permission useKokoro)
+
+
+=====================================================================
+1. CAPTURE / IMPORT
+=====================================================================
+1.1 Local media file import
+    home.local file, home.support ext ("MP4、MP3、SRT、TS …"), common.select files,
+    common.drag and drop files, task.drag and drop files
+    IPC: select-file, select-multi-file, select-subtitle, getFileMetadata, getFileThumbnails
+    Renderer video ext array evidence: ["mp4","webm","mov","avi","mkv","m4v"]
+1.2 URL / link import (YouTube + podcast)
+    home.link, home.support link ("Supports YouTube and Podcast links"), task.input link
+    IPC: parse-url, ytdlp-download-video, ytdlp-cancel-download, get-ytdlp-download-info,
+         ytdlp:get-path, ytdlp:check-update, ytdlp:download-version, ytdlp:reset-to-builtin,
+         ytdlp:get-config, ytdlp:set-config, ytdlp:get-config-path, ytdlp:get-folder-path
+    YouTube auth: browser-cookie import from Chrome/Edge/Firefox/Brave
+      transcript.youtube.cookieBrowsers.{chrome,edge,firefox,brave},
+      transcript.youtube.login.*, ytdlp:open-youtube-login, ytdlp:export-cookies,
+      ytdlp:clear-cookies, ytdlp:get-cookie-status; setting `use browser cookies`
+1.3 Recording (microphone / system / app audio)
+    home.record, home.support app ("Local application recording"), home.support local,
+    recorder.* (40 keys): input device, punctuation, language compatibility, uptime
+    IPC: start-record, start-record-data, stop-record-data, cancel-record-data,
+         sendRecordData, sendRecordFloat32Data, save-recording, get-desktop-sources,
+         microphone-access, recognition-access, get-mac-access
+    Local realtime server: startRecorderServer / stopRecorderServer / get-ws-url,
+      recorder.port, recorder.open in browser, recorder.server started description
+1.4 Subtitle file import
+    Subtitle ext array evidence in BOTH bundles: ["srt","vtt","ass"]
+    IPC: select-subtitle, parse-subtitle; transcript.select existing
+1.5 RSS / podcast subscriptions
+    rss.subscribe, rss.subscribe youtube user, rss.unsubscribe, rss.refresh, rss.enable rss
+    IPC: get-rss-data, refresh-rss-data, remove-rss-data ; route /rss/:id ; setting enableRSS
+1.6 Data import
+    IPC: import-data, import-models, import-extra-plugin-model-file
+    transcription.import model, transcription.import models from file,
+    transcription.import hash mismatch, transcription.import verifying (SHA-verified import)
+
+=====================================================================
+2. TRANSCRIPTION (ASR)  - engine detail lives in asr-engines.txt
+=====================================================================
+2.1 Engine choice
+    transcript.select engine, transcription.select engine, transcription.manage engines,
+    transcription.local whisper, transcription.local transcription ("Whisper"),
+    transcript.cloud_transcription, transcript.local_model, transcription.online plugins,
+    transcription.local plugins, transcription.funasr description, transcription.parakeet description
+    IPC: startTranscribe, startTranscription, startTask, stopTranscribe, start-asr, stop-asr,
+         speech-to-text, get-extra-transcription-plugins
+2.2 Hardware / acceleration
+    preferences.enable gpu, transcription.use_gpu_label, preferences.view cuda,
+    preferences.enable flash attention, transcription.flash_attn_label
+    settings macOSWhisperMode(CPU|coreML|Metal) / windowsWhisperMode(CPU|GPU|cuBLAS)
+    IPC: checkWhisperCudaExist, checkWhisperCudaCLIExist, unzip-cuda, unzipWhisperCudaCLI,
+         get-graphics-card, check-electron-version (returns cuda + nvidiaSMI)
+2.3 Decoding parameters exposed to the user (transcription.* / transcript.*)
+    language, model, prompt, temperature, temperature_inc, max_len (Maximum Segment Length),
+    max_content (Max Context Tokens), logprob_thold, entropy_thold, no_speech_thold,
+    sns (Suppress Non-Speech), split_on_word, flash_attn, use_gpu
+2.4 Presets (built-in + user-defined)
+    transcription.builtin_presets, transcription.custom_presets, transcription.add_custom_preset,
+    transcription.transcription presets, transcript.presets
+    10 built-in scenario presets + "Default Settings" (transcription.default_settings):
+      video_label (Generate Subtitles), meeting_label, podcast_label, multi_speaker_label,
+      noisy_label, medical_label (Professional Fields), multi_language_label, low_label
+      (Low-spec Devices), live_label (Live Real-time Subtitles), language_learning_label
+      (English Learning)
+      cmd: keys matching transcription\.[a-z_]+_label$ -> 24 total, of which 14 are decoder
+           parameter labels (2.3) and 10 are scenario presets
+2.4a Language coverage (locale key counts)
+    transcript.langs.*        -> 104   (ASR source languages incl. auto, zh_s, zh_t, yue, multi)
+    subtitle.languages.*      -> 159   (subtitle/target language display names)
+    transcription.lang *      ->  29   (per-engine supported-language chips)
+    translate.langs.*         ->  27   (translation target languages)
+    cmd: python3 - flatten en.json, count keys by prefix
+2.5 VAD (voice activity detection) - 62 locale keys under `vad.`
+    preferences.transcription vad, preferences.threshold, preferences.vad hint,
+    transcript.start vad, transcript.vad completed, vad.compare.*, vad.common.segment count
+    IPC: startVad, startVadCut, startAsrVad, stop-asr-vad
+    setting: vad {enabled,threshold=0.6}; shipped model addon/vad/silero_vad.onnx
+2.6 Transcription timeline / repeat-loop auto-repair
+    transcription.timeline.* (title, coverage, vad segments, cut segments, speech duration,
+    repeat segment(s), auto fix on/off, auto fix stage {pending,extracting,detecting,cutting,
+    transcribing,replacing,merging,completed,failed}, repair repeats action)
+    IPC: stopFixTranscription, cutAudioSegments, extractAudioWithSegment(s), extract-waveform
+2.7 Background-music separation before ASR
+    transcript.separate background music (+ hint "only use human voice for transcription"),
+    common.audio separation, common.vocals, common.accompaniment,
+    transcript.optimization.install spleeter / remove accompaniment
+    IPC: extractAudioAccompaniment, getAccompanimentList, deleteAccompaniment
+    App page: /applications -> accompaniment (permission useAccompaniment)
+2.8 Speaker diarization  (33 locale keys under `speaker.`)
+    speaker.speaker recognition, speaker.speaker recognition extension, speaker.speaker count,
+    speaker.set name, speaker.speaker mode, speaker.show speaker, speaker.redo,
+    speaker.color ("Text color"), speaker.speaker dubbing ("Under Development")
+    IPC: startSpeakerRecognition, getSpeakerData, saveSpeakerData, saveSpeakerSettings
+    Implementation identifiers in main bundle: "speaker-diarization", diarizationEnabled,
+      realtimeDiarizationEnabled, "memo-extension-pyannote" (downloaded extension, pyannote)
+    Player integration: setting subtitle.enabledSpeakerColor ("Subtitle color follows speakers")
+2.9 Batch transcription  (Pro-gated)
+    route /batch-tasks; menu.batch tasks (pro:true); pro.batch tasks required title/description
+    task.* 76 keys: new task, start task, restart task, processing progress, task status,
+      advanced, backup to folder, transcription settings, translation settings, export settings
+    home.welcomeDialog.features.batchAsrPlugin ("Batch transcription tasks can now use ASR plugins")
+    IPC: createTask, startTask, stopTask, getTask, createExportTask, createPlaybackStream
+2.10 Keyword / hot-word list and filler-word filter
+    common.keyword configuration, common.total keywords, common.keyword filter,
+    common.filler filter ("Filler Words Filter")
+    IPC: get-keywords, insert-keyword, edit-keyword, remove-keyword
+    Storage: <userData>/conf/keywords.json
+
+=====================================================================
+3. SUBTITLE / TRANSCRIPT EDITING  (212 + 281 locale keys)
+=====================================================================
+3.1 Segment editing
+    common.subtitle cut ("Subtitle editing"), common.segment clip, common.segment transcription,
+    subtitle.insert new line, subtitle.content, subtitle.time, subtitle.text, subtitle.actor,
+    subtitle.cps, transcript.adjust time, common.delete selected subtitle,
+    subtitle.invalid_time_format / start_time_greater_than_end / end_time_less_than_start
+    transcript.re transcribe, transcript.re transcribe selected
+    Route: /subtitle/:id and /edit/:id
+3.2 Find & replace (with regex)
+    common.find and replace, common.find text, common.replace text, common.use regex,
+    common.match case, common.match whole word, action.replace all
+3.3 Undo / change history
+    transcript.change history ("restore the last {{changeHistorySize}} steps"), action.undo
+3.4 Automatic subtitle optimisation / proofreading  (transcript.optimization.*)
+    proofread, execute repair, auto fix, detect repeat, remove repeat / merge repeated items,
+    emt (remove empty subtitles), ep (remove trailing punctuation), space (remove extra spaces),
+    zf (remove 0-frame subtitles), overlap (fix overlapping subtitles), gap (minimum interval),
+    duration (minimum subtitle duration), interval check, invalid characters
+3.5 Line-breaking / length control
+    transcript.auto cut, transcript.maximum length, transcript.auto_cut_disabled_by_max_length,
+    transcription.max_len_desc ("recommended not to exceed 150")
+3.6 Paragraph / article view
+    transcript.article, common.paragraph, export.export paragraph text
+    ("Merge multiple subtitles into a paragraph")
+3.7 Player + waveform
+    player.* 17 keys: theater mode, fullscreen, select/switch audio track, subtitle track,
+      subtitle settings, random background, original audio, volume, mute
+    common.loading waveform, common.follow playback, common.auto scroll
+    IPC: extract-waveform, createPlaybackStream, getPlaybackStreamStatus, stopPlaybackStream
+3.8 Subtitle styling / burn-in
+    subtitle.subtitle style, font, font size, font color, border color, stroke color, opacity,
+      position (bottom / top left / top right / bottom left / bottom right), watermark,
+      primary subtitle, secondary subtitle, subtitle order (drag to reorder), multi language,
+      set main font, set sub font, search font (system fonts)
+    subtitle.burn subtitles ("Burn subtitles into video"), subtitle.hardcoded,
+      export.burning subtitles
+    IPC: get-fonts, find-local-fonts, export-video, abort-export-video, exec-ffmpeg-command
+3.9 External floating subtitle window
+    preferences.external subtitle window, setting useSubtitleWindow;
+    preferences.use ass -> setting subtitle.enabledASS (ASS renderer, lib jassub/assjs/ass-compiler)
+3.10 Screenshots
+    export.screenshots, action.screenshot ; IPC: screenshots, abort-screenshots,
+    copy-image, saveImageFile
+
+=====================================================================
+4. AI FEATURES  (293 locale keys under `ai.`)
+=====================================================================
+Registered AI feature enum in main bundle (identifier `xg`), 6 members:
+    SUMMARY="summary", MINDMAP="mindmap", CHAT="chat", PROMPT="prompt",
+    TRANSLATE="translate", CORRECTION="correction"
+Service-capability enum (identifier `lh`), 4 members: CHAT, SUMMARIZE, MINDMAP, TRANSLATE
+
+4.1 AI Summary
+    ai.summary ("AI Summary"), ai.generating summary, ai.wait summary, transcript.summary,
+    ai.key points, ai.timeline, ai.tags, ai.markdown, ai.text, ai.time and text
+    IPC: ai-summarize, summarize, stop-summarize, get-supported-summarize-services,
+         is-summarize-service-supported
+4.1a Summary TEMPLATES (106 locale keys under `summaryTemplate.`)
+    2 built-in templates: builtin.default ("Default summary template", fields summary /
+      keyPoints / keywords / timeline) and builtin.thesisThemes ("Thesis extraction template",
+      fields coreThesis / themes / keywords)
+    5 field component types: plain_text, key_point_list, tag_list, theme_group, timeline
+    15 intent suggestions (cmd: distinct 4th segment of keys under
+      summaryTemplate.intent.suggestion.) : chapters, coreConclusion, demoHighlights, keyInfo,
+      keyMoments, keyPoints, modules, problemBreakdown, progression, tagActionItems,
+      tagKeywords, tagQuestions, themeGroups, timeline, twoSentence
+    User-defined templates: summaryTemplate.manager.* (addField, fieldKey, componentType,
+      preview, saveTemplate, deleteTemplate, draft)
+    >> "CHAPTERS" FINDING: chapters exist ONLY as a summary-template intent suggestion.
+       Command: python3 - search flattened en.json for "chapter" -> 2 matches, both under
+       summaryTemplate.intent.suggestion.chapters. There is no chapter IPC channel
+       (grep of the 342 channels for "chapter" -> 0) and no chapter DB table.
+4.2 AI Mind Map
+    ai.mindmap ("AI Mind Map"), ai.generating mindmap, ai.wait mindmap, transcript.mindmap
+    IPC: ai-mindmap, stop-mindmap, get-supported-mindmap-services, is-mindmap-service-supported
+    Renderer implementation: markmap (markmap-lib/markmap-view/markmap-common ^0.15.5 in the
+      embedded package.json; renderer CSS classes .markmap-container, .markmap-node,
+      .markmap-link, .markmap-fold, markmap-svg-container). Mind map is rendered as SVG from
+      Markdown. ai.copy image is offered. Mind-map image export = png / jpg / svg
+      (toolbar menu, anchor download="mindmap.<ext>"); see export-formats.txt.
+    >> NEGATIVE FINDING: no .xmind / .opml / FreeMind (.mm) mind-map export exists.
+       Command: python3 - count tokens in both bundles -> xmind: renderer 0 / main 4,
+       opml: renderer 2 / main 4, freemind: 0 / 0. Every one of those hits is inside the
+       bundled `mime-db` MIME table (e.g. "text/x-opml":{...extensions:["opml"]}) or the
+       public-suffix list ("*.mm"), not in any app export code path.
+4.3 AI Chat (RAG over the transcript)
+    ai.chat ("AI Chat"), ai.new chat, ai.chat history, ai.start chat,
+    ai.chat panel.* : ai assistant, conversation, chat config, model, temperature,
+      clear conversation, delete current conversation, regenerate failed, copy answer,
+      citation not found ("The AI citation could not be matched to subtitle context"),
+      4 starter suggestions (summarize / analyze / explain / important info)
+    IPC: chat, stop-chat, saveChatMessage, getChatMessage, deleteChatMessage
+    Retrieval: folder constant bi.embeddings="embeddings"; IPC get-remote-models;
+      embedding-model folder setting (preferences.embedding models folder)
+4.4 AI subtitle Correction  (16 `correction.` keys + ai.correction.* )
+    ai.correction.title ("AI subtitle correction"), description ("Correct typos, homophone
+      recognition errors, and proper noun mistakes"), start, preview (change preview),
+      apply changes, cancel row change, thinking process, chunk progress message,
+      global correction memory, glossary ("Correction terms", wrong form -> correct form)
+    11 progress phases: preparing, connecting, requesting, waiting model, thinking,
+      streaming plan, waiting plan, streaming lines, repairing lines, retrying, finalizing
+    IPC (16): correction:correct-subtitles, correction:stop, correction:create-glossary,
+      correction:update-glossary, correction:delete-glossary, correction:get-glossary,
+      correction:list-glossaries, correction:merge-glossaries, correction:add-glossary-entries,
+      correction:remove-glossary-entry, correction:update-glossary-entry,
+      correction:parse-glossary-content, correction:create/update/delete-glossary-category,
+      correction:list-glossary-categories
+    Settings: correctionProvider, correctionModel, correctionPrompt, llmCorrectionGlossaryIds
+4.5 Prompt templates
+    ai.prompt template (settings tab #4); IPC getPromptTemplates
+4.6 LLM service management
+    24 built-in providers + user-defined OpenAI-compatible services
+    ai.custom service.* (add openai compatible, dynamic models, model endpoint URL,
+      context tokens, output tokens, model list), ai.service templates.* (24 displayName/
+      description pairs incl. huggingface, meta, perplexity, poe, vertexai, volcengine,
+      alibaba, lmstudio, ollama), ai.configure pricing / ai.price / ai.currency
+    IPC: 16 channels with the `llm:` prefix (cmd: count of channels startswith 'llm:') --
+      llm:get-services, llm:get-service-config, llm:get-service-models, llm:get-service-icons,
+      llm:save-custom-service, llm:delete-custom-service, llm:get-custom-services,
+      llm:check-service-config, llm:test-service, llm:get-stats, llm:clear-cache,
+      llm:model-registry:{get-status,check-update,update,reload,ensure-dir}
+      plus 3 unprefixed: test-llm-service, get-providers, get-service-config
+4.7 Memo Lab (experimental)
+    lab.memo experiment, lab.content expert prompt, lab.generated article, lab.select ai model
+    (Settings tab #11 "lab")
+4.8 "AI Slice"
+    common.ai slice  (no dedicated IPC channel found; UNKNOWN what it slices - see UNKNOWNS)
+
+=====================================================================
+5. TRANSLATION  (161 locale keys under `translate.`)
+=====================================================================
+5.1 Modes
+    translate.ai translation, translate.plugin translation, translate.by line
+      ("subtitles are sent to the AI line by line"), translate.quick translation
+      ("sends multiple requests to AI simultaneously"), translate.translate selected,
+      translate.translate uncompleted (resume partial translation)
+    IPC (13): translate-content, translate-line, translate-segment, translate-by-content,
+      translate-by-line, stop-translate, stop-translate-by-content, stop-translate-by-line,
+      get-translate-providers, get-support-translate-language, and 3 legacy-migration channels
+5.2 Bilingual / multi-subtitle output
+    subtitle.primary subtitle, subtitle.secondary subtitle, subtitle.multi language,
+    subtitle.original, subtitle.translated, subtitle.no translation, subtitle.subtitle order
+5.3 Translation glossaries (terminology)
+    translate.glossary.* : manager title "Translation Glossaries", categories, terms,
+      import terms (supports .json/.csv/.tsv/.txt), source term -> target term, notes
+    9 preset categories (cmd: distinct 4th segment under translate.glossary.preset categories.):
+      finance, game, general, legal, medical, names(Names and Places), science, sports, technical
+    5 preset glossaries: ai llm, finance market, game localization, software ui, subtitle media
+    IPC (14): translate:create-glossary, translate:update-glossary, translate:delete-glossary,
+      translate:get-glossary, translate:list-glossaries, translate:merge-glossaries,
+      translate:add-glossary-entries, translate:remove-glossary-entry,
+      translate:update-glossary-entry, translate:parse-glossary-content,
+      translate:create/update/delete-glossary-category, translate:list-glossary-categories
+5.4 Translation prompt templates
+    translate.prompt.* ; 3 presets: faithful subtitle (default id "faithful-subtitle"),
+      natural localization, term consistency; plus user custom prompts
+5.5 Bundled translation plugins (.memox files shipped)
+    memo-plugin-translate-deepl@1.0.4, memo-plugin-translate-google@1.0.4,
+    memo-plugin-translate-microsoft@1.0.4  (default setting translateProvider="Microsoft")
+5.6 Target languages
+    translate.langs.* -> 27 entries: ar az de en es fa fr hi id it ja kk ko ky ms pt ro ru
+    tg th tr ug uz vi yue zh_cn zh_tw
+    cmd: len([k for k in flat if k.startswith('translate.langs.')]) -> 27
+
+=====================================================================
+6. TEXT-TO-SPEECH / DUBBING  (60 locale keys under `tts.`)
+=====================================================================
+    tts.speech synthesis, tts.dialogue synthesis, tts.paragraph synthesis, tts.ai voice,
+    tts.align with subtitle, tts.speech with video ("Merge generated speech with video"),
+    tts.video first / tts.audio first (which stream is time-stretched),
+    tts.mute original video, tts.automatically adjust background volume, tts.export tts
+    IPC: textToSpeech, getTextToSpeech, stopTextToSpeech, synthesize, stop-speech, openTTS,
+      closeTTS, checkTaskTTS, getTTSHistory, kokoroSynthesize
+    Voice library ("temo"): getTemoLibrary, saveTemoLibrary, getTemoData, updateTemoData,
+      deleteTemoData, getTemoAudition (voice preview mp3), mergeTemo, abortMergeTemo,
+      copyTemoFile, temoDownload   (on-disk: temp/temo/library.json, temo.json,
+      temo/audition/<id>.mp3, temo_audio.mp3)
+    Bundled TTS plugins (.memox): memo-plugin-tts-edge@1.1.0, memo-plugin-tts-openai@1.0.3,
+      memo-plugin-tts-elevenlabs@1.0.4, memo-plugin-tts-volcengine@1.1.0
+    Local TTS engine: Kokoro (/applications -> kokoro, permission useKokoro; downloadable
+      extension memo-extension-kokoro, win32_x64 1.63 GB download / 4.14 GB installed)
+
+=====================================================================
+7. EXPORT  (26 locale keys under `export.`; full format matrix in export-formats.txt)
+=====================================================================
+    SUMMARY OF FORMATS (authoritative detail + evidence in export-formats.txt):
+      transcript/subtitle : srt, vtt, ass, lrc, txt, md, docx, fcpxml   (8)
+      note/document/project: json, memo (zipped project), zip (log bundle)  (3)
+      mind map            : png, jpg, svg   (3)
+      media               : mp4 (optional burned-in subtitles/watermark/TTS mux), mp3, wav (3)
+      integrations        : Notion (API), Obsidian (obsidian://new URI)   (2)
+      pdf                 : menu entry exists but is disabled:!0 and no PDF engine is bundled
+    export.select options / export.format / export.select format / export.select language
+    Content selectors: export.transcriptions, export.notes, export.tts, export.screenshots,
+      export.whole project, export.only project data, export.export selected segments
+    Transcript layout options: export.timestamp ("Show the start and end time of a text
+      segment"), export.number / export.add number ("Add a number to each paragraph"),
+      export.export paragraph / export paragraph text (merge subtitles into a paragraph)
+    Video export: export.burning subtitles, export.cutting, export.merging, export.process audio
+    Obsidian: export.export vault ("Vault"), export.input export vault ("Input export vault
+      to Obsidian")   [token "obsidian" x12 in renderer, x0 in main]
+    Notion: IPC publish-to-notion; common.config notion; setting notion{secretKey,pageId};
+      dependency @notionhq/client ^2.2.5
+    Batch export: task.export format / export language / export location / export size /
+      export settings / select export file name rule / export synthesized
+      Filename rules: task.original file name "Filename.xxx",
+        task.original file name with language "Filename+[language].xxx",
+        task.language with original file name "[language]+Filename.xxx"
+    IPC: createExportTask, export-video, abort-export-video, export-note-data,
+      export-note-project, saveFile, saveImageFile, export-logs
+    Format conversion page: route /convert; convert.start transcoding / stop transcoding /
+      transcode video; task.format conversion settings, task.target format, task.quality
+      (High/Medium/Low), task.select video size
+
+=====================================================================
+8. NOTES / ORGANIZATION
+=====================================================================
+8.1 Workspaces (18 locale keys under `workspace.`)
+    workspace.create workspace, select workspace, remove workspace, workspace name,
+      description, path ("Storage location"), backgroundColor default "#575BC7",
+      workspace.permanently delete ("remove your local workspace folder")
+    Store: electron-store cwd "workspaces", name "index"; DB table `workspace`
+    IPC: workspace-data, remove-workspace, open-workspace-folder,
+      get-workspace-folder-size, get-workspace-folder-space
+    Settings tab #2 "workspace"
+8.2 Folders
+    workspace.folders, workspace.new folder, preferences.folder management,
+      workspace.permanently delete folder
+    DB table `folder`; route /folder/:id
+    IPC: folder-data, remove-folder, get-folder-path, open-folder, open-path-folder,
+      show-item-in-folder, show-project-in-folder, find-transcription-index-folder
+8.3 Tags  >> NOTABLE
+    DB tables `tag`, `note_tag`, `doc_tag` exist (createTable evidence in main bundle),
+    but there is NO tag IPC channel (grep of the 342 channels for "tag" -> 0 hits) and NO
+    user-facing tag locale key. `ai.tags` / `ai.input tags` refer to AI-summary keyword tags,
+    not note tags. => tagging is a latent/unused schema, not a shipped feature.
+8.4 Notes (15 locale keys under `docs.`)
+    docs.create note, docs.title, docs.no docs ("No notes"), docs.original filename,
+      docs.grid view ("Card view") / docs.table view, sort by title / created date /
+      last modified, sort ascending/descending, docs.search ("Search notes")
+    Route /docs; sidebar label menu.notes; DB tables `note` and `doc`
+    IPC: note-data, doc-data, find-note-detail, find-free-note, search-note, clear-all-note,
+      export-note-data, export-note-project
+    transcript.send note ("Send to notes"), transcript.notes
+    Editor libs in embedded package.json: @uiw/react-md-editor ^4.0.1, react-markdown ^9.1.0,
+      remark-gfm, remark-math, rehype-katex, katex, monaco-editor ^0.52.2, mammoth ^1.6.0
+      (docx -> html import), docx ^8.2.2 (docx generation)
+8.5 Media library
+    Route /all; sidebar menu.media; DB tables `resource`, `download`
+    IPC: resource-data, remove-resource, batch-remove-resource, download-data,
+      create-resource-task, create-project, remove-project, get-list-data
+8.6 Trash (7 locale keys)
+    Route /trash; trash.permanently delete, trash.revoke, trash.search ("Search filenames"),
+      trash.thumbnail, trash.original filename
+8.7 Search (13 locale keys under `search.`)
+    search.help.title ("Search Help") with three modes documented:
+      match_case ("Match uppercase and lowercase letters exactly"),
+      whole_word ("Find exact word matches only"),
+      regex ("Use regular expressions for advanced pattern matching") - each with 3 examples
+    menu.search; common.recent searches; IPC search-note
+    Scoped searches: docs.search (notes), task.search (batch filenames), trash.search
+
+=====================================================================
+9. OCR  >> NOTABLE (only 1 locale key, but a real shipped feature)
+=====================================================================
+    Locale evidence: transcript.ocr = "OCR"   (1 key; command: search flattened en.json
+      for "ocr" -> 1 match)
+    IPC channel: image-ocr
+    Windows implementation: resources/addon/ocr/RapidOcrOnnx.exe with PaddleOCR ONNX models
+      (det.onnx 2.4 MB, rec.onnx 10.7 MB, cls.onnx 0.6 MB, ppocr_keys_v1.txt 32 KB)
+      - confirmed present in /root/memoac-fx/win-listing.txt
+    macOS implementation: Contents/Resources/addon/ocr/macos-vision-ocr (Apple Vision framework)
+    Languages requested by the handler: zh-Hans, zh-Hant, en-US, ja-JP
+    Renderer identifiers: imageOCR, ocrData
+    NOTE: "tesseract.js":"^4.1.1" appears in the embedded package.json `scripts` block only,
+      NOT in dependencies or devDependencies; the shipped OCR path is native, not tesseract.js.
+
+=====================================================================
+10. PLUGINS / EXTENSIONS  (8 locale keys under `plugins.`)
+=====================================================================
+    plugins.install success / upgrade success / remove plugin / clear cache / view all apps
+    preferences.extensions, preferences.install extension, preferences.extension install folder,
+      preferences.extension package
+    IPC (19): get-plugins, install-plugins, install-online-plugins, refresh-online-plugins,
+      uninstall-plugin, test-plugins, readPluginFile, savePluginFile, getPluginEditorOptions,
+      checkPluginFileExist, download-extra-plugin, cancel-download-extra-plugin,
+      check-extra-plugin-installed, uninstall-extra-plugin, get-extra-transcription-plugins,
+      import-extra-plugin-model-file, + 3 legacy-llm-translate-plugin-migration:* channels
+    Extension (native addon) IPC: install-extensions, downloadExtension, cancelDownloadExtension,
+      removeExtension, checkExtensionExists, openExtensionFolder, get-extension-folder-path
+    Sandbox: vm2 ^3.9.19 in the embedded package.json
+    Shipped .memox plugin archives: 7  (3 translate + 4 tts; see sections 5.5 / 6)
+    Downloadable native extensions referenced in main bundle: pyannote (speaker diarization),
+      kokoro (TTS), spleeter (audio separation), whisper CUDA add-on
+
+=====================================================================
+11. SETTINGS / SYSTEM  (109 locale keys; schema in settings-schema.txt)
+=====================================================================
+    12 settings tabs; theme light/dark/system; 8 UI locales; proxy (system/custom/none) with
+    latency test; model & extension & temp & log folder relocation; download-source mirror
+    picker with network reachability test (transcription.network check title);
+    update channel incl. pre-release (receivePrereleaseUpdates); tray icon; permissions page
+    (macOS only: microphone / camera / screen); cache & database reset;
+    app tour (menu.app tour, driver.js); feedback/bug report (menu.report a bug, IPC report-bug)
+    Licensing / Pro (35 `pro.` keys): activate-license, activate-pro-license,
+      deactivate-pro-license, create-license, check-pro, get-pro-limit, use-pro-limit,
+      get-user-type, check-device, get-device-manager-info, get-machine-id
+      Pro-gated capabilities named in locale: batch tasks, GPU acceleration,
+      high-quality model, high-quality (4K/1080P) video export, export synthesized TTS audio
+    Telemetry: IPC action-event-track, page-event-track (mixpanel / mixpanel-browser deps)
+
+=====================================================================
+12. FEATURES EXPLICITLY *NOT* FOUND
+=====================================================================
+    TODO / task-list feature .......... NOT PRESENT.
+        cmd: search flattened en.json for "todo" -> 0 matches.
+        cmd: grep the 342 IPC channels for "todo" -> 0 hits.
+        (The `todo` token hits in the bundles are the tinyld language-detection trigram
+         table and the Spanish UI string "todo el contenido".)
+    xmind / opml / freemind mind-map export ... NOT PRESENT (see 4.2 for the command + counts).
+    Note tags UI ...................... NOT PRESENT despite tag/note_tag/doc_tag tables (see 8.3).
+    EPUB / xlsx / html / ttml / sbv / ssa export ... NOT PRESENT (see export-formats.txt).
+    PDF export ........................ menu item present but `disabled:!0`, and 0 PDF engines
+        are bundled (jsPDF / pdfmake / pdfkit / webContents.printToPDF all count 0).
+    Hard-coded cloud ASR providers .... NOT PRESENT. Cloud ASR is delivered only as downloadable
+        plugins (see asr-engines.txt); deepgram|assemblyai|gladia|speechmatics|revai|soniox|
+        iflytek tokens = 0 hits in both bundles.
+
+=====================================================================
+13. UNKNOWNS
+=====================================================================
+    UNKNOWN: what "common.ai slice" (AI Slice) does. The string exists in en.json but no
+             matching IPC channel, route or component identifier could be tied to it in the
+             minified renderer, so its behaviour cannot be stated from static artifacts.
+    UNKNOWN: exact list of preset/built-in keyboard shortcuts (common.shortcuts exists but the
+             binding table is built at runtime from minified handlers).
+    UNKNOWN: the preload API surface (window.AIM.*) - preload ships as V8 bytecode
+             (dist-electron/preload/index.jsc), so the renderer<->main API cannot be enumerated
+             directly; the 342 ipcMain.handle names are the authoritative proxy for it.
+    UNKNOWN: whether `doc` (table + doc-data IPC + DocController) is a separate user-facing
+             entity from `note`; both exist in the schema, but en.json has a single "Notes"
+             surface (docs.*), so the distinction is not observable from the shipped strings.

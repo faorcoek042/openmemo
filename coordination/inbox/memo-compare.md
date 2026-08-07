@@ -206,3 +206,64 @@ tiny-f16 和 large-v3-f16 都落进「full」，可两者速度差几十倍。
 - **品牌色 NOT FOUND**（明确查过 24 家全部字段，无 color/brandColor/theme）。
 - **未核实**：`icon` 字符串 id 映射到哪个图标包的哪个图形；甲/乙两份旧名单与本次 registry 的分工差异。
 - 两份 JSON 均为**事实性数据目录**（id/端点/模型名/体积/分组轴），非 memo.ac 源码，文件头 `_meta` 已注明。
+
+## [2026-08-08 00:06] T-171 DONE（用户亲自点名：重解 memo 包、对齐功能点与实现）
+
+交付:
+- `docs/research/memoac/GPU-BACKENDS.md` —— ★ 当年那个「未验证」项的答案
+- `docs/research/memoac/F1-F5-PARITY.md` —— ★ F1–F5 + 2.1/2.2 双层对照 + 差距清单（按性价比排序）
+- `docs/research/memoac/README.md` + `{ipc-channels,settings-schema,feature-list,asr-engines,export-formats}.txt`
+  + `win-package-listing.txt` —— 取证台账落盘（当年在 `/tmp/memoac/`，已随重启消失）
+
+要点:
+- **Windows 包解开了（`apt-get install p7zip-full` 即可，当年就是缺这个），R-01 的结论是错的**：
+  memo.ac 在 Windows 上有**第三个 GPU 后端 —— DirectCompute（D3D11）**，
+  `addon/whisper/bin/gpu/{main.exe,Whisper.dll}`，PE 导入表实测 `d3d11.dll`+`dxgi.dll`，
+  版本资源写着 `DirectCompute port of whisper.cpp library`（Const-me/Whisper 自建分支，
+  PDB 路径泄露分支名 `em2er-whisper`）。**D3D11 厂商中立 → 它的 "AMD GPU Acceleration" 宣传是真的**，
+  R-01 判其「夸大宣传」应撤回。**没有 Vulkan / DirectML / ROCm。** macOS 侧 R-01 正确（Metal/CoreML/CPU）。
+- **R-01 的错因已定位**：它引的 `["cpu","cuda"]` 是 **FunASR 的 device 列表**，不是全 app 的后端枚举。
+  真正的调度是 `m0r()`：win32 + `windowsWhisperMode` ∈ {CPU, GPU(=DirectCompute), cuBLAS}；界面是三按钮，默认 CPU。
+- **最值得做的第一条不是"追竞品"，是"我们自己编好了没发给用户"**：CI run 31155359839
+  合并出 **9 个 whisper 包，仓库 backends.json 只有 5**。漏的含 `whispercpp-vulkan-win-x64`
+  （产物 23 MB 未过期，`sizeBytes`/`sha256` 都已生成，**只差 `mirrors` 没传 release**）。
+  → **Windows 非 N 卡用户零 GPU 加速，而章程 §3 明确要求「Windows + AMD → Vulkan/DirectML」。这是章程未达标项。**
+- **F4 的差距方向和直觉相反**：memo.ac 是 markmap（Markdown→SVG）**节点不可编辑**、导出走 `html2canvas` 位图；
+  我们是 mind-elixir **节点级可编辑** + 矢量 SVG。**但我们服务端 4 种导图导出（md/opml/mm/json）
+  在界面上一个入口都没有** —— 全仓 `what=mindmap` 只命中 1 个测试注释 + 1 个 README。写了、测了、点不到。
+- **纠正 R-06 一条**：「memo.ac 有标签系统」是**过度纠正**。表是有，但 **0 个 tag IPC 通道**，
+  locale 里 5 个 tag 键全是「AI 摘要输出关键词」的字段名 → 它没有可用的笔记标签功能，**我们有**。
+
+下一步建议:
+1. **传 `whispercpp-vulkan-win-x64` 到 backend-packs release 并补 manifest 的 `mirrors`**（照
+   `whispercpp-vulkan-linux-x64` 已填好的那条抄）—— 代价最低、唯一能补上章程未达标项的一条。
+2. 接通思维导图的 4 种结构化导出入口（`ExportMenu` 加 `what=mindmap`）+ 接通搜索结果的 `?t=` 跳时间点 —— 两条都是纯前端接线。
+3. macOS 的 Metal 包重贴标签（现在 Metal 其实在跑，但包标成 `backend:"cpu"`，界面永远说不出"你在用 Metal"）。
+
+需要 Manager 决策:
+1. **传 release 需要授权** —— 本轮纪律禁止我建/改 release，gap 1 的最后一步卡在这里。请指派或授权。
+2. **空间 / Workspace 到底做不做、做哪一层**（逻辑分区 = 低成本；每空间独立磁盘根 = 要改 daemon 路径解析全局单例）。
+   ADR-006 决定不做，R-06 请求裁决，**至今无人回答**。这条卡在决策不卡在实现，**我不替你选**。
+3. **「跑基准」按钮**：先隐藏还是真做？现在它打的是永久 501 且该页不渲染 error，点了静默失败。
+4. Linux CUDA 包（缺 `libcudart` 随包分发）维持现状的话，**对外口径要改** —— 这条 R-06 提过，仍未做。
+
+诚实声明:
+- **未运行 memo.ac 的任何二进制、未注册账号、未向其发送任何数据**；全部为静态取证
+  （解包 / 读配置 / 自写 Python 解析 PE 导入表与 asar）。
+- **未改动任何产品代码**；未碰 `:10000`、`/root/data-memo`、`~/.local/share/openmemo/datadir.json`；
+  未跑任何构建；未建/改/删 release；未用 `pkill`。
+- 我方所有「有」均由我本人或我派出的审计 agent 落到 file:line；**我本人复核了 F4 全链路**
+  （mind-elixir 版本、editable 配置、export.ts、`what=mindmap` 零调用）与 GPU 全链路。
+- **未在真浏览器点击验证任何页面**；**gap 1 的「传完 release 后 Windows AMD 真能用」未在真 AMD 硬件上验证**
+  —— 与章程 §3 的 Windows+NVIDIA 那格同理，这台机器结构上验不了。
+- 标 `[报告]` 的（Workspace 一等公民、代理 37 处注入点、9 张表、静态密钥 AES）引自 R-06，本轮未复核。
+- `UNKNOWN`：memo.ac 的回收站/星标行为、Pro 额度数值与单位、`enableCoreML` 由谁置位、
+  preload API 面（`window.AIM.*` 是 V8 字节码 `index.jsc`，未反编译）。
+- **未把 memo.ac 的可执行文件、模型或任何受版权资源提交进仓库**；`docs/research/memoac/` 全部为文本事实台账。
+- **WebSearch 本轮对我同样不可用**，但错误与当年不同：`400 output_config.effort 'xhigh' is not supported
+  when thinking is disabled`（配置错误，非网络）。`curl` / `gh` / 二进制取证均正常。
+
+派生 subagent 记录（未 kill，可复用）:
+- `abc7951ebc7336551` (Explore) — 我方 F1–F5 + 2.1/2.2 实现真伪审计（含"写了但触发不了"清单）
+- `a14a443fdd54ce997` (general-purpose) — memo.ac 功能/IPC/设置/引擎/导出五份台账
+- `aa4dac81d158e2a16` (general-purpose) — 我方 backends/模型/LLM/导出/接口/设置/组织 八项清点
