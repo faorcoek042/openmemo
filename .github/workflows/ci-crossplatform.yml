@@ -88,9 +88,54 @@ jobs:
         if: ${{ !cancelled() }}
         run: pnpm typecheck
 
+      # ★ T-171 补：此前本 workflow **没有 lint**，于是「跨平台门禁」在 lint 这一格上
+      #   等于不存在 —— `ci.yml`（ubuntu-24.04）是全仓唯一自动触发的 workflow，
+      #   它绿了只说明 **Linux 上**的 eslint 绿。
+      #
+      #   为什么 lint 也需要跨平台跑（不是凑数）：eslint 的一部分判定与**文件系统**有关，
+      #   而三个平台在这上面不一样 —— import 解析走真实路径（macOS/Windows 大小写不敏感，
+      #   Linux 敏感 ⇒ `import './Foo'` 引 `foo.ts` 在 Linux 红、另两个平台绿），
+      #   glob 展开与路径分隔符也不同。`[未验证]` 本机只有 Linux，这条预测要靠一次真 dispatch
+      #   来证实或推翻 —— 照本文件末尾那条 `check:sources` 的先例，跑完请回来更新这段话。
+      - name: Lint
+        if: ${{ !cancelled() }}
+        run: pnpm lint
+
       - name: Test
         if: ${{ !cancelled() }}
         run: pnpm -r test
+
+      # ★ T-171 补：此前本 workflow 也**没有 `test:ci-scripts`**。
+      #
+      #   ⚠️ **这一步在 macOS / Windows 上很可能是红的，而那正是要它的理由**（探针不是门禁）。
+      #   `[未验证，需真机]` 预测与判据：`pnpm test:ci-scripts` 串了 7 个自检，其中
+      #   `selftest-buildbox.sh` / `selftest-build-whisper.sh` 是 **bash 脚本**，用到
+      #   `mktemp` / `sed` / `grep` / `ldd`。Windows runner 上 `bash` 是 Git Bash，
+      #   前三个有、**`ldd` 没有**；macOS 上 `sed` 是 BSD 版，`sed -i` 的参数与 GNU 不兼容。
+      #   所以预期形状是「Linux 绿、另两个平台在这一步红」。
+      #
+      #   为什么仍然接进来而不是等修好：这 7 个自检守的是 `build-backends.yml` 的判定逻辑，
+      #   而那个 workflow **本来就要在三个平台上跑**。自检只在 Linux 上跑过，
+      #   等于「用 Linux 的行为去证明 Windows 上的判定是对的」—— 本仓最贵的那类假绿。
+      #   先让它红出来，再决定是修脚本还是按平台收窄。**红了不要加 continue-on-error**
+      #   （文件头 ⚠️ 那条判据），要么修，要么把这段话改成实测结论。
+      - name: CI scripts self-test
+        if: ${{ !cancelled() }}
+        run: pnpm test:ci-scripts
+
+      # ── ⛔ `pnpm format:check` **刻意没有接**，这里也不接，`ci.yml` 里也不接 ──────────
+      #
+      # `[T-171 实测 2026-08-07]` `npx prettier --check .` → **481 个文件不合格**
+      # （历史记录：审计记 403、T-169 实测 476 —— 两个都已过期，别再引用那两个数）。
+      #
+      # 今天接进任何 workflow = 造一条**永远红**的门禁。而本仓自己写过判据：
+      #   **「一条永远红的守卫等于一条被删掉的守卫，而且会训练人忽略红灯。」**
+      # 顺序必须是「先把 481 个文件统一格式化 → 再上门禁」，反过来做只会让人给它加
+      # `continue-on-error`，那就正好变成本文件头 ⚠️ 那条判据禁止的东西。
+      #
+      # → 这是一条**已登记的欠债**，不是被忘掉的。要清它请单开一个任务：
+      #   一次 `pnpm format` 会碰几百个文件，与任何并行改动都必然冲突，
+      #   所以它得独占一个提交窗口（PROTOCOL §10 推论：这类改动要么一次到位，要么申报窗口）。
 
       # T-141 §3 第 30 条预测过：这一步用 POSIX `find`，而 Windows 的 `FIND.exe` 是
       # grep 类工具，语义完全不同 → catch → 返回 [] → "没找到任何源码目录" → exit 1。

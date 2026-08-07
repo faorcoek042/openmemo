@@ -425,6 +425,55 @@ for (const file of files.sort()) {
     'ci.yml: 用了 `pnpm -r build` —— PROTOCOL §7 补充要求一律 `pnpm build:safe`，' +
       '本地跑同一条命令会覆盖用户正在看的 apps/web/dist',
   );
+
+  /* ═════════════════════════════════════════════════════════════════════════════════
+   * T-171 · ci-crossplatform.yml 必须跑与 ci.yml **同一套**静态检查
+   *
+   * 立这一组的成因：`ci-crossplatform.yml` 此前**没有 lint、也没有 test:ci-scripts**。
+   * 而 `ci.yml`（ubuntu-24.04）是全仓**唯一自动触发**的 workflow，其余 5 个都是
+   * `workflow_dispatch`。两件事叠起来的净效果是：**「跨平台」这三个字在 lint 和
+   * CI 自检这两格上等于不存在** —— 而它恰恰是最该跨平台跑的两格
+   * （eslint 的 import 解析吃文件系统大小写敏感性；那 7 个 CI 自检守的是
+   * `build-backends.yml` 的判定逻辑，而那个 workflow 本来就要在三个平台上跑）。
+   *
+   * ⚠️ 判据不是"补齐了就完了"，是**"少一条当场红"** —— 否则下一个人把它删掉时，
+   * 失效的样子和"本来就没有"一模一样，这正是本仓在清的假绿家族。
+   * 这一组由 `pnpm test:ci-scripts` 的第一步跑，而它在 `ci.yml` 里 ⇒ **有自动调用方**。
+   *
+   * ⚠️ **不要**在下面这张表里加 `pnpm format:check`。理由与实测数字写在
+   * `ci-crossplatform.yml` 里那段 ⛔ 注释：`[T-171 实测]` 481 个文件不合格，
+   * 今天接进去就是一条永远红的门禁。**先统一格式，再上门禁。**
+   * ═════════════════════════════════════════════════════════════════════════════════ */
+  {
+    const XP = 'ci-crossplatform.yml';
+    const xp = parse(await readFile(join(WF_DIR, XP), 'utf8'));
+    const xpRuns = Object.values(xp.jobs ?? {})
+      .flatMap((j) => j?.steps ?? [])
+      .map((s) => String(s.run ?? ''))
+      .join('\n');
+    for (const cmd of ['pnpm lint', 'pnpm test:ci-scripts', 'pnpm typecheck', 'pnpm -r test']) {
+      must(
+        xpRuns.includes(cmd),
+        `${XP}: 缺 \`${cmd}\` —— 跨平台探针必须跑与 ci.yml 同一套检查，` +
+          `否则「跨平台」在这一格上等于不存在（T-171）`,
+      );
+    }
+    must(
+      !/pnpm -r build/.test(xpRuns),
+      `${XP}: 用了 \`pnpm -r build\` —— PROTOCOL §7 补充要求一律 \`pnpm build:safe\``,
+    );
+    /*
+     * 探针**不许**变成门禁而不先处理 `!cancelled()`：文件头 ⚠️ 那条判据写着
+     * 「如果哪天有人想把这个 workflow 当门禁用，必须先把 `!cancelled()` 全删掉」。
+     * 这里把它钉成可执行的断言：只要还有 `!cancelled()`，就不许自动触发。
+     */
+    const hasNotCancelled = /!\s*cancelled\s*\(\s*\)/.test(JSON.stringify(xp));
+    must(
+      !(hasNotCancelled && xp.on?.push !== undefined),
+      `${XP}: 同时有 \`!cancelled()\` 和 \`on.push\` —— 探针要转门禁，` +
+        `必须先按文件头那条判据把 \`!cancelled()\` 全删掉，否则后续步骤会在前面已红时继续跑`,
+    );
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════════
