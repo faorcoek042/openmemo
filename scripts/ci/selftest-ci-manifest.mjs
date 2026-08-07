@@ -121,13 +121,28 @@ function validatePack(pack) {
   });
 }
 
+/*
+ * ★ T-163：这几组用例要的是一个「目录里**还没有**的包」。
+ *
+ * 原来写死的是 `whispercpp-vulkan-linux-x64` —— 那时候它确实不在目录里。
+ * T-163 把它**真的补进 backends.json** 之后，两条用例当场变味而不是变红：
+ *   · ③「新包被加进来」变成了 upsert 已有条目，`packs.length + 1` 对不上（这条红了，好）；
+ *   · ⑤「坏 fragment 必须失败」**静默变绿**：merge 先按 ADR-015 认出"同 id 且上游有真 URL"
+ *     就跳过了它，**根本没走到 schema 校验**，于是 exit 0 —— 一条反向用例失去了它要验的东西，
+ *     而它看起来完全正常。
+ *
+ * 所以夹具改用一个明确不在目录里的 id，并**断言它确实不在** ——
+ * 哪天它也被发布了，这条前提会当场红，而不是又一次悄悄变味。
+ */
+const UNRELEASED_PACK_ID = 'whispercpp-vulkan-linux-arm64';
+
 /* ══════════════════ ① fragment 生成（C2） ══════════════════ */
 
 console.log('\n① fragment 生成 —— 必须直接通过 BackendPackSchema（.strict()）');
 
 let goodFragment;
 await acheck('emit 出来的 fragment 通过真 schema', async () => {
-  const { r, out } = await emit('whispercpp-vulkan-linux-x64');
+  const { r, out } = await emit(UNRELEASED_PACK_ID);
   assert.equal(r.status, 0, `emit 退出码 ${r.status}\n${r.stderr}`);
   goodFragment = JSON.parse(await readFile(out, 'utf8'));
   const v = validatePack(goodFragment);
@@ -166,7 +181,7 @@ console.log('\n② 旧的 printf fragment —— 必须被 schema 挡下来（�
 const LEGACY_FRAGMENT = {
   // 这是 build-whisper.sh 修复前 `emit_manifest()` 真正吐出来的形状（逐字段照抄）
   schemaVersion: 1,
-  id: 'whispercpp-vulkan-linux-x64',
+  id: UNRELEASED_PACK_ID,
   engine: 'whisper.cpp',
   engineVersion: 'v1.9.1',
   engineCommit: 'deadbeef',
@@ -206,6 +221,12 @@ await writeFile(join(fragDir, 'a.json'), JSON.stringify(goodFragment));
 
 let merged;
 await acheck('合并后现有上游包一个不少，新包被加进来', async () => {
+  // 前提：这个 id 必须真的还不在目录里，否则下面验的是 upsert 不是 add（见 UNRELEASED_PACK_ID）
+  assert.ok(
+    !realManifest.packs.some((p) => p.id === UNRELEASED_PACK_ID),
+    `前提不成立：${UNRELEASED_PACK_ID} 已经在 backends.json 里了 —— ` +
+      `换一个还没发布的 id，别把这条 add 用例悄悄变成 upsert 用例`,
+  );
   const r = run(MERGE, ['--fragments', fragDir, '--manifest', workManifest]);
   assert.equal(r.status, 0, `merge 退出码 ${r.status}\n${r.stdout}${r.stderr}`);
   merged = JSON.parse(await readFile(workManifest, 'utf8'));
@@ -213,7 +234,7 @@ await acheck('合并后现有上游包一个不少，新包被加进来', async 
   for (const p of realManifest.packs) {
     assert.ok(ids.has(p.id), `上游包 ${p.id} 在合并后消失了 —— 这正是 C1`);
   }
-  assert.ok(ids.has('whispercpp-vulkan-linux-x64'), '新包没进去');
+  assert.ok(ids.has(UNRELEASED_PACK_ID), '新包没进去');
   assert.equal(merged.packs.length, realManifest.packs.length + 1);
 });
 

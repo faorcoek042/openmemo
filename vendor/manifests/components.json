@@ -27,6 +27,29 @@
       "sha256": "f3bf3b4369a99b54665b0f19b88483b30de27f25963b0414235dea03198515c5"
     },
     {
+      "id": "whispercpp-vulkan-linux-x64",
+      "displayName": "whisper.cpp Vulkan backend (Linux x64)",
+      "displayNameZh": "whisper.cpp Vulkan 后端（Linux x64）",
+      "category": "backend-pack",
+      "pinnedVersion": "v1.9.1",
+      "provenance": {
+        "repoUrl": "https://github.com/ggml-org/whisper.cpp",
+        "releaseUrl": "https://github.com/faorcoek042/openmemo/releases/tag/backend-packs-2026.08.07",
+        "license": "MIT",
+        "licenseUrl": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE",
+        "submodulePath": "vendor/whisper.cpp",
+        "submoduleCommit": "f049fff95a089aa9969deb009cdd4892b3e74916"
+      },
+      "upstream": {
+        "kind": "github-release",
+        "repo": "ggml-org/whisper.cpp",
+        "stableOnly": true
+      },
+      "sizeBytes": 29491623,
+      "sha256": "62187d4a9610e2806a07fe0cd00cc27e68aaa7b026805c74e1896470e4ce9473",
+      "sha256Provenance": "★ T-163：这是**我们自己编的**包，不是上游产物 —— 上游 whisper.cpp v1.9.1 至今没有任何 Vulkan 构建（release 资产逐条核过）。所以 provenance 里两个 URL 指的是两件事：`repoUrl` 是**源码**来源（submodule 钉在 f049fff9 = v1.9.1 tag），`releaseUrl` 是**这些字节**的来源（我们的 release）。构建：`build-backends` run 31147884172，ubuntu-24.04 runner + scripts/ci/buildbox.Dockerfile 造的 glibc 2.35 容器（见 D-11 §8.2 那条 GLIBC_2.38 的坑）。sha256：**匿名从 release URL 全量重下 29,491,623 字节后本机独立复算**（env -u GITHUB_TOKEN -u GH_TOKEN，HTTP 200），没有抄 CI fragment、也没有抄任何人转述的值。解开逐个 ELF 跑 objdump -T：23 个 ELF 最高 GLIBC_2.34（Ubuntu 22.04 / Debian 12 都跑得动）；providesFiles 23 个含 whisper-cli 与 libggml-vulkan.so —— 这个包是**自包含**的，不依赖任何别的包的目录（D-11 §8.4）。⚠️ `upstream` 指向 ggml-org/whisper.cpp 是**刻意**的：它回答的是「引擎有没有新版本」。但上游发新版**不会自动产出新的 Vulkan 包** —— 那要有人重跑一次 build-backends 并发布。所以这一条上的「有更新」是「该重建了」的提示，不是「点一下就能升」。"
+    },
+    {
       "id": "whispercpp-cpu-macos-arm64",
       "displayName": "whisper.cpp — CPU + Metal + CoreML/ANE (macOS Apple Silicon)",
       "displayNameZh": "whisper.cpp · CPU + Metal + 神经引擎（macOS Apple Silicon）",

@@ -47,6 +47,72 @@
     },
     {
       "schemaVersion": 1,
+      "id": "whispercpp-vulkan-linux-x64",
+      "engine": "whisper.cpp",
+      "engineVersion": "v1.9.1",
+      "ggmlAbi": "0.15.1",
+      "backend": "vulkan",
+      "tier": "downloadable",
+      "os": "linux",
+      "arch": "x64",
+      "displayName": "whisper.cpp — Vulkan (Linux x64)",
+      "displayNameZh": "whisper.cpp · Vulkan 后端（Linux x64）",
+      "files": [
+        {
+          "role": "archive",
+          "name": "whispercpp-vulkan-linux-x64.tar.gz",
+          "sizeBytes": 29491623,
+          "sha256": "62187d4a9610e2806a07fe0cd00cc27e68aaa7b026805c74e1896470e4ce9473",
+          "unpack": "tar.gz",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/backend-packs-2026.08.07/whispercpp-vulkan-linux-x64.tar.gz",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 29491623,
+      "requiresDriver": {
+        "vulkanApi": "1.2"
+      },
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE"
+      },
+      "providesFiles": [
+        "libggml-base.so.0.15.1",
+        "libggml-cpu-alderlake.so",
+        "libggml-cpu-cannonlake.so",
+        "libggml-cpu-cascadelake.so",
+        "libggml-cpu-cooperlake.so",
+        "libggml-cpu-haswell.so",
+        "libggml-cpu-icelake.so",
+        "libggml-cpu-ivybridge.so",
+        "libggml-cpu-piledriver.so",
+        "libggml-cpu-sandybridge.so",
+        "libggml-cpu-sapphirerapids.so",
+        "libggml-cpu-skylakex.so",
+        "libggml-cpu-sse42.so",
+        "libggml-cpu-x64.so",
+        "libggml-cpu-zen4.so",
+        "libggml-vulkan.so",
+        "libggml.so.0.15.1",
+        "libparakeet.so.1.9.1",
+        "libwhisper.so.1.9.1",
+        "whisper-bench",
+        "whisper-cli",
+        "whisper-server",
+        "whisper-vad-speech-segments"
+      ],
+      "priority": 80,
+      "benchmark": null,
+      "catalogVersion": "2026.08.07"
+    },
+    {
+      "schemaVersion": 1,
       "id": "whispercpp-cpu-macos-arm64",
       "engine": "whisper.cpp",
       "engineVersion": "v1.9.1",
