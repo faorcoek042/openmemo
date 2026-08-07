@@ -8,15 +8,29 @@
 
 | 平台 | 今天的真实状态 |
 |---|---|
-| **Linux x64**（glibc ≥ 2.34） | ✅ 通，只有 CPU 后端 |
-| **Windows x64**（需 VC++ 2015-2022 运行时） | ✅ 通，只有 CPU 后端（CUDA 包今天装不上） |
-| **macOS arm64**（≥ 13.3） | ✅ 通，CPU + Metal；ANE 未启用时转写慢很多 |
+| **Linux x64**（glibc ≥ 2.34） | ✅ 通，CPU；目录里另有 Vulkan 包，**没在真 GPU 上验过** |
+| **Windows x64**（需 VC++ 2015-2022 运行时） | ✅ 通，CPU；CUDA 包见下面「已知不支持」 |
+| **macOS arm64**（≥ 13.3） | ✅ 通，CPU + Metal；**ANE 今天是坏的**，见下 |
 | 其余组合（AMD · macOS Intel · linux-arm64） | ❌ 见下面「已知不支持」 |
 
 判据是**「屏蔽宿主 PATH 的干净机器上真的转出非空文本」**，不是「代码写完了」：CI `cold-start-audit` run
-31076010999 三平台各一次，5 个工具全由产品自己下载校验、借宿主 PATH 的 **0** 个。逐条证据与三条运行时下限见 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §1。
+31160171438 三平台各一次，5 个工具全由产品自己下载校验、借宿主 PATH 的 **0** 个；同一轮里
+Linux 与 Windows 的硬件探针首次报出 `ok`（各枚举到 1 个设备）。逐条证据与三条运行时下限见
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §1。
 
 ## 快速开始
+
+### 先说清楚要下什么
+
+**这个项目没有安装包。** 装它的唯一方式是**克隆源码然后自己构建**——没有 `.exe`、没有 `.dmg`、
+没有 `.AppImage`，也没有 npm 包。个人自用项目，不做分发（ADR-002）。
+
+⚠️ **GitHub 的 Releases 页那几个 `backend-packs-*` / `model-mirror-*` 不是给你下的。**
+它们是**产品自己在运行时去取**的后端二进制与模型镜像——你在网页上点"安装"，daemon 按目录里
+钉死的 sha256 下载并校验。手动下载它们没有用：解压出来放哪、叫什么名字、要不要建硬链接，
+全部由安装器决定，不是拖到某个目录就能生效的。
+
+所以你要做的只有一件事：**把整个仓库 clone 下来**。
 
 前置：Node ≥ 22（`.nvmrc` = 22）· pnpm 10.15.0。**不需要**预装 ffmpeg / whisper / yt-dlp / CUDA
 （产品自己下载），也**不需要** `git submodule`（只在自己编译原生产物时才用得上）。
@@ -28,6 +42,11 @@ pnpm install
 pnpm -r build                        # ★ 网页 bundle 只有这条会产出，见下
 node apps/daemon/dist/main.js        # 打开终端里打印的地址，默认 http://127.0.0.1:17650/
 ```
+
+**下载量的实话**：仓库本身很小，但第一次用完整功能要从网上取 **几百 MB 到 1 GB+** ——
+`pnpm install` 的依赖、ffmpeg 与 yt-dlp（各几十 MB）、转写引擎（几 MB）、
+以及**你选的语音识别模型**（最小 ~30 MB，`large-v3-turbo` 约 1.6 GB）。
+这些**都在网页上点，不用碰命令行**，也都可以随时删掉重下。
 
 **第一次进去先做两件事**，否则转写会转成 blocked：
 
@@ -55,9 +74,9 @@ node apps/daemon/dist/main.js        # 打开终端里打印的地址，默认 h
 |---|---|
 | **Linux + AMD（ROCm）** | 🔴 **没有任何产物**：唯一的构建腿已被裁掉，上游 whisper.cpp 也没有 ROCm 版本。章程 §3 那一行在产物层面是空的 |
 | **Linux + NVIDIA（CUDA）· Windows + AMD** | 🔴 **目录里没有这些包**：能编出来，但纯增量的加速包在本产品里结构上不可用，**不接进目录** |
-| **Windows + NVIDIA（CUDA）** | 🔴 **包在目录里，今天装不上**：它需要硬件探针门控，而 `openmemo-probe` 至今没有分发通道 |
+| **Windows + NVIDIA（CUDA）** | ⚠️ **包在目录里，可能已经好了，但验不了**：探针分发通道已打通（CI 实测 Windows 报 `ok`），挡路的那条已不存在 —— 但要确认它真的能用**需要一块真 NVIDIA 卡**，任何托管 runner 都验不到 |
 | **macOS Intel · linux-arm64** | ✂ 用户 2026-08-05 明确裁掉，不构建 |
-| **Apple 神经引擎（ANE / CoreML）** | ⛔ 二进制已带、链路已修，但「真机上自检从 warn 变 ok」**从没被验证过**；tiny/base/small/medium 的 encoder **没挂**（没有它们的 sha256） |
+| **Apple 神经引擎（ANE / CoreML）** | 🔴 **今天是坏的，而且不出声**：encoder 解包后多套了一层同名目录，whisper.cpp 找不到 `coremldata.bin` → **静默回退到 Metal/CPU**。你付 1.17 GB 的下载，界面上不会有任何提示（自检的 `asr.coreml fail` 是唯一线索）。修复进行中；tiny/base/small/medium 的 encoder **另外还没挂**（没有它们的 sha256） |
 
 还有一族**装得上、跑不了、自检看不见**的下限（macOS < 13.3、Linux glibc、Windows 缺 VC++ 运行时）：
 下载成功、sha256 通过、安装记录 succeeded、自检全绿，**只有真正去执行时才死**。三条逐个写在
