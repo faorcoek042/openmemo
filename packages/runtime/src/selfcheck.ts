@@ -46,6 +46,15 @@ import {
   findInstalledByRole,
   isGgmlModelFile,
 } from '@openmemo/downloader';
+/*
+ * ★ T-174：断路器那几句话**搬到了 `@openmemo/shared`**，这里 import 回来。
+ *
+ * 起因：运行时页也要说同一件事，而 `@openmemo/runtime` 有 `node:fs` 依赖、浏览器打不进去，
+ * 于是"前端再写一遍"成了唯一顺手的做法 —— 那正是本仓吃过很多次的那个形状。
+ * 现在句子只有一份，**本文件下面那批断言（`/将在约 4 分钟后自动重试/` 等）
+ * 就顺带成了它的守卫**：谁改坏了措辞，这里当场红。
+ */
+import { breakerDetail, breakerRemediation, breakerTripped } from '@openmemo/shared';
 
 import { mediaAssetRoots, probeAssetFile } from './assetPaths.js';
 import { detectCpu, detectMemory, detectOs } from './detect/system.js';
@@ -73,7 +82,12 @@ export interface CheckResult {
    * 为什么不是把 `detail` 改成英文、再加 `detailZh`（那才与 `label`/`labelZh` 一致）：
    * 那要改写全部 25 条检查项的字面量，而 locale/自检两块同时有别的 agent 在动。
    * 这里只承诺**新写的检查项两种语言都给**，不假装历史那 24 条也给了。
-   * `[未修]` 另有 5 条（`tool.ffmpeg` 等）连 `label` 都写成了 `labelZh` 的值 —— 与本次无关，未动。
+   *
+   * `[T-174 已修]` 另有 5 条（`tool.ffmpeg` / `tool.ffprobe` / `tool.whisperCli` /
+   * `tool.whisperVad` / `tool.ytDlp`）连 `label` 都写成了 `labelZh` 的值，
+   * 英文界面上显示的是 `VAD 切分器` / `yt-dlp（可选，GPL）`。现已各给一份英文，
+   * 并加了守卫「`label` / `detailEn` / `remediationEn` 里不许出现 CJK」——
+   * 判据不是"中英字段不相等"（`ffmpeg` 本来就该相等），见 `selfcheck.test.ts`。
    */
   detailEn?: string;
   /** `remediation` 的英文版。同上。 */
@@ -589,46 +603,6 @@ function libSuffix(): string {
   return '.so';
 }
 
-/**
- * 把断路器状态翻成"接下来会发生什么"的一句话。中英各一句，**两句必须说同一件事**。
- *
- * 这句话是用户唯一能看到的东西，所以它宁可承认"时刻没记录"，也不许编一个时间出来。
- */
-function retryPhrase(b: BreakerStatusInfo): { zh: string; en: string } {
-  if (b.recovering) {
-    return {
-      zh: '正在重试 —— 一发后台恢复探测已经在跑，成功即自动恢复。',
-      en: 'Retrying now — a recovery probe is already running in the background; success restores them automatically.',
-    };
-  }
-  const due = b.retryAt === null ? Number.NaN : Date.parse(b.retryAt);
-  if (Number.isNaN(due)) {
-    // 「跳闸 ⇒ retryAt 必然存在」这条不变式被破坏了。如实说，不要假装知道时间。
-    return {
-      zh: '重试时刻未记录；下一次探测会立刻重试。',
-      en: 'No retry time recorded; the next check will retry immediately.',
-    };
-  }
-  const leftMs = due - Date.now();
-  if (leftMs <= 0) {
-    return {
-      zh: '冷却已到期，下一次探测就会重试。',
-      en: 'Cooldown has elapsed; the next check will retry.',
-    };
-  }
-  const d = humanDelay(leftMs);
-  return { zh: `将在约 ${d.zh}后自动重试。`, en: `Automatic retry in about ${d.en}.` };
-}
-
-function humanDelay(ms: number): { zh: string; en: string } {
-  const s = Math.max(1, Math.round(ms / 1000));
-  if (s < 90) return { zh: `${String(s)} 秒`, en: `${String(s)}s` };
-  const m = Math.round(s / 60);
-  if (m < 90) return { zh: `${String(m)} 分钟`, en: `${String(m)} min` };
-  const h = Math.round(m / 60);
-  return { zh: `${String(h)} 小时`, en: `${String(h)} h` };
-}
-
 export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckReport> {
   const results: CheckResult[] = [];
   const add = (r: CheckResult): void => {
@@ -765,7 +739,7 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         remediationEn:
           'Start the daemon and run the self-check again; for this check alone: GET /api/runtime/breaker',
       });
-    } else if (b.verdict === 'closed' && b.blacklistedBackends.length === 0) {
+    } else if (!breakerTripped(b.verdict, b.blacklistedBackends)) {
       add({
         layer: 'hardware',
         id: 'hw.breaker',
@@ -779,15 +753,12 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         remediationEn: null,
       });
     } else {
-      const backends = b.blacklistedBackends.length > 0 ? b.blacklistedBackends.join('、') : '（未列出）';
-      const backendsEn = b.blacklistedBackends.length > 0 ? b.blacklistedBackends.join(', ') : '(not listed)';
-      const why = b.lastError ?? '未记录原因';
-      const whyEn = b.lastError ?? 'no reason recorded';
       /*
-       * "将在 Y 之后重试" —— 这句话必须说得出**具体的 Y**，否则它和"坏了不吭声"
-       * 的差别只是多了一行字：用户仍然不知道该等还是该动手。
+       * "停用了什么 / 为什么 / 多久之后重试" —— 三件事必须凑齐，否则用户仍然不知道
+       * 该等还是该动手。造句在 `@openmemo/shared`，**运行时页用的是同一个函数**。
        */
-      const when = retryPhrase(b);
+      const text = breakerDetail(b);
+      const fix = breakerRemediation();
       add({
         layer: 'hardware',
         id: 'hw.breaker',
@@ -795,16 +766,11 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         labelZh: '加速后端断路器',
         // warn 不是 fail：CPU 兜底仍在，产品能用，只是没有加速。fail 会让 CLI EXIT=1。
         status: 'warn',
-        detail:
-          `已暂时停用：${backends}（连续 ${String(b.consecutiveFailures)} 次探测失败：${why}）。${when.zh}`,
-        detailEn:
-          `Temporarily disabled: ${backendsEn} ` +
-          `(${String(b.consecutiveFailures)} consecutive probe failures: ${whyEn}). ${when.en}`,
+        detail: text.zh,
+        detailEn: text.en,
         required: false,
-        remediation:
-          '不需要手动操作 —— 到点会自动重试，成功即自动恢复。想立刻重试：GET /api/runtime/hardware?reset=1',
-        remediationEn:
-          'No action needed — it retries automatically and recovers on its own. To retry right now: GET /api/runtime/hardware?reset=1',
+        remediation: fix.zh,
+        remediationEn: fix.en,
       });
     }
   }
@@ -877,19 +843,29 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
    * 判据：装在 storeRoot 里 = ok；只在系统 PATH 上 = warn（能跑，但不可分发）；没有 = fail。
    */
   const fromStore = (p: string | null): boolean => p !== null && p.startsWith(input.storeRoot);
-  for (const [id, labelZh, path, required] of [
-    ['tool.ffmpeg', 'ffmpeg', tools.ffmpeg, true],
-    ['tool.ffprobe', 'ffprobe', tools.ffprobe, true],
-    ['tool.whisperCli', 'whisper-cli', tools.whisperCli, true],
-    ['tool.whisperVad', 'VAD 切分器', tools.whisperVad, false],
-    ['tool.ytDlp', 'yt-dlp（可选，GPL）', tools.ytDlp, false],
+  /*
+   * ★ T-174：这个元组以前只有 `labelZh` 一列，三个分支都写 `label: labelZh` ——
+   * **英文界面上这 5 条显示的是中文**（`VAD 切分器`、`yt-dlp（可选，GPL）`，连括号逗号都是全角）。
+   *
+   * 为什么能写错还没人发现：前三条的 `label` 与 `labelZh` 恰好都是 `ffmpeg` 这类工具名，
+   * 中英本来就同形 —— 于是"`label` 拿中文"这件事在多数条目上**没有可观测后果**，
+   * 只有最后两条露馅，而没人用英文界面翻自检页。
+   * 守卫见 `selfcheck.test.ts` 的「英文字段里不许出现中文」：判据不是"两个字段不相等"
+   * （`ffmpeg` 本来就该相等），是"**`label` 里不许有 CJK**"。
+   */
+  for (const [id, label, labelZh, path, required] of [
+    ['tool.ffmpeg', 'ffmpeg', 'ffmpeg', tools.ffmpeg, true],
+    ['tool.ffprobe', 'ffprobe', 'ffprobe', tools.ffprobe, true],
+    ['tool.whisperCli', 'whisper-cli', 'whisper-cli', tools.whisperCli, true],
+    ['tool.whisperVad', 'VAD splitter', 'VAD 切分器', tools.whisperVad, false],
+    ['tool.ytDlp', 'yt-dlp (optional, GPL)', 'yt-dlp（可选，GPL）', tools.ytDlp, false],
   ] as const) {
     const found = await exists(path, constants.X_OK);
     if (!found) {
       add({
         layer: 'tools',
         id,
-        label: labelZh,
+        label,
         labelZh,
         status: required ? 'fail' : 'warn',
         detail: '未找到',
@@ -900,7 +876,7 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
       add({
         layer: 'tools',
         id,
-        label: labelZh,
+        label,
         labelZh,
         status: 'ok',
         detail: path as string,
@@ -911,7 +887,7 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
       add({
         layer: 'tools',
         id,
-        label: labelZh,
+        label,
         labelZh,
         status: 'warn',
         detail: `${path as string}（来自系统 PATH，非本产品安装 —— 用户机器上不一定有）`,

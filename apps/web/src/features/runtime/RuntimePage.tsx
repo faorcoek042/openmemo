@@ -18,6 +18,7 @@ import {
   useHardwareQuery,
 } from './api';
 import { HardwareCard } from './components/HardwareCard';
+import { BreakerNotice } from './components/BreakerNotice';
 import { BackendPackCard } from './components/BackendPackCard';
 import { isMeaningfulRecommendation } from './packStatus';
 
@@ -183,6 +184,13 @@ export default function RuntimePage() {
         <p className="text-xs text-ink-muted">{t('runtime.probing')}</p>
       ) : null}
       {hw ? <HardwareCard hw={hw} locale={locale} /> : null}
+
+      {/*
+        ★ T-174：断路器提示。**放在硬件卡下面、后端包上面**，因为它解释的正是
+        "为什么上面那排后端芯片是灰的、下面那些包装了也不起作用"。
+        没跳闸时组件自己返回 null —— 不占位、不显示"一切正常"。
+      */}
+      <BreakerNotice locale={locale} hardwareRuntime={hardware.data?.runtime} />
 
       <section className="space-y-3">
         <div className="flex items-baseline justify-between">

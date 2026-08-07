@@ -22,6 +22,7 @@ import type {
   Arch,
   Backend,
   BackendSelfTest,
+  GetBreakerResponse,
   GetHardwareResponse,
   InstalledBackendPack,
 } from '@openmemo/shared';
@@ -226,7 +227,12 @@ export function createRuntimeRoutes(deps: RuntimeRoutesDeps): {
           dataDir: deps.paths.dataDir,
           modelsDir: deps.paths.modelsDir,
         });
-        sendJson(res, 200, {
+        /*
+         * T-174：显式标注成契约类型。这个端点此前**零调用方**，形状漂了也没人会知道；
+         * 现在运行时页的断路器提示读的就是它（`/api/runtime/hardware` 带 daemon 侧缓存，
+         * `retryAt` / `recovering` 会是快照那一刻的值，拿它做倒计时会一路数到负数）。
+         */
+        const body: GetBreakerResponse = {
           backendDir: status.backendDir,
           breaker: breakerSnapshot(status.backendDir),
           open: status.verdict !== 'closed',
@@ -235,7 +241,8 @@ export function createRuntimeRoutes(deps: RuntimeRoutesDeps): {
           verdict: status.verdict,
           retryAt: status.retryAt,
           recovering: status.recovering,
-        });
+        };
+        sendJson(res, 200, body);
         return true;
       }
 

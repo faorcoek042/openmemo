@@ -338,6 +338,15 @@
       "backendsLabel": "后端：",
       "whyUnavailable": "为什么这些后端不可用（{{n}} 项）",
       "detectedAt": "探测于 {{at}} · {{platform}}/{{arch}} {{version}}"
+    },
+    "breaker": {
+      "title": "GPU 加速已暂时停用",
+      "retry": "立刻重试",
+      "retrying": "正在重新探测…",
+      "elapsed": "已用 {{s}} 秒",
+      "elapsedOfBudget": "已用 {{s}} 秒 · 最长约 {{budget}} 秒",
+      "retryFailed": "重试请求没有发出去 —— daemon 可能没在运行。",
+      "stillDisabled": "重试跑完了，加速后端仍然不可用。上面那条原因来自这一次探测，不是之前那次。"
     }
   },
   "detail": {

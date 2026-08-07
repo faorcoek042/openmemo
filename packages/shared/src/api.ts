@@ -291,9 +291,72 @@ export interface GetInstalledBackendsResponse {
 
 /* ------------------------------ hardware --------------------------------- */
 
+/**
+ * `GET /api/runtime/hardware` 里**除硬件本身之外**的诊断字段（T-174）。
+ *
+ * ★ 为什么它现在才出现在契约里：daemon 从 T-172 起就一直在发这个 `runtime` 对象，
+ * 但前端把响应断言成不含它的 `GetHardwareResponse`，**字段在类型边界上就被丢掉了** ——
+ * 全仓对 `breaker` / `blacklistedBackends` / `degradationChain` 的前端引用数曾是 **0**。
+ * 于是断路器跳闸时用户只看到"GPU 加速就是不工作"，唯一的解释躺在他不会去看的自检页里。
+ *
+ * 这里**故意比 daemon 侧的 `RuntimeDiagnostics` 窄**：只收录前端真的要用的字段。
+ * daemon 那个类型 `extends` 本接口所在的响应，多出来的字段（`paths` 等）结构上照样通过，
+ * 但契约不为它们背书 —— 契约只承诺"前端读得到的这些"。
+ */
+export interface HardwareRuntimeDiagnostics {
+  /** 探针诊断。前端只用 `timeoutMs`：手动重试的等待上限要按 daemon 自己报的预算显示，不许前端硬编一个 10 秒。 */
+  readonly probe: { readonly timeoutMs: number };
+  readonly breaker: {
+    readonly consecutiveFailures: number;
+    readonly threshold: number;
+    readonly open: boolean;
+    readonly lastError: string | null;
+    /** 三态裁决，见 `BreakerVerdict`。 */
+    readonly verdict: string;
+    /** 冷却到期时刻（ISO）。null = 没跳闸。**跳闸了它就不可能是 null**。 */
+    readonly retryAt: string | null;
+    readonly recovering: boolean;
+  };
+  /** 断路器停用的后端（cpu 永不入列）。 */
+  readonly blacklistedBackends: Backend[];
+  /** 降级链（ADR-003 决策 3）：还值得一试的后端，cpu 恒为最后一环。 */
+  readonly degradationChain: Backend[];
+}
+
 export interface GetHardwareResponse {
   hardware: HardwareInfo;
   snapshotId: string;
+  /**
+   * **可选**：`/api/runtime/hardware` 带它，而 `models.ts` 里那条同名兜底路由不带
+   * （那条路由拿不到 `AppPaths`，凑不出断路器状态）。前端必须按"可能没有"处理，
+   * 不能假设它一定在 —— 假设它一定在，兜底路由生效时就是一个白屏。
+   */
+  runtime?: HardwareRuntimeDiagnostics;
+}
+
+/**
+ * `GET /api/runtime/breaker` —— **纯观测**的断路器状态。
+ *
+ * ★ 为什么运行时页读这个而不是复用上面那个 `runtime.breaker`：
+ * `/api/runtime/hardware` 的 daemon 侧**带进程内缓存**（探测要 spawn，不能每请求跑一遍），
+ * 所以它的 `retryAt` / `recovering` 是**拍快照那一刻**的值。拿它做倒计时会一路数到负数，
+ * 然后永远停在"冷却已到期"上 —— 一个一直在说谎的倒计时比不显示更糟。
+ * 本端点每次都读进程内的实时 state，且**不跑探测、不起恢复、不改任何状态**。
+ */
+export interface GetBreakerResponse {
+  readonly backendDir: string;
+  readonly breaker: {
+    readonly consecutiveFailures: number;
+    readonly blacklistedAt: string | null;
+    readonly lastError: string | null;
+    readonly retryAt: string | null;
+  };
+  readonly open: boolean;
+  readonly threshold: number;
+  readonly blacklistedBackends: Backend[];
+  readonly verdict: string;
+  readonly retryAt: string | null;
+  readonly recovering: boolean;
 }
 
 /* ------------------------------ errors ----------------------------------- */

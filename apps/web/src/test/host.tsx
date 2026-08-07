@@ -302,8 +302,19 @@ export function stubApi(routes: Record<string, unknown | ((c: StubCall) => unkno
         { status: 404, headers: { 'content-type': 'application/json' } },
       );
     }
-    const payload =
-      typeof handler === 'function' ? (handler as (c: StubCall) => unknown)(calls.at(-1)!) : handler;
+    /**
+     * ★ T-174：`await` —— 桩函数可以返回一个**由用例控制何时兑现**的 Promise。
+     *
+     * 为什么需要它：`click()` 是 `await act(async …)`，会把微任务全部抽干，
+     * 于是"请求还在飞"的那一帧**在用例里根本捕捉不到** —— 任何关于
+     * pending 态（禁用按钮、spinner、计秒）的断言都只能在请求已经结束之后跑，
+     * 也就是**在断言一个永远不成立的状态**，而它会是绿的。
+     *
+     * 对既有桩完全无影响：`await` 一个非 Promise 是恒等的。
+     */
+    const payload = await (typeof handler === 'function'
+      ? (handler as (c: StubCall) => unknown)(calls.at(-1)!)
+      : handler);
 
     /**
      * 桩函数可以直接返回一个 `Response`，用来表达**非 200**。

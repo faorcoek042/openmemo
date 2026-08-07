@@ -1055,3 +1055,137 @@ describe('T-173 断路器在自检里是可见的', () => {
     }
   });
 });
+
+/**
+ * ★ T-174：英文字段里不许出现中文。
+ *
+ * ## 为什么这条守卫存在（成因比那 5 处改动重要）
+ *
+ * `tool.ffmpeg` 等 5 条检查项此前写的是 `label: labelZh` —— **英文界面上显示中文标签**。
+ * 它能长期存在而没人发现，原因不是"没人看"，是**多数条目上它没有可观测后果**：
+ * 前三条的 `labelZh` 恰好是 `ffmpeg` / `ffprobe` / `whisper-cli` 这类工具名，中英同形，
+ * 于是"把中文塞进英文字段"这个错误**在 3/5 的样本上是隐形的**，只有 `VAD 切分器` 与
+ * `yt-dlp（可选，GPL）` 会露馅，而没人用英文界面翻自检页。
+ *
+ * ## 判据为什么不是"中英字段不相等"
+ *
+ * 那条看起来更自然的判据（`label !== labelZh`）**是错的**：`ffmpeg` 本来就该两边相等，
+ * 它会把 3 条正确的条目判红，于是必然被加豁免名单，而豁免名单会慢慢长大直到守卫失效。
+ *
+ * 真正要钉的性质是「**英文字段里不许有 CJK**」—— 它对 `ffmpeg` 天然放行，
+ * 对 `VAD 切分器` 当场变红，不需要任何豁免。范围含全角标点（`（`、`，`），
+ * 因为 `yt-dlp（可选，GPL）` 的括号逗号也是全角，那同样是"英文界面上的中文"。
+ *
+ * `detail` **不在检查范围内**：它按设计就是中文原文（见 `CheckResult` 的注释），
+ * 英文版走可选的 `detailEn`。`labelZh` 同理不检查（它可以是拉丁字母的工具名）。
+ */
+describe('★ T-174 英文字段里不许出现中文', () => {
+  /**
+   * CJK 统一表意文字 + CJK 标点（、。）+ 全角形式（（），）。
+   *
+   * 写成 `\u` 转义而不是字面量：这个范围的**第一个字符就是 U+3000 全角空格**，
+   * 字面量写法会被 eslint `no-irregular-whitespace` 拦下 —— 而且在 diff 里根本看不见。
+   */
+  const CJK = /[\u3000-\u303F\u4E00-\u9FFF\uFF00-\uFFEF]/;
+
+  /** 造一个真实存在、且真的有可执行位的假工具（同上面那组用例的理由）。 */
+  async function fakeTool(dir: string): Promise<string> {
+    await fs.mkdir(dir, { recursive: true });
+    const p = join(dir, process.platform === 'win32' ? 'tool.exe' : 'tool');
+    await fs.writeFile(p, '#!/bin/sh\nexit 0\n');
+    await fs.chmod(p, 0o755);
+    return p;
+  }
+
+  const allTools = (p: string | null): Partial<SelfCheckProbes> => ({
+    tools: () =>
+      Promise.resolve({
+        ffmpeg: p,
+        ffprobe: p,
+        whisperCli: p,
+        whisperVad: p,
+        vadModel: p,
+        ytDlp: p,
+      }),
+  });
+
+  /**
+   * 三种 tools 分支各跑一遍。
+   *
+   * ★ 必须三条都跑：出问题的 `label: labelZh` 在 `selfcheck.ts` 里是**三个独立的
+   * `add()`**（未找到 / 装在 storeRoot / 只在 PATH 上），改对两个漏掉一个，
+   * 只跑一种分支的守卫会照样报绿 —— 那正是这条守卫要防的形状。
+   */
+  async function reportsCoveringAllToolBranches(): Promise<SelfCheckReport[]> {
+    const storeRoot = mkdtempSync(join(tmpdir(), 'om-sc-i18n-store-'));
+    tmpRoots.push(storeRoot);
+    const outside = mkdtempSync(join(tmpdir(), 'om-sc-i18n-host-'));
+    tmpRoots.push(outside);
+
+    const inStore = await fakeTool(join(storeRoot, 'by-name', 'backend', 'media-tools'));
+    const onPath = await fakeTool(outside);
+    assert.equal(inStore.startsWith(storeRoot), true);
+    assert.equal(onPath.startsWith(storeRoot), false);
+
+    const probes = { breaker: breakerProbe() };
+    return [
+      // ① 未找到（路径为 null）
+      await runSelfCheck({ ...BASE, storeRoot, probes: minimalProbes({ ...probes }) }),
+      // ② 装在 storeRoot 里 → ok
+      await runSelfCheck({
+        ...BASE,
+        storeRoot,
+        probes: minimalProbes({ ...probes, ...allTools(inStore) }),
+      }),
+      // ③ 只在系统 PATH 上 → warn
+      await runSelfCheck({
+        ...BASE,
+        storeRoot,
+        probes: minimalProbes({ ...probes, ...allTools(onPath) }),
+      }),
+    ];
+  }
+
+  it('前提自检：三种 tools 分支真的都被覆盖到了', async () => {
+    const [notFound, inStore, onPath] = await reportsCoveringAllToolBranches();
+    // 守卫本身要先证明自己跑在有内容的样本上，否则它就是一条永远绿的空断言
+    assert.equal(byId(notFound, 'tool.ffmpeg')?.status, 'fail');
+    assert.equal(byId(inStore, 'tool.ffmpeg')?.status, 'ok');
+    assert.equal(byId(onPath, 'tool.ffmpeg')?.status, 'warn');
+  });
+
+  it('★ 每一条 CheckResult 的 label / detailEn / remediationEn 都不许含中文', async () => {
+    const reports = await reportsCoveringAllToolBranches();
+    let checked = 0;
+    for (const r of reports) {
+      for (const c of r.results) {
+        for (const [field, text] of [
+          ['label', c.label],
+          ['detailEn', c.detailEn],
+          ['remediationEn', c.remediationEn],
+        ] as const) {
+          if (text === undefined || text === null) continue;
+          checked += 1;
+          assert.equal(
+            CJK.test(text),
+            false,
+            `${c.id}.${field} 是英文字段，却含中文：${JSON.stringify(text)}`,
+          );
+        }
+      }
+    }
+    // 空集返回绿是本仓最贵的那类假绿（HANDOFF ⑤A-2）—— 先证明真的检查了东西
+    assert.equal(checked > 60, true, `只检查了 ${String(checked)} 个字段，样本太少，守卫可能是空的`);
+  });
+
+  it('那 5 条工具检查各自给出了英文标签（不是把中文抄过去）', async () => {
+    const [r] = await reportsCoveringAllToolBranches();
+    assert.equal(byId(r, 'tool.whisperVad')?.label, 'VAD splitter');
+    assert.equal(byId(r, 'tool.whisperVad')?.labelZh, 'VAD 切分器');
+    assert.equal(byId(r, 'tool.ytDlp')?.label, 'yt-dlp (optional, GPL)');
+    assert.equal(byId(r, 'tool.ytDlp')?.labelZh, 'yt-dlp（可选，GPL）');
+    // 中英同形的那三条**不该**被强行拆开 —— 守卫允许相等，见本组头注
+    assert.equal(byId(r, 'tool.ffmpeg')?.label, 'ffmpeg');
+    assert.equal(byId(r, 'tool.ffmpeg')?.labelZh, 'ffmpeg');
+  });
+});

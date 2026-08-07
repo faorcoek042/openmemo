@@ -45,6 +45,15 @@ export const qk = {
   },
   runtime: {
     hardware: ['runtime', 'hardware'] as const,
+    /**
+     * `GET /api/runtime/breaker` —— 断路器的**实时**状态（T-174）。
+     *
+     * 与 `runtime.hardware` 分开一个 key，是因为两者的新鲜度要求差一个数量级：
+     * 硬件探测要 spawn 子进程（`staleTime` 5 分钟），而断路器的
+     * `retryAt` / `recovering` 是**秒级**在变的东西，拿硬件那份快照做倒计时会一路数到负数。
+     * 这个端点是纯观测（不跑探测、不起恢复、不改状态），所以可以放心轮询。
+     */
+    breaker: ['runtime', 'breaker'] as const,
   },
   /**
    * `GET /api/daemon/status` —— ASR 引擎**可用性的唯一真实来源**。
