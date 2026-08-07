@@ -162,8 +162,16 @@ jobs:
       # ⚠️ 但 sherpa-onnx-darwin-arm64 的 dylib 与 better-sqlite3 的 darwin-arm64.node
       #    **没有在本机验过**（本机是 Linux，那两个包在 Linux 上装不出来）。
       #    这一步就是去拿那个答案的。**它红了不是这一步的错，是我们第一次看见事实。**
-      - name: Guard macOS deployment target
-        run: node scripts/ci/check-macho-minos.mjs --dir "${{ steps.bundle.outputs.bundle_dir }}" --max 13.3
+      # ★★ [CI 实测 2026-08-08 run 31204790920] 第一次真跑就红了，而且红得有价值：
+      #   4 个**上游预编译**的 Mach-O 高于 README 承诺的 13.3 ——
+      #   libonnxruntime*.dylib 15.5.0、sherpa-onnx.node 14.0.0、vec0.dylib 14.0.0。
+      #   通过的是 node / better-sqlite3 / libsimple（都是 11.0.0）。
+      #
+      #   一刀切的 `--max 13.3` 只能得到"红着"，而那既发不出包也说不清事实。
+      #   换成分层守卫：CORE 仍然硬卡 13.3；可降级组各自**声明** floor，
+      #   高于声明值才红。判据没有放松 —— 上游再抬一档照样当场说话。
+      - name: Guard macOS deployment target（分层）
+        run: node scripts/ci/check-bundle-macos-floors.mjs --bundle "${{ steps.bundle.outputs.bundle_dir }}"
 
       - name: Verify extracted archive
         run: bash scripts/ci/verify-bundle.sh --archive "${{ steps.bundle.outputs.archive }}" --target darwin-arm64

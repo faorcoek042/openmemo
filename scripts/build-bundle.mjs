@@ -65,7 +65,7 @@ import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /*
  * 版本号的读取点。
@@ -292,7 +292,7 @@ async function acquireNode() {
   say(`   ✔ sha256 校验通过 ${want.slice(0, 16)}…`);
 
   const work = await mkdtemp(join(tmpdir(), 'om-node-'));
-  const { unpackArchive } = await import(join(REPO_ROOT, 'packages/downloader/dist/index.js'));
+  const { unpackArchive } = await import(pathToFileURL(join(REPO_ROOT, 'packages/downloader/dist/index.js')).href);
   await unpackArchive(archive, work, kindOf(file));
 
   // 解出来是 node-v<ver>-<plat>/ 一层壳
@@ -504,7 +504,7 @@ async function acquireSherpa(nm) {
   }
 
   const work = await mkdtemp(join(tmpdir(), 'om-sherpa-'));
-  const { unpackArchive } = await import(join(REPO_ROOT, 'packages/downloader/dist/index.js'));
+  const { unpackArchive } = await import(pathToFileURL(join(REPO_ROOT, 'packages/downloader/dist/index.js')).href);
   await unpackArchive(tgz, work, kindOf(tarName));
   const inner = join(work, 'package'); // npm tarball 固定一层 package/
   if (!(await exists(inner))) die(`${pkg} 的 tarball 结构异常：解开后没有 package/`);
@@ -531,7 +531,7 @@ async function assembleExtensions() {
   await mkdir(extDir, { recursive: true });
 
   const work = await mkdtemp(join(tmpdir(), 'om-ext-'));
-  const { unpackArchive } = await import(join(REPO_ROOT, 'packages/downloader/dist/index.js'));
+  const { unpackArchive } = await import(pathToFileURL(join(REPO_ROOT, 'packages/downloader/dist/index.js')).href);
 
   for (const id of T.extPackIds) {
     const pack = manifest.packs.find((p) => p.id === id);
@@ -559,7 +559,7 @@ async function assembleExtensions() {
    *    `win-fixes` 已经在这上面栽过一次。
    *    第三套命名约定绝不能从这个脚本里长出来。
    */
-  const { sqliteExtensionSources } = await import(join(REPO_ROOT, 'packages/pipeline/dist/index.js'));
+  const { sqliteExtensionSources } = await import(pathToFileURL(join(REPO_ROOT, 'packages/pipeline/dist/index.js')).href);
   for (const { dst, candidates } of sqliteExtensionSources(T.platform)) {
     let found = null;
     for (const cand of candidates) {

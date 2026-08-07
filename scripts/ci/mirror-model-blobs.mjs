@@ -129,6 +129,54 @@ async function main() {
     process.exit(1);
   }
 
+  /*
+   * ★★ 许可证闸门（2026-08-08，`prebuilt`）。
+   *
+   * 这个脚本**按设计**就是把第三方的字节转存到我们自己的 Release 上 ——
+   * 也就是说它是「我们成为分发者」的一条正规入口。而在此之前，
+   * `MIRROR_MODEL_IDS` 只是一份**手工维护的白名单，没有任何许可证判断**：
+   * 往里加一个 GPL 或 Gemma ToU 的条目，会静默生效。
+   *
+   * 今天名单里那 3 个都是 Apache-2.0，所以这道闸**现在就是绿的** ——
+   * 这正是加它的时机：等到它变红那天再加，就晚了。
+   *
+   * 判据与 release-upload.mjs 那道闸同源：**查不到许可证 = 拒绝**。
+   * 一个"不认识就放行"的闸门，只要新加的条目恰好没写 license 就形同虚设。
+   */
+  {
+    const COPYLEFT_RE = /\b(A?GPL|LGPL|SSPL|CC-BY-SA|EUPL|CECILL)\b/i;
+    /** 非 OSI 但可转存的例外，必须逐条写明理由 —— 空着就是"目前没有例外"。 */
+    const ACKNOWLEDGED_NON_OSI = new Map();
+    let bad = 0;
+    for (const m of picked) {
+      const lic = m.license?.id ?? m.license ?? null;
+      if (!lic) {
+        console.error(`mirror-model-blobs: ${m.id} 没有 license.id —— 查不到许可证不等于可以转存，拒绝。`);
+        bad++;
+        continue;
+      }
+      if (COPYLEFT_RE.test(String(lic))) {
+        console.error(
+          `mirror-model-blobs: ${m.id} 的许可证是 ${lic}。\n` +
+            `  把它转存到我们自己的 Release 上，就是我们在分发一份 copyleft 产物 ——\n` +
+            `  ADR-002 的分发义务当场触发（D-17 §1.2 第 2 条就是在说这里）。\n` +
+            `  正确做法：让产品在用户机器上直连上游取，不要经过我们。`,
+        );
+        bad++;
+        continue;
+      }
+      if (ACKNOWLEDGED_NON_OSI.has(m.id)) {
+        say(`   ⚠️ ${m.id}  ${lic}（已知例外：${ACKNOWLEDGED_NON_OSI.get(m.id)}）`);
+        continue;
+      }
+      say(`   ✔ ${m.id}  ${lic}`);
+    }
+    if (bad > 0) {
+      console.error(`mirror-model-blobs: ${bad} 个模型的许可证不允许由我们转存`);
+      process.exit(1);
+    }
+  }
+
   const jobs = [];
   for (const m of picked) {
     for (const f of m.files) {

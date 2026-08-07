@@ -66,6 +66,52 @@ SOURCE_URL=""
 die() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 log() { printf '\033[36m==>\033[0m %s\n' "$*" >&2; }
 
+# ══════════════════════════════════════════════════════════════════════════════════════
+#  ⛔ GPL 确认闸门（2026-08-08，`prebuilt`；用户当日裁决 ① 之后加）
+#
+#  **这个脚本的产物是一个 GPL-3.0-or-later 的二进制，被重新打包成了我们自己的格式。**
+#  脚本头上写得很清楚：“we emit our own tar.gz with our own manifest”。
+#
+#  在"个人自用"的前提下这没问题。但用户 2026-08-08 裁决把预编译包发到**公开 Release**，
+#  前提变了：一旦这个产物被传上去，**我们就成了 ffmpeg 的分发者** ——
+#  ADR-002 的「一旦要分发就是硬阻断」当场触发，而 D-17 §1 那整套
+#  「GPL 不触发」的结论会随之全部失效。
+#
+#  通往那里的路是现成的：`scripts/ci/release-upload.mjs` 读 `dist/packs`，
+#  而本脚本的默认输出目录**正是 `dist/packs`**。也就是说跑一次它、再跑一次上传，
+#  中间没有任何一步会说话。
+#
+#  → 上传那一侧现在有许可证闸门了（release-upload.mjs 会拒绝 GPL 资产），
+#    这里这道是**第二层**：让"我正在生产一份 GPL 产物"这件事在**生产的那一刻**
+#    就需要一次明确的确认，而不是等到上传时才被拦。
+#
+#  判据仍是 PROTOCOL §7 补充那条：**不是"要记得别跑"，是"跑错了也不会造成后果"。**
+#  两层都拦，且都不依赖任何人记得什么。
+# ══════════════════════════════════════════════════════════════════════════════════════
+if [[ "${OPENMEMO_ALLOW_GPL_REPACK:-}" != "1" ]]; then
+  cat >&2 <<'GPLGATE'
+[31merror:[0m 拒绝执行 —— 本脚本会产出一份 GPL-3.0-or-later 的产物（ffmpeg/ffprobe），
+       并把它打包成 OpenMemo 自己的 pack 格式，默认落在 dist/packs/。
+
+  为什么现在需要确认（以前不需要）：
+    用户 2026-08-08 裁决把预编译包发到**公开 Release**。在那个前提下，
+    把这个产物传上去 = 我们分发 GPL 二进制 = ADR-002 的硬阻断当场触发，
+    且 docs/design/D-17-prebuilt-bundles.md §1 的整套结论随之失效。
+
+  绝大多数情况下你不需要它：
+    ADR-015 已把默认路径改成**直连上游** BtbN/FFmpeg-Builds，
+    由**用户自己的机器**去取。那条路不触发任何分发义务。
+
+  确实需要本地重打包（瘦身 / macOS 拆包）时：
+    OPENMEMO_ALLOW_GPL_REPACK=1 bash scripts/build-media-tools.sh ...
+
+  ⚠️ 即使这样产出了，也**不要**上传到我们的 Release ——
+     scripts/ci/release-upload.mjs 的许可证闸门会拒绝它（那是第二层拦截）。
+GPLGATE
+  exit 1
+fi
+log "⚠️ OPENMEMO_ALLOW_GPL_REPACK=1 —— 正在生产 GPL 产物，请勿上传到我们自己的 Release"
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --out)        OUT_DIR="$2"; shift 2 ;;
