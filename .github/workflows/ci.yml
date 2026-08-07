@@ -119,6 +119,30 @@ jobs:
       - name: Tracked-sources guard
         run: pnpm check:sources
 
+      # 「零调用方导出」棘轮（T-157 立，**T-169 才真正接进 CI**）。
+      #
+      # ── 为什么这一步到今天才出现 ──────────────────────────────────────────────
+      #
+      # T-157 的提交标题写的是「固化成门禁」，`progress-audit` 记的是「✅ 已装」，
+      # 而 `closure-audit` 回头核了一遍：**它从来没在任何自动流程里跑过**。
+      # 脚本在、基线在、`pnpm check` 里也在 —— 但 `.github/` 里 `grep -rn orphan` 零命中，
+      # 没有 git hook，`pnpm check` 本身也没有任何自动调用方。
+      # `scripts/mutation-check.mjs:22` 当时就写着「`pnpm check` 也没人跑」，没人当回事。
+      #
+      # 也就是说：**一把造好的锁，挂在一扇没人经过的门上，挂了整整一个版本周期。**
+      # 期间棘轮一直是 72/72 没漏 —— 那是因为最近的改动恰好没引入新孤儿，
+      # **不是因为有东西在挡**。「没跑」和「跑了并通过」在结果里长得一模一样，
+      # 这正是本文件顶上那段注释在说的同一个病。
+      #
+      # ── 为什么是 `check:orphans` 而不是 `pnpm check` ──────────────────────────
+      #
+      # `pnpm check` = check:sources + check:orphans + tsc -b + build:safe + eslint。
+      # 后三样上面已经各有一步了，直接调 `pnpm check` 会把 build 跑第二遍。
+      # 这里只补真正缺的那一条。
+      # （对账：`pnpm check` 的五个成员，此前只有 `check:orphans` 不在 CI 里，现在补齐。）
+      - name: Orphan-exports ratchet
+        run: pnpm check:orphans
+
       # CI 脚本自身的正反向自检（T-144）。放在 test 前面：它比较快，
       # 而且它红的时候意味着 build-backends 那条线是坏的 —— 那是更要紧的信号。
       - name: CI scripts self-test
