@@ -725,3 +725,71 @@ T-144 那条 bug 正是「产出方与使用方用了两个名字」；如果守
 | Windows CUDA 在真 N 卡上到底行不行 | ⚠️ `UNKNOWN`，**需要真硬件**，CI 结构上验不了 |
 | 上游两个包各有几条 `ggml-cpu-*` 变体 | ⚠️ `UNKNOWN`，没下下来数 |
 | `whispercpp-cpu-win-x64` 的 `ggmlAbi` | ⚠️ **推断值**，不是量出来的（已写进 ADR-015 §7.3） |
+
+---
+
+## [2026-08-07 18:30] T-167 ② 收尾 —— 三平台冷启动实测拿到了
+
+# ★ 判据在 CI 上成立了（Windows 那一格我本机验不了，现在有真机数据）
+
+`cold-start-audit` run **31160171438**（`ec29792`，换包后）对比
+run **31152458527**（`8cb3b35`，换包前）—— **同一个 workflow，两轮只差目录里那四条**。
+
+| 平台 | `hw.probe` 换包前 | `hw.probe` 换包后 | 适用包 | 转写 |
+|---|---|---|---:|---|
+| **linux-x64** | `warn` openmemo-probe 未安装（后端能力未知） | ✅ **`ok` 1 个设备, ggml 0.15.1** | 6 → 6 | succeeded 2.1s，108 字符 |
+| **win32-x64** | `warn` openmemo-probe 未安装（后端能力未知） | ✅ **`ok` 1 个设备, ggml 0.15.1** | 5 → 5 | succeeded 3.7s，108 字符 |
+| **darwin-arm64** | `warn` openmemo-probe 未安装（后端能力未知） | 🟡 **`warn` probe timed out after 10000ms** | 5 → 5 | succeeded 111.8s，108 字符 |
+
+三平台都是「产品自己下载并校验的 (5) · 借宿主 PATH 的 (0) · 装不上/不可用 (0)」。
+**换包没有弄坏任何东西** —— 这是 §17 那条「Windows/macOS 端到端未验证」的答案。
+
+> 顺带回答一句我上一封没敢说的话：**「网页检测硬件」这一步在 Linux 与 Windows 上
+> 今天第一次真的有答案了**。此前它在三个平台上全部是「未安装（后端能力未知）」。
+
+# 🟡 但 macOS 冒出一条**新的**：探针找到了，然后超时
+
+**不是回归。** 换包前那台机器上根本没有探针（报"未安装"）；现在它在包里、
+被解析到、被启动了，**然后 10 秒没返回**。两次自检两次都超时 ——
+`CIRCUIT_BREAKER_THRESHOLD = 2`，所以断路器会跳闸。
+
+- ⚠️ **`UNKNOWN`：成因没有定性。** 最可能是加载 `libggml-metal.so` 时的 Metal 设备初始化，
+  而那台 runner 是**虚拟化的 3 核 M1**（同一轮转写要 111.8s，Linux 只要 2.1s，53 倍）。
+  我**分不清**「10 秒对这台 runner 太短」「虚拟化 macOS 上 Metal 初始化会挂」
+  与「真有 bug」，日志里没有探针的 stderr。**要一台真 Mac 才能定性。**
+- **刻意不做**：不去调大 `PROBE_TIMEOUT_MS`（ADR-003 决策 3 定死的 10 秒）。
+  把一个常量改大让 warn 消失，会把「探针挂了」伪装成「探针慢」，而两者的处置完全不同。
+  而且那是 `packages/runtime`，不是我的地盘。
+- **实测到的后果边界**：断路器拉黑的是加速后端，但 macOS 的 `metal` 走
+  `isAlwaysApplicable`（"看起来像 L2、行为像 L1"），所以 Metal 包仍可装，
+  这一轮转写也照常成功。**没有观测到用户可见的损坏。**
+
+已写进 **D-11 §9.8**（含换包前后的对照表）。
+
+# 全部提交（T-167）
+
+```
+3ef8734  feat(ci): 探针随包出厂 + macOS 部署目标守卫
+70ccfed  docs: 探针分发的三条阻碍 + D-11 §9
+7bb6d2a  fix(ci): 门禁刻意不拉 submodule，而探针那一步开始真的读它了
+8cf0294  docs: 我把门禁打红了 25 分钟
+d32d2c5  docs: §3 里平台/CI 各条的处置
+f511494  docs: build-backends 9/9 全绿
+ec29792  feat(catalog): 四个 whisper 包换成带探针的自建产物（ADR-015 §7 例外）
+ea4d911  docs: 换目录回执
+bdbae5f  docs(D-11): §9.8 换包前后三平台冷启动对比
+```
+
+门禁：`pnpm -r test` **1270 / 0** · `tsc -b` 0 · `eslint` 0 · `test:ci-scripts` 全绿 ·
+`ci.yml` 在 `ea4d911` 上 success · `build-backends` **9/9** · `cold-start-audit` **3/3**。
+
+# 剩下的（一条都没装绿）
+
+| 项 | 状态 | 归属 |
+|---|---|---|
+| macOS 探针为什么超时 | ⚠️ **`UNKNOWN`，需要真 Mac** | 待定 |
+| `backendDir` 单值缺口 | 🔴 未修，**今天起不再是假设**（目录里已经同时有 CPU 与 Vulkan 包） | `daemon-backlog` |
+| Windows CUDA 在真 N 卡上行不行 | ⚠️ `UNKNOWN`，**需要真硬件**，CI 结构上验不了 | 需要硬件 |
+| 上游两个包各有几条 `ggml-cpu-*` 变体 | ⚠️ `UNKNOWN`，没下下来数 | 我 |
+| `whispercpp-cpu-win-x64` 的 `ggmlAbi` | ⚠️ **推断值**（`ggml.dll` 文件名无版本号，结构上取不到） | 我 |
+| `00-CHARTER.md` §3 补丁 | ⏳ 全文已发你，**我没改那个文件** | 你 |
