@@ -1271,3 +1271,33 @@ M2/M3 两条变异因此落进了 `/root/memo/packages/shared/dist/breaker.js`�
    **我没动它** —— 那会改 daemon 行为，且与上一位刻意分开的两条路径有关，超出本轮授权。
 2. `runtime.degradationChain` 仍**零消费**（本轮只接了 `breaker` 与 `blacklistedBackends`）。
    "现在实际在用 cpu"这件事目前靠后端芯片行表达。要不要在提示块里显式说"已回退到 CPU"？
+
+### ⑧ 附记（两条收尾核对，都不是我原计划里的）
+
+**(a) `apps/web/dist` 在 `02:17:07` 被整体重写过，里面已经含我这轮的代码。**
+
+`[实测]` `grep -rl "runtime-breaker-notice" apps/web/dist/` → 命中
+`assets/index-CEQy61MW.js`；`已暂时停用` 同样命中。最新 mtime `2026-08-08 02:17:07`。
+
+- **我没有跑过不带重定向的 `vite build`。** 本轮所有验证构建都是
+  `--outDir .test-out/components`（组件套件自带）或 `/tmp` 副本；包构建一律 `pnpm build:safe`
+  （filter 掉 `@openmemo/web`）。§7 与 §7-补充我是按脚本走的。
+- **谁跑的 → `UNKNOWN`。** 取不到：没有构建日志、没有 shell 历史可查，
+  时间点上树里同时有另外三位。**我不做没有证据的归因。**
+- **可以确定的后果**：`02:17` 那一刻我的改动**还没提交**，所以那份 `dist` 是从共享工作树
+  构建的 —— 它同时含着当时**所有人**的在途改动。`:10000` 现在托管的就是它。
+  我这部分现已提交且门禁全绿，但**那份 dist 整体是一个没人申报过的状态**。
+- **建议**：Manager 下次重启前按 §7 统一重建一次 `apps/web/dist`，让它对应一个具体 commit。
+  我**没有**去重建（§7 明写"只由 Manager 在重启前统一构建"），也没有动 `:10000`。
+
+**(b) 共享索引被 HEAD 前移带歪了，已修。**
+
+提交后 `git status` 出现 `D  packages/shared/src/breaker.ts`（暂存为"已删除"）与一批 `MM`。
+成因：共享索引还停在 `d2e788c` 那棵树上，而 HEAD 已经是我的提交 ——
+**下一位若直接用共享索引提交，会把我这轮的三个新文件删掉、并把改动回滚。**
+正是上一位在 T-173 §⑧ 预告过的那个假条目。
+
+已用 `git reset HEAD -- <我的 16 条路径>` 逐条复位（**只碰我自己的路径**，
+不用无参数 `git reset`，以免抹掉别人可能刚 stage 的东西）。
+复位后 `git diff --cached --name-only` 为空，工作树里只剩另外几位的在途改动，
+我的新文件不再显示为"已删除"。
