@@ -1,4 +1,11 @@
----
+-
+> ⚠️ **2026-08-07 订正：markmap 已整块摘除**（T-165b，`1b4df67`）。
+> 适配器文件、两个 npm 依赖、界面那句「切到大纲视图将不显示 N 条关联线」全部删除 ——
+> **产品里从来没有大纲视图**，那句话描述的功能不存在，所以是删除而不是改写。
+> 本文中凡提到 markmap 的段落**均已不成立**，保留原文仅供追溯。
+> ⚠️ **`toMarkdown` 不属于 markmap**，它在 `serialize/`（与 `toOpml`/`toFreeMind` 同侪），
+> 且是 `GET /api/notes/:uid/export?what=mindmap&format=md` 的实现 —— **不要跟着一起删**。
+--
 id: ADR-006
 title: 架构决策裁决（architect T-010 提交的 8 项）
 status: accepted

@@ -28,6 +28,13 @@ depends_on: D-01, D-02, ADR-002, ADR-003, ADR-004, ADR-005, ADR-006, packages/sh
 
 # 详细内容
 
+> ⚠️ **2026-08-07 订正：markmap 已整块摘除**（T-165b，`1b4df67`）。
+> 适配器文件、两个 npm 依赖、界面那句「切到大纲视图将不显示 N 条关联线」全部删除 ——
+> **产品里从来没有大纲视图**，那句话描述的功能不存在，所以是删除而不是改写。
+> 本文中凡提到 markmap 的段落**均已不成立**，保留原文仅供追溯。
+> ⚠️ **`toMarkdown` 不属于 markmap**，它在 `serialize/`（与 `toOpml`/`toFreeMind` 同侪），
+> 且是 `GET /api/notes/:uid/export?what=mindmap&format=md` 的实现 —— **不要跟着一起删**。
+
 > **诚实标记**：`[已定]` = ADR / 已落地代码既成事实；`[设计]` = 我的决策，**未执行任何代码**；
 > `[已核实]` = 本次实地读取上游源码/文档/脚本输出；`[待核实]` = 需实证；`UNKNOWN` = 查不到，不编。
 > **本文档零代码交付**（BOARD + ADR-005 所有权表：`architect` 只写 `docs/design/D-01* D-02* D-05*`）。
