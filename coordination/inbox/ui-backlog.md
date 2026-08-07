@@ -1301,3 +1301,191 @@ M2/M3 两条变异因此落进了 `/root/memo/packages/shared/dist/breaker.js`�
 不用无参数 `git reset`，以免抹掉别人可能刚 stage 的东西）。
 复位后 `git diff --cached --name-only` 为空，工作树里只剩另外几位的在途改动，
 我的新文件不再显示为"已删除"。
+
+---
+
+## [2026-08-08 04:20] T-175 DONE —— 手点「立刻重试」改走恢复预算；删掉零读者的 `degradationChain`
+
+> **起点 HEAD**：`ce3f898`　**落地**：`ad5a1b9`（已 push）
+> **未碰**：`:10000`、`/root/data-memo`、`~/.local/share/openmemo/datadir.json`（跑完复核仍是 `/root/data-memo`）。
+> **未用** `pkill -f`；**未建/改/删** release；**未跑** `pnpm -r build`。
+> **未动**预编译包那位的 `apps/daemon/src/http/server.ts` / `scripts/` / `package.json`。
+> 门禁在隔离 worktree 检出 `ad5a1b9` 跑；反向验证 8/8 全红（/tmp 副本，先跑对照组）。
+
+---
+
+### ① 那 90 秒里界面到底什么样（**实跑渲染出来的原文**）
+
+`[实测]` 从组件测试把提示块 `textContent` 打出来（/tmp 隔离副本）。
+**中文 · 正在重试（服务端报已跑 3 秒）**：
+```
+GPU 加速已暂时停用
+已暂时停用：cuda、vulkan、rocm、metal、coreml（连续 2 次探测失败：probe timed out
+after 10000ms (killed).）。正在重试 —— 一发后台恢复探测已经在跑，成功即自动恢复。
+[⟳ 正在重新探测…]  已用 3 秒 · 最长约 90 秒
+可以离开这个页面 —— 它在后台跑，回来时进度还在。
+```
+**英文 · 同一状态（已跑 7 秒）**：
+```
+GPU acceleration is temporarily disabled
+Temporarily disabled: cuda, vulkan, rocm, metal, coreml (2 consecutive probe failures:
+probe timed out after 10000ms (killed).). Retrying now — a recovery probe is already
+running in the background; success restores them automatically.
+[⟳ Re-probing…]  7s elapsed · up to about 90s
+You can leave this page — it runs in the background and the progress will still be here
+when you return.
+```
+
+四点值得单独说：
+
+1. **「已用 N 秒」是服务端算的**（`recoveryStartedAt`），不是组件里的计数器。见 ③。
+2. **「最长约 90 秒」里的 90 从响应里读**（新增 `recoveryTimeoutMs`）。前端一个数字都没硬编 ——
+   反向验证 M6（把它写死成 10）当场红。
+3. **那句"正在重试 —— 一发后台恢复探测已经在跑"仍然来自 `@openmemo/shared`**，
+   与自检 `hw.breaker` 同一个函数（`breakerRetryPhrase` 的 `recovering` 分支）。
+   我一个字都没另写。
+4. `[改]` **正在重试时不再显示「不需要手动操作 —— 到点会自动重试」那句。**
+   第一次 dump 出来才看见：它和详情句里的"成功即自动恢复"重复，而且轻微地说错话
+   —— 此刻已经在重试了，"到点会自动重试"会让用户以为还要再等一个"到点"。
+   它的位置让给了「可以离开这个页面」。**90 秒比 10 秒更需要那句话**：
+   没有它，用户会守着一个转圈干等一分半。
+
+### ② 手点为什么现在是后台的（daemon 侧改了什么）
+
+`?reset=1` 以前是 `resetBreaker()` + `detect(true)` ⇒ 裁决变 `closed` ⇒ **就地探一发，交互预算 10 s**。
+现在是 `requestBreakerRecovery()`：起（或加入）一发后台恢复探测，**当次请求立刻返回**。
+手点相对自动的唯一区别是**不必等冷却到期**（`open` 也照起）—— 那正是"显式重试"的含义。
+
+`[实测]` `breakerRecovery.test.ts` 新增 3 条（真子进程、真断路器、真调度）：
+- 当次请求 **实测 < 5 s 返回**，而那一发探针**实测跑满 12 s**（> `PROBE_TIMEOUT_MS`）；
+- **不清失败计数**：先抹掉再探等于让界面闪一下假的"已恢复"；
+- 跑完 `recovering` 归位、`recoveryStartedAt` 清掉（否则按钮会永远禁用着）。
+
+### ③ 单飞与手点怎么共存 —— **三层，缺一层都不够**
+
+| 层 | 做法 | 不这么做会怎样 |
+|---|---|---|
+| daemon | 已有一发在跑 ⇒ `started: false`，**加入等待**，不起第二发、**也不报错** | 起第二发 = 两个探针抢同一块 GPU 初始化（断路器本该防的）；报错 = 用户以为自己点坏了什么 |
+| daemon | 加入时**不刷新** `recoveryStartedAt` | 进度永远归零，用户看不到它前进 |
+| 界面 | `recovering` 为真 ⇒ 按钮 `disabled` | 用户根本点不出第二发（连点在界面层就被挡住了） |
+
+`[实测]` 连点 3 次：`started` 三次都是 `false`、`recovering` 三次都是 `true`（不是拒绝）、
+`recoveryStartedAt` 三次都等于第一发那个、**探针总 spawn 数 +1**。
+
+★ **界面这一层顺带解决了另一件事**：因为"忙"读的是服务端 `recovering` 而不是
+`mutation.isPending`，**后台自动那一发也会让按钮变成"正在重新探测"** ——
+用户不需要知道这一发是谁起的。有一条用例专门**不点按钮**来钉这件事。
+
+### ④ 切走再回来，状态还在吗 —— **在，而且这是设计出来的**
+
+进度记在 daemon（`recoveryStartedAt` 是服务端时刻），不是组件的 `useState`。
+`[实测]` 有一条用例**全新挂载**组件（= 用户离开页面再回来 / 另开标签页），
+服务端说那一发 40 秒前起跑 ⇒ 界面直接显示「已用 40 秒」，不是从 0 重数。
+反向验证 M5（改成前端从 0 数）当场红。
+
+`[未验证]` **真浏览器里真的切走再回来**没做过 —— 证据是 jsdom 里的重新挂载。
+`[未验证]` **真的等满 90 秒**没做过；最长实测是 12 秒那一发。
+
+⚠️ **顺带修的一条**（不修就会当场露馅）：daemon 的硬件响应带进程内缓存，
+恢复探测只改断路器 state、**不动那份缓存**。所以恢复成功后提示块消失了，
+而上面那排后端芯片**还是灰的** —— 用户刚被告知"好了"，看着却还是"不可用"。
+现在在 open → closed 那一刻补一发 `?refresh=1`（用 `useRef` 守住，只打一次）。
+那也是代价最低的时刻：恢复那发刚把 shader 缓存捂热（T-172：17606ms → 163ms）。
+
+### ⑤ `degradationChain` —— 查出 **0 个调用方**，已删
+
+**逐个核过全仓，含 `.mjs` / `.js` / `.json` / `.yml` / shell**（你点名的那条：孤儿检查器只扫 `.tsx?`）：
+
+| 类别 | 数量 | 位置 |
+|---|---|---|
+| 类型声明 | 3 | `setup.ts` `RuntimeDetection`、`hardware.ts` `RuntimeDiagnostics`、`shared/api.ts` |
+| 生产方 | 2 | `detectRuntimeHardware()`、`toDiagnostics()` |
+| 测试 fixture | 1 | 我上轮自己写的 `HW` 桩里那行 `degradationChain: ['cpu']`（没有任何断言读它） |
+| 注释/文档 | 4 | ADR-003、两份 inbox |
+| **真实读者** | **0** | —— |
+
+**`.mjs` 侧确认为 0**：`packages/downloader/scripts/reference-server.mjs` 处理
+`/api/runtime/hardware` 但**完全忽略 query、也不回 `runtime` 对象**。没有撞到真实调用方。
+
+按你的判据删了，连同两个只为它存在的东西：
+- **`nextCandidates()`**（`packages/runtime`）—— 唯一用途就是算那个字段；
+  它包的 `preferenceOrder()` 仍在用（`backendPreference()`），**没有**被一起删。
+- **`resetBreaker()`**（daemon）—— 唯一调用方是被我改掉的那条路。
+  留着还特别危险：**不带参数调用时 `breakers.clear()` 会清掉所有 backendDir 的裁决**，
+  下一个人会以为那是"重试当前这个"的正确做法。
+
+### ⑥ ⚠️ 你说的那两条零引用导出：**核实后不成立，我没改**
+
+> `useBreakerQuery` / `useBreakerResetMutation`，这轮要么接上要么删掉
+
+`[实测]` 两个都**有真实消费者**，不是半成品：
+
+```
+api.ts:50/84                     定义
+BreakerNotice.tsx:8              import（两个）
+BreakerNotice.tsx:40/41          调用
+RuntimePage.tsx:21/193           <BreakerNotice> 真的挂在页面上
+```
+`pnpm check:orphans` 上轮与本轮都是 `✔ 没有新的零引用导出`。
+**来源大概是 `coordination/inbox/prebuilt.md:81`** —— 那句话把它们称作"半成品"，
+写的时候（T-174 落地前）是对的，现在过期了。我没有去改别人的 inbox。
+
+同一族的另一条订正：`hardware.ts` 里那句注释说
+「`reset=1` 才是 **ADR-003 说的**"用户显式重试"」—— **ADR-003 全文没有 `reset` 二字，
+也没有"用户显式重试"这个说法**（grep 过）。ADR 的立场恰恰相反：恢复是自动的、用户不必动手。
+那句注释是在给自己找一个并不存在的出处。本轮重写那段时已经不再这么写，
+但**没有去改 ADR-003**（它归 Manager）。`[报告]`，请裁。
+
+### ⑦ 门禁（绑在 `ad5a1b9`，隔离 worktree + `pnpm install --frozen-lockfile`）
+
+| 门禁 | 结果 |
+|---|---|
+| `pnpm -r test` | **1508 pass / 0 fail**（上轮 1489；我 +6，其余是 health 那位的 `97534c8`） |
+| `npx tsc -b` | ✅ |
+| `npx eslint .` | ✅ exit 0 |
+| `pnpm build:safe` | ✅（未跑 `pnpm -r build`） |
+| `pnpm lint-workflows` | ✅ 769 条 / 8 个 workflow |
+| `pnpm test:ci-scripts` | ✅ 22 passed |
+| `pnpm check:orphans` | ✅ 没有新的零引用导出，基线未动（删了两个导出，只降不升） |
+
+**反向验证 8/8 全红**：
+
+| 变异 | 坏了用户会怎样 | 结果 |
+|---|---|---|
+| M1 手点改回交互预算 | 冷 Mac 上手点必然超时 —— 点了跟没点一样 | 🔴 |
+| M2 手点绕过单飞 | 连点/多标签页各起一发，抢同一块 GPU 初始化 | 🔴 |
+| M3 加入等待时刷新起跑时刻 | 进度永远归零，用户看不到它前进 | 🔴 |
+| M4 「忙」改回读 `isPending` | 那 90 秒界面一片安静（请求几十毫秒就回来了） | 🔴 |
+| M5 已等时长前端从 0 数 | 切走再回来进度归零 | 🔴 |
+| M6 等待上限硬编 10 秒 | daemon 调预算时界面开始说谎 | 🔴 |
+| M7 恢复后不补 `?refresh=1` | 提示块没了而芯片还是灰的 | 🔴 |
+| M8 正在重试时放开按钮 | 用户能点出第二发，撞穿单飞 | 🔴 |
+
+★ **M1 第一次跑是"存活"的，而它暴露了我自己测试里的一个真缺口** ——
+新写的那组只断言了**报出来的**预算（`recoveryTimeoutMs > PROBE_TIMEOUT_MS`），
+而那是另一个常量：把 `recoveryProbe()` 实际用的预算改回 10 s，**报的仍然是 90**，
+于是本组全绿，只有 T-173 那条端到端会红。**报的和跑的可以分叉。**
+已补一条断言量**实际跑了多久**（探针 sleep 12 s，预算真是 10 s 就会在 10 s 处被 kill）。
+第二次仍存活 —— 因为阈值写成 `> PROBE_TIMEOUT_MS`，10 s 被砍那一发量出来是 10 000 出头，
+**恰好擦着通过**；改成 `> PROBE_TIMEOUT_MS + 1000` 才真正把 12 和 10 分开。
+两次都是反向验证抓的，不是我读代码读出来的。
+
+### 本轮"没验就说没验"
+
+- **真浏览器**（含真的切走再回来、真的等满 90 秒）→ `[未验证]`。证据是 jsdom 渲染的 `textContent`。
+- **真 Mac 上手点 → 90 秒内成功** → `[未验证]`（需要一台会真的冷两次的 Mac）。
+- **`?reset=1` 在断路器 `closed`（没跳闸）时被调用** → 会照样起一发恢复探测。
+  界面上按钮此时根本不显示，但**接口层面没拦**。`[未验证]` 无端到端路由测试。
+- **多标签页真并发** → `[未验证]`；daemon 侧单飞有实测（连点 3 次 spawn 只 +1），
+  但走的是进程内直调，**没有真的从两个浏览器上下文打 HTTP**。
+- daemon 的硬件缓存**在自动恢复（非手点）之后仍然是陈的** —— 我只在前端补了
+  open → closed 的那一发 `?refresh=1`，**没有去改 daemon 的缓存失效逻辑**（超出本轮授权）。
+  真正的根治是让那份缓存跟着断路器 state 失效。`[建议]`
+
+### 需要 Manager 决策
+
+1. **daemon 侧 `GET /api/runtime/hardware` 的进程内缓存没有失效条件** ——
+   一旦探测过一次，除非有人带 `?refresh=1`，它会永远返回同一份 `hardware`。
+   断路器恢复/跳闸都不会让它失效。我用前端补了一发，但那是在外面兜。要不要专开一轮？
+2. `hardware.ts` 那句"ADR-003 说的用户显式重试"没有出处（见 ⑥）。
+   要不要在 ADR-003 里补一条把 `?reset=1` 的语义写进去（现在它已经是"后台 90 s + 单飞"了）？
