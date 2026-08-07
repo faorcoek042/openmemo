@@ -861,3 +861,208 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
    要不要单开一张卡，我可以接着做。
 3. `RetranscribeButton` 那条**过期注释**导致的能力压制（engineId/modelId/prompt 后端已读）——
    归我还是归 `daemon-backlog`？改动很小，但会和 R-06 的"引擎选择器 catalog 化"撞车。
+
+## [2026-08-08 02:10] T-174 DONE —— 「不要搬」在传输层上根本没被表达出来；13 条端点已分诊
+
+交付:
+- 改 `apps/daemon/src/http/rest/storage.ts`（新 `parseChangeRequest()` / `externalFiles()`）
+- 新 `apps/daemon/src/http/rest/storage.dataDir.test.ts`（20 条，其中 7 条真发 HTTP 且**逐文件哈希扫文件系统**）
+- 改 `apps/web/src/features/settings/DataLocationSection.tsx`（新导出 `resultTextKey`）
+- 改 `apps/web/src/test/components.test.tsx`（+9 条）、两份 locale（+3 键，改 2 键）
+
+---
+
+### ① 今天点下去到底发生了什么（**实测**，两个 mkdtemp 数据目录 + 真 http server + 请求前后逐文件哈希）
+
+⚠️ **先更正上一位报的症状 —— 它不成立。**「点『直接使用此目录』会触发整目录搬迁」是**推断**，
+实际不是这样：那条路在 `looksLikeDataDir(plan.to)` 那道 `TARGET_ALREADY_DATA_DIR` 闸上
+**被挡在搬迁之前**。真正会搬走用户数据的是**主表单里那个复选框**。
+
+| 界面动作 | 请求体 | **修复前实际发生** | 修复后 |
+|---|---|---|---|
+| 输新路径 + **取消勾选**「移动现有数据」+ 应用 | `{path, moveExisting:false}` | **HTTP 202 `moved:true`，源目录被清空**；`openmemo.db` / `secrets.json`(含 key) / `media/*.m4a` / `models/*.bin` 共 **9 个文件 10.9MB 被 `rename` 走**；指针改写；请求重启。响应逐字写着「已移动 9 个文件到新位置」 | **409 `NOT_A_DATA_DIR`，0 字节变动**，目标目录连建都没建 |
+| 同上但**勾着** | `{path, moveExisting:true}` | **与上一行逐字节一模一样** —— 即那个复选框**在传输层上等于不存在** | 202 `moved:true`（照常搬，功能没被误伤） |
+| 撞 409 后点「直接使用此目录」 | `{path, moveExisting:false}` | **又是 409 `TARGET_ALREADY_DATA_DIR`** —— 用户看到的还是刚才那条错误。**这个按钮从上线起一次都没成功过**，且它不搬数据 | **202 `moved:false`**，指针更新，0 字节变动 |
+
+成因是两处叠加：前端发 `moveExisting`，daemon 读 `body?.move`，且缺省 `!== false` = **搬**。
+⚠️ 附带发现：`docs/DEPLOYMENT.md:301`、`inbox/storage-fix.md`、`inbox/docs-public.md` 里
+都留着「`moveExisting:true` 搬迁成功」的记录 —— **那几次成功全是靠缺省蒙对的**，
+这个字段从上线起一次都没被读到过。
+
+### ② 缺省值：定成 **false（不搬）**，依据如下
+
+我同意「破坏性操作缺省不做」，但真正说服我的不是这句话本身：
+
+- **失败代价不对称。** 缺省不搬的最坏结果是指针指向一个非数据目录 → 既有的
+  `NOT_A_DATA_DIR` 当场 409，**一个字节没动**，重发即可；缺省搬的最坏结果是
+  跨盘搬几十 GB + 改数据库路径 + 强制重启，而且**连原样搬回去都做不到**
+  （实测目标目录会多出 `openmemo.db-wal` / `-shm`）。
+- **★ 更关键的一层：缺省值决定了「键名写错」是一份缺陷报告，还是一次数据事故。**
+  同样这个 bug，在「缺省不搬」下的表现是：用户勾着框点应用，却看到
+  「已记录新位置（未搬运数据）」—— **不对，但可见、可逆、当天就会被报上来**。
+  在「缺省搬」下它安静地活了不知道多久，还在三份文档里留下了「成功」的假记录。
+- **本文件自己的既有立场就是这样**：`dryRun` 缺省 false、有任务在跑直接拒、
+  目标非空直接拒。`move` 缺省 true 是这一组里唯一的例外。
+
+⚠️ **界面复选框我保持默认勾选，这不矛盾，别把两者「统一」掉**（已写进源码注释）：
+界面**每次都显式发**这个字段；缺省值管的只是「没人表达过意图」的情形，
+而那正是绝不该替用户做不可逆决定的时刻。
+
+另外两条一并加上，判据是「意图送不到就绝不假装送到了」：
+- **认识但非布尔 → 400**（`moveExisting:"false"` 字符串在旧写法下等于"搬"）。
+- **不认识的字段 → 400**（只对本端点）。这条才治本：宽松解析下，写错的字段名
+  等价于"用户什么都没说"，于是缺省值替他做了决定。严格解析把它变成传输层一声硬报错。
+
+### ③ 同一端点上其余「一边写一边不读」的字段（都是实测出来的，不是读代码猜的）
+
+| 字段 | 事实 | 处置 |
+|---|---|---|
+| `entries[].bytes` / `files` | daemon **逐目录各跑一次 `measureTree`**，七条 entry 每条都带；前端类型里没有 → 被 TS 结构化子类型静静丢掉 | 已接上。⚠️ 前端源码注释与**两份 locale 文案**都写着「daemon 尚未逐目录统计」/「暂无整目录统计接口」——**都是假的**，而且与同一屏上已经显示着的「数据目录总占用」当场自相矛盾。三处一起改了 |
+| `externalFiles` | daemon 一直返回数据目录**外面**那个指针文件的位置/为什么在外面/风险（`riskZh` 逐字描述的就是 §9 那场事故的用户侧形态：「按它去那个不存在的位置建空目录，表现为笔记全没了」）。前端类型里没有它 → **这条警告写出来之后从没到达过任何用户** | 已接上；并按 T-135 的判据补齐中英成对（否则英文界面又会多一片汉字），抽成 `externalFiles()` 让成对断言守得住 |
+| `moved` | daemon 回了，前端类型里有、但从不渲染 —— 搬了和只改指向**显示同一句**「已保存。重启后生效。」 | 已分开。**只信 daemon 回的 `moved`，不按前端自己发了什么猜** —— 否则下次两端再对不上，界面会继续自信地报告一件没发生的事 |
+| `dryRun` | daemon 支持（实测 200），前端**从来不发**，搬家没有"先试算"入口 | 未接（本轮不做）。顺手让它回 `willMove`，试算的意义就是动手前看见"这一发会不会搬" |
+| `selfContained` / `noteZh` | daemon 回，前端无 | 未接。`noteZh` 与前端自己的 `safeToDelete` 文案是两个出处、会漂移，建议后续统一到 daemon |
+
+### ④ **同一个形状在别处还有三处**（派了只读 Explore 全量对账，逐条我自己复核过）
+
+1. `GET /api/components?check=` —— 前端发 `?check=true`，daemon 只认 `'1'`（**值不匹配**）。
+   潜伏中：唯一调用点传 `false`，今天发不出去。
+2. `POST /api/components/:id/update` —— 前端确认框**逐字承诺**「将『X』从 `pinnedVersion`
+   更新到 `latestVersion`？」并发 `toVersion`，而 daemon 这一分支**从头到尾没有 `readBody`**，
+   装的是清单里钉死的 `pinnedVersion`，响应还把 `pinnedVersion` 当作 `toVersion` 报回来。
+   ⚠️ **但 daemon 侧是有意的且写明了理由**（没有上游版本的 sha256 就不装，比放弃校验强）——
+   所以错的是**前端在承诺一件服务端明确拒绝做的事**，修法是改前端文案，
+   **不是**让 daemon 去读 `toVersion`。这条判断我自己读了两边源码。
+3. `PATCH /api/notes/:uid` 的 anchors —— 前端 `collectAnchors` 产出 `anchorKey`
+   （`TimeAnchor.ts:93`），daemon 读 `a.key`（`content.ts:139`），于是 `segmentRepo.ts:160`
+   **恒走 `ulid(now)` 兜底**：`note_anchors.anchor_key` 与正文 `body_json` 里的 anchorKey
+   **永远不相等**，且每次 800ms 自动保存都换一批新 ULID。
+   `0001_init.sql:470` 声明的那条一一对应不变式**对每一行都不成立**。
+   —— 这与我这轮修的是**同一个形状**（用户/前端表达的东西没到达执行方），
+   而且它**每次自动保存都在跑**。我没有碰它：它挨着笔记正文，且要先定"锚点以谁为准"。
+4. （第四处 `GET /api/runtime/hardware` 缺省方向相反，见下面分诊，**归断路器那位**。）
+
+---
+
+### ⑤ 13 条零前端入口端点的分诊
+
+**该删（服务端写了，但产品方向上不需要 / 零入口本身就是对的）**
+- `WS /ws/asr-worker` —— 握手过了鉴权**才**回 `NOT_IMPLEMENTED` 然后 close。ADR-006 明写 v1 不做。
+  一条"连得上但必然失败"的路由比没有更坏。
+- `POST /api/components/:id/rollback` —— **端到端死路**：产出回滚点的 `stashForRollback()`
+  零调用方 → `rollbackVersion` 恒 null → 恒 409；前端按钮 T-157 已删，
+  且 `componentActionPath` 的字面量类型让它在**编译期**就调不出去。要么实现 stash，要么整条删。
+- `GET /api/models/active` —— `/models/installed` 的响应里已经带 `active`，前端读的就是那份。纯冗余。
+- `GET /api/daemon/status` —— **零前端入口是对的，不是缺口**：业务块与公开的 `/api/health` 同源
+  （`server.ts` 里 `...deps.status()`），前端**有意**改打 health（status 要鉴权）。保留给 e2e 脚本。
+- `POST /api/echo` —— 保留，但应明确标为**内部夹具**：唯一消费者是 daemon 自己的鉴权/CSRF 用例。
+- `GET /api/jobs/:jobId` —— 列表 + SSE 已经覆盖，详情页没有产品形态。低价值。
+
+**该接（真会用 + 服务端行为已验证）—— 本轮都不做**
+- `POST /api/models/import` —— 实现是完整的（stat → 按文件名推量化 → 入下载队列 → sha256 →
+  内容寻址落库 → 写 manifest），`hf_repo` 分支硬 501。**手上已有 GGUF 的用户今天没有任何入口。**
+  工作量：中（一个"导入本地模型"表单 + 复用任务中心看进度）。
+- `GET /api/runtime/breaker` —— 该接，但**已经有人在做**：断路器那位刚往两份 locale 里加了
+  `runtime.breaker.*`（「立刻重试」/「正在重新探测」）。**归他，我没碰。**
+  ⚠️ 连带提醒他：`GET /api/runtime/hardware` 的 `reset=1` / `refresh=1` 前端**从不发**，
+  缺省是「用进程内缓存 + 不重置断路器」，**与那颗「重试」按钮的语义正好相反** ——
+  不发 `reset=1` 的话，点重试拿到的是逐字节相同的缓存快照，断路器计数也不清。
+
+**该查（服务端行为对不对/产品要不要，得先定）**
+- **`GET /api/tags` + `DELETE /api/tags/:uid` —— 需要你一句话。**
+  ⚠️ 按你的要求，**没有拿"竞品有"当理由**（memo.ac 那边标签系统其实不存在）。
+  我们自己的事实是：标签**只能由用户手工创建**（全仓 `INSERT INTO note_tags` 只有一处，
+  `source` **硬编码 `'user'`**，schema 里的 `'ai'` 从没被写过；pipeline 里没有任何自动打标路径）；
+  `nav.tags` 词条**两份 locale 里都有、全仓零引用**；`qk.tags` **只作为失效目标存在，
+  从来没有注册过对应的 query**。也就是说标签今天是**只写不读** ——
+  用户能打标签，打完没有任何地方能按标签找回来。
+  → 所以这**不是"接一个 GET"的事**：单接 `GET /api/tags` 只会得到一个列表页、点进去无处可去。
+  **要先定：标签算不算一条导航轴？** 定了才知道该做"标签页 + 按标签筛选笔记"（大），
+  还是把 `nav.tags` 那个死词条删掉（小）。`DELETE` 那条附带说明：级联是干净的
+  （事务里显式删 `note_tags` 再删 `tags`，不依赖 `PRAGMA foreign_keys`）。
+- `GET /api/notes/:uid/anchors` —— **接之前必须先修写入侧**（见上面 ④-3）。
+  今天表里的 `anchor_key` 全是每次自动保存新生成的 ULID，与正文对不上；
+  先接读取只会把一份错数据搬到界面上。
+- `POST /api/daemon/shutdown` —— 文档（`DEPLOYMENT.md` / `D-01`）承诺的触发源是 `openmemo down`，
+  而这个 CLI **全仓不存在**。三选一：补 CLI / 界面上给个「退出」/ 删端点并改文档。
+- `GET /api/models/:id` —— `ModelDetailPage` 现在从 catalog 里 `useMemo` 捞，工作正常。
+  不接也没坏处；接了才有"目录之外的已装模型"这一档。低优先。
+
+**`RetranscribeButton` 那条过期注释**：daemon `content.ts:289-291` 确实读
+`engineId`/`modelId`/`prompt`，注释还写着"后端只解析 language" —— 同一形状（过期注释压着已有能力）。
+但它会与 R-06「引擎选择器 catalog 化」撞车，且导入/上传两条路径缺同样这三个字段。
+**建议三条一起做、归一个人**，本轮不做。
+
+---
+
+### ⑥ 反向验证（12 条变异，**全部在 /tmp 隔离副本 + 假 HOME 上做**，PROTOCOL §10）
+
+对照组先绿（daemon 23/23、web 301/301），逐条变异，跑完还原后再绿。
+
+| daemon | 结果 | | web | 结果 |
+|---|---|---|---|---|
+| M1 恢复原样的 bug（读 `move` 且缺省 true） | 红 3 ✅ | | W1 补救守卫改回读 `move` | 红 1 ✅ |
+| **M2 键名是对的，只把缺省翻回 true** | **红 2 ✅** | | W2 逐目录大小不再渲染 | 红 1 ✅ |
+| M3 拿掉「未知字段 → 400」 | 红 2 ✅ | | W3 外部指针文件不再渲染 | 红 2 ✅ |
+| M4 非布尔改成真值转换 | 红 1 ✅ | | W4 结果文案恒定中性 | 红 1 ✅ |
+| M5 补救载荷改回 `move` | 红 1 ✅ | | W5 locale 那句假话回来 | 红 1 ✅ |
+| M6 `externalFiles` 去掉英文 | 红 1 ✅ | | | |
+| **M7 拿掉指针重定向（测试开始写机器级位置）** | **红 2 ✅** | | | |
+
+**M2 单独说一句**：它证明**缺省值方向是独立承重的** —— 就算键名对上了，
+把缺省翻回 true 照样红。这条不是文字游戏。
+
+**M7 单独说一句**：这条变异是**真的会去写机器级指针的敌对代码**（§9-bis 推论）。
+整套跑在假 `HOME`/`XDG_DATA_HOME` 里，所以它红得干干净净、又够不到真实那一份。
+
+### ⑦ 门禁（**在 `/tmp/gate-t174` 另开的 worktree 上、检出我自己那个 commit 跑的** —— 工作树上另有三位在途）
+
+| 门禁 | 结果 |
+|---|---|
+| `pnpm -r test` | **1462 pass / 0 fail** |
+| `npx tsc -b` | ✅ |
+| `npx eslint .` | ✅ 0 |
+| `pnpm build:safe` | ✅（**全程未跑 `vite build` 进 `apps/web/dist`**，§7） |
+| `pnpm lint-workflows` | ✅ 627 条断言 / 7 个 workflow |
+| `pnpm test:ci-scripts` | ✅ 22 passed, 0 failed |
+| `pnpm check:orphans` | ✅ **70 个（基线 70，未升）** |
+
+**基线 1433 我是实测核对的，不是算出来的**：把同一个 worktree 检出到我的父提交
+`353ca09`（**并且 `rm -rf apps/daemon/dist`**）重跑一遍 = **1433**，1462 − 1433 = 29
+= 我新增的 daemon 20 + web 9。
+⚠️ 顺带记一条：第一次测父提交时 `apps/daemon test: Failed`，总数掉到 962。
+**不是回归** —— `dist/` 不受 `git checkout` 管，我那个新测试文件的编译产物还留着，
+于是 daemon 自己那条「src 有几个测试文件、dist 就得有几个」的守卫当场拦下。
+**那条守卫是对的**，记在这里省得下一个人误判成回归。
+（`lint-workflows` 上一份回执是 628，我这里 627 —— 差额来自我提交之后树上新增的 workflow，
+断言数随 workflow 变，不是掉了一条。）
+
+### ⑧ 纪律申报
+
+- `:10000` 演示实例：**全程零请求、未重启、未占用**。所有实测都是自起的临时 http server
+  （`listen(0)`，OS 分配端口），**不启动 daemon**。
+- **`~/.local/share/openmemo/datadir.json`（机器级指针）：开工前记录
+  `sha256=7f930979…` / `mtime=1785776819` / `size=78` / `dataDir=/root/data-memo`，
+  全部工作与 12 条变异跑完之后逐字节复核 —— sha256 与 mtime 一字未变。**
+  新测试在**模块顶层**设 `OPENMEMO_POINTER_FILE`（窗口为零，无清理代码），
+  并有两条用例专门守着这条重定向本身（M7 证明它真的会红）。
+- `/root/data-memo`：**未读未写**。`pkill`：**未用**。release / `vendor/manifests/`：**未碰**。
+- `apps/daemon/src/runtime/`、`docs/adr/ADR-003*`、`docs/design/D-17-*`、`.github/workflows/`、
+  `scripts/`、`package.json` version、`gen-build-info.mjs`、`MockNotice.tsx`：**一个字节未改**。
+- **共享树纪律**：逐文件 stage，commit 前核对过 `git diff --cached --name-only`（6 个文件，全是我的）。
+  两份 locale 是**与断路器那位共享**的：我提交后他往同一段里加了 `runtime.breaker.*`，
+  两边是纯追加、无重叠，我没有动他那几行。
+- **反向验证全程没有在共享树里拆过修复**（§10）：daemon 侧变异打在 `/tmp` 的 dist 副本上，
+  web 侧把 bundle 与 `src` 一起复制到 `/tmp`、cwd 指向副本
+  （因为几条断言走 `readSource()` 读 `process.cwd()/src/`）。
+- **没在真浏览器里点过**：组件测试跑在 jsdom。受控文本输入框宿主驱动不了（既有限制），
+  所以"打开表单→输路径→点应用"这条链**没有**端到端点击验证 ——
+  我把会撒谎的那段判断抽成 `resultTextKey` 纯函数来钉，**而不是写一条跑不起来的点击链路假装覆盖了**。
+  搬迁行为本身的验证在 daemon 侧，判据是**文件系统里发生了什么**，不是响应里写了什么。
+
+需要 Manager 决策:
+1. **标签算不算一条导航轴？**（见 ⑤ 该查第一条）—— 定了我才知道是做页面还是删死词条。
+2. `POST /api/components/:id/update` 的确认框在承诺一件 daemon 明确拒绝做的事，
+   建议改前端文案（而不是让 daemon 读 `toVersion`）。归我还是归组件那条线？
+3. `PATCH /api/notes/:uid` 的 `anchorKey`/`key` 不匹配（④-3）——
+   与我这轮同形、且每次自动保存都在跑。要先定"锚点以谁为准"，请指派。
