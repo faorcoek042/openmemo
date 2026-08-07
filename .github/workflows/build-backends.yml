@@ -168,13 +168,37 @@ jobs:
             --out "${PACK_OUTPUT_DIR}" \
             --jobs $(sysctl -n hw.logicalcpu)
 
-      - name: Build probe
-        if: matrix.backend == 'cpu'
-        # C7: take the directory the build script actually used, not a guessed one.
+      # ★★★ T-167：**macOS 部署目标守卫**（D-11 §8.0 那一族的 macOS 那一格）。
+      #
+      # 与 Linux 的 `check-elf-glibc` 是同一条规律的两个面：不显式指定部署目标，
+      # 编译器就把**构建机自己的系统版本**写进 `LC_BUILD_VERSION.minos`，而 runner 是
+      # `macos-26`。`[CI 实测 T-146]` 那次是包里 12 个二进制全是 `minos=26.0.0`
+      # ——「下载成功、校验通过、一执行就死」。
+      #
+      # 那次修的是 `build-whisper.sh`。`[本机实测 T-167]` 把同一轮 CI 的产物解开逐个读：
+      #   包里 20 个 Mach-O   minos = 13.3.0
+      #   dist/probe/openmemo-probe  minos = 26.0.0   ← **同一个洞，另一个文件**
+      # 所以现在它是一步会红的守卫，而不是两个脚本里各自的一行 flag。
+      #
+      # 覆盖面是 `stage_dir`（= 整个包），而探针从 T-167 起就在包里，
+      # 于是它**自动**落进这条守卫 —— 这正是"随包出厂"顺带买到的性质。
+      - name: Guard macOS deployment target
         run: |
-          bash scripts/build-probe.sh \
-            --ggml-lib-dir "${{ steps.build.outputs.bin_dir }}" \
-            --out "dist/probe/openmemo-probe"
+          node scripts/ci/check-macho-minos.mjs \
+            --dir "${{ steps.build.outputs.stage_dir }}" \
+            --max 13.3
+
+      # T-167：探针不再单独编译一次 —— 它已经由 build-whisper.sh 编进包里了。
+      # 这一步只是把**同一份字节**复制出来当独立 artifact。
+      # 判据：被守卫验过的那个文件，和用户拿到的那个文件，必须是同一个。
+      # 单独再编一次会产生"两个都叫 openmemo-probe、但没人保证一样"的东西。
+      - name: Copy the in-pack probe out as a standalone artifact
+        if: matrix.backend == 'cpu'
+        run: |
+          set -euo pipefail
+          mkdir -p dist/probe
+          cp "${{ steps.build.outputs.probe_path }}" dist/probe/openmemo-probe
+          ls -l dist/probe
 
       # ADR-003 decision 4: ad-hoc only. No Developer ID, no notarisation, no stapling —
       # the user's brief is personal use and no certificates were purchased. D-04 §7
@@ -502,13 +526,17 @@ jobs:
             --dir "${{ steps.build.outputs.stage_dir }}" \
             --max 2.34
 
-      - name: Build probe
+      # T-167：探针不再单独编译一次 —— build-whisper.sh 已经把它编进包里了
+      # （理由见该脚本里 "探针随包出厂" 那一段：它动态链接 libggml-base，
+      #  单独发一个二进制文件在用户机器上**一次都启动不了**）。
+      # 这一步只是把**同一份字节**复制出来当独立 artifact。
+      - name: Copy the in-pack probe out as a standalone artifact
         if: matrix.backend == 'cpu'
         run: |
-          bash scripts/ci/buildbox.sh \
-            bash scripts/build-probe.sh \
-            --ggml-lib-dir "${{ steps.build.outputs.bin_dir }}" \
-            --out "dist/probe/openmemo-probe"
+          set -euo pipefail
+          mkdir -p dist/probe
+          cp "${{ steps.build.outputs.probe_path }}" dist/probe/openmemo-probe
+          ls -l dist/probe
 
       # ★★ T-163：**探针以前不在守卫的覆盖面里，而它是随包出厂的**。
       #
@@ -519,7 +547,10 @@ jobs:
       # 「这台机器能用哪些加速器」的那个东西：它挂掉的表现是"探测不到任何 GPU"，
       # 与"这台机器真的没有 GPU"**在界面上完全一样**。
       #
-      # 这条是本次迁移**顺手暴露出来的**，不是原来就红的 —— 记在这里以免下次被当成回归。
+      # ★ T-167 更新：探针进包之后，上面那条 `Guard glibc floor` 已经覆盖它了
+      #   （stage 的 ELF 计数会从 22 变成 23）。**这一条仍然保留**，因为它守的是
+      #   另一件事：**被 upload 出去的那份**与包里那份是不是同一个文件。
+      #   复制那一步一旦被改回"再编一次"，两份就可能不同，而这条守卫验的是前者。
       - name: Guard glibc floor (probe)
         if: matrix.backend == 'cpu'
         run: |
@@ -651,13 +682,19 @@ jobs:
             --out "${PACK_OUTPUT_DIR}" \
             --jobs 4 $EXTRA
 
-      - name: Build probe
+      # T-167：探针由 build-whisper.sh 编进包里；这一步只把同一份字节复制出来。
+      # `[本机实测]` Windows 探针的导入表只有 KERNEL32 + `api-ms-win-crt-*`（UCRT，
+      # Win10+ 自带）+ `ggml-base.dll` / `ggml.dll` —— **没有 MSVCP140 / VCRUNTIME140**。
+      # 也就是说探针本身不需要 VC++ 可再发行组件；但它链接的那两个 ggml DLL 需要
+      # （D-11 §8.3，`win-fixes` 的 `simple.dll` 是同一条），所以这条不构成"Windows 上没问题"。
+      - name: Copy the in-pack probe out as a standalone artifact
         if: matrix.backend == 'cpu'
         shell: bash
         run: |
-          bash scripts/build-probe.sh \
-            --ggml-lib-dir "${{ steps.build.outputs.bin_dir }}" \
-            --out "dist/probe/openmemo-probe.exe"
+          set -euo pipefail
+          mkdir -p dist/probe
+          cp "${{ steps.build.outputs.probe_path }}" dist/probe/openmemo-probe.exe
+          ls -l dist/probe
 
       - uses: actions/upload-artifact@v6
         with:

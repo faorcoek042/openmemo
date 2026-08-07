@@ -206,10 +206,16 @@ for (const file of files.sort()) {
     const steps = linux?.steps ?? [];
     const runs = steps.map((s) => ({ name: s.name ?? s.uses ?? '(anon)', code: stripShellComments(s.run) }));
 
-    /* ① 编译/链接/跑产物的每一步都必须经过 buildbox.sh。 */
+    /* ① 编译/链接/跑产物的每一步都必须经过 buildbox.sh。
+     *
+     * ★ T-167：`scripts/build-probe.sh` **从这张表里移走了**，因为 workflow 不再直接调它 ——
+     *   它现在由 `build-whisper.sh` 在同一次 buildbox 调用里调用（探针要和 ggml 库同目录，
+     *   所以它必须在打包之前就进 stage）。**性质没有放松，只是换了钉的位置**：
+     *   下面 ⑤ 那组断言钉的是「build-whisper.sh 里必须有那次调用 + 那条守卫」，
+     *   而 build-whisper.sh 本身仍然在这张表里、仍然必须经过 buildbox.sh。
+     *   —— 不这么改的话，这条断言会因为"没东西可查"而报出一个假红。 */
     const COMPILE_MARKERS = [
       'scripts/build-whisper.sh',
-      'scripts/build-probe.sh',
       'scripts/ci/smoke-linux-pack.sh',
     ];
     for (const marker of COMPILE_MARKERS) {
@@ -265,13 +271,120 @@ for (const file of files.sort()) {
       guards.some((g) => g.code.includes('dist/probe')),
       'build-backends.yml#linux: 没有一条 check-elf-glibc 覆盖 dist/probe（探针）',
     );
+
+    /* ═════════════════════════════════════════════════════════════════════════════
+     * ⑤ ★ T-167 · 探针**随包出厂**这件事本身要被钉住
+     *
+     * 三条独立的事实合起来才让它成立，缺一条就回到"发了也用不了"：
+     *   ① 探针动态链接 `libggml-base` / `libggml`（`[本机实测]` 裸跑报
+     *      `cannot open shared object file: libggml-base.so.0`）；
+     *   ② `runtime/setup.ts` 的 `backendDir` = `dirname(probePath)`；
+     *   ③ 探针只能枚举**与它同目录**的后端模块。
+     * → 它必须在包里，而且是**每一个**包里。
+     *
+     * 所以这里钉的不是 workflow 的措辞，是**结构**：
+     *   · build-whisper.sh 真的调了 build-probe.sh，并且落点是 STAGE（不是 dist/）；
+     *   · 编不出来当场 die（否则会打出一个"里面没有探针"的包并报绿）；
+     *   · workflow 那一步是**复制**，不是第二次编译（upload 的必须和包里的是同一份字节）。
+     * ═════════════════════════════════════════════════════════════════════════════ */
+    const bw = await readFile(join(REPO_ROOT, 'scripts', 'build-whisper.sh'), 'utf8');
+    const bwCode = stripShellComments(bw);
+    must(
+      /build-probe\.sh[\s\S]{0,200}--out\s+"\$\{STAGE\}\//.test(bwCode),
+      'scripts/build-whisper.sh: 没有把 openmemo-probe 编进 ${STAGE}。' +
+        '探针动态链接 libggml-base，且 runtime/setup.ts 的 backendDir = dirname(probePath) —— ' +
+        '不在包里的探针在用户机器上一次都启动不了。',
+    );
+    must(
+      /\[\[\s*!\s*-e\s*"\$\{STAGE\}\/\$\{PROBE_NAME\}"\s*\]\][\s\S]{0,600}\bdie\b/.test(bwCode),
+      'scripts/build-whisper.sh: 探针没编出来时没有 die。' +
+        '少了守卫就会打出一个"能下载、能安装、里面没有探针"的包并报绿 —— ' +
+        '而缺探针的表现是「尚未探测到硬件能力」，与"这台机器真的没有 GPU"完全一样。',
+    );
+    for (const jobName of ['macos', 'linux', 'windows']) {
+      const jobSteps = (bb.jobs?.[jobName]?.steps ?? []).map((s) => ({
+        name: s.name ?? s.uses ?? '(anon)',
+        code: stripShellComments(s.run),
+      }));
+      const probeSteps = jobSteps.filter((s) => /dist\/probe/.test(s.code));
+      must(
+        probeSteps.length > 0,
+        `build-backends.yml#${jobName}: 没有任何一步产出 dist/probe —— 探针的独立 artifact 不见了`,
+      );
+      for (const s of probeSteps) {
+        must(
+          !/scripts\/build-probe\.sh/.test(s.code),
+          `build-backends.yml#${jobName} "${s.name}": 又在 workflow 里单独编了一次探针。` +
+            `那会产生两个都叫 openmemo-probe、却没有任何东西保证一样的文件 —— ` +
+            `守卫验的是其中一个，用户拿到的是另一个。这一步只该从 stage 复制。`,
+        );
+      }
+    }
+
+    /* ⑥ macOS 那一格的同族守卫：LC_BUILD_VERSION.minos。 */
+    const macRuns = (bb.jobs?.macos?.steps ?? []).map((s) => ({
+      name: s.name ?? s.uses ?? '(anon)',
+      code: stripShellComments(s.run),
+    }));
+    const minosGuards = macRuns.filter((r) => r.code.includes('check-macho-minos.mjs'));
+    must(
+      minosGuards.length > 0,
+      'build-backends.yml#macos: 没有 check-macho-minos 守卫。' +
+        '不显式设部署目标，编译器就把构建机(macos-26)的版本写进 minos，' +
+        '而 minos 高于用户系统时 dyld 直接拒绝加载 —— 表现是"探测不到任何 GPU"。',
+    );
+    for (const g of minosGuards) {
+      must(
+        /--max\s+13\.3\b/.test(g.code),
+        `build-backends.yml#macos "${g.name}": check-macho-minos 的 --max 不是字面量 13.3。` +
+          `13.3 来自上游 build-xcframework.sh:5 的 MACOS_MIN_OS_VERSION，` +
+          `写成变量或表达式等于把基线交给别处去定义。`,
+      );
+      must(
+        g.code.includes('stage_dir'),
+        `build-backends.yml#macos "${g.name}": 守卫没有覆盖 stage_dir（= 整个包，含探针）`,
+      );
+    }
+
+    /* ⑦ 基线只许有一份：`scripts/lib/baselines.sh` 与 workflow 里的 --max 必须一致。
+     *    这两个数字此前分别写在 build-whisper.sh、build-probe.sh（漏了）和 workflow 里，
+     *    三次事故的共同成因就是"同一个数字写在两个地方，然后只改了一个"。 */
+    const baselines = await readFile(join(REPO_ROOT, 'scripts', 'lib', 'baselines.sh'), 'utf8');
+    const readBaseline = (name) =>
+      new RegExp(`^${name}="([^"]+)"`, 'm').exec(baselines)?.[1] ?? null;
+    const macBase = readBaseline('OPENMEMO_MACOS_DEPLOYMENT_TARGET');
+    const glibcBase = readBaseline('OPENMEMO_LINUX_GLIBC_MAX');
+    must(macBase === '13.3', `scripts/lib/baselines.sh: macOS 部署目标应为 13.3，实得 ${macBase}`);
+    must(glibcBase === '2.34', `scripts/lib/baselines.sh: glibc 上限应为 2.34，实得 ${glibcBase}`);
+    must(
+      /source\s+"\$\{SCRIPT_DIR\}\/lib\/baselines\.sh"/.test(stripShellComments(bw)),
+      'scripts/build-whisper.sh: 没有 source scripts/lib/baselines.sh',
+    );
+    const bp = stripShellComments(
+      await readFile(join(REPO_ROOT, 'scripts', 'build-probe.sh'), 'utf8'),
+    );
+    must(
+      /source\s+"\$\{SCRIPT_DIR\}\/lib\/baselines\.sh"/.test(bp),
+      'scripts/build-probe.sh: 没有 source scripts/lib/baselines.sh',
+    );
+    must(
+      /-mmacosx-version-min=\$\{OPENMEMO_MACOS_DEPLOYMENT_TARGET\}/.test(bp),
+      'scripts/build-probe.sh: darwin 分支没有传 -mmacosx-version-min。' +
+        '不传的话探针的 minos 会取构建机(macos-26)的版本 —— ' +
+        '`[本机实测 T-167]` 真产物就是 26.0.0，而同一个包里的 20 个二进制是 13.3.0。',
+    );
   }
 
   /* T-163：新守卫必须真的被跑到。一条没接进 test:ci-scripts 的自检等于不存在。 */
   {
     const pkg = JSON.parse(await readFile(join(REPO_ROOT, 'package.json'), 'utf8'));
     const cmd = String(pkg.scripts?.['test:ci-scripts'] ?? '');
-    for (const f of ['selftest-elf-glibc.mjs', 'selftest-buildbox.sh', 'selftest-build-whisper.sh']) {
+    for (const f of [
+      'selftest-elf-glibc.mjs',
+      'selftest-macho-minos.mjs',
+      'selftest-buildbox.sh',
+      'selftest-build-whisper.sh',
+    ]) {
       must(cmd.includes(f), `package.json: test:ci-scripts 里没有 ${f} —— 没被跑到的自检等于不存在`);
     }
   }

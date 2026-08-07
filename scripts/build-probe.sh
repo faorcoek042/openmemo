@@ -73,6 +73,42 @@ case "${HOST_OS}" in
   darwin) LDFLAGS+=( -Wl,-rpath,@executable_path ) ;;
 esac
 
+# ══════════════════════════════════════════════════════════════════════════════════════
+# ★★★ T-167：**部署目标必须显式设死** —— 这一行修的是一个已经出厂过的静默缺陷。
+#
+# `[本机实测 2026-08-07]` 把 CI 产物解开逐个读 `LC_BUILD_VERSION`
+# （run 31121718587，macos-arm64-cpu 那条腿的两样产物）：
+#
+#     whispercpp-cpu-macos-arm64.tar.gz 里的 20 个 Mach-O   minos = 13.3.0
+#     dist/probe/openmemo-probe                             minos = 26.0.0   ← ★
+#
+# 也就是说：T-146 修的是 `build-whisper.sh`（加 `-DCMAKE_OSX_DEPLOYMENT_TARGET=13.3`），
+# **本文件是另一个文件，没人想到它**。而 runner 是 `macos-26`，
+# 不显式指定就取构建机自己的系统版本。
+#
+# 后果比包里那 20 个更隐蔽：`minos` 高于用户系统时 **dyld 直接拒绝加载，进程根本不启动**，
+# 而探针启动不了的表现是 `runProbe()` 返回失败 → 界面写「尚未探测到硬件能力」——
+# **与"这台机器真的没有 GPU"一模一样**。清单里那条 `requiresDriver.macosVersion: "13.3"`
+# 还在向用户承诺 13.3 能用。
+#
+# 与 T-163 在 Linux 上发现的是**同一句话**：「守卫只看包的内容，而探针是单独 upload 的」。
+# 一个漏掉探针的守卫，在两个平台上各漏了一次 —— 所以 T-167 同时做了三件事：
+#   ① 这一行（把值设死）；
+#   ② `scripts/ci/check-macho-minos.mjs`（把它变成 CI 上会红的守卫）；
+#   ③ 让探针**随包出厂**（见 build-whisper.sh），这样它自动落进既有的 stage 守卫覆盖面。
+#
+# 13.3 从 `scripts/lib/baselines.sh` 来，不在这里写第二遍字面量 —— 上面那三次事故
+# 的共同成因就是"同一个数字写在两个地方，然后只改了一个"。
+# ══════════════════════════════════════════════════════════════════════════════════════
+# shellcheck source=lib/baselines.sh
+source "${SCRIPT_DIR}/lib/baselines.sh"
+if [[ "${HOST_OS}" == "darwin" ]]; then
+  [[ -n "${OPENMEMO_MACOS_DEPLOYMENT_TARGET:-}" ]] \
+    || die "scripts/lib/baselines.sh 没有给出 OPENMEMO_MACOS_DEPLOYMENT_TARGET"
+  CFLAGS+=( "-mmacosx-version-min=${OPENMEMO_MACOS_DEPLOYMENT_TARGET}" )
+  LDFLAGS+=( "-mmacosx-version-min=${OPENMEMO_MACOS_DEPLOYMENT_TARGET}" )
+fi
+
 log "compiling ${SRC_C}"
 log "  include: ${INCLUDE_DIR}"
 log "  libs:    ${GGML_LIB_DIR}"

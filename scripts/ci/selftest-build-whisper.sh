@@ -91,12 +91,61 @@ STUB
   chmod +x "${stubdir}/cmake"
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# ★ T-167：cc 桩
+#
+# `build-whisper.sh` 现在会把 `openmemo-probe` **编进包里**（探针必须与 ggml 库同目录，
+# 否则在用户机器上一次都启动不了 —— 理由写在 build-whisper.sh 里）。
+# 而这里的 cmake 桩产出的 "库" 是 5 字节的文本文件，真 `cc` 链不了它们
+# （`[实测]` `cannot find -lggml-base`）。
+#
+# 桩掉 `cc` 的理由与桩掉 `cmake` 完全相同：**要验的东西一行都不在编译器里**。
+# 桩产出一个能跑、会打印 JSON 的可执行文件 —— 那正是 build-probe.sh 冒烟测试要的。
+#
+# 第二个参数 BROKEN=1：编译"成功"但**什么都不产出**。
+# 这是 RV-D 的输入，用来确认"探针没编出来"不会被静默放过。
+# ──────────────────────────────────────────────────────────────────────────────
+make_stub_cc() {
+  local stubdir="$1" broken="${2:-0}"
+  mkdir -p "${stubdir}"
+  cat > "${stubdir}/cc" <<STUB
+#!/usr/bin/env bash
+BROKEN=${broken}
+STUB
+  cat >> "${stubdir}/cc" <<'STUB'
+out=""; prev=""
+for a in "$@"; do
+  [[ "$prev" == "-o" ]] && out="$a"
+  prev="$a"
+done
+[[ "$BROKEN" == "1" ]] && exit 0
+[[ -n "$out" ]] || { echo "stub-cc: no -o in: $*" >&2; exit 1; }
+mkdir -p "$(dirname "$out")"
+cat > "$out" <<'PROBE'
+#!/usr/bin/env bash
+echo '{"schemaVersion":1,"ggmlVersion":"0.15.1","ggmlCommit":"stub","searchPath":"","deviceCount":0,"devices":[]}'
+PROBE
+chmod +x "$out"
+STUB
+  chmod +x "${stubdir}/cc"
+}
+
+# ★ T-167：`run_case` 以前用 `echo "${case_dir}"` 回传路径，调用方写
+#   `if cd1="$(run_case …)"`。**那让 `bad` 的输出被 `$( )` 吞进变量、
+#   `fail` 的自增发生在子 shell 里于是丢掉**，失败的那个 case 表现为
+#   「那一节一条断言都没打印」，而总计仍然是 "N passed, 0 failed"。
+#   `[实测]` 我把探针加进 build-whisper.sh 之后第一次跑，①② 两节整节消失，
+#   脚本报的却是 `✔ 9 passed, 0 failed` —— **正是本仓在清的那种假绿**。
+#   改成全局变量回传：`bad` 直接打到终端，`fail` 在当前 shell 里加。
+CASE_DIR=""
 run_case() {
   local name="$1" layout="$2" backend="$3"
   local case_dir="${WORK}/${name}"
   local stub="${case_dir}/stub"
   mkdir -p "${case_dir}"
   make_stub_cmake "${layout}" "${stub}"
+  make_stub_cc "${stub}"
+  CASE_DIR="${case_dir}"
 
   local gh_out="${case_dir}/gh_output"
   : > "${gh_out}"
@@ -113,12 +162,13 @@ run_case() {
     bad "${name}: build-whisper.sh 退出非零" "$(tail -20 "${case_dir}/log")"
     return 1
   fi
-  echo "${case_dir}"
+  return 0
 }
 
 echo
 echo "① Linux 单配置布局（bin/）"
-if cd1="$(run_case linux-cpu single cpu)"; then
+if run_case linux-cpu single cpu; then
+  cd1="${CASE_DIR}"
   gh="${cd1}/gh_output"
   pack_id="$(sed -n 's/^pack_id=//p' "${gh}")"
   bin_dir="$(sed -n 's/^bin_dir=//p' "${gh}")"
@@ -160,6 +210,23 @@ if cd1="$(run_case linux-cpu single cpu)"; then
     else
       bad "fragment 没通过 schema" "$(cat "${cd1}/schema.err")"
     fi
+
+    # ★★ T-167：探针必须**在包里**，而且必须在 `providesFiles` 里被声明出来。
+    #   两条分开断言是有意的：
+    #     · 文件在包里 → 用户装完盘上真的有它；
+    #     · providesFiles 里有它 → `platformPacks.test.ts` 那一族的清单守卫看得见它，
+    #       而 `pack-select` 的解析器也是按声明去找的。
+    #   只验前者的话，一个"文件在、清单里没有"的包会照样通过，
+    #   而目录侧的守卫（"每个平台都要有探针"）就永远查不到它。
+    [[ -e "${stage_dir}/openmemo-probe" ]] \
+      && ok "★ 探针随包出厂：stage 里有 openmemo-probe" \
+      || bad "stage 里没有 openmemo-probe" "$(ls -la "${stage_dir}" 2>&1 | head -20)"
+
+    if grep -q '"openmemo-probe"' "${frag}" 2>/dev/null; then
+      ok "★ fragment 的 providesFiles 声明了 openmemo-probe"
+    else
+      bad "fragment 没声明 openmemo-probe" "$(cat "${frag}")"
+    fi
   else
     bad "没有 fragment" "找不到 ${frag}"
   fi
@@ -167,7 +234,8 @@ fi
 
 echo
 echo "② MSVC 多配置布局（bin/Release/）—— C7 的正面验证"
-if cd2="$(run_case msvc-vulkan msvc vulkan)"; then
+if run_case msvc-vulkan msvc vulkan; then
+  cd2="${CASE_DIR}"
   bin_dir="$(sed -n 's/^bin_dir=//p' "${cd2}/gh_output")"
   [[ "${bin_dir}" == */bin/Release ]] \
     && ok "BIN_DIR 找到了 bin/Release（老逻辑只试 bin 与 Release/bin，两个都会落空）" \
@@ -184,7 +252,9 @@ if cd2="$(run_case msvc-vulkan msvc vulkan)"; then
   if [[ -f "${cd2}/packs/${pack_id}.json" ]]; then
     if node -e '
       const frag=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8"));
-      const need=["whisper-cli","libggml-vulkan.so","libggml-cpu-haswell.so"];
+      // ★ T-167：加速包也要带探针 —— 探针只能枚举与它**同目录**的后端模块，
+      //   只有核心包带探针的话，装了 Vulkan 包的用户永远枚举不到 vulkan 设备。
+      const need=["whisper-cli","libggml-vulkan.so","libggml-cpu-haswell.so","openmemo-probe"];
       const miss=need.filter((n)=>!frag.providesFiles.includes(n));
       if(miss.length){console.error("providesFiles 缺: "+miss.join(", ")+
         "\n实际: "+frag.providesFiles.join(", "));process.exit(1);}
@@ -207,6 +277,7 @@ uname_case() {
   local case_dir="${WORK}/${name}" stub="${WORK}/${name}/stub"
   mkdir -p "${case_dir}"
   make_stub_cmake single "${stub}"
+  make_stub_cc "${stub}"
   cat > "${stub}/uname" <<STUB
 #!/usr/bin/env bash
 case "\$1" in
@@ -321,6 +392,40 @@ reverse_case engine-missing vulkan whisper-cli \
 reverse_case cpumod-missing vulkan libggml-cpu-haswell.so \
   "里没有任何 ggml CPU 后端模块" \
   "RV-C · 加速包里没有 CPU 后端模块 → 红（Vulkan 只接管一部分算子）"
+
+# ★★ RV-D（T-167）：**探针没编出来 → 整条链必须红，而且不许写 fragment。**
+#
+# 这一条守的是 T-167 新加的那一步。少了它的后果与 RV-A 同族但更隐蔽：
+# 打出一个"能下载、能安装、里面没有探针"的包并报绿，而缺探针在界面上的表现是
+# 「尚未探测到硬件能力」—— 与"这台机器真的没有 GPU"完全一样。
+#
+# ⚠️ 诚实边界：这里触发的是 `build-probe.sh` 自己那条「probe did not produce output」，
+# 而不是 `build-whisper.sh` 里那条 `[[ ! -e "${STAGE}/${PROBE_NAME}" ]]`。
+# 后者防的是**将来有人给这次调用加 `|| true`** 之类的手滑，桩不出来 ——
+# 它由 `lint-workflows.mjs` 的结构断言钉住（"那条 die 必须还在"），不是靠这里。
+{
+  local_dir="${WORK}/rv-probe-missing"
+  mkdir -p "${local_dir}/stub"
+  make_stub_cmake single "${local_dir}/stub"
+  make_stub_cc "${local_dir}/stub" 1     # ← 编译"成功"，但什么都不产出
+  if PATH="${local_dir}/stub:${PATH}" bash "${REPO_ROOT}/scripts/build-whisper.sh" \
+        --backend cpu --out "${local_dir}/packs" \
+        --build-root "${local_dir}/build" --no-strip \
+        > "${local_dir}/log" 2>&1; then
+    bad "RV-D · 探针没编出来 → 红" "居然成功了。日志尾部：$(tail -8 "${local_dir}/log")"
+  else
+    if grep -qE "probe did not produce output|里没有 openmemo-probe" "${local_dir}/log"; then
+      ok "RV-D · 探针没编出来 → 红（缺探针的包不许出厂）"
+    else
+      bad "RV-D（红了，但理由不对）" "$(tail -8 "${local_dir}/log")"
+    fi
+    if [[ -n "$(find "${local_dir}/packs" -name '*.json' 2>/dev/null)" ]]; then
+      bad "RV-D：失败路径下仍然写出了 fragment" "$(find "${local_dir}/packs" -name '*.json')"
+    else
+      ok "RV-D · 失败路径下一个 fragment 都没写"
+    fi
+  fi
+}
 
 echo
 if [[ ${fail} -eq 0 ]]; then

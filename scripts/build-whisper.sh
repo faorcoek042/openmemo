@@ -43,6 +43,11 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# 平台运行时基线（macOS 部署目标 / Linux glibc 上限）的单一事实来源。
+# 见该文件顶部：同一个数字写在两个地方然后只改一个，已经在本仓现形三次。
+# shellcheck source=lib/baselines.sh
+source "${SCRIPT_DIR}/lib/baselines.sh"
+
 # --------------------------------------------------------------------------------------
 # defaults
 # --------------------------------------------------------------------------------------
@@ -169,8 +174,12 @@ COMMON_FLAGS=(
 # 13.3 不是我拍的：**是上游自己 `build-xcframework.sh:5` 写的
 # `MACOS_MIN_OS_VERSION=13.3`** —— 同一份代码，上游测过的下限。
 # （所有 Apple Silicon 机器都能跑 macOS 13。）
+#
+# ★ T-167：13.3 这个字面量从这里搬进了 `scripts/lib/baselines.sh`。
+#   理由不是整洁：**同一个数字当时也该写进 `build-probe.sh`，而没有** ——
+#   于是探针在真产物里是 `minos=26.0.0`，包里 20 个二进制是 13.3.0（本机实测）。
 if [[ "${HOST_OS}" == "darwin" ]]; then
-  COMMON_FLAGS+=( -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3 )
+  COMMON_FLAGS+=( "-DCMAKE_OSX_DEPLOYMENT_TARGET=${OPENMEMO_MACOS_DEPLOYMENT_TARGET}" )
 fi
 
 # --------------------------------------------------------------------------------------
@@ -559,6 +568,72 @@ if ! ls "${STAGE}/whisper-cli"* >/dev/null 2>&1; then
   ggml 只在 whisper-cli 自己所在的目录里 dlopen 后端模块，
   所以不带引擎的包 = 一堆永远不会被加载的 .so（D-11 §8.4 三条独立证据）。"
 fi
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# ★★★ T-167：**探针随包出厂**。这是 `openmemo-probe` 的分发通道本身。
+#
+# ── 为什么它必须在包**里面**，而不是一个单独可下载的小文件 ────────────────────────────
+#
+# 三条，每一条单独就足以否掉"单独发一个 openmemo-probe"这个方案：
+#
+#   ① `[本机实测 2026-08-07]` 探针是**动态链接** ggml 的，不是自包含的：
+#          $ objdump -p openmemo-probe | grep NEEDED
+#            NEEDED  libggml-base.so.0     ← 在包里
+#            NEEDED  libggml.so.0          ← 在包里
+#            RUNPATH $ORIGIN
+#          $ ./openmemo-probe            # 同目录没有那两个库
+#            error while loading shared libraries: libggml-base.so.0: cannot open ...
+#      把它单独放进 `by-name/backend/openmemo-probe`（yt-dlp 那种扁平落点），
+#      它**一次都不会启动成功**。
+#
+#   ② `apps/daemon/src/runtime/setup.ts` 的 `backendDir` 定义就是
+#      `path.dirname(probePath)` —— 产品从设计上就假定"探针与 ggml 后端模块同目录"。
+#      而这个假定是对的：探针的工作就是 `ggml_backend_load_all_from_path(backendDir)`，
+#      **它只能枚举与它同目录的那些后端**。
+#
+#   ③ 由 ② 推出一条更强的：探针必须在**每一个**包里，不只是核心包。
+#      只有核心包带探针时，装了 Vulkan 加速包的用户，探针看的仍是核心包那个目录 ——
+#      枚举不到 vulkan 设备，`hardware.backends.vulkan.available` 恒 false，
+#      而那正是「装了没变快」在界面上唯一可能出声的地方。
+#      现在每个包各带一份自己的探针（几十 KB），`resolveBackendTool()` 按
+#      selectedBackend / priority 挑中哪个包，就用哪个包的探针，backendDir 自然对上。
+#
+# ── 为什么放在这里（顺序是有依据的）────────────────────────────────────────────────
+#
+# 必须在 `copy_core_files` 之后：探针链接的 `libggml-base` / `libggml` 就是它们。
+# 必须在 strip / codesign 之前：strip 会让签名失效，而 Apple Silicon 上
+# **没有签名的二进制根本不启动**（ADR-003 决策 4）。放在这里，下面那两步一起管它。
+#
+# ── 守卫（与上面两条同形）──────────────────────────────────────────────────────────
+#
+# 编不出来必须**当场红**。不设守卫的话，`|| true` 一类的手滑会打出一个
+# "能下载、能安装、里面没有探针"的包并报绿 —— 而缺探针的表现是
+# 「尚未探测到硬件能力」，与"这台机器真的没有 GPU"在界面上完全一样。
+# ══════════════════════════════════════════════════════════════════════════════════════
+PROBE_NAME="openmemo-probe"
+[[ "${HOST_OS}" == "win32" ]] && PROBE_NAME="openmemo-probe.exe"
+
+log "building ${PROBE_NAME} into the pack"
+bash "${SCRIPT_DIR}/build-probe.sh" \
+  --ggml-lib-dir "${BIN_DIR}" \
+  --out "${STAGE}/${PROBE_NAME}"
+
+if [[ ! -e "${STAGE}/${PROBE_NAME}" ]]; then
+  {
+    echo "==> STAGE (${STAGE}) 实际内容："
+    ls -la "${STAGE}" 2>&1 || true
+  } >&2
+  die "包 ${PACK_ID} 里没有 ${PROBE_NAME}。
+  探针是「这台机器能用哪些加速器」的唯一可信答案（ADR-003 决策 3），
+  而它必须与 ggml 后端模块同目录才跑得起来（它动态链接 libggml-base，且
+  runtime/setup.ts 的 backendDir = dirname(probePath)）。
+  少了它，L2 加速包在用户机器上只能靠 advisory 探测将就，
+  而 hw.probe 会永远报「openmemo-probe 未安装（后端能力未知）」。"
+fi
+
+# 让打出来的 GITHUB_OUTPUT 里有它，workflow 才能把同一份字节 upload 成独立 artifact
+# （**upload 的和包里的必须是同一个文件**，否则守卫验的和用户拿到的是两样东西）。
+[[ -n "${GITHUB_OUTPUT:-}" ]] && printf 'probe_path=%s\n' "${STAGE}/${PROBE_NAME}" >> "${GITHUB_OUTPUT}"
 
 # ★ T-145：暂存目录空掉时，**把 BIN_DIR 的真实内容打出来**再让下游去红。
 #   第一次真跑 CI 时 macos-arm64-metal 完整编译成功（100% built whisper-cli/…），
