@@ -78,6 +78,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { appendFile, copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /* ── 参数 ────────────────────────────────────────────────────────────────────────── */
 
@@ -375,6 +376,136 @@ async function postAsset(uploadUrlTemplate, name, buf) {
 
 /* ── main ────────────────────────────────────────────────────────────────────────── */
 
+/* ═══════════════════════════════════════════════════════════════════════════════════
+ * 许可证闸门 —— 「有 GPL 字节进入我们自己的产物」必须当场变红
+ *
+ * ## 为什么闸门在这里，而不在产生那些字节的脚本里
+ *
+ * D-17 §1 的结论是「GPL 不触发」，依据之一是**我们的 Release 上只有 MIT 的字节**，
+ * ffmpeg / yt-dlp 由用户机器直连上游取。这个结论成立与否，取决于一件事：
+ * **有没有人往我们的 Release 上传过一个 GPL 的二进制。**
+ *
+ * 而通往那里的路不止一条，`prebuilt` 在调研时数出三条，且三条都不会报错：
+ *   ① `scripts/build-media-tools.sh` 会把 BtbN 的 **GPL ffmpeg** 重打包成我们格式的 pack；
+ *   ② `scripts/ci/mirror-model-blobs.mjs` 的 `MIRROR_MODEL_IDS` 是手工白名单，**没有许可证闸门**；
+ *   ③ 本脚本此前只校验 sha256 与资产状态，**不看许可证**。
+ *
+ * 逐条去堵那三条路，是"要记得别跑"型的规则 —— PROTOCOL §7 补充那条判据说得很清楚：
+ * **一条需要人时刻记住的规则，等价于一条迟早会被违反的规则。**
+ *
+ * 所以闸门放在**唯一的汇流处**：不管字节是怎么产生的，只要它要变成
+ * "我们 Release 上的一个资产"，就必须从这里过。**跑错了也不会造成后果。**
+ *
+ * ## 判据
+ *
+ *   · 资产名能在 `vendor/manifests/*.json` 里查到 → 用那条 pack 的 `license.id` 判定；
+ *   · 是我们自己的预编译包（`openmemo-<version>-<target>.<ext>`）→ 放行
+ *     （包内不含 GPL 由 `scripts/ci/verify-bundle.sh` 的反向断言守着，那是另一道闸）；
+ *   · 是校验/清单类文本（SHA256SUMS / *.json）→ 放行；
+ *   · **其余一律拒绝。** 查不到许可证 ≠ 没问题 —— 一个"不认识就放行"的闸门，
+ *     只要把文件改个名就能绕过，那不叫闸门。
+ * ═══════════════════════════════════════════════════════════════════════════════════ */
+
+/** 传染性/受限许可证。命中即拒。 */
+const COPYLEFT_RE = /\b(A?GPL|LGPL|SSPL|CC-BY-SA|EUPL|CECILL)\b/i;
+
+/** 我们自己的预编译包。命名约定由 `scripts/lib/version.mjs` 定义。 */
+const BUNDLE_NAME_RE = /^openmemo-\d+\.\d+\.\d+-(linux-x64|win-x64|darwin-arm64)\.(tar\.xz|tar\.gz|zip)$/;
+
+/** 校验与清单类文本，本身不含第三方代码。 */
+const METADATA_NAME_RE = /^(SHA256SUMS|[A-Za-z0-9._-]+\.json)$/;
+
+async function buildLicenseIndex() {
+  const dir = MANIFESTS_DIR;
+  const index = new Map();
+  let files;
+  try {
+    files = (await readdir(dir)).filter((f) => f.endsWith('.json'));
+  } catch {
+    return index; // 没有 manifest 目录：调用方会因为"查不到"而拒绝，不会静默放行
+  }
+  for (const f of files) {
+    let json;
+    try {
+      json = JSON.parse(await readFile(join(dir, f), 'utf8'));
+    } catch {
+      continue;
+    }
+    for (const pack of json.packs ?? json.components ?? json.models ?? []) {
+      const lic = pack.license?.id ?? pack.license ?? null;
+      for (const file of pack.files ?? []) {
+        if (file?.name) index.set(file.name, { packId: pack.id, license: lic, manifest: f });
+      }
+      // 有些清单直接以 pack id 命名产物
+      if (pack.id) index.set(pack.id, { packId: pack.id, license: lic, manifest: f });
+    }
+  }
+  return index;
+}
+
+/*
+ * 许可证清单目录。默认是仓库里 committed 的那份。
+ *
+ * 可覆盖，理由与 `--from` / `--stage` 同：自检要能拿自己的夹具跑。
+ * **这不是一个洞** —— 覆盖之后语义一点没松：资产仍然必须在清单里**被声明**，
+ * 且声明的许可证仍然必须是宽松的。把一个 GPL 条目写进夹具清单，照样拒。
+ * （`selftest-release-upload.mjs` 的 ⑬ 就是这么验的。）
+ */
+const MANIFESTS_DIR = resolve(
+  arg('--manifests', join(fileURLToPath(new URL('../..', import.meta.url)), 'vendor', 'manifests')),
+);
+
+async function licenseGate(assets) {
+  hdr('0.5 许可证闸门 —— GPL 字节不许进入我们自己的 Release');
+  const index = await buildLicenseIndex();
+  say(`   manifest 索引：${index.size} 条`);
+
+  let allowed = 0;
+  for (const a of assets) {
+    const hit = index.get(a.name);
+    if (hit) {
+      const lic = hit.license ?? '(该 pack 没有 license.id)';
+      if (hit.license && COPYLEFT_RE.test(String(hit.license))) {
+        fatal(
+          `资产 \`${a.name}\` 的许可证是 **${lic}**（来自 ${hit.manifest} 的 pack \`${hit.packId}\`）。\n` +
+            `      把它上传到我们自己的 Release，就是我们在 conveying 一份 copyleft 产物 ——\n` +
+            `      ADR-002 的「一旦要分发就是硬阻断」当场触发，且 D-17 §1 的整套结论随之失效。\n` +
+            `      正确做法：让产品在**用户机器上**直连上游取（ffmpeg/yt-dlp 现在就是这么做的）。`,
+        );
+        continue;
+      }
+      if (!hit.license) {
+        fatal(`资产 \`${a.name}\` 对应的 pack \`${hit.packId}\` 没有 \`license.id\` —— 查不到许可证不等于没问题，拒绝上传。`);
+        continue;
+      }
+      say(`   ✔ ${a.name}  ${lic}`);
+      allowed++;
+      continue;
+    }
+    if (BUNDLE_NAME_RE.test(a.name)) {
+      say(`   ✔ ${a.name}  我们自己的预编译包（内容由 verify-bundle.sh 的反向断言守着）`);
+      allowed++;
+      continue;
+    }
+    if (METADATA_NAME_RE.test(a.name)) {
+      say(`   ✔ ${a.name}  校验/清单文本`);
+      allowed++;
+      continue;
+    }
+    fatal(
+      `资产 \`${a.name}\` 在 vendor/manifests/ 里查不到，也不是我们自己的预编译包。\n` +
+        `      **查不到许可证 = 拒绝上传。** 一个"不认识就放行"的闸门，改个文件名就能绕过。\n` +
+        `      要么把它登记进 manifest（带 license.id），要么别从这条路发。`,
+    );
+  }
+
+  // C5 同构：一个什么都没检查的闸门是最坏的那种绿。
+  if (allowed === 0 && problems.length === 0) {
+    fatal('许可证闸门一个资产都没判定 —— 判定逻辑被绕过了');
+  }
+  say(`   放行 ${allowed}/${assets.length}`);
+}
+
 async function main() {
   if (!/^[^/]+\/[^/]+$/.test(REPO)) fatal(`--repo 必须是 owner/repo，实得 ${JSON.stringify(REPO)}`);
   if (!TAG) fatal('--tag 必填：本脚本只能往一个**已存在**的 tag 上传，它不会替你建 release');
@@ -403,6 +534,9 @@ async function main() {
   let assets = [];
   for (const s of sources) assets = assets.concat(await stageOne(s, s.mode, seen));
   if (assets.length === 0) fatal('暂存之后一个资产都没有 —— 拒绝报成功');
+  if (problems.length > 0) await die();
+
+  await licenseGate(assets);
   if (problems.length > 0) await die();
 
   const sums = `${assets.map((a) => `${a.sha256}  ${a.name}`).join('\n')}\n`;

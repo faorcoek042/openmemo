@@ -33,7 +33,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -158,7 +158,39 @@ const NO_PROXY = { NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localho
  * 看起来像网络问题、像 GitHub 慢、像别人把机器弄卡了。
  * （和 PROTOCOL §8 那条 OOM 是同一族：真正的成因在别处，症状伪装成环境问题。）
  */
+/*
+ * ★ 夹具用的许可证清单（2026-08-08，`prebuilt`）。
+ *
+ * `release-upload.mjs` 现在有一道许可证闸门：**资产必须在清单里被声明，
+ * 且声明的许可证必须是宽松的**，否则拒绝上传。它堵的是
+ * 「有 GPL 字节进入我们自己的 Release」这条路（D-17 §1.2 数出三条通往那里的路，
+ * 且三条都不会报错）。
+ *
+ * 本自检的夹具包是凭空造的 `pack-a.tar.gz` / `pack-b.tar.gz`，
+ * 真清单里当然没有它们 —— 所以这里给一份**夹具清单**，把它们声明成 MIT。
+ * 这不削弱闸门：**RV11 用同一个机制把同一个包声明成 GPL，然后断言它被拒**，
+ * RV12 则把清单清空，断言"查不到许可证"同样被拒。
+ * 也就是说这个覆盖点本身是被反向验证过的，不是一个只会放行的旁路。
+ */
+const FIXTURE_MANIFESTS = mkdtempSync(join(tmpdir(), 'ci-upload-manifests-'));
+writeFileSync(
+  join(FIXTURE_MANIFESTS, 'fixture.json'),
+  JSON.stringify({
+    schemaVersion: 1,
+    catalogVersion: 'selftest',
+    packs: [
+      { id: 'pack-a', license: { id: 'MIT' }, files: [{ name: 'pack-a.tar.gz' }] },
+      { id: 'pack-b', license: { id: 'MIT' }, files: [{ name: 'pack-b.tar.gz' }] },
+      { id: 'tokens', license: { id: 'MIT' }, files: [{ name: 'tokens.txt' }] },
+    ],
+  }),
+);
+
 function run(script, args, extraEnv = {}) {
+  // 跑 release-upload 时，调用方没显式给 --manifests 就补上夹具那份。
+  if (script === UPLOAD && !args.includes('--manifests')) {
+    args = [...args, '--manifests', FIXTURE_MANIFESTS];
+  }
   /* 干净环境：真凭证一律不带进来（尤其对 release-verify 而言那是它要断言不存在的东西）。 */
   const env = { ...process.env, ...NO_PROXY, ...extraEnv };
   for (const k of ['GITHUB_TOKEN', 'GH_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_API_TOKEN']) {
@@ -469,6 +501,65 @@ console.log('② 反向验证 —— 每一条都必须红');
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /state=starter/);
     assert.match(r.out, /没有删除能力/);
+  });
+  stub.server.close();
+}
+
+/*
+ * RV11 / RV12 · 许可证闸门（2026-08-08，`prebuilt`）。
+ *
+ * 这两条守的是 D-17 §1 的整套 GPL 结论：它成立的前提是
+ * **我们自己的 Release 上没有 copyleft 的字节**。而通往那里的路有三条，
+ * 且三条都不会报错（build-media-tools.sh 重打包 GPL ffmpeg、
+ * mirror-model-blobs 的白名单没有许可证闸门、本脚本此前只看 sha256）。
+ * 闸门放在汇流处 = **跑错了也不会造成后果**，而不是"要记得别跑"。
+ */
+{
+  const stub = await startStub();
+  const src = await makeSrc({ 'pack-a.tar.gz': 'AAAA' });
+  tmpDirs.push(src);
+  // 同一个包，只把清单里的许可证从 MIT 改成 GPL-3.0-or-later
+  const gplDir = mkdtempSync(join(tmpdir(), 'ci-upload-manifests-gpl-'));
+  tmpDirs.push(gplDir);
+  writeFileSync(
+    join(gplDir, 'fixture.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      catalogVersion: 'selftest',
+      packs: [{ id: 'pack-a', license: { id: 'GPL-3.0-or-later' }, files: [{ name: 'pack-a.tar.gz' }] }],
+    }),
+  );
+  const r = await run(UPLOAD, [
+    '--repo', REPO, '--tag', TAG, '--from', src, '--stage', stage(),
+    '--api-base', stub.base, '--download-base', stub.base,
+    '--manifests', gplDir,
+  ], { GITHUB_TOKEN: 'stub-token' });
+  await check('RV11 · 资产的许可证是 GPL → 红，且一个字节都没传上去', () => {
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /GPL-3\.0-or-later/);
+    assert.match(r.out, /硬阻断|conveying/);
+    assert.equal(stub.state.uploads.length, 0, `不该传任何东西，实际传了 ${stub.state.uploads.length} 个`);
+  });
+  stub.server.close();
+}
+
+{
+  const stub = await startStub();
+  const src = await makeSrc({ 'pack-a.tar.gz': 'AAAA' });
+  tmpDirs.push(src);
+  // 空清单：包没有被声明过
+  const emptyDir = mkdtempSync(join(tmpdir(), 'ci-upload-manifests-empty-'));
+  tmpDirs.push(emptyDir);
+  writeFileSync(join(emptyDir, 'fixture.json'), JSON.stringify({ schemaVersion: 1, packs: [] }));
+  const r = await run(UPLOAD, [
+    '--repo', REPO, '--tag', TAG, '--from', src, '--stage', stage(),
+    '--api-base', stub.base, '--download-base', stub.base,
+    '--manifests', emptyDir,
+  ], { GITHUB_TOKEN: 'stub-token' });
+  await check('RV12 · 资产查不到许可证 → 红（"不认识就放行"的闸门等于没有闸门）', () => {
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /查不到许可证/);
+    assert.equal(stub.state.uploads.length, 0, `不该传任何东西，实际传了 ${stub.state.uploads.length} 个`);
   });
   stub.server.close();
 }

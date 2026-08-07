@@ -199,10 +199,45 @@ if (MASK) {
 
 /* ─────────────────────────── 2. 启动 daemon（冷） ──────────────────────────────── */
 
-const DAEMON = join(REPO, 'apps', 'daemon', 'dist', 'main.js');
+/*
+ * ★★ `--bundle <目录>`（D-17 第二阶段）：把这套判据**原样**指向预编译包。
+ *
+ * 为什么是加一个开关，而不是另写一个 bundle 版的冷启动脚本：
+ * 判据只要有两份实现，就会漂成两条 —— 而这里要证明的恰恰是
+ * 「**用户下载的那个东西**跟我们一直在测的那个东西一样能用」。
+ * 另写一份的话，绿灯证明的是那份新脚本，不是那个包。
+ *
+ * 带 `--bundle` 时有三处不同，其余（屏蔽宿主 PATH、真下载、真转写、
+ * 非空文本断言）**逐字沿用**：
+ *   ① daemon 入口取包里的，不是仓库 dist 里的；
+ *   ② 解释器取**包自带的 Node**，不是跑本脚本的这个 —— 否则测的是宿主的 node，
+ *      而"用户机器上没有 node"正是这个包存在的理由；
+ *   ③ 网页 bundle 与 SQLite 扩展指向包内（与启动脚本设的是同两个变量）。
+ */
+const BUNDLE = arg('--bundle', null);
+
+const DAEMON = BUNDLE
+  ? join(BUNDLE, 'app', 'daemon', 'dist', 'main.js')
+  : join(REPO, 'apps', 'daemon', 'dist', 'main.js');
 if (!existsSync(DAEMON)) {
-  console.error(`✘ 找不到 ${DAEMON} —— 先跑 pnpm build:safe`);
+  console.error(
+    BUNDLE
+      ? `✘ 找不到 ${DAEMON} —— --bundle 指向的目录不像一个预编译包`
+      : `✘ 找不到 ${DAEMON} —— 先跑 pnpm build:safe`,
+  );
   process.exit(2);
+}
+
+const NODE_BIN = BUNDLE
+  ? join(BUNDLE, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node')
+  : process.execPath;
+if (BUNDLE && !existsSync(NODE_BIN)) {
+  console.error(`✘ 包里没有自带的 Node 运行时：${NODE_BIN}`);
+  process.exit(2);
+}
+if (BUNDLE) {
+  say(`   预编译包模式：${BUNDLE}`);
+  say(`   解释器 = 包自带的 ${NODE_BIN}（**不是**宿主的 ${process.execPath}）`);
 }
 
 const childEnv = {
@@ -212,6 +247,12 @@ const childEnv = {
   OPENMEMO_DATA_DIR: DATA_DIR,
   // ★ PROTOCOL §9：绝不碰全局指针。模块级设定，窗口为零。
   OPENMEMO_POINTER_FILE: POINTER,
+  ...(BUNDLE
+    ? {
+        OPENMEMO_WEB_DIST: join(BUNDLE, 'app', 'apps', 'web', 'dist'),
+        OPENMEMO_EXT_DIR: join(BUNDLE, 'ext'),
+      }
+    : {}),
 };
 
 let proc = null;
@@ -219,7 +260,7 @@ let daemonLogs = [];
 async function startDaemon(label) {
   const logs = [];
   daemonLogs = logs;
-  proc = spawn(process.execPath, [DAEMON, '--data-dir', DATA_DIR, '--port', String(PORT)], {
+  proc = spawn(NODE_BIN, [DAEMON, '--data-dir', DATA_DIR, '--port', String(PORT)], {
     env: childEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
   });

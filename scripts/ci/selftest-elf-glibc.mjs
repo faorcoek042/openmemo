@@ -14,6 +14,19 @@
  * `coordination/inbox/amd-vulkan.md`（本机 objdump 自己就需要 GLIBC_2.38，
  * 三个符号与 D-11 §8.2 记的那三个逐字相同）。
  *
+ * **全程不联网、不读本机 `/usr/lib`**：夹具是这个文件里写死的字符串。
+ *
+ * ## 覆盖到哪儿
+ *
+ *   ①–⑤  glibc 那一格：正向 / 超标点名 / 空目录 / 数字比 / objdump 缺失
+ *   ⑥–⑩  C++ 那一格（`GLIBCXX_` / `CXXABI_`，本轮新增）：默认上限压线 /
+ *         只有 C++ 超标也要红 / **三段版本号 3.4.29 > 3.4.9** / CXXABI 独立成闸 /
+ *         三族不许串味
+ *
+ * 桩表里的符号名**一个都不是编的** —— 每条上面都标了 `[实测]` 是从哪个真文件量到的。
+ * 这条纪律的意义在 ⑦ 上最明显：`_ZNSt18condition_variable4waitE…` 确实只在
+ * `GLIBCXX_3.4.30` 那一档存在，夹具因此是"一个真的会发生的未来"，而不是造出来的假设。
+ *
  * 跑：`pnpm test:ci-scripts`
  */
 
@@ -95,6 +108,17 @@ const runChecker = (args, stubDir) => {
 //   0000000000000000      DF *UND*\t0000000000000000 (GLIBC_2.2.5) getenv
 const SYM = (ver, name) => `0000000000000000      DF *UND*\t0000000000000000 (GLIBC_${ver}) ${name}`;
 
+/**
+ * C++ 侧的同一行格式。`tag` 传完整的族名+版本（`GLIBCXX_3.4.29` / `CXXABI_1.3.9`），
+ * 因为两族的行长得一模一样，分开写两个 helper 只会多一份要维护的模板。
+ *
+ * `kind` 默认 `'DF'`（函数）。`[实测]` 真的符号表里还有 `'D '`（数据对象，两个空格对齐）：
+ *   0000000000000000      D  *UND*\t0000000000000000 (GLIBCXX_3.4.11) _ZSt15__once_callable
+ * 检查器的正则只看行尾的 `(版本) 符号名`，**不该**依赖中间那一列 —— ⑥ 里混着两种，
+ * 就是为了让"哪天有人把正则收紧到只认 DF"这件事当场红。
+ */
+const CXXSYM = (tag, name, kind = 'DF') => `0000000000000000      ${kind} *UND*\t0000000000000000 (${tag}) ${name}`;
+
 console.log('\n① 正向：全部 ≤ 上限时退出 0');
 {
   const dir = join(WORK, 'good');
@@ -169,6 +193,158 @@ console.log('\n⑤ ★反向：objdump 不存在时必须红 ——「我拿不�
   expect(r.out.includes('没法回答'), '说清了"没法回答不等于没问题"', '理由不对', r.out);
   const r2 = runChecker(['--dir', dir, '--max', '2.34', '--allow-missing-objdump'], null);
   expect(r2.code === 0, '显式 --allow-missing-objdump 才跳过（CI 上不许传）', '显式豁免没生效', r2.out);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════
+ * ⑥–⑩ · C++ 运行时那一格（GLIBCXX_ / CXXABI_）
+ *
+ * 这一格此前**完全没有守卫**：`better-sqlite3` 的 `linux-x64.node` 需要
+ * `GLIBC_2.34`（压线通过旧守卫）**同时**需要 `GLIBCXX_3.4.29` / `CXXABI_1.3.9`，
+ * 于是一台 libstdc++ 偏旧的机器上它会一路绿到 `require()` 那一刻才死。
+ * 下面五条钉的就是"绿得没有道理"这件事不能再发生。
+ *
+ * 夹具里的符号名不是编的，都是本机 objdump 量到的真名（见每条上面的 `[实测]`）。
+ * ═══════════════════════════════════════════════════════════════════════════════════ */
+
+console.log('\n⑥ 正向：C++ 两族**默认上限**下压线通过（≤ 是含等号的）');
+{
+  const dir = join(WORK, 'cxx-good');
+  elfFile(dir, 'linux-x64.node');
+  const stub = stubObjdump(join(WORK, 'stub-cxx-good'), {
+    // `[实测 2026-08-08]` better-sqlite3@13.0.2 prebuilds/linux-x64.node 的真实符号，逐字照抄。
+    // 它的三族最高值正好 = 三条默认上限，所以这条同时验了"边界不许差一格"。
+    'linux-x64.node': [
+      SYM('2.34', 'pthread_create'),
+      SYM('2.2.5', 'malloc'),
+      CXXSYM('GLIBCXX_3.4.29', '_ZSt28__throw_bad_array_new_lengthv'),
+      CXXSYM('GLIBCXX_3.4.21', '_ZNSt13random_device7_M_initERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE'),
+      // 这一条是 `D  `（数据对象）不是 `DF` —— 中间那一列不该影响解析
+      CXXSYM('GLIBCXX_3.4.11', '_ZSt15__once_callable', 'D '),
+      CXXSYM('CXXABI_1.3.9', '_ZdlPvm'),
+    ],
+  });
+  const r = runChecker(['--dir', dir, '--max', '2.34'], stub);
+  expect(r.code === 0, 'exit 0（3.4.29 ≤ 默认 3.4.29、1.3.9 ≤ 默认 1.3.9）', '把压线值判成了超标', r.out);
+  expect(
+    /实测最高 GLIBCXX_3\.4\.29 \/ CXXABI_1\.3\.9/m.test(r.out),
+    '打印出了 C++ 两族的实测最高值',
+    '没打印 C++ 实测最高值',
+    r.out,
+  );
+  expect(/实测最高 GLIBC_2\.34/m.test(r.out), 'glibc 那一行的原格式没被改坏', 'glibc 汇总行变了', r.out);
+}
+
+console.log('\n⑦ ★反向：只有 GLIBCXX 超标（glibc 完全合规）也必须红，并**点名具体符号**');
+{
+  const dir = join(WORK, 'cxx-bad');
+  elfFile(dir, 'ok.node');
+  elfFile(dir, 'too-new.node');
+  const stub = stubObjdump(join(WORK, 'stub-cxx-bad'), {
+    'ok.node': [SYM('2.34', 'pthread_create'), CXXSYM('GLIBCXX_3.4.18', '_ZNSt13random_device7_M_finiEv')],
+    'too-new.node': [
+      // glibc 侧完全合规 —— 这正是盲区的形状：旧守卫看这一栏，然后放行。
+      SYM('2.34', 'pthread_create'),
+      // `[实测]` 本机 libstdc++.so.6（.so.6.0.35）里 GLIBCXX_3.4.30 那一档的真符号：
+      //   00000000000e2de0 g DF .text 000000000000000c  GLIBCXX_3.4.30 _ZNSt18condition_variable4waitERSt11unique_lockISt5mutexE
+      CXXSYM('GLIBCXX_3.4.30', '_ZNSt18condition_variable4waitERSt11unique_lockISt5mutexE'),
+    ],
+  });
+  const r = runChecker(['--dir', dir, '--max', '2.34'], stub);
+  expect(r.code === 1, 'exit 1', 'C++ 下限超标却报绿 —— 正是这次要堵的那个洞', r.out);
+  expect(r.out.includes('too-new.node'), '点名了是哪个文件', '没说是哪个文件', r.out);
+  expect(
+    r.out.includes('_ZNSt18condition_variable4waitERSt11unique_lockISt5mutexE'),
+    '★ 点名了具体符号 —— 这让结论不是推测',
+    '没点名符号',
+    r.out,
+  );
+  expect(
+    !r.out.includes('以下产物的 glibc 下限高于基线'),
+    '没有连坐：glibc 合规就不报 glibc 的错',
+    '把 C++ 超标误报成了 glibc 超标',
+    r.out,
+  );
+  expect(!r.out.includes('ok.node  需要'), '没有把合规的那个也一起报成超标', '误报了合规文件', r.out);
+}
+
+console.log('\n⑧ ★三段版本号：3.4.29 必须判成 > 3.4.9（字符串比和 parseFloat 都会判反）');
+{
+  const dir = join(WORK, 'cxx-ver');
+  elfFile(dir, 'a.node');
+  const stub = stubObjdump(join(WORK, 'stub-cxx-ver'), {
+    // `[实测]` 3.4.9 那一档的真符号：_ZNSi10_M_extractIjEERSiRT_（本机 libstdc++.so.6）
+    'a.node': [
+      SYM('2.34', 'pthread_create'),
+      CXXSYM('GLIBCXX_3.4.9', '_ZNSi10_M_extractIjEERSiRT_'),
+      CXXSYM('GLIBCXX_3.4.29', '_ZSt28__throw_bad_array_new_lengthv'),
+    ],
+  });
+  // 上限压到 3.4.9：真实答案是"超标"（3.4.29 > 3.4.9）。
+  //   · 字符串比：'3.4.29' <= '3.4.9'（'2' < '9'）→ 会**静默放行**
+  //   · parseFloat：3.4 vs 3.4 → 相等 → 也会**静默放行**
+  // 两种偷懒写法在这里都表现为 exit 0，所以这一条能同时钉死它们。
+  const r = runChecker(['--dir', dir, '--max', '2.34', '--max-glibcxx', '3.4.9'], stub);
+  expect(r.code === 1, '★ exit 1（3.4.29 > 3.4.9）', '把 3.4.29 判成了 ≤ 3.4.9 —— 逐段数字比被写坏了', r.out);
+  expect(r.out.includes('需要 GLIBCXX_3.4.29'), '取的最高值是 3.4.29 而不是 3.4.9', '最高值取错', r.out);
+
+  // 反过来：上限给到 3.4.29 就该绿，且汇总行报的最高值仍是 3.4.29。
+  const r2 = runChecker(['--dir', dir, '--max', '2.34', '--max-glibcxx', '3.4.29'], stub);
+  expect(r2.code === 0, '上限 3.4.29 时判为合规', '把合规的判成了超标（假红同样是谎）', r2.out);
+  expect(r2.out.includes('实测最高 GLIBCXX_3.4.29'), '汇总行取的最高值是 3.4.29', '汇总行最高值取错', r2.out);
+}
+
+console.log('\n⑨ ★CXXABI 是**独立**的一条闸：自己的 --max-cxxabi，自己单独触发');
+{
+  const dir = join(WORK, 'abi');
+  elfFile(dir, 'a.node');
+  const stub = stubObjdump(join(WORK, 'stub-abi'), {
+    // `[实测]` CXXABI 的真实取值里两段（1.3）与三段（1.3.7 / 1.3.9）并存 ——
+    // sherpa-onnx 的 libsherpa-onnx-cxx-api.so 最高就是 CXXABI_1.3。
+    'a.node': [
+      SYM('2.34', 'pthread_create'),
+      CXXSYM('GLIBCXX_3.4.18', '_ZNSt13random_device7_M_finiEv'),
+      CXXSYM('CXXABI_1.3', '_ZTVN10__cxxabiv117__class_type_infoE'),
+      CXXSYM('CXXABI_1.3.7', '_ZTIPKn'),
+      CXXSYM('CXXABI_1.3.9', '_ZdlPvm'),
+    ],
+  });
+  const r = runChecker(['--dir', dir, '--max', '2.34', '--max-cxxabi', '1.3.8'], stub);
+  expect(r.code === 1, 'exit 1（1.3.9 > 1.3.8）', 'CXXABI 超标却报绿', r.out);
+  expect(r.out.includes('_ZdlPvm'), '点名了 sized delete 那个符号', '没点名符号', r.out);
+  expect(r.out.includes('需要 CXXABI_1.3.9'), '最高值取 1.3.9（1.3 / 1.3.7 段数不同也要比对）', '最高值取错', r.out);
+  expect(
+    !r.out.includes('高于基线（GLIBCXX）'),
+    'GLIBCXX 合规就不跟着报 —— 三族各判各的',
+    'CXXABI 超标把 GLIBCXX 也连坐了',
+    r.out,
+  );
+  const r2 = runChecker(['--dir', dir, '--max', '2.34'], stub);
+  expect(r2.code === 0, '默认上限 1.3.9 下同一份夹具是绿的', '默认 CXXABI 上限把本仓产物报红了', r2.out);
+}
+
+console.log('\n⑩ ★三族不许串味：GLIBCXX_3.4.29 绝不能被当成 GLIBC_3.4.29');
+{
+  const dir = join(WORK, 'nocrosstalk');
+  elfFile(dir, 'pure-cxx.node');
+  const stub = stubObjdump(join(WORK, 'stub-nocrosstalk'), {
+    // 一条 GLIBC_ 都没有，只有 C++ 两族。
+    'pure-cxx.node': [
+      CXXSYM('GLIBCXX_3.4.29', '_ZSt28__throw_bad_array_new_lengthv'),
+      CXXSYM('CXXABI_1.3.9', '_ZdlPvm'),
+    ],
+  });
+  const r = runChecker(['--dir', dir, '--max', '2.34'], stub);
+  // 正则的交替分支若写成 `GLIBC|GLIBCXX|CXXABI` 而引擎又不回溯，`GLIBCXX_3.4.29`
+  // 会被算进 GLIBC 族 → 3.4.29 > 2.34 → 这里当场变红。exit 0 就是"没串味"的证据。
+  expect(r.code === 0, '★ exit 0 —— GLIBCXX 没有被算进 GLIBC 族', 'GLIBCXX_ 被当成 GLIBC_ 判了超标', r.out);
+  expect(r.out.includes('实测最高 GLIBC_0.0'), 'glibc 族确实一条都没数到', 'glibc 族数到了不该有的东西', r.out);
+  expect(r.out.includes('(无 GLIBC 引用)'), '逐行那一列照旧标注"无 GLIBC 引用"', '逐行标注变了', r.out);
+  expect(
+    r.out.includes('实测最高 GLIBCXX_3.4.29 / CXXABI_1.3.9'),
+    '同一份输入在 C++ 两族里被正确数到',
+    'C++ 两族没数到',
+    r.out,
+  );
 }
 
 console.log('');

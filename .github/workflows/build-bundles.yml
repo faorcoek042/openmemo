@@ -1,0 +1,247 @@
+# 预编译包（自带 Node 运行时）—— 三平台组装 + 干净机器上的可行性证明。
+#
+# 设计见 docs/design/D-17-prebuilt-bundles.md。组装逻辑在 scripts/build-bundle.mjs。
+#
+# ── 这个 workflow 存在的理由 ────────────────────────────────────────────────────────
+#
+# 用户 2026-08-08：「想要的是**带运行时的、不用再在本机安装 npm 一大堆东西的、
+# 预编译好各系统的包**，那些依赖还是**调用在线下载到本目录/配置目录**。」
+#
+# 所以判据有两条，缺一不可：
+#   ① 包里**不需要**用户预装 Node / pnpm / git；
+#   ② ffmpeg / yt-dlp / whisper.cpp / 模型**仍然**由产品自己在线下载
+#      （体积 + GPL 两条理由，见 D-17 §1）。
+#
+# ── 为什么每条腿最后都要跑一次冷启动 ────────────────────────────────────────────────
+#
+# 「产出一个包」和「产出一个能用的包」之间，隔着本仓所有最贵的事故。
+# `cold-start-audit` 的判据是「**屏蔽宿主 PATH 的干净机器上真的转出非空文本**」，
+# 这里**逐字沿用**它 —— 不是另写一套。`--bundle` 只是把那套判据指向包，
+# 并且**用包自带的 Node 当解释器**（否则测的是 runner 上的 node，
+# 而"用户机器上没有 node"正是这个包存在的理由）。
+#
+# ⚠️ 与 build-backends.yml 的一个关键区别：**这里不编译任何原生代码。**
+#    Node 二进制、better-sqlite3 的 .node、sherpa 的 .so/.dylib/.dll 全是现成产物。
+#    所以**不需要 buildbox 容器** —— glibc 下限由上游产物决定，不由 runner 决定。
+#    但守卫照跑：判据是「实测每个 ELF/Mach-O」，不是「我们相信上游」。
+
+name: build-bundles
+
+on:
+  workflow_dispatch:
+    inputs:
+      # ★ 与 build-backends.yml 同一个理由：一次全矩阵要烧三个 runner（含 macOS），
+      #   而调试期绝大多数时候只需要看一条腿。
+      legs:
+        description: 'Which platform to build'
+        type: choice
+        required: false
+        default: all
+        options: [all, linux, macos, windows]
+      # 冷启动那一步会真下载几百 MB 并真跑一次转写。默认开——
+      # 关掉它就只剩"包组装出来了"，而那**不是**用户要的那个保证。
+      coldStart:
+        description: 'Run the cold-start + transcription proof (the real criterion)'
+        type: boolean
+        required: false
+        default: true
+
+# 只读。这个 workflow 不创建 release、不推 commit —— 发布归 Manager（用户单独授权）。
+permissions:
+  contents: read
+
+concurrency:
+  group: build-bundles-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    name: bundle-linux-x64
+    if: inputs.legs == 'all' || inputs.legs == 'linux'
+    runs-on: ubuntu-24.04
+    steps:
+      # submodules 不能省：冷启动那一步的转写样本是 whisper.cpp 自带的
+      # vendor/whisper.cpp/samples/jfk.wav（cold-start-audit.yml 已经为此栽过一次）。
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.15.0
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # ★ 这里**必须**是 `pnpm -r build` 而不是 `build:safe`。
+      #   `apps/web/dist` 只有它会产出，而缺了 web bundle 的包，用户打开是白页
+      #   （daemon 照常启动、端口照常监听、日志一行错都没有）。
+      #   PROTOCOL §7 禁的是**在共享开发树上**跑它 —— CI runner 是一次性的，不适用。
+      - name: Build（含 apps/web/dist —— 缺了就是白页包）
+        run: pnpm -r build
+
+      - name: Assemble bundle
+        id: bundle
+        run: node scripts/build-bundle.mjs --target linux-x64
+
+      # ── 守卫 ①：glibc / libstdc++ 运行时下限 ──────────────────────────────────
+      #
+      # 覆盖面是**整个包**，不只是我们自己的文件：Node 二进制、better-sqlite3 的
+      # .node、sherpa 的 4 个 .so 全在里面。
+      # `[实测 2026-08-08]` 三者分别是 GLIBC_2.28 / 2.34 / 2.16，都在 2.34 基线内；
+      # C++ 侧 better-sqlite3 与 sherpa-onnx.node 都恰好是 GLIBCXX_3.4.29 / CXXABI_1.3.9。
+      # 也就是说这条基线现在是**贴着实测值的棘轮**：上游哪天升了工具链，这里当场红。
+      - name: Guard glibc / libstdc++ floor
+        run: node scripts/ci/check-elf-glibc.mjs --dir "${{ steps.bundle.outputs.bundle_dir }}" --max 2.34
+
+      # ── 守卫 ②：包里必须真的有那几样东西 ────────────────────────────────────
+      #
+      # 组装脚本自己已经会在缺件时退出 1，但这一步验的是**另一件事**：
+      # 归档之后、解开之后，那些文件还在不在。两者不是同一个问题
+      # （glob 漏掉、tar 排除规则、符号链接没跟随，都只在这一侧显形）。
+      - name: Verify extracted archive
+        run: bash scripts/ci/verify-bundle.sh --archive "${{ steps.bundle.outputs.archive }}" --target linux-x64
+
+      # ── 判据本身：干净机器 + 屏蔽宿主 PATH + 真下载 + 真转写出非空文本 ────────
+      - name: Cold start + transcription proof（用包自带的 Node）
+        if: ${{ inputs.coldStart }}
+        timeout-minutes: 60
+        run: |
+          node scripts/ci/cold-start-audit.mjs \
+            --bundle "${{ steps.bundle.outputs.bundle_dir }}" \
+            --port 19780 --transcribe
+
+      # ── 升级不弄坏已有数据目录（Manager 要求：要证据，不是声明）────────────────
+      - name: Upgrade safety（旧数据目录必须原样存活）
+        run: node scripts/ci/verify-bundle-upgrade.mjs --bundle "${{ steps.bundle.outputs.bundle_dir }}"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: bundle-linux-x64
+          path: |
+            dist/bundles/*.tar.xz
+            dist/bundles/*.json
+          if-no-files-found: error
+
+  macos:
+    name: bundle-macos-arm64
+    if: inputs.legs == 'all' || inputs.legs == 'macos'
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.15.0
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build（含 apps/web/dist —— 缺了就是白页包）
+        run: pnpm -r build
+
+      - name: Assemble bundle
+        id: bundle
+        run: node scripts/build-bundle.mjs --target darwin-arm64
+
+      # ── 守卫：macOS 部署目标 ───────────────────────────────────────────────────
+      #
+      # D-11 §8.0 的 macOS 那一格。`[CI 实测 T-146]` 有一轮包里 12 个二进制全是
+      # `minos=26.0.0` ——「下载成功、校验通过、一执行就死」。
+      #
+      # `[本机实测 2026-08-08]` 官方 node-v22.23.1-darwin-arm64 是 **minos 11.0.0**，
+      # 远低于 README 承诺的 13.3 —— 那个坑不在 Node 这条路上。
+      # ⚠️ 但 sherpa-onnx-darwin-arm64 的 dylib 与 better-sqlite3 的 darwin-arm64.node
+      #    **没有在本机验过**（本机是 Linux，那两个包在 Linux 上装不出来）。
+      #    这一步就是去拿那个答案的。**它红了不是这一步的错，是我们第一次看见事实。**
+      - name: Guard macOS deployment target
+        run: node scripts/ci/check-macho-minos.mjs --dir "${{ steps.bundle.outputs.bundle_dir }}" --max 13.3
+
+      - name: Verify extracted archive
+        run: bash scripts/ci/verify-bundle.sh --archive "${{ steps.bundle.outputs.archive }}" --target darwin-arm64
+
+      - name: Cold start + transcription proof（用包自带的 Node）
+        if: ${{ inputs.coldStart }}
+        timeout-minutes: 60
+        run: |
+          node scripts/ci/cold-start-audit.mjs \
+            --bundle "${{ steps.bundle.outputs.bundle_dir }}" \
+            --port 19780 --transcribe
+
+      - name: Upgrade safety（旧数据目录必须原样存活）
+        run: node scripts/ci/verify-bundle-upgrade.mjs --bundle "${{ steps.bundle.outputs.bundle_dir }}"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: bundle-darwin-arm64
+          path: |
+            dist/bundles/*.tar.gz
+            dist/bundles/*.json
+          if-no-files-found: error
+
+  windows:
+    name: bundle-win-x64
+    if: inputs.legs == 'all' || inputs.legs == 'windows'
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.15.0
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build（含 apps/web/dist —— 缺了就是白页包）
+        run: pnpm -r build
+
+      - name: Assemble bundle
+        id: bundle
+        run: node scripts/build-bundle.mjs --target win-x64
+
+      # Windows 上没有 ELF / Mach-O 守卫可跑。
+      # 对应的下限是 VC++ 可再发行组件（D-11 §8.3），而那一条**不是这个包能解决的**：
+      # `[报告]` 官方 node.exe 与 ggml 的 DLL 都需要它。README 已经如实写了
+      #「Windows x64（需 VC++ 2015-2022 运行时）」。这里不假装有守卫。
+      #
+      # ★ shell: bash —— Windows runner 默认是 pwsh，而 verify-bundle.sh 是 POSIX 写法。
+      #   cold-start-audit.yml 已经因为这条栽过一次（`/tmp/install.log` 被 pwsh
+      #   解析成 `D:\tmp\install.log`）。
+      - name: Verify extracted archive
+        shell: bash
+        run: bash scripts/ci/verify-bundle.sh --archive "${{ steps.bundle.outputs.archive }}" --target win-x64
+
+      - name: Cold start + transcription proof（用包自带的 Node）
+        if: ${{ inputs.coldStart }}
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          node scripts/ci/cold-start-audit.mjs \
+            --bundle "${{ steps.bundle.outputs.bundle_dir }}" \
+            --port 19780 --transcribe
+
+      - name: Upgrade safety（旧数据目录必须原样存活）
+        shell: bash
+        run: node scripts/ci/verify-bundle-upgrade.mjs --bundle "${{ steps.bundle.outputs.bundle_dir }}"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: bundle-win-x64
+          path: |
+            dist/bundles/*.zip
+            dist/bundles/*.json
+          if-no-files-found: error
