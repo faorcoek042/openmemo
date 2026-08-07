@@ -815,7 +815,7 @@ components:
 
     BackendStatus:
       type: object
-      required: [id, available, installed, version, deviceIndex]
+      required: [id, available, installed, probed, version, deviceIndex]
       properties:
         id:
           $ref: '#/components/schemas/Backend'
@@ -825,6 +825,15 @@ components:
         installed:
           type: boolean
           description: The backend package is present on disk and loadable.
+        probed:
+          type: boolean
+          description: >-
+            Did this detection run actually load this backend's library? backendDir is
+            single-valued, so one probe run scans exactly one pack directory and every
+            other installed pack is absent from the result. probed=false means NO
+            measurement was taken: available=false then says nothing about the driver or
+            the hardware, and unavailableReason must not claim otherwise. probed=true with
+            available=false is a real verdict. available=true always implies probed=true.
         version:
           type: [string, 'null']
         deviceIndex:

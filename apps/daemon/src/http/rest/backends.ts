@@ -99,6 +99,18 @@ function inapplicableKind(
   if (pack.os !== platform.os || pack.arch !== platform.arch) return 'platform';
 
   const status = state.hardware.backends.find((b) => b.id === pack.backend);
+  /*
+   * ★ T-168：**结构判据排在字符串嗅探前面。**
+   *
+   * 包已装、而这次探测根本没加载它（`backendDir` 单值，一次只扫一个包的目录）——
+   * 这是"没测过"，不是"不支持"。此前这里会落到最后一行报 `unsupported`，
+   * 于是一个完好的 Vulkan 包在网页上被标成「本机不支持」。
+   *
+   * 用 `probed` 而不是继续加正则：判据必须独立于文案。下面那条正则要求
+   * `unavailableReason` 里逐字出现某句英文，改一个词它就哑掉且不会有人发现
+   * （T-144「产出方与使用方用了两个名字」的同一族）。
+   */
+  if (status?.installed === true && status.probed !== true) return 'undetermined';
   const why = status?.unavailableReason ?? '';
   // runtime 在 probe 没跑成时给的就是这句 —— 它代表"未知"，不代表"不支持"
   if (/probe did not complete|probe skipped/i.test(why)) return 'undetermined';
@@ -350,8 +362,27 @@ export async function handleBackendRoutes(
       return true;
     }
     const status = state.hardware.backends.find((b) => b.id === backend);
+    /*
+     * ★ T-168：**这道闸门此前会把用户锁死在 CPU 上。**
+     *
+     * 链条是闭合的：用户选了 cpu → `findInBackendPacks` 把 cpu 包排到最前 →
+     * `backendDir` 指向 cpu 包目录 → 探测报 `vulkan.available=false` →
+     * 用户想选回 vulkan，这里 409，理由是那句**编出来的**
+     * 「installed but enumerated no devices (driver missing or too old)」。
+     * 逃不出去：唯一的出路是卸掉 cpu 包或手改 prefs.json。
+     * 而拦住他的那个 `available=false`，恰恰是**他自己上一次选择**造成的。
+     *
+     * 判据改成「有没有真结论」，不是「available 是不是 true」：
+     *   · 包没装      → 继续拒（理由为真，且可操作：去装）
+     *   · 装了、探过、确实没设备 → 继续拒（真结论）
+     *   · 装了、**这次没探它**   → 放行。没有证据时拒绝，正是 ADR-014 那个死锁的形状，
+     *     而"选中它"本身就是拿到证据的唯一办法。代价上限见 manager.ts 文件头实测①：
+     *     装了个用不了的加速包是**无害的** —— ggml 会静默退回 CPU。
+     *     「我们的职责不是阻止它，而是解释它。」
+     */
+    const noVerdictYet = status?.installed === true && status.probed !== true;
     // CPU 同理：它是 L1 兜底，选它永远合法（ADR-014 决策 1）
-    if (backend !== 'cpu' && !status?.available) {
+    if (backend !== 'cpu' && status?.available !== true && !noVerdictYet) {
       sendError(
         res,
         409,

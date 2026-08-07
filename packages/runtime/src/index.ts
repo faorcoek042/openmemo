@@ -38,6 +38,7 @@ import {
   detectOs,
   detectUnifiedMemory,
 } from './detect/system.js';
+import { probedBackendsInDir } from './probe/probedBackends.js';
 import { runProbe } from './probe/runProbe.js';
 
 export const PACKAGE_NAME = '@openmemo/runtime' as const;
@@ -90,6 +91,13 @@ export {
   runProbe,
 } from './probe/runProbe.js';
 export type { BreakerState, RunProbeOptions } from './probe/runProbe.js';
+/*
+ * Which backends a probe run could actually load (T-168). Exported because the daemon's
+ * `composeHardware()` needs the SAME answer as `detectHardware()` below — two
+ * implementations of "was this backend loadable" is exactly how `backendDir` drifted from
+ * the installer's real layout in the first place (setup.ts T-160).
+ */
+export { ggmlRegNameFromFileName, probedBackendsInDir } from './probe/probedBackends.js';
 
 // -- backend selection ---------------------------------------------------------------------
 export {
@@ -201,6 +209,13 @@ export async function detectHardware(options: DetectHardwareOptions): Promise<Ha
     detectDisks({ modelsRoot: options.modelsRoot, runtimesRoot: options.runtimesRoot }),
   ]);
 
+  /*
+   * Which backends this run could even load. Read from the SAME directory the probe was
+   * pointed at — anything else would answer a different question than the probe answered.
+   * See `probedBackends.ts` and `BackendStatus.probed`.
+   */
+  const probedBackends = await probedBackendsInDir(options.backendDir);
+
   return buildHardwareInfo({
     os: detectOs(),
     cpu,
@@ -211,5 +226,6 @@ export async function detectHardware(options: DetectHardwareOptions): Promise<Ha
     probe,
     installedBackends: options.installedBackends ?? new Set<Backend>(['cpu']),
     blacklistedBackends: options.blacklistedBackends ?? new Set<Backend>(),
+    probedBackends,
   });
 }

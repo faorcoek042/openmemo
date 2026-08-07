@@ -124,6 +124,18 @@ export interface BuildHardwareInfoInput {
   installedBackends: Set<Backend>;
   /** Backends parked by the circuit breaker. */
   blacklistedBackends?: Set<Backend>;
+  /**
+   * Backends this probe run could actually load — i.e. whose ggml library is in the ONE
+   * directory the probe scanned (`probedBackendsInDir`).
+   *
+   * ⚠️ REQUIRED, deliberately. It would type-check as optional — there are only two
+   * callers — but "not knowing which backends were loadable" is precisely the state that
+   * produced T-168's false driver accusation. An optional field lets a future caller skip
+   * it and get a plausible-looking answer built on no evidence; a required one makes the
+   * compiler ask the question. Pass an empty set to mean "nothing was loadable"; there is
+   * no way to spell "do not care", on purpose. See `BackendStatus.probed`.
+   */
+  probedBackends: ReadonlySet<Backend>;
 }
 
 /**
@@ -143,6 +155,7 @@ export function buildHardwareInfo(input: BuildHardwareInfoInput): HardwareInfo {
     probe,
     installedBackends,
     blacklistedBackends = new Set<Backend>(),
+    probedBackends,
   } = input;
 
   const probeOutput: ProbeOutput | null = probe.ok ? probe.output : null;
@@ -191,6 +204,12 @@ export function buildHardwareInfo(input: BuildHardwareInfoInput): HardwareInfo {
     const devices = enumeratedBackends.get(id) ?? [];
     const usable = devices.filter((d) => (id === 'cpu' ? d.type === 'cpu' : isUsableAccelerator(d)));
     const installed = installedBackends.has(id);
+    /*
+     * Enumerating a device is itself proof the backend loaded, so it overrides the
+     * directory listing. This keeps the field self-consistent — `available` implies
+     * `probed` — even if the filename heuristic ever misses a library shape.
+     */
+    const probed = probe.ok && (probedBackends.has(id) || devices.length > 0);
 
     let unavailableReason: string | null = null;
     if (usable.length === 0) {
@@ -200,6 +219,30 @@ export function buildHardwareInfo(input: BuildHardwareInfoInput): HardwareInfo {
         unavailableReason = 'disabled after repeated failures; re-test to try again';
       } else if (!installed) {
         unavailableReason = 'backend package not installed';
+      } else if (!probed) {
+        /*
+         * ★ T-168. The pack IS installed, and this run never loaded it.
+         *
+         * `backendDir` is single-valued: one probe run scans one pack directory, so every
+         * other installed pack is invisible to it. Before this branch existed, that
+         * invisibility fell through to the "driver missing or too old" line below — a
+         * specific, confident, WRONG diagnosis, measured on a box where the Vulkan pack
+         * was installed and perfectly fine and the user had merely selected CPU.
+         *
+         * The rule this branch enforces: absence of evidence is reported as absence of
+         * evidence. Nothing here may mention drivers, hardware, or support — we did not
+         * look. The last sentence is load-bearing: without it users read any "unavailable"
+         * line as a fault to go and fix.
+         */
+        unavailableReason =
+          'installed, but this detection run did not load it: only the backend directory ' +
+          `currently in use is scanned${
+            probeOutput !== null && probeOutput.searchPath.length > 0
+              ? ` (${probeOutput.searchPath})`
+              : ''
+          }, and this backend's library is not in it. ` +
+          'This is not a driver or hardware fault — nothing was measured about it. ' +
+          'Select this backend, or run the self-test on that pack, to get a real answer.';
       } else if (devices.length > 0) {
         // The pack loaded but every device it offered was rejected. This is the
         // lavapipe case and it deserves a specific, non-alarming explanation.
@@ -207,6 +250,11 @@ export function buildHardwareInfo(input: BuildHardwareInfoInput): HardwareInfo {
           ? 'only a software renderer was found (no real GPU); falling back to CPU'
           : 'backend loaded but reported no usable devices';
       } else {
+        /*
+         * Now EARNED: the library was in the scanned directory (or failed to dlopen for a
+         * missing driver library such as libcuda.so.1, which is the same conclusion), and
+         * enumeration still came back empty.
+         */
         unavailableReason = 'installed but enumerated no devices (driver missing or too old)';
       }
     }
@@ -217,6 +265,7 @@ export function buildHardwareInfo(input: BuildHardwareInfoInput): HardwareInfo {
       id,
       available: usable.length > 0,
       installed,
+      probed,
       version: id === 'cpu' ? (probeOutput?.ggmlVersion ?? null) : null,
       deviceIndex: gpuIdx >= 0 ? gpuIdx : null,
       ...(id === 'cpu' ? { isa: cpu.features.includes('avx2') ? 'avx2' : null } : {}),

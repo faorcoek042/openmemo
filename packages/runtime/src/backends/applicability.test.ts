@@ -50,6 +50,8 @@ function statuses(overrides: Partial<Record<Backend, Partial<BackendStatus>>> = 
       id,
       available: id === 'cpu',
       installed: id === 'cpu',
+      // 没装的包，其 ggml 库不在被扫描的目录里 → 探针不可能加载过它（T-168）
+      probed: id === 'cpu',
       version: null,
       deviceIndex: null,
       unavailableReason: id === 'cpu' ? null : 'backend package not installed',
@@ -99,11 +101,15 @@ describe('L2 适用性：解开"要先装才能被发现"的环', () => {
     );
   });
 
-  it('**不许放水**：包已经装了之后，probe 的裁决重新说了算', () => {
+  it('**不许放水**：包已经装了、**而且探针真的探过**之后，probe 的裁决重新说了算', () => {
     /*
-     * 这一条是解环规则的边界。装上之后 probe 已经有机会枚举了：
+     * 这一条是解环规则的边界。装上、**并且探针加载过它的库**之后，probe 已经有机会枚举了：
      * 它仍然说"没有可用设备"，那就是真结论（驱动太老 / 只有软件渲染器 / 卡被占用），
      * 此时再拿 advisory 去覆盖它，就是用弱证据推翻强证据。
+     *
+     * ★ T-168：`probed: true` 是这条用例的**承重墙**，不是补齐类型的样板。
+     * 少了它，这条断言变成"装了就不许再解环"，而那正是被证伪的那句话 ——
+     * 见下面那条 T-168 用例。两条必须一起读。
      */
     const r = evaluateApplicability({
       pack: pack('cuda'),
@@ -111,6 +117,7 @@ describe('L2 适用性：解开"要先装才能被发现"的环', () => {
       backends: statuses({
         cuda: {
           installed: true,
+          probed: true,
           available: false,
           unavailableReason: 'installed but enumerated no devices (driver missing or too old)',
         },
@@ -119,6 +126,43 @@ describe('L2 适用性：解开"要先装才能被发现"的环', () => {
     });
     assert.equal(r.applicable, false);
     assert.match(r.reason ?? '', /enumerated no devices/);
+  });
+
+  it('★ T-168：装了、但**这次探测根本没加载它** → 那不是裁决，不许当裁决用', () => {
+    /*
+     * `backendDir` 是单值的：一次探测只扫一个包的目录。用户显式选了 cpu 时，
+     * 已装的 vulkan 包**永远**轮不到被加载 —— 再探一百次也一样。
+     *
+     * 缺陷原状：`installed === true` 就关掉解环通道，于是一个完好的包被判"不适用"，
+     * 理由是那句从来没测过的「driver missing or too old」。
+     */
+    const backends = statuses({
+      vulkan: {
+        installed: true,
+        probed: false,
+        available: false,
+        unavailableReason: 'installed, but this detection run did not load it: …',
+      },
+    });
+
+    const r = evaluateApplicability({
+      pack: pack('vulkan'),
+      platform: LINUX,
+      backends,
+      advisoryCandidates: ['vulkan'],
+    });
+    assert.equal(
+      r.applicable,
+      true,
+      '没有裁决就不能当成否定裁决 —— 这与"包没装"是同一种无知，必须同样解环',
+    );
+
+    // 阴性对照：没有独立硬件证据时，它仍然不可装。否则这条只是把闸门焊死在 true 上。
+    assert.equal(
+      evaluateApplicability({ pack: pack('vulkan'), platform: LINUX, backends }).applicable,
+      false,
+      'advisory 没看到对应硬件时不许放行 —— 解环不等于无条件放水',
+    );
   });
 
   it('probe 从未跑过（全新机器）：有独立证据就不必先装 CPU 包', () => {

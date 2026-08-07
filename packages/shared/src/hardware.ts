@@ -75,6 +75,33 @@ export interface BackendStatus {
   available: boolean;
   /** The backend package is present on disk and loadable. */
   installed: boolean;
+  /**
+   * Did this detection run actually LOAD this backend's library?
+   *
+   * ── Why this is a separate field, and not prose in `unavailableReason` ──────────────
+   *
+   * `available: false` has two causes that were indistinguishable before T-168, because
+   * they shared one boolean and one free-text slot:
+   *
+   *   1. The probe loaded this backend's ggml library and enumerated no usable device.
+   *      That is a REAL verdict about the driver/hardware.
+   *   2. The probe never loaded it at all. `backendDir` is single-valued — one probe run
+   *      scans exactly one pack directory (`ggml_backend_load_all_from_path`) — so every
+   *      OTHER installed pack is simply absent from the result. That is ZERO information
+   *      about the driver, and any sentence blaming the driver is invented.
+   *
+   * MEASURED (T-168, this box, real install of both Linux packs, probe stderr):
+   *   backendDir = <cpu pack>     -> "loaded CPU backend from libggml-cpu-zen4.so"      (Vulkan never loaded)
+   *   backendDir = <vulkan pack>  -> "ggml_vulkan: No devices found." + loaded Vulkan
+   * Both produced the identical string "installed but enumerated no devices (driver
+   * missing or too old)". In the first case it is FALSE — and it sends the user off to
+   * reinstall a driver that was never the problem.
+   *
+   * The test is structural and cheap: is this backend's ggml library present in the
+   * directory the probe scanned? Present + no devices = a real driver/hardware verdict.
+   * Absent = it never had a chance. `available: true` always implies `probed: true`.
+   */
+  probed: boolean;
   version: string | null;
   /** Index into HardwareInfo.gpus, when this backend is bound to a specific device. */
   deviceIndex: number | null;

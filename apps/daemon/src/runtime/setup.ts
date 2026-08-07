@@ -56,6 +56,7 @@ import {
   isBlacklisted,
   nextCandidates,
   preferenceOrder,
+  probedBackendsInDir,
   recordProbeOutcome,
   runProbe,
   runSelfTest,
@@ -429,6 +430,13 @@ async function composeHardware(
     probe,
     installedBackends,
     blacklistedBackends,
+    /*
+     * ★ T-168：`backendDir` 是单值的，一次探测只扫一个包的目录。
+     * 少了这一项，"这个包没被加载"会被当成"这个包的驱动坏了"报给用户 ——
+     * 一句具体的、错的诊断。用 `packages/runtime` 那**同一个**函数，
+     * 不在这里再写一份（`detectHardware()` 走的也是它）。
+     */
+    probedBackends: await probedBackendsInDir(layout.backendDir),
   });
 }
 

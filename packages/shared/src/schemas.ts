@@ -441,6 +441,7 @@ export const HardwareInfoSchema = z.object({
       id: BackendSchema,
       available: z.boolean(),
       installed: z.boolean(),
+      probed: z.boolean(),
       version: z.string().nullable(),
       deviceIndex: z.number().int().nullable(),
       isa: z.string().nullish(),

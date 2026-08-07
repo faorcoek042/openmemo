@@ -250,13 +250,19 @@ async function detectHardware() {
     unifiedMemory: false,
     // Honest: this box has no GPU. We do not fabricate one.
     gpus: [],
+    /*
+     * `probed` (T-168): did this run actually LOAD the backend's library? This box has one
+     * CPU pack and nothing else, so cpu was loaded and the accelerators never were —
+     * hence probed:false, and reasons that say "not installed" rather than blaming a
+     * driver nobody measured. See BackendStatus.probed in @openmemo/shared.
+     */
     backends: [
-      { id: 'cpu', available: true, installed: true, version: null, deviceIndex: null, isa: features.includes('avx2') ? 'avx2' : 'baseline' },
-      { id: 'cuda', available: false, installed: false, version: null, deviceIndex: null, unavailableReason: '未检测到 NVIDIA 设备（真实枚举结果，非文件存在性判断）' },
-      { id: 'vulkan', available: false, installed: false, version: null, deviceIndex: null, unavailableReason: '未枚举到 Vulkan 物理设备' },
-      { id: 'rocm', available: false, installed: false, version: null, deviceIndex: null, unavailableReason: '未检测到 AMD ROCm 设备' },
-      { id: 'metal', available: false, installed: false, version: null, deviceIndex: null, unavailableReason: '仅 macOS 可用' },
-      { id: 'coreml', available: false, installed: false, version: null, deviceIndex: null, unavailableReason: '仅 macOS 可用' },
+      { id: 'cpu', available: true, installed: true, probed: true, version: null, deviceIndex: null, isa: features.includes('avx2') ? 'avx2' : 'baseline' },
+      { id: 'cuda', available: false, installed: false, probed: false, version: null, deviceIndex: null, unavailableReason: '未安装 CUDA 后端包（本次探测没有加载过它，故对驱动不作结论）' },
+      { id: 'vulkan', available: false, installed: false, probed: false, version: null, deviceIndex: null, unavailableReason: '未安装 Vulkan 后端包（本次探测没有加载过它，故对驱动不作结论）' },
+      { id: 'rocm', available: false, installed: false, probed: false, version: null, deviceIndex: null, unavailableReason: '未安装 ROCm 后端包（本次探测没有加载过它，故对驱动不作结论）' },
+      { id: 'metal', available: false, installed: false, probed: false, version: null, deviceIndex: null, unavailableReason: '仅 macOS 可用' },
+      { id: 'coreml', available: false, installed: false, probed: false, version: null, deviceIndex: null, unavailableReason: '仅 macOS 可用' },
     ],
     selectedBackend: 'cpu',
     selectedGpuIndex: null,

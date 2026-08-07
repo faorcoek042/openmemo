@@ -171,8 +171,18 @@ export function evaluateApplicability(input: ApplicabilityInput): ApplicabilityR
    * probe cannot enumerate a backend whose library it does not have. Refusing here is
    * refusing to install B because B is not installed. So fall back to the independent
    * signal — and only to it, so a machine with no matching hardware still gets a no.
+   *
+   * ★ T-168 widened the condition, and the file header above says why in its own words:
+   * rule 2 "stops applying the moment the pack IS installed (from then on the probe has
+   * had its chance and its verdict stands)". That premise is FALSE for an installed pack
+   * the probe never loaded — `backendDir` is single-valued, so with two packs installed
+   * the unselected one never gets its chance no matter how many times detection runs.
+   * `probed === false` is exactly "no verdict exists", which is the same epistemic state
+   * as "not installed" and must break the cycle the same way. Gating on `installed`
+   * alone let a perfectly good Vulkan pack be marked not-applicable, citing a driver
+   * fault that was never measured.
    */
-  if (status?.installed !== true && advisory.includes(pack.backend)) {
+  if ((status?.installed !== true || status.probed !== true) && advisory.includes(pack.backend)) {
     return { applicable: true, reason: null, tier: 'l2' };
   }
 
