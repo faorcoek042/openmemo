@@ -26,19 +26,53 @@ interface HealthResponse {
  * 后者只统计模型目录，所以此前这一节只能一边显示"模型占用"一边写小字提醒
  * "这不是总量"。现在总量有了权威来源，就该显示它。
  *
- * ⚠️ `entries` **没有各自的字节数**。所以下面只列用途不列大小 ——
- * 按目录估一个数写上去，会让用户照着一个我们其实没测过的数字去清理磁盘。
+ * ⚠️ **这里原来写着「`entries` 没有各自的字节数，所以只列用途不列大小」——
+ * 那句话是错的，而且它压着一个早就存在的能力。** 实测 daemon 的真实响应：
+ * 七条 entry **每条都带 `bytes` 与 `files`**（`rest/storage.ts` 里对每个子目录
+ * 各跑一次 `measureTree`，源码注释还专门写了为什么必须逐目录 ——
+ * 「只给总数，用户知道占了 3GB 却不知道该删哪个」）。
+ * 前端的类型里没有这两个字段，于是它们被 TS 结构化子类型静静丢掉，
+ * 界面上"没有大小"这件事看起来就成了 daemon 的限制。
+ * 用户点名要过"可统计大小"，这一格其实一直是通的。
+ *
+ * 同理 `externalFiles`：daemon 一直在返回**数据目录外面**那个指针文件的说明与风险，
+ * 而这个类型里没有它 —— 那条警告写出来之后从没到达过任何用户。
+ * 它讲的正是 PROTOCOL §9 那场事故的用户侧形态（删了数据目录、留下指针 →
+ * 下次启动按指针去建空目录 → "笔记全没了"）。
  *
  * T-135：`purpose` 是新补的英文对应（`rest/storage.ts` 的 `layout()`）。
  * 在它存在之前，这一节是 `/settings` 英文界面上**全部 81 个汉字**的来源 ——
  * 而且前端修不了：没有可回落的英文，删掉又等于不告诉用户哪个目录能删。
  * 现在走 `pickLocalized()`，与 `displayName/displayNameZh` 同一套。
- * 类型上仍是可选，因为**老版本 daemon 不会给这个字段**（前端可以比 daemon 新）。
+ * 类型上仍是可选，因为**老版本 daemon 不会给这些字段**（前端可以比 daemon 新）。
  */
 interface DataDirResponse {
   dataDir?: string;
   usage: { bytes: number; files: number } | null;
-  entries: { path: string; name: string; purposeZh: string; purpose?: string }[];
+  entries: {
+    path: string;
+    name: string;
+    purposeZh: string;
+    purpose?: string;
+    /** 逐目录占用。老 daemon 没有 → 那一行不显示大小，而不是显示 0。 */
+    bytes?: number;
+    files?: number;
+  }[];
+  externalFiles?: {
+    path: string;
+    purposeZh: string;
+    purpose?: string;
+    /**
+     * 「它为什么必须待在数据目录**外面**」。
+     * 少了这半句，用户知道有个外部文件要一起删，却不知道原因 ——
+     * 而最自然的反应是把它挪进数据目录里，那正是这句话要拦的事
+     * （挪进去 → 跟着数据一起搬走 → 搬完再也找不到新位置）。
+     */
+    whyOutsideZh: string;
+    whyOutside?: string;
+    riskZh: string;
+    risk?: string;
+  }[];
 }
 
 /**
@@ -109,6 +143,29 @@ export function StaleLinksWarning({
       ) : null}
     </div>
   );
+}
+
+/**
+ * 成功之后该说哪一句 —— **搬了**，还是**只改了指向**。
+ *
+ * ## 为什么单独抽成函数
+ *
+ * 与 `StaleLinksWarning` 同一个理由：宿主驱动不了受控文本输入框
+ * （`fireEvent.change` / `input` 都进不到 React 的 onChange，state 恒为空），
+ * 所以"打开表单 → 输路径 → 点应用 → 看结果文案"这条链在组件测试里跑不起来。
+ * 内联成三元表达式的话，这段判断就**一条测试都没有**。
+ *
+ * ## 判据取 daemon 回的 `moved`，不取前端自己发了什么
+ *
+ * 本轮修的 bug 恰恰是"前端以为自己发了 A、服务端做了 B"。
+ * 如果这里改成"按我发的 moveExisting 显示"，那么下一次两端再对不上时，
+ * 界面会**继续自信地报告一件没发生的事** —— 那就等于把同一个 bug 又埋回来一次。
+ * 所以只信执行方的回执。老 daemon 不给 `moved` → 回落到中性文案，不猜。
+ */
+export function resultTextKey(moved: boolean | undefined): string {
+  if (moved === true) return 'settings.dataDir.resultMoved';
+  if (moved === false) return 'settings.dataDir.resultPointed';
+  return 'settings.dataDir.needRestart';
 }
 
 /**
@@ -278,13 +335,59 @@ export function DataLocationSection() {
             {layout.data.entries.map((e) => (
               <li key={e.path} className="flex flex-wrap items-baseline gap-x-2 px-2 py-1.5 text-xs">
                 <code className="font-mono text-ink">{e.name}</code>
-                <span className="text-ink-secondary">
+                <span className="min-w-0 flex-1 text-ink-secondary">
                   {pickLocalized(i18n.language, e.purposeZh, e.purpose)}
                 </span>
+                {/*
+                  逐目录大小 —— daemon 一直在给，只是前端此前把它丢了。
+                  `undefined` 与 `0` 必须分开：老 daemon 不给这个字段时**不显示**，
+                  而不是显示 "0 B"（那是在替一个我们没测过的数字背书）。
+                */}
+                {typeof e.bytes === 'number' ? (
+                  <span
+                    className="shrink-0 font-mono text-ink-muted"
+                    data-testid={`data-dir-entry-size-${e.name}`}
+                  >
+                    {formatBytes(e.bytes, i18n.language)}
+                  </span>
+                ) : null}
               </li>
             ))}
           </ul>
           <p className="mt-1.5 text-[11px] text-ink-muted">{t('settings.dataDir.perDirNote')}</p>
+        </div>
+      ) : null}
+
+      {/*
+        ── 数据目录**外面**的那个文件 ──
+
+        daemon 从一开始就在 `externalFiles` 里返回它，但前端的响应类型里没有这个字段，
+        所以这段警告**一次都没有到达过用户**。它说的是：删掉数据目录却留下指针，
+        daemon 下次启动会按指针去那个已不存在的位置建一套空的，界面上表现为"笔记全没了"。
+        这正是本仓 PROTOCOL §9 记录的那场事故在用户侧的样子。
+      */}
+      {layout.data?.externalFiles?.length ? (
+        <div
+          className="mb-4 rounded-md border border-warning/40 bg-warning/10 p-2"
+          data-testid="data-dir-external-files"
+        >
+          <p className="mb-1 flex items-start gap-1.5 text-xs font-medium text-warning">
+            <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
+            <span>{t('settings.dataDir.externalTitle')}</span>
+          </p>
+          <ul className="space-y-1 pl-5">
+            {layout.data.externalFiles.map((f) => (
+              <li key={f.path} className="text-[11px] text-ink-secondary">
+                <code className="break-all font-mono text-ink">{f.path}</code>
+                <span className="ml-1">{pickLocalized(i18n.language, f.purposeZh, f.purpose)}</span>
+                <Emphasis
+                  className="mt-0.5 block"
+                  text={pickLocalized(i18n.language, f.whyOutsideZh, f.whyOutside)}
+                />
+                <Emphasis className="mt-0.5 block" text={pickLocalized(i18n.language, f.riskZh, f.risk)} />
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
 
@@ -334,9 +437,27 @@ export function DataLocationSection() {
             </Button>
           </div>
 
-          {/* 带 `**重启后生效**` —— 用户最需要看见的半句，走 <Emphasis>（T-129b） */}
+          {/*
+            ★ 成功之后必须说清**到底做了哪一件事**：搬了，还是只改了指向。
+
+            这两件事的后果天差地别（一个动了几十 GB 且不可逆，一个一个字节没动），
+            而此前无论哪一种都只显示同一句「已保存。重启后生效。」——
+            于是"我以为我选了 A，系统做了 B"在结果页上也**看不出来**。
+            本轮那个 bug 能长期不被发现，这里是第二道失守的关口：
+            即使请求被误解了，只要结果页把真相说出来，用户当场就会发现。
+
+            `moved` 由 daemon 回（`{moved:true, files:N}` / `{moved:false}`），
+            不由前端按自己发了什么去猜 —— 猜的话就又回到"两边各说各的"。
+            老 daemon 不给 `moved` 时回落到原来那句中性文案。
+            带 `**…**` 的半句走 <Emphasis>（T-129b）。
+          */}
           {changeDir.isSuccess ? (
-            <Emphasis className="block text-xs text-good" text={t('settings.dataDir.needRestart')} />
+            <p data-testid="data-dir-result">
+              <Emphasis
+                className="block text-xs text-good"
+                text={t(resultTextKey(changeDir.data?.moved), { n: changeDir.data?.files ?? 0 })}
+              />
+            </p>
           ) : null}
 
           {/*
@@ -372,22 +493,27 @@ export function DataLocationSection() {
              * ★ T-140：26 个 `<ErrorBlock>` 里，**这一个**的补救不是"去某一页"，
              * 是**就地重发一次请求**。
              *
-             * daemon 在 `rest/storage.ts:266` 对着"目标已经是一个 OpenMemo 数据目录"
-             * 回 409 + `useExistingDataDir`，并在源码里写明「UI 点「直接使用此目录」时
-             * 按这个再发一次即可」，params 特意压平成 `{path, move:false}` 就是为了
-             * 让前端原样转发。`lib/remediation/routes.ts` 把它列进 `UNROUTED_ACTIONS`
-             * （没有落点），所以按钮只会因为这里传了 `onRemediate` 才出现 —— 这正是
-             * 那个 prop 现在的唯一职责：**"我能就地办"**。
+             * daemon 对着"目标已经是一个 OpenMemo 数据目录"回 409 + `useExistingDataDir`，
+             * 并在源码里写明「UI 点「直接使用此目录」时按这个再发一次即可」，
+             * params 特意压平成 `{path, moveExisting:false}` 就是为了让前端原样转发。
+             * `lib/remediation/routes.ts` 把它列进 `UNROUTED_ACTIONS`（没有落点），
+             * 所以按钮只会因为这里传了 `onRemediate` 才出现 —— 这正是那个 prop
+             * 现在的唯一职责：**"我能就地办"**。
              *
-             * 只认 `move === false`：daemon 现在只发这一种，将来若发了 `move:true`
-             * （真搬运）也不该被这条无声地当成"直接使用"执行掉。宁可不渲染按钮。
+             * ⚠️ 这个 key 曾经是 `move`，而请求体发的是 `moveExisting` ——
+             * daemon 读不到，缺省成"搬"，于是又撞回同一道 409。
+             * **实测：这个按钮从上线起一次都没成功过**（点了只是把同一条错误再显示一遍）。
+             * 现在两端统一叫 `moveExisting`。
+             *
+             * 只认 `moveExisting === false`：将来若 daemon 发了 `true`（真搬运），
+             * 也不该被这条无声地当成"直接使用"执行掉。宁可不渲染按钮。
              */
             <ErrorBlock
               error={changeDir.error}
               onRemediate={(action, params) => {
                 if (action !== 'useExistingDataDir') return;
                 const path = params?.['path'];
-                if (typeof path !== 'string' || !path || params?.['move'] !== false) return;
+                if (typeof path !== 'string' || !path || params?.['moveExisting'] !== false) return;
                 changeDir.mutate({ path, moveExisting: false });
               }}
             />

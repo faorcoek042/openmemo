@@ -100,6 +100,156 @@ export function layout(paths: AppPaths): Array<Record<string, string>> {
   ];
 }
 
+/**
+ * 数据目录**外面**还有哪些文件属于本程序 —— 用户要"删干净"就必须知道它们。
+ *
+ * ## 为什么单独抽成函数
+ *
+ * 与 `layout()` 同一个理由：这段文字是「删数据目录时还要删什么」的唯一答案，
+ * 抽出来才能被 `storageLayout.test.ts` 的**中英成对**断言守住。
+ * 只有中文一份时英文界面拿不到任何可回落的东西 —— 前端既不能翻译
+ * （路径随 dataDir 变，权威在 daemon），又不能省掉（省掉的代价见 `riskZh`：
+ * 用户删了数据目录却留下指针，daemon 下次启动按它去建空目录，表现为"笔记全没了"）。
+ *
+ * ⚠️ 这个字段 daemon 一直在返回，但前端的响应类型里**根本没有它** ——
+ * 也就是说这条警告写出来之后从来没有到达过任何一个用户。本轮一并接上。
+ */
+export function externalFiles(): Array<Record<string, string>> {
+  return [
+    {
+      path: pointerFile(),
+      purpose: 'Pointer file recording where the data directory was moved to',
+      purposeZh: '记录"数据目录搬到哪了"的指针文件',
+      whyOutside:
+        'It must live **outside** the data directory — put it inside and it would move along with the data, after which the new location could never be found again.',
+      whyOutsideZh:
+        '它必须在数据目录**外面** —— 放进去就会跟着一起搬走，搬完就再也找不到新位置了。',
+      risk: 'If it points at a directory you have deleted, the daemon will **recreate an empty directory at that missing location** on its next start (including self-restart), which looks exactly like "all my notes are gone". Delete this file together with the data directory.',
+      riskZh:
+        '如果它指向一个已被删除的目录，daemon 下次启动（含自我重启）会**按它去那个不存在的位置建空目录**，表现为"笔记全没了"。删除数据目录时请连同它一起删。',
+    },
+  ];
+}
+
+/** 本端点认识的**全部**请求字段。多一个都要当场报错 —— 理由见 `parseChangeRequest`。 */
+const KNOWN_FIELDS = new Set(['path', 'moveExisting', 'move', 'dryRun']);
+
+export type ChangeRequest =
+  | { readonly ok: true; readonly move: boolean; readonly dryRun: boolean }
+  | {
+      readonly ok: false;
+      readonly code: string;
+      readonly message: string;
+      readonly messageZh: string;
+    };
+
+/**
+ * 「要不要把现有数据一起搬过去」—— 这个选择的**唯一解析点**。
+ *
+ * ## 它修的是什么（实测，不是推断）
+ *
+ * 前端一直发 `moveExisting`，这里一直读 `move`，**两个名字从来没有对上过**。
+ * 而缺省是 `body?.move !== false`，也就是**字段缺席 = 搬**。合起来的后果实测如下：
+ *
+ * | 用户在界面上做的事 | 请求体 | 实际发生 |
+ * |---|---|---|
+ * | 取消勾选「把现有数据一并移动过去」后点应用 | `{path, moveExisting:false}` | **202 `moved:true`，源目录被清空**，`openmemo.db` / `secrets.json` / 媒体全部 `rename` 到新位置 |
+ * | 勾选着点应用 | `{path, moveExisting:true}` | 同上，**逐字节一模一样** |
+ *
+ * 也就是说那个复选框**在传输层上根本不存在**：勾与不勾产生同一个请求结果。
+ * 用户以为自己选了「只改指向」，系统做的是「搬走几十 GB 且不可逆」。
+ * （另一条路径：错误提示里那个「直接使用此目录」按钮发的也是 `moveExisting:false`，
+ * 它在 `TARGET_ALREADY_DATA_DIR` 那道闸上被挡回来 → 反复 409，
+ * 按钮**永远点不成**。同一个键名错误，两种截然不同的症状。）
+ *
+ * ## 三条规则，以及为什么是这三条
+ *
+ * **① 缺省 = 不搬。** 判据是**两种缺省的失败代价不对称**：
+ * 缺省不搬，最坏结果是指针指向一个不是数据目录的地方 → 下面 `NOT_A_DATA_DIR`
+ * 当场 409，**一个字节都没动**，用户重发一次即可；
+ * 缺省搬，最坏结果是几十 GB 跨盘搬迁 + 数据库路径改写 + 强制重启，
+ * 而且它连"原样搬回去"都做不到（实测目标目录会多出 `openmemo.db-wal` / `-shm`）。
+ *
+ * 更关键的一层：**缺省值决定了「键名写错」这个 bug 是一份缺陷报告还是一次数据事故。**
+ * 同样这个错误，在「缺省不搬」下的表现是：用户勾着框点应用，却看到
+ * 「已记录新位置（未搬运数据）」—— 不对，但**可见、可逆、当天就会被报上来**。
+ * 在「缺省搬」下它安静了不知道多久，`docs/DEPLOYMENT.md` 与两份 inbox 里
+ * 甚至留着「`moveExisting:true` 搬迁成功」的记录 —— 那几次成功**全是靠缺省蒙对的**，
+ * 字段一次都没被读到过。
+ *
+ * ⚠️ 这与界面复选框默认**勾着**并不矛盾，别把两者"统一"掉：
+ * 界面每次都**显式**发这个字段，缺省值管的是「没人表达过意图」的情形，
+ * 而那正是绝不该替用户做不可逆决定的时刻。
+ *
+ * **② 认识但形状不对 → 400，不猜。** `moveExisting:"false"`（字符串）在旧写法下
+ * 是"搬"（因为它 `!== false`）。一个拼错的值不许被解释成破坏性的那一档。
+ *
+ * **③ 不认识的字段 → 400。** 这条才是真正治本的：本 bug 的形状是
+ * **"一边写、一边不读，而且没有任何人会知道"**。字段名一旦写错，
+ * 在宽松解析下等价于"用户什么都没说"，于是缺省值替他做了决定。
+ * 严格解析把它变成传输层上的一声硬报错 —— 意图送不到，就绝不假装送到了。
+ * 只对本端点做（它是全仓唯一一个会不可逆地动用户全部数据的写端点），
+ * 不推广成全局规则。
+ */
+export function parseChangeRequest(body: unknown): ChangeRequest {
+  const rec = (body ?? {}) as Record<string, unknown>;
+
+  const unknown = Object.keys(rec).filter((k) => !KNOWN_FIELDS.has(k));
+  if (unknown.length > 0) {
+    return {
+      ok: false,
+      code: 'UNKNOWN_FIELD',
+      message: `unknown field(s): ${unknown.join(', ')}`,
+      messageZh:
+        `请求里有本端点不认识的字段：${unknown.join('、')}。` +
+        `这里刻意不忽略它 —— 忽略一个写错名字的字段，等于让缺省值替你决定要不要搬运数据。`,
+    };
+  }
+
+  if ('dryRun' in rec && typeof rec['dryRun'] !== 'boolean') {
+    return {
+      ok: false,
+      code: 'BAD_DRY_RUN',
+      message: 'dryRun must be a boolean',
+      messageZh: 'dryRun 必须是布尔值。',
+    };
+  }
+
+  /*
+   * `move` 是**旧别名**：daemon 自己的 `TARGET_ALREADY_DATA_DIR` 补救载荷一直发它。
+   * 留着是为了不在修这个 bug 的同时制造同一个 bug（把一个真有人发的字段悄悄丢掉）。
+   * 新代码一律用 `moveExisting` —— 它是 `docs/DEPLOYMENT.md`、界面状态与本仓
+   * 各份实测记录共用的那个名字。
+   */
+  const hasNew = 'moveExisting' in rec;
+  const hasOld = 'move' in rec;
+  for (const k of ['moveExisting', 'move'] as const) {
+    if (k in rec && typeof rec[k] !== 'boolean') {
+      return {
+        ok: false,
+        code: 'BAD_MOVE_FLAG',
+        message: `${k} must be a boolean, got ${typeof rec[k]}`,
+        messageZh: `${k} 必须是布尔值（收到的是 ${typeof rec[k]}）。这里不做真值转换：一个写错的值不该被当成"搬运"。`,
+      };
+    }
+  }
+  if (hasNew && hasOld && rec['moveExisting'] !== rec['move']) {
+    return {
+      ok: false,
+      code: 'CONFLICTING_MOVE_FLAG',
+      message: `moveExisting=${String(rec['moveExisting'])} conflicts with move=${String(rec['move'])}`,
+      messageZh: 'moveExisting 与旧别名 move 给了相反的值，无法判断你要哪个。请只发 moveExisting。',
+    };
+  }
+
+  return {
+    ok: true,
+    // ★ 缺省 false：没有表达过的意图，绝不解释成"搬"
+    move: hasNew ? (rec['moveExisting'] as boolean) : hasOld ? (rec['move'] as boolean) : false,
+    dryRun: rec['dryRun'] === true,
+  };
+}
+
 export function createStorageRoutes(deps: StorageRoutesDeps): {
   handle(req: IncomingMessage, res: ServerResponse, url: URL, method: string): Promise<boolean>;
 } {
@@ -144,16 +294,7 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
            * 只说 true 而不列出它，用户删完数据目录仍会被那个残留文件影响。
            */
           selfContained: true,
-          externalFiles: [
-            {
-              path: pointerFile(),
-              purposeZh: '记录"数据目录搬到哪了"的指针文件',
-              whyOutsideZh:
-                '它必须在数据目录**外面** —— 放进去就会跟着一起搬走，搬完就再也找不到新位置了。',
-              riskZh:
-                '如果它指向一个已被删除的目录，daemon 下次启动（含自我重启）会**按它去那个不存在的位置建空目录**，表现为"笔记全没了"。删除数据目录时请连同它一起删。',
-            },
-          ],
+          externalFiles: externalFiles(),
           noteZh:
             '这是一个独立文件夹，删除它不会影响程序本体运行（下次启动会重建空目录）。' +
             '但请注意 externalFiles 里列出的那个指针文件也需要一并删除。',
@@ -170,8 +311,22 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
 
       // ---- 修改 / 移动 ----
       const body = (await readJsonBody(req).catch(() => undefined)) as
-        | { path?: unknown; move?: unknown; dryRun?: unknown }
+        | { path?: unknown; moveExisting?: unknown; move?: unknown; dryRun?: unknown }
         | undefined;
+
+      /*
+       * ★ 先校验**信封**，再校验 path。
+       *
+       * 顺序是有意的：「你发的字段我不认识」是对整个请求的判断，
+       * 而它恰恰是本 bug 的形状 —— 字段名写错时，宽松解析会让请求
+       * "看起来完全合法"，然后由缺省值替用户做掉那个不可逆的决定。
+       */
+      const parsed = parseChangeRequest(body);
+      if (!parsed.ok) {
+        sendError(res, 400, parsed.code, parsed.message, parsed.messageZh);
+        return true;
+      }
+
       const target = typeof body?.path === 'string' ? body.path.trim() : '';
       if (!target) {
         sendError(res, 400, 'BAD_REQUEST', 'path is required', '请提供新的数据目录路径');
@@ -184,9 +339,19 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
         return true;
       }
 
-      // 试算：只回计划与占用，不动任何文件
-      if (body?.dryRun === true) {
-        sendJson(res, 200, { ok: true, dryRun: true, from: plan.from, to: plan.to });
+      /*
+       * 试算：只回计划，不动任何文件。
+       * `willMove` **必须回**：试算的全部意义就是让调用方在动手之前看见
+       * "这一发到底会不会搬"，而那正是本轮修的那件事。
+       */
+      if (parsed.dryRun) {
+        sendJson(res, 200, {
+          ok: true,
+          dryRun: true,
+          from: plan.from,
+          to: plan.to,
+          willMove: parsed.move,
+        });
         return true;
       }
 
@@ -210,7 +375,7 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
         return true;
       }
 
-      const doMove = body?.move !== false; // 默认搬；显式 false = 只改指向（"直接使用此目录"）
+      const doMove = parsed.move; // 见 parseChangeRequest：缺省 false（没表达过的意图不解释成"搬"）
 
       if (!doMove) {
         /*
@@ -266,7 +431,13 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
               action: 'useExistingDataDir',
               // UI 点「直接使用此目录」时按这个再发一次即可
               // params 只能是标量：把"怎么再发一次"表达成扁平字段
-              params: { path: plan.to, move: false, endpoint: '/api/settings/data-dir' },
+              //
+              // ★ 这里原本发的是 `move: false`，而前端一直发 `moveExisting` ——
+              // 于是这个补救载荷把**第三个名字**引进了同一件事。实测后果：
+              // 前端原样转发 `moveExisting:false` → 解析不到 → 缺省 true → 又撞回
+              // 上面这道 `TARGET_ALREADY_DATA_DIR` 闸 → **同一个 409 无限循环**，
+              // 这个按钮从上线起就没有成功过一次。名字统一到 `moveExisting`。
+              params: { path: plan.to, moveExisting: false, endpoint: '/api/settings/data-dir' },
               label: 'Use this directory',
               labelZh: '直接使用此目录',
             },

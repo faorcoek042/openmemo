@@ -590,12 +590,15 @@
       "volumeFree": "Free on volume",
       "volumeTotal": "Volume total",
       "apply": "Apply",
-      "sizeScopeNote": "These figures cover the **models directory** and its volume. The notes database and imported media are not included yet — the daemon has no whole-directory size endpoint, and a misleading total is worse than an incomplete one.",
+      "sizeScopeNote": "\"Total used by data directory\" is a measured total for the whole directory (notes database and imported media included). \"Models\" and the volume figures cover the **models directory** and the disk it sits on.",
       "totalUsed": "Total used by data directory",
       "fileCount": "{{n}} files",
       "layoutTitle": "What's in this directory",
-      "perDirNote": "The daemon reports the total for the whole data directory only; it does not yet measure each sub-directory. Purposes are listed below without sizes rather than showing a guessed number.",
-      "copyFailed": "Copy failed"
+      "perDirNote": "Sizes are measured by the daemon for each directory individually — they are not estimates.",
+      "copyFailed": "Copy failed",
+      "externalTitle": "One more file belonging to this app lives **outside** this directory — clean it up together:",
+      "resultMoved": "Moved **{{n}} files** to the new location. **Takes effect after restart.**",
+      "resultPointed": "New location recorded; **no data was moved** (your data is still in the old location). **Takes effect after restart.**"
     },
     "proxy": {
       "title": "Network proxy",

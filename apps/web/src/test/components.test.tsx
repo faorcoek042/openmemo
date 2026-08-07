@@ -62,7 +62,11 @@ import { ASR_ENGINE_LABELS, isValidAsrLanguage } from '../lib/asr';
 import { AsrModelPicker } from '../components/common/AsrModelPicker';
 import { AsrEngineStatus } from '../components/common/AsrEngineStatus';
 import { useImportUrlMutation } from '../features/notes';
-import { DataLocationSection, StaleLinksWarning } from '../features/settings/DataLocationSection';
+import {
+  DataLocationSection,
+  StaleLinksWarning,
+  resultTextKey,
+} from '../features/settings/DataLocationSection';
 import { RetranscribeButton, isSegmentEdited } from '../features/notes/RetranscribeButton';
 import { WordLevelBadge } from '../features/transcript';
 import { WordHighlight, findActiveWord } from '../features/transcript/WordHighlight';
@@ -3313,6 +3317,16 @@ const EMPHASIS_REGISTRY: Record<string, string[]> = {
   ],
   'settings.dataDir.needRestart': ['features/settings/DataLocationSection.tsx'],
   'settings.dataDir.sizeScopeNote': ['features/settings/DataLocationSection.tsx'],
+  /*
+   * 「搬了」与「只改了指向」这两句结果文案。强调标记在这里**不是排版**：
+   * 它就是这次修复的出口 —— `**未搬运任何数据**` 与 `**{{n}} 个文件**`
+   * 是用户唯一能一眼分辨"系统到底做了哪一件事"的地方。
+   * 此前无论哪一种都只显示同一句「已保存。重启后生效。」。
+   */
+  'settings.dataDir.resultMoved': ['features/settings/DataLocationSection.tsx'],
+  'settings.dataDir.resultPointed': ['features/settings/DataLocationSection.tsx'],
+  /* 数据目录**外面**那个指针文件的标题 —— 「外面」正是要跳出来的那个词。 */
+  'settings.dataDir.externalTitle': ['features/settings/DataLocationSection.tsx'],
   'settings.proxy.testUsesSaved': ['features/settings/ProxySettingsSection.tsx'],
   /*
    * T-129b：这句原本是 `RuntimePage.tsx` 里**硬编码**的 JSX 文本，标记就写在源码里
@@ -3858,6 +3872,189 @@ describe('T-135 ② 数据目录用途：daemon 必须给成对的 purpose / pur
       !/\{e\.purposeZh\}/.test(src),
       '仍有地方直接渲染 e.purposeZh —— 英文界面会退回中文',
     );
+  });
+});
+
+/**
+ * 数据目录：**「不要搬」这个意图必须一路无损**，而且界面不许对结果说谎。
+ *
+ * daemon 侧那条真发 HTTP、真扫文件系统的验证在
+ * `apps/daemon/src/http/rest/storage.dataDir.test.ts`（实测：修复前
+ * `{moveExisting:false}` 会 202 + 清空源目录）。这里守前端这一半。
+ *
+ * ⚠️ 为什么这里没有"打开表单→输路径→点应用"的用例：宿主驱动不了受控文本输入框
+ * （已实测，见 `StaleLinksWarning` 上面那段）。所以把会撒谎的那段判断抽成
+ * `resultTextKey` 纯函数来钉，而不是写一条跑不起来的点击链路假装覆盖了。
+ */
+describe('数据目录：意图无损 + 结果如实', () => {
+  const WITH_SIZES = {
+    'GET /health': { dataDir: '/tmp/omdemo' },
+    'GET /settings/data-dir': {
+      dataDir: '/tmp/omdemo',
+      usage: { bytes: 10_949_842, files: 6 },
+      entries: [
+        {
+          path: '/tmp/omdemo/openmemo.db',
+          name: 'openmemo.db',
+          purpose: 'Notes, transcripts, tags and mindmaps (the main SQLite database)',
+          purposeZh: '笔记、转写稿、标签、导图（SQLite 主库）',
+          bytes: 430_080,
+          files: 1,
+        },
+        {
+          path: '/tmp/omdemo/models',
+          name: 'models',
+          purpose: 'Downloaded models and backend packs (can be downloaded again)',
+          purposeZh: '下载的模型与后端包（可重新下载）',
+          bytes: 7_340_032,
+          files: 1,
+        },
+      ],
+      externalFiles: [
+        {
+          path: '/root/.local/share/openmemo/datadir.json',
+          purpose: 'Pointer file recording where the data directory was moved to',
+          purposeZh: '记录"数据目录搬到哪了"的指针文件',
+          whyOutside: 'It must live **outside** the data directory.',
+          whyOutsideZh: '它必须在数据目录**外面**。',
+          risk: 'The daemon would **recreate an empty directory** there and it looks like all notes are gone.',
+          riskZh: 'daemon 会**按它去那个不存在的位置建空目录**，表现为"笔记全没了"。',
+        },
+      ],
+    },
+  };
+
+  /* ── ① 补救按钮：键名必须与 daemon 发的那个一致 ── */
+
+  test('★ 「直接使用此目录」读的是 daemon 真正会发的键名（错一个字这个按钮就永远点不成）', async () => {
+    const src = await readSource('features/settings/DataLocationSection.tsx');
+    assert.match(
+      src,
+      /params\?\.\['moveExisting'\] !== false/,
+      '补救守卫没有读 moveExisting —— daemon 发的就是这个键，读错就直接 early return',
+    );
+    assert.ok(
+      !/params\?\.\['move'\]/.test(src),
+      '还在读旧键名 move —— 那是这个按钮一次都没成功过的原因',
+    );
+    assert.match(
+      src,
+      /changeDir\.mutate\(\{ path, moveExisting: false \}\)/,
+      '转发时必须显式说明"不要搬"',
+    );
+  });
+
+  /* ── ② 结果文案：只信执行方的回执 ── */
+
+  test('★ daemon 说搬了就说搬了，说没搬就说没搬 —— 不按前端发了什么猜', () => {
+    assert.equal(resultTextKey(true), 'settings.dataDir.resultMoved');
+    assert.equal(resultTextKey(false), 'settings.dataDir.resultPointed');
+  });
+
+  test('★ 老 daemon 不给 moved 时回落到中性文案，而不是默认成"已搬运"', () => {
+    assert.equal(resultTextKey(undefined), 'settings.dataDir.needRestart');
+  });
+
+  test('★ 两句结果文案必须中英都在，且必须把"搬没搬"说出来', () => {
+    for (const [lang, loc] of [
+      ['zh-CN', zhLocale],
+      ['en', enLocale],
+    ] as const) {
+      const d = (loc as unknown as Record<string, Record<string, Record<string, string>>>)['settings']?.['dataDir'];
+      for (const k of ['resultMoved', 'resultPointed', 'externalTitle']) {
+        assert.ok((d?.[k] ?? '').length > 0, `${lang} 缺 settings.dataDir.${k}`);
+      }
+      // "未搬运"那句是这次修复的出口：它必须强调出来，否则和"已保存"没区别
+      assert.match(
+        d?.['resultPointed'] ?? '',
+        /\*\*/,
+        `${lang} 的 resultPointed 没有强调标记 —— 用户扫一眼分辨不出与"已搬运"的差别`,
+      );
+    }
+  });
+
+  /* ── ③ 逐目录大小：daemon 一直在给，此前被前端丢掉 ── */
+
+  test('★ 每个目录各占多大要显示出来（daemon 早就在算，前端此前把它丢了）', async () => {
+    stubApi(WITH_SIZES);
+    const r = await render(<DataLocationSection />);
+    await r.flush();
+    const box = r.container.querySelector<HTMLElement>('[data-testid="data-dir-layout"]');
+    assert.ok(box, '目录清单没渲染 —— 前提不成立');
+    const shown = text(box);
+    assert.ok(shown.includes('7.3 MB'), `models 的大小没显示出来：${shown}`);
+    assert.ok(shown.includes('430'), `openmemo.db 的大小没显示出来：${shown}`);
+    r.unmount();
+  });
+
+  test('★ 老 daemon 不给 bytes 时**不显示**，而不是显示 0 B（别替没测过的数字背书）', async () => {
+    stubApi({
+      'GET /health': { dataDir: '/tmp/omdemo' },
+      'GET /settings/data-dir': {
+        dataDir: '/tmp/omdemo',
+        usage: null,
+        entries: [{ path: '/tmp/omdemo/logs', name: 'logs', purposeZh: '运行日志（可随时删）' }],
+      },
+    });
+    const r = await render(<DataLocationSection />);
+    await r.flush();
+    const box = r.container.querySelector<HTMLElement>('[data-testid="data-dir-layout"]');
+    assert.ok(box, '目录清单没渲染');
+    assert.equal(
+      !!box.querySelector('[data-testid="data-dir-entry-size-logs"]'),
+      false,
+      'daemon 没给大小，界面却显示了一个 —— 那个数字是编的',
+    );
+    r.unmount();
+  });
+
+  test('★ 那两句"daemon 尚未逐目录统计 / 暂无整目录统计接口"必须已经不在了', () => {
+    for (const [lang, loc] of [
+      ['zh-CN', zhLocale],
+      ['en', enLocale],
+    ] as const) {
+      const d = (loc as unknown as Record<string, Record<string, Record<string, string>>>)['settings']?.['dataDir'];
+      const joined = `${d?.['perDirNote'] ?? ''}\n${d?.['sizeScopeNote'] ?? ''}`;
+      for (const lie of ['尚未逐目录统计', '暂无整目录统计接口', 'does not yet measure', 'no whole-directory size endpoint']) {
+        assert.ok(
+          !joined.includes(lie),
+          `${lang} 的说明里还写着「${lie}」—— 而界面同一屏上正显示着这些数字`,
+        );
+      }
+    }
+  });
+
+  /* ── ④ 数据目录外面那个指针文件：写出来从没到达过用户 ── */
+
+  test('★ 指针文件的位置与风险必须显示出来（删了数据目录留下它 = "笔记全没了"）', async () => {
+    stubApi(WITH_SIZES);
+    const r = await render(<DataLocationSection />);
+    await r.flush();
+    const box = r.container.querySelector<HTMLElement>('[data-testid="data-dir-external-files"]');
+    assert.ok(box, '★ daemon 的 externalFiles 没有任何出口 —— 这条警告等于没写');
+    const shown = text(box);
+    assert.ok(shown.includes('datadir.json'), `没显示是哪个文件：${shown}`);
+    assert.ok(shown.includes('笔记全没了'), `没显示后果：${shown}`);
+    assert.ok(shown.includes('外面'), `没说清"为什么它必须在外面"：${shown}`);
+    r.unmount();
+  });
+
+  test('★ 英文界面下这一块不许出现汉字（daemon 给了英文就得用英文）', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      stubApi(WITH_SIZES);
+      const r = await render(<DataLocationSection />);
+      await r.flush();
+      const box = r.container.querySelector<HTMLElement>('[data-testid="data-dir-external-files"]');
+      assert.ok(box, '外部文件块没渲染 —— 前提不成立');
+      const shown = text(box);
+      const bad = shown.match(new RegExp(`.{0,20}[一-鿿].{0,20}`, 'g'));
+      assert.equal(bad, null, `英文界面上出现了中文 → ${JSON.stringify(bad?.slice(0, 3))}`);
+      assert.ok(shown.includes('empty directory'), `英文风险说明没渲染：${shown}`);
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
   });
 });
 
@@ -4913,7 +5110,10 @@ describe('T-140 ② ErrorBlock 自己就把补救渲染出来（不再要求调�
               messageZh: '该位置已经是一个 OpenMemo 数据目录',
               remediation: {
                 action: 'useExistingDataDir',
-                params: { path: '/tmp/x', move: false, endpoint: '/api/settings/data-dir' },
+                // 键名与 daemon 的 `rest/storage.ts` 保持一致。
+                // 这里原来写的是 `move: false` —— 那是 daemon 曾经发、而前端读不到的那个名字，
+                // 桩里留着它等于给那个 bug 做不在场证明。
+                params: { path: '/tmp/x', moveExisting: false, endpoint: '/api/settings/data-dir' },
                 label: 'Use this directory',
                 labelZh: '直接使用此目录',
               },
