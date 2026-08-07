@@ -613,3 +613,251 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
 | `:10000` | ✅ 本段全程**零请求** |
 | `docs/design/**` · `docs/adr/**` | ✅ 未碰。D-01 / D-02 / D-05 / ADR-006 里关于 markmap 的段落**仍是旧的**，需要你或 `architect` 同步；`features/mindmap/README.md` 里已注明"读到那几段时以本节为准" |
 | `daemon-backlog` / `platform-backlog` 的文件 | ✅ 未碰（`docs/design/D-11-*` 的改动是他们的） |
+
+## [2026-08-08 01:20] T-172 ②③ DONE（思维导图四种结构化导出接线 + 搜索结果 `?t=` 直达时间点）
+
+交付:
+- 新 `apps/web/src/features/mindmap/MindmapExportMenu.tsx` —— 六种格式一个菜单（SVG/PNG + md/opml/mm/json）
+- 新 `apps/web/src/features/notes/seekParam.ts` + `seekParam.test.ts`（9 条）
+- 新 `apps/daemon/src/http/rest/content.mindmapExport.test.ts`（8 条）—— **这条路由此前一次都没被请求过**
+- 改 `MindmapView.tsx`（`noteUid` 改必填）/ `MindmapPage.tsx` / `NoteDetailPage.tsx` /
+  `PlayerBar.tsx` / `lib/stores/player.store.ts` / `test/components.test.tsx`（+18 条）/
+  两份 locale / `apps/web/tsconfig.test.json`
+
+---
+
+### ② 四种格式**实际**返回了什么（真实响应，不是照文档）
+
+接线前先把端点各调一次。方法：不启 daemon，直接把 `createContentRoutes` 挂到一个
+`listen(0)` 的 http server 上，配真 SQLite + 真 `Repos`/`MindMapRepo`，
+喂一份带层级 / 时间戳 refs / XML 元字符 / 中文标题的文档。
+
+| `format=` | HTTP | Content-Type | 实际正文 |
+|---|---|---|---|
+| `md` | 200 | `text/markdown; charset=utf-8` | 缩进无序列表，**带 `[12:34]` 时间戳**；根节点成 `# 标题` |
+| `opml` | 200 | `text/x-opml; charset=utf-8` | OPML 2.0，`<outline text=…>`，XML 已转义 |
+| `mm` | 200 | `application/x-freemind; charset=utf-8` | FreeMind 1.0.1，`<map version="1.0.1">` + `<node ID TEXT>` |
+| `json` | 200 | `application/json; charset=utf-8` | 整份 `MindMapDoc`，**含 refs 的 startMs/endMs/quote**，另外多一个 `revision`（落库时加的） |
+
+`md` 的真实输出（逐字）：
+
+```
+# 产品评审会
+- 成本 <预算> & 排期 [12:34]
+  - 硬件采购 [15:02]
+- 风险 "引号" 项
+```
+
+**边界（也都实测过）**：`format` 缺省 = `md`；`what` 缺省 = **`note`**；两者都做 `toLowerCase()`，
+`what=MINDMAP&format=OPML` 照样 200；别名 `markdown` / `freemind` 都认；
+不支持的格式 → **400 `BAD_FORMAT`**；笔记没有导图 → **404 `NO_MINDMAP`**（带中文 `messageZh`）。
+`Content-Disposition` 实测带 RFC 5987 的 `filename*=UTF-8''…`，中文标题不退化成下划线；
+标题里的 `/` 在 ASCII 回退名里已被换成 `_`。
+
+#### ★ 一处**只有实测才拿得到**的事实：四种格式的损耗**不一样**
+
+拿同一份带「关联线 / 概要 / 备注 / 富文本 / 超链接 / 图标 / 标签 / 折叠 / 样式色 / 时间戳」
+十项的文档过一遍四个序列化器，逐项数：
+
+| | 层级 | 时间戳 | 备注 | 关联线 | 概要 | 富文本/超链接/图标/标签/样式 |
+|---|---|---|---|---|---|---|
+| `md` | ✅ | **✅** | ✅ | ❌ | ❌ | ❌ |
+| `opml` | ✅ | **❌** | ✅（`_note`） | ❌ | ❌ | ❌（保留 `_collapsed`） |
+| `mm` | ✅ | **❌** | ✅（`richcontent`） | 有 `<arrowlink>` **但标签丢了** | ❌ | ❌（保留 `FOLDED`） |
+| `json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅（十项全保留） |
+
+**时间戳是这张图与录音之间唯一的连接** —— 用户拿 OPML 导进别的软件后再也跳不回那一秒。
+所以菜单里写了一句损耗说明，并且**那句话自己有测试钉着**（daemon 侧那条断言
+「opml/mm 的正文里不许出现 `12:34` 或 `754000`」—— 哪天序列化器补上了，它会红，
+那正是该去改文案的时刻）。
+
+#### 接在哪、为什么不接在 `ExportMenu`
+
+对照结果建议「`ExportMenu` 加 `what=mindmap`」，**我没有照做**：详情页头部那个导出菜单
+在**任何**笔记上都渲染，而绝大多数笔记没有导图 —— 在那里放四个条目，点下去就是 404。
+现在放在**导图渲染器自己的工具栏**上（原来那两个平铺的 SVG / PNG 按钮收进同一个菜单），
+它只在 `doc` 真的存在时才画得出来，**404 分支在结构上走不到**，
+而不是"走到了再处理"。详情页的导图 tab 与全屏导图页共用这一个组件，两处都拿得到。
+
+顺带：daemon 不可达时**只禁用后半组**（四种结构化格式是服务端产出的），SVG/PNG 照常 ——
+它们由渲染器在浏览器里现画，本来就不经过 daemon。
+
+---
+
+### ③ `?t=` 的三个边界，逐条怎么处理的
+
+**① 媒体还没加载完。** 拆成两半：
+- `requestSeek()` 立刻把 `positionMs` 设成目标值，**转写稿的高亮与滚动当场就位**（它们不读媒体）；
+- 音频那一半由 `PlayerBar` 记成 pending，`loadedmetadata` 时**再落一次**。
+  理由：`readyState === HAVE_NOTHING` 时给 `currentTime` 赋值，规范说的是记成
+  *default playback start position* 等加载开始再应用 —— **各家实现是否都照做我没验证过**
+  （本机没有浏览器），所以不赌，元数据到达前一律保留 pending。多赋一次是幂等的。
+- 还补了一条：**pending 期间那个每帧跑的 rAF 循环不许把媒体的 `0` 播出去**。
+  不加这条的话，`positionMs` 会被每帧盖回 0 —— 表现是「命中段闪一下就弹回第一段」，
+  比完全不跳更像"产品坏了"。
+
+**② `?t=` 超出时长 → 夹到末尾，并且把话说出来**（`detail.seekClamped`，新词条）。
+判据是：**"跳错地方"必须和"没跳"区分得开**。悄悄夹到 0 的话，用户看到的是"从头开始播" ——
+**与这个功能根本没接线在界面上一模一样**，而那正是这一轮要修的病。
+时长未知（转写中的笔记 `durationMs` 为 0）时**不夹**：拿未知上界去夹只会把对的值夹坏。
+坏参数（`abc` / `12abc` / 负数 / `Infinity`）一律不跳、**也不打扰用户**——那不是产品的失败。
+（`12abc` 单列一条：`parseInt` 会给 12，也就是把坏参数当成有效值，用户被送到 0:00.012。）
+
+**③ 地址栏留不留 —— 我的判断是「留」，代价与守卫如下。**
+- 留的理由：这个 URL 是**可分享物**，`/notes/X?t=754000` 发给别人或自己收藏，理应还原成
+  "这条笔记的 12:34"；用完就抹掉等于让地址栏在下一个 tick 开始说假话。
+  且与本页既有约定一致（`?tab=` / 搜索页 `?q=` `?mode=` 全都留在 URL 里）。
+- **代价（我接受并写明）**：刷新会重跳一次。我认为这是 URL 说到做到，不是惊吓。
+- **真正会咬人的不是刷新，是会话中途被反复拽回去** —— 切 tab 会 `setParams`，
+  SSE 会让 `note.data` 换对象，两者都让那个 effect 有机会再跑。
+  所以用 `(noteUid, t)` 作闩，**一个值只消费一次**；用户跳走之后后台刷新，播放头一律不动。
+- 另外改了 `player.store` 的 `setSource`：**换了音源才作废待落的 seek**，同一音源重复
+  `setSource`（后台重取）不作废。无条件清空的话，一次后台刷新就能把用户刚点开、
+  音频还没加载完的那一跳悄悄取消掉 —— 又回到"从 0:00 开始播"。
+
+---
+
+### 反向验证（**在 `/tmp` 的隔离副本里做的，共享树全程没有坏过** —— PROTOCOL §10）
+
+照 `mutation-check.mjs` 的形状：把打包好的组件测试产物 copy 到 `/tmp`、
+`node_modules` 与 `src` 软链回真仓库（只读），**变异打在副本的 bundle 上**。
+先证明副本是绿的，再逐个变异。
+
+| 变异 | 结果 |
+|---|---|
+| M1 导出链接漏掉 `what=mindmap` | 红 2 条 ✅ |
+| M2 `NoteDetailPage` 根本不读 `?t=`（= 接线前的真实状态） | 红 8 条 ✅ |
+| M3 拿掉元数据补落（只赋一次就清 pending） | 红 2 条 ✅ |
+| M4 越界不夹取 | 红 1 条 ✅ |
+| M5 去掉闩 | 红 1 条 ✅ |
+| M6 rAF 循环不再守 pending | 红 1 条 ✅ |
+
+**⚠️ 头一轮有两个变异活下来了，我把它们当成缺陷改了，而不是当成噪音放过：**
+
+1. **「元素比 `?t=` 晚一个 render 才进 DOM」这个说法，在本环境里不成立。**
+   把 `PlayerBar` 整段还原成旧写法（`if (!seekRequest || !audioRef.current) return;`，
+   依赖只有 `[seekRequest]`），组件测试**照样全绿**。原因：`setSource` 与 `requestSeek`
+   两个 effect 在同一次 passive effect flush 里跑，React 把两次 store 更新批成一次重渲染，
+   `<audio>` 挂载与 `seekRequest` 变化落在**同一个 commit**，ref 早就接上了。
+   → 我把那条用例**重写成了真正的那一格**（元数据到达前被丢弃 → `loadedmetadata` 补回来），
+   并在 `PlayerBar` 的注释里把两档的把握程度分开写：
+   `loadedmetadata` 那档有实测支撑，依赖里的 `assetUid` 是**防御性的、我没能构造出它的红灯**
+   （它覆盖的是「笔记打开时还没有 `audio16k`」那个更窄的真实场景）。
+2. **「切 tab 不许拽回播放头」那条用例不构成对闩的守卫。** 切 tab 只改 `?tab=`，
+   effect 的依赖一个都没变，去掉闩它照样绿。→ 补了一条**后台重取**的用例
+   （并且刻意让第二次响应内容不同，否则 react-query 的 structural sharing 会原样返回旧引用、
+   effect 根本不重跑 —— 那样又是一条恒绿的摆设）。原那条保留，但**已在用例注释里如实标注
+   它钉的是用户可见性质、不是闩**。
+
+### 一个 §8 同族的坑（新的，值得进协议候选）
+
+`PlayerBar` 与 `TranscriptList` 各有一个 rAF 自循环，只在 `unmount()` 时取消。
+用例在 `r.unmount()` **之前**断言失败时，循环永远转下去，jsdom 的 rAF 把 Node 事件循环撑着 ——
+**`node --test` 不是报红，是整个文件挂住**，直到外部超时被 kill，
+而 spec reporter 缓冲在管道里的那几行 ✖ 一起丢掉。看起来完全像"测试环境坏了"。
+我第一次做反向验证时就撞上了：M2 跑了 300 秒、一个字都没输出。
+→ 已改成 `afterEach` 统一卸载（不靠每条用例自己记得写）。判据同 §8：
+**一条断言失败不许伪装成环境问题。**
+
+---
+
+### 顺手发现的「服务端有、前端没有」（这是回报重点之一）
+
+派了一个只读 Explore 做全量清点（daemon 12 个路由模块 ↔ `apps/web/src`）。
+关键方法细节：前端 client **自己加 `/api` 前缀**（`lib/api/client.ts:193`），
+所以调用点写的是 `'/notes'` 不是 `'/api/notes'` —— 按全字面量搜会得到假的"零命中"。
+
+**A 类 · 完全没有前端入口的端点**（各条都给到 daemon 侧 file:line）：
+`GET /api/jobs/:jobId` · `GET /api/models/:id`（详情页改从 catalog 里捞）·
+`GET /api/models/active` · `POST /api/models/import` · `GET /api/runtime/breaker` ·
+`GET /api/daemon/status` · **`GET /api/tags`** · **`DELETE /api/tags/:uid`** ·
+**`GET /api/notes/:uid/anchors`**（前端只写不读，"哪条笔记提到这一秒"整条反向索引没有消费方）·
+`POST /api/components/:id/rollback` · `POST /api/echo` · `POST /api/daemon/shutdown` ·
+`WS /ws/asr-worker`。
+
+**B 类 · 端点在用、但某个参数/字段前端从不传**（挑几条有后果的）：
+- **`POST /api/settings/data-dir` 有一处真 bug**：前端发 `moveExisting`，daemon 读的是 `move`
+  （`rest/storage.ts:213` 是 `body?.move !== false`，**缺省即 true**）。
+  于是「直接使用此目录」那个补救按钮（`DataLocationSection.tsx:391` 发 `{moveExisting:false}`
+  意图是**不要搬**）实际会触发**整目录搬迁**。
+  ⚠️ 这条挨着 PROTOCOL §9 的数据目录，**我没有碰它**，报给你派人。
+- `GET /api/components?check=…` 只认字面量 `'1'`，而前端发的是 `?check=true` —— **值对不上**。
+- `POST /api/notes/:uid/retranscribe` 的 `engineId`/`modelId`/`prompt` daemon **是读的**
+  （`content.ts:289-291`），而 `RetranscribeButton.tsx:26-30` 的注释还写着"后端只解析 language"
+  —— **注释过期了，UI 因此压着一个已经存在的能力不给**。
+- `PATCH /api/folders/:uid` 的 `parentUid`/`sortOrder`/`color`/`icon` 全无前端路径 ——
+  文件夹拖拽排序、改父级、连同那套 `FOLDER_CYCLE` 环检测都够不着。
+- `GET /api/search?limit=` 从不传（结果静默封顶 20）；`GET /api/selfcheck?proxyTest=1` 从不传
+  （代理连通性探测在界面上跑不到）；`GET /api/runtime/hardware?reset=1` 从不传
+  → **`resetBreaker()` 在 UI 上没有按钮**。
+- 导入/上传三条路径（`/notes/import`、`/notes/upload`、`retranscribe`）都不传
+  `engineId`/`modelId`/`prompt` —— 与 R-06 那条「引擎选择器与后端脱节」是同一件事的下游。
+
+**C 类 · 前端点得到、服务端明确 501**：`POST /api/models/benchmark`（无条件 501，
+`ModelDetailPage` 上有真按钮）；`POST /api/jobs/:id/{pause,resume}` 对**下载类**任务 501，
+而 `JobList` 不区分任务类型就把按钮画出来了。
+
+**反方向一条**：`GET /api/search?mode=` 前端发、daemon **不读**（`rest/search.ts` 只读 `q`/`limit`）。
+响应里的 `modes` 是诚实的（非 keyword 档全 false），所以没坏，但那个参数在线上是空转。
+
+---
+
+### 两处我要更正的既有说法
+
+1. **「服务端已实现**且有测试**」只对了一半。** `content.export.test.ts` 全文**不含 `mindmap`**，
+   它测的是*笔记*导出的纯函数；导图序列化器的测试在 `packages/mindmap/src/serialize/`。
+   也就是说 **`what === 'mindmap'` 那段路由分支（路由匹配、参数解析、404/400、
+   `Content-Disposition`）从来没有任何东西执行过** —— 而前端这一轮接的正是这条从没被走过的路。
+   我补了 8 条真发 HTTP 请求的用例。
+2. **本文件自己 438 行那句话是错的**：「即 `GET …?what=mindmap&format=md`，前端入口在
+   `features/notes/ExportMenu.tsx:43`」—— `ExportMenu.tsx:43` 发的是 `?format=`，**从不发 `what=`**，
+   它是*笔记*导出的入口。当时那句话让「导图导出有前端入口」这件事看起来已经成立了。
+
+---
+
+### 门禁（**绑定在最终提交的那棵树上**：所有代码改动定稿后跑的，之后只追加了本回执）
+
+| 门禁 | 结果 |
+|---|---|
+| `pnpm -r test` | **1433 pass / 0 fail** |
+| `npx tsc -b` | ✅ |
+| `npx eslint .` | ✅ 0 |
+| `pnpm build:safe` | ✅（**全程未跑 `vite build` 进 `apps/web/dist`**，§7） |
+| `pnpm lint-workflows` | ✅ 628 条断言 / 7 个 workflow |
+| `pnpm test:ci-scripts` | ✅ 22 passed, 0 failed |
+| `pnpm check:orphans` | ✅ **70 个（基线 70，未升）** |
+| `check-tracked-sources` | ✅ 96 个源码目录 |
+
+⚠️ **关于 1349 这个基线数字**：我接手时先跑了一次，这棵树**已经是 1370**（`pnpm build:safe`
+之后；在此之前 `pnpm -r test` 是**红的** —— dist 里少一个测试文件，46 vs 45）。
+差额来自树上另一位 agent 已在跑的工作，不是我的。
+我自己新增 **35 条**（daemon 8 + web 单测 9 + 组件 18），其余增量归他。
+
+### 纪律申报
+
+- `:10000` 演示实例：**全程零请求、未重启、未占用**。所有实测都是自起的临时 http server
+  （`listen(0)`，OS 分配端口）。
+- `/root/data-memo`、`~/.local/share/openmemo/datadir.json`：**未读未写**。
+  新加的 daemon 测试**刻意不用 `startDaemon`** —— 只挂一个路由模块，
+  不启动 daemon、不占固定端口、也就完全不接近那个机器级指针。
+- `pkill`：**未用**。release / `vendor/manifests/`：**未碰**。
+- `packages/runtime`、`packages/downloader`、`scripts/ci/`、`.github/workflows/`：**一个字节未改**。
+- **共享树纪律**：提交时逐文件 stage 并核对过 `git diff --cached --name-only`。
+  `apps/web/tsconfig.test.json` 是**与另一位 agent 共享**的文件（他同时在加
+  `checkText.test.ts` 的 include）—— 我没有整文件 `git add`，而是构造了
+  「HEAD + 只有我那两行」的 blob 用 `update-index` 送进索引，
+  他未提交的两行原样留在工作区。两份 locale 在我改的时候也有他的键，
+  我用保序解析只追加、没有重排，且他随后自行提交了，最终我的 diff 里只有我的键。
+- 组件测试跑在 jsdom，**没有在真浏览器里点击验证过任何页面**。
+  具体影响见上面反向验证第 1 条：`loadedmetadata` 补落这条链在真实浏览器上的行为
+  （尤其"元数据未到时 `currentTime` 赋值会不会被丢弃"）**我验不了**，
+  代码按"可能被丢弃"设防，多赋一次是幂等的。
+
+需要 Manager 决策:
+1. **`POST /api/settings/data-dir` 的 `moveExisting` / `move` 键名不匹配**（上面 B 类第一条）——
+   它挨着 §9 的数据目录，我没敢动。请指派，或明确授权我来修。
+2. A 类里 `GET /api/tags` + `DELETE /api/tags/:uid` + `GET /api/notes/:uid/anchors` 三条
+   看起来是**同一批"写了没接"**，且都有清晰的产品形态（标签管理页 / 锚点反查）。
+   要不要单开一张卡，我可以接着做。
+3. `RetranscribeButton` 那条**过期注释**导致的能力压制（engineId/modelId/prompt 后端已读）——
+   归我还是归 `daemon-backlog`？改动很小，但会和 R-06 的"引擎选择器 catalog 化"撞车。

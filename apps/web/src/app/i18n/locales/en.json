@@ -376,7 +376,8 @@
       "editsPreserved": "Your {{count}} edited segment(s) will be preserved"
     },
     "mindmapReadonly": "Preview only — changes here are not saved",
-    "mindmapEdit": "Edit in mindmap page"
+    "mindmapEdit": "Edit in mindmap page",
+    "seekClamped": "This link points at {{asked}}, past the end of this recording ({{duration}}) — jumped to the end instead. The recording may have been re-transcribed."
   },
   "progress": {
     "fetch": "Downloading",
@@ -745,7 +746,20 @@
       "NO_TRANSCRIPT": "This note has no transcript yet. Transcribe it first, then come back and generate the mind map.",
       "LLM_NOT_CONFIGURED": "No language model is available yet. Add an API key in Settings, or install a local model.",
       "UNKNOWN": "The job is on hold. Open the task centre to see what it is waiting for."
-    }
+    },
+    "export": "Export",
+    "exportImageGroup": "Image (current canvas)",
+    "exportDataGroup": "Structured (re-importable elsewhere)",
+    "exportFormats": {
+      "svg": "SVG vector",
+      "png": "PNG bitmap",
+      "md": "Markdown outline (.md)",
+      "opml": "OPML outline (.opml)",
+      "mm": "FreeMind (.mm)",
+      "json": "JSON full document (.json)"
+    },
+    "exportLossy": "Only JSON is lossless. Timestamps survive in Markdown and JSON only — OPML and FreeMind drop them, so the export can no longer jump back to that second of audio.",
+    "exportNeedsDaemon": "These are produced by the local service — it needs to be running"
   },
   "search": {
     "title": "Search",

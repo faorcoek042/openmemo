@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Download, Redo2, Undo2 } from 'lucide-react';
+import { Redo2, Undo2 } from 'lucide-react';
 import MindElixir, { type MindElixirInstance } from 'mind-elixir';
 import 'mind-elixir/style';
 
@@ -8,6 +8,7 @@ import { toMindElixir, fromMindElixir, type MindMapDoc } from '@openmemo/mindmap
 
 import { Button } from '../../components/common/Button';
 import { downloadMindmapImage } from './export';
+import { MindmapExportMenu } from './MindmapExportMenu';
 import { docSignature } from './docSignature';
 
 /**
@@ -33,10 +34,23 @@ function isRenderableDoc(d: MindMapDoc | null | undefined): d is MindMapDoc {
 
 export function MindmapView({
   doc,
+  noteUid,
   editable = true,
   onChange,
 }: {
   doc: MindMapDoc;
+  /**
+   * ★ **必填**，不是可选。
+   *
+   * 服务端的四种结构化导出按 **note** 寻址（`/api/notes/:uid/export?what=mindmap`），
+   * 所以这个组件必须知道自己画的是哪条笔记的图。做成可选 = 少传时导出入口静默消失，
+   * 而"入口静默消失"正是这一轮要修的那个病本身。
+   *
+   * 此前这里靠的是一条**隐式**耦合：`doc.uid` 恰好就是笔记的 uid（生成时传的是 `note.uid`，
+   * 见下方 effect 的注释）。那条耦合没有任何东西守着 —— 一旦哪天导图有了自己的 uid，
+   * 导出链接会悄悄指向一条不存在的笔记。显式收一个参数把它钉死。
+   */
+  noteUid: string;
   editable?: boolean;
   onChange?: (next: MindMapDoc) => void;
 }) {
@@ -155,24 +169,17 @@ export function MindmapView({
 
         <span className="mx-1 h-4 w-px bg-line" aria-hidden />
 
-        <Button
-          size="sm"
-          variant="ghost"
+        {/*
+          ★ 这里原来是两个平铺的 SVG / PNG 按钮，**服务端的四种结构化导出一个入口都没有**。
+          现在六种格式合成一个菜单（理由见 `MindmapExportMenu` 的文件头）。
+        */}
+        <MindmapExportMenu
+          noteUid={noteUid}
           disabled={!ready}
-          onClick={() => meRef.current && void downloadMindmapImage(meRef.current, doc, 'svg')}
-        >
-          <Download className="size-3.5" />
-          SVG
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={!ready}
-          onClick={() => meRef.current && void downloadMindmapImage(meRef.current, doc, 'png')}
-        >
-          <Download className="size-3.5" />
-          PNG
-        </Button>
+          onExportImage={(format) => {
+            if (meRef.current) void downloadMindmapImage(meRef.current, doc, format);
+          }}
+        />
 
         <span className="ml-auto text-xs text-ink-muted">{t('mindmap.editHint')}</span>
       </div>

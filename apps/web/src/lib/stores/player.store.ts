@@ -93,7 +93,26 @@ export const usePlayerStore = create<PlayerStore>()(
     seekRequest: null,
 
     setSource: (assetUid, durationMs) =>
-      set({ assetUid, durationMs, activeSeq: null, playing: false }),
+      set((s) => ({
+        assetUid,
+        durationMs,
+        activeSeq: null,
+        playing: false,
+        /*
+         * ★ 换了媒体 → 上一条媒体**还没落地**的 seek 必须作废。
+         *
+         * `seekRequest` 是跨笔记存活的（store 是全局单例），而 `PlayerBar` 现在会
+         * 等 `<audio>` 出现/元数据就绪后补跳一次（见该文件的 pendingSeek）。
+         * 两件事凑在一起就有一条坏路径：从 `?t=45:00` 的笔记 A 切到笔记 B，
+         * B 的音频元素一挂载，就会被 A 那次 seek 拽到 45:00 —— **跳到一条毫不相干的录音的中间**。
+         *
+         * 判据是 `assetUid` 变了没有，**不是"又调了一次 setSource"**：
+         * 这个 effect 的依赖里有 `note.data`，SSE 触发的后台重取会拿到新对象、
+         * 从而以同样的参数再调一次。若无条件清空，一次后台刷新就能把用户
+         * **刚点开还没跳到位**的搜索结果悄悄取消掉。
+         */
+        seekRequest: s.assetUid === assetUid ? s.seekRequest : null,
+      })),
     setPlaying: (playing) => set({ playing }),
     setRate: (rate) => set({ rate }),
     setActiveSeq: (activeSeq) => set({ activeSeq }),

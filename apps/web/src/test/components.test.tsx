@@ -15,7 +15,8 @@
 import { render, click, type, pressKey, text, buttonByText, stubApi } from './host';
 
 import { useState } from 'react';
-import { test, describe, beforeEach } from 'node:test';
+import { QueryClient } from '@tanstack/react-query';
+import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { useLocation } from 'react-router';
 
@@ -68,7 +69,10 @@ import { WordHighlight, findActiveWord } from '../features/transcript/WordHighli
 import { DEFAULT_PROXY_CONFIG, LLM_SETTING_KEYS, MAINSTREAM_PROVIDER_IDS, PROVIDER_KINDS } from '@openmemo/shared';
 import { ProxySettingsSection } from '../features/settings/ProxySettingsSection';
 import ComponentsPage from '../features/components/ComponentsPage';
-import { getPositionMs, setPositionMs, subscribePosition } from '../lib/stores/player.store';
+import { getPositionMs, setPositionMs, subscribePosition, usePlayerStore } from '../lib/stores/player.store';
+import { MindmapExportMenu } from '../features/mindmap/MindmapExportMenu';
+import NoteDetailPage from '../features/notes/NoteDetailPage';
+import { Route, Routes } from 'react-router';
 import { useConnectionStore } from '../lib/stores/connection.store';
 import { PurposeBindingsSection, mergePurposeBinding } from '../components/common/llm/PurposeBindingsSection';
 import { ReadinessBanner } from '../components/common/ReadinessBanner';
@@ -5026,7 +5030,7 @@ describe('MindmapView（T-139 C10）', () => {
       <div>
         {/* 模拟 SSE → invalidate → 重取之后，react-query 把新文档交下来 */}
         <button onClick={() => setDoc(b)}>refetched</button>
-        <MindmapView doc={doc} editable={false} />
+        <MindmapView doc={doc} noteUid="01KZ47V1X2YB402JKD60KRHK97" editable={false} />
       </div>
     );
   }
@@ -6991,7 +6995,7 @@ describe('T-165 ⑤ markmap 整块摘除，不许留半截', () => {
       edges: [{ key: 'e', from: 'r', to: 'a' }],
       summaries: [{ key: 's', parent: 'r', start: 0, end: 0, text: '概要' }],
     };
-    const r = await render(<MindmapView doc={doc as never} />);
+    const r = await render(<MindmapView doc={doc as never} noteUid="01KZ47V1X2YB402JKD60KRHK98" />);
     await r.flush();
     const shown = text(r.container);
     assert.equal(
@@ -7145,5 +7149,439 @@ describe('T-165b「跑通了」≠「加速用上了」', () => {
       `零设备就是没加速，与那串文字长什么样无关 → ${shown}`,
     );
     r.unmount();
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   T-172 ② 思维导图的四种结构化导出 —— 「写了、测了、点不到」的那一半
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ## 这一族钉的是什么
+ *
+ * `GET /api/notes/:uid/export?what=mindmap&format=md|opml|mm|json` 服务端早就实现了
+ * （`apps/daemon/src/http/rest/content.ts:386` + `exportMindmap()`），而在这次接线之前，
+ * **全 `apps/web/src` 搜 `what=mindmap` 命中数是 0** —— 唯一的导出调用点
+ * `notes/ExportMenu.tsx:43` 只发 `?format=`，从不发 `what=`。
+ *
+ * 所以判据必须钉在**发出去的那个 URL 上**，不能是"菜单里有四个条目"：
+ * 四个标签都对、`what=` 漏了，界面看起来完全正常，而服务端会按 `what=note`
+ * 去导**转写稿**（`format=opml` / `mm` 在那条分支上不支持 → 400）。
+ * 这正是"少一个查询参数"这类缺陷的典型形态：不报错，只是导出了另一样东西。
+ */
+describe('T-172 ② 导图导出：四种结构化格式必须真的点得到', () => {
+  const NOTE_UID = '01KZ8N0T3D3TA1LPQ5J8XR9V2C';
+
+  const menu = async () => {
+    stubApi({});
+    const r = await render(
+      <MindmapExportMenu noteUid={NOTE_UID} onExportImage={() => {}} />,
+    );
+    await r.flush();
+    await click(buttonByText(r.container, '导出'));
+    await r.flush();
+    return r;
+  };
+
+  const hrefs = (c: HTMLElement): string[] =>
+    Array.from(c.querySelectorAll('a[href]')).map((a) => a.getAttribute('href') ?? '');
+
+  test('★ 四种格式各有一条链接，且 `what=mindmap` 与 `format=` 都在里面', async () => {
+    const r = await menu();
+    const got = hrefs(r.container);
+
+    for (const format of ['md', 'opml', 'mm', 'json']) {
+      const want = `/api/notes/${NOTE_UID}/export?what=mindmap&format=${format}`;
+      assert.ok(
+        got.includes(want),
+        `${format} 的导出链接不对。期望 ${want}，实际拿到 ${JSON.stringify(got)}`,
+      );
+    }
+    r.unmount();
+  });
+
+  test('★ 漏掉 `what=mindmap` 会导出另一样东西 —— 每条链接都必须带上它', async () => {
+    /*
+     * 单独一条，因为这是**唯一**会静默出错的那一格：
+     * `what` 缺省是 `'note'`（`content.ts:384`），于是 md/json 会导出转写稿
+     * （用户拿到一份"内容不对但格式正确"的文件），opml/mm 则直接 400。
+     */
+    const r = await menu();
+    const got = hrefs(r.container);
+    assert.equal(got.length, 4, `结构化格式应当恰好 4 条链接 → ${JSON.stringify(got)}`);
+    for (const h of got) {
+      assert.ok(h.includes('what=mindmap'), `这条链接没带 what=mindmap，会导出转写稿：${h}`);
+    }
+    r.unmount();
+  });
+
+  test('图片导出（SVG / PNG）在合并进菜单之后仍然点得到，且走的是回调不是链接', async () => {
+    /*
+     * 这次改动把工具栏上两个平铺按钮收进了菜单。收进去容易连功能一起收没了 ——
+     * 所以正反两面都钉：回调收到了正确的格式，且它们**不是** <a href>
+     * （图片由渲染器在浏览器里现画，没有对应的服务端端点）。
+     */
+    stubApi({});
+    const got: string[] = [];
+    const r = await render(
+      <MindmapExportMenu noteUid={NOTE_UID} onExportImage={(f) => got.push(f)} />,
+    );
+    await r.flush();
+    await click(buttonByText(r.container, '导出'));
+    await r.flush();
+
+    await click(buttonByText(r.container, 'SVG'));
+    await r.flush();
+    await click(buttonByText(r.container, '导出'));
+    await r.flush();
+    await click(buttonByText(r.container, 'PNG'));
+    await r.flush();
+
+    assert.deepEqual(got, ['svg', 'png']);
+    r.unmount();
+  });
+
+  test('★ 损耗必须写在菜单里：时间戳只有 md / json 带得走（实测，非照文档）', async () => {
+    /*
+     * 逐项跑过四个序列化器之后的事实：JSON 十项全保留；md 只保留时间戳与备注；
+     * opml 只保留备注与折叠态；mm 保留备注与一条无标签的 arrowlink。
+     * **时间戳是这张图与录音之间唯一的连接** —— 用户拿 OPML 导进别的软件后
+     * 再也跳不回那一秒，而界面此前对此一个字都不说。
+     */
+    const r = await menu();
+    const shown = text(r.container);
+    assert.ok(shown.includes('JSON'), `菜单里应当点得出无损那一档 → ${shown}`);
+    assert.ok(
+      shown.includes('时间戳'),
+      `没有把"时间戳会丢"说出来 —— 那是这四种格式之间唯一会咬人的差别 → ${shown}`,
+    );
+    r.unmount();
+  });
+
+  test('★ daemon 不可达时只禁用服务端那一组，图片仍可导（它不需要 daemon）', async () => {
+    stubApi({});
+    // notes 面标成离线：四种结构化格式由 daemon 产出，此时点了只会失败
+    useSurfaceStore.getState().set('notes', 'offline');
+    const r = await render(<MindmapExportMenu noteUid={NOTE_UID} onExportImage={() => {}} />);
+    await r.flush();
+    await click(buttonByText(r.container, '导出'));
+    await r.flush();
+
+    assert.equal(
+      hrefs(r.container).length,
+      0,
+      'daemon 不可达时不该再给出可点的服务端导出链接',
+    );
+    // 阳性对照：图片那两个仍在 —— 否则这条用例只是在断言"菜单是空的"
+    assert.ok(!!buttonByText(r.container, 'SVG'), 'SVG 不该跟着一起消失，它不经过 daemon');
+    assert.ok(!!buttonByText(r.container, 'PNG'), 'PNG 不该跟着一起消失，它不经过 daemon');
+    r.unmount();
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   T-172 ③ 搜索结果直达时间点 —— `?t=` 的三个边界
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ## 这一族钉的是什么
+ *
+ * `SearchPage.tsx:135` 一直在发 `?t=<startMs>`，而 `NoteDetailPage` **从不读**
+ * （那个文件里唯一的 `params.get` 是 `'tab'`）—— 点任何转写命中都从 0:00 开始播。
+ *
+ * "能跳"只是第一格。真正会咬人的是另外三格，每一格都单独钉一条：
+ *   ① 媒体还没加载完（`<audio>` 比 `?t=` 晚一个 render 才进 DOM）
+ *   ② `?t=` 超出时长
+ *   ③ 参数留在地址栏之后，**会话中途不许被反复拽回去**
+ */
+describe('T-172 ③ 搜索结果点进去要跳到那一秒', () => {
+  const UID = '01KZ8N0T3D3TA1LPQ5J8XR9V2C';
+  const HIT_MS = 754_000;
+  const DURATION = 3_600_000;
+
+  const stubs = (durationMs: number | null = DURATION) => ({
+    [`/notes/${UID}`]: {
+      uid: UID,
+      title: '产品评审会',
+      status: 'done',
+      durationMs,
+      tags: [],
+      summaryMd: '这条笔记的摘要',
+      bodyJson: null,
+      canRetranscribe: false,
+      assets: [
+        { uid: 'asset-audio-1', role: 'audio16k', mime: 'audio/wav', bytes: 1, durationMs, state: 'ready' },
+      ],
+    },
+    [`/notes/${UID}/transcript`]: {
+      transcript: { uid: 'tr1', engineId: 'whisper', modelId: null, language: 'zh', status: 'done', progress: 1, durationMs, rtf: null },
+      segments: [
+        { seq: 0, startMs: 0, endMs: 5_000, text: '开场', speakerLabel: null, words: null },
+        { seq: 1, startMs: 754_000, endMs: 761_000, text: '这里说到成本', speakerLabel: null, words: null },
+      ],
+    },
+    [`/notes/${UID}/mindmap`]: { mindmap: null, doc: null },
+  });
+
+  /**
+   * ★ 挂载过的页面**必须**被卸载，哪怕用例是红的。
+   *
+   * `PlayerBar` 与 `TranscriptList` 各有一个 `requestAnimationFrame` 自循环，只在
+   * `unmount()` 时 `cancelAnimationFrame`。用例在 `r.unmount()` **之前**断言失败时，
+   * 那两个循环就永远转下去 —— jsdom 的 rAF 会把 Node 的事件循环一直撑着，
+   * `node --test` 于是**不报红、而是整个文件挂住**，直到外部超时把它杀掉。
+   *
+   * 这正是 PROTOCOL §8 那一族的形状：**一条断言失败伪装成环境问题**。
+   * 实测确认过：把 `?t=` 的读取拿掉做反向验证时，套件不是变红，是卡死 300 秒后被 kill，
+   * 而 spec reporter 缓冲在管道里的那几行 ✖ 一起丢了 —— 看起来像"测试环境坏了"。
+   *
+   * 所以卸载不能靠每条用例自己记得写，必须挂在 afterEach 上。
+   */
+  const mounted: { unmount: () => void }[] = [];
+  afterEach(() => {
+    while (mounted.length) {
+      try {
+        mounted.pop()?.unmount();
+      } catch {
+        /* 卸载失败不该掩盖用例本身的失败原因 */
+      }
+    }
+  });
+
+  const openAt = async (query: string, durationMs: number | null = DURATION) => {
+    stubApi(stubs(durationMs));
+    // 每条用例都从一个干净的播放器状态起步，否则上一条的 seek 会漏过来
+    usePlayerStore.setState({ assetUid: null, durationMs: 0, seekRequest: null, activeSeq: null });
+    setPositionMs(0, { immediate: true });
+    const r = await render(
+      <Routes>
+        <Route path="/notes/:noteUid" element={<NoteDetailPage />} />
+      </Routes>,
+      { route: `/notes/${UID}${query}` },
+    );
+    mounted.push(r);
+    await r.flush();
+    await r.flush();
+    return r;
+  };
+
+  /** jsdom 的 HTMLMediaElement 支持 currentTime 读写（readyState 恒 0、duration 恒 NaN）。 */
+  const audioSeconds = (c: HTMLElement): number | null => {
+    const el = c.querySelector('audio');
+    return el ? (el as HTMLAudioElement).currentTime : null;
+  };
+
+  test('★ ①-a 音频要跳到命中的那一秒（这一格是"能跳"本身）', async () => {
+    const r = await openAt(`?t=${HIT_MS}`);
+    assert.equal(
+      audioSeconds(r.container),
+      HIT_MS / 1000,
+      '音频没有跳到命中的那一秒',
+    );
+  });
+
+  test('★ ①-b 元数据到达前那次 seek 若被浏览器丢掉，loadedmetadata 必须补回来', async () => {
+    /*
+     * **这一格才是"媒体还没加载完"的真身。**
+     *
+     * `readyState === HAVE_NOTHING` 时给 `currentTime` 赋值，规范说的是先记成
+     * *default playback start position*、等加载开始再应用 —— 但各家实现是否都照做，
+     * 本机没有浏览器、**没验证过**。所以代码不赌它：pending 一直留到元数据到达。
+     *
+     * 这里就地模拟"浏览器把那次赋值丢了"（把 currentTime 打回 0），再发 `loadedmetadata`。
+     * 正确实现必须把它补回去；只赋一次就清掉 pending 的实现会停在 0 —— 也就是从头播。
+     */
+    const r = await openAt(`?t=${HIT_MS}`);
+    const el = r.container.querySelector('audio') as HTMLAudioElement;
+    assert.equal(el.currentTime, HIT_MS / 1000, '前提自检：第一次赋值就没成功，后面没有意义');
+
+    el.currentTime = 0; // ← 假装这是一个"元数据没到就不认 seek"的浏览器
+    el.dispatchEvent(new Event('loadedmetadata'));
+    await r.flush();
+
+    assert.equal(
+      el.currentTime,
+      HIT_MS / 1000,
+      '元数据到了却没有把那次 seek 补上 —— 用户会从 0:00 开始播',
+    );
+  });
+
+  test('★ ①-c seek 还没落到媒体上时，位置值不许被媒体的 0 盖回去', async () => {
+    /*
+     * `PlayerBar` 有一个每帧跑的 rAF 循环，把 `el.currentTime` 写进 `positionMs`。
+     * 转写稿的高亮与滚动读的正是 `positionMs`。所以只要媒体还停在 0，
+     * 那个循环就会把 `requestSeek` 设好的目标值**每帧盖回 0** ——
+     * 表现是「命中段闪一下就弹回第一段」，比完全不跳更像"产品坏了"。
+     */
+    const r = await openAt(`?t=${HIT_MS}`);
+    const el = r.container.querySelector('audio') as HTMLAudioElement;
+    el.currentTime = 0; // 媒体还没跟上（元数据未到）
+
+    await new Promise((res) => setTimeout(res, 60)); // 放几帧过去
+    await r.flush();
+
+    assert.equal(
+      getPositionMs(),
+      HIT_MS,
+      '待落的 seek 期间，转写稿的位置值被媒体的 0 盖掉了',
+    );
+  });
+
+  test('★ ①-d 转写稿不必等音频加载：位置值当场就位', async () => {
+    /*
+     * 高亮与滚动读的是 `getPositionMs()`（transient 通道），它不依赖媒体。
+     * 所以哪怕音频还在下载，命中段也应当立刻高亮 —— 这是"直达"体感的一半。
+     */
+    const r = await openAt(`?t=${HIT_MS}`);
+    assert.equal(getPositionMs(), HIT_MS, '位置值没被设到命中点，转写稿不会高亮那一段');
+    r.unmount();
+  });
+
+  test('没有 `?t=` 时不许凭空跳 —— 播放器停在 0', async () => {
+    const r = await openAt('');
+    assert.equal(audioSeconds(r.container), 0);
+    assert.equal(getPositionMs(), 0);
+    r.unmount();
+  });
+
+  test('★ ② 超出时长 → 夹到末尾，并且把话说出来', async () => {
+    const r = await openAt('?t=9999000');
+    assert.equal(
+      audioSeconds(r.container),
+      DURATION / 1000,
+      '越界时应当夹到末尾，而不是夹到 0（夹到 0 和"没接线"在界面上一模一样）',
+    );
+    assert.ok(
+      !!r.container.querySelector('[data-testid="seek-clamped"]'),
+      `越界了却一个字都不说 —— 用户只会以为搜索结果跳错了 → ${text(r.container)}`,
+    );
+    r.unmount();
+  });
+
+  test('② 没越界时那条提示不许出现（否则它就成了背景噪音）', async () => {
+    const r = await openAt(`?t=${HIT_MS}`);
+    // §8：DOM 存在性一律先转成布尔再比，绝不 assert.equal(node, null)
+    assert.equal(!!r.container.querySelector('[data-testid="seek-clamped"]'), false);
+    r.unmount();
+  });
+
+  test('② 时长未知（转写中的笔记）不夹取 —— 拿未知上界夹只会把对的值夹坏', async () => {
+    const r = await openAt(`?t=${HIT_MS}`, null);
+    assert.equal(audioSeconds(r.container), HIT_MS / 1000);
+    assert.equal(!!r.container.querySelector('[data-testid="seek-clamped"]'), false);
+    r.unmount();
+  });
+
+  test('坏掉的 `?t=` 不跳、也不打扰用户', async () => {
+    const r = await openAt('?t=abc');
+    assert.equal(audioSeconds(r.container), 0);
+    assert.equal(!!r.container.querySelector('[data-testid="seek-clamped"]'), false);
+    r.unmount();
+  });
+
+  test('③ 切 tab（`?t=` 仍留在地址栏）不许把播放头拽回去', async () => {
+    /*
+     * 留着 `?t=` 的理由是 URL 要能被分享/收藏（`/notes/X?t=754000` 理应还原成"这条笔记的 12:34"），
+     * 与本页既有的 `?tab=` 同一约定。代价就是**这个 effect 还有机会再跑**。
+     *
+     * ⚠️ 诚实标注：这一条**当前不构成对闩的守卫** —— 反向验证实测，把闩去掉它照样绿。
+     * 因为切 tab 只改 `?tab=`，effect 的依赖（`note.data` / `seekRaw` / `noteUid`）一个都没变。
+     * 留着它是钉"用户可见的性质"（切 tab 播放头不动），真正钉闩的是下面那条。
+     */
+    const r = await openAt(`?t=${HIT_MS}`);
+    const el = r.container.querySelector('audio') as HTMLAudioElement;
+    assert.equal(el.currentTime, HIT_MS / 1000, '前提自检：第一次跳都没成功，后面的断言没有意义');
+
+    el.currentTime = 42; // 用户自己拖到了别处
+    await click(buttonByText(r.container, '思维导图'));
+    await r.flush();
+
+    assert.equal(el.currentTime, 42, '切个 tab 就被拽回命中点');
+  });
+
+  test('★ ③ 后台重取（SSE → 笔记变了）之后，播放头必须留在用户拖到的地方', async () => {
+    /*
+     * **这一条才是那个闩的守卫。**
+     *
+     * `note.data` 在 effect 的依赖里，而 SSE 触发的重取会给出一个**新对象** ——
+     * effect 于是再跑一次。没有闩的话，用户听到 20 分钟时后台刷新一下，
+     * 就会被拽回 12:34。这是"把 `?t=` 留在地址栏"真正要付的那笔代价。
+     *
+     * 注意必须让第二次响应**内容不同**：react-query 默认开 structural sharing，
+     * 内容相同会原样返回旧对象引用，effect 根本不会重跑 —— 那样这条用例就又变成
+     * 一条恒绿的摆设了（上面那条切 tab 的就是那样，已如实标注）。
+     */
+    let fetches = 0;
+    const base = stubs(DURATION);
+    stubApi({
+      ...base,
+      [`/notes/${UID}`]: () => {
+        fetches += 1;
+        return { ...base[`/notes/${UID}`], title: `产品评审会 v${fetches}` };
+      },
+    });
+    usePlayerStore.setState({ assetUid: null, durationMs: 0, seekRequest: null, activeSeq: null });
+    setPositionMs(0, { immediate: true });
+
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 }, mutations: { retry: false } },
+    });
+    const r = await render(
+      <Routes>
+        <Route path="/notes/:noteUid" element={<NoteDetailPage />} />
+      </Routes>,
+      { route: `/notes/${UID}?t=${HIT_MS}`, queryClient: qc },
+    );
+    mounted.push(r);
+    await r.flush();
+    await r.flush();
+
+    const el = r.container.querySelector('audio') as HTMLAudioElement;
+    assert.equal(el.currentTime, HIT_MS / 1000, '前提自检：第一次跳都没成功，后面的断言没有意义');
+
+    el.currentTime = 42; // 用户听到别处去了
+    await qc.invalidateQueries();
+    await r.flush();
+    await r.flush();
+
+    assert.ok(fetches >= 2, `前提自检：笔记没有被重取过（fetches=${fetches}），这条用例没测到东西`);
+    assert.equal(
+      el.currentTime,
+      42,
+      '后台重取把播放头拽回了命中点 —— 留在地址栏里的 `?t=` 必须一个值只消费一次',
+    );
+  });
+});
+
+/* ── 播放器 store：待落的 seek 不许漏到另一条录音上 ───────────────────────── */
+
+describe('T-172 ③ setSource 与待落 seek 的关系', () => {
+  test('★ 换了媒体 → 上一条的待落 seek 作废（否则会跳到另一条录音的中间）', () => {
+    usePlayerStore.setState({ assetUid: 'asset-A', durationMs: 1000, seekRequest: null });
+    usePlayerStore.getState().requestSeek(2_700_000);
+    assert.ok(usePlayerStore.getState().seekRequest, '前提自检：seek 得先排上');
+
+    usePlayerStore.getState().setSource('asset-B', 5000);
+    assert.equal(
+      usePlayerStore.getState().seekRequest === null,
+      true,
+      '换了音源还留着上一条的 seek —— 新笔记一挂载就会被拽到 45:00',
+    );
+  });
+
+  test('★ 同一条媒体重复 setSource（后台重取）不许取消用户还没落地的那一跳', () => {
+    /*
+     * `setSource` 的 effect 依赖里有 `note.data`，SSE 触发的后台重取会拿到新对象、
+     * 以**同样的参数**再调一次。若无条件清空 seekRequest，一次后台刷新就能把用户
+     * 刚点开、音频还没加载完的那一跳悄悄取消掉 —— 表现又回到"从 0:00 开始播"。
+     */
+    usePlayerStore.setState({ assetUid: 'asset-A', durationMs: 1000, seekRequest: null });
+    usePlayerStore.getState().requestSeek(754_000);
+    const before = usePlayerStore.getState().seekRequest;
+
+    usePlayerStore.getState().setSource('asset-A', 1000);
+
+    assert.equal(usePlayerStore.getState().seekRequest?.nonce, before?.nonce);
+    assert.equal(usePlayerStore.getState().seekRequest?.ms, 754_000);
   });
 });

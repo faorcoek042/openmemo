@@ -49,7 +49,7 @@ export default function MindmapPage() {
       {/* 保存失败才说话；成功时一个字都不占（顶部横幅刷屏的教训） */}
       {save.isError ? <ErrorBlock error={save.error} className="mx-3 mt-3" /> : null}
       <div className="min-h-0 flex-1">
-        <MindmapView doc={data} onChange={onChange} />
+        <MindmapView doc={data} noteUid={noteUid ?? ''} onChange={onChange} />
       </div>
     </div>
   );

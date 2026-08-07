@@ -47,6 +47,8 @@
     "src/lib/api/notesCache.ts",
     "src/features/notes/noteAssets.test.ts",
     "src/features/notes/noteAssets.ts",
+    "src/features/notes/seekParam.test.ts",
+    "src/features/notes/seekParam.ts",
     "src/features/search/searchModes.test.ts",
     "src/features/search/modes.ts",
     "src/features/mindmap/docSignature.test.ts",

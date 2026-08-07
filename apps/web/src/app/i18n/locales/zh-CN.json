@@ -376,7 +376,8 @@
       "editsPreserved": "已保留你编辑过的 {{count}} 段"
     },
     "mindmapReadonly": "此处为预览，改动不会保存",
-    "mindmapEdit": "去导图页编辑"
+    "mindmapEdit": "去导图页编辑",
+    "seekClamped": "这个链接指向 {{asked}}，超过了本条录音的长度（{{duration}}）—— 已跳到结尾。可能是录音被重新转写过。"
   },
   "progress": {
     "fetch": "下载中",
@@ -745,7 +746,20 @@
       "NO_TRANSCRIPT": "这条笔记还没有转写稿。先把它转写出来，再回来生成导图。",
       "LLM_NOT_CONFIGURED": "还没有可用的语言模型。去设置里填一个 API Key，或者装一个本地模型。",
       "UNKNOWN": "任务被挂起了。去任务中心看看它在等什么。"
-    }
+    },
+    "export": "导出",
+    "exportImageGroup": "图片（当前画布）",
+    "exportDataGroup": "结构化（可再导入别的软件）",
+    "exportFormats": {
+      "svg": "SVG 矢量图",
+      "png": "PNG 位图",
+      "md": "Markdown 大纲 (.md)",
+      "opml": "OPML 大纲 (.opml)",
+      "mm": "FreeMind (.mm)",
+      "json": "JSON 完整文档 (.json)"
+    },
+    "exportLossy": "只有 JSON 是无损的。时间戳只有 Markdown 与 JSON 带得走 —— OPML 与 FreeMind 里没有它，导出后跳不回录音的那一秒。",
+    "exportNeedsDaemon": "这几种由本地服务生成，需要它在运行"
   },
   "search": {
     "title": "搜索",

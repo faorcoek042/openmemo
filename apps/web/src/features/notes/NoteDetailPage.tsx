@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { arr } from '../../lib/safe';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
@@ -16,6 +16,7 @@ import { NoteProgressLine } from './NoteProgressLine';
 import { TagEditor } from './TagEditor';
 import { RetranscribeButton } from './RetranscribeButton';
 import { NoteEditor } from './NoteEditor';
+import { parseSeekParam } from './seekParam';
 import { ExportMenu } from './ExportMenu';
 import { NoteActionsMenu } from './NoteActionsMenu';
 import { TranscriptList } from '../transcript';
@@ -23,6 +24,7 @@ import { PlayerBar } from '../player';
 import { usePlayerStore } from '../../lib/stores/player.store';
 import { useUiStore } from '../../lib/stores/ui.store';
 import { decodeOmpk, type DecodedPeaks } from '../../lib/format/peaks';
+import { timecode } from '../../lib/format/time';
 import { mediaUrl } from '../../lib/api/client';
 import { pickAudioAsset, pickPeaksAsset } from './noteAssets';
 import { cn } from '../../lib/utils';
@@ -106,6 +108,51 @@ export default function NoteDetailPage() {
       cancelled = true;
     };
   }, [peaksUrl]);
+
+  /*
+   * ★ F5「搜索结果直达时间点」的落点（`SearchPage` 把这叫杀手级体验，而它此前是半条链：
+   *   搜索页一直在发 `?t=`，这一页从来不读，点任何命中都从 0:00 开始播）。
+   *
+   * ## 三个边界怎么处理的
+   *
+   * ① **媒体还没加载完**：不在这里等。`requestSeek()` 会立刻把 `positionMs` 设成目标值，
+   *    转写稿的高亮/滚动当场就位（它们不依赖媒体）；音频那一半由 `PlayerBar` 记成 pending，
+   *    等 `<audio>` 挂载 + `loadedmetadata` 再补落。所以**转写稿不必为音频的加载速度买单**。
+   *    注意顺序：上面 `setSource` 的 effect 声明在前，先跑 —— 换笔记时它会先把上一条的
+   *    待落 seek 作废，本 effect 再为这一条重新排一次。
+   *
+   * ② **超出时长**：交给 `parseSeekParam` 夹到末尾并回一个 `clamped`，
+   *    然后**说出来**（下方那条提示）。悄悄夹到 0 会和"没接线"长得一模一样。
+   *    时长未知（转写中的笔记 `durationMs` 为 0）时不夹 —— 用未知上界夹只会夹坏对的值。
+   *
+   * ③ **地址栏留不留 `?t=`：留。** 这是我做的判断，理由与代价都写在这儿：
+   *    · 这个 URL 是**可分享物**。`/notes/X?t=754000` 发给别人、或者自己收藏，
+   *      理应还原成"这条笔记的 12:34"。用完就抹掉，等于让地址栏在下一个 tick 开始说假话。
+   *    · 与本页既有约定一致 —— `?tab=`、搜索页的 `?q=` / `?mode=` 全都是留在 URL 里的视图状态，
+   *      单独给 `?t=` 开一条"用完即焚"的例外，下一个人只会把它当 bug 改回来。
+   *    · **代价（我接受并写明）**：刷新会重跳一次。我认为这不是惊吓而是 URL 说到做到 ——
+   *      地址栏里明写着 `t=754000`。
+   *    · 真正会咬人的不是刷新，是**会话中途被反复拽回去**：切 tab 会 `setParams`，
+   *      SSE 会让 `note.data` 换对象，两者都会让这个 effect 再跑。所以用 `(noteUid, t)`
+   *      作闩，**一个值只跳一次**；用户跳走之后再切 tab / 后台刷新，播放头一律不动。
+   */
+  const seekRaw = params.get('t');
+  const seek = useMemo(
+    () => parseSeekParam(seekRaw, note.data?.durationMs ?? 0),
+    [seekRaw, note.data?.durationMs],
+  );
+  const requestSeek = usePlayerStore((s) => s.requestSeek);
+  /** 已经消费过的 `(笔记, t)`。ref 而不是 state：它不该引起渲染，也不该被渲染读到。 */
+  const appliedSeekRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    // 时长未知就先不跳：`parseSeekParam` 的夹取要靠它，早跳一拍会跳到夹取前的位置
+    if (!note.data || seek.ms === null) return;
+    const latch = `${noteUid ?? ''}|${seekRaw ?? ''}`;
+    if (appliedSeekRef.current === latch) return;
+    appliedSeekRef.current = latch;
+    requestSeek(seek.ms);
+  }, [note.data, seek.ms, seekRaw, noteUid, requestSeek]);
 
   const mindmap = useMindmapQuery(tab === 'mindmap' ? noteUid : undefined);
 
@@ -241,7 +288,7 @@ export default function NoteDetailPage() {
                     </Button>
                   </p>
                   <div className="min-h-0 flex-1">
-                    <MindmapView doc={mindmap.data} />
+                    <MindmapView doc={mindmap.data} noteUid={n.uid} />
                   </div>
                 </div>
               ) : (
@@ -274,6 +321,24 @@ export default function NoteDetailPage() {
           </div>
         </aside>
       </div>
+
+      {/*
+        ★ `?t=` 越界时把话说出来。
+        夹到末尾之后播放头停在结尾、转写稿也没有任何一段被高亮 ——
+        不说的话用户只会觉得"点搜索结果跳错了"，而这恰恰是本轮要修的那个病的样子。
+        只在 `clamped` 时出现；`malformed`（手改坏的 URL）不打扰，那不是产品的失败。
+      */}
+      {seek.reason === 'clamped' ? (
+        <p
+          data-testid="seek-clamped"
+          className="border-t border-line bg-surface-1 px-4 py-1.5 text-xs text-ink-muted"
+        >
+          {t('detail.seekClamped', {
+            asked: timecode(seek.askedMs ?? 0),
+            duration: timecode(n.durationMs ?? 0),
+          })}
+        </p>
+      ) : null}
 
       <PanelBoundary name={t('detail.transcript')} fallback={() => null}>
         <PlayerBar peaks={peaks} />
