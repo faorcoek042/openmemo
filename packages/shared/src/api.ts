@@ -229,6 +229,35 @@ export interface MigrateRequest {
 
 /* ------------------------------ backends --------------------------------- */
 
+/**
+ * 「不可用」的三种含义 —— **不能用同一个 `applicable=false` 表达**。
+ *
+ * 用户看到"不可用"会以为自己的机器不支持，然后就不装了。但在干净机器上，
+ * 绝大多数情况其实是**我们还没法判断**：probe 可执行文件装在后端包里，
+ * 包没装 → probe 跑不了 → 加速后端一律显示"不可用"。
+ * 这跟"探测完成、确认你没有这块卡"是完全不同的两件事，UI 该说的话也不同。
+ *
+ * ── ★ T-165：为什么这个类型必须住在 `shared` ────────────────────────────────
+ *
+ * 它原来只声明在 `apps/daemon/src/http/rest/backends.ts` 里，而 daemon 一直
+ * **真的把它发出去**。契约类型里没有它 ⇒ 前端拿到的 `pack` 上根本不存在这个属性，
+ * 于是「精心区分了三档」与「界面零消费」可以长期共存，**编译器一个字都不会说**。
+ * `progress-audit §4⑪` 记的就是这一格：它想防的正是"用户以为自己机器不支持"，
+ * 而它自己被同一种沉默挡住了。
+ *
+ * 与「写得进读不回 / 前后端键名对不上」是同一族：**发送方与接收方之间没有共享的类型，
+ * 就没有任何东西在守这条线。**
+ */
+export type InapplicableKind =
+  /** 可装 */
+  | 'applicable'
+  /** os/arch 就对不上，换台机器也没用 */
+  | 'platform'
+  /** **尚未探测**（probe 没跑成）——「检测中/待检测」，不是"不支持" */
+  | 'undetermined'
+  /** 探测完成，确认本机没有可用设备 */
+  | 'unsupported';
+
 export interface GetBackendCatalogResponse {
   catalogVersion: string;
   source: CatalogSource;
@@ -237,6 +266,14 @@ export interface GetBackendCatalogResponse {
     installed: boolean;
     /** This pack matches the detected hardware. */
     applicable: boolean;
+    /**
+     * 不可用属于哪一档。
+     *
+     * **可选**是刻意的：老 daemon 不发这个字段，而客户端**必须**能表达"我不知道"。
+     * 缺失时正确的行为是**什么档都不说**（只照抄 `inapplicableReason`），
+     * 而不是默认成 `unsupported` —— 那会让界面替 daemon 说出一句它没说过的话。
+     */
+    inapplicableKind?: InapplicableKind;
     /** Why not applicable, when applicable=false. */
     inapplicableReason: string | null;
     recommended: boolean;

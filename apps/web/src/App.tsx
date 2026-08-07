@@ -1,7 +1,17 @@
 import { Suspense, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { Activity, Cpu, FileAudio, Mic, Package, Plus, Settings, Star } from 'lucide-react';
+import {
+  Activity,
+  Cpu,
+  FileAudio,
+  Mic,
+  Package,
+  Plus,
+  Settings,
+  Star,
+  Stethoscope,
+} from 'lucide-react';
 
 import { Banner } from './components/common/Banner';
 import { ConnectivitySummary } from './components/common/MockNotice';
@@ -66,6 +76,20 @@ export default function App() {
     { to: '/runtime', icon: <Cpu className="size-4" />, label: t('nav.runtime') },
     { to: '/models', icon: <Package className="size-4" />, label: t('nav.models') },
     { to: '/tasks', icon: <Activity className="size-4" />, label: t('nav.tasks') },
+    /*
+     * ★ T-165：`/diagnostics` 此前**在界面上没有任何常驻入口**。
+     *
+     * 全仓唯一指向它的是 `ReadinessBanner` 里那个按钮，而那条横幅
+     * **一切正常时渲染 null** —— 也就是说：只有已经出问题的人才找得到诊断页，
+     * 而"我想看看现在到底怎么样"是它最主要的用途。章程要求 2.1 的最后一步
+     * 写的就是"显示状态"。这与 T-140 补 `/components` 入口是同一件事的另一半。
+     *
+     * ⚠️ **`/components` 不进侧栏**，那是查过之后的决定，不是漏了：
+     * 它已经有一个入口（`/runtime` 页头），而 D-10 §3.2 的 R3 是
+     * "同一问题只准一个出处" —— 再加一条一级导航就是给同一个问题开第二个出处。
+     * 诊断页不同：它现在的出处数是 **0**。
+     */
+    { to: '/diagnostics', icon: <Stethoscope className="size-4" />, label: t('nav.diagnostics') },
     { to: '/settings', icon: <Settings className="size-4" />, label: t('nav.settings') },
   ];
   /*

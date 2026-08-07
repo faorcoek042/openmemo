@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { CheckCircle2, CircleDashed, Cpu, Download, XCircle, Zap } from 'lucide-react';
+import { Ban, CheckCircle2, CircleDashed, Cpu, Download, HelpCircle, XCircle, Zap } from 'lucide-react';
 import type { Backend } from '@openmemo/shared';
 import { cn } from '../../lib/utils';
 
@@ -24,7 +24,30 @@ import { cn } from '../../lib/utils';
  * 「可安装」是**动作邀请不是状态**，不占状态色（旁边的下载按钮才是动作）。
  */
 
-export type BackendChipState = 'active' | 'installed' | 'available' | 'not-installed' | 'failed';
+/**
+ * ★ T-165：`not-installed` 这一档原来一个人扛着「不可用」的**三种不同含义**。
+ *
+ * daemon 早就把它们分开了（`InapplicableKind`：`platform` / `undetermined` /
+ * `unsupported`），而界面把三档一律渲染成「不可用」。
+ * `[实测 :10000]` `whispercpp-vulkan-linux-x64` 的档位是 `undetermined`
+ * （probe 还没跑成，与这台机器支不支持 Vulkan 无关），显示出来却是「不可用」——
+ * 这正是那个字段的注释写明要防的事："用户看到不可用会以为自己机器不支持，然后就不装了"。
+ *
+ * `not-installed` 保留，含义收窄成「不可用，但不知道属于哪一档」——
+ * 那是 daemon 没告诉我们时唯一诚实的说法。
+ */
+export type BackendChipState =
+  | 'active'
+  | 'installed'
+  | 'available'
+  | 'not-installed'
+  | 'failed'
+  /** os/arch 对不上：别的平台的包 */
+  | 'other-platform'
+  /** 还没探测到能力，**不是**"不支持" */
+  | 'undetermined'
+  /** 探测完成，确认本机没有可用设备 */
+  | 'unsupported';
 
 const BACKEND_LABEL: Record<Backend, string> = {
   cuda: 'CUDA',
@@ -65,6 +88,23 @@ const STATE_STYLE: Record<
       text: 'text-critical',
       labelKey: 'runtime.chip.failed',
       icon: <XCircle className="size-3.5 shrink-0" aria-hidden />,
+    },
+    'other-platform': {
+      text: 'text-ink-muted',
+      labelKey: 'runtime.chip.otherPlatform',
+      icon: <CircleDashed className="size-3.5 shrink-0" aria-hidden />,
+    },
+    /* 「待检测」是**中性偏进行中**，不是坏消息 —— 用 info 而不是 muted，
+       否则它在视觉上与「本机不支持」还是一个样子，拆开就白拆了。 */
+    undetermined: {
+      text: 'text-info',
+      labelKey: 'runtime.chip.undetermined',
+      icon: <HelpCircle className="size-3.5 shrink-0" aria-hidden />,
+    },
+    unsupported: {
+      text: 'text-ink-muted',
+      labelKey: 'runtime.chip.unsupported',
+      icon: <Ban className="size-3.5 shrink-0" aria-hidden />,
     },
   };
 

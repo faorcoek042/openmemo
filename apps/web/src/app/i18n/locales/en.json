@@ -17,7 +17,8 @@
     "runtime": "Runtime",
     "models": "Models",
     "settings": "Settings",
-    "tasks": "Tasks"
+    "tasks": "Tasks",
+    "diagnostics": "Diagnostics"
   },
   "banner": {
     "mockTitle": "MOCK mode: local service not connected",
@@ -308,7 +309,14 @@
       "installed": "Installed",
       "available": "Installable",
       "notInstalled": "Unavailable",
-      "failed": "Self-test failed"
+      "failed": "Self-test failed",
+      "otherPlatform": "Other platform",
+      "undetermined": "Not yet detected",
+      "unsupported": "Not supported here"
+    },
+    "kind": {
+      "undetermined": "This machine has not been probed for acceleration yet — that is not the same as \"unsupported\". Probing needs the base pack installed first; it re-runs automatically afterwards.",
+      "unsupported": "Probing finished: no device this backend can use was found on this machine."
     },
     "hw": {
       "title": "Your hardware",

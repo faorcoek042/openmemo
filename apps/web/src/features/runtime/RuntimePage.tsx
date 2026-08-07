@@ -19,6 +19,7 @@ import {
 } from './api';
 import { HardwareCard } from './components/HardwareCard';
 import { BackendPackCard } from './components/BackendPackCard';
+import { isMeaningfulRecommendation } from './packStatus';
 
 /**
  * 运行时与加速后端页 —— 章程要求 2.1 的主界面。
@@ -82,6 +83,19 @@ export default function RuntimePage() {
 
   const anyFailed = (installed.data?.packs ?? []).some((p) => p.selfTest && !p.selfTest.passed);
 
+  /**
+   * ★ 哪些「推荐」徽章真的承载信息（T-165 / `progress-audit §4⑩`）。
+   *
+   * `[实测 :10000]` 本机适用的 6 个包**全部** `recommended:true` —— 因为它们的
+   * `backend` 都是 `cpu`，而选中的后端就是 `cpu`。六个「推荐」徽章 + 六个主按钮，
+   * 一个都没区分出任何东西。判据与规则写在 `packStatus.ts`：
+   * **只收窄、不增加**，且必须看整份目录才算得出来（一张卡自己看不出"有没有得选"）。
+   */
+  const recommendedIds = useMemo(
+    () => new Set(packs.filter((p) => isMeaningfulRecommendation(p, packs)).map((p) => p.id)),
+    [packs],
+  );
+
   function handleSelect(pack: GetBackendCatalogResponse['packs'][number]) {
     void select.mutateAsync(pack.backend);
   }
@@ -96,6 +110,7 @@ export default function RuntimePage() {
         isActive={installed.data?.selectedBackend === p.backend && p.installed}
         selfTest={selfTestById.get(p.id) ?? null}
         installing={install.isPending && install.variables === p.id}
+        recommended={recommendedIds.has(p.id)}
         onInstall={(id) => void install.mutateAsync(id)}
         onRemove={(id) => {
           if (window.confirm(t('runtime.confirmRemove'))) {

@@ -2831,6 +2831,15 @@ components:
             applicable:
               type: boolean
               description: This pack matches the detected hardware.
+            inapplicableKind:
+              type: string
+              enum: [applicable, platform, undetermined, unsupported]
+              description: >-
+                Which KIND of unavailable. "undetermined" (probe never ran) must not be
+                shown as "your machine does not support this" — that is the exact
+                misreading that stops users from installing. Optional: older daemons do
+                not send it, and a client that cannot express "I don't know" will invent
+                an answer.
             inapplicableReason:
               type: [string, 'null']
               description: Why not applicable, when applicable=false.

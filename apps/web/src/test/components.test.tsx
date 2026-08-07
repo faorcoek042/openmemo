@@ -92,6 +92,8 @@ import { MindmapView } from '../features/mindmap/MindmapView';
 import type { MindMapDoc } from '@openmemo/mindmap';
 import type { PipelineJob } from '@openmemo/shared';
 import RuntimePage from '../features/runtime/RuntimePage';
+import { BackendPackCard } from '../features/runtime/components/BackendPackCard';
+import { isMeaningfulRecommendation } from '../features/runtime/packStatus';
 import { splitEmphasis } from '../components/common/Emphasis';
 import { ConnectivitySummary } from '../components/common/MockNotice';
 import { useSurfaceStore, SURFACES } from '../lib/api/surfaces';
@@ -3448,7 +3450,15 @@ describe('T-129b /runtime 不许中英混排', () => {
 
   function stubRuntimePage() {
     return stubApi({
-      '/hardware': {
+      /*
+       * ⚠️ T-165 订正：这个键原来写的是 `'/hardware'`，而 `useHardwareQuery()` 打的是
+       * **`/runtime/hardware`**（T-153 把它提升到 `lib/api/hardware.ts` 时换的路径）。
+       * 于是这份桩**一次都没命中过** → 查询 404 → `hw` 恒为 undefined →
+       * `<HardwareCard>` 在这两条用例里**从来没有被渲染过**。
+       * 下面那条"英文界面不许出现中文"因此一直在一个缺了一大块的页面上通过。
+       * （HANDOFF ⑤A-18 的同一形状：断言跑过了，但跑的不是它以为的那段。）
+       */
+      '/runtime/hardware': {
         hardware: {
           detectedAt: '2026-08-03T00:00:00.000Z',
           os: { platform: 'linux', arch: 'x64', version: '6.1' },
@@ -3556,6 +3566,27 @@ describe('T-129b /runtime 不许中英混排', () => {
       strong.includes('本机实测值') && strong.includes('估算'),
       `「实测」与「估算」应渲染成 <strong>，实际 strong = ${JSON.stringify(strong)}`,
     );
+    r.unmount();
+  });
+
+  /**
+   * ★ T-165 补的**探针的探针**。
+   *
+   * 上面两条用的桩里，硬件那一格的键写的是 `/hardware`，而 `useHardwareQuery()`
+   * 打的是 `/runtime/hardware` —— 桩**一次都没命中过**，`<HardwareCard>` 因此
+   * 在这两条用例里从来没有被渲染过。也就是说「/runtime 不许中英混排」这条
+   * 一直只覆盖了页面的一部分，而**少覆盖的那部分不会有任何东西告诉你**。
+   *
+   * 这条前提自检钉的就是"桩真的接上了"：断的是硬件卡里那些**只可能来自桩数据**
+   * 的字段，不是"页面渲染出来了"。
+   */
+  test('前提自检：硬件卡真的渲染了（桩键写错时它是静默不渲染的）', async () => {
+    stubRuntimePage();
+    const r = await render(<RuntimePage />, { route: '/runtime' });
+    await r.flush();
+    const shown = text(r.container);
+    assert.ok(shown.includes('你的硬件'), `硬件卡没渲染 —— 桩没命中 → ${shown.slice(0, 200)}`);
+    assert.ok(shown.includes('Stub CPU'), `渲染的不是桩给的那台机器 → ${shown.slice(0, 300)}`);
     r.unmount();
   });
 });
@@ -6419,6 +6450,456 @@ describe('T-155 笔记的删除 / 重命名入口', () => {
       ['PUT /notes/n1/folder'],
     );
     assert.deepEqual((sent[0] as { body?: unknown }).body, { folderUid: 'f1' });
+    r.unmount();
+  });
+});
+
+/* ══════════════════════════════ T-165 /runtime 三件 ══════════════════════════════ */
+
+/**
+ * 一份最小但**形状真实**的目录条目工厂。
+ *
+ * 默认值抄的是 `[实测 :10000]` 的真实响应：一台 linux/x64 机器上，
+ * 目录里适用的包**全部** `recommended: true`、`backend: 'cpu'`。
+ */
+function pack(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'p',
+    backend: 'cpu',
+    engine: 'whisper.cpp',
+    engineVersion: 'v1.9.1',
+    os: 'linux',
+    arch: 'x64',
+    tier: 'downloadable',
+    displayName: 'Pack',
+    displayNameZh: '包',
+    totalSizeBytes: 9_379_235,
+    installed: false,
+    applicable: true,
+    recommended: false,
+    priority: 10,
+    requiresDriver: null,
+    inapplicableReason: null,
+    ...over,
+  };
+}
+
+const HW_LINUX_X64 = {
+  hardware: {
+    detectedAt: '2026-08-07T00:00:00.000Z',
+    os: { platform: 'linux', arch: 'x64', version: '6.1' },
+    cpu: { brand: 'Stub CPU', physicalCores: 4, logicalCores: 8, features: ['avx2'] },
+    ram: { totalMB: 16000, availableMB: 8000 },
+    gpus: [],
+    selectedGpuIndex: null,
+    unifiedMemory: false,
+    disks: [{ path: '/tmp/stub', pathFor: 'models_root', freeMB: 10000, totalMB: 50000 }],
+    backends: [{ id: 'cpu', installed: true, available: true, unavailableReason: null }],
+    selectedBackend: 'cpu',
+  },
+  snapshotId: 'hw-local',
+};
+
+/**
+ * ## T-165 ①「不可用」的三档不许长成同一个样子
+ *
+ * `apps/daemon/src/http/rest/backends.ts` 花了一整段注释把「不可用」拆成三档，
+ * 并且**真的把 `inapplicableKind` 发出来**。它自己写明了这条区分要防什么：
+ *
+ * > 用户看到"不可用"会以为自己的机器不支持，然后就不装了。
+ *
+ * `[实测 :10000]` 这台机器上 `whispercpp-vulkan-linux-x64` 的档位是 `undetermined`
+ * （probe 还没跑成），而界面给它渲染的是 **「不可用」** ——
+ * **它想防的那件事，就是它自己造成的。**
+ *
+ * 为什么长期没人发现：契约类型 `GetBackendCatalogResponse` 里**根本没有这个字段**，
+ * 于是"daemon 精心分了三档"与"前端零消费"可以共存，编译器一个字都不说
+ * （`progress-audit §4⑪`；类型已在本轮补进 `packages/shared`）。
+ *
+ * ── 把名字遮住，这些断言什么时候会失败 ────────────────────────────────────────
+ * 任何人把三档重新合并回一句话（含"顺手简化成 `applicable ? … : '不可用'`"），
+ * 或者把缺档位时的兜底改成"本机不支持"（= 替 daemon 说一句它没说过的话）。
+ */
+describe('T-165 ①「不可用」的三档不许长成同一个样子', () => {
+  const NOOP = {
+    locale: 'zh-CN',
+    isActive: false,
+    selfTest: null,
+    installing: false,
+    onInstall: () => undefined,
+    onRemove: () => undefined,
+    onSelect: () => undefined,
+    onSelfTest: () => undefined,
+  } as const;
+
+  async function renderKind(kind: string | undefined, reason: string) {
+    const p = pack({
+      id: 'whispercpp-vulkan-linux-x64',
+      backend: 'vulkan',
+      applicable: false,
+      inapplicableReason: reason,
+      ...(kind === undefined ? {} : { inapplicableKind: kind }),
+    });
+    const r = await render(
+      <BackendPackCard {...NOOP} pack={p as never} />,
+    );
+    return { r, shown: text(r.container) };
+  }
+
+  test('★ `undetermined`（还没探测到）不许被说成「不可用」', async () => {
+    const { r, shown } = await renderKind('undetermined', '尚未探测到硬件能力');
+    assert.equal(
+      shown.includes('不可用'),
+      false,
+      `probe 还没跑成 ≠ 你的机器不支持，界面却说了「不可用」→ ${shown}`,
+    );
+    assert.ok(shown.includes('待检测'), `没有说出「待检测」这一档 → ${shown}`);
+    // daemon 的原话必须照抄，档位不是用来顶替它的
+    assert.ok(shown.includes('尚未探测到硬件能力'), `daemon 给的原因被吃掉了 → ${shown}`);
+    r.unmount();
+  });
+
+  test('★ `unsupported`（探测完成、确认没有设备）才可以说「本机不支持」', async () => {
+    const { r, shown } = await renderKind('unsupported', 'no vulkan device enumerated');
+    assert.ok(shown.includes('本机不支持'), `没说出「本机不支持」这一档 → ${shown}`);
+    r.unmount();
+  });
+
+  test('★ `platform`（别的平台的包）说的是平台，不是能力', async () => {
+    const { r, shown } = await renderKind('platform', '适用于 win32/x64，与本机不符');
+    assert.ok(shown.includes('其它平台'), `没说出「其它平台」这一档 → ${shown}`);
+    assert.equal(shown.includes('本机不支持'), false, `平台不匹配被说成了能力不支持 → ${shown}`);
+    r.unmount();
+  });
+
+  test('★ 三档渲染出来的文本必须两两不同 —— 这条钉的正是「区分」这个后果本身', async () => {
+    const a = await renderKind('undetermined', 'R');
+    const b = await renderKind('unsupported', 'R');
+    const c = await renderKind('platform', 'R');
+    const set = new Set([a.shown, b.shown, c.shown]);
+    assert.equal(
+      set.size,
+      3,
+      `三档里有两档在屏幕上长得一模一样 → ${JSON.stringify([...set])}`,
+    );
+    a.r.unmount();
+    b.r.unmount();
+    c.r.unmount();
+  });
+
+  test('★ daemon 没给档位时不许替它说话（既不说"不支持"也不说"待检测"）', async () => {
+    const { r, shown } = await renderKind(undefined, '原因由服务端给出');
+    assert.equal(shown.includes('本机不支持'), false, `没有证据却断言用户的硬件不支持 → ${shown}`);
+    assert.equal(shown.includes('待检测'), false, `同样是编出来的档位 → ${shown}`);
+    assert.ok(shown.includes('原因由服务端给出'), `服务端的原话必须还在 → ${shown}`);
+    r.unmount();
+  });
+});
+
+/**
+ * ## T-165 ②「推荐」徽章只在真的有得选时才出现
+ *
+ * daemon 算的是 `recommended = applicable && pack.backend === selectedBackend`。
+ * `[实测 :10000]` 本机适用的 6 个包**全部** `recommended: true` ——
+ * 因为它们的 `backend` 都是 `cpu`，而选中的后端就是 `cpu`。
+ * 于是一页六个「推荐」徽章 + 六个主按钮，**没有区分任何东西**（`progress-audit §4⑩`）。
+ *
+ * 这里做的是**收窄**不是重算：服务端说不推荐的永远不会变成推荐。
+ *
+ * ── 把名字遮住，这些断言什么时候会失败 ────────────────────────────────────────
+ * 有人把 `recommended` 直接怼回 `pack.recommended`（= 缺陷原状），
+ * 或者把收窄写成"增加"（服务端说 false 却渲染出徽章）。
+ */
+describe('T-165 ②「推荐」徽章只在真的有得选时才出现', () => {
+  /** `[实测 :10000]` 的形状：本机适用的包全是 cpu、全 recommended。 */
+  const REAL_SHAPE = [
+    pack({ id: 'whispercpp-cpu-linux-x64', engine: 'whisper.cpp', installed: true, recommended: true }),
+    pack({
+      id: 'whispercpp-vulkan-linux-x64',
+      engine: 'whisper.cpp',
+      backend: 'vulkan',
+      applicable: false,
+      inapplicableKind: 'undetermined',
+      inapplicableReason: '尚未探测到硬件能力',
+      recommended: false,
+    }),
+    pack({ id: 'media-tools-linux-x64', engine: 'ffmpeg', installed: true, recommended: true }),
+    pack({ id: 'ytdlp-linux-x64', engine: 'yt-dlp', installed: true, recommended: true }),
+    pack({ id: 'libsimple-linux-x64', engine: 'sqlite-ext', installed: true, recommended: true }),
+    pack({ id: 'sqlite-vec-linux-x64', engine: 'sqlite-ext', installed: true, recommended: true }),
+  ];
+
+  test('★ 六个「推荐」里只有一个承载信息 —— 其余五个没有任何备选', () => {
+    const kept = REAL_SHAPE.filter((p) =>
+      isMeaningfulRecommendation(p as never, REAL_SHAPE as never),
+    ).map((p) => p['id']);
+    assert.deepEqual(
+      kept,
+      ['whispercpp-cpu-linux-x64'],
+      'ffmpeg / yt-dlp / sqlite 扩展在这台机器上各只有一个包，"推荐"不回答任何问题',
+    );
+  });
+
+  test('★ 只收窄不增加：服务端说不推荐的，这里永远不会说推荐', () => {
+    const all = [
+      pack({ id: 'a', backend: 'cpu', recommended: false }),
+      pack({ id: 'b', backend: 'vulkan', recommended: false }),
+    ];
+    assert.equal(isMeaningfulRecommendation(all[0] as never, all as never), false);
+    assert.equal(isMeaningfulRecommendation(all[1] as never, all as never), false);
+  });
+
+  test('★ 备选必须是同一个引擎、同一个平台 —— ffmpeg 不是 whisper 的备选', () => {
+    const all = [
+      pack({ id: 'w', engine: 'whisper.cpp', backend: 'cpu', recommended: true }),
+      pack({ id: 'f', engine: 'ffmpeg', backend: 'cpu' }),
+      pack({ id: 'w-mac', engine: 'whisper.cpp', backend: 'metal', os: 'darwin', arch: 'arm64' }),
+    ];
+    assert.equal(
+      isMeaningfulRecommendation(all[0] as never, all as never),
+      false,
+      '别的引擎和别的平台的包都不是这台机器上的"另一个选项"',
+    );
+  });
+
+  /**
+   * ★ 这一条钉的是**接线**：`RuntimePage` 有没有真的算这一步。
+   *
+   * 只测纯函数的话，把 `recommended={…}` 那一行删掉（回到 `pack.recommended`），
+   * 上面三条**照样全绿** —— 本仓最贵的形状就是"函数写好了没有人调它"。
+   *
+   * 判据是**逐张卡**而不是数总数：数总数会被 `StatusChip` 的嵌套 span 蒙对
+   * （外层与内层 textContent 都是「推荐」，第一版就是这么把 1 数成 2 的）。
+   */
+  test('★ 接线：徽章只落在真有备选的那张卡上，另外四张一个都没有', async () => {
+    stubApi({
+      '/runtime/hardware': HW_LINUX_X64,
+      '/backends/catalog': { catalogVersion: 'v', source: 'bundled', stale: false, packs: REAL_SHAPE },
+      '/backends/installed': { selectedBackend: 'cpu', packs: [] },
+    });
+    const r = await render(<RuntimePage />, { route: '/runtime' });
+    await r.flush();
+
+    const badged = (id: string): boolean => {
+      const card = r.container.querySelector(`[data-testid="backend-pack-${id}"]`);
+      assert.ok(card, `卡片 ${id} 没渲染出来 —— 前提不成立`);
+      return [...card!.querySelectorAll('[data-tone="good"]')].some(
+        (e) => (e.textContent ?? '').trim() === '推荐',
+      );
+    };
+
+    assert.equal(badged('whispercpp-cpu-linux-x64'), true, 'CPU 与 Vulkan 之间确实有得选');
+    for (const id of [
+      'media-tools-linux-x64',
+      'ytdlp-linux-x64',
+      'libsimple-linux-x64',
+      'sqlite-vec-linux-x64',
+    ]) {
+      assert.equal(
+        badged(id),
+        false,
+        `${id} 在这台机器上只有一个包，「推荐」不回答任何问题 —— ` +
+          '这四张卡此前每张都戴着徽章',
+      );
+    }
+    r.unmount();
+  });
+});
+
+/**
+ * ## T-165 ③ 自检结果的三条 UI 分支真的会亮
+ *
+ * `gates-fix §5.3` → `backlog-work §2.6`：自检早就跑得起来（用户实测 `passed:true / 18.6x`），
+ * 但结果**没有人写回** `InstalledBackendPack.selfTest` —— 全仓写这个字段的
+ * 只有 `backends.ts` 那句 `selfTest: null`。daemon 侧已在上一轮接上（`recordSelfTest`），
+ * 这一族钉的是**界面这一半**：写回来了，屏幕上到底会不会变。
+ *
+ * ── 把名字遮住，这些断言什么时候会失败 ────────────────────────────────────────
+ * ① 三条分支里任何一条被删或被合并；
+ * ② 失败原因被换成笼统的"出错了"（daemon 已经给出具体原因，藏回黑箱是倒退）；
+ * ③ **`useBackendSelfTestMutation` 的 `invalidateQueries` 被拿掉** ——
+ *    那一刻自检仍然"成功"，只是刷新前什么都不会变，而这正是它此前的样子。
+ */
+describe('T-165 ③ 自检结果的三条 UI 分支真的会亮', () => {
+  const PASSED = {
+    passed: true,
+    ranAt: '2026-08-07T01:02:03.000Z',
+    devicesFound: 2,
+    rtf: 0.054,
+    errorMessage: null,
+  };
+  const FAILED = {
+    passed: false,
+    ranAt: '2026-08-07T01:02:03.000Z',
+    devicesFound: 0,
+    rtf: null,
+    errorMessage: 'libggml-vulkan.so: 驱动过旧，需要 Vulkan 1.2+',
+  };
+
+  const CATALOG = {
+    catalogVersion: 'v',
+    source: 'bundled',
+    stale: false,
+    packs: [pack({ id: 'whispercpp-cpu-linux-x64', installed: true, recommended: true })],
+  };
+
+  test('★ 分支一：passed → 通过徽章 + 枚举到的设备数 + 实测 RTF + 出处时间', async () => {
+    stubApi({
+      '/runtime/hardware': HW_LINUX_X64,
+      '/backends/catalog': CATALOG,
+      '/backends/installed': {
+        selectedBackend: 'cpu',
+        packs: [{ id: 'whispercpp-cpu-linux-x64', selfTest: PASSED }],
+      },
+    });
+    const r = await render(<RuntimePage />, { route: '/runtime' });
+    await r.flush();
+    const shown = text(r.container);
+    assert.ok(shown.includes('自检通过'), `通过徽章没亮 → ${shown}`);
+    assert.ok(shown.includes('枚举到 2 个设备'), `设备数没渲染 → ${shown}`);
+    assert.ok(shown.includes('0.05'), `实测 RTF 没渲染 → ${shown}`);
+    assert.ok(shown.includes('真实推理得出'), `出处（何时、怎么得出的）没渲染 → ${shown}`);
+    r.unmount();
+  });
+
+  test('★ 分支二：failed → 失败徽章 + **daemon 给的具体原因**，不是"出错了"', async () => {
+    stubApi({
+      '/runtime/hardware': HW_LINUX_X64,
+      '/backends/catalog': CATALOG,
+      '/backends/installed': {
+        selectedBackend: 'cpu',
+        packs: [{ id: 'whispercpp-cpu-linux-x64', selfTest: FAILED }],
+      },
+    });
+    const r = await render(<RuntimePage />, { route: '/runtime' });
+    await r.flush();
+    const shown = text(r.container);
+    assert.ok(shown.includes('自检失败'), `失败徽章没亮 → ${shown}`);
+    assert.ok(
+      shown.includes('驱动过旧，需要 Vulkan 1.2+'),
+      `已知的具体原因被藏回了黑箱 → ${shown}`,
+    );
+    assert.equal(shown.includes('未知原因'), false, `明明有原因却渲染成「未知原因」→ ${shown}`);
+    r.unmount();
+  });
+
+  test('★ 分支三：anyFailed → 顶部横幅；全部通过时不许出现（阳性对照）', async () => {
+    const withSelfTest = (st: unknown) => ({
+      '/runtime/hardware': HW_LINUX_X64,
+      '/backends/catalog': CATALOG,
+      '/backends/installed': {
+        selectedBackend: 'cpu',
+        packs: [{ id: 'whispercpp-cpu-linux-x64', selfTest: st }],
+      },
+    });
+
+    stubApi(withSelfTest(FAILED));
+    const bad = await render(<RuntimePage />, { route: '/runtime' });
+    await bad.flush();
+    assert.ok(
+      text(bad.container).includes('有加速后端自检未通过'),
+      '有包自检失败，顶部横幅没出现 —— D-05 要求 passed:false 留一条持续的警告',
+    );
+    bad.unmount();
+
+    stubApi(withSelfTest(PASSED));
+    const good = await render(<RuntimePage />, { route: '/runtime' });
+    await good.flush();
+    assert.equal(
+      text(good.container).includes('有加速后端自检未通过'),
+      false,
+      '全部通过却还挂着失败横幅 —— 假红灯和假绿灯一样要当 bug 修',
+    );
+    good.unmount();
+  });
+
+  test('★ 接线：点一次「自检」→ 结果落库 → 徽章当场从「没有」变成「自检通过」', async () => {
+    /*
+     * 判据钉的是**用户看得见的变化**，不是"请求发出去了"。
+     * 缺陷形态是：请求发了、daemon 也写回了 manifest，而页面不重新拉
+     * `/backends/installed` —— 于是"点了自检什么都没发生，刷新一下才看到"。
+     * 那正是 `invalidateQueries` 这一行在负责的事，而它被删掉时
+     * **所有只断言"POST 发出去了"的用例照样全绿**。
+     */
+    let recorded: unknown = null;
+    const { calls } = stubApi({
+      '/runtime/hardware': HW_LINUX_X64,
+      '/backends/catalog': CATALOG,
+      '/backends/installed': () => ({
+        selectedBackend: 'cpu',
+        packs: [{ id: 'whispercpp-cpu-linux-x64', selfTest: recorded }],
+      }),
+      'POST /backends/selftest': () => {
+        recorded = PASSED; // daemon 的 recordSelfTest() 写回 manifest 的那一步
+        return { status: 'ran', passed: true, recorded: true, recordedTo: 'whispercpp-cpu-linux-x64' };
+      },
+    });
+
+    const r = await render(<RuntimePage />, { route: '/runtime' });
+    await r.flush();
+    assert.equal(
+      text(r.container).includes('自检通过'),
+      false,
+      '前提自检：还没点自检时不该有通过徽章（否则下面那条断言恒真）',
+    );
+
+    await click(buttonByText(r.container, '自检'));
+    await r.flush();
+    await r.flush();
+
+    assert.ok(
+      calls.some((c) => c.method === 'POST' && c.path === '/backends/selftest'),
+      `自检请求没发出去，实际请求：${JSON.stringify(calls.map((c) => `${c.method} ${c.path}`))}`,
+    );
+    assert.ok(
+      text(r.container).includes('自检通过'),
+      '结果已经落库，界面却没变 —— 缺的正是那一次 invalidateQueries(backends.installed)',
+    );
+    r.unmount();
+  });
+});
+
+/**
+ * ## T-165 ④ `/diagnostics` 得有一个常驻入口
+ *
+ * 全仓唯一指向它的是 `ReadinessBanner` 里那个按钮，而那条横幅**一切正常时渲染 null**
+ * —— 只有已经出问题的人才找得到诊断页，而"我想看看现在到底怎么样"是它的主要用途。
+ * 章程要求 2.1 的最后一步写的就是"显示状态"。与 T-140 补 `/components` 入口同族。
+ *
+ * ⚠️ `/components` **刻意不进侧栏**：它已经有一个入口（`/runtime` 页头），
+ * 而 D-10 §3.2 的 R3 是"同一问题只准一个出处"。诊断页不同，它现在的出处数是 0。
+ *
+ * ── 把名字遮住，这条什么时候会失败 ────────────────────────────────────────────
+ * 有人把那一项从侧栏拿掉，或者加进来却忘了让高亮判定认得它
+ * （`activeNavTarget` 的入参就是这张清单，漏登记 = 那条链接永远不高亮且什么都不报）。
+ */
+describe('T-165 ④ /diagnostics 得有一个常驻入口', () => {
+  test('★ 侧栏里有一条指向 /diagnostics 的链接，且在该地址上恰好它一个高亮', async () => {
+    stubApi({});
+    const r = await render(<App />, { route: '/diagnostics' });
+    await r.flush();
+
+    const nav = r.container.querySelector('nav');
+    assert.ok(nav, '侧栏没渲染出来');
+    const hrefs = [...nav!.querySelectorAll('a')].map((a) => a.getAttribute('href'));
+    assert.ok(
+      hrefs.includes('/diagnostics'),
+      `侧栏里没有诊断页入口 → ${JSON.stringify(hrefs)}`,
+    );
+
+    /*
+     * 高亮是 `aria-current="page"`（SideLink 的实现）。
+     * 断"恰好一项"而不是"这一项亮了"：`activeNav.ts` 存在的理由就是**至多一项**，
+     * 而漏登记的症状恰恰是"它不亮、别人替它亮"。
+     */
+    const current = [...nav!.querySelectorAll('a[aria-current="page"]')].map((a) =>
+      a.getAttribute('href'),
+    );
+    assert.deepEqual(
+      current,
+      ['/diagnostics'],
+      `在 /diagnostics 上高亮的应当恰好是它自己 → ${JSON.stringify(current)}`,
+    );
     r.unmount();
   });
 });

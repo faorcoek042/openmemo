@@ -3,11 +3,27 @@ import { Download, Lock, Play, Trash2 } from 'lucide-react';
 import type { BackendSelfTest, GetBackendCatalogResponse } from '@openmemo/shared';
 import { Button } from '../../../components/common/Button';
 import { StatusChip } from '../../../components/common/StatusChip';
-import { BackendChip } from '../../../components/common/BackendChip';
+import { BackendChip, type BackendChipState } from '../../../components/common/BackendChip';
 import { formatBytes } from '../../../lib/format/bytes';
 import { localizedName } from '../../../lib/format/localized';
+import { packStatus, STATUS_NEEDS_EXPLANATION, type PackStatus } from '../packStatus';
 
 type Pack = GetBackendCatalogResponse['packs'][number];
+
+/**
+ * 状态 → 芯片档。**一一对应，不做合并** —— 合并回去就是把 T-165 拆开的那三档又粘上。
+ * `unavailable-unknown` 落回 `not-installed`（"不可用"），因为那时我们确实只知道这么多。
+ */
+const CHIP_STATE: Record<PackStatus, BackendChipState> = {
+  active: 'active',
+  installed: 'installed',
+  'self-test-failed': 'failed',
+  installable: 'available',
+  'other-platform': 'other-platform',
+  undetermined: 'undetermined',
+  unsupported: 'unsupported',
+  'unavailable-unknown': 'not-installed',
+};
 
 /**
  * 一个加速后端包（章程要求 2.1 的"下载对应预编译二进制 → 安装 → 自检 → 显示状态"）。
@@ -22,6 +38,15 @@ export interface BackendPackCardProps {
   isActive: boolean;
   selfTest: BackendSelfTest | null;
   installing: boolean;
+  /**
+   * 这张卡上「推荐」到底承不承载信息（T-165 / `progress-audit §4⑩`）。
+   *
+   * **必须由外面传进来**：判据是"同一引擎下本机还有没有别的后端可选"，
+   * 那要看整份目录，一张卡自己看不出来。
+   * 不传时按 `pack.recommended` 原样处理 —— 也就是回到缺陷行为，
+   * 所以调用方只有 `RuntimePage` 一处，并且有用例钉住它真的算了这一步。
+   */
+  recommended?: boolean;
   onInstall: (id: string) => void;
   onRemove: (id: string) => void;
   onSelect: (pack: Pack) => void;
@@ -34,6 +59,7 @@ export function BackendPackCard({
   isActive,
   selfTest,
   installing,
+  recommended,
   onInstall,
   onRemove,
   onSelect,
@@ -49,6 +75,14 @@ export function BackendPackCard({
    */
   const pendingCi = (pack as { availability?: string }).availability === 'pending-ci';
   const selfTestFailed = selfTest != null && !selfTest.passed;
+  const showRecommended = recommended ?? pack.recommended;
+  const status = packStatus({
+    installed: pack.installed,
+    applicable: pack.applicable,
+    inapplicableKind: pack.inapplicableKind,
+    isActive,
+    selfTestFailed,
+  });
 
   const actions = pack.installed ? (
     <>
@@ -78,7 +112,7 @@ export function BackendPackCard({
   ) : (
     <Button
       size="sm"
-      variant={pack.recommended ? 'primary' : 'secondary'}
+      variant={showRecommended ? 'primary' : 'secondary'}
       disabled={installing || !pack.applicable || pendingCi}
       title={pendingCi ? t('runtime.pack.pendingCiTitle') : undefined}
       onClick={() => onInstall(pack.id)}
@@ -112,22 +146,9 @@ export function BackendPackCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <BackendChip
-              backend={pack.backend}
-              state={
-                isActive
-                  ? 'active'
-                  : selfTestFailed
-                    ? 'failed'
-                    : pack.installed
-                      ? 'installed'
-                      : pack.applicable
-                        ? 'available'
-                        : 'not-installed'
-              }
-            />
+            <BackendChip backend={pack.backend} state={CHIP_STATE[status]} />
             <h3 className="text-sm font-medium text-ink">{localizedName(locale, pack)}</h3>
-            {pack.recommended ? <StatusChip tone="good" label={t('runtime.pack.recommended')} /> : null}
+            {showRecommended ? <StatusChip tone="good" label={t('runtime.pack.recommended')} /> : null}
             {isLoadBearing ? (
               <StatusChip
                 tone="neutral"
@@ -140,6 +161,23 @@ export function BackendPackCard({
             {pack.engine} {pack.engineVersion} · {pack.os}/{pack.arch} ·{' '}
             {formatBytes(pack.totalSizeBytes, locale)}
           </p>
+          {/*
+            ★ T-165：先说**这是哪一档**，再照抄 daemon 给的原因。
+
+            两句话是分工的，不是重复：
+              · 档位（"还没探测到" vs "本机不支持"）回答的是**"我要不要放弃"**；
+              · `inapplicableReason` 是 daemon 的原话，回答的是**"具体卡在哪"**。
+            此前只渲染后者，而后者不含档位信息 —— 于是"还没测出来"和"确认没有这块卡"
+            在屏幕上长得一模一样，用户只能按最坏的那个理解。
+          */}
+          {STATUS_NEEDS_EXPLANATION.includes(status) ? (
+            <p
+              className="mt-1 text-xs text-ink-secondary"
+              data-testid={`backend-kind-${status}`}
+            >
+              {t(`runtime.kind.${status}`)}
+            </p>
+          ) : null}
           {!pack.applicable && pack.inapplicableReason ? (
             <p className="mt-1 text-xs text-ink-muted">{pack.inapplicableReason}</p>
           ) : null}
