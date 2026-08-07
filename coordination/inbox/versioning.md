@@ -120,7 +120,12 @@ import 真实产物 `apps/daemon/dist/main.js`，得
 基线上升与本次改动无关；`check:orphans` 那条**只许降不许升**的基线稳在 70。
 
 下一步建议:
-1. Manager 重启 demo 前跑 `pnpm build:safe`，否则界面仍显示旧版本（守卫⑦会提醒）。
+1. **`:10000` 现在仍会显示 `daemon v0.1.0` —— 这不是没修好，是那个进程没重启。**
+   `[实测]` 只读 `GET :10000/api/health` 得
+   `version="0.1.0"`、`startedAt=2026-08-07T15:57:45Z` —— 该进程在我构建之前就起来了，
+   跑的是它自己内存里的旧代码。重启后会变成 `0.2.0`。
+   （这恰好演示了「启动时刻」为什么必须显示：光看版本号答不了"重启了没"。）
+   Manager 重启前请先 `pnpm build:safe`；若忘了，`pnpm check:version` 的⑦会当场拦下。
 2. 产品 tag 用 `v0.2.0`（与 `backend-packs-*` / `model-mirror-*` 刻意分开）。
    本轮**没有创建任何 tag/release**（纪律禁止）。tag ≠ Release，打 tag 不会往 Releases 页加东西，
    所以 README 第 12 行继续成立。
