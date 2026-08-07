@@ -79,13 +79,23 @@ async function main() {
 
   const manifest = JSON.parse(await readFile(join(REPO, 'vendor/manifests/backends.json'), 'utf8'));
   const packs = manifest.packs ?? manifest.items ?? [];
-  const pack = packs.find(
+  /*
+   * ★ `availability: 'pending-ci'` 的包**必须排除**：那种条目「构建过、摘要也核过，
+   * 但没有发布到任何地方」，清单自己写着不许当成下载项（发一个 404 的 URL
+   * 比承认缺口更糟）。`whispercpp-metal-macos-arm64` 今天就是这一档 ——
+   * 不滤掉的话这个脚本会挑中它然后死在下载上，而那与捂热一点关系都没有。
+   */
+  const usable = packs.filter(
     (p) =>
       p.os === process.platform &&
       p.arch === process.arch &&
       p.engine === 'whisper.cpp' &&
+      p.availability !== 'pending-ci' &&
       (p.providesFiles ?? []).some((f) => f.startsWith('openmemo-probe')),
   );
+  // 优先挑真的带 Metal 后端库的那个 —— 捂的就是它。
+  const pack =
+    usable.find((p) => (p.providesFiles ?? []).some((f) => /ggml-metal/.test(f))) ?? usable[0];
   if (!pack) {
     say(`   ✘ 目录里没有适用于 ${process.platform}/${process.arch} 且带探针的包 —— 无从验证，exit 0。`);
     return 0;
