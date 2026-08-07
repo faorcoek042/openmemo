@@ -19,6 +19,7 @@
 #   · ★反向：`$GITHUB_OUTPUT` 落在挂载根之外 → 必须红（"少挂一个目录"那一族）
 #   · ★反向：`$VULKAN_SDK` 指向不存在的路径 → 必须红（而不是静默不挂）
 #   · --report：容器 glibc ≤ 基线 → 绿；> 基线 → 红；解析不出版本 → 红
+#   · ★ 宿主环境（真 runner 设的 GITHUB_OUTPUT 等）不许改变结论 —— 见下面的 SCRUB
 #   · smoke：自包含正向、pack_id 为空、加速模块缺失、libggml 解析不到 → 红
 #   · ★边界：**不相干的库** not found（libcuda.so.1）→ 必须**绿**
 #
@@ -40,6 +41,27 @@ trap 'rm -rf "${WORK}"' EXIT
 pass=0; fail=0
 ok()  { printf '  \033[32m✔\033[0m %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf '  \033[31m✘\033[0m %s\n' "$1"; printf '      %s\n' "${2:-}"; fail=$((fail+1)); }
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ★★ 环境隔离 —— 这一段是**第一次真跑 CI 才补上的**，记在这里因为它是一族陷阱
+#
+# 第一版在本机 25/25 全绿，推上去 **CI 上 11 条红**。成因不是逻辑，是环境：
+# GitHub runner 自己就设着 `GITHUB_OUTPUT` / `GITHUB_ENV` / `GITHUB_STEP_SUMMARY`
+# （指向 `/home/runner/work/_temp/_runner_file_commands/…`），而 `buildbox.sh` 会去
+# 断言它们落在挂载根底下 —— 用例造的挂载根当然接不住宿主的那条路径，于是
+# **被测脚本在真实 CI 上按设计红了，而用例把那当成"功能坏了"**。
+#
+# 与 T-145 那条「本机 node 24 绿、CI node 22 红」是同一族：
+# **一个会随宿主环境改变结论的自检，等于没有自检。**
+# 所以每一次调用都从一个**显式擦干净**的环境出发，用例自己造它要的每一个变量。
+# 下面 ④-bis 那条用例专门钉住这一点：故意在宿主上设一堆脏变量，结论必须不变。
+# ──────────────────────────────────────────────────────────────────────────────
+SCRUB=(env
+  -u GITHUB_OUTPUT -u GITHUB_ENV -u GITHUB_STEP_SUMMARY -u GITHUB_WORKSPACE
+  -u RUNNER_TEMP -u RUNNER_TOOL_CACHE -u CCACHE_DIR -u CCACHE_MAXSIZE
+  -u VULKAN_SDK -u LD_LIBRARY_PATH -u BUILDBOX_IMAGE -u BUILDBOX_MAX_GLIBC
+  -u DOCKER -u ARGV_LOG -u CC -u CXX -u CI
+)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # docker 桩：把整条 argv 记到 $ARGV_LOG，并按 $STUB_MODE 决定 `run` 的输出。
@@ -74,19 +96,19 @@ new_env_dir() {
 echo "① buildbox.sh 的前置条件 —— 缺一个就必须红"
 {
   d="$(new_env_dir 1)"; make_stub_docker "${d}/bin" noop
-  out="$(env -u BUILDBOX_IMAGE ARGV_LOG="${d}/argv.log" PATH="${d}/bin:${PATH}" \
+  out="$("${SCRUB[@]}" ARGV_LOG="${d}/argv.log" PATH="${d}/bin:${PATH}" \
         GITHUB_WORKSPACE="${d}/ws" RUNNER_TEMP="${d}/tmp" \
         bash "${BUILDBOX}" true 2>&1)" && rc=0 || rc=$?
   if [[ ${rc} -ne 0 && "${out}" == *BUILDBOX_IMAGE* ]]; then ok "BUILDBOX_IMAGE 缺失 → 红"
   else bad "BUILDBOX_IMAGE 缺失应当红" "rc=${rc} out=${out}"; fi
 
-  out="$(BUILDBOX_IMAGE=x DOCKER=definitely-not-a-real-binary ARGV_LOG="${d}/argv.log" \
+  out="$("${SCRUB[@]}" BUILDBOX_IMAGE=x DOCKER=definitely-not-a-real-binary ARGV_LOG="${d}/argv.log" \
         GITHUB_WORKSPACE="${d}/ws" RUNNER_TEMP="${d}/tmp" \
         bash "${BUILDBOX}" true 2>&1)" && rc=0 || rc=$?
   if [[ ${rc} -ne 0 && "${out}" == *"definitely-not-a-real-binary"* ]]; then ok "宿主没有 docker → 红（而不是悄悄在宿主上编）"
   else bad "docker 不存在应当红" "rc=${rc} out=${out}"; fi
 
-  out="$(BUILDBOX_IMAGE=x ARGV_LOG="${d}/argv.log" PATH="${d}/bin:${PATH}" \
+  out="$("${SCRUB[@]}" BUILDBOX_IMAGE=x ARGV_LOG="${d}/argv.log" PATH="${d}/bin:${PATH}" \
         GITHUB_WORKSPACE="${d}/ws" RUNNER_TEMP="${d}/tmp" \
         bash "${BUILDBOX}" 2>&1)" && rc=0 || rc=$?
   if [[ ${rc} -ne 0 ]]; then ok "没给要执行的命令 → 红"
@@ -99,7 +121,7 @@ echo "② 挂载与环境的组装（正向）"
   : > "${d}/tmp/gh-output"
   mkdir -p "${d}/sdk/x86_64"
   ARGV="${d}/argv.log"; : > "${ARGV}"
-  BUILDBOX_IMAGE=om-box:test ARGV_LOG="${ARGV}" PATH="${d}/bin:${PATH}" \
+  "${SCRUB[@]}" BUILDBOX_IMAGE=om-box:test ARGV_LOG="${ARGV}" PATH="${d}/bin:${PATH}" \
     GITHUB_WORKSPACE="${d}/ws" RUNNER_TEMP="${d}/tmp" CCACHE_DIR="${d}/ccache" \
     VULKAN_SDK="${d}/sdk/x86_64" GITHUB_OUTPUT="${d}/tmp/gh-output" \
     bash "${BUILDBOX}" bash scripts/build-whisper.sh --backend vulkan >/dev/null 2>&1 || true
@@ -128,7 +150,7 @@ echo "③ ★反向：少挂一个目录必须当场红，而不是让某一步�
   mkdir -p "${d}/outside"; : > "${d}/outside/gh-output"
   # $GITHUB_OUTPUT 落在所有挂载根之外 —— 容器里那条路径要么不存在、要么指向容器自己的
   # 临时文件，宿主这边只会读到空的 pack_id / stage_dir。
-  out="$(BUILDBOX_IMAGE=x ARGV_LOG="${d}/argv.log" PATH="${d}/bin:${PATH}" \
+  out="$("${SCRUB[@]}" BUILDBOX_IMAGE=x ARGV_LOG="${d}/argv.log" PATH="${d}/bin:${PATH}" \
         GITHUB_WORKSPACE="${d}/ws" RUNNER_TEMP="${d}/tmp" \
         GITHUB_OUTPUT="${d}/outside/gh-output" \
         bash "${BUILDBOX}" true 2>&1)" && rc=0 || rc=$?
@@ -137,7 +159,7 @@ echo "③ ★反向：少挂一个目录必须当场红，而不是让某一步�
 
   # VULKAN_SDK 指向一个不存在的路径：add_mount 会跳过它（optional），
   # 如果没有 is_inside 兜着，就会静默地不挂 → configure 阶段才红，而且信息在别处。
-  out="$(BUILDBOX_IMAGE=x ARGV_LOG="${d}/argv.log" PATH="${d}/bin:${PATH}" \
+  out="$("${SCRUB[@]}" BUILDBOX_IMAGE=x ARGV_LOG="${d}/argv.log" PATH="${d}/bin:${PATH}" \
         GITHUB_WORKSPACE="${d}/ws" RUNNER_TEMP="${d}/tmp" \
         VULKAN_SDK="${d}/no-such-sdk" \
         bash "${BUILDBOX}" true 2>&1)" && rc=0 || rc=$?
@@ -151,12 +173,38 @@ echo "④ --report：编译环境自己的 glibc 就是那条基线的第一道�
   for mode_expect in "glibc-235:0" "glibc-239:1" "garbage:1"; do
     mode="${mode_expect%%:*}"; want="${mode_expect##*:}"
     bindir="${d}/bin-${mode}"; make_stub_docker "${bindir}" "${mode}"
-    out="$(BUILDBOX_IMAGE=x ARGV_LOG="${d}/argv-${mode}.log" PATH="${bindir}:${PATH}" \
+    out="$("${SCRUB[@]}" BUILDBOX_IMAGE=x ARGV_LOG="${d}/argv-${mode}.log" PATH="${bindir}:${PATH}" \
           GITHUB_WORKSPACE="${d}/ws" RUNNER_TEMP="${d}/tmp" BUILDBOX_MAX_GLIBC=2.35 \
           bash "${BUILDBOX}" --report 2>&1)" && rc=0 || rc=$?
     if [[ "${rc}" -eq "${want}" ]]; then ok "--report / ${mode} → rc=${rc}（期望 ${want}）"
     else bad "--report / ${mode} 期望 rc=${want}，实得 ${rc}" "${out}"; fi
   done
+}
+
+echo "④-bis ★ 宿主环境不许改变结论（第一次真跑 CI 才补上的那一条）"
+{
+  d="$(new_env_dir 5)"; bindir="${d}/bin-r"; make_stub_docker "${bindir}" glibc-235
+  # 故意在**宿主**上设一堆真 runner 会设、而用例不该受影响的变量。
+  # 没有 SCRUB 的话，`GITHUB_OUTPUT` 这条会让 buildbox.sh 按设计红掉，
+  # 而用例会把那当成"功能坏了"—— 这正是 CI 上 11 条红的成因。
+  out="$(GITHUB_OUTPUT=/somewhere/else/set_output \
+        GITHUB_ENV=/somewhere/else/set_env \
+        GITHUB_STEP_SUMMARY=/somewhere/else/summary \
+        VULKAN_SDK=/somewhere/else/sdk \
+        CCACHE_DIR=/somewhere/else/ccache \
+        "${SCRUB[@]}" BUILDBOX_IMAGE=x ARGV_LOG="${d}/argv.log" PATH="${bindir}:${PATH}" \
+        GITHUB_WORKSPACE="${d}/ws" RUNNER_TEMP="${d}/tmp" BUILDBOX_MAX_GLIBC=2.35 \
+        bash "${BUILDBOX}" --report 2>&1)" && rc=0 || rc=$?
+  if [[ ${rc} -eq 0 ]]; then ok "宿主设了脏的 GITHUB_OUTPUT / VULKAN_SDK / CCACHE_DIR，结论不变"
+  else bad "宿主环境泄漏进用例了 —— 一个会随宿主改变结论的自检等于没有自检" "rc=${rc} out=${out}"; fi
+
+  # 守卫本身有效：把 SCRUB 拿掉，同一条必须红。
+  out="$(GITHUB_OUTPUT=/somewhere/else/set_output \
+        env BUILDBOX_IMAGE=x ARGV_LOG="${d}/argv.log" PATH="${bindir}:${PATH}" \
+        GITHUB_WORKSPACE="${d}/ws" RUNNER_TEMP="${d}/tmp" BUILDBOX_MAX_GLIBC=2.35 \
+        bash "${BUILDBOX}" --report 2>&1)" && rc=0 || rc=$?
+  if [[ ${rc} -ne 0 ]]; then ok "★守卫本身有效：不擦环境时同一条确实会红（说明 SCRUB 不是装饰）"
+  else bad "不擦环境也绿 —— 那 SCRUB 就是个摆设，这条用例证明不了任何东西" "rc=${rc} out=${out}"; fi
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
