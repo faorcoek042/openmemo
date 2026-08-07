@@ -221,13 +221,23 @@ export function createRuntimeRoutes(deps: RuntimeRoutesDeps): {
       // ---- POST /api/backends/selftest ----
       if (p === '/api/backends/selftest') {
         if (method !== 'POST') return methodNotAllowed(res, 'POST');
-        // 前端发的是 `{id}`（`features/runtime/api.ts`）。没带也照跑 —— 结果按
-        // `backendUsed` 认领；认不到就不写，而不是随便挑一个包按上去。
+        /*
+         * 前端发的是 `{id}`（`features/runtime/api.ts` —— 每张后端包卡片上的
+         * 「自测」按钮都带自己的包 id）。
+         *
+         * ★ T-166 ①：这个 id 从**被忽略的候选**变成**真的钉住那个包**。
+         * 此前无论在哪张卡片上点，跑的都是"按统一规则选出来的那一个"——
+         * 装了 CPU 与 Vulkan 两个包的用户，永远只能测到其中一个，
+         * 另一张卡片上的按钮点了等于测了别人。
+         *
+         * 没带 id 就照旧按统一规则挑（`GET /api/selfcheck` 与 CLI 出口都走这条）。
+         */
         const body = (await readJsonBody(req)) as { id?: unknown } | undefined;
-        const bodyId = typeof body?.id === 'string' ? body.id : null;
+        const bodyId = typeof body?.id === 'string' && body.id.length > 0 ? body.id : null;
         const result = await (deps.runSelfTest ?? runBackendSelfTest)({
           dataDir: deps.paths.dataDir,
           modelsDir: deps.paths.modelsDir,
+          ...(bodyId === null ? {} : { packId: bodyId }),
         });
 
         if (result.status === 'blocked') {
@@ -253,8 +263,16 @@ export function createRuntimeRoutes(deps: RuntimeRoutesDeps): {
          * 写的是 manifest 文件本身，不是某个内存副本：`RestState.listInstalledBackends()`
          * 每次都从 `manifests/backend/*.json` 现读，所以这里写完，
          * 前端 `invalidateQueries(qk.backends.installed)` 一刷就能看见。
+         *
+         * ★ T-166：认领依据换成了「这个二进制是哪个包给的」（结构），
+         * 不再是「`pack.backend === outcome.backendUsed`」（字符串，且恒假）——
+         * 见 `recordSelfTest()` 的注释。
          */
-        const recorded = await recordSelfTest(deps.paths.modelsDir, bodyId, result.outcome);
+        const recorded = await recordSelfTest(
+          deps.paths.modelsDir,
+          { packId: result.packId, requestedId: bodyId },
+          result.outcome,
+        );
 
         // 跑过了就如实回报：passed 可能是 false（真实失败），那也是真结果。
         sendJson(res, 200, {
@@ -264,6 +282,10 @@ export function createRuntimeRoutes(deps: RuntimeRoutesDeps): {
           recorded: recorded.ok,
           recordedTo: recorded.packId,
           recordedReason: recorded.reason,
+          /** **跑的到底是哪个包**（钉住时 = 请求里的 id；没钉住时 = 统一规则选中的那个）。 */
+          packId: result.packId,
+          packBackend: result.packBackend,
+          requestedPackId: result.requestedPackId,
           ranAt: result.outcome.ranAt,
           devicesFound: result.outcome.devicesFound,
           rtf: result.outcome.rtf,
@@ -295,8 +317,23 @@ export interface SelfTestOutcomeLike {
   readonly ranAt: string;
   readonly devicesFound: number;
   readonly rtf: number | null;
+  /**
+   * whisper 日志里那句"实际用上的后端"。**是自由文本，不是 `Backend` 枚举** ——
+   * 见 {@link recordSelfTest} 里那段说明它为什么不能拿来做认领依据。
+   */
   readonly backendUsed: string | null;
   readonly errorMessage: string | null;
+}
+
+/** 认领依据：这次跑的二进制**是哪个已安装包提供的**，以及用户点的是哪张卡片。 */
+export interface SelfTestClaim {
+  /**
+   * 提供这次跑的 whisper-cli 的那个已安装包（`SelfTestRan.packId`）。
+   * `null` = 这个二进制不属于任何已安装包（环境变量覆盖 / 手工布局 / 装到一半）。
+   */
+  readonly packId: string | null;
+  /** 用户在哪张卡片上点的自测（前端发的 `{id}`）。没带时 `null`。 */
+  readonly requestedId: string | null;
 }
 
 export interface RecordSelfTestResult {
@@ -309,57 +346,76 @@ export interface RecordSelfTestResult {
 /**
  * 把一次自检结果写进 `manifests/backend/<id>.json` 的 `selfTest`。
  *
- * ## 认领规则：**结果只能记到它真的跑过的那个后端上**
+ * ## 认领规则：**结果只能记到真正提供了那个二进制的包头上**
  *
- * `runBackendSelfTest()` 跑的是"当前能找到的那套 whisper-cli + ggml 库"，
- * 它不是按包 id 分派的。所以请求里带的 `id` 只是**候选**：
- * 只有当那个包的 `backend` 与 `outcome.backendUsed` 相符时才写。
+ * 判据是**结构**：`resolveBackendTool()` 按安装记录把二进制所在目录反查回包
+ * （`runBackendSelfTest()` 把它作为 `SelfTestRan.packId` 交出来）。
+ * 认领与任何日志文字、任何目录名关键词都无关。
  *
- * 不这么设防的话，用户在 CUDA 包的卡片上点一次自测，
- * 而实际跑的是 CPU 后端 —— 结果会被写成"CUDA 包自检通过"。
- * 那不是少一个功能，那是**发明一条不成立的证据**，比 `selfTest: null` 坏得多。
+ * ### ★ T-166：为什么不能用 `outcome.backendUsed` 认领（T-164 的规则是恒假的）
  *
- * `id` 没带（或对不上）时按 `backendUsed` 去找唯一一个匹配的已装包；
- * 找不到或找到多个就**不写**，并把原因带回响应里。
+ * T-164 立的规则是「只有 `pack.backend === outcome.backendUsed` 才写」。
+ * 它的用例全绿，因为用例喂的是 `backendUsed: 'cpu'`。
+ * 而真正产出这个字段的 `parseBackendUsed()`（`packages/runtime/src/selfTest.ts`）
+ * 解析的是 whisper 的 stderr，返回的是**日志文字**：
+ *
+ * ```
+ * 'CPU'                     ← whisper_backend_init_gpu: no GPU found
+ * 'CPU (ggml-cpu-zen4)'     ← 最后兜底那一档
+ * 'NVIDIA GeForce RTX 4090' ← 真选中 GPU 时
+ * null                      ← 什么都没匹配上
+ * ```
+ *
+ * 与 `Backend` 枚举（`'cpu' | 'cuda' | 'vulkan' | …`）**没有一条会相等**：
+ * 无 GPU 的机器上必是 `'CPU'` 或 `'CPU (…)'`（本机可复现，用例钉住了）；
+ * GPU 分支给的是设备名，上游文字 `[未验证]`（`parseBackendUsed()` 自己也这么标着）——
+ * 但那不重要，**现在的认领规则一个字符串都不比**。
+ * 于是那条比较在拿得到证据的每一台机器上恒真 → 恒拒绝写 →
+ * `InstalledBackendPack.selfTest` 照旧永远是 null，
+ * 「通过徽章 / 失败徽章 / anyFailed 横幅」三条 UI 分支照旧不亮 ——
+ * 修复交付了、用例绿了，而用户看到的东西一个字没变。
+ *
+ * 这正是本仓最贵的那类：**断言钉的是测试自己造的形状，不是产出方的真实形状。**
+ * 所以现在认领不再比对任何字符串，`backendUsed` 只作为**记录内容**落库
+ * （它要回答的是另一个问题：跑是跑通了，但加速到底有没有用上）。
+ *
+ * ### 用户点的那张卡片必须与实际跑的那个包一致
+ *
+ * `requestedId` 与 `packId` 不一致时**不写**：用户在 CUDA 卡片上点自测、
+ * 实际跑的是 CPU 包的二进制，把结果记上去就是发明一条不成立的证据。
+ * 钉住自测（`RunBackendSelfTestOptions.packId`）之后这种情况本不该发生 ——
+ * 这条是**防线**，不是主路径；它红了说明钉住那一层被绕开了。
  */
 export async function recordSelfTest(
   modelsDir: string,
-  requestedId: string | null,
+  claim: SelfTestClaim,
   outcome: SelfTestOutcomeLike,
 ): Promise<RecordSelfTestResult> {
-  const used = outcome.backendUsed;
-  if (!used) {
-    return { ok: false, packId: null, reason: '这次自检没有报出用的是哪个后端，无法认领' };
+  const { packId, requestedId } = claim;
+  if (packId === null) {
+    return {
+      ok: false,
+      packId: null,
+      reason:
+        '这次跑的 whisper-cli 不属于任何已安装的后端包（环境变量覆盖 / 手工布局 / ' +
+        '安装记录缺失），无法认领 —— 不会随便挑一个包记上去',
+    };
   }
+
   const store = new ArtifactStore(modelsDir);
   const installed = await store.listManifests<InstalledBackendPack>('backend');
-
-  let target: InstalledBackendPack | undefined;
-  if (requestedId) {
-    const asked = installed.find((p) => p.id === requestedId);
-    if (!asked) {
-      return { ok: false, packId: null, reason: `没有已安装的后端包叫 ${requestedId}` };
-    }
-    if (asked.backend !== used) {
-      return {
-        ok: false,
-        packId: null,
-        reason:
-          `实际跑的是 ${used} 后端，而 ${requestedId} 是 ${asked.backend} 包 —— ` +
-          `不把结果记到它头上（那会变成一条不成立的证据）`,
-      };
-    }
-    target = asked;
-  } else {
-    const matches = installed.filter((p) => p.backend === used);
-    if (matches.length !== 1) {
-      return {
-        ok: false,
-        packId: null,
-        reason: `跑的是 ${used} 后端，已装的 ${used} 包有 ${String(matches.length)} 个，认不出是哪一个`,
-      };
-    }
-    target = matches[0];
+  const target = installed.find((p) => p.id === packId);
+  if (!target) {
+    return { ok: false, packId: null, reason: `没有已安装的后端包叫 ${packId}` };
+  }
+  if (requestedId !== null && requestedId !== packId) {
+    return {
+      ok: false,
+      packId: null,
+      reason:
+        `你点的是 ${requestedId}，而这次实际跑的是 ${packId} 包里的 whisper-cli —— ` +
+        `不把结果记到 ${requestedId} 头上（那会变成一条不成立的证据）`,
+    };
   }
 
   const selfTest: BackendSelfTest = {
@@ -368,6 +424,8 @@ export async function recordSelfTest(
     devicesFound: outcome.devicesFound,
     rtf: outcome.rtf,
     errorMessage: outcome.errorMessage,
+    // 「跑通了」与「加速用上了」是两件事，记录必须能分开说（见 BackendSelfTest 注释）
+    backendUsed: outcome.backendUsed,
   };
   await store.writeManifest('backend', target.id, { ...target, selfTest });
   return { ok: true, packId: target.id, reason: null };

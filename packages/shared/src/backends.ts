@@ -214,4 +214,23 @@ export interface BackendSelfTest {
   /** Measured real-time factor on the embedded sample; null if the run failed. */
   rtf: number | null;
   errorMessage: string | null;
+  /**
+   * 这次跑**实际用上的后端**，取自 whisper 自己的 `whisper_backend_init_gpu:` 日志
+   * （`parseBackendUsed()`）。是**日志文字**，例如 `"CPU"`、`"CPU (ggml-cpu-zen4)"`、
+   * 或 GPU 设备名 —— **不是** `Backend` 那个小写枚举，两者永不相等。
+   *
+   * OPTIONAL：T-166 之前写下的记录没有这个字段。
+   *
+   * ## 为什么必须记下来（T-166 ①）
+   *
+   * 自检现在可以**钉住某一个包**跑（用户在哪张卡片上点就测哪个包）。于是出现了一种
+   * 以前不存在的状态：跑的**确实**是 Vulkan 包里的 whisper-cli，而 ggml 在这台机器上
+   * 没枚举到设备、优雅退回 CPU 算完了 —— `passed` 为真，**但加速没有生效**。
+   * 只记 `passed:true` 的话，卡片上那句"自检通过"就变成了一条不成立的证据；
+   * 而这正是 D-05 与 ADR-004 决策 3 反复要求区分的两件事：
+   * **「这个包能跑」≠「这个包的加速在你机器上真的用上了」。**
+   *
+   * `devicesFound: 0` 是同一件事的另一半证据（枚举不会撒谎），两个一起看才完整。
+   */
+  backendUsed?: string | null;
 }

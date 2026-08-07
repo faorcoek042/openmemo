@@ -54,6 +54,14 @@ import {
 
 import { byModelDir } from '../../pipeline/modelStore.js';
 import type { SseHub } from '../sse.js';
+/*
+ * ⚠️ **静态 import，不许改成动态 `import()`。**
+ * daemon 的 dist 里目前没有任何对本地模块的动态 import —— 这条性质保证了
+ * "重建产物时正在跑的进程不会半新半旧"（`gates-fix §8` 靠它才敢重建 dist）。
+ * `backends.ts` 对 `state.ts` 是 **type-only** 引用，所以这条边不构成运行时环。
+ */
+import { reconcileBackendManifests } from './backendReconcile.js';
+import { currentPlatform } from './backends.js';
 import { detectLocalHardware } from './hardware.js';
 import {
   loadBackendCatalog,
@@ -173,8 +181,41 @@ export class RestState {
     );
     await state.store.init();
     await state.loadPersisted();
+    await state.reconcileBackends();
     state.bridgeQueueToSse();
     return state;
+  }
+
+  /**
+   * 启动对账：**盘上真的装着、却没有安装记录**的后端包，补一份记录。
+   *
+   * 修的是「`/runtime` 对已装的 ffmpeg 显示「安装 119 MB」」（`gates-fix §5.2`）。
+   * 判据、为什么选这条路而不是"catalog 现算"、以及补出来的记录凭什么算数，
+   * 全写在 `backendReconcile.ts` 的文件头。
+   *
+   * **不阻断启动**：这是一次修补，不是前置条件。它失败时最坏的结果是回到今天的样子
+   * （界面说没装），而抛出去会变成 daemon 起不来 —— 那是把一个显示问题升级成宕机。
+   * 但**必须出声**：静默的自愈与静默的降级是同一族。
+   */
+  private async reconcileBackends(): Promise<void> {
+    try {
+      const report = await reconcileBackendManifests({
+        store: this.store,
+        packs: this.backendCatalog.packs,
+        platform: currentPlatform(),
+      });
+      for (const r of report.reconciled) {
+        console.warn(
+          `[backends] ${r.packId} 盘上已装好但没有安装记录（安装器是"blob 先落、manifest 最后写"，` +
+            `中途崩就是这个状态）——已按实测 sha256 补回记录，${String(r.bytes)} 字节，界面不再让你重下一遍`,
+        );
+      }
+      for (const s of report.skipped) {
+        console.warn(`[backends] ${s.packId} 没有补记录：${s.reason}`);
+      }
+    } catch (err: unknown) {
+      console.warn(`[backends] 启动对账失败：${String(err)} —— 已装但没记录的包会继续显示成"未安装"`);
+    }
   }
 
   /* ----------------------------- 落盘状态 ------------------------------- */

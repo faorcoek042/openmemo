@@ -250,6 +250,23 @@ export interface BackendToolPreference {
    *   - 某个后端 = 就用它，不读盘。
    */
   readonly selectedBackend?: Backend | null;
+  /**
+   * **只在这一个已安装包里找**（T-166 ①）。不传 = 不限制（默认，全部调用方的行为不变）。
+   *
+   * 语义是**硬限制，不是偏好**：那个包里没有这个二进制就返回 `null`，
+   * 绝不像 `selectedBackend` 那样往下回退。两者的区别是刻意的：
+   *
+   *   - `selectedBackend` 回答的是"**平时**该跑哪个"——回退 + 出声是对的，
+   *     因为不回退就会因为一个装了一半的包把整条转写链打死（见下面的三条依据）。
+   *   - `packId` 回答的是"**这一个包**行不行"。这里回退等于换一个包去跑，然后把
+   *     结果记到用户点的那张卡片上 —— 那正是 `POST /api/backends/selftest` 此前
+   *     做不到"自测这一个包"的原因，也是「凭空造证据」那一类里最贵的一种。
+   *     **拿不到就说拿不到。**
+   *
+   * 因此钉住时 {@link ResolvedBackendTool.degraded} 恒为 `false`：既然不回退，
+   * 就没有"退了一档"这回事，报 true 会变成一个永远说不清指向谁的假红灯。
+   */
+  readonly packId?: string;
 }
 
 /** {@link resolveBackendTool} 的结果 —— 路径**以及它是从哪个包来的**。 */
@@ -366,6 +383,8 @@ export async function resolveBackendTool(
       : preference.selectedBackend;
 
   const origins = await readInstalledPackOrigins(storeRoot);
+  /** 钉住某个包时的硬过滤器。`null` = 不限制。 */
+  const pinned = preference?.packId ?? null;
 
   const listDirs = async (dir: string): Promise<string[]> => {
     try {
@@ -380,7 +399,9 @@ export async function resolveBackendTool(
    * 排序键。**先 tier 后 priority 后名字**，三层全部确定 —— 任何一层留成
    * `readdir` 顺序，这个函数就又变回"看文件系统心情"。
    */
-  const packDirs = await listDirs(backendRoot);
+  const packDirs = (await listDirs(backendRoot)).filter(
+    (name) => pinned === null || origins.get(name)?.packId === pinned,
+  );
   const rankOf = (name: string): [number, number, string] => {
     const origin = origins.get(name);
     if (origin === undefined) return [2, 0, name];
@@ -411,9 +432,13 @@ export async function resolveBackendTool(
    */
   // Flat first: it is the exact, unambiguous location the installer wrote to. The
   // directory scan below is a search; this is a lookup.
-  const candidates: { path: string; dir: string | null }[] = [
-    { path: join(backendRoot, binaryName), dir: null },
-  ];
+  //
+  // 钉住某个包时，扁平命中同样要**先证明它属于那个包**才算数：`by-name/backend/yt-dlp`
+  // 是所有单文件包共用的一格，不查来源就等于"钉住"被一个同名文件绕过去。
+  const candidates: { path: string; dir: string | null }[] =
+    pinned === null || origins.get(binaryName)?.packId === pinned
+      ? [{ path: join(backendRoot, binaryName), dir: null }]
+      : [];
   for (const name of ordered) {
     const packDir = join(backendRoot, name);
     candidates.push(
@@ -442,6 +467,8 @@ export async function resolveBackendTool(
       backend: origin?.backend ?? null,
       preferred,
       degraded:
+        // 钉住时不回退 → 没有"退了一档"这回事（见 BackendToolPreference.packId）
+        pinned === null &&
         origin !== undefined &&
         preferred !== null &&
         origin.backend !== preferred &&
@@ -662,33 +689,106 @@ export async function materializeSqliteExtensions(
   return { linked, missing };
 }
 
-/** Find an installed model file by name under `<storeRoot>/by-name/<kind>/`. */
-export async function findInstalledModel(
+/*
+ * ★ T-166：`findInstalledModel(storeRoot, kind, names[], accept)` **已删除**。
+ *
+ * 它全仓只有一个调用方 —— `discoverTools()` 里那句"在 `by-name/asr/` 下按三个写死的
+ * 文件名找 VAD 权重"。而那正是本轮修掉的缺陷：桶名过期（T-149 之后 VAD 在 `vad/`）、
+ * 名单过期（上游发新版本就查不到）。`D-08 §D12` 早在设计评审里就点过同一件事：
+ * 「`findInstalledModel` 又把 VAD 文件名写死了，与同轮 `modelStore.ts` 强调的
+ *  『不要写死文件名』自相矛盾」——两年半后它以 `meta.sameSource` 红线的形式兑现了。
+ *
+ * 唯一调用方换成 {@link findWhisperVadWeights} 之后，它成了一个零调用方导出。
+ * **留着比删掉贵**：这个仓库里"写好了没人调"的东西已经骗过好几轮审计
+ * （`check-orphan-exports.mjs` 的第三档就是为它们加的）。所以直接删，
+ * 把教训留在这条注释和 `findWhisperVadWeights` 的文档里。
+ */
+
+/**
+ * whisper.cpp 能加载的那份 VAD 权重，**按桶 + 关键词 + 内容判**，不按固定文件名。
+ *
+ * ── ★ T-166：这是一次"只改了一边"的迁移留下的静默降级 ────────────────────────────
+ *
+ * T-149（`9ab2ada`）把 `role=vad` 挪进了自己的桶（`by-name/vad/`）。
+ * `apps/daemon` 那一侧跟上了（`resolveWhisperVadModel()` 两个桶都看），
+ * **这一侧没有** —— `discoverTools()` 一直只在 `by-name/asr/` 里按三个写死的文件名找。
+ *
+ * `[CI 实测 · runner-migrate]` 后果是 `meta.sameSource` 三平台一致地红：
+ * ```
+ * model.vad   本地=warn  端点=ok
+ * ```
+ * daemon 出口报 ok（它读 `bundle.tools.vadModel`，那是 `buildPipeline()` 用
+ * `resolveWhisperVadModel()` **覆盖**过的），CLI 出口报 warn（它直接用
+ * `discoverTools()` 的答案）。**同一台机器、同一个 store、两个答案。**
+ *
+ * 用户侧的后果不在自检里，在转写上：`vadModel` 变成 `null` →
+ * **离线转写的静音切分静默降级为固定窗口**，断句变差，而模型页、安装记录、
+ * sha256 校验**全绿**。这正是本仓最贵的那一类。
+ *
+ * ── 为什么规则是"后缀 + 关键词 + ggml 魔数"，而不是文件名清单 ────────────────────
+ *
+ * 原来那份清单（`ggml-silero-v6.2.0.bin` / `v5.1.2` / `silero-vad.bin`）
+ * 与 daemon 那侧的规则（`scanByName(..., {ext:'.bin', includes:'silero'})`）**不同**。
+ * 只把桶名改对、清单留着的话，下一次上游发 `v7` 时两边会**再一次**分叉 ——
+ * 而且只有 CLI 那一侧会哑掉。所以两边现在用同一条规则：
+ *
+ *   桶：`vad`（T-149 之后的正式位置）→ `asr`（老布局，VAD 曾被塞在这里）
+ *   名：`*.bin` 且文件名含 `silero`
+ *   收：`isGgmlModelFile()` —— 读头四字节，**这正是 whisper 自己会检查的东西**，
+ *       所以 `silero_vad.onnx`（sherpa 专用）在任何桶里都不会被交出去。
+ *
+ * ⚠️ 这个函数**不读安装记录**（`active.json` / `role`）——那一层在 daemon 的
+ * `resolveWhisperVadModel()` 里，它排在这条兜底之前。两边的**结论**必须一致，
+ * 由 `apps/daemon/src/pipeline/vadSameSource.test.ts` 逐场景钉住。
+ *
+ * @param onRejected 名字对得上、内容却不是 ggml 的候选。**必须能报出去** ——
+ *   它的形态是"用户装了 VAD，结果比没装更糟"，静默跳过就等于把它藏起来。
+ */
+export async function findWhisperVadWeights(
   storeRoot: string,
-  kind: 'asr' | 'llm',
-  names: string[],
-  /**
-   * Extra requirement on the candidate. Defaults to "it exists and is readable".
-   *
-   * T-148: existence is NOT enough for the VAD model. `by-name/asr` legitimately holds
-   * both `ggml-silero-v6.2.0.bin` (whisper.cpp) and `silero_vad.onnx` (sherpa-onnx), and
-   * handing whisper.cpp the wrong one kills the whole transcription with a message that
-   * says nothing about which file was wrong.
-   */
-  accept: (path: string) => Promise<boolean> = fileExists,
+  onRejected?: (path: string) => void,
 ): Promise<string | null> {
-  for (const name of names) {
-    const p = join(storeRoot, 'by-name', kind, name);
-    if (await accept(p)) return p;
+  /*
+   * 搜索位置，按证据强度排：
+   *   `by-name/vad`  T-149 之后的正式桶
+   *   `by-name/asr`  老布局（VAD 曾被塞进 ASR 桶）
+   *   `<storeRoot>`  更老的扁平布局（daemon 那侧原本写死 `ggml-silero-v6.2.0.bin`
+   *                  这一个名字；用同一条规则覆盖它，少一个会过期的字面量）
+   */
+  const dirs = [join(storeRoot, 'by-name', 'vad'), join(storeRoot, 'by-name', 'asr'), storeRoot];
+  for (const dir of dirs) {
+    let names: string[];
+    try {
+      names = await readdir(dir);
+    } catch {
+      continue;
+    }
+    for (const name of names.sort()) {
+      if (!name.endsWith('.bin')) continue;
+      if (!name.toLowerCase().includes('silero')) continue;
+      const p = join(dir, name);
+      if (await isGgmlModelFile(p)) return p;
+      onRejected?.(p);
+    }
   }
-  // Fall back to any file in the directory matching a caller-supplied predicate shape.
   return null;
 }
+
+/**
+ * `by-name/` 下的桶名。
+ *
+ * ⚠️ **T-166**：解析 VAD 权重的那个函数以前把这个参数写成 `'asr' | 'llm'`，
+ * 而 T-149 起 `role=vad` / `punctuation` 各有自己的桶。
+ * 类型窄成两个值的后果**不是"编译不过"**，是**没有人能表达 `vad`** ——
+ * 于是它只好继续去 `asr` 桶里找 VAD 权重，而安装器早就写到 `by-name/vad/` 了。
+ * **一个过窄的类型把一条真实的迁移挡在了外面，而且一个字都不说。**
+ */
+export type ByNameBucket = 'asr' | 'llm' | 'vad' | 'punctuation' | 'backend';
 
 /** List everything installed under a by-name kind — used by the self-check report. */
 export async function listInstalledModels(
   storeRoot: string,
-  kind: 'asr' | 'llm' | 'backend',
+  kind: ByNameBucket,
 ): Promise<string[]> {
   try {
     return (await readdir(join(storeRoot, 'by-name', kind))).sort();
@@ -746,29 +846,21 @@ export async function discoverTools(
   };
 
   const resolve = async (name: string): Promise<string | null> =>
-    (await findInBackendPacks(storeRoot, exe(name), { selectedBackend })) ??
-    (await fromPath(name));
+    (await findInBackendPacks(storeRoot, exe(name), { selectedBackend })) ?? (await fromPath(name));
 
   /*
    * VAD model ships as a ggml file inside the whisper.cpp pack's sibling model store.
    *
    * The acceptance test is the ggml magic, NOT the file name (T-148). Two reasons, both
    * measured rather than imagined:
-   *   1. the name list below is a guess about upstream's release naming — it was written
+   *   1. a fixed name list is a guess about upstream's release naming — it was written
    *      for `v5.1.2` and the catalog now pins `v6.2.0`; a third version breaks it again;
    *   2. `whisper-vad-speech-segments` reports EVERY load failure as the same sentence
    *      (`error: failed to initialize whisper context`, exit 2) — wrong file, missing
    *      file and empty path are indistinguishable downstream, so the check has to happen
    *      here, where we still know which candidate we picked.
    */
-  const vadModel =
-    overrides.vadModel ??
-    (await findInstalledModel(
-      storeRoot,
-      'asr',
-      ['ggml-silero-v6.2.0.bin', 'ggml-silero-v5.1.2.bin', 'silero-vad.bin'],
-      isGgmlModelFile,
-    ));
+  const vadModel = overrides.vadModel ?? (await findWhisperVadWeights(storeRoot));
 
   return {
     ffmpeg: overrides.ffmpeg ?? (await resolve('ffmpeg')) ?? '',

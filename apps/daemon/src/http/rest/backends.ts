@@ -5,9 +5,16 @@
  * 断点续传、镜像切换、GC。这里的差异只有两处：manifest 来源不同、落在 store 的
  * `backend` 命名空间下。
  *
- * ★ 诚实边界：`selfTest` 恒为 `null`（= 从未运行），绝不写 `passed: true`。
+ * ★ 诚实边界：**本文件写下的** `selfTest` 恒为 `null`（= 从未运行），绝不写 `passed: true`。
  * ADR-003 决策 3 要求自检必须跑**真实推理**（内嵌音频），那需要引擎二进制；
  * 没跑就报 null，永远不假装通过。
+ *
+ * ⚠️ 订正（T-166）：这句原文是「`selfTest` 恒为 `null`」，**已经不成立**——
+ * `http/rest/hardware.ts` 的 `recordSelfTest()` 会在自检真跑完之后写回它
+ * （在那之前它确实全仓只有下面那一句 `selfTest: null` 在写，三条 UI 分支永不亮）。
+ * 边界仍然在，只是范围缩小了：**安装这条路上永不写非 null**。
+ * 重装/升级时这里照旧写回 `null` 是**刻意的** —— 二进制换了，旧的自检结论就作废了，
+ * 留着它等于用上一个版本的证据替这一个版本作证。
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
@@ -23,6 +30,7 @@ import {
   type DownloadJob,
   type GetBackendCatalogResponse,
   type GetInstalledBackendsResponse,
+  type InapplicableKind,
   type InstalledBackendPack,
   type PlatformSelector,
 } from '@openmemo/shared';
@@ -33,7 +41,8 @@ import { toPullResponse } from './jobs.js';
 import { asString, decodePathSegment, readBody } from './request.js';
 import type { RestState } from './state.js';
 
-function currentPlatform(): PlatformSelector {
+/** 本机的 os/arch。**导出**：`backendReconcile.ts` 必须用同一份判定，不另写一个。 */
+export function currentPlatform(): PlatformSelector {
   return {
     os: process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux',
     arch: currentArch(),
@@ -70,22 +79,15 @@ function applicability(
 }
 
 /**
- * 「不可用」的三种含义 —— **不能用同一个 `applicable=false` 表达**。
+ * 「不可用」的三种含义 —— 定义**已搬到 `@openmemo/shared`**（T-165）。
  *
- * 用户看到"不可用"会以为自己的机器不支持，然后就不装了。但在干净机器上，
- * 绝大多数情况其实是**我们还没法判断**：probe 可执行文件装在后端包里，
- * 包没装 → probe 跑不了 → 加速后端一律显示"不可用"。
- * 这跟"探测完成、确认你没有这块卡"是完全不同的两件事，UI 该说的话也不同。
+ * 搬家的理由不是整洁：它住在这里的时候，daemon 一直真的把这个字段发出去，
+ * 而契约类型里没有它 ⇒ 前端拿到的 `pack` 上**根本不存在这个属性**，
+ * 于是"精心区分了三档"与"界面零消费"可以长期共存，编译器一个字都不会说。
+ * 现在发送方与接收方共用同一个类型，那条线才有人守。
+ * 这里保留再导出，避免既有 import 断掉。
  */
-export type InapplicableKind =
-  /** 可装 */
-  | 'applicable'
-  /** os/arch 就对不上，换台机器也没用 */
-  | 'platform'
-  /** **尚未探测**（probe 没跑成）——「检测中/待检测」，不是"不支持" */
-  | 'undetermined'
-  /** 探测完成，确认本机没有可用设备 */
-  | 'unsupported';
+export type { InapplicableKind };
 
 function inapplicableKind(
   state: RestState,

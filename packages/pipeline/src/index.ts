@@ -81,7 +81,7 @@ export {
   fileExists,
   findFileInBackendPacks,
   findInBackendPacks,
-  findInstalledModel,
+  findWhisperVadWeights,
   isExecutable,
   listInstalledModels,
   materializeSqliteExtensions,
@@ -92,6 +92,7 @@ export {
 export type {
   BackendPackOrigin,
   BackendToolPreference,
+  ByNameBucket,
   ManagedDirs,
   MaterializedExtensions,
   ResolvedBackendTool,
@@ -222,7 +223,11 @@ export {
   runBenchmark,
   toBenchmarkResult,
 } from './benchmark/runBenchmark.js';
-export type { BenchmarkOutcome, BenchmarkReport, RunBenchmarkOptions } from './benchmark/runBenchmark.js';
+export type {
+  BenchmarkOutcome,
+  BenchmarkReport,
+  RunBenchmarkOptions,
+} from './benchmark/runBenchmark.js';
 
 // F3 two-phase merge (streaming draft -> offline re-run, preserving user edits).
 export {
@@ -241,13 +246,7 @@ export type {
 } from './asr/merge.js';
 
 // -- queue -----------------------------------------------------------------------------------
-export {
-  LANES,
-  LaneManager,
-  PRIORITY,
-  PriorityTracker,
-  defaultCapacities,
-} from './queue/lanes.js';
+export { LANES, LaneManager, PRIORITY, PriorityTracker, defaultCapacities } from './queue/lanes.js';
 export type { Lane, LaneCapacities, LaneStats, PreemptionCheck, Priority } from './queue/lanes.js';
 
 // -- pipeline ---------------------------------------------------------------------------------

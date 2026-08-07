@@ -18,6 +18,7 @@ import {
   buildCandidates,
   buildDefaultRegistry,
   discoverTools,
+  findWhisperVadWeights,
   resolveBackendTool,
   resolveStoreRoot,
   selectEngine,
@@ -210,13 +211,24 @@ export async function resolveWhisperVadModel(
     },
   });
 
+  /*
+   * ★ T-166：by-name 兜底**改成调 `@openmemo/pipeline` 的那一份**，不再在这里自己扫。
+   *
+   * 原因是 `runner-migrate` 在 CI 上照出来的 `meta.sameSource` 红线：
+   * `model.vad 本地=warn 端点=ok`（三平台一模一样）。成因是 T-149 把 `role=vad`
+   * 挪进 `by-name/vad/` 之后**只改了这一边** —— `discoverTools()` 那一侧还在
+   * 只按三个写死的文件名翻 `by-name/asr/`。daemon 出口用的是这里的答案（ok），
+   * CLI 出口用的是 `discoverTools()` 的答案（warn）。
+   *
+   * 只把那边的桶名改对是不够的：两边的**规则**当时也不一样（这里是"后缀+关键词"，
+   * 那边是固定名单），下一次上游发 `v7` 时会再分叉一次，而且仍然只有一边哑掉。
+   * 所以规则收成一份，这里只保留本侧独有的两层证据：
+   * 环境变量覆盖、以及按 `role` 读安装记录 —— 它们都排在兜底之前。
+   */
   const path =
     (await consider(firstExisting(env['OPENMEMO_VAD_MODEL']))) ??
     fromRecords?.path ??
-    // 老布局里 VAD 曾被塞进 asr 桶，兜底时两个桶都看，但**必须带 silero 关键词**
-    (await consider(scanByName(modelsDir, 'vad', { ext: '.bin', includes: 'silero' }))) ??
-    (await consider(scanByName(modelsDir, 'asr', { ext: '.bin', includes: 'silero' }))) ??
-    (await consider(join(modelsDir, 'ggml-silero-v6.2.0.bin')));
+    (await findWhisperVadWeights(modelsDir, (p) => rejected.push(p)));
 
   const reasonZh =
     path !== null
@@ -422,10 +434,8 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
   }
 
   const candidates = await buildCandidates(engines);
-  const sherpaAvailable =
-    candidates.find((c) => c.engine === sherpa)?.available ?? false;
-  const paraformerAvailable =
-    candidates.find((c) => c.engine === paraformer)?.available ?? false;
+  const sherpaAvailable = candidates.find((c) => c.engine === sherpa)?.available ?? false;
+  const paraformerAvailable = candidates.find((c) => c.engine === paraformer)?.available ?? false;
 
   const pickEngine = (
     language: string | undefined,
@@ -478,7 +488,11 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
       ? candidates.find((c) => c.engine.id === override.engineId && c.available)
       : undefined;
     const sel = forced
-      ? { engineId: forced.engine.id, engine: forced.engine, reason: `用户指定引擎 ${forced.engine.id}` }
+      ? {
+          engineId: forced.engine.id,
+          engine: forced.engine,
+          reason: `用户指定引擎 ${forced.engine.id}`,
+        }
       : pickEngine(language);
     if (!sel) {
       return {

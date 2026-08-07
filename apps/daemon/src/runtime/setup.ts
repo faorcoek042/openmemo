@@ -38,7 +38,7 @@ import { ArtifactStore } from '@openmemo/downloader';
  * 与 `canonicalAssetRelPath` 那次"读取侧/写入侧各归一一次"同一条判据：
  * **同一个问题只准有一个回答的人。**
  */
-import { findInBackendPacks } from '@openmemo/pipeline';
+import { findInBackendPacks, resolveBackendTool } from '@openmemo/pipeline';
 import {
   CIRCUIT_BREAKER_THRESHOLD,
   PROBE_TIMEOUT_MS,
@@ -65,12 +65,7 @@ import {
   type ProbeResult,
   type SelfTestOutcome,
 } from '@openmemo/runtime';
-import type {
-  Backend,
-  HardwareInfo,
-  InstalledBackendPack,
-  Remediation,
-} from '@openmemo/shared';
+import type { Backend, HardwareInfo, InstalledBackendPack, Remediation } from '@openmemo/shared';
 
 /**
  * 除 cpu 外的全部后端。
@@ -569,7 +564,29 @@ async function firstExistingFile(...candidates: (string | undefined)[]): Promise
   return null;
 }
 
-/** 自检用最小的已装模型（selfTest.ts 的建议）：按体积升序取第一个 .bin。 */
+/**
+ * 自检用最小的已装模型（selfTest.ts 的建议）：按体积升序取第一个 .bin。
+ *
+ * ## ★ T-166：**必须排除 silero**，而且这条以前不排也没事、现在不排就会出事
+ *
+ * `by-name/asr/` 里在 T-149 之前躺着 VAD 权重（`ggml-silero-*.bin`）——
+ * 而 VAD 权重恰恰是这个桶里**最小**的那个（约 1 MB，whisper base 是 140 MB）。
+ * 于是"按体积升序取第一个"在老布局的机器上会稳定挑中 VAD 权重，
+ * whisper 拿它去转写 → `invalid model data (bad magic)` → 自检 `passed:false`。
+ *
+ * 为什么以前没人撞上：**因为自检结果从来没有被记下来过**
+ * （`InstalledBackendPack.selfTest` 全仓恒为 null）。用户点一次看到一句失败，
+ * 刷新就没了，没人追。T-166 把回写接通之后，同一个错误会变成卡片上一条
+ * **持续的**"自检失败"红字，钉在一个完全好用的包上 —— 比原来坏得多。
+ *
+ * > 「把一个东西从『没有』变成『有』，会让所有拿它的缺席当前提的地方失去意义 ——
+ * >  而其中只有一部分会自己红出来。」
+ *
+ * 排除规则与 `pipeline/setup.ts` 里 ASR 权重那条**逐字相同**
+ * （`scanByName(..., { ext: '.bin', excludes: 'silero' })`）：同一个问题不许有两个答案。
+ * 它同时覆盖了 `findWhisperVadWeights()` 会选中的那一份 —— 那个函数要求文件名含
+ * `silero`，所以按 `silero` 排除必然把它排掉。
+ */
 async function smallestInstalledModel(modelsRoot: string): Promise<string | null> {
   const dir = path.join(modelsRoot, 'by-name', 'asr');
   let entries: string[];
@@ -581,6 +598,7 @@ async function smallestInstalledModel(modelsRoot: string): Promise<string | null
   const sized: { file: string; size: number }[] = [];
   for (const name of entries) {
     if (!name.endsWith('.bin')) continue;
+    if (name.toLowerCase().includes('silero')) continue;
     const full = path.join(dir, name);
     try {
       const st = await stat(full);
@@ -601,6 +619,8 @@ export interface SelfTestBlocked {
   readonly messageZh: string;
   readonly remediation: Remediation;
   readonly resolved: { whisperCli: string | null; model: string | null; audio: string | null };
+  /** 请求方点名要测的包（`{id}`）。没点名时 `null`。 */
+  readonly requestedPackId: string | null;
 }
 
 export interface SelfTestRan {
@@ -611,12 +631,43 @@ export interface SelfTestRan {
   readonly audioSeconds: number;
   readonly timeoutMs: number;
   readonly resolved: { whisperCli: string; model: string; audio: string };
+  readonly requestedPackId: string | null;
+  /**
+   * **这次跑的 whisper-cli 是哪个已安装包提供的**（T-166 ①）。
+   *
+   * 这是"结果该记到谁头上"的**唯一**合法证据，而且它是**结构性**的：
+   * 由 `resolveBackendTool()` 按安装记录反查目录得出，与任何日志文字无关。
+   *
+   * ⚠️ 不要拿 `outcome.backendUsed` 当这个用 —— 那是从 whisper 的 stderr 里
+   * 解析出来的**日志文字**（`'CPU'` / `'CPU (ggml-cpu-zen4)'` / GPU 设备名 / `null`），
+   * 与 `Backend` 那个小写枚举（`'cpu'`）**永不相等**。T-164 的认领规则正是这样
+   * 写成了一条恒假的比较：`asked.backend !== used` 在真机上恒真 →
+   * **`selfTest` 在任何真实机器上都写不进去**，三条 UI 分支照旧不亮。
+   * 见 `packages/runtime/src/selfTest.ts` 的 `parseBackendUsed()`。
+   *
+   * `null` 的含义是"这个二进制不属于任何已安装的包"（`OPENMEMO_WHISPER_CLI`
+   * 覆盖、`bin/runtime` 里的手工布局、装到一半没写 manifest）——
+   * 那种情况下**不认领**，而不是随便挑一个包按上去。
+   */
+  readonly packId: string | null;
+  /** 上面那个包声明的后端。`packId` 为 null 时也是 null。 */
+  readonly packBackend: Backend | null;
 }
 
 export type BackendSelfTestResult = SelfTestBlocked | SelfTestRan;
 
 export interface RunBackendSelfTestOptions extends RuntimePathsInput {
   readonly threads?: number | undefined;
+  /**
+   * **只自测这一个已安装包**（T-166 ①）。不传 = 按统一的选择规则挑一个。
+   *
+   * 装了 CPU 与 Vulkan 两个包的用户，此前只能测到"当前被选中的那个"——
+   * 在另一张卡片上点自测，跑的还是同一个二进制。钉住之后：
+   *   · 找得到 → 跑的确实是那个包里的 whisper-cli（ggml 只从二进制自身目录
+   *     dlopen 后端库，所以"哪个包的二进制"就等于"哪套后端库"）；
+   *   · 找不到 → `blocked`，**绝不回退到别的包再把结果记到这张卡片上**。
+   */
+  readonly packId?: string | undefined;
 }
 
 /**
@@ -631,6 +682,8 @@ export async function runBackendSelfTest(
 ): Promise<BackendSelfTestResult> {
   const layout = await resolveRuntimeLayout(options);
   const env = process.env;
+  const requestedPackId =
+    options.packId !== undefined && options.packId.length > 0 ? options.packId : null;
 
   /*
    * ★ T-160：这里原来**只搜 `bin/runtime`**，而安装器把后端包解到
@@ -641,12 +694,39 @@ export async function runBackendSelfTest(
    * 后果：`selfTest` 永远是 null →「自检结果」「anyFailed 横幅」三条 UI 分支永不亮。
    *
    * 修法**不是**给它补一条搜索路径，是让它去问 `findInBackendPacks()` —— 见文件头。
+   *
+   * ★ T-166 ①：改用 `resolveBackendTool()`（同一个解析器的完整视角），
+   * 因为自检还要回答"**这次跑的是哪个包**"。只回路径的 `findInBackendPacks()`
+   * 天然说不出这一点，而说不出这一点就只能去猜 —— 猜法就是 T-164 那条恒假的
+   * 字符串比较（`'CPU' !== 'cpu'`）。
    */
-  const whisperCli = await firstExistingFile(
-    env['OPENMEMO_WHISPER_CLI'],
-    (await findUnder(layout.runtimesRoot, named(whisperCliName()))) ?? undefined,
-    (await findInBackendPacks(layout.modelsRoot, whisperCliName())) ?? undefined,
+  const resolved = await resolveBackendTool(
+    layout.modelsRoot,
+    whisperCliName(),
+    requestedPackId === null ? undefined : { packId: requestedPackId },
   );
+
+  /*
+   * 钉住某个包时，**只**认那个包给的二进制：环境变量覆盖与 `bin/runtime` 里的
+   * 手工布局都不属于任何包，拿它们去跑再把结果记到用户点的那张卡片上，
+   * 就是在为另一个二进制作证（`scripts/selfcheck.mjs` 的同一条判据）。
+   */
+  const whisperCli =
+    requestedPackId !== null
+      ? (resolved?.path ?? null)
+      : await firstExistingFile(
+          env['OPENMEMO_WHISPER_CLI'],
+          (await findUnder(layout.runtimesRoot, named(whisperCliName()))) ?? undefined,
+          resolved?.path ?? undefined,
+        );
+
+  /*
+   * 认领证据：**只有当真正要跑的那个路径就是解析器给的那个**，才能说
+   * "这次跑的是 X 包"。环境变量赢了的时候 `whisperCli !== resolved.path`，
+   * 于是 packId 为 null —— 不认领。与 `scripts/selfcheck.mjs:244` 同一条判据。
+   */
+  const ranFrom =
+    resolved !== null && whisperCli !== null && whisperCli === resolved.path ? resolved : null;
 
   const model = await firstExistingFile(
     env['OPENMEMO_ASR_MODEL'],
@@ -695,6 +775,10 @@ export async function runBackendSelfTest(
       message: `self-test cannot run: missing ${missing.join(', ')}`,
       messageZh:
         `自检无法运行，缺少：${missing.join('、')}。` +
+        (requestedPackId !== null && whisperCli === null
+          ? `已安装的 ${requestedPackId} 包里没有 ${whisperCliName()} —— ` +
+            '不会拿别的包的二进制去跑再把结果记到它头上（那是发明证据）。'
+          : '') +
         '自检必须跑一次真实推理（ADR-003 决策 3），缺前提时只报 blocked，不会返回伪造的"通过"。',
       remediation: {
         action: missing.includes('asr-model') ? 'install_model' : 'install_backend',
@@ -707,6 +791,7 @@ export async function runBackendSelfTest(
         label: missing.includes('asr-model') ? 'Install an ASR model' : 'Install a backend pack',
       },
       resolved: { whisperCli, model, audio },
+      requestedPackId,
     };
   }
 
@@ -726,5 +811,8 @@ export async function runBackendSelfTest(
     audioSeconds,
     timeoutMs: SELF_TEST_TIMEOUT_MS,
     resolved: { whisperCli, model, audio },
+    requestedPackId,
+    packId: ranFrom?.packId ?? null,
+    packBackend: ranFrom?.backend ?? null,
   };
 }
