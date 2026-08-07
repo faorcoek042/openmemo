@@ -1,7 +1,8 @@
 /**
  * 库无关的思维导图数据模型（D-02 §2，**ADR-002 决策 3 硬要求**）。
  *
- * mind-elixir 与 markmap 都只是这个 schema 的**消费者**。
+ * mind-elixir 只是这个 schema 的一个**消费者**（T-165：markmap 适配器与依赖已整块摘除，
+ * 产品里没有大纲视图 —— 见 `index.ts` 文件头）。
  * 本文件**禁止 import 任何渲染库** —— 一旦依赖了，"库无关"就名存实亡。
  */
 
@@ -41,7 +42,7 @@ export interface NodeStyle {
 
 export interface MindMapNode {
   readonly key: NodeKey;
-  /** 【必填】纯文本 —— 最小公分母，markmap 只需要这个。 */
+  /** 【必填】纯文本 —— 最小公分母：所有序列化格式与渲染器都至少需要它。 */
   readonly text: string;
   /** 有序数组，顺序即显示顺序（不依赖对象键序）。 */
   readonly children: readonly NodeKey[];

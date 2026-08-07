@@ -1,6 +1,11 @@
 /**
- * Markdown 序列化（D-02 §2.4）。mind-elixir/markmap 都不提供通用 Markdown 往返
- * （见 D-02 §2.3 已核实的结论），所以这里自己实现，且是与 markmap 的桥。
+ * Markdown 序列化（D-02 §2.4）。mind-elixir 不提供通用 Markdown 往返
+ * （见 D-02 §2.3 已核实的结论），所以这里自己实现。
+ *
+ * ⚠️ T-165：这里原来还写着「且是与 markmap 的桥」—— markmap 已整块摘除，那句话失效了。
+ * 但**这个模块本身留着，而且它在产品路径上**：`toMarkdown()` 是
+ * `GET /api/notes/:uid/export?what=mindmap&format=md` 的实现
+ * （`apps/daemon/src/http/rest/content.ts` 的 `exportMindmap()`）。
  *
  * 两种输出风格：
  *   - `list`（默认）：根节点渲染成 `# title`，其余全部是嵌套 `- item`（每层缩进 2 空格）。

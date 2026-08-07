@@ -6,7 +6,12 @@ import { StatusChip } from '../../../components/common/StatusChip';
 import { BackendChip, type BackendChipState } from '../../../components/common/BackendChip';
 import { formatBytes } from '../../../lib/format/bytes';
 import { localizedName } from '../../../lib/format/localized';
-import { packStatus, STATUS_NEEDS_EXPLANATION, type PackStatus } from '../packStatus';
+import {
+  packStatus,
+  selfTestVerdict,
+  STATUS_NEEDS_EXPLANATION,
+  type PackStatus,
+} from '../packStatus';
 
 type Pack = GetBackendCatalogResponse['packs'][number];
 
@@ -76,6 +81,7 @@ export function BackendPackCard({
   const pendingCi = (pack as { availability?: string }).availability === 'pending-ci';
   const selfTestFailed = selfTest != null && !selfTest.passed;
   const showRecommended = recommended ?? pack.recommended;
+  const verdict = selfTestVerdict(pack.backend, selfTest);
   const status = packStatus({
     installed: pack.installed,
     applicable: pack.applicable,
@@ -204,7 +210,23 @@ export function BackendPackCard({
         <div className="mt-3 rounded border border-line bg-surface-0 p-2.5 text-xs">
           {selfTest.passed ? (
             <>
-              <StatusChip tone="good" label={t('runtime.pack.selfTestPassed')} />
+              {/*
+                ★ T-165b / T-166：「跑通了」与「加速真的用上了」**必须分开说**。
+
+                自检钉到某一个包上跑之后，出现了一种以前不存在的状态：跑的确实是
+                Vulkan 包里的 whisper-cli，而 ggml 没枚举到设备、**优雅退回 CPU 算完了**
+                —— `passed` 为真，加速一点没生效。
+                > 一张 Vulkan 卡片写着「自检通过」、而它其实静默跑的是 CPU，
+                > 这两种情况在界面上此前**无法区分**。
+                判据是 `devicesFound`（枚举不会撒谎），**不解析 `backendUsed`** ——
+                后者是日志文字，T-164 拿它跟 `Backend` 枚举比，恒不相等、恒拒绝回写，
+                而用例全绿。规则与依据写在 `packStatus.ts` 的 `selfTestVerdict`。
+              */}
+              {verdict === 'passed-not-accelerated' ? (
+                <StatusChip tone="warning" label={t('runtime.pack.selfTestNoAccel')} />
+              ) : (
+                <StatusChip tone="good" label={t('runtime.pack.selfTestPassed')} />
+              )}
               <p className="mt-1 text-ink-secondary">
                 {t('runtime.pack.devicesFound', { n: selfTest.devicesFound })}
                 {selfTest.rtf != null
@@ -214,6 +236,22 @@ export function BackendPackCard({
                     })
                   : ''}
               </p>
+              {verdict === 'passed-not-accelerated' ? (
+                <p className="mt-1 text-warning" data-testid={`selftest-no-accel-${pack.id}`}>
+                  {t('runtime.pack.selfTestNoAccelDetail')}
+                </p>
+              ) : null}
+              {/*
+                实际用上的后端：**原样显示**。
+                它是 whisper 自己的日志文字（`CPU`、`CPU (ggml-cpu-zen4)`、GPU 设备名），
+                显示原文永远诚实，解析它才会出错 —— 那正是 T-166 修掉的那个 bug。
+                字段可选（T-166 之前写下的记录没有它），没有就一个字不说，不编。
+              */}
+              {selfTest.backendUsed ? (
+                <p className="mt-0.5 text-[11px] text-ink-secondary">
+                  {t('runtime.pack.backendUsed', { backend: selfTest.backendUsed })}
+                </p>
+              ) : null}
               <p className="mt-0.5 text-[11px] text-ink-muted">
                 {t('runtime.pack.selfTestProvenance', {
                   at: new Date(selfTest.ranAt).toLocaleString(locale),

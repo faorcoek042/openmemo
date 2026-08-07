@@ -6903,3 +6903,247 @@ describe('T-165 ④ /diagnostics 得有一个常驻入口', () => {
     r.unmount();
   });
 });
+
+/**
+ * ## T-165 ⑤ markmap 整块摘除 —— **不许留半截**
+ *
+ * `MindmapView` 此前渲染「切到**大纲视图**将不显示 {{edges}} 条关联线与 {{summaries}} 个概要」，
+ * 而**产品里没有大纲视图**：`markmap-lib` / `markmap-view` 全仓零 import，
+ * `toMarkmap` / `markmapLoss` 零产品调用方。那句话在描述一个用户**做不到的动作**的后果。
+ *
+ * 它**只能删不能改写**：那两样东西（自由连线、概要）在现有的任何一条路径上都不会丢
+ * ——SVG/PNG 导出走的是 mind-elixir 的实时画布。改写只会产生第二句需要读者判断真假的话。
+ *
+ * ── 这条守卫钉的是什么 ────────────────────────────────────────────────────────
+ *
+ * **"半截"是这一族真正的失败形态**，而且两个方向都真实存在过：
+ *   · 删了依赖没删文案 → 界面继续提一个不存在的视图；
+ *   · 删了文案没删依赖 → 两个零 import 的包继续挂在供应链与打包体积上，
+ *     而且下一个人会以为"既然依赖还在，那视图大概是要做的"，把文案加回来。
+ * 所以断言**同时**覆盖依赖、适配器导出、以及词条 —— 任何一半回来都红。
+ *
+ * 手法与 `peaks.test.ts` 那条「这个模块不许再导出 mockPeaks」同族。
+ *
+ * ⚠️ `toMarkdown` **刻意不在这条守卫里**：它不是 markmap 的一部分，
+ * 而是 `GET /api/notes/:uid/export?what=mindmap&format=md` 的实现
+ * （`apps/daemon/src/http/rest/content.ts` 的 `exportMindmap()`）。把它一起禁掉会打掉一个真功能。
+ */
+describe('T-165 ⑤ markmap 整块摘除，不许留半截', () => {
+  test('★ `apps/web/package.json` 里不许再出现 markmap 依赖', () => {
+    const pkg = JSON.parse(readFileSync(`${process.cwd()}/package.json`, 'utf8')) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const all = { ...pkg.dependencies, ...pkg.devDependencies };
+    const back = Object.keys(all).filter((d) => d.startsWith('markmap'));
+    assert.deepEqual(
+      back,
+      [],
+      `markmap 依赖回来了：${JSON.stringify(back)} —— ` +
+        '零 import 的依赖不会有任何东西报错，但它会让下一个人以为"大纲视图是要做的"',
+    );
+  });
+
+  test('★ `@openmemo/mindmap` 不许再导出 markmap 适配器', async () => {
+    const mod = (await import('@openmemo/mindmap')) as unknown as Record<string, unknown>;
+    for (const name of ['toMarkmap', 'markmapLoss', 'escapeHtml']) {
+      assert.equal(
+        name in mod,
+        false,
+        `${name} 回来了 —— 适配器一旦回来，"提示切视图会丢什么"那句话就会跟着回来`,
+      );
+    }
+    // 阳性对照：这个断言必须是在**真的检查一个活模块**，而不是在一个空对象上恒真
+    assert.equal(typeof mod['toMindElixir'], 'function', '前提自检：mind-elixir 适配器应当还在');
+    assert.equal(typeof mod['toMarkdown'], 'function', '前提自检：导出端点用的 toMarkdown 不许被误删');
+  });
+
+  test('★ 两份 locale 里都不许再有那条词条（留着它，下一个人会把它接回去）', () => {
+    for (const loc of ['zh-CN', 'en']) {
+      const raw = readFileSync(`${process.cwd()}/src/app/i18n/locales/${loc}.json`, 'utf8');
+      const j = JSON.parse(raw) as { mindmap?: Record<string, unknown> };
+      assert.equal(
+        'markmapLoss' in (j.mindmap ?? {}),
+        false,
+        `${loc}.json 里 mindmap.markmapLoss 回来了`,
+      );
+    }
+  });
+
+  test('★ 导图面板上不许再出现那句提示（带自由连线与概要的文档也一样）', async () => {
+    /*
+     * 判据是**渲染出来的东西**，不是源码里有没有那个字符串。
+     * 而且这份 doc **刻意带上 edges 与 summaries** —— 缺陷版本正是靠它们才显示那句话，
+     * 拿一份空文档去测，把缺陷放回去也照样绿。
+     */
+    stubApi({});
+    const { MindmapView } = await import('../features/mindmap/MindmapView');
+    const doc = {
+      schemaVersion: 1,
+      uid: 'u',
+      title: '根',
+      rootKey: 'r',
+      revision: 0,
+      nodes: {
+        r: { key: 'r', text: '根', children: ['a'] },
+        a: { key: 'a', text: '子', children: [] },
+      },
+      edges: [{ key: 'e', from: 'r', to: 'a' }],
+      summaries: [{ key: 's', parent: 'r', start: 0, end: 0, text: '概要' }],
+    };
+    const r = await render(<MindmapView doc={doc as never} />);
+    await r.flush();
+    const shown = text(r.container);
+    assert.equal(
+      shown.includes('大纲视图'),
+      false,
+      `界面又在提一个不存在的视图 → ${shown}`,
+    );
+    r.unmount();
+  });
+});
+
+/**
+ * ## T-165b ★「跑通了」与「加速真的用上了」必须在卡片上分得开
+ *
+ * `daemon-backlog` T-166 把自检**钉到某一个包**上跑之后，出现了一种以前不存在的状态：
+ * 跑的**确实**是 Vulkan 包里的 whisper-cli，而 ggml 没枚举到设备、
+ * **优雅退回 CPU 算完了** —— `passed` 为真，加速一点没生效。
+ *
+ * > 一张 Vulkan 卡片写着「自检通过」、而它其实静默跑的是 CPU ——
+ * > 这两种情况在界面上此前**无法区分**。
+ *
+ * ## 判据用 `devicesFound`，**一个字符串都不比**
+ *
+ * 这条是从 T-166 那个 bug 直接抄来的：`backendUsed` 是 whisper 的**日志文字**
+ * （`'CPU'`、`'CPU (ggml-cpu-zen4)'`、GPU 设备名、null），**不是 `Backend` 枚举**。
+ * T-164 拿它跟 `'cpu'` 比 → `'CPU' !== 'cpu'` 恒真 → 回写恒被拒 → 三条 UI 分支恒不亮，
+ * **而它 6 条用例全绿，因为用例喂的是产品从不产出的形状**。
+ * 所以下面每一条喂的都是 `parseBackendUsed()` **真会产出**的那几种字符串。
+ *
+ * ── 把名字遮住，这些断言什么时候会失败 ──────────────────────────────────────
+ * 有人把两种"通过"合并回一句「自检通过」；或者反过来，
+ * 对 CPU 包也报"加速没生效"（假红灯）；或者开始**解析** `backendUsed` 来做判断。
+ */
+describe('T-165b「跑通了」≠「加速用上了」', () => {
+  const CARD = {
+    locale: 'zh-CN',
+    isActive: false,
+    installing: false,
+    onInstall: () => undefined,
+    onRemove: () => undefined,
+    onSelect: () => undefined,
+    onSelfTest: () => undefined,
+  } as const;
+
+  async function card(
+    packOver: Record<string, unknown>,
+    selfTest: Record<string, unknown> | null,
+  ) {
+    const r = await render(
+      <BackendPackCard
+        {...CARD}
+        pack={pack({ installed: true, ...packOver }) as never}
+        selfTest={selfTest as never}
+      />,
+    );
+    return { r, shown: text(r.container) };
+  }
+
+  const RAN_ON_CPU = {
+    passed: true,
+    ranAt: '2026-08-07T01:02:03.000Z',
+    devicesFound: 0,
+    rtf: 0.9,
+    errorMessage: null,
+    // parseBackendUsed() 在无 GPU 的机器上真正产出的那两种之一
+    backendUsed: 'CPU (ggml-cpu-zen4)',
+  };
+  const RAN_ON_GPU = {
+    passed: true,
+    ranAt: '2026-08-07T01:02:03.000Z',
+    devicesFound: 1,
+    rtf: 0.05,
+    errorMessage: null,
+    backendUsed: 'NVIDIA GeForce RTX 4090',
+  };
+
+  test('★ Vulkan 卡片：跑通了但零设备 → 不许只写「自检通过」', async () => {
+    const { r, shown } = await card({ id: 'v', backend: 'vulkan' }, RAN_ON_CPU);
+    assert.ok(
+      !!r.container.querySelector('[data-testid="selftest-no-accel-v"]'),
+      `一张 Vulkan 卡片报了通过，却没说加速其实没生效 → ${shown}`,
+    );
+    assert.ok(
+      shown.includes('CPU (ggml-cpu-zen4)'),
+      `没有把"实际用上的后端"原样显示出来 → ${shown}`,
+    );
+    r.unmount();
+  });
+
+  test('★ 阳性对照：真枚举到设备时，两种情况渲染出的文本必须不同', async () => {
+    const bad = await card({ id: 'v', backend: 'vulkan' }, RAN_ON_CPU);
+    const good = await card({ id: 'v', backend: 'vulkan' }, RAN_ON_GPU);
+    assert.equal(
+      !!good.r.container.querySelector('[data-testid="selftest-no-accel-v"]'),
+      false,
+      `真跑在 GPU 上却报"加速没生效" —— 假红灯会训练人忽略告警 → ${good.shown}`,
+    );
+    assert.notEqual(
+      bad.shown,
+      good.shown,
+      '「跑在 CPU 上」与「跑在 GPU 上」在屏幕上长得一模一样 —— 那就是这条要修的东西',
+    );
+    assert.ok(good.shown.includes('NVIDIA GeForce RTX 4090'), `设备名没显示 → ${good.shown}`);
+    bad.r.unmount();
+    good.r.unmount();
+  });
+
+  test('★ CPU 包枚举到 0 个 GPU 设备是正常的，不许报"加速没生效"', async () => {
+    const { r, shown } = await card({ id: 'c', backend: 'cpu' }, RAN_ON_CPU);
+    assert.equal(
+      !!r.container.querySelector('[data-testid="selftest-no-accel-c"]'),
+      false,
+      `对 CPU 包报"加速没生效"是假红灯 → ${shown}`,
+    );
+    assert.ok(shown.includes('自检通过'), `CPU 包跑通了就该说通过 → ${shown}`);
+    r.unmount();
+  });
+
+  test('★ 老记录没有 backendUsed 时不许编，也不许因此报警', async () => {
+    /*
+     * `backendUsed` 是 T-166 才加的可选字段。老记录里没有它 ——
+     * 那时"实际用了哪个后端"这件事我们**确实不知道**，一个字都不该说。
+     * （与 `inapplicableKind` 缺失时不许兜底成 "本机不支持" 是同一条判据。）
+     */
+    const { passed, ranAt, devicesFound, rtf, errorMessage } = RAN_ON_GPU;
+    const { r, shown } = await card(
+      { id: 'v', backend: 'vulkan' },
+      { passed, ranAt, devicesFound, rtf, errorMessage },
+    );
+    assert.ok(shown.includes('自检通过'), `枚举到设备就该说通过 → ${shown}`);
+    assert.equal(
+      shown.includes('实际用上的后端'),
+      false,
+      `没有这个字段却渲染了那一行 → ${shown}`,
+    );
+    r.unmount();
+  });
+
+  test('★ 判据是 devicesFound，不是解析 backendUsed（喂一个没人认识的字符串照样对）', async () => {
+    /*
+     * 这条钉的是**实现手法**留下的后果：一旦有人改成"看 backendUsed 里有没有 CPU 字样"，
+     * 上游哪天把日志文字改了（或者是 GPU 设备名里恰好带 CPU），判断就会静默出错。
+     * 喂一个完全陌生的字符串 + 零设备 —— 正确实现必须仍然判成"加速没生效"。
+     */
+    const { r, shown } = await card(
+      { id: 'v', backend: 'vulkan' },
+      { ...RAN_ON_CPU, backendUsed: 'Llvmpipe (LLVM 17, 256 bits)' },
+    );
+    assert.ok(
+      !!r.container.querySelector('[data-testid="selftest-no-accel-v"]'),
+      `零设备就是没加速，与那串文字长什么样无关 → ${shown}`,
+    );
+    r.unmount();
+  });
+});

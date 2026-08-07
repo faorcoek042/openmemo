@@ -10,7 +10,6 @@ import { describe, it } from 'node:test';
 import type { ChatRequest, ChatResult, LlmProvider, ProviderCapabilities } from '@openmemo/llm';
 
 import { fromMindElixir, toMindElixir } from './adapters/mind-elixir.js';
-import { escapeHtml, markmapLoss, toMarkmap } from './adapters/markmap.js';
 import { generateMindMap, planWindows, type TranscriptSegment } from './generate.js';
 import { emptyDoc, type MindMapDoc, type MindMapNode } from './types.js';
 import { repair, validate } from './validate.js';
@@ -173,43 +172,6 @@ describe('mind-elixir 适配器', () => {
     const d = doc({ r: { key: 'r', text: '思维导图 & 转写稿 <重点> "引号"', children: [] } });
     const back = fromMindElixir(toMindElixir(d), { uid: 'u' });
     assert.equal((back.nodes['r'] as MindMapNode).text, '思维导图 & 转写稿 <重点> "引号"');
-  });
-});
-
-describe('markmap 适配器', () => {
-  it('**HTML 转义**（content 是 HTML，不转义就是自己给自己开 XSS）', () => {
-    assert.equal(escapeHtml('<script>alert(1)</script>'), '&lt;script&gt;alert(1)&lt;/script&gt;');
-    const d = doc({ r: { key: 'r', text: '<img src=x onerror=alert(1)>', children: [] } });
-    const node = toMarkmap(d);
-    assert.ok(!node.content.includes('<img'), `未转义: ${node.content}`);
-    assert.ok(node.content.includes('&lt;img'));
-  });
-
-  it('collapsed → payload.fold；refs 塞进 payload 供前端 seek', () => {
-    const d = doc({
-      r: {
-        key: 'r',
-        children: [],
-        collapsed: true,
-        refs: [{ transcriptUid: 't', startMs: 65000, endMs: 70000, quote: 'q' }],
-      },
-    });
-    const node = toMarkmap(d);
-    assert.equal(node.payload?.['fold'], 1);
-    assert.ok(node.payload?.['openmemoRefs']);
-    // 时间戳渲染成 1:05
-    assert.match(node.content, /1:05/);
-  });
-
-  it('损失报告如实反映 markmap 不支持的特性', () => {
-    const d: MindMapDoc = {
-      ...doc({ r: { key: 'r', children: ['a'] }, a: { key: 'a', style: { color: 'red' } } }),
-      edges: [{ key: 'e', from: 'r', to: 'a' }],
-    };
-    const loss = markmapLoss(d);
-    assert.equal(loss.lossy, true);
-    assert.equal(loss.edges, 1);
-    assert.equal(loss.styledNodes, 1);
   });
 });
 

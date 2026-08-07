@@ -20,13 +20,12 @@
 ## 数据模型库无关：`MindMapDoc` 是唯一事实来源
 
 `packages/mindmap` 定义自己的 schema（`MindMapDoc`），这是 ADR-002 决策 3 的硬性要求，也是本 feature 最重要的
-架构前提：**`mind-elixir`（可编辑主视图）和 `markmap`（只读大纲视图）都只是这个 schema 的消费者**，不是数据源。
+架构前提：**`mind-elixir`（可编辑主视图）只是这个 schema 的一个消费者**，不是数据源。
 后端存的规范化表（`mindmap_nodes` + `edges` + `summaries` + `node_refs`）才是真相，`MindMapDoc` 是
 map-of-nodes（不是嵌套树）+ `extensions` 命名空间的 JSON 表示（D-02 §2）。`packages/mindmap/package.json` 里
 `dependencies` 只有 `@openmemo/shared` 一项——刻意的约束：**这个包本身禁止依赖任何渲染库**，加了
-`mind-elixir`/`markmap` 依赖就等于违反 ADR-002 决策 3。真正的库桥接
-（`MindMapDoc ⇄ mind-elixir NodeObj`、`MindMapDoc → markmap IPureNode`）放渲染适配层
-（`features/mindmap/` 内），不要塞进 `packages/mindmap`。
+`mind-elixir` 依赖就等于违反 ADR-002 决策 3。真正的库桥接
+（`MindMapDoc ⇄ mind-elixir NodeObj`）放渲染适配层（`features/mindmap/` 内），不要塞进 `packages/mindmap`。
 
 **npm 包名订正**：`mind-elixir-core` 是 GitHub 仓库名，**在 npm 上 404**；真正发布的包名是 `mind-elixir`
 （当前锁定 v5.14.0，`apps/web/package.json` 已按此写）。D-01/D-02/ADR-002/R-03/BOARD 都记录了这处订正，
@@ -35,30 +34,30 @@ map-of-nodes（不是嵌套树）+ `extensions` 命名空间的 JSON 表示（D-
 容易踩的字段坑：`MindElixirData` **没有 `linkData` 字段**，自由连线只有 `arrows`；`collapsed` 对应
 `NodeObj.expanded`，**布尔取反**，语义相反，最容易写反（均见 D-02 §2.3 已核实的字段映射表）。
 
-## markmap：直接构造 `IPureNode`，绕开两次有损转换
+## ★ T-165：**没有大纲视图，markmap 已整块摘除**
 
-`markmap-lib` 的 `transform()` **只接受 Markdown 字符串**（内部走 `markdown-it` → HTML → `buildTree`），
-不能直接喂 JSON 树；但 `markmap-view` 的 `Markmap.create()` 接受的是 `IPureNode` 对象
-（`{ content: string; payload?: { fold?: number; […] }; children: IPureNode[] }`）。
+> 这一节此前是两节：「markmap：直接构造 `IPureNode`，绕开两次有损转换」与
+> 「切到 markmap 只读视图必须提示能力损失」。**两节描述的东西都不存在了**，所以是删不是改。
 
-如果照直觉写"`MindMapDoc` → 转成 Markdown 字符串 → 喂给 `transform()` → 拿到树 → 渲染"，等于把一份结构化数据
-先降级成文本、再解析回结构，中间经过 `markdown-it` 通用解析器，**两次有损转换**。正确做法是
-**由 `MindMapDoc` 直接构造 `IPureNode` 树**，喂给 `Markmap.create()`，完全绕开 `transform()`。
-`toMarkdown(doc)` 只在**导出** Markdown 文件、"编辑 Markdown 源"这类显式入口用，**不出现在渲染路径上**
-（D-02 §2.3 已核实，直接读了 `markmap-lib` v0.18.12 的 `transform.ts` 源码确认）。
+`markmap-lib` / `markmap-view` 两个依赖 **全仓零 import**，
+`packages/mindmap` 的 `adapters/markmap.ts`（`toMarkmap` / `markmapLoss` / `IPureNode`）**零产品调用方**。
+本轮把依赖、适配器、以及界面上那句提示**一起**删掉。
 
-字段映射：`text`/`richMd` → `content`（要求是 **HTML 字符串**，不是 Markdown，`richMd` 需要先渲染成安全 HTML
-再塞进去）；`children` → `children`；`collapsed` → `payload.fold`（非 0 即折叠）；`refs`/`meta` 塞进
-`payload` 的自定义键，markmap 会原样保留、不解释。
+**判据不是"没用上所以删"，是"留着它界面就在说一句假话"**：
+`MindmapView` 会渲染「切到**大纲视图**将不显示 N 条关联线与 M 个概要」，
+而那个视图用户点不到；更进一步，那两样东西在现有的**任何**一条路径上都不会丢
+——SVG/PNG 导出走的是 mind-elixir 的实时画布，自由连线与概要都在。
+所以也**没有一句真话可以拿来替换它**，只能删。
+（先例：T-153 摘掉 `wavesurfer.js`，同样是"零 import + 已有替代实现"。）
 
-## 切到 markmap 只读视图必须提示能力损失
+选型本身没有变，而且这次摘除正是**兑现**它：用户的原话是"**整理**思维导图"，
+整理 = 编辑，是主路径；markmap 是 Markdown → 图的单向渲染器，编辑能力弱。
+D-01 / D-02 / D-05 / ADR-006 里关于 markmap 的段落**尚未同步**（那些是 architect / Manager 的交付物，
+本 feature 不改别人的文档）——读到那几段时以本节为准。
 
-渲染器切换器是 `[编辑视图 mind-elixir] / [大纲视图 markmap]`（D-05 §4.6）。`IPureNode` 没有 `edges`
-（自由连线）、`summaries`（概要）、逐节点 `style`、`icons` 对应字段，切换时这些信息**不会显示**，
-不是 bug，是格式本身的表达力差异（D-02 §2.3 损失矩阵已核实）。**每次切到 markmap 视图都必须提示损失**，
-文案参考 D-05 §4.6 给的例子："该视图不显示 N 条关联线与节点样式"（N 用当前文档的 `edges.length` 动态填）。
-不要做成一次性 Toast 就完事——用户可能来回切换视图，每次切换都应该能看到（可以是切换按钮旁的常驻小字提示，
-不需要每次都弹阻断层，阻断对话框按 D-05 §5.1 只留给两种全局场景，这不是其中之一）。
+⚠️ **`toMarkdown()` 保留，它不是 markmap 的一部分**：
+它是 `GET /api/notes/:uid/export?what=mindmap&format=md` 的实现
+（`apps/daemon/src/http/rest/content.ts` 的 `exportMindmap()`），删它会打掉一个真功能。
 
 ## 位图导出：SVG 序列化 + scale，禁止 html2canvas 截屏
 
@@ -66,8 +65,8 @@ map-of-nodes（不是嵌套树）+ `extensions` 命名空间的 JSON 表示（D-
 指定 `scale` 渲染，禁止用 `html2canvas` 截屏拿图**。这条是从竞品踩过的坑里抄来的教训：memo.ac 的 GitHub
 issue #133 标题就是"思维导图下载图片，字看不清楚"——它们的实现正是 `html2canvas` 截屏（R-01 §C10 #8 实地翻了
 memo.ac 的 bundle，`html2canvas` 出现 10 次），截屏方案在高 DPI 缩放下天然糊字，issue 最后"已关闭"但没修，
-说明这类问题上线后很难补救。SVG 是矢量的，序列化后按需要的分辨率栅格化不会糊，`mind-elixir` 和 `markmap`
-都原生支持导出 SVG，直接用。
+说明这类问题上线后很难补救。SVG 是矢量的，序列化后按需要的分辨率栅格化不会糊，`mind-elixir`
+原生支持导出 SVG，直接用。
 
 ## 渐进渲染：消费 `mindmap.delta` 事件
 
@@ -119,11 +118,11 @@ features/mindmap/
 ├── sse.ts
 ├── api.ts                useMindmapQuery / useMindmapExportMutation …（qk.mindmap(noteUid) 已在 app/query.ts 预留）
 ├── store.ts               编辑态（选中节点、折叠状态、渲染器切换）的瞬时状态，可选
-├── components/            MindElixirCanvas / MarkmapView / RendererSwitcher / ExportMenu …
+├── components/            MindElixirCanvas / ExportMenu …（没有 RendererSwitcher：只有一个渲染器）
 └── hooks/                 useMindmapDelta（消费 mindmap.delta 做增量拼装）…
 
 packages/mindmap/src/
-├── index.ts               当前是占位骨架（T-011 建的），MindMapDoc 类型/normalize()/toMarkdown() 等由你实现
+├── index.ts               MindMapDoc 类型 / normalize() / toMarkdown() 等（toMarkdown 是导出端点在用的那一份）
 ```
 
 ## 可以用 / 不可以用

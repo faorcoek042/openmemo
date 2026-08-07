@@ -4,7 +4,7 @@ import { Download, Redo2, Undo2 } from 'lucide-react';
 import MindElixir, { type MindElixirInstance } from 'mind-elixir';
 import 'mind-elixir/style';
 
-import { toMindElixir, fromMindElixir, markmapLoss, type MindMapDoc } from '@openmemo/mindmap';
+import { toMindElixir, fromMindElixir, type MindMapDoc } from '@openmemo/mindmap';
 
 import { Button } from '../../components/common/Button';
 import { downloadMindmapImage } from './export';
@@ -129,8 +129,6 @@ export function MindmapView({
     );
   }
 
-  const loss = markmapLoss(doc);
-
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-1.5">
@@ -180,13 +178,18 @@ export function MindmapView({
       </div>
 
       <div ref={hostRef} className="min-h-0 flex-1" />
+      {/*
+        ★ T-165：这里原来有一句「切到**大纲视图**将不显示 N 条关联线与 M 个概要」。
+        **删掉了，不是改写。**
 
-      {/* 切到只读视图会丢东西时必须明示（D-02 §2.3 损失矩阵），不静默丢弃 */}
-      {loss.edges > 0 || loss.summaries > 0 ? (
-        <p className="border-t border-line px-3 py-1.5 text-xs text-ink-muted">
-          {t('mindmap.markmapLoss', { edges: loss.edges, summaries: loss.summaries })}
-        </p>
-      ) : null}
+        产品里没有大纲视图 —— `markmap-lib` / `markmap-view` 全仓零 import，
+        `toMarkmap` / `markmapLoss` 零调用方（本轮连同适配器一起摘掉）。
+        也就是说那句话在描述**用户做不到的一个动作**的后果。
+
+        为什么不改写成一句"真话"：那两样东西（自由连线、概要）在现有的**任何**一条
+        路径上都不会丢 —— SVG/PNG 导出走的是 mind-elixir 的实时画布，它们都在。
+        改写只会产生第二句需要读者自己判断真假的话，而那正是本仓最贵的那一类。
+      */}
     </div>
   );
 }

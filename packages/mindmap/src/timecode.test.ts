@@ -9,15 +9,30 @@
  *
  * 1. **基准向量** —— 钉住"保留的是哪一份的语义"。光合并不写向量，
  *    下一个人把 `floor` 改成 `round` 不会有任何东西变红。
- * 2. **端到端一致** —— 钉的是**后果**（"两种导出的时间码必须是同一个字符串"），
- *    不是形式。这条即使有人把两份实现又拆开、但恰好写得一样，也仍然是对的。
+ * 2. **端到端** —— 钉的是**后果**（用户下载到的那个 `.md` 里写的是哪个时间码），
+ *    不是形式。
  * 3. **结构守卫** —— 钉的是"不许再出现第二份"。这条是三层里唯一能在
  *    *复制粘贴的那一刻* 变红的，前两条要等到有人把值改坏才红。
  *
- * ⚠️ 第 3 条**必须先剥注释再数**：本包里现在有三处注释在讲这段历史，
- * 每一处都写着 `formatTimestamp` 这个词。不剥注释，守卫会数出 4 份然后
- * **为了错误的理由变红** —— 本项目今天已经在这个陷阱上摔过六次
+ * ⚠️ 第 3 条**必须先剥注释再数**：本包里现在有几处注释在讲这段历史，
+ * 每一处都写着 `formatTimestamp` 这个词。不剥注释，守卫会数出好几份然后
+ * **为了错误的理由变红** —— 本项目已经在这个陷阱上摔过六次
  * （`/\bEmphasis\b/` 匹到自己旁边的注释、`/activeJobId/` 同样）。
+ *
+ * ── ★ T-165：第 2 条**从"两个导出器互相比对"降级成"钉住 Markdown 这一条"** ──
+ *
+ * 原文是「markmap 渲染与 Markdown 导出对同一个 ref 给出同一个时间码」。
+ * markmap 适配器本轮**整块删掉了**（产品里没有大纲视图，见 `index.ts` 文件头），
+ * 所以那个比对**没有第二方了**。
+ *
+ * **诚实地记一笔这次降级损失了什么**：原来那条能抓住"有人把两份实现又拆开、
+ * 且写得不一样"，现在抓不住了 —— 这一格改由第 3 条（结构守卫）承担，
+ * 而它只在**新出现一份定义**时红，抓不住"改坏了唯一那一份"。
+ * 那一格由第 1 条的基准向量守。**三层各守一段，删掉一层就该说清楚哪一段空了。**
+ *
+ * 保下来的那一半是**载重的那一半**：`serialize/markdown.ts` 的旧实现给 `01:31`，
+ * 而它正是 `GET /api/notes/:uid/export?what=mindmap&format=md` 真正吐给用户的字节
+ * （`apps/daemon/src/http/rest/content.ts` 的 `exportMindmap()`）。
  */
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -25,7 +40,6 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { toMarkmap } from './adapters/markmap.js';
 import { toMarkdown } from './serialize/markdown.js';
 import { formatTimestamp } from './timecode.js';
 import type { MindMapDoc } from './types.js';
@@ -81,7 +95,7 @@ describe('formatTimestamp —— 基准向量', () => {
   });
 });
 
-describe('★ 两种导出的时间码必须是同一个字符串（钉后果，不钉形式）', () => {
+describe('★ 用户下载到的 .md 里写的必须是保留下来的那一份时间码（钉后果，不钉形式）', () => {
   const doc: MindMapDoc = {
     schemaVersion: 1,
     uid: 'u',
@@ -100,11 +114,14 @@ describe('★ 两种导出的时间码必须是同一个字符串（钉后果，
     },
   };
 
-  it('markmap 渲染与 Markdown 导出对同一个 ref 给出同一个时间码', () => {
+  it('Markdown 导出（导出端点真正吐出去的字节）用的是 floor + 不补零的那一份', () => {
+    /*
+     * `toMarkdown(doc, {includeTimestamps:true})` 就是
+     * `content.ts` 的 `exportMindmap()` 在 `format=md` 分支里调的那一句 ——
+     * 这里断的字符串会**逐字**出现在用户下载到的 `.md` 里。
+     */
     const md = toMarkdown(doc, { includeTimestamps: true });
-    const mm = JSON.stringify(toMarkmap(doc, { showTimestamps: true }));
     assert.equal(md.includes('[1:30]'), true, `Markdown 里没有 [1:30]：\n${md}`);
-    assert.equal(mm.includes('[1:30]'), true, `markmap 里没有 [1:30]：\n${mm}`);
     // 旧的 Markdown 实现会写 01:31 —— 显式钉住它不许回来
     assert.equal(md.includes('01:31'), false, 'Markdown 又用回了 round + 补零的那份');
   });

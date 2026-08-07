@@ -400,3 +400,216 @@ apps/daemon/src/http/rest/selfTestRecord.test.ts(94,48): error TS2345:
 
 **不是我的** —— `SelfTestClaim` 是 `daemon-backlog` 正在往 `hardware.ts` 里加的类型，
 几分钟后自己没了。与 `backlog-work` 上一轮撞到的 `toInstalledRecord` 那次同族。
+
+---
+
+## [2026-08-07 16:20] T-165b DONE —— markmap 整块摘除 + 自测「跑通了」≠「加速用上了」
+
+# TL;DR
+
+| # | 事 | 结果 |
+|---|---|---|
+| **A** | **markmap 整块摘除**（§3 B-14，你拍板） | ✅ 依赖 + 适配器 + 文案 + 词条一起走。**⚠️ 一处必须偏离你的指令，见下** |
+| **B** | **卡片上显示这次自测实际用的是哪个后端**（`daemon-backlog` T-166 转达） | ✅ 并且把「跑通了」与「加速真的用上了」**分成两档**渲染 |
+
+**门禁**：`pnpm -r test` **1265 / 0** · `tsc -b` 0 · `eslint` 0 · `check:sources` ✔ ·
+`check:orphans` ✔ —— **零引用导出 72（基线 72），没有变大**，且 `markmap` 在报告的**每一档里零命中**。
+
+**反向验证累计 22/22**（web 15 + daemon 7），全部在 `/tmp/ui-backlog/rv` 隔离副本，对照组先绿。
+
+---
+
+## ⚠️ A-0 必须偏离你指令的一处：**`toMarkdown` 不能删，它在产品路径上**
+
+你的执行要求写的是：
+
+> `toMarkmap` / `toMarkdown` / `markmapLoss` 一起走，别留半截
+
+**`toMarkdown` 不能走。** 我上一轮的措辞害了这一条 —— 我写的是
+「`toMarkmap` / `toMarkdown` 在 **`apps/web`** 里零调用方」，那句话是对的，
+但它在 **daemon** 里有调用方，而且是用户点得到的功能：
+
+```
+apps/daemon/src/http/rest/content.ts:428
+  case 'md': case 'markdown':
+    return { body: toMarkdown(doc, { includeTimestamps: true }), mime: 'text/markdown…' };
+```
+
+即 `GET /api/notes/:uid/export?what=mindmap&format=md`，前端入口在
+`features/notes/ExportMenu.tsx:43`。**删掉它 = 导出 Markdown 当场 500。**
+
+`toMarkdown` 也确实不属于 markmap：它是 `serialize/` 那一族（MD / OPML / FreeMind），
+与 `toOpml` / `toFreeMind` 同级；只是当年的注释把它写成"与 markmap 的桥"，
+才让它看起来像 markmap 的一部分（那句注释本轮改掉了）。
+
+**所以摘除范围 = markmap 适配器 + 依赖 + 文案，不含 `serialize/markdown.ts`。**
+这一点我在守卫用例里写成了**显式的阳性对照**，免得下一个人照着你那句话再删一次：
+
+```
+assert.equal(typeof mod['toMarkdown'], 'function', '前提自检：导出端点用的 toMarkdown 不许被误删');
+```
+
+## A-1 删了什么
+
+```
+删  packages/mindmap/src/adapters/markmap.ts        toMarkmap / markmapLoss / escapeHtml / IPureNode
+改  packages/mindmap/src/index.ts                   去掉再导出 + 写清为什么摘、以及 toMarkdown 为何保留
+改  packages/mindmap/src/mindmap.test.ts            删掉「markmap 适配器」整个 describe（3 条）
+改  packages/mindmap/src/timecode.test.ts           见 A-2（这条有损失，我说清楚）
+改  packages/mindmap/src/types.ts                   两处现在时的"markmap 也是消费者"改成事实
+改  packages/mindmap/src/serialize/markdown.ts      删掉"且是与 markmap 的桥"，补上它真正的调用方
+改  apps/web/src/features/mindmap/MindmapView.tsx   删掉那句提示（**删不是改写**，理由写在原位）
+改  apps/web/src/features/mindmap/README.md         两节 markmap 内容 → 一节"为什么没有大纲视图"
+改  apps/web/src/app/i18n/locales/{zh-CN,en}.json   删 mindmap.markmapLoss
+改  apps/web/package.json                           删 markmap-lib / markmap-view
+改  pnpm-lock.yaml                                  **-649 行**（markmap 拖着 cheerio / katex / markdown-it / d3-flextree 一整棵树）
+```
+
+**文案是删不是改写**，按你说的。理由写在删除处的注释里：那两样东西（自由连线、概要）
+在现有的**任何**一条路径上都不会丢（SVG/PNG 导出走 mind-elixir 的实时画布），
+所以**没有一句真话可以拿来替换它** —— 改写只会产生第二句需要读者判断真假的话。
+
+### lockfile 的处理方式（申报）
+
+用的是 **`pnpm install --lockfile-only`**，不是 `pnpm install`。
+理由是 PROTOCOL §10 的同一条判据（"在最坏的那一秒，别人看到的是什么"）：
+`daemon-backlog` 与 `platform-backlog` 正在跑 `pnpm -r test`，
+一次真装会在他们脚下换 `node_modules`。
+`[实测]` `/root/memo/node_modules` 的 mtime 前后逐字未变（`1786002434`）。
+代价：那两个包的**文件**还留在 `node_modules` 里，下一次真装才会被清掉 —— 没有任何东西 import 它们。
+
+## A-2 `timecode.test.ts` 有**损失**，我不打算糊过去
+
+那个文件是一条真事故的护栏：`formatTimestamp` 曾有两份，
+`adapters/markmap.ts` 给 `1:30`、`serialize/markdown.ts` 给 `01:31`。它有三层：
+① 基准向量 ② **两个导出器互相比对** ③ 结构守卫（只许有一份实现）。
+
+**markmap 一走，第 ② 层就没有第二方了。** 我把它降级成"钉住 Markdown 这一条"，
+并在文件头**写清楚哪一段空了**：
+
+> 原来那条能抓住"有人把两份实现又拆开、且写得不一样"，现在抓不住了 ——
+> 这一格改由第 ③ 条承担，而它只在**新出现一份定义**时红，抓不住"改坏了唯一那一份"。
+> 那一格由第 ① 条的基准向量守。**三层各守一段，删掉一层就该说清楚哪一段空了。**
+
+保下来的那一半是**载重**的：`toMarkdown` 就是导出端点真正吐给用户的字节，
+断言里那个 `[1:30]` / 不许出现 `01:31` 会**逐字**出现在用户下载到的 `.md` 里。
+
+## A-3 棘轮：**没有变大**，而且 markmap 从每一档里消失了
+
+```
+零引用导出 72 个（基线 72 个）· 只有测试引用 15 个 · 只被再导出 21 个
+✔ 没有新的零引用导出，基线也没有过期条目
+```
+
+`pnpm check:orphans | grep -i markmap` → **零命中**（此前 `toMarkmap` / `escapeHtml`
+落在「只被再导出、零真实产品调用方」那一档里）。
+
+⚠️ **一处我不敢把功劳算在自己头上**：「只被再导出」那一档前后都是 21。
+`daemon-backlog` 同期落了 T-166，新增的导出可能正好补上了我摘掉的位置。
+**我没有单独测量过这个差值，所以不声称"它因为我而变小"** —— 我能证明的是
+"没有变大" + "markmap 零命中"，那两条是实测的。
+
+## A-4 守卫：**两个方向的"半截"都钉住**
+
+「半截」才是这一族真正的失败形态，而且两个方向都真实存在过：
+- 删了依赖没删文案 → 界面继续提一个不存在的视图；
+- 删了文案没删依赖 → 两个零 import 的包继续挂在供应链上，
+  而且下一个人会以为"既然依赖还在，那视图大概是要做的"，把文案加回来。
+
+所以 4 条断言**同时**覆盖：`package.json` 的依赖、`@openmemo/mindmap` 的导出、
+两份 locale 的词条、以及**渲染出来的界面**。手法与 `peaks.test.ts` 那条
+「不许再导出 mockPeaks」同族。
+
+⚠️ 界面那条**刻意喂一份带 `edges` 与 `summaries` 的文档** ——
+缺陷版本正是靠这两个字段非零才显示那句话，拿空文档去测**把缺陷放回去也照样绿**。
+
+---
+
+# B 卡片上要看得出「这次自测实际用的是哪个后端」
+
+## B-1 先认一件事：我上一轮那 4 条断言，钉的位置是对的，前提是错的
+
+`daemon-backlog` 查出：认领规则 `pack.backend === outcome.backendUsed` 里，
+左边是枚举 `'cpu'`、右边是 whisper 的**日志文字** `'CPU'` / `'CPU (ggml-cpu-zen4)'`
+→ **恒不相等 → 恒拒绝回写 → `selfTest` 恒 null**。
+也就是说我上一轮"确认三条 UI 分支确实会亮"时，**它们在真机上一次都没亮过**。
+
+我钉的是渲染分支（那一层是对的、现在也仍然对），**但前提在更下游，我没有下探到那一层**。
+教训记在这里：**"我确认它会亮"必须问一句"喂给它的那个形状，产品真的产得出来吗"。**
+T-164 那 6 条用例喂的 `backendUsed: 'cpu'` 就是产品从不产出的形状。
+
+## B-2 现在加的这一档：「跑通了」≠「加速真的用上了」
+
+`daemon-backlog` 的那句判据我照抄进了代码注释：
+
+> **一张 Vulkan 卡片写着"自测通过"、而它其实静默跑的是 CPU ——
+> 这两种情况在界面上目前无法区分。**
+
+新增 `selfTestVerdict(packBackend, selfTest)`（`packStatus.ts` 纯函数）：
+
+| 档 | 何时 | 卡片上 |
+|---|---|---|
+| `passed` | 跑通 + 枚举到设备（或它本来就是 CPU 包） | 绿「自检通过」 |
+| **`passed-not-accelerated`** | 跑通、**但零设备**、且这不是 CPU 包 | **黄「跑通了，但加速没有生效」+ 一句解释** |
+| `failed` | 真失败 | 红（不变） |
+
+外加**无条件原样显示** `backendUsed`：「实际用上的后端：CPU (ggml-cpu-zen4)」。
+
+## B-3 ★ 判据用 `devicesFound`，**一个字符串都不比**
+
+这一条是从 T-166 那个 bug 里直接抄的教训，写在函数注释里：
+
+> `backendUsed` 是**日志文字**，不是 `Backend` 枚举。拿它做判断就是把刚修好的坑再挖一遍。
+> 判据是 `devicesFound`（枚举不会撒谎，R-02 §A.0），
+> `backendUsed` 只**原样显示** —— 显示原文永远诚实，解析它才会出错。
+
+有一条用例专门钉这个手法：喂 `backendUsed: 'Llvmpipe (LLVM 17, 256 bits)'`
+（一个谁都不认识、且不含 "CPU" 字样的字符串）+ 零设备，**正确实现必须仍然判成"加速没生效"**。
+任何"看文字里有没有 CPU"的实现在这一条上当场红。
+
+**并且每一条用例喂的都是 `parseBackendUsed()` 真会产出的那几种形状**
+（`'CPU (ggml-cpu-zen4)'` / GPU 设备名 / 字段缺失），不是我自己造的 `'cpu'`。
+
+## B-4 三条阴性对照（防的是把它做过头）
+
+- **CPU 包**枚举到 0 个 GPU 设备是正常的 → **不许**报"加速没生效"（假红灯会训练人忽略告警）；
+- **真枚举到设备**时不许报警，且两种情况渲染出的文本**必须不同**（否则等于没区分）；
+- **老记录没有 `backendUsed`**（T-166 之前写下的）→ 一个字都不说，不编
+  —— 与 `inapplicableKind` 缺失时不许兜底成"本机不支持"是同一条判据。
+
+---
+
+# 反向验证（本轮新增 6 条，累计 22/22）
+
+| | 撤掉什么 | 红在哪 |
+|---|---|---|
+| W10 | 把那句「切到大纲视图…」放回界面 | 界面守卫 |
+| W11 | markmap 依赖放回 `package.json` | 依赖守卫 |
+| W12 | **探针的探针**：把守卫里的禁用名换成一个确实还导出着的名字 | 导出守卫 —— 证明它**能**红 |
+| W13 | 「跑通了」与「加速用上了」合并回一句 | 2 条（含那条"不许解析 backendUsed"） |
+| W14 | 不再原样显示 `backendUsed` | 2 条（含阳性对照） |
+| W15 | 对 CPU 包也判"加速没生效" | 假红灯那条 |
+
+W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules` 软链解析到**真包**的，
+所以"把适配器加回去"这种变异在副本里做不出来。改成变异**守卫自己**
+（禁用名换成 `toMindElixir`，一个确实还在的导出）—— 它红了，就证明 `name in mod`
+这个机制真的在检查一个活模块，而不是在一个空对象上恒真。
+
+---
+
+# 你转达的第三件：`smallestInstalledModel()` 选中 VAD 权重
+
+我这一侧对得上：我加的那档 `passed-not-accelerated` 与它**不冲突也不掩盖** ——
+它产出的是 `passed:false`（`bad magic`），走的是红色失败分支并**原样显示 daemon 给的原因**，
+上一轮那条用例（「失败徽章 + daemon 给的具体原因，不是"出错了"」）正好钉着这一格。
+修在 daemon 侧，界面这边不需要再动。
+
+# 纪律申报（增量）
+
+| 条 | 结果 |
+|---|---|
+| `apps/web/dist` | ✅ 未构建（`vite build` 仍只以 `--outDir .test-out/…` 跑过） |
+| `pnpm install` | ⚠️ **只跑过 `--lockfile-only`**，`node_modules` mtime 前后逐字未变（见 A-1 末） |
+| `:10000` | ✅ 本段全程**零请求** |
+| `docs/design/**` · `docs/adr/**` | ✅ 未碰。D-01 / D-02 / D-05 / ADR-006 里关于 markmap 的段落**仍是旧的**，需要你或 `architect` 同步；`features/mindmap/README.md` 里已注明"读到那几段时以本节为准" |
+| `daemon-backlog` / `platform-backlog` 的文件 | ✅ 未碰（`docs/design/D-11-*` 的改动是他们的） |

@@ -38,7 +38,11 @@
  * 判据刻意**不看 `applicable`**：probe 结果会随安装状态翻转，徽章跟着忽明忽暗
  * 只会让人以为界面在抖，而"有没有得选"这件事本身并不随之改变。
  */
-import type { GetBackendCatalogResponse, InapplicableKind } from '@openmemo/shared';
+import type {
+  BackendSelfTest,
+  GetBackendCatalogResponse,
+  InapplicableKind,
+} from '@openmemo/shared';
 
 export type CatalogPack = GetBackendCatalogResponse['packs'][number];
 
@@ -125,4 +129,58 @@ export function isMeaningfulRecommendation(
       other.arch === pack.arch &&
       other.backend !== pack.backend,
   );
+}
+
+/* ────────────────────── 自检结果怎么念（T-166 转达的那条）────────────────────── */
+
+/**
+ * 一次自检结果在卡片上该被说成什么。
+ *
+ * ## 要区分的那两件事
+ *
+ * `daemon-backlog` T-166 把自检**钉到某一个包**上跑之后，出现了一种以前不存在的状态：
+ * 跑的**确实**是 Vulkan 包里的 whisper-cli，而 ggml 在这台机器上没枚举到设备、
+ * **优雅退回 CPU 算完了** —— `passed` 为真，**但加速一点没生效**。
+ *
+ * > 一张 Vulkan 卡片写着「自检通过」、而它其实静默跑的是 CPU ——
+ * > 这两种情况在界面上此前**无法区分**。
+ *
+ * 「这个包能跑」≠「这个包的加速在你机器上真的用上了」。只渲染 `passed:true` 的话，
+ * 那句"自检通过"就是一条不成立的证据 —— 与本仓最贵的那一族（静默降级）同形。
+ *
+ * ## ★ 判据用 `devicesFound`，**不解析 `backendUsed`**
+ *
+ * 这一条是从 T-166 那个 bug 里直接抄来的教训：
+ * `backendUsed` 是 whisper 的**日志文字**（`'CPU'`、`'CPU (ggml-cpu-zen4)'`、
+ * GPU 设备名、或 null），**不是 `Backend` 枚举**。T-164 拿它跟 `'cpu'` 比，
+ * `'CPU' !== 'cpu'` 在每一台机器上恒真 → 回写恒被拒 → 三条 UI 分支恒不亮，
+ * 而它的 6 条用例全绿，因为**用例喂的是产品从不产出的形状**。
+ *
+ * 所以这里**一个字符串都不比**：判据是 `devicesFound`（枚举不会撒谎，
+ * R-02 §A.0；`BackendSelfTest.devicesFound` 的注释也是这么写的），
+ * `backendUsed` 只**原样显示**给用户看 —— 显示原文永远是诚实的，解析它才会出错。
+ *
+ * ## 为什么只对非 CPU 包判
+ *
+ * CPU 包枚举到 0 个 GPU 设备是**正常**的，对它报"加速没生效"是假红灯，
+ * 而假红灯会训练人忽略告警（HANDOFF ⑤B）。
+ */
+export type SelfTestVerdict =
+  /** 没跑过 */
+  | 'none'
+  /** 跑通了，且这个包该提供的加速确实枚举到了设备 */
+  | 'passed'
+  /** ★ 跑通了，**但一个设备都没枚举到** —— 加速没生效，只是退回 CPU 算完了 */
+  | 'passed-not-accelerated'
+  /** 真失败 */
+  | 'failed';
+
+export function selfTestVerdict(
+  packBackend: string,
+  selfTest: BackendSelfTest | null | undefined,
+): SelfTestVerdict {
+  if (!selfTest) return 'none';
+  if (!selfTest.passed) return 'failed';
+  if (packBackend === 'cpu') return 'passed';
+  return selfTest.devicesFound > 0 ? 'passed' : 'passed-not-accelerated';
 }

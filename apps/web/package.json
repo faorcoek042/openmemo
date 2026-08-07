@@ -32,8 +32,6 @@
     "clsx": "^2.1.1",
     "i18next": "^26.3.6",
     "lucide-react": "^1.28.0",
-    "markmap-lib": "^0.18.12",
-    "markmap-view": "^0.18.12",
     "mind-elixir": "^5.14.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
