@@ -644,3 +644,222 @@ CI 在 HEAD 上绿（run **31194326508**）。
 
 **这一格是我自己报错了**：我在本地跑 `check:orphans` 拿到过一次 ✔，之后没有在**最终提交态**上复跑就写了"全绿"。
 `[教训]` 门禁结论必须绑在**最后一次提交的那个树**上，不是"我中途跑过一次"。
+
+---
+
+## [2026-08-08] T-172 DONE —— 装包时捂热 Metal；断路器那条验了，结论比预想的严重
+
+> **产出者**：`closure-audit`（本轮）　**起点 HEAD**：`26fe85a`　**落地**：`ac6ebfc` + `119018b`
+> **未碰**：`:10000`、`/root/data-memo`、`~/.local/share/openmemo/datadir.json`（跑完复核仍指 `/root/data-memo`）。
+> **未用** `pkill -f`；**未建/改/删**任何 release；未跑 `pnpm -r build`。
+> 反向验证全部在 `/tmp` 隔离副本上做（PROTOCOL §10），先跑对照组。
+> ⚠️ 树上同时还有**两位**在干活（`docs/research/memoac/`+`memo-compare.md` 一位；
+> mindmap/player/notes 一位）。**逐 hunk 核对过**，见下面「暂存纪律」。
+
+---
+
+### ① 断路器：**会打开，而且后果比"打开"严重得多**（上一位标 `[未验证]`，现已验）
+
+`[实测]` 用产品自己的 `detectRuntimeHardware()` + 一个 `sleep 30` 的假探针（真超时，不是模拟返回值）：
+
+| 第几次 | 墙钟 | ran | kind | 连续失败 | open | 拉黑 |
+|---|---|---|---|---|---|---|
+| 1 | 10018ms | true | timeout | 1/2 | false | — |
+| 2 | 10018ms | true | timeout | **2/2** | **true** | cuda,vulkan,rocm,**metal**,coreml |
+| 3 | **8ms** | **false** | — | 2/2 | true | 同上 |
+
+**两次超时就开，而冷 Mac 上一个 daemon 进程里正好有两个独立调用点**：
+`RestState.create()`（`state.ts:178`，启动路径）与首个 `GET /api/runtime/hardware`
+（`hardware.ts:178`，路由自己的缓存那时还是空的）。所以它不是"可能"，是**必然**。
+
+#### ★★ 真正的发现：**指纹变化只给「一次」重试，不是复位**——这条推翻了任务书的隐含前提
+
+`recordProbeOutcome()` **只在成功时**清 `blacklistedAt`（`runProbe.ts:221-233`）。
+失败分支是 `state.blacklistedAt ?? new Date()` —— 一旦置上就再也不会被失败清掉，
+同时把**新指纹**写进 state。于是「指纹变了 → `isBlacklisted` 放行」只兑现**一次**，
+那一次要是还冷，断路器立刻带着新指纹重新关上；而包已装好，**指纹从此不会再变**。
+
+`[实测]`（`isBlacklisted` 放行了那一次，`ran=true`，但随即又关上）：
+
+```
+探测 1（失败）  open=false 失败=1 指纹=54f10df7
+探测 2（失败）  open=true  失败=2 指纹=54f10df7
+装包（换 probe 二进制 + 多一个 ggml 库 → 指纹改变）
+装包后探测      ran=true   open=true 失败=3 指纹=2ce8d15b   ← 放行了一次，那一次仍失败 → 立刻重新打开
+resetBreaker()  ran=true   open=false                      ← 人工出口确实有效
+```
+
+#### 冷 Mac 完整时间线 —— 捂热「做」与「不做」
+
+`[模拟]` **标清楚模拟的边界**：探针**耗时行为**是模拟的（Linux 上 `sleep 16` 的假探针，
+且**跑完才**写 marker = shader 缓存落盘，被 kill 就什么都不留 —— 依据是上一位把 H2 证伪了，
+缓存是全有全无的）。**断路器、超时、指纹、拉黑全是产品自己的代码在真跑。**
+
+```
+分支 A 不捂热（今天的行为）
+  daemon 启动 RestState.create      10020ms timeout  失败=1 open=false
+  首个 GET /api/runtime/hardware    10013ms timeout  失败=2 open=true
+  装包（指纹改变 → 放行一次重试）
+  装包后第 1 次探测                 10017ms timeout  失败=3 open=true   ← 那一次还是冷的
+  装包后第 2 次探测                     9ms ran=false      open=true   ← 探针不再被调用
+  ⇒ metal **被永久拉黑**，且没有任何地方报错
+
+分支 B 装包时捂热（本轮）
+  （前两发同上，断路器同样打开）
+  ★ 捂热 runProbe(timeoutMs=90000): 16011ms ok=true → 缓存落盘
+  装包后第 1 次探测                    17ms ok=true  失败=0 open=false ← **断路器彻底复位**
+  ⇒ metal 可用
+```
+
+> **所以捂热不只是省那 16 秒的 UX 优化 —— 它正好落在指纹放行的那一次重试之前，
+> 把那一次从「必然失败」变成「必然成功」。这才是它真正修掉的东西。**
+
+（`degradationChain` 两臂都是 `["cpu"]`，那是模拟宿主是 Linux 的产物，不是产品结论；
+有区分力的信号是 `open` 与 `metal被拉黑`。）
+
+**⚠️ 仍未覆盖、单独交回 Manager 的残留情形**：**包已装好、之后缓存才变冷**
+（系统升级清了 shader 缓存 / 换用户账户 / 缓存被回收）。那时没有装包动作 → 不捂热 →
+指纹也不变 → 两次超时后同样永久拉黑，且每次 daemon 重启都会重演（断路器是**进程内内存**
+`setup.ts:274`，重启即清空，于是"再试两次、再关上"）。
+**根治要动断路器语义**（`recordProbeOutcome` 在指纹变化时该不该把 `consecutiveFailures` 归零），
+那是 ADR-003 的地界，我不自己裁。今天的人工出口是 `GET /api/runtime/hardware?reset=1`（`[实测]`有效）。
+
+---
+
+### ② 捂热失败 ≠ 装包失败（任务书说这条比"捂热成功"重要得多）
+
+**契约写在函数上**：`warmProbeCache()`（`apps/daemon/src/runtime/warmup.ts`）**永不抛、永不 reject**，
+整个函数体在 try/catch 里，连调用方给的回调（`onBeforeProbe` / `log`）抛异常都咽掉。
+调用点（`backends.ts`，`state.publish` 之前）**再套一层 try/catch**。
+
+判据来自队列：`DownloadQueue.run()` 是 `await entry.task(ctx)` 外面套 try/catch
+（`queue.ts:201`）—— **任务里任何一处抛出都会把整个 job 判失败**，用户看到"安装失败"
+而包其实已完整落盘。
+
+**测试证据**（`warmup.test.ts` 15 条 + `installWarmup.test.ts` 6 条，共 21 条，全绿）：
+
+| 敌对输入 | 结果 |
+|---|---|
+| ① 注入探针**同步** throw（`.catch()` 接不住的那种） | 不抛 |
+| ② 注入探针返回 rejected promise | 不抛 |
+| ③ 探针如实报 timeout | 不抛 |
+| ④ 探针如实报 crash（SIGABRT） | 不抛 |
+| ⑤ `onBeforeProbe` 回调自己抛 | 不抛 |
+| ⑥ `log` 回调自己抛 | 不抛 |
+| ⑦ **真实 `runProbe`**（不注入）+ 立刻 exit 1 的假二进制 | 不抛，`ok=false` |
+| ⑧ 探针存在但不可执行（EACCES） | 不抛，`ok=false` |
+
+**走产品真实安装路径的那 6 条**（`installWarmup.test.ts`，真 `RestState` + 真 `DownloadQueue`
++ 真 `install()` + 本地 stub server）：捂热同步 throw / 异步 reject / 如实报失败 →
+**job 仍 `succeeded` 且安装记录真的落了盘**；另有一条钉「装包路径**真的调用了**捂热」
+（本仓最贵的那族是"写好了没人调"）；并有**对照组**：任务体别处抛出时 job 确实 `failed`
+—— 证明上面那些断言有区分力，不是恒真。
+
+---
+
+### ③ macOS CI：冷启动**真的被消掉了**（`[实测]` run 31198373722，两个独立的冷 runner）
+
+新增第二个 job（必须另起一个 job：捂热得是这台机器**第一次**碰 Metal，同 job 里先跑过探针就白验了）。
+调的是**产品自己那个 `warmProbeCache()`**，不是脚本里另写一发长超时 —— macOS 闸门、
+Metal 库结构判据、自己的预算这三件事只有这样才被真的走到。
+
+| 臂 | 内容 | 结果 |
+|---|---|---|
+| **A** | 产品 `warmProbeCache()`，本机第一次 Metal 初始化 | **17606 ms**，`ok=true` |
+| **B** | 紧接着**不传 timeoutMs**（= ADR-003 那 10 s） | **163 ms**，`ok=true`，`metal_library_init=0.034s` |
+
+```json
+{"warm":{"attempted":true,"ok":true,"durationMs":17606},
+ "afterWarm":{"ok":true,"durationMs":163},
+ "wouldHaveTimedOutWithoutWarmup":true}
+```
+
+17606 ms > 10000 ms → **同一时刻用产品默认超时去探必然超时**；捂热之后 163 ms。
+**用户从不在交互路径上付那一笔，10 s 这个诊断阈值也保住了。**
+
+#### ⚠️ 顺带订正上一位的区间：不是 16–21 s，是 **12–21 s**
+
+同一次 run 的另一个 job（独立的冷 runner）冷发 **12306 ms**（`metal_library_init=12.17s`）。
+连同历史样本，冷启动样本现在是 **n=4：12306 / 16092 / 17606 / 20959 ms**。
+→ 诚实写法：这批虚拟化 macOS runner 上冷启动 ≈ **12–21 s**（n=4），热态 0.014–0.09 s。
+**四个样本全部 > 10 s，所以"冷机器上首次探测必然超时"这条结论不但不受影响，反而更稳。**
+
+`[未验证：需真 Mac]` runner GPU 仍是 `Apple Paravirtual device`。
+**真机 M1/M2/M3 上这个数是多少 → UNKNOWN**，我取不到，也不拿 17.6 s 去代表真机。
+捂热预算取 90 s（≈ 最大观测样本的 4 倍余量）正是因为真机数未知；它**仍然有界**，
+驱动真挂死时这一步会收场并留日志，不会把装包任务永远吊住。
+
+---
+
+### ④ 明确**没有**动的东西
+
+- **`PROBE_TIMEOUT_MS` 一个字未改**，仍是 ADR-003 决策 3 的 10_000。
+  测试直接断言它 `=== 10_000`，并断言探针**实际收到**的 `timeoutMs ≠ 它`且 `> 它`
+  ——断言的是"探针收到什么"，不是某个常量的名字，常量改名/挪走时这条仍说得出真话。
+- **`CIRCUIT_BREAKER_THRESHOLD` 一个字未改**（残留情形已单独交回，见 ①）。
+- 判「是不是 Metal 包」用的是**结构判据**（`probedBackendsInDir()` 里有没有 `metal`），
+  **刻意不看 `pack.backend === 'metal'`** —— 我动手时目录里没有任何一个包这么声明
+  （macOS 的包声明 `cpu` 却装着 `libggml-metal.so`），照那个字段判会**永远跳过且零报错**。
+  （本轮进行中 `474c210` 恰好加了个 `backend: 'metal'` 的包，是 `pending-ci`；
+  这个选择因此同时挡住了两种情况。）
+
+### ⑤ 用户可见
+
+`JOB_STEPS` 增加 `warming`；`progress.warming` / `jobToast.warmingHint` 中英各一条。
+`ctx.setStep()` **自己不发任何 SSE**（`queue.ts:186` 只改字段），所以补了一发 `ctx.progress()`
+——否则这十几秒在前端完全隐形，用户看到的就是"进度条满格、卡死"。
+两份 locale 仍**逐行对齐**（各 993 行，`warming` 都在 404 行、`warmingHint` 都在 938 行，已用脚本核过）。
+
+### ⑥ 门禁（**绑在最终提交的那棵树上**，不是中途那次）
+
+⚠️ 我的工作树里同时有另外两位的在途改动，所以门禁**另开了一个 worktree
+检出到 `ac6ebfc` 本身**（`pnpm install --frozen-lockfile` 后全套重跑），
+避免重演上一位"中途跑过一次就写全绿"那一格。
+
+| 门禁 | 结果（在 `ac6ebfc` 的 worktree 上） |
+|---|---|
+| `pnpm -r test` | **1370 pass / 0 fail**（基线 1349，净增 21 条**全是本轮新增**） |
+| `npx tsc -b` | ✅ |
+| `npx eslint .` | ✅ exit 0 |
+| `pnpm build:safe` | ✅（**未跑 `pnpm -r build`**，未碰 `apps/web/dist`） |
+| `pnpm lint-workflows` | ✅ **627** 条 / 7 个 workflow（新 job 也过；此前 605） |
+| `pnpm test:ci-scripts` | ✅ 22 passed |
+| `pnpm check:orphans` | ✅ **70 个（基线 70）**，`orphan-exports-baseline.json` **一个字未动** |
+
+**没有 import 任何生产侧已死的导出**（上一位栽的那一格）：新测试只 import
+`PROBE_TIMEOUT_MS` / `ProbeResult` / `RunProbeOptions` —— 全是有真实生产调用方的。
+
+**反向验证 6/6 全红**（`/tmp` 隔离副本，先跑对照组，锚点唯一性校验，跑完立即还原）：
+
+| 变异 | 坏了用户会怎样 | 结果 |
+|---|---|---|
+| 拆掉调用点的 try/catch | 捂热一抛，装包被判失败 | 🔴 |
+| 拆掉 `warmProbeCache` 自己的兜底 catch | 路径解析一炸就把装包带走 | 🔴 |
+| 去掉 `platform !== 'darwin'` 闸门 | 每台非 Mac 机器每次装包白付一发探针 | 🔴 |
+| 捂热改用 `PROBE_TIMEOUT_MS` | 冷 Mac 上必然超时，整件事等于没做 | 🔴 |
+| 去掉「目录里有没有 Metal 库」判据 | 捂的不是 Metal，白付一发 | 🔴 |
+| 绕开注入接缝 / 根本不调捂热 | 「写好了没人调」 | 🔴 |
+
+### ⑦ 暂存纪律（树上有别人）
+
+`apps/web/src/app/i18n/locales/{en,zh-CN}.json` **两位同时在改**。
+各 4 个 hunk，我用脚本按「新增行里含 `warming`」筛出**我的 2 个**，
+`git apply --cached` 只暂存那些，**工作树里别人的改动一个字没动**。
+`git diff --cached --name-only` 逐个核过：11 个文件全是我的，
+**没有** mindmap/player/notes 那几个，**没有** `docs/research/memoac/`，**没有** `memo-compare.md`。
+
+### 本轮"没验就说没验"
+
+- **真 Mac（M1/M2/M3）上的冷启动耗时** → **UNKNOWN**。所有数都来自 `Apple Paravirtual device`
+  的虚拟化 runner，缺的是一台真机，我取不到。
+- **冷 Mac 时间线的两条分支** → `[模拟]`：探针耗时是 `sleep` 假的，断路器/超时/指纹/拉黑是真代码。
+  真机上把这条端到端跑一遍**没做**（要一台会真的冷两次的 Mac）。
+- **「包已装好、之后缓存才变冷」那条残留** → **未修**，已单独交回 Manager（见 ①）。
+- **前端那句文案没有在真浏览器里看过** —— 只有组件测试与 key 对齐脚本。
+- **`warming` 这一步在真 macOS 上的前端表现**（进度条满格 + 那句话）→ **未验**，CI 里没有浏览器。
+
+### 需要 Manager 决策
+
+1. **断路器语义**：`recordProbeOutcome()` 在**指纹变化**时该不该把 `consecutiveFailures` 归零
+   （现在是"只给一次重试"，那一次失败就永久关上）。这是 ADR-003 的地界，且能独立于捂热落地。
+2. **捂热预算 90 s** 是按"最大观测样本 ×4"取的，真机数 UNKNOWN。拿到真机数后应当复核。
