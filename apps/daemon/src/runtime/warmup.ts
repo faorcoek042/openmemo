@@ -61,8 +61,9 @@
  *
  * ⚠️ **捂热仍然不可省**。它省掉的是**交互路径上**的那一笔：没有它，冷 Mac 上用户
  * 装完包之后还要等一个冷却期（60 s）才自愈，期间 GPU 不可用；有它，装包结束时就是好的。
- * 人工出口 `GET /api/runtime/hardware?reset=1`（`resetBreaker()`）依旧有效，
- * 但**不再是唯一出口** —— 那才是它此前最严重的地方。
+ * 人工出口 `GET /api/runtime/hardware?reset=1` 依旧有效，但**不再是唯一出口** ——
+ * 那才是它此前最严重的地方。（T-175 起它走的也是恢复那条路：后台 + 90 s + 单飞，
+ * 见 `requestBreakerRecovery()`；`resetBreaker()` 已随之删除。）
  */
 
 import { probedBackendsInDir, runProbe, type ProbeResult, type RunProbeOptions } from '@openmemo/runtime';

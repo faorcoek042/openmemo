@@ -110,7 +110,6 @@ export {
   buildHardwareInfo,
   isAbiCompatible,
   isUsableAccelerator,
-  nextCandidates,
   preferenceOrder,
 } from './backends/manager.js';
 export type { BuildHardwareInfoInput } from './backends/manager.js';

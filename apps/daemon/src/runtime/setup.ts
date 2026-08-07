@@ -55,7 +55,6 @@ import {
   detectUnifiedMemory,
   emptyBreaker,
   formatSelfTest,
-  nextCandidates,
   preferenceOrder,
   probedBackendsInDir,
   recordProbeOutcome,
@@ -279,11 +278,17 @@ export function breakerSnapshot(backendDir: string): BreakerState {
   return breakers.get(backendDir) ?? emptyBreaker();
 }
 
-/** 用户显式"重试"时调用：清掉裁决，让后端重新自证。 */
-export function resetBreaker(backendDir?: string): void {
-  if (backendDir === undefined) breakers.clear();
-  else breakers.delete(backendDir);
-}
+/*
+ * ★ T-175 删掉了 `resetBreaker()`。
+ *
+ * 它的唯一调用方是 `GET /api/runtime/hardware?reset=1`，而那条路已经改成
+ * `requestBreakerRecovery()`（后台 + 90 s 预算 + 单飞）。留着它就是一个零调用方的导出，
+ * 而且是**危险**的那种零调用方：它不带参数调用时 `breakers.clear()` 会清掉
+ * **所有** backendDir 的裁决，下一个人看见它会以为那是"重试当前这个"的正确做法。
+ *
+ * 判据（Manager T-175）：**不许留半个功能。零读者 → 删。**
+ * 零读者字段/函数最坏的地方不是浪费空间，是下一个人会以为它在起作用。
+ */
 
 /* -------------------------------------------------------------------------- */
 /* 半开：恢复探测跑在后台                                                        */
@@ -301,8 +306,12 @@ export function resetBreaker(backendDir?: string): void {
  * ★ **为什么是单飞（Map 里有就不再起）**：冷却到期后每一个并发请求都会看到 `recover`。
  * 不去重的话，一台冷 Mac 上十几个请求会同时 spawn 十几个探针**去抢同一块 GPU 初始化** ——
  * 那正是断路器本来要防的"猛敲一个坏掉的东西"。
+ *
+ * ★ T-175：`startedAt` 是为**界面**记的。恢复那一发最长 90 s，用户完全可能在中途切走再回来
+ * （或者干脆是另一个标签页）。进度如果记在前端，切走就归零、回来重新从 0 数 ——
+ * 那是在**编一个进度**。记在这里，谁来问都得到同一个"已经跑了多久"。
  */
-const recoveries = new Map<string, Promise<void>>();
+const recoveries = new Map<string, { task: Promise<void>; startedAt: string }>();
 
 /**
  * 该目录上正在跑的恢复探测；没有就是 `null`。
@@ -311,7 +320,18 @@ const recoveries = new Map<string, Promise<void>>();
  * 测试侧用它等那一发跑完 —— 后台任务没有别的落点可以等。
  */
 export function breakerRecovery(backendDir: string): Promise<void> | null {
-  return recoveries.get(backendDir) ?? null;
+  return recoveries.get(backendDir)?.task ?? null;
+}
+
+/**
+ * 那一发是什么时候起跑的（ISO）；没在跑就是 `null`。
+ *
+ * 刻意**不导出**：唯一的读者是本文件里那两处组装（`breakerStatus()` 与
+ * `detectRuntimeHardware()`），外面要这个值就该去读那两个报告。
+ * 多导出一个零跨文件引用的函数会进 `check:orphans` 的棘轮，而那条棘轮是对的。
+ */
+function breakerRecoveryStartedAt(backendDir: string): string | null {
+  return recoveries.get(backendDir)?.startedAt ?? null;
 }
 
 async function recoveryProbe(layout: RuntimeLayout, fingerprint: string): Promise<void> {
@@ -344,6 +364,18 @@ export interface BreakerStatusReport {
   readonly blacklistedAt: string | null;
   readonly retryAt: string | null;
   readonly recovering: boolean;
+  /**
+   * 正在跑的那一发恢复探测的**起跑时刻**（ISO）；没在跑就是 null。
+   *
+   * 界面拿它算"已经等了多久" —— 记在服务端而不是前端，是因为那一发最长 90 s，
+   * 用户完全可能切走再回来。进度记在前端就会归零重数，那是编一个进度出来。
+   */
+  readonly recoveryStartedAt: string | null;
+  /**
+   * 恢复那一发的预算（ms）。**发出来是为了让界面别硬编一个 90。**
+   * 那个数是 `PROBE_RECOVERY_TIMEOUT_MS`，前端抄一份必然漂。
+   */
+  readonly recoveryTimeoutMs: number;
 }
 
 /**
@@ -370,12 +402,15 @@ export async function breakerStatus(options: RuntimePathsInput): Promise<Breaker
     blacklistedAt: state.blacklistedAt,
     retryAt: state.retryAt,
     recovering: breakerRecovery(layout.backendDir) !== null,
+    recoveryStartedAt: breakerRecoveryStartedAt(layout.backendDir),
+    recoveryTimeoutMs: PROBE_RECOVERY_TIMEOUT_MS,
   };
 }
 
-function startBreakerRecovery(layout: RuntimeLayout, fingerprint: string): void {
+/** @returns `true` = 本次真的起了一发；`false` = 已经有一发在跑，**加入等待**而不是再起一发。 */
+function startBreakerRecovery(layout: RuntimeLayout, fingerprint: string): boolean {
   const dir = layout.backendDir;
-  if (recoveries.has(dir)) return;
+  if (recoveries.has(dir)) return false;
   /*
    * `.finally()` 的回调**至少要等一个 microtask**才可能跑，而 `recoveries.set` 是同步的
    * —— 所以 set 必然先于 delete，不会留下一条永远删不掉的占位。
@@ -383,7 +418,45 @@ function startBreakerRecovery(layout: RuntimeLayout, fingerprint: string): void 
   const task = recoveryProbe(layout, fingerprint).finally(() => {
     recoveries.delete(dir);
   });
-  recoveries.set(dir, task);
+  recoveries.set(dir, { task, startedAt: new Date().toISOString() });
+  return true;
+}
+
+/**
+ * ★ T-175：**用户显式点「立刻重试」时走这里。**
+ *
+ * ## 为什么手点不该走"就地探一发"
+ *
+ * 这里以前是 `resetBreaker()` + `detect(true)`：清掉裁决 ⇒ 裁决变回 `closed` ⇒
+ * **就地跑一发探测，用的是交互预算 `PROBE_TIMEOUT_MS`（10 s）**。
+ * 而冷 Mac 上 Metal 首次初始化要 12–21 s（T-172 实测 n=4），被 kill 的探针又什么都不留 ——
+ * 也就是说**用户手点的那一发几乎必然超时，而后台自动那发（90 s）反而能成**。
+ * 按钮点了跟没点一样，只是多记了一次失败。
+ *
+ * Manager 的判据（T-175 裁定）：
+ *
+ * > 那 10 秒是用来保护"**顺带发生**"的请求的（页面加载时的硬件查询），
+ * > **不是用来保护一次显式的用户动作的**。用户按下「立刻重试」就是在说"我愿意等" ——
+ * > 拿一个为别的目的设的预算去掐他，是把保护用错了对象。
+ *
+ * 所以手点与冷却到期**走同一条路**：后台、`PROBE_RECOVERY_TIMEOUT_MS`（90 s）、单飞。
+ * 手点相对自动的唯一区别是**不必等冷却到期**（`open` 也照起），这正是"显式重试"的含义。
+ *
+ * ## 单飞怎么和手点共存
+ *
+ * 已经有一发在跑 ⇒ **加入等待**（返回 `started: false`），不再起第二发、也不报错。
+ * 「再起一发」会让两个探针抢同一块 GPU 初始化 —— 那正是断路器本该防的；
+ * 「报错」则会让用户以为自己点坏了什么。两种都不对，正确答案是"你要的事情已经在发生了"。
+ *
+ * **不清 `breakers` 里的计数**：那一发的成败由 `recordProbeOutcome()` 如实记账。
+ * 先把失败计数抹掉再探，等于让界面短暂显示一个"已恢复"的假象。
+ */
+export async function requestBreakerRecovery(
+  options: RuntimePathsInput,
+): Promise<{ started: boolean; status: BreakerStatusReport }> {
+  const layout = await resolveRuntimeLayout(options);
+  const started = startBreakerRecovery(layout, await driverFingerprint(layout));
+  return { started, status: await breakerStatus(options) };
 }
 
 /**
@@ -449,6 +522,10 @@ export interface BreakerDiagnostics {
   readonly retryAt: string | null;
   /** 此刻是不是有一发后台恢复探测正在跑。 */
   readonly recovering: boolean;
+  /** 那一发的起跑时刻（ISO）；没在跑就是 null。界面拿它算"已经等了多久"（T-175）。 */
+  readonly recoveryStartedAt: string | null;
+  /** 恢复那一发的预算（ms）。发出来是为了让界面别硬编那个 90。 */
+  readonly recoveryTimeoutMs: number;
 }
 
 export interface RuntimeDetection {
@@ -458,8 +535,6 @@ export interface RuntimeDetection {
   readonly breaker: BreakerDiagnostics;
   /** 断路器拉黑的后端（cpu 永不入列）。 */
   readonly blacklistedBackends: Backend[];
-  /** 降级链（ADR-003 决策 3）：还值得一试的后端，cpu 恒为最后一环。 */
-  readonly degradationChain: Backend[];
   readonly installedBackends: Backend[];
   /**
    * **advisory 探测**（nvidia-smi / sysfs DRM / system_profiler / DXGI）认为本机
@@ -648,7 +723,6 @@ export async function detectRuntimeHardware(
       })
     : await composeHardware(layout, probe, advisory, installed, blacklisted);
 
-  const primaryVendor = hardware.gpus[0]?.vendor ?? advisory.gpus[0]?.vendor ?? null;
   const advisoryBackends = [...new Set(advisory.gpus.flatMap((g) => g.candidateBackends))];
 
   return {
@@ -665,9 +739,10 @@ export async function detectRuntimeHardware(
       verdict: after,
       retryAt: breaker.retryAt,
       recovering: breakerRecovery(layout.backendDir) !== null,
+      recoveryStartedAt: breakerRecoveryStartedAt(layout.backendDir),
+      recoveryTimeoutMs: PROBE_RECOVERY_TIMEOUT_MS,
     },
     blacklistedBackends: [...blacklisted],
-    degradationChain: nextCandidates(hardware.os, primaryVendor, blacklisted),
     installedBackends: [...installed],
     advisoryBackends,
   };

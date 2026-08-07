@@ -316,11 +316,13 @@ export interface HardwareRuntimeDiagnostics {
     /** 冷却到期时刻（ISO）。null = 没跳闸。**跳闸了它就不可能是 null**。 */
     readonly retryAt: string | null;
     readonly recovering: boolean;
+    /** 正在跑的那一发恢复探测的起跑时刻（ISO）；没在跑就是 null。 */
+    readonly recoveryStartedAt: string | null;
+    /** 恢复那一发的预算（ms）。**发出来就是为了让界面别硬编那个 90。** */
+    readonly recoveryTimeoutMs: number;
   };
   /** 断路器停用的后端（cpu 永不入列）。 */
   readonly blacklistedBackends: Backend[];
-  /** 降级链（ADR-003 决策 3）：还值得一试的后端，cpu 恒为最后一环。 */
-  readonly degradationChain: Backend[];
 }
 
 export interface GetHardwareResponse {
@@ -357,6 +359,16 @@ export interface GetBreakerResponse {
   readonly verdict: string;
   readonly retryAt: string | null;
   readonly recovering: boolean;
+  /**
+   * 正在跑的那一发恢复探测的**起跑时刻**（ISO）；没在跑就是 null。
+   *
+   * ★ 界面拿它算"已经等了多久"。**记在服务端而不是前端**：那一发最长 90 s，
+   * 用户完全可能切走再回来（或者本来就在另一个标签页）。进度记在前端就会归零重数 ——
+   * 那是编一个进度出来，而不是报告一个进度。
+   */
+  readonly recoveryStartedAt: string | null;
+  /** 恢复那一发的预算（ms）= `PROBE_RECOVERY_TIMEOUT_MS`。界面显示"最长约 N 秒"用它。 */
+  readonly recoveryTimeoutMs: number;
 }
 
 /* ------------------------------ errors ----------------------------------- */

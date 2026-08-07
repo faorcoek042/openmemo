@@ -7789,7 +7789,8 @@ describe('T-172 ③ setSource 与待落 seek 的关系', () => {
 });
 
 
-/* ═══════════════════════ T-174 /runtime 断路器可见 + 立刻重试 ═══════════════════════ */
+
+/* ═════════════ T-174/T-175 /runtime 断路器可见 + 「立刻重试」走恢复预算 ═════════════ */
 
 /**
  * ## 这一组守的是什么
@@ -7797,26 +7798,35 @@ describe('T-172 ③ setSource 与待落 seek 的关系', () => {
  * 断路器连续两次探测失败就停用全部加速后端。此前这在**运行时页上完全不可见**：
  * daemon 一直随 `/api/runtime/hardware` 发 `runtime.breaker`，但前端把响应断言成
  * 不含该字段的窄契约，**它在类型边界上就被丢掉了** —— 全仓前端引用数 0，
- * `?reset=1` 同样零调用方。用户看到的是"GPU 加速就是不工作"，
- * 而唯一的解释躺在一个他不会去看的自检页里。
+ * `?reset=1` 同样零调用方。
+ *
+ * ## ★ T-175 把「立刻重试」从"就地 10 秒"改成了"后台 90 秒"
+ *
+ * 改之前手点走的是交互预算 `PROBE_TIMEOUT_MS`（10 s），而冷 Mac 上 Metal 首次初始化
+ * 要 12–21 s ⇒ **用户手点的那一发几乎必然超时，反而是后台自动那发能成** ——
+ * 按钮点了跟没点一样。现在手点与冷却到期走同一条路（后台 / 90 s / 单飞）。
+ *
+ * 于是**"忙"的来源变了**：不再是 mutation 的 `isPending`（那一个请求现在几十毫秒就回来），
+ * 而是 daemon 的 `recovering` + `recoveryStartedAt`。下面几条就是钉这件事的。
  *
  * ── 把名字遮住，这些断言什么时候会失败 ──────────────────────────────────────────
- *  · 有人把 `BreakerNotice` 从页面上摘掉，或让它在跳闸时返回 null；
- *  · 有人在组件里**另写一套措辞**（下面直接拿 `breakerDetail()` 的返回值比对，
- *    自检页与本页共用它 —— 抄一份出来就当场红）；
- *  · 有人把「立刻重试」接到别的 URL 上，或做成一个不发请求的装饰；
- *  · 有人把请求飞行期间的反馈去掉（按钮不禁用 / 文案不变），
- *    于是用户在那十秒里看不出任何变化 —— 而连点正是 daemon 侧单飞机制要防的。
+ *  · 有人把「忙」改回读 `reset.isPending` → 那 90 秒里界面会一片安静（用户以为没点上）；
+ *  · 有人把已等时长改成组件里的 `useState` 计数 → 切走再回来就从 0 重数（编进度）；
+ *  · 有人把 90 秒硬编进前端 → daemon 调预算时界面开始说谎；
+ *  · 有人在正在重试时把按钮放开 → 用户能点出第二发，撞穿单飞；
+ *  · 有人在组件里另写一套措辞（下面直接拿 `breakerDetail()` 比对）。
  */
-describe('★ T-174 /runtime 断路器可见 + 立刻重试', () => {
+describe('★ T-174/T-175 /runtime 断路器可见 + 立刻重试', () => {
   /** CJK 表意文字 + CJK 标点 + 全角形式。写 `\u` 转义：范围首字符是 U+3000 全角空格。 */
   const CJK_ANY = /[\u3000-\u303F\u4E00-\u9FFF\uFF00-\uFFEF]/;
 
   const LAST_ERROR = 'probe timed out after 10000ms (killed).';
   const DISABLED = ['cuda', 'vulkan', 'rocm', 'metal', 'coreml'];
   const RETRY_AT = new Date(Date.now() + 240_000).toISOString();
+  /** daemon 报的恢复预算。**用例里也不写死 90** —— 断言从这个值推出来。 */
+  const RECOVERY_MS = 90_000;
 
-  /** 与 daemon `GET /api/runtime/breaker` 同形。默认是"跳闸且冷却中"。 */
+  /** 与 daemon `GET /api/runtime/breaker` 同形。默认"跳闸、冷却中、没在重试"。 */
   function breakerBody(over: Record<string, unknown> = {}) {
     return {
       backendDir: '/tmp/stub/bin/runtime',
@@ -7832,15 +7842,27 @@ describe('★ T-174 /runtime 断路器可见 + 立刻重试', () => {
       verdict: 'open',
       retryAt: RETRY_AT,
       recovering: false,
+      recoveryStartedAt: null,
+      recoveryTimeoutMs: RECOVERY_MS,
       ...over,
     };
   }
+
+  /** 正在重试：`startedAt` 秒之前起跑的那一发。 */
+  const recoveringSince = (secondsAgo: number) =>
+    breakerBody({
+      verdict: 'recover',
+      recovering: true,
+      recoveryStartedAt: new Date(Date.now() - secondsAgo * 1000).toISOString(),
+    });
 
   const CLOSED = {
     verdict: 'closed',
     blacklistedBackends: [],
     open: false,
     retryAt: null,
+    recovering: false,
+    recoveryStartedAt: null,
   } as const;
 
   const HW = {
@@ -7858,7 +7880,6 @@ describe('★ T-174 /runtime 断路器可见 + 立刻重试', () => {
     },
     snapshotId: 'hw-local',
     runtime: {
-      // ★ 前端据此显示等待上限，而不是自己硬编一个 10 —— 那个数是 daemon 的 PROBE_TIMEOUT_MS
       probe: { timeoutMs: 10_000 },
       breaker: {
         consecutiveFailures: 2,
@@ -7868,9 +7889,10 @@ describe('★ T-174 /runtime 断路器可见 + 立刻重试', () => {
         verdict: 'open',
         retryAt: RETRY_AT,
         recovering: false,
+        recoveryStartedAt: null,
+        recoveryTimeoutMs: RECOVERY_MS,
       },
       blacklistedBackends: DISABLED,
-      degradationChain: ['cpu'],
     },
   };
 
@@ -7886,17 +7908,18 @@ describe('★ T-174 /runtime 断路器可见 + 立刻重试', () => {
   /**
    * 渲染 `/runtime` 并**保证卸载**，哪怕用例中途断言失败。
    *
-   * ★ 这不是洁癖。跳闸时提示块里有一个 **1 秒的倒计时 `setInterval`**（还有断路器查询的
-   * 10 秒轮询）。断言失败直接抛出会跳过 `unmount()`，那些定时器就留在事件循环里 ——
-   * 而 `apps/web/package.json` 的组件套件跑的是 `node --test`（`--test-timeout=0`），
-   * **进程于是永远不退出**：表现是"整个套件挂住"，不是"某条测试红了"。
-   *
-   * 这与 PROTOCOL §8 是同一族：**一条写错的用例伪装成了环境问题**，
-   * 而伪装之后它比红灯难查得多（本轮实测跑了 13 分钟 0 输出才发现）。
+   * ★ 不是洁癖。跳闸时提示块里有一个 1 秒的 `setInterval`（还有断路器查询的轮询）。
+   * 断言失败直接抛出会跳过 `unmount()`，那些定时器就留在事件循环里 ——
+   * 而组件套件跑的是 `node --test`（`--test-timeout=0`），**进程于是永远不退出**：
+   * 表现是"整个套件挂住"，不是"某条测试红了"。与 PROTOCOL §8 同一族：
+   * **一条写错的用例伪装成了环境问题**，而伪装之后比红灯难查得多。
    */
   async function withPage(
     over: Record<string, unknown>,
-    fn: (r: Awaited<ReturnType<typeof render>>, calls: { path: string; method: string }[]) => Promise<void>,
+    fn: (
+      r: Awaited<ReturnType<typeof render>>,
+      calls: { path: string; method: string }[],
+    ) => Promise<void>,
   ): Promise<void> {
     const { calls } = stubApi({
       '/runtime/hardware': HW,
@@ -7921,7 +7944,6 @@ describe('★ T-174 /runtime 断路器可见 + 立刻重试', () => {
 
   test('前提自检：桩真的接上了，提示块真的渲染了', async () => {
     await withPage({}, async (r) => {
-      // 断的是只可能来自桩数据的东西，不是"页面渲染出来了"
       assert.equal(!!notice(r), true, '提示块没渲染');
       assert.ok(text(r.container).includes('Stub CPU'), '硬件卡的桩没接上');
     });
@@ -7939,13 +7961,6 @@ describe('★ T-174 /runtime 断路器可见 + 立刻重试', () => {
     });
   });
 
-  /**
-   * ★★ 措辞**必须**与自检页同源。
-   *
-   * 直接拿 `@openmemo/shared` 的 `breakerDetail()` 返回值做子串比对：
-   * 谁在组件里重新写一遍句子（哪怕只差一个标点），这条当场红。
-   * 这就是"别另写一套措辞"从纪律变成守卫的地方。
-   */
   test('★ 页面文案逐字来自 shared 的 breakerDetail()，不是组件自己编的', async () => {
     await withPage({}, async (r) => {
       const shown = text(r.container);
@@ -7956,7 +7971,6 @@ describe('★ T-174 /runtime 断路器可见 + 立刻重试', () => {
         retryAt: RETRY_AT,
         recovering: false,
       }).zh;
-      // 倒计时每秒在变，比对"停用了什么 + 为什么"这段稳定的前缀
       const stable = expected.slice(0, expected.indexOf('。') + 1);
       assert.ok(stable.length > 20, `切出来的前缀太短，这条断言会变空：${stable}`);
       assert.ok(
@@ -7991,81 +8005,94 @@ describe('★ T-174 /runtime 断路器可见 + 立刻重试', () => {
   });
 
   /**
-   * ★★★ **按下去之后那十几秒界面是什么样。**
+   * ★★★ **点下去之后那 90 秒界面是什么样。**
    *
-   * `?reset=1` 是**同步**的：daemon 清掉裁决后就地跑一发探测，用的是交互预算
-   * `PROBE_TIMEOUT_MS`（10 s，随响应的 `probe.timeoutMs` 发过来）。
-   * 也就是说这个请求本身会挂最长约十秒 —— 那十秒里界面必须有变化，
-   * 否则用户会连点，而连点正是 daemon 侧单飞机制要防的东西。
-   *
-   * 这条用例靠 `stubApi` 的 `await`（T-174 加的）把请求**卡在飞行中**，
-   * 从而真的断言到那一帧；否则 `click()` 的 act 会把它抽干，
-   * 断言就变成在一个永远不成立的状态上跑 —— 而且是绿的。
+   * 关键变化：`?reset=1` 现在**立刻返回**（daemon 起一发后台探测就回），
+   * 所以"忙"不能再读 mutation 的 `isPending` —— 那只有几十毫秒。
+   * 忙与进度**都来自 daemon**：`recovering` + `recoveryStartedAt`。
    */
-  test('★★ 点下去之后：按钮禁用 + 文案变「正在重新探测」+ 计秒 + 转圈', async () => {
-    let release!: () => void;
-    const inFlight = new Promise<void>((res) => {
-      release = res;
-    });
+  test('★★ 点下去之后：按钮禁用 + 「正在重新探测」+ 已等秒数 + 最长约 90 秒 + 转圈', async () => {
+    let recovering = false;
     await withPage(
       {
-        '/runtime/hardware?reset=1': async () => {
-          await inFlight;
+        // daemon：起了一发后台探测就立刻返回
+        '/runtime/hardware?reset=1': () => {
+          recovering = true;
           return HW;
         },
+        '/runtime/breaker': () => (recovering ? recoveringSince(3) : breakerBody()),
       },
-      async (r, calls) => {
-        try {
-          assert.equal(retryBtn(r)?.disabled, false, '点之前按钮不该是禁用的');
-          assert.ok(text(r.container).includes('立刻重试'), '点之前应显示「立刻重试」');
+      async (r) => {
+        assert.equal(retryBtn(r)?.disabled, false, '点之前按钮不该是禁用的');
+        assert.ok(text(r.container).includes('立刻重试'), '点之前应显示「立刻重试」');
 
-          await click(retryBtn(r));
-          /*
-           * ★ 必须显式 flush 一次。
-           *
-           * `click()` 只保证事件派发进了 act，**不保证 mutation 那次
-           * `status: 'pending'` 的重渲染已经落到 DOM 上** —— 实测这条用例单独跑时
-           * 恰好落到了，跟着整个套件跑时就没有（React 调度的时机差别）。
-           * 于是它会变成一条**看运气的用例**：在 CI 上偶发红，而红的原因与产品无关。
-           *
-           * 这一次 flush 是安全的：`inFlight` 还没兑现，请求**不可能**在这里结束，
-           * flush 掉的只是 React 的渲染队列，不是那个请求。
-           */
-          await r.flush();
-
-          // ---- 请求还在飞：这一帧就是用户盯着的那十秒 ----
-          assert.equal(
-            calls.some((c) => c.path === '/runtime/hardware?reset=1'),
-            true,
-            '请求没发出去',
-          );
-          const during = text(r.container);
-          assert.equal(retryBtn(r)?.disabled, true, `★ 飞行期间按钮没被禁用 —— 用户会连点 → ${during.slice(0, 300)}`);
-          assert.ok(during.includes('正在重新探测'), `飞行期间文案没变 → ${during.slice(0, 300)}`);
-          assert.equal(
-            !!r.container.querySelector('[data-testid="runtime-breaker-elapsed"]'),
-            true,
-            '飞行期间没有计秒，用户无法判断它是不是卡住了',
-          );
-          // 等待上限取自 daemon 自己报的 probe.timeoutMs，不是前端硬编的 10
-          assert.ok(during.includes('最长约 10 秒'), `没显示等待上限 → ${during.slice(0, 300)}`);
-          assert.equal(
-            !!r.container.querySelector('.animate-spin'),
-            true,
-            '飞行期间没有转圈，静止的界面看起来像卡死',
-          );
-        } finally {
-          // ★ 必须兑现：不兑现的话这个 promise 会一直挂着，进程也就一直不退
-          release();
-        }
-
-        // ---- 请求回来 ----（fetch → json → mutation state → 重渲染，一个 tick 不够）
+        await click(retryBtn(r));
         await r.flush();
         await r.flush();
-        assert.equal(retryBtn(r)?.disabled, false, '请求回来了按钮还禁用着');
-        assert.ok(!text(r.container).includes('正在重新探测'), '请求回来了还在说"正在重新探测"');
+
+        const during = text(r.container);
+        assert.equal(retryBtn(r)?.disabled, true, '★ 正在重试时按钮没被禁用 —— 用户能点出第二发');
+        assert.ok(during.includes('正在重新探测'), `文案没变 → ${during.slice(0, 300)}`);
+        assert.equal(
+          !!r.container.querySelector('[data-testid="runtime-breaker-elapsed"]'),
+          true,
+          '没有已等时长，用户无法判断它是不是卡住了',
+        );
+        // 已等 3 秒来自**服务端**的 recoveryStartedAt，不是组件自己数的
+        assert.ok(during.includes('已用 3 秒'), `没显示服务端算出来的已等时长 → ${during}`);
+        // 预算取自 daemon 报的 recoveryTimeoutMs（90_000），前端不硬编
+        assert.ok(
+          during.includes(`最长约 ${String(RECOVERY_MS / 1000)} 秒`),
+          `没显示等待上限 → ${during.slice(0, 300)}`,
+        );
+        assert.equal(
+          !!r.container.querySelector('.animate-spin'),
+          true,
+          '没有转圈，静止的界面看起来像卡死',
+        );
+        // 90 秒比 10 秒更需要"你可以走开"这句话
+        assert.equal(
+          !!r.container.querySelector('[data-testid="runtime-breaker-leaveable"]'),
+          true,
+          '没告诉用户可以离开页面 —— 他会守着一个转圈干等 90 秒',
+        );
+        // ★ 那句"正在重试"的详情文案同样来自 shared（recovering 分支）
+        assert.ok(during.includes('正在重试'), '详情句没有切到 recovering 那一支');
       },
     );
+  });
+
+  /**
+   * ★ **切走再回来，进度还在。**
+   *
+   * 这一条把"进度记在服务端"这个决定钉死：组件是**全新挂载**的（模拟用户离开页面
+   * 再回来 / 另开一个标签页），没有任何本地累计状态，但已等时长必须仍然是 40 秒。
+   * 如果有人把它改成组件里的 `useState` 计数，这里会看到"已用 0 秒"。
+   */
+  test('★ 切走再回来（组件重新挂载）：已等时长仍然来自服务端，不从 0 重数', async () => {
+    await withPage({ '/runtime/breaker': recoveringSince(40) }, async (r) => {
+      const shown = text(r.container);
+      assert.ok(shown.includes('已用 40 秒'), `重新挂载后进度归零了 → ${shown.slice(0, 300)}`);
+      assert.equal(retryBtn(r)?.disabled, true, '别人起的那一发也该让按钮禁用');
+    });
+  });
+
+  /**
+   * ★ **单飞与手点共存**：后台自动那一发正在跑时，用户看到的就是"正在重新探测"，
+   * 按钮**本来就是禁用的** —— 他根本点不出第二发。
+   * 这一条**没有点击**：证明"忙"不依赖用户点过按钮（自动恢复也照样显示）。
+   */
+  test('★ 自动恢复正在跑时：无需点击，界面已经在说"正在重新探测"且按钮禁用', async () => {
+    await withPage({ '/runtime/breaker': recoveringSince(5) }, async (r, calls) => {
+      const shown = text(r.container);
+      assert.ok(shown.includes('正在重新探测'), `自动恢复没有反映到界面 → ${shown.slice(0, 300)}`);
+      assert.equal(retryBtn(r)?.disabled, true, '★ 正在重试时按钮必须禁用（单飞在界面上的样子）');
+      assert.equal(
+        calls.some((c) => c.path === '/runtime/hardware?reset=1'),
+        false,
+        '没点按钮却发了 reset 请求',
+      );
+    });
   });
 
   test('★ 重试跑完仍然停用时必须明说，而不是默默把转圈收掉', async () => {
@@ -8073,7 +8100,7 @@ describe('★ T-174 /runtime 断路器可见 + 立刻重试', () => {
       await click(retryBtn(r));
       await r.flush();
       await r.flush();
-      // 桩里断路器仍然是 open —— 用户必须能区分"点了没生效"和"点了但没修好"
+      // 桩里断路器仍然 open 且没在重试 —— 用户必须能区分"点了没生效"和"点了但没修好"
       assert.equal(
         !!r.container.querySelector('[data-testid="runtime-breaker-still"]'),
         true,
@@ -8082,22 +8109,37 @@ describe('★ T-174 /runtime 断路器可见 + 立刻重试', () => {
     });
   });
 
-  test('恢复之后提示块自己消失', async () => {
+  /**
+   * 恢复之后：提示块消失，**并且**硬件被重探一次。
+   *
+   * 后半条是重点：daemon 侧硬件响应带缓存，恢复探测只改断路器 state。
+   * 不补那一发 `?refresh=1` 的话，提示块没了而后端芯片还是灰的 ——
+   * 用户刚被告知"好了"，看到的却是"还是不可用"。
+   */
+  test('★ 恢复之后提示块消失，且补打一发 ?refresh=1 把硬件刷新掉', async () => {
     let tripped = true;
     await withPage(
       {
         '/runtime/breaker': () => (tripped ? breakerBody() : breakerBody(CLOSED)),
         '/runtime/hardware?reset=1': () => {
           tripped = false;
-          return HW_OK;
+          return HW;
         },
+        '/runtime/hardware?refresh=1': HW_OK,
       },
-      async (r) => {
+      async (r, calls) => {
         assert.equal(!!notice(r), true, '前提：先得是跳闸的');
+
         await click(retryBtn(r));
         await r.flush();
         await r.flush();
+
         assert.equal(!!notice(r), false, '断路器已恢复，提示块却还赖着');
+        assert.equal(
+          calls.filter((c) => c.path === '/runtime/hardware?refresh=1').length,
+          1,
+          `恢复后没有把硬件重探一次（芯片会一直是灰的）→ ${JSON.stringify(calls.map((c) => c.path))}`,
+        );
       },
     );
   });
@@ -8105,17 +8147,18 @@ describe('★ T-174 /runtime 断路器可见 + 立刻重试', () => {
   test('★ 英文界面上这一整块不许出现中文', async () => {
     await i18nInstance.changeLanguage('en');
     try {
-      await withPage({}, async (r) => {
+      await withPage({ '/runtime/breaker': recoveringSince(7) }, async (r) => {
         const el = notice(r);
         assert.equal(!!el, true, '提示块没渲染，这条断言会变空');
         const shown = el?.textContent ?? '';
         assert.ok(shown.length > 40, `文本太短，可能没真的渲染 → ${shown}`);
         const bad = shown.match(new RegExp(`.{0,20}${CJK_ANY.source}.{0,20}`, 'g'));
         assert.equal(bad, null, `英文界面上出现了中文 → ${JSON.stringify(bad?.slice(0, 3))}`);
-        // 且必须真的说了英文版的那三件事
+        // 且必须真的说了英文版的那几件事（含新增的两句）
         assert.ok(shown.includes('Temporarily disabled'), `英文详情没出来 → ${shown}`);
-        assert.match(shown, /Automatic retry in about/, '英文的"多久之后重试"没出来');
-        assert.ok(shown.includes('Retry now'), '英文按钮字样没出来');
+        assert.match(shown, /Retrying now/, '英文的"正在重试"没出来');
+        assert.match(shown, /7s elapsed/, '英文的已等时长没出来');
+        assert.match(shown, /background/, '英文的"可以离开"没出来');
       });
     } finally {
       await i18nInstance.changeLanguage('zh-CN');

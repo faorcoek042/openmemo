@@ -5,10 +5,10 @@ import { breakerDetail, breakerAdvice, breakerTripped } from '@openmemo/shared';
 import type { BreakerCopyInput, GetHardwareResponse } from '@openmemo/shared';
 
 import { Button } from '../../../components/common/Button';
-import { useBreakerQuery, useBreakerResetMutation } from '../api';
+import { useBreakerQuery, useBreakerResetMutation, useHardwareRefresh } from '../api';
 
 /**
- * 断路器提示 —— **运行时页上"GPU 加速为什么不工作"的唯一解释**（T-174）。
+ * 断路器提示 —— **运行时页上"GPU 加速为什么不工作"的唯一解释**（T-174 / T-175）。
  *
  * ## 它补的是什么洞
  *
@@ -21,11 +21,16 @@ import { useBreakerQuery, useBreakerResetMutation } from '../api';
  *
  * `breakerDetail()` / `breakerAdvice()` 与自检的 `hw.breaker` 是**同一个函数**。
  * 两处各写一遍就是下一次不一致的种子（本仓吃过很多次），所以这里一个字都不自己编：
- * 组件只负责排版、状态机和那个按钮。`packages/runtime/src/selfcheck.test.ts` 里
- * 那批钉措辞的断言因此顺带守着这一页。
+ * 组件只负责排版、状态机和那个按钮。
  *
- * 唯一由本组件提供的文案是**外壳**（标题、按钮字样、计秒），走 i18n catalog；
- * 断路器本身要说的三件事（停用了什么 / 为什么 / 多久之后重试）一律来自 shared。
+ * ## ★ T-175：进度是**服务端的**，不是这个组件的
+ *
+ * 手点「立刻重试」现在与冷却到期走同一条路（后台 90 s 单飞），所以
+ * "正在重试"这件事**不是本组件的 mutation 状态**，而是 daemon 的 `recovering`；
+ * 已等多久由 `recoveryStartedAt`（服务端时刻）算出来。于是：
+ *   - 用户**切走再回来**，进度还在（不是从 0 重数）；
+ *   - **自动恢复**与**手点**长得完全一样（用户不需要知道这一发是谁起的）；
+ *   - 另开一个标签页看到的是同一个进度。
  */
 export function BreakerNotice({
   locale,
@@ -39,45 +44,47 @@ export function BreakerNotice({
   const zh = locale.toLowerCase().startsWith('zh');
   const breaker = useBreakerQuery();
   const reset = useBreakerResetMutation();
+  const refreshHardware = useHardwareRefresh();
 
   /*
-   * 每秒重算一次，倒计时才会真的在动。
-   *
-   * ★ 只在**跳闸时**开这个 interval：绝大多数机器上断路器一辈子不跳，
-   * 不该为一个永远不显示的组件每秒 setState 一次。
-   * tick 只是用来让 `Date.now()` 被重新读取，值本身没有意义。
+   * 每秒重算一次，倒计时/计秒才会真的在动。
+   * 只在跳闸时开这个 interval：绝大多数机器上断路器一辈子不跳。
+   * tick 只是让 `Date.now()` 被重新读取，值本身没有意义。
    */
   const [, setTick] = useState(0);
 
-  /*
-   * 手动重试的**已用秒数**。
-   *
-   * ⚠️ 为什么显示"已用 N 秒"而不是"最长约 10 秒"的静态文案：那个 10 来自 daemon 的
-   * `PROBE_TIMEOUT_MS`，前端硬编一份就会漂。`probe.timeoutMs` 确实随响应发过来了
-   * （所以下面用得上它），但只在**拿到过硬件响应**时才有 —— 计秒不依赖它，任何时候都能显示。
-   */
-  const [elapsed, setElapsed] = useState(0);
-  const startedAt = useRef<number>(0);
-
   // 实时那份优先；还没回来时用硬件响应里的快照兜底，避免首屏闪一下空白
-  const source: BreakerCopyInput & { verdict: string; blacklistedBackends: string[] } | null =
-    breaker.data !== undefined
+  const live = breaker.data;
+  const snap = hardwareRuntime;
+  const source:
+    | (BreakerCopyInput & {
+        verdict: string;
+        blacklistedBackends: string[];
+        recoveryStartedAt: string | null;
+        recoveryTimeoutMs: number;
+      })
+    | null =
+    live !== undefined
       ? {
-          verdict: breaker.data.verdict,
-          blacklistedBackends: breaker.data.blacklistedBackends,
-          consecutiveFailures: breaker.data.breaker.consecutiveFailures,
-          lastError: breaker.data.breaker.lastError,
-          retryAt: breaker.data.retryAt,
-          recovering: breaker.data.recovering,
+          verdict: live.verdict,
+          blacklistedBackends: live.blacklistedBackends,
+          consecutiveFailures: live.breaker.consecutiveFailures,
+          lastError: live.breaker.lastError,
+          retryAt: live.retryAt,
+          recovering: live.recovering,
+          recoveryStartedAt: live.recoveryStartedAt,
+          recoveryTimeoutMs: live.recoveryTimeoutMs,
         }
-      : hardwareRuntime !== undefined
+      : snap !== undefined
         ? {
-            verdict: hardwareRuntime.breaker.verdict,
-            blacklistedBackends: hardwareRuntime.blacklistedBackends,
-            consecutiveFailures: hardwareRuntime.breaker.consecutiveFailures,
-            lastError: hardwareRuntime.breaker.lastError,
-            retryAt: hardwareRuntime.breaker.retryAt,
-            recovering: hardwareRuntime.breaker.recovering,
+            verdict: snap.breaker.verdict,
+            blacklistedBackends: snap.blacklistedBackends,
+            consecutiveFailures: snap.breaker.consecutiveFailures,
+            lastError: snap.breaker.lastError,
+            retryAt: snap.breaker.retryAt,
+            recovering: snap.breaker.recovering,
+            recoveryStartedAt: snap.breaker.recoveryStartedAt,
+            recoveryTimeoutMs: snap.breaker.recoveryTimeoutMs,
           }
         : null;
 
@@ -93,17 +100,21 @@ export function BreakerNotice({
     };
   }, [tripped]);
 
+  /*
+   * ★ 恢复成功的那一刻，把硬件重探一次。
+   *
+   * daemon 侧硬件响应带缓存，恢复探测只改断路器 state、**不动那份缓存**。
+   * 不补这一发的话：提示块消失了（它读的是实时端点），而上面那排后端芯片还是灰的 ——
+   * 用户刚被告知"好了"，看到的却是"还是不可用"。
+   *
+   * `useRef` 记住上一次是不是跳闸的，**只在 true → false 那一次跳变时**打一发，
+   * 不是每次渲染都打（那会变成一个自己给自己发请求的循环）。
+   */
+  const wasTripped = useRef(false);
   useEffect(() => {
-    if (!reset.isPending) return;
-    startedAt.current = Date.now();
-    setElapsed(0);
-    const id = setInterval(() => {
-      setElapsed(Math.round((Date.now() - startedAt.current) / 1000));
-    }, 1000);
-    return () => {
-      clearInterval(id);
-    };
-  }, [reset.isPending]);
+    if (wasTripped.current && !tripped) void refreshHardware();
+    wasTripped.current = tripped;
+  }, [tripped, refreshHardware]);
 
   /*
    * 没跳闸就**什么都不渲染**。
@@ -116,7 +127,24 @@ export function BreakerNotice({
   // ★ 与自检 `hw.breaker` 同一个函数、同一份措辞
   const detail = breakerDetail(source);
   const advice = breakerAdvice();
-  const budgetMs = hardwareRuntime?.probe.timeoutMs;
+
+  /*
+   * ★「正在重试」以**服务端**的 `recovering` 为准，不是 `reset.isPending`。
+   *
+   * `reset.isPending` 只覆盖那一个立刻返回的 HTTP 请求（几十毫秒），
+   * 而用户要等的是后台那 90 秒。两者都算"忙"，但**进度只能来自服务端**。
+   * 手点与自动恢复因此长得完全一样 —— 这正是要的：用户不需要知道是谁起的这一发。
+   */
+  const recovering = source.recovering;
+  const busy = recovering || reset.isPending;
+
+  const startedAt = source.recoveryStartedAt === null ? null : Date.parse(source.recoveryStartedAt);
+  const elapsedS =
+    startedAt === null || Number.isNaN(startedAt)
+      ? null
+      : Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+  // 「最长约 N 秒」的 N 取自 daemon 自己报的预算，前端不硬编那个 90
+  const budgetS = Math.round(source.recoveryTimeoutMs / 1000);
 
   return (
     <section
@@ -134,55 +162,70 @@ export function BreakerNotice({
           {/* 停用了什么 / 为什么 / 多久之后重试 —— 一整句，来自 shared */}
           <p className="mt-1 text-xs break-words text-ink-secondary">{zh ? detail.zh : detail.en}</p>
 
-          {/* "你不用动手" —— 与自检 remediation 同源，只是去掉了那条给 CLI 用的 URL */}
-          <p className="mt-1.5 text-xs text-ink-muted">{zh ? advice.zh : advice.en}</p>
+          {/*
+            "你不用动手" —— 与自检 remediation 同源，只是去掉了那条给 CLI 用的 URL。
+
+            ★ **正在重试时不显示它。** 这句话说的是"到点会自动重试"，而此刻已经在重试了：
+            留着既重复（详情句里已经有"成功即自动恢复"），又轻微地说错话
+            （用户会以为还要再等一个"到点"）。正在重试时它的位置让给"可以离开这个页面"。
+          */}
+          {!recovering ? (
+            <p className="mt-1.5 text-xs text-ink-muted">{zh ? advice.zh : advice.en}</p>
+          ) : null}
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button
               size="sm"
               variant="secondary"
               /*
-               * ★ 按下去之后**必须**变样。这一发是同步的（daemon 就地跑一发探测，
-               * 交互预算 10 s），期间界面什么都不变的话用户会连点 ——
-               * 而连点正是 daemon 侧单飞机制要防的东西。
+               * ★ 正在重试时按钮是禁用的 —— 这就是「单飞与手点共存」在界面上的样子：
+               * 用户根本点不出第二发。真撞上并发（比如两个标签页），daemon 侧也只是
+               * **加入等待**，不会起第二个探针、也不会报错。
                */
-              disabled={reset.isPending}
+              disabled={busy}
               data-testid="runtime-breaker-retry"
               onClick={() => {
                 reset.mutate();
               }}
             >
-              {reset.isPending ? (
+              {busy ? (
                 <Loader2 className="size-3.5 animate-spin" aria-hidden />
               ) : (
                 <RotateCw className="size-3.5" aria-hidden />
               )}
-              {reset.isPending ? t('runtime.breaker.retrying') : t('runtime.breaker.retry')}
+              {busy ? t('runtime.breaker.retrying') : t('runtime.breaker.retry')}
             </Button>
 
-            {reset.isPending ? (
+            {busy ? (
               <span className="text-xs text-ink-muted" data-testid="runtime-breaker-elapsed">
-                {budgetMs === undefined
-                  ? t('runtime.breaker.elapsed', { s: elapsed })
-                  : t('runtime.breaker.elapsedOfBudget', {
-                      s: elapsed,
-                      budget: Math.round(budgetMs / 1000),
-                    })}
+                {elapsedS === null
+                  ? t('runtime.breaker.starting')
+                  : t('runtime.breaker.elapsedOfBudget', { s: elapsedS, budget: budgetS })}
               </span>
             ) : null}
           </div>
 
           {/*
+            这一句只在**正在重试**时出现，说清"你可以走开"。
+            90 秒比 10 秒更需要这句话：没有它，用户会守在页面上盯着一个转圈。
+          */}
+          {recovering ? (
+            <p className="mt-2 text-xs text-ink-muted" data-testid="runtime-breaker-leaveable">
+              {t('runtime.breaker.leaveable')}
+            </p>
+          ) : null}
+
+          {/*
             重试**失败**也必须说出来。
             这里最容易长出来的 bug 是"点了没反应"：请求回来了、断路器还是开着，
-            如果界面只是把 spinner 收掉，用户完全无法区分"点了没生效"和"点了但没修好"。
+            如果界面只是把转圈收掉，用户完全无法区分"点了没生效"和"点了但没修好"。
           */}
           {reset.isError ? (
             <p className="mt-2 text-xs text-critical" data-testid="runtime-breaker-error">
               {t('runtime.breaker.retryFailed')}
             </p>
           ) : null}
-          {reset.isSuccess && tripped ? (
+          {reset.isSuccess && !busy && tripped ? (
             <p className="mt-2 text-xs text-ink-secondary" data-testid="runtime-breaker-still">
               {t('runtime.breaker.stillDisabled')}
             </p>

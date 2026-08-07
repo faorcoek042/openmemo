@@ -32,7 +32,7 @@ import {
   breakerSnapshot,
   breakerStatus,
   detectRuntimeHardware,
-  resetBreaker,
+  requestBreakerRecovery,
   runBackendSelfTest,
   type BreakerDiagnostics,
   type RunBackendSelfTestOptions,
@@ -138,7 +138,6 @@ export interface RuntimeDiagnostics {
   readonly probe: ProbeDiagnostics;
   readonly breaker: BreakerDiagnostics;
   readonly blacklistedBackends: Backend[];
-  readonly degradationChain: Backend[];
   readonly installedBackends: Backend[];
   readonly paths: {
     readonly probePath: string;
@@ -157,7 +156,6 @@ function toDiagnostics(d: RuntimeDetection): RuntimeDiagnostics {
     probe: d.probe,
     breaker: d.breaker,
     blacklistedBackends: d.blacklistedBackends,
-    degradationChain: d.degradationChain,
     installedBackends: d.installedBackends,
     paths: {
       probePath: d.layout.probePath,
@@ -200,11 +198,30 @@ export function createRuntimeRoutes(deps: RuntimeRoutesDeps): {
       // ---- GET /api/runtime/hardware ----
       if (p === '/api/runtime/hardware') {
         if (method !== 'GET') return methodNotAllowed(res, 'GET');
-        // `refresh=1` 重新探测但**保留**断路器计数（否则连续失败永远累计不到阈值）；
-        // `reset=1` 才是 ADR-003 说的"用户显式重试"，清掉裁决让后端重新自证。
-        const reset = url.searchParams.get('reset') === '1';
-        if (reset) resetBreaker();
-        const detection = await detect(reset || url.searchParams.get('refresh') === '1');
+        /*
+         * `refresh=1` 重新探测但**保留**断路器计数（否则连续失败永远累计不到阈值）。
+         *
+         * ★ T-175：`reset=1` = **用户显式重试**，现在走的是恢复那条路
+         * （后台 + `PROBE_RECOVERY_TIMEOUT_MS` 90 s + 单飞），**不再**就地跑一发。
+         *
+         * 以前是 `resetBreaker()` + `detect(true)`：清掉裁决 ⇒ 裁决变 `closed` ⇒
+         * 就地探一发，用的是**交互预算 10 s**。而冷 Mac 上 Metal 首次初始化要 12–21 s
+         * ⇒ **用户手点的那一发几乎必然超时，反而是后台自动那发能成** ——
+         * 按钮点了跟没点一样，只是多记一次失败。
+         *
+         * Manager 判据（T-175）：那 10 秒是保护"顺带发生"的请求的，不是保护一次显式用户动作的；
+         * 用户按下「立刻重试」就是在说"我愿意等"。
+         *
+         * 当次请求**立刻返回**（不 await 那一发），界面据此显示"正在重新探测 + 已等多久"。
+         * 注意这里不再强制 `detect(true)`：那会白跑一次探测，而恢复那发才是要看的。
+         */
+        if (url.searchParams.get('reset') === '1') {
+          await requestBreakerRecovery({
+            dataDir: deps.paths.dataDir,
+            modelsDir: deps.paths.modelsDir,
+          });
+        }
+        const detection = await detect(url.searchParams.get('refresh') === '1');
         const body: HardwareResponseWithDiagnostics = {
           hardware: detection.hardware,
           snapshotId: HARDWARE_SNAPSHOT_ID,
@@ -241,6 +258,8 @@ export function createRuntimeRoutes(deps: RuntimeRoutesDeps): {
           verdict: status.verdict,
           retryAt: status.retryAt,
           recovering: status.recovering,
+          recoveryStartedAt: status.recoveryStartedAt,
+          recoveryTimeoutMs: status.recoveryTimeoutMs,
         };
         sendJson(res, 200, body);
         return true;

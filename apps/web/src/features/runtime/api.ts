@@ -42,10 +42,13 @@ export { useHardwareQuery } from '../../lib/api/hardware';
  * **不跑探测、不起恢复、不改任何状态**（它以前会 `await detect(false)`，那时"看一眼
  * 就会改变被观测对象"）。正因为它是纯的，才可以放心轮询。
  *
- * ## 轮询节奏
+ * ## 轮询节奏（三档）
  *
- * **只在跳闸时轮询**（10 s）。没跳闸时 `refetchInterval: false` —— 绝大多数机器上
- * 断路器一辈子不会跳，不该为一个恒定为 closed 的东西每 10 秒打一次 daemon。
+ * | 状态 | 间隔 | 为什么 |
+ * |---|---|---|
+ * | 没跳闸 | **不轮询** | 绝大多数机器上断路器一辈子不跳，不该为一个恒为 closed 的东西每 10 s 打一次 daemon |
+ * | 跳闸、没在重试 | 10 s | 只需要察觉"冷却到期了/自动恢复了"，不需要更密 |
+ * | **正在重试** | **2 s** | 那一发最长 90 s，界面要显示"已等多久"并在它结束时立刻反应；这一档才是用户盯着看的 |
  */
 export function useBreakerQuery() {
   return useQuery({
@@ -54,45 +57,73 @@ export function useBreakerQuery() {
     refetchInterval: (q) => {
       const d = q.state.data;
       if (d === undefined) return false;
+      if (d.recovering) return 2_000;
       return breakerTripped(d.verdict, d.blacklistedBackends) ? 10_000 : false;
     },
   });
 }
 
 /**
- * 「立刻重试」—— 用户显式要求断路器重新自证（T-174）。
+ * 「立刻重试」—— 用户显式要求断路器重新自证（T-174；语义在 T-175 改过）。
  *
  * `GET /api/runtime/hardware?reset=1` 此前**零调用方**：接口写好了、按钮从来没有过，
  * 而自检里那句 remediation 让用户自己去敲 URL。这里就是那个按钮。
  *
- * ## ★ 这一发是**同步**的，别把它当成那个 90 秒的后台恢复
+ * ## ★ T-175：这一发**不再是同步的**
  *
- * 两条路径容易混：
- *   - **冷却到期的自动重试**：daemon 在后台放一发，预算 `PROBE_RECOVERY_TIMEOUT_MS`（90 s），
- *     当次请求立刻返回、`recovering: true`。界面上是"正在重试"。
- *   - **本 mutation**：`resetBreaker()` 清掉裁决 ⇒ 裁决变回 `closed` ⇒
- *     `detect(true)` **就地跑一发探测**，用的是交互预算 `PROBE_TIMEOUT_MS`（10 s）。
- *     也就是说**这个请求本身会挂最长约 10 秒**，回来时带的是全新的探测结果。
+ * 改之前：daemon 清掉裁决 ⇒ 裁决变 `closed` ⇒ **就地跑一发探测，交互预算 10 s**。
+ * 而冷 Mac 上 Metal 首次初始化要 12–21 s（T-172 实测）⇒
+ * **用户手点的那一发几乎必然超时，反而是后台自动那发（90 s）能成** ——
+ * 按钮点了跟没点一样，只是多记一次失败。
  *
- * 所以按钮按下去之后必须有可见反馈：那十秒里界面什么都不变的话，用户会连点，
- * 而连点正是 daemon 侧单飞机制要防的东西。反馈在 `BreakerNotice` 里（按钮禁用 + 计秒）。
+ * 现在手点与冷却到期**走同一条路**：daemon 起（或**加入**）一发后台恢复探测，
+ * 预算 `PROBE_RECOVERY_TIMEOUT_MS`（90 s），单飞，**本请求立刻返回**。
  *
- * `onSuccess` 直接把响应写回硬件缓存：这一发返回的就是**完整的**
- * `GetHardwareResponse`（含新的 `runtime`），再发一次请求去拿同样的东西是浪费，
- * 而且会让卡片有一瞬间显示旧值。
+ * ## 于是"可见反馈"的来源也变了 —— 这一条是关键
+ *
+ * 请求本身现在很快，`isPending` 只有一瞬 —— **拿它当进度条就什么都看不见了**。
+ * 真正的进度来自 daemon：`recovering` + `recoveryStartedAt`（见 `useBreakerQuery`）。
+ * 这样有三个好处，缺一不可：
+ *   1. **切走再回来进度还在** —— 它记在服务端，不是组件里的一个 `useState`；
+ *   2. **自动恢复与手点长得一样** —— 用户不需要知道这一发是谁起的；
+ *   3. **单飞与手点自然共存** —— 已经在跑时按钮本来就是禁用的，
+ *      真撞上并发也只是"加入等待"，daemon 不会起第二发。
+ *
+ * 不再 `setQueryData(hardware)`：响应里的 `runtime` 是 daemon 侧**缓存**的那份探测，
+ * 恢复那一发还没跑完，写回去等于把一份马上就要过期的快照钉在缓存上。
  */
 export function useBreakerResetMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api<GetHardwareResponse>('/runtime/hardware?reset=1'),
-    onSuccess: (data) => {
-      qc.setQueryData(qk.runtime.hardware, data);
-      // 断路器那份是独立端点，必须重新拉 —— 上面那行只更新了硬件那份
+    onSuccess: () => {
+      // 立刻去拿 `recovering: true` —— 那才是界面要显示的东西
       void qc.invalidateQueries({ queryKey: qk.runtime.breaker });
-      // 后端可用性变了 ⇒ 所有 fit 判定失效（与 useBackendSelectMutation 同一条理由）
-      void qc.invalidateQueries({ queryKey: qk.models.catalog });
     },
   });
+}
+
+/**
+ * 恢复成功之后，把硬件**重新探测**一遍。
+ *
+ * ## 为什么非得带 `?refresh=1`
+ *
+ * daemon 侧 `GET /api/runtime/hardware` 有进程内缓存（探测要 spawn，不能每请求跑一遍），
+ * 而恢复探测跑完只改断路器 state，**不会动那份缓存**。于是断路器恢复之后：
+ * 提示块消失了（它读的是实时端点），而上面那排后端芯片**还是灰的** ——
+ * 用户刚被告知"好了"，看到的却是"还是不可用"。
+ *
+ * 所以在 open → closed 那一刻**恰好**重探一次。这也是代价最低的时刻：
+ * 恢复那一发刚把 shader 缓存捂热（T-172 实测 17606ms → 163ms），这一次会很快。
+ */
+export function useHardwareRefresh() {
+  const qc = useQueryClient();
+  return async (): Promise<void> => {
+    const fresh = await api<GetHardwareResponse>('/runtime/hardware?refresh=1');
+    qc.setQueryData(qk.runtime.hardware, fresh);
+    // 后端可用性变了 ⇒ 所有 fit 判定失效（与 useBackendSelectMutation 同一条理由）
+    void qc.invalidateQueries({ queryKey: qk.models.catalog });
+  };
 }
 
 export function useBackendsCatalogQuery() {

@@ -343,7 +343,8 @@
       "title": "GPU 加速已暂时停用",
       "retry": "立刻重试",
       "retrying": "正在重新探测…",
-      "elapsed": "已用 {{s}} 秒",
+      "starting": "正在启动重新探测…",
+      "leaveable": "可以离开这个页面 —— 它在后台跑，回来时进度还在。",
       "elapsedOfBudget": "已用 {{s}} 秒 · 最长约 {{budget}} 秒",
       "retryFailed": "重试请求没有发出去 —— daemon 可能没在运行。",
       "stillDisabled": "重试跑完了，加速后端仍然不可用。上面那条原因来自这一次探测，不是之前那次。"

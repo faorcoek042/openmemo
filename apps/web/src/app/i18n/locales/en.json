@@ -343,7 +343,8 @@
       "title": "GPU acceleration is temporarily disabled",
       "retry": "Retry now",
       "retrying": "Re-probing…",
-      "elapsed": "{{s}}s elapsed",
+      "starting": "Starting the re-probe…",
+      "leaveable": "You can leave this page — it runs in the background and the progress will still be here when you return.",
       "elapsedOfBudget": "{{s}}s elapsed · up to about {{budget}}s",
       "retryFailed": "The retry request did not go through — the daemon may not be running.",
       "stillDisabled": "The retry finished and the accelerator backends are still unavailable. The reason above is from this latest probe, not the earlier one."

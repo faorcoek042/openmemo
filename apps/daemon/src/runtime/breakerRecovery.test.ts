@@ -35,9 +35,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
-import { BREAKER_COOLDOWN_MS, PROBE_TIMEOUT_MS } from '@openmemo/runtime';
+import { BREAKER_COOLDOWN_MS, CIRCUIT_BREAKER_THRESHOLD, PROBE_TIMEOUT_MS } from '@openmemo/runtime';
 
-import { breakerRecovery, breakerSnapshot, detectRuntimeHardware } from './setup.js';
+import {
+  breakerRecovery,
+  breakerSnapshot,
+  breakerStatus,
+  detectRuntimeHardware,
+  requestBreakerRecovery,
+} from './setup.js';
 
 /*
  * PROTOCOL §9-bis：指针文件重定向写在**模块顶层**，窗口为零 —— 不靠任何清理代码。
@@ -271,5 +277,147 @@ describe('T-173 ★ 残留情形：包已装好、之后缓存才变冷 —— �
       1,
       '并发请求各起了一发探针 —— 那正是断路器本该防住的"猛敲一个坏掉的东西"',
     );
+  });
+});
+
+/**
+ * T-175：**用户手点「立刻重试」走的是恢复那条路**，不再就地探一发。
+ *
+ * ## 为什么这几条值得存在
+ *
+ * 改之前 `?reset=1` 是 `resetBreaker()` + `detect(true)`：清掉裁决 ⇒ 裁决变 `closed`
+ * ⇒ **就地跑一发探测，交互预算 `PROBE_TIMEOUT_MS`（10 s）**。
+ * 而冷 Mac 上 Metal 首次初始化实测 12–21 s ⇒ **手点那一发几乎必然超时，
+ * 反而是后台自动那发（90 s）能成** —— 按钮点了跟没点一样，只是多记一次失败。
+ *
+ * Manager 判据：那 10 秒是保护"顺带发生"的请求的，不是保护一次显式用户动作的。
+ *
+ * ── 把名字遮住，这些断言什么时候会失败 ──────────────────────────────────────
+ *  · 有人把手点改回就地探（当次请求会开始变慢，且在冷机器上必然超时）；
+ *  · 有人让手点绕过单飞（两个探针抢同一块 GPU 初始化）；
+ *  · 有人让手点先 `resetBreaker()` 再探（界面会闪一下假的"已恢复"）。
+ */
+describe('T-175 手点「立刻重试」= 后台恢复那条路（不是就地探一发）', () => {
+  it('★ 冷却期内手点：不等那一发、当次请求立刻回，且报"正在重试"', async () => {
+    const m = makeMachine();
+    m.setMode('crash');
+    await detect(m);
+    await detect(m); // 跳闸
+
+    const before = m.spawns();
+    // 这一发要活过交互预算：证明手点拿到的是恢复预算，不是 10 秒
+    m.setMode('cold');
+
+    const t0 = Date.now();
+    const { started, status } = await requestBreakerRecovery({
+      dataDir: m.dataDir,
+      modelsDir: m.modelsDir,
+    });
+    const elapsed = Date.now() - t0;
+
+    assert.equal(started, true, '冷却期内手点必须真的起一发（这正是"显式重试"的含义）');
+    assert.equal(status.recovering, true, '起了之后必须报"正在重试"，否则界面无话可说');
+    assert.equal(
+      status.recoveryStartedAt === null,
+      false,
+      '没有起跑时刻 —— 界面就算不出"已经等了多久"，只能自己编一个',
+    );
+    assert.equal(
+      status.recoveryTimeoutMs > PROBE_TIMEOUT_MS,
+      true,
+      `手点用的还是交互预算（${String(status.recoveryTimeoutMs)}ms）—— 冷机器上必然超时`,
+    );
+    /*
+     * ★ 当次请求不许等那一发。探针 sleep 12 秒，所以"立刻返回"必须远小于它。
+     * 用 5 秒而不是 1 秒：CI 机器慢，留足余量，但仍然与 12 秒拉得开。
+     */
+    assert.equal(elapsed < 5_000, true, `手点请求挂了 ${String(elapsed)}ms —— 它不该等那一发`);
+
+    // 计数**不许**被先抹掉：那会让界面闪一下假的"已恢复"
+    assert.equal(
+      breakerSnapshot(status.backendDir).consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD,
+      true,
+      '手点把失败计数清了 —— 探测还没跑完就先宣布好了',
+    );
+
+    /*
+     * ★ 上面那条断言的是**报出来的**预算（`recoveryTimeoutMs`），这一条断言**实际跑到的**。
+     *
+     * 反向验证抓到的一个真实缺口：把 `recoveryProbe()` 的 `timeoutMs` 改回
+     * `PROBE_TIMEOUT_MS` 之后，报出来的预算仍然是 90 s（那是另一个常量），
+     * 于是本组用例**全绿** —— 只有 T-173 那条端到端会红。
+     * 报的和跑的可以分叉，所以两个都要钉：探针 sleep 12 s，
+     * 若预算真是 10 s 它会在 10 s 处被 kill，这里就量不到 12 s。
+     */
+    const t1 = Date.now();
+    await breakerRecovery(status.backendDir);
+    const probeRan = Date.now() - t1 + elapsed;
+    /*
+     * 阈值要**留出余量**，不能写成 `> PROBE_TIMEOUT_MS`：
+     * 预算真是 10 s 时那一发在 10 s 处被 kill，量出来是 10 000ms 出头，
+     * 恰好能擦着通过 —— 反向验证实测这条变异因此存活过一次。
+     * 探针 sleep 12 s，所以用 11 s 把「跑满 12 秒」和「10 秒被砍」清楚地分开。
+     */
+    assert.equal(
+      probeRan > PROBE_TIMEOUT_MS + 1_000,
+      true,
+      `恢复那一发只跑了 ${String(probeRan)}ms —— 它拿到的还是交互预算，冷 Mac 上必被 kill`,
+    );
+    assert.equal(m.spawns() - before, 1, '手点应当恰好起一发');
+  });
+
+  it('★ 单飞与手点共存：已经有一发在跑时，手点是"加入等待"，不是再起一发、也不是报错', async () => {
+    const m = makeMachine();
+    m.setMode('crash');
+    await detect(m);
+    await detect(m);
+
+    const before = m.spawns();
+    m.setMode('slow');
+
+    const paths = { dataDir: m.dataDir, modelsDir: m.modelsDir };
+    const first = await requestBreakerRecovery(paths);
+    assert.equal(first.started, true, '第一发应当真的起来');
+
+    // 用户连点 / 多个标签页同时点
+    const rest = await Promise.all([
+      requestBreakerRecovery(paths),
+      requestBreakerRecovery(paths),
+      requestBreakerRecovery(paths),
+    ]);
+
+    for (const r of rest) {
+      assert.equal(r.started, false, '★ 又起了一发 —— 两个探针会抢同一块 GPU 初始化');
+      // 加入等待 ≠ 被拒绝：状态里仍然是"正在重试"，界面照常显示进度
+      assert.equal(r.status.recovering, true, '被拒绝了 —— 用户会以为自己点坏了什么');
+      assert.equal(
+        r.status.recoveryStartedAt,
+        first.status.recoveryStartedAt,
+        '★ 起跑时刻被刷新了 —— 进度会一直归零，用户永远看不到它前进',
+      );
+    }
+
+    await breakerRecovery(first.status.backendDir);
+    assert.equal(m.spawns() - before, 1, `连点起了 ${String(m.spawns() - before)} 发探针`);
+  });
+
+  it('★ 那一发跑完后 recovering 归位，起跑时刻也跟着清掉（不许留一个永远在跑的假象）', async () => {
+    const m = makeMachine();
+    m.setMode('crash');
+    await detect(m);
+    await detect(m);
+
+    m.setMode('warm'); // 这一发会成功 → 断路器彻底复位
+    const { status } = await requestBreakerRecovery({
+      dataDir: m.dataDir,
+      modelsDir: m.modelsDir,
+    });
+    await breakerRecovery(status.backendDir);
+
+    const after = await breakerStatus({ dataDir: m.dataDir, modelsDir: m.modelsDir });
+    assert.equal(after.recovering, false, '跑完了还报"正在重试" —— 按钮会永远禁用着');
+    assert.equal(after.recoveryStartedAt, null, '起跑时刻没清掉 —— 界面会一直数下去');
+    assert.equal(after.verdict, 'closed', '成功那一发之后断路器应当复位');
+    assert.deepEqual(after.blacklistedBackends, [], '复位了却还挂着停用列表');
   });
 });

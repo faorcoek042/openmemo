@@ -303,18 +303,20 @@ export function buildHardwareInfo(input: BuildHardwareInfoInput): HardwareInfo {
   };
 }
 
-/**
- * The ordered list of backends still worth trying after `failed` has been ruled out.
- * `cpu` is always last and always present — it is the floor of the chain.
+/*
+ * ★ T-175 删掉了 `nextCandidates()`（"降级链"）。
+ *
+ * 它的唯一用途是算 `RuntimeDetection.degradationChain`，而那个字段**从来没有读者** ——
+ * daemon 算出来、序列化进 `GET /api/runtime/hardware` 的响应、然后没有任何人读它
+ * （逐个核过全仓，含 `.mjs` 脚本；本仓刚栽过一次"孤儿检查器只扫 .tsx? 看不见 .mjs"）。
+ *
+ * 判据（Manager T-175）：**不许留半个功能。有真实读者 → 补契约补测试；零读者 → 删。**
+ * 零读者最坏的地方不是浪费空间，是**下一个人会以为它在起作用** ——
+ * "降级链"听起来像是产品真的会顺着它退，而实际上退不退全由
+ * `blacklistedBackends` + `buildHardwareInfo()` 决定，这个数组只是被一路传到线上然后丢掉。
+ *
+ * 它包的 `preferenceOrder()` 仍在用（`backendPreference()`），没有被一起删掉。
  */
-export function nextCandidates(
-  os: OsInfo,
-  primaryVendor: GpuDevice['vendor'] | null,
-  failed: Set<Backend>,
-): Backend[] {
-  const order = preferenceOrder(os, primaryVendor).filter((b) => !failed.has(b));
-  return order.includes('cpu') ? order : [...order, 'cpu'];
-}
 
 /**
  * Gate cross-engine reuse of a backend pack on an exact ggml ABI match.
