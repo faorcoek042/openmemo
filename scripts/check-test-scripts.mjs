@@ -60,9 +60,52 @@ function countTestFiles(dir) {
   return n;
 }
 
+/**
+ * ★ T-169：**「一个测试文件都没有」本身就是可疑信号，不是豁免理由。**
+ *
+ * 上面那条守卫的判据是「**有**测试文件 却 没有 test 脚本」。`closure-audit` 🟡-6 指出：
+ * 这个判据有个前提 —— 包里得先有测试文件。`packages/shared` 有 **0 个**，
+ * 于是它**永远不触发**；`pnpm -r test` 也永远跳过它；CI 日志那句
+ * 「8 个含测试的包都有 test 脚本」里从来没有它。**两边都不出声。**
+ *
+ * 而 `packages/shared` 恰恰是**跨进程契约的那一份**（`schemas.ts` 的 zod、`CONTRACT_VERSION`、
+ * daemon 与 web 的唯一事实来源）。本项目已知的多起事故形状都是
+ * 「发送方与接收方对同一个字段理解不同」—— 守着那条线的包，
+ * 是唯一一个**没有任何测试、且没有任何门禁会为之出声**的包。
+ *
+ * 这与 T-157 棘轮「从来没在 CI 里跑」、以及棘轮判据「不剥字符串字面量」是**同一个形状**：
+ * **判据的前提没被满足，于是守卫静默失效。** 所以判据要反过来写：
+ * 有源码却零测试 → 必须**明确表态**（补测试，或登记进下面这张表并写清理由）。
+ *
+ * 这张表**刻意留空**。要往里加之前先想清楚：一个跨进程契约包"不需要测试"是什么意思。
+ */
+const NO_TEST_EXEMPT = Object.freeze({
+  // 'packages/foo': '为什么这个包不需要任何测试',
+});
+
+/** 递归数一个目录里的非测试源文件（`.d.ts` 不算）。 */
+function countSourceFiles(dir) {
+  let n = 0;
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const e of entries) {
+    if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+    const p = join(dir, e.name);
+    if (e.isDirectory()) n += countSourceFiles(p);
+    else if (e.isFile() && /\.tsx?$/.test(e.name) && !TEST_FILE.test(e.name) && !e.name.endsWith('.d.ts'))
+      n += 1;
+  }
+  return n;
+}
+
 const offenders = [];
 const discovery = [];
 const covered = [];
+const untested = [];
 let wiring = 0;
 
 for (const root of ROOTS) {
@@ -92,8 +135,15 @@ for (const root of ROOTS) {
     if (wired) wiring += 1;
 
     const n = countTestFiles(join(pkgDir, 'src'));
-    if (n === 0) continue;
     const where = `${root}/${name}`;
+    if (n === 0) {
+      // 有源码、零测试 —— 这才是要抓的那一类（见上方 NO_TEST_EXEMPT 的说明）。
+      const src = countSourceFiles(join(pkgDir, 'src'));
+      if (src > 0 && !(where in NO_TEST_EXEMPT)) {
+        untested.push(`${where} —— ${src} 个源文件，**0 个测试文件**`);
+      }
+      continue;
+    }
     if (typeof scripts.test === 'string' && scripts.test.trim() !== '') {
       covered.push(`${where}(${n})`);
       // ★ T-145：`node --test` 的**发现范围**必须被钉死，不能交给 node 的默认规则。
@@ -128,6 +178,17 @@ if (discovery.length > 0) {
     `\`node --test\` 的发现范围没被钉死（会漏跑或多跑，两种都以"绿灯"收场）：\n` +
       discovery.map((o) => `    - ${o}`).join('\n') +
       `\n  修法：结尾写成 \`&& node --test "dist/**/*.test.js"\`（**双引号不能掉**）。理由见上方注释。`,
+  );
+}
+if (untested.length > 0) {
+  problems.push(
+    `有源码却**一个测试文件都没有**的包（这类包对 \`pnpm -r test\` 完全隐形 —— ` +
+      `它不会被跳过并报绿，它压根不在名单上）：\n` +
+      untested.map((o) => `    - ${o}`).join('\n') +
+      `\n  判据：**"零测试"本身就是可疑信号，不是豁免理由。**` +
+      `\n  修法：补测试（挑真会咬人的契约点，别为了让数字好看灌样板），` +
+      `并照 packages/db 抄那一行 scripts.test；` +
+      `\n        确有理由不测 → 登记进 ${'check-test-scripts.mjs'} 的 NO_TEST_EXEMPT 并写清为什么。`,
   );
 }
 if (wiring < 2) {

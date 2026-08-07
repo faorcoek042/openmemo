@@ -20,7 +20,9 @@
   ],
   "scripts": {
     "build": "tsc -b",
-    "clean": "tsc -b --clean"
+    "clean": "tsc -b --clean",
+    "_comment:test": "★ T-169：这个包此前 **0 个测试文件**，于是 `check-test-scripts.mjs` 的判据（「**有**测试文件却没 test 脚本」）永远不触发，`pnpm -r test` 也永远跳过它 —— 两边都不出声。而它恰恰是跨进程契约的那一份（daemon 与 web 的唯一事实来源）。判据已改成「有源码却零测试」本身就红。这一行是 db / pipeline / runtime / llm / mindmap / daemon 六个包共用的那一行，**逐字抄过来的，别发明第七种写法**：前置的 `check-test-scripts.mjs` 是跨包守卫（必须挂在包的 test 脚本里，因为 `pnpm -r` 默认不含 workspace root）；中间的 `node -e` 守卫是因为 `node --test` **对空集返回 exit 0**（本项目已发生三次），跑之前必须先证明「源码里有几个测试文件，dist 里就有几个」；结尾 `\"dist/**/*.test.js\"` 的双引号不能掉（掉了 sh 会把 `**` 展开成恰好两层，漏跑且报绿）。",
+    "test": "node ../../scripts/check-test-scripts.mjs && node -e \"const{globSync}=require('node:fs');const s=globSync('src/**/*.test.ts').length,d=globSync('dist/**/*.test.js').length;if(s===0||d!==s)throw new Error('test discovery broken: '+s+' source test files vs '+d+' compiled in dist —— 先 pnpm build:safe；node --test 对空集/漏集一律返回绿')\" && node --test \"dist/**/*.test.js\""
   },
   "dependencies": {
     "zod": "^4.4.3"
