@@ -35,8 +35,13 @@ import {
   type PlatformSelector,
 } from '@openmemo/shared';
 
+import {
+  warmProbeCache,
+  type WarmProbeCacheOptions,
+  type WarmProbeCacheResult,
+} from '../../runtime/warmup.js';
 import { sendError, sendJson } from '../respond.js';
-import { currentArch } from './hardware.js';
+import { currentArch, inferDataDir } from './hardware.js';
 import { toPullResponse } from './jobs.js';
 import { asString, decodePathSegment, readBody } from './request.js';
 import type { RestState } from './state.js';
@@ -170,9 +175,19 @@ export function toInstalledRecord(
  * 也被 `POST /api/models/pull`（`kind: "backend-pack"`）复用 —— 契约里 PullRequest
  * 明确允许用同一个入口拉后端包。
  */
+/**
+ * 可注入的接缝。**只有引擎可以被顶替**，路由/落盘/事件全是产品自己的路径 ——
+ * 与 `RuntimeRoutesDeps.runSelfTest`（hardware.ts:111）同一条边界、同一个理由：
+ * 「捂热失败不许让装包失败」这条**必须能被测到**，而它在没有 Mac 的机器上无法自然发生。
+ */
+export interface StartPackInstallDeps {
+  readonly warmProbeCache?: (options: WarmProbeCacheOptions) => Promise<WarmProbeCacheResult>;
+}
+
 export function startPackInstall(
   state: RestState,
   pack: BackendPack,
+  deps: StartPackInstallDeps = {},
 ): { job: DownloadJob; deduplicated: boolean } {
   const platform = currentPlatform();
   const { job, deduplicated } = state.queue.enqueue(
@@ -257,6 +272,55 @@ export function startPackInstall(
                 `包已装好，但中文分词/向量检索不会生效，且不会提示"需重启"`,
             );
           },
+        );
+      }
+
+      /*
+       * ★ T-172：装完立刻把 GPU 着色器缓存捂热（只在 macOS，见 runtime/warmup.ts 文件头）。
+       *
+       * 为什么放在这里：macOS 上第一次触碰 Metal 要 16 s 上下（实测区间 16–21 s，n=2，
+       * 真机 UNKNOWN），而 `PROBE_TIMEOUT_MS` 是 ADR-003 定死的 10 s ——
+       * 冷机器上首次硬件探测**必然超时**，而且两次超时就会把断路器打开、
+       * 把 metal **永久**拉黑（指纹变化只给一次重试，不是复位）。
+       * 装包这里进度条本来就在转、用户已经在等，把这一发挪到这里，
+       * 用户就从不在交互路径上付那 16 s，10 s 这个诊断阈值也保住了。
+       *
+       * ★★ **两层保护，且都不是装饰**：
+       *   ① `warmProbeCache()` 契约上永不抛（自己全包 try/catch，warmup.test.ts 六组敌对输入钉着）；
+       *   ② 这里再套一层 try/catch。
+       * 因为 `DownloadQueue.run()` 是 `await entry.task(ctx)` 外面套 try/catch
+       * （queue.ts:201），**任务里任何一处抛出都会把整个 job 判失败** ——
+       * 而捂热是优化、不是安装的前提。这条比"捂热成功"重要得多。
+       */
+      try {
+        const warm = await (deps.warmProbeCache ?? warmProbeCache)({
+          dataDir: inferDataDir(state.modelsRoot),
+          modelsDir: state.modelsRoot,
+          onBeforeProbe: () => {
+            ctx.setStep('warming');
+            /*
+             * `ctx.setStep()` 自己**不发任何 SSE**（queue.ts:186 只改字段 + updatedAt）。
+             * 不补这一发 `progress`，这一步在前端就是隐形的 —— 而它要转十几秒，
+             * 用户看到的就是"进度条卡在 100% 不动"。
+             */
+            ctx.progress({
+              completedBytes: result.totalBytes,
+              totalBytes: result.totalBytes,
+              speedBps: 0,
+              etaSeconds: null,
+            });
+          },
+          log: (message) => {
+            console.info(`[backends] ${message}`);
+          },
+        });
+        if (warm.attempted && !warm.ok) {
+          console.warn(`[backends] ${warm.detail}`);
+        }
+      } catch (err) {
+        console.warn(
+          `[backends] GPU 着色器缓存预热抛了异常：${String(err)} —— ` +
+            `包已装好，安装结果不受影响（捂热是优化，不是前提）`,
         );
       }
 

@@ -85,7 +85,15 @@ export async function detectLocalHardware(
   });
 }
 
-function inferDataDir(modelsRoot: string): string {
+/**
+ * `<dataDir>/models` 的约定反推 dataDir。
+ *
+ * **导出**：`startPackInstall` 的捂热步骤要的是同一个 `RuntimePathsInput`，
+ * 而 `RestState` 手里只有 `modelsRoot`（它不存 dataDir）。两边各写一份反推
+ * 正是本仓「装了却找不到」那一族缺陷的成因（见 state.ts:170、setup.ts:190 的 T-160 段），
+ * 所以这里只有这一份。
+ */
+export function inferDataDir(modelsRoot: string): string {
   const parent = modelsRoot.replace(/[/\\]+$/, '');
   const cut = Math.max(parent.lastIndexOf('/'), parent.lastIndexOf('\\'));
   return cut > 0 ? parent.slice(0, cut) : parent;

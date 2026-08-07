@@ -400,6 +400,7 @@
     "downloading": "下载中",
     "verifying": "正在校验完整性",
     "installing": "正在安装",
+    "warming": "正在初始化 GPU 着色器缓存",
     "state": {
       "queued": "排队中",
       "blocked": "暂时无法继续",
@@ -920,6 +921,7 @@
     "backgroundHint": "可以离开此页面，安装会在后台继续",
     "verifyingHint": "文件已下完，正在逐字节核对 SHA-256。大模型这一步要几十秒，进度条不动是正常的，不是卡死。",
     "installingHint": "正在解压并写入模型目录，马上就好。",
+    "warmingHint": "本机第一次用 Metal，正在预生成 GPU 着色器缓存，好让之后的硬件探测不再超时。这一步要十几秒，每台机器只发生一次，进度条不动是正常的，不是卡死。",
     "queuedHint": "正在等待下载通道空闲，稍后自动开始。",
     "doneModel": "已安装 · {{name}}",
     "doneBackend": "已安装 · {{name}}",

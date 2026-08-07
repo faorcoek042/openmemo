@@ -393,6 +393,11 @@ function subtitleFor(toast: Toast, step: string | null, t: TFunction): string {
   }
   if (step === 'verifying') return t('jobToast.verifyingHint');
   if (step === 'installing') return t('jobToast.installingHint');
+  /*
+   * ★ T-172：macOS 上装完后要把 Metal 着色器缓存捂热，实测十几秒（真机 UNKNOWN）。
+   * 这一步进度条已经满格且不动 —— 不说这一句，用户看到的就是"装完了但卡死了"。
+   */
+  if (step === 'warming') return t('jobToast.warmingHint');
   if (step == null && toast.state === 'queued') return t('jobToast.queuedHint');
   // 下载 / 选源阶段：这里才是说"可以走开"的时机（D-05 §4.5：用户默认以为关页面 = 任务没了）
   return t('jobToast.backgroundHint');

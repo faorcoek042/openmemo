@@ -80,3 +80,37 @@ jobs:
         env:
           PROBE_LONG_MS: ${{ inputs.longMs }}
         run: node scripts/ci/probe-cold-timing.mjs --long-ms "${PROBE_LONG_MS:-120000}"
+
+  # ── 第二个 job：验产品的修复，而不是再量一次现象（T-172）────────────────────
+  #
+  # 它必须与上面那个 job **分开**，理由和上面 workflow 头部那段一模一样、且更强：
+  # 要验「捂热之后产品默认的 10s 够不够」，捂热就必须是这台机器上**第一次**碰 Metal。
+  # 同 job 里但凡先跑过一发探针，缓存就热了，臂 B 会漂亮得毫无意义。
+  # runner 一次性，每个 job 都是一台全新的冷机器 —— 所以换个 job 就没有这个问题。
+  #
+  # 与上面那个只取数的 job 不同，**这一个可以把 CI 弄红**：它验的是一条产品声明
+  # （「装包时捂热，此后就能走 10s 阈值」），声明被证伪就该红。
+  # 但"环境上拿不到结论"（没探针 / 目录里没有 Metal 库）一律 exit 0 —— 不拿环境问题冒充失败。
+  warmup:
+    name: 捂热之后冷启动是否真的被消掉（darwin-arm64）
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.15.0
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build:safe
+
+      # ★★ 这一步必须是这台机器上第一个碰 Metal 的东西。前面每一步都刻意与 GPU 无关。
+      - name: 臂 A 捂热 + 臂 B 默认超时复探
+        timeout-minutes: 20
+        run: node scripts/ci/probe-warmup-verify.mjs

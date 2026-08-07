@@ -400,6 +400,7 @@
     "downloading": "Downloading",
     "verifying": "Verifying checksum",
     "installing": "Installing",
+    "warming": "Initialising GPU shader cache",
     "state": {
       "queued": "Queued",
       "blocked": "On hold",
@@ -920,6 +921,7 @@
     "backgroundHint": "You can leave this page — it keeps going in the background",
     "verifyingHint": "Download finished; verifying SHA-256 byte by byte. For large models this takes tens of seconds and the bar does not move — that is normal, not a freeze.",
     "installingHint": "Unpacking into the model directory, almost done.",
+    "warmingHint": "First Metal run on this Mac — building the GPU shader cache so later hardware checks stay fast. Takes around 15 seconds, happens only once per machine, and the bar will not move. That is normal, not a freeze.",
     "queuedHint": "Waiting for a free download lane; it will start automatically.",
     "doneModel": "Installed · {{name}}",
     "doneBackend": "Installed · {{name}}",

@@ -40,7 +40,12 @@ export const TERMINAL_JOB_STATES: readonly JobState[] = ['succeeded', 'failed', 
  * this right). Ollama's download.go has no checksum step at all; ADR-004 decision 5
  * requires we not inherit that gap.
  */
-export const JOB_STEPS = ['resolving', 'downloading', 'verifying', 'installing'] as const;
+/*
+ * ★ T-172：`warming` 是装完之后的最后一步 —— macOS 上把 Metal 着色器缓存捂热。
+ * 它必须**看得见**：实测这一步要 16 s 上下（真机 UNKNOWN），进度条上不说一句话，
+ * 用户只会以为卡死了。只有 macOS 会出现这个步骤，其余平台直接从 `installing` 收尾。
+ */
+export const JOB_STEPS = ['resolving', 'downloading', 'verifying', 'installing', 'warming'] as const;
 export type JobStep = (typeof JOB_STEPS)[number];
 
 export const JOB_KINDS = ['model', 'backend-pack'] as const;
