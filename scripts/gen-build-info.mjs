@@ -31,6 +31,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { readProductVersion } from './lib/version.mjs';
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'apps', 'daemon', 'dist', 'build-info.json');
 
@@ -51,7 +53,25 @@ const commitTime = git(['log', '-1', '--format=%cI']);
 // 页面上那个 commit 就是全部真相。
 const dirty = git(['status', '--porcelain']) ? true : false;
 
+/*
+ * 版本号也走这条路 —— 和 commit 同生共死，理由是同一条。
+ *
+ * daemon 跑的是 `dist/` 里上一次构建出来的 JS。如果它在**启动时**去读根
+ * `package.json`，那读到的是工作区当前的值：版本号 bump 了但没重建，页面会显示新版本
+ * 而实际跑的是旧代码 —— 与本文件开头批判的"启动时读 git"是同一个错误。
+ *
+ * 另外，预编译产物解包后 `dist/main.js` 旁边**不保证**有根 `package.json`
+ * （`apps/daemon/package.json` 的 `files` 只列了 `dist`），运行时读它本来也不成立。
+ *
+ * 读不到 build-info.json 时 daemon 显示 `unknown` —— 和 commit 一样，诚实而不是猜。
+ *
+ * ⚠️ 这里**不允许**写成 `JSON.parse(readFileSync('package.json')).version`。
+ * 读取点只有 `scripts/lib/version.mjs` 一个，见那里的注释。
+ */
+const version = readProductVersion();
+
 const info = {
+  version,
   commit: commit ?? 'unknown',
   commitTime: commitTime ?? null,
   dirty,
@@ -60,4 +80,4 @@ const info = {
 
 mkdirSync(dirname(OUT), { recursive: true });
 writeFileSync(OUT, `${JSON.stringify(info, null, 2)}\n`, 'utf8');
-console.log(`✔ build-info: ${info.commit}${dirty ? '+dirty' : ''} @ ${commitTime ?? '?'}`);
+console.log(`✔ build-info: v${version} · ${info.commit}${dirty ? '+dirty' : ''} @ ${commitTime ?? '?'}`);

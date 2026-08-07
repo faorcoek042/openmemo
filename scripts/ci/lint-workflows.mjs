@@ -384,6 +384,9 @@ for (const file of files.sort()) {
       'selftest-macho-minos.mjs',
       'selftest-buildbox.sh',
       'selftest-build-whisper.sh',
+      // D-12：版本号单一事实来源。被"顺手简化"掉时会当场红，而不是等用户发现
+      // 界面上那个数字又几个月没动过了。
+      'check-version-sync.mjs',
     ]) {
       must(cmd.includes(f), `package.json: test:ci-scripts 里没有 ${f} —— 没被跑到的自检等于不存在`);
     }

@@ -93,8 +93,8 @@ export function ConnectivitySummary({ className }: { className?: string }) {
    * 判据：一个元素的显示条件，必须是它自己的条件。
    */
   const buildStamp = health ? (
-    <span className="text-ink-muted/70" title={buildTitle(health.build)}>
-      daemon v{health.version} {buildLabel(health.build)}
+    <span className="text-ink-muted/70" title={buildTitle(health.version, health.build)}>
+      daemon {versionLabel(health.version)} {buildLabel(health.build)}
     </span>
   ) : null;
 
@@ -125,28 +125,48 @@ const mdhms = (iso: string) =>
   `${new Date(iso).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })} ${hms(iso)}`;
 
 /**
- * 角落里那行版本号要同时回答两个问题：**跑的是哪份代码** 和 **刚才那次重启生效了没有**。
+ * 角落里这一行有**四个**信号，各答各的，谁也替不了谁 —— 所以谁也不能挤掉谁：
  *
- * commit 只答得了第一个 —— 同一个 commit 重启两次，commit 号一模一样。
- * 所以启动时刻必须一起显示，否则"我改完让它重启了，页面没变，是没重启还是改动没生效"
- * 这个问题无法从界面上回答，只能靠猜。
+ * | 显示        | 回答的问题           | 为什么别的答不了                             |
+ * |-------------|----------------------|----------------------------------------------|
+ * | `v0.2.0`    | **第几个可用的东西** | commit 是 hash，比不出大小，也数不出"第几个" |
+ * | commit/提交时间 | 跑的是哪一份代码 | 一个版本号底下可以有几十个 commit            |
+ * | `起 HH:MM:SS` | 到底重启了没有     | 前两个在重启前后一模一样                     |
+ *
+ * ★ 版本号是 D-12 之后**才有意义**的。此前它是 daemon 源码里手写的 `'0.1.0'`，
+ * 和任何 `package.json` 都没有关系，因此从项目开始就没变过 —— 用户看到的是一个
+ * 长得很像版本号、但什么都不报告的东西。现在它由构建从根 `package.json` 烘焙进产物。
  *
  * `+dirty` = 构建时工作区有未提交改动，此时 commit 号不足以说明跑的是什么。
  */
+function versionLabel(version: string | undefined) {
+  // 'unknown' 是 daemon 在读不到 dist/build-info.json 时的**诚实**回答（没构建过 /
+  // 非 git 检出）。照原样渲染会变成 "vunknown"，看起来像个真版本号 —— 那正是要避免的。
+  if (!version || version === 'unknown') return '版本未知';
+  return `v${version}`;
+}
+
 function buildLabel(b: BuildMeta | undefined) {
   if (!b) return '(构建信息未知)';
   const commit = b.commitTime ? mdhms(b.commitTime) : b.commit;
   return `· ${commit}${b.dirty ? '+dirty' : ''} · 起 ${hms(b.startedAt)}`;
 }
 
-function buildTitle(b: BuildMeta | undefined) {
-  if (!b) return '该 daemon 未提供构建信息（可能是旧版本，或未经构建脚本生成）';
+function buildTitle(version: string | undefined, b: BuildMeta | undefined) {
+  const head =
+    !version || version === 'unknown'
+      ? '版本: 未知（daemon 没读到构建信息，多半是没构建过）'
+      : `版本: ${version} —— 第 ${version.split('.')[1]} 个可用版本（见 CHANGELOG.md）`;
+  if (!b) return `${head}\n该 daemon 未提供构建信息（可能是旧版本，或未经构建脚本生成）`;
   return [
+    head,
     `commit: ${b.commit}${b.dirty ? ' (构建时工作区有未提交改动)' : ''}`,
     b.commitTime ? `提交时间: ${mdhms(b.commitTime)}` : null,
     b.builtAt ? `构建时间: ${mdhms(b.builtAt)}` : null,
     `本次启动: ${mdhms(b.startedAt)}`,
+    '',
+    '版本号答「第几个」，commit 答「哪一份代码」，启动时刻答「重启了没」。',
   ]
-    .filter(Boolean)
+    .filter((x) => x !== null)
     .join('\n');
 }

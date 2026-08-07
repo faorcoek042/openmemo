@@ -1,6 +1,7 @@
 {
   "name": "openmemo",
-  "version": "0.0.0",
+  "_comment:version": "★ 产品版本号的**唯一事实来源**（D-12）。格式 0.N.P：N = 第几个可用的东西，P = 针对已交付的那个 N 的修补。工作区里其余 9 个 package.json **没有 version 字段** —— 不是同步成一样，是根本没有，这样它们就不可能和这里分叉。改这个数请用 `pnpm version:bump`（它会同时写 CHANGELOG，两者必须一致，`pnpm check:version` 守着）。这里曾经是 `0.0.0`，而界面上显示的是 daemon 里手写的另一个字面量 `0.1.0` —— 两个数互不知道对方存在，所以谁也没变过。",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "OpenMemo — 本地优先的 AI 笔记 / 知识捕获工具（memo.ac 复刻版）",
@@ -22,13 +23,15 @@
     "check:sources": "node scripts/check-tracked-sources.mjs",
     "check:selfcheck": "node scripts/selfcheck.mjs",
     "check:orphans": "node scripts/check-orphan-exports.mjs",
+    "check:version": "node scripts/check-version-sync.mjs",
+    "version:bump": "node scripts/version-bump.mjs",
     "_comment:check": "★ T-157：这条命令有两处改动，都不是风格问题。① 加入 `check:orphans`（`scripts/check-orphan-exports.mjs`）——「零引用导出」是 T-155 命中率最高的探针：15 条用户可见缺陷里 6 条是它查出来的，而那 6 条在 35 份回执里一个字都没提，因为**没人认为自己写的东西没被接上**。这类缺陷只能靠机器扫，理由与 check:sources 同。② `pnpm -r build` 换成 `tsc -b && pnpm build:safe`。`pnpm -r build` 含 `vite build`，会覆盖 `:10000` 正在托管的 `apps/web/dist`（PROTOCOL §7，已有两名 agent 踩过）。换掉之后类型覆盖**不减反增**：根 `tsc -b` 的 references 里就有 `apps/web`（实测能抓到 web 的类型错），而 `build:safe` 负责产出各包的 dist。判据照 PROTOCOL §7 补充：**跑错了也不会造成后果**。",
-    "check": "node scripts/check-tracked-sources.mjs && node scripts/check-orphan-exports.mjs && tsc -b && pnpm build:safe && eslint .",
+    "check": "node scripts/check-tracked-sources.mjs && node scripts/check-orphan-exports.mjs && tsc -b && pnpm build:safe && node scripts/check-version-sync.mjs && eslint .",
     "build:info": "node scripts/gen-build-info.mjs",
     "build:safe": "pnpm --filter \"!@openmemo/web\" -r build",
     "_comment:test:ci-scripts": "★ T-144：`.github/workflows/**` 里的关键步骤在本机跑一遍。CI 从来没执行过，所以它里面装着从来没被执行过的错误（platform T-141 §4 数出 11 条）。这两个脚本把「fragment 生成 → schema 校验 → 合并 → 失败即红」整条链搬到本地，正反向都跑；`pnpm -r` 默认不含 workspace root，所以它只能挂在根脚本上、由 ci.yml 与人手动调用。跑之前要先 `pnpm build:safe`（需要真的 @openmemo/shared/dist）。",
     "lint-workflows": "node scripts/ci/lint-workflows.mjs",
-    "test:ci-scripts": "node scripts/ci/lint-workflows.mjs && node scripts/ci/selftest-ci-manifest.mjs && node scripts/ci/selftest-release-upload.mjs && node scripts/ci/selftest-elf-glibc.mjs && node scripts/ci/selftest-macho-minos.mjs && bash scripts/ci/selftest-buildbox.sh && bash scripts/ci/selftest-build-whisper.sh"
+    "test:ci-scripts": "node scripts/check-version-sync.mjs && node scripts/ci/lint-workflows.mjs && node scripts/ci/selftest-ci-manifest.mjs && node scripts/ci/selftest-release-upload.mjs && node scripts/ci/selftest-elf-glibc.mjs && node scripts/ci/selftest-macho-minos.mjs && bash scripts/ci/selftest-buildbox.sh && bash scripts/ci/selftest-build-whisper.sh"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

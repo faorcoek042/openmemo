@@ -75,8 +75,6 @@ import { resolveManifestDir } from './http/rest/manifests.js';
 import { createMediaRoutes } from './http/media.js';
 import type { RouteModule } from './http/server.js';
 
-export const VERSION = '0.1.0';
-
 /**
  * 构建来源信息，由 `scripts/gen-build-info.mjs` 在构建时写进 `dist/build-info.json`。
  *
@@ -87,13 +85,21 @@ export const VERSION = '0.1.0';
  * 文件缺失（没构建过 / 非 git 检出）时返回 unknown，不抛错也不猜。
  */
 export interface BuildInfo {
+  /** 产品版本号，见 `docs/design/D-12-versioning.md`。来源：根 `package.json` 的 `version`。 */
+  readonly version: string;
   readonly commit: string;
   readonly commitTime: string | null;
   readonly dirty: boolean;
   readonly builtAt: string | null;
 }
 
-const UNKNOWN_BUILD: BuildInfo = { commit: 'unknown', commitTime: null, dirty: false, builtAt: null };
+const UNKNOWN_BUILD: BuildInfo = {
+  version: 'unknown',
+  commit: 'unknown',
+  commitTime: null,
+  dirty: false,
+  builtAt: null,
+};
 
 function readBuildInfo(): BuildInfo {
   try {
@@ -101,6 +107,7 @@ function readBuildInfo(): BuildInfo {
     const p = new URL('./build-info.json', import.meta.url);
     const raw = JSON.parse(readFileSync(p, 'utf8')) as Partial<BuildInfo>;
     return {
+      version: typeof raw.version === 'string' ? raw.version : 'unknown',
       commit: typeof raw.commit === 'string' ? raw.commit : 'unknown',
       commitTime: typeof raw.commitTime === 'string' ? raw.commitTime : null,
       dirty: raw.dirty === true,
@@ -112,6 +119,26 @@ function readBuildInfo(): BuildInfo {
 }
 
 export const BUILD_INFO: BuildInfo = readBuildInfo();
+
+/**
+ * 产品版本号 —— 回答的是「**这是第几个可用的东西**」。
+ *
+ * 它和旁边那三个信号各答各的，谁也替不了谁（这正是它们要同时显示的原因）：
+ *
+ * | 信号         | 回答的问题           | 为什么别的答不了                       |
+ * |--------------|----------------------|----------------------------------------|
+ * | `version`    | 第几个可用的东西     | commit 是 hash，比不出大小，也数不出"第几个" |
+ * | `commit`     | 跑的是哪一份代码     | 同一个版本号下可以有几十个 commit      |
+ * | `commitTime` | 那份代码是什么时候的 | commit 号本身没有时间序                |
+ * | `startedAt`  | 到底重启了没有       | 前三个在重启前后一模一样               |
+ *
+ * ★ 曾经这里是一行 `export const VERSION = '0.1.0'` —— 一个**手写字面量**，
+ * 和根 `package.json` 的 `0.0.0` 毫无关系，两个数谁也不知道对方存在。
+ * 界面上那个 `v0.1.0` 因此从项目开始就没变过：它不是"忘了改"，
+ * 而是**根本没有任何东西会让它改**。现在它由构建从唯一事实来源烘焙进产物，
+ * 而 `scripts/check-version-sync.mjs` 守着"不许再有第二个地方写版本号字面量"。
+ */
+export const VERSION = BUILD_INFO.version;
 
 /** 本进程启动时刻。用户靠它判断"到底重启了没有" —— commit 没变时这是唯一的信号。 */
 export const STARTED_AT = new Date().toISOString();
@@ -364,7 +391,15 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     sse,
     instanceId: () => instanceIdRef,
     version: VERSION,
-    build: { ...BUILD_INFO, startedAt: STARTED_AT },
+    // `version` **故意**不进 build：它已经是 health 的顶层字段，
+    // 同一份 JSON 里出现两份同名值，读的人迟早会挑错一个。build 只放构建来源。
+    build: {
+      commit: BUILD_INFO.commit,
+      commitTime: BUILD_INFO.commitTime,
+      dirty: BUILD_INFO.dirty,
+      builtAt: BUILD_INFO.builtAt,
+      startedAt: STARTED_AT,
+    },
     dataDir: paths.dataDir,
     port: () => boundPort,
     host: () => boundHost,
