@@ -508,3 +508,33 @@ C++ 源码里"的自检跑起来。两条真正的修法：
 而这不影响 §4.2 那四个资产 —— 它们各自的腿都已经 success 并产出了 artifact。
 如果 CUDA 那条最终红了，那是它自己的事（我们不发 Linux/Windows CUDA 包），
 但请注意 `merge-manifest` 会因此 skipped —— **这是 C4 的设计，不是缺陷**。
+
+---
+
+## [2026-08-07 16:30] T-167 ③ —— `backlog-work` §3 里平台/CI 那几条的处置
+
+| §3 编号 | 项 | 我做了什么 |
+|---|---|---|
+| A-4 | `openmemo-probe` 没有分发通道 | 🟡 **机制做完了、CI 实测过了，卡在 release**。本文件 §1/§4 |
+| A-5 | `ytdlp-macos-arm64` 装的是 universal2 却声明 `arch:"arm64"` | ⏸ **刻意没动**，理由见下 |
+| C-17 | Vulkan 补目录 | ✅ **已完成**（`8cb3b35`，`runner-migrate` 做的）。我复核过：目录里那条指向 `backend-packs-2026.08.07`，`availability` 不是 `pending-ci` |
+| C-21 | GitHub 仓库描述 / topics | ⛔ 没碰 —— 改仓库设置是对外动作，与"不建/改/删 release"同一类 |
+| C-24 | 「HEAD 从未跑过 CI」 | ✅ **不再成立**：`ci.yml` 现在 `on.push` 自动触发，本轮我这几个提交各触发一次（含一次真红一次真绿，见上一条） |
+| B-16 | ANE 真机验证 | ⛔ 没碰（`pack-publish` 的地盘，需要一次 macOS runner 上的转写） |
+| B-13 | `hf-mirror` 口径 | ⛔ 没碰（`model-mgmt` 的地盘） |
+
+## A-5 为什么刻意没动
+
+两条：
+
+1. **它不是一个"改一个字就对"的错。** `yt-dlp_macos` 确实是 universal2，
+   所以 `arch:"arm64"` 这条声明**低估**了它。要"修对"有两条路：
+   ① 把 displayName 里那句「macOS 通用二进制」改成「Apple Silicon」（**收窄承诺**）；
+   ② 再加一条 `ytdlp-macos-x64`（**放开支持面**）。
+   ②与用户 2026-08-05「macOS Intel 我用不到」的裁定冲突，而且会造出一个
+   **只有 yt-dlp 装得上、转写引擎一个都没有**的平台格 —— 那比现在更误导人。
+   ①是对的，但它是**产品口径**不是 bug 修复。
+2. **本轮 `vendor/manifests/` 我一个字节没改是有意的**：那份文件此刻的状态是
+   「等 release」，掺一条无关的文案改动进去，会让下一个人分不清哪些改动是发布必需的。
+
+建议：等 §4 那次 release 落地、我补目录时，把 ①**连同**那几条一起改，一次说清楚。
