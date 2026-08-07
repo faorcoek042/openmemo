@@ -213,11 +213,36 @@ export function isPackApplicable(
    */
   advisoryCandidates?: readonly Backend[],
 ): ApplicabilityResult {
+  /*
+   * ★ 结构字段，不是字符串嗅探。
+   *
+   * 这里原本是 `(b.unavailableReason ?? '').includes('probe')` —— 拿**英文散文**当判据。
+   * 它不是死代码（`manager.ts:217` 在 `probe.ok === false` 时确实给全部六个后端写
+   * `probe did not complete: …`，`.every()` 能命中），所以它比死代码危险：**它活着，
+   * 而且随时会静默失效**。
+   *
+   * 失效的触发条件已经在树上了：`manager.ts` 现在一共会写 7 种 `unavailableReason`，
+   * **只有 1 种含 `probe` 这个词**。T-168 新增的那段（`manager.ts:237-245`，
+   * "installed, but this detection run did not load it…"）就不含。任何一个后端落到
+   * 新文案上，`.every()` 当场变 false，`probeNeverRan` 恒变 false。
+   *
+   * ⚠️ **后果有多大，是量出来的，不是推出来的**（`[实测]` 新旧两版并排跑同一组输入）：
+   * **只有 `reason` 会变，`applicable` 一次都没变过。** 原因是下面那条 ★ 环打破器：
+   * 探针没跑成时 `probed` 对每个后端都是 false，于是 `status.probed !== true` 恒真，
+   * advisory 那条路**照样放行**。所以这不是"冷启动死锁原样回来"——
+   * `closure-audit` ⛔#3 那句话高报了一格，这里按实测收窄。
+   *
+   * 真实后果是**用户看到的解释退化**：本该是
+   * 「尚未探测到硬件能力；请先安装 CPU 基础包，安装后会自动重新探测」（可执行），
+   * 退化成一串探针内部的英文（不可执行）。够格修，但不值得写成死锁。
+   *
+   * `probed` 是 T-168 为此加的结构字段（`shared/hardware.ts`：`available` 恒蕴含
+   * `probed`），daemon 侧同族判据已经先改过了（`http/rest/backends.ts:113`
+   * `status.probed !== true`），那里的注释写得很清楚：**判据必须独立于文案**。
+   * 这一处是最后一个还在读散文的地方，现在两边对齐。
+   */
   const probeNeverRan =
-    hardware === null ||
-    hardware.backends.every(
-      (b) => !b.available && (b.unavailableReason ?? '').includes('probe'),
-    );
+    hardware === null || hardware.backends.every((b) => !b.available && !b.probed);
 
   return evaluateApplicability({
     pack,

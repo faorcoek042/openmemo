@@ -227,4 +227,110 @@ describe('L2 适用性：解开"要先装才能被发现"的环', () => {
     );
     assert.equal(isPackApplicable(pack('cuda'), LINUX, hardware, ['cuda']).applicable, true);
   });
+
+  /*
+   * ★ 这一组钉的是"判据不许读散文"。
+   *
+   * `isPackApplicable` 里那句 `probeNeverRan` 原本是
+   * `(b.unavailableReason ?? '').includes('probe')`。它**不是死代码** ——
+   * `manager.ts:217` 在探针整个没跑成时给六个后端全写 `probe did not complete: …`，
+   * 所以它一直在生效。危险的地方在于它**随时会静默失效**：
+   * `manager.ts` 今天会写 7 种 unavailableReason，只有 1 种含 `probe` 这个词，
+   * T-168 新增的那段就不含。任一后端落到新文案上，`.every()` 立刻变 false，
+   * 冷启动死锁原样回来，而且没有任何东西会响。
+   *
+   * 下面第二条就是那个反例：**结构完全相同，只换了文案**。
+   * 它在改回字符串判据时必红 —— 这正是它存在的理由。
+   */
+  describe('★ probeNeverRan 的判据：结构字段，不是 unavailableReason 里的英文', () => {
+    /** 探针整个没跑成时 `manager.ts` 产出的形状：六个后端全部 unavailable + unprobed。 */
+    const probeFailed = (reason: string): BackendStatus[] =>
+      (['cuda', 'vulkan', 'rocm', 'metal', 'coreml', 'cpu'] as Backend[]).map((id) => ({
+        id,
+        available: false,
+        installed: false,
+        probed: false,
+        version: null,
+        deviceIndex: null,
+        unavailableReason: reason,
+      }));
+
+    const hardwareWith = (backends: BackendStatus[]) => ({
+      schemaVersion: 1 as const,
+      detectedAt: new Date().toISOString(),
+      os: { platform: 'linux' as OsPlatform, arch: 'x64' as const, version: '6.8.0' },
+      cpu: { brand: 'x', physicalCores: 4, logicalCores: 8, features: ['avx2'] },
+      ram: { totalMB: 16000, availableMB: 8000 },
+      unifiedMemory: false,
+      gpus: [],
+      backends,
+      selectedBackend: 'cpu' as Backend,
+      selectedGpuIndex: null,
+      disks: [],
+    });
+
+    /** T-168 写进 `manager.ts:237-245` 的那段文案，一个 `probe` 字样都没有。 */
+    const T168_REASON =
+      'installed, but this detection run did not load it: only the backend directory ' +
+      "currently in use is scanned, and this backend's library is not in it. " +
+      'This is not a driver or hardware fault — nothing was measured about it.';
+
+    /** 探针没跑成时，该给用户的那句**可执行**的话。 */
+    const ACTIONABLE = /尚未探测到硬件能力/;
+
+    it('前提检查：这段真实文案里确实没有 probe 这个词（前提没了的话下面全是空转）', () => {
+      assert.equal(
+        T168_REASON.includes('probe'),
+        false,
+        'manager.ts 的新文案现在含 probe 了 —— 请换一段真实的、不含该词的文案',
+      );
+    });
+
+    /*
+     * ★★ 这条是**唯一**能区分新旧判据的用例，写清楚免得下一个人白写一条。
+     *
+     * `[实测]` 我把新旧两版并排跑了同一组输入：**`applicable` 一次都没变过**，
+     * 变的只有 `reason`。因为 `evaluateApplicability` 里那条环打破器
+     * （`status.probed !== true` && advisory）在探针没跑成时**恒真**，
+     * advisory 那条路照样放行 —— 所以拿 `applicable` 当断言的用例
+     * **在新旧两版下都会绿**，它什么都没验到。（我第一版就是这么写的，反向验证时才发现。）
+     */
+    it('★ 文案换了 → 用户拿到的解释不许退化成探针内部的英文', () => {
+      const hw = hardwareWith(probeFailed(T168_REASON));
+      const r = isPackApplicable(pack('vulkan'), LINUX, hw);
+
+      assert.match(
+        r.reason ?? '',
+        ACTIONABLE,
+        '判据又在读散文了：换个文案就把"请先装 CPU 包，装完自动重探"退化成了探针的英文原话',
+      );
+    });
+
+    it('探针失败的老文案下，行为必须与从前一字不差（不许借修复之名改掉别的）', () => {
+      const hw = hardwareWith(probeFailed('probe did not complete: probe executable not found'));
+      assert.match(isPackApplicable(pack('vulkan'), LINUX, hw).reason ?? '', ACTIONABLE);
+      assert.equal(
+        isPackApplicable(pack('vulkan'), LINUX, hw, ['vulkan']).applicable,
+        true,
+        '探针没跑成 + 有独立硬件证据 → 必须可装（T-044 那个冷启动死锁）',
+      );
+    });
+
+    it('阴性对照：探针真的跑过且给了结论时，不许被当成"没跑过"放水', () => {
+      // cpu 已装、已探测、可用；vulkan 已装、已探测、枚举不到设备 = 真结论。
+      const backends = probeFailed('installed but enumerated no devices (driver missing or too old)');
+      const withVerdict = backends.map((b) =>
+        b.id === 'cpu'
+          ? { ...b, available: true, installed: true, probed: true, unavailableReason: null }
+          : b.id === 'vulkan'
+            ? { ...b, installed: true, probed: true }
+            : b,
+      );
+      assert.equal(
+        isPackApplicable(pack('vulkan'), LINUX, hardwareWith(withVerdict), ['vulkan']).applicable,
+        false,
+        '探针给过结论就得认 —— 否则这条修复只是把闸门焊死在 true 上',
+      );
+    });
+  });
 });

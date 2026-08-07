@@ -83,8 +83,11 @@ CPU 包与 CUDA 包结构 100% 一致，差集仅几个文件）：
 因用户已定"仅个人/自用"，`gpu-runtime` 的决策项 2（Apple $99/年 + Windows OV $129/年
 + 硬件令牌 $379）**全部不采购**。
 
-- macOS：ad-hoc 签名（`codesign -s -`，Apple Silicon 上所有可执行文件的**最低要求**）
-  + 首次运行时由 daemon 自动 `xattr -dr com.apple.quarantine` 清除隔离属性。
+- macOS：ad-hoc 签名（`codesign -s -`，Apple Silicon 上所有可执行文件的**最低要求**）。
+  ~~+ 首次运行时由 daemon 自动 `xattr -dr com.apple.quarantine` 清除隔离属性。~~
+  ⛔ **这后半句不实：那段代码从来没有存在过。** `[实测 grep]` `apps/` + `packages/`
+  全仓零 `xattr` / 零 `quarantine`。**订正与后果见文末 §7（2026-08-07）。**
+  本决策"不买 $99 证书"的论证链**缺这一环**，读到这里请不要当它已经闭合。
 - Windows：不签名，用户自行通过 SmartScreen。
 - **Developer ID / OV 证书路径完整写入文档**，作为日后商用时的升级路径。
 
@@ -143,3 +146,100 @@ CPU 包与 CUDA 包结构 100% 一致，差集仅几个文件）：
 ## A.5 过程记录
 `gpu-runtime` 自测时抓到自己一个真 bug：`backendUsed` 误报 Vulkan
 （混淆了 "loaded" 与 "used"），已修并复测。**自检能抓出自己的 bug，说明自检设计是有效的。**
+
+---
+
+# §7 订正（2026-08-07）：决策 4 的 quarantine 缓解措施**不存在**
+
+> 本节由 `closure-fix` 追加，§1–§6 与附录 A **除决策 4 那两行外一个字未改**。
+> 那两行**必须就地改**，不能只在这里挂说明 —— 理由见 §7.4。
+> **需要 Manager / 用户拍板的一条在 §7.5。**
+
+## 7.1 事实（这半不需要 Mac 就能定案）
+
+| 断言 | 证据 | 级别 |
+|---|---|---|
+| daemon 会清 `com.apple.quarantine` | `apps/` + `packages/` 全仓 `xattr` / `quarantine` **零命中** | `[实测 grep]` |
+| 构建侧也没有 | `scripts/build-whisper.sh:680` 是一句注释：`# quarantine xattr after download. See D-04 §7 for the upgrade path.` | `[实测]` |
+| 有人早就发现了 | `.github/workflows/build-backends.yml:207`：`# ⚠️ ADR-003:83 claims the daemon clears com.apple.quarantine after download.` | `[实测]` |
+| ad-hoc 签名**是真的做了** | `build-whisper.sh:686`、`build-media-tools.sh:153`、`build-sqlite-ext.sh:191`、`build-probe.sh:119` 都真的调了 `codesign --force --sign -`；`build-backends.yml:236` 还有一条 `codesign --verify` 门禁（且带"检查了 0 个文件就报错"的兜底） | `[实测]` |
+
+**所以决策 4 是"一半做了、一半没做"**：签名那半有实现有门禁，
+清 quarantine 那半从头到尾只存在于三份文档里。
+
+## 7.2 今天用户到底会不会被 Gatekeeper 拦 —— `[未验证：需真 Mac]`
+
+**取不到。本轮执行环境是 Linux，没有任何 macOS 机器，CI 的 macOS runner 也是非交互的**
+（`D-11` 已记：runner 上没有 Finder、没有 LaunchServices 会话，
+`ADR-012:61-68` 那条"最大验证缺口"至今成立）。
+
+**不要靠推断下结论。** 下面把两条**必须分开**的路径写清楚，各自标级别：
+
+| # | 路径 | quarantine 会不会被打上 | 级别 |
+|---|---|---|---|
+| ① | 用户在**浏览器里**下载 OpenMemo 的发布包，再用 Finder 解压 | 浏览器属于 LaunchServices 的 quarantine-aware 应用，解压时属性会传播给解出来的文件 | `[报告]`（Apple 的公开行为，**本轮没在真机上验过**） |
+| ② | **daemon 自己**下载后端包（`packages/downloader`，走 undici/Node，再由我们自己的 `unpack.ts` 解压） | 这是普通的文件写入，不经过 LaunchServices | `[未验证]` — 这是**假说**，正是最该验的一条 |
+
+**为什么这个区分是决定性的**：ADR 原文写的是"**首次运行时由 daemon 自动清除**" ——
+它针对的是路径 ②。**如果 ② 根本不会被打上 quarantine，那这条缓解措施从一开始就没有必要，
+"缺了一环"的其实是论证，不是代码。** 反过来如果 ② 会被打上，那今天每一个加速包在 Mac 上
+都可能加载失败，而我们没有任何补救。**这两种结论差别极大，而它们只差一条命令。**
+
+### 验它需要什么（一条命令，任何一台 Apple Silicon Mac，5 分钟）
+
+```bash
+# 路径 ②：让 daemon 真装一个后端包，然后直接问文件
+xattr -p com.apple.quarantine <models_root>/runtime/<pack>/libggml-metal.so ; echo "exit=$?"
+#   exit=1 且报 "No such xattr"  -> ② 不会被打上 -> 缓解措施本来就不需要 -> 改 ADR 收工
+#   打印出 0083;....;Safari;    -> ② 会被打上   -> 今天 Mac 用户是坏的 -> 见 §7.5
+
+# 对照组，证明这台机器确实会打 quarantine（否则上面的阴性结果没有意义）
+curl -LO <任意 http 链接>   # curl 不会打
+# 换成用 Safari 下同一个文件，再 xattr -p —— 两者不同才说明探针有效
+```
+
+⚠️ **阴性对照是必需的**：`xattr -p` 在"这台机器压根不打 quarantine"和
+"这个文件没被打"两种情况下输出一样。没有对照组的阴性结果等于没测 —— 本仓栽过三次。
+
+## 7.3 已经能定的后果
+
+- **ADR-003 决策 4 的论证链缺一环**，且缺的那一环**当时被当成已完成**写进了三份文档
+  （本 ADR、`D-01:1214`、`D-04 §7`）。
+- **`build-backends.yml:207` 那条 ⚠️ 挂了半个月，ADR 原文一字未改。**
+  这本身是一条更普遍的教训，见 §7.4。
+
+## 7.4 为什么必须就地改，而不是在别处挂警告
+
+`build-backends.yml:207` 的作者做对了 90%：他发现了、他写下来了。
+**但他写在了一个读 ADR 的人永远不会经过的地方。**
+
+于是这条缺陷获得了最坏的一种状态：**"有人知道"和"没人知道"在后果上完全相同，
+而台账上它看起来像被处理过了。** 之后又有至少两轮审计重新发现了同一条
+（`platform` T-141 §3.0-③、`closure-audit` 🟡-4）—— 每一轮都付了一次全仓 grep 的钱。
+
+> **判据：一条不实的断言，只能在它被读到的那一行修。
+> 在别处挂警告，是把发现的成本留给了下一个人。**
+
+这与 PROTOCOL §7 的成因是同一个形状（"两句话隔了 60 行，读到禁令的人不会意识到自己
+刚敲的命令违反了它"）。所以本轮**改了决策 4 那两行本身**。
+
+## 7.5 需要拍板：补实现这件事**不能由 agent 自己做**
+
+看起来"补一个 `xattr -dr` 就行了"。**本轮刻意没有补**，理由是判断，不是偷懒：
+
+1. **清除 quarantine 就是关掉 Gatekeeper 对我们自己产物的检查。**
+   它属于 Security Weaken 一类的改动，与"绑 `0.0.0.0`"、"放宽 Host 校验"同级，
+   本项目的既定做法是**必须用户本人在自己的轮次里说**（见 `closure-audit` 🚧-14）。
+2. **在 §7.2 那条命令跑出结果之前，我们不知道它解决的是不是一个真实存在的问题。**
+   给一个未经确认存在的问题写一段无法在本机验证的缓解代码，正是本仓最贵的那类改动。
+3. 真要补，`xattr` 也不该是唯一选项：ad-hoc 签名 + 用户首次手动放行（右键打开）
+   在"仅个人自用"的定位下可能完全够用 —— 那样 ADR 只需把这条写成
+   **"我们不做，用户首次运行需手动放行一次"**，论证链同样是完整的。
+
+**给 Manager 的三选一**：
+- (A) 先跑 §7.2 那条命令 → 若 ② 不会被打上，把决策 4 改成"无需此缓解"，本条彻底闭合；
+- (B) 若会被打上，且用户同意关 Gatekeeper → 派人补 `xattr -dr`，并在 SECURITY.md 记明其代价；
+- (C) 用户不同意 → ADR 改成"我们不清 quarantine，用户首次运行需手动放行一次"，
+  并把这句话透出到网页的下载说明里（**否则用户会看到一个失败的安装而不知道为什么**）。
+
+**在三者之一落地之前，决策 4 的那半句就是不实的，本节不许被删。**

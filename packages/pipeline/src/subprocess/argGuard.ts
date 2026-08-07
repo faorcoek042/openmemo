@@ -105,8 +105,19 @@ export function isPrivateOrReservedHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
 
   if (host === 'localhost' || host.endsWith('.localhost')) return true;
-  // Common internal TLDs; not exhaustive, and DNS rebinding still needs a re-check at
-  // connect time (see resolveAndCheck below).
+  /*
+   * Common internal TLDs; not exhaustive.
+   *
+   * ⚠️ This comment used to point the reader at a `resolveAndCheck` below.
+   * THERE IS NO SUCH FUNCTION — `[实测 grep]` the name appeared exactly once in the whole
+   * repo, in that comment itself. It named a connect-time re-check that was never
+   * written, inside the SSRF guard, where a reader has every reason to trust it.
+   *
+   * What actually exists is `assertHostNotPrivate` below, and it is a PRE-FLIGHT lookup,
+   * not a connect-time re-check: it resolves the hostname, checks the answers, and
+   * returns — the fetch that follows resolves again, on its own. So DNS rebinding is a
+   * real open gap (D-06 §9), not a covered one.
+   */
   if (host.endsWith('.local') || host.endsWith('.internal')) return true;
 
   // --- IPv4 -----------------------------------------------------------------------------
@@ -195,7 +206,10 @@ export function validateHttpUrl(input: unknown): GuardResult<SafeUrl> {
     return fail('embedded_credentials', 'URL must not contain credentials');
   }
 
-  // L3.3 — SSRF. This is the literal-IP check; DNS names are re-checked at connect time.
+  // L3.3 — SSRF. This is the literal-IP check only. Hostnames are NOT re-checked at
+  // connect time (this line used to claim they were); callers that go on to fetch must
+  // call `assertHostNotPrivate` themselves, and even that is pre-flight — see its
+  // docblock for the TOCTOU gap it does not close.
   if (isPrivateOrReservedHost(url.hostname)) {
     return fail('private_address', `host "${url.hostname}" resolves to a private or reserved address`);
   }

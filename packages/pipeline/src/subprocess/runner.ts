@@ -138,6 +138,36 @@ class RingBuffer {
 }
 
 /**
+ * Absolute path to Windows' `taskkill.exe`.
+ *
+ * Never a bare name. A PATH search is exactly what `RunOptions.bin` forbids for every
+ * other executable in this file, and the reason applies with more force here: this is the
+ * teardown path, so an attacker-planted `taskkill.exe` earlier on PATH would be handed
+ * our process tree. `SystemRoot` is already in the child-env allowlist above, for the
+ * same reason it is the right source now.
+ */
+export function taskkillPath(env: NodeJS.ProcessEnv = process.env): string {
+  const root = env.SystemRoot ?? env.windir ?? 'C:\\Windows';
+  return `${root}\\System32\\taskkill.exe`;
+}
+
+/**
+ * argv for tearing down a whole process tree on Windows.
+ *
+ * `/T` is the load-bearing flag — "this process AND every descendant". Without it,
+ * `taskkill` is merely a slower `child.kill()` and the grandchildren still leak.
+ *
+ * `/F` is force, and it is deliberately reserved for the SIGKILL escalation so the
+ * SIGTERM stage stays a graceful request. D-01 §2.5 specified exactly this pair
+ * (`taskkill /T` then `taskkill /T /F`) long before anything implemented it.
+ */
+export function windowsKillTreeArgv(pid: number, force: boolean): string[] {
+  const argv = ['/PID', String(pid), '/T'];
+  if (force) argv.push('/F');
+  return argv;
+}
+
+/**
  * Spawn a child process under every layer-2/5 control.
  *
  * Resolves with a RunResult regardless of exit status — a non-zero exit is data, not an
@@ -186,8 +216,9 @@ export async function run(options: RunOptions): Promise<RunResult> {
       // Layer 2, the load-bearing line of this file.
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
-      // Own process group so the timeout can kill the whole tree (ffmpeg and yt-dlp
-      // both spawn helpers). On Windows this is emulated via taskkill below.
+      // Own process group so the timeout can kill the whole tree (yt-dlp shells out to
+      // ffmpeg for some formats). Windows has no process group to signal — killTree
+      // below shells out to `taskkill /T` there instead.
       detached: process.platform !== 'win32',
       windowsHide: true,
     });
@@ -196,15 +227,62 @@ export async function run(options: RunOptions): Promise<RunResult> {
     let aborted = false;
     let settled = false;
 
+    /*
+     * Kill the child AND everything it spawned.
+     *
+     * POSIX: `detached` above put the child in its own process group, so a negative pid
+     * signals the whole group — children and grandchildren alike.
+     *
+     * Windows has no process group to signal, and `child.kill()` ends exactly ONE
+     * process: whatever that process spawned is orphaned, not reaped. `taskkill /T` is
+     * the OS-provided tree walk.
+     *
+     * ── What is measured here, and what is not ────────────────────────────────────────
+     * `[实测 本机 Linux]` Both branches replayed against a real parent→grandchild pair:
+     *     posix branch (detached + `kill(-pid)`)  -> grandchild reaped
+     *     the OLD win32 branch (bare `child.kill()`) -> grandchild still ALIVE
+     *   That measures the SHAPE of the leak — killing one pid does not reap descendants.
+     *   It is NOT a Windows measurement and must not be read as one.
+     * `[实测 CI windows-2025]` `taskkill` exists on the Windows runner and exits 0
+     *   (D-11 §3.1). So the missing piece was our code, not the operating system.
+     * `[未验证：需真 Windows]` that this reaps a real yt-dlp helper in production. This
+     *   project has no Windows machine; the previous comment here asserted a `taskkill`
+     *   that was never written, which is how it survived a dozen rounds of review.
+     */
     const killTree = (sig: NodeJS.Signals): void => {
-      if (child.pid === undefined) return;
-      try {
-        if (process.platform === 'win32') {
-          child.kill(sig);
-        } else {
-          // Negative pid = the whole process group.
-          process.kill(-child.pid, sig);
+      const pid = child.pid;
+      if (pid === undefined) return;
+
+      if (process.platform === 'win32') {
+        const killDirectChildOnly = (): void => {
+          // Strictly worse than a tree kill — grandchildren leak — but better than
+          // doing nothing at all if taskkill is missing or unspawnable.
+          try {
+            child.kill(sig);
+          } catch {
+            // Already dead.
+          }
+        };
+        try {
+          const killer = spawn(taskkillPath(), windowsKillTreeArgv(pid, sig === 'SIGKILL'), {
+            shell: false,
+            stdio: 'ignore',
+            windowsHide: true,
+          });
+          // A non-zero exit only means "already gone" and is not worth reporting. An
+          // unhandled 'error' event, by contrast, is an uncaught exception that would
+          // take the whole daemon down — so it is handled, not ignored.
+          killer.on('error', killDirectChildOnly);
+          killer.unref();
+        } catch {
+          killDirectChildOnly();
         }
+        return;
+      }
+
+      try {
+        // Negative pid = the whole process group.
+        process.kill(-pid, sig);
       } catch {
         // Already dead.
       }
