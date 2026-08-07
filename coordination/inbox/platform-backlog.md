@@ -538,3 +538,38 @@ C++ 源码里"的自检跑起来。两条真正的修法：
    「等 release」，掺一条无关的文案改动进去，会让下一个人分不清哪些改动是发布必需的。
 
 建议：等 §4 那次 release 落地、我补目录时，把 ①**连同**那几条一起改，一次说清楚。
+
+---
+
+## [2026-08-07 16:55] T-167 DONE —— CI 收尾
+
+# ★ `build-backends` run **31155359839**（commit `3ef8734`，`legs=all`）：**9/9 全绿**
+
+```
+macos-arm64-cpu    success      macos-arm64-metal  success
+linux-x64-cpu      success      linux-x64-vulkan   success      linux-x64-cuda    success
+windows-x64-cpu    success      windows-x64-vulkan success      windows-x64-cuda  success
+merge-manifest     success      ← 八条腿全绿它才跑（C4 的设计）
+```
+
+**Windows / macOS 那五条腿本轮重跑了**，因为我这轮的改动会影响它们（探针打进包里）——
+这正是任务书说的那个条件。它们的定义我一个字没改，跑出来全绿。
+
+`ci.yml` 门禁在 HEAD（`d32d2c5`）上 **success**。
+
+# 本轮全部提交
+
+```
+3ef8734  feat(ci): 探针随包出厂 + macOS 部署目标守卫 (T-167 ①)
+70ccfed  docs: T-167 探针分发的三条阻碍 + D-11 §9（回执）
+7bb6d2a  fix(ci): 门禁刻意不拉 submodule，而探针那一步开始真的读它了
+8cf0294  docs: T-167 追加 —— 我把门禁打红了 25 分钟
+d32d2c5  docs: T-167 ③ —— §3 里平台/CI 各条的处置
+```
+
+# 还在你手上的四件事（不变）
+
+1. 建 tag `backend-packs-2026.08.07b` + 上传 §4.2 那 4 个资产（清单已备好，sha256 本机复算过）。
+2. Linux / Windows 的核心包换不换成我们自己的构建（§4.3）—— 探针到那两个平台的唯一通路。
+3. Windows CUDA 那条：先修 §3.2 的 `backendDir` 单值缺口，还是换我们自建的 138 MB 窄包。
+4. `00-CHARTER.md` §3 的补丁（§5，全文已写好）。
