@@ -613,9 +613,16 @@ fi
 PROBE_NAME="openmemo-probe"
 [[ "${HOST_OS}" == "win32" ]] && PROBE_NAME="openmemo-probe.exe"
 
+#
+# `--include` 显式传：build-probe.sh 的默认值是 `REPO_ROOT/vendor/whisper.cpp/ggml/include`，
+# 而本脚本的源码树由 `--src` 决定。两边各算各的 = 又一次「产出方与使用方用了两个定义」。
+# `[CI 实测 run 31155338320]` 这条**不是假想**：ci.yml 的门禁刻意不拉 submodule
+# （"TS 侧一行都不需要 vendor/ 里的 C++ 源码，几百 MB"），
+# 于是默认路径不存在，selftest-build-whisper 当场三条红。
 log "building ${PROBE_NAME} into the pack"
 bash "${SCRIPT_DIR}/build-probe.sh" \
   --ggml-lib-dir "${BIN_DIR}" \
+  --include "${SRC_DIR}/ggml/include" \
   --out "${STAGE}/${PROBE_NAME}"
 
 if [[ ! -e "${STAGE}/${PROBE_NAME}" ]]; then

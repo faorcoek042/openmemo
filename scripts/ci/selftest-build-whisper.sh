@@ -130,6 +130,37 @@ STUB
   chmod +x "${stubdir}/cc"
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# ★ T-167：**源码树桩** —— 这条是被 CI 打脸打出来的，值得写清楚。
+#
+# 原来每个 case 都不传 `--src`，于是用的是**真的** `vendor/whisper.cpp` submodule
+# （注释里写着"脚本要 git -C 它拿版本号"）。这在开发机上一直好用 ——
+# 因为开发机上 submodule 是拉过的。
+#
+# `[CI 实测 run 31155338320]` 门禁上当场三条红：
+#     error: ggml headers not found: /home/runner/work/openmemo/openmemo/vendor/whisper.cpp/ggml/include
+# 成因是 `ci.yml` **刻意不拉 submodule**（"TS 侧一行都不需要 vendor/ 里的 C++ 源码，
+# whisper.cpp + sherpa-onnx 加起来几百 MB"）。在探针进包之前，本脚本恰好没有任何一步
+# 真的**读**过那棵树，所以这条依赖一直是隐形的。
+#
+# → 判据不是"CI 上把 submodule 拉下来"，是「**这个自检本来就不该依赖那棵树**」：
+#   它要验的是 pack id / BIN_DIR / stage 装配 / fragment，一行都不在 C++ 源码里。
+#   所以造一棵最小的假源码树（含一个真 git 仓库，好让 engineVersion 仍是一个真 sha
+#   而不是 "unknown" —— 后者会让 fragment 的语义悄悄变掉）。
+# ──────────────────────────────────────────────────────────────────────────────
+make_stub_src() {
+  local srcdir="$1"
+  mkdir -p "${srcdir}/ggml/include"
+  printf '/* stub */\n' > "${srcdir}/ggml/include/ggml.h"
+  printf '/* stub */\n' > "${srcdir}/ggml/include/ggml-backend.h"
+  printf 'cmake_minimum_required(VERSION 3.10)\n' > "${srcdir}/CMakeLists.txt"
+  git -C "${srcdir}" init -q 2>/dev/null || true
+  git -C "${srcdir}" -c user.email=ci@example.com -c user.name=ci \
+      -c commit.gpgsign=false add -A 2>/dev/null || true
+  git -C "${srcdir}" -c user.email=ci@example.com -c user.name=ci \
+      -c commit.gpgsign=false commit -q -m stub 2>/dev/null || true
+}
+
 # ★ T-167：`run_case` 以前用 `echo "${case_dir}"` 回传路径，调用方写
 #   `if cd1="$(run_case …)"`。**那让 `bad` 的输出被 `$( )` 吞进变量、
 #   `fail` 的自增发生在子 shell 里于是丢掉**，失败的那个 case 表现为
@@ -145,16 +176,19 @@ run_case() {
   mkdir -p "${case_dir}"
   make_stub_cmake "${layout}" "${stub}"
   make_stub_cc "${stub}"
+  make_stub_src "${case_dir}/src"
   CASE_DIR="${case_dir}"
 
   local gh_out="${case_dir}/gh_output"
   : > "${gh_out}"
 
-  # `--src` 指向真的 whisper.cpp submodule（脚本要 `git -C` 它拿版本号），
-  # 但产物全部落在临时目录里 —— 不碰仓库的 .build / dist。
+  # `--src` 指向**假的**源码树（见 make_stub_src：T-167 之前这里用的是真 submodule，
+  # 而门禁刻意不拉 submodule，于是这条隐形依赖在 CI 上当场变红）。
+  # 产物全部落在临时目录里 —— 不碰仓库的 .build / dist。
   if ! PATH="${stub}:${PATH}" GITHUB_OUTPUT="${gh_out}" \
       bash "${REPO_ROOT}/scripts/build-whisper.sh" \
         --backend "${backend}" \
+        --src "${case_dir}/src" \
         --out "${case_dir}/packs" \
         --build-root "${case_dir}/build" \
         --no-strip \
@@ -278,6 +312,7 @@ uname_case() {
   mkdir -p "${case_dir}"
   make_stub_cmake single "${stub}"
   make_stub_cc "${stub}"
+  make_stub_src "${case_dir}/src"
   cat > "${stub}/uname" <<STUB
 #!/usr/bin/env bash
 case "\$1" in
@@ -290,7 +325,8 @@ STUB
   local gh="${case_dir}/gh_output"; : > "${gh}"
   PATH="${stub}:${PATH}" GITHUB_OUTPUT="${gh}" \
     bash "${REPO_ROOT}/scripts/build-whisper.sh" \
-      --backend cpu --out "${case_dir}/packs" --build-root "${case_dir}/build" \
+      --backend cpu --src "${case_dir}/src" \
+      --out "${case_dir}/packs" --build-root "${case_dir}/build" \
       --no-strip --no-sign --no-package > "${case_dir}/log" 2>&1
   echo "${case_dir}"
 }
@@ -336,8 +372,10 @@ done
 exit 0
 STUB
 chmod +x "${empty_case}/stub/cmake"
+make_stub_src "${empty_case}/src"
 if PATH="${empty_case}/stub:${PATH}" bash "${REPO_ROOT}/scripts/build-whisper.sh" \
-      --backend cpu --out "${empty_case}/packs" --build-root "${empty_case}/build" --no-strip \
+      --backend cpu --src "${empty_case}/src" \
+      --out "${empty_case}/packs" --build-root "${empty_case}/build" --no-strip \
       > "${empty_case}/log" 2>&1; then
   bad "空产物构建居然成功了" "$(tail -5 "${empty_case}/log")"
 else
@@ -364,8 +402,10 @@ reverse_case() {
   local case_dir="${WORK}/rv-${name}" stub="${WORK}/rv-${name}/stub"
   mkdir -p "${case_dir}"
   make_stub_cmake single "${stub}" "${omit}"
+  make_stub_cc "${stub}"
+  make_stub_src "${case_dir}/src"
   if PATH="${stub}:${PATH}" bash "${REPO_ROOT}/scripts/build-whisper.sh" \
-        --backend "${backend}" --out "${case_dir}/packs" \
+        --backend "${backend}" --src "${case_dir}/src" --out "${case_dir}/packs" \
         --build-root "${case_dir}/build" --no-strip \
         > "${case_dir}/log" 2>&1; then
     bad "${desc}" "居然成功了。stage 内容：$(tail -8 "${case_dir}/log")"
@@ -408,8 +448,9 @@ reverse_case cpumod-missing vulkan libggml-cpu-haswell.so \
   mkdir -p "${local_dir}/stub"
   make_stub_cmake single "${local_dir}/stub"
   make_stub_cc "${local_dir}/stub" 1     # ← 编译"成功"，但什么都不产出
+  make_stub_src "${local_dir}/src"
   if PATH="${local_dir}/stub:${PATH}" bash "${REPO_ROOT}/scripts/build-whisper.sh" \
-        --backend cpu --out "${local_dir}/packs" \
+        --backend cpu --src "${local_dir}/src" --out "${local_dir}/packs" \
         --build-root "${local_dir}/build" --no-strip \
         > "${local_dir}/log" 2>&1; then
     bad "RV-D · 探针没编出来 → 红" "居然成功了。日志尾部：$(tail -8 "${local_dir}/log")"
