@@ -10,7 +10,7 @@
 |---|---|
 | **Linux x64**（glibc ≥ 2.34） | ✅ 通，CPU；目录里另有 Vulkan 包，**没在真 GPU 上验过** |
 | **Windows x64**（需 VC++ 2015-2022 运行时） | ✅ 通，CPU；CUDA 包见下面「已知不支持」 |
-| **macOS arm64**（≥ 13.3） | ✅ 通，CPU + Metal；**ANE 今天是坏的**，见下 |
+| **macOS arm64**（≥ 13.3） | ✅ 通，CPU + Metal + ANE（ANE 仅 `large-v3-turbo`，见下） |
 | 其余组合（AMD · macOS Intel · linux-arm64） | ❌ 见下面「已知不支持」 |
 
 判据是**「屏蔽宿主 PATH 的干净机器上真的转出非空文本」**，不是「代码写完了」：CI `cold-start-audit` run
@@ -76,7 +76,7 @@ node apps/daemon/dist/main.js        # 打开终端里打印的地址，默认 h
 | **Linux + NVIDIA（CUDA）· Windows + AMD** | 🔴 **目录里没有这些包**：能编出来，但纯增量的加速包在本产品里结构上不可用，**不接进目录** |
 | **Windows + NVIDIA（CUDA）** | ⚠️ **包在目录里，可能已经好了，但验不了**：探针分发通道已打通（CI 实测 Windows 报 `ok`），挡路的那条已不存在 —— 但要确认它真的能用**需要一块真 NVIDIA 卡**，任何托管 runner 都验不到 |
 | **macOS Intel · linux-arm64** | ✂ 用户 2026-08-05 明确裁掉，不构建 |
-| **Apple 神经引擎（ANE / CoreML）** | 🔴 **今天是坏的，而且不出声**：encoder 解包后多套了一层同名目录，whisper.cpp 找不到 `coremldata.bin` → **静默回退到 Metal/CPU**。你付 1.17 GB 的下载，界面上不会有任何提示（自检的 `asr.coreml fail` 是唯一线索）。修复进行中；tiny/base/small/medium 的 encoder **另外还没挂**（没有它们的 sha256） |
+| **Apple 神经引擎（ANE / CoreML）** | ✅ **已修**（run 31167151669 实测 `asr.coreml = ok`）：此前 encoder 解包后多套一层同名目录 → whisper.cpp 找不到 `coremldata.bin` → 静默回退到 Metal/CPU，且**界面上没有任何提示**。tiny/base/small/medium 的 encoder **仍然没挂**（没有它们的 sha256），只有 `large-v3-turbo` 能走 ANE |
 
 还有一族**装得上、跑不了、自检看不见**的下限（macOS < 13.3、Linux glibc、Windows 缺 VC++ 运行时）：
 下载成功、sha256 通过、安装记录 succeeded、自检全绿，**只有真正去执行时才死**。三条逐个写在
