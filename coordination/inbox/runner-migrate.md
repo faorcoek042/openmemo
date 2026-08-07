@@ -335,3 +335,230 @@ Linux 侧一个都没拷。本轮 `ldd` 实测把它照出来了（`libcudart.so
 | `package.json` | 公共 | 一行：把 `selftest-buildbox.sh` 接进 `test:ci-scripts` | 无 |
 | `apps/daemon/src/pipeline/ffmpegStableOnly.test.ts` | **新文件（我的）** | 刻意**不改** `amd-vulkan` 的 `ffmpegPinRot.test.ts` | 无 |
 | `.github/workflows/build-backends.yml` · `scripts/ci/*` | 我的地盘 | ①的主体 | 无 |
+
+---
+
+## [2026-08-07 06:40] T-163 ③ DONE + cold-start-audit 回执
+
+# TL;DR
+
+| 事 | 结果 |
+|---|---|
+| Vulkan 包补进目录 | ✅ `8cb3b35`。sha256 **我自己匿名重下复算**，没抄你的、也没抄 CI fragment |
+| `backend.selection` 报 vulkan | ✅ **CI 上真的拿到了**（`cold-start-audit` run **31152458527**，linux-x64）：`选中 未选择（按 priority 挑） → 实际使用 whispercpp-vulkan-linux-x64（backend=vulkan）`，并且用它**真转写成功** |
+| macOS ffmpeg 8.1.2 | ✅ **第一次在真 Mac 上跑起来了**（同一 run，macos-26），已把 manifest 里「未在 Mac 上运行过」那句订正 |
+| ⚠️ 那一 run 是 **failure** | **不是我这轮引入的** —— 三个平台同一条 `meta.sameSource fail`，成因是 **T-149（`9ab2ada`）** 的桶迁移，已本机复现并定位到行。详见 §3 |
+
+---
+
+# §1 复算与核对（按你说的，一个字没抄）
+
+`[本机实测]` 匿名从 release URL 全量重下（`env -u GITHUB_TOKEN -u GH_TOKEN`）：
+
+```
+whispercpp-cpu-linux-x64.tar.gz      http=200  6,746,006 B
+  3113d0d6443eb8293d0b68d992994ac5535575240d8c51b21cb5885408838154
+whispercpp-vulkan-linux-x64.tar.gz   http=200  29,491,623 B
+  62187d4a9610e2806a07fe0cd00cc27e68aaa7b026805c74e1896470e4ce9473
+```
+
+与你给的两个值**逐字符一致**。解开之后我又自己跑了一遍守卫：
+`check-elf-glibc: 23 个 ELF，上限 GLIBC_2.34，实测最高 GLIBC_2.34`，
+`providesFiles` 23 个含 `whisper-cli` 与 `libggml-vulkan.so`。
+
+**第三次独立确认**：`cold-start-audit` 里产品自己的安装器又下了一遍并校验 sha256 —— 通过。
+
+## 每个字段的来源（都不是拍的）
+
+| 字段 | 值 | 依据 |
+|---|---|---|
+| `priority` | 80 | `emit-pack-manifest.mjs:95` 的 `PRIORITY` 表（CI 自己那份），不是我挑的数 |
+| `engineVersion` | `v1.9.1` | `git -C vendor/whisper.cpp describe --tags` |
+| `ggmlAbi` | `0.15.1` | 包里 `libggml.so.0.15.1` 的 soname |
+| `providesFiles` | 23 条 | 与 emit 脚本同一判据（只算真文件、basename、排序） |
+| `requiresDriver` | `{"vulkanApi":"1.2"}` | **这个包自己的源码**：`ggml-vulkan.cpp:6528` `if (api_version < VK_API_VERSION_1_2) { "Vulkan 1.2 required" }` |
+
+> `requiresDriver` 这条特意说明：`emit-pack-manifest.mjs` 的注释明确反对「照抄 llama.cpp 文档里的数字」，
+> 并写着「真测出来了用 `--requires-driver` 传进来」。我填的不是抄来的，是从**要发出去的那份源码**里读的行号。
+
+## ⚠️ 一处订正 `amd-vulkan` 回执
+
+它写 `engineVersion: f049fff9（submodule 没有 tag 所以 git describe 回落到 sha）`。
+`[实测]` submodule **就在 `v1.9.1` 这个 tag 上**，`git describe --tags` 返回 `v1.9.1`。
+所以目录里这条与旁边的 `whispercpp-cpu-linux-x64` 版本号一致，不是一串 sha。
+
+## 只补了 vulkan，**没有**动 `whispercpp-cpu-linux-x64`
+
+你发了两个资产，我只接了一个，理由是它自己那条守卫：目录里 `whispercpp-cpu-linux-x64`
+现在指向**上游** `whisper-bin-ubuntu-x64.tar.gz`。用我们自建的同 id 顶掉它，正是
+ADR-015「上游预编译优先」与 `merge-backend-manifest` 那条「CI 产物不许顶掉有真下载地址的上游包」
+要挡的形状（`selftest-ci-manifest` ④ 专门验这一条）。
+**要换的话我需要你先拍板 ADR-015 这一格**，材料我有：我们那个 6.7 MB（上游 9.4 MB）、
+14 个 CPU 变体、GLIBC 下限被守卫钉在 2.34；上游那个的 glibc 下限**我们从来没验过**。
+
+---
+
+# §2 `backend.selection` —— 两处证据，一处是你要的那条
+
+## 2.1 ★ CI 冷启动实测（run 31152458527，linux-x64，全新数据目录）
+
+```
+目录共 23 个包，适用于本机 6 个：
+  - whispercpp-cpu-linux-x64
+  - whispercpp-vulkan-linux-x64          ← 新进目录的这个
+  …
+whispercpp-vulkan-linux-x64      succeeded  (1.0s)
+whispercpp-vulkan-linux-x64      ✅ 真的在已安装列表里
+
+backend.selection   ok   选中 未选择（按 priority 挑） → 实际使用 whispercpp-vulkan-linux-x64（backend=vulkan）
+tool.whisperCli     ok   …/by-name/backend/whispercpp-vulkan-linux-x64/whisper-cli
+```
+
+并且**它真的干活了**：`POST /api/notes/import → 转写 job：succeeded (2.1s)`，
+拿到非空文本（jfk.wav 那句 "And so, my fellow Americans…"）。
+
+> **判据只到这一层**：这台 runner 上没有真 GPU。上面证明的是
+> 「**选中并跑起来的是 vulkan 那个包的 whisper-cli**」，
+> **不是**「GPU 真的被用上了」。ggml 在没有可用设备时会 `No devices found.` 退回 CPU 跑 ——
+> 而正因为这个包是**自包含**的（自带全套 CPU 模块），退回来也不会更差。
+
+## 2.2 本机定向验证：四种情形，用的是产品自己的那条链
+
+`[本机实测]` 用**产品自己的** `install()` 把两个真包装进 `/tmp` 的临时 store
+（`target.kind='backend'`，与 `apps/daemon/src/http/rest/backends.ts:194` 逐字同形），
+再跑 `scripts/selfcheck.mjs --json` 读 `backend.selection`：
+
+```
+① 只装 CPU 包                          → 实际使用 whispercpp-cpu-linux-x64（backend=cpu）
+② CPU + Vulkan，用户没选过（按 priority）→ 实际使用 whispercpp-vulkan-linux-x64（backend=vulkan）
+③ 同上但 prefs 里显式选了 cpu           → 选中 cpu    → whispercpp-cpu-linux-x64
+④ prefs 里显式选了 vulkan               → 选中 vulkan → whispercpp-vulkan-linux-x64
+```
+
+③ 那条是关键：**用户的明确选择压过 priority** —— 这正是 `pack-select` 规则 1 的语义，
+而在 T-162 之前 `selectedBackend` 只驱动两个展示徽章。
+
+## 2.3 ⚠️ 这台开发机上装不上（是闸门在正确工作，不是坏了）
+
+`[本机实测]` 跑产品自己的 `evaluateApplicability`：
+
+```
+detectGpus.gpus      = []
+advisoryCandidates   = []
+whispercpp-cpu-linux-x64      applicable=true   tier=l1
+whispercpp-vulkan-linux-x64   applicable=false  tier=l2  「尚未探测到硬件能力；请先安装 CPU 基础包…」
+```
+
+而 GitHub 的 runner 上 advisory 认出了候选，所以那边装得上。
+**两边行为不同是对的**：L2 闸门要的就是"这台机器有没有相应硬件的证据"。
+用户那台有 AMD 卡的机器落在 runner 那一格，不是这台 KVM 的这一格。
+
+---
+
+# §3 ⚠️ 那一 run 是 failure —— **先说清楚不是我这轮引入的**
+
+三个平台**同一条**：
+
+```
+model.vad        warn   已装的 VAD 权重 whisper.cpp 一个都加载不了（已装：ggml-silero-v6.2.0.bin、silero_vad.onnx）→ 切分降级为固定窗口
+meta.sameSource  fail   model.vad: 本地=warn 端点=ok
+```
+
+## 3.1 为什么可以肯定不是我的
+
+**macOS 与 Windows 的目录里根本没有 Vulkan 包**（它只有 linux/x64 一条），
+而它们**failure 的那一条一模一样**。这一条单独就足以定性。
+
+## 3.2 成因（已本机复现，定位到行）
+
+`[实测]` 对比两次审计里模型落盘的位置：
+
+```
+上一轮 run 31076010999（commit 1f49530）：by-name/asr/ggml-silero-v6.2.0.bin   → model.vad ok
+本轮   run 31152458527（commit 8cb3b35）：by-name/vad/ggml-silero-v6.2.0.bin   → model.vad warn
+```
+
+桶变了。变它的是 **T-149 `9ab2ada`「一个 role 一个桶」** ——
+`git show 1f49530:apps/daemon/src/http/rest/roleMap.ts` 里 `case 'vad': … return 'asr'`，
+T-149 之后 `roleToStoreKind` 委托给 `bucketForRole`，于是 `bucketForRole('vad') === 'vad'`。
+
+**而 `packages/pipeline/src/tools.ts:764-771` 那一侧没跟着改**：
+
+```ts
+const vadModel = overrides.vadModel ?? (await findInstalledModel(
+    storeRoot, 'asr',                      // ← 仍然在 asr 桶里找
+    ['ggml-silero-v6.2.0.bin', …], isGgmlModelFile));
+```
+
+`[本机实测]` 同一个 store、只改桶，其余一字不动：
+
+```
+装进 by-name/asr/  → discoverTools.vadModel = …/by-name/asr/ggml-silero-v6.2.0.bin
+装进 by-name/vad/  → discoverTools.vadModel = null          ← 本轮 CI 上的那一格
+```
+
+**上一轮审计跑在 `1f49530`，那是 T-149 之前** —— 所以本轮是 T-149 之后的**第一次冷启动**，
+也就是这条不一致第一次有机会显形。审计正是干这个的。
+
+## 3.3 后果与建议（不是我的地盘，我没动）
+
+后果：**离线转写的静音切分静默降级为固定窗口**，断句变差，而
+「模型页显示已安装」「安装记录齐全」「sha256 全对」—— 全都是绿的。
+本仓最贵的那类形状，又一格。
+
+建议给接手的人（`pack-select` 正在这个文件里，或者 T-149 的原作者）：
+`findInstalledModel` 该按 `bucketForRole(role)` 找，并**同时兼容 `asr` 老布局**
+（T-149 之前装的用户，权重还躺在 `by-name/asr/`）。
+判据现成：`meta.sameSource` 已经把这条抓出来了，修完它必须变绿。
+
+⚠️ 顺带一条：`meta.sameSource` 说「本地=warn 端点=ok」——
+**端点那一侧为什么是 ok，我没有查**。两个出口对同一件事给出不同答案本身是第二个问题，
+标 `UNKNOWN` 交给接手的人。
+
+---
+
+# §4 顺带在 CI 上被证实的两条（都是本轮改动）
+
+| 条 | 证据 |
+|---|---|
+| macOS ffmpeg 8.1.2-2 **第一次在真 Mac 上跑起来** | run 31152458527 / macos-26：下载 32,894,656 B → 安装器校验 sha256 → 走产品真实路径转写 jfk.wav **succeeded**，拿到非空文本。已把 `components.json` 里「未在 Mac 上运行过 —— 全部是静态分析」那句订正掉（那句在 8.1.2 落地前是对的，现在不是了）。⚠️ 仍未验证：低于 macOS 26 的系统（minos 声明 12.0，但 runner 是 26 ——「新系统上跑得起来」不构成「老系统上跑得起来」的证据，D-11 §3.4） |
+| Linux ffmpeg 8.1.2 | 三平台 `tool.ffmpeg ok`，路径含 `ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-gpl-8.1` |
+
+---
+
+# §5 顺带修掉一条**被我自己的改动弄失效的守卫**（这条值得单说）
+
+`selftest-ci-manifest.mjs` 的夹具把 `whispercpp-vulkan-linux-x64` 当成"目录里还没有的包"。
+我把它真的补进目录之后：
+
+- ③「新包被加进来」**红了** —— 好，它在说真话（`packs.length + 1` 对不上，因为变成了 upsert）；
+- ⑤「★反向：坏 fragment 必须失败」**静默变绿** —— merge 先按 ADR-015 认出"同 id 且上游有真 URL"
+  就跳过了那个 fragment，**根本没走到 schema 校验**，于是 exit 0。
+  **一条反向用例失去了它要验的东西，而它看起来完全正常。**
+
+夹具改用 `UNRELEASED_PACK_ID`（`whispercpp-vulkan-linux-arm64`）并**断言它确实不在目录里** ——
+哪天它也被发布了，这条前提会当场红，而不是又一次悄悄变味。
+
+> 记一句给以后：**把一个东西"从假的变成真的"，会让所有拿它当假的的测试失去意义**，
+> 而其中只有一部分会红。红的那部分是运气。
+
+---
+
+# §6 纪律申报（本段）
+
+- **`:10000` 零请求**；未重启、未 kill、未占用。起过的服务只有 `install.mjs` 的本地文件操作（不监听端口）。
+- **`/root/data-memo` 未读未写**；指针文件全程用 `OPENMEMO_POINTER_FILE` 指到 `/tmp/runner-migrate/sel/pointer.json`
+  （**模块外显式指定，窗口为零**，PROTOCOL §9-bis），真指针 `~/.local/share/openmemo/datadir.json` 一个字节没碰。
+- **没有建 / 改 / 删任何 release**。`gh` 只用了 `run list/view/download`、`api …/logs`（只读）与 `workflow run`。
+- `apps/web/dist` 未被触碰（只跑 `pnpm build:safe` 与单包 `--filter` 构建）。
+- **没有 `pkill -f`**；本机 whisper 转写**一次都没跑**（`--transcribe` 是 CI runner 上跑的，不是本机）。
+- `git add` 逐个文件核对；别人的在途改动一个没带上。
+- 反向验证与所有临时 store 全在 `/tmp/runner-migrate/`。
+
+## SHARED-CHANGE（本段新增）
+
+| 文件 | 归属 | 我做了什么 | 冲突风险 |
+|---|---|---|---|
+| `vendor/manifests/backends.json` | `pack-publish` / `catalog-truth` | 新增 `whispercpp-vulkan-linux-x64` 一条（66 行，纯新增） | 低 |
+| `vendor/manifests/components.json` | 同上 | 新增同 id 的来源条目；订正 macOS ffmpeg 那条的「未在 Mac 上运行过」 | 低 |
+| `scripts/ci/selftest-ci-manifest.mjs` | 我的地盘 | 夹具换 id + 补前提断言（见 §5） | 低 |
