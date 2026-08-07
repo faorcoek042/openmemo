@@ -92,16 +92,26 @@ import 真实产物 `apps/daemon/dist/main.js`，得
 `node_modules` / `vendor` 软链回真仓库（照 `scripts/mutation-check.mjs` §36 的形状）。
 已核对该树的 locale JSON 与 HEAD 逐字节相同，即别人的在飞改动确实不在里面。
 
-| 门禁 | 结果 |
+**最终结论跑在提交 `5c06654` 那棵树上**（`git archive HEAD` 导出，
+`node_modules`/`vendor` 软链回真仓库），不是跑到一半那次检查：
+
+| 门禁 | 结果（提交 `5c06654`） |
 |---|---|
 | `pnpm build:safe` | ✔ exit 0 |
 | `pnpm check:version`（新） | ✔ exit 0 |
 | `npx tsc -b` | ✔ exit 0 |
 | `npx eslint .` | ✔ exit 0 |
-| `pnpm lint-workflows` | ✔ 628 条断言全过（7 个 workflow） |
-| `pnpm test:ci-scripts` | ✔ 22 passed / 0 failed（含新守卫） |
+| `pnpm lint-workflows` | ✔ **768** 条断言全过（**8** 个 workflow） |
+| `pnpm test:ci-scripts` | ✔ 22 passed / 0 failed（含新守卫，排在链首） |
 | `pnpm check:orphans` | ✔ 无新增零引用导出；基线 **70**（未升） |
-| `pnpm -r test` | ✔ **1433 pass / 0 fail**，9 个包全跑到（含 `apps/web` 438 条） |
+| `pnpm -r test` | ✔ **1462 tests / 1462 pass / 0 fail**，`Scope: 9 of 10`，含 `apps/web` 447 条 |
+
+（`lint-workflows` 从 628/7 涨到 768/8、测试数涨到 1462，都是因为期间预编译包那位的
+`build-bundles.yml` 与三个 workflow 相关提交落地 —— 不是我加的。）
+
+中途在"HEAD=3849239 + 只叠加我的 20 个文件"的隔离树上也全绿过一次
+（`1433 pass / 0 fail`），那次用于**把我的改动和别人的在飞改动分离**，
+证明红灯不是我的；上表才是绑定在最终提交上的那次。
 
 **关于 1433 vs 基线 1349（+84）**：`[实测]` 我**一个测试文件都没加**。
 `git diff --stat 5769110..HEAD -- '*.test.ts' '*.test.tsx'` = 8 个文件、2020 行新增，
