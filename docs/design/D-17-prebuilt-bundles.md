@@ -1,9 +1,27 @@
 ---
 id: D-17
 author: prebuilt
-status: draft
+status: ready
 date: 2026-08-08
 input: 用户 2026-08-08 口述；README.md；ADR-002；ADR-015；D-11；D-12；.github/workflows/build-backends.yml
+---
+
+## 第二阶段实测结果（2026-08-08，用户三条裁决之后）
+
+**裁决已实现**：① 发公开 Release（补了 `LICENSE` + `THIRD-PARTY-NOTICES` + libsimple 的 MIT election）
+② libsimple/sqlite-vec 进包 ③ sherpa-onnx 留着。
+
+| 平台 | 组装 | 归档校验 | **冷启动转出非空文本** | 升级不坏数据目录 | 未压缩 | 归档 |
+|---|---|---|---|---|---|---|
+| **linux-x64** | ✅ | ✅ 26/26 | ✅ **108 字符，借宿主 PATH 的 0 个** | ✅ 10/10 | **176.3 MiB** | **41.0 MiB** `.tar.xz` |
+| **win-x64** | 见下 | — | — | — | — | — |
+| **macos-arm64** | ✅ | — | — | — | — | — |
+
+`[CI 实测 run 31204790920 · linux-x64 全绿]`。win/macOS 见 §10 的两条实测发现。
+
+**裁决 ② 的直接收益（实测）**：包启动后是 `tokenizer=simple vec=on`；
+此前是 `tokenizer=trigram vec=off` —— **中文两字词搜索从"静默返回 0 条"变成能用**。
+
 ---
 
 ## TL;DR（≤ 25 行，Manager 只读这里）
@@ -482,3 +500,61 @@ THIRD-PARTY-NOTICES、libsimple 的 MIT election）应当补齐；GPL 那条**�
 6. 包内 README：写清 Gatekeeper / SmartScreen 首次运行会拦，以及绕过方式。
 
 **本轮不做任何实现。** 以上仅为裁决后的执行路径。
+
+---
+
+## 10. 第一次真跑 CI 发现的两件事（2026-08-08）
+
+两条都不是"代码写错了"那种发现，所以单独记在这里。
+
+### 10.1 Windows：动态 import 绝对路径当场炸
+
+`[CI 实测 run 31204790920]`
+
+```
+Error [ERR_UNSUPPORTED_ESM_URL_SCHEME]: ... On Windows, absolute paths must be
+valid file:// URLs. Received protocol 'd:'
+```
+
+组装器用 `await import(join(REPO_ROOT, 'packages/downloader/dist/index.js'))`
+去复用产品自己的解包器。**在 Linux/macOS 上这是对的，在 Windows 上不是** ——
+`D:\...` 不是合法的 ESM specifier，必须 `pathToFileURL().href`。
+
+值得记一条：它**只在 Windows 上出现，而且出现在第一步下载之后** ——
+也就是说本机跑一万遍都不会看见。这正是"接 GitHub 换来的能力"要用来回答的那类问题。
+
+### 10.2 ⚠️ macOS：四个**上游预编译**的二进制高于我们承诺的 13.3
+
+`[CI 实测 run 31204790920]` 这条是**产品事实**，不是我们的缺陷，需要 Manager/用户裁决。
+
+| 文件 | minos | 来源 | 坏了丢什么 |
+|---|---:|---|---|
+| `libonnxruntime.dylib` / `libonnxruntime.1.27.0.dylib` | **15.5.0** | sherpa-onnx npm | 流式 ASR / VAD |
+| `sherpa-onnx.node` | **14.0.0** | sherpa-onnx npm | 同上 |
+| `ext/vec0.dylib` | **14.0.0** | sqlite-vec v0.1.9 官方 release | 语义 / 混合检索 |
+
+**通过的**：`runtime/node` 11.0.0 · `better-sqlite3` 11.0.0 · **`ext/libsimple.dylib` 11.0.0**
+· `libsherpa-onnx-{c,cxx}-api.dylib` 11.0.0。
+
+含义，逐条：
+
+- README 的平台表写着 **macOS arm64（≥ 13.3）**。在 **13.3 ≤ 系统 < 14.0** 的机器上，
+  `vec0.dylib` **加载不了** → 语义检索没有；**< 15.5** 的机器上 sherpa **加载不了**
+  → 流式 ASR / VAD 没有。
+- **两者都是静默失效**：`loadExtensions()` 的契约就是"绝不阻塞启动"，
+  sherpa 是 `await import()` 懒加载且容忍失败。用户看到的是"功能不见了"，不是报错。
+  —— 这正是 README §"装得上、跑不了、自检看不见"那一族，现在有了确切数字。
+- **好消息**：裁决 ② 的主要目标 `libsimple`（中文分词）是 **11.0.0**，
+  在 13.3 上完全可用。**中文搜索这一条不受影响。**
+
+**已做的**：`scripts/ci/check-bundle-macos-floors.mjs` 把一刀切换成分层 ——
+CORE（node / better-sqlite3 / libsimple）仍然硬卡 13.3；可降级组各自**声明** floor，
+**实测高于声明才红**。判据没有放松：上游再抬一档照样当场说话，
+而已知事实不再每次伪装成新问题。
+
+**没做的（需要裁决）**：README 的平台表现在与事实不完全一致。三个选项：
+1. 保留 13.3，在平台表里注明这两个功能各自的 floor（我倾向这个 —— 诚实且不砍用户）；
+2. 把 macOS floor 整体抬到 14.0 或 15.5（砍掉一批用户，换"表里只有一个数字"）；
+3. macOS 包不带 sherpa-onnx（省 58.8 MiB，同时消掉 15.5 那一行）。
+
+**README 是对外承诺，不在我的职权内** —— 已在 inbox 里升级。

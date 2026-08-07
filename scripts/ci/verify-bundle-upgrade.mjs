@@ -104,12 +104,33 @@ async function startDaemon(installDir, label) {
   proc.stdout.on('data', (d) => logs.push(String(d)));
   proc.stderr.on('data', (d) => logs.push(String(d)));
 
-  for (let i = 0; i < 120; i++) {
+  /*
+   * ★★ 就绪判据是 `GET /api/folders` 能应答，**不是** `/api/health`。
+   *
+   * `[CI 实测 2026-08-08 run 31205369931, windows-2025]` 第一版等的是 `/api/health`，
+   * 结果 Windows 腿红在：
+   *     ✘ 建文件夹失败 HTTP 404：{"code":"NOT_FOUND","message":"no route for POST /api/folders"}
+   * 而**同一份代码在 Linux 上是绿的**。
+   *
+   * 成因不是 Windows 特有的 bug，是一个**真实存在的窗口**被慢一点的机器撞上了：
+   *   · `/api/health` 由 `apps/daemon/src/http/server.ts:122` **直接**应答，
+   *     不经过路由表；
+   *   · 而业务路由是 `main.ts:844` 的 `routers.push(...)`，发生在 server 建好**之后**。
+   * 于是「health 说 ok」与「路由表装完了」之间有一段真空。
+   * （`server.ts:39` 的注释里已经记着单实例探测撞过同一个窗口 —— 它一直在那儿。）
+   *
+   * 对本脚本而言正确的修法是**把就绪判据换成一个真业务路由**：
+   * 等到 `/api/folders` 不再是 404，路由表就一定装完了。
+   * 靠 sleep 猜一个更长的时间是不行的 —— 那只是把同一个竞态推给更慢的机器。
+   *
+   * ⚠️ 这个窗口本身**没有被修**（那是 daemon 的事，不在本脚本职权内），已升级给 Manager。
+   */
+  for (let i = 0; i < 240; i++) {
     await new Promise((r) => setTimeout(r, 500));
     try {
-      const res = await fetch(`${BASE}/api/health`);
+      const res = await fetch(`${BASE}/api/folders`);
       if (res.ok) {
-        console.log(`   ${label} 已就绪`);
+        console.log(`   ${label} 已就绪（/api/folders 可应答 —— 路由表装完了，不只是 health）`);
         return { proc, logs };
       }
     } catch {
