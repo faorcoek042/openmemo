@@ -236,7 +236,7 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
       // Honour an explicit unpack target when given; otherwise keep the by-name layout.
       const finalDir = opts.unpackInto
         ? path.resolve(opts.dataRoot ?? path.join(store.root, '..'), opts.unpackInto)
-        : path.join(store.byNameDir(target.kind), stripExt(f.name));
+        : path.join(store.byNameDir(target.kind), unpackDirName(f.name));
       const tmpDir = `${finalDir}.tmp-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
       try {
         await fs.rm(tmpDir, { recursive: true, force: true });
@@ -328,7 +328,23 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
   return { id: target.id, files: records, totalBytes, bytesTransferred, installedTo: expandedTo };
 }
 
-function stripExt(name: string): string {
+/**
+ * The directory an archive is expanded into, under `by-name/<kind>/`.
+ *
+ * ── Why this is exported (T-162) ──────────────────────────────────────────────────────
+ * This is the ONLY agreement between the installer and tool discovery. The installer
+ * creates the directory from it (`finalDir` above); `findInBackendPacks()` runs it the
+ * other way — an installed record names the archive (`InstalledBackendPack.files[].name`),
+ * and this function turns that name into the directory to look for, which is how a
+ * directory on disk gets attributed back to the pack that produced it.
+ *
+ * Two implementations of the same rule would diverge on the extension list, and the list
+ * is not guessable: `.tar.xz` is deliberately NOT stripped, so jellyfin's macOS ffmpeg
+ * really does unpack into a directory whose name ends in `.tar.xz`
+ * (`[实测]` pack-publish §2.3, and `verify-offline.mjs [12]` builds that exact layout).
+ * A resolver that "cleaned that up" would attribute zero directories to any pack.
+ */
+export function unpackDirName(name: string): string {
   return name.replace(/\.(zip|tar\.gz|tgz)$/i, '');
 }
 
@@ -340,7 +356,7 @@ function stripExt(name: string): string {
  * ─── 这是一个真 bug，不是整洁问题（T-146 §3.3 #1 → T-153）─────────────────────────
  *
  * `install()` 把 `<X>.mlmodelc.zip` 解到 `by-name/asr/<X>.mlmodelc/`（目录名由
- * `stripExt(f.name)` 得到）。而上游那个 zip **内部自带一层同名顶层目录**，
+ * `unpackDirName(f.name)` 得到）。而上游那个 zip **内部自带一层同名顶层目录**，
  * 于是磁盘上真实结构是：
  *
  *     by-name/asr/ggml-large-v3-encoder.mlmodelc/

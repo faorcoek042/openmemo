@@ -180,6 +180,21 @@ export interface InstalledBackendPack {
   installedAt: string;
   verifiedAt: string | null;
   integrity: 'ok' | 'unverified' | 'corrupt' | 'missing_files';
+  /**
+   * Copy of {@link BackendPack.priority} taken at install time. OPTIONAL because records
+   * written before T-162 do not have it.
+   *
+   * ── Why it has to be copied here (T-162) ────────────────────────────────────────────
+   * `priority` documents itself as "higher wins when several packs match the same
+   * hardware", and that decision is made by `findInBackendPacks()` in `@openmemo/pipeline`
+   * — which only ever sees the STORE, not `vendor/manifests/backends.json`. Leaving the
+   * number in the catalog meant it had eleven declarations and zero readers, while the
+   * function that was supposed to obey it picked whatever `readdir` returned first.
+   *
+   * A record without it sorts as 0. That only matters when the user has never chosen a
+   * backend (an explicit choice outranks priority), and reinstalling the pack fills it in.
+   */
+  priority?: number;
   /** Mirrors {@link BackendPack.linkInto}; absent for packs that are not linked anywhere. */
   linkInto?: string;
   files: { name: string; sha256: string; sizeBytes: number; path: string }[];

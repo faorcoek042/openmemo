@@ -232,6 +232,17 @@ async function main() {
   const shared = await import(distUrl('packages/shared/dist/index.js'));
 
   const tools = await pl.discoverTools({ storeRoot: STORE_ROOT, dataDir: DATA_DIR });
+  /*
+   * T-162：跑的是哪个后端包。与 daemon 出口给的是同一件事 ——
+   * 那边读 `bundle.whisperCliOrigin`（buildPipeline 装配时算的），这边现算一次，
+   * **调的是同一个 `resolveBackendTool()`**，输入也都是 STORE_ROOT，所以结论必然一致。
+   * 只在它与 `tools.whisperCli` 逐字相同时才认：不同就说明这条路径来自
+   * 环境变量或系统 PATH，报一个包 id 就是在为另一个二进制作证。
+   */
+  const whisperCliName = process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli';
+  const resolvedWhisper = await pl.resolveBackendTool(STORE_ROOT, whisperCliName);
+  const whisperCliOrigin =
+    resolvedWhisper !== null && resolvedWhisper.path === tools.whisperCli ? resolvedWhisper : null;
   const Database = await loadSqlite();
   const sqlite = Database === null ? null : makeSqliteProbes(Database);
   const appDb = openAppDb(Database);
@@ -265,6 +276,19 @@ async function main() {
     probes: {
       tools: () => Promise.resolve(tools),
       installed: (kind) => pl.listInstalledModels(STORE_ROOT, kind),
+
+      // T-162：跑的是哪个后端包。**必须与 daemon 那个出口给出同一个答案**（见上）。
+      backendSelection: () =>
+        Promise.resolve(
+          whisperCliOrigin === null
+            ? null
+            : {
+                selectedBackend: whisperCliOrigin.preferred,
+                packId: whisperCliOrigin.packId,
+                packBackend: whisperCliOrigin.backend,
+                degraded: whisperCliOrigin.degraded,
+              },
+        ),
 
       /*
        * T-149：按安装记录里的 `role` 问，不按目录名猜。

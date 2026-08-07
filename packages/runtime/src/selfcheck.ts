@@ -116,9 +116,35 @@ export interface ProxyConnectivity {
   probes: { target: string; result: string; viaProxy: boolean }[];
 }
 
+/**
+ * 「跑的是哪个后端包」—— T-162 的可观测那一半。
+ *
+ * 在此之前，同时装了 CPU 包与加速包时用哪个**取决于 `readdir` 返回顺序**，
+ * 而这件事在产品里没有任何出口能看出来：`/api/selfcheck` 只报了一条绝对路径，
+ * 用户既不知道也影响不了。这个结构回答两个问题：**选的是谁**、**跑的是谁**。
+ */
+export interface BackendSelectionInfo {
+  /** 用户在「运行时」页选中的后端；`null` = 从未选过（此时按 `priority` 挑）。 */
+  selectedBackend: string | null;
+  /** 实际提供 whisper-cli 的包 id；`null` = 不是从后端包来的（环境变量 / PATH）。 */
+  packId: string | null;
+  /** 该包声明的 backend。 */
+  packBackend: string | null;
+  /** true = 选中的后端有已装包，但同引擎里提供 whisper-cli 的是另一个包（已退档）。 */
+  degraded: boolean;
+}
+
 export interface SelfCheckProbes {
   /** Resolved native tool paths, as the pipeline would resolve them. */
   tools: () => Promise<SelfCheckToolPaths>;
+  /**
+   * 后端包的**选择**结果（T-162）。
+   *
+   * 可选，与 `probePath` 同一形状：探针没给就如实报"未探测"，而不是不出现
+   * —— 少一条检查项与"这条通过了"在报告里长得一模一样。
+   * daemon 与 CLI 两个出口都必须接上，否则 `--daemon` 的逐 id 比对会当场报漂移。
+   */
+  backendSelection?: () => Promise<BackendSelectionInfo | null>;
   /**
    * Installed artifact names by store **kind** (= directory).
    *
@@ -557,6 +583,48 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
     required: false,
     remediation: backendPacks.length > 0 ? null : '在「运行时」页安装 CPU 基础包',
   });
+
+  /*
+   * ★ T-162：**上面那条只说"装了哪些"，不说"跑的是哪个"。**
+   *
+   * 两个包同时装着时，此前用哪个由 `readdir` 的返回顺序决定 ——
+   * `[实测]` 装了 Vulkan 包，跑的仍是 CPU 包里的 whisper-cli，**两种安装顺序结果相同**。
+   * 那个状态在报告里长得和"一切正常"一模一样，因为报告里根本没有这个问题。
+   */
+  if (input.probes.backendSelection === undefined) {
+    notProbed('tools', 'backend.selection', 'backend pack in use', '实际生效的后端包');
+  } else {
+    const sel = await input.probes.backendSelection();
+    if (sel === null) {
+      add({
+        layer: 'tools',
+        id: 'backend.selection',
+        label: 'backend pack in use',
+        labelZh: '实际生效的后端包',
+        status: 'warn',
+        detail: 'whisper-cli 不是从后端包解析出来的（环境变量覆盖 / 系统 PATH / 未找到）',
+        required: false,
+        remediation: '在「运行时」页安装后端包，让产品自己的安装通道提供 whisper-cli',
+      });
+    } else {
+      const chosen = sel.selectedBackend ?? '未选择（按 priority 挑）';
+      add({
+        layer: 'tools',
+        id: 'backend.selection',
+        label: 'backend pack in use',
+        labelZh: '实际生效的后端包',
+        status: sel.degraded ? 'warn' : 'ok',
+        detail:
+          `选中 ${chosen} → 实际使用 ${sel.packId ?? '(来源不明，无安装记录)'}` +
+          `（backend=${sel.packBackend ?? '未知'}）`,
+        required: false,
+        remediation: sel.degraded
+          ? '选中的后端包里没有 whisper-cli，已退回另一个包 —— 加速不会生效。' +
+            '重装该后端包，或在「运行时」页改选一个真的能用的后端'
+          : null,
+      });
+    }
+  }
 
   /*
    * 「找到了」和「装上了」是两件事。

@@ -137,6 +137,7 @@ export {
 } from './selfcheck.js';
 export type {
   CheckResult,
+  BackendSelectionInfo,
   CheckStatus,
   DetectedLlmService,
   InstalledByRole,

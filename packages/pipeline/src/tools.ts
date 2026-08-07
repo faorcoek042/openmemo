@@ -12,11 +12,12 @@
  * paths explicitly from the installed-pack records.
  */
 
-import { access, constants, cp, mkdir, readdir, rm, symlink } from 'node:fs/promises';
+import { access, constants, cp, mkdir, readdir, readFile, rm, symlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, join, relative } from 'node:path';
 
-import { isGgmlModelFile } from '@openmemo/downloader';
+import { isGgmlModelFile, unpackDirName } from '@openmemo/downloader';
+import { BACKENDS, type Backend } from '@openmemo/shared';
 
 export interface ToolPaths {
   ffmpeg: string;
@@ -120,8 +121,161 @@ export function defaultStoreRoot(): string {
   return resolveStoreRoot();
 }
 
+/* ==========================================================================================
+ * 后端包的**选择**（T-162）
+ * ========================================================================================== */
+
 /**
- * Find an executable inside an installed backend pack.
+ * 用户在「运行时」页选中的后端，落盘的位置。
+ *
+ * `RestState` 把偏好写在 `<storeRoot>/prefs.json`（`POST /api/backends/select` →
+ * `prefs.selectedBackend` → 落盘），与 `active.json`（哪个模型被激活）是同一族：
+ * **用户的选择存放在制品旁边，流水线在装配时读回来**
+ * （`apps/daemon/src/pipeline/modelStore.ts` 读 `active.json` 早就是这个形状）。
+ *
+ * 路径在这里导出、由 `RestState.prefsFile` 反过来引用，所以"这个文件叫什么"
+ * 只有一个答案。同一个问题有两个答案，本仓已经付过四次代价
+ * （`%APPDATA%` vs `%LOCALAPPDATA%`、`bin/runtime` vs `by-name/backend`、
+ * `installPath` 的三个含义、whisper-cli 的四个出口）。
+ */
+export function backendPrefsPath(storeRoot: string): string {
+  return join(storeRoot, 'prefs.json');
+}
+
+/**
+ * 用户选中的后端；从未选过（或文件读不出来）返回 `null`。
+ *
+ * `null` 的含义是"**没有选择**"，不是"选了 cpu" —— 两者在下面的排序里不同：
+ * 前者交给 `priority` 决定，后者是用户明确要求跑 CPU 那个包。
+ */
+export async function readSelectedBackend(storeRoot: string): Promise<Backend | null> {
+  try {
+    const raw: unknown = JSON.parse(await readFile(backendPrefsPath(storeRoot), 'utf8'));
+    const value = (raw as { selectedBackend?: unknown }).selectedBackend;
+    if (typeof value !== 'string') return null;
+    return (BACKENDS as readonly string[]).includes(value) ? (value as Backend) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 一个 `by-name/backend/` 下的目录属于哪个已安装的包。 */
+export interface BackendPackOrigin {
+  readonly packId: string;
+  readonly backend: Backend;
+  /**
+   * `InstalledBackendPack.engine`（whisper.cpp / ffmpeg / yt-dlp / …）。
+   *
+   * 用来回答"选中的后端**本来**该不该提供这个二进制"：whisper 包与 media-tools 包
+   * 是两个引擎，选了 vulkan 而 ffmpeg 来自 media-tools 是**正常**的，不是降级。
+   * 少了这一格，`degraded` 会对每一个不相干的工具报警 —— 而
+   * 「一条会对不相干的东西发表意见的检查，说对的时候也不该被相信」。
+   */
+  readonly engine: string;
+  /**
+   * 目录里那条 `BackendPack.priority`（"Higher wins when several packs match the same
+   * hardware"），安装时抄进安装记录。**老安装记录没有这个字段 → `null`**，
+   * 排序时按 0 处理：它只在"用户没选过后端"时才起作用，重装一次该包即可回填。
+   */
+  readonly priority: number | null;
+}
+
+interface RawInstalledPack {
+  id?: unknown;
+  backend?: unknown;
+  engine?: unknown;
+  priority?: unknown;
+  files?: { name?: unknown }[];
+}
+
+/**
+ * 把 `by-name/backend/` 下的每个条目**反查**回是哪个包装的。
+ *
+ * 证据来自安装记录 `<storeRoot>/manifests/backend/<id>.json`（`InstalledBackendPack`），
+ * 不是目录名里的字符串。判据必须是结构而不是关键词：目录名叫
+ * `whispercpp-vulkan-linux-x64` 只是上游今天的命名习惯，而
+ * `jellyfin-ffmpeg_8.1.2-2_portable_macarm64-gpl.tar.xz` 里一个后端名都没有。
+ * 按名字猜是"同名不同物、而系统按名字工作"那一族（`tokens.txt` 互相顶掉是最近一例）。
+ *
+ * 一个包会占两个键：解包目录（`unpackDirName(files[].name)`，安装器建目录用的就是它）
+ * 与扁平硬链名（`files[].name` 本身，单文件包如 yt-dlp 走这条）。
+ */
+async function readInstalledPackOrigins(
+  storeRoot: string,
+): Promise<Map<string, BackendPackOrigin>> {
+  const out = new Map<string, BackendPackOrigin>();
+  const dir = join(storeRoot, 'manifests', 'backend');
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
+    if (!entry.endsWith('.json')) continue;
+    let rec: RawInstalledPack;
+    try {
+      rec = JSON.parse(await readFile(join(dir, entry), 'utf8')) as RawInstalledPack;
+    } catch {
+      continue; // 读不出来的记录 = 没有记录，不猜
+    }
+    const packId = typeof rec.id === 'string' ? rec.id : null;
+    const backend =
+      typeof rec.backend === 'string' && (BACKENDS as readonly string[]).includes(rec.backend)
+        ? (rec.backend as Backend)
+        : null;
+    if (packId === null || backend === null) continue;
+    const origin: BackendPackOrigin = {
+      packId,
+      backend,
+      engine: typeof rec.engine === 'string' ? rec.engine : '',
+      priority: typeof rec.priority === 'number' ? rec.priority : null,
+    };
+    for (const f of rec.files ?? []) {
+      if (typeof f.name !== 'string') continue;
+      out.set(unpackDirName(f.name), origin);
+      out.set(f.name, origin);
+    }
+  }
+  return out;
+}
+
+/** {@link resolveBackendTool} 的第三个参数。 */
+export interface BackendToolPreference {
+  /**
+   * 用户选中的后端。
+   *   - **不传（`undefined`）** = 生产默认：从 `<storeRoot>/prefs.json` 读回来。
+   *     这是刻意的 —— 见 {@link resolveBackendTool} 的"为什么不做成必填参数"。
+   *   - `null` = 显式表示"没有选择"（测试与不关心偏好的调用方用）。
+   *   - 某个后端 = 就用它，不读盘。
+   */
+  readonly selectedBackend?: Backend | null;
+}
+
+/** {@link resolveBackendTool} 的结果 —— 路径**以及它是从哪个包来的**。 */
+export interface ResolvedBackendTool {
+  readonly path: string;
+  /** 提供它的已安装包；没有安装记录时为 `null`（冷启动脚本 / 手工解包 / 装到一半崩了）。 */
+  readonly packId: string | null;
+  readonly backend: Backend | null;
+  /** 本次解析生效的偏好。`null` = 用户从未选过。 */
+  readonly preferred: Backend | null;
+  /**
+   * `true` = **同一个引擎**里，用户选中的后端有已装的包，而这个二进制却来自别的包
+   * （选中的那个包里没有它）→ 已按下面的回退策略退了一档。
+   *
+   * "同一个引擎"是必要的限定：选了 vulkan 时 ffmpeg 来自 `media-tools-*`（engine
+   * `ffmpeg`）是正常的，把它也算成降级就是假红灯，而假红灯会训练人忽略告警。
+   * 来源不明的目录（没有安装记录）一律**不**声称降级 —— 我们无从判断，
+   * "我拿不到" ≠ "这里没有"。
+   *
+   * **这条必须有人报出去**：静默降级正是本仓最贵的那一类。
+   */
+  readonly degraded: boolean;
+}
+
+/**
+ * Find an executable inside an installed backend pack, honouring the user's choice.
  *
  * Layout comes from `@openmemo/downloader`'s ArtifactStore:
  *     <storeRoot>/by-name/backend/<name>                              (pack = one binary)
@@ -129,7 +283,57 @@ export function defaultStoreRoot(): string {
  *
  * The nested level exists because upstream archives carry their own top-level directory
  * (whisper.cpp's Linux tarball unpacks to `whisper-bin-ubuntu-x64/`), so a fixed depth
- * would miss it. We scan two levels, newest first, and take the first hit.
+ * would miss it.
+ *
+ * ── ★ T-162：这段注释此前描述的是一个不存在的行为 ──────────────────────────────────
+ *
+ * 原文（保留在此，因为它正是缺陷的成因）：
+ *
+ *     "We scan two levels, **newest first**, and take the first hit."
+ *
+ * **实现里没有任何排序** —— 候选按 `readdir` 返回的顺序拼，取第一个能执行的。
+ * `[amd-vulkan 本机实测]` 同时装 CPU 包与 Vulkan 包时跑的是 **CPU 包里的 whisper-cli**，
+ * **两种安装顺序结果相同**；Windows 上目录里那个"唯一能用的加速包"
+ * `whispercpp-cuda-12.4-win-x64` 与 `whispercpp-cpu-win-x64` 同装时同样被顶掉。
+ * 后果不是"装不上"，是**装上了、点得动、跑起来还是 CPU，且没有任何地方会说**：
+ * ggml 只在**二进制自身所在目录**里 dlopen 后端模块，所以另一个包里的
+ * `libggml-vulkan.so` 虽然就在盘上，也永远不会被加载。
+ *
+ * 这条与「`priority` 有 11 条声明、零个读取方」「`selectedBackend` 只驱动两个展示标志」
+ * 是同一件事的三个断面：**结论算出来了，做决定的那个函数看不见它。**
+ *
+ * ── 现在的选择规则，以及每一条的依据 ─────────────────────────────────────────────
+ *
+ *   0. **扁平命中最先**（`by-name/backend/<name>`）。它不是搜索是查表 —— 安装器就写在
+ *      这个精确位置，而且只有"包本身就是一个可执行文件"的包（yt-dlp）会落在这里，
+ *      不可能与任何 whisper 包争同一个名字。T-132 的回归守卫钉的就是它。
+ *   1. **用户选中的后端优先**：`prefs.selectedBackend` 对应的包排最前。
+ *      依据 = `POST /api/backends/select` 是产品里**唯一**一处"用户表达后端偏好"的入口，
+ *      在此之前它只驱动 `recommended` / `active` 两个徽章。用户能改的东西必须真的管事。
+ *   2. **没选过 → 按 `priority` 降序**，这正是 `BackendPack.priority` 的文档语义
+ *      （"Higher wins when several packs match the same hardware"）。目录里
+ *      cuda 包是 90、cpu 包是 10 —— 装了加速包又没有另行指定，就用加速包。
+ *      安全性依据：加速包**自包含**（T-161 起每个包都带全 CPU 模块与 whisper-cli，
+ *      CI 实测 `providesFiles` 23 个），所以即使 GPU 不可用，ggml 也只是
+ *      `No devices found.` 退回 CPU 跑 —— 不会更差。**两个改动是配套的。**
+ *   3. **同优先级、以及没有安装记录的目录**：按 packId / 目录名字典序。
+ *      不是"随便定个顺序"，是**只要求确定性**：与 `readdir` 的区别在于它与文件系统、
+ *      与安装顺序、与磁盘状态都无关，因此可复现、可断言。
+ *      没有安装记录的目录一律排在有记录的之后 —— 它们是"装到一半崩在 writeManifest
+ *      之前"或手工解包的产物（`gates-fix` §5.2 的 A/B 分叉），证据强度更低。
+ *
+ * ── 选中的包里没有这个文件时怎么办：**回退，并且出声** ───────────────────────────
+ *
+ * 显式决定（不是沿用现状）：**继续往下找，绝不报错**。三条依据：
+ *   · 这个函数同时在解析 ffmpeg / ffprobe / yt-dlp / openmemo-probe，
+ *     它们与"选中哪个后端"毫无关系；为 whisper-cli 报错会把无关的工具一起打死。
+ *   · 顶格的包缺文件恰恰是"装到一半"这个**按设计会发生**的中间态
+ *     （安装器刻意 blob 先落、manifest 最后写）。把降级状态变成死机不是修复。
+ *   · CPU 是 ADR-003 降级链的地板，`manager.ts` 实测记着 ggml 在加速包不可用时
+ *     优雅降级 —— "our job is not to prevent it; it is to explain it"。
+ * 代价是"解释"这半边必须真的做到，所以 {@link ResolvedBackendTool.degraded} 会翻真，
+ * `buildPipeline()` 会 warn，自检里有一条 `backend.selection`。
+ * **只回退不出声，就是把这个 bug 换个位置重来一遍。**
  *
  * ── Why the FLAT case is checked too ──────────────────────────────────────────────────
  * `ArtifactStore.linkByName()` hardlinks every installed file to
@@ -141,24 +345,60 @@ export function defaultStoreRoot(): string {
  * and `discoverTools()` still reports the tool as missing. That is the T-093 /
  * media-tools failure shape again, and it is why this is a listed candidate rather than
  * a lucky side effect of the directory scan.
+ *
+ * ── 为什么偏好不做成必填参数 ─────────────────────────────────────────────────────
+ * 调用方有五处，分布在三个包、两个进程（daemon 与 `scripts/selfcheck.mjs` 这条 CLI）。
+ * CLI 那条**拿不到 `RestState`**，而 T-148/T-149 立下的规矩是"两个出口必须调同一个函数、
+ * 得出同一个答案"。让每个调用方各自去拿偏好，等价于把"忘了传"变成一种可能的状态 ——
+ * `gates-fix` 刚在 `isPackApplicable` 的可选第四参数上写下"能传而不传 = 选择了死锁"。
+ * 偏好和"装了什么"一样是 `storeRoot` 里的事实，所以由本函数负责读，调用方不需要知道。
  */
-export async function findInBackendPacks(
+export async function resolveBackendTool(
   storeRoot: string,
   binaryName: string,
-): Promise<string | null> {
+  preference?: BackendToolPreference,
+): Promise<ResolvedBackendTool | null> {
   const backendRoot = join(storeRoot, 'by-name', 'backend');
-  // Flat first: it is the exact, unambiguous location the installer wrote to. The
-  // directory scan below is a search; this is a lookup.
-  const candidates: string[] = [join(backendRoot, binaryName)];
+
+  const preferred =
+    preference === undefined || preference.selectedBackend === undefined
+      ? await readSelectedBackend(storeRoot)
+      : preference.selectedBackend;
+
+  const origins = await readInstalledPackOrigins(storeRoot);
 
   const listDirs = async (dir: string): Promise<string[]> => {
     try {
       const entries = await readdir(dir, { withFileTypes: true });
-      return entries.filter((e) => e.isDirectory()).map((e) => join(dir, e.name));
+      return entries.filter((e) => e.isDirectory()).map((e) => e.name);
     } catch {
       return [];
     }
   };
+
+  /*
+   * 排序键。**先 tier 后 priority 后名字**，三层全部确定 —— 任何一层留成
+   * `readdir` 顺序，这个函数就又变回"看文件系统心情"。
+   */
+  const packDirs = await listDirs(backendRoot);
+  const rankOf = (name: string): [number, number, string] => {
+    const origin = origins.get(name);
+    if (origin === undefined) return [2, 0, name];
+    const tier = preferred !== null && origin.backend === preferred ? 0 : 1;
+    return [tier, -(origin.priority ?? 0), origin.packId];
+  };
+  const ordered = packDirs
+    .map((name) => ({ name, rank: rankOf(name) }))
+    .sort((a, b) => {
+      for (let i = 0; i < 3; i += 1) {
+        const x = a.rank[i] as number | string;
+        const y = b.rank[i] as number | string;
+        if (x < y) return -1;
+        if (x > y) return 1;
+      }
+      return 0;
+    })
+    .map((e) => e.name);
 
   /*
    * `bin/` is checked at every level because the archive layout is upstream's choice,
@@ -169,17 +409,61 @@ export async function findInBackendPacks(
    * not fail loudly at install time, it fails much later as "every transcription is
    * blocked", because every audio file has to be normalised to 16 kHz mono first.
    */
-  for (const packDir of await listDirs(backendRoot)) {
-    candidates.push(join(packDir, binaryName), join(packDir, 'bin', binaryName));
+  // Flat first: it is the exact, unambiguous location the installer wrote to. The
+  // directory scan below is a search; this is a lookup.
+  const candidates: { path: string; dir: string | null }[] = [
+    { path: join(backendRoot, binaryName), dir: null },
+  ];
+  for (const name of ordered) {
+    const packDir = join(backendRoot, name);
+    candidates.push(
+      { path: join(packDir, binaryName), dir: name },
+      { path: join(packDir, 'bin', binaryName), dir: name },
+    );
     for (const nested of await listDirs(packDir)) {
-      candidates.push(join(nested, binaryName), join(nested, 'bin', binaryName));
+      const nestedDir = join(packDir, nested);
+      candidates.push(
+        { path: join(nestedDir, binaryName), dir: name },
+        { path: join(nestedDir, 'bin', binaryName), dir: name },
+      );
     }
   }
 
+  /** 选中的后端下面已经装了哪些包（按引擎分组用）。 */
+  const selectedPacks =
+    preferred === null ? [] : [...origins.values()].filter((o) => o.backend === preferred);
+
   for (const c of candidates) {
-    if (await isExecutable(c)) return c;
+    if (!(await isExecutable(c.path))) continue;
+    const origin = c.dir === null ? origins.get(binaryName) : origins.get(c.dir);
+    return {
+      path: c.path,
+      packId: origin?.packId ?? null,
+      backend: origin?.backend ?? null,
+      preferred,
+      degraded:
+        origin !== undefined &&
+        preferred !== null &&
+        origin.backend !== preferred &&
+        selectedPacks.some((p) => p.engine === origin.engine),
+    };
   }
   return null;
+}
+
+/**
+ * {@link resolveBackendTool} 的路径视角。
+ *
+ * 保留这个签名是因为它有五个调用方，而其中三个只关心"路径是什么"。
+ * ⚠️ 要判断"跑的是哪个包"请用 `resolveBackendTool()` —— 一个只回路径的函数
+ * 天然说不出"我退了一档"，而那正是 T-162 之前没人发现的原因。
+ */
+export async function findInBackendPacks(
+  storeRoot: string,
+  binaryName: string,
+  preference?: BackendToolPreference,
+): Promise<string | null> {
+  return (await resolveBackendTool(storeRoot, binaryName, preference))?.path ?? null;
 }
 
 /**
@@ -432,11 +716,25 @@ export async function discoverTools(
     storeRoot?: string;
     /** The daemon's data directory — pass this whenever it is known (D-08 D4). */
     dataDir?: string;
+    /**
+     * 用户选中的后端。不传 = 从 `<storeRoot>/prefs.json` 读（生产路径）。
+     * 见 {@link resolveBackendTool}。
+     */
+    selectedBackend?: Backend | null;
   } = {},
 ): Promise<ToolPaths> {
   const exe = (name: string): string => (process.platform === 'win32' ? `${name}.exe` : name);
 
   const storeRoot = overrides.storeRoot ?? resolveStoreRoot(overrides.dataDir);
+  /*
+   * 偏好**读一次**，五个工具共用。逐个工具各读一次不只是浪费 I/O：
+   * 中途有人改了 prefs.json，同一次装配就会出现"ffmpeg 按旧偏好、whisper-cli 按新偏好"，
+   * 而那种不一致查起来比慢一点贵得多。
+   */
+  const selectedBackend =
+    overrides.selectedBackend === undefined
+      ? await readSelectedBackend(storeRoot)
+      : overrides.selectedBackend;
 
   const fromPath = async (name: string): Promise<string | null> => {
     const dirs = (process.env.PATH ?? '').split(delimiter).filter(Boolean);
@@ -448,7 +746,8 @@ export async function discoverTools(
   };
 
   const resolve = async (name: string): Promise<string | null> =>
-    (await findInBackendPacks(storeRoot, exe(name))) ?? (await fromPath(name));
+    (await findInBackendPacks(storeRoot, exe(name), { selectedBackend })) ??
+    (await fromPath(name));
 
   /*
    * VAD model ships as a ggml file inside the whisper.cpp pack's sibling model store.

@@ -74,6 +74,7 @@ export type { ProxyConfig, ProxyScheme, ProxyValidation } from './subprocess/pro
 
 // -- tools ---------------------------------------------------------------------------------
 export {
+  backendPrefsPath,
   defaultStoreRoot,
   resolveStoreRoot,
   discoverTools,
@@ -84,11 +85,16 @@ export {
   isExecutable,
   listInstalledModels,
   materializeSqliteExtensions,
+  readSelectedBackend,
+  resolveBackendTool,
   sqliteExtensionSources,
 } from './tools.js';
 export type {
+  BackendPackOrigin,
+  BackendToolPreference,
   ManagedDirs,
   MaterializedExtensions,
+  ResolvedBackendTool,
   SqliteExtensionSource,
   ToolPaths,
 } from './tools.js';
