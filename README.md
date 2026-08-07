@@ -55,7 +55,7 @@ node apps/daemon/dist/main.js        # 打开终端里打印的地址,默认 htt
 |---|---|
 | **Linux x64**(glibc ≥ 2.34) | ✅ CPU;另有 Vulkan 包,**没在真 GPU 上验过** |
 | **Windows x64**(需 VC++ 2015-2022 运行时) | ✅ CPU;CUDA 包**可能已经好了但验不了**(要真 N 卡) |
-| **macOS arm64**(≥ 13.3) | ✅ CPU + Metal + ANE(ANE 仅 `large-v3-turbo`) |
+| **macOS arm64**(≥ 13.3,**部分功能要 ≥ 15.5**,见下) | ✅ CPU + Metal + ANE(ANE 仅 `large-v3-turbo`) |
 | **AMD(ROCm)** · **macOS Intel** · **linux-arm64** | ❌ 不构建 |
 
 判据是**「屏蔽宿主 PATH 的干净机器上真的转出非空文本」**,不是「代码写完了」。最近一轮
@@ -64,6 +64,17 @@ node apps/daemon/dist/main.js        # 打开终端里打印的地址,默认 htt
 ⚠️ 有一族**装得上、跑不了、自检看不见**的下限(macOS < 13.3 · Linux glibc 过低 · Windows 缺 VC++):
 下载成功、sha256 通过、安装记录 succeeded、自检全绿,**只有真正去执行时才死**。三条见
 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §1.2。
+
+**macOS 的系统版本下限是分层的**(`[CI 实测]`,逐个二进制读 `LC_BUILD_VERSION`):
+
+| 要用什么 | 最低 macOS | 来源 |
+|---|---|---|
+| 核心:转写、播放、笔记、**中文全文检索** | **11.0** | node · better-sqlite3 · libsimple 都是 11.0 |
+| 向量检索(`vec0`)、流式 ASR / VAD(`sherpa-onnx`) | **14.0** | 上游预编译 |
+| 同上的 ONNX 运行时 | **15.5** | 上游预编译 |
+
+我们承诺 **13.3** 是因为 whisper.cpp 那个包;**13.3–14.x 上向量检索与流式 ASR 会静默失效**
+——不报错,只是不工作。这几个数字来自上游的预编译产物,**不是我们能选的**。
 
 ## 你该知道的
 
