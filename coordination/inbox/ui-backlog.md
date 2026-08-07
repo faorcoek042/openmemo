@@ -1066,3 +1066,208 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
    建议改前端文案（而不是让 daemon 读 `toVersion`）。归我还是归组件那条线？
 3. `PATCH /api/notes/:uid` 的 `anchorKey`/`key` 不匹配（④-3）——
    与我这轮同形、且每次自动保存都在跑。要先定"锚点以谁为准"，请指派。
+
+---
+
+## [2026-08-08 02:50] T-174 DONE —— 断路器接到运行时页 + 真「立刻重试」；`CheckResult` 5 条中英标签
+
+> **起点 HEAD**：`d2e788c`　**落地**：`c992086`（已 push）
+> **未碰**：`:10000`、`/root/data-memo`、`~/.local/share/openmemo/datadir.json`（跑完复核仍是 `/root/data-memo`）。
+> **未用** `pkill -f`；**未建/改/删** release；**未跑** `pnpm -r build`（`apps/web/dist` 一个字节没动）。
+> **未改** `PROBE_TIMEOUT_MS` / `CIRCUIT_BREAKER_THRESHOLD` / 三个断路器常量。
+> ⚠️ 有一次 §10 违规，**我自己造成的、控制组抓到的**，见 §⑥ —— 没有掩盖。
+
+---
+
+### ① 用户在 `/runtime` 上到底看到什么（**实跑渲染出来的原文**，不是我转述的）
+
+`[实测]` 从组件测试里把提示块的 `textContent` 打出来（/tmp 隔离副本，未改仓库）：
+
+**中文界面**
+```
+GPU 加速已暂时停用
+已暂时停用：cuda、vulkan、rocm、metal、coreml（连续 2 次探测失败：probe timed out
+after 10000ms (killed).）。将在约 4 分钟后自动重试。
+不需要手动操作 —— 到点会自动重试，成功即自动恢复。
+[立刻重试]
+```
+
+**英文界面**
+```
+GPU acceleration is temporarily disabled
+Temporarily disabled: cuda, vulkan, rocm, metal, coreml (2 consecutive probe failures:
+probe timed out after 10000ms (killed).). Automatic retry in about 4 min.
+No action needed — it retries automatically and recovers on its own.
+[Retry now]
+```
+
+**中间那两句一个字都不是我写的** —— `breakerDetail()` / `breakerAdvice()` 与自检
+`hw.breaker` 是**同一个函数**（见 ②）。倒计时每秒重算，`将在约 58 秒…` 会真的往下走。
+
+**位置**：硬件卡**下面**、后端包列表**上面** —— 它解释的正是"为什么上面那排芯片是灰的、
+下面这些包装了也不起作用"。没跳闸时**整块不渲染**（不做恒常绿条：一条永远在的绿条
+会把真跳闸时的那条训练成背景噪音）。
+
+### ② 「别另写一套措辞」怎么做到的 —— 从纪律改成**编译期事实**
+
+措辞原来是 `packages/runtime/src/selfcheck.ts` 里的模块私有函数，而 `@openmemo/runtime`
+有 `node:fs` 依赖、**浏览器打不进去** —— 所以"前端再抄一遍"本来是唯一顺手的做法。
+
+改成：造句函数提到 **`packages/shared/src/breaker.ts`**（本包按约定就是纯类型 + 纯函数、
+无 I/O，daemon 与浏览器都能 import），`selfcheck.ts` 从那里 import 回去。于是
+
+> **`selfcheck.test.ts` 里原有的那批断言（`/将在约 4 分钟后自动重试/`、
+> `/Automatic retry in about 4 min/`、"英文里不许混中文"）自动变成了这个模块的守卫。**
+
+没有新增一套平行断言，也没有"两处要记得同步"的注释。
+另加一条组件测试：**页面文案与 `breakerDetail()` 的返回值逐字比对** ——
+谁在组件里重写句子（哪怕差一个标点）当场红（反向验证 M6 🔴）。
+
+`remediation` 拆成两支：`breakerAdvice()`（只有建议）+ `breakerManualRetryHint()`
+（那条 `GET …?reset=1`）。**自检拼两支、界面只用建议** —— 界面上那条 URL 的位置是一个
+真的按钮，把 URL 念给用户听是 D-05 §5.3 明令禁止的。拼接规则只写在一处，
+且有断言钉死"拼起来必须逐字等于原来那一整句"。
+
+### ③ ★ 点了「立刻重试」之后那十几秒 —— **先纠正一个前提**
+
+任务书说"恢复探测跑在后台、最长 90 秒"。`[实测代码路径]` **`?reset=1` 不走那条路**：
+
+| 路径 | 触发 | 预算 | 当次请求 | 界面 |
+|---|---|---|---|---|
+| 冷却到期**自动**重试 | daemon 自己 | `PROBE_RECOVERY_TIMEOUT_MS` **90 s** | 立刻返回，`recovering: true` | "正在重试 —— 一发后台恢复探测已经在跑" |
+| **本按钮** `?reset=1` | 用户点 | `PROBE_TIMEOUT_MS` **10 s** | **就地挂最长约 10 秒** | 见下 |
+
+原因：`resetBreaker()` 清空裁决 ⇒ 裁决变回 `closed` ⇒ `detect(true)` **就地跑一发探测**
+（`hardware.ts` → `detectRuntimeHardware()` 的 `verdict === 'closed'` 分支，
+用 `runProbe()` 的默认超时）。所以要设计的是**十秒**，不是九十秒。
+
+**那十秒里界面长这样**（`[实测]` 渲染原文）：
+```
+… 将在约 4 分钟后自动重试。
+不需要手动操作 —— 到点会自动重试，成功即自动恢复。
+[⟳ 正在重新探测…]  已用 0 秒 · 最长约 10 秒
+```
+- 按钮 **`disabled`** + 图标换成转圈（连点从"被忽略"变成"点不动"）；
+- 文案 `立刻重试` → `正在重新探测…`；
+- 旁边**计秒**，每秒 +1，让用户看得出它在动而不是卡死；
+- **"最长约 10 秒"里的 10 取自响应里的 `probe.timeoutMs`**，不是前端硬编 ——
+  那个数就是 `PROBE_TIMEOUT_MS`，前端抄一份必然漂。
+
+请求回来后三种结局都说得出话，**没有"默默把转圈收掉"这一种**：
+- **好了** → 整块消失；
+- **仍然停用** → 多一行「重试跑完了，加速后端仍然不可用。上面那条原因来自这一次探测，
+  不是之前那次。」（用户必须能区分"点了没生效"和"点了但没修好"）；
+- **请求本身失败** → 「重试请求没有发出去 —— daemon 可能没在运行。」
+
+⚠️ **这一帧此前在测试里根本捕捉不到**：`click()` 是 `await act(async …)`，会把微任务
+抽干，pending 态在断言之前就没了 —— 任何关于它的断言都会在一个**永远不成立的状态**上跑，
+而且是绿的。所以给 `stubApi` 加了一个 `await`（对既有桩恒等），让用例能把请求**卡在飞行中**。
+反向验证 M4（拿掉 `disabled`）🔴 证明这条断言真的在守着。
+
+**倒计时读的是 `GET /api/runtime/breaker` 而不是硬件响应里那份。**
+`/api/runtime/hardware` 在 daemon 侧带进程内缓存，它的 `retryAt`/`recovering` 是**快照那一刻**
+的值；拿它做倒计时会一路数到负数然后永远停在"冷却已到期"上。
+`/api/runtime/breaker` 每次读进程内实时 state 且**纯观测**（T-173 已把副作用摘掉），
+所以可以放心轮询 —— **只在跳闸时轮询**（10 s），没跳闸时不轮询。
+
+### ④ 中英字段那条：**加了守卫**，判据不是"两个字段不相等"
+
+5 条（`tool.ffmpeg` / `ffprobe` / `whisperCli` / `whisperVad` / `ytDlp`）此前
+`label: labelZh` —— 实际是**三个 `add()` 分支共用一个元组**（未找到 / 装在 storeRoot / 只在 PATH 上）。
+现已各给一份英文（`VAD splitter`、`yt-dlp (optional, GPL)`）。
+
+**为什么这 5 处能写错还没人发现**（这条比改动本身重要）：
+前三条的 `labelZh` 恰好是 `ffmpeg`/`ffprobe`/`whisper-cli` 这类工具名，**中英同形** ——
+"把中文塞进英文字段"这个错误**在 3/5 的样本上没有可观测后果**，只有后两条露馅，
+而没人用英文界面翻自检页。
+
+**守卫加了，判据是「英文字段（`label` / `detailEn` / `remediationEn`）里不许出现 CJK」。**
+显式**不用**"中英字段不相等"那条更自然的判据：`ffmpeg` 本来就该两边相等，那条会把 3 条
+正确条目判红 ⇒ 必然长出一张豁免名单 ⇒ 名单慢慢变大直到守卫失效。CJK 判据对 `ffmpeg`
+天然放行、对 `VAD 切分器` 当场红，**不需要任何豁免**。范围含全角标点
+（`yt-dlp（可选，GPL）` 的括号逗号也是全角，那同样是英文界面上的中文）。
+
+守卫跑在**三种 tools 分支各一遍**的报告上（出问题的是三个独立 `add()`，只跑一种分支的
+守卫会漏掉另外两个），并有一条前提自检钉死"三种分支真的都被覆盖到了"+
+一条"检查的字段数 > 60"防空集假绿。
+
+**类型层面做不到**：`label` 与 `labelZh` 都是 `string`，TS 无法知道一个运行时字符串是不是中文。
+所以走测试，不走类型 —— 这一条是"判断代价不成比例"的地方，如实说明。
+
+**顺带发现、明确没改**：`selfcheck.ts` 的引擎检查是 `label: e.id, labelZh: e.id`，
+两种语言都拿原始引擎 id。**那不是中英错位**（id 是语言中立的），故不动。
+
+### ⑤ 反向验证 7/7 全红（/tmp 隔离副本，先跑对照组）
+
+| 变异 | 坏了用户会怎样 | 结果 |
+|---|---|---|
+| M1 `label` 改回 `labelZh` | 英文用户看到「VAD 切分器」 | 🔴 |
+| M2 `detailEn` 换成中文 | 英文界面上断路器整段变中文 | 🔴 |
+| M3 `breakerTripped` 对认不出的 verdict 放行 | 新增裁决值就让提示整块消失（静默降级复发） | 🔴 |
+| M4 按钮不再禁用 | 那十秒无反馈 → 连点 → 撞 daemon 单飞 | 🔴 |
+| M5 「立刻重试」不带 `?reset=1` | 按钮能点但不清裁决 —— 又一个"有界面没效果" | 🔴 |
+| M6 组件自己另写措辞 | 两处开始漂移（本次要消灭的形状） | 🔴 |
+| M7 跳闸时 `BreakerNotice` 返回 null | 回到"服务端有、界面看不到" | 🔴 |
+
+三组对照组（runtime / shared / web）全绿才开跑。**对照组抓到两件事**：
+① 我自己写错的一条断言（60 s 仍在"秒"档，我写成了"1 分钟"）；② 下面那条 §10 违规。
+
+### ⑥ ⚠️ 我违反了一次 §10（主动申报）
+
+反向验证脚本第一版把副本的 `node_modules` 整个 `cpSync` 过去，而
+`packages/runtime/node_modules/@openmemo/shared` 是一条**指向真仓库的软链**，
+`cpSync(dereference:false)` 把软链原样抄了过去 ⇒
+`writeFileSync(副本/node_modules/@openmemo/shared/dist/breaker.js)` **写的是真仓库的产物**。
+M2/M3 两条变异因此落进了 `/root/memo/packages/shared/dist/breaker.js`。
+
+- **影响面**：只有 `dist/`（`.gitignore` 忽略，**从不进提交**）；**源码一个字节未动**（已逐条核对）。
+- **暴露窗口**：约 3 分钟。期间若有人跑 `pnpm -r test`，`shared`/`runtime` 会看到
+  无法解释的红。**如果那三分钟里有人撞到红，那是我的，不是你们的。**
+- **是谁发现的**：**下一轮的对照组**（它拒绝在不绿的产物上继续），不是我事后想起来的。
+- **修复**：`tsc -b` 是增量的、源码没变**不会**把它重建回来（差点漏掉这一层），
+  用 `tsc -b --force` 强制重建并逐行核对已还原；runtime 50/50 复跑通过。
+- **根因与结构性修法**：判据不是"记得别写到副本外面"，而是**让它写不出去**。
+  脚本现在 ① 把 `@openmemo/shared` 换成实拷贝（只把 `node_modules` 软链留给只读依赖），
+  ② 每次 `writeFileSync` 前 `realpathSync` 断言目标**真实路径在 /tmp 副本内**，否则当场炸。
+  这与 §9-bis 是同一条：结构上不可能，而不是靠人记得。
+
+### ⑦ 门禁（**绑在 `c992086` 上**，另开 worktree 检出该 commit 跑，`pnpm install --frozen-lockfile` 后全套）
+
+| 门禁 | 结果 |
+|---|---|
+| `pnpm -r test` | **1489 pass / 0 fail**（基线 1433；+56 含另外两位期间落的提交） |
+| `npx tsc -b` | ✅ |
+| `npx eslint .` | ✅ exit 0 |
+| `pnpm build:safe` | ✅（**未跑** `pnpm -r build`） |
+| `pnpm lint-workflows` | ✅ 768 条 / 8 个 workflow |
+| `pnpm test:ci-scripts` | ✅ 22 passed |
+| `pnpm check:orphans` | ✅ 没有新的零引用导出，基线未动 |
+
+**本轮新增测试**：`packages/shared/src/breaker.test.ts` 22 · `selfcheck.test.ts` +3 ·
+`components.test.tsx` +9。
+
+**暂存纪律**：树上另有两位在动（`package.json` / `scripts/ci/lint-workflows.mjs` 等）。
+没用共享索引：`GIT_INDEX_FILE` 建临时索引 + `git read-tree HEAD` 起底，只 `git add` 我这 15 个文件，
+`git diff --cached --name-only` 逐个核过 —— **没有** `package.json`、**没有** `scripts/ci/*`、
+**没有** `MockNotice.tsx`、**没有** `gen-build-info.mjs`。locale 两份只含我的 `runtime.breaker` 块。
+
+### 本轮"没验就说没验"
+
+- **真浏览器里的样子** → `[未验证]`。证据是 jsdom 组件测试渲染出的 `textContent`（上面①③贴的都是它的真实输出），
+  不是截图。样式类名没在真浏览器里核过。
+- **真的等满 10 秒的那次点击** → `[未验证]`。测试里请求是被我卡住再放的，
+  **没有真的对着一个会挂 10 秒的 daemon 点过**。计秒逻辑是 `setInterval` 每秒 +1，按秒数推算。
+- **后台 90 s 恢复跑完后界面自动消失** → `[未验证]`（只验了"点按钮 → 恢复 → 消失"）。
+  轮询是 10 s 一次，理论上最迟 10 s 后消失，**没有真的等过**。
+- **`?reset=1` 会 `resetBreaker()` 清掉全部 backendDir 的断路器**（不止当前那个）——
+  `[未改]`，是既有行为。单机单目录下无差别，多目录时"重试一个等于重试全部"。**存疑，留给 Manager。**
+- **英文界面的 CJK 守卫只覆盖提示块本身**，不是整页（整页那条是既有的 T-129b）。
+
+### 需要 Manager 决策
+
+1. **`?reset=1` 用的是交互预算（10 s），而冷 Mac 上 Metal 首次初始化要 12–21 s（T-172 实测）。**
+   也就是说**用户手点的那一发在冷 Mac 上几乎必然超时**，反而是后台那发 90 s 的能成。
+   界面已如实显示"仍然不可用"，但这条体验是歪的。要不要让 `?reset=1` 也走恢复预算？
+   **我没动它** —— 那会改 daemon 行为，且与上一位刻意分开的两条路径有关，超出本轮授权。
+2. `runtime.degradationChain` 仍**零消费**（本轮只接了 `breaker` 与 `blacklistedBackends`）。
+   "现在实际在用 cpu"这件事目前靠后端芯片行表达。要不要在提示块里显式说"已回退到 CPU"？
