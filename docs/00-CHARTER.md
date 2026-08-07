@@ -15,24 +15,38 @@
 
 ## 3. 平台与硬件矩阵（硬性要求）
 
-> ⚠️ **产物现状（2026-08-06 实测）—— 分两层看，此前本块把这两层混为一谈**
+> ⚠️ **产物现状（2026-08-07 实测）—— 分两层看，此前本块把这两层混为一谈**
 >
-> **第一层：CI 能不能编出来。** `build-backends` run 31067558923 **9 个 job 全绿**，
-> 含 macOS metal / Linux vulkan / Linux cuda / Win vulkan 四条腿。**路已经走通了。**
-> `backend-packs-2026.08.06` 里有 5 个资产（含 145 MB 的 Linux CUDA）。
+> **第一层：CI 能不能编出来。** `build-backends` run **31155359839**（`legs=all`）
+> macOS ×2 / Linux ×3 / Windows ×3 八条腿 + merge-manifest **9/9 全绿**，
+> 含 metal / vulkan / cuda。**路是通的。**
 >
-> **第二层：用户能不能在网页上装。** 5 个资产里**只有 1 个进了 `backends.json`**，
-> 另外 4 个的下载数是 **0** —— 因为加速增量包在当前安装布局下装了必然无效
-> （ggml 只在 whisper-cli 自身目录与 cwd 里找后端模块），故意没接进目录。
+> **第二层：用户能不能在网页上装。** 这一层才是对外口径。
 >
-> **所以逐平台的实话是**：macOS-arm64（CPU+Metal+ANE 打进同一个自包含核心包）、
-> Linux x64 CPU、Win x64 CPU 三行**网页可装**；Win x64 CUDA **在目录里但今天装不上**
-> （L2 门禁 + `openmemo-probe` 无分发通道）；Win/Linux Vulkan 与 Linux CUDA **有产物、未进目录**；
-> AMD ROCm **无产物且已被用户 2026-08-05 裁掉**，`linux-arm64` / `macos-x64` 同。
+> | 平台 / 加速 | 网页可装？ | 依据 |
+> |---|---|---|
+> | macOS arm64（CPU + Metal + CoreML 同一个自包含核心包） | ✅ | 我们自己编的包 |
+> | Linux x64 CPU · Windows x64 CPU | ✅ | **2026-08-07 起改成我们自建**（ADR-015 §7 例外：上游归档里不可能有 `openmemo-probe`） |
+> | **Linux x64 Vulkan** | ✅ **2026-08-07 起**（`8cb3b35`，三条阻碍全消之后才补） | — |
+> | Windows x64 CUDA | 🟡 **在有 NVIDIA 驱动的机器上应当可装，但没有人在真硬件上看到过** | `[实测]` 用 `evaluateApplicability` 跑真目录：有 `nvidia-smi` → 6/6 适用；没有 → 5/6（**这是正确行为**） |
+> | Windows x64 Vulkan · Linux x64 CUDA | 🟡 有产物、未进目录 | Linux CUDA 缺 `libcudart` 随包分发，装了没用 |
+> | AMD ROCm · linux-arm64 · macOS Intel | ⛔ 无产物 | 用户 2026-08-05 明确裁掉 |
 >
-> ⚠️ **本块此前写着**「Win Vulkan 已交付」「Linux CUDA 无任何产物」「补产物这条路已被砍」
-> —— 三条都错。根因是**把「有产物」和「网页可装」当成了一件事**。
-> **对外口径请用第二层，不是第一层。**
+> ⚠️ **本块此前有三处错，来源不同，一并订正：**
+> 1. 「Linux Vulkan 有产物、未进目录」—— **已进目录**（`8cb3b35`）。
+> 2. 「Win CUDA 在目录里但今天装不上（L2 门禁 + `openmemo-probe` 无分发通道）」——
+>    **两个理由都不成立**：L2 死锁已由 `gates-fix` T-160（`4bb846e`）用 advisory 探测解开；
+>    而 `[实测]` 探针在不在**不改变**这一格的判定（探针枚举不到未安装的后端，
+>    这一格从来是 advisory 在答）。
+> 3. 沿用「适用包 5 个不是 6 个」时**没说清前提** —— 那是**没有 N 卡的 runner** 上的数。
+>
+> ➕ **新增两条现状**：
+> - `openmemo-probe`（要求 2.1「网页检测硬件」那一步的执行者）从 2026-08-07 起
+>   **随每个包出厂**。`[本机实测]` 走产品真实安装路径：装完 `probeExists=true`、
+>   探针子进程枚举到设备、自检 `hw.probe` 从 `warn「未安装」` 变 `ok`。
+>   ⚠️ **只在 Linux x64 上验到这一步**，Windows / macOS 同一条链 `[未验证]`。
+> - 「Windows + NVIDIA CUDA」这一格**需要一台真 NVIDIA 硬件才能收**，
+>   任何 GitHub 托管 runner 都验不了 —— 不是"还没验"，是"这个 runner 结构上验不了"。
 必须在以下组合可用，且**加速后端由网页 UI 检测并配置**，不要求用户碰命令行：
 
 | 平台 | 加速后端 |
