@@ -592,6 +592,121 @@
       "priority": 10,
       "benchmark": null,
       "catalogVersion": "2026.08.03"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "whispercpp-vulkan-win-x64",
+      "engine": "whisper.cpp",
+      "engineVersion": "f049fff9",
+      "ggmlAbi": null,
+      "backend": "vulkan",
+      "tier": "downloadable",
+      "os": "win32",
+      "arch": "x64",
+      "displayName": "whisper.cpp — Vulkan (Windows x64)",
+      "displayNameZh": "whisper.cpp · Vulkan 后端（Windows x64）",
+      "files": [
+        {
+          "role": "archive",
+          "name": "whispercpp-vulkan-win-x64.zip",
+          "sizeBytes": 25067783,
+          "sha256": "50de90bd6b5e097442070ba3d1c3964aee4779d6576f1c19c00946c82160d313",
+          "unpack": "zip",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/backend-packs-2026.08.08/whispercpp-vulkan-win-x64.zip",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 25067783,
+      "requiresDriver": null,
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE"
+      },
+      "providesFiles": [
+        "ggml-base.dll",
+        "ggml-cpu-alderlake.dll",
+        "ggml-cpu-cannonlake.dll",
+        "ggml-cpu-cascadelake.dll",
+        "ggml-cpu-haswell.dll",
+        "ggml-cpu-icelake.dll",
+        "ggml-cpu-sandybridge.dll",
+        "ggml-cpu-skylakex.dll",
+        "ggml-cpu-sse42.dll",
+        "ggml-cpu-x64.dll",
+        "ggml-vulkan.dll",
+        "ggml.dll",
+        "openmemo-probe.exe",
+        "parakeet.dll",
+        "whisper-bench.exe",
+        "whisper-cli.exe",
+        "whisper-server.exe",
+        "whisper-vad-speech-segments.exe",
+        "whisper.dll"
+      ],
+      "priority": 80,
+      "availability": "pending-ci",
+      "benchmark": null,
+      "catalogVersion": "2026.08.07"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "whispercpp-metal-macos-arm64",
+      "engine": "whisper.cpp",
+      "engineVersion": "f049fff9",
+      "ggmlAbi": "0.15.1",
+      "backend": "metal",
+      "tier": "downloadable",
+      "os": "darwin",
+      "arch": "arm64",
+      "displayName": "whisper.cpp — Metal (macOS arm64)",
+      "displayNameZh": "whisper.cpp · Metal 后端（macOS arm64）",
+      "files": [
+        {
+          "role": "archive",
+          "name": "whispercpp-metal-macos-arm64.tar.gz",
+          "sizeBytes": 2005577,
+          "sha256": "453acf186b374ef3138847a4da4c475abb6acc7766c22428f2a6319a9b8528f7",
+          "unpack": "tar.gz",
+          "mirrors": [
+            {
+              "provider": "github",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/backend-packs-2026.08.08/whispercpp-metal-macos-arm64.tar.gz",
+              "official": true
+            }
+          ]
+        }
+      ],
+      "totalSizeBytes": 2005577,
+      "requiresDriver": null,
+      "license": {
+        "id": "MIT",
+        "gated": false,
+        "url": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE"
+      },
+      "providesFiles": [
+        "libggml-base.0.15.1.dylib",
+        "libggml-blas.so",
+        "libggml-cpu.so",
+        "libggml-metal.so",
+        "libggml.0.15.1.dylib",
+        "libparakeet.1.9.1.dylib",
+        "libwhisper.1.9.1.dylib",
+        "openmemo-probe",
+        "whisper-bench",
+        "whisper-cli",
+        "whisper-server",
+        "whisper-vad-speech-segments"
+      ],
+      "priority": 90,
+      "availability": "pending-ci",
+      "benchmark": null,
+      "catalogVersion": "2026.08.07"
     }
   ]
 }
