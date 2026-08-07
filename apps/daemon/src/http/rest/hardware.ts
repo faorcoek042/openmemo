@@ -29,6 +29,7 @@ import type {
 import type { AppPaths } from '../../config/paths.js';
 import {
   breakerSnapshot,
+  breakerStatus,
   detectRuntimeHardware,
   resetBreaker,
   runBackendSelfTest,
@@ -215,13 +216,25 @@ export function createRuntimeRoutes(deps: RuntimeRoutesDeps): {
       // ---- GET /api/runtime/breaker ----（断路器单独可查，便于排障）
       if (p === '/api/runtime/breaker') {
         if (method !== 'GET') return methodNotAllowed(res, 'GET');
-        const detection = await detect(false);
+        /*
+         * ★ T-173：这里以前是 `await detect(false)` —— 缓存空的时候，**查一眼断路器
+         * 会真的跑一发探测**，在冷机器上要 10 s，而且那一发失败还会把计数往上加一。
+         * 一个"看一眼就改变被观测对象"的排障入口，测出来的是它自己造成的状态。
+         * 现在走纯观测的 `breakerStatus()`：只解析路径 + 读进程内 state。
+         */
+        const status = await breakerStatus({
+          dataDir: deps.paths.dataDir,
+          modelsDir: deps.paths.modelsDir,
+        });
         sendJson(res, 200, {
-          backendDir: detection.layout.backendDir,
-          breaker: breakerSnapshot(detection.layout.backendDir),
-          open: detection.breaker.open,
-          threshold: detection.breaker.threshold,
-          blacklistedBackends: detection.blacklistedBackends,
+          backendDir: status.backendDir,
+          breaker: breakerSnapshot(status.backendDir),
+          open: status.verdict !== 'closed',
+          threshold: status.threshold,
+          blacklistedBackends: status.blacklistedBackends,
+          verdict: status.verdict,
+          retryAt: status.retryAt,
+          recovering: status.recovering,
         });
         return true;
       }

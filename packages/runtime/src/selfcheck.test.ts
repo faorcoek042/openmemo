@@ -941,3 +941,117 @@ describe('T-168 ④ asr.coreml：结构性损坏必须让审计变红，可选�
     );
   });
 });
+
+/* ====================================================================================== */
+/* T-173：断路器跳闸必须在自检里**说得出人话**，中英都要                                     */
+/* ====================================================================================== */
+
+/**
+ * ## 为什么这一组比冷却期本身还重要
+ *
+ * 断路器跳闸此前是**零报错的静默降级**：探针不再被调用，GPU 加速"就是不工作"，
+ * 而全仓没有任何一个出口说得出这件事发生过 —— `runtime.breaker` 确实随
+ * `/api/runtime/hardware` 发出去，但前端把响应断言成窄契约 `GetHardwareResponse`，
+ * 那个字段在**类型边界上**就被丢掉了。
+ *
+ * > 一个能自愈、但用户不知道发生过什么的系统，
+ * > 和一个坏了不吭声的系统，在用户那里是一样的。
+ *
+ * 所以下面钉三件事：**这条检查项存在**、**它说得出"停用了什么/为什么/多久之后重试"**、
+ * **中英两种语言都说得出**（英文用户拿到的不能是一句中文，也不能是一片空白）。
+ */
+function breakerProbe(over: Record<string, unknown> = {}) {
+  return () =>
+    Promise.resolve({
+      verdict: 'open',
+      blacklistedBackends: ['cuda', 'vulkan', 'rocm', 'metal', 'coreml'],
+      consecutiveFailures: 3,
+      threshold: 2,
+      lastError: 'probe timed out after 10000ms (killed).',
+      retryAt: new Date(Date.now() + 240_000).toISOString(),
+      recovering: false,
+      ...over,
+    });
+}
+
+describe('T-173 断路器在自检里是可见的', () => {
+  it('探针没给时检查项照常出现（两个出口 id 集合不许分叉）', async () => {
+    const r = await runSelfCheck({ ...BASE, probes: minimalProbes() });
+    assert.ok(idsOf(r).includes('hw.breaker'));
+    assert.equal(byId(r, 'hw.breaker')?.status, 'warn');
+    // "未探测" 这一支也得有英文，否则英文用户看到的是一句中文
+    assert.match(byId(r, 'hw.breaker')?.detailEn ?? '', /not probed/);
+  });
+
+  it('没跳闸时是 ok，且不吓唬人', async () => {
+    const r = await runSelfCheck({
+      ...BASE,
+      probes: minimalProbes({
+        breaker: breakerProbe({ verdict: 'closed', blacklistedBackends: [], consecutiveFailures: 0, lastError: null, retryAt: null }),
+      }),
+    });
+    assert.equal(byId(r, 'hw.breaker')?.status, 'ok');
+    assert.equal(byId(r, 'hw.breaker')?.remediation, null);
+  });
+
+  it('★ 跳闸时说得出「停用了什么 / 为什么 / 多久之后重试」—— 中英各一份', async () => {
+    const r = await runSelfCheck({ ...BASE, probes: minimalProbes({ breaker: breakerProbe() }) });
+    const c = byId(r, 'hw.breaker');
+
+    // warn 而不是 fail：CPU 兜底还在，产品能用。fail 会让 CLI EXIT=1。
+    assert.equal(c?.status, 'warn');
+    assert.equal(c?.required, false);
+
+    for (const [lang, text] of [
+      ['中文', c?.detail ?? ''],
+      ['English', c?.detailEn ?? ''],
+    ] as const) {
+      assert.notEqual(text, '', `${lang}: detail 是空的`);
+      assert.equal(text.includes('metal'), true, `${lang}: 没说停用了哪个后端`);
+      assert.equal(text.includes('10000ms'), true, `${lang}: 没说原因`);
+      assert.equal(/\d/.test(text), true, `${lang}: 没有任何数字 —— "多久之后"就没说出来`);
+    }
+    // 「将在 Y 之后重试」必须是**具体的 Y**，不是"稍后重试"
+    assert.match(c?.detail ?? '', /将在约 4 分钟后自动重试/);
+    assert.match(c?.detailEn ?? '', /Automatic retry in about 4 min/);
+
+    // 中文里不许混英文提示语，英文里不许混中文 —— 混了就等于没做双语
+    assert.equal(/[一-龥]/.test(c?.detailEn ?? ''), false, 'detailEn 里混进了中文');
+    assert.equal(/[一-龥]/.test(c?.remediationEn ?? ''), false, 'remediationEn 里混进了中文');
+    assert.equal(/[一-龥]/.test(c?.detail ?? ''), true);
+
+    // 用户该知道"不用你动手"，否则他会去找一个并不存在的按钮
+    assert.match(c?.remediation ?? '', /自动重试/);
+    assert.match(c?.remediationEn ?? '', /automatically/);
+  });
+
+  it('正在重试时说的是"正在重试"，不是一个假的倒计时', async () => {
+    const r = await runSelfCheck({
+      ...BASE,
+      probes: minimalProbes({ breaker: breakerProbe({ recovering: true }) }),
+    });
+    assert.match(byId(r, 'hw.breaker')?.detail ?? '', /正在重试/);
+    assert.match(byId(r, 'hw.breaker')?.detailEn ?? '', /Retrying now/);
+  });
+
+  it('拿不到断路器状态时如实说拿不到（CLI 没连 daemon 的那一支），不是假装没跳闸', async () => {
+    const r = await runSelfCheck({
+      ...BASE,
+      probes: minimalProbes({ breaker: () => Promise.resolve(null) }),
+    });
+    assert.equal(byId(r, 'hw.breaker')?.status, 'warn');
+    assert.match(byId(r, 'hw.breaker')?.detail ?? '', /取不到/);
+    assert.match(byId(r, 'hw.breaker')?.detailEn ?? '', /unavailable/);
+  });
+
+  it('★ retryAt 缺失/坏掉时如实说"没记录"，绝不编一个时间出来', async () => {
+    for (const bad of [null, 'not-a-date']) {
+      const r = await runSelfCheck({
+        ...BASE,
+        probes: minimalProbes({ breaker: breakerProbe({ retryAt: bad }) }),
+      });
+      assert.match(byId(r, 'hw.breaker')?.detail ?? '', /重试时刻未记录/);
+      assert.match(byId(r, 'hw.breaker')?.detailEn ?? '', /No retry time recorded/);
+    }
+  });
+});

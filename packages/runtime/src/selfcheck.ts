@@ -61,11 +61,23 @@ export interface CheckResult {
   label: string;
   labelZh: string;
   status: CheckStatus;
+  /** ⚠️ 历史包袱：`detail` 是**中文**（`label`/`labelZh` 那对却是英/中）。见 `detailEn`。 */
   detail: string;
   /** A failing required check means the product is broken, not merely degraded. */
   required: boolean;
   /** What the user should do. Null when nothing is wrong. */
   remediation: string | null;
+  /**
+   * `detail` 的英文版。**可选**，前端 `detailEn ?? detail` 回退。
+   *
+   * 为什么不是把 `detail` 改成英文、再加 `detailZh`（那才与 `label`/`labelZh` 一致）：
+   * 那要改写全部 25 条检查项的字面量，而 locale/自检两块同时有别的 agent 在动。
+   * 这里只承诺**新写的检查项两种语言都给**，不假装历史那 24 条也给了。
+   * `[未修]` 另有 5 条（`tool.ffmpeg` 等）连 `label` 都写成了 `labelZh` 的值 —— 与本次无关，未动。
+   */
+  detailEn?: string;
+  /** `remediation` 的英文版。同上。 */
+  remediationEn?: string | null;
 }
 
 export interface SelfCheckReport {
@@ -134,6 +146,27 @@ export interface BackendSelectionInfo {
   degraded: boolean;
 }
 
+/**
+ * 断路器状态的**只读**投影（T-173）。
+ *
+ * 刻意用宽松的 `string` 而不是 `BreakerVerdict`：CLI 出口是从 HTTP JSON 里拿的，
+ * 那边过来的就是任意字符串，装成联合类型只会把"字段变了"这件事藏进类型断言里。
+ */
+export interface BreakerStatusInfo {
+  /** `closed` | `open` | `recover`。其它值一律当"停用中"处理，不静默放行。 */
+  verdict: string;
+  /** 此刻被停用的后端。空数组 = 没有被停用的。 */
+  blacklistedBackends: string[];
+  consecutiveFailures: number;
+  threshold: number;
+  /** 最近一次探测失败的原因；null = 没有失败记录。 */
+  lastError: string | null;
+  /** 冷却到期时刻（ISO）。 */
+  retryAt: string | null;
+  /** 是否有一发后台恢复探测正在跑。 */
+  recovering: boolean;
+}
+
 export interface SelfCheckProbes {
   /** Resolved native tool paths, as the pipeline would resolve them. */
   tools: () => Promise<SelfCheckToolPaths>;
@@ -176,6 +209,17 @@ export interface SelfCheckProbes {
 
   /** `openmemo-probe` 的绝对路径。它藏在后端包里，只有 pipeline 的两层扫描找得到。 */
   probePath?: () => Promise<string | null>;
+  /**
+   * 加速后端断路器的**当前**状态（T-173）。
+   *
+   * 它是 daemon 的**进程内**状态（`apps/daemon/src/runtime/setup.ts` 的那张 Map），
+   * 所以 CLI 出口只能向 daemon 要；拿不到就回 `null`，检查项照常出现并如实说拿不到
+   * —— 与 `proxyConnectivity` 同一形状。
+   *
+   * ⚠️ 这个探针**必须是纯观测**：它一旦顺手跑一发探测，两个出口就会互相改变对方
+   * 看到的状态，而 `meta.sameSource` 是 `required` 的。
+   */
+  breaker?: () => Promise<BreakerStatusInfo | null>;
   /** `media_assets` 的 (role, rel_path)。null = 读不到库（全新安装还没建库是正常的）。 */
   mediaAssets?: () => Promise<MediaAssetRef[] | null>;
   /** 档 2：本机已装且**真能用**的 LLM 服务（Ollama / LM Studio）。 */
@@ -545,6 +589,46 @@ function libSuffix(): string {
   return '.so';
 }
 
+/**
+ * 把断路器状态翻成"接下来会发生什么"的一句话。中英各一句，**两句必须说同一件事**。
+ *
+ * 这句话是用户唯一能看到的东西，所以它宁可承认"时刻没记录"，也不许编一个时间出来。
+ */
+function retryPhrase(b: BreakerStatusInfo): { zh: string; en: string } {
+  if (b.recovering) {
+    return {
+      zh: '正在重试 —— 一发后台恢复探测已经在跑，成功即自动恢复。',
+      en: 'Retrying now — a recovery probe is already running in the background; success restores them automatically.',
+    };
+  }
+  const due = b.retryAt === null ? Number.NaN : Date.parse(b.retryAt);
+  if (Number.isNaN(due)) {
+    // 「跳闸 ⇒ retryAt 必然存在」这条不变式被破坏了。如实说，不要假装知道时间。
+    return {
+      zh: '重试时刻未记录；下一次探测会立刻重试。',
+      en: 'No retry time recorded; the next check will retry immediately.',
+    };
+  }
+  const leftMs = due - Date.now();
+  if (leftMs <= 0) {
+    return {
+      zh: '冷却已到期，下一次探测就会重试。',
+      en: 'Cooldown has elapsed; the next check will retry.',
+    };
+  }
+  const d = humanDelay(leftMs);
+  return { zh: `将在约 ${d.zh}后自动重试。`, en: `Automatic retry in about ${d.en}.` };
+}
+
+function humanDelay(ms: number): { zh: string; en: string } {
+  const s = Math.max(1, Math.round(ms / 1000));
+  if (s < 90) return { zh: `${String(s)} 秒`, en: `${String(s)}s` };
+  const m = Math.round(s / 60);
+  if (m < 90) return { zh: `${String(m)} 分钟`, en: `${String(m)} min` };
+  const h = Math.round(m / 60);
+  return { zh: `${String(h)} 小时`, en: `${String(h)} h` };
+}
+
 export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckReport> {
   const results: CheckResult[] = [];
   const add = (r: CheckResult): void => {
@@ -564,6 +648,7 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
       labelZh,
       status: 'warn',
       detail: '未探测（本次运行未提供该探针）',
+      detailEn: 'not probed (this run did not supply that probe)',
       required: false,
       remediation: null,
     });
@@ -645,6 +730,81 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
           : probeFailureDetail(r),
         required: false,
         remediation: r.ok ? null : '探测失败 → 加速后端不可判定，会退回 L1 CPU',
+      });
+    }
+  }
+
+  /*
+   * ---- hw.breaker（T-173）------------------------------------------------------------
+   *
+   * ★ 这一条是本次修复里**比冷却期本身更重要**的一半。
+   *
+   * 断路器跳闸此前是**零报错的静默降级**：探针不再被调用，GPU 加速"就是不工作"，
+   * 而全仓没有任何一个出口说得出这件事发生过 —— `runtime.breaker` 确实随
+   * `/api/runtime/hardware` 发出去，但前端把响应断言成窄契约 `GetHardwareResponse`，
+   * 那个字段在类型边界上就被丢掉了（apps/web/src/lib/api/hardware.ts）。
+   *
+   * 一个能自愈、但用户不知道发生过什么的系统，和一个坏了不吭声的系统，在用户那里是一样的。
+   */
+  if (input.probes.breaker === undefined) {
+    notProbed('hardware', 'hw.breaker', 'accelerator circuit breaker', '加速后端断路器');
+  } else {
+    const b = await input.probes.breaker();
+    if (b === null) {
+      add({
+        layer: 'hardware',
+        id: 'hw.breaker',
+        label: 'accelerator circuit breaker',
+        labelZh: '加速后端断路器',
+        status: 'warn',
+        detail: '取不到断路器状态 —— 它是 daemon 的进程内状态，需要 daemon 正在运行',
+        detailEn:
+          'breaker state unavailable — it lives inside the running daemon process, so the daemon must be up',
+        required: false,
+        remediation: '启动 daemon 后重跑自检；只看这一条的话：GET /api/runtime/breaker',
+        remediationEn:
+          'Start the daemon and run the self-check again; for this check alone: GET /api/runtime/breaker',
+      });
+    } else if (b.verdict === 'closed' && b.blacklistedBackends.length === 0) {
+      add({
+        layer: 'hardware',
+        id: 'hw.breaker',
+        label: 'accelerator circuit breaker',
+        labelZh: '加速后端断路器',
+        status: 'ok',
+        detail: '未跳闸 —— 加速后端正常参与选择',
+        detailEn: 'closed — accelerator backends are eligible',
+        required: false,
+        remediation: null,
+        remediationEn: null,
+      });
+    } else {
+      const backends = b.blacklistedBackends.length > 0 ? b.blacklistedBackends.join('、') : '（未列出）';
+      const backendsEn = b.blacklistedBackends.length > 0 ? b.blacklistedBackends.join(', ') : '(not listed)';
+      const why = b.lastError ?? '未记录原因';
+      const whyEn = b.lastError ?? 'no reason recorded';
+      /*
+       * "将在 Y 之后重试" —— 这句话必须说得出**具体的 Y**，否则它和"坏了不吭声"
+       * 的差别只是多了一行字：用户仍然不知道该等还是该动手。
+       */
+      const when = retryPhrase(b);
+      add({
+        layer: 'hardware',
+        id: 'hw.breaker',
+        label: 'accelerator circuit breaker',
+        labelZh: '加速后端断路器',
+        // warn 不是 fail：CPU 兜底仍在，产品能用，只是没有加速。fail 会让 CLI EXIT=1。
+        status: 'warn',
+        detail:
+          `已暂时停用：${backends}（连续 ${String(b.consecutiveFailures)} 次探测失败：${why}）。${when.zh}`,
+        detailEn:
+          `Temporarily disabled: ${backendsEn} ` +
+          `(${String(b.consecutiveFailures)} consecutive probe failures: ${whyEn}). ${when.en}`,
+        required: false,
+        remediation:
+          '不需要手动操作 —— 到点会自动重试，成功即自动恢复。想立刻重试：GET /api/runtime/hardware?reset=1',
+        remediationEn:
+          'No action needed — it retries automatically and recovers on its own. To retry right now: GET /api/runtime/hardware?reset=1',
       });
     }
   }

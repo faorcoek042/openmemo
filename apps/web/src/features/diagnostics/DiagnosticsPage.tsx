@@ -9,6 +9,7 @@ import { Button } from '../../components/common/Button';
 import { EmptyState } from '../../components/common/EmptyState';
 import { useSurfaceStore } from '../../lib/api/surfaces';
 import { cn } from '../../lib/utils';
+import { pickCheckRemediation, pickCheckText } from './checkText';
 
 /**
  * M-8 诊断页 —— `HealthBanner` 的完整版。
@@ -97,6 +98,15 @@ interface SelfCheckResult {
   /** 这一条挂了 = 产品坏了，不只是降级。 */
   required: boolean;
   remediation: string | null;
+  /**
+   * `detail` / `remediation` 的英文版（T-173 起，新写的检查项两种语言都给）。
+   *
+   * ⚠️ **可选，且历史那批检查项没有** —— `detail` 一直是中文原文。所以这里是
+   * `detailEn ?? detail` 回退：给了就用英文，没给就照旧显示中文原文。
+   * 回退成中文是难看，但比回退成空白诚实 —— 后者会让一条真实的告警在英文界面上消失。
+   */
+  detailEn?: string;
+  remediationEn?: string | null;
 }
 
 interface SelfCheckReport {
@@ -450,17 +460,17 @@ export default function DiagnosticsPage() {
                       {/*
                         `detail` / `remediation` 是**服务端原文**（路径、设备名、修复建议
                         只有 daemon 知道），与 `secrets.disclosure` 同一条理由：
-                        前端自己编必然说错。这里只负责显示。
+                        前端自己编必然说错。这里只负责显示 —— 包括选哪一种语言。
                       */}
                       <span className="mt-0.5 block break-all text-xs text-ink-muted">
-                        {r.detail}
+                        {pickCheckText(zh, r.detail, r.detailEn)}
                       </span>
                       {r.remediation ? (
                         <span
                           className="mt-0.5 block text-xs text-ink-secondary"
                           data-testid="selfcheck-remediation"
                         >
-                          → {r.remediation}
+                          → {pickCheckRemediation(zh, r.remediation, r.remediationEn)}
                         </span>
                       ) : null}
                     </span>

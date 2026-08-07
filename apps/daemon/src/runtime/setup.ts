@@ -41,8 +41,10 @@ import { ArtifactStore } from '@openmemo/downloader';
 import { findInBackendPacks, resolveBackendTool } from '@openmemo/pipeline';
 import {
   CIRCUIT_BREAKER_THRESHOLD,
+  PROBE_RECOVERY_TIMEOUT_MS,
   PROBE_TIMEOUT_MS,
   SELF_TEST_TIMEOUT_MS,
+  breakerVerdict,
   buildHardwareInfo,
   detectCpu,
   detectDisks,
@@ -53,7 +55,6 @@ import {
   detectUnifiedMemory,
   emptyBreaker,
   formatSelfTest,
-  isBlacklisted,
   nextCandidates,
   preferenceOrder,
   probedBackendsInDir,
@@ -62,6 +63,7 @@ import {
   runSelfTest,
   type AdvisoryDetection,
   type BreakerState,
+  type BreakerVerdict,
   type ProbeFailureKind,
   type ProbeResult,
   type SelfTestOutcome,
@@ -283,6 +285,107 @@ export function resetBreaker(backendDir?: string): void {
   else breakers.delete(backendDir);
 }
 
+/* -------------------------------------------------------------------------- */
+/* 半开：恢复探测跑在后台                                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 每个 backendDir 至多**一发**在跑的恢复探测。
+ *
+ * ★ **为什么必须是后台，而不是就地探一发**：半开那一发的预算是
+ * `PROBE_RECOVERY_TIMEOUT_MS`（90 s，冷 Mac 上的 Metal 初始化要 12–21 s，10 s 一定不够）。
+ * 而 `detectRuntimeHardware()` 的调用方是 `GET /api/runtime/hardware` 与 daemon 启动 ——
+ * **就地探就是让用户的请求最长挂 90 s**，那比原来的病还重。
+ * 所以：当次请求立刻返回"仍停用 + 正在重试"，恢复在后台跑完自己改 state，下一次请求就看见好了。
+ *
+ * ★ **为什么是单飞（Map 里有就不再起）**：冷却到期后每一个并发请求都会看到 `recover`。
+ * 不去重的话，一台冷 Mac 上十几个请求会同时 spawn 十几个探针**去抢同一块 GPU 初始化** ——
+ * 那正是断路器本来要防的"猛敲一个坏掉的东西"。
+ */
+const recoveries = new Map<string, Promise<void>>();
+
+/**
+ * 该目录上正在跑的恢复探测；没有就是 `null`。
+ *
+ * 生产侧用它回答"现在是不是正在重试"（`/api/runtime/breaker`、自检的 `hw.breaker`），
+ * 测试侧用它等那一发跑完 —— 后台任务没有别的落点可以等。
+ */
+export function breakerRecovery(backendDir: string): Promise<void> | null {
+  return recoveries.get(backendDir) ?? null;
+}
+
+async function recoveryProbe(layout: RuntimeLayout, fingerprint: string): Promise<void> {
+  try {
+    const probe = await runProbe({
+      probePath: layout.probePath,
+      backendDir: layout.backendDir,
+      // ↓ 放宽的是 runProbe 本来就接受的入参，PROBE_TIMEOUT_MS 一个字没动
+      timeoutMs: PROBE_RECOVERY_TIMEOUT_MS,
+    });
+    const prev = breakers.get(layout.backendDir) ?? emptyBreaker();
+    breakers.set(layout.backendDir, recordProbeOutcome(prev, probe, fingerprint));
+  } catch {
+    /*
+     * `runProbe` 契约上永不抛。真抛了也绝不能把 daemon 带走 —— 这条任务没有 await 它的人，
+     * 一个 unhandled rejection 会直接杀进程。state 保持原样，下一轮冷却照常再放一发。
+     */
+  }
+}
+
+/** `breakerStatus()` 的回传。**纯观测**，不含任何会改变状态的东西。 */
+export interface BreakerStatusReport {
+  readonly backendDir: string;
+  readonly verdict: BreakerVerdict;
+  /** 此刻被停用的后端；空数组 = 没有停用。cpu 永不入列。 */
+  readonly blacklistedBackends: Backend[];
+  readonly consecutiveFailures: number;
+  readonly threshold: number;
+  readonly lastError: string | null;
+  readonly blacklistedAt: string | null;
+  readonly retryAt: string | null;
+  readonly recovering: boolean;
+}
+
+/**
+ * 只看一眼断路器，**不跑探测、不起恢复、不改任何状态**。
+ *
+ * 两个理由必须是纯的：
+ *   1. `/api/runtime/breaker` 与自检的 `hw.breaker` 都是**排障入口** ——
+ *      一个"看一眼就把它改了"的诊断，测出来的永远是自己造成的那个状态；
+ *   2. CLI 与 `/api/selfcheck` 的逐 id 同源校验（`meta.sameSource`，required）
+ *      要求两个出口给出同一个 status。观测带副作用 ⇒ 先问的那一方改变了后问的那一方
+ *      看到的东西 ⇒ 那条 required 的红线会开始随机变红。
+ */
+export async function breakerStatus(options: RuntimePathsInput): Promise<BreakerStatusReport> {
+  const layout = await resolveRuntimeLayout(options);
+  const state = breakerSnapshot(layout.backendDir);
+  const verdict = breakerVerdict(state, await driverFingerprint(layout));
+  return {
+    backendDir: layout.backendDir,
+    verdict,
+    blacklistedBackends: verdict === 'closed' ? [] : [...ACCELERATOR_BACKENDS],
+    consecutiveFailures: state.consecutiveFailures,
+    threshold: CIRCUIT_BREAKER_THRESHOLD,
+    lastError: state.lastError,
+    blacklistedAt: state.blacklistedAt,
+    retryAt: state.retryAt,
+    recovering: breakerRecovery(layout.backendDir) !== null,
+  };
+}
+
+function startBreakerRecovery(layout: RuntimeLayout, fingerprint: string): void {
+  const dir = layout.backendDir;
+  if (recoveries.has(dir)) return;
+  /*
+   * `.finally()` 的回调**至少要等一个 microtask**才可能跑，而 `recoveries.set` 是同步的
+   * —— 所以 set 必然先于 delete，不会留下一条永远删不掉的占位。
+   */
+  const task = recoveryProbe(layout, fingerprint).finally(() => {
+    recoveries.delete(dir);
+  });
+  recoveries.set(dir, task);
+}
+
 /**
  * 驱动指纹。
  *
@@ -335,10 +438,17 @@ export interface ProbeDiagnostics {
 export interface BreakerDiagnostics {
   readonly consecutiveFailures: number;
   readonly threshold: number;
+  /** 加速后端此刻是不是被停用着（冷却中或半开待重试都算停用）。 */
   readonly open: boolean;
   readonly blacklistedAt: string | null;
   readonly lastError: string | null;
   readonly driverFingerprint: string | null;
+  /** 三态裁决（T-173）。`open` 只说"停不停用"，这一项说"为什么以及接下来怎么办"。 */
+  readonly verdict: BreakerVerdict;
+  /** 冷却到期时刻（ISO）。null = 没跳闸。**跳闸了它就不可能是 null** —— 那是出口。 */
+  readonly retryAt: string | null;
+  /** 此刻是不是有一发后台恢复探测正在跑。 */
+  readonly recovering: boolean;
 }
 
 export interface RuntimeDetection {
@@ -443,6 +553,17 @@ async function composeHardware(
 export interface DetectRuntimeHardwareOptions extends RuntimePathsInput {
   /** 已安装后端包；不传就从 store 的 backend manifest 里读（daemon 的真实状态）。 */
   readonly installedBackends?: ReadonlySet<Backend> | undefined;
+  /**
+   * 判断冷却期是否到期用的"现在"。**只给测试用；生产侧不传，行为与写死 `new Date()`
+   * 逐字相同**（同 `SelfCheckInput.platform` 那条注释的理由）。
+   *
+   * 没有它，"冷却到期之后会自愈"这条只能靠**真等一分钟**来测 ——
+   * 而一个要等一分钟的测试，等于一条迟早会被 skip 掉的测试。
+   *
+   * ⚠️ 它**只影响读**（`breakerVerdict`）。恢复探测跑完后记账仍用真实时间，
+   * 否则会把一个假的 `retryAt` 写进 state 里。
+   */
+  readonly now?: Date;
 }
 
 /**
@@ -481,24 +602,35 @@ export async function detectRuntimeHardware(
   let ran = true;
   let probe: ProbeResult;
 
-  if (isBlacklisted(breaker, fingerprint)) {
+  const verdict = breakerVerdict(breaker, fingerprint, options.now);
+  if (verdict === 'closed') {
+    probe = await runProbe({ probePath: layout.probePath, backendDir: layout.backendDir });
+    breaker = recordProbeOutcome(breaker, probe, fingerprint);
+    breakers.set(layout.backendDir, breaker);
+  } else {
     ran = false;
+    /*
+     * 冷却到期 ⇒ 后台放一发恢复探测。**当次请求不等它**（预算 90 s，见 startBreakerRecovery）。
+     * 这一发的结果由它自己写回 breakers，下一次 detect 就能看见复位。
+     */
+    if (verdict === 'recover') startBreakerRecovery(layout, fingerprint);
     probe = {
       ok: false,
       kind: 'exec_error',
       message:
         `probe skipped: circuit breaker open after ${String(breaker.consecutiveFailures)} ` +
-        `consecutive failures (last: ${breaker.lastError ?? 'no detail'})`,
+        `consecutive failures (last: ${breaker.lastError ?? 'no detail'}); ` +
+        (verdict === 'recover'
+          ? 'cooldown elapsed, a recovery probe is running in the background'
+          : `next retry at ${breaker.retryAt ?? 'unknown'}`),
       durationMs: 0,
       stderr: '',
     };
-  } else {
-    probe = await runProbe({ probePath: layout.probePath, backendDir: layout.backendDir });
-    breaker = recordProbeOutcome(breaker, probe, fingerprint);
-    breakers.set(layout.backendDir, breaker);
   }
 
-  const open = isBlacklisted(breaker, fingerprint);
+  const after = breakerVerdict(breaker, fingerprint, options.now);
+  // 冷却中(open)与半开待重试(recover)**都还是停用状态** —— 只有 closed 才是能用。
+  const open = after !== 'closed';
   const blacklisted = new Set<Backend>(open ? ACCELERATOR_BACKENDS : []);
 
   const cheapToRerun =
@@ -530,6 +662,9 @@ export async function detectRuntimeHardware(
       blacklistedAt: breaker.blacklistedAt,
       lastError: breaker.lastError,
       driverFingerprint: breaker.driverFingerprint,
+      verdict: after,
+      retryAt: breaker.retryAt,
+      recovering: breakerRecovery(layout.backendDir) !== null,
     },
     blacklistedBackends: [...blacklisted],
     degradationChain: nextCandidates(hardware.os, primaryVendor, blacklisted),

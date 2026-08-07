@@ -83,14 +83,18 @@ export { SOFTWARE_ADAPTER_NAMES, detectGpus } from './detect/gpu.js';
 
 // -- probe --------------------------------------------------------------------------------
 export {
+  BREAKER_COOLDOWN_MAX_MS,
+  BREAKER_COOLDOWN_MS,
   CIRCUIT_BREAKER_THRESHOLD,
+  PROBE_RECOVERY_TIMEOUT_MS,
   PROBE_TIMEOUT_MS,
+  breakerCooldownMs,
+  breakerVerdict,
   emptyBreaker,
-  isBlacklisted,
   recordProbeOutcome,
   runProbe,
 } from './probe/runProbe.js';
-export type { BreakerState, RunProbeOptions } from './probe/runProbe.js';
+export type { BreakerState, BreakerVerdict, RunProbeOptions } from './probe/runProbe.js';
 /*
  * Which backends a probe run could actually load (T-168). Exported because the daemon's
  * `composeHardware()` needs the SAME answer as `detectHardware()` below — two
@@ -146,6 +150,7 @@ export {
 export type {
   CheckResult,
   BackendSelectionInfo,
+  BreakerStatusInfo,
   CheckStatus,
   DetectedLlmService,
   InstalledByRole,

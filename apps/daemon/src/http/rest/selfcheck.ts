@@ -33,6 +33,7 @@ import { redactProxyUrl, type ProxyConfig } from '@openmemo/shared';
 
 import type { AppPaths } from '../../config/paths.js';
 import type { PipelineBundle } from '../../pipeline/setup.js';
+import { breakerStatus } from '../../runtime/setup.js';
 import { sendError, sendJson } from '../respond.js';
 
 export interface SelfCheckRoutesDeps {
@@ -124,6 +125,27 @@ export function createSelfCheckRoutes(deps: SelfCheckRoutesDeps): {
               deps.paths.modelsDir,
               process.platform === 'win32' ? 'openmemo-probe.exe' : 'openmemo-probe',
             ),
+
+          /*
+           * T-173：断路器状态。**这是 daemon 侧唯一能观测到它的地方** ——
+           * 那张 Map 就在本进程内存里（`runtime/setup.ts`），CLI 出口只能反过来问 HTTP。
+           * `breakerStatus()` 是纯观测：不跑探测、不起恢复、不改 state。
+           */
+          breaker: async () => {
+            const s = await breakerStatus({
+              dataDir: deps.paths.dataDir,
+              modelsDir: deps.paths.modelsDir,
+            });
+            return {
+              verdict: s.verdict,
+              blacklistedBackends: [...s.blacklistedBackends],
+              consecutiveFailures: s.consecutiveFailures,
+              threshold: s.threshold,
+              lastError: s.lastError,
+              retryAt: s.retryAt,
+              recovering: s.recovering,
+            };
+          },
 
           /*
            * 中文检索探针 —— 整个自检里最有价值的一条，但**必须测在自带语料上**。

@@ -305,6 +305,39 @@ async function main() {
           process.platform === 'win32' ? 'openmemo-probe.exe' : 'openmemo-probe',
         ),
 
+      /*
+       * T-173：断路器是 **daemon 进程内**的状态，CLI 这个进程里根本没有它。
+       * 所以只能问 daemon；没有 `--daemon` 就如实回 null（检查项照常出现，说"取不到"），
+       * 而不是在本进程另算一份 —— 那就是第二个实现，且必然与 daemon 那份不一致。
+       * 与 `proxyConnectivity` 同一形状。
+       *
+       * `/api/runtime/breaker` 是纯观测的（T-173 起不再触发探测），所以问它不会
+       * 反过来改变 `/api/selfcheck` 那一侧看到的状态 —— `meta.sameSource` 才稳得住。
+       */
+      breaker: async () => {
+        if (!DAEMON) return null;
+        try {
+          const r = await fetch(`${DAEMON}/api/runtime/breaker`, {
+            headers: TOKEN ? { authorization: `Bearer ${TOKEN}` } : {},
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!r.ok) return null;
+          const j = await r.json();
+          if (typeof j?.verdict !== 'string') return null;
+          return {
+            verdict: j.verdict,
+            blacklistedBackends: Array.isArray(j.blacklistedBackends) ? j.blacklistedBackends : [],
+            consecutiveFailures: j.breaker?.consecutiveFailures ?? 0,
+            threshold: j.threshold ?? 0,
+            lastError: j.breaker?.lastError ?? null,
+            retryAt: j.retryAt ?? null,
+            recovering: j.recovering === true,
+          };
+        } catch {
+          return null;
+        }
+      },
+
       chineseSearch: () => (sqlite === null ? Promise.resolve(null) : sqlite.chineseSearch()),
       vecVersion: () => (sqlite === null ? Promise.resolve(null) : sqlite.vecVersion()),
 

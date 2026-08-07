@@ -47,11 +47,22 @@
  * 装包后第 1 次探测                     17ms  ok=true  失败=0  open=false  ← 断路器彻底复位
  * ```
  *
- * ⚠️ **仍未覆盖的残留情形**（已单独交回 Manager，不在本模块的职责里）：
- * 包已装好、之后缓存才变冷（系统升级清了 shader 缓存 / 换用户账户 / 缓存被回收）。
- * 那时不会有装包动作 → 不会捂热 → 指纹也不变 → 两次超时后同样永久拉黑。
- * 根治要动断路器语义（`recordProbeOutcome` 在指纹变化时应否把计数归零），那是 ADR-003 的地界。
- * 今天的人工出口是 `GET /api/runtime/hardware?reset=1`（`resetBreaker()`，已实测有效）。
+ * ## 那条残留情形：**已在 T-173 修掉**（本注释原先说它没修，那句话现在不成立了）
+ *
+ * 残留情形是：包已装好、之后缓存才变冷（系统升级清了 shader 缓存 / 换用户账户 /
+ * 缓存被回收）。那时不会有装包动作 → 不会捂热 → **指纹也不变** → 两次超时后同样永久拉黑。
+ *
+ * T-173 给断路器加了**冷却期 + 半开**（`packages/runtime/src/probe/runProbe.ts`）：
+ * 停用不再是永久的，冷却到期会在**后台**放一发恢复探测，
+ * 那一发用 `PROBE_RECOVERY_TIMEOUT_MS`（90 s，与本文件的捂热预算同源同理由），
+ * 所以它在冷 Mac 上跑得完；成功即彻底复位。
+ * 端到端证据见 `apps/daemon/src/runtime/breakerRecovery.test.ts`（恢复探测实测跑了 12 s，
+ * 即在交互路径的 10 s 预算下必被 kill，而断路器确实自己复位了）。
+ *
+ * ⚠️ **捂热仍然不可省**。它省掉的是**交互路径上**的那一笔：没有它，冷 Mac 上用户
+ * 装完包之后还要等一个冷却期（60 s）才自愈，期间 GPU 不可用；有它，装包结束时就是好的。
+ * 人工出口 `GET /api/runtime/hardware?reset=1`（`resetBreaker()`）依旧有效，
+ * 但**不再是唯一出口** —— 那才是它此前最严重的地方。
  */
 
 import { probedBackendsInDir, runProbe, type ProbeResult, type RunProbeOptions } from '@openmemo/runtime';

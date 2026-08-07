@@ -65,7 +65,9 @@
     "src/lib/utils.ts",
     "src/lib/format/time.ts",
     "src/lib/api/types.ts",
-    "src/lib/events/types.ts"
+    "src/lib/events/types.ts",
+    "src/features/diagnostics/checkText.test.ts",
+    "src/features/diagnostics/checkText.ts"
   ],
   "exclude": []
 }
