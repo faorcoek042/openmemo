@@ -1133,3 +1133,48 @@ mlmodelc 与本机 CoreML 版本不兼容、ANE 被降级、
 | `large-v2` 形状（顶层目录名 ≠ 包名） | 🟡 当前清单里没有；真要收得**逐包声明**，别放宽通用规则 | 待清单出现消费者 |
 | 二进制没编 CoreML → 自检报 `ok` 的假绿灯 | 🟡 **没修**，理由见 ③（不该在 Linux 上盲写） | 待裁决 |
 | 镜像副本的 sha256 | ⚠️ `UNKNOWN` —— 要下满 1.17 GB；已核字节数逐位相同 | 我 |
+
+## [2026-08-07 17:56] T-168 追加 —— macOS 实测闭环：`asr.coreml` **从 fail 变 ok**
+
+证据：`cold-start-audit` run **31167151669**（`445788c`，`includeOptional=coreml-encoder`）
+**三格全 success**（darwin-arm64 / win32-x64 / linux-x64）。
+
+上一封那条「**没有验证"修好之后会不会变 ok"**」现在关掉了 —— 是实测，不是推断：
+
+```
+第 5 节（装 encoder 之前）：
+   asr.coreml     warn   required=true   未启用 ANE —— 转写会走 Metal/CPU（功能正常，只是慢）
+第 8 节（装完 1.17 GB 的 encoder 之后）：
+   ★★ asr.coreml = ok（required=true）
+      ANE 已就绪：ggml-large-v3-turbo-q5_0.bin → ggml-large-v3-turbo-encoder.mlmodelc
+      → ANE 真的就绪了。这一格闭环：encoder 装得上、目录结构对。
+
+   by-name/asr 目录实况：
+     ggml-large-v3-turbo-encoder.mlmodelc        ← 里面第一层就是 coremldata.bin
+     ggml-large-v3-turbo-encoder.mlmodelc.zip
+```
+
+**`__MACOSX` 不见了**，外层不再是空壳。上一封那份磁盘证据里的两行，现在只剩该有的那两行。
+
+## 裁决 ④ 的两半**都**被实测证到了
+
+- **`fail` 会变红**：本地反向验证 6/6（拆掉 `required` 就红）。
+- **`warn` 不变红**：`[实测]` 第 5 节 macOS 上就是 `warn required=true`，
+  而那一格**success** —— 一台"没装 encoder 的正常 Mac"没有被误判。
+  这一半才是原注释真正担心的东西，现在它有实测背书了。
+
+## 顺带的观察（不是我的改动带来的）
+
+- `meta.sameSource = ok`（27 项逐 id 一致）。上一轮红在这里，**这一轮没复现** ——
+  说明那是**间歇**的，不是稳定红。`hw.probe` 仍然是屏蔽组 `warn`（10s 超时）
+  / 对照组 `ok`（3 设备），与上一封"冷/热"的定性一致。
+  ⚠️ 那条冷启动探针的**真实耗时**仍然 `UNKNOWN`，仍然开着。
+- 转写没被弄坏：`✔ 拿到 1 段、共 108 字符的非空文本`（两遍都是）。
+
+## 仍然 `[未验证]` 的一条（如实说）
+
+第 8 节新加的那条闸门，**只走了通过分支**（`sc.status === 0`，没触发）。
+**失败分支在生产里没被执行过** —— 要执行它得让 macOS 那一格真的不健康。
+它复用的是第 6 节末尾同一个机制（`if (sc.status !== 0) exitCode = 1`），
+但"复用了同一个机制"不等于"跑过"。我不打算为此再烧一次 1.7 GB 的 runner，
+**记在这里而不是当它绿了。**
