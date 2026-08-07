@@ -93,6 +93,24 @@ export function createSelfCheckRoutes(deps: SelfCheckRoutesDeps): {
           installed: (kind) => listByName(deps.paths.modelsDir, kind),
 
           /*
+           * T-162：**必须与 CLI 版（`scripts/selfcheck.mjs`）读同一份 `bundle` 语义** ——
+           * 两个出口对"跑的是哪个包"给出不同答案，正是 T-148 那次两边都报绿的机制。
+           * 这里读的是 `buildPipeline()` 当次装配的结论，不另跑一遍解析：
+           * 再解析一次就是第二个实现，而这个函数存在的理由就是消灭第二个实现。
+           */
+          backendSelection: () =>
+            Promise.resolve(
+              bundle?.whisperCliOrigin
+                ? {
+                    selectedBackend: bundle.whisperCliOrigin.preferred,
+                    packId: bundle.whisperCliOrigin.packId,
+                    packBackend: bundle.whisperCliOrigin.backend,
+                    degraded: bundle.whisperCliOrigin.degraded,
+                  }
+                : null,
+            ),
+
+          /*
            * T-149：按记录里的 `role` 问，而不是按目录名猜。
            * **必须与 CLI 版（`scripts/selfcheck.mjs`）调同一个函数** ——
            * 两个出口各自解析出不同答案、而同源校验只比 id 与 status 看不出来，

@@ -233,6 +233,24 @@ export default function RecorderPage() {
               break;
             case 'error':
               setStreamError(msg.messageZh);
+              /*
+               * ★ 致命错误必须把界面带回 idle，并**放开麦克风**（T-164 ②）。
+               *
+               * 原来只 `setStreamError`：红字出来了，phase 却还是 'recording' ——
+               * 计时器继续走、麦克风灯继续亮、AudioWorklet 继续往一条死掉的
+               * socket 上推帧。用户唯一的出路是点「停止」，而在修掉服务端那半之前，
+               * 那一下正是造出 0 秒死笔记的动作。
+               *
+               * 只对**会话根本没开起来**的两个码这么做：`overrun` /
+               * `ASR_STREAM_ERROR` 这类是「录着录着出了点问题」，
+               * 把它们也打回 idle 会丢掉已经识别出来的内容。
+               */
+              if (msg.code === 'ASR_STREAM_UNAVAILABLE' || msg.code === 'RECORD_START_FAILED') {
+                if (timerRef.current) clearInterval(timerRef.current);
+                setPhase('idle');
+                handleRef.current?.dispose();
+                handleRef.current = null;
+              }
               break;
             case 'stopped':
               setRerunJobUid(msg.rerunJobUid);

@@ -34,7 +34,7 @@
  * ⇒ 播放 404、自检报「读不出来」，而那个 wav 明明跟着搬过去了。
  */
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { cp, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -51,7 +51,7 @@ import { SessionStore } from '../http/auth.js';
 import { SseHub } from '../http/sse.js';
 import { attachWebSocket } from '../http/ws.js';
 import { JobQueue } from '../jobs/queue.js';
-import { RECORD_SAMPLE_RATE, type ServerMessage } from './recorder.js';
+import { RECORD_SAMPLE_RATE, RecorderSession, type ServerMessage } from './recorder.js';
 
 const made: string[] = [];
 const closers: Array<() => void | Promise<void>> = [];
@@ -378,3 +378,177 @@ describe('F3 录音落盘 —— 走真 WebSocket 的 harness', () => {
 function messagesOf(msgs: readonly ServerMessage[]): string[] {
   return msgs.map((m) => m.type);
 }
+
+/* ========================================================================== *
+ * T-164 ②：**引擎不可用时录一次音，不许在库里留下任何东西**
+ * ========================================================================== */
+
+/**
+ * 起一个 `openStream` 恒返回 undefined 的会话（= 没装流式模型的真实状态）。
+ *
+ * 用**真 `RecorderSession`**，不走 WS —— 因为要断言的是"停止之后库里是什么"，
+ * 而经 WS 的话 `stop()` 是由服务端在 `ws.on('close')` 里异步触发的：
+ * 断言可能跑在它前面，于是**把缺陷放回去也照样绿**。
+ * 这里全程 `await`，时序上不存在那个窗口。WS 那一半单独由下面一条钉。
+ */
+async function deadSession(): Promise<{
+  dataDir: string;
+  mediaDir: string;
+  db: ReturnType<typeof openAppDatabase>['db'];
+  messages: ServerMessage[];
+  session: RecorderSession;
+}> {
+  const dataDir = await mkdtemp(join(tmpdir(), 'om-rec-dead-'));
+  made.push(dataDir);
+  const mediaDir = join(dataDir, 'media');
+
+  const handle = openAppDatabase({ filename: join(dataDir, 'openmemo.db') });
+  closers.push(() => handle.close());
+  const repos = new Repos(handle.db);
+  repos.ensureDefaultFolder();
+  const queue = new JobQueue(handle.db, 'test-instance', () => undefined);
+  const sse = new SseHub();
+
+  const messages: ServerMessage[] = [];
+  const session = new RecorderSession(
+    {
+      repos,
+      queue,
+      sse,
+      mediaDir,
+      dataDir,
+      // ★ 这就是「没装流式模型」在产品里的真实形状（`setup.ts` 构造不出引擎）
+      openStream: () => undefined,
+      streamModelId: 'none',
+    },
+    (m) => messages.push(m),
+  );
+  return { dataDir, mediaDir, db: handle.db, messages, session };
+}
+
+function countOf(db: ReturnType<typeof openAppDatabase>['db'], table: string): number {
+  return (
+    db.prepare<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`).get({})?.n ?? -1
+  );
+}
+
+describe('F3 引擎不可用 —— 录一次音不许留下一条「就绪」的死笔记（T-164 ②）', () => {
+  it('★ 开不起来 → 停止/断线之后 notes / transcripts / media_assets / jobs 全部一行都没有', async () => {
+    const d = await deadSession();
+
+    await d.session.start({ title: '用户点了一次开始录音' });
+
+    // 前提：它确实走的是"引擎不可用"那一支，而不是碰巧什么都没做
+    const err = d.messages.find((m) => m.type === 'error');
+    assert.equal(
+      err?.type === 'error' && err.code,
+      'ASR_STREAM_UNAVAILABLE',
+      `没有收到引擎不可用的错误，实际消息：${messagesOf(d.messages).join(',')}`,
+    );
+
+    /*
+     * 用户接下来只可能做两件事之一，两条都要安全：
+     *   · 点「停止」        → `stop()`
+     *   · 关掉标签页/断线   → `ws.on('close')` → `abandon()`
+     * 缺陷版本里这两条都会跑完整条收尾链，造出那条死笔记。
+     */
+    await d.session.stop();
+    await d.session.abandon();
+
+    /*
+     * 判据钉的是**后果**：库里一行都不许有。
+     *
+     * 不钉"status 不等于 ready" —— 那样把状态改成 'failed' 就能骗过去，
+     * 而用户仍然会看到一条 0 秒、打不开的笔记躺在列表里。
+     */
+    assert.equal(
+      countOf(d.db, 'notes'),
+      0,
+      '引擎不可用却建了笔记 —— 这就是那条 0 秒打不开的「就绪」死笔记',
+    );
+    assert.equal(countOf(d.db, 'transcripts'), 0, '建了转写稿');
+    assert.equal(countOf(d.db, 'media_assets'), 0, '落了媒体资产（对一个空文件）');
+    assert.equal(countOf(d.db, 'jobs'), 0, '排了任务');
+
+    // 盘上也不许留东西：44 字节的空 WAV 头同样是垃圾
+    const recDir = join(d.mediaDir, 'recordings');
+    // 目录压根没建出来是期望结果之一，所以读不到就是空集
+    const left = await readdir(recDir).catch(() => [] as string[]);
+    assert.deepEqual(left, [], `盘上留下了空录音文件：${left.join(',')}`);
+  });
+
+  it('★ 开不起来时 `active` 为假 —— WS 层据此关闭连接，不让前端对着死路推流', async () => {
+    const d = await deadSession();
+    await d.session.start({ title: 'x' });
+    assert.equal(
+      d.session.active,
+      false,
+      'start() 正常返回了，但 active 仍是真 —— ws.ts 会把 socket 留着，浏览器继续推流',
+    );
+  });
+
+  it('★ 走真 WebSocket：引擎不可用时服务端主动关闭连接', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'om-rec-deadws-'));
+    made.push(dataDir);
+    const handle = openAppDatabase({ filename: join(dataDir, 'openmemo.db') });
+    closers.push(() => handle.close());
+    const repos = new Repos(handle.db);
+    repos.ensureDefaultFolder();
+
+    const server: Server = createServer((_req, res) => {
+      res.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    closers.push(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+    const sessions = new SessionStore('boot-token-for-test');
+    const session = sessions.create();
+    const wss = attachWebSocket(server, {
+      sessions,
+      port: () => port,
+      recorder: {
+        repos,
+        queue: new JobQueue(handle.db, 'test-instance', () => undefined),
+        sse: new SseHub(),
+        mediaDir: join(dataDir, 'media'),
+        dataDir,
+        openStream: () => undefined,
+        streamModelId: 'none',
+      },
+    });
+    closers.push(() => new Promise<void>((resolve) => wss.close(() => resolve())));
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/recorder`, {
+      headers: {
+        host: `127.0.0.1:${port}`,
+        origin: `http://127.0.0.1:${port}`,
+        cookie: `om_sid=${session.sid}`,
+      },
+    });
+
+    const seen: ServerMessage[] = [];
+    ws.on('message', (raw: Buffer) => seen.push(JSON.parse(raw.toString('utf8')) as ServerMessage));
+
+    /*
+     * **客户端一个字都不发**。缺陷版本里 socket 会一直开着（`started = true`），
+     * 于是这里超时 → 红。这一条不依赖任何 DB 状态，正好补上上面那条测不到的一半。
+     */
+    const closedByServer = await new Promise<boolean>((resolve) => {
+      ws.on('close', () => resolve(true));
+      setTimeout(() => resolve(false), 5_000).unref();
+    });
+    ws.close();
+
+    assert.equal(
+      closedByServer,
+      true,
+      '引擎不可用，服务端却把 WS 留着 —— 浏览器会继续录、继续推，界面停在「录音中」',
+    );
+    assert.equal(
+      seen.some((m) => m.type === 'error' && m.code === 'ASR_STREAM_UNAVAILABLE'),
+      true,
+      `关之前没有把原因说出来：${messagesOf(seen).join(',')}`,
+    );
+  });
+});

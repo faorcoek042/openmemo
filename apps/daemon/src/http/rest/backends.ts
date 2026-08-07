@@ -104,6 +104,48 @@ function inapplicableKind(
 }
 
 /**
+ * 目录条目 → 安装记录。
+ *
+ * ── 为什么它是一个**导出的纯函数**，而不是留在 `startPackInstall` 里 ────────────────
+ *
+ * 因为它抄的东西里有一条是有人依赖的：`priority`。
+ *
+ * 做"跑哪个包"这个决定的是 `findInBackendPacks()`（`packages/pipeline`），而它
+ * **只看得见 `<storeRoot>`**，看不见 `vendor/manifests/backends.json`。
+ * 于是 `priority` 在目录里有 11 条声明、**零个读取方**，而它的文档写着
+ * "Higher wins when several packs match the same hardware" —— 不抄进安装记录，
+ * 那句话就永远只是一句话（T-162）。
+ *
+ * 留在 `startPackInstall` 的闭包里就只能靠"真的装一次"才测得到，而那需要网络；
+ * 抽出来之后可以拿**真实目录**里的每一条去断言"抄全了"。
+ */
+export function toInstalledRecord(
+  pack: BackendPack,
+  files: readonly { name: string; sha256: string; sizeBytes: number; path: string }[],
+): InstalledBackendPack {
+  return {
+    schemaVersion: 1,
+    id: pack.id,
+    engine: pack.engine,
+    engineVersion: pack.engineVersion,
+    backend: pack.backend,
+    installedAt: new Date().toISOString(),
+    verifiedAt: new Date().toISOString(),
+    integrity: 'ok',
+    priority: pack.priority,
+    ...(pack.linkInto ? { linkInto: pack.linkInto } : {}),
+    files: files.map((f) => ({
+      name: f.name,
+      sha256: f.sha256,
+      sizeBytes: f.sizeBytes,
+      path: f.path,
+    })),
+    // ★ 从未运行 ≠ 通过。需要真实推理自检才能填，见文件头注释。
+    selfTest: null,
+  };
+}
+
+/**
  * 把一个后端包排进下载队列。
  *
  * 也被 `POST /api/models/pull`（`kind: "backend-pack"`）复用 —— 契约里 PullRequest
@@ -171,25 +213,7 @@ export function startPackInstall(
       });
 
       ctx.setStep('installing');
-      const record: InstalledBackendPack = {
-        schemaVersion: 1,
-        id: pack.id,
-        engine: pack.engine,
-        engineVersion: pack.engineVersion,
-        backend: pack.backend,
-        installedAt: new Date().toISOString(),
-        verifiedAt: new Date().toISOString(),
-        integrity: 'ok',
-        ...(pack.linkInto ? { linkInto: pack.linkInto } : {}),
-        files: result.files.map((f) => ({
-          name: f.name,
-          sha256: f.sha256,
-          sizeBytes: f.sizeBytes,
-          path: f.path,
-        })),
-        // ★ 从未运行 ≠ 通过。需要真实推理自检才能填，见文件头注释。
-        selfTest: null,
-      };
+      const record = toInstalledRecord(pack, result.files);
       // blob 先落、manifest 最后写：中途崩溃只会留下可回收的孤儿 blob，
       // 绝不会留下指向不存在文件的 manifest。
       await state.store.writeManifest('backend', pack.id, record);

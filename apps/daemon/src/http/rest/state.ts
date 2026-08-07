@@ -10,7 +10,7 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 
-import { resolveStoreRoot } from '@openmemo/pipeline';
+import { backendPrefsPath, resolveStoreRoot } from '@openmemo/pipeline';
 
 import {
   ArtifactStore,
@@ -19,6 +19,8 @@ import {
   bucketForRole,
   orderSourcesForDownload,
   probeAll,
+  resolveInstalledFile,
+  unpackDirName,
   type ProbeOutcome,
   type ProbeTarget,
   type StoreKind,
@@ -50,6 +52,7 @@ import {
   type StorageBreakdownItem,
 } from '@openmemo/shared';
 
+import { byModelDir } from '../../pipeline/modelStore.js';
 import type { SseHub } from '../sse.js';
 import { detectLocalHardware } from './hardware.js';
 import {
@@ -179,8 +182,15 @@ export class RestState {
   private get activeFile(): string {
     return path.join(this.modelsRoot, 'active.json');
   }
+  /**
+   * ★ T-162：路径由 `@openmemo/pipeline` 定义，**这里只是引用**。
+   *
+   * `selectedBackend` 从这个文件出去、由 `findInBackendPacks()` 读回来 ——
+   * 写的人和读的人各写一个字面量，就又是一次 `%APPDATA%` vs `%LOCALAPPDATA%`：
+   * 两边都"对"，产品静默不生效。
+   */
   private get prefsFile(): string {
-    return path.join(this.modelsRoot, 'prefs.json');
+    return backendPrefsPath(this.modelsRoot);
   }
 
   private async loadPersisted(): Promise<void> {
@@ -343,8 +353,63 @@ export class RestState {
     return null;
   }
 
+  /**
+   * 把某个 id **在 `by-name/` 与 `by-model/` 里的硬链视图**删掉。
+   *
+   * ## 为什么删模型必须走这一步（T-164 ⑥）
+   *
+   * 删除现在的动作是「删 manifest → `collectGarbage(['orphan_blobs'])`」，
+   * 而 `findGarbage()` **只扫 `blobs/`**。blob 确实被 `rm` 了，`freedBytes` 也照着
+   * blob 的大小报了出去 —— 但 `by-name/<kind>/<file>` 那条**硬链还在**，
+   * 硬链与 blob 共用同一个 inode，只要还有一条链指着它，**磁盘一个字节都不会回收**。
+   *
+   * `[复现]` 写 4 MiB blob → `linkByName` → 删 → `collectGarbage` 报
+   * `freedBytes: 4194304`、`usedBytes()` 归 0，而 `du -sb` **仍是 4194304**。
+   * 用户侧：删掉一堆模型、看着数字一路下降、磁盘越来越满，而且没有任何地方对得上账。
+   *
+   * 还有第二个后果，比空间更难查：**`by-name/` 是发现路径**。
+   * `resolveActiveModel` / `scanByName` / `findInBackendPacks` 都按名字扫它 ——
+   * 一个"已删除"的模型文件留在那里，会被当成还装着。
+   *
+   * ## 判据：删的是**记录里点名的那些文件**，不是按模式猜
+   *
+   * 逐条走 `record.files[].relPath`（安装器写下的、`root='models'` 的可移植路径），
+   * 用 `resolveInstalledFile()` 解析 —— 它自带越界检查（记录若指到 models 根之外
+   * 会抛，而不是让我们 `rm` 到别人家里去）。归档展开出来的目录按
+   * `unpackDirName(name)` 推，那是安装器与发现侧**唯一**的那份约定，不另写一份。
+   *
+   * 删不掉不阻断删除流程：manifest 必须走掉，否则用户会卡在"删不掉"上；
+   * 留下的孤儿链下一轮还能再清。
+   */
+  async dropInstalledFiles(id: string): Promise<void> {
+    const roots = { models: this.store.root };
+    for (const kind of STORE_KINDS) {
+      if (kind === 'backend') continue;
+      const rec = await this.store.readManifest<InstalledModel>(kind, id);
+      if (!rec) continue;
+      for (const f of rec.files ?? []) {
+        let abs: string;
+        try {
+          abs = resolveInstalledFile(f, roots);
+        } catch {
+          continue; // 记录损坏/越界 —— 宁可留下也不按猜出来的路径去 rm
+        }
+        await fs.rm(abs, { force: true }).catch(() => undefined);
+        // 归档包展开出来的目录（`by-name/<kind>/<unpackDirName(name)>`）
+        const dir = path.join(path.dirname(abs), unpackDirName(f.name));
+        if (dir !== abs) await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+      }
+      // `materializeModelDir()` 摊出来的每模型独占目录（T-160 ①附）
+      await fs
+        .rm(byModelDir(this.store.root, id), { recursive: true, force: true })
+        .catch(() => undefined);
+    }
+  }
+
   /** 把某个 id 的安装记录从**所有**桶里删干净（旧布局可能不止一处）。 */
   async dropInstalledRecord(id: string): Promise<void> {
+    // ★ 顺序不能反：先按记录删文件，再删记录 —— 记录没了就不知道该删哪些文件了
+    await this.dropInstalledFiles(id);
     for (const kind of STORE_KINDS) {
       if (kind === 'backend') continue;
       await this.store.removeManifest(kind, id);

@@ -17,7 +17,14 @@
 import { promises as fs } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import type { Arch, Backend, GetHardwareResponse } from '@openmemo/shared';
+import { ArtifactStore } from '@openmemo/downloader';
+import type {
+  Arch,
+  Backend,
+  BackendSelfTest,
+  GetHardwareResponse,
+  InstalledBackendPack,
+} from '@openmemo/shared';
 
 import type { AppPaths } from '../../config/paths.js';
 import {
@@ -26,10 +33,11 @@ import {
   resetBreaker,
   runBackendSelfTest,
   type BreakerDiagnostics,
+  type RunBackendSelfTestOptions,
   type ProbeDiagnostics,
   type RuntimeDetection,
 } from '../../runtime/setup.js';
-import { sendError, sendJson } from '../respond.js';
+import { readJsonBody, sendError, sendJson } from '../respond.js';
 
 /** 硬件快照 id。fit 判定是针对某一份快照算出来的，UI 用它判断缓存是否失效。 */
 export const HARDWARE_SNAPSHOT_ID = 'hw-local';
@@ -98,6 +106,21 @@ export interface RuntimeRoutesDeps {
    * `manifests/backend/*.json` —— 同一份事实，只是少绕一层。
    */
   readonly installedBackends?: () => Promise<readonly Backend[]>;
+  /**
+   * 自检执行器。**默认就是真的那个**（`runBackendSelfTest`），可注入是为了让
+   * 「跑完之后结果有没有被记回安装记录」这条接线**能在没有 whisper-cli 的机器上被验到**。
+   *
+   * 为什么必须验接线而不是只验 `recordSelfTest()` 本身：这个仓库反复吃亏的形状
+   * 就是「函数写好了、没有人调它」——`useDeleteNoteMutation`（笔记删不掉）、
+   * `ERROR_MESSAGES_ZH`（中文错误不显示）、`stashForRollback`（回滚永远不可用）
+   * 全是这一族。单测 `recordSelfTest` 在那种情况下照样全绿。
+   *
+   * 与 `RecorderDeps.openStream` / `TranscribeRunnerDeps.pipelineFor` 同一条边界：
+   * **被顶替的只有引擎**，路由、认领规则、落盘全是产品自己的路径。
+   */
+  readonly runSelfTest?: (
+    options: RunBackendSelfTestOptions,
+  ) => Promise<Awaited<ReturnType<typeof runBackendSelfTest>>>;
 }
 
 /** 契约的 `GetHardwareResponse` 之外附加的可观测字段（只增不改，前端可忽略）。 */
@@ -161,7 +184,7 @@ export function createRuntimeRoutes(deps: RuntimeRoutesDeps): {
   };
 
   return {
-    async handle(_req, res, url, method): Promise<boolean> {
+    async handle(req, res, url, method): Promise<boolean> {
       const p = url.pathname;
 
       // ---- GET /api/runtime/hardware ----
@@ -198,7 +221,11 @@ export function createRuntimeRoutes(deps: RuntimeRoutesDeps): {
       // ---- POST /api/backends/selftest ----
       if (p === '/api/backends/selftest') {
         if (method !== 'POST') return methodNotAllowed(res, 'POST');
-        const result = await runBackendSelfTest({
+        // 前端发的是 `{id}`（`features/runtime/api.ts`）。没带也照跑 —— 结果按
+        // `backendUsed` 认领；认不到就不写，而不是随便挑一个包按上去。
+        const body = (await readJsonBody(req)) as { id?: unknown } | undefined;
+        const bodyId = typeof body?.id === 'string' ? body.id : null;
+        const result = await (deps.runSelfTest ?? runBackendSelfTest)({
           dataDir: deps.paths.dataDir,
           modelsDir: deps.paths.modelsDir,
         });
@@ -213,10 +240,30 @@ export function createRuntimeRoutes(deps: RuntimeRoutesDeps): {
           return true;
         }
 
+        /*
+         * ★ 结果**必须回写到安装记录**（T-164 / gates-fix §5.3）。
+         *
+         * 在这之前：自检真的跑了、真的返回了 `passed:true, 18.6x`，
+         * 而 `InstalledBackendPack.selfTest` 全仓**只有 `backends.ts` 那一句 `selfTest: null`**
+         * 在写。于是 `/api/backends/installed` 里每个包的 `selfTest` 恒为 null，
+         * `BackendPackCard` 的三条分支（通过徽章 / 失败徽章 / anyFailed 横幅）
+         * **永远不会亮**。用户点了自测、看到一次性的返回，刷新一下就什么都没有了 ——
+         * 而 D-05 明说 `passed:false` 要有一条**持续**的警告。
+         *
+         * 写的是 manifest 文件本身，不是某个内存副本：`RestState.listInstalledBackends()`
+         * 每次都从 `manifests/backend/*.json` 现读，所以这里写完，
+         * 前端 `invalidateQueries(qk.backends.installed)` 一刷就能看见。
+         */
+        const recorded = await recordSelfTest(deps.paths.modelsDir, bodyId, result.outcome);
+
         // 跑过了就如实回报：passed 可能是 false（真实失败），那也是真结果。
         sendJson(res, 200, {
           status: 'ran',
           passed: result.outcome.passed,
+          /** 这次结果有没有被记进安装记录（没有就说清楚为什么，不静默丢掉）。 */
+          recorded: recorded.ok,
+          recordedTo: recorded.packId,
+          recordedReason: recorded.reason,
           ranAt: result.outcome.ranAt,
           devicesFound: result.outcome.devicesFound,
           rtf: result.outcome.rtf,
@@ -240,4 +287,88 @@ export function createRuntimeRoutes(deps: RuntimeRoutesDeps): {
 function methodNotAllowed(res: ServerResponse, expected: string): boolean {
   sendError(res, 405, 'METHOD_NOT_ALLOWED', `use ${expected}`, '方法不允许');
   return true;
+}
+
+/** 一次自检跑出来的东西，收成安装记录上那个字段的形状。 */
+export interface SelfTestOutcomeLike {
+  readonly passed: boolean;
+  readonly ranAt: string;
+  readonly devicesFound: number;
+  readonly rtf: number | null;
+  readonly backendUsed: string | null;
+  readonly errorMessage: string | null;
+}
+
+export interface RecordSelfTestResult {
+  readonly ok: boolean;
+  readonly packId: string | null;
+  /** 没写成时**说清楚为什么**（会原样出现在响应里）。 */
+  readonly reason: string | null;
+}
+
+/**
+ * 把一次自检结果写进 `manifests/backend/<id>.json` 的 `selfTest`。
+ *
+ * ## 认领规则：**结果只能记到它真的跑过的那个后端上**
+ *
+ * `runBackendSelfTest()` 跑的是"当前能找到的那套 whisper-cli + ggml 库"，
+ * 它不是按包 id 分派的。所以请求里带的 `id` 只是**候选**：
+ * 只有当那个包的 `backend` 与 `outcome.backendUsed` 相符时才写。
+ *
+ * 不这么设防的话，用户在 CUDA 包的卡片上点一次自测，
+ * 而实际跑的是 CPU 后端 —— 结果会被写成"CUDA 包自检通过"。
+ * 那不是少一个功能，那是**发明一条不成立的证据**，比 `selfTest: null` 坏得多。
+ *
+ * `id` 没带（或对不上）时按 `backendUsed` 去找唯一一个匹配的已装包；
+ * 找不到或找到多个就**不写**，并把原因带回响应里。
+ */
+export async function recordSelfTest(
+  modelsDir: string,
+  requestedId: string | null,
+  outcome: SelfTestOutcomeLike,
+): Promise<RecordSelfTestResult> {
+  const used = outcome.backendUsed;
+  if (!used) {
+    return { ok: false, packId: null, reason: '这次自检没有报出用的是哪个后端，无法认领' };
+  }
+  const store = new ArtifactStore(modelsDir);
+  const installed = await store.listManifests<InstalledBackendPack>('backend');
+
+  let target: InstalledBackendPack | undefined;
+  if (requestedId) {
+    const asked = installed.find((p) => p.id === requestedId);
+    if (!asked) {
+      return { ok: false, packId: null, reason: `没有已安装的后端包叫 ${requestedId}` };
+    }
+    if (asked.backend !== used) {
+      return {
+        ok: false,
+        packId: null,
+        reason:
+          `实际跑的是 ${used} 后端，而 ${requestedId} 是 ${asked.backend} 包 —— ` +
+          `不把结果记到它头上（那会变成一条不成立的证据）`,
+      };
+    }
+    target = asked;
+  } else {
+    const matches = installed.filter((p) => p.backend === used);
+    if (matches.length !== 1) {
+      return {
+        ok: false,
+        packId: null,
+        reason: `跑的是 ${used} 后端，已装的 ${used} 包有 ${String(matches.length)} 个，认不出是哪一个`,
+      };
+    }
+    target = matches[0];
+  }
+
+  const selfTest: BackendSelfTest = {
+    passed: outcome.passed,
+    ranAt: outcome.ranAt,
+    devicesFound: outcome.devicesFound,
+    rtf: outcome.rtf,
+    errorMessage: outcome.errorMessage,
+  };
+  await store.writeManifest('backend', target.id, { ...target, selfTest });
+  return { ok: true, packId: target.id, reason: null };
 }

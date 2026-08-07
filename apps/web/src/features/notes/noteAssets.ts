@@ -62,9 +62,38 @@ function pickByRole(note: NoteDetail | undefined, role: string): MediaAssetDto |
   return assets.find((a) => a.role === role && isUsableAsset(a));
 }
 
-/** 播放器的音源：16k 单声道音轨（转写与时间轴都对着它）。 */
+/**
+ * 播放器的音源。
+ *
+ * **首选** `audio16k`（转写与时间轴都对着它，`peaks.ompk` 也是从它算出来的）。
+ *
+ * ## 为什么要有第二档：录完的笔记在重跑结束前**根本没有音源**（T-164 ③）
+ *
+ * `ws/recorder.ts` 停止录音时只建 `role:'original'` 的 WAV；`audio16k` 要等
+ * 那个离线重跑 job 跑完、`transcribe.ts` 的 `archiveIntoMedia` 归档之后才出现。
+ * 也就是说：**录完立刻打开笔记，`<audio>` 根本不进 DOM** ——
+ * 播放键点了没反应、点段落也不跳，而波形和时间码照常显示（peaks 是录音时就算好的）。
+ * 看起来一切正常，只是"点了没用"，零报错、零提示。
+ *
+ * 更糟的一格：**一句话都没识别出来时 recorder 连重跑 job 都不排**
+ * （`segments.length > 0` 才 enqueue）→ 那条录音**永远**没有 `audio16k`，
+ * 也就永远播不了。而"什么都没识别出来"恰恰是用户最想回去听一遍的时候。
+ *
+ * ## 回退只收 `audio/*`，不赌容器
+ *
+ * 录音的 `original` 就是 16 kHz 单声道 PCM WAV（`mime: 'audio/wav'`），
+ * 浏览器直接能播，时间轴与 `audio16k` 是同一条（同一段音频）。
+ * 而 F1/F2 导入的 `original` 可能是 `video/*` 或站点给的任意容器 ——
+ * 那种要不要交给 `<audio>` 是另一个问题（可能没有音轨、可能解不了码），
+ * **这里不猜**：mime 不是 `audio/` 开头就当没有，维持现状而不是换一种失败方式。
+ *
+ * `mime` 为 null（这一列没有 NOT NULL）同样不回退：判据只认**明说是音频**的那一档。
+ */
 export function pickAudioAsset(note: NoteDetail | undefined): MediaAssetDto | undefined {
-  return pickByRole(note, 'audio16k');
+  const normalized = pickByRole(note, 'audio16k');
+  if (normalized) return normalized;
+  const original = pickByRole(note, 'original');
+  return original?.mime?.startsWith('audio/') ? original : undefined;
 }
 
 /**

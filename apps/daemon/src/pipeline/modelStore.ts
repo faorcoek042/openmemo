@@ -280,6 +280,18 @@ function sanitizeId(id: string): string {
   return id.replace(/[^a-zA-Z0-9._-]+/g, '_');
 }
 
+/**
+ * 一个模型独占目录的位置。**写入方与清理方共用这一份**。
+ *
+ * 卸载时要把它删掉（T-164 ⑥：留下的硬链让磁盘回收不了，也让"已删除"的模型
+ * 继续被发现路径找到）。两处各写一遍 `join(modelsDir,'by-model',sanitize(id))`
+ * 的下场是可预见的：`sanitizeId` 的规则一改，清理方就开始删不到东西 ——
+ * 而"删不到"是静默的。
+ */
+export function byModelDir(modelsDir: string, id: string): string {
+  return join(modelsDir, 'by-model', sanitizeId(id));
+}
+
 async function linkOrCopy(src: string, dest: string): Promise<void> {
   await rm(dest, { force: true });
   try {
@@ -341,7 +353,7 @@ export async function materializeModelDir(
   const files = raw.files ?? [];
   if (files.length === 0) return undefined;
 
-  const dir = join(modelsDir, 'by-model', sanitizeId(rec.id));
+  const dir = byModelDir(modelsDir, rec.id);
   const store = new ArtifactStore(modelsDir);
   let linked = 0;
 

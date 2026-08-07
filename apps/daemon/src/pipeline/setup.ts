@@ -18,8 +18,10 @@ import {
   buildCandidates,
   buildDefaultRegistry,
   discoverTools,
+  resolveBackendTool,
   resolveStoreRoot,
   selectEngine,
+  type ResolvedBackendTool,
   type AsrEngine,
   type AsrStream,
   type EngineCandidate,
@@ -36,6 +38,7 @@ import {
 import { isGgmlModelFile } from '@openmemo/downloader';
 
 import type { AppPaths } from '../config/paths.js';
+import { whisperCliName } from '../runtime/setup.js';
 import {
   listInstalledModelRecords,
   materializeModelDir,
@@ -105,6 +108,15 @@ export interface PipelineBundle {
    * 前端 `AsrEngineStatus` 现成就会渲染 `reason` + 「去装运行时」按钮，一行前端代码都不用改。
    */
   readonly unavailableEngines: readonly { id: EngineId; reasonZh: string }[];
+  /**
+   * **这次跑的 whisper-cli 是哪个后端包给的**（T-162）。
+   *
+   * `null` = 它不是从后端包里解析出来的（`OPENMEMO_WHISPER_CLI` 覆盖 / 系统 PATH /
+   * 根本没找到）。在此之前"用哪个包"取决于 `readdir` 返回顺序，
+   * **用户既无法知道也无法影响** —— 这个字段是"能知道"的那一半，
+   * `/api/selfcheck` 的 `backend.selection` 把它露出去。
+   */
+  readonly whisperCliOrigin: ResolvedBackendTool | null;
 }
 
 /**
@@ -272,6 +284,29 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
   if (!tools.ffmpeg) missing.push('ffmpeg');
   if (!tools.ffprobe) missing.push('ffprobe');
   if (!tools.whisperCli) missing.push('whisper-cli');
+
+  /*
+   * ★ T-162：**这次跑的 whisper-cli 是哪个包给的**。
+   *
+   * 只在解析结果与 `tools.whisperCli` 逐字相同时才认 —— 否则那条路径来自
+   * `OPENMEMO_WHISPER_CLI` 或系统 PATH，报一个"它来自 whispercpp-cpu-linux-x64"
+   * 就是在为另一个二进制作证。（`hw.probe` 与 `/runtime` 上那行 CPU 型号串
+   * 刚在同一天犯过这个错：两件事被当成了一件。）
+   */
+  const resolvedWhisper = await resolveBackendTool(storeRoot, whisperCliName());
+  const whisperCliOrigin =
+    resolvedWhisper !== null && resolvedWhisper.path === tools.whisperCli ? resolvedWhisper : null;
+  if (whisperCliOrigin?.degraded === true) {
+    /*
+     * 必须出声，理由与上面那条 VAD 警告一样：形态是"用户选了加速后端、装上了、
+     * 跑的却是另一个包"，而**每一层都不会报错**。静默降级是本仓最贵的一类 bug。
+     */
+    console.warn(
+      `[daemon] ⚠️ 已选中后端 ${whisperCliOrigin.preferred ?? '(无)'}，但 whisper-cli 来自 ` +
+        `${whisperCliOrigin.packId ?? '(来源不明)'}（backend=${whisperCliOrigin.backend ?? '未知'}）` +
+        ` —— 选中的那个包里没有 ${whisperCliName()}，已退回。加速不会生效。`,
+    );
+  }
 
   /*
    * ASR 模型：**读安装记录**，不猜文件名（ADR-014 ②）。
@@ -515,6 +550,7 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
      * main.ts 会把两份并进 health 的 `engines` —— 重复列同一个 id 只会互相盖掉。
      */
     unavailableEngines,
+    whisperCliOrigin,
   };
 }
 

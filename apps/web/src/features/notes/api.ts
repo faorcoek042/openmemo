@@ -126,10 +126,13 @@ export function useTranscriptQuery(uid: string | undefined) {
 /**
  * probe（解析链接元数据，先于下载）。
  *
- * ⚠️ **daemon 目前没有独立的 probe 端点**（读 `rest/notes.ts` 确认：只有
- * `POST /api/notes/import`，它直接建 note + 排 job）。
- * 在端点落地之前，这里会 404 → 端点级记账把这一条标为缺失、回落 mock（读操作可以回落），
- * UI 上有 MockNotice 标着。**不再假装它接通了。**
+ * ✅ **端点是真的**：`POST /api/notes/probe`（`apps/daemon/src/http/rest/notes.ts`，
+ * 走 `registry.probeWithSource()` 的完整回退链，只读、不建 note、不排 job）。
+ *
+ * ⚠️ 这里此前的注释写着「daemon 目前没有独立的 probe 端点…会 404 → 回落 mock」——
+ * **三句话没有一句成立**（`progress-audit §4⑫`）：端点在、它是 POST，
+ * 而 `lib/api/client.ts` 明写「写操作**永不**静默回落 mock」。
+ * 留着它的代价是具体的：读到的人会以为这条链没接通，于是不去查真正的失败原因。
  */
 export function useProbeMutation() {
   return useMutation({

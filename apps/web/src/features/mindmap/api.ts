@@ -89,14 +89,18 @@ export function useGenerateMindmapMutation(noteUid: string | undefined) {
  * 但接口形状保持 PATCH，日后换成 ops 不影响调用方。
  */
 /**
- * ⚠️ 保存导图编辑：**服务端尚无对应端点**。
+ * 保存导图编辑。
  *
- * daemon 的 `/api/notes/:uid/mindmap` 只有 `GET`（读）与 `POST`（重新生成，排一个 job），
- * **没有 PATCH**。我原来按 PATCH 发，结果那条 404 把整个 `notes` 面毒化成 mock ——
- * 星标、标签、段落编辑跟着全部失效（见 `lib/api/client.ts` 的端点级记账）。
+ * ✅ **PATCH `/api/notes/:uid/mindmap` 已经存在**（`apps/daemon/src/http/rest/content.ts`，
+ * `mindmaps.save({generatedBy:'user'})` 真落库并回 `{revision, mindmapUid}`）。
  *
- * 现在的处理：**不再对着不存在的路由发请求**。编辑仍然在渲染器内即时生效（用户手感不变），
- * 但不假装已保存 —— UI 上明确标注"编辑尚未持久化"。等端点落地把这里改回真调用即可。
+ * ⚠️ 这里此前的注释写着「服务端尚无对应端点…**不再对着不存在的路由发请求**」，
+ * 而紧接着的 `mutationFn` **正在发 PATCH**（`progress-audit §4⑫`）。
+ * 注释描述的是端点落地**之前**的一个中间状态，端点补上之后没人回来改。
+ *
+ * 那个中间状态本身的教训仍然值得记住：当时对着不存在的路由发 PATCH，
+ * 那条 404 把整个 `notes` 面毒化成 mock —— 星标、标签、段落编辑跟着全部失效
+ * （见 `lib/api/client.ts` 的端点级记账）。**所以别对着没落地的端点发请求。**
  */
 export function useSaveMindmapMutation(noteUid: string | undefined) {
   const qc = useQueryClient();

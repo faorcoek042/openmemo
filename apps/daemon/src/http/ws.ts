@@ -71,6 +71,20 @@ function onRecorder(ws: WebSocket, url: URL, deps: WsDeps): void {
   void session
     .start({ language, title })
     .then(() => {
+      /*
+       * ★ `start()` 正常 resolve **不等于**会话开起来了（T-164 ②）。
+       *
+       * 引擎不可用那一支会发一条 `ASR_STREAM_UNAVAILABLE` 然后正常返回。
+       * 这里原来无条件 `started = true` 并把 socket 留着：浏览器于是继续
+       * 推 PCM（`writeAudio` 全部丢掉）、界面继续显示"录音中"，
+       * 直到用户点停止 —— 而那一下会造出一条 0 秒的"就绪"死笔记。
+       * 病根已在 `RecorderSession.start()` 里修掉（失败时一行都不建），
+       * 这里补上另一半：**开不起来就把连接关了**，别让前端对着一条死路推流。
+       */
+      if (!session.active) {
+        ws.close();
+        return;
+      }
       started = true;
     })
     .catch((err: unknown) => {

@@ -7,6 +7,7 @@
  * sqlite-vec 都要求整数），对外只暴露 `uid`（ULID）。仓储层负责两者之间的翻译。
  */
 import type { DatabaseHandle } from '@openmemo/db';
+import type { WordTimestamp } from '@openmemo/pipeline';
 import { ulid } from '@openmemo/shared';
 
 export interface NoteRow {
@@ -83,6 +84,35 @@ export interface SegmentRow {
   words_json: string | null;
   chunk_idx: number | null;
   flags: number;
+}
+
+/**
+ * `transcript_segments.words_json` → 词级时间戳数组。**唯一的一份读法**（T-164 ④）。
+ *
+ * ## 为什么它必须在这里，而不是各处一份
+ *
+ * 这一列此前有**两个读取方，行为相反**：
+ * `http/rest/notes.ts` 真解析（所以 whisper 的逐字高亮在第一次转写后是好的），
+ * 而 `jobs/runners/transcribe.ts` 的两处合并映射**直接写死 `words: null`** ——
+ * 于是走一遍「重新转写」或任何 F3 离线重跑，`replaceSegments` 整表覆盖，
+ * **全稿的词级时间戳被抹成 NULL**。用户看到的是：逐字高亮突然退化成整句高亮，
+ * 而 `WordLevelBadge` 还会告诉他"这个引擎只有句级"—— 他会以为是引擎不行。
+ *
+ * 触发的是两个**常规**动作，不是边角情形。而且它不可逆：源里的 words 已经没了。
+ *
+ * ## 解析不出来一律 `null`
+ *
+ * 与 `body_json` 同一条约定：**绝不把坏数据当有效结果发出去**。
+ * 词级高亮是渐进增强，退回整句是安全的；把半截数组交给 `findActiveWord` 不是。
+ */
+export function parseWordsJson(raw: string | null): WordTimestamp[] | null {
+  if (!raw) return null;
+  try {
+    const v: unknown = JSON.parse(raw);
+    return Array.isArray(v) ? (v as WordTimestamp[]) : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface SettingRow {

@@ -745,10 +745,12 @@
       "keyword": "Keyword",
       "semantic": "Semantic"
     },
+    "modesUnavailable": "{{modes}} search is unavailable: {{reason}}",
+    "modesUnavailableUnknown": "the server did not say why",
     "idle": "Type to search",
     "idleHint": "Chinese word segmentation and pinyin supported. Transcript hits jump straight to that second.",
     "noResults": "No matches",
-    "noResultsHint": "Try different words, or switch to Semantic."
+    "noResultsHint": "Try different words. Transcript hits jump straight to that second."
   },
   "onboarding": {
     "title": "Welcome to OpenMemo",

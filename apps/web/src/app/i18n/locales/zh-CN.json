@@ -745,10 +745,12 @@
       "keyword": "关键词",
       "semantic": "语义"
     },
+    "modesUnavailable": "「{{modes}}」检索暂不可用：{{reason}}",
+    "modesUnavailableUnknown": "服务端未说明原因",
     "idle": "输入关键词开始搜索",
     "idleHint": "支持中文分词与拼音；命中转写内容时可直接跳到那一秒。",
     "noResults": "没有找到匹配内容",
-    "noResultsHint": "换个关键词，或试试「语义」模式。"
+    "noResultsHint": "换个关键词试试；命中转写内容时可直接跳到那一秒。"
   },
   "onboarding": {
     "title": "欢迎使用 OpenMemo",

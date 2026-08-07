@@ -333,12 +333,30 @@ export async function generateMindMap(
     };
   }
 
-  // LLM 可能产出重复/悬空结构 —— repair 做无损清理，再校验
-  let doc = repair(snapshot());
+  /*
+   * LLM 可能产出重复/悬空结构 —— `repair` 做无损清理，再校验。
+   *
+   * ⚠️ 这段注释此前写的是「把问题带出去而不是静默产出坏数据」，
+   * 而代码做的是**再 repair 一次然后照常返回** —— 没有任何东西被"带出去"
+   * （`progress-audit §4⑫`）。一条描述了不存在行为的注释比没有注释更坏：
+   * 下一个人读到它会以为这里已经有告警通道，于是不去建。
+   *
+   * 现在如实：`repair` 是**幂等**的（它做的是删悬空引用 / 去重 key 这类无损清理），
+   * 所以"再 repair 一次"本来就不可能修好第一次没修好的东西。
+   * 真正需要的是让它**出声**：仍不合法就打一行带 issue 码的日志。
+   * 这是最便宜的一档 —— 不改 `GenerateResult` 的形状（那会牵动 runner 与端点），
+   * 但至少排障时看得见，而不是拿到一份坏文档却不知道从哪儿坏的。
+   */
+  const doc = repair(snapshot());
   const v = validate(doc);
   if (!v.ok) {
-    // repair 之后仍不合法属于语义问题；把问题带出去而不是静默产出坏数据
-    doc = repair(doc);
+    console.warn(
+      `[mindmap] repair 之后仍不合法（${v.issues.length} 处），照常返回但请注意：` +
+        v.issues
+          .slice(0, 5)
+          .map((i) => `${i.code} ${i.message}`)
+          .join(' | '),
+    );
   }
 
   return {

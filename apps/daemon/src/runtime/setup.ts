@@ -97,7 +97,11 @@ function probeBinaryName(): string {
   return process.platform === 'win32' ? 'openmemo-probe.exe' : 'openmemo-probe';
 }
 
-function whisperCliName(): string {
+/**
+ * 导出，因为 `pipeline/setup.ts` 也要用它去问"这次的 whisper-cli 是哪个包给的"。
+ * 两处各写一份字面量 = 又一次「产出方与使用方用了两个名字」（见上面 probe 的 T-144）。
+ */
+export function whisperCliName(): string {
   return process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli';
 }
 

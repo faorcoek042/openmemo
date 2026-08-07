@@ -41,7 +41,7 @@ import {
 
 import { NoMediaSourceError, type MediaSourceRegistry } from '@openmemo/pipeline';
 
-import type { Repos } from '../../db/repos.js';
+import { parseWordsJson, type Repos } from '../../db/repos.js';
 import type { JobQueue } from '../../jobs/queue.js';
 import type { SseHub } from '../sse.js';
 import { readJsonBody, sendError, sendJson } from '../respond.js';
@@ -72,25 +72,9 @@ interface ImportBody {
 }
 
 /**
- * `words_json` → 词级时间戳数组。
- *
- * 存的是 JSON 字符串，直接发出去前端拿到的是一根字符串而不是数组。
- * 解析失败一律回 null（当作"没有词级时间戳"），**绝不把坏数据当成有效结果发出去**。
- */
-function parseWords(raw: string | null): unknown[] | null {
-  if (!raw) return null;
-  try {
-    const v: unknown = JSON.parse(raw);
-    return Array.isArray(v) ? v : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * `notes.body_json`（TEXT）→ TipTap 文档对象。
  *
- * 与 `parseWords` 同一条约定：**解析不出来就当"没有"，绝不把坏数据当有效结果发出去**。
+ * 与 `parseWordsJson` 同一条约定：**解析不出来就当"没有"，绝不把坏数据当有效结果发出去**。
  * 这一列是 `PATCH` 用 `JSON.stringify` 写进去的，正常情况下必然可解析；
  * 会走到 catch 的只有手工改库或旧数据，那种时候"编辑器空着"远好过"编辑器崩了"。
  */
@@ -542,7 +526,7 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
              * ADR-013 说的是"中文 Paraformer 无词级时间戳要降级"，
              * 不是"所有路径都没有"。null 与"字段不存在"必须区分开。
              */
-            words: parseWords(s.words_json),
+            words: parseWordsJson(s.words_json),
             /*
              * 说话人分离（`speakers` 表 + `segments.speaker_id`）**尚未接线** ——
              * 所以这里如实发 `null`，而不是省掉字段。
@@ -628,7 +612,7 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
              *
              * **发解析后的对象，不发字符串**：`NoteEditor` 把它直接喂给 TipTap 的
              * `content`，那里要的是文档对象；发字符串会变成"一段显示为 JSON 的正文"。
-             * 解析失败一律回 `null`（同 `parseWords` 的约定）——
+             * 解析失败一律回 `null`（同 `parseWordsJson` 的约定）——
              * 坏数据宁可当"没有正文"，也绝不原样发出去让编辑器崩在用户脸上。
              */
             bodyJson: parseJsonOrNull(note.body_json),

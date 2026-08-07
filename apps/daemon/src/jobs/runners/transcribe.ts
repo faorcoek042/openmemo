@@ -37,7 +37,7 @@ import {
   type TranscribePipeline,
 } from '@openmemo/pipeline';
 
-import type { Repos } from '../../db/repos.js';
+import { parseWordsJson, type Repos } from '../../db/repos.js';
 import { generatePeaksAsset } from '../../media/peaksAsset.js';
 import { mayRetitleNote } from './retitle.js';
 import type { SseHub } from '../../http/sse.js';
@@ -414,7 +414,7 @@ export async function runTranscribeJob(
         text: r.text,
         confidence: r.confidence,
         noSpeechProb: r.no_speech_prob,
-        words: null,
+        words: parseWordsJson(r.words_json),
         chunkIdx: r.chunk_idx ?? 0,
         flags: r.flags,
         speakerLabel: null,
@@ -426,7 +426,7 @@ export async function runTranscribeJob(
         text: r.text,
         confidence: r.confidence,
         noSpeechProb: r.no_speech_prob,
-        words: null,
+        words: parseWordsJson(r.words_json),
         chunkIdx: r.chunk_idx ?? 0,
         flags: r.flags,
         speakerLabel: null,

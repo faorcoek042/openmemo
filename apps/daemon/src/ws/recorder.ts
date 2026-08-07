@@ -113,9 +113,53 @@ export class RecorderSession {
     return this.#noteUid;
   }
 
+  /**
+   * 这一路会话有没有真的开起来。
+   *
+   * `start()` **正常 resolve 也可能什么都没开成**（引擎不可用那一支）。
+   * 调用方（`http/ws.ts`）必须据此把 socket 关掉，否则浏览器会继续推流、
+   * 用户会继续看着"录音中"，而服务端一帧都不收。
+   */
+  get active(): boolean {
+    return this.#stream !== undefined;
+  }
+
   async start(init: RecorderSessionInit): Promise<void> {
     const { repos, sse } = this.deps;
     this.#startedAt = Date.now();
+
+    /*
+     * ★ 引擎必须**先于任何落库/落盘**拿到（T-164 ②）。
+     *
+     * 原来的顺序是：建 note → 建 transcript → 建 WAV 文件 → 才去 openStream，
+     * 拿不到引擎时只 `send(error)` + `#emitState('failed')` 然后 `return` ——
+     * 但 `start()` **正常 resolve**，`ws.ts` 于是把 `started` 置真、socket 不关。
+     * 用户点停止（或者仅仅关掉标签页 → `ws.on('close')` → `abandon()`）时
+     * `stop()` 会**照常跑完整条收尾链**：回填 44 字节的空 WAV 头 → `createAsset` →
+     * 对一个 0 采样的文件生成 peaks → `updateNote(status:'ready')`。
+     *
+     * 结果是列表里多一条 **0 秒、打不开、状态却是「就绪」**的死笔记。
+     * 触发条件不是什么边角情形：**只要没装流式模型，任何人点一次「开始录音」就会中招。**
+     *
+     * 所以判据不是"要不要多发一条错误消息"，而是**失败时不许在库里留下任何行**：
+     * 引擎拿不到 → 一行都不建、一个文件都不落、`#closed` 置真让 `stop()`/`abandon()`
+     * 变成 no-op，然后由 `ws.ts` 关闭连接。
+     */
+    const stream = this.deps.openStream({
+      ...(init.language ? { language: init.language } : {}),
+      signal: this.#abort.signal,
+    });
+    if (!stream) {
+      // 契约：isAvailable() 为假时**不要**调 openStream；这里已由 deps 层保证
+      this.#closed = true; // ← stop()/abandon() 从此是 no-op，收尾链一步都不会走
+      this.send({
+        type: 'error',
+        code: 'ASR_STREAM_UNAVAILABLE',
+        messageZh: '流式识别引擎不可用（未安装流式模型）',
+      });
+      this.#emitState('failed');
+      return;
+    }
 
     const note = repos.createNote({
       title: init.title ?? `录音 ${new Date().toLocaleString('zh-CN')}`,
@@ -144,20 +188,6 @@ export class RecorderSession {
     this.#wav = createWriteStream(this.#wavPath);
     this.#wav.write(wavHeaderPlaceholder());
 
-    const stream = this.deps.openStream({
-      ...(init.language ? { language: init.language } : {}),
-      signal: this.#abort.signal,
-    });
-    if (!stream) {
-      this.send({
-        type: 'error',
-        code: 'ASR_STREAM_UNAVAILABLE',
-        messageZh: '流式识别引擎不可用（未安装流式模型）',
-      });
-      // 契约：isAvailable() 为假时**不要**调 openStream；这里已由 deps 层保证
-      this.#emitState('failed');
-      return;
-    }
     this.#stream = stream;
 
     stream.on('partial', (seg: TranscriptSegment) => {

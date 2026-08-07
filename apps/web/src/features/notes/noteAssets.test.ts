@@ -98,6 +98,99 @@ describe('T-139 A1 —— 播放器音源的选取', () => {
   });
 });
 
+/* ========================================================================== *
+ * T-164 ③：**刚录完的笔记，在离线重跑结束前根本没有可播的音源**
+ * ========================================================================== */
+
+/**
+ * F3 录音停止之后、离线重跑完成之前，库里就长这样：
+ * 只有 `role:'original'` 的那条 WAV（`ws/recorder.ts` 建的），
+ * 外加录音时就算好的 `peaks`。**没有 `audio16k`** —— 它由重跑归档时才产生。
+ *
+ * 字段取自 `recorder.ts` 的 `createAsset` 实参（`mime: 'audio/wav'`）与
+ * `rest/notes.ts` 的序列化形状，不是想象出来的。
+ */
+const JUST_RECORDED = {
+  uid: '01KZD5RECORDED0000000000000',
+  title: '录音 2026-08-07',
+  assets: [
+    {
+      uid: '01KZD5ORIGINALWAV0000000000',
+      role: 'original',
+      mime: 'audio/wav',
+      bytes: 320044,
+      durationMs: 10000,
+      state: 'ready',
+      url: '/media/asset/01KZD5ORIGINALWAV0000000000',
+    },
+    {
+      uid: '01KZD5PEAKS000000000000000',
+      role: 'peaks',
+      mime: 'application/octet-stream',
+      bytes: 526,
+      durationMs: 10000,
+      state: 'ready',
+      url: '/media/asset/01KZD5PEAKS000000000000000',
+    },
+  ],
+} as unknown as NoteDetail;
+
+describe('T-164 ③ —— 录完就能听：没有 audio16k 时回退到录音原件', () => {
+  it('★ 只有 original(audio/wav) 时必须选得出来 —— 否则 <audio> 不进 DOM，播放键点了没反应', () => {
+    const a = pickAudioAsset(JUST_RECORDED);
+    assert.equal(
+      a?.uid,
+      '01KZD5ORIGINALWAV0000000000',
+      '刚录完的笔记选不出音源：波形和时间码都在，点播放/点段落什么都不发生，零报错',
+    );
+    assert.equal(a?.url, '/media/asset/01KZD5ORIGINALWAV0000000000');
+  });
+
+  it('★ audio16k 在场时永远优先 —— 回退不许把首选顶掉', () => {
+    /*
+     * 这一条是上面那条的对照组：只加一条 `audio16k` 就必须换人。
+     * 少了它，"回退"可能悄悄变成"总是用 original"，
+     * 而 original 是没被归一化过的那份（采样率/声道可能不同，时间轴对不上）。
+     */
+    const both = {
+      ...JUST_RECORDED,
+      assets: [
+        ...JUST_RECORDED.assets,
+        {
+          uid: '01KZD5NORMALIZED0000000000',
+          role: 'audio16k',
+          mime: 'audio/wav',
+          state: 'ready',
+          url: '/media/asset/01KZD5NORMALIZED0000000000',
+        },
+      ],
+    } as unknown as NoteDetail;
+    assert.equal(pickAudioAsset(both)?.uid, '01KZD5NORMALIZED0000000000');
+  });
+
+  it('original 是视频/未知 mime 时不回退 —— 不猜容器，宁可维持现状', () => {
+    for (const mime of ['video/mp4', 'application/octet-stream', null]) {
+      const note = {
+        ...JUST_RECORDED,
+        assets: [{ ...JUST_RECORDED.assets[0], mime }],
+      } as unknown as NoteDetail;
+      assert.equal(
+        pickAudioAsset(note),
+        undefined,
+        `mime=${String(mime)} 的 original 被交给了 <audio> —— 那是把一种失败换成另一种`,
+      );
+    }
+  });
+
+  it('original 自己 state 不可用时同样不回退', () => {
+    const note = {
+      ...JUST_RECORDED,
+      assets: [{ ...JUST_RECORDED.assets[0], state: 'missing' }],
+    } as unknown as NoteDetail;
+    assert.equal(pickAudioAsset(note), undefined);
+  });
+});
+
 describe('T-139 A3 —— 波形只能来自真资产', () => {
   it('有 peaks 资产就选出来（此前这一支反而把它丢掉，改去造一份假的）', () => {
     const p = pickPeaksAsset(REAL_NOTE_RESPONSE);
