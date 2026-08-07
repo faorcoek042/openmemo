@@ -22,10 +22,6 @@
       "name": "clearSessionCookie"
     },
     {
-      "file": "apps/daemon/src/http/rest/storage.ts",
-      "name": "StorageRoutesDeps"
-    },
-    {
       "file": "apps/daemon/src/jobs/queue.ts",
       "name": "JobRunner"
     },
@@ -149,6 +145,11 @@
     {
       "file": "packages/downloader/src/manifest.ts",
       "name": "loadModelManifest"
+    },
+    {
+      "file": "packages/downloader/src/manifest.ts",
+      "name": "verifyCatalogSignature",
+      "note": "⚠️ T-169 补剥字符串字面量后**第一次**被看见 —— 它此前一直隐身，因为它在自己的错误信息里写了自己的名字（`self` 因此恒 ≥ 1）。查清楚了再登记，结论是**不是「验签特性被静默关掉了」**：① 生产**根本没有远端目录**可验 —— 目录是 `vendor/manifests/*.json`，**随仓库发布**（git 已跟踪），daemon 走 `rest/manifests.ts:73 listManifestFiles()` 的 `fs.readdir` 本地读盘，全程不联网；② 会联网取目录的那个分层加载器 `loadManifest`（`manifest.ts:75`，含唯一一处 `fetch`）**自己就是死代码**，全仓零调用方 —— 它的两个出口 `loadBackendManifest` / `loadModelManifest` 就在本文件上面两条，同样零调用方。所以缺的不是「给验签接上调用方」，是「远端目录这条线整条没做」；③ 今天真正在承重的完整性控制是**编译期下载域名白名单**（`shared/schemas.ts:49-62`）+ **每个产物强制 sha256**，不是签名；④ 当前状态是**被 ADR 明确批准过的**：`ADR-012` 决策 6「已实现但生产未启用（无密钥），供签名却无密钥时失败关闭绝不放行 —— 批准」，`ADR-010` 决策 4「未实现且显式抛错不静默 —— 批准」。函数本身是 fail-closed 的（给了签名却无密钥 → 抛，不返 true），删掉它等于推翻一条 accepted ADR，**那是 Manager 的决定，不是门禁的**。→ 留在这里当地图；要动它请连同「远端目录到底做不做」一起裁。"
     },
     {
       "file": "packages/downloader/src/proxy.ts",

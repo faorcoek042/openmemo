@@ -114,13 +114,247 @@ function sourceFiles() {
     .filter((p) => !/\/(dist|dist-types|node_modules|\.test-out)\//.test(p));
 }
 
-/** 剥掉块注释与行注释。粗糙但足够：目的是不让注释里的名字算作引用。 */
-function stripComments(src) {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/^\s*\/\/[^\n]*$/gm, ' ')
-    .replace(/([^:"'`])\/\/[^\n]*/g, '$1 ');
+/**
+ * 词法扫描器：把**注释**和**字符串字面量的内容**一起抹掉，只留下真代码。
+ *
+ * ## 为什么要有这个东西（`closure-audit` 🟡-2 查出的第二个同形盲区）
+ *
+ * 老版本只剥注释、**不剥字符串字面量**。后果和 barrel 再导出那次（T-160）一模一样，
+ * 只是换了个遮蔽物：一个导出只要**在自己的错误信息里写了自己的名字**，`self` 就 ≥ 1，
+ * 于是它**永远不会被这条门禁看见** —— 哪怕它零调用方、零测试。
+ *
+ *     export async function verifyCatalogSignature(…) {
+ *       throw new Error('verifyCatalogSignature: a signature was supplied but …')
+ *     }                  ↑ 这一次自我提及就够了
+ *
+ * 而"在错误信息里写自己的名字"是**好的工程习惯**，本仓库到处都是。
+ * 也就是说：这个盲区**专门遮蔽写得比较讲究的那部分代码**。
+ *
+ * ## ★ 为什么注释和字符串必须**同一遍**扫，不能分两步
+ *
+ * 这条是实测撞出来的，**而且它证明老的 `stripComments()` 本身一直是坏的**。
+ *
+ * 老写法是三条正则，其中一条是 `([^:"'`])\/\/[^\n]*` —— 用"`//` 前面那个字符不是 `:`"
+ * 来避开 `https://`。这个近似在**模板字面量**上翻车：
+ *
+ *     return `${protocol}//${host}`;      // apps/web/src/lib/secure-context.ts
+ *
+ * 这里 `//` 前面是 `}`，不是 `:`，于是那条正则把 **`//${host}`;` 连同后面整行删掉**，
+ * 留下一个**没有闭合的模板字面量**。老版本察觉不到（它不跟踪字符串状态），
+ * 于是这个损坏一直安静地待在那儿；等我把字符串扫描接上，扫描器就从这里开始失步，
+ * 把后面成片的真代码当成字符串抹掉。
+ *
+ * `[实测]` 全仓 15 个文件因此失步，其中 4 个连 `export` 声明都被吞掉了。
+ * **两遍扫描在结构上就是错的**：第一遍不认识字符串，就必然会咬坏字符串；
+ * 第二遍再想认字符串，读到的已经是被咬坏的文本了。
+ *
+ * ## 三处必须逐字符扫、正则做不到的地方
+ *
+ * 1. **模板字面量的 `${ … }` 里装的是真代码** —— `` `${describeSpeed(x)} 秒` `` 是一次真调用。
+ *    一条 /`[^`]*`/ 式的正则会把它一起吞掉，那就从"看不见孤儿"变成"把活着的当孤儿"，
+ *    由漏报变误报。所以遇到 `${` 要**回到代码模式**并跟踪花括号配平（可嵌套）。
+ * 2. **正则字面量里的引号不是字符串开头**（`/['"]/`）。不认它，扫描器当场失步。
+ * 3. **注释里的引号也不是字符串开头**（`// don't`）—— 这正是上面那条的另一面。
+ *
+ * @param {string} src
+ * @param {{ strings?: boolean }} [opts]  `strings:false` = 只剥注释，保留字符串内容。
+ *   留这个开关不是为了灵活，是为了让下面的不变量能拿"同一段代码、只差这一步"做对照。
+ */
+function scanSource(src, opts = {}) {
+  const stripStringContents = opts.strings !== false;
+  const out = [];
+  /** 模板字面量栈。每一项 = 当前这层 `${}` 里尚未配平的 `{` 数量。 */
+  const tplBraces = [];
+  /** 'code' | "'" | '"' | '`' | 'regex' | 'line' | 'block' */
+  let mode = 'code';
+  /** 正则字符类 `[…]` 内部，`/` 不结束正则。 */
+  let inCharClass = false;
+  /** 上一个吐出去的非空白字符 —— 用来分辨 `/` 是除号还是正则开头。 */
+  let lastSignificant = '';
+  /** 再上一个 —— 只为 TS 的非空断言 `!` 服务，见下面 `REGEX_CAN_START_AFTER` 处。 */
+  let prevSignificant = '';
+
+  const push = (ch) => {
+    out.push(ch);
+    if (!/\s/.test(ch)) {
+      prevSignificant = lastSignificant;
+      lastSignificant = ch;
+    }
+  };
+
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+
+    if (mode === 'code') {
+      if (c === "'" || c === '"' || c === '`') {
+        mode = c;
+        // ★ 引号本身要留下，只把**内容**抹掉。
+        //   因为 `REEXPORT_RE` 认的是 `from '…'` —— 连引号一起吞掉的话，
+        //   全仓 163 条再导出会一起消失，"只被再导出"那一档当场归零。
+        //   （这不是推演：第一版连引号一起吞了，脚本自己的
+        //   「一条 `export … from …` 都没扫到」自检当场把我拦下来了。）
+        push(c);
+        i += 1;
+        continue;
+      }
+      if (c === '/' && src[i + 1] === '/') {
+        mode = 'line';
+        out.push('  ');
+        i += 2;
+        continue;
+      }
+      if (c === '/' && src[i + 1] === '*') {
+        mode = 'block';
+        out.push('  ');
+        i += 2;
+        continue;
+      }
+      if (c === '/') {
+        /*
+         * 到这里只剩"正则字面量 vs 除号 vs **JSX**"（注释已在上面两个分支里处理掉了）。
+         *
+         * ★ 这里用的是**白名单**（只有这几个前驱字符才认正则），不是"非表达式结尾即正则"的
+         *   黑名单写法。原因是 JSX —— 而这条是**实测撞出来的，不是推演**：
+         *
+         *     第一版用黑名单（`/[\w$)\]]/` 之外都算正则），全仓扫下来
+         *     `BackendChip.tsx :: backendLabel` 与 `secure-context.ts :: httpsEquivalent`
+         *     **从"零引用导出"名单里消失了**，脚本报的是"基线里有 2 个过期条目"。
+         *
+         *   成因：`.tsx` 里遍地是 `<Foo bar={a} />` 和 `</div>`。`/>` 前面那个 `}`、
+         *   `</` 前面那个 `<` 都不是"表达式结尾"，于是黑名单把它们当成正则开头，
+         *   一路吞到下一个 `/` —— **把中间的 `export function backendLabel` 整个吞掉了**。
+         *   声明被吞掉的导出不会变成"新孤儿"，它会**从名单里安静消失**，
+         *   表现成"基线过期"。这正是本仓库最怕的那种错法：**看起来像好消息**
+         *   （"有人把它接上了！"），实际是探针瞎了。
+         *
+         *   → 抓住它的是脚本自己的"基线只准变短"那条守卫。留个记号：
+         *     那条守卫的价值不止于催人删豁免，它同时是**扫描器失明的报警器**。
+         *
+         * 白名单里刻意**不含** `{` `}` `<` `>` `)` `]` 与标识符字符。代价是
+         * `return /re/…` 这类位置认不出正则（前驱是 `n`）—— 那是**保守**的错法：
+         * 认不出只会少剥，不会失步。下面的两条不变量守着真失步的情形。
+         */
+        const REGEX_CAN_START_AFTER = /[(,=:[!&|?;+\-*%^~]/;
+        /*
+         * ★ `!` 在 TypeScript 里有两种意思，恰好指向相反的结论：
+         *     `if (!/re/.test(s))`      前缀取反 → 后面是**正则**
+         *     `out[i] = pcm[i]! / 32768`  后缀非空断言 → 后面是**除号**
+         * `[实测]` 后一种就在 `packages/pipeline/src/asr/sherpaOnnx.ts:404`，
+         * 只看前一个字符会把它当成正则开头，一路吞到文件尾（扫描器收尾停在 regex 模式）。
+         * 分辨靠再往前看一个字符：`!` 前面是值的结尾（标识符 / `)` / `]`）就是非空断言。
+         */
+        const bangIsNonNullAssertion =
+          lastSignificant === '!' && /[\w$)\]]/.test(prevSignificant);
+        if (
+          !bangIsNonNullAssertion &&
+          (lastSignificant === '' || REGEX_CAN_START_AFTER.test(lastSignificant))
+        ) {
+          mode = 'regex';
+          inCharClass = false;
+          push(c);
+          i += 1;
+          continue;
+        }
+        push(c);
+        i += 1;
+        continue;
+      }
+      if (tplBraces.length > 0 && (c === '{' || c === '}')) {
+        const top = tplBraces.length - 1;
+        if (c === '{') {
+          tplBraces[top] += 1;
+        } else if (tplBraces[top] === 0) {
+          // 配平的 `}` —— 这一段 `${…}` 结束，回到模板字面量内部。
+          tplBraces.pop();
+          mode = '`';
+          out.push(' ');
+          i += 1;
+          continue;
+        } else {
+          tplBraces[top] -= 1;
+        }
+        push(c);
+        i += 1;
+        continue;
+      }
+      push(c);
+      i += 1;
+      continue;
+    }
+
+    // ── 注释内部（`//` 到行尾；`/* */` 到配对的 `*/`）：整段抹成空白 ──
+    if (mode === 'line') {
+      if (c === '\n') {
+        mode = 'code';
+        out.push('\n');
+      } else out.push(' ');
+      i += 1;
+      continue;
+    }
+    if (mode === 'block') {
+      if (c === '*' && src[i + 1] === '/') {
+        mode = 'code';
+        out.push('  ');
+        i += 2;
+        continue;
+      }
+      out.push(c === '\n' ? '\n' : ' ');
+      i += 1;
+      continue;
+    }
+
+    // ── 字符串 / 正则内部：一律吐空格，只保留换行（不影响计数，但让残留物仍可读）──
+    if (c === '\\') {
+      out.push(stripStringContents ? ' ' : c);
+      out.push(stripStringContents || src[i + 1] === undefined ? ' ' : src[i + 1]);
+      i += 2; // 转义序列整个跳过，`\'` 不结束字符串
+      continue;
+    }
+    if (c === '\n') {
+      out.push('\n');
+      i += 1;
+      continue;
+    }
+    if (mode === 'regex') {
+      if (c === '[') inCharClass = true;
+      else if (c === ']') inCharClass = false;
+      else if (c === '/' && !inCharClass) {
+        mode = 'code';
+        push(c);
+        i += 1;
+        continue;
+      }
+      out.push(' ');
+      i += 1;
+      continue;
+    }
+    if (mode === '`' && c === '$' && src[i + 1] === '{') {
+      // ★ `${` 里是真代码，必须原样留下 —— 否则这一步会把真引用一起抹掉。
+      tplBraces.push(0);
+      mode = 'code';
+      out.push('  ');
+      i += 2;
+      continue;
+    }
+    if (c === mode) {
+      mode = 'code';
+      push(c);
+      i += 1;
+      continue;
+    }
+    out.push(stripStringContents ? ' ' : c);
+    i += 1;
+  }
+  // `endMode` / `tplDepth` 是给下面那条"失步"不变量用的：扫到文件尾还停在字符串里，
+  // 说明有一个引号没配上 —— 那之后的东西全被当成字符串抹掉了。
+  return { out: out.join(''), endMode: mode, tplDepth: tplBraces.length };
 }
+
+/** 送进 `classify()` 的标准预处理：注释 + 字符串内容一起抹掉。 */
+const prepare = (src) => scanSource(src).out;
+/** 只剥注释、保留字符串 —— 唯一用途是给下面的不变量当对照组。 */
+const stripCommentsOnly = (src) => scanSource(src, { strings: false }).out;
 
 const DECL_RE =
   /export\s+(?:async\s+)?(?:function|class|const|let|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g;
@@ -236,14 +470,74 @@ function classify(bodies) {
 function scan() {
   const files = sourceFiles();
   const bodies = new Map();
+  /** 只剥了注释、还没剥字符串的版本 —— 只用来证明"剥字符串"这一步真的接上了。 */
+  const commentsOnly = new Map();
+  /** 扫描器在这些文件上失步了（扫到文件尾还停在字符串/模板里）。 */
+  const desynced = [];
+  /** 剥字符串**改变了导出声明清单**的文件 —— 声明不可能长在字符串里，所以这一定是失步。 */
+  const declDrift = [];
+
+  const declNames = (body) => {
+    const s = new Set();
+    DECL_RE.lastIndex = 0;
+    let m;
+    while ((m = DECL_RE.exec(body))) s.add(m[1]);
+    return s;
+  };
+
   for (const f of files) {
     try {
-      bodies.set(f, stripComments(readFileSync(join(REPO, f), 'utf8')));
+      const raw = readFileSync(join(REPO, f), 'utf8');
+      const src = stripCommentsOnly(raw);
+      commentsOnly.set(f, src);
+      // ★ 这里走 `prepare()`，**不是**直接调 `scanSource()` —— 自检跑的也是 `prepare()`，
+      //   两边必须是同一个入口。否则"把预处理拆掉"这类变异只会让自检红、真实扫描照跑，
+      //   或者反过来。（实测：第一版 `scan()` 直接调 `scanSource()`，把 `prepare` 改坏
+      //   只有自检响，真实路径一格没动 —— 那说明自检守的不是真实路径。）
+      bodies.set(f, prepare(raw));
+      const r = scanSource(raw);
+      if (r.endMode !== 'code' || r.tplDepth !== 0) {
+        desynced.push(`${f}（收尾停在 ${r.endMode === 'code' ? `${r.tplDepth} 层未闭合的 \${}` : `${r.endMode} 字符串里`}）`);
+      }
+      /*
+       * ⚠️ 测试文件不参与这条不变量，**这不是为了让它变绿，是因为它在测试文件上本来就不成立**：
+       * lint 类测试的夹具会把源码**当字符串**喂进去 ——
+       *   `packages/pipeline/src/subprocess/__tests__/childProcessAllowlist.test.ts:76`
+       *   const CHILD_PROCESS_IMPORT = "… export const x = spawn;\n";
+       * 那三个 `export const x/ok/y` 本来就该被剥掉，剥掉才是对的。
+       * 而且 `classify()` 本来就跳过测试文件里的声明（`if (isTestFile(f)) continue`），
+       * 它们一个都进不了孤儿判定。
+       * 测试文件仍然受下面 `desynced`（收尾模式）那条不变量约束 ——
+       * 那条不依赖"声明不在字符串里"这个前提。
+       */
+      if (!isTestFile(f)) {
+        const before = declNames(src);
+        const after = declNames(bodies.get(f));
+        const lost = [...before].filter((n) => !after.has(n));
+        const gained = [...after].filter((n) => !before.has(n));
+        if (lost.length || gained.length) {
+          declDrift.push(`${f}（少了 ${JSON.stringify(lost)}，多了 ${JSON.stringify(gained)}）`);
+        }
+      }
     } catch {
       /* 读不了就跳过；非空守卫会兜住"全都读不了"这种情况 */
     }
   }
-  return { files, ...classify(bodies) };
+
+  /**
+   * 有几个文件在"剥掉字符串"之后**真的和剥字符串前不同**。
+   *
+   * ⚠️ 与下面 `strippedFiles` 同一个讲究：判据读的是**存进 map 的那个值**，
+   * 不是 `stripStrings()` 的返回值。要抓的回归是"算对了、存错了" ——
+   * 把 `bodies.set(f, prepare(…))` 顺手简化回 `stripComments(…)` 时，
+   * 按返回值计数的自检**一格都不会响**。
+   */
+  let stringStrippedFiles = 0;
+  for (const [f, src] of commentsOnly) {
+    if (bodies.get(f) !== src) stringStrippedFiles += 1;
+  }
+
+  return { files, stringStrippedFiles, desynced, declDrift, ...classify(bodies) };
 }
 
 /**
@@ -267,7 +561,7 @@ function selfTestReexportTier() {
     ['pkg/src/index.ts', "export { useThing, useUsed } from './api';"],
     ['pkg/src/Page.tsx', "import { useUsed } from './index';\nuseUsed();"],
   ]);
-  const r = classify(sample);
+  const r = classify(new Map([...sample].map(([f, s]) => [f, prepare(s)])));
   const problems = [];
   const tier = r.reexportOnly.map((o) => o.name);
   if (!tier.includes('useThing')) {
@@ -285,12 +579,93 @@ function selfTestReexportTier() {
   return problems;
 }
 
+/**
+ * 「剥字符串字面量」这一档的正反向对照。**样本是写死的**，理由同上：
+ * 拿仓库里的真实条目当阳性对照，等哪天有人把它接上了，自检会红在一件好事上。
+ *
+ * 四条断言各自钉住一种**已经想清楚的错法**：
+ *   ① 只在自己的错误信息里提到自己 → 必须判成孤儿（这就是遮住 `verifyCatalogSignature` 的形状）
+ *   ② 只被别人的字符串提到 → 同样不算引用
+ *   ③ 唯一的引用在模板字面量的 `${}` 里 → **不**准判成孤儿（`${}` 里是真代码）
+ *   ④ 引用前面隔着一个含引号的正则字面量 → **不**准判成孤儿（扫描器不能在 `/['"]/` 上失步）
+ *
+ * ③④ 是有意设计成"错了就红"的：把 `${}` 保留那一段删掉，③ 当场红；
+ * 把正则字面量识别删掉，扫描器会从 `/['"]/` 的那个 `'` 一路吞到下一个 `'`，
+ * 正好吞掉 ④ 那一行，于是 ④ 红、②（被吞进代码区）也跟着红。
+ */
+function selfTestStringStripping() {
+  const sample = new Map([
+    [
+      'pkg/src/sig.ts',
+      [
+        "export function verifyThing() { throw new Error('verifyThing: no key configured') }",
+        'export function mentionedOnlyInText() { return 1 }',
+        'export function usedInTemplate() { return 2 }',
+        'export function usedAfterRegex() { return 3 }',
+      ].join('\n'),
+    ],
+    [
+      'pkg/src/consumer.ts',
+      [
+        'const msg = `结果 ${usedInTemplate()} 完成`;',
+        "const quoted = /['\"]/.test(msg);",
+        'const n = usedAfterRegex();',
+        "const doc = 'mentionedOnlyInText 见文档';",
+      ].join('\n'),
+    ],
+  ]);
+  const r = classify(new Map([...sample].map(([f, s]) => [f, prepare(s)])));
+  const orphans = r.orphans.map((o) => o.name);
+  const problems = [];
+  const want = (n, why) => {
+    if (!orphans.includes(n)) problems.push(`阳性对照失败：${n} 没被判成零引用导出 —— ${why}`);
+  };
+  const wantNot = (n, why) => {
+    if (orphans.includes(n)) problems.push(`阴性对照失败：${n} 被误判成零引用导出 —— ${why}`);
+  };
+  want('verifyThing', '它对自己的唯一一次提及在错误信息字符串里，字符串没被剥掉');
+  want('mentionedOnlyInText', '另一个文件只在字符串里提到它，那不是引用');
+  wantNot('usedInTemplate', '它唯一的引用在模板字面量的 `${}` 里，那是**真代码**，不该被剥掉');
+  wantNot('usedAfterRegex', "扫描器在 /['\"]/ 这个正则字面量上失步了，把后面的真引用一起吞掉了");
+  return problems;
+}
+
 /* ────────────────────────────── 自检（先跑） ────────────────────────────── */
 
-const { files, orphans, testOnly, reexportOnly, declCount, reexportStatements, strippedFiles } =
-  scan();
+const {
+  files,
+  orphans,
+  testOnly,
+  reexportOnly,
+  declCount,
+  reexportStatements,
+  strippedFiles,
+  stringStrippedFiles,
+  desynced,
+  declDrift,
+} = scan();
 const selfCheckFailures = [];
 if (files.length === 0) selfCheckFailures.push('文件清单是空的');
+if (stringStrippedFiles === 0) {
+  selfCheckFailures.push(
+    '没有任何一个文件在"剥掉字符串字面量"之后发生变化 —— 这个仓库到处是错误信息和字面量，' +
+      '所以只可能是这一步没有真的接上（`bodies.set(f, …)` 被简化回 `stripComments(…)` 了？）。' +
+      '它失效的样子和"本来就没有字符串"完全一样：门禁照常绿，而 5 条零调用方导出重新隐身。',
+  );
+}
+if (declDrift.length > 0) {
+  selfCheckFailures.push(
+    '剥字符串**改变了导出声明清单** —— 声明不可能长在字符串里，所以扫描器一定在这些文件上失步了：\n' +
+      declDrift.map((d) => `       ${d}`).join('\n') +
+      '\n     （实测过一次：JSX 的 `/>` 被当成正则开头，把 `export function backendLabel` 整个吞了）',
+  );
+}
+if (desynced.length > 0) {
+  selfCheckFailures.push(
+    '扫描器扫到文件尾还停在字符串里 —— 有个引号没配上，那之后的代码全被当字符串抹掉了：\n' +
+      desynced.map((d) => `       ${d}`).join('\n'),
+  );
+}
 if (reexportStatements === 0) {
   selfCheckFailures.push(
     '全仓一条 `export … from …` 都没扫到 —— 这个仓库满是 barrel，' +
@@ -309,6 +684,7 @@ if (reexportOnly.some((o) => o.name === PROBE_EXPORT)) {
   selfCheckFailures.push(`${PROBE_EXPORT} 被报成"只被再导出" —— 它有真实调用方，说明分档瞎了`);
 }
 selfCheckFailures.push(...selfTestReexportTier());
+selfCheckFailures.push(...selfTestStringStripping());
 if (!files.includes(PROBE_FILE)) {
   selfCheckFailures.push(
     `文件清单里没有 ${PROBE_FILE} —— 这正是当年那个残缺 glob 漏掉的那一类（src/ 第一层）`,
