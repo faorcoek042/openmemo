@@ -61,6 +61,21 @@ command -v "${DOCKER}" >/dev/null 2>&1 \
 MOUNTS=()
 MOUNT_ROOTS=()
 
+# ★★ 同路径挂载**绝不许落在容器的系统目录上**（T-163，CI 实测逼出来的）。
+#
+# `[CI 实测 run 31147246480 / linux-x64-cuda]`：那条腿跑了 `free-disk-space`，
+# 它把 `/opt/hostedtoolcache` 整个删掉 → `command -v node` 回落到 `/usr/local/bin/node`
+# → 本脚本于是把宿主的 `/usr/local/bin` 同路径挂进容器，**盖住了容器自己的那一个**。
+# 后果不是"node 找不到"，是**宿主的 cmake 3.31 顶掉了容器里的 cmake 3.22**：
+#
+#   CMake Error: Could not find CMAKE_ROOT !!!
+#   Modules directory not found in /usr/local/share/cmake-3.31
+#
+# —— 那个二进制是给 glibc 2.39 编的、它的 Modules 目录又没挂进来。
+# 也就是说：**一个"为了让 node 能用"的挂载，把整个编译环境换了一半。**
+# 这正是本文件要防的那一族（挂错了不报错，只是换了一个东西），所以它成了一条守卫。
+SYSTEM_DIRS_NEVER_SAME_PATH=(/ /bin /sbin /lib /lib64 /etc /usr /usr/bin /usr/sbin /usr/lib /usr/local /usr/local/bin /usr/local/lib /opt /var)
+
 add_mount() {
   local path="$1" what="$2" required="$3"
   if [[ -z "${path}" ]]; then
@@ -73,6 +88,13 @@ add_mount() {
   fi
   # 规范化，免得 `/a/b/` 与 `/a/b` 被当成两条
   path="$(cd "${path}" && pwd -P)"
+  local sys
+  for sys in "${SYSTEM_DIRS_NEVER_SAME_PATH[@]}"; do
+    [[ "${path}" == "${sys}" ]] && die "${what} 解析到 \`${path}\` —— 那是容器的系统目录，
+  同路径挂上去会把容器自己的那一份**整个盖掉**（CI 上实测过：宿主的 cmake 3.31 顶掉了
+  容器的 3.22，报 'Could not find CMAKE_ROOT'，而报错发生在几百行之后、看起来像别的问题）。
+  要把宿主的某个可执行文件带进去，请挂**那一个文件**到 /opt/buildbox/ 下面，别挂它所在的目录。"
+  done
   for existing in ${MOUNT_ROOTS[@]+"${MOUNT_ROOTS[@]}"}; do
     [[ "${path}" == "${existing}" ]] && return 0
   done
@@ -109,12 +131,20 @@ add_mount "${CCACHE_DIR:-}"        'CCACHE_DIR'        optional
 add_mount "${VULKAN_SDK:-}"        'VULKAN_SDK'        optional
 
 # node：`build-whisper.sh` 用它跑 `emit-pack-manifest.mjs`（脚本里 `command -v node` 拿不到
-# 就 die）。jammy 的 apt 只有 node 12，所以不装，直接把 runner 上 setup-node 装好的那个
-# 挂进去 —— 官方 linux-x64 构建的下限是 GLIBC_2.28，在 2.35 的容器里跑得动。
-NODE_BIN=""
+# 就 die）。jammy 的 apt 只有 node 12，所以不装，直接把宿主上的那个挂进去 ——
+# 官方 linux-x64 构建的下限是 GLIBC_2.28，在 2.35 的容器里跑得动。
+#
+# ★ 挂的是**那一个文件**，落到一个专用目录里，**不是**挂它所在的目录。
+#   宿主上 node 可能在 `/opt/hostedtoolcache/node/…/bin`（setup-node），
+#   也可能在 `/usr/local/bin`（`free-disk-space` 把 tool-cache 删掉之后的回落，
+#   CUDA 那条腿实测就是这样）—— 后者同路径挂上去会盖掉容器的整个 `/usr/local/bin`。
+#   挂单个文件让"node 在宿主的哪里"这件事**不再影响容器里的任何别的东西**。
+NODE_MOUNT_DIR='/opt/buildbox/node'
+NODE_PATH_HOST=""
 if NODE_PATH_HOST="$(command -v node 2>/dev/null)"; then
-  NODE_BIN="$(cd "$(dirname "${NODE_PATH_HOST}")" && pwd -P)"
-  add_mount "${NODE_BIN}" 'node bin 目录' optional
+  # 解引用软链：docker 会按宿主侧解析，但把真实路径写进去更容易在日志里看懂。
+  NODE_PATH_HOST="$(readlink -f "${NODE_PATH_HOST}")"
+  MOUNTS+=(-v "${NODE_PATH_HOST}:${NODE_MOUNT_DIR}/node:ro")
 fi
 
 # 容器里的 $HOME。没有 passwd 条目时 HOME 是空的，而 ccache / cmake 都会去写它。
@@ -139,8 +169,8 @@ done
 # 这里只**追加**，不覆盖 —— 覆盖会把 nvcc 从 PATH 上打掉，而那个失败发生在 configure 阶段。
 # 同理下面用的是 `bash -c` 而**不是** `bash -lc`：登录 shell 会去跑 `/etc/profile` 与
 # `/etc/profile.d/*`，那里面有把 PATH 重写掉的东西，而重写掉 CUDA 那一段是静默的。
-if [[ -n "${NODE_BIN}" ]]; then
-  ENVS+=(-e "BUILDBOX_NODE_BIN=${NODE_BIN}")
+if [[ -n "${NODE_PATH_HOST}" ]]; then
+  ENVS+=(-e "BUILDBOX_NODE_BIN=${NODE_MOUNT_DIR}")
 fi
 
 run_in_box() {

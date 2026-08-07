@@ -142,6 +142,34 @@ echo "② 挂载与环境的组装（正向）"
   done
   if [[ -d "${d}/tmp/buildbox-home" ]]; then ok "容器 \$HOME 落在 RUNNER_TEMP 底下（不写宿主的真 HOME）"
   else bad "没建 buildbox-home"; fi
+
+  # ★ node 只许挂**那一个文件**到 /opt/buildbox/node/ 下，不许挂它所在的目录。
+  #   见 buildbox.sh 里 SYSTEM_DIRS_NEVER_SAME_PATH 的注释：CUDA 那条腿实测过
+  #   `command -v node` 回落到 /usr/local/bin，同路径挂上去把容器的 cmake 换掉了。
+  node_host="$(readlink -f "$(command -v node)")"
+  if [[ "${argv}" == *"-v ${node_host}:/opt/buildbox/node/node:ro"* ]]; then
+    ok "node 是**单文件**挂载（-v <node>:/opt/buildbox/node/node:ro）"
+  else bad "node 不是单文件挂载" "${argv}"; fi
+  node_dir="$(dirname "${node_host}")"
+  if [[ "${argv}" != *"-v ${node_dir}:${node_dir}"* ]]; then
+    ok "没有把 node 所在的目录同路径挂进容器（那会盖住容器自己的同名目录）"
+  else bad "把 ${node_dir} 同路径挂进去了 —— 它会盖掉容器里的同名目录" "${argv}"; fi
+  if [[ "${argv}" == *"-e BUILDBOX_NODE_BIN=/opt/buildbox/node"* ]]; then
+    ok "PATH 前缀指向那个专用目录，而不是宿主的 bin 目录"
+  else bad "BUILDBOX_NODE_BIN 不是 /opt/buildbox/node" "${argv}"; fi
+}
+
+echo "②-bis ★反向：任何同路径挂载都不许落在容器的系统目录上"
+{
+  d="$(new_env_dir 2b)"; make_stub_docker "${d}/bin" noop
+  # 把 CCACHE_DIR 指到 /usr/local/bin —— 就是 CUDA 那条腿实测踩到的那一格。
+  # 它必须在造 docker 命令**之前**就红，而不是等到几百行之后报 "Could not find CMAKE_ROOT"。
+  out="$("${SCRUB[@]}" BUILDBOX_IMAGE=x ARGV_LOG="${d}/argv.log" PATH="${d}/bin:${PATH}" \
+        GITHUB_WORKSPACE="${d}/ws" RUNNER_TEMP="${d}/tmp" CCACHE_DIR=/usr/local/bin \
+        bash "${BUILDBOX}" true 2>&1)" && rc=0 || rc=$?
+  if [[ ${rc} -ne 0 && "${out}" == *"容器的系统目录"* ]]; then
+    ok "★反向：挂载根落在 /usr/local/bin → 当场红（CI 实测过的那一格）"
+  else bad "系统目录同路径挂载必须红" "rc=${rc} out=${out}"; fi
 }
 
 echo "③ ★反向：少挂一个目录必须当场红，而不是让某一步对着空气工作"
