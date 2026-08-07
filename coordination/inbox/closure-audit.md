@@ -863,3 +863,194 @@ Metal 库结构判据、自己的预算这三件事只有这样才被真的走�
 1. **断路器语义**：`recordProbeOutcome()` 在**指纹变化**时该不该把 `consecutiveFailures` 归零
    （现在是"只给一次重试"，那一次失败就永久关上）。这是 ADR-003 的地界，且能独立于捂热落地。
 2. **捂热预算 90 s** 是按"最大观测样本 ×4"取的，真机数 UNKNOWN。拿到真机数后应当复核。
+
+---
+
+## [2026-08-08] T-173 DONE —— 断路器加冷却期/半开：拉黑不再是永久的
+
+> **产出者**：`closure-audit`（本轮）　**起点 HEAD**：`bc42ffc`　**落地**：`353ca09`
+> **未碰**：`:10000`、`/root/data-memo`、`~/.local/share/openmemo/datadir.json`（跑完复核仍指 `/root/data-memo`）。
+> **未用** `pkill -f`；**未建/改/删**任何 release；**未跑** `pnpm -r build`。
+> 反向验证全部在 `/tmp` 隔离副本上做（PROTOCOL §10），先跑对照组。
+> ⚠️ 树上同时有另外两位在干活（预编译包 / 版本号 / 前端导图与搜索跳转）。**逐文件核对过**，见 §⑦。
+
+---
+
+### ① 冷却期定了多久、依据是什么
+
+**三个参数，两个下界一个上界，全部是被别的数字夹出来的，不是拍的。**
+
+| 参数 | 取值 | 依据 |
+|---|---|---|
+| `BREAKER_COOLDOWN_MS` | **60 s** | **下界**由 Manager 的底线 1 夹出来（不许做成"每次自检都重试"）：诊断页自检查询的 `staleTime` 是 **30 s**（`DiagnosticsPage.tsx`），用户手动刷新还能更密。60 s ⇒ **无论怎么刷，一分钟内最多放一发**，且那一发在后台。**上界**由"残留情形要在用户察觉之前自愈"夹出来。 |
+| `BREAKER_COOLDOWN_MAX_MS` | **1 h**（60s→2m→4m→8m→16m→32m→1h 封顶） | 一发恢复探测的代价是**一个后台子进程**，不是用户的等待（见 ③）。封在 1 h ⇒ 驱动真挂死的机器每天最多白跑 ~24 发；而**用户修好驱动后一小时内产品自己会发现**，不需要他知道有个断路器存在、更不需要去找重试按钮。 |
+| `PROBE_RECOVERY_TIMEOUT_MS` | **90 s** | ★ **这个数是本次最容易被"顺手统一"掉、而一统一就前功尽弃的一个。** 见 ②。 |
+
+**指数退避：要。** 理由是两类失败的成本不对称 —— 缓存变冷是**会自己好的**（第一发就该早点放，所以基数只有 60 s），
+驱动挂死是**不会自己好的**（那就该越退越远）。同一个参数同时服务两类，只能靠退避区分。
+
+**半开并发：单飞**（每个 `backendDir` 至多一发在跑）。冷却到期那一刻所有并发请求都会看到 `recover`，
+不去重的话十几个请求会同时 spawn 十几个探针**去抢同一块 GPU 初始化** —— 那正是断路器本该防的"猛敲一个坏掉的东西"。
+
+### ② ★ 恢复探测**不能**沿用 10 s —— 否则这次修复等于没做
+
+`[实测 T-172]` 冷 Mac 上 Metal 首次初始化 **12–21 s**（n=4：12306 / 16092 / 17606 / 20959 ms），
+而**被 kill 的探针什么都不留**（shader 缓存全有全无，T-172 已证伪"部分落盘"）。
+
+⇒ 用 `PROBE_TIMEOUT_MS`（10 s）做恢复探测，**每一发都必然超时**：
+冷却期照转、用户照样没有 GPU，只是从「永久拉黑」变成「**永久重试**」—— 换了个死法而已。
+
+所以恢复探测用 90 s（≈ 最大观测样本 ×4，与 `warmup.ts` 的捂热预算同源同理由），
+**且必须跑在后台**：就地探等于让用户的 HTTP 请求最长挂 90 s，比原来的病还重。
+当次请求立刻返回「仍停用 + 正在重试」，恢复跑完自己改 state，下一次请求就看见好了。
+
+### ③ ★ 「缓存后来才变冷」那个残留情形，现在真的能自愈了吗 —— **能，有测试证据**
+
+`[实测]` `apps/daemon/src/runtime/breakerRecovery.test.ts`。
+**真 `detectRuntimeHardware()` + 真 `runProbe()` 子进程 + 真断路器 + 真指纹计算 + 真调度**，
+在**指纹一个字节都没变**的前提下（`setMode()` 只改 mode 文件，不碰 probe 二进制、不增删任何库）：
+
+```
+① 起点：机器是好的            probe ran=true ok=true  open=false
+② 缓存变冷（无任何装包动作）   两发失败 → open=true，metal 等被停用
+   指纹 === 起点那个指纹        ← T-172 那条「指纹变化给一次重试」的出口在这里根本不存在
+   下一发 probe.ran = false     ← 探针确实不再被调用
+③ 冷却期内连打 3 次            spawn 计数**一次都没涨**（不是"每次都重试"）
+④ 冷却到期                     当次请求 **耗时 < 5 s** 返回，recovering=true，仍报停用
+⑤ 后台那一发                   **实测跑了 12 秒**（> PROBE_TIMEOUT_MS）
+⑥ 直接读 state                 blacklistedAt=null  consecutiveFailures=0  retryAt=null  ← **彻底复位**
+⑦ 产品层面                     open=false  blacklistedBackends=[]  probe.ran=true
+```
+
+**全程用户零操作。**
+
+**它不是空断言 —— 对照组证明了这一点**：把恢复预算改回 `PROBE_TIMEOUT_MS`（变异 M8），
+同一条测试在 **10067 ms** 处失败并打出 `★ 残留情形没有自愈`（原来是 12070 ms 通过）。
+也就是说：**这条残留情形之所以能自愈，恰恰是因为恢复探测拿到了比交互预算更长的预算。**
+
+另有两条同文件用例：
+- **对照组**：恢复探测也失败 → 不许报好，且 `retryAt` 必须被推后（退避），不是原地卡死也不是永久关上；
+- **单飞**：冷却到期后并发打 5 发，spawn 计数只许 +1。
+
+`[未验证]` **真 macOS 上「缓存变冷 → 自愈」的端到端没跑过**（要一台会真的冷两次的 Mac）。
+上面这条跑在 Linux + shell 假探针上，**但断路器/超时/指纹/调度全是产品代码真跑的**。
+`[UNKNOWN]` 真机 M1/M2/M3 的冷启动耗时仍取不到（runner GPU 全是 `Apple Paravirtual device`）。
+
+### ④ 用户到底会看到什么（真实文案，实跑 `runSelfCheck` 打出来的）
+
+自检新增 `hw.breaker`（layer `hardware`，`status: warn`、`required: false` —— CPU 兜底还在，
+产品能用，不该让 CLI `EXIT=1`）。**daemon 与 CLI 两个出口都接上**，`meta.sameSource` 不会漂移。
+
+```
+──── 跳闸冷却中  [status=warn]
+  ZH  已暂时停用：cuda、vulkan、rocm、metal、coreml（连续 2 次探测失败：probe timed out
+      after 10000ms (killed). This usually means a GPU driver hung during device discovery.）。
+      将在约 58 秒后自动重试。
+  EN  Temporarily disabled: cuda, vulkan, rocm, metal, coreml (2 consecutive probe failures:
+      probe timed out after 10000ms (killed). …). Automatic retry in about 58s.
+  ZH→ 不需要手动操作 —— 到点会自动重试，成功即自动恢复。想立刻重试：GET /api/runtime/hardware?reset=1
+  EN→ No action needed — it retries automatically and recovers on its own. To retry right now: …
+
+──── 正在重试  [status=warn]
+  ZH  …。正在重试 —— 一发后台恢复探测已经在跑，成功即自动恢复。
+  EN  …. Retrying now — a recovery probe is already running in the background; …
+
+──── 退避后（第 7 次失败）  [status=warn]
+  ZH  …（连续 7 次探测失败：probe crashed (SIGABRT). …）。将在约 32 分钟后自动重试。
+  EN  …. Automatic retry in about 32 min.
+
+──── 正常  [status=ok]
+  ZH  未跳闸 —— 加速后端正常参与选择
+  EN  closed — accelerator backends are eligible
+```
+
+**中文句子里那段英文是探针自己的原文**（`lastError`），与路径/版本号同性质，刻意不翻译 —— 翻译它就等于前端自己编。
+
+**为什么此前一个字都看不到**：`runtime.breaker` 确实随 `/api/runtime/hardware` 发出去，
+但前端把响应断言成窄契约 `GetHardwareResponse`（`apps/web/src/lib/api/hardware.ts:27`），
+**那个字段在类型边界上就被丢掉了** —— 全仓前端对 `breaker` / `blacklistedBackends` /
+`degradationChain` 的引用数是 **0**，`?reset=1` 也**零调用方**。所以这次走的是自检这条真有人看的路。
+
+**`CheckResult` 增了可选的 `detailEn` / `remediationEn`**（历史那 24 条的 `detail` 一直是中文原文，
+改成 `detail`/`detailZh` 要重写全部字面量，而 locale/自检两块同时有别人在动）。
+前端回退方向是 `pickCheckText()`：**没有英文版就显示中文原文，绝不回退到空** ——
+回退成空会让一条真实告警在英文界面上**消失**，而中文界面上永远看不出来。
+
+### ⑤ 明确**没有**动的东西
+
+- **`PROBE_TIMEOUT_MS` 一个字未改**，仍是 ADR-003 决策 3 的 `10_000`；测试直接断言其值。
+- **`CIRCUIT_BREAKER_THRESHOLD` 一个字未改**，仍是 `2`；测试直接断言其值。
+- 顺带修的一条（不是新功能，是把观测变成纯的）：`GET /api/runtime/breaker` 以前会
+  `await detect(false)` —— 缓存空时**查一眼断路器就真跑一发探测**（冷机器上 10 s，失败还给计数 +1）。
+  一个看一眼就改变被观测对象的排障入口，测出来的永远是它自己造成的状态；
+  而 CLI 自检要问它，观测带副作用会让 `required` 的 `meta.sameSource` 开始随机变红。
+- 删了 `isBlacklisted`（被 `breakerVerdict` 三态取代，唯一调用方已改），
+  连同 barrel 的再导出一起删 —— 不留一个零引用导出进棘轮。
+
+### ⑥ ADR-003 就地订正
+
+Manager 本轮**明确授权就地改**。决策 3 那行用**删除线保留原文** + ⛔ 指向文末新增 **§8**；
+§8 开头写清「**何时**：2026-08-08 · **被谁**：`closure-audit`(agent) · **依据什么**：Manager 在 T-173
+任务书里的授权原文」，格式照 §7.6 先例。**§1–§7 与附录 A 除决策 3 那一行外一个字未改。**
+
+### ⑦ 门禁（**绑在最终提交 `353ca09` 的那棵树上**）
+
+⚠️ 工作树里同时有另外两位的在途改动，所以门禁**另开 worktree 检出 `353ca09` 本身**
+（`pnpm install --frozen-lockfile` 后全套重跑）。
+
+| 门禁 | 结果（在 `353ca09` 的 worktree 上） |
+|---|---|
+| `pnpm -r test` | **1433 pass / 0 fail** |
+| `npx tsc -b` | ✅ |
+| `npx eslint .` | ✅ exit 0 |
+| `pnpm build:safe` | ✅（**未跑** `pnpm -r build`，未碰 `apps/web/dist`） |
+| `pnpm lint-workflows` | ✅ **627** 条 / 7 个 workflow |
+| `pnpm test:ci-scripts` | ✅ 22 passed |
+| `pnpm check:orphans` | ✅ **没有新的零引用导出，基线也没有过期条目**（`orphan-exports-baseline.json` 一个字未动） |
+
+**本轮新增 28 条测试**：`breaker.test.ts` 14 · `selfcheck.test.ts` +6 · `breakerRecovery.test.ts` 3 ·
+`checkText.test.ts` 5。基线 1370 → 1433 的其余部分是期间另外两位落的提交（`b318ad4`、`252e8b7`），不是我的。
+
+**反向验证 10/10 全红**（`/tmp` 隔离副本，先跑对照组、锚点唯一性校验、跑完立即还原）：
+
+| 变异 | 坏了用户会怎样 | 结果 |
+|---|---|---|
+| M1 `PROBE_RECOVERY_TIMEOUT_MS` → 10 s | 冷 Mac 上每发恢复都超时，从"永久拉黑"变"永久重试" | 🔴 |
+| M2 拿掉 `recover` 裁决 | 原地回到死锁 | 🔴 |
+| M3 跳闸不写 `retryAt` | 不变式没了，"必然有出路"变空话 | 🔴 |
+| M4 冷却期缩到 1 s | 等于把断路器删掉（Manager 的底线 1） | 🔴 |
+| M5 `retryAt` 读不出来时**不放行** | 一个坏时间戳 = 再造一个零报错死角 | 🔴 |
+| M6 自检里的 `hw.breaker` 不发 | 又变回零报错的静默降级 | 🔴 |
+| M7 丢掉英文 `detailEn` | 英文用户拿到中文/空白 | 🔴 |
+| M8 daemon 用交互预算做恢复 | ★ 残留情形永远自愈不了（10067ms 处红） | 🔴 |
+| M9 拿掉单飞 | 并发各起一发探针抢 GPU 初始化 | 🔴 |
+| M10 `recover` 时不起恢复 | "写好了没人调" | 🔴 |
+
+### ⑧ 暂存纪律（树上有别人）
+
+提交前 HEAD 已被另外两位推进到 `252e8b7`，且**共享索引里当时还有别人 stage 的东西**。
+所以本轮**没有用共享索引**：用 `GIT_INDEX_FILE` 建了一个临时索引（`git read-tree HEAD` 起底），
+只 `git add` 我自己的 15 个文件；`apps/web/tsconfig.test.json` 由 `HEAD` 版本 + 我那 2 行
+重新造 blob 后 `update-index --cacheinfo` 写进去 —— **别人的索引与工作树一个字节没动**。
+提交后把这 16 条路径 `git reset HEAD --` 回去，避免共享索引里留下"我的新文件 = 已删除"的假条目
+（那会让下一位一提交就把它们删掉）。`git diff --cached --name-only` 逐个核过：16 个全是我的，
+**没有** mindmap/player/notes、**没有** locale、**没有** 版本号那批 `package.json`、**没有** `scripts/ci/*`。
+
+### 本轮"没验就说没验"
+
+- **真 Mac 上的端到端自愈** → **未验**（需要一台会真的冷两次的 Mac）。
+- **真机 M 系列冷启动耗时** → **UNKNOWN**，取不到；90 s 这个余量正是因为它取不到。
+- **`hw.breaker` 那两句话在真浏览器里的样子** → **未验**（只有 `runSelfCheck` 实跑输出 + 纯函数测试；
+  组件测试文件 `components.test.tsx` 当时有别人在改，没去动它）。
+- **`GET /api/runtime/breaker` 改成纯观测之后的 HTTP 层** → 无端到端路由测试，
+  只有类型与调用点核对。`[未验证]`
+- **退避到 1 h 之后的长时间行为** → 只在纯状态机里跑了 200 轮，**没有真的等过一小时**。
+
+### 需要 Manager 决策
+
+1. **前端窄契约丢掉 `runtime` 诊断字段**（`apps/web/src/lib/api/hardware.ts:27` 把响应断言成
+   `GetHardwareResponse`）—— 断路器/降级链在**运行时页**仍然完全不可见，本轮只补了诊断页那条。
+   要不要把它接到 `HardwareCard` 上（含一个真的「立刻重试」按钮，今天 `?reset=1` **零调用方**）。
+2. **`CheckResult` 的中英字段是歪的**：`detail`/`remediation` 是中文，`label`/`labelZh` 是英/中。
+   本轮只加了可选的 `detailEn`/`remediationEn`。要不要专开一轮把 25 条统一
+   （顺带修 `tool.ffmpeg` 等 5 条 `label: labelZh` —— 英文用户现在看到的是中文标签）。
