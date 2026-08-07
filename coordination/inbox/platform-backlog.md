@@ -793,3 +793,193 @@ bdbae5f  docs(D-11): §9.8 换包前后三平台冷启动对比
 | 上游两个包各有几条 `ggml-cpu-*` 变体 | ⚠️ `UNKNOWN`，没下下来数 | 我 |
 | `whispercpp-cpu-win-x64` 的 `ggmlAbi` | ⚠️ **推断值**（`ggml.dll` 文件名无版本号，结构上取不到） | 我 |
 | `00-CHARTER.md` §3 补丁 | ⏳ 全文已发你，**我没改那个文件** | 你 |
+
+---
+
+## [2026-08-07 17:08] `asr.coreml` 有答案了 —— 是 **fail**，不是 warn，更不是 ok
+
+交付：`.github/workflows/cold-start-audit.yml` · `scripts/ci/cold-start-audit.mjs` ·
+`packages/runtime/src/selfcheck.ts`（commit `9ca6c01`）
+证据：`cold-start-audit` run **31163897527**（`9ca6c01`，`includeOptional=coreml-encoder`）
+
+# ★★ 结论一：`asr.coreml` = **`fail`**
+
+`last-mile.md` 那条「macOS 上 `asr.coreml` 真的从 warn 变 ok」——**这个说法是错的**。
+真装上之后它不是 ok，也不是停在 warn，而是掉到 **`fail`**：
+
+```
+★★ asr.coreml = fail（required=false）
+   CoreML encoder 目录结构不对，whisper 会**静默回退**到 Metal/CPU：
+   ggml-large-v3-turbo-encoder.mlmodelc（里面是 __MACOSX,
+   ggml-large-v3-turbo-encoder.mlmodelc，不是编译好的 mlmodelc）
+```
+
+解包之后 `by-name/asr/` 的实况（日志原样）：
+
+```
+ggml-large-v3-turbo-encoder.mlmodelc          ← 外层空壳
+ggml-large-v3-turbo-encoder.mlmodelc.zip      ← 原始 zip 也留下了
+ggml-large-v3-turbo-q5_0.bin
+ggml-tiny-q5_1.bin
+```
+
+外层 `.mlmodelc/` 里面只有 `__MACOSX` 和**一个同名的内层目录**，
+`coremldata.bin` 在内层 —— 正是 `selfcheck.ts:276-278` 早就预言过的那个空壳形态
+（`stripExt` + zip 自带顶层目录），**今天第一次真的被撞到**。
+
+**用户可见的后果**：装了「可选的 CoreML encoder」之后，whisper.cpp 因为
+`-DWHISPER_COREML_ALLOW_FALLBACK=ON` 会**静默回退**到 Metal/CPU，
+而那行 ERROR 被 `--no-prints` 关掉了 —— 用户付了 1.17 GB 的下载和一次安装，
+得到的是「以为在用神经引擎、实际没有，且没有任何地方会告诉他」。
+**这正是 `asr.coreml` 这条自检当初被写出来要防的形状。它防住了。**
+
+> ⚠️ 我**没有去修** `installer.ts` 的解包。那是 downloader 的地盘，
+> 而且这类修法要连着反向验证一起做（拆掉修复要能真的变回 fail）。
+> 这里只交出定性 + 现场，修法归属请裁决。
+
+## `[未验证]` 一并说清楚
+
+- **只在 `whisper-large-v3-turbo-q5_0` 上撞到**。清单里带 encoder 的另外 4 个
+  （`large-v3-q5_0` / `large-v3-f16` / `turbo-q8_0` / `turbo-f16`）**没测**，
+  但它们用的是同一套 zip 打包与同一条解包路径，`UNKNOWN` 偏向"同样坏"。
+- **没有验证"修好之后会不会变 ok"** —— 我没修，所以这条仍然开着。
+
+# ★★ 结论二：探针超时定性到了 —— **既不是"挂"，也不是"一直慢"，是"第一次冷启动那一发慢"**
+
+上一封列的三条候选，现在能分开了。**关键是 stderr 终于收上来了**：
+
+```
+① 自检那一发（冷，超时）— stderr 停在这里：
+   load_backend: loaded BLAS backend from .../libggml-blas.so
+   ggml_metal_device_init: tensor API disabled for pre-M5 and pre-A19 devices
+   ggml_metal_library_init: using embedded metal library      ← 停在 Metal 库初始化
+
+② 40 毫秒后，同一个探针、同一个目录，深挖那一发：
+   ok=true  耗时=47ms
+   ggml_metal_library_init: loaded in 0.012 sec
+   ggml_metal_device_init: GPU name: MTL0 (Apple Paravirtual device)
+   → deviceCount=3（BLAS / MTL / CPU），ggml 0.15.1
+```
+
+**判决：**
+
+| 候选 | 判决 | 依据 |
+|---|---|---|
+| ①「10 秒太短」 | **部分成立，但只对"冷"那一发** | 热的时候 47ms / 85ms —— 不是普遍慢 |
+| ②「Metal 在虚拟化 macOS 上会挂」 | **位置对，"挂"错了** | 确实停在 Metal 初始化，GPU 是 `Apple Paravirtual device`；但它**会做完**，不是挂死 |
+| ③「真有 bug」 | **没有任何证据** | 热跑一次就正常枚举出 3 个设备 |
+
+**三条独立证据互相印证"冷/热"这个解释：**
+
+1. `meta.sameSource` = `fail` — `hw.probe: 本地=warn 端点=ok`。
+   同一台机器上相隔几秒的两发探针，**冷的超时、热的 ok**。
+2. **对照组那一遍**（`--no-mask`，全新数据目录、全新 store）第一发就是
+   `hw.probe = ok  3 个设备` —— 因为 Metal 的缓存是**机器级**的，已经被前一遍焐热了。
+3. linux 13ms · win32 39ms · darwin 热 47–85ms —— 只有 darwin 的**第一发**是 >10s。
+
+> 顺带**推翻**上一封的一句话：「两次自检两次超时」不能读成"macOS 上探针总是超时"。
+> 正确的读法是「**一台冷机器上的第一发**会超时」。这两句话的处置完全不同。
+
+- **`PROBE_TIMEOUT_MS` 我一个字没动**，仍是 ADR-003 定死的 10 秒。
+  深挖那一节调的是 `runProbe()` 的 `timeoutMs` **入参**（它本来就接受），
+  且只发生在审计脚本里。**刻意调产品自己那个函数**而不是另写一个 spawn ——
+  自己写就等于换了环境变量、换了参数、换了解析，测的就不是同一件事。
+
+## ⚠️ 还缺什么才能把它彻底钉死（`UNKNOWN`，说清为什么取不到）
+
+**我不知道"冷"那一发到底要多久。** 10s？12s？60s？——**取不到**，
+因为产品在 10 秒就把它 kill 了，而等我的深挖跑起来，缓存已经被那一发焐热了。
+我测到的是「>10s 冷」与「≈50ms 热」两个点，**中间那个真实数字没有**。
+
+要取到它，需要**在任何别的探针之前**、在一台冷 runner 上先跑一发长超时的。
+也就是把深挖挪到第 5 节 selfcheck **之前**。这是一个具体、便宜的下一步，我没做 ——
+因为那会改变第 5 节看到的状态（把缓存焐热），从而**破坏这一轮要复现的那个现象本身**。
+两者只能二选一，我选了先如实复现现象。
+
+**没有这个数字，就不该去调 `PROBE_TIMEOUT_MS`** —— 这也是上一位那条判断继续成立的理由。
+
+# 这一轮为什么是红的（不是 coreml 的锅）
+
+darwin-arm64 那一格红在 **`meta.sameSource fail (required=true)`**，
+就是上面第 1 条证据：冷/热两发探针结论不一致。
+`asr.coreml` 是 `required=false`，**没有参与红绿**。
+
+- 转写照常成功：**92.8s，1 段，108 字符**（对照组 86.7s）。换包没弄坏任何东西。
+- 也就是说：这个红是**探针冷启动抖动**的直接产物，属于新暴露出来的真问题，
+  不是我的改动引入的回归。
+
+> 🟡 **一条我没做、但建议做的**：`asr.coreml == 'fail'` 目前不会让审计变红
+> （因为 `required=false`）。但 selfcheck 自己的三档定义里 `fail` = **结构坏了**，
+> 与 `warn` = "没装 ANE，功能正常" 是两回事。
+> 我**没有**动这个门禁语义 —— 那会让本轮多一个红、且超出本任务范围。请裁决。
+
+# 改了什么（三个文件）
+
+1. **`cold-start-audit.yml`**：加 `workflow_dispatch.inputs.includeOptional`，
+   默认 `coreml-encoder`，经 `env:` 传给脚本（**不拼进 `run:`** —— 既避开 `${{ }}` 注入，
+   也避开 pwsh/bash 差异，T-145 已经被 pwsh 咬过一次）。**只挂屏蔽组那一遍**，
+   对照组挂上去就是花双倍带宽买同一个答案。
+2. **`cold-start-audit.mjs`**：透传 `includeOptional`；新增第 8 节**另挑载体模型**
+   （只透传参数仍是空操作：本脚本挑"最小的 ASR"= tiny，而 tiny 根本没有 encoder，
+   那样拿到的 warn 会**看起来像产品的答案、其实是我挑错了模型**）；
+   新增 6b 探针深挖；`hw.probe` / `asr.coreml` 的 detail 不再被截到 100 字符。
+3. **`selfcheck.ts`**：`hw.probe` 失败时带上**耗时 + stderr 尾部**。
+   `runProbe()` 一直在收 stderr（超时路径也收），是这一层丢掉了 ——
+   丢在了唯一会被人看到的地方。**stderr 为空也明写**，那本身就是结论。
+
+**第 8 节刻意排在转写之后**：载体模型 1.67 GB，若在 3b 节就装上，
+第 7 节的转写**可能**改用它（权重选取顺序是「env > active.json > 任意已装记录」，
+而 `active.json` 是"先装的赢"）。macOS 上 tiny 转 11 秒音频已经要 92.8s，
+换成 turbo 大概率把一个本来会绿的可行性证明拖成红。
+判据照老规矩：不是"记得别装早了"，是**结构上不可能装早**。
+
+## 三平台都按设计走了（这条是给"平台过滤对不对"作证的）
+
+linux-x64 / win32-x64 两格都打印：
+
+```
+ⓘ 本平台（linux/x64）没有任何模型提供这些 role。
+   清单里有 5 个模型提供它，但都限定了别的平台 —— 这是预期的：
+   asr/whisper-large-v3-turbo-q5_0  coreml-encoder → [{"os":"darwin","arch":"arm64"}]
+   …
+→ 本平台跳过，不下载。
+```
+
+**一个字节都没多下。** 这个客户端侧过滤是必要的：`[实测核过]`
+`/api/models/catalog` **不做任何服务端平台过滤**（`state.ts:501` 是整个 `{...m}` 展开），
+所以 Linux 上照样看得见那个 darwin-only 的文件条目 —— 不滤就会白下 574 MB。
+
+# 门禁
+
+`pnpm -r test` **1280 / 0** · `npx tsc -b` 0 · `npx eslint` 0 ·
+`node scripts/ci/lint-workflows.mjs` **557 条断言全过** · `pnpm test:ci-scripts` **22 / 0**
+
+> ⚠️ **`pnpm lint-workflows` 这个命令不存在**（根 `package.json` 里没有这个 script，
+> 9 个 workspace 里也没有）。真正的入口是 `node scripts/ci/lint-workflows.mjs`，
+> 它挂在 `pnpm test:ci-scripts` 的第一环。我跑的是后者。
+> 建议要么加一条 `"lint-workflows"` 的 alias，要么把交接文档里的名字改过来 ——
+> 现在这个名字，**照着敲的人会得到一个 "command not found" 然后以为是自己环境坏了**。
+
+# 纪律
+
+- `:10000` 零请求 · `/root/data-memo` 未碰 · 机器级指针 `~/.local/share/openmemo/datadir.json`
+  未碰（审计脚本一直用 `OPENMEMO_POINTER_FILE` 重定向，日志里有回显）·
+  `apps/web/dist` 未构建（只跑 `pnpm build:safe`）· 无 `pkill` · **没有建/改/删任何 release**。
+- **dispatch 前查过**：`gh run list --workflow=cold-start-audit.yml` 无 in-progress，
+  全局也只有一个 `ci`（我这次 push 触发的，不同 workflow）。**本轮只 dispatch 了 1 次。**
+- ⚠️ **提交时工作树里有另一名 agent 正在进行的改动**（`BackendStatus` 加 `probed` 字段，
+  7 个文件 + 新增 `packages/runtime/src/probe/probedBackends.ts`，16:47 还在写）。
+  中途 `tsc -b` 曾红在 `applicability.test.ts`（`probed` 缺构造点）——
+  **那是 PROTOCOL §10 推论说的那种"必填字段改动的必然红"，不是我的**，
+  几分钟后它自己补齐就绿了。我**逐个 `git add`**，`git diff --cached --name-only`
+  核过只有我那 3 个文件，**没有碰它任何一行**。
+
+# 还开着的
+
+| 项 | 状态 | 归属 |
+|---|---|---|
+| CoreML encoder 解包多一层同名目录 → `asr.coreml=fail` | 🔴 **实锤未修**，用户可见（静默回退到 Metal/CPU） | downloader / 待裁决 |
+| 另外 4 个带 encoder 的模型是否同样坏 | ⚠️ `UNKNOWN`，没测，倾向同样坏（同一条解包路径） | 待定 |
+| macOS 冷启动那一发探针**真实耗时** | ⚠️ `UNKNOWN` —— 被 10s kill 了，之后缓存已热。要把深挖挪到 selfcheck 之前才取得到 | 我 |
+| `asr.coreml == fail` 该不该让审计变红 | 🟡 **没改**，超出本任务范围 | 你裁决 |
+| `pnpm lint-workflows` 这个名字不存在 | 🟡 建议加 alias 或改文档 | 你裁决 |
