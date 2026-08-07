@@ -573,3 +573,155 @@ d32d2c5  docs: T-167 ③ —— §3 里平台/CI 各条的处置
 2. Linux / Windows 的核心包换不换成我们自己的构建（§4.3）—— 探针到那两个平台的唯一通路。
 3. Windows CUDA 那条：先修 §3.2 的 `backendDir` 单值缺口，还是换我们自建的 138 MB 窄包。
 4. `00-CHARTER.md` §3 的补丁（§5，全文已写好）。
+
+---
+
+## [2026-08-07 17:40] T-167 ② 换目录 DONE —— release 已落地，三条裁决全部执行
+
+# TL;DR
+
+| 裁决 | 状态 |
+|---|---|
+| ① Linux / Windows 核心包换成自建 + ADR-015 补例外 | ✅ **做完**，提交 `ec29792`。判据本机走产品真实路径验到了 |
+| ② Windows CUDA 先不动，状态记进 D-11 | ✅ **记了**（D-11 §9.7），原话是「可能已经好了，但验不了」 |
+| ③ `00-CHARTER.md` §3 补丁 | ✅ **全文已发给你**（本文件 §5 的更新版），我没有改那个文件 |
+
+门禁：`pnpm -r test` **1270 / 0** · `tsc -b` 0 · `eslint` 0 · `test:ci-scripts` 全绿。
+
+# §11 release 复核：**我自己重下复算的，没抄转达值**
+
+```
+$ env -u GITHUB_TOKEN -u GH_TOKEN -u GH_ENTERPRISE_TOKEN curl -sSL <4 个资产>
+$ sha256sum -c expected.txt        # expected.txt 是我上一封那张表
+whispercpp-cpu-linux-x64.tar.gz:    OK      6,752,275 B
+whispercpp-vulkan-linux-x64.tar.gz: OK     29,499,386 B
+whispercpp-cpu-macos-arm64.tar.gz:  OK      2,015,162 B
+whispercpp-cpu-win-x64.zip:         OK      3,951,207 B
+exit=0
+```
+
+# §12 ★ 判据本身：**走产品真实路径，第一次真的成立**（Linux x64）
+
+真的东西：真 manifest 条目（改完的 `backends.json`，一个字没再动）、真 `install()`
+（分片下载 → 校验 sha256 → 解包 → 硬链）、真 release URL（不带任何凭证）、
+真 `resolveRuntimeLayout()`、真 `runProbe()` 子进程。
+假的东西：**没有**。数据目录是 `mkdtemp`，**不启 daemon、不写指针**（PROTOCOL §9-bis）。
+
+```
+url  .../releases/download/backend-packs-2026.08.07b/whispercpp-cpu-linux-x64.tar.gz
+install() → 1 个文件，4.6s
+resolveRuntimeLayout()  probeExists = true
+                        probePath   = <models>/by-name/backend/whispercpp-cpu-linux-x64/openmemo-probe
+                        backendDir  = <models>/by-name/backend/whispercpp-cpu-linux-x64
+runProbe()              ok = true   ggml 0.15.1 / f049fff9   deviceCount = 1
+                          - CPU / CPU / type=cpu / software=false
+自检 hw.probe           status=ok  detail='1 个设备, ggml 0.15.1'
+                        ← 换目录之前这一行是 warn「openmemo-probe 未安装（后端能力未知）」
+findInBackendPacks(whisper-cli) = <models>/by-name/backend/whispercpp-cpu-linux-x64/whisper-cli
+                        ← 换了包不能把引擎弄丢，这条是专门验它的
+```
+
+⚠️ **只在 Linux x64 上。** Windows / macOS 同一条链 `[未验证]` ——
+已触发 `cold-start-audit` run **31160171438**，判据仍是
+「屏蔽宿主 PATH 的干净机器上真的转出非空文本」。**拿到之前我不声称那两格成立。**
+
+# §13 改了什么（逐条）
+
+`backends.json` / `components.json` **各 4 条**，其余 8 / 21 条一个字节没动
+（用 `git show HEAD:` 逐个 JSON 反序列化比对确认，不是看 diff 行数）。
+
+| id | 之前 | 现在 |
+|---|---|---|
+| `whispercpp-cpu-linux-x64` | 上游 `whisper-bin-ubuntu-x64.tar.gz` 9,379,235 B | 自建 6,752,275 B |
+| `whispercpp-cpu-win-x64` | 上游 `whisper-bin-x64.zip` 7,982,101 B | 自建 3,951,207 B |
+| `whispercpp-cpu-macos-arm64` | 自建（`backend-packs-2026.08.06`） | 新 tag，2,015,162 B |
+| `whispercpp-vulkan-linux-x64` | 自建（`backend-packs-2026.08.07`） | 新 tag，29,499,386 B |
+
+`providesFiles` 不是抄 CI fragment 的：我把四个归档**解开逐条列出来**与 fragment 比对过，
+差异恰好只有 8 个 soname 软链（按既有约定不进 providesFiles），其余逐字相同。
+
+# §14 ADR-015 §7：例外**写下来了**，守卫**没绕过也没改**
+
+`docs/adr/ADR-015-upstream-first.md` 追加 §7（§0–§6 一字未改），四小节：
+7.1 哪四个 id · 7.2 依据（探针为什么只能由我们放进包里，三条实测事实）·
+7.3 **代价与未知逐条列出** · 7.4 守卫怎么办。
+
+7.3 里点名写着你要的那两个数字与它们的成因/未知：
+
+- `9,379,235 → 6,752,275`（小 2.6 MB）：可见成因是我们跑了 `strip --strip-unneeded`；
+  **`UNKNOWN`：上游包里 `ggml-cpu-*` 变体有几条我没下下来数过**（我们 14 条）。
+- `7,982,101 → 3,951,207`（小 4 MB）：我们 **10 条** `ggml-cpu-*.dll`；
+  **`UNKNOWN`：上游那个有几条我没数过**。ggml 按 CPU 特性挑变体，少一条只会退到更保守的那条。
+
+另外四条未知也在：`ggmlAbi` 在 Windows 上**结构性取不到**（`ggml.dll` 文件名没有版本号，
+我填的 `0.15.1` 是**推断值**，来自同一 commit 同一轮构建的兄弟包）；端到端未重跑；
+VC++ 那一格**换包既没改善也没恶化**；升级检查的语义变成「有更新 = 该重建了」。
+同一份内容重复在两条 `sha256Provenance` 里 —— 那才是用户在「组件与来源」页看得到的地方。
+
+## 守卫
+
+`merge-backend-manifest.mjs` 那条 ADR-015 规则按**「现有条目有没有真 URL」**判定，
+**不按 URL 属于谁**。所以这次替换**不触发也不削弱它**：换完之后目录里那条仍然有真 URL，
+CI fragment 仍然是 `pending-ci`，规则原样生效。`selftest-ci-manifest.mjs` ④ 一个字没动。
+
+新守卫另起一个文件 **`apps/daemon/src/pipeline/probeShipping.test.ts`**（5 条，
+刻意不改 `platformPacks.test.ts` / `ffmpegPinRot.test.ts` / `ffmpegStableOnly.test.ts`）：
+
+| # | 断言 |
+|---|---|
+| ① | 每个我们自己托管的 whisper 包都必须提供 `openmemo-probe`（Windows 是 `.exe`） |
+| ② | 每个能装 whisper 引擎的**平台**至少有一个包带探针 |
+| ③ | 四个例外 id 必须各自把「为什么例外」写在 `sha256Provenance` 里（≥300 字且提到 ADR-015 或探针），且 `releaseUrl` 与字节来源一致 |
+| ④ | 白名单里不许躺着一个已不存在的 id |
+| ⑤ | 例外 id 的下载地址必须是我们 release 的资产 |
+
+⚠️ 一条设计决定：**探针文件名在守卫里刻意写死字面量，不 import `probeBinaryName()`。**
+T-144 那条 bug 正是「产出方与使用方用了两个名字」；如果守卫 import 实现，
+实现改名时它会**跟着改名并继续报绿** —— 判据必须独立于被测者。
+
+## 反向验证 6/6（含对照组），跑在 `/tmp` 隔离副本（PROTOCOL §10）
+
+| 变异 | 结果 | 红在哪（真实输出） |
+|---|---|---|
+| 对照组（不变异） | ✔ 全绿 | 不绿则整条验证作废 |
+| 拿掉 Linux CPU 包 providesFiles 里的探针 | ✔ exit 1 | `whispercpp-cpu-linux-x64 的 providesFiles 里没有 openmemo-probe` |
+| 把 Windows 包改回上游地址（"顺手统一回 ADR-015"） | ✔ exit 1 | `下载地址不是我们 release 的资产：https://github.com/ggml-org/…` |
+| 抹掉例外理由 | ✔ exit 1 | `它的字节由我们自己托管…但 sha256Provenance 没有（或只有一句敷衍的）说明，实得 5 字` |
+| 白名单塞一个不存在的 id | ✔ exit 1 | `…已经不存在了 —— 别让白名单变成一张没人看的免死金牌` |
+| `releaseUrl` 指回上游（字节是自建的） | ✔ exit 1 | `两者对不上，用户查来源会被带偏` |
+
+# §15 ② Windows CUDA：状态记进 D-11 §9.7，**没动它**
+
+原话：
+
+> 🟡 **在有 NVIDIA 驱动的 Windows 上"应该"可装且可用，但没有任何人在真硬件上看到过。**
+> 要收这一格，**必须一台带 NVIDIA GPU 的 Windows**，CI 替代不了。
+
+同时如实记了：它是上游包、**没有探针**，装上之后会落进 §9.3 那个 `backendDir` 单值缺口
+（会被报成 `driver missing or too old` —— 一句具体的、错的诊断）。
+以及**刻意不做**换我们自建窄包（`--cuda-arch 86;89` 比上游 fat 包窄）的理由。
+
+⚠️ **那个缺口从今天起不再是假设**：目录里现在真的同时有 Linux CPU 包与 Vulkan 包了。
+已转 `daemon-backlog`。
+
+# §16 纪律（本轮追加部分）
+
+- **仍然没有建 / 改 / 删任何 release，也没有 dispatch `release-upload.yml`。**
+  release 是你建的、你传的；我只做了「匿名重下 + 本机复算」。
+- 本轮 `gh` 新增用到：`workflow run cold-start-audit.yml`（一次 dispatch）。
+- `:10000` 零请求 · `/root/data-memo` 与指针未碰 · `apps/web/dist` 未构建 · 无 `pkill` ·
+  本机零 whisper 转写（跑过的二进制只有 `openmemo-probe`，只读枚举）。
+- **`git add` 逐个文件**，提交前用 `git diff --cached --name-only` 与
+  「反序列化后逐 id 比对」两道核对过：`backends.json` 只有 4 个 pack 变了，
+  `components.json` 只有 4 条变了，条目总数 12 / 25 都没变。
+- 反向验证在 `/tmp/platform-backlog/` 与 `mkdtemp`，共享工作树没有坏过一秒。
+
+# §17 还开着的（都标了未验证，没有装绿）
+
+| 项 | 状态 |
+|---|---|
+| Windows / macOS「干净机器 → 真的转出非空文本」（换包之后） | ⏳ `cold-start-audit` run **31160171438** 跑着，**结果没拿到** |
+| `backendDir` 单值缺口 | 🔴 未修，已转 `daemon-backlog`。**今天起不再是假设** |
+| Windows CUDA 在真 N 卡上到底行不行 | ⚠️ `UNKNOWN`，**需要真硬件**，CI 结构上验不了 |
+| 上游两个包各有几条 `ggml-cpu-*` 变体 | ⚠️ `UNKNOWN`，没下下来数 |
+| `whispercpp-cpu-win-x64` 的 `ggmlAbi` | ⚠️ **推断值**，不是量出来的（已写进 ADR-015 §7.3） |
