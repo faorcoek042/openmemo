@@ -189,7 +189,7 @@ describe('T-162 ② 选择一路走到 buildPipeline 交出去的那个 whisper-
 
     await writeFile(
       backendPrefsPath(paths.modelsDir),
-      JSON.stringify({ sourceProvider: 'auto', sourceBaseUrl: null, selectedBackend: 'vulkan' }),
+      JSON.stringify({ sourceProvider: 'auto', selectedBackend: 'vulkan' }),
     );
     const a = await buildPipeline(paths);
     assert.equal(a.tools.whisperCli, vkCli);
@@ -198,7 +198,7 @@ describe('T-162 ② 选择一路走到 buildPipeline 交出去的那个 whisper-
 
     await writeFile(
       backendPrefsPath(paths.modelsDir),
-      JSON.stringify({ sourceProvider: 'auto', sourceBaseUrl: null, selectedBackend: 'cpu' }),
+      JSON.stringify({ sourceProvider: 'auto', selectedBackend: 'cpu' }),
     );
     const b = await buildPipeline(paths);
     assert.equal(b.tools.whisperCli, cpuCli);

@@ -123,7 +123,7 @@ async function installPack(
 async function writePrefs(root: string, selectedBackend: unknown): Promise<void> {
   await writeFile(
     join(root, 'prefs.json'),
-    JSON.stringify({ sourceProvider: 'auto', sourceBaseUrl: null, selectedBackend }),
+    JSON.stringify({ sourceProvider: 'auto', selectedBackend }),
   );
 }
 

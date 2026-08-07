@@ -936,6 +936,34 @@ export async function unpackTarXz(src: string, destDir: string, opts?: UnpackOpt
   return extractTar(raw, destDir, budget, opts);
 }
 
+/**
+ * Expand `src` into `destDir`.
+ *
+ * ## Failure contract (C-19 / B-4) — **this function is NOT self-cleaning**
+ *
+ * On failure it throws `UnpackError` and **leaves whatever it had already written in
+ * `destDir`**. There is no rollback: entries are streamed to disk as they are read, so a
+ * limit/corruption/traversal rejection at entry 500 leaves entries 1–499 on disk. It also
+ * does not remove `destDir` itself (it creates it with `mkdir -p` before extracting).
+ *
+ * **Callers own atomicity.** The contract is deliberately this weak because the only
+ * production caller already provides something stronger and cheaper: `install()`
+ * (`installer.ts`) unpacks into a sibling `<final>.tmp-<rand>` directory and only
+ * `rename()`s it into place after a clean return, deleting the temp directory on failure.
+ * That is what makes "the directory exists" a truthful signal that the install completed.
+ *
+ * ⚠️ **Therefore: never point `destDir` at a directory a user depends on.** Doing so
+ * converts any extraction failure into a half-replaced installation, which is strictly
+ * worse than no installation — the verified blob is already cached, so a retry skips the
+ * download, sees a directory, and the user is stuck at "installed but unusable" with no
+ * way out from the UI. This happened for real: a 43-entry tarball aborted on its first
+ * symlink entry and left 3 files behind, with `whisper-cli` simply absent.
+ *
+ * The invariant that matters to users therefore lives one layer up and is pinned by
+ * `installer.test.ts` → "解包失败时不许动用户已经装好的那一份":
+ * a failed unpack must leave the previous `finalDir` byte-for-byte intact and leave no
+ * `.tmp-*` residue behind.
+ */
 export async function unpackArchive(
   src: string,
   destDir: string,

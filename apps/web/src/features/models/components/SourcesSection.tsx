@@ -32,8 +32,8 @@ import { useModelsSourcesQuery, useSelectSourceMutation, useSourceProbeMutation 
  *    也不写"自动"充数 —— "不知道"和"就是它"是两件事，混在一起就是又一个假绿灯
  *    （`components.ts` 文件头为 `latestVersion` 立过同一条）。
  * 3. **可选项来自 daemon 的 `available`**（= 目录里真实出现过的 provider），
- *    不在前端写死一张表；也**不提供"自定义源"** —— `sourceBaseUrl` 存得下来，
- *    但 `[实测 grep]` 全仓没有任何下载路径读它，做出来就是个填了必然无效的输入框。
+ *    不在前端写死一张表；也**不提供"自定义源"** —— T-171（A-6）已把那半个功能拆掉，
+ *    daemon 收到 `provider:"custom"` 直接 400（没有任何下载路径会用用户填的地址）。
  */
 export function SourcesSection({ locale }: { locale: string }): React.ReactElement | null {
   const { t } = useTranslation();

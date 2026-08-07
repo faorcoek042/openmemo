@@ -130,6 +130,11 @@ function inapplicableKind(
  * "Higher wins when several packs match the same hardware" —— 不抄进安装记录，
  * 那句话就永远只是一句话（T-162）。
  *
+ * ⚠️ **「零个读取方」是 T-162 之前的状态，今天已不成立。** 现在有两个真实读取方：
+ *    `packages/pipeline/src/tools.ts` 的 `rankOf()`（读安装记录里这份拷贝，决定跑哪个包）
+ *    与 `apps/web/.../RuntimePage.tsx` 的展示排序（读目录里那份）。
+ *    加这一句是因为**这段话已经被一轮审计当成现状引用过一次** —— 差点据此把 `priority` 裁掉。
+ *
  * 留在 `startPackInstall` 的闭包里就只能靠"真的装一次"才测得到，而那需要网络；
  * 抽出来之后可以拿**真实目录**里的每一条去断言"抄全了"。
  */

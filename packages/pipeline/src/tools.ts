@@ -319,6 +319,12 @@ export interface ResolvedBackendTool {
  * 这条与「`priority` 有 11 条声明、零个读取方」「`selectedBackend` 只驱动两个展示标志」
  * 是同一件事的三个断面：**结论算出来了，做决定的那个函数看不见它。**
  *
+ * ⚠️ **上面这两句描述的是 T-162 之前的状态，今天都已不成立** —— 本文件的 `rankOf()`
+ *    （见下面 `resolveBackendTool`）现在真的按 `selectedBackend → priority → packId` 排序，
+ *    `priority` 由 `readInstalledPackOrigins()` 从安装记录里读出来。
+ *    保留原文是因为它是成因；加这一句是因为**它已经被一轮审计当成现状引用过一次**
+ *    （`closure-audit` 据此把 `priority` 列为可裁字段）。历史段落必须自己说明自己是历史。
+ *
  * ── 现在的选择规则，以及每一条的依据 ─────────────────────────────────────────────
  *
  *   0. **扁平命中最先**（`by-name/backend/<name>`）。它不是搜索是查表 —— 安装器就写在

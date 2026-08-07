@@ -173,9 +173,11 @@ export function useSourceProbeMutation() {
  * 探测失败的源在真实传输里未必不通，全部丢掉会让用户一个源都不剩）。
  * 界面上必须照这个说，不能让用户以为自己关掉了别的源。
  *
- * ⚠️ **不提供 `custom`。** 契约里有 `baseUrl`，daemon 也会把它存进 prefs
- * （`models.ts:953`），但 `[实测 grep]` **全仓没有任何下载路径读过 `sourceBaseUrl`** ——
- * 现在做出来就是一个填了必然无效的输入框，比没有更糟。
+ * ⚠️ **不提供 `custom`，而且现在 daemon 也不再收它了。**
+ * 契约里曾有一个 `baseUrl`，daemon 会把它存进 prefs，而**全仓没有任何下载路径读过它**。
+ * T-171（A-6）把那个字段连同"自定义源"这半个功能一起拆掉了：
+ * `POST /api/models/sources/select` 收到 `provider:"custom"` 直接 400。
+ * 所以这里不做输入框，不是"暂时没做"，是**后端明确拒绝**。
  */
 export function useSelectSourceMutation() {
   const qc = useQueryClient();

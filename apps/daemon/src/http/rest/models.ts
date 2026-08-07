@@ -937,20 +937,38 @@ async function selectSource(
     return true;
   }
 
-  const baseUrl = asString(body['baseUrl']);
-  if (provider === 'custom' && !baseUrl) {
+  /*
+   * ★ T-171（A-6）：`custom` 是一个**从来没有实现过的源**，现在明确拒绝它。
+   *
+   * 此前这里收一个 `baseUrl`：`provider==='custom'` 且没给 `baseUrl` → 400，
+   * 给了 → 200，然后 `state.prefs.sourceBaseUrl = baseUrl` 落盘。
+   * 但**全仓没有任何下载路径读过 `sourceBaseUrl`**，所以"给了 baseUrl"那一支
+   * 才是坏的那一支：它返回 200、把 `sourceProvider='custom'` 存下来，
+   * 而 `orderSourcesForDownload()`（`packages/downloader/src/probe.ts:139-143`）
+   * 用 pinned 去 filter 镜像时**一个都匹配不上**（清单里没有任何 provider 为 custom
+   * 的镜像），于是 `hit=[]`、返回未经排序的全表 —— 探针排序被静默关掉，
+   * 下载还能跑，只是不再按实测吞吐选源。**没有任何地方会报错。**
+   *
+   * 也就是说这个端点此前有两支：一支 400，一支"看起来成功、实则悄悄降级"。
+   * 两支都不是"自定义源"这个功能。所以不是补 `baseUrl` 的读取方，是**把这半个功能拆掉**：
+   * 字段删掉，`custom` 在门口就拒绝，理由说清楚。
+   *
+   * ⚠️ `custom` 仍留在 `ProviderId` 里（`packages/shared/src/artifacts.ts`），
+   *    因为那个联合类型还描述着清单里镜像的 `provider` 字段；
+   *    这里拒的是"把它选成下载源"，不是把这个名字从类型系统里抹掉。
+   */
+  if (provider === 'custom') {
     sendError(
       res,
       400,
       'BAD_REQUEST',
-      'baseUrl is required when provider is "custom"',
-      '选择自定义源时必须提供 baseUrl',
+      'provider "custom" is not implemented: no download path resolves a user-supplied base URL',
+      '自定义源尚未实现：没有任何下载路径会使用用户填写的地址，选它只会静默关掉按实测速度选源',
     );
     return true;
   }
 
   state.prefs.sourceProvider = provider;
-  state.prefs.sourceBaseUrl = baseUrl;
   await state.persistPrefs();
   sendJson(res, 200, state.buildSources());
   return true;

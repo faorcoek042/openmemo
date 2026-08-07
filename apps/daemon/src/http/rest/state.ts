@@ -97,14 +97,25 @@ function onJobState(queue: DownloadQueue, fn: (job: DownloadJob, prev: JobState)
   });
 }
 
-/** 用户偏好，落盘在 models 根目录，重启后保持。 */
+/**
+ * 用户偏好，落盘在 models 根目录，重启后保持。
+ *
+ * ★ T-171 删掉了 `sourceBaseUrl`（A-6）。它曾在 `models.ts` 里被写入并随本对象落盘，
+ *   而**全仓没有任何一处读它** —— 不出现在 `buildSources()` 的返回里，
+ *   也不在 `GetSourcesResponse` 上，所以连泄漏给客户端都做不到。
+ *   对照：同一个对象里的 `sourceProvider` 与 `selectedBackend` 各有真实读取方
+ *   （见下面 `loadPrefs` 紧跟着的两行、以及 `effectiveProvider()`）。
+ *
+ *   判据不是"省下一个字段的空间"，是**零读取方的字段会让下一个人以为它在起作用**。
+ *   这个仓库刚因为同一个形状吃过亏：一个从未被调用的验签函数，
+ *   让人以为目录是被验签的。
+ */
 interface Prefs {
   sourceProvider: ProviderId | 'auto';
-  sourceBaseUrl: string | null;
   selectedBackend: Backend | null;
 }
 
-const DEFAULT_PREFS: Prefs = { sourceProvider: 'auto', sourceBaseUrl: null, selectedBackend: null };
+const DEFAULT_PREFS: Prefs = { sourceProvider: 'auto', selectedBackend: null };
 
 export interface RestStateDeps {
   sse: SseHub;

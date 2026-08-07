@@ -332,7 +332,10 @@ paths:
       tags: [sources]
       summary: Select a download source
       description: >-
-        `provider: "custom"` requires `baseUrl` to be set.
+        `provider: "custom"` is rejected with 400 — no download path resolves a
+        user-supplied base URL, so selecting it would only silently disable
+        probe-ranked source selection. The former `baseUrl` field was removed in
+        T-171 (A-6): the daemon stored it and nothing ever read it.
       requestBody:
         required: true
         content:
@@ -2759,9 +2762,6 @@ components:
             - $ref: '#/components/schemas/ProviderId'
             - type: string
               enum: [auto]
-        baseUrl:
-          type: string
-          description: Base URL override, required when provider is "custom".
 
     VerifyRequest:
       type: object

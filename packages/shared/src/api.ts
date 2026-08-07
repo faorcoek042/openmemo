@@ -194,9 +194,13 @@ export interface GetSourcesResponse {
 }
 
 export interface SelectSourceRequest {
+  /**
+   * ⚠️ `"custom"` is rejected with 400 — see `apps/daemon/src/http/rest/models.ts`.
+   * Nothing in the download path ever resolved a user-supplied base URL, so the
+   * accompanying `baseUrl` field was removed in T-171 (A-6) rather than left as a
+   * value the daemon stores and no code reads.
+   */
   provider: ProviderId | 'auto';
-  /** Base URL override, required when provider is "custom". */
-  baseUrl?: string;
 }
 
 /* ------------------------------- verify ---------------------------------- */

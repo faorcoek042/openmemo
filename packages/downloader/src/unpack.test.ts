@@ -36,7 +36,14 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { gzipSync } from 'node:zlib';
 
-import { UnpackError, isMacArchiveJunk, lexicalEntryPath, lexicalLinkTarget, unpackTarGz } from './unpack.js';
+import {
+  UnpackError,
+  isMacArchiveJunk,
+  lexicalEntryPath,
+  lexicalLinkTarget,
+  unpackArchive,
+  unpackTarGz,
+} from './unpack.js';
 
 /* ------------------------------ tar 构造器 -------------------------------- */
 // 手搓 512 字节头：本包不许引入新依赖，而且恶意归档本来也不是任何 tar 库愿意产出的东西。
@@ -423,5 +430,66 @@ describe('T-168 ① tar：垃圾不落盘，载荷一个不少', () => {
     ]);
     const err = await expectRejected(() => unpackTarGz(src, destRoot));
     assert.equal(err.code, 'PATH_TRAVERSAL');
+  });
+});
+
+/**
+ * C-19 / B-4 —— `unpackArchive` 的**失败契约**：它不自清，而且这一点是故意的。
+ *
+ * ## 为什么要给"它不自清"写测试
+ *
+ * 审计把这一条记成「两份测试零『失败后 destDir 干净』断言」。回代码核下来，
+ * **用户可见的那半其实已经被钉住了** —— `installer.test.ts` 的 T-157 ②
+ * 「解包失败时上一版必须原封不动」+「不许留下 .tmp- 残骸」正是它。
+ *
+ * 真正没人守的是**另一半**：`unpackArchive` 自己的契约。它在签名上一个字都没写，
+ * 于是「失败后 destDir 是什么状态」这个问题，谁读谁自己猜 ——
+ * 而两种猜法（自清 / 不自清）会导出完全相反的调用写法：
+ *   · 猜"自清" → 直接把 destDir 指向用户正在用的目录，失败就毁掉它；
+ *   · 猜"不自清" → 解到临时目录再换入（`install()` 就是这么做的）。
+ *
+ * 这个仓库反复栽的正是这一族：**注释/直觉描述了一个不存在的行为**。
+ * 所以这里把真实行为钉死，让 `unpack.ts` 上那段契约**有东西替它作证**。
+ *
+ * ⚠️ 如果哪天有人真把 `unpackArchive` 改成失败自清，这条会红 ——
+ *    那是**要求他连 `unpack.ts` 的契约段一起改**，不是说自清不许做。
+ */
+describe('C-19 unpackArchive 失败契约：不自清，原子性由调用方负责', () => {
+  it('★ 中途失败时，已经写下去的条目**留在 destDir 里**（所以调用方绝不能把它指向用户在用的目录）', async () => {
+    const { destRoot } = sandbox();
+    /*
+     * 顺序是关键：先一个正常条目，再一个越界条目。
+     * 提取是边读边写的，所以第一个条目会真的落盘，然后第二个把整件事拒掉。
+     */
+    const src = makeTarGz(
+      path.join(mkdtempSync(path.join(os.tmpdir(), 'om-c19-')), 'partial.tar.gz'),
+      [
+        { name: 'good-1.txt', data: 'WRITTEN-BEFORE-THE-FAILURE' },
+        { name: '../escaped.txt', data: 'EVIL' },
+      ],
+    );
+
+    const err = await expectRejected(() => unpackArchive(src, destRoot, 'tar.gz'));
+    assert.equal(err.code, 'PATH_TRAVERSAL', '这条用例要的是"中途被拒"，不是别的失败');
+
+    const left = await fs.readdir(destRoot);
+    assert.equal(
+      left.includes('good-1.txt'),
+      true,
+      '契约说它不自清，实际却清了 —— 请把 unpack.ts 上那段失败契约一起改掉。' +
+        `实际残留：${JSON.stringify(left)}`,
+    );
+  });
+
+  it('不认识的归档类型必须抛 UNSUPPORTED，而不是悄悄返回一个空结果', async () => {
+    const { destRoot } = sandbox();
+    const src = makeTarGz(
+      path.join(mkdtempSync(path.join(os.tmpdir(), 'om-c19b-')), 'x.tar.gz'),
+      [{ name: 'a.txt', data: 'A' }],
+    );
+    const err = await expectRejected(() =>
+      unpackArchive(src, destRoot, 'rar' as unknown as 'zip'),
+    );
+    assert.equal(err.code, 'UNSUPPORTED');
   });
 });

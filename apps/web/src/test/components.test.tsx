@@ -4604,7 +4604,7 @@ describe('T-157 ④ 下载源（镜像）', () => {
     assert.equal(
       r.container.querySelector('[data-testid="models-source-custom"]') === null,
       true,
-      '不许提供「自定义源」—— sourceBaseUrl 全仓没有任何下载路径读它，做出来就是个填了必然无效的输入框',
+      '不许提供「自定义源」—— T-171(A-6) 已拆掉这半个功能，daemon 收到 provider:"custom" 直接 400',
     );
     r.unmount();
   });
