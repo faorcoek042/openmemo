@@ -1,0 +1,82 @@
+# 探针冷启动真实耗时 —— 一个**什么都不做**的 macOS job
+#
+# ── 为什么它必须是一个独立的 workflow，而不是 cold-start-audit 里加一步 ──────────
+#
+# `cold-start-audit` 的 §6b 把 darwin-arm64 的探针超时定性成功了（是**慢**不是挂，
+# 慢在 `ggml_metal_library_init`），但它**在结构上拿不到真实的冷启动耗时**：
+#
+#   要量，就得先跑一发长超时的；而那一发会把 Metal 缓存捂热，
+#   于是"第一发超时"这个要复现的现象本身就没了。两者在**同一个 job 里**互斥。
+#
+# 但 runner 是一次性的 —— **每个 job 都是一台全新的冷机器**。
+# 所以互斥的不是"这两件事"，只是"这两件事挤在同一个 job 里"。换个 job 就没有了。
+#
+# 这个 workflow 就是那个 job。它的**唯一产出是一个数字**：
+# 不起 daemon、不跑自检、不转写、不装模型、不下 1.7 GB 的 CoreML 载体模型。
+# 装一个 2 MB 的包，然后立刻用长超时跑探针 —— 那是这台机器的第一次 Metal 初始化。
+#
+# ⚠️ **顺序是这个 workflow 的全部内容。** 任何在测量之前起 daemon 的步骤都会毁掉它：
+#    `apps/daemon/src/runtime/setup.ts:496` 在启动路径上就 `runProbe()` 了。
+#    §6b 量不到的根因正是它跑在 daemon 起来之后。往这个 job 里加步骤前请先读这一段。
+#
+# ── 不改产品常量 ──────────────────────────────────────────────────────────────
+#
+# `PROBE_TIMEOUT_MS` 是 ADR-003 决策 3 定死的 10 秒，本 workflow 与其脚本**都没有动它**。
+# 放宽的是 `runProbe()` 的 `timeoutMs` 入参，只在审计脚本里。
+#
+# ── 触发方式：手动 ────────────────────────────────────────────────────────────
+#
+# 它回答的是一个**一次性的事实问题**，不是需要每次 push 都复核的性质。
+# 值得重跑的时机：换了 runner 镜像、升级了 whisper.cpp / ggml、改了探针本身。
+
+name: probe-cold-timing
+
+on:
+  workflow_dispatch:
+    inputs:
+      longMs:
+        description: '冷发用的超时（毫秒）。要足够大到"没返回"只能解释成挂住，而不是"我给少了"。'
+        required: false
+        default: '120000'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: probe-cold-timing-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  timing:
+    # macOS Apple Silicon 是唯一出现这个现象的平台（Linux/Windows 上探针默认超时就过）。
+    # 只跑这一格，是因为多跑两格不会带来新信息，只会多烧两台 runner。
+    name: 探针冷启动耗时（darwin-arm64）
+    runs-on: macos-26
+    steps:
+      # ★ 刻意**不带** `submodules: recursive`：这个 job 不转写，用不到 jfk.wav。
+      #   少 checkout 一个 submodule = 少一份"顺手多做了点什么"的机会。
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.15.0
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # `build:safe` 而不是 `pnpm -r build`：PROTOCOL §7 补充。
+      # 这里其实是 runner 上的一次性工作区，但判据是"跑错了也不会造成后果"，
+      # 所以照样用安全的那条 —— 一条只在某些机器上才能违反的规则，等于一条迟早被违反的规则。
+      - name: Build
+        run: pnpm build:safe
+
+      # ★★ 这一步必须是这台机器上第一个碰 Metal 的东西。前面每一步都刻意与 GPU 无关。
+      - name: 冷发 + 热发（本 job 的唯一产出）
+        timeout-minutes: 20
+        env:
+          PROBE_LONG_MS: ${{ inputs.longMs }}
+        run: node scripts/ci/probe-cold-timing.mjs --long-ms "${PROBE_LONG_MS:-120000}"
