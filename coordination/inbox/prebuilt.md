@@ -88,3 +88,73 @@
 - 逐文件 stage，每次 commit 前 `git diff --cached --name-only` 核对；未碰 `apps/web`、
   `package.json`、`packages/runtime/src`、`apps/daemon/src`。
 - 反向验证全部在 `/tmp` 隔离副本上做（§10），共享树未出现中间态。
+
+---
+
+## [2026-08-08 02:55] health 就绪契约 + 自检挂载 DONE
+
+交付: `apps/daemon/src/http/server.ts` · `apps/daemon/src/main.ts` ·
+`apps/daemon/src/bootstrap/single-instance.ts` · `apps/daemon/src/http/readiness.test.ts`（14 例）·
+`scripts/ci/selftest-bundle.mjs`（13 例）· `package.json` · `scripts/ci/lint-workflows.mjs` ·
+`scripts/ci/verify-bundle-upgrade.mjs`
+
+### ② health 什么时刻开始答 200、在此之前答什么
+
+- **200 的时刻**：`main.ts` 里 `routers.push(...)` 之后、**「就绪」横幅打印之前**置 `isReady = true`。
+  判据：**横幅说"可以用了"和 health 说 200，必须是同一件事**，不允许两者不一致。
+- **在此之前**：`/api/health` 回 **503** + `ready:false` + `status:'starting'`，
+  **身份字段（app / dataDir / host / port / instanceId / version）原样给全**；
+  本来会落到 404 的请求回 **503 `SERVICE_STARTING` + `retryable:true` + `Retry-After: 1`**。
+- **为什么不是"让 health 晚点答"**：那只是把窗口挪个位置。判据是
+  「health 说 ready 的时候它承诺的东西必须真的在」，所以做法是**让它在没装完时说实话**。
+- **闸门位置**：404 **之前**、其余一切之后。health / 静态产物 / 会话握手 / models 路由
+  在 ready 之前本来就能工作，这道门一个都不挡 —— "别把启动探测饿死"因此是
+  **结构上成立**，不是靠逐条豁免。
+- **反向**：ready 之后，真正不存在的端点**仍然是 404**（有独立用例钉着，
+  防止"把 404 换成 503"被写成"永远回 503"而把真信号也吃掉）。
+- ⚠️ `retryable` 是**显式给的 true**：`sendError` 默认 false，第一版漏给，
+  实测响应体是 `"retryable":false` —— 一个几百毫秒就自己好的状态却说"重试没用"。
+
+### ② 单实例与端口漂移改完之后还工作吗（实测）
+
+**必须配套改的一半**：`probeExisting` 原本 `if (!res.ok) return undefined`。
+只做上面那半会引入**比它修的更坏的 bug**：A 启动中(503) → B 撞 EADDRINUSE →
+判定「端口上不是我们」→ **静默漂到 17651**，而端口漂移 = 浏览器换 origin =
+**用户麦克风授权要重新点一次**。现在 200 与 503 都算"是我们自己"
+（判据在 body 的 `app` 字段，不在状态码），其余状态码仍然不算。
+
+`[本机实测]`
+- 真 daemon 抓到窗口：**t≈400ms 时 health=503、`/api/folders`=503 SERVICE_STARTING**（此前 404）。
+  窗口 **< 2s** —— 这正是 Linux/macOS 从没复现、Windows 复现了的原因。
+- 单实例：A 跑着时启 B → `exit 5`「另一个 OpenMemo 实例正在使用同一个数据目录 /
+  数据目录锁生效」，**17802 无人监听 = 没有漂移**。
+- `[CI 实测 run 31208766871]` 三平台全绿；**Windows 的升级验证现在等的是 health 200**
+  并通过 —— 也就是说这条契约在当初暴露 bug 的那个平台上被端到端验证了。
+
+`[反向验证，/tmp 隔离 worktree，PROTOCOL §10]` 三个变异各自变红、还原后 14/14 绿：
+- RV-1 探测不认 503（会导致端口漂移）→ **3 红**
+- RV-2 未 ready 时回 404 而非 503 → **2 红**
+- RV-3 health 永远说 ready → **2 红**
+
+### ③ 自检挂载后的断言数
+
+- `lint-workflows`：**769 条断言 / 8 个 workflow**（此前 768）。
+- `selftest-bundle.mjs`：**13 例**（4 正向 + 9 反向），已进 `test:ci-scripts`
+  并钉进 lint-workflows 的必跑清单（摘掉会当场红，已验证）。
+- 非空洞性已证：把 `verify-bundle.sh` 的 GPL 反向断言整段删掉，
+  **那个守卫自己仍然报绿**（`检查了 25 条，失败 0 条` —— 25 仍 ≥ 20 的下限），
+  只有新自检会红。也就是说这 13 例买到的正是"少检查一条却报绿"那一类。
+
+### 门禁（隔离 worktree 检出 `97534c8` 跑）
+
+`pnpm -r test` **1503 / fail 0**（上轮 1462）· `tsc -b` clean · `eslint` clean ·
+`build:safe` 0 · `lint-workflows` 769/8 · `test:ci-scripts` EXIT=0 · `check:orphans` 绿。
+
+### 一条要提醒 Manager 的操作风险
+
+`git` 的**索引是三个 agent 共享的**。这轮我 `git add` 自己那 8 个文件后，
+`git diff --cached --name-only` 里混进了**别人已 stage 的 `coordination/inbox/ui-backlog.md`**，
+已 `git restore --staged` 剔除。**"逐文件 stage"不够，必须每次 commit 前核对 `--cached` 全量列表**
+—— 只看自己 add 了什么会漏掉别人先 stage 的东西。
+
+需要 Manager 决策: 无。
