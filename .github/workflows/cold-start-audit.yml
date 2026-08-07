@@ -30,6 +30,27 @@ name: cold-start-audit
 
 on:
   workflow_dispatch:
+    inputs:
+      includeOptional:
+        # ★ 这个 input 补的是一个**结构性缺口**，不是加个开关。
+        #
+        #   `last-mile.md` 里挂着一条「⛔ 未验证：macOS 上 asr.coreml 真的从 warn 变 ok」，
+        #   一直被读成"没人去验"。**不是 —— 是没有入口可验。**
+        #   CoreML encoder 在清单里是 `optional: true` 的文件，而 `installer.ts` 的
+        #   `selectFiles` 明确写着 `if (f.optional && !includeOptional.includes(f.role)) return false`。
+        #   在这个 input 存在之前，那一项**在结构上不可能变绿**，跑多少轮 CI 都一样。
+        #   这比"没验"更糟：它看起来像"验了没过"。
+        #
+        #   默认就填 `coreml-encoder`，不是留空。理由与 PROTOCOL §7 补充那条同源：
+        #   一个需要人记得去填的参数，等价于一个迟早不会被填的参数 ——
+        #   而"没填"的后果恰恰是这一项**静悄悄地继续没有答案**。
+        #   代价可控：清单里的 CoreML encoder 限定 `platforms: darwin/arm64`，
+        #   所以 Linux / Windows 那两格会明确打印"本平台没有提供该 role 的模型"并跳过，
+        #   一个字节都不会多下。只有 macOS 那一格会多下载载体模型（约 1.7 GB）。
+        description: '要一并安装的可选文件 role（逗号分隔）。留空 = 不装任何可选文件，asr.coreml 将得不到答案。'
+        required: false
+        default: 'coreml-encoder'
+        type: string
 
 permissions:
   contents: read
@@ -177,9 +198,20 @@ jobs:
       #    但可行性的下限不是"文件下下来了" —— 这一步真的跑一次转写并要求**非空文本**。
       #    放在屏蔽组而不是对照组，是因为对照组可能借到 runner 自带的工具，
       #    那样跑出来的绿证明不了"我们自己装的那套能用"。
+      #    ★ `includeOptional` 走 `env:` 而不是拼进 `run:`：
+      #      `env:` 是赋值、不经过 shell，所以既没有 `${{ }}` 注入问题，
+      #      也不用管这台 runner 的默认 shell 是 pwsh 还是 bash
+      #      （T-145 已经在这个 workflow 上被 pwsh 咬过一次：`/tmp/install.log`
+      #       被解析成了 `D:\tmp\install.log`）。
+      #
+      #      **只挂在屏蔽组这一遍。** 对照组挂上去就要再下一次载体模型（约 1.7 GB），
+      #      而 CoreML encoder 装不装得上与"宿主 PATH 上有没有 ffmpeg"毫无关系 ——
+      #      两遍都跑等于花双倍带宽买同一个答案。
       - name: 冷启动（全新数据目录，屏蔽宿主工具）+ 转写可行性证明
         if: ${{ !cancelled() }}
         timeout-minutes: 60
+        env:
+          AUDIT_INCLUDE_OPTIONAL: ${{ inputs.includeOptional }}
         run: node scripts/ci/cold-start-audit.mjs --port 19700 --transcribe
 
       # ⑤ 对照组：**不屏蔽**再跑一次。两次的差集 = "如果用户机器上没有这些东西，

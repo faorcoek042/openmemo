@@ -372,6 +372,41 @@ async function checkCoreMl(
   );
 }
 
+/**
+ * `hw.probe` 失败时**必须留下诊断线索**，否则下一个人只能从零查起。
+ *
+ * ─── 这条是一次真实的"查不下去"换来的 ──────────────────────────────────────────
+ *
+ * `cold-start-audit` run 31160171438 的 darwin-arm64 那一格报的是
+ * `warn probe timed out after 10000ms` —— **然后就没有了**。
+ * 一个会超时的子进程，日志里**一个字的 stderr 都没有**。于是这三种成因
+ *   ① 10 秒对这台虚拟化 runner 太短   ② Metal 在虚拟化 macOS 上初始化会挂
+ *   ③ 探针真有 bug
+ * 在报告里长得**一模一样**，谁都分辨不出来 —— 而三者的处置完全不同。
+ *
+ * 关键在于：`runProbe()` **一直都在收 stderr**，超时路径也收
+ * （`probe/runProbe.ts` 的 timeout 分支里就有 `stderr: tail(stderr)`）。
+ * 是这一层把它丢掉了 —— 丢在了唯一会被人看到的地方。
+ *
+ * 两条信息各自独立有用，所以都带上：
+ *   · **耗时** —— 区分「卡满整个超时窗口」（≈ timeout 值，像挂了）
+ *     与「早早就退了」（远小于 timeout，像崩溃/加载失败）。
+ *   · **stderr** —— ggml 在 `GGML_BACKEND_DL=ON` 下会逐个打印后端的加载/跳过决定，
+ *     **最后一行就是它停住的地方**。
+ *
+ * ★ `stderr` 为空**本身就是结论**，不是"没信息"：它说明探针连第一个后端都没
+ *   来得及打印就没了。所以空也要明写出来，不能省略成一片空白 ——
+ *   那正是这条注释存在的原因。
+ */
+function probeFailureDetail(r: { message: string; stderr: string; durationMs: number }): string {
+  const err = r.stderr.replace(/\s+/g, ' ').trim();
+  const tail =
+    err.length > 0
+      ? `stderr 尾部：${err.slice(-400)}`
+      : 'stderr 为空（探针连一行都没来得及输出）';
+  return `${r.message}（耗时 ${String(r.durationMs)}ms；${tail}）`;
+}
+
 async function exists(p: string | null | undefined, mode: number): Promise<boolean> {
   if (p === null || p === undefined || p.length === 0) return false;
   try {
@@ -562,7 +597,9 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         label: 'device enumeration (subprocess)',
         labelZh: 'probe 子进程枚举设备',
         status: r.ok ? 'ok' : 'warn',
-        detail: r.ok ? `${r.output.deviceCount} 个设备, ggml ${r.output.ggmlVersion}` : r.message,
+        detail: r.ok
+          ? `${r.output.deviceCount} 个设备, ggml ${r.output.ggmlVersion}`
+          : probeFailureDetail(r),
         required: false,
         remediation: r.ok ? null : '探测失败 → 加速后端不可判定，会退回 L1 CPU',
       });

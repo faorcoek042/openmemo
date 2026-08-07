@@ -48,7 +48,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, chmodSync, rmSync, existsSync, accessSync, copyFileSync, statSync, constants as fsConstants } from 'node:fs';
 import { join, resolve, dirname, delimiter } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -74,6 +74,38 @@ const MASK = !argv.includes('--no-mask');
  * （屏蔽组 + 对照组）。workflow 只在屏蔽组那一遍打开它。
  */
 const TRANSCRIBE = argv.includes('--transcribe');
+
+/*
+ * ★ `--include-optional <role>[,<role>…]` —— 补的是一个**结构性缺口**，不是加个开关。
+ *
+ * ── 缺口长什么样 ────────────────────────────────────────────────────────────────
+ *
+ * `last-mile.md` 里有一条挂了很久的「⛔ 未验证」：
+ *   「macOS 上 `asr.coreml` 真的从 warn 变成 ok」。
+ * 它一直被读成"没人去验"。**不是。是没有入口可验** ——
+ * 这个脚本从头到尾没有任何地方能把 `includeOptional` 传给 `/api/models/pull`，
+ * 而 CoreML encoder 在清单里是 `optional: true` 的文件
+ * （`installer.ts` 的 `selectFiles`：`if (f.optional && !includeOptional.includes(f.role)) return false`）。
+ * 也就是说：**在补上这个参数之前，那一项在结构上不可能变绿**，
+ * 谁跑多少轮 CI 都一样。这比"没验"糟 —— 它看起来像是"验了没过"。
+ *
+ * ── 为什么还要额外挑一个"载体模型" ──────────────────────────────────────────────
+ *
+ * 光把参数透传下去**仍然是个空操作**：本脚本挑 ASR 模型的判据是"最小的那个"
+ * （`asr/whisper-tiny-q5_1`，32 MB），而清单里 **只有 large-v3 / large-v3-turbo 那 5 个**
+ * 带 `coreml-encoder` 文件（其余 20 个一个都没有，见 `platform-backlog.md` §17：
+ * tiny/base/small/medium 的 encoder 因为拿不到 sha256 而**刻意没挂**）。
+ * 传了参数、装的却是 tiny —— `asr.coreml` 照样是 warn，而且这次的 warn
+ * **看起来像是产品的答案，其实是我挑错了模型**。所以第 8 节会另外挑一个
+ * 真的提供该 role 的模型；挑不出来就**当场出声**，不假装跑过。
+ *
+ * 环境变量兜底是给 workflow 用的：`env:` 赋值不经过 shell，
+ * 既没有 `${{ }}` 注入问题，也不用管 Windows runner 默认是 pwsh 还是 bash。
+ */
+const INCLUDE_OPTIONAL = String(arg('--include-optional', '') || process.env.AUDIT_INCLUDE_OPTIONAL || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 const DATA_DIR = join(ROOT, 'data');
 const POINTER = join(ROOT, 'pointer.json');
@@ -279,6 +311,47 @@ async function waitForJob(jobId, timeoutSec = 900) {
   return `TIMEOUT（${timeoutSec}s 内没到终态）`;
 }
 
+/**
+ * 拉一个模型并等到终态。**`includeOptional` 一律带上** —— 目录里没有该 role 的
+ * 可选文件时它是无害的空操作（`selectFiles` 按 role + platform 双重筛），
+ * 带上它才对得住"这一轮到底问了产品什么"。
+ */
+async function pullModel(m, timeoutSec = 900) {
+  const body = { id: m.id };
+  if (INCLUDE_OPTIONAL.length > 0) body.includeOptional = INCLUDE_OPTIONAL;
+  const r = await j('/api/models/pull', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const jobId = r.body?.jobId ?? r.body?.uid ?? r.body?.id;
+  if (!jobId) return `HTTP ${r.status} 且没有 jobId：${JSON.stringify(r.body).slice(0, 200)}`;
+  return await waitForJob(jobId, timeoutSec);
+}
+
+/**
+ * 跑一次 `scripts/selfcheck.mjs --json`。
+ *
+ * 提成函数是因为第 8 节要**再跑一次** —— 装完可选文件之后必须重新问一遍，
+ * 否则拿到的还是装之前那份报告。
+ * （`selfcheck.mjs` 每次都 `new ArtifactStore(storeRoot)` 现读磁盘、无缓存，
+ *   所以不需要重启 daemon 就能看到新装的模型。）
+ */
+function selfCheckJson() {
+  const sc = spawnSync(
+    process.execPath,
+    [join(REPO, 'scripts', 'selfcheck.mjs'), '--data-dir', DATA_DIR, '--daemon', BASE, '--json'],
+    { env: childEnv, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
+  );
+  let report = null;
+  try {
+    report = JSON.parse(sc.stdout);
+  } catch {
+    /* 调用方负责出声 —— 这里安静地吞掉才是 bug */
+  }
+  return { sc, report, checks: report?.checks ?? report?.results ?? [] };
+}
+
 function extLine(tag, health) {
   const e = health?.db?.extensions ?? {};
   say(`   [${tag}] tokenizer=${e.tokenizer}  libsimple=${e.libsimple}  sqliteVec=${e.sqliteVec}`);
@@ -447,20 +520,12 @@ try {
   }
   say();
 
+  if (INCLUDE_OPTIONAL.length > 0) {
+    say(`   （本轮 --include-optional=${INCLUDE_OPTIONAL.join(',')}，每次 pull 都会带上）`);
+  }
   for (const m of pick) {
     const t0 = Date.now();
-    const r = await j('/api/models/pull', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id: m.id }),
-    });
-    let status = `HTTP ${r.status}`;
-    const jobId = r.body?.jobId ?? r.body?.uid ?? r.body?.id;
-    if (!jobId) {
-      status = `HTTP ${r.status} 且没有 jobId：${JSON.stringify(r.body).slice(0, 200)}`;
-    } else {
-      status = await waitForJob(jobId);
-    }
+    const status = await pullModel(m);
     say(`   ${String(m.id).padEnd(34)} ${status}  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
   }
 
@@ -484,22 +549,14 @@ try {
   /* ───────────────── 5. selfcheck：问"功能好不好使"而不是"文件在不在" ─────────── */
 
   hdr('5. selfcheck —— 判据是「中文双字词真的搜得到」，不是「文件下下来了」');
-  const sc = spawnSync(
-    process.execPath,
-    [join(REPO, 'scripts', 'selfcheck.mjs'), '--data-dir', DATA_DIR, '--daemon', BASE, '--json'],
-    { env: childEnv, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
-  );
-  let report = null;
-  try {
-    report = JSON.parse(sc.stdout);
-  } catch {
+  const { sc, report, checks } = selfCheckJson();
+  if (!report) {
     say('   ✘ selfcheck 的 JSON 解析不了，原样输出：');
     say((sc.stdout || '').slice(0, 4000));
     say((sc.stderr || '').slice(0, 4000));
   }
 
   if (report) {
-    const checks = report.checks ?? report.results ?? [];
     say(`   selfcheck exit=${sc.status}  共 ${checks.length} 项`);
     say();
     say('   id                                 status  required  detail');
@@ -508,6 +565,27 @@ try {
       say(
         `   ${String(c.id).padEnd(34)} ${String(c.status).padEnd(7)} ${String(c.required ?? '').padEnd(9)} ${String(c.detail ?? c.message ?? '').replace(/\s+/g, ' ').slice(0, 100)}`,
       );
+    }
+
+    /*
+     * ★ `hw.probe` 与 `asr.coreml` 的 detail 在上面那张表里被截到 100 字符 ——
+     *   而这两条**最值钱的信息恰好在后面**：探针失败时是「耗时 + stderr 尾部」，
+     *   CoreML 失败时是「到底缺哪个 .mlmodelc」。截断之后它们读起来都像
+     *   "有一句话，但看不清" —— 等于没有。这里整条打出来，不截。
+     */
+    for (const id of ['hw.probe', 'asr.coreml']) {
+      const c = checks.find((x) => x.id === id);
+      say();
+      if (!c) {
+        say(`   ★ ${id}：本轮报告里**没有这一项**`);
+        if (id === 'asr.coreml') {
+          say(`     （checkCoreMl() 第一行就是 platform!=='darwin' || arch!=='arm64' → return，`);
+          say(`       所以这在 ${process.platform}/${process.arch} 上是预期的，不是缺陷）`);
+        }
+      } else {
+        say(`   ★ ${id} = ${c.status}（required=${c.required}）`);
+        say(`     ${String(c.detail ?? c.message ?? '').replace(/\s+/g, ' ')}`);
+      }
     }
 
     /* ── 6. 三分类表 —— 用产品自己的判据，不另发明 ── */
@@ -532,6 +610,122 @@ try {
     if (sc.status !== 0) exitCode = 1;
   } else {
     exitCode = 1;
+  }
+
+  /* ────── 6b. ★ 探针深挖：分辨「10 秒太短」/「初始化会挂」/「真有 bug」 ────── */
+
+  /*
+   * ── 这一节要回答的问题 ────────────────────────────────────────────────────────
+   *
+   * darwin-arm64 上 `hw.probe` 报 `probe timed out after 10000ms`，而
+   * `platform-backlog.md` 把成因列成了三条**没有分开**的候选：
+   *   ① 10 秒对这台虚拟化 runner 太短    ② Metal 在虚拟化 macOS 上初始化会挂
+   *   ③ 探针真有 bug
+   * 上一位判断"不许调大 `PROBE_TIMEOUT_MS`，改大只会把『挂了』伪装成『慢』"——
+   * 这条判断是对的，**所以这里也不改它**。
+   *
+   * ── 但"不改常量"不等于"不能做实验" ──────────────────────────────────────────
+   *
+   * ① 和 ②/③ 的区别是**可判定的**：给它一个远大于 10 秒的窗口，
+   *    · 在 10s 与 120s 之间返回  → 它只是**慢**，① 成立（而且给出了真实耗时，
+   *      下一步该谈的是常量取值，那时才有据可依）；
+   *    · 120s 仍然不返回          → 它是**挂了**，① 被证伪，剩 ②/③；
+   *    · 崩溃/信号退出            → 既不是慢也不是挂，直接落到 ③（或驱动故障）。
+   *
+   * 关键在于**这个放宽只发生在审计脚本里，产品常量一个字没动**：
+   * 调的是 `runProbe()` 的 `timeoutMs` 入参（它本来就接受），
+   * `PROBE_TIMEOUT_MS` 仍然是 ADR-003 定死的 10 秒。
+   * 而且刻意调的是**产品自己那个函数**，不是我另写一个 spawn ——
+   * 自己写一个就等于换了环境变量、换了参数、换了解析，测的就不是同一件事了。
+   *
+   * 这一节**只观测，绝不改 exitCode**：它是用来查的，不是判据。
+   */
+  try {
+    hdr('6b. ★ 探针深挖：同一个 runProbe()，只把超时放宽 —— 分辨「慢」还是「挂」');
+    const distUrl = (rel) => pathToFileURL(join(REPO, rel)).href;
+    const rt = await import(distUrl('packages/runtime/dist/index.js'));
+    const pl = await import(distUrl('packages/pipeline/dist/index.js'));
+    const STORE_ROOT = process.env.OPENMEMO_MODELS ?? join(DATA_DIR, 'models');
+    const probePath = await pl.findInBackendPacks(
+      STORE_ROOT,
+      IS_WIN ? 'openmemo-probe.exe' : 'openmemo-probe',
+    );
+
+    if (!probePath) {
+      say('   ⚠️ 这台机器上找不到 openmemo-probe —— 深挖无从谈起。');
+      say(`      找过的 storeRoot：${STORE_ROOT}`);
+      say('      （若 hw.probe 报的是"未安装"，这一条与它一致，不是新问题。）');
+    } else {
+      const backendDir = dirname(probePath);
+      say(`   探针：${probePath}`);
+      say(`   后端目录：${backendDir}`);
+      /*
+       * 先把后端目录摊开。「加载哪个后端时停住的」这个问题，
+       * 得先知道**这里到底有哪些后端**才谈得下去（macOS 上关心的是 metal）。
+       */
+      try {
+        const { readdirSync } = await import('node:fs');
+        const libs = readdirSync(backendDir).filter((f) => /ggml|metal|vulkan|cuda|blas/i.test(f));
+        say(`   目录里与 ggml 后端有关的文件（${libs.length}）：${libs.join(', ') || '(无)'}`);
+      } catch (e) {
+        say(`   （列目录失败：${e.message}）`);
+      }
+
+      /*
+       * 第一发：**完全按产品的默认参数**跑，先确认自检那个结论在这里复现得出来。
+       * 复现不出来的话，后面那一发放宽超时就没有对照意义了。
+       */
+      say();
+      say(`   ── 第 1 发：产品默认超时 ${rt.PROBE_TIMEOUT_MS}ms（复现自检看到的那个结论）──`);
+      const r1 = await rt.runProbe({ probePath, backendDir });
+      say(`   ok=${r1.ok}  耗时=${r1.durationMs}ms  ${r1.ok ? '' : `kind=${r1.kind}  message=${r1.message}`}`);
+      say(`   stdout: ${r1.ok ? JSON.stringify(r1.output).slice(0, 400) : '(失败，无有效 JSON)'}`);
+      say('   ── stderr 全文（这正是此前日志里完全没有的东西）──');
+      say(r1.stderr ? r1.stderr.split('\n').map((l) => `      ${l}`).join('\n') : '      (空)');
+
+      /*
+       * 第二发：只有第一发失败才有必要 —— 成功的话"慢还是挂"这个问题本身不存在。
+       */
+      if (r1.ok) {
+        say();
+        say('   ✔ 默认超时下探针就成功了 —— 本平台不存在"慢还是挂"的问题，跳过第 2 发。');
+      } else {
+        const LONG_MS = 120_000;
+        say();
+        say(`   ── 第 2 发：超时放宽到 ${LONG_MS}ms（产品常量未改，只改本次调用的入参）──`);
+        const t0 = Date.now();
+        const r2 = await rt.runProbe({ probePath, backendDir, timeoutMs: LONG_MS });
+        const wall = Date.now() - t0;
+        say(`   ok=${r2.ok}  耗时=${r2.durationMs}ms（墙钟 ${wall}ms）  ${r2.ok ? '' : `kind=${r2.kind}  message=${r2.message}`}`);
+        say(`   stdout: ${r2.ok ? JSON.stringify(r2.output).slice(0, 400) : '(失败，无有效 JSON)'}`);
+        say('   ── stderr 全文 ──');
+        say(r2.stderr ? r2.stderr.split('\n').map((l) => `      ${l}`).join('\n') : '      (空)');
+
+        /*
+         * ★ 结论只从上面这两发的实际输出里读，不引入任何假设。
+         *   三条候选各自对应一个**可观测**的形态，对不上就明说对不上。
+         */
+        say();
+        say('   ── 定性（只依据上面两发的实测输出）──');
+        if (r2.ok) {
+          say(`   ✔ 放宽后成功了，用时 ${r2.durationMs}ms。`);
+          say(`     → 「10 秒太短」成立；「初始化会挂」被证伪 —— 它是**慢**，不是挂。`);
+          say(`     → 下一步该谈的是 PROBE_TIMEOUT_MS 取值，而且现在有实测数字了。`);
+        } else if (r2.kind === 'timeout') {
+          say(`   ✘ 放宽到 ${LONG_MS}ms 仍然超时（${r2.durationMs}ms）。`);
+          say('     → 「10 秒太短」被证伪：这不是慢，是**卡住不返回**。');
+          say('     → 剩下「初始化会挂」与「真有 bug」两条，二者要靠上面的 stderr 停在哪一行来分。');
+          say('       stderr 为空 = 连第一个后端都没打印出来就停了（更像加载期就挂住）。');
+        } else {
+          say(`   ✘ 放宽后不是超时，而是 ${r2.kind}：${r2.message}`);
+          say('     → 「10 秒太短」与「初始化挂住」都被证伪 —— 这是崩溃/执行失败那一类。');
+        }
+      }
+    }
+  } catch (e) {
+    // 观测步骤没有资格让整个审计变红（与第 7 节里 job.error 全文那段同理）。
+    say(`   ⚠️ 探针深挖本身失败了：${e.message}`);
+    say('      （这一节只观测，不改红绿；但它失败本身也是个信息，所以照报。）');
   }
 
   /* ─────────── 7. ★ 可行性证明：真的转写一次，判据是拿到非空文本 ─────────── */
@@ -634,6 +828,151 @@ try {
             say(`   ✘ 装上的 VAD 权重 whisper.cpp 加载不了：${vad.rejected.join(', ')}`);
             exitCode = 1;
           }
+        }
+      }
+    }
+  }
+
+  /* ────── 8. ★ 可选文件（includeOptional）：CoreML encoder 到底装不装得上 ────── */
+
+  /*
+   * ── 为什么这一节放在转写**之后** ────────────────────────────────────────────
+   *
+   * 这里要装的载体模型是 `whisper-large-v3-turbo`（574 MB 权重 + 1.17 GB encoder）——
+   * 清单里带 `coreml-encoder` 的最小的一个。如果在第 3b 节就装上它，
+   * 第 7 节的转写就**可能**改用它：ASR 权重的选取顺序是
+   * 「环境变量 > active.json > 任意已装记录（readdir 原序）」
+   * （`apps/daemon/src/pipeline/setup.ts:330-337`）——
+   * 而 `active.json` 是"先装的赢"（`rest/models.ts:494` 的 `!state.active[role]`）。
+   * 也就是说：**先装 tiny 就轮不到它**，但那是靠顺序侥幸成立的，不是保证。
+   *
+   * 而 macOS runner 上 tiny 转 11 秒音频已经要 **111.8s**（虚拟化 3 核 M1，
+   * 同一轮 Linux 只要 2.1s）。同一台机器上换成 turbo，转写有很大概率撞上
+   * `waitForJob` 的上限，把一个**本来会绿的可行性证明**拖成红。
+   *
+   * 所以顺序上就把它排在转写后面：**不依赖任何选取顺序的侥幸**，
+   * 第 7 节看到的仍然只有 tiny 一个 ASR。判据照 PROTOCOL 的老规矩 ——
+   * 不是"记得别装早了"，是"装早了也不会有后果"（这里是结构上不可能装早）。
+   */
+  hdr('8. ★ 可选文件（--include-optional）—— asr.coreml 这一项到底是什么状态');
+
+  if (INCLUDE_OPTIONAL.length === 0) {
+    say('   本轮没传 --include-optional / AUDIT_INCLUDE_OPTIONAL，跳过。');
+    say('   ⚠️ 这意味着 asr.coreml 在本轮**没有被检验过** —— 它的状态不是"好"，是"没问"。');
+  } else {
+    say(`   本轮请求的可选 role：${INCLUDE_OPTIONAL.join(', ')}`);
+
+    /*
+     * 清单里的可选文件带 `platforms: [{os, arch}]`（CoreML encoder 是 darwin/arm64）。
+     * 按当前平台先筛一遍：Linux/Windows 上**根本不该**为此多下 1.7 GB。
+     */
+    const platformMatches = (f) => {
+      const ps = f.platforms ?? [];
+      if (ps.length === 0) return true;
+      return ps.some(
+        (p) =>
+          (!p.os || p.os === process.platform) && (!p.arch || p.arch === process.arch),
+      );
+    };
+    const hitsOf = (m) =>
+      (m.files ?? []).filter(
+        (f) => f.optional === true && INCLUDE_OPTIONAL.includes(f.role) && platformMatches(f),
+      );
+    const sizeWith = (m, hits) =>
+      (m.files ?? []).reduce(
+        (n, f) => n + (f.optional === true && !hits.includes(f) ? 0 : (f.sizeBytes ?? 0)),
+        0,
+      );
+
+    const carriers = models
+      .map((m) => ({ m, hits: hitsOf(m) }))
+      .filter((x) => x.hits.length > 0)
+      .map((x) => ({ ...x, bytes: sizeWith(x.m, x.hits) }))
+      .sort((a, b) => a.bytes - b.bytes);
+
+    if (carriers.length === 0) {
+      /*
+       * ★ 空集必须出声（本仓同一形状已经发生过四次），而且要把
+       *   「本平台没有」与「清单里根本没有」分开 —— 这两句话的处置完全不同。
+       */
+      say(`   ⓘ 本平台（${process.platform}/${process.arch}）没有任何模型提供这些 role。`);
+      const anyPlatform = models.filter(
+        (m) => (m.files ?? []).some((f) => f.optional === true && INCLUDE_OPTIONAL.includes(f.role)),
+      );
+      if (anyPlatform.length === 0) {
+        say('   ⚠️ 而且**整个清单里**都没有这个 role 的可选文件 —— 先怀疑 role 名写错了，');
+        say('      再怀疑清单。（清单里出现过的可选 role：');
+        const seen = new Set();
+        for (const m of models) for (const f of m.files ?? []) if (f.optional === true) seen.add(f.role);
+        say(`      ${[...seen].join(', ') || '(一个都没有)'}）`);
+      } else {
+        say(`   清单里有 ${anyPlatform.length} 个模型提供它，但都限定了别的平台 —— 这是预期的：`);
+        for (const m of anyPlatform.slice(0, 6)) {
+          const f = (m.files ?? []).find((x) => x.optional === true && INCLUDE_OPTIONAL.includes(x.role));
+          say(`     ${String(m.id).padEnd(34)} ${f?.role} → ${JSON.stringify(f?.platforms ?? null)}`);
+        }
+        say('   → 本平台跳过，不下载。这一格的答案只能由对应平台的那一格给出。');
+      }
+    } else {
+      const best = carriers[0];
+      say(`   清单里能在本平台提供这些 role 的模型 ${carriers.length} 个，挑最小的：`);
+      for (const c of carriers.slice(0, 6)) {
+        say(`     ${String(c.m.id).padEnd(34)} ${(c.bytes / 1024 / 1024).toFixed(0)} MB  (${c.hits.map((h) => h.role).join(',')})`);
+      }
+      say();
+      say(`   → 装 ${best.m.id}（含可选文件共 ${(best.bytes / 1024 / 1024).toFixed(0)} MB）`);
+      const t0 = Date.now();
+      // 1.7 GB 的下载 + 解包，900s 不够；这一步单独给更长的窗口。
+      const status = await pullModel(best.m, 2400);
+      say(`   ${String(best.m.id).padEnd(34)} ${status}  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+
+      /*
+       * ★ 重新问一次 selfcheck。**必须重跑** —— 第 5 节那份报告是装之前的。
+       *   `selfcheck.mjs` 每次现读磁盘（`new ArtifactStore(storeRoot)`，无缓存），
+       *   所以不需要重启 daemon。
+       */
+      say();
+      say('   ── 重跑 selfcheck（装完之后再问一次）──');
+      const again = selfCheckJson();
+      if (!again.report) {
+        say('   ✘ 第二次 selfcheck 的 JSON 解析不了，原样输出：');
+        say((again.sc.stdout || '').slice(0, 2000));
+        say((again.sc.stderr || '').slice(0, 2000));
+      } else {
+        const cm = again.checks.find((c) => c.id === 'asr.coreml');
+        say();
+        if (!cm) {
+          say('   ★ asr.coreml：报告里**没有这一项**。');
+          say(`     checkCoreMl() 在 ${process.platform}/${process.arch} 上第一行就 return，`);
+          say('     所以这个平台产生不出这一项 —— 是预期，不是缺陷。');
+        } else {
+          say(`   ★★ asr.coreml = ${cm.status}（required=${cm.required}）`);
+          say(`      ${String(cm.detail ?? '').replace(/\s+/g, ' ')}`);
+          if (cm.remediation) say(`      remediation: ${String(cm.remediation).replace(/\s+/g, ' ')}`);
+          say();
+          /*
+           * ★ 三档各自意味着什么，直接写在输出里 —— 免得下一个人再去翻 selfcheck.ts。
+           *   **不把 warn 说成"差不多绿了"**：warn 就是没启用 ANE。
+           */
+          if (cm.status === 'ok') {
+            say('      → ANE 真的就绪了。这一格闭环：encoder 装得上、目录结构对。');
+          } else if (cm.status === 'warn') {
+            say('      → **仍然是 warn**，ANE 没启用。可选文件没落到 checkCoreMl() 要找的位置，');
+            say('        或者这个载体模型的 encoder 压根没装上（看上面那行 pull 的状态）。');
+          } else {
+            say('      → **fail**：目录在、但里面没有 coremldata.bin —— 就是那个"多一层同名目录"');
+            say('        的空壳形态，whisper 会静默回退到 Metal/CPU。');
+          }
+        }
+        /* 装完之后 by-name/asr 下到底多了什么，摊开给下一个人看。 */
+        try {
+          const { readdirSync } = await import('node:fs');
+          const asrDir = join(process.env.OPENMEMO_MODELS ?? join(DATA_DIR, 'models'), 'by-name', 'asr');
+          say();
+          say(`   by-name/asr 目录实况（${asrDir}）：`);
+          for (const e of readdirSync(asrDir)) say(`     ${e}`);
+        } catch (e) {
+          say(`   （列 by-name/asr 失败：${e.message}）`);
         }
       }
     }
