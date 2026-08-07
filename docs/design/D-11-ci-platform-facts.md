@@ -802,3 +802,175 @@ delta is what makes requirement 2.1 cheap」—— **写着 A，实现是 B，�
 → **Linux/Windows 的 Vulkan 与 CUDA 增量包因此暂不进目录**（§8.2 那条 glibc 也就暂时不伤用户）。
 要接它们，得先让加速包自包含，或者补一条"把后端模块搬到引擎目录旁边"的机制
 （`materializeSqliteExtensions()` 对 SQLite 扩展做的正是这件事，后端模块没有对应物）。
+
+---
+
+# §9 `openmemo-probe` 的分发通道 —— 以及**同一族的第四条**
+
+> **本节由 `platform-backlog`（T-167，2026-08-07）追加。**
+> 作者是 `ci-runner`，§1–§7 的正文一个字未改；§8 是 `pack-publish` 追加的（T-146）。
+> 本节延续 §8.0 那条共同形状，补上它在**探针**这个产物上的第四次现形，
+> 以及「探针为什么必须在包里」的三条独立依据。
+
+## 9.0 结论先给
+
+| # | 事 | 状态 |
+|---|---|---|
+| ① | 探针**不能**单独分发 —— 它动态链接 ggml，裸跑起不来 | ✅ `[本机实测]` |
+| ② | 探针必须在**每一个**包里，不只是核心包 | ✅ 三条依据，见 §9.2 |
+| ③ | macOS 探针 `minos = 26.0.0`（§8.1 只修了包，没修探针） | ✅ **已修**，`[CI 实测]` 13.3.0 |
+| ④ | Windows 探针的导入表**不需要** VC++ 运行时（只有 UCRT） | ✅ `[本机实测]`，但见 §9.4 |
+| ⑤ | 「探针发出去 → Windows 适用包 5 变 6」 | ❌ **因果关系不成立**，见 §9.5 |
+
+## 9.1 ① 探针**不是**自包含的可执行文件
+
+`[本机实测 2026-08-07]`，对象是 `build-backends` run 31147884172 的
+`packs-linux-x64-cpu` artifact 里那个 `dist/probe/openmemo-probe`（17,208 B）：
+
+```
+$ objdump -p openmemo-probe | grep -E 'NEEDED|RUNPATH'
+  NEEDED   libggml-base.so.0
+  NEEDED   libggml.so.0
+  NEEDED   libc.so.6
+  RUNPATH  $ORIGIN
+
+$ ./openmemo-probe                       # 同目录没有那两个库
+  error while loading shared libraries: libggml-base.so.0: cannot open shared object file
+
+$ cp openmemo-probe <解开的 whispercpp-cpu-linux-x64>/ && cd 那个目录
+$ env -u LD_LIBRARY_PATH ./openmemo-probe .
+  {"schemaVersion":1,"ggmlVersion":"0.15.1","deviceCount":1,
+   "devices":[{"name":"CPU","backendReg":"CPU","type":"cpu", …}]}
+```
+
+成因在 `scripts/build-probe.sh:68`：`LDFLAGS=( -L … -lggml-base -lggml )`。
+它**从设计上就是**一个跟着 ggml 走的东西 —— `probe.c` 的文件头写着
+「links only ggml-base + ggml；the backend .so files are dlopen'd at runtime by
+`ggml_backend_load_all_from_path`」。
+
+→ **把它当成 yt-dlp 那种"扁平落点的独立可执行文件"发出去，在用户机器上一次都启动不了。**
+而它启动不了的表现是 `runProbe()` 返回失败 → 界面写「尚未探测到硬件能力」
+—— **与"这台机器真的没有 GPU"在界面上完全一样**（§8.0 那条形状的又一次）。
+
+## 9.2 ② 为什么必须在**每一个**包里，而不只是核心包
+
+三条依据，任何一条单独都够：
+
+1. **§9.1**：它要和 `libggml-base` 同目录才起得来。
+2. `apps/daemon/src/runtime/setup.ts` 的 `backendDir` 定义就是 `path.dirname(probePath)`
+   —— 产品从设计上假定"探针与 ggml 后端模块同目录"。
+3. `probe.c:110` 只调一次 `ggml_backend_load_all_from_path(backend_dir)`：
+   **它只能枚举与它同目录的那些后端**。只有核心包带探针时，装了 Vulkan 包的用户
+   枚举不到 vulkan 设备 → `hardware.backends.vulkan.available` 恒 false。
+
+`[本机实测]` 用**产品自己的** `resolveRuntimeLayout()` 在真 store 上验：
+
+```
+场景 cpu-only            probePath = <models>/by-name/backend/whisper-bin-ubuntu-x64.tar.gz/openmemo-probe
+                         backendDir = 同目录          runProbe.ok = true   deviceCount = 1
+场景 cpu+vulkan（未选）  probePath = <models>/by-name/backend/whispercpp-vulkan-linux-x64.tar.gz/openmemo-probe
+                         ← priority 80 > 10，**加速包那份探针胜出，backendDir 自然对上**
+场景 cpu+vulkan + 用户显式选 cpu
+                         probePath 回到 CPU 包        ← 见 §9.3，这是**残留缺口**
+```
+
+→ T-167 的做法：`scripts/build-whisper.sh` 把探针编进**每个** stage
+（在 strip / codesign 之前，两步一起管它），编不出来当场 die。
+`[CI 实测 run 31155359839]`：linux-cpu 的 ELF 从 22 → **23**、linux-vulkan 23 → **24**、
+macOS 的 Mach-O 12 → **13**，codesign 从 12 → **13** 个文件。
+
+## 9.3 ⚠️ 残留缺口（**没修，交给 `daemon-backlog`**）
+
+`backendDir` 是**单值**的，而 `resolveBackendTool()` 只挑一个包。于是：
+
+> 用户显式选了 `cpu`（或同时装了两个加速包）时，探针只会看**一个**目录，
+> 另一个已安装的加速包会被报成
+> `installed but enumerated no devices (driver missing or too old)` ——
+> **一句具体的、而且是错的诊断**（它在怪驱动，真实原因是探针看错了目录）。
+
+`[本机实测]` 已复现（上面第三个场景）。**今天不伤人，因为今天根本没有探针**；
+探针发出去之后它就成立了。建议的判据：
+
+> `detectHardware` 应当对**每一个已安装的后端包目录**各跑一次探针并取并集，
+> 而不是只跑 `dirname(probePath)` 那一个。
+> 判据：CPU 包 + Vulkan 包同时装着、用户显式选 cpu 时，
+> `hardware.backends.vulkan` 必须仍然报得出真实结论。
+
+## 9.4 ③④ 两个平台的"构建机版本焊进产物"复查
+
+**macOS（§8.1 的第四次现形）**。`[本机实测]` 同一轮 CI（run 31121718587）的两样产物：
+
+```
+whispercpp-cpu-macos-arm64.tar.gz 里的 20 个 Mach-O    minos = 13.3.0
+dist/probe/openmemo-probe                              minos = 26.0.0   ← ★
+```
+
+§8.1 修的是 `build-whisper.sh`（`-DCMAKE_OSX_DEPLOYMENT_TARGET=13.3`），
+`build-probe.sh` **是另一个文件，没人想到它**。这与 T-163 在 Linux 上说的是同一句话：
+「守卫只看包的内容，而探针是单独 upload 的」——
+**一个漏掉探针的守卫，在两个平台上各漏了一次。**
+
+已修三件事：`build-probe.sh` 传 `-mmacosx-version-min`；13.3 与 2.34 收进
+`scripts/lib/baselines.sh`（**同一个数字写在两个地方然后只改一个**，是这三次事故的共同成因）；
+新增 `scripts/ci/check-macho-minos.mjs` 守卫 —— **纯 node 解析 Mach-O，不调 `otool`**，
+所以它的 7 条反向用例能在 Linux 开发机上真的拿到红灯，而不必赌一次 macOS CI。
+`[CI 实测 run 31155359839]` macos-arm64-cpu：`13 个 Mach-O … 实测最高 13.3.0`，探针在内。
+
+**Windows（§8.3 的一格）**。`[本机实测]` `objdump -p openmemo-probe.exe` 的导入表：
+
+```
+KERNEL32.dll · api-ms-win-crt-{environment,heap,locale,math,private,runtime,stdio,string}-l1-1-0.dll
+ggml-base.dll · ggml.dll
+```
+
+**没有 MSVCP140 / VCRUNTIME140** —— 探针自己是 UCRT（Win10+ 自带）。
+⚠️ **但这不构成「Windows 上没问题」**：它链接的 `ggml-base.dll` / `ggml.dll` 仍然依赖
+VC++ 可再发行组件（§8.3 未修）。探针会和它们一起起不来。
+
+## 9.5 ⑤ ★「探针发出去 → Windows 适用包 5 变 6」——**因果关系不成立**
+
+这条推断来自 `docs-public` §3.3，由三条证据拼成，其中第 2 条
+（「探针为 null 时 L2 一律 `applicable:false`」）**在写下之后被 `gates-fix` T-160
+（`4bb846e`）改掉了**：advisory 探测成了第二条独立证据。
+被引用的那次 CI 观测（run 31076010999）早于 T-160。
+
+`[本机实测]` 用**产品自己的** `evaluateApplicability()` 跑真目录（23 个包，Windows x64 占 6 个）：
+
+| 场景 | 适用 |
+|---|---|
+| A 今天的 CI runner（无探针、无 NVIDIA） | **5 / 6**，CUDA 被拒：「尚未探测到硬件能力」 |
+| B 今天的真 N 卡 Windows（无探针，`nvidia-smi` 在） | **6 / 6** ← ★ **今天就是 6，不需要探针** |
+| C 探针发出去后的 CI runner（无 NVIDIA） | **5 / 6**，理由变成「backend package not installed」 |
+| D 探针发出去后的真 N 卡 Windows | **6 / 6** |
+
+机制：`detect/gpu.ts` 的 Windows 分支先跑 `nvidia-smi`，成功就给
+`candidateBackends: ['cuda','vulkan']`；`Get-CimInstance Win32_VideoController`
+那条**永远只给 `['vulkan']`**，且软件适配器被 `SOFTWARE_ADAPTER_NAMES` 过滤。
+GitHub 的 `windows-2025` runner 没有 NVIDIA 驱动 → 没有 `nvidia-smi` → cuda 永不入选。
+
+**两条结论**：
+
+1. **「Windows CUDA 包今天装不上」这句话要限定到"没有 N 卡的机器"** ——
+   而那是**正确行为**，不是缺陷。有 N 卡的 Windows 上它今天就是可装的。
+2. **这条判据没法在 CI 上验**，因为把它从 5 变到 6 需要一块真 NVIDIA 卡，
+   而任何 GitHub 托管 runner 都没有。**不是"还没验"，是"这个 runner 结构上验不了"。**
+   探针真正买到的是另一样东西：`hw.probe` 从
+   `warn: openmemo-probe 未安装（后端能力未知）` 变成 `ok: N 个设备, ggml 0.15.1`
+   （`[本机实测]` 逐行复刻 `selfcheck.ts` 的那一条，喂真 store，两种形状各跑一遍）。
+
+## 9.6 🔴 还差的那一步：**Linux 与 Windows 的核心包指的是上游，不是我们编的**
+
+`vendor/manifests/backends.json` 现状：
+
+| 包 | 来源 | 里面会有探针吗 |
+|---|---|---|
+| `whispercpp-cpu-linux-x64` | `ggml-org/whisper.cpp` 的 `whisper-bin-ubuntu-x64.tar.gz` | ❌ 上游的包，我们加不进去 |
+| `whispercpp-cpu-win-x64` | `ggml-org/whisper.cpp` 的 `whisper-bin-x64.zip` | ❌ 同上 |
+| `whispercpp-cuda-12.4-win-x64` | `ggml-org` 的 `whisper-cublas-12.4.0-bin-x64.zip` | ❌ 同上 |
+| `whispercpp-cpu-macos-arm64` | **我们自己编的** | ✅ |
+| `whispercpp-vulkan-linux-x64` | **我们自己编的** | ✅ |
+
+→ **探针要到达 Linux 与 Windows 用户，前两条必须换成我们自己的构建。**
+两个包我们本来就在编、CI 每轮都产出，只是目录一直指向上游。
+换与不换的取舍、以及 Windows CUDA 那条（上游包没有探针，装上之后会落进 §9.3 那个缺口）
+写在 `coordination/inbox/platform-backlog.md`，**需要 Manager 拍板 + 一次 release**。
