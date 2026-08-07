@@ -27,7 +27,7 @@
     "build:info": "node scripts/gen-build-info.mjs",
     "build:safe": "pnpm --filter \"!@openmemo/web\" -r build",
     "_comment:test:ci-scripts": "★ T-144：`.github/workflows/**` 里的关键步骤在本机跑一遍。CI 从来没执行过，所以它里面装着从来没被执行过的错误（platform T-141 §4 数出 11 条）。这两个脚本把「fragment 生成 → schema 校验 → 合并 → 失败即红」整条链搬到本地，正反向都跑；`pnpm -r` 默认不含 workspace root，所以它只能挂在根脚本上、由 ci.yml 与人手动调用。跑之前要先 `pnpm build:safe`（需要真的 @openmemo/shared/dist）。",
-    "test:ci-scripts": "node scripts/ci/lint-workflows.mjs && node scripts/ci/selftest-ci-manifest.mjs && node scripts/ci/selftest-release-upload.mjs && node scripts/ci/selftest-elf-glibc.mjs && bash scripts/ci/selftest-build-whisper.sh"
+    "test:ci-scripts": "node scripts/ci/lint-workflows.mjs && node scripts/ci/selftest-ci-manifest.mjs && node scripts/ci/selftest-release-upload.mjs && node scripts/ci/selftest-elf-glibc.mjs && bash scripts/ci/selftest-buildbox.sh && bash scripts/ci/selftest-build-whisper.sh"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

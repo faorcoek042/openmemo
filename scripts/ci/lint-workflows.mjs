@@ -178,6 +178,104 @@ for (const file of files.sort()) {
   must(!/\.build\/whisper-/.test(allText), 'build-backends.yml: 又出现了硬编码的 .build/whisper-* 路径（C7）');
   must(!/choco install ninja/.test(allText), 'build-backends.yml: choco install ninja 回来了，而脚本仍然没有 -G Ninja（C6）');
 
+  /* ═════════════════════════════════════════════════════════════════════════════════
+   * ★ T-163 · 「GLIBC 下限」与「runner 标签」必须保持解耦
+   *
+   * 历史：T-145 把 vulkan/cuda 从 22.04 挪到 24.04（为了 apt 的 glslc），
+   * 顺手把产物的运行时下限从 2.34 抬到 2.38；T-161 又挪回 22.04 把它压下来，
+   * 于是撞上 runner 退役（2026-09-17 起 deprecation）。**来回横跳两次，
+   * 每次都是因为这两件事被绑在同一个 `runs-on:` 上。**
+   *
+   * T-163 把它们拆开：`runs-on` 跟着 GitHub 的排期走，编译发生在 buildbox 容器里。
+   * 下面这几条钉的就是"拆开"这个**结构**本身 —— 不钉 runner 的名字（那会在下一次
+   * 升级时变成一条过期的守卫，参见上面 ci.yml 那条被用户指令翻过来的断言）。
+   *
+   * ⚠️ 扫描前先剥掉整行注释：本文件里这些 `run:` 块的注释**大量**提到
+   *    `buildbox.sh` / `check-elf-glibc`，正因为它们在解释这件事。
+   *    不剥的话，把编译搬回宿主、只在注释里留一句"以前用 buildbox"，这几条会照样绿。
+   * ═════════════════════════════════════════════════════════════════════════════════ */
+  {
+    const stripShellComments = (src) =>
+      String(src ?? '')
+        .split('\n')
+        .filter((l) => !l.trimStart().startsWith('#'))
+        .join('\n');
+
+    const linux = bb.jobs?.linux;
+    must(linux != null, 'build-backends.yml: 没有 linux job');
+    const steps = linux?.steps ?? [];
+    const runs = steps.map((s) => ({ name: s.name ?? s.uses ?? '(anon)', code: stripShellComments(s.run) }));
+
+    /* ① 编译/链接/跑产物的每一步都必须经过 buildbox.sh。 */
+    const COMPILE_MARKERS = [
+      'scripts/build-whisper.sh',
+      'scripts/build-probe.sh',
+      'scripts/ci/smoke-linux-pack.sh',
+    ];
+    for (const marker of COMPILE_MARKERS) {
+      const hits = runs.filter((r) => r.code.includes(marker));
+      must(
+        hits.length > 0,
+        `build-backends.yml#linux: 没有任何一步调用 ${marker} —— 这条守卫会因为"没东西可查"而永远绿`,
+      );
+      for (const h of hits) {
+        must(
+          h.code.includes('scripts/ci/buildbox.sh'),
+          `build-backends.yml#linux "${h.name}": 直接在 runner 上跑 ${marker}。` +
+            `runner 是 ubuntu-24.04（glibc 2.39），产物的下限会跟着跑到 2.39 —— ` +
+            `而 GGML_BACKEND_DL 下 dlopen 失败是**静默的**（D-11 §8.2）。` +
+            `编译与跑产物一律经过 scripts/ci/buildbox.sh。`,
+        );
+      }
+    }
+
+    /* ② 那个镜像必须是本仓自己的 Dockerfile 造的，且 BASE_IMAGE 写在 workflow 里（看得见）。 */
+    const imgStep = runs.find((r) => r.code.includes('scripts/ci/buildbox.Dockerfile'));
+    must(imgStep != null, 'build-backends.yml#linux: 没有一步用 scripts/ci/buildbox.Dockerfile 造编译镜像');
+    must(
+      (imgStep?.code ?? '').includes('--build-arg BASE_IMAGE='),
+      'build-backends.yml#linux: `docker build` 没有显式传 BASE_IMAGE —— ' +
+        '那条决定 glibc 下限的选择不该藏在 Dockerfile 的默认值里',
+    );
+
+    /* ③ 编译**开始之前**先断言容器自己的 glibc（省得跑完整个 CUDA 编译才发现镜像被换了）。 */
+    must(
+      runs.some((r) => /buildbox\.sh\s+--report/.test(r.code)),
+      'build-backends.yml#linux: 少了 `buildbox.sh --report` —— ' +
+        '它是"我们以为在容器里编，实际上是不是"的第一道闸',
+    );
+
+    /* ④ 真正的判据：逐个 ELF 的 objdump 守卫。包与探针**各一条**。 */
+    const guards = runs.filter((r) => r.code.includes('check-elf-glibc.mjs'));
+    must(
+      guards.length >= 2,
+      `build-backends.yml#linux: check-elf-glibc 守卫只有 ${guards.length} 条。` +
+        `包（stage_dir）与探针（dist/probe）要各一条 —— 探针是随包出厂的可执行文件，` +
+        `它挂掉的表现是"探测不到任何 GPU"，与"这台机器真的没有 GPU"在界面上完全一样。`,
+    );
+    for (const g of guards) {
+      must(
+        /--max\s+2\.34\b/.test(g.code),
+        `build-backends.yml#linux "${g.name}": check-elf-glibc 的 --max 不是字面量 2.34。` +
+          `2.34 是 Ubuntu 22.04 上编出来的实测值；把它写成变量或表达式，` +
+          `等于把基线交给别处去定义。`,
+      );
+    }
+    must(
+      guards.some((g) => g.code.includes('dist/probe')),
+      'build-backends.yml#linux: 没有一条 check-elf-glibc 覆盖 dist/probe（探针）',
+    );
+  }
+
+  /* T-163：新守卫必须真的被跑到。一条没接进 test:ci-scripts 的自检等于不存在。 */
+  {
+    const pkg = JSON.parse(await readFile(join(REPO_ROOT, 'package.json'), 'utf8'));
+    const cmd = String(pkg.scripts?.['test:ci-scripts'] ?? '');
+    for (const f of ['selftest-elf-glibc.mjs', 'selftest-buildbox.sh', 'selftest-build-whisper.sh']) {
+      must(cmd.includes(f), `package.json: test:ci-scripts 里没有 ${f} —— 没被跑到的自检等于不存在`);
+    }
+  }
+
   const ci = parse(await readFile(join(WF_DIR, 'ci.yml'), 'utf8'));
   /*
    * ★ T-145：这条断言**方向反过来了**，而且是被用户的新指令翻的。

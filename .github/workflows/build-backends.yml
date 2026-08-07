@@ -83,6 +83,23 @@ on:
         type: boolean
         required: false
         default: false
+      # ★ T-163：只跑其中一组 job。
+      #
+      # 加它的直接理由是实测成本：本 workflow 只能整份 dispatch，一次要烧 8 个 job
+      # （含两个 macOS runner）。T-161 有一轮 GitHub Actions 正在故障，五条腿全死在
+      # `Set up job`，一行我们的代码都没跑到 —— 那一轮里**唯一有信息量的只有 linux**，
+      # 其余全是噪声与 macOS 分钟数。
+      #
+      # ⚠️ 只跑一组时 `merge-manifest` 会**被跳过**（它 `needs:` 三组，有一组 skipped
+      #    整个 job 就 skipped）。那不是缺陷，是正确结果：**半份矩阵合出来的目录比没有目录更糟**
+      #    —— 这正是 C4 那条 `if: always()` 被删掉的理由，`lint-workflows.mjs` 还钉着
+      #    「manifest job 不许有任何 if:」，所以这条路是堵死的，不需要额外守卫。
+      legs:
+        description: 'Which job group to run'
+        type: choice
+        required: false
+        default: all
+        options: [all, linux, macos, windows]
 
 # T-144: was `contents: write`. Nothing in this workflow creates a release or pushes a
 # commit — the "publish" step only prints a reminder. Least privilege by default; widen
@@ -110,6 +127,7 @@ jobs:
   # =====================================================================================
   macos:
     name: macos-${{ matrix.arch }}-${{ matrix.backend }}
+    if: inputs.legs == 'all' || inputs.legs == 'macos'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -215,15 +233,37 @@ jobs:
   # =====================================================================================
   linux:
     name: linux-${{ matrix.arch }}-${{ matrix.backend }}
+    if: inputs.legs == 'all' || inputs.legs == 'linux'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # ★ T-145（第一次真跑才知道的）：**vulkan 在 jammy 上装不上**
-          #   （E: Unable to locate package glslc），而同一份包列表在
-          #   `ubuntu-24.04-arm` 上**同一轮是绿的** —— 见下面 install 步骤里的实测输出。
-          #   cpu 保留 22.04 是刻意的：它是**glibc 基线**，产物要能在老发行版上跑。
+          # ═══════════════════════════════════════════════════════════════════════════
+          # ★★★ T-163：三条腿一起从 `ubuntu-22.04` 升到 `ubuntu-24.04`，
+          #            **同时把产物的 GLIBC 下限留在 ≤ 2.34**。
+          #
+          # 这两件事在此之前是互相矛盾的，历史就是来回横跳：
+          #   T-145  vulkan/cuda 22.04 → 24.04（为了 apt 的 glslc）→ 下限被抬到 2.38
+          #   T-161  vulkan/cuda 24.04 → 22.04（为了把下限压回 2.34）→ 撞上 runner 退役
+          #
+          # 退役不是"以后再说"：`actions/runner-images#14254` 与
+          # `Ubuntu2404-Readme.md` 顶部的公告栏都写着 **2026-09-17 起 deprecation、
+          # 2027-04-17 完全不支持**，期间有 brownout（job 硬失败）。
+          #
+          # 解法不是再横跳一次，是**把两件事解耦**：
+          #   · `runs-on` 只决定「谁来跑这个 job」 → 跟着 GitHub 的排期走，随时可以升。
+          #   · 编译发生在 `scripts/ci/buildbox.Dockerfile` 造的 **glibc 2.35 容器**里
+          #     → 那是我们对用户机器的承诺，不跟着 GitHub 的排期漂。
+          #   · 判据仍然是 `check-elf-glibc.mjs` 逐个 ELF 实测（见下面那两步）——
+          #     容器只是让基线容易满足，**不是**基线本身。
+          #
+          # `[实测 T-161]` 排除掉的那条路：留在 24.04 上用编译器开关压住 C23 重定向。
+          #   触发源是 g++ driver 无条件注入的 `-D_GNU_SOURCE`
+          #   （gcc/config/gnu-user.h 的 `CPLUSPLUS_CPP_SPEC`，gcc-12 与 gcc-13 两个分支
+          #   字节相同），不是语言标准版本 —— C++ 侧 `-std=c++11/17/20/23` 逐个试过，
+          #   **全部仍然产出 `__isoc23_strtol`**；换 gcc-12 同样无效（重定向在 glibc 2.39
+          #   的头文件里）。
           #
           # ★ T-145 矩阵裁剪（用户 2026-08-05 当面指示：「linux-arm64 / macos-x64 /
           #   linux-x64-rocm 这些我用不到」）。删掉的三行原样记在这里，
@@ -232,29 +272,33 @@ jobs:
           #     - { runner: ubuntu-24.04-arm, arch: arm64, backend: cpu }
           #     - { runner: ubuntu-24.04-arm, arch: arm64, backend: vulkan }
           #   ⚠️ rocm 这一行就是章程要求 2.1 里的「AMD」。裁掉之后
-          #   **AMD 加速没有任何产物**。偏离已记入 docs/adr/…（见 T-145 回执）。
-          #   ⚠️ 讽刺的是 arm64 那两行是本轮**唯二全绿**的 linux job
-          #   （linux-arm64-cpu / linux-arm64-vulkan success）—— 删的不是坏的那些。
-          - { runner: ubuntu-22.04,     arch: x64,   backend: cpu }
-          # ★★ T-161：**vulkan 挪回 ubuntu-22.04**（原来是 `ubuntu-24.04`）。
-          #   T-145 把它挪走是因为 jammy 的 apt 里没有 `glslc`；那次挪动解决了编译问题，
-          #   **同时把产物的运行时下限从 GLIBC_2.34 抬到了 2.38，而没有人注意到**
-          #   （D-11 §8.2：三个 `__isoc23_strtol` 家族符号，Ubuntu 22.04 / Debian 12 上
-          #   `dlopen` 直接失败，且失败是静默的）。
-          #   现在两个问题一起解决：glslc 不走 apt，走 LunarG SDK（见下面那一步）。
-          #   `[实测]` 24.04 上是**压不掉**这条重定向的：触发源是 g++ driver 无条件注入的
-          #   `-D_GNU_SOURCE`（gcc/config/gnu-user.h 的 `CPLUSPLUS_CPP_SPEC`，
-          #   gcc-12 与 gcc-13 两个分支字节相同），不是语言标准版本 ——
-          #   C++ 侧 `-std=c++11/17/20/23` 逐个试过，**全部仍然产出 `__isoc23_strtol`**。
-          #   换编译器版本同样无效（重定向在 glibc 2.39 的头文件里）。
-          - { runner: ubuntu-22.04,     arch: x64,   backend: vulkan }
-          # ★ T-145 第二轮：**CUDA 必须留在 22.04**。
-          #   我第一轮把它一起挪到了 noble，第二轮当场证明那是错的：
-          #     Package 'cuda-nvcc-12-4' has no installation candidate
-          #     Package 'cuda-cudart-12-4' has no installation candidate
-          #   NVIDIA 的 ubuntu2404 仓库里**没有 12.4 这一代**。
-          #   jammy 上这三个包第一轮是装得上的，只有 cuBLAS 那两个名字错了。
-          - { runner: ubuntu-22.04,     arch: x64,   backend: cuda }
+          #   **AMD 的加速产物只剩 vulkan 这一条**（用户 2026-08-07：「AMD 卡用 vulkan，
+          #   这正是我放弃 rocm 的原因」—— 所以 rocm 这一格是被 vulkan 取代，不是被放弃）。
+          # ═══════════════════════════════════════════════════════════════════════════
+          - { runner: ubuntu-24.04, arch: x64, backend: cpu }
+          # glslc 的来源与发行版无关：`jakoch/install-vulkan-sdk-action` 在 x86_64 Linux 上
+          # 下的是 LunarG 官方 tarball，跟 runner 是 22.04 还是 24.04 没关系
+          # （T-161 已在 22.04 上实测拿到 `found components: glslc glslangValidator`）。
+          # 所以升 runner 不会把 T-145 那个 "E: Unable to locate package glslc" 带回来。
+          - { runner: ubuntu-24.04, arch: x64, backend: vulkan }
+          # ★ CUDA 12.4 的仓库这件事没变，只是搬了一层：
+          #   `[实测 2026-08-07]` NVIDIA 的 `repos/ubuntu2404/x86_64/` 里**最老只到 12-5**，
+          #   `repos/ubuntu2204/x86_64/` 才有 `cuda-nvcc-12-4`。T-145 第二轮那两行
+          #   "Package 'cuda-nvcc-12-4' has no installation candidate" 就是这么来的。
+          #   → 现在 CUDA 装在 **jammy 容器**里（buildbox.Dockerfile），仓库路径回到
+          #     ubuntu2204，12.4 又拿得到了 —— 宿主是 24.04 也不影响。
+          - { runner: ubuntu-24.04, arch: x64, backend: cuda }
+    env:
+      # `docker build -t` 出来的本地 tag。buildbox.sh 读它。
+      BUILDBOX_IMAGE: openmemo-buildbox:local
+      # ★ ccache 的缓存目录必须**显式**给，而且宿主与容器要是同一个。
+      #   `ggml-org/ccache-action` 的实现是 `process.env.CCACHE_DIR || $GITHUB_WORKSPACE/.ccache`，
+      #   而它**不导出** `CCACHE_DIR` —— 它把 cache_dir 写进宿主 `$HOME/.config/ccache/ccache.conf`。
+      #   容器里的 $HOME 是另一个目录 → ccache 回落到自己的默认路径 →
+      #   **每次全量重编，且只表现为"CI 变慢了"，没有任何一处会说话。**
+      #   在这里写死之后，action 与容器读到的是同一个值（这个值恰好也是 action 的默认值）。
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 500M
     steps:
       - uses: actions/checkout@v6
         with:
@@ -270,6 +314,12 @@ jobs:
         run: git -C vendor/whisper.cpp checkout "${{ inputs.whisper_ref }}"
 
       # The CUDA and ROCm toolchains do not fit in the runner's 14 GB of free space.
+      #
+      # ★ T-163：CUDA 现在装进 buildbox 镜像里（见下面那一节），但**这一步仍然必须在宿主上跑**：
+      #   容器的镜像层与可写层都落在宿主的 `/var/lib/docker`，就在这一步要释放的那块盘上。
+      #   这也是本次没有用 job 级 `container:` 的直接原因 —— 那样所有 step 都在容器里，
+      #   这一步就再也够不着宿主的 `/usr/share/dotnet` / `/opt/ghc` 之类，
+      #   只会**成功地什么都没释放**（而它照样报绿）。
       - name: Free disk space
         if: matrix.backend == 'cuda' || matrix.backend == 'rocm'
         uses: jlumbroso/free-disk-space@v1.3.1
@@ -332,26 +382,29 @@ jobs:
           cache: true
 
       # --- CUDA ----------------------------------------------------------------------
-      # Note: llama.cpp and whisper.cpp both hand-roll this by pulling individual
-      # component archives from NVIDIA's redist server rather than using an action. The
-      # action is simpler; swap to the manual route if image sizes become a problem.
-      - name: Install CUDA toolkit
-        if: matrix.backend == 'cuda'
-        uses: Jimver/cuda-toolkit@v0.2.35
-        with:
-          cuda: '12.4.0'
-          method: 'network'
-          # ★ T-145：cuBLAS 走 `non-cuda-sub-packages`，**不是** `sub-packages`。
-          #   两轮实测把这条钉死了 ——
-          #     第一轮 sub-packages 里写 "cublas"      → E: Unable to locate package cuda-cublas-12-4
-          #     第二轮 sub-packages 里写 "libcublas"   → E: Unable to locate package cuda-libcublas-12-4
-          #   因为该 action 对 `sub-packages` 的每一项都拼成 `cuda-<项>-<major>-<minor>`。
-          #   而 CUDA 11 之后 cuBLAS 的真实包名是 `libcublas-12-4`（不带 `cuda-` 前缀，
-          #   它已经是独立于 toolkit 版本的数学库）—— 这类包正是该 action 的
-          #   `non-cuda-sub-packages` 输入存在的理由。
-          #   ⚠️ **未验证**：这一条要看下一轮日志才算数。前两次我都改错了，这是第三次。
-          sub-packages: '["nvcc","cudart","nvrtc","nvrtc-dev"]'
-          non-cuda-sub-packages: '["libcublas","libcublas-dev"]'
+      #
+      # ★★ T-163：**CUDA 不再由 action 在宿主上装，改成装进 buildbox 镜像里**
+      #    （`scripts/ci/buildbox.Dockerfile` 的 `BACKEND=cuda` 分支）。
+      #
+      # 原因是硬的，不是偏好：`[实测 2026-08-07]` NVIDIA 的
+      #   `repos/ubuntu2404/x86_64/`  最老只有 `cuda-nvcc-12-5`
+      #   `repos/ubuntu2204/x86_64/`  才有 `cuda-nvcc-12-4_12.4.99 / _12.4.131`
+      # 而 `Jimver/cuda-toolkit` 的 network 方法用 `lsb_release -sr` 拼仓库路径 ——
+      # 宿主升到 24.04 之后它必然去 ubuntu2404 找 12.4，然后复现 T-145 第二轮那两行：
+      #   Package 'cuda-nvcc-12-4' has no installation candidate
+      # 在 jammy 容器里装，仓库路径回到 ubuntu2204，12.4 又拿得到了。
+      #
+      # 顺带消掉的一个坑：该 action 把 `sub-packages` 的每一项拼成
+      # `cuda-<项>-<major>-<minor>`，而 cuBLAS 的真实包名是 `libcublas-12-4`（无 `cuda-` 前缀）
+      # —— T-145 为此烧了两轮真跑（"cublas" → `cuda-cublas-12-4` 不存在；
+      # "libcublas" → `cuda-libcublas-12-4` 也不存在），最后靠 `non-cuda-sub-packages` 绕过去。
+      # Dockerfile 里直接写包名，**没有拼接，也就没有这一类失败**。
+      #
+      # ⚠️ 磁盘：`free-disk-space` 仍然跑在**宿主**上（见上面那一步）。这正是这里用
+      #   `docker build` + `docker run` 而不是 job 级 `container:` 的理由 ——
+      #   `container:` 会让所有 step 都在容器里跑，那一步就再也够不着宿主的
+      #   `/usr/share/dotnet` 之类，只会"成功地什么都没释放"。
+      #   而容器的可写层落在宿主的 `/var/lib/docker`，就在被释放的那块盘上。
 
       # --- ROCm ----------------------------------------------------------------------
       # No maintained setup action exists; this mirrors llama.cpp's apt route.
@@ -379,6 +432,29 @@ jobs:
           sudo apt-get install -y rocm-hip-sdk
           echo "/opt/rocm/bin" >> "$GITHUB_PATH"
 
+      # ═══════════════════════════════════════════════════════════════════════════════
+      # ★★★ T-163：编译环境 —— 与 runner 镜像解耦的那一层
+      #
+      # 设计与取舍全部写在 `scripts/ci/buildbox.Dockerfile` 的文件头里，这里只留判据：
+      #   · 这一步换掉 BASE_IMAGE、或者有人把下面几步的 `buildbox.sh` 前缀拿掉，
+      #     产物的 GLIBC 下限就会跟着宿主跑到 2.39 —— 而那**不会**静默通过：
+      #     `Guard glibc floor` 会红并点名 `__isoc23_strtol` 家族的符号。
+      #   · `--report` 还会在编译**开始之前**就断言容器自己的 glibc ≤ 2.35，
+      #     省得跑完整个 CUDA 编译才发现镜像被换了。
+      # ═══════════════════════════════════════════════════════════════════════════════
+      - name: Build the glibc-floor build image
+        run: |
+          docker build \
+            --build-arg BASE_IMAGE=ubuntu:22.04 \
+            --build-arg BACKEND=${{ matrix.backend }} \
+            --build-arg CUDA_VERSION=12.4 \
+            -f scripts/ci/buildbox.Dockerfile \
+            -t "${BUILDBOX_IMAGE}" \
+            scripts/ci
+
+      - name: Build image self-report
+        run: bash scripts/ci/buildbox.sh --report
+
       - name: Build pack
         id: build
         run: |
@@ -393,10 +469,17 @@ jobs:
             export CC=/opt/rocm/llvm/bin/clang
             export CXX=/opt/rocm/llvm/bin/clang++
           fi
-          bash scripts/build-whisper.sh \
+          bash scripts/ci/buildbox.sh \
+            bash scripts/build-whisper.sh \
             --backend ${{ matrix.backend }} \
             --out "${PACK_OUTPUT_DIR}" \
             --jobs $(nproc) $EXTRA
+
+      # ccache 在容器里到底命中没有 —— 只打印，不判红绿。
+      # 它答的是「CI 为什么忽然变慢了」这一类问题，而那类问题在此之前**没有任何一处会说话**
+      # （见上面 env 里 CCACHE_DIR 那段注释）。
+      - name: ccache stats
+        run: bash scripts/ci/buildbox.sh ccache --show-stats
 
       # ★★ T-161：**glibc 运行时下限守卫**（D-11 §8.0 那一族的 Linux 那一格）。
       #
@@ -410,6 +493,9 @@ jobs:
       #
       # 2.34 = Ubuntu 22.04 上编出来的实测值，不是拍的。
       # 发行版对照：Ubuntu 22.04=2.35 · Debian 12=2.36 · Ubuntu 24.04=2.39 · Debian 13=2.41。
+      #
+      # ★★ T-163：runner 升到 24.04 之后，**这一步是"两条要求都满足了"的唯一判据**。
+      #    它跑在宿主上（objdump 读的是文件，与谁编的无关），验的是容器里编出来的东西。
       - name: Guard glibc floor
         run: |
           node scripts/ci/check-elf-glibc.mjs \
@@ -419,9 +505,27 @@ jobs:
       - name: Build probe
         if: matrix.backend == 'cpu'
         run: |
-          bash scripts/build-probe.sh \
+          bash scripts/ci/buildbox.sh \
+            bash scripts/build-probe.sh \
             --ggml-lib-dir "${{ steps.build.outputs.bin_dir }}" \
             --out "dist/probe/openmemo-probe"
+
+      # ★★ T-163：**探针以前不在守卫的覆盖面里，而它是随包出厂的**。
+      #
+      # `Guard glibc floor` 只看 `stage_dir`（包的内容），而 `openmemo-probe` 被单独
+      # upload 到 `dist/probe/`，`apps/daemon/src/runtime/setup.ts` 在用户机器上跑的就是它。
+      # 在 22.04 runner 上这一格碰巧是安全的（宿主 = 基线），**升到 24.04 之后就不是了** ——
+      # 一个 GLIBC_2.39 的探针在 Debian 12 上会直接起不来，而探针恰恰是回答
+      # 「这台机器能用哪些加速器」的那个东西：它挂掉的表现是"探测不到任何 GPU"，
+      # 与"这台机器真的没有 GPU"**在界面上完全一样**。
+      #
+      # 这条是本次迁移**顺手暴露出来的**，不是原来就红的 —— 记在这里以免下次被当成回归。
+      - name: Guard glibc floor (probe)
+        if: matrix.backend == 'cpu'
+        run: |
+          node scripts/ci/check-elf-glibc.mjs \
+            --dir dist/probe \
+            --max 2.34
 
       # Smoke test: extract the pack somewhere else entirely and run it with no
       # LD_LIBRARY_PATH. This catches the rpath regressions that make a pack work on the
@@ -433,60 +537,22 @@ jobs:
       #   加速包自包含之后，这条烟雾测试**对每条腿都成立，而且它正是自包含的判据本身**：
       #   解到别处、不给 LD_LIBRARY_PATH、`./whisper-cli --help` 能起来
       #   = 这个包不依赖任何别的包。
+      #
+      # ★★★ T-163：这段逻辑**整段搬进了 `scripts/ci/smoke-linux-pack.sh`**，两个理由：
+      #   ① 内联在 YAML 里的 50 行 shell **没有任何测试碰得到它** —— 与 C1/C3 把
+      #      `node -e` 搬出 YAML 是同一条理由。现在它有反向用例
+      #      （`scripts/ci/selftest-buildbox.sh`，`pnpm test:ci-scripts` 会跑）。
+      #   ② 它现在**跑在 buildbox 容器里**，不是 runner 上。这不是形式问题：
+      #      runner 升到 24.04(2.39) 之后，一个需要 GLIBC_2.38 的产物在宿主上照样跑得欢
+      #      —— 那正是 D-11 §8.2 那个 bug 的原貌。**判据要跑在下限那一侧才算数。**
       - name: Smoke test pack relocatability
         if: matrix.arch == 'x64'
         run: |
-          set -euo pipefail
-          pack_id="${{ steps.build.outputs.pack_id }}"
-          [ -n "$pack_id" ] || { echo "::error::build step did not report pack_id"; exit 1; }
-          rm -rf /tmp/smoke && mkdir -p /tmp/smoke
-          tar xzf "${PACK_OUTPUT_DIR}/${pack_id}.tar.gz" -C /tmp/smoke
-          cd "/tmp/smoke/${pack_id}"
-          # `--help` 走的是 **stderr**（whisper.cpp 的 `whisper_print_usage`），
-          # 只重定向 stdout 的话它会把 100 多行用法信息灌进 job 日志，
-          # 正好淹掉紧接着那段 `ldd` 输出 —— 而 `ldd` 那几行才是这一步要留的证据。
-          # 但**不能直接丢掉**：失败时那段输出就是唯一的线索。所以存文件，只在失败时打。
-          if ! env -u LD_LIBRARY_PATH ./whisper-cli --help > /tmp/smoke.out 2>&1; then
-            echo "::error::whisper-cli 在解压目录里跑不起来 —— 这个包不是自包含的"
-            cat /tmp/smoke.out
-            exit 1
-          fi
-          echo "pack is relocatable"
-
-          # ★ T-161：加速包还要多答一个问题 —— **那个加速模块自己的依赖解析得了吗**。
-          #   D-11 §8.3 实测过 Windows 侧 `ggml-vulkan.dll` 的导入表里有 `ggml-base.dll`，
-          #   而它在**另一个包的目录里** —— 也就是"就算 ggml 找到了这个模块，
-          #   模块自己也加载不起来"。自包含之后 `libggml-base.so` 就在同一个目录，
-          #   `ldd` 里不该再有任何 `not found`。
-          #   注意 runner 上没有显卡，`libvulkan.so.1` 由 apt 的 libvulkan-dev 提供，
-          #   用户机器上由显卡驱动提供 —— 所以这里只断言"不是 not found"，
-          #   **不断言 Vulkan 真的能跑**（runner 上无从验证，见 D-11 §3.4 的判据）。
-          #
-          #   ⚠️ **这条检查的能力边界，照 D-11 §3.4 的判据写清楚**：
-          #   「runner 上"能做到"不等于用户机器上"能做到"；只有 runner 上"做不到"才是硬结论。」
-          #   runner 上装了 Vulkan / CUDA 工具链，所以 `libcudart.so.12` / `libvulkan.so.1`
-          #   这类**由构建机提供**的依赖在这里一定解析得到，而用户机器上未必。
-          #   已知一条真实缺口：Linux 的 CUDA 包链的是 `CUDA::cudart`（**动态**，
-          #   ggml-cuda/CMakeLists.txt:176，我们没开 GGML_STATIC），
-          #   而打包时只拷了 Windows 命名的 `cudart64_*.dll` —— Linux 侧一个都没拷。
-          #   → **Linux CUDA 包在没装 CUDA 工具链的机器上仍然装了没用**，这条这里验不出来。
-          if [ "${{ matrix.backend }}" != "cpu" ]; then
-            mod="libggml-${{ matrix.backend }}.so"
-            [ -e "$mod" ] || { echo "::error::$mod 不在包里 —— 加速包没有加速器"; exit 1; }
-            echo "== ldd $mod =="
-            ldd "$mod" || true
-            # 只对 **我们自己应当随包出厂的** 那些库断言（`libggml-*`）。
-            # `libvulkan.so.1` / `libcudart.so.12` / `libstdc++.so.6` 由用户机器提供，
-            # 它们在 runner 上解析得到**不构成**用户机器上也解析得到的证据 ——
-            # 把它们算进红绿只会造出一条骗人的绿。
-            if ldd "$mod" | grep 'not found' | grep -q 'libggml'; then
-              echo "::error::$mod 依赖的某个 libggml-* 解析不到（见上面 ldd 输出）。"
-              echo "::error::这正是 D-11 §8.4 第 2 条：找到了模块，模块自己也加载不起来。"
-              echo "::error::修复前实测：dlopen 报 'libggml-base.so.0: cannot open shared object file'。"
-              exit 1
-            fi
-            echo "$mod 的 libggml-* 依赖全部解析得到（其余为宿主提供，见上）"
-          fi
+          bash scripts/ci/buildbox.sh \
+            bash scripts/ci/smoke-linux-pack.sh \
+            --archive "${PACK_OUTPUT_DIR}/${{ steps.build.outputs.pack_id }}.tar.gz" \
+            --pack-id "${{ steps.build.outputs.pack_id }}" \
+            --backend "${{ matrix.backend }}"
 
       - uses: actions/upload-artifact@v6
         with:
@@ -514,6 +580,7 @@ jobs:
   # `scripts/ci/selftest-build-whisper.sh` case ②.
   windows:
     name: windows-${{ matrix.arch }}-${{ matrix.backend }}
+    if: inputs.legs == 'all' || inputs.legs == 'windows'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
