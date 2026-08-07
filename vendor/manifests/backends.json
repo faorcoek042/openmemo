@@ -277,7 +277,7 @@
       "schemaVersion": 1,
       "id": "media-tools-macos-arm64",
       "engine": "ffmpeg",
-      "engineVersion": "7.1.4-3",
+      "engineVersion": "8.1.2-2",
       "ggmlAbi": null,
       "backend": "cpu",
       "tier": "downloadable",
@@ -288,20 +288,20 @@
       "files": [
         {
           "role": "archive",
-          "name": "jellyfin-ffmpeg_7.1.4-3_portable_macarm64-gpl.tar.xz",
-          "sizeBytes": 31063636,
-          "sha256": "99d689816a41075574928a0b3059101fd454fc58f465c99105a73b5c415ac86d",
+          "name": "jellyfin-ffmpeg_8.1.2-2_portable_macarm64-gpl.tar.xz",
+          "sizeBytes": 32894656,
+          "sha256": "397642a17f0e34882875f3127cc065b8f225a3d5b0fc4c068c1fe6ad49e5485c",
           "unpack": "tar.xz",
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v7.1.4-3/jellyfin-ffmpeg_7.1.4-3_portable_macarm64-gpl.tar.xz",
+              "url": "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v8.1.2-2/jellyfin-ffmpeg_8.1.2-2_portable_macarm64-gpl.tar.xz",
               "official": true
             }
           ]
         }
       ],
-      "totalSizeBytes": 31063636,
+      "totalSizeBytes": 32894656,
       "requiresDriver": {
         "macosVersion": "12.0"
       },

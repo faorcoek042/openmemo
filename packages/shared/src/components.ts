@@ -34,6 +34,19 @@ export interface UpstreamSource {
   tagPattern?: string;
   /** Ignore prereleases when picking the newest. */
   stableOnly?: boolean;
+  /**
+   * 为什么这一条**可以**不过滤 prerelease —— 放宽一条既有约束时必须写下来的那句话。
+   *
+   * ★ T-163 加的。起因是 macOS 的 ffmpeg：上游 jellyfin-ffmpeg 把 8.x 全部标成
+   * `prerelease=true`，于是 `stableOnly: true` 在那一条上过滤掉的不是「不稳定的版本」，
+   * 而是**整个 8.x 世代** —— 它把组件永久钉死在 7.x，而这件事从字段名上完全看不出来。
+   *
+   * 判据不是"这个布尔值是什么"，是**"改它的人有没有说清楚为什么这一条例外"**。
+   * 一个悄悄从 true 翻成 false 的布尔值，和一条写下了代价与对冲的例外，
+   * 在 diff 里长得一样 —— 这个字段就是把它们分开的地方。
+   * 守卫见 `apps/daemon/src/pipeline/ffmpegStableOnly.test.ts`。
+   */
+  stableOnlyReason?: string;
 }
 
 /** Human-facing provenance. Rendered in the UI — this is the "where is it from" answer. */

@@ -245,21 +245,23 @@
       "displayName": "ffmpeg / ffprobe (macOS Apple Silicon)",
       "displayNameZh": "ffmpeg / ffprobe（macOS Apple Silicon）",
       "category": "media-tool",
-      "pinnedVersion": "v7.1.4-3",
+      "pinnedVersion": "v8.1.2-2",
       "provenance": {
         "repoUrl": "https://github.com/jellyfin/jellyfin-ffmpeg",
-        "releaseUrl": "https://github.com/jellyfin/jellyfin-ffmpeg/releases/tag/v7.1.4-3",
+        "releaseUrl": "https://github.com/jellyfin/jellyfin-ffmpeg/releases/tag/v8.1.2-2",
         "license": "GPL-3.0-or-later",
         "licenseUrl": "https://www.gnu.org/licenses/gpl-3.0.html"
       },
       "upstream": {
         "kind": "github-release",
         "repo": "jellyfin/jellyfin-ffmpeg",
-        "stableOnly": true
+        "stableOnly": false,
+        "tagPattern": "^v\\d+\\.\\d+\\.\\d+-\\d+$",
+        "stableOnlyReason": "★ T-163（用户 2026-08-07 直接下令升到 8.1.2）：这一条的 stableOnly 由 true 放松成 false，是**只对这一条**的例外，不是把全局约束放松了 —— UpstreamSource 本来就是每个组件各自一份（packages/shared/src/components.ts），upstream.ts:131 的 .filter 读的就是这一条自己的值，其余 23 条一个字节没动。为什么这一条可以：jellyfin-ffmpeg 的 8.x **全部标着 prerelease=true**（实测 2026-08-07，最近 30 个 release 里 v8.1.2-2 / v8.1.2-1 / v8.1.1-4 / v8.1.1-3 / v8.1.1-2 / v8.1.1-1 六条 8.x 无一例外），而 /releases/latest 返回 v7.1.4-3。也就是说 stableOnly=true 在这里过滤掉的不是「不稳定的版本」，而是**整个 8.x 世代** —— 它把这个组件永久钉死在 7.x，而上游查不到把 8.x 转正的 roadmap（issue 里只有一条无关 bug，标 UNKNOWN）。放松的代价与三条对冲：① 升级检查只**报告**新版本、从不自动改安装（components.ts 的 DESIGN RULE），所以放松影响的是「看得见什么」，不是「装了什么」；② 同时补上 tagPattern，把候选收窄到 vX.Y.Z-N 这一族发布 tag，防止 stableOnly 拿掉之后别的 tag 家族溜进来；③ 每次移动这个 pin 都必须重跑 Mach-O 的 minos 检查（D-11 §8.1 那一族），本次已跑，见 sha256Provenance。⚠️ 一条不许被读错的事实：本条**不是全仓唯一**不过滤 prerelease 的组件 —— 实测另有 5 条（whispercpp-cpu-macos-arm64 显式 false；sherpa-onnx-node 与 asr/whisper-large-v3-turbo-q5_0 是 npm/huggingface，那两个 kind 根本不看这个字段；media-tools-{linux,win}-x64 没写这个字段但有 tagPattern 收着）。它是**唯一一条写了理由的**。守卫：apps/daemon/src/pipeline/ffmpegStableOnly.test.ts。"
       },
-      "sizeBytes": 31063636,
-      "sha256": "99d689816a41075574928a0b3059101fd454fc58f465c99105a73b5c415ac86d",
-      "sha256Provenance": "本机下载全部 31,063,636 字节后独立复算，并与 GitHub Releases API 的 digest 逐字符比对一致（2026-08-06）。⚠️ 这是 ffmpeg 的 **fork**（jellyfin 的 hwaccel 补丁），不是上游原版；BtbN 与 evermeet.cx 都不提供 Apple Silicon 产物（evermeet 官网原话：\"I do not plan to provide native ffmpeg binaries for Apple Silicon ARM.\"）。本机逐条解析 Mach-O load command：26 条 LC_LOAD_DYLIB 全部指向 Apple 系统框架与 /usr/lib，零 @rpath、零 /opt/homebrew，带 LC_CODE_SIGNATURE，LC_BUILD_VERSION minos=macOS 12.0。**未在 Mac 上运行过 —— 以上全部是静态分析。**"
+      "sizeBytes": 32894656,
+      "sha256": "397642a17f0e34882875f3127cc065b8f225a3d5b0fc4c068c1fe6ad49e5485c",
+      "sha256Provenance": "本机下载全部 32,894,656 字节后独立复算，并与 GitHub Releases API 的 digest 逐字符比对一致（2026-08-07，T-163；匿名下载，env -u GITHUB_TOKEN -u GH_TOKEN）。⚠️ 这是 ffmpeg 的 **fork**（jellyfin 的 hwaccel 补丁），不是上游原版；BtbN 与 evermeet.cx 都不提供 Apple Silicon 产物（evermeet 官网原话：\"I do not plan to provide native ffmpeg binaries for Apple Silicon ARM.\"）。本机逐条解析 Mach-O load command（ffmpeg 与 ffprobe **各解一遍**，两个都是 45 条 load command）：各 26 条 LC_LOAD_DYLIB 全部指向 /System/Library/Frameworks 与 /usr/lib，**零 @rpath、零 LC_RPATH、零 /opt/homebrew**，带 LC_CODE_SIGNATURE；LC_BUILD_VERSION minos = macOS **12.0.0**（sdk 26.5.0），与 7.1.4-3 相同 —— 所以 requiresDriver.macosVersion 仍是 12.0，没被抬高。⚠️ jellyfin 的 mac 构建脚本里**没有任何 MACOSX_DEPLOYMENT_TARGET**，跑在 macos-latest 上，minos 这次没漂是**运气不是保证**（D-11 §8.1 就是这一族），所以每次移动这个 pin 都要重跑这条检查。**未在 Mac 上运行过 —— 以上全部是静态分析。**"
     },
     {
       "id": "ytdlp-linux-arm64",
