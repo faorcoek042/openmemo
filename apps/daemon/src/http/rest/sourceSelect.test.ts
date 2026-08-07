@@ -41,9 +41,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
-import { backendPrefsPath } from '@openmemo/pipeline';
-import { resolveModelsRoot } from '@openmemo/downloader';
-
 import { startDaemon } from '../../main.js';
 
 let base = '';
@@ -63,6 +60,32 @@ before(async () => {
 after(async () => {
   await stop?.();
 });
+
+/**
+ * 在 `root` 底下递归找**恰好一个**叫 `name` 的文件。
+ *
+ * "恰好一个"是刻意的：找到 0 个说明产品没写（或写去了别处），找到 2 个说明这条断言
+ * 挑错了对象 —— 两种都该当场红，而不是随手取第一个然后断言一个不知道是谁的文件。
+ */
+async function findOne(root: string, name: string): Promise<string> {
+  const hits: string[] = [];
+  async function walk(dir: string): Promise<void> {
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) await walk(p);
+      else if (e.name === name) hits.push(p);
+    }
+  }
+  await walk(root);
+  assert.equal(hits.length, 1, `期望 ${root} 底下恰好一个 ${name}，实得 ${JSON.stringify(hits)}`);
+  return hits[0]!;
+}
 
 async function selectSource(
   body: unknown,
@@ -109,10 +132,14 @@ describe('POST /api/models/sources/select —— A-6：零读取方字段与它�
 
     /*
      * 落盘内容才是下一个版本要去读的东西 —— 接口上没有它不代表磁盘上没有。
-     * 路径用产品自己的两个函数拼，不在测试里手写 'models/prefs.json'：
-     * 手写的话，产品换了布局这条断言会**读不到文件而不是变红**（又一个假绿）。
+     *
+     * 不手写 `models/prefs.json`（产品换了布局，断言会**读不到文件而不是变红** —— 又一个假绿），
+     * 也**刻意不 import `resolveModelsRoot`**：那个导出今天躺在孤儿棘轮基线里，
+     * 生产零调用方；在测试里 import 它只会把它从基线里"救"出来，
+     * 让一个仍然没有生产调用方的导出对棘轮隐形 —— 那是把门禁变松，不是把测试写好。
+     * 所以改成**在 dataDir 底下找 prefs.json**：布局无关，且不动任何账。
      */
-    const prefsPath = backendPrefsPath(resolveModelsRoot(dataDir));
+    const prefsPath = await findOne(dataDir, 'prefs.json');
     const text = await fs.readFile(prefsPath, 'utf8');
     const parsed = JSON.parse(text) as Record<string, unknown>;
     assert.equal(
