@@ -143,7 +143,30 @@ export async function probeExisting(
         else process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = prevReject;
       }
     }
-    if (!res.ok) return undefined;
+    /*
+     * ★★ **503 也算"是我们自己"** —— 这一条不能少，少了会让用户重新授权麦克风。
+     *
+     * 2026-08-08 起 `/api/health` 在路由表装完之前回 **503 + `ready:false`**
+     * （见 `http/server.ts` 的 `ServerDeps.ready`：一个在路由还没挂上时就答 200 的
+     * 就绪信号本身就是在说谎）。
+     *
+     * 这里原本是 `if (!res.ok) return undefined`。**如果就这么放着，改动会引入一个
+     * 比它修的那个更坏的 bug**：
+     *   实例 A 正在启动（health 503）→ 实例 B 起来，绑端口撞 EADDRINUSE
+     *   → 探测 A → `!res.ok` → 判定「端口上不是我们的服务」
+     *   → `acquireSingleInstance` 的循环走「是别人的服务 → 继续往下扫」
+     *   → **静默漂到 17651**。
+     * 而端口漂移的代价就写在本文件开头：**浏览器按 origin 隔离麦克风授权，
+     * 端口一变用户要重新点一次授权**，直接影响 F3 录音转文字。
+     *
+     * 判据因此不是「HTTP 状态码好不好看」，是「**这个端口上蹲着的是不是一个
+     * OpenMemo 实例**」—— 而那个问题的答案在 body 的 `app` 字段里，不在状态码里。
+     * 启动中的实例**同样占着这个端口**，对调用方来说结论完全一样。
+     *
+     * 只接受 200 与 503 两种：其余状态码（404 / 500 / 代理的 502…）说明
+     * 那头要么不是我们，要么是坏的，不该被当成"已有实例"。
+     */
+    if (res.status !== 200 && res.status !== 503) return undefined;
     const body = (await res.json()) as Partial<RuntimeInfo> & { app?: string };
     return body.app === 'openmemo' ? (body as RuntimeInfo) : undefined;
   } catch {

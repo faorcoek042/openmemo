@@ -384,6 +384,10 @@ for (const file of files.sort()) {
       'selftest-macho-minos.mjs',
       'selftest-buildbox.sh',
       'selftest-build-whisper.sh',
+      // T-22 预编译包：`verify-bundle.sh` 是出厂检查，只在打包流水线上跑一次，
+      // 而它写错的方式基本都是**少检查几条然后报绿**（C5 那一族）。
+      // 它的自检被摘掉时，失效的样子和"本来就没有"一模一样 —— 所以钉在这里。
+      'selftest-bundle.mjs',
       // D-12：版本号单一事实来源。被"顺手简化"掉时会当场红，而不是等用户发现
       // 界面上那个数字又几个月没动过了。
       'check-version-sync.mjs',

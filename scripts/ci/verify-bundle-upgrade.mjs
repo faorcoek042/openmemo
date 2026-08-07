@@ -105,32 +105,33 @@ async function startDaemon(installDir, label) {
   proc.stderr.on('data', (d) => logs.push(String(d)));
 
   /*
-   * ★★ 就绪判据是 `GET /api/folders` 能应答，**不是** `/api/health`。
+   * ★★ 就绪判据 = `GET /api/health` 回 200。**而这句话在 2026-08-08 之前是不成立的。**
    *
-   * `[CI 实测 2026-08-08 run 31205369931, windows-2025]` 第一版等的是 `/api/health`，
-   * 结果 Windows 腿红在：
+   * `[CI 实测 run 31205369931, windows-2025]` 那一轮 Windows 腿红在：
    *     ✘ 建文件夹失败 HTTP 404：{"code":"NOT_FOUND","message":"no route for POST /api/folders"}
-   * 而**同一份代码在 Linux 上是绿的**。
+   * 而**同一份代码在 Linux 与 macOS 上都是绿的** —— 因为
+   * `/api/health` 由 `http/server.ts` 直接应答、不经过路由表，
+   * 而业务路由是 `main.ts` 的 `routers.push(...)`，发生在 server 建好之后。
+   * 「health 说 200」与「路由表装完了」之间有一段真空，慢一点的机器就会掉进去。
    *
-   * 成因不是 Windows 特有的 bug，是一个**真实存在的窗口**被慢一点的机器撞上了：
-   *   · `/api/health` 由 `apps/daemon/src/http/server.ts:122` **直接**应答，
-   *     不经过路由表；
-   *   · 而业务路由是 `main.ts:844` 的 `routers.push(...)`，发生在 server 建好**之后**。
-   * 于是「health 说 ok」与「路由表装完了」之间有一段真空。
-   * （`server.ts:39` 的注释里已经记着单实例探测撞过同一个窗口 —— 它一直在那儿。）
+   * 那个窗口**已经在 daemon 侧修掉了**（`ServerDeps.ready`）：没 ready 时 health 回 503，
+   * 落到 404 的请求回 503 `SERVICE_STARTING`。所以现在 health 200 **确实**意味着
+   * "它承诺的东西都在"。
    *
-   * 对本脚本而言正确的修法是**把就绪判据换成一个真业务路由**：
-   * 等到 `/api/folders` 不再是 404，路由表就一定装完了。
-   * 靠 sleep 猜一个更长的时间是不行的 —— 那只是把同一个竞态推给更慢的机器。
-   *
-   * ⚠️ 这个窗口本身**没有被修**（那是 daemon 的事，不在本脚本职权内），已升级给 Manager。
+   * ★ 为什么故意等 health 而不是等一个具体端点（例如 `/api/folders` 不再 404）：
+   *   等具体端点的话，**readiness 契约哪天退化了这里也照样绿** ——
+   *   而那正是我们最想被告知的事。等 health 就是让这条 CI 腿
+   *   顺带成为那个契约的回归探针：契约一坏，Windows 腿会再红一次，
+   *   而不是悄悄退回到"每个调用方各自绕开它"。
+   *   `[本机实测 2026-08-08]` 真 daemon 上抓到过这个窗口：t≈400ms 时
+   *   health=503、`/api/folders`=503 SERVICE_STARTING（此前是 404）。
    */
   for (let i = 0; i < 240; i++) {
     await new Promise((r) => setTimeout(r, 500));
     try {
-      const res = await fetch(`${BASE}/api/folders`);
+      const res = await fetch(`${BASE}/api/health`);
       if (res.ok) {
-        console.log(`   ${label} 已就绪（/api/folders 可应答 —— 路由表装完了，不只是 health）`);
+        console.log(`   ${label} 已就绪（health 200 —— 现在它意味着路由表也装完了）`);
         return { proc, logs };
       }
     } catch {

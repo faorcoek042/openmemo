@@ -78,6 +78,34 @@ export interface ServerDeps {
    * 放在鉴权与 CSRF **之后**、404 **之前**。
    */
   readonly routers?: readonly RouteModule[];
+  /**
+   * **本进程是否已经装完它承诺的东西。**
+   *
+   * ## 为什么需要它（一次真实的、用户可见的 404）
+   *
+   * `[CI 实测 2026-08-08 run 31205369931, windows-2025]`
+   * 预编译包的升级验证红在 `POST /api/folders` → **404 `no route for POST /api/folders`**，
+   * 而**同一份代码在 Linux 与 macOS 上都是绿的**。
+   *
+   * 成因不是 Windows 特有缺陷，是一个一直开着的窗口被慢一点的机器撞上了：
+   *   · `/api/health` 由本文件**直接**应答，不经过路由表；
+   *   · 而业务路由是 `main.ts` 的 `routers.push(...)`，发生在 server 建好**之后**。
+   * 于是「health 说 200」与「路由表装完了」之间有一段真空。
+   * 上面 `instanceId` 的注释里其实早就记着**单实例探测撞过同一个窗口** ——
+   * **同一个形状撞第二次了，而且这次是用户可见的 404。**
+   *
+   * ## 判据不是"让 health 晚点答"，是"health 说 ready 的时候它承诺的东西必须真的在"
+   *
+   * 一个在路由还没挂上时就答 200 的就绪信号，本身就是在说谎。所以：
+   *   · 没 ready  → `/api/health` 回 **503**，`ready:false`；
+   *     其余会落到 404 的请求也回 **503 `SERVICE_STARTING`**，
+   *     而不是 404 —— 404 的语义是"这个端点不存在"，那是假话。
+   *   · ready 了  → 一切照旧。
+   *
+   * ⚠️ **不给（undefined）= 永远 ready。** 这是刻意的：`healthHost.test.ts` 之类
+   * 只测某一个字段的用例不必关心启动阶段，而生产路径（main.ts）必须显式传。
+   */
+  readonly ready?: () => boolean;
 }
 
 export interface RouteModule {
@@ -123,7 +151,21 @@ async function handleRequest(
   // 单实例探测在拿到 token 之前就要调它（D-01 §2.2 阶梯第 2 步）。
   // 因此它**绝不能**包含 token 或任何 secret。
   if (path === '/api/health') {
-    sendJson(res, 200, {
+    const ready = deps.ready?.() ?? true;
+    /*
+     * ★★ 身份字段在 **ready 与未 ready 两种情况下都必须原样给全**。
+     *
+     * 这不是为了好看，是**单实例探测赖以工作的东西**：另一个进程撞到
+     * `EADDRINUSE` 之后会打这个端点，靠 `app === 'openmemo'` + `dataDir`
+     * 判断「占着端口的是不是我们自己」。
+     *
+     * 如果启动中的实例在这里少给身份、或者干脆不应答，探测方会判定
+     * 「这不是我们的服务」→ **顺延到下一个端口**。而端口漂移的代价写在
+     * `single-instance.ts` 的注释里：**浏览器按 origin 隔离麦克风授权，
+     * 端口一变用户要重新授权一次**（直接影响录音转文字）。
+     * 也就是说"把启动探测饿死"的后果不是慢一点，是用户功能坏掉。
+     */
+    const identity = {
       app: 'openmemo',
       version: deps.version,
       build: deps.build,
@@ -135,6 +177,24 @@ async function handleRequest(
       host: deps.host(),
       port: deps.port(),
       pid: process.pid,
+      ready,
+    };
+    if (!ready) {
+      /*
+       * 503 而不是 200：**这台服务器还不能兑现它承诺的东西。**
+       *
+       * 这里**刻意不展开 `deps.status()`** —— 那个闭包读的是启动过程中才逐个
+       * 赋值的东西（数据库、扩展状态、pipeline）。在未 ready 阶段调它，
+       * 轻则字段是 undefined，重则 TDZ 抛错，而抛错会让健康检查
+       * **从"我还没好"变成"我 500 了"** —— 那对探测方是完全不同的结论。
+       * 未 ready 时只给身份，是能诚实给出的最大集合。
+       */
+      res.setHeader('Retry-After', '1');
+      sendJson(res, 503, { ...identity, status: 'starting' });
+      return;
+    }
+    sendJson(res, 200, {
+      ...identity,
       ...deps.status(),
     });
     return;
@@ -408,6 +468,39 @@ async function handleRequest(
   // 模型 / 后端 / 下载任务（shared ENDPOINTS 的 26 条 REST）。按 deps 记忆化，
   // 不经由 deps.routers 是因为 main.ts 归属其他任务，不在本次改动范围内。
   if (await modelRoutesFor(deps).handle(req, res, url, method)) return;
+
+  /*
+   * ★★ 落到这里 + 还没 ready ⇒ **503，不是 404。**
+   *
+   * 这一格就是 Windows 上那个用户可见的 404 的落点：路由表还没 push，
+   * `POST /api/folders` 一路穿到这里，被告知"接口不存在" —— **那是假话**，
+   * 它存在，只是还没挂上。调用方据此做的判断全是错的
+   * （前端会认为版本不兼容，脚本会认为端点被删了）。
+   *
+   * 放在 404 **之前**、其余一切之后，是刻意选的位置：
+   * 上面所有内联处理（health / 静态产物 / 会话握手 / models 路由）
+   * 在 ready 之前本来就能正常工作，**这个门一个都不挡** ——
+   * 于是"别把启动探测饿死"这条要求在结构上就成立，而不是靠逐条豁免。
+   * 它只把**本来就要失败的那些请求**，从一句假话换成一句真话。
+   */
+  if (!(deps.ready?.() ?? true)) {
+    res.setHeader('Retry-After', '1');
+    sendError(
+      res,
+      503,
+      'SERVICE_STARTING',
+      `daemon is still starting; route table not mounted yet (${method} ${path})`,
+      '服务正在启动，请稍候重试',
+      /*
+       * ★ `retryable: true`，而且必须显式给 —— `sendError` 的默认值是 `false`。
+       *   `[本机实测]` 第一版没给，抓到的响应体里是 `"retryable":false`：
+       *   一个**过几百毫秒就会自己好**的状态，却告诉调用方"重试没用"。
+       *   那是把刚修好的那个谎换了个字段接着说。
+       */
+      { retryable: true },
+    );
+    return;
+  }
 
   sendError(res, 404, 'NOT_FOUND', `no route for ${method} ${path}`, '接口不存在');
 }

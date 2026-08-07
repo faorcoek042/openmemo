@@ -292,6 +292,15 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
    * 见 `http/server.ts` 的 `ServerDeps.host`。
    */
   let boundHost = BIND_HOST;
+  /*
+   * ★ 就绪标志。**默认 false，且只在启动全部走完之后置一次 true。**
+   *
+   * 与 `boundPort` / `boundHost` 同理必须是可变量 + 取值函数：HTTP handler 必须在
+   * 端口绑定**之前**就挂好（否则会有"端口已通但没有 handler"的窗口，
+   * 单实例探测正好打 /api/health），而"装完了没有"这件事只有到最后才知道。
+   * 详见 http/server.ts 的 `ServerDeps.ready`。
+   */
+  let isReady = false;
   let instanceIdRef = '';
   let repos: Repos | undefined;
   let bundle: PipelineBundle | undefined;
@@ -404,6 +413,12 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     port: () => boundPort,
     host: () => boundHost,
     routers,
+    /*
+     * ★ 就绪信号。见 http/server.ts 的 `ServerDeps.ready` ——
+     *   它防的是「health 已经答 200，而 routers 还没 push」那段真空。
+     *   置位点在下面「就绪」横幅那一行之前，判据是**横幅打印时它必须已经是 true**。
+     */
+    ready: () => isReady,
     requestRestart: (reason: string, o?: { dataDir?: string }) => {
       // 不 await：让 HTTP 响应先发出去，前端才能显示"正在重启"
       void restartHook.run?.(reason, o);
@@ -946,6 +961,16 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     dataDir: paths.dataDir,
   };
   writeRuntimeJson(paths.runtimeJson, info);
+
+  /*
+   * ★ 到这里为止，routers 已经 push 完、pipeline / WS / 调度器全部挂好。
+   *   在此之前 `/api/health` 一直回 503（`ready:false`），落到 404 的请求回
+   *   503 `SERVICE_STARTING` —— 见 http/server.ts 里 `ServerDeps.ready` 的说明。
+   *
+   *   **置位必须在「就绪」横幅之前**：横幅是打印给用户看的"可以用了"，
+   *   两者说的是同一件事，不允许它们不一致。
+   */
+  isReady = true;
 
   // 端口漂移必须**显式可见**：麦克风授权按 origin 隔离，端口变了要重新授权（ADR-006 决策 2）
   const portWarning = outcome.portDrifted
