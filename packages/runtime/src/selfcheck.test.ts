@@ -782,3 +782,162 @@ describe('diffSelfCheckReports 真的抓得到漂移', () => {
     assert.deepEqual(diffSelfCheckReports(a, b), []);
   });
 });
+
+/**
+ * T-168 ④ —— `asr.coreml` 的三档，以及**哪一档该让整份报告变红**。
+ *
+ * ## 为什么这组测试到今天才有
+ *
+ * `checkCoreMl()` 第一行就 `if (platform !== 'darwin' || arch !== 'arm64') return;`，
+ * 而 CI 与本机都跑在 Linux 上 —— **它的每一个分支都从来没有被任何测试执行过**。
+ * 它却是决定「用户付了 1.17 GB 有没有白付」的那一条。
+ * `SelfCheckInput.platform/arch` 这两个注入就是为了让它在 Linux 上跑起来
+ * （与 `unpack.ts` 的 `lex(platform)` 同一招、同一个理由）。
+ *
+ * ## 判据
+ *
+ *   warn = 没装 encoder，功能健康（可选加速缺失）→ **不许**让报告变红
+ *   fail = 装了、但目录里没有 coremldata.bin（结构性损坏，whisper 静默回退）
+ *          → **必须**让报告变红
+ *
+ * 这两条一起才叫"裁决被执行了"。只验 fail 变红的话，
+ * 一个把 warn 也标红的实现同样能过 —— 那正是原来 `required=false` 想避免的那种谎。
+ */
+describe('T-168 ④ asr.coreml：结构性损坏必须让审计变红，可选加速缺失不许', () => {
+  const MAC = { platform: 'darwin' as NodeJS.Platform, arch: 'arm64' };
+  const BIN = 'ggml-large-v3-turbo-q5_0.bin';
+  const ENC = 'ggml-large-v3-turbo-encoder.mlmodelc';
+
+  /** 造一个 storeRoot，by-name/asr 下按 `shape` 摆出 encoder 目录。 */
+  async function macStore(shape: 'none' | 'shell' | 'good'): Promise<string> {
+    const storeRoot = mkdtempSync(join(tmpdir(), 'om-sc-coreml-'));
+    tmpRoots.push(storeRoot);
+    const asr = join(storeRoot, 'by-name', 'asr');
+    await fs.mkdir(asr, { recursive: true });
+    const magic = Buffer.alloc(4);
+    magic.writeUInt32LE(GGML_FILE_MAGIC, 0);
+    await fs.writeFile(join(asr, BIN), magic);
+    if (shape === 'shell') {
+      // 事故形态：解包多留了一层同名目录（真 zip 里还有个 __MACOSX 把它挡住了）
+      await fs.mkdir(join(asr, ENC, ENC), { recursive: true });
+      await fs.writeFile(join(asr, ENC, ENC, 'coremldata.bin'), 'x');
+    } else if (shape === 'good') {
+      await fs.mkdir(join(asr, ENC), { recursive: true });
+      await fs.writeFile(join(asr, ENC, 'coremldata.bin'), 'x');
+    }
+    return storeRoot;
+  }
+
+  const runMac = async (shape: 'none' | 'shell' | 'good'): Promise<SelfCheckReport> => {
+    const storeRoot = await macStore(shape);
+    return runSelfCheck({
+      ...BASE,
+      ...MAC,
+      storeRoot,
+      probes: minimalProbes({
+        installedByRole: () => Promise.resolve({ names: [BIN], skippedWithoutRole: 0 }),
+      }),
+    });
+  };
+
+  /**
+   * 让报告变红的那一组 id（`ok:` 那一行的判据逐字同一条）。
+   *
+   * ⚠️ **不能直接断言 `r.ok === true`。** 这个夹具的 dataDir 是 `/nonexistent`、
+   * 探针一个工具都不给，于是本来就有 6 条不相干的 required 失败
+   * （`tool.ffmpeg` / `tool.ffprobe` / `tool.whisperCli` / `ext.chineseSearch` /
+   * `engine.select.zh` / `engine.select.en`）。`r.ok` 在三种形态下**恒为 false**，
+   * 拿它当判据的话，这组测试写成什么样都会"过"。
+   *
+   * `[反向验证实测]` 第一版正是这么写的：把 `warn` 改成 `fail` 的变异**没有被抓住**。
+   * 所以判据换成**差分** —— 只看 `asr.coreml` 有没有进这一组。
+   */
+  const redIds = (r: SelfCheckReport): string[] =>
+    r.results.filter((c) => c.status === 'fail' && c.required).map((c) => c.id);
+
+  it('★ fail（空壳）→ required=true，且它必须进"让报告变红"的那一组', async () => {
+    const r = await runMac('shell');
+    const c = byId(r, 'asr.coreml');
+    assert.equal(c?.status, 'fail');
+    assert.equal(c?.required, true);
+    assert.equal(
+      redIds(r).includes('asr.coreml'),
+      true,
+      '装了 encoder 却是空壳（whisper 静默回退到 Metal/CPU），而这一条不让报告变红',
+    );
+    assert.equal(r.ok, false);
+  });
+
+  it('★ warn（没装 encoder）→ **不许**进那一组：可选加速缺失不是"坏了"', async () => {
+    const r = await runMac('none');
+    const c = byId(r, 'asr.coreml');
+    assert.equal(c?.status, 'warn');
+    // required 是**无条件常量**（同源比对的前提），warn 不参与红绿
+    assert.equal(c?.required, true);
+    assert.equal(
+      redIds(r).includes('asr.coreml'),
+      false,
+      '一台没装 encoder 的正常 Mac 被这一条判红了 —— required 只该让 fail 变红',
+    );
+  });
+
+  it('★ ok（结构正确）→ 也不许进那一组', async () => {
+    const r = await runMac('good');
+    const c = byId(r, 'asr.coreml');
+    assert.equal(c?.status, 'ok');
+    assert.equal(c?.required, true);
+    assert.equal(redIds(r).includes('asr.coreml'), false);
+  });
+
+  it('★ 差分：三种形态之间，红的那一组**只差** asr.coreml 一项', async () => {
+    /*
+     * 这条把"不相干的 6 条红"彻底排除掉：encoder 的形态是三次运行之间
+     * **唯一**的变量，所以红集合的差也必须**恰好**是这一项。
+     * 多出别的 id ⇒ 这条检查影响到了它不该影响的东西。
+     */
+    const shell = redIds(await runMac('shell'));
+    const none = redIds(await runMac('none'));
+    const good = redIds(await runMac('good'));
+    assert.deepEqual(shell.filter((id) => !none.includes(id)), ['asr.coreml']);
+    assert.deepEqual(none.filter((id) => !shell.includes(id)), []);
+    assert.deepEqual(good, none, 'ok 与 warn 对红绿的贡献必须完全一样（都是零）');
+  });
+
+  it('非 darwin/arm64 上这一项根本不出现（不许变成永久噪音）', async () => {
+    const storeRoot = await macStore('shell');
+    for (const p of [
+      { platform: 'linux' as NodeJS.Platform, arch: 'x64' },
+      { platform: 'win32' as NodeJS.Platform, arch: 'x64' },
+      { platform: 'darwin' as NodeJS.Platform, arch: 'x64' }, // Intel Mac 没有 ANE
+    ]) {
+      const r = await runSelfCheck({
+        ...BASE,
+        ...p,
+        storeRoot,
+        probes: minimalProbes({
+          installedByRole: () => Promise.resolve({ names: [BIN], skippedWithoutRole: 0 }),
+        }),
+      });
+      assert.equal(
+        idsOf(r).includes('asr.coreml'),
+        false,
+        `${p.platform}/${p.arch} 上不该产出 asr.coreml`,
+      );
+    }
+  });
+
+  it('不传 platform/arch 时 = 宿主平台（生产侧行为逐字不变）', async () => {
+    const storeRoot = await macStore('shell');
+    const r = await runSelfCheck({
+      ...BASE,
+      storeRoot,
+      probes: minimalProbes({
+        installedByRole: () => Promise.resolve({ names: [BIN], skippedWithoutRole: 0 }),
+      }),
+    });
+    assert.equal(
+      idsOf(r).includes('asr.coreml'),
+      process.platform === 'darwin' && process.arch === 'arm64',
+    );
+  });
+});

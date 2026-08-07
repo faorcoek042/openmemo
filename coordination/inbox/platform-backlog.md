@@ -983,3 +983,153 @@ linux-x64 / win32-x64 两格都打印：
 | macOS 冷启动那一发探针**真实耗时** | ⚠️ `UNKNOWN` —— 被 10s kill 了，之后缓存已热。要把深挖挪到 selfcheck 之前才取得到 | 我 |
 | `asr.coreml == fail` 该不该让审计变红 | 🟡 **没改**，超出本任务范围 | 你裁决 |
 | `pnpm lint-workflows` 这个名字不存在 | 🟡 建议加 alias 或改文档 | 你裁决 |
+
+---
+
+## [2026-08-07 17:41] T-168 DONE —— CoreML 解包修好了，根因是**通用解包规则**的问题
+
+交付：`packages/downloader/src/unpack.ts` · `packages/downloader/src/installer.ts` ·
+`packages/runtime/src/selfcheck.ts` · `scripts/ci/cold-start-audit.mjs` + 三个测试文件
+接的是上一封（17:08）留下的四条开口。
+
+# ★★ ① 根因：**是通用规则的问题，但不是"层级"那条通用规则**
+
+`installer.ts` 里**早就有**一条压顶层目录的修复（T-153，`collapseRedundantTopLevel`）。
+它**一次都没生效过**，因为它要求「顶层恰好一个条目」，而真归档的顶层有**两个**：
+
+```
+ggml-large-v3-encoder.mlmodelc/…                          ← 载荷
+__MACOSX/ggml-large-v3-encoder.mlmodelc/._metadata.json   ← 171 字节，就这一条
+```
+
+**一条 171 字节的 AppleDouble 边车文件，废掉了整条修复。**
+判据本身没写错，错的是它**没写出来的那个前提**：「顶层条目都是载荷」。
+T-153 的夹具全是自己造的、干干净净，所以那个前提从来没被检验过。
+
+修法因此在 `unpack.ts`，不在 `installer.ts`：**macOS 打包副产物根本不落盘**
+（`isMacArchiveJunk`：`__MACOSX/**`、`.DS_Store`、AppleDouble `._*`；zip 与 tar 两侧同一条规则）。
+垃圾不落盘之后，落到 `collapseRedundantTopLevel` 的顶层条目**真的都是载荷**，
+那条判据的前提第一次成立，它自己就工作了 —— 一行都没改。
+
+## 「清垃圾」与「修层级」为什么必须是两处
+
+- **清垃圾 → 做成通用规则。** 判据是**归档内在的、只看名字就能判**，
+  且不存在"某个包需要 `__MACOSX`"这种情形。所以它是 `unpack.ts` 里一条无条件规则。
+- **压顶层 → 不做通用规则，维持窄判据。** 因为"冗余包装"与"有意义的目录"
+  **在归档里长得一模一样**：`ggml-…-encoder.mlmodelc/` 和 `bin/` 都是"顶层唯一的目录"，
+  区别只在**消费方期待什么**，而那个信息不在归档里。
+  「只有一个目录就压」不是更聪明的规则，**是在猜** —— 猜错的形态正是这次这一类
+  （装了、没报错、不工作）。名字逐字相等是唯一不需要猜的情形，所以窄规则留着、**不放宽**。
+
+判断写在 `installer.ts` 的 `collapseRedundantTopLevel` 注释里（连同下面那张表），
+免得下一个人"顺手把它放宽"。
+
+# ★★ ② 另外 4 个模型：**全部中招**，而且这不是推断
+
+清单里 5 个带 encoder 的模型，实际只有 **2 个不同的归档**（sha256 逐字相同）：
+
+| 归档 | sha256 | 被哪些模型引用 | 结论 |
+|---|---|---|---|
+| `ggml-large-v3-turbo-encoder.mlmodelc.zip` | `84bedfe8…` | turbo-q5_0 **(已实测)** / turbo-q8_0 / turbo-f16 | 🔴 坏 —— 同一份字节，`unpackDirName` 只取决于文件名，三者逐字同一条路径 |
+| `ggml-large-v3-encoder.mlmodelc.zip` | `47837be7…` | large-v3-q5_0 / large-v3-f16 | 🔴 坏 —— **`[实测]` 见下** |
+
+`[实测]` 第二个归档我**真去看了**，没有推断：用 HTTP Range 只读回它的**中央目录**
+（`huggingface.co` 本机不通，走清单里同一份文件的 modelscope 镜像
+`cjc1887415157/whisper.cpp`，**字节数 1175711232 与清单 `sizeBytes` 逐位相同**）。
+9 条记录，顶层两个条目：`ggml-large-v3-encoder.mlmodelc/` + `__MACOSX/` —— **同一个形状**。
+
+> ⚠️ `[未验证]` 该镜像副本的 **sha256 没校**（要下满 1.17 GB）。
+> 我核到的是**字节数逐位相同 + 同一上游 repo**。结构结论不依赖 sha。
+
+**顺带把整个上游家族 11 个 encoder 包的中央目录全读了一遍**，顶层形态有三种：
+
+- 9 个：顶层唯一目录、名字与包名一致 → 窄规则本来就命中
+- `large-v3` / `turbo`：多一个 `__MACOSX` → **清垃圾之后命中**
+- ⚠️ **`large-v2`：包名 `ggml-large-v2-encoder.mlmodelc.zip`，顶层目录却叫
+  `ggml-large-encoder.mlmodelc`** → 名字不等，**窄规则不命中**
+
+最后这个形状**当前清单里没有**，但它证明了一件要紧的事：
+**上游家族并不统一，拿"归档文件名"当依据结构上就不可靠。**
+真要收它只能**逐包声明**（给 `ArtifactFile` 加显式字段）——
+但清单里没有消费者之前不该先建机制（本仓 `check:orphans` 正在管这个）。
+在那之前它会被 `asr.coreml` 判 `fail` 并让审计变红，**是响的，不是静默的**。
+
+# ★★ ③ 那条静默回退：我的判断是 **现在不该动**（三条都写了理由）
+
+- **不摘 `--no-prints`。** whisper-cli 收到它就 `whisper_log_set(cb_log_disable)`，
+  整个日志通道关掉 —— 要那一行 ERROR 就得连每段转写的噪音一起要回来。
+  而且频率错了：这是**每次安装一次**的故障，却要付**每次转写**的代价。
+- **不做"本次没走 ANE"的转写后横幅。** 管线**手上没有这个信号**（ERROR 在进程内就被
+  掐掉了）。要出这条横幅只能靠**推断** —— 而"推断出来的告知"正是本仓反复烧手的那类谎，
+  比不说更坏。判据不是"能不能显示"，是"显示的那句话是不是真的被观测到了"。
+- **④ 已经买到了当前唯一有证据的那个成因。** `asr.coreml=fail` 现在会让审计变红。
+
+## ⚠️ 但这条形状**没有被消灭**，说清楚它还剩什么（`[未验证]`）
+
+`checkCoreMl()` 查的是**磁盘结构**，不是"这次真的走了 ANE"。查不到的至少有：
+mlmodelc 与本机 CoreML 版本不兼容、ANE 被降级、
+以及**最坏的一个：shipped 的 whisper 二进制压根没编 `-DWHISPER_COREML=ON`**
+—— 那时 `coremldata.bin` 在、自检报 **`ok`**，而 ANE 一次都没用上。**这是一盏真的假绿灯。**
+
+便宜的堵法有：扫二进制里有没有 `whisper_coreml_init` / `Core ML model loaded` 这类字符串。
+**我没做**，理由是同一条：**我在 Linux 上，验不了这个判据在真 macOS 二进制上成不成立**，
+写下去就是又一个"从没在它所判断的平台上执行过"的守卫（本仓假绿灯 #8 的形状）。
+**建议**把它和一次能确认该字符串确实存在的 macOS CI 跑绑在一起做，不要盲写。
+
+# ★★ ④ 裁决已执行 —— 但**光翻 `required` 是不够的**，那里还有一条缝
+
+`selfcheck.ts` 的 `asr.coreml` 已改成 `required: true`（无条件常量，
+符合 `diffSelfCheckReports` 对 required 的要求）。原注释那句
+「标成 required 会让一台正常的 Mac 报红」**不成立**：红的条件是
+`status==='fail' && required`，而正常 Mac 走的是 `warn`，**`warn` 永远不参与红绿**。
+
+> ⚠️ **只改这一处的话，裁决会是空的。**
+> `cold-start-audit.mjs` 的 `exitCode` **只由第 5 节那一发 selfcheck 决定**，
+> 而第 5 节是**装可选文件之前**跑的 —— 那时 `asr.coreml` 必然是 `warn`。
+> 唯一会看见它 `fail` 的是第 8 节那一发，而第 8 节**整节都只打印、不参与红绿**。
+> 「装了 encoder 之后坏没坏」正是那一节存在的理由，却是那一节唯一不影响结论的东西。
+>
+> 已补：第 8 节重跑的那份报告现在也参与 `exitCode`，判据用**产品自己的**
+> （`selfcheck.mjs` 的退出码），审计不另立一套。只在真装了可选文件的那一格生效
+> —— Linux/Windows 走不到那里。
+
+# 验证（都在 /tmp 隔离副本上，§10）
+
+- **端到端复现**：把真归档的**中央目录条目表**逐字喂给产品的 `install()`。
+  修之前顶层 = `["__MACOSX","ggml-large-v3-encoder.mlmodelc"]`（空壳，与 macOS CI 实测一致）；
+  修之后 = `["analytics","coremldata.bin","metadata.json","model.mil","weights"]`。
+- **真归档**：`ggml-tiny-encoder.mlmodelc.zip`（15 MB，真下下来的）走完整 `install()`
+  → `coremldata.bin` 落在第一层。
+- **反向验证 6/6 全红**（`/tmp` 隔离副本，拆的是编译产物，共享树全程没有坏状态）：
+  zip 跳过 / tar 跳过 / 判据收太窄 / 判据放太宽 / `required` 改回 false / 把 `warn` 判成 `fail`。
+
+> ★ **反向验证抓出了我自己两条假绿灯**，两条都已修：
+> ① 「守卫不许过宽」那张表里**一个点开头的文件名都没有**（`.config/keep.json` 的
+>    basename 是 `keep.json`），于是"隐藏文件都算垃圾"这个变异**没被抓住**；
+> ② `asr.coreml` 那组本来断言 `report.ok === true`，而那个夹具**本来就有 6 条
+>    不相干的 required 失败**（`tool.ffmpeg` 等），`r.ok` 三种形态下恒为 false ——
+>    **写成什么样都会"过"**。已换成**差分**判据：三种形态之间红集合的差必须恰好是
+>    `asr.coreml` 一项。
+
+# 门禁
+
+`pnpm -r test` **1301 / 0**（基线 1287，+14 条新用例）· `npx tsc -b` 0 ·
+`npx eslint` 0 · `pnpm build:safe` 通过 · `pnpm lint-workflows` **557 条全过**（alias 能跑了）·
+`pnpm test:ci-scripts` **22 / 0**
+
+# 纪律
+
+`:10000` 零请求 · `/root/data-memo` 未碰 · 机器级指针 `~/.local/share/openmemo/datadir.json`
+未碰（所有安装都在 `mkdtemp` 里，反向验证用假 `HOME`/`XDG_DATA_HOME`）·
+`apps/web/dist` 未构建 · 无 `pkill` · **没有建/改/删任何 release** ·
+提交前 `git diff --cached --name-only` 核过只有我这 7 个文件。
+
+# 还开着的
+
+| 项 | 状态 | 归属 |
+|---|---|---|
+| 修好之后 macOS 上 `asr.coreml` 是不是真的变 `ok` | ⚠️ **`[未验证]`** —— 只有 darwin/arm64 的 CI 跑得出来，本机结构上验不了 | 我，已 dispatch |
+| 第 8 节新加的那条 `exitCode` 闸门 | ⚠️ **`[未验证]`** —— Linux 上 `carriers.length===0`，走不到那一节 | 同上一格 |
+| `large-v2` 形状（顶层目录名 ≠ 包名） | 🟡 当前清单里没有；真要收得**逐包声明**，别放宽通用规则 | 待清单出现消费者 |
+| 二进制没编 CoreML → 自检报 `ok` 的假绿灯 | 🟡 **没修**，理由见 ③（不该在 Linux 上盲写） | 待裁决 |
+| 镜像副本的 sha256 | ⚠️ `UNKNOWN` —— 要下满 1.17 GB；已核字节数逐位相同 | 我 |

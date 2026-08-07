@@ -158,6 +158,41 @@ function lex(platform: NodeJS.Platform): path.PlatformPath {
   return platform === 'win32' ? path.win32 : path.posix;
 }
 
+/**
+ * macOS 打包副产物 —— **从来不是载荷**，一律不落盘。
+ *
+ * ─── 为什么这是一条独立的规则（判据与"修正层级"不同）───────────────────────────
+ *
+ * macOS 上用 Finder「压缩」或 `zip` 打出来的归档，会把每个文件的资源分支与扩展属性
+ * 另存成 AppleDouble 边车（`._<原名>`），zip 把它们集中到一个 `__MACOSX/` 顶层目录里，
+ * tar 则直接放在原文件旁边。`.DS_Store` 是 Finder 的窗口状态。
+ * 这三样**在任何一个包里都不是内容**：删掉它们，包该干的事一件不少。
+ *
+ * 判据因此是**"这条目有没有可能是载荷"**（纯粹由名字决定，与目的地、与消费方无关），
+ * 而不是"目录层级对不对"（那要知道消费方去哪里找，见 installer.ts 的
+ * `collapseRedundantTopLevel`）。两件事判据不同，所以是两处代码、两组测试 ——
+ * 混成一件事的话，其中一条改了会悄悄改掉另一条的行为。
+ *
+ * ─── 不清掉的代价（`[实测]`，不是假设）───────────────────────────────────────────
+ *
+ * `ggml-large-v3-encoder.mlmodelc.zip` 的真中央目录（HTTP Range 从镜像读回，9 条）：
+ *
+ *     ggml-large-v3-encoder.mlmodelc/…            ← 载荷（含 coremldata.bin）
+ *     __MACOSX/ggml-large-v3-encoder.mlmodelc/._metadata.json   ← 就这一条
+ *
+ * `collapseRedundantTopLevel` 要求"顶层恰好一个条目"，而 `__MACOSX` 让它变成两个 ——
+ * 于是压不掉，装出来是个空壳，whisper.cpp 静默回退到 Metal/CPU，用户白付 1.17 GB。
+ * **一条 171 字节的边车文件，废掉了整条修复。**
+ */
+export function isMacArchiveJunk(rawName: string): boolean {
+  const segments = rawName.split(/[\\/]+/).filter((s) => s !== '' && s !== '.');
+  if (segments.length === 0) return false;
+  if (segments[0] === '__MACOSX') return true;
+  const base = segments[segments.length - 1] as string;
+  // `._x` 是 AppleDouble 的固定前缀；`.DS_Store` 是 Finder 的窗口状态。
+  return base === '.DS_Store' || base.startsWith('._');
+}
+
 function assertSafeEntryName(rawName: string): void {
   if (rawName.length === 0) {
     throw new UnpackError('Archive entry has an empty name', 'CORRUPT');
@@ -567,6 +602,17 @@ export async function unpackZip(src: string, destDir: string, opts?: UnpackOptio
     for (const entry of entries) {
       checkAborted(opts?.signal);
 
+      /*
+       * 垃圾条目：**先验名，再整条跳过**（见 `isMacArchiveJunk`）。
+       * 顺序是有意的 —— 把穿越藏在 `__MACOSX/../../x` 里的恶意归档仍然要当场
+       * `PATH_TRAVERSAL` 报出来，而不是被"跳过"悄悄咽下去。
+       * 跳过发生在 `noteBytes`/inflate **之前**，所以垃圾一个字节也不会被解压。
+       */
+      if (isMacArchiveJunk(entry.name)) {
+        assertSafeEntryName(entry.name);
+        continue;
+      }
+
       const isDir = entry.name.endsWith('/');
       const dest = lexicalEntryPath(destRoot, entry.name);
       await resolveEntryDest(rootReal, entry.name);
@@ -771,6 +817,17 @@ async function extractTar(
     const baseName = readCString(header.subarray(0, 100));
     const name = pendingLongName ?? (prefix ? `${prefix}/${baseName}` : baseName);
     pendingLongName = null;
+
+    /*
+     * 与 zip 那侧同一条规则、同一个顺序（先验名再跳过）。
+     * tar 这侧不能只挡 `__MACOSX/`：macOS 的 `tar` 不建那个目录，
+     * 而是把 `._<原名>` 直接放在原文件旁边 —— 同一个东西，另一种形状。
+     * 放在链接/目录/普通文件三个分支**之前**，这样三种类型一视同仁。
+     */
+    if (isMacArchiveJunk(name)) {
+      assertSafeEntryName(name);
+      continue;
+    }
 
     if (typeFlag === '2' || typeFlag === '1') {
       // linkname field, bytes 157..257

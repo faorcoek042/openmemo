@@ -964,6 +964,36 @@ try {
             say('        的空壳形态，whisper 会静默回退到 Metal/CPU。');
           }
         }
+
+        /*
+         * ★★ T-168 ④：**这一份报告也要参与红绿。**
+         *
+         * 在此之前，第 8 节整节都是"只打印"—— `exitCode` 只由第 5 节那一发
+         * （`sc.status`，见本文件 6 节末尾）决定。而第 5 节是**装可选文件之前**跑的，
+         * 那时 `asr.coreml` 必然是 `warn`（encoder 还没装）。
+         *
+         * 于是有一条谁都没看见的缝：**把 `asr.coreml` 标成 required 也不会让审计变红**，
+         * 因为唯一会看到它 `fail` 的那一发报告，压根没有被计入退出码。
+         * 「装了 encoder 之后坏没坏」正是本节存在的理由，它却是本节唯一不影响结论的东西。
+         *
+         * 判据用**产品自己的**：`selfcheck.mjs` 的退出码 = `status==='fail' && required`。
+         * 审计不在这里另立一套规矩（比如单独 `if (cm.status==='fail')`）——
+         * 那会变成两处判据，改一处的人不会知道还有另一处。
+         *
+         * 只在真的装了可选文件的那一格生效：`carriers.length === 0` 的平台
+         * （Linux/Windows）根本走不到这里。
+         */
+        if (again.sc.status !== 0) {
+          say();
+          say('   ✘ 装完可选文件之后，selfcheck 判定**不健康**（退出码 ' + String(again.sc.status) + '）。');
+          say('     本节因此让整个审计变红 —— 判据是产品自己的 required 语义，不是审计另立的。');
+          const bad = (again.checks ?? []).filter((c) => c.status === 'fail' && c.required);
+          for (const c of bad) {
+            say(`     · ${String(c.id).padEnd(24)} ${String(c.detail ?? '').replace(/\s+/g, ' ').slice(0, 200)}`);
+          }
+          exitCode = 1;
+        }
+
         /* 装完之后 by-name/asr 下到底多了什么，摊开给下一个人看。 */
         try {
           const { readdirSync } = await import('node:fs');

@@ -242,6 +242,88 @@ describe('T-153 ② CoreML encoder：解包不许多出一层同名目录', () =
 });
 
 /**
+ * T-168 ① —— **上面那组测试全绿，而线上仍然是坏的。**
+ *
+ * ## 差在哪
+ *
+ * 上面每个夹具的顶层条目都是**载荷**。真归档不是：macOS 上打的包会多一个
+ * `__MACOSX/`，于是 `entries.length !== 1`，T-153 那条修复**一次都没生效过**。
+ * macOS CI（run 31163897527）装完 1.17 GB 的 encoder，磁盘上是
+ * `<X>.mlmodelc/{__MACOSX, <X>.mlmodelc}` —— 空壳，whisper 静默回退到 Metal/CPU。
+ *
+ * **教训不是"再加一条判据"，是"夹具要照着真归档造"。**
+ * 所以下面的条目名不是编的：它们逐字取自上游 zip 的中央目录
+ * （用 HTTP Range 只读回中央目录，没下那 1.17 GB）。
+ *
+ * ## 判据
+ *
+ * 与 `selfcheck.ts` 的 `checkCoreMl()` 逐字同一条：
+ * `readdir(<X>.mlmodelc)` 里必须**直接**有 `coremldata.bin`。
+ */
+describe('T-168 ① 真归档形状：__MACOSX 不许废掉层级修复', () => {
+  const V3 = 'ggml-large-v3-encoder.mlmodelc';
+
+  it('★ large-v3 的真条目表（同名顶层目录 + __MACOSX）→ coremldata.bin 必须在第一层', async () => {
+    const { dir } = await installZip(`${V3}.zip`, [
+      { name: `${V3}/metadata.json`, data: Buffer.from('{}') },
+      // ↓ 真归档里就是这一条，171 字节，它一个人废掉了整条修复
+      { name: `__MACOSX/${V3}/._metadata.json`, data: Buffer.from('applédouble') },
+      { name: `${V3}/model.mil`, data: Buffer.from('mil') },
+      { name: `${V3}/coremldata.bin`, data: Buffer.from('COREML-DATA') },
+      { name: `${V3}/weights/weight.bin`, data: Buffer.from('weights') },
+      { name: `${V3}/analytics/coremldata.bin`, data: Buffer.from('analytics') },
+    ]);
+
+    const entries = (await readdir(dir)).sort();
+    assert.equal(
+      entries.includes('coremldata.bin'),
+      true,
+      `<X>.mlmodelc 里没有 coremldata.bin —— whisper 会**静默回退**。实际内容：${JSON.stringify(entries)}`,
+    );
+    assert.equal(await fs.readFile(join(dir, 'coremldata.bin'), 'utf8'), 'COREML-DATA');
+    // 垃圾不许跟着进来（`__MACOSX` 落盘时正是它让 collapse 压不掉）
+    assert.equal(entries.includes('__MACOSX'), false, `__MACOSX 落盘了：${JSON.stringify(entries)}`);
+    // 也不许还套着一层
+    assert.equal(entries.includes(V3), false, `还套着一层同名目录：${JSON.stringify(entries)}`);
+    // 载荷的子目录一个都不许少
+    assert.deepEqual(entries, ['analytics', 'coremldata.bin', 'metadata.json', 'model.mil', 'weights']);
+  });
+
+  it('★ turbo（macOS CI 实测的那一个）同形状 → 同样必须落对', async () => {
+    const { dir } = await installZip(`${ENC}.zip`, [
+      { name: `${ENC}/coremldata.bin`, data: Buffer.from('T') },
+      { name: `__MACOSX/${ENC}/._coremldata.bin`, data: Buffer.from('ad') },
+      { name: `${ENC}/model.mil`, data: Buffer.from('mil') },
+    ]);
+    assert.deepEqual((await readdir(dir)).sort(), ['coremldata.bin', 'model.mil']);
+  });
+
+  it('★ 安全边界没被这次放宽带走：同名目录 + 一个**真**兄弟文件，照旧不许压', async () => {
+    /*
+     * 这条与上一条只差一个字节：兄弟是 `README.txt`（载荷）还是 `__MACOSX/…`（垃圾）。
+     * 判据因此确实是"是不是载荷"，而不是"顶层有几个条目"——
+     * 后者才是 T-153 栽的那一跤。
+     */
+    const S = 'sib-encoder.mlmodelc';
+    const { dir } = await installZip(`${S}.zip`, [
+      { name: `${S}/coremldata.bin`, data: Buffer.from('x') },
+      { name: 'README.txt', data: Buffer.from('hi') },
+    ]);
+    assert.deepEqual((await readdir(dir)).sort(), ['README.txt', S]);
+  });
+
+  it('★ 后端包的 bin/ 不许被压（清垃圾之后这条仍然成立）', async () => {
+    const { dir } = await installZip('backend-with-junk.zip', [
+      { name: 'bin/whisper-cli', data: Buffer.from('ELF') },
+      { name: 'bin/.DS_Store', data: Buffer.from('finder') },
+      { name: 'lib/libggml.so', data: Buffer.from('ELF') },
+    ]);
+    assert.deepEqual((await readdir(dir)).sort(), ['bin', 'lib']);
+    assert.deepEqual((await readdir(join(dir, 'bin'))).sort(), ['whisper-cli']);
+  });
+});
+
+/**
  * T-157 ② —— **更新失败绝不许毁掉当前能用的那份安装。**
  *
  * ## 为什么这条测试是这次改动的核心

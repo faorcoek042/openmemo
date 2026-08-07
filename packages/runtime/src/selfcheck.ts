@@ -201,6 +201,21 @@ export interface SelfCheckInput {
    * 否则"这台机器没网"会被渲染成"产品坏了"，那是另一种谎。
    */
   proxyTest?: boolean;
+  /**
+   * ★ T-168 ④：平台注入。**只给测试用；生产侧不传，行为与写死 `process.*` 逐字相同。**
+   *
+   * `asr.coreml` 只在 darwin/arm64 上产出（ANE 只有 Apple Silicon 有），
+   * 于是它在 CI 的 Linux/Windows 上**一次都不会被执行** —— 而这一条现在
+   * 会决定整份报告的红绿（`required: true`）。
+   *
+   * 一条决定红绿、却从来没被执行过的分支，正是本仓记过的"假绿灯 #8"形状：
+   * 守卫看着对、从没跑过、谁也看不出来。`unpack.ts` 的 `lex(platform)` 用的是同一招
+   * （那里的注释写得更长：「Not for portability — for testability」）。
+   * 这里照抄它，**为的是让 macOS 的那三档在 Linux 上就能被跑红**，
+   * 而不是等一次 1.17 GB 的 macOS CI 才知道。
+   */
+  platform?: NodeJS.Platform;
+  arch?: string;
 }
 
 /** The words that were silently returning zero before libsimple shipped (T-035). */
@@ -283,7 +298,8 @@ async function checkCoreMl(
   add: (r: CheckResult) => void,
 ): Promise<void> {
   // ANE 只有 Apple Silicon 有。别的平台连这一项都不该出现，免得变成永久噪音。
-  if (process.platform !== 'darwin' || process.arch !== 'arm64') return;
+  // 平台取自 input（默认宿主）—— 见 `SelfCheckInput.platform` 的注释。
+  if ((input.platform ?? process.platform) !== 'darwin' || (input.arch ?? process.arch) !== 'arm64') return;
 
   const asrDir = join(input.storeRoot, 'by-name', 'asr');
   const emit = (status: CheckResult['status'], detail: string, remediation: string | null): void => {
@@ -295,11 +311,38 @@ async function checkCoreMl(
       status,
       detail,
       /*
-       * required=false 是有意的：**没有 ANE 不影响能不能转写**，只影响快不快
-       * （CoreML 只接管 encoder，whisper.cpp:2412）。把它标成 required 会让
-       * 一台完全正常的 Mac 报红，那是另一种谎。
+       * ★ T-168 ④：`required: false` → `true`（Manager 裁决）。
+       *
+       * ─── 原来那条理由错在哪 ──────────────────────────────────────────────────
+       *
+       * 原注释写的是：「没有 ANE 不影响能不能转写，标成 required 会让一台完全正常的
+       * Mac 报红」。**前半句对，后半句不成立** —— 因为红的条件不是 `required`，
+       * 是 `status === 'fail' && required`（本文件 `ok:` 那一行）。
+       * 而一台"完全正常、只是没装 encoder"的 Mac 走的是上面那条 `warn` 分支，
+       * **`warn` 永远不参与红绿**。所以 `required` 从来没有为它校准过。
+       *
+       * 它实际校准的是另一件事：把 `fail` 也一并静音了。而这两档的定义本来就分家：
+       *
+       *   warn = 没有 ANE，但**功能健康**（可选加速缺失）
+       *   fail = 目录在、里面没有 `coremldata.bin` = **结构性损坏**
+       *          → whisper 静默回退，用户付了 1.17 GB 却什么也不会被告知
+       *
+       * `required=false` 是按前者校准的，**从没为后者校准过**。
+       * 于是它成了一条永远不会让任何东西变红的 `fail` —— 而那种东西
+       * 唯一确定会做成的事，是**训练人忽略它**。
+       *
+       * ─── 为什么写成无条件常量 ────────────────────────────────────────────────
+       *
+       * 与 `backend.libLinks` 同一条规矩（见本文件 §「required 恒为 true」那段）：
+       * `required` 是纯逻辑，不许随 storeRoot 漂移 —— `diffSelfCheckReports` 把
+       * required 不一致直接判成"判据被改分叉了"，而 CLI 与 daemon 的 storeRoot 可以不同。
+       * 环境差异全部由 `status` 承担。
+       *
+       * ⚠️ **已知后果，且是有意的**：解包那条 bug（T-168 ①）修好之前，
+       * macOS 那一格会立刻变红。红是对的 —— 它今天就是坏的。
+       * 不许为了绿把这条改回去。
        */
-      required: false,
+      required: true,
       remediation,
     });
   };

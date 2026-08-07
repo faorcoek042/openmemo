@@ -36,7 +36,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { gzipSync } from 'node:zlib';
 
-import { UnpackError, lexicalEntryPath, lexicalLinkTarget, unpackTarGz } from './unpack.js';
+import { UnpackError, isMacArchiveJunk, lexicalEntryPath, lexicalLinkTarget, unpackTarGz } from './unpack.js';
 
 /* ------------------------------ tar 构造器 -------------------------------- */
 // 手搓 512 字节头：本包不许引入新依赖，而且恶意归档本来也不是任何 tar 库愿意产出的东西。
@@ -333,5 +333,95 @@ describe('T-157 ① 词法判定的 platform 入参 —— win32 分支在 Linux
   it('默认参数 = 宿主平台：不传 platform 时行为与旧实现逐字一致', () => {
     const root = process.platform === 'win32' ? 'C:\\dest' : '/tmp/dest';
     assert.equal(lexicalEntryPath(root, 'lib/a.so'), path.resolve(root, 'lib/a.so'));
+  });
+});
+
+/* ================== ④ macOS 打包副产物一律不落盘（T-168 ①） ================== */
+
+describe('T-168 ① macOS 打包副产物：判定纯粹由名字决定', () => {
+  it('★ 三种真实形态都算垃圾', () => {
+    for (const n of [
+      '__MACOSX/',
+      '__MACOSX/ggml-large-v3-encoder.mlmodelc/._metadata.json', // 真归档里就是这一条
+      'ggml-tiny-encoder.mlmodelc/._coremldata.bin', // macOS tar 的形态：边车直接放在旁边
+      '.DS_Store',
+      'a/b/.DS_Store',
+      '__MACOSX\\x\\._y', // 反斜杠形态（Windows 上写出来的归档）
+    ]) {
+      assert.equal(isMacArchiveJunk(n), true, `应判为垃圾：${n}`);
+    }
+  });
+
+  it('★ 守卫不许过宽 —— 这些是载荷，一个都不许被吞', () => {
+    /*
+     * ⚠️ 这张表第一版漏掉了**点开头的普通文件**（`.keep` / `.gitkeep` / `.env.example`）。
+     * 反向验证把判据改成 `base.startsWith('.')`（"隐藏文件都算垃圾"）时，
+     * 这一条**没有变红** —— 表里当时只有 `.config/keep.json`，而它的 basename
+     * 是 `keep.json`，压根不触发那条过宽的规则。
+     * 一张"看起来覆盖了隐藏文件"的表，实际一个隐藏文件名都没测到。
+     */
+    for (const n of [
+      'ggml-large-v3-encoder.mlmodelc/coremldata.bin',
+      'bin/whisper-cli',
+      '.config/keep.json', // 隐藏目录不等于垃圾
+      'bin/.keep', // ← 点开头的**文件**，是载荷
+      '.gitkeep',
+      'conf/.env.example',
+      'lib/libggml.so',
+      '__MACOSX_NOT_REALLY/x.bin', // 前缀相同但不是那个目录名
+      'a/_.bin', // 与 `._` 只差一个字符
+      'weights/weight.bin',
+    ]) {
+      assert.equal(isMacArchiveJunk(n), false, `不该被判为垃圾：${n}`);
+    }
+  });
+});
+
+describe('T-168 ① tar：垃圾不落盘，载荷一个不少', () => {
+  it('★ `._x` / `.DS_Store` / `__MACOSX/` 都不写进磁盘，且不计入 files', async () => {
+    const { destRoot } = sandbox();
+    const src = makeTarGz(path.join(mkdtempSync(path.join(os.tmpdir(), 'om-junk-')), 'a.tar.gz'), [
+      { name: 'ggml-tiny-encoder.mlmodelc/', type: '5' },
+      { name: 'ggml-tiny-encoder.mlmodelc/coremldata.bin', data: 'COREML' },
+      { name: 'ggml-tiny-encoder.mlmodelc/._coremldata.bin', data: 'applédouble' },
+      { name: 'ggml-tiny-encoder.mlmodelc/.DS_Store', data: 'finder' },
+      { name: '__MACOSX/ggml-tiny-encoder.mlmodelc/._metadata.json', data: 'ad' },
+    ]);
+    const res = await unpackTarGz(src, destRoot);
+
+    assert.deepEqual(
+      (await fs.readdir(destRoot)).sort(),
+      ['ggml-tiny-encoder.mlmodelc'],
+      '顶层出现了不该有的东西 —— `__MACOSX` 落盘就会让 collapseRedundantTopLevel 压不掉',
+    );
+    assert.deepEqual(
+      (await fs.readdir(path.join(destRoot, 'ggml-tiny-encoder.mlmodelc'))).sort(),
+      ['coremldata.bin'],
+    );
+    // 载荷内容没被动过
+    assert.equal(
+      await fs.readFile(path.join(destRoot, 'ggml-tiny-encoder.mlmodelc/coremldata.bin'), 'utf8'),
+      'COREML',
+    );
+    // 返回的 files 也不许把垃圾算进去（调用方会拿它记账）
+    assert.equal(
+      res.files.some((f) => f.includes('._') || f.includes('.DS_Store') || f.includes('__MACOSX')),
+      false,
+      `files 里混进了垃圾：${JSON.stringify(res.files)}`,
+    );
+  });
+
+  it('★ 垃圾名字里藏穿越 → 仍然当场被拒，不许被"跳过"悄悄咽下去', async () => {
+    /*
+     * 这条守的是**跳过与验名的顺序**。先跳后验的话，
+     * `__MACOSX/../../evil` 会安静地什么都不做 —— 归档"解包成功"，
+     * 而它其实是一次被吞掉的攻击。攻击被无声处理，与攻击成功一样坏。
+     */
+    const { destRoot } = sandbox();
+    const src = makeTarGz(path.join(mkdtempSync(path.join(os.tmpdir(), 'om-junk-')), 'b.tar.gz'), [
+      { name: '__MACOSX/../../evil/._x', data: 'EVIL' },
+    ]);
+    const err = await expectRejected(() => unpackTarGz(src, destRoot));
+    assert.equal(err.code, 'PATH_TRAVERSAL');
   });
 });
