@@ -1,208 +1,51 @@
 /**
- * Manifest loading with three-tier degradation.
+ * Catalog signature verification.
  *
- * Copied deliberately from ComfyUI-Manager's `local | cache | remote` mode system, which
- * is battle-tested in production: it fetches remotely, caches for a day, and silently
- * falls back to the bundled copy on any network error.
+ * ── 这个文件为什么叫 manifest.ts，里面却没有 manifest 加载 ────────────────────────
  *
- * Our additions over ComfyUI-Manager:
- *   - zod validation at every tier (its registry has string sizes and no hashes)
- *   - HTTPS-only, host-allowlisted URLs enforced by the schema
- *   - the bundled tier is committed to git (ADR-001 mandates manifests be in-repo so
- *     "what did we download" stays auditable)
+ * 2026-08-07（T-171）之前，本文件是一个 `remote → cache → bundled` 三层降级的目录加载器
+ * （`loadManifest` / `loadModelManifest` / `loadBackendManifest`，含全仓唯一一处取目录的
+ * `fetch`）。**整族已被用户裁决删除**，理由见 ADR-010 §决策 4 订正 / ADR-012 §决策 6 订正：
  *
- * Signature verification is implemented (see verifyCatalogSignature below) but NOT yet
- * ACTIVE in production, because no signing key has been provisioned — see that function's
- * doc comment for what protects the catalog in the meantime.
+ *   · 生产**从来没有远端目录可加载**。目录是 `vendor/manifests/*.json`，git 跟踪、随仓库
+ *     发布；daemon 走 `apps/daemon/src/http/rest/manifests.ts` 的 `fs.readdir` 本地读盘，
+ *     全程不联网。那个分层加载器**零调用方、零测试**，两个月没动过。
+ *   · 将来真要做远端目录，应当对着那时候的约束重新设计，而不是复活一份从未运行过的实现。
+ *     **git 历史留着它**（删除前 HEAD `26fdd1f`）。
+ *
+ * 文件名保留不改，因为 `packages/downloader/scripts/verify-unpack.mjs:50` 用
+ * `await import(dist/manifest.js)` 在**顶层**引它 —— 改名会让那份脚本在模块加载阶段就
+ * `ERR_MODULE_NOT_FOUND`，连带 53 条解包安全断言全挂。要改名请连它一起改。
+ *
+ * ⚠️ **今天目录的实际完整性保障不是签名，是另外两件东西**，别看到本文件就以为目录被验签了：
+ *   (a) 每个产物在 `vendor/manifests/*.json` 里带 git 提交过的 SHA-256，下载后强制校验；
+ *   (b) 镜像 URL 被编译期 host 白名单钉死（见 `@openmemo/shared` 的 `schemas.ts`
+ *       `ALLOWED_DOWNLOAD_HOSTS`）。
+ * 签名这条线**没有密钥、没有签名产物、没有签名脚本**，见下面函数的文档注释。
  */
 
-import { promises as fs } from 'node:fs';
-import * as path from 'node:path';
-import {
-  type ValidationResult,
-  validateBackendManifest,
-  validateModelManifest,
-} from '@openmemo/shared';
 import { OPENMEMO_CATALOG_PUBLIC_KEY, verifyEd25519 } from './signature.js';
 
-export type ManifestTier = 'remote' | 'cache' | 'bundled';
-
-export interface LoadedManifest<T> {
-  data: T;
-  source: ManifestTier;
-  fetchedAt: string;
-  /** True when serving cached/bundled data; the UI shows an offline banner. */
-  stale: boolean;
-}
-
-export const CATALOG_TTL_MS = 24 * 3600 * 1000;
-export const STALE_AFTER_MS = 7 * 24 * 3600 * 1000;
-
-export interface LoadManifestOptions {
-  /** Remote catalog URL. Omit to stay offline. */
-  remoteUrl?: string;
-  /** Directory for the cached copy. */
-  cacheDir: string;
-  /** Path to the bundled manifest committed in vendor/manifests/. */
-  bundledPath: string;
-  cacheFileName: string;
-  /** Force a network fetch even when the cache is fresh. */
-  refresh?: boolean;
-  timeoutMs?: number;
-  validate: (input: unknown) => ValidationResult<unknown>;
-}
-
-async function readJson(file: string): Promise<unknown | null> {
-  try {
-    return JSON.parse(await fs.readFile(file, 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-async function fileAgeMs(file: string): Promise<number | null> {
-  try {
-    return Date.now() - (await fs.stat(file)).mtimeMs;
-  } catch {
-    return null;
-  }
-}
-
 /**
- * Load a manifest, preferring fresh remote data but never failing outright.
- * Degradation order: remote → cache (any age) → bundled.
- */
-export async function loadManifest<T>(opts: LoadManifestOptions): Promise<LoadedManifest<T>> {
-  const cacheFile = path.join(opts.cacheDir, opts.cacheFileName);
-  const etagFile = `${cacheFile}.etag`;
-  const cacheAge = await fileAgeMs(cacheFile);
-  const cacheFresh = cacheAge != null && cacheAge < CATALOG_TTL_MS;
-
-  if (opts.remoteUrl && (opts.refresh || !cacheFresh)) {
-    try {
-      const prevEtag = await fs.readFile(etagFile, 'utf8').catch(() => '');
-      const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), opts.timeoutMs ?? 10_000);
-      let res: Response;
-      try {
-        res = await fetch(opts.remoteUrl, {
-          headers: prevEtag ? { 'if-none-match': prevEtag } : {},
-          signal: ac.signal,
-        });
-      } finally {
-        clearTimeout(timer);
-      }
-
-      if (res.status === 304) {
-        const cached = await readJson(cacheFile);
-        const v = opts.validate(cached);
-        if (v.ok) {
-          return {
-            data: v.data as T,
-            source: 'cache',
-            fetchedAt: new Date(Date.now() - (cacheAge ?? 0)).toISOString(),
-            stale: false,
-          };
-        }
-      } else if (res.ok) {
-        const body = await res.json();
-        const v = opts.validate(body);
-        if (!v.ok) {
-          // A remote catalog that fails validation is treated as hostile, not as
-          // "close enough" — fall through to the cached/bundled copy.
-          throw new Error(`remote manifest failed validation: ${v.errors.slice(0, 3).join('; ')}`);
-        }
-        await fs.mkdir(opts.cacheDir, { recursive: true });
-        await fs.writeFile(cacheFile, JSON.stringify(body), 'utf8');
-        const etag = res.headers.get('etag');
-        if (etag) await fs.writeFile(etagFile, etag, 'utf8');
-        return {
-          data: v.data as T,
-          source: 'remote',
-          fetchedAt: new Date().toISOString(),
-          stale: false,
-        };
-      }
-    } catch {
-      // Any network/validation failure degrades rather than propagating.
-    }
-  }
-
-  const cached = await readJson(cacheFile);
-  if (cached) {
-    const v = opts.validate(cached);
-    if (v.ok) {
-      return {
-        data: v.data as T,
-        source: 'cache',
-        fetchedAt: new Date(Date.now() - (cacheAge ?? 0)).toISOString(),
-        stale: (cacheAge ?? 0) > STALE_AFTER_MS,
-      };
-    }
-  }
-
-  const bundled = await readJson(opts.bundledPath);
-  const v = opts.validate(bundled);
-  if (!v.ok) {
-    throw new Error(
-      `Bundled manifest ${opts.bundledPath} is invalid: ${v.errors.slice(0, 5).join('; ')}`,
-    );
-  }
-  return {
-    data: v.data as T,
-    source: 'bundled',
-    fetchedAt: new Date().toISOString(),
-    stale: true,
-  };
-}
-
-export function loadModelManifest<T>(
-  o: Omit<LoadManifestOptions, 'validate' | 'cacheFileName'> & { cacheFileName?: string },
-) {
-  return loadManifest<T>({
-    ...o,
-    cacheFileName: o.cacheFileName ?? 'models.json',
-    validate: validateModelManifest as (i: unknown) => ValidationResult<unknown>,
-  });
-}
-
-export function loadBackendManifest<T>(
-  o: Omit<LoadManifestOptions, 'validate' | 'cacheFileName'> & { cacheFileName?: string },
-) {
-  return loadManifest<T>({
-    ...o,
-    cacheFileName: o.cacheFileName ?? 'backends.json',
-    validate: validateBackendManifest as (i: unknown) => ValidationResult<unknown>,
-  });
-}
-
-/**
- * Detached-signature verification for remote catalogs.
+ * Detached-signature verification for catalogs.
  *
- * A real requirement, not an optional nicety: a catalog contains download URLs, so
- * whoever controls the catalog controls what the app fetches. ComfyUI-Manager relies on a
- * URL allowlist plus a post-hoc malware blocklist and has needed repeated security
- * patches — Ed25519 signing is the harder-to-bypass layer on top of that same allowlist
- * idea.
+ * ── 状态（老老实实写清楚）─────────────────────────────────────────────────────────
  *
- * The verification itself (Ed25519 via node:crypto, see signature.ts) is fully
- * implemented and correct. What is HONESTLY NOT TRUE YET: this is not active in
- * production, because `OPENMEMO_CATALOG_PUBLIC_KEY` is `null` — no signing key has been
- * provisioned. `loadManifest` above never calls this function; nothing currently produces
- * a `.sig` file to verify against. Wiring it into the remote-fetch path is future work,
- * gated on actually having a key.
+ * 验签本体（Ed25519 via node:crypto，见 signature.ts）**是完整且正确的**，并且**真的被跑过**：
+ * `packages/downloader/scripts/verify-unpack.mjs` 第 8/9 节共 13 条断言拿真实生成的
+ * Ed25519 密钥对跑它 —— 真签名通过、篡改载荷返 false、异密钥返 false、无密钥抛错。
+ * 所以它**不是**没跑过的加密代码。
  *
- * Until a key exists, the real protection against a hostile/compromised catalog is:
- *   (a) every file carries a SHA-256 in `vendor/manifests/*.json`, committed to git and
- *       schema-validated at every load tier (remote/cache/bundled) — ADR-001;
- *   (b) the schema restricts mirror URLs to an allowlisted host set (see @openmemo/shared
- *       schemas.ts), so a compromised catalog cannot simply point at an arbitrary origin.
+ * 但**同样老实**的是：它在**生产路径上零调用方**。`OPENMEMO_CATALOG_PUBLIC_KEY` 是 `null`
+ * （从没有配发过密钥），全仓也**没有任何东西会产出 `.sig`**。原先"未来会把它接进远端取目录
+ * 那条路"的说法已经过期 —— 那条路 T-171 已被删除（见文件头）。
  *
- * Fail-closed by design: if a caller supplies a signature to check but no key is
- * configured (the `publicKey` param, or the module default, is null), this THROWS rather
- * than returning `true` or silently skipping the check. A signature nobody can verify
- * must never be treated as equivalent to "verified" — that would be strictly worse than
- * not attempting verification at all, because it would look secure while being a no-op.
+ * ⚠️ 那份跑它的脚本 `verify-unpack.mjs` **没有任何自动调用方**（不在任何 package.json
+ * scripts、不在任何 workflow）。所以本函数今天的真实覆盖是"有人手敲的时候才有"。
+ *
+ * Fail-closed by design: 调用方给了签名却没有配密钥（`publicKey` 参数与模块默认值都是 null）
+ * 时 **抛错**，而不是返回 `true` 或静默跳过。一个没人能验的签名绝不能被当成"已验证" ——
+ * 那比不验还糟，因为它看起来是安全的而实际是空操作。
  */
 export async function verifyCatalogSignature(
   catalogBytes: Uint8Array,

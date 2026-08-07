@@ -140,16 +140,8 @@
     },
     {
       "file": "packages/downloader/src/manifest.ts",
-      "name": "loadBackendManifest"
-    },
-    {
-      "file": "packages/downloader/src/manifest.ts",
-      "name": "loadModelManifest"
-    },
-    {
-      "file": "packages/downloader/src/manifest.ts",
       "name": "verifyCatalogSignature",
-      "note": "⚠️ T-169 补剥字符串字面量后**第一次**被看见 —— 它此前一直隐身，因为它在自己的错误信息里写了自己的名字（`self` 因此恒 ≥ 1）。查清楚了再登记，结论是**不是「验签特性被静默关掉了」**：① 生产**根本没有远端目录**可验 —— 目录是 `vendor/manifests/*.json`，**随仓库发布**（git 已跟踪），daemon 走 `rest/manifests.ts:73 listManifestFiles()` 的 `fs.readdir` 本地读盘，全程不联网；② 会联网取目录的那个分层加载器 `loadManifest`（`manifest.ts:75`，含唯一一处 `fetch`）**自己就是死代码**，全仓零调用方 —— 它的两个出口 `loadBackendManifest` / `loadModelManifest` 就在本文件上面两条，同样零调用方。所以缺的不是「给验签接上调用方」，是「远端目录这条线整条没做」；③ 今天真正在承重的完整性控制是**编译期下载域名白名单**（`shared/schemas.ts:49-62`）+ **每个产物强制 sha256**，不是签名；④ 当前状态是**被 ADR 明确批准过的**：`ADR-012` 决策 6「已实现但生产未启用（无密钥），供签名却无密钥时失败关闭绝不放行 —— 批准」，`ADR-010` 决策 4「未实现且显式抛错不静默 —— 批准」。函数本身是 fail-closed 的（给了签名却无密钥 → 抛，不返 true），删掉它等于推翻一条 accepted ADR，**那是 Manager 的决定，不是门禁的**。→ 留在这里当地图；要动它请连同「远端目录到底做不做」一起裁。"
+      "note": "⚠️ 本条目的 note 在 T-171 被**订正过一次，因为它此前有一处事实错误**：它写着本函数「零单测」，而实际上 `packages/downloader/scripts/verify-unpack.mjs` 第 8/9 节共 13 条断言在跑它（`:50` 顶层 await 动态 import + `:584 :587 :591 :596` 四处实调用），其中包含拿真实 Ed25519 密钥对验一个真签名。棘轮之所以仍把它算成孤儿，是因为 `check-orphan-exports.mjs:112` 的文件过滤是 `/\\.tsx?$/` 且限定 `^(apps|packages)/[^/]+/src/` —— **`.mjs` 脚本结构性地不在扫描范围内**。所以这一条是**扫描器口径下的孤儿，不是真孤儿**，别照着 note 去删它（T-171 用户裁定删整条远端目录管线时，就是撞在这里被拦下的；本仓栽过一次 `toMarkdown` —— 有 daemon 调用方却被删，导出 500）。⚠️ 特别注意爆炸半径：`verify-unpack.mjs:50` 是**顶层 await**，`dist/manifest.js` 一旦消失，整份脚本在模块加载阶段就 `ERR_MODULE_NOT_FOUND`，**53 条解包安全断言（zip-slip / 绝对路径 / 软链逃逸 / zip 炸弹）全部一起死**，而那正是 `docs/SECURITY.md:453` 与 `ADR-015:44` 引为「已实现」的证据来源。—— 其余仍然成立的背景：① 生产**根本没有远端目录**可验，目录是 `vendor/manifests/*.json`（git 跟踪、随仓发布），daemon 走 `rest/manifests.ts` 的 `fs.readdir` 本地读盘，全程不联网；② 会联网取目录的那个分层加载器 `loadManifest` 一族（含全仓唯一一处取目录的 `fetch`）**已于 T-171 删除**，本文件上方原有的 `loadBackendManifest` / `loadModelManifest` 两条基线条目随之移除（72 → 70，只降不升）；③ 今天真正承重的完整性控制是**编译期下载域名白名单** + **每个产物强制 sha256**，不是签名；④ 签名这条线仍然无密钥、无签名产物、无签名脚本。⚠️ 还有一条没闭：`verify-unpack.mjs` 自己**没有任何自动调用方**（不在任何 package.json scripts、不在任何 workflow），所以上面那 13 条断言只在有人手敲时才跑。"
     },
     {
       "file": "packages/downloader/src/proxy.ts",

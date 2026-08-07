@@ -41,7 +41,11 @@ whisper.cpp v1.9.1 上游**无 macOS / Vulkan / ROCm 包**，`model-mgmt` **拒�
 ## 决策 4：压缩包解压 + catalog Ed25519 验签 —— 未实现且**显式抛错不静默**，批准该选择
 
 "没实现就大声失败"优于"悄悄跳过"。**实现指派回 `model-mgmt` 本人**（`packages/downloader` 是他的），
-不转 T-020。解压是后端包安装的必经环节，属 ADR-003 决策 6 统一下载器的一部分。
+不转 T-020。~~解压是后端包安装的必经环节，属 ADR-003 决策 6 统一下载器的一部分。~~
+
+> **解压那半仍然成立且已落地**（`packages/downloader/src/unpack.ts`，53 条安全断言在
+> `scripts/verify-unpack.mjs`）。**被推翻的是 catalog 验签那半 —— 见文末 §附-A（2026-08-07）。**
+> 本决策原文不许删，留作可追溯。
 
 ## 决策 5：双 ID 对齐方式 —— 表彰
 
@@ -75,3 +79,85 @@ Qwen3-4B Q4_K_M @8K 上下文 = **4130 MB，其中 KV cache 占 1208 MB**。
 # 附：全仓库红灯状态
 - ✅ `shared` 未导出 `ulid` —— **已修**
 - 🔴 仅剩 `packages/pipeline` 的 `argGuard.test.ts`（`gpu-runtime` 所有，他正在 T-025 中）
+
+---
+
+# 附-A：决策 4 的「catalog Ed25519 验签」那半被推翻（2026-08-07）
+
+**何时**：2026-08-07，T-171。
+**被谁**：**用户本人**在 T-171 任务书里直接裁定（原话："上一位倾向删但没删……**现在我裁：删**"）。
+不是 agent 自作主张：PROTOCOL §1 把 `docs/adr/**` 划给 Manager，本节由 agent 就地写，
+**用户在同一份任务书里明确授权了这次就地改**（"我授权你这次就地改——原文用删除线保留，不许删原文"）。
+做法照抄 ADR-003 §7.6 的先例。
+
+**依据什么推翻**（用户给的三条理由，逐条抄录）：
+
+1. **一个从未被调用、也没有任何测试的加密验签函数，"经过审查"是错觉。**
+   留着它的最大风险不是它有 bug，是**下一个人会以为目录是被验签的** ——
+   而今天目录的实际保障是编译期 host 白名单 + 强制 sha256，完全是另外两件东西。
+2. **今天没有功能损失**：用户没有安装包、靠 `git pull` 更新，目录随仓走。
+3. **将来真要做远端目录，应该对着那时候的约束重新设计**，而不是复活一份两个月没动过、
+   从未运行过的实现。**git 历史留着它**（删除前 HEAD `26fdd1f`）。
+
+## 实际执行到什么程度：**删了一半，另一半被证据挡下**
+
+⚠️ **这一节记录的是真实发生的事，不是被下达的事。** 两者不同，差别必须留痕。
+
+### 删掉了（零调用方，已核实）
+
+`packages/downloader/src/manifest.ts` 里的三层降级远端目录加载器整族：
+
+| 符号 | 性质 |
+|---|---|
+| `loadManifest` | 含全仓**唯一**一处取目录的 `fetch` |
+| `loadModelManifest` / `loadBackendManifest` | 它的两个出口 |
+| `LoadManifestOptions` / `LoadedManifest` / `ManifestTier` | 只为它们存在的类型 |
+| `CATALOG_TTL_MS` / `STALE_AFTER_MS` | 只为它们存在的常量 |
+| `readJson` / `fileAgeMs` | 只为它们存在的私有辅助 |
+
+`[T-171 实测]` 逐个核过调用方：全部**零生产调用方、零测试**，仅有同文件自引用 +
+markdown 提及 + 基线 JSON 条目。棘轮基线随之 **72 → 70**（`loadBackendManifest` /
+`loadModelManifest` 两条移除）——**只降不升，规矩没有被绕过**。
+
+### 没有删：`verifyCatalogSignature`（**它有真实调用方**）
+
+用户在同一份任务书里立了一条硬约束：**"你要拒绝删任何有真实调用方的东西，并回报给我"**
+（本仓栽过一次：`toMarkdown` 有 daemon 调用方却被删，导出 500）。这条约束在这里触发了。
+
+`[T-171 实测]` `packages/downloader/scripts/verify-unpack.mjs`：
+- `:50` `const { verifyCatalogSignature } = await import(path.join(dist, 'manifest.js'));`
+- `:584 :587 :591 :596` 四处实调用，第 9 节共 5 条断言
+- 第 8 节另有 8 条断言调用 `signature.ts` 的三个导出
+
+**对照组实测（删改之前跑的）：`53 passed, 0 failed`**，其中
+`PASS  verifies correctly once a key IS supplied` —— 是拿**真实生成的 Ed25519 密钥对**
+验一个**真签名**。
+
+> **所以用户裁决理由 #1 的事实前提不成立**：这个函数**不是**"从未被调用、没有任何测试、
+> 从来没有对着一个真实签名跑过"。它被调用、有 13 条断言、跑过真签名。
+> 理由 #2（今天没有功能损失）与 #3（将来重新设计）**不受影响，仍然成立**，
+> 所以远端加载器那族照删。
+
+**爆炸半径（这是不删的决定性理由）**：`:50` 是**顶层 await 动态 import**。删掉 `manifest.ts`
+→ `dist/manifest.js` 消失 → 该脚本在**模块加载阶段**就 `ERR_MODULE_NOT_FOUND` →
+**整份脚本全挂，不只是第 9 节** → **53 条解包安全断言（zip-slip、绝对路径、软链逃逸、
+zip 炸弹限额、可执行位保留）一起死**，而那正是 `docs/SECURITY.md:453` 与 `ADR-015:44`
+引为「已实现」的证据来源。
+
+**为什么门禁不会替你拦下来**：`scripts/check-orphan-exports.mjs:112` 的文件过滤是
+`/\.tsx?$/` 且限定 `^(apps|packages)/[^/]+/src/` —— **`.mjs` 结构性地不在扫描范围内**。
+所以基线把 `verifyCatalogSignature` 记成"孤儿"是**扫描器口径下的孤儿，不是真孤儿**。
+基线 note 已就地订正（它此前写着"零单测"，那是错的）。
+
+### 结论：本决策"catalog Ed25519 验签"部分的今天状态
+
+- **远端目录这条线：明确不做 v1**，实现已删，git 历史留档。→ 这半**已推翻并执行**。
+- **验签函数本身：保留**，因为它是 `verify-unpack.mjs` 的被测对象之一，且该脚本还承载
+  53 条解包安全断言。→ 这半**未执行，等用户看到上面的证据后再裁**。
+- 若用户看过证据仍要删，**正确切法是**：把 `verifyCatalogSignature` 并进 `signature.ts`、
+  同步改 `verify-unpack.mjs:50` 的 import、再删 `manifest.ts` ——
+  **绝不能只删文件了事**。
+
+⚠️ **另一条没闭的**：`verify-unpack.mjs` 自己**没有任何自动调用方**（不在任何
+`package.json` scripts、不在任何 workflow）。所以上面那 13+53 条断言"有人手敲才跑"。
+这是一条独立的欠债，T-171 没动它。
