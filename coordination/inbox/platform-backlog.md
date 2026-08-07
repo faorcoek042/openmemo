@@ -425,3 +425,86 @@ windows-x64-cpu     ==> probe OK
    这是探针到达那两个平台的**唯一**通路，但它把两条目录项从上游换成自建。
 3. **Windows CUDA 那条怎么办**（§4.3 最后）：先修 §3.2，还是换成我们自建的 138 MB 窄包。
 4. **`00-CHARTER.md` §3 的补丁**（§5）—— 只有你能写。
+
+---
+
+## [2026-08-07 16:15] T-167 追加 —— ★ 我把门禁打红了 25 分钟，成因与修法
+
+# 先说给别人听的那句
+
+**`ci.yml` run `31155338320`（commit `3ef8734`，我的）与 `31157170184`
+（commit `eacd158`，别人的提交继承了我的坏状态）两次 failure，都是我。**
+撞上这两条红的人不用去查自己的改动。已修：`7bb6d2a`，`ci.yml` run **31157500574 success**。
+
+# 红在哪（真实输出）
+
+```
+✘ linux-cpu: build-whisper.sh 退出非零
+    error: ggml headers not found: /home/runner/work/openmemo/openmemo/vendor/whisper.cpp/ggml/include
+✘ msvc-vulkan: 同上
+✘ RV-D（红了，但理由不对）
+✘ 10 passed, 3 failed
+```
+
+# 成因：**一条一直存在、但直到今天才被真的踩到的隐形依赖**
+
+`selftest-build-whisper.sh` 的每个 case 都不传 `--src`，于是用的是真的
+`vendor/whisper.cpp` submodule（它自己的注释写着"脚本要 `git -C` 它拿版本号"）。
+而 `ci.yml` 的 checkout **刻意不拉 submodule**：
+
+> `# submodules 刻意**不拉**：TS 侧一行都不需要 vendor/ 里的 C++ 源码，`
+> `# 而 whisper.cpp / sherpa-onnx 加起来是几百 MB 的 checkout。`
+
+**在探针进包之前，这个自检恰好没有任何一步真的「读」过那棵树** ——
+`git -C <空目录> describe` 有 `|| echo unknown` 兜底，`cmake -S` 是桩。
+所以那条依赖存在了很久，一直看不见。探针那一步要 ggml 头文件，一读就现形。
+
+# 修法：**让它本来就不该依赖那棵树**，不是"把 submodule 拉下来"
+
+给门禁加 `submodules: recursive` 是最省事的一条，我没选：
+那会给**每一次**门禁运行加上几百 MB 的 checkout，只为了让一个"要验的东西一行都不在
+C++ 源码里"的自检跑起来。两条真正的修法：
+
+1. `build-whisper.sh` 给 `build-probe.sh` 显式传 `--include "${SRC_DIR}/ggml/include"`。
+   此前 build-probe.sh 用**它自己的默认值** `REPO_ROOT/vendor/whisper.cpp/ggml/include`，
+   而源码树由 `--src` 决定 —— **又一次「产出方与使用方各算各的」**，
+   和本仓那几次事故是同一个形状，只是这次代价只是 CI 红了一次。
+2. 自检新增 `make_stub_src`：造一棵最小的假源码树（含一个真 git 仓库，
+   好让 `engineVersion` 仍是一个真 sha 而不是 `unknown` —— 后者会让 fragment 的
+   语义悄悄变掉），三处 case runner 全部改用它，并订正那句已经不成立的注释。
+
+# 反向验证（复现门禁条件）
+
+在 `/tmp/platform-backlog/nosub` 造了一份树：`vendor/whisper.cpp` 是**空目录**，
+其余全部软链回本仓（**共享工作树一个字节没改**，PROTOCOL §10）。
+在那棵树上跑 `pnpm test:ci-scripts` → **全绿**，`selftest-build-whisper` 22/22。
+
+# 值得记的一条
+
+**这次是那个自检自己救了自己**：如果我没有先修掉 §6.2 那个
+「`bad` 被 `$( )` 吞掉、`fail` 在子 shell 里丢掉」的假绿，
+这三条红会表现为「①② 两节一条断言都没打印，但脚本报 `✔ N passed, 0 failed`」——
+**门禁会是绿的，而 build-probe.sh 的调用在 CI 上从来没跑成功过。**
+我会一直以为它是对的，直到某天有人去读日志。
+
+---
+
+## 两处对上一封的订正
+
+1. **§4.3 里我写「我倾向先修 ggmlAbi 探测再补目录」——那句话的前提是错的。**
+   再去看了一遍：`build-whisper.sh` 的 ABI 是从**文件名**里取的
+   （`libggml.so.<x.y.z>` / `libggml.<x.y.z>.dylib`），而 **Windows 的 `ggml.dll`
+   文件名里根本没有版本号**。所以这不是一个"glob 写窄了"的 bug，是**结构上取不到**。
+   → 换目录时那一格只能另找来源（whisper.cpp submodule 的 ggml 版本）或手填。
+   **我没有改它**，也不再建议"先修探测"——那是一句没查清就说出口的话。
+
+2. **`whispercpp-vulkan-win-x64` 的 artifact 我最终没下下来**（两次都超时），
+   所以它**不在**清单里，sha256 我一个字都没写。
+
+## build-backends run 31155359839 的最终状态
+
+七条腿 success；`windows-x64-cuda` 到写这封时**仍在跑**（已 ~50 分钟，
+它是矩阵里最慢的一条）。**因此 `merge-manifest` 还没跑**，
+而这不影响 §4.2 那四个资产 —— 它们各自的腿都已经 success 并产出了 artifact。
+如果 CUDA 那条最终红了，那是它自己的事（我们不发 Linux/Windows CUDA 包），
+但请注意 `merge-manifest` 会因此 skipped —— **这是 C4 的设计，不是缺陷**。
