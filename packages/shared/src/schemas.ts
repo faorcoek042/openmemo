@@ -69,8 +69,54 @@ export const ALLOWED_DOWNLOAD_HOSTS = [
  *
  * `file://` was rejected deliberately: Node's fetch cannot read it, so it would require a
  * separate branch in the downloader — exactly the second code path this avoids.
+ *
+ * ── IPv6：`::1` 为什么必须配 `unbracketHost` 才能命中（T-171 修）─────────────────
+ *
+ * 这张表存的是**裸**字面量 `'::1'`，而 `new URL('http://[::1]/x').hostname` 返回的是
+ * **`'[::1]'`（带方括号）** —— WHATWG 的 host 序列化器**规定**要带。所以直接
+ * `LOOPBACK_HOSTS.includes(parsed.hostname)` 时 `'::1'` 这一条**恒为 false**，
+ * 是一条从写下来那天起就命中不了的死条目：IPv6 回环上的本机自建产物**永远下载不了**。
+ *
+ * ★ **这是同一个错误假设第二次咬人，不是新坑。** 第一次是 T-142（commit `7ff7e73`）：
+ * `apps/daemon/src/http/guard.ts` 的同源校验以为 `URL.hostname` **不带**方括号，于是主动
+ * **再包一层**拼成 `[[::1]]` → 与 Host 头恒不相等 → 谁用 `http://[::1]:port` 打开界面，
+ * **页面发出的每一个带 Origin 的请求都 403，整页全死**。
+ *
+ * 两次的错误假设**逐字相同**（"`.hostname` 不带方括号"），只是猜错的方向不同：
+ * guard.ts 是**多包一层**，这里是**存了裸的**。两次的后果也同为 fail-closed（恒拒，
+ * 不是漏放），所以都不是安全洞、也都不会被安全测试抓到 —— 它们只是让功能静默消失。
+ * 两次都没被及时发现，原因也一样：**daemon 打印的启动地址是 IPv4**，没人从 IPv6 走过。
+ *
+ * ⚠️ `guard.ts:119-120` 当年把教训写成了「改成两边都剥而不是两边都包，就**不会再被同一个
+ * 假设坑一次**」—— 而那句话写下的时候，本文件已经在被同一个假设坑着了。所以这里照抄
+ * **同一个方向**（剥，不包）：剥法对任何一边用哪种书写约定都成立。
+ *
+ * ⚠️ **剥的是包装，不是判据**：剥完仍然只放行 `LOOPBACK_HOSTS` 里那三个。
+ * `[2001:db8::1]` 剥成 `2001:db8::1` 之后照样不在表里，照样拒绝 —— 有专门的用例守这一条
+ * （见 `schemas.test.ts`）。不要把它"顺手"改成"含冒号就算回环"。
+ *
+ * ⚠️ **等价写法这里不用管，`new URL` 已经替我们归一化了** —— 这一点与 `guard.ts:123-125`
+ * 的处理**不同，别照抄那一段的结论**。`[实测 Node 24]`：
+ *   `new URL('http://[0:0:0:0:0:0:0:1]/x').hostname === '[::1]'`   ← 展开写法被压缩
+ *   `new URL('http://[::ffff:127.0.0.1]/x').hostname === '[::ffff:7f00:1]'` ← 换了个形式
+ * 差别的成因是**两边的输入不同**：本文件比的两侧**都**过 `new URL`，所以 WHATWG 的
+ * 地址序列化器已经把等价写法压成同一个规范形式；而 `guard.ts` 比的是 `URL.hostname`
+ * 与**原始 Host 头**（一个没被解析过的字符串），那边才需要"不猜等价"。
+ *
+ * 顺带一条**反直觉的**：IPv4 映射写法 `[::ffff:127.0.0.1]` 会被压成 `::ffff:7f00:1`，
+ * 它**不在** `LOOPBACK_HOSTS` 里，因此**被拒绝**。这是有意的 —— 放行它需要单独论证
+ * （它是不是真回环取决于内核栈配置），不在本次裁决范围内。有用例钉住。
  */
 export const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '::1'] as const;
+
+/**
+ * 剥掉 IPv6 字面量主机名的首尾方括号，并小写化。
+ *
+ * 与 `apps/daemon/src/http/guard.ts:127-128` 的 `unbracket` 是**同一个修法的两处应用**
+ * （T-142 / T-171）。两边刻意保持同形，改一处时请看另一处。
+ */
+const unbracketHost = (h: string): string =>
+  (h.startsWith('[') && h.endsWith(']') ? h.slice(1, -1) : h).toLowerCase();
 
 export const DownloadUrlSchema = z
   .string()
@@ -83,7 +129,10 @@ export const DownloadUrlSchema = z
       ctx.addIssue({ code: 'custom', message: 'not a valid URL' });
       return;
     }
-    const isLoopback = (LOOPBACK_HOSTS as readonly string[]).includes(parsed.hostname);
+    // 比之前先剥方括号 —— 否则 `'::1'` 这一条永远命中不了（见 LOOPBACK_HOSTS 上方 ★）。
+    const isLoopback = (LOOPBACK_HOSTS as readonly string[]).includes(
+      unbracketHost(parsed.hostname),
+    );
     if (parsed.protocol === 'http:' && isLoopback) return; // locally served artifact
     if (parsed.protocol !== 'https:') {
       ctx.addIssue({ code: 'custom', message: 'download URLs must use https (or http on loopback)' });

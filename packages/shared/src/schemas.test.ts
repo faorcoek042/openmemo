@@ -4,8 +4,9 @@
  * ## 为什么先测这一条
  *
  * `closure-audit` 顺带查清了一件事：目录 Ed25519 验签**生产零调用方**，
- * 而且会联网取目录的那个分层加载器（`downloader/manifest.ts:75 loadManifest`）
- * 自己就是死代码 —— 也就是说，**今天真正在承重的完整性控制只剩两条**：
+ * 而且会联网取目录的那个分层加载器（`downloader/src/manifest.ts` 里的 `loadManifest` 一族）
+ * 自己就是死代码 —— **该加载器已于 T-171 被用户裁决删除**，所以今天连"未来会验签"这个
+ * 说法都不成立了。也就是说，**今天真正在承重的完整性控制只剩两条**：
  *
  *   ① 这里的域名白名单 + https（挡"从哪儿下"）
  *   ② 每个产物强制 sha256（挡"下到的是不是那个东西"）
@@ -88,33 +89,62 @@ describe('DownloadUrlSchema —— 下载来源白名单', () => {
     assert.equal(ok(DownloadUrlSchema, 'http://10.0.0.5/x.tar.gz'), false);
   });
 
-  it('⚠️ 已知缺陷（T-169 发现）：`LOOPBACK_HOSTS` 里的 `::1` 是一条**永远命中不了**的死条目', () => {
+  it('IPv6 回环 `[::1]` 也放行 —— 曾经是一条永远命中不了的死条目（T-169 发现 / T-171 修）', () => {
     /*
-     * 这条断言钉的是**当前真实行为**，不是期望行为 —— 写在这里是为了让这个不一致有人守。
+     * 本用例在 T-171 之前钉的是**相反**的行为（`[::1]` 被拒），因为当时 `LOOPBACK_HOSTS`
+     * 存的是裸 `'::1'`，而 `new URL('http://[::1]/x').hostname` 返回 `'[::1]'`（带方括号），
+     * `includes()` 恒为 false。用户于 2026-08-07 裁定修它，判词是：
      *
-     * 成因：`LOOPBACK_HOSTS` 里写的是 `'::1'`，而 `new URL('http://[::1]/x').hostname`
-     * 返回的是 **`'[::1]'`（带方括号）**，于是 `LOOPBACK_HOSTS.includes(hostname)` 恒为 false。
-     * IPv4 的 `127.0.0.1` 与 `localhost` 不带括号，所以只有 IPv6 这一条是死的。
+     *   > 这条豁免的既有论证（回环流量不出机器、sha256 仍然钉死、复用同一条下载路径）
+     *   > **对 IPv6 回环同样成立，一字不用改**。所以补上它**不是一个新决策，
+     *   > 是把一个已经接受的决策表达完整** —— `::1` 按任何定义都是回环。
      *
-     * 为什么这轮**不顺手修**：改它是把一个安全校验**放宽**（让 `[::1]` 从拒绝变放行）。
-     * 本仓库对"放宽安全校验"一律要求用户/Manager 本人拍板（见 closure-audit 🚧-14），
-     * 而且当前方向是 **fail-closed**（拒绝），不是漏放 —— 不修不会造成安全后果，
-     * 只会让"本机自建产物用 IPv6 回环分发"这条路走不通。
+     * 修法：`schemas.ts` 比对前用 `unbracketHost()` 剥掉首尾方括号（**两边都剥，不是两边都包**，
+     * 抄 `apps/daemon/src/http/guard.ts:127-128` 的 T-142 修法）。
      *
-     * 要修的时候：`schemas.ts` 里比对前把 hostname 的首尾方括号剥掉，
-     * 然后把这条用例改成"应当放行"。**别只改这条用例。**
+     * ★ 这是同一个错误假设（"`URL.hostname` 不带方括号"）在本仓的**第二次**发作。
+     *   第一次是 T-142 / commit `7ff7e73`：`guard.ts` 同源校验多包一层拼成 `[[::1]]`，
+     *   导致用 `http://[::1]:port` 打开界面时**每个带 Origin 的请求都 403，整页全死**。
+     *   两次方向不同（多包 vs 存裸的），后果都是 fail-closed 的静默失效。
      */
     assert.equal(
       ok(DownloadUrlSchema, 'http://[::1]:17650/local-artifacts/whisper.tar.gz'),
-      false,
-      '`[::1]` 现在被放行了 —— 如果这是有意修的，请一并更新本用例与上面那段说明',
+      true,
+      'IPv6 回环 `[::1]` 上的 http 应当放行 —— 与 127.0.0.1 同一条豁免',
     );
-    // 名单里确实写着它，所以"名单与实现不一致"这件事本身也钉一下。
+    // 不带端口也一样。
+    assert.equal(ok(DownloadUrlSchema, 'http://[::1]/local-artifacts/whisper.tar.gz'), true);
+    // 展开写法也放行 —— **不是我们做的归一化**，是 `new URL` 自己把它压成 `[::1]` 的。
+    // `[实测]` `new URL('http://[0:0:0:0:0:0:0:1]/x').hostname === '[::1]'`。
+    // 钉住它是因为：这条一旦变红，说明 Node 的 URL 序列化行为变了，而我们有两处代码
+    // （本文件 + guard.ts）建立在它之上。
+    assert.equal(ok(DownloadUrlSchema, 'http://[0:0:0:0:0:0:0:1]/x.tar.gz'), true);
+    // 名单里存的仍是**裸**形式 —— 归一化发生在比较侧。改成存 `'[::1]'` 是另一种修法，
+    // 但那会让"两边都剥"退化成"依赖某一边的书写约定"，正是 T-142 踩过的坑。
     assert.equal(
       (LOOPBACK_HOSTS as readonly string[]).includes('::1'),
       true,
-      'LOOPBACK_HOSTS 里的 ::1 被删掉了 —— 那也是一种修法，但上面那条用例要跟着改',
+      'LOOPBACK_HOSTS 里的 ::1 被改写了 —— 修法是在比较侧剥括号，不是在名单里存带括号的形式',
     );
+  });
+
+  it('★ 剥方括号剥的是**包装**，不是判据 —— 非回环的 IPv6 仍然一律拒绝', () => {
+    /*
+     * 这条是 T-171 那次放宽的配对守卫，防的是把"剥括号"顺手做成"含冒号就算回环"。
+     * 判据照抄 `guard.test.ts` 里 T-142 的同名反向断言：**剥壳不许放宽判据。**
+     */
+    for (const url of [
+      'http://[2001:db8::1]/x.tar.gz', // 文档用地址段
+      'http://[fe80::1]/x.tar.gz', // 链路本地
+      'http://[fd00::1]/x.tar.gz', // 唯一本地（ULA）
+      'http://[::ffff:127.0.0.1]/x.tar.gz', // IPv4 映射写法：**不是** LOOPBACK_HOSTS 里那三个之一
+      'http://[::]/x.tar.gz', // 未指定地址
+    ]) {
+      assert.equal(ok(DownloadUrlSchema, url), false, `${url} 不是回环，必须仍被拒绝`);
+    }
+    // https 侧同理：IPv6 字面量不在域名白名单里，剥不剥括号都不该放行。
+    assert.equal(ok(DownloadUrlSchema, 'https://[2001:db8::1]/x.tar.gz'), false);
+    assert.equal(ok(DownloadUrlSchema, 'https://[::1]/x.tar.gz'), false);
   });
 
   it('不是 URL 的字符串要拒绝', () => {
