@@ -131,7 +131,16 @@ async function waitForUi(port, seconds = 90) {
  * 跑一次"双击等价"的启动，收集**用户会看到的那些字节**（stdout+stderr 合并，
  * 因为控制台窗口里两者是混在一起的），然后探测界面。
  */
-async function runLauncher({ label, cmd, args, cwd, env, port = DEFAULT_PORT, waitSec = 90 }) {
+async function runLauncher({
+  label,
+  cmd,
+  args,
+  cwd,
+  env,
+  port = DEFAULT_PORT,
+  waitSec = 90,
+  verbatim = false,
+}) {
   console.log(`   ▶ ${label}`);
   console.log(`     spawn: ${cmd} ${args.map((a) => JSON.stringify(a)).join(' ')}`);
   const child = spawn(cmd, args, {
@@ -139,6 +148,16 @@ async function runLauncher({ label, cmd, args, cwd, env, port = DEFAULT_PORT, wa
     env: { ...process.env, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
+    /*
+     * ⚠️ Windows 上**必须**用 verbatim。
+     * `[CI 实测 run 31245628148]` 第一版没用，Node 自己的 Windows 引号规则把
+     * `cmd.exe /c "…start.cmd"` 改写成了别的东西，结果拿到的是
+     *   '"C:\…\start.cmd"' is not recognized as an internal or external command
+     * —— 那是**我这条命令写错了**，不是 start.cmd 的错。
+     * 这正是 ADR-003 §7.2 那条"没有对照组的阴性结果等于没测"的同一族陷阱：
+     * 一个自己写坏的探针，会伪装成被测对象的缺陷。
+     */
+    windowsVerbatimArguments: verbatim,
   });
   let out = '';
   let exited = null;
@@ -149,13 +168,25 @@ async function runLauncher({ label, cmd, args, cwd, env, port = DEFAULT_PORT, wa
   const ui = await waitForUi(port, waitSec);
   const health = ui.status ? await httpGet(port, '/api/health') : { status: 0, body: '-' };
 
-  // 收尾：只杀我们自己 spawn 的那个 pid（不许 pkill -f，见 PROTOCOL）
+  /*
+   * 收尾：**只杀我们自己 spawn 的那棵进程树**（按 pid，不许 pkill -f，见 PROTOCOL）。
+   *
+   * Windows 上 `child.kill()` 只杀 cmd.exe，**杀不掉它下面的 node.exe** ——
+   * 留下来的 node 会一直占着 17650，于是下一轮测量拿到的是"单实例锁"，
+   * 而那会被误读成"启动失败"。`taskkill /T` 按 pid 收整棵树，仍然不是模式匹配。
+   */
   try {
-    if (exited === null) child.kill('SIGTERM');
+    if (exited === null) {
+      if (process.platform === 'win32') {
+        sh('taskkill', ['/pid', String(child.pid), '/T', '/F']);
+      } else {
+        child.kill('SIGTERM');
+      }
+    }
   } catch {
     /* 已经退了 */
   }
-  await new Promise((r) => setTimeout(r, 1500));
+  await new Promise((r) => setTimeout(r, 2500));
   try {
     if (exited === null) child.kill('SIGKILL');
   } catch {
@@ -272,20 +303,25 @@ Write-Output "extracted_items=$((Get-ChildItem -Recurse -Force '${dest.replace(/
   }
 
   hdr('⑥ 双击等价路径：cmd /c "<path>\\start.cmd"，分别在 437 与 936 代码页下');
+  /*
+   * 双击的真实形态是 `cmdfile="%1" %*`（④ 实测），也就是**直接执行该文件**。
+   * 要同时控制代码页，最干净的办法是生成一个 wrapper .bat：
+   *   chcp <cp> ; call "<launcher>"
+   * 这样就不必把引号嵌进 `cmd /c "…"`（第一版正是栽在那里）。
+   */
   for (const cp of ['437', '936']) {
+    const wrapper = join(root, `__sim_cp${cp}.bat`);
+    writeFileSync(wrapper, `@echo off\r\nchcp ${cp} >nul\r\ncall "${launcher}"\r\n`, 'latin1');
     const r = await runLauncher({
-      label: `代码页 ${cp} 下双击 start.cmd`,
+      label: `代码页 ${cp} 下双击 start.cmd（经 wrapper 设代码页）`,
       cmd: 'cmd.exe',
-      args: ['/c', `chcp ${cp} >nul & "${launcher}"`],
+      args: ['/d', '/s', '/c', `"${wrapper}"`],
+      verbatim: true,
       cwd: root,
       waitSec: 100,
     });
     if (r.ui.status === 200) ok(`代码页 ${cp}: 界面可达 (HTTP 200)`);
     else fail(`代码页 ${cp}: 界面不可达 (${r.ui.body})`);
-    // 一旦第一次就起来了，第二次换个端口会撞单实例；这里只跑一次 936 作对照
-    if (cp === '437' && r.ui.status === 200) {
-      info('（437 已经起来了；936 那轮会撞上单实例锁，属预期，看的是它的报错原文）');
-    }
   }
 
   hdr('⑦ 结尾有没有 pause —— 出错时窗口会不会一闪就关');
@@ -364,9 +400,19 @@ async function macos() {
       run: (d) => {
         const copy = join(d, basename(tgz));
         sh('cp', ['-p', tgz, copy]);
-        const r = sh('open', ['-b', 'com.apple.archiveutility', '-W', copy]);
-        // Archive Utility 是异步的，-W 未必等得到；再给它一点时间
-        sh('sleep', ['25']);
+        /*
+         * ⚠️ **不能加 `-W`**。`[CI 实测 run 31245628148]` 第一版用了 `-W`
+         * （等被打开的 app 退出），而 Archive Utility 解完并不退出 ——
+         * 于是这一步**永远不返回**，整条腿挂到 30 分钟超时。
+         * 改成不等待 + 轮询产物，并给一个明确的上限。
+         */
+        const r = sh('open', ['-b', 'com.apple.archiveutility', copy]);
+        for (let i = 0; i < 40; i++) {
+          const kids = existsSync(d) ? readdirSync(d) : [];
+          if (kids.some((k) => k !== basename(tgz) && existsSync(join(d, k, 'OpenMemo.command'))))
+            break;
+          sh('sleep', ['3']);
+        }
         return r;
       },
     },
@@ -590,6 +636,12 @@ run()
       process.exit(1);
     }
     console.log(`\nmode=${MODE} → exit 0（diagnose 只取证，不判定）`);
+    /*
+     * ★ 显式退出。被测对象是**长驻服务**，它或它的子进程可能仍握着我们的管道，
+     *   于是事件循环空不下来 —— 表现是"脚本跑完了但这一步永远不结束"。
+     *   `[CI 实测 run 31245628148]` linux 腿正是这样挂到超时的。
+     */
+    process.exit(0);
   })
   .catch((e) => {
     console.error('脚本自身出错:', e);
