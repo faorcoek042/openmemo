@@ -876,7 +876,18 @@ async function assembleProbeRuntime() {
    * 软链必须原样保留（`verbatimSymlinks`）—— `NEEDED` 写的是软链名，
    * 丢了链 whisper-cli 就起不来。这一条与上面 ggml 那段栽过的坑是同一个。
    */
-  const isWhisperLib = (n) => /^(lib)?whisper[-.0-9]*\.(so|dylib|dll)(\.[0-9.]+)?$/.test(n);
+  /*
+   * ⚠️ 命名段里**可以有字母**（不只是版本号里的数字点）。
+   *
+   * `[CI 实测 2026-08-08 run 31263423087]` 第一版写的是 `[-.0-9]*`，
+   * 于是 macOS 上漏掉了 `libwhisper.coreml.dylib`：
+   * 文件存在性三条**全绿**（whisper-cli 在、libwhisper 3 个文件在），
+   * 而 `verify-bundle.sh` 里那条「**真的跑一次**」当场红：
+   *     dyld: Library not loaded: @rpath/libwhisper.coreml.dylib
+   * —— 与 ggml 那段栽过的坑一模一样（那次漏的是 `libggml.0.dylib`），
+   * 也再一次说明那条断言为什么必须存在：**存在 ≠ 能跑**。
+   */
+  const isWhisperLib = (n) => /^(lib)?whisper[A-Za-z0-9._-]*\.(so|dylib|dll)(\.[0-9.]+)?$/.test(n);
   let cliCopied = 0;
   for (const n of entries) {
     if (!isWhisperLib(n)) continue;
