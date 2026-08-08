@@ -790,3 +790,125 @@ attest:
 
 按 PROTOCOL §12 提交：`git commit -- <pathspec>`（新文件先 `git add -N`），
 **提交后**用 `git show --stat` 复核 —— 恰好 5 个文件，全是我的。
+
+---
+
+## [2026-08-09 01:20] e2e-import(接完四条腿 + 补齐 v0.3.0) DONE
+
+交付: `.github/workflows/e2e-{notes,record,runtime}.yml`（各加 attest job）、
+`scripts/ci/verify-e2e-attestation.mjs`（抖动重试 + 逐腿触发提示）。
+提交 `fcce6e3`、`387b7d9`。
+
+要点:
+
+- **闸门现在对 `v0.3.0` 那批包放行**（build-bundles run `31253583769`，四条腿凭证齐全）。
+- `e2e-notes` 两种模式：**只有发布审计模式发凭证**，与 Manager 判断一致（§B）。
+- **选了重跑，不补发** —— 补发会让凭证不再等于"这条腿真的跑过这批包"（§C）。
+- 三条腿的改动**全是纯新增、零删除**（53/53/55 行），没碰它们的断言/矩阵/其它。
+- 顺带修掉闸门自己的一个抖动缺陷和一句会把人送进 422 的提示（§D）。
+
+需要 Manager 决策: 无。
+
+### A. 闸门对 v0.3.0 那批的最终答案：**放行**
+
+```
+import    ✔ e2e-attest-import-31253583769（来自 e2e-import.yml   run 31258300507）
+notes     ✔ e2e-attest-notes-31253583769（来自 e2e-notes.yml     run 31258972781）
+record    ✔ e2e-attest-record-31253583769（来自 e2e-record.yml   run 31258974214）
+runtime   ✔ e2e-attest-runtime-31253583769（来自 e2e-runtime.yml run 31258975830）
+✔ 四条腿都对 build-bundles run 31253583769 跑绿过 —— 这批包可以发。   （exit 0）
+```
+
+对照：一批没验过的包（`31248640972`）仍然 **exit 1**，四条腿逐条点名。
+
+### B. `e2e-notes` 两种模式怎么处理 —— **只有发布审计模式发凭证**（同意 Manager）
+
+`assembleFromSource=true`（默认）跑的是**本次 checkout 现场组装**的包。
+那是**回归门禁**：它证明的是"当前代码组装出来的东西好"。
+
+它**不能给一批已发布的包背书**，理由不是保守，是**两者根本不是同一堆字节**：
+包里有 Node 运行时、web bundle、SQLite 扩展、各平台原生模块，
+现场组装与发布产物之间隔着一整条 `build-bundles` 流水线（还有 glibc 地板守卫、
+部署目标守卫、归档/解档）。拿前者的绿去发后者的凭证，等于让闸门相信一件它没验过的事
+—— 而这个闸门存在的**全部理由**就是挡住这种"看起来验过了"。
+
+所以 `attest` 上挂 `if: ${{ !inputs.assembleFromSource }}`。
+
+同一条判据在另外两条腿上的对应物（形状不同，逻辑同源）：
+
+| 腿 | 只有这种情况才发凭证 | 为什么 |
+| --- | --- | --- |
+| `e2e-notes` | `assembleFromSource=false` | 现场组装 ≠ 已发布的那堆字节 |
+| `e2e-record` | `legs=all` | 它能只跑一个平台；那种 run 里 `needs` 照样成功，发三平台凭证就是假话 |
+| `e2e-runtime` | `bundleSource=artifact` | 同 notes：`checkout` 模式是回归门禁 |
+| `e2e-import` | （无模式开关，恒三平台） | — |
+
+⚠️ **三处 `if:` 管的都是「模式」，不是「结果」。** 结果由 `needs:` 管住
+（GitHub 对带 `needs` 的 job 默认要求 needs 全 success，普通布尔表达式**不会**解除它）。
+注释里写明：**永远不要改成 `always()` / `!cancelled()`** —— 那会解除该要求，
+于是"部分跑"也能发凭证，而那正是本机制要挡的事。
+
+### C. 补凭证 vs 重跑：**选了重跑**
+
+判据是 Manager 给的那句：「如果补发凭证意味着'凭证不再等于这条腿真的跑过这批包'，
+那就重跑」。**它确实意味着。**
+
+- artifact **不能事后塞进一个已完成的 run**。所谓"补发"只能是从**另一个 run**
+  （或本机）造一张同名凭证传上去。
+- 那样一来，凭证与"真的跑过测试的那次执行"之间的绑定就断了 ——
+  凭证存在，而产出它的那次 run 什么都没验。**这正是 §11 要挡的假通过**，
+  由本机制自己制造出来就更荒唐。
+
+所以三条腿都**对着同一批包（`31253583769`）真跑了一遍**，三平台全绿后由各自的
+`attest` job 发凭证。四个 run 号见 §A。
+（`e2e-import` 上一轮已经这么做过：run `31258300507`。）
+
+### D. 顺带修掉的两个缺陷（都是这一轮实测撞出来的）
+
+**① 闸门自己会抖。** 第一次问 v0.3.0 那批时 `record` 那格拿到
+`net/http: TLS handshake timeout`，闸门**拒绝了一批其实已经验全的包**。
+
+拒绝本身没错（"我没问到"决不能渲染成"它没问题"），但：
+
+> 一道会因为网络抖动随机变红的闸门，会训练所有人「先重跑一次再说」——
+> 而那正是「学会忽略它」的第一步。
+
+与本仓那条「一条永远红的守卫等于一条被删掉的守卫」同族，**这是它的抖动版**：
+不是永远红，是随机红，后果一样。修法是两件事同时成立：
+传输层失败重试 3 次吸收抖动；**重试用尽仍失败照旧拒绝**。
+HTTP 4xx **不重试** —— 那不是抖动，那就是答案（例如"这条腿的 workflow 不存在"）。
+
+**② 闸门给的补救命令会把人送进 422。** 拒绝时原本打一句通用的
+`-f bundleRunId=…`，而四条腿的输入各不相同（`assembleFromSource` /
+`legs=all` / **`bundlesRunId` 多一个 s**）。**一句会 422 的提示比不给提示更糟：
+它让人以为是闸门坏了。** 改成逐腿登记，实测四条命令各自正确。
+
+### E. 授权边界
+
+Manager 授权范围是"在三条腿里各加 attest job，别动别的"。实际改动：
+
+```
+.github/workflows/e2e-notes.yml   | 53 +++++  （纯新增，0 删除）
+.github/workflows/e2e-record.yml  | 53 +++++  （纯新增，0 删除）
+.github/workflows/e2e-runtime.yml | 55 +++++  （纯新增，0 删除）
+```
+
+两处例外要报备（都是 attest 必需的最小改动，不是"别的东西"）：
+
+- `e2e-notes` 的 `e2e` job、`e2e-runtime` 的 `audit` job 各加了一个 `outputs:`
+  （把实际用到的 bundle run id 抬到 job 级）。**不这么做就只能在 attest 里重新
+  `resolve-bundle-run.sh` 一次，而那可能解析到另一次 run** —— 绑定就断了。
+- `e2e-record` **一行都没改它原有的 job**：它的 `bundleRunId` 必填无默认，
+  输入本身就是权威值，所以 attest 直接绑输入。**没有给它加默认值**（作者的理由成立）。
+
+`D-17` 本轮**没有再碰**（Manager 说有人在动）。
+
+### F. 门禁
+
+`pnpm -r test` **1589 / fail 0**（基线 1578）、`tsc -b` 0、`build:safe` 0、
+`test:ci-scripts` 0、`lint-workflows` **1292 条断言全过**、`check:orphans` 干净、
+`eslint` / `format:check`（我的文件）通过。
+
+⚠️ 全树 `format:check` 我最后一次检查时红在 `docs/DEPLOYMENT.md` 与
+`docs/design/D-03-download-and-model-api.md` —— **那是另外两位正在动的文档**，
+我没有碰（`pnpm format` 会 `--write` 整棵树并塞进共享索引）。
