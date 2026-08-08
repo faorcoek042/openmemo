@@ -912,3 +912,153 @@ Manager 授权范围是"在三条腿里各加 attest job，别动别的"。实�
 ⚠️ 全树 `format:check` 我最后一次检查时红在 `docs/DEPLOYMENT.md` 与
 `docs/design/D-03-download-and-model-api.md` —— **那是另外两位正在动的文档**，
 我没有碰（`pnpm format` 会 `--write` 整棵树并塞进共享索引）。
+
+---
+
+## [2026-08-09 05:30] e2e-import(四条腿改走启动器) DONE + 1 条阻塞缺陷
+
+交付: `scripts/ci/launcher-spawn.mjs`（新）、`scripts/ci/selftest-launcher-path.mjs`（新）、
+四条腿脚本、`package.json`（挂守卫）。提交 `0ad3b09`。
+
+要点:
+
+- **四条腿都真的从启动器起了**（`main.js` 在四个文件的**可执行代码里出现 0 次**）。
+- **探针修复在启动器路径上实测生效**：`cpu available=true probed=true`（§C）。
+- ⚠️ **查出一条阻塞缺陷：双击之后「组件目录是空的」** —— 用户装不了任何组件（§D）。
+  它**不归我改**（在 `build-bundle.mjs` / `manifests.ts`），但它会让四条腿现在全红。
+- 守卫反向验证 3 个变异全红、还原全绿（§B）。
+
+需要 Manager 决策: §D 那条派给谁修 —— 修好之前四条腿对**包**跑不绿。
+
+### A. 四条腿是不是都真的从启动器起了
+
+是。共享模块 `launcher-spawn.mjs` 是**唯一**起 daemon 的入口，它**不接受调用方传
+daemon 入口**，只收 `bundleDir`。源码树回退也收进模块内部，于是**腿的源码里
+一次都不会出现入口路径** —— "别再直接起 main.js"从一条要记住的纪律，
+变成一件做不到的事。
+
+```
+腿                        可执行代码里的 main.js    import 共享模块
+e2e-import-audit.mjs              0                    ✔
+e2e-notes-audit.mjs               0                    ✔
+e2e-record.mjs                    0                    ✔
+e2e-runtime-audit.mjs             0                    ✔
+```
+
+四条腿都**不再预设** `OPENMEMO_WEB_DIST` / `OPENMEMO_EXT_DIR` /
+`OPENMEMO_BUNDLED_PROBE_DIR` —— 预设了就等于"看起来在走启动器"而实际又架空一次，
+`assertNoLauncherOverrides()` 会当场拦下。
+变异验证要**显式**写 `allowLauncherOverrides: true` 才放行（`e2e-notes` 那条
+"把 EXT_DIR 指到空目录证明中文检索会红"正需要它）——那五个字就是它在申明"我是故意的"。
+
+### B. 三平台收尾（§11：按 pid 收整棵树，绝不 pkill -f）
+
+**统一意图是对的，统一拼写是错的** —— 启动器形状不同，收法就不同：
+
+| 平台 | 启动器最后一行 | pid 是谁 | 收法 |
+| --- | --- | --- | --- |
+| Linux / macOS | `exec "$DIR/runtime/node" dist/main.js "$@"` | **就是 daemon**（exec 换掉了 shell） | `detached:true` 自成组 + `kill(-pid, SIGTERM)` |
+| Windows | `"%DIR%runtime\node.exe" dist\main.js %*`（批处理**没有 exec**） | **cmd.exe**，node.exe 是它的子进程 | `taskkill /PID <pid> /T /F` |
+
+`[本机实测]` POSIX 上 `health.pid === proc.pid`（41815 等多次一致），**exec 的推理成立**。
+Windows 上因此**不能比 pid**（会把一次正确的启动判成"别人的 daemon"），改比
+`dataDir` —— 它是本轮 `mkdtemp` 出来的唯一路径，别的 daemon 报不出同一个。
+`[未验证]` Windows 的 taskkill 收尾本轮**没有在真 Windows 上跑过**（见 §E）。
+
+**守卫**（`selftest-launcher-path.mjs`，已挂进 `test:ci-scripts`）：
+**先剥注释**只看可执行代码 —— 这几个文件的注释里大量出现 `main.js`，因为它们
+正是在解释"为什么不再直接起它"；一条会把解释文字当成违规的守卫，
+会逼人把解释删掉，那是在惩罚说清楚的人。断言只涉及**符号在不在**：
+
+反向验证（隔离副本）：
+
+| 变异 | 结果 |
+| --- | --- |
+| 对照组 | ✔ 21 条断言全过 |
+| 腿里重新写出入口路径 | **红**（指出是哪一行） |
+| 腿不再 import 共享模块 | **红** |
+| 共享模块少一个平台的启动器拼写 | **红** |
+| 还原 | ✔ 全绿 |
+
+### C. 探针修复在启动器路径上：**实测生效**（这是这条改动值不值的唯一证据）
+
+先复现了 D-17 §11 那条性质：拿 `v0.3.0` 的包（build run `31253583769`，sha `aa92cba3`）
+试，`probeExists=false` —— 因为那个包**早于**探针修复 `5413369`（`merge-base` 判定）。
+**包比修复旧，不是修复不生效。**
+
+于是从当前 master 重新出包（build-bundles run **`31263239505`**，sha `d941d133`），
+包里确实多了 `runtime/probe`。走**启动器**起，`[Linux 本机实测]`：
+
+```
+probe: ran=true ok=true probeExists=true devicesFound=1
+       path=<bundle>/runtime/probe/openmemo-probe   ← 正是启动器设的 BUNDLED_PROBE_DIR
+   cuda     available=false probed=false  backend package not installed
+   vulkan   available=false probed=false  backend package not installed
+   ...
+   cpu      available=true  probed=true
+```
+
+**`cpu available=true probed=true` —— 就是要的那一行。**
+对照：同一个包**旧口径**（直接起入口、不设该变量）报的是
+`probe did not complete: probe executable not found` —— 六个后端全红。
+
+⚠️ **只在 Linux 上实测**。macOS / Windows 标 `[未验证]`，原因见 §E。
+
+### D. ⚠️ 查出的真实缺陷：**双击之后「组件目录是空的」**（阻塞）
+
+这正是"走启动器"立刻换来的东西 —— 旧口径**结构上看不见**它。
+
+`[实测]` 走启动器起 v0.3.0 的包：
+
+```
+backends catalog packs = 0        ← 设置→组件 页面是空的
+models  catalog groups = 0
+```
+
+根因（逐步验过，不是推断）——`apps/daemon/src/http/rest/manifests.ts:92` 的
+`resolveManifestDir()` 三级回退：
+
+1. `OPENMEMO_MANIFEST_DIR` —— 启动器**没设**，包里也没人设
+2. 模块相对 `<bundle>/vendor/manifests` —— **包里根本没有 `vendor/`**
+   （`ls` 只有 LICENSE / READ-ME-FIRST.txt / THIRD-PARTY-NOTICES / app / ext / runtime / start.sh）
+3. `process.cwd()/vendor/manifests` —— 启动器 `cd "$DIR/app/daemon"`，
+   于是指向 `<bundle>/app/daemon/vendor/manifests`，**也不存在**
+
+→ 空目录。
+
+**为什么 CI 一直没看见**：旧口径直接起入口，`cwd` 是**仓库检出**，
+而那里 `vendor/manifests` **存在** —— 第 3 级回退恰好命中，**把这个 bug 完整地掩盖了**。
+这就是"CI 直接起 main.js"这个盲区的实际代价。
+
+**反证**（确定根因，不是猜）：同一个包、同样走启动器，只额外给
+`OPENMEMO_MANIFEST_DIR=<真的 manifests 目录>` →
+
+```
+packs = 25     （从 0 变 25）
+```
+
+**用户后果**：双击打开 → 设置→组件 里一个包都没有 → 装不了 ffmpeg / whisper / yt-dlp
+→ 转写、导入全都用不了。与"CI 没经历过空数据目录 → 装不了组件"同一族，
+但这次是**更早一步**：连目录都看不到。
+
+**修法建议**（我**没有动**，`build-bundle.mjs` 与产品代码都不是我的）：
+把 `vendor/manifests` 随包出厂（放到包根，第 2 级回退就命中），
+或让启动器设 `OPENMEMO_MANIFEST_DIR`。**前者更好**：第 2 级是模块相对的，
+不依赖 cwd，也就不会再被"从哪儿启动"影响。
+
+⚠️ **在它修好之前，四条腿对着包跑不绿** —— 它们现在会诚实地红在"必需的后端包没装上"。
+那不是腿坏了，是腿终于看见了。
+
+### E. 没做到 / 未验证（如实列）
+
+- **三平台 CI 实跑没做**：本轮把预算用在了定位 §D 那条根因上。四条腿现在会红在 §D，
+  跑 CI 只会得到一片"必需的包没装上"，**证明不了启动器那一段**。
+  修好 §D 之后再跑才有意义。标 `[未验证]`：macOS / Windows 的启动器路径、
+  Windows 的 `taskkill /T` 收尾、macOS quarantine 那一段。
+- **本机只验了 Linux**（`start.sh`）：pid 相同、按组收尾、探针生效、目录为空 —— 四条都实测。
+- `pnpm -r test` 本轮在 `apps/web` 处 bail（6 红，全在 `/diagnostics` 那组），
+  而 `apps/web` 有**另一位未提交的改动**（i18n locales / ReadinessBanner / RuntimePage）。
+  **我一个字都没碰 apps/web**；我改的四条腿所属的包全部 fail 0。
+  基线 1593 因此本轮**没有量到**，标 `[未验证]`。
+- `tsc -b` 0、`build:safe` 0、`lint-workflows` 1399、`check:orphans` 干净、
+  `test:ci-scripts` 0（含新守卫）、我的文件 `eslint`/`format:check` 通过。
