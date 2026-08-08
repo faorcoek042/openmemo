@@ -74,7 +74,15 @@
  */
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -446,10 +454,14 @@ console.log('⑧ ⑨ win-x64 参数化 —— .dll / node.exe / start.cmd / win3
 {
   const BUILDER = join(REPO_ROOT, 'scripts', 'build-bundle.mjs');
   const paths = (out, cwd) => {
-    const r = spawnSync(process.execPath, [BUILDER, '--target', 'linux-x64', '--out', out, '--print-paths'], {
-      encoding: 'utf8',
-      cwd,
-    });
+    const r = spawnSync(
+      process.execPath,
+      [BUILDER, '--target', 'linux-x64', '--out', out, '--print-paths'],
+      {
+        encoding: 'utf8',
+        cwd,
+      },
+    );
     if (r.status !== 0) throw new Error(`--print-paths 退出码 ${r.status}: ${r.stdout}${r.stderr}`);
     return JSON.parse(r.stdout);
   };
@@ -507,7 +519,9 @@ console.log('⑧ ⑨ win-x64 参数化 —— .dll / node.exe / start.cmd / win3
       writeFileSync(join(dir, `${m.name}.json`), JSON.stringify(m));
     }
     const out = join(dir, 'out', 'bundles-complete.json');
-    const r = spawnSync(process.execPath, [EMIT, '--from', dir, '--out', out], { encoding: 'utf8' });
+    const r = spawnSync(process.execPath, [EMIT, '--from', dir, '--out', out], {
+      encoding: 'utf8',
+    });
     return { ...r, out, combined: `${r.stdout}${r.stderr}` };
   };
   const ALL = ['linux-x64', 'win-x64', 'darwin-arm64'];
@@ -563,4 +577,6 @@ if (failures.length > 0) {
   for (const f of failures) console.log(`  - ${f}`);
   process.exit(1);
 }
-console.log(`\x1b[32m✔\x1b[0m selftest-bundle: ${passed} 个用例全部通过（5 条正向 + 12 条反向 + 3 条 --out 路径）`);
+console.log(
+  `\x1b[32m✔\x1b[0m selftest-bundle: ${passed} 个用例全部通过（5 条正向 + 12 条反向 + 3 条 --out 路径）`,
+);

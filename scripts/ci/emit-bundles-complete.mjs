@@ -100,7 +100,9 @@ if (missing.length > 0) {
   console.error('');
   console.error(`::error::缺 ${missing.join(', ')} —— 不写 bundles-complete 凭证。`);
   console.error('::error::这次 run 不是一套完整的三平台产物，不能当作可发布的来源。');
-  console.error('::error::（PROTOCOL §11：「跳过」不许渲染成「成功」。要完整的一套请跑 legs=all。）');
+  console.error(
+    '::error::（PROTOCOL §11：「跳过」不许渲染成「成功」。要完整的一套请跑 legs=all。）',
+  );
   process.exit(1);
 }
 
@@ -111,7 +113,9 @@ if (missing.length > 0) {
  */
 const versions = [...new Set([...byTarget.values()].map((m) => m.version))];
 if (versions.length !== 1) {
-  console.error(`::error::三个平台的版本号不一致：${versions.join(' / ')} —— 它们不是同一次构建的产物`);
+  console.error(
+    `::error::三个平台的版本号不一致：${versions.join(' / ')} —— 它们不是同一次构建的产物`,
+  );
   process.exit(1);
 }
 
