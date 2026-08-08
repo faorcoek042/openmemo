@@ -135,11 +135,17 @@ export const DownloadUrlSchema = z
     );
     if (parsed.protocol === 'http:' && isLoopback) return; // locally served artifact
     if (parsed.protocol !== 'https:') {
-      ctx.addIssue({ code: 'custom', message: 'download URLs must use https (or http on loopback)' });
+      ctx.addIssue({
+        code: 'custom',
+        message: 'download URLs must use https (or http on loopback)',
+      });
       return;
     }
     if (!(ALLOWED_DOWNLOAD_HOSTS as readonly string[]).includes(parsed.hostname)) {
-      ctx.addIssue({ code: 'custom', message: `host must be one of: ${ALLOWED_DOWNLOAD_HOSTS.join(', ')}` });
+      ctx.addIssue({
+        code: 'custom',
+        message: `host must be one of: ${ALLOWED_DOWNLOAD_HOSTS.join(', ')}`,
+      });
     }
   });
 
@@ -292,9 +298,22 @@ export const BenchmarkResultSchema = z.object({
 /* -------------------------------- models ---------------------------------- */
 
 export const QuantizationSchema = z.enum([
-  'f32', 'f16', 'bf16',
-  'q8_0', 'q6_k', 'q5_k_m', 'q5_1', 'q5_0', 'q4_k_m', 'q4_k_s', 'q4_0',
-  'q3_k_m', 'q2_k', 'iq4_xs', 'iq3_m', 'iq2_m',
+  'f32',
+  'f16',
+  'bf16',
+  'q8_0',
+  'q6_k',
+  'q5_k_m',
+  'q5_1',
+  'q5_0',
+  'q4_k_m',
+  'q4_k_s',
+  'q4_0',
+  'q3_k_m',
+  'q2_k',
+  'iq4_xs',
+  'iq3_m',
+  'iq2_m',
 ]);
 
 export const ModelEntrySchema = z
@@ -344,10 +363,9 @@ export const ModelEntrySchema = z
   })
   // Reject the fabricated-metric fields memo.ac ships, so they cannot creep back in.
   .strict()
-  .refine(
-    (m) => m.totalSizeBytes === sumRequiredFileBytes(m.files),
-    { message: 'totalSizeBytes must equal the sum of non-optional file sizes' },
-  )
+  .refine((m) => m.totalSizeBytes === sumRequiredFileBytes(m.files), {
+    message: 'totalSizeBytes must equal the sum of non-optional file sizes',
+  })
   .refine((m) => m.gguf == null || m.format === 'gguf', {
     message: 'gguf metadata is only valid on format="gguf" entries',
   })
@@ -444,7 +462,10 @@ export const BackendManifestSchema = z
     for (const p of m.packs) {
       const hasUrl = p.files.some((f) => f.mirrors.length > 0);
       if (p.availability === 'published' && !hasUrl) {
-        ctx.addIssue({ code: 'custom', message: `pack ${p.id} is 'published' but has no mirror URL` });
+        ctx.addIssue({
+          code: 'custom',
+          message: `pack ${p.id} is 'published' but has no mirror URL`,
+        });
       }
     }
   })
@@ -544,9 +565,12 @@ export const InstalledFileSchema = z.object({
     .string()
     .min(1)
     // A relative path that escapes its root is the same traversal bug as in archives.
-    .refine((p) => !p.startsWith('/') && !/^[A-Za-z]:/.test(p) && !p.split(/[\\/]+/).includes('..'), {
-      message: 'relPath must stay inside its root (no absolute paths, no "..")',
-    }),
+    .refine(
+      (p) => !p.startsWith('/') && !/^[A-Za-z]:/.test(p) && !p.split(/[\\/]+/).includes('..'),
+      {
+        message: 'relPath must stay inside its root (no absolute paths, no "..")',
+      },
+    ),
   /** @deprecated legacy absolute path */
   path: z.string().optional(),
 });
@@ -562,7 +586,6 @@ export function validateBackendManifest(input: unknown) {
 export function validateHardwareInfo(input: unknown) {
   return toResult(HardwareInfoSchema.safeParse(input));
 }
-
 
 /* ------------------------- F1/F2/F5 notes domain -------------------------- */
 /* Shapes adopted verbatim from oss-scout's shipped daemon (ADR-012). */

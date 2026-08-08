@@ -39,7 +39,11 @@ const OUT = join(ROOT, 'apps', 'daemon', 'dist', 'build-info.json');
 /** 读 git，失败返回 null —— 非 git 检出（如解包发行版）是合法场景，不该让构建挂掉。 */
 function git(args) {
   try {
-    return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return execFileSync('git', args, {
+      cwd: ROOT,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
   } catch {
     return null;
   }
@@ -80,4 +84,6 @@ const info = {
 
 mkdirSync(dirname(OUT), { recursive: true });
 writeFileSync(OUT, `${JSON.stringify(info, null, 2)}\n`, 'utf8');
-console.log(`✔ build-info: v${version} · ${info.commit}${dirty ? '+dirty' : ''} @ ${commitTime ?? '?'}`);
+console.log(
+  `✔ build-info: v${version} · ${info.commit}${dirty ? '+dirty' : ''} @ ${commitTime ?? '?'}`,
+);

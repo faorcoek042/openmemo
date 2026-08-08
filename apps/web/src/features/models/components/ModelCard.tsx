@@ -51,7 +51,9 @@ export function ModelCard({
   const { t } = useTranslation();
   const [selectedId, setSelectedId] = useState(
     () =>
-      group.variants.find((v) => v.fitness.tier === 'recommended')?.id ?? group.variants[0]?.id ?? '',
+      group.variants.find((v) => v.fitness.tier === 'recommended')?.id ??
+      group.variants[0]?.id ??
+      '',
   );
   /**
    * 勾选"同时下载 CoreML encoder"。
@@ -95,12 +97,20 @@ export function ModelCard({
             <FitBadge fitness={variant.fitness} />
             <h3 className="text-sm font-medium text-ink">{localizedName(locale, group)}</h3>
             {isDefault ? (
-              <StatusChip tone="neutral" label={t('models.card.officialDefault')} icon={<Star className="size-3.5" />} />
+              <StatusChip
+                tone="neutral"
+                label={t('models.card.officialDefault')}
+                icon={<Star className="size-3.5" />}
+              />
             ) : null}
             {installed ? <StatusChip tone="good" label={t('models.card.installed')} /> : null}
             {/* 「使用中」与「已安装」同为 good：区分交给 ⚡ 图标与文字，不靠颜色（statusTone.ts） */}
             {isActive ? (
-              <StatusChip tone="good" label={t('models.card.inUse')} icon={<Zap className="size-3.5" />} />
+              <StatusChip
+                tone="good"
+                label={t('models.card.inUse')}
+                icon={<Zap className="size-3.5" />}
+              />
             ) : null}
           </div>
           {/*

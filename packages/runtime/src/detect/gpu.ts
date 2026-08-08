@@ -49,7 +49,8 @@ const PCI_VENDORS: Record<string, GpuDevice['vendor']> = {
   '0x106b': 'apple',
 };
 
-const SOFTWARE_ADAPTER_NAMES = /llvmpipe|lavapipe|swiftshader|softpipe|basic render|microsoft basic|warp/i;
+const SOFTWARE_ADAPTER_NAMES =
+  /llvmpipe|lavapipe|swiftshader|softpipe|basic render|microsoft basic|warp/i;
 
 export async function detectGpus(): Promise<AdvisoryDetection> {
   switch (os.platform()) {
@@ -256,7 +257,9 @@ function parseVramString(v: string | undefined): number | null {
 // =======================================================================================
 
 async function detectGpusWin32(): Promise<AdvisoryDetection> {
-  const warnings: string[] = ['Windows GPU detection is UNVERIFIED — written from Microsoft docs only'];
+  const warnings: string[] = [
+    'Windows GPU detection is UNVERIFIED — written from Microsoft docs only',
+  ];
   const gpus: AdvisoryGpu[] = [];
 
   // NVIDIA first: nvidia-smi.exe lands in System32 with the driver.
@@ -327,7 +330,8 @@ async function detectGpusWin32(): Promise<AdvisoryDetection> {
 
         if (vendor === 'nvidia' && gpus.some((g) => g.vendor === 'nvidia')) continue;
 
-        const ramMB = typeof entry.AdapterRAM === 'number' ? Math.round(entry.AdapterRAM / 1e6) : null;
+        const ramMB =
+          typeof entry.AdapterRAM === 'number' ? Math.round(entry.AdapterRAM / 1e6) : null;
         const trustworthy = ramMB !== null && ramMB > 0 && ramMB < 4095;
 
         gpus.push({

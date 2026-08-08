@@ -149,7 +149,10 @@ async function seedRecord(modelsRoot: string, o: SeedOpts): Promise<void> {
     catalogVersion: 'test',
   };
   if (!o.omitRole) rec['role'] = o.role;
-  await writeFile(join(dir, `${o.id.replace(/[^a-zA-Z0-9._-]+/g, '_')}.json`), JSON.stringify(rec, null, 2));
+  await writeFile(
+    join(dir, `${o.id.replace(/[^a-zA-Z0-9._-]+/g, '_')}.json`),
+    JSON.stringify(rec, null, 2),
+  );
 }
 
 async function freshState(): Promise<RestState> {
@@ -240,7 +243,10 @@ describe('T-149 ② 旧布局（VAD 记录躺在 manifests/asr 下）不许因�
     assert.notEqual(bucket, bucketForRole('vad'), '这条用例的前提就是两者不同');
 
     // 真按定位到的桶写回一次（= verifyModel 的动作），记录数不许变
-    const rec = await state.store.readManifest<Record<string, unknown>>(bucket, 'vad/silero-vad-ggml');
+    const rec = await state.store.readManifest<Record<string, unknown>>(
+      bucket,
+      'vad/silero-vad-ggml',
+    );
     assert.ok(rec);
     await state.store.writeManifest(bucket, 'vad/silero-vad-ggml', { ...rec, integrity: 'ok' });
     assert.equal((await state.listInstalled()).length, 1, '校验一次就多出一份记录');
@@ -289,7 +295,10 @@ describe('T-149 ③ listInstalledNamesByRole：不看目录，只看记录里的
     const got = await listInstalledNamesByRole(root, 'asr');
     assert.deepEqual(got.names, ['silero-asr-en-v1.bin']);
     // 旧判据 `/silero|vad|punct|…/i` 在这里会把它剔掉 → model.asr 报 fail = 假红灯
-    assert.equal(/silero|vad|punct|ct-transformer|speaker|diariz/i.test('silero-asr-en-v1.bin'), true);
+    assert.equal(
+      /silero|vad|punct|ct-transformer|speaker|diariz/i.test('silero-asr-en-v1.bin'),
+      true,
+    );
   });
 
   it('★ 与 downloader 的 findInstalledByRole 必须给出同一个答案（两处规则不许漂移）', async () => {

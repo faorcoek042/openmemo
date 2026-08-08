@@ -214,7 +214,8 @@ async function walk(root) {
     for (const e of entries) {
       const p = join(cur, e.name);
       if (e.isDirectory()) stack.push(p);
-      else if (e.isSymbolicLink()) continue; // 软链的目标本身也在列表里，别数两遍
+      else if (e.isSymbolicLink())
+        continue; // 软链的目标本身也在列表里，别数两遍
       else {
         const parsed = await readMachO(p);
         if (parsed !== null) out.push({ file: p, parsed });
@@ -244,14 +245,10 @@ const main = async () => {
   }
 
   const unreadable = rows.filter((r) => r.info === null);
-  const wrongPlatform = rows.filter(
-    (r) => r.info !== null && r.info.platform !== PLATFORM_MACOS,
-  );
+  const wrongPlatform = rows.filter((r) => r.info !== null && r.info.platform !== PLATFORM_MACOS);
   const over = rows.filter(
     (r) =>
-      r.info !== null &&
-      r.info.platform === PLATFORM_MACOS &&
-      cmpVer(r.info.minos, maxAllowed) > 0,
+      r.info !== null && r.info.platform === PLATFORM_MACOS && cmpVer(r.info.minos, maxAllowed) > 0,
   );
 
   let worst = '0.0.0';
@@ -265,9 +262,7 @@ const main = async () => {
   );
   for (const r of rows) {
     const bad =
-      r.info === null ||
-      r.info.platform !== PLATFORM_MACOS ||
-      cmpVer(r.info.minos, maxAllowed) > 0;
+      r.info === null || r.info.platform !== PLATFORM_MACOS || cmpVer(r.info.minos, maxAllowed) > 0;
     const mark = bad ? '\x1b[31m✘\x1b[0m' : '\x1b[32m✔\x1b[0m';
     const desc =
       r.info === null
@@ -278,7 +273,9 @@ const main = async () => {
 
   if (unreadable.length > 0) {
     console.error('');
-    console.error('\x1b[31m✘ 以下 Mach-O 既没有 LC_BUILD_VERSION 也没有 LC_VERSION_MIN_MACOSX：\x1b[0m');
+    console.error(
+      '\x1b[31m✘ 以下 Mach-O 既没有 LC_BUILD_VERSION 也没有 LC_VERSION_MIN_MACOSX：\x1b[0m',
+    );
     for (const r of unreadable) console.error(`  ${r.slice}${r.file}`);
     console.error('');
     console.error('「我读不出来」不等于「这里没问题」—— 一个连下限都没写的二进制，');

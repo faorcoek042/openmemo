@@ -50,7 +50,11 @@ function bindingFor(
 ): { providerId?: string; model?: string } {
   const defProvider = asString(readSetting(db, 'llm.defaultProviderId'));
   const defModel = asString(readSetting(db, 'llm.defaultModelId'));
-  if (!purpose) return { ...(defProvider ? { providerId: defProvider } : {}), ...(defModel ? { model: defModel } : {}) };
+  if (!purpose)
+    return {
+      ...(defProvider ? { providerId: defProvider } : {}),
+      ...(defModel ? { model: defModel } : {}),
+    };
 
   const all = readSetting(db, 'llm.purposes');
   const b = (all && typeof all === 'object' ? (all as PurposeBindings)[purpose] : undefined) ?? {};

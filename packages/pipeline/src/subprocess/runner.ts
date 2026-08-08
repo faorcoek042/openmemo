@@ -89,9 +89,19 @@ export function buildChildEnv(
 ): Record<string, string> {
   const base: Record<string, string> = {};
 
-  const ALLOWED: string[] = process.platform === 'win32'
-    ? ['PATH', 'SystemRoot', 'windir', 'TEMP', 'TMP', 'COMSPEC', 'PATHEXT', 'NUMBER_OF_PROCESSORS']
-    : ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ'];
+  const ALLOWED: string[] =
+    process.platform === 'win32'
+      ? [
+          'PATH',
+          'SystemRoot',
+          'windir',
+          'TEMP',
+          'TMP',
+          'COMSPEC',
+          'PATHEXT',
+          'NUMBER_OF_PROCESSORS',
+        ]
+      : ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ'];
 
   for (const key of ALLOWED) {
     const v = process.env[key];
@@ -175,7 +185,18 @@ export function windowsKillTreeArgv(pid: number, force: boolean): string[] {
  * the process could not be spawned.
  */
 export async function run(options: RunOptions): Promise<RunResult> {
-  const { bin, argv, cwd, timeoutMs, env, proxy = null, signal, onStdoutLine, onStderrLine, nice = false } = options;
+  const {
+    bin,
+    argv,
+    cwd,
+    timeoutMs,
+    env,
+    proxy = null,
+    signal,
+    onStdoutLine,
+    onStderrLine,
+    nice = false,
+  } = options;
 
   // Layer 2 — refuse anything that would need a shell to execute.
   const safeBin = isSafeExecutable(bin);
@@ -343,10 +364,7 @@ export async function runOrThrow(options: RunOptions): Promise<RunResult> {
       : result.aborted
         ? 'was cancelled'
         : `exited with code ${String(result.code)}${result.signal !== null ? ` (${result.signal})` : ''}`;
-    throw new SubprocessError(
-      `${options.bin} ${why}\n${result.stderr.slice(-2000)}`,
-      result,
-    );
+    throw new SubprocessError(`${options.bin} ${why}\n${result.stderr.slice(-2000)}`, result);
   }
   return result;
 }

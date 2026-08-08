@@ -93,7 +93,10 @@ function metalInitSeconds(stderr) {
 /** 探针是否连 metal 库都还没开始加载就被砍了（stderr 停在 using embedded metal library）。 */
 function stoppedAtMetalInit(stderr) {
   const s = stderr ?? '';
-  return s.includes('ggml_metal_library_init: using embedded metal library') && metalInitSeconds(s) === null;
+  return (
+    s.includes('ggml_metal_library_init: using embedded metal library') &&
+    metalInitSeconds(s) === null
+  );
 }
 
 function fmt(r) {
@@ -106,7 +109,14 @@ function fmt(r) {
 
 function dumpStderr(r, indent = '      ') {
   say('   ── stderr 全文 ──');
-  say(r.stderr ? r.stderr.split('\n').map((l) => `${indent}${l}`).join('\n') : `${indent}(空)`);
+  say(
+    r.stderr
+      ? r.stderr
+          .split('\n')
+          .map((l) => `${indent}${l}`)
+          .join('\n')
+      : `${indent}(空)`,
+  );
 }
 
 async function main() {
@@ -192,7 +202,13 @@ async function main() {
   const coldWall = Date.now() - coldWall0;
   say(`   ${fmt(cold)}   （墙钟 ${coldWall}ms）`);
   dumpStderr(cold);
-  results.cold = { durationMs: cold.durationMs, wallMs: coldWall, ok: cold.ok, kind: cold.kind ?? null, metalSec: metalInitSeconds(cold.stderr) };
+  results.cold = {
+    durationMs: cold.durationMs,
+    wallMs: coldWall,
+    ok: cold.ok,
+    kind: cold.kind ?? null,
+    metalSec: metalInitSeconds(cold.stderr),
+  };
 
   /* ── 3. 紧接着的热发：对照系 ── */
 
@@ -202,20 +218,35 @@ async function main() {
   const warm = await rt.runProbe({ probePath, backendDir });
   say(`   ${fmt(warm)}`);
   dumpStderr(warm);
-  results.warm = { durationMs: warm.durationMs, ok: warm.ok, kind: warm.kind ?? null, metalSec: metalInitSeconds(warm.stderr) };
+  results.warm = {
+    durationMs: warm.durationMs,
+    ok: warm.ok,
+    kind: warm.kind ?? null,
+    metalSec: metalInitSeconds(warm.stderr),
+  };
 
   hdr('4. 第二发热的（确认热态是稳的，不是刚好赶上）');
   const warm2 = await rt.runProbe({ probePath, backendDir });
   say(`   ${fmt(warm2)}`);
-  results.warm2 = { durationMs: warm2.durationMs, ok: warm2.ok, metalSec: metalInitSeconds(warm2.stderr) };
+  results.warm2 = {
+    durationMs: warm2.durationMs,
+    ok: warm2.ok,
+    metalSec: metalInitSeconds(warm2.stderr),
+  };
 
   /* ── 5. 读数 ── */
 
   hdr('5. 读数（只依据上面三发的实测输出）');
 
-  say(`   冷发   ok=${cold.ok}  ${cold.durationMs}ms  metal_library_init=${results.cold.metalSec ?? 'n/a'}s`);
-  say(`   热发   ok=${warm.ok}  ${warm.durationMs}ms  metal_library_init=${results.warm.metalSec ?? 'n/a'}s`);
-  say(`   热发2  ok=${warm2.ok}  ${warm2.durationMs}ms  metal_library_init=${results.warm2.metalSec ?? 'n/a'}s`);
+  say(
+    `   冷发   ok=${cold.ok}  ${cold.durationMs}ms  metal_library_init=${results.cold.metalSec ?? 'n/a'}s`,
+  );
+  say(
+    `   热发   ok=${warm.ok}  ${warm.durationMs}ms  metal_library_init=${results.warm.metalSec ?? 'n/a'}s`,
+  );
+  say(
+    `   热发2  ok=${warm2.ok}  ${warm2.durationMs}ms  metal_library_init=${results.warm2.metalSec ?? 'n/a'}s`,
+  );
   say();
 
   if (!cold.ok) {
@@ -233,7 +264,9 @@ async function main() {
     say('   本轮拿不到冷启动耗时，如实标 UNKNOWN，不用别的数去顶替。');
   } else {
     const ratio = warm.durationMs > 0 ? (cold.durationMs / warm.durationMs).toFixed(0) : 'n/a';
-    say(`   ✔ 冷发成功，耗时 **${cold.durationMs}ms**（≈ ${(cold.durationMs / 1000).toFixed(1)} 秒）。`);
+    say(
+      `   ✔ 冷发成功，耗时 **${cold.durationMs}ms**（≈ ${(cold.durationMs / 1000).toFixed(1)} 秒）。`,
+    );
     say(`     热发 ${warm.durationMs}ms —— 冷 / 热 ≈ ${ratio}×。`);
     say();
     /*
@@ -249,26 +282,30 @@ async function main() {
       say('     "冷启动第一发很贵"这个现象在这里不存在，也就没有 H1/H2 可判。');
       say(`     （本平台冷发 ${cold.durationMs}ms，本身就远在 ${rt.PROBE_TIMEOUT_MS}ms 之内。）`);
     } else {
-    const s = cold.durationMs / 1000;
-    if (s >= 15 && s <= 26) {
-      say(`     冷发 ${s.toFixed(1)}s 落在 ~21s 附近 → **H1 成立**：`);
-      say('     被 kill 的那一发什么也没留下，Metal 缓存是全有全无的。');
-      say('     → run 31167151669 的 21103ms **不是被污染的值**，它本来就是冷启动耗时。');
-    } else if (s >= 27 && s <= 38) {
-      say(`     冷发 ${s.toFixed(1)}s 落在 ~31s 附近 → **H2 成立**：`);
-      say('     之前那 10 秒是有用功，21103ms 是偏低的污染值。');
-      say(`     → 真实冷启动耗时是 ${s.toFixed(1)}s，比之前记的高一档。`);
-    } else {
-      say(`     冷发 ${s.toFixed(1)}s **两条预测都没落进去**（H1≈21s / H2≈31s）。`);
-      say('     → 不硬套：说明 Metal 初始化耗时本身在这批 runner 上就有较大方差，');
-      say('       单次测量不足以定值。结论应当写成区间而不是一个数。');
-    }
+      const s = cold.durationMs / 1000;
+      if (s >= 15 && s <= 26) {
+        say(`     冷发 ${s.toFixed(1)}s 落在 ~21s 附近 → **H1 成立**：`);
+        say('     被 kill 的那一发什么也没留下，Metal 缓存是全有全无的。');
+        say('     → run 31167151669 的 21103ms **不是被污染的值**，它本来就是冷启动耗时。');
+      } else if (s >= 27 && s <= 38) {
+        say(`     冷发 ${s.toFixed(1)}s 落在 ~31s 附近 → **H2 成立**：`);
+        say('     之前那 10 秒是有用功，21103ms 是偏低的污染值。');
+        say(`     → 真实冷启动耗时是 ${s.toFixed(1)}s，比之前记的高一档。`);
+      } else {
+        say(`     冷发 ${s.toFixed(1)}s **两条预测都没落进去**（H1≈21s / H2≈31s）。`);
+        say('     → 不硬套：说明 Metal 初始化耗时本身在这批 runner 上就有较大方差，');
+        say('       单次测量不足以定值。结论应当写成区间而不是一个数。');
+      }
     }
     say();
     say(`   ── 与 PROBE_TIMEOUT_MS = ${rt.PROBE_TIMEOUT_MS}ms 的关系 ──`);
     if (cold.durationMs > rt.PROBE_TIMEOUT_MS) {
-      say(`     冷发 ${cold.durationMs}ms > ${rt.PROBE_TIMEOUT_MS}ms → **首次探测在这类机器上必然超时**。`);
-      say(`     要让它一次过，超时得 ≥ ${Math.ceil((cold.durationMs * 1.5) / 1000)}s 量级（含余量）。`);
+      say(
+        `     冷发 ${cold.durationMs}ms > ${rt.PROBE_TIMEOUT_MS}ms → **首次探测在这类机器上必然超时**。`,
+      );
+      say(
+        `     要让它一次过，超时得 ≥ ${Math.ceil((cold.durationMs * 1.5) / 1000)}s 量级（含余量）。`,
+      );
       say('     ⚠️ 本脚本**不改那个常量**，也不主张改 —— 只把数摆出来供决策。');
     } else {
       say(`     冷发 ${cold.durationMs}ms ≤ ${rt.PROBE_TIMEOUT_MS}ms → 当前超时值对冷启动是够的。`);
@@ -277,7 +314,9 @@ async function main() {
 
   say();
   say('   ── 机器可读（便于回执引用）──');
-  say(`   RESULT_JSON ${JSON.stringify({ platform: process.platform, arch: process.arch, pack: pack.id, probeTimeoutMs: rt.PROBE_TIMEOUT_MS, longMs: LONG_MS, ...results })}`);
+  say(
+    `   RESULT_JSON ${JSON.stringify({ platform: process.platform, arch: process.arch, pack: pack.id, probeTimeoutMs: rt.PROBE_TIMEOUT_MS, longMs: LONG_MS, ...results })}`,
+  );
 
   await rm(storeRoot, { recursive: true, force: true });
   say();

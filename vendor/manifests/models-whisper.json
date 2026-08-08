@@ -18,17 +18,9 @@
       "displayNameZh": "Whisper 基础模型（Q5_1 量化）",
       "descriptionZh": "最小可用档，主要用于快速预览与后端自检基准。中文质量较差。",
       "descriptionEn": "Smallest usable tier; mainly for quick previews and the backend self-test benchmark. Weak on Chinese.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual",
-        "cpu-friendly",
-        "benchmark-default"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual", "cpu-friendly", "benchmark-default"],
+      "engines": ["whisper.cpp"],
       "files": [
         {
           "role": "weights",
@@ -74,9 +66,7 @@
       },
       "benchmark": null,
       "catalogVersion": "2026.08.02",
-      "notRecommendedFor": [
-        "zh"
-      ],
+      "notRecommendedFor": ["zh"],
       "speedEvidence": {
         "kind": "measured",
         "rtf": 0.0583,
@@ -106,18 +96,10 @@
       "displayNameZh": "Whisper 基础模型（Q8_0 量化）",
       "descriptionZh": "Whisper base 多语种模型，Q8_0 量化。体积 0.08 GB，运行约需 332 MB 内存。",
       "descriptionEn": "Whisper base multilingual model, Q8_0. About 332 MB of RAM at runtime.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
-      "notRecommendedFor": [
-        "zh"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual"],
+      "engines": ["whisper.cpp"],
+      "notRecommendedFor": ["zh"],
       "files": [
         {
           "role": "weights",
@@ -187,18 +169,10 @@
       "displayNameZh": "Whisper 基础模型（F16 全精度）",
       "descriptionZh": "Whisper base 多语种模型，F16 全精度。体积 0.15 GB，运行约需 398 MB 内存。",
       "descriptionEn": "Whisper base multilingual model, F16. About 398 MB of RAM at runtime.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
-      "notRecommendedFor": [
-        "zh"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual"],
+      "engines": ["whisper.cpp"],
+      "notRecommendedFor": ["zh"],
       "files": [
         {
           "role": "weights",
@@ -273,18 +247,10 @@
       "displayNameZh": "Whisper 基础模型·仅英文（Q5_1 量化）",
       "descriptionZh": "仅支持英文的专用版本，同尺寸下英文准确率略高于多语种版。中文请勿使用。",
       "descriptionEn": "English-only build; slightly better English accuracy than the multilingual model of the same size. Not for Chinese.",
-      "languages": [
-        "en"
-      ],
-      "tags": [
-        "english-only"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
-      "notRecommendedFor": [
-        "zh"
-      ],
+      "languages": ["en"],
+      "tags": ["english-only"],
+      "engines": ["whisper.cpp"],
+      "notRecommendedFor": ["zh"],
       "files": [
         {
           "role": "weights",
@@ -350,16 +316,9 @@
       "displayNameZh": "Whisper 大模型 v1（F16 全精度）",
       "descriptionZh": "Whisper large-v1 多语种模型，F16 全精度。体积 3.09 GB，运行约需 3915 MB 内存。",
       "descriptionEn": "Whisper large-v1 multilingual model, F16. About 3915 MB of RAM at runtime.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual",
-        "superseded"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual", "superseded"],
+      "engines": ["whisper.cpp"],
       "files": [
         {
           "role": "weights",
@@ -425,16 +384,9 @@
       "displayNameZh": "Whisper 大模型 v2（Q5_0 量化）",
       "descriptionZh": "Whisper large-v2 多语种模型，Q5_0 量化。体积 1.08 GB，运行约需 1901 MB 内存。",
       "descriptionEn": "Whisper large-v2 multilingual model, Q5_0. About 1901 MB of RAM at runtime.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual",
-        "superseded"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual", "superseded"],
+      "engines": ["whisper.cpp"],
       "files": [
         {
           "role": "weights",
@@ -500,16 +452,9 @@
       "displayNameZh": "Whisper 大模型 v2（Q8_0 量化）",
       "descriptionZh": "Whisper large-v2 多语种模型，Q8_0 量化。体积 1.66 GB，运行约需 2476 MB 内存。",
       "descriptionEn": "Whisper large-v2 multilingual model, Q8_0. About 2476 MB of RAM at runtime.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual",
-        "superseded"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual", "superseded"],
+      "engines": ["whisper.cpp"],
       "files": [
         {
           "role": "weights",
@@ -570,16 +515,9 @@
       "displayNameZh": "Whisper 大模型 v2（F16 全精度）",
       "descriptionZh": "Whisper large-v2 多语种模型，F16 全精度。体积 3.09 GB，运行约需 3915 MB 内存。",
       "descriptionEn": "Whisper large-v2 multilingual model, F16. About 3915 MB of RAM at runtime.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual",
-        "superseded"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual", "superseded"],
+      "engines": ["whisper.cpp"],
       "files": [
         {
           "role": "weights",
@@ -645,16 +583,9 @@
       "displayNameZh": "Whisper 大模型 v3（Q5_0 量化）",
       "descriptionZh": "准确率最高的多语种模型，比 turbo 慢但质量更好。量化后显存需求可控。",
       "descriptionEn": "Highest-accuracy multilingual model. Slower than turbo but more accurate; quantization keeps VRAM manageable.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual",
-        "high-accuracy"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual", "high-accuracy"],
+      "engines": ["whisper.cpp"],
       "files": [
         {
           "role": "weights",
@@ -747,16 +678,9 @@
       "displayNameZh": "Whisper 大模型 v3（F16 完整精度）",
       "descriptionZh": "完整精度的 large-v3，质量上限。需要约 3.9 GB 内存。",
       "descriptionEn": "Full-precision large-v3 — the quality ceiling. Needs roughly 3.9 GB.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual",
-        "high-accuracy"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual", "high-accuracy"],
+      "engines": ["whisper.cpp"],
       "files": [
         {
           "role": "weights",
@@ -849,16 +773,9 @@
       "displayNameZh": "Whisper 大模型 v3 Turbo（Q5_0 量化）",
       "descriptionZh": "多语种识别，中文表现优秀。large-v3 的蒸馏版本，解码层由 32 减至 4，速度大幅提升而准确率接近 large-v3。体积与质量平衡最好，推荐作为默认。",
       "descriptionEn": "Multilingual ASR with strong Chinese performance. Distilled from large-v3 with decoder layers cut from 32 to 4. The best size/quality tradeoff; recommended default.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "recommended-default",
-        "multilingual"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
+      "languages": ["multi"],
+      "tags": ["recommended-default", "multilingual"],
+      "engines": ["whisper.cpp"],
       "files": [
         {
           "role": "weights",
@@ -955,15 +872,9 @@
       "displayNameZh": "Whisper 大模型 v3 Turbo（Q8_0 量化）",
       "descriptionZh": "large-v3-turbo 的高精度量化档，质量接近完整精度，体积仍远小于 large-v3。",
       "descriptionEn": "Higher-precision quantization of large-v3-turbo; near full-precision quality at a fraction of large-v3's size.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual"],
+      "engines": ["whisper.cpp"],
       "files": [
         {
           "role": "weights",
@@ -1045,15 +956,9 @@
       "displayNameZh": "Whisper 大模型 v3 Turbo（F16 完整精度）",
       "descriptionZh": "large-v3-turbo 的完整精度版本。显存充足时可选。",
       "descriptionEn": "Full-precision large-v3-turbo. Choose when VRAM is plentiful.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual"],
+      "engines": ["whisper.cpp"],
       "files": [
         {
           "role": "weights",
@@ -1141,15 +1046,9 @@
       "displayNameZh": "Whisper 中模型（Q5_0 量化）",
       "descriptionZh": "中端平衡档。资源有限但仍需要较好中文识别时使用。",
       "descriptionEn": "Mid-range balance. Use when resources are limited but decent Chinese ASR is still needed.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual"],
+      "engines": ["whisper.cpp"],
       "files": [
         {
           "role": "weights",
@@ -1195,9 +1094,7 @@
       },
       "benchmark": null,
       "catalogVersion": "2026.08.02",
-      "notRecommendedFor": [
-        "zh"
-      ],
+      "notRecommendedFor": ["zh"],
       "speedEvidence": {
         "kind": "measured",
         "rtf": 0.2386,
@@ -1227,15 +1124,9 @@
       "displayNameZh": "Whisper 中模型（Q8_0 量化）",
       "descriptionZh": "Whisper medium 多语种模型，Q8_0 量化。体积 0.82 GB，运行约需 1343 MB 内存。",
       "descriptionEn": "Whisper medium multilingual model, Q8_0. About 1343 MB of RAM at runtime.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual"],
+      "engines": ["whisper.cpp"],
       "files": [
         {
           "role": "weights",
@@ -1296,15 +1187,9 @@
       "displayNameZh": "Whisper 中模型（F16 全精度）",
       "descriptionZh": "Whisper medium 多语种模型，F16 全精度。体积 1.53 GB，运行约需 2054 MB 内存。",
       "descriptionEn": "Whisper medium multilingual model, F16. About 2054 MB of RAM at runtime.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual"],
+      "engines": ["whisper.cpp"],
       "files": [
         {
           "role": "weights",
@@ -1370,18 +1255,10 @@
       "displayNameZh": "Whisper 中模型·仅英文（Q5_0 量化）",
       "descriptionZh": "仅支持英文的专用版本，同尺寸下英文准确率略高于多语种版。中文请勿使用。",
       "descriptionEn": "English-only build; slightly better English accuracy than the multilingual model of the same size. Not for Chinese.",
-      "languages": [
-        "en"
-      ],
-      "tags": [
-        "english-only"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
-      "notRecommendedFor": [
-        "zh"
-      ],
+      "languages": ["en"],
+      "tags": ["english-only"],
+      "engines": ["whisper.cpp"],
+      "notRecommendedFor": ["zh"],
       "files": [
         {
           "role": "weights",
@@ -1447,16 +1324,9 @@
       "displayNameZh": "Whisper 小模型（Q5_1 量化）",
       "descriptionZh": "轻量档，适合纯 CPU 机器。中文识别质量一般但可用。",
       "descriptionEn": "Lightweight; suitable for CPU-only machines. Chinese accuracy is modest but usable.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual",
-        "cpu-friendly"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual", "cpu-friendly"],
+      "engines": ["whisper.cpp"],
       "files": [
         {
           "role": "weights",
@@ -1502,9 +1372,7 @@
       },
       "benchmark": null,
       "catalogVersion": "2026.08.02",
-      "notRecommendedFor": [
-        "zh"
-      ],
+      "notRecommendedFor": ["zh"],
       "speedEvidence": {
         "kind": "measured",
         "rtf": 0.0879,
@@ -1534,18 +1402,10 @@
       "displayNameZh": "Whisper 小模型（Q8_0 量化）",
       "descriptionZh": "Whisper small 多语种模型，Q8_0 量化。体积 0.26 GB，运行约需 644 MB 内存。",
       "descriptionEn": "Whisper small multilingual model, Q8_0. About 644 MB of RAM at runtime.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
-      "notRecommendedFor": [
-        "zh"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual"],
+      "engines": ["whisper.cpp"],
+      "notRecommendedFor": ["zh"],
       "files": [
         {
           "role": "weights",
@@ -1606,18 +1466,10 @@
       "displayNameZh": "Whisper 小模型（F16 全精度）",
       "descriptionZh": "Whisper small 多语种模型，F16 全精度。体积 0.49 GB，运行约需 868 MB 内存。",
       "descriptionEn": "Whisper small multilingual model, F16. About 868 MB of RAM at runtime.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
-      "notRecommendedFor": [
-        "zh"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual"],
+      "engines": ["whisper.cpp"],
+      "notRecommendedFor": ["zh"],
       "files": [
         {
           "role": "weights",
@@ -1683,18 +1535,10 @@
       "displayNameZh": "Whisper 小模型·仅英文（Q5_1 量化）",
       "descriptionZh": "仅支持英文的专用版本，同尺寸下英文准确率略高于多语种版。中文请勿使用。",
       "descriptionEn": "English-only build; slightly better English accuracy than the multilingual model of the same size. Not for Chinese.",
-      "languages": [
-        "en"
-      ],
-      "tags": [
-        "english-only"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
-      "notRecommendedFor": [
-        "zh"
-      ],
+      "languages": ["en"],
+      "tags": ["english-only"],
+      "engines": ["whisper.cpp"],
+      "notRecommendedFor": ["zh"],
       "files": [
         {
           "role": "weights",
@@ -1760,18 +1604,10 @@
       "displayNameZh": "Whisper 超小模型（Q5_1 量化）",
       "descriptionZh": "Whisper tiny 多语种模型，Q5_1 量化。体积 0.03 GB，运行约需 232 MB 内存。",
       "descriptionEn": "Whisper tiny multilingual model, Q5_1. About 232 MB of RAM at runtime.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
-      "notRecommendedFor": [
-        "zh"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual"],
+      "engines": ["whisper.cpp"],
+      "notRecommendedFor": ["zh"],
       "files": [
         {
           "role": "weights",
@@ -1846,18 +1682,10 @@
       "displayNameZh": "Whisper 超小模型（Q8_0 量化）",
       "descriptionZh": "Whisper tiny 多语种模型，Q8_0 量化。体积 0.04 GB，运行约需 244 MB 内存。",
       "descriptionEn": "Whisper tiny multilingual model, Q8_0. About 244 MB of RAM at runtime.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
-      "notRecommendedFor": [
-        "zh"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual"],
+      "engines": ["whisper.cpp"],
+      "notRecommendedFor": ["zh"],
       "files": [
         {
           "role": "weights",
@@ -1918,17 +1746,9 @@
       "displayNameZh": "Whisper 微型模型（F16）",
       "descriptionZh": "最小的多语种模型。质量低，主要用于冒烟测试与下载器验证。",
       "descriptionEn": "Smallest multilingual model. Low quality; used mainly for smoke tests and downloader verification.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "multilingual",
-        "cpu-friendly",
-        "smoke-test"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
+      "languages": ["multi"],
+      "tags": ["multilingual", "cpu-friendly", "smoke-test"],
+      "engines": ["whisper.cpp"],
       "files": [
         {
           "role": "weights",
@@ -1975,9 +1795,7 @@
       },
       "benchmark": null,
       "catalogVersion": "2026.08.02",
-      "notRecommendedFor": [
-        "zh"
-      ],
+      "notRecommendedFor": ["zh"],
       "speedEvidence": {
         "kind": "unmeasured",
         "reason": "not_run"
@@ -1998,18 +1816,10 @@
       "displayNameZh": "Whisper 超小模型·仅英文（Q5_1 量化）",
       "descriptionZh": "仅支持英文的专用版本，同尺寸下英文准确率略高于多语种版。中文请勿使用。",
       "descriptionEn": "English-only build; slightly better English accuracy than the multilingual model of the same size. Not for Chinese.",
-      "languages": [
-        "en"
-      ],
-      "tags": [
-        "english-only"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
-      "notRecommendedFor": [
-        "zh"
-      ],
+      "languages": ["en"],
+      "tags": ["english-only"],
+      "engines": ["whisper.cpp"],
+      "notRecommendedFor": ["zh"],
       "files": [
         {
           "role": "weights",

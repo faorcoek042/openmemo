@@ -112,7 +112,9 @@ export class GeminiProvider implements LlmProvider {
 
   async listModels(): Promise<string[]> {
     try {
-      const res = await fetch(`${this.baseUrl}/${API_VERSION}/models`, { headers: this.#headers() });
+      const res = await fetch(`${this.baseUrl}/${API_VERSION}/models`, {
+        headers: this.#headers(),
+      });
       if (!res.ok) return [];
       const body = (await res.json()) as { models?: Array<{ name?: string }> };
       return (body.models ?? [])
@@ -197,7 +199,8 @@ export class GeminiProvider implements LlmProvider {
       ? {
           promptTokens: u.promptTokenCount ?? 0,
           completionTokens: u.candidatesTokenCount ?? 0,
-          totalTokens: u.totalTokenCount ?? (u.promptTokenCount ?? 0) + (u.candidatesTokenCount ?? 0),
+          totalTokens:
+            u.totalTokenCount ?? (u.promptTokenCount ?? 0) + (u.candidatesTokenCount ?? 0),
         }
       : undefined;
 

@@ -6,14 +6,14 @@
 
 # TL;DR（Manager 只读这里）
 
-| # | 事 | 用户此前会遇到什么 | 撤掉后变红？ |
-|---|---|---|---|
-| **①** | **`/runtime` 对已装的包显示「安装 119 MB」** | 装好的东西界面说没装，点下去把 119 MB 重下一遍 | ✅ **7 条变异全红** |
-| **②** | **自测结果的三条 UI 分支** | 点了自测、`passed:true / 18.6x`，**刷新一下什么都没有** | ✅ **3 条变异全红**（含"点了之后界面不变"那条） |
-| **③** | **`inapplicableKind` 白做了**（§3 A-3） | 「还没探测到」和「确认不支持」在屏幕上**长得一模一样**，用户以为自己机器不支持就不装了 | ✅ 2 条变异全红 |
-| **④** | **「推荐」徽章零信息量**（§3 A-2） | `[实测 :10000]` 本机适用的 **6 个包全部**戴「推荐」徽章 + 主按钮 | ✅ 2 条变异全红 |
-| **⑤** | **`/diagnostics` 在界面上没有常驻入口**（§3 B-12 的侧栏那半） | 只有**已经出问题**的人才找得到诊断页 —— 而"我想看看现在怎么样"是它的主要用途 | ✅ 1 条变异红 |
-| **⑥** | 🆕 **一份组件测试的桩键写错了，一次都没命中过** | 无用户症状，但「/runtime 不许中英混排」这条**一直只覆盖了半页** | ✅ 1 条变异红 |
+| #     | 事                                                            | 用户此前会遇到什么                                                                     | 撤掉后变红？                                    |
+| ----- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| **①** | **`/runtime` 对已装的包显示「安装 119 MB」**                  | 装好的东西界面说没装，点下去把 119 MB 重下一遍                                         | ✅ **7 条变异全红**                             |
+| **②** | **自测结果的三条 UI 分支**                                    | 点了自测、`passed:true / 18.6x`，**刷新一下什么都没有**                                | ✅ **3 条变异全红**（含"点了之后界面不变"那条） |
+| **③** | **`inapplicableKind` 白做了**（§3 A-3）                       | 「还没探测到」和「确认不支持」在屏幕上**长得一模一样**，用户以为自己机器不支持就不装了 | ✅ 2 条变异全红                                 |
+| **④** | **「推荐」徽章零信息量**（§3 A-2）                            | `[实测 :10000]` 本机适用的 **6 个包全部**戴「推荐」徽章 + 主按钮                       | ✅ 2 条变异全红                                 |
+| **⑤** | **`/diagnostics` 在界面上没有常驻入口**（§3 B-12 的侧栏那半） | 只有**已经出问题**的人才找得到诊断页 —— 而"我想看看现在怎么样"是它的主要用途           | ✅ 1 条变异红                                   |
+| **⑥** | 🆕 **一份组件测试的桩键写错了，一次都没命中过**               | 无用户症状，但「/runtime 不许中英混排」这条**一直只覆盖了半页**                        | ✅ 1 条变异红                                   |
 
 **门禁**（收尾时重跑，含 `daemon-backlog` 同期落地的改动）：
 `pnpm -r test` **1259 / 0** · `tsc -b` 0 · `eslint .` 0 · `check:sources` ✔ · `check:orphans` ✔（棘轮基线一个字没动）。
@@ -41,12 +41,12 @@
 第 2 条（`/api/backends/catalog` 的 `installed` 改成「有 manifest **或** 文件都在」）**过不了这条判据**——
 它只让那一格变绿，而同一台机器上：
 
-| 读取方 | 现算之后 |
-|---|---|
-| `GET /api/backends/installed` | 仍然列不出它（它列的是 manifest） |
-| `DELETE /api/backends/:id` | 仍然 **404「未安装该后端包」** → 用户看到「已安装」，点卸载，被告知没装 |
-| `GET /api/components` 的 `installedVersion` | 仍然 `null`（`readInstalledVersions` 读 manifest） |
-| `recordSelfTest()` | 仍然写不进去（按 id 找 manifest）→ **本轮 ② 那三条分支照样不亮** |
+| 读取方                                      | 现算之后                                                                |
+| ------------------------------------------- | ----------------------------------------------------------------------- |
+| `GET /api/backends/installed`               | 仍然列不出它（它列的是 manifest）                                       |
+| `DELETE /api/backends/:id`                  | 仍然 **404「未安装该后端包」** → 用户看到「已安装」，点卸载，被告知没装 |
+| `GET /api/components` 的 `installedVersion` | 仍然 `null`（`readInstalledVersions` 读 manifest）                      |
+| `recordSelfTest()`                          | 仍然写不进去（按 id 找 manifest）→ **本轮 ② 那三条分支照样不亮**        |
 
 **那不是把两个答案变成一个，是变成三个。**
 
@@ -134,27 +134,27 @@ by-name/backend/<unpackDirName(f.name)>     ← 解包目录；安装器是 temp
 
 ## 🔴 A 组
 
-| # | 项 | 状态 |
-|---:|---|---|
-| **1** | `/runtime` 对已装的包显示「安装 119 MB」 | ✅ **本轮做掉**（启动对账，见 §1）。⚠️ 它修的是"A 有 B 没有"；`[实测 :10000]` 那台机器上还有**另一格**：manifest 在、但盘上是 ffmpeg **7.1.5** 而目录已升到 **8.1.2** —— 那是「组件更新」的洞，不是这一条，**仍开着**，归 `model-mgmt` |
-| **2** | 「推荐」徽章等于零信息量 | ✅ **本轮做掉**（收窄，不重算，见 §4.2） |
-| **3** | `inapplicableKind` 白做了 | ✅ **本轮做掉**（并补进契约类型，见 §4.1） |
-| **4** | `openmemo-probe` 没有分发通道 | ⬜ 未动。要 release 资产 = 硬边界外。归 `platform-backlog` / `pack-publish` |
-| **5** | `ytdlp-macos-arm64` 声明 `arch:"arm64"` 却是 universal2 | ⬜ 未动（`vendor/manifests` 是 `runner-migrate` 的地盘） |
-| **6** | `sourceBaseUrl` 是半截 | ⬜ 未动。**核过：web 这一侧不欠债** —— `features/models/api.ts:176` 明写"不提供 custom"并说明了理由，界面上没有任何入口。欠的是 daemon 存了一个零读取方的字段 + 契约里那个 `baseUrl`，归 `model-mgmt` |
-| **7** | 组件「回滚」 | ⬜ 产品取舍，归你（写进 ADR） |
+|     # | 项                                                      | 状态                                                                                                                                                                                                                                   |
+| ----: | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1** | `/runtime` 对已装的包显示「安装 119 MB」                | ✅ **本轮做掉**（启动对账，见 §1）。⚠️ 它修的是"A 有 B 没有"；`[实测 :10000]` 那台机器上还有**另一格**：manifest 在、但盘上是 ffmpeg **7.1.5** 而目录已升到 **8.1.2** —— 那是「组件更新」的洞，不是这一条，**仍开着**，归 `model-mgmt` |
+| **2** | 「推荐」徽章等于零信息量                                | ✅ **本轮做掉**（收窄，不重算，见 §4.2）                                                                                                                                                                                               |
+| **3** | `inapplicableKind` 白做了                               | ✅ **本轮做掉**（并补进契约类型，见 §4.1）                                                                                                                                                                                             |
+| **4** | `openmemo-probe` 没有分发通道                           | ⬜ 未动。要 release 资产 = 硬边界外。归 `platform-backlog` / `pack-publish`                                                                                                                                                            |
+| **5** | `ytdlp-macos-arm64` 声明 `arch:"arm64"` 却是 universal2 | ⬜ 未动（`vendor/manifests` 是 `runner-migrate` 的地盘）                                                                                                                                                                               |
+| **6** | `sourceBaseUrl` 是半截                                  | ⬜ 未动。**核过：web 这一侧不欠债** —— `features/models/api.ts:176` 明写"不提供 custom"并说明了理由，界面上没有任何入口。欠的是 daemon 存了一个零读取方的字段 + 契约里那个 `baseUrl`，归 `model-mgmt`                                  |
+| **7** | 组件「回滚」                                            | ⬜ 产品取舍，归你（写进 ADR）                                                                                                                                                                                                          |
 
 ## 🟠 B 组
 
-| # | 项 | 状态 |
-|---:|---|---|
-| **8** | 重建 `apps/web/dist` 并重启 `:10000` | ⬜ **只有你能做，而且现在更急**：demo 正跑在一棵 **dirty 工作树**的构建上（见 TL;DR ⚠️1） |
-| **9–11** | 章程 §3 订正块 / `PENDING-USER-DECISIONS §D` / `SECURITY.md §0` | ⬜ 归你 |
-| **12** | C6 诊断页换 `/api/selfcheck` + `/diagnostics` `/components` 进侧栏 | ✅ **两半都齐了**。换数据源那半**在我开工前就已经做完了**（`DiagnosticsPage.tsx:169` 真打 `/api/selfcheck`，T-150 有 3 条用例钉着）—— §3 把它记成"L（换数据源）未做"是**过期信息**。侧栏那半本轮补上：**只加 `/diagnostics`，`/components` 刻意不加**（理由见 §4.3） |
-| **13** | B8 `hf-mirror` 的口径 | ⬜ 归 `model-mgmt` |
-| **14** | B2 `markmap-lib` / `markmap-view` 删不删 + `MindmapView` 那句「切到大纲视图」 | 🟡 **查清了，没动，理由见 §4.4 —— 需要你一句话拍板** |
-| **15** | C7 老安装记录补 `role` 迁移 | ⬜ 归 `model-mgmt` |
-| **16** | B7 ANE 真机验证 | ⬜ 归 `pack-publish` |
+|        # | 项                                                                            | 状态                                                                                                                                                                                                                                                                 |
+| -------: | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|    **8** | 重建 `apps/web/dist` 并重启 `:10000`                                          | ⬜ **只有你能做，而且现在更急**：demo 正跑在一棵 **dirty 工作树**的构建上（见 TL;DR ⚠️1）                                                                                                                                                                            |
+| **9–11** | 章程 §3 订正块 / `PENDING-USER-DECISIONS §D` / `SECURITY.md §0`               | ⬜ 归你                                                                                                                                                                                                                                                              |
+|   **12** | C6 诊断页换 `/api/selfcheck` + `/diagnostics` `/components` 进侧栏            | ✅ **两半都齐了**。换数据源那半**在我开工前就已经做完了**（`DiagnosticsPage.tsx:169` 真打 `/api/selfcheck`，T-150 有 3 条用例钉着）—— §3 把它记成"L（换数据源）未做"是**过期信息**。侧栏那半本轮补上：**只加 `/diagnostics`，`/components` 刻意不加**（理由见 §4.3） |
+|   **13** | B8 `hf-mirror` 的口径                                                         | ⬜ 归 `model-mgmt`                                                                                                                                                                                                                                                   |
+|   **14** | B2 `markmap-lib` / `markmap-view` 删不删 + `MindmapView` 那句「切到大纲视图」 | 🟡 **查清了，没动，理由见 §4.4 —— 需要你一句话拍板**                                                                                                                                                                                                                 |
+|   **15** | C7 老安装记录补 `role` 迁移                                                   | ⬜ 归 `model-mgmt`                                                                                                                                                                                                                                                   |
+|   **16** | B7 ANE 真机验证                                                               | ⬜ 归 `pack-publish`                                                                                                                                                                                                                                                 |
 
 ## 🟡 C 组（17–24）
 
@@ -167,7 +167,7 @@ by-name/backend/<unpackDirName(f.name)>     ← 解包目录；安装器是 temp
 ## 4.1 `inapplicableKind`：**它白做了的机制是「契约类型里没有这个字段」**
 
 daemon 的 `rest/backends.ts` 花了一整段注释把「不可用」拆成三档并**真的发出来**，
-它自己写明了要防什么：*"用户看到不可用会以为自己的机器不支持，然后就不装了。"*
+它自己写明了要防什么：_"用户看到不可用会以为自己的机器不支持，然后就不装了。"_
 
 `[实测 :10000]`：`whispercpp-vulkan-linux-x64` 的档位是 **`undetermined`**（probe 还没跑成），
 而界面给它渲染的芯片文案是 **「不可用」** —— **它想防的那件事，就是它自己造成的。**
@@ -201,6 +201,7 @@ daemon 发、前端收不到、**TypeScript 一个字都不说**。
 做的是一次**收窄**：服务端说不推荐的永远不会变推荐；服务端说推荐、**但用户根本没得选**时不渲染。
 
 "有没有得选"的判据是**同一引擎、同一平台、还有别的后端**：
+
 - `engine` —— ffmpeg 不是 whisper 的"备选"，拿它当备选是胡说；
 - `os/arch` —— 别的平台的包不是这台机器的选项；
 - `backend` 不同 —— 同一后端的两个包不构成"选哪种加速"的问题。
@@ -284,8 +285,8 @@ apps/daemon/src/http/rest/backends.ts               InapplicableKind 改为从 s
 
 ⚠️ **`state.ts` 与 `backends.ts` 我只加了独立的块**，没动别人那几行。
 ⚠️ `state.ts` 里那个 import **必须保持静态**：daemon 的 dist 目前没有任何对本地模块的动态 `import()`，
-   这条性质保证了"重建产物时正在跑的进程不会半新半旧"（`gates-fix §8` 靠它才敢重建 dist）。
-   注释已经写在 import 上方。
+这条性质保证了"重建产物时正在跑的进程不会半新半旧"（`gates-fix §8` 靠它才敢重建 dist）。
+注释已经写在 import 上方。
 
 ## web
 
@@ -314,29 +315,29 @@ apps/web/src/test/components.test.tsx                     +15 条；并修掉 st
 
 ## web 组（`reverse-verify.mjs`，对照组 265/265 先绿）
 
-| 撤掉什么（= 缺陷原状） | 红在哪 |
-|---|---|
-| W1 三档合并回一句话 | 4 条：undetermined 被说成「不可用」/ unsupported / platform / **三档互不相同** |
-| W2 缺档位时兜底成 `unsupported` | 1 条：「没给档位时不许替它说话」 |
-| W3 `isMeaningfulRecommendation` 改回 `pack.recommended` | 3 条 |
-| W4 `RuntimePage` 不再把收窄结果传下去 | 1 条：接线 |
-| W5 自检后不再 `invalidateQueries` | 1 条：**只有"点了之后界面真的变"那条红** |
-| W6 `selfTest` 拿不到卡片 | 3 条 |
-| W7 `anyFailed` 恒假 | 1 条 |
-| W8 侧栏拿掉 `/diagnostics` | 1 条 |
-| W9 硬件桩的键写回 `/hardware` | 1 条：**我新补的那条探针的探针** |
+| 撤掉什么（= 缺陷原状）                                  | 红在哪                                                                         |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| W1 三档合并回一句话                                     | 4 条：undetermined 被说成「不可用」/ unsupported / platform / **三档互不相同** |
+| W2 缺档位时兜底成 `unsupported`                         | 1 条：「没给档位时不许替它说话」                                               |
+| W3 `isMeaningfulRecommendation` 改回 `pack.recommended` | 3 条                                                                           |
+| W4 `RuntimePage` 不再把收窄结果传下去                   | 1 条：接线                                                                     |
+| W5 自检后不再 `invalidateQueries`                       | 1 条：**只有"点了之后界面真的变"那条红**                                       |
+| W6 `selfTest` 拿不到卡片                                | 3 条                                                                           |
+| W7 `anyFailed` 恒假                                     | 1 条                                                                           |
+| W8 侧栏拿掉 `/diagnostics`                              | 1 条                                                                           |
+| W9 硬件桩的键写回 `/hardware`                           | 1 条：**我新补的那条探针的探针**                                               |
 
 ## daemon 组（`reverse-verify-daemon.mjs`，对照组 9/9 先绿）
 
-| 撤掉什么 | 红在哪 |
-|---|---|
-| D1 启动时不再对账 | **5 条** |
-| D2 不再核对 sha256 | 阴性对照一（"盘上是另一个版本"） |
-| D3 不再按 os/arch 过滤 | 阴性对照二（三个 ytdlp 归档名相同） |
-| D4 不再要求解包目录存在 | 阴性对照三（装到一半） |
-| D5 `installedAt` 写成"现在" | 「补出来的记录不许撒谎」 |
-| D6 `priority` 不进记录 | 「T-162 空转」那条 |
-| D7 已有记录也重写一遍 | 「它只补，不改」 |
+| 撤掉什么                    | 红在哪                              |
+| --------------------------- | ----------------------------------- |
+| D1 启动时不再对账           | **5 条**                            |
+| D2 不再核对 sha256          | 阴性对照一（"盘上是另一个版本"）    |
+| D3 不再按 os/arch 过滤      | 阴性对照二（三个 ytdlp 归档名相同） |
+| D4 不再要求解包目录存在     | 阴性对照三（装到一半）              |
+| D5 `installedAt` 写成"现在" | 「补出来的记录不许撒谎」            |
+| D6 `priority` 不进记录      | 「T-162 空转」那条                  |
+| D7 已有记录也重写一遍       | 「它只补，不改」                    |
 
 ⚠️ 三条变异（D2/D4、W3）**刻意写成类型合法的恒假条件**（`&& f.name === '__never_matches__'`、
 `return true || …`），不是 `if (false)`。理由：`backlog-work` 上一轮踩过 ——
@@ -344,6 +345,7 @@ apps/web/src/test/components.test.tsx                     +15 条；并修掉 st
 脚本里对"编译不过"这种情况**判为变异体无效并算作存活**，不让它冒充红灯。
 
 **把名字遮住之后这些断言什么时候会失败**（自问自答）：
+
 - W1/W2 → 有人把三档合回一句话，或者在没有证据时替 daemon 断言用户的硬件不支持；
 - W3/W4 → 有人把收窄改回原样（六个徽章），或者算了却没传下去；
 - W5/W6/W7 → 自检结果到不了界面的**任何一段**：没回写、没重新拉、横幅条件写坏；
@@ -355,37 +357,37 @@ apps/web/src/test/components.test.tsx                     +15 条；并修掉 st
 
 # §7 我核过、但**没有**采信别人自述的几处
 
-| 别人写的 | 我怎么核的 | 结论 |
-|---|---|---|
-| `gates-fix §5.2`「B 的写入方全仓只有 `startPackInstall()` 一处」 | 自己扫 `writeManifest('backend'` | ✔ 属实（本轮之后是两处：多了对账，且它只写"缺的那些"） |
-| `progress-audit §4⑪`「`inapplicableKind` 前端零命中」 | `grep` + **读契约类型** | ✔ 属实，**并查出机制**：契约类型里根本没这个字段（他们没说这一层） |
-| `progress-audit §4⑩`「22 个包里 21 个声明 cpu」 | 打 live `/api/backends/catalog` 逐条数 | ⚠️ **订正**：目录现在 **23** 个包，本机**适用的 6 个**全部 `recommended:true`。方向对，数字与口径都变了（Vulkan 包 08-07 才进目录） |
-| `backlog-work §2.6`「三条 UI 分支现在会亮」 | **真的渲染了一遍**（4 条用例） | ✔ 属实。但**此前一条断言都没有**，等于没人守 |
-| `§3 #12`「C6 换数据源 = L，未做」 | 读 `DiagnosticsPage.tsx` + 跑 T-150 那 3 条 | ❌ **过期**：换数据源那半**早就做完了**，只欠侧栏 |
-| `§3 #6` `sourceBaseUrl`「前端有半截」 | 读 `features/models/api.ts` | ⚠️ **订正**：web 这一侧不欠债，它明写"不提供 custom"并说明了理由。欠的全在 daemon + 契约 |
-| 用户症状「`/runtime` 对已装 ffmpeg 显示 Install 119 MB」 | 打 live `/api/backends/catalog` | ⚠️ **今天在 demo 上已经不复现**（`media-tools-linux-x64` 有 manifest）。但 119 MB = `totalSizeBytes 124,917,816` **逐字对得上**，而产生它的那个中间态按设计可复现 —— 所以修的是机制不是那一次现象 |
+| 别人写的                                                         | 我怎么核的                                  | 结论                                                                                                                                                                                              |
+| ---------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gates-fix §5.2`「B 的写入方全仓只有 `startPackInstall()` 一处」 | 自己扫 `writeManifest('backend'`            | ✔ 属实（本轮之后是两处：多了对账，且它只写"缺的那些"）                                                                                                                                            |
+| `progress-audit §4⑪`「`inapplicableKind` 前端零命中」            | `grep` + **读契约类型**                     | ✔ 属实，**并查出机制**：契约类型里根本没这个字段（他们没说这一层）                                                                                                                                |
+| `progress-audit §4⑩`「22 个包里 21 个声明 cpu」                  | 打 live `/api/backends/catalog` 逐条数      | ⚠️ **订正**：目录现在 **23** 个包，本机**适用的 6 个**全部 `recommended:true`。方向对，数字与口径都变了（Vulkan 包 08-07 才进目录）                                                               |
+| `backlog-work §2.6`「三条 UI 分支现在会亮」                      | **真的渲染了一遍**（4 条用例）              | ✔ 属实。但**此前一条断言都没有**，等于没人守                                                                                                                                                      |
+| `§3 #12`「C6 换数据源 = L，未做」                                | 读 `DiagnosticsPage.tsx` + 跑 T-150 那 3 条 | ❌ **过期**：换数据源那半**早就做完了**，只欠侧栏                                                                                                                                                 |
+| `§3 #6` `sourceBaseUrl`「前端有半截」                            | 读 `features/models/api.ts`                 | ⚠️ **订正**：web 这一侧不欠债，它明写"不提供 custom"并说明了理由。欠的全在 daemon + 契约                                                                                                          |
+| 用户症状「`/runtime` 对已装 ffmpeg 显示 Install 119 MB」         | 打 live `/api/backends/catalog`             | ⚠️ **今天在 demo 上已经不复现**（`media-tools-linux-x64` 有 manifest）。但 119 MB = `totalSizeBytes 124,917,816` **逐字对得上**，而产生它的那个中间态按设计可复现 —— 所以修的是机制不是那一次现象 |
 
 ---
 
 # §8 纪律申报
 
-| 条 | 结果 |
-|---|---|
-| `apps/web/dist` | ✅ **未构建**。`vite build` 我只以 `--ssr … --outDir .test-out/{components,host}` 的形式跑过（那就是 `pnpm test` 自己那条命令），**从未不带 `--outDir` 跑过**；`npx tsc -b` 对 web 的 `outDir` 是 `dist-types/`（已 gitignore）。⚠️ `index.html` 的 mtime 是 `14:31:34`，与 daemon 的 `builtAt=06:32:32Z` 差 62 秒、且它报 `commit 5372a95a dirty:true` —— **那是你在我工作期间的一次重建+重启，不是我** |
-| `pnpm -r build` / `pnpm build:safe` | ✅ 未跑（`build:safe` 被沙箱拦下，我改用 `npx tsc -b`，效果等价且不碰 web 产物） |
-| `:10000` | ✅ **只发过 GET**（`/api/health`、`/api/backends/catalog`、`/api/components`）。未重启、未 kill、未占用；**没有起过任何 dev server**（本轮不需要，组件测试就是渲染真组件） |
-| `/root/data-memo` | ✅ 未读未写 |
-| 指针文件 | ✅ sha256 仍是 `7f930979b85204d4c05b221f4c17a5cf5936a4d432a46488816727f60da233f3`（逐字节与 `gates-fix` 记录的相同）。新增用例在**模块顶层**钉 `OPENMEMO_MODELS` / `OPENMEMO_EXT_DIR` 到 `mkdtemp`（PROTOCOL §9-bis，窗口为零，无清理代码） |
-| `pkill -f` | ✅ 未用 |
-| release / `gh` | ✅ 未建/未改/未删，`gh` 一次都没用 |
-| 本机 whisper 转写 | ✅ **一次都没跑**。自检那几条用例全部只渲染前端，`recordSelfTest` 那一侧不是我这轮碰的 |
-| 反向验证 | ✅ 全部在 `/tmp/ui-backlog/rv`，共享工作树没有坏过一秒 |
-| `daemon-backlog` 的地盘（`hardware.ts` / `runtime/setup.ts` / `pipeline/setup.ts` / `selfTestRecord.test.ts`） | ✅ **一个字未碰** |
-| `platform-backlog` 的地盘（`packages/pipeline/**`、`.github/**`、`scripts/ci/**`、`vendor/manifests/**`） | ✅ **一个字未碰**（`vendor/manifests` 只读过） |
-| `packages/shared/src/backends.ts` | ✅ 未碰（`daemon-backlog` 在改）。我只动了 `api.ts` 与 `openapi.yaml` |
-| `HANDOFF.md` / `00-CHARTER.md` / `BOARD.md` / `ROSTER.md` / `docs/adr/**` / `PENDING-USER-DECISIONS.md` / `README.md` / `SECURITY.md` | ✅ 一个字未改 |
-| 别人的 inbox | ⚠️ **在 `backlog-work.md §3` 表头上加了两行指针**（指向本文件 §3），因为你要求"别让下一个人重做"。**没有改他们的任何一行内容。** 若你认为这违反 PROTOCOL §1，删掉那两行即可，本文件 §3 是完整的 |
-| 派出的 subagent | 0 个 |
+| 条                                                                                                                                    | 结果                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/dist`                                                                                                                       | ✅ **未构建**。`vite build` 我只以 `--ssr … --outDir .test-out/{components,host}` 的形式跑过（那就是 `pnpm test` 自己那条命令），**从未不带 `--outDir` 跑过**；`npx tsc -b` 对 web 的 `outDir` 是 `dist-types/`（已 gitignore）。⚠️ `index.html` 的 mtime 是 `14:31:34`，与 daemon 的 `builtAt=06:32:32Z` 差 62 秒、且它报 `commit 5372a95a dirty:true` —— **那是你在我工作期间的一次重建+重启，不是我** |
+| `pnpm -r build` / `pnpm build:safe`                                                                                                   | ✅ 未跑（`build:safe` 被沙箱拦下，我改用 `npx tsc -b`，效果等价且不碰 web 产物）                                                                                                                                                                                                                                                                                                                         |
+| `:10000`                                                                                                                              | ✅ **只发过 GET**（`/api/health`、`/api/backends/catalog`、`/api/components`）。未重启、未 kill、未占用；**没有起过任何 dev server**（本轮不需要，组件测试就是渲染真组件）                                                                                                                                                                                                                               |
+| `/root/data-memo`                                                                                                                     | ✅ 未读未写                                                                                                                                                                                                                                                                                                                                                                                              |
+| 指针文件                                                                                                                              | ✅ sha256 仍是 `7f930979b85204d4c05b221f4c17a5cf5936a4d432a46488816727f60da233f3`（逐字节与 `gates-fix` 记录的相同）。新增用例在**模块顶层**钉 `OPENMEMO_MODELS` / `OPENMEMO_EXT_DIR` 到 `mkdtemp`（PROTOCOL §9-bis，窗口为零，无清理代码）                                                                                                                                                              |
+| `pkill -f`                                                                                                                            | ✅ 未用                                                                                                                                                                                                                                                                                                                                                                                                  |
+| release / `gh`                                                                                                                        | ✅ 未建/未改/未删，`gh` 一次都没用                                                                                                                                                                                                                                                                                                                                                                       |
+| 本机 whisper 转写                                                                                                                     | ✅ **一次都没跑**。自检那几条用例全部只渲染前端，`recordSelfTest` 那一侧不是我这轮碰的                                                                                                                                                                                                                                                                                                                   |
+| 反向验证                                                                                                                              | ✅ 全部在 `/tmp/ui-backlog/rv`，共享工作树没有坏过一秒                                                                                                                                                                                                                                                                                                                                                   |
+| `daemon-backlog` 的地盘（`hardware.ts` / `runtime/setup.ts` / `pipeline/setup.ts` / `selfTestRecord.test.ts`）                        | ✅ **一个字未碰**                                                                                                                                                                                                                                                                                                                                                                                        |
+| `platform-backlog` 的地盘（`packages/pipeline/**`、`.github/**`、`scripts/ci/**`、`vendor/manifests/**`）                             | ✅ **一个字未碰**（`vendor/manifests` 只读过）                                                                                                                                                                                                                                                                                                                                                           |
+| `packages/shared/src/backends.ts`                                                                                                     | ✅ 未碰（`daemon-backlog` 在改）。我只动了 `api.ts` 与 `openapi.yaml`                                                                                                                                                                                                                                                                                                                                    |
+| `HANDOFF.md` / `00-CHARTER.md` / `BOARD.md` / `ROSTER.md` / `docs/adr/**` / `PENDING-USER-DECISIONS.md` / `README.md` / `SECURITY.md` | ✅ 一个字未改                                                                                                                                                                                                                                                                                                                                                                                            |
+| 别人的 inbox                                                                                                                          | ⚠️ **在 `backlog-work.md §3` 表头上加了两行指针**（指向本文件 §3），因为你要求"别让下一个人重做"。**没有改他们的任何一行内容。** 若你认为这违反 PROTOCOL §1，删掉那两行即可，本文件 §3 是完整的                                                                                                                                                                                                          |
+| 派出的 subagent                                                                                                                       | 0 个                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 ---
 
@@ -407,10 +409,10 @@ apps/daemon/src/http/rest/selfTestRecord.test.ts(94,48): error TS2345:
 
 # TL;DR
 
-| # | 事 | 结果 |
-|---|---|---|
-| **A** | **markmap 整块摘除**（§3 B-14，你拍板） | ✅ 依赖 + 适配器 + 文案 + 词条一起走。**⚠️ 一处必须偏离你的指令，见下** |
-| **B** | **卡片上显示这次自测实际用的是哪个后端**（`daemon-backlog` T-166 转达） | ✅ 并且把「跑通了」与「加速真的用上了」**分成两档**渲染 |
+| #     | 事                                                                      | 结果                                                                    |
+| ----- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **A** | **markmap 整块摘除**（§3 B-14，你拍板）                                 | ✅ 依赖 + 适配器 + 文案 + 词条一起走。**⚠️ 一处必须偏离你的指令，见下** |
+| **B** | **卡片上显示这次自测实际用的是哪个后端**（`daemon-backlog` T-166 转达） | ✅ 并且把「跑通了」与「加速真的用上了」**分成两档**渲染                 |
 
 **门禁**：`pnpm -r test` **1265 / 0** · `tsc -b` 0 · `eslint` 0 · `check:sources` ✔ ·
 `check:orphans` ✔ —— **零引用导出 72（基线 72），没有变大**，且 `markmap` 在报告的**每一档里零命中**。
@@ -512,6 +514,7 @@ assert.equal(typeof mod['toMarkdown'], 'function', '前提自检：导出端点�
 ## A-4 守卫：**两个方向的"半截"都钉住**
 
 「半截」才是这一族真正的失败形态，而且两个方向都真实存在过：
+
 - 删了依赖没删文案 → 界面继续提一个不存在的视图；
 - 删了文案没删依赖 → 两个零 import 的包继续挂在供应链上，
   而且下一个人会以为"既然依赖还在，那视图大概是要做的"，把文案加回来。
@@ -547,11 +550,11 @@ T-164 那 6 条用例喂的 `backendUsed: 'cpu'` 就是产品从不产出的形�
 
 新增 `selfTestVerdict(packBackend, selfTest)`（`packStatus.ts` 纯函数）：
 
-| 档 | 何时 | 卡片上 |
-|---|---|---|
-| `passed` | 跑通 + 枚举到设备（或它本来就是 CPU 包） | 绿「自检通过」 |
-| **`passed-not-accelerated`** | 跑通、**但零设备**、且这不是 CPU 包 | **黄「跑通了，但加速没有生效」+ 一句解释** |
-| `failed` | 真失败 | 红（不变） |
+| 档                           | 何时                                     | 卡片上                                     |
+| ---------------------------- | ---------------------------------------- | ------------------------------------------ |
+| `passed`                     | 跑通 + 枚举到设备（或它本来就是 CPU 包） | 绿「自检通过」                             |
+| **`passed-not-accelerated`** | 跑通、**但零设备**、且这不是 CPU 包      | **黄「跑通了，但加速没有生效」+ 一句解释** |
+| `failed`                     | 真失败                                   | 红（不变）                                 |
 
 外加**无条件原样显示** `backendUsed`：「实际用上的后端：CPU (ggml-cpu-zen4)」。
 
@@ -581,14 +584,14 @@ T-164 那 6 条用例喂的 `backendUsed: 'cpu'` 就是产品从不产出的形�
 
 # 反向验证（本轮新增 6 条，累计 22/22）
 
-| | 撤掉什么 | 红在哪 |
-|---|---|---|
-| W10 | 把那句「切到大纲视图…」放回界面 | 界面守卫 |
-| W11 | markmap 依赖放回 `package.json` | 依赖守卫 |
-| W12 | **探针的探针**：把守卫里的禁用名换成一个确实还导出着的名字 | 导出守卫 —— 证明它**能**红 |
-| W13 | 「跑通了」与「加速用上了」合并回一句 | 2 条（含那条"不许解析 backendUsed"） |
-| W14 | 不再原样显示 `backendUsed` | 2 条（含阳性对照） |
-| W15 | 对 CPU 包也判"加速没生效" | 假红灯那条 |
+|     | 撤掉什么                                                   | 红在哪                               |
+| --- | ---------------------------------------------------------- | ------------------------------------ |
+| W10 | 把那句「切到大纲视图…」放回界面                            | 界面守卫                             |
+| W11 | markmap 依赖放回 `package.json`                            | 依赖守卫                             |
+| W12 | **探针的探针**：把守卫里的禁用名换成一个确实还导出着的名字 | 导出守卫 —— 证明它**能**红           |
+| W13 | 「跑通了」与「加速用上了」合并回一句                       | 2 条（含那条"不许解析 backendUsed"） |
+| W14 | 不再原样显示 `backendUsed`                                 | 2 条（含阳性对照）                   |
+| W15 | 对 CPU 包也判"加速没生效"                                  | 假红灯那条                           |
 
 W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules` 软链解析到**真包**的，
 所以"把适配器加回去"这种变异在副本里做不出来。改成变异**守卫自己**
@@ -606,17 +609,18 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
 
 # 纪律申报（增量）
 
-| 条 | 结果 |
-|---|---|
-| `apps/web/dist` | ✅ 未构建（`vite build` 仍只以 `--outDir .test-out/…` 跑过） |
-| `pnpm install` | ⚠️ **只跑过 `--lockfile-only`**，`node_modules` mtime 前后逐字未变（见 A-1 末） |
-| `:10000` | ✅ 本段全程**零请求** |
-| `docs/design/**` · `docs/adr/**` | ✅ 未碰。D-01 / D-02 / D-05 / ADR-006 里关于 markmap 的段落**仍是旧的**，需要你或 `architect` 同步；`features/mindmap/README.md` 里已注明"读到那几段时以本节为准" |
-| `daemon-backlog` / `platform-backlog` 的文件 | ✅ 未碰（`docs/design/D-11-*` 的改动是他们的） |
+| 条                                           | 结果                                                                                                                                                              |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/dist`                              | ✅ 未构建（`vite build` 仍只以 `--outDir .test-out/…` 跑过）                                                                                                      |
+| `pnpm install`                               | ⚠️ **只跑过 `--lockfile-only`**，`node_modules` mtime 前后逐字未变（见 A-1 末）                                                                                   |
+| `:10000`                                     | ✅ 本段全程**零请求**                                                                                                                                             |
+| `docs/design/**` · `docs/adr/**`             | ✅ 未碰。D-01 / D-02 / D-05 / ADR-006 里关于 markmap 的段落**仍是旧的**，需要你或 `architect` 同步；`features/mindmap/README.md` 里已注明"读到那几段时以本节为准" |
+| `daemon-backlog` / `platform-backlog` 的文件 | ✅ 未碰（`docs/design/D-11-*` 的改动是他们的）                                                                                                                    |
 
 ## [2026-08-08 01:20] T-172 ②③ DONE（思维导图四种结构化导出接线 + 搜索结果 `?t=` 直达时间点）
 
 交付:
+
 - 新 `apps/web/src/features/mindmap/MindmapExportMenu.tsx` —— 六种格式一个菜单（SVG/PNG + md/opml/mm/json）
 - 新 `apps/web/src/features/notes/seekParam.ts` + `seekParam.test.ts`（9 条）
 - 新 `apps/daemon/src/http/rest/content.mindmapExport.test.ts`（8 条）—— **这条路由此前一次都没被请求过**
@@ -632,12 +636,12 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
 `listen(0)` 的 http server 上，配真 SQLite + 真 `Repos`/`MindMapRepo`，
 喂一份带层级 / 时间戳 refs / XML 元字符 / 中文标题的文档。
 
-| `format=` | HTTP | Content-Type | 实际正文 |
-|---|---|---|---|
-| `md` | 200 | `text/markdown; charset=utf-8` | 缩进无序列表，**带 `[12:34]` 时间戳**；根节点成 `# 标题` |
-| `opml` | 200 | `text/x-opml; charset=utf-8` | OPML 2.0，`<outline text=…>`，XML 已转义 |
-| `mm` | 200 | `application/x-freemind; charset=utf-8` | FreeMind 1.0.1，`<map version="1.0.1">` + `<node ID TEXT>` |
-| `json` | 200 | `application/json; charset=utf-8` | 整份 `MindMapDoc`，**含 refs 的 startMs/endMs/quote**，另外多一个 `revision`（落库时加的） |
+| `format=` | HTTP | Content-Type                            | 实际正文                                                                                   |
+| --------- | ---- | --------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `md`      | 200  | `text/markdown; charset=utf-8`          | 缩进无序列表，**带 `[12:34]` 时间戳**；根节点成 `# 标题`                                   |
+| `opml`    | 200  | `text/x-opml; charset=utf-8`            | OPML 2.0，`<outline text=…>`，XML 已转义                                                   |
+| `mm`      | 200  | `application/x-freemind; charset=utf-8` | FreeMind 1.0.1，`<map version="1.0.1">` + `<node ID TEXT>`                                 |
+| `json`    | 200  | `application/json; charset=utf-8`       | 整份 `MindMapDoc`，**含 refs 的 startMs/endMs/quote**，另外多一个 `revision`（落库时加的） |
 
 `md` 的真实输出（逐字）：
 
@@ -659,12 +663,12 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
 拿同一份带「关联线 / 概要 / 备注 / 富文本 / 超链接 / 图标 / 标签 / 折叠 / 样式色 / 时间戳」
 十项的文档过一遍四个序列化器，逐项数：
 
-| | 层级 | 时间戳 | 备注 | 关联线 | 概要 | 富文本/超链接/图标/标签/样式 |
-|---|---|---|---|---|---|---|
-| `md` | ✅ | **✅** | ✅ | ❌ | ❌ | ❌ |
-| `opml` | ✅ | **❌** | ✅（`_note`） | ❌ | ❌ | ❌（保留 `_collapsed`） |
-| `mm` | ✅ | **❌** | ✅（`richcontent`） | 有 `<arrowlink>` **但标签丢了** | ❌ | ❌（保留 `FOLDED`） |
-| `json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅（十项全保留） |
+|        | 层级 | 时间戳 | 备注                | 关联线                          | 概要 | 富文本/超链接/图标/标签/样式 |
+| ------ | ---- | ------ | ------------------- | ------------------------------- | ---- | ---------------------------- |
+| `md`   | ✅   | **✅** | ✅                  | ❌                              | ❌   | ❌                           |
+| `opml` | ✅   | **❌** | ✅（`_note`）       | ❌                              | ❌   | ❌（保留 `_collapsed`）      |
+| `mm`   | ✅   | **❌** | ✅（`richcontent`） | 有 `<arrowlink>` **但标签丢了** | ❌   | ❌（保留 `FOLDED`）          |
+| `json` | ✅   | ✅     | ✅                  | ✅                              | ✅   | ✅（十项全保留）             |
 
 **时间戳是这张图与录音之间唯一的连接** —— 用户拿 OPML 导进别的软件后再也跳不回那一秒。
 所以菜单里写了一句损耗说明，并且**那句话自己有测试钉着**（daemon 侧那条断言
@@ -687,10 +691,11 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
 ### ③ `?t=` 的三个边界，逐条怎么处理的
 
 **① 媒体还没加载完。** 拆成两半：
+
 - `requestSeek()` 立刻把 `positionMs` 设成目标值，**转写稿的高亮与滚动当场就位**（它们不读媒体）；
 - 音频那一半由 `PlayerBar` 记成 pending，`loadedmetadata` 时**再落一次**。
   理由：`readyState === HAVE_NOTHING` 时给 `currentTime` 赋值，规范说的是记成
-  *default playback start position* 等加载开始再应用 —— **各家实现是否都照做我没验证过**
+  _default playback start position_ 等加载开始再应用 —— **各家实现是否都照做我没验证过**
   （本机没有浏览器），所以不赌，元数据到达前一律保留 pending。多赋一次是幂等的。
 - 还补了一条：**pending 期间那个每帧跑的 rAF 循环不许把媒体的 `0` 播出去**。
   不加这条的话，`positionMs` 会被每帧盖回 0 —— 表现是「命中段闪一下就弹回第一段」，
@@ -704,6 +709,7 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
 （`12abc` 单列一条：`parseInt` 会给 12，也就是把坏参数当成有效值，用户被送到 0:00.012。）
 
 **③ 地址栏留不留 —— 我的判断是「留」，代价与守卫如下。**
+
 - 留的理由：这个 URL 是**可分享物**，`/notes/X?t=754000` 发给别人或自己收藏，理应还原成
   "这条笔记的 12:34"；用完就抹掉等于让地址栏在下一个 tick 开始说假话。
   且与本页既有约定一致（`?tab=` / 搜索页 `?q=` `?mode=` 全都留在 URL 里）。
@@ -723,14 +729,14 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
 `node_modules` 与 `src` 软链回真仓库（只读），**变异打在副本的 bundle 上**。
 先证明副本是绿的，再逐个变异。
 
-| 变异 | 结果 |
-|---|---|
-| M1 导出链接漏掉 `what=mindmap` | 红 2 条 ✅ |
+| 变异                                                     | 结果       |
+| -------------------------------------------------------- | ---------- |
+| M1 导出链接漏掉 `what=mindmap`                           | 红 2 条 ✅ |
 | M2 `NoteDetailPage` 根本不读 `?t=`（= 接线前的真实状态） | 红 8 条 ✅ |
-| M3 拿掉元数据补落（只赋一次就清 pending） | 红 2 条 ✅ |
-| M4 越界不夹取 | 红 1 条 ✅ |
-| M5 去掉闩 | 红 1 条 ✅ |
-| M6 rAF 循环不再守 pending | 红 1 条 ✅ |
+| M3 拿掉元数据补落（只赋一次就清 pending）                | 红 2 条 ✅ |
+| M4 越界不夹取                                            | 红 1 条 ✅ |
+| M5 去掉闩                                                | 红 1 条 ✅ |
+| M6 rAF 循环不再守 pending                                | 红 1 条 ✅ |
 
 **⚠️ 头一轮有两个变异活下来了，我把它们当成缺陷改了，而不是当成噪音放过：**
 
@@ -776,6 +782,7 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
 `WS /ws/asr-worker`。
 
 **B 类 · 端点在用、但某个参数/字段前端从不传**（挑几条有后果的）：
+
 - **`POST /api/settings/data-dir` 有一处真 bug**：前端发 `moveExisting`，daemon 读的是 `move`
   （`rest/storage.ts:213` 是 `body?.move !== false`，**缺省即 true**）。
   于是「直接使用此目录」那个补救按钮（`DataLocationSection.tsx:391` 发 `{moveExisting:false}`
@@ -817,16 +824,16 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
 
 ### 门禁（**绑定在最终提交的那棵树上**：所有代码改动定稿后跑的，之后只追加了本回执）
 
-| 门禁 | 结果 |
-|---|---|
-| `pnpm -r test` | **1433 pass / 0 fail** |
-| `npx tsc -b` | ✅ |
-| `npx eslint .` | ✅ 0 |
-| `pnpm build:safe` | ✅（**全程未跑 `vite build` 进 `apps/web/dist`**，§7） |
-| `pnpm lint-workflows` | ✅ 628 条断言 / 7 个 workflow |
-| `pnpm test:ci-scripts` | ✅ 22 passed, 0 failed |
-| `pnpm check:orphans` | ✅ **70 个（基线 70，未升）** |
-| `check-tracked-sources` | ✅ 96 个源码目录 |
+| 门禁                    | 结果                                                   |
+| ----------------------- | ------------------------------------------------------ |
+| `pnpm -r test`          | **1433 pass / 0 fail**                                 |
+| `npx tsc -b`            | ✅                                                     |
+| `npx eslint .`          | ✅ 0                                                   |
+| `pnpm build:safe`       | ✅（**全程未跑 `vite build` 进 `apps/web/dist`**，§7） |
+| `pnpm lint-workflows`   | ✅ 628 条断言 / 7 个 workflow                          |
+| `pnpm test:ci-scripts`  | ✅ 22 passed, 0 failed                                 |
+| `pnpm check:orphans`    | ✅ **70 个（基线 70，未升）**                          |
+| `check-tracked-sources` | ✅ 96 个源码目录                                       |
 
 ⚠️ **关于 1349 这个基线数字**：我接手时先跑了一次，这棵树**已经是 1370**（`pnpm build:safe`
 之后；在此之前 `pnpm -r test` 是**红的** —— dist 里少一个测试文件，46 vs 45）。
@@ -854,6 +861,7 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
   代码按"可能被丢弃"设防，多赋一次是幂等的。
 
 需要 Manager 决策:
+
 1. **`POST /api/settings/data-dir` 的 `moveExisting` / `move` 键名不匹配**（上面 B 类第一条）——
    它挨着 §9 的数据目录，我没敢动。请指派，或明确授权我来修。
 2. A 类里 `GET /api/tags` + `DELETE /api/tags/:uid` + `GET /api/notes/:uid/anchors` 三条
@@ -865,6 +873,7 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
 ## [2026-08-08 02:10] T-174 DONE —— 「不要搬」在传输层上根本没被表达出来；13 条端点已分诊
 
 交付:
+
 - 改 `apps/daemon/src/http/rest/storage.ts`（新 `parseChangeRequest()` / `externalFiles()`）
 - 新 `apps/daemon/src/http/rest/storage.dataDir.test.ts`（20 条，其中 7 条真发 HTTP 且**逐文件哈希扫文件系统**）
 - 改 `apps/web/src/features/settings/DataLocationSection.tsx`（新导出 `resultTextKey`）
@@ -878,11 +887,11 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
 实际不是这样：那条路在 `looksLikeDataDir(plan.to)` 那道 `TARGET_ALREADY_DATA_DIR` 闸上
 **被挡在搬迁之前**。真正会搬走用户数据的是**主表单里那个复选框**。
 
-| 界面动作 | 请求体 | **修复前实际发生** | 修复后 |
-|---|---|---|---|
+| 界面动作                                      | 请求体                       | **修复前实际发生**                                                                                                                                                                                                  | 修复后                                                   |
+| --------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
 | 输新路径 + **取消勾选**「移动现有数据」+ 应用 | `{path, moveExisting:false}` | **HTTP 202 `moved:true`，源目录被清空**；`openmemo.db` / `secrets.json`(含 key) / `media/*.m4a` / `models/*.bin` 共 **9 个文件 10.9MB 被 `rename` 走**；指针改写；请求重启。响应逐字写着「已移动 9 个文件到新位置」 | **409 `NOT_A_DATA_DIR`，0 字节变动**，目标目录连建都没建 |
-| 同上但**勾着** | `{path, moveExisting:true}` | **与上一行逐字节一模一样** —— 即那个复选框**在传输层上等于不存在** | 202 `moved:true`（照常搬，功能没被误伤） |
-| 撞 409 后点「直接使用此目录」 | `{path, moveExisting:false}` | **又是 409 `TARGET_ALREADY_DATA_DIR`** —— 用户看到的还是刚才那条错误。**这个按钮从上线起一次都没成功过**，且它不搬数据 | **202 `moved:false`**，指针更新，0 字节变动 |
+| 同上但**勾着**                                | `{path, moveExisting:true}`  | **与上一行逐字节一模一样** —— 即那个复选框**在传输层上等于不存在**                                                                                                                                                  | 202 `moved:true`（照常搬，功能没被误伤）                 |
+| 撞 409 后点「直接使用此目录」                 | `{path, moveExisting:false}` | **又是 409 `TARGET_ALREADY_DATA_DIR`** —— 用户看到的还是刚才那条错误。**这个按钮从上线起一次都没成功过**，且它不搬数据                                                                                              | **202 `moved:false`**，指针更新，0 字节变动              |
 
 成因是两处叠加：前端发 `moveExisting`，daemon 读 `body?.move`，且缺省 `!== false` = **搬**。
 ⚠️ 附带发现：`docs/DEPLOYMENT.md:301`、`inbox/storage-fix.md`、`inbox/docs-public.md` 里
@@ -909,19 +918,20 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
 而那正是绝不该替用户做不可逆决定的时刻。
 
 另外两条一并加上，判据是「意图送不到就绝不假装送到了」：
+
 - **认识但非布尔 → 400**（`moveExisting:"false"` 字符串在旧写法下等于"搬"）。
 - **不认识的字段 → 400**（只对本端点）。这条才治本：宽松解析下，写错的字段名
   等价于"用户什么都没说"，于是缺省值替他做了决定。严格解析把它变成传输层一声硬报错。
 
 ### ③ 同一端点上其余「一边写一边不读」的字段（都是实测出来的，不是读代码猜的）
 
-| 字段 | 事实 | 处置 |
-|---|---|---|
-| `entries[].bytes` / `files` | daemon **逐目录各跑一次 `measureTree`**，七条 entry 每条都带；前端类型里没有 → 被 TS 结构化子类型静静丢掉 | 已接上。⚠️ 前端源码注释与**两份 locale 文案**都写着「daemon 尚未逐目录统计」/「暂无整目录统计接口」——**都是假的**，而且与同一屏上已经显示着的「数据目录总占用」当场自相矛盾。三处一起改了 |
-| `externalFiles` | daemon 一直返回数据目录**外面**那个指针文件的位置/为什么在外面/风险（`riskZh` 逐字描述的就是 §9 那场事故的用户侧形态：「按它去那个不存在的位置建空目录，表现为笔记全没了」）。前端类型里没有它 → **这条警告写出来之后从没到达过任何用户** | 已接上；并按 T-135 的判据补齐中英成对（否则英文界面又会多一片汉字），抽成 `externalFiles()` 让成对断言守得住 |
-| `moved` | daemon 回了，前端类型里有、但从不渲染 —— 搬了和只改指向**显示同一句**「已保存。重启后生效。」 | 已分开。**只信 daemon 回的 `moved`，不按前端自己发了什么猜** —— 否则下次两端再对不上，界面会继续自信地报告一件没发生的事 |
-| `dryRun` | daemon 支持（实测 200），前端**从来不发**，搬家没有"先试算"入口 | 未接（本轮不做）。顺手让它回 `willMove`，试算的意义就是动手前看见"这一发会不会搬" |
-| `selfContained` / `noteZh` | daemon 回，前端无 | 未接。`noteZh` 与前端自己的 `safeToDelete` 文案是两个出处、会漂移，建议后续统一到 daemon |
+| 字段                        | 事实                                                                                                                                                                                                                                      | 处置                                                                                                                                                                                      |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `entries[].bytes` / `files` | daemon **逐目录各跑一次 `measureTree`**，七条 entry 每条都带；前端类型里没有 → 被 TS 结构化子类型静静丢掉                                                                                                                                 | 已接上。⚠️ 前端源码注释与**两份 locale 文案**都写着「daemon 尚未逐目录统计」/「暂无整目录统计接口」——**都是假的**，而且与同一屏上已经显示着的「数据目录总占用」当场自相矛盾。三处一起改了 |
+| `externalFiles`             | daemon 一直返回数据目录**外面**那个指针文件的位置/为什么在外面/风险（`riskZh` 逐字描述的就是 §9 那场事故的用户侧形态：「按它去那个不存在的位置建空目录，表现为笔记全没了」）。前端类型里没有它 → **这条警告写出来之后从没到达过任何用户** | 已接上；并按 T-135 的判据补齐中英成对（否则英文界面又会多一片汉字），抽成 `externalFiles()` 让成对断言守得住                                                                              |
+| `moved`                     | daemon 回了，前端类型里有、但从不渲染 —— 搬了和只改指向**显示同一句**「已保存。重启后生效。」                                                                                                                                             | 已分开。**只信 daemon 回的 `moved`，不按前端自己发了什么猜** —— 否则下次两端再对不上，界面会继续自信地报告一件没发生的事                                                                  |
+| `dryRun`                    | daemon 支持（实测 200），前端**从来不发**，搬家没有"先试算"入口                                                                                                                                                                           | 未接（本轮不做）。顺手让它回 `willMove`，试算的意义就是动手前看见"这一发会不会搬"                                                                                                         |
+| `selfContained` / `noteZh`  | daemon 回，前端无                                                                                                                                                                                                                         | 未接。`noteZh` 与前端自己的 `safeToDelete` 文案是两个出处、会漂移，建议后续统一到 daemon                                                                                                  |
 
 ### ④ **同一个形状在别处还有三处**（派了只读 Explore 全量对账，逐条我自己复核过）
 
@@ -947,6 +957,7 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
 ### ⑤ 13 条零前端入口端点的分诊
 
 **该删（服务端写了，但产品方向上不需要 / 零入口本身就是对的）**
+
 - `WS /ws/asr-worker` —— 握手过了鉴权**才**回 `NOT_IMPLEMENTED` 然后 close。ADR-006 明写 v1 不做。
   一条"连得上但必然失败"的路由比没有更坏。
 - `POST /api/components/:id/rollback` —— **端到端死路**：产出回滚点的 `stashForRollback()`
@@ -959,6 +970,7 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
 - `GET /api/jobs/:jobId` —— 列表 + SSE 已经覆盖，详情页没有产品形态。低价值。
 
 **该接（真会用 + 服务端行为已验证）—— 本轮都不做**
+
 - `POST /api/models/import` —— 实现是完整的（stat → 按文件名推量化 → 入下载队列 → sha256 →
   内容寻址落库 → 写 manifest），`hf_repo` 分支硬 501。**手上已有 GGUF 的用户今天没有任何入口。**
   工作量：中（一个"导入本地模型"表单 + 复用任务中心看进度）。
@@ -969,6 +981,7 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
   不发 `reset=1` 的话，点重试拿到的是逐字节相同的缓存快照，断路器计数也不清。
 
 **该查（服务端行为对不对/产品要不要，得先定）**
+
 - **`GET /api/tags` + `DELETE /api/tags/:uid` —— 需要你一句话。**
   ⚠️ 按你的要求，**没有拿"竞品有"当理由**（memo.ac 那边标签系统其实不存在）。
   我们自己的事实是：标签**只能由用户手工创建**（全仓 `INSERT INTO note_tags` 只有一处，
@@ -999,15 +1012,15 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
 
 对照组先绿（daemon 23/23、web 301/301），逐条变异，跑完还原后再绿。
 
-| daemon | 结果 | | web | 结果 |
-|---|---|---|---|---|
-| M1 恢复原样的 bug（读 `move` 且缺省 true） | 红 3 ✅ | | W1 补救守卫改回读 `move` | 红 1 ✅ |
-| **M2 键名是对的，只把缺省翻回 true** | **红 2 ✅** | | W2 逐目录大小不再渲染 | 红 1 ✅ |
-| M3 拿掉「未知字段 → 400」 | 红 2 ✅ | | W3 外部指针文件不再渲染 | 红 2 ✅ |
-| M4 非布尔改成真值转换 | 红 1 ✅ | | W4 结果文案恒定中性 | 红 1 ✅ |
-| M5 补救载荷改回 `move` | 红 1 ✅ | | W5 locale 那句假话回来 | 红 1 ✅ |
-| M6 `externalFiles` 去掉英文 | 红 1 ✅ | | | |
-| **M7 拿掉指针重定向（测试开始写机器级位置）** | **红 2 ✅** | | | |
+| daemon                                        | 结果        |     | web                      | 结果    |
+| --------------------------------------------- | ----------- | --- | ------------------------ | ------- |
+| M1 恢复原样的 bug（读 `move` 且缺省 true）    | 红 3 ✅     |     | W1 补救守卫改回读 `move` | 红 1 ✅ |
+| **M2 键名是对的，只把缺省翻回 true**          | **红 2 ✅** |     | W2 逐目录大小不再渲染    | 红 1 ✅ |
+| M3 拿掉「未知字段 → 400」                     | 红 2 ✅     |     | W3 外部指针文件不再渲染  | 红 2 ✅ |
+| M4 非布尔改成真值转换                         | 红 1 ✅     |     | W4 结果文案恒定中性      | 红 1 ✅ |
+| M5 补救载荷改回 `move`                        | 红 1 ✅     |     | W5 locale 那句假话回来   | 红 1 ✅ |
+| M6 `externalFiles` 去掉英文                   | 红 1 ✅     |     |                          |         |
+| **M7 拿掉指针重定向（测试开始写机器级位置）** | **红 2 ✅** |     |                          |         |
 
 **M2 单独说一句**：它证明**缺省值方向是独立承重的** —— 就算键名对上了，
 把缺省翻回 true 照样红。这条不是文字游戏。
@@ -1017,15 +1030,15 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
 
 ### ⑦ 门禁（**在 `/tmp/gate-t174` 另开的 worktree 上、检出我自己那个 commit 跑的** —— 工作树上另有三位在途）
 
-| 门禁 | 结果 |
-|---|---|
-| `pnpm -r test` | **1462 pass / 0 fail** |
-| `npx tsc -b` | ✅ |
-| `npx eslint .` | ✅ 0 |
-| `pnpm build:safe` | ✅（**全程未跑 `vite build` 进 `apps/web/dist`**，§7） |
-| `pnpm lint-workflows` | ✅ 627 条断言 / 7 个 workflow |
-| `pnpm test:ci-scripts` | ✅ 22 passed, 0 failed |
-| `pnpm check:orphans` | ✅ **70 个（基线 70，未升）** |
+| 门禁                   | 结果                                                   |
+| ---------------------- | ------------------------------------------------------ |
+| `pnpm -r test`         | **1462 pass / 0 fail**                                 |
+| `npx tsc -b`           | ✅                                                     |
+| `npx eslint .`         | ✅ 0                                                   |
+| `pnpm build:safe`      | ✅（**全程未跑 `vite build` 进 `apps/web/dist`**，§7） |
+| `pnpm lint-workflows`  | ✅ 627 条断言 / 7 个 workflow                          |
+| `pnpm test:ci-scripts` | ✅ 22 passed, 0 failed                                 |
+| `pnpm check:orphans`   | ✅ **70 个（基线 70，未升）**                          |
 
 **基线 1433 我是实测核对的，不是算出来的**：把同一个 worktree 检出到我的父提交
 `353ca09`（**并且 `rm -rf apps/daemon/dist`**）重跑一遍 = **1433**，1462 − 1433 = 29
@@ -1061,6 +1074,7 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
   搬迁行为本身的验证在 daemon 侧，判据是**文件系统里发生了什么**，不是响应里写了什么。
 
 需要 Manager 决策:
+
 1. **标签算不算一条导航轴？**（见 ⑤ 该查第一条）—— 定了我才知道是做页面还是删死词条。
 2. `POST /api/components/:id/update` 的确认框在承诺一件 daemon 明确拒绝做的事，
    建议改前端文案（而不是让 daemon 读 `toVersion`）。归我还是归组件那条线？
@@ -1084,6 +1098,7 @@ W12 值得单独说：`@openmemo/mindmap` 在隔离副本里是经 `node_modules
 `[实测]` 从组件测试里把提示块的 `textContent` 打出来（/tmp 隔离副本，未改仓库）：
 
 **中文界面**
+
 ```
 GPU 加速已暂时停用
 已暂时停用：cuda、vulkan、rocm、metal、coreml（连续 2 次探测失败：probe timed out
@@ -1093,6 +1108,7 @@ after 10000ms (killed).）。将在约 4 分钟后自动重试。
 ```
 
 **英文界面**
+
 ```
 GPU acceleration is temporarily disabled
 Temporarily disabled: cuda, vulkan, rocm, metal, coreml (2 consecutive probe failures:
@@ -1132,21 +1148,23 @@ No action needed — it retries automatically and recovers on its own.
 
 任务书说"恢复探测跑在后台、最长 90 秒"。`[实测代码路径]` **`?reset=1` 不走那条路**：
 
-| 路径 | 触发 | 预算 | 当次请求 | 界面 |
-|---|---|---|---|---|
-| 冷却到期**自动**重试 | daemon 自己 | `PROBE_RECOVERY_TIMEOUT_MS` **90 s** | 立刻返回，`recovering: true` | "正在重试 —— 一发后台恢复探测已经在跑" |
-| **本按钮** `?reset=1` | 用户点 | `PROBE_TIMEOUT_MS` **10 s** | **就地挂最长约 10 秒** | 见下 |
+| 路径                  | 触发        | 预算                                 | 当次请求                     | 界面                                   |
+| --------------------- | ----------- | ------------------------------------ | ---------------------------- | -------------------------------------- |
+| 冷却到期**自动**重试  | daemon 自己 | `PROBE_RECOVERY_TIMEOUT_MS` **90 s** | 立刻返回，`recovering: true` | "正在重试 —— 一发后台恢复探测已经在跑" |
+| **本按钮** `?reset=1` | 用户点      | `PROBE_TIMEOUT_MS` **10 s**          | **就地挂最长约 10 秒**       | 见下                                   |
 
 原因：`resetBreaker()` 清空裁决 ⇒ 裁决变回 `closed` ⇒ `detect(true)` **就地跑一发探测**
 （`hardware.ts` → `detectRuntimeHardware()` 的 `verdict === 'closed'` 分支，
 用 `runProbe()` 的默认超时）。所以要设计的是**十秒**，不是九十秒。
 
 **那十秒里界面长这样**（`[实测]` 渲染原文）：
+
 ```
 … 将在约 4 分钟后自动重试。
 不需要手动操作 —— 到点会自动重试，成功即自动恢复。
 [⟳ 正在重新探测…]  已用 0 秒 · 最长约 10 秒
 ```
+
 - 按钮 **`disabled`** + 图标换成转圈（连点从"被忽略"变成"点不动"）；
 - 文案 `立刻重试` → `正在重新探测…`；
 - 旁边**计秒**，每秒 +1，让用户看得出它在动而不是卡死；
@@ -1154,6 +1172,7 @@ No action needed — it retries automatically and recovers on its own.
   那个数就是 `PROBE_TIMEOUT_MS`，前端抄一份必然漂。
 
 请求回来后三种结局都说得出话，**没有"默默把转圈收掉"这一种**：
+
 - **好了** → 整块消失；
 - **仍然停用** → 多一行「重试跑完了，加速后端仍然不可用。上面那条原因来自这一次探测，
   不是之前那次。」（用户必须能区分"点了没生效"和"点了但没修好"）；
@@ -1199,15 +1218,15 @@ No action needed — it retries automatically and recovers on its own.
 
 ### ⑤ 反向验证 7/7 全红（/tmp 隔离副本，先跑对照组）
 
-| 变异 | 坏了用户会怎样 | 结果 |
-|---|---|---|
-| M1 `label` 改回 `labelZh` | 英文用户看到「VAD 切分器」 | 🔴 |
-| M2 `detailEn` 换成中文 | 英文界面上断路器整段变中文 | 🔴 |
-| M3 `breakerTripped` 对认不出的 verdict 放行 | 新增裁决值就让提示整块消失（静默降级复发） | 🔴 |
-| M4 按钮不再禁用 | 那十秒无反馈 → 连点 → 撞 daemon 单飞 | 🔴 |
-| M5 「立刻重试」不带 `?reset=1` | 按钮能点但不清裁决 —— 又一个"有界面没效果" | 🔴 |
-| M6 组件自己另写措辞 | 两处开始漂移（本次要消灭的形状） | 🔴 |
-| M7 跳闸时 `BreakerNotice` 返回 null | 回到"服务端有、界面看不到" | 🔴 |
+| 变异                                        | 坏了用户会怎样                             | 结果 |
+| ------------------------------------------- | ------------------------------------------ | ---- |
+| M1 `label` 改回 `labelZh`                   | 英文用户看到「VAD 切分器」                 | 🔴   |
+| M2 `detailEn` 换成中文                      | 英文界面上断路器整段变中文                 | 🔴   |
+| M3 `breakerTripped` 对认不出的 verdict 放行 | 新增裁决值就让提示整块消失（静默降级复发） | 🔴   |
+| M4 按钮不再禁用                             | 那十秒无反馈 → 连点 → 撞 daemon 单飞       | 🔴   |
+| M5 「立刻重试」不带 `?reset=1`              | 按钮能点但不清裁决 —— 又一个"有界面没效果" | 🔴   |
+| M6 组件自己另写措辞                         | 两处开始漂移（本次要消灭的形状）           | 🔴   |
+| M7 跳闸时 `BreakerNotice` 返回 null         | 回到"服务端有、界面看不到"                 | 🔴   |
 
 三组对照组（runtime / shared / web）全绿才开跑。**对照组抓到两件事**：
 ① 我自己写错的一条断言（60 s 仍在"秒"档，我写成了"1 分钟"）；② 下面那条 §10 违规。
@@ -1233,15 +1252,15 @@ M2/M3 两条变异因此落进了 `/root/memo/packages/shared/dist/breaker.js`�
 
 ### ⑦ 门禁（**绑在 `c992086` 上**，另开 worktree 检出该 commit 跑，`pnpm install --frozen-lockfile` 后全套）
 
-| 门禁 | 结果 |
-|---|---|
-| `pnpm -r test` | **1489 pass / 0 fail**（基线 1433；+56 含另外两位期间落的提交） |
-| `npx tsc -b` | ✅ |
-| `npx eslint .` | ✅ exit 0 |
-| `pnpm build:safe` | ✅（**未跑** `pnpm -r build`） |
-| `pnpm lint-workflows` | ✅ 768 条 / 8 个 workflow |
-| `pnpm test:ci-scripts` | ✅ 22 passed |
-| `pnpm check:orphans` | ✅ 没有新的零引用导出，基线未动 |
+| 门禁                   | 结果                                                            |
+| ---------------------- | --------------------------------------------------------------- |
+| `pnpm -r test`         | **1489 pass / 0 fail**（基线 1433；+56 含另外两位期间落的提交） |
+| `npx tsc -b`           | ✅                                                              |
+| `npx eslint .`         | ✅ exit 0                                                       |
+| `pnpm build:safe`      | ✅（**未跑** `pnpm -r build`）                                  |
+| `pnpm lint-workflows`  | ✅ 768 条 / 8 个 workflow                                       |
+| `pnpm test:ci-scripts` | ✅ 22 passed                                                    |
+| `pnpm check:orphans`   | ✅ 没有新的零引用导出，基线未动                                 |
 
 **本轮新增测试**：`packages/shared/src/breaker.test.ts` 22 · `selfcheck.test.ts` +3 ·
 `components.test.tsx` +9。
@@ -1318,6 +1337,7 @@ M2/M3 两条变异因此落进了 `/root/memo/packages/shared/dist/breaker.js`�
 
 `[实测]` 从组件测试把提示块 `textContent` 打出来（/tmp 隔离副本）。
 **中文 · 正在重试（服务端报已跑 3 秒）**：
+
 ```
 GPU 加速已暂时停用
 已暂时停用：cuda、vulkan、rocm、metal、coreml（连续 2 次探测失败：probe timed out
@@ -1325,7 +1345,9 @@ after 10000ms (killed).）。正在重试 —— 一发后台恢复探测已经�
 [⟳ 正在重新探测…]  已用 3 秒 · 最长约 90 秒
 可以离开这个页面 —— 它在后台跑，回来时进度还在。
 ```
+
 **英文 · 同一状态（已跑 7 秒）**：
+
 ```
 GPU acceleration is temporarily disabled
 Temporarily disabled: cuda, vulkan, rocm, metal, coreml (2 consecutive probe failures:
@@ -1357,17 +1379,18 @@ when you return.
 手点相对自动的唯一区别是**不必等冷却到期**（`open` 也照起）—— 那正是"显式重试"的含义。
 
 `[实测]` `breakerRecovery.test.ts` 新增 3 条（真子进程、真断路器、真调度）：
+
 - 当次请求 **实测 < 5 s 返回**，而那一发探针**实测跑满 12 s**（> `PROBE_TIMEOUT_MS`）；
 - **不清失败计数**：先抹掉再探等于让界面闪一下假的"已恢复"；
 - 跑完 `recovering` 归位、`recoveryStartedAt` 清掉（否则按钮会永远禁用着）。
 
 ### ③ 单飞与手点怎么共存 —— **三层，缺一层都不够**
 
-| 层 | 做法 | 不这么做会怎样 |
-|---|---|---|
+| 层     | 做法                                                                    | 不这么做会怎样                                                                          |
+| ------ | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | daemon | 已有一发在跑 ⇒ `started: false`，**加入等待**，不起第二发、**也不报错** | 起第二发 = 两个探针抢同一块 GPU 初始化（断路器本该防的）；报错 = 用户以为自己点坏了什么 |
-| daemon | 加入时**不刷新** `recoveryStartedAt` | 进度永远归零，用户看不到它前进 |
-| 界面 | `recovering` 为真 ⇒ 按钮 `disabled` | 用户根本点不出第二发（连点在界面层就被挡住了） |
+| daemon | 加入时**不刷新** `recoveryStartedAt`                                    | 进度永远归零，用户看不到它前进                                                          |
+| 界面   | `recovering` 为真 ⇒ 按钮 `disabled`                                     | 用户根本点不出第二发（连点在界面层就被挡住了）                                          |
 
 `[实测]` 连点 3 次：`started` 三次都是 `false`、`recovering` 三次都是 `true`（不是拒绝）、
 `recoveryStartedAt` 三次都等于第一发那个、**探针总 spawn 数 +1**。
@@ -1396,18 +1419,19 @@ when you return.
 
 **逐个核过全仓，含 `.mjs` / `.js` / `.json` / `.yml` / shell**（你点名的那条：孤儿检查器只扫 `.tsx?`）：
 
-| 类别 | 数量 | 位置 |
-|---|---|---|
-| 类型声明 | 3 | `setup.ts` `RuntimeDetection`、`hardware.ts` `RuntimeDiagnostics`、`shared/api.ts` |
-| 生产方 | 2 | `detectRuntimeHardware()`、`toDiagnostics()` |
-| 测试 fixture | 1 | 我上轮自己写的 `HW` 桩里那行 `degradationChain: ['cpu']`（没有任何断言读它） |
-| 注释/文档 | 4 | ADR-003、两份 inbox |
-| **真实读者** | **0** | —— |
+| 类别         | 数量  | 位置                                                                               |
+| ------------ | ----- | ---------------------------------------------------------------------------------- |
+| 类型声明     | 3     | `setup.ts` `RuntimeDetection`、`hardware.ts` `RuntimeDiagnostics`、`shared/api.ts` |
+| 生产方       | 2     | `detectRuntimeHardware()`、`toDiagnostics()`                                       |
+| 测试 fixture | 1     | 我上轮自己写的 `HW` 桩里那行 `degradationChain: ['cpu']`（没有任何断言读它）       |
+| 注释/文档    | 4     | ADR-003、两份 inbox                                                                |
+| **真实读者** | **0** | ——                                                                                 |
 
 **`.mjs` 侧确认为 0**：`packages/downloader/scripts/reference-server.mjs` 处理
 `/api/runtime/hardware` 但**完全忽略 query、也不回 `runtime` 对象**。没有撞到真实调用方。
 
 按你的判据删了，连同两个只为它存在的东西：
+
 - **`nextCandidates()`**（`packages/runtime`）—— 唯一用途就是算那个字段；
   它包的 `preferenceOrder()` 仍在用（`backendPreference()`），**没有**被一起删。
 - **`resetBreaker()`**（daemon）—— 唯一调用方是被我改掉的那条路。
@@ -1426,6 +1450,7 @@ BreakerNotice.tsx:8              import（两个）
 BreakerNotice.tsx:40/41          调用
 RuntimePage.tsx:21/193           <BreakerNotice> 真的挂在页面上
 ```
+
 `pnpm check:orphans` 上轮与本轮都是 `✔ 没有新的零引用导出`。
 **来源大概是 `coordination/inbox/prebuilt.md:81`** —— 那句话把它们称作"半成品"，
 写的时候（T-174 落地前）是对的，现在过期了。我没有去改别人的 inbox。
@@ -1438,28 +1463,28 @@ RuntimePage.tsx:21/193           <BreakerNotice> 真的挂在页面上
 
 ### ⑦ 门禁（绑在 `ad5a1b9`，隔离 worktree + `pnpm install --frozen-lockfile`）
 
-| 门禁 | 结果 |
-|---|---|
-| `pnpm -r test` | **1508 pass / 0 fail**（上轮 1489；我 +6，其余是 health 那位的 `97534c8`） |
-| `npx tsc -b` | ✅ |
-| `npx eslint .` | ✅ exit 0 |
-| `pnpm build:safe` | ✅（未跑 `pnpm -r build`） |
-| `pnpm lint-workflows` | ✅ 769 条 / 8 个 workflow |
-| `pnpm test:ci-scripts` | ✅ 22 passed |
-| `pnpm check:orphans` | ✅ 没有新的零引用导出，基线未动（删了两个导出，只降不升） |
+| 门禁                   | 结果                                                                       |
+| ---------------------- | -------------------------------------------------------------------------- |
+| `pnpm -r test`         | **1508 pass / 0 fail**（上轮 1489；我 +6，其余是 health 那位的 `97534c8`） |
+| `npx tsc -b`           | ✅                                                                         |
+| `npx eslint .`         | ✅ exit 0                                                                  |
+| `pnpm build:safe`      | ✅（未跑 `pnpm -r build`）                                                 |
+| `pnpm lint-workflows`  | ✅ 769 条 / 8 个 workflow                                                  |
+| `pnpm test:ci-scripts` | ✅ 22 passed                                                               |
+| `pnpm check:orphans`   | ✅ 没有新的零引用导出，基线未动（删了两个导出，只降不升）                  |
 
 **反向验证 8/8 全红**：
 
-| 变异 | 坏了用户会怎样 | 结果 |
-|---|---|---|
-| M1 手点改回交互预算 | 冷 Mac 上手点必然超时 —— 点了跟没点一样 | 🔴 |
-| M2 手点绕过单飞 | 连点/多标签页各起一发，抢同一块 GPU 初始化 | 🔴 |
-| M3 加入等待时刷新起跑时刻 | 进度永远归零，用户看不到它前进 | 🔴 |
-| M4 「忙」改回读 `isPending` | 那 90 秒界面一片安静（请求几十毫秒就回来了） | 🔴 |
-| M5 已等时长前端从 0 数 | 切走再回来进度归零 | 🔴 |
-| M6 等待上限硬编 10 秒 | daemon 调预算时界面开始说谎 | 🔴 |
-| M7 恢复后不补 `?refresh=1` | 提示块没了而芯片还是灰的 | 🔴 |
-| M8 正在重试时放开按钮 | 用户能点出第二发，撞穿单飞 | 🔴 |
+| 变异                        | 坏了用户会怎样                               | 结果 |
+| --------------------------- | -------------------------------------------- | ---- |
+| M1 手点改回交互预算         | 冷 Mac 上手点必然超时 —— 点了跟没点一样      | 🔴   |
+| M2 手点绕过单飞             | 连点/多标签页各起一发，抢同一块 GPU 初始化   | 🔴   |
+| M3 加入等待时刷新起跑时刻   | 进度永远归零，用户看不到它前进               | 🔴   |
+| M4 「忙」改回读 `isPending` | 那 90 秒界面一片安静（请求几十毫秒就回来了） | 🔴   |
+| M5 已等时长前端从 0 数      | 切走再回来进度归零                           | 🔴   |
+| M6 等待上限硬编 10 秒       | daemon 调预算时界面开始说谎                  | 🔴   |
+| M7 恢复后不补 `?refresh=1`  | 提示块没了而芯片还是灰的                     | 🔴   |
+| M8 正在重试时放开按钮       | 用户能点出第二发，撞穿单飞                   | 🔴   |
 
 ★ **M1 第一次跑是"存活"的，而它暴露了我自己测试里的一个真缺口** ——
 新写的那组只断言了**报出来的**预算（`recoveryTimeoutMs > PROBE_TIMEOUT_MS`），

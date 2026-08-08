@@ -95,8 +95,12 @@ export async function readWavPcmInfo(path: string): Promise<WavPcmInfo> {
     }
 
     let pos = 12;
-    let fmt: { sampleRate: number; channels: number; bitsPerSample: number; format: number } | null =
-      null;
+    let fmt: {
+      sampleRate: number;
+      channels: number;
+      bitsPerSample: number;
+      format: number;
+    } | null = null;
     let data: { offset: number; declared: number } | null = null;
 
     while (pos + 8 <= head.length) {
@@ -130,8 +134,7 @@ export async function readWavPcmInfo(path: string): Promise<WavPcmInfo> {
     }
 
     const available = Math.max(0, fileBytes - data.offset);
-    const dataBytes =
-      data.declared > 0 && data.declared <= available ? data.declared : available;
+    const dataBytes = data.declared > 0 && data.declared <= available ? data.declared : available;
 
     return {
       sampleRate: fmt.sampleRate,
@@ -173,7 +176,10 @@ export function encodeOmpk(p: {
   header.writeUInt32LE(p.samplesPerPixel, 6);
   // u32 上限约 49.7 天，音频不可能超；夹一下只是不想在极端脏数据上写出乱码
   header.writeUInt32LE(Math.max(0, Math.min(0xffff_ffff, Math.round(p.durationMs))), 10);
-  return Buffer.concat([header, Buffer.from(p.values.buffer, p.values.byteOffset, p.values.length)]);
+  return Buffer.concat([
+    header,
+    Buffer.from(p.values.buffer, p.values.byteOffset, p.values.length),
+  ]);
 }
 
 /** int16 → Int8（−127…127）。用 127 而不是 128，与解码器的 `v / 127` 严格互逆。 */

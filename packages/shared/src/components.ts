@@ -16,7 +16,13 @@
  */
 
 /** How to ask an upstream project what its latest release is. */
-export const UPSTREAM_KINDS = ['github-release', 'github-tag', 'npm', 'huggingface', 'static'] as const;
+export const UPSTREAM_KINDS = [
+  'github-release',
+  'github-tag',
+  'npm',
+  'huggingface',
+  'static',
+] as const;
 export type UpstreamKind = (typeof UPSTREAM_KINDS)[number];
 
 export interface UpstreamSource {
@@ -157,8 +163,16 @@ export function compareVersions(a: string, b: string): number {
   const buildB = /^b(\d+)$/.exec(b);
   if (buildA && buildB) return Number(buildA[1]) - Number(buildB[1]);
 
-  const numsA = a.replace(/^v/, '').split(/[.\-+]/).map((x) => Number(x)).filter((x) => Number.isFinite(x));
-  const numsB = b.replace(/^v/, '').split(/[.\-+]/).map((x) => Number(x)).filter((x) => Number.isFinite(x));
+  const numsA = a
+    .replace(/^v/, '')
+    .split(/[.\-+]/)
+    .map((x) => Number(x))
+    .filter((x) => Number.isFinite(x));
+  const numsB = b
+    .replace(/^v/, '')
+    .split(/[.\-+]/)
+    .map((x) => Number(x))
+    .filter((x) => Number.isFinite(x));
   if (numsA.length && numsB.length) {
     for (let i = 0; i < Math.max(numsA.length, numsB.length); i++) {
       const d = (numsA[i] ?? 0) - (numsB[i] ?? 0);

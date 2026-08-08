@@ -3,6 +3,7 @@
 ## [2026-08-05 22:15] T-144 DONE
 
 交付:
+
 - 提交 `07584d9`（摘 llama.cpp）、`bde374e`（修 CI 11 条）—— **均未 push**
 - 新增 `.github/workflows/ci.yml`、`scripts/ci/{emit-pack-manifest,merge-backend-manifest,lint-workflows,selftest-ci-manifest}.mjs`、`scripts/ci/selftest-build-whisper.sh`
 - 改 `.github/workflows/build-backends.yml`、`scripts/build-whisper.sh`、两份 manifest、`.gitmodules` 等
@@ -55,11 +56,11 @@ llamacpp-metal-macos-arm64   | applicable=false | kind=platform
 
 `[读码]` 三段逐个核过，没有一处按 engine 过滤：
 
-| 位置 | 它做了什么 |
-|---|---|
-| `apps/daemon/src/http/rest/backends.ts:242` | `state.backendCatalog.packs.map(...)` —— **整个目录原样映射出去** |
-| `apps/web/src/features/runtime/RuntimePage.tsx:80-81` | `applicable` 的进主列表，`!applicable` 的才折进 `<details>` |
-| `apps/web/src/features/runtime/components/BackendPackCard.tsx:82` | `disabled={installing \|\| !pack.applicable \|\| pendingCi}` |
+| 位置                                                              | 它做了什么                                                        |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `apps/daemon/src/http/rest/backends.ts:242`                       | `state.backendCatalog.packs.map(...)` —— **整个目录原样映射出去** |
+| `apps/web/src/features/runtime/RuntimePage.tsx:80-81`             | `applicable` 的进主列表，`!applicable` 的才折进 `<details>`       |
+| `apps/web/src/features/runtime/components/BackendPackCard.tsx:82` | `disabled={installing \|\| !pack.applicable \|\| pendingCi}`      |
 
 而 `pendingCi` 来自 `pack.availability === 'pending-ci'`，**这 7 个包一个都没有
 `availability` 字段**（`[实测]` 逐个打印过）→ `pendingCi` 恒 false
@@ -73,15 +74,15 @@ llamacpp-metal-macos-arm64   | applicable=false | kind=platform
 
 ## 摘了什么
 
-| 对象 | 前 → 后 |
-|---|---|
-| `vendor/llama.cpp` submodule | 工作副本 165 MB / `.git/modules` 36 MB → **0**。`deinit` → `git rm` → `rm -rf .git/modules/vendor/llama.cpp` |
-| `git submodule status` | 5 条 → **4 条**，无半摘状态 |
-| `.git/config` 的 `submodule.*` | 5 组 → 4 组，无残留 |
-| `vendor/manifests/backends.json` | 15 包 → **8 包** |
-| `vendor/manifests/components.json` | 8 条 → **7 条** |
-| `scripts/license-report.mjs` | A 类 5 → **4**（`pnpm license:report` 实跑确认 `A:4`） |
-| `.gitmodules` / `.prettierignore` / `.gitignore` 注释 / `vendor/README.md` | 全部同步 |
+| 对象                                                                       | 前 → 后                                                                                                      |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `vendor/llama.cpp` submodule                                               | 工作副本 165 MB / `.git/modules` 36 MB → **0**。`deinit` → `git rm` → `rm -rf .git/modules/vendor/llama.cpp` |
+| `git submodule status`                                                     | 5 条 → **4 条**，无半摘状态                                                                                  |
+| `.git/config` 的 `submodule.*`                                             | 5 组 → 4 组，无残留                                                                                          |
+| `vendor/manifests/backends.json`                                           | 15 包 → **8 包**                                                                                             |
+| `vendor/manifests/components.json`                                         | 8 条 → **7 条**                                                                                              |
+| `scripts/license-report.mjs`                                               | A 类 5 → **4**（`pnpm license:report` 实跑确认 `A:4`）                                                       |
+| `.gitmodules` / `.prettierignore` / `.gitignore` 注释 / `vendor/README.md` | 全部同步                                                                                                     |
 
 > ⚠️ **push 体量不受影响**：submodule 的内容从来没进过本仓库的对象库
 > （gitlink 只是 40 字节的 SHA）。`.git` 现在 34 MiB。
@@ -103,7 +104,10 @@ llamacpp-metal-macos-arm64   | applicable=false | kind=platform
 `apps/daemon/src/pipeline/ytdlpInstall.test.ts` 新增：
 
 ```ts
-assert.deepEqual(packs.filter((p) => p.engine === 'llama.cpp').map((p) => p.id), []);
+assert.deepEqual(
+  packs.filter((p) => p.engine === 'llama.cpp').map((p) => p.id),
+  [],
+);
 ```
 
 判据是 **`engine` 字段**，不是 `llamacpp-` 前缀 —— 换个包名照样红。
@@ -145,19 +149,19 @@ assert.deepEqual(packs.filter((p) => p.engine === 'llama.cpp').map((p) => p.id),
 
 ## 逐条
 
-| # | 处理 | 我的判断 |
-|---|---|---|
-| **C1** 整份覆盖 `backends.json` | 改成 `scripts/ci/merge-backend-manifest.mjs`，按 id **upsert** | 按盘点改 + **加了一条盘点没提的**：见下「上游优先」 |
-| **C2** fragment 与 `BackendPackSchema` 不兼容 | 改成 `scripts/ci/emit-pack-manifest.mjs`（零依赖 node），`availability:"pending-ci"` + `mirrors:[]` | 按盘点改。`pending-ci` 不是将就 —— schema 早就为它留了 superRefine 的例外，前端也会据此禁用按钮 |
-| **C3** 顶层漏 `catalogVersion` | merge 脚本沿用现有值，可 `--catalog-version` 覆盖 | 按盘点改 |
-| **C4** `if: always()` → `packs: []` 绿灯 | **删掉**，另加两道 | 按盘点改，见下「失败即红」 |
-| **C5** 签名检查 glob 落空即静默通过 | 改成 `find` + **计数**，检了 0 个就红 | 按盘点改 |
-| **C6** `choco install ninja` 装了不用 | **删掉安装**，不加 `-G Ninja` | ⚠️ **我没按盘点建议的那半边做**，理由见下 |
-| **C7** 硬编码 `.build/whisper-win32-*/bin` | `build-whisper.sh` 把 `bin_dir`/`stage_dir`/`pack_id` 导出到 `$GITHUB_OUTPUT`；并新增 `bin/Release` 候选 | 按盘点改 + 修了盘点只是"怀疑"的那一半，见下 |
-| **C8** `$ORIGIN` 对 macOS 无效 | 照抄 `build-probe.sh:70-73` 的分平台写法 | 按盘点改 |
-| **C9** pack id `win32/darwin` vs `win/macos` | 新增 `PACK_OS` 映射，id 用 `win`/`macos`，schema 的 `os` 字段仍是 `win32`/`darwin` | 按盘点改，选了**手写 manifest 已经在用**的那套 |
-| **C10** probe 名字对不上 | `setup.ts:70` → `openmemo-probe` | 按盘点改（`[实测 grep]` 全仓 6 处都用 `openmemo-probe`，只有这一行是另一个名字） |
-| **C11** 没有 TS 门禁 | 新增 `.github/workflows/ci.yml` | 按盘点改，**保持 workflow_dispatch-only** |
+| #                                             | 处理                                                                                                     | 我的判断                                                                                        |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| **C1** 整份覆盖 `backends.json`               | 改成 `scripts/ci/merge-backend-manifest.mjs`，按 id **upsert**                                           | 按盘点改 + **加了一条盘点没提的**：见下「上游优先」                                             |
+| **C2** fragment 与 `BackendPackSchema` 不兼容 | 改成 `scripts/ci/emit-pack-manifest.mjs`（零依赖 node），`availability:"pending-ci"` + `mirrors:[]`      | 按盘点改。`pending-ci` 不是将就 —— schema 早就为它留了 superRefine 的例外，前端也会据此禁用按钮 |
+| **C3** 顶层漏 `catalogVersion`                | merge 脚本沿用现有值，可 `--catalog-version` 覆盖                                                        | 按盘点改                                                                                        |
+| **C4** `if: always()` → `packs: []` 绿灯      | **删掉**，另加两道                                                                                       | 按盘点改，见下「失败即红」                                                                      |
+| **C5** 签名检查 glob 落空即静默通过           | 改成 `find` + **计数**，检了 0 个就红                                                                    | 按盘点改                                                                                        |
+| **C6** `choco install ninja` 装了不用         | **删掉安装**，不加 `-G Ninja`                                                                            | ⚠️ **我没按盘点建议的那半边做**，理由见下                                                       |
+| **C7** 硬编码 `.build/whisper-win32-*/bin`    | `build-whisper.sh` 把 `bin_dir`/`stage_dir`/`pack_id` 导出到 `$GITHUB_OUTPUT`；并新增 `bin/Release` 候选 | 按盘点改 + 修了盘点只是"怀疑"的那一半，见下                                                     |
+| **C8** `$ORIGIN` 对 macOS 无效                | 照抄 `build-probe.sh:70-73` 的分平台写法                                                                 | 按盘点改                                                                                        |
+| **C9** pack id `win32/darwin` vs `win/macos`  | 新增 `PACK_OS` 映射，id 用 `win`/`macos`，schema 的 `os` 字段仍是 `win32`/`darwin`                       | 按盘点改，选了**手写 manifest 已经在用**的那套                                                  |
+| **C10** probe 名字对不上                      | `setup.ts:70` → `openmemo-probe`                                                                         | 按盘点改（`[实测 grep]` 全仓 6 处都用 `openmemo-probe`，只有这一行是另一个名字）                |
+| **C11** 没有 TS 门禁                          | 新增 `.github/workflows/ci.yml`                                                                          | 按盘点改，**保持 workflow_dispatch-only**                                                       |
 
 外加两条卫生项：`permissions` 从 `contents: write` **收窄到 `contents: read`**
 （这个 workflow 不建 release、不推 commit，publish 步骤只 echo），加 `concurrency`。
@@ -218,10 +222,10 @@ assert.deepEqual(packs.filter((p) => p.engine === 'llama.cpp').map((p) => p.id),
 
 ## 覆盖到了
 
-| 脚本 | 覆盖的 job 步骤 |
-|---|---|
-| `scripts/ci/lint-workflows.mjs` | YAML 能否解析 · **job/step 键名是否 GitHub 认识**（非法键会让整份 workflow 被拒） · `needs:` 指向的 job 存在 · `${{ steps.X.outputs.Y }}` 的 X 在同 job 有 `id:` · **失败即红**（禁 `always()`/`continue-on-error`） · T-144 各条改动的定点断言 |
-| `scripts/ci/selftest-ci-manifest.mjs` | `merge-manifest` job 整条：fragment 生成 → **真 `validateBackendManifest`** → upsert → 落盘。含 6 条反向用例 |
+| 脚本                                   | 覆盖的 job 步骤                                                                                                                                                                                                                                   |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/ci/lint-workflows.mjs`        | YAML 能否解析 · **job/step 键名是否 GitHub 认识**（非法键会让整份 workflow 被拒） · `needs:` 指向的 job 存在 · `${{ steps.X.outputs.Y }}` 的 X 在同 job 有 `id:` · **失败即红**（禁 `always()`/`continue-on-error`） · T-144 各条改动的定点断言   |
+| `scripts/ci/selftest-ci-manifest.mjs`  | `merge-manifest` job 整条：fragment 生成 → **真 `validateBackendManifest`** → upsert → 落盘。含 6 条反向用例                                                                                                                                      |
 | `scripts/ci/selftest-build-whisper.sh` | 三个构建 job 的 `Build pack` 步骤里**除编译外的全部逻辑**：用桩 `cmake` 造出真实目录布局，`build-whisper.sh` **原封不动跑它自己的代码**。桩 `uname` 让本机走到 **win / macos 两条分支**（`platform` §3.2 说的"从写下来那天起没被执行过"的那一类） |
 
 `[实测]` 我还把 merge job 的真实命令按 CI 的样子跑了一遍
@@ -278,6 +282,7 @@ summary 表格正常产出，且 `sha256sum` 确认**真的 `backends.json` 一�
 ```
 
 每次反向验证前都先 `grep` 确认坏行**在即将运行的产物里**：
+
 - `[G]/[H]/[I]` 的目标是脚本/YAML 本身，直接 grep 到了行号；
 - `[A]–[F]` 与 llama.cpp 那两条走的是 `apps/daemon/dist/**`，测试**直接读源 JSON**
   （`REPO_ROOT/vendor/manifests/`，不经 dist），所以 grep 源文件即可，已 grep。
@@ -319,7 +324,7 @@ summary 表格正常产出，且 `sha256sum` 确认**真的 `backends.json` 一�
 
 → **现在按 build-backends 的 Run workflow = 11 条原样发生。**
 → **先推 `bde374e`，再按按钮。** 顺序反了没有第二次机会：
-   C1 会把 `backends.json` 覆盖成只含本次产物，C4 会让它绿着通过。
+C1 会把 `backends.json` 覆盖成只含本次产物，C4 会让它绿着通过。
 
 （另：`zz-ci-runner-probe.yml`（`b44d574`）是 T-145 的探针，不是我的。
 我 `git add` 前对过 `git status`，**没有把它扫进我的提交**。）

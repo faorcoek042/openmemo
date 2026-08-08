@@ -403,7 +403,9 @@ export class Repos {
   }
 
   /** 取该笔记的主媒体源（重跑/续跑要用它的原始输入）。 */
-  primarySourceOf(noteId: number): { id: number; kind: string; input_url: string | null } | undefined {
+  primarySourceOf(
+    noteId: number,
+  ): { id: number; kind: string; input_url: string | null } | undefined {
     return this.db
       .prepare<{ id: number; kind: string; input_url: string | null }>(
         `SELECT id, kind, input_url FROM media_sources WHERE note_id = :n ORDER BY id LIMIT 1`,

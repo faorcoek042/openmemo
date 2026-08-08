@@ -19,7 +19,12 @@
 
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import type { ComponentStatus, GetComponentsResponse, Provenance, UpstreamSource } from '@openmemo/shared';
+import type {
+  ComponentStatus,
+  GetComponentsResponse,
+  Provenance,
+  UpstreamSource,
+} from '@openmemo/shared';
 import { checkAllUpstreams } from './upstream.js';
 import { isUpdateAvailable } from './upstream.js';
 import type { ArtifactStore } from './store.js';
@@ -63,7 +68,11 @@ export async function loadComponentRegistry(manifestPath: string): Promise<Compo
 async function readInstalledVersions(store: ArtifactStore): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   for (const kind of STORE_KINDS) {
-    const records = await store.listManifests<{ id?: string; version?: string; catalogVersion?: string }>(kind);
+    const records = await store.listManifests<{
+      id?: string;
+      version?: string;
+      catalogVersion?: string;
+    }>(kind);
     for (const r of records) {
       if (r.id) out.set(r.id, r.version ?? r.catalogVersion ?? 'installed');
     }
@@ -121,7 +130,10 @@ export async function listComponents(opts: ListComponentsOptions): Promise<GetCo
   const installed = await readInstalledVersions(opts.store);
   const rollback = await readRollbackVersions(opts.store);
 
-  let checks = new Map<string, { latestVersion: string | null; error: string | null; checkedAt: string }>();
+  let checks = new Map<
+    string,
+    { latestVersion: string | null; error: string | null; checkedAt: string }
+  >();
   let online = false;
   if (opts.checkUpstream) {
     checks = await checkAllUpstreams(

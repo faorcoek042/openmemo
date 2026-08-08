@@ -18,15 +18,9 @@
       "displayNameZh": "Silero 语音活动检测（ONNX · sherpa 引擎用）",
       "descriptionZh": "语音活动检测，**sherpa-onnx 引擎专用格式**。F3 流式录音走这条路径。whisper.cpp 用不了这个文件，它要 ggml 格式的那一个。",
       "descriptionEn": "VAD in ONNX format, for the sherpa-onnx engine (F3 streaming). whisper.cpp CANNOT load this file — it needs the ggml build.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "vad"
-      ],
-      "engines": [
-        "sherpa-onnx"
-      ],
+      "languages": ["multi"],
+      "tags": ["vad"],
+      "engines": ["sherpa-onnx"],
       "files": [
         {
           "role": "weights",
@@ -82,15 +76,9 @@
       "displayNameZh": "Silero 语音活动检测（ggml · whisper.cpp 用）",
       "descriptionZh": "语音活动检测，**whisper.cpp 专用 ggml 格式**（`whisper-cli --vad --vad-model`）。离线转写分块靠它。sherpa 引擎用不了这个文件，它要 ONNX 那一个。",
       "descriptionEn": "VAD in ggml format, required by whisper.cpp (`--vad --vad-model`). The sherpa-onnx engine CANNOT load this file — it needs the ONNX build.",
-      "languages": [
-        "multi"
-      ],
-      "tags": [
-        "vad"
-      ],
-      "engines": [
-        "whisper.cpp"
-      ],
+      "languages": ["multi"],
+      "tags": ["vad"],
+      "engines": ["whisper.cpp"],
       "files": [
         {
           "role": "weights",
@@ -156,16 +144,9 @@
       "displayNameZh": "sherpa 流式中文 zh-14M",
       "descriptionZh": "F3 录音转文字的流式引擎：边说边出字，带逐字时间戳。仅中文、仅流式 —— 离线批量转写请用 Whisper 或 Paraformer。",
       "descriptionEn": "The streaming engine behind live recording (F3): text appears while you speak, with per-token timestamps. Chinese-only and streaming-only.",
-      "languages": [
-        "zh"
-      ],
-      "tags": [
-        "streaming",
-        "required-for-f3"
-      ],
-      "engines": [
-        "sherpa-onnx"
-      ],
+      "languages": ["zh"],
+      "tags": ["streaming", "required-for-f3"],
+      "engines": ["sherpa-onnx"],
       "files": [
         {
           "role": "weights",
@@ -260,10 +241,7 @@
       },
       "benchmark": null,
       "catalogVersion": "2026.08.02",
-      "capabilityCaveats": [
-        "仅支持中文",
-        "仅用于流式录音，不能做离线批量转写"
-      ],
+      "capabilityCaveats": ["仅支持中文", "仅用于流式录音，不能做离线批量转写"],
       "speedEvidence": {
         "kind": "unmeasured",
         "reason": "artifact_differs"
@@ -284,16 +262,9 @@
       "displayNameZh": "Paraformer 中文（快）",
       "descriptionZh": "中文默认离线引擎，比 Whisper 快很多。需要逐字对齐或中英混排排版时可一键切回 Whisper large-v3-turbo。",
       "descriptionEn": "Default offline Chinese engine, much faster than Whisper. Switch back to Whisper large-v3-turbo when you need word-level alignment.",
-      "languages": [
-        "zh"
-      ],
-      "tags": [
-        "recommended-default-zh",
-        "offline"
-      ],
-      "engines": [
-        "sherpa-onnx"
-      ],
+      "languages": ["zh"],
+      "tags": ["recommended-default-zh", "offline"],
+      "engines": ["sherpa-onnx"],
       "files": [
         {
           "role": "weights",
@@ -404,17 +375,9 @@
       "displayNameZh": "中文标点恢复",
       "descriptionZh": "给转写结果补标点。不装的话中文输出是一整段没有标点的文字，几乎没法读。中英双语词表。",
       "descriptionEn": "Restores punctuation. Without it Chinese output is one unpunctuated run of characters.",
-      "languages": [
-        "zh",
-        "en"
-      ],
-      "tags": [
-        "punctuation",
-        "recommended-with-zh"
-      ],
-      "engines": [
-        "sherpa-onnx"
-      ],
+      "languages": ["zh", "en"],
+      "tags": ["punctuation", "recommended-with-zh"],
+      "engines": ["sherpa-onnx"],
       "files": [
         {
           "role": "weights",

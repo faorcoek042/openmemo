@@ -50,12 +50,16 @@ const done = new Promise((resolve) => {
     const msg = JSON.parse(String(raw));
     if (msg.type === 'ready') {
       ready = msg;
-      console.log(`[3] WS ready: recording=${msg.recordingUid} note=${msg.noteUid} sr=${msg.sampleRate}`);
+      console.log(
+        `[3] WS ready: recording=${msg.recordingUid} note=${msg.noteUid} sr=${msg.sampleRate}`,
+      );
     } else if (msg.type === 'partial') {
       partials.push(msg);
     } else if (msg.type === 'final') {
       finals.push(msg);
-      console.log(`    final seq=${msg.seq} [${(msg.startMs / 1000).toFixed(1)}-${(msg.endMs / 1000).toFixed(1)}s] ${msg.text.slice(0, 44)}`);
+      console.log(
+        `    final seq=${msg.seq} [${(msg.startMs / 1000).toFixed(1)}-${(msg.endMs / 1000).toFixed(1)}s] ${msg.text.slice(0, 44)}`,
+      );
     } else if (msg.type === 'stopped') {
       stopped = msg;
       resolve();
@@ -113,23 +117,35 @@ if (partials.length) {
   for (const arr of byUtt.values()) {
     for (let i = 1; i < arr.length; i++) if (!arr[i].startsWith(arr[i - 1])) monotonic = false;
   }
-  console.log(`    partial 单调增长（契约语义 4）: ${monotonic ? '✅' : '❌'}（${byUtt.size} 个 utterance）`);
+  console.log(
+    `    partial 单调增长（契约语义 4）: ${monotonic ? '✅' : '❌'}（${byUtt.size} 个 utterance）`,
+  );
   console.log(`    示例 partial: "${partials[Math.floor(partials.length / 2)].text.slice(0, 40)}"`);
 }
 if (stopped) {
-  console.log(`    stopped: segmentCount=${stopped.segmentCount} rerunJobUid=${stopped.rerunJobUid ?? '(无)'}`);
+  console.log(
+    `    stopped: segmentCount=${stopped.segmentCount} rerunJobUid=${stopped.rerunJobUid ?? '(无)'}`,
+  );
 }
 
 // ---- 回读：落库与重跑 job ----
 if (ready) {
-  const noteRes = await fetch(`${base}/api/notes/${ready.noteUid}`, { headers: { Cookie: cookie } });
+  const noteRes = await fetch(`${base}/api/notes/${ready.noteUid}`, {
+    headers: { Cookie: cookie },
+  });
   const note = await noteRes.json();
   console.log(`\n[7] REST 回读: status=${note.status} kind=${note.kind} 段数=${note.segmentCount}`);
-  const trRes = await fetch(`${base}/api/notes/${ready.noteUid}/transcript`, { headers: { Cookie: cookie } });
+  const trRes = await fetch(`${base}/api/notes/${ready.noteUid}/transcript`, {
+    headers: { Cookie: cookie },
+  });
   const tr = await trRes.json();
-  console.log(`    转写稿 ${tr.segments.length} 段（engine=${tr.transcript?.engineId} model=${tr.transcript?.modelId}）`);
+  console.log(
+    `    转写稿 ${tr.segments.length} 段（engine=${tr.transcript?.engineId} model=${tr.transcript?.modelId}）`,
+  );
   for (const s of tr.segments.slice(0, 5)) {
-    console.log(`      [${String(s.startMs).padStart(6)}-${String(s.endMs).padStart(6)}] ${s.text.slice(0, 48)}`);
+    console.log(
+      `      [${String(s.startMs).padStart(6)}-${String(s.endMs).padStart(6)}] ${s.text.slice(0, 48)}`,
+    );
   }
 }
 

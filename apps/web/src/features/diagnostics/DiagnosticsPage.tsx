@@ -132,7 +132,8 @@ interface Row {
  * 同一个语义在同一页出现两套画法，他就得先学会两套。
  */
 function LevelIcon({ level }: { level: Level }) {
-  if (level === 'ok') return <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-good" aria-hidden />;
+  if (level === 'ok')
+    return <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-good" aria-hidden />;
   if (level === 'warn')
     return <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />;
   return <XCircle className="mt-0.5 size-3.5 shrink-0 text-critical" aria-hidden />;

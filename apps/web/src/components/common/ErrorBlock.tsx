@@ -36,7 +36,9 @@ export function resolveErrorText(
 
   // 未知 code → 用服务端文案兜底
   if (err instanceof ApiError) {
-    const server = locale.startsWith('zh') ? err.serverMessageZh || err.serverMessage : err.serverMessage;
+    const server = locale.startsWith('zh')
+      ? err.serverMessageZh || err.serverMessage
+      : err.serverMessage;
     return { title: server || err.message || t('errors.unknown.title'), detail: '' };
   }
   /**
@@ -97,7 +99,9 @@ export function ErrorBlock({ error, onRetry, onRemediate, className }: ErrorBloc
       setReconnecting(false);
     }
   };
-  const raw = api ? JSON.stringify({ code: api.code, status: api.status, details: api.details }, null, 2) : String(error);
+  const raw = api
+    ? JSON.stringify({ code: api.code, status: api.status, details: api.details }, null, 2)
+    : String(error);
 
   return (
     <div className={cn('rounded-lg border border-line bg-surface-1 p-4', className)}>
@@ -109,7 +113,12 @@ export function ErrorBlock({ error, onRetry, onRemediate, className }: ErrorBloc
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {isAuth ? (
-              <Button size="sm" variant="primary" onClick={() => void reconnect()} disabled={reconnecting}>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => void reconnect()}
+                disabled={reconnecting}
+              >
                 {reconnecting ? t('errors.reconnecting') : t('errors.reconnect')}
               </Button>
             ) : null}
@@ -124,9 +133,7 @@ export function ErrorBlock({ error, onRetry, onRemediate, className }: ErrorBloc
             {api?.remediation ? (
               <RemediationButton
                 remediation={api.remediation}
-                {...(onRemediate
-                  ? { onAct: (r) => onRemediate(r.action, r.params) }
-                  : {})}
+                {...(onRemediate ? { onAct: (r) => onRemediate(r.action, r.params) } : {})}
                 {...(action ? { fallbackLabel: action } : {})}
               />
             ) : null}

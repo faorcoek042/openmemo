@@ -42,16 +42,48 @@ const WF_DIR = join(REPO_ROOT, '.github', 'workflows');
 
 /* GitHub Actions 的合法键名。来源：docs.github.com「Workflow syntax for GitHub Actions」。 */
 const WORKFLOW_KEYS = new Set([
-  'name', 'run-name', 'on', 'permissions', 'env', 'defaults', 'concurrency', 'jobs',
+  'name',
+  'run-name',
+  'on',
+  'permissions',
+  'env',
+  'defaults',
+  'concurrency',
+  'jobs',
 ]);
 const JOB_KEYS = new Set([
-  'name', 'permissions', 'needs', 'if', 'runs-on', 'environment', 'concurrency',
-  'outputs', 'env', 'defaults', 'steps', 'timeout-minutes', 'strategy',
-  'continue-on-error', 'container', 'services', 'uses', 'with', 'secrets',
+  'name',
+  'permissions',
+  'needs',
+  'if',
+  'runs-on',
+  'environment',
+  'concurrency',
+  'outputs',
+  'env',
+  'defaults',
+  'steps',
+  'timeout-minutes',
+  'strategy',
+  'continue-on-error',
+  'container',
+  'services',
+  'uses',
+  'with',
+  'secrets',
 ]);
 const STEP_KEYS = new Set([
-  'id', 'if', 'name', 'uses', 'run', 'working-directory', 'shell', 'with', 'env',
-  'continue-on-error', 'timeout-minutes',
+  'id',
+  'if',
+  'name',
+  'uses',
+  'run',
+  'working-directory',
+  'shell',
+  'with',
+  'env',
+  'continue-on-error',
+  'timeout-minutes',
 ]);
 
 /** 这些 job 的失败必须让整个 workflow 变红 —— 不许被 always() / continue-on-error 绕开。 */
@@ -102,7 +134,10 @@ for (const file of files.sort()) {
       must(JOB_KEYS.has(k), `${where}: job 键 \`${k}\` 不是 GitHub 认识的键（会被整份拒绝）`);
     }
 
-    must(job?.['runs-on'] != null || job?.uses != null, `${where}: 既没有 runs-on 也不是 reusable workflow`);
+    must(
+      job?.['runs-on'] != null || job?.uses != null,
+      `${where}: 既没有 runs-on 也不是 reusable workflow`,
+    );
 
     for (const need of [].concat(job?.needs ?? [])) {
       must(jobNames.has(need), `${where}: needs 指向不存在的 job \`${need}\``);
@@ -161,22 +196,36 @@ for (const file of files.sort()) {
 /* ── 针对 T-144 改动的定点断言（钉结构，不钉措辞） ── */
 {
   const bb = parse(await readFile(join(WF_DIR, 'build-backends.yml'), 'utf8'));
-  must(bb.permissions?.contents === 'read', 'build-backends.yml: permissions 应收窄到 contents: read');
+  must(
+    bb.permissions?.contents === 'read',
+    'build-backends.yml: permissions 应收窄到 contents: read',
+  );
   must(bb.on?.workflow_dispatch !== undefined, 'build-backends.yml: 必须保留 workflow_dispatch');
   must(bb.on?.push === undefined, 'build-backends.yml: 不许自动 push 触发（用户要求第一次手动）');
   must(
     bb.jobs?.manifest?.if === undefined,
     'build-backends.yml: manifest job 不该有任何 if:（C4 的那行 always() 已删）',
   );
-  const mergeStep = (bb.jobs?.manifest?.steps ?? []).find((s) => String(s.run ?? '').includes('merge-backend-manifest.mjs'));
-  must(mergeStep != null, 'build-backends.yml: manifest job 没有调用 scripts/ci/merge-backend-manifest.mjs');
+  const mergeStep = (bb.jobs?.manifest?.steps ?? []).find((s) =>
+    String(s.run ?? '').includes('merge-backend-manifest.mjs'),
+  );
+  must(
+    mergeStep != null,
+    'build-backends.yml: manifest job 没有调用 scripts/ci/merge-backend-manifest.mjs',
+  );
   must(
     !JSON.stringify(bb.jobs?.manifest ?? {}).includes('node -e'),
     'build-backends.yml: manifest job 里又出现了 inline `node -e` —— 那种东西没有任何测试能碰到它',
   );
   const allText = JSON.stringify(bb);
-  must(!/\.build\/whisper-/.test(allText), 'build-backends.yml: 又出现了硬编码的 .build/whisper-* 路径（C7）');
-  must(!/choco install ninja/.test(allText), 'build-backends.yml: choco install ninja 回来了，而脚本仍然没有 -G Ninja（C6）');
+  must(
+    !/\.build\/whisper-/.test(allText),
+    'build-backends.yml: 又出现了硬编码的 .build/whisper-* 路径（C7）',
+  );
+  must(
+    !/choco install ninja/.test(allText),
+    'build-backends.yml: choco install ninja 回来了，而脚本仍然没有 -G Ninja（C6）',
+  );
 
   /* ═════════════════════════════════════════════════════════════════════════════════
    * ★ T-163 · 「GLIBC 下限」与「runner 标签」必须保持解耦
@@ -204,7 +253,10 @@ for (const file of files.sort()) {
     const linux = bb.jobs?.linux;
     must(linux != null, 'build-backends.yml: 没有 linux job');
     const steps = linux?.steps ?? [];
-    const runs = steps.map((s) => ({ name: s.name ?? s.uses ?? '(anon)', code: stripShellComments(s.run) }));
+    const runs = steps.map((s) => ({
+      name: s.name ?? s.uses ?? '(anon)',
+      code: stripShellComments(s.run),
+    }));
 
     /* ① 编译/链接/跑产物的每一步都必须经过 buildbox.sh。
      *
@@ -214,10 +266,7 @@ for (const file of files.sort()) {
      *   下面 ⑤ 那组断言钉的是「build-whisper.sh 里必须有那次调用 + 那条守卫」，
      *   而 build-whisper.sh 本身仍然在这张表里、仍然必须经过 buildbox.sh。
      *   —— 不这么改的话，这条断言会因为"没东西可查"而报出一个假红。 */
-    const COMPILE_MARKERS = [
-      'scripts/build-whisper.sh',
-      'scripts/ci/smoke-linux-pack.sh',
-    ];
+    const COMPILE_MARKERS = ['scripts/build-whisper.sh', 'scripts/ci/smoke-linux-pack.sh'];
     for (const marker of COMPILE_MARKERS) {
       const hits = runs.filter((r) => r.code.includes(marker));
       must(
@@ -237,7 +286,10 @@ for (const file of files.sort()) {
 
     /* ② 那个镜像必须是本仓自己的 Dockerfile 造的，且 BASE_IMAGE 写在 workflow 里（看得见）。 */
     const imgStep = runs.find((r) => r.code.includes('scripts/ci/buildbox.Dockerfile'));
-    must(imgStep != null, 'build-backends.yml#linux: 没有一步用 scripts/ci/buildbox.Dockerfile 造编译镜像');
+    must(
+      imgStep != null,
+      'build-backends.yml#linux: 没有一步用 scripts/ci/buildbox.Dockerfile 造编译镜像',
+    );
     must(
       (imgStep?.code ?? '').includes('--build-arg BASE_IMAGE='),
       'build-backends.yml#linux: `docker build` 没有显式传 BASE_IMAGE —— ' +
@@ -392,7 +444,10 @@ for (const file of files.sort()) {
       // 界面上那个数字又几个月没动过了。
       'check-version-sync.mjs',
     ]) {
-      must(cmd.includes(f), `package.json: test:ci-scripts 里没有 ${f} —— 没被跑到的自检等于不存在`);
+      must(
+        cmd.includes(f),
+        `package.json: test:ci-scripts 里没有 ${f} —— 没被跑到的自检等于不存在`,
+      );
     }
   }
 
@@ -408,7 +463,10 @@ for (const file of files.sort()) {
    * 它拦住的不是错误，是一个**已经过期的前提**。守卫该改，不是该删 ——
    * 所以这里把它翻成正向断言：现在「没有自动触发」才是违规。
    */
-  must(ci.on?.push !== undefined, 'ci.yml: 门禁必须自动触发（用户 2026-08-05 指令），on.push 不见了');
+  must(
+    ci.on?.push !== undefined,
+    'ci.yml: 门禁必须自动触发（用户 2026-08-05 指令），on.push 不见了',
+  );
   must(
     Array.isArray(ci.on?.push?.branches) && ci.on.push.branches.includes('master'),
     'ci.yml: on.push 应限定 branches: [master]（配合 pull_request，避免 PR 分支双触发）',
@@ -502,7 +560,9 @@ for (const file of files.sort()) {
 
   /* ① 顶层不许有任何权限。写在顶层会同时落到 verify 上，而 verify 的全部意义是"没有凭证"。 */
   must(
-    ru.permissions != null && typeof ru.permissions === 'object' && Object.keys(ru.permissions).length === 0,
+    ru.permissions != null &&
+      typeof ru.permissions === 'object' &&
+      Object.keys(ru.permissions).length === 0,
     `${RU}: 顶层 permissions 必须是空的（\`permissions: {}\`）—— 写权限只能挂在需要它的那一个 job 上`,
   );
 
@@ -518,10 +578,7 @@ for (const file of files.sort()) {
   /* ③ verify 不许有任何 write 权限，也不许被喂 token。 */
   const verify = ru.jobs?.verify;
   must(verify != null, `${RU}: 没有 verify job —— 上传完不校验等于只证明了"我们以为传上去了"`);
-  must(
-    [].concat(verify?.needs ?? []).includes('upload'),
-    `${RU}: verify 必须 needs: [upload]`,
-  );
+  must([].concat(verify?.needs ?? []).includes('upload'), `${RU}: verify 必须 needs: [upload]`);
   must(
     Object.values(verify?.permissions ?? {}).every((v) => v !== 'write'),
     `${RU}#verify: 拿到了 write 权限 —— 一个手里攥着写权限的校验者证明不了"匿名用户拿得到"`,
@@ -562,11 +619,23 @@ for (const file of files.sort()) {
   for (const [file, doc] of [
     [RU, ru],
     ['build-backends.yml', parse(await readFile(join(WF_DIR, 'build-backends.yml'), 'utf8'))],
-    ['mirror-model-blobs.yml', parse(await readFile(join(WF_DIR, 'mirror-model-blobs.yml'), 'utf8'))],
+    [
+      'mirror-model-blobs.yml',
+      parse(await readFile(join(WF_DIR, 'mirror-model-blobs.yml'), 'utf8')),
+    ],
   ]) {
     const text = JSON.stringify(doc);
-    for (const bad of ['release create', 'release delete', 'release edit', '--clobber', 'repo edit']) {
-      must(!text.includes(bad), `${file}: 出现了 \`${bad}\` —— 建/改/删 release 与改仓库设置不在本流水线的授权范围内`);
+    for (const bad of [
+      'release create',
+      'release delete',
+      'release edit',
+      '--clobber',
+      'repo edit',
+    ]) {
+      must(
+        !text.includes(bad),
+        `${file}: 出现了 \`${bad}\` —— 建/改/删 release 与改仓库设置不在本流水线的授权范围内`,
+      );
     }
   }
 }
@@ -619,9 +688,14 @@ for (const file of files.sort()) {
    * 光靠"方法必须是 POST"是拦不住的，得钉住它打在哪儿。
    */
   const posts = (code['release-upload.mjs'].match(/method:\s*'POST'/g) ?? []).length;
-  must(posts === 1, `scripts/ci/release-upload.mjs: 应当**恰好**有一次 POST（上传资产），实得 ${posts} 次`);
   must(
-    /function postAsset\(uploadUrlTemplate[\s\S]{0,400}method:\s*'POST'/.test(code['release-upload.mjs']),
+    posts === 1,
+    `scripts/ci/release-upload.mjs: 应当**恰好**有一次 POST（上传资产），实得 ${posts} 次`,
+  );
+  must(
+    /function postAsset\(uploadUrlTemplate[\s\S]{0,400}method:\s*'POST'/.test(
+      code['release-upload.mjs'],
+    ),
     'scripts/ci/release-upload.mjs: 那次 POST 必须在 postAsset() 里、且 URL 来自 release 自己的 upload_url' +
       '（打到 /repos/{o}/{r}/releases 上的 POST 就是"建 release"，那不在授权范围内）',
   );

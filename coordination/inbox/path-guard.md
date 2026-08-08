@@ -4,21 +4,21 @@
 
 交付（**精确清单，未使用 `git add -A`**）：
 
-| 文件 | 动作 | 归属 |
-|---|---|---|
-| `packages/runtime/src/assetPaths.ts` | 改（① realpath 复核 + `escaped` 字段） | **工作区** |
-| `packages/runtime/src/assetPaths.test.ts` | 改（+6） | **工作区** |
-| `packages/runtime/src/selfcheck.ts` | 改（① 越界分档） | **工作区** |
-| `packages/runtime/src/selfcheck.test.ts` | 改（+1） | **工作区** |
-| `packages/pipeline/src/subprocess/argGuard.ts` | 改（② platform 入参） | **工作区** |
-| `packages/pipeline/src/subprocess/__tests__/argGuard.test.ts` | 改（+6） | ⚠️ 已被 `4ee1f4a`(T-142) 带走 |
-| `apps/daemon/src/bootstrap/entrypoint.ts` | **新增**（③） | ⚠️ 已被 `4ee1f4a`(T-142) 带走 |
-| `apps/daemon/src/bootstrap/entrypoint.test.ts` | **新增**（+10） | ⚠️ 已被 `4ee1f4a`(T-142) 带走 |
-| `apps/daemon/src/main.ts` | 改（③ 用 `isDirectRun`） | ⚠️ 已被 `35a2635`(T-139) 带走 |
-| `apps/daemon/src/http/media.ts` | 改（① 403 分支） | ⚠️ 已被 `35a2635`(T-139) 带走 |
-| `apps/daemon/src/http/media.test.ts` | 改（+4） | ⚠️ 已被 `35a2635`(T-139) 带走 |
-| `apps/daemon/src/storage/migrateAssets.ts` | 改（④ 分隔符） | ⚠️ 已被 `35a2635`(T-139) 带走 |
-| `apps/daemon/src/storage/migrateAssets.test.ts` | 改（+6） | ⚠️ 已被 `35a2635`(T-139) 带走 |
+| 文件                                                          | 动作                                   | 归属                          |
+| ------------------------------------------------------------- | -------------------------------------- | ----------------------------- |
+| `packages/runtime/src/assetPaths.ts`                          | 改（① realpath 复核 + `escaped` 字段） | **工作区**                    |
+| `packages/runtime/src/assetPaths.test.ts`                     | 改（+6）                               | **工作区**                    |
+| `packages/runtime/src/selfcheck.ts`                           | 改（① 越界分档）                       | **工作区**                    |
+| `packages/runtime/src/selfcheck.test.ts`                      | 改（+1）                               | **工作区**                    |
+| `packages/pipeline/src/subprocess/argGuard.ts`                | 改（② platform 入参）                  | **工作区**                    |
+| `packages/pipeline/src/subprocess/__tests__/argGuard.test.ts` | 改（+6）                               | ⚠️ 已被 `4ee1f4a`(T-142) 带走 |
+| `apps/daemon/src/bootstrap/entrypoint.ts`                     | **新增**（③）                          | ⚠️ 已被 `4ee1f4a`(T-142) 带走 |
+| `apps/daemon/src/bootstrap/entrypoint.test.ts`                | **新增**（+10）                        | ⚠️ 已被 `4ee1f4a`(T-142) 带走 |
+| `apps/daemon/src/main.ts`                                     | 改（③ 用 `isDirectRun`）               | ⚠️ 已被 `35a2635`(T-139) 带走 |
+| `apps/daemon/src/http/media.ts`                               | 改（① 403 分支）                       | ⚠️ 已被 `35a2635`(T-139) 带走 |
+| `apps/daemon/src/http/media.test.ts`                          | 改（+4）                               | ⚠️ 已被 `35a2635`(T-139) 带走 |
+| `apps/daemon/src/storage/migrateAssets.ts`                    | 改（④ 分隔符）                         | ⚠️ 已被 `35a2635`(T-139) 带走 |
+| `apps/daemon/src/storage/migrateAssets.test.ts`               | 改（+6）                               | ⚠️ 已被 `35a2635`(T-139) 带走 |
 
 ---
 
@@ -95,12 +95,12 @@
 
 ## 1.2 攻击者怎样才能让一条指向外部的软链落进数据目录？
 
-| 路径 | 能不能 | 依据 |
-|---|---|---|
-| **`unpack.ts` 解压上游包时写软链** | **能，但需要先控制那个包** | `unpack.ts:170-205` 的 `resolveLinkTarget` **是 target-based 校验**：绝对目标拒、词法解析出 destRoot 的拒。直白的 `evil -> /etc/passwd` 进不来。**但校验是词法的**，见 §4-B2：`s→.` 配 `evil→s/../OUTSIDE.txt` 能骗过它 `[实测]`。而包的 URL 与 sha256 **钉死在 `vendor/manifests/`**，`ALLOWED_DOWNLOAD_HOSTS` 白名单，**全仓没有任何端点接受用户提供的 URL 或 manifest** `[实测 grep]` → 需要污染上游产物或改盘上的 manifest |
-| **`media_assets.rel_path` 由谁写入** | **全部由服务端生成，HTTP 客户端一个字都控制不了** | ① `transcribe.ts:298` → `archiveIntoMedia` 产出 `<noteUid>/<basename>`；② `recorder.ts:270` → 服务端拼的绝对路径；③ `migrateAssets.ts` → 重写既有行。**上传路由 `upload.ts:559` 的磁盘名是 `ulid() + 白名单扩展名`，注释亲口写着「与客户端输入**完全无关**」** `[读码]` |
-| **让迁移把记录重挂到一条软链上** | **不能** | `indexFiles`（`migrateAssets.ts:76`）用的是 `dirent.isFile()`，**对软链为 false**（dirent 是 lstat 语义）→ 软链根本不进索引 `[读码]` |
-| **`POST /api/notes/import` 指向一条软链** | 闸门本身挡不住，**但下游有 realpath 兜底** | `notes.ts:186` 是**词法**前缀比较且 `importRoots[0] = paths.dataDir`（`main.ts:781`）→ 软链能过这道。但 `localFile.ts:154` 紧接着调**基于 realpath 的** `assertWithinRoot(dataDir, input)`（`setup.ts:219` 传的就是同一个根）→ 被挡住 `[读码]` |
+| 路径                                      | 能不能                                            | 依据                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ----------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **`unpack.ts` 解压上游包时写软链**        | **能，但需要先控制那个包**                        | `unpack.ts:170-205` 的 `resolveLinkTarget` **是 target-based 校验**：绝对目标拒、词法解析出 destRoot 的拒。直白的 `evil -> /etc/passwd` 进不来。**但校验是词法的**，见 §4-B2：`s→.` 配 `evil→s/../OUTSIDE.txt` 能骗过它 `[实测]`。而包的 URL 与 sha256 **钉死在 `vendor/manifests/`**，`ALLOWED_DOWNLOAD_HOSTS` 白名单，**全仓没有任何端点接受用户提供的 URL 或 manifest** `[实测 grep]` → 需要污染上游产物或改盘上的 manifest |
+| **`media_assets.rel_path` 由谁写入**      | **全部由服务端生成，HTTP 客户端一个字都控制不了** | ① `transcribe.ts:298` → `archiveIntoMedia` 产出 `<noteUid>/<basename>`；② `recorder.ts:270` → 服务端拼的绝对路径；③ `migrateAssets.ts` → 重写既有行。**上传路由 `upload.ts:559` 的磁盘名是 `ulid() + 白名单扩展名`，注释亲口写着「与客户端输入**完全无关**」** `[读码]`                                                                                                                                                        |
+| **让迁移把记录重挂到一条软链上**          | **不能**                                          | `indexFiles`（`migrateAssets.ts:76`）用的是 `dirent.isFile()`，**对软链为 false**（dirent 是 lstat 语义）→ 软链根本不进索引 `[读码]`                                                                                                                                                                                                                                                                                           |
+| **`POST /api/notes/import` 指向一条软链** | 闸门本身挡不住，**但下游有 realpath 兜底**        | `notes.ts:186` 是**词法**前缀比较且 `importRoots[0] = paths.dataDir`（`main.ts:781`）→ 软链能过这道。但 `localFile.ts:154` 紧接着调**基于 realpath 的** `assertWithinRoot(dataDir, input)`（`setup.ts:219` 传的就是同一个根）→ 被挡住 `[读码]`                                                                                                                                                                                 |
 
 ## 1.3 直接回答你的问题
 
@@ -157,7 +157,7 @@
 ## ② `assertWithinRoot` —— platform 提成入参
 
 ```ts
-export async function assertWithinRoot(managedRoot, candidate, platform = process.platform)
+export async function assertWithinRoot(managedRoot, candidate, platform = process.platform);
 ```
 
 照抄 `isSafeExecutable` 的形状。同时：
@@ -188,14 +188,14 @@ export async function assertWithinRoot(managedRoot, candidate, platform = proces
 原写法 ``import.meta.url === `file://${process.argv[1]}` `` 是**手拼** URL 而不是**转换** URL。
 `[实测]` 本机 Linux x64，逐个目录名跑真 Node：
 
-| 目录名 | `import.meta.url` | 手拼结果 | 匹配 |
-|---|---|---|---|
-| `plain` | `…/plain/probe.js` | 同左 | ✅ |
-| `my dir` | `…/my%20dir/probe.js` | `…/my dir/probe.js` | 🔴 |
-| `笔记` | `…/%E7%AC%94%E8%AE%B0/…` | `…/笔记/…` | 🔴 |
-| `a#b` | `…/a%23b/probe.js` | `…/a#b/probe.js` | 🔴 |
-| `a?b` | `…/a%3Fb/probe.js` | `…/a?b/probe.js` | 🔴 |
-| `a%b` | `…/a%25b/probe.js` | `…/a%b/probe.js` | 🔴 |
+| 目录名   | `import.meta.url`        | 手拼结果            | 匹配 |
+| -------- | ------------------------ | ------------------- | ---- |
+| `plain`  | `…/plain/probe.js`       | 同左                | ✅   |
+| `my dir` | `…/my%20dir/probe.js`    | `…/my dir/probe.js` | 🔴   |
+| `笔记`   | `…/%E7%AC%94%E8%AE%B0/…` | `…/笔记/…`          | 🔴   |
+| `a#b`    | `…/a%23b/probe.js`       | `…/a#b/probe.js`    | 🔴   |
+| `a?b`    | `…/a%3Fb/probe.js`       | `…/a?b/probe.js`    | 🔴   |
+| `a%b`    | `…/a%25b/probe.js`       | `…/a%b/probe.js`    | 🔴   |
 
 **不止空格和中文**：`#` `?` `%` 在 URL 里各有语法含义，各自中招，成因不是同一个"忘了编码空格"。
 
@@ -260,6 +260,7 @@ if (all.has(cand)) return cand;                 // ← 第二个在这
 每次都先证明「我即将运行的产物里，坏的那行在/不在」。
 
 ### 变异 1 —— ① 的守卫整段删掉
+
 ```
 === 我即将运行的产物里，守卫还在不在？（0 = 已删掉） ===  0
 控制组（未变异的同一份副本）：tests 17 / pass 17 / fail 0
@@ -274,9 +275,11 @@ if (all.has(cand)) return cand;                 // ← 第二个在这
 ✔ ★ 数据目录本身经由软链访问时**不许全盘误杀**（macOS 的 /var → /private/var 形态）
 ℹ tests 17 / pass 14 / fail 3
 ```
+
 （后两条在变异体下仍绿是**对的** —— 它们钉的是"别误杀"，不依赖这段守卫。）
 
 ### 变异 2 —— 只撤掉「根也要 realpath」那一半
+
 ```
 === 根 realpath 还在不在？（0 = 已撤掉） ===  0
 ✖ ★ 数据目录本身经由软链访问时**不许全盘误杀**（macOS 的 /var → /private/var 形态）
@@ -284,6 +287,7 @@ if (all.has(cand)) return cand;                 // ← 第二个在这
 ```
 
 ### 变异 3 —— ② 的 platform 退回读宿主
+
 ```
 变异体 platform 入参命中数 = 0     宿主读取命中数 = 1
 真产物 platform 入参命中数 = 1     宿主读取命中数 = 0
@@ -295,11 +299,13 @@ if (all.has(cand)) return cand;                 // ← 第二个在这
 ✖ ★ a legitimate win32 child is still accepted (the guard must not reject everything)
 ℹ tests 32 / pass 28 / fail 4
 ```
+
 > 如实说明：我写的 5 条 win32 用例里，**「反斜杠 `..` 穿越」那条在变异体下仍然绿** ——
 > posix 规则下 `..\..\Windows\win.ini` 恰好也以 `..` 开头，于是**因为正确的结果、错误的理由**通过。
 > 它钉住了行为，但**不是这条修复的鉴别器**。剩下 4 条是。
 
 ### 变异 4 —— ③ 退回手拼 `file://`
+
 ```
 变异体里的实现（肉眼可核）：
   return Boolean(argv1) && moduleUrl === `file://${argv1}`;
@@ -315,6 +321,7 @@ if (all.has(cand)) return cand;                 // ← 第二个在这
 ```
 
 ### 变异 5 —— ④ 的 `matchBySuffix` 退回 `split('/')`
+
 ```
 --- 我即将运行的产物里的实现 ---
 101:function matchBySuffix(abs, all, pathSep = sep) {
@@ -327,15 +334,18 @@ if (all.has(cand)) return cand;                 // ← 第二个在这
 ```
 
 ### 变异 6 —— `selfcheck` 的「软链出界算越界」这一档删掉
+
 ```
 === 该分支还在吗（应为 0）: 0
 ✖ ★ 根内的软链指向根外 → assetsContained 必须报 fail，不许说"全部落在 dataDir 内"
     AssertionError: 软链出界必须算越界：2 条资产全部落在 /tmp/om-sc-assets-k68VtY 内
     'ok' !== 'fail'
 ```
+
 **那句 `2 条资产全部落在 … 内` 就是它会说出口的假话**，而其中一条是指向 `/etc` 的软链。
 
 ### T-128 那 8 条 `.so` 没有被误杀（用户点名要保的）
+
 ```
 ▶ ★ T-128 后端 .so 符号链接可解析
   ✔ 两级相对链完好 → 全部读得到内容
@@ -347,6 +357,7 @@ if (all.has(cand)) return cand;                 // ← 第二个在这
 ```
 
 ### 断言写法：钉结构，不钉关键词（今天已经踩了三次的那个坑）
+
 - ① / media / selfcheck 的判据一律是**「根外那份文件的字节有没有出现在返回值/响应体里」**，
   用一个独一无二的串（`SECRET-OUTSIDE-ROOT`）反查 —— **不是**匹配 note 里的某个词。
 - ③ 的期望值由 `node:url` 的 `pathToFileURL` **独立算出来**，不重复被测代码的写法
@@ -361,13 +372,13 @@ if (all.has(cand)) return cand;                 // ← 第二个在这
 
 ## 4.1 方法（五轮 grep，每轮的口径写在这里备查）
 
-| # | 扫什么 | 命令口径 | 命中 |
-|---|---|---|---|
-| 1 | 宿主 `process.platform` / `os.platform()` | `grep -rn "process\.platform\|os\.platform()"` 于 `apps/*/src packages/*/src`，排除 `*.test.ts` 与 `__tests__` | **38 处** |
-| 2 | 宿主绑定的 `isAbsolute` / `relative`（排除已显式限定 `win32.` / `posix.` 的） | 同上 + `grep -v "win32\.\|posix\."` | **27 处** |
-| 3 | 对文件系统路径 `split('/')` / `split(sep)` | 同上 | **11 处** |
-| 4 | **词法边界检查**（`startsWith(<root>)`）—— ① 的同族 | `grep -rn "startsWith(.*[Rr]oot\|startsWith(dataDir\|startsWith(destRoot\|startsWith(base"` | **9 处** |
-| 5 | 谁做了**解析后复核**（`realpath`） | `grep -rn "realpath"` | **2 处** |
+| #   | 扫什么                                                                        | 命令口径                                                                                                       | 命中      |
+| --- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | --------- |
+| 1   | 宿主 `process.platform` / `os.platform()`                                     | `grep -rn "process\.platform\|os\.platform()"` 于 `apps/*/src packages/*/src`，排除 `*.test.ts` 与 `__tests__` | **38 处** |
+| 2   | 宿主绑定的 `isAbsolute` / `relative`（排除已显式限定 `win32.` / `posix.` 的） | 同上 + `grep -v "win32\.\|posix\."`                                                                            | **27 处** |
+| 3   | 对文件系统路径 `split('/')` / `split(sep)`                                    | 同上                                                                                                           | **11 处** |
+| 4   | **词法边界检查**（`startsWith(<root>)`）—— ① 的同族                           | `grep -rn "startsWith(.*[Rr]oot\|startsWith(dataDir\|startsWith(destRoot\|startsWith(base"`                    | **9 处**  |
+| 5   | 谁做了**解析后复核**（`realpath`）                                            | `grep -rn "realpath"`                                                                                          | **2 处**  |
 
 > ⚠️ **扫描过程中被工具骗过一次，如实记下**：`packages/pipeline/dist/subprocess/argGuard.js`
 > 里 `CONTROL_CHARS = /[<裸控制字节>]/` 让 `file(1)` 把它判成 `data`，于是
@@ -378,17 +389,17 @@ if (all.has(cand)) return cand;                 // ← 第二个在这
 
 ## 4.2 结论：**只有 2 处做解析后复核，7 处路径边界判定全是词法的**
 
-| 位置 | 词法/realpath | 判断 |
-|---|---|---|
-| `packages/pipeline/src/subprocess/argGuard.ts` `assertWithinRoot` | ✅ realpath | 从第一天就对 |
-| `packages/runtime/src/assetPaths.ts` `probeAssetFile` | ✅ realpath | **本轮补上（①）** |
-| `apps/daemon/src/http/rest/notes.ts:186` | 🔴 词法 + 写死 `/` | 见 A1 |
-| `packages/downloader/src/unpack.ts:162,201` | 🔴 词法 | 见 A2 |
-| `apps/daemon/src/http/static.ts:83` | 🟡 词法（用了 `sep`） | 静态目录里若有指向外部的软链会被服务出去。风险低（`dist` 是我们自己产的），但同族 |
-| `packages/downloader/src/store.ts:336` | 🟡 词法（用了 `sep`） | 安装记录越界检查 |
-| `packages/runtime/src/selfcheck.ts:390` | 🔴 词法 + **没有分隔符边界** | 见 A3 |
-| `apps/daemon/src/storage/migrateAssets.ts:202,265` | 🟡 词法（用了 `sep`） | 有边界，词法层面正确 |
-| `apps/daemon/src/storage/move.ts:86` | 🟡 `relative()` 判定 | `:82` 的注释明确说明**为什么不用前缀比较**，是全仓写得最讲究的一处 |
+| 位置                                                              | 词法/realpath                | 判断                                                                              |
+| ----------------------------------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------- |
+| `packages/pipeline/src/subprocess/argGuard.ts` `assertWithinRoot` | ✅ realpath                  | 从第一天就对                                                                      |
+| `packages/runtime/src/assetPaths.ts` `probeAssetFile`             | ✅ realpath                  | **本轮补上（①）**                                                                 |
+| `apps/daemon/src/http/rest/notes.ts:186`                          | 🔴 词法 + 写死 `/`           | 见 A1                                                                             |
+| `packages/downloader/src/unpack.ts:162,201`                       | 🔴 词法                      | 见 A2                                                                             |
+| `apps/daemon/src/http/static.ts:83`                               | 🟡 词法（用了 `sep`）        | 静态目录里若有指向外部的软链会被服务出去。风险低（`dist` 是我们自己产的），但同族 |
+| `packages/downloader/src/store.ts:336`                            | 🟡 词法（用了 `sep`）        | 安装记录越界检查                                                                  |
+| `packages/runtime/src/selfcheck.ts:390`                           | 🔴 词法 + **没有分隔符边界** | 见 A3                                                                             |
+| `apps/daemon/src/storage/migrateAssets.ts:202,265`                | 🟡 词法（用了 `sep`）        | 有边界，词法层面正确                                                              |
+| `apps/daemon/src/storage/move.ts:86`                              | 🟡 `relative()` 判定         | `:82` 的注释明确说明**为什么不用前缀比较**，是全仓写得最讲究的一处                |
 
 ## 4.3 platform 那份 49 行清单里**没有**的三条新发现
 
@@ -445,11 +456,14 @@ host 走白名单、**没有任何端点接受用户提供的 URL** `[实测 gre
 ```ts
 const fromStore = (p) => p !== null && p.startsWith(input.storeRoot);
 ```
+
 `[实测]`：
+
 ```
 /root/data-memo/models/asr/x.bin          startsWith(storeRoot) = true
 /root/data-memo/models-backup/asr/x.bin   startsWith(storeRoot) = true   🔴 -backup 被算成 store 内
 ```
+
 **`move.ts:82` 的注释亲口写过这个坑**：「用 `relative()` 而不是字符串前缀比较：
 `/data` 与 `/data-backup` 前缀相同但毫无关系」—— **同一个仓库里，一处知道、一处不知道。**
 后果是分类错误（把 `models-backup` 里的工具报成"装在 dataDir 里"），不是安全边界。
@@ -462,18 +476,18 @@ const fromStore = (p) => p !== null && p.startsWith(input.storeRoot);
 `.exe` 后缀、信号语义、env 白名单、chmod、mmap —— 代码就跑在那台机器上）。
 **真正属于这一族的是「用宿主平台去解释一段可能来自别处的路径」或「分支在本机永不可达因而从未被执行」**：
 
-| 位置 | 状态 |
-|---|---|
-| `argGuard.ts` `isSafeExecutable` | ✅ 已修（假绿灯 #8） |
-| `argGuard.ts` `assertWithinRoot` | ✅ **本轮修（②）** |
-| `migrateAssets.ts` `matchBySuffix`/`matchByTail` | ✅ **本轮修（④）** |
-| `downloader/store.ts:63` `defaultModelsRoot(platform = …)` | ✅ 原本就对 —— **全仓的正确范式** |
-| 🔴 `apps/daemon/src/config/paths.ts:28,32` | **未修**：三平台数据根推导，只读宿主、无入参 |
-| 🔴 `packages/pipeline/src/tools.ts:100,104` | **未修**：**同一件事的第二份拷贝**，同样无入参 |
-| 🔴 `packages/runtime/src/assetPaths.ts:58` | **未修**：`isAbsolute` 宿主绑定（platform #8）。属跨平台，按用户裁定未动 |
-| 🔴 `packages/pipeline/src/media/sources/localFile.ts:51` | **未修**：`isAbsolute` 宿主绑定 |
-| 🟡 `runtime/probe/runProbe.ts:193` | 路径**列表**分隔符（`;` vs `:`），只喂给 `LD_/DYLD_` → Windows 上是死代码 |
-| 🟡 `main.ts:627`、`transcribe.ts:185` | `modelPath.split('/').pop()` 对**文件系统路径**硬编码 `/` —— ④ 的同族，Windows 上"模型 id"会显示成整条路径。**显示层，未修** |
+| 位置                                                       | 状态                                                                                                                         |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `argGuard.ts` `isSafeExecutable`                           | ✅ 已修（假绿灯 #8）                                                                                                         |
+| `argGuard.ts` `assertWithinRoot`                           | ✅ **本轮修（②）**                                                                                                           |
+| `migrateAssets.ts` `matchBySuffix`/`matchByTail`           | ✅ **本轮修（④）**                                                                                                           |
+| `downloader/store.ts:63` `defaultModelsRoot(platform = …)` | ✅ 原本就对 —— **全仓的正确范式**                                                                                            |
+| 🔴 `apps/daemon/src/config/paths.ts:28,32`                 | **未修**：三平台数据根推导，只读宿主、无入参                                                                                 |
+| 🔴 `packages/pipeline/src/tools.ts:100,104`                | **未修**：**同一件事的第二份拷贝**，同样无入参                                                                               |
+| 🔴 `packages/runtime/src/assetPaths.ts:58`                 | **未修**：`isAbsolute` 宿主绑定（platform #8）。属跨平台，按用户裁定未动                                                     |
+| 🔴 `packages/pipeline/src/media/sources/localFile.ts:51`   | **未修**：`isAbsolute` 宿主绑定                                                                                              |
+| 🟡 `runtime/probe/runProbe.ts:193`                         | 路径**列表**分隔符（`;` vs `:`），只喂给 `LD_/DYLD_` → Windows 上是死代码                                                    |
+| 🟡 `main.ts:627`、`transcribe.ts:185`                      | `modelPath.split('/').pop()` 对**文件系统路径**硬编码 `/` —— ④ 的同族，Windows 上"模型 id"会显示成整条路径。**显示层，未修** |
 
 > **`paths.ts:28` 与 `tools.ts:100` 是同一段逻辑的两份拷贝，而 `store.ts:63` 是第三份、
 > 且只有它做对了。** 这一族的根治不是逐个加入参，是**把三份合成一份带 platform 入参的**。

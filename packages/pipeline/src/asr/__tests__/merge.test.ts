@@ -24,9 +24,15 @@ import { SEGMENT_FLAG } from '../types.js';
 
 function seg(startMs: number, endMs: number, text: string): TranscriptSegment {
   return {
-    startMs, endMs, text,
-    confidence: null, noSpeechProb: null, words: null,
-    chunkIdx: 0, flags: 0, speakerLabel: null,
+    startMs,
+    endMs,
+    text,
+    confidence: null,
+    noSpeechProb: null,
+    words: null,
+    chunkIdx: 0,
+    flags: 0,
+    speakerLabel: null,
   };
 }
 
@@ -137,7 +143,10 @@ describe('mergeTranscripts — the core promise', () => {
     const draft = [draftSeg(10_000, 15_000, 'c', 1)];
     const rerun = [seg(5_000, 9_000, 'b'), seg(0, 4_000, 'a')];
     const result = mergeTranscripts(draft, rerun);
-    assert.deepEqual(result.segments.map((s) => s.text), ['a', 'b', 'c']);
+    assert.deepEqual(
+      result.segments.map((s) => s.text),
+      ['a', 'b', 'c'],
+    );
   });
 
   it('handles an empty draft (plain first transcription)', () => {
@@ -179,8 +188,14 @@ describe('formatMergeSummary — the D-05 banner', () => {
   });
 
   it('appends added/removed only when non-zero', () => {
-    assert.match(formatMergeSummary({ updated: 1, preserved: 0, added: 2, removed: 3 }), /新增 2 段/);
-    assert.match(formatMergeSummary({ updated: 1, preserved: 0, added: 2, removed: 3 }), /移除 3 段/);
+    assert.match(
+      formatMergeSummary({ updated: 1, preserved: 0, added: 2, removed: 3 }),
+      /新增 2 段/,
+    );
+    assert.match(
+      formatMergeSummary({ updated: 1, preserved: 0, added: 2, removed: 3 }),
+      /移除 3 段/,
+    );
   });
 });
 
@@ -205,9 +220,15 @@ describe('buildDiff — the [查看改动] panel', () => {
 
 describe('dedupeBoundarySegments — duplicated opening (T-037)', () => {
   const seg2 = (startMs: number, endMs: number, text: string): TranscriptSegment => ({
-    startMs, endMs, text,
-    confidence: null, noSpeechProb: null, words: null,
-    chunkIdx: 0, flags: 0, speakerLabel: null,
+    startMs,
+    endMs,
+    text,
+    confidence: null,
+    noSpeechProb: null,
+    words: null,
+    chunkIdx: 0,
+    flags: 0,
+    speakerLabel: null,
   });
 
   it('strips a repeated opening the ratio test lets through', () => {
@@ -215,7 +236,11 @@ describe('dedupeBoundarySegments — duplicated opening (T-037)', () => {
     // is correctly kept — but it opens by repeating seq4 word for word.
     const accepted = [seg2(28_480, 31_580, '输入最多140字的文字更新')];
     const incoming = [
-      seg2(28_860, 52_920, '输入最多140字的文字更新,Twitter在2006年3月成立于旧金山,由Upvirus公司开发'),
+      seg2(
+        28_860,
+        52_920,
+        '输入最多140字的文字更新,Twitter在2006年3月成立于旧金山,由Upvirus公司开发',
+      ),
     ];
     const kept = dedupeBoundarySegments(accepted, incoming);
     assert.equal(kept.length, 1, 'the segment is mostly new; it must survive');

@@ -6,10 +6,10 @@
 （工作区只有 `apps/daemon/src/pipeline/platformPacks.test.ts` + `vendor/manifests/*.json` 三个 M，
 是 `pack-publish` 的，我不碰）。
 
-| 文件 | 归属 | 我要做什么 | 为什么非动不可 |
-|---|---|---|---|
-| `packages/shared/src/notes.ts` | `model-mgmt` 独占 | 给 `NoteAsset` 补 `state`、给 `NoteDetail` 补 `bodyJson` / `canRetranscribe` 等 daemon **实际在传**的字段 | T-151 ② 的全部内容。`notes-contract` 已定性：shared 与 daemon 一致、**分叉的是 web 那一份**；只补 shared 不切过去等于没做 |
-| `apps/web/src/lib/api/types.ts` | `frontend-truth`（`apps/web/` 全归它） | 把手抄的 `NoteDetail` / `MediaAssetDto` 改成 **`import` shared 的那一份**再本地扩展 | ②的判据是「编译期能挡住」。手抄镜像与 daemon 之间没有任何连接，`tsc` **结构上看不见**这条缝 |
+| 文件                            | 归属                                   | 我要做什么                                                                                                | 为什么非动不可                                                                                                            |
+| ------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `packages/shared/src/notes.ts`  | `model-mgmt` 独占                      | 给 `NoteAsset` 补 `state`、给 `NoteDetail` 补 `bodyJson` / `canRetranscribe` 等 daemon **实际在传**的字段 | T-151 ② 的全部内容。`notes-contract` 已定性：shared 与 daemon 一致、**分叉的是 web 那一份**；只补 shared 不切过去等于没做 |
+| `apps/web/src/lib/api/types.ts` | `frontend-truth`（`apps/web/` 全归它） | 把手抄的 `NoteDetail` / `MediaAssetDto` 改成 **`import` shared 的那一份**再本地扩展                       | ②的判据是「编译期能挡住」。手抄镜像与 daemon 之间没有任何连接，`tsc` **结构上看不见**这条缝                               |
 
 **我不碰 `apps/web/` 的其它任何文件**；若切换后 web 有别的文件编译不过，我会如实报出来交给
 `frontend-truth`，而不是顺手改它的交付物。
@@ -100,15 +100,15 @@ Origin 严格同源、必须带 om_sid cookie）
 
 ### 补了什么（`packages/shared/src/notes.ts`）
 
-| | 补/改 | daemon 是否一直在发 |
-|---|---|---|
-| `NoteAsset.state` | 🆕 **必填** `MediaAssetState` | 是（T-139 后） |
-| `NoteAsset.mime` / `bytes` | `string`/`number` → **可空** | 两列都没有 NOT NULL，录音路径确实不填 |
-| `NoteDetail.bodyJson` | 🆕 `unknown \| null` | 是 |
-| `NoteDetail.canRetranscribe` | 🆕 **必填** | 是 |
-| `NoteListItem.starred` / `tags` | 🆕 | **一直在发，契约里一直没有** |
-| `NOTE_KINDS` / `NOTE_STATUSES` | **按建表 CHECK 订正**（见 TL;DR 4） | — |
-| `MEDIA_ASSET_STATES` / `MEDIA_ASSET_ROLES` / 三个类型守卫 | 🆕 | — |
+|                                                           | 补/改                               | daemon 是否一直在发                   |
+| --------------------------------------------------------- | ----------------------------------- | ------------------------------------- |
+| `NoteAsset.state`                                         | 🆕 **必填** `MediaAssetState`       | 是（T-139 后）                        |
+| `NoteAsset.mime` / `bytes`                                | `string`/`number` → **可空**        | 两列都没有 NOT NULL，录音路径确实不填 |
+| `NoteDetail.bodyJson`                                     | 🆕 `unknown \| null`                | 是                                    |
+| `NoteDetail.canRetranscribe`                              | 🆕 **必填**                         | 是                                    |
+| `NoteListItem.starred` / `tags`                           | 🆕                                  | **一直在发，契约里一直没有**          |
+| `NOTE_KINDS` / `NOTE_STATUSES`                            | **按建表 CHECK 订正**（见 TL;DR 4） | —                                     |
+| `MEDIA_ASSET_STATES` / `MEDIA_ASSET_ROLES` / 三个类型守卫 | 🆕                                  | —                                     |
 
 `state` 与 `canRetranscribe` 都声明为**必填**，这是刻意的：可选的话 daemon 删掉那一行**不会**编译失败，
 A1 那个洞就还开着。**消费侧的宽容是另一条规矩**（老响应真的没有这个键 → 按可用处理），
@@ -141,7 +141,7 @@ A1 那个洞就还开着。**消费侧的宽容是另一条规矩**（老响应�
 ### 评估：上一份的成本估算建立在一个不成立的前提上
 
 > 「要在音轨落地后用 ffmpeg 抽 PCM → 按桶算 min/max → 写 .ompk → 建资产 → 发事件，M 级，
->  且要跨 `packages/pipeline`（`gpu-runtime` 独占）」
+> 且要跨 `packages/pipeline`（`gpu-runtime` 独占）」
 
 `transcribe.ts` 的 `archiveIntoMedia` **已经**把归一化音频（16 kHz 单声道 PCM16 WAV）搬进了
 media 根并登记成 `role='audio16k'`；录音会话落的是同格式的 WAV。**盘上躺着的就是解码后的 PCM。**
@@ -186,6 +186,7 @@ media 根并登记成 `role='audio16k'`；录音会话落的是同格式的 WAV�
 
 **RV-1｜①：`relPath` 退回 `this.#wavPath`（事故形态）**
 产物 `dist/ws/recorder.js:225` 命中 `MUTANT_T151_RV1`。
+
 ```
 ✖ ★ 数据目录搬家后，录音仍然读得回来（rel_path 不许是绝对路径）
   数据目录搬到 /tmp/om-rec-moved-FKNi3L 之后就读不到了：
@@ -196,13 +197,15 @@ media 根并登记成 `role='audio16k'`；录音会话落的是同格式的 WAV�
 ```
 
 **RV-2｜②：daemon 删掉 `state: assetStateOf(a.state)`**
+
 ```
-src/http/rest/notes.ts(531,17): error TS2322: ... 
+src/http/rest/notes.ts(531,17): error TS2322: ...
   Property 'state' is missing in type '{ uid; role; mime; bytes; durationMs; url; }'
   but required in type 'NoteAsset'.
 ```
 
 **RV-3｜②：daemon 删掉 `bodyJson: parseJsonOrNull(...)`**
+
 ```
 src/http/rest/notes.ts(569,17): error TS2741: Property 'bodyJson' is missing in type
   '{ uid; title; status; kind; language; durationMs; ... 8 more ...; createdAt; }'
@@ -210,14 +213,17 @@ src/http/rest/notes.ts(569,17): error TS2741: Property 'bodyJson' is missing in 
 ```
 
 **RV-4｜②：web 读三个 daemon 详情端点不发的字段**（`NoteDetailPage.tsx` 临时加一行，已按 sha256 逐字节还原）
+
 ```
 src/features/notes/NoteDetailPage.tsx(119,17): error TS2339: Property 'updatedAt' does not exist on type 'NoteDetail'.
 src/features/notes/NoteDetailPage.tsx(119,30): error TS2339: Property 'source'    does not exist on type 'NoteDetail'.
 src/features/notes/NoteDetailPage.tsx(119,40): error TS2339: Property 'bodyText'  does not exist on type 'NoteDetail'.
 ```
+
 > 这正是 `notes-contract` 预言的那一条：「切过去的价值是让 `NoteDetailPage` 当场编译报错」。
 
 **RV-5｜②：把 `NOTE_STATUSES` 退回订正前那份**（产物 `packages/shared/dist/notes.js:37` 命中）
+
 ```
 ✖ ★ notes.status：契约里的每个值都必须真的写得进去
   SqliteError: CHECK constraint failed: status IN ('draft','processing','ready','partial','failed')
@@ -226,6 +232,7 @@ src/features/notes/NoteDetailPage.tsx(119,40): error TS2339: Property 'bodyText'
 ```
 
 **RV-6a｜③：把 planar 写成文档说的"交错"**（产物 `dist/media/peaks.js:175` 命中）
+
 ```
 ✖ ★ 多声道按 planar 排布（照 decodeOmpk 的索引来，不照文档里的"交错"）
   AssertionError: 左声道应当恒为 +1，实得 -1
@@ -233,6 +240,7 @@ src/features/notes/NoteDetailPage.tsx(119,40): error TS2339: Property 'bodyText'
 ```
 
 **RV-6b｜③：录音链路不再产 peaks（回到 T-151 之前）**（产物 `dist/ws/recorder.js:255` 命中）
+
 ```
 ✖ ★ 录完就有真波形：peaks 资产落库 + 文件能按 .ompk 解开（T-151 ③）
   peaks 资产应当恰好一条，实得 0：
@@ -245,11 +253,11 @@ src/features/notes/NoteDetailPage.tsx(119,40): error TS2339: Property 'bodyText'
 
 ## §越界（`apps/web/` 归 `frontend-truth`，逐条申报）
 
-| 文件 | 为什么非动不可 | 动了什么 |
-|---|---|---|
-| `lib/api/types.ts` | **开工前已申报**，②的本体 | `NoteDetail`/`MediaAssetDto` 改成 import shared |
-| `lib/api/mock.ts` | 切过去后**编译不过**（7 处） | `MockNote` 显式合上 `Pick<NoteSummary,…>`；删 `bodyText`（daemon 从不发、全仓无人读）；补 `segmentCount`/`canRetranscribe`；资产统一走新的 `mockAsset()`（`url` 由 uid 算出来，**不许留空**）|
-| `features/notes/noteAssets.ts` | 切过去后 `isUsableAsset({})` 编译不过 | **只改参数类型**（`Pick<MediaAssetDto,'state'>` → `{state?: string}`）+ 注释。逻辑一行没动 |
+| 文件                           | 为什么非动不可                        | 动了什么                                                                                                                                                                                      |
+| ------------------------------ | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/api/types.ts`             | **开工前已申报**，②的本体             | `NoteDetail`/`MediaAssetDto` 改成 import shared                                                                                                                                               |
+| `lib/api/mock.ts`              | 切过去后**编译不过**（7 处）          | `MockNote` 显式合上 `Pick<NoteSummary,…>`；删 `bodyText`（daemon 从不发、全仓无人读）；补 `segmentCount`/`canRetranscribe`；资产统一走新的 `mockAsset()`（`url` 由 uid 算出来，**不许留空**） |
+| `features/notes/noteAssets.ts` | 切过去后 `isUsableAsset({})` 编译不过 | **只改参数类型**（`Pick<MediaAssetDto,'state'>` → `{state?: string}`）+ 注释。逻辑一行没动                                                                                                    |
 
 **没动 web 的任何组件/页面。** 三个文件都只改声明与夹具形状。
 
@@ -287,6 +295,7 @@ src/features/notes/NoteDetailPage.tsx(119,40): error TS2339: Property 'bodyText'
 ### 精确交付清单（合并者请照此 `add`，**不要 `-A`**）
 
 **新增（5）**
+
 ```
 packages/db/src/schemaContract.test.ts        契约↔CHECK 双向守卫（6）
 apps/daemon/src/media/peaks.ts                .ompk 生成（纯计算）
@@ -296,6 +305,7 @@ apps/daemon/src/ws/recorder.test.ts           录音 harness 5 条
 ```
 
 **修改（11）**
+
 ```
 packages/shared/src/notes.ts                  ② 契约补齐 + 按建表 CHECK 订正联合
 packages/runtime/src/assetPaths.ts            ① canonicalAssetRelPath（platform 入参）
@@ -318,6 +328,7 @@ apps/web/src/features/notes/noteAssets.ts     ② isUsableAsset 参数类型放�
 `docs/**`、`coordination/inbox/catalog-truth.md`。
 
 ### 门禁最终数字
+
 ```
 tsc -b   exit 0
 eslint . exit 0
@@ -325,11 +336,13 @@ pnpm -r test  exit 0   TOTAL 1005 passed / 0 failed
   packages/db 53（+6 我） · packages/llm 18 · packages/mindmap 51 · packages/runtime 51
   packages/pipeline 187 · apps/web 103+10+221 · apps/daemon 311（+13 我）
 ```
+
 > 中途见过一次 `apps/web` 组件套件 1 条红（`isSuperseded` 读到 undefined，在
 > `features/models/asrSections.ts` —— 并行 agent 正在现场编辑的新文件）。**不是我的**，
 > 且在我收工前已由对方修好（现 221/0）。一并报出以免被算在 T-151 头上。
 
 ### 需要 Manager 决策
+
 1. **`NoteSummary`（列表 DTO）要不要一起收敛。** 差异清单在 §只报不动 1；shared 侧已经补齐、
    daemon 侧已经标注，只差 web 切过去 + 改 `NotesListPage.tsx`。那是 `frontend-truth` 的地界。
 2. **`wavesurfer.js` 用起来还是下掉**（现在真 peaks 有了，前端有了真实数据源）。

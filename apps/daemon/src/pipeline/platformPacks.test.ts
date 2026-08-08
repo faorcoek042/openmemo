@@ -202,7 +202,10 @@ describe('T-146 ③ backends/sqlite-ext → components 反方向也必须齐', (
     const publishable = [...be.packs, ...ext.packs].filter((p) => p.availability !== 'pending-ci');
     assert.ok(publishable.length >= 15, `可下载的包只有 ${publishable.length} 个，断言失去意义`);
 
-    const undocumented = publishable.filter((p) => !documented.has(p.id)).map((p) => p.id).sort();
+    const undocumented = publishable
+      .filter((p) => !documented.has(p.id))
+      .map((p) => p.id)
+      .sort();
     assert.deepEqual(
       undocumented,
       [],
@@ -402,7 +405,8 @@ describe('T-146 ⑥ macOS Apple Silicon 的转写链是完整的', () => {
        * 而它会「下载成功 → sha256 通过 → 安装 succeeded → 一执行就死」。
        */
       assert.ok(
-        typeof p.requiresDriver?.macosVersion === 'string' && p.requiresDriver.macosVersion.length > 0,
+        typeof p.requiresDriver?.macosVersion === 'string' &&
+          p.requiresDriver.macosVersion.length > 0,
         `${p.id} 没有声明 requiresDriver.macosVersion —— 用户不会知道自己的 Mac 太旧`,
       );
     }

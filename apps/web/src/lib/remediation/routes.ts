@@ -136,7 +136,8 @@ export const UNROUTED_ACTIONS: Readonly<Record<string, string>> = {
    * 它是一个**就地动作（重发请求）**，不是跳转。由
    * `features/settings/DataLocationSection.tsx` 传 `onRemediate` 就地处理。
    */
-  useExistingDataDir: '就地重发 POST /settings/data-dir，由 DataLocationSection 的 onRemediate 处理',
+  useExistingDataDir:
+    '就地重发 POST /settings/data-dir，由 DataLocationSection 的 onRemediate 处理',
   /**
    * `http/rest/jobs.ts:182` —— 501，暂停/继续没实现，建议改为取消。
    * 同样是**就地动作**（取消这个 job），不是跳转。

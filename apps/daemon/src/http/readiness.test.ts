@@ -54,7 +54,10 @@ after(() => {
 });
 
 /** 起一个只有 health 的最小 daemon-like 服务，`ready` 由调用方控制。 */
-async function startDaemonLike(ready: () => boolean, dataDir = '/tmp/readiness-test'): Promise<{
+async function startDaemonLike(
+  ready: () => boolean,
+  dataDir = '/tmp/readiness-test',
+): Promise<{
   base: string;
   port: number;
   server: Server;

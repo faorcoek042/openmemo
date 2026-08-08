@@ -192,7 +192,8 @@ async function record(frames: number): Promise<Recorded> {
   for (let f = 0; f < frames; f += 1) {
     const samples = RECORD_SAMPLE_RATE / 10;
     const buf = Buffer.alloc(samples * 2);
-    for (let i = 0; i < samples; i += 1) buf.writeInt16LE(((f * samples + i) % 30000) - 15000, i * 2);
+    for (let i = 0; i < samples; i += 1)
+      buf.writeInt16LE(((f * samples + i) % 30000) - 15000, i * 2);
     chunks.push(buf);
     ws.send(buf, { binary: true });
   }
@@ -207,7 +208,9 @@ async function record(frames: number): Promise<Recorded> {
   const asset = assets.find((a) => a.role === 'original');
   assert.ok(asset, `录音结束后没有 original 资产：${JSON.stringify(assets)}`);
   const note = handle.db
-    .prepare<{ uid: string; status: string }>('SELECT uid, status FROM notes ORDER BY id DESC LIMIT 1')
+    .prepare<{ uid: string; status: string }>(
+      'SELECT uid, status FROM notes ORDER BY id DESC LIMIT 1',
+    )
     .get({});
   assert.ok(note, '录音结束后 notes 里一行都没有');
   const jobs = handle.db
@@ -427,9 +430,7 @@ async function deadSession(): Promise<{
 }
 
 function countOf(db: ReturnType<typeof openAppDatabase>['db'], table: string): number {
-  return (
-    db.prepare<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`).get({})?.n ?? -1
-  );
+  return db.prepare<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`).get({})?.n ?? -1;
 }
 
 describe('F3 引擎不可用 —— 录一次音不许留下一条「就绪」的死笔记（T-164 ②）', () => {

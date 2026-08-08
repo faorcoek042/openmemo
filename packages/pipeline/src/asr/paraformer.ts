@@ -246,7 +246,8 @@ export class ParaformerEngine implements AsrEngine {
     modelPath?: string,
   ): Promise<{ recognizer: OfflineRecognizerLike; mod: ParaformerSherpaModule }> {
     const mod = await this.loadModule();
-    const wanted = modelPath !== undefined && modelPath.length > 0 ? modelPath : this.opts.model.model;
+    const wanted =
+      modelPath !== undefined && modelPath.length > 0 ? modelPath : this.opts.model.model;
 
     // Rebuild when the requested model differs from the cached one.
     if (this.recognizer !== null && this.loadedModelPath !== wanted) {

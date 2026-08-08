@@ -58,7 +58,18 @@
 
 import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { access, chmod, cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  access,
+  chmod,
+  cp,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -86,13 +97,21 @@ async function loadVersion() {
   const repoRoot = fileURLToPath(new URL('..', import.meta.url));
   try {
     const m = await import('./lib/version.mjs');
-    return { version: m.readProductVersion(), root: m.REPO_ROOT, via: 'scripts/lib/version.mjs（唯一读取点）' };
+    return {
+      version: m.readProductVersion(),
+      root: m.REPO_ROOT,
+      via: 'scripts/lib/version.mjs（唯一读取点）',
+    };
   } catch {
     const pj = JSON.parse(await readFile(join(repoRoot, 'package.json'), 'utf8'));
     if (typeof pj.version !== 'string' || !/^\d+\.\d+\.\d+$/.test(pj.version)) {
       die(`根 package.json 的 version 不是合法的 X.Y.Z：${JSON.stringify(pj.version)}`);
     }
-    return { version: pj.version, root: repoRoot, via: '根 package.json（version.mjs 尚未提交，已回落）' };
+    return {
+      version: pj.version,
+      root: repoRoot,
+      via: '根 package.json（version.mjs 尚未提交，已回落）',
+    };
   }
 }
 
@@ -282,8 +301,11 @@ async function acquireNode() {
   // 没有第二个地方可以对照 —— 如实说明这一点，不假装它是独立信源。
   const sumsPath = await fetchToCache(`${base}/SHASUMS256.txt`, `SHASUMS256-${NODE_VERSION}.txt`);
   const sums = await readFile(sumsPath, 'utf8');
-  const line = sums.split('\n').find((l) => l.trim().endsWith(` ${file}`) || l.trim().endsWith(`  ${file}`));
-  if (!line) die(`SHASUMS256.txt 里没有 ${file} —— Node ${NODE_VERSION} 是否真的有这个平台的产物？`);
+  const line = sums
+    .split('\n')
+    .find((l) => l.trim().endsWith(` ${file}`) || l.trim().endsWith(`  ${file}`));
+  if (!line)
+    die(`SHASUMS256.txt 里没有 ${file} —— Node ${NODE_VERSION} 是否真的有这个平台的产物？`);
   const want = line.trim().split(/\s+/)[0];
 
   const archive = await fetchToCache(`${base}/${file}`, file);
@@ -292,7 +314,9 @@ async function acquireNode() {
   say(`   ✔ sha256 校验通过 ${want.slice(0, 16)}…`);
 
   const work = await mkdtemp(join(tmpdir(), 'om-node-'));
-  const { unpackArchive } = await import(pathToFileURL(join(REPO_ROOT, 'packages/downloader/dist/index.js')).href);
+  const { unpackArchive } = await import(
+    pathToFileURL(join(REPO_ROOT, 'packages/downloader/dist/index.js')).href
+  );
   await unpackArchive(archive, work, kindOf(file));
 
   // 解出来是 node-v<ver>-<plat>/ 一层壳
@@ -348,13 +372,15 @@ async function assembleOurCode() {
 
   // --- build-info：包里必须有，否则 /api/health 认不出自己是哪个版本 ---
   const buildInfo = join(daemonDist, 'build-info.json');
-  if (!(await exists(buildInfo))) die('apps/daemon/dist/build-info.json 不存在 —— 先跑 `pnpm build:safe`');
+  if (!(await exists(buildInfo)))
+    die('apps/daemon/dist/build-info.json 不存在 —— 先跑 `pnpm build:safe`');
 
   // --- workspace 包 ---
   for (const p of WORKSPACE_PKGS) {
     const src = join(REPO_ROOT, 'packages', p);
     const dst = join(STAGE, 'app/node_modules/@openmemo', p);
-    if (!(await exists(join(src, 'dist')))) die(`packages/${p}/dist 不存在 —— 先跑 \`pnpm build:safe\``);
+    if (!(await exists(join(src, 'dist'))))
+      die(`packages/${p}/dist 不存在 —— 先跑 \`pnpm build:safe\``);
     await mkdir(dst, { recursive: true });
     await copyRuntimeDist(join(src, 'dist'), join(dst, 'dist'));
     await cp(join(src, 'package.json'), join(dst, 'package.json'));
@@ -406,7 +432,10 @@ function pnpmDir(name, version) {
 /** 读 pnpm-lock.yaml 里某个包的 version + integrity。**committed 的那份才是权威。** */
 async function lockEntry(pkg) {
   const lock = await readFile(join(REPO_ROOT, 'pnpm-lock.yaml'), 'utf8');
-  const re = new RegExp(`^  ${pkg.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}@([^:]+):\\s*\\n\\s*resolution: \\{integrity: (sha\\d+-[^}]+)\\}`, 'm');
+  const re = new RegExp(
+    `^  ${pkg.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}@([^:]+):\\s*\\n\\s*resolution: \\{integrity: (sha\\d+-[^}]+)\\}`,
+    'm',
+  );
   const m = lock.match(re);
   if (!m) return null;
   return { version: m[1], integrity: m[2] };
@@ -429,7 +458,8 @@ async function assembleNodeModules() {
 
   for (const [name, version] of PLAIN_DEPS) {
     const src = pnpmDir(name, version);
-    if (!(await exists(src))) die(`node_modules 里找不到 ${name}@${version} —— 先跑 \`pnpm install\``);
+    if (!(await exists(src)))
+      die(`node_modules 里找不到 ${name}@${version} —— 先跑 \`pnpm install\``);
     await cp(src, join(nm, name), { recursive: true, dereference: true });
   }
   say(`   ✔ ${PLAIN_DEPS.length} 个纯 JS 依赖`);
@@ -500,11 +530,15 @@ async function acquireSherpa(nm) {
   if (alg !== 'sha512') die(`${pkg} 的 integrity 不是 sha512（是 ${alg}）—— 校验逻辑需要更新`);
   const gotB64 = await sha512Base64Of(tgz);
   if (gotB64 !== wantB64) {
-    die(`${pkg} 摘要与 pnpm-lock.yaml 不符\n   期望 ${wantB64.slice(0, 24)}…\n   实得 ${gotB64.slice(0, 24)}…`);
+    die(
+      `${pkg} 摘要与 pnpm-lock.yaml 不符\n   期望 ${wantB64.slice(0, 24)}…\n   实得 ${gotB64.slice(0, 24)}…`,
+    );
   }
 
   const work = await mkdtemp(join(tmpdir(), 'om-sherpa-'));
-  const { unpackArchive } = await import(pathToFileURL(join(REPO_ROOT, 'packages/downloader/dist/index.js')).href);
+  const { unpackArchive } = await import(
+    pathToFileURL(join(REPO_ROOT, 'packages/downloader/dist/index.js')).href
+  );
   await unpackArchive(tgz, work, kindOf(tarName));
   const inner = join(work, 'package'); // npm tarball 固定一层 package/
   if (!(await exists(inner))) die(`${pkg} 的 tarball 结构异常：解开后没有 package/`);
@@ -517,7 +551,9 @@ async function acquireSherpa(nm) {
   if (natives.length === 0) {
     die(`${pkg} 解开后一个原生库都没有 —— 拿到的不是我们要的那个包`);
   }
-  say(`   ✔ ${pkg}@${version}（sha512 对着 lockfile 校验通过，${natives.length} 个原生件，${mib(await dirSize(join(nm, pkg)))}）`);
+  say(
+    `   ✔ ${pkg}@${version}（sha512 对着 lockfile 校验通过，${natives.length} 个原生件，${mib(await dirSize(join(nm, pkg)))}）`,
+  );
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────────
@@ -526,12 +562,16 @@ async function acquireSherpa(nm) {
 
 async function assembleExtensions() {
   hdr('④ SQLite 扩展（中文分词 + 向量）');
-  const manifest = JSON.parse(await readFile(join(REPO_ROOT, 'vendor/manifests/sqlite-ext.json'), 'utf8'));
+  const manifest = JSON.parse(
+    await readFile(join(REPO_ROOT, 'vendor/manifests/sqlite-ext.json'), 'utf8'),
+  );
   const extDir = join(STAGE, 'ext');
   await mkdir(extDir, { recursive: true });
 
   const work = await mkdtemp(join(tmpdir(), 'om-ext-'));
-  const { unpackArchive } = await import(pathToFileURL(join(REPO_ROOT, 'packages/downloader/dist/index.js')).href);
+  const { unpackArchive } = await import(
+    pathToFileURL(join(REPO_ROOT, 'packages/downloader/dist/index.js')).href
+  );
 
   for (const id of T.extPackIds) {
     const pack = manifest.packs.find((p) => p.id === id);
@@ -559,7 +599,9 @@ async function assembleExtensions() {
    *    `win-fixes` 已经在这上面栽过一次。
    *    第三套命名约定绝不能从这个脚本里长出来。
    */
-  const { sqliteExtensionSources } = await import(pathToFileURL(join(REPO_ROOT, 'packages/pipeline/dist/index.js')).href);
+  const { sqliteExtensionSources } = await import(
+    pathToFileURL(join(REPO_ROOT, 'packages/pipeline/dist/index.js')).href
+  );
   for (const { dst, candidates } of sqliteExtensionSources(T.platform)) {
     let found = null;
     for (const cand of candidates) {
@@ -736,7 +778,9 @@ async function writeNotices() {
   parts.push('汇总');
   parts.push('─'.repeat(78));
   for (const r of rows) {
-    parts.push(`  ${r.name}@${r.version}  —  ${r.license}${r.licenseText ? '' : '   [上游包内未附许可证正文]'}`);
+    parts.push(
+      `  ${r.name}@${r.version}  —  ${r.license}${r.licenseText ? '' : '   [上游包内未附许可证正文]'}`,
+    );
   }
 
   /*
@@ -760,7 +804,9 @@ async function writeNotices() {
   parts.push('');
   parts.push('随包出厂的 Node.js 运行时');
   parts.push(`  Node.js v${NODE_VERSION}  —  MIT（含其依赖 OpenSSL / ICU / libuv 等，`);
-  parts.push('      正文见运行时上游发行包内的 LICENSE：https://github.com/nodejs/node/blob/main/LICENSE）');
+  parts.push(
+    '      正文见运行时上游发行包内的 LICENSE：https://github.com/nodejs/node/blob/main/LICENSE）',
+  );
 
   if (missing.length > 0) {
     parts.push('');
@@ -874,10 +920,16 @@ async function main() {
     target: TARGET,
     nodeVersion: NODE_VERSION,
     rawBytes: raw,
-    archive: archive ? { file: basename(archive.out), bytes: archive.size, sha256: archive.digest } : null,
+    archive: archive
+      ? { file: basename(archive.out), bytes: archive.size, sha256: archive.digest }
+      : null,
     generatedAt: new Date().toISOString(),
   };
-  await writeFile(join(OUT_ROOT, `${BUNDLE_NAME}.json`), JSON.stringify(meta, null, 2) + '\n', 'utf8');
+  await writeFile(
+    join(OUT_ROOT, `${BUNDLE_NAME}.json`),
+    JSON.stringify(meta, null, 2) + '\n',
+    'utf8',
+  );
   say(`   ✔ ${BUNDLE_NAME}.json`);
 
   if (process.env['GITHUB_OUTPUT']) {
@@ -885,7 +937,9 @@ async function main() {
     await appendFile(
       process.env['GITHUB_OUTPUT'],
       `bundle_dir=${STAGE}\nbundle_name=${BUNDLE_NAME}\nraw_bytes=${raw}\n` +
-        (archive ? `archive=${archive.out}\narchive_bytes=${archive.size}\narchive_sha256=${archive.digest}\n` : ''),
+        (archive
+          ? `archive=${archive.out}\narchive_bytes=${archive.size}\narchive_sha256=${archive.digest}\n`
+          : ''),
     );
   }
   say('');

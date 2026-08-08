@@ -87,16 +87,22 @@ export class WhisperCppEngine implements AsrEngine {
     const jsonPath = `${outputBase}.json`;
 
     const flags: string[] = [
-      '-m', req.modelPath,
-      '-f', req.audioPath,
+      '-m',
+      req.modelPath,
+      '-f',
+      req.audioPath,
       // Window into the full WAV — no slicing needed.
-      '--offset-t', String(Math.round(req.offsetMs)),
-      '--duration', String(Math.round(req.durationMs)),
-      '-t', String(req.threads ?? this.opts.defaultThreads ?? 4),
+      '--offset-t',
+      String(Math.round(req.offsetMs)),
+      '--duration',
+      String(Math.round(req.durationMs)),
+      '-t',
+      String(req.threads ?? this.opts.defaultThreads ?? 4),
       // Full JSON: the only mode that emits per-token probabilities (measured on
       // v1.9.1 it does NOT emit avg_logprob/no_speech_prob — see parseWhisperJson).
       '--output-json-full',
-      '--output-file', outputBase,
+      '--output-file',
+      outputBase,
       // Keep stdout clean; we read the JSON file, not the console.
       '--no-prints',
     ];
@@ -170,7 +176,12 @@ interface WhisperJsonSegment {
   timestamps?: { from?: string; to?: string };
   offsets?: { from?: number; to?: number };
   text?: string;
-  tokens?: { text?: string; timestamps?: { from?: string; to?: string }; offsets?: { from?: number; to?: number }; p?: number }[];
+  tokens?: {
+    text?: string;
+    timestamps?: { from?: string; to?: string };
+    offsets?: { from?: number; to?: number };
+    p?: number;
+  }[];
   no_speech_prob?: number;
   avg_logprob?: number;
 }
@@ -218,7 +229,7 @@ export function parseWhisperJson(
     if (text.length === 0) continue;
 
     const fromMs = baseOffsetMs + (seg.offsets?.from ?? 0);
-    const toMs = baseOffsetMs + (seg.offsets?.to ?? (seg.offsets?.from ?? 0));
+    const toMs = baseOffsetMs + (seg.offsets?.to ?? seg.offsets?.from ?? 0);
 
     // Outside the window we asked for: whisper over-ran into the next chunk's territory.
     if (windowEndMs !== undefined && fromMs >= windowEndMs) continue;

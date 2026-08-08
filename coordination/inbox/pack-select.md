@@ -10,14 +10,14 @@
 `amd-vulkan` §1.3 那条实测（装了 Vulkan 包跑的还是 CPU 包的 whisper-cli，两种安装顺序结果相同）
 在改后不再成立；Windows 的 CUDA 包同一条也一起解掉。
 
-| # | 事 | 状态 | 撤掉后变红？ |
-|---|---|---|---|
-| ① | 候选按 `readdir` 顺序取第一个 → 改成三层确定排序 | ✅ | ✅ M1 红 10 条 |
-| ② | `selectedBackend` 是装饰品（只驱动两个徽章） → 现在真的决定跑哪个包 | ✅ | ✅ M2 红 5 条 |
-| ③ | `BackendPack.priority` 11 条声明 **0 个读取方** → 抄进安装记录并成为兜底排序键 | ✅ | ✅ M3/M7 红 3 条 |
-| ④ | 选中的包缺文件 → **显式决定：回退并出声**（不是沿用现状，也不报错） | ✅ | ✅ M4 红 2 条 |
-| ⑤ | 那句错注释 "newest first" → 订正，并把原文保留在原地 | ✅ | — |
-| ⑥ | 「跑的是哪个包」现在能从自检 / daemon 日志看出来 | ✅ | ✅ M4 |
+| #   | 事                                                                             | 状态 | 撤掉后变红？     |
+| --- | ------------------------------------------------------------------------------ | ---- | ---------------- |
+| ①   | 候选按 `readdir` 顺序取第一个 → 改成三层确定排序                               | ✅   | ✅ M1 红 10 条   |
+| ②   | `selectedBackend` 是装饰品（只驱动两个徽章） → 现在真的决定跑哪个包            | ✅   | ✅ M2 红 5 条    |
+| ③   | `BackendPack.priority` 11 条声明 **0 个读取方** → 抄进安装记录并成为兜底排序键 | ✅   | ✅ M3/M7 红 3 条 |
+| ④   | 选中的包缺文件 → **显式决定：回退并出声**（不是沿用现状，也不报错）            | ✅   | ✅ M4 红 2 条    |
+| ⑤   | 那句错注释 "newest first" → 订正，并把原文保留在原地                           | ✅   | —                |
+| ⑥   | 「跑的是哪个包」现在能从自检 / daemon 日志看出来                               | ✅   | ✅ M4            |
 
 **门禁**：`pnpm -r test` **1202 pass / 3 fail** · `tsc -b` 0 · `eslint`（我的 14 个文件）0。
 ⚠️ **那 3 条红不是我的**，是共享树里两位在途 agent 的半成品，证据在 §6 —— 我复核到了具体断言。
@@ -40,13 +40,13 @@
 `gates-fix` 把 whisper-cli 与 probe 都归一到它之后，它是**唯一**的解析器。全仓调用点 5 处、
 跨 3 个包 2 个进程：
 
-| # | 调用方 | 找什么 | 影响 |
-|---|---|---|---|
-| 1 | `packages/pipeline/src/tools.ts` `discoverTools()` | ffmpeg / ffprobe / whisper-cli / whisper-vad-speech-segments / yt-dlp | 整条转写链 |
-| 2 | `apps/daemon/src/runtime/setup.ts:229` `resolveRuntimeLayout()` | `openmemo-probe` | 硬件探测 + `backendDir`（ggml 从二进制同级目录 dlopen） |
-| 3 | `apps/daemon/src/runtime/setup.ts:644` `runBackendSelfTest()` | whisper-cli | `POST /api/backends/selftest` |
-| 4 | `apps/daemon/src/http/rest/selfcheck.ts:105` | `openmemo-probe` | `GET /api/selfcheck` |
-| 5 | `scripts/selfcheck.mjs:279` | `openmemo-probe` | CLI 自检（**拿不到 `RestState`**） |
+| #   | 调用方                                                          | 找什么                                                                | 影响                                                    |
+| --- | --------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------- |
+| 1   | `packages/pipeline/src/tools.ts` `discoverTools()`              | ffmpeg / ffprobe / whisper-cli / whisper-vad-speech-segments / yt-dlp | 整条转写链                                              |
+| 2   | `apps/daemon/src/runtime/setup.ts:229` `resolveRuntimeLayout()` | `openmemo-probe`                                                      | 硬件探测 + `backendDir`（ggml 从二进制同级目录 dlopen） |
+| 3   | `apps/daemon/src/runtime/setup.ts:644` `runBackendSelfTest()`   | whisper-cli                                                           | `POST /api/backends/selftest`                           |
+| 4   | `apps/daemon/src/http/rest/selfcheck.ts:105`                    | `openmemo-probe`                                                      | `GET /api/selfcheck`                                    |
+| 5   | `scripts/selfcheck.mjs:279`                                     | `openmemo-probe`                                                      | CLI 自检（**拿不到 `RestState`**）                      |
 
 第 5 条决定了这次的接口形状 —— 见 §3。
 
@@ -56,12 +56,12 @@
 
 排序键是三层，**每层都确定**：任何一层留成 `readdir` 顺序，这个函数就又变回看文件系统心情。
 
-| 层 | 键 | 依据 |
-|---|---|---|
-| 0 | **扁平命中最先**（`by-name/backend/<name>`） | 它不是搜索是查表：安装器写的就是这个精确位置，而且只有"包本身就是一个可执行文件"的包（yt-dlp）落在这里，不可能与任何 whisper 包争同名。T-132 的回归守卫钉的就是它，我留着没动 |
-| 1 | **用户选中的后端**（`prefs.selectedBackend`）对应的包 | `POST /api/backends/select` 是产品里**唯一**一处"用户表达后端偏好"的入口。在此之前它只驱动 `recommended` / `active` 两个徽章（`amd-vulkan` §1.3 推论 2 说的"装饰性"）。**用户能改的东西必须真的管事** |
-| 2 | **`priority` 降序** | 这正是 `BackendPack.priority` 自己的文档语义："Higher wins when several packs match the same hardware"。目录里 cuda 包 90、cpu 包 10 —— 装了加速包又没另行指定，就用加速包 |
-| 3 | **packId 字典序**；没有安装记录的目录整体排在最后，按目录名 | 平手时只要求**确定性**：与 `readdir` 的区别是它与文件系统、安装顺序、磁盘状态都无关，可复现可断言。无安装记录的目录是"装到一半崩在 `writeManifest` 之前"或手工解包的产物（`gates-fix` §5.2 的 A/B 分叉），**证据强度更低，所以排后面** |
+| 层  | 键                                                          | 依据                                                                                                                                                                                                                                   |
+| --- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0   | **扁平命中最先**（`by-name/backend/<name>`）                | 它不是搜索是查表：安装器写的就是这个精确位置，而且只有"包本身就是一个可执行文件"的包（yt-dlp）落在这里，不可能与任何 whisper 包争同名。T-132 的回归守卫钉的就是它，我留着没动                                                          |
+| 1   | **用户选中的后端**（`prefs.selectedBackend`）对应的包       | `POST /api/backends/select` 是产品里**唯一**一处"用户表达后端偏好"的入口。在此之前它只驱动 `recommended` / `active` 两个徽章（`amd-vulkan` §1.3 推论 2 说的"装饰性"）。**用户能改的东西必须真的管事**                                  |
+| 2   | **`priority` 降序**                                         | 这正是 `BackendPack.priority` 自己的文档语义："Higher wins when several packs match the same hardware"。目录里 cuda 包 90、cpu 包 10 —— 装了加速包又没另行指定，就用加速包                                                             |
+| 3   | **packId 字典序**；没有安装记录的目录整体排在最后，按目录名 | 平手时只要求**确定性**：与 `readdir` 的区别是它与文件系统、安装顺序、磁盘状态都无关，可复现可断言。无安装记录的目录是"装到一半崩在 `writeManifest` 之前"或手工解包的产物（`gates-fix` §5.2 的 A/B 分叉），**证据强度更低，所以排后面** |
 
 ## 2.1 层 2 的安全性依据（这条与 T-161 配套，缺一不可）
 
@@ -149,22 +149,23 @@ whisper-cli（CI 实测 `providesFiles` 23 个）。所以即使 GPU 不可用�
 `/tmp/pack-select/rv.mjs`（可重跑），锚点是源文本、必须唯一，找不到就当场报错不猜。
 
 **先跑对照组**（不先证明这一点，下面每一条红都不证明任何事）：
+
 ```
 === ⓪ 对照组：未变异的副本必须全绿
   ✔ pipeline: exit=0 pass=14 fail=0
   ✔ daemon:   exit=0 pass=9  fail=0
 ```
 
-| 变异（撤掉什么） | 结果 | 红在哪（节选真实输出） |
-|---|---|---|
-| **M1** 回到缺陷原状：不排序、不看偏好 | ✔ 红 pipeline **fail=8** / daemon **fail=2** | `✖ ★ 同一份磁盘布局：选 vulkan 跑 vulkan 包，选 cpu 跑 cpu 包`、`✖ 安装（创建）顺序不影响结果` |
-| **M2** 只拿掉「用户选择优先」这一档（`priority` 仍在） | ✔ 红 4 / 1 | `✖ 显式选择压过 priority（选了低优先级的那个，就跑它）` |
-| **M3** 只拿掉 `priority`（同层按 packId 排，确定性还在） | ✔ 红 2 | `✖ ★ 同一份布局：priority 90 的包赢；把两个 priority 对调，答案就反过来` |
-| **M4** `degraded` 恒 false（只回退不出声） | ✔ 红 1 / 1 | `✖ ★ 选了 vulkan，但 vulkan 包里没有 whisper-cli → 用 cpu 包的，degraded=true` |
-| **M5** 读取侧自己拼 prefs 路径（写读分叉） | ✔ 红 3 / 3 | `✖ ★ 走 RestState 自己的 persistPrefs()，readSelectedBackend() 必须读得到` |
-| **M6** 键名分叉（读 `.backend` 而不是 `.selectedBackend`） | ✔ 红 3 / 3 | 同上 |
-| **M7** 安装记录不抄 `priority` | ✔ 红 1 | `✖ ★ 拿真实目录里的每一条包过一遍 toInstalledRecord()，priority 必须逐条相等` |
-| **M8** `unpackDirName` 变成恒等（安装器与解析器的约定断掉） | ✔ 红 **11** | 目录全部变"来源不明"，偏好与 priority 一起失效 |
+| 变异（撤掉什么）                                            | 结果                                         | 红在哪（节选真实输出）                                                                         |
+| ----------------------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **M1** 回到缺陷原状：不排序、不看偏好                       | ✔ 红 pipeline **fail=8** / daemon **fail=2** | `✖ ★ 同一份磁盘布局：选 vulkan 跑 vulkan 包，选 cpu 跑 cpu 包`、`✖ 安装（创建）顺序不影响结果` |
+| **M2** 只拿掉「用户选择优先」这一档（`priority` 仍在）      | ✔ 红 4 / 1                                   | `✖ 显式选择压过 priority（选了低优先级的那个，就跑它）`                                        |
+| **M3** 只拿掉 `priority`（同层按 packId 排，确定性还在）    | ✔ 红 2                                       | `✖ ★ 同一份布局：priority 90 的包赢；把两个 priority 对调，答案就反过来`                       |
+| **M4** `degraded` 恒 false（只回退不出声）                  | ✔ 红 1 / 1                                   | `✖ ★ 选了 vulkan，但 vulkan 包里没有 whisper-cli → 用 cpu 包的，degraded=true`                 |
+| **M5** 读取侧自己拼 prefs 路径（写读分叉）                  | ✔ 红 3 / 3                                   | `✖ ★ 走 RestState 自己的 persistPrefs()，readSelectedBackend() 必须读得到`                     |
+| **M6** 键名分叉（读 `.backend` 而不是 `.selectedBackend`）  | ✔ 红 3 / 3                                   | 同上                                                                                           |
+| **M7** 安装记录不抄 `priority`                              | ✔ 红 1                                       | `✖ ★ 拿真实目录里的每一条包过一遍 toInstalledRecord()，priority 必须逐条相等`                  |
+| **M8** `unpackDirName` 变成恒等（安装器与解析器的约定断掉） | ✔ 红 **11**                                  | 目录全部变"来源不明"，偏好与 priority 一起失效                                                 |
 
 ## 5.1 变异打准了没有 —— 这一条要单独说
 
@@ -190,9 +191,9 @@ M2 / M3 是分辨力的证据：它们各自只拿掉一层排序、**保留其�
 
 跑门禁期间共享树里**至少两位 agent 在途**。我逐条追到了断言：
 
-| 红 | 归属证据 |
-|---|---|
-| `T-164 ⑥ 删模型必须真的回收磁盘` 2 条 | 测试文件 `apps/daemon/src/http/rest/modelDiskReclaim.test.ts` 是**未跟踪的新文件**，不是我建的；断言 `磁盘只少了 4195197 字节，应当少 4194304` —— 差 893 字节，是他正在收的尾 |
+| 红                                                      | 归属证据                                                                                                                                                                                                                                           |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `T-164 ⑥ 删模型必须真的回收磁盘` 2 条                   | 测试文件 `apps/daemon/src/http/rest/modelDiskReclaim.test.ts` 是**未跟踪的新文件**，不是我建的；断言 `磁盘只少了 4195197 字节，应当少 4194304` —— 差 893 字节，是他正在收的尾                                                                      |
 | `T-146 ③ 两份清单里同一个 id 的体积与摘要必须一致` 1 条 | `media-tools-macos-arm64` 在 `components.json` 是 32,894,656（刚改成 8.1.2），`backends.json` 还是 31,063,636（7.1.4）。**`backends.json` 我没碰、`git status` 也显示它未修改** —— 这是 T-163 那位在执行 `amd-vulkan` §2.3 的 macOS 决策，改了一半 |
 
 **中途还撞到过一次 24 条红**（含我自己的用例）：成因是那一刻 `vendor/manifests/components.json`
@@ -207,6 +208,7 @@ M2 / M3 是分辨力的证据：它们各自只拿掉一层排序、**保留其�
 # §7 交付文件（**未 commit**，理由在下面）
 
 改（12）：
+
 ```
 packages/pipeline/src/tools.ts             ★ 主体：resolveBackendTool / findInBackendPacks
                                               + readSelectedBackend / backendPrefsPath
@@ -223,7 +225,9 @@ apps/daemon/src/pipeline/setup.ts          bundle.whisperCliOrigin + 降级 warn
 apps/daemon/src/runtime/setup.ts           导出 whisperCliName()（两处别各写一份字面量）
 scripts/selfcheck.mjs                      接 backendSelection 探针（CLI 出口）
 ```
+
 新增（2）：
+
 ```
 packages/pipeline/src/__tests__/backendSelect.test.ts     14 条（解析规则本身）
 apps/daemon/src/pipeline/backendSelectWiring.test.ts       9 条（两头的接线 + 自检出口）
@@ -238,15 +242,15 @@ apps/daemon/src/pipeline/backendSelectWiring.test.ts       9 条（两头的接�
 
 `git diff --numstat` 说这个文件是 **67 插入 / 2 删除**。七个 hunk 全部认领完，**没有一行悬空**：
 
-| hunk 头 | 内容 | 归属 | 增/删 |
-|---|---|---|---|
-| `@@ -13 +13 @@` | `import { backendPrefsPath, resolveStoreRoot } from '@openmemo/pipeline';`（原文只 import `resolveStoreRoot`） | **T-162（我）** | +1 / −1 |
-| `@@ -21,0 +22,2 @@` | 在 `@openmemo/downloader` 那个 import 块里加 `resolveInstalledFile` / `unpackDirName` | T-164 | +2 |
-| `@@ -52,0 +55 @@` | `import { byModelDir } from '../../pipeline/modelStore.js';` | T-164 | +1 |
-| `@@ -181,0 +185,7 @@` | `prefsFile` getter 上方 7 行注释（「路径由 `@openmemo/pipeline` 定义，这里只是引用」） | **T-162（我）** | +7 |
-| `@@ -183 +193 @@` | `return path.join(this.modelsRoot, 'prefs.json')` → `return backendPrefsPath(this.modelsRoot)` | **T-162（我）** | +1 / −1 |
-| `@@ -345,0 +356,53 @@` | `dropInstalledFiles()` 整个方法 + 其文档注释 | T-164 | +53 |
-| `@@ -347,0 +411,2 @@` | 删除流程里调用 `dropInstalledFiles(id)` 的两行 | T-164 | +2 |
+| hunk 头                | 内容                                                                                                           | 归属            | 增/删   |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------- | --------------- | ------- |
+| `@@ -13 +13 @@`        | `import { backendPrefsPath, resolveStoreRoot } from '@openmemo/pipeline';`（原文只 import `resolveStoreRoot`） | **T-162（我）** | +1 / −1 |
+| `@@ -21,0 +22,2 @@`    | 在 `@openmemo/downloader` 那个 import 块里加 `resolveInstalledFile` / `unpackDirName`                          | T-164           | +2      |
+| `@@ -52,0 +55 @@`      | `import { byModelDir } from '../../pipeline/modelStore.js';`                                                   | T-164           | +1      |
+| `@@ -181,0 +185,7 @@`  | `prefsFile` getter 上方 7 行注释（「路径由 `@openmemo/pipeline` 定义，这里只是引用」）                         | **T-162（我）** | +7      |
+| `@@ -183 +193 @@`      | `return path.join(this.modelsRoot, 'prefs.json')` → `return backendPrefsPath(this.modelsRoot)`                 | **T-162（我）** | +1 / −1 |
+| `@@ -345,0 +356,53 @@` | `dropInstalledFiles()` 整个方法 + 其文档注释                                                                   | T-164           | +53     |
+| `@@ -347,0 +411,2 @@`  | 删除流程里调用 `dropInstalledFiles(id)` 的两行                                                                 | T-164           | +2      |
 
 **一句话版本**：`state.ts` 里属于我的是「**引用 `backendPrefsPath` 的那 9 行**」——
 一行 import、一行 getter 主体、加上它上面那 7 行说明为什么不许各写各的字面量。
@@ -286,41 +290,41 @@ T-164 的那段 import 里有 **`unpackDirName`** —— 那是我这轮**新导
 
 # §9 我没做 / 做不到的（如实列）
 
-| 项 | 状态 |
-|---|---|
-| 「选中的包真的跑出了 GPU 加速」 | ⛔ **本机验不了**：`systemd-detect-virt=kvm`，`/sys/class/drm`、`/dev/dri`、`/dev/kfd` 全不存在（我自己复验过，不是转述）。判据已按你的指示退到"选中了哪个包" |
-| Windows / macOS 上的真实布局 | `[未验证]`。夹具用的是 `backends.json` 里逐字抄的归档名，win 的 `.zip` 与 mac 的 `.tar.xz` 两种扩展名规则都被 M8 覆盖到了，但没有在真机上跑过 |
-| `runBackendSelfTest` 按 pack 自测 | ⛔ 见 §8-1 |
-| 老记录 priority 回填 | ⛔ 见 §8-2 |
+| 项                                  | 状态                                                                                                                                                                               |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 「选中的包真的跑出了 GPU 加速」     | ⛔ **本机验不了**：`systemd-detect-virt=kvm`，`/sys/class/drm`、`/dev/dri`、`/dev/kfd` 全不存在（我自己复验过，不是转述）。判据已按你的指示退到"选中了哪个包"                      |
+| Windows / macOS 上的真实布局        | `[未验证]`。夹具用的是 `backends.json` 里逐字抄的归档名，win 的 `.zip` 与 mac 的 `.tar.xz` 两种扩展名规则都被 M8 覆盖到了，但没有在真机上跑过                                      |
+| `runBackendSelfTest` 按 pack 自测   | ⛔ 见 §8-1                                                                                                                                                                         |
+| 老记录 priority 回填                | ⛔ 见 §8-2                                                                                                                                                                         |
 | 前端把 `backend.selection` 渲染出来 | ⛔ 没碰 `apps/web`。`progress-audit` 说 `/diagnostics` 读的是 `/api/health` 而不是 `/api/selfcheck`（C6），所以这一条目前只在 `GET /api/selfcheck`、CLI 自检与 daemon 日志里看得见 |
-| 把 Vulkan 包补进 `backends.json` | ⛔ **不是我的地盘**，也不该由我做。但阻碍 3 现在消了 —— `amd-vulkan` 说的「先修解析器 → 再发包 → 再补目录」的第一步已经完成 |
+| 把 Vulkan 包补进 `backends.json`    | ⛔ **不是我的地盘**，也不该由我做。但阻碍 3 现在消了 —— `amd-vulkan` 说的「先修解析器 → 再发包 → 再补目录」的第一步已经完成                                                        |
 
 ---
 
 # §10 纪律申报
 
-| 条 | 结果 |
-|---|---|
-| `:10000` | ✅ **零请求**。未重启、未 kill、未占用该端口 |
-| `/root/data-memo` | ✅ 未读未写。所有验证走 `mkdtemp` 沙箱与 `/tmp/pack-select/` |
-| 指针文件 | ✅ sha256 仍是 `7f930979b85204d4c05b221f4c17a5cf5936a4d432a46488816727f60da233f3`（收工复核）。新测试在**模块顶层** `delete OPENMEMO_MODELS / OPENMEMO_EXT_DIR`，并有一条用例专门断言"模型根必须在 tmpdir 里且不在 `$HOME` 下"（§9-bis） |
-| `apps/web/dist` | ✅ **未构建**。全程只跑 `pnpm build:safe`，一次 `pnpm -r build` / `vite build` 都没跑。`[复核]` `dist` 全部文件 mtime 停在 `11:37:39`（= 你重启到 `3b11de4` 那次），我此后跑了多轮构建与测试，**一个字节没被改写** |
-| `pkill -f` | ✅ 未用 |
-| release | ✅ 未建/未改/未删。`gh` 一次都没用 |
-| 本机 whisper 转写 | ✅ **一次都没跑**（按用户指示）。夹具里的 `whisper-cli` 是 `#!/bin/sh; echo <packid>` 的壳脚本，判据是"解析到了哪个路径"，不需要真跑推理 |
-| 反向验证 | ✅ 全部在 `/tmp/pack-select/rv` 隔离副本（PROTOCOL §10），**先跑对照组**；共享树未被改动过一秒 |
-| `grep -r` 陷阱 | ✅ 目录/清单类断言一律用 Node 读 JSON 计数，不用 `grep`（`packages/pipeline` 那条「源码必须是纯文本」的守卫对我的新文件也是绿的） |
-| 空集陷阱 | ✅ `①-bis` 那条先断言「目录非空」+「priority 至少有两种取值」再断言相等 —— 否则"抄对了"和"写死一个常数"长得一样 |
-| 他人文件 | ✅ 一个字未改。`HANDOFF.md` / `BOARD.md` / `docs/adr/**` / `vendor/manifests/**` / `README.md` 全部只读 |
-| 派出的 subagent | 0 个 |
+| 条                | 结果                                                                                                                                                                                                                                     |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `:10000`          | ✅ **零请求**。未重启、未 kill、未占用该端口                                                                                                                                                                                             |
+| `/root/data-memo` | ✅ 未读未写。所有验证走 `mkdtemp` 沙箱与 `/tmp/pack-select/`                                                                                                                                                                             |
+| 指针文件          | ✅ sha256 仍是 `7f930979b85204d4c05b221f4c17a5cf5936a4d432a46488816727f60da233f3`（收工复核）。新测试在**模块顶层** `delete OPENMEMO_MODELS / OPENMEMO_EXT_DIR`，并有一条用例专门断言"模型根必须在 tmpdir 里且不在 `$HOME` 下"（§9-bis） |
+| `apps/web/dist`   | ✅ **未构建**。全程只跑 `pnpm build:safe`，一次 `pnpm -r build` / `vite build` 都没跑。`[复核]` `dist` 全部文件 mtime 停在 `11:37:39`（= 你重启到 `3b11de4` 那次），我此后跑了多轮构建与测试，**一个字节没被改写**                       |
+| `pkill -f`        | ✅ 未用                                                                                                                                                                                                                                  |
+| release           | ✅ 未建/未改/未删。`gh` 一次都没用                                                                                                                                                                                                       |
+| 本机 whisper 转写 | ✅ **一次都没跑**（按用户指示）。夹具里的 `whisper-cli` 是 `#!/bin/sh; echo <packid>` 的壳脚本，判据是"解析到了哪个路径"，不需要真跑推理                                                                                                 |
+| 反向验证          | ✅ 全部在 `/tmp/pack-select/rv` 隔离副本（PROTOCOL §10），**先跑对照组**；共享树未被改动过一秒                                                                                                                                           |
+| `grep -r` 陷阱    | ✅ 目录/清单类断言一律用 Node 读 JSON 计数，不用 `grep`（`packages/pipeline` 那条「源码必须是纯文本」的守卫对我的新文件也是绿的）                                                                                                        |
+| 空集陷阱          | ✅ `①-bis` 那条先断言「目录非空」+「priority 至少有两种取值」再断言相等 —— 否则"抄对了"和"写死一个常数"长得一样                                                                                                                          |
+| 他人文件          | ✅ 一个字未改。`HANDOFF.md` / `BOARD.md` / `docs/adr/**` / `vendor/manifests/**` / `README.md` 全部只读                                                                                                                                  |
+| 派出的 subagent   | 0 个                                                                                                                                                                                                                                     |
 
 ## SHARED-CHANGE
 
-| 文件 | 归属 | 我做了什么 | 冲突风险 |
-|---|---|---|---|
-| `packages/downloader/src/installer.ts` | `model-mgmt` / `catalog-truth` | `stripExt` 改名并导出为 `unpackDirName`，行为逐字不变（同一个正则） | 低（T-164 已在用这个新导出） |
-| `packages/shared/src/backends.ts` | `model-mgmt` | `InstalledBackendPack` 加一个**可选**字段 `priority?`。可选是刻意的：必填字段在补齐所有构造点之前红是必然的（PROTOCOL §10 推论） | 低 |
-| `packages/runtime/src/selfcheck.ts` | `gpu-runtime` | 加一条检查项 + 一个**可选**探针（照 `probePath` 的先例，没接就 `notProbed`），两个出口都接上了 | 低 |
-| `apps/daemon/src/http/rest/state.ts` | 公共 / **T-164 在途** | 只改 2 处：import 一行 + `prefsFile` getter | ⚠️ **中**：该文件此刻还有别人的未完成改动，见 §7 |
-| `apps/daemon/src/http/rest/backends.ts` | `model-mgmt` | 抽出 `toInstalledRecord()`（行为等价）+ 记录里加 `priority` | 低 |
-| `scripts/selfcheck.mjs` | `gpu-runtime` | 接一个探针，纯新增 | 低 |
+| 文件                                    | 归属                           | 我做了什么                                                                                                                       | 冲突风险                                         |
+| --------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `packages/downloader/src/installer.ts`  | `model-mgmt` / `catalog-truth` | `stripExt` 改名并导出为 `unpackDirName`，行为逐字不变（同一个正则）                                                              | 低（T-164 已在用这个新导出）                     |
+| `packages/shared/src/backends.ts`       | `model-mgmt`                   | `InstalledBackendPack` 加一个**可选**字段 `priority?`。可选是刻意的：必填字段在补齐所有构造点之前红是必然的（PROTOCOL §10 推论） | 低                                               |
+| `packages/runtime/src/selfcheck.ts`     | `gpu-runtime`                  | 加一条检查项 + 一个**可选**探针（照 `probePath` 的先例，没接就 `notProbed`），两个出口都接上了                                   | 低                                               |
+| `apps/daemon/src/http/rest/state.ts`    | 公共 / **T-164 在途**          | 只改 2 处：import 一行 + `prefsFile` getter                                                                                      | ⚠️ **中**：该文件此刻还有别人的未完成改动，见 §7 |
+| `apps/daemon/src/http/rest/backends.ts` | `model-mgmt`                   | 抽出 `toInstalledRecord()`（行为等价）+ 记录里加 `priority`                                                                      | 低                                               |
+| `scripts/selfcheck.mjs`                 | `gpu-runtime`                  | 接一个探针，纯新增                                                                                                               | 低                                               |

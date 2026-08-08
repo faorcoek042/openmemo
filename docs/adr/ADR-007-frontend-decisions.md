@@ -16,6 +16,7 @@ F1–F5 的实时事件（`transcribe.segment` / `mindmap.delta` / pipeline `job
 缺了它们，"14 秒后就有字"、流式字幕、渐进式导图**全部塌掉**，T-021/T-023 只能先写轮询再返工。
 
 **裁决**：
+
 - **规格由 `architect` 出**（写进 D-05，含事件名 + payload 形状 + 触发时机）。
 - **实现由 `model-mgmt` 做**（他独占 `packages/shared`，不改所有权、不破坏边界）。
 - **优先级高于 T-013 的其余部分。** 已直接转达。
@@ -34,6 +35,7 @@ F1–F5 的实时事件（`transcribe.segment` / `mindmap.delta` / pipeline `job
 ## 决策 4：补装前端依赖 —— **批准，指派 `oss-scout`**
 
 已核实的版本（`architect` 实地核实）：
+
 - `react-router@^8.3.0` —— ⚠️ **v8 移除了 `react-router-dom`**，需 Node ≥ 22.22.0
 - `i18next@^26.3.6` + `react-i18next@^17.0.11` —— **版本联动，必须配套升**
 - shadcn 底层库（见决策 7）、虚拟滚动库
@@ -82,6 +84,7 @@ F1–F5 的实时事件（`transcribe.segment` / `mindmap.delta` / pipeline `job
    于是把"存储分解条必须带图例和数字标签"**从审美建议变成硬性要求**。
 
 # 附：D-05 记录的三个静默坑（会让人浪费半天，全项目周知）
+
 - `formatSseFrame()` 发 `event: <type>` → **`EventSource.onmessage` 永不触发**，必须逐类型 `addEventListener`。
 - **Tailwind v4**：`@theme{}` 变量不能嵌套 → 明暗双档必须用 `:root`/`[data-theme]` + **`@theme inline`** 转发；
   写成普通 `@theme` **暗色永远不生效且不报错**。

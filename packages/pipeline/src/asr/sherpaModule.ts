@@ -51,7 +51,12 @@ export function normalizeSherpaModule(raw: unknown): SherpaExports {
         Number(typeof x.OfflinePunctuation === 'function') +
         Number(typeof x.readWave === 'function');
       const other = candidate === ns.default ? ns : (ns.default as SherpaExports | undefined);
-      if (other !== undefined && other !== null && typeof other === 'object' && score(other) > score(c)) {
+      if (
+        other !== undefined &&
+        other !== null &&
+        typeof other === 'object' &&
+        score(other) > score(c)
+      ) {
         return other;
       }
       return c;

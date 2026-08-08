@@ -68,7 +68,10 @@ export function pipelineKindOf(type: string): PipelineJobKind | undefined {
  * `displayName` 用**笔记标题**：用户刚刚点的就是那条笔记，任何内部 uid 对他都没有意义。
  * 标题为空时回落到 uid 是有意的 —— 空字符串会渲染成一条没有主语的提示。
  */
-export function pipelineJobOf(row: JobRow, note: { uid: string; title: string } | undefined): PipelineJob | undefined {
+export function pipelineJobOf(
+  row: JobRow,
+  note: { uid: string; title: string } | undefined,
+): PipelineJob | undefined {
   const kind = pipelineKindOf(row.type);
   if (!kind) return undefined;
   return {

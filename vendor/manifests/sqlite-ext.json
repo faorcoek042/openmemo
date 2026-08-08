@@ -39,9 +39,7 @@
         "gated": false,
         "url": "https://github.com/wangfenjin/simple/blob/master/LICENSE"
       },
-      "providesFiles": [
-        "libsimple.dylib"
-      ],
+      "providesFiles": ["libsimple.dylib"],
       "linkInto": "bin/ext",
       "priority": 100,
       "availability": "published",
@@ -84,9 +82,7 @@
         "gated": false,
         "url": "https://github.com/wangfenjin/simple/blob/master/LICENSE"
       },
-      "providesFiles": [
-        "libsimple.dylib"
-      ],
+      "providesFiles": ["libsimple.dylib"],
       "linkInto": "bin/ext",
       "priority": 100,
       "availability": "published",
@@ -129,9 +125,7 @@
         "gated": false,
         "url": "https://github.com/wangfenjin/simple/blob/master/LICENSE"
       },
-      "providesFiles": [
-        "libsimple.so"
-      ],
+      "providesFiles": ["libsimple.so"],
       "linkInto": "bin/ext",
       "priority": 100,
       "availability": "published",
@@ -174,9 +168,7 @@
         "gated": false,
         "url": "https://github.com/wangfenjin/simple/blob/master/LICENSE"
       },
-      "providesFiles": [
-        "libsimple.so"
-      ],
+      "providesFiles": ["libsimple.so"],
       "linkInto": "bin/ext",
       "priority": 100,
       "availability": "published",
@@ -219,9 +211,7 @@
         "gated": false,
         "url": "https://github.com/wangfenjin/simple/blob/master/LICENSE"
       },
-      "providesFiles": [
-        "simple.dll"
-      ],
+      "providesFiles": ["simple.dll"],
       "linkInto": "bin/ext",
       "priority": 100,
       "availability": "published",
@@ -264,9 +254,7 @@
         "gated": false,
         "url": "https://github.com/wangfenjin/simple/blob/master/LICENSE"
       },
-      "providesFiles": [
-        "simple.dll"
-      ],
+      "providesFiles": ["simple.dll"],
       "linkInto": "bin/ext",
       "priority": 100,
       "availability": "published",
@@ -309,9 +297,7 @@
         "gated": false,
         "url": "https://github.com/asg017/sqlite-vec/blob/main/LICENSE"
       },
-      "providesFiles": [
-        "vec0.dylib"
-      ],
+      "providesFiles": ["vec0.dylib"],
       "linkInto": "bin/ext",
       "priority": 90,
       "availability": "published",
@@ -354,9 +340,7 @@
         "gated": false,
         "url": "https://github.com/asg017/sqlite-vec/blob/main/LICENSE"
       },
-      "providesFiles": [
-        "vec0.dylib"
-      ],
+      "providesFiles": ["vec0.dylib"],
       "linkInto": "bin/ext",
       "priority": 90,
       "availability": "published",
@@ -399,9 +383,7 @@
         "gated": false,
         "url": "https://github.com/asg017/sqlite-vec/blob/main/LICENSE"
       },
-      "providesFiles": [
-        "vec0.so"
-      ],
+      "providesFiles": ["vec0.so"],
       "linkInto": "bin/ext",
       "priority": 90,
       "availability": "published",
@@ -444,9 +426,7 @@
         "gated": false,
         "url": "https://github.com/asg017/sqlite-vec/blob/main/LICENSE"
       },
-      "providesFiles": [
-        "vec0.so"
-      ],
+      "providesFiles": ["vec0.so"],
       "linkInto": "bin/ext",
       "priority": 90,
       "availability": "published",
@@ -489,9 +469,7 @@
         "gated": false,
         "url": "https://github.com/asg017/sqlite-vec/blob/main/LICENSE"
       },
-      "providesFiles": [
-        "vec0.dll"
-      ],
+      "providesFiles": ["vec0.dll"],
       "linkInto": "bin/ext",
       "priority": 90,
       "availability": "published",

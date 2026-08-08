@@ -123,11 +123,14 @@ async function main() {
    */
   const planNames = new Set(plan.assets.map((a) => a.name));
   const sumNames = new Set(sums.map((s) => s.name));
-  for (const n of planNames) if (!sumNames.has(n)) problems.push(`计划里有 ${n}，SHA256SUMS 里没有`);
-  for (const n of sumNames) if (!planNames.has(n)) problems.push(`SHA256SUMS 里有 ${n}，计划里没有`);
+  for (const n of planNames)
+    if (!sumNames.has(n)) problems.push(`计划里有 ${n}，SHA256SUMS 里没有`);
+  for (const n of sumNames)
+    if (!planNames.has(n)) problems.push(`SHA256SUMS 里有 ${n}，计划里没有`);
   for (const a of plan.assets) {
     const s = sums.find((x) => x.name === a.name);
-    if (s && s.sha256 !== a.sha256) problems.push(`${a.name}: 计划说 ${a.sha256}，SHA256SUMS 说 ${s.sha256}`);
+    if (s && s.sha256 !== a.sha256)
+      problems.push(`${a.name}: 计划说 ${a.sha256}，SHA256SUMS 说 ${s.sha256}`);
   }
   if (problems.length > 0) await finish();
 
@@ -145,9 +148,14 @@ async function main() {
     const t0 = Date.now();
     let r;
     try {
-      r = await fetch(url, { redirect: 'follow', headers: { 'user-agent': 'openmemo-release-verify' } });
+      r = await fetch(url, {
+        redirect: 'follow',
+        headers: { 'user-agent': 'openmemo-release-verify' },
+      });
     } catch (e) {
-      problems.push(`${want.name}: 匿名下载请求失败 —— ${e instanceof Error ? e.message : String(e)}`);
+      problems.push(
+        `${want.name}: 匿名下载请求失败 —— ${e instanceof Error ? e.message : String(e)}`,
+      );
       say(`   ✘ ${want.name.padEnd(56)} 请求失败`);
       continue;
     }
@@ -183,7 +191,9 @@ async function main() {
       }
     })();
     if (got !== want.sha256) {
-      problems.push(`${want.name}: 清单说 ${want.sha256}，从公开 URL 下下来复算是 ${got}（${size} B）`);
+      problems.push(
+        `${want.name}: 清单说 ${want.sha256}，从公开 URL 下下来复算是 ${got}（${size} B）`,
+      );
       say(`   ✘ ${want.name.padEnd(56)} sha256 不符（${secs}s，落到 ${finalHost}）`);
       continue;
     }
@@ -191,7 +201,10 @@ async function main() {
   }
 
   /* 把清单也放进下载目录，让 `sha256sum -c SHA256SUMS` 这条命令在那儿本来就是对的。 */
-  await writeFile(join(OUT, 'SHA256SUMS'), `${sums.map((s) => `${s.sha256}  ${s.name}`).join('\n')}\n`);
+  await writeFile(
+    join(OUT, 'SHA256SUMS'),
+    `${sums.map((s) => `${s.sha256}  ${s.name}`).join('\n')}\n`,
+  );
 
   hdr('1. 结果');
   if (problems.length === 0) {

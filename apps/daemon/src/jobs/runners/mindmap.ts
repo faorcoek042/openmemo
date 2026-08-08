@@ -9,11 +9,7 @@
  *   2. 本机探测到的 Ollama / LM Studio / llama-server —— 档 2（**真发请求确认**，不只看端口）
  * 都没有 → job 转 `blocked` + remediation，而不是 failed（D-01 §4.1）。
  */
-import {
-  OpenAiCompatibleProvider,
-  detectLocalBackends,
-  type LlmProvider,
-} from '@openmemo/llm';
+import { OpenAiCompatibleProvider, detectLocalBackends, type LlmProvider } from '@openmemo/llm';
 import { generateMindMap, validate, type TranscriptSegment } from '@openmemo/mindmap';
 import { makeEvent, topics } from '@openmemo/shared';
 

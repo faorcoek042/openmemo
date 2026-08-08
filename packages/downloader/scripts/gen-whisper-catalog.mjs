@@ -50,14 +50,22 @@ const QUANT = {
 
 /** Files we want, as they appear in the repo. */
 const WANTED = [
-  'ggml-tiny-q5_1.bin', 'ggml-tiny-q8_0.bin',
-  'ggml-base.bin', 'ggml-base-q8_0.bin',
-  'ggml-small.bin', 'ggml-small-q8_0.bin',
-  'ggml-medium.bin', 'ggml-medium-q8_0.bin',
+  'ggml-tiny-q5_1.bin',
+  'ggml-tiny-q8_0.bin',
+  'ggml-base.bin',
+  'ggml-base-q8_0.bin',
+  'ggml-small.bin',
+  'ggml-small-q8_0.bin',
+  'ggml-medium.bin',
+  'ggml-medium-q8_0.bin',
   'ggml-large-v1.bin',
-  'ggml-large-v2.bin', 'ggml-large-v2-q5_0.bin', 'ggml-large-v2-q8_0.bin',
-  'ggml-tiny.en-q5_1.bin', 'ggml-base.en-q5_1.bin',
-  'ggml-small.en-q5_1.bin', 'ggml-medium.en-q5_0.bin',
+  'ggml-large-v2.bin',
+  'ggml-large-v2-q5_0.bin',
+  'ggml-large-v2-q8_0.bin',
+  'ggml-tiny.en-q5_1.bin',
+  'ggml-base.en-q5_1.bin',
+  'ggml-small.en-q5_1.bin',
+  'ggml-medium.en-q5_0.bin',
 ];
 
 /** `ggml-large-v2-q5_0.bin` -> { size:'large-v2', en:false, quant:'-q5_0' } */
@@ -141,7 +149,11 @@ for (const file of WANTED) {
         sha256: f.lfs.oid,
         mirrors: [
           { provider: 'hf', url: `${HF}/${REPO}/resolve/${rev}/${file}`, official: true },
-          { provider: 'hf-mirror', url: `https://hf-mirror.com/${REPO}/resolve/${rev}/${file}`, official: false },
+          {
+            provider: 'hf-mirror',
+            url: `https://hf-mirror.com/${REPO}/resolve/${rev}/${file}`,
+            official: false,
+          },
         ],
       },
     ],

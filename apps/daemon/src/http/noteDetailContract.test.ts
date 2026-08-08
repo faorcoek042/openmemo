@@ -257,7 +257,9 @@ describe('T-139 A1b —— 正文写得进，必须读得回', () => {
       await patch(f, `/api/notes/${f.noteUid}`, {
         bodyJson: { type: 'doc', content: [{ type: 'paragraph' }] },
       });
-      const body = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as { bodyJson: unknown };
+      const body = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as {
+        bodyJson: unknown;
+      };
       assert.equal(
         typeof body.bodyJson,
         'object',
@@ -271,7 +273,9 @@ describe('T-139 A1b —— 正文写得进，必须读得回', () => {
   it('从没写过正文时是 null，不是缺字段（"没有正文"与"这条响应不带这个键"是两回事）', async () => {
     const f = await makeNote('a1bnull');
     try {
-      const body = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as { bodyJson?: unknown };
+      const body = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as {
+        bodyJson?: unknown;
+      };
       assert.equal(Object.prototype.hasOwnProperty.call(body, 'bodyJson'), true);
       assert.equal(body.bodyJson, null);
     } finally {
@@ -282,7 +286,10 @@ describe('T-139 A1b —— 正文写得进，必须读得回', () => {
   it('★ GET 的输出原样喂回 PATCH 必须幂等（⑤C 立的规矩：读写形状可互换）', async () => {
     const f = await makeNote('roundtrip');
     try {
-      const doc = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '往返' }] }] };
+      const doc = {
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: '往返' }] }],
+      };
       await patch(f, `/api/notes/${f.noteUid}`, { bodyJson: doc });
 
       const first = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as {
@@ -291,11 +298,17 @@ describe('T-139 A1b —— 正文写得进，必须读得回', () => {
       };
       // 把 GET 回来的东西原样送回去 —— 不许因此产生第二种形状（settings 那次的教训）
       assert.equal(
-        (await patch(f, `/api/notes/${f.noteUid}`, { bodyJson: first.bodyJson, title: first.title }))
-          .status,
+        (
+          await patch(f, `/api/notes/${f.noteUid}`, {
+            bodyJson: first.bodyJson,
+            title: first.title,
+          })
+        ).status,
         200,
       );
-      const second = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as { bodyJson: unknown };
+      const second = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as {
+        bodyJson: unknown;
+      };
       assert.deepEqual(second.bodyJson, first.bodyJson);
       assert.deepEqual(second.bodyJson, doc);
     } finally {
@@ -308,7 +321,10 @@ describe('T-139 —— 这个端点整体（E1：此前一次都没被执行过�
   it('★ 顶层键必须齐（少一个前端就少一块功能，而且不会报错）', async () => {
     const f = await makeNote('shape');
     try {
-      const body = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as Record<string, unknown>;
+      const body = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as Record<
+        string,
+        unknown
+      >;
       /*
        * 钉的是**结构**不是关键词：逐个 hasOwnProperty，不做整体 deepEqual ——
        * 后者会让"新增一个字段"变成红灯，那种红灯只会训练人去改断言。
@@ -331,11 +347,7 @@ describe('T-139 —— 这个端点整体（E1：此前一次都没被执行过�
         'canRetranscribe',
         'createdAt',
       ]) {
-        assert.equal(
-          Object.prototype.hasOwnProperty.call(body, key),
-          true,
-          `响应里少了 ${key}`,
-        );
+        assert.equal(Object.prototype.hasOwnProperty.call(body, key), true, `响应里少了 ${key}`);
       }
       assert.equal(Array.isArray(body['tags']), true, 'tags 必须永远是数组（少了它详情页整页崩）');
       assert.equal(Array.isArray(body['assets']), true);
@@ -351,7 +363,10 @@ describe('T-139 —— 这个端点整体（E1：此前一次都没被执行过�
     try {
       const res = await get(f, '/api/notes/01ARZ3NDEKTSV4RRFFQ69G5FAV');
       assert.equal(res.status, 404);
-      assert.equal(((await res.json()) as { error: { code: string } }).error.code, 'NOTE_NOT_FOUND');
+      assert.equal(
+        ((await res.json()) as { error: { code: string } }).error.code,
+        'NOTE_NOT_FOUND',
+      );
     } finally {
       await f.d.stop();
     }
@@ -381,12 +396,18 @@ describe('T-142 并入 —— 详情端点上另外几条"坏了不会报错"的
       const before = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as {
         starred: unknown;
       };
-      assert.equal(typeof before.starred, 'boolean', `starred 不是布尔：${JSON.stringify(before.starred)}`);
+      assert.equal(
+        typeof before.starred,
+        'boolean',
+        `starred 不是布尔：${JSON.stringify(before.starred)}`,
+      );
       assert.equal(before.starred, false, '前提：新建的笔记不该是星标的');
 
       assert.equal((await put(f, `/api/notes/${f.noteUid}/star`, { starred: true })).status, 200);
 
-      const after_ = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as { starred: unknown };
+      const after_ = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as {
+        starred: unknown;
+      };
       assert.equal(after_.starred, true, '星标写进去了，详情端点读不回来');
     } finally {
       await f.d.stop();
@@ -402,7 +423,10 @@ describe('T-142 并入 —— 详情端点上另外几条"坏了不会报错"的
     const f = await makeNote('consistency');
     try {
       await put(f, `/api/notes/${f.noteUid}/star`, { starred: true });
-      assert.equal((await patch(f, `/api/notes/${f.noteUid}`, { title: '改过的标题' })).status, 200);
+      assert.equal(
+        (await patch(f, `/api/notes/${f.noteUid}`, { title: '改过的标题' })).status,
+        200,
+      );
 
       const detail = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as {
         title: string;
@@ -497,10 +521,14 @@ describe('T-142 并入 —— 详情端点上另外几条"坏了不会报错"的
     // 顶层键那条只验"在不在"；这条验"是不是能用的类型"——前端拿 createdAt 直接格式化
     const f = await makeNote('types');
     try {
-      const body = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as Record<string, unknown>;
+      const body = (await (await get(f, `/api/notes/${f.noteUid}`)).json()) as Record<
+        string,
+        unknown
+      >;
       assert.equal(typeof body['canRetranscribe'], 'boolean');
       assert.equal(
-        typeof body['createdAt'] === 'string' && !Number.isNaN(Date.parse(body['createdAt'] as string)),
+        typeof body['createdAt'] === 'string' &&
+          !Number.isNaN(Date.parse(body['createdAt'] as string)),
         true,
         `createdAt 不是可解析的时间串：${JSON.stringify(body['createdAt'])}`,
       );

@@ -22,21 +22,12 @@
       "axis1": {
         "field": "lang",
         "control": "Select",
-        "values": [
-          "multi",
-          "en",
-          "zh",
-          "ja"
-        ]
+        "values": ["multi", "en", "zh", "ja"]
       },
       "axis2": {
         "field": "speedValue",
         "control": "Tabs",
-        "values": [
-          "fast",
-          "balance",
-          "quality"
-        ]
+        "values": ["fast", "balance", "quality"]
       },
       "renderedSet": "models.filter(m => m.lang === selectedLang && m.speedValue === selectedSpeed)",
       "resultingCardCount": "typically 1-3 of 15 visible at once",
@@ -72,10 +63,7 @@
       "engineId": "whisper",
       "outOfScope": false,
       "note": "bundled whisper.cpp 1.8.6; this is the only engine OpenMemo ships (ADR-016)",
-      "groupingAxes": [
-        "lang",
-        "speedValue"
-      ],
+      "groupingAxes": ["lang", "speedValue"],
       "models": [
         {
           "id": "ggml-tiny.bin",
@@ -330,9 +318,7 @@
         {
           "id": "parakeet-tdt-0.6b-v2",
           "displayName": "Parakeet V2",
-          "languages": [
-            "transcription.lang en"
-          ],
+          "languages": ["transcription.lang en"],
           "sizeBytes": 450887680
         },
         {
@@ -370,9 +356,7 @@
         {
           "id": "parakeet-tdt-0.6b-v2-coreml",
           "displayName": "Parakeet V2",
-          "languages": [
-            "transcription.lang en"
-          ],
+          "languages": ["transcription.lang en"],
           "sizeBytes": 450887680
         },
         {
@@ -434,9 +418,7 @@
         {
           "id": "funasr-models",
           "displayName": "FunASR Models",
-          "languages": [
-            "transcription.lang zh"
-          ],
+          "languages": ["transcription.lang zh"],
           "sizeBytes": 1073741824
         }
       ],
@@ -446,11 +428,7 @@
       "engineId": "sherpa-onnx",
       "pluginId": "plugin:sherpa-onnx",
       "displayName": "Sherpa ONNX",
-      "category": [
-        "asr",
-        "tts",
-        "punctuation"
-      ],
+      "category": ["asr", "tts", "punctuation"],
       "outOfScope": true,
       "reason": "ADR-016: OpenMemo ships whisper only",
       "enginePlatforms": [],
@@ -459,126 +437,85 @@
         {
           "id": "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
           "displayName": "SenseVoice-zh-en-ja-ko-yue",
-          "languages": [
-            "zh",
-            "en",
-            "ja",
-            "ko",
-            "yue"
-          ],
+          "languages": ["zh", "en", "ja", "ko", "yue"],
           "sizeBytes": 1047870769
         },
         {
           "id": "sherpa-onnx-zipformer-korean-2024-06-24",
           "displayName": "Zipformer-Korean",
-          "languages": [
-            "ko"
-          ],
+          "languages": ["ko"],
           "sizeBytes": 329740690
         },
         {
           "id": "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25",
           "displayName": "Qwen3-ASR-0.6B-Int8",
-          "languages": [
-            "zh",
-            "en",
-            "ja",
-            "ko"
-          ],
+          "languages": ["zh", "en", "ja", "ko"],
           "sizeBytes": 878702423
         },
         {
           "id": "sherpa-onnx-moonshine-tiny-ko-quantized-2026-02-27",
           "displayName": "Moonshine-Tiny-Ko",
-          "languages": [
-            "ko"
-          ],
+          "languages": ["ko"],
           "sizeBytes": 49153415
         },
         {
           "id": "sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12",
           "displayName": "Omnilingual-300M-Int8",
-          "languages": [
-            "multi"
-          ],
+          "languages": ["multi"],
           "sizeBytes": 292571207
         },
         {
           "id": "sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04-01",
           "displayName": "Cohere-Transcribe-14Lang-Int8",
-          "languages": [
-            "zh",
-            "en",
-            "ja",
-            "ko"
-          ],
+          "languages": ["zh", "en", "ja", "ko"],
           "sizeBytes": 1699791751
         },
         {
           "id": "sherpa-onnx-streaming-paraformer-bilingual-zh-en",
           "displayName": "Paraformer-bilingual-zh-en",
-          "languages": [
-            "zh",
-            "en"
-          ],
+          "languages": ["zh", "en"],
           "sizeBytes": 1047319737
         },
         {
           "id": "sherpa-onnx-streaming-zipformer-korean-2024-06-16",
           "displayName": "Streaming-Zipformer-Korean",
-          "languages": [
-            "ko"
-          ],
+          "languages": ["ko"],
           "sizeBytes": 418218652
         },
         {
           "id": "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
           "displayName": "Zipformer-bilingual-zh-en",
-          "languages": [
-            "zh",
-            "en"
-          ],
+          "languages": ["zh", "en"],
           "sizeBytes": 511279104
         },
         {
           "id": "sherpa-onnx-streaming-zipformer-ctc-small-2024-03-18",
           "displayName": "Zipformer-ctc-small",
-          "languages": [
-            "en"
-          ],
+          "languages": ["en"],
           "sizeBytes": 184604253
         },
         {
           "id": "sherpa-onnx-streaming-zipformer-ctc-multi-zh-hans-2023-12-13",
           "displayName": "Zipformer-multi-zh-hans",
-          "languages": [
-            "zh",
-            "hans"
-          ],
+          "languages": ["zh", "hans"],
           "sizeBytes": 247200045
         },
         {
           "id": "sherpa-onnx-streaming-zipformer-en-20M-2023-02-17",
           "displayName": "Zipformer-en-20M",
-          "languages": [
-            "en"
-          ],
+          "languages": ["en"],
           "sizeBytes": 127887156
         },
         {
           "id": "sherpa-onnx-whisper-base.en",
           "displayName": "Whisper-base.en",
-          "languages": [
-            "en"
-          ],
+          "languages": ["en"],
           "sizeBytes": 208576005
         },
         {
           "id": "sherpa-onnx-whisper-distil-large-v2",
           "displayName": "Whisper-Distil-Large-v2",
-          "languages": [
-            "en"
-          ],
+          "languages": ["en"],
           "sizeBytes": 576607838
         },
         {
@@ -691,9 +628,7 @@
         {
           "id": "sherpa-onnx-whisper-distil-large-v3",
           "displayName": "Whisper-Distil-Large-v3",
-          "languages": [
-            "en"
-          ],
+          "languages": ["en"],
           "sizeBytes": 529350808
         },
         {
@@ -806,17 +741,13 @@
         {
           "id": "sherpa-onnx-whisper-medium.en",
           "displayName": "Whisper-Medium.en",
-          "languages": [
-            "en"
-          ],
+          "languages": ["en"],
           "sizeBytes": 1905872689
         },
         {
           "id": "sherpa-onnx-whisper-small.en",
           "displayName": "Whisper-Small.en",
-          "languages": [
-            "en"
-          ],
+          "languages": ["en"],
           "sizeBytes": 635693775
         },
         {
@@ -1036,9 +967,7 @@
         {
           "id": "sherpa-onnx-whisper-tiny.en",
           "displayName": "Whisper-Tiny.en",
-          "languages": [
-            "en"
-          ],
+          "languages": ["en"],
           "sizeBytes": 118071777
         },
         {
@@ -1365,17 +1294,13 @@
         {
           "id": "sherpa-onnx-zh-wenet-aishell",
           "displayName": "Zh-Wenet-Aishell",
-          "languages": [
-            "zh"
-          ],
+          "languages": ["zh"],
           "sizeBytes": 355342084
         },
         {
           "id": "sherpa-onnx-en-wenet-gigaspeech",
           "displayName": "En-Wenet-Gigaspeech",
-          "languages": [
-            "en"
-          ],
+          "languages": ["en"],
           "sizeBytes": 933151114
         }
       ],

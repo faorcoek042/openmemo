@@ -27,7 +27,13 @@
 export const RECORD_SAMPLE_RATE = 16_000;
 
 export type RecorderServerMessage =
-  | { type: 'ready'; recordingUid: string; noteUid: string; transcriptUid: string; sampleRate: number }
+  | {
+      type: 'ready';
+      recordingUid: string;
+      noteUid: string;
+      transcriptUid: string;
+      sampleRate: number;
+    }
   | { type: 'partial'; utteranceId: string; text: string; startMs: number }
   | { type: 'final'; seq: number; startMs: number; endMs: number; text: string }
   | { type: 'overrun'; droppedSamples: number }
@@ -119,7 +125,12 @@ export async function startRecording(opts: StartOptions): Promise<RecorderHandle
   try {
     await ctx.audioWorklet.addModule(blobUrl);
 
-    ws = new WebSocket(wsUrl({ ...(opts.language ? { language: opts.language } : {}), ...(opts.title ? { title: opts.title } : {}) }));
+    ws = new WebSocket(
+      wsUrl({
+        ...(opts.language ? { language: opts.language } : {}),
+        ...(opts.title ? { title: opts.title } : {}),
+      }),
+    );
     ws.binaryType = 'arraybuffer';
 
     ws.onmessage = (ev: MessageEvent<string>) => {
@@ -214,7 +225,10 @@ export interface CaptionRow {
  * - `final` 到达 = 该句定稿：丢掉所有未定稿行，追加定稿行
  *   （服务端一句定稿后就换新的 `utteranceId`，未定稿行不会再更新）。
  */
-export function applyCaption(rows: readonly CaptionRow[], msg: RecorderServerMessage): CaptionRow[] {
+export function applyCaption(
+  rows: readonly CaptionRow[],
+  msg: RecorderServerMessage,
+): CaptionRow[] {
   if (msg.type === 'partial') {
     const row: CaptionRow = { id: msg.startMs, uid: msg.utteranceId, text: msg.text, final: false };
     const idx = rows.findIndex((x) => !x.final && x.uid === msg.utteranceId);

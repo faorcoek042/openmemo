@@ -26,13 +26,7 @@ import type { FetchedMedia, MediaInfo } from './media/types.js';
 import type { Lane, LaneManager, PreemptionCheck } from './queue/lanes.js';
 import type { ManagedDirs, ToolPaths } from './tools.js';
 
-export type PipelineStep =
-  | 'fetch'
-  | 'probe'
-  | 'normalize'
-  | 'vad'
-  | 'asr'
-  | 'done';
+export type PipelineStep = 'fetch' | 'probe' | 'normalize' | 'vad' | 'asr' | 'done';
 
 export interface StepProgress {
   step: PipelineStep;
@@ -207,8 +201,7 @@ export class TranscribePipeline {
      * the engine keeps that decision next to the knowledge that motivates it.
      */
     const engineCaps = await asr.capabilities().catch(() => null);
-    const targetChunkMs =
-      this.opts.targetChunkMs ?? engineCaps?.preferredChunkMs ?? undefined;
+    const targetChunkMs = this.opts.targetChunkMs ?? engineCaps?.preferredChunkMs ?? undefined;
     const maxChunkMs =
       this.opts.maxChunkMs ??
       (engineCaps?.preferredChunkMs !== undefined
@@ -324,7 +317,6 @@ export class TranscribePipeline {
   }
 }
 
-
 /**
  * Drop segments that duplicate speech already captured by the previous chunk.
  *
@@ -414,7 +406,10 @@ export function stripDuplicatedPrefix(text: string, prevText: string): string | 
   for (; i < text.length && consumed < b.length; i++) {
     if (normaliseForCompare(text[i] ?? '').length > 0) consumed += 1;
   }
-  return text.slice(i).replace(/^[\s,.!?;:、，。！？；：]+/, '').trim();
+  return text
+    .slice(i)
+    .replace(/^[\s,.!?;:、，。！？；：]+/, '')
+    .trim();
 }
 
 /**

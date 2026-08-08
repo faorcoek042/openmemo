@@ -70,9 +70,7 @@ export interface FetchRequest {
   onProgress?: (fraction: number) => void;
 }
 
-export type Availability =
-  | { ok: true }
-  | { ok: false; reason: string; remediation: string };
+export type Availability = { ok: true } | { ok: false; reason: string; remediation: string };
 
 export interface MediaSource {
   readonly id: MediaSourceId;

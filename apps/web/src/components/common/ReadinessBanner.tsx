@@ -6,7 +6,11 @@ import { AlertTriangle, ChevronDown, ChevronRight, XCircle } from 'lucide-react'
 
 import { rawFetch } from '../../lib/api/client';
 import { useConnectionStore } from '../../lib/stores/connection.store';
-import { detectBlockedCapabilities, isSecureContext, localhostEquivalent } from '../../lib/secure-context';
+import {
+  detectBlockedCapabilities,
+  isSecureContext,
+  localhostEquivalent,
+} from '../../lib/secure-context';
 import { Button } from './Button';
 import { Emphasis } from './Emphasis';
 import { worstTone, type StatusTone } from './statusTone';
@@ -130,7 +134,10 @@ export function ReadinessBanner() {
          */
         details: blocked.map((c) => t(`secureContext.caps.${c.key}`)),
         ...(local
-          ? { actionLabel: t('secureContext.tryLocalhost'), onAction: () => window.location.assign(local) }
+          ? {
+              actionLabel: t('secureContext.tryLocalhost'),
+              onAction: () => window.location.assign(local),
+            }
           : {}),
       });
     }
@@ -142,7 +149,8 @@ export function ReadinessBanner() {
   /* ── 2. 后端能力（health 轮询）── */
   const ext = data?.db?.extensions;
   const missing = data?.pipeline?.missing ?? [];
-  const pendingRestart = data?.restartRequired?.required === true ? (data.restartRequired.extensions ?? []) : [];
+  const pendingRestart =
+    data?.restartRequired?.required === true ? (data.restartRequired.extensions ?? []) : [];
   const awaits = (n: string) => pendingRestart.includes(n);
 
   // ★ 「装好了待重启」优先：否则会把已经装好的用户送回去再装一遍（装了也出不去的圈）
@@ -154,9 +162,9 @@ export function ReadinessBanner() {
       actionLabel: restarting ? t('health.restarting') : t('health.restartNow'),
       onAction: () => {
         setRestarting(true);
-        void rawFetch(data?.restartRequired?.endpoint ?? '/api/daemon/restart', { method: 'POST' }).catch(
-          () => setRestarting(false),
-        );
+        void rawFetch(data?.restartRequired?.endpoint ?? '/api/daemon/restart', {
+          method: 'POST',
+        }).catch(() => setRestarting(false));
       },
     });
   }

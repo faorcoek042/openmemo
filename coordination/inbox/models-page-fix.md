@@ -38,11 +38,11 @@
 
 ### 2.1 三种猜测逐条排除（都是实测，不是推断）
 
-| 猜测 | 核实方式 | 结论 |
-|---|---|---|
-| 缺 zh-CN 词条 | 脚本拍平两份 locale 比键集合 | ❌ **522 = 522，差集两边都是空** |
-| 键名对不上导致回退英文 | 逐个打印用到的 8 个 key 的 zh/en 值 | ❌ 全部存在且正确（`settings.llm` = 「AI 模型」…） |
-| 搬迁漏了 `t()` 包装 | 通读 `LlmSettingsSection.tsx` / `PurposeBindingsSection.tsx` | ❌ **两块全程 `t()`，是这一页唯一做对 i18n 的部分** |
+| 猜测                   | 核实方式                                                     | 结论                                                |
+| ---------------------- | ------------------------------------------------------------ | --------------------------------------------------- |
+| 缺 zh-CN 词条          | 脚本拍平两份 locale 比键集合                                 | ❌ **522 = 522，差集两边都是空**                    |
+| 键名对不上导致回退英文 | 逐个打印用到的 8 个 key 的 zh/en 值                          | ❌ 全部存在且正确（`settings.llm` = 「AI 模型」…）  |
+| 搬迁漏了 `t()` 包装    | 通读 `LlmSettingsSection.tsx` / `PurposeBindingsSection.tsx` | ❌ **两块全程 `t()`，是这一页唯一做对 i18n 的部分** |
 
 ### 2.2 真因
 
@@ -70,13 +70,13 @@
 
 新增 `models.*` 命名空间（zh-CN / en 各 107 条），覆盖 **6 个文件**：
 
-| 文件 | 为什么在范围内 |
-|---|---|
-| `features/models/ModelsPage.tsx` | 就是出问题那一屏的骨架 |
-| `features/models/components/StorageBreakdown.tsx` | **两个 Tab 都渲染**，和骨架同屏 |
+| 文件                                                                | 为什么在范围内                                                       |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `features/models/ModelsPage.tsx`                                    | 就是出问题那一屏的骨架                                               |
+| `features/models/components/StorageBreakdown.tsx`                   | **两个 Tab 都渲染**，和骨架同屏                                      |
 | `.../ModelCard.tsx`、`.../DownloadRow.tsx`、`.../QuantSelector.tsx` | 转写 Tab 的正文。**只修骨架的话，点一下 Tab 就又是混排** —— 那叫半做 |
-| `components/common/FitBadge.tsx` | 只被上面这几个 + 详情页用；不改的话卡片里仍有中文徽标 |
-| `features/models/ModelDetailPage.tsx` | 「详情」一点就到，且它本来就带一处裸 `**` |
+| `components/common/FitBadge.tsx`                                    | 只被上面这几个 + 详情页用；不改的话卡片里仍有中文徽标                |
+| `features/models/ModelDetailPage.tsx`                               | 「详情」一点就到，且它本来就带一处裸 `**`                            |
 
 两条实现上的取舍写进了代码注释：
 
@@ -91,9 +91,9 @@
 
 新增 `apps/web/src/components/common/Emphasis.tsx`，接了两处（都在出问题那一屏）：
 
-| 处 | 来源 | 为什么不能"删掉星号" |
-|---|---|---|
-| `settings.llmIntro` | locale 文件 | 删了「推荐用在线 API」就和正文一样平，而 ADR-016 要它是主路径 |
+| 处                             | 来源                                           | 为什么不能"删掉星号"                                                                                        |
+| ------------------------------ | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `settings.llmIntro`            | locale 文件                                    | 删了「推荐用在线 API」就和正文一样平，而 ADR-016 要它是主路径                                               |
 | `disclosure.messageZh/message` | **服务端**（`packages/llm/src/secrets.ts:68`） | ADR-006 要求路径由 daemon 给（随 dataDir 变，前端硬编码必然说错）。我**不能**改那份字符串，只能在渲染侧处理 |
 
 另接了 `models.detail.benchNone`（详情页那句「我们**不显示论文里的准确率数字**」，同型，顺手）。
@@ -107,22 +107,27 @@
 每条都是：改坏 → 跑 `pnpm run test:components` → 贴输出 → 还原。
 
 **① Tab 条塞回 hidden 分支**
+
 ```
 ℹ tests 140  ℹ pass 136  ℹ fail 2
 ✖ ★ ?tab=llm 时切换条必须仍在页面上，且不在任何被隐藏的面板里 (20.372149ms)
   AssertionError [ERR_ASSERTION]: 切换条被一个 hidden 的祖先包住了（切到另一个 Tab 就会连它一起消失）
 ```
+
 （同一次里另一条 `✖ ★ DataLocationSection 确实把 daemon 的 warningZh 接进了这个组件` 是 `storage-fix` 当时在途的，不是我的；它随后自己修好了，最终全绿。）
 
 **② 骨架改回硬编码中文**（只把 h1 与「当前使用」两条改回去）
+
 ```
 ℹ tests 140  ℹ pass 137  ℹ fail 1
 ✖ ★ 英文界面下 /models 不许渲染出硬编码中文（两个 Tab 都查） (15.571854ms)
   AssertionError: /models：英文界面上出现了硬编码中文 → ["模型管理Browse, download, switch"," no command line needed.当前使用TranscriptionNone sel"]
 ```
+
 断言里直接把混排的那一截打出来了 —— 这正是用户看到的那种"一行里中英各半"。
 
 **③ 撤掉星标过滤**
+
 ```
 ℹ tests 140  ℹ pass 135  ℹ fail 3
 ✖ ★ /notes?starred=1 只列星标笔记；/notes 列全部
@@ -133,6 +138,7 @@
 ```
 
 **④ 撤掉 `<Emphasis>`**
+
 ```
 ℹ tests 140  ℹ pass 137  ℹ fail 1
 ✖ ★ 服务端下发的 disclosure 里的 ** 必须渲染成 <strong>，页面上看不到星号
@@ -140,6 +146,7 @@
 ```
 
 **⑤ 撤掉 MockNotice 的版本戳修复**（改回 `if (mocked === 0) return null;`）
+
 ```
 ℹ tests 140  ℹ pass 137  ℹ fail 1
 ✖ ★ 所有 API 面都接通（mocked === 0）时，daemon 版本戳仍然渲染 (5.918006ms)
@@ -182,26 +189,28 @@ assert.equal(tabs.closest('.hidden'), null, '…');
 
 自建 `vite dev --port 5203`（`OPENMEMO_DAEMON=http://127.0.0.1:10000`，只走代理读 demo 的真实数据）。
 
-| 检查 | zh-CN | en |
-|---|---|---|
-| `?tab=llm` 时 Tab 条可见 | ✅ `126×33` | ✅ `232×33` |
-| 点「转写」能回去 | ✅ URL → `/models?tab=asr`，目录面板可见 | ✅ 同左 |
-| 页面含裸 `**` | ❌ 无 | ❌ 无 |
-| 全页汉字数 | 478（整页中文） | **17**（= 4 个服务商中文品牌名） |
-| 「当前生效 / In effect」 | `DeepSeek · deepseek-v4-flash` | 同左 |
-| `/notes?starred=1` | 0 条 + 星标专属空态 | 同左 |
-| `/notes` | 2 条 | 2 条 |
-| 非 GET 请求 | 只有 SPA 自己的 `POST /api/auth/session` 握手 | 同左 |
+| 检查                     | zh-CN                                         | en                               |
+| ------------------------ | --------------------------------------------- | -------------------------------- |
+| `?tab=llm` 时 Tab 条可见 | ✅ `126×33`                                   | ✅ `232×33`                      |
+| 点「转写」能回去         | ✅ URL → `/models?tab=asr`，目录面板可见      | ✅ 同左                          |
+| 页面含裸 `**`            | ❌ 无                                         | ❌ 无                            |
+| 全页汉字数               | 478（整页中文）                               | **17**（= 4 个服务商中文品牌名） |
+| 「当前生效 / In effect」 | `DeepSeek · deepseek-v4-flash`                | 同左                             |
+| `/notes?starred=1`       | 0 条 + 星标专属空态                           | 同左                             |
+| `/notes`                 | 2 条                                          | 2 条                             |
+| 非 GET 请求              | 只有 SPA 自己的 `POST /api/auth/session` 握手 | 同左                             |
 
 > 演示库里那 2 条笔记**本来就都没加星**（`ui-polish` 上一轮也这么报的），所以浏览器里能验的是"星标页不再等于全部笔记"这一半；"加了星的会出现"那一半由组件测试的正例覆盖（2 条数据里 1 条 starred → 星标页正好 1 条）。**我没有去点星标按钮**（那是写请求，会改用户的库）。
 
 截图（仓库外）：`/tmp/models-page-fix/shots/`
+
 ```
 zh-CN-models-asr.png   zh-CN-models-llm.png   zh-CN-models-after-click-back.png
 zh-CN-notes-all.png    zh-CN-notes-starred.png
 en-models-asr.png      en-models-llm.png      en-models-after-click-back.png
 en-notes-all.png       en-notes-starred.png
 ```
+
 诊断脚本与日志：`/tmp/models-page-fix/{diag.mjs,shot.mjs,rev-*.log,final-all.log}`
 
 ---
@@ -288,6 +297,7 @@ git add apps/web/src/features/models/ModelsPage.tsx \
 ## §A 反向验证（6 条，真实输出）
 
 **① `/runtime` 骨架改回硬编码中文**
+
 ```
 ℹ tests 150  ℹ pass 147  ℹ fail 1
 ✖ ★ 英文界面下 /runtime 不许渲染出硬编码中文 (13.73658ms)
@@ -295,42 +305,51 @@ git add apps/web/src/features/models/ModelsPage.tsx \
 ```
 
 **② `/runtime` 的 RTF 提示撤掉 `<Emphasis>`**
+
 ```
 ✖ ★ RTF 那句提示不许把裸 ** 吐给用户（它原本是硬编码在 JSX 里的）
   AssertionError: 页面上仍能看到裸的 ** → …提示：自检里的 RTF 是**本机实测值**；模型卡片上的“预计耗时”是由它外推的**估算**，外推系数尚未标定，仅供参考。
 ```
 
 **③ `title=` 撤掉 `stripEmphasis`**
+
 ```
 ✖ ★ title= 这类属性位置只能脱标记：tooltip 里绝不许出现星号
   AssertionError: tooltip 里出现了裸标记：代价：**没有逐字时间戳**（字幕高亮到句、不到字）、…
 ```
 
 **④ 撤掉 `DataLocationSection` 的两处 `<Emphasis>`** —— **第一次没红**：
+
 ```
 ℹ tests 150  ℹ pass 148  ℹ fail 0        ← ⚠️ 假绿
 ```
+
 成因：我的断言是 `/\bEmphasis\b/.test(src)`，而我在改动旁留了一句注释写着"走 `<Emphasis>`"，
 **正则匹到了注释**。改成断 import 之后重跑：
+
 ```
 ℹ tests 150  ℹ pass 147  ℹ fail 1
 ✖ ★ 登记的每个渲染点都必须真的 import Emphasis / stripEmphasis（不是注释里提一句）
   AssertionError: features/settings/DataLocationSection.tsx 渲染了带 ** 的 settings.dataDir.needRestart，却没有 import Emphasis/stripEmphasis —— 用户会看到裸星号
 ```
+
 > 这条和上一轮那个 OOM 是同一类：**验证手段自己有缺陷时，你拿到的绿灯是假的。**
 > 判据改成"import 在不在"之后就没有这个面了 —— 未使用的 import 过不了 eslint，所以 import 在 ⇒ 它一定被用了。
 
 **⑤ `BackendChip` 的状态词改回写死中文**
+
 ```
 ✖ ★ 英文界面下 /runtime 不许渲染出硬编码中文
   AssertionError: → ["eration backend packsCPU使用中whisper.cpp CPURecomme"]
 ```
 
 **⑥ 撤掉 `localizedName` / `localizedDescription`**（第三类混语言）
+
 ```
 ✖ ★ 英文界面下 /models 不许渲染出硬编码中文（两个 Tab 都查）
   AssertionError: → ["chine can runRecommended假装的转写模型一段用来占位的中文描述Details"]
 ```
+
 > 为了让这条真的能红，我把两个页面的桩数据改成了**目录的真实形状**
 > （`displayName` + `displayNameZh` 成对、`descriptionEn` + `descriptionZh` 成对）。
 > 原来的桩全是 ASCII，测的其实只有"我们自己的文案"，**测不到目录数据这一层**。
@@ -387,23 +406,23 @@ git add apps/web/src/features/runtime/RuntimePage.tsx \
 
 ## §D 验证
 
-| 项 | 结果 |
-|---|---|
-| `tsc -b`（全仓） | **0** |
-| `eslint`（我碰过的全部路径） | **0** |
-| `apps/web` 单测 | **27 / 27** |
-| `apps/web` 组件测试 | **150 条 / 148 通过 / 0 失败 / 2 skipped**（本轮新增 12 条，累计 25 条） |
+| 项                           | 结果                                                                     |
+| ---------------------------- | ------------------------------------------------------------------------ |
+| `tsc -b`（全仓）             | **0**                                                                    |
+| `eslint`（我碰过的全部路径） | **0**                                                                    |
+| `apps/web` 单测              | **27 / 27**                                                              |
+| `apps/web` 组件测试          | **150 条 / 148 通过 / 0 失败 / 2 skipped**（本轮新增 12 条，累计 25 条） |
 
 ⚠️ 全仓 `eslint apps/web/src` 此刻有 1 error + 3 warning，**全在 `test/host.test.tsx`、`test/__mut*.test.tsx`、`test/host.tsx`** —— `test-host` 在途，不是我的。我对自己碰过的路径单独跑过，rc=0。
 
 **真浏览器复核**（自建 `vite dev --port 5203` 代理 `:10000`，全程只 GET）：
 
-| 页面 | zh-CN 汉字 | en 汉字 | 裸 `**` |
-|---|---|---|---|
-| `/runtime` | 312 | **0** ✅（修 `displayNameZh` 前是 13） | 无 |
-| `/models?tab=llm` | 478 | 17（= 4 个服务商中文品牌名，属 `llm-catalog.ts`，未动） | 无 |
-| `/record` | 206 | **0** | 无 |
-| `/settings` | 387 | 81（daemon 的 `purposeZh` + 语言切换器的「中文」，见 §B.2） | 无 |
+| 页面              | zh-CN 汉字 | en 汉字                                                     | 裸 `**` |
+| ----------------- | ---------- | ----------------------------------------------------------- | ------- |
+| `/runtime`        | 312        | **0** ✅（修 `displayNameZh` 前是 13）                      | 无      |
+| `/models?tab=llm` | 478        | 17（= 4 个服务商中文品牌名，属 `llm-catalog.ts`，未动）     | 无      |
+| `/record`         | 206        | **0**                                                       | 无      |
+| `/settings`       | 387        | 81（daemon 的 `purposeZh` + 语言切换器的「中文」，见 §B.2） | 无      |
 
 截图：`/tmp/models-page-fix/shots2/{zh-CN,en}-{runtime,models-llm,recorder,settings}.png`
 反向验证日志：`/tmp/models-page-fix/rev2-*.log`

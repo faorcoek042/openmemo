@@ -105,7 +105,10 @@ export default function ComponentsPage() {
             onClick={() => void check.mutateAsync({})}
             data-testid="components-check-updates"
           >
-            <RefreshCw className={check.isPending ? 'size-3.5 animate-spin' : 'size-3.5'} aria-hidden />
+            <RefreshCw
+              className={check.isPending ? 'size-3.5 animate-spin' : 'size-3.5'}
+              aria-hidden
+            />
             {check.isPending ? '检查中…' : '检查更新'}
           </Button>
         </div>

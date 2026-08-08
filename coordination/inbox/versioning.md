@@ -3,6 +3,7 @@
 ## [2026-08-08 01:05] T-VERSIONING DONE
 
 交付:
+
 - `docs/design/D-12-versioning.md`（方案与依据，TL;DR 在开头）
 - `scripts/lib/version.mjs`（版本号唯一读取点）
 - `scripts/check-version-sync.mjs`（守卫，7 条断言）
@@ -16,6 +17,7 @@
 - `scripts/ci/lint-workflows.mjs`（把新守卫登记进"必须被跑到"清单，+1 行）
 
 要点:
+
 1. **那两个数各自从哪来、为什么对不上**：界面上的 `v0.1.0` 来自
    `apps/daemon/src/main.ts:78` 手写的 `export const VERSION = '0.1.0'`；`package.json` 的
    `0.0.0` 是 `npm init` 默认值。`[实测]` 全仓读 `package.json` 只有 4 处，**没有一处读
@@ -42,15 +44,15 @@
 `[实测]` 七条断言**逐条反向验证**，全部在 `/tmp/versioning/fake` 的隔离副本上做
 （PROTOCOL §10：共享树里不做反向验证），共享树全程未被弄坏：
 
-| # | 拆掉什么 | 结果 |
-|---|---|---|
-| ① | 根 `package.json` 的 name 改掉 | ✔ 红（自检：读错文件） |
-| ② | 移走 `packages/llm/package.json` | ✔ 红（自检：清单对不上，防止对着不存在的路径报绿） |
-| ③ | 给 `packages/db` 加回 `version` | ✔ 红 |
-| ④ | 根 version 改成 `2026.08.08` | ✔ 红（格式 + 文件名安全） |
-| ⑤ | `main.ts` 改回 `VERSION = '0.9.9'`（v0.1.0 的原始成因） | ✔ 红 |
-| ⑥ | 改 version 不改 CHANGELOG | ✔ 红 |
-| ⑦ | 改 version 不重建 | ✔ 红 |
+| #   | 拆掉什么                                                | 结果                                               |
+| --- | ------------------------------------------------------- | -------------------------------------------------- |
+| ①   | 根 `package.json` 的 name 改掉                          | ✔ 红（自检：读错文件）                             |
+| ②   | 移走 `packages/llm/package.json`                        | ✔ 红（自检：清单对不上，防止对着不存在的路径报绿） |
+| ③   | 给 `packages/db` 加回 `version`                         | ✔ 红                                               |
+| ④   | 根 version 改成 `2026.08.08`                            | ✔ 红（格式 + 文件名安全）                          |
+| ⑤   | `main.ts` 改回 `VERSION = '0.9.9'`（v0.1.0 的原始成因） | ✔ 红                                               |
+| ⑥   | 改 version 不改 CHANGELOG                               | ✔ 红                                               |
+| ⑦   | 改 version 不重建                                       | ✔ 红                                               |
 
 还原后回到绿。另外守卫在**本轮真的红过一次**（不是演习）：根 version 改成 `0.2.0` 之后
 `dist/build-info.json` 还是旧的，⑦ 当场拦下，跑 `pnpm build:safe` 才转绿。
@@ -95,16 +97,16 @@ import 真实产物 `apps/daemon/dist/main.js`，得
 **最终结论跑在提交 `5c06654` 那棵树上**（`git archive HEAD` 导出，
 `node_modules`/`vendor` 软链回真仓库），不是跑到一半那次检查：
 
-| 门禁 | 结果（提交 `5c06654`） |
-|---|---|
-| `pnpm build:safe` | ✔ exit 0 |
-| `pnpm check:version`（新） | ✔ exit 0 |
-| `npx tsc -b` | ✔ exit 0 |
-| `npx eslint .` | ✔ exit 0 |
-| `pnpm lint-workflows` | ✔ **768** 条断言全过（**8** 个 workflow） |
-| `pnpm test:ci-scripts` | ✔ 22 passed / 0 failed（含新守卫，排在链首） |
-| `pnpm check:orphans` | ✔ 无新增零引用导出；基线 **70**（未升） |
-| `pnpm -r test` | ✔ **1462 tests / 1462 pass / 0 fail**，`Scope: 9 of 10`，含 `apps/web` 447 条 |
+| 门禁                       | 结果（提交 `5c06654`）                                                        |
+| -------------------------- | ----------------------------------------------------------------------------- |
+| `pnpm build:safe`          | ✔ exit 0                                                                      |
+| `pnpm check:version`（新） | ✔ exit 0                                                                      |
+| `npx tsc -b`               | ✔ exit 0                                                                      |
+| `npx eslint .`             | ✔ exit 0                                                                      |
+| `pnpm lint-workflows`      | ✔ **768** 条断言全过（**8** 个 workflow）                                     |
+| `pnpm test:ci-scripts`     | ✔ 22 passed / 0 failed（含新守卫，排在链首）                                  |
+| `pnpm check:orphans`       | ✔ 无新增零引用导出；基线 **70**（未升）                                       |
+| `pnpm -r test`             | ✔ **1462 tests / 1462 pass / 0 fail**，`Scope: 9 of 10`，含 `apps/web` 447 条 |
 
 （`lint-workflows` 从 628/7 涨到 768/8、测试数涨到 1462，都是因为期间预编译包那位的
 `build-bundles.yml` 与三个 workflow 相关提交落地 —— 不是我加的。）
@@ -120,6 +122,7 @@ import 真实产物 `apps/daemon/dist/main.js`，得
 基线上升与本次改动无关；`check:orphans` 那条**只许降不许升**的基线稳在 70。
 
 下一步建议:
+
 1. **`:10000` 现在仍会显示 `daemon v0.1.0` —— 这不是没修好，是那个进程没重启。**
    `[实测]` 只读 `GET :10000/api/health` 得
    `version="0.1.0"`、`startedAt=2026-08-07T15:57:45Z` —— 该进程在我构建之前就起来了，
@@ -133,6 +136,7 @@ import 真实产物 `apps/daemon/dist/main.js`，得
    那条守卫会在无关机器上永远红）。已在 D-12 §7 记为已知缺口。
 
 需要 Manager 决策:
+
 - 起点定为 `0.2.0`（而非 0.1.0 / 1.0.0）：`0.1.0` 是一个从没动过的字面量、不代表某次交付，
   把它记为"第 1 个"、本次为"第 2 个"。若 Manager 认为该另起编号，改根 `package.json`
   一处 + `pnpm check:version` 会指出 CHANGELOG 也要跟着改。

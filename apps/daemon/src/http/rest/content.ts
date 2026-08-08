@@ -8,13 +8,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import {
-  toFreeMind,
-  toMarkdown,
-  toOpml,
-  validate,
-  type MindMapDoc,
-} from '@openmemo/mindmap';
+import { toFreeMind, toMarkdown, toOpml, validate, type MindMapDoc } from '@openmemo/mindmap';
 import { makeEvent, topics, type NoteUpdatedEvent } from '@openmemo/shared';
 
 type NoteChange = NoteUpdatedEvent['changed'][number];
@@ -92,7 +86,13 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
           try {
             patch.bodyJson = body.bodyJson === null ? null : JSON.stringify(body.bodyJson);
           } catch {
-            sendError(res, 400, 'BAD_BODY_JSON', 'bodyJson not serializable', '正文 JSON 无法序列化');
+            sendError(
+              res,
+              400,
+              'BAD_BODY_JSON',
+              'bodyJson not serializable',
+              '正文 JSON 无法序列化',
+            );
             return true;
           }
           /*
@@ -113,7 +113,13 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
         }
         if (body.bodyText !== undefined) {
           if (typeof body.bodyText !== 'string') {
-            sendError(res, 400, 'BAD_BODY_TEXT', 'bodyText must be a string', '正文纯文本必须是字符串');
+            sendError(
+              res,
+              400,
+              'BAD_BODY_TEXT',
+              'bodyText must be a string',
+              '正文纯文本必须是字符串',
+            );
             return true;
           }
           // 只有在没有 bodyJson 可推导时，才采信客户端给的投影（见上方权威规则）
@@ -165,7 +171,9 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
       // ---- M-4：PATCH /api/notes/:uid/segments/:seq —— 编辑转写段落 ----
       // ★ 这是 `edited_at` 的**唯一写入口**。没有它，D-06 §15.2 那条实测跑通的
       //   两阶段合并逻辑在产品里永远走不到（edited_at 恒为 NULL）。
-      const segMatch = /^\/api\/notes\/([0-9A-HJKMNP-TV-Z]{26})\/segments\/(\d+)$/.exec(url.pathname);
+      const segMatch = /^\/api\/notes\/([0-9A-HJKMNP-TV-Z]{26})\/segments\/(\d+)$/.exec(
+        url.pathname,
+      );
       if (segMatch) {
         const note = repos.noteByUid(segMatch[1] as string);
         if (!note) {
@@ -235,7 +243,9 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
       }
 
       // ---- POST /api/notes/:uid/retranscribe —— 同 note 重跑（取消后续跑的入口）----
-      const retryMatch = /^\/api\/notes\/([0-9A-HJKMNP-TV-Z]{26})\/retranscribe$/.exec(url.pathname);
+      const retryMatch = /^\/api\/notes\/([0-9A-HJKMNP-TV-Z]{26})\/retranscribe$/.exec(
+        url.pathname,
+      );
       if (retryMatch && method === 'POST') {
         const note = repos.noteByUid(retryMatch[1] as string);
         if (!note) {
@@ -341,7 +351,10 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
             400,
             'INVALID_MINDMAP',
             `validation failed: ${v.issues.map((i) => i.code).join(', ')}`,
-            `思维导图校验失败：${v.issues.map((i) => i.message).slice(0, 3).join('；')}`,
+            `思维导图校验失败：${v.issues
+              .map((i) => i.message)
+              .slice(0, 3)
+              .join('；')}`,
             { details: v.issues.slice(0, 10) },
           );
           return true;
@@ -392,7 +405,13 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
           }
           const out = exportMindmap(doc, format);
           if (!out) {
-            sendError(res, 400, 'BAD_FORMAT', `unsupported: ${format}`, `不支持的导出格式：${format}`);
+            sendError(
+              res,
+              400,
+              'BAD_FORMAT',
+              `unsupported: ${format}`,
+              `不支持的导出格式：${format}`,
+            );
             return true;
           }
           sendDownload(res, out.body, out.mime, `${safeName(note.title)}.${out.ext}`);
@@ -403,7 +422,13 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
         const segments = tr ? repos.segmentsOf(tr.id) : [];
         const out = exportNote(note.title, note.summary_md, segments, format);
         if (!out) {
-          sendError(res, 400, 'BAD_FORMAT', `unsupported: ${format}`, `不支持的导出格式：${format}`);
+          sendError(
+            res,
+            400,
+            'BAD_FORMAT',
+            `unsupported: ${format}`,
+            `不支持的导出格式：${format}`,
+          );
           return true;
         }
         sendDownload(res, out.body, out.mime, `${safeName(note.title)}.${out.ext}`);
@@ -425,14 +450,22 @@ function exportMindmap(doc: MindMapDoc, format: string): Exported | undefined {
   switch (format) {
     case 'md':
     case 'markdown':
-      return { body: toMarkdown(doc, { includeTimestamps: true }), mime: 'text/markdown; charset=utf-8', ext: 'md' };
+      return {
+        body: toMarkdown(doc, { includeTimestamps: true }),
+        mime: 'text/markdown; charset=utf-8',
+        ext: 'md',
+      };
     case 'opml':
       return { body: toOpml(doc), mime: 'text/x-opml; charset=utf-8', ext: 'opml' };
     case 'mm':
     case 'freemind':
       return { body: toFreeMind(doc), mime: 'application/x-freemind; charset=utf-8', ext: 'mm' };
     case 'json':
-      return { body: JSON.stringify(doc, null, 2), mime: 'application/json; charset=utf-8', ext: 'json' };
+      return {
+        body: JSON.stringify(doc, null, 2),
+        mime: 'application/json; charset=utf-8',
+        ext: 'json',
+      };
     default:
       return undefined;
   }
@@ -476,7 +509,16 @@ function exportNote(
     case 'json':
       return {
         body: JSON.stringify(
-          { title, summaryMd, segments: segments.map((s) => ({ seq: s.seq, startMs: s.start_ms, endMs: s.end_ms, text: s.text })) },
+          {
+            title,
+            summaryMd,
+            segments: segments.map((s) => ({
+              seq: s.seq,
+              startMs: s.start_ms,
+              endMs: s.end_ms,
+              text: s.text,
+            })),
+          },
           null,
           2,
         ),
@@ -533,10 +575,7 @@ export function toSrt(segments: readonly ExportableSegment[]): string {
   return segments
     .map((s) => ({ ...s, body: sanitizeCue(s.text, 'srt') }))
     .filter((s) => s.body.length > 0)
-    .map(
-      (s, i) =>
-        `${i + 1}\n${msToSrtTime(s.start_ms)} --> ${msToSrtTime(s.end_ms)}\n${s.body}\n`,
-    )
+    .map((s, i) => `${i + 1}\n${msToSrtTime(s.start_ms)} --> ${msToSrtTime(s.end_ms)}\n${s.body}\n`)
     .join('\n');
 }
 

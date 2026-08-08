@@ -55,7 +55,12 @@ export function useAsrEngines(): { engines: EngineState[]; isLoading: boolean; r
   const reported = new Map<AsrEngineId, EngineState>();
   for (const e of arr(data?.pipeline?.engines)) {
     const id = toEngineId(e.id);
-    if (id) reported.set(id, { id, available: e.available === true, ...(e.reason ? { reason: e.reason } : {}) });
+    if (id)
+      reported.set(id, {
+        id,
+        available: e.available === true,
+        ...(e.reason ? { reason: e.reason } : {}),
+      });
   }
 
   /**
@@ -130,8 +135,17 @@ export function AsrEngineStatus({ className }: { className?: string }) {
       {/* 装不上的不灰掉了事 —— 给出路。reason 是 daemon 实测给的，不是我编的文案 */}
       {missing.length > 0 ? (
         <p className="mt-1 flex flex-wrap items-center gap-2 text-ink-muted">
-          <span>{missing.map((e) => `${ASR_ENGINE_LABELS[e.id]}${e.reason ? `（${e.reason}）` : ''}`).join('；')}</span>
-          <Button size="sm" variant="ghost" className="h-5 px-1.5 text-xs" onClick={() => navigate('/runtime')}>
+          <span>
+            {missing
+              .map((e) => `${ASR_ENGINE_LABELS[e.id]}${e.reason ? `（${e.reason}）` : ''}`)
+              .join('；')}
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-5 px-1.5 text-xs"
+            onClick={() => navigate('/runtime')}
+          >
             <Download className="size-3 " />
             {t('asr.goInstallRuntime')}
           </Button>

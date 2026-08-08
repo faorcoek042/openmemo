@@ -84,7 +84,9 @@ export function verifyEd25519(
 ): boolean {
   try {
     const keyObject =
-      publicKey instanceof KeyObject ? publicKey : parseEd25519PublicKey(publicKey as Uint8Array | string);
+      publicKey instanceof KeyObject
+        ? publicKey
+        : parseEd25519PublicKey(publicKey as Uint8Array | string);
     return cryptoVerify(null, data, keyObject, signature);
   } catch {
     return false;

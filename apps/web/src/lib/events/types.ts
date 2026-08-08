@@ -41,9 +41,7 @@ export function classOf(type: string): EventClass {
 
 /** 需要按单调 `seq` 应用、并检测缺口的事件。 */
 export function isSequenced(type: string): boolean {
-  return (
-    (SEQUENCED_EVENT_TYPES as readonly string[]).includes(type) || type === 'x.summary.delta'
-  );
+  return (SEQUENCED_EVENT_TYPES as readonly string[]).includes(type) || type === 'x.summary.delta';
 }
 
 /* ═════════════════════ 扩展事件（shared 尚未覆盖，见 §缺口）═════════════════════ */

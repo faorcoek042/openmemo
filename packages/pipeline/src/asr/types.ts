@@ -94,9 +94,7 @@ export interface StreamRequest {
   signal: AbortSignal;
 }
 
-export type AsrAvailability =
-  | { ok: true }
-  | { ok: false; reason: string; remediation: string };
+export type AsrAvailability = { ok: true } | { ok: false; reason: string; remediation: string };
 
 export interface AsrEngine {
   readonly id: string;

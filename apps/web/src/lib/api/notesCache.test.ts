@@ -97,7 +97,10 @@ describe('T-138 ③ 星标切换的乐观更新规则', () => {
       hasMore: false,
     };
     const out = applyStarToPage(starredPage, { starred: true }, 'a', false);
-    assert.deepEqual(out?.notes.map((n) => n.uid), ['b']);
+    assert.deepEqual(
+      out?.notes.map((n) => n.uid),
+      ['b'],
+    );
     assert.equal(
       out?.total,
       1,

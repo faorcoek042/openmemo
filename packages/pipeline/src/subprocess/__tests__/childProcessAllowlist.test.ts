@@ -73,7 +73,8 @@ function lintAs(asPath: string, source: string): string[] {
   return [...new Set(ids)].sort();
 }
 
-const CHILD_PROCESS_IMPORT = "import { spawn } from 'node:child_process';\nexport const x = spawn;\n";
+const CHILD_PROCESS_IMPORT =
+  "import { spawn } from 'node:child_process';\nexport const x = spawn;\n";
 
 /**
  * L1 白名单 —— 必须与 `eslint.config.js` 里那一块**逐字一致**，也与 D-01 §8.4 的表一致。

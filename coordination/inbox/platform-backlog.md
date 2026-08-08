@@ -6,12 +6,12 @@
 
 ## ★ 一句话：**「缺的只剩把它发出去」不成立 —— 我查到三条别的阻碍，两条已修，第三条要你拍板**
 
-| # | 事 | 状态 |
-|---|---|---|
-| ① | 探针**不能**单独分发：它动态链接 ggml，裸跑报 `libggml-base.so.0: cannot open shared object file` | ✅ **已解**：改成**随包出厂**（每个包各带一份），`[CI 实测]` |
-| ② | **macOS 探针 `minos = 26.0.0`** —— 同一轮 CI 里包内 20 个二进制是 13.3.0，探针是 26.0.0 | ✅ **已修 + 上守卫**，`[CI 实测]` 现在 13.3.0 |
-| ③ | 目录里 **Linux / Windows 的核心包指的是上游** `ggml-org` 的归档，我们的探针进不去 | 🔴 **要你拍板 + 一次 release** —— 清单见下面「要发 release 的清单」 |
-| ④ | 「Windows 适用包 5 变 6」 | ❌ **因果关系不成立**，而且**这个 runner 结构上验不了**。实测四格矩阵见 §2 |
+| #   | 事                                                                                                | 状态                                                                       |
+| --- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| ①   | 探针**不能**单独分发：它动态链接 ggml，裸跑报 `libggml-base.so.0: cannot open shared object file` | ✅ **已解**：改成**随包出厂**（每个包各带一份），`[CI 实测]`               |
+| ②   | **macOS 探针 `minos = 26.0.0`** —— 同一轮 CI 里包内 20 个二进制是 13.3.0，探针是 26.0.0           | ✅ **已修 + 上守卫**，`[CI 实测]` 现在 13.3.0                              |
+| ③   | 目录里 **Linux / Windows 的核心包指的是上游** `ggml-org` 的归档，我们的探针进不去                 | 🔴 **要你拍板 + 一次 release** —— 清单见下面「要发 release 的清单」        |
+| ④   | 「Windows 适用包 5 变 6」                                                                         | ❌ **因果关系不成立**，而且**这个 runner 结构上验不了**。实测四格矩阵见 §2 |
 
 提交 `3ef8734`（已 push）。`build-backends` run **31155359839**（`legs=all`，8 条腿）
 —— 7 条 success，`windows-x64-cuda` 写这封时还在跑。
@@ -107,12 +107,12 @@ cpu+vulkan + 显式选 cpu
 `[本机实测]` 用**产品自己的** `evaluateApplicability()` 跑真目录
 （`loadBackendCatalog` 会读的全部 23 个包，Windows x64 占 6 个）：
 
-| 场景 | 适用 | CUDA 那条被判成什么 |
-|---|---|---|
-| **A** 今天的 CI runner（无探针、无 NVIDIA） | **5 / 6** | 「尚未探测到硬件能力；请先安装 CPU 基础包」 |
-| **B** 今天的真 N 卡 Windows（无探针，`nvidia-smi` 在） | **6 / 6** | ✅ **今天就是 6，不需要探针** |
-| **C** 探针发出去后的 CI runner（无 NVIDIA） | **5 / 6** | 「backend package not installed」 |
-| **D** 探针发出去后的真 N 卡 Windows | **6 / 6** | ✅ |
+| 场景                                                   | 适用      | CUDA 那条被判成什么                         |
+| ------------------------------------------------------ | --------- | ------------------------------------------- |
+| **A** 今天的 CI runner（无探针、无 NVIDIA）            | **5 / 6** | 「尚未探测到硬件能力；请先安装 CPU 基础包」 |
+| **B** 今天的真 N 卡 Windows（无探针，`nvidia-smi` 在） | **6 / 6** | ✅ **今天就是 6，不需要探针**               |
+| **C** 探针发出去后的 CI runner（无 NVIDIA）            | **5 / 6** | 「backend package not installed」           |
+| **D** 探针发出去后的真 N 卡 Windows                    | **6 / 6** | ✅                                          |
 
 机制（`packages/runtime/src/detect/gpu.ts`）：Windows 分支先跑 `nvidia-smi`，
 成功才给 `candidateBackends: ['cuda','vulkan']`；
@@ -144,12 +144,12 @@ C 格还顺带改善了一句话：拒绝理由从「请先安装 CPU 基础包�
 
 探针发出去之后逐格核过（就是 §2 那张表的 C/D 两行 + 已装包的情形）：
 
-| 情形 | 探针缺席时 | 探针在场时 | 打架吗 |
-|---|---|---|---|
-| 有对应硬件、包没装 | advisory → 适用 | `installed=false` → 仍走 advisory → 适用 | 否 |
-| 有对应硬件、包已装、探针枚举到 | — | `available=true` → 适用（**最强证据**） | 否 |
-| 有对应硬件、包已装、探针枚举不到 | — | 不适用，理由来自探针 | 否（**这是设计**：探针有过机会） |
-| 无对应硬件 | 不适用 | 不适用 | 否 |
+| 情形                             | 探针缺席时      | 探针在场时                               | 打架吗                           |
+| -------------------------------- | --------------- | ---------------------------------------- | -------------------------------- |
+| 有对应硬件、包没装               | advisory → 适用 | `installed=false` → 仍走 advisory → 适用 | 否                               |
+| 有对应硬件、包已装、探针枚举到   | —               | `available=true` → 适用（**最强证据**）  | 否                               |
+| 有对应硬件、包已装、探针枚举不到 | —               | 不适用，理由来自探针                     | 否（**这是设计**：探针有过机会） |
+| 无对应硬件                       | 不适用          | 不适用                                   | 否                               |
 
 **"probe 在场以 probe 为准、不在场用 advisory"这条规则一格都没被推翻。**
 `gates-fix` 用 `AdvisoryGpu.candidateBackends` 解开死锁那条修法，在探针发出去之后仍然对。
@@ -195,12 +195,12 @@ draft 的附件不能匿名下载）。
 
 ## 4.2 清单（全部来自 `build-backends` run **31155359839**，sha256 **本机重下复算**，与 CI fragment 逐字符一致）
 
-| # | 文件 | 字节 | sha256（本机复算） | artifact |
-|---|---|---:|---|---|
-| 1 | `whispercpp-cpu-linux-x64.tar.gz` | 6,752,275 | `7075ef1ce24087798d2a7f4ddaaf7506559560d5b35ec8af49a5a6854dca6ba8` | `packs-linux-x64-cpu` |
-| 2 | `whispercpp-vulkan-linux-x64.tar.gz` | 29,499,386 | `5bad8cf2384069942972b67d408f2f9835daf4ecd0a16bed0fbf2edf95cc2d22` | `packs-linux-x64-vulkan` |
-| 3 | `whispercpp-cpu-macos-arm64.tar.gz` | 2,015,162 | `b33060e6c00be7ab6dbc00949e4c34ec52c2037802c3d331c38a3cee0c10a257` | `packs-macos-arm64-cpu` |
-| 4 | `whispercpp-cpu-win-x64.zip` | 3,951,207 | `a1d101cbe2f12636d23cdf43ea8f0faa014306230ddb8b4597e53fae48497e86` | `packs-windows-x64-cpu` |
+| #   | 文件                                 |       字节 | sha256（本机复算）                                                 | artifact                 |
+| --- | ------------------------------------ | ---------: | ------------------------------------------------------------------ | ------------------------ |
+| 1   | `whispercpp-cpu-linux-x64.tar.gz`    |  6,752,275 | `7075ef1ce24087798d2a7f4ddaaf7506559560d5b35ec8af49a5a6854dca6ba8` | `packs-linux-x64-cpu`    |
+| 2   | `whispercpp-vulkan-linux-x64.tar.gz` | 29,499,386 | `5bad8cf2384069942972b67d408f2f9835daf4ecd0a16bed0fbf2edf95cc2d22` | `packs-linux-x64-vulkan` |
+| 3   | `whispercpp-cpu-macos-arm64.tar.gz`  |  2,015,162 | `b33060e6c00be7ab6dbc00949e4c34ec52c2037802c3d331c38a3cee0c10a257` | `packs-macos-arm64-cpu`  |
+| 4   | `whispercpp-cpu-win-x64.zip`         |  3,951,207 | `a1d101cbe2f12636d23cdf43ea8f0faa014306230ddb8b4597e53fae48497e86` | `packs-windows-x64-cpu`  |
 
 四个包**每个里面都有一份探针**（`[本机实测]` 逐个解开数过：
 `openmemo-probe` / `openmemo-probe.exe` 各 1 个，且都在 `providesFiles` 里）。
@@ -212,10 +212,10 @@ draft 的附件不能匿名下载）。
 
 ## 4.3 ⚠️ 3 与 4 是**替换**，不是新增 —— 这条要你拍板
 
-| 目录里那条 | 现在指向 | 建议改成 | 为什么 |
-|---|---|---|---|
-| `whispercpp-cpu-linux-x64` | 上游 `ggml-org` 的 `whisper-bin-ubuntu-x64.tar.gz`（9,379,235 B） | 我们编的（6,752,275 B） | **上游的包里永远不会有我们的探针**。而且我们这个有 glibc ≤2.34 守卫、自包含、CI 上跑过 relocatable 冒烟 |
-| `whispercpp-cpu-win-x64` | 上游 `whisper-bin-x64.zip`（7,982,101 B） | 我们编的（3,951,207 B） | 同上。内容清点过：`whisper-cli.exe` / `whisper-server.exe` / `whisper-bench.exe` / `whisper-vad-speech-segments.exe` / `whisper.dll` / `ggml*.dll` × 11 / `parakeet.dll` / `openmemo-probe.exe`，共 18 个文件 |
+| 目录里那条                 | 现在指向                                                          | 建议改成                | 为什么                                                                                                                                                                                                        |
+| -------------------------- | ----------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `whispercpp-cpu-linux-x64` | 上游 `ggml-org` 的 `whisper-bin-ubuntu-x64.tar.gz`（9,379,235 B） | 我们编的（6,752,275 B） | **上游的包里永远不会有我们的探针**。而且我们这个有 glibc ≤2.34 守卫、自包含、CI 上跑过 relocatable 冒烟                                                                                                       |
+| `whispercpp-cpu-win-x64`   | 上游 `whisper-bin-x64.zip`（7,982,101 B）                         | 我们编的（3,951,207 B） | 同上。内容清点过：`whisper-cli.exe` / `whisper-server.exe` / `whisper-bench.exe` / `whisper-vad-speech-segments.exe` / `whisper.dll` / `ggml*.dll` × 11 / `parakeet.dll` / `openmemo-probe.exe`，共 18 个文件 |
 
 **代价与未知，如实列：**
 
@@ -232,7 +232,7 @@ draft 的附件不能匿名下载）。
   no devices (driver missing or too old)」）。**两条出路**：
   ① 先修 §3.2（推荐，结构性）；
   ② 换成我们自己编的 Windows CUDA 包（run 31155359839 有产出，**138 MB vs 上游 678 MB**），
-     但我们只编 `--cuda-arch 86;89`（RTX 30/40 系），**比上游的 fat 包窄** —— 这是产品取舍，你定。
+  但我们只编 `--cuda-arch 86;89`（RTX 30/40 系），**比上游的 fat 包窄** —— 这是产品取舍，你定。
 
 **我没有把任何一条写进 `vendor/manifests/`。** 理由与 `amd-vulkan` T-161 当时一样：
 **在资产有下载地址之前补目录，只是多一个装了没用的按钮。**
@@ -251,16 +251,17 @@ draft 的附件不能匿名下载）。
 >
 > **第二层：用户能不能在网页上装。** 这一层才是对外口径。
 >
-> | 平台 / 加速 | 网页可装？ | 依据 |
-> |---|---|---|
-> | macOS arm64（CPU + Metal + CoreML 同一个自包含核心包） | ✅ | 目录里是我们自己编的包 |
-> | Linux x64 CPU · Windows x64 CPU | ✅ | 目录里指的是**上游 ggml-org** 的归档 |
-> | **Linux x64 Vulkan** | ✅ **2026-08-07 起**（`8cb3b35`，三条阻碍全消之后才补的） | — |
-> | Windows x64 CUDA | ✅ **在有 NVIDIA 驱动的机器上** / ❌ 没有 N 卡的机器上不适用（**这是正确行为**） | `[实测]` 用 `evaluateApplicability` 跑真目录：有 `nvidia-smi` → 6/6 适用；没有 → 5/6 |
-> | Windows x64 Vulkan · Linux x64 CUDA | 🟡 有产物、未进目录 | Linux CUDA 缺 `libcudart` 随包分发，装了没用 |
-> | AMD ROCm · linux-arm64 · macOS Intel | ⛔ 无产物 | 用户 2026-08-05 明确裁掉 |
+> | 平台 / 加速                                            | 网页可装？                                                                       | 依据                                                                                 |
+> | ------------------------------------------------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+> | macOS arm64（CPU + Metal + CoreML 同一个自包含核心包） | ✅                                                                               | 目录里是我们自己编的包                                                               |
+> | Linux x64 CPU · Windows x64 CPU                        | ✅                                                                               | 目录里指的是**上游 ggml-org** 的归档                                                 |
+> | **Linux x64 Vulkan**                                   | ✅ **2026-08-07 起**（`8cb3b35`，三条阻碍全消之后才补的）                        | —                                                                                    |
+> | Windows x64 CUDA                                       | ✅ **在有 NVIDIA 驱动的机器上** / ❌ 没有 N 卡的机器上不适用（**这是正确行为**） | `[实测]` 用 `evaluateApplicability` 跑真目录：有 `nvidia-smi` → 6/6 适用；没有 → 5/6 |
+> | Windows x64 Vulkan · Linux x64 CUDA                    | 🟡 有产物、未进目录                                                              | Linux CUDA 缺 `libcudart` 随包分发，装了没用                                         |
+> | AMD ROCm · linux-arm64 · macOS Intel                   | ⛔ 无产物                                                                        | 用户 2026-08-05 明确裁掉                                                             |
 >
 > ⚠️ **本块此前有三处错，来源不同，一并订正：**
+>
 > 1. 「Linux Vulkan 有产物、未进目录」—— **已进目录**（`8cb3b35`）。
 > 2. 「Win CUDA 在目录里但今天装不上（L2 门禁 + `openmemo-probe` 无分发通道）」——
 >    **两个理由都不再成立**：L2 死锁已由 `gates-fix` T-160（`4bb846e`）用 advisory 探测解开；
@@ -351,18 +352,18 @@ windows-x64-cpu     ==> probe OK
 
 ## 7.1 ★反向验证
 
-| 撤掉什么 | 结果 | 红在哪 |
-|---|---|---|
-| **拿真产物喂新守卫**（不是变异，是真的旧产物） | ✔ exit 1 | `.../dist/probe/openmemo-probe minos 26.0.0（sdk 26.5.0）`，同一目录的 20 个包内二进制全绿 —— **守卫在真实缺陷上第一次运行就抓到了它** |
-| minos = 26.0 的探针混在合规文件里 | ✔ exit 1 | 点名 `openmemo-probe` + `minos 26.0.0`，**不连坐** `libggml-base` |
-| 目录里一个 Mach-O 都没有 | ✔ exit 1 | 「空集 ≠ 没问题」 |
-| 既无 `LC_BUILD_VERSION` 也无 `LC_VERSION_MIN_MACOSX` | ✔ exit 1 | 「我读不出来 ≠ 这里没问题」 |
-| platform=iOS 的 slice | ✔ exit 1 | — |
-| universal binary 里**第二个** slice 超标 | ✔ exit 1 | 点名 `slice 1`（只看第一个的话会漏） |
-| `minos 9.0` vs `--max 13.3` | ✔ exit 0 | 版本按数字比，不是字符串（假红同样是谎） |
-| 老式 `LC_VERSION_MIN_MACOSX` 里的超标 | ✔ exit 1 | 只认新 load command 会整个绕过守卫 |
-| 同一份输入 `--max 13.3` / `--max 26.0` | ✔ 一红一绿 | 阈值参数真的参与判断 |
-| **RV-D**：`cc` 编译"成功"但不产出探针 | ✔ exit 1 | 「probe did not produce output」，且失败路径下**一个 fragment 都没写** |
+| 撤掉什么                                             | 结果       | 红在哪                                                                                                                                 |
+| ---------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| **拿真产物喂新守卫**（不是变异，是真的旧产物）       | ✔ exit 1   | `.../dist/probe/openmemo-probe minos 26.0.0（sdk 26.5.0）`，同一目录的 20 个包内二进制全绿 —— **守卫在真实缺陷上第一次运行就抓到了它** |
+| minos = 26.0 的探针混在合规文件里                    | ✔ exit 1   | 点名 `openmemo-probe` + `minos 26.0.0`，**不连坐** `libggml-base`                                                                      |
+| 目录里一个 Mach-O 都没有                             | ✔ exit 1   | 「空集 ≠ 没问题」                                                                                                                      |
+| 既无 `LC_BUILD_VERSION` 也无 `LC_VERSION_MIN_MACOSX` | ✔ exit 1   | 「我读不出来 ≠ 这里没问题」                                                                                                            |
+| platform=iOS 的 slice                                | ✔ exit 1   | —                                                                                                                                      |
+| universal binary 里**第二个** slice 超标             | ✔ exit 1   | 点名 `slice 1`（只看第一个的话会漏）                                                                                                   |
+| `minos 9.0` vs `--max 13.3`                          | ✔ exit 0   | 版本按数字比，不是字符串（假红同样是谎）                                                                                               |
+| 老式 `LC_VERSION_MIN_MACOSX` 里的超标                | ✔ exit 1   | 只认新 load command 会整个绕过守卫                                                                                                     |
+| 同一份输入 `--max 13.3` / `--max 26.0`               | ✔ 一红一绿 | 阈值参数真的参与判断                                                                                                                   |
+| **RV-D**：`cc` 编译"成功"但不产出探针                | ✔ exit 1   | 「probe did not produce output」，且失败路径下**一个 fragment 都没写**                                                                 |
 
 全部跑在 `/tmp/platform-backlog/` 与 `mkdtemp` 的隔离副本上（PROTOCOL §10），
 共享工作树全程没有被改成坏状态。
@@ -375,18 +376,18 @@ windows-x64-cpu     ==> probe OK
 
 # §8 我没做 / 做不到的（如实列）
 
-| 项 | 状态 |
-|---|---|
-| 「干净机器上从网页装完之后 `/api/runtime` 报出 probe 已就位」 | ⛔ **本轮拿不到** —— 新产物没有下载地址，而我不建 release。运行时那一侧已在本机逐格验过（§1.2 / §1.3） |
-| 「Windows 适用包 5 变 6」 | ❌ **判据本身不成立**，且 GitHub runner 结构上验不了（§2）。不是"没验" |
-| `vendor/manifests/**` | ✅ **一个字节没改**。等 release |
-| §3.2 那个 `backendDir` 单值缺口 | 🔴 **没修** —— 在 `daemon-backlog` / `pack-select` 的地盘。判据已写好交出去 |
-| Windows 上「我们的 CPU 包」端到端能不能转写 | ⏳ **未验证** —— 要等换目录 + 一轮 `cold-start-audit --transcribe` |
-| 上游 `whisper-bin-x64.zip` 里有几个 `ggml-cpu-*` 变体 | ⚠️ `UNKNOWN`，没下下来数 |
-| `whispercpp-cpu-win-x64` 的 `ggmlAbi` 探测（认不出 `ggml.dll`） | 🟡 **既存缺陷，没修**，见 §4.3 |
-| `whispercpp-vulkan-win-x64` 要不要一起发 | ⏳ artifact 下到一半（本轮网络慢），没复算 sha256，**不列进清单** |
-| Windows 的 VC++ 运行时依赖（D-11 §8.3） | ⛔ 没碰。探针自己只要 UCRT，但它链的 `ggml-base.dll` 仍然要 VC++ |
-| 真 GPU 上验证探针枚举到加速器 | ⛔ 本机是 KVM 无 GPU，CI runner 也没有。全程退到"能不能起来、枚举到什么"这一可验证层 |
+| 项                                                              | 状态                                                                                                   |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 「干净机器上从网页装完之后 `/api/runtime` 报出 probe 已就位」   | ⛔ **本轮拿不到** —— 新产物没有下载地址，而我不建 release。运行时那一侧已在本机逐格验过（§1.2 / §1.3） |
+| 「Windows 适用包 5 变 6」                                       | ❌ **判据本身不成立**，且 GitHub runner 结构上验不了（§2）。不是"没验"                                 |
+| `vendor/manifests/**`                                           | ✅ **一个字节没改**。等 release                                                                        |
+| §3.2 那个 `backendDir` 单值缺口                                 | 🔴 **没修** —— 在 `daemon-backlog` / `pack-select` 的地盘。判据已写好交出去                            |
+| Windows 上「我们的 CPU 包」端到端能不能转写                     | ⏳ **未验证** —— 要等换目录 + 一轮 `cold-start-audit --transcribe`                                     |
+| 上游 `whisper-bin-x64.zip` 里有几个 `ggml-cpu-*` 变体           | ⚠️ `UNKNOWN`，没下下来数                                                                               |
+| `whispercpp-cpu-win-x64` 的 `ggmlAbi` 探测（认不出 `ggml.dll`） | 🟡 **既存缺陷，没修**，见 §4.3                                                                         |
+| `whispercpp-vulkan-win-x64` 要不要一起发                        | ⏳ artifact 下到一半（本轮网络慢），没复算 sha256，**不列进清单**                                      |
+| Windows 的 VC++ 运行时依赖（D-11 §8.3）                         | ⛔ 没碰。探针自己只要 UCRT，但它链的 `ggml-base.dll` 仍然要 VC++                                       |
+| 真 GPU 上验证探针枚举到加速器                                   | ⛔ 本机是 KVM 无 GPU，CI runner 也没有。全程退到"能不能起来、枚举到什么"这一可验证层                   |
 
 ---
 
@@ -411,12 +412,12 @@ windows-x64-cpu     ==> probe OK
 
 ## SHARED-CHANGE
 
-| 文件 | 归属 | 我做了什么 | 冲突风险 |
-|---|---|---|---|
-| `package.json` | 公共 | 一行：`selftest-macho-minos.mjs` 接进 `test:ci-scripts` | 低（照 T-161/T-163 的先例） |
-| `scripts/ci/lint-workflows.mjs` | `runner-migrate` | 改了它一条断言的**钉法**（不是删性质），+20 条。理由见 §6.1 | 中 —— 请 `runner-migrate` 复核 §6.1 |
-| `scripts/build-whisper.sh` | `gpu-runtime` / CI 共管 | 加探针那一段 + 13.3 改从 baselines 取 | 低 |
-| `docs/design/D-11-ci-platform-facts.md` | `ci-runner` | **只追加 §9**，节首标明作者与来源，正文其余一字未改（照 `pack-publish` 追加 §8 的先例） | 低 |
+| 文件                                    | 归属                    | 我做了什么                                                                              | 冲突风险                            |
+| --------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------- | ----------------------------------- |
+| `package.json`                          | 公共                    | 一行：`selftest-macho-minos.mjs` 接进 `test:ci-scripts`                                 | 低（照 T-161/T-163 的先例）         |
+| `scripts/ci/lint-workflows.mjs`         | `runner-migrate`        | 改了它一条断言的**钉法**（不是删性质），+20 条。理由见 §6.1                             | 中 —— 请 `runner-migrate` 复核 §6.1 |
+| `scripts/build-whisper.sh`              | `gpu-runtime` / CI 共管 | 加探针那一段 + 13.3 改从 baselines 取                                                   | 低                                  |
+| `docs/design/D-11-ci-platform-facts.md` | `ci-runner`             | **只追加 §9**，节首标明作者与来源，正文其余一字未改（照 `pack-publish` 追加 §8 的先例） | 低                                  |
 
 # §10 需要 Manager 决策
 
@@ -513,15 +514,15 @@ C++ 源码里"的自检跑起来。两条真正的修法：
 
 ## [2026-08-07 16:30] T-167 ③ —— `backlog-work` §3 里平台/CI 那几条的处置
 
-| §3 编号 | 项 | 我做了什么 |
-|---|---|---|
-| A-4 | `openmemo-probe` 没有分发通道 | 🟡 **机制做完了、CI 实测过了，卡在 release**。本文件 §1/§4 |
-| A-5 | `ytdlp-macos-arm64` 装的是 universal2 却声明 `arch:"arm64"` | ⏸ **刻意没动**，理由见下 |
-| C-17 | Vulkan 补目录 | ✅ **已完成**（`8cb3b35`，`runner-migrate` 做的）。我复核过：目录里那条指向 `backend-packs-2026.08.07`，`availability` 不是 `pending-ci` |
-| C-21 | GitHub 仓库描述 / topics | ⛔ 没碰 —— 改仓库设置是对外动作，与"不建/改/删 release"同一类 |
-| C-24 | 「HEAD 从未跑过 CI」 | ✅ **不再成立**：`ci.yml` 现在 `on.push` 自动触发，本轮我这几个提交各触发一次（含一次真红一次真绿，见上一条） |
-| B-16 | ANE 真机验证 | ⛔ 没碰（`pack-publish` 的地盘，需要一次 macOS runner 上的转写） |
-| B-13 | `hf-mirror` 口径 | ⛔ 没碰（`model-mgmt` 的地盘） |
+| §3 编号 | 项                                                          | 我做了什么                                                                                                                               |
+| ------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| A-4     | `openmemo-probe` 没有分发通道                               | 🟡 **机制做完了、CI 实测过了，卡在 release**。本文件 §1/§4                                                                               |
+| A-5     | `ytdlp-macos-arm64` 装的是 universal2 却声明 `arch:"arm64"` | ⏸ **刻意没动**，理由见下                                                                                                                 |
+| C-17    | Vulkan 补目录                                               | ✅ **已完成**（`8cb3b35`，`runner-migrate` 做的）。我复核过：目录里那条指向 `backend-packs-2026.08.07`，`availability` 不是 `pending-ci` |
+| C-21    | GitHub 仓库描述 / topics                                    | ⛔ 没碰 —— 改仓库设置是对外动作，与"不建/改/删 release"同一类                                                                            |
+| C-24    | 「HEAD 从未跑过 CI」                                        | ✅ **不再成立**：`ci.yml` 现在 `on.push` 自动触发，本轮我这几个提交各触发一次（含一次真红一次真绿，见上一条）                            |
+| B-16    | ANE 真机验证                                                | ⛔ 没碰（`pack-publish` 的地盘，需要一次 macOS runner 上的转写）                                                                         |
+| B-13    | `hf-mirror` 口径                                            | ⛔ 没碰（`model-mgmt` 的地盘）                                                                                                           |
 
 ## A-5 为什么刻意没动
 
@@ -580,11 +581,11 @@ d32d2c5  docs: T-167 ③ —— §3 里平台/CI 各条的处置
 
 # TL;DR
 
-| 裁决 | 状态 |
-|---|---|
-| ① Linux / Windows 核心包换成自建 + ADR-015 补例外 | ✅ **做完**，提交 `ec29792`。判据本机走产品真实路径验到了 |
-| ② Windows CUDA 先不动，状态记进 D-11 | ✅ **记了**（D-11 §9.7），原话是「可能已经好了，但验不了」 |
-| ③ `00-CHARTER.md` §3 补丁 | ✅ **全文已发给你**（本文件 §5 的更新版），我没有改那个文件 |
+| 裁决                                              | 状态                                                        |
+| ------------------------------------------------- | ----------------------------------------------------------- |
+| ① Linux / Windows 核心包换成自建 + ADR-015 补例外 | ✅ **做完**，提交 `ec29792`。判据本机走产品真实路径验到了   |
+| ② Windows CUDA 先不动，状态记进 D-11              | ✅ **记了**（D-11 §9.7），原话是「可能已经好了，但验不了」  |
+| ③ `00-CHARTER.md` §3 补丁                         | ✅ **全文已发给你**（本文件 §5 的更新版），我没有改那个文件 |
 
 门禁：`pnpm -r test` **1270 / 0** · `tsc -b` 0 · `eslint` 0 · `test:ci-scripts` 全绿。
 
@@ -630,12 +631,12 @@ findInBackendPacks(whisper-cli) = <models>/by-name/backend/whispercpp-cpu-linux-
 `backends.json` / `components.json` **各 4 条**，其余 8 / 21 条一个字节没动
 （用 `git show HEAD:` 逐个 JSON 反序列化比对确认，不是看 diff 行数）。
 
-| id | 之前 | 现在 |
-|---|---|---|
-| `whispercpp-cpu-linux-x64` | 上游 `whisper-bin-ubuntu-x64.tar.gz` 9,379,235 B | 自建 6,752,275 B |
-| `whispercpp-cpu-win-x64` | 上游 `whisper-bin-x64.zip` 7,982,101 B | 自建 3,951,207 B |
-| `whispercpp-cpu-macos-arm64` | 自建（`backend-packs-2026.08.06`） | 新 tag，2,015,162 B |
-| `whispercpp-vulkan-linux-x64` | 自建（`backend-packs-2026.08.07`） | 新 tag，29,499,386 B |
+| id                            | 之前                                             | 现在                 |
+| ----------------------------- | ------------------------------------------------ | -------------------- |
+| `whispercpp-cpu-linux-x64`    | 上游 `whisper-bin-ubuntu-x64.tar.gz` 9,379,235 B | 自建 6,752,275 B     |
+| `whispercpp-cpu-win-x64`      | 上游 `whisper-bin-x64.zip` 7,982,101 B           | 自建 3,951,207 B     |
+| `whispercpp-cpu-macos-arm64`  | 自建（`backend-packs-2026.08.06`）               | 新 tag，2,015,162 B  |
+| `whispercpp-vulkan-linux-x64` | 自建（`backend-packs-2026.08.07`）               | 新 tag，29,499,386 B |
 
 `providesFiles` 不是抄 CI fragment 的：我把四个归档**解开逐条列出来**与 fragment 比对过，
 差异恰好只有 8 个 soname 软链（按既有约定不进 providesFiles），其余逐字相同。
@@ -667,13 +668,13 @@ CI fragment 仍然是 `pending-ci`，规则原样生效。`selftest-ci-manifest.
 新守卫另起一个文件 **`apps/daemon/src/pipeline/probeShipping.test.ts`**（5 条，
 刻意不改 `platformPacks.test.ts` / `ffmpegPinRot.test.ts` / `ffmpegStableOnly.test.ts`）：
 
-| # | 断言 |
-|---|---|
-| ① | 每个我们自己托管的 whisper 包都必须提供 `openmemo-probe`（Windows 是 `.exe`） |
-| ② | 每个能装 whisper 引擎的**平台**至少有一个包带探针 |
-| ③ | 四个例外 id 必须各自把「为什么例外」写在 `sha256Provenance` 里（≥300 字且提到 ADR-015 或探针），且 `releaseUrl` 与字节来源一致 |
-| ④ | 白名单里不许躺着一个已不存在的 id |
-| ⑤ | 例外 id 的下载地址必须是我们 release 的资产 |
+| #   | 断言                                                                                                                           |
+| --- | ------------------------------------------------------------------------------------------------------------------------------ |
+| ①   | 每个我们自己托管的 whisper 包都必须提供 `openmemo-probe`（Windows 是 `.exe`）                                                  |
+| ②   | 每个能装 whisper 引擎的**平台**至少有一个包带探针                                                                              |
+| ③   | 四个例外 id 必须各自把「为什么例外」写在 `sha256Provenance` 里（≥300 字且提到 ADR-015 或探针），且 `releaseUrl` 与字节来源一致 |
+| ④   | 白名单里不许躺着一个已不存在的 id                                                                                              |
+| ⑤   | 例外 id 的下载地址必须是我们 release 的资产                                                                                    |
 
 ⚠️ 一条设计决定：**探针文件名在守卫里刻意写死字面量，不 import `probeBinaryName()`。**
 T-144 那条 bug 正是「产出方与使用方用了两个名字」；如果守卫 import 实现，
@@ -681,14 +682,14 @@ T-144 那条 bug 正是「产出方与使用方用了两个名字」；如果守
 
 ## 反向验证 6/6（含对照组），跑在 `/tmp` 隔离副本（PROTOCOL §10）
 
-| 变异 | 结果 | 红在哪（真实输出） |
-|---|---|---|
-| 对照组（不变异） | ✔ 全绿 | 不绿则整条验证作废 |
-| 拿掉 Linux CPU 包 providesFiles 里的探针 | ✔ exit 1 | `whispercpp-cpu-linux-x64 的 providesFiles 里没有 openmemo-probe` |
-| 把 Windows 包改回上游地址（"顺手统一回 ADR-015"） | ✔ exit 1 | `下载地址不是我们 release 的资产：https://github.com/ggml-org/…` |
-| 抹掉例外理由 | ✔ exit 1 | `它的字节由我们自己托管…但 sha256Provenance 没有（或只有一句敷衍的）说明，实得 5 字` |
-| 白名单塞一个不存在的 id | ✔ exit 1 | `…已经不存在了 —— 别让白名单变成一张没人看的免死金牌` |
-| `releaseUrl` 指回上游（字节是自建的） | ✔ exit 1 | `两者对不上，用户查来源会被带偏` |
+| 变异                                              | 结果     | 红在哪（真实输出）                                                                   |
+| ------------------------------------------------- | -------- | ------------------------------------------------------------------------------------ |
+| 对照组（不变异）                                  | ✔ 全绿   | 不绿则整条验证作废                                                                   |
+| 拿掉 Linux CPU 包 providesFiles 里的探针          | ✔ exit 1 | `whispercpp-cpu-linux-x64 的 providesFiles 里没有 openmemo-probe`                    |
+| 把 Windows 包改回上游地址（"顺手统一回 ADR-015"） | ✔ exit 1 | `下载地址不是我们 release 的资产：https://github.com/ggml-org/…`                     |
+| 抹掉例外理由                                      | ✔ exit 1 | `它的字节由我们自己托管…但 sha256Provenance 没有（或只有一句敷衍的）说明，实得 5 字` |
+| 白名单塞一个不存在的 id                           | ✔ exit 1 | `…已经不存在了 —— 别让白名单变成一张没人看的免死金牌`                                |
+| `releaseUrl` 指回上游（字节是自建的）             | ✔ exit 1 | `两者对不上，用户查来源会被带偏`                                                     |
 
 # §15 ② Windows CUDA：状态记进 D-11 §9.7，**没动它**
 
@@ -718,13 +719,13 @@ T-144 那条 bug 正是「产出方与使用方用了两个名字」；如果守
 
 # §17 还开着的（都标了未验证，没有装绿）
 
-| 项 | 状态 |
-|---|---|
+| 项                                                         | 状态                                                           |
+| ---------------------------------------------------------- | -------------------------------------------------------------- |
 | Windows / macOS「干净机器 → 真的转出非空文本」（换包之后） | ⏳ `cold-start-audit` run **31160171438** 跑着，**结果没拿到** |
-| `backendDir` 单值缺口 | 🔴 未修，已转 `daemon-backlog`。**今天起不再是假设** |
-| Windows CUDA 在真 N 卡上到底行不行 | ⚠️ `UNKNOWN`，**需要真硬件**，CI 结构上验不了 |
-| 上游两个包各有几条 `ggml-cpu-*` 变体 | ⚠️ `UNKNOWN`，没下下来数 |
-| `whispercpp-cpu-win-x64` 的 `ggmlAbi` | ⚠️ **推断值**，不是量出来的（已写进 ADR-015 §7.3） |
+| `backendDir` 单值缺口                                      | 🔴 未修，已转 `daemon-backlog`。**今天起不再是假设**           |
+| Windows CUDA 在真 N 卡上到底行不行                         | ⚠️ `UNKNOWN`，**需要真硬件**，CI 结构上验不了                  |
+| 上游两个包各有几条 `ggml-cpu-*` 变体                       | ⚠️ `UNKNOWN`，没下下来数                                       |
+| `whispercpp-cpu-win-x64` 的 `ggmlAbi`                      | ⚠️ **推断值**，不是量出来的（已写进 ADR-015 §7.3）             |
 
 ---
 
@@ -735,11 +736,11 @@ T-144 那条 bug 正是「产出方与使用方用了两个名字」；如果守
 `cold-start-audit` run **31160171438**（`ec29792`，换包后）对比
 run **31152458527**（`8cb3b35`，换包前）—— **同一个 workflow，两轮只差目录里那四条**。
 
-| 平台 | `hw.probe` 换包前 | `hw.probe` 换包后 | 适用包 | 转写 |
-|---|---|---|---:|---|
-| **linux-x64** | `warn` openmemo-probe 未安装（后端能力未知） | ✅ **`ok` 1 个设备, ggml 0.15.1** | 6 → 6 | succeeded 2.1s，108 字符 |
-| **win32-x64** | `warn` openmemo-probe 未安装（后端能力未知） | ✅ **`ok` 1 个设备, ggml 0.15.1** | 5 → 5 | succeeded 3.7s，108 字符 |
-| **darwin-arm64** | `warn` openmemo-probe 未安装（后端能力未知） | 🟡 **`warn` probe timed out after 10000ms** | 5 → 5 | succeeded 111.8s，108 字符 |
+| 平台             | `hw.probe` 换包前                            | `hw.probe` 换包后                           | 适用包 | 转写                       |
+| ---------------- | -------------------------------------------- | ------------------------------------------- | -----: | -------------------------- |
+| **linux-x64**    | `warn` openmemo-probe 未安装（后端能力未知） | ✅ **`ok` 1 个设备, ggml 0.15.1**           |  6 → 6 | succeeded 2.1s，108 字符   |
+| **win32-x64**    | `warn` openmemo-probe 未安装（后端能力未知） | ✅ **`ok` 1 个设备, ggml 0.15.1**           |  5 → 5 | succeeded 3.7s，108 字符   |
+| **darwin-arm64** | `warn` openmemo-probe 未安装（后端能力未知） | 🟡 **`warn` probe timed out after 10000ms** |  5 → 5 | succeeded 111.8s，108 字符 |
 
 三平台都是「产品自己下载并校验的 (5) · 借宿主 PATH 的 (0) · 装不上/不可用 (0)」。
 **换包没有弄坏任何东西** —— 这是 §17 那条「Windows/macOS 端到端未验证」的答案。
@@ -785,14 +786,14 @@ bdbae5f  docs(D-11): §9.8 换包前后三平台冷启动对比
 
 # 剩下的（一条都没装绿）
 
-| 项 | 状态 | 归属 |
-|---|---|---|
-| macOS 探针为什么超时 | ⚠️ **`UNKNOWN`，需要真 Mac** | 待定 |
-| `backendDir` 单值缺口 | 🔴 未修，**今天起不再是假设**（目录里已经同时有 CPU 与 Vulkan 包） | `daemon-backlog` |
-| Windows CUDA 在真 N 卡上行不行 | ⚠️ `UNKNOWN`，**需要真硬件**，CI 结构上验不了 | 需要硬件 |
-| 上游两个包各有几条 `ggml-cpu-*` 变体 | ⚠️ `UNKNOWN`，没下下来数 | 我 |
-| `whispercpp-cpu-win-x64` 的 `ggmlAbi` | ⚠️ **推断值**（`ggml.dll` 文件名无版本号，结构上取不到） | 我 |
-| `00-CHARTER.md` §3 补丁 | ⏳ 全文已发你，**我没改那个文件** | 你 |
+| 项                                    | 状态                                                               | 归属             |
+| ------------------------------------- | ------------------------------------------------------------------ | ---------------- |
+| macOS 探针为什么超时                  | ⚠️ **`UNKNOWN`，需要真 Mac**                                       | 待定             |
+| `backendDir` 单值缺口                 | 🔴 未修，**今天起不再是假设**（目录里已经同时有 CPU 与 Vulkan 包） | `daemon-backlog` |
+| Windows CUDA 在真 N 卡上行不行        | ⚠️ `UNKNOWN`，**需要真硬件**，CI 结构上验不了                      | 需要硬件         |
+| 上游两个包各有几条 `ggml-cpu-*` 变体  | ⚠️ `UNKNOWN`，没下下来数                                           | 我               |
+| `whispercpp-cpu-win-x64` 的 `ggmlAbi` | ⚠️ **推断值**（`ggml.dll` 文件名无版本号，结构上取不到）           | 我               |
+| `00-CHARTER.md` §3 补丁               | ⏳ 全文已发你，**我没改那个文件**                                  | 你               |
 
 ---
 
@@ -863,11 +864,11 @@ ggml-tiny-q5_1.bin
 
 **判决：**
 
-| 候选 | 判决 | 依据 |
-|---|---|---|
-| ①「10 秒太短」 | **部分成立，但只对"冷"那一发** | 热的时候 47ms / 85ms —— 不是普遍慢 |
-| ②「Metal 在虚拟化 macOS 上会挂」 | **位置对，"挂"错了** | 确实停在 Metal 初始化，GPU 是 `Apple Paravirtual device`；但它**会做完**，不是挂死 |
-| ③「真有 bug」 | **没有任何证据** | 热跑一次就正常枚举出 3 个设备 |
+| 候选                             | 判决                           | 依据                                                                               |
+| -------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------- |
+| ①「10 秒太短」                   | **部分成立，但只对"冷"那一发** | 热的时候 47ms / 85ms —— 不是普遍慢                                                 |
+| ②「Metal 在虚拟化 macOS 上会挂」 | **位置对，"挂"错了**           | 确实停在 Metal 初始化，GPU 是 `Apple Paravirtual device`；但它**会做完**，不是挂死 |
+| ③「真有 bug」                    | **没有任何证据**               | 热跑一次就正常枚举出 3 个设备                                                      |
 
 **三条独立证据互相印证"冷/热"这个解释：**
 
@@ -976,13 +977,13 @@ linux-x64 / win32-x64 两格都打印：
 
 # 还开着的
 
-| 项 | 状态 | 归属 |
-|---|---|---|
-| CoreML encoder 解包多一层同名目录 → `asr.coreml=fail` | 🔴 **实锤未修**，用户可见（静默回退到 Metal/CPU） | downloader / 待裁决 |
-| 另外 4 个带 encoder 的模型是否同样坏 | ⚠️ `UNKNOWN`，没测，倾向同样坏（同一条解包路径） | 待定 |
-| macOS 冷启动那一发探针**真实耗时** | ⚠️ `UNKNOWN` —— 被 10s kill 了，之后缓存已热。要把深挖挪到 selfcheck 之前才取得到 | 我 |
-| `asr.coreml == fail` 该不该让审计变红 | 🟡 **没改**，超出本任务范围 | 你裁决 |
-| `pnpm lint-workflows` 这个名字不存在 | 🟡 建议加 alias 或改文档 | 你裁决 |
+| 项                                                    | 状态                                                                              | 归属                |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------- |
+| CoreML encoder 解包多一层同名目录 → `asr.coreml=fail` | 🔴 **实锤未修**，用户可见（静默回退到 Metal/CPU）                                 | downloader / 待裁决 |
+| 另外 4 个带 encoder 的模型是否同样坏                  | ⚠️ `UNKNOWN`，没测，倾向同样坏（同一条解包路径）                                  | 待定                |
+| macOS 冷启动那一发探针**真实耗时**                    | ⚠️ `UNKNOWN` —— 被 10s kill 了，之后缓存已热。要把深挖挪到 selfcheck 之前才取得到 | 我                  |
+| `asr.coreml == fail` 该不该让审计变红                 | 🟡 **没改**，超出本任务范围                                                       | 你裁决              |
+| `pnpm lint-workflows` 这个名字不存在                  | 🟡 建议加 alias 或改文档                                                          | 你裁决              |
 
 ---
 
@@ -1028,10 +1029,10 @@ T-153 的夹具全是自己造的、干干净净，所以那个前提从来没�
 
 清单里 5 个带 encoder 的模型，实际只有 **2 个不同的归档**（sha256 逐字相同）：
 
-| 归档 | sha256 | 被哪些模型引用 | 结论 |
-|---|---|---|---|
+| 归档                                       | sha256      | 被哪些模型引用                                   | 结论                                                                    |
+| ------------------------------------------ | ----------- | ------------------------------------------------ | ----------------------------------------------------------------------- |
 | `ggml-large-v3-turbo-encoder.mlmodelc.zip` | `84bedfe8…` | turbo-q5_0 **(已实测)** / turbo-q8_0 / turbo-f16 | 🔴 坏 —— 同一份字节，`unpackDirName` 只取决于文件名，三者逐字同一条路径 |
-| `ggml-large-v3-encoder.mlmodelc.zip` | `47837be7…` | large-v3-q5_0 / large-v3-f16 | 🔴 坏 —— **`[实测]` 见下** |
+| `ggml-large-v3-encoder.mlmodelc.zip`       | `47837be7…` | large-v3-q5_0 / large-v3-f16                     | 🔴 坏 —— **`[实测]` 见下**                                              |
 
 `[实测]` 第二个归档我**真去看了**，没有推断：用 HTTP Range 只读回它的**中央目录**
 （`huggingface.co` 本机不通，走清单里同一份文件的 modelscope 镜像
@@ -1105,11 +1106,11 @@ mlmodelc 与本机 CoreML 版本不兼容、ANE 被降级、
 
 > ★ **反向验证抓出了我自己两条假绿灯**，两条都已修：
 > ① 「守卫不许过宽」那张表里**一个点开头的文件名都没有**（`.config/keep.json` 的
->    basename 是 `keep.json`），于是"隐藏文件都算垃圾"这个变异**没被抓住**；
+> basename 是 `keep.json`），于是"隐藏文件都算垃圾"这个变异**没被抓住**；
 > ② `asr.coreml` 那组本来断言 `report.ok === true`，而那个夹具**本来就有 6 条
->    不相干的 required 失败**（`tool.ffmpeg` 等），`r.ok` 三种形态下恒为 false ——
->    **写成什么样都会"过"**。已换成**差分**判据：三种形态之间红集合的差必须恰好是
->    `asr.coreml` 一项。
+> 不相干的 required 失败**（`tool.ffmpeg` 等），`r.ok` 三种形态下恒为 false ——
+> **写成什么样都会"过"**。已换成**差分**判据：三种形态之间红集合的差必须恰好是
+> `asr.coreml` 一项。
 
 # 门禁
 
@@ -1126,13 +1127,13 @@ mlmodelc 与本机 CoreML 版本不兼容、ANE 被降级、
 
 # 还开着的
 
-| 项 | 状态 | 归属 |
-|---|---|---|
-| 修好之后 macOS 上 `asr.coreml` 是不是真的变 `ok` | ⚠️ **`[未验证]`** —— 只有 darwin/arm64 的 CI 跑得出来，本机结构上验不了 | 我，已 dispatch |
-| 第 8 节新加的那条 `exitCode` 闸门 | ⚠️ **`[未验证]`** —— Linux 上 `carriers.length===0`，走不到那一节 | 同上一格 |
-| `large-v2` 形状（顶层目录名 ≠ 包名） | 🟡 当前清单里没有；真要收得**逐包声明**，别放宽通用规则 | 待清单出现消费者 |
-| 二进制没编 CoreML → 自检报 `ok` 的假绿灯 | 🟡 **没修**，理由见 ③（不该在 Linux 上盲写） | 待裁决 |
-| 镜像副本的 sha256 | ⚠️ `UNKNOWN` —— 要下满 1.17 GB；已核字节数逐位相同 | 我 |
+| 项                                               | 状态                                                                    | 归属             |
+| ------------------------------------------------ | ----------------------------------------------------------------------- | ---------------- |
+| 修好之后 macOS 上 `asr.coreml` 是不是真的变 `ok` | ⚠️ **`[未验证]`** —— 只有 darwin/arm64 的 CI 跑得出来，本机结构上验不了 | 我，已 dispatch  |
+| 第 8 节新加的那条 `exitCode` 闸门                | ⚠️ **`[未验证]`** —— Linux 上 `carriers.length===0`，走不到那一节       | 同上一格         |
+| `large-v2` 形状（顶层目录名 ≠ 包名）             | 🟡 当前清单里没有；真要收得**逐包声明**，别放宽通用规则                 | 待清单出现消费者 |
+| 二进制没编 CoreML → 自检报 `ok` 的假绿灯         | 🟡 **没修**，理由见 ③（不该在 Linux 上盲写）                            | 待裁决           |
+| 镜像副本的 sha256                                | ⚠️ `UNKNOWN` —— 要下满 1.17 GB；已核字节数逐位相同                      | 我               |
 
 ## [2026-08-07 17:56] T-168 追加 —— macOS 实测闭环：`asr.coreml` **从 fail 变 ok**
 

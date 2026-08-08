@@ -62,7 +62,13 @@ const doc = {
       text: '成本 <预算> & 排期',
       children: ['a1'],
       refs: [
-        { transcriptUid: 'T1', startMs: 754_000, endMs: 761_000, quote: '这里说到成本', matchScore: 1 },
+        {
+          transcriptUid: 'T1',
+          startMs: 754_000,
+          endMs: 761_000,
+          quote: '这里说到成本',
+          matchScore: 1,
+        },
       ],
     },
     a1: { key: 'a1', text: '硬件采购', children: [] },
@@ -122,8 +128,7 @@ after(async () => {
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
 
-const get = async (query: string) =>
-  fetch(`${base}/api/notes/${noteUid}/export?${query}`);
+const get = async (query: string) => fetch(`${base}/api/notes/${noteUid}/export?${query}`);
 
 describe('GET /api/notes/:uid/export?what=mindmap', () => {
   it('★ 四种格式全部 200，且各自的 Content-Type 不同（前端菜单直连这四条）', async () => {
@@ -151,10 +156,14 @@ describe('GET /api/notes/:uid/export?what=mindmap', () => {
      * ② `MindmapExportMenu` 里那句「OPML 与 FreeMind 不含时间戳」是**真的**。
      *    哪天序列化器补上了时间戳，这条会红 —— 那正是该去改文案的时刻。
      */
-    assert.ok((await (await get('what=mindmap&format=md')).text()).includes('[12:34]'),
-      'md 丢了时间戳：includeTimestamps 没传，或者序列化器变了');
-    assert.ok((await (await get('what=mindmap&format=json')).text()).includes('754000'),
-      'json 丢了 refs 里的 startMs');
+    assert.ok(
+      (await (await get('what=mindmap&format=md')).text()).includes('[12:34]'),
+      'md 丢了时间戳：includeTimestamps 没传，或者序列化器变了',
+    );
+    assert.ok(
+      (await (await get('what=mindmap&format=json')).text()).includes('754000'),
+      'json 丢了 refs 里的 startMs',
+    );
 
     for (const format of ['opml', 'mm']) {
       const body = await (await get(`what=mindmap&format=${format}`)).text();
@@ -183,7 +192,10 @@ describe('GET /api/notes/:uid/export?what=mindmap', () => {
     const res = await get('what=mindmap&format=md');
     const cd = res.headers.get('content-disposition') ?? '';
     assert.ok(cd.startsWith('attachment;'), `不是附件下载：${cd}`);
-    assert.ok(cd.includes("filename*=UTF-8''"), `缺 RFC 5987 的 filename*，中文名会变成下划线：${cd}`);
+    assert.ok(
+      cd.includes("filename*=UTF-8''"),
+      `缺 RFC 5987 的 filename*，中文名会变成下划线：${cd}`,
+    );
     // ASCII 回退名里不许出现路径分隔符（标题里那个 `/` 必须已被换掉）
     const ascii = /filename="([^"]*)"/.exec(cd)?.[1] ?? '';
     assert.equal(ascii.includes('/'), false, `回退文件名里漏出了路径分隔符：${ascii}`);
@@ -229,6 +241,9 @@ describe('GET /api/notes/:uid/export?what=mindmap', () => {
       false,
       '不带 what=mindmap 却导出了导图 —— 缺省值变了，前端那四条链接的判据要跟着重看',
     );
-    assert.ok(body.startsWith('# 产品评审会 2026/03「第一次」'), `导出的应当是笔记本身：${body.slice(0, 60)}`);
+    assert.ok(
+      body.startsWith('# 产品评审会 2026/03「第一次」'),
+      `导出的应当是笔记本身：${body.slice(0, 60)}`,
+    );
   });
 });

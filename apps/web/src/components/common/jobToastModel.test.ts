@@ -74,13 +74,19 @@ const NAMES = {
 };
 
 const feed = (events: [Parameters<typeof toastActionFor>[0], unknown][]): Toast[] =>
-  events.reduce<Toast[]>((acc, [type, ev]) => reduceToasts(acc, toastActionFor(type, ev, NAMES)), []);
+  events.reduce<Toast[]>(
+    (acc, [type, ev]) => reduceToasts(acc, toastActionFor(type, ev, NAMES)),
+    [],
+  );
 
 describe('T-130 流水线 job 的状态能不能到达 toast 层', () => {
   test('★ 真实链路：job.created → job.blocked，用户必须看到一条带原因和补救的提示', () => {
     const toasts = feed([
       ['job.created', CREATED],
-      ['job.state', { type: 'job.state', jobId: CREATED.job.jobId, state: 'running', previousState: 'leased' }],
+      [
+        'job.state',
+        { type: 'job.state', jobId: CREATED.job.jobId, state: 'running', previousState: 'leased' },
+      ],
       ['job.blocked', BLOCKED],
     ]);
 
@@ -103,7 +109,10 @@ describe('T-130 流水线 job 的状态能不能到达 toast 层', () => {
   test('★ 反向验证的靶子：服务端不发 job.created 时，blocked 仍然必须可见（兜底层）', () => {
     // 这正是 T-130 被发现时的现场：只有 job.state 和 job.blocked，没有 job.created
     const toasts = feed([
-      ['job.state', { type: 'job.state', jobId: BLOCKED.jobId, state: 'running', previousState: 'leased' }],
+      [
+        'job.state',
+        { type: 'job.state', jobId: BLOCKED.jobId, state: 'running', previousState: 'leased' },
+      ],
       ['job.blocked', BLOCKED],
     ]);
 
@@ -136,7 +145,12 @@ describe('T-130 流水线 job 的状态能不能到达 toast 层', () => {
         {
           type: 'job.failed',
           jobId: 'j-unseen',
-          error: { code: 'RUNNER_ERROR', message: 'ffmpeg exited 1', messageZh: '任务失败：ffmpeg exited 1', retryable: false },
+          error: {
+            code: 'RUNNER_ERROR',
+            message: 'ffmpeg exited 1',
+            messageZh: '任务失败：ffmpeg exited 1',
+            retryable: false,
+          },
           willRetry: false,
           nextProvider: null,
         },
@@ -153,7 +167,12 @@ describe('T-130 流水线 job 的状态能不能到达 toast 层', () => {
         {
           type: 'job.failed',
           jobId: 'j-unseen',
-          error: { code: 'NETWORK_TIMEOUT', message: 'timeout', messageZh: '网络超时', retryable: true },
+          error: {
+            code: 'NETWORK_TIMEOUT',
+            message: 'timeout',
+            messageZh: '网络超时',
+            retryable: true,
+          },
           willRetry: true,
           nextProvider: null,
         },
@@ -164,10 +183,20 @@ describe('T-130 流水线 job 的状态能不能到达 toast 层', () => {
 
   test('纯生命周期噪音仍然丢弃：刷新页面时重放的历史 job.state 不该凭空造出 toast', () => {
     const toasts = feed([
-      ['job.state', { type: 'job.state', jobId: 'old-job', state: 'running', previousState: 'leased' }],
-      ['job.state', { type: 'job.state', jobId: 'old-job', state: 'queued', previousState: 'running' }],
+      [
+        'job.state',
+        { type: 'job.state', jobId: 'old-job', state: 'running', previousState: 'leased' },
+      ],
+      [
+        'job.state',
+        { type: 'job.state', jobId: 'old-job', state: 'queued', previousState: 'running' },
+      ],
     ]);
-    assert.equal(toasts.length, 0, '没有名字、也不需要用户做什么的事件，补建出来只是一条没有主语的提示');
+    assert.equal(
+      toasts.length,
+      0,
+      '没有名字、也不需要用户做什么的事件，补建出来只是一条没有主语的提示',
+    );
   });
 
   test('★ 坏载荷不许让处理器抛异常（旧 daemon 的 as never 事件）', () => {
@@ -181,7 +210,15 @@ describe('T-130 流水线 job 的状态能不能到达 toast 层', () => {
   test('★ 转写完成要能走到 done —— job.state(succeeded) 是唯一的入口', () => {
     const toasts = feed([
       ['job.created', CREATED],
-      ['job.state', { type: 'job.state', jobId: CREATED.job.jobId, state: 'succeeded', previousState: 'running' }],
+      [
+        'job.state',
+        {
+          type: 'job.state',
+          jobId: CREATED.job.jobId,
+          state: 'succeeded',
+          previousState: 'running',
+        },
+      ],
     ]);
     assert.equal(
       (toasts[0] as Toast).phase,

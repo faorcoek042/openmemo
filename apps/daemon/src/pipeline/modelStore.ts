@@ -414,7 +414,10 @@ export function resolveExtensionDir(modelsDir: string, fallbackDir: string): str
       const archive = f.relPath ? join(modelsDir, f.relPath) : f.path;
       if (!archive) continue;
       const unpacked = archive.replace(/\.(zip|tar\.gz|tgz)$/i, '');
-      if (existsSync(join(unpacked, 'libsimple.so')) || existsSync(join(unpacked, 'libsimple.dylib'))) {
+      if (
+        existsSync(join(unpacked, 'libsimple.so')) ||
+        existsSync(join(unpacked, 'libsimple.dylib'))
+      ) {
         return unpacked;
       }
       // 有些包会把内容直接摊在 by-name/backend 下

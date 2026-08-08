@@ -26,7 +26,10 @@ const STEP_KEY: Record<string, string> = {
 
 /** ETA 文案：D-05 §4.1 规则 4 —— 只在有依据时显示，且四舍五入到"约 X 分钟"。
  *  不显示"剩余 03:47"这种假精确：实测速率波动很大。 */
-function formatEta(t: (k: string, o?: Record<string, unknown>) => string, sec: number | null): string | null {
+function formatEta(
+  t: (k: string, o?: Record<string, unknown>) => string,
+  sec: number | null,
+): string | null {
   if (sec == null || !Number.isFinite(sec) || sec <= 0) return null;
   if (sec < 60) return t('models.download.etaUnderMinute');
   return t('models.download.etaMinutes', { minutes: Math.round(sec / 60) });
@@ -73,14 +76,20 @@ export function DownloadRow({ job, locale, onCancel, onRetry }: DownloadRowProps
             ) : (
               <>
                 {step && STEP_KEY[step] ? t(STEP_KEY[step]) : t('models.download.queued')}
-                {job.provider ? ` · ${t('models.download.source', { provider: job.provider })}` : ''}
+                {job.provider
+                  ? ` · ${t('models.download.source', { provider: job.provider })}`
+                  : ''}
               </>
             )}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {isVerifying ? (
-            <StatusChip tone="running" label={t('models.download.verifyingChip')} icon={<ShieldCheck className="size-3.5" />} />
+            <StatusChip
+              tone="running"
+              label={t('models.download.verifyingChip')}
+              icon={<ShieldCheck className="size-3.5" />}
+            />
           ) : null}
           {failed ? (
             <Button size="sm" variant="secondary" onClick={() => onRetry(job.jobId)}>

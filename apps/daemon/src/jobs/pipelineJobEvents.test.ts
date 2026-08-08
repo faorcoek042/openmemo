@@ -178,7 +178,10 @@ describe('T-130 流水线 job 的事件链路（真 daemon + 真 SSE + 真上传
 
       /* ── ② 载荷必须是契约里的形状，不是随便一个对象 ── */
       const job = created.data['job'] as Record<string, unknown> | undefined;
-      assert.ok(job, 'job.created 的载荷必须是 { job: … }（旧实现发的是 {jobUid,kind,label}，前端读 ev.job.jobId 直接 TypeError）');
+      assert.ok(
+        job,
+        'job.created 的载荷必须是 { job: … }（旧实现发的是 {jobUid,kind,label}，前端读 ev.job.jobId 直接 TypeError）',
+      );
       assert.equal(job['jobId'], accepted.jobUid, 'jobId 必须与 202 响应里的 jobUid 一致');
       assert.equal(job['kind'], 'transcribe');
       assert.equal(job['type'], 'transcribe');

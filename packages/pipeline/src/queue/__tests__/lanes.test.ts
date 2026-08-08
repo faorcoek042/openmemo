@@ -80,7 +80,12 @@ describe('LaneManager', () => {
         gpuRunning -= 1;
       });
 
-    await Promise.all([gpuTask('gpu.asr'), gpuTask('gpu.llm'), gpuTask('gpu.asr'), gpuTask('gpu.llm')]);
+    await Promise.all([
+      gpuTask('gpu.asr'),
+      gpuTask('gpu.llm'),
+      gpuTask('gpu.asr'),
+      gpuTask('gpu.llm'),
+    ]);
 
     assert.equal(violations, 0, 'ASR and LLM must never share the GPU — this is an OOM');
   });

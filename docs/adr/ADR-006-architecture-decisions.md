@@ -1,17 +1,19 @@
 -
+
 > ⚠️ **2026-08-07 订正：markmap 已整块摘除**（T-165b，`1b4df67`）。
 > 适配器文件、两个 npm 依赖、界面那句「切到大纲视图将不显示 N 条关联线」全部删除 ——
 > **产品里从来没有大纲视图**，那句话描述的功能不存在，所以是删除而不是改写。
 > 本文中凡提到 markmap 的段落**均已不成立**，保留原文仅供追溯。
 > ⚠️ **`toMarkdown` 不属于 markmap**，它在 `serialize/`（与 `toOpml`/`toFreeMind` 同侪），
 > 且是 `GET /api/notes/:uid/export?what=mindmap&format=md` 的实现 —— **不要跟着一起删**。
---
-id: ADR-006
-title: 架构决策裁决（architect T-010 提交的 8 项）
-status: accepted
-date: 2026-08-02
-decider: Meta Manager
-input: docs/design/D-01-architecture.md, D-02-data-model.md, coordination/inbox/architect.md
+> \--
+> id: ADR-006
+> title: 架构决策裁决（architect T-010 提交的 8 项）
+> status: accepted
+> date: 2026-08-02
+> decider: Meta Manager
+> input: docs/design/D-01-architecture.md, D-02-data-model.md, coordination/inbox/architect.md
+
 ---
 
 ## 决策 1：API Key 存储 = **明文 0600 + 明确告知**
@@ -28,6 +30,7 @@ input: docs/design/D-01-architecture.md, D-02-data-model.md, coordination/inbox/
 ——这是固定端口的硬理由，不是偏好。
 
 **补充规则**（`architect` 未覆盖的冲突场景）：
+
 - 17650 被**我们自己的实例**占用 → 单实例锁生效，聚焦已有窗口，不启新进程。
 - 17650 被**他人**占用 → 依次尝试 17651…17659，并在 UI **明确警告**
   "端口已变更，浏览器会要求重新授权麦克风"。不许静默漂移。
@@ -74,9 +77,11 @@ D-02 已预留表结构，**保留预留，不实现**。范围纪律优先。
 "数据模型库无关"要求，`packages/mindmap` 按此实现。
 
 ## 附：所有权表补充
+
 `packages/mindmap/**` 原**无 owner**。指派给 Wave 3 的 **T-023（思维导图生成与编辑）**。
 
 ## 附：上游报告订正（`architect` 核实）
+
 - R-01 判定 memo.ac「无标签系统」**有误** —— `tag`/`note_tag`/`doc_tag` 三表实际存在。
 - R-01「7 个 migration 文件 `[BIN]`」在 asar 中无法复现；memo.ac 实际**无任何 schema 版本机制**。
 - → 已知会 `memo-researcher`。**R-01 的证据等级标签需复核**，其余结论不受影响。

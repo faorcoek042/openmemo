@@ -85,7 +85,7 @@ export function approxEta(seconds: number | null | undefined, locale: string): s
  * 不给时间预期，用户会以为卡死了然后去关窗口。
  *
  * @param audioMs 音频时长
- * @param speedRatio 相对实时的倍数（2.7 表示 2.7 倍速）。为 null 时返回 null —— 
+ * @param speedRatio 相对实时的倍数（2.7 表示 2.7 倍速）。为 null 时返回 null ——
  *        **宁可不显示，也不编一个数字**（ADR-004 决策 3 的项目标准）。
  */
 export function estimateRerunMs(audioMs: number, speedRatio: number | null): number | null {

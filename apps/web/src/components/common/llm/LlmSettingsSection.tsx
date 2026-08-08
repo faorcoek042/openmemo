@@ -1,7 +1,15 @@
 import { useState } from 'react';
 import { arr } from '../../../lib/safe';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronRight, Eye, EyeOff, KeyRound, ShieldAlert, Trash2 } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  Eye,
+  EyeOff,
+  KeyRound,
+  ShieldAlert,
+  Trash2,
+} from 'lucide-react';
 
 import { Button } from '../Button';
 import { Emphasis } from '../Emphasis';
@@ -93,8 +101,7 @@ export function LlmSettingsSection() {
   const effectiveProviderId = activeId;
   const effectiveModel = readDefaultModelId(settings.data);
   const disclosure = secrets.data?.disclosure;
-  const hasKey = (id: string) =>
-    arr(secrets.data?.secrets).some((s) => s.key === secretKeyFor(id));
+  const hasKey = (id: string) => arr(secrets.data?.secrets).some((s) => s.key === secretKeyFor(id));
   const maskOf = (id: string) =>
     arr(secrets.data?.secrets).find((s) => s.key === secretKeyFor(id))?.masked ?? null;
 
@@ -572,7 +579,10 @@ function ProviderForm({
           disabled={saving}
           data-testid="llm-save"
           onClick={() =>
-            onSave({ ...provider, baseUrl, model }, !showApiKey || apiKey === '' ? undefined : apiKey)
+            onSave(
+              { ...provider, baseUrl, model },
+              !showApiKey || apiKey === '' ? undefined : apiKey,
+            )
           }
         >
           {saving ? t('settings.saving') : t('common.confirm')}

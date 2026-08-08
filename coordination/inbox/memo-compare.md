@@ -5,6 +5,7 @@
 交付: `/root/memo/docs/research/R-06-memo-ac-gap.md`
 
 要点:
+
 - **识别引擎两个可选的根因**：`apps/web/src/features/recorder/RecorderPage.tsx:49` 写死
   `useState<'paraformer'|'turbo'>`，非 manifest 驱动、值从不发给后端、`'turbo'` 在后端
   `EngineId` 三值联合里根本不存在；导入页 `CapturePage` 连引擎/模型/语言都没有。
@@ -20,11 +21,13 @@
   "真 AMD 支持"目前**只覆盖 LLM 不覆盖 ASR**。站得住的是量化选择与显存 fit 预检（均已实测）。
 
 下一步建议:
+
 1. 引擎/模型选择器改 catalog 驱动，从 RecorderPage 提到导入页 + 设置页（数据源 `/api/models/catalog` 现成）。
 2. 补 sherpa 离线分支 + SenseVoice 进目录 —— 中文体验最大缺口，成本最低。
 3. 接通 `RecorderPage` ↔ `/ws/recorder`（后端是真的，前端是 mock，F3 端到端从未跑通）。
 
 需要 Manager 决策:
+
 - **FEATURE-COVERAGE.md 需大改**：B-1/B-2/B-3 三个"交付阻塞"实测全部已解（daemon 实有 42 条 REST + 2 条 WS，
   非 6 条）；另 5 处标 🔴 的实际已实现（拖拽/标签写入/导出/TipTap/onboarding）。
   同时要新增两条它没有的：N-1 前端引擎选择器与后端脱节、N-2 F3 端到端未跑通（矩阵标 🟢 属偏乐观）。
@@ -32,6 +35,7 @@
 - 未派生任何 subagent 保留（两个 Explore 均为一次性事实提取，已完成）。
 
 诚实声明:
+
 - 全程只读 demo 实例（仅 GET），未写未重启。审计期间该实例被其他 agent 重启过一次
   （pid 2066756 → 2075454，绑定由 0.0.0.0 变回 127.0.0.1），非我所为。
 - **未在真浏览器点击验证任何页面**，结论基于只读 API + 读源码 + 读 git 历史。
@@ -43,8 +47,9 @@
 交付: `docs/research/R-06-memo-ac-gap.md`（新增文末「附录 A」，未改动原有内容）
 
 要点:
+
 - **① 空间管理 = Workspace，一等公民，且与磁盘目录绑定**。表 `workspace{id,name,folder(磁盘路径,NOT NULL),
-  icon,thumbnail,backgroundColor,description}`；`folder.workspaceId` / `resource.workspaceId` / `doc.workspaceId`
+icon,thumbnail,backgroundColor,description}`；`folder.workspaceId` / `resource.workspaceId` / `doc.workspaceId`
   三条 FK。设置弹窗 12 个 tab 里独占第 2 个。新建表单 = 名称 + **存储文件夹** + 背景色 + 描述。
   切换器显示该目录已用体积；删除时 `deleteFolder:true` **连磁盘目录一起删**。数量无上限，保底恒 ≥1。
   **两种含义是同一件事**：逻辑分区 ×（每空间独立存储根）。另有一套独立的纯磁盘管理面（模型/配置/临时目录）。
@@ -62,6 +67,7 @@
   远端 `model.memo.ac/llm-models/manifest.json` + sha256 + 可热更新。
 
 下一步建议:
+
 1. **先问用户**「空间管理」要哪一层：逻辑分区（低成本，`folders` 已有 parent_id/color/icon，加一表一列即可，
    `notes` 经 `folder_id` 间接归属、不用动）还是**每空间独立磁盘根**（要改 daemon 的 `resolvePaths` 全局单例，
    工作量在这里）。**别替他选。**
@@ -72,12 +78,14 @@
    **建议注册表进 git 仓库而非远端拉取**（章程是 local-first，不宜新增云依赖）。
 
 需要 Manager 决策:
+
 - **用户指令 3 触发一次连锁删除**：砍掉本地 LLM ⇒ `models-llm.json` 5 个 GGUF + llama.cpp 后端包 4 个失去用途。
   而 vulkan/rocm 后端包**只属于 llama.cpp** —— 删掉后「真 AMD 支持」将彻底不成立（whisper.cpp 侧本就只有
   cpu×2 + cuda-win×1）。**这是删除决策 + 对外话术更正，两件事都要你拍板。**
 - ADR-006 决策 4（不引入 workspace 层）：竞品有、且是一等公民。事实已给出，成本拆成两层也已给出，请你裁决。
 
 诚实声明:
+
 - 三条结论均由我本人从 forensics 原文复核（表结构 / 渲染层逻辑 / IPC handler / package.json + nm.txt 双源）。
 - 明确标 NOT FOUND 的：代理认证、代理 bypass、`session.setProxy`、`--proxy-server`、非 yt-dlp 子进程的代理注入。
 - 明确标**未核实**的：`note` 表是否由 migration 补 `workspaceId`；代理是否作用于云 API 调用；
@@ -90,6 +98,7 @@
 交付: `docs/research/R-06-memo-ac-gap.md` 附录 A-2 已修订
 
 **我在 04:10 那份回执里有一条写错了，现更正：**
+
 - ❌ 我写的：「『测试连接』测的是下载源域名延迟，不是代理本身」
 - ✅ 实际：**是两个独立的测试**。代理有**专属**的 `test-proxy` —— 用当前代理 agent 请求
   `https://youtube.com`、测往返延迟、把毫秒数回显；下载源那张域名延迟表是**另一个** IPC
@@ -98,6 +107,7 @@
   后者答「哪个镜像最快」。混成一个用户没法定位问题。
 
 **另外三条补充（都是我初版没查到、深挖后确认的）**：
+
 1. **出厂默认是 `{type:"system"}`**（跟随系统代理），不是 `none`。这个默认值值得抄。
 2. **代理确实作用于云 LLM / 云 ASR / 模型下载 / 授权校验 / RSS / GitHub 版本检查**（约 37 处 agent 注入点）。
    我初版把这条标了「未核实」，现已核实为「是」。→ **我们 daemon/downloader 侧零接线这件事，
@@ -139,12 +149,14 @@ LLM 侧的 subagent 仍在跑，其结论若与 A-3 冲突我会再发一次更�
 **「两处都查不到」对纯 JS 库不构成证据。我把"没看见"当成了"不存在"。**
 
 **对我们的实际影响（比我上一版给的更贵）**：
+
 - `openai-compatible.ts` 方向没错，覆盖约 20/24。
 - **但 Claude 与 Gemini 覆盖不了，必须各写一个原生适配器**
   （Anthropic Messages `/v1/messages` + `x-api-key` + `anthropic-version` 头；Gemini 的 generativelanguage 端点）。
   这两家是最主流的两家。**上一版我说"缺的只是清单与 UI"，低估了工作量，请以此版为准。**
 
 **同批次另外四条已核实的（原标未核实）**：
+
 1. **Key 存储**：memo.ac 是**明文 JSON**（`conf/setting.conf`），全 bundle `safeStorage` **0 命中**；
    唯一的 AES-256-CBC 用**硬编码静态密钥+IV**，且只加密 Notion secret，**LLM key 不经过它**。
    → 双方实质都是明文落盘，**差别是我们明确告知用户（ADR-006 强制 disclosure），它不说**。
@@ -164,11 +176,13 @@ LLM 侧的 subagent 仍在跑，其结论若与 A-3 冲突我会再发一次更�
 ## [2026-08-03 14:20] T-113 DONE
 
 交付:
+
 - `docs/research/assets/memoac-llm-providers.json`（24 家 / 520 条模型 / 255 KB）
 - `docs/research/assets/memoac-asr-models.json`（whisper 15 条 + 三个越界引擎 + UI 呈现方案 / 36 KB）
 - `docs/research/R-06-memo-ac-gap.md` 新增「附录 B」（未动前文）
 
 要点:
+
 - **LLM 24 家 / 520 条内置模型**。默认选中 = **`openai` / `gpt-5.4-mini`**，
   **但主进程默认设置对象里根本没有 LLM 供应商键 —— memo.ac 出厂状态没有任何可用 LLM**，
   `openai` 只是下拉初始高亮。照抄时要连这个诚实的空状态一起抄。
@@ -190,17 +204,20 @@ tiny-f16 和 large-v3-f16 都落进「full」，可两者速度差几十倍。
 → 建议给 manifest 加 `speedTier: fast|balance|quality`（按模型族定），**与 quantTier 并存**。
 
 下一步建议:
+
 1. `model-mgmt`：加 `speedTier` 字段（12 组各定一次，工作量很小），然后按附录 B-2.3 的三层结构改下拉——
    卡片=groupId（双轴筛选）→ 量化=卡内分段控件 → fit/下载状态画在卡上。
 2. `architect`：LLM 下拉直接照三桶分组 + 六家置顶实现，JSON 里 `_meta.dropdownGrouping` 有完整判据。
 3. `ui-polish`：`icon` 是字符串 id（24 家都有），但**品牌色注册表里没有**，需自定，别说是抄的。
 
 需要 Manager 决策:
+
 - **模型 id 的时效性**：JSON 里的 520 条是 memo.ac 的人工策展快照（`checkedAt` 多为 2026-05-31）。
   是直接照搬它的清单（快，但可能已过时/与厂商不符），还是只抄结构、清单走 `official-api` 动态拉取？
   我倾向后者对主流几家用动态拉取，但这会引入出网依赖，**归你裁决**。
 
 诚实声明:
+
 - 24 家供应商对象**全部由程序逐层展开压缩变量后解析，24/24 成功 0 失败**，520 条为程序化统计非人工计数。
   取证方法写进了 JSON 的 `_meta.evidence`——因为我上次犯过"把没看见当成不存在"的错，这次把路径留痕。
 - **品牌色 NOT FOUND**（明确查过 24 家全部字段，无 color/brandColor/theme）。
@@ -210,12 +227,14 @@ tiny-f16 和 large-v3-f16 都落进「full」，可两者速度差几十倍。
 ## [2026-08-08 00:06] T-171 DONE（用户亲自点名：重解 memo 包、对齐功能点与实现）
 
 交付:
+
 - `docs/research/memoac/GPU-BACKENDS.md` —— ★ 当年那个「未验证」项的答案
 - `docs/research/memoac/F1-F5-PARITY.md` —— ★ F1–F5 + 2.1/2.2 双层对照 + 差距清单（按性价比排序）
 - `docs/research/memoac/README.md` + `{ipc-channels,settings-schema,feature-list,asr-engines,export-formats}.txt`
-  + `win-package-listing.txt` —— 取证台账落盘（当年在 `/tmp/memoac/`，已随重启消失）
+  - `win-package-listing.txt` —— 取证台账落盘（当年在 `/tmp/memoac/`，已随重启消失）
 
 要点:
+
 - **Windows 包解开了（`apt-get install p7zip-full` 即可，当年就是缺这个），R-01 的结论是错的**：
   memo.ac 在 Windows 上有**第三个 GPU 后端 —— DirectCompute（D3D11）**，
   `addon/whisper/bin/gpu/{main.exe,Whisper.dll}`，PE 导入表实测 `d3d11.dll`+`dxgi.dll`，
@@ -235,12 +254,14 @@ tiny-f16 和 large-v3-f16 都落进「full」，可两者速度差几十倍。
   locale 里 5 个 tag 键全是「AI 摘要输出关键词」的字段名 → 它没有可用的笔记标签功能，**我们有**。
 
 下一步建议:
+
 1. **传 `whispercpp-vulkan-win-x64` 到 backend-packs release 并补 manifest 的 `mirrors`**（照
    `whispercpp-vulkan-linux-x64` 已填好的那条抄）—— 代价最低、唯一能补上章程未达标项的一条。
 2. 接通思维导图的 4 种结构化导出入口（`ExportMenu` 加 `what=mindmap`）+ 接通搜索结果的 `?t=` 跳时间点 —— 两条都是纯前端接线。
 3. macOS 的 Metal 包重贴标签（现在 Metal 其实在跑，但包标成 `backend:"cpu"`，界面永远说不出"你在用 Metal"）。
 
 需要 Manager 决策:
+
 1. **传 release 需要授权** —— 本轮纪律禁止我建/改 release，gap 1 的最后一步卡在这里。请指派或授权。
 2. **空间 / Workspace 到底做不做、做哪一层**（逻辑分区 = 低成本；每空间独立磁盘根 = 要改 daemon 路径解析全局单例）。
    ADR-006 决定不做，R-06 请求裁决，**至今无人回答**。这条卡在决策不卡在实现，**我不替你选**。
@@ -248,6 +269,7 @@ tiny-f16 和 large-v3-f16 都落进「full」，可两者速度差几十倍。
 4. Linux CUDA 包（缺 `libcudart` 随包分发）维持现状的话，**对外口径要改** —— 这条 R-06 提过，仍未做。
 
 诚实声明:
+
 - **未运行 memo.ac 的任何二进制、未注册账号、未向其发送任何数据**；全部为静态取证
   （解包 / 读配置 / 自写 Python 解析 PE 导入表与 asar）。
 - **未改动任何产品代码**；未碰 `:10000`、`/root/data-memo`、`~/.local/share/openmemo/datadir.json`；
@@ -261,9 +283,10 @@ tiny-f16 和 large-v3-f16 都落进「full」，可两者速度差几十倍。
   preload API 面（`window.AIM.*` 是 V8 字节码 `index.jsc`，未反编译）。
 - **未把 memo.ac 的可执行文件、模型或任何受版权资源提交进仓库**；`docs/research/memoac/` 全部为文本事实台账。
 - **WebSearch 本轮对我同样不可用**，但错误与当年不同：`400 output_config.effort 'xhigh' is not supported
-  when thinking is disabled`（配置错误，非网络）。`curl` / `gh` / 二进制取证均正常。
+when thinking is disabled`（配置错误，非网络）。`curl` / `gh` / 二进制取证均正常。
 
 派生 subagent 记录（未 kill，可复用）:
+
 - `abc7951ebc7336551` (Explore) — 我方 F1–F5 + 2.1/2.2 实现真伪审计（含"写了但触发不了"清单）
 - `a14a443fdd54ce997` (general-purpose) — memo.ac 功能/IPC/设置/引擎/导出五份台账
 - `aa4dac81d158e2a16` (general-purpose) — 我方 backends/模型/LLM/导出/接口/设置/组织 八项清点

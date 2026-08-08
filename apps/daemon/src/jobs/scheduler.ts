@@ -152,7 +152,10 @@ export class Scheduler {
     const ac = new AbortController();
     this.#running.set(job.id, ac);
 
-    const renew = setInterval(() => queue.renewLease(job.id, this.deps.leaseTtlMs ?? 30_000), 10_000);
+    const renew = setInterval(
+      () => queue.renewLease(job.id, this.deps.leaseTtlMs ?? 30_000),
+      10_000,
+    );
     renew.unref?.();
 
     try {
@@ -204,9 +207,7 @@ export class Scheduler {
          * 两个队列对同一套事件各发一半，谁都不算错，合起来就是个假状态。
          */
         sse.publish(jobStateEvent(job.uid, 'succeeded', 'running'));
-        sse.publish(
-          jobDoneEvent(job.uid, resultUidOf(final.result_json), resultKindOf(job.type)),
-        );
+        sse.publish(jobDoneEvent(job.uid, resultUidOf(final.result_json), resultKindOf(job.type)));
       }
     } catch (err) {
       const aborted = ac.signal.aborted;
@@ -289,7 +290,9 @@ function resultUidOf(resultJson: string | null): string | null {
 }
 
 /** job 类型 → 结果实体种类（契约的 resultKind 枚举）。 */
-function resultKindOf(type: string): 'note' | 'transcript' | 'mindmap' | 'model' | 'backend' | null {
+function resultKindOf(
+  type: string,
+): 'note' | 'transcript' | 'mindmap' | 'model' | 'backend' | null {
   if (type === 'transcribe') return 'transcript';
   if (type === 'mindmap') return 'mindmap';
   return null;

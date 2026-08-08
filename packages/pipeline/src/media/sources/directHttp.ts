@@ -14,16 +14,14 @@ import { stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { normalizeToPcm16k, probeMedia } from '../../audio/ffmpeg.js';
-import { assertHostNotPrivate, hasAllowedMediaExtension, validateHttpUrl } from '../../subprocess/argGuard.js';
+import {
+  assertHostNotPrivate,
+  hasAllowedMediaExtension,
+  validateHttpUrl,
+} from '../../subprocess/argGuard.js';
 import { resumableFetch } from '../resumableFetch.js';
 import type { ToolPaths } from '../../tools.js';
-import type {
-  Availability,
-  FetchRequest,
-  FetchedMedia,
-  MediaInfo,
-  MediaSource,
-} from '../types.js';
+import type { Availability, FetchRequest, FetchedMedia, MediaInfo, MediaSource } from '../types.js';
 
 const MEDIA_CONTENT_TYPES = /^(audio|video)\//i;
 const HLS_CONTENT_TYPES = /(application\/(vnd\.apple\.)?mpegurl|application\/x-mpegurl)/i;

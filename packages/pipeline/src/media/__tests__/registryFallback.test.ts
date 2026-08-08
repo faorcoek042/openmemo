@@ -35,9 +35,16 @@ function stub(
       tried.push(id);
       if (failWith !== null) throw failWith;
       return {
-        sourceKey: id, title: null, durationMs: null, description: null,
-        thumbnailUrl: null, uploader: null, publishedAt: null, tracks: [],
-        isCollection: false, producedBy: id,
+        sourceKey: id,
+        title: null,
+        durationMs: null,
+        description: null,
+        thumbnailUrl: null,
+        uploader: null,
+        publishedAt: null,
+        tracks: [],
+        isCollection: false,
+        producedBy: id,
       };
     },
     fetch: async () => {
@@ -53,7 +60,10 @@ describe('probeWithSource — fallback walk', () => {
     r.register(stub('direct-http', 80, tried, new Error('connect timeout')));
     r.register(stub('yt-dlp', 10, tried, null));
 
-    const { source, info } = await r.probeWithSource('https://x.example/watch', AbortSignal.timeout(5000));
+    const { source, info } = await r.probeWithSource(
+      'https://x.example/watch',
+      AbortSignal.timeout(5000),
+    );
     assert.equal(source.id, 'yt-dlp', 'must hand back the adapter that worked');
     assert.equal(info.producedBy, 'yt-dlp');
     assert.deepEqual(tried, ['direct-http', 'yt-dlp']);
@@ -68,7 +78,10 @@ describe('probeWithSource — fallback walk', () => {
     r.register(stub('direct-http', 80, tried, timeout));
     r.register(stub('rss', 20, tried, null));
 
-    const { source } = await r.probeWithSource('https://x.example/a.mp3', AbortSignal.timeout(5000));
+    const { source } = await r.probeWithSource(
+      'https://x.example/a.mp3',
+      AbortSignal.timeout(5000),
+    );
     assert.equal(source.id, 'rss', 'a transient error must not fail the whole job');
   });
 

@@ -140,11 +140,7 @@ check('independent re-hash matches', actualSha === TINY.sha256);
 /* --- 2. SHA-1 cross-check ------------------------------------------------- */
 console.log('\n[2] cross-check against whisper.cpp published SHA-1');
 const gotSha1 = await sha1File(r1.blobPath);
-check(
-  'SHA-1 matches whisper.cpp README',
-  gotSha1 === TINY.sha1,
-  `${gotSha1.slice(0, 16)}…`,
-);
+check('SHA-1 matches whisper.cpp README', gotSha1 === TINY.sha1, `${gotSha1.slice(0, 16)}…`);
 
 /* --- 3. cache hit --------------------------------------------------------- */
 console.log('\n[3] second request hits the content-addressed cache');
@@ -177,17 +173,26 @@ const interrupted = downloadFile({
 }).catch((e) => e);
 
 const err = await interrupted;
-check('abort surfaced as CANCELLED', err instanceof DownloadError && err.code === 'CANCELLED',
-  err?.code ?? String(err));
+check(
+  'abort surfaced as CANCELLED',
+  err instanceof DownloadError && err.code === 'CANCELLED',
+  err?.code ?? String(err),
+);
 
 const sidecar = await readSidecar(partialPath);
 const partialSize = await sizeOf(partialPath);
-check('.partial retained after cancel', partialSize === TINY.sizeBytes,
-  `sparse file, apparent ${mb(partialSize)}`);
+check(
+  '.partial retained after cancel',
+  partialSize === TINY.sizeBytes,
+  `sparse file, apparent ${mb(partialSize)}`,
+);
 check('sidecar written', sidecar != null && sidecar.digest === TINY.sha256);
 const resumeFrom = sidecar ? completedBytes(sidecar) : 0;
-check('sidecar records real progress', resumeFrom > 0 && resumeFrom < TINY.sizeBytes,
-  `${mb(resumeFrom)} already done`);
+check(
+  'sidecar records real progress',
+  resumeFrom > 0 && resumeFrom < TINY.sizeBytes,
+  `${mb(resumeFrom)} already done`,
+);
 // Actual disk usage of a sparse file, to prove we are not preallocating 77 MB of blocks.
 const duOut = await new Promise((res) => {
   execFile('du', ['-B1', '--apparent-size=0', partialPath], (e, so) => res(e ? '' : so));
@@ -227,8 +232,15 @@ try {
 } catch (e) {
   caught = e;
 }
-check('rejected with CHECKSUM_MISMATCH', caught?.code === 'CHECKSUM_MISMATCH', caught?.message?.slice(0, 90));
-check('no blob committed for bad content', (await sizeOf(path.join(badDir, `sha256-${wrongSha}`))) === -1);
+check(
+  'rejected with CHECKSUM_MISMATCH',
+  caught?.code === 'CHECKSUM_MISMATCH',
+  caught?.message?.slice(0, 90),
+);
+check(
+  'no blob committed for bad content',
+  (await sizeOf(path.join(badDir, `sha256-${wrongSha}`))) === -1,
+);
 check('partial discarded', (await sizeOf(path.join(badDir, `sha256-${wrongSha}.partial`))) === -1);
 
 /* --- 6. mirror failover --------------------------------------------------- */
@@ -238,14 +250,21 @@ const r6 = await downloadFile({
   sha256: TINY.sha256,
   sizeBytes: TINY.sizeBytes,
   sources: [
-    { provider: 'broken', url: 'https://huggingface.co/this-repo/does-not-exist/resolve/main/x.bin', official: false },
+    {
+      provider: 'broken',
+      url: 'https://huggingface.co/this-repo/does-not-exist/resolve/main/x.bin',
+      official: false,
+    },
     { provider: 'hf', url: TINY.hf, official: true },
   ],
   blobDir: foDir,
   maxParts: 4,
 });
-check('failed over to a working mirror', r6.sha256 === TINY.sha256 && r6.provider === 'hf',
-  `used ${r6.provider} after ${r6.attempts} attempt(s)`);
+check(
+  'failed over to a working mirror',
+  r6.sha256 === TINY.sha256 && r6.provider === 'hf',
+  `used ${r6.provider} after ${r6.attempts} attempt(s)`,
+);
 
 /* --- 7. ModelScope mirror ------------------------------------------------- */
 console.log('\n[7] ModelScope mirror serves byte-identical content');
@@ -278,12 +297,18 @@ const linked = await store.linkByName('asr', TINY.sha256, TINY.name);
 const linkStat = await fs.stat(linked);
 const blobStat = await fs.stat(store.blobPath(TINY.sha256));
 check('by-name path exists', linkStat.size === TINY.sizeBytes, linked.replace(root, '<scratch>'));
-check('hardlink shares one inode (no extra disk)', linkStat.ino === blobStat.ino,
-  `inode ${linkStat.ino}, nlink ${linkStat.nlink}`);
+check(
+  'hardlink shares one inode (no extra disk)',
+  linkStat.ino === blobStat.ino,
+  `inode ${linkStat.ino}, nlink ${linkStat.nlink}`,
+);
 
 let g = await store.findGarbage();
-check('unreferenced blob detected as orphan', g.orphanBlobs.length === 1,
-  `${g.orphanBlobs.length} orphan(s), ${mb(g.orphanBlobs[0]?.bytes ?? 0)}`);
+check(
+  'unreferenced blob detected as orphan',
+  g.orphanBlobs.length === 1,
+  `${g.orphanBlobs.length} orphan(s), ${mb(g.orphanBlobs[0]?.bytes ?? 0)}`,
+);
 
 await store.writeManifest('asr', 'asr/whisper-tiny', {
   schemaVersion: 1,
@@ -295,8 +320,11 @@ check('referenced blob is NOT collected', g.orphanBlobs.length === 0);
 
 await store.removeManifest('asr', 'asr/whisper-tiny');
 const gc = await store.collectGarbage(['orphan_blobs']);
-check('GC reclaims after manifest removal', gc.freedBytes === TINY.sizeBytes,
-  `freed ${mb(gc.freedBytes)}`);
+check(
+  'GC reclaims after manifest removal',
+  gc.freedBytes === TINY.sizeBytes,
+  `freed ${mb(gc.freedBytes)}`,
+);
 
 /* --- 9. source probing ---------------------------------------------------- */
 console.log('\n[9] mirror probing and ranking');
@@ -309,7 +337,10 @@ for (const p of probes) {
     `      ${p.provider.padEnd(12)} ok=${String(p.ok).padEnd(5)} ttfb=${String(p.ttfbMs ?? '-').padStart(5)}ms  ${String(p.throughputKbps ?? '-').padStart(7)} KB/s  ${p.error ?? ''}`,
   );
 }
-check('at least one source probed OK', probes.some((p) => p.ok));
+check(
+  'at least one source probed OK',
+  probes.some((p) => p.ok),
+);
 const ranked = rankSources(
   [
     { provider: 'hf', url: TINY.hf, official: true },
@@ -317,8 +348,7 @@ const ranked = rankSources(
   ],
   probes,
 );
-check('ranking produced an ordering', ranked.length > 0,
-  ranked.map((r) => r.provider).join(' > '));
+check('ranking produced an ordering', ranked.length > 0, ranked.map((r) => r.provider).join(' > '));
 
 /* ------------------------------ summary ---------------------------------- */
 

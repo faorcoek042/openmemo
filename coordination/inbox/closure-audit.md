@@ -13,11 +13,11 @@
 
 我用的三级证据：
 
-| 级别 | 含义 |
-|---|---|
-| `[我核过]` | 我本人读了那一行代码 / 跑了那条命令 / 看了那个 run，并把行号或输出贴在下面 |
-| `[报告]` | 只有回执这么说，我没独立核 |
-| `[未验证]` / `UNKNOWN` | 我拿不到证据，并说明为什么拿不到 |
+| 级别                   | 含义                                                                       |
+| ---------------------- | -------------------------------------------------------------------------- |
+| `[我核过]`             | 我本人读了那一行代码 / 跑了那条命令 / 看了那个 run，并把行号或输出贴在下面 |
+| `[报告]`               | 只有回执这么说，我没独立核                                                 |
+| `[未验证]` / `UNKNOWN` | 我拿不到证据，并说明为什么拿不到                                           |
 
 **为什么这份台账把重点压在 🟡 上**：这个项目反复栽的不是「没做」，是「做了、写了回执、而那条修复从来没触发过」。
 最近一例是 `collapseRedundantTopLevel` —— 判据是"顶层恰好一个条目"，真包里有两个（`__MACOSX`），
@@ -35,65 +35,65 @@
 
 > 只列我**独立核过**的条目。看着像但我没核实的，一律不进这张表，进第七节。
 
-| 条目 | 类 | 证据 | 主 |
-|---|---|---|---|
-| **孤儿导出棘轮 `check:orphans` 从来不在 CI 里跑** | 🟡 | `.github/workflows/ci.yml:120` 只有 `check:sources`；全仓 `grep -rn orphan .github/` 零命中；无 git hook | Manager |
-| **棘轮判据有字符串字面量盲区：72 应为 76** | 🟡 | 我复刻其规则得 72（与基线一致）；加剥字符串字面量得 76，遮住 5 条 | Manager |
-| `runner.ts:190` 注释声称 Windows 用 `taskkill` 杀进程树 —— 全仓零实现 | 🟡 | `runner.ts:190` 注释 vs `killTree` `runner.ts:198-210` win32 分支只 `child.kill()`；全仓 `taskkill` 仅此一条注释 | `platform-backlog` |
-| ADR-003:83 声称 daemon 会清 macOS quarantine —— 全仓零实现 | 🟡 | `apps/`+`packages/` 零 `xattr`；`.github/workflows/build-backends.yml:207` 自己挂了 ⚠️ 说这条 ADR 声称不实 | Manager（改 ADR）/ `platform-backlog` |
-| **TD-001**（重开 `noUnusedLocals`）ADR 与 tsconfig 给了相反的理由，无人调和 | 🟡 | `ADR-005:54` = 🔴未清、"Wave 3 前必须重开、Manager 验收"；`tsconfig.base.json:24-26` = 「刻意不开，已由 eslint 覆盖」 | Manager（裁一次） |
-| `packages/shared` 零测试，且 `check-test-scripts` 结构上看不见它 | 🟡 | `find packages/shared -name '*.test.*'` 空；守卫只抓"有测试文件却没脚本"；CI 日志 8 个包无 shared | `test-gaps` |
-| `argGuard.ts:109` 指向的 `resolveAndCheck` 全仓不存在 | 🟡 | `grep -rn resolveAndCheck` 只命中那条注释本身 | `path-guard` |
-| **A-6** daemon 侧 `sourceBaseUrl` 零读取字段仍在 | ⛔ | `state.ts:103` 声明、`models.ts:953` 唯一写入、全仓零读取（`api.ts:177` 的 `[实测 grep]` 我复核过） | `daemon-backlog` |
-| **C-19 / B-4** `unpackArchive` 失败自清 → 契约 + 断言 | ⛔ | `unpack.ts:939` 无契约段；`unpack.test.ts`/`installer.test.ts` 零"自清"断言 | `daemon-backlog` |
-| `applicability.ts:219` `.includes('probe')` 字符串嗅探仍在 | ⛔ | 行还在（从 206 挪到 219）；daemon 同族已改结构判据（`backends.ts:114`） | `gates-fix` / `daemon-backlog` |
-| **B15 / C-7** 老安装记录回 `role` | 🚧 | 建议"与 `priority` 一起裁"，等 Manager 一句话（`daemon-backlog.md:361`） | Manager |
-| **A-5** `ytdlp-macos-arm64` 声明 `arch:"arm64"` 却是 universal2 | ⛔ | `backends.json:514-522` `arch:"arm64"` + `displayName` 写着 universal2；无 `ytdlp-macos-x64` | `platform-backlog` |
-| 组件「回滚」永远不可用（`stashForRollback` 零调用方） | ⛔ | `downloader/components.ts:207` 零调用方 → `rollbackVersion` 恒 null；按钮已被 T-157② 拿掉并写明 | Manager（需一句 ADR） |
-| `role=llm` 5 条 GGUF 仍被 `/api/models/catalog` 发出 | ⛔ | `models-llm.json` 5 条 `"role":"llm"`；`manifests.ts` 列目录全载。**但 UI 不渲染**（见展开） | `model-mgmt` |
-| `describeSpeed()` 零调用方 → T-125 实测证据一条没进 UI | ⛔ | `shared/models.ts:244` 声明，全仓零 import；已登记在棘轮基线并带 ⚠️ note | `model-mgmt` |
-| `statusTone.ts` 三个 tone 函数零调用方 | ⛔ | `statusTone.ts:71/78/96`，全仓零调用；已登记基线 | `ui-backlog` |
-| `JobList` 的 pause/resume 错误零渲染 → 点了静默无反应 | ⛔ | `JobList.tsx:122,127` `actions.pause.mutate(...)`，同文件无 `isError` | `ui-backlog` |
-| `mistralai` 驱动不了（无 `mistral-native` 适配器） | ⛔ | `llm-catalog.ts:114` `'mistral-native': null`；目录 `llm-providers.json:4491` 有这家 | `architect` |
-| 根 `package.json` 的 `"build": "pnpm -r build"` 陷阱仍在 | ⛔ | `package.json` `build` 未改（`check` 改掉了，`build` 没有） | Manager |
-| `format:check` 不是门禁 | ⛔ | 根脚本有 `format:check`，`ci.yml` 不调用 | Manager |
-| `migrateAssets.ts:81` `void mediaRoot` + `depth>6` 静默截断 | ⛔ | `migrateAssets.ts:61,81` 逐字如此 | `daemon-backlog` |
-| `defaultDataDir()` / `resolveStoreRoot()` 仍直读 `process.platform`，无 platform 入参 | ⛔ | `config/paths.ts:26`、`pipeline/tools.ts:100` | `path-guard` |
-| Ed25519 目录验签：实现在、**生产零调用方 + 无密钥** | 🚧 | `signature.ts:104` `PUBLIC_KEY = null`；`verifyCatalogSignature` 全仓零调用；`manifest.ts:14` 自陈 | 等密钥（用户/Manager） |
-| Windows / macOS / arm64 / musl 真机行为 | 🚧 | 无机器。CI 只有 GitHub 托管 runner，无真 N 卡 / 真 AMD / 真 Mac 交互 | 等硬件 |
-| Vulkan 包 `GLIBC_2.38`、Windows VC++ 运行时 | 🚧 | `ADR-015:115-123` 自陈；我无 22.04/干净 Windows 可验 | 等真机 |
-| 真 release / 真上传一个字节 | 🚧 | 建 release 是对外动作，规则要求用户本人确认 | 用户 |
-| 真浏览器点一遍（全仓无 playwright/puppeteer） | 🚧 | `ADR-012:61-68` 立的"最大验证缺口"，至今无 e2e 依赖 | 需能开浏览器的人 |
-| ★ `ws/recorder.ts` 绝对路径进 `rel_path`（asset-check:193 那条） | ✅ | `recorder.ts:326` `canonicalAssetRelPath()` + `recorder.test.ts` **本机跑 8/8 绿** | 已闭 |
-| ★ `__MACOSX` 废掉整条 CoreML 修复（T-168 ①） | ✅ | `unpack.ts:187 isMacArchiveJunk` + 两处调用；`installer.test.ts:266` 真条目表；downloader **35/35 绿** | 已闭 |
-| `/api/health` 的 `host` 硬编码 `127.0.0.1` | ✅ | `server.ts:134` `host: deps.host()`；`main.ts:370` `boundHost`；有 `healthHost.test.ts` | 已闭 |
-| `upload.ts` 两处 `as never` | ✅ | 产品代码全仓零 `as never`（只剩测试夹具）；`as any` 仅 3 处 | 已闭 |
-| `staleLinks`/`warningZh` 算了没接出来 | ✅ | `rest/storage.ts:348-349` 回传；`DataLocationSection.tsx:91,98,354` 渲染 | 已闭 |
-| 侧栏「星标」筛选没实现 | ✅ | 服务端筛选 `notesCache.ts:47-53`；`activeNav.test.ts` 钉住 | 已闭 |
-| `GET /api/notes` 无分页（A12） | ✅ | `rest/notes.ts:346-369` `?offset=` + 拒绝非法值 | 已闭 |
-| `POST /api/llm/detect` 不存在（D-10 #3） | ✅ | `rest/llmRoutes.test.ts:85` + `LocalLlmSection.tsx:19` 消费方 | 已闭 |
-| `activeJobId` 死代码 | ✅ | 已删并有回归断言 `components.test.tsx:4213`「不许回来」 | 已闭 |
-| F4 导图无生成入口（A6） | ✅ | `features/mindmap/api.ts:62` POST 已接 | 已闭 |
-| `POST /api/auth/session` 在 `AUTH=none` 下 401 → 全站无 SSE | ✅ | `server.ts:189-197` 已改并写明原委 | 已闭 |
-| `POST /api/backends/selftest` 结果不回写（gates-fix §5.3） | ✅ | `rest/hardware.ts:271` 调 `recordSelfTest()`，`:430` 写 manifest | 已闭 |
-| ADR-014 ② manifest 文件名硬编码 | ✅ | `rest/manifests.ts:50-72` 改成列目录 + 按内容判类型 | 已闭 |
-| **A-4** `openmemo-probe` 无分发通道 | ✅ | `3ef8734`（T-167①）探针编进每个包；`build-backends` run 31155359839 9/9 绿 | 已闭 |
-| `asr.coreml` 的 `required:false` 假绿灯 | ✅ | `runtime/selfcheck.ts:311+` 改无条件 `required:true`；`cold-start-audit` run **31167151669** 实测 `asr.coreml = ok` | 已闭 |
-| D-10 #24「+ 添加服务商」够不到 13 家 | ✅ | `llm-providers.json` **24 家 / 520 条**；`LlmSettingsSection.tsx:324` 三桶驱动 | 已闭 |
-| 一批测试从来没被执行过（C1/TD-002 族） | ✅ | `check-test-scripts.mjs` 挂进 6 个包共用行；CI 日志：**8 个含测试的包都有 test 脚本**，daemon 434 / web 274 / pipeline 222 全绿 | 已闭 |
-| **C-24** HEAD 从未跑过 CI | ✅ | `ci.yml` 已 `on.push`；`gh run list` 近 15 次全部 push 触发 | 已闭 |
-| ADR-016 空间管理②③（修改/移动数据目录） | ✅ | `storage/move.ts:317 moveDataDir` + `move.test.ts` 12+ 用例 + `rest/storage.ts:302` | 已闭 |
-| ADR-016 决策 5 代理配置 | ✅ | `shared/proxy.ts` + `rest/proxy.ts`（脱敏、`no_proxy`、SOCKS5）+ ffmpeg SOCKS 局限如实透出 `proxy.ts:62-84` | 已闭 |
-| `sqlite-ext.json` 的 `libsimple.dll` → `simple.dll` | ✅ | `grep -c simple.dll` = 2，`libsimple.dll` = 0 | 已闭 |
-| **孤儿导出棘轮基线 = 72，没被抬过** | ✅ | 基线文件 `accepted` **72 条**；`git log` 该文件**只有一个提交**（`1b0675b`）；本机跑 checker：`零引用导出 72 个（基线 72 个）` + `✔ 没有新的零引用导出，基线也没有过期条目` | 已闭（但见 🟡-1/🟡-2） |
-| ADR-016 决策 1/2/3：TTS、本地 ASR 扩容、内置 `llama.cpp` | ✂ | `ADR-016:24-36`，用户指令原文在案 | 已裁 |
-| 翻译/双语字幕/字幕导出、说话人分离、workspace 层级 | ✂ | `ADR-006:57-60`、`ADR-011:82-84`、`ADR-006:48-50` | 已裁 |
-| 桌面外壳 Tauri、离线全量安装包、代码签名证书 | ✂ | `ADR-003:31,81-93` | 已裁 |
-| L0 浏览器 WebGPU / `/ws/asr-worker` | ✂ | `ADR-006:36-46`（降为实验特性，不进 v1） | 已裁 |
-| 「可导入任意 HF GGUF」「真实 AMD 支持」对外口径 | ✂ | `ADR-016:73-76` 改口径不补实现 | 已裁 |
-| macOS Intel 支持 | ✂ | 用户 2026-08-05 裁定（`progress-audit.md:175` 引） | 已裁 |
-| 向量检索（`/api/search` `modes.semantic=false`） | ✂ | `HANDOFF.md:565` 标"已裁决的取舍，不是 bug" | 已裁 |
-| ROCm 换 noble 的冲突复验 | ✂ | `ci-runner.md:233` 已被裁掉，"可能永远不会验证" | 已裁 |
+| 条目                                                                                  | 类  | 证据                                                                                                                                                                        | 主                                    |
+| ------------------------------------------------------------------------------------- | --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| **孤儿导出棘轮 `check:orphans` 从来不在 CI 里跑**                                     | 🟡  | `.github/workflows/ci.yml:120` 只有 `check:sources`；全仓 `grep -rn orphan .github/` 零命中；无 git hook                                                                    | Manager                               |
+| **棘轮判据有字符串字面量盲区：72 应为 76**                                            | 🟡  | 我复刻其规则得 72（与基线一致）；加剥字符串字面量得 76，遮住 5 条                                                                                                           | Manager                               |
+| `runner.ts:190` 注释声称 Windows 用 `taskkill` 杀进程树 —— 全仓零实现                 | 🟡  | `runner.ts:190` 注释 vs `killTree` `runner.ts:198-210` win32 分支只 `child.kill()`；全仓 `taskkill` 仅此一条注释                                                            | `platform-backlog`                    |
+| ADR-003:83 声称 daemon 会清 macOS quarantine —— 全仓零实现                            | 🟡  | `apps/`+`packages/` 零 `xattr`；`.github/workflows/build-backends.yml:207` 自己挂了 ⚠️ 说这条 ADR 声称不实                                                                  | Manager（改 ADR）/ `platform-backlog` |
+| **TD-001**（重开 `noUnusedLocals`）ADR 与 tsconfig 给了相反的理由，无人调和           | 🟡  | `ADR-005:54` = 🔴未清、"Wave 3 前必须重开、Manager 验收"；`tsconfig.base.json:24-26` = 「刻意不开，已由 eslint 覆盖」                                                       | Manager（裁一次）                     |
+| `packages/shared` 零测试，且 `check-test-scripts` 结构上看不见它                      | 🟡  | `find packages/shared -name '*.test.*'` 空；守卫只抓"有测试文件却没脚本"；CI 日志 8 个包无 shared                                                                           | `test-gaps`                           |
+| `argGuard.ts:109` 指向的 `resolveAndCheck` 全仓不存在                                 | 🟡  | `grep -rn resolveAndCheck` 只命中那条注释本身                                                                                                                               | `path-guard`                          |
+| **A-6** daemon 侧 `sourceBaseUrl` 零读取字段仍在                                      | ⛔  | `state.ts:103` 声明、`models.ts:953` 唯一写入、全仓零读取（`api.ts:177` 的 `[实测 grep]` 我复核过）                                                                         | `daemon-backlog`                      |
+| **C-19 / B-4** `unpackArchive` 失败自清 → 契约 + 断言                                 | ⛔  | `unpack.ts:939` 无契约段；`unpack.test.ts`/`installer.test.ts` 零"自清"断言                                                                                                 | `daemon-backlog`                      |
+| `applicability.ts:219` `.includes('probe')` 字符串嗅探仍在                            | ⛔  | 行还在（从 206 挪到 219）；daemon 同族已改结构判据（`backends.ts:114`）                                                                                                     | `gates-fix` / `daemon-backlog`        |
+| **B15 / C-7** 老安装记录回 `role`                                                     | 🚧  | 建议"与 `priority` 一起裁"，等 Manager 一句话（`daemon-backlog.md:361`）                                                                                                    | Manager                               |
+| **A-5** `ytdlp-macos-arm64` 声明 `arch:"arm64"` 却是 universal2                       | ⛔  | `backends.json:514-522` `arch:"arm64"` + `displayName` 写着 universal2；无 `ytdlp-macos-x64`                                                                                | `platform-backlog`                    |
+| 组件「回滚」永远不可用（`stashForRollback` 零调用方）                                 | ⛔  | `downloader/components.ts:207` 零调用方 → `rollbackVersion` 恒 null；按钮已被 T-157② 拿掉并写明                                                                             | Manager（需一句 ADR）                 |
+| `role=llm` 5 条 GGUF 仍被 `/api/models/catalog` 发出                                  | ⛔  | `models-llm.json` 5 条 `"role":"llm"`；`manifests.ts` 列目录全载。**但 UI 不渲染**（见展开）                                                                                | `model-mgmt`                          |
+| `describeSpeed()` 零调用方 → T-125 实测证据一条没进 UI                                | ⛔  | `shared/models.ts:244` 声明，全仓零 import；已登记在棘轮基线并带 ⚠️ note                                                                                                    | `model-mgmt`                          |
+| `statusTone.ts` 三个 tone 函数零调用方                                                | ⛔  | `statusTone.ts:71/78/96`，全仓零调用；已登记基线                                                                                                                            | `ui-backlog`                          |
+| `JobList` 的 pause/resume 错误零渲染 → 点了静默无反应                                 | ⛔  | `JobList.tsx:122,127` `actions.pause.mutate(...)`，同文件无 `isError`                                                                                                       | `ui-backlog`                          |
+| `mistralai` 驱动不了（无 `mistral-native` 适配器）                                    | ⛔  | `llm-catalog.ts:114` `'mistral-native': null`；目录 `llm-providers.json:4491` 有这家                                                                                        | `architect`                           |
+| 根 `package.json` 的 `"build": "pnpm -r build"` 陷阱仍在                              | ⛔  | `package.json` `build` 未改（`check` 改掉了，`build` 没有）                                                                                                                 | Manager                               |
+| `format:check` 不是门禁                                                               | ⛔  | 根脚本有 `format:check`，`ci.yml` 不调用                                                                                                                                    | Manager                               |
+| `migrateAssets.ts:81` `void mediaRoot` + `depth>6` 静默截断                           | ⛔  | `migrateAssets.ts:61,81` 逐字如此                                                                                                                                           | `daemon-backlog`                      |
+| `defaultDataDir()` / `resolveStoreRoot()` 仍直读 `process.platform`，无 platform 入参 | ⛔  | `config/paths.ts:26`、`pipeline/tools.ts:100`                                                                                                                               | `path-guard`                          |
+| Ed25519 目录验签：实现在、**生产零调用方 + 无密钥**                                   | 🚧  | `signature.ts:104` `PUBLIC_KEY = null`；`verifyCatalogSignature` 全仓零调用；`manifest.ts:14` 自陈                                                                          | 等密钥（用户/Manager）                |
+| Windows / macOS / arm64 / musl 真机行为                                               | 🚧  | 无机器。CI 只有 GitHub 托管 runner，无真 N 卡 / 真 AMD / 真 Mac 交互                                                                                                        | 等硬件                                |
+| Vulkan 包 `GLIBC_2.38`、Windows VC++ 运行时                                           | 🚧  | `ADR-015:115-123` 自陈；我无 22.04/干净 Windows 可验                                                                                                                        | 等真机                                |
+| 真 release / 真上传一个字节                                                           | 🚧  | 建 release 是对外动作，规则要求用户本人确认                                                                                                                                 | 用户                                  |
+| 真浏览器点一遍（全仓无 playwright/puppeteer）                                         | 🚧  | `ADR-012:61-68` 立的"最大验证缺口"，至今无 e2e 依赖                                                                                                                         | 需能开浏览器的人                      |
+| ★ `ws/recorder.ts` 绝对路径进 `rel_path`（asset-check:193 那条）                      | ✅  | `recorder.ts:326` `canonicalAssetRelPath()` + `recorder.test.ts` **本机跑 8/8 绿**                                                                                          | 已闭                                  |
+| ★ `__MACOSX` 废掉整条 CoreML 修复（T-168 ①）                                          | ✅  | `unpack.ts:187 isMacArchiveJunk` + 两处调用；`installer.test.ts:266` 真条目表；downloader **35/35 绿**                                                                      | 已闭                                  |
+| `/api/health` 的 `host` 硬编码 `127.0.0.1`                                            | ✅  | `server.ts:134` `host: deps.host()`；`main.ts:370` `boundHost`；有 `healthHost.test.ts`                                                                                     | 已闭                                  |
+| `upload.ts` 两处 `as never`                                                           | ✅  | 产品代码全仓零 `as never`（只剩测试夹具）；`as any` 仅 3 处                                                                                                                 | 已闭                                  |
+| `staleLinks`/`warningZh` 算了没接出来                                                 | ✅  | `rest/storage.ts:348-349` 回传；`DataLocationSection.tsx:91,98,354` 渲染                                                                                                    | 已闭                                  |
+| 侧栏「星标」筛选没实现                                                                | ✅  | 服务端筛选 `notesCache.ts:47-53`；`activeNav.test.ts` 钉住                                                                                                                  | 已闭                                  |
+| `GET /api/notes` 无分页（A12）                                                        | ✅  | `rest/notes.ts:346-369` `?offset=` + 拒绝非法值                                                                                                                             | 已闭                                  |
+| `POST /api/llm/detect` 不存在（D-10 #3）                                              | ✅  | `rest/llmRoutes.test.ts:85` + `LocalLlmSection.tsx:19` 消费方                                                                                                               | 已闭                                  |
+| `activeJobId` 死代码                                                                  | ✅  | 已删并有回归断言 `components.test.tsx:4213`「不许回来」                                                                                                                     | 已闭                                  |
+| F4 导图无生成入口（A6）                                                               | ✅  | `features/mindmap/api.ts:62` POST 已接                                                                                                                                      | 已闭                                  |
+| `POST /api/auth/session` 在 `AUTH=none` 下 401 → 全站无 SSE                           | ✅  | `server.ts:189-197` 已改并写明原委                                                                                                                                          | 已闭                                  |
+| `POST /api/backends/selftest` 结果不回写（gates-fix §5.3）                            | ✅  | `rest/hardware.ts:271` 调 `recordSelfTest()`，`:430` 写 manifest                                                                                                            | 已闭                                  |
+| ADR-014 ② manifest 文件名硬编码                                                       | ✅  | `rest/manifests.ts:50-72` 改成列目录 + 按内容判类型                                                                                                                         | 已闭                                  |
+| **A-4** `openmemo-probe` 无分发通道                                                   | ✅  | `3ef8734`（T-167①）探针编进每个包；`build-backends` run 31155359839 9/9 绿                                                                                                  | 已闭                                  |
+| `asr.coreml` 的 `required:false` 假绿灯                                               | ✅  | `runtime/selfcheck.ts:311+` 改无条件 `required:true`；`cold-start-audit` run **31167151669** 实测 `asr.coreml = ok`                                                         | 已闭                                  |
+| D-10 #24「+ 添加服务商」够不到 13 家                                                  | ✅  | `llm-providers.json` **24 家 / 520 条**；`LlmSettingsSection.tsx:324` 三桶驱动                                                                                              | 已闭                                  |
+| 一批测试从来没被执行过（C1/TD-002 族）                                                | ✅  | `check-test-scripts.mjs` 挂进 6 个包共用行；CI 日志：**8 个含测试的包都有 test 脚本**，daemon 434 / web 274 / pipeline 222 全绿                                             | 已闭                                  |
+| **C-24** HEAD 从未跑过 CI                                                             | ✅  | `ci.yml` 已 `on.push`；`gh run list` 近 15 次全部 push 触发                                                                                                                 | 已闭                                  |
+| ADR-016 空间管理②③（修改/移动数据目录）                                               | ✅  | `storage/move.ts:317 moveDataDir` + `move.test.ts` 12+ 用例 + `rest/storage.ts:302`                                                                                         | 已闭                                  |
+| ADR-016 决策 5 代理配置                                                               | ✅  | `shared/proxy.ts` + `rest/proxy.ts`（脱敏、`no_proxy`、SOCKS5）+ ffmpeg SOCKS 局限如实透出 `proxy.ts:62-84`                                                                 | 已闭                                  |
+| `sqlite-ext.json` 的 `libsimple.dll` → `simple.dll`                                   | ✅  | `grep -c simple.dll` = 2，`libsimple.dll` = 0                                                                                                                               | 已闭                                  |
+| **孤儿导出棘轮基线 = 72，没被抬过**                                                   | ✅  | 基线文件 `accepted` **72 条**；`git log` 该文件**只有一个提交**（`1b0675b`）；本机跑 checker：`零引用导出 72 个（基线 72 个）` + `✔ 没有新的零引用导出，基线也没有过期条目` | 已闭（但见 🟡-1/🟡-2）                |
+| ADR-016 决策 1/2/3：TTS、本地 ASR 扩容、内置 `llama.cpp`                              | ✂   | `ADR-016:24-36`，用户指令原文在案                                                                                                                                           | 已裁                                  |
+| 翻译/双语字幕/字幕导出、说话人分离、workspace 层级                                    | ✂   | `ADR-006:57-60`、`ADR-011:82-84`、`ADR-006:48-50`                                                                                                                           | 已裁                                  |
+| 桌面外壳 Tauri、离线全量安装包、代码签名证书                                          | ✂   | `ADR-003:31,81-93`                                                                                                                                                          | 已裁                                  |
+| L0 浏览器 WebGPU / `/ws/asr-worker`                                                   | ✂   | `ADR-006:36-46`（降为实验特性，不进 v1）                                                                                                                                    | 已裁                                  |
+| 「可导入任意 HF GGUF」「真实 AMD 支持」对外口径                                       | ✂   | `ADR-016:73-76` 改口径不补实现                                                                                                                                              | 已裁                                  |
+| macOS Intel 支持                                                                      | ✂   | 用户 2026-08-05 裁定（`progress-audit.md:175` 引）                                                                                                                          | 已裁                                  |
+| 向量检索（`/api/search` `modes.semantic=false`）                                      | ✂   | `HANDOFF.md:565` 标"已裁决的取舍，不是 bug"                                                                                                                                 | 已裁                                  |
+| ROCm 换 noble 的冲突复验                                                              | ✂   | `ci-runner.md:233` 已被裁掉，"可能永远不会验证"                                                                                                                             | 已裁                                  |
 
 ---
 
@@ -107,11 +107,13 @@
 ### 🟡-1　孤儿导出棘轮「固化成门禁」了，但**这个门禁从来不在 CI 里跑**
 
 **谁声称闭合**
+
 - 提交 `1b0675b` 的标题：`ci: 「零调用方」扫描固化成门禁 —— 15 条用户可见缺陷里 6 条是它查出来的 (T-157)`
 - `progress-audit.md:246`：`debt-cleanup 决策 6：死导出检测器何时装守卫 | ✅ **已装**（T-157）`
 - `sweep-fix.md:45`：新增脚本 + 基线，**接进 `pnpm check`**
 
 **我验到的**
+
 - 脚本在：`scripts/check-orphan-exports.mjs`　`[我核过]`
 - 基线在：`scripts/orphan-exports-baseline.json`，`accepted` **72 条**　`[我核过]`
 - `package.json:24` `check:orphans` 在、`package.json:26` `check` 里也在　`[我核过]`
@@ -121,6 +123,7 @@
 - `pnpm check` 本身**没有任何自动调用方** —— 它只在人手敲的时候跑。
 
 **佐证（不是我说的）**：`scripts/mutation-check.mjs:22` 自己写着
+
 > 「本仓库没有 CI、没有 git hook、**`pnpm check` 也没人跑** —— 多加一条没人跑的门禁没有意义」
 
 那句话的前半截（"没有 CI"）今天已经过期（`ci.yml` 08-07 起 `on.push`），**后半截没有过期**。
@@ -139,6 +142,7 @@
 这条是我在核 🟡-1 时顺手撞出来的，**没有任何回执提过它**。
 
 **判据长什么样**（`check-orphan-exports.mjs:196-213`）：
+
 1. 先 `stripComments()` 剥掉注释（`:118-123`）——**只剥注释，不剥字符串字面量**；
 2. 统计三个数：`self`（同文件内命中数 − 1）、`test`、`prod`；
 3. 只有 `prod === 0 && self === 0 && test === 0` 才判为"零引用导出"。
@@ -182,6 +186,7 @@ L168:   'verifyCatalogSignature: a signature was supplied but no catalog signing
 ### 🟡-3　`runner.ts:190` 的注释声称 Windows 上用 `taskkill` 杀进程树 —— 全仓零实现
 
 **声称在哪**（`packages/pipeline/src/subprocess/runner.ts:188-190`）：
+
 ```
 // Own process group so the timeout can kill the whole tree (ffmpeg and yt-dlp
 // both spawn helpers). On Windows this is emulated via taskkill below.
@@ -189,16 +194,19 @@ detached: process.platform !== 'win32',
 ```
 
 **"below" 实际是什么**（同文件 `:198-210`）：
+
 ```js
 const killTree = (sig) => {
   if (child.pid === undefined) return;
   try {
     if (process.platform === 'win32') {
-      child.kill(sig);                 // ← 只杀直接子进程
+      child.kill(sig); // ← 只杀直接子进程
     } else {
-      process.kill(-child.pid, sig);   // ← 负 pid = 整个进程组
+      process.kill(-child.pid, sig); // ← 负 pid = 整个进程组
     }
-  } catch { /* Already dead. */ }
+  } catch {
+    /* Already dead. */
+  }
 };
 ```
 
@@ -223,6 +231,7 @@ const killTree = (sig) => {
 其配套断言是 daemon 下载后清 `com.apple.quarantine`。ADR 状态 = `accepted`。
 
 **我验到的**：
+
 - `apps/` + `packages/` 里 `quarantine` / `xattr` **零命中**　`[我核过]`
 - 仅有的两处提及都在构建侧且都是"这事没做"的语气：
   - `scripts/build-whisper.sh:680` — `# quarantine xattr after download. See D-04 §7 for the upgrade path.`
@@ -241,18 +250,22 @@ const killTree = (sig) => {
 ### 🟡-5　TD-001：ADR 说"必须重开"，`tsconfig` 给了一个相反的、永久性的理由，没人调和
 
 **A 面**（`docs/adr/ADR-005-workspace-conventions.md`）：
+
 - `:14-15` —「**但这是暂时豁免，不是永久决定。** 登记为技术债 **TD-001**」
 - `:54` — 技术债表：`| TD-001 | 重开 noUnusedLocals/noUnusedParameters 并清理 | Wave 3 结束前 | 🔴 未清 |`，**验收人写的是 Manager**
 
 **B 面**（`tsconfig.base.json:24-26`）：
+
 ```
 // 刻意不开 noUnusedLocals / noUnusedParameters：
 // 未使用变量是 lint 关注点，不该阻断编译（尤其多 agent 并行开发期间）。
 // 已由 eslint 的 @typescript-eslint/no-unused-vars 覆盖，且有 `^_` 前缀豁免。
 ```
+
 这不是"还没来得及重开"，这是**一个相反的永久决定**，而且写在代码里，没有回到 ADR 上。
 
 **我验到的**：
+
 - 两处原文逐字如上　`[我核过]`
 - `eslint.config.js:39` 确实有 `@typescript-eslint/no-unused-vars`　`[我核过]`，所以 B 面的理由**技术上成立**
 - 全仓只有 `model-mgmt.md:83` 一处提到 TD-001，是说自己"未依赖 TD-001 豁免"，**没有人来结这笔账**
@@ -276,6 +289,7 @@ const killTree = (sig) => {
 `packages/shared` 有 **0 个测试文件**，所以它**永远不触发**，`pnpm -r test` 也永远跳过它，两边都不出声。
 
 **我验到的**：
+
 - `find packages/shared -name '*.test.*'` → **空**　`[我核过]`
 - `packages/shared/package.json` 的 `scripts.test` → `undefined`　`[我核过]`
 - CI 日志里那 8 个包：`apps/daemon(43) apps/web(16) packages/db(4) packages/downloader(3) packages/llm(2) packages/mindmap(3) packages/pipeline(16) packages/runtime(5)` —— **没有 shared**　`[我核过]`
@@ -294,6 +308,7 @@ const killTree = (sig) => {
 ### 🟡-7　SSRF 守卫的注释指向一个不存在的函数 `resolveAndCheck`
 
 **声称在哪**（`packages/pipeline/src/subprocess/argGuard.ts:108-109`，就在 `isPrivateOrReservedHost` 里）：
+
 ```
 // Common internal TLDs; not exhaustive, and DNS rebinding still needs a re-check at
 // connect time (see resolveAndCheck below).
@@ -317,44 +332,44 @@ const killTree = (sig) => {
 
 > 全部我回代码核过。回执写着开着、而我核出来已经闭了的，**不在这里**（在 ✅ 里）。
 
-| # | 条目 | 我核到的证据 | 下一步 | 主 |
-|---|---|---|---|---|
-| 1 | **A-6** `sourceBaseUrl` daemon 侧零读取字段 | `rest/state.ts:103` 声明 · `rest/models.ts:953` 唯一写入 · 全仓零读取（`apps/web/.../models/api.ts:177` 的 `[实测 grep]` 我复核过；web 侧已刻意不做"自定义源"输入框，`SourcesSection.tsx:35`） | **删**它，连同 `SelectSourceRequest.baseUrl`（`progress-audit` B5 与 `daemon-backlog` 同意见） | `daemon-backlog` |
-| 2 | **C-19 / B-4** `unpackArchive` 失败自清契约 | `unpack.ts:939` 函数签名上无契约说明（文件头只讲安全属性）；`unpack.test.ts` / `installer.test.ts` 零"失败后 destDir 干净"断言 | 按 `progress-audit` B4：**不改行为**，在签名上明写契约 + 加一条断言 | `daemon-backlog` |
-| 3 | `applicability.ts:219` 字符串嗅探 | 行仍在。**我把 `daemon-backlog.md:606` 的判断修正了一处**：那条说"我的新文案不含 probe 一词，与本次改动无交互"——对；但它**不是死代码**，`manager.ts:217` 在 `probe.ok === false` 时给所有后端 `probe did not complete: …`，`.every()` 能命中。真正的问题是它**要求全部六个后端都匹配**，且 T-168 新增的文案（`manager.ts:237-245`，不含 `probe`）一旦出现在任一后端上，这条就静默失效 | 换成 `status.probed !== true` 结构判据（daemon 侧 `backends.ts:114` 已是这个写法，两边对齐即可） | `gates-fix` |
-| 4 | **A-5** `ytdlp-macos-arm64` universal2 却声明 `arch:"arm64"` | `backends.json:514-522` + `components.json:312`；无 `ytdlp-macos-x64` 条目 | `platform-backlog.md:519` 给了两条路并选了①（收窄 displayName 承诺），且说明为什么要等 release 之后一起改 —— **这个"等"是有理由的，别当拖延** | `platform-backlog` |
-| 5 | 组件「回滚」永不可用 | `downloader/components.ts:207 stashForRollback` 零调用方 → `:154 rollbackVersion` 恒 null。T-157② 已把假按钮拿掉并在 `ComponentCard.tsx:164-179` 写清四条原因 | 用户可见的谎言已消除。剩下的是**要不要做**：`progress-audit` C3 建议「明确 v1 不做并写进 ADR，别继续挂着」 | Manager（一句 ADR） |
-| 6 | `role=llm` 5 条 GGUF 仍在目录里 | `models-llm.json` 5 条 `"role":"llm"`；唯一的标记是 `speedEvidence.reason="out_of_scope"`（`shared/models.ts:282` 只是一句速度文案，**不下架任何东西**）；`rest/manifests.ts` 列目录全载 → `/api/models/catalog?role=llm` 仍返回它们。**但我核到 UI 不渲染**：`ModelsPage.tsx:74 ASR_TAB_ROLES = ['asr','vad','punctuation']`，LLM Tab 只有在线服务商区块 | 严重度比多份回执写的低（**今天用户看不到**）。剩下是目录卫生 + API 契约 | `model-mgmt` |
-| 7 | `describeSpeed()` 零调用方 | `shared/models.ts:244` 声明，全仓零 import。**已在棘轮基线里带 ⚠️ note**（`orphan-exports-baseline.json:235`），note 原文：「HANDOFF ③ 写着「读 rtf 要走 describeSpeed()」，而 UI 全走 speedClass。T-125 实测的 9/35 条 measured 证据一条都没进 UI」 | 要么补断言接上，要么改 HANDOFF 那条规范 | `model-mgmt` |
-| 8 | `statusTone.ts` 三个 tone 零调用方 | `statusTone.ts:71/78/96`；均在基线里 | T-114 立的规矩没人执行 —— 要么接上要么删 | `ui-backlog` |
-| 9 | `JobList` pause/resume 错误零渲染 | `JobList.tsx:122,127` 直接 `.mutate()`，同文件无 `isError` 分支 | 点「暂停」失败时静默无反应。补 `<ErrorBlock>`（同页已有 4 个的写法） | `ui-backlog` |
-| 10 | `mistralai` 驱动不了 | `llm-catalog.ts:114` `'mistral-native': null`；目录里这家在（`llm-providers.json:4487-4493`）。前端用总 `Record` 强制表态（新协议族没人表态就构建红），处理是诚实的 | 补 `mistral-native` 适配器，或在界面逐家说明原因（`LLM_CATALOG_STATS.supported` 已备好这个口径） | `architect` |
-| 11 | 根 `"build": "pnpm -r build"` 陷阱仍在 | `package.json` `check` 已换成 `tsc -b && pnpm build:safe`，**但 `build` 本身没换** —— 陷阱只是挪开了（`progress-audit` B3 原话） | 一行改动 | Manager |
-| 12 | `format:check` 不是门禁 | 根脚本有，`ci.yml` 不调。`ci-prep.md:409` `[报告]` 说全仓 403 个文件不过（**我没跑，太慢** → `[未验证]`） | 先统一格式再上门禁，别反过来 | Manager |
-| 13 | `migrateAssets.ts` 收着 `mediaRoot` 不用 + `depth>6` 静默截断 | `:61` 签名收它、`:81` `void mediaRoot;`；`walk` 里 `if (depth > 6) return;` 无任何提示 | 深目录里的文件找不回来时不会说明原因。小坑 | `daemon-backlog` |
-| 14 | 三份数据根推导仍直读 `process.platform` | `config/paths.ts:26 defaultDataDir()`、`pipeline/tools.ts:100 resolveStoreRoot()` 均无 platform 入参（对照正确范式：`downloader/store.ts:63 defaultModelsRoot(platform=…)`） | `path-guard.md:480` 明说三份合一超出 T-143 范围。**注**：`resolveStoreRoot(dataDir)` 已接线，daemon 路径上到不了那个兜底 | `path-guard` |
-| 15 | `rel_path` 大小写归一化 | `apps/daemon/src/storage/` 无 `toLowerCase`；Linux 敏感、mac/Win 不敏感 → 跨平台行为不一致 | `asset-check.md:201` 自陈本机验不了 | `path-guard` |
+| #   | 条目                                                          | 我核到的证据                                                                                                                                                                                                                                                                                                                                                                          | 下一步                                                                                                                                        | 主                  |
+| --- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| 1   | **A-6** `sourceBaseUrl` daemon 侧零读取字段                   | `rest/state.ts:103` 声明 · `rest/models.ts:953` 唯一写入 · 全仓零读取（`apps/web/.../models/api.ts:177` 的 `[实测 grep]` 我复核过；web 侧已刻意不做"自定义源"输入框，`SourcesSection.tsx:35`）                                                                                                                                                                                        | **删**它，连同 `SelectSourceRequest.baseUrl`（`progress-audit` B5 与 `daemon-backlog` 同意见）                                                | `daemon-backlog`    |
+| 2   | **C-19 / B-4** `unpackArchive` 失败自清契约                   | `unpack.ts:939` 函数签名上无契约说明（文件头只讲安全属性）；`unpack.test.ts` / `installer.test.ts` 零"失败后 destDir 干净"断言                                                                                                                                                                                                                                                        | 按 `progress-audit` B4：**不改行为**，在签名上明写契约 + 加一条断言                                                                           | `daemon-backlog`    |
+| 3   | `applicability.ts:219` 字符串嗅探                             | 行仍在。**我把 `daemon-backlog.md:606` 的判断修正了一处**：那条说"我的新文案不含 probe 一词，与本次改动无交互"——对；但它**不是死代码**，`manager.ts:217` 在 `probe.ok === false` 时给所有后端 `probe did not complete: …`，`.every()` 能命中。真正的问题是它**要求全部六个后端都匹配**，且 T-168 新增的文案（`manager.ts:237-245`，不含 `probe`）一旦出现在任一后端上，这条就静默失效 | 换成 `status.probed !== true` 结构判据（daemon 侧 `backends.ts:114` 已是这个写法，两边对齐即可）                                              | `gates-fix`         |
+| 4   | **A-5** `ytdlp-macos-arm64` universal2 却声明 `arch:"arm64"`  | `backends.json:514-522` + `components.json:312`；无 `ytdlp-macos-x64` 条目                                                                                                                                                                                                                                                                                                            | `platform-backlog.md:519` 给了两条路并选了①（收窄 displayName 承诺），且说明为什么要等 release 之后一起改 —— **这个"等"是有理由的，别当拖延** | `platform-backlog`  |
+| 5   | 组件「回滚」永不可用                                          | `downloader/components.ts:207 stashForRollback` 零调用方 → `:154 rollbackVersion` 恒 null。T-157② 已把假按钮拿掉并在 `ComponentCard.tsx:164-179` 写清四条原因                                                                                                                                                                                                                         | 用户可见的谎言已消除。剩下的是**要不要做**：`progress-audit` C3 建议「明确 v1 不做并写进 ADR，别继续挂着」                                    | Manager（一句 ADR） |
+| 6   | `role=llm` 5 条 GGUF 仍在目录里                               | `models-llm.json` 5 条 `"role":"llm"`；唯一的标记是 `speedEvidence.reason="out_of_scope"`（`shared/models.ts:282` 只是一句速度文案，**不下架任何东西**）；`rest/manifests.ts` 列目录全载 → `/api/models/catalog?role=llm` 仍返回它们。**但我核到 UI 不渲染**：`ModelsPage.tsx:74 ASR_TAB_ROLES = ['asr','vad','punctuation']`，LLM Tab 只有在线服务商区块                             | 严重度比多份回执写的低（**今天用户看不到**）。剩下是目录卫生 + API 契约                                                                       | `model-mgmt`        |
+| 7   | `describeSpeed()` 零调用方                                    | `shared/models.ts:244` 声明，全仓零 import。**已在棘轮基线里带 ⚠️ note**（`orphan-exports-baseline.json:235`），note 原文：「HANDOFF ③ 写着「读 rtf 要走 describeSpeed()」，而 UI 全走 speedClass。T-125 实测的 9/35 条 measured 证据一条都没进 UI」                                                                                                                                  | 要么补断言接上，要么改 HANDOFF 那条规范                                                                                                       | `model-mgmt`        |
+| 8   | `statusTone.ts` 三个 tone 零调用方                            | `statusTone.ts:71/78/96`；均在基线里                                                                                                                                                                                                                                                                                                                                                  | T-114 立的规矩没人执行 —— 要么接上要么删                                                                                                      | `ui-backlog`        |
+| 9   | `JobList` pause/resume 错误零渲染                             | `JobList.tsx:122,127` 直接 `.mutate()`，同文件无 `isError` 分支                                                                                                                                                                                                                                                                                                                       | 点「暂停」失败时静默无反应。补 `<ErrorBlock>`（同页已有 4 个的写法）                                                                          | `ui-backlog`        |
+| 10  | `mistralai` 驱动不了                                          | `llm-catalog.ts:114` `'mistral-native': null`；目录里这家在（`llm-providers.json:4487-4493`）。前端用总 `Record` 强制表态（新协议族没人表态就构建红），处理是诚实的                                                                                                                                                                                                                   | 补 `mistral-native` 适配器，或在界面逐家说明原因（`LLM_CATALOG_STATS.supported` 已备好这个口径）                                              | `architect`         |
+| 11  | 根 `"build": "pnpm -r build"` 陷阱仍在                        | `package.json` `check` 已换成 `tsc -b && pnpm build:safe`，**但 `build` 本身没换** —— 陷阱只是挪开了（`progress-audit` B3 原话）                                                                                                                                                                                                                                                      | 一行改动                                                                                                                                      | Manager             |
+| 12  | `format:check` 不是门禁                                       | 根脚本有，`ci.yml` 不调。`ci-prep.md:409` `[报告]` 说全仓 403 个文件不过（**我没跑，太慢** → `[未验证]`）                                                                                                                                                                                                                                                                             | 先统一格式再上门禁，别反过来                                                                                                                  | Manager             |
+| 13  | `migrateAssets.ts` 收着 `mediaRoot` 不用 + `depth>6` 静默截断 | `:61` 签名收它、`:81` `void mediaRoot;`；`walk` 里 `if (depth > 6) return;` 无任何提示                                                                                                                                                                                                                                                                                                | 深目录里的文件找不回来时不会说明原因。小坑                                                                                                    | `daemon-backlog`    |
+| 14  | 三份数据根推导仍直读 `process.platform`                       | `config/paths.ts:26 defaultDataDir()`、`pipeline/tools.ts:100 resolveStoreRoot()` 均无 platform 入参（对照正确范式：`downloader/store.ts:63 defaultModelsRoot(platform=…)`）                                                                                                                                                                                                          | `path-guard.md:480` 明说三份合一超出 T-143 范围。**注**：`resolveStoreRoot(dataDir)` 已接线，daemon 路径上到不了那个兜底                      | `path-guard`        |
+| 15  | `rel_path` 大小写归一化                                       | `apps/daemon/src/storage/` 无 `toLowerCase`；Linux 敏感、mac/Win 不敏感 → 跨平台行为不一致                                                                                                                                                                                                                                                                                            | `asset-check.md:201` 自陈本机验不了                                                                                                           | `path-guard`        |
 
 ---
 
 ## 四、🚧 阻塞（**不算欠债**，但要说清卡在什么上）
 
-| # | 卡住的东西 | 卡在什么上 | 我核到的 |
-|---|---|---|---|
-| 1 | **目录 Ed25519 验签** | **没有密钥**。`signature.ts:104` `OPENMEMO_CATALOG_PUBLIC_KEY: string \| null = null` | 实现是完整的且 fail-closed（给了签名却无密钥 → 抛，不是返 true）。**但生产零调用方**：`loadManifest` 从不调它，`manifest.ts:14` 自陈。⚠️ 叠加 🟡-2：它连棘轮都看不见 |
-| 2 | **B15 / C-7 老记录回 `role`** | **等 Manager 一句裁决**。`daemon-backlog.md:361` 论证：读取侧无从补（信息不在盘上），四个读取方已改成扫全桶按 `role` 判，建议与 `priority` 回填**一起裁** | 我**没有**在真实数据目录上核 `skippedWithoutRole > 0`（`/root/data-memo` 禁碰）→ `[未验证]` |
-| 3 | 真 release / 真上传一个字节 | 建 release（含 draft）是对外动作，规则要求用户本人确认 | `pack-publish.md:594`、`ci-upload.md:322` `[报告]` |
-| 4 | Windows / macOS / arm64 / musl 一切真机行为 | 无机器。GitHub 托管 runner 能编能测，但**没有真 N 卡、没有真 AMD、没有交互式 Mac、没有干净 Windows** | `platform.md:544-560` 列了必须真机的 10 类 `[报告]` |
-| 5 | Vulkan 包 `GLIBC_2.38`（22.04/Debian 12 静默加载失败） | 需要一台 22.04 | `ADR-015:115-123` 自陈 `[报告]`；我无该发行版 |
-| 6 | Windows VC++ 运行时依赖 | 需要一台干净 Windows | `ADR-015:121-123` `[报告]` |
-| 7 | Linux CUDA 包在没装 CUDA 的机器上能否用 | 需要一台没装 CUDA 工具链的机器（runner 上装了，`ldd` 看不出来） | `amd-vulkan.md:525` `[报告]` |
-| 8 | 真浏览器点一遍 | 全仓无 playwright / puppeteer（`ADR-012:61-68` 当年就把它定为"当前最大验证缺口"） | `[我核过：无 e2e 依赖]` |
-| 9 | 云 LLM 真 Key 往返（Anthropic / Gemini / DeepSeek） | 无 Key / 无出网 | `HANDOFF.md:552`、`last-mile.md:242-243` `[报告]` |
-| 10 | 代理在**真实可用**的代理后面测 | 只做过死代理反证法（证明流量改道，未证明经代理能出网） | `HANDOFF.md:553`、`gpu-runtime.md:1512` `[报告]` |
-| 11 | 重建 `apps/web/dist` + 重启 `:10000` | **只有 Manager 能做**（PROTOCOL §7）。在此之前多轮前端修复用户一条都看不见 | `ui-backlog.md:150`、`backlog-work.md:224` `[报告]`。我未碰 `:10000` |
-| 12 | `PENDING-USER-DECISIONS.md` / 章程 §3 / `SECURITY.md` 的订正 | **只有 Manager 能写那几个文件** | `gates-fix.md:382`、`backlog-work.md:225-232` `[报告]` |
-| 13 | 会员内容 cookie（yt-dlp `--cookies`） | **需用户拍板**：`--cookies` 是任意文件读取入口，`--cookies-from-browser` 读全站凭据 | `HANDOFF.md:581` `[报告]` |
-| 14 | 绑 `0.0.0.0` / 放宽 Host 校验 / 同源免 CSRF | **需用户本人在自己的轮次里说**（权限系统判为 Security Weaken 并拒绝） | `oss-scout.md:1232,1910` `[报告]` |
+| #   | 卡住的东西                                                   | 卡在什么上                                                                                                                                                | 我核到的                                                                                                                                                             |
+| --- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **目录 Ed25519 验签**                                        | **没有密钥**。`signature.ts:104` `OPENMEMO_CATALOG_PUBLIC_KEY: string \| null = null`                                                                     | 实现是完整的且 fail-closed（给了签名却无密钥 → 抛，不是返 true）。**但生产零调用方**：`loadManifest` 从不调它，`manifest.ts:14` 自陈。⚠️ 叠加 🟡-2：它连棘轮都看不见 |
+| 2   | **B15 / C-7 老记录回 `role`**                                | **等 Manager 一句裁决**。`daemon-backlog.md:361` 论证：读取侧无从补（信息不在盘上），四个读取方已改成扫全桶按 `role` 判，建议与 `priority` 回填**一起裁** | 我**没有**在真实数据目录上核 `skippedWithoutRole > 0`（`/root/data-memo` 禁碰）→ `[未验证]`                                                                          |
+| 3   | 真 release / 真上传一个字节                                  | 建 release（含 draft）是对外动作，规则要求用户本人确认                                                                                                    | `pack-publish.md:594`、`ci-upload.md:322` `[报告]`                                                                                                                   |
+| 4   | Windows / macOS / arm64 / musl 一切真机行为                  | 无机器。GitHub 托管 runner 能编能测，但**没有真 N 卡、没有真 AMD、没有交互式 Mac、没有干净 Windows**                                                      | `platform.md:544-560` 列了必须真机的 10 类 `[报告]`                                                                                                                  |
+| 5   | Vulkan 包 `GLIBC_2.38`（22.04/Debian 12 静默加载失败）       | 需要一台 22.04                                                                                                                                            | `ADR-015:115-123` 自陈 `[报告]`；我无该发行版                                                                                                                        |
+| 6   | Windows VC++ 运行时依赖                                      | 需要一台干净 Windows                                                                                                                                      | `ADR-015:121-123` `[报告]`                                                                                                                                           |
+| 7   | Linux CUDA 包在没装 CUDA 的机器上能否用                      | 需要一台没装 CUDA 工具链的机器（runner 上装了，`ldd` 看不出来）                                                                                           | `amd-vulkan.md:525` `[报告]`                                                                                                                                         |
+| 8   | 真浏览器点一遍                                               | 全仓无 playwright / puppeteer（`ADR-012:61-68` 当年就把它定为"当前最大验证缺口"）                                                                         | `[我核过：无 e2e 依赖]`                                                                                                                                              |
+| 9   | 云 LLM 真 Key 往返（Anthropic / Gemini / DeepSeek）          | 无 Key / 无出网                                                                                                                                           | `HANDOFF.md:552`、`last-mile.md:242-243` `[报告]`                                                                                                                    |
+| 10  | 代理在**真实可用**的代理后面测                               | 只做过死代理反证法（证明流量改道，未证明经代理能出网）                                                                                                    | `HANDOFF.md:553`、`gpu-runtime.md:1512` `[报告]`                                                                                                                     |
+| 11  | 重建 `apps/web/dist` + 重启 `:10000`                         | **只有 Manager 能做**（PROTOCOL §7）。在此之前多轮前端修复用户一条都看不见                                                                                | `ui-backlog.md:150`、`backlog-work.md:224` `[报告]`。我未碰 `:10000`                                                                                                 |
+| 12  | `PENDING-USER-DECISIONS.md` / 章程 §3 / `SECURITY.md` 的订正 | **只有 Manager 能写那几个文件**                                                                                                                           | `gates-fix.md:382`、`backlog-work.md:225-232` `[报告]`                                                                                                               |
+| 13  | 会员内容 cookie（yt-dlp `--cookies`）                        | **需用户拍板**：`--cookies` 是任意文件读取入口，`--cookies-from-browser` 读全站凭据                                                                       | `HANDOFF.md:581` `[报告]`                                                                                                                                            |
+| 14  | 绑 `0.0.0.0` / 放宽 Host 校验 / 同源免 CSRF                  | **需用户本人在自己的轮次里说**（权限系统判为 Security Weaken 并拒绝）                                                                                     | `oss-scout.md:1232,1910` `[报告]`                                                                                                                                    |
 
 ---
 
@@ -362,29 +377,29 @@ const killTree = (sig) => {
 
 按 ADR 与用户指令，逐条给出处。**建议下一个 agent 开工前先读 `ADR-016`，否则会去做已经被砍掉的东西。**
 
-| 裁掉什么 | 出处 |
-|---|---|
-| TTS（memo.ac 有 Kokoro，我们不做） | `ADR-016:24-25` |
-| 本地 ASR 扩容：sherpa 多模型族分派 / SenseVoice / Qwen3-ASR / Omnilingual / AMD ASR 自建 CI | `ADR-016:28`（✅ 保留 Paraformer 与 sherpa 流式 zh-14M，用户明说「已经做那两个留着」） |
-| 追平 memo.ac 的 47 条 ASR 模型 | `ADR-016:32`（差距**接受**） |
-| 内置 LLM：档 3 `llama.cpp` / `llama-server` 整体下线 | `ADR-016:35`（✅ 保留 BYO API Key、探测已装 Ollama/LM Studio） |
-| 「可导入任意 HF GGUF」对外口径 | `ADR-016:73-74`（`kind:'hf_repo'` 硬编码 501，**改口径不补实现**） |
-| 「真实 AMD 支持」对外口径 | `ADR-016:75-76`（只覆盖 LLM 不覆盖 ASR） |
-| workspace 层级 | `ADR-006:48-50`（`ADR-016:61-63` 追认结论、否定原理由） |
-| 翻译 / 双语字幕 / 字幕导出 | `ADR-006:57-60`（D-02 保留预留表，不实现） |
-| 说话人分离 | `ADR-011:82-84` |
-| L0 浏览器 WebGPU / `/ws/asr-worker` | `ADR-006:36-46`（降为实验特性，不进 v1） |
-| 桌面外壳 Tauri | `ADR-003:31` |
-| 离线全量安装包 | `ADR-003:91-93` |
-| 代码签名证书（Apple $99 / Windows OV $129 / 硬件令牌 $379） | `ADR-003:81-88`（走 ad-hoc 签名）⚠️ 但见 🟡-4 |
-| 自建模型 CDN | `ADR-004:24-27` |
-| 法务咨询（R-03 §6.2 的 8 项） | `ADR-002:67-69`（全部降级为文档记录） |
-| `tldraw` / `@tiptap-pro/*` | `ADR-002:25-27` |
-| `build-sqlite-ext.sh` 停用；`build-media-tools.sh` 降可选；`build-whisper.sh` 不进默认流程 | `ADR-015:48-49` |
-| **A-1 GitHub 仓库这条硬阻塞** | `ADR-015:56-57` **已撤销**。⚠️ `ADR-003:53-55` 与 `ADR-010:39` 仍把它当阻塞前提，`PENDING-USER-DECISIONS.md` 里"唯一硬阻塞"的说法已过期（`HANDOFF.md:583`） |
-| macOS Intel 支持 | 用户 2026-08-05 裁定 |
-| 向量检索（`/api/search` 的 `modes.semantic=false`） | `HANDOFF.md:565`「已裁决的取舍，不是 bug」 |
-| ROCm 换 noble 后的冲突复验 | `ci-runner.md:233`（"可能永远不会验证"） |
+| 裁掉什么                                                                                    | 出处                                                                                                                                                        |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TTS（memo.ac 有 Kokoro，我们不做）                                                          | `ADR-016:24-25`                                                                                                                                             |
+| 本地 ASR 扩容：sherpa 多模型族分派 / SenseVoice / Qwen3-ASR / Omnilingual / AMD ASR 自建 CI | `ADR-016:28`（✅ 保留 Paraformer 与 sherpa 流式 zh-14M，用户明说「已经做那两个留着」）                                                                      |
+| 追平 memo.ac 的 47 条 ASR 模型                                                              | `ADR-016:32`（差距**接受**）                                                                                                                                |
+| 内置 LLM：档 3 `llama.cpp` / `llama-server` 整体下线                                        | `ADR-016:35`（✅ 保留 BYO API Key、探测已装 Ollama/LM Studio）                                                                                              |
+| 「可导入任意 HF GGUF」对外口径                                                              | `ADR-016:73-74`（`kind:'hf_repo'` 硬编码 501，**改口径不补实现**）                                                                                          |
+| 「真实 AMD 支持」对外口径                                                                   | `ADR-016:75-76`（只覆盖 LLM 不覆盖 ASR）                                                                                                                    |
+| workspace 层级                                                                              | `ADR-006:48-50`（`ADR-016:61-63` 追认结论、否定原理由）                                                                                                     |
+| 翻译 / 双语字幕 / 字幕导出                                                                  | `ADR-006:57-60`（D-02 保留预留表，不实现）                                                                                                                  |
+| 说话人分离                                                                                  | `ADR-011:82-84`                                                                                                                                             |
+| L0 浏览器 WebGPU / `/ws/asr-worker`                                                         | `ADR-006:36-46`（降为实验特性，不进 v1）                                                                                                                    |
+| 桌面外壳 Tauri                                                                              | `ADR-003:31`                                                                                                                                                |
+| 离线全量安装包                                                                              | `ADR-003:91-93`                                                                                                                                             |
+| 代码签名证书（Apple $99 / Windows OV $129 / 硬件令牌 $379）                                 | `ADR-003:81-88`（走 ad-hoc 签名）⚠️ 但见 🟡-4                                                                                                               |
+| 自建模型 CDN                                                                                | `ADR-004:24-27`                                                                                                                                             |
+| 法务咨询（R-03 §6.2 的 8 项）                                                               | `ADR-002:67-69`（全部降级为文档记录）                                                                                                                       |
+| `tldraw` / `@tiptap-pro/*`                                                                  | `ADR-002:25-27`                                                                                                                                             |
+| `build-sqlite-ext.sh` 停用；`build-media-tools.sh` 降可选；`build-whisper.sh` 不进默认流程  | `ADR-015:48-49`                                                                                                                                             |
+| **A-1 GitHub 仓库这条硬阻塞**                                                               | `ADR-015:56-57` **已撤销**。⚠️ `ADR-003:53-55` 与 `ADR-010:39` 仍把它当阻塞前提，`PENDING-USER-DECISIONS.md` 里"唯一硬阻塞"的说法已过期（`HANDOFF.md:583`） |
+| macOS Intel 支持                                                                            | 用户 2026-08-05 裁定                                                                                                                                        |
+| 向量检索（`/api/search` 的 `modes.semantic=false`）                                         | `HANDOFF.md:565`「已裁决的取舍，不是 bug」                                                                                                                  |
+| ROCm 换 noble 后的冲突复验                                                                  | `ci-runner.md:233`（"可能永远不会验证"）                                                                                                                    |
 
 ---
 
@@ -450,7 +465,7 @@ const killTree = (sig) => {
 
 ---
 
-*本报告的每一条 ✅ / ⛔ / 🟡 都附了我自己核过的行号或命令输出；`[报告]` 是转述、`[未验证]` 是拿不到、`UNKNOWN` 是不知道并说明了为什么。没有一个数字是猜出来填的。*
+_本报告的每一条 ✅ / ⛔ / 🟡 都附了我自己核过的行号或命令输出；`[报告]` 是转述、`[未验证]` 是拿不到、`UNKNOWN` 是不知道并说明了为什么。没有一个数字是猜出来填的。_
 
 ---
 
@@ -468,11 +483,11 @@ const killTree = (sig) => {
 
 **结论：绕法成立，数取到了。**
 
-| 发次 | 结果 | `ggml_metal_library_init` |
-|---|---|---|
-| **冷**（长超时 120 s，本机第一次 Metal 初始化） | **ok，16092 ms** | **15.911 s** |
-| 热（产品默认 10 s，紧接着） | ok，123 ms | 0.020 s |
-| 热 2 | ok，90 ms | 0.016 s |
+| 发次                                            | 结果             | `ggml_metal_library_init` |
+| ----------------------------------------------- | ---------------- | ------------------------- |
+| **冷**（长超时 120 s，本机第一次 Metal 初始化） | **ok，16092 ms** | **15.911 s**              |
+| 热（产品默认 10 s，紧接着）                     | ok，123 ms       | 0.020 s                   |
+| 热 2                                            | ok，90 ms        | 0.016 s                   |
 
 冷 / 热 ≈ **131×**。
 
@@ -488,6 +503,7 @@ H1（被 kill 那发什么也没留下）→ 冷发 ≈ 21 s；H2（那 10 s 是
 
 **⚠️ 我自己脚本那句判词说得太满，在此订正**：它印的是「落在 ~21s 附近 → H1 成立」，
 但两个冷样本是 **15.911 s 与 20.959 s**，相差 30%。诚实的写法是**区间不是点**：
+
 > 这批虚拟化 macOS runner 上，探针冷启动 ≈ **16–21 s**（n=2）；热态 ≈ 0.02 s。
 
 **`[未验证：需真 Mac]`**：runner 的 GPU 是 `MTL0 (Apple Paravirtual device)` / `MTLGPUFamilyApple5`，
@@ -519,11 +535,11 @@ daemon 一起来就把 Metal 捂热了**，这正是 §6b 在结构上量不到�
 
 判据用你给的那条：**有读者 → 补契约补测试；零读者 → 删。**
 
-| 条目 | 读者实况 | 处置 |
-|---|---|---|
-| **A-6 `sourceBaseUrl`** | **零读者**（确认） | **删** |
-| **C-7 `role`**（安装记录） | **4 个运行时读者 + 自检计数** | **拒删**，判为已闭合 |
-| **`priority`** | **2 个真实读者，其中一个决定跑哪个包** | **拒删**，并订正两处注释 |
+| 条目                       | 读者实况                               | 处置                     |
+| -------------------------- | -------------------------------------- | ------------------------ |
+| **A-6 `sourceBaseUrl`**    | **零读者**（确认）                     | **删**                   |
+| **C-7 `role`**（安装记录） | **4 个运行时读者 + 自检计数**          | **拒删**，判为已闭合     |
+| **`priority`**             | **2 个真实读者，其中一个决定跑哪个包** | **拒删**，并订正两处注释 |
 
 #### A-6 `sourceBaseUrl` —— 零读者属实，已删；但删的过程中撞出一个更大的洞
 
@@ -585,22 +601,22 @@ daemon 一起来就把 Metal 捂热了**，这正是 §6b 在结构上量不到�
 
 ### 门禁
 
-| 门禁 | 结果 |
-|---|---|
-| `pnpm -r test` | **1349 pass / 0 fail**（基线 1341；我净增 7，另 1 条是并行 T-171 那位的） |
-| `npx tsc -b` | ✅ |
-| `npx eslint .` | ✅ exit 0 |
-| `pnpm build:safe` | ✅（**未跑 `pnpm -r build`，未碰 `apps/web/dist`**） |
-| `pnpm lint-workflows` | ✅ 605 条断言 / **7** 个 workflow（新增的那个也过） |
-| `pnpm test:ci-scripts` | ✅ 22 passed |
-| `pnpm check:orphans` | ✅ 没有新的零引用导出，基线也没有过期条目 |
+| 门禁                   | 结果                                                                      |
+| ---------------------- | ------------------------------------------------------------------------- |
+| `pnpm -r test`         | **1349 pass / 0 fail**（基线 1341；我净增 7，另 1 条是并行 T-171 那位的） |
+| `npx tsc -b`           | ✅                                                                        |
+| `npx eslint .`         | ✅ exit 0                                                                 |
+| `pnpm build:safe`      | ✅（**未跑 `pnpm -r build`，未碰 `apps/web/dist`**）                      |
+| `pnpm lint-workflows`  | ✅ 605 条断言 / **7** 个 workflow（新增的那个也过）                       |
+| `pnpm test:ci-scripts` | ✅ 22 passed                                                              |
+| `pnpm check:orphans`   | ✅ 没有新的零引用导出，基线也没有过期条目                                 |
 
 **反向验证** `[实测，PROTOCOL §10，全部在 `/tmp` 隔离副本上跑，先跑对照组]`：
 
-| 对照组 | 变异 | 结果 |
-|---|---|---|
-| downloader 22/0 绿 | 把 `unpackArchive` 改成失败自清 | 🔴 **21/1**，红在「中途失败时已写下去的条目留在 destDir 里」 |
-| daemon 5/0 绿 | 把 A-6 整个撤回（恢复字段 + custom 放行） | 🔴 **2/3**，输出逐字复现旧缺陷：`{"selected":"custom","effective":"custom"}` 返回 **200** |
+| 对照组             | 变异                                      | 结果                                                                                      |
+| ------------------ | ----------------------------------------- | ----------------------------------------------------------------------------------------- |
+| downloader 22/0 绿 | 把 `unpackArchive` 改成失败自清           | 🔴 **21/1**，红在「中途失败时已写下去的条目留在 destDir 里」                              |
+| daemon 5/0 绿      | 把 A-6 整个撤回（恢复字段 + custom 放行） | 🔴 **2/3**，输出逐字复现旧缺陷：`{"selected":"custom","effective":"custom"}` 返回 **200** |
 
 ### 本轮"没验就说没验"
 
@@ -631,6 +647,7 @@ daemon 一起来就把 Metal 捂热了**，这正是 §6b 在结构上量不到�
 那个导出**生产零调用方**，躺在基线里并带着一条说明「三份重复实现之一，合并是独立改动」（本文 ⛔#14）。
 
 两条修法，选了第二条：
+
 - ① 从基线里删掉那条 —— 基线变短，方向合法，**但代价是**：一个仍然没有生产调用方的导出
   **从此对棘轮隐形**，那条债的说明也被一起擦掉。等于用一次 import 把门禁放松，还顺手抹了账。
 - ② **不 import 它** —— 改成在 `dataDir` 底下递归找 `prefs.json`（布局无关，仍然不手写 `models/prefs.json`），
@@ -662,11 +679,11 @@ CI 在 HEAD 上绿（run **31194326508**）。
 
 `[实测]` 用产品自己的 `detectRuntimeHardware()` + 一个 `sleep 30` 的假探针（真超时，不是模拟返回值）：
 
-| 第几次 | 墙钟 | ran | kind | 连续失败 | open | 拉黑 |
-|---|---|---|---|---|---|---|
-| 1 | 10018ms | true | timeout | 1/2 | false | — |
-| 2 | 10018ms | true | timeout | **2/2** | **true** | cuda,vulkan,rocm,**metal**,coreml |
-| 3 | **8ms** | **false** | — | 2/2 | true | 同上 |
+| 第几次 | 墙钟    | ran       | kind    | 连续失败 | open     | 拉黑                              |
+| ------ | ------- | --------- | ------- | -------- | -------- | --------------------------------- |
+| 1      | 10018ms | true      | timeout | 1/2      | false    | —                                 |
+| 2      | 10018ms | true      | timeout | **2/2**  | **true** | cuda,vulkan,rocm,**metal**,coreml |
+| 3      | **8ms** | **false** | —       | 2/2      | true     | 同上                              |
 
 **两次超时就开，而冷 Mac 上一个 daemon 进程里正好有两个独立调用点**：
 `RestState.create()`（`state.ts:178`，启动路径）与首个 `GET /api/runtime/hardware`
@@ -738,22 +755,23 @@ resetBreaker()  ran=true   open=false                      ← 人工出口确�
 
 **测试证据**（`warmup.test.ts` 15 条 + `installWarmup.test.ts` 6 条，共 21 条，全绿）：
 
-| 敌对输入 | 结果 |
-|---|---|
-| ① 注入探针**同步** throw（`.catch()` 接不住的那种） | 不抛 |
-| ② 注入探针返回 rejected promise | 不抛 |
-| ③ 探针如实报 timeout | 不抛 |
-| ④ 探针如实报 crash（SIGABRT） | 不抛 |
-| ⑤ `onBeforeProbe` 回调自己抛 | 不抛 |
-| ⑥ `log` 回调自己抛 | 不抛 |
+| 敌对输入                                                | 结果             |
+| ------------------------------------------------------- | ---------------- |
+| ① 注入探针**同步** throw（`.catch()` 接不住的那种）     | 不抛             |
+| ② 注入探针返回 rejected promise                         | 不抛             |
+| ③ 探针如实报 timeout                                    | 不抛             |
+| ④ 探针如实报 crash（SIGABRT）                           | 不抛             |
+| ⑤ `onBeforeProbe` 回调自己抛                            | 不抛             |
+| ⑥ `log` 回调自己抛                                      | 不抛             |
 | ⑦ **真实 `runProbe`**（不注入）+ 立刻 exit 1 的假二进制 | 不抛，`ok=false` |
-| ⑧ 探针存在但不可执行（EACCES） | 不抛，`ok=false` |
+| ⑧ 探针存在但不可执行（EACCES）                          | 不抛，`ok=false` |
 
 **走产品真实安装路径的那 6 条**（`installWarmup.test.ts`，真 `RestState` + 真 `DownloadQueue`
-+ 真 `install()` + 本地 stub server）：捂热同步 throw / 异步 reject / 如实报失败 →
-**job 仍 `succeeded` 且安装记录真的落了盘**；另有一条钉「装包路径**真的调用了**捂热」
-（本仓最贵的那族是"写好了没人调"）；并有**对照组**：任务体别处抛出时 job 确实 `failed`
-—— 证明上面那些断言有区分力，不是恒真。
+
+- 真 `install()` + 本地 stub server）：捂热同步 throw / 异步 reject / 如实报失败 →
+  **job 仍 `succeeded` 且安装记录真的落了盘**；另有一条钉「装包路径**真的调用了**捂热」
+  （本仓最贵的那族是"写好了没人调"）；并有**对照组**：任务体别处抛出时 job 确实 `failed`
+  —— 证明上面那些断言有区分力，不是恒真。
 
 ---
 
@@ -763,15 +781,17 @@ resetBreaker()  ran=true   open=false                      ← 人工出口确�
 调的是**产品自己那个 `warmProbeCache()`**，不是脚本里另写一发长超时 —— macOS 闸门、
 Metal 库结构判据、自己的预算这三件事只有这样才被真的走到。
 
-| 臂 | 内容 | 结果 |
-|---|---|---|
-| **A** | 产品 `warmProbeCache()`，本机第一次 Metal 初始化 | **17606 ms**，`ok=true` |
-| **B** | 紧接着**不传 timeoutMs**（= ADR-003 那 10 s） | **163 ms**，`ok=true`，`metal_library_init=0.034s` |
+| 臂    | 内容                                             | 结果                                               |
+| ----- | ------------------------------------------------ | -------------------------------------------------- |
+| **A** | 产品 `warmProbeCache()`，本机第一次 Metal 初始化 | **17606 ms**，`ok=true`                            |
+| **B** | 紧接着**不传 timeoutMs**（= ADR-003 那 10 s）    | **163 ms**，`ok=true`，`metal_library_init=0.034s` |
 
 ```json
-{"warm":{"attempted":true,"ok":true,"durationMs":17606},
- "afterWarm":{"ok":true,"durationMs":163},
- "wouldHaveTimedOutWithoutWarmup":true}
+{
+  "warm": { "attempted": true, "ok": true, "durationMs": 17606 },
+  "afterWarm": { "ok": true, "durationMs": 163 },
+  "wouldHaveTimedOutWithoutWarmup": true
+}
 ```
 
 17606 ms > 10000 ms → **同一时刻用产品默认超时去探必然超时**；捂热之后 163 ms。
@@ -816,29 +836,29 @@ Metal 库结构判据、自己的预算这三件事只有这样才被真的走�
 检出到 `ac6ebfc` 本身**（`pnpm install --frozen-lockfile` 后全套重跑），
 避免重演上一位"中途跑过一次就写全绿"那一格。
 
-| 门禁 | 结果（在 `ac6ebfc` 的 worktree 上） |
-|---|---|
-| `pnpm -r test` | **1370 pass / 0 fail**（基线 1349，净增 21 条**全是本轮新增**） |
-| `npx tsc -b` | ✅ |
-| `npx eslint .` | ✅ exit 0 |
-| `pnpm build:safe` | ✅（**未跑 `pnpm -r build`**，未碰 `apps/web/dist`） |
-| `pnpm lint-workflows` | ✅ **627** 条 / 7 个 workflow（新 job 也过；此前 605） |
-| `pnpm test:ci-scripts` | ✅ 22 passed |
-| `pnpm check:orphans` | ✅ **70 个（基线 70）**，`orphan-exports-baseline.json` **一个字未动** |
+| 门禁                   | 结果（在 `ac6ebfc` 的 worktree 上）                                    |
+| ---------------------- | ---------------------------------------------------------------------- |
+| `pnpm -r test`         | **1370 pass / 0 fail**（基线 1349，净增 21 条**全是本轮新增**）        |
+| `npx tsc -b`           | ✅                                                                     |
+| `npx eslint .`         | ✅ exit 0                                                              |
+| `pnpm build:safe`      | ✅（**未跑 `pnpm -r build`**，未碰 `apps/web/dist`）                   |
+| `pnpm lint-workflows`  | ✅ **627** 条 / 7 个 workflow（新 job 也过；此前 605）                 |
+| `pnpm test:ci-scripts` | ✅ 22 passed                                                           |
+| `pnpm check:orphans`   | ✅ **70 个（基线 70）**，`orphan-exports-baseline.json` **一个字未动** |
 
 **没有 import 任何生产侧已死的导出**（上一位栽的那一格）：新测试只 import
 `PROBE_TIMEOUT_MS` / `ProbeResult` / `RunProbeOptions` —— 全是有真实生产调用方的。
 
 **反向验证 6/6 全红**（`/tmp` 隔离副本，先跑对照组，锚点唯一性校验，跑完立即还原）：
 
-| 变异 | 坏了用户会怎样 | 结果 |
-|---|---|---|
-| 拆掉调用点的 try/catch | 捂热一抛，装包被判失败 | 🔴 |
-| 拆掉 `warmProbeCache` 自己的兜底 catch | 路径解析一炸就把装包带走 | 🔴 |
-| 去掉 `platform !== 'darwin'` 闸门 | 每台非 Mac 机器每次装包白付一发探针 | 🔴 |
-| 捂热改用 `PROBE_TIMEOUT_MS` | 冷 Mac 上必然超时，整件事等于没做 | 🔴 |
-| 去掉「目录里有没有 Metal 库」判据 | 捂的不是 Metal，白付一发 | 🔴 |
-| 绕开注入接缝 / 根本不调捂热 | 「写好了没人调」 | 🔴 |
+| 变异                                   | 坏了用户会怎样                      | 结果 |
+| -------------------------------------- | ----------------------------------- | ---- |
+| 拆掉调用点的 try/catch                 | 捂热一抛，装包被判失败              | 🔴   |
+| 拆掉 `warmProbeCache` 自己的兜底 catch | 路径解析一炸就把装包带走            | 🔴   |
+| 去掉 `platform !== 'darwin'` 闸门      | 每台非 Mac 机器每次装包白付一发探针 | 🔴   |
+| 捂热改用 `PROBE_TIMEOUT_MS`            | 冷 Mac 上必然超时，整件事等于没做   | 🔴   |
+| 去掉「目录里有没有 Metal 库」判据      | 捂的不是 Metal，白付一发            | 🔴   |
+| 绕开注入接缝 / 根本不调捂热            | 「写好了没人调」                    | 🔴   |
 
 ### ⑦ 暂存纪律（树上有别人）
 
@@ -880,11 +900,11 @@ Metal 库结构判据、自己的预算这三件事只有这样才被真的走�
 
 **三个参数，两个下界一个上界，全部是被别的数字夹出来的，不是拍的。**
 
-| 参数 | 取值 | 依据 |
-|---|---|---|
-| `BREAKER_COOLDOWN_MS` | **60 s** | **下界**由 Manager 的底线 1 夹出来（不许做成"每次自检都重试"）：诊断页自检查询的 `staleTime` 是 **30 s**（`DiagnosticsPage.tsx`），用户手动刷新还能更密。60 s ⇒ **无论怎么刷，一分钟内最多放一发**，且那一发在后台。**上界**由"残留情形要在用户察觉之前自愈"夹出来。 |
-| `BREAKER_COOLDOWN_MAX_MS` | **1 h**（60s→2m→4m→8m→16m→32m→1h 封顶） | 一发恢复探测的代价是**一个后台子进程**，不是用户的等待（见 ③）。封在 1 h ⇒ 驱动真挂死的机器每天最多白跑 ~24 发；而**用户修好驱动后一小时内产品自己会发现**，不需要他知道有个断路器存在、更不需要去找重试按钮。 |
-| `PROBE_RECOVERY_TIMEOUT_MS` | **90 s** | ★ **这个数是本次最容易被"顺手统一"掉、而一统一就前功尽弃的一个。** 见 ②。 |
+| 参数                        | 取值                                    | 依据                                                                                                                                                                                                                                                                 |
+| --------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BREAKER_COOLDOWN_MS`       | **60 s**                                | **下界**由 Manager 的底线 1 夹出来（不许做成"每次自检都重试"）：诊断页自检查询的 `staleTime` 是 **30 s**（`DiagnosticsPage.tsx`），用户手动刷新还能更密。60 s ⇒ **无论怎么刷，一分钟内最多放一发**，且那一发在后台。**上界**由"残留情形要在用户察觉之前自愈"夹出来。 |
+| `BREAKER_COOLDOWN_MAX_MS`   | **1 h**（60s→2m→4m→8m→16m→32m→1h 封顶） | 一发恢复探测的代价是**一个后台子进程**，不是用户的等待（见 ③）。封在 1 h ⇒ 驱动真挂死的机器每天最多白跑 ~24 发；而**用户修好驱动后一小时内产品自己会发现**，不需要他知道有个断路器存在、更不需要去找重试按钮。                                                       |
+| `PROBE_RECOVERY_TIMEOUT_MS` | **90 s**                                | ★ **这个数是本次最容易被"顺手统一"掉、而一统一就前功尽弃的一个。** 见 ②。                                                                                                                                                                                            |
 
 **指数退避：要。** 理由是两类失败的成本不对称 —— 缓存变冷是**会自己好的**（第一发就该早点放，所以基数只有 60 s），
 驱动挂死是**不会自己好的**（那就该越退越远）。同一个参数同时服务两类，只能靠退避区分。
@@ -929,6 +949,7 @@ Metal 库结构判据、自己的预算这三件事只有这样才被真的走�
 也就是说：**这条残留情形之所以能自愈，恰恰是因为恢复探测拿到了比交互预算更长的预算。**
 
 另有两条同文件用例：
+
 - **对照组**：恢复探测也失败 → 不许报好，且 `retryAt` 必须被推后（退避），不是原地卡死也不是永久关上；
 - **单飞**：冷却到期后并发打 5 发，spawn 计数只许 +1。
 
@@ -998,33 +1019,33 @@ Manager 本轮**明确授权就地改**。决策 3 那行用**删除线保留原
 ⚠️ 工作树里同时有另外两位的在途改动，所以门禁**另开 worktree 检出 `353ca09` 本身**
 （`pnpm install --frozen-lockfile` 后全套重跑）。
 
-| 门禁 | 结果（在 `353ca09` 的 worktree 上） |
-|---|---|
-| `pnpm -r test` | **1433 pass / 0 fail** |
-| `npx tsc -b` | ✅ |
-| `npx eslint .` | ✅ exit 0 |
-| `pnpm build:safe` | ✅（**未跑** `pnpm -r build`，未碰 `apps/web/dist`） |
-| `pnpm lint-workflows` | ✅ **627** 条 / 7 个 workflow |
-| `pnpm test:ci-scripts` | ✅ 22 passed |
-| `pnpm check:orphans` | ✅ **没有新的零引用导出，基线也没有过期条目**（`orphan-exports-baseline.json` 一个字未动） |
+| 门禁                   | 结果（在 `353ca09` 的 worktree 上）                                                        |
+| ---------------------- | ------------------------------------------------------------------------------------------ |
+| `pnpm -r test`         | **1433 pass / 0 fail**                                                                     |
+| `npx tsc -b`           | ✅                                                                                         |
+| `npx eslint .`         | ✅ exit 0                                                                                  |
+| `pnpm build:safe`      | ✅（**未跑** `pnpm -r build`，未碰 `apps/web/dist`）                                       |
+| `pnpm lint-workflows`  | ✅ **627** 条 / 7 个 workflow                                                              |
+| `pnpm test:ci-scripts` | ✅ 22 passed                                                                               |
+| `pnpm check:orphans`   | ✅ **没有新的零引用导出，基线也没有过期条目**（`orphan-exports-baseline.json` 一个字未动） |
 
 **本轮新增 28 条测试**：`breaker.test.ts` 14 · `selfcheck.test.ts` +6 · `breakerRecovery.test.ts` 3 ·
 `checkText.test.ts` 5。基线 1370 → 1433 的其余部分是期间另外两位落的提交（`b318ad4`、`252e8b7`），不是我的。
 
 **反向验证 10/10 全红**（`/tmp` 隔离副本，先跑对照组、锚点唯一性校验、跑完立即还原）：
 
-| 变异 | 坏了用户会怎样 | 结果 |
-|---|---|---|
-| M1 `PROBE_RECOVERY_TIMEOUT_MS` → 10 s | 冷 Mac 上每发恢复都超时，从"永久拉黑"变"永久重试" | 🔴 |
-| M2 拿掉 `recover` 裁决 | 原地回到死锁 | 🔴 |
-| M3 跳闸不写 `retryAt` | 不变式没了，"必然有出路"变空话 | 🔴 |
-| M4 冷却期缩到 1 s | 等于把断路器删掉（Manager 的底线 1） | 🔴 |
-| M5 `retryAt` 读不出来时**不放行** | 一个坏时间戳 = 再造一个零报错死角 | 🔴 |
-| M6 自检里的 `hw.breaker` 不发 | 又变回零报错的静默降级 | 🔴 |
-| M7 丢掉英文 `detailEn` | 英文用户拿到中文/空白 | 🔴 |
-| M8 daemon 用交互预算做恢复 | ★ 残留情形永远自愈不了（10067ms 处红） | 🔴 |
-| M9 拿掉单飞 | 并发各起一发探针抢 GPU 初始化 | 🔴 |
-| M10 `recover` 时不起恢复 | "写好了没人调" | 🔴 |
+| 变异                                  | 坏了用户会怎样                                    | 结果 |
+| ------------------------------------- | ------------------------------------------------- | ---- |
+| M1 `PROBE_RECOVERY_TIMEOUT_MS` → 10 s | 冷 Mac 上每发恢复都超时，从"永久拉黑"变"永久重试" | 🔴   |
+| M2 拿掉 `recover` 裁决                | 原地回到死锁                                      | 🔴   |
+| M3 跳闸不写 `retryAt`                 | 不变式没了，"必然有出路"变空话                    | 🔴   |
+| M4 冷却期缩到 1 s                     | 等于把断路器删掉（Manager 的底线 1）              | 🔴   |
+| M5 `retryAt` 读不出来时**不放行**     | 一个坏时间戳 = 再造一个零报错死角                 | 🔴   |
+| M6 自检里的 `hw.breaker` 不发         | 又变回零报错的静默降级                            | 🔴   |
+| M7 丢掉英文 `detailEn`                | 英文用户拿到中文/空白                             | 🔴   |
+| M8 daemon 用交互预算做恢复            | ★ 残留情形永远自愈不了（10067ms 处红）            | 🔴   |
+| M9 拿掉单飞                           | 并发各起一发探针抢 GPU 初始化                     | 🔴   |
+| M10 `recover` 时不起恢复              | "写好了没人调"                                    | 🔴   |
 
 ### ⑧ 暂存纪律（树上有别人）
 

@@ -74,8 +74,7 @@ interface ComponentEntry {
 
 async function components(): Promise<ComponentEntry[]> {
   const raw = JSON.parse(await readFile(join(MANIFEST_DIR, 'components.json'), 'utf8')) as
-    | { components?: ComponentEntry[] }
-    | ComponentEntry[];
+    { components?: ComponentEntry[] } | ComponentEntry[];
   const list = Array.isArray(raw) ? raw : (raw.components ?? []);
   // 空集不是"没问题"，是"什么都没检查"。
   assert.ok(list.length > 0, 'components.json 解析出 0 条 —— 这是"工具返回空集被读成没有"的形状');

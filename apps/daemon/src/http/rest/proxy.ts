@@ -43,7 +43,9 @@ export function readProxyConfig(repos: Repos): ProxyConfig {
   try {
     const v = JSON.parse(row.value_json) as Partial<ProxyConfig>;
     return {
-      mode: PROXY_MODES.includes(v.mode as ProxyMode) ? (v.mode as ProxyMode) : DEFAULT_PROXY_CONFIG.mode,
+      mode: PROXY_MODES.includes(v.mode as ProxyMode)
+        ? (v.mode as ProxyMode)
+        : DEFAULT_PROXY_CONFIG.mode,
       httpProxy: typeof v.httpProxy === 'string' ? v.httpProxy : null,
       httpsProxy: typeof v.httpsProxy === 'string' ? v.httpsProxy : null,
       socks5: typeof v.socks5 === 'string' ? v.socks5 : null,
@@ -122,8 +124,7 @@ export function createProxyRoutes(deps: ProxyRoutesDeps): {
       // ---- 写 ----
       if (p === '/api/settings/proxy' && method === 'PATCH') {
         const body = (await readJsonBody(req).catch(() => undefined)) as
-          | Partial<ProxyConfig>
-          | undefined;
+          Partial<ProxyConfig> | undefined;
         if (!body || typeof body !== 'object') {
           sendError(res, 400, 'BAD_REQUEST', 'body required', '请求体不能为空');
           return true;
@@ -143,7 +144,8 @@ export function createProxyRoutes(deps: ProxyRoutesDeps): {
         const next: ProxyConfig = {
           mode: mode as ProxyMode,
           httpProxy: body.httpProxy !== undefined ? (body.httpProxy ?? null) : current.httpProxy,
-          httpsProxy: body.httpsProxy !== undefined ? (body.httpsProxy ?? null) : current.httpsProxy,
+          httpsProxy:
+            body.httpsProxy !== undefined ? (body.httpsProxy ?? null) : current.httpsProxy,
           socks5: body.socks5 !== undefined ? (body.socks5 ?? null) : current.socks5,
           noProxy: Array.isArray(body.noProxy) ? body.noProxy : current.noProxy,
         };

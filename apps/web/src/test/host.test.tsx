@@ -74,7 +74,8 @@ function ControlledSelect() {
   );
 }
 
-const stateOf = (c: HTMLElement): string => c.querySelector('b[data-probe="state"]')?.textContent ?? '';
+const stateOf = (c: HTMLElement): string =>
+  c.querySelector('b[data-probe="state"]')?.textContent ?? '';
 
 describe('宿主自证：type() 必须真的驱动受控输入框', () => {
   test('★ 受控 input：type() 之后 React 的 state 真的变了（不是只有 DOM 属性变了）', async () => {
@@ -203,7 +204,11 @@ describe('宿主自证：其它交互仍然成立（防止修 type 时误伤）'
     const r = await render(<OnBlur />);
     await blur(r.container.querySelector('input'));
     assert.equal(stateOf(r.container), 'blurred×1', 'onBlur 必须进且只进一次');
-    assert.equal(fired, 1, 'host.blur() 再手工补一次 focusOut 就会变成 2 —— 那会让"失焦保存"发两条请求');
+    assert.equal(
+      fired,
+      1,
+      'host.blur() 再手工补一次 focusOut 就会变成 2 —— 那会让"失焦保存"发两条请求',
+    );
     r.unmount();
   });
 
@@ -214,7 +219,12 @@ describe('宿主自证：其它交互仍然成立（防止修 type 时误伤）'
       const [v, setV] = useState('');
       return (
         <div>
-          <input type="text" value={v} onChange={(e) => setV(e.target.value)} onBlur={() => saved.push(v)} />
+          <input
+            type="text"
+            value={v}
+            onChange={(e) => setV(e.target.value)}
+            onBlur={() => saved.push(v)}
+          />
           <b data-probe="state">{v}</b>
         </div>
       );

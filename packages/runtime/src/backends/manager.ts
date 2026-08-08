@@ -29,13 +29,7 @@
  *     => The L1 CPU pack is load-bearing and must never be evictable.
  */
 
-import type {
-  Backend,
-  BackendStatus,
-  GpuDevice,
-  HardwareInfo,
-  OsInfo,
-} from '@openmemo/shared';
+import type { Backend, BackendStatus, GpuDevice, HardwareInfo, OsInfo } from '@openmemo/shared';
 
 import type { AdvisoryDetection, ProbeDevice, ProbeOutput, ProbeResult } from '../types.js';
 
@@ -202,7 +196,9 @@ export function buildHardwareInfo(input: BuildHardwareInfoInput): HardwareInfo {
   const allBackends: Backend[] = ['cuda', 'vulkan', 'rocm', 'metal', 'coreml', 'cpu'];
   const backends: BackendStatus[] = allBackends.map((id) => {
     const devices = enumeratedBackends.get(id) ?? [];
-    const usable = devices.filter((d) => (id === 'cpu' ? d.type === 'cpu' : isUsableAccelerator(d)));
+    const usable = devices.filter((d) =>
+      id === 'cpu' ? d.type === 'cpu' : isUsableAccelerator(d),
+    );
     const installed = installedBackends.has(id);
     /*
      * Enumerating a device is itself proof the backend loaded, so it overrides the

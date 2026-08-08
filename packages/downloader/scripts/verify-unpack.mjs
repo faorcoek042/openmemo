@@ -43,7 +43,9 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(here, '..', 'dist');
 
-const { unpackZip, unpackTarGz, unpackArchive, UnpackError } = await import(path.join(dist, 'unpack.js'));
+const { unpackZip, unpackTarGz, unpackArchive, UnpackError } = await import(
+  path.join(dist, 'unpack.js')
+);
 const { verifyEd25519, parseEd25519PublicKey, OPENMEMO_CATALOG_PUBLIC_KEY } = await import(
   path.join(dist, 'signature.js')
 );
@@ -172,7 +174,9 @@ async function writeZip(root, name, entries) {
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'openmemo-unpack-'));
 console.log(`\nOpenMemo downloader — unpack/signature verification`);
 console.log(`scratch: ${root}`);
-console.log(`zip binary present: ${hasCmd('zip')}  (using hand-rolled writer regardless — see header)`);
+console.log(
+  `zip binary present: ${hasCmd('zip')}  (using hand-rolled writer regardless — see header)`,
+);
 console.log(`tar binary present: ${hasCmd('tar')}\n`);
 
 const t0 = Date.now();
@@ -190,7 +194,11 @@ console.log('[1] ZIP round-trip: nested dirs, stored + deflated, byte-for-byte c
   const destDir = path.join(root, 'rt-zip-out');
   const res = await unpackZip(zipPath, destDir);
 
-  check('returns exactly the 2 file entries (dir excluded)', res.files.length === 2, `files=${res.files.length}`);
+  check(
+    'returns exactly the 2 file entries (dir excluded)',
+    res.files.length === 2,
+    `files=${res.files.length}`,
+  );
   check(
     'totalBytes matches sum of file contents',
     res.totalBytes === helloTxt.length + binData.length,
@@ -198,7 +206,10 @@ console.log('[1] ZIP round-trip: nested dirs, stored + deflated, byte-for-byte c
   );
   const gotHello = await fs.readFile(path.join(destDir, 'dir', 'hello.txt'));
   const gotBin = await fs.readFile(path.join(destDir, 'root.bin'));
-  check('deflated entry content is byte-for-byte correct', Buffer.compare(gotHello, helloTxt) === 0);
+  check(
+    'deflated entry content is byte-for-byte correct',
+    Buffer.compare(gotHello, helloTxt) === 0,
+  );
   check('stored entry content is byte-for-byte correct', Buffer.compare(gotBin, binData) === 0);
 }
 
@@ -220,7 +231,11 @@ if (!tarAvailable) {
 
   const destDir = path.join(root, 'rt-tar-out');
   const res = await unpackTarGz(archivePath, destDir);
-  check('one file extracted', res.files.length === 1, `files=${JSON.stringify(res.files.map((f) => path.basename(f)))}`);
+  check(
+    'one file extracted',
+    res.files.length === 1,
+    `files=${JSON.stringify(res.files.map((f) => path.basename(f)))}`,
+  );
   const got = await fs.readFile(path.join(destDir, 'sub', 'data.txt'));
   check('tar.gz content is byte-for-byte correct', Buffer.compare(got, fileContent) === 0);
 }
@@ -235,7 +250,11 @@ console.log('\n[3] zip-slip ("../evil.txt") is rejected and nothing escapes dest
   await fs.mkdir(destDir, { recursive: true });
   const err = await mustThrow(() => unpackZip(zipPath, destDir));
   check('extraction throws', err != null, err?.message);
-  check('throws with PATH_TRAVERSAL code', err instanceof UnpackError && err.code === 'PATH_TRAVERSAL', err?.code);
+  check(
+    'throws with PATH_TRAVERSAL code',
+    err instanceof UnpackError && err.code === 'PATH_TRAVERSAL',
+    err?.code,
+  );
   const escaped = await fs
     .stat(path.join(destDir, '..', 'evil.txt'))
     .then(() => true)
@@ -246,10 +265,16 @@ console.log('\n[3] zip-slip ("../evil.txt") is rejected and nothing escapes dest
 /* --- 4. absolute paths rejected ------------------------------------------------ */
 console.log('\n[4] absolute paths (POSIX and Windows-style) are rejected');
 {
-  for (const badName of ['/etc/evil-posix.txt', 'C:\\evil-windows.txt', '\\\\server\\share\\evil.txt']) {
-    const zipPath = await writeZip(root, `abs-${Buffer.from(badName).toString('hex').slice(0, 8)}.zip`, [
-      { name: badName, content: Buffer.from('x'), method: 'store' },
-    ]);
+  for (const badName of [
+    '/etc/evil-posix.txt',
+    'C:\\evil-windows.txt',
+    '\\\\server\\share\\evil.txt',
+  ]) {
+    const zipPath = await writeZip(
+      root,
+      `abs-${Buffer.from(badName).toString('hex').slice(0, 8)}.zip`,
+      [{ name: badName, content: Buffer.from('x'), method: 'store' }],
+    );
     const destDir = path.join(root, `abs-out-${Buffer.from(badName).toString('hex').slice(0, 8)}`);
     const err = await mustThrow(() => unpackZip(zipPath, destDir));
     check(
@@ -279,7 +304,9 @@ if (!tarAvailable) {
     await fs.writeFile(path.join(srcDir, 'real.txt'), 'real file\n');
     await fs.symlink('real.txt', path.join(srcDir, 'link.txt'));
     const archivePath = path.join(root, 'symlink-ok.tar.gz');
-    execFileSync('tar', ['-czf', archivePath, '--no-recursion', 'real.txt', 'link.txt'], { cwd: srcDir });
+    execFileSync('tar', ['-czf', archivePath, '--no-recursion', 'real.txt', 'link.txt'], {
+      cwd: srcDir,
+    });
 
     const destDir = path.join(root, 'symlink-ok-out');
     let err = null;
@@ -290,9 +317,17 @@ if (!tarAvailable) {
     }
     check('内部 symlink 不再被拒', err == null, err?.message);
     const st = await fs.lstat(path.join(destDir, 'link.txt')).catch(() => null);
-    check('link.txt 已创建', st != null, st?.isSymbolicLink() ? 'symlink' : st ? 'regular file (copy fallback)' : 'missing');
+    check(
+      'link.txt 已创建',
+      st != null,
+      st?.isSymbolicLink() ? 'symlink' : st ? 'regular file (copy fallback)' : 'missing',
+    );
     const content = await fs.readFile(path.join(destDir, 'link.txt'), 'utf8').catch(() => '');
-    check('通过 link 能读到目标内容', content.includes('real file'), JSON.stringify(content.slice(0, 20)));
+    check(
+      '通过 link 能读到目标内容',
+      content.includes('real file'),
+      JSON.stringify(content.slice(0, 20)),
+    );
   }
 
   // 5b. escaping symlink — MUST still be rejected
@@ -306,8 +341,15 @@ if (!tarAvailable) {
     const destDir = path.join(root, 'symlink-evil-out');
     const err = await mustThrow(() => unpackTarGz(archivePath, destDir));
     check('逃逸 symlink 仍被拒绝', err != null, err?.message?.slice(0, 80));
-    check('拒绝码为 SYMLINK_REJECTED', err instanceof UnpackError && err.code === 'SYMLINK_REJECTED', err?.code);
-    const exists = await fs.lstat(path.join(destDir, 'evil.txt')).then(() => true).catch(() => false);
+    check(
+      '拒绝码为 SYMLINK_REJECTED',
+      err instanceof UnpackError && err.code === 'SYMLINK_REJECTED',
+      err?.code,
+    );
+    const exists = await fs
+      .lstat(path.join(destDir, 'evil.txt'))
+      .then(() => true)
+      .catch(() => false);
     check('逃逸链接从未被创建', !exists);
   }
 
@@ -321,7 +363,11 @@ if (!tarAvailable) {
 
     const destDir = path.join(root, 'symlink-abs-out');
     const err = await mustThrow(() => unpackTarGz(archivePath, destDir));
-    check('绝对路径 symlink 仍被拒绝', err instanceof UnpackError && err.code === 'SYMLINK_REJECTED', err?.code);
+    check(
+      '绝对路径 symlink 仍被拒绝',
+      err instanceof UnpackError && err.code === 'SYMLINK_REJECTED',
+      err?.code,
+    );
   }
 }
 
@@ -347,7 +393,8 @@ if (!tarAvailable || !xzAvailable) {
     execFileSync('tar', ['-cJf', arc, '-C', srcDir, '.'], { stdio: 'ignore' });
 
     const dest = path.join(root, 'xz-ok-out');
-    let err = null, res = null;
+    let err = null,
+      res = null;
     try {
       res = await unpackArchive(arc, dest, 'tar.xz');
     } catch (e) {
@@ -358,7 +405,10 @@ if (!tarAvailable || !xzAvailable) {
     check('内容正确', a.includes('xz payload alpha'), JSON.stringify(a.trim()));
     const bst = await fs.stat(path.join(dest, 'sub', 'b.bin')).catch(() => null);
     check('子目录文件正确', bst?.size === 4096, `${bst?.size} bytes`);
-    check('内部 symlink 同样被允许', (await fs.lstat(path.join(dest, 'link.txt')).catch(() => null)) != null);
+    check(
+      '内部 symlink 同样被允许',
+      (await fs.lstat(path.join(dest, 'link.txt')).catch(() => null)) != null,
+    );
     check('files 计数非空', (res?.files.length ?? 0) > 0, `${res?.files.length} files`);
   }
 
@@ -369,11 +419,22 @@ if (!tarAvailable || !xzAvailable) {
     await fs.writeFile(path.join(srcDir, 'evil.txt'), 'pwned\n');
     const arc = path.join(root, 'slip.tar.xz');
     // `-P` keeps the literal ../ path in the archive
-    execFileSync('tar', ['-cJf', arc, '-P', '-C', srcDir, '--transform', 's|evil.txt|../evil.txt|', 'evil.txt'], { stdio: 'ignore' });
+    execFileSync(
+      'tar',
+      ['-cJf', arc, '-P', '-C', srcDir, '--transform', 's|evil.txt|../evil.txt|', 'evil.txt'],
+      { stdio: 'ignore' },
+    );
     const dest = path.join(root, 'xz-slip-out');
     const err = await mustThrow(() => unpackArchive(arc, dest, 'tar.xz'));
-    check('tar.xz 中的 ../ 被拒绝', err instanceof UnpackError && err.code === 'PATH_TRAVERSAL', err?.code ?? err?.message?.slice(0, 60));
-    const escaped = await fs.stat(path.join(root, 'evil.txt')).then(() => true).catch(() => false);
+    check(
+      'tar.xz 中的 ../ 被拒绝',
+      err instanceof UnpackError && err.code === 'PATH_TRAVERSAL',
+      err?.code ?? err?.message?.slice(0, 60),
+    );
+    const escaped = await fs
+      .stat(path.join(root, 'evil.txt'))
+      .then(() => true)
+      .catch(() => false);
     check('destDir 外没有产生文件', !escaped);
   }
 
@@ -386,8 +447,18 @@ if (!tarAvailable || !xzAvailable) {
     execFileSync('tar', ['-cJf', arc, '-C', srcDir, 'bad.txt'], { stdio: 'ignore' });
     const dest = path.join(root, 'xz-link-out');
     const err = await mustThrow(() => unpackArchive(arc, dest, 'tar.xz'));
-    check('tar.xz 中的逃逸 symlink 被拒绝', err instanceof UnpackError && err.code === 'SYMLINK_REJECTED', err?.code);
-    check('逃逸链接未被创建', !(await fs.lstat(path.join(dest, 'bad.txt')).then(() => true).catch(() => false)));
+    check(
+      'tar.xz 中的逃逸 symlink 被拒绝',
+      err instanceof UnpackError && err.code === 'SYMLINK_REJECTED',
+      err?.code,
+    );
+    check(
+      '逃逸链接未被创建',
+      !(await fs
+        .lstat(path.join(dest, 'bad.txt'))
+        .then(() => true)
+        .catch(() => false)),
+    );
   }
 
   // 5d-4 limits via xz
@@ -397,16 +468,28 @@ if (!tarAvailable || !xzAvailable) {
     await fs.writeFile(path.join(srcDir, 'big.bin'), Buffer.alloc(300_000, 3));
     const arc = path.join(root, 'limit.tar.xz');
     execFileSync('tar', ['-cJf', arc, '-C', srcDir, 'big.bin'], { stdio: 'ignore' });
-    const err = await mustThrow(() => unpackArchive(arc, path.join(root, 'xz-limit-out'), 'tar.xz', { maxTotalBytes: 1000 }));
-    check('tar.xz 超出字节上限被拒绝', err instanceof UnpackError && err.code === 'LIMIT_EXCEEDED', err?.code ?? err?.message?.slice(0, 70));
+    const err = await mustThrow(() =>
+      unpackArchive(arc, path.join(root, 'xz-limit-out'), 'tar.xz', { maxTotalBytes: 1000 }),
+    );
+    check(
+      'tar.xz 超出字节上限被拒绝',
+      err instanceof UnpackError && err.code === 'LIMIT_EXCEEDED',
+      err?.code ?? err?.message?.slice(0, 70),
+    );
   }
 
   // 5d-5 corrupt payload
   {
     const bad = path.join(root, 'corrupt.tar.xz');
     await fs.writeFile(bad, Buffer.from('this is not an xz stream at all'));
-    const err = await mustThrow(() => unpackArchive(bad, path.join(root, 'xz-corrupt-out'), 'tar.xz'));
-    check('损坏的 xz 报 CORRUPT 而非静默', err instanceof UnpackError && err.code === 'CORRUPT', err?.code);
+    const err = await mustThrow(() =>
+      unpackArchive(bad, path.join(root, 'xz-corrupt-out'), 'tar.xz'),
+    );
+    check(
+      '损坏的 xz 报 CORRUPT 而非静默',
+      err instanceof UnpackError && err.code === 'CORRUPT',
+      err?.code,
+    );
   }
 }
 
@@ -419,17 +502,29 @@ console.log('\n[6] entry-count and total-bytes limits are enforced');
     method: 'store',
   }));
   const zipPath = await writeZip(root, 'many-entries.zip', manyEntries);
-  const err = await mustThrow(() => unpackZip(zipPath, path.join(root, 'many-out'), { maxEntries: 10 }));
+  const err = await mustThrow(() =>
+    unpackZip(zipPath, path.join(root, 'many-out'), { maxEntries: 10 }),
+  );
   check('maxEntries=10 rejects a 50-entry archive', err != null, err?.message);
-  check('rejected with LIMIT_EXCEEDED', err instanceof UnpackError && err.code === 'LIMIT_EXCEEDED', err?.code);
+  check(
+    'rejected with LIMIT_EXCEEDED',
+    err instanceof UnpackError && err.code === 'LIMIT_EXCEEDED',
+    err?.code,
+  );
 
   const bigContent = randomBytes(200_000);
   const bigZipPath = await writeZip(root, 'big-entry.zip', [
     { name: 'big.bin', content: bigContent, method: 'deflate' },
   ]);
-  const err2 = await mustThrow(() => unpackZip(bigZipPath, path.join(root, 'big-out'), { maxTotalBytes: 1000 }));
+  const err2 = await mustThrow(() =>
+    unpackZip(bigZipPath, path.join(root, 'big-out'), { maxTotalBytes: 1000 }),
+  );
   check('maxTotalBytes=1000 rejects a 200KB entry', err2 != null, err2?.message);
-  check('rejected with LIMIT_EXCEEDED', err2 instanceof UnpackError && err2.code === 'LIMIT_EXCEEDED', err2?.code);
+  check(
+    'rejected with LIMIT_EXCEEDED',
+    err2 instanceof UnpackError && err2.code === 'LIMIT_EXCEEDED',
+    err2?.code,
+  );
 
   // A declared-small-but-actually-large entry (lying header) must still be caught, via
   // zlib's maxOutputLength rather than the pre-check on the (false) declared size.
@@ -437,13 +532,24 @@ console.log('\n[6] entry-count and total-bytes limits are enforced');
   const lyingZip = buildLyingZip(lyingCompressed, 10); // header claims uncompressed size 10
   const lyingPath = path.join(root, 'lying.zip');
   await fs.writeFile(lyingPath, lyingZip);
-  const err3 = await mustThrow(() => unpackZip(lyingPath, path.join(root, 'lying-out'), { maxTotalBytes: 100 }));
-  check('a header that under-declares its size is still caught', err3 != null, err3?.message?.slice(0, 100));
+  const err3 = await mustThrow(() =>
+    unpackZip(lyingPath, path.join(root, 'lying-out'), { maxTotalBytes: 100 }),
+  );
+  check(
+    'a header that under-declares its size is still caught',
+    err3 != null,
+    err3?.message?.slice(0, 100),
+  );
 
   // Under a generous budget, the same shape of archive (small count, small declared size)
   // must still succeed — proves the limits reject BAD archives, not all archives.
-  const okZip = await writeZip(root, 'ok-small.zip', [{ name: 'fine.txt', content: Buffer.from('fine'), method: 'store' }]);
-  const okRes = await unpackZip(okZip, path.join(root, 'ok-small-out'), { maxEntries: 10, maxTotalBytes: 10_000 });
+  const okZip = await writeZip(root, 'ok-small.zip', [
+    { name: 'fine.txt', content: Buffer.from('fine'), method: 'store' },
+  ]);
+  const okRes = await unpackZip(okZip, path.join(root, 'ok-small-out'), {
+    maxEntries: 10,
+    maxTotalBytes: 10_000,
+  });
   check('a small archive within limits still succeeds', okRes.files.length === 1);
 }
 
@@ -499,12 +605,21 @@ if (process.platform === 'win32') {
   check('skipped on win32 (chmod is meaningless there)', true);
 } else {
   const zipPath = await writeZip(root, 'exec.zip', [
-    { name: 'run.sh', content: Buffer.from('#!/bin/sh\necho hi\n'), method: 'deflate', unixMode: 0o100755 },
+    {
+      name: 'run.sh',
+      content: Buffer.from('#!/bin/sh\necho hi\n'),
+      method: 'deflate',
+      unixMode: 0o100755,
+    },
   ]);
   const destDir = path.join(root, 'exec-zip-out');
   await unpackZip(zipPath, destDir);
   const st = await fs.stat(path.join(destDir, 'run.sh'));
-  check('ZIP: extracted file has the executable bit set', (st.mode & 0o111) !== 0, `mode=${(st.mode & 0o777).toString(8)}`);
+  check(
+    'ZIP: extracted file has the executable bit set',
+    (st.mode & 0o111) !== 0,
+    `mode=${(st.mode & 0o777).toString(8)}`,
+  );
 
   if (tarAvailable) {
     const srcDir = path.join(root, 'tar-exec-src');
@@ -517,17 +632,25 @@ if (process.platform === 'win32') {
     const tarDestDir = path.join(root, 'exec-tar-out');
     await unpackTarGz(archivePath, tarDestDir);
     const tst = await fs.stat(path.join(tarDestDir, 'run.sh'));
-    check('tar.gz: extracted file has the executable bit set', (tst.mode & 0o111) !== 0, `mode=${(tst.mode & 0o777).toString(8)}`);
+    check(
+      'tar.gz: extracted file has the executable bit set',
+      (tst.mode & 0o111) !== 0,
+      `mode=${(tst.mode & 0o777).toString(8)}`,
+    );
   }
 }
 
 /* --- unpackArchive dispatch sanity ----------------------------------------------- */
 console.log('\n[dispatch] unpackArchive(kind) routes to the right parser');
 {
-  const zipPath = await writeZip(root, 'dispatch.zip', [{ name: 'a.txt', content: Buffer.from('a'), method: 'store' }]);
+  const zipPath = await writeZip(root, 'dispatch.zip', [
+    { name: 'a.txt', content: Buffer.from('a'), method: 'store' },
+  ]);
   const res = await unpackArchive(zipPath, path.join(root, 'dispatch-out'), 'zip');
   check('unpackArchive("zip") works', res.files.length === 1);
-  const errKind = await mustThrow(() => unpackArchive(zipPath, path.join(root, 'dispatch-out-2'), 'rar'));
+  const errKind = await mustThrow(() =>
+    unpackArchive(zipPath, path.join(root, 'dispatch-out-2'), 'rar'),
+  );
   check('unpackArchive() rejects an unknown kind', errKind != null, errKind?.message);
 }
 
@@ -539,7 +662,10 @@ console.log('\n[8] Ed25519 detached-signature verification');
   const data = Buffer.from('the quick brown fox jumps over the lazy dog');
   const signature = cryptoSign(null, data, privateKey);
 
-  check('verifies a genuine signature (KeyObject)', verifyEd25519(data, signature, publicKey) === true);
+  check(
+    'verifies a genuine signature (KeyObject)',
+    verifyEd25519(data, signature, publicKey) === true,
+  );
   check(
     'verifies a genuine signature (raw 32-byte public key)',
     verifyEd25519(data, signature, rawPublicKey) === true,
@@ -550,7 +676,8 @@ console.log('\n[8] Ed25519 detached-signature verification');
   );
   check(
     'parseEd25519PublicKey accepts PEM',
-    parseEd25519PublicKey(publicKey.export({ type: 'spki', format: 'pem' })).asymmetricKeyType === 'ed25519',
+    parseEd25519PublicKey(publicKey.export({ type: 'spki', format: 'pem' })).asymmetricKeyType ===
+      'ed25519',
   );
 
   const tamperedData = Buffer.from(data);
@@ -575,17 +702,30 @@ console.log('\n[8] Ed25519 detached-signature verification');
 /* --- 9. verifyCatalogSignature fails closed --------------------------------------- */
 console.log('\n[9] verifyCatalogSignature fails closed with no key configured');
 {
-  check('OPENMEMO_CATALOG_PUBLIC_KEY is honestly null (no key provisioned yet)', OPENMEMO_CATALOG_PUBLIC_KEY === null);
+  check(
+    'OPENMEMO_CATALOG_PUBLIC_KEY is honestly null (no key provisioned yet)',
+    OPENMEMO_CATALOG_PUBLIC_KEY === null,
+  );
 
   const catalogBytes = Buffer.from('{"models":[]}');
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const signature = cryptoSign(null, catalogBytes, privateKey);
 
   const errDefault = await mustThrow(() => verifyCatalogSignature(catalogBytes, signature));
-  check('throws using the default (unconfigured) key', errDefault != null, errDefault?.message?.slice(0, 90));
+  check(
+    'throws using the default (unconfigured) key',
+    errDefault != null,
+    errDefault?.message?.slice(0, 90),
+  );
 
-  const errExplicitNull = await mustThrow(() => verifyCatalogSignature(catalogBytes, signature, null));
-  check('throws when explicitly passed a null key', errExplicitNull != null, errExplicitNull?.message?.slice(0, 60));
+  const errExplicitNull = await mustThrow(() =>
+    verifyCatalogSignature(catalogBytes, signature, null),
+  );
+  check(
+    'throws when explicitly passed a null key',
+    errExplicitNull != null,
+    errExplicitNull?.message?.slice(0, 60),
+  );
 
   const rawPublicKey = publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
   const ok = await verifyCatalogSignature(catalogBytes, signature, rawPublicKey);
@@ -594,7 +734,10 @@ console.log('\n[9] verifyCatalogSignature fails closed with no key configured');
   const tampered = Buffer.from(catalogBytes);
   tampered[0] ^= 0xff;
   const rejected = await verifyCatalogSignature(tampered, signature, rawPublicKey);
-  check('a tampered catalog fails verification (does not throw, returns false)', rejected === false);
+  check(
+    'a tampered catalog fails verification (does not throw, returns false)',
+    rejected === false,
+  );
 }
 
 /* -------------------------------- summary --------------------------------- */

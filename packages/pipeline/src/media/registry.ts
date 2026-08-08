@@ -138,10 +138,7 @@ export class MediaSourceRegistry {
       }
     }
 
-    throw new NoMediaSourceError(
-      input,
-      `${DEFAULT_REMEDIATION} (tried: ${failures.join('; ')})`,
-    );
+    throw new NoMediaSourceError(input, `${DEFAULT_REMEDIATION} (tried: ${failures.join('; ')})`);
   }
 }
 

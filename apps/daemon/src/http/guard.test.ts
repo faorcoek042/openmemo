@@ -146,7 +146,10 @@ describe('checkOrigin —— 必须与本次请求严格同源', () => {
   });
 
   it('Origin 端口不匹配必须拒（hostname 同源 ⇒ 只有端口子句能开火）', () => {
-    assert.equal(checkOrigin(req({ host: HOST, origin: 'http://127.0.0.1:1234' }), PORTS).ok, false);
+    assert.equal(
+      checkOrigin(req({ host: HOST, origin: 'http://127.0.0.1:1234' }), PORTS).ok,
+      false,
+    );
   });
 
   it('无 Origin：默认放行（curl/CLI 不发它），`required:true` 时必须拒（WS 那条路径）', () => {
@@ -205,10 +208,8 @@ describe('checkOrigin —— 必须与本次请求严格同源', () => {
 
   it('IPv6 与 IPv4 之间不算同源（两种地址族不能互相顶替）', () => {
     assert.equal(
-      checkOrigin(
-        req({ host: `[::1]:${PORTS[0]}`, origin: `http://127.0.0.1:${PORTS[0]}` }),
-        PORTS,
-      ).ok,
+      checkOrigin(req({ host: `[::1]:${PORTS[0]}`, origin: `http://127.0.0.1:${PORTS[0]}` }), PORTS)
+        .ok,
       false,
     );
   });
@@ -240,7 +241,10 @@ describe('guardRequest —— 三条子句任一不过即拒，且每一条都�
   });
 
   it('★ 只把 Host 换成域名（其余不动）→ 拒', () => {
-    assert.equal(guardRequest(req({ ...OK, host: `evil.example.com:${PORTS[0]}` }), PORTS).ok, false);
+    assert.equal(
+      guardRequest(req({ ...OK, host: `evil.example.com:${PORTS[0]}` }), PORTS).ok,
+      false,
+    );
   });
 
   it('★ 只把 Origin 换成跨源（其余不动）→ 拒', () => {

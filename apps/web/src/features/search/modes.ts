@@ -70,7 +70,10 @@ export function availableModes(modes: SearchModes | undefined): SearchMode[] {
  * 请求里写着 `mode=semantic`、服务端根本不读它、回来的是关键词结果，
  * 而界面还高亮着「语义」那个 tab。
  */
-export function effectiveMode(requested: string | null, modes: SearchModes | undefined): SearchMode {
+export function effectiveMode(
+  requested: string | null,
+  modes: SearchModes | undefined,
+): SearchMode {
   const avail = availableModes(modes);
   if (requested && (avail as string[]).includes(requested)) return requested as SearchMode;
   return avail[0] ?? 'keyword';

@@ -22,7 +22,13 @@ import { join } from 'node:path';
 
 function parseHex(h: string): [number, number, number] {
   const s = h.trim().replace('#', '');
-  const v = s.length === 3 ? s.split('').map((c) => c + c).join('') : s;
+  const v =
+    s.length === 3
+      ? s
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : s;
   return [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16) / 255) as [number, number, number];
 }
 const toLinear = (c: number): number => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
@@ -33,7 +39,14 @@ function relativeLuminance(hex: string): number {
 }
 
 const toHex = (v: [number, number, number]): string =>
-  '#' + v.map((c) => Math.round(Math.min(1, Math.max(0, c)) * 255).toString(16).padStart(2, '0')).join('');
+  '#' +
+  v
+    .map((c) =>
+      Math.round(Math.min(1, Math.max(0, c)) * 255)
+        .toString(16)
+        .padStart(2, '0'),
+    )
+    .join('');
 
 /**
  * 把 `rgb(R G B / P%)` 形式的半透明填充**合成**到某个不透明表层上。
@@ -46,14 +59,21 @@ function composite(fill: string, base: string): string {
   const m = /rgb\(\s*(\d+)\s+(\d+)\s+(\d+)\s*\/\s*([\d.]+)%\s*\)/.exec(fill.trim());
   if (!m) throw new Error(`认不出的半透明写法：${fill}（本文件只支持 rgb(R G B / P%)）`);
   const a = Number(m[4]) / 100;
-  const f = [Number(m[1]) / 255, Number(m[2]) / 255, Number(m[3]) / 255] as [number, number, number];
+  const f = [Number(m[1]) / 255, Number(m[2]) / 255, Number(m[3]) / 255] as [
+    number,
+    number,
+    number,
+  ];
   const b = parseHex(base);
   return toHex(f.map((c, i) => c * a + b[i]! * (1 - a)) as [number, number, number]);
 }
 
 /** WCAG 对比度，保留两位小数（与 D-05 §7.5 的记录口径一致，便于对照） */
 export function contrastRatio(a: string, b: string): number {
-  const [hi, lo] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x) as [number, number];
+  const [hi, lo] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x) as [
+    number,
+    number,
+  ];
   return Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100;
 }
 
@@ -130,7 +150,9 @@ const findScope = (pred: (k: string) => boolean): Scope => {
 };
 
 const LIGHT = findScope((k) => k === ':root');
-const DARK_MEDIA = findScope((k) => k.startsWith('@media') && k.includes('prefers-color-scheme: dark'));
+const DARK_MEDIA = findScope(
+  (k) => k.startsWith('@media') && k.includes('prefers-color-scheme: dark'),
+);
 const DARK_ATTR = findScope((k) => k.includes("[data-theme='dark']") && !k.startsWith('@media'));
 
 /* ──────────────────────────── 断言 ──────────────────────────── */
@@ -154,7 +176,9 @@ const STATUSES = ['good', 'warning', 'serious', 'critical', 'info'] as const;
 const report: string[] = [];
 function expect(min: number, label: string, fg: string, bg: string): void {
   const v = contrastRatio(fg, bg);
-  report.push(`${v >= min ? 'PASS' : 'FAIL'}  ${label.padEnd(48)} ${String(v).padStart(6)}:1  (需 ${min})`);
+  report.push(
+    `${v >= min ? 'PASS' : 'FAIL'}  ${label.padEnd(48)} ${String(v).padStart(6)}:1  (需 ${min})`,
+  );
   assert.ok(v >= min, `${label}: ${fg} on ${bg} = ${v}:1，低于 ${min}:1`);
 }
 
@@ -191,7 +215,12 @@ for (const [mode, scope] of [
     for (const s of STATUSES) {
       expect(TEXT_MIN, `${mode} --status-${s}-ink vs 表层`, g(`--status-${s}-ink`), worst);
       // 芯片里文字压在自己的淡底上，那才是它真正的背景
-      expect(TEXT_MIN, `${mode} --status-${s}-ink on 自身 tint`, g(`--status-${s}-ink`), g(`--status-${s}-tint`));
+      expect(
+        TEXT_MIN,
+        `${mode} --status-${s}-ink on 自身 tint`,
+        g(`--status-${s}-ink`),
+        g(`--status-${s}-tint`),
+      );
     }
   });
 
@@ -213,13 +242,28 @@ for (const [mode, scope] of [
   test(`${mode} · 表层与淡底的可分辨性 ≥ ${SURFACE_MIN}:1（自定阈值，非 WCAG）`, () => {
     expect(SURFACE_MIN, `${mode} 页底 vs 面`, g('--surface-0'), g('--surface-1'));
     for (const s of STATUSES) {
-      expect(SURFACE_MIN, `${mode} --status-${s}-tint vs 最不利表层`, g(`--status-${s}-tint`), worst);
+      expect(
+        SURFACE_MIN,
+        `${mode} --status-${s}-tint vs 最不利表层`,
+        g(`--status-${s}-tint`),
+        worst,
+      );
     }
     expect(SURFACE_MIN, `${mode} --accent-tint vs 面`, g('--accent-tint'), g('--surface-1'));
     // 选中项：品牌文字压在品牌淡底上，这是它真正的背景
-    expect(TEXT_MIN, `${mode} --accent-ink on --accent-tint`, g('--accent-ink'), g('--accent-tint'));
+    expect(
+      TEXT_MIN,
+      `${mode} --accent-ink on --accent-tint`,
+      g('--accent-ink'),
+      g('--accent-tint'),
+    );
     // 搜索命中高亮用的是 --accent-tint + --ink-primary
-    expect(TEXT_MIN, `${mode} --ink-primary on --accent-tint`, g('--ink-primary'), g('--accent-tint'));
+    expect(
+      TEXT_MIN,
+      `${mode} --ink-primary on --accent-tint`,
+      g('--ink-primary'),
+      g('--accent-tint'),
+    );
   });
 
   test(`${mode} · hover / active 填充：既要看得见，又不能把文字压垮`, () => {
@@ -243,8 +287,18 @@ test('实心块（白字压在上面）明暗两档都要成立', () => {
   for (const s of ['good', 'critical'] as const) {
     const solid = resolve(LIGHT, `--status-${s}-solid`);
     expect(TEXT_MIN, `--status-${s}-solid 上的白字`, '#ffffff', '#' + solid.replace('#', ''));
-    expect(NON_TEXT_MIN, `--status-${s}-solid 块面 vs 明档页底`, solid, resolve(LIGHT, '--surface-0'));
-    expect(NON_TEXT_MIN, `--status-${s}-solid 块面 vs 暗档抬升面`, solid, resolve(DARK_ATTR, '--surface-2', LIGHT));
+    expect(
+      NON_TEXT_MIN,
+      `--status-${s}-solid 块面 vs 明档页底`,
+      solid,
+      resolve(LIGHT, '--surface-0'),
+    );
+    expect(
+      NON_TEXT_MIN,
+      `--status-${s}-solid 块面 vs 暗档抬升面`,
+      solid,
+      resolve(DARK_ATTR, '--surface-2', LIGHT),
+    );
   }
 });
 

@@ -21,7 +21,22 @@
  * **绝不碰** `~/.local/share/openmemo/datadir.json`，不写 `$HOME`，不起服务，不占端口。
  * 判据用的是 §9-bis 那条：把它 kill -9 在最坏的一行上，机器上只会剩一个 tmp 目录。
  */
-import { mkdtempSync, writeFileSync, openSync, readSync, closeSync, chmodSync, statSync, symlinkSync, linkSync, rmSync, mkdirSync, cpSync, accessSync, constants } from 'node:fs';
+import {
+  mkdtempSync,
+  writeFileSync,
+  openSync,
+  readSync,
+  closeSync,
+  chmodSync,
+  statSync,
+  symlinkSync,
+  linkSync,
+  rmSync,
+  mkdirSync,
+  cpSync,
+  accessSync,
+  constants,
+} from 'node:fs';
 import { tmpdir, homedir, release, cpus } from 'node:os';
 import { join, sep, resolve, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -61,7 +76,11 @@ fact('0.homedir.exists', String(!!homedir()));
     closeSync(fd);
     return buf.toString();
   });
-  fact('1.fs.case-insensitive', String(lower.ok), lower.ok ? `open('rec.wav') 读到 ${lower.value}` : `open('rec.wav') -> ${lower.value}`);
+  fact(
+    '1.fs.case-insensitive',
+    String(lower.ok),
+    lower.ok ? `open('rec.wav') 读到 ${lower.value}` : `open('rec.wav') -> ${lower.value}`,
+  );
   // assetPaths.ts:49 的判定逻辑（大小写敏感前缀比较）在这个文件系统上会怎样
   const rootAbs = d;
   const asWritten = join(d.toUpperCase() === d ? d : d, 'Rec.wav');
@@ -90,7 +109,11 @@ fact('0.homedir.exists', String(!!homedir()));
 {
   const f = join(ROOT, 'secret.json');
   writeFileSync(f, '{"token":"x"}', { mode: 0o600 });
-  fact('3.write(mode 0o600)->mode', (statSync(f).mode & 0o777).toString(8), 'Windows 上 POSIX 位被忽略 → 期望看到 666/644 之类');
+  fact(
+    '3.write(mode 0o600)->mode',
+    (statSync(f).mode & 0o777).toString(8),
+    'Windows 上 POSIX 位被忽略 → 期望看到 666/644 之类',
+  );
 }
 
 // ── 4. 符号链接 / 硬链接（T-141 §3 第 13 条：move.ts:470 是唯一没有回退的那条）──
@@ -125,13 +148,21 @@ fact('0.homedir.exists', String(!!homedir()));
   const p = join(ROOT, 'my dir', 'main.js');
   const handRolled = `file://${p}`;
   const correct = pathToFileURL(p).href;
-  fact('5.`file://`+path === pathToFileURL()', String(handRolled === correct), `手拼=${handRolled}  正确=${correct}`);
+  fact(
+    '5.`file://`+path === pathToFileURL()',
+    String(handRolled === correct),
+    `手拼=${handRolled}  正确=${correct}`,
+  );
 }
 
 // ── 6. 路径分隔（T-141 §3 第 26 条 / migrateAssets.ts:93 的 abs.split('/')）──────
 {
   const p = join('dd', 'tmp', 'job', 'a.wav');
-  fact('6.join(...).split("/").length', String(p.split('/').length), `p=${p}（Linux 期望 4；Windows 期望 1 → matchBySuffix 永远匹配不上）`);
+  fact(
+    '6.join(...).split("/").length',
+    String(p.split('/').length),
+    `p=${p}（Linux 期望 4；Windows 期望 1 → matchBySuffix 永远匹配不上）`,
+  );
   fact('6.isAbsolute("/media/x.wav")', String(isAbsolute('/media/x.wav')));
   fact('6.isAbsolute("C:\\\\data\\\\x.wav")', String(isAbsolute('C:\\data\\x.wav')));
   fact('6.resolve("C:\\\\d\\\\m\\\\r.wav")', resolve('C:\\d\\m\\r.wav'));
@@ -156,11 +187,19 @@ for (const [bin, args] of [
 {
   const r = spawnSync('bash', ['-c', 'echo $BASH_VERSION'], { encoding: 'utf8', timeout: 15000 });
   fact('8.bash --version', (r.stdout || '').trim() || 'n/a');
-  const r2 = spawnSync('bash', ['-c', 'set -u; A=(); echo "count=${#A[@]}"; echo "expand=[${A[@]}]"'], {
-    encoding: 'utf8',
-    timeout: 15000,
-  });
-  fact('8.set -u + empty array expansion', `exit=${r2.status}`, ((r2.stdout || '') + (r2.stderr || '')).replace(/\r?\n/g, ' | ').trim());
+  const r2 = spawnSync(
+    'bash',
+    ['-c', 'set -u; A=(); echo "count=${#A[@]}"; echo "expand=[${A[@]}]"'],
+    {
+      encoding: 'utf8',
+      timeout: 15000,
+    },
+  );
+  fact(
+    '8.set -u + empty array expansion',
+    `exit=${r2.status}`,
+    ((r2.stdout || '') + (r2.stderr || '')).replace(/\r?\n/g, ' | ').trim(),
+  );
 }
 
 rmSync(ROOT, { recursive: true, force: true });

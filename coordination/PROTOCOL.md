@@ -3,6 +3,7 @@
 所有 agent **必须**遵守。Meta Manager 是唯一的调度者与合并者。
 
 ## 0. 角色
+
 - **Meta Manager**（主会话）：分派任务、读摘要、做决策、写 ADR、合并成果。不写业务代码。
 - **Lead Agent**（opus5）：领域负责人，可再派 sub-subagent（琐碎活用 sonnet5）。
 - **Worker Agent**（sonnet5）：执行明确定义的机械任务。
@@ -25,6 +26,7 @@
 ```
 
 ### 规则
+
 1. **写自己的文件，读别人的文件。** 除 `inbox/<自己>.md`、自己被分配的 `tasks/T-NNN.md`
    和自己交付的 `docs/**` 文件外，不得修改任何文件。避免写冲突。
 2. **跨 agent 依赖靠文件，不靠猜。** 需要别人的产出时，读对方的 `docs/` 交付物。
@@ -44,13 +46,15 @@ date: YYYY-MM-DD
 ---
 
 ## TL;DR（≤ 25 行，Manager 只读这里）
+
 - 结论 1
 - 结论 2
 - 关键取舍：...
-- 未验证/存疑：...   <-- 必填，没有就写"无"
+- 未验证/存疑：... <-- 必填，没有就写"无"
 - 对其他 agent 的影响：...
 
 ## 详细内容
+
 （正文随意长）
 ```
 
@@ -58,6 +62,7 @@ date: YYYY-MM-DD
 
 ```markdown
 ## [YYYY-MM-DD HH:MM] <TASK-ID> <STATUS>
+
 STATUS ∈ DONE | PROGRESS | BLOCKED | DISPUTE | QUESTION
 交付: <文件路径列表>
 要点: <≤5 行>
@@ -66,17 +71,20 @@ STATUS ∈ DONE | PROGRESS | BLOCKED | DISPUTE | QUESTION
 ```
 
 ## 4. 诚实规则（不可协商）
+
 - 没验证过的写 **"未验证"**。没跑通的写 **"未跑通"** 并附错误输出。
 - 不允许编造 API、版本号、benchmark 数字。不确定就去查，查不到就标 `UNKNOWN`。
 - 网络受限导致无法验证的，明确写 `无法联网验证`。
 
 ## 5. 派生 subagent 的规则
+
 - Lead 可派 sub-subagent，但**自己名下同时运行的不得超过 2 个**（全局上限 4 由 Manager 控制）。
 - 机械性工作（改文件名、批量重写、跑格式化、写样板代码）→ 用 sonnet5。
 - 需要判断/设计/取舍的 → opus5。
 - 派出去的 agent 完成后不要 kill，记录其 name/id 到自己的 inbox 以便复用。
 
 ## 6. 上下文节约
+
 - 不要把大文件全文贴进回复。写到磁盘，回复里只给路径 + TL;DR。
 - 读别人的文档时优先只读 TL;DR 块。
 
@@ -112,9 +120,9 @@ STATUS ∈ DONE | PROGRESS | BLOCKED | DISPUTE | QUESTION
 所以：**断言 DOM 存在性一律先转成布尔或字符串再比**。
 
 ```js
-assert.equal(el === null, true)          // ✅
-assert.equal(!!container.querySelector(sel), false)  // ✅
-assert.equal(el, null)                   // ✘ 失败时 OOM
+assert.equal(el === null, true); // ✅
+assert.equal(!!container.querySelector(sel), false); // ✅
+assert.equal(el, null); // ✘ 失败时 OOM
 ```
 
 同理适用于任何**可能持有父引用的对象**（DOM 节点、fiber、带 `parent` 指针的树节点、

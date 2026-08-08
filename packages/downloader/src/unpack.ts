@@ -69,12 +69,7 @@ export interface UnpackOptions {
 }
 
 export type UnpackErrorCode =
-  | 'PATH_TRAVERSAL'
-  | 'SYMLINK_REJECTED'
-  | 'LIMIT_EXCEEDED'
-  | 'UNSUPPORTED'
-  | 'CORRUPT'
-  | 'ABORTED';
+  'PATH_TRAVERSAL' | 'SYMLINK_REJECTED' | 'LIMIT_EXCEEDED' | 'UNSUPPORTED' | 'CORRUPT' | 'ABORTED';
 
 export class UnpackError extends Error {
   constructor(
@@ -197,14 +192,22 @@ function assertSafeEntryName(rawName: string): void {
   if (rawName.length === 0) {
     throw new UnpackError('Archive entry has an empty name', 'CORRUPT');
   }
-  if (rawName.startsWith('/') || rawName.startsWith('\\') || WINDOWS_ABS_RE.test(rawName) || UNC_RE.test(rawName)) {
+  if (
+    rawName.startsWith('/') ||
+    rawName.startsWith('\\') ||
+    WINDOWS_ABS_RE.test(rawName) ||
+    UNC_RE.test(rawName)
+  ) {
     throw new UnpackError(`Archive entry uses an absolute path: "${rawName}"`, 'PATH_TRAVERSAL');
   }
   // Split on both separators: ZIP mandates '/', but a hostile entry can still embed '\'
   // and rely on the extractor being run on Windows to reinterpret it as a separator.
   const segments = rawName.split(/[\\/]+/);
   if (segments.some((s) => s === '..')) {
-    throw new UnpackError(`Archive entry escapes destination via "..": "${rawName}"`, 'PATH_TRAVERSAL');
+    throw new UnpackError(
+      `Archive entry escapes destination via "..": "${rawName}"`,
+      'PATH_TRAVERSAL',
+    );
   }
 }
 
@@ -226,7 +229,10 @@ export function lexicalEntryPath(
   const destRoot = p.resolve(destDir);
   const resolved = p.resolve(destRoot, rawName);
   if (resolved !== destRoot && !resolved.startsWith(destRoot + p.sep)) {
-    throw new UnpackError(`Archive entry resolves outside destination: "${rawName}"`, 'PATH_TRAVERSAL');
+    throw new UnpackError(
+      `Archive entry resolves outside destination: "${rawName}"`,
+      'PATH_TRAVERSAL',
+    );
   }
   return resolved;
 }
@@ -255,7 +261,11 @@ export function lexicalLinkTarget(
   if (linkTarget.length === 0) {
     throw new UnpackError(`Archive link "${entryName}" has an empty target`, 'CORRUPT');
   }
-  if (linkTarget.startsWith('/') || linkTarget.startsWith('\\') || WINDOWS_ABS_RE.test(linkTarget)) {
+  if (
+    linkTarget.startsWith('/') ||
+    linkTarget.startsWith('\\') ||
+    WINDOWS_ABS_RE.test(linkTarget)
+  ) {
     throw new UnpackError(
       `Archive link "${entryName}" points outside the archive via an absolute path: "${linkTarget}"`,
       'SYMLINK_REJECTED',
@@ -310,11 +320,7 @@ export function lexicalLinkTarget(
  */
 const MAX_LINK_HOPS = 40;
 
-async function walk(
-  startReal: string,
-  rest: string,
-  hops: { n: number },
-): Promise<string> {
+async function walk(startReal: string, rest: string, hops: { n: number }): Promise<string> {
   let cur = startReal;
   // Split on BOTH separators: a tar written on Windows can embed `\`, and on a Windows
   // host that is a separator. Splitting on both everywhere is strictly more conservative.
@@ -539,7 +545,10 @@ async function findEndOfCentralDirectory(
     }
     return { entriesTotal, cdSize, cdOffset };
   }
-  throw new UnpackError('Not a valid ZIP file (End Of Central Directory record not found)', 'CORRUPT');
+  throw new UnpackError(
+    'Not a valid ZIP file (End Of Central Directory record not found)',
+    'CORRUPT',
+  );
 }
 
 function parseCentralDirectory(cdBuf: Buffer, budget: Budget): ZipCentralEntry[] {
@@ -559,7 +568,11 @@ function parseCentralDirectory(cdBuf: Buffer, budget: Budget): ZipCentralEntry[]
     const externalAttrs = cdBuf.readUInt32LE(p + 38);
     const localHeaderOffset = cdBuf.readUInt32LE(p + 42);
 
-    if (compressedSize === 0xffffffff || uncompressedSize === 0xffffffff || localHeaderOffset === 0xffffffff) {
+    if (
+      compressedSize === 0xffffffff ||
+      uncompressedSize === 0xffffffff ||
+      localHeaderOffset === 0xffffffff
+    ) {
       throw new UnpackError('ZIP64 entries are not supported', 'UNSUPPORTED');
     }
 
@@ -574,14 +587,18 @@ function parseCentralDirectory(cdBuf: Buffer, budget: Budget): ZipCentralEntry[]
       compressedSize,
       uncompressedSize,
       localHeaderOffset,
-      isUnix: (versionMadeBy >>> 8) === UNIX_HOST,
+      isUnix: versionMadeBy >>> 8 === UNIX_HOST,
       externalAttrs,
     });
   }
   return entries;
 }
 
-export async function unpackZip(src: string, destDir: string, opts?: UnpackOptions): Promise<UnpackResult> {
+export async function unpackZip(
+  src: string,
+  destDir: string,
+  opts?: UnpackOptions,
+): Promise<UnpackResult> {
   const budget = newBudget(opts);
   const files: string[] = [];
   const links: string[] = [];
@@ -617,8 +634,7 @@ export async function unpackZip(src: string, destDir: string, opts?: UnpackOptio
       const dest = lexicalEntryPath(destRoot, entry.name);
       await resolveEntryDest(rootReal, entry.name);
 
-      const isSymlink =
-        entry.isUnix && ((entry.externalAttrs >>> 16) & S_IFMT) === S_IFLNK;
+      const isSymlink = entry.isUnix && ((entry.externalAttrs >>> 16) & S_IFMT) === S_IFLNK;
 
       if (isDir) {
         await fs.mkdir(dest, { recursive: true });
@@ -649,12 +665,20 @@ export async function unpackZip(src: string, destDir: string, opts?: UnpackOptio
           // maxOutputLength is the real zip-bomb backstop: it caps memory during
           // decompression itself, so a header that understates its true output size
           // cannot use that lie to blow past the budget before we get to check anything.
-          data = zlib.inflateRawSync(compressed, { maxOutputLength: Math.max(entry.uncompressedSize, 1) });
+          data = zlib.inflateRawSync(compressed, {
+            maxOutputLength: Math.max(entry.uncompressedSize, 1),
+          });
         } catch (e) {
-          throw new UnpackError(`Failed to inflate "${entry.name}": ${(e as Error).message}`, 'CORRUPT');
+          throw new UnpackError(
+            `Failed to inflate "${entry.name}": ${(e as Error).message}`,
+            'CORRUPT',
+          );
         }
       } else {
-        throw new UnpackError(`Unsupported ZIP compression method ${entry.method} for "${entry.name}"`, 'UNSUPPORTED');
+        throw new UnpackError(
+          `Unsupported ZIP compression method ${entry.method} for "${entry.name}"`,
+          'UNSUPPORTED',
+        );
       }
       if (data.length !== entry.uncompressedSize) {
         throw new UnpackError(`"${entry.name}" decompressed to an unexpected size`, 'CORRUPT');
@@ -739,7 +763,11 @@ function parsePaxRecords(data: Buffer): Record<string, string> {
   return result;
 }
 
-export async function unpackTarGz(src: string, destDir: string, opts?: UnpackOptions): Promise<UnpackResult> {
+export async function unpackTarGz(
+  src: string,
+  destDir: string,
+  opts?: UnpackOptions,
+): Promise<UnpackResult> {
   const budget = newBudget(opts);
   const compressed = await fs.readFile(src);
   let raw: Buffer;
@@ -884,7 +912,11 @@ async function extractTar(
  * works the same on Windows as on Linux. The system `xz` binary was rejected precisely
  * because it does not exist on a default Windows install.
  */
-export async function unpackTarXz(src: string, destDir: string, opts?: UnpackOptions): Promise<UnpackResult> {
+export async function unpackTarXz(
+  src: string,
+  destDir: string,
+  opts?: UnpackOptions,
+): Promise<UnpackResult> {
   const budget = newBudget(opts);
   const compressed = await fs.readFile(src);
 
@@ -896,7 +928,9 @@ export async function unpackTarXz(src: string, destDir: string, opts?: UnpackOpt
     // package keeps working.
     const mod = (await import('xz-decompress')) as unknown as {
       XzReadableStream?: new (s: ReadableStream<Uint8Array>) => ReadableStream<Uint8Array>;
-      default?: { XzReadableStream?: new (s: ReadableStream<Uint8Array>) => ReadableStream<Uint8Array> };
+      default?: {
+        XzReadableStream?: new (s: ReadableStream<Uint8Array>) => ReadableStream<Uint8Array>;
+      };
     };
     const XzReadableStream = mod.XzReadableStream ?? mod.default?.XzReadableStream;
     if (typeof XzReadableStream !== 'function') {

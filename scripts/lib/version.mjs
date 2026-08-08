@@ -77,7 +77,9 @@ export function readRootPackageJson() {
   // 读对文件了吗 —— 抄自 apps/web/src/lib/format/peaks.test.ts 的哨兵写法：
   // 先证明"我读的是我以为的那个文件"，再去信它里面的值。
   if (json.name !== 'openmemo') {
-    throw new Error(`${path} 的 name 不是 "openmemo"（实得 ${JSON.stringify(json.name)}）—— 读错文件了`);
+    throw new Error(
+      `${path} 的 name 不是 "openmemo"（实得 ${JSON.stringify(json.name)}）—— 读错文件了`,
+    );
   }
   return { path, text, json };
 }

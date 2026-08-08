@@ -267,7 +267,8 @@ export function checkCsrfDetailed(req: IncomingMessage, auth: AuthResult): CsrfO
     return { ok: false, reason: `no CSRF token and Sec-Fetch-Site=${String(site)}` };
   }
   const origin = req.headers['origin'];
-  const host = typeof req.headers['host'] === 'string' ? req.headers['host'].toLowerCase() : undefined;
+  const host =
+    typeof req.headers['host'] === 'string' ? req.headers['host'].toLowerCase() : undefined;
   if (typeof origin !== 'string' || !host) {
     return { ok: false, reason: 'no CSRF token and no verifiable same-origin evidence' };
   }

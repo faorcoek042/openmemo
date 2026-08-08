@@ -93,8 +93,7 @@ function mergeOne(job: AnyJob, live: JobProgressSnapshot | undefined): MergedJob
     };
   }
 
-  const serverProgress =
-    job.totalBytes > 0 ? Math.min(1, job.completedBytes / job.totalBytes) : 0;
+  const serverProgress = job.totalBytes > 0 ? Math.min(1, job.completedBytes / job.totalBytes) : 0;
   return {
     jobId: job.jobId,
     displayName: job.displayName,
@@ -119,7 +118,12 @@ function mergeOne(job: AnyJob, live: JobProgressSnapshot | undefined): MergedJob
  * 服务端列表是主干；内存里有、服务端还没有的（刚 POST 完那一瞬间）作为
  * `transientOnly` 补进去，避免"点了开始但列表里什么都没有"的空窗期。
  */
-export function useMergedJobs(): { jobs: MergedJob[]; isLoading: boolean; isError: boolean; error: unknown } {
+export function useMergedJobs(): {
+  jobs: MergedJob[];
+  isLoading: boolean;
+  isError: boolean;
+  error: unknown;
+} {
   const q = useJobsQuery();
   const byJob = useProgressStore((s) => s.byJob);
 

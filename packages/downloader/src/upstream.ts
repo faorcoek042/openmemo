@@ -113,7 +113,12 @@ export async function checkUpstream(
   const timeoutMs = opts.timeoutMs ?? 12_000;
   try {
     if (src.kind === 'static') {
-      return { latestVersion: null, release: null, error: 'component has no upstream feed', checkedAt };
+      return {
+        latestVersion: null,
+        release: null,
+        error: 'component has no upstream feed',
+        checkedAt,
+      };
     }
 
     if (src.kind === 'github-release') {
@@ -131,7 +136,12 @@ export async function checkUpstream(
         .filter((r) => (src.stableOnly ? !r.prerelease : true))
         .filter((r) => (re ? re.test(r.tag_name) : true));
       if (candidates.length === 0) {
-        return { latestVersion: null, release: null, error: 'no release matched the tag pattern', checkedAt };
+        return {
+          latestVersion: null,
+          release: null,
+          error: 'no release matched the tag pattern',
+          checkedAt,
+        };
       }
       // Sort by our own comparator rather than trusting list order, which is by date and
       // does not match build-number or date-tag ordering in every repo.
@@ -149,7 +159,8 @@ export async function checkUpstream(
       )) as { name: string }[];
       const re = src.tagPattern ? new RegExp(src.tagPattern) : null;
       const names = tags.map((t) => t.name).filter((n) => (re ? re.test(n) : true));
-      if (!names.length) return { latestVersion: null, release: null, error: 'no tag matched', checkedAt };
+      if (!names.length)
+        return { latestVersion: null, release: null, error: 'no tag matched', checkedAt };
       names.sort((a, b) => compareVersions(b, a));
       return { latestVersion: names[0], release: null, error: null, checkedAt };
     }
@@ -158,7 +169,12 @@ export async function checkUpstream(
       const meta = (await getJson(`https://registry.npmjs.org/${src.repo}/latest`, timeoutMs)) as {
         version?: string;
       };
-      return { latestVersion: meta.version ?? null, release: null, error: meta.version ? null : 'no version field', checkedAt };
+      return {
+        latestVersion: meta.version ?? null,
+        release: null,
+        error: meta.version ? null : 'no version field',
+        checkedAt,
+      };
     }
 
     if (src.kind === 'huggingface') {
@@ -167,17 +183,30 @@ export async function checkUpstream(
         lastModified?: string;
       };
       // HF models have no releases; the commit sha IS the version.
-      return { latestVersion: meta.sha ?? null, release: null, error: meta.sha ? null : 'no sha field', checkedAt };
+      return {
+        latestVersion: meta.sha ?? null,
+        release: null,
+        error: meta.sha ? null : 'no sha field',
+        checkedAt,
+      };
     }
 
-    return { latestVersion: null, release: null, error: `unsupported upstream kind: ${src.kind}`, checkedAt };
+    return {
+      latestVersion: null,
+      release: null,
+      error: `unsupported upstream kind: ${src.kind}`,
+      checkedAt,
+    };
   } catch (e) {
     // Degrade quietly: a failed check must never look like "you are up to date", and must
     // never prevent installing the pinned version.
     return {
       latestVersion: null,
       release: null,
-      error: (e as Error)?.name === 'AbortError' ? `timed out after ${timeoutMs}ms` : String((e as Error)?.message ?? e),
+      error:
+        (e as Error)?.name === 'AbortError'
+          ? `timed out after ${timeoutMs}ms`
+          : String((e as Error)?.message ?? e),
       checkedAt,
     };
   }
@@ -192,7 +221,12 @@ export async function checkAllUpstreams(
   await Promise.all(
     sources.map(async (s) => {
       if (!s.upstream) {
-        out.set(s.id, { latestVersion: null, release: null, error: 'no upstream configured', checkedAt: new Date().toISOString() });
+        out.set(s.id, {
+          latestVersion: null,
+          release: null,
+          error: 'no upstream configured',
+          checkedAt: new Date().toISOString(),
+        });
         return;
       }
       out.set(s.id, await checkUpstream(s.upstream, opts));

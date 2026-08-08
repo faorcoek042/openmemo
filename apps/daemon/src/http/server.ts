@@ -109,12 +109,7 @@ export interface ServerDeps {
 }
 
 export interface RouteModule {
-  handle(
-    req: IncomingMessage,
-    res: ServerResponse,
-    url: URL,
-    method: string,
-  ): Promise<boolean>;
+  handle(req: IncomingMessage, res: ServerResponse, url: URL, method: string): Promise<boolean>;
 }
 
 // 响应 helpers 统一放 respond.ts，各路由模块共用同一套信封

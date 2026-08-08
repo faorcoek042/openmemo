@@ -58,7 +58,11 @@ const H = (): Record<string, string> => ({
 });
 
 async function patch(body: unknown): Promise<{ status: number; json: Record<string, unknown> }> {
-  const r = await fetch(`${base}/api/settings`, { method: 'PATCH', headers: H(), body: JSON.stringify(body) });
+  const r = await fetch(`${base}/api/settings`, {
+    method: 'PATCH',
+    headers: H(),
+    body: JSON.stringify(body),
+  });
   return { status: r.status, json: (await r.json()) as Record<string, unknown> };
 }
 async function getSettings(): Promise<Record<string, unknown>> {
@@ -69,7 +73,10 @@ async function getSettings(): Promise<Record<string, unknown>> {
 
 describe('PATCH /api/settings —— 写什么读回来必须是什么', () => {
   it('扁平形状：键名逐字相同，值原样', async () => {
-    const res = await patch({ 'llm.defaultProviderId': 'deepseek', 'llm.defaultModelId': 'deepseek-chat' });
+    const res = await patch({
+      'llm.defaultProviderId': 'deepseek',
+      'llm.defaultModelId': 'deepseek-chat',
+    });
     assert.equal(res.status, 200);
     const got = await getSettings();
     assert.equal(got['llm.defaultProviderId'], 'deepseek');
@@ -174,7 +181,11 @@ describe('CSRF 同源兜底 —— 放行一种，拒绝四种', () => {
 
   it('★ 带了**错的** CSRF 头 → 仍然拒绝（兜底不救它）', async () => {
     assert.equal(
-      await write({ Origin: origin(), 'Sec-Fetch-Site': 'same-origin', 'x-openmemo-csrf': 'WRONG' }),
+      await write({
+        Origin: origin(),
+        'Sec-Fetch-Site': 'same-origin',
+        'x-openmemo-csrf': 'WRONG',
+      }),
       403,
     );
   });

@@ -10,6 +10,7 @@
 ## [2026-08-07] T-169 DONE
 
 交付:
+
 - `.github/workflows/ci.yml`（新增 `Orphan-exports ratchet` 一步）
 - `scripts/check-orphan-exports.mjs`（词法扫描器重写 + 3 条新不变量 + 1 组新自检）
 - `scripts/orphan-exports-baseline.json`（72 → 72，**换了一条**）
@@ -17,6 +18,7 @@
 - `packages/shared/package.json` + `src/{schemas,contract,jobs}.test.ts`（0 → 31 条测试）
 
 要点:
+
 1. 棘轮门禁确实从来没在 CI 里跑过，已接进 `ci.yml`。**`ci.yml` 是全仓唯一自动触发的 workflow**，其余 5 个都是 `workflow_dispatch`。
 2. 补剥字符串字面量时**牵出一个更大的洞**：老的 `stripComments()` 自己就是坏的，它让门禁对 6 个导出声明完全失明，并制造了至少 1 条基线假阳性。
 3. 基线**没有从 72 抬到 76**。审计预测的 5 条里只有 1 条为真，同时修复反而消掉 1 条旧假阳性 → 72 换 72。**债没有增加，也没有被藏起来。**
@@ -38,21 +40,21 @@
 
 `pnpm check` 的五个成员，此前**只有 `check:orphans` 一条**不在 CI 里，现已补齐：
 
-| `pnpm check` 成员 | 此前在 CI 里？ |
-|---|---|
-| `check:sources` | ✅ `ci.yml:119` |
-| `check:orphans` | ❌ **本次补上** |
-| `tsc -b` | ✅ `ci.yml:111` Typecheck |
-| `build:safe` | ✅ `ci.yml:108` |
-| `eslint .` | ✅ `ci.yml:114` Lint |
+| `pnpm check` 成员 | 此前在 CI 里？            |
+| ----------------- | ------------------------- |
+| `check:sources`   | ✅ `ci.yml:119`           |
+| `check:orphans`   | ❌ **本次补上**           |
+| `tsc -b`          | ✅ `ci.yml:111` Typecheck |
+| `build:safe`      | ✅ `ci.yml:108`           |
+| `eslint .`        | ✅ `ci.yml:114` Lint      |
 
 **但把范围放大到「所有守卫脚本」，还有 3 条没有自动调用方**（本轮**没有**动它们，理由逐条写清）：
 
-| 守卫 | 状态 | 为什么这轮不接 |
-|---|---|---|
-| `format:check` | ❌ 无任何调用方 | **`[我实测]` 476 个文件不过**（审计里记的 403 是 `[报告]`，已过期）。现在接进 CI = 门禁永久红。判据照审计：**先统一格式再上门禁，别反过来**。 |
+| 守卫                                         | 状态                | 为什么这轮不接                                                                                                                                                                                               |
+| -------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `format:check`                               | ❌ 无任何调用方     | **`[我实测]` 476 个文件不过**（审计里记的 403 是 `[报告]`，已过期）。现在接进 CI = 门禁永久红。判据照审计：**先统一格式再上门禁，别反过来**。                                                                |
 | `check:selfcheck`（`scripts/selfcheck.mjs`） | ⚠️ 有调用方但不自动 | 被 `scripts/ci/cold-start-audit.mjs:343` 调用，而 `cold-start-audit.yml` 是 `workflow_dispatch:`。它要**真数据目录 + 起 daemon + 装好后端**，塞进 `ci.yml` 那个 2 分钟的静态门禁里不合适。**留作已知缺口**。 |
-| `scripts/mutation-check.mjs` | ⚠️ 无调用方 | **设计如此**，文件头明写「不进门禁」。不算欠债（审计同结论）。 |
+| `scripts/mutation-check.mjs`                 | ⚠️ 无调用方         | **设计如此**，文件头明写「不进门禁」。不算欠债（审计同结论）。                                                                                                                                               |
 
 ⚠️ 顺带核到一件审计没提的事：**`ci-crossplatform.yml` 是 `workflow_dispatch:`**，
 而且它里面**没有 lint、没有 `test:ci-scripts`**。也就是说「跨平台门禁」今天等于不存在，
@@ -74,19 +76,23 @@
 它是三条正则，在**原始源码**上跑，不知道自己站在哪儿：
 
 **坑 A —— 幽灵块注释**（`apps/daemon/src/http/rest/storage.ts:83`）：
+
 ```
 // 说"可随时删"必须是真的：转写产物现在会**归档进 media/**，
 ```
+
 `media/**` 里那个 `/*` 在一条**行注释**里，但块注释正则不知道，
 于是从这里开了一个幽灵块注释，**一路吃到第 116 行的下一个 `*/`** ——
 `[实测]` 33 行真代码被删，其中就有 `export function createStorageRoutes(deps: StorageRoutesDeps)`。
 
 **坑 B —— 行注释正则咬坏模板字面量**（`apps/web/src/lib/secure-context.ts`）：
+
 ```js
 return `${protocol}//${host}`;
 ```
-那条 `([^:"'`])\/\/[^\n]*` 用「`//` 前面不是 `:`」来避开 `https://`，
-这里 `//` 前面是 `}` → 把 `//${host}`;` 连同整行删掉，留下一个**没闭合的模板字面量**。
+
+那条 `([^:"'`])\/\/[^\n]*` 用「`//`前面不是`:`」来避开 `https://`，
+这里 `//`前面是`}`→ 把`//${host}`;` 连同整行删掉，留下一个**没闭合的模板字面量**。
 
 **量化 `[我实测]`**：老 `stripComments()` 让 **6 个导出声明**对门禁完全隐形 ——
 `AUTH_MODE`（两处）、`createStorageRoutes`、`MINDMAP_SAVE_SUPPORTED`、`UnpackResult`、`MEDIA_EXTENSIONS`。
@@ -100,13 +106,13 @@ return `${protocol}//${host}`;
 
 审计用它自己的复刻算出「加剥字符串 = 76，遮住 5 条」。我用真扫描器复算，**5 条里只有 1 条为真**：
 
-| 审计点名的条目 | 我的结论 | 证据 |
-|---|---|---|
-| `single-instance.ts :: PROBE_HOST` | ❌ **误报** | `:139` `` `${scheme}://${PROBE_HOST}:${port}/api/health` `` —— 引用在模板 `${}` 里，那是**真代码**。审计的复刻把整个模板连 `${}` 一起吞了。 |
-| `probe.ts :: PROBE_BYTES` | ❌ **误报** | `:46` `` `bytes=0-${PROBE_BYTES - 1}` `` 同上。 |
-| `childEnv.ts :: pathVarSeparator` | ❌ **误报** | `:49` `` `${dir}${pathVarSeparator(platform)}${existing}` `` 同上。 |
-| `asrStream.ts :: RecorderServerMessage` | ❌ **误报** | `:82 :126 :128 :217` 四处**普通类型标注**，与字符串无关。它之所以看着像孤儿，是**坑 B** 把该文件后半段吞了。 |
-| `manifest.ts :: verifyCatalogSignature` | ✅ **真的** | 全仓唯一一次自我提及在自己的错误信息里；生产零调用方、零单测。 |
+| 审计点名的条目                          | 我的结论    | 证据                                                                                                                                        |
+| --------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `single-instance.ts :: PROBE_HOST`      | ❌ **误报** | `:139` `` `${scheme}://${PROBE_HOST}:${port}/api/health` `` —— 引用在模板 `${}` 里，那是**真代码**。审计的复刻把整个模板连 `${}` 一起吞了。 |
+| `probe.ts :: PROBE_BYTES`               | ❌ **误报** | `:46` `` `bytes=0-${PROBE_BYTES - 1}` `` 同上。                                                                                             |
+| `childEnv.ts :: pathVarSeparator`       | ❌ **误报** | `:49` `` `${dir}${pathVarSeparator(platform)}${existing}` `` 同上。                                                                         |
+| `asrStream.ts :: RecorderServerMessage` | ❌ **误报** | `:82 :126 :128 :217` 四处**普通类型标注**，与字符串无关。它之所以看着像孤儿，是**坑 B** 把该文件后半段吞了。                                |
+| `manifest.ts :: verifyCatalogSignature` | ✅ **真的** | 全仓唯一一次自我提及在自己的错误信息里；生产零调用方、零单测。                                                                              |
 
 **外加一条审计不知道的**：`rest/storage.ts :: StorageRoutesDeps` 是**基线里躺着的假阳性**
 （`:103` 一直有真引用，是坑 A 把那一行吞了）。修好后它自动掉出名单，脚本的「基线只准变短」当场逼我删。
@@ -123,19 +129,19 @@ return `${protocol}//${host}`;
 
 对照组（副本未改动）绿；逐条拆掉后：
 
-| 变异 | 结果 |
-|---|---|
-| ① 剥字符串这一步拆掉 | 🔴 仓库级不变量 +「verifyThing / mentionedOnlyInText 阳性对照」同时红 |
-| ② 模板 `${}` 保留拆掉 | 🔴「usedInTemplate 被误判成孤儿」 |
-| ③ 正则字面量识别拆掉 | 🔴 15 个 `.tsx` 收尾停在字符串里 |
-| ④ 换回老的三条正则 `stripComments` | 🔴 声明清单漂移 |
-| ⑤ 正则判据换回黑名单写法（我真踩过的 JSX bug） | 🔴 大批 `.tsx` 失步 |
-| ⑥ 真加一个零调用方导出 | 🔴「1 个新的零引用导出」—— 棘轮本体仍然灵 |
-| ⑦ 往基线塞一条不存在的条目 | 🔴「基线里有 1 个条目已经不再是零引用导出」 |
+| 变异                                           | 结果                                                                  |
+| ---------------------------------------------- | --------------------------------------------------------------------- |
+| ① 剥字符串这一步拆掉                           | 🔴 仓库级不变量 +「verifyThing / mentionedOnlyInText 阳性对照」同时红 |
+| ② 模板 `${}` 保留拆掉                          | 🔴「usedInTemplate 被误判成孤儿」                                     |
+| ③ 正则字面量识别拆掉                           | 🔴 15 个 `.tsx` 收尾停在字符串里                                      |
+| ④ 换回老的三条正则 `stripComments`             | 🔴 声明清单漂移                                                       |
+| ⑤ 正则判据换回黑名单写法（我真踩过的 JSX bug） | 🔴 大批 `.tsx` 失步                                                   |
+| ⑥ 真加一个零调用方导出                         | 🔴「1 个新的零引用导出」—— 棘轮本体仍然灵                             |
+| ⑦ 往基线塞一条不存在的条目                     | 🔴「基线里有 1 个条目已经不再是零引用导出」                           |
 
 ⚠️ 变异①第一次只让**自检**红、真实扫描一格没动 —— 因为 `scan()` 直接调 `scanSource()`
 而自检调 `prepare()`，**两边不是同一个入口**。已改成同一个入口，注释里记了这一笔：
-*自检守的必须是真实路径，否则它证明的只是自检自己还活着。*
+_自检守的必须是真实路径，否则它证明的只是自检自己还活着。_
 
 ### 新增的三条不变量（这次的教训固化下来）
 
@@ -194,23 +200,23 @@ return `${protocol}//${host}`;
 
 判据是**「坏掉的时候两边都不报错」**，不是「把覆盖率填上去」：
 
-| 文件 | 测什么 | 为什么它会咬人 |
-|---|---|---|
-| `schemas.test.ts`（11） | 下载域名白名单 / https / 回环例外、sha256 形状、字节数必须是整数 | 见第三节第 5 点：**这是今天真正承重的两条完整性控制**，而它们全住在这个此前零测试的包里。放宽 zod schema 不会让任何东西变红 —— 上层看到的只是"校验通过"。**最要紧的一条**是后缀相似域名（`huggingface.co.evil.com`）必须拒绝：只要有人把精确相等改成 `endsWith`，它们会全部变成合法下载源。 |
-| `contract.test.ts`（12） | `CONTRACT_VERSION` 语义 + SSE 线格式 + 事件类型表自洽 | `CONTRACT_VERSION` 是 daemon↔web 唯一的握手位，**没有任何 schema 描述它**，两边各自手写字段名；改它 = 宣布旧前端必须一起换。SSE 帧少一个换行 → 浏览器**永远不 dispatch**，而服务端 write 成功、连接正常、没有异常、进度条只是不动了。 |
-| `jobs.test.ts`（8） | 任务状态机表级不变量 | `JOB_TRANSITIONS` 写错一个状态名 → `canTransition()` **恒 false** → 任务卡住不动，不抛异常。另钉死 `succeeded` 是吸收态、终态只能经 `queued` 复活（直接跳回 `running` 会绕过租约，同一任务两个执行者写同一个文件）。 |
+| 文件                     | 测什么                                                           | 为什么它会咬人                                                                                                                                                                                                                                                                              |
+| ------------------------ | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schemas.test.ts`（11）  | 下载域名白名单 / https / 回环例外、sha256 形状、字节数必须是整数 | 见第三节第 5 点：**这是今天真正承重的两条完整性控制**，而它们全住在这个此前零测试的包里。放宽 zod schema 不会让任何东西变红 —— 上层看到的只是"校验通过"。**最要紧的一条**是后缀相似域名（`huggingface.co.evil.com`）必须拒绝：只要有人把精确相等改成 `endsWith`，它们会全部变成合法下载源。 |
+| `contract.test.ts`（12） | `CONTRACT_VERSION` 语义 + SSE 线格式 + 事件类型表自洽            | `CONTRACT_VERSION` 是 daemon↔web 唯一的握手位，**没有任何 schema 描述它**，两边各自手写字段名；改它 = 宣布旧前端必须一起换。SSE 帧少一个换行 → 浏览器**永远不 dispatch**，而服务端 write 成功、连接正常、没有异常、进度条只是不动了。                                                       |
+| `jobs.test.ts`（8）      | 任务状态机表级不变量                                             | `JOB_TRANSITIONS` 写错一个状态名 → `canTransition()` **恒 false** → 任务卡住不动，不抛异常。另钉死 `succeeded` 是吸收态、终态只能经 `queued` 复活（直接跳回 `running` 会绕过租约，同一任务两个执行者写同一个文件）。                                                                        |
 
 **没有**为了凑数写 getter/setter 类断言。31 条里每一条都对着一种具体错法。
 
 ### 反向验证 `[实测，5 组，/tmp 隔离副本，先跑对照组 31/0 绿]`
 
-| 变异 | 结果 |
-|---|---|
+| 变异                                 | 结果                                                  |
+| ------------------------------------ | ----------------------------------------------------- |
 | A 域名白名单改成 `endsWith` 后缀匹配 | 🔴「后缀相似的域名必须拒绝」+「子域名不自动继承信任」 |
-| B SSE 帧结尾空行掉一个 | 🔴「帧必须以空行结束」 |
-| C `succeeded` 加一条出边 | 🔴「succeeded 是吸收态」 |
-| D 悄悄 bump `CONTRACT_VERSION` | 🔴「钉在当前值上」绊线 |
-| E `data` 改成缩进美化 JSON | 🔴「data 必须是单行 JSON」 |
+| B SSE 帧结尾空行掉一个               | 🔴「帧必须以空行结束」                                |
+| C `succeeded` 加一条出边             | 🔴「succeeded 是吸收态」                              |
+| D 悄悄 bump `CONTRACT_VERSION`       | 🔴「钉在当前值上」绊线                                |
+| E `data` 改成缩进美化 JSON           | 🔴「data 必须是单行 JSON」                            |
 
 ⚠️ 第一次跑对照组就是红的（隔离副本解析不到 `zod`）—— **对照组红的时候后面的变异结果一律不作数**，
 已修好（软链回真实 `node_modules`，只读）后重跑，对照组 31/0 绿，五组变异才逐一确认。
@@ -235,16 +241,16 @@ return `${protocol}//${host}`;
 
 ## 六、门禁
 
-| 门禁 | 结果 |
-|---|---|
-| `pnpm -r test` | **1341 pass / 0 fail** |
-| `npx tsc -b` | ✅ |
-| `npx eslint .` | ✅ |
-| `pnpm build:safe` | ✅ |
-| `pnpm lint-workflows` | ✅ 562 条断言 / 6 个 workflow |
-| `pnpm test:ci-scripts` | ✅ 22 passed / 0 failed |
-| `pnpm check:orphans` | ✅ 72 / 基线 72 |
-| `check-test-scripts` | ✅ 9 个包（此前 8 个） |
+| 门禁                   | 结果                          |
+| ---------------------- | ----------------------------- |
+| `pnpm -r test`         | **1341 pass / 0 fail**        |
+| `npx tsc -b`           | ✅                            |
+| `npx eslint .`         | ✅                            |
+| `pnpm build:safe`      | ✅                            |
+| `pnpm lint-workflows`  | ✅ 562 条断言 / 6 个 workflow |
+| `pnpm test:ci-scripts` | ✅ 22 passed / 0 failed       |
+| `pnpm check:orphans`   | ✅ 72 / 基线 72               |
+| `check-test-scripts`   | ✅ 9 个包（此前 8 个）        |
 
 ⚠️ **1341 与任务书给的基线 1301 差 40，其中只有 31 条是我的。**
 另外 9 条不是我的：`closure-fix` 在我开工期间提交了 `eac1cdd`（T-170），
@@ -275,6 +281,7 @@ return `${protocol}//${host}`;
 > 反向验证 **8 组全部在 `/tmp` 隔离副本**上做，先跑对照组，做完即清理（§10）。
 
 交付:
+
 - `packages/downloader/src/manifest.ts`（删掉远端目录加载器整族，227 行 → 62 行）
 - `scripts/orphan-exports-baseline.json`（**72 → 70**，只降不升；并订正了一条**写错了的** note）
 - `docs/adr/ADR-010-…md`（决策 4 删除线 + 新增 §附-A）、`docs/adr/ADR-012-…md`（决策 6 删除线 + 新增 §附-B）
@@ -284,6 +291,7 @@ return `${protocol}//${host}`;
 - `scripts/ci/lint-workflows.mjs`（+14 条断言，让上面那两步**少一条就当场红**）
 
 要点:
+
 1. **① 撞到了真实调用方，我按用户的指令拒绝删并回报。** `verifyCatalogSignature` 有调用方
    `packages/downloader/scripts/verify-unpack.mjs`，**用户裁定理由 #1 的事实前提不成立**（详见第一节）。
 2. **② 修了，并且找到了那"第二处坑"—— 但它不在我以为的地方**：同族比对点全仓 12 处，
@@ -301,15 +309,15 @@ return `${protocol}//${host}`;
 
 用户的硬约束原话：「**你要拒绝删任何有真实调用方的东西，并回报给我。**」这条**触发了**。
 
-| 符号 | 真实调用方 | 处理 |
-|---|---|---|
-| `loadManifest`（含全仓唯一取目录的 `fetch`） | **零** | ✅ 已删 |
-| `loadModelManifest` / `loadBackendManifest` | **零** | ✅ 已删 |
-| `LoadManifestOptions` / `LoadedManifest` / `ManifestTier` | **零** | ✅ 已删 |
-| `CATALOG_TTL_MS` / `STALE_AFTER_MS` | **零** | ✅ 已删 |
-| `readJson` / `fileAgeMs`（私有） | **零** | ✅ 已删 |
-| **`verifyCatalogSignature`** | **`verify-unpack.mjs:50` + `:584 :587 :591 :596`** | ⛔ **拒绝删** |
-| `signature.ts` 三个导出（`verifyEd25519` / `parseEd25519PublicKey` / `OPENMEMO_CATALOG_PUBLIC_KEY`） | **同上，全部被消费** | ⛔ **整个文件都不能删** |
+| 符号                                                                                                 | 真实调用方                                         | 处理                    |
+| ---------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ----------------------- |
+| `loadManifest`（含全仓唯一取目录的 `fetch`）                                                         | **零**                                             | ✅ 已删                 |
+| `loadModelManifest` / `loadBackendManifest`                                                          | **零**                                             | ✅ 已删                 |
+| `LoadManifestOptions` / `LoadedManifest` / `ManifestTier`                                            | **零**                                             | ✅ 已删                 |
+| `CATALOG_TTL_MS` / `STALE_AFTER_MS`                                                                  | **零**                                             | ✅ 已删                 |
+| `readJson` / `fileAgeMs`（私有）                                                                     | **零**                                             | ✅ 已删                 |
+| **`verifyCatalogSignature`**                                                                         | **`verify-unpack.mjs:50` + `:584 :587 :591 :596`** | ⛔ **拒绝删**           |
+| `signature.ts` 三个导出（`verifyEd25519` / `parseEd25519PublicKey` / `OPENMEMO_CATALOG_PUBLIC_KEY`） | **同上，全部被消费**                               | ⛔ **整个文件都不能删** |
 
 ### 为什么拒绝：三条证据
 
@@ -350,6 +358,7 @@ return `${protocol}//${host}`;
 ### ADR 怎么改的
 
 照 ADR-003 §7.6 的先例：**原文加删除线保留，不删**，另起订正节写清「何时、被谁、依据什么推翻」。
+
 - `ADR-010` 决策 4 → 新增 **§附-A**（含逐符号删除清单、拒绝删的完整证据、以及"若仍要删的正确切法"）
 - `ADR-012` 决策 6 → 新增 **§附-B**（订正"未启用（无密钥）"这个措辞暗示的不存在的未来）
 
@@ -370,31 +379,32 @@ return `${protocol}//${host}`;
 
 全仓 12 处 `URL.hostname` / IPv6 字面量比对点逐个核过，**今天真踩坑的只有 `schemas.ts` 一处**：
 
-| 位置 | 结论 |
-|---|---|
-| `packages/shared/src/schemas.ts:86` | 🔴 **就是本次修的这处** |
-| `apps/daemon/src/http/guard.ts:127-131` | ✅ **同一个坑，T-142 已修** —— 见下 |
-| `packages/pipeline/src/subprocess/argGuard.ts:105`（SSRF 守卫） | ✅ 进函数第一行就剥，**没这个坑** |
-| `packages/shared/src/proxy.ts:171` | ✅ 剥了 |
-| `packages/llm/.../openai-compatible.ts:284-285` | ✅ 两种形式都列了，行为对（`'::1'` 那支是死的，冗余但不咬人） |
-| `apps/daemon/src/http/guard.ts:11` `ALLOWED_HOSTS` | ✅ 同上，且 `guard.test.ts:99-102` 已记为"到不了的分支，不是 bug" |
-| `apps/daemon/src/http/auth.ts:270,280` | ✅ 比的是 `.host` vs Host 头，**两边都带括号**，对得上 |
-| `single-instance.ts:38` / `tls.ts:91` / `pipeline/proxy.ts:94` / `llm-catalog.ts:170` | ✅ **不是 URL 解析结果**，裸/带括号各自都是正确写法 |
+| 位置                                                                                  | 结论                                                              |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `packages/shared/src/schemas.ts:86`                                                   | 🔴 **就是本次修的这处**                                           |
+| `apps/daemon/src/http/guard.ts:127-131`                                               | ✅ **同一个坑，T-142 已修** —— 见下                               |
+| `packages/pipeline/src/subprocess/argGuard.ts:105`（SSRF 守卫）                       | ✅ 进函数第一行就剥，**没这个坑**                                 |
+| `packages/shared/src/proxy.ts:171`                                                    | ✅ 剥了                                                           |
+| `packages/llm/.../openai-compatible.ts:284-285`                                       | ✅ 两种形式都列了，行为对（`'::1'` 那支是死的，冗余但不咬人）     |
+| `apps/daemon/src/http/guard.ts:11` `ALLOWED_HOSTS`                                    | ✅ 同上，且 `guard.test.ts:99-102` 已记为"到不了的分支，不是 bug" |
+| `apps/daemon/src/http/auth.ts:270,280`                                                | ✅ 比的是 `.host` vs Host 头，**两边都带括号**，对得上            |
+| `single-instance.ts:38` / `tls.ts:91` / `pipeline/proxy.ts:94` / `llm-catalog.ts:170` | ✅ **不是 URL 解析结果**，裸/带括号各自都是正确写法               |
 
 ### 那次"IPv6 回环永久 403"事故：**同源，而且顺序反了**
 
 `[我核过]` commit **`7ff7e73`**（2026-08-04，T-142b）+ `test-gaps.md:497-503` + `guard.ts:99-126`
-+ 回归测试 `guard.test.ts:161-214` + 变异守卫 `mutation-check.mjs:159-169`（`E2-ipv6-sameorigin`）。
+
+- 回归测试 `guard.test.ts:161-214` + 变异守卫 `mutation-check.mjs:159-169`（`E2-ipv6-sameorigin`）。
 
 **根因逐字相同**：「`URL.hostname` 会剥掉 IPv6 方括号」这个假设是错的（WHATWG 规定必须带）。
 两次只是**猜错的方向不同**：
 
-| | T-142（`guard.ts`，已修） | 本次（`schemas.ts`） |
-|---|---|---|
-| 错法 | 以为不带 → 主动**再包**一层 → `[[::1]]` | 以为不带 → 名单里存**裸的** |
-| 后果 | 用 `http://[::1]:port` 打开界面，**每个带 Origin 的请求都 403，整页全死** | IPv6 回环上的本机自建产物**永远下载不了** |
-| 方向 | fail-closed（恒拒） | fail-closed（恒拒） |
-| 为何没人发现 | **daemon 打印的启动地址是 IPv4** | 同上 |
+|              | T-142（`guard.ts`，已修）                                                 | 本次（`schemas.ts`）                      |
+| ------------ | ------------------------------------------------------------------------- | ----------------------------------------- |
+| 错法         | 以为不带 → 主动**再包**一层 → `[[::1]]`                                   | 以为不带 → 名单里存**裸的**               |
+| 后果         | 用 `http://[::1]:port` 打开界面，**每个带 Origin 的请求都 403，整页全死** | IPv6 回环上的本机自建产物**永远下载不了** |
+| 方向         | fail-closed（恒拒）                                                       | fail-closed（恒拒）                       |
+| 为何没人发现 | **daemon 打印的启动地址是 IPv4**                                          | 同上                                      |
 
 > **最值得记的一笔**：`guard.ts:119-120` 当年把教训写成了「改成两边都剥……**也就不会再被同一个
 > 假设坑一次**」。而**那句话写下的时候，`schemas.ts` 已经在被同一个假设坑着了**。
@@ -426,11 +436,11 @@ new URL('http://[::ffff:127.0.0.1]/x').hostname === '[::ffff:7f00:1]'
 ⚠️ 第一次搭副本时对照组是 **`tests 0`** —— 正是本仓警告过的「空集返回绿」。
 **对照组不绿，后面一律不作数**，修好（用仓库自带 tsc）后对照组 **32/0 绿**才开始。
 
-| 变异 | 结果 |
-|---|---|
-| M1 比较时不剥括号（退回修复前） | 🔴「IPv6 回环 `[::1]` 也放行」 |
-| M2 `unbracketHost` 被"简化"成恒等 | 🔴 同上 |
-| M3 放宽成「含冒号就算回环」 | 🔴「**剥的是包装，不是判据**」 |
+| 变异                              | 结果                           |
+| --------------------------------- | ------------------------------ |
+| M1 比较时不剥括号（退回修复前）   | 🔴「IPv6 回环 `[::1]` 也放行」 |
+| M2 `unbracketHost` 被"简化"成恒等 | 🔴 同上                        |
+| M3 放宽成「含冒号就算回环」       | 🔴「**剥的是包装，不是判据**」 |
 | M4 从 `LOOPBACK_HOSTS` 删掉 `::1` | 🔴「IPv6 回环 `[::1]` 也放行」 |
 
 还原后对照组回到 32/0，副本已删。**四组各自红在正确的那一条上**（M3 红在配对用例上，正是它存在的理由）。
@@ -441,12 +451,13 @@ new URL('http://[::ffff:127.0.0.1]/x').hostname === '[::ffff:7f00:1]'
 
 补了两步，**位置照 `ci.yml` 的相对顺序**，`if: ${{ !cancelled() }}` 沿用本文件既有约定：
 
-| 步骤 | 说明 |
-|---|---|
-| `pnpm lint` | 此前**完全没有** → 「跨平台」在 lint 这一格上等于不存在 |
-| `pnpm test:ci-scripts` | 此前**完全没有** |
+| 步骤                   | 说明                                                    |
+| ---------------------- | ------------------------------------------------------- |
+| `pnpm lint`            | 此前**完全没有** → 「跨平台」在 lint 这一格上等于不存在 |
+| `pnpm test:ci-scripts` | 此前**完全没有**                                        |
 
 **两步都写了预测和判据**（照本文件末尾那条 `check:sources` 的先例 —— 预测要么被证实要么被推翻）：
+
 - lint：eslint 的 import 解析吃**文件系统大小写敏感性**（`import './Foo'` 引 `foo.ts` 在 Linux 红、
   另两平台绿）。`[未验证，需真机]`
 - `test:ci-scripts`：**预期在 macOS / Windows 上红**，而那正是要它的理由（探针不是门禁）。
@@ -466,12 +477,12 @@ new URL('http://[::ffff:127.0.0.1]/x').hostname === '[::ffff:7f00:1]'
 
 反向验证 `[实测，4 组，/tmp 隔离副本，对照组 576 条/6 workflow 绿]`：
 
-| 变异 | 结果 |
-|---|---|
-| W1 删掉 lint 步骤 | 🔴 `缺 \`pnpm lint\`` |
-| W2 删掉 test:ci-scripts 步骤 | 🔴 `缺 \`pnpm test:ci-scripts\`` |
-| W3 保留 `!cancelled()` 却加 `on.push` | 🔴 |
-| W4 `build:safe` 换成 `pnpm -r build` | 🔴 |
+| 变异                                  | 结果                             |
+| ------------------------------------- | -------------------------------- |
+| W1 删掉 lint 步骤                     | 🔴 `缺 \`pnpm lint\``            |
+| W2 删掉 test:ci-scripts 步骤          | 🔴 `缺 \`pnpm test:ci-scripts\`` |
+| W3 保留 `!cancelled()` 却加 `on.push` | 🔴                               |
+| W4 `build:safe` 换成 `pnpm -r build`  | 🔴                               |
 
 ### `format:check` —— **按判断没接**，理由留在了代码里
 
@@ -495,12 +506,12 @@ new URL('http://[::ffff:127.0.0.1]/x').hostname === '[::ffff:7f00:1]'
 
 **我能证明不是我**（证据链）：
 
-| 时刻 | 事件 |
-|---|---|
-| 22:16:54 | 我第一次 `pnpm build:safe`（= `pnpm --filter "!@openmemo/web" -r build`，**排除 web**） |
-| **22:22:51** | **`apps/web/dist` 61 个文件被整体重写。那一秒仓库里没有任何其它文件变动。** |
-| 22:56:2x | 我的 `pnpm -r test`（web 用例走 `vite build --outDir .test-out/…`，**不写 dist**） |
-| 22:57:26 | 我第二次 `pnpm build:safe` |
+| 时刻         | 事件                                                                                    |
+| ------------ | --------------------------------------------------------------------------------------- |
+| 22:16:54     | 我第一次 `pnpm build:safe`（= `pnpm --filter "!@openmemo/web" -r build`，**排除 web**） |
+| **22:22:51** | **`apps/web/dist` 61 个文件被整体重写。那一秒仓库里没有任何其它文件变动。**             |
+| 22:56:2x     | 我的 `pnpm -r test`（web 用例走 `vite build --outDir .test-out/…`，**不写 dist**）      |
+| 22:57:26     | 我第二次 `pnpm build:safe`                                                              |
 
 我全程只跑过 `build:safe` / `--filter @openmemo/shared build` / `npx tsc -b`。
 `apps/web/tsconfig.json` 的 `outDir` 是 **`dist-types/`** 不是 `dist`，所以 `tsc -b` 也写不到那里。
@@ -532,17 +543,17 @@ new URL('http://[::ffff:127.0.0.1]/x').hostname === '[::ffff:7f00:1]'
 
 ## 六、门禁
 
-| 门禁 | 结果 |
-|---|---|
-| `pnpm -r test` | **1342 pass / 0 fail**（基线 1341，**+1 全是我的**：shared 删 1 加 2） |
-| `npx tsc -b` | ✅ exit 0 |
-| `npx eslint .` | ✅ exit 0 |
-| `pnpm build:safe` | ✅ exit 0 |
-| `pnpm lint-workflows` | ✅ **605 条 / 7 个 workflow**（剔除他人在途的未跟踪文件后为 **576 条 / 6 个**；我新增 14 条） |
-| `pnpm test:ci-scripts` | ✅ 22 passed / 0 failed |
-| `pnpm check:orphans` | ✅ **70 / 基线 70**（72 → 70，只降不升） |
-| `verify-unpack.mjs` | ✅ **53 passed / 0 failed**（删改前后各跑一次，未打断） |
-| `~/.local/share/openmemo/datadir.json` | ✅ `md5sum -c` OK，仍是 `/root/data-memo`（§9-bis） |
+| 门禁                                   | 结果                                                                                          |
+| -------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `pnpm -r test`                         | **1342 pass / 0 fail**（基线 1341，**+1 全是我的**：shared 删 1 加 2）                        |
+| `npx tsc -b`                           | ✅ exit 0                                                                                     |
+| `npx eslint .`                         | ✅ exit 0                                                                                     |
+| `pnpm build:safe`                      | ✅ exit 0                                                                                     |
+| `pnpm lint-workflows`                  | ✅ **605 条 / 7 个 workflow**（剔除他人在途的未跟踪文件后为 **576 条 / 6 个**；我新增 14 条） |
+| `pnpm test:ci-scripts`                 | ✅ 22 passed / 0 failed                                                                       |
+| `pnpm check:orphans`                   | ✅ **70 / 基线 70**（72 → 70，只降不升）                                                      |
+| `verify-unpack.mjs`                    | ✅ **53 passed / 0 failed**（删改前后各跑一次，未打断）                                       |
+| `~/.local/share/openmemo/datadir.json` | ✅ `md5sum -c` OK，仍是 `/root/data-memo`（§9-bis）                                           |
 
 ⚠️ **`lint-workflows` 的 workflow 计数从 6 变 7 不是我造成的** —— 第 7 个是另一个 agent 的未跟踪
 `probe-cold-timing.yml`。我用剔除它的隔离副本复算得 576/6，两个数都如实记在这里。

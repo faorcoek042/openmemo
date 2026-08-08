@@ -133,8 +133,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: macos-26,       arch: arm64, backend: metal }
-          - { runner: macos-26,       arch: arm64, backend: cpu }
+          - { runner: macos-26, arch: arm64, backend: metal }
+          - { runner: macos-26, arch: arm64, backend: cpu }
           # ★ T-145 矩阵裁剪（用户 2026-08-05：「macos-x64 我用不到」）。原行：
           #   # Intel Macs have no supported GPU backend in ggml — CPU/AVX2 only.
           #   - { runner: macos-15-intel, arch: x64,   backend: cpu }

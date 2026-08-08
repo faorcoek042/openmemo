@@ -109,10 +109,22 @@ function buildRegistry(tools: ToolPaths, enableExtractor: boolean): MediaSourceR
 
 /** The inputs that must keep working. Podcasts are the dominant real use case. */
 const INPUTS_THAT_MUST_WORK = [
-  { label: 'podcast MP3 direct link', input: 'https://example.com/episodes/ep42.mp3', expect: 'direct-http' },
+  {
+    label: 'podcast MP3 direct link',
+    input: 'https://example.com/episodes/ep42.mp3',
+    expect: 'direct-http',
+  },
   { label: 'CDN m4a', input: 'https://cdn.example.org/audio/lecture.m4a', expect: 'direct-http' },
-  { label: 'public-domain OGG', input: 'https://upload.wikimedia.org/wikipedia/commons/7/7c/x.ogg', expect: 'direct-http' },
-  { label: 'HLS playlist', input: 'https://stream.example.com/live/index.m3u8', expect: 'direct-http' },
+  {
+    label: 'public-domain OGG',
+    input: 'https://upload.wikimedia.org/wikipedia/commons/7/7c/x.ogg',
+    expect: 'direct-http',
+  },
+  {
+    label: 'HLS playlist',
+    input: 'https://stream.example.com/live/index.m3u8',
+    expect: 'direct-http',
+  },
   { label: 'podcast RSS feed', input: 'https://example.com/feed.rss', expect: 'rss' },
   { label: 'podcast feed (path form)', input: 'https://example.com/podcast/feed', expect: 'rss' },
   { label: 'local file', input: '/tmp/recording.wav', expect: 'local-file' },
@@ -168,11 +180,16 @@ describe('TD-002 — the product survives removal of the GPL adapter', () => {
     const registry = buildRegistry(TOOLS_WITH_EXTRACTOR, true);
     const tried: string[] = [];
 
-    registry.register(stubSource('direct-http', 80, tried, new Error('not a media file (text/html)')));
+    registry.register(
+      stubSource('direct-http', 80, tried, new Error('not a media file (text/html)')),
+    );
     registry.register(stubSource('rss', 20, tried, new Error('not a feed')));
     registry.register(stubSource('yt-dlp', 10, tried, null), true);
 
-    const info = await registry.probe('https://video.example.com/watch?v=abc123', AbortSignal.timeout(5000));
+    const info = await registry.probe(
+      'https://video.example.com/watch?v=abc123',
+      AbortSignal.timeout(5000),
+    );
     assert.equal(info.producedBy, 'yt-dlp');
     assert.deepEqual(tried, ['direct-http', 'rss', 'yt-dlp'], 'clean adapters must be tried first');
   });
@@ -220,7 +237,6 @@ describe('TD-002 — the product survives removal of the GPL adapter', () => {
     await assert.rejects(() => registry.probe(url, AbortSignal.timeout(5000)));
   });
 });
-
 
 /** Minimal adapter double: records that it was consulted, then succeeds or declines. */
 function stubSource(

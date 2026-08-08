@@ -7,6 +7,7 @@
 交付: `/root/memo/HANDOFF.md`（七节齐全）
 
 节标题:
+
 - ① 30 秒读懂：这是什么、现在能干什么
 - ② 怎么跑起来（从零到能用）
 - ③ 架构一页纸
@@ -17,8 +18,9 @@
 - ⑦ 给接手者的第一步建议
 
 方法: 读完 16 份 ADR + PROTOCOL + CHARTER + FEATURE-COVERAGE + PENDING + D-07/08/09 TL;DR
-+ 七份 inbox（重点读最近 2–3 条）+ 90 条 git log；对 `:10000` demo **只读**打了 9 个接口；
-派 2 个 sonnet subagent 分别核实「构建/启动/环境变量/selfcheck」与「路由面/前端接线/历史 bug 类是否复发」。
+
+- 七份 inbox（重点读最近 2–3 条）+ 90 条 git log；对 `:10000` demo **只读**打了 9 个接口；
+  派 2 个 sonnet subagent 分别核实「构建/启动/环境变量/selfcheck」与「路由面/前端接线/历史 bug 类是否复发」。
 
 ### 我核实后发现与既有报告 / 文档不符的地方（共 8 条）
 
@@ -51,10 +53,12 @@
    后来靠空提交补记归属）。本项目把 commit message 当最重要的事实来源，`add -A` 直接污染它。
 
 ### 顺带记录的两项环境事实
+
 - 机器上挂着**两个遗留 vite dev server**（127.0.0.1:5173 与 :5188，跑了 19–24 小时）。
 - `PENDING-USER-DECISIONS.md` 的 A-1（GitHub 仓库=唯一硬阻塞）已被 ADR-015 撤销，**该文件那一段已过期**。
 
 下一步建议:
+
 1. 请把 F3 前端 mock 排进任务（`architect`）—— 它是章程功能，且后端早就是真的。
 2. `check-tracked-sources.mjs` 接进 CI 或 pre-commit（`oss-scout`）。
 3. 安装记录迁移（`model-mgmt`）：旧记录的绝对路径与 `installPath` 残留。
@@ -62,6 +66,7 @@
 需要 Manager 决策: 无（本 agent 不改代码，以上均为报告）。
 
 诚实声明:
+
 - demo（`:10000`）**全程只读**，只发过 GET，未重启、未写、未读任何密钥文件内容。
 - 未使用 `pkill -f`，未起任何进程。
 - HANDOFF.md 里每条能力都带证据等级；凡是我没独立核实的一律标 `[报告]`，未验的标 `[未验证]`。
@@ -106,16 +111,16 @@ coordination/inbox/handoff.md         # 本文件
 
 ### 2. 上一版 HANDOFF 里**已经过期**的 6 条（我逐条核实后改了）
 
-| 上一版写的 | 实际 | 证据 |
-|---|---|---|
-| 「F3 录音页前端是 mock，是最大的功能缺口」 | **已接通** | `[读码]` `features/recorder/asrStream.ts`（新文件）：AudioWorklet → PCM16 → `/ws/recorder`；`RecorderPage.tsx:190` 注释写明"此前这里是 `setInterval` 轮播" |
-| 「`GET /api/selfcheck` 是 CLI 的真子集，缺三项」 | **已补齐** | `[实测]` HTTP 端点现在 19 项，`hw.probe` / `datadir.assetsPresent` / `llm.tier2` 三项都在 |
-| 「安装记录里躺着 `/tmp/cold4` 悬空路径 + `installPath` 残留」 | **已迁移干净** | `[实测]` `GET /api/models/installed` 中 `/tmp/` 0 命中、`installPath` 0 命中（`storage/migrateRecords.ts`） |
-| 「`openapi.yaml` 还留着 4 处 `installPath`」 | **0 处** | `[实测]` `grep -c` = 0 |
-| 「`docs/SECURITY.md` 与当前部署不一致」 | **已如实** | `[读码]` 原句已改成划掉，并列出真实部署与恢复命令 |
-| 「`check-tracked-sources.mjs` 没有任何调用方」 | **有入口，没人跑** | `[实测]` 已在根 `package.json` 的 `check:sources` / `check` 里；但仓库唯一 workflow 是手动的 `build-backends.yml`，`.git/hooks` 无非 sample 钩子 |
-| 「`HealthBanner.tsx` 是死文件待清」 | **已删** | `[实测]` `git log --diff-filter=D` → 删于 `70210a0` |
-| 「demo LLM 配置自相矛盾（`defaultModelId` vs `providers[0].model`）」 | **不再是矛盾** | T-126b 定了权威关系：前者权威、后者是"上次选的型号"的记忆，**两者本就允许不同** |
+| 上一版写的                                                            | 实际               | 证据                                                                                                                                                       |
+| --------------------------------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 「F3 录音页前端是 mock，是最大的功能缺口」                            | **已接通**         | `[读码]` `features/recorder/asrStream.ts`（新文件）：AudioWorklet → PCM16 → `/ws/recorder`；`RecorderPage.tsx:190` 注释写明"此前这里是 `setInterval` 轮播" |
+| 「`GET /api/selfcheck` 是 CLI 的真子集，缺三项」                      | **已补齐**         | `[实测]` HTTP 端点现在 19 项，`hw.probe` / `datadir.assetsPresent` / `llm.tier2` 三项都在                                                                  |
+| 「安装记录里躺着 `/tmp/cold4` 悬空路径 + `installPath` 残留」         | **已迁移干净**     | `[实测]` `GET /api/models/installed` 中 `/tmp/` 0 命中、`installPath` 0 命中（`storage/migrateRecords.ts`）                                                |
+| 「`openapi.yaml` 还留着 4 处 `installPath`」                          | **0 处**           | `[实测]` `grep -c` = 0                                                                                                                                     |
+| 「`docs/SECURITY.md` 与当前部署不一致」                               | **已如实**         | `[读码]` 原句已改成划掉，并列出真实部署与恢复命令                                                                                                          |
+| 「`check-tracked-sources.mjs` 没有任何调用方」                        | **有入口，没人跑** | `[实测]` 已在根 `package.json` 的 `check:sources` / `check` 里；但仓库唯一 workflow 是手动的 `build-backends.yml`，`.git/hooks` 无非 sample 钩子           |
+| 「`HealthBanner.tsx` 是死文件待清」                                   | **已删**           | `[实测]` `git log --diff-filter=D` → 删于 `70210a0`                                                                                                        |
+| 「demo LLM 配置自相矛盾（`defaultModelId` vs `providers[0].model`）」 | **不再是矛盾**     | T-126b 定了权威关系：前者权威、后者是"上次选的型号"的记忆，**两者本就允许不同**                                                                            |
 
 ### 3. 你那份清单里，**与代码不符 / 需要补充**的地方
 
@@ -147,8 +152,8 @@ coordination/inbox/handoff.md         # 本文件
    - `93310ea`「T-118」只剩 2 个文件；
    - `18f205f`「F3 接真 WebSocket (T-117)」**只有一个 inbox 文件，零行代码**；
    - `9d57689`「T-121」顺带装走了 T-114 的 `statusTone.ts` 等一批配色代码。
-   成因是 14:55 那次 `add -A` 把磁盘上别人已写完未提交的文件一并扫走。
-   **后果：想知道 F3 是怎么接通的，`git log --oneline` 会把你指到一个只有 inbox 文件的提交。**
+     成因是 14:55 那次 `add -A` 把磁盘上别人已写完未提交的文件一并扫走。
+     **后果：想知道 F3 是怎么接通的，`git log --oneline` 会把你指到一个只有 inbox 文件的提交。**
 2. 🔴 **T-127 的版本戳在"全部接通"时看不见。** `[读码]` `daemon v… · commit · 起 HH:MM` 这行渲染在
    `MockNotice.tsx` 的 `ConnectivitySummary` 内部，而该组件开头是 `if (mocked === 0) return null;`。
    **一切正常时，那个用来回答"重启生效了没有"的东西自己消失了** —— 而"一切正常"恰恰是最需要它的时候。

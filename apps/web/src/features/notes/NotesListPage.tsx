@@ -149,11 +149,17 @@ export default function NotesListPage() {
             >
               <div className="flex items-start gap-3">
                 <div className="mt-0.5 text-ink-muted" aria-hidden>
-                  {n.kind === 'recording' ? <Mic className="size-4" /> : <FileAudio className="size-4" />}
+                  {n.kind === 'recording' ? (
+                    <Mic className="size-4" />
+                  ) : (
+                    <FileAudio className="size-4" />
+                  )}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <h2 className="truncate text-sm font-medium text-ink">{n.title || t('notes.untitled')}</h2>
+                    <h2 className="truncate text-sm font-medium text-ink">
+                      {n.title || t('notes.untitled')}
+                    </h2>
                     {/* 星标此前只显示不能点 —— 现在是真的写入路径（乐观更新） */}
                     <button
                       type="button"
@@ -176,7 +182,9 @@ export default function NotesListPage() {
                     </button>
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
-                    {n.durationMs ? <span>{humanDuration(n.durationMs, i18n.language)}</span> : null}
+                    {n.durationMs ? (
+                      <span>{humanDuration(n.durationMs, i18n.language)}</span>
+                    ) : null}
                     {/*
                       ⚠️ 这里原来有一个站点徽章 `{n.source?.site ? <span>{n.source.site}</span> : null}`。
                       **删掉了，不是改名**（T-150）：`GET /api/notes` 的 `.map()` 从来不发 `source`
@@ -192,7 +200,10 @@ export default function NotesListPage() {
                     */}
                     <span>{relativeTime(Date.parse(n.updatedAt), i18n.language)}</span>
                     {arr(n.tags).map((tag) => (
-                      <span key={tag.uid} className="rounded bg-surface-0 px-1.5 py-0.5 text-ink-secondary">
+                      <span
+                        key={tag.uid}
+                        className="rounded bg-surface-0 px-1.5 py-0.5 text-ink-secondary"
+                      >
                         {tag.name}
                       </span>
                     ))}

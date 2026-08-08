@@ -72,7 +72,12 @@ describe('T-164 ⑤ —— 搜索档位由服务端说了算', () => {
      * 阳性对照。少了它，把 `availableModes` 写成 `return ['keyword']` 也能让上面三条全绿，
      * 而那是"把选择器焊死"，不是"如实反映服务端"。
      */
-    const all = normalizeModes({ keyword: true, semantic: true, hybrid: true, semanticReason: null });
+    const all = normalizeModes({
+      keyword: true,
+      semantic: true,
+      hybrid: true,
+      semanticReason: null,
+    });
     assert.deepEqual(availableModes(all), ['hybrid', 'keyword', 'semantic']);
     assert.deepEqual(missingModes(all), []);
     assert.equal(effectiveMode('semantic', all), 'semantic');

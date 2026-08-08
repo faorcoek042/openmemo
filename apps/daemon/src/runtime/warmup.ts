@@ -66,7 +66,12 @@
  * 见 `requestBreakerRecovery()`；`resetBreaker()` 已随之删除。）
  */
 
-import { probedBackendsInDir, runProbe, type ProbeResult, type RunProbeOptions } from '@openmemo/runtime';
+import {
+  probedBackendsInDir,
+  runProbe,
+  type ProbeResult,
+  type RunProbeOptions,
+} from '@openmemo/runtime';
 
 import { resolveRuntimeLayout, type RuntimePathsInput } from './setup.js';
 
@@ -195,6 +200,12 @@ export async function warmProbeCache(
      */
     const detail = `捂热 GPU 着色器缓存时出错：${String(err)} —— 安装本身已成功，不受影响`;
     safely(() => options.log?.(detail));
-    return { attempted: true, ok: false, skipped: null, durationMs: Date.now() - startedAt, detail };
+    return {
+      attempted: true,
+      ok: false,
+      skipped: null,
+      durationMs: Date.now() - startedAt,
+      detail,
+    };
   }
 }

@@ -40,12 +40,12 @@
 
 ## 清了什么（按"会不会误导人"排，不按数量）
 
-| 优先级 | 族 | 结果 |
-|---|---|---|
-| 1 | **文档断言** | 核了 **187 条**，判定 **113 条已不成立**；已落地订正见 §1。**这是本轮的大头** |
-| 2 | **重复实现（8 处已分叉）** | 清 **2 处**（D5 时间码 = 真 bug、D4 代理脱敏）；**1 处证实仍全开但跨三家地界**（D1 扩展名）；其余见 §2 |
-| 3 | **34 个没人读的字段** | **做了判定不做修改**（全在别人地界）。结论见 §3 —— 其中 **6 个"前端其实读了"是假的**，是同名碰撞 |
-| 4 | 死导出 / 死词条 / wavesurfer | **基本没清**，理由在 §4。**这是有意的**，不是没做完 |
+| 优先级 | 族                           | 结果                                                                                                   |
+| ------ | ---------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 1      | **文档断言**                 | 核了 **187 条**，判定 **113 条已不成立**；已落地订正见 §1。**这是本轮的大头**                          |
+| 2      | **重复实现（8 处已分叉）**   | 清 **2 处**（D5 时间码 = 真 bug、D4 代理脱敏）；**1 处证实仍全开但跨三家地界**（D1 扩展名）；其余见 §2 |
+| 3      | **34 个没人读的字段**        | **做了判定不做修改**（全在别人地界）。结论见 §3 —— 其中 **6 个"前端其实读了"是假的**，是同名碰撞       |
+| 4      | 死导出 / 死词条 / wavesurfer | **基本没清**，理由在 §4。**这是有意的**，不是没做完                                                    |
 
 ## 没清的，说清楚为什么（这一节比上面那张表重要）
 
@@ -70,11 +70,11 @@
 判"零命中"时**同时给出含注释与剥注释两个数字**（剥注释用 TS scanner 状态机，不是正则）。
 判决表存档：`/tmp/debt-cleanup/verdicts-design.md`、`/tmp/debt-cleanup/verdicts-research.md`。
 
-| | 核了 | 已不成立 | 仍成立 | 拿不准 |
-|---|---|---|---|---|
-| D-01…D-06 / D-11 | 93 | 57 | 30 | 6 |
-| SECURITY / R-* / coordination | 94 | 56 | 30 | 8 |
-| **合计** | **187** | **113** | **60** | **14** |
+|                               | 核了    | 已不成立 | 仍成立 | 拿不准 |
+| ----------------------------- | ------- | -------- | ------ | ------ |
+| D-01…D-06 / D-11              | 93      | 57       | 30     | 6      |
+| SECURITY / R-* / coordination | 94      | 56       | 30     | 8      |
+| **合计**                      | **187** | **113**  | **60** | **14** |
 
 「写着没做实际做了」在设计文档里占 **31/57**，与盘点自评的「约 60%」吻合。
 
@@ -109,6 +109,7 @@
 TL;DR `:11` 还特意声明这是「**架构强制点，不是编码规范建议**」。
 
 `[实测]`：
+
 - `eslint.config.js` 全文 115 行，`child_process` **零命中**（含注释一起 grep 也是 0）
 - 那三处 `no-restricted-imports`（`:64`/`:86`/`:104`）**全是前端分层护栏**，与子进程无关
 - 那个目录**不存在**（真正的 runner 在 `packages/pipeline/src/subprocess/runner.ts`）
@@ -128,17 +129,17 @@ TL;DR `:11` 还特意声明这是「**架构强制点，不是编码规范建议
 
 ## 1.4 改了哪些文件
 
-| 文件 | 处置 |
-|---|---|
-| `docs/SECURITY.md` | 三条点名项订正（解压防护 ❌→✅、"唯一 import child_process" 如实降级、补记 auth 的 same-origin fallback）+ 附录「验证状态」表 3 行订正 |
-| `docs/design/D-01`…`D-06`、`D-11` | 逐条落地判决表（含 §1.2 目录树、§3 组件清单两处重写） |
-| `docs/design/D-07` / `D-08` | **标 `superseded` 并互相补上反向链接**（此前 D-08 只单向声明、D-07 什么标记都没有）+ TL;DR 前加逐条对照表 |
-| `docs/design/D-09` / `D-10` | TL;DR 前加对照表：四条 🚨 里已闭合的逐条标出，**仍成立的如实保留** |
-| `docs/design/D-05 §7.3a` | 订正 wavesurfer（见 §5） |
-| `docs/research/R-03` | 标 superseded + header；**§3 许可证矩阵 / §4 FFmpeg LGPL / §5 yt-dlp 分级保留**（实测确认全仓独家，9 条命中无一重复，且 `vendor/README.md` 引用它） |
-| `docs/research/R-01/R-02/R-06` | 加 header + 就地划线 |
-| `coordination/FEATURE-COVERAGE.md` | 20 条 🔴 里 **16 条是假阴性**，逐条订正；**3 条仍值得抢救的单独标出** |
-| `coordination/PENDING-USER-DECISIONS.md` | A-1「唯一硬阻塞」已被 ADR-015 明文撤销；C-2 的裁决依据两个前提都已被用户推翻 |
+| 文件                                     | 处置                                                                                                                                                |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docs/SECURITY.md`                       | 三条点名项订正（解压防护 ❌→✅、"唯一 import child_process" 如实降级、补记 auth 的 same-origin fallback）+ 附录「验证状态」表 3 行订正              |
+| `docs/design/D-01`…`D-06`、`D-11`        | 逐条落地判决表（含 §1.2 目录树、§3 组件清单两处重写）                                                                                               |
+| `docs/design/D-07` / `D-08`              | **标 `superseded` 并互相补上反向链接**（此前 D-08 只单向声明、D-07 什么标记都没有）+ TL;DR 前加逐条对照表                                           |
+| `docs/design/D-09` / `D-10`              | TL;DR 前加对照表：四条 🚨 里已闭合的逐条标出，**仍成立的如实保留**                                                                                  |
+| `docs/design/D-05 §7.3a`                 | 订正 wavesurfer（见 §5）                                                                                                                            |
+| `docs/research/R-03`                     | 标 superseded + header；**§3 许可证矩阵 / §4 FFmpeg LGPL / §5 yt-dlp 分级保留**（实测确认全仓独家，9 条命中无一重复，且 `vendor/README.md` 引用它） |
+| `docs/research/R-01/R-02/R-06`           | 加 header + 就地划线                                                                                                                                |
+| `coordination/FEATURE-COVERAGE.md`       | 20 条 🔴 里 **16 条是假阴性**，逐条订正；**3 条仍值得抢救的单独标出**                                                                               |
+| `coordination/PENDING-USER-DECISIONS.md` | A-1「唯一硬阻塞」已被 ADR-015 明文撤销；C-2 的裁决依据两个前提都已被用户推翻                                                                        |
 
 **订正一律保留「此前写着 X」**（⑤D-bis 的规矩），一处都没有抹掉旧说法。
 **没有删任何章节、没有动任何章节号** —— D-01 有 350+ 处代码注释按章节号引用它。
@@ -162,9 +163,9 @@ TL;DR `:11` 还特意声明这是「**架构强制点，不是编码规范建议
 `packages/mindmap` 里有两份，输出不同：
 
 | 输入 ms | `adapters/markmap.ts` | `serialize/markdown.ts` |
-|---|---|---|
-| 90500 | `1:30` | `01:31` |
-| 3599999 | `59:59` | `1:00:00` |
+| ------- | --------------------- | ----------------------- |
+| 90500   | `1:30`                | `01:31`                 |
+| 3599999 | `59:59`               | `1:00:00`               |
 
 两处差异各自独立：`Math.floor` vs `Math.round`（后者把 90.5s **进位到 91s**，
 时间码指向那一刻**之后** —— 跳过去会错过用户要找的那句话的开头），以及分钟位补不补零。
@@ -182,11 +183,11 @@ TL;DR `:11` 还特意声明这是「**架构强制点，不是编码规范建议
 
 `[实测]` 7 个输入里 6 个不一样：
 
-| 输入 | pipeline 那份 | shared 那份 |
-|---|---|---|
-| `http://user:pass@proxy:3128` | `http://***@proxy:3128` | `http://***:***@proxy:3128/` |
-| `http://:pass@h:80` | `http://***@h`（**端口丢了**） | `http://:***@h/` |
-| `''` | `<invalid proxy url>` | `null` |
+| 输入                          | pipeline 那份                  | shared 那份                  |
+| ----------------------------- | ------------------------------ | ---------------------------- |
+| `http://user:pass@proxy:3128` | `http://***@proxy:3128`        | `http://***:***@proxy:3128/` |
+| `http://:pass@h:80`           | `http://***@h`（**端口丢了**） | `http://:***@h/`             |
+| `''`                          | `<invalid proxy url>`          | `null`                       |
 
 第二行最难看：只有密码没有用户名时端口被规范化掉，且打码结果看起来像"只填了用户名"。
 第三行会把"没配代理"显示成"配错了代理"。
@@ -212,11 +213,11 @@ web      looksLikeMedia     (18): aac avi flac flv m4a m4v mkv mov mp3 mp4 mpeg 
 
 四个方向的差集**逐个实测**（脚本 `/tmp/debt-cleanup/ext.mjs`）：
 
-| 差集 | 内容 | 用户看到什么 |
-|---|---|---|
-| **web ∖ daemon** | `flv` `wmv` | 拖一个 `.flv`：**前端放行、出现上传行、服务端拒收** |
-| **daemon ∖ web** | `ts` | 服务端收，前端的拖拽预检不认它 |
-| **daemon ∖ pipeline** | `mpeg` `mpg` | 传得上去，但不在 pipeline 的媒体白名单里 |
+| 差集                  | 内容                                                    | 用户看到什么                                               |
+| --------------------- | ------------------------------------------------------- | ---------------------------------------------------------- |
+| **web ∖ daemon**      | `flv` `wmv`                                             | 拖一个 `.flv`：**前端放行、出现上传行、服务端拒收**        |
+| **daemon ∖ web**      | `ts`                                                    | 服务端收，前端的拖拽预检不认它                             |
+| **daemon ∖ pipeline** | `mpeg` `mpg`                                            | 传得上去，但不在 pipeline 的媒体白名单里                   |
 | **pipeline ∖ daemon** | `aif` `aiff` `ass` `flv` `m3u8` `oga` `srt` `vtt` `wmv` | pipeline 认得（字幕/HLS/播放列表类多为有意），上传端一律拒 |
 
 ⚠️ 盘点当时报的是 `web∖daemon = {.flv,.wmv}` + `daemon∖pipeline = {.mpg,.mpeg}`，
@@ -258,16 +259,16 @@ web      looksLikeMedia     (18): aac avi flac flv m4a m4v mkv mov mp3 mp4 mpeg 
 
 ## 2.5 其余各条在 HEAD 上的状态（复核过，未动）
 
-| # | 状态 | 归属 |
-|---|---|---|
-| D2 `resolveInstalledFile` | 🔴 仍 2 份（`downloader/store.ts:322` + `daemon/rest/models.ts:67`） | daemon-contract |
-| D3 CSRF 令牌读取 | 🔴 仍 2 份（`client.ts` + `capture/upload.ts:132`） | frontend-truth |
-| D6 笔记 DTO 镜像 | 🔴 仍在（正被 daemon-contract 收敛中） | daemon-contract |
-| D7 LLM 供应商预设 | 🔴 仍在（`catalog-truth` 正在动 `llm-catalog.ts`） | catalog-truth |
-| D8 provider `kind` 枚举 | 🔴 仍 3 套（shared 6 值 / llm 3 值 / web 3 值） | 跨 |
-| U2–U8（daemon `http/rest/` 内部 7 处） | 🔴 仍在，全 XS | daemon-contract |
-| U13 `RECORD_SAMPLE_RATE` | 🔴 仍 2 份（WebSocket 线协议常量，漂了 = 静默乱码转写） | 跨 |
-| P1/P2/P3/P6 | 🟡 未分叉，未动 | 我（下一轮） |
+| #                                      | 状态                                                                 | 归属            |
+| -------------------------------------- | -------------------------------------------------------------------- | --------------- |
+| D2 `resolveInstalledFile`              | 🔴 仍 2 份（`downloader/store.ts:322` + `daemon/rest/models.ts:67`） | daemon-contract |
+| D3 CSRF 令牌读取                       | 🔴 仍 2 份（`client.ts` + `capture/upload.ts:132`）                  | frontend-truth  |
+| D6 笔记 DTO 镜像                       | 🔴 仍在（正被 daemon-contract 收敛中）                               | daemon-contract |
+| D7 LLM 供应商预设                      | 🔴 仍在（`catalog-truth` 正在动 `llm-catalog.ts`）                   | catalog-truth   |
+| D8 provider `kind` 枚举                | 🔴 仍 3 套（shared 6 值 / llm 3 值 / web 3 值）                      | 跨              |
+| U2–U8（daemon `http/rest/` 内部 7 处） | 🔴 仍在，全 XS                                                       | daemon-contract |
+| U13 `RECORD_SAMPLE_RATE`               | 🔴 仍 2 份（WebSocket 线协议常量，漂了 = 静默乱码转写）              | 跨              |
+| P1/P2/P3/P6                            | 🟡 未分叉，未动                                                      | 我（下一轮）    |
 
 ---
 
@@ -279,14 +280,14 @@ web      looksLikeMedia     (18): aac avi flac flv m4a m4v mkv mov mp3 mp4 mpeg 
 
 `[实测]` 28 个字段逐个在**剥注释后**的语料里查，6 个看起来"web 有命中"的**全是同名碰撞**：
 
-| 字段 | 看起来命中在 | 实际是什么 |
-|---|---|---|
-| `requiresAuth` | `lib/api/types.ts:136` | **只是类型声明**，不是读取 |
-| `nodeCount` | `features/mindmap/api.ts:9` | 同上 |
-| `concurrencyLimit` | `features/tasks/api.ts:41` | 同上 |
-| `keyword` / `semantic` | `features/search/SearchPage.tsx:12` | `SearchMode` 枚举值，**另一个概念** |
-| `effective` | `ProxySettingsSection.tsx:341` | i18n 键 `settings.proxy.effective` + 本地计算 |
-| `selected` | `ModelsPage.tsx:334` | `aria-selected` |
+| 字段                   | 看起来命中在                        | 实际是什么                                    |
+| ---------------------- | ----------------------------------- | --------------------------------------------- |
+| `requiresAuth`         | `lib/api/types.ts:136`              | **只是类型声明**，不是读取                    |
+| `nodeCount`            | `features/mindmap/api.ts:9`         | 同上                                          |
+| `concurrencyLimit`     | `features/tasks/api.ts:41`          | 同上                                          |
+| `keyword` / `semantic` | `features/search/SearchPage.tsx:12` | `SearchMode` 枚举值，**另一个概念**           |
+| `effective`            | `ProxySettingsSection.tsx:341`      | i18n 键 `settings.proxy.effective` + 本地计算 |
+| `selected`             | `ModelsPage.tsx:334`                | `aria-selected`                               |
 
 **28 个抽查的全部确认为真的没人读。** 盘点那 34 条是对的。
 
@@ -294,12 +295,12 @@ web      looksLikeMedia     (18): aac avi flac flv m4a m4v mkv mov mp3 mp4 mpeg 
 
 我逐个读了产出侧。抽样深查 4 条，结论有两条推翻了"前端漏读"这个默认框架：
 
-| 字段 | 判定 | 依据 |
-|---|---|---|
-| **`ProbeResult.requiresAuth`** | **不该发** | `apps/daemon/src/http/rest/notes.ts:211-214` **硬编码 `false`**，注释自己写着「猜出一个假的 `requiresAuth` 比没有这个字段更糟」。**契约声明了一个谁都没在算的字段** —— 前端不读是对的，债在契约那头 |
-| **`ActivateResponse.reloadRequired`** | **不该发（第二事实来源）** | `rest/models.ts:569` **硬编码 `true`**；而前端的"需要重启"UI 读的是另一条路（`ReadinessBanner.tsx:145` ← `/api/health` 的 `restartRequired`）。两个来源、其中一个恒真 |
-| **`TranscribeDoneEvent.partial`** | 低价值 | `transcribe.ts:507` 是真值，但同样的信息经 `note.status === 'partial'` 已经到了界面（`NotesListPage.tsx:177`）。接它只省一次 refetch |
-| **`GcResponse.removedFiles`** | **前端漏读**，值得接 | 现在只说清了多少字节，不说清了几个文件 |
+| 字段                                  | 判定                       | 依据                                                                                                                                                                                                |
+| ------------------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`ProbeResult.requiresAuth`**        | **不该发**                 | `apps/daemon/src/http/rest/notes.ts:211-214` **硬编码 `false`**，注释自己写着「猜出一个假的 `requiresAuth` 比没有这个字段更糟」。**契约声明了一个谁都没在算的字段** —— 前端不读是对的，债在契约那头 |
+| **`ActivateResponse.reloadRequired`** | **不该发（第二事实来源）** | `rest/models.ts:569` **硬编码 `true`**；而前端的"需要重启"UI 读的是另一条路（`ReadinessBanner.tsx:145` ← `/api/health` 的 `restartRequired`）。两个来源、其中一个恒真                               |
+| **`TranscribeDoneEvent.partial`**     | 低价值                     | `transcribe.ts:507` 是真值，但同样的信息经 `note.status === 'partial'` 已经到了界面（`NotesListPage.tsx:177`）。接它只省一次 refetch                                                                |
+| **`GcResponse.removedFiles`**         | **前端漏读**，值得接       | 现在只说清了多少字节，不说清了几个文件                                                                                                                                                              |
 
 **其余 30 条我按语义归类，没有逐个深查**（诚实标注）。我的建议分档：
 
@@ -312,8 +313,8 @@ web      looksLikeMedia     (18): aac avi flac flv m4a m4v mkv mov mp3 mp4 mpeg 
 - **内部键，前端本来就不该用**：`hardwareSnapshotId` / `snapshotId` / `eventsUrl`
   （`eventsUrl` 还是个 URL 拼装的第二来源）
 
-**判据建议**（比逐条清单有用）：*一个字段进契约的门槛，应该是"有人会读它"，
-不是"我算得出来"。* 现在这 34 条里至少 2 条是**硬编码的假值**，那比不发更糟 ——
+**判据建议**（比逐条清单有用）：_一个字段进契约的门槛，应该是"有人会读它"，
+不是"我算得出来"。_ 现在这 34 条里至少 2 条是**硬编码的假值**，那比不发更糟 ——
 它让下一个人以为这个信息存在。
 
 ---
@@ -340,6 +341,7 @@ web      looksLikeMedia     (18): aac avi flac flv m4a m4v mkv mov mp3 mp4 mpeg 
 修完之后，我地界内 6 个包的结果与盘点**独立对上**（32 个）。
 
 **为什么不删**：
+
 - 其中 **benchmark 三件套 + `WhisperServerEngine`** 是**刻意留着的**（D-07/D-08 记为
   "已实现、尚未注册进候选池"）—— 债是那条缺失的注册线，删掉等于扔掉能用的东西
 - `resolveModelsRoot`/`bucketForRole` 是**重复实现的另一半**（daemon 自己重写了一遍），
@@ -392,11 +394,11 @@ web      looksLikeMedia     (18): aac avi flac flv m4a m4v mkv mov mp3 mp4 mpeg 
 
 **没有一条来自我。** 我提交的每一步都在自己的包上跑绿过。
 
-| 红 | 出处 | 归属 |
-|---|---|---|
-| 3 条 `apps/web` `/models` Tab / 中英混排 | `ReferenceError: splitAsrSections is not defined` —— `asrSections.ts` 在源码里有、测试 bundle 是旧的 | `catalog-truth` 在途 |
-| 8 条 `apps/daemon` `dist/media/peaks.test.js` | `apps/daemon/src/media/` 是**未跟踪的新目录** | `daemon-contract` 在途（真 peaks） |
-| `tsc -b`：`apps/web/src/lib/api/mock.ts` 缺 `NoteAsset.url` | `packages/shared/src/notes.ts` 正在被改 | daemon-contract / frontend-truth 在途 |
+| 红                                                          | 出处                                                                                                 | 归属                                  |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| 3 条 `apps/web` `/models` Tab / 中英混排                    | `ReferenceError: splitAsrSections is not defined` —— `asrSections.ts` 在源码里有、测试 bundle 是旧的 | `catalog-truth` 在途                  |
+| 8 条 `apps/daemon` `dist/media/peaks.test.js`               | `apps/daemon/src/media/` 是**未跟踪的新目录**                                                        | `daemon-contract` 在途（真 peaks）    |
+| `tsc -b`：`apps/web/src/lib/api/mock.ts` 缺 `NoteAsset.url` | `packages/shared/src/notes.ts` 正在被改                                                              | daemon-contract / frontend-truth 在途 |
 
 我自己的包（收尾实测）：`mindmap 51/51` · `pipeline 187/187` · `db 53/53` · `llm 18/18` ·
 `runtime 51/51` · `web unit 94/94` · `web host 10/10`。
@@ -451,6 +453,7 @@ web      looksLikeMedia     (18): aac avi flac flv m4a m4v mkv mov mp3 mp4 mpeg 
    **另建议定一条规矩**：ADR 被推翻时**必须**在被推翻的那份上留反向标记
    （现有至少 4 处只做了单向）—— 否则必读清单会持续把人指错。
    我这次给 D-07/D-08 补的双向链接就是这条规矩的样子。
+
 3. **D1 媒体扩展名白名单**（§2.3）跨三家地界，需要一次 SHARED-CHANGE 把它收到 `packages/shared`。
    ⚠️ 同时 E5 仍然成立：**扩展名判定改成"什么都放行"，pipeline 187/187 全绿。**
    所以收敛的同时必须补一条"拒绝"侧的断言，否则统一完还是钉不住。
@@ -480,6 +483,7 @@ sourceIsGreppable.test.ts`），**上线当天就抓到第四例**。
 # §反向验证（每条护栏都撤掉确认过真红，贴真实输出）
 
 **① 时间码：把第二份实现放回去**
+
 ```
 ✖ 剥掉注释后，全包恰好一个定义，且在 timecode.ts
   AssertionError: formatTimestamp 的实现份数不对（应恰好 1 份、在 timecode.ts）。
@@ -490,6 +494,7 @@ sourceIsGreppable.test.ts`），**上线当天就抓到第四例**。
 ```
 
 **② 时间码：floor 改成 round（只有一份实现，但语义被改坏）**
+
 ```
 ✖ 90500ms → 1:30（floor，不是 round 出来的 1:31）
   AssertionError: actual: '1:31'   expected: '1:30'
@@ -499,11 +504,13 @@ sourceIsGreppable.test.ts`），**上线当天就抓到第四例**。
 ```
 
 **③ 纯文本守卫：把字面控制字节放回 argGuard.ts**
+
 ```
 ✖ ★ 全仓源码零个字面控制字节
     packages/pipeline/src/subprocess/argGuard.ts:89 含字面控制字节 0x00
 ℹ pass 184  ℹ fail 1
 ```
+
 `file` 同时确认：`packages/pipeline/src/subprocess/argGuard.ts: data`（改回后 `JavaScript source, UTF-8 text`）。
 
 **④ 纯文本守卫的"判据自检"**：`FORBIDDEN` 被放宽时那条会红；
@@ -526,6 +533,7 @@ sourceIsGreppable.test.ts`），**上线当天就抓到第四例**。
 
 ```markdown
 > ⚠️ 此前本清单只列到 ADR-004。实测 `docs/adr/` 现有 **16 份**，且其中两条已被后续 ADR 收窄。
+
 - `ADR-001` 依赖引入三分法 · `ADR-002` 许可证政策 **v2 = 个人自用档**
 - `ADR-003` 进程模型 = 本地 daemon + 浏览器 UI、GPU 后端策略、ad-hoc 签名
   —— ⚠️ **决策 2（自建 whisper.cpp CI）适用范围已被 ADR-015 收窄为「仅 macOS/Vulkan/ROCm 按需」**
@@ -543,7 +551,9 @@ sourceIsGreppable.test.ts`），**上线当天就抓到第四例**。
 ```
 apps/daemon/      Node.js + TS 本地服务（默认 0.0.0.0，可用 OPENMEMO_HOST 收回回环）
 ```
+
 布局块下补一句：
+
 > 📝 **此前写着「127.0.0.1 ONLY」**。已被用户 2026-08 的决定推翻，
 > 见 `docs/SECURITY.md` §0 与 `apps/daemon/src/bootstrap/single-instance.ts` 的 `BIND_HOST`。
 
@@ -553,10 +563,12 @@ apps/daemon/      Node.js + TS 本地服务（默认 0.0.0.0，可用 OPENMEMO_H
 
 ```markdown
 ## Wave 2 — 架构与骨架 ~~（进行中，4 并发跑满）~~ → ✅ **早已完成（本表停在 2026-08-02）**
+
 > 📝 **此前 T-010…T-013 全标 🔵 进行中。** 实测四项交付物均已存在，项目已跑到 **T-152**，
 > `coordination/inbox/` 有 32 份报告。**本表仅供追溯。**
 
 ## Wave 3 — 开发 ~~（待启动）~~ → ✅ **全部已交付（本表停在 2026-08-02）**
+
 > 📝 **此前 T-020…T-024 全标 ⚪ 待启动。** 实测 `apps/web/src/features/` 15 个 feature、
 > `packages/mindmap/`、`.github/workflows/` 4 个 workflow 均已就位。**本表仅供追溯。**
 ```
@@ -567,6 +579,7 @@ apps/daemon/      Node.js + TS 本地服务（默认 0.0.0.0，可用 OPENMEMO_H
 
 ```markdown
 > ⚠️ **本表停在项目第 1 个提交（2026-08-02），已严重过期，仅供追溯。**
+>
 > - 此前 4 行全标「🔵 T-00x 进行中」，而 **`BOARD.md` 的 Wave 1 表把同一批 T-001…T-004
 >   标为 🟢 全部完成** —— 两份 coordination 文档互相矛盾。
 > - 实际参与的 agent 远不止 4 个：`coordination/inbox/` 有 **32 份**报告，
@@ -581,13 +594,13 @@ apps/daemon/      Node.js + TS 本地服务（默认 0.0.0.0，可用 OPENMEMO_H
 > 上表有 **5 行在产物层面为空** —— Metal / CoreML / Vulkan / DirectML / ROCm / Linux-CUDA
 > **均无预编译包**。
 >
-> | 章程行 | 承诺的后端 | 实际产物 |
-> |---|---|---|
-> | macOS (Apple Silicon) | Metal / CoreML | ❌ 只有 `whispercpp-cpu-macos-arm64`（CPU） |
-> | macOS (Intel) | CPU (AVX2) | ❌ 已被用户 2026-08-05 指示裁掉 |
-> | Windows + AMD | Vulkan / DirectML | ❌ 无任何产物 |
-> | Linux + NVIDIA | CUDA | ❌ 唯一 CUDA 条目是 `whispercpp-cuda-12.4-win-x64` |
-> | Linux + AMD | ROCm / Vulkan | ❌ 无产物，`linux-x64-rocm` 已被用户裁掉 |
+> | 章程行                | 承诺的后端        | 实际产物                                           |
+> | --------------------- | ----------------- | -------------------------------------------------- |
+> | macOS (Apple Silicon) | Metal / CoreML    | ❌ 只有 `whispercpp-cpu-macos-arm64`（CPU）        |
+> | macOS (Intel)         | CPU (AVX2)        | ❌ 已被用户 2026-08-05 指示裁掉                    |
+> | Windows + AMD         | Vulkan / DirectML | ❌ 无任何产物                                      |
+> | Linux + NVIDIA        | CUDA              | ❌ 唯一 CUDA 条目是 `whispercpp-cuda-12.4-win-x64` |
+> | Linux + AMD           | ROCm / Vulkan     | ❌ 无产物，`linux-x64-rocm` 已被用户裁掉           |
 >
 > **已交付的只有**：macOS-arm64 CPU、Linux x64 CPU、Win x64 CPU、Win x64 CUDA 12.4。
 > `D-11:17` 已就此发过警告。而 **ADR-016 已停「AMD ASR 自建 CI」→ 补产物这条路已被砍，

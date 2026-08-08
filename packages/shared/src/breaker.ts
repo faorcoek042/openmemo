@@ -105,8 +105,10 @@ export function breakerRetryPhrase(b: BreakerCopyInput, now: number = Date.now()
  * 用户要的是"我现在该等还是该动手"，而那需要三件事凑齐才回答得了。
  */
 export function breakerDetail(b: BreakerCopyInput, now: number = Date.now()): BilingualText {
-  const backends = b.blacklistedBackends.length > 0 ? b.blacklistedBackends.join('、') : '（未列出）';
-  const backendsEn = b.blacklistedBackends.length > 0 ? b.blacklistedBackends.join(', ') : '(not listed)';
+  const backends =
+    b.blacklistedBackends.length > 0 ? b.blacklistedBackends.join('、') : '（未列出）';
+  const backendsEn =
+    b.blacklistedBackends.length > 0 ? b.blacklistedBackends.join(', ') : '(not listed)';
   const why = b.lastError ?? '未记录原因';
   const whyEn = b.lastError ?? 'no reason recorded';
   const when = breakerRetryPhrase(b, now);

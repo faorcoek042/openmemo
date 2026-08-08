@@ -20,8 +20,7 @@ import { pathToFileURL } from 'node:url';
 import { isDirectRun } from './entrypoint.js';
 
 /** 旧写法，一比一照抄事故当天那一行。 */
-const legacyGuard = (moduleUrl: string, argv1: string): boolean =>
-  moduleUrl === `file://${argv1}`;
+const legacyGuard = (moduleUrl: string, argv1: string): boolean => moduleUrl === `file://${argv1}`;
 
 describe('★ T-143 ③ 入口守卫：路径要被**转换**成 URL，不是**拼**成 URL', () => {
   /*

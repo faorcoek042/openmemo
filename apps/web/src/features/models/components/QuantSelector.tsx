@@ -65,9 +65,7 @@ export function QuantSelector({ variants, selectedId, onSelect, locale }: QuantS
         onClick={() => setOpen((v) => !v)}
       >
         <span>{t('models.quant.current', { quant: labelOf(selected) })}</span>
-        <span className="text-ink-secondary">
-          {formatBytes(selected.totalSizeBytes, locale)}
-        </span>
+        <span className="text-ink-secondary">{formatBytes(selected.totalSizeBytes, locale)}</span>
         <ChevronDown className="size-3.5" aria-hidden />
       </button>
 
@@ -106,9 +104,7 @@ export function QuantSelector({ variants, selectedId, onSelect, locale }: QuantS
                    原来写 `bg-surface-1`，而这块面板本身是 `bg-surface-2` ——
                    T-124 之后明档两者同为白（抬升靠阴影），选中项会**完全消失**。
                    选中态本来就不该靠"表层差一档"来表达，它是语义不是层级。 */
-                v.id === selectedId
-                  ? 'bg-accent-tint text-accent-ink'
-                  : 'hover:bg-fill-hover',
+                v.id === selectedId ? 'bg-accent-tint text-accent-ink' : 'hover:bg-fill-hover',
               )}
               onClick={() => {
                 onSelect(v.id);

@@ -133,7 +133,8 @@ function attach(source: EventSourceLike): void {
 
 function openStream(opts: SseSourceOptions): void {
   const factory =
-    opts.factory ?? ((url: string) => new EventSource(url, { withCredentials: true }) as EventSourceLike);
+    opts.factory ??
+    ((url: string) => new EventSource(url, { withCredentials: true }) as EventSourceLike);
   setState('connecting');
   es = factory(opts.url);
   attach(es);

@@ -13,13 +13,7 @@
  */
 
 import { assertHostNotPrivate, validateHttpUrl } from '../../subprocess/argGuard.js';
-import type {
-  Availability,
-  FetchRequest,
-  FetchedMedia,
-  MediaInfo,
-  MediaSource,
-} from '../types.js';
+import type { Availability, FetchRequest, FetchedMedia, MediaInfo, MediaSource } from '../types.js';
 
 /** Cap on downloaded feed bytes; some feeds are enormous. */
 const MAX_FEED_BYTES = 8 * 1024 * 1024;
@@ -133,7 +127,10 @@ export class RssSource implements MediaSource {
 /** Does this body look like a feed? Used to sniff URLs with uninformative paths. */
 export function looksLikeFeed(body: string): boolean {
   const head = body.slice(0, 4096);
-  return /<rss[\s>]/i.test(head) || /<feed[\s>][^>]*xmlns=["']http:\/\/www\.w3\.org\/2005\/Atom/i.test(head);
+  return (
+    /<rss[\s>]/i.test(head) ||
+    /<feed[\s>][^>]*xmlns=["']http:\/\/www\.w3\.org\/2005\/Atom/i.test(head)
+  );
 }
 
 export function parseChannelTitle(xml: string): string | null {
@@ -162,7 +159,9 @@ export function parseFeed(xml: string): FeedItem[] {
     // RSS: <enclosure url="..."/>  |  Atom: <link rel="enclosure" href="..."/>
     const enclosure =
       /<enclosure[^>]*\burl\s*=\s*["']([^"']+)["']/i.exec(block)?.[1] ??
-      /<link[^>]*\brel\s*=\s*["']enclosure["'][^>]*\bhref\s*=\s*["']([^"']+)["']/i.exec(block)?.[1] ??
+      /<link[^>]*\brel\s*=\s*["']enclosure["'][^>]*\bhref\s*=\s*["']([^"']+)["']/i.exec(
+        block,
+      )?.[1] ??
       null;
     if (enclosure === null) continue;
 
@@ -200,15 +199,17 @@ export function parseItunesDuration(raw: string | null): number | null {
 }
 
 function decodeXmlText(raw: string): string {
-  return raw
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
-    // Only the five predefined XML entities plus numeric refs. No external entities.
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, h: string) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&amp;/g, '&')
-    .trim();
+  return (
+    raw
+      .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+      // Only the five predefined XML entities plus numeric refs. No external entities.
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
+      .replace(/&#x([0-9a-f]+);/gi, (_, h: string) => String.fromCodePoint(parseInt(h, 16)))
+      .replace(/&amp;/g, '&')
+      .trim()
+  );
 }

@@ -96,7 +96,9 @@ describe('resolveStoreRoot 的优先级（钉现状，不改语义）', () => {
   });
 
   it('空串不算"设过"（否则 `OPENMEMO_MODELS=` 会把 store 指到裸的相对路径）', () => {
-    const out = withEnv({ ...CLEAR, OPENMEMO_MODELS: '' }, () => resolveStoreRoot('/tmp/om-datadir'));
+    const out = withEnv({ ...CLEAR, OPENMEMO_MODELS: '' }, () =>
+      resolveStoreRoot('/tmp/om-datadir'),
+    );
     assert.equal(out, join('/tmp/om-datadir', 'models'));
   });
 

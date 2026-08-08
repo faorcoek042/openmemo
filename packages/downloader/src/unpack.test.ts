@@ -31,7 +31,14 @@
  */
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
-import { promises as fs, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  promises as fs,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -49,7 +56,13 @@ import {
 // 手搓 512 字节头：本包不许引入新依赖，而且恶意归档本来也不是任何 tar 库愿意产出的东西。
 
 const BLOCK = 512;
-type Entry = { name: string; type?: '0' | '2' | '5'; linkname?: string; data?: string; mode?: number };
+type Entry = {
+  name: string;
+  type?: '0' | '2' | '5';
+  linkname?: string;
+  data?: string;
+  mode?: number;
+};
 
 function tarHeader(e: Entry, size: number): Buffer {
   const b = Buffer.alloc(BLOCK, 0);
@@ -325,7 +338,10 @@ describe('T-157 ① 词法判定的 platform 入参 —— win32 分支在 Linux
       lexicalLinkTarget(WIN_ROOT, 'lib\\a.dll', 'b.dll', 'win32'),
       'C:\\Users\\me\\dest\\lib\\b.dll',
     );
-    assert.equal(lexicalEntryPath(WIN_ROOT, 'lib\\whisper.dll', 'win32'), 'C:\\Users\\me\\dest\\lib\\whisper.dll');
+    assert.equal(
+      lexicalEntryPath(WIN_ROOT, 'lib\\whisper.dll', 'win32'),
+      'C:\\Users\\me\\dest\\lib\\whisper.dll',
+    );
   });
 
   it('盘符绝对目标被拒（与平台无关，两套规则下都拒）', () => {
@@ -401,10 +417,9 @@ describe('T-168 ① tar：垃圾不落盘，载荷一个不少', () => {
       ['ggml-tiny-encoder.mlmodelc'],
       '顶层出现了不该有的东西 —— `__MACOSX` 落盘就会让 collapseRedundantTopLevel 压不掉',
     );
-    assert.deepEqual(
-      (await fs.readdir(path.join(destRoot, 'ggml-tiny-encoder.mlmodelc'))).sort(),
-      ['coremldata.bin'],
-    );
+    assert.deepEqual((await fs.readdir(path.join(destRoot, 'ggml-tiny-encoder.mlmodelc'))).sort(), [
+      'coremldata.bin',
+    ]);
     // 载荷内容没被动过
     assert.equal(
       await fs.readFile(path.join(destRoot, 'ggml-tiny-encoder.mlmodelc/coremldata.bin'), 'utf8'),
@@ -483,13 +498,10 @@ describe('C-19 unpackArchive 失败契约：不自清，原子性由调用方负
 
   it('不认识的归档类型必须抛 UNSUPPORTED，而不是悄悄返回一个空结果', async () => {
     const { destRoot } = sandbox();
-    const src = makeTarGz(
-      path.join(mkdtempSync(path.join(os.tmpdir(), 'om-c19b-')), 'x.tar.gz'),
-      [{ name: 'a.txt', data: 'A' }],
-    );
-    const err = await expectRejected(() =>
-      unpackArchive(src, destRoot, 'rar' as unknown as 'zip'),
-    );
+    const src = makeTarGz(path.join(mkdtempSync(path.join(os.tmpdir(), 'om-c19b-')), 'x.tar.gz'), [
+      { name: 'a.txt', data: 'A' },
+    ]);
+    const err = await expectRejected(() => unpackArchive(src, destRoot, 'rar' as unknown as 'zip'));
     assert.equal(err.code, 'UNSUPPORTED');
   });
 });

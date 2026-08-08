@@ -13,6 +13,7 @@ input: R-04 全文, R-01 §B7
 Manager 也没有大陆机器可测。
 
 **不去解决这个未知，而是设计成不需要知道答案：**
+
 - 模型源做成**可配置源列表**（HF / hf-mirror / ModelScope / 用户自填）。
 - 首次下载前**并发探测**各源（发 HEAD/Range 小请求测连通性与速度），自动选最快可用源。
 - 失败自动切换下一源，UI 显示当前使用的源并允许手动覆盖。
@@ -39,11 +40,11 @@ Gemma 等权重受限的模型 → 走"用户自行接受上游条款后下载"�
 采纳 `memo-researcher` 建议：直接复用 R-01 §B7.2 取证到的注册表 schema
 （`size/speed/quality/lang/downloadLink/sha`，引擎与模型解耦按 platform+arch 分发），**并补**：
 
-| 补充字段 | 理由 |
-|---|---|
-| `quantization` | **memo.ac 硬缺口 ①**：它的 whisper 模型全是 f16，无量化选择 |
-| `vramRequiredMB` / `ramRequiredMB` | **memo.ac 硬缺口 ②**：无显存/内存 fit 预检，只在网页文档写"最低 8G" |
-| `backend` 枚举扩展 | memo.ac 只有 `{cuda, metal, coreml}`；我们扩到 `{cuda, vulkan, rocm, metal, coreml, cpu}` |
+| 补充字段                           | 理由                                                                                      |
+| ---------------------------------- | ----------------------------------------------------------------------------------------- |
+| `quantization`                     | **memo.ac 硬缺口 ①**：它的 whisper 模型全是 f16，无量化选择                               |
+| `vramRequiredMB` / `ramRequiredMB` | **memo.ac 硬缺口 ②**：无显存/内存 fit 预检，只在网页文档写"最低 8G"                       |
+| `backend` 枚举扩展                 | memo.ac 只有 `{cuda, metal, coreml}`；我们扩到 `{cuda, vulkan, rocm, metal, coreml, cpu}` |
 
 **显存需求不手填**：采纳 `model-mgmt` 的已验证方案 —— **8 MB Range 请求读出完整 GGUF 元数据**，
 由 CI 自动生成 `vramRequiredMB`，且**必须计入 KV cache**（实测 8K 上下文 ≈ 1.1 GB）。
@@ -62,6 +63,7 @@ Gemma 等权重受限的模型 → 走"用户自行接受上游条款后下载"�
   **硬约束：只开一条全局 SSE 流**，否则撞 HTTP/1.1 六连接上限。实时录音转写另开 WebSocket。
 
 ## 我们相对 memo.ac 的差异化（产品需求，写入 D-01）
+
 1. 量化选择（memo.ac 无）
 2. 显存/内存 fit 预检 + "能不能跑"三档判定（memo.ac 无）
 3. 真实 Linux 支持（memo.ac 无）

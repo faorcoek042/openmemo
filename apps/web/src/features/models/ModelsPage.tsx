@@ -51,7 +51,6 @@ import { splitAsrSections } from './asrSections';
  * 或在快照与增量之间重复计数。这里三个 useQuery 天然并行，SSE 订阅在 App 层已建立。
  */
 
-
 /**
  * 转写 Tab 上会出现哪些 role。
  *
@@ -159,7 +158,9 @@ export default function ModelsPage() {
       .filter((g) => g.variants.length > 0)
       .filter((g) =>
         onlyRunnable
-          ? g.variants.some((v) => v.fitness.tier === 'recommended' || v.fitness.tier === 'slow_partial')
+          ? g.variants.some(
+              (v) => v.fitness.tier === 'recommended' || v.fitness.tier === 'slow_partial',
+            )
           : true,
       );
   }, [catalog.data, onlyRunnable, showNotRecommended, installedIds, active.asr, active.llm]);
@@ -184,7 +185,8 @@ export default function ModelsPage() {
   const activeJobs = useMemo(
     () =>
       (jobs.data?.jobs ?? []).filter(
-        (j): j is DownloadJob => j.kind === 'model' && !['succeeded', 'cancelled'].includes(j.state),
+        (j): j is DownloadJob =>
+          j.kind === 'model' && !['succeeded', 'cancelled'].includes(j.state),
       ),
     [jobs.data],
   );
@@ -256,7 +258,8 @@ export default function ModelsPage() {
   const llmCfg = useLlmConfig();
   const llmModel = llmCfg.defaultModel;
   const llmProviderLabel =
-    llmCfg.providers.find((p) => p.id === llmCfg.activeProviderId)?.label ?? llmCfg.activeProviderId;
+    llmCfg.providers.find((p) => p.id === llmCfg.activeProviderId)?.label ??
+    llmCfg.activeProviderId;
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-4 p-4" data-testid="models-page">
@@ -378,12 +381,10 @@ export default function ModelsPage() {
           className="flex rounded-md border border-line bg-surface-1 p-0.5"
           data-testid="models-tabs"
         >
-          {(
-            [
-              { id: 'asr' as const, label: t('models.tabs.asr') },
-              { id: 'llm' as const, label: t('models.tabs.llm') },
-            ]
-          ).map((item) => (
+          {[
+            { id: 'asr' as const, label: t('models.tabs.asr') },
+            { id: 'llm' as const, label: t('models.tabs.llm') },
+          ].map((item) => (
             <button
               key={item.id}
               type="button"
@@ -471,7 +472,9 @@ export default function ModelsPage() {
           </div>
         ) : null}
 
-        {catalog.isError ? <ErrorBlock error={catalog.error} onRetry={() => void catalog.refetch()} /> : null}
+        {catalog.isError ? (
+          <ErrorBlock error={catalog.error} onRetry={() => void catalog.refetch()} />
+        ) : null}
         {/*
           ★ T-140：安装 / 删除失败此前**一个字都不显示**。
           `pull.error` 与 `del.error` 全仓零渲染点 —— 点「安装」磁盘不够、或模型受许可限制，
@@ -486,9 +489,7 @@ export default function ModelsPage() {
         */}
         {pull.isError ? <ErrorBlock error={pull.error} /> : null}
         {del.isError ? <ErrorBlock error={del.error} /> : null}
-        {catalog.isLoading ? (
-          <p className="text-xs text-ink-muted">{t('models.loading')}</p>
-        ) : null}
+        {catalog.isLoading ? <p className="text-xs text-ink-muted">{t('models.loading')}</p> : null}
 
         {!catalog.isLoading && groups.length === 0 ? (
           <EmptyState

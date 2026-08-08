@@ -137,7 +137,9 @@ const CATALOG = {
     /** ★ 盘上会放一份**内容不同**的同名文件 —— sha256 对不上，不许认。 */
     pack({
       id: 'rc-stale',
-      files: [{ ...FLAT_FILE, name: 'rc-stale-bin', sha256: sha(Buffer.from('the other version')) }],
+      files: [
+        { ...FLAT_FILE, name: 'rc-stale-bin', sha256: sha(Buffer.from('the other version')) },
+      ],
       providesFiles: ['rc-stale-bin'],
     }),
     /** ★ 归档在、解包目录不在 = 装到一半，不许认。 */
@@ -237,11 +239,7 @@ describe('T-165 ① 启动对账：盘上装好了、manifest 没写成', () => 
       true,
       '盘上那份单文件包（yt-dlp 形状）仍被说成未安装 —— 这就是那个「安装 119 MB」按钮',
     );
-    assert.equal(
-      byId.get('rc-archive')?.installed,
-      true,
-      '归档包（ffmpeg 形状）仍被说成未安装',
-    );
+    assert.equal(byId.get('rc-archive')?.installed, true, '归档包（ffmpeg 形状）仍被说成未安装');
   });
 
   it('★ 判据不是"catalog 那一格变绿"：同一台机器上必须**卸得掉**', async () => {
@@ -277,7 +275,11 @@ describe('T-165 ① 启动对账：盘上装好了、manifest 没写成', () => 
       'priority 没抄进记录 —— `resolveBackendTool()` 的排序只能从安装记录里读到它，' +
         '缺了就落到"无安装清单"那一档，排在所有包最后',
     );
-    assert.equal(rec!.backend, 'cpu', 'backend 没抄进记录 —— 用户的 selectedBackend 就对不上任何包');
+    assert.equal(
+      rec!.backend,
+      'cpu',
+      'backend 没抄进记录 —— 用户的 selectedBackend 就对不上任何包',
+    );
     assert.equal(rec!.selfTest, null, '从来没跑过自检，不许写成跑过');
   });
 
@@ -285,11 +287,7 @@ describe('T-165 ① 启动对账：盘上装好了、manifest 没写成', () => 
     const { state } = await seed();
     const rec = (await state.listInstalledBackends()).find((p) => p.id === 'rc-flat');
     assert.ok(rec);
-    assert.equal(
-      rec!.files[0]?.sha256,
-      sha(FLAT_BYTES),
-      '摘要必须是从盘上的字节算出来的',
-    );
+    assert.equal(rec!.files[0]?.sha256, sha(FLAT_BYTES), '摘要必须是从盘上的字节算出来的');
     assert.equal(rec!.integrity, 'ok', '刚刚逐字节校验过，这一条是真的');
     assert.equal(
       rec!.installedAt,

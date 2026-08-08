@@ -46,7 +46,10 @@ import {
 } from '../vad.js';
 import type { ToolPaths } from '../../tools.js';
 
-const TOOLS = (vadModel: string | null, whisperVad: string | null = '/fake/whisper-vad'): ToolPaths => ({
+const TOOLS = (
+  vadModel: string | null,
+  whisperVad: string | null = '/fake/whisper-vad',
+): ToolPaths => ({
   ffmpeg: '/fake/ffmpeg',
   ffprobe: '/fake/ffprobe',
   whisperCli: '/fake/whisper-cli',
@@ -114,7 +117,11 @@ describe('buildVadFlags —— 失败原因不许被开关吞掉', () => {
     const out: Record<string, string> = {};
     for (let i = 0; i < flags.length; i += 1) {
       const f = flags[i] as string;
-      if (f.startsWith('-') && flags[i + 1] !== undefined && !(flags[i + 1] as string).startsWith('-')) {
+      if (
+        f.startsWith('-') &&
+        flags[i + 1] !== undefined &&
+        !(flags[i + 1] as string).startsWith('-')
+      ) {
         out[f] = flags[i + 1] as string;
         i += 1;
       }
@@ -169,7 +176,9 @@ describe('buildVadFlags —— 失败原因不许被开关吞掉', () => {
      * `--vad-min-silence-duration-ms` 也不在里面 —— 它被绑到了 min-speech 那个变量上。
      */
     const SUPPORTED = new Set([
-      '-f', '-t', '-vm',
+      '-f',
+      '-t',
+      '-vm',
       '--vad-threshold',
       '--vad-min-speech-duration-ms',
       '--vad-max-speech-duration-s',
@@ -183,7 +192,11 @@ describe('buildVadFlags —— 失败原因不许被开关吞掉', () => {
       threads: 8,
     });
     const unknown = flags.filter((f) => f.startsWith('-') && !SUPPORTED.has(f));
-    assert.deepEqual(unknown, [], `这些 flag 要么例子不认识（exit 0 + 空 stdout），要么一名两义：${unknown.join(' ')}`);
+    assert.deepEqual(
+      unknown,
+      [],
+      `这些 flag 要么例子不认识（exit 0 + 空 stdout），要么一名两义：${unknown.join(' ')}`,
+    );
     // 前提自检：真的发出了那四个可调项，否则上面那条对空集恒真
     assert.equal(flags.filter((f) => f.startsWith('--')).length, 4);
   });
@@ -208,21 +221,32 @@ describe('interpretVadRun —— "exit 0" 不等于"跑过了"', () => {
 
   it('有段落时按厘秒换算成毫秒', () => {
     assert.deepEqual(
-      interpretVadRun(run('\nDetected 1 speech segments:\nSpeech segment 0: start = 32.00, end = 227.00\n')),
+      interpretVadRun(
+        run('\nDetected 1 speech segments:\nSpeech segment 0: start = 32.00, end = 227.00\n'),
+      ),
       [{ startMs: 320, endMs: 2270 }],
     );
   });
 
   it('usage 文本（例子把 --help 打到 stderr、stdout 全空）不算答案', () => {
     assert.throws(
-      () => interpretVadRun({ stdout: '', stderr: 'usage: whisper-vad-speech-segments [options] file', code: 0 }),
+      () =>
+        interpretVadRun({
+          stdout: '',
+          stderr: 'usage: whisper-vad-speech-segments [options] file',
+          code: 0,
+        }),
       /no result header/,
     );
   });
 
   it('抛出来的话里要带上退出码与实际输出，否则又是一条查不动的错误', () => {
     try {
-      interpretVadRun({ stdout: 'nothing useful', stderr: 'error: unknown argument: -vspd', code: 0 });
+      interpretVadRun({
+        stdout: 'nothing useful',
+        stderr: 'error: unknown argument: -vspd',
+        code: 0,
+      });
       assert.fail('应该抛');
     } catch (e) {
       const m = (e as Error).message;
@@ -299,7 +323,11 @@ describe('planAudioChunks —— VAD 跑挂了，转写要活下来并且要出�
      */
     assert.equal(plan.warningsZh.length, 1);
     assert.equal(plan.warningsZh[0]?.includes('bad magic'), true, '必须带上真正的失败原因');
-    assert.equal(plan.warningsZh[0]?.includes('第二行'), false, '只取首行，别把 2 KB stderr 灌进 UI');
+    assert.equal(
+      plan.warningsZh[0]?.includes('第二行'),
+      false,
+      '只取首行，别把 2 KB stderr 灌进 UI',
+    );
   });
 
   it('★ 用户点了取消时**不许**降级 —— 取消必须一路传出去', async () => {

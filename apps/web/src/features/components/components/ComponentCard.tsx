@@ -34,11 +34,26 @@ function checkState(c: ComponentStatus): CheckState {
   return 'unchecked';
 }
 
-const CHECK_UI: Record<CheckState, { tone: 'warning' | 'good' | 'neutral'; label: string; icon: React.ReactNode }> = {
-  update: { tone: 'warning', label: '有新版本', icon: <ArrowUpCircle className="size-3.5" aria-hidden /> },
-  current: { tone: 'good', label: '已是最新', icon: <CheckCircle2 className="size-3.5" aria-hidden /> },
+const CHECK_UI: Record<
+  CheckState,
+  { tone: 'warning' | 'good' | 'neutral'; label: string; icon: React.ReactNode }
+> = {
+  update: {
+    tone: 'warning',
+    label: '有新版本',
+    icon: <ArrowUpCircle className="size-3.5" aria-hidden />,
+  },
+  current: {
+    tone: 'good',
+    label: '已是最新',
+    icon: <CheckCircle2 className="size-3.5" aria-hidden />,
+  },
   // Deliberately a question mark, not a tick.
-  unchecked: { tone: 'neutral', label: '未检测', icon: <CircleHelp className="size-3.5" aria-hidden /> },
+  unchecked: {
+    tone: 'neutral',
+    label: '未检测',
+    icon: <CircleHelp className="size-3.5" aria-hidden />,
+  },
 };
 
 export interface ComponentCardProps {

@@ -66,7 +66,6 @@ function groupByFamily(models: InstalledModel[]): [string, InstalledModel[]][] {
   });
 }
 
-
 /**
  * 当前**真正激活**的 ASR 模型（`/api/models/installed` 的 `active.asr`）。
  *

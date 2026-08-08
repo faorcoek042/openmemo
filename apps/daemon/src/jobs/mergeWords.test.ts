@@ -72,7 +72,12 @@ function tinyWav(): Buffer {
   return b;
 }
 
-function seg(startMs: number, endMs: number, text: string, words: WordTimestamp[] | null): TranscriptSegment {
+function seg(
+  startMs: number,
+  endMs: number,
+  text: string,
+  words: WordTimestamp[] | null,
+): TranscriptSegment {
   return {
     startMs,
     endMs,
@@ -87,7 +92,13 @@ function seg(startMs: number, endMs: number, text: string, words: WordTimestamp[
 }
 
 interface RerunOutcome {
-  rows: Array<{ start_ms: number; end_ms: number; text: string; words_json: string | null; edited_at: number | null }>;
+  rows: Array<{
+    start_ms: number;
+    end_ms: number;
+    text: string;
+    words_json: string | null;
+    edited_at: number | null;
+  }>;
   dataDir: string;
 }
 
@@ -288,13 +299,13 @@ describe('重新转写 / F3 离线重跑：词级时间戳不许被合并抹掉�
     const kept = r.rows.find((x) => x.start_ms === 0);
     assert.ok(kept, '用户编辑过的那一段整段没了');
     assert.equal(kept.text, '我改过这一句', '用户的编辑被重跑覆盖了');
-    assert.equal(kept.edited_at !== null, true, 'edited_at 没写回 —— 下一次重跑就会把它当没人编辑过而覆盖');
-    const words = JSON.parse(kept.words_json ?? 'null') as WordTimestamp[] | null;
     assert.equal(
-      words?.length,
-      3,
-      '保留下来的编辑段丢了自己的词级时间戳 —— 文本活着、时间轴死了',
+      kept.edited_at !== null,
+      true,
+      'edited_at 没写回 —— 下一次重跑就会把它当没人编辑过而覆盖',
     );
+    const words = JSON.parse(kept.words_json ?? 'null') as WordTimestamp[] | null;
+    assert.equal(words?.length, 3, '保留下来的编辑段丢了自己的词级时间戳 —— 文本活着、时间轴死了');
   });
 
   it('重跑替换掉的那一段用的是重跑的新文本与新词表（证明合并真的发生了）', async () => {

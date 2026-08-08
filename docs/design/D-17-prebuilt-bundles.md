@@ -11,11 +11,11 @@ input: 用户 2026-08-08 口述；README.md；ADR-002；ADR-015；D-11；D-12；
 **裁决已实现**：① 发公开 Release（补了 `LICENSE` + `THIRD-PARTY-NOTICES` + libsimple 的 MIT election）
 ② libsimple/sqlite-vec 进包 ③ sherpa-onnx 留着。
 
-| 平台 | 组装 | 归档校验 | **冷启动转出非空文本** | 升级不坏数据目录 | 未压缩 | 归档 |
-|---|---|---|---|---|---|---|
-| **linux-x64** | ✅ | ✅ 26/26 | ✅ **108 字符 · 借宿主 PATH 的 0 个** | ✅ 10/10 | **176.3 MiB** | **41.0 MiB** `.tar.xz` |
-| **win-x64** | ✅ | ✅ 26/26 | ✅ **108 字符 · 借宿主 PATH 的 0 个** | ✅ 10/10 | **132.0 MiB** | **49.0 MiB** `.zip` |
-| **macos-arm64** | ✅ | ✅ 26/26 | ✅ **108 字符 · 借宿主 PATH 的 0 个** | ✅ 10/10 | **192.4 MiB** | **59.9 MiB** `.tar.gz` |
+| 平台            | 组装 | 归档校验 | **冷启动转出非空文本**                | 升级不坏数据目录 | 未压缩        | 归档                   |
+| --------------- | ---- | -------- | ------------------------------------- | ---------------- | ------------- | ---------------------- |
+| **linux-x64**   | ✅   | ✅ 26/26 | ✅ **108 字符 · 借宿主 PATH 的 0 个** | ✅ 10/10         | **176.3 MiB** | **41.0 MiB** `.tar.xz` |
+| **win-x64**     | ✅   | ✅ 26/26 | ✅ **108 字符 · 借宿主 PATH 的 0 个** | ✅ 10/10         | **132.0 MiB** | **49.0 MiB** `.zip`    |
+| **macos-arm64** | ✅   | ✅ 26/26 | ✅ **108 字符 · 借宿主 PATH 的 0 个** | ✅ 10/10         | **192.4 MiB** | **59.9 MiB** `.tar.gz` |
 
 **三平台全绿，全部是 CI 实测值，不再有推算值**（run 31204790920 / 31205369931 / 31206040985）。
 转写文本三平台都是 jfk.wav 的
@@ -77,16 +77,16 @@ ffmpeg/yt-dlp 仍由用户自己在网页上下载"。这个边界成立，但**
 对 `@openmemo/daemon` 的**生产**依赖闭包逐个读 `node_modules` 里已安装的
 `package.json` 的 `license` 字段，16 个外部包：
 
-| 包 | 版本 | license（逐字） |
-|---|---|---|
-| `better-sqlite3` | 13.0.2 | `MIT` |
-| `node-addon-api` | 8.9.1 | `MIT`（仅编译期头文件，可不发） |
-| `zod` | 4.4.3 | `MIT` |
-| `ws` | 8.21.1 | `MIT` |
-| `undici` | 7.29.0 | `MIT` |
-| `socks` / `smart-buffer` / `ip-address` | 2.8.9 / 4.2.0 / 10.4.0 | `MIT` |
-| `xz-decompress` | 0.2.3 | `MIT` |
-| `sherpa-onnx-node` + 6 个平台包 | 1.13.4 | `Apache-2.0` |
+| 包                                      | 版本                   | license（逐字）                 |
+| --------------------------------------- | ---------------------- | ------------------------------- |
+| `better-sqlite3`                        | 13.0.2                 | `MIT`                           |
+| `node-addon-api`                        | 8.9.1                  | `MIT`（仅编译期头文件，可不发） |
+| `zod`                                   | 4.4.3                  | `MIT`                           |
+| `ws`                                    | 8.21.1                 | `MIT`                           |
+| `undici`                                | 7.29.0                 | `MIT`                           |
+| `socks` / `smart-buffer` / `ip-address` | 2.8.9 / 4.2.0 / 10.4.0 | `MIT`                           |
+| `xz-decompress`                         | 0.2.3                  | `MIT`                           |
+| `sherpa-onnx-node` + 6 个平台包         | 1.13.4                 | `Apache-2.0`                    |
 
 `apps/web/dist` 侧：`apps/web/vite.config.ts` **没有** `rollupOptions.external`、没有
 `build.lib`、没有 CDN externals —— 也就是说第三方库代码是**被复制进 dist 的 JS** 的，
@@ -107,11 +107,11 @@ ffmpeg/yt-dlp 仍由用户自己在网页上下载"。这个边界成立，但**
 
 把 `vendor/manifests/` 全部 7 个文件里的 `url` 字段逐条列出来：
 
-| 组件 | 许可证 | 谁提供字节 |
-|---|---|---|
-| ffmpeg / ffprobe (`media-tools-*`) | 🔴 GPL-3.0-or-later | `github.com/BtbN/FFmpeg-Builds`、`github.com/jellyfin/jellyfin-ffmpeg` |
-| yt-dlp (`ytdlp-*`) | 🔴 GPL-3.0-or-later | `github.com/yt-dlp/yt-dlp` |
-| libsimple / sqlite-vec / 模型 | MIT / Apache-2.0 / Gemma ToU | wangfenjin、asg017、HuggingFace、ModelScope |
+| 组件                               | 许可证                       | 谁提供字节                                                             |
+| ---------------------------------- | ---------------------------- | ---------------------------------------------------------------------- |
+| ffmpeg / ffprobe (`media-tools-*`) | 🔴 GPL-3.0-or-later          | `github.com/BtbN/FFmpeg-Builds`、`github.com/jellyfin/jellyfin-ffmpeg` |
+| yt-dlp (`ytdlp-*`)                 | 🔴 GPL-3.0-or-later          | `github.com/yt-dlp/yt-dlp`                                             |
+| libsimple / sqlite-vec / 模型      | MIT / Apache-2.0 / Gemma ToU | wangfenjin、asg017、HuggingFace、ModelScope                            |
 
 我们自己的 Release 上**只有 6 个资产，全部是 whisper.cpp，全部 MIT**
 （`backend-packs-2026.08.07b` / `-2026.08.08` 里的 `whispercpp-*`）。
@@ -134,7 +134,7 @@ ffmpeg/yt-dlp 仍由用户自己在网页上下载"。这个边界成立，但**
 这三条今天都**没有**触发，但都是**一步之遥**，且都不会有任何东西报错：
 
 1. **`scripts/build-media-tools.sh` 还在。** 它把 BtbN 的 **GPL** ffmpeg 重新打包成
-   OpenMemo 格式的 pack（脚本自己的注释：*"we emit our own tar.gz with our own manifest"*）。
+   OpenMemo 格式的 pack（脚本自己的注释：_"we emit our own tar.gz with our own manifest"_）。
    ADR-015 §4 决策 2 只是把它降级为"可选重打包"，没删。
    **谁跑一次它、再用 `scripts/ci/release-upload.mjs` 传上去，我们当场变成 GPL 二进制的分发者。**
 2. **`scripts/ci/mirror-model-blobs.mjs` 按设计就是把第三方 blob 转存到我们的 Release 上。**
@@ -170,18 +170,18 @@ MIT 与 Apache-2.0 都要求**在分发物中保留版权与许可声明**。自
 
 ### 2.1 对比表
 
-| | **A. Node SEA（单文件）** | **B. 官方 node 二进制 + 目录 + 启动脚本 ★推荐** | C. 打包器（pkg / nexe） | D. Electron / Tauri |
-|---|---|---|---|---|
-| 真的是"单文件"吗 | **不是**（见 2.2） | 否，是一个目录 | 同 A 的问题 | 否 |
-| 用户要装 Node/pnpm/git | 否 ✅ | **否 ✅** | 否 | 否 |
-| 原生模块 | 必须写到临时文件再 `process.dlopen()`；兄弟 `.so` 的 rpath 会断 | **直接放在 `node_modules` 里，原样 require ✅【实测通过】** | 各家自有机制，同样别扭 | 同 B |
-| 需要新增 bundler 步骤 | **是**（SEA 内不读文件系统，全部 JS 必须先打成一个文件） | **否，直接用现有 `tsc` 产物 ✅** | 是 | 是 |
-| ESM 兼容 | `mainFormat:"module"` 下 `import()` **不能从文件系统加载**，且无 `createRequire` 逃生口 → 实际要改回 CJS | **原生 ESM，零改动 ✅** | 普遍对 ESM 支持差 | 好 |
-| macOS 签名 | **注入会摧毁 Node 官方签名**，只能改 ad-hoc 重签 → Gatekeeper 姿态更差 | **原样携带 Node 官方签名+公证 ✅** | 同 A | 需自己签 |
-| Node 22 基线可用性 | `--build-sea` 是 v25.5.0 才有；`mainFormat` 引入版本 `UNKNOWN` → 22 上很可能只有 CJS | **无版本依赖 ✅** | — | — |
-| 上游稳定性 | **Stability 1.1「积极开发中」** | 稳定 | `vercel/pkg` 已归档 **[报告，未独立核实]** | 稳定 |
-| 体积 | 与 B 基本相同（见 2.3） | 见 §4 | 相近 | **更大**（另带 Chromium） |
-| 与本仓宪章 | — | — | — | README 明写**"不是 Electron"** |
+|                        | **A. Node SEA（单文件）**                                                                                | **B. 官方 node 二进制 + 目录 + 启动脚本 ★推荐**             | C. 打包器（pkg / nexe）                    | D. Electron / Tauri            |
+| ---------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------ | ------------------------------ |
+| 真的是"单文件"吗       | **不是**（见 2.2）                                                                                       | 否，是一个目录                                              | 同 A 的问题                                | 否                             |
+| 用户要装 Node/pnpm/git | 否 ✅                                                                                                    | **否 ✅**                                                   | 否                                         | 否                             |
+| 原生模块               | 必须写到临时文件再 `process.dlopen()`；兄弟 `.so` 的 rpath 会断                                          | **直接放在 `node_modules` 里，原样 require ✅【实测通过】** | 各家自有机制，同样别扭                     | 同 B                           |
+| 需要新增 bundler 步骤  | **是**（SEA 内不读文件系统，全部 JS 必须先打成一个文件）                                                 | **否，直接用现有 `tsc` 产物 ✅**                            | 是                                         | 是                             |
+| ESM 兼容               | `mainFormat:"module"` 下 `import()` **不能从文件系统加载**，且无 `createRequire` 逃生口 → 实际要改回 CJS | **原生 ESM，零改动 ✅**                                     | 普遍对 ESM 支持差                          | 好                             |
+| macOS 签名             | **注入会摧毁 Node 官方签名**，只能改 ad-hoc 重签 → Gatekeeper 姿态更差                                   | **原样携带 Node 官方签名+公证 ✅**                          | 同 A                                       | 需自己签                       |
+| Node 22 基线可用性     | `--build-sea` 是 v25.5.0 才有；`mainFormat` 引入版本 `UNKNOWN` → 22 上很可能只有 CJS                     | **无版本依赖 ✅**                                           | —                                          | —                              |
+| 上游稳定性             | **Stability 1.1「积极开发中」**                                                                          | 稳定                                                        | `vercel/pkg` 已归档 **[报告，未独立核实]** | 稳定                           |
+| 体积                   | 与 B 基本相同（见 2.3）                                                                                  | 见 §4                                                       | 相近                                       | **更大**（另带 Chromium）      |
+| 与本仓宪章             | —                                                                                                        | —                                                           | —                                          | README 明写**"不是 Electron"** |
 
 ### 2.2 决定性的一条：SEA 对我们产不出单文件
 
@@ -262,7 +262,7 @@ openmemo-0.2.0-linux-x64/
 - **模型与 better-sqlite3 相反**：6 个平台包是 `optionalDependencies` + `os`/`cpu` 门控，
   **pnpm 只装宿主那一个**。本机只有 `sherpa-onnx-linux-x64`。
   → **跨平台打包必须显式去取 `sherpa-onnx-win-x64` 与 `sherpa-onnx-darwin-arm64` 的 tarball。**
-    这是 CI 里必须新写的一步，也是最容易漏、且漏了只在别的平台上才显形的一步。
+  这是 CI 里必须新写的一步，也是最容易漏、且漏了只在别的平台上才显形的一步。
 - **体积很不对称**【npm registry `unpackedSize`】：
   linux-x64 **31.2 MiB** · win-x64 **21.9 MiB** · **darwin-arm64 58.8 MiB**。
   它一个人就是 macOS 包比 Linux 包还大的原因。
@@ -328,21 +328,21 @@ GCC 12 → 满足 3.4.29），所以**在承诺范围内是安全的**，但守�
 
 我在 `/tmp` 里真的装出了这个包并压缩：
 
-| 组成 | 字节 | MiB |
-|---|---:|---:|
-| `runtime/node`（官方 v22.23.1 二进制） | 124,835,376 | **119.1** |
-| `app/node_modules` 合计 | 43,457,635 | 41.4 |
-| ├ `sherpa-onnx-linux-x64` | 32,675,645 | 31.2 |
-| ├ `zod` | 4,558,122 | 4.3 |
-| ├ `better-sqlite3`（已裁到单平台） | 2,264,562 | 2.2 |
-| ├ `@openmemo/*` 7 个包 | 1,460,632 | 1.4 |
-| └ 其余（undici/ws/socks/…） | ~2,498,674 | ~2.4 |
-| `app/apps/web/dist`（★ 网页 bundle） | 1,515,745 | 1.4 |
-| `app/daemon/dist` | 955,902 | 0.9 |
-| **合计（未压缩）** | **170,764,658** | **162.8** |
-| **`.tar.xz`（xz -6）** | **39,285,284** | **37.4** |
-| （参考）`.tar.gz` | 58,046,513 | 55.4 |
-| （参考）`.zip` deflate | 58,678,363 | 56.0 |
+| 组成                                   |            字节 |       MiB |
+| -------------------------------------- | --------------: | --------: |
+| `runtime/node`（官方 v22.23.1 二进制） |     124,835,376 | **119.1** |
+| `app/node_modules` 合计                |      43,457,635 |      41.4 |
+| ├ `sherpa-onnx-linux-x64`              |      32,675,645 |      31.2 |
+| ├ `zod`                                |       4,558,122 |       4.3 |
+| ├ `better-sqlite3`（已裁到单平台）     |       2,264,562 |       2.2 |
+| ├ `@openmemo/*` 7 个包                 |       1,460,632 |       1.4 |
+| └ 其余（undici/ws/socks/…）            |      ~2,498,674 |      ~2.4 |
+| `app/apps/web/dist`（★ 网页 bundle）   |       1,515,745 |       1.4 |
+| `app/daemon/dist`                      |         955,902 |       0.9 |
+| **合计（未压缩）**                     | **170,764,658** | **162.8** |
+| **`.tar.xz`（xz -6）**                 |  **39,285,284** |  **37.4** |
+| （参考）`.tar.gz`                      |      58,046,513 |      55.4 |
+| （参考）`.zip` deflate                 |      58,678,363 |      56.0 |
 
 ### 4.2 三平台
 
@@ -354,11 +354,11 @@ better-sqlite3 prebuild），不是拍的；但**没有在真机上装出来过*
 > （裁决 ② 之后才进包，解开后 14.1 MiB，压缩包只有 5.4 MB —— 我当时把压缩包大小
 > 当成了占用，这是个**低估**）；② 归档压缩比按 linux 的比例外推，macOS 偏乐观。
 
-| 平台 | node 二进制 | sherpa | 未压缩（推算 → **实测**） | 格式 | 压缩后（估算 → **实测**） |
-|---|---:|---:|---:|---|---:|
-| **linux-x64** | 124,835,376 (119.1 MiB) | 31.2 MiB | 162.8 → **176.3 MiB** | `.tar.xz` | 37.4 → **41.0 MiB** |
-| **win-x64** | 86,989,128 (82.9 MiB) | 21.9 MiB | ≈117.3 → **132.0 MiB** | `.zip` | ≈42 → **49.0 MiB** |
-| **macos-arm64** | 112,928,848 (107.7 MiB) | 58.8 MiB | ≈178.9 → **192.4 MiB** | `.tar.gz` | ≈64 → **59.9 MiB** |
+| 平台            |             node 二进制 |   sherpa | 未压缩（推算 → **实测**） | 格式      | 压缩后（估算 → **实测**） |
+| --------------- | ----------------------: | -------: | ------------------------: | --------- | ------------------------: |
+| **linux-x64**   | 124,835,376 (119.1 MiB) | 31.2 MiB |     162.8 → **176.3 MiB** | `.tar.xz` |       37.4 → **41.0 MiB** |
+| **win-x64**     |   86,989,128 (82.9 MiB) | 21.9 MiB |    ≈117.3 → **132.0 MiB** | `.zip`    |        ≈42 → **49.0 MiB** |
+| **macos-arm64** | 112,928,848 (107.7 MiB) | 58.8 MiB |    ≈178.9 → **192.4 MiB** | `.tar.gz` |        ≈64 → **59.9 MiB** |
 
 **推算的方向性是对的**（win 最小、macOS 最大），绝对值普遍低估 8–13%。
 
@@ -367,11 +367,11 @@ better-sqlite3 prebuild），不是拍的；但**没有在真机上装出来过*
 
 ### 4.3 两个体积杠杆（都实测过）
 
-| 杠杆 | linux 未压缩 | linux `.tar.xz` | 代价 |
-|---|---:|---:|---|
-| 基线 | 162.8 MiB | 37.4 MiB | — |
-| **去掉 sherpa-onnx** | 130.9 MiB | **30.1 MiB** | 失去流式 ASR / VAD；macOS 上省 **58.8 MiB**（最划算） |
-| **`strip` node 二进制** | 145.2 MiB | 35.0 MiB | 省 16.9 MiB。**macOS 上绝对不能做** —— 会摧毁官方签名 |
+| 杠杆                    | linux 未压缩 | linux `.tar.xz` | 代价                                                  |
+| ----------------------- | -----------: | --------------: | ----------------------------------------------------- |
+| 基线                    |    162.8 MiB |        37.4 MiB | —                                                     |
+| **去掉 sherpa-onnx**    |    130.9 MiB |    **30.1 MiB** | 失去流式 ASR / VAD；macOS 上省 **58.8 MiB**（最划算） |
+| **`strip` node 二进制** |    145.2 MiB |        35.0 MiB | 省 16.9 MiB。**macOS 上绝对不能做** —— 会摧毁官方签名 |
 
 `strip` 后的 node 实测仍能正常执行（`node -e` 通过）。但收益（-14%）相对风险
 （丢失原生崩溃栈符号）一般，**建议先不做**。
@@ -401,10 +401,10 @@ $ node scripts/ci/check-elf-glibc.mjs --dir <官方 node-v22.23.1-linux-x64> --m
 
 ### 签名与拦截（未实测，逐条标注）
 
-| | 现状 | 后果 |
-|---|---|---|
-| **macOS Gatekeeper** | 我们**原样携带 Node 官方签名+公证**的 `node`（实测有 `LC_CODE_SIGNATURE`），但**我们自己的启动脚本与整包没有签名/公证** | 浏览器下载的归档带 `com.apple.quarantine`。用 Finder 解压会**传播**隔离属性 → 双击 `.command` 大概率被拦"无法验证开发者"。用命令行 `tar` 解压**不传播** → 不拦。**[未验证：没有 Mac 可测]** 缓解：文档里给 `xattr -dr com.apple.quarantine <目录>` 一行 |
-| **Windows SmartScreen** | 完全不签（ADR-003 决策 4） | 下载的 `.zip` 带 Mark-of-the-Web，解压出的 `.cmd`/`.exe` 首次运行会弹 SmartScreen，需点"仍要运行"。会随下载量累积信誉而缓解。`build-backends.yml:599` 已记载同一结论 **[报告]** |
+|                         | 现状                                                                                                                    | 后果                                                                                                                                                                                                                                                    |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **macOS Gatekeeper**    | 我们**原样携带 Node 官方签名+公证**的 `node`（实测有 `LC_CODE_SIGNATURE`），但**我们自己的启动脚本与整包没有签名/公证** | 浏览器下载的归档带 `com.apple.quarantine`。用 Finder 解压会**传播**隔离属性 → 双击 `.command` 大概率被拦"无法验证开发者"。用命令行 `tar` 解压**不传播** → 不拦。**[未验证：没有 Mac 可测]** 缓解：文档里给 `xattr -dr com.apple.quarantine <目录>` 一行 |
+| **Windows SmartScreen** | 完全不签（ADR-003 决策 4）                                                                                              | 下载的 `.zip` 带 Mark-of-the-Web，解压出的 `.cmd`/`.exe` 首次运行会弹 SmartScreen，需点"仍要运行"。会随下载量累积信誉而缓解。`build-backends.yml:599` 已记载同一结论 **[报告]**                                                                         |
 
 **这两条都是"不签名"的既有后果，不是本方案引入的新问题** —— README 已经写了
 "不签名：macOS 只做 ad-hoc，Windows 完全不签"。但**它们会成为用户第一次双击时看到的东西**，
@@ -482,6 +482,7 @@ THIRD-PARTY-NOTICES、libsimple 的 MIT election）应当补齐；GPL 那条**�
 **请明确：公开可下载，还是自用分发？**
 
 **问题 2 —— 要不要把 libsimple + sqlite-vec 放进包里？（我倾向：放）**
+
 - 代价：每平台 **+5.4 MB**（占比 3%），**全 MIT，不碰 GPL**，不改变任何法律判断。
 - 收益：开箱即可中文全文检索。**否则默认是 `tokenizer=trigram`，中文两字词搜索
   返回 0 条且不报任何错**（§3.3 实测日志）。
@@ -489,6 +490,7 @@ THIRD-PARTY-NOTICES、libsimple 的 MIT election）应当补齐；GPL 那条**�
   所以我认为它属于判据 2 想排除的范围之外，但**这是用户的判断，我不擅自做。**
 
 **问题 3 —— sherpa-onnx 留还是去？**
+
 - 留：macOS 包 178.9 MiB，Linux 162.8 MiB。
 - 去：macOS 降到 **约 120 MiB**（省 58.8 MiB，33%），Linux 降到 130.9 MiB。
 - 代价：失去流式 ASR 与 VAD（产品仍启动，`unavailableReason` 会如实说明）。
@@ -539,11 +541,11 @@ valid file:// URLs. Received protocol 'd:'
 
 `[CI 实测 run 31204790920]` 这条是**产品事实**，不是我们的缺陷，需要 Manager/用户裁决。
 
-| 文件 | minos | 来源 | 坏了丢什么 |
-|---|---:|---|---|
-| `libonnxruntime.dylib` / `libonnxruntime.1.27.0.dylib` | **15.5.0** | sherpa-onnx npm | 流式 ASR / VAD |
-| `sherpa-onnx.node` | **14.0.0** | sherpa-onnx npm | 同上 |
-| `ext/vec0.dylib` | **14.0.0** | sqlite-vec v0.1.9 官方 release | 语义 / 混合检索 |
+| 文件                                                   |      minos | 来源                           | 坏了丢什么      |
+| ------------------------------------------------------ | ---------: | ------------------------------ | --------------- |
+| `libonnxruntime.dylib` / `libonnxruntime.1.27.0.dylib` | **15.5.0** | sherpa-onnx npm                | 流式 ASR / VAD  |
+| `sherpa-onnx.node`                                     | **14.0.0** | sherpa-onnx npm                | 同上            |
+| `ext/vec0.dylib`                                       | **14.0.0** | sqlite-vec v0.1.9 官方 release | 语义 / 混合检索 |
 
 **通过的**：`runtime/node` 11.0.0 · `better-sqlite3` 11.0.0 · **`ext/libsimple.dylib` 11.0.0**
 · `libsherpa-onnx-{c,cxx}-api.dylib` 11.0.0。
@@ -565,6 +567,7 @@ CORE（node / better-sqlite3 / libsimple）仍然硬卡 13.3；可降级组各�
 而已知事实不再每次伪装成新问题。
 
 **没做的（需要裁决）**：README 的平台表现在与事实不完全一致。三个选项：
+
 1. 保留 13.3，在平台表里注明这两个功能各自的 floor（我倾向这个 —— 诚实且不砍用户）；
 2. 把 macOS floor 整体抬到 14.0 或 15.5（砍掉一批用户，换"表里只有一个数字"）；
 3. macOS 包不带 sherpa-onnx（省 58.8 MiB，同时消掉 15.5 那一行）。

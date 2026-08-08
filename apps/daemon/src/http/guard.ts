@@ -29,7 +29,8 @@ export interface GuardResult {
  * 拆开后，NAT/反代等合法场景不再被误伤，而防护本身一分未减。
  */
 function isIpLiteral(hostname: string): boolean {
-  const bare = hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
+  const bare =
+    hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
   // IPv4 点分十进制，逐段 0-255
   if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(bare)) {
     return bare.split('.').every((seg) => Number(seg) <= 255);

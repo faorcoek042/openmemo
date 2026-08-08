@@ -63,7 +63,9 @@ export default function SettingsPage() {
       >
         <span>
           <span className="font-medium text-ink">{t('settings.modelsLink')}</span>
-          <span className="mt-0.5 block text-xs text-ink-secondary">{t('settings.modelsLinkHint')}</span>
+          <span className="mt-0.5 block text-xs text-ink-secondary">
+            {t('settings.modelsLinkHint')}
+          </span>
         </span>
         <ChevronRight className="size-4 text-ink-muted" aria-hidden />
       </Link>

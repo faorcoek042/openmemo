@@ -60,7 +60,10 @@ const CHECKER = join(import.meta.dirname, 'check-elf-glibc.mjs');
 /** 造一个"是 ELF"的文件 —— 检查器按魔数认，不看扩展名。 */
 const elfFile = (dir, name) => {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, name), Buffer.concat([Buffer.from([0x7f, 0x45, 0x4c, 0x46]), Buffer.alloc(60)]));
+  writeFileSync(
+    join(dir, name),
+    Buffer.concat([Buffer.from([0x7f, 0x45, 0x4c, 0x46]), Buffer.alloc(60)]),
+  );
 };
 
 /**
@@ -106,7 +109,8 @@ const runChecker = (args, stubDir) => {
 
 // 逐字对着真 objdump -T 的输出写的（`objdump -T /usr/bin/true` 的一行）：
 //   0000000000000000      DF *UND*\t0000000000000000 (GLIBC_2.2.5) getenv
-const SYM = (ver, name) => `0000000000000000      DF *UND*\t0000000000000000 (GLIBC_${ver}) ${name}`;
+const SYM = (ver, name) =>
+  `0000000000000000      DF *UND*\t0000000000000000 (GLIBC_${ver}) ${name}`;
 
 /**
  * C++ 侧的同一行格式。`tag` 传完整的族名+版本（`GLIBCXX_3.4.29` / `CXXABI_1.3.9`），
@@ -117,7 +121,8 @@ const SYM = (ver, name) => `0000000000000000      DF *UND*\t0000000000000000 (GL
  * 检查器的正则只看行尾的 `(版本) 符号名`，**不该**依赖中间那一列 —— ⑥ 里混着两种，
  * 就是为了让"哪天有人把正则收紧到只认 DF"这件事当场红。
  */
-const CXXSYM = (tag, name, kind = 'DF') => `0000000000000000      ${kind} *UND*\t0000000000000000 (${tag}) ${name}`;
+const CXXSYM = (tag, name, kind = 'DF') =>
+  `0000000000000000      ${kind} *UND*\t0000000000000000 (${tag}) ${name}`;
 
 console.log('\n① 正向：全部 ≤ 上限时退出 0');
 {
@@ -130,7 +135,12 @@ console.log('\n① 正向：全部 ≤ 上限时退出 0');
   });
   const r = runChecker(['--dir', dir, '--max', '2.34'], stub);
   expect(r.code === 0, 'exit 0', '应当 exit 0', r.out);
-  expect(/实测最高 GLIBC_2\.34/m.test(r.out), '打印出了实测最高值（2.34）', '没打印实测最高值', r.out);
+  expect(
+    /实测最高 GLIBC_2\.34/m.test(r.out),
+    '打印出了实测最高值（2.34）',
+    '没打印实测最高值',
+    r.out,
+  );
 }
 
 console.log('\n② ★反向：有一个超标就必须红，并**点名具体符号**');
@@ -157,7 +167,12 @@ console.log('\n② ★反向：有一个超标就必须红，并**点名具体�
     '没点名符号',
     r.out,
   );
-  expect(!r.out.includes('libggml-cpu.so  需要'), '没有把合规的那个也一起报成超标', '误报了合规文件', r.out);
+  expect(
+    !r.out.includes('libggml-cpu.so  需要'),
+    '没有把合规的那个也一起报成超标',
+    '误报了合规文件',
+    r.out,
+  );
 }
 
 console.log('\n③ ★反向：一个 ELF 都没数到 = 什么都没检查，必须红');
@@ -181,7 +196,12 @@ console.log('\n④ 版本号按数字比，不按字符串比');
   });
   const r = runChecker(['--dir', dir, '--max', '2.34'], stub);
   expect(r.code === 0, '2.9 与 2.34 并存时判为合规（2.9 < 2.34）', '把 2.9 当成了大于 2.34', r.out);
-  expect(r.out.includes('实测最高 GLIBC_2.34'), '最高值取的是 2.34 而不是 2.9', '最高值取错', r.out);
+  expect(
+    r.out.includes('实测最高 GLIBC_2.34'),
+    '最高值取的是 2.34 而不是 2.9',
+    '最高值取错',
+    r.out,
+  );
 }
 
 console.log('\n⑤ ★反向：objdump 不存在时必须红 ——「我拿不到」不等于「这里没有」');
@@ -192,7 +212,12 @@ console.log('\n⑤ ★反向：objdump 不存在时必须红 ——「我拿不�
   expect(r.code === 1, 'exit 1', '没有 objdump 却报绿', r.out);
   expect(r.out.includes('没法回答'), '说清了"没法回答不等于没问题"', '理由不对', r.out);
   const r2 = runChecker(['--dir', dir, '--max', '2.34', '--allow-missing-objdump'], null);
-  expect(r2.code === 0, '显式 --allow-missing-objdump 才跳过（CI 上不许传）', '显式豁免没生效', r2.out);
+  expect(
+    r2.code === 0,
+    '显式 --allow-missing-objdump 才跳过（CI 上不许传）',
+    '显式豁免没生效',
+    r2.out,
+  );
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════════
@@ -217,21 +242,34 @@ console.log('\n⑥ 正向：C++ 两族**默认上限**下压线通过（≤ 是�
       SYM('2.34', 'pthread_create'),
       SYM('2.2.5', 'malloc'),
       CXXSYM('GLIBCXX_3.4.29', '_ZSt28__throw_bad_array_new_lengthv'),
-      CXXSYM('GLIBCXX_3.4.21', '_ZNSt13random_device7_M_initERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE'),
+      CXXSYM(
+        'GLIBCXX_3.4.21',
+        '_ZNSt13random_device7_M_initERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE',
+      ),
       // 这一条是 `D  `（数据对象）不是 `DF` —— 中间那一列不该影响解析
       CXXSYM('GLIBCXX_3.4.11', '_ZSt15__once_callable', 'D '),
       CXXSYM('CXXABI_1.3.9', '_ZdlPvm'),
     ],
   });
   const r = runChecker(['--dir', dir, '--max', '2.34'], stub);
-  expect(r.code === 0, 'exit 0（3.4.29 ≤ 默认 3.4.29、1.3.9 ≤ 默认 1.3.9）', '把压线值判成了超标', r.out);
+  expect(
+    r.code === 0,
+    'exit 0（3.4.29 ≤ 默认 3.4.29、1.3.9 ≤ 默认 1.3.9）',
+    '把压线值判成了超标',
+    r.out,
+  );
   expect(
     /实测最高 GLIBCXX_3\.4\.29 \/ CXXABI_1\.3\.9/m.test(r.out),
     '打印出了 C++ 两族的实测最高值',
     '没打印 C++ 实测最高值',
     r.out,
   );
-  expect(/实测最高 GLIBC_2\.34/m.test(r.out), 'glibc 那一行的原格式没被改坏', 'glibc 汇总行变了', r.out);
+  expect(
+    /实测最高 GLIBC_2\.34/m.test(r.out),
+    'glibc 那一行的原格式没被改坏',
+    'glibc 汇总行变了',
+    r.out,
+  );
 }
 
 console.log('\n⑦ ★反向：只有 GLIBCXX 超标（glibc 完全合规）也必须红，并**点名具体符号**');
@@ -240,7 +278,10 @@ console.log('\n⑦ ★反向：只有 GLIBCXX 超标（glibc 完全合规）也�
   elfFile(dir, 'ok.node');
   elfFile(dir, 'too-new.node');
   const stub = stubObjdump(join(WORK, 'stub-cxx-bad'), {
-    'ok.node': [SYM('2.34', 'pthread_create'), CXXSYM('GLIBCXX_3.4.18', '_ZNSt13random_device7_M_finiEv')],
+    'ok.node': [
+      SYM('2.34', 'pthread_create'),
+      CXXSYM('GLIBCXX_3.4.18', '_ZNSt13random_device7_M_finiEv'),
+    ],
     'too-new.node': [
       // glibc 侧完全合规 —— 这正是盲区的形状：旧守卫看这一栏，然后放行。
       SYM('2.34', 'pthread_create'),
@@ -264,7 +305,12 @@ console.log('\n⑦ ★反向：只有 GLIBCXX 超标（glibc 完全合规）也�
     '把 C++ 超标误报成了 glibc 超标',
     r.out,
   );
-  expect(!r.out.includes('ok.node  需要'), '没有把合规的那个也一起报成超标', '误报了合规文件', r.out);
+  expect(
+    !r.out.includes('ok.node  需要'),
+    '没有把合规的那个也一起报成超标',
+    '误报了合规文件',
+    r.out,
+  );
 }
 
 console.log('\n⑧ ★三段版本号：3.4.29 必须判成 > 3.4.9（字符串比和 parseFloat 都会判反）');
@@ -284,13 +330,28 @@ console.log('\n⑧ ★三段版本号：3.4.29 必须判成 > 3.4.9（字符串�
   //   · parseFloat：3.4 vs 3.4 → 相等 → 也会**静默放行**
   // 两种偷懒写法在这里都表现为 exit 0，所以这一条能同时钉死它们。
   const r = runChecker(['--dir', dir, '--max', '2.34', '--max-glibcxx', '3.4.9'], stub);
-  expect(r.code === 1, '★ exit 1（3.4.29 > 3.4.9）', '把 3.4.29 判成了 ≤ 3.4.9 —— 逐段数字比被写坏了', r.out);
-  expect(r.out.includes('需要 GLIBCXX_3.4.29'), '取的最高值是 3.4.29 而不是 3.4.9', '最高值取错', r.out);
+  expect(
+    r.code === 1,
+    '★ exit 1（3.4.29 > 3.4.9）',
+    '把 3.4.29 判成了 ≤ 3.4.9 —— 逐段数字比被写坏了',
+    r.out,
+  );
+  expect(
+    r.out.includes('需要 GLIBCXX_3.4.29'),
+    '取的最高值是 3.4.29 而不是 3.4.9',
+    '最高值取错',
+    r.out,
+  );
 
   // 反过来：上限给到 3.4.29 就该绿，且汇总行报的最高值仍是 3.4.29。
   const r2 = runChecker(['--dir', dir, '--max', '2.34', '--max-glibcxx', '3.4.29'], stub);
   expect(r2.code === 0, '上限 3.4.29 时判为合规', '把合规的判成了超标（假红同样是谎）', r2.out);
-  expect(r2.out.includes('实测最高 GLIBCXX_3.4.29'), '汇总行取的最高值是 3.4.29', '汇总行最高值取错', r2.out);
+  expect(
+    r2.out.includes('实测最高 GLIBCXX_3.4.29'),
+    '汇总行取的最高值是 3.4.29',
+    '汇总行最高值取错',
+    r2.out,
+  );
 }
 
 console.log('\n⑨ ★CXXABI 是**独立**的一条闸：自己的 --max-cxxabi，自己单独触发');
@@ -311,7 +372,12 @@ console.log('\n⑨ ★CXXABI 是**独立**的一条闸：自己的 --max-cxxabi�
   const r = runChecker(['--dir', dir, '--max', '2.34', '--max-cxxabi', '1.3.8'], stub);
   expect(r.code === 1, 'exit 1（1.3.9 > 1.3.8）', 'CXXABI 超标却报绿', r.out);
   expect(r.out.includes('_ZdlPvm'), '点名了 sized delete 那个符号', '没点名符号', r.out);
-  expect(r.out.includes('需要 CXXABI_1.3.9'), '最高值取 1.3.9（1.3 / 1.3.7 段数不同也要比对）', '最高值取错', r.out);
+  expect(
+    r.out.includes('需要 CXXABI_1.3.9'),
+    '最高值取 1.3.9（1.3 / 1.3.7 段数不同也要比对）',
+    '最高值取错',
+    r.out,
+  );
   expect(
     !r.out.includes('高于基线（GLIBCXX）'),
     'GLIBCXX 合规就不跟着报 —— 三族各判各的',
@@ -319,7 +385,12 @@ console.log('\n⑨ ★CXXABI 是**独立**的一条闸：自己的 --max-cxxabi�
     r.out,
   );
   const r2 = runChecker(['--dir', dir, '--max', '2.34'], stub);
-  expect(r2.code === 0, '默认上限 1.3.9 下同一份夹具是绿的', '默认 CXXABI 上限把本仓产物报红了', r2.out);
+  expect(
+    r2.code === 0,
+    '默认上限 1.3.9 下同一份夹具是绿的',
+    '默认 CXXABI 上限把本仓产物报红了',
+    r2.out,
+  );
 }
 
 console.log('\n⑩ ★三族不许串味：GLIBCXX_3.4.29 绝不能被当成 GLIBC_3.4.29');
@@ -336,9 +407,24 @@ console.log('\n⑩ ★三族不许串味：GLIBCXX_3.4.29 绝不能被当成 GLI
   const r = runChecker(['--dir', dir, '--max', '2.34'], stub);
   // 正则的交替分支若写成 `GLIBC|GLIBCXX|CXXABI` 而引擎又不回溯，`GLIBCXX_3.4.29`
   // 会被算进 GLIBC 族 → 3.4.29 > 2.34 → 这里当场变红。exit 0 就是"没串味"的证据。
-  expect(r.code === 0, '★ exit 0 —— GLIBCXX 没有被算进 GLIBC 族', 'GLIBCXX_ 被当成 GLIBC_ 判了超标', r.out);
-  expect(r.out.includes('实测最高 GLIBC_0.0'), 'glibc 族确实一条都没数到', 'glibc 族数到了不该有的东西', r.out);
-  expect(r.out.includes('(无 GLIBC 引用)'), '逐行那一列照旧标注"无 GLIBC 引用"', '逐行标注变了', r.out);
+  expect(
+    r.code === 0,
+    '★ exit 0 —— GLIBCXX 没有被算进 GLIBC 族',
+    'GLIBCXX_ 被当成 GLIBC_ 判了超标',
+    r.out,
+  );
+  expect(
+    r.out.includes('实测最高 GLIBC_0.0'),
+    'glibc 族确实一条都没数到',
+    'glibc 族数到了不该有的东西',
+    r.out,
+  );
+  expect(
+    r.out.includes('(无 GLIBC 引用)'),
+    '逐行那一列照旧标注"无 GLIBC 引用"',
+    '逐行标注变了',
+    r.out,
+  );
   expect(
     r.out.includes('实测最高 GLIBCXX_3.4.29 / CXXABI_1.3.9'),
     '同一份输入在 C++ 两族里被正确数到',

@@ -81,7 +81,10 @@ export class TlsUnavailableError extends Error {
  *   NAT 场景下用户看到的外部 IP **不是本机网卡地址**，我们猜不到，
  *   所以提供这个口子让他显式加进去；不加也能用，只是浏览器会多报一次名称不匹配。
  */
-export function ensureSelfSignedCert(runtimeDir: string, extraHosts: readonly string[] = []): TlsMaterial {
+export function ensureSelfSignedCert(
+  runtimeDir: string,
+  extraHosts: readonly string[] = [],
+): TlsMaterial {
   const certPath = join(runtimeDir, 'tls-cert.pem');
   const keyPath = join(runtimeDir, 'tls-key.pem');
 
@@ -108,12 +111,20 @@ export function ensureSelfSignedCert(runtimeDir: string, extraHosts: readonly st
       execFileSync(
         'openssl',
         [
-          'req', '-x509', '-newkey', 'rsa:2048', '-sha256',
-          '-days', '825',            // 超过 825 天会被部分浏览器直接拒绝
-          '-nodes',                  // 不加密私钥：daemon 无人值守启动，没人来输密码
-          '-keyout', keyPath,
-          '-out', certPath,
-          '-config', cnf,
+          'req',
+          '-x509',
+          '-newkey',
+          'rsa:2048',
+          '-sha256',
+          '-days',
+          '825', // 超过 825 天会被部分浏览器直接拒绝
+          '-nodes', // 不加密私钥：daemon 无人值守启动，没人来输密码
+          '-keyout',
+          keyPath,
+          '-out',
+          certPath,
+          '-config',
+          cnf,
         ],
         { stdio: 'pipe' },
       );
@@ -128,7 +139,8 @@ export function ensureSelfSignedCert(runtimeDir: string, extraHosts: readonly st
     }
     try {
       // 私钥必须只有属主可读
-      if ((statSync(keyPath).mode & 0o077) !== 0) writeFileSync(keyPath, readFileSync(keyPath), { mode: 0o600 });
+      if ((statSync(keyPath).mode & 0o077) !== 0)
+        writeFileSync(keyPath, readFileSync(keyPath), { mode: 0o600 });
     } catch {
       /* 权限收紧失败不阻塞启动，但上面已尽力 */
     }

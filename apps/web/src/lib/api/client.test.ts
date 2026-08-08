@@ -34,7 +34,15 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 
-import { ApiError, api, clearCsrf, forgetMissingEndpoints, hasCsrf, missingEndpointList, registerMockFetcher } from './client';
+import {
+  ApiError,
+  api,
+  clearCsrf,
+  forgetMissingEndpoints,
+  hasCsrf,
+  missingEndpointList,
+  registerMockFetcher,
+} from './client';
 import type { ApiOptions } from './client';
 import { resetConnection } from './connect';
 
@@ -90,13 +98,16 @@ async function freshHandshake(): Promise<void> {
   routes = new Map([
     [
       'GET /api/health',
-      { status: 200, body: { version: '0', instanceId: 'i', contractVersion: 1, port: 80, pid: 1 } },
+      {
+        status: 200,
+        body: { version: '0', instanceId: 'i', contractVersion: 1, port: 80, pid: 1 },
+      },
     ],
     ['POST /api/auth/session', { status: 200, body: { csrf: CSRF } }],
   ]);
   clearCsrf();
   forgetMissingEndpoints();
-  registerMockFetcher(async <T,>(path: string, opts?: ApiOptions): Promise<T> => {
+  registerMockFetcher(async <T>(path: string, opts?: ApiOptions): Promise<T> => {
     mockCalls.push({ path, method: (opts?.method ?? 'GET').toUpperCase() });
     return { fromMock: true } as T;
   });
@@ -179,7 +190,11 @@ describe('client —— 写操作永不静默回落 mock（T-137 §E E3：这条
      */
     // 读：第一次真发、落 mock；第二次直接抄近路
     await api('notes', '/maybe-later').catch(() => undefined);
-    assert.equal(missingEndpointList().includes('GET /maybe-later'), true, '前提：GET 已被记成缺失');
+    assert.equal(
+      missingEndpointList().includes('GET /maybe-later'),
+      true,
+      '前提：GET 已被记成缺失',
+    );
     calls = [];
     mockCalls = [];
     await api('notes', '/maybe-later').catch(() => undefined);
@@ -188,7 +203,11 @@ describe('client —— 写操作永不静默回落 mock（T-137 §E E3：这条
 
     // 写：第一次抛错并记账；第二次**必须仍然发出去**
     await api('notes', '/maybe-later', { method: 'POST' }).catch(() => undefined);
-    assert.equal(missingEndpointList().includes('POST /maybe-later'), true, '前提：POST 已被记成缺失');
+    assert.equal(
+      missingEndpointList().includes('POST /maybe-later'),
+      true,
+      '前提：POST 已被记成缺失',
+    );
     calls = [];
     mockCalls = [];
     await api('notes', '/maybe-later', { method: 'POST' }).catch(() => undefined);

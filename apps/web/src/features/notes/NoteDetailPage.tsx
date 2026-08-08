@@ -162,7 +162,8 @@ export default function NoteDetailPage() {
     return m;
   }, [transcript.data]);
 
-  if (note.isError) return <ErrorBlock error={note.error} onRetry={() => void note.refetch()} className="m-6" />;
+  if (note.isError)
+    return <ErrorBlock error={note.error} onRetry={() => void note.refetch()} className="m-6" />;
   if (!note.data) return <div className="p-6 text-sm text-ink-muted">{t('common.loading')}</div>;
 
   const n = note.data;
@@ -229,11 +230,11 @@ export default function NoteDetailPage() {
           </div>
           <div className="min-h-0 flex-1">
             <PanelBoundary name={t('detail.transcript')}>
-            <TranscriptList
-              segments={arr(transcript.data?.segments)}
-              speakerNames={speakerNames}
-              noteUid={noteUid}
-            />
+              <TranscriptList
+                segments={arr(transcript.data?.segments)}
+                speakerNames={speakerNames}
+                noteUid={noteUid}
+              />
             </PanelBoundary>
           </div>
         </section>
@@ -246,13 +247,17 @@ export default function NoteDetailPage() {
                 key={k}
                 role="tab"
                 aria-selected={tab === k}
-                onClick={() => setParams((p) => {
-                  p.set('tab', k);
-                  return p;
-                })}
+                onClick={() =>
+                  setParams((p) => {
+                    p.set('tab', k);
+                    return p;
+                  })
+                }
                 className={cn(
                   'flex-1 px-3 py-2 text-sm transition-colors',
-                  tab === k ? 'border-b-2 border-b-accent text-ink' : 'text-ink-muted hover:text-ink-secondary',
+                  tab === k
+                    ? 'border-b-2 border-b-accent text-ink'
+                    : 'text-ink-muted hover:text-ink-secondary',
                 )}
               >
                 {t(`detail.tabs.${k}`)}
@@ -261,62 +266,62 @@ export default function NoteDetailPage() {
           </nav>
           <div className="min-h-0 flex-1 overflow-auto p-4 text-sm text-ink-secondary">
             <PanelBoundary name={t(`detail.tabs.${tab}`)}>
-            {tab === 'summary' ? (
-              (n.summaryMd ?? streamedSummary) ? (
-                <p className="whitespace-pre-wrap">{n.summaryMd || streamedSummary}</p>
-              ) : (
-                <p className="text-ink-muted">{t('detail.summaryEmpty')}</p>
-              )
-            ) : tab === 'mindmap' ? (
-              mindmap.data ? (
-                <div className="-m-4 flex h-[60vh] flex-col">
-                  {/*
+              {tab === 'summary' ? (
+                (n.summaryMd ?? streamedSummary) ? (
+                  <p className="whitespace-pre-wrap">{n.summaryMd || streamedSummary}</p>
+                ) : (
+                  <p className="text-ink-muted">{t('detail.summaryEmpty')}</p>
+                )
+              ) : tab === 'mindmap' ? (
+                mindmap.data ? (
+                  <div className="-m-4 flex h-[60vh] flex-col">
+                    {/*
                     ★ 这个 tab **是只读的**（没传 onChange），此前界面对此一个字都不说 ——
                     用户在这里拖动节点，会以为改动生效了。
                     渲染器内部的乐观更新恰恰让它**看起来像成功了**，这是最坏的一种沉默。
                     要么接上编辑，要么明说 + 给出能编辑的地方；这里选后者（保持详情页轻量）。
                   */}
-                  <p className="flex items-center gap-2 px-4 py-1 text-xs text-ink-muted">
-                    <span data-testid="mindmap-readonly">{t('detail.mindmapReadonly')}</span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-5 px-1.5 text-xs text-accent-ink hover:text-accent-ink"
-                      onClick={() => navigate(`/notes/${n.uid}/mindmap`)}
-                    >
-                      {t('detail.mindmapEdit')}
-                    </Button>
-                  </p>
-                  <div className="min-h-0 flex-1">
-                    <MindmapView doc={mindmap.data} noteUid={n.uid} />
+                    <p className="flex items-center gap-2 px-4 py-1 text-xs text-ink-muted">
+                      <span data-testid="mindmap-readonly">{t('detail.mindmapReadonly')}</span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-5 px-1.5 text-xs text-accent-ink hover:text-accent-ink"
+                        onClick={() => navigate(`/notes/${n.uid}/mindmap`)}
+                      >
+                        {t('detail.mindmapEdit')}
+                      </Button>
+                    </p>
+                    <div className="min-h-0 flex-1">
+                      <MindmapView doc={mindmap.data} noteUid={n.uid} />
+                    </div>
                   </div>
-                </div>
-              ) : (
-                /*
+                ) : (
+                  /*
                   ★ F4 的生成入口（T-138 ①）。这里以前只有一句"还没有思维导图"，
                   用户在整个产品里**找不到任何地方**能让 AI 生成一张 ——
                   而后端 `POST /api/notes/:uid/mindmap` 早就通了（实测 4.3 秒出图）。
                   放在这里而不是别处：这是用户"想看导图却没有"的那一刻，
                   和 memo.ac 把生成放在详情页 mindmap tab 里是同一个位置（R-01 §A2.4）。
                 */
-                <div className="flex flex-col items-start gap-3">
-                  <p className="text-ink-muted">{t('mindmap.empty')}</p>
-                  <GenerateMindmapButton noteUid={n.uid} size="sm" />
-                </div>
-              )
-            ) : (
-              <NoteEditor
-                noteUid={n.uid}
-                initialJson={n.bodyJson ?? null}
-                transcriptUid={transcript.data?.uid}
-                quoteAt={(ms) => {
-                  // 取该毫秒所在段的原文，作为锚点的重定位依据（D-02 §3.5 第 2 层）
-                  const segs = transcript.data?.segments ?? [];
-                  const hit = segs.find((sg) => sg.startMs <= ms && ms < sg.endMs);
-                  return hit ? hit.text.slice(0, 200) : null;
-                }}
-              />
-            )}
+                  <div className="flex flex-col items-start gap-3">
+                    <p className="text-ink-muted">{t('mindmap.empty')}</p>
+                    <GenerateMindmapButton noteUid={n.uid} size="sm" />
+                  </div>
+                )
+              ) : (
+                <NoteEditor
+                  noteUid={n.uid}
+                  initialJson={n.bodyJson ?? null}
+                  transcriptUid={transcript.data?.uid}
+                  quoteAt={(ms) => {
+                    // 取该毫秒所在段的原文，作为锚点的重定位依据（D-02 §3.5 第 2 层）
+                    const segs = transcript.data?.segments ?? [];
+                    const hit = segs.find((sg) => sg.startMs <= ms && ms < sg.endMs);
+                    return hit ? hit.text.slice(0, 200) : null;
+                  }}
+                />
+              )}
             </PanelBoundary>
           </div>
         </aside>

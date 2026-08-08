@@ -60,9 +60,21 @@ export const DOWNLOAD_SOURCE_TARGETS: ReadonlyArray<{
   label: string;
   url: string;
 }> = [
-  { provider: 'hf', label: 'Hugging Face', url: 'https://huggingface.co/api/models/ggerganov/whisper.cpp' },
-  { provider: 'hf-mirror', label: 'hf-mirror 镜像', url: 'https://hf-mirror.com/api/models/ggerganov/whisper.cpp' },
-  { provider: 'modelscope', label: 'ModelScope 魔搭', url: 'https://www.modelscope.cn/api/v1/models/Qwen/Qwen3-4B-GGUF/revisions' },
+  {
+    provider: 'hf',
+    label: 'Hugging Face',
+    url: 'https://huggingface.co/api/models/ggerganov/whisper.cpp',
+  },
+  {
+    provider: 'hf-mirror',
+    label: 'hf-mirror 镜像',
+    url: 'https://hf-mirror.com/api/models/ggerganov/whisper.cpp',
+  },
+  {
+    provider: 'modelscope',
+    label: 'ModelScope 魔搭',
+    url: 'https://www.modelscope.cn/api/v1/models/Qwen/Qwen3-4B-GGUF/revisions',
+  },
   { provider: 'github', label: 'GitHub', url: 'https://api.github.com/repos/ggml-org/whisper.cpp' },
 ];
 
@@ -143,7 +155,10 @@ class RoutingDispatcher extends Dispatcher {
   }
 
   override async close(): Promise<void> {
-    await Promise.all([this.#direct.close(), ...[...this.#byProxyUrl.values()].map((a) => a.close())]);
+    await Promise.all([
+      this.#direct.close(),
+      ...[...this.#byProxyUrl.values()].map((a) => a.close()),
+    ]);
   }
 
   override async destroy(): Promise<void> {
@@ -176,7 +191,8 @@ export function applyProxyConfig(
 export function activeProxySummary(): { mode: string; proxy: string | null } | null {
   if (!active) return null;
   const { cfg } = active;
-  const url = cfg.mode === 'manual' ? (cfg.socks5 ?? cfg.httpsProxy ?? cfg.httpProxy ?? null) : null;
+  const url =
+    cfg.mode === 'manual' ? (cfg.socks5 ?? cfg.httpsProxy ?? cfg.httpProxy ?? null) : null;
   return { mode: cfg.mode, proxy: redactProxyUrl(url) };
 }
 
@@ -300,7 +316,8 @@ function classify(err: unknown, proxyLive: boolean | null, viaProxy: boolean): P
   if (isProxyFault(err) || isProxyFault(e?.cause)) return 'proxy_unreachable';
   if (msg.includes('407') || msg.includes('proxy authentication')) return 'proxy_auth_failed';
   if (viaProxy && proxyLive === false) return 'proxy_unreachable';
-  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return viaProxy ? 'upstream_unreachable' : 'dns_failed';
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN')
+    return viaProxy ? 'upstream_unreachable' : 'dns_failed';
   if (code === 'ECONNREFUSED' && viaProxy) return 'proxy_unreachable';
   return 'upstream_unreachable';
 }

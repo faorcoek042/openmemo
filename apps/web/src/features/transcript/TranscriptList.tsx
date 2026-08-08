@@ -124,11 +124,19 @@ export function TranscriptList({
               role="listitem"
               data-index={row.index}
               ref={virtualizer.measureElement}
-              style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${row.start}px)` }}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${row.start}px)`,
+              }}
             >
               <SegmentRow
                 seg={seg}
-                speakerName={seg.speakerLabel ? (speakerNames[seg.speakerLabel] ?? seg.speakerLabel) : null}
+                speakerName={
+                  seg.speakerLabel ? (speakerNames[seg.speakerLabel] ?? seg.speakerLabel) : null
+                }
                 active={active}
                 editable={editable && Boolean(noteUid)}
                 onSeek={() => {

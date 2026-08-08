@@ -48,7 +48,12 @@ describe('笔记标题覆盖规则', () => {
 
   it('空标题可以被填上', () => {
     assert.equal(
-      mayRetitleNote({ noteKind: 'media', currentTitle: '   ', input: '/x/a.wav', mediaTitle: 'A' }),
+      mayRetitleNote({
+        noteKind: 'media',
+        currentTitle: '   ',
+        input: '/x/a.wav',
+        mediaTitle: 'A',
+      }),
       true,
     );
   });

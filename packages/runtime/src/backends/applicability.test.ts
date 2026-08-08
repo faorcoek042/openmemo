@@ -43,7 +43,9 @@ const pack = (backend: Backend) => ({
 });
 
 /** 一份真实形状的 BackendStatus 表：CPU 已装可用，其余都"没装所以枚举不到"。 */
-function statuses(overrides: Partial<Record<Backend, Partial<BackendStatus>>> = {}): BackendStatus[] {
+function statuses(
+  overrides: Partial<Record<Backend, Partial<BackendStatus>>> = {},
+): BackendStatus[] {
   const all: Backend[] = ['cuda', 'vulkan', 'rocm', 'metal', 'coreml', 'cpu'];
   return all.map((id) => {
     const base: BackendStatus = {
@@ -318,7 +320,9 @@ describe('L2 适用性：解开"要先装才能被发现"的环', () => {
 
     it('阴性对照：探针真的跑过且给了结论时，不许被当成"没跑过"放水', () => {
       // cpu 已装、已探测、可用；vulkan 已装、已探测、枚举不到设备 = 真结论。
-      const backends = probeFailed('installed but enumerated no devices (driver missing or too old)');
+      const backends = probeFailed(
+        'installed but enumerated no devices (driver missing or too old)',
+      );
       const withVerdict = backends.map((b) =>
         b.id === 'cpu'
           ? { ...b, available: true, installed: true, probed: true, unavailableReason: null }

@@ -96,7 +96,12 @@ function countSourceFiles(dir) {
     if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
     const p = join(dir, e.name);
     if (e.isDirectory()) n += countSourceFiles(p);
-    else if (e.isFile() && /\.tsx?$/.test(e.name) && !TEST_FILE.test(e.name) && !e.name.endsWith('.d.ts'))
+    else if (
+      e.isFile() &&
+      /\.tsx?$/.test(e.name) &&
+      !TEST_FILE.test(e.name) &&
+      !e.name.endsWith('.d.ts')
+    )
       n += 1;
   }
   return n;
@@ -155,7 +160,10 @@ for (const root of ROOTS) {
       //     · 掉引号 → sh 展开 `**` 成"恰好两层"，漏跑（T-135，daemon 13→9 个文件）
       //     · 写成 `node --test dist` → Node 24 当成一个文件，`tests 1 / pass 1` 绿灯（实测）
       //   所以判据不是"记得加引号"，是"没加会在这里当场红"。
-      if (/node --test/.test(scripts.test) && !/node --test "dist\/\*\*\/\*\.test\.js"/.test(scripts.test)) {
+      if (
+        /node --test/.test(scripts.test) &&
+        !/node --test "dist\/\*\*\/\*\.test\.js"/.test(scripts.test)
+      ) {
         discovery.push(
           `${where} —— scripts.test 里的 \`node --test\` 没有跟着 "dist/**/*.test.js"（含双引号）` +
             `\n      实际写的是: ${scripts.test.slice(scripts.test.indexOf('node --test'))}`,
@@ -203,4 +211,6 @@ if (problems.length > 0) {
   process.exit(1);
 }
 
-console.log(`✔ check-test-scripts: ${covered.length} 个含测试的包都有 test 脚本 —— ${covered.join(' ')}`);
+console.log(
+  `✔ check-test-scripts: ${covered.length} 个含测试的包都有 test 脚本 —— ${covered.join(' ')}`,
+);

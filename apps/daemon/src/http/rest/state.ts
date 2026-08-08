@@ -178,8 +178,7 @@ export class RestState {
     const detection = await detectLocalHardware(modelsRoot);
 
     // 与 AppPaths.extensionsDir 同一个定义（config/paths.ts:91）。
-    const extensionsDir =
-      process.env['OPENMEMO_EXT_DIR'] ?? path.join(deps.dataDir, 'bin', 'ext');
+    const extensionsDir = process.env['OPENMEMO_EXT_DIR'] ?? path.join(deps.dataDir, 'bin', 'ext');
 
     const state = new RestState(
       deps.sse,
@@ -225,7 +224,9 @@ export class RestState {
         console.warn(`[backends] ${s.packId} 没有补记录：${s.reason}`);
       }
     } catch (err: unknown) {
-      console.warn(`[backends] 启动对账失败：${String(err)} —— 已装但没记录的包会继续显示成"未安装"`);
+      console.warn(
+        `[backends] 启动对账失败：${String(err)} —— 已装但没记录的包会继续显示成"未安装"`,
+      );
     }
   }
 

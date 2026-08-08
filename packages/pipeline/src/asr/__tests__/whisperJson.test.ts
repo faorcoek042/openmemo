@@ -116,7 +116,9 @@ describe('parseWhisperJson', () => {
 
   it('flags likely silence via no_speech_prob', () => {
     const json = JSON.stringify({
-      transcription: [{ offsets: { from: 0, to: 1000 }, text: 'hmm', no_speech_prob: 0.9, avg_logprob: -0.1 }],
+      transcription: [
+        { offsets: { from: 0, to: 1000 }, text: 'hmm', no_speech_prob: 0.9, avg_logprob: -0.1 },
+      ],
     });
     const segs = parseWhisperJson(json, 0);
     assert.ok((segs[0]!.flags & SEGMENT_FLAG.SILENCE_OR_MUSIC) !== 0);
@@ -129,7 +131,10 @@ describe('detectRepetition — whisper hallucination flag (D-02 §1.5 bit 0)', (
   });
 
   it('catches a tiled phrase with no spaces (CJK)', () => {
-    assert.equal(detectRepetition('字幕由社群提供字幕由社群提供字幕由社群提供字幕由社群提供'), true);
+    assert.equal(
+      detectRepetition('字幕由社群提供字幕由社群提供字幕由社群提供字幕由社群提供'),
+      true,
+    );
   });
 
   it('does not flag ordinary prose', () => {
@@ -159,7 +164,10 @@ describe('logprobToConfidence', () => {
 describe('deriveResumeSet — plan_version guard (D-01 §4.5)', () => {
   it('resumes from persisted chunks when the plan version matches', () => {
     const s = deriveResumeSet([0, 1, 2], PLAN_VERSION);
-    assert.deepEqual([...s].sort((a, b) => a - b), [0, 1, 2]);
+    assert.deepEqual(
+      [...s].sort((a, b) => a - b),
+      [0, 1, 2],
+    );
   });
 
   it('refuses to resume across a plan change — indices would be misaligned', () => {
@@ -172,9 +180,15 @@ describe('deriveResumeSet — plan_version guard (D-01 §4.5)', () => {
 
 describe('dedupeBoundarySegments — chunk-overlap artifact', () => {
   const seg = (startMs: number, endMs: number, text: string): TranscriptSegment => ({
-    startMs, endMs, text,
-    confidence: null, noSpeechProb: null, words: null,
-    chunkIdx: 0, flags: 0, speakerLabel: null,
+    startMs,
+    endMs,
+    text,
+    confidence: null,
+    noSpeechProb: null,
+    words: null,
+    chunkIdx: 0,
+    flags: 0,
+    speakerLabel: null,
   });
 
   it('drops the duplicate the real run produced at a chunk boundary', () => {

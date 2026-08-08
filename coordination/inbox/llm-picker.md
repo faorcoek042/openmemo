@@ -20,6 +20,7 @@
 ## [2026-08-03 19:35] T-126 DONE
 
 交付:
+
 - `apps/web/src/components/common/llm/LlmModelSelect.tsx`（**新**，两处共用的唯一模型选择器）
 - `apps/web/src/components/common/llm/llm-catalog.ts`（`MODELS_BY_PROVIDER` 删除 → 吃目录；新增 `catalogProviderFor` / `catalogNoteFor` / `LLM_CATALOG_STATS`）
 - `apps/web/src/components/common/llm/LlmSettingsSection.tsx`、`PurposeBindingsSection.tsx`（各自的 `<input list>` + `<datalist>` 换成 `<LlmModelSelect>`）
@@ -30,7 +31,7 @@
 
 ### ① 为什么默认改成真下拉，而前任的顾虑仍然被照顾
 
-前任的注释是：*"厂商上新模型比我们发版快，写死下拉会把新模型挡在外面。"*
+前任的注释是：_"厂商上新模型比我们发版快，写死下拉会把新模型挡在外面。"_
 **这条是真的**，而且比他说的更具体：24 家里 **20 家**的模型清单是 `official-doc`
 （人工从文档转录，`checkedAt` 停在 2026-04~05），**根本没有端点可调**，必然会过时。
 
@@ -56,10 +57,10 @@
 
 两处唯一的差异用参数表达，不用复制代码表达：
 
-| | 「AI 模型」 | 「按用途分别配置」 |
-|---|---|---|
-| 空值 | 只在还没选过时出现（同 `AsrModelPicker`） | **常驻**「继承全局（deepseek-v4-flash）」 |
-| 提交时机 | `commit="change"`（写本地 state） | `commit="blur"`（每次提交都会 PATCH） |
+|          | 「AI 模型」                               | 「按用途分别配置」                        |
+| -------- | ----------------------------------------- | ----------------------------------------- |
+| 空值     | 只在还没选过时出现（同 `AsrModelPicker`） | **常驻**「继承全局（deepseek-v4-flash）」 |
+| 提交时机 | `commit="change"`（写本地 state）         | `commit="blur"`（每次提交都会 PATCH）     |
 
 ### ③ 数据源：一份，不是两份
 
@@ -76,22 +77,23 @@
 
 **怎么进的包**：`vite.config.ts` 加 `resolve.alias['@manifests']`，配 `src/types/manifests.d.ts`
 的 ambient 声明。两个理由都不是审美：
+
 - `apps/web/tsconfig.json` 的 `rootDir` 是 `src`，相对路径 import 会 TS6059；
 - ambient 声明让 **tsc 完全不去读那 253 KB JSON**（否则要为 520 条模型推字面量类型）。
-它的**代价**我在文件头写清楚了：ambient 声明是**断言不是校验**，manifest 形状变了 tsc 不会发现 ——
-所以运行时读取处对缺字段全部做了 `?? []` 防御，且不假设任何 provider 一定存在。
+  它的**代价**我在文件头写清楚了：ambient 声明是**断言不是校验**，manifest 形状变了 tsc 不会发现 ——
+  所以运行时读取处对缺字段全部做了 `?? []` 防御，且不假设任何 provider 一定存在。
 
 **没有新开端点**：`packages/shared/src/providers.ts` 的文件头已经把这条定死了 ——
-目录是随仓库分发的静态快照，*"a dropdown that is empty because the network is blocked is
-worse than one that is slightly out of date"*。
+目录是随仓库分发的静态快照，_"a dropdown that is empty because the network is blocked is
+worse than one that is slightly out of date"_。
 
 ### ④ 覆盖率（这一节是本回执最要紧的一段，别读成"已接入 520"）
 
-| | 家数 | 模型数 |
-|---|---|---|
+|                                              | 家数   | 模型数  |
+| -------------------------------------------- | ------ | ------- |
 | `vendor/manifests/llm-providers.json` 里有的 | **24** | **520** |
-| **实际能出现在下拉里的** | **11** | **283** |
-| 够不到的 | 13 | 237 |
+| **实际能出现在下拉里的**                     | **11** | **283** |
+| 够不到的                                     | 13     | 237     |
 
 11 家分别是：`deepseek`(4) `openai`(30) `anthropic→claude`(14) `gemini`(14) `moonshot`(13)
 `zhipu→zhipuai`(16) `dashscope→qwen`(70) `siliconflow→siliconcloud`(66) `openrouter`(30)
@@ -124,11 +126,11 @@ minimax / kimicodingplan / aliyun / xiaomimimo / zhipuaicodingplan / minimaxtoke
 原来 3 条断言 `datalist option` 的（旧行号 1829/1850/1858）——
 **都改成按 testid 定位 `<select>` 取 `option`，断言的内容一条没弱化**：
 
-| 原断言 | 现在 |
-|---|---|
+| 原断言                       | 现在                                                         |
+| ---------------------------- | ------------------------------------------------------------ |
 | 用户填的模型必须在分档候选里 | 同左，改查 `select[data-testid="purpose-chat-model"] option` |
-| 两个区块候选同源 | 同左，两边各按自己的 testid 取 |
-| —— | 另加 8 条见下 |
+| 两个区块候选同源             | 同左，两边各按自己的 testid 取                               |
+| ——                           | 另加 8 条见下                                                |
 
 新增 8 条：① 两处都必须是 `<select>` 且全仓无 `datalist`；② 两处必须复用 `LlmModelSelect`（读源码断言）；
 ③ 候选来自目录（断 `deepseek-v4-flash` 在候选里 + `LLM_CATALOG_STATS` ≥ 24/520）；
@@ -143,24 +145,26 @@ minimax / kimicodingplan / aliyun / xiaomimimo / zhipuaicodingplan / minimaxtoke
 
 ### ⑦ 真浏览器实测（Chromium，`:10000`，全程只 GET）
 
-| 检查 | 结果 |
-|---|---|
-| 「当前使用 · 语言模型」 | `DeepSeek deepseek-v4-flash` —— **原样，没丢** |
-| 「AI 模型」的模型控件 | `<select data-testid="llm-model-select">`，选中值 `deepseek-chat` |
-| 候选 | `["deepseek-chat","deepseek-v4-flash","deepseek-v4-pro","deepseek-reasoner","__custom__"]` |
-| 全页 `datalist` 计数 | **0** |
-| 三个用途档的模型控件 | 三个 `<select>`，各 6 项（继承全局 + 4 型号 + 自定义） |
-| 选「自定义…」 | 文本框出现（`purpose-translate-model-custom`），提示语与占位符正确 |
-| 非 GET 请求 | 只有 SPA 自己的 `POST /api/auth/session` ×2（握手），**零设置写入** |
+| 检查                    | 结果                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------ |
+| 「当前使用 · 语言模型」 | `DeepSeek deepseek-v4-flash` —— **原样，没丢**                                             |
+| 「AI 模型」的模型控件   | `<select data-testid="llm-model-select">`，选中值 `deepseek-chat`                          |
+| 候选                    | `["deepseek-chat","deepseek-v4-flash","deepseek-v4-pro","deepseek-reasoner","__custom__"]` |
+| 全页 `datalist` 计数    | **0**                                                                                      |
+| 三个用途档的模型控件    | 三个 `<select>`，各 6 项（继承全局 + 4 型号 + 自定义）                                     |
+| 选「自定义…」           | 文本框出现（`purpose-translate-model-custom`），提示语与占位符正确                         |
+| 非 GET 请求             | 只有 SPA 自己的 `POST /api/auth/session` ×2（握手），**零设置写入**                        |
 
 截图：`/tmp/llm-picker/01-llm-tab.png`（全页）、`04-ai-model-select.png`、`05-purpose-custom.png`。
 
 下一步建议:
+
 1. **D-10 #24 归 `architect`**：`LLM_PRESETS` → 目录 24 家 + `bucketProviders` 三桶。做完那 13 家 / 237 条自动有候选，`CATALOG_ID_ALIASES` 同时删掉。
 2. **D-10 #26 的「刷新模型列表」**：判据我已备好（`catalogNoteFor().refreshable`，只有 openrouter / siliconcloud / ollama / lmstudio 四家为 true）。
 3. `llm.defaultModelId` 与 `llm.providers[*].model` 的双写不同步（见 TL;DR 最后一条），建议单独立项。
 
 需要 Manager 决策:
+
 - **`apps/web/dist` 是共享产物**：`:10000` 的 daemon 直接托管它，任何 agent 跑 `vite build` 都会换掉演示实例正在提供的前端。要不要给各 agent 规定"验证构建一律用 `--outDir` 到 `/tmp`"？（我这次是构建完才意识到，已在诚实声明里报了。）
 - 上面 TL;DR 最后一条那个**点一次「确定」就会静默改掉 `defaultModelId`** 的既有缺陷，本轮修不修。
 
@@ -191,6 +195,7 @@ git add apps/web/src/components/common/llm/LlmModelSelect.tsx \
 但请知道它属于他那批。）
 
 诚实声明:
+
 - **没有重启/kill `:10000`，没有占用该端口，没有对它发过任何写请求。** 但 `vite build` 重写了
   `apps/web/dist`，而该实例正是从这个目录托管 SPA —— **它现在跑的是我这次的构建**。这条必须算在我头上。
   19:18 的那次 daemon 重启不是我做的（`builtAt` 19:18:16，daemon 被别人重新构建过）。
@@ -210,6 +215,7 @@ git add apps/web/src/components/common/llm/LlmModelSelect.tsx \
 ## [2026-08-03 19:55] T-126 追加 DONE —— `defaultModelId` 静默覆盖
 
 交付（在 e896e2b 之上的新改动，**未提交**）:
+
 - `apps/web/src/components/common/llm/LlmSettingsSection.tsx`（`ProviderForm` 新增 `initialModel` 入参）
 - `apps/web/src/components/common/llm/llm-catalog.ts`（`modelsFor` 把权威值也并进候选）
 - `apps/web/src/test/components.test.tsx`（新增 1 条回归 + 改写 1 条既有断言）
@@ -218,12 +224,12 @@ git add apps/web/src/components/common/llm/LlmModelSelect.tsx \
 
 我按 daemon **实际读什么**定，不按名字猜（`apps/daemon/src/llm/resolve.ts`）：
 
-| 键 | daemon 拿它做什么 | 结论 |
-|---|---|---|
-| `llm.defaultProviderId` / `llm.defaultModelId` | `bindingFor()` :51-52 —— **决定用哪家、哪个型号**；缺任一直接 `undefined` → `LLM_NOT_CONFIGURED` | **权威** |
-| `llm.providers[i].kind` | `providerKind()` :70 —— 决定用哪个协议适配器 | 有独立职责，必须留 |
-| `llm.providers[i].model` | **全仓 grep：daemon 一处都不读** | **不是权威** |
-| `llm.baseUrl.<id>` | :107 端点 | 有独立职责 |
+| 键                                             | daemon 拿它做什么                                                                                | 结论               |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------ |
+| `llm.defaultProviderId` / `llm.defaultModelId` | `bindingFor()` :51-52 —— **决定用哪家、哪个型号**；缺任一直接 `undefined` → `LLM_NOT_CONFIGURED` | **权威**           |
+| `llm.providers[i].kind`                        | `providerKind()` :70 —— 决定用哪个协议适配器                                                     | 有独立职责，必须留 |
+| `llm.providers[i].model`                       | **全仓 grep：daemon 一处都不读**                                                                 | **不是权威**       |
+| `llm.baseUrl.<id>`                             | :107 端点                                                                                        | 有独立职责         |
 
 **所以 `providers[i].model` 是什么？** 它是「这家上次选的型号」的**记忆**，唯一的正当用途是
 「设为默认」切换 provider 时把 `defaultModelId` 恢复成**那家的**型号 ——
@@ -280,12 +286,12 @@ git add apps/web/src/components/common/llm/LlmModelSelect.tsx \
 用完**按 pid `kill 2967635`**，端口已释放；`:10000` 期间 200 正常，`apps/web/dist` 我这轮**一次都没构建**
 （其 mtime 19:33 是你那次统一构建）。
 
-| 检查 | 结果 |
-|---|---|
-| 「当前生效」 | `DeepSeek · deepseek-v4-flash` |
-| 表单里模型下拉的选中值 | **`deepseek-v4-flash`** ← 修复前这里是 `deepseek-chat`，与上一行自相矛盾 |
-| 候选顺序 | `["deepseek-v4-flash","deepseek-chat","deepseek-v4-pro","deepseek-reasoner","__custom__"]` |
-| 非 GET 请求 | 只有 `POST /api/auth/session` ×3（握手）。**我没有点「确定」，用户的库一个字节没动。** |
+| 检查                   | 结果                                                                                       |
+| ---------------------- | ------------------------------------------------------------------------------------------ |
+| 「当前生效」           | `DeepSeek · deepseek-v4-flash`                                                             |
+| 表单里模型下拉的选中值 | **`deepseek-v4-flash`** ← 修复前这里是 `deepseek-chat`，与上一行自相矛盾                   |
+| 候选顺序               | `["deepseek-v4-flash","deepseek-chat","deepseek-v4-pro","deepseek-reasoner","__custom__"]` |
+| 非 GET 请求            | 只有 `POST /api/auth/session` ×3（握手）。**我没有点「确定」，用户的库一个字节没动。**     |
 
 截图 `/tmp/llm-picker/06-authority-fixed.png`。
 
@@ -314,6 +320,7 @@ git add apps/web/src/components/common/llm/LlmSettingsSection.tsx \
 ```
 
 诚实声明:
+
 - **反向验证是真跑的**，上面那 3 行 `✖ / fail 2` 是实际输出，不是我预期的样子。
 - 期间起过的进程只有 `vite --port 5199`（pid 2967635），**按 pid kill，没用 `pkill -f`**。
 - **没有重建 `apps/web/dist`**（新 PROTOCOL 规矩），没有重启/kill `:10000`，没对它发过写请求。

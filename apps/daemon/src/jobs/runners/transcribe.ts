@@ -195,13 +195,13 @@ export async function runTranscribeJob(
   const transcript =
     resumable ??
     repos.createTranscript({
-    noteId: note.id,
-    engineId: chosen.engineId,
-    // modelId 也必须跟着引擎走 —— 否则 engine=paraformer 却记着 whisper 的 ggml 文件名，
-    // 排障时会把人带偏（实测出现过 engine=paraformer / model=ggml-base.en.bin）
-    modelId,
-    language: payload.language ?? null,
-  });
+      noteId: note.id,
+      engineId: chosen.engineId,
+      // modelId 也必须跟着引擎走 —— 否则 engine=paraformer 却记着 whisper 的 ggml 文件名，
+      // 排障时会把人带偏（实测出现过 engine=paraformer / model=ggml-base.en.bin）
+      modelId,
+      language: payload.language ?? null,
+    });
   if (resumable) {
     console.log(
       `[transcribe] 续跑 transcript=${transcript.uid}，已完成 chunk=${[...repos.completedChunks(transcript.id)].join(',') || '(无)'}`,

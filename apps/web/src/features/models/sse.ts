@@ -40,8 +40,7 @@ export const modelsSse: SseBinding = (qc: QueryClient) => [
       jobType: 'download',
       state: e.state,
       progress:
-        e.pct ??
-        (e.totalBytes && e.completedBytes != null ? e.completedBytes / e.totalBytes : 0),
+        e.pct ?? (e.totalBytes && e.completedBytes != null ? e.completedBytes / e.totalBytes : 0),
       step: e.step,
       completedBytes: e.completedBytes,
       totalBytes: e.totalBytes,

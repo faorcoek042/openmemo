@@ -304,7 +304,9 @@ export function removeRuntimeJson(path: string): void {
  * 不该给所有人默认加上证书信任成本。
  */
 export function createUnboundServer(tls?: { key: string; cert: string }): Server {
-  return tls ? (createHttpsServer({ key: tls.key, cert: tls.cert }) as unknown as Server) : createServer();
+  return tls
+    ? (createHttpsServer({ key: tls.key, cert: tls.cert }) as unknown as Server)
+    : createServer();
 }
 
 /**
@@ -324,7 +326,10 @@ export interface DataDirLock {
 }
 
 export class DataDirLockedError extends Error {
-  constructor(readonly holderPid: number, readonly path: string) {
+  constructor(
+    readonly holderPid: number,
+    readonly path: string,
+  ) {
     super(
       `另一个 OpenMemo 实例（pid ${holderPid}）正在使用同一个数据目录。` +
         `同一个数据目录只能有一个实例，否则任务会被互相抢走、数据库会被并发写坏。`,

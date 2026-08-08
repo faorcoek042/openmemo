@@ -55,7 +55,11 @@ export type GuardFailureCode =
 
 export type GuardResult<T> = { ok: true; value: T } | GuardFailure;
 
-const fail = (code: GuardFailureCode, message: string): GuardFailure => ({ ok: false, code, message });
+const fail = (code: GuardFailureCode, message: string): GuardFailure => ({
+  ok: false,
+  code,
+  message,
+});
 
 // =========================================================================================
 // LAYER 3 — argument injection: user input must never be mistaken for an option
@@ -211,7 +215,10 @@ export function validateHttpUrl(input: unknown): GuardResult<SafeUrl> {
   // call `assertHostNotPrivate` themselves, and even that is pre-flight — see its
   // docblock for the TOCTOU gap it does not close.
   if (isPrivateOrReservedHost(url.hostname)) {
-    return fail('private_address', `host "${url.hostname}" resolves to a private or reserved address`);
+    return fail(
+      'private_address',
+      `host "${url.hostname}" resolves to a private or reserved address`,
+    );
   }
 
   return { ok: true, value: { href: url.href, hostname: url.hostname, protocol: url.protocol } };
@@ -287,7 +294,10 @@ export function buildArgv(spec: ArgvSpec): GuardResult<string[]> {
     }
   }
 
-  return { ok: true, value: [...flags, ...(useDoubleDash && operands.length > 0 ? ['--'] : []), ...operands] };
+  return {
+    ok: true,
+    value: [...flags, ...(useDoubleDash && operands.length > 0 ? ['--'] : []), ...operands],
+  };
 }
 
 /** L4 — user-controlled prompt text, truncated so it cannot blow out argv limits. */
@@ -312,7 +322,10 @@ export function safePrompt(prompt: string | undefined): string | null {
  */
 const WINDOWS_SHELL_EXTENSIONS = ['.bat', '.cmd', '.ps1', '.com', '.vbs', '.js'];
 
-export function isSafeExecutable(binPath: string, platform: NodeJS.Platform = process.platform): GuardResult<string> {
+export function isSafeExecutable(
+  binPath: string,
+  platform: NodeJS.Platform = process.platform,
+): GuardResult<string> {
   if (typeof binPath !== 'string' || binPath.length === 0) {
     return fail('not_a_string', 'executable path must be a non-empty string');
   }

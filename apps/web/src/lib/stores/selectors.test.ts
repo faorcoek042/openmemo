@@ -59,11 +59,7 @@ describe('progress.store 选择器引用稳定性', () => {
       (s: { byJob: Record<string, unknown> }) => Object.values(s.byJob),
       useProgressStore,
     );
-    assert.notStrictEqual(
-      a,
-      b,
-      '如果这条断言失败，说明 zustand 行为变了，可以重新评估这条禁令',
-    );
+    assert.notStrictEqual(a, b, '如果这条断言失败，说明 zustand 行为变了，可以重新评估这条禁令');
   });
 
   test('选派生标量（长度/计数）是安全的：按值比较', () => {

@@ -1920,7 +1920,8 @@ components:
       allOf:
         - $ref: '#/components/schemas/SseEventBase'
         - type: object
-          required: [type, jobId, step, pct, completedBytes, totalBytes, speedBps, etaSeconds, state]
+          required:
+            [type, jobId, step, pct, completedBytes, totalBytes, speedBps, etaSeconds, state]
           properties:
             type:
               type: string

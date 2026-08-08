@@ -23,7 +23,9 @@ import * as peaksModule from './peaks';
 import { decodeOmpk } from './peaks';
 
 /** 按 D-02 §3.4 拼一个合法 `.ompk`。 */
-function ompk(opts: { magic?: string; version?: number; channels?: number; values?: number[][] } = {}) {
+function ompk(
+  opts: { magic?: string; version?: number; channels?: number; values?: number[][] } = {},
+) {
   const channels = opts.channels ?? 1;
   const values = opts.values ?? [[127, -127, 64, 0]];
   const perChannel = values[0]!.length;
@@ -72,7 +74,15 @@ describe('decodeOmpk', () => {
   });
 
   it('多声道各自成一个数组（交错存放，别把第二声道读成第一声道的尾巴）', () => {
-    const d = decodeOmpk(ompk({ channels: 2, values: [[127, 0], [-127, 64]] }));
+    const d = decodeOmpk(
+      ompk({
+        channels: 2,
+        values: [
+          [127, 0],
+          [-127, 64],
+        ],
+      }),
+    );
     assert.equal(d.channels.length, 2);
     near(d.channels[0]!, [1, 0], '第一声道');
     near(d.channels[1]!, [-1, 64 / 127], '第二声道');

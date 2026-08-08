@@ -156,7 +156,8 @@ async function installZip(
   const sha = createHash('sha256').update(zip).digest('hex');
   served.set(`/${name}`, zip);
 
-  const store = reuseStore ?? new ArtifactStore(join(await mkdtemp(join(tmpdir(), 'om-installer-')), 'models'));
+  const store =
+    reuseStore ?? new ArtifactStore(join(await mkdtemp(join(tmpdir(), 'om-installer-')), 'models'));
   const out = await install({
     store,
     target: {
@@ -203,11 +204,7 @@ describe('T-153 ② CoreML encoder：解包不许多出一层同名目录', () =
     // 内容也要对得上 —— 目录在、文件名对、内容错，同样是静默回退
     assert.equal(await fs.readFile(join(dir, 'coremldata.bin'), 'utf8'), 'coreml-data');
     // 而且不许留下一个空的中间层
-    assert.equal(
-      entries.includes(ENC),
-      false,
-      `还套着一层同名目录：${JSON.stringify(entries)}`,
-    );
+    assert.equal(entries.includes(ENC), false, `还套着一层同名目录：${JSON.stringify(entries)}`);
   });
 
   it('zip 本来就是平铺的（没有那层冗余目录）→ 行为完全不变', async () => {
@@ -282,11 +279,21 @@ describe('T-168 ① 真归档形状：__MACOSX 不许废掉层级修复', () => 
     );
     assert.equal(await fs.readFile(join(dir, 'coremldata.bin'), 'utf8'), 'COREML-DATA');
     // 垃圾不许跟着进来（`__MACOSX` 落盘时正是它让 collapse 压不掉）
-    assert.equal(entries.includes('__MACOSX'), false, `__MACOSX 落盘了：${JSON.stringify(entries)}`);
+    assert.equal(
+      entries.includes('__MACOSX'),
+      false,
+      `__MACOSX 落盘了：${JSON.stringify(entries)}`,
+    );
     // 也不许还套着一层
     assert.equal(entries.includes(V3), false, `还套着一层同名目录：${JSON.stringify(entries)}`);
     // 载荷的子目录一个都不许少
-    assert.deepEqual(entries, ['analytics', 'coremldata.bin', 'metadata.json', 'model.mil', 'weights']);
+    assert.deepEqual(entries, [
+      'analytics',
+      'coremldata.bin',
+      'metadata.json',
+      'model.mil',
+      'weights',
+    ]);
   });
 
   it('★ turbo（macOS CI 实测的那一个）同形状 → 同样必须落对', async () => {
@@ -346,7 +353,11 @@ describe('T-157 ② 更新失败不许破坏当前版本', () => {
     const NAME = 'keepold-pack.zip';
 
     // ① 先装一版能用的
-    const { dir } = await installZip(NAME, [{ name: 'bin/whisper-cli', data: Buffer.from('V1-GOOD') }], store);
+    const { dir } = await installZip(
+      NAME,
+      [{ name: 'bin/whisper-cli', data: Buffer.from('V1-GOOD') }],
+      store,
+    );
     assert.equal(await fs.readFile(join(dir, 'bin/whisper-cli'), 'utf8'), 'V1-GOOD');
 
     /*

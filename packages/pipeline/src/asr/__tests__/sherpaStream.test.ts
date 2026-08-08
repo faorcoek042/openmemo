@@ -53,8 +53,12 @@ function fakeModule(opts: { endpointAfter?: number } = {}): SherpaModule {
 function engineWith(mod: SherpaModule): SherpaOnnxEngine {
   return new SherpaOnnxEngine({
     model: {
-      encoder: 'e', decoder: 'd', joiner: 'j', tokens: 't',
-      modelId: 'fake', languages: ['zh'],
+      encoder: 'e',
+      decoder: 'd',
+      joiner: 'j',
+      tokens: 't',
+      modelId: 'fake',
+      languages: ['zh'],
     },
     loadModule: async () => mod,
   });
@@ -80,7 +84,9 @@ describe('SherpaAsrStream lifecycle', () => {
   it('emits partials as the hypothesis grows', async () => {
     const engine = engineWith(fakeModule());
     const stream = engine.openStream({
-      modelPath: 'm', language: 'zh', signal: new AbortController().signal,
+      modelPath: 'm',
+      language: 'zh',
+      signal: new AbortController().signal,
     });
     const partials: TranscriptSegment[] = [];
     stream.on('partial', (s) => partials.push(s));
@@ -96,7 +102,9 @@ describe('SherpaAsrStream lifecycle', () => {
   it('ignores writes issued after close()', async () => {
     const engine = engineWith(fakeModule());
     const stream = engine.openStream({
-      modelPath: 'm', language: 'zh', signal: new AbortController().signal,
+      modelPath: 'm',
+      language: 'zh',
+      signal: new AbortController().signal,
     });
     stream.write(new Int16Array(1600));
     await stream.close();
@@ -111,7 +119,9 @@ describe('SherpaAsrStream lifecycle', () => {
   it('is idempotent on repeated close()', async () => {
     const engine = engineWith(fakeModule());
     const stream = engine.openStream({
-      modelPath: 'm', language: 'zh', signal: new AbortController().signal,
+      modelPath: 'm',
+      language: 'zh',
+      signal: new AbortController().signal,
     });
     stream.write(new Int16Array(1600));
     await stream.close();
@@ -123,8 +133,12 @@ describe('SherpaAsrStream lifecycle', () => {
     await assert.rejects(
       () =>
         engine.transcribeChunk({
-          audioPath: 'a', chunkIndex: 0, offsetMs: 0, durationMs: 1000,
-          modelPath: 'm', signal: new AbortController().signal,
+          audioPath: 'a',
+          chunkIndex: 0,
+          offsetMs: 0,
+          durationMs: 1000,
+          modelPath: 'm',
+          signal: new AbortController().signal,
         }),
       /stream-only/,
     );

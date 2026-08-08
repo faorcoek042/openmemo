@@ -4,12 +4,12 @@
 
 我要改的共享文件，以及为什么必须是这几个：
 
-| 文件 | 改动 | 兼容性 |
-|---|---|---|
-| `apps/web/src/test/host.tsx` | 把 `@testing-library/react` 从静态 import 改成**动态 import**（延迟到 `dom-env` 装好全局之后）；`type()` 首次调用时做一次一次性自检 | **完全向后兼容**：所有导出签名不变（`render`/`click`/`type`/`pressKey`/`blur` 本来就是 async），已有调用点一个字都不用改 |
-| `apps/web/src/test/dom-env.ts` | 只加注释更正（jsdom 30 下 `'oninput' in document` 已经是 true，那段修补现在是死代码），**不删逻辑** | 无行为变化 |
-| `apps/web/package.json` | `test:components` 前面**追加**一条新测试文件的 build+run（新增，不改原有那条） | 脚本名不变，`pnpm test` 行为不变（多跑一个套件） |
-| `apps/web/src/test/host.test.tsx` | **新文件** | 无冲突 |
+| 文件                              | 改动                                                                                                                                | 兼容性                                                                                                                   |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `apps/web/src/test/host.tsx`      | 把 `@testing-library/react` 从静态 import 改成**动态 import**（延迟到 `dom-env` 装好全局之后）；`type()` 首次调用时做一次一次性自检 | **完全向后兼容**：所有导出签名不变（`render`/`click`/`type`/`pressKey`/`blur` 本来就是 async），已有调用点一个字都不用改 |
+| `apps/web/src/test/dom-env.ts`    | 只加注释更正（jsdom 30 下 `'oninput' in document` 已经是 true，那段修补现在是死代码），**不删逻辑**                                 | 无行为变化                                                                                                               |
+| `apps/web/package.json`           | `test:components` 前面**追加**一条新测试文件的 build+run（新增，不改原有那条）                                                      | 脚本名不变，`pnpm test` 行为不变（多跑一个套件）                                                                         |
+| `apps/web/src/test/host.test.tsx` | **新文件**                                                                                                                          | 无冲突                                                                                                                   |
 
 **不会碰** `apps/web/src/test/components.test.tsx`（`models-page-fix` 在改）。
 
@@ -150,7 +150,10 @@ composition / beforeInput（IME 中文输入）、`animationend`/`transitionend`
 const importRtl = () => import('@testing-library/react');
 type Rtl = Awaited<ReturnType<typeof importRtl>>;
 let rtlPromise: Promise<Rtl> | undefined;
-async function rtl(): Promise<Rtl> { rtlPromise ??= importRtl(); return rtlPromise; }
+async function rtl(): Promise<Rtl> {
+  rtlPromise ??= importRtl();
+  return rtlPromise;
+}
 ```
 
 动态 import 的**求值时机在包体里**，`dom-env` 已经跑完了。改完产物里
@@ -217,6 +220,7 @@ TypeError: Cannot read properties of null (reading 'tag')
 ```
 
 **诚实标注两点**：
+
 - `TagEditor` 那条失败信息是 **`实际：[]`（零条请求）**。这就是这个 bug 的完整形状：
   **一条请求都没发出去，而 DOM 上的输入框看起来填好了。**
   如果当初把断言写成"不该发某某请求"，它会**永远是绿的**。
@@ -245,23 +249,23 @@ AFTER （修好的 host）ℹ tests 150  ℹ suites 35  ℹ pass 148  ℹ fail 0
 **方法 2 —— 调用点普查。** 全仓库只有 `components.test.tsx` 用这个宿主，
 而 150 条用例里 **`type()` 一共只有 3 个调用点**：
 
-| # | 位置 | 目标 | 修复前是不是假绿 | 判断 |
-|---|---|---|---|---|
-| 1 | `:162` SearchBox 回车跳转 | **不受控** input | 否（组件直接读 DOM 值） | 但**它钉不住任何东西**，见 §6-③ |
-| 2 | `:174` SearchBox 空输入 | 同上 | 否 | **整条用例一个 assert 都没有**，见 §6-③ |
-| 3 | `:2060` `__custom__` | `<select>` | 否（select 走另一条分支） | 真的在测 |
+| #   | 位置                      | 目标             | 修复前是不是假绿          | 判断                                    |
+| --- | ------------------------- | ---------------- | ------------------------- | --------------------------------------- |
+| 1   | `:162` SearchBox 回车跳转 | **不受控** input | 否（组件直接读 DOM 值）   | 但**它钉不住任何东西**，见 §6-③         |
+| 2   | `:174` SearchBox 空输入   | 同上             | 否                        | **整条用例一个 assert 都没有**，见 §6-③ |
+| 3   | `:2060` `__custom__`      | `<select>`       | 否（select 走另一条分支） | 真的在测                                |
 
 **"100+ 条组件测试里有多少在假绿"这个担心，答案是 0 条** —— 但不是因为运气好，
 是因为**前几轮的人碰到这堵墙时都绕过去了**（方法 3）。
 
 **方法 3 —— 把"被绕过去"的痕迹全找出来**（grep 测试与组件里的相关注释）：
 
-| 处置 | 位置 | 代价 |
-|---|---|---|
-| 直接 `{ skip: true }` | `components.test.tsx:115`（TagEditor 回车 POST） | 该行为**零覆盖** |
-| 直接 `{ skip: true }` | `components.test.tsx:374`（填 Key → PUT secrets） | 该行为**零覆盖** |
-| 抽纯函数只测规则 | `PurposeBindingsSection.tsx:44` 的 `mergePurposeBinding` | 规则测到了，**接线没测** |
-| 改成直接渲染子组件 + 真 HTTP | `components.test.tsx:713` 的 `StaleLinksWarning` | 组件测到了，**整条点击链没测** |
+| 处置                         | 位置                                                     | 代价                           |
+| ---------------------------- | -------------------------------------------------------- | ------------------------------ |
+| 直接 `{ skip: true }`        | `components.test.tsx:115`（TagEditor 回车 POST）         | 该行为**零覆盖**               |
+| 直接 `{ skip: true }`        | `components.test.tsx:374`（填 Key → PUT secrets）        | 该行为**零覆盖**               |
+| 抽纯函数只测规则             | `PurposeBindingsSection.tsx:44` 的 `mergePurposeBinding` | 规则测到了，**接线没测**       |
+| 改成直接渲染子组件 + 真 HTTP | `components.test.tsx:713` 的 `StaleLinksWarning`         | 组件测到了，**整条点击链没测** |
 
 **这个洞的代价是"少测"，不是"错测"。** `storage-fix` 说它自己写出过一条假绿测试 ——
 那条**没有进仓库**（它自己加前提断言抓出来了）。我核对了 §4 的失败形状，与它的描述一致。
@@ -307,16 +311,16 @@ AFTER （修好的 host）ℹ tests 150  ℹ suites 35  ℹ pass 148  ℹ fail 0
 
 修好之后我把 6 条从来没被测过的「输入 → 提交」链路真的跑了，逐条核对了发出去的请求：
 
-| 链路 | 实际请求（真实输出） | 结论 |
-|---|---|---|
-| TagEditor 输入标签名 + 回车 | `POST /tags {name:"播客"}` → `POST /notes/n1/tags {tagUids:["t9"]}` | ✅ 两步都对，uid 用的是服务端回的 |
-| LLM 填 Key 保存 | `PATCH /settings {…}` + `PUT /secrets/llm.openai.apiKey {value:"sk-test-12345"}` | ✅ 路径与请求体都对 |
-| LLM **不填** Key 保存（对照） | 只有 `PATCH /settings`，**无 PUT / 无 DELETE** | ✅ 没有误删已有 Key |
-| 代理：填 httpProxy 保存 | `PATCH {httpProxy:"http://127.0.0.1:7890", mode:"manual"}` | ✅ 只发改过的字段 + mode |
-| 代理：noProxy 文本域 | `PATCH {noProxy:["localhost",".cn","192.168.1.5"], mode:"manual"}` | ✅ 逗号切分与 trim 都对 |
-| 代理：**脱敏保护** | 只改 socks5 时 `PATCH {socks5:…, mode:"manual"}`，**body 里没有 `***`** | ✅ 这条最要紧，没把脱敏值写回去 |
-| 捕获页：输入链接回车 | `POST /notes/probe {input:"https://example.com/watch?v=abc"}` | ✅ |
-| 数据目录：输入路径点应用 | `POST /settings/data-dir {path:"/new/place", moveExisting:true}` | ✅ storage-fix 当时绕过去的正是这条 |
+| 链路                          | 实际请求（真实输出）                                                             | 结论                                |
+| ----------------------------- | -------------------------------------------------------------------------------- | ----------------------------------- |
+| TagEditor 输入标签名 + 回车   | `POST /tags {name:"播客"}` → `POST /notes/n1/tags {tagUids:["t9"]}`              | ✅ 两步都对，uid 用的是服务端回的   |
+| LLM 填 Key 保存               | `PATCH /settings {…}` + `PUT /secrets/llm.openai.apiKey {value:"sk-test-12345"}` | ✅ 路径与请求体都对                 |
+| LLM **不填** Key 保存（对照） | 只有 `PATCH /settings`，**无 PUT / 无 DELETE**                                   | ✅ 没有误删已有 Key                 |
+| 代理：填 httpProxy 保存       | `PATCH {httpProxy:"http://127.0.0.1:7890", mode:"manual"}`                       | ✅ 只发改过的字段 + mode            |
+| 代理：noProxy 文本域          | `PATCH {noProxy:["localhost",".cn","192.168.1.5"], mode:"manual"}`               | ✅ 逗号切分与 trim 都对             |
+| 代理：**脱敏保护**            | 只改 socks5 时 `PATCH {socks5:…, mode:"manual"}`，**body 里没有 `***`**          | ✅ 这条最要紧，没把脱敏值写回去     |
+| 捕获页：输入链接回车          | `POST /notes/probe {input:"https://example.com/watch?v=abc"}`                    | ✅                                  |
+| 数据目录：输入路径点应用      | `POST /settings/data-dir {path:"/new/place", moveExisting:true}`                 | ✅ storage-fix 当时绕过去的正是这条 |
 
 顺带确认了两个"按钮该不该亮"的状态位（它们**只有**在输入能驱动 state 时才有意义）：
 代理页 `proxy-save` 从 `disabled=true` 变 `false`、`proxy-unsaved` 提示出现；
@@ -351,6 +355,7 @@ drwxr-xr-x  2026-08-03 21:00:11.129702602 +0800 .
 （`storage-fix` 上一轮记录的 dist mtime 是 `19:56:22`，现在是 `21:00:11`。）
 
 我不是它的作者，理由三条：
+
 1. 那是一次**完整 SPA 构建**（`index.html` + `modulepreload` + `AsrModelPicker` / `Button` /
    `CapturePage` 等按路由切分的 chunk）。我这轮**每一条** `vite build` 都是
    `--ssr <单个测试文件> --outDir <显式路径>`，产物形状是**单文件**，产不出这个。
@@ -445,13 +450,13 @@ git add apps/web/src/test/components.test.tsx \
 `packages/pipeline/package.json` 处于修改态 —— **不是我的**，是这一轮新开工的 agent
 （在做 `pickLocalized` 那条线）。我一个字没碰，别把它们加进我的提交。
 
-| 位置 | 原状 | 现状 |
-|---|---|---|
-| `components.test.tsx` TagEditor | `{skip:true}` 空壳 + 一段**诊断错误**的注释 | `★ 输入标签名后回车：两条请求都要真的发出去`（`POST /tags` → `POST /notes/n1/tags`，逐条核对 body） |
-| `components.test.tsx` LlmSettingsSection | `{skip:true}` 空壳 | `★ 填入 Key 后保存：真的 PUT …` + **新增**一条对照 `★ 不填 Key 直接保存：不许发 PUT，也不许发 DELETE` |
-| `components.test.tsx` SearchBox ×2 | 断言 `input.value` / **零断言** | 两条都改成断言 `useLocation()` 探针读到的真实 URL |
-| `components.test.tsx` 文件头 | 「`./host` 必须是第一个 import」 | 改成「保持第一，但**别把这一行当成保证**」+ 指向 `host.tsx` T-133 |
-| `host.test.tsx` | 14 条（含 4 条重复覆盖） | **10 条，只剩宿主自证**；删除处留了一段说明去向的注释 |
+| 位置                                     | 原状                                        | 现状                                                                                                  |
+| ---------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `components.test.tsx` TagEditor          | `{skip:true}` 空壳 + 一段**诊断错误**的注释 | `★ 输入标签名后回车：两条请求都要真的发出去`（`POST /tags` → `POST /notes/n1/tags`，逐条核对 body）   |
+| `components.test.tsx` LlmSettingsSection | `{skip:true}` 空壳                          | `★ 填入 Key 后保存：真的 PUT …` + **新增**一条对照 `★ 不填 Key 直接保存：不许发 PUT，也不许发 DELETE` |
+| `components.test.tsx` SearchBox ×2       | 断言 `input.value` / **零断言**             | 两条都改成断言 `useLocation()` 探针读到的真实 URL                                                     |
+| `components.test.tsx` 文件头             | 「`./host` 必须是第一个 import」            | 改成「保持第一，但**别把这一行当成保证**」+ 指向 `host.tsx` T-133                                     |
+| `host.test.tsx`                          | 14 条（含 4 条重复覆盖）                    | **10 条，只剩宿主自证**；删除处留了一段说明去向的注释                                                 |
 
 **为什么多加了一条"不填 Key"的对照**（超出你列的两条）：恢复的那条只证明"填了会写"。
 而这个表单最容易出错的是**另一半** —— 留空的语义是"保持原样"，`LlmSettingsSection` 里
@@ -542,6 +547,7 @@ git add apps/web/src/test/components.test.tsx \
 > 它是覆盖率报告上的一条绿线。
 >
 > ### ★ 由此立的规矩
+>
 > 1. **读测试先读断言，别读名字。** 名字是作者的**意图**，断言才是**证据**。
 >    评审一条用例时，把名字遮住，问"这些断言在什么情况下会失败"。
 > 2. **答不上"它什么时候会红"的用例，等于没写。** 最快的检验是**变异**：

@@ -78,13 +78,19 @@ async function seedBackend(opts: { broken: boolean }): Promise<string> {
   const pack = join(storeRoot, 'by-name', 'backend', 'whisper-bin-ubuntu-x64');
   await fs.mkdir(pack, { recursive: true });
   // 真 ELF 魔数：判据要读到内容，就得有内容可读
-  await fs.writeFile(join(pack, 'libwhisper.so.1.9.1'), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 1, 2, 3]));
+  await fs.writeFile(
+    join(pack, 'libwhisper.so.1.9.1'),
+    Buffer.from([0x7f, 0x45, 0x4c, 0x46, 1, 2, 3]),
+  );
   await fs.symlink('libwhisper.so.1.9.1', join(pack, 'libwhisper.so.1'));
   await fs.symlink('libwhisper.so.1', join(pack, 'libwhisper.so'));
   if (opts.broken) {
     // 精确复现事故形态：链接被改写成指向一个**已经不存在的旧数据目录**
     await fs.unlink(join(pack, 'libwhisper.so.1'));
-    await fs.symlink('/tmp/om-gone/models/by-name/backend/x/libwhisper.so.1.9.1', join(pack, 'libwhisper.so.1'));
+    await fs.symlink(
+      '/tmp/om-gone/models/by-name/backend/x/libwhisper.so.1.9.1',
+      join(pack, 'libwhisper.so.1'),
+    );
   }
   return storeRoot;
 }
@@ -124,7 +130,12 @@ describe('检查项集合稳定（两个出口不会分叉）', () => {
         localLlmServices: () => Promise.resolve([]),
         llmKeyConfig: () => Promise.resolve({ providerId: null, hasKey: false }),
         proxy: () =>
-          Promise.resolve({ mode: 'system', activeUrl: null, ffmpegSupported: true, ffmpegReason: null }),
+          Promise.resolve({
+            mode: 'system',
+            activeUrl: null,
+            ffmpegSupported: true,
+            ffmpegReason: null,
+          }),
       }),
     });
     assert.deepEqual(idsOf(bare), idsOf(full));
@@ -134,7 +145,12 @@ describe('检查项集合稳定（两个出口不会分叉）', () => {
     let called = 0;
     const probes = minimalProbes({
       proxy: () =>
-        Promise.resolve({ mode: 'system', activeUrl: null, ffmpegSupported: true, ffmpegReason: null }),
+        Promise.resolve({
+          mode: 'system',
+          activeUrl: null,
+          ffmpegSupported: true,
+          ffmpegReason: null,
+        }),
       proxyConnectivity: () => {
         called += 1;
         return Promise.resolve({ ok: true, probes: [] });
@@ -255,10 +271,7 @@ describe('判据没有被降级成"文件在不在"', () => {
    * 与 `whisper_vad_init_with_params` 的第一步逐字对应。
    */
   describe('★ model.vad 判的是"whisper.cpp 加载得了吗"，不是"文件在不在"', () => {
-    const seedVad = async (
-      name: string,
-      bytes: Buffer,
-    ): Promise<string> => {
+    const seedVad = async (name: string, bytes: Buffer): Promise<string> => {
       const d = mkdtempSync(join(tmpdir(), 'om-sc-vad-'));
       tmpRoots.push(d);
       await fs.writeFile(join(d, name), bytes);
@@ -308,7 +321,10 @@ describe('判据没有被降级成"文件在不在"', () => {
     });
 
     it('★ 是 ggml → ok', async () => {
-      const good = await seedVad('ggml-silero-v6.2.0.bin', Buffer.concat([ggmlMagic, Buffer.alloc(32)]));
+      const good = await seedVad(
+        'ggml-silero-v6.2.0.bin',
+        Buffer.concat([ggmlMagic, Buffer.alloc(32)]),
+      );
       const c = await vadCheck(good);
       assert.equal(c?.status, 'ok');
       assert.equal(c?.detail, good);
@@ -546,11 +562,7 @@ describe('★ T-136 datadir.assetsPresent —— 报出来的必须**就是**那
     // 越界的那条不许再被 assetsPresent 重复算成"读不到"以外的东西：
     // 它确实读不到（这是对的），但**证据不许包含根外文件的内容**
     const present = byId(r, 'datadir.assetsPresent');
-    assert.equal(
-      (present?.detail ?? '').includes('SECRET'),
-      false,
-      '根外内容不许出现在自检报告里',
-    );
+    assert.equal((present?.detail ?? '').includes('SECRET'), false, '根外内容不许出现在自检报告里');
   });
 });
 
@@ -658,7 +670,10 @@ describe('★ T-128 后端 .so 符号链接可解析', () => {
     const broken = links.filter((l) => !l.readable);
     // 两级链断在第二跳，第一跳跟着一起用不了 —— 两条都要报出来
     assert.equal(broken.length, 2, JSON.stringify(links));
-    assert.ok(broken.every((l) => l.note === 'ENOENT'), JSON.stringify(broken));
+    assert.ok(
+      broken.every((l) => l.note === 'ENOENT'),
+      JSON.stringify(broken),
+    );
   });
 
   it('★ 悬空链接的 lstat 是成功的 —— 证明"组件存在"这个判据本身就是假绿灯', async () => {
@@ -725,7 +740,9 @@ describe('★ T-128 后端 .so 符号链接可解析', () => {
 });
 
 describe('diffSelfCheckReports 真的抓得到漂移', () => {
-  const mk = (results: { id: string; status: 'ok' | 'warn' | 'fail'; required?: boolean }[]): SelfCheckReport => ({
+  const mk = (
+    results: { id: string; status: 'ok' | 'warn' | 'fail'; required?: boolean }[],
+  ): SelfCheckReport => ({
     ok: true,
     ranAt: '',
     dataDir: '',
@@ -745,12 +762,27 @@ describe('diffSelfCheckReports 真的抓得到漂移', () => {
   });
 
   it('完全一致 → 空', () => {
-    const a = mk([{ id: 'a', status: 'ok' }, { id: 'b', status: 'warn' }]);
-    assert.deepEqual(diffSelfCheckReports(a, mk([{ id: 'a', status: 'ok' }, { id: 'b', status: 'warn' }])), []);
+    const a = mk([
+      { id: 'a', status: 'ok' },
+      { id: 'b', status: 'warn' },
+    ]);
+    assert.deepEqual(
+      diffSelfCheckReports(
+        a,
+        mk([
+          { id: 'a', status: 'ok' },
+          { id: 'b', status: 'warn' },
+        ]),
+      ),
+      [],
+    );
   });
 
   it('端点少一项（就是 T-119 之前的形状）→ 报 missing-there', () => {
-    const cli = mk([{ id: 'hw.os', status: 'ok' }, { id: 'ext.chineseSearch', status: 'ok' }]);
+    const cli = mk([
+      { id: 'hw.os', status: 'ok' },
+      { id: 'ext.chineseSearch', status: 'ok' },
+    ]);
     const api = mk([{ id: 'ext.chineseSearch', status: 'ok' }]);
     const d = diffSelfCheckReports(cli, api);
     assert.equal(d.length, 1);
@@ -898,8 +930,14 @@ describe('T-168 ④ asr.coreml：结构性损坏必须让审计变红，可选�
     const shell = redIds(await runMac('shell'));
     const none = redIds(await runMac('none'));
     const good = redIds(await runMac('good'));
-    assert.deepEqual(shell.filter((id) => !none.includes(id)), ['asr.coreml']);
-    assert.deepEqual(none.filter((id) => !shell.includes(id)), []);
+    assert.deepEqual(
+      shell.filter((id) => !none.includes(id)),
+      ['asr.coreml'],
+    );
+    assert.deepEqual(
+      none.filter((id) => !shell.includes(id)),
+      [],
+    );
     assert.deepEqual(good, none, 'ok 与 warn 对红绿的贡献必须完全一样（都是零）');
   });
 
@@ -987,7 +1025,13 @@ describe('T-173 断路器在自检里是可见的', () => {
     const r = await runSelfCheck({
       ...BASE,
       probes: minimalProbes({
-        breaker: breakerProbe({ verdict: 'closed', blacklistedBackends: [], consecutiveFailures: 0, lastError: null, retryAt: null }),
+        breaker: breakerProbe({
+          verdict: 'closed',
+          blacklistedBackends: [],
+          consecutiveFailures: 0,
+          lastError: null,
+          retryAt: null,
+        }),
       }),
     });
     assert.equal(byId(r, 'hw.breaker')?.status, 'ok');
@@ -1175,7 +1219,11 @@ describe('★ T-174 英文字段里不许出现中文', () => {
       }
     }
     // 空集返回绿是本仓最贵的那类假绿（HANDOFF ⑤A-2）—— 先证明真的检查了东西
-    assert.equal(checked > 60, true, `只检查了 ${String(checked)} 个字段，样本太少，守卫可能是空的`);
+    assert.equal(
+      checked > 60,
+      true,
+      `只检查了 ${String(checked)} 个字段，样本太少，守卫可能是空的`,
+    );
   });
 
   it('那 5 条工具检查各自给出了英文标签（不是把中文抄过去）', async () => {

@@ -30,7 +30,12 @@ export function TasksDrawer() {
     >
       <header className="flex items-center justify-between border-b border-line px-4 py-2.5">
         <h2 className="text-sm font-semibold text-ink">{t('tasks.title')}</h2>
-        <Button size="icon" variant="ghost" onClick={() => setOpen(false)} aria-label={t('common.close')}>
+        <Button
+          size="icon"
+          variant="ghost"
+          onClick={() => setOpen(false)}
+          aria-label={t('common.close')}
+        >
           <X className="size-4" />
         </Button>
       </header>

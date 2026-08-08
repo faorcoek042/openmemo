@@ -53,7 +53,9 @@ import { SseHub } from '../sse.js';
 import { createModelRoutes } from './models.js';
 import { RestState } from './state.js';
 
-const REPO_ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..'));
+const REPO_ROOT = resolve(
+  join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..'),
+);
 const MANIFEST_DIR = join(REPO_ROOT, 'vendor', 'manifests');
 
 const MODEL_ID = 'asr/reclaim-test-model';

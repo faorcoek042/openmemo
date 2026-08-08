@@ -151,7 +151,9 @@ async function main() {
     for (const m of picked) {
       const lic = m.license?.id ?? m.license ?? null;
       if (!lic) {
-        console.error(`mirror-model-blobs: ${m.id} 没有 license.id —— 查不到许可证不等于可以转存，拒绝。`);
+        console.error(
+          `mirror-model-blobs: ${m.id} 没有 license.id —— 查不到许可证不等于可以转存，拒绝。`,
+        );
         bad++;
         continue;
       }
@@ -185,7 +187,12 @@ async function main() {
         console.error(`mirror-model-blobs: ${m.id} / ${f.name} 没有任何 mirror URL`);
         process.exit(1);
       }
-      jobs.push({ modelId: m.id, file: f, url: official.url, others: f.mirrors.filter((x) => x !== official) });
+      jobs.push({
+        modelId: m.id,
+        file: f,
+        url: official.url,
+        others: f.mirrors.filter((x) => x !== official),
+      });
     }
   }
   if (jobs.length === 0) {
@@ -197,7 +204,9 @@ async function main() {
   let planned = 0;
   for (const j of jobs) {
     planned += j.file.sizeBytes;
-    say(`   ${assetName(j.modelId, j.file.name).padEnd(56)} ${String(j.file.sizeBytes).padStart(10)} B`);
+    say(
+      `   ${assetName(j.modelId, j.file.name).padEnd(56)} ${String(j.file.sizeBytes).padStart(10)} B`,
+    );
   }
   say(`   合计 ${(planned / 1024 / 1024).toFixed(1)} MiB`);
 
@@ -334,21 +343,21 @@ async function main() {
   }
 
   const manifestJson = `${JSON.stringify(
-      {
-        generatedAt: new Date().toISOString(),
-        note: '逐字节镜像自上游不可变引用；sha256 由本文件的生成过程重新计算并与仓库清单比对通过。',
-        files: verified.map((v) => ({
-          assetName: v.assetName,
-          modelId: v.modelId,
-          installName: v.file.name,
-          sizeBytes: v.sizeBytes,
-          sha256: v.sha256,
-          upstreamUrl: v.url,
-        })),
-      },
-      null,
-      2,
-    )}\n`;
+    {
+      generatedAt: new Date().toISOString(),
+      note: '逐字节镜像自上游不可变引用；sha256 由本文件的生成过程重新计算并与仓库清单比对通过。',
+      files: verified.map((v) => ({
+        assetName: v.assetName,
+        modelId: v.modelId,
+        installName: v.file.name,
+        sizeBytes: v.sizeBytes,
+        sha256: v.sha256,
+        upstreamUrl: v.url,
+      })),
+    },
+    null,
+    2,
+  )}\n`;
   await writeFile(join(OUT, 'MIRROR-MANIFEST.json'), manifestJson);
   // 每个子目录也放一份：单独拿走一个 artifact 时它仍然能自证来源。
   for (const slug of new Set(verified.map((v) => slugOf(v.modelId)))) {

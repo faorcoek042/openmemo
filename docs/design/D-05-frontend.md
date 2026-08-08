@@ -45,21 +45,21 @@ depends_on: D-01, D-02, ADR-002, ADR-003, ADR-004, ADR-005, ADR-006, packages/sh
 
 `[已核实]` 2026-08-02 读取 `/root/memo/apps/web/package.json` 与 `/root/memo/packages/shared/src/**`：
 
-| 项 | 现状 | 影响 |
-|---|---|---|
-| 框架 | React **19.2**、Vite **8**、Tailwind **4.3**（`@tailwindcss/vite`，CSS-first） | 已定，本文不改选型 |
-| 状态 | `@tanstack/react-query` **5.101**、`zustand` **5.0** 已装 | 与 §2 选型一致 ✅ |
-| 编辑器 | `@tiptap/react` **3.29** + `starter-kit` + `pm` | 笔记正文（D-02 `notes.body_json`） |
-| 导图 | `mind-elixir` **5.14**、`markmap-lib`/`markmap-view` **0.18.12** | 与 ADR-006 决策 8 一致 ✅ |
-| 音频 | `wavesurfer.js` **7.12** | F5 波形 |
-| shadcn 栈 | `cva` + `clsx` + `tailwind-merge` + `lucide-react` 已装，**无底层无头组件库** | ⚠️ 见 §0.1 —— shadcn 的默认底层库已于 **2026-07-03 从 Radix 改为 Base UI**，这改变了"要装什么" |
-| **路由** | ⚠️ **完全没有路由库** | §1 的路由表无法落地 → 需补装（选型见 §0.2） |
-| **i18n** | ⚠️ **完全没有 i18n 库** | §6.1 需补装（选型见 §6.1） |
-| 契约 | `packages/shared` 已产出 10 个文件、`CONTRACT_VERSION = 1` | §2/§5 全部对齐它 |
-| SSE | `GET /api/events`，`formatSseFrame()` → `event: <type>`，**30** 个事件类型（**此前写着 14 个** —— 那是 2026-08-02 盘点时的数，F1–F5 域事件后续已补齐），`PROGRESS_THROTTLE_HZ=4`，`SSE_REPLAY_BUFFER_SIZE=256`，`KEEPALIVE_INTERVAL_MS=15000` | §2.3 按此实现；数量以 `SSE_EVENT_TYPES` 常量为准，别写死 |
-| 作业状态机 | `JOB_STATES` 8 态 + `JOB_TRANSITIONS`，已与 D-02 §1.7 对齐 | §4/§5 直接复用，**前端不得自造状态词汇** |
-| 错误 | `ApiErrorBody = {error:{code,message,messageZh,retryable,details?}}` | §5/§6 按此，但见 §8 差异 |
-| ULID | `packages/shared/src/ulid.ts` **故意未从 `index.ts` 导出** | ✅ 正确：它 `import 'node:crypto'`，进浏览器包会炸。**前端严禁 import 它**（§2.6） |
+| 项         | 现状                                                                                                                                                                                                                                          | 影响                                                                                           |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| 框架       | React **19.2**、Vite **8**、Tailwind **4.3**（`@tailwindcss/vite`，CSS-first）                                                                                                                                                                | 已定，本文不改选型                                                                             |
+| 状态       | `@tanstack/react-query` **5.101**、`zustand` **5.0** 已装                                                                                                                                                                                     | 与 §2 选型一致 ✅                                                                              |
+| 编辑器     | `@tiptap/react` **3.29** + `starter-kit` + `pm`                                                                                                                                                                                               | 笔记正文（D-02 `notes.body_json`）                                                             |
+| 导图       | `mind-elixir` **5.14**、`markmap-lib`/`markmap-view` **0.18.12**                                                                                                                                                                              | 与 ADR-006 决策 8 一致 ✅                                                                      |
+| 音频       | `wavesurfer.js` **7.12**                                                                                                                                                                                                                      | F5 波形                                                                                        |
+| shadcn 栈  | `cva` + `clsx` + `tailwind-merge` + `lucide-react` 已装，**无底层无头组件库**                                                                                                                                                                 | ⚠️ 见 §0.1 —— shadcn 的默认底层库已于 **2026-07-03 从 Radix 改为 Base UI**，这改变了"要装什么" |
+| **路由**   | ⚠️ **完全没有路由库**                                                                                                                                                                                                                         | §1 的路由表无法落地 → 需补装（选型见 §0.2）                                                    |
+| **i18n**   | ⚠️ **完全没有 i18n 库**                                                                                                                                                                                                                       | §6.1 需补装（选型见 §6.1）                                                                     |
+| 契约       | `packages/shared` 已产出 10 个文件、`CONTRACT_VERSION = 1`                                                                                                                                                                                    | §2/§5 全部对齐它                                                                               |
+| SSE        | `GET /api/events`，`formatSseFrame()` → `event: <type>`，**30** 个事件类型（**此前写着 14 个** —— 那是 2026-08-02 盘点时的数，F1–F5 域事件后续已补齐），`PROGRESS_THROTTLE_HZ=4`，`SSE_REPLAY_BUFFER_SIZE=256`，`KEEPALIVE_INTERVAL_MS=15000` | §2.3 按此实现；数量以 `SSE_EVENT_TYPES` 常量为准，别写死                                       |
+| 作业状态机 | `JOB_STATES` 8 态 + `JOB_TRANSITIONS`，已与 D-02 §1.7 对齐                                                                                                                                                                                    | §4/§5 直接复用，**前端不得自造状态词汇**                                                       |
+| 错误       | `ApiErrorBody = {error:{code,message,messageZh,retryable,details?}}`                                                                                                                                                                          | §5/§6 按此，但见 §8 差异                                                                       |
+| ULID       | `packages/shared/src/ulid.ts` **故意未从 `index.ts` 导出**                                                                                                                                                                                    | ✅ 正确：它 `import 'node:crypto'`，进浏览器包会炸。**前端严禁 import 它**（§2.6）             |
 
 ### 0.1 ⚠️ shadcn/ui 的底层库已变更（本次核实到的最意外事实）
 
@@ -83,10 +83,10 @@ depends_on: D-01, D-02, ADR-002, ADR-003, ADR-004, ADR-005, ADR-006, packages/sh
 
 ### 0.2 路由库选型 `[已核实版本，选型为设计建议]`
 
-| 候选 | 版本 | 事实 |
-|---|---|---|
-| **`react-router` v8** | **8.3.0**（2026-07-22） | 基线要求 **React ≥19.2.7、Vite ≥7、Node ≥22.22.0**，**纯 ESM**。我们是 React 19.2.8 / Vite 8 / Node ≥24 → **全部满足**。⚠️ **v8 彻底移除了 `react-router-dom` 包**，`RouterProvider` 改从 `react-router/dom` 导入，其余从 `react-router`。旧 `react-router-dom` 仍在 v7 线（7.18.2）并行维护，未废弃 |
-| `@tanstack/react-router` | 1.170.18 | peer 明确支持 React 19；**不强制文件路由/代码生成**，可用 `createRootRoute` + `createRoute` 手写路由树（`[文档]` 级，未逐字抓取原文） |
+| 候选                     | 版本                    | 事实                                                                                                                                                                                                                                                                                                 |
+| ------------------------ | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`react-router` v8**    | **8.3.0**（2026-07-22） | 基线要求 **React ≥19.2.7、Vite ≥7、Node ≥22.22.0**，**纯 ESM**。我们是 React 19.2.8 / Vite 8 / Node ≥24 → **全部满足**。⚠️ **v8 彻底移除了 `react-router-dom` 包**，`RouterProvider` 改从 `react-router/dom` 导入，其余从 `react-router`。旧 `react-router-dom` 仍在 v7 线（7.18.2）并行维护，未废弃 |
+| `@tanstack/react-router` | 1.170.18                | peer 明确支持 React 19；**不强制文件路由/代码生成**，可用 `createRootRoute` + `createRoute` 手写路由树（`[文档]` 级，未逐字抓取原文）                                                                                                                                                                |
 
 **建议：`react-router` v8，Data 模式**（`createBrowserRouter(routes)` + `<RouterProvider>`）。
 
@@ -131,29 +131,30 @@ depends_on: D-01, D-02, ADR-002, ADR-003, ADR-004, ADR-005, ADR-006, packages/sh
 
 **路由模式 = History（非 hash）**。daemon 对未知路径回落 `index.html`，但**必须排除** `/api`、`/ws`、`/media`、`/assets`（D-01 §3.1）。
 
-| 路由 | 页面 | 职责 | Wave 3 归属 |
-|---|---|---|---|
-| `/` | — | 重定向到 `/notes`（首启未完成则 `/onboarding`） | T-021 |
-| `/onboarding` | 首启引导 | 3 步：选界面语言 → 检测硬件并推荐后端 → 装第一个 ASR 模型（可跳过，L1 CPU 兜底永远可用） | T-022 主笔（含硬件/模型步），T-021 提供壳 |
-| `/notes` | 笔记列表 | F5：列表/网格切换、文件夹与标签筛选、排序、批量操作、空态 | T-021 |
-| `/notes/:noteUid` | **笔记详情**（产品心脏） | F5：播放器 + 波形 + 转写稿 + 右侧 Tab(`?tab=summary\|mindmap\|notes`) | T-021（导图 Tab 内嵌 T-023 的组件） |
-| `/notes/:noteUid/mindmap` | 导图全屏 | F4：编辑、布局、导出 | **T-023** |
-| `/capture` | 捕获 | F1 粘贴链接 / F2 拖文件；解析确认卡片；批量队列 | T-021 |
-| `/record` | 录音 | F3：设备选择、授权、波形、流式字幕、两阶段提示 | T-021 |
-| `/search` | 全局搜索 | 关键词/语义/混合三档；结果直达时间点（D-02 §4.4） | T-021 |
-| `/tasks` | 任务中心（整页） | 抽屉的完整版：历史、失败重试、日志 | T-021 |
-| `/runtime` | **运行时与加速后端** | 章程 2.1：硬件卡片、后端包列表、安装/自检/切换 | **T-022** |
-| `/models` | **模型管理** | 章程 2.2：目录、量化选择、fit 徽标、下载、导入、存储 | **T-022** |
-| `/models/:modelId` | 模型详情 | 变体、许可证、跑基准 | **T-022** |
-| `/settings` | — | 重定向 `/settings/general` | T-021 |
-| `/settings/general` | 通用 | 语言、主题、开机自启、端口、默认行为 | T-021 |
-| `/settings/asr` | 转写 | 默认引擎/模型/语言、VAD、说话人分离、提示词 | T-021（模型选择器复用 T-022 组件） |
-| `/settings/llm` | LLM | provider、baseUrl、API Key（**必须显式告知明文存储**，ADR-006 决策 1） | T-021 |
-| `/settings/storage` | 存储 | 数据目录、迁移、GC、存储分解条（§7.5） | T-022（复用其 storage API） |
-| `/settings/about` | 关于 | 版本、契约版本、许可证清单、**导出诊断包** | T-021 |
-| `/diagnostics` | 安全模式诊断 | daemon 进入安全模式时**强制跳转**（D-01 §2.7 D）：崩溃栈、日志、重置按钮 | T-021 |
+| 路由                      | 页面                     | 职责                                                                                     | Wave 3 归属                               |
+| ------------------------- | ------------------------ | ---------------------------------------------------------------------------------------- | ----------------------------------------- |
+| `/`                       | —                        | 重定向到 `/notes`（首启未完成则 `/onboarding`）                                          | T-021                                     |
+| `/onboarding`             | 首启引导                 | 3 步：选界面语言 → 检测硬件并推荐后端 → 装第一个 ASR 模型（可跳过，L1 CPU 兜底永远可用） | T-022 主笔（含硬件/模型步），T-021 提供壳 |
+| `/notes`                  | 笔记列表                 | F5：列表/网格切换、文件夹与标签筛选、排序、批量操作、空态                                | T-021                                     |
+| `/notes/:noteUid`         | **笔记详情**（产品心脏） | F5：播放器 + 波形 + 转写稿 + 右侧 Tab(`?tab=summary\|mindmap\|notes`)                    | T-021（导图 Tab 内嵌 T-023 的组件）       |
+| `/notes/:noteUid/mindmap` | 导图全屏                 | F4：编辑、布局、导出                                                                     | **T-023**                                 |
+| `/capture`                | 捕获                     | F1 粘贴链接 / F2 拖文件；解析确认卡片；批量队列                                          | T-021                                     |
+| `/record`                 | 录音                     | F3：设备选择、授权、波形、流式字幕、两阶段提示                                           | T-021                                     |
+| `/search`                 | 全局搜索                 | 关键词/语义/混合三档；结果直达时间点（D-02 §4.4）                                        | T-021                                     |
+| `/tasks`                  | 任务中心（整页）         | 抽屉的完整版：历史、失败重试、日志                                                       | T-021                                     |
+| `/runtime`                | **运行时与加速后端**     | 章程 2.1：硬件卡片、后端包列表、安装/自检/切换                                           | **T-022**                                 |
+| `/models`                 | **模型管理**             | 章程 2.2：目录、量化选择、fit 徽标、下载、导入、存储                                     | **T-022**                                 |
+| `/models/:modelId`        | 模型详情                 | 变体、许可证、跑基准                                                                     | **T-022**                                 |
+| `/settings`               | —                        | 重定向 `/settings/general`                                                               | T-021                                     |
+| `/settings/general`       | 通用                     | 语言、主题、开机自启、端口、默认行为                                                     | T-021                                     |
+| `/settings/asr`           | 转写                     | 默认引擎/模型/语言、VAD、说话人分离、提示词                                              | T-021（模型选择器复用 T-022 组件）        |
+| `/settings/llm`           | LLM                      | provider、baseUrl、API Key（**必须显式告知明文存储**，ADR-006 决策 1）                   | T-021                                     |
+| `/settings/storage`       | 存储                     | 数据目录、迁移、GC、存储分解条（§7.5）                                                   | T-022（复用其 storage API）               |
+| `/settings/about`         | 关于                     | 版本、契约版本、许可证清单、**导出诊断包**                                               | T-021                                     |
+| `/diagnostics`            | 安全模式诊断             | daemon 进入安全模式时**强制跳转**（D-01 §2.7 D）：崩溃栈、日志、重置按钮                 | T-021                                     |
 
 **约定**
+
 - **URL 是可分享/可书签的状态**：笔记详情的 Tab、播放位置（`?t=754000`）、搜索词与模式、模型筛选，全部进 URL query。用户把"这一秒"发给自己是真实需求。
 - **`:noteUid` / `:modelId` 一律用 ULID**（ADR-006 决策 5），**前端永不见整数 PK**。
 - 深链接进入未完成的笔记 → 正常渲染 + 顶部进度条，不做"加载中"全屏遮罩。
@@ -170,30 +171,36 @@ depends_on: D-01, D-02, ADR-002, ADR-003, ADR-004, ADR-005, ADR-006, packages/sh
 
 ### 2.1 三类状态，三种机制（**先分类，再选库**）
 
-| 类别 | 例子 | 机制 | 为什么不用另外两种 |
-|---|---|---|---|
-| **服务端状态** | 笔记、转写稿、任务列表、模型目录、硬件信息 | **TanStack Query v5** | 它有缓存、去重、失效、重试、`staleTime`。放进 Zustand 等于自己重写一遍 Query 且必然写差 |
-| **客户端 UI 状态** | 侧栏折叠、主题、语言、任务抽屉开合、列表视图模式、当前选中段 | **Zustand v5**（按 feature 切片） | 与服务器无关，放进 Query 是滥用；用 Context 会导致整棵树重渲染 |
-| **高频瞬时流** | 播放位置(≈10Hz)、下载进度(4Hz×N)、录音电平(≈30Hz)、流式 partial 字幕 | **独立 transient store + ref/canvas 直写**（§2.4） | 进 Query 会每帧写缓存；进普通 React state 会每帧重渲染 3000 行虚拟列表 → 掉帧 |
+| 类别               | 例子                                                                 | 机制                                               | 为什么不用另外两种                                                                      |
+| ------------------ | -------------------------------------------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| **服务端状态**     | 笔记、转写稿、任务列表、模型目录、硬件信息                           | **TanStack Query v5**                              | 它有缓存、去重、失效、重试、`staleTime`。放进 Zustand 等于自己重写一遍 Query 且必然写差 |
+| **客户端 UI 状态** | 侧栏折叠、主题、语言、任务抽屉开合、列表视图模式、当前选中段         | **Zustand v5**（按 feature 切片）                  | 与服务器无关，放进 Query 是滥用；用 Context 会导致整棵树重渲染                          |
+| **高频瞬时流**     | 播放位置(≈10Hz)、下载进度(4Hz×N)、录音电平(≈30Hz)、流式 partial 字幕 | **独立 transient store + ref/canvas 直写**（§2.4） | 进 Query 会每帧写缓存；进普通 React state 会每帧重渲染 3000 行虚拟列表 → 掉帧           |
 
 ### 2.2 TanStack Query 约定 `[设计]`
 
 ```ts
 // app/query.ts —— 唯一的 queryKey 工厂，三个任务都从这里取，禁止手写字符串数组
 export const qk = {
-  notes:      { all: ['notes'] as const,
-                list: (f: NoteFilter) => ['notes', 'list', f] as const,
-                detail: (uid: string) => ['notes', 'detail', uid] as const },
+  notes: {
+    all: ['notes'] as const,
+    list: (f: NoteFilter) => ['notes', 'list', f] as const,
+    detail: (uid: string) => ['notes', 'detail', uid] as const,
+  },
   transcript: (noteUid: string) => ['transcript', noteUid] as const,
-  mindmap:    (noteUid: string) => ['mindmap', noteUid] as const,
-  jobs:       { all: ['jobs'] as const, detail: (id: string) => ['jobs', id] as const },
-  models:     { catalog: ['models','catalog'] as const,
-                installed: ['models','installed'] as const,
-                storage: ['models','storage'] as const,
-                sources: ['models','sources'] as const },
-  backends:   { catalog: ['backends','catalog'] as const,
-                installed: ['backends','installed'] as const },
-  runtime:    { hardware: ['runtime','hardware'] as const },
+  mindmap: (noteUid: string) => ['mindmap', noteUid] as const,
+  jobs: { all: ['jobs'] as const, detail: (id: string) => ['jobs', id] as const },
+  models: {
+    catalog: ['models', 'catalog'] as const,
+    installed: ['models', 'installed'] as const,
+    storage: ['models', 'storage'] as const,
+    sources: ['models', 'sources'] as const,
+  },
+  backends: {
+    catalog: ['backends', 'catalog'] as const,
+    installed: ['backends', 'installed'] as const,
+  },
+  runtime: { hardware: ['runtime', 'hardware'] as const },
 };
 ```
 
@@ -255,20 +262,20 @@ for (const t of SSE_EVENT_TYPES) {
 
 #### 事件 → 动作映射（默认策略）
 
-| 事件 | 动作 | 理由 |
-|---|---|---|
-| `job.progress` | **不碰 Query 缓存**，写 `progressStore`（200ms 节流后 commit） | 4Hz × N 个任务写缓存 = 全列表反复重渲染 |
-| `job.created` | `setQueryData(qk.jobs.all, 追加)` | 已有完整 `DownloadJob` 载荷，直接写，省一次往返 |
-| `job.state` | `setQueryData` 改状态 + 进入终态时 `invalidateQueries(qk.jobs.detail)` | |
-| `job.failed` | `setQueryData` + **toast（`willRetry===false` 时才弹）** | 自动重试中的失败不该打扰用户 |
-| `model.installed` / `model.removed` | `invalidate(qk.models.installed, qk.models.catalog, qk.models.storage)` | |
-| `model.activated` | `setQueryData(qk.models.installed)` 改 active | |
-| `backend.installed` / `backend.removed` | `invalidate(qk.backends.*)`；`selfTestPassed===false` 时弹**持久**告警 | 自检失败必须显性（ADR-003 决策 3） |
-| `storage.changed` | `setQueryData(qk.models.storage)` | |
-| `catalog.updated` | `invalidate(qk.models.catalog)` | |
-| `sources.probed` | `setQueryData(qk.models.sources)` | |
-| `hardware.changed` | `invalidate(qk.runtime.hardware` **和** `qk.models.catalog)` | ⚠️ `shared/events.ts` 注释明确：硬件变了**所有 fit 判定失效**，必须重拉目录 |
-| `keepalive` | **只重置看门狗计时器**，不派发 | 15s 没收到任何帧（含 keepalive）→ 判定连接死了，主动重连 |
+| 事件                                    | 动作                                                                    | 理由                                                                        |
+| --------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `job.progress`                          | **不碰 Query 缓存**，写 `progressStore`（200ms 节流后 commit）          | 4Hz × N 个任务写缓存 = 全列表反复重渲染                                     |
+| `job.created`                           | `setQueryData(qk.jobs.all, 追加)`                                       | 已有完整 `DownloadJob` 载荷，直接写，省一次往返                             |
+| `job.state`                             | `setQueryData` 改状态 + 进入终态时 `invalidateQueries(qk.jobs.detail)`  |                                                                             |
+| `job.failed`                            | `setQueryData` + **toast（`willRetry===false` 时才弹）**                | 自动重试中的失败不该打扰用户                                                |
+| `model.installed` / `model.removed`     | `invalidate(qk.models.installed, qk.models.catalog, qk.models.storage)` |                                                                             |
+| `model.activated`                       | `setQueryData(qk.models.installed)` 改 active                           |                                                                             |
+| `backend.installed` / `backend.removed` | `invalidate(qk.backends.*)`；`selfTestPassed===false` 时弹**持久**告警  | 自检失败必须显性（ADR-003 决策 3）                                          |
+| `storage.changed`                       | `setQueryData(qk.models.storage)`                                       |                                                                             |
+| `catalog.updated`                       | `invalidate(qk.models.catalog)`                                         |                                                                             |
+| `sources.probed`                        | `setQueryData(qk.models.sources)`                                       |                                                                             |
+| `hardware.changed`                      | `invalidate(qk.runtime.hardware` **和** `qk.models.catalog)`            | ⚠️ `shared/events.ts` 注释明确：硬件变了**所有 fit 判定失效**，必须重拉目录 |
+| `keepalive`                             | **只重置看门狗计时器**，不派发                                          | 15s 没收到任何帧（含 keepalive）→ 判定连接死了，主动重连                    |
 
 **总原则（承 D-01 §3.3）：SSE 事件是"该去拉数据了"的提示，不是数据本身。**
 唯二例外：`job.progress`（用完即弃）与未来的 `transcribe.segment`（有序追加）。
@@ -305,33 +312,35 @@ open ──断──> reconnecting（EventSource 自动重连，服务端已设 
                 ▼
               open：清黄条 + invalidate 全部查询（重放缓冲只有 256 条，可能已滚过）
 ```
+
 - **重连后必须全量失效**：`SSE_REPLAY_BUFFER_SIZE = 256`，一次大批量下载就能滚过。宁可多拉一次。
 - **`CONTRACT_VERSION` 校验**：应用启动时比对 `@openmemo/shared` 的 `CONTRACT_VERSION` 与 `/api/health` 返回值；不匹配 → 阻断对话框"前端与本地服务版本不一致，请刷新/升级"。**静默不匹配比崩溃更糟**。
 
 ### 2.4 高频瞬时流：不要经过 React
 
-| 流 | 频率 | 通道 | 落点 |
-|---|---|---|---|
-| 播放位置 | `requestAnimationFrame`，节流 ~10Hz | `<audio>.currentTime` → transient store（`subscribeWithSelector`） | 只有"当前高亮段变了"才 setState；位置本身写进 ref + 直接改 DOM `transform`（波形游标） |
-| 波形绘制 | 随位置 | 预计算 peaks（D-02 §3.4）→ canvas 直写 | 完全不进 React |
-| 录音电平 | ~30Hz | AudioWorklet → transient store | canvas 直写 |
-| 流式 partial 字幕 | 高频覆盖 | WS → transient store | 单独一个"当前 partial"组件订阅，**不进转写稿列表** |
-| `final` 字幕 | 低频追加 | WS/SSE → `setQueryData(qk.transcript(uid), 追加)` | 进 Query，因为它是真数据 |
-| 下载进度 | 4Hz×N | SSE → `progressStore`（200ms 节流） | 只有进度条组件订阅自己那一个 jobId |
+| 流                | 频率                                | 通道                                                               | 落点                                                                                   |
+| ----------------- | ----------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| 播放位置          | `requestAnimationFrame`，节流 ~10Hz | `<audio>.currentTime` → transient store（`subscribeWithSelector`） | 只有"当前高亮段变了"才 setState；位置本身写进 ref + 直接改 DOM `transform`（波形游标） |
+| 波形绘制          | 随位置                              | 预计算 peaks（D-02 §3.4）→ canvas 直写                             | 完全不进 React                                                                         |
+| 录音电平          | ~30Hz                               | AudioWorklet → transient store                                     | canvas 直写                                                                            |
+| 流式 partial 字幕 | 高频覆盖                            | WS → transient store                                               | 单独一个"当前 partial"组件订阅，**不进转写稿列表**                                     |
+| `final` 字幕      | 低频追加                            | WS/SSE → `setQueryData(qk.transcript(uid), 追加)`                  | 进 Query，因为它是真数据                                                               |
+| 下载进度          | 4Hz×N                               | SSE → `progressStore`（200ms 节流）                                | 只有进度条组件订阅自己那一个 jobId                                                     |
 
 **判据（写给三个任务的一句话）**：
+
 > 这个值刷新时，**是否需要让超过一个组件重新渲染**？不需要 → 别进 React state。
 
 ### 2.5 乐观更新的边界
 
-| 场景 | 乐观？ | 理由 |
-|---|---|---|
-| 改笔记标题 / 标签 / 星标 / 文件夹 | ✅ 乐观 + 失败回滚 | 本地毫秒级，必然成功；等待会显得卡 |
-| 编辑转写段落文本 | ✅ 乐观 | 同上；`text_raw` 在后端保留原文，可撤销 |
-| 思维导图节点拖拽/改字 | ✅ 乐观（走 `revision` 乐观锁，409 时提示，见 D-01 §5 F4） | 交互密集，等往返必然卡顿 |
-| 删除笔记 | ⚠️ 半乐观：立即从列表移除 + Toast「已删除 · 撤销」 | 软删（D-02），撤销成本低 |
-| 触发转写 / 下载 / 安装后端 | ❌ **绝不乐观** | 它们会失败、会 `blocked`、会排队。假装成功是欺骗 |
-| 激活模型 | ❌ | `reloadRequired` 语义在服务端（`ActivateResponse`），前端猜不了 |
+| 场景                              | 乐观？                                                     | 理由                                                            |
+| --------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------- |
+| 改笔记标题 / 标签 / 星标 / 文件夹 | ✅ 乐观 + 失败回滚                                         | 本地毫秒级，必然成功；等待会显得卡                              |
+| 编辑转写段落文本                  | ✅ 乐观                                                    | 同上；`text_raw` 在后端保留原文，可撤销                         |
+| 思维导图节点拖拽/改字             | ✅ 乐观（走 `revision` 乐观锁，409 时提示，见 D-01 §5 F4） | 交互密集，等往返必然卡顿                                        |
+| 删除笔记                          | ⚠️ 半乐观：立即从列表移除 + Toast「已删除 · 撤销」         | 软删（D-02），撤销成本低                                        |
+| 触发转写 / 下载 / 安装后端        | ❌ **绝不乐观**                                            | 它们会失败、会 `blocked`、会排队。假装成功是欺骗                |
+| 激活模型                          | ❌                                                         | `reloadRequired` 语义在服务端（`ActivateResponse`），前端猜不了 |
 
 ### 2.6 前端硬禁忌
 
@@ -428,14 +437,14 @@ features/<name>/
 
 ### 3.2 所有权矩阵（硬约束）
 
-| 路径 | 独占 owner | 其他人 |
-|---|---|---|
-| `apps/web/src/features/capture,notes,transcript,player,recorder,search,tasks,settings/**` | **T-021** | 只读 |
-| `apps/web/src/features/runtime,models/**` | **T-022** | 只读 |
-| `apps/web/src/features/mindmap/**` + `packages/mindmap/**` | **T-023** | 只读 |
-| `apps/web/src/{app,lib,components,styles}/**`、`main.tsx`、`App.tsx`、`routes.tsx` | **T-021 首建，之后为共享区** | 见 §3.3 |
-| `apps/web/package.json` | `oss-scout`（ADR-005 所有权表） | 三方**都不改**，需要新依赖 → inbox 申报 |
-| `packages/shared/src/**` | `model-mgmt` | 三方**都不改**，需要新类型/事件 → inbox 申报（§8） |
+| 路径                                                                                      | 独占 owner                      | 其他人                                             |
+| ----------------------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------- |
+| `apps/web/src/features/capture,notes,transcript,player,recorder,search,tasks,settings/**` | **T-021**                       | 只读                                               |
+| `apps/web/src/features/runtime,models/**`                                                 | **T-022**                       | 只读                                               |
+| `apps/web/src/features/mindmap/**` + `packages/mindmap/**`                                | **T-023**                       | 只读                                               |
+| `apps/web/src/{app,lib,components,styles}/**`、`main.tsx`、`App.tsx`、`routes.tsx`        | **T-021 首建，之后为共享区**    | 见 §3.3                                            |
+| `apps/web/package.json`                                                                   | `oss-scout`（ADR-005 所有权表） | 三方**都不改**，需要新依赖 → inbox 申报            |
+| `packages/shared/src/**`                                                                  | `model-mgmt`                    | 三方**都不改**，需要新类型/事件 → inbox 申报（§8） |
 
 ### 3.3 共享区变更协议
 
@@ -452,18 +461,19 @@ features/<name>/
 
 ```tsx
 // routes.tsx —— 共享，但只在"新增一个 feature"时才动，平时零冲突
-import { captureRoutes }  from '@/features/capture/Capture.routes';
-import { notesRoutes }    from '@/features/notes/Notes.routes';
-import { mindmapRoutes }  from '@/features/mindmap/Mindmap.routes';   // T-023 独占那个文件
-import { modelsRoutes }   from '@/features/models/Models.routes';     // T-022 独占那个文件
-export const routes = [ ...captureRoutes, ...notesRoutes, ...mindmapRoutes, ...modelsRoutes, /* … */ ];
+import { captureRoutes } from '@/features/capture/Capture.routes';
+import { notesRoutes } from '@/features/notes/Notes.routes';
+import { mindmapRoutes } from '@/features/mindmap/Mindmap.routes'; // T-023 独占那个文件
+import { modelsRoutes } from '@/features/models/Models.routes'; // T-022 独占那个文件
+export const routes = [...captureRoutes, ...notesRoutes, ...mindmapRoutes, ...modelsRoutes /* … */];
 ```
 
 ```ts
 // lib/events/bindings.ts —— 同理
 import { notesSse } from '@/features/notes/sse';
 import { modelsSse } from '@/features/models/sse';
-export const registerAllSseBindings = (qc: QueryClient) => [notesSse, modelsSse, /*…*/].forEach(f => f(qc));
+export const registerAllSseBindings = (qc: QueryClient) =>
+  [notesSse, modelsSse /*…*/].forEach((f) => f(qc));
 ```
 
 **效果**：T-021/T-022/T-023 各自只改**自己 feature 目录里的那个文件**；两个聚合文件在 Wave 3 开工时由 T-021 一次性建好，之后基本不动。这是本文档最有实用价值的一条。
@@ -483,17 +493,17 @@ lib/*       ──禁止──>  features/* · components/*
 
 ### 3.6 命名约定
 
-| 类型 | 约定 | 例 |
-|---|---|---|
-| 组件文件 | `PascalCase.tsx`，一个文件一个默认导出组件 | `TranscriptList.tsx` |
-| hooks | `use*.ts` | `useActiveSegment.ts` |
-| Zustand | `*.store.ts`，导出 `use<Name>Store` | `player.store.ts` |
-| Query hooks | `api.ts` 内，`useXxxQuery` / `useXxxMutation` | `useNotesQuery` |
-| 路由片段 | `<Name>.routes.tsx` | `Notes.routes.tsx` |
-| SSE 片段 | `sse.ts`，导出 `<name>Sse` | `models/sse.ts` |
-| 类型 | 与 `@openmemo/shared` 同名类型**禁止本地重定义**，一律 import | — |
-| i18n key | `<feature>.<区块>.<语义>` | `capture.urlInput.placeholder` |
-| test id | `data-testid="<feature>-<element>"` | `capture-submit` |
+| 类型        | 约定                                                          | 例                             |
+| ----------- | ------------------------------------------------------------- | ------------------------------ |
+| 组件文件    | `PascalCase.tsx`，一个文件一个默认导出组件                    | `TranscriptList.tsx`           |
+| hooks       | `use*.ts`                                                     | `useActiveSegment.ts`          |
+| Zustand     | `*.store.ts`，导出 `use<Name>Store`                           | `player.store.ts`              |
+| Query hooks | `api.ts` 内，`useXxxQuery` / `useXxxMutation`                 | `useNotesQuery`                |
+| 路由片段    | `<Name>.routes.tsx`                                           | `Notes.routes.tsx`             |
+| SSE 片段    | `sse.ts`，导出 `<name>Sse`                                    | `models/sse.ts`                |
+| 类型        | 与 `@openmemo/shared` 同名类型**禁止本地重定义**，一律 import | —                              |
+| i18n key    | `<feature>.<区块>.<语义>`                                     | `capture.urlInput.placeholder` |
+| test id     | `data-testid="<feature>-<element>"`                           | `capture-submit`               |
 
 ---
 
@@ -549,6 +559,7 @@ INPUT_URL_INVALID   无法解析（给"改用本地文件"出口）          blo
 ```
 
 **六条硬规则**
+
 1. **阶段名说人话**：`fetch/demux/vad/asr` → "下载中 / 提取音轨 / 分析语音 / 转写中 / 整理笔记"。
 2. **边转边看**：`transcribe.segment` 一到就追加渲染。这是相对 memo.ac 的体感差异点——不是"等 40 分钟看结果"，是"14 秒后就有字"。
 3. **"可以关闭此页面"必须写出来**（§4.5）。用户默认认为关页面 = 任务没了。
@@ -569,6 +580,7 @@ INPUT_URL_INVALID   无法解析（给"改用本地文件"出口）          blo
      ↓ 大文件（>500MB）
 明确显示 "正在复制到 OpenMemo 数据目录"，并给出"完成后删除原文件"选项（默认关）
 ```
+
 - **必须解释为什么要"上传"本地文件**：一句副文案"浏览器出于安全限制无法直接读取本地路径，文件会被复制到数据目录"。不解释的话用户会困惑"我文件就在本机为什么要传"。
 - 分块上传支持断点（D-01 §5 F2），刷新页面后可续。
 
@@ -583,6 +595,7 @@ INPUT_URL_INVALID   无法解析（给"改用本地文件"出口）          blo
 │  [ 允许并开始 ]      │  │ [ 开始录音 ]      │  │ 然后 [ 重新检测 ]                 │
 └─────────────────────┘  └───────────────────┘  └───────────────────────────────────┘
 ```
+
 > ⚠️ 若 daemon 端口发生过漂移（ADR-006 决策 2），此处**必须**额外显示：
 > "端口已从 17650 变为 17652，浏览器会把它当作新站点，需要重新授权麦克风。"
 
@@ -646,17 +659,17 @@ D-01 §5 F3 设计了"流式出稿 → 停止后用离线大模型重跑覆盖"�
 
 **交互契约**
 
-| 动作 | 结果 |
-|---|---|
-| 播放推进 | 二分查找当前段 → 高亮 + （若开"跟随"）滚动到视野中部；有 `words_json` 时词级 karaoke |
-| **用户手动滚动** | **自动关闭"跟随播放"**并把开关变灰 —— 经典细节：不做的话用户往回翻会被强行拽回来 |
-| 点转写段 | `audio.currentTime = start_ms/1000`；不自动播放（尊重当前播放态） |
-| 点笔记锚点 / 导图节点 ⏱ | 同上，来源分别是 `note_anchors` / `mindmap_node_refs`（D-02 §3.3） |
-| 拖波形 | 像素 → 时间 → seek |
-| 双击段落文本 | 进入编辑（乐观更新）；`Esc` 取消，`⌘Enter` 保存 |
-| 选中文本 → 浮起工具条 | 「引用到笔记（带时间戳）」「复制」「作为导图节点」 |
-| `Space` / `←→` / `J K L` | 播放暂停 / ±5s / 后退-暂停-前进（视频编辑通用手势） |
-| ⚠ 幻觉标记（`flags` bit0） | 段落左侧黄色竖条 + 悬浮"疑似重复，[仅重跑此段]" |
+| 动作                       | 结果                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------ |
+| 播放推进                   | 二分查找当前段 → 高亮 + （若开"跟随"）滚动到视野中部；有 `words_json` 时词级 karaoke |
+| **用户手动滚动**           | **自动关闭"跟随播放"**并把开关变灰 —— 经典细节：不做的话用户往回翻会被强行拽回来     |
+| 点转写段                   | `audio.currentTime = start_ms/1000`；不自动播放（尊重当前播放态）                    |
+| 点笔记锚点 / 导图节点 ⏱    | 同上，来源分别是 `note_anchors` / `mindmap_node_refs`（D-02 §3.3）                   |
+| 拖波形                     | 像素 → 时间 → seek                                                                   |
+| 双击段落文本               | 进入编辑（乐观更新）；`Esc` 取消，`⌘Enter` 保存                                      |
+| 选中文本 → 浮起工具条      | 「引用到笔记（带时间戳）」「复制」「作为导图节点」                                   |
+| `Space` / `←→` / `J K L`   | 播放暂停 / ±5s / 后退-暂停-前进（视频编辑通用手势）                                  |
+| ⚠ 幻觉标记（`flags` bit0） | 段落左侧黄色竖条 + 悬浮"疑似重复，[仅重跑此段]"                                      |
 
 **性能硬要求**：转写稿必须虚拟滚动（3 小时 ≈ 3000+ 段）；高亮变更只重渲染**受影响的两段**，不是整列表（§2.4）。
 
@@ -667,6 +680,7 @@ D-01 §5 F3 设计了"流式出稿 → 停止后用离线大模型重跑覆盖"�
 ```
 顶栏徽标：[⚡ 2]  ← 有活跃任务时出现，数字 = running+queued，点击展开抽屉
 ```
+
 ```
 ┌─ 任务中心（右侧抽屉）─────────────────────────────────────────┐
 │  进行中 (2)                                    [全部暂停] [⋯] │
@@ -706,34 +720,34 @@ D-01 §5 F3 设计了"流式出稿 → 停止后用离线大模型重跑覆盖"�
 
 ### 5.1 四个呈现层级（选错层级本身就是 bug）
 
-| 层级 | 用在哪 | 特征 |
-|---|---|---|
-| **内联**（字段旁） | 表单校验：URL 非法、路径不存在 | 红字 + 图标，不打断 |
-| **区块错误** | 某个区域拉取失败（转写稿加载失败、目录拉不到） | 卡片内替换，带 [重试]，**其余页面照常可用** |
-| **Toast** | 异步动作的结果通知（下载失败且不再重试、导出完成） | 5s 自动消失；**带动作的 toast 不自动消失** |
-| **持久条幅** | 全局降级态：SSE 断开、磁盘将满、后端自检失败、端口漂移 | 顶部常驻，可折叠不可关闭（问题还在就不该消失） |
-| **阻断对话框** | 只有两种：契约版本不匹配、数据库版本过新 | 除此之外**一律不要**阻断 |
+| 层级               | 用在哪                                                 | 特征                                           |
+| ------------------ | ------------------------------------------------------ | ---------------------------------------------- |
+| **内联**（字段旁） | 表单校验：URL 非法、路径不存在                         | 红字 + 图标，不打断                            |
+| **区块错误**       | 某个区域拉取失败（转写稿加载失败、目录拉不到）         | 卡片内替换，带 [重试]，**其余页面照常可用**    |
+| **Toast**          | 异步动作的结果通知（下载失败且不再重试、导出完成）     | 5s 自动消失；**带动作的 toast 不自动消失**     |
+| **持久条幅**       | 全局降级态：SSE 断开、磁盘将满、后端自检失败、端口漂移 | 顶部常驻，可折叠不可关闭（问题还在就不该消失） |
+| **阻断对话框**     | 只有两种：契约版本不匹配、数据库版本过新               | 除此之外**一律不要**阻断                       |
 
 ### 5.2 错误映射表（`code` → UI）
 
 `[已核实]` `code` 取自 `packages/shared/src/jobs.ts` 的 `ERROR_CODES` 与 D-01 §7.1 的分类前缀。
 
-| code / 场景 | 层级 | 文案要点 | 动作按钮 |
-|---|---|---|---|
-| `NETWORK_TIMEOUT` / `CONNECTION_RESET`（`retryable`） | 无（静默重试） | 只在任务中心显示"重试中 2/5" | — |
-| 下载多次失败 | Toast + 任务中心 | "下载失败：连接反复中断" | [换个下载源] [重试] |
-| `CHECKSUM_MISMATCH` | 持久条幅 | **"文件校验未通过，已丢弃"**（绝不"凑合用"，ADR-004 决策 5） | [换源重下] [查看详情] |
-| 磁盘不足（`blocked`） | 持久条幅 + 任务中心 | "需要 3.2 GB，可用 1.1 GB" | [清理空间]→`/settings/storage` |
-| 后端未安装（`blocked`） | 区块 + 任务中心 | "转写需要先安装加速后端" | [去安装]→`/runtime` |
-| 后端自检失败 | 持久条幅 | 显示**真实原因**（如"你的算力架构 sm_120 不被此构建支持"，对冲 R-01 §C11 #9） | [改用 CPU] [重试自检] |
-| 自动降级发生 | Toast（一次性）+ 运行时页标记 | "CUDA 加载失败，已切换到 Vulkan" | [了解原因] |
-| 无 LLM 可用 | 区块（导图 Tab 内） | "未配置 AI 模型，已生成基础大纲" | [配置 LLM]→`/settings/llm` |
-| yt-dlp 需要登录 | 区块（捕获页） | "该视频需要登录才能访问" | [使用浏览器 Cookie] [改为拖入本地文件] |
-| 端口漂移 | 持久条幅 | "端口已变更为 17652，**麦克风需要重新授权**" | [了解] |
-| SSE 断开 | 持久条幅（黄） | "实时更新已断开，正在轮询" | 自动恢复 |
-| `CONTRACT_VERSION` 不匹配 | **阻断对话框** | "前端与本地服务版本不一致" | [刷新页面] |
-| 数据库版本过新 | **阻断** | D-01 §2.6 | [查看备份] |
-| 安全模式 | 强制跳 `/diagnostics` | "OpenMemo 连续启动失败，已进入安全模式" | [导出诊断包] [重置后端选择] |
+| code / 场景                                           | 层级                          | 文案要点                                                                      | 动作按钮                               |
+| ----------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------- | -------------------------------------- |
+| `NETWORK_TIMEOUT` / `CONNECTION_RESET`（`retryable`） | 无（静默重试）                | 只在任务中心显示"重试中 2/5"                                                  | —                                      |
+| 下载多次失败                                          | Toast + 任务中心              | "下载失败：连接反复中断"                                                      | [换个下载源] [重试]                    |
+| `CHECKSUM_MISMATCH`                                   | 持久条幅                      | **"文件校验未通过，已丢弃"**（绝不"凑合用"，ADR-004 决策 5）                  | [换源重下] [查看详情]                  |
+| 磁盘不足（`blocked`）                                 | 持久条幅 + 任务中心           | "需要 3.2 GB，可用 1.1 GB"                                                    | [清理空间]→`/settings/storage`         |
+| 后端未安装（`blocked`）                               | 区块 + 任务中心               | "转写需要先安装加速后端"                                                      | [去安装]→`/runtime`                    |
+| 后端自检失败                                          | 持久条幅                      | 显示**真实原因**（如"你的算力架构 sm_120 不被此构建支持"，对冲 R-01 §C11 #9） | [改用 CPU] [重试自检]                  |
+| 自动降级发生                                          | Toast（一次性）+ 运行时页标记 | "CUDA 加载失败，已切换到 Vulkan"                                              | [了解原因]                             |
+| 无 LLM 可用                                           | 区块（导图 Tab 内）           | "未配置 AI 模型，已生成基础大纲"                                              | [配置 LLM]→`/settings/llm`             |
+| yt-dlp 需要登录                                       | 区块（捕获页）                | "该视频需要登录才能访问"                                                      | [使用浏览器 Cookie] [改为拖入本地文件] |
+| 端口漂移                                              | 持久条幅                      | "端口已变更为 17652，**麦克风需要重新授权**"                                  | [了解]                                 |
+| SSE 断开                                              | 持久条幅（黄）                | "实时更新已断开，正在轮询"                                                    | 自动恢复                               |
+| `CONTRACT_VERSION` 不匹配                             | **阻断对话框**                | "前端与本地服务版本不一致"                                                    | [刷新页面]                             |
+| 数据库版本过新                                        | **阻断**                      | D-01 §2.6                                                                     | [查看备份]                             |
+| 安全模式                                              | 强制跳 `/diagnostics`         | "OpenMemo 连续启动失败，已进入安全模式"                                       | [导出诊断包] [重置后端选择]            |
 
 ### 5.3 三条呈现原则
 
@@ -743,12 +757,12 @@ D-01 §5 F3 设计了"流式出稿 → 停止后用离线大模型重跑覆盖"�
 
 ### 5.4 空态与首启
 
-| 场景 | 呈现 |
-|---|---|
-| 零笔记 | 大号插画位 + "粘贴一个链接开始" + 输入框直接可用（**空态即入口**，不要只放一句"暂无数据"） |
-| 零搜索结果 | 建议：换关键词 / 试试语义搜索 / 检查筛选条件 |
+| 场景          | 呈现                                                                                            |
+| ------------- | ----------------------------------------------------------------------------------------------- |
+| 零笔记        | 大号插画位 + "粘贴一个链接开始" + 输入框直接可用（**空态即入口**，不要只放一句"暂无数据"）      |
+| 零搜索结果    | 建议：换关键词 / 试试语义搜索 / 检查筛选条件                                                    |
 | 未装 ASR 模型 | 引导到 `/models` 的推荐项；同时说明"内置 CPU 后端可用，只是较慢"（L1 永不失败，ADR-006 决策 3） |
-| 首启 | `/onboarding` 三步，**每步都能跳过**。R-04 §1.5 引述的经验：第一次不要让用户做任何配置决策 |
+| 首启          | `/onboarding` 三步，**每步都能跳过**。R-04 §1.5 引述的经验：第一次不要让用户做任何配置决策      |
 
 ---
 
@@ -763,14 +777,15 @@ D-01 §5 F3 设计了"流式出稿 → 停止后用离线大模型重跑覆盖"�
 - **时间码格式**（`HH:MM:SS` / `MM:SS`）不随 locale 变，属于媒体惯例，单独实现。
 - **选型建议：`i18next` + `react-i18next`** `[版本已核实]`
 
-  | 候选 | 版本 | 事实 |
-  |---|---|---|
-  | **`react-i18next`** | **17.0.11** | ⚠️ peer 要求 **`i18next >= 26.2.0`** —— **版本联动，不能配旧 i18next**，装错会在运行时静默出错 |
-  | `i18next` | 26.3.6 | 纯运行时，JSON 词条，**无编译步骤** |
-  | `@lingui/core` | 6.6.0 | peer 含 `babel-plugin-macros`，且需 `@lingui/cli` 做 extract + compile **两步编译**（`[文档]` 级） |
-  | `typesafe-i18n` | 5.27.1 | 需要常驻 generator 进程生成类型（`[文档]` 级） |
+  | 候选                | 版本        | 事实                                                                                               |
+  | ------------------- | ----------- | -------------------------------------------------------------------------------------------------- |
+  | **`react-i18next`** | **17.0.11** | ⚠️ peer 要求 **`i18next >= 26.2.0`** —— **版本联动，不能配旧 i18next**，装错会在运行时静默出错     |
+  | `i18next`           | 26.3.6      | 纯运行时，JSON 词条，**无编译步骤**                                                                |
+  | `@lingui/core`      | 6.6.0       | peer 含 `babel-plugin-macros`，且需 `@lingui/cli` 做 extract + compile **两步编译**（`[文档]` 级） |
+  | `typesafe-i18n`     | 5.27.1      | 需要常驻 generator 进程生成类型（`[文档]` 级）                                                     |
 
   选 i18next 的理由：**它是唯一零编译步骤的方案**。Wave 3 有三个任务并行，多一个代码生成步骤就多一处"我本地能跑你那儿不行"。类型安全的收益抵不上并行期的构建复杂度。
+
 - **`Intl.RelativeTimeFormat` / `Intl.NumberFormat` 无需 polyfill** —— 均已 Baseline widely available 多年（`[文档]` 级，来自 caniuse）。
 - 无论选谁，**必须封装在 `app/i18n/`**，feature 只用 `t()`，以便日后更换。
 
@@ -778,13 +793,14 @@ D-01 §5 F3 设计了"流式出稿 → 停止后用离线大模型重跑覆盖"�
 
 `packages/shared` 的 `ApiErrorBody` 是 `{ code, message, messageZh, retryable, details? }` —— **把 zh/en 两种文案硬编码在后端**。
 
-| 问题 | 说明 |
-|---|---|
-| 加第三种语言要改后端 | 语言与业务逻辑耦合 |
+| 问题                     | 说明                                            |
+| ------------------------ | ----------------------------------------------- |
+| 加第三种语言要改后端     | 语言与业务逻辑耦合                              |
 | 前端无法按上下文调整措辞 | 同一个 `DISK_FULL` 在下载页和转写页该说的话不同 |
-| 文案分散在两个仓位置 | 翻译工作流会割裂 |
+| 文案分散在两个仓位置     | 翻译工作流会割裂                                |
 
 **我的建议 `[设计]`**：
+
 - **前端优先用 `code` 查本地文案表**（`errors.<CODE>.title/detail/action`）；
 - `message`/`messageZh` **仅作未知 code 的兜底**（前端版本旧、后端加了新 code 时不至于白屏）；
 - `details` 作为插值参数（如 `{requiredBytes, freeBytes}`）——这要求后端把参数**结构化**给出，而不是拼进 message。
@@ -793,19 +809,19 @@ D-01 §5 F3 设计了"流式出稿 → 停止后用离线大模型重跑覆盖"�
 
 ### 6.3 可访问性基线（三个任务的验收项）
 
-| 项 | 要求 |
-|---|---|
-| 键盘 | 所有交互可 Tab 到达；焦点顺序符合视觉顺序；`Esc` 关闭浮层；**焦点陷阱**只在模态里 |
-| 焦点可见 | 统一 `:focus-visible` 环（§7 令牌 `--ring`），**禁止 `outline: none` 不补替代** |
-| 语义 | 用 `<button>`/`<nav>`/`<main>`/`<h1-h3>`；`div` + `onClick` 一律不通过评审 |
-| 动态通知 | 任务进度 → `aria-live="polite"`；错误 → `aria-live="assertive"`。**但进度不要每 250ms 播报**——只在阶段切换与终态播报 |
-| 虚拟列表 | 转写稿用 `role="list"`/`listitem`，并提供"跳到转写稿"跳转链接 |
-| 播放器 | 原生 `<audio controls>` 作为无障碍回退可用；自定义控件必须有 `aria-label` 与快捷键说明 |
-| 颜色 | **状态绝不只用颜色**：图标 + 文字标签同时出现（与 §7 状态色规则一致——明档 warning/serious 对比度 <3:1，就是靠图标+标签兜底） |
-| 对比度 | 正文 ≥ 4.5:1，大字/图形 ≥ 3:1（§7 已按此选值并**跑脚本验证**） |
-| 动效 | 尊重 `prefers-reduced-motion`：关闭位移与缩放动画，保留透明度 |
-| 缩放 | 200% 缩放下不横向滚动、不截断 |
-| 语言标注 | `<html lang>` 随 locale 变；转写稿容器按 `transcripts.language` 标 `lang` |
+| 项       | 要求                                                                                                                         |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| 键盘     | 所有交互可 Tab 到达；焦点顺序符合视觉顺序；`Esc` 关闭浮层；**焦点陷阱**只在模态里                                            |
+| 焦点可见 | 统一 `:focus-visible` 环（§7 令牌 `--ring`），**禁止 `outline: none` 不补替代**                                              |
+| 语义     | 用 `<button>`/`<nav>`/`<main>`/`<h1-h3>`；`div` + `onClick` 一律不通过评审                                                   |
+| 动态通知 | 任务进度 → `aria-live="polite"`；错误 → `aria-live="assertive"`。**但进度不要每 250ms 播报**——只在阶段切换与终态播报         |
+| 虚拟列表 | 转写稿用 `role="list"`/`listitem`，并提供"跳到转写稿"跳转链接                                                                |
+| 播放器   | 原生 `<audio controls>` 作为无障碍回退可用；自定义控件必须有 `aria-label` 与快捷键说明                                       |
+| 颜色     | **状态绝不只用颜色**：图标 + 文字标签同时出现（与 §7 状态色规则一致——明档 warning/serious 对比度 <3:1，就是靠图标+标签兜底） |
+| 对比度   | 正文 ≥ 4.5:1，大字/图形 ≥ 3:1（§7 已按此选值并**跑脚本验证**）                                                               |
+| 动效     | 尊重 `prefers-reduced-motion`：关闭位移与缩放动画，保留透明度                                                                |
+| 缩放     | 200% 缩放下不横向滚动、不截断                                                                                                |
+| 语言标注 | `<html lang>` 随 locale 变；转写稿容器按 `transcripts.language` 标 `lang`                                                    |
 
 ---
 
@@ -819,18 +835,18 @@ D-01 §5 F3 设计了"流式出稿 → 停止后用离线大模型重跑覆盖"�
 > 🔄 **本表已被回写更新（2026-08-03，见 §7.1b 变更说明）。下面就是当前代码里的真值** ——
 > `apps/web/src/styles/tokens.css`。**旧值不要再照抄**，它已经不在代码里了。
 
-| 角色 | 令牌 | 亮色 | 暗色 |
-|---|---|---|---|
-| 页面底板 / 卡片内的内嵌字段（输入框、pre、标签片） | `--surface-0` | `#edf0f5` | `#14161d` |
-| 卡片 / 侧栏 / 顶栏 | `--surface-1` | `#ffffff` | `#242732` |
-| 抬升（弹层/抽屉/toast） | `--surface-2` | `#ffffff`（**与 surface-1 同值**） | `#242732`（**同值**） |
-| hover 填充 | `--fill-hover` | `rgb(15 23 42 / 6%)` | `rgb(255 255 255 / 7%)` |
-| 按下填充 | `--fill-active` | `rgb(15 23 42 / 9%)` | `rgb(255 255 255 / 10%)` |
-| 主文字 | `--ink-primary` | `#161a23` | `#f2f4f9` |
-| 次文字 | `--ink-secondary` | `#4a5263` | `#c3c9d6` |
-| 弱化（占位/轴标/说明正文） | `--ink-muted` | `#576170` | `#9da9be` |
-| 分隔线 | `--line` | `#d8dee8` | `#383c4a` |
-| 边框环 | `--border` | `rgb(15 23 42 / 12%)` | `rgb(255 255 255 / 12%)` |
+| 角色                                               | 令牌              | 亮色                               | 暗色                     |
+| -------------------------------------------------- | ----------------- | ---------------------------------- | ------------------------ |
+| 页面底板 / 卡片内的内嵌字段（输入框、pre、标签片） | `--surface-0`     | `#edf0f5`                          | `#14161d`                |
+| 卡片 / 侧栏 / 顶栏                                 | `--surface-1`     | `#ffffff`                          | `#242732`                |
+| 抬升（弹层/抽屉/toast）                            | `--surface-2`     | `#ffffff`（**与 surface-1 同值**） | `#242732`（**同值**）    |
+| hover 填充                                         | `--fill-hover`    | `rgb(15 23 42 / 6%)`               | `rgb(255 255 255 / 7%)`  |
+| 按下填充                                           | `--fill-active`   | `rgb(15 23 42 / 9%)`               | `rgb(255 255 255 / 10%)` |
+| 主文字                                             | `--ink-primary`   | `#161a23`                          | `#f2f4f9`                |
+| 次文字                                             | `--ink-secondary` | `#4a5263`                          | `#c3c9d6`                |
+| 弱化（占位/轴标/说明正文）                         | `--ink-muted`     | `#576170`                          | `#9da9be`                |
+| 分隔线                                             | `--line`          | `#d8dee8`                          | `#383c4a`                |
+| 边框环                                             | `--border`        | `rgb(15 23 42 / 12%)`              | `rgb(255 255 255 / 12%)` |
 
 **★ 两条随本表一起失效的旧规则**（照旧规则写出来的代码现在是错的，不是过时而已）：
 
@@ -844,12 +860,12 @@ D-01 §5 F3 设计了"流式出稿 → 停止后用离线大模型重跑覆盖"�
 
 ### 7.1b 变更说明 —— 这两张表为什么被改（不要静默覆盖，所以留在原处）
 
-| | |
-|---|---|
-| **谁改的** | `handoff` agent 执行回写；新取值与实测出自 `ui-polish`（T-124） |
-| **什么时候** | 2026-08-03（T-124 代码落地 `6b1cac0`；T-131 裁决回写本文档） |
+|                  |                                                                                                                                                                                                                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **谁改的**       | `handoff` agent 执行回写；新取值与实测出自 `ui-polish`（T-124）                                                                                                                                                                                                                      |
+| **什么时候**     | 2026-08-03（T-124 代码落地 `6b1cac0`；T-131 裁决回写本文档）                                                                                                                                                                                                                         |
 | **依据哪次实测** | `ui-polish` T-124：Playwright/Chromium 像素取样 + `apps/web/src/styles/tokens.contrast.test.ts` 从 `tokens.css` **现场解析**的 88 对对比度断言（T-114 时是 64 对）。逐条过程见 `docs/design/D-09-ui-gap.md` §8 与 `coordination/inbox/ui-polish.md`（2026-08-03 19:45 / 19:55 两条） |
-| **裁决** | **D-09 §8 是现行事实，回写 D-05。** 本表即回写结果 |
+| **裁决**         | **D-09 §8 是现行事实，回写 D-05。** 本表即回写结果                                                                                                                                                                                                                                   |
 
 **为什么是"改规范"而不是"代码违反了规范"** —— 这一条值得下一个人读完：
 
@@ -872,17 +888,17 @@ D-01 §5 F3 设计了"流式出稿 → 停止后用离线大模型重跑覆盖"�
 
 > 🔄 **品牌三行已被回写更新（同 §7.1b）。四个状态锚点一个字没动。**
 
-| 角色 | 令牌 | 亮色 | 暗色 | 说明 |
-|---|---|---|---|---|
-| 主色/强调（**块面色**） | `--accent` | `#575bc7` | `#6268d5` | 主按钮底、播放进度。判据「白字压在上面 ≥ 4.5:1」→ 实测明 5.64:1 / 暗 4.71:1 |
-| 主色前景 | `--accent-fg` | `#ffffff` | `#ffffff` | |
-| 主色**文字色** | `--accent-ink` | `#5457c4` | `#a9aef5` | 链接、选中项文字。判据「对最不利表层 ≥ 4.5:1」**且**压得住 `--accent-tint` |
-| 品牌淡底 | `--accent-tint` | `#e2e4fa` | `#2a2e5c` | 选中项 / 搜索命中 / 拖放目标 / 存储条底。**原名 `--accent-track`，已更名** |
-| 焦点环 | `--ring` | `var(--accent-ink)` | `var(--accent-ink)` | 2px + 2px offset |
-| 成功 | `--status-good` | `#0ca30c` | `#0ca30c` | **状态色四个都不随主题变** |
-| 警告 | `--status-warning` | `#fab219` | `#fab219` | |
-| 严重 | `--status-serious` | `#ec835a` | `#ec835a` | |
-| 危险/失败 | `--status-critical` | `#d03b3b` | `#d03b3b` | |
+| 角色                    | 令牌                | 亮色                | 暗色                | 说明                                                                        |
+| ----------------------- | ------------------- | ------------------- | ------------------- | --------------------------------------------------------------------------- |
+| 主色/强调（**块面色**） | `--accent`          | `#575bc7`           | `#6268d5`           | 主按钮底、播放进度。判据「白字压在上面 ≥ 4.5:1」→ 实测明 5.64:1 / 暗 4.71:1 |
+| 主色前景                | `--accent-fg`       | `#ffffff`           | `#ffffff`           |                                                                             |
+| 主色**文字色**          | `--accent-ink`      | `#5457c4`           | `#a9aef5`           | 链接、选中项文字。判据「对最不利表层 ≥ 4.5:1」**且**压得住 `--accent-tint`  |
+| 品牌淡底                | `--accent-tint`     | `#e2e4fa`           | `#2a2e5c`           | 选中项 / 搜索命中 / 拖放目标 / 存储条底。**原名 `--accent-track`，已更名**  |
+| 焦点环                  | `--ring`            | `var(--accent-ink)` | `var(--accent-ink)` | 2px + 2px offset                                                            |
+| 成功                    | `--status-good`     | `#0ca30c`           | `#0ca30c`           | **状态色四个都不随主题变**                                                  |
+| 警告                    | `--status-warning`  | `#fab219`           | `#fab219`           |                                                                             |
+| 严重                    | `--status-serious`  | `#ec835a`           | `#ec835a`           |                                                                             |
+| 危险/失败               | `--status-critical` | `#d03b3b`           | `#d03b3b`           |                                                                             |
 
 > **状态色的硬规则**：`--status-warning`（明档 1.79:1）与 `--status-serious`（明档 2.57:1）
 > **在亮色背景上达不到 3:1，这是设计取舍不是疏漏** —— 缓解手段是**强制配图标 + 文字标签**（§6.3）。
@@ -899,22 +915,22 @@ D-01 §5 F3 设计了"流式出稿 → 停止后用离线大模型重跑覆盖"�
 
 ### 7.3 数据展示（进度条 / 存储分解 / 波形）
 
-| 元素 | 规格 |
-|---|---|
+| 元素                | 规格                                                                                                                                                                                                                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **进度条（meter）** | 高 6px（行内）/ 8px（抽屉）；**填充端 4px 圆角、基线端方角**；填充按严重度 `accent → warning → critical`。⚠️ **轨道色已变更**：本表原写"同色系更浅一档（亮 `#cde2fb` / 暗 `#184f95`）"，T-114 起改为跟着 tone 走的 `--status-*-tint` / `--accent-tint`（判据见 D-09 §7.5），**这两个十六进制值已不在代码里** |
-| **存储分解条** | 水平堆叠，**厚度 ≤ 24px**；**段与段之间 2px 表层色缝隙**（不是描边）；分段用下表 4 色；**必须配图例 + 字节数标签** |
-| **波形** | 已播 = `--accent`；未播 = `--ink-muted`（约 40% 不透明）；游标 2px `--accent`；选区 = accent 10% 洗；峰值来自预计算 `peaks`（D-02 §3.4），**不在浏览器解码音频**。落地细节见 §7.3a |
-| **说话人色条** | 用分类槽 1–8 的固定顺序分配，**按说话人实体分配、绝不按当前排名循环**；配文字标签 |
-| **稀疏值** | 未测量的指标（如未跑基准的模型速度）显示 **"未测量"**，不显示 0、不显示占位数字（ADR-004 决策 3） |
+| **存储分解条**      | 水平堆叠，**厚度 ≤ 24px**；**段与段之间 2px 表层色缝隙**（不是描边）；分段用下表 4 色；**必须配图例 + 字节数标签**                                                                                                                                                                                           |
+| **波形**            | 已播 = `--accent`；未播 = `--ink-muted`（约 40% 不透明）；游标 2px `--accent`；选区 = accent 10% 洗；峰值来自预计算 `peaks`（D-02 §3.4），**不在浏览器解码音频**。落地细节见 §7.3a                                                                                                                           |
+| **说话人色条**      | 用分类槽 1–8 的固定顺序分配，**按说话人实体分配、绝不按当前排名循环**；配文字标签                                                                                                                                                                                                                            |
+| **稀疏值**          | 未测量的指标（如未跑基准的模型速度）显示 **"未测量"**，不显示 0、不显示占位数字（ADR-004 决策 3）                                                                                                                                                                                                            |
 
 **分类分段色（存储分解 / 说话人，固定顺序，不得循环）**
 
-| 槽 | 语义示例 | 亮色 | 暗色 |
-|---|---|---|---|
-| 1 | 模型 | `#2a78d6` | `#3987e5` |
-| 2 | 加速后端 | `#eb6834` | `#d95926` |
-| 3 | 媒体文件 | `#1baf7a` | `#199e70` |
-| 4 | 缓存/临时 | `#eda100` | `#c98500` |
+| 槽  | 语义示例  | 亮色      | 暗色      |
+| --- | --------- | --------- | --------- |
+| 1   | 模型      | `#2a78d6` | `#3987e5` |
+| 2   | 加速后端  | `#eb6834` | `#d95926` |
+| 3   | 媒体文件  | `#1baf7a` | `#199e70` |
+| 4   | 缓存/临时 | `#eda100` | `#c98500` |
 
 > 超过 4 类 → 归入"其他"，**不要新造颜色**。
 
@@ -946,10 +962,10 @@ D-01 §5 F3 设计了"流式出稿 → 停止后用离线大模型重跑覆盖"�
 D-01/D-02 的设计要求"绝不在浏览器解码音频"（2 小时文件 `decodeAudioData` 会吃几百 MB 内存并阻塞主线程）。
 核实结果（**写作当时**）：**wavesurfer.js v7.12.11 原生支持这两点**，不需要我们自己写 canvas：
 
-| 选项 | 类型 | 用途 |
-|---|---|---|
-| `peaks` | `(Float32Array \| number[])[]` —— **二维，每声道一个数组** | 直接喂预计算峰值，**跳过解码**。必须同时给 `duration` |
-| `media` | `HTMLMediaElement` | 绑定我们自己的 `<audio>`（指向 `/media/asset/<uid>`），而不是让它自建媒体元素 → 播放控制、Range 请求、cookie 鉴权全部仍由我们掌握 |
+| 选项    | 类型                                                       | 用途                                                                                                                              |
+| ------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `peaks` | `(Float32Array \| number[])[]` —— **二维，每声道一个数组** | 直接喂预计算峰值，**跳过解码**。必须同时给 `duration`                                                                             |
+| `media` | `HTMLMediaElement`                                         | 绑定我们自己的 `<audio>`（指向 `/media/asset/<uid>`），而不是让它自建媒体元素 → 播放控制、Range 请求、cookie 鉴权全部仍由我们掌握 |
 
 插件路径（`[文档]` 级，未逐一在源码确认）：
 `wavesurfer.js/dist/plugins/{regions,timeline,minimap}.esm.js`
@@ -995,15 +1011,21 @@ v4 是 CSS-first 配置，但有一个**关键限制会直接影响我们**：
 ```css
 /* apps/web/src/styles/tokens.css —— 第 1 层：语义令牌（唯一真值来源，纯 CSS，零库依赖） */
 :root {
-  --surface-1: #fcfcfb;  --ink-primary: #0b0b0b;  --accent: #2a78d6;  /* ← 旧值，仅作结构示意 */
+  --surface-1: #fcfcfb;
+  --ink-primary: #0b0b0b;
+  --accent: #2a78d6; /* ← 旧值，仅作结构示意 */
 }
 @media (prefers-color-scheme: dark) {
-  :root:where(:not([data-theme="light"])) {
-    --surface-1: #1a1a19; --ink-primary: #ffffff; --accent: #3987e5;  /* … */
+  :root:where(:not([data-theme='light'])) {
+    --surface-1: #1a1a19;
+    --ink-primary: #ffffff;
+    --accent: #3987e5; /* … */
   }
 }
-:root[data-theme="dark"] {
-  --surface-1: #1a1a19; --ink-primary: #ffffff; --accent: #3987e5;    /* … */
+:root[data-theme='dark'] {
+  --surface-1: #1a1a19;
+  --ink-primary: #ffffff;
+  --accent: #3987e5; /* … */
 }
 ```
 
@@ -1033,17 +1055,18 @@ v4 是 CSS-first 配置，但有一个**关键限制会直接影响我们**：
 
 命名空间 → 工具类的对应关系（`[已核实]`，只列我们用到的）：
 
-| `@theme` 前缀 | 生成的工具类 |
-|---|---|
-| `--color-*` | `bg-* / text-* / border-* / fill-*` |
-| `--spacing-*` | `p-* / m-* / gap-* / w-* / h-*` |
-| `--text-*`（+ `--text-<n>--line-height` 修饰符） | 字号 |
-| `--radius-*` | `rounded-*` |
-| `--shadow-*` | `shadow-*` |
-| `--ease-*` / `--animate-*` | 过渡与动画 |
-| `--breakpoint-*` | 响应式变体 |
+| `@theme` 前缀                                    | 生成的工具类                        |
+| ------------------------------------------------ | ----------------------------------- |
+| `--color-*`                                      | `bg-* / text-* / border-* / fill-*` |
+| `--spacing-*`                                    | `p-* / m-* / gap-* / w-* / h-*`     |
+| `--text-*`（+ `--text-<n>--line-height` 修饰符） | 字号                                |
+| `--radius-*`                                     | `rounded-*`                         |
+| `--shadow-*`                                     | `shadow-*`                          |
+| `--ease-*` / `--animate-*`                       | 过渡与动画                          |
+| `--breakpoint-*`                                 | 响应式变体                          |
 
 其它已核实要点：
+
 - **`tailwind.config.js` 仍受支持但 v4 不再自动探测**，要用必须在 CSS 里显式 `@config "…"`。我们**不用**它 —— CSS-first 一条路走到黑，避免两处配置漂移。
 - v4 中 `corePlugins` / `safelist` / `separator` 三个 JS 配置项**已不支持**（safelist 改用 `@source inline()`）。
 - `@custom-variant` 是**定义/重定义**变体；`@variant` 是在自定义 CSS 里**应用**已有变体。两者不是一回事，别写反。
@@ -1070,13 +1093,13 @@ v4 是 CSS-first 配置，但有一个**关键限制会直接影响我们**：
 
 `[已核实]` 读 `packages/shared/src/{api,events,jobs}.ts`（`model-mgmt` 独占，PROTOCOL 规则 3 禁止我修改）：
 
-| # | D-01 写的 | `packages/shared` 实现的 | 影响 | 我的建议 |
-|---|---|---|---|---|
-| 1 | 路由前缀 `/api/v1/**` | `/api/**`（`ENDPOINTS` 表无版本段） | 前端 baseURL 二选一 | **以实现为准（`/api`）**，用 `CONTRACT_VERSION` 承担版本职责已足够；请 Manager 追认并订正 D-01 §3.1 |
-| 2 | 错误信封 RFC 9457 `application/problem+json` + `remediation` 对象 | `{error:{code,message,messageZh,retryable,details?}}`，**无 `remediation` 字段** | §5.3"每个 blocked 都有按钮"落不了地——前端只能靠 `code` 硬编码动作 | 建议在 `ApiErrorBody.error` 加可选 `remediation?: {action, params}`。**这是章程要求 2.1「不碰命令行」的直接依赖** |
-| 3 | 事件含 `transcribe.segment` / `mindmap.delta` / `job.progress`(通用) / `note.*` | `SSE_EVENT_TYPES` 只有 14 个，**全部是模型/下载/后端域** | **F1–F5 的实时反馈一个事件都没有**（§4.1 边转边看、§4.3 流式字幕、§4.6 渐进导图全部依赖它们） | **最高优先级**：需 `model-mgmt` 扩 `SSE_EVENT_TYPES` 与对应 payload 类型；否则 T-021/T-023 只能轮询，产品体验直接塌掉 |
-| 4 | SSE 重放缓冲 2000 条 | `SSE_REPLAY_BUFFER_SIZE = 256` | 断线稍久必然丢事件 | **接受 256**（我在 §2.3 已设计"重连后全量失效"来兜底），订正 D-01 §3.3 |
-| 5 | SSE 帧 `event: message` + `data.type` | `event: <type>` | 前端必须 `addEventListener` 逐类型 | **接受实现**，已写进 §2.3 并加粗标注为坑；订正 D-01 §3.3 |
+| #   | D-01 写的                                                                       | `packages/shared` 实现的                                                         | 影响                                                                                          | 我的建议                                                                                                              |
+| --- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| 1   | 路由前缀 `/api/v1/**`                                                           | `/api/**`（`ENDPOINTS` 表无版本段）                                              | 前端 baseURL 二选一                                                                           | **以实现为准（`/api`）**，用 `CONTRACT_VERSION` 承担版本职责已足够；请 Manager 追认并订正 D-01 §3.1                   |
+| 2   | 错误信封 RFC 9457 `application/problem+json` + `remediation` 对象               | `{error:{code,message,messageZh,retryable,details?}}`，**无 `remediation` 字段** | §5.3"每个 blocked 都有按钮"落不了地——前端只能靠 `code` 硬编码动作                             | 建议在 `ApiErrorBody.error` 加可选 `remediation?: {action, params}`。**这是章程要求 2.1「不碰命令行」的直接依赖**     |
+| 3   | 事件含 `transcribe.segment` / `mindmap.delta` / `job.progress`(通用) / `note.*` | `SSE_EVENT_TYPES` 只有 14 个，**全部是模型/下载/后端域**                         | **F1–F5 的实时反馈一个事件都没有**（§4.1 边转边看、§4.3 流式字幕、§4.6 渐进导图全部依赖它们） | **最高优先级**：需 `model-mgmt` 扩 `SSE_EVENT_TYPES` 与对应 payload 类型；否则 T-021/T-023 只能轮询，产品体验直接塌掉 |
+| 4   | SSE 重放缓冲 2000 条                                                            | `SSE_REPLAY_BUFFER_SIZE = 256`                                                   | 断线稍久必然丢事件                                                                            | **接受 256**（我在 §2.3 已设计"重连后全量失效"来兜底），订正 D-01 §3.3                                                |
+| 5   | SSE 帧 `event: message` + `data.type`                                           | `event: <type>`                                                                  | 前端必须 `addEventListener` 逐类型                                                            | **接受实现**，已写进 §2.3 并加粗标注为坑；订正 D-01 §3.3                                                              |
 
 > 差异 1/4/5 我建议**以实现为准**，D-01 由我订正；差异 2/3 需要 `model-mgmt` 改文件，**必须由 Manager 协调**。
 
@@ -1084,18 +1107,18 @@ v4 是 CSS-first 配置，但有一个**关键限制会直接影响我们**：
 
 ## §9 待验证清单（诚实）
 
-| # | 事项 | 影响 | 状态 |
-|---|---|---|---|
-| V-1 | Tailwind v4 `@theme` 写法、CSS 变量命名、暗色变体、是否需 `tailwind.config.js` | §7.5 | ✅ **已核实**（官方文档原文）。关键发现：`@theme` 不能嵌套 → 必须用 **`@theme inline` 两层结构**，否则暗色不生效 |
-| V-2 | 路由库选型与版本 | §0.2 / §1.2 | ✅ **已核实**：`react-router` **8.3.0**（v8 移除 `react-router-dom`，`RouterProvider` 改从 `react-router/dom` 导入）；`@tanstack/react-router` 1.170.18 可手写路由树。**建议 react-router v8 Data 模式**。**已补装并在用**（`apps/web/package.json` → `react-router@^8.3.0`；`apps/web/src/main.tsx:29` `createBrowserRouter(routes)`）。**此前写着"仍需 `oss-scout` 补装"** |
-| V-3 | i18n 库选型与版本 | §6.1 | ✅ **已核实**：`react-i18next` 17.0.11 + `i18next` 26.3.6（**peer 强制 i18next ≥26.2.0**）；lingui / typesafe-i18n 均需编译步骤。**已补装**（`i18next@^26.3.6` + `react-i18next@^17.0.11`，`apps/web/src/app/i18n/locales/{zh-CN,en}` 已建）。**此前写着"仍需补装"** |
-| V-4 | shadcn/ui 的底层依赖 | §0.1 | ✅ **已核实，且结论出人意料**：默认底层库 2026-07-03 起为 **Base UI（`@base-ui/react` 1.6.0）**，非 Radix。Radix 仍可用（`init -b radix`）。**SOURCE.md 需订正** |
-| V-5 | `navigator.locks`（Web Locks）跨浏览器支持，特别是 Safari | §2.3 多标签选主 | **仍待核实**；有 BroadcastChannel 降级与"仅支持单标签"两条退路 |
-| V-6 | `wavesurfer.js` v7 的 `peaks` / `media` 选项 | §4.4 / §7.3a | ✅ **已核实**：`peaks?: (Float32Array\|number[])[]`（二维，配 `duration`）与 `media?: HTMLMediaElement` 均存在 → 两项需求都满足。插件路径为 `[文档]` 级 |
-| V-7 | React 19 + StrictMode 下 EventSource 单例行为 | §2.3 | 未验证 |
-| V-8 | 虚拟滚动库选型（3000+ 段转写稿） | §4.4 性能 | ✅ **已定并已装：`@tanstack/react-virtual@^3.14.9`**。**此前写着"未选型，需 T-021 定并向 `oss-scout` 申报依赖"** |
-| V-9 | TanStack Query 的 SSE 官方模式 | §2.2/§2.3 | ✅ **已核实：不存在官方 SSE 指南**。`invalidateQueries` / `setQueryData` 两种手法是**社区共识而非官方定式**（我在 §2.3 的映射表按此诚实标注）。另：`experimental_streamedQuery` 确实存在，但它是给 `AsyncIterable` 流式 `queryFn` 用的（如 LLM 输出），**与"SSE 触发缓存失效"是两回事，不要混用** |
-| V-10 | 本文所有线框、令牌落地、状态模式 | 全局 | **零代码执行**。仅 §7.5 的调色板校验是脚本实测 |
+| #    | 事项                                                                           | 影响            | 状态                                                                                                                                                                                                                                                                                                                                                                         |
+| ---- | ------------------------------------------------------------------------------ | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| V-1  | Tailwind v4 `@theme` 写法、CSS 变量命名、暗色变体、是否需 `tailwind.config.js` | §7.5            | ✅ **已核实**（官方文档原文）。关键发现：`@theme` 不能嵌套 → 必须用 **`@theme inline` 两层结构**，否则暗色不生效                                                                                                                                                                                                                                                             |
+| V-2  | 路由库选型与版本                                                               | §0.2 / §1.2     | ✅ **已核实**：`react-router` **8.3.0**（v8 移除 `react-router-dom`，`RouterProvider` 改从 `react-router/dom` 导入）；`@tanstack/react-router` 1.170.18 可手写路由树。**建议 react-router v8 Data 模式**。**已补装并在用**（`apps/web/package.json` → `react-router@^8.3.0`；`apps/web/src/main.tsx:29` `createBrowserRouter(routes)`）。**此前写着"仍需 `oss-scout` 补装"** |
+| V-3  | i18n 库选型与版本                                                              | §6.1            | ✅ **已核实**：`react-i18next` 17.0.11 + `i18next` 26.3.6（**peer 强制 i18next ≥26.2.0**）；lingui / typesafe-i18n 均需编译步骤。**已补装**（`i18next@^26.3.6` + `react-i18next@^17.0.11`，`apps/web/src/app/i18n/locales/{zh-CN,en}` 已建）。**此前写着"仍需补装"**                                                                                                         |
+| V-4  | shadcn/ui 的底层依赖                                                           | §0.1            | ✅ **已核实，且结论出人意料**：默认底层库 2026-07-03 起为 **Base UI（`@base-ui/react` 1.6.0）**，非 Radix。Radix 仍可用（`init -b radix`）。**SOURCE.md 需订正**                                                                                                                                                                                                             |
+| V-5  | `navigator.locks`（Web Locks）跨浏览器支持，特别是 Safari                      | §2.3 多标签选主 | **仍待核实**；有 BroadcastChannel 降级与"仅支持单标签"两条退路                                                                                                                                                                                                                                                                                                               |
+| V-6  | `wavesurfer.js` v7 的 `peaks` / `media` 选项                                   | §4.4 / §7.3a    | ✅ **已核实**：`peaks?: (Float32Array\|number[])[]`（二维，配 `duration`）与 `media?: HTMLMediaElement` 均存在 → 两项需求都满足。插件路径为 `[文档]` 级                                                                                                                                                                                                                      |
+| V-7  | React 19 + StrictMode 下 EventSource 单例行为                                  | §2.3            | 未验证                                                                                                                                                                                                                                                                                                                                                                       |
+| V-8  | 虚拟滚动库选型（3000+ 段转写稿）                                               | §4.4 性能       | ✅ **已定并已装：`@tanstack/react-virtual@^3.14.9`**。**此前写着"未选型，需 T-021 定并向 `oss-scout` 申报依赖"**                                                                                                                                                                                                                                                             |
+| V-9  | TanStack Query 的 SSE 官方模式                                                 | §2.2/§2.3       | ✅ **已核实：不存在官方 SSE 指南**。`invalidateQueries` / `setQueryData` 两种手法是**社区共识而非官方定式**（我在 §2.3 的映射表按此诚实标注）。另：`experimental_streamedQuery` 确实存在，但它是给 `AsyncIterable` 流式 `queryFn` 用的（如 LLM 输出），**与"SSE 触发缓存失效"是两回事，不要混用**                                                                            |
+| V-10 | 本文所有线框、令牌落地、状态模式                                               | 全局            | **零代码执行**。仅 §7.5 的调色板校验是脚本实测                                                                                                                                                                                                                                                                                                                               |
 
 ---
 
@@ -1125,11 +1148,11 @@ v4 是 CSS-first 配置，但有一个**关键限制会直接影响我们**：
 
 ### 11.0 三条总则（先定规矩，再列事件）
 
-| # | 规则 | 理由 |
-|---|---|---|
-| **1** | **事件分两类：`hint`（提示去拉数据）与 `data`（载荷即真相）。每个事件必须显式归类。** | D-01 §3.3 的"SSE 是提示不是数据源"原则需要可执行的判据。归错类会导致要么白白多拉、要么状态不一致 |
-| **2** | **只有 `data` 类事件允许"必达且有序"，其余一律可丢可乱序。** 前端对 `hint` 类做去重合并即可 | 让服务端有明确的节流自由度：`hint` 随便合并，`data` 必须逐条发 |
-| **3** | **所有事件带 `noteUid`（若与笔记相关）** | 前端要按笔记路由到不同页面/组件；没有它就得反查，多一次往返 |
+| #     | 规则                                                                                        | 理由                                                                                             |
+| ----- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| **1** | **事件分两类：`hint`（提示去拉数据）与 `data`（载荷即真相）。每个事件必须显式归类。**       | D-01 §3.3 的"SSE 是提示不是数据源"原则需要可执行的判据。归错类会导致要么白白多拉、要么状态不一致 |
+| **2** | **只有 `data` 类事件允许"必达且有序"，其余一律可丢可乱序。** 前端对 `hint` 类做去重合并即可 | 让服务端有明确的节流自由度：`hint` 随便合并，`data` 必须逐条发                                   |
+| **3** | **所有事件带 `noteUid`（若与笔记相关）**                                                    | 前端要按笔记路由到不同页面/组件；没有它就得反查，多一次往返                                      |
 
 **`data` 类事件只有三个**（其余全是 `hint`）：`transcribe.segment`、`mindmap.delta`、`summary.delta`。
 它们是"增量内容流"，丢了就少一段文字，无法靠重拉便宜地补（重拉要传整篇）。
@@ -1150,11 +1173,11 @@ export interface JobProgressEvent {
   state: JobState;
 
   /* ── 新增：所有 job 都有的通用字段 ── */
-  jobType: string;              // D-02 jobs.type，如 'import.url' | 'download.model'
-  noteUid?: string;             // 与笔记相关时必填（总则 3）
-  progress: number;             // 0..1，总体进度。前端进度条只认它
-  step: string | null;          // D-02 jobs.current_step，如 'downloading' | 'asr'
-  stepIndex?: number;           // 第几步 / 共几步，用于"3/7 抽取音轨"
+  jobType: string; // D-02 jobs.type，如 'import.url' | 'download.model'
+  noteUid?: string; // 与笔记相关时必填（总则 3）
+  progress: number; // 0..1，总体进度。前端进度条只认它
+  step: string | null; // D-02 jobs.current_step，如 'downloading' | 'asr'
+  stepIndex?: number; // 第几步 / 共几步，用于"3/7 抽取音轨"
   stepCount?: number;
 
   /* ── 既有：下载专用，改为可空 ── */
@@ -1174,27 +1197,27 @@ export interface JobProgressEvent {
 ```ts
 /** 转写稿的段落 DTO。建议放 packages/shared/src/transcripts.ts，对齐 D-02 §1.5。 */
 export interface TranscriptSegmentDto {
-  seq: number;                  // D-02 transcript_segments.seq，稳定
+  seq: number; // D-02 transcript_segments.seq，稳定
   startMs: number;
   endMs: number;
   text: string;
-  speakerLabel: string | null;  // 'SPEAKER_00'；显示名前端自己查
+  speakerLabel: string | null; // 'SPEAKER_00'；显示名前端自己查
   confidence: number | null;
   noSpeechProb: number | null;
-  words: { w: string; s: number; e: number; p: number }[] | null;  // 词级，可空
+  words: { w: string; s: number; e: number; p: number }[] | null; // 词级，可空
   chunkIdx: number | null;
-  flags: number;                // 位图：bit0 疑似幻觉 / bit1 低置信 / bit2 人工确认 / bit3 静音
+  flags: number; // 位图：bit0 疑似幻觉 / bit1 低置信 / bit2 人工确认 / bit3 静音
 }
 ```
 
-| 事件 | 类别 | payload | 触发时机 | 频率 / 保证 |
-|---|---|---|---|---|
-| `transcribe.started` | hint | `{ transcriptUid, noteUid, jobId, engineId, modelId, backend, language, durationMs, totalChunks }` | ASR 步骤开始 | 每次转写 1 条 |
-| **`transcribe.segment`** | **data ★** | `{ transcriptUid, noteUid, seq, chunkIdx, segments: TranscriptSegmentDto[] }` | **每个 VAD chunk 落库后立刻发**（D-01 §4.1：chunk 边界 = 落库点） | **不节流、不合并、必达有序**。`seq` 为本次转写内单调递增的**批次号**（不是段序号），前端检缺口 |
-| `transcribe.chunk` | hint | `{ transcriptUid, noteUid, doneChunks, totalChunks, lastEndMs }` | 同上，与 segment 成对 | 4Hz 合并。给进度条用，**与 `transcribe.segment` 分开**，这样节流不会拖累内容流 |
-| `transcribe.done` | hint | `{ transcriptUid, noteUid, segmentCount, rtf, durationMs, speakers: {label,totalMs}[] }` | 转写完成并落库 | 1 条 |
-| `transcribe.failed` | hint | `{ transcriptUid, noteUid, error: JobError, partial: boolean, lastEndMs: number\|null }` | 失败终态 | 1 条。`partial=true` 时前端显示"前 N 段可用 + 从这里继续"（D-05 §4.1 规则 6） |
-| **`transcribe.replaced`** | hint | `{ noteUid, oldTranscriptUid, newTranscriptUid, updatedSegments, preservedEditedSegments, canUndo: boolean }` | **F3 两阶段重跑覆盖完成时** | 1 条 |
+| 事件                      | 类别       | payload                                                                                                       | 触发时机                                                          | 频率 / 保证                                                                                    |
+| ------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `transcribe.started`      | hint       | `{ transcriptUid, noteUid, jobId, engineId, modelId, backend, language, durationMs, totalChunks }`            | ASR 步骤开始                                                      | 每次转写 1 条                                                                                  |
+| **`transcribe.segment`**  | **data ★** | `{ transcriptUid, noteUid, seq, chunkIdx, segments: TranscriptSegmentDto[] }`                                 | **每个 VAD chunk 落库后立刻发**（D-01 §4.1：chunk 边界 = 落库点） | **不节流、不合并、必达有序**。`seq` 为本次转写内单调递增的**批次号**（不是段序号），前端检缺口 |
+| `transcribe.chunk`        | hint       | `{ transcriptUid, noteUid, doneChunks, totalChunks, lastEndMs }`                                              | 同上，与 segment 成对                                             | 4Hz 合并。给进度条用，**与 `transcribe.segment` 分开**，这样节流不会拖累内容流                 |
+| `transcribe.done`         | hint       | `{ transcriptUid, noteUid, segmentCount, rtf, durationMs, speakers: {label,totalMs}[] }`                      | 转写完成并落库                                                    | 1 条                                                                                           |
+| `transcribe.failed`       | hint       | `{ transcriptUid, noteUid, error: JobError, partial: boolean, lastEndMs: number\|null }`                      | 失败终态                                                          | 1 条。`partial=true` 时前端显示"前 N 段可用 + 从这里继续"（D-05 §4.1 规则 6）                  |
+| **`transcribe.replaced`** | hint       | `{ noteUid, oldTranscriptUid, newTranscriptUid, updatedSegments, preservedEditedSegments, canUndo: boolean }` | **F3 两阶段重跑覆盖完成时**                                       | 1 条                                                                                           |
 
 > **`transcribe.replaced` 是 F3 产品成败点的数据来源**（D-05 §4.3 步骤 4）：
 > UI 要渲染「已更新 47 段 · 你编辑过的 3 段已保留 · [查看改动] [撤销这次更新]」。
@@ -1212,18 +1235,18 @@ export interface MindMapNodeDraft {
   key: string;
   parentKey: string | null;
   text: string;
-  refs?: { startMs: number; endMs: number; quote?: string }[];  // D-02 §2.1 的 refs
+  refs?: { startMs: number; endMs: number; quote?: string }[]; // D-02 §2.1 的 refs
 }
 ```
 
-| 事件 | 类别 | payload | 触发 | 频率 |
-|---|---|---|---|---|
-| `mindmap.started` | hint | `{ mindmapUid, noteUid, jobId, modelId, providerId }` | 结构化开始 | 1 条 |
-| **`mindmap.delta`** | **data ★** | `{ mindmapUid, noteUid, seq, nodes: MindMapNodeDraft[] }` | LLM 流式产出，**服务端按 ~250ms 批量成组**再发 | 有序必达；`seq` 单调。**不要每个 token 发一条** |
-| `mindmap.done` | hint | `{ mindmapUid, noteUid, nodeCount, edgeCount, revision }` | 落库后 | 1 条 |
-| `mindmap.failed` | hint | `{ mindmapUid, noteUid, error: JobError, degradedTo: 'heuristic' \| null }` | 失败 | 1 条。`degradedTo='heuristic'` 对应 D-01 §7.2 的"无 LLM 时启发式大纲" |
-| `summary.delta` | **data ★** | `{ noteUid, seq, textDelta: string }` | 摘要流式生成 | 同 `mindmap.delta` |
-| `summary.done` | hint | `{ noteUid, chars }` | | 1 条 |
+| 事件                | 类别       | payload                                                                     | 触发                                           | 频率                                                                  |
+| ------------------- | ---------- | --------------------------------------------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------------- |
+| `mindmap.started`   | hint       | `{ mindmapUid, noteUid, jobId, modelId, providerId }`                       | 结构化开始                                     | 1 条                                                                  |
+| **`mindmap.delta`** | **data ★** | `{ mindmapUid, noteUid, seq, nodes: MindMapNodeDraft[] }`                   | LLM 流式产出，**服务端按 ~250ms 批量成组**再发 | 有序必达；`seq` 单调。**不要每个 token 发一条**                       |
+| `mindmap.done`      | hint       | `{ mindmapUid, noteUid, nodeCount, edgeCount, revision }`                   | 落库后                                         | 1 条                                                                  |
+| `mindmap.failed`    | hint       | `{ mindmapUid, noteUid, error: JobError, degradedTo: 'heuristic' \| null }` | 失败                                           | 1 条。`degradedTo='heuristic'` 对应 D-01 §7.2 的"无 LLM 时启发式大纲" |
+| `summary.delta`     | **data ★** | `{ noteUid, seq, textDelta: string }`                                       | 摘要流式生成                                   | 同 `mindmap.delta`                                                    |
+| `summary.done`      | hint       | `{ noteUid, chars }`                                                        |                                                | 1 条                                                                  |
 
 > **为什么 `mindmap.delta` 发结构化节点而不是原始 token**：D-01 §5 F4 已定 LLM 必须走强制结构化输出
 > （memo.ac 自陈"72B 以下模型思维导图转换有问题"，本质是自由文本解析太脆）。
@@ -1231,13 +1254,13 @@ export interface MindMapNodeDraft {
 
 ### 11.4 笔记与媒体域 `note.*` / `media.*`（F5）
 
-| 事件 | 类别 | payload | 触发 | 频率 |
-|---|---|---|---|---|
-| `note.created` | hint | `{ noteUid, title, kind, folderUid: string\|null }` | 笔记建行（F1 在 probe 前就建草稿） | 1 条 |
-| `note.updated` | hint | `{ noteUid, fields: string[] }` | 服务端侧改动（如 probe 回填标题/时长/封面） | 合并，≤2Hz。**`fields` 让前端只失效相关查询** |
-| `note.status` | hint | `{ noteUid, status: 'draft'\|'processing'\|'ready'\|'partial'\|'failed' }` | 状态流转 | 1 条/次 |
-| `note.deleted` | hint | `{ noteUid, purged: boolean }` | 删除 | 1 条 |
-| `media.asset.ready` | hint | `{ noteUid, assetUid, role, bytes, durationMs? }` | 某个媒体产物就绪 | 每产物 1 条 |
+| 事件                | 类别 | payload                                                                    | 触发                                        | 频率                                          |
+| ------------------- | ---- | -------------------------------------------------------------------------- | ------------------------------------------- | --------------------------------------------- |
+| `note.created`      | hint | `{ noteUid, title, kind, folderUid: string\|null }`                        | 笔记建行（F1 在 probe 前就建草稿）          | 1 条                                          |
+| `note.updated`      | hint | `{ noteUid, fields: string[] }`                                            | 服务端侧改动（如 probe 回填标题/时长/封面） | 合并，≤2Hz。**`fields` 让前端只失效相关查询** |
+| `note.status`       | hint | `{ noteUid, status: 'draft'\|'processing'\|'ready'\|'partial'\|'failed' }` | 状态流转                                    | 1 条/次                                       |
+| `note.deleted`      | hint | `{ noteUid, purged: boolean }`                                             | 删除                                        | 1 条                                          |
+| `media.asset.ready` | hint | `{ noteUid, assetUid, role, bytes, durationMs? }`                          | 某个媒体产物就绪                            | 每产物 1 条                                   |
 
 > **`media.asset.ready` 是必需的**：`role='peaks'`（波形）与 `role='transcode'` 是**异步生成**的，
 > 前端在它们就绪前不能去 `/media/asset/<uid>` 拉（会 404 或拿到半个文件）。
@@ -1245,11 +1268,11 @@ export interface MindMapNodeDraft {
 
 ### 11.5 系统域
 
-| 事件 | 类别 | payload | 触发 | 前端动作 |
-|---|---|---|---|---|
-| ⬜ `daemon.shutdown` | hint | `{ graceMs: number }` | 优雅退出开始（D-01 §2.5） | 顶部条幅"本地服务正在退出"，停止发起新请求 |
-| ✅ `sync.required` | hint | `{ reason: 'replay_gap' \| 'contract_mismatch' }` | `Last-Event-ID` 未命中重放缓冲（256 条已滚过） | **全量 `invalidateQueries()`** |
-| ⬜ `index.progress` | hint | `{ kind: 'fts' \| 'vector', done: number, total: number }` | 后台重建检索索引（D-02 §4.5） | 设置页进度，不打扰主界面 |
+| 事件                 | 类别 | payload                                                    | 触发                                           | 前端动作                                   |
+| -------------------- | ---- | ---------------------------------------------------------- | ---------------------------------------------- | ------------------------------------------ |
+| ⬜ `daemon.shutdown` | hint | `{ graceMs: number }`                                      | 优雅退出开始（D-01 §2.5）                      | 顶部条幅"本地服务正在退出"，停止发起新请求 |
+| ✅ `sync.required`   | hint | `{ reason: 'replay_gap' \| 'contract_mismatch' }`          | `Last-Event-ID` 未命中重放缓冲（256 条已滚过） | **全量 `invalidateQueries()`**             |
+| ⬜ `index.progress`  | hint | `{ kind: 'fts' \| 'vector', done: number, total: number }` | 后台重建检索索引（D-02 §4.5）                  | 设置页进度，不打扰主界面                   |
 
 > ⬜ = **从未加入 `SSE_EVENT_TYPES`**。本节三个系统域事件里只有 `sync.required` 落地了；
 > `daemon.shutdown` 与 `index.progress` 至今不存在，前端不要给它们注册监听。
@@ -1274,6 +1297,7 @@ export interface MindMapNodeDraft {
 ```
 
 **实现顺序建议**（若要分批交付，按这个顺序对前端解阻塞最快；⬜ 的事件至今不存在，遇到就跳过）：
+
 1. `job.progress` 扩展 + ✅`note.created` / ~~⬜`note.status`~~ → F1/F2 的进度条能动（**最小可用**）
 2. ✅`transcribe.segment` / ~~⬜`transcribe.chunk`~~ / ✅`transcribe.done` → "边转边看"成立（**F1 的核心体验**）
 3. ✅`media.asset.ready` → F5 波形与时间轴能画

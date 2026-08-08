@@ -60,8 +60,14 @@ describe('breakerTripped —— 两个出口共用的那个判据', () => {
 
 describe('breakerRetryPhrase —— 分档边界', () => {
   it('秒档：< 90 秒说秒', () => {
-    assert.equal(breakerRetryPhrase(input({ retryAt: at(58_000) }), NOW).zh, '将在约 58 秒后自动重试。');
-    assert.equal(breakerRetryPhrase(input({ retryAt: at(58_000) }), NOW).en, 'Automatic retry in about 58s.');
+    assert.equal(
+      breakerRetryPhrase(input({ retryAt: at(58_000) }), NOW).zh,
+      '将在约 58 秒后自动重试。',
+    );
+    assert.equal(
+      breakerRetryPhrase(input({ retryAt: at(58_000) }), NOW).en,
+      'Automatic retry in about 58s.',
+    );
   });
 
   it('★ 89 秒还是秒，90 秒就该进分钟档（边界不许漂）', () => {
@@ -70,8 +76,14 @@ describe('breakerRetryPhrase —— 分档边界', () => {
   });
 
   it('分钟档四舍五入到整分钟', () => {
-    assert.equal(breakerRetryPhrase(input({ retryAt: at(240_000) }), NOW).zh, '将在约 4 分钟后自动重试。');
-    assert.equal(breakerRetryPhrase(input({ retryAt: at(240_000) }), NOW).en, 'Automatic retry in about 4 min.');
+    assert.equal(
+      breakerRetryPhrase(input({ retryAt: at(240_000) }), NOW).zh,
+      '将在约 4 分钟后自动重试。',
+    );
+    assert.equal(
+      breakerRetryPhrase(input({ retryAt: at(240_000) }), NOW).en,
+      'Automatic retry in about 4 min.',
+    );
   });
 
   it('★ 退避到 1 小时封顶那一档说的是小时（89 分钟 vs 90 分钟）', () => {
@@ -124,7 +136,11 @@ describe('breakerDetail —— 三件事必须凑齐', () => {
 
   it('★ 英文版里不许混中文（探针原文那段英文除外，它本来就是英文）', () => {
     const d = breakerDetail(input(), NOW);
-    assert.equal(/[\u3000-\u303F\u4E00-\u9FFF\uFF00-\uFFEF]/.test(d.en), false, `英文版混入中文：${d.en}`);
+    assert.equal(
+      /[\u3000-\u303F\u4E00-\u9FFF\uFF00-\uFFEF]/.test(d.en),
+      false,
+      `英文版混入中文：${d.en}`,
+    );
     assert.equal(/[一-鿿]/.test(d.zh), true, '中文版反而没有中文？');
   });
 });

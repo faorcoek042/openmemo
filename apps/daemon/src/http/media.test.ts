@@ -243,7 +243,11 @@ describe('★ T-143 符号链接不许把数据目录外的文件流出去', () 
     await fs.symlink(await secretOutside(), join(d, 'media', 'escape.wav'));
     const err = JSON.parse((await get(d, 'escape.wav')).body).error;
     assert.notEqual(err.code, 'ASSET_FILE_MISSING');
-    assert.equal(/不存在|已删除|丢失/.test(String(err.messageZh)), false, `不许说文件没了：${err.messageZh}`);
+    assert.equal(
+      /不存在|已删除|丢失/.test(String(err.messageZh)),
+      false,
+      `不许说文件没了：${err.messageZh}`,
+    );
   });
 
   it('★ 合法的相对软链照常 200（别把产品自己的链接一起杀了）', async () => {

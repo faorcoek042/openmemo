@@ -311,8 +311,7 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
 
       // ---- 修改 / 移动 ----
       const body = (await readJsonBody(req).catch(() => undefined)) as
-        | { path?: unknown; moveExisting?: unknown; move?: unknown; dryRun?: unknown }
-        | undefined;
+        { path?: unknown; moveExisting?: unknown; move?: unknown; dryRun?: unknown } | undefined;
 
       /*
        * ★ 先校验**信封**，再校验 path。
@@ -335,7 +334,13 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
 
       const plan = planMove(deps.paths.dataDir, target);
       if (!plan.ok) {
-        sendError(res, 400, 'INVALID_TARGET', plan.reason ?? 'invalid', plan.reasonZh ?? '目标路径不合法');
+        sendError(
+          res,
+          400,
+          'INVALID_TARGET',
+          plan.reason ?? 'invalid',
+          plan.reasonZh ?? '目标路径不合法',
+        );
         return true;
       }
 

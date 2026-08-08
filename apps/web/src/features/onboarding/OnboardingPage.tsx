@@ -68,7 +68,9 @@ export default function OnboardingPage() {
             >
               {i < step ? <Check className="size-3.5" /> : s.icon}
             </span>
-            <span className={cn('hidden text-xs sm:block', i === step ? 'text-ink' : 'text-ink-muted')}>
+            <span
+              className={cn('hidden text-xs sm:block', i === step ? 'text-ink' : 'text-ink-muted')}
+            >
               {t(`onboarding.steps.${s.key}`)}
             </span>
             {i < STEPS.length - 1 ? <span className="h-px flex-1 bg-line" aria-hidden /> : null}
@@ -121,10 +123,22 @@ export default function OnboardingPage() {
             <h2 className="text-sm font-medium text-ink">{t('onboarding.tryTitle')}</h2>
             <p className="mt-1 text-sm text-ink-secondary">{t('onboarding.tryBody')}</p>
             <div className="mt-3 flex flex-wrap gap-2">
-              <Button variant="primary" onClick={() => { markOnboardingDone(); navigate('/capture'); }}>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  markOnboardingDone();
+                  navigate('/capture');
+                }}
+              >
                 {t('onboarding.goCapture')}
               </Button>
-              <Button variant="secondary" onClick={() => { markOnboardingDone(); navigate('/record'); }}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  markOnboardingDone();
+                  navigate('/record');
+                }}
+              >
                 {t('onboarding.goRecord')}
               </Button>
             </div>

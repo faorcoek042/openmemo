@@ -229,11 +229,15 @@ export function parseBackendUsed(stderr: string): string | null {
 
   // A non-CPU device line (type != 0) means an accelerator was chosen.
   // UNVERIFIED shape — no GPU machine was available to confirm the exact wording.
-  const deviceLine = /whisper_backend_init_gpu: device \d+:\s*(.+?)\s*\(type:\s*(\d+)\)/.exec(stderr);
+  const deviceLine = /whisper_backend_init_gpu: device \d+:\s*(.+?)\s*\(type:\s*(\d+)\)/.exec(
+    stderr,
+  );
   if (deviceLine !== null && deviceLine[2] !== '0') return deviceLine[1] ?? null;
 
   // Last resort: the CPU variant ggml settled on, e.g. "ggml-cpu-zen4".
-  const cpuVariant = /load_backend: loaded CPU backend from .*?(ggml-cpu-[a-z0-9]+)/i.exec(stderr)?.[1];
+  const cpuVariant = /load_backend: loaded CPU backend from .*?(ggml-cpu-[a-z0-9]+)/i.exec(
+    stderr,
+  )?.[1];
   if (cpuVariant !== undefined) return `CPU (${cpuVariant})`;
 
   return null;
@@ -242,7 +246,8 @@ export function parseBackendUsed(stderr: string): string | null {
 /** Human-facing summary. Never invents a number it does not have. */
 export function formatSelfTest(outcome: SelfTestOutcome, audioSeconds: number): string {
   if (!outcome.passed) return `Self-test failed: ${outcome.errorMessage ?? 'unknown error'}`;
-  if (outcome.rtf === null || outcome.speedup === null) return 'Self-test passed (speed not measured)';
+  if (outcome.rtf === null || outcome.speedup === null)
+    return 'Self-test passed (speed not measured)';
   const wall = (outcome.rtf * audioSeconds).toFixed(2);
   return (
     `Self-test passed on ${outcome.backendUsed ?? 'unknown'} backend: ` +

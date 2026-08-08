@@ -56,10 +56,7 @@ export interface RecorderDeps {
    */
   readonly dataDir: string;
   /** 打开一路流式识别；引擎不可用时返回 undefined（**不要**调 openStream）。 */
-  readonly openStream: (req: {
-    language?: string;
-    signal: AbortSignal;
-  }) => AsrStream | undefined;
+  readonly openStream: (req: { language?: string; signal: AbortSignal }) => AsrStream | undefined;
   readonly streamModelId: string;
 }
 
@@ -403,7 +400,9 @@ export class RecorderSession {
     await this.stop();
   }
 
-  #emitState(state: 'starting' | 'recording' | 'paused' | 'finalizing' | 'stopped' | 'failed'): void {
+  #emitState(
+    state: 'starting' | 'recording' | 'paused' | 'finalizing' | 'stopped' | 'failed',
+  ): void {
     this.deps.sse.publish(
       makeEvent('record.state', topics.recording(this.recordingUid), {
         recordingUid: this.recordingUid,

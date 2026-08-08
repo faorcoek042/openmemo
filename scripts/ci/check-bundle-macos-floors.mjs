@@ -123,14 +123,17 @@ async function walk(dir, out = []) {
 
 const files = await walk(BUNDLE);
 if (files.length === 0) {
-  console.error(`✘ 在 ${BUNDLE} 底下一个 Mach-O 都没数到 —— 一个什么都没检查的检查器是最坏的那种绿`);
+  console.error(
+    `✘ 在 ${BUNDLE} 底下一个 Mach-O 都没数到 —— 一个什么都没检查的检查器是最坏的那种绿`,
+  );
   process.exit(1);
 }
 
 /* 分组 */
 const groups = new Map(); // key -> { max, what, files: [] }
 groups.set('CORE', { max: CORE_MAX, what: '产品本体（坏了就不能用）', files: [] });
-for (const d of DEGRADABLE) groups.set(d.what, { max: d.max, what: d.what, note: d.note, files: [] });
+for (const d of DEGRADABLE)
+  groups.set(d.what, { max: d.max, what: d.what, note: d.note, files: [] });
 
 for (const f of files) {
   const rel = relative(BUNDLE, f);
@@ -140,7 +143,9 @@ for (const f of files) {
 
 console.log(`\n\x1b[1m预编译包 macOS 部署目标分层守卫\x1b[0m`);
 console.log(`  包 ${BUNDLE}`);
-console.log(`  共 ${files.length} 个 Mach-O，分 ${[...groups.values()].filter((g) => g.files.length).length} 组\n`);
+console.log(
+  `  共 ${files.length} 个 Mach-O，分 ${[...groups.values()].filter((g) => g.files.length).length} 组\n`,
+);
 
 let failed = 0;
 const staged = [];
@@ -150,11 +155,18 @@ for (const [key, g] of groups) {
   staged.push(dir);
   for (const f of g.files) await cp(f, join(dir, `${g.files.indexOf(f)}__${basename(f)}`));
 
-  const label = key === 'CORE' ? `CORE（承诺 ≤ ${g.max}）` : `可降级：${g.what}（已声明 ≤ ${g.max}）`;
+  const label =
+    key === 'CORE' ? `CORE（承诺 ≤ ${g.max}）` : `可降级：${g.what}（已声明 ≤ ${g.max}）`;
   console.log(`\x1b[1m── ${label}\x1b[0m`);
   if (g.note) console.log(`   ${g.note}`);
   try {
-    const { stdout } = await execFileAsync(process.execPath, [CHECKER, '--dir', dir, '--max', g.max]);
+    const { stdout } = await execFileAsync(process.execPath, [
+      CHECKER,
+      '--dir',
+      dir,
+      '--max',
+      g.max,
+    ]);
     console.log(
       stdout
         .split('\n')
@@ -163,13 +175,17 @@ for (const [key, g] of groups) {
         .join('\n'),
     );
     if (key !== 'CORE') {
-      console.log(`   \x1b[33m⚠️  在 macOS < ${g.max} 上，「${g.what}」不可用，且失败是静默的。\x1b[0m`);
+      console.log(
+        `   \x1b[33m⚠️  在 macOS < ${g.max} 上，「${g.what}」不可用，且失败是静默的。\x1b[0m`,
+      );
     }
   } catch (e) {
     failed++;
     console.log(`${e.stdout ?? ''}${e.stderr ?? ''}`);
     if (key === 'CORE') {
-      console.error(`\x1b[31m✘ CORE 组超过 README 承诺的 ${CORE_MAX} —— 产品在承诺范围内的机器上根本起不来。\x1b[0m`);
+      console.error(
+        `\x1b[31m✘ CORE 组超过 README 承诺的 ${CORE_MAX} —— 产品在承诺范围内的机器上根本起不来。\x1b[0m`,
+      );
     } else {
       console.error(
         `\x1b[31m✘ 「${g.what}」的实测 minos 高于本文件声明的 ${g.max}。\x1b[0m\n` +

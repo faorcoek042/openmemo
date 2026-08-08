@@ -244,8 +244,7 @@ function scanSource(src, opts = {}) {
          * 只看前一个字符会把它当成正则开头，一路吞到文件尾（扫描器收尾停在 regex 模式）。
          * 分辨靠再往前看一个字符：`!` 前面是值的结尾（标识符 / `)` / `]`）就是非空断言。
          */
-        const bangIsNonNullAssertion =
-          lastSignificant === '!' && /[\w$)\]]/.test(prevSignificant);
+        const bangIsNonNullAssertion = lastSignificant === '!' && /[\w$)\]]/.test(prevSignificant);
         if (
           !bangIsNonNullAssertion &&
           (lastSignificant === '' || REGEX_CAN_START_AFTER.test(lastSignificant))
@@ -497,7 +496,9 @@ function scan() {
       bodies.set(f, prepare(raw));
       const r = scanSource(raw);
       if (r.endMode !== 'code' || r.tplDepth !== 0) {
-        desynced.push(`${f}（收尾停在 ${r.endMode === 'code' ? `${r.tplDepth} 层未闭合的 \${}` : `${r.endMode} 字符串里`}）`);
+        desynced.push(
+          `${f}（收尾停在 ${r.endMode === 'code' ? `${r.tplDepth} 层未闭合的 \${}` : `${r.endMode} 字符串里`}）`,
+        );
       }
       /*
        * ⚠️ 测试文件不参与这条不变量，**这不是为了让它变绿，是因为它在测试文件上本来就不成立**：
@@ -608,7 +609,7 @@ function selfTestStringStripping() {
       'pkg/src/consumer.ts',
       [
         'const msg = `结果 ${usedInTemplate()} 完成`;',
-        "const quoted = /['\"]/.test(msg);",
+        'const quoted = /[\'"]/.test(msg);',
         'const n = usedAfterRegex();',
         "const doc = 'mentionedOnlyInText 见文档';",
       ].join('\n'),
@@ -626,7 +627,7 @@ function selfTestStringStripping() {
   want('verifyThing', '它对自己的唯一一次提及在错误信息字符串里，字符串没被剥掉');
   want('mentionedOnlyInText', '另一个文件只在字符串里提到它，那不是引用');
   wantNot('usedInTemplate', '它唯一的引用在模板字面量的 `${}` 里，那是**真代码**，不该被剥掉');
-  wantNot('usedAfterRegex', "扫描器在 /['\"]/ 这个正则字面量上失步了，把后面的真引用一起吞掉了");
+  wantNot('usedAfterRegex', '扫描器在 /[\'"]/ 这个正则字面量上失步了，把后面的真引用一起吞掉了');
   return problems;
 }
 
@@ -726,7 +727,9 @@ const current = new Set(orphans.map(key));
 const added = orphans.filter((o) => !allowed.has(key(o)));
 const stale = [...allowed.keys()].filter((k) => !current.has(k));
 
-console.log(`ℹ 扫描 ${files.length} 个源文件 / ${declCount} 个导出 / ${reexportStatements} 条再导出语句`);
+console.log(
+  `ℹ 扫描 ${files.length} 个源文件 / ${declCount} 个导出 / ${reexportStatements} 条再导出语句`,
+);
 console.log(
   `ℹ 零引用导出 ${orphans.length} 个（基线 ${allowed.size} 个）· 只有测试引用 ${testOnly.length} 个` +
     ` · 只被再导出 ${reexportOnly.length} 个`,
@@ -751,7 +754,9 @@ if (reexportOnly.length) {
   );
   for (const o of reexportOnly) {
     const mark = o.test === 0 ? '⚠ ' : '  ';
-    console.log(`   ${mark}${o.file} :: ${o.name}  (test=${o.test}, 转发方: ${o.forwarders.join(', ')})`);
+    console.log(
+      `   ${mark}${o.file} :: ${o.name}  (test=${o.test}, 转发方: ${o.forwarders.join(', ')})`,
+    );
   }
 }
 

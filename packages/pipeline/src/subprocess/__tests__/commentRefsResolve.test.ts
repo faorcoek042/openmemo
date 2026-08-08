@@ -88,19 +88,28 @@ describe('★ 注释里的 `see <标识符>` 不许指向不存在的东西', ()
       sources.set(rel, text);
       fileNames.add(basename(rel).replace(/\.tsx?$/, ''));
       for (const m of text.matchAll(
-        new RegExp(`${MODIFIERS}(?:function|const|let|var|class|interface|type|enum)\\s+([A-Za-z_$][\\w$]*)`, 'g'),
+        new RegExp(
+          `${MODIFIERS}(?:function|const|let|var|class|interface|type|enum)\\s+([A-Za-z_$][\\w$]*)`,
+          'g',
+        ),
       )) {
         if (m[1] !== undefined) declared.add(m[1]);
       }
       // 对象字面量的键、类方法、接口成员 —— 名字后面跟 `(` `<` `:` `?` 的那些。
-      for (const m of text.matchAll(new RegExp(`^\\s*${MODIFIERS}([a-zA-Z_$][\\w$]*)\\s*[(<:?]`, 'gm'))) {
+      for (const m of text.matchAll(
+        new RegExp(`^\\s*${MODIFIERS}([a-zA-Z_$][\\w$]*)\\s*[(<:?]`, 'gm'),
+      )) {
         if (m[1] !== undefined) declared.add(m[1]);
       }
     }
 
     // 阴性对照：索引里必须有几个我们确定存在的名字，否则"全都解析得到"只是索引坏了。
     for (const known of ['isPrivateOrReservedHost', 'assertHostNotPrivate', 'buildChildEnv']) {
-      assert.equal(declared.has(known), true, `声明索引里没有 ${known} —— 索引坏了，下面的断言不成立`);
+      assert.equal(
+        declared.has(known),
+        true,
+        `声明索引里没有 ${known} —— 索引坏了，下面的断言不成立`,
+      );
     }
 
     const dangling: string[] = [];

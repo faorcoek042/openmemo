@@ -105,9 +105,7 @@ export function BackendPackCard({
         size="sm"
         variant="ghost"
         disabled={isLoadBearing}
-        title={
-          isLoadBearing ? t('runtime.pack.loadBearingTitle') : undefined
-        }
+        title={isLoadBearing ? t('runtime.pack.loadBearingTitle') : undefined}
         onClick={() => onRemove(pack.id)}
         data-testid={`backend-remove-${pack.id}`}
       >
@@ -154,7 +152,9 @@ export function BackendPackCard({
           <div className="flex flex-wrap items-center gap-2">
             <BackendChip backend={pack.backend} state={CHIP_STATE[status]} />
             <h3 className="text-sm font-medium text-ink">{localizedName(locale, pack)}</h3>
-            {showRecommended ? <StatusChip tone="good" label={t('runtime.pack.recommended')} /> : null}
+            {showRecommended ? (
+              <StatusChip tone="good" label={t('runtime.pack.recommended')} />
+            ) : null}
             {isLoadBearing ? (
               <StatusChip
                 tone="neutral"
@@ -177,10 +177,7 @@ export function BackendPackCard({
             在屏幕上长得一模一样，用户只能按最坏的那个理解。
           */}
           {STATUS_NEEDS_EXPLANATION.includes(status) ? (
-            <p
-              className="mt-1 text-xs text-ink-secondary"
-              data-testid={`backend-kind-${status}`}
-            >
+            <p className="mt-1 text-xs text-ink-secondary" data-testid={`backend-kind-${status}`}>
               {t(`runtime.kind.${status}`)}
             </p>
           ) : null}

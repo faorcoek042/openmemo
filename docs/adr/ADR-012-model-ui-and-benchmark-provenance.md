@@ -10,6 +10,7 @@ input: docs/design/D-03 §13, coordination/inbox/model-mgmt.md
 ## 真实链路验证（要求 2.2 已闭环）
 
 真下 `ggml-base-q5_1`（59,707,625 B）：
+
 ```
 POST /api/models/pull → 202 jobId=01KZ0KDT98V0JJS7CP53T94K17
 再点一次 → deduplicated=true sameJob=true
@@ -18,6 +19,7 @@ SSE: job.created → sources.probed → job.progress(19/39/59/79/99%) → model.
 installed: integrity=ok sha256=422f1ae452ade6f3…  |  catalog: installed=true
 DELETE 使用中的模型 → 409 MODEL_IN_USE + remediation
 ```
+
 门禁 exit code 全 0；Zip-Slip 38/38；`verify-offline` 25/25；三份 manifest zod VALID。
 
 ## 决策 1：**`ReferenceBenchmark` 与 `benchmark` 分离 —— 批准，并细化 ADR-004 决策 3**
@@ -29,6 +31,7 @@ DELETE 使用中的模型 → 409 MODEL_IN_USE + remediation
 「本机实测」vs「参考机实测，仅供参考」，且只在后端匹配时采用。
 
 **批准，并据此细化 ADR-004 决策 3 的表述**：
+
 > 禁止的是**编造**数字，不是禁止**有出处的测量**。
 > 任何展示给用户的性能/质量数字必须能回答三个问题：**谁测的、在什么机器上测的、什么条件下测的**。
 > 答不出任一项 → 不许显示。
@@ -50,6 +53,7 @@ DELETE 使用中的模型 → 409 MODEL_IN_USE + remediation
 **这不是重复劳动，是把接口跑通了再交接。** 指派 `oss-scout` 照抄进 `apps/daemon`，**别另起炉灶**。
 
 ## 决策 4：ADR-011 的三条已落地，验收通过
+
 1. `lang=zh` → base/small/tiny/medium 默认隐藏 + 说明「会把维基百科听成危机摆科」+ **可一键解除**；
    `lang=en` → base 恢复 `recommended`。**改的是默认值不是能力**，符合裁决。
 2. **Zip-Slip 38/38 带真实攻击用例**：`../evil.txt`、POSIX/Windows/UNC 绝对路径、tar 真实 symlink、
@@ -78,6 +82,7 @@ DELETE 使用中的模型 → 409 MODEL_IN_USE + remediation
 > 本决策原文不许删，留作可追溯。
 
 ## 决策 7：i18n 统一 —— 排在 `architect` 的 locales 落地之后
+
 `model-mgmt` 的两个 feature 目前用内联中文。不返工，等 T-021 的 i18n 基础设施就位后统一抽取。
 
 ---
@@ -97,11 +102,11 @@ DELETE 使用中的模型 → 409 MODEL_IN_USE + remediation
 
 `[T-171 实测]` 真实情况是：
 
-| 以为 | 实际 |
-|---|---|
-| 差一把密钥 | 差的是**整条远端目录管线** |
+| 以为                       | 实际                                                                                                    |
+| -------------------------- | ------------------------------------------------------------------------------------------------------- |
+| 差一把密钥                 | 差的是**整条远端目录管线**                                                                              |
 | 目录来自远端，只是还没验签 | 目录是 `vendor/manifests/*.json`，**git 跟踪、随仓发布**，daemon 走 `fs.readdir` 本地读盘，**从不联网** |
-| 接上密钥即可启用 | 全仓**无 `.sig`、目录 JSON 无 `signature` 字段、无任何脚本会签目录** |
+| 接上密钥即可启用           | 全仓**无 `.sig`、目录 JSON 无 `signature` 字段、无任何脚本会签目录**                                    |
 
 用户的判词（抄录）：**"留着它的最大风险不是它有 bug，是下一个人会以为目录是被验签的"** ——
 而今天目录的实际保障是**编译期 host 白名单 + 强制 sha256**，完全是另外两件东西。

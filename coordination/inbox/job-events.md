@@ -59,12 +59,12 @@
 
 **我的答案：按"这条事件是否需要用户动手"分流，而不是"是否见过这个 id"。**
 
-| 事件 | 没见过这个 id 时 | 理由 |
-|---|---|---|
+| 事件                                | 没见过这个 id 时 | 理由                                                       |
+| ----------------------------------- | ---------------- | ---------------------------------------------------------- |
 | `job.state` → running/queued/paused | **丢弃**（不变） | 既没有名字也不需要用户做什么，补建出来是一条没有主语的提示 |
-| `job.blocked` | **补建** | 自带"为什么停 + 怎么办"，缺的只是名字；丢掉 = 零报错的卡住 |
-| `job.failed` 且 `willRetry=false` | **补建** | 失败是用户必须知道的事 |
-| `job.failed` 且 `willRetry=true` | 丢弃 | 重试成功了他根本不用知道（D-05 §2.3） |
+| `job.blocked`                       | **补建**         | 自带"为什么停 + 怎么办"，缺的只是名字；丢掉 = 零报错的卡住 |
+| `job.failed` 且 `willRetry=false`   | **补建**         | 失败是用户必须知道的事                                     |
+| `job.failed` 且 `willRetry=true`    | 丢弃             | 重试成功了他根本不用知道（D-05 §2.3）                      |
 
 实现上把"补建用的最小信息"变成一个显式的 `seed` 参数：传了才补建，**且 `seed` 只在补建时生效、不覆盖已有条目**
 （否则 `job.created` 带来的真实笔记标题会被 `job.blocked` 的兜底名字盖掉，修完反而比修前更差 —— 有测试钉住）。
@@ -83,14 +83,14 @@
 
 **结果（6 处，全部已修）**：
 
-| # | 状态 / 场景 | 原因 | 后果 |
-|---|---|---|---|
-| 1 | `blocked` | 无 `job.created` → toast 层丢弃 | **被报上来的那条**：导入后页面零反馈 |
-| 2 | 终态 `failed` | 同上，且**连兜底都没有** | 转写失败（ffmpeg 挂了等）同样零反馈 |
-| 3 | `succeeded` | 调度器只发 `job.done`，**不发 `job.state(succeeded)`**；而 toast 的完成分支挂在后者 | 转写跑完，提示**永远停在"转写中"** |
-| 4 | 退避重试 | `queue.fail()` 可重试时返回 `'queued'`，调度器与"进程退出"走同一分支只发 `job.state(queued)` | `JobFailedEvent.willRetry` 与「正在自动重试 (n/m)」文案对流水线 job **永不触发** |
-| 5 | 自动解除阻塞 | `main.ts` 热刷新里 `queue.unblock()` **不发任何事件** | 用户装完模型，那条「暂时无法继续」一直挂着 |
-| 6 | **REST 侧**：`GET /api/jobs` | 只返回 `DownloadQueue`，流水线队列是另一套 | `[实测]` 库里 6 条 blocked，接口 `jobs: []`；blocked 提示的「任务中心」按钮把用户送到空列表；「重试」按钮必定 409 |
+| #   | 状态 / 场景                  | 原因                                                                                         | 后果                                                                                                              |
+| --- | ---------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 1   | `blocked`                    | 无 `job.created` → toast 层丢弃                                                              | **被报上来的那条**：导入后页面零反馈                                                                              |
+| 2   | 终态 `failed`                | 同上，且**连兜底都没有**                                                                     | 转写失败（ffmpeg 挂了等）同样零反馈                                                                               |
+| 3   | `succeeded`                  | 调度器只发 `job.done`，**不发 `job.state(succeeded)`**；而 toast 的完成分支挂在后者          | 转写跑完，提示**永远停在"转写中"**                                                                                |
+| 4   | 退避重试                     | `queue.fail()` 可重试时返回 `'queued'`，调度器与"进程退出"走同一分支只发 `job.state(queued)` | `JobFailedEvent.willRetry` 与「正在自动重试 (n/m)」文案对流水线 job **永不触发**                                  |
+| 5   | 自动解除阻塞                 | `main.ts` 热刷新里 `queue.unblock()` **不发任何事件**                                        | 用户装完模型，那条「暂时无法继续」一直挂着                                                                        |
+| 6   | **REST 侧**：`GET /api/jobs` | 只返回 `DownloadQueue`，流水线队列是另一套                                                   | `[实测]` 库里 6 条 blocked，接口 `jobs: []`；blocked 提示的「任务中心」按钮把用户送到空列表；「重试」按钮必定 409 |
 
 **顺带修掉的两个真实缺陷**（同一条链路上撞见的，不是主动扩范围）：
 
@@ -102,6 +102,7 @@
 ## §2 改了什么（精确清单，未用 `git add -A`）
 
 **契约（`packages/shared` —— 归属 `model-mgmt`，见 §7 SHARED-CHANGE 申报）**
+
 - `src/jobs.ts` —— 新增 `PIPELINE_JOB_KINDS` / `PipelineJob` / `AnyJob` / `isPipelineJob` / `isDownloadJob`。
   **只含流水线 job 真有的字段**：`jobId/kind/type/displayName/noteUid/state/step/progress/attempt/maxAttempts/error/blockedCode/createdAt/updatedAt`。
   字节计数、`parts`、`provider` **是"没有"而不是"填 0"**。判别式复用 `kind`（两组字面量不相交，TS 天然收窄）。
@@ -112,9 +113,10 @@
   真要 bump 必须与 Manager 的重建同一批做。
 
 **daemon**
+
 - `src/jobs/queue.ts` —— `JobRow` 补声明 `note_id`（列一直都在，只是类型上看不见）；
   `JobQueue` 构造函数新增可选 `onCreated` 钩子（**事务提交后**才回调，幂等命中不回调）；新增 `requeue()`（任务中心「重试」用，`attempt` 归零）。
-  *钩子放在队列层而不是 5 个入队点：入队点分散在 4 个文件、第 6 个迟早有人加，漏发不会让任何东西报错，只会让整条任务在界面上消失。*
+  _钩子放在队列层而不是 5 个入队点：入队点分散在 4 个文件、第 6 个迟早有人加，漏发不会让任何东西报错，只会让整条任务在界面上消失。_
 - `src/jobs/events.ts` —— 新增 `pipelineKindOf()` / `pipelineJobOf()` / `jobCreatedEvent()`，**零类型断言**；认不出的 job 类型返回 `undefined`（宁可不发，不编）。
 - `src/jobs/scheduler.ts` —— 成功时补发 `job.state(succeeded)`；退避重试改发 `job.failed{willRetry:true}` 而不是与"进程退出"共用 `job.state(queued)`。
 - `src/main.ts` —— 接上 `onCreated`（查笔记标题当 `displayName`）；`unblock` 循环补发 `job.state(queued, prev=blocked)`；
@@ -123,10 +125,11 @@
 - `src/http/upload.ts` —— **删掉那条 `as never` 的坏 `job.created`**（现由队列钩子统一发），`note.created` 的多余断言一并删。
 - `src/http/rest/notes.ts` / `rest/content.ts` —— 只改注释（"刻意不发"已过期，改成指向队列钩子）。
 - `src/http/upload.test.ts` —— 那句 `assert.equal(rec.events.length, 2, 'note.created + job.created')` 改为断言**只有** `note.created` **且断言了 type**。
-  *这行旧断言正是坏载荷能活下来的原因：它只数了条数，没看载荷。*
+  _这行旧断言正是坏载荷能活下来的原因：它只数了条数，没看载荷。_
 - **新增** `src/jobs/pipelineJobEvents.test.ts` —— 真 daemon + 真上传 + 真 SSE 的端到端测试（§4）。
 
 **web**
+
 - **新增** `src/components/common/jobToastModel.ts` —— 把"哪条事件能变成一条 toast"的规则抽成**纯函数**
   （`toastActionFor` + `reduceToasts`）。抽出来的唯一目的：这条规则原先埋在 `useEffect` 里，
   只能靠起浏览器点一遍验证，而本项目栽过多次"单测测的是另一条路"。`JobToaster.tsx` import 了 react-router（纯 ESM），进不了仓库的 CJS 单测通道。
@@ -286,19 +289,19 @@ web 侧那 9 条喂的是从这条真链路上抓下来的原始 JSON。
 
 ## §6 门禁结果（诚实版）
 
-| 项 | 结果 |
-|---|---|
-| `tsc -b`（全仓） | **0 错误** |
+| 项                          | 结果                                                                                                                                                                                                                                                                  |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tsc -b`（全仓）            | **0 错误**                                                                                                                                                                                                                                                            |
 | `eslint . --max-warnings=0` | 我改的文件 **0**；最后一次全仓跑出现 **1 warning，在 `apps/web/src/test/host.tsx:79`**（`import()` 类型注解），该文件此刻正被别的 agent 改（未提交），**不是我的**。我改动范围内单独跑 `eslint apps/daemon/src apps/web/src packages/shared/src --max-warnings=0` → 0 |
-| `@openmemo/db` | 47 / 47 |
-| `@openmemo/web` 单测 | 36 / 36（含我新增 9 条） |
-| `@openmemo/web` 组件 | 144 pass / **1 fail** / 2 skip |
-| `@openmemo/daemon` | 169 pass / **2 fail**（含我新增 2 条，都过） |
+| `@openmemo/db`              | 47 / 47                                                                                                                                                                                                                                                               |
+| `@openmemo/web` 单测        | 36 / 36（含我新增 9 条）                                                                                                                                                                                                                                              |
+| `@openmemo/web` 组件        | 144 pass / **1 fail** / 2 skip                                                                                                                                                                                                                                        |
+| `@openmemo/daemon`          | 169 pass / **2 fail**（含我新增 2 条，都过）                                                                                                                                                                                                                          |
 
 **两处失败都不是我的，附归属证据：**
 
 - daemon 的 2 条 = §5 ④ 那两条鉴权用例（`OPENMEMO_AUTH=token` 下 14/14 全过 → 与我的改动无关）。
-  *跑到一半时还见过 `pipeline/ytdlpInstall.test.js` 3 条失败，那是 `T-132` 正在写的新文件（`git status` 显示为未跟踪，20:45 才落盘），后来自己变了。*
+  _跑到一半时还见过 `pipeline/ytdlpInstall.test.js` 3 条失败，那是 `T-132` 正在写的新文件（`git status` 显示为未跟踪，20:45 才落盘），后来自己变了。_
 - web 组件的 1 条 = `T-129b「写了 ** 就必须有人渲染它」`。断言输出显示**登记表里多出** `recorder.paraformerTradeoff`、
   `settings.proxy.testUsesSaved` 两条（`- 号`），即 en.json 里这两条**不再带 `**`**。
   `components.test.tsx` 此刻正被别的 agent 改（`git status` 显示未提交），而 en.json 已由 T-129 提交。
@@ -347,11 +350,13 @@ web 侧那 9 条喂的是从这条真链路上抓下来的原始 JSON。
 - 取证产物（截图、复现脚本、日志）全部在仓库外的 `/tmp/job-events/`。
 
 下一步建议:
+
 - Manager：**先裁决 §5 ①**（鉴权关闭时 SSE 起不来）。在它修好之前，用户从 `:10000` 的普通地址看不到本次修复的任何效果。
 - `architect`：`PipelineJob` 是否要回写进 D-05 的事件表（我不改别人的交付物）。
 - 谁接 §5 ② `activeJobId`：笔记页/列表页的进度行现在是死代码，成本很小但要动笔记 DTO。
 
 需要 Manager 决策:
+
 1. §5 ① 的两个候选修法选哪个、派给谁（我倾向 daemon 侧 (a)）。
 2. `CONTRACT_VERSION` 是否要在下一次统一重建时 bump（我这轮**没 bump**，理由见 §2）。
 3. §5 ④ 那两条鉴权用例：改用例还是标记已知失败。

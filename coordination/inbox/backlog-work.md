@@ -8,28 +8,28 @@
 
 ## 数字（三处清单去重后的准确值）
 
-| | 条数 | 说明 |
-|---|---:|---|
-| 三处清单原始条目 | **39** | `progress-audit §4` 13 条（①–⑬，不是 12）+ `§2` A5/B8/C9 = 22 条 + `gates-fix §5` 4 条 |
-| 去重后 | **38** | **只有一对真重复**：`progress-audit A4`（Vulkan 补目录）≡ `gates-fix §5.1`。`A3` 与 `§4⑦⑧` 看着像重复，其实 A3 是三个子断点的伞，⑦⑧ 各是其中一个 —— 按"件"算不重复 |
-| 我开工前**已经做掉**的 | **7** | 全部是 T-160(`gates-fix`) 的成果。**我对着代码逐条复核过，不是采信回执**（证据见 §1） |
-| **我这轮修掉** | **7** | 见下表 |
-| **剩余** | **24** | 排序表在 §3，可直接拿来排期 |
+|                        |   条数 | 说明                                                                                                                                                               |
+| ---------------------- | -----: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 三处清单原始条目       | **39** | `progress-audit §4` 13 条（①–⑬，不是 12）+ `§2` A5/B8/C9 = 22 条 + `gates-fix §5` 4 条                                                                             |
+| 去重后                 | **38** | **只有一对真重复**：`progress-audit A4`（Vulkan 补目录）≡ `gates-fix §5.1`。`A3` 与 `§4⑦⑧` 看着像重复，其实 A3 是三个子断点的伞，⑦⑧ 各是其中一个 —— 按"件"算不重复 |
+| 我开工前**已经做掉**的 |  **7** | 全部是 T-160(`gates-fix`) 的成果。**我对着代码逐条复核过，不是采信回执**（证据见 §1）                                                                              |
+| **我这轮修掉**         |  **7** | 见下表                                                                                                                                                             |
+| **剩余**               | **24** | 排序表在 §3，可直接拿来排期                                                                                                                                        |
 
 外加**半条**：`§4⑬` 的「`runTranscribeJob` 零测试引用」——现在有了（`jobs/mergeWords.test.ts` 真跑一遍 runner）。
 另一半（HEAD 从未跑过 CI）仍开着，归你。
 
 ## 修掉的 7 条，按「用户多快撞上」排
 
-| # | 事 | 用户此前会遇到什么 | 撤掉后变红？ |
-|---|---|---|---|
-| **1** | **录一次音留一条 ready 死笔记**（§4②） | 没装流式模型时点一次「开始录音」→ 停止（或**只是关掉标签页**）→ 列表里多一条 0 秒、打不开、状态却是「就绪」的笔记。**每次录音都会中招** | ✅ M1 / M2 各 1 条红 |
-| **2** | **录完的笔记在重跑结束前根本没有音源**（§4③） | 波形和时间码都在，`<audio>` 却不进 DOM —— 播放键点了没反应、点段落也不跳，**零报错**。一句话都没识别出来时连重跑 job 都不排 → **永远**播不了 | ✅ M8 1 条红 |
-| **3** | **重新转写丢词级时间戳**（§4④） | 点一次「重新转写」或任何 F3 离线重跑 → **全稿** `words` 变 NULL → 逐字高亮永久降级成整句，而 `WordLevelBadge` 还告诉他"这个引擎只有句级" | ✅ M3 **3 条红** |
-| **4** | **搜索三档模式是装饰品**（§4⑤） | 切到「语义」以为换了检索方式，服务端从头到尾不读 `mode`，三档同一份关键词结果，界面一个字不说 | ✅ M5 **4 条红** |
-| **5** | **删模型报假 freedBytes、磁盘不回收**（§4⑥） | 删掉一堆模型、看着"已释放 N MB"、`du` 一个字节没少（硬链还在）。而且 `by-name/` 是发现路径 —— "已删除"的模型继续被当成装着 | ✅ M4 **3 条红** |
-| **6** | **自检结果到不了界面**（`gates-fix §5.2`→§5.3） | 你亲手点的那次自测 `passed:true / 18.6x`，刷新一下什么都没有 —— 通过徽章 / 失败徽章 / `anyFailed` 横幅三条分支永不亮 | ✅ M6 / M7 各 1 条红 |
-| **7** | **三处注释在说谎**（§4⑫） | 无用户可见症状，但**每一条都会把下一个人带偏**（"probe 端点不存在"/"PATCH 端点不存在"/"把问题带出去"）| — 文档类，无断言 |
+| #     | 事                                              | 用户此前会遇到什么                                                                                                                           | 撤掉后变红？         |
+| ----- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| **1** | **录一次音留一条 ready 死笔记**（§4②）          | 没装流式模型时点一次「开始录音」→ 停止（或**只是关掉标签页**）→ 列表里多一条 0 秒、打不开、状态却是「就绪」的笔记。**每次录音都会中招**      | ✅ M1 / M2 各 1 条红 |
+| **2** | **录完的笔记在重跑结束前根本没有音源**（§4③）   | 波形和时间码都在，`<audio>` 却不进 DOM —— 播放键点了没反应、点段落也不跳，**零报错**。一句话都没识别出来时连重跑 job 都不排 → **永远**播不了 | ✅ M8 1 条红         |
+| **3** | **重新转写丢词级时间戳**（§4④）                 | 点一次「重新转写」或任何 F3 离线重跑 → **全稿** `words` 变 NULL → 逐字高亮永久降级成整句，而 `WordLevelBadge` 还告诉他"这个引擎只有句级"     | ✅ M3 **3 条红**     |
+| **4** | **搜索三档模式是装饰品**（§4⑤）                 | 切到「语义」以为换了检索方式，服务端从头到尾不读 `mode`，三档同一份关键词结果，界面一个字不说                                                | ✅ M5 **4 条红**     |
+| **5** | **删模型报假 freedBytes、磁盘不回收**（§4⑥）    | 删掉一堆模型、看着"已释放 N MB"、`du` 一个字节没少（硬链还在）。而且 `by-name/` 是发现路径 —— "已删除"的模型继续被当成装着                   | ✅ M4 **3 条红**     |
+| **6** | **自检结果到不了界面**（`gates-fix §5.2`→§5.3） | 你亲手点的那次自测 `passed:true / 18.6x`，刷新一下什么都没有 —— 通过徽章 / 失败徽章 / `anyFailed` 横幅三条分支永不亮                         | ✅ M6 / M7 各 1 条红 |
+| **7** | **三处注释在说谎**（§4⑫）                       | 无用户可见症状，但**每一条都会把下一个人带偏**（"probe 端点不存在"/"PATCH 端点不存在"/"把问题带出去"）                                       | — 文档类，无断言     |
 
 **门禁**：`pnpm -r test` **1214 / 0** · `tsc -b` 0 · `eslint .` 0 · `check:sources` ✔ · `check:orphans` ✔（棘轮基线一个字没动）。
 开工基线 1162/0；+52 里**我贡献 26 条**（daemon 16 / web 10），另外 26 条是 `pack-select` 与 `runner-migrate` 同期加的。
@@ -52,6 +52,7 @@
 **两块互不相交，我没动他那几行。** `git add` 时请逐块看 hunk，别整文件覆盖。
 
 中途撞到过两次**别人写到一半的中间态**，记在这里免得下一个人去查一个不存在的 bug：
+
 - `backends.ts(174,22): Cannot find name 'toInstalledRecord'`（几十秒后自己没了）；
 - `vendor/manifests/components.json` 有一次 `JSON.parse` 失败（同上）。
 
@@ -61,15 +62,15 @@
 
 **没有采信任何一份回执的自述**（包括 `gates-fix` 自己的）。逐条对着 HEAD 的代码：
 
-| 条目 | 判据（我实际跑的） | 结论 |
-|---|---|---|
-| §4① F2 上传不能重新转写 | `apps/daemon/src/http/upload.ts:641` = `originalUrl: finalPath` | ✅ 属实 |
-| §4⑦ 安装器目录 ≠ runtime 目录 | `apps/daemon/src/runtime/setup.ts` 三处改走 `findInBackendPacks()` | ✅ 属实 |
-| §4⑧ L2 门禁自指 | `packages/runtime/src/backends/applicability.ts:110-117` 有 `advisoryCandidates` 与两条边界 | ✅ 属实 |
-| §2 A2 F3 两个引擎闸门 | `apps/daemon/src/pipeline/setup.ts:620,654` 走 `listInstalledModelRecords()`，不再只认环境变量 | ✅ 属实 |
-| §2 B1 零调用方门禁的 barrel 盲区 | `scripts/check-orphan-exports.mjs` 有第三档，实跑输出 21 条「只被再导出」 | ✅ 属实 |
-| §2 C2 `/api/health` 的 host 硬编码 | `apps/daemon/src/http/server.ts:135` = `host: deps.host()` | ✅ 属实 |
-| §2 C4 `.gitmodules` 过期注释 | 文件里已改成「从上游预编译包安装（BtbN / jellyfin-ffmpeg）」 | ✅ **已被别人做掉**（不在 `gates-fix` 的清单里，是顺手核出来的） |
+| 条目                               | 判据（我实际跑的）                                                                             | 结论                                                             |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| §4① F2 上传不能重新转写            | `apps/daemon/src/http/upload.ts:641` = `originalUrl: finalPath`                                | ✅ 属实                                                          |
+| §4⑦ 安装器目录 ≠ runtime 目录      | `apps/daemon/src/runtime/setup.ts` 三处改走 `findInBackendPacks()`                             | ✅ 属实                                                          |
+| §4⑧ L2 门禁自指                    | `packages/runtime/src/backends/applicability.ts:110-117` 有 `advisoryCandidates` 与两条边界    | ✅ 属实                                                          |
+| §2 A2 F3 两个引擎闸门              | `apps/daemon/src/pipeline/setup.ts:620,654` 走 `listInstalledModelRecords()`，不再只认环境变量 | ✅ 属实                                                          |
+| §2 B1 零调用方门禁的 barrel 盲区   | `scripts/check-orphan-exports.mjs` 有第三档，实跑输出 21 条「只被再导出」                      | ✅ 属实                                                          |
+| §2 C2 `/api/health` 的 host 硬编码 | `apps/daemon/src/http/server.ts:135` = `host: deps.host()`                                     | ✅ 属实                                                          |
+| §2 C4 `.gitmodules` 过期注释       | 文件里已改成「从上游预编译包安装（BtbN / jellyfin-ffmpeg）」                                   | ✅ **已被别人做掉**（不在 `gates-fix` 的清单里，是顺手核出来的） |
 
 > 这一轮的比例值得记一笔：**38 条里 7 条（18%）在清单写下之后已经被做掉了**。
 > 比 `debt-cleanup`（113/187）和 `backlog-sweep`（61/105）低得多 —— 因为这三份清单本身就很新。
@@ -87,13 +88,15 @@
 **但 `start()` 正常 resolve** → `http/ws.ts` 把 `started` 置真、socket 不关。
 
 用户接下来做什么都会中招：
+
 - 点「停止」→ `stop()`；
 - **只是关掉标签页** → `ws.on('close')` → `abandon()` → 同一个 `stop()`。
 
 `stop()` 会跑完整条收尾链：回填 44 字节的空 WAV 头 → `createAsset` →
 对 0 采样的文件生成 peaks → `updateNote(status:'ready')`。
 
-**改法**（判据：*失败时不许在库里留下任何行*）：
+**改法**（判据：_失败时不许在库里留下任何行_）：
+
 - `openStream()` 提到**任何落库/落盘之前**；拿不到就 `#closed = true` + 发错误 + 返回 —— 一行不建、一个文件不落，`stop()`/`abandon()` 从此是 no-op；
 - 新增 `get active()`，`http/ws.ts` 据此**主动关闭 socket**（否则浏览器继续录、继续推，界面停在「录音中」）；
 - `RecorderPage.tsx` 收到 `ASR_STREAM_UNAVAILABLE` / `RECORD_START_FAILED` 时回到 `idle` 并**放开麦克风**（原来只弹一句红字，计时器还在走、麦克风灯还亮着）。
@@ -142,6 +145,7 @@ WS 那一半（服务端会不会关连接）由另一条**客户端一个字都
 顺带把 `noResultsHint` 那句「或试试「语义」模式」改掉 —— 它在推荐一个不存在的东西。
 
 **两条判据写在代码里**：
+
 - URL 里写着 `mode=semantic` 时**真正发出去的是 keyword**（原样转发正是那个谎的载体）；
 - 响应里没有 `modes` 时按「只有关键词」处理 —— 与 `isUsableAsset`「字段缺失 ≠ 不可用」**方向相反，是刻意的**：
   判据不是"缺省该宽该严"，是**"哪个默认值会让界面说一句不成立的话"**。
@@ -184,11 +188,11 @@ manifest 就是那份唯一事实，写文件即可，前端已有的 `invalidat
 
 ## 2.7 三处说谎的注释（§4⑫）
 
-| 位置 | 原文说 | 事实 |
-|---|---|---|
-| `apps/web/src/features/notes/api.ts` | 「daemon 目前没有独立的 probe 端点…会 404 → 回落 mock」 | `POST /api/notes/probe` 在 `rest/notes.ts:173`；它是 POST，而 `client.ts` 明写「写操作**永不**静默回落 mock」。**三句都不成立** |
-| `apps/web/src/features/mindmap/api.ts` | 「服务端尚无对应端点…**不再对着不存在的路由发请求**」 | 紧接着的 `mutationFn` **正在发 PATCH**，端点在 `content.ts:328` |
-| `packages/mindmap/src/generate.ts` | 「把问题带出去而不是静默产出坏数据」 | 代码是**再 repair 一次然后照常返回**，什么都没带出去 |
+| 位置                                   | 原文说                                                  | 事实                                                                                                                            |
+| -------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/features/notes/api.ts`   | 「daemon 目前没有独立的 probe 端点…会 404 → 回落 mock」 | `POST /api/notes/probe` 在 `rest/notes.ts:173`；它是 POST，而 `client.ts` 明写「写操作**永不**静默回落 mock」。**三句都不成立** |
+| `apps/web/src/features/mindmap/api.ts` | 「服务端尚无对应端点…**不再对着不存在的路由发请求**」   | 紧接着的 `mutationFn` **正在发 PATCH**，端点在 `content.ts:328`                                                                 |
+| `packages/mindmap/src/generate.ts`     | 「把问题带出去而不是静默产出坏数据」                    | 代码是**再 repair 一次然后照常返回**，什么都没带出去                                                                            |
 
 前两条改成如实描述（并把当初那个中间态的教训保留下来）；第三条**顺手让它真的出声**：
 `repair` 是幂等的（无损清理），"再 repair 一次"本就不可能修好第一次没修好的东西 ——
@@ -207,42 +211,42 @@ manifest 就是那份唯一事实，写文件即可，前端已有的 `invalidat
 
 ## 🔴 A 组：用户能撞上（7 条）
 
-| # | 项 | 用户会看到什么 | 规模 | 归属 | 我核过的事实 |
-|---:|---|---|---|---|---|
-| **1** | `/runtime` 对**已装的** ffmpeg 显示「Install 119 MB」（`gates-fix §5.2`） | 装好的东西界面说没装，点下去重下 119 MB | S | `pack-select` | 全仓两个互不相干的"已安装"：A=盘上有文件（`findInBackendPacks`）、B=有 manifest。**B 的写入方全仓只有 `startPackInstall()` 那一句**，安装器刻意"blob 先落、manifest 最后写"，**崩在中间就是这个状态**。修法见 `gates-fix §5.2`（启动对账 / catalog 现算，建议两条都做）。⚠️ 我**没动**：`findInBackendPacks` 及其调用方是 `pack-select` 在跑的地盘 |
-| **2** | 「推荐」徽章等于零信息量（§4⑩） | CPU 机器上**每个可装的包**都戴推荐徽章 + 主按钮 | S | `architect`+`gpu-runtime` | `[实测]` `backends.json` 11 个包 = `{cpu:10, cuda:1}`；`backends.ts:261` `recommended = applicable && backend === selectedBackend`；`BackendPackCard.tsx:130` 真渲染徽章、`:81` 还把按钮变 primary |
-| **3** | `inapplicableKind` 白做了（§4⑪） | 干净机器上「不可用」不分「还没探测到」与「确认不支持」，用户以为自己机器不支持就不装了 | S | `architect` | `[实测]` `backends.ts` 精心区分 `platform/undetermined/unsupported` 并在 `:259` 发出去，**`apps/web` 零命中**。它想防的正是这件事 |
-| **4** | `openmemo-probe` 没有分发通道（A3 剩下的那一格） | Win/Linux 有 N 卡的用户永远看到「尚未探测到硬件能力」 | M | `pack-publish` | `gates-fix` 已把**接线侧**备好（包里一有它就找得到）。缺的是一次 release 资产 + 一条 manifest 条目。**"不建/改/删 release" 是硬边界**，agent 做不了 |
-| **5** | `ytdlp-macos-arm64` 装的是 universal2 却声明 `arch:"arm64"`（§4⑨） | Intel Mac **一个组件都装不上** | XS | `runner-migrate` | `[实测]` `backends.json:407` `os:darwin, arch:arm64`，而 `displayNameZh` 自己写着「macOS 通用二进制」。⚠️ macOS Intel 已被你 08-05 裁掉，所以**影响面已经很小**；`vendor/manifests/` 是 `runner-migrate` 的地盘，我没碰 |
-| **6** | `sourceBaseUrl`（自定义下载源）是半截（B5） | 存得下来、永远不生效 | XS | `model-mgmt` | `[实测]` 唯一写入 `models.ts:953`，**零读取方**。`progress-audit` 建议删（连同 `SelectSourceRequest.baseUrl`），我同意：留字段不做界面是把半截藏起来 |
-| **7** | 组件「回滚」（C3） | `efe8fd4` 已把假承诺拿掉，**现状不再撒谎**，降级为产品取舍 | S | 你（写进 ADR） | `[实测]` `stashForRollback` 仍零调用方（`components.ts:207` 定义 + 两处注释/测试引用）。建议按 `progress-audit` 说的「v1 不做，写进 ADR」封掉，别继续挂着 |
+|     # | 项                                                                        | 用户会看到什么                                                                         | 规模 | 归属                      | 我核过的事实                                                                                                                                                                                                                                                                                                                                       |
+| ----: | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ---- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1** | `/runtime` 对**已装的** ffmpeg 显示「Install 119 MB」（`gates-fix §5.2`） | 装好的东西界面说没装，点下去重下 119 MB                                                | S    | `pack-select`             | 全仓两个互不相干的"已安装"：A=盘上有文件（`findInBackendPacks`）、B=有 manifest。**B 的写入方全仓只有 `startPackInstall()` 那一句**，安装器刻意"blob 先落、manifest 最后写"，**崩在中间就是这个状态**。修法见 `gates-fix §5.2`（启动对账 / catalog 现算，建议两条都做）。⚠️ 我**没动**：`findInBackendPacks` 及其调用方是 `pack-select` 在跑的地盘 |
+| **2** | 「推荐」徽章等于零信息量（§4⑩）                                           | CPU 机器上**每个可装的包**都戴推荐徽章 + 主按钮                                        | S    | `architect`+`gpu-runtime` | `[实测]` `backends.json` 11 个包 = `{cpu:10, cuda:1}`；`backends.ts:261` `recommended = applicable && backend === selectedBackend`；`BackendPackCard.tsx:130` 真渲染徽章、`:81` 还把按钮变 primary                                                                                                                                                 |
+| **3** | `inapplicableKind` 白做了（§4⑪）                                          | 干净机器上「不可用」不分「还没探测到」与「确认不支持」，用户以为自己机器不支持就不装了 | S    | `architect`               | `[实测]` `backends.ts` 精心区分 `platform/undetermined/unsupported` 并在 `:259` 发出去，**`apps/web` 零命中**。它想防的正是这件事                                                                                                                                                                                                                  |
+| **4** | `openmemo-probe` 没有分发通道（A3 剩下的那一格）                          | Win/Linux 有 N 卡的用户永远看到「尚未探测到硬件能力」                                  | M    | `pack-publish`            | `gates-fix` 已把**接线侧**备好（包里一有它就找得到）。缺的是一次 release 资产 + 一条 manifest 条目。**"不建/改/删 release" 是硬边界**，agent 做不了                                                                                                                                                                                                |
+| **5** | `ytdlp-macos-arm64` 装的是 universal2 却声明 `arch:"arm64"`（§4⑨）        | Intel Mac **一个组件都装不上**                                                         | XS   | `runner-migrate`          | `[实测]` `backends.json:407` `os:darwin, arch:arm64`，而 `displayNameZh` 自己写着「macOS 通用二进制」。⚠️ macOS Intel 已被你 08-05 裁掉，所以**影响面已经很小**；`vendor/manifests/` 是 `runner-migrate` 的地盘，我没碰                                                                                                                            |
+| **6** | `sourceBaseUrl`（自定义下载源）是半截（B5）                               | 存得下来、永远不生效                                                                   | XS   | `model-mgmt`              | `[实测]` 唯一写入 `models.ts:953`，**零读取方**。`progress-audit` 建议删（连同 `SelectSourceRequest.baseUrl`），我同意：留字段不做界面是把半截藏起来                                                                                                                                                                                               |
+| **7** | 组件「回滚」（C3）                                                        | `efe8fd4` 已把假承诺拿掉，**现状不再撒谎**，降级为产品取舍                             | S    | 你（写进 ADR）            | `[实测]` `stashForRollback` 仍零调用方（`components.ts:207` 定义 + 两处注释/测试引用）。建议按 `progress-audit` 说的「v1 不做，写进 ADR」封掉，别继续挂着                                                                                                                                                                                          |
 
 ## 🟠 B 组：会误导人 / 攒技术债（9 条）
 
-| # | 项 | 不做会怎样 | 规模 | 归属 |
-|---:|---|---|---|---|
-| **8** | **A1 重建 `apps/web/dist` 并重启 `:10000`** | 你和用户对着一个落后十几个提交的界面做验收。**我这轮 7 条修复他一条也看不见** | XS | **只有你能做**（PROTOCOL §7） |
-| **9** | A5 章程 §3 订正块重写 | 它把「有产物」与「网页可装」混为一谈，照它决策会走偏 | S | 你 |
-| **10** | `gates-fix §5.4` `PENDING-USER-DECISIONS §D` 订正 | ADR-013「中文默认=Paraformer」被列为"已生效"，实际是「已实现，未默认安装」 | XS | 你 |
-| **11** | C1 两个 TOCTOU 的裁决依据已失效 + `SECURITY.md §0` 措辞 | 「这次部署的选择」被写成「产品默认」，所有基于它的风险评估都偏一档 | S | 你 |
-| **12** | C6 诊断页换 `/api/selfcheck` + **`/diagnostics` `/components` 进侧栏** | 要求 2.1 说的"显示状态"页，用户平时点不到 | XS（侧栏）/ L（换数据源） | `architect` |
-| **13** | B8 `hf-mirror` 的口径 | 3 份 manifest 里 78 处标着"镜像"，实测只是 308 跳回源站 —— 假冗余 | S | `model-mgmt` |
-| **14** | B2 `markmap-lib` / `markmap-view` 删不删 | 两个零 import 的依赖挂在供应链上。⚠️ 删时**连带**拿掉 `MindmapView.tsx` 那句「切到大纲视图…」——产品里没有大纲视图 | S | `oss-scout` |
-| **15** | C7 老安装记录补 `role` 迁移 | 自检里进 `skippedWithoutRole`，会出声不会自愈 —— 长期训练人忽略自检输出 | S | `model-mgmt` |
-| **16** | B7 ANE 真机验证（一次 macOS runner） | mac 用户可能吃 48× 延迟且无提示；接线三处已改，没人在真机确认过 | M | `pack-publish` |
+|      # | 项                                                                     | 不做会怎样                                                                                                        | 规模                      | 归属                          |
+| -----: | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------- | ----------------------------- |
+|  **8** | **A1 重建 `apps/web/dist` 并重启 `:10000`**                            | 你和用户对着一个落后十几个提交的界面做验收。**我这轮 7 条修复他一条也看不见**                                     | XS                        | **只有你能做**（PROTOCOL §7） |
+|  **9** | A5 章程 §3 订正块重写                                                  | 它把「有产物」与「网页可装」混为一谈，照它决策会走偏                                                              | S                         | 你                            |
+| **10** | `gates-fix §5.4` `PENDING-USER-DECISIONS §D` 订正                      | ADR-013「中文默认=Paraformer」被列为"已生效"，实际是「已实现，未默认安装」                                        | XS                        | 你                            |
+| **11** | C1 两个 TOCTOU 的裁决依据已失效 + `SECURITY.md §0` 措辞                | 「这次部署的选择」被写成「产品默认」，所有基于它的风险评估都偏一档                                                | S                         | 你                            |
+| **12** | C6 诊断页换 `/api/selfcheck` + **`/diagnostics` `/components` 进侧栏** | 要求 2.1 说的"显示状态"页，用户平时点不到                                                                         | XS（侧栏）/ L（换数据源） | `architect`                   |
+| **13** | B8 `hf-mirror` 的口径                                                  | 3 份 manifest 里 78 处标着"镜像"，实测只是 308 跳回源站 —— 假冗余                                                 | S                         | `model-mgmt`                  |
+| **14** | B2 `markmap-lib` / `markmap-view` 删不删                               | 两个零 import 的依赖挂在供应链上。⚠️ 删时**连带**拿掉 `MindmapView.tsx` 那句「切到大纲视图…」——产品里没有大纲视图 | S                         | `oss-scout`                   |
+| **15** | C7 老安装记录补 `role` 迁移                                            | 自检里进 `skippedWithoutRole`，会出声不会自愈 —— 长期训练人忽略自检输出                                           | S                         | `model-mgmt`                  |
+| **16** | B7 ANE 真机验证（一次 macOS runner）                                   | mac 用户可能吃 48× 延迟且无提示；接线三处已改，没人在真机确认过                                                   | M                         | `pack-publish`                |
 
 ## 🟡 C 组：需要拍板但不阻塞任何人（8 条）
 
-| # | 项 | 建议 |
-|---:|---|---|
-| **17** | A4 / `gates-fix §5.1` Vulkan 补目录 | **你已裁定先别补**，两位都同意。门禁侧已解开，剩包本身：不自包含 + `GLIBC_2.38`。`amd-vulkan` T-161 报这两条已消，**补目录前请让它出具一次实测** |
-| **18** | B3 `check` 脚本 `pnpm -r build` → `tsc -b && build:safe` 追认/回退 | 追认。⚠️ 根 `"build": "pnpm -r build"` **还在**，陷阱只是从 `check` 挪开了 |
-| **19** | B4 `unpackArchive` 失败自清 `destDir` | 不改，改成写进契约 + 一条断言钉住 |
-| **20** | B6 翻页次级键 `n.id DESC` 的定性 | 接受"规范收紧"，但在 HANDOFF 上留一句"它没被任何断言覆盖过" |
-| **21** | C5 GitHub 仓库描述 + topics | 用 `docs-public` 的①，**不要**写"支持 CUDA / AMD / 全平台加速" |
-| **22** | C8 `unpack` 行为变化转达 `pack-publish` | 转达即可，不动代码 |
-| **23** | C9 `no-restricted-imports` 维持如实降级 | 维持。加一条守不住的规则比诚实地没有规则更危险 |
-| **24** | §4⑬ **HEAD 从未跑过 CI** | 归你。`runTranscribeJob` 零测试那一半**我这轮补上了**，另一半（真的跑一次 CI）不是 agent 能做的 |
+|      # | 项                                                                 | 建议                                                                                                                                             |
+| -----: | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **17** | A4 / `gates-fix §5.1` Vulkan 补目录                                | **你已裁定先别补**，两位都同意。门禁侧已解开，剩包本身：不自包含 + `GLIBC_2.38`。`amd-vulkan` T-161 报这两条已消，**补目录前请让它出具一次实测** |
+| **18** | B3 `check` 脚本 `pnpm -r build` → `tsc -b && build:safe` 追认/回退 | 追认。⚠️ 根 `"build": "pnpm -r build"` **还在**，陷阱只是从 `check` 挪开了                                                                       |
+| **19** | B4 `unpackArchive` 失败自清 `destDir`                              | 不改，改成写进契约 + 一条断言钉住                                                                                                                |
+| **20** | B6 翻页次级键 `n.id DESC` 的定性                                   | 接受"规范收紧"，但在 HANDOFF 上留一句"它没被任何断言覆盖过"                                                                                      |
+| **21** | C5 GitHub 仓库描述 + topics                                        | 用 `docs-public` 的①，**不要**写"支持 CUDA / AMD / 全平台加速"                                                                                   |
+| **22** | C8 `unpack` 行为变化转达 `pack-publish`                            | 转达即可，不动代码                                                                                                                               |
+| **23** | C9 `no-restricted-imports` 维持如实降级                            | 维持。加一条守不住的规则比诚实地没有规则更危险                                                                                                   |
+| **24** | §4⑬ **HEAD 从未跑过 CI**                                           | 归你。`runTranscribeJob` 零测试那一半**我这轮补上了**，另一半（真的跑一次 CI）不是 agent 能做的                                                  |
 
 ---
 
@@ -252,18 +256,19 @@ manifest 就是那份唯一事实，写文件即可，前端已有的 `invalidat
 不是改 `dist`。每条**先跑对照组**要求未变异的产物全绿；对照组不绿整条作废。
 锚点在源文件里必须**恰好出现一次**，否则脚本当场报错拒绝乱改。
 
-| 撤掉什么（= 缺陷原状） | 结果 | 红在哪 |
-|---|---|---|
-| M1 `recorder.ts` 的引擎前置 + `#closed`（回到"先建 note 再 openStream"） | ✔ exit 1 | 「引擎不可用却建了笔记 —— 这就是那条 0 秒打不开的「就绪」死笔记」 |
-| M2 `ws.ts` 的 `if (!session.active) ws.close()` | ✔ exit 1 | 「服务端却把 WS 留着 —— 浏览器会继续录、继续推」 |
-| M3 `transcribe.ts` 两处 `parseWordsJson` → `null` | ✔ exit 1（**3 条**） | 「「我改过这一句」的 words_json 是 NULL —— 逐字高亮从这一刻起永久降级」 |
-| M4 `state.ts` 的 `dropInstalledFiles(id)` 调用 | ✔ exit 1（**3 条**） | 「磁盘只少了 **893** 字节，至少应当少 **4194304**」 |
-| M5 `modes.ts` 的 `availableModes` 改回写死三档 | ✔ exit 1（**4 条**） | 「服务端明说 semantic/hybrid 为假，它们却仍然可选」 |
-| M6 `hardware.ts` 里 `recordSelfTest()` 的调用 | ✔ exit 1 | 「响应说没记下来：`"recorded":false`」+ manifest 里 `selfTest` 仍是 null |
-| M7 `recordSelfTest` 的 backend 认领防线 | ✔ exit 1 | 「把一次 CPU 自检记成了 CUDA 包通过」 |
-| M8 `pickAudioAsset` 的 original 回退 | ✔ exit 1 | 「刚录完的笔记选不出音源：波形和时间码都在，点播放什么都不发生」 |
+| 撤掉什么（= 缺陷原状）                                                   | 结果                 | 红在哪                                                                   |
+| ------------------------------------------------------------------------ | -------------------- | ------------------------------------------------------------------------ |
+| M1 `recorder.ts` 的引擎前置 + `#closed`（回到"先建 note 再 openStream"） | ✔ exit 1             | 「引擎不可用却建了笔记 —— 这就是那条 0 秒打不开的「就绪」死笔记」        |
+| M2 `ws.ts` 的 `if (!session.active) ws.close()`                          | ✔ exit 1             | 「服务端却把 WS 留着 —— 浏览器会继续录、继续推」                         |
+| M3 `transcribe.ts` 两处 `parseWordsJson` → `null`                        | ✔ exit 1（**3 条**） | 「「我改过这一句」的 words_json 是 NULL —— 逐字高亮从这一刻起永久降级」  |
+| M4 `state.ts` 的 `dropInstalledFiles(id)` 调用                           | ✔ exit 1（**3 条**） | 「磁盘只少了 **893** 字节，至少应当少 **4194304**」                      |
+| M5 `modes.ts` 的 `availableModes` 改回写死三档                           | ✔ exit 1（**4 条**） | 「服务端明说 semantic/hybrid 为假，它们却仍然可选」                      |
+| M6 `hardware.ts` 里 `recordSelfTest()` 的调用                            | ✔ exit 1             | 「响应说没记下来：`"recorded":false`」+ manifest 里 `selfTest` 仍是 null |
+| M7 `recordSelfTest` 的 backend 认领防线                                  | ✔ exit 1             | 「把一次 CPU 自检记成了 CUDA 包通过」                                    |
+| M8 `pickAudioAsset` 的 original 回退                                     | ✔ exit 1             | 「刚录完的笔记选不出音源：波形和时间码都在，点播放什么都不发生」         |
 
 **把名字遮住之后这些断言什么时候会失败**（自问自答，逐条）：
+
 - M1/M2 → 有人把"引擎不可用"这条路上的任何一步挪回落库之后，或者忘了关连接；
 - M3 → 任何人再把 `words` 在合并链上写成 null（含"顺手简化"）；
 - M4 → 任何人只删 manifest 不删链，或让 `freedBytes` 报一个没真释放的数；
@@ -279,6 +284,7 @@ manifest 就是那份唯一事实，写文件即可，前端已有的 `invalidat
 # §5 交付文件（**请 `git add` 后用 `git diff --cached --name-only` 逐条核对**）
 
 改：
+
 ```
 apps/daemon/src/ws/recorder.ts               引擎前置 + #closed + get active()
 apps/daemon/src/ws/recorder.test.ts          +3（引擎不可用不留任何行 / active / WS 关闭）
@@ -302,6 +308,7 @@ packages/mindmap/src/generate.ts             说谎注释③ + 让它真的出�
 ```
 
 新增：
+
 ```
 apps/daemon/src/jobs/mergeWords.test.ts              3 条（**runTranscribeJob 的第一份用例**）
 apps/daemon/src/http/rest/modelDiskReclaim.test.ts   4 条
@@ -318,19 +325,19 @@ coordination/inbox/backlog-work.md                   本文件
 
 # §6 纪律申报
 
-| 条 | 结果 |
-|---|---|
-| `apps/web/dist` | ✅ **未构建**。全程只跑 `pnpm build:safe` / `npx tsc -b`；`vite build` 一次都没跑 |
-| `pnpm -r build` | ✅ 未跑 |
-| `:10000` | ✅ **一个请求都没发**（连 GET 都没有）。未重启、未 kill、未占用 |
-| `/root/data-memo` | ✅ 未读未写 |
-| 指针文件 | ✅ 未碰。所有会写模型根的用例都在**模块顶层**钉 `OPENMEMO_MODELS` / `OPENMEMO_EXT_DIR` 到 `mkdtemp`（PROTOCOL §9-bis，窗口为零，无清理代码） |
-| `pkill -f` | ✅ 未用 |
-| release | ✅ 未建/未改/未删。`gh` 一次都没用 |
-| 本机 whisper 转写 | ✅ **一次都没跑**。`mergeWords.test.ts` 顶替的正是 `TranscribePipeline`；`selfTestRecord.test.ts` 顶替的是自检执行器 |
-| 反向验证 | ✅ 全部在 `/tmp/backlog-work/rv`，共享工作树没有坏过一秒 |
-| `findInBackendPacks()` 及其调用方 | ✅ **未碰**（`pack-select` 在跑） |
-| `.github/**` · `vendor/manifests/**` · `scripts/ci/**` | ✅ **未碰**（`runner-migrate` 在跑；`vendor/manifests` 只读过） |
-| `HANDOFF.md` / `00-CHARTER.md` / `BOARD.md` / `ROSTER.md` / `docs/adr/**` / `PENDING-USER-DECISIONS.md` / `README.md` / `SECURITY.md` | ✅ 一个字未改 |
-| 新增 `src/**/*.test.ts` 登记 | ✅ `apps/web/tsconfig.test.json` 已加两条（daemon 侧靠 `tsc -b` 全量编译，无白名单） |
-| 派出的 subagent | 0 个 |
+| 条                                                                                                                                    | 结果                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/dist`                                                                                                                       | ✅ **未构建**。全程只跑 `pnpm build:safe` / `npx tsc -b`；`vite build` 一次都没跑                                                            |
+| `pnpm -r build`                                                                                                                       | ✅ 未跑                                                                                                                                      |
+| `:10000`                                                                                                                              | ✅ **一个请求都没发**（连 GET 都没有）。未重启、未 kill、未占用                                                                              |
+| `/root/data-memo`                                                                                                                     | ✅ 未读未写                                                                                                                                  |
+| 指针文件                                                                                                                              | ✅ 未碰。所有会写模型根的用例都在**模块顶层**钉 `OPENMEMO_MODELS` / `OPENMEMO_EXT_DIR` 到 `mkdtemp`（PROTOCOL §9-bis，窗口为零，无清理代码） |
+| `pkill -f`                                                                                                                            | ✅ 未用                                                                                                                                      |
+| release                                                                                                                               | ✅ 未建/未改/未删。`gh` 一次都没用                                                                                                           |
+| 本机 whisper 转写                                                                                                                     | ✅ **一次都没跑**。`mergeWords.test.ts` 顶替的正是 `TranscribePipeline`；`selfTestRecord.test.ts` 顶替的是自检执行器                         |
+| 反向验证                                                                                                                              | ✅ 全部在 `/tmp/backlog-work/rv`，共享工作树没有坏过一秒                                                                                     |
+| `findInBackendPacks()` 及其调用方                                                                                                     | ✅ **未碰**（`pack-select` 在跑）                                                                                                            |
+| `.github/**` · `vendor/manifests/**` · `scripts/ci/**`                                                                                | ✅ **未碰**（`runner-migrate` 在跑；`vendor/manifests` 只读过）                                                                              |
+| `HANDOFF.md` / `00-CHARTER.md` / `BOARD.md` / `ROSTER.md` / `docs/adr/**` / `PENDING-USER-DECISIONS.md` / `README.md` / `SECURITY.md` | ✅ 一个字未改                                                                                                                                |
+| 新增 `src/**/*.test.ts` 登记                                                                                                          | ✅ `apps/web/tsconfig.test.json` 已加两条（daemon 侧靠 `tsc -b` 全量编译，无白名单）                                                         |
+| 派出的 subagent                                                                                                                       | 0 个                                                                                                                                         |

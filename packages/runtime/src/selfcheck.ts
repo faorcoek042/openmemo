@@ -357,10 +357,15 @@ async function checkCoreMl(
 ): Promise<void> {
   // ANE 只有 Apple Silicon 有。别的平台连这一项都不该出现，免得变成永久噪音。
   // 平台取自 input（默认宿主）—— 见 `SelfCheckInput.platform` 的注释。
-  if ((input.platform ?? process.platform) !== 'darwin' || (input.arch ?? process.arch) !== 'arm64') return;
+  if ((input.platform ?? process.platform) !== 'darwin' || (input.arch ?? process.arch) !== 'arm64')
+    return;
 
   const asrDir = join(input.storeRoot, 'by-name', 'asr');
-  const emit = (status: CheckResult['status'], detail: string, remediation: string | null): void => {
+  const emit = (
+    status: CheckResult['status'],
+    detail: string,
+    remediation: string | null,
+  ): void => {
     add({
       layer: 'models',
       id: 'asr.coreml',
@@ -422,8 +427,8 @@ async function checkCoreMl(
   if (ggml.length === 0) {
     emit(
       'warn',
-      `没有 whisper.cpp 的 ggml 模型，ANE 不适用（CoreML encoder 只服务 whisper.cpp；`
-        + `当前 by-name/asr 下是：${realAsr.slice(0, 4).join(', ')}）`,
+      `没有 whisper.cpp 的 ggml 模型，ANE 不适用（CoreML encoder 只服务 whisper.cpp；` +
+        `当前 by-name/asr 下是：${realAsr.slice(0, 4).join(', ')}）`,
       null,
     );
     return;
@@ -447,7 +452,10 @@ async function checkCoreMl(
      * 「目录存在」正是那个空壳的表现 —— 只查存在性等于把 fail 读成 ok。
      */
     if (entries.includes('coremldata.bin')) found.push(`${bin} → ${encName}`);
-    else shells.push(`${encName}（里面是 ${entries.slice(0, 3).join(', ') || '空'}，不是编译好的 mlmodelc）`);
+    else
+      shells.push(
+        `${encName}（里面是 ${entries.slice(0, 3).join(', ') || '空'}，不是编译好的 mlmodelc）`,
+      );
   }
 
   if (shells.length > 0) {
@@ -502,9 +510,7 @@ async function checkCoreMl(
 function probeFailureDetail(r: { message: string; stderr: string; durationMs: number }): string {
   const err = r.stderr.replace(/\s+/g, ' ').trim();
   const tail =
-    err.length > 0
-      ? `stderr 尾部：${err.slice(-400)}`
-      : 'stderr 为空（探针连一行都没来得及输出）';
+    err.length > 0 ? `stderr 尾部：${err.slice(-400)}` : 'stderr 为空（探针连一行都没来得及输出）';
   return `${r.message}（耗时 ${String(r.durationMs)}ms；${tail}）`;
 }
 
@@ -569,9 +575,7 @@ export async function checkBackendSymlinks(storeRoot: string): Promise<SymlinkHe
           const buf = Buffer.alloc(4);
           const { bytesRead } = await fh.read(buf, 0, 4, 0);
           readable = bytesRead === 4;
-          note = readable
-            ? buf.toString('hex')
-            : `只读到 ${bytesRead} 字节（文件为空或被截断）`;
+          note = readable ? buf.toString('hex') : `只读到 ${bytesRead} 字节（文件为空或被截断）`;
         } catch (err) {
           note = (err as NodeJS.ErrnoException).code ?? String(err);
         } finally {
@@ -609,12 +613,7 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
     results.push(r);
   };
   /** 探针没给 → 检查项照常出现，只是如实说"没测"。列表必须两边一样长。 */
-  const notProbed = (
-    layer: string,
-    id: string,
-    label: string,
-    labelZh: string,
-  ): void =>
+  const notProbed = (layer: string, id: string, label: string, labelZh: string): void =>
     add({
       layer,
       id,
@@ -651,9 +650,7 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
     detail: `${cpu.brand} · ${cpu.physicalCores}核 · ${cpu.features.slice(0, 6).join(',') || '未检出'}`,
     required: false,
     remediation:
-      cpu.features.length > 0
-        ? null
-        : '未检出指令集 → 只能用最保守的 CPU 后端，推理会明显更慢',
+      cpu.features.length > 0 ? null : '未检出指令集 → 只能用最保守的 CPU 后端，推理会明显更慢',
   });
 
   const ram = detectMemory();
@@ -1031,9 +1028,7 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
    */
   const asrInstalled = await input.probes.installedByRole('asr');
   const realAsr = asrInstalled.names;
-  const otherRoleFiles = (await input.probes.installed('asr')).filter(
-    (n) => !realAsr.includes(n),
-  );
+  const otherRoleFiles = (await input.probes.installed('asr')).filter((n) => !realAsr.includes(n));
   /*
    * 「跳过了几条」必须说出来，不能吞：没写 `role` 的老记录一律不猜（`store.ts` 的规矩），
    * 但那不等于"你什么都没装" —— 不报出来的话，一个装满模型的旧库会被说成"无"。
@@ -1095,7 +1090,9 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         ? `${cfg.providerId as string} + 已存 Key（★ 只表示配了，未代发请求验证可用性）`
         : `未配置（provider=${cfg?.providerId ?? '无'} key=${cfg?.hasKey ? '有' : '无'}）`,
       required: false,
-      remediation: configured ? null : '在设置页填一个在线模型的 API Key，否则 F4 思维导图会转 blocked',
+      remediation: configured
+        ? null
+        : '在设置页填一个在线模型的 API Key，否则 F4 思维导图会转 blocked',
     });
   }
 
@@ -1195,7 +1192,12 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
    * 描述成「可随时删」。只看目录结构、不看数据库引用，这种问题永远查不出来。
    */
   if (input.probes.mediaAssets === undefined) {
-    notProbed('datadir', 'datadir.assetsContained', 'assets inside dataDir', 'media_assets 路径全在 dataDir 内');
+    notProbed(
+      'datadir',
+      'datadir.assetsContained',
+      'assets inside dataDir',
+      'media_assets 路径全在 dataDir 内',
+    );
     notProbed('datadir', 'datadir.assetsPresent', 'asset files present', 'media_assets 文件都在');
   } else {
     const rows = await input.probes.mediaAssets();
@@ -1365,7 +1367,9 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
       status: ffOk ? 'ok' : 'warn',
       detail: ffOk ? '当前代理形态 ffmpeg 可用' : (px?.ffmpegReason ?? 'ffmpeg 不走当前代理'),
       required: false,
-      remediation: ffOk ? null : '模型下载与站点解析仍走代理；若要在线拉流也走代理，请改填 HTTP 代理地址',
+      remediation: ffOk
+        ? null
+        : '模型下载与站点解析仍走代理；若要在线拉流也走代理，请改填 HTTP 代理地址',
     });
   }
 
@@ -1376,8 +1380,9 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
     const detail =
       rep === null
         ? '探测失败'
-        : rep.probes.map((p) => `${p.target}:${p.result}${p.viaProxy ? '(经代理)' : '(直连)'}`).join(' ') ||
-          '无探针结果';
+        : rep.probes
+            .map((p) => `${p.target}:${p.result}${p.viaProxy ? '(经代理)' : '(直连)'}`)
+            .join(' ') || '无探针结果';
     /*
      * 只有 mode=manual 时才算"必需项"。
      * 用户明确填了代理却连不上 = 配置坏了，下载一定会失败，该红。

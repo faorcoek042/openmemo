@@ -91,7 +91,9 @@ export interface LlmProviderSpec {
    * a fake key for Ollama is a real thing competitors do and it teaches them the app does
    * not understand its own configuration.
    */
-  configFieldKeys: ('apiKey' | 'baseURL' | 'model' | 'temperature' | 'maxTokens' | 'apiVersion' | 'deploymentId')[];
+  configFieldKeys: (
+    'apiKey' | 'baseURL' | 'model' | 'temperature' | 'maxTokens' | 'apiVersion' | 'deploymentId'
+  )[];
   modelListSource: ModelListSource;
   defaultModel: string | null;
   models: LlmModelSpec[];

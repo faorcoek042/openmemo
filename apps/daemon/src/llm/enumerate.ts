@@ -44,8 +44,7 @@ export type EnumerateFailure =
   | { kind: 'request-failed'; providerId: string; endpoint: string; detail: string };
 
 export type EnumerateResult =
-  | { ok: true; value: LlmModelsResponse }
-  | { ok: false; failure: EnumerateFailure };
+  { ok: true; value: LlmModelsResponse } | { ok: false; failure: EnumerateFailure };
 
 let cachedCatalog: LlmProviderCatalog | null = null;
 
@@ -93,11 +92,15 @@ function asString(v: unknown): string | undefined {
  * 目录里的 `baseUrl.default` 是厂商文档上的地址，不一定是我们该收的那个。
  * Ollama 给的是原生 API 的根（`:11434`），它的 OpenAI 兼容面在 `/v1` 下。
  */
-export function modelsEndpointFor(spec: LlmProviderSpec, configuredBaseUrl?: string): string | null {
+export function modelsEndpointFor(
+  spec: LlmProviderSpec,
+  configuredBaseUrl?: string,
+): string | null {
   const base = (configuredBaseUrl ?? spec.baseUrl.default ?? '').replace(/\/+$/, '');
   if (!base) return null;
   // Ollama 原生根 → 补 `/v1`（`:11434/api/tags` 也能列，但那是另一套响应形状）
-  const normalised = spec.kind === 'ollama-native' && !/\/v\d+(\b|$)/.test(base) ? `${base}/v1` : base;
+  const normalised =
+    spec.kind === 'ollama-native' && !/\/v\d+(\b|$)/.test(base) ? `${base}/v1` : base;
   return `${normalised}/models`;
 }
 

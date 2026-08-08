@@ -46,7 +46,17 @@
  * `~/.local/share/openmemo/datadir.json`。端口用 19700 段，避开 :10000 与 17650。
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, chmodSync, rmSync, existsSync, accessSync, copyFileSync, statSync, constants as fsConstants } from 'node:fs';
+import {
+  mkdirSync,
+  writeFileSync,
+  chmodSync,
+  rmSync,
+  existsSync,
+  accessSync,
+  copyFileSync,
+  statSync,
+  constants as fsConstants,
+} from 'node:fs';
 import { join, resolve, dirname, delimiter } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -102,7 +112,9 @@ const TRANSCRIBE = argv.includes('--transcribe');
  * 环境变量兜底是给 workflow 用的：`env:` 赋值不经过 shell，
  * 既没有 `${{ }}` 注入问题，也不用管 Windows runner 默认是 pwsh 还是 bash。
  */
-const INCLUDE_OPTIONAL = String(arg('--include-optional', '') || process.env.AUDIT_INCLUDE_OPTIONAL || '')
+const INCLUDE_OPTIONAL = String(
+  arg('--include-optional', '') || process.env.AUDIT_INCLUDE_OPTIONAL || '',
+)
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
@@ -126,7 +138,15 @@ mkdirSync(DATA_DIR, { recursive: true });
 /* ─────────────────── 0. 宿主基线：这台 runner 上本来就有什么 ───────────────────── */
 
 hdr('0. 宿主基线（屏蔽之前）—— 这些就是"不屏蔽就会被悄悄借走"的东西');
-const HOST_TOOLS = ['ffmpeg', 'ffprobe', 'yt-dlp', 'youtube-dl', 'whisper-cli', 'sqlite3', 'python3'];
+const HOST_TOOLS = [
+  'ffmpeg',
+  'ffprobe',
+  'yt-dlp',
+  'youtube-dl',
+  'whisper-cli',
+  'sqlite3',
+  'python3',
+];
 
 /*
  * ★ T-145：自己实现 which，**不要 shell 出去**。
@@ -280,7 +300,13 @@ async function startDaemon(label) {
     if (proc.exitCode !== null) break;
   }
   say(`   [${label}] ✘ daemon 没起来。它的输出：`);
-  say(logs.join('').split('\n').map((l) => `      ${l}`).join('\n'));
+  say(
+    logs
+      .join('')
+      .split('\n')
+      .map((l) => `      ${l}`)
+      .join('\n'),
+  );
   throw new Error('daemon did not start');
 }
 async function stopDaemon() {
@@ -406,7 +432,10 @@ try {
   const bootLogs = await startDaemon('cold');
   const h0 = await j('/api/health');
   extLine('cold', h0.body);
-  const bootLine = bootLogs.join('').split('\n').find((l) => l.includes('tokenizer='));
+  const bootLine = bootLogs
+    .join('')
+    .split('\n')
+    .find((l) => l.includes('tokenizer='));
   if (bootLine) say(`   启动日志里的那一行：${bootLine.trim()}`);
 
   /* ──────────────────── 3. 目录里"适用于本机"的包，逐个装 ─────────────────────── */
@@ -459,13 +488,17 @@ try {
 
   // ★ 地面真相：不信 job 的自述，直接问"到底装上了哪些"。
   const inst = await j('/api/backends/installed');
-  const instArr = Array.isArray(inst.body) ? inst.body : (inst.body?.packs ?? inst.body?.installed ?? []);
+  const instArr = Array.isArray(inst.body)
+    ? inst.body
+    : (inst.body?.packs ?? inst.body?.installed ?? []);
   const installedIds = new Set(instArr.map((x) => x.id ?? x.packId));
   say(`   （/api/backends/installed 返回 ${instArr.length} 条）`);
   say();
   say('   ── 独立核对：/api/backends/installed 怎么说 ──');
   for (const p of applicable) {
-    say(`   ${p.id.padEnd(32)} ${installedIds.has(p.id) ? '✅ 真的在已安装列表里' : '❌ 不在已安装列表里'}`);
+    say(
+      `   ${p.id.padEnd(32)} ${installedIds.has(p.id) ? '✅ 真的在已安装列表里' : '❌ 不在已安装列表里'}`,
+    );
   }
 
   /* ─────────────────── 3b. 拉模型（T-145 第二轮补上的覆盖缺口）──────────────── */
@@ -518,11 +551,13 @@ try {
     `   目录里 role=vad 的模型 ${wanted.length} 个；` +
       `体积 <= ${(CAP / 1024 / 1024) | 0} MB 的 ${pick.length} 个`,
   );
-  for (const m of skipped) say(`     [skip] ${(sizeOf(m) / 1024 / 1024).toFixed(0)} MB 超上限：${m.id}`);
+  for (const m of skipped)
+    say(`     [skip] ${(sizeOf(m) / 1024 / 1024).toFixed(0)} MB 超上限：${m.id}`);
   if (wanted.length === 0) {
     // 空集必须出声（本仓同一形状已发生四次）：先怀疑 unwrap，再怀疑目录。
     say('   ⚠️ 目录里一个 role=vad 的模型都没有 —— 先怀疑 unwrap 写错了，别当成"目录里没有 VAD"。');
-    for (const m of models.slice(0, 10)) say(`     （目录里有：${m.id} role=${m.role} tags=${JSON.stringify(m.tags ?? [])}）`);
+    for (const m of models.slice(0, 10))
+      say(`     （目录里有：${m.id} role=${m.role} tags=${JSON.stringify(m.tags ?? [])}）`);
   }
 
   /*
@@ -548,7 +583,9 @@ try {
       .sort((a, b) => a.bytes - b.bytes)[0];
     if (!asr) {
       // 空集必须出声（本仓同一形状已发生三次）。
-      say('   ⚠️ --transcribe：目录里挑不出任何 whisper.cpp 能加载的 asr 模型 —— 先怀疑 unwrap，再怀疑目录。');
+      say(
+        '   ⚠️ --transcribe：目录里挑不出任何 whisper.cpp 能加载的 asr 模型 —— 先怀疑 unwrap，再怀疑目录。',
+      );
       for (const m of models.filter((x) => x.role === 'asr').slice(0, 8)) {
         say(`      （role=asr 的有：${m.id} engines=${JSON.stringify(m.engines ?? null)}）`);
       }
@@ -571,11 +608,13 @@ try {
   }
 
   const minst = await j('/api/models/installed');
-  const minstArr = Array.isArray(minst.body) ? minst.body : (minst.body?.models ?? minst.body?.installed ?? []);
+  const minstArr = Array.isArray(minst.body)
+    ? minst.body
+    : (minst.body?.models ?? minst.body?.installed ?? []);
   say();
   say(`   ── 独立核对：/api/models/installed 返回 ${minstArr.length} 条 ──`);
-  for (const m of minstArr.slice(0, 12)) say(`     ${m.id ?? m.modelId ?? JSON.stringify(m).slice(0, 60)}`);
-
+  for (const m of minstArr.slice(0, 12))
+    say(`     ${m.id ?? m.modelId ?? JSON.stringify(m).slice(0, 60)}`);
 
   /* ─────────── 4. 重启（materializeSqliteExtensions 只在启动时跑）─────────────── */
 
@@ -604,7 +643,11 @@ try {
     say('   ' + '-'.repeat(88));
     for (const c of checks) {
       say(
-        `   ${String(c.id).padEnd(34)} ${String(c.status).padEnd(7)} ${String(c.required ?? '').padEnd(9)} ${String(c.detail ?? c.message ?? '').replace(/\s+/g, ' ').slice(0, 100)}`,
+        `   ${String(c.id).padEnd(34)} ${String(c.status).padEnd(7)} ${String(c.required ?? '').padEnd(9)} ${String(
+          c.detail ?? c.message ?? '',
+        )
+          .replace(/\s+/g, ' ')
+          .slice(0, 100)}`,
       );
     }
 
@@ -633,16 +676,30 @@ try {
     hdr('6. ★ 三分类：产品自己下的 / 借宿主的 / 装不上');
     const tools = checks.filter((c) => String(c.id).startsWith('tool.'));
     const own = tools.filter((c) => c.status === 'ok');
-    const borrowed = tools.filter((c) => c.status === 'warn' && /PATH/i.test(String(c.detail ?? '')));
-    const missing = tools.filter((c) => c.status === 'fail' || (c.status === 'warn' && !/PATH/i.test(String(c.detail ?? ''))));
-    say(`   ✅ 产品自己下载并校验的 (${own.length})：      ${own.map((c) => c.id).join(', ') || '(无)'}`);
-    say(`   ⚠️ 借宿主 PATH 的       (${borrowed.length})：      ${borrowed.map((c) => c.id).join(', ') || '(无)'}`);
-    say(`   ❌ 装不上/不可用        (${missing.length})：      ${missing.map((c) => c.id).join(', ') || '(无)'}`);
+    const borrowed = tools.filter(
+      (c) => c.status === 'warn' && /PATH/i.test(String(c.detail ?? '')),
+    );
+    const missing = tools.filter(
+      (c) => c.status === 'fail' || (c.status === 'warn' && !/PATH/i.test(String(c.detail ?? ''))),
+    );
+    say(
+      `   ✅ 产品自己下载并校验的 (${own.length})：      ${own.map((c) => c.id).join(', ') || '(无)'}`,
+    );
+    say(
+      `   ⚠️ 借宿主 PATH 的       (${borrowed.length})：      ${borrowed.map((c) => c.id).join(', ') || '(无)'}`,
+    );
+    say(
+      `   ❌ 装不上/不可用        (${missing.length})：      ${missing.map((c) => c.id).join(', ') || '(无)'}`,
+    );
     say();
     const cn = checks.find((c) => c.id === 'ext.chineseSearch');
     if (cn) {
       say(`   ★ ext.chineseSearch = ${cn.status}（required=${cn.required}）`);
-      say(`     ${String(cn.detail ?? cn.message ?? '').replace(/\s+/g, ' ').slice(0, 300)}`);
+      say(
+        `     ${String(cn.detail ?? cn.message ?? '')
+          .replace(/\s+/g, ' ')
+          .slice(0, 300)}`,
+      );
       say('     ← 这一条才是「libsimple 真的装上了」的判据。');
       say('       T-093 的事故形态是：7 个包全 succeeded、sha256 全过，而这里是 fail。');
     } else {
@@ -719,10 +776,19 @@ try {
       say();
       say(`   ── 第 1 发：产品默认超时 ${rt.PROBE_TIMEOUT_MS}ms（复现自检看到的那个结论）──`);
       const r1 = await rt.runProbe({ probePath, backendDir });
-      say(`   ok=${r1.ok}  耗时=${r1.durationMs}ms  ${r1.ok ? '' : `kind=${r1.kind}  message=${r1.message}`}`);
+      say(
+        `   ok=${r1.ok}  耗时=${r1.durationMs}ms  ${r1.ok ? '' : `kind=${r1.kind}  message=${r1.message}`}`,
+      );
       say(`   stdout: ${r1.ok ? JSON.stringify(r1.output).slice(0, 400) : '(失败，无有效 JSON)'}`);
       say('   ── stderr 全文（这正是此前日志里完全没有的东西）──');
-      say(r1.stderr ? r1.stderr.split('\n').map((l) => `      ${l}`).join('\n') : '      (空)');
+      say(
+        r1.stderr
+          ? r1.stderr
+              .split('\n')
+              .map((l) => `      ${l}`)
+              .join('\n')
+          : '      (空)',
+      );
 
       /*
        * 第二发：只有第一发失败才有必要 —— 成功的话"慢还是挂"这个问题本身不存在。
@@ -737,10 +803,21 @@ try {
         const t0 = Date.now();
         const r2 = await rt.runProbe({ probePath, backendDir, timeoutMs: LONG_MS });
         const wall = Date.now() - t0;
-        say(`   ok=${r2.ok}  耗时=${r2.durationMs}ms（墙钟 ${wall}ms）  ${r2.ok ? '' : `kind=${r2.kind}  message=${r2.message}`}`);
-        say(`   stdout: ${r2.ok ? JSON.stringify(r2.output).slice(0, 400) : '(失败，无有效 JSON)'}`);
+        say(
+          `   ok=${r2.ok}  耗时=${r2.durationMs}ms（墙钟 ${wall}ms）  ${r2.ok ? '' : `kind=${r2.kind}  message=${r2.message}`}`,
+        );
+        say(
+          `   stdout: ${r2.ok ? JSON.stringify(r2.output).slice(0, 400) : '(失败，无有效 JSON)'}`,
+        );
         say('   ── stderr 全文 ──');
-        say(r2.stderr ? r2.stderr.split('\n').map((l) => `      ${l}`).join('\n') : '      (空)');
+        say(
+          r2.stderr
+            ? r2.stderr
+                .split('\n')
+                .map((l) => `      ${l}`)
+                .join('\n')
+            : '      (空)',
+        );
 
         /*
          * ★ 结论只从上面这两发的实际输出里读，不引入任何假设。
@@ -755,7 +832,9 @@ try {
         } else if (r2.kind === 'timeout') {
           say(`   ✘ 放宽到 ${LONG_MS}ms 仍然超时（${r2.durationMs}ms）。`);
           say('     → 「10 秒太短」被证伪：这不是慢，是**卡住不返回**。');
-          say('     → 剩下「初始化会挂」与「真有 bug」两条，二者要靠上面的 stderr 停在哪一行来分。');
+          say(
+            '     → 剩下「初始化会挂」与「真有 bug」两条，二者要靠上面的 stderr 停在哪一行来分。',
+          );
           say('       stderr 为空 = 连第一个后端都没打印出来就停了（更像加载期就挂住）。');
         } else {
           say(`   ✘ 放宽后不是超时，而是 ${r2.kind}：${r2.message}`);
@@ -796,7 +875,9 @@ try {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ input: dest, title: 'jfk (CI 可行性证明)', language: 'en' }),
       });
-      say(`   POST /api/notes/import → HTTP ${imp.status} ${JSON.stringify(imp.body).slice(0, 300)}`);
+      say(
+        `   POST /api/notes/import → HTTP ${imp.status} ${JSON.stringify(imp.body).slice(0, 300)}`,
+      );
 
       const noteUid = imp.body?.noteUid;
       const jobUid = imp.body?.jobUid;
@@ -824,7 +905,11 @@ try {
 
         const tr = await j(`/api/notes/${encodeURIComponent(noteUid)}/transcript`);
         const segs = tr.body?.segments ?? [];
-        const text = segs.map((s) => String(s.text ?? '')).join(' ').replace(/\s+/g, ' ').trim();
+        const text = segs
+          .map((s) => String(s.text ?? ''))
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
         say(`   GET /api/notes/${noteUid}/transcript → HTTP ${tr.status}，${segs.length} 段`);
         say(`   文本（前 300 字）：${text.slice(0, 300) || '(空)'}`);
 
@@ -838,7 +923,14 @@ try {
           say('   ✘ 转写没有产出可用文本 —— 这个平台上"能转写"这件事目前不成立。');
           if (daemonLogs.length) {
             say('   daemon 最后 40 行：');
-            say(daemonLogs.join('').split('\n').slice(-40).map((l) => `      ${l}`).join('\n'));
+            say(
+              daemonLogs
+                .join('')
+                .split('\n')
+                .slice(-40)
+                .map((l) => `      ${l}`)
+                .join('\n'),
+            );
           }
           exitCode = 1;
         } else {
@@ -911,8 +1003,7 @@ try {
       const ps = f.platforms ?? [];
       if (ps.length === 0) return true;
       return ps.some(
-        (p) =>
-          (!p.os || p.os === process.platform) && (!p.arch || p.arch === process.arch),
+        (p) => (!p.os || p.os === process.platform) && (!p.arch || p.arch === process.arch),
       );
     };
     const hitsOf = (m) =>
@@ -937,20 +1028,25 @@ try {
        *   「本平台没有」与「清单里根本没有」分开 —— 这两句话的处置完全不同。
        */
       say(`   ⓘ 本平台（${process.platform}/${process.arch}）没有任何模型提供这些 role。`);
-      const anyPlatform = models.filter(
-        (m) => (m.files ?? []).some((f) => f.optional === true && INCLUDE_OPTIONAL.includes(f.role)),
+      const anyPlatform = models.filter((m) =>
+        (m.files ?? []).some((f) => f.optional === true && INCLUDE_OPTIONAL.includes(f.role)),
       );
       if (anyPlatform.length === 0) {
         say('   ⚠️ 而且**整个清单里**都没有这个 role 的可选文件 —— 先怀疑 role 名写错了，');
         say('      再怀疑清单。（清单里出现过的可选 role：');
         const seen = new Set();
-        for (const m of models) for (const f of m.files ?? []) if (f.optional === true) seen.add(f.role);
+        for (const m of models)
+          for (const f of m.files ?? []) if (f.optional === true) seen.add(f.role);
         say(`      ${[...seen].join(', ') || '(一个都没有)'}）`);
       } else {
         say(`   清单里有 ${anyPlatform.length} 个模型提供它，但都限定了别的平台 —— 这是预期的：`);
         for (const m of anyPlatform.slice(0, 6)) {
-          const f = (m.files ?? []).find((x) => x.optional === true && INCLUDE_OPTIONAL.includes(x.role));
-          say(`     ${String(m.id).padEnd(34)} ${f?.role} → ${JSON.stringify(f?.platforms ?? null)}`);
+          const f = (m.files ?? []).find(
+            (x) => x.optional === true && INCLUDE_OPTIONAL.includes(x.role),
+          );
+          say(
+            `     ${String(m.id).padEnd(34)} ${f?.role} → ${JSON.stringify(f?.platforms ?? null)}`,
+          );
         }
         say('   → 本平台跳过，不下载。这一格的答案只能由对应平台的那一格给出。');
       }
@@ -958,14 +1054,18 @@ try {
       const best = carriers[0];
       say(`   清单里能在本平台提供这些 role 的模型 ${carriers.length} 个，挑最小的：`);
       for (const c of carriers.slice(0, 6)) {
-        say(`     ${String(c.m.id).padEnd(34)} ${(c.bytes / 1024 / 1024).toFixed(0)} MB  (${c.hits.map((h) => h.role).join(',')})`);
+        say(
+          `     ${String(c.m.id).padEnd(34)} ${(c.bytes / 1024 / 1024).toFixed(0)} MB  (${c.hits.map((h) => h.role).join(',')})`,
+        );
       }
       say();
       say(`   → 装 ${best.m.id}（含可选文件共 ${(best.bytes / 1024 / 1024).toFixed(0)} MB）`);
       const t0 = Date.now();
       // 1.7 GB 的下载 + 解包，900s 不够；这一步单独给更长的窗口。
       const status = await pullModel(best.m, 2400);
-      say(`   ${String(best.m.id).padEnd(34)} ${status}  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+      say(
+        `   ${String(best.m.id).padEnd(34)} ${status}  (${((Date.now() - t0) / 1000).toFixed(1)}s)`,
+      );
 
       /*
        * ★ 重新问一次 selfcheck。**必须重跑** —— 第 5 节那份报告是装之前的。
@@ -989,7 +1089,8 @@ try {
         } else {
           say(`   ★★ asr.coreml = ${cm.status}（required=${cm.required}）`);
           say(`      ${String(cm.detail ?? '').replace(/\s+/g, ' ')}`);
-          if (cm.remediation) say(`      remediation: ${String(cm.remediation).replace(/\s+/g, ' ')}`);
+          if (cm.remediation)
+            say(`      remediation: ${String(cm.remediation).replace(/\s+/g, ' ')}`);
           say();
           /*
            * ★ 三档各自意味着什么，直接写在输出里 —— 免得下一个人再去翻 selfcheck.ts。
@@ -1026,11 +1127,19 @@ try {
          */
         if (again.sc.status !== 0) {
           say();
-          say('   ✘ 装完可选文件之后，selfcheck 判定**不健康**（退出码 ' + String(again.sc.status) + '）。');
+          say(
+            '   ✘ 装完可选文件之后，selfcheck 判定**不健康**（退出码 ' +
+              String(again.sc.status) +
+              '）。',
+          );
           say('     本节因此让整个审计变红 —— 判据是产品自己的 required 语义，不是审计另立的。');
           const bad = (again.checks ?? []).filter((c) => c.status === 'fail' && c.required);
           for (const c of bad) {
-            say(`     · ${String(c.id).padEnd(24)} ${String(c.detail ?? '').replace(/\s+/g, ' ').slice(0, 200)}`);
+            say(
+              `     · ${String(c.id).padEnd(24)} ${String(c.detail ?? '')
+                .replace(/\s+/g, ' ')
+                .slice(0, 200)}`,
+            );
           }
           exitCode = 1;
         }
@@ -1038,7 +1147,11 @@ try {
         /* 装完之后 by-name/asr 下到底多了什么，摊开给下一个人看。 */
         try {
           const { readdirSync } = await import('node:fs');
-          const asrDir = join(process.env.OPENMEMO_MODELS ?? join(DATA_DIR, 'models'), 'by-name', 'asr');
+          const asrDir = join(
+            process.env.OPENMEMO_MODELS ?? join(DATA_DIR, 'models'),
+            'by-name',
+            'asr',
+          );
           say();
           say(`   by-name/asr 目录实况（${asrDir}）：`);
           for (const e of readdirSync(asrDir)) say(`     ${e}`);
@@ -1058,7 +1171,14 @@ try {
   }
   if (daemonLogs.length) {
     say('   daemon 最后 60 行输出：');
-    say(daemonLogs.join('').split('\n').slice(-60).map((l) => `      ${l}`).join('\n'));
+    say(
+      daemonLogs
+        .join('')
+        .split('\n')
+        .slice(-60)
+        .map((l) => `      ${l}`)
+        .join('\n'),
+    );
   }
   exitCode = 1;
 } finally {

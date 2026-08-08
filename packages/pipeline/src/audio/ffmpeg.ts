@@ -64,10 +64,13 @@ export async function probeMedia(
 ): Promise<ProbeResult> {
   const argv = buildArgv({
     flags: [
-      '-v', 'error',
+      '-v',
+      'error',
       '-hide_banner',
-      '-protocol_whitelist', opts.remote === true ? REMOTE_PROTOCOLS : LOCAL_PROTOCOLS,
-      '-print_format', 'json',
+      '-protocol_whitelist',
+      opts.remote === true ? REMOTE_PROTOCOLS : LOCAL_PROTOCOLS,
+      '-print_format',
+      'json',
       '-show_format',
       '-show_streams',
       '-i',
@@ -181,18 +184,27 @@ export async function normalizeToPcm16k(
     flags: [
       '-nostdin',
       '-hide_banner',
-      '-loglevel', 'error',
+      '-loglevel',
+      'error',
       '-y',
-      '-protocol_whitelist', opts.remote === true ? REMOTE_PROTOCOLS : LOCAL_PROTOCOLS,
+      '-protocol_whitelist',
+      opts.remote === true ? REMOTE_PROTOCOLS : LOCAL_PROTOCOLS,
       // Machine-readable progress on stdout; avoids scraping the human log format.
-      '-progress', 'pipe:1',
-      '-i', inputPath,
+      '-progress',
+      'pipe:1',
+      '-i',
+      inputPath,
       '-vn', // drop video
-      '-map', '0:a:0', // first audio stream only
-      '-ac', String(ASR_CHANNELS),
-      '-ar', String(ASR_SAMPLE_RATE),
-      '-c:a', 'pcm_s16le',
-      '-f', 'wav',
+      '-map',
+      '0:a:0', // first audio stream only
+      '-ac',
+      String(ASR_CHANNELS),
+      '-ar',
+      String(ASR_SAMPLE_RATE),
+      '-c:a',
+      'pcm_s16le',
+      '-f',
+      'wav',
       outPath,
     ],
     // Both paths are ours (managed temp dir), so there is no user-controlled operand.
@@ -252,16 +264,28 @@ export async function sliceWav(
 
   const argv = buildArgv({
     flags: [
-      '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
-      '-protocol_whitelist', LOCAL_PROTOCOLS,
+      '-nostdin',
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-protocol_whitelist',
+      LOCAL_PROTOCOLS,
       // -ss BEFORE -i is the fast seek; on PCM it is also exact.
-      '-ss', startSec,
-      '-t', durSec,
-      '-i', inputPath,
-      '-c:a', 'pcm_s16le',
-      '-ar', String(ASR_SAMPLE_RATE),
-      '-ac', String(ASR_CHANNELS),
-      '-f', 'wav',
+      '-ss',
+      startSec,
+      '-t',
+      durSec,
+      '-i',
+      inputPath,
+      '-c:a',
+      'pcm_s16le',
+      '-ar',
+      String(ASR_SAMPLE_RATE),
+      '-ac',
+      String(ASR_CHANNELS),
+      '-f',
+      'wav',
       outPath,
     ],
     operands: [],
@@ -280,7 +304,10 @@ export async function sliceWav(
 }
 
 /** Is ffmpeg/ffprobe actually usable? Checked at startup so failures are explainable. */
-export async function checkFfmpeg(tools: ToolPaths, cwd: string): Promise<{ ok: boolean; version: string | null }> {
+export async function checkFfmpeg(
+  tools: ToolPaths,
+  cwd: string,
+): Promise<{ ok: boolean; version: string | null }> {
   try {
     const r = await run({
       bin: tools.ffmpeg,

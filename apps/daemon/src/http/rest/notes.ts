@@ -253,7 +253,13 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
         const looksLikeUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(input);
         if (!looksLikeUrl) {
           if (!isAbsolute(input)) {
-            sendError(res, 400, 'BAD_PATH', 'local path must be absolute', '本地路径必须是绝对路径');
+            sendError(
+              res,
+              400,
+              'BAD_PATH',
+              'local path must be absolute',
+              '本地路径必须是绝对路径',
+            );
             return true;
           }
           const real = resolve(input);

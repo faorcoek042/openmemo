@@ -132,7 +132,10 @@ describe('T-132 ① yt-dlp 在下载清单里', () => {
       /^https:\/\/github\.com\/yt-dlp\/yt-dlp\/releases\/download\//,
       '来源必须是 yt-dlp 官方 GitHub Release（用户要求：写明从哪里下载）',
     );
-    assert.ok(pack.files[0].mirrors[0].url.includes(pack.engineVersion), 'URL 必须钉在声明的版本上');
+    assert.ok(
+      pack.files[0].mirrors[0].url.includes(pack.engineVersion),
+      'URL 必须钉在声明的版本上',
+    );
   });
 
   it('Windows 包给的是 yt-dlp.exe（平台名不同，找错名字就等于没装）', async () => {
@@ -182,7 +185,10 @@ describe('T-132 ① yt-dlp 在下载清单里', () => {
     // 集合不能是空的，否则这条断言可以靠"一个都不匹配"永远通过。
     assert.ok(needsChannel.length >= 2, '筛选条件把所有组件都排除了，这条断言就失去意义了');
     for (const id of ['media-tools-linux-x64', 'ytdlp-linux-x64']) {
-      assert.ok(needsChannel.some((c) => c.id === id), `${id} 应当落在被检查的集合里`);
+      assert.ok(
+        needsChannel.some((c) => c.id === id),
+        `${id} 应当落在被检查的集合里`,
+      );
     }
 
     const orphans = needsChannel.filter((c) => !installable.has(c.id));
@@ -321,7 +327,9 @@ describe('T-132 ②③ 装上了要真的找得到', () => {
               name: YTDLP,
               sizeBytes: body.length,
               sha256,
-              mirrors: [{ provider: 'github', url: `http://127.0.0.1:${port}/yt-dlp`, official: true }],
+              mirrors: [
+                { provider: 'github', url: `http://127.0.0.1:${port}/yt-dlp`, official: true },
+              ],
             },
           ],
         },

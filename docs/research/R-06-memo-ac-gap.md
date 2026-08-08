@@ -11,14 +11,14 @@ corrected-date: 2026-08-06
 > **此前本文标 `status: ready`**，其 §6「建议优先级（给 Manager）」是当前最年轻、也**最可能被直接照做**
 > 的一份待办清单。逐条复核后：**6 条里 3 条已作废** —— 照原文做会白白花掉约一周。
 >
-> | §6 条目 | 此前写着 | 复核结论（2026-08-06） |
-> | --- | --- | --- |
-> | 1【最高】引擎/模型选择器改 catalog 驱动 + 删 `'turbo'` | 待办 | ❌ **已完成**。`apps/web/src/components/common/AsrModelPicker.tsx:18-21` 自陈替换了写死的 `'paraformer'\|'turbo'`；`features/recorder/RecorderPage.tsx:73-74`；回归测试 `apps/web/src/test/components.test.tsx:692`「★ 引擎标识来自 shared 联合，"turbo" 不是合法引擎」 |
-> | 2【高】sherpa 离线分支 + SenseVoice 进目录 | 待办 | ❌ **已被 ADR-016 推翻**。`ADR-016-user-scope-cuts.md:31`：「❌ 停：sherpa 多模型族分派、**SenseVoice** / Qwen3-ASR / Omnilingual、AMD ASR 自建 CI」。全仓 `SenseVoice` 剥注释后仅 `packages/shared/src/models.ts:477` 一处**注释**提及 |
-> | 3【高】接通 RecorderPage ↔ `/ws/recorder` | 待办 | ❌ **已完成**。`apps/web/src/features/recorder/asrStream.ts:2`（自陈「F3 实时录音的**真实**上行通道」）、`:72`（`new URL(…/ws/recorder)`）、`:108-122`（真 `WebSocket`，非 mock） |
-> | 4【中】whisper.cpp 的 Vulkan/ROCm：自建 or 改口径 | 待办 | ✅ **仍然成立，而且更急**。`backends.json` 零个 vulkan/rocm；ADR-016 已停 AMD ASR 自建 CI → **"自建"这一半被砍，"改口径"那一半从未做**（`docs/00-CHARTER.md:24,27` 原文未动，`D-11:15-18` 已就此发过警告） |
-> | 5【中】把"可导入任意 HF GGUF"从对外话术撤掉 | 待办 | ✅ **仍然成立**。`apps/daemon/src/http/rest/models.ts:728-733` 对 `kind === 'hf_repo'` 硬 501，而 `coordination/BOARD.md:9` 仍把 ADR-004 列为必读、ADR-004 里那句"可导入任意 HF GGUF"未加任何标注 |
-> | 6【低】回收站 / 摘要 / prompt 模板 | 待办 | ⚠️ **拿不准，本轮未定**。`R-06:262` 说 `DELETE /api/notes/:uid` 是**直接删**，而 `apps/web/src/features/notes/api.ts:245` 的注释写的是**软删除（D-02：`deleted_at`）** —— 两说冲突，**需要单独核一轮 DB 层**才能判 |
+> | §6 条目                                                | 此前写着 | 复核结论（2026-08-06）                                                                                                                                                                                                                                                  |
+> | ------------------------------------------------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+> | 1【最高】引擎/模型选择器改 catalog 驱动 + 删 `'turbo'` | 待办     | ❌ **已完成**。`apps/web/src/components/common/AsrModelPicker.tsx:18-21` 自陈替换了写死的 `'paraformer'\|'turbo'`；`features/recorder/RecorderPage.tsx:73-74`；回归测试 `apps/web/src/test/components.test.tsx:692`「★ 引擎标识来自 shared 联合，"turbo" 不是合法引擎」 |
+> | 2【高】sherpa 离线分支 + SenseVoice 进目录             | 待办     | ❌ **已被 ADR-016 推翻**。`ADR-016-user-scope-cuts.md:31`：「❌ 停：sherpa 多模型族分派、**SenseVoice** / Qwen3-ASR / Omnilingual、AMD ASR 自建 CI」。全仓 `SenseVoice` 剥注释后仅 `packages/shared/src/models.ts:477` 一处**注释**提及                                 |
+> | 3【高】接通 RecorderPage ↔ `/ws/recorder`              | 待办     | ❌ **已完成**。`apps/web/src/features/recorder/asrStream.ts:2`（自陈「F3 实时录音的**真实**上行通道」）、`:72`（`new URL(…/ws/recorder)`）、`:108-122`（真 `WebSocket`，非 mock）                                                                                       |
+> | 4【中】whisper.cpp 的 Vulkan/ROCm：自建 or 改口径      | 待办     | ✅ **仍然成立，而且更急**。`backends.json` 零个 vulkan/rocm；ADR-016 已停 AMD ASR 自建 CI → **"自建"这一半被砍，"改口径"那一半从未做**（`docs/00-CHARTER.md:24,27` 原文未动，`D-11:15-18` 已就此发过警告）                                                              |
+> | 5【中】把"可导入任意 HF GGUF"从对外话术撤掉            | 待办     | ✅ **仍然成立**。`apps/daemon/src/http/rest/models.ts:728-733` 对 `kind === 'hf_repo'` 硬 501，而 `coordination/BOARD.md:9` 仍把 ADR-004 列为必读、ADR-004 里那句"可导入任意 HF GGUF"未加任何标注                                                                       |
+> | 6【低】回收站 / 摘要 / prompt 模板                     | 待办     | ⚠️ **拿不准，本轮未定**。`R-06:262` 说 `DELETE /api/notes/:uid` 是**直接删**，而 `apps/web/src/features/notes/api.ts:245` 的注释写的是**软删除（D-02：`deleted_at`）** —— 两说冲突，**需要单独核一轮 DB 层**才能判                                                      |
 >
 > **连带作废**：§5 的 **N-2「`RecorderPage` 的字幕流是 MOCK」** 随第 3 条一起作废（已就地标注）。
 > §1–§4 的对标事实（引擎数 8 vs 3、ASR 模型条目 47 vs 11 等）本轮未复核，按原样引用请自行验证时点。
@@ -31,7 +31,7 @@ corrected-date: 2026-08-06
   在后端三值联合 `EngineId = 'whisper.cpp'|'paraformer'|'sherpa-onnx'` 里**根本不存在**。
   真实引擎切换只能靠环境变量 `OPENMEMO_ASR_ENGINE`，全前端 grep 无命中。**导入页 CapturePage 连引擎/模型/语言/prompt 都没有。**
 - **引擎数量差距（forensics 原文核实）**：memo.ac 本地 4 个（`whisper` / `sherpa-onnx` / `funasr-cli` / `parakeet-cli`）
-  + 云端 4 个 ASR 插件（Deepgram / ElevenLabs / Groq / OpenAI）= **8 条可选路径**；我们后端 3、前端 0 条真实可选。
+  - 云端 4 个 ASR 插件（Deepgram / ElevenLabs / Groq / OpenAI）= **8 条可选路径**；我们后端 3、前端 0 条真实可选。
 - **ASR 模型条目差距**：memo.ac **47 条**（whisper 15 + sherpa 27 + parakeet 4 + funasr 1）；我们 **11 条**
   （whisper 9 个量化档 + sherpa 2）。差得最狠的是 sherpa 侧 27→2：**SenseVoice、Qwen3-ASR、Omnilingual-1600语种、
   Moonshine、各 zipformer/wenet 全缺**。技术根因：`packages/pipeline/src/asr/paraformer.ts:257` 把
@@ -69,14 +69,15 @@ corrected-date: 2026-08-06
 
 ### 0. 证据等级与方法
 
-| 标记 | 含义 |
-|---|---|
-| **[F]** | 从 `/root/memo-forensics/` 解包原文核实（我或我的 subagent 直接读到）。最高可信度。 |
-| **[O]** | 从 OpenMemo 仓库源码 / 运行中 demo 的只读 API / git 历史核实。 |
-| **[R1]** | 仅来自 R-01 的转述，本次**未**独立核实。 |
-| **推测** | 明确标注。 |
+| 标记     | 含义                                                                                |
+| -------- | ----------------------------------------------------------------------------------- |
+| **[F]**  | 从 `/root/memo-forensics/` 解包原文核实（我或我的 subagent 直接读到）。最高可信度。 |
+| **[O]**  | 从 OpenMemo 仓库源码 / 运行中 demo 的只读 API / git 历史核实。                      |
+| **[R1]** | 仅来自 R-01 的转述，本次**未**独立核实。                                            |
+| **推测** | 明确标注。                                                                          |
 
 方法说明：
+
 - memo.ac 侧全部重新读原文，未依赖 R-01 转述。核实到 R-01 的一处硬错误（标签系统）。
 - 我方状态全部读代码 / 读 manifest / 打运行中的 demo（`GET` only，未写、未重启）。
   **未采信 FEATURE-COVERAGE.md 的任何状态**——实测发现该矩阵在两个方向上都已失真（见 §5）。
@@ -93,13 +94,14 @@ corrected-date: 2026-08-06
 
 引擎选择在其渲染层是两层结构：
 
-| 层 | 取值 | 证据 |
-|---|---|---|
-| `transcriptType` | `local` / `cloud` | 渲染层 `transcriptSetStore` 默认值 `"local"` |
+| 层                                             | 取值                                                             | 证据                                                                                    |
+| ---------------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `transcriptType`                               | `local` / `cloud`                                                | 渲染层 `transcriptSetStore` 默认值 `"local"`                                            |
 | `localEngine`（`transcriptType==='local'` 时） | `whisper`（默认）· `sherpa-onnx` · `funasr-cli` · `parakeet-cli` | 渲染层条件分支 `l==="funasr-cli"` / `l==="sherpa-onnx"` / `h==="parakeet-cli"` 逐个命中 |
-| 云端 provider（`transcriptType==='cloud'` 时） | 4 个 ASR 插件 | `plugins.json` 的 `type:"transcription"` 条目 |
+| 云端 provider（`transcriptType==='cloud'` 时） | 4 个 ASR 插件                                                    | `plugins.json` 的 `type:"transcription"` 条目                                           |
 
 **本地 4 个引擎**：
+
 1. `whisper` = whisper.cpp **1.8.6**，随包内置。macOS 出两套构建：`addon/whisper/bin/1.8.6/`（含 `libggml-metal`，即 Metal+CPU）
    与 `addon/whisper/bin/1.8.6/coreml/`（额外含 `libwhisper.coreml.dylib`）。Windows 的 CUDA 版是**按需下载**的 `.7z`，不随包。
 2. `sherpa-onnx` = 走 npm 包 `sherpa-onnx-node` + `libonnxruntime 1.24.4`，无独立引擎二进制。
@@ -114,15 +116,16 @@ corrected-date: 2026-08-06
 
 #### 1.2 我们有几个 **[O]**
 
-| 层 | 现状 | 文件 |
-|---|---|---|
-| 后端引擎联合类型 | **3 个**：`'whisper.cpp' \| 'paraformer' \| 'sherpa-onnx'` | `packages/pipeline/src/asr/selectEngine.ts:22` |
-| 引擎实际构造 | `whisper` 恒构造；`sherpa` 需 `OPENMEMO_SHERPA_STREAM_DIR` 环境变量 + 模型解析成功；`paraformer` 需 `OPENMEMO_PARAFORMER_DIR` | `apps/daemon/src/pipeline/setup.ts` |
-| 引擎选择入口 | **只有环境变量** `OPENMEMO_ASR_ENGINE` | `apps/daemon/src/pipeline/setup.ts` `pickEngine()` |
-| 前端选择器 | **写死两态** `useState<'paraformer' \| 'turbo'>('paraformer')` | `apps/web/src/features/recorder/RecorderPage.tsx:49` |
-| 云端 ASR | **完全没有**（grep `deepgram|elevenlabs|assemblyai|asrProvider` 在 ASR 语境零命中；Groq 只出现在 LLM provider 注释里） | — |
+| 层               | 现状                                                                                                                          | 文件                                                 |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| 后端引擎联合类型 | **3 个**：`'whisper.cpp' \| 'paraformer' \| 'sherpa-onnx'`                                                                    | `packages/pipeline/src/asr/selectEngine.ts:22`       |
+| 引擎实际构造     | `whisper` 恒构造；`sherpa` 需 `OPENMEMO_SHERPA_STREAM_DIR` 环境变量 + 模型解析成功；`paraformer` 需 `OPENMEMO_PARAFORMER_DIR` | `apps/daemon/src/pipeline/setup.ts`                  |
+| 引擎选择入口     | **只有环境变量** `OPENMEMO_ASR_ENGINE`                                                                                        | `apps/daemon/src/pipeline/setup.ts` `pickEngine()`   |
+| 前端选择器       | **写死两态** `useState<'paraformer' \| 'turbo'>('paraformer')`                                                                | `apps/web/src/features/recorder/RecorderPage.tsx:49` |
+| 云端 ASR         | **完全没有**（grep `deepgram                                                                                                  | elevenlabs                                           | assemblyai | asrProvider` 在 ASR 语境零命中；Groq 只出现在 LLM provider 注释里） | —   |
 
 **前端选择器的三个独立缺陷（全部实测）**：
+
 1. **只有两个值**，且不是下拉框而是一个来回切的 `<Button>`。
 2. **两个值不是引擎**。`'turbo'` 不在后端 `EngineId` 里；后端有的 `'whisper.cpp'`/`'sherpa-onnx'` 前端一个都没有。
    `'turbo'` 推测指 whisper large-v3-turbo 模型，但代码里**找不到任何映射**。
@@ -133,14 +136,14 @@ corrected-date: 2026-08-06
 
 #### 1.3 差在哪、为什么差
 
-| 差距 | 性质 | 根因（已核实） |
-|---|---|---|
-| 缺 FunASR 引擎 | 完全没做 | 无人认领；memo.ac 靠可下载插件包解决，我们连注册表条目都没有 |
-| 缺 Parakeet 引擎 | 完全没做 | 同上 |
-| 缺云端 ASR（4 家） | 完全没做 | 我方 BYOK 抽象只做了 LLM（`packages/llm`），ASR 侧无 provider 层 |
+| 差距                      | 性质     | 根因（已核实）                                                     |
+| ------------------------- | -------- | ------------------------------------------------------------------ |
+| 缺 FunASR 引擎            | 完全没做 | 无人认领；memo.ac 靠可下载插件包解决，我们连注册表条目都没有       |
+| 缺 Parakeet 引擎          | 完全没做 | 同上                                                               |
+| 缺云端 ASR（4 家）        | 完全没做 | 我方 BYOK 抽象只做了 LLM（`packages/llm`），ASR 侧无 provider 层   |
 | sherpa 只跑流式，不跑离线 | 做了但残 | `setup.ts` 注释自陈"sherpa-onnx 默认不为批量/离线构造，只接了流式" |
-| 前端引擎选择器是死的 | 做了但残 | 见上 3 条 |
-| 引擎选择只能靠环境变量 | 做了但残 | `OPENMEMO_ASR_ENGINE` 在前端 grep 零命中 |
+| 前端引擎选择器是死的      | 做了但残 | 见上 3 条                                                          |
+| 引擎选择只能靠环境变量    | 做了但残 | `OPENMEMO_ASR_ENGINE` 在前端 grep 零命中                           |
 
 ---
 
@@ -151,17 +154,17 @@ corrected-date: 2026-08-06
 **（a）`Resources/presets/whisper-models.js` —— 15 条**，字段
 `{label, value, size, description(i18n key), disabled, downloadLink, speed(1–6), speedLabel, speedValue(fast|balance|quality), quality(1–6), download, lang, langLabel, sha(SHA-1)}`。
 
-| # | label | 文件 | 体积 | speed/quality | lang |
-|---|---|---|---|---|---|
-| 1–2 | Tiny / Tiny.en | `ggml-tiny(.en).bin` | 77.7 MB | 6 / 2 | multi / en |
-| 3–4 | Base / Base.en | `ggml-base(.en).bin` | 148 MB | 5 / 3 | multi / en |
-| 5–6 | Small / Small.en | `ggml-small(.en).bin` | 488 MB | 4 / 4 | multi / en |
-| 7–8 | Medium / Medium.en | `ggml-medium(.en).bin` | 1.53 GB | 3 / 5 | multi / en |
-| 9–11 | Large(v1/v2/v3) | `ggml-large-v{1,2,3}.bin` | 3.09 GB | 2 / 6 | multi |
-| 12 | Large(v3)-turbo | `ggml-large-v3-turbo.bin` | 1.62 GB | 4 / 6 | multi |
-| 13 | Distil Large(v3) | `ggml-distil-large-v3.bin` | 1.52 GB | 2 / 6 | en |
-| 14 | Memo-large.zh | `Memo-large.zh.bin` | 2.88 GB | 2 / 6 | zh |
-| 15 | Memo-large.ja | `Memo-large.ja.bin` | 2.88 GB | 2 / 6 | ja |
+| #    | label              | 文件                       | 体积    | speed/quality | lang       |
+| ---- | ------------------ | -------------------------- | ------- | ------------- | ---------- |
+| 1–2  | Tiny / Tiny.en     | `ggml-tiny(.en).bin`       | 77.7 MB | 6 / 2         | multi / en |
+| 3–4  | Base / Base.en     | `ggml-base(.en).bin`       | 148 MB  | 5 / 3         | multi / en |
+| 5–6  | Small / Small.en   | `ggml-small(.en).bin`      | 488 MB  | 4 / 4         | multi / en |
+| 7–8  | Medium / Medium.en | `ggml-medium(.en).bin`     | 1.53 GB | 3 / 5         | multi / en |
+| 9–11 | Large(v1/v2/v3)    | `ggml-large-v{1,2,3}.bin`  | 3.09 GB | 2 / 6         | multi      |
+| 12   | Large(v3)-turbo    | `ggml-large-v3-turbo.bin`  | 1.62 GB | 4 / 6         | multi      |
+| 13   | Distil Large(v3)   | `ggml-distil-large-v3.bin` | 1.52 GB | 2 / 6         | en         |
+| 14   | Memo-large.zh      | `Memo-large.zh.bin`        | 2.88 GB | 2 / 6         | zh         |
+| 15   | Memo-large.ja      | `Memo-large.ja.bin`        | 2.88 GB | 2 / 6         | ja         |
 
 > 前 13 条源 `huggingface.co/ggerganov/whisper.cpp`（**无 revision 钉版，走 `main` 分支**）；
 > 后 2 条源自有域名 `model.memo.ac`，且**需发购买凭证到邮箱人工发链接**。
@@ -169,11 +172,11 @@ corrected-date: 2026-08-06
 
 **（b）`Resources/plugins/extra-transcription-plugins.json` —— 3 个引擎 / 37 条模型**
 
-| 引擎 id | 引擎平台 | 模型条目 | 备注 |
-|---|---|---|---|
-| `parakeet-cli` | darwin/arm64 · win32/x64 | **4** | `parakeet-tdt-0.6b-v2/v3` 各出 `.nemo`（win）与 `-coreml`（mac）双版；v3 覆盖 25 种欧洲语言 |
-| `funasr-cli` | darwin/arm64 · win32/x64 | **1** | `funasr-models` 打包 ASR/VAD/PUNC/SPK 四件套，约 1 GB |
-| `sherpa-onnx` | （无独立引擎二进制） | **32** | 其中 **ASR 27** + TTS 2（kokoro f32/int8）+ 标点 3 |
+| 引擎 id        | 引擎平台                 | 模型条目 | 备注                                                                                        |
+| -------------- | ------------------------ | -------- | ------------------------------------------------------------------------------------------- |
+| `parakeet-cli` | darwin/arm64 · win32/x64 | **4**    | `parakeet-tdt-0.6b-v2/v3` 各出 `.nemo`（win）与 `-coreml`（mac）双版；v3 覆盖 25 种欧洲语言 |
+| `funasr-cli`   | darwin/arm64 · win32/x64 | **1**    | `funasr-models` 打包 ASR/VAD/PUNC/SPK 四件套，约 1 GB                                       |
+| `sherpa-onnx`  | （无独立引擎二进制）     | **32**   | 其中 **ASR 27** + TTS 2（kokoro f32/int8）+ 标点 3                                          |
 
 sherpa 侧 27 条 ASR（全部 `platform:"all"`，直链 k2-fsa 的 GitHub release，每条带 `sizeBytes`+`sha256`+`languages[]`）：
 SenseVoice-zh-en-ja-ko-yue（1.05 GB，5 语）· Qwen3-ASR-0.6B-Int8（879 MB）·
@@ -192,13 +195,13 @@ Zh-Wenet-Aishell · En-Wenet-Gigaspeech。
 
 实测 `GET /api/models/catalog`（运行中 demo）：**14 组 / 19 变体**。
 
-| role | 组 | 变体 | 明细 |
-|---|---|---|---|
-| asr（whisper） | 6 | **9** | large-v3-turbo(q5_0/q8_0/f16)、large-v3(q5_0/f16)、medium(q5_0)、small(q5_1)、base(q5_1)、tiny(f16) |
-| asr（sherpa） | 2 | **2** | `sherpa-streaming-zh-14m`(q8_0, 25 MB)、`paraformer-zh-small`(q8_0, 82 MB) |
-| vad | 1 | 2 | silero ONNX（给 sherpa）+ silero ggml（给 whisper.cpp） |
-| punctuation | 1 | 1 | ct-transformer-zh-en |
-| llm | 4 | 5 | Qwen3 1.7B/4B×2/8B、Gemma-3-4B-it（全 GGUF，llama.cpp） |
+| role           | 组  | 变体  | 明细                                                                                                |
+| -------------- | --- | ----- | --------------------------------------------------------------------------------------------------- |
+| asr（whisper） | 6   | **9** | large-v3-turbo(q5_0/q8_0/f16)、large-v3(q5_0/f16)、medium(q5_0)、small(q5_1)、base(q5_1)、tiny(f16) |
+| asr（sherpa）  | 2   | **2** | `sherpa-streaming-zh-14m`(q8_0, 25 MB)、`paraformer-zh-small`(q8_0, 82 MB)                          |
+| vad            | 1   | 2     | silero ONNX（给 sherpa）+ silero ggml（给 whisper.cpp）                                             |
+| punctuation    | 1   | 1     | ct-transformer-zh-en                                                                                |
+| llm            | 4   | 5     | Qwen3 1.7B/4B×2/8B、Gemma-3-4B-it（全 GGUF，llama.cpp）                                             |
 
 **我方 ASR 模型条目 = 11。差距 47 → 11，缺 36 条。**
 
@@ -227,101 +230,101 @@ sherpa **27→2**（缺 25，这是最大单点缺口）；parakeet 4→0；funa
 
 #### 3.1 导入与采集（10 条）
 
-| # | memo.ac 有什么 **[F]** | OpenMemo 有没有 **[O]** | 差距性质 |
-|---|---|---|---|
-| 1 | URL 导入：yt-dlp 2026.03.17（PyInstaller 冻结含 Python 3.14 + curl_cffi + yt_dlp_ejs）+ 内置 bun 解 nsig | 有 yt-dlp 全链路（`packages/pipeline/src/media/sources/ytdlp.ts`） | ⚠️ 做了但残（无 JS challenge runtime，YouTube 反爬变更即失效） |
-| 2 | 浏览器 cookie 导入（`cookieBrowser`, `ytdlp:export-cookies`, `ytdlp:open-youtube-login`）→ 会员内容 | 无 | ❌（章程未裁决；FEATURE-COVERAGE 标"待用户决策：`--cookies` 是任意读文件入口"） |
-| 3 | yt-dlp 可独立于主程序在线升级（`ytdlp:check-update` / `:download-version` / `:reset-to-builtin`） | 无（yt-dlp 甚至不在 `vendor/manifests/components.json` 里，grep 零命中） | ❌ 完全没做 |
-| 4 | 本地文件拖拽（多格式） | `CapturePage.tsx:92` 有真 `onDrop`；`POST /api/notes/upload` 多部分流式落盘 | ➖ 相当（前人矩阵标 🔴 已过时） |
-| 5 | 实时录音 + 麦克风选择 + 本地 recorder server | `/ws/recorder` 后端为真实实现（二进制帧上行 + 控制 JSON） | ⚠️ 做了但残：`RecorderPage` 前端仍是 MOCK 字幕流，**端到端未跑通** |
-| 6 | RSS 订阅 + YouTube 频道订阅（9 个 IPC） | `packages/pipeline/src/media/sources/rss.ts` 只解析 feed | ⚠️ 做了但残（没下载并转写过一集） |
-| 7 | YouTube 官方字幕直接拉取（上传的 + 自动生成的） | 无 | ❌ 完全没做 |
-| 8 | 本地字幕导入（SRT/VTT 拖入直接翻译） | 无（我们只有导出方向） | ❌ 完全没做 |
-| 9 | 系统音频回环 / 桌面采集（`get-desktop-sources`、`loopback`） | 无 | ❌ 完全没做（浏览器架构下需 getDisplayMedia，可行但未做） |
-| 10 | 截图（`screenshots` / `abort-screenshots`，摘要自动配图） | 无 | ❌ 完全没做 |
+| #   | memo.ac 有什么 **[F]**                                                                                   | OpenMemo 有没有 **[O]**                                                     | 差距性质                                                                        |
+| --- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| 1   | URL 导入：yt-dlp 2026.03.17（PyInstaller 冻结含 Python 3.14 + curl_cffi + yt_dlp_ejs）+ 内置 bun 解 nsig | 有 yt-dlp 全链路（`packages/pipeline/src/media/sources/ytdlp.ts`）          | ⚠️ 做了但残（无 JS challenge runtime，YouTube 反爬变更即失效）                  |
+| 2   | 浏览器 cookie 导入（`cookieBrowser`, `ytdlp:export-cookies`, `ytdlp:open-youtube-login`）→ 会员内容      | 无                                                                          | ❌（章程未裁决；FEATURE-COVERAGE 标"待用户决策：`--cookies` 是任意读文件入口"） |
+| 3   | yt-dlp 可独立于主程序在线升级（`ytdlp:check-update` / `:download-version` / `:reset-to-builtin`）        | 无（yt-dlp 甚至不在 `vendor/manifests/components.json` 里，grep 零命中）    | ❌ 完全没做                                                                     |
+| 4   | 本地文件拖拽（多格式）                                                                                   | `CapturePage.tsx:92` 有真 `onDrop`；`POST /api/notes/upload` 多部分流式落盘 | ➖ 相当（前人矩阵标 🔴 已过时）                                                 |
+| 5   | 实时录音 + 麦克风选择 + 本地 recorder server                                                             | `/ws/recorder` 后端为真实实现（二进制帧上行 + 控制 JSON）                   | ⚠️ 做了但残：`RecorderPage` 前端仍是 MOCK 字幕流，**端到端未跑通**              |
+| 6   | RSS 订阅 + YouTube 频道订阅（9 个 IPC）                                                                  | `packages/pipeline/src/media/sources/rss.ts` 只解析 feed                    | ⚠️ 做了但残（没下载并转写过一集）                                               |
+| 7   | YouTube 官方字幕直接拉取（上传的 + 自动生成的）                                                          | 无                                                                          | ❌ 完全没做                                                                     |
+| 8   | 本地字幕导入（SRT/VTT 拖入直接翻译）                                                                     | 无（我们只有导出方向）                                                      | ❌ 完全没做                                                                     |
+| 9   | 系统音频回环 / 桌面采集（`get-desktop-sources`、`loopback`）                                             | 无                                                                          | ❌ 完全没做（浏览器架构下需 getDisplayMedia，可行但未做）                       |
+| 10  | 截图（`screenshots` / `abort-screenshots`，摘要自动配图）                                                | 无                                                                          | ❌ 完全没做                                                                     |
 
 #### 3.2 转写与引擎（9 条）
 
-| # | memo.ac **[F]** | OpenMemo **[O]** | 性质 |
-|---|---|---|---|
-| 11 | 本地 4 引擎（whisper / sherpa-onnx / funasr-cli / parakeet-cli） | 后端 3（whisper.cpp / paraformer / sherpa-onnx），前端 0 条真实可选 | ⚠️ 做了但残 |
-| 12 | 云端 ASR 4 家（Deepgram / ElevenLabs / Groq / OpenAI） | 无 ASR provider 层 | ❌ 完全没做 |
-| 13 | 47 条 ASR 模型条目 | 11 条 | ⚠️ 做了但残（缺 36） |
-| 14 | 每次导入都有完整转写设置面板（引擎/模型/语言/prompt/maxLen/VAD/GPU/flash-attn） | `CapturePage` 零设置项 | ❌ 完全没做 |
-| 15 | VAD（Silero，`vad_addon.node` + FastDeploy 运行时），设置项 `preferences.transcription vad` | 有 VAD 模型（双格式）+ `whisper-vad-speech-segments`；demo 自检显示"未安装 → 降级为固定窗口" | ➖ 相当（我们把 ggml/onnx 双格式在目录里显式区分并写进描述，避免装错） |
-| 16 | Whisper prompt 条件化 + 关键词过滤/替换（`insert-keyword` 等 4 个 IPC） | 无 prompt、无关键词过滤 | ❌ 完全没做 |
-| 17 | 说话人分离（pyannote 外挂扩展，可指定人数；`speaker.*` 33 个 i18n key） | `speakers` 表存在、`diarization: boolean` 字段存在，无引擎无 UI | ✂️ 章程已裁决不做（但数据模型已留位） |
-| 18 | 人声/伴奏分离（rspleeter，Settings > Labs） | 无 | ✂️ 章程明确不做 |
-| 19 | AI 字幕纠错 + 术语表（`correction:*` 16 个 IPC，含 glossary CRUD） | 无（grep `glossary` 零命中） | ❌ 完全没做 |
+| #   | memo.ac **[F]**                                                                             | OpenMemo **[O]**                                                                             | 性质                                                                   |
+| --- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| 11  | 本地 4 引擎（whisper / sherpa-onnx / funasr-cli / parakeet-cli）                            | 后端 3（whisper.cpp / paraformer / sherpa-onnx），前端 0 条真实可选                          | ⚠️ 做了但残                                                            |
+| 12  | 云端 ASR 4 家（Deepgram / ElevenLabs / Groq / OpenAI）                                      | 无 ASR provider 层                                                                           | ❌ 完全没做                                                            |
+| 13  | 47 条 ASR 模型条目                                                                          | 11 条                                                                                        | ⚠️ 做了但残（缺 36）                                                   |
+| 14  | 每次导入都有完整转写设置面板（引擎/模型/语言/prompt/maxLen/VAD/GPU/flash-attn）             | `CapturePage` 零设置项                                                                       | ❌ 完全没做                                                            |
+| 15  | VAD（Silero，`vad_addon.node` + FastDeploy 运行时），设置项 `preferences.transcription vad` | 有 VAD 模型（双格式）+ `whisper-vad-speech-segments`；demo 自检显示"未安装 → 降级为固定窗口" | ➖ 相当（我们把 ggml/onnx 双格式在目录里显式区分并写进描述，避免装错） |
+| 16  | Whisper prompt 条件化 + 关键词过滤/替换（`insert-keyword` 等 4 个 IPC）                     | 无 prompt、无关键词过滤                                                                      | ❌ 完全没做                                                            |
+| 17  | 说话人分离（pyannote 外挂扩展，可指定人数；`speaker.*` 33 个 i18n key）                     | `speakers` 表存在、`diarization: boolean` 字段存在，无引擎无 UI                              | ✂️ 章程已裁决不做（但数据模型已留位）                                  |
+| 18  | 人声/伴奏分离（rspleeter，Settings > Labs）                                                 | 无                                                                                           | ✂️ 章程明确不做                                                        |
+| 19  | AI 字幕纠错 + 术语表（`correction:*` 16 个 IPC，含 glossary CRUD）                          | 无（grep `glossary` 零命中）                                                                 | ❌ 完全没做                                                            |
 
 #### 3.3 AI 功能（8 条）
 
-| # | memo.ac **[F]** | OpenMemo **[O]** | 性质 |
-|---|---|---|---|
-| 20 | 摘要 Summary + 可复用摘要模板（`ai-summarize` / `summarize` / `getPromptTemplates`） | 无 summary 生成端点（`mindmap_summaries` 表存在但无路由） | ❌ 完全没做 |
-| 21 | 思维导图（markmap，LLM 流式 `mindmap:start/thinking/message/complete`） | `POST/PATCH/GET /api/notes/:uid/mindmap` + `MindmapPage` + 26 张表里 4 张 mindmap 表 | ✅ 我们更好：**节点级拖拽编辑 + 撤销**（mind-elixir），并用 `exportSvg()/exportPng()` 矢量导出而非截屏——正是 memo.ac issue #133「导出字看不清」的根因 **[R1] 该 issue 未复核** |
-| 22 | 导图/摘要各自可设自定义 prompt | 无 | ❌ 完全没做 |
-| 23 | 与视频内容对话 Chat + 本地 `embeddings` 目录（本地 RAG） | `embed_chunks` 表 + sqlite-vec 组件存在，但 `search.ts:186` 的 `modeReport()` 明确返回 `semantic: false` | ⚠️ 做了但残（embedding 生成链路是断的） |
-| 24 | 翻译：逐行 / 段落重译 / 双语导出 / 术语表 / 自定义翻译模板 / 22 家 provider 插件 | `segment_translations` 表存在，无翻译端点无 UI | ✂️ 章程明确不做（"翻译字幕"已裁决） |
-| 25 | LLM BYOK ~19 家 + 远端 LLM 注册表（`model.memo.ac/llm-models/manifest.json`，16 个 `llm:*` IPC） | `packages/llm` 的 OpenAI-compatible 抽象覆盖同一批云厂商 + Ollama/LM Studio/内置 llama-server；`LlmSettingsSection` 有 UI | ✅ 我们更好：**所有 provider 都能配 baseURL**（memo.ac 只有 OpenAI 能，是其 issue #353/#359 的抱怨点 **[R1] 未复核**）；且我们能跑**内置本地 llama.cpp**，无需装 Ollama |
-| 26 | TTS（Kokoro 本地 + 5 家云插件 + Temo 独立子应用，61 个 i18n key） | 无（`tts` 只作为 model role 枚举存在） | ✂️ 章程明确不做 |
-| 27 | 英语/日语学习工具 · 字幕转文章（app 类插件 ×2） | 无 | ✂️ 章程明确不做（非目标） |
+| #   | memo.ac **[F]**                                                                                  | OpenMemo **[O]**                                                                                                          | 性质                                                                                                                                                                           |
+| --- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 20  | 摘要 Summary + 可复用摘要模板（`ai-summarize` / `summarize` / `getPromptTemplates`）             | 无 summary 生成端点（`mindmap_summaries` 表存在但无路由）                                                                 | ❌ 完全没做                                                                                                                                                                    |
+| 21  | 思维导图（markmap，LLM 流式 `mindmap:start/thinking/message/complete`）                          | `POST/PATCH/GET /api/notes/:uid/mindmap` + `MindmapPage` + 26 张表里 4 张 mindmap 表                                      | ✅ 我们更好：**节点级拖拽编辑 + 撤销**（mind-elixir），并用 `exportSvg()/exportPng()` 矢量导出而非截屏——正是 memo.ac issue #133「导出字看不清」的根因 **[R1] 该 issue 未复核** |
+| 22  | 导图/摘要各自可设自定义 prompt                                                                   | 无                                                                                                                        | ❌ 完全没做                                                                                                                                                                    |
+| 23  | 与视频内容对话 Chat + 本地 `embeddings` 目录（本地 RAG）                                         | `embed_chunks` 表 + sqlite-vec 组件存在，但 `search.ts:186` 的 `modeReport()` 明确返回 `semantic: false`                  | ⚠️ 做了但残（embedding 生成链路是断的）                                                                                                                                        |
+| 24  | 翻译：逐行 / 段落重译 / 双语导出 / 术语表 / 自定义翻译模板 / 22 家 provider 插件                 | `segment_translations` 表存在，无翻译端点无 UI                                                                            | ✂️ 章程明确不做（"翻译字幕"已裁决）                                                                                                                                            |
+| 25  | LLM BYOK ~19 家 + 远端 LLM 注册表（`model.memo.ac/llm-models/manifest.json`，16 个 `llm:*` IPC） | `packages/llm` 的 OpenAI-compatible 抽象覆盖同一批云厂商 + Ollama/LM Studio/内置 llama-server；`LlmSettingsSection` 有 UI | ✅ 我们更好：**所有 provider 都能配 baseURL**（memo.ac 只有 OpenAI 能，是其 issue #353/#359 的抱怨点 **[R1] 未复核**）；且我们能跑**内置本地 llama.cpp**，无需装 Ollama        |
+| 26  | TTS（Kokoro 本地 + 5 家云插件 + Temo 独立子应用，61 个 i18n key）                                | 无（`tts` 只作为 model role 枚举存在）                                                                                    | ✂️ 章程明确不做                                                                                                                                                                |
+| 27  | 英语/日语学习工具 · 字幕转文章（app 类插件 ×2）                                                  | 无                                                                                                                        | ✂️ 章程明确不做（非目标）                                                                                                                                                      |
 
 #### 3.4 笔记组织与检索（9 条）
 
-| # | memo.ac **[F]** | OpenMemo **[O]** | 性质 |
-|---|---|---|---|
-| 28 | 层级 Workspace → Folder → Note；9 张 SQLite 表（`workspace/folder/note/doc/tag/note_tag/doc_tag/resource/download`） | `folders` + `notes`，26 张业务表（另 15 张 FTS 影子表） | ➖ 相当；我们表更细（jobs/job_steps/job_events、media_assets/media_sources、mindmap 四表、note_anchors、recordings、secrets） |
-| 29 | **标签系统（`tag` / `note_tag` / `doc_tag` 三张表）** ← R-01 判"无标签"**是错的** | `tags` + `note_tags` 两张表；`GET/POST /api/tags`、`DELETE /api/tags/:uid`、`POST /api/notes/:uid/tags`、`DELETE .../tags/:tagUid` 全部真实；前端 `TagEditor.tsx` | ➖ 相当（前人矩阵标"前端只读、零写入路径"已过时） |
-| 30 | 星标 | `PUT /api/notes/:uid/star` + 侧栏 `/notes?starred=1` | ➖ 相当 |
-| 31 | 双链 / 反向链接 | 无 | ❌ 双方都没有（并列，非差距） |
-| 32 | 字幕搜索/替换（正则 + 大小写 + Title Case） | `GET /api/search`（FTS5 + libsimple 中文分词），`SearchPage` + 顶栏 `SearchBox` | ✅ 我们更好：**中文分词 FTS**（libsimple v0.7.1 含完整 pos_dict）；memo.ac 靠 jieba WASM 但只用于分词，未见 FTS |
-| 33 | 向量检索 | 表 + sqlite-vec 组件齐备，`semantic: false` | ⚠️ 做了但残 |
-| 34 | 回收站（`/trash` 路由 + 7 个 i18n key，含永久删除/还原） | 无（`DELETE /api/notes/:uid` 直接删） | ❌ 完全没做 |
-| 35 | 转写稿 ↔ 时间轴联动（点击字幕跳转、浮动字幕窗、悬浮笔记带时间戳与截图） | `GET /media/asset/:ulid` 完整 Range 支持；`note_anchors` 表 + `GET /api/notes/:uid/anchors` + `TimeAnchor.ts` | ➖ 相当 |
-| 36 | 转写段落编辑 | `PATCH/DELETE /api/notes/:uid/segments/:seq`（可回退到原文） | ✅ 我们更好：**段落编辑可逐段 revert**，且两阶段重跑保留用户编辑（`POST /api/notes/:uid/retranscribe`） |
+| #   | memo.ac **[F]**                                                                                                      | OpenMemo **[O]**                                                                                                                                                  | 性质                                                                                                                          |
+| --- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| 28  | 层级 Workspace → Folder → Note；9 张 SQLite 表（`workspace/folder/note/doc/tag/note_tag/doc_tag/resource/download`） | `folders` + `notes`，26 张业务表（另 15 张 FTS 影子表）                                                                                                           | ➖ 相当；我们表更细（jobs/job_steps/job_events、media_assets/media_sources、mindmap 四表、note_anchors、recordings、secrets） |
+| 29  | **标签系统（`tag` / `note_tag` / `doc_tag` 三张表）** ← R-01 判"无标签"**是错的**                                    | `tags` + `note_tags` 两张表；`GET/POST /api/tags`、`DELETE /api/tags/:uid`、`POST /api/notes/:uid/tags`、`DELETE .../tags/:tagUid` 全部真实；前端 `TagEditor.tsx` | ➖ 相当（前人矩阵标"前端只读、零写入路径"已过时）                                                                             |
+| 30  | 星标                                                                                                                 | `PUT /api/notes/:uid/star` + 侧栏 `/notes?starred=1`                                                                                                              | ➖ 相当                                                                                                                       |
+| 31  | 双链 / 反向链接                                                                                                      | 无                                                                                                                                                                | ❌ 双方都没有（并列，非差距）                                                                                                 |
+| 32  | 字幕搜索/替换（正则 + 大小写 + Title Case）                                                                          | `GET /api/search`（FTS5 + libsimple 中文分词），`SearchPage` + 顶栏 `SearchBox`                                                                                   | ✅ 我们更好：**中文分词 FTS**（libsimple v0.7.1 含完整 pos_dict）；memo.ac 靠 jieba WASM 但只用于分词，未见 FTS               |
+| 33  | 向量检索                                                                                                             | 表 + sqlite-vec 组件齐备，`semantic: false`                                                                                                                       | ⚠️ 做了但残                                                                                                                   |
+| 34  | 回收站（`/trash` 路由 + 7 个 i18n key，含永久删除/还原）                                                             | 无（`DELETE /api/notes/:uid` 直接删）                                                                                                                             | ❌ 完全没做                                                                                                                   |
+| 35  | 转写稿 ↔ 时间轴联动（点击字幕跳转、浮动字幕窗、悬浮笔记带时间戳与截图）                                              | `GET /media/asset/:ulid` 完整 Range 支持；`note_anchors` 表 + `GET /api/notes/:uid/anchors` + `TimeAnchor.ts`                                                     | ➖ 相当                                                                                                                       |
+| 36  | 转写段落编辑                                                                                                         | `PATCH/DELETE /api/notes/:uid/segments/:seq`（可回退到原文）                                                                                                      | ✅ 我们更好：**段落编辑可逐段 revert**，且两阶段重跑保留用户编辑（`POST /api/notes/:uid/retranscribe`）                       |
 
 #### 3.5 导出与集成（5 条）
 
-| # | memo.ac **[F]** | OpenMemo **[O]** | 性质 |
-|---|---|---|---|
-| 37 | 字幕：SRT / VTT / ASS / LRC / FCPXML；文本：TXT / MD / DOCX；数据：JSON / XLSX；图片：PNG/JPG/SVG | `GET /api/notes/:uid/export?format=` → md/txt/srt/vtt/json；导图 md/opml/mm/json | ⚠️ 做了但残（缺 ASS/LRC/FCPXML/DOCX/XLSX；但**导图导出格式我们更多**） |
-| 38 | 视频压制 / 烧录字幕 / 水印 / 字幕样式（47 个 `subtitle.*` key） | 无 | ✂️ 章程明确不做 |
-| 39 | Notion 发布（`publish-to-notion`；官方自评"需一定技术能力"，要手工建 Integration） | 无 | ❌ 完全没做 |
-| 40 | Obsidian 一键导出（限 2h 以内） | 无（但 md 导出可手工放进 vault） | ❌ 完全没做 |
-| 41 | 导出整个 workspace / 项目（`export-note-project` / `export vault`） | 无 | ❌ 完全没做 |
+| #   | memo.ac **[F]**                                                                                   | OpenMemo **[O]**                                                                 | 性质                                                                   |
+| --- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| 37  | 字幕：SRT / VTT / ASS / LRC / FCPXML；文本：TXT / MD / DOCX；数据：JSON / XLSX；图片：PNG/JPG/SVG | `GET /api/notes/:uid/export?format=` → md/txt/srt/vtt/json；导图 md/opml/mm/json | ⚠️ 做了但残（缺 ASS/LRC/FCPXML/DOCX/XLSX；但**导图导出格式我们更多**） |
+| 38  | 视频压制 / 烧录字幕 / 水印 / 字幕样式（47 个 `subtitle.*` key）                                   | 无                                                                               | ✂️ 章程明确不做                                                        |
+| 39  | Notion 发布（`publish-to-notion`；官方自评"需一定技术能力"，要手工建 Integration）                | 无                                                                               | ❌ 完全没做                                                            |
+| 40  | Obsidian 一键导出（限 2h 以内）                                                                   | 无（但 md 导出可手工放进 vault）                                                 | ❌ 完全没做                                                            |
+| 41  | 导出整个 workspace / 项目（`export-note-project` / `export vault`）                               | 无                                                                               | ❌ 完全没做                                                            |
 
 #### 3.6 要求 2.1 GPU / 后端安装（7 条）
 
-| # | memo.ac **[F]** | OpenMemo **[O]** | 性质 |
-|---|---|---|---|
-| 42 | 后端 = 可下载构件（`whisper-cublas-12.2.0-bin-x64.zip` → 解压到 `addon/whisper/win32/x64/cublas/` → 存在性自检） | `vendor/manifests/backends.json` 10 个 pack，`/api/backends/{catalog,installed,install,select,selftest}` + `DELETE /api/backends/:id` | ➖ 相当，且我们**每个 pack 带 sha256 + `requiresDriver`**（nvidiaDriver 580 / vulkanApi 1.2 / rocmVersion 7.0 / macosVersion 13.0） |
-| 43 | 后端枚举：win = cpu/cuda；mac = cpu/mps(Metal)/coreML。**全量文件名复查：Vulkan/ROCm/DirectML/OpenCL/CLBlast/SYCL/OpenVINO 全部 NOT FOUND**（命中皆为 Electron SwiftShader 与 Monaco 语法词表） | 10 个 pack 覆盖 cpu/cuda/vulkan/rocm/metal × win/linux/mac | ✅ 我们更好，**但有重要限定见 #44** |
-| 44 | — | **vulkan/rocm 三个包全部是 llama.cpp（LLM）**；whisper.cpp 侧只有 `cpu-linux` / `cpu-win` / `cuda-12.4-win`。ADR-015 已记：上游 whisper.cpp v1.9.1 **没有 macOS CLI / Vulkan / ROCm / Linux CUDA 产物** | ⚠️ **做了但残 —— "真 AMD 支持"目前只覆盖 LLM，不覆盖 ASR。前人报告在此吹过头，本报告纠正。** |
-| 45 | 硬件探测：`systeminformation` + `nvidia-smi`（Win 上遍历 DriverStore 取最新）+ `nvcc --version` | `GET /api/runtime/hardware`（`?refresh=1`/`?reset=1`）+ `GET /api/runtime/breaker`（熔断器状态） | ✅ 我们更好：**探测有熔断器**，冷启动探测死锁已由 ADR-014 处理 |
-| 46 | 自检：向 whisper-server 发内嵌 base64 测试音频跑真实推理 | `POST /api/backends/selftest` 真实实现（返回 `passed`/`rtf`/`speedup`/`devicesFound`，前置不满足返回 409 `SELF_TEST_BLOCKED`）+ `GET /api/selfcheck` 13 项分层自检（tools/models/ext） | ✅ 我们更好：**分层自检 + 每项带 `remediation` 修复指引**，且 demo 实测 11 ok / 2 warn / 0 fail |
-| 47 | whisper-server 常驻，`--host 0.0.0.0`（⚠️ 监听全网卡） | daemon 默认绑 127.0.0.1（demo 曾用 `OPENMEMO_HOST=0.0.0.0` 覆盖，重启后已回到 127.0.0.1）；四重防护 Host/Origin/CSRF/HttpOnly cookie | ✅ 我们更好 |
-| 48 | 进度事件总线 `renderer-message` + `域:动作:阶段` 命名 + 250 ms 节流 | `GET /api/events` 单一 SSE 通道 | ➖ 相当 |
+| #   | memo.ac **[F]**                                                                                                                                                                                 | OpenMemo **[O]**                                                                                                                                                                                        | 性质                                                                                                                                |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| 42  | 后端 = 可下载构件（`whisper-cublas-12.2.0-bin-x64.zip` → 解压到 `addon/whisper/win32/x64/cublas/` → 存在性自检）                                                                                | `vendor/manifests/backends.json` 10 个 pack，`/api/backends/{catalog,installed,install,select,selftest}` + `DELETE /api/backends/:id`                                                                   | ➖ 相当，且我们**每个 pack 带 sha256 + `requiresDriver`**（nvidiaDriver 580 / vulkanApi 1.2 / rocmVersion 7.0 / macosVersion 13.0） |
+| 43  | 后端枚举：win = cpu/cuda；mac = cpu/mps(Metal)/coreML。**全量文件名复查：Vulkan/ROCm/DirectML/OpenCL/CLBlast/SYCL/OpenVINO 全部 NOT FOUND**（命中皆为 Electron SwiftShader 与 Monaco 语法词表） | 10 个 pack 覆盖 cpu/cuda/vulkan/rocm/metal × win/linux/mac                                                                                                                                              | ✅ 我们更好，**但有重要限定见 #44**                                                                                                 |
+| 44  | —                                                                                                                                                                                               | **vulkan/rocm 三个包全部是 llama.cpp（LLM）**；whisper.cpp 侧只有 `cpu-linux` / `cpu-win` / `cuda-12.4-win`。ADR-015 已记：上游 whisper.cpp v1.9.1 **没有 macOS CLI / Vulkan / ROCm / Linux CUDA 产物** | ⚠️ **做了但残 —— "真 AMD 支持"目前只覆盖 LLM，不覆盖 ASR。前人报告在此吹过头，本报告纠正。**                                        |
+| 45  | 硬件探测：`systeminformation` + `nvidia-smi`（Win 上遍历 DriverStore 取最新）+ `nvcc --version`                                                                                                 | `GET /api/runtime/hardware`（`?refresh=1`/`?reset=1`）+ `GET /api/runtime/breaker`（熔断器状态）                                                                                                        | ✅ 我们更好：**探测有熔断器**，冷启动探测死锁已由 ADR-014 处理                                                                      |
+| 46  | 自检：向 whisper-server 发内嵌 base64 测试音频跑真实推理                                                                                                                                        | `POST /api/backends/selftest` 真实实现（返回 `passed`/`rtf`/`speedup`/`devicesFound`，前置不满足返回 409 `SELF_TEST_BLOCKED`）+ `GET /api/selfcheck` 13 项分层自检（tools/models/ext）                  | ✅ 我们更好：**分层自检 + 每项带 `remediation` 修复指引**，且 demo 实测 11 ok / 2 warn / 0 fail                                     |
+| 47  | whisper-server 常驻，`--host 0.0.0.0`（⚠️ 监听全网卡）                                                                                                                                          | daemon 默认绑 127.0.0.1（demo 曾用 `OPENMEMO_HOST=0.0.0.0` 覆盖，重启后已回到 127.0.0.1）；四重防护 Host/Origin/CSRF/HttpOnly cookie                                                                    | ✅ 我们更好                                                                                                                         |
+| 48  | 进度事件总线 `renderer-message` + `域:动作:阶段` 命名 + 250 ms 节流                                                                                                                             | `GET /api/events` 单一 SSE 通道                                                                                                                                                                         | ➖ 相当                                                                                                                             |
 
 #### 3.7 要求 2.2 模型管理（7 条）
 
-| # | memo.ac **[F]** | OpenMemo **[O]** | 性质 |
-|---|---|---|---|
-| 49 | 声明式注册表 + SHA-1（whisper）/ SHA-256（插件）+ `size`/`fileSize`/`installSize` 双体积 | manifest 每文件带 **sha256 + sha1 + `totalSizeBytes` + `requirements.diskRequiredMB`** | ➖ 相当偏好 |
-| 50 | **无量化选择**（15 条 whisper 全 f16） | **9 个 whisper 变体覆盖 f16 / q5_0 / q5_1 / q8_0**，按 `groupId` 分组、`quantTier` 分档（small/balanced/quality） | ✅ **我们更好（核心差异点，已实测）** |
-| 51 | **无显存/内存 fit 预检**（只有官网表格写"最低 8G/16G"） | 每条带 `requirements{ramRequiredMB, vramRequiredMB, diskRequiredMB}`；`GET /api/models/catalog` **实测每个变体返回 `fitness.tier`**（recommended / slow_cpu …）+ `speedTier` | ✅ **我们更好（核心差异点，已实测）** |
-| 52 | 下载源三选一（huggingface / hf-mirror / aifasthub）+ 官方代理 `download.memo.ac` | 每个文件 `mirrors[]`（hf / hf-mirror / **modelscope** / github），`GET /api/models/sources` + `POST /api/models/sources/{probe,select}` **带实测探活** | ✅ 我们更好（多一个 modelscope，且能主动测速选源） |
-| 53 | 模型源**不钉 revision**（走 HF `main` 分支） | `source.revision` 钉到 commit SHA（如 `5359861c…`），URL 里直接用该 SHA | ✅ 我们更好（可复现，上游改文件不会静默换权重） |
-| 54 | **不能导入任意 HF 模型**（其 issue #218 至今未做 **[R1] 未复核**）；只支持导入本地模型文件 | `POST /api/models/import`：`kind:'local_file'` 真实（流式 sha256 + 从文件名推断量化，推断不出就**拒绝而不猜**）；**`kind:'hf_repo'` 硬编码 501**（models.ts:724，理由：没有权威 SHA-256 就不装，ADR-004 决策 5） | ⚠️ **做了但残 —— "可导入任意 HF GGUF"是假的。前人报告在此吹过头，本报告纠正。** 我们与 memo.ac 在这一项上**打平**（都只能导本地文件） |
-| 55 | 模型/后端页埋在设置弹窗里（其"模型下载卡 0%"是最高频用户问题 **[R1]**） | `/runtime` `/models` 是**一级侧栏导航**（App.tsx 注释明写这是刻意选择）；另有 `/models/:modelId` 详情页与 `/settings/storage` 存储页 | ✅ 我们更好（信息架构） |
+| #   | memo.ac **[F]**                                                                            | OpenMemo **[O]**                                                                                                                                                                                                 | 性质                                                                                                                                  |
+| --- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 49  | 声明式注册表 + SHA-1（whisper）/ SHA-256（插件）+ `size`/`fileSize`/`installSize` 双体积   | manifest 每文件带 **sha256 + sha1 + `totalSizeBytes` + `requirements.diskRequiredMB`**                                                                                                                           | ➖ 相当偏好                                                                                                                           |
+| 50  | **无量化选择**（15 条 whisper 全 f16）                                                     | **9 个 whisper 变体覆盖 f16 / q5_0 / q5_1 / q8_0**，按 `groupId` 分组、`quantTier` 分档（small/balanced/quality）                                                                                                | ✅ **我们更好（核心差异点，已实测）**                                                                                                 |
+| 51  | **无显存/内存 fit 预检**（只有官网表格写"最低 8G/16G"）                                    | 每条带 `requirements{ramRequiredMB, vramRequiredMB, diskRequiredMB}`；`GET /api/models/catalog` **实测每个变体返回 `fitness.tier`**（recommended / slow_cpu …）+ `speedTier`                                     | ✅ **我们更好（核心差异点，已实测）**                                                                                                 |
+| 52  | 下载源三选一（huggingface / hf-mirror / aifasthub）+ 官方代理 `download.memo.ac`           | 每个文件 `mirrors[]`（hf / hf-mirror / **modelscope** / github），`GET /api/models/sources` + `POST /api/models/sources/{probe,select}` **带实测探活**                                                           | ✅ 我们更好（多一个 modelscope，且能主动测速选源）                                                                                    |
+| 53  | 模型源**不钉 revision**（走 HF `main` 分支）                                               | `source.revision` 钉到 commit SHA（如 `5359861c…`），URL 里直接用该 SHA                                                                                                                                          | ✅ 我们更好（可复现，上游改文件不会静默换权重）                                                                                       |
+| 54  | **不能导入任意 HF 模型**（其 issue #218 至今未做 **[R1] 未复核**）；只支持导入本地模型文件 | `POST /api/models/import`：`kind:'local_file'` 真实（流式 sha256 + 从文件名推断量化，推断不出就**拒绝而不猜**）；**`kind:'hf_repo'` 硬编码 501**（models.ts:724，理由：没有权威 SHA-256 就不装，ADR-004 决策 5） | ⚠️ **做了但残 —— "可导入任意 HF GGUF"是假的。前人报告在此吹过头，本报告纠正。** 我们与 memo.ac 在这一项上**打平**（都只能导本地文件） |
+| 55  | 模型/后端页埋在设置弹窗里（其"模型下载卡 0%"是最高频用户问题 **[R1]**）                    | `/runtime` `/models` 是**一级侧栏导航**（App.tsx 注释明写这是刻意选择）；另有 `/models/:modelId` 详情页与 `/settings/storage` 存储页                                                                             | ✅ 我们更好（信息架构）                                                                                                               |
 
 #### 3.8 平台、隐私、工程（3 条）
 
-| # | memo.ac **[F]** | OpenMemo **[O]** | 性质 |
-|---|---|---|---|
-| 56 | 仅 Win x64 + macOS arm64。**无 Linux**；Intel Mac 停在 1.6.8；Win ARM 无版本 | **Linux x64 实跑中**（demo 全链路在 Linux 上，ffmpeg/whisper-cli/VAD 自检全 ok） | ✅ **我们更好（已实证，非声明）** |
-| 57 | 首页称"完全离线"，隐私政策却写收集 IP/行为、向免费用户投放第三方广告、埋 Clarity | 无遥测（本次未做全量 grep 验证 → **未验证**） | ✅ 我们更好（结构上；**未逐行验证**） |
-| 58 | 插件沙箱用 **`vm2` ^3.9.19**（作者已宣布废弃且存在不可修复的沙箱逃逸） | 无插件系统（既是缺口也是免疫） | ❌ 完全没做（插件市场）／同时规避了该风险 |
+| #   | memo.ac **[F]**                                                                  | OpenMemo **[O]**                                                                 | 性质                                      |
+| --- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------- |
+| 56  | 仅 Win x64 + macOS arm64。**无 Linux**；Intel Mac 停在 1.6.8；Win ARM 无版本     | **Linux x64 实跑中**（demo 全链路在 Linux 上，ffmpeg/whisper-cli/VAD 自检全 ok） | ✅ **我们更好（已实证，非声明）**         |
+| 57  | 首页称"完全离线"，隐私政策却写收集 IP/行为、向免费用户投放第三方广告、埋 Clarity | 无遥测（本次未做全量 grep 验证 → **未验证**）                                    | ✅ 我们更好（结构上；**未逐行验证**）     |
+| 58  | 插件沙箱用 **`vm2` ^3.9.19**（作者已宣布废弃且存在不可修复的沙箱逃逸）           | 无插件系统（既是缺口也是免疫）                                                   | ❌ 完全没做（插件市场）／同时规避了该风险 |
 
 **统计**：❌ 完全没做 **25** · ⚠️ 做了但残 **14** · ✅ 我们更好/相当 **11** · ✂️ 章程明确不做 **8** = **58 条**。
 （#31 双链为"双方都没有"，计入"完全没做"栏；#44 与 #54 是对既有乐观结论的纠正，计入"做了但残"。）
@@ -331,6 +334,7 @@ sherpa **27→2**（缺 25，这是最大单点缺口）；parakeet 4→0；funa
 ### 4. 功能面反推的原始素材（供后续 agent 复用）
 
 **memo.ac 导航面 [F]**
+
 - 路由 12 条：`/`(→/home) · `/home` · `/batch-tasks`(Pro) · `/convert` · `/all` · `/edit/:id` · `/subtitle/:id` ·
   `/docs` · `/trash` · `/rss/:id` · `/folder/:id` · `/applications`
 - 侧栏 6 项：Memo(/home) · 批量任务(Pro) · 媒体(/all) · 笔记(/docs) · 应用(/applications) · 回收站(/trash)
@@ -341,6 +345,7 @@ sherpa **27→2**（缺 25，这是最大单点缺口）；parakeet 4→0；funa
 - IPC 通道 **342** 条（R-01 的数字核实无误）
 
 **OpenMemo 导航面 [O]**
+
 - 路由 17 条：`/`(→/notes 或 /onboarding) · `/capture` · `/components` · `/diagnostics` ·
   `/notes` · `/notes/:uid` · `/notes/:uid/mindmap` · `/models` · `/models/:modelId` · `/onboarding` ·
   `/record` · `/runtime` · `/search` · `/settings`(→/settings/general) · `/settings/:section` ·
@@ -355,20 +360,21 @@ sherpa **27→2**（缺 25，这是最大单点缺口）；parakeet 4→0；funa
 
 ### 5. 对 FEATURE-COVERAGE.md 的纠正（实测，Manager 请更新）
 
-| 矩阵原文 | 实测 | 方向 |
-|---|---|---|
-| **B-2**「daemon 只有 6 个端点，`/api/notes` `/api/import` `/api/search` 不存在，`/media` 返回 501」 | **42 条 REST**，含 `/api/notes`(6)、`/api/notes/import`、`/api/search`、`/media/asset/:ulid`（完整 Range） | 偏悲观 |
-| **B-1**「4 个 ASR 模型不在模型目录」 | 4 个全在（silero×2、sherpa-streaming-zh-14m、paraformer-zh-small、ct-transformer 标点） | 偏悲观 |
-| **B-3**「设置页没有 API Key 输入框」 | `LlmSettingsSection.tsx` + `GET/PUT/DELETE /api/secrets` | 偏悲观 |
-| 「拖拽上传 `onDrop` 是空函数」 | `CapturePage.tsx:92` 是真实现 | 偏悲观 |
-| 「标签/星标/文件夹前端只读、零写入路径」 | `organize.ts` 8 条写路由 + `TagEditor.tsx` | 偏悲观 |
-| 「笔记导出零实现零入口」 | `ExportMenu.tsx`（5 格式）+ `GET /api/notes/:uid/export` | 偏悲观 |
-| 「TipTap 笔记编辑器完全遗漏」 | `NoteEditor.tsx` + `PATCH /api/notes/:uid`（TipTap JSON → 纯文本） | 偏悲观 |
-| 「M-3 首启引导缺失」 | `/onboarding` + `isOnboardingDone()` 已接入首屏重定向 | 偏悲观 |
-| **要求 2.2「目录/量化/fit/下载/校验/删除 🟢」** | fit/量化/校验/删除属实；**「可导入任意 HF」不成立**（501） | **偏乐观** |
-| 「运行时管理页 🟡 未在真浏览器点过」 | 仍然**未在真浏览器点过**（本次也没点，只打了 API） | 仍准确 |
+| 矩阵原文                                                                                            | 实测                                                                                                       | 方向       |
+| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------- |
+| **B-2**「daemon 只有 6 个端点，`/api/notes` `/api/import` `/api/search` 不存在，`/media` 返回 501」 | **42 条 REST**，含 `/api/notes`(6)、`/api/notes/import`、`/api/search`、`/media/asset/:ulid`（完整 Range） | 偏悲观     |
+| **B-1**「4 个 ASR 模型不在模型目录」                                                                | 4 个全在（silero×2、sherpa-streaming-zh-14m、paraformer-zh-small、ct-transformer 标点）                    | 偏悲观     |
+| **B-3**「设置页没有 API Key 输入框」                                                                | `LlmSettingsSection.tsx` + `GET/PUT/DELETE /api/secrets`                                                   | 偏悲观     |
+| 「拖拽上传 `onDrop` 是空函数」                                                                      | `CapturePage.tsx:92` 是真实现                                                                              | 偏悲观     |
+| 「标签/星标/文件夹前端只读、零写入路径」                                                            | `organize.ts` 8 条写路由 + `TagEditor.tsx`                                                                 | 偏悲观     |
+| 「笔记导出零实现零入口」                                                                            | `ExportMenu.tsx`（5 格式）+ `GET /api/notes/:uid/export`                                                   | 偏悲观     |
+| 「TipTap 笔记编辑器完全遗漏」                                                                       | `NoteEditor.tsx` + `PATCH /api/notes/:uid`（TipTap JSON → 纯文本）                                         | 偏悲观     |
+| 「M-3 首启引导缺失」                                                                                | `/onboarding` + `isOnboardingDone()` 已接入首屏重定向                                                      | 偏悲观     |
+| **要求 2.2「目录/量化/fit/下载/校验/删除 🟢」**                                                     | fit/量化/校验/删除属实；**「可导入任意 HF」不成立**（501）                                                 | **偏乐观** |
+| 「运行时管理页 🟡 未在真浏览器点过」                                                                | 仍然**未在真浏览器点过**（本次也没点，只打了 API）                                                         | 仍准确     |
 
 **新增两条矩阵里没有的阻塞**：
+
 - **N-1**：前端引擎选择器与后端 `EngineId` 完全脱节（§1.2）。这是用户当前最直接的痛点。
 - ~~**N-2**：`RecorderPage` 的字幕流是 MOCK，而 `/ws/recorder` 后端是真的 —— **F3 端到端从未跑通过**，
   只是两头各自能跑。矩阵把 F3 流式 ASR 标 🟢 属于**偏乐观**。~~ **← 已作废（2026-08-06）**
@@ -405,15 +411,15 @@ sherpa **27→2**（缺 25，这是最大单点缺口）；parakeet 4→0；funa
 
 ### 7. 诚实清单（本报告未能验证的）
 
-| 事项 | 状态 |
-|---|---|
-| memo.ac Windows 包内是否含 Vulkan/DirectML | **仍未验证**（沿用 R-01，只解了 macOS 包） |
-| memo.ac 思维导图是否节点级可编辑 | **仍未验证** |
-| 引用的 memo.ac GitHub issue（#133 #218 #353 #359）现状 | **[R1] 未复核**，仅转述 R-01 |
-| 我方任何页面的真浏览器点击验证 | **未做**（本次只读 API + 读码 + 读 git 历史） |
-| 我方"零遥测" | **未验证**（未做全量出网调用 grep） |
-| `RecorderPage` ↔ `/ws/recorder` 端到端 | **未跑通**（前端仍是 mock） |
-| demo 实例状态 | 审计期间被其他 agent 重启（pid 2066756 → 2075454，绑定由 0.0.0.0 变回 127.0.0.1）。**我全程只读，未写未重启。** |
+| 事项                                                   | 状态                                                                                                            |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| memo.ac Windows 包内是否含 Vulkan/DirectML             | **仍未验证**（沿用 R-01，只解了 macOS 包）                                                                      |
+| memo.ac 思维导图是否节点级可编辑                       | **仍未验证**                                                                                                    |
+| 引用的 memo.ac GitHub issue（#133 #218 #353 #359）现状 | **[R1] 未复核**，仅转述 R-01                                                                                    |
+| 我方任何页面的真浏览器点击验证                         | **未做**（本次只读 API + 读码 + 读 git 历史）                                                                   |
+| 我方"零遥测"                                           | **未验证**（未做全量出网调用 grep）                                                                             |
+| `RecorderPage` ↔ `/ws/recorder` 端到端                 | **未跑通**（前端仍是 mock）                                                                                     |
+| demo 实例状态                                          | 审计期间被其他 agent 重启（pid 2066756 → 2075454，绑定由 0.0.0.0 变回 127.0.0.1）。**我全程只读，未写未重启。** |
 
 ---
 
@@ -452,19 +458,20 @@ workspace (id, name, folder=磁盘路径, icon, thumbnail, backgroundColor, desc
 
 ### A-1.2 用户可见形态 **[F]**
 
-| 维度 | 事实 |
-|---|---|
-| 入口 | 设置弹窗 12 个 tab 中的**第 2 个**，标签文案取自 i18n `workspace.manage workspace`（英文 "Workspace"） |
-| 切换 | 侧栏顶部下拉；选中 → `selectCurrentWorkspace(ws, true)` → 立即 `navigate("/home", {replace:true})` |
-| 新建表单字段 | **名称**（必填）· **存储文件夹**（必填，目录选择器）· **背景色**（取色器，默认随机）· **描述**（≤200 字） |
-| 提交约束 | 名称与文件夹**两者都填**才允许提交（实读 `setDisabled(!folder \|\| !name)` 等价逻辑） |
-| 数量上限 | **未见上限**（`workspaceList` 数组 + `unshift`，无容量判断） |
-| 保底 | `workspaceList` 为空时自动重新拉取并选中第一个 → **始终至少 1 个** |
-| 当前空间的持久化 | electron-store 键 `currentWorkspace`（不是数据库） |
-| 磁盘体积 | 切换器挂载时调 `getWorkspaceFolderSize(id)` 并显示 |
-| 删除 | `removeWorkspace({ id, deleteFolder: true })` —— **`deleteFolder` 硬编码为 true，连磁盘目录一起删**；文案明确警告不可撤销 |
+| 维度             | 事实                                                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| 入口             | 设置弹窗 12 个 tab 中的**第 2 个**，标签文案取自 i18n `workspace.manage workspace`（英文 "Workspace"）                    |
+| 切换             | 侧栏顶部下拉；选中 → `selectCurrentWorkspace(ws, true)` → 立即 `navigate("/home", {replace:true})`                        |
+| 新建表单字段     | **名称**（必填）· **存储文件夹**（必填，目录选择器）· **背景色**（取色器，默认随机）· **描述**（≤200 字）                 |
+| 提交约束         | 名称与文件夹**两者都填**才允许提交（实读 `setDisabled(!folder \|\| !name)` 等价逻辑）                                     |
+| 数量上限         | **未见上限**（`workspaceList` 数组 + `unshift`，无容量判断）                                                              |
+| 保底             | `workspaceList` 为空时自动重新拉取并选中第一个 → **始终至少 1 个**                                                        |
+| 当前空间的持久化 | electron-store 键 `currentWorkspace`（不是数据库）                                                                        |
+| 磁盘体积         | 切换器挂载时调 `getWorkspaceFolderSize(id)` 并显示                                                                        |
+| 删除             | `removeWorkspace({ id, deleteFolder: true })` —— **`deleteFolder` 硬编码为 true，连磁盘目录一起删**；文案明确警告不可撤销 |
 
 官方英文文案（i18n 原文，可直接证明产品意图）：
+
 - create → `Create a new workspace to consolidate all your resources.`
 - workspace → `Set the folder where the workspace is located.`
 - path → `Storage location`
@@ -484,15 +491,16 @@ IPC 通道 5 条 **[F]**：
 
 ### A-1.4 对照我们 + 对 ADR-006 决策 4 的事实输入
 
-| 项 | memo.ac **[F]** | OpenMemo **[O]** |
-|---|---|---|
-| 工作空间层 | 有，一等公民，独占一个设置 tab | **无**（全仓 `apps/*/src` `packages/*/src` grep `workspace` **零命中**） |
-| 文件夹树 | 有（`folder.parentId` 嵌套） | 有（`folders.parent_id`），且已有 `color` / `icon` / `sort_order` / `deleted_at` |
-| 存储位置 | **每个空间一个目录**，用户可选 | **全局一个 `dataDir`**，模型目录可在 `/settings/storage` 看到（`modelsRoot`） |
-| 空间体积 / 剩余空间 | 有（两条 IPC） | 有 `GET /api/models/storage`（仅模型目录口径） |
-| 删除即删盘 | 是（硬编码 `deleteFolder:true`） | N/A |
+| 项                  | memo.ac **[F]**                  | OpenMemo **[O]**                                                                 |
+| ------------------- | -------------------------------- | -------------------------------------------------------------------------------- |
+| 工作空间层          | 有，一等公民，独占一个设置 tab   | **无**（全仓 `apps/*/src` `packages/*/src` grep `workspace` **零命中**）         |
+| 文件夹树            | 有（`folder.parentId` 嵌套）     | 有（`folders.parent_id`），且已有 `color` / `icon` / `sort_order` / `deleted_at` |
+| 存储位置            | **每个空间一个目录**，用户可选   | **全局一个 `dataDir`**，模型目录可在 `/settings/storage` 看到（`modelsRoot`）    |
+| 空间体积 / 剩余空间 | 有（两条 IPC）                   | 有 `GET /api/models/storage`（仅模型目录口径）                                   |
+| 删除即删盘          | 是（硬编码 `deleteFolder:true`） | N/A                                                                              |
 
 **给 Manager 的事实判断（不替你决策）**：
+
 - ADR-006 决策 4 说「日后加只需一列 + 一次迁移」—— **这个成本估计是对的**，而且比你想的还低：
   我们的 `folders` 表已有 `parent_id` / `color` / `icon` / `deleted_at`，
   补一张 `workspaces` 表 + `folders.workspace_id` 一列即可，`notes` 通过 `folder_id` 间接归属，**不需要动 notes**。
@@ -510,11 +518,11 @@ IPC 通道 5 条 **[F]**：
 
 设置 → `preferences.proxy setting`（英文 "Proxy"），一组 radio，三选一：
 
-| 值 | i18n key | 英文文案 |
-|---|---|---|
-| `none` | `preferences.disable proxy` | Disable proxy |
+| 值       | i18n key                          | 英文文案              |
+| -------- | --------------------------------- | --------------------- |
+| `none`   | `preferences.disable proxy`       | Disable proxy         |
 | `system` | `preferences.use system settings` | System proxy settings |
-| `custom` | `preferences.use custom proxy` | Custom proxy |
+| `custom` | `preferences.use custom proxy`    | Custom proxy          |
 
 持久化形状（实读运行时读取逻辑）：
 
@@ -531,14 +539,14 @@ IPC 通道 5 条 **[F]**：
 
 ### A-2.2 协议与能力 **[F]**
 
-| 能力 | 结论 |
-|---|---|
-| HTTP 代理 | ✅ `type === "http"`（UI 标签 "Http(s)"）→ 构造 `http://host:port`，用 HttpsProxyAgent |
-| SOCKS 代理 | ✅ UI 标签 "Socks5"；非 http 条目拼 `socks://host:port`，走 SocksProxyAgent |
-| **UI 只暴露两种** | ⚠️ 协议选择是**两个 tab：`http` / `socks5`**。底层 vendored 的 SocksProxyAgent 支持 `socks4/4a/5/5h`，但**`socks4` 系没有入口** |
-| **代理认证（用户名/密码）** | **NOT FOUND** —— 条目结构无 `username`/`password`，表单无对应输入框。（bundle 里确有 `proxyAuth` → `Proxy-Authorization: Basic` 的代码，但那是**第三方 tunnel 库的未接线管道**，没接到它的设置项上） |
-| **用户可配的 bypass / no_proxy 列表** | **NOT FOUND** —— 没有这个设置项 |
-| **硬编码的内部 bypass** | ✅ **有，但只作用于 LLM 端点**：构造 LLM 客户端时，若 `baseURL` 的主机名属于 `localhost` / `127.0.0.1` / `0.0.0.0` / `::1` / `[::1]` 或以 `.local` 结尾，**跳过代理注入**（避免把本地 Ollama 的请求送进代理）。其余链路无此保护 |
+| 能力                                  | 结论                                                                                                                                                                                                                            |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HTTP 代理                             | ✅ `type === "http"`（UI 标签 "Http(s)"）→ 构造 `http://host:port`，用 HttpsProxyAgent                                                                                                                                          |
+| SOCKS 代理                            | ✅ UI 标签 "Socks5"；非 http 条目拼 `socks://host:port`，走 SocksProxyAgent                                                                                                                                                     |
+| **UI 只暴露两种**                     | ⚠️ 协议选择是**两个 tab：`http` / `socks5`**。底层 vendored 的 SocksProxyAgent 支持 `socks4/4a/5/5h`，但**`socks4` 系没有入口**                                                                                                 |
+| **代理认证（用户名/密码）**           | **NOT FOUND** —— 条目结构无 `username`/`password`，表单无对应输入框。（bundle 里确有 `proxyAuth` → `Proxy-Authorization: Basic` 的代码，但那是**第三方 tunnel 库的未接线管道**，没接到它的设置项上）                            |
+| **用户可配的 bypass / no_proxy 列表** | **NOT FOUND** —— 没有这个设置项                                                                                                                                                                                                 |
+| **硬编码的内部 bypass**               | ✅ **有，但只作用于 LLM 端点**：构造 LLM 客户端时，若 `baseURL` 的主机名属于 `localhost` / `127.0.0.1` / `0.0.0.0` / `::1` / `[::1]` 或以 `.local` 结尾，**跳过代理注入**（避免把本地 Ollama 的请求送进代理）。其余链路无此保护 |
 
 > 关于 `HTTP_PROXY` / `HTTPS_PROXY` 环境变量：我自己 grep 主进程 bundle 得到 `HTTPS_PROXY` **2 处命中**，
 > 但两处都在**第三方库内部**（一个 proxy-from-env 式的辅助函数、以及内置的 Mixpanel 遥测客户端），读的是 `process.env`。
@@ -557,14 +565,14 @@ IPC 通道 5 条 **[F]**：
 
 ### A-2.4 代理作用到哪些链路 **[F]**
 
-| 链路 | 是否走代理 | 证据 |
-|---|---|---|
-| **yt-dlp 子进程** | ✅ **argv 显式传** `--proxy <url>` + `--socket-timeout 60`；SOCKS 时传 `--proxy socks://host:port` | 实读 `applyProxyArgs()` |
-| 自身 HTTP 客户端（模型下载 / API） | ✅ 通过 agent 注入（`{ httpAgent, httpsAgent }` 形式的 agent 包装） | 实读 agent 构造函数 |
-| **Electron 会话级**（`session.setProxy` / `--proxy-server` 开关） | **NOT FOUND** —— 两者在 12 MB 主进程 bundle 里 0 命中。**渲染层自身的网络请求不走用户配置的代理** | 实测 grep |
-| ffmpeg / whisper-cli 等其他子进程 | **NOT FOUND** —— 没找到为它们注入 `HTTP_PROXY` 的环境构造 | 实测 grep |
-| **云 LLM / 云 ASR 调用** | ✅ **走**（已核实）：云转写把 agent 塞进 `fetchOptions`；翻译与 LLM 客户端经同一个 agent 工厂注入 `httpAgent`（受 A-2.2 的本地 bypass 约束） | 实读调用点 |
-| 授权校验 / 插件与扩展下载 / RSS / GitHub 版本检查 / TTS | ✅ 全部走同一个 agent 工厂（约 37 处调用点） | 实读 |
+| 链路                                                              | 是否走代理                                                                                                                                   | 证据                    |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| **yt-dlp 子进程**                                                 | ✅ **argv 显式传** `--proxy <url>` + `--socket-timeout 60`；SOCKS 时传 `--proxy socks://host:port`                                           | 实读 `applyProxyArgs()` |
+| 自身 HTTP 客户端（模型下载 / API）                                | ✅ 通过 agent 注入（`{ httpAgent, httpsAgent }` 形式的 agent 包装）                                                                          | 实读 agent 构造函数     |
+| **Electron 会话级**（`session.setProxy` / `--proxy-server` 开关） | **NOT FOUND** —— 两者在 12 MB 主进程 bundle 里 0 命中。**渲染层自身的网络请求不走用户配置的代理**                                            | 实测 grep               |
+| ffmpeg / whisper-cli 等其他子进程                                 | **NOT FOUND** —— 没找到为它们注入 `HTTP_PROXY` 的环境构造                                                                                    | 实测 grep               |
+| **云 LLM / 云 ASR 调用**                                          | ✅ **走**（已核实）：云转写把 agent 塞进 `fetchOptions`；翻译与 LLM 客户端经同一个 agent 工厂注入 `httpAgent`（受 A-2.2 的本地 bypass 约束） | 实读调用点              |
+| 授权校验 / 插件与扩展下载 / RSS / GitHub 版本检查 / TTS           | ✅ 全部走同一个 agent 工厂（约 37 处调用点）                                                                                                 | 实读                    |
 
 ### A-2.5 有没有「测试连接」**[F]**
 
@@ -574,6 +582,7 @@ IPC 通道 5 条 **[F]**：
 **（A）代理专属的「测试连接」** —— IPC `test-proxy`：
 用当前代理 agent 请求 **`https://youtube.com`**，测往返延迟并把毫秒数回给 UI；失败则报错。
 按钮文案 `preferences.test connection`，仅在 `type === "system"` 或（`custom` 且已有条目）时可用。
+
 > 选 `youtube.com` 作为探测目标是**合理**的（用户配代理多半就是为了访问它），
 > 与 A-2.3 里 system 探测选 `google.com` 的问题不同——后者是探测**系统设置**却依赖出网，那才是设计缺陷。
 
@@ -593,19 +602,20 @@ UI 成功显示 `preferences.network latency` + 毫秒数，失败显示 `prefer
 
 已有（`packages/pipeline/src/subprocess/proxy.ts`，189 行，`gpu-runtime` 交付）：
 
-| 能力 | 我们 | memo.ac |
-|---|---|---|
-| 协议 | http / https / **socks5 / socks5h / socks4 / socks4a**（`PROXY_SCHEMES`） | UI 只有 `http` 与 `socks5` 两档 |
-| **用户可配的 no_proxy / bypass** | ✅ 有 `noProxy` 字段 | ❌ NOT FOUND |
-| **loopback 保护** | ✅ **无条件强制预置** `localhost,127.0.0.1,::1`，覆盖**全部**链路 | ⚠️ 有，但**只保护 LLM 端点**（`localhost`/`127.0.0.1`/`0.0.0.0`/`::1`/`[::1]`/`*.local`），其余链路无 |
-| 输入校验 | ✅ scheme 白名单 / 控制字符 / 前导 `-`（防 argv 注入）/ 1024 字节上限；**先查控制字符再 `new URL()`**（避免解析器把恶意串洗白） | 未见等价校验 |
-| 凭据脱敏 | ✅ `redactProxyUrl()` 进日志前抹掉用户名密码 | 未见（但它也没有认证字段，无从泄露） |
-| yt-dlp | ✅ `ytDlpProxyArgs()` → `--proxy <url>` | ✅ 同（另加 `--socket-timeout 60`，**这一条值得抄**） |
-| **ffmpeg** | ✅ `ffmpegProxySupport()`，并**如实报告 ffmpeg 不支持 SOCKS**（libavformat 只读 `http_proxy`），返回 `{supported, reason}` 让上层能准确告警而不是静默直连 | ❌ 未处理 |
-| 大小写双写 env | ✅ `http_proxy`+`HTTP_PROXY`+…（两派工具各读一套）；SOCKS 时补 `ALL_PROXY` | ❌ 不走 env，全靠 agent 注入 + yt-dlp argv |
-| 默认值 | ⚠️ 无（还没有设置项） | ✅ 出厂即 `{type:"system"}` |
+| 能力                             | 我们                                                                                                                                                      | memo.ac                                                                                               |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| 协议                             | http / https / **socks5 / socks5h / socks4 / socks4a**（`PROXY_SCHEMES`）                                                                                 | UI 只有 `http` 与 `socks5` 两档                                                                       |
+| **用户可配的 no_proxy / bypass** | ✅ 有 `noProxy` 字段                                                                                                                                      | ❌ NOT FOUND                                                                                          |
+| **loopback 保护**                | ✅ **无条件强制预置** `localhost,127.0.0.1,::1`，覆盖**全部**链路                                                                                         | ⚠️ 有，但**只保护 LLM 端点**（`localhost`/`127.0.0.1`/`0.0.0.0`/`::1`/`[::1]`/`*.local`），其余链路无 |
+| 输入校验                         | ✅ scheme 白名单 / 控制字符 / 前导 `-`（防 argv 注入）/ 1024 字节上限；**先查控制字符再 `new URL()`**（避免解析器把恶意串洗白）                           | 未见等价校验                                                                                          |
+| 凭据脱敏                         | ✅ `redactProxyUrl()` 进日志前抹掉用户名密码                                                                                                              | 未见（但它也没有认证字段，无从泄露）                                                                  |
+| yt-dlp                           | ✅ `ytDlpProxyArgs()` → `--proxy <url>`                                                                                                                   | ✅ 同（另加 `--socket-timeout 60`，**这一条值得抄**）                                                 |
+| **ffmpeg**                       | ✅ `ffmpegProxySupport()`，并**如实报告 ffmpeg 不支持 SOCKS**（libavformat 只读 `http_proxy`），返回 `{supported, reason}` 让上层能准确告警而不是静默直连 | ❌ 未处理                                                                                             |
+| 大小写双写 env                   | ✅ `http_proxy`+`HTTP_PROXY`+…（两派工具各读一套）；SOCKS 时补 `ALL_PROXY`                                                                                | ❌ 不走 env，全靠 agent 注入 + yt-dlp argv                                                            |
+| 默认值                           | ⚠️ 无（还没有设置项）                                                                                                                                     | ✅ 出厂即 `{type:"system"}`                                                                           |
 
 **缺的下半截（全部实测确认）**：
+
 1. **daemon 侧零接线** —— `apps/daemon/src` 与 `packages/downloader/src` grep `proxy` 除一处无关注释外**零命中**。
    即**模型下载根本走不了代理**，而这恰恰是最需要代理的链路。memo.ac 在这条链路上是覆盖到的（agent 注入）。
 2. **无持久化** —— `settings` 表当前为空，`settings.ts` 里没有 proxy 键。
@@ -633,20 +643,20 @@ UI 成功显示 `preferences.network latency` + 毫秒数，失败显示 `prefer
 
 **（乙）带 displayName/description 的服务注册表，24 项**：
 
-| id | 显示名 | | id | 显示名 |
-|---|---|---|---|---|
-| `openai` | OpenAI GPT | | `siliconcloud` | SiliconFlow |
-| `claude` | Anthropic Claude | | `xai` | xAI Grok |
-| `gemini` | Google Gemini | | `mistral` | Mistral AI |
-| `deepseek` | DeepSeek AI | | `meta` | Meta Llama |
-| `zhipuai` | ZhipuAI | | `moonshot` | Moonshot AI (Kimi) |
-| `zhipuaicodingplan` | ZhipuAI Coding Plan | | `poe` | Poe by Quora |
-| `kimicodingplan` | Kimi Coding Plan | | `volcengine` | Volcano Ark |
-| `huggingface` | Hugging Face | | `lmstudio` | LM Studio Local |
-| `openrouter` | OpenRouter | | `ollama` | Ollama Local |
-| `perplexity` | Perplexity AI | | `minimax` | MiniMax API |
-| `vertexai` | Google Vertex AI | | `minimaxtokenplan` | MiniMax Token Plan |
-| `alibaba` | Alibaba Cloud Bailian | | **`custom`** | **Custom Service** |
+| id                  | 显示名                |     | id                 | 显示名             |
+| ------------------- | --------------------- | --- | ------------------ | ------------------ |
+| `openai`            | OpenAI GPT            |     | `siliconcloud`     | SiliconFlow        |
+| `claude`            | Anthropic Claude      |     | `xai`              | xAI Grok           |
+| `gemini`            | Google Gemini         |     | `mistral`          | Mistral AI         |
+| `deepseek`          | DeepSeek AI           |     | `meta`             | Meta Llama         |
+| `zhipuai`           | ZhipuAI               |     | `moonshot`         | Moonshot AI (Kimi) |
+| `zhipuaicodingplan` | ZhipuAI Coding Plan   |     | `poe`              | Poe by Quora       |
+| `kimicodingplan`    | Kimi Coding Plan      |     | `volcengine`       | Volcano Ark        |
+| `huggingface`       | Hugging Face          |     | `lmstudio`         | LM Studio Local    |
+| `openrouter`        | OpenRouter            |     | `ollama`           | Ollama Local       |
+| `perplexity`        | Perplexity AI         |     | `minimax`          | MiniMax API        |
+| `vertexai`          | Google Vertex AI      |     | `minimaxtokenplan` | MiniMax Token Plan |
+| `alibaba`           | Alibaba Cloud Bailian |     | **`custom`**       | **Custom Service** |
 
 两份并集约 **31 个**独立标识。甲表独有：`doubao` `groq` `together` `qianfan` `qwen` `xiaomimimo` `aliyun` `azura`；
 乙表独有：`huggingface` `perplexity` `vertexai` `meta` `poe` `volcengine` `custom`。
@@ -667,19 +677,19 @@ UI 成功显示 `preferences.network latency` + 毫秒数，失败显示 `prefer
 
 **实际情况（我在 12 MB 主进程 bundle 里直接 grep 计数，非转述）**：
 
-| 标记 | 主进程 bundle 命中数 |
-|---|---|
-| `ChatOpenAI` | **19** |
-| `/v1/messages`（Anthropic Messages API 路径） | **28** |
-| `x-api-key`（Anthropic 认证头） | **11** |
-| `api.anthropic.com` | **7** |
-| `ChatAnthropic` | **5** |
-| `generativelanguage.googleapis.com` | **5** |
-| `ChatGoogleGenerativeAI` | **4** |
-| `ChatOllama` | **2** |
-| `anthropic-version` | **2** |
-| `ChatMistralAI` / `@anthropic-ai/sdk` / `@google/genai` | 各 **1** |
-| `ChatDeepSeek` / `ChatXAI` / `ChatZhipuAI` / `ChatGroq` / `ChatTogetherAI` | **各 0** |
+| 标记                                                                       | 主进程 bundle 命中数 |
+| -------------------------------------------------------------------------- | -------------------- |
+| `ChatOpenAI`                                                               | **19**               |
+| `/v1/messages`（Anthropic Messages API 路径）                              | **28**               |
+| `x-api-key`（Anthropic 认证头）                                            | **11**               |
+| `api.anthropic.com`                                                        | **7**                |
+| `ChatAnthropic`                                                            | **5**                |
+| `generativelanguage.googleapis.com`                                        | **5**                |
+| `ChatGoogleGenerativeAI`                                                   | **4**                |
+| `ChatOllama`                                                               | **2**                |
+| `anthropic-version`                                                        | **2**                |
+| `ChatMistralAI` / `@anthropic-ai/sdk` / `@google/genai`                    | 各 **1**             |
+| `ChatDeepSeek` / `ChatXAI` / `ChatZhipuAI` / `ChatGroq` / `ChatTogetherAI` | **各 0**             |
 
 → **修正后的结论**：memo.ac 是**混合制**。
 
@@ -690,6 +700,7 @@ UI 成功显示 `preferences.network latency` + 毫秒数，失败显示 `prefer
   （DeepSeek / xAI / 智谱 / Groq / Together / 通义 / 豆包 / MiniMax / 千帆 / SiliconCloud / OpenRouter / LM Studio … 均无专用类）。
 
 **对我们的真实含义（比我上一版给的建议更贵，请以此版为准）**：
+
 - OpenAI 兼容这条路**确实覆盖了大多数（约 20/24）**，我们 `openai-compatible.ts` 的方向没错。
 - **但 Claude 与 Gemini 覆盖不了** —— 这两家恰恰是最主流的两家。
   想接它们，`packages/llm` **必须新增两个适配器**（Anthropic Messages 格式 + Gemini 格式），
@@ -707,6 +718,7 @@ UI 成功显示 `preferences.network latency` + 毫秒数，失败显示 `prefer
 **`modelListSource`** · **`baseURL`** · `capabilities` · `models` · `defaultModel` · **`configFields`**
 
 两个关键设计：
+
 - **`configFields`** = 配置表单由数据描述，不是每家写一个 React 组件。加一家 = 加一条 JSON。
 - **`modelListSource`** = 模型清单从哪来（供应商的 `/models` 端点 or 内置列表），做到**模型下拉自动填充**。
 
@@ -714,6 +726,7 @@ IPC 5 条：`llm:model-registry:{get-status, ensure-dir, check-update, update, r
 → 注册表可**独立于主程序热更新**（新供应商上线不必发版）。
 
 补充细节 **[F]**：
+
 - `configFields` 的**字段键全集**只有 7 个：`apiKey`（password）· `model`（select）· `baseURL`（url）·
   `temperature`（number）· `maxTokens`（number）· `deploymentId` · `apiVersion`。
   后两个**只有 Azure 一家**用。没有 `topP` / `contextWindow` / `timeout` / `organization` 的表单项。
@@ -738,22 +751,23 @@ IPC 5 条：`llm:model-registry:{get-status, ensure-dir, check-update, update, r
 
 ### A-3.5 对照我们 **[O]**
 
-| 项 | memo.ac | OpenMemo |
-|---|---|---|
-| 架构 | **混合**：Claude/Gemini/Mistral/Ollama 原生客户端 + 其余 ~20 家走 OpenAI 兼容 | 只有 OpenAI 兼容一条路 → **接 Claude/Gemini 需新写两个适配器** |
-| 供应商数量 | 24 内置 + 自定义（另有一份 24 项的旧枚举，并集约 31） | 注释列了 OpenAI/DeepSeek/Groq/xAI/Moonshot/SiliconCloud/OpenRouter/通义/智谱/Ollama/LM Studio/内置 llama-server；**清单硬编码在代码里，非注册表** |
-| 供应商注册表 | 远端 JSON + sha256 + 原子写 + 热更新 + `configFields` 动态表单 | **无** |
-| 模型下拉自动填充 | `modelListSource` 三模式 | **无** |
-| 每功能独立选模型 | ✅ chat / (summary+mindmap) / translate **各自独立**的 provider+model | **无**（只有全局一处） |
-| 自定义端点 | ✅ `custom` 服务 + 动态模型 URL | ✅ 有（任意 baseURL），**无动态模型拉取** |
-| **Key 存储** | ⚠️ **明文 JSON**（`conf/setting.conf`）。全 bundle **`safeStorage` 0 命中**。唯一的 AES-256-CBC 用了**硬编码静态密钥+IV**，且只加密 Notion 的 secret，**LLM key 不经过它** | `secrets` 表 + `SecretStore`，`GET /api/secrets` 只返回掩码，且**强制向用户明示「明文存储在 <路径>，权限 0600」**（ADR-006 决策 1） |
-| 本地 LLM | Ollama / LM Studio | 同 + **内置 llama.cpp**（用户指令 3 要求砍掉本地自接，此项将成为待裁撤项） |
+| 项               | memo.ac                                                                                                                                                                    | OpenMemo                                                                                                                                          |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 架构             | **混合**：Claude/Gemini/Mistral/Ollama 原生客户端 + 其余 ~20 家走 OpenAI 兼容                                                                                              | 只有 OpenAI 兼容一条路 → **接 Claude/Gemini 需新写两个适配器**                                                                                    |
+| 供应商数量       | 24 内置 + 自定义（另有一份 24 项的旧枚举，并集约 31）                                                                                                                      | 注释列了 OpenAI/DeepSeek/Groq/xAI/Moonshot/SiliconCloud/OpenRouter/通义/智谱/Ollama/LM Studio/内置 llama-server；**清单硬编码在代码里，非注册表** |
+| 供应商注册表     | 远端 JSON + sha256 + 原子写 + 热更新 + `configFields` 动态表单                                                                                                             | **无**                                                                                                                                            |
+| 模型下拉自动填充 | `modelListSource` 三模式                                                                                                                                                   | **无**                                                                                                                                            |
+| 每功能独立选模型 | ✅ chat / (summary+mindmap) / translate **各自独立**的 provider+model                                                                                                      | **无**（只有全局一处）                                                                                                                            |
+| 自定义端点       | ✅ `custom` 服务 + 动态模型 URL                                                                                                                                            | ✅ 有（任意 baseURL），**无动态模型拉取**                                                                                                         |
+| **Key 存储**     | ⚠️ **明文 JSON**（`conf/setting.conf`）。全 bundle **`safeStorage` 0 命中**。唯一的 AES-256-CBC 用了**硬编码静态密钥+IV**，且只加密 Notion 的 secret，**LLM key 不经过它** | `secrets` 表 + `SecretStore`，`GET /api/secrets` 只返回掩码，且**强制向用户明示「明文存储在 <路径>，权限 0600」**（ADR-006 决策 1）               |
+| 本地 LLM         | Ollama / LM Studio                                                                                                                                                         | 同 + **内置 llama.cpp**（用户指令 3 要求砍掉本地自接，此项将成为待裁撤项）                                                                        |
 
 > Key 存储这条值得说清楚：**双方实质都是明文落盘，谁也不比谁安全**。
 > 差别在于**我们明确告诉用户**（ADR-006 强制 disclosure），而它不说。
 > 它那把硬编码静态密钥的 AES 属于**安全剧场**——密钥就在同一个二进制里，拆包即得。**不要抄。**
 
 **给 Manager 的四条落地建议（第 1 条已按新证据改写）**：
+
 1. ~~架构不用改~~ → **架构要补**。OpenAI 兼容覆盖约 20/24 没错，
    但 **Claude 与 Gemini 必须各写一个原生适配器**（Anthropic Messages `/v1/messages` + `x-api-key` + `anthropic-version`；
    Gemini 的 `generativelanguage.googleapis.com`）。这两家是主流，不接说不过去。**这是我上一版漏报的工作量。**
@@ -770,19 +784,19 @@ IPC 5 条：`llm:model-registry:{get-status, ensure-dir, check-update, update, r
 
 ## A-4. 本节诚实清单
 
-| 事项 | 状态 |
-|---|---|
-| `note` 表是否由 migration 补了 `workspaceId` 列 | **未核实**（未找到 alterTable/hasColumn 证据） |
-| memo.ac 空间数量是否真无上限 | **未见上限判断**，但不排除在我没读到的代码路径里 |
-| 代理是否作用于云 LLM / 云 ASR 调用 | ✅ **已核实为「是」**（初版标未核实，后由 subagent 定位到调用点后更正） |
-| 「测试连接」测的是什么 | ✅ **已更正**：初版我写"只测下载源"是**错的**，实为两个独立测试，代理有专属的 `test-proxy`（打 `youtube.com` 测延迟） |
-| memo.ac 的 API Key 存储方式与是否加密 | ✅ **已核实**：明文 JSON（`conf/setting.conf`），`safeStorage` 0 命中；唯一的静态密钥 AES 只用于 Notion secret，不覆盖 LLM key |
-| 非 OpenAI 供应商能否改 baseURL | ✅ **已核实并推翻 R-01**：24 家里 22 家的 `configFields` 都有可编辑 `baseURL`；例外只有 Mistral（走原生 SDK，无该字段）与 Azure（必填无默认）。R-01 引的 issue #353/#359 说法**不成立** |
-| **A-3.2「它没装任何厂商 SDK」（本报告第一版结论）** | ❌ **已推翻**。实测 bundle 内联了 `@anthropic-ai/sdk` / `@google/genai` / `@langchain/{anthropic,google-genai,ollama,mistralai}`，`/v1/messages` 28 处、`x-api-key` 11 处、`api.anthropic.com` 7 处。**错因：把"打包器内联后依赖清单里看不见"误当成"没装"，且把两个同源指标当成了独立双源。** |
-| `@alicloud/tingwu20230930`（阿里通义听悟）是否为第 5 条云 ASR 通路 | **推测，未核实**（仅 1 处命中） |
-| 甲/乙两份供应商名单里 `poe`/`perplexity`/`vertexai`/`meta`/`huggingface` 是否真的可用 | **未核实** —— 它们出现在 displayName 注册表里，但不在 24 项内置 registry 对象中 |
-| 甲/乙两份供应商名单的确切分工 | **推测**，未核实 |
-| 用户说的「空间管理」指逻辑分区还是每空间独立磁盘根 | **未知 —— 建议直接问用户** |
+| 事项                                                                                  | 状态                                                                                                                                                                                                                                                                                          |
+| ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `note` 表是否由 migration 补了 `workspaceId` 列                                       | **未核实**（未找到 alterTable/hasColumn 证据）                                                                                                                                                                                                                                                |
+| memo.ac 空间数量是否真无上限                                                          | **未见上限判断**，但不排除在我没读到的代码路径里                                                                                                                                                                                                                                              |
+| 代理是否作用于云 LLM / 云 ASR 调用                                                    | ✅ **已核实为「是」**（初版标未核实，后由 subagent 定位到调用点后更正）                                                                                                                                                                                                                       |
+| 「测试连接」测的是什么                                                                | ✅ **已更正**：初版我写"只测下载源"是**错的**，实为两个独立测试，代理有专属的 `test-proxy`（打 `youtube.com` 测延迟）                                                                                                                                                                         |
+| memo.ac 的 API Key 存储方式与是否加密                                                 | ✅ **已核实**：明文 JSON（`conf/setting.conf`），`safeStorage` 0 命中；唯一的静态密钥 AES 只用于 Notion secret，不覆盖 LLM key                                                                                                                                                                |
+| 非 OpenAI 供应商能否改 baseURL                                                        | ✅ **已核实并推翻 R-01**：24 家里 22 家的 `configFields` 都有可编辑 `baseURL`；例外只有 Mistral（走原生 SDK，无该字段）与 Azure（必填无默认）。R-01 引的 issue #353/#359 说法**不成立**                                                                                                       |
+| **A-3.2「它没装任何厂商 SDK」（本报告第一版结论）**                                   | ❌ **已推翻**。实测 bundle 内联了 `@anthropic-ai/sdk` / `@google/genai` / `@langchain/{anthropic,google-genai,ollama,mistralai}`，`/v1/messages` 28 处、`x-api-key` 11 处、`api.anthropic.com` 7 处。**错因：把"打包器内联后依赖清单里看不见"误当成"没装"，且把两个同源指标当成了独立双源。** |
+| `@alicloud/tingwu20230930`（阿里通义听悟）是否为第 5 条云 ASR 通路                    | **推测，未核实**（仅 1 处命中）                                                                                                                                                                                                                                                               |
+| 甲/乙两份供应商名单里 `poe`/`perplexity`/`vertexai`/`meta`/`huggingface` 是否真的可用 | **未核实** —— 它们出现在 displayName 注册表里，但不在 24 项内置 registry 对象中                                                                                                                                                                                                               |
+| 甲/乙两份供应商名单的确切分工                                                         | **推测**，未核实                                                                                                                                                                                                                                                                              |
+| 用户说的「空间管理」指逻辑分区还是每空间独立磁盘根                                    | **未知 —— 建议直接问用户**                                                                                                                                                                                                                                                                    |
 
 ---
 
@@ -790,6 +804,7 @@ IPC 5 条：`llm:model-registry:{get-status, ensure-dir, check-update, update, r
 
 > 追加日期 2026-08-03，author memo-compare。触发：用户「模型改成下拉了，但和 memo 内置几个选项不一样，我不是让你做统一吗」。
 > **交付物是两份 JSON，不是本节表格** —— `model-mgmt` 请直接读文件：
+>
 > - `docs/research/assets/memoac-llm-providers.json`（24 家 / 520 条模型 / 255 KB）
 > - `docs/research/assets/memoac-asr-models.json`（whisper 15 条 + 三个越界引擎 + **UI 呈现方案**）
 >
@@ -823,44 +838,45 @@ IPC 5 条：`llm:model-registry:{get-status, ensure-dir, check-update, update, r
 
 分组函数 `YKt(services, models)` 把 24 家分成**三桶**：
 
-| 桶 | 规则 |
-|---|---|
-| `configured` | 已配好的（判据：`apiKeyRequired ? hasApiKey : (isConfigured \|\| hasUserConfig \|\| hasApiKey)`） |
-| `mainstreamUnconfigured` | 没配好、但在上面 6 家置顶名单里 |
-| `more` | 其余全部（折叠区） |
+| 桶                       | 规则                                                                                              |
+| ------------------------ | ------------------------------------------------------------------------------------------------- |
+| `configured`             | 已配好的（判据：`apiKeyRequired ? hasApiKey : (isConfigured \|\| hasUserConfig \|\| hasApiKey)`） |
+| `mainstreamUnconfigured` | 没配好、但在上面 6 家置顶名单里                                                                   |
+| `more`                   | 其余全部（折叠区）                                                                                |
 
 `primary = configured + mainstreamUnconfigured`，排序键 = 置顶名单里的下标，其次是注册表原始顺序。
 → **用户第一眼只看到「已配好的 + 6 家主流」，另外十几家收进 `more`。**
 
 ### B-1.3 四家原生 + 十九家 OpenAI 兼容（`kind` 字段已写进 JSON）
 
-| kind | 家数 | 谁 |
-|---|---|---|
-| `openai-compatible` | **19** | deepseek / doubao / groq / lmstudio / minimax / minimaxtokenplan / moonshot / openai / openrouter / qianfan / qwen / aliyun / azura / siliconcloud / together / xai / xiaomimimo / zhipuai / zhipuaicodingplan |
-| `anthropic-native` | 1 | claude |
-| `google-native` | 1 | gemini |
-| `mistral-native` | 1 | mistralai |
-| `ollama-native` | 1 | ollama |
-| `anthropic-compatible` | 1 | kimicodingplan（`baseURL` 是 `…/anthropic`，走 Anthropic 协议） |
+| kind                   | 家数   | 谁                                                                                                                                                                                                             |
+| ---------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `openai-compatible`    | **19** | deepseek / doubao / groq / lmstudio / minimax / minimaxtokenplan / moonshot / openai / openrouter / qianfan / qwen / aliyun / azura / siliconcloud / together / xai / xiaomimimo / zhipuai / zhipuaicodingplan |
+| `anthropic-native`     | 1      | claude                                                                                                                                                                                                         |
+| `google-native`        | 1      | gemini                                                                                                                                                                                                         |
+| `mistral-native`       | 1      | mistralai                                                                                                                                                                                                      |
+| `ollama-native`        | 1      | ollama                                                                                                                                                                                                         |
+| `anthropic-compatible` | 1      | kimicodingplan（`baseURL` 是 `…/anthropic`，走 Anthropic 协议）                                                                                                                                                |
 
 **`baseURL` 可编辑：24 家里 23 家**（JSON 里 `baseUrl.editable`）。
 唯一没有该字段的是 **mistralai**（走原生 SDK）；**azura**（Azure）有该字段但**必填无默认**，另需 `deploymentId` + `apiVersion`。
+
 > 这再次确认附录 A-3.4 的结论：R-01 转述的"只有 OpenAI 能配 base URL"**不成立**。
 
 ### B-1.4 模型条目最多的几家（说明为什么必须分组）
 
-| 家 | 内置模型条目 |
-|---|---|
-| qianfan（百度千帆） | **82** |
-| qwen（通义） | **70** |
-| siliconcloud | **66** |
-| azura（Azure） | 35 |
-| openai / openrouter | 各 30 |
-| together | 27 |
-| ollama | 25 |
-| mistralai | 22 |
-| zhipuai | 16 · groq 15 · claude 14 · gemini 14 · doubao 13 · moonshot 13 · xai 12 |
-| 其余 | ≤ 7 |
+| 家                  | 内置模型条目                                                            |
+| ------------------- | ----------------------------------------------------------------------- |
+| qianfan（百度千帆） | **82**                                                                  |
+| qwen（通义）        | **70**                                                                  |
+| siliconcloud        | **66**                                                                  |
+| azura（Azure）      | 35                                                                      |
+| openai / openrouter | 各 30                                                                   |
+| together            | 27                                                                      |
+| ollama              | 25                                                                      |
+| mistralai           | 22                                                                      |
+| zhipuai             | 16 · groq 15 · claude 14 · gemini 14 · doubao 13 · moonshot 13 · xai 12 |
+| 其余                | ≤ 7                                                                     |
 
 → **520 条模型如果平铺是不可用的。** 它的解法是三层：先选供应商（三桶分组）→ 再选该家的模型 →
 模型清单本身还分三种来源（`modelListSource.type`）：`official-doc`（注册表内置静态清单，带 `checkedAt` 日期，人工策展）/
@@ -887,18 +903,19 @@ IPC 5 条：`llm:model-registry:{get-status, ensure-dir, check-update, update, r
 
 ### B-2.1 它的 15 条 vs 我们的 25 条 —— **我们的更长，所以更需要分组**
 
-| | memo.ac | OpenMemo（实测 `models-whisper.json`） |
-|---|---|---|
-| 条目数 | **15** | **25** |
-| 逻辑模型组 | 15（无组概念） | **12 组**（`groupId`） |
-| 量化 | **全 f16，无选择** | f16 / q5_0 / q5_1 / q8_0 |
-| 分组轴 | `lang` × `speedValue` | `groupId` × `quantization` |
+|            | memo.ac               | OpenMemo（实测 `models-whisper.json`） |
+| ---------- | --------------------- | -------------------------------------- |
+| 条目数     | **15**                | **25**                                 |
+| 逻辑模型组 | 15（无组概念）        | **12 组**（`groupId`）                 |
+| 量化       | **全 f16，无选择**    | f16 / q5_0 / q5_1 / q8_0               |
+| 分组轴     | `lang` × `speedValue` | `groupId` × `quantization`             |
 
 **我们的清单比它长 67%，还多了一个量化维度。它那套 15 条的平铺方式我们照抄会更糟。**
 
 ### B-2.2 它怎么让 15 条不像一堵墙（**这才是要抄的**）
 
 **面 A · 转写设置里的快速选择器** —— **是双轴筛选，不是列表**：
+
 - 轴 1 `lang`：`multi` / `en` / `zh` / `ja`，用 Select
 - 轴 2 `speedValue`：`fast` / `balance` / `quality`，用 Tabs
 - 只渲染 `lang === 选中语言 && speedValue === 选中档位` 的那几条，做成**固定尺寸卡片**（不是下拉行）
@@ -915,32 +932,33 @@ IPC 5 条：`llm:model-registry:{get-status, ensure-dir, check-update, update, r
 
 要做成它那种双轴，我们的 manifest **少一根轴**：
 
-| 轴 | 我们有没有 | 说明 |
-|---|---|---|
-| 语言 | ✅ 有 `languages`（`["multi"]`），且已有 `-en` 分组 | 需归一成 `multi` / `en` 两档即可 |
-| **速度/质量档** | ❌ **没有** | 我们只有 `quantTier`（实测取值 `small` / `balanced` / `full` / `large`）—— 那是**量化体积轴，不是速度轴**。tiny-f16 与 large-v3-f16 都会落进「full」，但两者速度差几十倍 |
+| 轴              | 我们有没有                                          | 说明                                                                                                                                                                     |
+| --------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 语言            | ✅ 有 `languages`（`["multi"]`），且已有 `-en` 分组 | 需归一成 `multi` / `en` 两档即可                                                                                                                                         |
+| **速度/质量档** | ❌ **没有**                                         | 我们只有 `quantTier`（实测取值 `small` / `balanced` / `full` / `large`）—— 那是**量化体积轴，不是速度轴**。tiny-f16 与 large-v3-f16 都会落进「full」，但两者速度差几十倍 |
 
 → **建议**：给 manifest 加一个 `speedTier: "fast" | "balance" | "quality"`，按模型族定
 （tiny/base → fast，small → balance，medium/large → quality），**与 `quantTier` 并存互不替代**。
 这样双轴筛选的两根轴才都齐。**这是我们与 memo.ac 对不齐的真正原因之一，不是选项抄漏了。**
 
 三层结构建议（因为我们比它多一个量化维度）：
+
 1. **卡片 = `groupId`**（12 个逻辑模型），按 `lang × speedTier` 双轴筛选 → 一屏 1～3 张
 2. **量化 = 卡片内的分段控件**（f16 / q5_0 / q8_0…），不占外层列表位
 3. 下载状态与 fit 徽标**画在卡上**，不做单独的「已安装」tab
 
 ## B-3. 本节诚实清单
 
-| 事项 | 状态 |
-|---|---|
-| 24 家供应商对象解析 | ✅ **24/24 成功，0 失败**，逐层展开自压缩变量 |
-| 520 条模型条目 | ✅ 由解析结果程序化统计，非人工计数 |
-| 默认供应商 `openai` | ✅ 渲染层 store 初值；**但主进程默认设置里无 LLM 键**（即出厂无可用 LLM），两条都已核实 |
-| 6 家置顶名单与三桶分组 | ✅ 渲染层 `YKt` 原文 |
-| **品牌色** | ❌ **NOT FOUND** —— 注册表无 `color`/`brandColor`/`theme` 字段。`ui-polish` 需自定 |
-| 图标资源本体 | **未核实** —— 只拿到 `icon` 字符串 id，没去核对它映射到哪个图标包的哪个图形 |
-| 模型 id 的时效性 | ⚠️ 是 memo.ac 的**人工策展快照**（`modelListSource.checkedAt` 多为 2026-05-31）。**落地前必须对厂商官方文档复核**，不要直接当权威清单 |
-| 甲表（旧枚举 24 项）与乙表（displayName 注册表 24 项）的分工 | **仍未核实**（附录 A-3.1 已记）。本次 JSON 用的是**主进程的 24 家 registry 对象**，与那两份都不完全相同 |
+| 事项                                                         | 状态                                                                                                                                  |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 24 家供应商对象解析                                          | ✅ **24/24 成功，0 失败**，逐层展开自压缩变量                                                                                         |
+| 520 条模型条目                                               | ✅ 由解析结果程序化统计，非人工计数                                                                                                   |
+| 默认供应商 `openai`                                          | ✅ 渲染层 store 初值；**但主进程默认设置里无 LLM 键**（即出厂无可用 LLM），两条都已核实                                               |
+| 6 家置顶名单与三桶分组                                       | ✅ 渲染层 `YKt` 原文                                                                                                                  |
+| **品牌色**                                                   | ❌ **NOT FOUND** —— 注册表无 `color`/`brandColor`/`theme` 字段。`ui-polish` 需自定                                                    |
+| 图标资源本体                                                 | **未核实** —— 只拿到 `icon` 字符串 id，没去核对它映射到哪个图标包的哪个图形                                                           |
+| 模型 id 的时效性                                             | ⚠️ 是 memo.ac 的**人工策展快照**（`modelListSource.checkedAt` 多为 2026-05-31）。**落地前必须对厂商官方文档复核**，不要直接当权威清单 |
+| 甲表（旧枚举 24 项）与乙表（displayName 注册表 24 项）的分工 | **仍未核实**（附录 A-3.1 已记）。本次 JSON 用的是**主进程的 24 家 registry 对象**，与那两份都不完全相同                               |
 
 ---
 

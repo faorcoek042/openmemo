@@ -8,17 +8,17 @@
 
 **四件全做完，外加你中途追加的第 5 件（第四个解析器归一）。死锁解开了，不是绕开。**
 
-| # | 事 | 状态 | 撤掉后变红？ |
-|---|---|---|---|
-| ① | F3 / Paraformer 被只读不写的环境变量闸死 | ✅ 改成从**已安装模型库**发现；环境变量降级为覆盖 | ✅ 3 条红 |
-| ①附 | **新查出**：sherpa 流式与 Paraformer **都带 `tokens.txt`**，互相顶掉 | ✅ 每个模型独占目录 | ✅（同上那 3 条里有一条专钉它） |
-| ②-1 | `openmemo-probe` 没有分发通道 | ❌ **没做**（要动 release 资产，边界外）—— 但**接线侧已备好**，包里一有它就能被找到 | — |
-| ②-2 | **L2 门禁自指死锁** | ✅ **解开了**。用 `AdvisoryGpu.candidateBackends` 这条**不依赖任何包**的独立证据 | ✅ 2 条变异各 3/1 条红 |
-| ②-3 | 安装器写 `by-name/backend`、runtime 读 `bin/runtime` | ✅ probe / ggml 库 / whisper-cli 三处全部改读安装器真正写下的位置 | ✅ 3 条变异各 1 条红 |
-| ②附 | **用户亲手复现的那个 409 就是我修的那一行** | ✅ 见 §2.4 | ✅ |
-| ③ | F2 上传的笔记永远不能重新转写 | ✅ 一行 + **先证明测试原来看不见这个字段** | ✅ 1 条红 |
-| ④ | `/api/health` 的 host 硬编码 | ✅ 报实际绑定地址 | ✅ 1 条红 |
-| ⑤ | 「零调用方」门禁的 barrel 盲区 | ✅ 补回丢掉的第三档「只被再导出」：**21 条，其中 16 条连测试都没有** | ✅ 4 条变异全部被自检抓住 |
+| #   | 事                                                                   | 状态                                                                                | 撤掉后变红？                    |
+| --- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------- |
+| ①   | F3 / Paraformer 被只读不写的环境变量闸死                             | ✅ 改成从**已安装模型库**发现；环境变量降级为覆盖                                   | ✅ 3 条红                       |
+| ①附 | **新查出**：sherpa 流式与 Paraformer **都带 `tokens.txt`**，互相顶掉 | ✅ 每个模型独占目录                                                                 | ✅（同上那 3 条里有一条专钉它） |
+| ②-1 | `openmemo-probe` 没有分发通道                                        | ❌ **没做**（要动 release 资产，边界外）—— 但**接线侧已备好**，包里一有它就能被找到 | —                               |
+| ②-2 | **L2 门禁自指死锁**                                                  | ✅ **解开了**。用 `AdvisoryGpu.candidateBackends` 这条**不依赖任何包**的独立证据    | ✅ 2 条变异各 3/1 条红          |
+| ②-3 | 安装器写 `by-name/backend`、runtime 读 `bin/runtime`                 | ✅ probe / ggml 库 / whisper-cli 三处全部改读安装器真正写下的位置                   | ✅ 3 条变异各 1 条红            |
+| ②附 | **用户亲手复现的那个 409 就是我修的那一行**                          | ✅ 见 §2.4                                                                          | ✅                              |
+| ③   | F2 上传的笔记永远不能重新转写                                        | ✅ 一行 + **先证明测试原来看不见这个字段**                                          | ✅ 1 条红                       |
+| ④   | `/api/health` 的 host 硬编码                                         | ✅ 报实际绑定地址                                                                   | ✅ 1 条红                       |
+| ⑤   | 「零调用方」门禁的 barrel 盲区                                       | ✅ 补回丢掉的第三档「只被再导出」：**21 条，其中 16 条连测试都没有**                | ✅ 4 条变异全部被自检抓住       |
 
 **基线**：`pnpm -r test` **1159 / 0**（1138 + 21 条新用例）· `tsc -b` 0 · `eslint` 0 ·
 `check:sources` ✔ · `check:orphans` ✔（**棘轮基线一个字没动**：72 个，与之前逐字相同）。
@@ -54,7 +54,7 @@ if (paraDir)  { … 才构造引擎 … }
 
 - 新增 `modelStore.listInstalledModelRecords(modelsDir, role)`；
 - 判据钉**文件形状**而不是 id / `family`：transducer = `encoder*.onnx + decoder*.onnx +
-  joiner*.onnx + tokens.txt`（那正是 `OnlineRecognizer.modelConfig.transducer` 要的东西）。
+joiner*.onnx + tokens.txt`（那正是 `OnlineRecognizer.modelConfig.transducer` 要的东西）。
   用 `family` 当唯一判据会漏掉老记录 —— 契约明写「`family === undefined` = 未知，
   **不得**当成空集过滤掉」；
 - 标点模型（`role: punctuation`）同路解析，缺了不阻止引擎启用（但会一个标点都没有）。
@@ -156,6 +156,7 @@ cuda 包没装 → 没有 libggml-cuda.so → probe 枚举不到 CUDA 设备
 3. 其余 → 不可装，理由沿用 probe 给的那句。
 
 **两条边界，缺一条就是"把闸门拆了"而不是"解开死锁"**：
+
 - 没有匹配硬件仍然拒（否则会把 678 MB 的 CUDA 包推给一台没有 N 卡的机器）；
 - **包一旦装上，probe 的裁决重新说了算**（装完之后 probe 已经有机会枚举了，
   它仍说"没有可用设备"就是真结论：驱动太老 / 只有软件渲染器。此时用弱证据推翻强证据是错的）。
@@ -197,6 +198,7 @@ runtime 只搜 <dataDir>/bin/runtime                       （空目录）
 ```
 
 三处全部改成读安装器真正写下的位置：
+
 - `resolveRuntimeLayout()` 的 **probe**；
 - **ggml 后端库**（`backendDir` 在 probe 还没有分发通道时指向真的装了 ggml 库的那个目录，
   这样 `backendDirExists` 与断路器的驱动指纹说的都是实话，而不是恒 false）；
@@ -211,11 +213,18 @@ ggml 库的判据是**"ggml 会 dlopen 的那类文件"**（`libggml*.{so,dylib}
 用户点「自测」拿到：
 
 ```json
-{ "code":"SELF_TEST_BLOCKED", "status":409,
-  "details": { "missing":["whisper-cli"],
-    "resolved": { "whisperCli": null,
+{
+  "code": "SELF_TEST_BLOCKED",
+  "status": 409,
+  "details": {
+    "missing": ["whisper-cli"],
+    "resolved": {
+      "whisperCli": null,
       "model": "/root/data-memo/models/by-name/asr/ggml-base-q5_1.bin",
-      "audio": "/root/memo/vendor/whisper.cpp/samples/jfk.wav" } } }
+      "audio": "/root/memo/vendor/whisper.cpp/samples/jfk.wav"
+    }
+  }
+}
 ```
 
 **同一台实例上**：`/api/daemon/status` 报 `missing: []`、`/api/selfcheck` 报 `tool.whisperCli ok`
@@ -223,12 +232,12 @@ ggml 库的判据是**"ggml 会 dlopen 的那类文件"**（`libggml*.{so,dylib}
 
 四个出口，两种答案 —— 因为第 4 个**自己解析、不吃流水线那份答案**，而且只搜 `bin/runtime`：
 
-| # | 出口 | 答案 |
-|---|---|---|
-| 1 | `discoverTools()` → `findInBackendPacks()` | 找得到 |
-| 2 | `/api/selfcheck` 读 bundle | 找得到 |
-| 3 | 磁盘 | 在 |
-| 4 | `runBackendSelfTest()`（`apps/daemon/src/runtime/setup.ts`，由 `hardware.ts` 的 `/api/backends/selftest` 调用） | **null** |
+| #   | 出口                                                                                                            | 答案     |
+| --- | --------------------------------------------------------------------------------------------------------------- | -------- |
+| 1   | `discoverTools()` → `findInBackendPacks()`                                                                      | 找得到   |
+| 2   | `/api/selfcheck` 读 bundle                                                                                      | 找得到   |
+| 3   | 磁盘                                                                                                            | 在       |
+| 4   | `runBackendSelfTest()`（`apps/daemon/src/runtime/setup.ts`，由 `hardware.ts` 的 `/api/backends/selftest` 调用） | **null** |
 
 **按你的判据修的：不是给它补一条搜索路径（那是第五个实现），是让它去问 1 号本人。**
 `runtime/setup.ts` 现在 `import { findInBackendPacks } from '@openmemo/pipeline'`，
@@ -324,12 +333,12 @@ GET /api/health → "host": "127.0.0.1"
 
 4 条变异，**全部被自检当场抓住（exit 1）**：
 
-| 变异 | 结果 |
-|---|---|
+| 变异                                              | 结果 |
+| ------------------------------------------------- | ---- |
 | `bodiesNoReexport.set(f, body)`（算对了、存错了） | ✔ 红 |
-| 再导出正则打瞎 | ✔ 红 |
-| 分档那个 `else if` 整段删掉 | ✔ 红 |
-| `real` 又按未挖空的 body 算 | ✔ 红 |
+| 再导出正则打瞎                                    | ✔ 红 |
+| 分档那个 `else if` 整段删掉                       | ✔ 红 |
+| `real` 又按未挖空的 body 算                       | ✔ 红 |
 
 阳性对照**刻意用写死的样本，不用仓库里的真实条目** —— 真实条目随时会被人接上
 （那正是我们想要的结果），到那天自检会红在一件好事上，然后被顺手删掉。
@@ -351,10 +360,10 @@ GET /api/health → "host": "127.0.0.1"
 
 **全仓有两个互不相干的"已安装"概念**：
 
-| | 判据 | 谁读 |
-|---|---|---|
-| A **盘上真的有文件** | `findInBackendPacks(storeRoot, name)` 扫 `by-name/backend/**` | `discoverTools()` → `pipeline.tools` → `/api/daemon/status` 的 `missing`；`/api/selfcheck` 的 `tool.ffmpeg` |
-| B **有一份安装 manifest** | `manifests/backend/<id>.json` 存在 | `RestState.listInstalledBackends()` → `/api/backends/catalog` 的 `installed` → `/runtime` 页的按钮；`readInstalledVersions()`（`packages/downloader/src/components.ts:62`）→ `/api/components` 的 `installedVersion` |
+|                           | 判据                                                          | 谁读                                                                                                                                                                                                                 |
+| ------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A **盘上真的有文件**      | `findInBackendPacks(storeRoot, name)` 扫 `by-name/backend/**` | `discoverTools()` → `pipeline.tools` → `/api/daemon/status` 的 `missing`；`/api/selfcheck` 的 `tool.ffmpeg`                                                                                                          |
+| B **有一份安装 manifest** | `manifests/backend/<id>.json` 存在                            | `RestState.listInstalledBackends()` → `/api/backends/catalog` 的 `installed` → `/runtime` 页的按钮；`readInstalledVersions()`（`packages/downloader/src/components.ts:62`）→ `/api/components` 的 `installedVersion` |
 
 **B 的写入方全仓只有一处**：`apps/daemon/src/http/rest/backends.ts` 的 `startPackInstall()`
 里那句 `await state.store.writeManifest('backend', pack.id, record)`。
@@ -367,6 +376,7 @@ GET /api/health → "host": "127.0.0.1"
 
 **给接手的人的判据**（沿用你说的那条）：同一台机器上，「装没装」只准有一个回答的人。
 两条路可选，我倾向两条都做：
+
 1. `startPackInstall()` 是唯一写入方 → 启动时补一次**对账**：`providesFiles` 全部能被
    `findInBackendPacks()` 找到、却没有 manifest 的包，回填一份记录（与 `migrateInstallRecords` 同族）；
 2. `/api/backends/catalog` 的 `installed` 改成「有 manifest **或** `providesFiles` 全部可发现」。
@@ -393,16 +403,16 @@ GET /api/health → "host": "127.0.0.1"
 对照组先跑：5 组测试文件在**未变异**的产物上全绿 —— 不先证明这一点，
 下面每一条"红"都不证明任何事（变异测试最容易出的假绿就是"产物本来就是坏的"）。
 
-| 撤掉什么 | 结果 | 红在哪 |
-|---|---|---|
+| 撤掉什么                                                    | 结果     | 红在哪                                            |
+| ----------------------------------------------------------- | -------- | ------------------------------------------------- |
 | `listInstalledModelRecords` 恒返回 `[]`（回到只认环境变量） | ✔ exit 1 | 3 条：流式翻 true / Paraformer 可用 / tokens 不串 |
-| L2 解环分支（`installed !== true && advisory.includes`） | ✔ exit 1 | 3 条：解环 / 不许放水 / `isPackApplicable` 传参 |
-| L2「probe 从未跑过 + 有独立证据」那一支 | ✔ exit 1 | 1 条 |
-| 从安装器落点找 ggml 库 | ✔ exit 1 | `backendDirExists` 回到恒 false |
-| probe 问 `findInBackendPacks()` | ✔ exit 1 | probe 永远 missing |
-| 自检问 `findInBackendPacks()` | ✔ exit 1 | 回到用户那个 `409 missing:["whisper-cli"]` |
-| `originalUrl: finalPath` → `null` | ✔ exit 1 | 上传成功路径那条 |
-| `host: deps.host()` → `'127.0.0.1'` | ✔ exit 1 | health host 那条 |
+| L2 解环分支（`installed !== true && advisory.includes`）    | ✔ exit 1 | 3 条：解环 / 不许放水 / `isPackApplicable` 传参   |
+| L2「probe 从未跑过 + 有独立证据」那一支                     | ✔ exit 1 | 1 条                                              |
+| 从安装器落点找 ggml 库                                      | ✔ exit 1 | `backendDirExists` 回到恒 false                   |
+| probe 问 `findInBackendPacks()`                             | ✔ exit 1 | probe 永远 missing                                |
+| 自检问 `findInBackendPacks()`                               | ✔ exit 1 | 回到用户那个 `409 missing:["whisper-cli"]`        |
+| `originalUrl: finalPath` → `null`                           | ✔ exit 1 | 上传成功路径那条                                  |
+| `host: deps.host()` → `'127.0.0.1'`                         | ✔ exit 1 | health host 那条                                  |
 
 外加门禁脚本 4 条变异（§4.4），全部被自检抓住。
 
@@ -411,6 +421,7 @@ GET /api/health → "host": "127.0.0.1"
 # §7 交付文件（**请 `git add` 后用 `git diff --cached --name-only` 逐条核对**）
 
 改：
+
 ```
 apps/daemon/src/bootstrap/single-instance.ts     boundAddress()
 apps/daemon/src/http/server.ts                   ServerDeps.host + health 用它
@@ -429,6 +440,7 @@ scripts/check-orphan-exports.mjs                 第三档「只被再导出」+
 ```
 
 新增：
+
 ```
 apps/daemon/src/pipeline/chineseEngineResolve.test.ts   5 条
 apps/daemon/src/runtime/layoutResolve.test.ts           5 条
@@ -442,18 +454,18 @@ packages/runtime/src/backends/applicability.test.ts     8 条
 
 # §8 纪律申报
 
-| 条 | 结果 |
-|---|---|
-| `apps/web/dist` | ✅ **未构建**。全程只跑 `pnpm build:safe`（`pnpm --filter "!@openmemo/web" -r build`）与 `tsc -b`。⚠️ 开工时它的 mtime 是 `22:58:25`，与 daemon 的 `builtAt=14:58:25Z` 逐秒相同 —— **那是你重启前的那次构建，不是我**（我第一条命令晚于它） |
-| `pnpm -r build` / `vite build` | ✅ 未跑 |
-| `apps/daemon/dist` | ⚠️ **重建了**（`pnpm build:safe`，`pnpm check` 自己就跑这条）。核过：daemon dist 里**没有任何对本地模块的动态 `import()`**，所以正在跑的进程不会半新半旧 |
-| `:10000` | ✅ **只发过 GET**（`/api/health`）。未重启、未 kill、未占用；另用 `ss -ltnp` 只读观测过监听地址 |
-| `/root/data-memo` | ✅ **未读未写**（只通过 daemon 的只读 API 与 `ss` 观测） |
-| 指针文件 | ✅ sha256 仍是 `7f930979b85204d4c05b221f4c17a5cf5936a4d432a46488816727f60da233f3` |
-| `pkill -f` | ✅ 未用 |
-| release | ✅ 未建/未改/未删。`gh` 一次都没用 |
-| 本机 whisper 转写 | ✅ **一次都没跑**。①的验证走的是"装上模型后 `streamAvailable` 翻转"，没有真跑推理；layout 那条用例里**刻意让 ASR 模型缺席**，保证它只能 `blocked`、不可能真跑 |
-| 反向验证 | ✅ 全部在 `/tmp/gates-fix/` 与 `mkdtemp` 沙箱里，**共享工作树全程没有坏过一秒** |
-| `HANDOFF.md` / `00-CHARTER.md` / `BOARD.md` / `ROSTER.md` / `docs/adr/**` / `PENDING-USER-DECISIONS.md` | ✅ 只读引用，一个字未改（要改的写进 §5 交给你） |
-| `README.md` / `docs/DEPLOYMENT.md` / `SECURITY.md` | ✅ 未碰 |
-| 派出的 subagent | 0 个 |
+| 条                                                                                                      | 结果                                                                                                                                                                                                                                        |
+| ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/dist`                                                                                         | ✅ **未构建**。全程只跑 `pnpm build:safe`（`pnpm --filter "!@openmemo/web" -r build`）与 `tsc -b`。⚠️ 开工时它的 mtime 是 `22:58:25`，与 daemon 的 `builtAt=14:58:25Z` 逐秒相同 —— **那是你重启前的那次构建，不是我**（我第一条命令晚于它） |
+| `pnpm -r build` / `vite build`                                                                          | ✅ 未跑                                                                                                                                                                                                                                     |
+| `apps/daemon/dist`                                                                                      | ⚠️ **重建了**（`pnpm build:safe`，`pnpm check` 自己就跑这条）。核过：daemon dist 里**没有任何对本地模块的动态 `import()`**，所以正在跑的进程不会半新半旧                                                                                    |
+| `:10000`                                                                                                | ✅ **只发过 GET**（`/api/health`）。未重启、未 kill、未占用；另用 `ss -ltnp` 只读观测过监听地址                                                                                                                                             |
+| `/root/data-memo`                                                                                       | ✅ **未读未写**（只通过 daemon 的只读 API 与 `ss` 观测）                                                                                                                                                                                    |
+| 指针文件                                                                                                | ✅ sha256 仍是 `7f930979b85204d4c05b221f4c17a5cf5936a4d432a46488816727f60da233f3`                                                                                                                                                           |
+| `pkill -f`                                                                                              | ✅ 未用                                                                                                                                                                                                                                     |
+| release                                                                                                 | ✅ 未建/未改/未删。`gh` 一次都没用                                                                                                                                                                                                          |
+| 本机 whisper 转写                                                                                       | ✅ **一次都没跑**。①的验证走的是"装上模型后 `streamAvailable` 翻转"，没有真跑推理；layout 那条用例里**刻意让 ASR 模型缺席**，保证它只能 `blocked`、不可能真跑                                                                               |
+| 反向验证                                                                                                | ✅ 全部在 `/tmp/gates-fix/` 与 `mkdtemp` 沙箱里，**共享工作树全程没有坏过一秒**                                                                                                                                                             |
+| `HANDOFF.md` / `00-CHARTER.md` / `BOARD.md` / `ROSTER.md` / `docs/adr/**` / `PENDING-USER-DECISIONS.md` | ✅ 只读引用，一个字未改（要改的写进 §5 交给你）                                                                                                                                                                                             |
+| `README.md` / `docs/DEPLOYMENT.md` / `SECURITY.md`                                                      | ✅ 未碰                                                                                                                                                                                                                                     |
+| 派出的 subagent                                                                                         | 0 个                                                                                                                                                                                                                                        |

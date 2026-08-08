@@ -108,7 +108,9 @@ async function detectCpuLinux(brand: string, logicalCores: number): Promise<CpuI
   try {
     const text = await readFile('/proc/cpuinfo', 'utf8');
 
-    const flagLine = text.split('\n').find((l) => l.startsWith('flags') || l.startsWith('Features'));
+    const flagLine = text
+      .split('\n')
+      .find((l) => l.startsWith('flags') || l.startsWith('Features'));
     if (flagLine) {
       const raw = flagLine.split(':')[1] ?? '';
       features = normaliseFeatures(raw.trim().split(/\s+/));
@@ -119,7 +121,11 @@ async function detectCpuLinux(brand: string, logicalCores: number): Promise<CpuI
 
     // "cpu cores" is per-socket; multiply by the number of distinct physical ids.
     const coresPerSocket = Number(
-      text.split('\n').find((l) => l.startsWith('cpu cores'))?.split(':')[1]?.trim() ?? '0',
+      text
+        .split('\n')
+        .find((l) => l.startsWith('cpu cores'))
+        ?.split(':')[1]
+        ?.trim() ?? '0',
     );
     const sockets = new Set(
       text
@@ -221,19 +227,60 @@ const ISA_BY_VARIANT: Record<string, string[]> = {
   skylakex: ['sse4_2', 'avx', 'avx2', 'f16c', 'fma', 'bmi2', 'avx512f'],
   cannonlake: ['sse4_2', 'avx', 'avx2', 'f16c', 'fma', 'bmi2', 'avx512f', 'avx512_vbmi'],
   cascadelake: ['sse4_2', 'avx', 'avx2', 'f16c', 'fma', 'bmi2', 'avx512f', 'avx512_vnni'],
-  icelake: ['sse4_2', 'avx', 'avx2', 'f16c', 'fma', 'bmi2', 'avx512f', 'avx512_vbmi', 'avx512_vnni'],
-  cooperlake: ['sse4_2', 'avx', 'avx2', 'f16c', 'fma', 'bmi2', 'avx512f', 'avx512_vnni', 'avx512_bf16'],
+  icelake: [
+    'sse4_2',
+    'avx',
+    'avx2',
+    'f16c',
+    'fma',
+    'bmi2',
+    'avx512f',
+    'avx512_vbmi',
+    'avx512_vnni',
+  ],
+  cooperlake: [
+    'sse4_2',
+    'avx',
+    'avx2',
+    'f16c',
+    'fma',
+    'bmi2',
+    'avx512f',
+    'avx512_vnni',
+    'avx512_bf16',
+  ],
   zen4: [
-    'sse4_2', 'avx', 'avx2', 'f16c', 'fma', 'bmi2',
-    'avx512f', 'avx512_vbmi', 'avx512_vnni', 'avx512_bf16',
+    'sse4_2',
+    'avx',
+    'avx2',
+    'f16c',
+    'fma',
+    'bmi2',
+    'avx512f',
+    'avx512_vbmi',
+    'avx512_vnni',
+    'avx512_bf16',
   ],
   sapphirerapids: [
-    'sse4_2', 'avx', 'avx2', 'f16c', 'fma', 'bmi2',
-    'avx512f', 'avx512_vbmi', 'avx512_vnni', 'avx512_bf16', 'amx_tile', 'amx_int8',
+    'sse4_2',
+    'avx',
+    'avx2',
+    'f16c',
+    'fma',
+    'bmi2',
+    'avx512f',
+    'avx512_vbmi',
+    'avx512_vnni',
+    'avx512_bf16',
+    'amx_tile',
+    'amx_int8',
   ],
 };
 
-export function inferIsaFromBackendPath(probeStderr: string): { variant: string | null; features: string[] } {
+export function inferIsaFromBackendPath(probeStderr: string): {
+  variant: string | null;
+  features: string[];
+} {
   const m = /ggml-cpu-([a-z0-9]+)\.(?:so|dll|dylib)/i.exec(probeStderr);
   const variant = m?.[1]?.toLowerCase() ?? null;
   if (variant === null) return { variant: null, features: [] };
@@ -243,10 +290,34 @@ export function inferIsaFromBackendPath(probeStderr: string): { variant: string 
 /** Lowercase, keep only flags anyone downstream cares about, de-duplicate. */
 function normaliseFeatures(raw: string[]): string[] {
   const KEEP = new Set([
-    'sse4_2', 'sse4.2', 'avx', 'avx2', 'avx512f', 'avx512bw', 'avx512vl', 'avx512dq',
-    'avx512vnni', 'avx512_vnni', 'avx512bf16', 'avx512_bf16', 'avx512vbmi', 'avx512_vbmi',
-    'avx_vnni', 'avxvnni', 'f16c', 'fma', 'bmi2', 'amx_tile', 'amx_int8',
-    'neon', 'asimd', 'fp16', 'dotprod', 'i8mm', 'sve', 'sme',
+    'sse4_2',
+    'sse4.2',
+    'avx',
+    'avx2',
+    'avx512f',
+    'avx512bw',
+    'avx512vl',
+    'avx512dq',
+    'avx512vnni',
+    'avx512_vnni',
+    'avx512bf16',
+    'avx512_bf16',
+    'avx512vbmi',
+    'avx512_vbmi',
+    'avx_vnni',
+    'avxvnni',
+    'f16c',
+    'fma',
+    'bmi2',
+    'amx_tile',
+    'amx_int8',
+    'neon',
+    'asimd',
+    'fp16',
+    'dotprod',
+    'i8mm',
+    'sve',
+    'sme',
   ]);
   const out = new Set<string>();
   for (const f of raw) {

@@ -10,6 +10,7 @@ input: docs/design/D-03-download-and-model-api.md, coordination/inbox/model-mgmt
 ## 交付实测
 
 **下载器真下 `ggml-tiny.bin`（77,691,713 B），53 项断言**
+
 - 联网 **28/29**：续传**省下 12.1 MB**；SHA-256 三重交叉一致
   （HF `lfs.oid` = `x-linked-etag` = 独立计算）；SHA-1 对上 whisper.cpp README；
   硬链接 inode 共享；GC 回收 77.7 MB。唯一失败是瞬时 `fetch failed`，隔离复测确认逻辑正确。
@@ -63,20 +64,24 @@ whisper.cpp v1.9.1 上游**无 macOS / Vulkan / ROCm 包**，`model-mgmt` **拒�
 3. `shared` 误引 `node:crypto` → **污染浏览器包**。（web-first 架构下这是硬伤。）
 
 # 附：自查记录 —— 又一个"测试写得不真实"
+
 离线测试一度报「续传从零开始」，实测确认是**测试本身不真实**
 （`write()` 后立刻 `destroy()` 让 undici 零字节交付），非代码缺陷，已如实记录在 D-03 §8.6。
 → 这是本项目第三次出现"测试的结论不可信"。**方法论已稳定：先质疑测试，再质疑代码。**
 
 # 附：已标注未标定的量（不许当成事实使用）
+
 - `estimateGpuLayers` **未标定**
 - RTF 外推系数 **未标定**
-→ 代码与文档均已标注。**任何基于它们的 UI 提示必须写"估算"而非确定值。**
+  → 代码与文档均已标注。**任何基于它们的 UI 提示必须写"估算"而非确定值。**
 
 # 附：机器生成的显存数据（ADR-004 决策 4 落地）
+
 Qwen3-4B Q4_K_M @8K 上下文 = **4130 MB，其中 KV cache 占 1208 MB**。
 全部由 GGUF 头**机器生成**，非手填 —— 避免了 LM Studio 漏算 KV 的翻车。
 
 # 附：全仓库红灯状态
+
 - ✅ `shared` 未导出 `ulid` —— **已修**
 - 🔴 仅剩 `packages/pipeline` 的 `argGuard.test.ts`（`gpu-runtime` 所有，他正在 T-025 中）
 
@@ -107,13 +112,13 @@ Qwen3-4B Q4_K_M @8K 上下文 = **4130 MB，其中 KV cache 占 1208 MB**。
 
 `packages/downloader/src/manifest.ts` 里的三层降级远端目录加载器整族：
 
-| 符号 | 性质 |
-|---|---|
-| `loadManifest` | 含全仓**唯一**一处取目录的 `fetch` |
-| `loadModelManifest` / `loadBackendManifest` | 它的两个出口 |
-| `LoadManifestOptions` / `LoadedManifest` / `ManifestTier` | 只为它们存在的类型 |
-| `CATALOG_TTL_MS` / `STALE_AFTER_MS` | 只为它们存在的常量 |
-| `readJson` / `fileAgeMs` | 只为它们存在的私有辅助 |
+| 符号                                                      | 性质                               |
+| --------------------------------------------------------- | ---------------------------------- |
+| `loadManifest`                                            | 含全仓**唯一**一处取目录的 `fetch` |
+| `loadModelManifest` / `loadBackendManifest`               | 它的两个出口                       |
+| `LoadManifestOptions` / `LoadedManifest` / `ManifestTier` | 只为它们存在的类型                 |
+| `CATALOG_TTL_MS` / `STALE_AFTER_MS`                       | 只为它们存在的常量                 |
+| `readJson` / `fileAgeMs`                                  | 只为它们存在的私有辅助             |
 
 `[T-171 实测]` 逐个核过调用方：全部**零生产调用方、零测试**，仅有同文件自引用 +
 markdown 提及 + 基线 JSON 条目。棘轮基线随之 **72 → 70**（`loadBackendManifest` /
@@ -125,6 +130,7 @@ markdown 提及 + 基线 JSON 条目。棘轮基线随之 **72 → 70**（`loadB
 （本仓栽过一次：`toMarkdown` 有 daemon 调用方却被删，导出 500）。这条约束在这里触发了。
 
 `[T-171 实测]` `packages/downloader/scripts/verify-unpack.mjs`：
+
 - `:50` `const { verifyCatalogSignature } = await import(path.join(dist, 'manifest.js'));`
 - `:584 :587 :591 :596` 四处实调用，第 9 节共 5 条断言
 - 第 8 节另有 8 条断言调用 `signature.ts` 的三个导出

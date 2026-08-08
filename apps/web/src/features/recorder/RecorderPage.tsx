@@ -133,7 +133,9 @@ export default function RecorderPage() {
     if (typeof navigator === 'undefined' || !navigator.permissions) return;
     navigator.permissions
       .query({ name: 'microphone' as PermissionName })
-      .then((s) => setPerm(s.state === 'granted' ? 'granted' : s.state === 'denied' ? 'denied' : 'unknown'))
+      .then((s) =>
+        setPerm(s.state === 'granted' ? 'granted' : s.state === 'denied' ? 'denied' : 'unknown'),
+      )
       .catch(() => setPerm('unknown'));
   }, []);
 
@@ -437,7 +439,11 @@ export default function RecorderPage() {
           {/* 词条里带 `**没有逐字时间戳**` —— 走 <Emphasis>，别把裸星号吐给用户（T-129b） */}
           <Emphasis
             className="block text-ink-muted"
-            text={rerunEngine === 'paraformer' ? t('recorder.paraformerTradeoff') : t('recorder.turboTradeoff')}
+            text={
+              rerunEngine === 'paraformer'
+                ? t('recorder.paraformerTradeoff')
+                : t('recorder.turboTradeoff')
+            }
           />
         </div>
       ) : null}
@@ -460,7 +466,11 @@ export default function RecorderPage() {
               {t('recorder.skipRerun')}
             </Button>
           </div>
-          <ProgressMeter value={rerunProgress} label={t('recorder.rerunning', { model: '' })} size="md" />
+          <ProgressMeter
+            value={rerunProgress}
+            label={t('recorder.rerunning', { model: '' })}
+            size="md"
+          />
           <p className="mt-2 text-xs text-ink-secondary">{t('recorder.rerunHint')}</p>
         </section>
       ) : null}
@@ -506,4 +516,3 @@ export default function RecorderPage() {
     </div>
   );
 }
-

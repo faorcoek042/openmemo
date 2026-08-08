@@ -35,6 +35,7 @@ Windows 的 zip 里**没有 `libsimple.dll` 这个文件**。这条错误声明�
 ## [2026-08-06 04:20] T-147 DONE
 
 交付（全部已 push 到 master）:
+
 - `98bcdf8` 产品修复：`packages/pipeline/src/tools.ts` 新增 `sqliteExtensionSources()`
 - `80212c4` `packages/runtime/src/{assetPaths,selfcheck}.test.ts`（CI 实测那 5 条）
 - `0588091` `packages/pipeline/src/subprocess/__tests__/argGuard.test.ts`、
@@ -84,6 +85,7 @@ Windows 上永远找不到 → `bin/ext` 里没有它 → `文件不存在` → 
 **判据用的就是你要的那条**（`ext.chineseSearch` 四个双字词真的命中），不是"文件下下来了"。
 
 顺带排掉两条会让人白忙的猜测（都是实测，不是推理）：
+
 - **入口点没问题**：SQLite 无显式入口点时从文件名推 —— 去目录、跳过 `lib`、取到第一个 `.`
   之前的字母。`simple.dll` 与 `libsimple.dll` **都推出 `sqlite3_simple_init`**，
   而那是该 DLL 唯一的 `sqlite3_*` 导出（PE 导出表 2623 个导出，匹配 `sqlite3*` 的只有这一个）。
@@ -112,28 +114,28 @@ node.exe 自己是静态链接 CRT 的，所以"能跑 daemon"不代表"能加�
 `packages/pipeline` / `apps/daemon` 在非 Linux 上**一条都没轮到过**。
 每修好一层，CI 就往前走一层，露出下一层：
 
-| 轮次 | win32 | darwin |
-|---|---|---|
-| 起点（ci-runner） | runtime 5 红，后面全没跑 | pipeline 1 红（已由 ci-runner 修） |
-| 修完 runtime | runtime 47/47 ✅ → **pipeline 露出 5 红** | runtime ✅ → pipeline 1 红 |
-| 修完 pipeline | pipeline 162/162 ✅ → **daemon 露出 3 红** | pipeline ✅ → daemon 1 红 |
-| 修完 daemon 那 3 条 | **daemon 又露出 2 红**（upload 415 + 端口扫描器） | **全绿** |
+| 轮次                | win32                                             | darwin                             |
+| ------------------- | ------------------------------------------------- | ---------------------------------- |
+| 起点（ci-runner）   | runtime 5 红，后面全没跑                          | pipeline 1 红（已由 ci-runner 修） |
+| 修完 runtime        | runtime 47/47 ✅ → **pipeline 露出 5 红**         | runtime ✅ → pipeline 1 红         |
+| 修完 pipeline       | pipeline 162/162 ✅ → **daemon 露出 3 红**        | pipeline ✅ → daemon 1 红          |
+| 修完 daemon 那 3 条 | **daemon 又露出 2 红**（upload 415 + 端口扫描器） | **全绿**                           |
 
 **14 条逐条定性**（真·宿主假设 12 / 允许 skip 1 / 真产品问题 1）：
 
-| # | 文件 | 定性 | 修法 |
-|---|---|---|---|
-| 1-3 | `runtime/assetPaths` | 宿主假设：期望值写死 `'/d/media/a.wav'` | 根用 `resolve('/d')`、期望值用 `join()`；另加一条"候选必须用本平台分隔符" |
-| 4-5 | `runtime/selfcheck` | 宿主假设：借 `/usr/bin/env` 当"一定存在的可执行文件" | 自己造一个真文件；另加一条 fail 档把"没找到"与"借来的"分开 |
-| 6-7 | `pipeline/ytdlpRemoval` | 宿主假设：`ffmpeg/ytDlp` 写死 `'/bin/sh'`（注释原文「/bin/sh always is」） | 改 `process.execPath` —— 按构造每个平台都有 |
-| 8 | `argGuard` 软链逃逸 | 宿主假设：软链到 `/etc`，**而且失败被 `.catch` 吞了** | 自己造根外目标 + 断言前置条件真的成立 |
-| 9 | `argGuard` 根内软链出界 | 宿主假设：`/etc/hostname` **macOS 上不存在** → 悬空链 → 词法回退 → 落回根内 → 守卫（正确地）不拦 | 同上 |
-| 10 | `argGuard` UNC-under-posix | 宿主假设：调用**强制** posix 规则，期望值却用宿主 `join()` 重拼（win32 的 join 会把反斜杠规范化掉） | 改成钉结构 + 一条反向用例（否则"放行一切"也满足） |
-| 11 | `daemon/entrypoint` 对照组 | 宿主假设：路径写死 `/opt/...`，Windows 上 `pathToFileURL` 会补盘符 → **连对照组都失配** | 用本平台形状造路径；并把对照命题换成各平台都真的更强版本 |
-| 12 | `daemon/restart-datadir` | 宿主假设：`readFileSync(pointer).includes(decoy)` —— JSON 会转义反斜杠 | 解析 JSON 比字段（顺带更强） |
-| 13 | `daemon/testPorts` | **不是平台问题，是 CRLF**（见下） | `split(/\r?\n/)` + 路径归一 |
-| 14 | `daemon/upload` 413/415 | 🔴 **真产品问题**，见下面「单独报给你」 | **没修产品**，只把测试改成"只为那个真原因红" |
-| — | `ytdlpInstall`「没有可执行位就不算找到」 | **允许 skip**：Windows 上根本不存在"没有可执行位"这个状态 | 见下「唯一一条 skip」 |
+| #   | 文件                                     | 定性                                                                                                | 修法                                                                      |
+| --- | ---------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 1-3 | `runtime/assetPaths`                     | 宿主假设：期望值写死 `'/d/media/a.wav'`                                                             | 根用 `resolve('/d')`、期望值用 `join()`；另加一条"候选必须用本平台分隔符" |
+| 4-5 | `runtime/selfcheck`                      | 宿主假设：借 `/usr/bin/env` 当"一定存在的可执行文件"                                                | 自己造一个真文件；另加一条 fail 档把"没找到"与"借来的"分开                |
+| 6-7 | `pipeline/ytdlpRemoval`                  | 宿主假设：`ffmpeg/ytDlp` 写死 `'/bin/sh'`（注释原文「/bin/sh always is」）                          | 改 `process.execPath` —— 按构造每个平台都有                               |
+| 8   | `argGuard` 软链逃逸                      | 宿主假设：软链到 `/etc`，**而且失败被 `.catch` 吞了**                                               | 自己造根外目标 + 断言前置条件真的成立                                     |
+| 9   | `argGuard` 根内软链出界                  | 宿主假设：`/etc/hostname` **macOS 上不存在** → 悬空链 → 词法回退 → 落回根内 → 守卫（正确地）不拦    | 同上                                                                      |
+| 10  | `argGuard` UNC-under-posix               | 宿主假设：调用**强制** posix 规则，期望值却用宿主 `join()` 重拼（win32 的 join 会把反斜杠规范化掉） | 改成钉结构 + 一条反向用例（否则"放行一切"也满足）                         |
+| 11  | `daemon/entrypoint` 对照组               | 宿主假设：路径写死 `/opt/...`，Windows 上 `pathToFileURL` 会补盘符 → **连对照组都失配**             | 用本平台形状造路径；并把对照命题换成各平台都真的更强版本                  |
+| 12  | `daemon/restart-datadir`                 | 宿主假设：`readFileSync(pointer).includes(decoy)` —— JSON 会转义反斜杠                              | 解析 JSON 比字段（顺带更强）                                              |
+| 13  | `daemon/testPorts`                       | **不是平台问题，是 CRLF**（见下）                                                                   | `split(/\r?\n/)` + 路径归一                                               |
+| 14  | `daemon/upload` 413/415                  | 🔴 **真产品问题**，见下面「单独报给你」                                                             | **没修产品**，只把测试改成"只为那个真原因红"                              |
+| —   | `ytdlpInstall`「没有可执行位就不算找到」 | **允许 skip**：Windows 上根本不存在"没有可执行位"这个状态                                           | 见下「唯一一条 skip」                                                     |
 
 **第 13 条值得单独看**：它红的原因是 **git 在 Windows 上默认 `core.autocrlf=true`**，
 扫描器 `split('\n')` 给每行留了 `\r`，而形态正则以 `(?:\/\/.*)?$` 收尾 ——
@@ -219,19 +221,20 @@ catch → 返回 `[]` → 「✘ 没找到任何源码目录」→ 步骤红。�
 
 # 诚实边界（每条结论的证据级别）
 
-| 结论 | 级别 |
-|---|---|
-| Windows 上 `ext.chineseSearch = ok（用户:1 推特:2 中国:1 服务:2）` | **CI 实测**（run 31037371404，win32-x64） |
-| 上游三个 zip 里的真实文件名 | **实测**（下载 + sha256 与清单一致 + unzip 列表） |
-| `simple.dll` 只导出 `sqlite3_simple_init`、依赖 VC 运行时 | **实测**（PE 导出/导入表） |
-| SQLite 从文件名推入口点、`DirSep` 认反斜杠 | **读码**（better-sqlite3 13.0.2 内置 sqlite3.c，行号已写进注释） |
-| 拆掉修复 → 5 条红 | **本机实测**（先 grep 确认坏行在即将运行的产物里，跑完已还原并复验 18/18） |
-| runtime / pipeline / web 在 win32+darwin 全绿 | **CI 实测**（run 31038276704 / 31039060738） |
-| upload 413/415 在 Windows 上读不到响应 | **CI 实测**，但**间歇性**（同一条用例两轮结果不同） |
-| `simple.dll` 在没装 VC 运行时的机器上能否加载 | **未验证：需一台干净的 Windows** |
-| `modelStore.ts` 那条兜底的实际后果 | **读码推断**，未构造场景验证 |
+| 结论                                                               | 级别                                                                       |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| Windows 上 `ext.chineseSearch = ok（用户:1 推特:2 中国:1 服务:2）` | **CI 实测**（run 31037371404，win32-x64）                                  |
+| 上游三个 zip 里的真实文件名                                        | **实测**（下载 + sha256 与清单一致 + unzip 列表）                          |
+| `simple.dll` 只导出 `sqlite3_simple_init`、依赖 VC 运行时          | **实测**（PE 导出/导入表）                                                 |
+| SQLite 从文件名推入口点、`DirSep` 认反斜杠                         | **读码**（better-sqlite3 13.0.2 内置 sqlite3.c，行号已写进注释）           |
+| 拆掉修复 → 5 条红                                                  | **本机实测**（先 grep 确认坏行在即将运行的产物里，跑完已还原并复验 18/18） |
+| runtime / pipeline / web 在 win32+darwin 全绿                      | **CI 实测**（run 31038276704 / 31039060738）                               |
+| upload 413/415 在 Windows 上读不到响应                             | **CI 实测**，但**间歇性**（同一条用例两轮结果不同）                        |
+| `simple.dll` 在没装 VC 运行时的机器上能否加载                      | **未验证：需一台干净的 Windows**                                           |
+| `modelStore.ts` 那条兜底的实际后果                                 | **读码推断**，未构造场景验证                                               |
 
 需要 Manager 决策:
+
 1. **`vendor/manifests/sqlite-ext.json` 那两行要不要改成 `simple.dll`**（SHARED-CHANGE 已申报，
    **我没动**）。不改也不会让 Windows 重新变坏（代码两个名字都找），只是清单继续说着一件
    归档里不存在的事。
@@ -241,6 +244,7 @@ catch → 返回 `[]` → 「✘ 没找到任何源码目录」→ 步骤红。�
    我按边界没碰 workflow。
 
 下一步建议:
+
 1. 等 run 31039891282（我推的最后一版）出结果 —— 预期 win32 只剩 upload 那 2 条真问题。
 2. `cold-start-audit` 在 Windows 上重跑一次（`pack-publish` 的 Windows ffmpeg 包已进 master），
    `tool.ffmpeg/ffprobe` 那两条 required fail 应该会一起消掉。
@@ -264,10 +268,10 @@ web 94+10+202 · daemon 278/278` —— 加上 `check:sources ✔ 95` 与 typech
 
 **唯一剩下的那条，两轮的表现正好相反 —— 这本身就是证据：**
 
-| 轮次 | win32 | darwin |
-|---|---|---|
-| 31039060738 | upload 415 + 413 红（`read ECONNRESET`） | 全绿 |
-| 31039891282 | **全绿** | upload 413 红（`write EPIPE`） |
+| 轮次        | win32                                    | darwin                         |
+| ----------- | ---------------------------------------- | ------------------------------ |
+| 31039060738 | upload 415 + 413 红（`read ECONNRESET`） | 全绿                           |
+| 31039891282 | **全绿**                                 | upload 413 红（`write EPIPE`） |
 
 同一条用例、同一份代码，两个平台各红过一次、也各绿过一次，
 而 **linux 从来没红过**。这排除了"某个平台的固定差异"，指向上面那条产品问题的
@@ -314,6 +318,7 @@ web 94+10+202 · daemon 278/278` —— 加上 `check:sources ✔ 95` 与 typech
    活跃领地，而它无法验证边界是否真的被解除」。**这个拦截是对的**，我没有绕。
 
 我做过的非重叠核对（供你判断，不构成授权）：
+
 - `sqlite-ext.json` 自 `1b4df88`（T-097）起**没有任何人动过**；
 - `pack-publish` 的 T-146 改的是 `backends.json` / `components.json`（`2075a88`）；
 - 它回执里写的下一步是「release 批下来后补 **macOS whisper 的两条 manifest**」——

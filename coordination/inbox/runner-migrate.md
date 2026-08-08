@@ -9,11 +9,11 @@
 
 我接下来要改：
 
-| 文件 | 改什么 | 冲突风险 |
-|---|---|---|
-| `vendor/manifests/components.json` | 只改 `media-tools-macos-arm64` 一条：`v7.1.4-3` → `v8.1.2-2`（`pinnedVersion` / `releaseUrl` / `sizeBytes` / `sha256` / `sha256Provenance`），并把该条的 `stableOnly` 由 `true` 放松成 `false`、补 `tagPattern` | 低 |
-| `vendor/manifests/backends.json` | 同上那条的 `engineVersion` / 文件名 / `sizeBytes` / `sha256` / mirror URL / `totalSizeBytes` | 低 |
-| `.github/workflows/build-backends.yml` · `scripts/ci/*` · `package.json`（一行） | 我的地盘（T-163 ①） | 低 |
+| 文件                                                                             | 改什么                                                                                                                                                                                                          | 冲突风险 |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| `vendor/manifests/components.json`                                               | 只改 `media-tools-macos-arm64` 一条：`v7.1.4-3` → `v8.1.2-2`（`pinnedVersion` / `releaseUrl` / `sizeBytes` / `sha256` / `sha256Provenance`），并把该条的 `stableOnly` 由 `true` 放松成 `false`、补 `tagPattern` | 低       |
+| `vendor/manifests/backends.json`                                                 | 同上那条的 `engineVersion` / 文件名 / `sizeBytes` / `sha256` / mirror URL / `totalSizeBytes`                                                                                                                    | 低       |
+| `.github/workflows/build-backends.yml` · `scripts/ci/*` · `package.json`（一行） | 我的地盘（T-163 ①）                                                                                                                                                                                             | 低       |
 
 **`stableOnly` 只对这一条放开，不动全局**（其它 21 条一个字节不改）。理由写进
 `sha256Provenance`，不是只翻一个布尔值 —— 见下一条回执 §2。
@@ -26,11 +26,11 @@
 
 # TL;DR
 
-| # | 事 | 状态 |
-|---|---|---|
-| ① | 三条 Linux 腿迁到 `ubuntu-24.04` **且**产物 GLIBC ≤ 2.34 | ✅ **两条判据都满足，CI 实测**（run **31147884172**，三腿全 success） |
-| ② | macOS ffmpeg 升 8.1.2-2，`stableOnly` 只对这一条放开 | ✅ 完成，sha256 与 Mach-O `minos` 本机复核过 |
-| ③ | Vulkan 包补进 `backends.json` | ⛔ **没补，也不该由我补** —— `pack-select` 的前置已落地（`a7535c7`），但还差一件**只有你能做**的事：那个包**没有下载地址**。清单在 §3 |
+| #   | 事                                                       | 状态                                                                                                                                  |
+| --- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| ①   | 三条 Linux 腿迁到 `ubuntu-24.04` **且**产物 GLIBC ≤ 2.34 | ✅ **两条判据都满足，CI 实测**（run **31147884172**，三腿全 success）                                                                 |
+| ②   | macOS ffmpeg 升 8.1.2-2，`stableOnly` 只对这一条放开     | ✅ 完成，sha256 与 Mach-O `minos` 本机复核过                                                                                          |
+| ③   | Vulkan 包补进 `backends.json`                            | ⛔ **没补，也不该由我补** —— `pack-select` 的前置已落地（`a7535c7`），但还差一件**只有你能做**的事：那个包**没有下载地址**。清单在 §3 |
 
 提交：`3bb7a56`（①）· `0d01e8f`（②）· `b243a37` + `04259d6`（①的两轮 CI 修）。全部已 push。
 门禁：`pnpm -r test` **1208 / 0** · `tsc -b` 0 · `eslint` 0 · `test:ci-scripts` 全绿 ·
@@ -133,12 +133,12 @@ check-elf-glibc: 22 个 ELF，上限 GLIBC_2.34，实测最高 GLIBC_2.38
 
 ## 1.6 其余顺手改的（都在我的地盘）
 
-| 改动 | 为什么 |
-|---|---|
-| CUDA 不再用 `Jimver/cuda-toolkit` | `[实测]` NVIDIA 的 `repos/ubuntu2404/` 最老只到 `cuda-nvcc-12-5`，`ubuntu2204/` 才有 12-4。宿主一升级，T-145 第二轮那两行 `no installation candidate` 必然重演。改成在 jammy 容器里按**真实包名**装 —— 顺带消掉该 action 把包名拼成 `cuda-<项>-<major>-<minor>` 那个坑（T-145 为 cuBLAS 烧过两轮真跑） |
-| 烟雾测试搬进 `scripts/ci/smoke-linux-pack.sh` 并**在容器里跑** | 内联在 YAML 里的 50 行 shell 没有任何测试碰得到它（与 C1/C3 同一条理由）；更要紧的是：在 2.39 的宿主上跑它，证明的是一句弱得多的话 —— **判据要跑在下限那一侧才算数** |
-| `workflow_dispatch` 加 `legs` 输入 | 本 workflow 只能整份 dispatch，一次烧 8 个 job（含两个 macOS）。T-161 有一轮 GitHub 故障，五条腿全死在 `Set up job`，唯一有信息量的只有 linux |
-| `CCACHE_DIR` 在 job env 里写死 | `ggml-org/ccache-action` 的缓存目录是 `process.env.CCACHE_DIR \|\| $GITHUB_WORKSPACE/.ccache`，而它**不导出**这个变量（配置写在宿主 `$HOME/.config/ccache/`）。容器里 $HOME 不同 → ccache 回落到自己的默认路径 → **每次全量重编，且只表现为"CI 变慢了"** |
+| 改动                                                           | 为什么                                                                                                                                                                                                                                                                                                 |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| CUDA 不再用 `Jimver/cuda-toolkit`                              | `[实测]` NVIDIA 的 `repos/ubuntu2404/` 最老只到 `cuda-nvcc-12-5`，`ubuntu2204/` 才有 12-4。宿主一升级，T-145 第二轮那两行 `no installation candidate` 必然重演。改成在 jammy 容器里按**真实包名**装 —— 顺带消掉该 action 把包名拼成 `cuda-<项>-<major>-<minor>` 那个坑（T-145 为 cuBLAS 烧过两轮真跑） |
+| 烟雾测试搬进 `scripts/ci/smoke-linux-pack.sh` 并**在容器里跑** | 内联在 YAML 里的 50 行 shell 没有任何测试碰得到它（与 C1/C3 同一条理由）；更要紧的是：在 2.39 的宿主上跑它，证明的是一句弱得多的话 —— **判据要跑在下限那一侧才算数**                                                                                                                                   |
+| `workflow_dispatch` 加 `legs` 输入                             | 本 workflow 只能整份 dispatch，一次烧 8 个 job（含两个 macOS）。T-161 有一轮 GitHub 故障，五条腿全死在 `Set up job`，唯一有信息量的只有 linux                                                                                                                                                          |
+| `CCACHE_DIR` 在 job env 里写死                                 | `ggml-org/ccache-action` 的缓存目录是 `process.env.CCACHE_DIR \|\| $GITHUB_WORKSPACE/.ccache`，而它**不导出**这个变量（配置写在宿主 `$HOME/.config/ccache/`）。容器里 $HOME 不同 → ccache 回落到自己的默认路径 → **每次全量重编，且只表现为"CI 变慢了"**                                               |
 
 ## 1.7 两个 CI 才暴露、本机绿的 bug（如实记）
 
@@ -227,11 +227,11 @@ minos 这次没漂是**运气不是保证**（D-11 §8.1 同族）。**每次移
 我原本想断言"全仓只有这一条 `stableOnly: false`"—— **查了之后发现那是错的**，
 所以断言改了、话也改了：
 
-| 组件 | 状态 | 影响 |
-|---|---|---|
-| `whispercpp-cpu-macos-arm64` | 显式 `false`，**没有理由** | 见下 |
-| `media-tools-{linux,win}-x64` | 字段缺省（= 同样不过滤），但有 `tagPattern` 收着 | 低 |
-| `sherpa-onnx-node` / `asr/whisper-large-v3-turbo-q5_0` | 缺省，且 kind 是 npm / huggingface —— **那两个分支根本不看这个字段** | 无 |
+| 组件                                                   | 状态                                                                 | 影响 |
+| ------------------------------------------------------ | -------------------------------------------------------------------- | ---- |
+| `whispercpp-cpu-macos-arm64`                           | 显式 `false`，**没有理由**                                           | 见下 |
+| `media-tools-{linux,win}-x64`                          | 字段缺省（= 同样不过滤），但有 `tagPattern` 收着                     | 低   |
+| `sherpa-onnx-node` / `asr/whisper-large-v3-turbo-q5_0` | 缺省，且 kind 是 npm / huggingface —— **那两个分支根本不看这个字段** | 无   |
 
 第一条值得单说：它指向**我们自己的仓库** `faorcoek042/openmemo`，
 而 `[实测]` 那里只有两个 release（`backend-packs-2026.08.06`、`model-mirror-2026.08.06`），
@@ -260,11 +260,11 @@ minos 这次没漂是**运气不是保证**（D-11 §8.1 同族）。**每次移
 **已经过期了** —— 那是 22.04 runner 上编的。本轮换了编译环境（容器 + 同版本工具链），
 产物是新构建，**sha256 必然不同**。要发就发新的：
 
-| 文件 | 来源 | 说明 |
-|---|---|---|
+| 文件                                 | 来源                                                                    | 说明                                                                                                                                 |
+| ------------------------------------ | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `whispercpp-vulkan-linux-x64.tar.gz` | `build-backends` run **31147884172**，artifact `packs-linux-x64-vulkan` | 23 个 ELF 全部 ≤ GLIBC_2.34；`providesFiles` 含 `whisper-cli`；relocatable；`libggml-vulkan.so` 从**包内**解析到 `libggml-base.so.0` |
-| `whispercpp-cpu-linux-x64.tar.gz` | 同 run，`packs-linux-x64-cpu` | 22 个 ELF ≤ 2.34 + 探针 1 个 ≤ 2.34 |
-| `whispercpp-cuda-linux-x64.tar.gz` | 同 run，`packs-linux-x64-cuda` | 23 个 ELF ≤ 2.34。⚠️ 但见下一行 |
+| `whispercpp-cpu-linux-x64.tar.gz`    | 同 run，`packs-linux-x64-cpu`                                           | 22 个 ELF ≤ 2.34 + 探针 1 个 ≤ 2.34                                                                                                  |
+| `whispercpp-cuda-linux-x64.tar.gz`   | 同 run，`packs-linux-x64-cuda`                                          | 23 个 ELF ≤ 2.34。⚠️ 但见下一行                                                                                                      |
 
 ⚠️ **Linux CUDA 那个包我不建议发**：`amd-vulkan` 查到的那条仍然成立 ——
 `ggml-cuda` 动态链 `CUDA::cudart`，而打包只拷了 Windows 命名的 `cudart64_*.dll`，
@@ -293,14 +293,14 @@ Linux 侧一个都没拷。本轮 `ldd` 实测把它照出来了（`libcudart.so
 
 # §5 我没做 / 做不到的（如实列）
 
-| 项 | 状态 |
-|---|---|
-| Windows / macOS 腿在本轮的表现 | ⏳ **未验证** —— 我只跑了 `legs=linux`。它们的定义我一个字没改 |
-| 「Vulkan 后端在真 AMD 硬件上真的被用上了」 | ⛔ **本机与 CI 都验不了**。这台开发机是 KVM 虚拟机、没有任何真实 GPU（`/sys/class/drm`、`/dev/dri`、`/dev/kfd` 全不存在；`/runtime` 上那行 "Radeon 8060S" 是 **CPU 型号串**）。判据全程退到"产物的 GLIBC 下限"与"包自包含"这一可验证层 |
-| Linux CUDA 包在没装 CUDA 的机器上能不能用 | 🔴 **不能**，见 §3 最后一行。本轮 `ldd` 把它照出来了，但这不是我的修复范围 |
-| BtbN win64 n8.1 的 PE 导入表 | ⚠️ `UNKNOWN`（沿用 `amd-vulkan` 的标注，我没有下 167 MB 去 dump） |
-| jellyfin 何时把 8.x 转正 | ⚠️ `UNKNOWN`，查不到 roadmap |
-| `ubuntu:22.04` 之后怎么办（22.04 标准支持 2027-04 结束） | 未做。但**这次改动正是为了让那次迁移只改一行 `BASE_IMAGE`**，而不是再横跳一次 runner |
+| 项                                                       | 状态                                                                                                                                                                                                                                   |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows / macOS 腿在本轮的表现                           | ⏳ **未验证** —— 我只跑了 `legs=linux`。它们的定义我一个字没改                                                                                                                                                                         |
+| 「Vulkan 后端在真 AMD 硬件上真的被用上了」               | ⛔ **本机与 CI 都验不了**。这台开发机是 KVM 虚拟机、没有任何真实 GPU（`/sys/class/drm`、`/dev/dri`、`/dev/kfd` 全不存在；`/runtime` 上那行 "Radeon 8060S" 是 **CPU 型号串**）。判据全程退到"产物的 GLIBC 下限"与"包自包含"这一可验证层 |
+| Linux CUDA 包在没装 CUDA 的机器上能不能用                | 🔴 **不能**，见 §3 最后一行。本轮 `ldd` 把它照出来了，但这不是我的修复范围                                                                                                                                                             |
+| BtbN win64 n8.1 的 PE 导入表                             | ⚠️ `UNKNOWN`（沿用 `amd-vulkan` 的标注，我没有下 167 MB 去 dump）                                                                                                                                                                      |
+| jellyfin 何时把 8.x 转正                                 | ⚠️ `UNKNOWN`，查不到 roadmap                                                                                                                                                                                                           |
+| `ubuntu:22.04` 之后怎么办（22.04 标准支持 2027-04 结束） | 未做。但**这次改动正是为了让那次迁移只改一行 `BASE_IMAGE`**，而不是再横跳一次 runner                                                                                                                                                   |
 
 ---
 
@@ -328,13 +328,13 @@ Linux 侧一个都没拷。本轮 `ldd` 实测把它照出来了（`libcudart.so
 
 ## SHARED-CHANGE（实际改动，与开头的申报对照）
 
-| 文件 | 归属 | 我做了什么 | 与申报的差异 |
-|---|---|---|---|
-| `vendor/manifests/{components,backends}.json` | `pack-publish` / `catalog-truth` | 只改 `media-tools-macos-arm64` 一条 | 无 |
-| `packages/shared/src/components.ts` | `model-mgmt` | **新增一个可选字段** `stableOnlyReason?: string` + 文档注释，零行为改动 | ⚠️ **超出开头的申报**：写的时候才发现，把理由塞进未声明的 JSON 字段是本仓 C2 那一族（"4 个未声明字段"），所以改成正式加一个可选字段。可选是刻意的 |
-| `package.json` | 公共 | 一行：把 `selftest-buildbox.sh` 接进 `test:ci-scripts` | 无 |
-| `apps/daemon/src/pipeline/ffmpegStableOnly.test.ts` | **新文件（我的）** | 刻意**不改** `amd-vulkan` 的 `ffmpegPinRot.test.ts` | 无 |
-| `.github/workflows/build-backends.yml` · `scripts/ci/*` | 我的地盘 | ①的主体 | 无 |
+| 文件                                                    | 归属                             | 我做了什么                                                              | 与申报的差异                                                                                                                                      |
+| ------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vendor/manifests/{components,backends}.json`           | `pack-publish` / `catalog-truth` | 只改 `media-tools-macos-arm64` 一条                                     | 无                                                                                                                                                |
+| `packages/shared/src/components.ts`                     | `model-mgmt`                     | **新增一个可选字段** `stableOnlyReason?: string` + 文档注释，零行为改动 | ⚠️ **超出开头的申报**：写的时候才发现，把理由塞进未声明的 JSON 字段是本仓 C2 那一族（"4 个未声明字段"），所以改成正式加一个可选字段。可选是刻意的 |
+| `package.json`                                          | 公共                             | 一行：把 `selftest-buildbox.sh` 接进 `test:ci-scripts`                  | 无                                                                                                                                                |
+| `apps/daemon/src/pipeline/ffmpegStableOnly.test.ts`     | **新文件（我的）**               | 刻意**不改** `amd-vulkan` 的 `ffmpegPinRot.test.ts`                     | 无                                                                                                                                                |
+| `.github/workflows/build-backends.yml` · `scripts/ci/*` | 我的地盘                         | ①的主体                                                                 | 无                                                                                                                                                |
 
 ---
 
@@ -342,12 +342,12 @@ Linux 侧一个都没拷。本轮 `ldd` 实测把它照出来了（`libcudart.so
 
 # TL;DR
 
-| 事 | 结果 |
-|---|---|
-| Vulkan 包补进目录 | ✅ `8cb3b35`。sha256 **我自己匿名重下复算**，没抄你的、也没抄 CI fragment |
+| 事                            | 结果                                                                                                                                                                                          |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Vulkan 包补进目录             | ✅ `8cb3b35`。sha256 **我自己匿名重下复算**，没抄你的、也没抄 CI fragment                                                                                                                     |
 | `backend.selection` 报 vulkan | ✅ **CI 上真的拿到了**（`cold-start-audit` run **31152458527**，linux-x64）：`选中 未选择（按 priority 挑） → 实际使用 whispercpp-vulkan-linux-x64（backend=vulkan）`，并且用它**真转写成功** |
-| macOS ffmpeg 8.1.2 | ✅ **第一次在真 Mac 上跑起来了**（同一 run，macos-26），已把 manifest 里「未在 Mac 上运行过」那句订正 |
-| ⚠️ 那一 run 是 **failure** | **不是我这轮引入的** —— 三个平台同一条 `meta.sameSource fail`，成因是 **T-149（`9ab2ada`）** 的桶迁移，已本机复现并定位到行。详见 §3 |
+| macOS ffmpeg 8.1.2            | ✅ **第一次在真 Mac 上跑起来了**（同一 run，macos-26），已把 manifest 里「未在 Mac 上运行过」那句订正                                                                                         |
+| ⚠️ 那一 run 是 **failure**    | **不是我这轮引入的** —— 三个平台同一条 `meta.sameSource fail`，成因是 **T-149（`9ab2ada`）** 的桶迁移，已本机复现并定位到行。详见 §3                                                          |
 
 ---
 
@@ -370,12 +370,12 @@ whispercpp-vulkan-linux-x64.tar.gz   http=200  29,491,623 B
 
 ## 每个字段的来源（都不是拍的）
 
-| 字段 | 值 | 依据 |
-|---|---|---|
-| `priority` | 80 | `emit-pack-manifest.mjs:95` 的 `PRIORITY` 表（CI 自己那份），不是我挑的数 |
-| `engineVersion` | `v1.9.1` | `git -C vendor/whisper.cpp describe --tags` |
-| `ggmlAbi` | `0.15.1` | 包里 `libggml.so.0.15.1` 的 soname |
-| `providesFiles` | 23 条 | 与 emit 脚本同一判据（只算真文件、basename、排序） |
+| 字段             | 值                    | 依据                                                                                                           |
+| ---------------- | --------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `priority`       | 80                    | `emit-pack-manifest.mjs:95` 的 `PRIORITY` 表（CI 自己那份），不是我挑的数                                      |
+| `engineVersion`  | `v1.9.1`              | `git -C vendor/whisper.cpp describe --tags`                                                                    |
+| `ggmlAbi`        | `0.15.1`              | 包里 `libggml.so.0.15.1` 的 soname                                                                             |
+| `providesFiles`  | 23 条                 | 与 emit 脚本同一判据（只算真文件、basename、排序）                                                             |
 | `requiresDriver` | `{"vulkanApi":"1.2"}` | **这个包自己的源码**：`ggml-vulkan.cpp:6528` `if (api_version < VK_API_VERSION_1_2) { "Vulkan 1.2 required" }` |
 
 > `requiresDriver` 这条特意说明：`emit-pack-manifest.mjs` 的注释明确反对「照抄 llama.cpp 文档里的数字」，
@@ -519,10 +519,10 @@ const vadModel = overrides.vadModel ?? (await findInstalledModel(
 
 # §4 顺带在 CI 上被证实的两条（都是本轮改动）
 
-| 条 | 证据 |
-|---|---|
+| 条                                               | 证据                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | macOS ffmpeg 8.1.2-2 **第一次在真 Mac 上跑起来** | run 31152458527 / macos-26：下载 32,894,656 B → 安装器校验 sha256 → 走产品真实路径转写 jfk.wav **succeeded**，拿到非空文本。已把 `components.json` 里「未在 Mac 上运行过 —— 全部是静态分析」那句订正掉（那句在 8.1.2 落地前是对的，现在不是了）。⚠️ 仍未验证：低于 macOS 26 的系统（minos 声明 12.0，但 runner 是 26 ——「新系统上跑得起来」不构成「老系统上跑得起来」的证据，D-11 §3.4） |
-| Linux ffmpeg 8.1.2 | 三平台 `tool.ffmpeg ok`，路径含 `ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-gpl-8.1` |
+| Linux ffmpeg 8.1.2                               | 三平台 `tool.ffmpeg ok`，路径含 `ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-gpl-8.1`                                                                                                                                                                                                                                                                                                           |
 
 ---
 
@@ -557,8 +557,8 @@ const vadModel = overrides.vadModel ?? (await findInstalledModel(
 
 ## SHARED-CHANGE（本段新增）
 
-| 文件 | 归属 | 我做了什么 | 冲突风险 |
-|---|---|---|---|
-| `vendor/manifests/backends.json` | `pack-publish` / `catalog-truth` | 新增 `whispercpp-vulkan-linux-x64` 一条（66 行，纯新增） | 低 |
-| `vendor/manifests/components.json` | 同上 | 新增同 id 的来源条目；订正 macOS ffmpeg 那条的「未在 Mac 上运行过」 | 低 |
-| `scripts/ci/selftest-ci-manifest.mjs` | 我的地盘 | 夹具换 id + 补前提断言（见 §5） | 低 |
+| 文件                                  | 归属                             | 我做了什么                                                          | 冲突风险 |
+| ------------------------------------- | -------------------------------- | ------------------------------------------------------------------- | -------- |
+| `vendor/manifests/backends.json`      | `pack-publish` / `catalog-truth` | 新增 `whispercpp-vulkan-linux-x64` 一条（66 行，纯新增）            | 低       |
+| `vendor/manifests/components.json`    | 同上                             | 新增同 id 的来源条目；订正 macOS ffmpeg 那条的「未在 Mac 上运行过」 | 低       |
+| `scripts/ci/selftest-ci-manifest.mjs` | 我的地盘                         | 夹具换 id + 补前提断言（见 §5）                                     | 低       |

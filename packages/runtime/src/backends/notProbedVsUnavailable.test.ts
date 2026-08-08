@@ -51,7 +51,12 @@ import { buildHardwareInfo } from './manager.js';
 /* ------------------------------------------------------------------ 夹具 -- */
 
 const OS = { platform: 'linux' as const, arch: 'x64' as const, version: '6.8.0' };
-const CPU = { brand: 'AMD RYZEN AI MAX+ 395', physicalCores: 8, logicalCores: 16, features: ['avx2'] };
+const CPU = {
+  brand: 'AMD RYZEN AI MAX+ 395',
+  physicalCores: 8,
+  logicalCores: 16,
+  features: ['avx2'],
+};
 const NO_ADVISORY: AdvisoryDetection = { gpus: [], source: 'none' } as unknown as AdvisoryDetection;
 
 const cpuDevice: ProbeDevice = {

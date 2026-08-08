@@ -3,7 +3,15 @@ import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { useNavigate } from 'react-router';
 import { useShallow } from 'zustand/react/shallow';
-import { AlertTriangle, CheckCircle2, Clock, Download, RotateCw, ShieldCheck, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  Download,
+  RotateCw,
+  ShieldCheck,
+  X,
+} from 'lucide-react';
 
 import { bus } from '../../lib/events/bus';
 import type { Phase, Toast, ToastAction } from './jobToastModel';
@@ -99,7 +107,8 @@ const SUCCESS_LINGER_MS = 8000;
  */
 function blockedFallbackName(code: string, t: TFunction): string {
   if (code === 'MISSING_ASR_MODEL') return t('jobToast.blockedTranscribe');
-  if (code === 'NO_TRANSCRIPT' || code === 'LLM_NOT_CONFIGURED') return t('jobToast.blockedMindmap');
+  if (code === 'NO_TRANSCRIPT' || code === 'LLM_NOT_CONFIGURED')
+    return t('jobToast.blockedMindmap');
   return t('jobToast.blockedGeneric');
 }
 
@@ -109,7 +118,9 @@ function titleFor(toast: Toast, t: TFunction): string {
   if (toast.phase === 'done') {
     if (toast.kind === 'transcribe') return t('jobToast.doneTranscribe', { name });
     if (toast.kind === 'mindmap') return t('jobToast.doneMindmap', { name });
-    return t(toast.kind === 'backend-pack' ? 'jobToast.doneBackend' : 'jobToast.doneModel', { name });
+    return t(toast.kind === 'backend-pack' ? 'jobToast.doneBackend' : 'jobToast.doneModel', {
+      name,
+    });
   }
   if (toast.phase === 'failed') {
     // "安装失败"对一条转写任务是错的说法
@@ -118,7 +129,9 @@ function titleFor(toast: Toast, t: TFunction): string {
   if (toast.phase === 'blocked') return t('jobToast.blockedTitle', { name });
   if (toast.kind === 'transcribe') return t('jobToast.startedTranscribe', { name });
   if (toast.kind === 'mindmap') return t('jobToast.startedMindmap', { name });
-  return t(toast.kind === 'backend-pack' ? 'jobToast.startedBackend' : 'jobToast.startedModel', { name });
+  return t(toast.kind === 'backend-pack' ? 'jobToast.startedBackend' : 'jobToast.startedModel', {
+    name,
+  });
 }
 
 /* ──────────────────────────── 容器 ──────────────────────────── */
@@ -209,7 +222,9 @@ export function JobToaster() {
         const need = body.restartRequired?.required === true;
         if (!alive) return;
         setToasts((prev) =>
-          prev.map((x) => (x.phase === 'done' && x.needsRestart === undefined ? { ...x, needsRestart: need } : x)),
+          prev.map((x) =>
+            x.phase === 'done' && x.needsRestart === undefined ? { ...x, needsRestart: need } : x,
+          ),
         );
         // 需要重启 = 带动作的 toast → 取消自动消失
         if (need) {
@@ -222,7 +237,11 @@ export function JobToaster() {
         /* health 拿不到就按"立刻可用"处理，不额外吓人 */
         if (alive) {
           setToasts((prev) =>
-            prev.map((x) => (x.phase === 'done' && x.needsRestart === undefined ? { ...x, needsRestart: false } : x)),
+            prev.map((x) =>
+              x.phase === 'done' && x.needsRestart === undefined
+                ? { ...x, needsRestart: false }
+                : x,
+            ),
           );
         }
       }
@@ -315,22 +334,34 @@ function ToastRow({ toast, onDismiss }: { toast: Toast; onDismiss: () => void })
           {/* 阶段名 + 字节 + 速度 + ETA。全部用 tabular-nums，数字跳动时不抖行宽。 */}
           {toast.phase === 'active' ? (
             <p className="mt-0.5 text-xs text-ink-secondary">
-              <span>{t(`progress.${step ?? toast.state}`, { defaultValue: t('progress.queued') })}</span>
+              <span>
+                {t(`progress.${step ?? toast.state}`, { defaultValue: t('progress.queued') })}
+              </span>
               {total ? (
                 <span className="tabular-nums">
                   {' · '}
                   {formatBytes(completed, locale)} / {formatBytes(total, locale)}
                 </span>
               ) : null}
-              {live?.speedBps ? <span className="tabular-nums">{` · ${formatSpeed(live.speedBps, locale)}`}</span> : null}
+              {live?.speedBps ? (
+                <span className="tabular-nums">{` · ${formatSpeed(live.speedBps, locale)}`}</span>
+              ) : null}
               {eta && !verifying ? <span className="tabular-nums">{` · ${eta}`}</span> : null}
             </p>
           ) : null}
 
-          {(toast.phase === 'blocked' || toast.phase === 'failed') && (toast.reason || toast.reasonEn) ? (
-            <p className={cn('mt-0.5 text-xs', toast.phase === 'failed' ? 'text-critical' : 'text-ink-secondary')}>
+          {(toast.phase === 'blocked' || toast.phase === 'failed') &&
+          (toast.reason || toast.reasonEn) ? (
+            <p
+              className={cn(
+                'mt-0.5 text-xs',
+                toast.phase === 'failed' ? 'text-critical' : 'text-ink-secondary',
+              )}
+            >
               {/* 服务端两份文案都给了；无条件取中文会让英文界面上冒出一句中文（实测见过） */}
-              {locale.startsWith('zh') ? (toast.reason ?? toast.reasonEn) : (toast.reasonEn ?? toast.reason)}
+              {locale.startsWith('zh')
+                ? (toast.reason ?? toast.reasonEn)
+                : (toast.reasonEn ?? toast.reason)}
             </p>
           ) : null}
         </div>
@@ -357,7 +388,9 @@ function ToastRow({ toast, onDismiss }: { toast: Toast; onDismiss: () => void })
       ) : null}
 
       {/* ── 副文案：每个阶段各说一句人话，其中 verifying 是重点 ── */}
-      <p className="mt-1.5 text-[11px] leading-relaxed text-ink-muted">{subtitleFor(toast, step, t)}</p>
+      <p className="mt-1.5 text-[11px] leading-relaxed text-ink-muted">
+        {subtitleFor(toast, step, t)}
+      </p>
 
       {/* ── 动作：装完之后"现在能干嘛"必须给出口，不能只说"成功" ── */}
       <ToastActions toast={toast} onDismiss={onDismiss} navigate={navigate} />
@@ -448,7 +481,9 @@ function ToastActions({
               setRestarting(true);
               // daemon 自我重启端点（`/api/health` 的 restartRequired.endpoint）。
               // 重启后前端会自己走 401 自愈 / SSE 重连，不需要用户做别的。
-              void rawFetch('/api/daemon/restart', { method: 'POST' }).catch(() => setRestarting(false));
+              void rawFetch('/api/daemon/restart', { method: 'POST' }).catch(() =>
+                setRestarting(false),
+              );
             }}
             data-testid="job-toast-restart"
           >

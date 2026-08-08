@@ -56,12 +56,12 @@ inputs: R-04, R-02 §C.3, D-01, D-02, D-05, /root/memo-forensics
 
 ## 1. 范围与文件所有权
 
-| 路径 | 内容 |
-|---|---|
-| `packages/shared/src/**` | 契约：类型 + zod schema + 纯函数（fitness / ULID / SSE 编码） |
-| `packages/downloader/src/**` | 统一下载器实现 |
-| `packages/downloader/scripts/**` | 清单生成器 + 两套验证脚本（ADR-005 决策 3） |
-| `vendor/manifests/*.json` | 模型与后端包清单（ADR-001 C 类，入 git） |
+| 路径                             | 内容                                                          |
+| -------------------------------- | ------------------------------------------------------------- |
+| `packages/shared/src/**`         | 契约：类型 + zod schema + 纯函数（fitness / ULID / SSE 编码） |
+| `packages/downloader/src/**`     | 统一下载器实现                                                |
+| `packages/downloader/scripts/**` | 清单生成器 + 两套验证脚本（ADR-005 决策 3）                   |
+| `vendor/manifests/*.json`        | 模型与后端包清单（ADR-001 C 类，入 git）                      |
 
 **`packages/shared` 是同构包**：被 `apps/daemon`（Node）与 `apps/web`（浏览器）同时 import，
 因此**禁止任何 `node:` 引入**。我自己就踩过这个坑（见 §8.3），现已加为硬约束。
@@ -74,10 +74,10 @@ inputs: R-04, R-02 §C.3, D-01, D-02, D-05, /root/memo-forensics
 
 我解包了 memo.ac 的 `app.asar`，发现它有**两套不一致的注册表**：
 
-| 文件 | 条目 | 体积字段 | 哈希 | 量化 | 显存 |
-|---|---|---|---|---|---|
-| `presets/whisper-models.js` | 15 | `"77.7 MB"` **字符串** | `sha` = **40 位 SHA-1** | ❌ 无 | ❌ 无 |
-| `plugins/extra-transcription-plugins.json` | — | `sizeBytes` **整数** | `sha256` ✅ | ❌ 无 | ❌ 无 |
+| 文件                                       | 条目 | 体积字段               | 哈希                    | 量化  | 显存  |
+| ------------------------------------------ | ---- | ---------------------- | ----------------------- | ----- | ----- |
+| `presets/whisper-models.js`                | 15   | `"77.7 MB"` **字符串** | `sha` = **40 位 SHA-1** | ❌ 无 | ❌ 无 |
+| `plugins/extra-transcription-plugins.json` | —    | `sizeBytes` **整数**   | `sha256` ✅             | ❌ 无 | ❌ 无 |
 
 第二套明显更好，**我们以它为基线**。另注意旧表里的：
 
@@ -94,11 +94,11 @@ memo.ac 另外自建了 `Memo-large.zh.bin` / `.ja.bin`（`https://model.memo.ac
 
 ### 2.2 我们的三处补充
 
-| 字段 | 对应缺口 |
-|---|---|
-| `quantization` + `quantTier` | 缺口①：memo.ac 全部 f16，无量化选择。我们同一模型可有 q5_0/q8_0/f16 三档 |
-| `requirements.{ram,vram,disk}RequiredMB` + `computedAtContext` | 缺口②：memo.ac 无 fit 预检 |
-| `Backend` 枚举 6 值 | 缺口③：memo.ac 只有 cuda/metal/coreml |
+| 字段                                                           | 对应缺口                                                                 |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `quantization` + `quantTier`                                   | 缺口①：memo.ac 全部 f16，无量化选择。我们同一模型可有 q5_0/q8_0/f16 三档 |
+| `requirements.{ram,vram,disk}RequiredMB` + `computedAtContext` | 缺口②：memo.ac 无 fit 预检                                               |
+| `Backend` 枚举 6 值                                            | 缺口③：memo.ac 只有 cuda/metal/coreml                                    |
 
 `computedAtContext` 的设计要点：**显存数字脱离上下文长度就没有意义**（KV cache 与之线性相关），
 所以必须把假设一起存。Whisper 与 context 无关，填 `null` —— **不是 0**，0 会被读成"在 0 上下文下算的"。
@@ -147,16 +147,16 @@ disks[pathFor='models_root'].freeMB ★ 要模型目录所在卷，不是系统�
 
 ### 4.1 事件全集（30 个）
 
-| 域 | 事件 |
-|---|---|
-| 任务生命周期 | `job.created` `job.progress` `job.state` `job.done` `job.failed` `job.blocked` |
+| 域             | 事件                                                                                                                                                              |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 任务生命周期   | `job.created` `job.progress` `job.state` `job.done` `job.failed` `job.blocked`                                                                                    |
 | 模型/后端/存储 | `model.installed` `model.removed` `model.activated` `backend.installed` `backend.removed` `storage.changed` `catalog.updated` `sources.probed` `hardware.changed` |
-| F1/F2 导入 | `media.ready` `media.asset.ready` |
-| F1/F2/F3 转写 | `transcribe.started` `transcribe.partial` `transcribe.segment` `transcribe.done` `transcribe.replaced` |
-| F3 录音 | `record.state` |
-| F4 导图 | `mindmap.delta` `mindmap.done` |
-| F5 笔记 | `note.created` `note.updated` `note.deleted` |
-| 流控 | `sync.required` `keepalive` |
+| F1/F2 导入     | `media.ready` `media.asset.ready`                                                                                                                                 |
+| F1/F2/F3 转写  | `transcribe.started` `transcribe.partial` `transcribe.segment` `transcribe.done` `transcribe.replaced`                                                            |
+| F3 录音        | `record.state`                                                                                                                                                    |
+| F4 导图        | `mindmap.delta` `mindmap.done`                                                                                                                                    |
+| F5 笔记        | `note.created` `note.updated` `note.deleted`                                                                                                                      |
+| 流控           | `sync.required` `keepalive`                                                                                                                                       |
 
 > **此前这里写着"事件全集（28 个）"，且表里漏了 `media.asset.ready` 与 `transcribe.replaced`**
 > —— 以 `packages/shared/src/events.ts:31` 的 `SSE_EVENT_TYPES` 常量为准（现 30 个）。**前端别写死数字，遍历常量。**
@@ -166,8 +166,8 @@ disks[pathFor='models_root'].freeMB ★ 要模型目录所在卷，不是系统�
 ```ts
 interface SseEventBase {
   type: SseEventType;
-  ts: string;      // ISO-8601
-  topic: string;   // 合并/路由键：job:<ulid> / transcript:<ulid> / models / ...
+  ts: string; // ISO-8601
+  topic: string; // 合并/路由键：job:<ulid> / transcript:<ulid> / models / ...
 }
 ```
 
@@ -185,10 +185,10 @@ D-01 §3.3 的总原则是「**事件只是"该去拉数据了"的提示，真�
 
 ```ts
 export const AUTHORITATIVE_EVENT_TYPES = [
-  'job.progress',          // 用完即弃，不进 Query 缓存
-  'transcribe.partial',    // 易失，同 utteranceId 覆盖
-  'transcribe.segment',    // 持久、有序、只追加
-  'mindmap.delta',         // 持久、有序、只追加
+  'job.progress', // 用完即弃，不进 Query 缓存
+  'transcribe.partial', // 易失，同 utteranceId 覆盖
+  'transcribe.segment', // 持久、有序、只追加
+  'mindmap.delta', // 持久、有序、只追加
 ];
 export const SEQUENCED_EVENT_TYPES = ['transcribe.segment', 'mindmap.delta'];
 ```
@@ -218,9 +218,9 @@ MindmapDeltaEvent { mindmapUid, noteUid, seq, nodes: [{ nodeKey, parentKey, text
 
 > **三处订正（以 `packages/shared/src/events.ts` 为准）：**
 > ① **时间单位一律整数毫秒 `*Ms`。此前写着 `startSec` / `endSec` / `sourceStartSec` / `sourceEndSec`（浮点秒）**
->    —— D-02 §1.1 规定媒体时间一律整数毫秒，这三个事件已按此对齐。照旧字段名写会拿到 `undefined`。
+> —— D-02 §1.1 规定媒体时间一律整数毫秒，这三个事件已按此对齐。照旧字段名写会拿到 `undefined`。
 > ② **`TranscribePartialEvent` / `TranscribeSegmentEvent` / `MindmapDeltaEvent` 各多一个必填 `noteUid`**，
->    此前都没写。
+> 此前都没写。
 > ③ 其余字段与顺序与实现一致。
 
 `TranscribeDoneEvent.partial = true` 表示提前结束但**前面的段仍然有效** ——
@@ -230,9 +230,10 @@ MindmapDeltaEvent { mindmapUid, noteUid, seq, nodes: [{ nodeKey, parentKey, text
 
 ```ts
 interface Remediation {
-  action: string;   // install_model | install_backend | free_disk | switch_source | configure_api_key
+  action: string; // install_model | install_backend | free_disk | switch_source | configure_api_key
   params: Record<string, string | number | boolean | null>;
-  labelZh: string;  label: string;
+  labelZh: string;
+  label: string;
 }
 ```
 
@@ -260,11 +261,11 @@ interface Remediation {
 └── by-name/<kind>/<name>                 硬链接视图（人类与原生程序用）
 ```
 
-| 平台 | 路径 | 理由 |
-|---|---|---|
-| macOS | `~/Library/Application Support/OpenMemo/models` | **不用 Caches**：系统会在磁盘紧张时清理，几 GB 模型被静默删掉是灾难（Buzz 就存在 `user_cache_dir`） |
-| Windows | `%LOCALAPPDATA%\OpenMemo\models` | **不用 Roaming**：域环境会尝试同步 |
-| Linux | `${XDG_DATA_HOME:-~/.local/share}/openmemo/models` | XDG |
+| 平台    | 路径                                               | 理由                                                                                                |
+| ------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| macOS   | `~/Library/Application Support/OpenMemo/models`    | **不用 Caches**：系统会在磁盘紧张时清理，几 GB 模型被静默删掉是灾难（Buzz 就存在 `user_cache_dir`） |
+| Windows | `%LOCALAPPDATA%\OpenMemo\models`                   | **不用 Roaming**：域环境会尝试同步                                                                  |
+| Linux   | `${XDG_DATA_HOME:-~/.local/share}/openmemo/models` | XDG                                                                                                 |
 
 **内容寻址的四个收益**：跨镜像天然去重（实测 HF 与 ModelScope 字节一致）、断点状态与来源解耦、
 校验内蕴（文件名即期望哈希）、多版本共存。
@@ -284,12 +285,12 @@ interface Remediation {
 
 **四处刻意不同**：
 
-| 项 | Ollama | 我们 | 理由 |
-|---|---|---|---|
-| SHA256 校验 | **没有**（digest 只作缓存 key，`os.Stat` 即命中） | **强制**，校验通过才 rename | ADR-004 决策 5 |
-| 并发分片 | 16 | 上限 8，默认 4 | 桌面应用跑在家用宽带/热点上，16 条互相踩踏且触发 CDN 限速，ETA 全乱 |
-| sidecar | 每片一个 JSON | 整文件一个 | 分片数已被压到 ≤8，单文件原子写更简单 |
-| 换源 | — | **保留已下字节**，只清 validators | 摘要与来源无关（已验证 HF/ModelScope 字节一致） |
+| 项          | Ollama                                            | 我们                              | 理由                                                                |
+| ----------- | ------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------- |
+| SHA256 校验 | **没有**（digest 只作缓存 key，`os.Stat` 即命中） | **强制**，校验通过才 rename       | ADR-004 决策 5                                                      |
+| 并发分片    | 16                                                | 上限 8，默认 4                    | 桌面应用跑在家用宽带/热点上，16 条互相踩踏且触发 CDN 限速，ETA 全乱 |
+| sidecar     | 每片一个 JSON                                     | 整文件一个                        | 分片数已被压到 ≤8，单文件原子写更简单                               |
+| 换源        | —                                                 | **保留已下字节**，只清 validators | 摘要与来源无关（已验证 HF/ModelScope 字节一致）                     |
 
 ### 6.2 "校验通过才算安装"
 
@@ -411,10 +412,10 @@ interface Remediation {
 
 ### 8.1 两套脚本
 
-| 脚本 | 性质 | 结果 |
-|---|---|---|
+| 脚本                                              | 性质                                | 结果      |
+| ------------------------------------------------- | ----------------------------------- | --------- |
 | `packages/downloader/scripts/verify-download.mjs` | 真实网络，对 HF/ModelScope 下 77 MB | **28/29** |
-| `packages/downloader/scripts/verify-offline.mjs` | 本地 HTTP 源，确定性、可注入故障 | **25/25** |
+| `packages/downloader/scripts/verify-offline.mjs`  | 本地 HTTP 源，确定性、可注入故障    | **25/25** |
 
 联网实测节选（原始输出）：
 
@@ -439,6 +440,7 @@ interface Remediation {
 == ModelScope `Sha256`，且 SHA-1 与 whisper.cpp README 公布值一致。
 
 离线注入故障实测：
+
 ```
 [1] PASS 错哈希 → CHECKSUM_MISMATCH，目录内 0 个残留文件
 [2] PASS 源声明的摘要不符 → 传输前拒绝
@@ -488,10 +490,12 @@ local advertises a different digest (43c5ef5aa93d…)   ← 0 字节传输即拒
 ### 8.5 真 bug 之三：`shared` 误引 `node:crypto` 污染浏览器包
 
 `pnpm -r build` 输出：
+
 ```
 Module "node:crypto" has been externalized for browser compatibility,
 imported by "/root/memo/packages/shared/dist/ulid.js"
 ```
+
 `packages/shared` 被 `apps/web` 的浏览器包 import，任何 `node:` 引入都会被 Vite externalize
 → 运行时炸。改用 Web Crypto (`globalThis.crypto.getRandomValues`)，
 现在 `grep -rn "from 'node:" packages/shared/src/` **零命中**。
@@ -528,12 +532,12 @@ CI 应定期跑：**上游改动一个已钉住的文件正是需要人来看的
 
 实测输出：
 
-| 模型 | layers | n_kv_head | KV/token | 8K ctx 总需求 | 其中 KV |
-|---|---:|---:|---:|---:|---:|
-| Qwen3-4B Q4_K_M | 36 | 8 | 147,456 B | **4130 MB** | 1208 MB |
-| Qwen3-8B Q4_K_M | 36 | 8 | 147,456 B | **6787 MB** | 1208 MB |
-| Gemma-3-4B Q4_K_M | 34 | 4 | 139,264 B | **4055 MB** | 1141 MB |
-| Qwen3-1.7B Q8_0 | 28 | 8 | 114,688 B | **3166 MB** | 940 MB |
+| 模型              | layers | n_kv_head |  KV/token | 8K ctx 总需求 | 其中 KV |
+| ----------------- | -----: | --------: | --------: | ------------: | ------: |
+| Qwen3-4B Q4_K_M   |     36 |         8 | 147,456 B |   **4130 MB** | 1208 MB |
+| Qwen3-8B Q4_K_M   |     36 |         8 | 147,456 B |   **6787 MB** | 1208 MB |
+| Gemma-3-4B Q4_K_M |     34 |         4 | 139,264 B |   **4055 MB** | 1141 MB |
+| Qwen3-1.7B Q8_0   |     28 |         8 | 114,688 B |   **3166 MB** |  940 MB |
 
 **KV cache 约 1.2 GB，占 4B 模型总需求的 29%。** 只比较「文件大小 vs 显存」的估算器
 （LM Studio 的 beta 估算器官方承认未完全计入 KV 增长）会系统性偏乐观，用户点了就 OOM。
@@ -550,11 +554,11 @@ medium 520 / large 820 MB）。**加常数而非乘系数**：whisper 计算缓�
 
 ## 10. 清单内容
 
-| 文件 | 条目 | 说明 |
-|---|---|---|
-| `vendor/manifests/models-whisper.json` | **25 模型 / 27 文件** | base/base.en、large-v1/v2/v3、turbo、medium/medium.en、small/small.en、tiny/tiny.en 的 q5_1/q5_0/q8_0/f16 各档；含 2 个 macOS CoreML encoder（可选，即多出的那 2 个文件）。**此前写着"9 模型 / 11 文件"** |
-| `vendor/manifests/models-llm.json` | 5 模型 | Qwen3 4B(q4_k_m/q5_k_m)、8B(q4_k_m)、1.7B(q8_0)、Gemma-3-4B(q4_k_m) |
-| `vendor/manifests/backends.json` | **11 包** | whisper.cpp × {linux-x64-cpu, macos-arm64-cpu（含 Metal+CoreML）, win-x64-cpu, win-x64-cuda12.4}；media-tools(ffmpeg/ffprobe) × {linux-x64, win-x64, macos-arm64}；yt-dlp × {linux-x64, linux-arm64, macos-arm64, win-x64} |
+| 文件                                   | 条目                  | 说明                                                                                                                                                                                                                       |
+| -------------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vendor/manifests/models-whisper.json` | **25 模型 / 27 文件** | base/base.en、large-v1/v2/v3、turbo、medium/medium.en、small/small.en、tiny/tiny.en 的 q5_1/q5_0/q8_0/f16 各档；含 2 个 macOS CoreML encoder（可选，即多出的那 2 个文件）。**此前写着"9 模型 / 11 文件"**                  |
+| `vendor/manifests/models-llm.json`     | 5 模型                | Qwen3 4B(q4_k_m/q5_k_m)、8B(q4_k_m)、1.7B(q8_0)、Gemma-3-4B(q4_k_m)                                                                                                                                                        |
+| `vendor/manifests/backends.json`       | **11 包**             | whisper.cpp × {linux-x64-cpu, macos-arm64-cpu（含 Metal+CoreML）, win-x64-cpu, win-x64-cuda12.4}；media-tools(ffmpeg/ffprobe) × {linux-x64, win-x64, macos-arm64}；yt-dlp × {linux-x64, linux-arm64, macos-arm64, win-x64} |
 
 > ⚠️ **`backends.json` 这一行是全表最危险的一处订正。此前写着"10 包 ｜ llama.cpp × {win,linux,mac} × {cpu,vulkan,cuda,rocm,metal}；whisper.cpp × {linux-cpu, win-cpu, win-cuda}"
 > —— `backends.json` 里现在 `llama` 零命中，那 7 个 llama.cpp 包已于 T-144① 整族摘掉**
@@ -577,16 +581,16 @@ ModelScope 上 `Qwen/Qwen3-4B-GGUF` 与 HF **10/10 文件 size+sha256 逐字节�
 
 ## 11. 遗留与待办
 
-| # | 事项 | 状态 |
-|---|---|---|
-| 1 | 压缩包解压（zip / tar.gz）+ zip-slip 防护 | ✅ **已实现**（T-022，ADR-011 决策 5）。手写 ZIP/tar 解析器，零新依赖。38 项断言全绿，含真实攻击用例 |
-| 2 | catalog Ed25519 验签 | ✅ **已实现但生产未启用** —— 无签名密钥，`OPENMEMO_CATALOG_PUBLIC_KEY = null`，供签名却无密钥时**失败关闭**（抛错，绝不放行） |
-| 3 | `estimateGpuLayers` 系数标定 | 未验证，需实测 llama.cpp `-ngl` 行为 |
-| 4 | RTF 外推系数 | 未标定，首个真实转写后回写 |
-| 5 | whisper.cpp macOS/Vulkan/ROCm 包 | macOS ✅ **已自建**（`whispercpp-cpu-macos-arm64`，CPU+Metal+CoreML/ANE 一包带齐，T-146）；**Vulkan 仍缺**；ROCm 已按用户指示裁掉（D-11 §2.2）。**此前写着"上游不存在，待自建 CI"** |
-| 6 | SSE 信封扁平 vs D-01 嵌套 | **需 `architect` 裁决**（§4.2） |
-| 7 | F1–F5 事件 payload | 由我推导，**需 `architect` 确认**（§4.4） |
-| 8 | `vec0` rowid 必须 BigInt | 已知会；`packages/shared` 无 rowid 绑定，不受影响（§12） |
+| #   | 事项                                      | 状态                                                                                                                                                                                |
+| --- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | 压缩包解压（zip / tar.gz）+ zip-slip 防护 | ✅ **已实现**（T-022，ADR-011 决策 5）。手写 ZIP/tar 解析器，零新依赖。38 项断言全绿，含真实攻击用例                                                                                |
+| 2   | catalog Ed25519 验签                      | ✅ **已实现但生产未启用** —— 无签名密钥，`OPENMEMO_CATALOG_PUBLIC_KEY = null`，供签名却无密钥时**失败关闭**（抛错，绝不放行）                                                       |
+| 3   | `estimateGpuLayers` 系数标定              | 未验证，需实测 llama.cpp `-ngl` 行为                                                                                                                                                |
+| 4   | RTF 外推系数                              | 未标定，首个真实转写后回写                                                                                                                                                          |
+| 5   | whisper.cpp macOS/Vulkan/ROCm 包          | macOS ✅ **已自建**（`whispercpp-cpu-macos-arm64`，CPU+Metal+CoreML/ANE 一包带齐，T-146）；**Vulkan 仍缺**；ROCm 已按用户指示裁掉（D-11 §2.2）。**此前写着"上游不存在，待自建 CI"** |
+| 6   | SSE 信封扁平 vs D-01 嵌套                 | **需 `architect` 裁决**（§4.2）                                                                                                                                                     |
+| 7   | F1–F5 事件 payload                        | 由我推导，**需 `architect` 确认**（§4.4）                                                                                                                                           |
+| 8   | `vec0` rowid 必须 BigInt                  | 已知会；`packages/shared` 无 rowid 绑定，不受影响（§12）                                                                                                                            |
 
 ---
 
@@ -599,7 +603,6 @@ ModelScope 上 `Qwen/Qwen3-4B-GGUF` 与 HF **10/10 文件 size+sha256 逐字节�
 目录 slug（`model_installs.model_id`）。绑定发生在 `packages/db`，由该包负责用 BigInt。
 我在 `hardware.ts`/`jobs.ts` 中也未使用任何 `number` 型数据库主键。
 
-
 ---
 
 ## 13. T-022 增补：解压防护、中文模型策略、速度纳入判定
@@ -611,20 +614,21 @@ ModelScope 上 `Qwen/Qwen3-4B-GGUF` 与 HF **10/10 文件 size+sha256 逐字节�
 
 拒绝的条目类型（每一条都有攻击用例证明，不是声称）：
 
-| 攻击 | 结果 |
-|---|---|
-| `../evil.txt` | `PATH_TRAVERSAL`，且 destDir 外**无任何文件产生** |
-| `/etc/evil-posix.txt` | `PATH_TRAVERSAL` |
-| `C:\evil-windows.txt` | `PATH_TRAVERSAL` |
-| `\\server\share\evil.txt`（UNC） | `PATH_TRAVERSAL` |
-| tar 中的**真实 symlink 条目** | `SYMLINK_REJECTED`，且**符号链接从未被创建** |
-| 50 条目 vs `maxEntries=10` | `LIMIT_EXCEEDED` |
-| 200 KB vs `maxTotalBytes=1000` | `LIMIT_EXCEEDED` |
-| **头部谎报体积**的 zip bomb | 被 zlib `maxOutputLength` 拦下 |
+| 攻击                             | 结果                                              |
+| -------------------------------- | ------------------------------------------------- |
+| `../evil.txt`                    | `PATH_TRAVERSAL`，且 destDir 外**无任何文件产生** |
+| `/etc/evil-posix.txt`            | `PATH_TRAVERSAL`                                  |
+| `C:\evil-windows.txt`            | `PATH_TRAVERSAL`                                  |
+| `\\server\share\evil.txt`（UNC） | `PATH_TRAVERSAL`                                  |
+| tar 中的**真实 symlink 条目**    | `SYMLINK_REJECTED`，且**符号链接从未被创建**      |
+| 50 条目 vs `maxEntries=10`       | `LIMIT_EXCEEDED`                                  |
+| 200 KB vs `maxTotalBytes=1000`   | `LIMIT_EXCEEDED`                                  |
+| **头部谎报体积**的 zip bomb      | 被 zlib `maxOutputLength` 拦下                    |
 
 两道闸门：`assertSafeEntryName()`（快速可读，按 `/` 与 `\` 双分隔符切分，防 Windows 重解释）
-+ `path.resolve` 前缀比对（**权威判定**）。执行位按 ZIP external attrs / tar mode 还原
-（后端包里有 `llama-server` 这类可执行文件，丢了 +x 就跑不起来），Windows 上跳过 chmod。
+
+- `path.resolve` 前缀比对（**权威判定**）。执行位按 ZIP external attrs / tar mode 还原
+  （后端包里有 `llama-server` 这类可执行文件，丢了 +x 就跑不起来），Windows 上跳过 chmod。
 
 **已知限制（诚实记录）**：不支持 ZIP64 —— **检测到即明确报错**，不静默误解析。
 
@@ -662,9 +666,9 @@ lang=en:  base → tier=recommended, notRecommendedForLanguage=false（恢复可
 `FitResult` 新增三个字段：
 
 ```ts
-speedTier: 'fast' | 'moderate' | 'slow' | 'very_slow' | 'unknown'
-speedSource: 'measured_here' | 'reference_machine' | 'none'
-notRecommendedForLanguage: boolean
+speedTier: 'fast' | 'moderate' | 'slow' | 'very_slow' | 'unknown';
+speedSource: 'measured_here' | 'reference_machine' | 'none';
+notRecommendedForLanguage: boolean;
 ```
 
 阈值按真实测量定：≤6 分钟/小时 fast，≤15 moderate，≤40 slow，其余 very_slow
@@ -673,11 +677,11 @@ notRecommendedForLanguage: boolean
 
 **新增 `ReferenceBenchmark` 类型**，与 `BenchmarkResult` **刻意分开**，两者永不混淆：
 
-| 类型 | 含义 | UI 措辞 |
-|---|---|---|
-| `benchmark` | 在**用户机器**上实测 | 「本机实测」 |
+| 类型                 | 含义                     | UI 措辞                  |
+| -------------------- | ------------------------ | ------------------------ |
+| `benchmark`          | 在**用户机器**上实测     | 「本机实测」             |
 | `referenceBenchmark` | 在**我们的参考机**上实测 | 「参考机实测，仅供参考」 |
-| 都没有 | — | 「速度未测量」 |
+| 都没有               | —                        | 「速度未测量」           |
 
 ADR-004 决策 3 禁的是**编造数字**，不是禁**有出处的真实测量**。因此
 `ReferenceBenchmark` 的每个字段都是为了让出处可审计：哪台机器、哪个后端、
@@ -696,9 +700,9 @@ ADR-004 决策 3 禁的是**编造数字**，不是禁**有出处的真实测量
 `ModelEntry.speedClass`（`fast|balance|quality`）**在 T-125 之前就存在于全部 35 条清单里**。
 真正卡住双轴卡片的不是"没有速度字段"，而是：
 
-| | T-125 之前 | 问题 |
-|---|---|---|
-| `speedClass` | 35/35 有 | 按**体积**人工分档，**没有任何测量支撑** —— 它是分组用的档位，不是速度承诺 |
+|                      | T-125 之前              | 问题                                                                                             |
+| -------------------- | ----------------------- | ------------------------------------------------------------------------------------------------ |
+| `speedClass`         | 35/35 有                | 按**体积**人工分档，**没有任何测量支撑** —— 它是分组用的档位，不是速度承诺                       |
 | `referenceBenchmark` | **2/35** 有，且**可选** | 唯一带实测的字段。"没有这个字段"同时表示"没测过"/"生成器漏了"/"没人补"，**读的人分不出是哪一种** |
 
 所以 T-125 加的不是"速度"，是**速度的出处**：新增**必填**的 `speedEvidence`，
@@ -708,9 +712,9 @@ ADR-004 决策 3 禁的是**编造数字**，不是禁**有出处的真实测量
 
 ```ts
 type SpeedEvidence =
-  | { kind: 'measured';   rtf; benchmark: ReferenceBenchmark }        // 我们拿秒表跑过这个文件
-  | { kind: 'estimated';  rtf; basedOn; method; uncertaintyFactor }   // 从别的条目外推
-  | { kind: 'unmeasured'; reason }                                    // 没跑过，并说明为什么
+  | { kind: 'measured'; rtf; benchmark: ReferenceBenchmark } // 我们拿秒表跑过这个文件
+  | { kind: 'estimated'; rtf; basedOn; method; uncertaintyFactor } // 从别的条目外推
+  | { kind: 'unmeasured'; reason }; // 没跑过，并说明为什么
 ```
 
 三条设计约束，每条都对应一次真实事故的教训：
@@ -731,11 +735,11 @@ type SpeedEvidence =
 
 **`speedClass`（目录常量，按组，与用户机器无关）** —— 用于 `/models` 的「档位」筛选：
 
-| 档位 | 判据 | 实测区间（本次） |
-|---|---|---|
-| `fast` | tiny / base 级架构 | RTF 0.042 – 0.058（2.5 – 3.5 分钟/音频小时） |
+| 档位      | 判据                  | 实测区间（本次）                              |
+| --------- | --------------------- | --------------------------------------------- |
+| `fast`    | tiny / base 级架构    | RTF 0.042 – 0.058（2.5 – 3.5 分钟/音频小时）  |
 | `balance` | small / medium 级架构 | RTF 0.088 – 0.239（5.3 – 14.3 分钟/音频小时） |
-| `quality` | large / turbo 级架构 | RTF 0.377（22.6 分钟/音频小时） |
+| `quality` | large / turbo 级架构  | RTF 0.377（22.6 分钟/音频小时）               |
 
 三档**互不重叠**，边界由测量而非直觉支撑（数据见 §14.4）。
 
@@ -754,17 +758,17 @@ turbo(22.6) → `slow`，paraformer(0.67) → `fast`。分布合理，**不改�
 **方法**：`whisper-cli` 参数照抄 `packages/pipeline/src/asr/whisperCpp.ts`（`-t 32 -l zh --output-json-full`），
 每个模型跑 4 次。7 个模型的 sha256 **逐个对上清单**后才计时。
 
-| 条目 | 体积 | RTF | 实时倍数 | 分钟/音频小时 | `speedClass` | 出处 |
-|---|---|---|---|---|---|---|
-| `asr/whisper-tiny-q5_1` | 32.2 MB | 0.0418 | 23.9x | 2.51 | fast | T-125 实测 |
-| `asr/whisper-base-q8_0` | 81.8 MB | 0.0464 | 21.5x | 2.79 | fast | T-125 实测 |
-| `asr/whisper-base-f16` | 148.0 MB | 0.0575 | 17.4x | 3.45 | fast | T-125 实测 |
-| `asr/whisper-base-q5_1` | 59.7 MB | 0.0583 | 17.1x | 3.50 | fast | T-125 实测 |
-| `asr/whisper-small-q5_1` | 190.1 MB | 0.0879 | 11.4x | 5.28 | balance | T-125 实测 |
-| `asr/whisper-medium-q5_0` | 539.2 MB | 0.2386 | 4.2x | 14.32 | balance | T-125 实测 |
-| `asr/whisper-large-v3-turbo-q5_0` | 574.0 MB | **0.377** | 2.7x | 22.6 | quality | `gpu-runtime`（见 §14.6） |
-| `asr/paraformer-zh-small` | 81.9 MB | 0.0111 | 90x | 0.67 | fast | `gpu-runtime` D-06 §18.1 |
-| `punctuation/ct-transformer-zh-en` | 298.6 MB | 0.0008 | — | 0.05 | balance | `gpu-runtime` D-06 §18.1 |
+| 条目                               | 体积     | RTF       | 实时倍数 | 分钟/音频小时 | `speedClass` | 出处                      |
+| ---------------------------------- | -------- | --------- | -------- | ------------- | ------------ | ------------------------- |
+| `asr/whisper-tiny-q5_1`            | 32.2 MB  | 0.0418    | 23.9x    | 2.51          | fast         | T-125 实测                |
+| `asr/whisper-base-q8_0`            | 81.8 MB  | 0.0464    | 21.5x    | 2.79          | fast         | T-125 实测                |
+| `asr/whisper-base-f16`             | 148.0 MB | 0.0575    | 17.4x    | 3.45          | fast         | T-125 实测                |
+| `asr/whisper-base-q5_1`            | 59.7 MB  | 0.0583    | 17.1x    | 3.50          | fast         | T-125 实测                |
+| `asr/whisper-small-q5_1`           | 190.1 MB | 0.0879    | 11.4x    | 5.28          | balance      | T-125 实测                |
+| `asr/whisper-medium-q5_0`          | 539.2 MB | 0.2386    | 4.2x     | 14.32         | balance      | T-125 实测                |
+| `asr/whisper-large-v3-turbo-q5_0`  | 574.0 MB | **0.377** | 2.7x     | 22.6          | quality      | `gpu-runtime`（见 §14.6） |
+| `asr/paraformer-zh-small`          | 81.9 MB  | 0.0111    | 90x      | 0.67          | fast         | `gpu-runtime` D-06 §18.1  |
+| `punctuation/ct-transformer-zh-en` | 298.6 MB | 0.0008    | —        | 0.05          | balance      | `gpu-runtime` D-06 §18.1  |
 
 **取值规则**：本机为多 agent 共用，CPU 争用只会让某次跑得**更慢**，不可能更快，
 因此取 **4 次中的最小值**作为无争用成本的估计，并把每次原始耗时一并留在
@@ -810,11 +814,11 @@ tiny（32 MB）0.0418 与 base-q5_1（60 MB）0.0583 只差 1.4 倍，
 
 ### 14.7 未测量的 26 条：为什么不补，以及各自的理由
 
-| `reason` | 条数 | 含义 |
-|---|---|---|
-| `not_run` | 20 | 没在参考机上跑过这个文件。**大多数 whisper 变体属于此类。** |
-| `out_of_scope` | 5 | 全部 `role=llm`（ADR-016 决策 3 砍掉本地 llama.cpp 线，D-10 #7 待下架），测了也要下架 |
-| `artifact_differs` | 1 | `asr/sherpa-streaming-zh-14m`：上游确有 RTF 0.01–0.07（D-06 §18.4），但**那是 74 MB 浮点版**，我们发的是 **25.4 MB int8 版**。**同名不同文件，数字不能挪用。** |
+| `reason`           | 条数 | 含义                                                                                                                                                           |
+| ------------------ | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `not_run`          | 20   | 没在参考机上跑过这个文件。**大多数 whisper 变体属于此类。**                                                                                                    |
+| `out_of_scope`     | 5    | 全部 `role=llm`（ADR-016 决策 3 砍掉本地 llama.cpp 线，D-10 #7 待下架），测了也要下架                                                                          |
+| `artifact_differs` | 1    | `asr/sherpa-streaming-zh-14m`：上游确有 RTF 0.01–0.07（D-06 §18.4），但**那是 74 MB 浮点版**，我们发的是 **25.4 MB int8 版**。**同名不同文件，数字不能挪用。** |
 
 `artifact_differs` 这一条正是这个字段存在的理由：
 **它是"有个数字很好用，但它不属于这个文件"的情形** ——
@@ -826,11 +830,11 @@ tiny（32 MB）0.0418 与 base-q5_1（60 MB）0.0583 只差 1.4 倍，
 要求是「新增一档而某处没处理，应该**编译报错**，而不是运行时静默走 default」。
 两个方向都**真的试过一次**（改完即还原）：
 
-| 实验 | 改动 | `tsc -b` 结果 |
-|---|---|---|
-| A | `SPEED_CLASSES` 加第 4 个值 `'instant'` | **红**：`SPEED_CLASS_LABEL_ZH` / `SPEED_CLASS_ORDER` 两个 `Record` 缺 key（TS2741） |
-| B | `SpeedEvidence` 加第 4 个成员 `VendorClaimedSpeed` | **红**：`SPEED_EVIDENCE_LABEL_ZH` 缺 key，且 `describeSpeed` / `referenceSpeedOf` 的 `assertNever` 拿到非 `never`（TS2345 ×2） |
-| C | `SPEED_TIERS` 加第 6 个值 `'glacial'` | **红**：`SPEED_NOTE_ZH` 缺 key（此护栏本来就在，一并复验） |
+| 实验 | 改动                                               | `tsc -b` 结果                                                                                                                  |
+| ---- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| A    | `SPEED_CLASSES` 加第 4 个值 `'instant'`            | **红**：`SPEED_CLASS_LABEL_ZH` / `SPEED_CLASS_ORDER` 两个 `Record` 缺 key（TS2741）                                            |
+| B    | `SpeedEvidence` 加第 4 个成员 `VendorClaimedSpeed` | **红**：`SPEED_EVIDENCE_LABEL_ZH` 缺 key，且 `describeSpeed` / `referenceSpeedOf` 的 `assertNever` 拿到非 `never`（TS2345 ×2） |
+| C    | `SPEED_TIERS` 加第 6 个值 `'glacial'`              | **红**：`SPEED_NOTE_ZH` 缺 key（此护栏本来就在，一并复验）                                                                     |
 
 手法是**全量 `Record<K,V>` 字面量 + `switch` 配 `assertNever`**，两者缺一不可：
 前者挡住"给枚举加值"，后者挡住"给联合加成员"。

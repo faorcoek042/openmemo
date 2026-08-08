@@ -43,9 +43,17 @@ const GGUF_HEAD_BYTES = 8 * 1024 * 1024;
 /* --------------------------- GGUF header parsing -------------------------- */
 
 const GGUF_TYPES = {
-  0: ['u8', 1], 1: ['i8', 1], 2: ['u16', 2], 3: ['i16', 2],
-  4: ['u32', 4], 5: ['i32', 4], 6: ['f32', 4], 7: ['bool', 1],
-  10: ['u64', 8], 11: ['i64', 8], 12: ['f64', 8],
+  0: ['u8', 1],
+  1: ['i8', 1],
+  2: ['u16', 2],
+  3: ['i16', 2],
+  4: ['u32', 4],
+  5: ['i32', 4],
+  6: ['f32', 4],
+  7: ['bool', 1],
+  10: ['u64', 8],
+  11: ['i64', 8],
+  12: ['f64', 8],
 };
 
 class Cursor {
@@ -54,18 +62,41 @@ class Cursor {
     this.off = 0;
   }
   need(n) {
-    if (this.off + n > this.buf.length) throw new Error('GGUF header truncated: increase GGUF_HEAD_BYTES');
+    if (this.off + n > this.buf.length)
+      throw new Error('GGUF header truncated: increase GGUF_HEAD_BYTES');
   }
-  u32() { this.need(4); const v = this.buf.readUInt32LE(this.off); this.off += 4; return v; }
-  u64() { this.need(8); const v = Number(this.buf.readBigUInt64LE(this.off)); this.off += 8; return v; }
-  str() { const n = this.u64(); this.need(n); const s = this.buf.toString('utf8', this.off, this.off + n); this.off += n; return s; }
-  skip(n) { this.need(n); this.off += n; }
+  u32() {
+    this.need(4);
+    const v = this.buf.readUInt32LE(this.off);
+    this.off += 4;
+    return v;
+  }
+  u64() {
+    this.need(8);
+    const v = Number(this.buf.readBigUInt64LE(this.off));
+    this.off += 8;
+    return v;
+  }
+  str() {
+    const n = this.u64();
+    this.need(n);
+    const s = this.buf.toString('utf8', this.off, this.off + n);
+    this.off += n;
+    return s;
+  }
+  skip(n) {
+    this.need(n);
+    this.off += n;
+  }
   value(type) {
     if (type === 8) return this.str();
     if (type === 9) {
       const et = this.u32();
       const n = this.u64();
-      if (et === 8) { for (let i = 0; i < n; i++) this.str(); return `<${n} strings>`; }
+      if (et === 8) {
+        for (let i = 0; i < n; i++) this.str();
+        return `<${n} strings>`;
+      }
       const [, size] = GGUF_TYPES[et] ?? [null, 0];
       if (!size) throw new Error(`Unknown GGUF array element type ${et}`);
       this.skip(size * n);
@@ -77,18 +108,41 @@ class Cursor {
     this.need(size);
     let v;
     switch (name) {
-      case 'u8': v = this.buf.readUInt8(this.off); break;
-      case 'i8': v = this.buf.readInt8(this.off); break;
-      case 'u16': v = this.buf.readUInt16LE(this.off); break;
-      case 'i16': v = this.buf.readInt16LE(this.off); break;
-      case 'u32': v = this.buf.readUInt32LE(this.off); break;
-      case 'i32': v = this.buf.readInt32LE(this.off); break;
-      case 'f32': v = this.buf.readFloatLE(this.off); break;
-      case 'bool': v = this.buf.readUInt8(this.off) !== 0; break;
-      case 'u64': v = Number(this.buf.readBigUInt64LE(this.off)); break;
-      case 'i64': v = Number(this.buf.readBigInt64LE(this.off)); break;
-      case 'f64': v = this.buf.readDoubleLE(this.off); break;
-      default: throw new Error(`unhandled ${name}`);
+      case 'u8':
+        v = this.buf.readUInt8(this.off);
+        break;
+      case 'i8':
+        v = this.buf.readInt8(this.off);
+        break;
+      case 'u16':
+        v = this.buf.readUInt16LE(this.off);
+        break;
+      case 'i16':
+        v = this.buf.readInt16LE(this.off);
+        break;
+      case 'u32':
+        v = this.buf.readUInt32LE(this.off);
+        break;
+      case 'i32':
+        v = this.buf.readInt32LE(this.off);
+        break;
+      case 'f32':
+        v = this.buf.readFloatLE(this.off);
+        break;
+      case 'bool':
+        v = this.buf.readUInt8(this.off) !== 0;
+        break;
+      case 'u64':
+        v = Number(this.buf.readBigUInt64LE(this.off));
+        break;
+      case 'i64':
+        v = Number(this.buf.readBigInt64LE(this.off));
+        break;
+      case 'f64':
+        v = this.buf.readDoubleLE(this.off);
+        break;
+      default:
+        throw new Error(`unhandled ${name}`);
     }
     this.off += size;
     return v;
@@ -259,10 +313,14 @@ async function cmdCheck() {
         try {
           const meta = await hfHead(repo, name, rev);
           if (meta.sizeBytes && meta.sizeBytes !== file.sizeBytes) {
-            console.log(`  MISMATCH size ${m.id}/${file.name}: manifest ${file.sizeBytes}, upstream ${meta.sizeBytes}`);
+            console.log(
+              `  MISMATCH size ${m.id}/${file.name}: manifest ${file.sizeBytes}, upstream ${meta.sizeBytes}`,
+            );
             problems++;
           } else if (meta.sha256 && meta.sha256 !== file.sha256) {
-            console.log(`  MISMATCH sha256 ${m.id}/${file.name}: manifest ${file.sha256.slice(0, 12)}…, upstream ${meta.sha256.slice(0, 12)}…`);
+            console.log(
+              `  MISMATCH sha256 ${m.id}/${file.name}: manifest ${file.sha256.slice(0, 12)}…, upstream ${meta.sha256.slice(0, 12)}…`,
+            );
             problems++;
           } else {
             console.log(`  ok  ${m.id}/${file.name}`);

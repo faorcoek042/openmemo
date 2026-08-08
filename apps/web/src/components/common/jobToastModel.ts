@@ -208,7 +208,9 @@ export function toastActionFor(
          * 于是流水线任务**失败**时页面同样一个字都没有。同成因、同后果，只是没人撞见过。
          * 只给终态失败补建：还在自动重试的不该打扰用户（重试成功了他根本不用知道）。
          */
-        ...(ev.willRetry ? {} : { seed: { name: names.failed(), kind: 'model' as ToastKind, totalBytes: 0 } }),
+        ...(ev.willRetry
+          ? {}
+          : { seed: { name: names.failed(), kind: 'model' as ToastKind, totalBytes: 0 } }),
       };
     }
   }

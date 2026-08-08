@@ -46,7 +46,9 @@ export function resolveComponentRegistryPath(): string {
   if (override) return override;
   // dist/http/rest/ → 上溯 5 层到仓库根
   const here = dirname(fileURLToPath(import.meta.url));
-  return resolve(join(here, '..', '..', '..', '..', '..', 'vendor', 'manifests', 'components.json'));
+  return resolve(
+    join(here, '..', '..', '..', '..', '..', 'vendor', 'manifests', 'components.json'),
+  );
 }
 
 /** 上游查询的超时。查不到不是错误，只是 latestVersion 为 null。 */

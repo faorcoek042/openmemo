@@ -3,6 +3,7 @@
 ## [2026-08-06 04:10] T-148 DONE（Linux / Windows 第一次真的转出字来；macOS 卡在另一条线）
 
 交付:
+
 - `packages/downloader/src/verify.ts`（新增 `GGML_FILE_MAGIC` + `isGgmlModelFile`）
 - `apps/daemon/src/pipeline/setup.ts`（新增 `resolveWhisperVadModel`）+ `modelStore.ts`（`resolveActiveModel` 加 `accept`）
 - `apps/daemon/src/pipeline/vadStatus.ts`（**新增**）+ `main.ts`（`/api/health` 出 `pipeline.vad`）
@@ -22,11 +23,11 @@
 
 # §0 ★ 判据：CI 上真的转出字来了（`[CI 实测]` run 31069224572，commit `a7b96b7`）
 
-| 平台 | 转写 job | 拿到的文本 | 切分方式 | 判定 |
-|---|---|---|---|---|
-| **linux-x64** | `succeeded (2.1s)` | 1 段 / 108 字符 | **VAD（按静音）** | ✅ **通了** |
-| **win32-x64** | `succeeded (4.6s)` | 1 段 / 108 字符 | **VAD（按静音）** | ✅ **通了（Windows 有史以来第一次）** |
-| **darwin-arm64** | `failed` | (空) | VAD（按静音）✅ | 🔴 **卡在别处**：`maskbin/whisper-cli exited with code 127` —— **macOS 还没有 whisper 包**（等 release，`pack-publish` 那条线）。**VAD 这一环在 macOS 上也已经修好** |
+| 平台             | 转写 job           | 拿到的文本      | 切分方式          | 判定                                                                                                                                                                 |
+| ---------------- | ------------------ | --------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **linux-x64**    | `succeeded (2.1s)` | 1 段 / 108 字符 | **VAD（按静音）** | ✅ **通了**                                                                                                                                                          |
+| **win32-x64**    | `succeeded (4.6s)` | 1 段 / 108 字符 | **VAD（按静音）** | ✅ **通了（Windows 有史以来第一次）**                                                                                                                                |
+| **darwin-arm64** | `failed`           | (空)            | VAD（按静音）✅   | 🔴 **卡在别处**：`maskbin/whisper-cli exited with code 127` —— **macOS 还没有 whisper 包**（等 release，`pack-publish` 那条线）。**VAD 这一环在 macOS 上也已经修好** |
 
 两台成功的机器上，文本一字不差：
 
@@ -38,11 +39,11 @@ ask what you can do for your country.
 
 **对照前一轮（run 31039460495，同一个脚本、同一个判据）**：
 
-| | 上一轮 | 本轮 |
-|---|---|---|
-| linux-x64 转写步骤 | ✘ `whisper-vad-speech-segments exited with code 2` | ✅ succeeded |
-| win32-x64 转写步骤 | ✘ 同上，一字不差 | ✅ succeeded |
-| darwin-arm64 转写步骤 | ✘ whisper-cli 127 | ✘ whisper-cli 127（**同一条，未变，不属本任务**） |
+|                       | 上一轮                                             | 本轮                                              |
+| --------------------- | -------------------------------------------------- | ------------------------------------------------- |
+| linux-x64 转写步骤    | ✘ `whisper-vad-speech-segments exited with code 2` | ✅ succeeded                                      |
+| win32-x64 转写步骤    | ✘ 同上，一字不差                                   | ✅ succeeded                                      |
+| darwin-arm64 转写步骤 | ✘ whisper-cli 127                                  | ✘ whisper-cli 127（**同一条，未变，不属本任务**） |
 
 ⚠️ **三个 job 的整体结论仍是 `failure`，但红的不是这一步。**
 红的是**对照组**那一步（`--no-mask`，**不带 `--transcribe`**）的
@@ -62,13 +63,13 @@ ask what you can do for your country.
 
 ## ① `pack-publish` 的假设**被证伪了** —— 不是 v5/v6，是「role 相同、格式互不兼容」
 
-它的假设：*清单钉 v6、`tools.ts:449` 第一个写 v5 → 版本对不上*。三条独立证据推翻它：
+它的假设：_清单钉 v6、`tools.ts:449` 第一个写 v5 → 版本对不上_。三条独立证据推翻它：
 
-| 查了什么 | 结果 |
-|---|---|
-| `tools.ts` 那张候选表 | **v6.2.0 一直在里面**（第二个），文件真在就找得到 |
+| 查了什么                           | 结果                                                                           |
+| ---------------------------------- | ------------------------------------------------------------------------------ |
+| `tools.ts` 那张候选表              | **v6.2.0 一直在里面**（第二个），文件真在就找得到                              |
 | whisper.cpp v1.9.1 支不支持 v6.2.0 | **支持**。`models/download-vad-model.sh:33` 明写 `silero-v5.1.2 silero-v6.2.0` |
-| 那个文件的 magic 到底对不对 | **对**。而且不用联网就能验 —— 见下 |
+| 那个文件的 magic 到底对不对        | **对**。而且不用联网就能验 —— 见下                                             |
 
 **它下不到 HF，我也下不到（`hf-mirror.com` 只是 308 跳回 huggingface.co，不是镜像）。
 但那份权重一直躺在仓库里**：
@@ -160,11 +161,11 @@ stdout 0 字节                            ← ★ 空
 
 ## ④ 三条修法（对应任务书 ①②）
 
-| # | 修了什么 | 判据 |
-|---|---|---|
-| 1 | VAD 权重按**内容**挑：读头四字节比 `GGML_FILE_MAGIC` | 与 `whisper_vad_init_with_params`（`whisper.cpp:4779-4785`）的第一步逐字对应 |
-| 2 | 去掉 `-np` | 失败路径说话；成功路径照旧安静（`runOrThrow` 只在非零退出时才带出 stderr） |
-| 3 | VAD 跑挂 → 退回固定窗口 **+ 三处出声** | 见 §3 |
+| #   | 修了什么                                             | 判据                                                                         |
+| --- | ---------------------------------------------------- | ---------------------------------------------------------------------------- |
+| 1   | VAD 权重按**内容**挑：读头四字节比 `GGML_FILE_MAGIC` | 与 `whisper_vad_init_with_params`（`whisper.cpp:4779-4785`）的第一步逐字对应 |
+| 2   | 去掉 `-np`                                           | 失败路径说话；成功路径照旧安静（`runOrThrow` 只在非零退出时才带出 stderr）   |
+| 3   | VAD 跑挂 → 退回固定窗口 **+ 三处出声**               | 见 §3                                                                        |
 
 **为什么按内容而不是按 `engines` 字段**：老安装记录里**没有** `engines`（后加的），
 按字段过滤会把一份完全能用的权重误判成不能用。按内容判则新记录、老记录、
@@ -188,17 +189,17 @@ stdout 0 字节                            ← ★ 空
 
 # §1 定性过程（每一步的证据级别）
 
-| 步骤 | 结论 | 级别 |
-|---|---|---|
-| 读 `speech.cpp` 两个 `return 2` | `:116` 那条文案与 CI 一致；`read_audio_data` 打到了 miniaudio 说明音频读到了 | 读源码，与 `pack-publish` 一致 |
-| 读 `whisper.cpp:4731-5090` | VAD 初始化有 **5 条** `return nullptr` 路径（打不开 / bad magic / unknown tensor / wrong shape / backend init），**全部**经 `WHISPER_LOG_ERROR` | 读源码 |
-| 试连 HF / hf-mirror | HF 直连超时；**`hf-mirror.com` 对 `/resolve/**` 一律 308 跳回 huggingface.co** ⇒ 清单里那条 mirror 提供的冗余是 0 | 本机实测 |
-| 在仓库里找到同一份权重 | `vendor/whisper.cpp/models/for-tests-silero-v6.2.0-ggml.bin` sha256 与清单**逐字符一致** | 本机实测 |
-| 用 CI 的上游二进制跑那份权重 | rc=0，4 段 ⇒ **权重与二进制都没问题** | 本机实测 |
-| 空路径 / 不存在 / ONNX 三种输入 | 带 `-np` 时输出**逐字节相同**，全是 `failed to initialize whisper context` + exit 2 | 本机实测 |
-| 读 `active.json`（真实冷启动留下的） | `"vad":"vad/silero-vad-onnx"` | 本机实测（读 `ci-runner` 的临时目录） |
-| 跑 `resolveActiveModel(dir,'vad')` | 返回 `…/silero_vad.onnx` | 本机实测（调编译后的产品代码） |
-| 端到端喂给 `detectSpeechSegments` | 复现 CI 那条错误 | 本机实测 |
+| 步骤                                 | 结论                                                                                                                                            | 级别                                  |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| 读 `speech.cpp` 两个 `return 2`      | `:116` 那条文案与 CI 一致；`read_audio_data` 打到了 miniaudio 说明音频读到了                                                                    | 读源码，与 `pack-publish` 一致        |
+| 读 `whisper.cpp:4731-5090`           | VAD 初始化有 **5 条** `return nullptr` 路径（打不开 / bad magic / unknown tensor / wrong shape / backend init），**全部**经 `WHISPER_LOG_ERROR` | 读源码                                |
+| 试连 HF / hf-mirror                  | HF 直连超时；**`hf-mirror.com` 对 `/resolve/**` 一律 308 跳回 huggingface.co** ⇒ 清单里那条 mirror 提供的冗余是 0                               | 本机实测                              |
+| 在仓库里找到同一份权重               | `vendor/whisper.cpp/models/for-tests-silero-v6.2.0-ggml.bin` sha256 与清单**逐字符一致**                                                        | 本机实测                              |
+| 用 CI 的上游二进制跑那份权重         | rc=0，4 段 ⇒ **权重与二进制都没问题**                                                                                                           | 本机实测                              |
+| 空路径 / 不存在 / ONNX 三种输入      | 带 `-np` 时输出**逐字节相同**，全是 `failed to initialize whisper context` + exit 2                                                             | 本机实测                              |
+| 读 `active.json`（真实冷启动留下的） | `"vad":"vad/silero-vad-onnx"`                                                                                                                   | 本机实测（读 `ci-runner` 的临时目录） |
+| 跑 `resolveActiveModel(dir,'vad')`   | 返回 `…/silero_vad.onnx`                                                                                                                        | 本机实测（调编译后的产品代码）        |
+| 端到端喂给 `detectSpeechSegments`    | 复现 CI 那条错误                                                                                                                                | 本机实测                              |
 
 **我没有绕开产品代码去"模拟"任何一步** —— 复现用的是 `apps/daemon/dist` 与
 `packages/pipeline/dist` 里编译出来的同一份函数。
@@ -210,10 +211,10 @@ stdout 0 字节                            ← ★ 空
 事故那一轮 `selfcheck` 报 `model.vad **ok** …/by-name/asr/ggml-silero-v6.2.0.bin`，
 而 daemon 手里拿的是 `silero_vad.onnx`。**两句话都不假，因为它们说的不是同一个东西**：
 
-| 出口 | 怎么解析 VAD 权重 | 得到 |
-|---|---|---|
-| `scripts/selfcheck.mjs`（CLI） | `pl.discoverTools()` → 按**文件名**在 `by-name/asr` 里找 | `ggml-silero-v6.2.0.bin` ✅ |
-| daemon / `/api/selfcheck` | `resolveActiveModel(dir,'vad')` → 按 **role + active.json** | `silero_vad.onnx` ❌ |
+| 出口                           | 怎么解析 VAD 权重                                           | 得到                        |
+| ------------------------------ | ----------------------------------------------------------- | --------------------------- |
+| `scripts/selfcheck.mjs`（CLI） | `pl.discoverTools()` → 按**文件名**在 `by-name/asr` 里找    | `ggml-silero-v6.2.0.bin` ✅ |
+| daemon / `/api/selfcheck`      | `resolveActiveModel(dir,'vad')` → 按 **role + active.json** | `silero_vad.onnx` ❌        |
 
 而 `meta.sameSource` **只比 id 与 status，不比 detail**（`scripts/selfcheck.mjs:391-393`
 写得很清楚，理由也正当：detail 里有路径这类本来就该不同的东西）。
@@ -231,12 +232,12 @@ stdout 0 字节                            ← ★ 空
 
 你的原话：**退回固定窗口 + 自检出现一条明确的 warn/fail + 用户在界面上看得见。**
 
-| 层 | 做了什么 |
-|---|---|
-| 转写结果 | `TranscribeResult` 新增 `chunking: 'vad' \| 'fixed'` 与 `warningsZh[]`。**调用方拿不到结果就拿不到这个事实**（不是可选的旁路信息） |
-| daemon | 退回时 `console.warn`；job 成功 payload 带 `chunking` + `warningsZh` |
-| 自检 | `model.vad` 判据从 `access(R_OK)` 换成 `isGgmlModelFile`。三档：`ok` 能加载／`fail` 交出来的文件加载不了／`warn` 没有可用的（**并说清是"一个都没装"还是"装的那个 whisper 用不了"**） |
-| 界面 | 诊断页「流水线」组新增 **「音频切分方式」** 一行，读 `/api/health` 的 `pipeline.vad`，非 VAD 时黄灯 + 「去修」跳 `/models` |
+| 层       | 做了什么                                                                                                                                                                             |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 转写结果 | `TranscribeResult` 新增 `chunking: 'vad' \| 'fixed'` 与 `warningsZh[]`。**调用方拿不到结果就拿不到这个事实**（不是可选的旁路信息）                                                   |
+| daemon   | 退回时 `console.warn`；job 成功 payload 带 `chunking` + `warningsZh`                                                                                                                 |
+| 自检     | `model.vad` 判据从 `access(R_OK)` 换成 `isGgmlModelFile`。三档：`ok` 能加载／`fail` 交出来的文件加载不了／`warn` 没有可用的（**并说清是"一个都没装"还是"装的那个 whisper 用不了"**） |
+| 界面     | 诊断页「流水线」组新增 **「音频切分方式」** 一行，读 `/api/health` 的 `pipeline.vad`，非 VAD 时黄灯 + 「去修」跳 `/models`                                                           |
 
 **⚠️ 我特意堵了一个自己差点造出来的新假绿灯**：
 `buildPipeline` 只知道**静态**那一半（权重挑到没有）。权重挑对了、二进制却跑失败时，
@@ -256,6 +257,7 @@ stdout 0 字节                            ← ★ 空
 `grep -rn REVERSAL` 全仓 0 命中。
 
 **R1 · 把解析器退回「只按 role 挑」**（事故那天的那一行）
+
 ```
 ✖ ★ 两个都装了、active.json 指着 ONNX：仍然必须交出 ggml 那一份
   AssertionError: 交给 whisper-vad-speech-segments 的那份权重必须真的能被它加载
@@ -267,6 +269,7 @@ stdout 0 字节                            ← ★ 空
 ```
 
 **R2+R5 · 把 `-np` 放回去、`-vsd` 改回 `-vspd`**
+
 ```
 ✖ ★ 绝不能出现 `-np`：它会把 whisper 五种加载失败压成同一句话
 ✖ ★ min-speech-duration 必须发 `-vsd`，发 `-vspd` 会换来一份空转写 + 绿灯
@@ -276,6 +279,7 @@ stdout 0 字节                            ← ★ 空
 ```
 
 **R3+R6 · 拆掉降级、拆掉「没有结果头就不算跑过」的闸**
+
 ```
 ✖ ★ exit 0 + 空 stdout 必须抛，不能当成"这段音频没有语音"   Missing expected exception
 ✖ usage 文本（例子把 --help 打到 stderr、stdout 全空）不算答案  Missing expected exception
@@ -286,6 +290,7 @@ stdout 0 字节                            ← ★ 空
 ```
 
 **R4 · 自检退回「文件在不在」**
+
 ```
 ✖ ★ 文件在、但不是 ggml → fail（旧判据在这里给的是 ok）
   AssertionError: 存在性检查会把它读成 ok —— 那正是事故那天的样子
@@ -317,15 +322,15 @@ stdout 0 字节                            ← ★ 空
 
 # §6 我没做 / 做不到的（如实列）
 
-| 项 | 状态 |
-|---|---|
-| macOS 上真的转出字 | ⛔ **本任务修不了** —— `[CI 实测]` 它已经走过 VAD 那一环（`✔ 切分方式 = VAD`），死在 `whisper-cli` 127：**缺 whisper 包，等 release**（`pack-publish` 那条线） |
-| `cold-start-audit` 对照组的 `model.asr fail` | ⛔ **旧账，没动**。对照组不带 `--transcribe`，因此不拉 ASR 模型，而 `required-core` 里本来就没有 ASR（D-11 §7.3 #1 的产品结论）。**它让这个 workflow 恒红** —— 恒红会训练人忽略告警，建议单独派人裁（要么对照组也拉模型，要么把这条改成 warn） |
-| `models.ts:488`「先装的赢」的激活规则 | ⛔ **刻意没动**。它对 ASR/LLM 是合理的，对 VAD 出问题是因为"一个 role 一个槽位"这个前提不成立（VAD 是**按引擎**分的）。正确的修法是让**消费方**说清自己要什么 —— 已经这么做了。改激活规则会牵动 sherpa 那条线，超出本任务 |
-| `hf-mirror` 那条 mirror 其实不提供冗余 | ⛔ 只是查到并记在这里（`vendor/manifests/` 归 `pack-publish`，动它要先申报）。**影响面**：`models-*.json` 里所有 `hf-mirror` 条目在 HF 不可达时同样不可达 |
-| 用户机器上"装了 ONNX 没装 ggml"的历史状态怎么自愈 | 🟡 **不会自动装**。现在会在自检与诊断页明确说"去装 `vad/silero-vad-ggml`"，但没有一键修复 |
-| 本机跑 whisper **转写** | ⛔ 按用户指示**一次都没跑**。我只跑了 `whisper-vad-speech-segments`（11 秒样本的语音分段，不是转写），那是定性所必需 |
-| `packages/downloader` 至今**没有 `test` 脚本** | ⛔ 没加。新函数的护栏放在 pipeline/daemon/runtime 三个已有脚本的包里。`check-test-scripts.mjs` 目前不报它（该包 0 个测试文件），**但谁往那个包里加第一个测试就会被它拦下** |
+| 项                                                | 状态                                                                                                                                                                                                                                           |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS 上真的转出字                                | ⛔ **本任务修不了** —— `[CI 实测]` 它已经走过 VAD 那一环（`✔ 切分方式 = VAD`），死在 `whisper-cli` 127：**缺 whisper 包，等 release**（`pack-publish` 那条线）                                                                                 |
+| `cold-start-audit` 对照组的 `model.asr fail`      | ⛔ **旧账，没动**。对照组不带 `--transcribe`，因此不拉 ASR 模型，而 `required-core` 里本来就没有 ASR（D-11 §7.3 #1 的产品结论）。**它让这个 workflow 恒红** —— 恒红会训练人忽略告警，建议单独派人裁（要么对照组也拉模型，要么把这条改成 warn） |
+| `models.ts:488`「先装的赢」的激活规则             | ⛔ **刻意没动**。它对 ASR/LLM 是合理的，对 VAD 出问题是因为"一个 role 一个槽位"这个前提不成立（VAD 是**按引擎**分的）。正确的修法是让**消费方**说清自己要什么 —— 已经这么做了。改激活规则会牵动 sherpa 那条线，超出本任务                      |
+| `hf-mirror` 那条 mirror 其实不提供冗余            | ⛔ 只是查到并记在这里（`vendor/manifests/` 归 `pack-publish`，动它要先申报）。**影响面**：`models-*.json` 里所有 `hf-mirror` 条目在 HF 不可达时同样不可达                                                                                      |
+| 用户机器上"装了 ONNX 没装 ggml"的历史状态怎么自愈 | 🟡 **不会自动装**。现在会在自检与诊断页明确说"去装 `vad/silero-vad-ggml`"，但没有一键修复                                                                                                                                                      |
+| 本机跑 whisper **转写**                           | ⛔ 按用户指示**一次都没跑**。我只跑了 `whisper-vad-speech-segments`（11 秒样本的语音分段，不是转写），那是定性所必需                                                                                                                           |
+| `packages/downloader` 至今**没有 `test` 脚本**    | ⛔ 没加。新函数的护栏放在 pipeline/daemon/runtime 三个已有脚本的包里。`check-test-scripts.mjs` 目前不报它（该包 0 个测试文件），**但谁往那个包里加第一个测试就会被它拦下**                                                                     |
 
 ---
 
@@ -355,13 +360,13 @@ stdout 0 字节                            ← ★ 空
 
 ## SHARED-CHANGE 申报
 
-| 文件 | 归属 | 我做了什么 | 冲突风险 |
-|---|---|---|---|
-| `scripts/ci/cold-start-audit.mjs` | `ci-runner` / `pack-publish`（在途） | §7 末尾**纯追加** ~20 行切分方式判定 | 🟡 中 —— `pack-publish` 上一轮也改过这个文件，rebase 时留意 |
-| `packages/runtime/src/selfcheck.ts` | `storage-fix` / `gpu-runtime` / `pack-publish` | 改写 `model.vad` 一项 + 加一个正则常量 + 加一行 import | 🟡 中 —— 只动这一项，不碰 `asr.coreml` 等其它检查 |
-| `packages/runtime/src/selfcheck.test.ts` | 同上 | 在既有 describe 里**插入**一个子 describe | 低 |
-| `apps/daemon/src/http/rest/models.ts` | `model-mgmt` | **没改**（只读了 `:488` 那条激活规则并在 §6 说明为什么不动） | 无 |
-| `apps/web/.../DiagnosticsPage.tsx` + 2 份 i18n | 前端线 | 加一行 Row + 3 个 key（插在 `asrEngine` 之后） | 低 |
+| 文件                                           | 归属                                           | 我做了什么                                                   | 冲突风险                                                    |
+| ---------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------- |
+| `scripts/ci/cold-start-audit.mjs`              | `ci-runner` / `pack-publish`（在途）           | §7 末尾**纯追加** ~20 行切分方式判定                         | 🟡 中 —— `pack-publish` 上一轮也改过这个文件，rebase 时留意 |
+| `packages/runtime/src/selfcheck.ts`            | `storage-fix` / `gpu-runtime` / `pack-publish` | 改写 `model.vad` 一项 + 加一个正则常量 + 加一行 import       | 🟡 中 —— 只动这一项，不碰 `asr.coreml` 等其它检查           |
+| `packages/runtime/src/selfcheck.test.ts`       | 同上                                           | 在既有 describe 里**插入**一个子 describe                    | 低                                                          |
+| `apps/daemon/src/http/rest/models.ts`          | `model-mgmt`                                   | **没改**（只读了 `:488` 那条激活规则并在 §6 说明为什么不动） | 无                                                          |
+| `apps/web/.../DiagnosticsPage.tsx` + 2 份 i18n | 前端线                                         | 加一行 Row + 3 个 key（插在 `asrEngine` 之后）               | 低                                                          |
 
 ---
 
@@ -444,6 +449,7 @@ stdout 0 字节                          ← ★
 
 `:67` 与 `:68` 都以 `-vsd` 起头（`:68` 的 `-vsd` 分支不可达），
 **并且两条都赋给 `vad_min_speech_duration_ms`**。后果两条：
+
 - `--vad-min-silence-duration-ms` 拧的是 **min-speech**（写错变量）；
 - `vad_min_silence_duration_ms` **没有任何命令行路径能设置**，
   尽管 `:130` 会把它传给 `whisper_vad_params`。
@@ -491,10 +497,10 @@ stdout 0 字节                          ← ★
 
 ### 对三条裁决的回执
 
-| 裁决 | 我的动作 |
-|---|---|
-| ① 诊断页数据源 → 你建任务 | ✅ 不动。补一条给那张任务单的事实：诊断页顶部那段注释里「selfcheck 只是 CLI、没有 HTTP 端点」**这句话本身也要删** —— 留着它会让下一个人重新得出同一个错误结论 |
+| 裁决                                  | 我的动作                                                                                                                                                                     |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ① 诊断页数据源 → 你建任务             | ✅ 不动。补一条给那张任务单的事实：诊断页顶部那段注释里「selfcheck 只是 CLI、没有 HTTP 端点」**这句话本身也要删** —— 留着它会让下一个人重新得出同一个错误结论                |
 | ② `hf-mirror` → 你协调 `pack-publish` | ✅ 不动 `vendor/manifests/`。证据在本文件 §1：`https://hf-mirror.com/…/resolve/{main,<40位sha>}/…` 一律 `HTTP/2 308` + `location: https://huggingface.co/…`，两种 ref 都试过 |
-| ③ 上游 PR | ✅ 复现步骤 + 4 行 patch 见上，可整段搬进 D-11。`vendor/` 未改 |
+| ③ 上游 PR                             | ✅ 复现步骤 + 4 行 patch 见上，可整段搬进 D-11。`vendor/` 未改                                                                                                               |
 
 门禁（addendum 之后重跑）：`tsc -b` 0 · `eslint` 0 · `pnpm -r test` **931 / 0**

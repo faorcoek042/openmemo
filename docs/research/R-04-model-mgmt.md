@@ -42,12 +42,12 @@ date: 2026-08-02
 
 ## 0. 本文档的证据等级约定
 
-| 标记 | 含义 |
-|---|---|
+| 标记         | 含义                                                                       |
+| ------------ | -------------------------------------------------------------------------- |
 | **[已验证]** | 我在本机 `curl`/解析实测过，或直接 fetch 到源码/官方文档原文，命令附在文中 |
-| **[文档]** | 来自官方文档/源码原文，但我没有实际运行 |
-| **[未验证]** | 推断、二手信息、或社区说法 |
-| `UNKNOWN` | 查不到可信来源，**不编** |
+| **[文档]**   | 来自官方文档/源码原文，但我没有实际运行                                    |
+| **[未验证]** | 推断、二手信息、或社区说法                                                 |
+| `UNKNOWN`    | 查不到可信来源，**不编**                                                   |
 
 本机出口 IP 实测为 **美国洛杉矶**（`AS25820 IT7 Networks`，`curl https://ipinfo.io/json`）。
 这直接影响国内镜像的可验证性，见 §5。
@@ -60,15 +60,15 @@ date: 2026-08-02
 
 **HTTP API（`docs/api.md` 原文）**
 
-| Endpoint | 说明 |
-|---|---|
-| `POST /api/pull` | 请求体 `{model, insecure?, stream?}`。**"Cancelled pulls are resumed from where they left off, and multiple calls will share the same download progress."** |
-| `GET /api/tags` | 已安装模型列表 |
-| `POST /api/show` | 模型详情，含 `model_info`（`llama.context_length`、`llama.attention.head_count` 等）、`capabilities` |
-| `DELETE /api/delete` | 体 `{model}` |
-| `POST /api/copy` / `POST /api/create` / `POST /api/push` | 复制 / 构建（可 `quantize`）/ 上传 |
-| `GET /api/ps` | 已载入显存的模型，含 `size_vram`、`expires_at` |
-| `HEAD /api/blobs/:digest` / `POST /api/blobs/:digest` | blob 存在性探测 / 上传 |
+| Endpoint                                                 | 说明                                                                                                                                                        |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/pull`                                         | 请求体 `{model, insecure?, stream?}`。**"Cancelled pulls are resumed from where they left off, and multiple calls will share the same download progress."** |
+| `GET /api/tags`                                          | 已安装模型列表                                                                                                                                              |
+| `POST /api/show`                                         | 模型详情，含 `model_info`（`llama.context_length`、`llama.attention.head_count` 等）、`capabilities`                                                        |
+| `DELETE /api/delete`                                     | 体 `{model}`                                                                                                                                                |
+| `POST /api/copy` / `POST /api/create` / `POST /api/push` | 复制 / 构建（可 `quantize`）/ 上传                                                                                                                          |
+| `GET /api/ps`                                            | 已载入显存的模型，含 `size_vram`、`expires_at`                                                                                                              |
+| `HEAD /api/blobs/:digest` / `POST /api/blobs/:digest`    | blob 存在性探测 / 上传                                                                                                                                      |
 
 `POST /api/pull` 的流式响应（NDJSON，逐行）：
 
@@ -87,11 +87,25 @@ date: 2026-08-02
 `GET /api/tags` 响应（原文示例）：
 
 ```json
-{"models":[{"name":"deepseek-r1:latest","model":"deepseek-r1:latest",
- "modified_at":"2025-05-10T08:06:48.639712648-07:00","size":4683075271,
- "digest":"0a8c266910232fd3291e71e5ba1e058cc5af9d411192cf88b6d30e92b6e73163",
- "details":{"parent_model":"","format":"gguf","family":"qwen2","families":["qwen2"],
-            "parameter_size":"7.6B","quantization_level":"Q4_K_M"}}]}
+{
+  "models": [
+    {
+      "name": "deepseek-r1:latest",
+      "model": "deepseek-r1:latest",
+      "modified_at": "2025-05-10T08:06:48.639712648-07:00",
+      "size": 4683075271,
+      "digest": "0a8c266910232fd3291e71e5ba1e058cc5af9d411192cf88b6d30e92b6e73163",
+      "details": {
+        "parent_model": "",
+        "format": "gguf",
+        "family": "qwen2",
+        "families": ["qwen2"],
+        "parameter_size": "7.6B",
+        "quantization_level": "Q4_K_M"
+      }
+    }
+  ]
+}
 ```
 
 **存储布局** [文档：`docs/faq.mdx`]
@@ -105,11 +119,32 @@ date: 2026-08-02
 **Registry 协议** [已验证：`curl https://registry.ollama.ai/v2/library/llama3.2/manifests/1b`]
 
 ```json
-{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json",
- "config":{"mediaType":"application/vnd.docker.container.image.v1+json","digest":"sha256:4f65…","size":485},
- "layers":[{"mediaType":"application/vnd.ollama.image.model","digest":"sha256:74701a8c…","size":1321082688},
-           {"mediaType":"application/vnd.ollama.image.template","digest":"sha256:966de95c…","size":1429},
-           {"mediaType":"application/vnd.ollama.image.license","digest":"sha256:fcc5a6be…","size":7711}]}
+{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+  "config": {
+    "mediaType": "application/vnd.docker.container.image.v1+json",
+    "digest": "sha256:4f65…",
+    "size": 485
+  },
+  "layers": [
+    {
+      "mediaType": "application/vnd.ollama.image.model",
+      "digest": "sha256:74701a8c…",
+      "size": 1321082688
+    },
+    {
+      "mediaType": "application/vnd.ollama.image.template",
+      "digest": "sha256:966de95c…",
+      "size": 1429
+    },
+    {
+      "mediaType": "application/vnd.ollama.image.license",
+      "digest": "sha256:fcc5a6be…",
+      "size": 7711
+    }
+  ]
+}
 ```
 
 Docker Distribution v2 的**路径与信封**，但 layer 用自定义 media type。**不是**开箱即用的 OCI registry。
@@ -158,10 +193,17 @@ GET/POST /manager/channel_url_list   # 切换目录源
 **目录格式 `model-list.json`**（fetch 时 538 条），每条：
 
 ```json
-{"name":"TAEF1 Decoder","type":"TAESD","base":"FLUX.1","save_path":"vae_approx",
- "description":"…","reference":"https://github.com/madebyollin/taesd",
- "filename":"taef1_decoder.pth","url":"https://github.com/madebyollin/taesd/raw/main/taef1_decoder.pth",
- "size":"4.71MB"}
+{
+  "name": "TAEF1 Decoder",
+  "type": "TAESD",
+  "base": "FLUX.1",
+  "save_path": "vae_approx",
+  "description": "…",
+  "reference": "https://github.com/madebyollin/taesd",
+  "filename": "taef1_decoder.pth",
+  "url": "https://github.com/madebyollin/taesd/raw/main/taef1_decoder.pth",
+  "size": "4.71MB"
+}
 ```
 
 **注意它的缺陷**：`size` 是**字符串**（`"4.71MB"`），没有 `sha256`，没有结构化硬件需求。
@@ -169,11 +211,11 @@ GET/POST /manager/channel_url_list   # 切换目录源
 
 **三模式降级 `core.get_data_by_mode(mode, filename, channel_url)`**：
 
-| mode | 行为 |
-|---|---|
-| `local` | 只读随包 JSON，完全不联网 |
-| `cache` | 本地缓存 < 1 天则用缓存，否则拉远程再缓存（缓存名 = `simple_hash(uri)+'_'+filename`） |
-| `remote` | 每次实时拉 `channel_url + '/' + filename` |
+| mode     | 行为                                                                                  |
+| -------- | ------------------------------------------------------------------------------------- |
+| `local`  | 只读随包 JSON，完全不联网                                                             |
+| `cache`  | 本地缓存 < 1 天则用缓存，否则拉远程再缓存（缓存名 = `simple_hash(uri)+'_'+filename`） |
+| `remote` | 每次实时拉 `channel_url + '/' + filename`                                             |
 
 任何网络异常 → 静默回落 local（日志 `"switching to local mode"`）。另有独立的 `network_mode`：
 `public` / `private`（内网自定义 channel）/ `offline`（永不联网）。**这套降级链值得直接照抄**，见 §10。
@@ -211,9 +253,9 @@ GET/POST /manager/channel_url_list   # 切换目录源
   另写 `huggingface-metadata.txt` 记录 sha256sum。
 - **UI**（`modules/ui_model_menu.py` 原文）：下载框 label `"Download model or LoRA"`，
   info `"Enter the Hugging Face username/model path, for instance: facebook/galactica-125m. To specify a
-  branch, add it at the end after a ':' character…"`，配 `download_specific_file` 文本框
+branch, add it at the end after a ':' character…"`，配 `download_specific_file` 文本框
   （placeholder `"File name (for GGUF models)"`）与 `Download` / `Get file list` 两个按钮。
-  加载器参数暴露得极多（`gpu_layers` slider info: *"Number of layers to offload to the GPU. -1 = auto."*、
+  加载器参数暴露得极多（`gpu_layers` slider info: _"Number of layers to offload to the GPU. -1 = auto."_、
   `ctx_size`、`cache_type` 含 `fp16/q8_0/q4_0/…`、`split_mode`、`tensor_split`、`no_mmap`、`mlock`…）。
   → **反面教材**：把 llama.cpp 全部旋钮直接抛给用户。我们只暴露「上下文长度」与「GPU 卸载：自动/手动」两项。
 
@@ -234,6 +276,7 @@ GET/POST /manager/channel_url_list   # 切换目录源
 本机「estimated RAM and VRAM capacities」。
 
 ⚠ **两个已验证的缺陷，我们必须避开**：
+
 1. Settings > Hardware 里显示的显存是**总量而非可用量**（社区文档明确指出）。
    → 我们的 §7.3 用 `vram_free_mb`，拿不到才退回 `total × 0.85`。
 2. GitHub issue `lmstudio-ai/lms#67`：双 RTX 3090 环境下徽章显示
@@ -297,10 +340,10 @@ Windows「At least 16GB of RAM is recommended」「at least 4GB of dedicated VRA
 #### Jan —— 三档 fit 提示，文案值得直接借鉴
 
 **兼容性 pill 的三个状态（官方文档原文）**：**"Fits"** / **"May be slow"** / **"Won't fit"**，
-并明确标注 *"No data is downloaded to determine fit status."*（纯本地计算）。
+并明确标注 _"No data is downloaded to determine fit status."_（纯本地计算）。
 **量化档分组**：**"Small"** / **"Balanced"** / **"Large"**，默认项打 **"Recommended"** 标签。
 
-→ **这与我的 §7.3 三档（recommended / slow_* / unsupported）几乎完全同构，属独立收敛，增强信心。**
+→ _\*这与我的 §7.3 三档（recommended / slow_* / unsupported）几乎完全同构，属独立收敛，增强信心。_*
 我们的中文文案（「✅ 推荐」/「⚠️ 可以跑，会慢」/「⛔ 跑不动」）与之对应。
 具体阈值算法官方**未公开** → `UNKNOWN`。
 
@@ -326,12 +369,22 @@ model_sha256: 1dc700f26bfb10e53d1b2daebd86d4c5f2accc50fe13acd863c59453f9abfa48
 `models3.json`（实拉，32 条）单条原文：
 
 ```json
-{ "order":"a", "md5sum":"a54c08a7b90e4029a8c2ab5b5dc936aa", "name":"Reasoner v1",
-  "filename":"qwen2.5-coder-7b-instruct-q4_0.gguf", "filesize":"4431390720",
-  "requires":"3.6.0", "ramrequired":"8", "parameters":"8 billion", "quant":"q4_0",
-  "type":"qwen2", "description":"<ul><li>Based on …</li></ul>",
-  "url":"https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_0.gguf",
-  "chatTemplate":"{{- '<|im_start|>system\\n' }}…", "systemPrompt":"" }
+{
+  "order": "a",
+  "md5sum": "a54c08a7b90e4029a8c2ab5b5dc936aa",
+  "name": "Reasoner v1",
+  "filename": "qwen2.5-coder-7b-instruct-q4_0.gguf",
+  "filesize": "4431390720",
+  "requires": "3.6.0",
+  "ramrequired": "8",
+  "parameters": "8 billion",
+  "quant": "q4_0",
+  "type": "qwen2",
+  "description": "<ul><li>Based on …</li></ul>",
+  "url": "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_0.gguf",
+  "chatTemplate": "{{- '<|im_start|>system\\n' }}…",
+  "systemPrompt": ""
+}
 ```
 
 新条目改用 `sha256sum` 替代 `md5sum`。⚠ `filesize` 是**字符串**、`disableGUI` 是字符串 `"true"`
@@ -339,6 +392,7 @@ model_sha256: 1dc700f26bfb10e53d1b2daebd86d4c5f2accc50fe13acd863c59453f9abfa48
 → 我们的目录必须有 **schema 校验 + CI 强制**（§10.4）。
 
 **下载与校验（`download.cpp`，值得抄）**：
+
 - Qt `QNetworkAccessManager`，**HTTP `Range` 断点续传**，写入 `incomplete-<filename>` 临时文件；
   取消时**保留**已下载字节，按钮变 `Resume`。
 - `HashAndSaveFile::hashAndSave()`：算 SHA-256（有 `sha256sum` 时）或 MD5，
@@ -374,16 +428,14 @@ text: "WARNING: Not recommended for your hardware. Model requires more memory (%
 
 #### Msty / AnythingLLM —— 简略
 
-| 维度 | Msty | AnythingLLM |
-|---|---|---|
-| 模型来源 | 精选 + Model Hub（Ollama registry + HF GGUF 搜索） | 内置 provider 下载 GGUF + 外部（Ollama / LM Studio / LocalAI …） |
-| 引擎 | 自动装配 Ollama / llama.cpp / MLX；onboarding 有硬件扫描 + Light↔Powerful 推荐滑块 | 无 |
-| 进度 UI | 侧栏活动安装徽章 + 面板内逐项进度 + 取消 | **仅右上角一个指示器**，无进度条/速度/ETA |
-| 存储 | 可直接指向 Ollama 目录（`~/.ollama/models`），路径可编辑 | `%AppData%\anythingllm-desktop\storage\models\` 等 |
-| 校验 | 未见文档 → `UNKNOWN` | **确认没有** —— issue #4961 明确说 `@xenova/transformers` 下载无 SHA-256/许可校验，且被 close 为 "not planned" |
-| 能不能跑 | 有硬件扫描 + "hardware-fit information"，阈值未公开 | **无**，只有一句「本地推理是实验性的，可能崩溃」 |
-
-
+| 维度     | Msty                                                                               | AnythingLLM                                                                                                    |
+| -------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| 模型来源 | 精选 + Model Hub（Ollama registry + HF GGUF 搜索）                                 | 内置 provider 下载 GGUF + 外部（Ollama / LM Studio / LocalAI …）                                               |
+| 引擎     | 自动装配 Ollama / llama.cpp / MLX；onboarding 有硬件扫描 + Light↔Powerful 推荐滑块 | 无                                                                                                             |
+| 进度 UI  | 侧栏活动安装徽章 + 面板内逐项进度 + 取消                                           | **仅右上角一个指示器**，无进度条/速度/ETA                                                                      |
+| 存储     | 可直接指向 Ollama 目录（`~/.ollama/models`），路径可编辑                           | `%AppData%\anythingllm-desktop\storage\models\` 等                                                             |
+| 校验     | 未见文档 → `UNKNOWN`                                                               | **确认没有** —— issue #4961 明确说 `@xenova/transformers` 下载无 SHA-256/许可校验，且被 close 为 "not planned" |
+| 能不能跑 | 有硬件扫描 + "hardware-fit information"，阈值未公开                                | **无**，只有一句「本地推理是实验性的，可能崩溃」                                                               |
 
 ### 1.5 Whisper 专用应用（Vibe / Buzz / MacWhisper）与 whisper.cpp 官方分发
 
@@ -401,8 +453,10 @@ export const modelUrls = {
     'https://huggingface.co/vibe-app/whisper-large-v3-turbo-gguf/resolve/main/ggml-large-v3-turbo.bin',
     'https://github.com/thewh1teagle/vibe/releases/download/model-files-v1.0/ggml-large-v3-turbo.bin',
   ],
-  hebrew: ['https://huggingface.co/ivrit-ai/whisper-large-v3-turbo-ggml/resolve/main/ggml-model.bin'],
-}
+  hebrew: [
+    'https://huggingface.co/ivrit-ai/whisper-large-v3-turbo-ggml/resolve/main/ggml-model.bin',
+  ],
+};
 ```
 
 `downloadModel` 依次尝试直到成功 —— 但**没有 digest**，换源换到的是不是同一份文件全靠信任。
@@ -493,18 +547,16 @@ large-v3-turbo, large-v3-turbo-q5_0, large-v3-turbo-q8_0
 
 #### 小结：我们相对这三者的具体改进点
 
-| 能力 | Vibe | Buzz | MacWhisper | **OpenMemo（本方案）** |
-|---|---|---|---|---|
-| 断点续传 | ❌ | 部分（依赖 hf_hub） | `UNKNOWN` | ✅ Range 分片 + sidecar（§6.3） |
-| 内容校验 | ❌ | 仅 OpenAI 系 | `UNKNOWN` | ✅ 全量 sha256 强制（§6.6） |
-| 真实进度条 | ✅ | ❌（HF 系转圈） | `UNKNOWN` | ✅ SSE 字节级（§8.5） |
-| UI 显示体积 | ❌ | ❌ | ✅ | ✅ |
-| 显存/内存适配判断 | ❌ | ❌ | `UNKNOWN` | ✅ 三档 + 预计耗时（§7） |
-| 量化选择器 | ❌ | 藏在环境变量 | `UNKNOWN` | ✅ 一等公民（§9.2） |
-| 国内镜像 | ❌ | ❌ | `UNKNOWN` | ✅ 多源 + 自动测速（§5） |
-| 多源 fallback | ✅（无校验） | ❌ | `UNKNOWN` | ✅（digest 钉死） |
-
-
+| 能力              | Vibe         | Buzz                | MacWhisper | **OpenMemo（本方案）**          |
+| ----------------- | ------------ | ------------------- | ---------- | ------------------------------- |
+| 断点续传          | ❌           | 部分（依赖 hf_hub） | `UNKNOWN`  | ✅ Range 分片 + sidecar（§6.3） |
+| 内容校验          | ❌           | 仅 OpenAI 系        | `UNKNOWN`  | ✅ 全量 sha256 强制（§6.6）     |
+| 真实进度条        | ✅           | ❌（HF 系转圈）     | `UNKNOWN`  | ✅ SSE 字节级（§8.5）           |
+| UI 显示体积       | ❌           | ❌                  | ✅         | ✅                              |
+| 显存/内存适配判断 | ❌           | ❌                  | `UNKNOWN`  | ✅ 三档 + 预计耗时（§7）        |
+| 量化选择器        | ❌           | 藏在环境变量        | `UNKNOWN`  | ✅ 一等公民（§9.2）             |
+| 国内镜像          | ❌           | ❌                  | `UNKNOWN`  | ✅ 多源 + 自动测速（§5）        |
+| 多源 fallback     | ✅（无校验） | ❌                  | `UNKNOWN`  | ✅（digest 钉死）               |
 
 ---
 
@@ -521,11 +573,18 @@ curl -s "https://huggingface.co/api/models/ggerganov/whisper.cpp/tree/main"
 单条返回：
 
 ```json
-{"type":"file","oid":"d144f735b005ae8cbfa04a49e22fe40faa24dbec","size":77691713,
- "lfs":{"oid":"be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
-        "size":77691713,"pointerSize":133},
- "xetHash":"518970a29bedb265f23ac48d486ddbc63bedffd90967b10140ae5ac61243acf3",
- "path":"ggml-tiny.bin"}
+{
+  "type": "file",
+  "oid": "d144f735b005ae8cbfa04a49e22fe40faa24dbec",
+  "size": 77691713,
+  "lfs": {
+    "oid": "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
+    "size": 77691713,
+    "pointerSize": 133
+  },
+  "xetHash": "518970a29bedb265f23ac48d486ddbc63bedffd90967b10140ae5ac61243acf3",
+  "path": "ggml-tiny.bin"
+}
 ```
 
 **关键**：`lfs.oid` 就是文件内容的 **SHA-256**（下节验证它等于下载响应的 `x-linked-etag`）。
@@ -533,13 +592,13 @@ curl -s "https://huggingface.co/api/models/ggerganov/whisper.cpp/tree/main"
 
 其他有用参数：
 
-| 用法 | 说明 | 状态 |
-|---|---|---|
-| `?recursive=true` | 递归子目录 | [文档] |
-| `?expand=true` | 追加 `lastCommit` + `securityFileStatus`（含 `avScan` / `pickleImportScan` / `protectAiScan` 结果）| [已验证] |
-| `POST /api/models/{repo}/paths-info/{rev}` 体 `{"paths":[...]}` | **批量**取指定文件元数据，一次拿多个 | [已验证] |
-| `GET /api/models/{repo}` | repo 级信息。GGUF repo 会带 `gguf` 字段：`{"total":8190735360,"architecture":"qwen3","context_length":40960,"chat_template":"…"}` | [已验证] |
-| `GET /api/models?search=…&filter=gguf&limit=N` | 搜索 | [已验证] |
+| 用法                                                            | 说明                                                                                                                              | 状态     |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| `?recursive=true`                                               | 递归子目录                                                                                                                        | [文档]   |
+| `?expand=true`                                                  | 追加 `lastCommit` + `securityFileStatus`（含 `avScan` / `pickleImportScan` / `protectAiScan` 结果）                               | [已验证] |
+| `POST /api/models/{repo}/paths-info/{rev}` 体 `{"paths":[...]}` | **批量**取指定文件元数据，一次拿多个                                                                                              | [已验证] |
+| `GET /api/models/{repo}`                                        | repo 级信息。GGUF repo 会带 `gguf` 字段：`{"total":8190735360,"architecture":"qwen3","context_length":40960,"chat_template":"…"}` | [已验证] |
+| `GET /api/models?search=…&filter=gguf&limit=N`                  | 搜索                                                                                                                              | [已验证] |
 
 **按量化过滤**：HF **没有**服务端的 quant filter。做法是拉 tree 后在客户端按文件名正则匹配
 （`/-(Q[2-8]_[KM0-9_]*|IQ\d\w*|F16|BF16)\.gguf$/i`）。实测：
@@ -597,9 +656,9 @@ curl -s -L -D- -o /dev/null -H "Range: bytes=1000000-1000099" \
 
 **限流（匿名，实测响应头）**：
 
-| 策略 | 配额 | 窗口 |
-|---|---|---|
-| `api`（`/api/*`） | 500 | 300 s |
+| 策略                        | 配额 | 窗口  |
+| --------------------------- | ---- | ----- |
+| `api`（`/api/*`）           | 500  | 300 s |
 | `resolvers`（`/resolve/*`） | 3000 | 300 s |
 
 → 目录若实时查 HF，一个用户刷几次页面就可能打满 `api` 配额（尤其共享出口 IP 的公司/校园网）。
@@ -642,26 +701,26 @@ curl -s -L -H "Range: bytes=0-8388607" -o head.gguf \
 
 ### 3.1 权威体积（`huggingface.co/api/models/ggerganov/whisper.cpp/tree/main` 实测字节数）[已验证]
 
-| 文件 | 字节 | MiB |
-|---|---:|---:|
-| `ggml-tiny.bin` | 77,691,713 | 74.1 |
-| `ggml-tiny-q5_1.bin` | 32,152,673 | 30.7 |
-| `ggml-tiny-q8_0.bin` | 43,537,433 | 41.5 |
-| `ggml-base.bin` | 147,951,465 | 141.1 |
-| `ggml-base-q5_1.bin` | 59,707,625 | 56.9 |
-| `ggml-base-q8_0.bin` | 81,768,585 | 78.0 |
-| `ggml-small.bin` | 487,601,967 | 465.0 |
-| `ggml-small-q5_1.bin` | 190,085,487 | 181.3 |
-| `ggml-small-q8_0.bin` | 264,464,607 | 252.2 |
-| `ggml-medium.bin` | 1,533,763,059 | 1462.7 |
-| `ggml-medium-q5_0.bin` | 539,212,467 | 514.2 |
-| `ggml-medium-q8_0.bin` | 823,369,779 | 785.2 |
-| `ggml-large-v2.bin` | 3,094,623,691 | 2951.3 |
-| `ggml-large-v3.bin` | 3,095,033,483 | 2951.7 |
-| `ggml-large-v3-q5_0.bin` | 1,081,140,203 | 1031.1 |
-| **`ggml-large-v3-turbo.bin`** | 1,624,555,275 | 1549.3 |
+| 文件                               |            字节 |       MiB |
+| ---------------------------------- | --------------: | --------: |
+| `ggml-tiny.bin`                    |      77,691,713 |      74.1 |
+| `ggml-tiny-q5_1.bin`               |      32,152,673 |      30.7 |
+| `ggml-tiny-q8_0.bin`               |      43,537,433 |      41.5 |
+| `ggml-base.bin`                    |     147,951,465 |     141.1 |
+| `ggml-base-q5_1.bin`               |      59,707,625 |      56.9 |
+| `ggml-base-q8_0.bin`               |      81,768,585 |      78.0 |
+| `ggml-small.bin`                   |     487,601,967 |     465.0 |
+| `ggml-small-q5_1.bin`              |     190,085,487 |     181.3 |
+| `ggml-small-q8_0.bin`              |     264,464,607 |     252.2 |
+| `ggml-medium.bin`                  |   1,533,763,059 |    1462.7 |
+| `ggml-medium-q5_0.bin`             |     539,212,467 |     514.2 |
+| `ggml-medium-q8_0.bin`             |     823,369,779 |     785.2 |
+| `ggml-large-v2.bin`                |   3,094,623,691 |    2951.3 |
+| `ggml-large-v3.bin`                |   3,095,033,483 |    2951.7 |
+| `ggml-large-v3-q5_0.bin`           |   1,081,140,203 |    1031.1 |
+| **`ggml-large-v3-turbo.bin`**      |   1,624,555,275 |    1549.3 |
 | **`ggml-large-v3-turbo-q5_0.bin`** | **574,041,195** | **547.4** |
-| `ggml-large-v3-turbo-q8_0.bin` | 874,188,075 | 833.7 |
+| `ggml-large-v3-turbo-q8_0.bin`     |     874,188,075 |     833.7 |
 
 （`.en` 单语版体积与多语版**接近但不相同**，此处省略；repo 内 `.bin` 共 33 个。
 ⚠ 易错点：`ggml-tiny.bin` = 77,691,713 而 `ggml-tiny.en.bin` = 77,704,715，**相差 13,002 字节**。
@@ -672,13 +731,13 @@ curl -s -L -H "Range: bytes=0-8388607" -o head.gguf \
 
 ### 3.2 运行内存（whisper.cpp 官方 README "Memory usage" 表）[文档]
 
-| Model | Disk | Mem |
-|---|---|---|
-| tiny | 75 MiB | ~273 MB |
-| base | 142 MiB | ~388 MB |
-| small | 466 MiB | ~852 MB |
+| Model  | Disk    | Mem     |
+| ------ | ------- | ------- |
+| tiny   | 75 MiB  | ~273 MB |
+| base   | 142 MiB | ~388 MB |
+| small  | 466 MiB | ~852 MB |
 | medium | 1.5 GiB | ~2.1 GB |
-| large | 2.9 GiB | ~3.9 GB |
+| large  | 2.9 GiB | ~3.9 GB |
 
 ⚠ 该表**没有 large-v3-turbo**，且是 F16 版数据。我据此反推出的公式见 §7.2。
 
@@ -687,6 +746,7 @@ curl -s -L -H "Range: bytes=0-8388607" -o head.gguf \
 **`UNKNOWN` —— 我没有找到一份同时覆盖 tiny→large-v3-turbo、口径一致、可引用的 WER/RTF 表。**
 
 已知的定性事实 [文档，whisper.cpp / OpenAI README]：
+
 - 模型名不含 `.en` 即多语言；`-q5_0` / `-q8_0` / `-q5_1` 为量化版。
 - `large-v3-turbo` 是 large-v3 的蒸馏解码器版本（解码层 32→4），F16 体积 1.5 GiB vs large-v3 的 2.9 GiB。
 - `small.en-tdrz` 支持 tinydiarize 说话人切分标记。
@@ -716,15 +776,15 @@ distil-whisper 的速度优势**依赖 chunked long-form 推理**，而 whisper.
 > （与操作系统「文件大小」显示、与 HF 页面一致）。**MiB/GiB 只出现在引用上游原文的表格里**。
 > §3.1 的 MiB 列是 1024² 换算，本表是 1e6 换算，故数字不同 —— 这正是必须统一口径的原因。
 
-| 目录条目 | 文件 | 体积 (MB=1e6) | 定位 |
-|---|---|---:|---|
-| `whisper/base-q5_1` | `ggml-base-q5_1.bin` | 60 MB | 最低配 / 快速预览 |
-| `whisper/small-q5_1` | `ggml-small-q5_1.bin` | 190 MB | CPU 机器的默认 |
-| `whisper/medium-q5_0` | `ggml-medium-q5_0.bin` | 539 MB | 中端平衡 |
-| **`whisper/large-v3-turbo-q5_0`** | `ggml-large-v3-turbo-q5_0.bin` | **574 MB** | **全局默认推荐** |
-| `whisper/large-v3-turbo` | `ggml-large-v3-turbo.bin` | 1.62 GB | 有显存就上 |
-| `whisper/large-v3` | `ggml-large-v3.bin` | 3.10 GB | 最高质量 |
-| `whisper/large-v3-q5_0` | `ggml-large-v3-q5_0.bin` | 1.08 GB | 高质量 + 省显存 |
+| 目录条目                          | 文件                           | 体积 (MB=1e6) | 定位              |
+| --------------------------------- | ------------------------------ | ------------: | ----------------- |
+| `whisper/base-q5_1`               | `ggml-base-q5_1.bin`           |         60 MB | 最低配 / 快速预览 |
+| `whisper/small-q5_1`              | `ggml-small-q5_1.bin`          |        190 MB | CPU 机器的默认    |
+| `whisper/medium-q5_0`             | `ggml-medium-q5_0.bin`         |        539 MB | 中端平衡          |
+| **`whisper/large-v3-turbo-q5_0`** | `ggml-large-v3-turbo-q5_0.bin` |    **574 MB** | **全局默认推荐**  |
+| `whisper/large-v3-turbo`          | `ggml-large-v3-turbo.bin`      |       1.62 GB | 有显存就上        |
+| `whisper/large-v3`                | `ggml-large-v3.bin`            |       3.10 GB | 最高质量          |
+| `whisper/large-v3-q5_0`           | `ggml-large-v3-q5_0.bin`       |       1.08 GB | 高质量 + 省显存   |
 
 macOS 条目额外挂 `ggml-<name>-encoder.mlmodelc.zip` 作为可选文件（`optional: true`, `platform: ["darwin"]`）。
 
@@ -734,16 +794,16 @@ macOS 条目额外挂 `ggml-<name>-encoder.mlmodelc.zip` 作为可选文件（`o
 
 ### 4.1 实测体积（HF tree API 字节数换算）[已验证]
 
-| 模型 | Q4_K_M | Q5_K_M | Q8_0 | 中文 |
-|---|---:|---:|---:|---|
-| **Qwen3-4B**（`Qwen/Qwen3-4B-GGUF`） | 2.50 GB | 2.89 GB | 4.28 GB | 原生强 |
-| **Qwen3-4B-Instruct-2507**（`unsloth/…-GGUF`） | ~2.5 GB | — | — | 原生强，非思考模式 |
-| **Qwen3-8B**（`Qwen/Qwen3-8B-GGUF`） | 5.03 GB | 5.85 GB | 8.71 GB | 原生强 |
-| Qwen3-1.7B（`Qwen/Qwen3-1.7B-GGUF`） | — | — | 1.83 GB | 可用，质量下降 |
-| **Gemma-3-4B-it**（`ggml-org/gemma-3-4b-it-GGUF`） | 2.49 GB | — | 4.13 GB | 尚可 |
-| Gemma-3-12B-it（`ggml-org/…`） | 7.30 GB | — | 12.51 GB | 好但太大 |
-| Llama-3.1-8B-Instruct（`bartowski/…`） | 4.92 GB | 5.73 GB | 8.54 GB | **中文偏弱** |
-| Llama-3.2-3B-Instruct（`bartowski/…`） | 2.02 GB | 2.32 GB | — | 中文弱 |
+| 模型                                               |  Q4_K_M |  Q5_K_M |     Q8_0 | 中文               |
+| -------------------------------------------------- | ------: | ------: | -------: | ------------------ |
+| **Qwen3-4B**（`Qwen/Qwen3-4B-GGUF`）               | 2.50 GB | 2.89 GB |  4.28 GB | 原生强             |
+| **Qwen3-4B-Instruct-2507**（`unsloth/…-GGUF`）     | ~2.5 GB |       — |        — | 原生强，非思考模式 |
+| **Qwen3-8B**（`Qwen/Qwen3-8B-GGUF`）               | 5.03 GB | 5.85 GB |  8.71 GB | 原生强             |
+| Qwen3-1.7B（`Qwen/Qwen3-1.7B-GGUF`）               |       — |       — |  1.83 GB | 可用，质量下降     |
+| **Gemma-3-4B-it**（`ggml-org/gemma-3-4b-it-GGUF`） | 2.49 GB |       — |  4.13 GB | 尚可               |
+| Gemma-3-12B-it（`ggml-org/…`）                     | 7.30 GB |       — | 12.51 GB | 好但太大           |
+| Llama-3.1-8B-Instruct（`bartowski/…`）             | 4.92 GB | 5.73 GB |  8.54 GB | **中文偏弱**       |
+| Llama-3.2-3B-Instruct（`bartowski/…`）             | 2.02 GB | 2.32 GB |        — | 中文弱             |
 
 ⚠ `Qwen/Qwen2.5-7B-Instruct-GGUF` 是**分片**的（`-00001-of-00002.gguf`），首版不收，减少复杂度。
 `unsloth` 的 `UD-*` / `IQ*` 超低位量化（IQ1_S 仅 1.08 GB）质量风险大，不进默认目录，只在"高级"页可见。
@@ -752,17 +812,18 @@ macOS 条目额外挂 `ggml-<name>-encoder.mlmodelc.zip` 作为可选文件（`o
 
 公式：`KV_bytes_per_token = block_count × head_count_kv × (key_length + value_length) × bytes_per_elem`
 
-| 模型 | layers | n_kv_head | k/v_len | f16 KV/token | 每 1K ctx | 8K ctx | 16K ctx |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Qwen3-4B | 36 | 8 | 128/128 | 144 KiB | 144 MiB | **1.12 GiB** | 2.25 GiB |
-| Qwen3-8B | 36 | 8 | 128/128 | 144 KiB | 144 MiB | **1.12 GiB** | 2.25 GiB |
-| Gemma-3-4B-it | 34 | 4 | 256/256 | 136 KiB | 136 MiB | 1.06 GiB | 2.12 GiB |
-| Llama-3.1-8B | 32 | 8 | 128/128 | 128 KiB | 128 MiB | 1.00 GiB | 2.00 GiB |
+| 模型          | layers | n_kv_head | k/v_len | f16 KV/token | 每 1K ctx |       8K ctx |  16K ctx |
+| ------------- | -----: | --------: | ------: | -----------: | --------: | -----------: | -------: |
+| Qwen3-4B      |     36 |         8 | 128/128 |      144 KiB |   144 MiB | **1.12 GiB** | 2.25 GiB |
+| Qwen3-8B      |     36 |         8 | 128/128 |      144 KiB |   144 MiB | **1.12 GiB** | 2.25 GiB |
+| Gemma-3-4B-it |     34 |         4 | 256/256 |      136 KiB |   136 MiB |     1.06 GiB | 2.12 GiB |
+| Llama-3.1-8B  |     32 |         8 | 128/128 |      128 KiB |   128 MiB |     1.00 GiB | 2.00 GiB |
 
 **这是本报告最有价值的数字之一**：8K 上下文的 KV cache ≈ **1.1 GB**，
 相当于给每个模型凭空加了 1 GB 显存需求。只按「文件大小 vs 显存」判断能否运行（LM Studio 早期做法）会系统性偏乐观。
 
 缓解手段（写进 UI）：
+
 - `cache_type = q8_0` 可把 KV 砍半 → 8K ctx 约 0.56 GiB。llama.cpp 原生支持。
 - 转写稿分块喂入，把默认 ctx 定在 **8192**，不要一上来就 32K。
 
@@ -836,14 +897,14 @@ curl -s -L -D- -o ms.bin -H "Range: bytes=1000000-1000099" "…/resolve/master/g
 # 同时拉 HF 与 ModelScope 的文件表并逐项比对 size 与 sha256
 ```
 
-| 文件 | HF 字节 | ModelScope 字节 | size 相同 | sha256 相同 |
-|---|---:|---:|:---:|:---:|
-| `Qwen3-8B-Q4_K_M.gguf` | 5,027,783,488 | 5,027,783,488 | ✅ | ✅ |
-| `Qwen3-8B-Q5_0.gguf` | 5,720,761,152 | 5,720,761,152 | ✅ | ✅ |
-| `Qwen3-8B-Q5_K_M.gguf` | 5,851,112,224 | 5,851,112,224 | ✅ | ✅ |
-| `Qwen3-8B-Q6_K.gguf` | 6,725,899,040 | 6,725,899,040 | ✅ | ✅ |
-| `Qwen3-8B-Q8_0.gguf` | 8,709,518,112 | 8,709,518,112 | ✅ | ✅ |
-| `Qwen3-4B-*.gguf`（5 个量化档） | — | — | ✅ 全部 | ✅ 全部 |
+| 文件                            |       HF 字节 | ModelScope 字节 | size 相同 | sha256 相同 |
+| ------------------------------- | ------------: | --------------: | :-------: | :---------: |
+| `Qwen3-8B-Q4_K_M.gguf`          | 5,027,783,488 |   5,027,783,488 |    ✅     |     ✅      |
+| `Qwen3-8B-Q5_0.gguf`            | 5,720,761,152 |   5,720,761,152 |    ✅     |     ✅      |
+| `Qwen3-8B-Q5_K_M.gguf`          | 5,851,112,224 |   5,851,112,224 |    ✅     |     ✅      |
+| `Qwen3-8B-Q6_K.gguf`            | 6,725,899,040 |   6,725,899,040 |    ✅     |     ✅      |
+| `Qwen3-8B-Q8_0.gguf`            | 8,709,518,112 |   8,709,518,112 |    ✅     |     ✅      |
+| `Qwen3-4B-*.gguf`（5 个量化档） |             — |               — |  ✅ 全部  |   ✅ 全部   |
 
 **10/10 文件的 size 与 sha256 完全一致。** 且 ModelScope 上的路径就是
 `Qwen/Qwen3-4B-GGUF` —— **与 HF 的 repo id 逐字符相同**，是 Qwen 官方发布（`CommitMessage`:
@@ -931,11 +992,11 @@ done
 
 ### 6.1 各 OS 标准路径
 
-| 平台 | 路径 | 理由 |
-|---|---|---|
-| macOS | `~/Library/Application Support/OpenMemo/models` | **不用 `~/Library/Caches`** —— 系统会在磁盘紧张时清理，几 GB 模型被静默删掉是灾难 |
-| Windows | `%LOCALAPPDATA%\OpenMemo\models`（`C:\Users\<u>\AppData\Local\OpenMemo\models`） | **不用 Roaming** —— 域环境下漫游配置文件会尝试同步，几 GB 会拖垮登录 |
-| Linux | `${XDG_DATA_HOME:-~/.local/share}/openmemo/models` | XDG 规范；不用 `XDG_CACHE_HOME` 同理 |
+| 平台    | 路径                                                                             | 理由                                                                              |
+| ------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| macOS   | `~/Library/Application Support/OpenMemo/models`                                  | **不用 `~/Library/Caches`** —— 系统会在磁盘紧张时清理，几 GB 模型被静默删掉是灾难 |
+| Windows | `%LOCALAPPDATA%\OpenMemo\models`（`C:\Users\<u>\AppData\Local\OpenMemo\models`） | **不用 Roaming** —— 域环境下漫游配置文件会尝试同步，几 GB 会拖垮登录              |
+| Linux   | `${XDG_DATA_HOME:-~/.local/share}/openmemo/models`                               | XDG 规范；不用 `XDG_CACHE_HOME` 同理                                              |
 
 覆盖顺序：`OPENMEMO_MODELS` 环境变量 > 设置里的自定义路径 > 上表默认。
 UI 必须提供「更改模型目录」并**支持迁移**（同卷 rename，跨卷复制 + 校验 + 删除，带进度）。
@@ -962,13 +1023,13 @@ UI 必须提供「更改模型目录」并**支持迁移**（同卷 rename，跨
 
 **为什么内容寻址而不是直接按文件名存**
 
-| 收益 | 说明 |
-|---|---|
-| 跨源去重 | 已验证 HF 与 ModelScope 同文件字节一致 → 换镜像不重下 |
-| 跨模型去重 | 例：`large-v3` 与 `large-v3` 的某些 repack 完全相同；CoreML encoder 被多个条目共享 |
-| 断点状态天然可复用 | 分片进度按 digest 存，与「用户当时选了哪个源」解耦 |
-| 校验即免费 | 文件名本身就是期望的 hash |
-| 多版本共存 | 目录换了 revision，旧 blob 仍在，可秒回滚 |
+| 收益               | 说明                                                                               |
+| ------------------ | ---------------------------------------------------------------------------------- |
+| 跨源去重           | 已验证 HF 与 ModelScope 同文件字节一致 → 换镜像不重下                              |
+| 跨模型去重         | 例：`large-v3` 与 `large-v3` 的某些 repack 完全相同；CoreML encoder 被多个条目共享 |
+| 断点状态天然可复用 | 分片进度按 digest 存，与「用户当时选了哪个源」解耦                                 |
+| 校验即免费         | 文件名本身就是期望的 hash                                                          |
+| 多版本共存         | 目录换了 revision，旧 blob 仍在，可秒回滚                                          |
 
 **为什么还要 `by-name/` 硬链接**：Ollama 那种纯 blob 目录对用户和排障极不友好
 （"我的 5 GB 在哪"、"能不能手动拷进去"）。硬链接零额外磁盘占用；
@@ -986,15 +1047,16 @@ Windows NTFS `CreateHardLinkW` **不需要管理员权限**（symlink 才需要�
   "provider": "modelscope",
   "validators": { "etag": "\"be07e048…\"", "last_modified": null },
   "parts": [
-    {"index": 0, "start": 0,         "end": 143510298,  "completed": 143510298},
-    {"index": 1, "start": 143510299, "end": 287020597,  "completed": 60000000},
-    {"index": 2, "start": 287020598, "end": 430530896,  "completed": 0},
-    {"index": 3, "start": 430530897, "end": 574041194,  "completed": 0}
+    { "index": 0, "start": 0, "end": 143510298, "completed": 143510298 },
+    { "index": 1, "start": 143510299, "end": 287020597, "completed": 60000000 },
+    { "index": 2, "start": 287020598, "end": 430530896, "completed": 0 },
+    { "index": 3, "start": 430530897, "end": 574041194, "completed": 0 }
   ]
 }
 ```
 
 规则：
+
 - 分片数 = `clamp(ceil(total / 128MB), 1, 8)`。
   **注意：不抄 Ollama 的 16 并发。** Ollama 面向服务器；我们是桌面应用，16 条并发在家用路由器/移动热点上
   会互相踩踏且触发 CDN 限速。8 是上限，默认 4，可在设置里调。
@@ -1017,25 +1079,35 @@ Windows NTFS `CreateHardLinkW` **不需要管理员权限**（symlink 才需要�
   "quant": "q5_0",
   "languages": ["multilingual"],
   "files": [
-    { "role": "weights",
+    {
+      "role": "weights",
       "name": "ggml-large-v3-turbo-q5_0.bin",
       "digest": "sha256:394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
       "size": 574041195,
-      "optional": false },
-    { "role": "coreml-encoder",
+      "optional": false
+    },
+    {
+      "role": "coreml-encoder",
       "name": "ggml-large-v3-turbo-encoder.mlmodelc.zip",
-      "digest": "sha256:…", "size": 0,
-      "optional": true, "platforms": ["darwin-arm64"], "unpack": "zip" }
+      "digest": "sha256:…",
+      "size": 0,
+      "optional": true,
+      "platforms": ["darwin-arm64"],
+      "unpack": "zip"
+    }
   ],
   "total_size": 574041195,
   "requirements": {
-    "min_ram_mb": 1394,          // = 574 (权重, MB=1e6) + 820 (large 级 overhead)，见 §7.2
+    "min_ram_mb": 1394, // = 574 (权重, MB=1e6) + 820 (large 级 overhead)，见 §7.2
     "est_vram_mb": 1394,
-    "min_disk_mb": 632,          // = 574 × 1.10，下载峰值
+    "min_disk_mb": 632, // = 574 × 1.10，下载峰值
     "cpu_features": []
   },
-  "source": { "provider": "huggingface", "repo": "ggerganov/whisper.cpp",
-              "revision": "5359861c739e955e79d9a303bcbc70fb988958b1" },
+  "source": {
+    "provider": "huggingface",
+    "repo": "ggerganov/whisper.cpp",
+    "revision": "5359861c739e955e79d9a303bcbc70fb988958b1"
+  },
   "license": { "id": "MIT", "gated": false, "url": "https://huggingface.co/ggerganov/whisper.cpp" },
   "installed_at": "2026-08-02T12:04:11Z",
   "verified_at": "2026-08-02T12:04:40Z",
@@ -1062,13 +1134,13 @@ LLM 条目额外带（由 §2.3 的 GGUF 头解析自动生成）：
 
 ### 6.6 校验策略（补齐 Ollama 的短板）
 
-| 时机 | 动作 |
-|---|---|
-| 每片下载完 | 无（分片级不校验，成本高） |
-| 全部分片完成、rename 之前 | **流式 sha256 全量校验**，与 manifest 的 `digest` 比对 |
-| 校验失败 | 删除 `.partial`，标记该 provider 一次失败，换源自动重试一次，再失败则报错给 UI |
-| 已安装模型 | 提供 `POST /api/models/verify`，UI 上是「校验完整性」按钮；启动时**不**自动全量校验（几 GB 太慢），只比对文件大小 |
-| 加载模型前 | 只比对 size + mtime（快速健全性检查） |
+| 时机                      | 动作                                                                                                              |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 每片下载完                | 无（分片级不校验，成本高）                                                                                        |
+| 全部分片完成、rename 之前 | **流式 sha256 全量校验**，与 manifest 的 `digest` 比对                                                            |
+| 校验失败                  | 删除 `.partial`，标记该 provider 一次失败，换源自动重试一次，再失败则报错给 UI                                    |
+| 已安装模型                | 提供 `POST /api/models/verify`，UI 上是「校验完整性」按钮；启动时**不**自动全量校验（几 GB 太慢），只比对文件大小 |
+| 加载模型前                | 只比对 size + mtime（快速健全性检查）                                                                             |
 
 ---
 
@@ -1082,29 +1154,36 @@ LLM 条目额外带（由 §2.3 的 GGUF 头解析自动生成）：
 {
   "schema": 1,
   "detected_at": "2026-08-02T12:00:00Z",
-  "os":  { "platform": "windows", "arch": "x86_64", "version": "10.0.22631" },
-  "cpu": { "brand": "AMD Ryzen 7 7840HS", "physical_cores": 8, "logical_cores": 16,
-           "features": ["avx2", "fma", "f16c", "avx512f"] },              // ★
-  "ram": { "total_mb": 32768, "available_mb": 21000 },                     // ★
-  "unified_memory": false,                                                 // ★ Apple Silicon = true
+  "os": { "platform": "windows", "arch": "x86_64", "version": "10.0.22631" },
+  "cpu": {
+    "brand": "AMD Ryzen 7 7840HS",
+    "physical_cores": 8,
+    "logical_cores": 16,
+    "features": ["avx2", "fma", "f16c", "avx512f"],
+  }, // ★
+  "ram": { "total_mb": 32768, "available_mb": 21000 }, // ★
+  "unified_memory": false, // ★ Apple Silicon = true
   "gpus": [
-    { "index": 0, "vendor": "nvidia", "name": "NVIDIA GeForce RTX 4060 Laptop GPU",
-      "vram_total_mb": 8188,                                               // ★
-      "vram_free_mb": 7100,                                                // ★
+    {
+      "index": 0,
+      "vendor": "nvidia",
+      "name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+      "vram_total_mb": 8188, // ★
+      "vram_free_mb": 7100, // ★
       "driver": "560.94",
       "capabilities": { "cuda_cc": "8.9" },
-      "backends": ["cuda", "vulkan"] }
+      "backends": ["cuda", "vulkan"],
+    },
   ],
   "backends": [
-    { "id": "cuda",   "available": true,  "installed": true,  "version": "12.4", "device_index": 0 },
-    { "id": "vulkan", "available": true,  "installed": false },
-    { "id": "metal",  "available": false },
-    { "id": "cpu",    "available": true,  "installed": true,  "isa": "avx2" }
+    { "id": "cuda", "available": true, "installed": true, "version": "12.4", "device_index": 0 },
+    { "id": "vulkan", "available": true, "installed": false },
+    { "id": "metal", "available": false },
+    { "id": "cpu", "available": true, "installed": true, "isa": "avx2" },
   ],
-  "selected_backend": "cuda",                                              // ★
-  "selected_gpu_index": 0,                                                 // ★
-  "disks": [ { "mount": "C:\\", "path_for": "models_root",
-               "free_mb": 240000, "total_mb": 900000 } ]                   // ★
+  "selected_backend": "cuda", // ★
+  "selected_gpu_index": 0, // ★
+  "disks": [{ "mount": "C:\\", "path_for": "models_root", "free_mb": 240000, "total_mb": 900000 }], // ★
 }
 ```
 
@@ -1177,16 +1256,16 @@ Need        = §7.2 算出的 mem_mb
 
 判定（**自上而下，短路**）：
 
-| # | 条件 | 结果 | UI 文案（中/英） |
-|---|---|---|---|
-| 1 | `disks[models_root].free_mb < DISK_needed` | `blocked_disk` | 磁盘空间不足（还需 X GB） / Not enough disk space |
-| 2 | `requirements.cpu_features` ⊄ `cpu.features` | `unsupported` | CPU 不支持（需要 AVX2） / CPU lacks AVX2 |
-| 3 | `Need > RAM_budget` | `unsupported` | 内存不足，跑不动 / Too large for this machine |
-| 4 | `VRAM_budget > 0` 且 `Need ≤ VRAM_budget` | **`recommended`** | ✅ 推荐 · 可全部载入显存 / Full GPU offload |
-| 5 | `VRAM_budget == 0` 且 `Need ≤ RAM_budget × 0.5` 且 `role == asr` 且 `whisper_size ≤ small` | **`recommended`** | ✅ 推荐（CPU） / Recommended (CPU) |
-| 6 | `VRAM_budget == 0` 且 `Need ≤ RAM_budget × 0.5` 且 `role == llm` 且 `params_b ≤ 4` | **`recommended`** | ✅ 推荐（CPU，较慢） / Recommended (CPU) |
-| 7 | `VRAM_budget > 0` 且 `Need ≤ VRAM_budget + RAM_budget` | `slow_partial` | ⚠️ 可以跑，会慢 · 部分层在显存（约 N/L 层） / Partial GPU offload |
-| 8 | 其余（`Need ≤ RAM_budget`） | `slow_cpu` | ⚠️ 可以跑，很慢 · 纯 CPU / Runs on CPU, slow |
+| #   | 条件                                                                                       | 结果              | UI 文案（中/英）                                                  |
+| --- | ------------------------------------------------------------------------------------------ | ----------------- | ----------------------------------------------------------------- |
+| 1   | `disks[models_root].free_mb < DISK_needed`                                                 | `blocked_disk`    | 磁盘空间不足（还需 X GB） / Not enough disk space                 |
+| 2   | `requirements.cpu_features` ⊄ `cpu.features`                                               | `unsupported`     | CPU 不支持（需要 AVX2） / CPU lacks AVX2                          |
+| 3   | `Need > RAM_budget`                                                                        | `unsupported`     | 内存不足，跑不动 / Too large for this machine                     |
+| 4   | `VRAM_budget > 0` 且 `Need ≤ VRAM_budget`                                                  | **`recommended`** | ✅ 推荐 · 可全部载入显存 / Full GPU offload                       |
+| 5   | `VRAM_budget == 0` 且 `Need ≤ RAM_budget × 0.5` 且 `role == asr` 且 `whisper_size ≤ small` | **`recommended`** | ✅ 推荐（CPU） / Recommended (CPU)                                |
+| 6   | `VRAM_budget == 0` 且 `Need ≤ RAM_budget × 0.5` 且 `role == llm` 且 `params_b ≤ 4`         | **`recommended`** | ✅ 推荐（CPU，较慢） / Recommended (CPU)                          |
+| 7   | `VRAM_budget > 0` 且 `Need ≤ VRAM_budget + RAM_budget`                                     | `slow_partial`    | ⚠️ 可以跑，会慢 · 部分层在显存（约 N/L 层） / Partial GPU offload |
+| 8   | 其余（`Need ≤ RAM_budget`）                                                                | `slow_cpu`        | ⚠️ 可以跑，很慢 · 纯 CPU / Runs on CPU, slow                      |
 
 **规则 7 的可卸载层数估算**（仅 LLM，给用户看的具体数字）：
 
@@ -1240,10 +1319,10 @@ Query：`role=asr|llm|all`（默认 all）、`refresh=true|false`（默认 false
 ```jsonc
 {
   "catalog_version": "2026.08.01",
-  "source": "remote",                      // remote | cache | bundled
+  "source": "remote", // remote | cache | bundled
   "fetched_at": "2026-08-02T09:00:00Z",
-  "stale": false,                          // true 时 UI 显示「离线目录」横幅
-  "hardware_snapshot_id": "hw-9f3a…",      // 用于判断 fitness 是否还新鲜
+  "stale": false, // true 时 UI 显示「离线目录」横幅
+  "hardware_snapshot_id": "hw-9f3a…", // 用于判断 fitness 是否还新鲜
   "models": [
     {
       "id": "asr/whisper-large-v3-turbo",
@@ -1255,51 +1334,72 @@ Query：`role=asr|llm|all`（默认 all）、`refresh=true|false`（默认 false
       "languages": ["multilingual"],
       "tags": ["recommended-default", "multilingual"],
       "license": { "id": "MIT", "gated": false },
-      "variants": [                        // ← 量化档
+      "variants": [
+        // ← 量化档
         {
           "quant": "q5_0",
           "label": "Q5_0（推荐）",
           "total_size": 574041195,
           "files": [
-            { "role": "weights",
+            {
+              "role": "weights",
               "name": "ggml-large-v3-turbo-q5_0.bin",
-              "digest": "sha256:394221709cd5ad1f…",     // ← 唯一信任锚，见 §5.3
+              "digest": "sha256:394221709cd5ad1f…", // ← 唯一信任锚，见 §5.3
               "size": 574041195,
               // 镜像必须逐文件显式列出：ModelScope 上 whisper 的 repo 路径与 HF 不同，
               // 不能靠"换 base URL"推导。Qwen 系则路径相同（§5.2），但仍显式写，不搞特例。
               "mirrors": [
-                { "provider":"hf",         "official":true,
-                  "url":"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin" },
-                { "provider":"hf-mirror",  "official":false,
-                  "url":"https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin" },
-                { "provider":"modelscope", "official":false,   // 社区搬运，靠 digest 兜底
-                  "url":"https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-large-v3-turbo-q5_0.bin" },
-                { "provider":"memo-cdn",   "official":true,
-                  "url":"https://cdn.memo.ac/blobs/sha256-394221709cd5ad1f…" }
-              ] }
+                {
+                  "provider": "hf",
+                  "official": true,
+                  "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
+                },
+                {
+                  "provider": "hf-mirror",
+                  "official": false,
+                  "url": "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
+                },
+                {
+                  "provider": "modelscope",
+                  "official": false, // 社区搬运，靠 digest 兜底
+                  "url": "https://www.modelscope.cn/models/cjc1887415157/whisper.cpp/resolve/master/ggml-large-v3-turbo-q5_0.bin",
+                },
+                {
+                  "provider": "memo-cdn",
+                  "official": true,
+                  "url": "https://cdn.memo.ac/blobs/sha256-394221709cd5ad1f…",
+                },
+              ],
+            },
           ],
-          "requirements": { "min_ram_mb": 1394, "est_vram_mb": 1394, "min_disk_mb": 632,
-                            "cpu_features": [] },
+          "requirements": {
+            "min_ram_mb": 1394,
+            "est_vram_mb": 1394,
+            "min_disk_mb": 632,
+            "cpu_features": [],
+          },
           "installed": false,
-          "fitness": {                     // ← 服务端算好，前端不重算
-            "tier": "recommended",         // recommended | slow_partial | slow_cpu
-                                           // | unsupported | blocked_disk
+          "fitness": {
+            // ← 服务端算好，前端不重算
+            "tier": "recommended", // recommended | slow_partial | slow_cpu
+            // | unsupported | blocked_disk
             "reason_code": "full_gpu_offload",
             "reason_zh": "可全部载入显存（需 1.4 GB / 可用 6.9 GB）",
             "reason_en": "Full GPU offload (needs 1.4 GB of 6.9 GB available)",
-            "est_minutes_per_audio_hour": 4.2,   // null = 尚未基准测试
-            "est_gpu_layers": null
-          }
+            "est_minutes_per_audio_hour": 4.2, // null = 尚未基准测试
+            "est_gpu_layers": null,
+          },
         },
         { "quant": "q8_0", "label": "Q8_0", "total_size": 874188075, "…": "…" },
-        { "quant": "f16",  "label": "F16（完整精度）", "total_size": 1624555275, "…": "…" }
-      ]
-    }
-  ]
+        { "quant": "f16", "label": "F16（完整精度）", "total_size": 1624555275, "…": "…" },
+      ],
+    },
+  ],
 }
 ```
 
 设计要点：
+
 - **`fitness` 由服务端计算**。前端不该复刻 §7.3 的规则表（两处实现必然漂移）。
 - `size` 一律是**整数字节**（ComfyUI-Manager 用 `"4.71MB"` 字符串是反面教材）。
 - `digest` **必填**。
@@ -1310,20 +1410,29 @@ Query：`role=asr|llm|all`（默认 all）、`refresh=true|false`（默认 false
 ```jsonc
 {
   "models": [
-    { "id": "asr/whisper-large-v3-turbo-q5_0", "role": "asr",
+    {
+      "id": "asr/whisper-large-v3-turbo-q5_0",
+      "role": "asr",
       "display_name": "Whisper large-v3-turbo (Q5_0)",
-      "quant": "q5_0", "total_size": 574041195,
+      "quant": "q5_0",
+      "total_size": 574041195,
       "installed_at": "2026-08-02T12:04:11Z",
-      "verified_at":  "2026-08-02T12:04:40Z",
-      "integrity": "ok",                 // ok | unverified | corrupt | missing_files
+      "verified_at": "2026-08-02T12:04:40Z",
+      "integrity": "ok", // ok | unverified | corrupt | missing_files
       "active": true,
       "catalog_version": "2026.08.01",
-      "update_available": null,          // 或 { "to_catalog_version": "…", "reason": "…" }
-      "files": [ { "name":"ggml-large-v3-turbo-q5_0.bin",
-                   "digest":"sha256:394221…","size":574041195,
-                   "path":"<models_root>/by-name/asr/ggml-large-v3-turbo-q5_0.bin" } ] }
+      "update_available": null, // 或 { "to_catalog_version": "…", "reason": "…" }
+      "files": [
+        {
+          "name": "ggml-large-v3-turbo-q5_0.bin",
+          "digest": "sha256:394221…",
+          "size": 574041195,
+          "path": "<models_root>/by-name/asr/ggml-large-v3-turbo-q5_0.bin",
+        },
+      ],
+    },
   ],
-  "active": { "asr": "asr/whisper-large-v3-turbo-q5_0", "llm": null }
+  "active": { "asr": "asr/whisper-large-v3-turbo-q5_0", "llm": null },
 }
 ```
 
@@ -1331,17 +1440,24 @@ Query：`role=asr|llm|all`（默认 all）、`refresh=true|false`（默认 false
 
 ```jsonc
 // 请求
-{ "id": "asr/whisper-large-v3-turbo", "quant": "q5_0",
-  "provider": "auto",            // auto | hf | hf-mirror | modelscope | memo-cdn
+{
+  "id": "asr/whisper-large-v3-turbo",
+  "quant": "q5_0",
+  "provider": "auto", // auto | hf | hf-mirror | modelscope | memo-cdn
   "include_optional": ["coreml-encoder"],
-  "activate_on_success": true }
+  "activate_on_success": true,
+}
 ```
 
 ```jsonc
 // 202 Accepted
-{ "job_id": "job_01J8…", "state": "queued",
-  "model_id": "asr/whisper-large-v3-turbo-q5_0", "total_bytes": 574041195,
-  "events_url": "/api/models/events?job=job_01J8…" }
+{
+  "job_id": "job_01J8…",
+  "state": "queued",
+  "model_id": "asr/whisper-large-v3-turbo-q5_0",
+  "total_bytes": 574041195,
+  "events_url": "/api/models/events?job=job_01J8…",
+}
 ```
 
 **幂等**：同一 `(model_id)` 已有活跃 job → 返回 **200** 和既有 `job_id`，不新建。
@@ -1368,33 +1484,36 @@ POST /api/models/jobs/:job_id/resume  -> 202
   "job_id": "job_01J8…",
   "model_id": "asr/whisper-large-v3-turbo-q5_0",
   "display_name": "Whisper large-v3-turbo (Q5_0)",
-  "state": "downloading",   // queued | resolving | downloading | verifying
-                            // | installing | done | failed | cancelled | paused
+  "state": "downloading", // queued | resolving | downloading | verifying
+  // | installing | done | failed | cancelled | paused
   "provider": "modelscope",
   "total_bytes": 574041195,
-  "completed_bytes": 231000000,      // 服务端保证存在，即使为 0（不学 Ollama 的可选字段）
+  "completed_bytes": 231000000, // 服务端保证存在，即使为 0（不学 Ollama 的可选字段）
   "speed_bps": 8400000,
   "eta_seconds": 41,
-  "parts": [ {"index":0,"completed":143510298,"total":143510299}, "…" ],
+  "parts": [{ "index": 0, "completed": 143510298, "total": 143510299 }, "…"],
   "current_file": "ggml-large-v3-turbo-q5_0.bin",
-  "file_index": 0, "file_count": 1,
-  "attempt": 1, "max_attempts": 3,
-  "error": null,            // { "code":"CHECKSUM_MISMATCH","message_zh":"…","retryable":true }
-  "started_at": "…", "updated_at": "…"
+  "file_index": 0,
+  "file_count": 1,
+  "attempt": 1,
+  "max_attempts": 3,
+  "error": null, // { "code":"CHECKSUM_MISMATCH","message_zh":"…","retryable":true }
+  "started_at": "…",
+  "updated_at": "…",
 }
 ```
 
 **错误码**（前端据此决定文案与按钮）：
 
-| code | 可重试 | UI 动作 |
-|---|---|---|
-| `NETWORK_TIMEOUT` / `CONNECTION_RESET` | ✅ | 自动重试，第 3 次后提示「换个下载源」 |
-| `CHECKSUM_MISMATCH` | ✅ | 自动换源重试 1 次；再失败 → 「该源文件损坏，已切换到 X」 |
-| `DISK_FULL` | ❌ | 「磁盘空间不足」+ 跳转清理页 |
-| `GATED_REPO` | ❌ | 「该模型需要登录 Hugging Face 并同意许可」+ 填 token 入口 |
-| `RATE_LIMITED` | ✅（延迟） | 「下载源限流，X 秒后重试」 |
-| `PROVIDER_UNREACHABLE` | ✅ | 自动换下一个 provider |
-| `INTEGRITY_ALL_SOURCES_FAILED` | ❌ | 「所有下载源都失败」+ 一键提交诊断 |
+| code                                   | 可重试     | UI 动作                                                   |
+| -------------------------------------- | ---------- | --------------------------------------------------------- |
+| `NETWORK_TIMEOUT` / `CONNECTION_RESET` | ✅         | 自动重试，第 3 次后提示「换个下载源」                     |
+| `CHECKSUM_MISMATCH`                    | ✅         | 自动换源重试 1 次；再失败 → 「该源文件损坏，已切换到 X」  |
+| `DISK_FULL`                            | ❌         | 「磁盘空间不足」+ 跳转清理页                              |
+| `GATED_REPO`                           | ❌         | 「该模型需要登录 Hugging Face 并同意许可」+ 填 token 入口 |
+| `RATE_LIMITED`                         | ✅（延迟） | 「下载源限流，X 秒后重试」                                |
+| `PROVIDER_UNREACHABLE`                 | ✅         | 自动换下一个 provider                                     |
+| `INTEGRITY_ALL_SOURCES_FAILED`         | ❌         | 「所有下载源都失败」+ 一键提交诊断                        |
 
 **并发策略**：全局同时下载数默认 **2**，可设 1–4。
 超出的入队（ComfyUI-Manager 式 FIFO）。**理由**：并发多个大模型只会瓜分同一条带宽，
@@ -1437,15 +1556,15 @@ data: {"used_bytes":1832000000,"free_bytes":251658240000}
 
 **为什么 SSE 而不是 WebSocket**
 
-| 维度 | SSE | WebSocket | 结论 |
-|---|---|---|---|
-| 通信方向 | 单向 server→client | 双向 | 我们的控制指令走 REST POST 已经够了；WS 的双向性**没有被用到** |
-| 与 REST 共用鉴权/CORS | ✅ 就是普通 HTTP GET，同一套 middleware | ❌ Upgrade 握手，鉴权/Origin 校验是**另一条代码路径** | 本地 daemon 的攻击面，少一条路径少一处漏 |
-| 断线重连 | ✅ `EventSource` 原生自动重连 + `Last-Event-ID` 请求头 → **服务端可重放漏掉的事件** | ❌ 全部手写 | 用户刷新页面/合盖唤醒后进度不丢，是刚需 |
-| 代理/杀软兼容 | 好（就是普通 HTTP 响应） | 企业代理与部分杀软会拦 Upgrade | Windows 企业环境真实存在 |
-| 实现复杂度 | 后端一个 `text/event-stream` handler | 需要连接管理、心跳、帧处理 | — |
-| 二进制 | ❌ | ✅ | 我们只传 JSON |
-| 连接数上限 | HTTP/1.1 每 origin **6 条** | 无此限制 | ⚠ 见下方缓解 |
+| 维度                  | SSE                                                                                 | WebSocket                                             | 结论                                                           |
+| --------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------- |
+| 通信方向              | 单向 server→client                                                                  | 双向                                                  | 我们的控制指令走 REST POST 已经够了；WS 的双向性**没有被用到** |
+| 与 REST 共用鉴权/CORS | ✅ 就是普通 HTTP GET，同一套 middleware                                             | ❌ Upgrade 握手，鉴权/Origin 校验是**另一条代码路径** | 本地 daemon 的攻击面，少一条路径少一处漏                       |
+| 断线重连              | ✅ `EventSource` 原生自动重连 + `Last-Event-ID` 请求头 → **服务端可重放漏掉的事件** | ❌ 全部手写                                           | 用户刷新页面/合盖唤醒后进度不丢，是刚需                        |
+| 代理/杀软兼容         | 好（就是普通 HTTP 响应）                                                            | 企业代理与部分杀软会拦 Upgrade                        | Windows 企业环境真实存在                                       |
+| 实现复杂度            | 后端一个 `text/event-stream` handler                                                | 需要连接管理、心跳、帧处理                            | —                                                              |
+| 二进制                | ❌                                                                                  | ✅                                                    | 我们只传 JSON                                                  |
+| 连接数上限            | HTTP/1.1 每 origin **6 条**                                                         | 无此限制                                              | ⚠ 见下方缓解                                                   |
 
 **关键缓解措施**：**只开一条** `/api/models/events` 全局流，**绝不为每个下载任务开一条**。
 否则 3 个下载 + 转写进度 + 运行时安装就能吃满 6 条，页面后续 fetch 会直接挂住 —— 这是 SSE 最经典的翻车方式。
@@ -1736,16 +1855,17 @@ POST /api/models/migrate           Req {"path":"…"} -> 202 {job_id}
 
 ### 10.1 三层结构（推荐方案）
 
-| 层 | 内容 | 更新方式 | 何时使用 |
-|---|---|---|---|
-| **L1 内置** | `catalog.bundled.json` 编译进二进制 | 随版本发布 | 永远可用的兜底；全新安装 + 无网络时 |
-| **L2 远程** | `https://cdn.memo.ac/catalog/v1/catalog.json` + `.sig` | 随时热更新，无需发版 | 默认路径 |
-| **L3 实时查询** | HF / ModelScope API | 用户输入时实时查 | **仅**"高级 → 自带模型"页 |
+| 层              | 内容                                                   | 更新方式             | 何时使用                            |
+| --------------- | ------------------------------------------------------ | -------------------- | ----------------------------------- |
+| **L1 内置**     | `catalog.bundled.json` 编译进二进制                    | 随版本发布           | 永远可用的兜底；全新安装 + 无网络时 |
+| **L2 远程**     | `https://cdn.memo.ac/catalog/v1/catalog.json` + `.sig` | 随时热更新，无需发版 | 默认路径                            |
+| **L3 实时查询** | HF / ModelScope API                                    | 用户输入时实时查     | **仅**"高级 → 自带模型"页           |
 
 **为什么不硬编码（纯 L1）**：新模型（如下一个 whisper 版本、Qwen3.5）要等发版才能上，
 且体积/digest 一旦上游改动就全线失效。
 
 **为什么不实时查 HF 做主目录（纯 L3）**：
+
 1. 国内不可达（§5）；
 2. 匿名限流 **500 req / 300 s**（实测响应头），共享出口 IP 会被打满；
 3. HF 上一个模型有 20+ 个量化文件，**没有"哪个好"的信息**，需要我们策展；
@@ -1783,6 +1903,7 @@ ComfyUI-Manager 的应对是「白名单 + security_level」，仍然不够
 （它自己的 `security_check.py` 就是在事后补挂已知恶意包黑名单）。
 
 我们的做法：
+
 1. `catalog.json` 用 **Ed25519** 私钥签名，产出 `catalog.json.sig`；**公钥硬编码在二进制里**。
 2. 验签失败 → **完全拒绝**，回落到缓存/内置，不做任何降级放行。
 3. 目录内每个文件条目**必须**有 `sha256`；下载后强制校验（§6.6）。
@@ -1817,22 +1938,22 @@ ComfyUI-Manager 的应对是「白名单 + security_level」，仍然不够
 
 ### 10.5 离线兜底总结
 
-| 场景 | 行为 |
-|---|---|
-| 完全离线首次启动 | L1 内置目录可浏览；点下载报「无网络」；已装模型正常用 |
-| 离线但已装模型 | 全功能可用，模型页显示 `stale` 横幅 |
-| CDN 挂了，HF 可达 | L2 失败 → 缓存/内置目录 → 下载源自动选 HF（目录与下载源是**解耦**的） |
-| 内网/隔离环境 | 设置里可指定自定义 `catalog_url` + 自定义 provider base URL；或直接 `POST /api/models/import` 导入本地文件 |
+| 场景              | 行为                                                                                                       |
+| ----------------- | ---------------------------------------------------------------------------------------------------------- |
+| 完全离线首次启动  | L1 内置目录可浏览；点下载报「无网络」；已装模型正常用                                                      |
+| 离线但已装模型    | 全功能可用，模型页显示 `stale` 横幅                                                                        |
+| CDN 挂了，HF 可达 | L2 失败 → 缓存/内置目录 → 下载源自动选 HF（目录与下载源是**解耦**的）                                      |
+| 内网/隔离环境     | 设置里可指定自定义 `catalog_url` + 自定义 provider base URL；或直接 `POST /api/models/import` 导入本地文件 |
 
 ---
 
 ## 11. 待办 / 交给别人的问题
 
-| # | 问题 | 归属 |
-|---|---|---|
-| 1 | `hf-mirror.com` 在**中国大陆网络**的可用性/限速/Range/tree API 代理情况 —— §5.4 有脚本，需大陆机器复测 | Manager 找人复测 |
-| 2 | 硬件描述 JSON 契约（§7.1）与 R-02 对齐 | `gpu-runtime` + Manager |
-| 3 | Gemma 权重的再分发许可（我们能否自建 CDN 镜像） | `oss-scout` |
-| 4 | whisper 各模型的 WER —— 当前 `UNKNOWN`。若产品要对外宣称准确率，需自建评测集 | 后续任务 |
-| 5 | §7.4 的 `flops_ratio` 外推系数需实测校准 | 开发期 |
-| 6 | Gemma-3 SWA 使实际 KV < 我算的上界，折扣比例 `UNKNOWN` | 开发期实测 |
+| #   | 问题                                                                                                   | 归属                    |
+| --- | ------------------------------------------------------------------------------------------------------ | ----------------------- |
+| 1   | `hf-mirror.com` 在**中国大陆网络**的可用性/限速/Range/tree API 代理情况 —— §5.4 有脚本，需大陆机器复测 | Manager 找人复测        |
+| 2   | 硬件描述 JSON 契约（§7.1）与 R-02 对齐                                                                 | `gpu-runtime` + Manager |
+| 3   | Gemma 权重的再分发许可（我们能否自建 CDN 镜像）                                                        | `oss-scout`             |
+| 4   | whisper 各模型的 WER —— 当前 `UNKNOWN`。若产品要对外宣称准确率，需自建评测集                           | 后续任务                |
+| 5   | §7.4 的 `flops_ratio` 外推系数需实测校准                                                               | 开发期                  |
+| 6   | Gemma-3 SWA 使实际 KV < 我算的上界，折扣比例 `UNKNOWN`                                                 | 开发期实测              |

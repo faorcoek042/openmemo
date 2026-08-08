@@ -76,7 +76,16 @@
  */
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { appendFile, copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  appendFile,
+  copyFile,
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -172,7 +181,10 @@ async function readPackFragment(path) {
     const j = JSON.parse(await readFile(path, 'utf8'));
     if (typeof j?.id === 'string' && Array.isArray(j?.files) && j.files.length > 0) {
       const ok = j.files.every(
-        (f) => typeof f?.name === 'string' && typeof f?.sha256 === 'string' && typeof f?.sizeBytes === 'number',
+        (f) =>
+          typeof f?.name === 'string' &&
+          typeof f?.sha256 === 'string' &&
+          typeof f?.sizeBytes === 'number',
       );
       if (ok) return j;
     }
@@ -284,7 +296,9 @@ async function stageOne(src, mode, seen) {
     }
     const got = await sha256Of(p);
     if (got !== w.sha256) {
-      fatal(`${w.name}: 清单说 ${w.sha256}，本地实算 ${got} —— 产物在传输途中坏了，或者清单不是这一版的`);
+      fatal(
+        `${w.name}: 清单说 ${w.sha256}，本地实算 ${got} —— 产物在传输途中坏了，或者清单不是这一版的`,
+      );
       continue;
     }
     if (w.sizeBytes != null && st.size !== w.sizeBytes) {
@@ -335,11 +349,16 @@ async function ghGet(path) {
 /* ── 阶段 3：逐个资产判定 ────────────────────────────────────────────────────────── */
 
 const digestOf = (asset) =>
-  typeof asset?.digest === 'string' && asset.digest.startsWith('sha256:') ? asset.digest.slice(7) : null;
+  typeof asset?.digest === 'string' && asset.digest.startsWith('sha256:')
+    ? asset.digest.slice(7)
+    : null;
 
 /** 不带任何凭证地把已存在的资产下下来复算 —— 用在 API 没给 `digest` 的老资产上。 */
 async function anonymousSha256(url) {
-  const r = await fetch(url, { redirect: 'follow', headers: { 'user-agent': 'openmemo-release-upload' } });
+  const r = await fetch(url, {
+    redirect: 'follow',
+    headers: { 'user-agent': 'openmemo-release-upload' },
+  });
   if (!r.ok) return { error: `HTTP ${r.status}` };
   const h = createHash('sha256');
   let size = 0;
@@ -410,7 +429,8 @@ async function postAsset(uploadUrlTemplate, name, buf) {
 const COPYLEFT_RE = /\b(A?GPL|LGPL|SSPL|CC-BY-SA|EUPL|CECILL)\b/i;
 
 /** 我们自己的预编译包。命名约定由 `scripts/lib/version.mjs` 定义。 */
-const BUNDLE_NAME_RE = /^openmemo-\d+\.\d+\.\d+-(linux-x64|win-x64|darwin-arm64)\.(tar\.xz|tar\.gz|zip)$/;
+const BUNDLE_NAME_RE =
+  /^openmemo-\d+\.\d+\.\d+-(linux-x64|win-x64|darwin-arm64)\.(tar\.xz|tar\.gz|zip)$/;
 
 /** 校验与清单类文本，本身不含第三方代码。 */
 const METADATA_NAME_RE = /^(SHA256SUMS|[A-Za-z0-9._-]+\.json)$/;
@@ -475,7 +495,9 @@ async function licenseGate(assets) {
         continue;
       }
       if (!hit.license) {
-        fatal(`资产 \`${a.name}\` 对应的 pack \`${hit.packId}\` 没有 \`license.id\` —— 查不到许可证不等于没问题，拒绝上传。`);
+        fatal(
+          `资产 \`${a.name}\` 对应的 pack \`${hit.packId}\` 没有 \`license.id\` —— 查不到许可证不等于没问题，拒绝上传。`,
+        );
         continue;
       }
       say(`   ✔ ${a.name}  ${lic}`);
@@ -517,7 +539,9 @@ async function main() {
 
   const { found: sources, ignored } = await collectSourceDirs(FROM);
   for (const ig of ignored) {
-    say(`   ⏭ 整个跳过 ${ig.dir}（既没有 SHA256SUMS 也没有 pack fragment）：${ig.files.join(', ')}`);
+    say(
+      `   ⏭ 整个跳过 ${ig.dir}（既没有 SHA256SUMS 也没有 pack fragment）：${ig.files.join(', ')}`,
+    );
   }
   if (ignored.length > 0) say('');
   if (sources.length === 0) {
@@ -543,7 +567,9 @@ async function main() {
   await writeFile(join(STAGE, 'SHA256SUMS'), sums);
   say('');
   say(`   ${assets.length} 个资产，合计 ${assets.reduce((n, a) => n + a.sizeBytes, 0)} B`);
-  say(`   已写 ${join(STAGE, 'SHA256SUMS')}（**只列这次的这些**，所以 \`sha256sum -c SHA256SUMS\` 本来就是对的）`);
+  say(
+    `   已写 ${join(STAGE, 'SHA256SUMS')}（**只列这次的这些**，所以 \`sha256sum -c SHA256SUMS\` 本来就是对的）`,
+  );
 
   /* ── 找 release ── */
 
@@ -598,7 +624,9 @@ async function main() {
       /* 老资产没有 digest 字段 —— 那就不带凭证真的下下来算一遍。 */
       const got = await anonymousSha256(cur.browser_download_url);
       if (got.error) {
-        fatal(`${a.name}: release 上已有同名资产，但匿名下载失败（${got.error}），无法判断是不是同一份`);
+        fatal(
+          `${a.name}: release 上已有同名资产，但匿名下载失败（${got.error}），无法判断是不是同一份`,
+        );
         continue;
       }
       curSha = got.sha256;
@@ -642,10 +670,14 @@ async function main() {
       const t0 = Date.now();
       try {
         await postAsset(release.upload_url, p.name, buf);
-        say(`   ⬆ ${p.name.padEnd(56)} 第 ${attempt} 次尝试成功（${((Date.now() - t0) / 1000).toFixed(1)}s）`);
+        say(
+          `   ⬆ ${p.name.padEnd(56)} 第 ${attempt} 次尝试成功（${((Date.now() - t0) / 1000).toFixed(1)}s）`,
+        );
         done = true;
       } catch (e) {
-        say(`   ✘ ${p.name.padEnd(56)} 第 ${attempt} 次失败：${e instanceof Error ? e.message : String(e)}`);
+        say(
+          `   ✘ ${p.name.padEnd(56)} 第 ${attempt} 次失败：${e instanceof Error ? e.message : String(e)}`,
+        );
         /*
          * ★ 重试前**重新拉一遍资产列表**。上一次可能其实已经传成功了，只是响应没回来；
          *   闷头再传一次就会撞上 422 already_exists，或者更糟 —— 留下一个半截资产。
@@ -655,7 +687,11 @@ async function main() {
         const now = (fresh.body?.assets ?? []).find((x) => x.name === p.name);
         if (now) {
           const d = digestOf(now);
-          if (now.state === 'uploaded' && (d === null || d === p.sha256) && now.size === p.sizeBytes) {
+          if (
+            now.state === 'uploaded' &&
+            (d === null || d === p.sha256) &&
+            now.size === p.sizeBytes
+          ) {
             say(`   ↩ ${p.name}：其实上一次已经传上去了（size/digest 都对），不再重试`);
             break;
           }
@@ -683,9 +719,17 @@ async function main() {
     prerelease: release.prerelease,
     dryRun: DRY_RUN,
     downloadBase: DOWNLOAD_BASE,
-    assets: plan.map((p) => ({ name: p.name, sha256: p.sha256, sizeBytes: p.sizeBytes, action: p.action })),
+    assets: plan.map((p) => ({
+      name: p.name,
+      sha256: p.sha256,
+      sizeBytes: p.sizeBytes,
+      action: p.action,
+    })),
   };
-  await writeFile(join(STAGE, 'RELEASE-UPLOAD-PLAN.json'), `${JSON.stringify(planJson, null, 2)}\n`);
+  await writeFile(
+    join(STAGE, 'RELEASE-UPLOAD-PLAN.json'),
+    `${JSON.stringify(planJson, null, 2)}\n`,
+  );
 
   hdr('4. 结果');
   const nUp = plan.filter((p) => p.action === 'upload').length;
@@ -709,7 +753,10 @@ async function main() {
       `- 仓库 \`${REPO}\` · release id \`${release.id}\` · draft=\`${release.draft}\` · prerelease=\`${release.prerelease}\``,
       `- 上传 **${nUp}** 个 · 跳过（已存在且 sha256 一致）**${nSkip}** 个`,
       ...(DRY_RUN
-        ? ['', '> ⚠️ **dry-run：什么都没传，校验那一步也不会跑。这一轮不对 release 的现状作任何断言。**']
+        ? [
+            '',
+            '> ⚠️ **dry-run：什么都没传，校验那一步也不会跑。这一轮不对 release 的现状作任何断言。**',
+          ]
         : []),
       '',
       '| 资产 | 字节 | sha256 | 处置 |',

@@ -113,10 +113,10 @@ rc=0                       ← 一个测试文件都没有，绿的
 
 ### 2.3 🔴 `apps/daemon` 上这个缺陷是活的（**只报不动**）
 
-| | 现在的脚本 | 带引号后 |
-|---|---|---|
-| 测试文件 | **9** | 13 |
-| 用例 | **113 pass / 0 fail** | 171：**164 pass / 7 fail** |
+|          | 现在的脚本            | 带引号后                   |
+| -------- | --------------------- | -------------------------- |
+| 测试文件 | **9**                 | 13                         |
+| 用例     | **113 pass / 0 fail** | 171：**164 pass / 7 fail** |
 
 跑不到的 4 个文件：`dist/daemon.test.js`（**一层深**）、`dist/http/rest/content.export.test.js`、
 `dist/http/rest/settings.roundtrip.test.js`、`dist/jobs/runners/retitle.test.js`（**三层深**）。
@@ -271,6 +271,7 @@ secure-context 那条填 `blocked.map((c) => t(\`secureContext.caps.${c.key}\`))
 **[R-A] ④ 抄 daemon 的那一行** —— 见 §2.1（132 → **6**，exit 0）。
 
 **[R-B] ④ 假装 TD-002 那个文件没编出来（dist 少一个）**
+
 ```
 Error: test discovery broken: 10 source test files vs 9 compiled in dist —— 先 pnpm build:safe；node --test 对空集/漏集一律返回绿
  ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @openmemo/pipeline@0.0.0 test
@@ -278,6 +279,7 @@ Error: test discovery broken: 10 source test files vs 9 compiled in dist —— 
 ```
 
 **[R-①a] 撤掉逐项明细，退回只取 `blocked.length`**
+
 ```
 ℹ tests 162  ℹ pass 159  ℹ fail 3
 ✖ ★ 展开后逐项列出失去的能力，且与 detectBlockedCapabilities() 逐条对齐
@@ -289,6 +291,7 @@ Error: test discovery broken: 10 source test files vs 9 compiled in dist —— 
 ```
 
 **[R-①b] 明细保留，但不走 `<Emphasis>`（直接吐词条原文）**
+
 ```
 ℹ tests 162  ℹ pass 160  ℹ fail 2
 ✖ ★ 麦克风那条的 ** 必须渲染成 <strong>，页面上看不到裸星号
@@ -296,6 +299,7 @@ Error: test discovery broken: 10 source test files vs 9 compiled in dist —— 
 ```
 
 **[R-②a] 前端改回直接渲染 `e.purposeZh`**
+
 ```
 ℹ tests 162  ℹ pass 160  ℹ fail 2
 ✖ ★ 英文界面下目录清单不许出现汉字 —— 它此前是 /settings 上 81 个汉字的来源
@@ -305,6 +309,7 @@ Error: test discovery broken: 10 source test files vs 9 compiled in dist —— 
 ```
 
 **[R-②b] daemon 少给一条 `purpose`（logs）**
+
 ```
 ℹ tests 3  ℹ pass 2  ℹ fail 1
 ✖ 每一条都同时有 purpose 与 purposeZh，且都不是空的
@@ -312,6 +317,7 @@ Error: test discovery broken: 10 source test files vs 9 compiled in dist —— 
 ```
 
 **[R-②c] daemon 把中文原样抄进 `purpose`（字段在、内容没变）**
+
 ```
 ℹ tests 3  ℹ pass 2  ℹ fail 1
 ✖ purpose 里不许出现汉字，purposeZh 里必须有汉字（防两边互相抄）
@@ -319,6 +325,7 @@ Error: test discovery broken: 10 source test files vs 9 compiled in dist —— 
 ```
 
 **[R-③] `ComponentCard` 改回写死 `displayNameZh`**
+
 ```
 ℹ tests 162  ℹ pass 160  ℹ fail 2
 ✖ ★ 英文界面下卡片标题用 displayName，不是 displayNameZh
@@ -476,11 +483,11 @@ pnpm -r test                → rc=0
 
 **同一棵树、同一次构建，只换脚本**：
 
-| | 旧脚本 | 新脚本 |
-|---|---|---|
-| 测试文件 | 9 | **13** |
-| 用例 | **116** pass | **177** pass |
-| exit code | 0 | 0 |
+|           | 旧脚本       | 新脚本       |
+| --------- | ------------ | ------------ |
+| 测试文件  | 9            | **13**       |
+| 用例      | **116** pass | **177** pass |
+| exit code | 0            | 0            |
 
 **两个都是"绿"**，这正是它最坏的地方。你说的那句我原样记在 HANDOFF ⑤A-19 里了：
 **它污染的是判断依据本身**——据「门禁全绿」做过的每一次决定，当时都建立在一个漏跑 30% 的脚本上。
@@ -497,12 +504,12 @@ rc=0                     ← 空集，绿
 
 全仓 10 个 workspace，有 `test` 脚本的是 **4 个**（其余 5 个包没有测试脚本，靠包内 `verify-*.mjs`）：
 
-| 包 | 改前 | 改后 | 说明 |
-|---|---|---|---|
-| `packages/db` | `node --test dist/**/*.test.js` | **统一** | 你的定性完全对：**它正确的原因是 sh 匹配不到、原样透传**，不是写对了 |
-| `packages/pipeline` | （T-135 我写的那版） | **统一**（逐字相同） | |
-| `apps/daemon` | 同 db | **统一**（逐字相同） | |
-| `apps/web` | `test:unit` + `test:components` | **保留结构，补守卫** | 见下 |
+| 包                  | 改前                            | 改后                 | 说明                                                                 |
+| ------------------- | ------------------------------- | -------------------- | -------------------------------------------------------------------- |
+| `packages/db`       | `node --test dist/**/*.test.js` | **统一**             | 你的定性完全对：**它正确的原因是 sh 匹配不到、原样透传**，不是写对了 |
+| `packages/pipeline` | （T-135 我写的那版）            | **统一**（逐字相同） |                                                                      |
+| `apps/daemon`       | 同 db                           | **统一**（逐字相同） |                                                                      |
+| `apps/web`          | `test:unit` + `test:components` | **保留结构，补守卫** | 见下                                                                 |
 
 **`apps/web` 为什么必须是例外 —— 这是实测出来的，不是我不想统一**：
 
@@ -535,11 +542,11 @@ $ node --test                          # 默认发现：会把 .test-out/{compon
 
 改了三处：
 
-| 位置 | 改法 |
-|---|---|
-| `daemon.test.ts` 「鉴权链路」 | 加 `pinAuthMode('token')` + 一段说明为什么它红了却没人看见 |
-| `settings.roundtrip.test.ts` 「仅凭 cookie 续签」 | 加 `pinAuthMode('token')` + 说明 |
-| `settings.roundtrip.test.ts` 「CSRF 同源兜底」 | 就地写的 before/after **换成同一个 helper**（它原来的注释是对的、做法也是对的，**只是隔壁那组没照做**，我把这句写进注释了） |
+| 位置                                              | 改法                                                                                                                        |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `daemon.test.ts` 「鉴权链路」                     | 加 `pinAuthMode('token')` + 一段说明为什么它红了却没人看见                                                                  |
+| `settings.roundtrip.test.ts` 「仅凭 cookie 续签」 | 加 `pinAuthMode('token')` + 说明                                                                                            |
+| `settings.roundtrip.test.ts` 「CSRF 同源兜底」    | 就地写的 before/after **换成同一个 helper**（它原来的注释是对的、做法也是对的，**只是隔壁那组没照做**，我把这句写进注释了） |
 
 **断言一个字没改。** 没有把 401 改成"200 也算过"—— 那会把 token 档的全部边界一起删掉。
 
@@ -603,27 +610,32 @@ $ node --test                          # 默认发现：会把 .test-out/{compon
 ## §C 反向验证（6 组，真实输出，每组都已还原）
 
 **[R-1] `apps/daemon` 换回旧的那一行**（就是今天一直在跑的那个）
+
 ```
 ℹ tests 116  ℹ suites 25  ℹ pass 116  ℹ fail 0
 rc=0                                             ← 绿
 ### 已还原
 ℹ tests 177  ℹ suites 40  ℹ pass 177  ℹ fail 0
 ```
+
 **同一棵树、同一次构建，61 条用例的差别，两边都是 exit 0。**
 
 **[R-2] daemon：假装有个测试文件没编出来**
+
 ```
 Error: test discovery broken: 14 source test files vs 13 compiled in dist —— 先 pnpm build:safe；node --test 对空集/漏集一律返回绿
 Exit status 1
 ```
 
 **[R-3] db：同上**
+
 ```
 Error: test discovery broken: 3 source test files vs 2 compiled in dist —— …
 Exit status 1
 ```
 
 **[R-4] 撤掉两处 `pinAuthMode`（回到依赖默认值）**
+
 ```
 ℹ tests 177  ℹ pass 170  ℹ fail 7
 ✖ 未认证请求被 401 拒绝
@@ -634,17 +646,21 @@ Exit status 1
 ✖ 两者都无 → 仍 401，且带可执行的 remediation
 ✖ ★ 伪造/失效的 cookie → 必须 401（续签不等于放行任何 cookie）
 ```
+
 ↑ **一模一样的 7 条**回来了。
 
 **[R-5] 让 `authMode()` 忽略环境变量（重演 `AUTH_MODE` 单向门）—— 看 pin 自己会不会红**
+
 ```
 AssertionError [ERR_ASSERTION]: 钉鉴权档没有生效（想要 token，实际 none）—— 后面每一条断言都会在错误的前提下跑
 'none' !== 'token'
 ```
+
 ↑ 这正是 pin 里那句回读断言存在的理由：**没有它，症状会表现成"7 条业务断言莫名其妙全红"，
 而真因是"前提根本没设上"** —— 那会把人引向去改断言。
 
 **[R-6] web：新写一个单测但忘了加进 `tsconfig.test.json` 的 include**
+
 ```
 Error: test discovery broken: 4 个 src/**/*.test.ts vs 3 个编进 .test-out/unit —— 新加的单测要写进 tsconfig.test.json 的 include；node --test 对空集/漏集一律返回绿
  ELIFECYCLE  Command failed with exit code 1.

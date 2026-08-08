@@ -16,7 +16,10 @@ describe('remediationTarget —— 一份表，三种结局', () => {
     // 这一条就是 demo 上 `warn | tool.ytDlp | 未找到` 唯一会在界面上显形的出口：
     // 粘一个 YouTube 链接 → daemon 422 NO_MEDIA_SOURCE + 这个 action。
     // 改坏它 = 用户点了「查看如何支持该站点」被送到一个装不了 yt-dlp 的页面。
-    assert.equal(remediationTarget({ action: 'installSiteExtractor', params: { input: 'x' } }), '/components');
+    assert.equal(
+      remediationTarget({ action: 'installSiteExtractor', params: { input: 'x' } }),
+      '/components',
+    );
   });
 
   test('带 modelId 的 install_model 直达详情页，且 id 经过 URL 编码', () => {
@@ -27,7 +30,10 @@ describe('remediationTarget —— 一份表，三种结局', () => {
   });
 
   test('不带 modelId 时退回列表页，不拼出 /models/undefined', () => {
-    assert.equal(remediationTarget({ action: 'install_model', params: { role: 'asr' } }), '/models');
+    assert.equal(
+      remediationTarget({ action: 'install_model', params: { role: 'asr' } }),
+      '/models',
+    );
     assert.equal(remediationTarget({ action: 'install_model' }), '/models');
   });
 
@@ -56,7 +62,10 @@ describe('remediationTarget —— 一份表，三种结局', () => {
   });
 
   test('认不出的 action 仍给一个落点（前端比 daemon 旧时，什么都不显示是最差的）', () => {
-    assert.equal(remediationTarget({ action: 'somethingInventedNextMonth' }), UNKNOWN_ACTION_FALLBACK);
+    assert.equal(
+      remediationTarget({ action: 'somethingInventedNextMonth' }),
+      UNKNOWN_ACTION_FALLBACK,
+    );
   });
 
   test('两张表不许有交集 —— 同一个 action 不能既有路由又"故意没有"', () => {
@@ -81,7 +90,9 @@ describe('remediationTarget —— 一份表，三种结局', () => {
  * `rest/notes.ts:128` 报成了 `:96`。**一条报错位置的护栏，等于让下一个人多查一遍。**
  */
 function stripComments(src: string): string {
-  const noBlock = src.replace(/\/\*[\s\S]*?\*\//g, (m) => '\n'.repeat((m.match(/\n/g) ?? []).length));
+  const noBlock = src.replace(/\/\*[\s\S]*?\*\//g, (m) =>
+    '\n'.repeat((m.match(/\n/g) ?? []).length),
+  );
   return noBlock
     .split('\n')
     .map((line) => {
@@ -144,7 +155,11 @@ describe('守卫：daemon 会发的 action，前端必须逐个认领过', () =>
   const daemonSrc = `${process.cwd()}/../daemon/src`;
 
   test('前提：daemon 源码目录找得到（找不到就不是"没问题"，是没在测）', () => {
-    assert.equal(existsSync(daemonSrc), true, `扫不到 ${daemonSrc} —— 仓库布局变了，这条护栏已失效`);
+    assert.equal(
+      existsSync(daemonSrc),
+      true,
+      `扫不到 ${daemonSrc} —— 仓库布局变了，这条护栏已失效`,
+    );
   });
 
   test('前提：扫得出东西（正则失效 → 空集 → 下面那条会假绿）', () => {

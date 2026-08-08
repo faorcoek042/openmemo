@@ -120,7 +120,10 @@ describe('SSE 线格式 —— 少一个换行就永远不 dispatch', () => {
   });
 
   it('事件里的换行/引号被转义，不会撑破分帧', () => {
-    const nasty = { type: 'job.failed', message: 'line1\nline2\n\n"quoted"' } as unknown as SseEvent;
+    const nasty = {
+      type: 'job.failed',
+      message: 'line1\nline2\n\n"quoted"',
+    } as unknown as SseEvent;
     const frame = formatSseFrame(2, nasty);
     // 整帧里应当只有 3 个换行：id 行尾、event 行尾、data 行尾 + 结尾空行
     assert.equal(frame.split('\n').length, 5, `分帧被内容撑破了：${JSON.stringify(frame)}`);

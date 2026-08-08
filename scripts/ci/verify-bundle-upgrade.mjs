@@ -209,7 +209,10 @@ try {
   const found = JSON.stringify(list).includes(folderName);
 
   if (found) ok(`★ 旧版写的数据被新版读到了：「${folderName}」`);
-  else bad(`★ 旧版写的数据不见了 —— 升级弄坏了数据目录。新版读到：${JSON.stringify(list).slice(0, 300)}`);
+  else
+    bad(
+      `★ 旧版写的数据不见了 —— 升级弄坏了数据目录。新版读到：${JSON.stringify(list).slice(0, 300)}`,
+    );
 
   if (health2.dataDir === health1.dataDir) ok(`dataDir 没变：${health2.dataDir}`);
   else bad(`dataDir 变了：${health1.dataDir} → ${health2.dataDir}`);

@@ -119,7 +119,8 @@ export function useModelActivateMutation() {
 
 export function useModelVerifyMutation() {
   return useMutation({
-    mutationFn: (id: string) => api<PullResponse>('/models/verify', { method: 'POST', body: { id } }),
+    mutationFn: (id: string) =>
+      api<PullResponse>('/models/verify', { method: 'POST', body: { id } }),
   });
 }
 

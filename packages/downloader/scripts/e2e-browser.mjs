@@ -76,7 +76,8 @@ async function goto(route, waitMs = 1200) {
 /** Is there a visible, enabled element matching any of these selectors/texts? */
 async function probe(selectors) {
   for (const sel of selectors) {
-    const loc = sel.startsWith('text=') || sel.startsWith('/') ? page.locator(sel) : page.locator(sel);
+    const loc =
+      sel.startsWith('text=') || sel.startsWith('/') ? page.locator(sel) : page.locator(sel);
     const n = await loc.count();
     for (let i = 0; i < n; i++) {
       const el = loc.nth(i);
@@ -107,16 +108,30 @@ record(
 /* ═══════════════ 1. Navigation inventory ═══════════════ */
 console.log('\n[1] 导航入口清单');
 const navLinks = await page.locator('a[href], nav a, [role="navigation"] a').evaluateAll((els) =>
-  els.map((e) => ({ href: e.getAttribute('href'), text: (e.textContent ?? '').trim().slice(0, 20) })).filter((x) => x.href),
+  els
+    .map((e) => ({
+      href: e.getAttribute('href'),
+      text: (e.textContent ?? '').trim().slice(0, 20),
+    }))
+    .filter((x) => x.href),
 );
 const uniq = [...new Map(navLinks.map((l) => [l.href, l])).values()];
-record('侧栏/顶栏导航', uniq.length ? 'yes' : 'no', `${uniq.length} 个链接: ${uniq.map((l) => l.text || l.href).join(' / ')}`);
+record(
+  '侧栏/顶栏导航',
+  uniq.length ? 'yes' : 'no',
+  `${uniq.length} 个链接: ${uniq.map((l) => l.text || l.href).join(' / ')}`,
+);
 
 /* ═══════════════ 2. 要求 2.2 — 模型管理页真实点击 ═══════════════ */
 console.log('\n[2] 要求 2.2 模型管理页（真实点击）');
 await goto('/models', 2000);
 const modelsPage = await probe(['[data-testid="models-page"]']);
-record('模型管理页渲染', modelsPage.found ? 'yes' : 'no', modelsPage.found ? '已渲染' : '未找到 models-page', await shot('01-models'));
+record(
+  '模型管理页渲染',
+  modelsPage.found ? 'yes' : 'no',
+  modelsPage.found ? '已渲染' : '未找到 models-page',
+  await shot('01-models'),
+);
 
 if (modelsPage.found) {
   const cards = await page.locator('[data-testid^="model-card-"]').count();
@@ -124,7 +139,11 @@ if (modelsPage.found) {
 
   // 中文默认过滤（ADR-011 决策 1）
   const hint = await probe(['[data-testid="models-show-not-recommended"]']);
-  record('中文默认过滤提示', hint.found ? 'yes' : 'no', hint.found ? '「仍要显示」按钮存在' : '未出现（可能语言非 zh）');
+  record(
+    '中文默认过滤提示',
+    hint.found ? 'yes' : 'no',
+    hint.found ? '「仍要显示」按钮存在' : '未出现（可能语言非 zh）',
+  );
   if (hint.found) {
     const before = await page.locator('[data-testid^="model-card-"]').count();
     await hint.el.click();
@@ -144,7 +163,12 @@ if (modelsPage.found) {
     await quant.el.click();
     await page.waitForTimeout(600);
     const opts = await page.locator('[role="option"]').count();
-    record('量化选择器展开', opts > 0 ? 'yes' : 'partial', `${opts} 个量化档可选`, await shot('03-quant-selector'));
+    record(
+      '量化选择器展开',
+      opts > 0 ? 'yes' : 'partial',
+      `${opts} 个量化档可选`,
+      await shot('03-quant-selector'),
+    );
     await page.keyboard.press('Escape').catch(() => {});
     await page.mouse.click(5, 5);
     await page.waitForTimeout(300);
@@ -158,7 +182,11 @@ if (modelsPage.found) {
 
   // 存储分解
   const storage = await probe(['[data-testid="models-storage"]']);
-  record('磁盘占用分解', storage.found ? 'yes' : 'no', storage.found ? '含图例与字节标签' : '未找到');
+  record(
+    '磁盘占用分解',
+    storage.found ? 'yes' : 'no',
+    storage.found ? '含图例与字节标签' : '未找到',
+  );
 }
 
 /* ═══════════════ 3. 真实下载点击 ═══════════════ */
@@ -226,7 +254,8 @@ if (modelsPage.found) {
       const j = (jobs.jobs ?? []).find((x) => x.kind === 'model');
       if (j && ['succeeded', 'failed', 'cancelled'].includes(j.state)) {
         jobDone = j.state === 'succeeded';
-        if (j.totalBytes) maxPct = Math.max(maxPct, Math.round((j.completedBytes / j.totalBytes) * 100));
+        if (j.totalBytes)
+          maxPct = Math.max(maxPct, Math.round((j.completedBytes / j.totalBytes) * 100));
         break;
       }
     }
@@ -265,7 +294,11 @@ if (downloadOk) {
     record(
       '409 后 remediation 按钮渲染',
       rem > 0 ? 'yes' : errText > 0 ? 'partial' : 'no',
-      rem > 0 ? `${rem} 个可点的补救按钮` : errText > 0 ? '显示了错误文案但无补救按钮' : '无任何反馈',
+      rem > 0
+        ? `${rem} 个可点的补救按钮`
+        : errText > 0
+          ? '显示了错误文案但无补救按钮'
+          : '无任何反馈',
       await shot('07-delete-remediation'),
     );
   } else {
@@ -277,7 +310,12 @@ if (downloadOk) {
 console.log('\n[5] 要求 2.1 运行时与加速后端页');
 await goto('/runtime', 2000);
 const hwCard = await probe(['[data-testid="runtime-hardware-card"]']);
-record('硬件探测卡片', hwCard.found ? 'yes' : 'no', hwCard.found ? '已渲染真实硬件' : '未找到', await shot('08-runtime'));
+record(
+  '硬件探测卡片',
+  hwCard.found ? 'yes' : 'no',
+  hwCard.found ? '已渲染真实硬件' : '未找到',
+  await shot('08-runtime'),
+);
 if (hwCard.found) {
   const txt = ((await hwCard.el.textContent()) ?? '').replace(/\s+/g, ' ');
   record('硬件信息内容', /内存|处理器/.test(txt) ? 'yes' : 'partial', txt.slice(0, 120));
@@ -287,9 +325,17 @@ if (hwCard.found) {
   record('后端状态芯片', chips > 0 ? 'yes' : 'no', `${chips} 个芯片`);
   const instBtn = await page.locator('[data-testid^="backend-install-"]').count();
   const cpuRm = await probe(['[data-testid^="backend-remove-"]']);
-  record('后端安装按钮', instBtn > 0 ? 'yes' : 'partial', `${instBtn} 个可安装（本机无 GPU，多数不适用属预期）`);
+  record(
+    '后端安装按钮',
+    instBtn > 0 ? 'yes' : 'partial',
+    `${instBtn} 个可安装（本机无 GPU，多数不适用属预期）`,
+  );
   if (cpuRm.found) {
-    record('CPU 包卸载按钮被禁用（承重墙）', cpuRm.enabled === false ? 'yes' : 'partial', `disabled=${cpuRm.enabled === false}`);
+    record(
+      'CPU 包卸载按钮被禁用（承重墙）',
+      cpuRm.enabled === false ? 'yes' : 'partial',
+      `disabled=${cpuRm.enabled === false}`,
+    );
   }
 }
 
@@ -321,11 +367,22 @@ for (const r of ROUTES) {
 /* --- F1 粘贴链接真实输入 --- */
 console.log('\n[6a] F1 粘贴链接入口');
 await goto('/capture', 1500);
-const urlInput = await probe(['input[type="url"]', 'input[placeholder*="http"]', 'input[placeholder*="链接"]', 'textarea', 'input[type="text"]']);
+const urlInput = await probe([
+  'input[type="url"]',
+  'input[placeholder*="http"]',
+  'input[placeholder*="链接"]',
+  'textarea',
+  'input[type="text"]',
+]);
 if (urlInput.found) {
   await urlInput.el.fill('https://www.youtube.com/watch?v=aqz-KE-bpKQ');
   await page.waitForTimeout(400);
-  const submit = await probe(['button:has-text("导入")', 'button:has-text("开始")', 'button[type="submit"]', 'button:has-text("转写")']);
+  const submit = await probe([
+    'button:has-text("导入")',
+    'button:has-text("开始")',
+    'button[type="submit"]',
+    'button:has-text("转写")',
+  ]);
   record('F1 链接输入框', 'yes', `可输入 · 提交按钮${submit.found ? '存在' : '未找到'}`);
   if (submit.found && submit.enabled) {
     await submit.el.click();
@@ -341,12 +398,20 @@ if (urlInput.found) {
 console.log('\n[6b] F2 本地文件导入');
 const fileInput = await page.locator('input[type="file"]').count();
 const dropHint = await page.getByText(/拖.{0,4}(拽|放)|松开|drag|drop/i).count();
-record('F2 文件选择/拖拽入口', fileInput > 0 || dropHint > 0 ? 'yes' : 'no', `file input ×${fileInput} · 拖拽提示 ×${dropHint}`);
+record(
+  'F2 文件选择/拖拽入口',
+  fileInput > 0 || dropHint > 0 ? 'yes' : 'no',
+  `file input ×${fileInput} · 拖拽提示 ×${dropHint}`,
+);
 
 /* --- F3 录音 --- */
 console.log('\n[6c] F3 录音');
 await goto('/record', 1500);
-const recBtn = await probe(['button:has-text("开始录音")', 'button:has-text("录音")', '[data-testid*="record"]']);
+const recBtn = await probe([
+  'button:has-text("开始录音")',
+  'button:has-text("录音")',
+  '[data-testid*="record"]',
+]);
 if (recBtn.found) {
   await recBtn.el.click();
   await page.waitForTimeout(2000);
@@ -359,13 +424,22 @@ if (recBtn.found) {
 /* --- F5 搜索 / 标签 / 星标 / 编辑器 / 导出 --- */
 console.log('\n[6d] F5 笔记功能面');
 await goto('/', 1800);
-const search = await probe(['input[type="search"]', 'input[placeholder*="搜索"]', '[data-testid*="search"]']);
+const search = await probe([
+  'input[type="search"]',
+  'input[placeholder*="搜索"]',
+  '[data-testid*="search"]',
+]);
 if (search.found) {
   await search.el.fill('测试');
   await page.keyboard.press('Enter');
   await page.waitForTimeout(1800);
   const body = ((await page.locator('body').textContent()) ?? '').replace(/\s+/g, ' ');
-  record('F5 搜索框', 'yes', `可输入并回车 · 结果区: ${body.slice(0, 110)}`, await shot('13-f5-search'));
+  record(
+    'F5 搜索框',
+    'yes',
+    `可输入并回车 · 结果区: ${body.slice(0, 110)}`,
+    await shot('13-f5-search'),
+  );
 } else {
   record('F5 搜索框', 'no', '未找到搜索输入');
 }
@@ -382,8 +456,14 @@ const noteLink = await probe(['a[href^="/notes/"]', 'a[href*="/note"]']);
 if (noteLink.found) {
   await noteLink.el.click();
   await page.waitForTimeout(2500);
-  const editor = await page.locator('.ProseMirror, [contenteditable="true"], [data-testid*="editor"]').count();
-  record('F5 笔记编辑器 (TipTap)', editor > 0 ? 'yes' : 'no', editor > 0 ? `${editor} 个可编辑区` : '详情页无任何 contenteditable/ProseMirror');
+  const editor = await page
+    .locator('.ProseMirror, [contenteditable="true"], [data-testid*="editor"]')
+    .count();
+  record(
+    'F5 笔记编辑器 (TipTap)',
+    editor > 0 ? 'yes' : 'no',
+    editor > 0 ? `${editor} 个可编辑区` : '详情页无任何 contenteditable/ProseMirror',
+  );
   const exportBtn = await page.locator('button:has-text("导出"), [data-testid*="export"]').count();
   record('F5 笔记导出入口', exportBtn > 0 ? 'yes' : 'no', `${exportBtn} 个导出按钮`);
   const mindmap = await page.locator('[data-testid*="mindmap"], .mind-elixir, svg.markmap').count();
@@ -409,7 +489,12 @@ const langSel =
   (await page.getByText(/语言|Language/).count());
 record('设置-API Key', apiKey > 0 ? 'yes' : 'no', `${apiKey} 个相关元素`);
 record('设置-语言切换', langSel > 0 ? 'yes' : 'no', `${langSel} 个相关元素`);
-record('设置页内容', settingsBody.length > 60 ? 'yes' : 'partial', settingsBody.slice(0, 120), await shot('15-settings'));
+record(
+  '设置页内容',
+  settingsBody.length > 60 ? 'yes' : 'partial',
+  settingsBody.slice(0, 120),
+  await shot('15-settings'),
+);
 
 /* ═══════════════ 7. 真浏览器才能暴露的问题 ═══════════════ */
 console.log('\n[7] 真浏览器专属检查');
@@ -426,7 +511,13 @@ const sseInfo = await page.evaluate(async () => {
       const es = new EventSource('/api/events');
       // 关键坑：具名 event: 帧不会触发 onmessage
       es.onmessage = () => out.received.push('onmessage');
-      for (const t of ['job.created', 'job.progress', 'model.installed', 'storage.changed', 'keepalive']) {
+      for (const t of [
+        'job.created',
+        'job.progress',
+        'model.installed',
+        'storage.changed',
+        'keepalive',
+      ]) {
         es.addEventListener(t, () => out.received.push(t));
       }
       setTimeout(() => {
@@ -455,7 +546,8 @@ record(
 
 // 暗色主题是否真的生效（architect 记录过：写成普通 @theme 会永远不生效且不报错）
 const themeCheck = await page.evaluate(() => {
-  const read = () => getComputedStyle(document.documentElement).getPropertyValue('--surface-0').trim();
+  const read = () =>
+    getComputedStyle(document.documentElement).getPropertyValue('--surface-0').trim();
   const before = read();
   document.documentElement.setAttribute('data-theme', 'dark');
   const after = read();

@@ -129,7 +129,10 @@ export function HardwareCard({ hw, locale }: { hw: HardwareInfo; locale: string 
       {hw.backends.some((b) => !b.available && b.unavailableReason) ? (
         <details className="group mt-2">
           <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[11px] text-ink-muted hover:text-ink-secondary">
-            <ChevronRight className="size-3 transition-transform group-open:rotate-90" aria-hidden />
+            <ChevronRight
+              className="size-3 transition-transform group-open:rotate-90"
+              aria-hidden
+            />
             {t('runtime.hw.whyUnavailable', {
               n: hw.backends.filter((b) => !b.available && b.unavailableReason).length,
             })}

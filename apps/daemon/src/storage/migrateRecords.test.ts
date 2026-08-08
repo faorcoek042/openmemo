@@ -107,12 +107,19 @@ describe('migrateInstallRecords —— 整库', () => {
         id: 'asr/whisper-base-q5_1',
         role: 'asr',
         integrity: 'ok',
-        files: [{ name: 'ggml-base-q5_1.bin', path: '/tmp/cold4/models/by-name/asr/ggml-base-q5_1.bin' }],
+        files: [
+          { name: 'ggml-base-q5_1.bin', path: '/tmp/cold4/models/by-name/asr/ggml-base-q5_1.bin' },
+        ],
       },
       'backend/whispercpp.json': {
         id: 'whispercpp-cpu-linux-x64',
         installPath: 'whispercpp/v1.9.1/cpu',
-        files: [{ name: 'whisper-bin.tar.gz', path: join(root, 'by-name', 'backend', 'whisper-bin.tar.gz') }],
+        files: [
+          {
+            name: 'whisper-bin.tar.gz',
+            path: join(root, 'by-name', 'backend', 'whisper-bin.tar.gz'),
+          },
+        ],
       },
     });
 
@@ -144,7 +151,10 @@ describe('migrateInstallRecords —— 整库', () => {
     const r = await migrateInstallRecords(root);
     assert.equal(r.migrated, 0);
     assert.equal(r.unresolved.length, 1);
-    assert.equal(await fs.readFile(join(root, 'manifests', 'asr', 'broken.json'), 'utf8'), '{ not json');
+    assert.equal(
+      await fs.readFile(join(root, 'manifests', 'asr', 'broken.json'), 'utf8'),
+      '{ not json',
+    );
   });
 
   it('listExistingRelPaths 只列 by-name 下的真实文件', async () => {

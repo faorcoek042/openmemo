@@ -93,7 +93,13 @@ export function createOrganizeRoutes(deps: OrganizeRoutesDeps): {
           }
           const color = optionalString(raw['color']);
           if (color === INVALID) {
-            sendError(res, 400, 'BAD_REQUEST', 'color must be a string or null', 'color 必须是字符串或 null');
+            sendError(
+              res,
+              400,
+              'BAD_REQUEST',
+              'color must be a string or null',
+              'color 必须是字符串或 null',
+            );
             return true;
           }
 
@@ -265,7 +271,13 @@ export function createOrganizeRoutes(deps: OrganizeRoutesDeps): {
           const color = optionalString(raw['color']);
           const icon = optionalString(raw['icon']);
           if (color === INVALID || icon === INVALID) {
-            sendError(res, 400, 'BAD_REQUEST', 'color/icon must be string or null', 'color / icon 必须是字符串或 null');
+            sendError(
+              res,
+              400,
+              'BAD_REQUEST',
+              'color/icon must be string or null',
+              'color / icon 必须是字符串或 null',
+            );
             return true;
           }
 
@@ -273,12 +285,24 @@ export function createOrganizeRoutes(deps: OrganizeRoutesDeps): {
           const parentUid = raw['parentUid'];
           if (parentUid !== undefined && parentUid !== null) {
             if (typeof parentUid !== 'string') {
-              sendError(res, 400, 'BAD_REQUEST', 'parentUid must be a string or null', 'parentUid 必须是字符串或 null');
+              sendError(
+                res,
+                400,
+                'BAD_REQUEST',
+                'parentUid must be a string or null',
+                'parentUid 必须是字符串或 null',
+              );
               return true;
             }
             const parent = repos.folderByUid(parentUid);
             if (!parent || parent.deleted_at !== null) {
-              sendError(res, 400, 'FOLDER_NOT_FOUND', `no folder ${parentUid}`, '父文件夹不存在或已删除');
+              sendError(
+                res,
+                400,
+                'FOLDER_NOT_FOUND',
+                `no folder ${parentUid}`,
+                '父文件夹不存在或已删除',
+              );
               return true;
             }
             parentId = parent.id;
@@ -331,7 +355,13 @@ export function createOrganizeRoutes(deps: OrganizeRoutesDeps): {
           if (raw['color'] !== undefined) {
             const color = optionalString(raw['color']);
             if (color === INVALID) {
-              sendError(res, 400, 'BAD_REQUEST', 'color must be string or null', 'color 必须是字符串或 null');
+              sendError(
+                res,
+                400,
+                'BAD_REQUEST',
+                'color must be string or null',
+                'color 必须是字符串或 null',
+              );
               return true;
             }
             patch.color = color;
@@ -339,7 +369,13 @@ export function createOrganizeRoutes(deps: OrganizeRoutesDeps): {
           if (raw['icon'] !== undefined) {
             const icon = optionalString(raw['icon']);
             if (icon === INVALID) {
-              sendError(res, 400, 'BAD_REQUEST', 'icon must be string or null', 'icon 必须是字符串或 null');
+              sendError(
+                res,
+                400,
+                'BAD_REQUEST',
+                'icon must be string or null',
+                'icon 必须是字符串或 null',
+              );
               return true;
             }
             patch.icon = icon;
@@ -365,16 +401,31 @@ export function createOrganizeRoutes(deps: OrganizeRoutesDeps): {
             if (parentUid === null) {
               patch.parentId = null;
             } else if (typeof parentUid !== 'string') {
-              sendError(res, 400, 'BAD_REQUEST', 'parentUid must be a string or null', 'parentUid 必须是字符串或 null');
+              sendError(
+                res,
+                400,
+                'BAD_REQUEST',
+                'parentUid must be a string or null',
+                'parentUid 必须是字符串或 null',
+              );
               return true;
             } else {
               const parent = repos.folderByUid(parentUid);
               if (!parent || parent.deleted_at !== null) {
-                sendError(res, 400, 'FOLDER_NOT_FOUND', `no folder ${parentUid}`, '父文件夹不存在或已删除');
+                sendError(
+                  res,
+                  400,
+                  'FOLDER_NOT_FOUND',
+                  `no folder ${parentUid}`,
+                  '父文件夹不存在或已删除',
+                );
                 return true;
               }
               // 环检测：新父节点若是自己、或自己的后代（等价于「自己在它的祖先链上」），都会成环
-              if (parent.id === folder.id || repos.folderAncestorIds(parent.id).includes(folder.id)) {
+              if (
+                parent.id === folder.id ||
+                repos.folderAncestorIds(parent.id).includes(folder.id)
+              ) {
                 sendError(
                   res,
                   400,
@@ -448,12 +499,24 @@ export function createOrganizeRoutes(deps: OrganizeRoutesDeps): {
           return true;
         }
         if (typeof folderUid !== 'string') {
-          sendError(res, 400, 'BAD_REQUEST', 'folderUid must be a string or null', 'folderUid 必须是字符串或 null');
+          sendError(
+            res,
+            400,
+            'BAD_REQUEST',
+            'folderUid must be a string or null',
+            'folderUid 必须是字符串或 null',
+          );
           return true;
         }
         const folder = repos.folderByUid(folderUid);
         if (!folder || folder.deleted_at !== null) {
-          sendError(res, 400, 'FOLDER_NOT_FOUND', `no folder ${folderUid}`, '目标文件夹不存在或已删除');
+          sendError(
+            res,
+            400,
+            'FOLDER_NOT_FOUND',
+            `no folder ${folderUid}`,
+            '目标文件夹不存在或已删除',
+          );
           return true;
         }
         repos.setNoteFolder(note.id, folder.id);
@@ -470,7 +533,11 @@ function toTagDto(t: TagRow): TagDto {
   return { uid: t.uid, name: t.name, color: t.color, usageCount: t.usage_count };
 }
 
-function toFolderNode(f: FolderRow, noteCount: number, parentUid: string | null = null): FolderNode {
+function toFolderNode(
+  f: FolderRow,
+  noteCount: number,
+  parentUid: string | null = null,
+): FolderNode {
   return {
     uid: f.uid,
     name: f.name,

@@ -166,7 +166,12 @@ export function PlayerBar({ peaks }: { peaks: DecodedPeaks | null }) {
         <span className="text-ink-muted"> / {timecode(durationMs)}</span>
       </span>
 
-      <Waveform peaks={peaks} durationMs={durationMs} onSeek={requestSeek} className="h-10 flex-1" />
+      <Waveform
+        peaks={peaks}
+        durationMs={durationMs}
+        onSeek={requestSeek}
+        className="h-10 flex-1"
+      />
 
       {assetUid ? (
         <audio

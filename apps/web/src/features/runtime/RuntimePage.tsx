@@ -45,7 +45,7 @@ export default function RuntimePage() {
   const selfTest = useBackendSelfTestMutation();
 
   const selfTestById = useMemo(() => {
-    const m = new Map<string, NonNullable<(typeof installed.data)>['packs'][number]['selfTest']>();
+    const m = new Map<string, NonNullable<typeof installed.data>['packs'][number]['selfTest']>();
     for (const p of installed.data?.packs ?? []) m.set(p.id, p.selfTest);
     return m;
   }, [installed.data]);
@@ -180,9 +180,7 @@ export default function RuntimePage() {
       {hardware.isError ? (
         <ErrorBlock error={hardware.error} onRetry={() => void hardware.refetch()} />
       ) : null}
-      {hardware.isLoading ? (
-        <p className="text-xs text-ink-muted">{t('runtime.probing')}</p>
-      ) : null}
+      {hardware.isLoading ? <p className="text-xs text-ink-muted">{t('runtime.probing')}</p> : null}
       {hw ? <HardwareCard hw={hw} locale={locale} /> : null}
 
       {/*
@@ -228,7 +226,10 @@ export default function RuntimePage() {
         {inapplicable.length > 0 ? (
           <details className="group rounded-lg border border-line bg-surface-1">
             <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-xs text-ink-secondary hover:text-ink">
-              <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" aria-hidden />
+              <ChevronRight
+                className="size-3.5 transition-transform group-open:rotate-90"
+                aria-hidden
+              />
               {t('runtime.inapplicableSummary', { n: inapplicable.length })}
               <span className="text-ink-muted">{t('runtime.inapplicableHint')}</span>
             </summary>

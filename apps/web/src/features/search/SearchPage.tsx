@@ -64,7 +64,10 @@ export default function SearchPage() {
       <h1 className="text-xl font-semibold text-ink">{t('search.title')}</h1>
 
       <div className="relative">
-        <SearchIcon className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-muted" aria-hidden />
+        <SearchIcon
+          className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-muted"
+          aria-hidden
+        />
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}

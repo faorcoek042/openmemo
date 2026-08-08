@@ -37,10 +37,10 @@ date: 2026-08-08
 
 ### 1. 今天的两个数各自从哪来
 
-| 数字 | 出处 | 谁读它 |
-|---|---|---|
-| `0.1.0`（界面显示的） | `apps/daemon/src/main.ts:78` `export const VERSION = '0.1.0'` | `main.ts:366`/`:903` → `/api/health` 的 `version` → `connect.ts` → `MockNotice.tsx:97` `daemon v{health.version}` |
-| `0.0.0`（package.json 的） | `npm init` 的脚手架默认值，10 个包全是它 | **没有任何东西读它** |
+| 数字                       | 出处                                                          | 谁读它                                                                                                            |
+| -------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `0.1.0`（界面显示的）      | `apps/daemon/src/main.ts:78` `export const VERSION = '0.1.0'` | `main.ts:366`/`:903` → `/api/health` 的 `version` → `connect.ts` → `MockNotice.tsx:97` `daemon v{health.version}` |
+| `0.0.0`（package.json 的） | `npm init` 的脚手架默认值，10 个包全是它                      | **没有任何东西读它**                                                                                              |
 
 关键事实：`[实测]` 全仓对 `package.json` 的读取只有 4 处
 （`check-test-scripts.mjs:123` 读 `scripts.test`、`lint-workflows.mjs:380` 读
@@ -142,15 +142,15 @@ package.json (version: "0.2.0")          ← 唯一权威。其余 9 个 package
 
 它检查（自检先行，照 `check-orphan-exports.mjs` 的规矩）：
 
-| # | 断言 | 抓的是 |
-|---|---|---|
-| ① | 根 `package.json` 的 `name === 'openmemo'` | 我读的是我以为的文件吗 |
-| ② | 清单里 9 个包都存在、数量 ≥ 8 | 扫描器对着不存在的路径报绿 |
-| ③ | 9 个包**都没有** `version` 字段 | 有人把副本加回来 |
-| ④ | 根 `version` 匹配 `^0\.\d+\.\d+$` 且文件名安全 | 格式漂移；下游包名会拼它 |
-| ⑤ | `main.ts` 的 `VERSION` 来自 `BUILD_INFO.version` | **v0.1.0 的原始成因复发** |
-| ⑥ | `CHANGELOG.md` 最新条目 == 根 `version` | 版本变了但没说变了什么 |
-| ⑦ | `dist/build-info.json` 的 `version` == 根（构建过才查） | 改完没重建，界面在报旧值 |
+| #   | 断言                                                    | 抓的是                     |
+| --- | ------------------------------------------------------- | -------------------------- |
+| ①   | 根 `package.json` 的 `name === 'openmemo'`              | 我读的是我以为的文件吗     |
+| ②   | 清单里 9 个包都存在、数量 ≥ 8                           | 扫描器对着不存在的路径报绿 |
+| ③   | 9 个包**都没有** `version` 字段                         | 有人把副本加回来           |
+| ④   | 根 `version` 匹配 `^0\.\d+\.\d+$` 且文件名安全          | 格式漂移；下游包名会拼它   |
+| ⑤   | `main.ts` 的 `VERSION` 来自 `BUILD_INFO.version`        | **v0.1.0 的原始成因复发**  |
+| ⑥   | `CHANGELOG.md` 最新条目 == 根 `version`                 | 版本变了但没说变了什么     |
+| ⑦   | `dist/build-info.json` 的 `version` == 根（构建过才查） | 改完没重建，界面在报旧值   |
 
 **它刻意不做的事**：不检查"你是不是该 bump 了"。
 

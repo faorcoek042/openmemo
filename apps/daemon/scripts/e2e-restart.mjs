@@ -77,7 +77,9 @@ const res = await fetch(`${base}/api/daemon/restart`, {
   headers: H,
   body: JSON.stringify({ reason: 'e2e-test' }),
 });
-console.log(`[4] POST /api/daemon/restart → HTTP ${res.status} ${JSON.stringify(await res.json())}`);
+console.log(
+  `[4] POST /api/daemon/restart → HTTP ${res.status} ${JSON.stringify(await res.json())}`,
+);
 
 // ---- 关键：在**同一个端口**上等它回来 ----
 let after = null;
@@ -98,14 +100,18 @@ if (!after) {
   process.exit(1);
 }
 const backMs = Date.now() - t0;
-console.log(`[5] 重启后 pid=${after.pid} instanceId=${after.instanceId} port=${after.port} 用时=${backMs}ms`);
+console.log(
+  `[5] 重启后 pid=${after.pid} instanceId=${after.instanceId} port=${after.port} 用时=${backMs}ms`,
+);
 
 const pidChanged = after.pid !== before.pid;
 const idChanged = after.instanceId !== before.instanceId;
 const samePort = after.port === before.port;
 console.log(`    ★ 真的换了进程（pid 变）: ${pidChanged ? '✅' : '❌'}`);
 console.log(`    ★ instanceId 变了: ${idChanged ? '✅' : '❌'}`);
-console.log(`    ★ 端口没漂（麦克风授权保住）: ${samePort ? '✅' : `❌ ${before.port} → ${after.port}`}`);
+console.log(
+  `    ★ 端口没漂（麦克风授权保住）: ${samePort ? '✅' : `❌ ${before.port} → ${after.port}`}`,
+);
 
 // ---- 在途任务必须自动续跑 ----
 /*
@@ -138,7 +144,9 @@ console.log(`    ★ note 重启后仍可读: ${dataOk ? '✅' : `❌ HTTP ${det
 // ---- 登录态必须活过重启（否则用户那一页直接废掉）----
 // 用 cookie 会话而不是 Bearer 才测得准，这里退一步：至少证明 token 没换。
 const tokenStillValid = detailRes.status !== 401;
-console.log(`    ★ 重启后旧 token/会话仍有效（浏览器那页不会被踢）: ${tokenStillValid ? '✅' : '❌'}`);
+console.log(
+  `    ★ 重启后旧 token/会话仍有效（浏览器那页不会被踢）: ${tokenStillValid ? '✅' : '❌'}`,
+);
 
 const allOk = pidChanged && idChanged && samePort && grew && dataOk && tokenStillValid;
 console.log(`\n结论：自我重启 ${allOk ? '✅ 可行' : '❌ 有问题'}`);

@@ -43,7 +43,10 @@ for (let i = 0; i < 40; i++) {
 }
 console.log(`[2] 暂停前已落段=${n}  jobs=${JSON.stringify(await jobOf())}`);
 
-const pauseRes = await fetch(`${base}/api/jobs/${imp.jobUid}/pause`, { method: 'POST', headers: H });
+const pauseRes = await fetch(`${base}/api/jobs/${imp.jobUid}/pause`, {
+  method: 'POST',
+  headers: H,
+});
 console.log(`[3] POST /api/jobs/:uid/pause → HTTP ${pauseRes.status}`);
 
 await sleep(4000);
@@ -54,7 +57,10 @@ const isPaused = (afterPause['paused'] ?? 0) >= 1;
 console.log(`    ★ 状态是 paused（不是 cancelled）: ${isPaused ? '✅' : '❌'}`);
 
 // ---- 关键：resume 必须真的恢复 ----
-const resumeRes = await fetch(`${base}/api/jobs/${imp.jobUid}/resume`, { method: 'POST', headers: H });
+const resumeRes = await fetch(`${base}/api/jobs/${imp.jobUid}/resume`, {
+  method: 'POST',
+  headers: H,
+});
 console.log(`\n[5] POST /api/jobs/:uid/resume → HTTP ${resumeRes.status}`);
 
 let grew = false;
@@ -67,7 +73,9 @@ for (let i = 0; i < 60; i++) {
     break;
   }
 }
-console.log(`[6] resume 后段数: ${segAfterPause} → ${n2}  ${grew ? '✅ 真的继续跑了' : '❌ 没有恢复'}`);
+console.log(
+  `[6] resume 后段数: ${segAfterPause} → ${n2}  ${grew ? '✅ 真的继续跑了' : '❌ 没有恢复'}`,
+);
 
 console.log(`\n=== D1 结论 ===`);
 console.log(`  暂停后状态为 paused : ${isPaused ? '✅' : '❌'}`);

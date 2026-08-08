@@ -29,13 +29,23 @@ import { DownloadQueue } from './queue.js';
 /** 抛一个带 `code` 的错误 —— 与 `DownloadError` / `HttpError` 真实抛出的形状一致。 */
 function failingWith(code: string, message: string, retryable?: boolean) {
   return () =>
-    Promise.reject(Object.assign(new Error(message), { code, ...(retryable === undefined ? {} : { retryable }) }));
+    Promise.reject(
+      Object.assign(new Error(message), {
+        code,
+        ...(retryable === undefined ? {} : { retryable }),
+      }),
+    );
 }
 
 async function runOne(task: () => Promise<never>) {
   const q = new DownloadQueue(1);
   const { job } = q.enqueue(
-    { kind: 'model', targetId: `asr/t-${Math.random().toString(36).slice(2)}`, displayName: 'x', totalBytes: 1 },
+    {
+      kind: 'model',
+      targetId: `asr/t-${Math.random().toString(36).slice(2)}`,
+      displayName: 'x',
+      totalBytes: 1,
+    },
     task,
   );
   await new Promise<void>((resolve) => {
@@ -47,7 +57,9 @@ async function runOne(task: () => Promise<never>) {
 
 describe('下载失败时交给界面的错误文案', () => {
   it('★ 已登记的错误码必须给中文 —— 中文界面读的就是 messageZh 这一个字段', async () => {
-    const job = await runOne(failingWith('INTEGRITY_ALL_SOURCES_FAILED', 'All download sources failed'));
+    const job = await runOne(
+      failingWith('INTEGRITY_ALL_SOURCES_FAILED', 'All download sources failed'),
+    );
     assert.equal(job?.state, 'failed');
     assert.equal(job?.error?.messageZh, '所有下载源均失败');
     // 英文那半边不许被顺手改掉：诊断细节只在这里，丢了就再也拿不回来。

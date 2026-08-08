@@ -49,9 +49,9 @@ jobs:
         include:
           # ubuntu 这一行是**对照组**，不是冗余：没有它，macOS/Windows 的红分不清是
           # "平台问题"还是"这一版代码本来就坏"。
-          - { runner: ubuntu-24.04,   label: linux-x64 (control) }
-          - { runner: macos-26,       label: darwin-arm64 }
-          - { runner: windows-2025,   label: win32-x64 }
+          - { runner: ubuntu-24.04, label: linux-x64 (control) }
+          - { runner: macos-26, label: darwin-arm64 }
+          - { runner: windows-2025, label: win32-x64 }
           # ★ T-145 第二轮裁掉（用户 2026-08-05：「macos-x64 我用不到」）：
           #   - { runner: macos-15-intel, label: darwin-x64 }
           #   第一轮它跑过一次，结论是**和 darwin-arm64 逐条一致**

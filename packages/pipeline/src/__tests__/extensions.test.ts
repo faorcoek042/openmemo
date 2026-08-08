@@ -18,7 +18,16 @@
  * 必须双双能读到真实内容。
  */
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, lstat, readFile, readlink, rm, writeFile, symlink } from 'node:fs/promises';
+import {
+  mkdtemp,
+  mkdir,
+  lstat,
+  readFile,
+  readlink,
+  rm,
+  writeFile,
+  symlink,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -204,7 +213,10 @@ describe('materializeSqliteExtensions', () => {
   it('一个都没装：如实报 missing，不建空目录也不抛', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'om-ext-empty-'));
     roots.push(dataDir);
-    const r = await materializeSqliteExtensions(join(dataDir, 'models'), join(dataDir, 'bin', 'ext'));
+    const r = await materializeSqliteExtensions(
+      join(dataDir, 'models'),
+      join(dataDir, 'bin', 'ext'),
+    );
     assert.equal(Object.keys(r.linked).length, 0);
     assert.equal(r.missing.length, 3);
   });

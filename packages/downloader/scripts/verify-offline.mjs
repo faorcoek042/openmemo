@@ -159,11 +159,20 @@ console.log('[1] full transfer with a wrong expected hash must install nothing')
   const dir = path.join(root, 'late');
   let err = null;
   try {
-    await downloadFile({ sha256: WRONG_SHA, sizeBytes: CONTENT.length, sources: src('/f'), blobDir: dir });
+    await downloadFile({
+      sha256: WRONG_SHA,
+      sizeBytes: CONTENT.length,
+      sources: src('/f'),
+      blobDir: dir,
+    });
   } catch (e) {
     err = e;
   }
-  check('rejected with CHECKSUM_MISMATCH', err?.code === 'CHECKSUM_MISMATCH', err?.message?.slice(0, 80));
+  check(
+    'rejected with CHECKSUM_MISMATCH',
+    err?.code === 'CHECKSUM_MISMATCH',
+    err?.message?.slice(0, 80),
+  );
   const entries = await fs.readdir(dir).catch(() => []);
   check('no blob and no partial left behind', entries.length === 0, `dir contains [${entries}]`);
 }
@@ -178,7 +187,11 @@ console.log('\n[2] origin-advertised digest disagreeing must reject before trans
   } catch (e) {
     err = e;
   }
-  check('rejected with CHECKSUM_MISMATCH', err?.code === 'CHECKSUM_MISMATCH', err?.message?.slice(0, 70));
+  check(
+    'rejected with CHECKSUM_MISMATCH',
+    err?.code === 'CHECKSUM_MISMATCH',
+    err?.message?.slice(0, 70),
+  );
   check('rejected without writing anything', (await fs.readdir(dir).catch(() => [])).length === 0);
 }
 
@@ -190,8 +203,12 @@ console.log('\n[3] connection drops mid-stream, retry resumes from the sidecar')
   let firstErr = null;
   try {
     await downloadFile({
-      sha256: CONTENT_SHA, sizeBytes: CONTENT.length, sources: src('/flaky'),
-      blobDir: dir, maxParts: 2, stallTimeoutMs: 3000,
+      sha256: CONTENT_SHA,
+      sizeBytes: CONTENT.length,
+      sources: src('/flaky'),
+      blobDir: dir,
+      maxParts: 2,
+      stallTimeoutMs: 3000,
     });
   } catch (e) {
     firstErr = e;
@@ -206,8 +223,11 @@ console.log('\n[3] connection drops mid-stream, retry resumes from the sidecar')
 
   dropNextAt = 0; // origin recovers
   const r = await downloadFile({
-    sha256: CONTENT_SHA, sizeBytes: CONTENT.length, sources: src('/flaky'),
-    blobDir: dir, maxParts: 2,
+    sha256: CONTENT_SHA,
+    sizeBytes: CONTENT.length,
+    sources: src('/flaky'),
+    blobDir: dir,
+    maxParts: 2,
   });
   check('completed and verified after recovery', r.sha256 === CONTENT_SHA);
   check(
@@ -224,8 +244,11 @@ console.log('\n[4] origin ignoring Range still yields a verified file');
 {
   const dir = path.join(root, 'norange');
   const r = await downloadFile({
-    sha256: CONTENT_SHA, sizeBytes: CONTENT.length, sources: src('/no-range'),
-    blobDir: dir, maxParts: 4,
+    sha256: CONTENT_SHA,
+    sizeBytes: CONTENT.length,
+    sources: src('/no-range'),
+    blobDir: dir,
+    maxParts: 4,
   });
   check('single-stream fallback verified', r.sha256 === CONTENT_SHA);
   check('content correct', sha256(await fs.readFile(r.blobPath)) === CONTENT_SHA);
@@ -237,7 +260,12 @@ console.log('\n[5] size disagreement is caught before transferring');
   const dir = path.join(root, 'size');
   let err = null;
   try {
-    await downloadFile({ sha256: CONTENT_SHA, sizeBytes: CONTENT.length, sources: src('/wrong-size'), blobDir: dir });
+    await downloadFile({
+      sha256: CONTENT_SHA,
+      sizeBytes: CONTENT.length,
+      sources: src('/wrong-size'),
+      blobDir: dir,
+    });
   } catch (e) {
     err = e;
   }
@@ -258,8 +286,11 @@ console.log('\n[6] corrupt mirror is skipped, good mirror wins');
     blobDir: dir,
     maxParts: 2,
   });
-  check('recovered from a corrupt mirror', r.sha256 === CONTENT_SHA && r.provider === 'good-mirror',
-    `provider=${r.provider}, attempts=${r.attempts}`);
+  check(
+    'recovered from a corrupt mirror',
+    r.sha256 === CONTENT_SHA && r.provider === 'good-mirror',
+    `provider=${r.provider}, attempts=${r.attempts}`,
+  );
   check('final content correct', sha256(await fs.readFile(r.blobPath)) === CONTENT_SHA);
 }
 
@@ -282,8 +313,14 @@ console.log('\n[7] queue: dedup, concurrency, cancel, retry');
       }, 120);
     });
 
-  const a = q.enqueue({ kind: 'model', targetId: 'm/a', displayName: 'A', totalBytes: 1 }, slow('a'));
-  const dup = q.enqueue({ kind: 'model', targetId: 'm/a', displayName: 'A', totalBytes: 1 }, slow('a2'));
+  const a = q.enqueue(
+    { kind: 'model', targetId: 'm/a', displayName: 'A', totalBytes: 1 },
+    slow('a'),
+  );
+  const dup = q.enqueue(
+    { kind: 'model', targetId: 'm/a', displayName: 'A', totalBytes: 1 },
+    slow('a2'),
+  );
   check('duplicate target deduplicated', dup.deduplicated && dup.job.jobId === a.job.jobId);
   check('jobId is a ULID', /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(a.job.jobId), a.job.jobId);
   check('job.type set from kind', a.job.type === 'download.model', a.job.type);
@@ -293,13 +330,18 @@ console.log('\n[7] queue: dedup, concurrency, cancel, retry');
   }
   await Promise.all(q.list().map((j) => q.waitFor(j.jobId)));
   check('concurrency limit honoured', peakConcurrent <= 2, `peak=${peakConcurrent}`);
-  check('all jobs reached succeeded', q.list().every((j) => j.state === 'succeeded'));
+  check(
+    'all jobs reached succeeded',
+    q.list().every((j) => j.state === 'succeeded'),
+  );
 
   const q2 = new DownloadQueue(1);
-  const hang = q2.enqueue({ kind: 'model', targetId: 'm/hang', displayName: 'H', totalBytes: 1 }, (ctx) =>
-    new Promise((_res, rej) => {
-      ctx.signal.addEventListener('abort', () => rej(new Error('aborted')), { once: true });
-    }),
+  const hang = q2.enqueue(
+    { kind: 'model', targetId: 'm/hang', displayName: 'H', totalBytes: 1 },
+    (ctx) =>
+      new Promise((_res, rej) => {
+        ctx.signal.addEventListener('abort', () => rej(new Error('aborted')), { once: true });
+      }),
   );
   await new Promise((r) => setTimeout(r, 30));
   q2.cancel(hang.job.jobId);
@@ -335,7 +377,11 @@ console.log('\n[8] installer: disk pre-check and by-name linking');
   });
   check('install completed', res.files.length === 1 && res.files[0].sha256 === CONTENT_SHA);
   const linked = res.files[0].path;
-  check('by-name link created', (await fs.stat(linked)).size === CONTENT.length, path.basename(linked));
+  check(
+    'by-name link created',
+    (await fs.stat(linked)).size === CONTENT.length,
+    path.basename(linked),
+  );
 
   // Optional file for another platform must be skipped, not downloaded.
   const res2 = await install({
@@ -346,11 +392,18 @@ console.log('\n[8] installer: disk pre-check and by-name linking');
       displayName: 'Test2',
       files: [
         {
-          role: 'weights', name: 'test-model.bin', sizeBytes: CONTENT.length, sha256: CONTENT_SHA,
+          role: 'weights',
+          name: 'test-model.bin',
+          sizeBytes: CONTENT.length,
+          sha256: CONTENT_SHA,
           mirrors: [{ provider: 'local', url: `${base}/f`, official: true }],
         },
         {
-          role: 'coreml-encoder', name: 'mac-only.zip', sizeBytes: 1, sha256: WRONG_SHA, optional: true,
+          role: 'coreml-encoder',
+          name: 'mac-only.zip',
+          sizeBytes: 1,
+          sha256: WRONG_SHA,
+          optional: true,
           platforms: [{ os: 'darwin', arch: 'arm64' }],
           mirrors: [{ provider: 'local', url: `${base}/nope`, official: true }],
         },
@@ -409,7 +462,11 @@ console.log('\n[9] 安装失败不得留下半个解压目录');
   }
   check('解压失败会抛错', err != null, err?.code);
   check('错误码是 UNPACK_FAILED', err?.code === 'UNPACK_FAILED', err?.code);
-  check('失败标记为可重试（字节已校验，重试很便宜）', err?.retryable === true, `retryable=${err?.retryable}`);
+  check(
+    '失败标记为可重试（字节已校验，重试很便宜）',
+    err?.retryable === true,
+    `retryable=${err?.retryable}`,
+  );
 
   const leftovers = await fs.readdir(store.byNameDir('backend')).catch(() => []);
   const partial = leftovers.filter((n) => n.startsWith('broken'));
@@ -437,23 +494,37 @@ console.log('\n[10] role 与目录解耦：VAD 不得被当成 ASR');
 
   // 正常安装：各自进各自的桶
   await store.writeManifest('asr', 'asr/whisper-tiny', {
-    id: 'asr/whisper-tiny', role: 'asr', integrity: 'ok',
+    id: 'asr/whisper-tiny',
+    role: 'asr',
+    integrity: 'ok',
     files: [{ role: 'weights', name: 'ggml-tiny.bin', sha256: 'a'.repeat(64) }],
   });
   await store.writeManifest('vad', 'vad/silero-vad-ggml', {
-    id: 'vad/silero-vad-ggml', role: 'vad', integrity: 'ok',
+    id: 'vad/silero-vad-ggml',
+    role: 'vad',
+    integrity: 'ok',
     files: [{ role: 'weights', name: 'ggml-silero.bin', sha256: 'b'.repeat(64) }],
   });
 
   const asr = await findInstalledByRole(store, 'asr');
   const vad = await findInstalledByRole(store, 'vad');
-  check('ASR 查询只返回 ASR', asr.length === 1 && asr[0].id === 'asr/whisper-tiny', asr.map((r) => r.id).join(','));
-  check('VAD 查询只返回 VAD', vad.length === 1 && vad[0].id === 'vad/silero-vad-ggml', vad.map((r) => r.id).join(','));
+  check(
+    'ASR 查询只返回 ASR',
+    asr.length === 1 && asr[0].id === 'asr/whisper-tiny',
+    asr.map((r) => r.id).join(','),
+  );
+  check(
+    'VAD 查询只返回 VAD',
+    vad.length === 1 && vad[0].id === 'vad/silero-vad-ggml',
+    vad.map((r) => r.id).join(','),
+  );
   check('VAD 没有混进 ASR 结果', !asr.some((r) => String(r.id).startsWith('vad/')));
 
   // ★ 恶意/历史情况：VAD 记录被错误地写进了 manifests/asr/ 目录
   await store.writeManifest('asr', 'vad/misfiled', {
-    id: 'vad/misfiled', role: 'vad', integrity: 'ok',
+    id: 'vad/misfiled',
+    role: 'vad',
+    integrity: 'ok',
     files: [{ role: 'weights', name: 'ggml-silero.bin', sha256: 'c'.repeat(64) }],
   });
   const asr2 = await findInstalledByRole(store, 'asr');
@@ -463,20 +534,30 @@ console.log('\n[10] role 与目录解耦：VAD 不得被当成 ASR');
     'asr 结果: ' + asr2.map((r) => `${r.id}(${r.role})`).join(', '),
   );
   const vad2 = await findInstalledByRole(store, 'vad');
-  check('且它仍能被 VAD 查询找到', vad2.some((r) => r.id === 'vad/misfiled'), vad2.map((r) => r.id).join(','));
+  check(
+    '且它仍能被 VAD 查询找到',
+    vad2.some((r) => r.id === 'vad/misfiled'),
+    vad2.map((r) => r.id).join(','),
+  );
 
   // 没有 role 字段 → 不猜，直接不算候选
   await store.writeManifest('asr', 'legacy/no-role', {
-    id: 'legacy/no-role', integrity: 'ok',
+    id: 'legacy/no-role',
+    integrity: 'ok',
     files: [{ role: 'weights', name: 'x.bin', sha256: 'd'.repeat(64) }],
   });
   const asr3 = await findInstalledByRole(store, 'asr');
-  check('缺 role 的旧记录不被猜成 ASR', !asr3.some((r) => r.id === 'legacy/no-role'),
-    '（宁可显示"未安装"，也不要拿一个类型不明的权重去推理）');
+  check(
+    '缺 role 的旧记录不被猜成 ASR',
+    !asr3.some((r) => r.id === 'legacy/no-role'),
+    '（宁可显示"未安装"，也不要拿一个类型不明的权重去推理）',
+  );
 
   // 校验失败的记录不得被选用
   await store.writeManifest('asr', 'asr/corrupt', {
-    id: 'asr/corrupt', role: 'asr', integrity: 'corrupt',
+    id: 'asr/corrupt',
+    role: 'asr',
+    integrity: 'corrupt',
     files: [{ role: 'weights', name: 'y.bin', sha256: 'e'.repeat(64) }],
   });
   const asr4 = await findInstalledByRole(store, 'asr');
@@ -487,72 +568,114 @@ console.log('\n[10] role 与目录解耦：VAD 不得被当成 ASR');
 console.log('\n[14] speedClass 双轴 + 供应商目录的出厂空状态');
 {
   const read = async (f) =>
-    JSON.parse(await fs.readFile(new URL('../../../vendor/manifests/' + f, import.meta.url), 'utf8'));
+    JSON.parse(
+      await fs.readFile(new URL('../../../vendor/manifests/' + f, import.meta.url), 'utf8'),
+    );
   const models = [
     ...(await read('models-whisper.json')).models,
     ...(await read('models-asr-support.json')).models,
     ...(await read('models-llm.json')).models,
   ];
-  check('每条模型都有 speedClass', models.every((m) => ['fast', 'balance', 'quality'].includes(m.speedClass)),
-    `${models.length} 条`);
+  check(
+    '每条模型都有 speedClass',
+    models.every((m) => ['fast', 'balance', 'quality'].includes(m.speedClass)),
+    `${models.length} 条`,
+  );
 
   // 同一 groupId 内档位必须一致 —— 否则"按档位筛选"会把一个组劈成两半
   const byGroup = new Map();
-  for (const m of models) (byGroup.get(m.groupId) ?? byGroup.set(m.groupId, new Set()).get(m.groupId)).add(m.speedClass);
+  for (const m of models)
+    (byGroup.get(m.groupId) ?? byGroup.set(m.groupId, new Set()).get(m.groupId)).add(m.speedClass);
   const split = [...byGroup].filter(([, v]) => v.size > 1).map(([k]) => k);
-  check('同一组内 speedClass 一致（否则筛选会把组劈开）', split.length === 0, split.join(',') || '无');
+  check(
+    '同一组内 speedClass 一致（否则筛选会把组劈开）',
+    split.length === 0,
+    split.join(',') || '无',
+  );
 
   // speedClass 与 quantTier 必须是两根独立的轴，否则加它就没有意义
   const pairs = new Set(models.map((m) => `${m.quantTier}|${m.speedClass}`));
   const quant = new Set(models.map((m) => m.quantTier));
-  check('speedClass 不是 quantTier 的别名（组合数 > 各自取值数）', pairs.size > quant.size,
-    `${pairs.size} 种组合 / ${quant.size} 种 quantTier`);
+  check(
+    'speedClass 不是 quantTier 的别名（组合数 > 各自取值数）',
+    pairs.size > quant.size,
+    `${pairs.size} 种组合 / ${quant.size} 种 quantTier`,
+  );
 
   /* --- speedEvidence：实测 / 估计 / 未测量 三态不许混同（T-125） --------- */
-  const {
-    describeSpeed,
-    referenceSpeedOf,
-    SPEED_EVIDENCE_KINDS,
-  } = await import('../../shared/dist/index.js');
+  const { describeSpeed, referenceSpeedOf, SPEED_EVIDENCE_KINDS } =
+    await import('../../shared/dist/index.js');
 
-  check('每条模型都有 speedEvidence（"未测量"是写出来的事实，不是缺字段）',
+  check(
+    '每条模型都有 speedEvidence（"未测量"是写出来的事实，不是缺字段）',
     models.every((m) => m.speedEvidence && SPEED_EVIDENCE_KINDS.includes(m.speedEvidence.kind)),
-    `${models.length} 条`);
+    `${models.length} 条`,
+  );
 
   // 退役字段必须彻底消失：留着就又有两个出处，正是这次要消掉的东西
-  check('retired referenceBenchmark 已从清单里移除',
+  check(
+    'retired referenceBenchmark 已从清单里移除',
     models.every((m) => !('referenceBenchmark' in m)),
-    models.filter((m) => 'referenceBenchmark' in m).map((m) => m.id).join(',') || '无残留');
+    models
+      .filter((m) => 'referenceBenchmark' in m)
+      .map((m) => m.id)
+      .join(',') || '无残留',
+  );
 
   // ★ 最要紧的一条：未测量的条目**不可能**携带速度数字
   const unmeasured = models.filter((m) => m.speedEvidence.kind === 'unmeasured');
-  check('未测量的条目不携带任何 rtf（结构上就放不下）',
+  check(
+    '未测量的条目不携带任何 rtf（结构上就放不下）',
     unmeasured.every((m) => m.speedEvidence.rtf === undefined),
-    `${unmeasured.length} 条未测量`);
-  check('未测量的条目都写了 reason（说明为什么没有，而不是沉默）',
-    unmeasured.every((m) => typeof m.speedEvidence.reason === 'string'));
+    `${unmeasured.length} 条未测量`,
+  );
+  check(
+    '未测量的条目都写了 reason（说明为什么没有，而不是沉默）',
+    unmeasured.every((m) => typeof m.speedEvidence.reason === 'string'),
+  );
 
   const measured = models.filter((m) => m.speedEvidence.kind === 'measured');
-  check('实测条目的 rtf 与 benchmark.rtf 一致（单一出处，不可能漂移）',
+  check(
+    '实测条目的 rtf 与 benchmark.rtf 一致（单一出处，不可能漂移）',
     measured.every((m) => m.speedEvidence.rtf === m.speedEvidence.benchmark.rtf),
-    `${measured.length} 条实测`);
-  check('实测条目的出处齐全（机器/后端/素材/时长/语言）',
+    `${measured.length} 条实测`,
+  );
+  check(
+    '实测条目的出处齐全（机器/后端/素材/时长/语言）',
     measured.every((m) => {
       const b = m.speedEvidence.benchmark;
-      return b.deviceName && b.backend && b.sampleName && b.sampleDurationSec > 0 && b.sampleLanguage;
-    }));
+      return (
+        b.deviceName && b.backend && b.sampleName && b.sampleDurationSec > 0 && b.sampleLanguage
+      );
+    }),
+  );
 
   // 估计值绝不能被 fit 计算当成"参考机实测"
-  check('只有 measured 会喂给 fit 计算，估计/未测量一律 null',
+  check(
+    '只有 measured 会喂给 fit 计算，估计/未测量一律 null',
     models.every((m) =>
       m.speedEvidence.kind === 'measured'
         ? referenceSpeedOf(m.speedEvidence)?.rtf === m.speedEvidence.rtf
-        : referenceSpeedOf(m.speedEvidence) === null));
+        : referenceSpeedOf(m.speedEvidence) === null,
+    ),
+  );
 
   // 三态的 UI 文案必须互不相同，否则用户分不出哪个是承诺哪个是猜
   const labels = new Set(
     [
-      { kind: 'measured', rtf: 0.1, benchmark: { rtf: 0.1, backend: 'cpu', deviceName: 'd', measuredAt: '', sampleName: 's', sampleDurationSec: 1, sampleLanguage: 'zh' } },
+      {
+        kind: 'measured',
+        rtf: 0.1,
+        benchmark: {
+          rtf: 0.1,
+          backend: 'cpu',
+          deviceName: 'd',
+          measuredAt: '',
+          sampleName: 's',
+          sampleDurationSec: 1,
+          sampleLanguage: 'zh',
+        },
+      },
       { kind: 'estimated', rtf: 0.1, basedOn: 'x', method: 'm'.repeat(12), uncertaintyFactor: 2 },
       { kind: 'unmeasured', reason: 'not_run' },
     ].map((e) => describeSpeed(e).labelZh),
@@ -561,16 +684,32 @@ console.log('\n[14] speedClass 双轴 + 供应商目录的出厂空状态');
 
   const cat = await read('llm-providers.json');
   check('供应商目录 24 家', cat.providers.length === 24, String(cat.providers.length));
-  check('置顶六家齐全', ['openai','claude','gemini','deepseek','ollama','lmstudio']
-    .every((id) => cat.providers.some((p) => p.id === id && p.isMainstreamPinned)));
+  check(
+    '置顶六家齐全',
+    ['openai', 'claude', 'gemini', 'deepseek', 'ollama', 'lmstudio'].every((id) =>
+      cat.providers.some((p) => p.id === id && p.isMainstreamPinned),
+    ),
+  );
   // ★ 出厂必须是"一个都没配"，而不是预置一个用不了的 provider
   const { bucketProviders, canRefreshModelList } = await import('../../shared/dist/index.js');
-  check('出厂状态 configured 为空（不假装已配好）', bucketProviders(cat.providers, []).configured.length === 0);
-  check('只对有程序化来源的厂商允许「刷新」', cat.providers.filter(canRefreshModelList).length === 4,
-    cat.providers.filter(canRefreshModelList).map((p) => p.id).join(','));
-  check('人工转录的清单都带 checkedAt（时效可见）',
-    cat.providers.filter((p) => p.modelListSource.type === 'official-doc')
-      .every((p) => typeof p.modelListSource.checkedAt === 'string'));
+  check(
+    '出厂状态 configured 为空（不假装已配好）',
+    bucketProviders(cat.providers, []).configured.length === 0,
+  );
+  check(
+    '只对有程序化来源的厂商允许「刷新」',
+    cat.providers.filter(canRefreshModelList).length === 4,
+    cat.providers
+      .filter(canRefreshModelList)
+      .map((p) => p.id)
+      .join(','),
+  );
+  check(
+    '人工转录的清单都带 checkedAt（时效可见）',
+    cat.providers
+      .filter((p) => p.modelListSource.type === 'official-doc')
+      .every((p) => typeof p.modelListSource.checkedAt === 'string'),
+  );
 }
 
 console.log('\n[13] linkInto 只属于 sqlite-ext，后端包不许有');
@@ -579,15 +718,24 @@ console.log('\n[13] linkInto 只属于 sqlite-ext，后端包不许有');
   // 而两者语义冲突时，执行它比忽略它更糟（后端包会被搬出 by-name/，ffmpeg 当场找不到；
   // sqlite-ext 共用 bin/ext，解压式安装会把上一个扩展整个删掉）。
   const read = async (f) =>
-    JSON.parse(await fs.readFile(new URL('../../../vendor/manifests/' + f, import.meta.url), 'utf8'));
+    JSON.parse(
+      await fs.readFile(new URL('../../../vendor/manifests/' + f, import.meta.url), 'utf8'),
+    );
   const be = await read('backends.json');
   const ext = await read('sqlite-ext.json');
   const stale = [...be.packs, ...ext.packs].filter((p) => 'installPath' in p);
-  check('两份清单里都没有 installPath 残留', stale.length === 0, stale.map((p) => p.id).join(',') || '无');
+  check(
+    '两份清单里都没有 installPath 残留',
+    stale.length === 0,
+    stale.map((p) => p.id).join(',') || '无',
+  );
   check(
     '后端包一律不带 linkInto（否则会被搬出 by-name/，工具发现失效）',
     be.packs.every((p) => p.linkInto === undefined),
-    be.packs.filter((p) => p.linkInto).map((p) => p.id).join(',') || '无',
+    be.packs
+      .filter((p) => p.linkInto)
+      .map((p) => p.id)
+      .join(',') || '无',
   );
   check(
     'sqlite-ext 每个包都带 linkInto=bin/ext',
@@ -615,8 +763,14 @@ console.log('\n[12] 后端包里的可执行文件必须能被找到（含 bin/ 
   await fs.mkdir(flat, { recursive: true });
   await fs.writeFile(path.join(flat, 'whisper-cli'), '#!/bin/sh\n');
   await fs.chmod(path.join(flat, 'whisper-cli'), 0o755);
-  check('平铺布局仍然找得到（没有为了新布局牺牲旧的）', (await findInBackendPacks(root, 'whisper-cli')) !== null);
-  check('不存在的工具仍返回 null（不误报找到）', (await findInBackendPacks(root, 'nope-cli')) === null);
+  check(
+    '平铺布局仍然找得到（没有为了新布局牺牲旧的）',
+    (await findInBackendPacks(root, 'whisper-cli')) !== null,
+  );
+  check(
+    '不存在的工具仍返回 null（不误报找到）',
+    (await findInBackendPacks(root, 'nope-cli')) === null,
+  );
 
   // T-132：**包本身就是一个可执行文件**（yt-dlp 的官方发布物就是这样，没有归档）。
   // 这时 `linkByName` 直接把它硬链成 `by-name/backend/<name>` —— 是文件不是目录，
@@ -624,7 +778,10 @@ console.log('\n[12] 后端包里的可执行文件必须能被找到（含 bin/ 
   const bare = path.join(root, 'by-name', 'backend', 'yt-dlp');
   await fs.writeFile(bare, '#!/bin/sh\n');
   await fs.chmod(bare, 0o755);
-  check('单文件包（by-name/backend/<name> 是文件）也能被找到', (await findInBackendPacks(root, 'yt-dlp')) === bare);
+  check(
+    '单文件包（by-name/backend/<name> 是文件）也能被找到',
+    (await findInBackendPacks(root, 'yt-dlp')) === bare,
+  );
   // 没有可执行位 = 不算找到：否则会交出一个 spawn 必然 EACCES 的路径还报绿。
   await fs.chmod(bare, 0o644);
   check('单文件包缺可执行位时不算找到', (await findInBackendPacks(root, 'yt-dlp')) === null);
@@ -657,16 +814,33 @@ console.log('\n[11] unpackInto 生效（解压到指定目录而不是 by-name�
     dataRoot,
     unpackInto: 'bin/ext',
     target: {
-      id: 'sqlite-ext', kind: 'backend', displayName: 'ext',
-      files: [{ role: 'archive', name: 'ext.tar.gz', sizeBytes: bytes.length, sha256: arcSha,
-                unpack: 'tar.gz', mirrors: [{ provider: 'local', url: `${base}/ext.tar.gz`, official: true }] }],
+      id: 'sqlite-ext',
+      kind: 'backend',
+      displayName: 'ext',
+      files: [
+        {
+          role: 'archive',
+          name: 'ext.tar.gz',
+          sizeBytes: bytes.length,
+          sha256: arcSha,
+          unpack: 'tar.gz',
+          mirrors: [{ provider: 'local', url: `${base}/ext.tar.gz`, official: true }],
+        },
+      ],
     },
     maxParts: 1,
   });
   const landed = path.join(dataRoot, 'bin', 'ext', 'libsimple.so');
-  const ok = await fs.stat(landed).then(() => true).catch(() => false);
+  const ok = await fs
+    .stat(landed)
+    .then(() => true)
+    .catch(() => false);
   check('解压到指定的 unpackInto', ok, res.installedTo ?? '(未记录)');
-  check('installedTo 如实回报落点', res.installedTo === path.join(dataRoot, 'bin', 'ext'), res.installedTo ?? '');
+  check(
+    'installedTo 如实回报落点',
+    res.installedTo === path.join(dataRoot, 'bin', 'ext'),
+    res.installedTo ?? '',
+  );
 }
 
 /* -------------------------------- summary --------------------------------- */

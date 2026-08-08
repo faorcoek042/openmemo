@@ -77,7 +77,9 @@ export class MindMapRepo {
             now,
           });
         // 整体替换：先清空旧节点（外键级联会带走子节点，但 root_node_id 需要先解引用）
-        this.db.prepare(`UPDATE mindmaps SET root_node_id = NULL WHERE id = :id`).run({ id: mindmapId });
+        this.db
+          .prepare(`UPDATE mindmaps SET root_node_id = NULL WHERE id = :id`)
+          .run({ id: mindmapId });
         this.db.prepare(`DELETE FROM mindmap_nodes WHERE mindmap_id = :id`).run({ id: mindmapId });
       } else {
         revision = 1;
@@ -167,7 +169,9 @@ export class MindMapRepo {
       // ---- refs（F5 联动的三层引用）----
       const rootId = idByKey.get(p.doc.rootKey);
       if (rootId !== undefined) {
-        this.db.prepare(`UPDATE mindmaps SET root_node_id = :r WHERE id = :id`).run({ r: rootId, id: mindmapId });
+        this.db
+          .prepare(`UPDATE mindmaps SET root_node_id = :r WHERE id = :id`)
+          .run({ r: rootId, id: mindmapId });
       }
       const insertRef = this.db.prepare(
         `INSERT INTO mindmap_node_refs(node_id, transcript_id, start_ms, end_ms, quote, match_score)
@@ -195,7 +199,9 @@ export class MindMapRepo {
         )
         .run({ id: mindmapId, doc: JSON.stringify(cached), rev: revision, now });
 
-      return this.db.prepare<MindMapRow>(`SELECT * FROM mindmaps WHERE id = :id`).get({ id: mindmapId }) as MindMapRow;
+      return this.db
+        .prepare<MindMapRow>(`SELECT * FROM mindmaps WHERE id = :id`)
+        .get({ id: mindmapId }) as MindMapRow;
     });
   }
 

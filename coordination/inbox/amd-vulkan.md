@@ -5,13 +5,13 @@
 `git status --short` 此刻只有我自己的两个未跟踪文件 + `progress-audit` 的回执，
 `vendor/manifests/` **没有任何人的在途改动**。我接下来要改：
 
-| 文件 | 改什么 | 冲突风险 |
-|---|---|---|
-| `vendor/manifests/backends.json` | `media-tools-linux-x64` / `media-tools-win-x64` 两条的 ffmpeg 7.1.5 → 8.1.2，**并把 tag 从 `autobuild-2026-08-02-13-17` 换到月末 tag**（前者约 9 天后会被上游删除，见下一条回执 §2） | 低（只改这两条的 5 个字段） |
-| `vendor/manifests/components.json` | 同上两条的 `pinnedVersion` / `sizeBytes` / `sha256` / `sha256Provenance` / `tagPattern` | 低 |
-| `package.json` | 一行：把 `selftest-elf-glibc.mjs` 接进 `test:ci-scripts`（已提交 `8092027`） | 低 |
-| `apps/daemon/src/pipeline/ffmpegPinRot.test.ts` | **新文件**（不改 `pack-publish` 的 `platformPacks.test.ts`） | 无 |
-| `scripts/build-whisper.sh` · `.github/workflows/build-backends.yml` · `scripts/ci/*` | 我的地盘（已提交 `8092027`） | 无 |
+| 文件                                                                                 | 改什么                                                                                                                                                                               | 冲突风险                    |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------- |
+| `vendor/manifests/backends.json`                                                     | `media-tools-linux-x64` / `media-tools-win-x64` 两条的 ffmpeg 7.1.5 → 8.1.2，**并把 tag 从 `autobuild-2026-08-02-13-17` 换到月末 tag**（前者约 9 天后会被上游删除，见下一条回执 §2） | 低（只改这两条的 5 个字段） |
+| `vendor/manifests/components.json`                                                   | 同上两条的 `pinnedVersion` / `sizeBytes` / `sha256` / `sha256Provenance` / `tagPattern`                                                                                              | 低                          |
+| `package.json`                                                                       | 一行：把 `selftest-elf-glibc.mjs` 接进 `test:ci-scripts`（已提交 `8092027`）                                                                                                         | 低                          |
+| `apps/daemon/src/pipeline/ffmpegPinRot.test.ts`                                      | **新文件**（不改 `pack-publish` 的 `platformPacks.test.ts`）                                                                                                                         | 无                          |
+| `scripts/build-whisper.sh` · `.github/workflows/build-backends.yml` · `scripts/ci/*` | 我的地盘（已提交 `8092027`）                                                                                                                                                         | 无                          |
 
 **macOS 那条我不动** —— 升 8.x 需要把 `stableOnly: true` 主动放松，那是要人拍板的，见下一条回执。
 
@@ -49,9 +49,13 @@ $ 遍历 /sys/bus/pci/devices/*/vendor 找 0x1002 → 一个都没有（全机 8
 **跑产品自己的探测函数**（`packages/runtime/src/detect/gpu.ts` 的 `detectGpus()`，不是我另写的）：
 
 ```json
-{ "gpus": [],
-  "warnings": ["/sys/class/drm not readable (headless VM, container, or no DRM driver)",
-               "no GPU detected; CPU backend only"] }
+{
+  "gpus": [],
+  "warnings": [
+    "/sys/class/drm not readable (headless VM, container, or no DRM driver)",
+    "no GPU detected; CPU backend only"
+  ]
+}
 ```
 
 ## ⚠️ 「AMD RYZEN AI MAX+ 395 w/ Radeon 8060S」那行字是 **CPU 名字**，不是探到的显卡
@@ -108,12 +112,12 @@ GPU0:  deviceType = PHYSICAL_DEVICE_TYPE_CPU
 
 判据不在我们这边，在**这台 daemon 跑在哪儿**：
 
-| 前提 | 现状 | 谁能改 |
-|---|---|---|
-| daemon 所在的系统里有 `/dev/dri/renderD*`（amdgpu 驱动 + 设备可见） | ❌ KVM guest 里没有 | 虚拟化层：GPU 直通，或把 daemon 跑在宿主机上 |
-| Vulkan 能枚举到 `eIntegratedGpu` 的 AMD 设备 | ❌ 只有 llvmpipe | 同上 |
-| 目录里有一个能装的 Linux Vulkan 包 | 🟡 本轮消掉两条阻碍，**还差第三条**（见 §1.3） | 我 + 解析器那边 |
-| advisory 探测认出 0x1002 | ❌ 见上（没有 GPU 就没有 vendor id 可读） | 同第一行 |
+| 前提                                                                | 现状                                           | 谁能改                                       |
+| ------------------------------------------------------------------- | ---------------------------------------------- | -------------------------------------------- |
+| daemon 所在的系统里有 `/dev/dri/renderD*`（amdgpu 驱动 + 设备可见） | ❌ KVM guest 里没有                            | 虚拟化层：GPU 直通，或把 daemon 跑在宿主机上 |
+| Vulkan 能枚举到 `eIntegratedGpu` 的 AMD 设备                        | ❌ 只有 llvmpipe                               | 同上                                         |
+| 目录里有一个能装的 Linux Vulkan 包                                  | 🟡 本轮消掉两条阻碍，**还差第三条**（见 §1.3） | 我 + 解析器那边                              |
+| advisory 探测认出 0x1002                                            | ❌ 见上（没有 GPU 就没有 vendor id 可读）      | 同第一行                                     |
 
 **四条里有三条卡在同一件事上：那块核显没有暴露给这台虚拟机。**
 先解决这一条，其余才有意义 —— 反过来说，**在解决它之前，把包补进目录也只是多一个装了没用的按钮。**
@@ -124,11 +128,11 @@ GPU0:  deviceType = PHYSICAL_DEVICE_TYPE_CPU
 
 ## 1.0 结论先给
 
-| 阻碍 | 状态 | 判据 |
-|---|---|---|
-| 1 · 增量包不自包含 | ✅ **消掉**（构建侧） | 加速包现在 = 核心 + 后端模块；CI 上 `whisper-cli --help` 从解压目录裸跑成功 |
-| 2 · GLIBC_2.38 | ✅ **消掉**（构建侧） | vulkan 腿挪回 `ubuntu-22.04`，glslc 改走 LunarG SDK；守卫钉住 ≤ 2.34 |
-| 3 · **解析器不认包，谁先被 `readdir` 到就跑谁** | 🔴 **没消掉，也不在我地盘** | 见 §1.3 —— **它单独一条就足以让前两条白做** |
+| 阻碍                                            | 状态                        | 判据                                                                        |
+| ----------------------------------------------- | --------------------------- | --------------------------------------------------------------------------- |
+| 1 · 增量包不自包含                              | ✅ **消掉**（构建侧）       | 加速包现在 = 核心 + 后端模块；CI 上 `whisper-cli --help` 从解压目录裸跑成功 |
+| 2 · GLIBC_2.38                                  | ✅ **消掉**（构建侧）       | vulkan 腿挪回 `ubuntu-22.04`，glslc 改走 LunarG SDK；守卫钉住 ≤ 2.34        |
+| 3 · **解析器不认包，谁先被 `readdir` 到就跑谁** | 🔴 **没消掉，也不在我地盘** | 见 §1.3 —— **它单独一条就足以让前两条白做**                                 |
 
 **所以我没有把它补进 `backends.json`。** 按已批准的判据：现在补进去，用户会得到一个
 "看得见、点得动、装得上、**跑起来还是 CPU**"的包 —— 比"看不见"更糟，而不是更好。
@@ -213,13 +217,13 @@ libggml-cuda.so 的 libggml-* 依赖全部解析得到（其余为宿主提供�
 
 ### 先回答"能不能拿到"：**能。**
 
-| 路线 | 拿得到 glslc？ | 结论 |
-|---|---|---|
-| jammy 官方 apt | ❌ | `glslc` 二进制包**首次出现在 noble**；jammy 连 `shaderc` 源码包都没有；backports 也没有。按**文件名**搜 jammy/amd64 的 `glslc`，6 条命中全是 `SPIRVGLSLCanonicalization.h` 之类无关文件。`glslang-tools` 只给 `glslangValidator` |
-| **LunarG SDK（tarball，经 `jakoch/install-vulkan-sdk-action`）** | ✅ **选它** | 就是**下面 Windows 腿已经在用的那个 action**；x86_64 分支不看发行版，下的是 LunarG 官方 tarball |
-| LunarG apt（`lunarg-vulkan-jammy.list`） | ✅ | 仓库还活着（`dists.json` 仍把 Ubuntu 22.04 列为 SupportedDistro），但**整个 Linux apt 频道自 2025-05-06 起停更**（jammy 与 noble 一起冻），tarball 频道还在走 |
-| 24.04 上用编译器开关压住 C23 重定向 | ❌ **不可行** | 见下 |
-| 24.04 编 shader → 22.04 编 C++ | ❌ 不推荐 | ggml **没有任何开关**支持；`find_package(Vulkan COMPONENTS glslc REQUIRED)` 在 configure 阶段就红，而且 CMake 会**真的跑 glslc** 做 5 次特性探测再喂给 `add_compile_definitions` |
+| 路线                                                             | 拿得到 glslc？ | 结论                                                                                                                                                                                                                             |
+| ---------------------------------------------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| jammy 官方 apt                                                   | ❌             | `glslc` 二进制包**首次出现在 noble**；jammy 连 `shaderc` 源码包都没有；backports 也没有。按**文件名**搜 jammy/amd64 的 `glslc`，6 条命中全是 `SPIRVGLSLCanonicalization.h` 之类无关文件。`glslang-tools` 只给 `glslangValidator` |
+| **LunarG SDK（tarball，经 `jakoch/install-vulkan-sdk-action`）** | ✅ **选它**    | 就是**下面 Windows 腿已经在用的那个 action**；x86_64 分支不看发行版，下的是 LunarG 官方 tarball                                                                                                                                  |
+| LunarG apt（`lunarg-vulkan-jammy.list`）                         | ✅             | 仓库还活着（`dists.json` 仍把 Ubuntu 22.04 列为 SupportedDistro），但**整个 Linux apt 频道自 2025-05-06 起停更**（jammy 与 noble 一起冻），tarball 频道还在走                                                                    |
+| 24.04 上用编译器开关压住 C23 重定向                              | ❌ **不可行**  | 见下                                                                                                                                                                                                                             |
+| 24.04 编 shader → 22.04 编 C++                                   | ❌ 不推荐      | ggml **没有任何开关**支持；`find_package(Vulkan COMPONENTS glslc REQUIRED)` 在 configure 阶段就红，而且 CMake 会**真的跑 glslc** 做 5 次特性探测再喂给 `add_compile_definitions`                                                 |
 
 ### ★ 第二个坑（此前没人提过，光有 glslc 也过不去）
 
@@ -371,17 +375,17 @@ gh release delete --cleanup-tag --yes "${TAG}"
 
 → 新 pin：**`autobuild-2026-07-31-14-10`**（7 月最后一天，受 `KEEP_MONTHLY` 保护约 24 个月）。
 → 新守卫 `apps/daemon/src/pipeline/ffmpegPinRot.test.ts`：只允许钉「每月最后一天」的 tag，
-   判据钉的是**结构**（tag 里的日期是不是它那个月的最后一天，含闰年），不是关键词；
-   `components.json` 的 `tagPattern` 同步收紧到 `^autobuild-\d{4}-\d{2}-(2[89]|3[01])-`
-   （regex 表达不了"该月最后一天"，取它的超集，剩下的由守卫兜底）。
+判据钉的是**结构**（tag 里的日期是不是它那个月的最后一天，含闰年），不是关键词；
+`components.json` 的 `tagPattern` 同步收紧到 `^autobuild-\d{4}-\d{2}-(2[89]|3[01])-`
+（regex 表达不了"该月最后一天"，取它的超集，剩下的由守卫兜底）。
 
 ## 2.2 要发的清单（三平台一起看）
 
-| 平台 | 资产 | 字节 | sha256（**本机全量下载后复算**） | tag |
-|---|---|---:|---|---|
-| **linux-x64** ✅ 已改 | `ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-gpl-8.1.tar.xz` | 124,917,816 | `09fc77be269c7053e438b7e96548e4af97604faf96a42c4a3c56a1ad74c22c0a` | `autobuild-2026-07-31-14-10` |
-| **win-x64** ✅ 已改 | `ffmpeg-n8.1.2-34-g9b6c8969e0-win64-gpl-8.1.zip` | 167,405,723 | `cc4156d51387566ea8ba653fc3a04897bdf812fddf652428d9030bbf7ae24835` | 同上（守卫要求两平台同 tag） |
-| **macos-arm64** ⛔ **没动，等你裁** | `jellyfin-ffmpeg_8.1.2-2_portable_macarm64-gpl.tar.xz` | 32,894,656 | `397642a17f0e34882875f3127cc065b8f225a3d5b0fc4c068c1fe6ad49e5485c` | `v8.1.2-2`（**GitHub prerelease=true**） |
+| 平台                                | 资产                                                   |        字节 | sha256（**本机全量下载后复算**）                                   | tag                                      |
+| ----------------------------------- | ------------------------------------------------------ | ----------: | ------------------------------------------------------------------ | ---------------------------------------- |
+| **linux-x64** ✅ 已改               | `ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-gpl-8.1.tar.xz`  | 124,917,816 | `09fc77be269c7053e438b7e96548e4af97604faf96a42c4a3c56a1ad74c22c0a` | `autobuild-2026-07-31-14-10`             |
+| **win-x64** ✅ 已改                 | `ffmpeg-n8.1.2-34-g9b6c8969e0-win64-gpl-8.1.zip`       | 167,405,723 | `cc4156d51387566ea8ba653fc3a04897bdf812fddf652428d9030bbf7ae24835` | 同上（守卫要求两平台同 tag）             |
+| **macos-arm64** ⛔ **没动，等你裁** | `jellyfin-ffmpeg_8.1.2-2_portable_macarm64-gpl.tar.xz` |  32,894,656 | `397642a17f0e34882875f3127cc065b8f225a3d5b0fc4c068c1fe6ad49e5485c` | `v8.1.2-2`（**GitHub prerelease=true**） |
 
 三个都是匿名下载（`env -u GITHUB_TOKEN -u GH_TOKEN curl`），复算值与 GitHub API 的
 `digest` 字段**逐字符一致**。**不需要建任何 release** —— 这三个都是上游的资产，我们只是指过去。
@@ -404,6 +408,7 @@ gh release delete --cleanup-tag --yes "${TAG}"
 > 而放松之后它对**将来所有版本**都生效。这是产品决策，不是我能替谁做的。
 
 材料已备齐，你说升我十分钟就能补上：
+
 - sha256 已本机复算（见上表）；
 - `[本机实测]` Mach-O 解析：**`LC_BUILD_VERSION` minos 仍是 12.0（没抬高）**，
   27 条 `LC_LOAD_DYLIB` 全部指向 `/System/Library/Frameworks/` 与 `/usr/lib/`，
@@ -432,16 +437,16 @@ gh release delete --cleanup-tag --yes "${TAG}"
 
 `[本机实测]`（跑的是刚下下来的 n8.1.2-34 linux64）：
 
-| 我们用的 | 8.1 上 | 证据 |
-|---|---|---|
-| `ffmpeg -version` + `/ffmpeg version (\S+)/` | ✅ | `ffmpeg version n8.1.2-34-g9b6c8969e0-20260731 …` |
-| `-progress pipe:1` + `/^out_time_us=(\d+)$/` | ✅ | stdout 出现 `out_time_us=3000000` |
-| `-nostdin -hide_banner -loglevel error -y -vn -map 0:a:0 -ac 1 -ar 16000 -c:a pcm_s16le -f wav` | ✅ | exit 0，**stderr 零字节**（无 deprecation 警告） |
-| ffprobe `-print_format json -show_format -show_streams` | ✅ | `format_name=wav` `codec_name=pcm_s16le` `sample_rate=16000` `channels=1` |
-| `-protocol_whitelist`（安全边界） | ✅ **仍在拦人** | 远程白名单去探本地文件 → `Protocol 'file' not on whitelist …`，**exit 1** |
-| `localFile.ts:164` 的 `/hls\|applehttp\|m3u/i` | ✅ | `ffprobe -demuxers` → `D hls  Apple HTTP Live Streaming`，名字没变 |
-| glibc 下限 | ✅ **2.28** | 用我们自己新写的守卫跑的：`2 个 ELF … 实测最高 GLIBC_2.28`，**低于 2.34 基线，无代价** |
-| 归档布局 | ✅ | `<top>/bin/{ffmpeg,ffprobe}`，与 7.x 相同 |
+| 我们用的                                                                                        | 8.1 上          | 证据                                                                                   |
+| ----------------------------------------------------------------------------------------------- | --------------- | -------------------------------------------------------------------------------------- |
+| `ffmpeg -version` + `/ffmpeg version (\S+)/`                                                    | ✅              | `ffmpeg version n8.1.2-34-g9b6c8969e0-20260731 …`                                      |
+| `-progress pipe:1` + `/^out_time_us=(\d+)$/`                                                    | ✅              | stdout 出现 `out_time_us=3000000`                                                      |
+| `-nostdin -hide_banner -loglevel error -y -vn -map 0:a:0 -ac 1 -ar 16000 -c:a pcm_s16le -f wav` | ✅              | exit 0，**stderr 零字节**（无 deprecation 警告）                                       |
+| ffprobe `-print_format json -show_format -show_streams`                                         | ✅              | `format_name=wav` `codec_name=pcm_s16le` `sample_rate=16000` `channels=1`              |
+| `-protocol_whitelist`（安全边界）                                                               | ✅ **仍在拦人** | 远程白名单去探本地文件 → `Protocol 'file' not on whitelist …`，**exit 1**              |
+| `localFile.ts:164` 的 `/hls\|applehttp\|m3u/i`                                                  | ✅              | `ffprobe -demuxers` → `D hls  Apple HTTP Live Streaming`，名字没变                     |
+| glibc 下限                                                                                      | ✅ **2.28**     | 用我们自己新写的守卫跑的：`2 个 ELF … 实测最高 GLIBC_2.28`，**低于 2.34 基线，无代价** |
+| 归档布局                                                                                        | ✅              | `<top>/bin/{ffmpeg,ffprobe}`，与 7.x 相同                                              |
 
 Changelog 逐条核对：8.1 唯一的移除是 `Remove the old HLS **protocol** handler`
 （删的是 `hls://` 协议，不是 HLS demuxer —— `ff_hls_demuxer` 两边都在），
@@ -518,15 +523,15 @@ Failed to resolve action download info. Error: Service Unavailable
 
 # §5 我没做 / 做不到的（如实列）
 
-| 项 | 状态 |
-|---|---|
-| 把 `whispercpp-vulkan-linux-x64` 补进 `backends.json` | ⛔ **刻意没补**。阻碍 3 未消，补了就是"看得见点不动"的升级版："装得上、跑起来还是 CPU" |
-| Vulkan 腿的 CI 产物判据（glibc / 自包含） | ⏳ **未验证** —— GitHub 服务故障打掉了那条腿，已重试 dispatch |
-| Linux CUDA 包能不能在没装 CUDA 工具链的机器上用 | 🔴 **不能**，且这是**新查出来的**：`ggml-cuda` 链的是 `CUDA::cudart`（**动态**，`ggml-cuda/CMakeLists.txt:176`，我们没开 `GGML_STATIC`），而打包时只拷了 Windows 命名的 `cudart64_*.dll`，Linux 侧一个都没拷。runner 上装了工具链所以 `ldd` 看不出来 |
-| Windows 的 VC++ 运行时依赖（D-11 §8.3） | ⛔ 没碰 |
-| macOS 升 8.1.2 | ⛔ 等裁决（§2.3） |
-| BtbN win64 n8.1 的 PE 导入表 | ⚠️ `UNKNOWN`，没下 167 MB 实测 |
-| 在真 AMD 硬件上验证 Vulkan 后端 | ⛔ **本机没有 GPU**（开头那节），CI runner 也没有。这条只能等一台真机 |
+| 项                                                    | 状态                                                                                                                                                                                                                                                 |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 把 `whispercpp-vulkan-linux-x64` 补进 `backends.json` | ⛔ **刻意没补**。阻碍 3 未消，补了就是"看得见点不动"的升级版："装得上、跑起来还是 CPU"                                                                                                                                                               |
+| Vulkan 腿的 CI 产物判据（glibc / 自包含）             | ⏳ **未验证** —— GitHub 服务故障打掉了那条腿，已重试 dispatch                                                                                                                                                                                        |
+| Linux CUDA 包能不能在没装 CUDA 工具链的机器上用       | 🔴 **不能**，且这是**新查出来的**：`ggml-cuda` 链的是 `CUDA::cudart`（**动态**，`ggml-cuda/CMakeLists.txt:176`，我们没开 `GGML_STATIC`），而打包时只拷了 Windows 命名的 `cudart64_*.dll`，Linux 侧一个都没拷。runner 上装了工具链所以 `ldd` 看不出来 |
+| Windows 的 VC++ 运行时依赖（D-11 §8.3）               | ⛔ 没碰                                                                                                                                                                                                                                              |
+| macOS 升 8.1.2                                        | ⛔ 等裁决（§2.3）                                                                                                                                                                                                                                    |
+| BtbN win64 n8.1 的 PE 导入表                          | ⚠️ `UNKNOWN`，没下 167 MB 实测                                                                                                                                                                                                                       |
+| 在真 AMD 硬件上验证 Vulkan 后端                       | ⛔ **本机没有 GPU**（开头那节），CI runner 也没有。这条只能等一台真机                                                                                                                                                                                |
 
 ---
 
@@ -547,12 +552,12 @@ Failed to resolve action download info. Error: Service Unavailable
 
 ## SHARED-CHANGE
 
-| 文件 | 归属 | 我做了什么 | 冲突风险 |
-|---|---|---|---|
-| `package.json` | 公共 | 一行：把 `selftest-elf-glibc.mjs` 接进 `test:ci-scripts`（照 `ci-upload` T-154 的先例） | 低 |
-| `packages/downloader/src/upstream.ts` | `model-mgmt` / `catalog-truth` | **只改注释**：把错的那句 "immutable `autobuild-<date>` tags" 订正并说明成因 | 低（零代码改动） |
-| `vendor/manifests/{backends,components}.json` | `pack-publish` / `catalog-truth` | 只改 `media-tools-linux-x64` / `media-tools-win-x64` 两条 | 低 |
-| `apps/daemon/src/pipeline/ffmpegPinRot.test.ts` | **新文件（我的）** | 刻意**不改** `pack-publish` 的 `platformPacks.test.ts`，避免写冲突 | 无 |
+| 文件                                            | 归属                             | 我做了什么                                                                              | 冲突风险         |
+| ----------------------------------------------- | -------------------------------- | --------------------------------------------------------------------------------------- | ---------------- |
+| `package.json`                                  | 公共                             | 一行：把 `selftest-elf-glibc.mjs` 接进 `test:ci-scripts`（照 `ci-upload` T-154 的先例） | 低               |
+| `packages/downloader/src/upstream.ts`           | `model-mgmt` / `catalog-truth`   | **只改注释**：把错的那句 "immutable `autobuild-<date>` tags" 订正并说明成因             | 低（零代码改动） |
+| `vendor/manifests/{backends,components}.json`   | `pack-publish` / `catalog-truth` | 只改 `media-tools-linux-x64` / `media-tools-win-x64` 两条                               | 低               |
+| `apps/daemon/src/pipeline/ffmpegPinRot.test.ts` | **新文件（我的）**               | 刻意**不改** `pack-publish` 的 `platformPacks.test.ts`，避免写冲突                      | 无               |
 
 ---
 
@@ -643,12 +648,12 @@ GitHub Actions 当时正在故障（同一时段 `gh workflow run` 返回 HTTP 5
 
 # ★ 结论更新：①的两条阻碍**确实消掉了**，但**仍然不补 `backends.json`**
 
-| 阻碍 | 状态 | 证据 |
-|---|---|---|
-| 1 · 不自包含 | ✅ **消掉，CI 实测** | `providesFiles` 含 whisper-cli；relocatable；`ldd` 零 not found |
-| 2 · GLIBC_2.38 | ✅ **消掉，CI 实测** | 23 个 ELF 全部 ≤ 2.34 |
-| 3 · 解析器按 `readdir` 取第一个 | 🔴 **仍在**（§1.3） | 本机实测：装了 Vulkan 包，跑的仍是 CPU 包里的 whisper-cli |
-| 4 · 这台机器上没有 GPU | 🔴 **仍在**（开头） | `detectGpus()` → `gpus: []`；`/dev/dri` 不存在 |
+| 阻碍                            | 状态                 | 证据                                                            |
+| ------------------------------- | -------------------- | --------------------------------------------------------------- |
+| 1 · 不自包含                    | ✅ **消掉，CI 实测** | `providesFiles` 含 whisper-cli；relocatable；`ldd` 零 not found |
+| 2 · GLIBC_2.38                  | ✅ **消掉，CI 实测** | 23 个 ELF 全部 ≤ 2.34                                           |
+| 3 · 解析器按 `readdir` 取第一个 | 🔴 **仍在**（§1.3）  | 本机实测：装了 Vulkan 包，跑的仍是 CPU 包里的 whisper-cli       |
+| 4 · 这台机器上没有 GPU          | 🔴 **仍在**（开头）  | `detectGpus()` → `gpus: []`；`/dev/dri` 不存在                  |
 
 **补进目录的前置条件是第 3 条**（第 4 条只影响这一台机器，不影响别的 Linux 用户）。
 在它消掉之前，补进去等于给用户一个"装得上、装完还是 CPU、而且没有任何地方会说"的按钮。
@@ -659,8 +664,8 @@ GitHub Actions 当时正在故障（同一时段 `gh workflow run` 返回 HTTP 5
 这是 schema 设计好的诚实状态，前端读到它会禁用安装按钮）。**我不建 release**，
 所以要发的话，清单在这里，由你建 tag，然后走 `ci-upload` 那条 `release-upload.yml`：
 
-| 文件 | 字节 | sha256（**我本机复算**，与 CI fragment 逐字符一致） | 来源 |
-|---|---:|---|---|
+| 文件                                 |       字节 | sha256（**我本机复算**，与 CI fragment 逐字符一致）                | 来源                                                                              |
+| ------------------------------------ | ---------: | ------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
 | `whispercpp-vulkan-linux-x64.tar.gz` | 29,495,375 | `fa6feb61c13cce50a3b6b09ed2c5c9370591d698c0620fd42637c753abde636f` | 我们自建：`build-backends` run **31121718587**，artifact `packs-linux-x64-vulkan` |
 
 （`ggmlAbi: 0.15.1`、`engineVersion: f049fff9`（submodule commit，没有 tag 所以 `git describe` 回落到 sha）、

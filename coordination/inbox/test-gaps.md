@@ -28,6 +28,7 @@
 
 不是"记得别导出那个变量"，判据是 **store 根目录里必须有本工具亲手放下的
 `.openmemo-refserver-sandbox`**。两道：
+
 - **启动时**：目录非空且无标记 → 拒绝启动（`exit 2`）；
 - **每次删除前重新读一遍磁盘** —— 不信任启动时那次检查，因为进程可能已经跑了几小时，
   `--models-root` 底下的东西可能已经被换掉了（比如换成指向真实 store 的符号链接）。
@@ -119,8 +120,9 @@ testkit 与 setup 文件。判据全程是你那条：**"kill -9 在最坏那一
 #### 🔴 `packages/downloader/scripts/seed-fixture.mjs` —— **默认参数就是用户的真实数据库**
 
 ```js
-const DB = argv.includes('--db') ? argv[argv.indexOf('--db')+1]
-                                 : '/root/.local/share/openmemo/openmemo.db';   // ← 默认值
+const DB = argv.includes('--db')
+  ? argv[argv.indexOf('--db') + 1]
+  : '/root/.local/share/openmemo/openmemo.db'; // ← 默认值
 ```
 
 它往这个库里 INSERT 一条笔记 + 资产 + 转写稿 + 7 条分段；`--reset` 还会
@@ -137,6 +139,7 @@ const DB = argv.includes('--db') ? argv[argv.indexOf('--db')+1]
 **所以今天它的实际杀伤是 0。但这恰恰是本项目最不接受的那种"对"** ——
 `packages/db` 那条 glob "碰巧正确"是同一个形状：
 **它安全的原因是用户碰巧搬过家，不是因为脚本写对了。**
+
 - 用户哪天搬回来、或在任何**没搬过家**的机器上（也就是默认情形），那个路径**就是**真实库；
 - 而且它写死的是 `/root/...`，连 `homedir()` 都没用 —— 换个用户名当场指错人。
 
@@ -170,16 +173,18 @@ seeded T-038 fixture … segments: 7 · fts: rebuilt          ← 功能完好
   用户真实库 T-038 笔记条数 = 0
   ✔ 用户真实库 md5 不变
 ```
+
 （正向验证用的是真库的**文件副本**，对原库全程只读。）
 
 #### 🟡 `packages/downloader/scripts/reference-server.mjs` —— **需要你派人，我没动**
 
 ```js
-const PORT = Number(argv[argv.indexOf('--port')+1]) || 17650;                      // = DEFAULT_PORT
+const PORT = Number(argv[argv.indexOf('--port') + 1]) || 17650; // = DEFAULT_PORT
 const ROOT = process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-refserver', 'models');
 ```
 
 三个问题叠在一起：
+
 1. **固定名** `openmemo-refserver`（不是 `mkdtemp`），跨并发运行共享、跨重启存活，
    **全文件零 `rm`**；下次启动会把上次留下的 `active.json` 读回来当真（`:174`）。
 2. **`OPENMEMO_MODELS` 优先级最高** —— 那个变量产品代码自己也在读
@@ -209,10 +214,13 @@ const ROOT = process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-ref
 
 **改完我写了个检查器扫全仓复核，当场抓到我自己刚引入的重叠**（`maxPort` 跨度让每段宽 70，
 我按 60 间隔排的基数互相压住，第三段还压到了 `noteDetailContract` 的 19860）：
+
 ```
   ✘ 重叠: restart-datadir-c [19820..19889]  vs  noteDetailContract [19860..19880]
 ```
+
 收窄后八个区间互不重叠、全部 ≥ 19340：
+
 ```
   daemon.test [19340..19400] · pipelineJobEvents [19510..19570] · notesRest [19610..19660]
   restart-a [19700..19718] · restart-b [19730..19748] · restart-c [19760..19778]
@@ -222,17 +230,17 @@ const ROOT = process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-ref
 
 ### 明确"查了、没有"的（这半边和找到的东西一样重要）
 
-| 类别 | 结果 |
-|---|---|
-| 测试里的 `homedir()` / `$HOME` / XDG / AppData / Library | **零处**。所有 homedir 相关的都是产品或 CLI 代码；每个测试的 `startDaemon()` 都传显式 mkdtemp `dataDir` |
-| `/root/data-memo` | **零处**。只在 `components.test.tsx` 的两条注释里出现 |
-| 端口 10000（你的 demo） | **零处**。只出现在 i18n 文案、一条注释、一条 usage 示例 |
-| `git config` / `npm config` / `.npmrc` / `.gitconfig` 写入 | **零处** |
-| lock / pid 文件、unix socket | **零处在临时目录之外**。唯一的锁是 dataDir 内的 `O_CREAT\|O_EXCL`，测试里 dataDir 全是 mkdtemp |
-| 临时目录之外建符号链接 | **零处**。全部创建点都在 mkdtemp 根里 |
-| 会关掉用户 daemon 的测试 | **零处**。`acquireSingleInstance` 只探活后让路或报错，从不请求对方退出 |
-| `process.env` 全局污染 | 3 处，**全部进程内**（`authMode.testkit.ts` 是 before/after 存取 —— 文本上正是失效的那个模式，但它是进程级 env，node:test 一文件一子进程，kill -9 带不走任何东西）|
-| 其余所有 `after()`/`finally` 清理 | 约 20 处，**每一处守的都是唯一的 `mkdtempSync` 目录**。kill -9 只留 `$TMPDIR` 垃圾，无共享名、无跨运行碰撞、不重定向任何产品路径 —— **结构上不是这个 bug 的形状** |
+| 类别                                                       | 结果                                                                                                                                                               |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 测试里的 `homedir()` / `$HOME` / XDG / AppData / Library   | **零处**。所有 homedir 相关的都是产品或 CLI 代码；每个测试的 `startDaemon()` 都传显式 mkdtemp `dataDir`                                                            |
+| `/root/data-memo`                                          | **零处**。只在 `components.test.tsx` 的两条注释里出现                                                                                                              |
+| 端口 10000（你的 demo）                                    | **零处**。只出现在 i18n 文案、一条注释、一条 usage 示例                                                                                                            |
+| `git config` / `npm config` / `.npmrc` / `.gitconfig` 写入 | **零处**                                                                                                                                                           |
+| lock / pid 文件、unix socket                               | **零处在临时目录之外**。唯一的锁是 dataDir 内的 `O_CREAT\|O_EXCL`，测试里 dataDir 全是 mkdtemp                                                                     |
+| 临时目录之外建符号链接                                     | **零处**。全部创建点都在 mkdtemp 根里                                                                                                                              |
+| 会关掉用户 daemon 的测试                                   | **零处**。`acquireSingleInstance` 只探活后让路或报错，从不请求对方退出                                                                                             |
+| `process.env` 全局污染                                     | 3 处，**全部进程内**（`authMode.testkit.ts` 是 before/after 存取 —— 文本上正是失效的那个模式，但它是进程级 env，node:test 一文件一子进程，kill -9 带不走任何东西） |
+| 其余所有 `after()`/`finally` 清理                          | 约 20 处，**每一处守的都是唯一的 `mkdtempSync` 目录**。kill -9 只留 `$TMPDIR` 垃圾，无共享名、无跨运行碰撞、不重定向任何产品路径 —— **结构上不是这个 bug 的形状**  |
 
 ### 剩下的（低危，git 可见，建议顺手不建议排期）
 
@@ -272,12 +280,12 @@ const ROOT = process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-ref
 
 ### 重复的 9 条一律保留他那份，理由是**他的更强**，不是先来后到
 
-| 重复项 | 为什么留他的 |
-|---|---|
-| `assets[].url` | 他是与**具体 asset uid 逐字相等**（`/media/asset/${f.audioUid}`），我是泛化的"url 与 uid 一致" |
-| `state` | 他额外验了**按那个 url 真的取回 64 字节** —— "字段在"不等于"能用" |
-| `bodyJson` 往返 / 是对象 | 等价，且他的 fixture 带 `timeAnchor` 节点，更接近真实文档 |
-| `tags` 是数组 / 404 / 端点被执行 | 等价，他在顶层键那条里一并覆盖 |
+| 重复项                           | 为什么留他的                                                                                   |
+| -------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `assets[].url`                   | 他是与**具体 asset uid 逐字相等**（`/media/asset/${f.audioUid}`），我是泛化的"url 与 uid 一致" |
+| `state`                          | 他额外验了**按那个 url 真的取回 64 字节** —— "字段在"不等于"能用"                              |
+| `bodyJson` 往返 / 是对象         | 等价，且他的 fixture 带 `timeAnchor` 节点，更接近真实文档                                      |
+| `tags` 是数组 / 404 / 端点被执行 | 等价，他在顶层键那条里一并覆盖                                                                 |
 
 ### 并入的 5 条（他那边没有）
 
@@ -367,6 +375,7 @@ const ROOT = process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-ref
 再怎么加固也满足不了"被 kill 也不能留下坏状态"。
 
 **`[实测]` kill -9 三次，用户指针一个字节没动：**
+
 ```
 开跑前： md5=5285e93676fc9f9979d5e2e2e3ef5173
   第 1 次：kill -9 pid=3266942（after() 绝对没跑过）
@@ -378,6 +387,7 @@ const ROOT = process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-ref
 
 **`[实测]` 旧写法在同一条件下会留下什么**（把 HEAD 那段备份/还原逻辑逐行搬到**假 HOME** 下跑，
 零风险复现，不碰真指针）：
+
 ```
 --- ① 正常跑完（after() 有机会跑）
 { "dataDir": "/root/data-memo", ... }          ← 还原成功，所以以前一直没人发现
@@ -400,6 +410,7 @@ const ROOT = process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-ref
 那行两个分支相同的三元一并删掉了。
 
 四条断言，**正反都钉**：
+
 - `[::1]` 同源必须**通过**（修好的那个 bug 的回归）
 - `127.0.0.1` 同源**仍然**必须通过（← 你点名的方向；归一化最容易顺手把 IPv4 也弄坏）
 - 两个**不同**的 IPv6 之间必须**拒**（剥的是包装，不是判据）
@@ -412,9 +423,11 @@ const ROOT = process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-ref
 
 给"指针位置可覆盖"加变异（把 `pointerFile()` 改回硬编码全局位置）之后，
 **跑一次 `mutation-check.mjs`，它把用户的 `datadir.json` 写坏了**：
+
 ```
 > {"dataDir":"/tmp/om-rd-decoy-E6uiqY"}
 ```
+
 **一个用来防止事故的工具，复现了那场事故。** 当场还原并与开工备份逐字比对通过
 （现内容 `/root/data-memo`，权限 `-rw-------`，全套与变异检查再跑多次均未再动）。
 
@@ -431,6 +444,7 @@ const ROOT = process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-ref
 
 旧 §9 只说了"**测搬迁**别碰指针"，**漏掉了 `pnpm -r test` 本身**；
 而它给的兜底「备份→还原」**恰恰就是这次出事的那个做法**。所以：
+
 - 把那条兜底划掉并指向 §9-bis（不删，留着让人看见它为什么被作废）
 - 写清判据：**不是"还原得对不对"，是"被 kill 也不能留下坏状态"**
 - 给了可推广的一般形式：
@@ -443,11 +457,13 @@ const ROOT = process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-ref
 
 `index.html` 从 `3707` 字节变成 `3555`，`dist/assets/*` 全量重写。
 **不是我** —— 我做了决定性实验：
+
 ```
 实验前： 2026-08-04 01:02:57.890545160  md5=dc352549eda7cb2adfae7e5d8aae8afd
 跑完 build:safe + 根 tsc -b 之后： 完全一致（mtime 与 md5 都没动）
   ✔ 我的两条命令都不写 apps/web/dist
 ```
+
 （根 `tsconfig.json` 虽然 references `./apps/web`，但 web 是 `emitDeclarationOnly`，
 `tsc -b` 只写 `dist-types`，不跑 `vite build`。）
 按 §7，`:10000` **直接托管这个目录**，所以**用户现在看到的前端已经是别人的验证构建了** ——
@@ -469,13 +485,13 @@ const ROOT = process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-ref
 **门禁现在是 `843 passed / 0 failed / 1 todo`**（`tsc -b` 0 · `eslint .` 0）。
 拆开说清楚，因为这个数字很容易被误读：
 
-| 来源 | 条数 | 说明 |
-|---|---|---|
-| 我开工时实测的基线 | **674** | 交接给我的数字是 621，**开工时已经过期**（别人在这之前落了 ~53 条） |
+| 来源                                 | 条数    | 说明                                                                |
+| ------------------------------------ | ------- | ------------------------------------------------------------------- |
+| 我开工时实测的基线                   | **674** | 交接给我的数字是 621，**开工时已经过期**（别人在这之前落了 ~53 条） |
 | **`llm`(18) + `mindmap`(42) 进门禁** | **+60** | ⚠️ **不是新增测试**，是"本来就在、从没被够到"。我一行测试代码都没写 |
-| **我新写的测试** | **+50** | `guard.test.ts` 23 · `noteDetail.test.ts` 14 · `client.test.ts` 13 |
-| 同一窗口里别人落的 | +59 | runtime +6 · pipeline +6 · web 单测 +18 · web 组件 +17 · daemon +12 |
-| **合计** | **843** | |
+| **我新写的测试**                     | **+50** | `guard.test.ts` 23 · `noteDetail.test.ts` 14 · `client.test.ts` 13  |
+| 同一窗口里别人落的                   | +59     | runtime +6 · pipeline +6 · web 单测 +18 · web 组件 +17 · daemon +12 |
+| **合计**                             | **843** |                                                                     |
 
 ## 四件事的结果
 
@@ -526,6 +542,7 @@ const ROOT = process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-ref
 交付（精确清单，**未 `git add`、未 commit**）：
 
 **新增**
+
 - `scripts/check-test-scripts.mjs` —— "有测试文件就必须有 test 脚本"跨包守卫
 - `scripts/mutation-check.mjs` —— 变异检查（13 条清单，隔离副本）
 - `apps/daemon/src/http/guard.test.ts` —— 23 条（22 pass + 1 todo）
@@ -534,6 +551,7 @@ const ROOT = process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-ref
 - `coordination/inbox/test-gaps.md`（本文件）
 
 **修改**
+
 - `packages/llm/package.json`、`packages/mindmap/package.json` —— 补 `test` 脚本（+ `_comment:test`）
 - `packages/db/package.json`、`packages/pipeline/package.json`、`packages/runtime/package.json`、
   `apps/daemon/package.json` —— 同一行前置 `check-test-scripts.mjs`，并把 `_comment:test` 里
@@ -553,11 +571,11 @@ const ROOT = process.env.OPENMEMO_MODELS ?? path.join(os.tmpdir(), 'openmemo-ref
 
 判据只有一条：**这个地方坏了，用户会怎样。** 不按"哪个好修"排。
 
-| 顺位 | 条目 | 用户会怎样 | 为什么排这里 |
-|---|---|---|---|
-| **1** | **E1 `GET /api/notes/:uid` 整个端点从没被执行** | 打开任意一条笔记，看到的东西是错的或缺的 —— 而且**零报错** | 三个理由叠加：① 用户**现在**就在撞（T-139 的 A1/A1b 两个 P0 都长在这个端点上）；② 它是**假绿灯制造机**（判据 3）—— 这条债掩护着另外两条 P0，成本要按它掩护的东西算；③ `notes-contract` **此刻正在改这个端点的契约**，没有护栏就没有任何办法证明他改对了、更没办法防止它再退回去 |
-| **2** | **E3 写请求静默回落 mock** | 点保存 → 界面显示成功 → **什么都没发生**。项目自己的定性是"比报错糟糕得多" | 静默排在会报错的前面（判据 2）。而且 `client.ts` 是**前端唯一的 HTTP 收口**：这里一条守卫塌了，影响的是**全部**写操作，不是某个页面。附带价值：它是"断言一个恒假前提"最干净的活样本，修它的过程本身就把方法立起来了 |
-| **3** | **E2 Host/Origin 闸门可整段删除** | 任意网页把域名重绑到本机 → 读走用户全部笔记与 API key | 后果**最重**，但判据 1 把它压到第三：**产品代码今天是对的**，真攻击形状被正确拒绝，用户要撞上还需要先被诱导访问恶意站点。它是"未来某人删掉它没人知道"。**排第三不是因为它不要紧，是因为前两条今天就在伤人。**<br>（顺带：查它的过程里挖出了上面那个 IPv6 产品 bug） |
+| 顺位  | 条目                                            | 用户会怎样                                                                 | 为什么排这里                                                                                                                                                                                                                                                                    |
+| ----- | ----------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1** | **E1 `GET /api/notes/:uid` 整个端点从没被执行** | 打开任意一条笔记，看到的东西是错的或缺的 —— 而且**零报错**                 | 三个理由叠加：① 用户**现在**就在撞（T-139 的 A1/A1b 两个 P0 都长在这个端点上）；② 它是**假绿灯制造机**（判据 3）—— 这条债掩护着另外两条 P0，成本要按它掩护的东西算；③ `notes-contract` **此刻正在改这个端点的契约**，没有护栏就没有任何办法证明他改对了、更没办法防止它再退回去 |
+| **2** | **E3 写请求静默回落 mock**                      | 点保存 → 界面显示成功 → **什么都没发生**。项目自己的定性是"比报错糟糕得多" | 静默排在会报错的前面（判据 2）。而且 `client.ts` 是**前端唯一的 HTTP 收口**：这里一条守卫塌了，影响的是**全部**写操作，不是某个页面。附带价值：它是"断言一个恒假前提"最干净的活样本，修它的过程本身就把方法立起来了                                                             |
+| **3** | **E2 Host/Origin 闸门可整段删除**               | 任意网页把域名重绑到本机 → 读走用户全部笔记与 API key                      | 后果**最重**，但判据 1 把它压到第三：**产品代码今天是对的**，真攻击形状被正确拒绝，用户要撞上还需要先被诱导访问恶意站点。它是"未来某人删掉它没人知道"。**排第三不是因为它不要紧，是因为前两条今天就在伤人。**<br>（顺带：查它的过程里挖出了上面那个 IPv6 产品 bug）             |
 
 **没做的四条，理由写清楚**（都在 22 个存活里，我判断本轮不该抢）：
 
@@ -696,11 +714,11 @@ T-137 的原实验：换成 `sendJson(res,200,{})` → 196/196 全绿；换成 `
 
 **三条红是我先猜错、追下去改的期望值，不是"看到红就把断言改宽"**，逐条交代：
 
-| 我第一版猜的 | 实测 | 结论 |
-|---|---|---|
-| `GET /api/notes/upload` → 404 | **405** | **产品对，我错**：`upload.ts:465` 认领了这个路径、只是拒绝 GET。**这比 404 更能证明结论**（请求确实穿过了详情分支）。断言改成 405 + `code === 'METHOD_NOT_ALLOWED'` |
-| `folderUid` → `null` | **一个 ULID** | **产品对，我错**：上传会把笔记放进默认文件夹。但我**没有**把断言放宽成"允许非 null" —— 改成了更强的判据：**它必须在 `/api/folders` 的树里查得到**（指到查不到的 uid = 笔记落在一个界面上不存在的文件夹里，而这条链上没有任何一层会报错） |
-| `assets` 非空 | **空数组** | **我错，且我造了一盏假绿灯**：见 TL;DR。现在 `before()` 直接经仓储层落一条 `audio16k`（`createAsset` 的 INSERT 把 `state` 写死 `'ready'`，与真实转写路径是同一行 SQL），并加了显式数量断言 |
+| 我第一版猜的                  | 实测          | 结论                                                                                                                                                                                                                                     |
+| ----------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/notes/upload` → 404 | **405**       | **产品对，我错**：`upload.ts:465` 认领了这个路径、只是拒绝 GET。**这比 404 更能证明结论**（请求确实穿过了详情分支）。断言改成 405 + `code === 'METHOD_NOT_ALLOWED'`                                                                      |
+| `folderUid` → `null`          | **一个 ULID** | **产品对，我错**：上传会把笔记放进默认文件夹。但我**没有**把断言放宽成"允许非 null" —— 改成了更强的判据：**它必须在 `/api/folders` 的树里查得到**（指到查不到的 uid = 笔记落在一个界面上不存在的文件夹里，而这条链上没有任何一层会报错） |
+| `assets` 非空                 | **空数组**    | **我错，且我造了一盏假绿灯**：见 TL;DR。现在 `before()` 直接经仓储层落一条 `audio16k`（`createAsset` 的 INSERT 把 `state` 写死 `'ready'`，与真实转写路径是同一行 SQL），并加了显式数量断言                                               |
 
 ## E2 · Host/Origin 闸门 —— `apps/daemon/src/http/guard.test.ts`（23 条）
 
@@ -865,21 +883,21 @@ exit=1
 
 两个文件都在测 `GET /api/notes/:uid`。**我全程没碰他的实现，也没碰他的文件。**
 
-| 断言 | 他的 `noteDetailContract.test.ts` | 我的 `rest/noteDetail.test.ts` |
-|---|---|---|
-| `state` 存在且是 `media_assets` 那一列的真值 | ✅ | ✅（我只断言"存在且是字符串"——刚上传的资产本来就可能还在处理中，把状态值写死才是把 bug 写成期望） |
-| `state:'ready'` 时 url 真的取得回字节 | ✅ **只有他有** | ❌ |
-| `bodyJson` 往返 / 是对象不是字符串 / 没写过时为 null | ✅ | ✅（前两条重复） |
-| GET 的输出原样喂回 PATCH 必须幂等 | ✅ **只有他有** | ❌ |
-| 顶层键必须齐 | ✅ **只有他有** | ❌ |
-| 404 NOTE_NOT_FOUND | ✅ | ✅（重复） |
-| **非 ULID 段位落到后续路由（405，不被详情分支吃掉）** | ❌ | ✅ **只有我有** |
-| **`tags` 是数组且无标签时为 `[]`** | ❌ | ✅ **只有我有** |
-| **`starred` 写进去能从详情端点读回来（往返）** | ❌ | ✅ **只有我有** |
-| **`assets[].url` 与该 asset 的 `uid` 一致** | ❌ | ✅ **只有我有** |
-| **`folderUid` 必须在 `/api/folders` 的树里查得到** | ❌ | ✅ **只有我有** |
-| **详情与列表对同一条笔记的 `title`/`starred` 逐字一致** | ❌ | ✅ **只有我有** |
-| `canRetranscribe`/`segmentCount`/`createdAt` 类型 | ❌ | ✅ **只有我有** |
+| 断言                                                    | 他的 `noteDetailContract.test.ts` | 我的 `rest/noteDetail.test.ts`                                                                    |
+| ------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `state` 存在且是 `media_assets` 那一列的真值            | ✅                                | ✅（我只断言"存在且是字符串"——刚上传的资产本来就可能还在处理中，把状态值写死才是把 bug 写成期望） |
+| `state:'ready'` 时 url 真的取得回字节                   | ✅ **只有他有**                   | ❌                                                                                                |
+| `bodyJson` 往返 / 是对象不是字符串 / 没写过时为 null    | ✅                                | ✅（前两条重复）                                                                                  |
+| GET 的输出原样喂回 PATCH 必须幂等                       | ✅ **只有他有**                   | ❌                                                                                                |
+| 顶层键必须齐                                            | ✅ **只有他有**                   | ❌                                                                                                |
+| 404 NOTE_NOT_FOUND                                      | ✅                                | ✅（重复）                                                                                        |
+| **非 ULID 段位落到后续路由（405，不被详情分支吃掉）**   | ❌                                | ✅ **只有我有**                                                                                   |
+| **`tags` 是数组且无标签时为 `[]`**                      | ❌                                | ✅ **只有我有**                                                                                   |
+| **`starred` 写进去能从详情端点读回来（往返）**          | ❌                                | ✅ **只有我有**                                                                                   |
+| **`assets[].url` 与该 asset 的 `uid` 一致**             | ❌                                | ✅ **只有我有**                                                                                   |
+| **`folderUid` 必须在 `/api/folders` 的树里查得到**      | ❌                                | ✅ **只有我有**                                                                                   |
+| **详情与列表对同一条笔记的 `title`/`starred` 逐字一致** | ❌                                | ✅ **只有我有**                                                                                   |
+| `canRetranscribe`/`segmentCount`/`createdAt` 类型       | ❌                                | ✅ **只有我有**                                                                                   |
 
 **建议**：合成一个文件，重复的三条去掉一边即可。
 `mutation-check.mjs` 里 4 条 E1 变异指向的是**我这个文件**，合并后记得改 `tests:` 那一行
@@ -906,11 +924,13 @@ exit=1
    （那些脚本刻意做成可独立运行的 e2e）。**没做，明说。**
 
 下一步建议:
+
 1. 先裁决 §E 的合并（我建议 `notes-contract` 先合，我后合；红着等会训练人忽略红灯）
 2. 派人修 §TL;DR 的 IPv6 产品 bug + `restart-datadir.test.ts` 写全局指针那条
 3. E7（9 个端点）单独立卡；E4/E5/E6 按 §A 末尾的理由排
 
 需要 Manager 决策:
+
 - §E 的合并顺序与归并到哪个文件
 - `guard.ts` 的 IPv6 修复派给谁（安全边界，我判断该单独复核，不该顺手改）
 - `mutation-check.mjs` 要不要写进 HANDOFF 的"怎么验"一节（我建议写，但**明确标注它不是门禁**）

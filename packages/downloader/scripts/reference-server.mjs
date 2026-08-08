@@ -80,7 +80,9 @@ const { install } = await import(path.join(DIST, 'installer.js'));
 const { probeAll } = await import(path.join(DIST, 'probe.js'));
 const { computeFit, makeEvent, referenceSpeedOf, topics, formatSseFrame, formatSseRetry } =
   await import(path.join(SHARED, 'index.js'));
-const { listComponents, rollback: rollbackComponent } = await import(path.join(DIST, 'components.js'));
+const { listComponents, rollback: rollbackComponent } = await import(
+  path.join(DIST, 'components.js')
+);
 const COMPONENT_REGISTRY = path.join(REPO, 'vendor', 'manifests', 'components.json');
 /** Cache the last upstream sweep so the page does not re-hit GitHub on every render. */
 let componentCache = null;
@@ -239,7 +241,11 @@ async function detectHardware() {
   return {
     schemaVersion: 1,
     detectedAt: new Date().toISOString(),
-    os: { platform: process.platform, arch: process.arch === 'x64' ? 'x64' : 'arm64', version: os.release() },
+    os: {
+      platform: process.platform,
+      arch: process.arch === 'x64' ? 'x64' : 'arm64',
+      version: os.release(),
+    },
     cpu: {
       brand: cpus[0]?.model ?? 'unknown',
       physicalCores: Math.max(1, Math.floor(cpus.length / 2)),
@@ -257,16 +263,66 @@ async function detectHardware() {
      * driver nobody measured. See BackendStatus.probed in @openmemo/shared.
      */
     backends: [
-      { id: 'cpu', available: true, installed: true, probed: true, version: null, deviceIndex: null, isa: features.includes('avx2') ? 'avx2' : 'baseline' },
-      { id: 'cuda', available: false, installed: false, probed: false, version: null, deviceIndex: null, unavailableReason: '未安装 CUDA 后端包（本次探测没有加载过它，故对驱动不作结论）' },
-      { id: 'vulkan', available: false, installed: false, probed: false, version: null, deviceIndex: null, unavailableReason: '未安装 Vulkan 后端包（本次探测没有加载过它，故对驱动不作结论）' },
-      { id: 'rocm', available: false, installed: false, probed: false, version: null, deviceIndex: null, unavailableReason: '未安装 ROCm 后端包（本次探测没有加载过它，故对驱动不作结论）' },
-      { id: 'metal', available: false, installed: false, probed: false, version: null, deviceIndex: null, unavailableReason: '仅 macOS 可用' },
-      { id: 'coreml', available: false, installed: false, probed: false, version: null, deviceIndex: null, unavailableReason: '仅 macOS 可用' },
+      {
+        id: 'cpu',
+        available: true,
+        installed: true,
+        probed: true,
+        version: null,
+        deviceIndex: null,
+        isa: features.includes('avx2') ? 'avx2' : 'baseline',
+      },
+      {
+        id: 'cuda',
+        available: false,
+        installed: false,
+        probed: false,
+        version: null,
+        deviceIndex: null,
+        unavailableReason: '未安装 CUDA 后端包（本次探测没有加载过它，故对驱动不作结论）',
+      },
+      {
+        id: 'vulkan',
+        available: false,
+        installed: false,
+        probed: false,
+        version: null,
+        deviceIndex: null,
+        unavailableReason: '未安装 Vulkan 后端包（本次探测没有加载过它，故对驱动不作结论）',
+      },
+      {
+        id: 'rocm',
+        available: false,
+        installed: false,
+        probed: false,
+        version: null,
+        deviceIndex: null,
+        unavailableReason: '未安装 ROCm 后端包（本次探测没有加载过它，故对驱动不作结论）',
+      },
+      {
+        id: 'metal',
+        available: false,
+        installed: false,
+        probed: false,
+        version: null,
+        deviceIndex: null,
+        unavailableReason: '仅 macOS 可用',
+      },
+      {
+        id: 'coreml',
+        available: false,
+        installed: false,
+        probed: false,
+        version: null,
+        deviceIndex: null,
+        unavailableReason: '仅 macOS 可用',
+      },
     ],
     selectedBackend: 'cpu',
     selectedGpuIndex: null,
-    disks: [{ mount: '/', pathFor: 'models_root', path: ROOT, freeMB: diskFreeMB, totalMB: diskTotalMB }],
+    disks: [
+      { mount: '/', pathFor: 'models_root', path: ROOT, freeMB: diskFreeMB, totalMB: diskTotalMB },
+    ],
   };
 }
 
@@ -430,13 +486,24 @@ queue.on('job.progress', (job) =>
   ),
 );
 queue.on('job.state', (job, prev) =>
-  emit(makeEvent('job.state', topics.job(job.jobId), { jobId: job.jobId, state: job.state, previousState: prev })),
+  emit(
+    makeEvent('job.state', topics.job(job.jobId), {
+      jobId: job.jobId,
+      state: job.state,
+      previousState: prev,
+    }),
+  ),
 );
 queue.on('job.failed', (job) =>
   emit(
     makeEvent('job.failed', topics.job(job.jobId), {
       jobId: job.jobId,
-      error: job.error ?? { code: 'INTERNAL', message: 'failed', messageZh: '失败', retryable: false },
+      error: job.error ?? {
+        code: 'INTERNAL',
+        message: 'failed',
+        messageZh: '失败',
+        retryable: false,
+      },
       willRetry: false,
       nextProvider: null,
     }),
@@ -461,12 +528,21 @@ async function startPull(model) {
     async (ctx) => {
       ctx.setStep('resolving');
       const probes = await probeAll(
-        model.files[0].mirrors.map((m) => ({ provider: m.provider, url: m.url, official: m.official })),
+        model.files[0].mirrors.map((m) => ({
+          provider: m.provider,
+          url: m.url,
+          official: m.official,
+        })),
       );
       emit(
         makeEvent('sources.probed', topics.models(), {
           effective: probes.find((p) => p.ok)?.provider ?? 'none',
-          probes: probes.map((p) => ({ id: p.provider, ok: p.ok, ttfbMs: p.ttfbMs, throughputKbps: p.throughputKbps })),
+          probes: probes.map((p) => ({
+            id: p.provider,
+            ok: p.ok,
+            ttfbMs: p.ttfbMs,
+            throughputKbps: p.throughputKbps,
+          })),
         }),
       );
 
@@ -546,7 +622,12 @@ async function startPull(model) {
         }),
       );
       const st = await buildStorage();
-      emit(makeEvent('storage.changed', topics.models(), { usedBytes: st.usedBytes, freeBytes: st.volume.freeBytes }));
+      emit(
+        makeEvent('storage.changed', topics.models(), {
+          usedBytes: st.usedBytes,
+          freeBytes: st.volume.freeBytes,
+        }),
+      );
     },
   );
   return { job, deduplicated };
@@ -566,7 +647,10 @@ function json(res, status, body) {
     return;
   }
   const b = Buffer.from(JSON.stringify(body));
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': b.length });
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': b.length,
+  });
   res.end(b);
 }
 function apiError(res, status, code, messageZh, remediation = null) {
@@ -623,7 +707,8 @@ async function proxyUpstream(req, res, url, method) {
     });
     const out = {};
     up.headers.forEach((v, k) => {
-      if (k !== 'content-encoding' && k !== 'content-length' && k !== 'transfer-encoding') out[k] = v;
+      if (k !== 'content-encoding' && k !== 'content-length' && k !== 'transfer-encoding')
+        out[k] = v;
     });
     // Set-Cookie must go INTO the header object before writeHead. Calling
     // res.setHeader() afterwards throws ERR_HTTP_HEADERS_SENT, which silently aborted the
@@ -696,24 +781,40 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/components' && method === 'GET') {
       const check = url.searchParams.get('check') === 'true';
       if (!check && componentCache) return json(res, 200, componentCache);
-      const r = await listComponents({ registryPath: COMPONENT_REGISTRY, store, checkUpstream: check, timeoutMs: 15000 });
+      const r = await listComponents({
+        registryPath: COMPONENT_REGISTRY,
+        store,
+        checkUpstream: check,
+        timeoutMs: 15000,
+      });
       if (check) componentCache = r;
       return json(res, 200, r);
     }
     if (p === '/api/components/check' && method === 'POST') {
       await readBody(req);
-      const r = await listComponents({ registryPath: COMPONENT_REGISTRY, store, checkUpstream: true, timeoutMs: 15000 });
+      const r = await listComponents({
+        registryPath: COMPONENT_REGISTRY,
+        store,
+        checkUpstream: true,
+        timeoutMs: 15000,
+      });
       componentCache = r;
       return json(res, 200, r);
     }
     if (p === '/api/components/update' && method === 'POST') {
       const body = await readBody(req);
       // Reference server does not perform the swap; it proves the contract shape.
-      return json(res, 202, { jobId: `job_${Date.now().toString(36)}`, id: body.id, toVersion: body.toVersion ?? null });
+      return json(res, 202, {
+        jobId: `job_${Date.now().toString(36)}`,
+        id: body.id,
+        toVersion: body.toVersion ?? null,
+      });
     }
     if (p === '/api/components/rollback' && method === 'POST') {
       const body = await readBody(req);
-      const ok = await rollbackComponent(store, 'backend', String(body.id ?? ''), 'prev').catch(() => false);
+      const ok = await rollbackComponent(store, 'backend', String(body.id ?? ''), 'prev').catch(
+        () => false,
+      );
       return json(res, 200, { ok: true, version: ok ? 'prev' : 'none' });
     }
 
@@ -774,12 +875,21 @@ const server = http.createServer(async (req, res) => {
       const [, jobId, action] = jobMatch;
       if (action === 'cancel') {
         const ok = queue.cancel(jobId);
-        return ok ? (res.writeHead(204), res.end()) : apiError(res, 409, 'NOT_FOUND', '任务不存在或已结束');
+        return ok
+          ? (res.writeHead(204), res.end())
+          : apiError(res, 409, 'NOT_FOUND', '任务不存在或已结束');
       }
       if (action === 'retry') {
         const j = queue.retry(jobId);
         return j
-          ? json(res, 202, { jobId: j.jobId, state: j.state, targetId: j.targetId, totalBytes: j.totalBytes, eventsUrl: '/api/events', deduplicated: false })
+          ? json(res, 202, {
+              jobId: j.jobId,
+              state: j.state,
+              targetId: j.targetId,
+              totalBytes: j.totalBytes,
+              eventsUrl: '/api/events',
+              deduplicated: false,
+            })
           : apiError(res, 409, 'NOT_FOUND', '任务不可重试');
       }
       return apiError(res, 501, 'NOT_IMPLEMENTED', '暂未实现');
@@ -790,8 +900,19 @@ const server = http.createServer(async (req, res) => {
       const prev = activeState[body.role] ?? null;
       activeState[body.role] = body.id;
       await persistActive();
-      emit(makeEvent('model.activated', topics.models(), { role: body.role, modelId: body.id, previous: prev }));
-      return json(res, 200, { role: body.role, active: body.id, previous: prev, reloadRequired: true });
+      emit(
+        makeEvent('model.activated', topics.models(), {
+          role: body.role,
+          modelId: body.id,
+          previous: prev,
+        }),
+      );
+      return json(res, 200, {
+        role: body.role,
+        active: body.id,
+        previous: prev,
+        reloadRequired: true,
+      });
     }
 
     if (p === '/api/models/gc' && method === 'POST') {
@@ -799,7 +920,12 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const r = await store.collectGarbage(body.targets ?? ['orphan_blobs', 'stale_partials']);
       const st = await buildStorage();
-      emit(makeEvent('storage.changed', topics.models(), { usedBytes: st.usedBytes, freeBytes: st.volume.freeBytes }));
+      emit(
+        makeEvent('storage.changed', topics.models(), {
+          usedBytes: st.usedBytes,
+          freeBytes: st.volume.freeBytes,
+        }),
+      );
       return json(res, 200, r);
     }
 
@@ -822,7 +948,12 @@ const server = http.createServer(async (req, res) => {
       const g = await store.collectGarbage(['orphan_blobs']);
       emit(makeEvent('model.removed', topics.models(), { modelId: id, freedBytes: g.freedBytes }));
       const st = await buildStorage();
-      emit(makeEvent('storage.changed', topics.models(), { usedBytes: st.usedBytes, freeBytes: st.volume.freeBytes }));
+      emit(
+        makeEvent('storage.changed', topics.models(), {
+          usedBytes: st.usedBytes,
+          freeBytes: st.volume.freeBytes,
+        }),
+      );
       res.writeHead(204);
       return res.end();
     }
@@ -836,8 +967,10 @@ const server = http.createServer(async (req, res) => {
     /* ---- backends ---- */
     if (p === '/api/backends/catalog') {
       const packs = backendDoc.packs.map((pk) => {
-        const applicable = pk.os === process.platform && pk.arch === (process.arch === 'x64' ? 'x64' : 'arm64');
-        const backendAvailable = hardware.backends.find((b) => b.id === pk.backend)?.available ?? false;
+        const applicable =
+          pk.os === process.platform && pk.arch === (process.arch === 'x64' ? 'x64' : 'arm64');
+        const backendAvailable =
+          hardware.backends.find((b) => b.id === pk.backend)?.available ?? false;
         return {
           ...pk,
           installed: false,
@@ -845,12 +978,18 @@ const server = http.createServer(async (req, res) => {
           inapplicableReason: !applicable
             ? `适用于 ${pk.os}/${pk.arch}，与本机不符`
             : !backendAvailable
-              ? hardware.backends.find((b) => b.id === pk.backend)?.unavailableReason ?? '该后端在本机不可用'
+              ? (hardware.backends.find((b) => b.id === pk.backend)?.unavailableReason ??
+                '该后端在本机不可用')
               : null,
           recommended: applicable && backendAvailable && pk.backend === hardware.selectedBackend,
         };
       });
-      return json(res, 200, { catalogVersion: backendDoc.catalogVersion, source: 'bundled', stale: true, packs });
+      return json(res, 200, {
+        catalogVersion: backendDoc.catalogVersion,
+        source: 'bundled',
+        stale: true,
+        packs,
+      });
     }
 
     if (p === '/api/backends/installed') {
@@ -859,7 +998,12 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/models/benchmark' && method === 'POST') {
       // Not implemented: needs the real engine binary. Fail loudly rather than fake a number.
-      return apiError(res, 501, 'NOT_IMPLEMENTED', '基准测试需要已安装的推理后端，参考服务器未实现');
+      return apiError(
+        res,
+        501,
+        'NOT_IMPLEMENTED',
+        '基准测试需要已安装的推理后端，参考服务器未实现',
+      );
     }
 
     if (p.startsWith('/api/') || p.startsWith('/ws/') || p.startsWith('/media/')) {
@@ -891,7 +1035,9 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`  models root : ${ROOT}`);
   console.log(`  web dist    : ${WEB_DIST}`);
   console.log(`  catalog     : ${MODELS.length} models, ${backendDoc.packs.length} backend packs`);
-  console.log(`  proxy       : ${PROXY ?? '(none — unmatched /api returns 404)'}${PROXY_ALL ? '  [PROXY-ALL: serving static only]' : ''}`);
+  console.log(
+    `  proxy       : ${PROXY ?? '(none — unmatched /api returns 404)'}${PROXY_ALL ? '  [PROXY-ALL: serving static only]' : ''}`,
+  );
 });
 
 process.on('SIGTERM', () => server.close(() => process.exit(0)));

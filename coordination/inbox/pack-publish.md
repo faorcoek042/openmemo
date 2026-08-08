@@ -3,6 +3,7 @@
 ## [2026-08-06 03:20] T-146 PROGRESS
 
 交付:
+
 - `vendor/manifests/backends.json`（+2 个 ffmpeg 包）
 - `vendor/manifests/components.json`（+16 条来源/许可证条目，把**反方向**的洞补齐）
 - `apps/daemon/src/pipeline/platformPacks.test.ts`（**新增**，9 条守卫）
@@ -24,12 +25,12 @@
 
 「各个系统都是通过网页去调用再自下载各种依赖吗」—— **机制是真的。今天之前覆盖只有 Linux；现在 Windows 也齐了，macOS 差最后一步。**
 
-| 平台 | ffmpeg / ffprobe | 转写引擎 (whisper.cpp) | ANE / GPU 加速 | yt-dlp | 中文检索 | **这台机器能转写吗** |
-|---|---|---|---|---|---|---|
-| **Linux x64** | ✅ BtbN 7.1.5<br>`[本机+CI 实测]` | ✅ 上游 v1.9.1<br>`[本机+CI 实测]` | CUDA/Vulkan **已编出、待发布**（§1） | ✅ | ✅ `[CI 实测]` | ✅ **能**（唯一一路走通过的） |
-| **Windows x64** | ✅ **本次补上**<br>BtbN 同一个已钉 tag | ✅ 上游 v1.9.1（cpu / cuda 12.4） | CUDA 已有；Vulkan **已编出、待发布** | ✅ | 🔴 libsimple 装了不加载<br>（`ci-runner` CI 实测，产品 bug） | 🟡 **理论齐了，等 CI 实跑判定**（§5） |
-| **macOS arm64** | ✅ **本次补上**<br>jellyfin 7.1.4-3 | 🔴 **差最后一步**：CI 已经编出来了，**等你批 release 才有下载地址**（§1） | Metal 已编出；**ANE 本次接通到构建层**（§3） | ✅ | ✅ `[CI 实测]` | 🔴 **还不能** —— 卡在 whisper 没有发布地址 |
-| linux-arm64 / macos-x64 / linux-x64-rocm | — | — | — | — | — | **用户 2026-08-05 明确不需要，没补** |
+| 平台                                     | ffmpeg / ffprobe                       | 转写引擎 (whisper.cpp)                                                    | ANE / GPU 加速                               | yt-dlp | 中文检索                                                     | **这台机器能转写吗**                       |
+| ---------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------- | -------------------------------------------- | ------ | ------------------------------------------------------------ | ------------------------------------------ |
+| **Linux x64**                            | ✅ BtbN 7.1.5<br>`[本机+CI 实测]`      | ✅ 上游 v1.9.1<br>`[本机+CI 实测]`                                        | CUDA/Vulkan **已编出、待发布**（§1）         | ✅     | ✅ `[CI 实测]`                                               | ✅ **能**（唯一一路走通过的）              |
+| **Windows x64**                          | ✅ **本次补上**<br>BtbN 同一个已钉 tag | ✅ 上游 v1.9.1（cpu / cuda 12.4）                                         | CUDA 已有；Vulkan **已编出、待发布**         | ✅     | 🔴 libsimple 装了不加载<br>（`ci-runner` CI 实测，产品 bug） | 🟡 **理论齐了，等 CI 实跑判定**（§5）      |
+| **macOS arm64**                          | ✅ **本次补上**<br>jellyfin 7.1.4-3    | 🔴 **差最后一步**：CI 已经编出来了，**等你批 release 才有下载地址**（§1） | Metal 已编出；**ANE 本次接通到构建层**（§3） | ✅     | ✅ `[CI 实测]`                                               | 🔴 **还不能** —— 卡在 whisper 没有发布地址 |
+| linux-arm64 / macos-x64 / linux-x64-rocm | —                                      | —                                                                         | —                                            | —      | —                                                            | **用户 2026-08-05 明确不需要，没补**       |
 
 **证据口径**：`[本机实测]` = 我在这台 Linux x64 上跑过；`[CI 实测]` = GitHub runner 上跑过；
 其余一律标出来源。**本机只有 Linux x64，非 Linux 的行为结论我一条都不声称"已验证"。**
@@ -52,6 +53,7 @@ download 'https://www.osxexperts.net/ffmpeg6arm.zip' ffmpeg-darwin-arm64.zip
 与 Linux 侧的 7.1.5 差一个大版本。
 
 evermeet.cx 也出局，官网原话（我实测抓的页面）：
+
 > "I do not plan to provide native ffmpeg binaries for Apple Silicon ARM."
 
 改用 **`jellyfin/jellyfin-ffmpeg v7.1.4-3`**，核实强度见 §2。**但它是 fork 不是上游原版，
@@ -78,6 +80,7 @@ evermeet.cx 也出局，官网原话（我实测抓的页面）：
 ---
 
 需要 Manager 决策:
+
 1. **release**（§1）—— 你说在去拿用户授权。**现在多一条理由等**：macOS 核心包已经改成带
    CoreML，`build-backends` 我刚重新触发（run 31037981498），跑完的产物才是要发的那一版。
 2. **ANE 剩下的 3 处断点**（§3.3）—— 其中「解包多一层同名目录」是个真 bug，
@@ -87,6 +90,7 @@ evermeet.cx 也出局，官网原话（我实测抓的页面）：
    要不要精简成一句、把详情留在这份回执里。
 
 下一步建议:
+
 1. 等 `cold-start-audit` run 31037964581 出三平台的转写可行性结论（§5）。
 2. 等 `build-backends` run 31037981498 确认 macOS 带 CoreML 还编得出来（§3.1 的风险）。
 3. release 批下来后我补 macOS whisper 的两条 manifest + 再跑一次 CI 收尾。
@@ -124,12 +128,12 @@ whispercpp-metal-macos-arm64/libggml-metal.so             828,512   ← 单文�
 
 ## 1.2 为什么必须是 GitHub Release（可选项我都查了）
 
-| 通道 | 判定 |
-|---|---|
-| Actions artifact 直链 | ✘ **有保留期**，这一批 `expires_at = 2026-11-03`。清单里的 URL 是给用户机器取的，会过期的地址等于没有 |
-| `raw.githubusercontent.com/<o>/<r>/<sha>/…` | ✘ host 在允许名单里，但要求**把二进制提交进仓库** —— 破坏 D-11 §6.2「仓库里没有二进制，最大已跟踪文件 255 KB」 |
-| `huggingface.co` | ✘ 在名单里，但那是第三方账号，等于换一个我们不控制的托管方 |
-| **`github.com/<o>/<r>/releases/download/<tag>/<file>`** | ✅ 不可变、无保留期、host 已在 `ALLOWED_DOWNLOAD_HOSTS` |
+| 通道                                                    | 判定                                                                                                           |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Actions artifact 直链                                   | ✘ **有保留期**，这一批 `expires_at = 2026-11-03`。清单里的 URL 是给用户机器取的，会过期的地址等于没有          |
+| `raw.githubusercontent.com/<o>/<r>/<sha>/…`             | ✘ host 在允许名单里，但要求**把二进制提交进仓库** —— 破坏 D-11 §6.2「仓库里没有二进制，最大已跟踪文件 255 KB」 |
+| `huggingface.co`                                        | ✘ 在名单里，但那是第三方账号，等于换一个我们不控制的托管方                                                     |
+| **`github.com/<o>/<r>/releases/download/<tag>/<file>`** | ✅ 不可变、无保留期、host 已在 `ALLOWED_DOWNLOAD_HOSTS`                                                        |
 
 ⚠️ **一条容易踩的**：`build-backends.yml` 的 publish 输入写的是「Attach the packs to a **draft** release」——
 **draft release 的附件不能匿名下载**（要 token）。所以这个 release 必须是**已发布**的
@@ -156,6 +160,7 @@ tag    autobuild-2026-08-02-13-17          ← 和 media-tools-linux-x64 同一�
 体积   158,697,121 B
 sha256 5fef81d2a19752cafacb1bb396b3c7d64d31845d7ce4878ac65d24dd3abda00d
 ```
+
 `[本机实测]` **全量下载复算**，与 GitHub Releases API 的 digest 逐字符一致。
 
 **守卫钉的是"同一个 tag"而不是"某个 tag"**：BtbN 的 `latest` 是移动 tag，
@@ -169,6 +174,7 @@ tag    v7.1.4-3
 体积   31,063,636 B
 sha256 99d689816a41075574928a0b3059101fd454fc58f465c99105a73b5c415ac86d
 ```
+
 `[本机实测]` **全量下载复算**，与 API digest 逐字符一致。
 
 解开正好两个文件：`ffmpeg` 53,441,720 B + `ffprobe` 53,300,504 B。
@@ -185,10 +191,12 @@ file: Mach-O 64-bit arm64 executable
 LC_CODE_SIGNATURE  有（Apple Silicon 上没签名的 Mach-O 根本不启动）
 LC_BUILD_VERSION   platform=macOS  minos=12.0.0  sdk=15.5.0
 ```
+
 → `requiresDriver.macosVersion: "12.0"` 是**量出来的**，不是抄的。
 （`emit-pack-manifest.mjs` 的规矩是「没测过写 null」，测过就写。）
 
 ⚠️ **诚实边界，两条**：
+
 1. jellyfin-ffmpeg 是 ffmpeg 的 **fork**（带 jellyfin 的 hwaccel 补丁），不是上游原版。
 2. **我没有在 Mac 上运行过它。** 上面全部是静态分析。
    「它真能归一化 + 探测」要靠 macOS runner 实跑证明（§5）。
@@ -259,11 +267,11 @@ whisper-cli 收到 --no-prints →  cli.cpp:1039-1040  whisper_log_set(cb_log_di
 
 所以我加了 `packages/runtime/src/selfcheck.ts` 的 `asr.coreml`（**只在 darwin/arm64 出现**）：
 
-| 档 | 条件 | 文案要点 |
-|---|---|---|
-| `ok` | encoder 目录在，**且里面有 `coremldata.bin`** | ANE 已就绪（只接管 encoder，decoder 仍走 Metal/CPU） |
-| `warn` | 没装 encoder | 未启用 ANE —— 走 Metal/CPU，**功能正常只是慢** |
-| `fail` | 目录在、但**里面没有 `coremldata.bin`** | CoreML encoder 结构不对，whisper 会**静默回退** |
+| 档     | 条件                                          | 文案要点                                             |
+| ------ | --------------------------------------------- | ---------------------------------------------------- |
+| `ok`   | encoder 目录在，**且里面有 `coremldata.bin`** | ANE 已就绪（只接管 encoder，decoder 仍走 Metal/CPU） |
+| `warn` | 没装 encoder                                  | 未启用 ANE —— 走 Metal/CPU，**功能正常只是慢**       |
+| `fail` | 目录在、但**里面没有 `coremldata.bin`**       | CoreML encoder 结构不对，whisper 会**静默回退**      |
 
 - **判据是"目录里有没有 `coremldata.bin`"，不是"目录在不在"** ——
   只查存在性会把 `fail` 那档读成 `ok`，而 `fail` 那档正是 §3.3 第 1 条那个空壳。
@@ -276,11 +284,11 @@ whisper-cli 收到 --no-prints →  cli.cpp:1039-1040  whisper_log_set(cb_log_di
 
 ## 3.3 ⚠️ 剩下 3 处断点（需要你裁，都超出本任务）
 
-| # | 断点 | 位置 | 后果 |
-|---|---|---|---|
-| 1 | **解包多一层同名目录** | `installer.ts:236-238` 的 `stripExt(f.name)` 得到 `X-encoder.mlmodelc`，而 zip 内部**自带一层同名顶层目录**，`unpack.ts` 又不做 strip-components → 真实结构是 `X-encoder.mlmodelc/X-encoder.mlmodelc/coremldata.bin`，**外层是个空壳** | whisper 静默回退。**新自检项会把它报成 `fail`**，所以至少不再是静默的 |
-| 2 | **前端从不传 `includeOptional`** | `coreml-encoder` 是 optional 文件，只有 `POST /api/models/pull` 带 `includeOptional:["coreml-encoder"]` 才会下载（`rest/models.ts:385`）。全仓 `apps/web` 里**没有任何地方传这个值** | **用户在界面上没有任何办法装 CoreML encoder** |
-| 3 | **只有 f16 条目挂了 encoder** | `models-whisper.json` 里只有 `whisper-large-v3-f16` / `-turbo-f16` 有 `coreml-encoder`；产品默认推荐的是 `whisper-large-v3-turbo-q5_0`，它没挂 | 装了默认模型的用户拿不到 ANE。⚠️ 注意**技术上完全可以挂**（§TL;DR ②：q5_0 会去找同一个 `-turbo-encoder.mlmodelc`），只是清单没写 |
+| #   | 断点                             | 位置                                                                                                                                                                                                                                   | 后果                                                                                                                             |
+| --- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **解包多一层同名目录**           | `installer.ts:236-238` 的 `stripExt(f.name)` 得到 `X-encoder.mlmodelc`，而 zip 内部**自带一层同名顶层目录**，`unpack.ts` 又不做 strip-components → 真实结构是 `X-encoder.mlmodelc/X-encoder.mlmodelc/coremldata.bin`，**外层是个空壳** | whisper 静默回退。**新自检项会把它报成 `fail`**，所以至少不再是静默的                                                            |
+| 2   | **前端从不传 `includeOptional`** | `coreml-encoder` 是 optional 文件，只有 `POST /api/models/pull` 带 `includeOptional:["coreml-encoder"]` 才会下载（`rest/models.ts:385`）。全仓 `apps/web` 里**没有任何地方传这个值**                                                   | **用户在界面上没有任何办法装 CoreML encoder**                                                                                    |
+| 3   | **只有 f16 条目挂了 encoder**    | `models-whisper.json` 里只有 `whisper-large-v3-f16` / `-turbo-f16` 有 `coreml-encoder`；产品默认推荐的是 `whisper-large-v3-turbo-q5_0`，它没挂                                                                                         | 装了默认模型的用户拿不到 ANE。⚠️ 注意**技术上完全可以挂**（§TL;DR ②：q5_0 会去找同一个 `-turbo-encoder.mlmodelc`），只是清单没写 |
 
 关于 #3 的一条补充事实（来自我派的调研，`[未直连 HF 核实]`）：上游 HF 仓库有
 tiny/base/small/medium/large 全套 `*-encoder.mlmodelc.zip`，**最小的 tiny 只有 ~14.3 MiB**。
@@ -306,6 +314,7 @@ tiny/base/small/medium/large 全套 `*-encoder.mlmodelc.zip`，**最小的 tiny 
 **他自己那台机器上要装的每一个组件，来源与许可证一条都查不到**」。
 
 本轮：
+
 - 新增 **16 条** `components.json` 条目，把 `backends.json`(10) + `sqlite-ext.json`(11) 里
   所有 `published` 的包补齐（`pending-ci` 的**刻意排除** —— 用户下不下来的东西不该出现在来源页）；
 - 加**反方向守卫**：每个可下载的包必须在 `components.json` 里查得到来源与许可证；
@@ -319,13 +328,13 @@ tiny/base/small/medium/large 全套 `*-encoder.mlmodelc.zip`，**最小的 tiny 
 
 ## 5.1 本机（Linux x64）`[本机实测]`
 
-| 项 | 结论 |
-|---|---|
-| 两个新归档的 sha256 与清单一致 | ✅ 全量下载复算 |
-| 走真实 `install()` 下载→校验→解包→硬链 | ✅ §2.3 |
-| `findInBackendPacks` 真能找到 4 个二进制 | ✅ §2.3 |
-| `backends.json` 过真的 `validateBackendManifest` | ✅ 10 个包全 `published` |
-| 门禁 | `tsc -b` 0 · `eslint` 0 · `pnpm -r test` **897 / 0** |
+| 项                                               | 结论                                                 |
+| ------------------------------------------------ | ---------------------------------------------------- |
+| 两个新归档的 sha256 与清单一致                   | ✅ 全量下载复算                                      |
+| 走真实 `install()` 下载→校验→解包→硬链           | ✅ §2.3                                              |
+| `findInBackendPacks` 真能找到 4 个二进制         | ✅ §2.3                                              |
+| `backends.json` 过真的 `validateBackendManifest` | ✅ 10 个包全 `published`                             |
+| 门禁                                             | `tsc -b` 0 · `eslint` 0 · `pnpm -r test` **897 / 0** |
 
 ⚠️ **本机没有也不可能验的**：那两个二进制在 Windows / macOS 上**真的能跑**。
 按用户指示，本地 whisper 转写测试**一次都没跑**。
@@ -363,6 +372,7 @@ POST /api/notes/import  (本地 wav)  →  transcribe job  →  GET /api/notes/:
   AssertionError: backends.json 里没有 win32/x64 的 ffmpeg 包 —— Windows 上转写全废
 ℹ tests 7 / pass 4 / fail 3
 ```
+
 ↑ **这一行就是 Windows 今天之前的真实处境。**
 
 **R2 · 只写 `backends.json`、忘了写 `components.json`（ffmpeg 两次成灾的那个形状）**
@@ -399,6 +409,7 @@ D-11 是 `ci-runner` 的交付物，PROTOCOL §1 规则 3 说不改别人的交�
 如果你希望我直接写进 D-11，说一声我就写。
 
 同时**订正 D-11 / T-141 的两条**（都在我这边有新证据）：
+
 1. `platform` T-141 §2.2 给的 macOS ffmpeg 候选（`eugeneware/ffmpeg-static`）**不可用**，
    理由见 §TL;DR ①。它当时标的是「未落地前必须重新核」——**核了，结论是换掉**。
 2. D-11 §5 遗留第 1 条「macOS metal 包为何是空的」已经解决（第 3 轮的 `.so` 后缀修复），
@@ -408,16 +419,16 @@ D-11 是 `ci-runner` 的交付物，PROTOCOL §1 规则 3 说不改别人的交�
 
 # §7 我没做 / 做不到的（如实列）
 
-| 项 | 状态 |
-|---|---|
-| macOS whisper 进清单 | ⛔ **等 release 授权**。产物、sha256、URL 形态都备好了 |
-| linux-x64 vulkan/cuda、win-x64 vulkan 进清单 | ⛔ 同上（同一个 release） |
-| Windows / macOS 上二进制真的能跑 | ⏳ **CI 跑着，结果没拿到**。本机验不了 |
-| ANE 真的被用上 | 🔴 **今天不成立**，4 处断点修了 1 处（§3.3） |
-| macOS 上 `WHISPER_COREML=ON` 编得出来吗 | ⏳ **未验证**，run 31037981498 正在答 |
-| `openmemo-probe` 的分发 | ⛔ 没碰。CI 产出了它（macOS 52,896 B / Linux 17,208 B）但没有分发通道，`probeExists` 恒 false 这条老债还在 |
-| `whispercpp-cuda-11.8` / `whisper-blas` 等上游未收录资产 | ⛔ 没碰，不在本任务范围 |
-| linux-arm64 / macos-x64 / linux-x64-rocm | ⛔ **用户明确不需要，刻意没补** |
+| 项                                                       | 状态                                                                                                       |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| macOS whisper 进清单                                     | ⛔ **等 release 授权**。产物、sha256、URL 形态都备好了                                                     |
+| linux-x64 vulkan/cuda、win-x64 vulkan 进清单             | ⛔ 同上（同一个 release）                                                                                  |
+| Windows / macOS 上二进制真的能跑                         | ⏳ **CI 跑着，结果没拿到**。本机验不了                                                                     |
+| ANE 真的被用上                                           | 🔴 **今天不成立**，4 处断点修了 1 处（§3.3）                                                               |
+| macOS 上 `WHISPER_COREML=ON` 编得出来吗                  | ⏳ **未验证**，run 31037981498 正在答                                                                      |
+| `openmemo-probe` 的分发                                  | ⛔ 没碰。CI 产出了它（macOS 52,896 B / Linux 17,208 B）但没有分发通道，`probeExists` 恒 false 这条老债还在 |
+| `whispercpp-cuda-11.8` / `whisper-blas` 等上游未收录资产 | ⛔ 没碰，不在本任务范围                                                                                    |
+| linux-arm64 / macos-x64 / linux-x64-rocm                 | ⛔ **用户明确不需要，刻意没补**                                                                            |
 
 ---
 
@@ -435,13 +446,13 @@ D-11 是 `ci-runner` 的交付物，PROTOCOL §1 规则 3 说不改别人的交�
 
 ## SHARED-CHANGE 申报
 
-| 文件 | 归属 | 我做了什么 | 冲突风险 |
-|---|---|---|---|
-| `packages/runtime/src/selfcheck.ts` | `storage-fix` / `gpu-runtime` | **纯新增**：一个导出函数 + 一个私有函数 + `model.asr` 之后加一行调用 | 低（不改任何既有检查项的判据或文案） |
-| `packages/runtime/src/index.ts` | 同上 | 导出列表加一行 | 低 |
-| `scripts/ci/cold-start-audit.mjs`、`.github/workflows/cold-start-audit.yml` | **`ci-runner`（在途）** | 加 `--transcribe`（默认关）+ 3b 里多挑一个 ASR 模型 + 末尾新增第 7 节 | 🟡 **中** —— `ci-runner` 可能正在改同一个文件，请他 rebase 时留意 |
-| `scripts/build-whisper.sh` | `gpu-runtime` | cpu 分支加 darwin 条件；coreml 分支改成 die | 低 |
-| `vendor/manifests/*.json` | `model-mgmt` | 追加条目 | 低（数组末尾追加） |
+| 文件                                                                        | 归属                          | 我做了什么                                                            | 冲突风险                                                          |
+| --------------------------------------------------------------------------- | ----------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `packages/runtime/src/selfcheck.ts`                                         | `storage-fix` / `gpu-runtime` | **纯新增**：一个导出函数 + 一个私有函数 + `model.asr` 之后加一行调用  | 低（不改任何既有检查项的判据或文案）                              |
+| `packages/runtime/src/index.ts`                                             | 同上                          | 导出列表加一行                                                        | 低                                                                |
+| `scripts/ci/cold-start-audit.mjs`、`.github/workflows/cold-start-audit.yml` | **`ci-runner`（在途）**       | 加 `--transcribe`（默认关）+ 3b 里多挑一个 ASR 模型 + 末尾新增第 7 节 | 🟡 **中** —— `ci-runner` 可能正在改同一个文件，请他 rebase 时留意 |
+| `scripts/build-whisper.sh`                                                  | `gpu-runtime`                 | cpu 分支加 darwin 条件；coreml 分支改成 die                           | 低                                                                |
+| `vendor/manifests/*.json`                                                   | `model-mgmt`                  | 追加条目                                                              | 低（数组末尾追加）                                                |
 
 ---
 
@@ -459,6 +470,7 @@ D-11 是 `ci-runner` 的交付物，PROTOCOL §1 规则 3 说不改别人的交�
 ❌ 装不上/不可用        (0)：  (无)
 ext.chineseSearch = ok（required=true）
 ```
+
 补 ffmpeg 之前它是「引擎在、前置工具不在」。适用包 4/19 → **5/21**。
 
 ## 🎉 ② macOS 的 ffmpeg 不再是"借来的"
@@ -480,26 +492,27 @@ libwhisper.1.9.1.dylib 的 LC_LOAD_DYLIB：
     @rpath/libwhisper.coreml.dylib         ← 真的链上了
     @rpath/libggml-base.0.dylib
 ```
+
 `src/CMakeLists.txt:30-45` 那个「找不到 CoreML.framework 就 FATAL_ERROR」的关口通过了 ——
 我上一封标的风险**已排除**。
 
 **新的 sha256（release 要发的是这一版，不是上一封那两个）**：
 
-| 文件 | 字节 | sha256（我本机复算） |
-|---|---:|---|
-| `whispercpp-cpu-macos-arm64.tar.gz` | **1,847,186** | `cb9d6c5ddfd921424cf947e138f006edf12d08fb183d3d061f94c125f400db7c` |
-| `whispercpp-metal-macos-arm64.tar.gz` | **163,224** | `8e1ed22320c130a1b7ba53bebc67805b811fa5b3b9eadd266127a00e1629a652` |
+| 文件                                  |          字节 | sha256（我本机复算）                                               |
+| ------------------------------------- | ------------: | ------------------------------------------------------------------ |
+| `whispercpp-cpu-macos-arm64.tar.gz`   | **1,847,186** | `cb9d6c5ddfd921424cf947e138f006edf12d08fb183d3d061f94c125f400db7c` |
+| `whispercpp-metal-macos-arm64.tar.gz` |   **163,224** | `8e1ed22320c130a1b7ba53bebc67805b811fa5b3b9eadd266127a00e1629a652` |
 
 ## 🔴 ④ **本轮最重要的发现：三个平台没有一个能在干净机器上完成转写**
 
 这是**第一次有人在干净机器上跑产品的真实转写路径**。判据从"文件下下来了"换成"拿到非空文本"，
 立刻问出了两条以前谁都没问过的事实。
 
-| 平台 | 卡在哪 | 定性 |
-|---|---|---|
-| linux-x64 | `whisper-vad-speech-segments exited with code 2` → `error: failed to initialize whisper context` | 🔴 **产品 bug（新）** |
-| win32-x64 | **同上，一字不差** | 🔴 **同一个 bug** |
-| darwin-arm64 | `maskbin/whisper-cli exited with code 127` | 🟡 **预期之中** —— macOS 还没有 whisper 包（等 release） |
+| 平台         | 卡在哪                                                                                           | 定性                                                     |
+| ------------ | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| linux-x64    | `whisper-vad-speech-segments exited with code 2` → `error: failed to initialize whisper context` | 🔴 **产品 bug（新）**                                    |
+| win32-x64    | **同上，一字不差**                                                                               | 🔴 **同一个 bug**                                        |
+| darwin-arm64 | `maskbin/whisper-cli exited with code 127`                                                       | 🟡 **预期之中** —— macOS 还没有 whisper 包（等 release） |
 
 **Linux/Windows 那条的完整证据**（`[CI 实测]` run 31039460495，job.error 全文）：
 
@@ -513,6 +526,7 @@ error: failed to initialize whisper context
 
 **定位到具体那一行**：`vendor/whisper.cpp/examples/vad-speech-segments/speech.cpp` 里
 `return 2` 有两处 ——
+
 - `:104` 是「读音频失败」，配的文案是 `failed to read audio data from %s`；
 - `:116` 是「VAD 模型初始化失败」，配的文案正是我们拿到的 `failed to initialize whisper context`。
 
@@ -527,6 +541,7 @@ error: failed to initialize whisper context
 下不到那个文件去比对 magic。**只能标假设，不能当结论。**
 
 **还有两条使它更难查的因素**：
+
 1. `vad.ts:70` 传了 `-np`，而 `speech.cpp:95-97` 收到 `-np` 就
    `whisper_log_set(cb_log_disable)` —— **具体原因（bad magic / 打不开文件）被整个吞掉**，
    只剩下例子自己 fprintf 的那句泛泛而谈。**与 CoreML 那条是同一族**（§3.2）。
@@ -541,10 +556,12 @@ error: failed to initialize whisper context
 ## ✅ ⑤ Windows 上「本地文件导入 100% 不可用」—— 已修并在真机上确认
 
 run 31038554367 / win32-x64：一个**就放在 dataDir 里**的文件被拒
+
 ```
 POST /api/notes/import → HTTP 403 PATH_NOT_ALLOWED
 path outside allowed roots: C:\Users\RUNNER~1\...\data\jfk.wav
 ```
+
 `notes.ts` 原写法 `real.startsWith(root + '/')` 硬编码 POSIX 分隔符，
 Windows 上 `root + '/'` = `C:\…\data/`，**永远匹配不上**。
 （同族第二处：`main.ts:784` 用 `':'` 切 `OPENMEMO_IMPORT_ROOTS`，`C:\media` 会被切成两半。）
@@ -560,13 +577,13 @@ Windows 上 `root + '/'` = `C:\…\data/`，**永远匹配不上**。
 
 ## ⑥ 我自己在这三轮里犯的错（继续记账）
 
-| # | 错 | 后果 | 教训 |
-|---|---|---|---|
-| 1 | 反向验证时给**被检查的那个量**也加了"集合非空"守卫 | 该说的那句「这些平台有转写引擎但装不到 ffmpeg」**一个字没印出来**，先炸的是守卫 | **空集守卫防的是"筛空了报绿"，不能加在被检查的量上** —— 加上去它会在真出问题时抢在真错误前面炸掉：守卫红了，但它没告诉你为什么 |
-| 2 | `cold-start-audit.yml` 的 checkout 没有 `submodules: recursive` | 三平台第 7 节同一行「样本不存在」 | 它**红得诚实**（说了自己缺什么），但确实什么都没证明 |
-| 3 | 挑"最小的 ASR 模型"挑到了 `asr/sherpa-streaming-zh-14m` | 那是中文流式 onnx，样本是英语，而本轮要证的是 whisper.cpp + ffmpeg 这条链 | **挑错引擎的话，绿了也证明不了它该证明的东西** |
-| 4 | 同一个错让 `asr.coreml` 对着 `decoder-epoch-99-avg-1.int8.onnx` 算出「缺 …-encoder.mlmodelc」 | 一句语法正确、毫无意义的话 | **一条会对不相干的东西发表意见的检查，说对的时候也不该被相信** |
-| 5 | `waitForJob` 把 error 截到 200 字符 | 第一次拿到的是 `…exited with code 2\nload_backend: l` ——**正好断在最关键的那个字上** | 摘要用的截断和定位用的全文是两件事。现在第 7 节会再取一次全文（只打印、不改红绿） |
+| #   | 错                                                                                            | 后果                                                                                 | 教训                                                                                                                           |
+| --- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | 反向验证时给**被检查的那个量**也加了"集合非空"守卫                                            | 该说的那句「这些平台有转写引擎但装不到 ffmpeg」**一个字没印出来**，先炸的是守卫      | **空集守卫防的是"筛空了报绿"，不能加在被检查的量上** —— 加上去它会在真出问题时抢在真错误前面炸掉：守卫红了，但它没告诉你为什么 |
+| 2   | `cold-start-audit.yml` 的 checkout 没有 `submodules: recursive`                               | 三平台第 7 节同一行「样本不存在」                                                    | 它**红得诚实**（说了自己缺什么），但确实什么都没证明                                                                           |
+| 3   | 挑"最小的 ASR 模型"挑到了 `asr/sherpa-streaming-zh-14m`                                       | 那是中文流式 onnx，样本是英语，而本轮要证的是 whisper.cpp + ffmpeg 这条链            | **挑错引擎的话，绿了也证明不了它该证明的东西**                                                                                 |
+| 4   | 同一个错让 `asr.coreml` 对着 `decoder-epoch-99-avg-1.int8.onnx` 算出「缺 …-encoder.mlmodelc」 | 一句语法正确、毫无意义的话                                                           | **一条会对不相干的东西发表意见的检查，说对的时候也不该被相信**                                                                 |
+| 5   | `waitForJob` 把 error 截到 200 字符                                                           | 第一次拿到的是 `…exited with code 2\nload_backend: l` ——**正好断在最关键的那个字上** | 摘要用的截断和定位用的全文是两件事。现在第 7 节会再取一次全文（只打印、不改红绿）                                              |
 
 ## ⑦ 一条顺带证实的（`[CI 实测 macOS]`）
 
@@ -578,11 +595,11 @@ Windows 上 `root + '/'` = `C:\…\data/`，**永远匹配不上**。
 
 ## 逐平台覆盖表（更新版，可以直接给用户）
 
-| 平台 | ffmpeg/ffprobe | 转写引擎 | 中文检索 | yt-dlp | **干净机器上能转写吗** |
-|---|---|---|---|---|---|
-| **Linux x64** | ✅ `[CI 实测]` | ✅ `[CI 实测]` | ✅ `[CI 实测]` | ✅ | 🔴 **不能** —— 卡在 VAD 模型（④，新发现的产品 bug） |
-| **Windows x64** | ✅ **本次补上** `[CI 实测]` | ✅ `[CI 实测]` | 🔴 libsimple 装了不加载（`ci-runner` 已报） | ✅ | 🔴 **不能** —— 同一个 VAD bug |
-| **macOS arm64** | ✅ **本次补上** `[CI 实测]` | 🔴 等 release | ✅ `[CI 实测]` | ✅ | 🔴 **不能** —— 引擎还没有下载地址 |
+| 平台            | ffmpeg/ffprobe              | 转写引擎       | 中文检索                                    | yt-dlp | **干净机器上能转写吗**                              |
+| --------------- | --------------------------- | -------------- | ------------------------------------------- | ------ | --------------------------------------------------- |
+| **Linux x64**   | ✅ `[CI 实测]`              | ✅ `[CI 实测]` | ✅ `[CI 实测]`                              | ✅     | 🔴 **不能** —— 卡在 VAD 模型（④，新发现的产品 bug） |
+| **Windows x64** | ✅ **本次补上** `[CI 实测]` | ✅ `[CI 实测]` | 🔴 libsimple 装了不加载（`ci-runner` 已报） | ✅     | 🔴 **不能** —— 同一个 VAD bug                       |
+| **macOS arm64** | ✅ **本次补上** `[CI 实测]` | 🔴 等 release  | ✅ `[CI 实测]`                              | ✅     | 🔴 **不能** —— 引擎还没有下载地址                   |
 
 > **口径**：这张表比上一版更红，**因为判据变严了** ——
 > 上一版问的是"工具装齐了吗"，这一版问的是"**真的转出字来了吗**"。
@@ -611,13 +628,13 @@ Manager 在 inbox 里转达了「已获用户授权」，我据此执行 `gh rel
 来源：`build-backends` run **31067558923**（macOS 两条腿 success；linux/win 同轮）。
 **每一条都与 CI fragment 声明的 sha256 + 字节数逐字符一致。**
 
-| 文件 | 字节 | sha256（本机复算） |
-|---|---:|---|
-| `whispercpp-cpu-macos-arm64.tar.gz` | 2,012,304 | `c473de000a64c509486cd9df48ad28467dcaf604813187b72f7a8815df3393bc` |
-| `whispercpp-metal-macos-arm64.tar.gz` | 164,607 | `74c859b9ad1e7fef203dc3273cb65e747f83f180c0fbba07566520a87011f3f8` |
-| `whispercpp-vulkan-linux-x64.tar.gz` | 19,187,014 | `00b6822af5972d9b8e5d54dfbf8b21e3f2dc716ba5d18eec4837038a671837b0` |
-| `whispercpp-cuda-linux-x64.tar.gz` | 145,506,836 | `bd979dbaf47907960cfea9c3032273804ba17a6ee807e5e8b227d1e10ce67bdc` |
-| `whispercpp-vulkan-win-x64.zip` | 21,220,391 | `9cb50e8973e0475fd55be43f45c7a66311d1988bdb264f2a3b291eac771d4b34` |
+| 文件                                  |        字节 | sha256（本机复算）                                                 |
+| ------------------------------------- | ----------: | ------------------------------------------------------------------ |
+| `whispercpp-cpu-macos-arm64.tar.gz`   |   2,012,304 | `c473de000a64c509486cd9df48ad28467dcaf604813187b72f7a8815df3393bc` |
+| `whispercpp-metal-macos-arm64.tar.gz` |     164,607 | `74c859b9ad1e7fef203dc3273cb65e747f83f180c0fbba07566520a87011f3f8` |
+| `whispercpp-vulkan-linux-x64.tar.gz`  |  19,187,014 | `00b6822af5972d9b8e5d54dfbf8b21e3f2dc716ba5d18eec4837038a671837b0` |
+| `whispercpp-cuda-linux-x64.tar.gz`    | 145,506,836 | `bd979dbaf47907960cfea9c3032273804ba17a6ee807e5e8b227d1e10ce67bdc` |
+| `whispercpp-vulkan-win-x64.zip`       |  21,220,391 | `9cb50e8973e0475fd55be43f45c7a66311d1988bdb264f2a3b291eac771d4b34` |
 
 ⚠️ **注意：这些哈希与我 03:40 那份不同**，因为中间修了部署目标 + 把 Metal 折进核心包，
 产物是重编的。**以这一份为准。**
@@ -638,6 +655,7 @@ whisper-cli                    minos=13.3.0  sdk=26.5.0  signed=True
 whisper-server                 minos=13.3.0  sdk=26.5.0  signed=True
 whisper-vad-speech-segments    minos=13.3.0  sdk=26.5.0  signed=True
 ```
+
 **上一版是 minos=26.0.0**（12 个全是），也就是「只能在 macOS 26 上跑」。修完是 13.3.0。
 
 ---
@@ -658,18 +676,20 @@ whisper-vad-speech-segments    minos=13.3.0  sdk=26.5.0  signed=True
 
 `[本机实测]` 把三个 Linux 包解开，对每个 ELF 跑 `objdump -T` 取最高 `GLIBC_x.y`：
 
-| 包 | 构建机 | 最高 GLIBC 需求 | 判定 |
-|---|---|---|---|
-| `whispercpp-cpu-linux-x64` | **ubuntu-22.04** | **2.34** | ✅ Ubuntu 22.04 / Debian 12 都能跑 |
-| `whispercpp-cuda-linux-x64` | ubuntu-24.04 | 2.27 | ✅ 碰巧安全（只有一个 `.so`，用到的符号很少） |
-| `whispercpp-vulkan-linux-x64` | ubuntu-24.04 | **2.38** | 🔴 **Ubuntu 22.04(2.35) 与 Debian 12(2.36) 上加载失败** |
+| 包                            | 构建机           | 最高 GLIBC 需求 | 判定                                                    |
+| ----------------------------- | ---------------- | --------------- | ------------------------------------------------------- |
+| `whispercpp-cpu-linux-x64`    | **ubuntu-22.04** | **2.34**        | ✅ Ubuntu 22.04 / Debian 12 都能跑                      |
+| `whispercpp-cuda-linux-x64`   | ubuntu-24.04     | 2.27            | ✅ 碰巧安全（只有一个 `.so`，用到的符号很少）           |
+| `whispercpp-vulkan-linux-x64` | ubuntu-24.04     | **2.38**        | 🔴 **Ubuntu 22.04(2.35) 与 Debian 12(2.36) 上加载失败** |
 
 **具体是哪三个符号**（这条让它不是猜测）：
+
 ```
 (GLIBC_2.38) __isoc23_strtoul
 (GLIBC_2.38) __isoc23_strtoull
 (GLIBC_2.38) __isoc23_strtol
 ```
+
 —— C23 的 `strtol` 家族。GCC 13+ / glibc 2.38 起，编译器会把普通的 `strtol` 重定向到
 `__isoc23_*` 变体。**源码一个字没改，换台机器编就多了一条版本下限。**
 
@@ -690,6 +710,7 @@ whisper-vad-speech-segments    minos=13.3.0  sdk=26.5.0  signed=True
 ## 9.3 🟡 Windows：`MSVCP140 / VCRUNTIME140 / VCRUNTIME140_1`（**未修**）
 
 `[本机实测]` `objdump -p ggml-vulkan.dll`：
+
 ```
 DLL Name: ggml-base.dll          ← ★ 见 §9.4，这是跨包依赖
 DLL Name: vulkan-1.dll           （随显卡驱动安装，正常）
@@ -699,6 +720,7 @@ DLL Name: VCRUNTIME140_1.dll     ← ★ VC++ 2015-2022 可再发行组件，干
 DLL Name: api-ms-win-crt-*.dll   （Universal CRT，Win10+ 自带，正常）
 DLL Name: KERNEL32.dll
 ```
+
 **与 `win-fixes` 对 `simple.dll` 的实测结论是同一条**（他标注了「runner 一定有，用户机器不一定」）。
 **同一个问题，我们各查到了一半** —— 现在两半拼上了：
 **本产品所有自建的 Windows 原生产物都依赖 VC++ 运行时，而产品没有任何地方检查它在不在。**
@@ -710,6 +732,7 @@ DLL Name: KERNEL32.dll
 不只是"ggml 找不到这个模块"，是"**就算找到了，模块自己也加载不起来**"。
 
 三条独立证据指向同一个结论 —— **加速包必须自包含**：
+
 1. ggml 只在 `whisper-cli` 自己的目录和 cwd 里找模块（`ggml-backend-reg.cpp:479-489`）；
 2. 模块自身链接的 `ggml-base.dll` / `libggml-base.so` 也在别的包目录里；
 3. 目录里唯一**能用**的加速包 `whispercpp-cuda-12.4-win-x64` 的 `providesFiles` 是
@@ -757,9 +780,11 @@ Keeping it to just the delta is what makes requirement 2.1 cheap」**与实现�
   "priority": 10, "benchmark": null, "catalogVersion": "2026.08.06"
 }
 ```
+
 `components.json` 同步加一条（来源 = 我们自己的 CI，钉 submodule commit `f049fff…`）。
 
 **建完之后我会做的验证**（不是"文件传上去了"）：
+
 1. **不带任何凭证** `curl` 那个 release URL，确认匿名可下（draft 的附件不行 —— 这是硬条件）；
 2. **从 release URL 重新下载并复算 sha256**，与写进 manifest 的那个比对；
 3. 跑 `platformPacks.test.ts` 全部守卫 + `pnpm -r test`；
@@ -808,12 +833,12 @@ win32-x64      转写 job：succeeded  (3.7s)
 
 # ★ 逐平台覆盖表（最终版，可直接给用户）
 
-| 平台 | ffmpeg/ffprobe | 转写引擎 | 加速 | 中文检索 | yt-dlp | **干净机器上真的转出字了吗** |
-|---|---|---|---|---|---|---|
-| **Linux x64** | ✅ BtbN 7.1.5 | ✅ 上游 v1.9.1 | 🟡 CUDA/Vulkan 已编出**未接入**（D-11 §8.4） | ✅ | ✅ | ✅ **是** `[CI 实测 2.1s]` |
-| **Windows x64** | ✅ **本轮补上**（BtbN 同一已钉 tag） | ✅ 上游 v1.9.1 | 🟡 同上；CUDA 12.4 有上游自包含包 | ✅（`win-fixes` 修好） | ✅ | ✅ **是** `[CI 实测 3.7s]` |
-| **macOS arm64** | ✅ **本轮补上**（jellyfin 7.1.4-3） | ✅ **本轮补上**（我们自建，上游根本不发） | ✅ **Metal + ANE 都在核心包里** | ✅ | ✅ | ✅ **是** `[CI 实测 101.7s]` |
-| linux-arm64 / macos-x64 / linux-x64-rocm | — | — | — | — | — | 用户 2026-08-05 明确不需要，**没补** |
+| 平台                                     | ffmpeg/ffprobe                       | 转写引擎                                  | 加速                                         | 中文检索               | yt-dlp | **干净机器上真的转出字了吗**         |
+| ---------------------------------------- | ------------------------------------ | ----------------------------------------- | -------------------------------------------- | ---------------------- | ------ | ------------------------------------ |
+| **Linux x64**                            | ✅ BtbN 7.1.5                        | ✅ 上游 v1.9.1                            | 🟡 CUDA/Vulkan 已编出**未接入**（D-11 §8.4） | ✅                     | ✅     | ✅ **是** `[CI 实测 2.1s]`           |
+| **Windows x64**                          | ✅ **本轮补上**（BtbN 同一已钉 tag） | ✅ 上游 v1.9.1                            | 🟡 同上；CUDA 12.4 有上游自包含包            | ✅（`win-fixes` 修好） | ✅     | ✅ **是** `[CI 实测 3.7s]`           |
+| **macOS arm64**                          | ✅ **本轮补上**（jellyfin 7.1.4-3）  | ✅ **本轮补上**（我们自建，上游根本不发） | ✅ **Metal + ANE 都在核心包里**              | ✅                     | ✅     | ✅ **是** `[CI 实测 101.7s]`         |
+| linux-arm64 / macos-x64 / linux-x64-rocm | —                                    | —                                         | —                                            | —                      | —      | 用户 2026-08-05 明确不需要，**没补** |
 
 > **口径没有放松过**：判据是「屏蔽宿主 PATH 的干净机器上，从网页装 → 拉模型 → 走
 > `/api/notes/import` 真实路径 → `/api/notes/:uid/transcript` 拿到非空文本」。
@@ -840,6 +865,7 @@ CI 声明   c473de000a64c509486cd9df48ad28467dcaf604813187b72f7a8815df3393bc    
 
 `backends.json` 只加了**一条**（另外 4 个增量包按 D-11 §8.4 的三条证据不接）。
 两处判断值得记：
+
 - `backend: "cpu"` 是**有意**的：`applicability.ts:33` 的 L1 无条件适用，L2 要等硬件探针，
   而 `openmemo-probe` 至今没有分发通道 → 把 macOS 唯一的引擎挂 L2 上等于让它永远装不上。
 - `tier: "downloadable"`：CI fragment 写的是 `builtin`（`build-whisper.sh` 按 `backend==cpu` 推的），
@@ -848,11 +874,11 @@ CI 声明   c473de000a64c509486cd9df48ad28467dcaf604813187b72f7a8815df3393bc    
 
 # 新增守卫 3 条（共 15 条），逐条反向验证
 
-| 反向操作 | 真实输出 |
-|---|---|
-| 删掉 macOS 的 whisper 包 | `AssertionError: macOS 上没有任何转写引擎 —— 上游不发 macOS CLI，这条只能靠我们自己发布` |
-| URL 换成 Actions artifact | `AssertionError: whispercpp-cpu-macos-arm64 指向了会过期的 Actions artifact：…` |
-| 拿掉 `requiresDriver.macosVersion` | `AssertionError: … 用户不会知道自己的 Mac 太旧` |
+| 反向操作                           | 真实输出                                                                                 |
+| ---------------------------------- | ---------------------------------------------------------------------------------------- |
+| 删掉 macOS 的 whisper 包           | `AssertionError: macOS 上没有任何转写引擎 —— 上游不发 macOS CLI，这条只能靠我们自己发布` |
+| URL 换成 Actions artifact          | `AssertionError: whispercpp-cpu-macos-arm64 指向了会过期的 Actions artifact：…`          |
+| 拿掉 `requiresDriver.macosVersion` | `AssertionError: … 用户不会知道自己的 Mac 太旧`                                          |
 
 `grep -rn REVERSAL` 全仓 0 命中（全部已还原）。
 
@@ -884,13 +910,13 @@ run 31075515732 里**对照组三平台全红**，原因都是
 
 # 剩下的（都不在本任务范围，已交出去或已记档）
 
-| 项 | 状态 |
-|---|---|
-| ANE 真的用上（3 处断点：解包多一层同名目录 / 前端不传 `includeOptional` / q5_0 没挂 encoder） | 🔴 **未接通**，自检项 `asr.coreml` 会如实报 warn，不会假绿 |
-| `vulkan-linux` 的 GLIBC_2.38 | 🔴 未修，**已写进 D-11 §8.2**，含给下一个人的二选一前置条件 |
-| Windows 的 VC++ 运行时依赖 | 🟡 未修，**已写进 D-11 §8.3**（与 `win-fixes` 的 `simple.dll` 是同一条） |
-| 4 个加速增量包接入 | ⛔ 按判据不接，**已写进 D-11 §8.4**（三条独立证据） |
-| `openmemo-probe` 的分发通道 | ⛔ 没碰，老债还在（`probeExists` 恒 false） |
+| 项                                                                                            | 状态                                                                     |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| ANE 真的用上（3 处断点：解包多一层同名目录 / 前端不传 `includeOptional` / q5_0 没挂 encoder） | 🔴 **未接通**，自检项 `asr.coreml` 会如实报 warn，不会假绿               |
+| `vulkan-linux` 的 GLIBC_2.38                                                                  | 🔴 未修，**已写进 D-11 §8.2**，含给下一个人的二选一前置条件              |
+| Windows 的 VC++ 运行时依赖                                                                    | 🟡 未修，**已写进 D-11 §8.3**（与 `win-fixes` 的 `simple.dll` 是同一条） |
+| 4 个加速增量包接入                                                                            | ⛔ 按判据不接，**已写进 D-11 §8.4**（三条独立证据）                      |
+| `openmemo-probe` 的分发通道                                                                   | ⛔ 没碰，老债还在（`probeExists` 恒 false）                              |
 
 # 纪律
 
@@ -950,10 +976,10 @@ hf-mirror.com                →  连得上，但对这些路径 308 → hugging
 
 脚本第 1 节会对每个 mirror host 真发一次请求。**两个独立观测点，结论一致**：
 
-| host | 开发机（境内出口） | ubuntu-24.04 runner（us-west） |
-|---|---|---|
-| `huggingface.co` | 连不上 | `HTTP 302 → us.aws.cdn.hf.co` |
-| `hf-mirror.com` | `HTTP 308 → huggingface.co` | **`HTTP 308 → huggingface.co`** |
+| host             | 开发机（境内出口）          | ubuntu-24.04 runner（us-west）  |
+| ---------------- | --------------------------- | ------------------------------- |
+| `huggingface.co` | 连不上                      | `HTTP 302 → us.aws.cdn.hf.co`   |
+| `hf-mirror.com`  | `HTTP 308 → huggingface.co` | **`HTTP 308 → huggingface.co`** |
 
 也就是说清单里那条 `hf-mirror` **对"上游消失"这件事提供的冗余是 0** —— 它是同一个来源的别名，
 不是副本。`catalog-truth` §② 说「冗余是 0 只在境外出口成立」，**从 runner 上看它在境外出口也是 0**。
@@ -1003,11 +1029,11 @@ URL 的 basename 与它本来就允许不同 —— yt-dlp 那几条就是这样
 
 # 脚本的判据（都反向验证过，按 §10 跑在 /tmp 隔离副本上）
 
-| 判据 | 反向验证 |
-|---|---|
-| 选中的模型数对不上 → 当场失败 | `RV1`：把一个 id 写错 → `exit 1` + 明确列出缺哪个 |
+| 判据                                                | 反向验证                                                             |
+| --------------------------------------------------- | -------------------------------------------------------------------- |
+| 选中的模型数对不上 → 当场失败                       | `RV1`：把一个 id 写错 → `exit 1` + 明确列出缺哪个                    |
 | 任一文件 sha256/字节数不符 → 失败并**删掉全部产物** | 本机 HF 不通，这组**只能在 runner 上真正显形**，如实标注为未直接观测 |
-| `if-no-files-found: error` | 不许上传空 artifact 然后绿灯 |
+| `if-no-files-found: error`                          | 不许上传空 artifact 然后绿灯                                         |
 
 **部分正确的镜像比没有镜像更糟**：它看起来是成功的，而缺的那一半要等用户装到一半才发现。
 所以失败时是**整个目录删掉**，不是"跳过坏的那个"。
@@ -1089,6 +1115,7 @@ model-mirror-sherpa-streaming-zh-14m    20,860,555 B
 model-mirror-paraformer-zh-small        74,172,575 B
 model-mirror-ct-transformer-zh-en      271,800,567 B
 ```
+
 两个小的不再被那个 294 MiB 的标点模型拖着，一次失败的代价从"整包重来"变成"重来一个"。
 （294 MiB 那个是**单个文件**，拆不开。）
 
@@ -1117,6 +1144,7 @@ exit 1
 `MIRROR-MANIFEST.json` 每个 artifact 各一份，单独拿走一个也能自证来源。
 
 **端到端实测（run 31087370058，`gh run download` 真的拿下来）**：
+
 ```
 $ ls -1
 MIRROR-MANIFEST.json  SHA256SUMS  SHA256SUMS.all

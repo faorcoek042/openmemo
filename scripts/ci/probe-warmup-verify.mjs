@@ -97,7 +97,9 @@ async function main() {
   const pack =
     usable.find((p) => (p.providesFiles ?? []).some((f) => /ggml-metal/.test(f))) ?? usable[0];
   if (!pack) {
-    say(`   ✘ 目录里没有适用于 ${process.platform}/${process.arch} 且带探针的包 —— 无从验证，exit 0。`);
+    say(
+      `   ✘ 目录里没有适用于 ${process.platform}/${process.arch} 且带探针的包 —— 无从验证，exit 0。`,
+    );
     return 0;
   }
   say(`   包：${pack.id}  大小：${pack.totalSizeBytes} B`);

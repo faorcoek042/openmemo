@@ -41,13 +41,7 @@ import { ytDlpProxyArgs, type ProxyConfig } from '../../subprocess/proxy.js';
 import { SubprocessError } from '../../subprocess/runner.js';
 import type { ToolPaths } from '../../tools.js';
 import { isExecutable } from '../../tools.js';
-import type {
-  Availability,
-  FetchRequest,
-  FetchedMedia,
-  MediaInfo,
-  MediaSource,
-} from '../types.js';
+import type { Availability, FetchRequest, FetchedMedia, MediaInfo, MediaSource } from '../types.js';
 
 /** Flags applied to EVERY invocation. Order is irrelevant; presence is not. */
 const HARDENING_FLAGS: string[] = [
@@ -107,7 +101,12 @@ export class YtDlpSource implements MediaSource {
 
     // -J = dump metadata as JSON, implies --simulate: nothing is written to disk.
     const argv = buildArgv({
-      flags: [...HARDENING_FLAGS, ...ytDlpProxyArgs(this.opts.proxy ?? null), '--dump-single-json', '--simulate'],
+      flags: [
+        ...HARDENING_FLAGS,
+        ...ytDlpProxyArgs(this.opts.proxy ?? null),
+        '--dump-single-json',
+        '--simulate',
+      ],
       operands: [url],
     });
     if (!argv.ok) throw new Error(`URL rejected (${argv.code}): ${argv.message}`);
@@ -131,11 +130,15 @@ export class YtDlpSource implements MediaSource {
       ...HARDENING_FLAGS,
       ...ytDlpProxyArgs(this.opts.proxy ?? null),
       // Output stays inside the directory WE chose.
-      '--paths', req.destDir,
+      '--paths',
+      req.destDir,
       // Constant template. yt-dlp sanitises %(id)s itself.
-      '-o', '%(id)s.%(ext)s',
-      '--max-downloads', '1',
-      '--max-filesize', String(req.maxBytes),
+      '-o',
+      '%(id)s.%(ext)s',
+      '--max-downloads',
+      '1',
+      '--max-filesize',
+      String(req.maxBytes),
       '--newline',
     ];
 
@@ -211,7 +214,8 @@ export class YtDlpSource implements MediaSource {
       withStats.push({ path, name, size: st.size, mtimeMs: st.mtimeMs });
     }
 
-    const isSidecar = (n: string): boolean => /\.(info\.json|jpg|jpeg|png|webp|vtt|srt|part|ytdl)$/i.test(n);
+    const isSidecar = (n: string): boolean =>
+      /\.(info\.json|jpg|jpeg|png|webp|vtt|srt|part|ytdl)$/i.test(n);
 
     const tiers = [
       withStats.filter((f) => !before.has(f.name) && !isSidecar(f.name)),
@@ -283,7 +287,14 @@ export class YtDlpSource implements MediaSource {
       upload_date?: string;
       _type?: string;
       entries?: { url?: string; webpage_url?: string; title?: string }[];
-      formats?: { format_id?: string; acodec?: string; vcodec?: string; abr?: number; asr?: number; filesize?: number }[];
+      formats?: {
+        format_id?: string;
+        acodec?: string;
+        vcodec?: string;
+        abr?: number;
+        asr?: number;
+        filesize?: number;
+      }[];
     };
     try {
       raw = JSON.parse(stdout) as typeof raw;
@@ -306,7 +317,8 @@ export class YtDlpSource implements MediaSource {
         .slice(0, 20)
         .map((f) => ({
           id: f.format_id ?? 'unknown',
-          kind: f.vcodec === undefined || f.vcodec === 'none' ? ('audio' as const) : ('muxed' as const),
+          kind:
+            f.vcodec === undefined || f.vcodec === 'none' ? ('audio' as const) : ('muxed' as const),
           codec: f.acodec ?? null,
           bitrateKbps: typeof f.abr === 'number' ? Math.round(f.abr) : null,
           sampleRateHz: typeof f.asr === 'number' ? f.asr : null,

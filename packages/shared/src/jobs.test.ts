@@ -79,11 +79,7 @@ describe('终态语义', () => {
     // 出现同一个任务两个执行者同时写同一个目标文件。
     for (const s of TERMINAL_JOB_STATES) {
       for (const to of JOB_TRANSITIONS[s]) {
-        assert.equal(
-          to,
-          'queued',
-          `终态 ${s} 有一条到 ${to} 的转移 —— 终态重启只允许经由 queued`,
-        );
+        assert.equal(to, 'queued', `终态 ${s} 有一条到 ${to} 的转移 —— 终态重启只允许经由 queued`);
       }
     }
   });

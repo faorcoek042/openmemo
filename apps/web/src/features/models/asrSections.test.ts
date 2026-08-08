@@ -48,7 +48,11 @@ function group(
 
 /** 与 `vendor/manifests/` 里的真实标签一致 —— 判据不许写死 id，所以夹具只带标签。 */
 const PARAFORMER = group('asr/paraformer-zh-small', 'asr', [
-  { id: 'asr/paraformer-zh-small', speedClass: 'fast', tags: ['recommended-default-zh', 'offline'] },
+  {
+    id: 'asr/paraformer-zh-small',
+    speedClass: 'fast',
+    tags: ['recommended-default-zh', 'offline'],
+  },
 ]);
 const TURBO = group('asr/whisper-large-v3-turbo', 'asr', [
   { id: 'turbo-q5_0', speedClass: 'quality', tags: ['recommended-default', 'multilingual'] },

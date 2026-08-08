@@ -151,11 +151,15 @@ export class WhisperServerEngine implements AsrEngine {
       const port = await freePort();
 
       const argv = [
-        '-m', modelPath,
+        '-m',
+        modelPath,
         // Loopback only. Never 0.0.0.0 — ADR-003, and the mistake R-01 found in memo.ac.
-        '--host', '127.0.0.1',
-        '--port', String(port),
-        '-t', String(threads ?? this.opts.defaultThreads ?? 4),
+        '--host',
+        '127.0.0.1',
+        '--port',
+        String(port),
+        '-t',
+        String(threads ?? this.opts.defaultThreads ?? 4),
       ];
 
       const child = spawn(bin, argv, {
@@ -179,7 +183,9 @@ export class WhisperServerEngine implements AsrEngine {
       let ready = false;
       while (Date.now() < deadline) {
         if (child.exitCode !== null) {
-          throw new Error(`speech recognition server exited during startup (code ${String(child.exitCode)})`);
+          throw new Error(
+            `speech recognition server exited during startup (code ${String(child.exitCode)})`,
+          );
         }
         try {
           const r = await fetch(url, { signal: AbortSignal.timeout(1500) });
@@ -223,7 +229,10 @@ export class WhisperServerEngine implements AsrEngine {
       return;
     }
     // Give it a moment, then make sure.
-    const exited = await Promise.race([once(child, 'exit').then(() => true), delay(5000).then(() => false)]);
+    const exited = await Promise.race([
+      once(child, 'exit').then(() => true),
+      delay(5000).then(() => false),
+    ]);
     if (!exited) {
       try {
         if (process.platform === 'win32') child.kill('SIGKILL');

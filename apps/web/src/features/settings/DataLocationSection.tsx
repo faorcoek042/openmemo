@@ -294,12 +294,12 @@ export function DataLocationSection() {
             </div>
           ) : null}
           {storage.data ? (
-          <div>
-            <dt className="text-ink-muted">{t('settings.dataDir.modelsUsed')}</dt>
-            <dd className="text-ink" data-testid="data-dir-models-used">
-              {formatBytes(storage.data.usedBytes, i18n.language)}
-            </dd>
-          </div>
+            <div>
+              <dt className="text-ink-muted">{t('settings.dataDir.modelsUsed')}</dt>
+              <dd className="text-ink" data-testid="data-dir-models-used">
+                {formatBytes(storage.data.usedBytes, i18n.language)}
+              </dd>
+            </div>
           ) : null}
           {storage.data ? (
             <>
@@ -320,7 +320,10 @@ export function DataLocationSection() {
         </dl>
       ) : null}
       {/* 带 `**模型目录**` —— 划定统计范围的那个词，必须看得出来（T-129b） */}
-      <Emphasis className="mb-4 block text-xs text-ink-muted" text={t('settings.dataDir.sizeScopeNote')} />
+      <Emphasis
+        className="mb-4 block text-xs text-ink-muted"
+        text={t('settings.dataDir.sizeScopeNote')}
+      />
 
       {/*
         ── 目录清单：日志 / 临时文件 / 数据库 这三类此前完全没露过面 ──
@@ -333,7 +336,10 @@ export function DataLocationSection() {
           <p className="mb-1.5 text-xs text-ink-secondary">{t('settings.dataDir.layoutTitle')}</p>
           <ul className="divide-y divide-line rounded-md border border-line bg-surface-0">
             {layout.data.entries.map((e) => (
-              <li key={e.path} className="flex flex-wrap items-baseline gap-x-2 px-2 py-1.5 text-xs">
+              <li
+                key={e.path}
+                className="flex flex-wrap items-baseline gap-x-2 px-2 py-1.5 text-xs"
+              >
                 <code className="font-mono text-ink">{e.name}</code>
                 <span className="min-w-0 flex-1 text-ink-secondary">
                   {pickLocalized(i18n.language, e.purposeZh, e.purpose)}
@@ -384,7 +390,10 @@ export function DataLocationSection() {
                   className="mt-0.5 block"
                   text={pickLocalized(i18n.language, f.whyOutsideZh, f.whyOutside)}
                 />
-                <Emphasis className="mt-0.5 block" text={pickLocalized(i18n.language, f.riskZh, f.risk)} />
+                <Emphasis
+                  className="mt-0.5 block"
+                  text={pickLocalized(i18n.language, f.riskZh, f.risk)}
+                />
               </li>
             ))}
           </ul>

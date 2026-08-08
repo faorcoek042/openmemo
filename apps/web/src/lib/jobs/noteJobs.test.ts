@@ -61,7 +61,11 @@ const DOWNLOAD: DownloadJob = {
 
 describe('T-138 ② 这条笔记上现在有没有任务在跑', () => {
   test('★ blocked 算"还没结束" —— 它正是最需要在笔记页上说话的状态', () => {
-    assert.equal(isActiveJobState('blocked'), true, 'blocked 被当成终态 = 一次零报错的卡住又回来了');
+    assert.equal(
+      isActiveJobState('blocked'),
+      true,
+      'blocked 被当成终态 = 一次零报错的卡住又回来了',
+    );
     assert.equal(isActiveJobState('queued'), true);
     assert.equal(isActiveJobState('paused'), true);
     assert.equal(isActiveJobState('succeeded'), false);
@@ -76,7 +80,11 @@ describe('T-138 ② 这条笔记上现在有没有任务在跑', () => {
 
   test('★ 别的笔记的任务不算这条笔记的', () => {
     const jobs: AnyJob[] = [pipeline({ jobId: 'j1', noteUid: OTHER })];
-    assert.equal(pickActiveNoteJob(jobs, NOTE), undefined, '按 noteUid 归属，不是"随便找一条在跑的"');
+    assert.equal(
+      pickActiveNoteJob(jobs, NOTE),
+      undefined,
+      '按 noteUid 归属，不是"随便找一条在跑的"',
+    );
   });
 
   test('★ 下载任务不许被认领成笔记任务（它根本没有 noteUid）', () => {

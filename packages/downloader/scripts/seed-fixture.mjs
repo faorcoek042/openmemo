@@ -129,8 +129,14 @@ try {
                                  duration_ms, state, created_at)
        VALUES (?, ?, 'audio16k', ?, ?, 'audio/wav', 640000, ?, 'ready', ?)`,
     )
-    .run(assetUid, noteId, `t038/${assetUid}.wav`, 'fixture.wav', SEGMENTS.at(-1)[2], now)
-    .lastInsertRowid;
+    .run(
+      assetUid,
+      noteId,
+      `t038/${assetUid}.wav`,
+      'fixture.wav',
+      SEGMENTS.at(-1)[2],
+      now,
+    ).lastInsertRowid;
 } catch (e) {
   console.log('  (media_assets insert skipped: ' + String(e.message).slice(0, 80) + ')');
 }

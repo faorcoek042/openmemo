@@ -251,7 +251,6 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
    */
   const dirLock = acquireDataDirLock(paths.dataDir, handoverWaitMs);
 
-
   // 自我重启的接力棒优先；否则复用磁盘上那个**跨重启稳定**的 token，
   // 这样用户保存的 `#t=...` 链接不会因为一次重启就作废（见 loadOrCreateToken）
   const token =
@@ -692,7 +691,9 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       refreshTimer.unref?.();
     });
     if (bundle.missing.length > 0) {
-      console.warn(`[daemon] ⚠️  流水线缺少工具: ${bundle.missing.join(', ')} —— 相关任务会转 blocked`);
+      console.warn(
+        `[daemon] ⚠️  流水线缺少工具: ${bundle.missing.join(', ')} —— 相关任务会转 blocked`,
+      );
     }
 
     // ---- job 处理器注册表 ----
@@ -1038,10 +1039,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     dirLock.release();
   };
 
-  const restart = async (
-    reason: string,
-    opts?: { dataDir?: string },
-  ): Promise<void> => {
+  const restart = async (reason: string, opts?: { dataDir?: string }): Promise<void> => {
     console.log(`[daemon] 自我重启（${reason}）…`);
     /*
      * 先拉新进程、确认它没当场死掉，再停自己。

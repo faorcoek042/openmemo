@@ -55,7 +55,9 @@ export function mediaAssetRoots(dataDir: string): string[] {
 export function assetCandidates(roots: readonly string[], relOrAbs: string): string[] {
   if (relOrAbs.length === 0) return [];
   const rs = roots.map((r) => resolve(r));
-  const raw = isAbsolute(relOrAbs) ? [resolve(relOrAbs)] : rs.map((r) => resolve(join(r, relOrAbs)));
+  const raw = isAbsolute(relOrAbs)
+    ? [resolve(relOrAbs)]
+    : rs.map((r) => resolve(join(r, relOrAbs)));
   const out: string[] = [];
   for (const p of raw) if (insideAnyRoot(rs, p) && !out.includes(p)) out.push(p);
   return out;

@@ -93,25 +93,55 @@ interface MockProvider {
  */
 const mockJobs: AnyJob[] = [
   {
-    jobId: 'job_demo_1', kind: 'model', type: 'download.model',
+    jobId: 'job_demo_1',
+    kind: 'model',
+    type: 'download.model',
     targetId: 'asr/whisper-large-v3-turbo-q5_0',
     displayName: 'Whisper large-v3-turbo (Q5_0)',
-    state: 'running', step: 'downloading', provider: 'modelscope',
-    totalBytes: 574_041_195, completedBytes: 412_000_000, speedBps: 8_200_000, etaSeconds: 20,
-    parts: [], currentFile: 'ggml-large-v3-turbo-q5_0.bin', fileIndex: 0, fileCount: 1,
-    attempt: 0, maxAttempts: 5, error: null,
-    startedAt: new Date(Date.now() - 60_000).toISOString(), updatedAt: new Date().toISOString(),
+    state: 'running',
+    step: 'downloading',
+    provider: 'modelscope',
+    totalBytes: 574_041_195,
+    completedBytes: 412_000_000,
+    speedBps: 8_200_000,
+    etaSeconds: 20,
+    parts: [],
+    currentFile: 'ggml-large-v3-turbo-q5_0.bin',
+    fileIndex: 0,
+    fileCount: 1,
+    attempt: 0,
+    maxAttempts: 5,
+    error: null,
+    startedAt: new Date(Date.now() - 60_000).toISOString(),
+    updatedAt: new Date().toISOString(),
   },
   {
-    jobId: 'job_demo_2', kind: 'model', type: 'download.model',
-    targetId: 'llm/qwen3-4b-q4_k_m', displayName: 'Qwen3 4B (Q4_K_M)',
-    state: 'blocked', step: null, provider: null,
-    totalBytes: 2_500_000_000, completedBytes: 0, speedBps: 0, etaSeconds: null,
-    parts: [], currentFile: null, fileIndex: 0, fileCount: 1,
-    attempt: 1, maxAttempts: 5,
-    error: { code: 'RESOURCE_DISK_FULL', message: '需要 2.5 GB，可用 1.1 GB',
-             messageZh: '需要 2.5 GB，可用 1.1 GB', retryable: false },
-    startedAt: new Date(Date.now() - 300_000).toISOString(), updatedAt: new Date().toISOString(),
+    jobId: 'job_demo_2',
+    kind: 'model',
+    type: 'download.model',
+    targetId: 'llm/qwen3-4b-q4_k_m',
+    displayName: 'Qwen3 4B (Q4_K_M)',
+    state: 'blocked',
+    step: null,
+    provider: null,
+    totalBytes: 2_500_000_000,
+    completedBytes: 0,
+    speedBps: 0,
+    etaSeconds: null,
+    parts: [],
+    currentFile: null,
+    fileIndex: 0,
+    fileCount: 1,
+    attempt: 1,
+    maxAttempts: 5,
+    error: {
+      code: 'RESOURCE_DISK_FULL',
+      message: '需要 2.5 GB，可用 1.1 GB',
+      messageZh: '需要 2.5 GB，可用 1.1 GB',
+      retryable: false,
+    },
+    startedAt: new Date(Date.now() - 300_000).toISOString(),
+    updatedAt: new Date().toISOString(),
   },
 ];
 
@@ -151,7 +181,13 @@ function finishMockPipelineJob(jobUid: string): void {
   }
 }
 
-const mockFolders: { uid: string; name: string; parentUid: string | null; color: string | null; noteCount: number }[] = [
+const mockFolders: {
+  uid: string;
+  name: string;
+  parentUid: string | null;
+  color: string | null;
+  noteCount: number;
+}[] = [
   { uid: 'fld_course', name: '课程', parentUid: null, color: null, noteCount: 1 },
   { uid: 'fld_dl', name: '深度学习', parentUid: 'fld_course', color: null, noteCount: 1 },
   { uid: 'fld_podcast', name: '播客', parentUid: null, color: null, noteCount: 1 },
@@ -276,8 +312,18 @@ function seedDemoData() {
   const tUid = nextId('tr');
   n1.transcriptUid = tUid;
   n1.assets = [
-    mockAsset({ role: 'audio16k', mime: 'audio/wav', bytes: 103_232_000, durationMs: n1.durationMs }),
-    mockAsset({ role: 'peaks', mime: 'application/octet-stream', bytes: 451_000, durationMs: null }),
+    mockAsset({
+      role: 'audio16k',
+      mime: 'audio/wav',
+      bytes: 103_232_000,
+      durationMs: n1.durationMs,
+    }),
+    mockAsset({
+      role: 'peaks',
+      mime: 'application/octet-stream',
+      bytes: 451_000,
+      durationMs: null,
+    }),
   ];
   transcripts.set(tUid, {
     uid: tUid,
@@ -339,19 +385,42 @@ function runImportPipeline(note: MockNote, jobId: string) {
     emit('note.updated', { noteUid: note.uid, fields: ['title', 'durationMs', 'coverAssetUid'] });
   }, 400);
 
-  step('fetch', 0.08, 600, { completedBytes: 12_000_000, totalBytes: 148_000_000, speedBps: 8_200_000 });
-  step('fetch', 0.32, 1400, { completedBytes: 64_000_000, totalBytes: 148_000_000, speedBps: 9_100_000 });
+  step('fetch', 0.08, 600, {
+    completedBytes: 12_000_000,
+    totalBytes: 148_000_000,
+    speedBps: 8_200_000,
+  });
+  step('fetch', 0.32, 1400, {
+    completedBytes: 64_000_000,
+    totalBytes: 148_000_000,
+    speedBps: 9_100_000,
+  });
   step('demux', 0.44, 2200);
 
   later(() => {
-    const asset = mockAsset({ role: 'peaks', mime: 'application/octet-stream', bytes: 380_000, durationMs: null });
+    const asset = mockAsset({
+      role: 'peaks',
+      mime: 'application/octet-stream',
+      bytes: 380_000,
+      durationMs: null,
+    });
     note.assets = [
       ...note.assets,
-      mockAsset({ role: 'audio16k', mime: 'audio/wav', bytes: 81_920_000, durationMs: note.durationMs }),
+      mockAsset({
+        role: 'audio16k',
+        mime: 'audio/wav',
+        bytes: 81_920_000,
+        durationMs: note.durationMs,
+      }),
       asset,
     ];
     // 波形就绪前前端不能去拉，否则 404 —— 这就是这个事件存在的理由
-    emit('media.asset.ready', { noteUid: note.uid, assetUid: asset.uid, role: 'peaks', bytes: asset.bytes });
+    emit('media.asset.ready', {
+      noteUid: note.uid,
+      assetUid: asset.uid,
+      role: 'peaks',
+      bytes: asset.bytes,
+    });
   }, 2400);
 
   step('vad', 0.5, 2600);
@@ -374,66 +443,117 @@ function runImportPipeline(note: MockNote, jobId: string) {
     note.transcriptUid = transcriptUid;
     note.status = 'processing';
     emit('transcribe.started', {
-      transcriptUid, noteUid: note.uid, jobId,
-      engineId: 'whisper.cpp', modelId: 'asr/whisper-large-v3-turbo-q5_0',
-      backend: 'cpu', language: 'zh', durationMs: note.durationMs, totalChunks,
+      transcriptUid,
+      noteUid: note.uid,
+      jobId,
+      engineId: 'whisper.cpp',
+      modelId: 'asr/whisper-large-v3-turbo-q5_0',
+      backend: 'cpu',
+      language: 'zh',
+      durationMs: note.durationMs,
+      totalChunks,
     });
   }, 2800);
 
   // ★ 每个 chunk 落库即发 —— "边转边看"，14 秒后就有字，而不是等 40 分钟
   for (let c = 0; c < totalChunks; c += 1) {
-    later(() => {
-      const segs = makeSegments(4, c * 4);
-      const tr = transcripts.get(transcriptUid);
-      if (tr) {
-        tr.segments = [...tr.segments, ...segs];
-        tr.progress = (c + 1) / totalChunks;
-      }
-      // data 类：seq 单调、不节流、必达有序
-      emit('transcribe.segment', { transcriptUid, noteUid: note.uid, seq: c, chunkIdx: c, segments: segs });
-      // 进度另发一条 hint，与内容流分开 → 节流不会拖累内容
-      emit('transcribe.chunk', {
-        transcriptUid, noteUid: note.uid,
-        doneChunks: c + 1, totalChunks, lastEndMs: (c * 4 + 4) * 8200,
-      });
-      emit('job.progress', {
-        jobId, state: 'running', jobType: 'import.url', noteUid: note.uid,
-        progress: 0.5 + 0.45 * ((c + 1) / totalChunks),
-        step: 'asr', stepIndex: 5, stepCount: 7,
-        completedBytes: null, totalBytes: null, speedBps: null,
-        etaSeconds: Math.round((totalChunks - c - 1) * 26),
-      });
-    }, 3200 + c * 900);
+    later(
+      () => {
+        const segs = makeSegments(4, c * 4);
+        const tr = transcripts.get(transcriptUid);
+        if (tr) {
+          tr.segments = [...tr.segments, ...segs];
+          tr.progress = (c + 1) / totalChunks;
+        }
+        // data 类：seq 单调、不节流、必达有序
+        emit('transcribe.segment', {
+          transcriptUid,
+          noteUid: note.uid,
+          seq: c,
+          chunkIdx: c,
+          segments: segs,
+        });
+        // 进度另发一条 hint，与内容流分开 → 节流不会拖累内容
+        emit('transcribe.chunk', {
+          transcriptUid,
+          noteUid: note.uid,
+          doneChunks: c + 1,
+          totalChunks,
+          lastEndMs: (c * 4 + 4) * 8200,
+        });
+        emit('job.progress', {
+          jobId,
+          state: 'running',
+          jobType: 'import.url',
+          noteUid: note.uid,
+          progress: 0.5 + 0.45 * ((c + 1) / totalChunks),
+          step: 'asr',
+          stepIndex: 5,
+          stepCount: 7,
+          completedBytes: null,
+          totalBytes: null,
+          speedBps: null,
+          etaSeconds: Math.round((totalChunks - c - 1) * 26),
+        });
+      },
+      3200 + c * 900,
+    );
   }
 
   const doneAt = 3200 + totalChunks * 900 + 400;
   later(() => {
     const tr = transcripts.get(transcriptUid);
-    if (tr) { tr.status = 'done'; tr.progress = 1; tr.rtf = 0.38; }
+    if (tr) {
+      tr.status = 'done';
+      tr.progress = 1;
+      tr.rtf = 0.38;
+    }
     note.status = 'ready';
     finishMockPipelineJob(jobId);
     emit('transcribe.done', {
-      transcriptUid, noteUid: note.uid, segmentCount: totalChunks * 4,
-      rtf: 0.38, durationMs: note.durationMs,
-      speakers: [{ label: 'SPEAKER_00', totalMs: 4_100_000 }, { label: 'SPEAKER_01', totalMs: 1_020_000 }],
+      transcriptUid,
+      noteUid: note.uid,
+      segmentCount: totalChunks * 4,
+      rtf: 0.38,
+      durationMs: note.durationMs,
+      speakers: [
+        { label: 'SPEAKER_00', totalMs: 4_100_000 },
+        { label: 'SPEAKER_01', totalMs: 1_020_000 },
+      ],
     });
     emit('note.status', { noteUid: note.uid, status: 'ready' });
     emit('job.progress', {
-      jobId, state: 'succeeded', jobType: 'import.url', noteUid: note.uid,
-      progress: 1, step: null, completedBytes: null, totalBytes: null, speedBps: null, etaSeconds: null,
+      jobId,
+      state: 'succeeded',
+      jobType: 'import.url',
+      noteUid: note.uid,
+      progress: 1,
+      step: null,
+      completedBytes: null,
+      totalBytes: null,
+      speedBps: null,
+      etaSeconds: null,
     });
   }, doneAt);
 
   // 结构化：summary 与 mindmap 的 delta 流
   later(() => {
     emit('summary.delta', { noteUid: note.uid, seq: 0, textDelta: '本讲承接反向传播，' });
-    emit('summary.delta', { noteUid: note.uid, seq: 1, textDelta: '重点讨论深层网络中的梯度消失问题，' });
-    emit('summary.delta', { noteUid: note.uid, seq: 2, textDelta: '并给出残差连接与批归一化两条解决路径。' });
+    emit('summary.delta', {
+      noteUid: note.uid,
+      seq: 1,
+      textDelta: '重点讨论深层网络中的梯度消失问题，',
+    });
+    emit('summary.delta', {
+      noteUid: note.uid,
+      seq: 2,
+      textDelta: '并给出残差连接与批归一化两条解决路径。',
+    });
     emit('summary.done', { noteUid: note.uid, chars: 46 });
   }, doneAt + 600);
 }
 
-const mockFetcher: Fetcher = async <T,>(path: string, opts: ApiOptions = {}): Promise<T> => {
+const mockFetcher: Fetcher = async <T>(path: string, opts: ApiOptions = {}): Promise<T> => {
   await new Promise((r) => setTimeout(r, 60)); // 模拟本地往返
   const method = (opts.method ?? 'GET').toUpperCase();
 
@@ -466,20 +586,18 @@ const mockFetcher: Fetcher = async <T,>(path: string, opts: ApiOptions = {}): Pr
        *
        * 写成显式对象之后，`NoteListItem` 加字段这里会编译失败，多发字段也过不去。
        */
-      .map(
-        (n): NoteSummary => ({
-          uid: n.uid,
-          title: n.title,
-          status: n.status,
-          kind: n.kind,
-          language: n.language,
-          durationMs: n.durationMs,
-          starred: n.starred,
-          tags: n.tags,
-          createdAt: n.createdAt,
-          updatedAt: n.updatedAt,
-        }),
-      );
+      .map((n): NoteSummary => ({
+        uid: n.uid,
+        title: n.title,
+        status: n.status,
+        kind: n.kind,
+        language: n.language,
+        durationMs: n.durationMs,
+        starred: n.starred,
+        tags: n.tags,
+        createdAt: n.createdAt,
+        updatedAt: n.updatedAt,
+      }));
     /*
      * ★ T-157 ③：mock 也必须**真的翻页**。
      *
@@ -547,7 +665,15 @@ const mockFetcher: Fetcher = async <T,>(path: string, opts: ApiOptions = {}): Pr
   }
 
   if (method === 'PUT' && path === '/settings/llm/providers') {
-    const b = opts.body as { id: string; label: string; baseUrl: string; model: string; kind: string; isLocal: boolean; apiKey?: string };
+    const b = opts.body as {
+      id: string;
+      label: string;
+      baseUrl: string;
+      model: string;
+      kind: string;
+      isLocal: boolean;
+      apiKey?: string;
+    };
     const existing = mockProviders.find((p) => p.id === b.id);
     const next = {
       id: b.id,
@@ -589,7 +715,13 @@ const mockFetcher: Fetcher = async <T,>(path: string, opts: ApiOptions = {}): Pr
 
   if (method === 'POST' && path === '/folders') {
     const b = opts.body as { name: string; parentUid?: string | null };
-    const f = { uid: nextId('fld'), name: b.name, parentUid: b.parentUid ?? null, color: null, noteCount: 0 };
+    const f = {
+      uid: nextId('fld'),
+      name: b.name,
+      parentUid: b.parentUid ?? null,
+      color: null,
+      noteCount: 0,
+    };
     mockFolders.push(f);
     return f as T;
   }

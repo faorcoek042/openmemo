@@ -277,9 +277,11 @@ class SherpaAsrStream implements AsrStream {
    */
   write(pcm: Int16Array): void {
     if (this.closing || this.closed) return;
-    this.queue = this.queue.then(() => this.handleWrite(pcm)).catch((err: unknown) => {
-      this.emit('error', err instanceof Error ? err : new Error(String(err)));
-    });
+    this.queue = this.queue
+      .then(() => this.handleWrite(pcm))
+      .catch((err: unknown) => {
+        this.emit('error', err instanceof Error ? err : new Error(String(err)));
+      });
   }
 
   private async handleWrite(pcm: Int16Array): Promise<void> {
@@ -359,10 +361,10 @@ class SherpaAsrStream implements AsrStream {
             .map((tok, i) => ({
               w: tok,
               s: Math.round(startMs + (result.timestamps?.[i] ?? 0) * 1000),
-              e: Math.round(startMs + (result.timestamps?.[i + 1] ?? result.timestamps?.[i] ?? 0) * 1000),
-              ...(result.ys_probs?.[i] !== undefined
-                ? { p: Math.exp(result.ys_probs[i]!) }
-                : {}),
+              e: Math.round(
+                startMs + (result.timestamps?.[i + 1] ?? result.timestamps?.[i] ?? 0) * 1000,
+              ),
+              ...(result.ys_probs?.[i] !== undefined ? { p: Math.exp(result.ys_probs[i]!) } : {}),
             }))
             .filter((w) => w.w.length > 0 && !w.w.startsWith('<'))
         : null;

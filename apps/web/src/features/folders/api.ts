@@ -151,7 +151,8 @@ export function useRenameFolderMutation() {
 export function useDeleteFolderMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (uid: string) => api<{ ok: true }>('notes', `/folders/${uid}`, { method: 'DELETE' }),
+    mutationFn: (uid: string) =>
+      api<{ ok: true }>('notes', `/folders/${uid}`, { method: 'DELETE' }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.folders });
       // 删文件夹会把里面的笔记移到"未分类"，列表也要刷

@@ -121,9 +121,17 @@ export function PurposeBindingsSection() {
             model: defaultModel,
           });
           return (
-            <div key={purpose} className="rounded-md border border-line p-3" data-testid={`purpose-${purpose}`}>
-              <p className="mb-2 text-sm font-medium text-ink">{t(`settings.purposes.names.${purpose}`)}</p>
-              <p className="mb-2 text-xs text-ink-secondary">{t(`settings.purposes.hints.${purpose}`)}</p>
+            <div
+              key={purpose}
+              className="rounded-md border border-line p-3"
+              data-testid={`purpose-${purpose}`}
+            >
+              <p className="mb-2 text-sm font-medium text-ink">
+                {t(`settings.purposes.names.${purpose}`)}
+              </p>
+              <p className="mb-2 text-xs text-ink-secondary">
+                {t(`settings.purposes.hints.${purpose}`)}
+              </p>
 
               <div className="flex flex-col gap-2 sm:flex-row">
                 {/* provider：选"继承全局"或某个已配置的 provider */}
@@ -181,10 +189,14 @@ export function PurposeBindingsSection() {
                 ★ 最终生效值。这一行是整屏的重点：
                 逐字段回退意味着"你填的"和"实际用的"可以是两码事。
               */}
-              <p className="mt-2 text-xs text-ink-muted" data-testid={`purpose-${purpose}-effective`}>
+              <p
+                className="mt-2 text-xs text-ink-muted"
+                data-testid={`purpose-${purpose}-effective`}
+              >
                 {eff.providerId && eff.model
                   ? t('settings.purposes.effective', {
-                      provider: providers.find((p) => p.id === eff.providerId)?.label ?? eff.providerId,
+                      provider:
+                        providers.find((p) => p.id === eff.providerId)?.label ?? eff.providerId,
                       model: eff.model,
                     })
                   : t('settings.purposes.incomplete')}

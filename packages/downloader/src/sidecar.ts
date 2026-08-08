@@ -151,8 +151,10 @@ export function canResume(
   total: number,
   provider: string | null,
 ): { resumable: boolean; reason: string; clearValidators: boolean } {
-  if (s.digest !== digest) return { resumable: false, reason: 'digest changed', clearValidators: false };
-  if (s.total !== total) return { resumable: false, reason: 'size changed', clearValidators: false };
+  if (s.digest !== digest)
+    return { resumable: false, reason: 'digest changed', clearValidators: false };
+  if (s.total !== total)
+    return { resumable: false, reason: 'size changed', clearValidators: false };
   if (s.provider !== provider) {
     return { resumable: true, reason: 'provider switched', clearValidators: true };
   }

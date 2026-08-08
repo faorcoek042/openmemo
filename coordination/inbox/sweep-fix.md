@@ -4,13 +4,13 @@
 
 交付：**5 个提交**，逐个 `git add` 精确清单，**一次 `-A` 都没用过**。
 
-| 提交 | 项 | 一句话 |
-|---|---|---|
-| `4511e0b` | ① | unpack 软链校验从词法改成解析后复核 —— **一次可复现的任意文件写** |
-| `6517f90` | ③ | 笔记列表能翻页了 —— 第 51 条起此前在界面上永远看不到 |
-| `a3afc99` | ④ | 下载源（镜像）UI —— 三个端点全真、前端两个 hook 零调用方 |
-| `efe8fd4` | ② | 拿掉"一键回滚"这句假话，**顺带修掉一条真 bug：更新失败会毁掉当前安装** |
-| `1b0675b` | 门禁 | 「零调用方」扫描固化进 `scripts/` 并接进 `pnpm check` |
+| 提交      | 项   | 一句话                                                                 |
+| --------- | ---- | ---------------------------------------------------------------------- |
+| `4511e0b` | ①    | unpack 软链校验从词法改成解析后复核 —— **一次可复现的任意文件写**      |
+| `6517f90` | ③    | 笔记列表能翻页了 —— 第 51 条起此前在界面上永远看不到                   |
+| `a3afc99` | ④    | 下载源（镜像）UI —— 三个端点全真、前端两个 hook 零调用方               |
+| `efe8fd4` | ②    | 拿掉"一键回滚"这句假话，**顺带修掉一条真 bug：更新失败会毁掉当前安装** |
+| `1b0675b` | 门禁 | 「零调用方」扫描固化进 `scripts/` 并接进 `pnpm check`                  |
 
 门禁：`tsc -b` **0** · `eslint .` **0** · `pnpm -r test` **1138 passed / 0 failed**
 （开工基线 1100，我贡献 **38 条**：downloader +17 / daemon +6 / web +15）。
@@ -91,22 +91,24 @@ evil  -> "s/../OUTSIDE.txt"   词法 = destRoot/OUTSIDE.txt  → 放行
   修复前：unpack **成功返回**
   ★ 解包结束后，通过 destRoot/evil 读到 = "SECRET-OUTSIDE-DESTROOT\n"
 ```
+
 即：解包"成功"，而 destRoot 里从此有一条通往外面的门 —— 之后任何遍历包目录的代码
 （`findInBackendPacks` / `findFileInBackendPacks` / sqlite 扩展链接）都会跟过去。
 
 ## 1.2 谁能把一个恶意归档喂进解压流程 —— 逐条追出来的
 
-| 路径 | 能不能 | 依据 |
-|---|---|---|
-| `unpackArchive` 的调用方 | **只有一个** | `[实测 grep]` 全仓生产代码里只有 `installer.ts:243` |
-| `install()` 的调用方 | **只有两个** | `backends.ts:143`（后端包）、`models.ts:417`（模型拉取） |
-| 这两处的 `files` 从哪来 | **`vendor/manifests/*.json`，git 里钉死** | zod 校验 + `ALLOWED_DOWNLOAD_HOSTS` 编译期白名单（只 https）；**sha256 在 `downloadFile` 里解包之前就已校验** |
-| `POST /api/models/import` | **到不了 unpack** | `hf_repo` → 501（`models.ts:748`，ADR-004 决策 5）；`local_file` → 只 `copyFile` 进 blob + `linkByName`，**没有任何 unpack 分支** `[读码]` |
-| `POST /api/notes/import`（任意 URL） | **到不了 unpack** | 走媒体流水线（yt-dlp/ffmpeg），不经过 downloader |
-| 换 manifest 目录 | **要能设进程环境变量** | `OPENMEMO_MANIFEST_DIR` / `OPENMEMO_COMPONENTS_MANIFEST`，HTTP 客户端设不了 |
-| 自定义下载源 | **不存在** | `sourceBaseUrl` 存得下来但**全仓没有任何下载路径读它**（见 §4） |
+| 路径                                 | 能不能                                    | 依据                                                                                                                                       |
+| ------------------------------------ | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `unpackArchive` 的调用方             | **只有一个**                              | `[实测 grep]` 全仓生产代码里只有 `installer.ts:243`                                                                                        |
+| `install()` 的调用方                 | **只有两个**                              | `backends.ts:143`（后端包）、`models.ts:417`（模型拉取）                                                                                   |
+| 这两处的 `files` 从哪来              | **`vendor/manifests/*.json`，git 里钉死** | zod 校验 + `ALLOWED_DOWNLOAD_HOSTS` 编译期白名单（只 https）；**sha256 在 `downloadFile` 里解包之前就已校验**                              |
+| `POST /api/models/import`            | **到不了 unpack**                         | `hf_repo` → 501（`models.ts:748`，ADR-004 决策 5）；`local_file` → 只 `copyFile` 进 blob + `linkByName`，**没有任何 unpack 分支** `[读码]` |
+| `POST /api/notes/import`（任意 URL） | **到不了 unpack**                         | 走媒体流水线（yt-dlp/ffmpeg），不经过 downloader                                                                                           |
+| 换 manifest 目录                     | **要能设进程环境变量**                    | `OPENMEMO_MANIFEST_DIR` / `OPENMEMO_COMPONENTS_MANIFEST`，HTTP 客户端设不了                                                                |
+| 自定义下载源                         | **不存在**                                | `sourceBaseUrl` 存得下来但**全仓没有任何下载路径读它**（见 §4）                                                                            |
 
 **所以：**
+
 - **不夸大**：一个鉴权关闭、绑 `0.0.0.0`、NAT 外可达的外部访问者**不能触发它**。
   说"demo 正在被利用"是不成立的。
 - **也不轻描淡写**：机制是真的、复现是真的（**任意写**，不是任意读）、
@@ -219,6 +221,7 @@ evil  -> "s/../OUTSIDE.txt"   词法 = destRoot/OUTSIDE.txt  → 放行
 用户需要它的确切时刻，是刚看到「所有下载源均失败」的时候，而那条横幅就在这一页）。
 
 **三条刻意的诚实：**
+
 1. **"优先"不是"只用"**：`orderSourcesForDownload` 只把钉住的源排到最前，其余仍作回退。
    界面照这个说 —— 让用户以为自己关掉了别的源，是又一句界面说了不算的话。
 2. **没测过就说没测过**：`effective` 为 null 时不显示"当前源"，也不拿"自动"充数。
@@ -289,6 +292,7 @@ PROTOCOL §7 补充立的判据正是"跑错了也不会造成后果"。
 ⑥ `root + sep` 退回裸 `startsWith(root)`         ★ 1 红
 还原                                            26 pass / 0 fail
 ```
+
 ⚠️ **④ 第一版没红，变异体当场揭穿了我的用例**：只做"根是软链"不够 ——
 `walk()` 从给定的根出发、不回头解析它，两边**恰好**都停在软链那一侧，比较照样成立。
 补了一条**绝对软链**才让两边真的分叉。这条如实写进了用例注释。
@@ -419,19 +423,19 @@ posix 下同样会拒。**那条用例根本没有执行到 platform 分支。**
 `ci-upload` 的 `.github/**` + `scripts/ci/**` 与 `docs-public` 的 `README.md` +
 `docs/DEPLOYMENT.md` **一个字未动**）：
 
-| 路径 | 归属 | 说明 |
-|---|---|---|
-| `packages/downloader/src/{unpack,installer,components}.ts` + 两个测试 | `model-mgmt` | ① 与 ② |
-| `packages/shared/src/{api,notes}.ts` | `daemon-contract` | `ListNotesResponse` 补 4 个字段；`GetSourcesResponse` 补 `available` |
-| `apps/daemon/src/db/repos.ts` + 新增 `db/notesPaging.test.ts` | `oss-scout` | 翻页 |
-| `apps/daemon/src/http/rest/{notes,state}.ts` + 新增 `http/sourcesRest.test.ts` | `oss-scout` | 翻页 / 下载源 |
-| `apps/daemon/src/http/notesRest.test.ts` | `notes-contract` | 只**追加**一个 describe，未动任何既有用例 |
-| `apps/web/src/features/{notes,models,components}/**` | `architect` / `model-mgmt` | 新增 `models/components/SourcesSection.tsx` |
-| `apps/web/src/lib/api/{notesCache,mock}.ts` + `notesCache.test.ts` | `architect` | |
-| `apps/web/src/app/i18n/locales/{zh-CN,en}.json` | `frontend-truth` | **只追加**：`notes` 段 +4 键、`models` 段 +1 个 `sources` 子对象。**没有重排任何已有键** |
-| `apps/web/src/test/components.test.tsx` | `architect` | 追加 3 个 describe + `EMPHASIS_REGISTRY` 加 1 行 |
-| `scripts/check-orphan-exports.mjs` · `scripts/orphan-exports-baseline.json` | 新增 | Manager 已批准固化 |
-| `package.json`（根） | — | 见 §5 的越权说明 |
+| 路径                                                                           | 归属                       | 说明                                                                                     |
+| ------------------------------------------------------------------------------ | -------------------------- | ---------------------------------------------------------------------------------------- |
+| `packages/downloader/src/{unpack,installer,components}.ts` + 两个测试          | `model-mgmt`               | ① 与 ②                                                                                   |
+| `packages/shared/src/{api,notes}.ts`                                           | `daemon-contract`          | `ListNotesResponse` 补 4 个字段；`GetSourcesResponse` 补 `available`                     |
+| `apps/daemon/src/db/repos.ts` + 新增 `db/notesPaging.test.ts`                  | `oss-scout`                | 翻页                                                                                     |
+| `apps/daemon/src/http/rest/{notes,state}.ts` + 新增 `http/sourcesRest.test.ts` | `oss-scout`                | 翻页 / 下载源                                                                            |
+| `apps/daemon/src/http/notesRest.test.ts`                                       | `notes-contract`           | 只**追加**一个 describe，未动任何既有用例                                                |
+| `apps/web/src/features/{notes,models,components}/**`                           | `architect` / `model-mgmt` | 新增 `models/components/SourcesSection.tsx`                                              |
+| `apps/web/src/lib/api/{notesCache,mock}.ts` + `notesCache.test.ts`             | `architect`                |                                                                                          |
+| `apps/web/src/app/i18n/locales/{zh-CN,en}.json`                                | `frontend-truth`           | **只追加**：`notes` 段 +4 键、`models` 段 +1 个 `sources` 子对象。**没有重排任何已有键** |
+| `apps/web/src/test/components.test.tsx`                                        | `architect`                | 追加 3 个 describe + `EMPHASIS_REGISTRY` 加 1 行                                         |
+| `scripts/check-orphan-exports.mjs` · `scripts/orphan-exports-baseline.json`    | 新增                       | Manager 已批准固化                                                                       |
+| `package.json`（根）                                                           | —                          | 见 §5 的越权说明                                                                         |
 
 ---
 

@@ -23,10 +23,12 @@
 交付（精确清单，未 `git add`）：
 
 **新增**
+
 - `apps/web/src/lib/remediation/routes.ts` —— 全仓唯一一份 `action → 路由` 表
 - `apps/web/src/lib/remediation/routes.test.ts` —— 12 条，含扫 daemon 源码的护栏
 
 **修改**
+
 - `apps/web/src/components/common/ErrorBlock.tsx` —— **SHARED-CHANGE**，默认渲染补救按钮
 - `apps/web/src/components/common/RemediationButton.tsx` —— 走共享表；`fallbackLabel`；无落点则不渲染
 - `apps/web/src/components/common/JobToaster.tsx` —— 删掉第二张路由表，复用同一个按钮
@@ -44,11 +46,11 @@
 
 ## 1.1 先摆事实：三页今天各自问什么 `[实测]`
 
-| 页 | 端点 | 它回答的问题 | 对象 |
-|---|---|---|---|
-| `/models` | `/api/models/catalog`+`/installed` | 转写/语言模型我要用哪一个 | 权重 |
-| `/runtime` | `/api/backends/catalog`+`/installed`+`/api/runtime/hardware` | **这台机器**该装哪些二进制、装没装上、自检过没过 | 后端包（26 个，按平台） |
-| `/components` | `/api/components` | 这个二进制**从哪来、钉在哪版、上游有没有新版、能不能回滚** | 组件（8 个） |
+| 页            | 端点                                                         | 它回答的问题                                               | 对象                    |
+| ------------- | ------------------------------------------------------------ | ---------------------------------------------------------- | ----------------------- |
+| `/models`     | `/api/models/catalog`+`/installed`                           | 转写/语言模型我要用哪一个                                  | 权重                    |
+| `/runtime`    | `/api/backends/catalog`+`/installed`+`/api/runtime/hardware` | **这台机器**该装哪些二进制、装没装上、自检过没过           | 后端包（26 个，按平台） |
+| `/components` | `/api/components`                                            | 这个二进制**从哪来、钉在哪版、上游有没有新版、能不能回滚** | 组件（8 个）            |
 
 `[实测]` 两个目录的 id **高度重合**：`/api/components` 的 8 条里 **6 条**（`whispercpp-cpu-linux-x64` / `libsimple-linux-x64` / `sqlite-vec-linux-x64` / `media-tools-linux-x64` / `ytdlp-linux-x64` / `llamacpp-cpu-linux-x64`）与 `/api/backends/catalog` 的包 id **逐字相同**；另两条是 `sherpa-onnx-node` 与一个 ASR 模型。
 
@@ -76,11 +78,11 @@ D-10 §3.3 规划的 `/runtime` 页内「转写加速后端 / 功能组件」两
 
 ## 2.1 有真补救的：**2 个**（外加 1 个"有 remediation 但故意不给按钮"）
 
-| 调用点 | 端点 | daemon 发的 action | 处置 |
-|---|---|---|---|
-| `CapturePage.tsx:170`（probe） | `POST /api/notes/probe` 422 `NO_MEDIA_SOURCE` | `installSiteExtractor`（`rest/notes.ts:144`） | ✅ **跳 `/components`** —— 本轮验收的那一条 |
-| `DataLocationSection.tsx:385` | `POST /api/settings/data-dir` 409 | `useExistingDataDir`（`rest/storage.ts:266`） | ✅ **就地重发**（唯一一个传 `onRemediate` 的） |
-| `CapturePage.tsx:214`（import） | `POST /api/notes/import` 403 | `chooseAllowedFolder`（`rest/notes.ts:196`） | ⛔ **故意不给按钮**：产品里没有目录选择器，允许的根已经在错误详情里，跳 `/capture` 是原地转圈（用户本来就在那儿） |
+| 调用点                          | 端点                                          | daemon 发的 action                            | 处置                                                                                                              |
+| ------------------------------- | --------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `CapturePage.tsx:170`（probe）  | `POST /api/notes/probe` 422 `NO_MEDIA_SOURCE` | `installSiteExtractor`（`rest/notes.ts:144`） | ✅ **跳 `/components`** —— 本轮验收的那一条                                                                       |
+| `DataLocationSection.tsx:385`   | `POST /api/settings/data-dir` 409             | `useExistingDataDir`（`rest/storage.ts:266`） | ✅ **就地重发**（唯一一个传 `onRemediate` 的）                                                                    |
+| `CapturePage.tsx:214`（import） | `POST /api/notes/import` 403                  | `chooseAllowedFolder`（`rest/notes.ts:196`）  | ⛔ **故意不给按钮**：产品里没有目录选择器，允许的根已经在错误详情里，跳 `/capture` 是原地转圈（用户本来就在那儿） |
 
 ## 2.2 普通错误：**23 个**
 
@@ -94,12 +96,12 @@ D-10 §3.3 规划的 `/runtime` 页内「转写加速后端 / 功能组件」两
 
 `[实测]` 这 4 个 mutation 的 `error` **全仓零渲染点**：
 
-| mutation | 端点 | daemon 的 action | 用户看到的 |
-|---|---|---|---|
-| `ModelsPage` `pull` | `POST /api/models/:id/install` | `accept_license`(models.ts:353) / `free_disk`(:369) | 点安装磁盘不够 → **一个字都不显示** |
-| `ModelsPage` `del` | `DELETE /api/models/:id` | `activate_model`(:597) | 删不掉正在用的模型 → 同上 |
-| `RuntimePage` `select` | `POST /api/backends/select` | `install_backend`(backends.ts:330) | 同上 |
-| `RuntimePage` `selfTest` | `POST /api/backends/selftest` | `install_backend`/`install_model`(hardware.ts:204←setup.ts:574) | 点自检 → 同上 |
+| mutation                 | 端点                           | daemon 的 action                                                | 用户看到的                          |
+| ------------------------ | ------------------------------ | --------------------------------------------------------------- | ----------------------------------- |
+| `ModelsPage` `pull`      | `POST /api/models/:id/install` | `accept_license`(models.ts:353) / `free_disk`(:369)             | 点安装磁盘不够 → **一个字都不显示** |
+| `ModelsPage` `del`       | `DELETE /api/models/:id`       | `activate_model`(:597)                                          | 删不掉正在用的模型 → 同上           |
+| `RuntimePage` `select`   | `POST /api/backends/select`    | `install_backend`(backends.ts:330)                              | 同上                                |
+| `RuntimePage` `selfTest` | `POST /api/backends/selftest`  | `install_backend`/`install_model`(hardware.ts:204←setup.ts:574) | 点自检 → 同上                       |
 
 三条 models 的错误都是**在建 job 之前**同步返回的，所以 `JobToaster` 也永远看不到它们。已补 4 个 `<ErrorBlock>`（`ModelsPage.tsx:430-431`、`RuntimePage.tsx:190-191`）。
 
@@ -184,17 +186,21 @@ this.remediation =
   + [ 'installSiteExtractor（…notes.ts:96）' ]   - []
 ℹ pass 61  ℹ fail 2
 ```
+
 组件侧同一变异体：
+
 ```
 ✖ ★ 点下去落到 /components（不是 /models，也不是 /tasks）   actual:'/tasks'  expected:'/components'
 ✖ ★ 点「开始」→ 422 → 「查看如何支持该站点」→ /components   actual:'/tasks'  expected:'/components'
 ℹ tests 200  ℹ pass 198  ℹ fail 2
 ```
+
 （顺带：这次红灯里那个 `:96` 就是上面说的行号 bug，已修成等量换行，现在报 `:144`。）
 
 ### 5.2 把 `ErrorBlock` 的渲染条件改回 `api?.remediation && onRemediate`
 
 产物核对：`grep -c "api?.remediation && onRemediate" .test-out/components/components.test.js` → **2**（一处注释 + 一处代码，坏行在产物里）
+
 ```
 ✖ ★ 一个 prop 都不传，补救按钮就得在（这正是 26 处全都不传的那个前提）  actual:false expected:true
 ✖ ★ 按钮上写的是服务端那句话                                        actual:''    expected:'查看如何支持该站点'
@@ -206,6 +212,7 @@ this.remediation =
 ### 5.3 删掉 `/runtime` 上那条 `<Link to="/components">`
 
 产物核对：`grep -c runtime-components-link .test-out/components/assets/RuntimePage*.js` → **0**（链接确实不在产物里）
+
 ```
 ✖ ★ 从 /runtime 点得到 /components —— 且落地的真是那一页，不只是 URL 变了
 ℹ tests 200  ℹ pass 199  ℹ fail 1
@@ -214,6 +221,7 @@ this.remediation =
 ### 5.4 从 `routes.tsx` 摘掉 `...componentsRoutes`
 
 （这一条钉的是**路由注册**：5.3 那条仍然会绿，因为 href 还在。两件事必须分开钉。）
+
 ```
 ✖ ★ /components 这个地址真的渲染出组件页（路由被摘掉时必须红）
   actual: 0   expected: 1
@@ -228,17 +236,20 @@ this.remediation =
   expected: '查看如何支持该站点'
 ℹ tests 200  ℹ pass 199  ℹ fail 1
 ```
+
 （红灯里 `actual` 正是原始 action 名 —— 这就是"渲染出来了但没有服务端那句话"的样子。）
 
 ### 5.6 **活体变异**：模拟 daemon 新增一个前端还不认识的 action
 
 临时写入 `apps/daemon/src/http/rest/__t140_mutant.ts`（内含 `remediation:{action:'brandNewActionNobodyClaimed',…}`），跑完**立刻删除并核对 0 残留**：
+
 ```
 ✖ ★ 每个 action 要么有路由，要么在 UNROUTED_ACTIONS 里写明为什么没有
   brandNewActionNobodyClaimed（/root/memo/apps/daemon/src/http/rest/__t140_mutant.ts:4）
   actual: [ 'brandNewActionNobodyClaimed（…__t140_mutant.ts:4）' ]   expected: []
 ℹ pass 74  ℹ fail 1
 ```
+
 → **这条护栏钉的正是本轮 bug 的成因**：daemon 加了 action，前端没跟上，从前**不会有任何东西说一句话**。
 
 ---
@@ -248,11 +259,13 @@ this.remediation =
 环境：daemon `node dist/main.js --data-dir /tmp/remediation/data --port 17651`（**不是** `:10000`），`vite --port 5211` 代理到它。`[实测]` `GET /api/health` → `dataDir=/tmp/remediation/data`。
 
 起始态与 demo 一致：
+
 ```
 warn | tool.ytDlp | 未找到
 ```
 
 Playwright 走一遍（`/tmp/remediation/walk.mjs`）：
+
 ```
 步骤 1  打开 /capture
 步骤 2  粘链接 + 点「开始」
@@ -261,7 +274,9 @@ Playwright 走一遍（`/tmp/remediation/walk.mjs`）：
 步骤 4  点「查看如何支持该站点」→ 落地 /components
 步骤 5  页面里有 yt-dlp 吗： true
 ```
+
 接着点安装（`/tmp/remediation/install.mjs`）：
+
 ```
 步骤 6  yt-dlp 卡片上的安装按钮： 1 → 安装 2026.07.04
         确认框： 安装「yt-dlp 站点解析器（Linux x64）」2026.07.04？
@@ -271,12 +286,16 @@ Playwright 走一遍（`/tmp/remediation/walk.mjs`）：
         t+15s  installedVersion="installed"
   POST /api/components/ytdlp-linux-x64/update → 202
 ```
+
 落盘与自检：
+
 ```
 39924536 /tmp/remediation/data/models/by-name/backend/yt-dlp   (-rwxr-xr-x)
 自检： ok | tool.ytDlp | /tmp/remediation/data/models/by-name/backend/yt-dlp
 ```
+
 **回到起点复验**（同一条链接，装完再 probe 一次）：
+
 ```
 http=200
 {"title":"Rick Astley - Never Gonna Give You Up …","adapterId":"yt-dlp","durationMs":213000,…}
@@ -287,9 +306,11 @@ http=200
 ## 6.1 🔴 两条订正 `debt-audit`（都是实测，不是意见）
 
 **订正 1 —— A4 的「唯一入口」不成立。** `[实测]` `GET :10000/api/backends/catalog` 里就有：
+
 ```
 ytdlp-linux-x64   applicable=True  installed=False  backend=cpu  recommended=True
 ```
+
 也就是说 **`/runtime` 上一直有一张可点的 yt-dlp 安装卡**（T-132 往 `backends.json` 补条目时一并进了 backends catalog，而 `ComponentCard.tsx:130` 那句注释写在那之前）。所以「唯一能装回来的那个页面用户走不到」这句**不成立**；成立的是两条更窄的事实：**`/components` 不可达**，以及**补救链是死的**。这条不影响 T-140 该做的事，但影响"到底有多急"的判断，必须报上来。
 
 **订正 2 —— 那句 warn 在界面上根本没有出处。** demo 的 `warn | tool.ytDlp | 未找到` 来自 `GET /api/selfcheck`，而 **web 全仓没有任何一处读这个端点**（`grep`）。`/diagnostics` 读的是 `/api/health`，`[实测]` demo 上 `health.pipeline.missing` 是 `[]` —— 不含 ytDlp。所以「从那句 warn 一路点到安装」在字面上做不到：**它在界面上唯一会显形的地方就是 F1 的那条 422**，也就是本轮打通的这条。
@@ -326,13 +347,13 @@ ytdlp-linux-x64   applicable=True  installed=False  backend=cpu  recommended=Tru
 
 # 9. 纪律核对
 
-| 条 | 结果 |
-|---|---|
-| `apps/web/dist` 未被覆盖 | ✅ `index.html` 时间戳仍是 `Aug 3 23:53`（我动手前）。构建全程用 `pnpm build:safe` |
-| `:10000` 只读 | ✅ 只发过 GET（`/api/health`、`/api/selfcheck`、`/api/components`、`/api/backends/catalog`）。未重启、未 kill、未占用 |
-| 自起服务端口 | ✅ daemon `17651` + vite `5211`（避开 5194/5196/5199/5203/5207），**跑完按 PID `kill`，未用 `pkill -f`**，已核对端口释放 |
-| `/root/data-memo` | ✅ 未读写。所有安装落在 `/tmp/remediation/data` |
+| 条                                 | 结果                                                                                                                                                                                                                                                            |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/dist` 未被覆盖           | ✅ `index.html` 时间戳仍是 `Aug 3 23:53`（我动手前）。构建全程用 `pnpm build:safe`                                                                                                                                                                              |
+| `:10000` 只读                      | ✅ 只发过 GET（`/api/health`、`/api/selfcheck`、`/api/components`、`/api/backends/catalog`）。未重启、未 kill、未占用                                                                                                                                           |
+| 自起服务端口                       | ✅ daemon `17651` + vite `5211`（避开 5194/5196/5199/5203/5207），**跑完按 PID `kill`，未用 `pkill -f`**，已核对端口释放                                                                                                                                        |
+| `/root/data-memo`                  | ✅ 未读写。所有安装落在 `/tmp/remediation/data`                                                                                                                                                                                                                 |
 | `datadir.json` 指针（PROTOCOL §9） | ✅ **动手前备份 + 事后 sha256 逐字核对一致**：`7f930979b85204d4c05b221f4c17a5cf5936a4d432a46488816727f60da233f3`，内容仍是 `{"dataDir":"/root/data-memo"}`。核实过只有 `POST /api/settings/data-dir` 会写它（`rest/storage.ts:231,331`），`--data-dir` 启动不写 |
-| 本地 whisper 转写 | ✅ 未跑 |
-| `git add -A` / commit | ✅ 未做（精确清单在交付段） |
-| 临时变异体残留 | ✅ `apps/daemon/src/http/rest/__t140_mutant.ts` 已删，核对 0 残留 |
+| 本地 whisper 转写                  | ✅ 未跑                                                                                                                                                                                                                                                         |
+| `git add -A` / commit              | ✅ 未做（精确清单在交付段）                                                                                                                                                                                                                                     |
+| 临时变异体残留                     | ✅ `apps/daemon/src/http/rest/__t140_mutant.ts` 已删，核对 0 残留                                                                                                                                                                                               |

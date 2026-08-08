@@ -119,7 +119,10 @@ export default function CapturePage() {
         </label>
         <div className="flex gap-2">
           <div className="relative flex-1">
-            <Link2 className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-muted" aria-hidden />
+            <Link2
+              className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-muted"
+              aria-hidden
+            />
             <input
               id="capture-url"
               // 显式 aria-label + testid：此前只靠 <label> 关联，而拖拽区用了**同一句**文案，
@@ -171,7 +174,10 @@ export default function CapturePage() {
 
       {/* ── probe 结果卡片：秒级出现，先于下载 ── */}
       {probe ? (
-        <section className="rounded-lg border border-line bg-surface-1 p-4" data-testid="capture-probe">
+        <section
+          className="rounded-lg border border-line bg-surface-1 p-4"
+          data-testid="capture-probe"
+        >
           <div className="flex gap-4">
             <div
               className="flex size-20 shrink-0 items-center justify-center rounded-md bg-surface-0 text-xs text-ink-muted"
@@ -182,7 +188,11 @@ export default function CapturePage() {
             <div className="min-w-0 flex-1">
               <h2 className="truncate text-base font-medium text-ink">{probe.title}</h2>
               <p className="mt-0.5 text-sm text-ink-secondary">
-                {[probe.author, probe.durationMs ? humanDuration(probe.durationMs, i18n.language) : null, probe.site]
+                {[
+                  probe.author,
+                  probe.durationMs ? humanDuration(probe.durationMs, i18n.language) : null,
+                  probe.site,
+                ]
                   .filter(Boolean)
                   .join(' · ')}
               </p>
@@ -251,7 +261,10 @@ export default function CapturePage() {
       {uploads.length > 0 ? (
         <ul className="flex flex-col gap-2" role="list">
           {uploads.map((u, i) => (
-            <li key={`${u.file.name}-${i}`} className="rounded-lg border border-line bg-surface-1 p-3">
+            <li
+              key={`${u.file.name}-${i}`}
+              className="rounded-lg border border-line bg-surface-1 p-3"
+            >
               <div className="mb-1 flex items-center justify-between gap-2 text-sm">
                 <span className="min-w-0 truncate text-ink">{u.file.name}</span>
                 <span className="shrink-0 text-xs text-ink-muted">
@@ -264,7 +277,9 @@ export default function CapturePage() {
                 <>
                   <ProgressMeter
                     value={u.progress}
-                    label={t('capture.uploading', { percent: formatPercent(u.progress, i18n.language) })}
+                    label={t('capture.uploading', {
+                      percent: formatPercent(u.progress, i18n.language),
+                    })}
                   />
                   <p className="mt-1 text-xs text-ink-muted">
                     {t(`capture.uploadPhase.${u.phase}`, { defaultValue: u.phase })}

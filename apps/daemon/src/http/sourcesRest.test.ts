@@ -40,9 +40,9 @@ interface Sources {
 async function providersInManifests(): Promise<Set<string>> {
   const out = new Set<string>();
   for (const f of MODEL_MANIFESTS) {
-    const raw = JSON.parse(
-      await readFile(join(REPO_ROOT, 'vendor', 'manifests', f), 'utf8'),
-    ) as { models?: { files?: { mirrors?: { provider?: string }[] }[] }[] };
+    const raw = JSON.parse(await readFile(join(REPO_ROOT, 'vendor', 'manifests', f), 'utf8')) as {
+      models?: { files?: { mirrors?: { provider?: string }[] }[] }[];
+    };
     for (const m of raw.models ?? []) {
       for (const file of m.files ?? []) {
         for (const mirror of file.mirrors ?? []) {
@@ -69,7 +69,9 @@ describe('T-157 ④ GET /api/models/sources 必须说得出"能选哪些源"', (
       const base = `http://127.0.0.1:${d.port}`;
       const cookie = `${SESSION_COOKIE}=${sid}`;
 
-      const s = (await (await fetch(`${base}/api/models/sources`, { headers: { Cookie: cookie } })).json()) as Sources;
+      const s = (await (
+        await fetch(`${base}/api/models/sources`, { headers: { Cookie: cookie } })
+      ).json()) as Sources;
 
       /*
        * 非空守卫先行：`available: []` 会让下面那条子集断言**恒真**，
@@ -108,7 +110,9 @@ describe('T-157 ④ GET /api/models/sources 必须说得出"能选哪些源"', (
       const base = `http://127.0.0.1:${d.port}`;
       const cookie = `${SESSION_COOKIE}=${sid}`;
 
-      const before = (await (await fetch(`${base}/api/models/sources`, { headers: { Cookie: cookie } })).json()) as Sources;
+      const before = (await (
+        await fetch(`${base}/api/models/sources`, { headers: { Cookie: cookie } })
+      ).json()) as Sources;
       assert.equal(before.selected, 'auto', '默认应当是 auto');
       const target = before.available.find((p) => p !== 'auto');
       assert.ok(target, 'available 里没有可选的源，这条用例无从下手');
@@ -123,8 +127,14 @@ describe('T-157 ④ GET /api/models/sources 必须说得出"能选哪些源"', (
       assert.equal((JSON.parse(body) as Sources).selected, target);
 
       // 判据是**再取一次还在**，不是"POST 回了 200"
-      const after = (await (await fetch(`${base}/api/models/sources`, { headers: { Cookie: cookie } })).json()) as Sources;
-      assert.equal(after.selected, target, '选完再取一次就变回去了 —— 那界面上的选中态只是本地幻觉');
+      const after = (await (
+        await fetch(`${base}/api/models/sources`, { headers: { Cookie: cookie } })
+      ).json()) as Sources;
+      assert.equal(
+        after.selected,
+        target,
+        '选完再取一次就变回去了 —— 那界面上的选中态只是本地幻觉',
+      );
       assert.equal(
         after.effective,
         target,

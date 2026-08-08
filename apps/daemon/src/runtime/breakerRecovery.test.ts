@@ -35,7 +35,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
-import { BREAKER_COOLDOWN_MS, CIRCUIT_BREAKER_THRESHOLD, PROBE_TIMEOUT_MS } from '@openmemo/runtime';
+import {
+  BREAKER_COOLDOWN_MS,
+  CIRCUIT_BREAKER_THRESHOLD,
+  PROBE_TIMEOUT_MS,
+} from '@openmemo/runtime';
 
 import {
   breakerRecovery,
@@ -108,8 +112,8 @@ function makeMachine(): Machine {
       '#!/bin/sh',
       `echo x >> ${JSON.stringify(countFile)}`,
       `case "$(cat ${JSON.stringify(modeFile)})" in`,
-      '  crash) exit 134 ;;',      // → runProbe 判成 kind:'crash'
-      '  cold)  sleep 12 ;;',      // → 12s > PROBE_TIMEOUT_MS，10s 预算下必被 kill
+      '  crash) exit 134 ;;', // → runProbe 判成 kind:'crash'
+      '  cold)  sleep 12 ;;', // → 12s > PROBE_TIMEOUT_MS，10s 预算下必被 kill
       '  slow)  sleep 2 ;;',
       'esac',
       `printf '%s' ${JSON.stringify(PROBE_JSON)}`,
@@ -178,11 +182,7 @@ describe('T-173 ★ 残留情形：包已装好、之后缓存才变冷 —— �
     // ---- ③ 冷却期内：一发都不许探（否则等于把断路器删掉，每次白等 10s）-----------------
     const spawnsAfterTrip = m.spawns();
     for (let i = 0; i < 3; i += 1) await detect(m);
-    assert.equal(
-      m.spawns(),
-      spawnsAfterTrip,
-      '冷却期内还在探 —— 那不是冷却期，是把断路器删了',
-    );
+    assert.equal(m.spawns(), spawnsAfterTrip, '冷却期内还在探 —— 那不是冷却期，是把断路器删了');
 
     // ---- ④ 冷却到期：后台放一发恢复探测，**当次请求不等它** -----------------------------
     m.setMode('cold'); // 这一发要跑 12 秒：交互路径的 10s 预算下它会被 kill

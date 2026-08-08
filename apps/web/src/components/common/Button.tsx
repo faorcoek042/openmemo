@@ -34,8 +34,7 @@ const button = cva(
 );
 
 export interface ButtonProps
-  extends ButtonHTMLAttributes<HTMLButtonElement>,
-    VariantProps<typeof button> {}
+  extends ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof button> {}
 
 export function Button({ className, variant, size, type = 'button', ...rest }: ButtonProps) {
   return <button type={type} className={cn(button({ variant, size }), className)} {...rest} />;

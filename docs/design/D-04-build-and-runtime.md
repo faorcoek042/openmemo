@@ -12,12 +12,12 @@ supersedes_unknowns_in: R-02
 - **R-02 的核心论断已实证，不再是"读源码得出的推断"**。在本机真编译了 whisper.cpp v1.9.1（`vendor/whisper.cpp`，pin v1.9.1），并跑完整条链路。`GGML_BACKEND_DL=ON` 成立：`libwhisper.so` 只链接 `libggml.so.0` + `libggml-base.so.0`，**12 个 CPU 后端一个都不链接**，全部运行时 dlopen。
 - **要求 2.1 的完整闭环已在本机跑通**：L1 core 包（7.7 MB tar.gz，21 个文件）解压 → probe 报 1 个设备(CPU) → **丢进 1 个文件** `libggml-vulkan.so` → 重新 probe → Vulkan 后端加载成功。**没有重装、没有重启、没有改配置。**
 - **第一批真实性能数字**（AMD Ryzen AI MAX+ 395，8 线程，11.0s 音频，ggml v1.9.1）：
-  | 模型 | 后端 | wall | **RTF** | 倍速 |
-  |---|---|---|---|---|
-  | tiny.en | CPU(zen4 自动选中) | 0.295–0.323 s | **0.027–0.029** | ~35x |
-  | base.en | CPU(zen4) | 0.439–0.450 s | **0.040** | ~25x |
-  | tiny.en | CPU(**强制 sse42 兜底**) | 1.029–1.136 s | **0.094–0.103** | ~10x |
-  → **最优与最差 CPU 变体差 3.4 倍**。这就是 `GGML_CPU_ALL_VARIANTS` 必须开的量化理由，也说明我们**根本不需要自己检测 AVX 等级**。
+  | 模型                                                                                                                             | 后端                     | wall          | **RTF**         | 倍速 |
+  | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ------------- | --------------- | ---- |
+  | tiny.en                                                                                                                          | CPU(zen4 自动选中)       | 0.295–0.323 s | **0.027–0.029** | ~35x |
+  | base.en                                                                                                                          | CPU(zen4)                | 0.439–0.450 s | **0.040**       | ~25x |
+  | tiny.en                                                                                                                          | CPU(**强制 sse42 兜底**) | 1.029–1.136 s | **0.094–0.103** | ~10x |
+  | → **最优与最差 CPU 变体差 3.4 倍**。这就是 `GGML_CPU_ALL_VARIANTS` 必须开的量化理由，也说明我们**根本不需要自己检测 AVX 等级**。 |
 - **Vulkan 后端编译成功**（v1.9.1，本机无 GPU 也能编）。**L2 加速包 = 恰好 1 个文件**：`libggml-vulkan.so` 74.1 MB stripped → **22.7 MB tar.gz**。对比 R-02 从 llama.cpp 外推的 "~15-35 MB"，**外推成立**。
 - **发现了 R-02 没预料到的二阶陷阱（本机实测）**：装了 `vulkan-tools` 后，Mesa lavapipe ICD 让**一台没有 GPU 的机器开始报告 1 个 Vulkan 物理设备**（`llvmpipe`，deviceType = **CPU**）。→ **"枚举到设备 > 0" 同样不可信**，必须看 `deviceType` 并过滤软件光栅化器。ggml-vulkan 上游已正确过滤（只收 eDiscreteGpu/eIntegratedGpu），我们的 probe 额外打 `softwareRenderer` 标记供 UI 解释。
 - **降级链行为已逐项实测**：删 zen4 → 自动落 cooperlake → 再删所有 AVX512 → 落 alderlake → 只剩 sse42 → 仍正常工作。丢一个 200 KB 随机字节的假 `libggml-cpu-evilcorp.so` 进去 → **静默跳过，毫无影响**。
@@ -121,23 +121,24 @@ R-02 §B.3 的论断（读源码得出）**全部成立**，且现在有本机�
 
 ### 3.1 测试条件
 
-| 项 | 值 |
-|---|---|
-| 音频 | `samples/jfk.wav`，ffprobe 实测：`pcm_s16le / 16000 Hz / 1ch / duration=11.000000` |
+| 项   | 值                                                                                        |
+| ---- | ----------------------------------------------------------------------------------------- |
+| 音频 | `samples/jfk.wav`，ffprobe 实测：`pcm_s16le / 16000 Hz / 1ch / duration=11.000000`        |
 | 模型 | `ggml-tiny.en.bin` (77,704,715 B, sha256 `921e4cf8…`)、`ggml-base.en.bin` (147,964,211 B) |
-| 线程 | 8（`-t 8`，本机 32 vCPU） |
-| 计时 | wall-clock 包含进程启动 + 模型加载 + 推理，即**用户真实等待时间** |
-| RTF | `wall_seconds / 11.0`（越小越快）；倍速 = `1 / RTF` |
+| 线程 | 8（`-t 8`，本机 32 vCPU）                                                                 |
+| 计时 | wall-clock 包含进程启动 + 模型加载 + 推理，即**用户真实等待时间**                         |
+| RTF  | `wall_seconds / 11.0`（越小越快）；倍速 = `1 / RTF`                                       |
 
 ### 3.2 结果 `[实测，各跑 3 次]`
 
-| 模型 | CPU 后端 | wall (s) | RTF | 倍速 |
-|---|---|---|---|---|
-| tiny.en | zen4（自动） | 0.308 / 0.323 / 0.295 | 0.028 / 0.029 / 0.027 | 35.7x / 34.0x / 37.3x |
-| base.en | zen4（自动） | 0.450 / 0.450 / 0.439 | 0.041 / 0.041 / 0.040 | 24.5x / 24.4x / 25.1x |
-| tiny.en | **sse42（强制最差）** | 1.136 / 1.033 / 1.029 | 0.103 / 0.094 / 0.094 | 9.7x / 10.6x / 10.7x |
+| 模型    | CPU 后端              | wall (s)              | RTF                   | 倍速                  |
+| ------- | --------------------- | --------------------- | --------------------- | --------------------- |
+| tiny.en | zen4（自动）          | 0.308 / 0.323 / 0.295 | 0.028 / 0.029 / 0.027 | 35.7x / 34.0x / 37.3x |
+| base.en | zen4（自动）          | 0.450 / 0.450 / 0.439 | 0.041 / 0.041 / 0.040 | 24.5x / 24.4x / 25.1x |
+| tiny.en | **sse42（强制最差）** | 1.136 / 1.033 / 1.029 | 0.103 / 0.094 / 0.094 | 9.7x / 10.6x / 10.7x  |
 
 转写文本逐字正确：
+
 > ` And so my fellow Americans ask not what your country can do for you, ask what you can do for your country.`
 
 ### 3.3 最重要的一条推论
@@ -166,10 +167,10 @@ cmake --build build-vk -j 32                # build rc=0
 
 产物体积：
 
-| 文件 | unstripped | stripped | gzip |
-|---|---|---|---|
-| `libggml-vulkan.so` (master, ggml 0.18.0) | 51,738,872 | 51,404,832 | 15,704,870 |
-| `libggml-vulkan.so` (**v1.9.1**, ggml 0.15.1) | — | 74,145,568 | **tar.gz 22,721,724** |
+| 文件                                          | unstripped | stripped   | gzip                  |
+| --------------------------------------------- | ---------- | ---------- | --------------------- |
+| `libggml-vulkan.so` (master, ggml 0.18.0)     | 51,738,872 | 51,404,832 | 15,704,870            |
+| `libggml-vulkan.so` (**v1.9.1**, ggml 0.15.1) | —          | 74,145,568 | **tar.gz 22,721,724** |
 
 → **R-02 从 llama.cpp 外推的 "~15–35 MB" 落在区间内，外推方法成立。**
 
@@ -217,9 +218,9 @@ load_backend: loaded CPU backend from .../libggml-cpu-zen4.so
 
 在装有 Vulkan 包、但无可用 GPU 的机器上跑推理：
 
-| 构建 | wall (s) | 倍速 |
-|---|---|---|
-| 纯 CPU 构建 | 0.295–0.323 | ~35x |
+| 构建                | wall (s)              | 倍速    |
+| ------------------- | --------------------- | ------- |
+| 纯 CPU 构建         | 0.295–0.323           | ~35x    |
 | **CPU + Vulkan 包** | 0.277 / 0.323 / 0.354 | ~31–40x |
 
 **性能无差异、无报错、无用户干预。**
@@ -232,12 +233,12 @@ load_backend: loaded CPU backend from .../libggml-cpu-zen4.so
 
 ### 5.1 CPU 变体降级 `[实测]`
 
-| 实验 | 操作 | ggml 选中 |
-|---|---|---|
-| EXP-1 | 12 个变体齐全 | `zen4` |
-| EXP-2 | 移走 zen4 | → `cooperlake` |
-| EXP-3 | 再移走全部 AVX512 变体 | → `alderlake` |
-| EXP-4 | 只剩 sse42 | → `sse42`（仍正常转写） |
+| 实验  | 操作                   | ggml 选中               |
+| ----- | ---------------------- | ----------------------- |
+| EXP-1 | 12 个变体齐全          | `zen4`                  |
+| EXP-2 | 移走 zen4              | → `cooperlake`          |
+| EXP-3 | 再移走全部 AVX512 变体 | → `alderlake`           |
+| EXP-4 | 只剩 sse42             | → `sse42`（仍正常转写） |
 
 **全自动，无配置，无报错。**
 
@@ -265,6 +266,7 @@ EXIT CODE = 134
 ```
 
 backtrace：
+
 ```
 #3 ggml_print_backtrace ()          from libggml-base.so.0
 #4 ggml_abort ()                    from libggml-base.so.0
@@ -334,10 +336,10 @@ PACK RTF=0.0285 speedup=35.0x
 
 ### 6.1 包体积实测汇总
 
-| 包 | 内容 | 解压 | tar.gz |
-|---|---|---|---|
-| **L1 core** `whispercpp-cpu-linux-x64` | 12 个 CPU 变体 + libwhisper + libparakeet + whisper-cli/server/bench/vad（21 文件） | 20.8 MB | **7.70 MB** |
-| **L2 vulkan** `whispercpp-vulkan-linux-x64` | **`libggml-vulkan.so` 一个文件** | 74.1 MB | **22.72 MB** |
+| 包                                          | 内容                                                                                | 解压    | tar.gz       |
+| ------------------------------------------- | ----------------------------------------------------------------------------------- | ------- | ------------ |
+| **L1 core** `whispercpp-cpu-linux-x64`      | 12 个 CPU 变体 + libwhisper + libparakeet + whisper-cli/server/bench/vad（21 文件） | 20.8 MB | **7.70 MB**  |
+| **L2 vulkan** `whispercpp-vulkan-linux-x64` | **`libggml-vulkan.so` 一个文件**                                                    | 74.1 MB | **22.72 MB** |
 
 对照 whisper.cpp 官方 Linux CPU tarball 9,379,235 B —— 我们的 7.70 MB 更小（去掉了 parakeet 测试可执行文件等）。**R-02 估计的 "L1 8–20 MB" 成立。**
 
@@ -356,6 +358,7 @@ PACK RTF=0.0285 speedup=35.0x
 - 自动产出**每文件 SHA256** 的 manifest 片段（ADR-004 决策 5：Ollama 的下载器没做校验，我们必须做）。
 
 实测输出：
+
 ```
 ==> ggml ABI: 0.15.1
 ==> pack:     dist/packs/whispercpp-cpu-linux-x64.tar.gz (7.4M)     [46.6 s]
@@ -371,13 +374,13 @@ PACK RTF=0.0285 speedup=35.0x
 ✅ **已执行多轮**（首轮 run 31014564498：12 job，3 success / 8 failure / 1 skipped），逐平台结论见 D-11 §4 与 §8。
 **此前这里写着"⚠️ 本仓库无 git remote，此 workflow 从未执行过"** —— remote 已配（T-145，`origin https://github.com/faorcoek042/openmemo.git`）。矩阵：
 
-| 平台 | runner | 后端 |
-|---|---|---|
-| macOS arm64 | `macos-26` | metal, cpu |
-| macOS x64 | `macos-15-intel` | cpu |
-| Linux x64 | `ubuntu-22.04` | cpu, vulkan, cuda, rocm |
-| Linux arm64 | `ubuntu-24.04-arm` | cpu, vulkan |
-| Windows x64 | `windows-2025` / `windows-2022`(cuda) | cpu, vulkan, cuda |
+| 平台        | runner                                | 后端                    |
+| ----------- | ------------------------------------- | ----------------------- |
+| macOS arm64 | `macos-26`                            | metal, cpu              |
+| macOS x64   | `macos-15-intel`                      | cpu                     |
+| Linux x64   | `ubuntu-22.04`                        | cpu, vulkan, cuda, rocm |
+| Linux arm64 | `ubuntu-24.04-arm`                    | cpu, vulkan             |
+| Windows x64 | `windows-2025` / `windows-2022`(cuda) | cpu, vulkan, cuda       |
 
 **runner label 已核实（2026-08-02）**：`macos-13` 已从 runner-images **完全移除**，`macos-14` 已标记 deprecated → 因此用 `macos-15-intel` 和 `macos-26`。`ubuntu-24.04-arm` 对公开仓库免费。Node 基线按 **ADR-006 决策 7 = 22**。
 
@@ -389,14 +392,14 @@ PACK RTF=0.0285 speedup=35.0x
 
 `pnpm -r build` **EXIT=0**（全工作区通过）。
 
-| 文件 | 职责 | 验证 |
-|---|---|---|
-| `native/probe.c` | 权威设备枚举，输出 JSON | **[实测]** 编译并运行 |
-| `probe/runProbe.ts` | 子进程 + 10s 超时 + SIGABRT/SIGSEGV 识别 + 熔断 | **[实测]** 编译产物真跑 |
-| `detect/system.ts` | OS/CPU/RAM/磁盘 | **[实测]** Linux 分支；mac/Win **未验证** |
-| `detect/gpu.ts` | **advisory** GPU 提示 | **[实测]** Linux 分支；mac/Win **未验证** |
-| `backends/manager.ts` | 融合成 `HardwareInfo`、降级链、ABI gate | **[实测]** 真机产出契约对象 |
-| `selfTest.ts` | 真实推理自检 + RTF | **[实测]** 见下 |
+| 文件                  | 职责                                            | 验证                                      |
+| --------------------- | ----------------------------------------------- | ----------------------------------------- |
+| `native/probe.c`      | 权威设备枚举，输出 JSON                         | **[实测]** 编译并运行                     |
+| `probe/runProbe.ts`   | 子进程 + 10s 超时 + SIGABRT/SIGSEGV 识别 + 熔断 | **[实测]** 编译产物真跑                   |
+| `detect/system.ts`    | OS/CPU/RAM/磁盘                                 | **[实测]** Linux 分支；mac/Win **未验证** |
+| `detect/gpu.ts`       | **advisory** GPU 提示                           | **[实测]** Linux 分支；mac/Win **未验证** |
+| `backends/manager.ts` | 融合成 `HardwareInfo`、降级链、ABI gate         | **[实测]** 真机产出契约对象               |
+| `selfTest.ts`         | 真实推理自检 + RTF                              | **[实测]** 见下                           |
 
 ### 8.1 契约对齐（回应 `model-mgmt`）
 
@@ -458,11 +461,11 @@ whisper_backend_init_gpu: no GPU found                           ← 这才是�
 
 ## 9. 签名与分发（ADR-003 决策 4：不买证书）
 
-| 平台 | 本项目做法 | 后果 | 日后升级路径 |
-|---|---|---|---|
-| macOS arm64 | `codesign -s -`（ad-hoc，免费） | 能运行（Apple Silicon 的硬性最低要求），但 Gatekeeper 首次运行会拦（若带 quarantine） | Apple Developer Program $99/年 → Developer ID 签名 + notarytool 公证 |
-| macOS | daemon 下载后自动 `xattr -dr com.apple.quarantine` | 绕开 Gatekeeper 首次运行拦截 | 公证后可省 |
-| Windows | **完全不签名** | 用户下载**安装包**时 SmartScreen 会警告；**下载的后端包不会**（程序化 HTTP 下载不附加 MOTW） | Azure Trusted Signing 或 OV 证书（EV 已不再给即时信誉） |
+| 平台        | 本项目做法                                         | 后果                                                                                         | 日后升级路径                                                         |
+| ----------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| macOS arm64 | `codesign -s -`（ad-hoc，免费）                    | 能运行（Apple Silicon 的硬性最低要求），但 Gatekeeper 首次运行会拦（若带 quarantine）        | Apple Developer Program $99/年 → Developer ID 签名 + notarytool 公证 |
+| macOS       | daemon 下载后自动 `xattr -dr com.apple.quarantine` | 绕开 Gatekeeper 首次运行拦截                                                                 | 公证后可省                                                           |
+| Windows     | **完全不签名**                                     | 用户下载**安装包**时 SmartScreen 会警告；**下载的后端包不会**（程序化 HTTP 下载不附加 MOTW） | Azure Trusted Signing 或 OV 证书（EV 已不再给即时信誉）              |
 
 **注意顺序**：`strip` 会使 ad-hoc 签名失效 → 构建脚本里签名**必须在 strip 之后**。已实现。
 
@@ -473,6 +476,7 @@ whisper_backend_init_gpu: no GPU found                           ← 这才是�
 ## 10. 诚实清单
 
 ### 10.1 本次实测验证的（附命令与输出）
+
 1. `GGML_BACKEND_DL=ON` 后端独立 `.so` + 运行时 dlopen —— `ldd` 证明
 2. 12 个 CPU 变体自动打分选优（zen4）
 3. CPU 变体降级链 zen4 → cooperlake → alderlake → sse42
@@ -489,20 +493,22 @@ whisper_backend_init_gpu: no GPU found                           ← 这才是�
 14. build 脚本端到端跑通并产出 manifest + SHA256
 
 ### 10.2 未验证 / UNKNOWN
-| # | 项 | 状态 |
-|---|---|---|
-| 1 | **CUDA vs Vulkan 性能比** | **仍是 UNKNOWN** —— 本机无 GPU。ADR-003 决策 3 的临时立场既未证实也未推翻 |
-| 2 | macOS 全部分支（Metal/CoreML/签名/quarantine） | ⚠️ **部分已验**：Metal/CoreML 已在 `macos-26` runner 上编出并 ad-hoc 签名（`build-backends.yml` 有逐文件 `codesign --verify` 守卫），产物已进 `vendor/manifests/backends.json`（`whispercpp-cpu-macos-arm64`），见 D-11 §4.1/§8.1。**仍未验的只剩 quarantine/Gatekeeper 在真实用户机上的行为**（runner 不能代表用户机器）。**此前写着"未验证 —— 无 Mac"** |
-| 3 | Windows 全部分支（DXGI/CIM/SmartScreen/MOTW） | ⚠️ **部分已验**：三个 Windows 后端（cpu/vulkan/cuda）均在 `windows-2025` 编译成功（D-11 §4.3），平台探针 20 条见 D-11 §3.1。**仍未验的是 SmartScreen/MOTW，以及非管理员账户下的 symlink**（D-11 §3.4：runner 跑在管理员下）。**此前写着"未验证 —— 无 Windows 机器"** |
-| 4 | CUDA 包编译与体积 | **未编译** —— 无 CUDA SDK 与硬件 |
-| 5 | ROCm 包编译 | **未编译** —— 无 ROCm |
-| 6 | 单架构 CUDA 瘦身实际收益 | **未实测** |
-| 7 | `.github/workflows/build-backends.yml` | ✅ **已执行**：run 31014564498（首轮 12 job，3 绿）等多轮，结论见 D-11 §4/§8。**此前写着"从未执行 —— 无 git remote"** |
-| 8 | llama.cpp 与 whisper.cpp 后端包能否共用 | **未验证** —— whisper.cpp v1.9.1 = ggml 0.15.1，llama.cpp b10223 侧 UNKNOWN |
-| 9 | arm64（Apple/Linux）上的 CPU 变体行为 | **未验证** —— arm64 走运行时特性检测而非 `CPU_ALL_VARIANTS` |
-| 10 | `whisper_backend_init_gpu` 在**有 GPU** 时的确切日志格式 | **未验证** —— `parseBackendUsed()` 里已标注 |
+
+| #   | 项                                                       | 状态                                                                                                                                                                                                                                                                                                                                                      |
+| --- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **CUDA vs Vulkan 性能比**                                | **仍是 UNKNOWN** —— 本机无 GPU。ADR-003 决策 3 的临时立场既未证实也未推翻                                                                                                                                                                                                                                                                                 |
+| 2   | macOS 全部分支（Metal/CoreML/签名/quarantine）           | ⚠️ **部分已验**：Metal/CoreML 已在 `macos-26` runner 上编出并 ad-hoc 签名（`build-backends.yml` 有逐文件 `codesign --verify` 守卫），产物已进 `vendor/manifests/backends.json`（`whispercpp-cpu-macos-arm64`），见 D-11 §4.1/§8.1。**仍未验的只剩 quarantine/Gatekeeper 在真实用户机上的行为**（runner 不能代表用户机器）。**此前写着"未验证 —— 无 Mac"** |
+| 3   | Windows 全部分支（DXGI/CIM/SmartScreen/MOTW）            | ⚠️ **部分已验**：三个 Windows 后端（cpu/vulkan/cuda）均在 `windows-2025` 编译成功（D-11 §4.3），平台探针 20 条见 D-11 §3.1。**仍未验的是 SmartScreen/MOTW，以及非管理员账户下的 symlink**（D-11 §3.4：runner 跑在管理员下）。**此前写着"未验证 —— 无 Windows 机器"**                                                                                      |
+| 4   | CUDA 包编译与体积                                        | **未编译** —— 无 CUDA SDK 与硬件                                                                                                                                                                                                                                                                                                                          |
+| 5   | ROCm 包编译                                              | **未编译** —— 无 ROCm                                                                                                                                                                                                                                                                                                                                     |
+| 6   | 单架构 CUDA 瘦身实际收益                                 | **未实测**                                                                                                                                                                                                                                                                                                                                                |
+| 7   | `.github/workflows/build-backends.yml`                   | ✅ **已执行**：run 31014564498（首轮 12 job，3 绿）等多轮，结论见 D-11 §4/§8。**此前写着"从未执行 —— 无 git remote"**                                                                                                                                                                                                                                     |
+| 8   | llama.cpp 与 whisper.cpp 后端包能否共用                  | **未验证** —— whisper.cpp v1.9.1 = ggml 0.15.1，llama.cpp b10223 侧 UNKNOWN                                                                                                                                                                                                                                                                               |
+| 9   | arm64（Apple/Linux）上的 CPU 变体行为                    | **未验证** —— arm64 走运行时特性检测而非 `CPU_ALL_VARIANTS`                                                                                                                                                                                                                                                                                               |
+| 10  | `whisper_backend_init_gpu` 在**有 GPU** 时的确切日志格式 | **未验证** —— `parseBackendUsed()` 里已标注                                                                                                                                                                                                                                                                                                               |
 
 ### 10.3 建议的下一步 spike（按价值排序）
+
 1. **[最高] 借一台有 NVIDIA 卡的机器**，跑 CUDA vs Vulkan 的 whisper RTF 对比。这是唯一能推翻/确认 ADR-003 决策 3 的实验，且只需一台机器一小时。
 2. **[高] 单架构 CUDA 包瘦身实测**：`-DCMAKE_CUDA_ARCHITECTURES=86` 编一个，量 `ggml-cuda` 体积。决定 CUDA 包是 678 MB 还是 <100 MB。
 3. **[中] 一台 Mac 30 分钟**：验证 ad-hoc 签名 + 下载不带 quarantine 是否成立。决定整个 mac 分发形态。

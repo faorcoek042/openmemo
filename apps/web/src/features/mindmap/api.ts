@@ -6,7 +6,13 @@ import { qk } from '../../app/query';
 
 /** 服务端的信封（读 `content.ts` 的 mindmap GET 分支确认，**不是**裸 doc）。 */
 export interface MindmapEnvelope {
-  mindmap: { uid: string; title: string; revision: number; generatedBy: string | null; nodeCount: number } | null;
+  mindmap: {
+    uid: string;
+    title: string;
+    revision: number;
+    generatedBy: string | null;
+    nodeCount: number;
+  } | null;
   doc?: MindMapDoc | null;
 }
 

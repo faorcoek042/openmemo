@@ -258,7 +258,8 @@ async function walk(root) {
     for (const e of entries) {
       const p = join(cur, e.name);
       if (e.isDirectory()) stack.push(p);
-      else if (e.isSymbolicLink()) continue; // 软链指向的目标本身也在列表里，别数两遍
+      else if (e.isSymbolicLink())
+        continue; // 软链指向的目标本身也在列表里，别数两遍
       else if (await isElf(p)) out.push(p);
     }
   }
@@ -324,13 +325,16 @@ const main = async () => {
   }
 
   /** 某一族里超标的行。三族各判各的 —— 一族绿不能替另一族背书。 */
-  const overIn = (key) => rows.filter((r) => r.top[key] !== null && cmpVer(r.top[key], maxOf[key]) > 0);
+  const overIn = (key) =>
+    rows.filter((r) => r.top[key] !== null && cmpVer(r.top[key], maxOf[key]) > 0);
   const over = { GLIBC: overIn('GLIBC'), GLIBCXX: overIn('GLIBCXX'), CXXABI: overIn('CXXABI') };
   const overFiles = new Set(FAMILIES.flatMap((fam) => over[fam.key].map((r) => r.file)));
 
   // 第一行**逐字保留原格式**：inbox / D-17 / runner-migrate 里多处抄了它，
   // 改格式等于让那些历史记录对不上号。C++ 那两族另起一行，不挤进这一行。
-  console.log(`check-elf-glibc: ${files.length} 个 ELF，上限 GLIBC_${maxAllowed}，实测最高 GLIBC_${worst.GLIBC}`);
+  console.log(
+    `check-elf-glibc: ${files.length} 个 ELF，上限 GLIBC_${maxAllowed}，实测最高 GLIBC_${worst.GLIBC}`,
+  );
   const shown = (key) => (worst[key] === null ? '(无)' : `${key}_${worst[key]}`);
   console.log(
     `check-elf-glibc: C++ 运行时上限 GLIBCXX_${maxOf.GLIBCXX} / CXXABI_${maxOf.CXXABI}，` +
@@ -338,8 +342,10 @@ const main = async () => {
   );
   for (const r of rows) {
     const mark = overFiles.has(r.file) ? '\x1b[31m✘\x1b[0m' : '\x1b[32m✔\x1b[0m';
-    const glibcCell = r.top.GLIBC === null ? '(无 GLIBC 引用)'.padEnd(8) : `GLIBC_${r.top.GLIBC}`.padEnd(12);
-    const cxxCell = r.top.GLIBCXX === null ? '(无)'.padEnd(16) : `GLIBCXX_${r.top.GLIBCXX}`.padEnd(16);
+    const glibcCell =
+      r.top.GLIBC === null ? '(无 GLIBC 引用)'.padEnd(8) : `GLIBC_${r.top.GLIBC}`.padEnd(12);
+    const cxxCell =
+      r.top.GLIBCXX === null ? '(无)'.padEnd(16) : `GLIBCXX_${r.top.GLIBCXX}`.padEnd(16);
     const abiCell = r.top.CXXABI === null ? '(无)'.padEnd(14) : `CXXABI_${r.top.CXXABI}`.padEnd(14);
     console.log(`  ${mark} ${glibcCell} ${cxxCell} ${abiCell} ${r.file}`);
   }
@@ -355,7 +361,9 @@ const main = async () => {
       }
     }
     console.error('');
-    console.error(`发行版对照：Ubuntu 22.04 = 2.35 · Debian 12 = 2.36 · Ubuntu 24.04 = 2.39 · Debian 13 = 2.41`);
+    console.error(
+      `发行版对照：Ubuntu 22.04 = 2.35 · Debian 12 = 2.36 · Ubuntu 24.04 = 2.39 · Debian 13 = 2.41`,
+    );
     console.error(`后果是**静默的**：GGML_BACKEND_DL 下 dlopen 失败只是"后端没注册上"，`);
     console.error(`whisper 照常用 CPU 跑完 —— 装得上、校验过、自检看得见的那一层全绿。`);
   }
@@ -363,7 +371,9 @@ const main = async () => {
   for (const fam of FAMILIES.filter((x) => x.key !== 'GLIBC')) {
     if (over[fam.key].length === 0) continue;
     console.error('');
-    console.error(`\x1b[31m✘ 以下产物的 C++ 运行时（libstdc++）下限高于基线（${fam.key}）：\x1b[0m`);
+    console.error(
+      `\x1b[31m✘ 以下产物的 C++ 运行时（libstdc++）下限高于基线（${fam.key}）：\x1b[0m`,
+    );
     for (const r of over[fam.key]) {
       console.error(`  ${r.file}  需要 ${fam.key}_${r.top[fam.key]}`);
       // 与 glibc 那段同一条纪律：点名符号，结论才不是推测。
@@ -384,7 +394,9 @@ const main = async () => {
       `→ 我们承诺给用户的地板是「libstdc++.so.6.0.N 里 N ≥ ${maxOf.GLIBCXX.split('.').pop()}」；` +
         `上面这些产物要的比它高，等于**把地板悄悄抬走了**。`,
     );
-    console.error(`GCC↔GLIBCXX 的完整对照表 \`[未验证]\`（本机只有 gcc-15/16 一代，证不出 GCC 11 那一跳），`);
+    console.error(
+      `GCC↔GLIBCXX 的完整对照表 \`[未验证]\`（本机只有 gcc-15/16 一代，证不出 GCC 11 那一跳），`,
+    );
     console.error(`所以默认上限取的是本仓产物的**实测值**而不是查表值 —— 详见本文件顶部那段注释。`);
     console.error(`后果同样查不到：\`.node\` 加载失败是一条 symbol lookup error，`);
     console.error(`而它只出现在**用户的机器上**，我们的 CI 与构建机上永远不会出现。`);

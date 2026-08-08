@@ -88,7 +88,11 @@ describe('planChunks', () => {
       startMs: i * 5_000,
       endMs: i * 5_000 + 4_900,
     }));
-    const chunks = planChunks(segs, { totalDurationMs: 300_000, targetChunkMs: 30_000, maxChunkMs: 45_000 });
+    const chunks = planChunks(segs, {
+      totalDurationMs: 300_000,
+      targetChunkMs: 30_000,
+      maxChunkMs: 45_000,
+    });
     assert.ok(chunks.length > 1);
     for (const c of chunks) {
       assert.ok(
@@ -99,7 +103,10 @@ describe('planChunks', () => {
   });
 
   it('produces dense, ascending indices (they map to DB chunk_idx)', () => {
-    const segs = Array.from({ length: 30 }, (_, i) => ({ startMs: i * 9_000, endMs: i * 9_000 + 8_000 }));
+    const segs = Array.from({ length: 30 }, (_, i) => ({
+      startMs: i * 9_000,
+      endMs: i * 9_000 + 8_000,
+    }));
     const chunks = planChunks(segs, { totalDurationMs: 300_000 });
     chunks.forEach((c, i) => assert.equal(c.index, i, 'indices must be dense and ordered'));
   });

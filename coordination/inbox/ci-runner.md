@@ -3,6 +3,7 @@
 ## [2026-08-05 23:00] T-145 PROGRESS
 
 交付:
+
 - `docs/design/D-11-ci-platform-facts.md`（**主交付**，非 Linux 实测数据 + 章程偏离记录）
 - 提交 `96d068a`（macOS/Windows/apt 实测修复）、`239ed94`（Node 22 测试发现 + 跨平台探针）、
   `0d4536b`（矩阵裁到 8 + D-11）—— **已 push**
@@ -65,6 +66,7 @@
 ==> host=darwin/arm64 backend=cpu jobs=3
 scripts/build-whisper.sh: line 229: BACKEND_FLAGS[@]: unbound variable
 ```
+
 探针独立复现：`8.set -u + empty array expansion` → darwin `exit=127 bash: A[@]: unbound variable`，
 linux(5.2.21) 与 windows Git Bash(5.3.15) 都 `exit=0`。
 
@@ -79,6 +81,7 @@ ERR_MODULE_NOT_FOUND: Cannot find module
   /home/runner/work/openmemo/openmemo/packages/llm/src/errors.js
   imported from .../packages/llm/src/structured.test.ts
 ```
+
 本机 v24.18.0 → 18 tests / 0 fail；CI v22.23.1 → 20 tests / **2 fail**。
 `pnpm -r test` 在 llm 处 bail，**后面几个包一条都没跑**，所以第一轮只看得到一个包。
 
@@ -92,6 +95,7 @@ ERR_MODULE_NOT_FOUND: Cannot find module
 2.chmod(0o755)->mode           666
 2.access(X_OK)                 true      X_OK 通过
 ```
+
 T-141 #23 原本标着 `[推测]`。现在是实测：
 **`runtime.json`（内含 auth token）、`datadir.json`、`tls-key.pem` 在 Windows 上对本机所有用户可读**，
 而且没有 ACL 回退。
@@ -103,6 +107,7 @@ T-141 #23 原本标着 `[推测]`。现在是实测：
 ```
 1.fs.case-insensitive    linux=false    darwin=true    win32=true
 ```
+
 T-141 §3 #7 之前是用 `mkfs.vfat` + loop mount **模拟**出来的。现在是真机：
 **触发条件不需要用户做任何特殊操作**，`assetPaths.ts:49` 的大小写敏感前缀比较
 在这两个平台上是默认路径而不是边缘情形。
@@ -114,6 +119,7 @@ T-141 §3 #7 之前是用 `mkfs.vfat` + loop mount **模拟**出来的。现在�
 6.isAbsolute("/media/x.wav")                          三个平台全是 true
 6.resolve("C:\d\m\r.wav")   linux=<cwd>/C:\d\m\r.wav   win32=C:\d\m\r.wav
 ```
+
 → T-141 #26（`migrateAssets.ts:93` 资产迁移在 Windows 上静默失效）与 #8 **双双证实**。
 
 ## ⑥ `pnpm check:sources` 在 Windows 上是坏的 —— **而 macOS 上是好的**
@@ -123,6 +129,7 @@ win32:  ✘ 没找到任何源码目录，检查脚本本身可能有问题     
 darwin: ✔ （绿）
 7.find   linux=GNU 4.9.0   darwin=`find: illegal option -- -`   win32=`FIND: Parameter format not correct`
 ```
+
 T-141 #30 预测"只有 Windows 会断"—— **完全正确，连范围都对**
 （BSD find 认 `-type d`，只是不认 `--version`）。
 
@@ -132,10 +139,11 @@ T-141 #30 预测"只有 Windows 会断"—— **完全正确，连范围都对**
 whisper-cli.vcxproj    -> D:\a\...\.build\whisper-win32-x64-cpu\bin\Release\whisper-cli.exe
 whisper-server.vcxproj -> D:\a\...\bin\Release\whisper-server.exe
 ```
+
 `cpu` / `vulkan` / `cuda` 三个 job 全部编译 100% 成功，只死在打包那一步。
 → **章程 §3 第 4 行「Windows + AMD」仍有希望**（上游没有 Windows Vulkan whisper，我们能自己编）。
 → 并且 `bin\Release\` 证实了 `platform` C7 对 MSVC 多配置布局的预测，
-  `ci-prep` 的三候选探测第一次真跑就用上了。
+`ci-prep` 的三候选探测第一次真跑就用上了。
 
 ## ⑧ Windows 的 zip **exit 0，文件却写到了没人看的地方**
 
@@ -143,6 +151,7 @@ whisper-server.vcxproj -> D:\a\...\bin\Release\whisper-server.exe
 ==> stripping symbols
 emit-pack-manifest: archive not found: dist/packs/whispercpp-cpu-win-x64.zip
 ```
+
 `--out dist/packs` 是相对路径，zip 那条要先 `cd` 到 stage 的父目录 →
 归档落在 `.build/…/stage/dist/packs/`。**tar 那条没这毛病纯属运气**：
 `tar -C` 是在**打开归档之后**才切目录的。
@@ -154,6 +163,7 @@ emit-pack-manifest: archive not found: dist/packs/whispercpp-cpu-win-x64.zip
 4.symlink()    win32=ok（created）
 7.openssl      win32=exit 0, OpenSSL 3.6.3
 ```
+
 两条都**看起来**推翻了 T-141 #13 / #21。**它们不能这么用**：
 
 > GitHub 的 Windows runner **以管理员身份运行**，天然持有 `SeCreateSymbolicLinkPrivilege`；
@@ -183,19 +193,21 @@ emit-pack-manifest: archive not found: dist/packs/whispercpp-cpu-win-x64.zip
 ✂ 删  ubuntu-24.04-arm / arm64 / vulkan
 ✂ 删  macos-15-intel   / x64   / cpu
 ```
+
 （YAML 实测计数：`build-backends` 8+1，`ci-crossplatform` 3，`ci` 1。四行删除的内容原样留在注释里。）
 
 ## `ci-crossplatform.yml`：4 → **3**
+
 `ubuntu-24.04`（对照组）/ `macos-26` / `windows-2025`。
 删 `macos-15-intel`：第一轮跑过一次，**结论与 darwin-arm64 逐条一致**，没有 Intel Mac 独有的事实。
 
 ## 你点名的三处连带影响，逐条实测
 
-| 你的问题 | 实测结果 |
-|---|---|
-| 两条 manifest 守卫会不会因此红 | **不会，跑过了**：裁完之后 `pnpm test:ci-scripts` = 15+14 全过、`pnpm -r test` = **868/0**。原因也说得通：CI 现在**不产出也不提交任何 manifest**，裁矩阵动不到那两份文件 |
-| `needs:` / skip 语义（`ci-prep` 标 `[未跑通]`） | **真跑验了**：`merge-manifest` = **`skipped`**。且是**全有或全无** —— 本轮 `linux-x64-cpu`/`linux-arm64-cpu`/`linux-arm64-vulkan` 三个 leg 是 success 的，manifest 照样没跑。想"部分成功也出 manifest"就得按 leg 收集 —— **但那正是 C4 的形状，不要** |
-| 章程一致性（AMD） | **已记入 `docs/design/D-11` §2.2**，带日期（2026-08-05）与原因（用户明确不需要）。结论一句话：**Linux+AMD 加速从此没有任何可安装的产物**（上游 whisper.cpp 本来也没有 ROCm 版）；**Windows+AMD 走 Vulkan，那一行仍然可能成立**。⚠️ 我**没有改 `docs/00-CHARTER.md`** —— 那是你的文件 |
+| 你的问题                                        | 实测结果                                                                                                                                                                                                                                                                             |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 两条 manifest 守卫会不会因此红                  | **不会，跑过了**：裁完之后 `pnpm test:ci-scripts` = 15+14 全过、`pnpm -r test` = **868/0**。原因也说得通：CI 现在**不产出也不提交任何 manifest**，裁矩阵动不到那两份文件                                                                                                             |
+| `needs:` / skip 语义（`ci-prep` 标 `[未跑通]`） | **真跑验了**：`merge-manifest` = **`skipped`**。且是**全有或全无** —— 本轮 `linux-x64-cpu`/`linux-arm64-cpu`/`linux-arm64-vulkan` 三个 leg 是 success 的，manifest 照样没跑。想"部分成功也出 manifest"就得按 leg 收集 —— **但那正是 C4 的形状，不要**                                |
+| 章程一致性（AMD）                               | **已记入 `docs/design/D-11` §2.2**，带日期（2026-08-05）与原因（用户明确不需要）。结论一句话：**Linux+AMD 加速从此没有任何可安装的产物**（上游 whisper.cpp 本来也没有 ROCm 版）；**Windows+AMD 走 Vulkan，那一行仍然可能成立**。⚠️ 我**没有改 `docs/00-CHARTER.md`** —— 那是你的文件 |
 
 ---
 
@@ -238,6 +250,7 @@ emit-pack-manifest: archive not found: dist/packs/whispercpp-cpu-win-x64.zip
 ---
 
 需要 Manager 决策:
+
 1. **`ci.yml` 的 `push`/`pull_request` 三行什么时候放开？** 现在它绿了、跑一次 1m42s。
    在放开之前，"CI 接上了"这件事只在有人手动点的时候成立。
 2. **跨平台的 6 条测试红派给谁？** 我判断是 `test-gaps` 的活（是测试的宿主假设，
@@ -247,6 +260,7 @@ emit-pack-manifest: archive not found: dist/packs/whispercpp-cpu-win-x64.zip
    矩阵却单独建 —— 这是设计问题不是 CI 问题。
 
 下一步建议:
+
 1. 等第二轮（run 31017917421 / 31017923588）跑完，按真实日志继续迭代 —— 尤其是 metal 空包那条。
 2. `ci.yml` 放开自动触发。
 3. Windows 上 `0o600` → `666` 那条（token 对本机所有用户可读）现在**有实测证据**了，值得单独派人。
@@ -257,16 +271,16 @@ emit-pack-manifest: archive not found: dist/packs/whispercpp-cpu-win-x64.zip
 
 ### 第二轮（run 31017917421）：`4 success / 3 failure / 1 进行中`
 
-| job | 第一轮 | 第二轮 | 说明 |
-|---|---|---|---|
-| linux-x64-cpu | ✅ | ✅ | — |
-| **linux-x64-vulkan** | ❌ glslc | **✅** | 换 ubuntu-24.04 **生效** |
-| **macos-arm64-cpu** | ❌ bash 3.2 | **✅** | bash 3.2 修复**生效** ⚠️ **但包是坏的**，见下 |
-| **windows-x64-vulkan** | ❌ zip | **✅** | zip 修复**生效**。`whispercpp-vulkan-win-x64.zip (21M)`，含 `ggml-vulkan.dll` |
-| windows-x64-cpu | ❌ zip | ❌ **新的一层** | 包**打出来了**（17 files / 3.8M），死在下一步 probe 冒烟测试 |
-| macos-arm64-metal | ❌ 空包 | ❌ **已定性** | 见下 |
-| linux-x64-cuda | ❌ 包名 | ❌ **我改错了** | 见下 |
-| windows-x64-cuda | ❌ zip | 进行中 | — |
+| job                    | 第一轮      | 第二轮          | 说明                                                                          |
+| ---------------------- | ----------- | --------------- | ----------------------------------------------------------------------------- |
+| linux-x64-cpu          | ✅          | ✅              | —                                                                             |
+| **linux-x64-vulkan**   | ❌ glslc    | **✅**          | 换 ubuntu-24.04 **生效**                                                      |
+| **macos-arm64-cpu**    | ❌ bash 3.2 | **✅**          | bash 3.2 修复**生效** ⚠️ **但包是坏的**，见下                                 |
+| **windows-x64-vulkan** | ❌ zip      | **✅**          | zip 修复**生效**。`whispercpp-vulkan-win-x64.zip (21M)`，含 `ggml-vulkan.dll` |
+| windows-x64-cpu        | ❌ zip      | ❌ **新的一层** | 包**打出来了**（17 files / 3.8M），死在下一步 probe 冒烟测试                  |
+| macos-arm64-metal      | ❌ 空包     | ❌ **已定性**   | 见下                                                                          |
+| linux-x64-cuda         | ❌ 包名     | ❌ **我改错了** | 见下                                                                          |
+| windows-x64-cuda       | ❌ zip      | 进行中          | —                                                                             |
 
 ### ★★ 第二轮最重要的发现：**macos-arm64-cpu 是绿的，包却是坏的**
 
@@ -308,11 +322,13 @@ emit-pack-manifest: archive not found: dist/packs/whispercpp-cpu-win-x64.zip
 
 - **windows-x64-cpu**：zip 修好了，**本仓第一个 Windows whisper 包成功产出**
   （`whispercpp-cpu-win-x64.zip 3.8M`），随后死在**新的一层**：
+
   ```
   ==> built: dist/probe/openmemo-probe.exe (60K)
   ==> smoke test:
   error: probe did not produce output
   ```
+
   成因正是 `platform` T-141 §3 **第 18 条**点过名的那条（当时 `[读码]`，现在实测）：
   冒烟测试只设 `LD_LIBRARY_PATH`/`DYLD_LIBRARY_PATH`，**在 Windows 上这两个变量都是死的**。
   → 已修：三个变量一起设，失败时打印库目录内容。
@@ -345,16 +361,16 @@ emit-pack-manifest: archive not found: dist/packs/whispercpp-cpu-win-x64.zip
 
 ### 第三轮（run 31019163756）
 
-| job | 第一轮 | 第二轮 | 第三轮 |
-|---|---|---|---|
-| linux-x64-cpu | ✅ | ✅ | ✅ |
-| linux-x64-vulkan | ❌ glslc | ✅ | ✅ |
-| linux-x64-cuda | ❌ 包名 | ❌ 包名 | **过了 apt，正在编译** |
-| macos-arm64-cpu | ❌ bash 3.2 | ⚠️ **绿但包是坏的** | ✅ **包是真的了** |
-| macos-arm64-metal | ❌ 空包 | ❌ 空包 | ❌ **包有了，卡在签名验证模式** |
-| windows-x64-cpu | ❌ zip | ❌ probe | ✅ |
-| windows-x64-vulkan | ❌ zip | ✅ | ✅ |
-| windows-x64-cuda | ❌ zip | （被我取消） | 编译中 |
+| job                | 第一轮      | 第二轮              | 第三轮                          |
+| ------------------ | ----------- | ------------------- | ------------------------------- |
+| linux-x64-cpu      | ✅          | ✅                  | ✅                              |
+| linux-x64-vulkan   | ❌ glslc    | ✅                  | ✅                              |
+| linux-x64-cuda     | ❌ 包名     | ❌ 包名             | **过了 apt，正在编译**          |
+| macos-arm64-cpu    | ❌ bash 3.2 | ⚠️ **绿但包是坏的** | ✅ **包是真的了**               |
+| macos-arm64-metal  | ❌ 空包     | ❌ 空包             | ❌ **包有了，卡在签名验证模式** |
+| windows-x64-cpu    | ❌ zip      | ❌ probe            | ✅                              |
+| windows-x64-vulkan | ❌ zip      | ✅                  | ✅                              |
+| windows-x64-cuda   | ❌ zip      | （被我取消）        | 编译中                          |
 
 **已确认 5 绿 / 1 红（已修待验）/ 2 编译中。** 第一轮是 3 绿 / 8 红 / 1 skip（共 12）。
 
@@ -368,6 +384,7 @@ emit-pack-manifest: archive not found: dist/packs/whispercpp-cpu-win-x64.zip
    whisper-server / whisper-bench / whisper-vad-speech-segments   ← 之前也都缺
    libggml-base / libggml / libwhisper / libparakeet / whisper-cli
 ```
+
 probe 冒烟测试也真的吐 JSON 了（`"schemaVersion": 1`）。
 
 ### macos-arm64-metal：**第一次产出了非空的 metal 包**，然后被守卫拦下 —— 拦得对
@@ -380,6 +397,7 @@ emit-pack-manifest: wrote …/whispercpp-metal-macos-arm64.json (1 staged files)
 verified 0 signed file(s)
 ::error::checked 0 files under … — the pack is empty or the name patterns drifted
 ```
+
 签名验证的模式是 `*.dylib|*whisper-cli|*whisper-server|*openmemo-probe`，
 而这个包里**只有一个 `libggml-metal.so`** —— 同一个 `.so` 根因的第三处显形。
 
@@ -427,14 +445,14 @@ verified 0 signed file(s)
 
 **全部证据来自干净 runner 的 CI 日志**（`cold-start-audit` run 31026300122）。
 
-| | 结论 |
-|---|---|
-| manifest 那条通道 | **62 个下载文件，sha256 100%，钉死引用 100%，URL 62/62 可达（HTTP 206）**，8 MB 以下的**逐个重算 sha256 全部 MATCH** |
-| 冷启动后工具从哪来 | **✅ 产品自己下的 5 个 / ⚠️ 借宿主 PATH 的 0 个 / ❌ 装不上 0 个** |
-| 你点名要验的中文检索 | **`ext.chineseSearch = ok`（required）：用户:1 推特:2 中国:1 服务:2** —— T-093 那次事故**没有复现** |
-| 仓库里有二进制吗 | **没有**。最大的已跟踪文件 255 KB（JSON/PNG/文档）。你查的 0.2 MB 是对的 |
-| ⚠️ **例外 1** | `ffmpeg-static` 在 `pnpm install` 期下 **79,826,272 B** 的 ffmpeg，钉了 tag `b6.1.1` 但**无校验和** |
-| ⚠️ **例外 2** | `youtube-dl-exec` 打的是 `api.github.com/repos/yt-dlp/yt-dlp/releases/**latest**` —— **不钉版本、无校验和** |
+|                      | 结论                                                                                                                 |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| manifest 那条通道    | **62 个下载文件，sha256 100%，钉死引用 100%，URL 62/62 可达（HTTP 206）**，8 MB 以下的**逐个重算 sha256 全部 MATCH** |
+| 冷启动后工具从哪来   | **✅ 产品自己下的 5 个 / ⚠️ 借宿主 PATH 的 0 个 / ❌ 装不上 0 个**                                                   |
+| 你点名要验的中文检索 | **`ext.chineseSearch = ok`（required）：用户:1 推特:2 中国:1 服务:2** —— T-093 那次事故**没有复现**                  |
+| 仓库里有二进制吗     | **没有**。最大的已跟踪文件 255 KB（JSON/PNG/文档）。你查的 0.2 MB 是对的                                             |
+| ⚠️ **例外 1**        | `ffmpeg-static` 在 `pnpm install` 期下 **79,826,272 B** 的 ffmpeg，钉了 tag `b6.1.1` 但**无校验和**                  |
+| ⚠️ **例外 2**        | `youtube-dl-exec` 打的是 `api.github.com/repos/yt-dlp/yt-dlp/releases/**latest**` —— **不钉版本、无校验和**          |
 
 **例外 2 值得单独看**：同一个 yt-dlp，**两条通道一严一松** ——
 `backends.json` 里那条钉死 `2026.07.04` + 带 sha256（39.9 MB 自包含二进制），
@@ -479,7 +497,7 @@ ext.chineseSearch ok  用户:1 推特:2 中国:1 服务:2
 **刻意不加 `paths` 过滤**，三条理由（写进了 ci.yml 文件头）：
 ① 只要 1m42s，省不下什么；
 ② 被 `paths` 过滤掉的检查在分支保护里显示为「未运行」而不是「通过」，
-   docs-only 的 PR 会永远卡在 `Expected — waiting for status`；
+docs-only 的 PR 会永远卡在 `Expected — waiting for status`；
 ③ ★ **它和本仓在清的假绿家族是同一个形状**：「没跑」和「跑了并通过」长得一模一样。
 
 ★ `lint-workflows.mjs` 里那条「ci.yml 不许自动 push 触发」**在我改的当天就红了，而且红得对** ——
@@ -490,6 +508,7 @@ ext.chineseSearch ok  用户:1 推特:2 中国:1 服务:2
 
 `assertWithinRoot`：**托管根在软链后面时，任何「即将创建」的文件被判为越界。**
 上次我说的是"整体拒绝"，**不准确** —— 实测是**半好的**：
+
 ```
 exists.wav     ok            ← 已存在的文件正常
 newfile.wav    path_escape   ← ★ 错：即将创建的
@@ -497,6 +516,7 @@ sub/new.wav    path_escape   ← ★ 错
 ../escape      path_escape   ← 对
 /etc/hostname  path_escape   ← 对
 ```
+
 **读得了、写不了**，现场看起来像权限问题。
 机制：`realpathOrResolve` 对不存在的路径回退到词法路径（这是对的），
 于是 root realpath 过、target 没有，两边不在同一个坐标系。
@@ -513,6 +533,7 @@ macOS 上 `/var` 和 `/tmp` **本身就是软链**，默认 TMPDIR 就触发。
 ---
 
 需要 Manager 决策:
+
 1. **npm 那两条通道要不要收口？** 建议 `YOUTUBE_DL_SKIP_DOWNLOAD=1` +
    运行期只认 manifest 装出来的 yt-dlp（那条是钉死且带 sha256 的）。
    `ffmpeg-static` 同理。**我没有动**，因为它会改变 `pnpm install` 的行为，超出 T-145 范围。
@@ -523,6 +544,7 @@ macOS 上 `/var` 和 `/tmp` **本身就是软链**，默认 TMPDIR 就触发。
    定性见 D-11 §3.3，建议派 `test-gaps`。
 
 下一步建议:
+
 1. 等 windows-x64-cuda 收尾，确认 build-backends 8/8。
 2. `cold-start-audit` 加 `/api/models/pull`，把 paraformer + VAD 也纳入，
    然后 `model.asr` 才有资格从 fail 变 ok。
@@ -563,12 +585,12 @@ selfcheck 给的是 `warn` 不是 `fail` → 一片绿里没人会细看 →
 
 ## 三分类（按平台）
 
-| | linux-x64 | darwin-arm64 |
-|---|---|---|
-| ✅ 产品自己下的 | **5** | **1**（只有 ytDlp） |
-| ⚠️ 借宿主 PATH | **0** | **3**（ffmpeg/ffprobe/whisperCli） |
-| ❌ 装不上 | **0** | **1**（whisperVad） |
-| 适用后端包 | 5/19 | **3/19** |
+|                 | linux-x64 | darwin-arm64                       |
+| --------------- | --------- | ---------------------------------- |
+| ✅ 产品自己下的 | **5**     | **1**（只有 ytDlp）                |
+| ⚠️ 借宿主 PATH  | **0**     | **3**（ffmpeg/ffprobe/whisperCli） |
+| ❌ 装不上       | **0**     | **1**（whisperVad）                |
+| 适用后端包      | 5/19      | **3/19**                           |
 
 中文检索**两个平台都成立**（macOS 找的是 `libsimple.dylib`/`vec0.dylib`，
 与 Linux 的 `.so` 不同，这条路径第一次被真机走过）。
@@ -613,12 +635,12 @@ model.asr  fail required  无可用 ASR 模型（by-name/asr 下只有非 ASR �
 
 ## 我这一轮又犯的四个错（继续记账，全在 D-11 §7.5）
 
-| # | 错 | 教训 |
-|---|---|---|
-| 3 | `/api/models/catalog` 是分组结构，我按 `body.models` 取 → 拿到 0 个还照常往下走 | **同一形状第三次：工具安静返回空集，被读成"没有"**。现在空集当场出声 |
-| 4 | job 字段名是 `jobId`，我按 `uid` 比 | `jobs.ts:182` 注释写的是**数据库列名**，字段名在下一行。**准确但指向别处的注释同样能带偏人** |
-| 5 | `/tmp/install.log` 写在没 `shell: bash` 的步骤里 | Windows pwsh 解析成 `D:\tmp\...` 当场炸 |
-| 6 | 观测用的 `find -perm` 把整步拖红 | **一个用来看的步骤，不该有能力决定红绿** |
+| #   | 错                                                                              | 教训                                                                                         |
+| --- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| 3   | `/api/models/catalog` 是分组结构，我按 `body.models` 取 → 拿到 0 个还照常往下走 | **同一形状第三次：工具安静返回空集，被读成"没有"**。现在空集当场出声                         |
+| 4   | job 字段名是 `jobId`，我按 `uid` 比                                             | `jobs.ts:182` 注释写的是**数据库列名**，字段名在下一行。**准确但指向别处的注释同样能带偏人** |
+| 5   | `/tmp/install.log` 写在没 `shell: bash` 的步骤里                                | Windows pwsh 解析成 `D:\tmp\...` 当场炸                                                      |
+| 6   | 观测用的 `find -perm` 把整步拖红                                                | **一个用来看的步骤，不该有能力决定红绿**                                                     |
 
 第 4 条修好后安装耗时立刻可信（14.1s/52.3s/28.1s），第一版全是 `1.0s` —— 正好是轮询间隔。
 
@@ -630,6 +652,7 @@ model.asr  fail required  无可用 ASR 模型（by-name/asr 下只有非 ASR �
 ---
 
 需要 Manager 决策:
+
 1. **macOS 的 ffmpeg / whisper 缺口怎么办**（§7.1）。这是产品能力问题不是 CI 问题：
    要么补 manifest（`platform` T-141 §2.2 给过 `eugeneware/ffmpeg-static` 的 darwin 条目，
    host 已在允许名单里），要么在 macOS 上把"借到宿主 ffmpeg"从 `warn` 升成显式告知。
@@ -638,6 +661,7 @@ model.asr  fail required  无可用 ASR 模型（by-name/asr 下只有非 ASR �
 3. VAD 模型落在 `by-name/asr/` 下，role 映射要不要查？
 
 下一步建议:
+
 1. 等最新一轮 cold-start-audit 出 Windows 结果。
 2. build-backends 第 4 轮只剩 windows-x64-cuda（其余 7 个已 success）。
 3. macOS 那条 ffmpeg 缺口，建议单独派人（它决定章程 §3 第 1/2 行成不成立）。
@@ -654,6 +678,7 @@ Windows workflow 的两处假设修好后，`win32-x64` 第一次真的跑到了
 selfcheck crashed: Error [ERR_UNSUPPORTED_ESM_URL_SCHEME]:
   On Windows, absolute paths must be valid file:// URLs. Received protocol 'd:'
 ```
+
 `await import(`${REPO_ROOT}/packages/.../index.js`)` —— `D:\a\...` 的 `D:` 被当成 URL scheme。
 
 ★ **与 `platform` T-141 §3 第 1 条同一族**（`main.ts:1075` 手拼 `file://`）。
@@ -669,6 +694,7 @@ selfcheck crashed: Error [ERR_UNSUPPORTED_ESM_URL_SCHEME]:
 装完 4 个适用包（job succeeded + /api/backends/installed 全部确认在列）→ 重启 →
   [warm] tokenizer=trigram   libsimple=false   sqliteVec=true
 ```
+
 **`sqlite-vec` 加载成功，`libsimple` 没有** → 中文检索静默退回 trigram。
 冷启动时它找的是 `...\data\bin\ext\libsimple.dll`。
 **Linux 与 macOS 上同一条路径都是 `libsimple=true`。**
@@ -679,12 +705,12 @@ selfcheck crashed: Error [ERR_UNSUPPORTED_ESM_URL_SCHEME]:
 
 ### 三平台冷启动最终对照
 
-| | linux-x64 | darwin-arm64 | win32-x64 |
-|---|---|---|---|
-| 适用后端包 | 5/19 | **3/19** | 4/19 |
-| ✅ 产品自己下的 | 5 | 1 | *selfcheck 崩溃，测不出* |
-| ⚠️ 借宿主 PATH | 0 | **3**（ffmpeg/ffprobe/whisperCli） | *同上* |
-| 扩展（重启后） | `simple` / vec ✅ | `simple` / vec ✅ | **`trigram` / libsimple ❌** |
-| 宿主自带 | sqlite3, python3, cmake | — | python3 only |
+|                 | linux-x64               | darwin-arm64                       | win32-x64                    |
+| --------------- | ----------------------- | ---------------------------------- | ---------------------------- |
+| 适用后端包      | 5/19                    | **3/19**                           | 4/19                         |
+| ✅ 产品自己下的 | 5                       | 1                                  | _selfcheck 崩溃，测不出_     |
+| ⚠️ 借宿主 PATH  | 0                       | **3**（ffmpeg/ffprobe/whisperCli） | _同上_                       |
+| 扩展（重启后）  | `simple` / vec ✅       | `simple` / vec ✅                  | **`trigram` / libsimple ❌** |
+| 宿主自带        | sqlite3, python3, cmake | —                                  | python3 only                 |
 
 （Windows 的三分类要等 selfcheck 修复后重跑才有 —— 那个修复已 push，**结果我没等到**。）

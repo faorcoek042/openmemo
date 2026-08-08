@@ -104,7 +104,12 @@ try {
   for (const line of out.split('\n').filter(Boolean)) {
     // ` <sha> <path> (<describe>)`
     const m = /^[\s+-U]*([0-9a-f]{40})\s+(\S+)(?:\s+\((.*)\))?/.exec(line);
-    if (m) submodules.push({ sha: m[1], path: m[2], describe: m[3] ?? '(no tag — NOT pinned to a tag)' });
+    if (m)
+      submodules.push({
+        sha: m[1],
+        path: m[2],
+        describe: m[3] ?? '(no tag — NOT pinned to a tag)',
+      });
   }
 } catch (e) {
   notes.push(`git submodule status 跑不了：${e.message}`);
@@ -146,7 +151,9 @@ try {
       if (m) onlyBuilt.push(m[1]);
     }
     if (onlyBuilt.length === 0) {
-      notes.push('⚠️ 找到了 onlyBuiltDependencies 这个键，却解析出 0 项 —— 解析器可能坏了，不要读成"没有"');
+      notes.push(
+        '⚠️ 找到了 onlyBuiltDependencies 这个键，却解析出 0 项 —— 解析器可能坏了，不要读成"没有"',
+      );
     }
   } else {
     notes.push('pnpm-workspace.yaml 里没有 onlyBuiltDependencies 键');
@@ -159,8 +166,11 @@ try {
 
 let biggestTracked = [];
 try {
-  const files = execFileSync('git', ['ls-files', '-z'], { cwd: REPO, encoding: 'utf8' }).split('\0').filter(Boolean);
-  const BINARY_EXT = /\.(so|dylib|dll|exe|a|lib|o|node|wasm|bin|gguf|onnx|tar|tgz|gz|xz|zip|7z|dmg|pkg|msi|jar|pyd)$/i;
+  const files = execFileSync('git', ['ls-files', '-z'], { cwd: REPO, encoding: 'utf8' })
+    .split('\0')
+    .filter(Boolean);
+  const BINARY_EXT =
+    /\.(so|dylib|dll|exe|a|lib|o|node|wasm|bin|gguf|onnx|tar|tgz|gz|xz|zip|7z|dmg|pkg|msi|jar|pyd)$/i;
   const sized = [];
   for (const f of files) {
     try {
@@ -174,7 +184,12 @@ try {
   biggestTracked = sized.slice(0, 15);
   const bins = sized.filter((x) => x.suspicious);
   if (bins.length > 0) {
-    notes.push(`⚠️ 疑似被提交进仓库的二进制 ${bins.length} 个：${bins.slice(0, 10).map((b) => `${b.f}(${b.size}B)`).join(', ')}`);
+    notes.push(
+      `⚠️ 疑似被提交进仓库的二进制 ${bins.length} 个：${bins
+        .slice(0, 10)
+        .map((b) => `${b.f}(${b.size}B)`)
+        .join(', ')}`,
+    );
   }
 } catch (e) {
   notes.push(`git ls-files 跑不了：${e.message}`);
@@ -225,11 +240,16 @@ if (LIVE) {
 
   if (VERIFY_UNDER_MB > 0) {
     const cap = VERIFY_UNDER_MB * 1024 * 1024;
-    const small = uniq.filter((r) => r.sha256 && r.sizeBytes && r.sizeBytes <= cap && r.live?.status && r.live.status < 400);
+    const small = uniq.filter(
+      (r) => r.sha256 && r.sizeBytes && r.sizeBytes <= cap && r.live?.status && r.live.status < 400,
+    );
     for (const r of small) {
       try {
         const got = await download(r.url);
-        r.verify = got.sha256 === r.sha256 ? `MATCH (${got.bytes}B)` : `MISMATCH got=${got.sha256.slice(0, 16)}…`;
+        r.verify =
+          got.sha256 === r.sha256
+            ? `MATCH (${got.bytes}B)`
+            : `MISMATCH got=${got.sha256.slice(0, 16)}…`;
       } catch (e) {
         r.verify = `download failed: ${e.message}`;
       }
@@ -244,7 +264,9 @@ if (LIVE) {
 const line = (s = '') => console.log(s);
 line();
 line('='.repeat(100));
-line(`依赖来源审计  |  host=${process.platform}/${process.arch}  node=${process.version}  live=${LIVE}`);
+line(
+  `依赖来源审计  |  host=${process.platform}/${process.arch}  node=${process.version}  live=${LIVE}`,
+);
 line('='.repeat(100));
 
 line();
@@ -260,7 +282,9 @@ for (const [mf, list] of byManifest) {
   const noSha = list.filter((r) => r.url && !r.sha256);
   const mutable = list.filter((r) => r.pinned === false);
   line(`${mf}`);
-  line(`   条目 ${list.length}  |  有 URL ${withUrl.length}  |  有 sha256 ${withUrl.length - noSha.length}/${withUrl.length}  |  引用可变 ${mutable.length}`);
+  line(
+    `   条目 ${list.length}  |  有 URL ${withUrl.length}  |  有 sha256 ${withUrl.length - noSha.length}/${withUrl.length}  |  引用可变 ${mutable.length}`,
+  );
   const hosts = [...new Set(withUrl.map((r) => r.host))].sort();
   if (hosts.length) line(`   host: ${hosts.join(', ')}`);
   if (noSha.length) line(`   ⚠️ 没有 sha256: ${noSha.map((r) => `${r.id}/${r.name}`).join(', ')}`);
@@ -280,7 +304,9 @@ if (LIVE) {
   for (const r of uniqUrls) {
     const l = r.live ?? {};
     const st = l.status ? String(l.status) : `ERR ${l.error ?? ''}`;
-    line(`   ${st.padEnd(6)} ${(l.contentRange || l.contentLength || '').padEnd(22)} ${r.verify ? `sha256 ${r.verify}`.padEnd(26) : ''.padEnd(26)} ${r.id}/${r.name}`);
+    line(
+      `   ${st.padEnd(6)} ${(l.contentRange || l.contentLength || '').padEnd(22)} ${r.verify ? `sha256 ${r.verify}`.padEnd(26) : ''.padEnd(26)} ${r.id}/${r.name}`,
+    );
     line(`          ${r.url}`);
   }
   line();
@@ -320,9 +346,12 @@ const urlRows = rows.filter((r) => r.url);
 const noSha = urlRows.filter((r) => !r.sha256);
 const mutable = urlRows.filter((r) => r.pinned === false);
 if (noSha.length) problems.push(`${noSha.length} 个下载文件没有 sha256`);
-if (mutable.length) problems.push(`${mutable.length} 个 URL 引用了可变的 ref（latest/master/main/HEAD）`);
+if (mutable.length)
+  problems.push(`${mutable.length} 个 URL 引用了可变的 ref（latest/master/main/HEAD）`);
 if (LIVE) {
-  const mismatch = urlRows.filter((r) => typeof r.verify === 'string' && r.verify.startsWith('MISMATCH'));
+  const mismatch = urlRows.filter(
+    (r) => typeof r.verify === 'string' && r.verify.startsWith('MISMATCH'),
+  );
   if (mismatch.length) problems.push(`${mismatch.length} 个文件的 sha256 与上游实际内容**不一致**`);
 }
 

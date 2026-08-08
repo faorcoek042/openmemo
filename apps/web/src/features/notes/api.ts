@@ -241,7 +241,11 @@ export function useToggleStarMutation() {
 export function useAddTagMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (v: { noteUid: string; name: string; existingTagUids: readonly string[] }) => {
+    mutationFn: async (v: {
+      noteUid: string;
+      name: string;
+      existingTagUids: readonly string[];
+    }) => {
       const tag = await api<{ uid: string; name: string; color: string | null }>('notes', '/tags', {
         method: 'POST',
         body: { name: v.name },

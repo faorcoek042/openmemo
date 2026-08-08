@@ -40,7 +40,9 @@ describe('looksLikeMedia —— 前端预检必须与服务端上传白名单逐
       `共享白名单只剩 ${UPLOAD_MEDIA_EXTENSIONS.size} 项，集合被筛空了`,
     );
 
-    const rejected = [...UPLOAD_MEDIA_EXTENSIONS].filter((ext) => !looksLikeMedia(named(`a${ext}`)));
+    const rejected = [...UPLOAD_MEDIA_EXTENSIONS].filter(
+      (ext) => !looksLikeMedia(named(`a${ext}`)),
+    );
     assert.deepEqual(
       rejected,
       [],

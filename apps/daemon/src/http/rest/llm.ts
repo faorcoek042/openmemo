@@ -102,8 +102,7 @@ export function createLlmRoutes(deps: LlmRoutesDeps): {
 
       // ---- POST /api/llm/models ----
       const raw = (await readJsonBody(req).catch(() => undefined)) as
-        | { providerId?: unknown }
-        | undefined;
+        { providerId?: unknown } | undefined;
       const providerId = typeof raw?.providerId === 'string' ? raw.providerId.trim() : '';
       if (!providerId) {
         sendError(res, 400, 'BAD_REQUEST', 'providerId is required', '缺少 providerId');

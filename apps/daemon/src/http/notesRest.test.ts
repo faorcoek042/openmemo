@@ -136,7 +136,9 @@ describe('T-138 ③ GET /api/notes?starred=1', () => {
       // limit=2 时，"最近两条"里根本没有 a —— 前端过滤那条路在这里必然返回空
       const res = await listNotes(s, '?starred=1&limit=2');
       assert.equal(res.status, 200);
-      const { notes } = (await res.json()) as { notes: { uid: string; title: string; starred: boolean }[] };
+      const { notes } = (await res.json()) as {
+        notes: { uid: string; title: string; starred: boolean }[];
+      };
       assert.deepEqual(
         notes.map((n) => n.uid),
         [a],
@@ -329,10 +331,18 @@ describe('T-138 ① POST /api/notes/:uid/mindmap 的生成入口', () => {
         'GET /api/jobs 里找不到这条导图任务 —— 前端的「正在生成」正是从这里认领的，' +
           '认不到的话按钮会一直保持可点，而生成要几秒，用户必然重复点击',
       );
-      assert.equal(mine!['kind'], 'mindmap', '按 kind 收窄的那一步会失效：转写任务会被当成导图任务');
+      assert.equal(
+        mine!['kind'],
+        'mindmap',
+        '按 kind 收窄的那一步会失效：转写任务会被当成导图任务',
+      );
       assert.equal(mine!['noteUid'], noteUid, '没有 noteUid 就无从判断它属于哪条笔记');
       assert.equal(mine!['displayName'], 'lecture.wav', 'displayName 要给用户看得懂的名字');
-      assert.equal(mine!['totalBytes'], undefined, '流水线 job 不该有字节计数（会渲染成卡死的下载条）');
+      assert.equal(
+        mine!['totalBytes'],
+        undefined,
+        '流水线 job 不该有字节计数（会渲染成卡死的下载条）',
+      );
     } finally {
       await d.stop();
     }
@@ -440,7 +450,9 @@ describe('T-138 ④ GET /api/notes?folder=', () => {
       // ① 侧栏计数（GET /api/folders 里那个 noteCount）
       const tree = (await (
         await fetch(`${s.base}/api/folders`, { headers: { Cookie: `${SESSION_COOKIE}=${s.sid}` } })
-      ).json()) as { folders: { uid: string; name: string; noteCount: number; children?: unknown[] }[] };
+      ).json()) as {
+        folders: { uid: string; name: string; noteCount: number; children?: unknown[] }[];
+      };
       const flat: { uid: string; noteCount: number }[] = [];
       const walk = (ns: { uid: string; noteCount: number; children?: unknown[] }[]) => {
         for (const n of ns) {
@@ -494,7 +506,11 @@ describe('T-138 ④ GET /api/notes?folder=', () => {
 
   it('★ 筛选发生在 limit 之前（与 ?starred=1 同一条判据）', async () => {
     const port = nextPort();
-    const d = await startDaemon({ port, dataDir: join(ROOT, `folderlimit-${port}`), maxPort: port });
+    const d = await startDaemon({
+      port,
+      dataDir: join(ROOT, `folderlimit-${port}`),
+      maxPort: port,
+    });
     try {
       const s = await handshake(d.port, d.token);
       const f = await folder(s, '课程');
@@ -535,7 +551,10 @@ describe('T-138 ④ GET /api/notes?folder=', () => {
           `?folder=${JSON.stringify(bad)} 被静默忽略了 —— 用户会以为自己在看某个文件夹，` +
             '实际拿到的是全部笔记',
         );
-        assert.equal(((await res.json()) as { error?: { code?: string } }).error?.code, 'BAD_QUERY_PARAM');
+        assert.equal(
+          ((await res.json()) as { error?: { code?: string } }).error?.code,
+          'BAD_QUERY_PARAM',
+        );
       }
     } finally {
       await d.stop();

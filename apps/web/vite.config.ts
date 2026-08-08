@@ -22,7 +22,9 @@ const DAEMON = process.env['OPENMEMO_DAEMON'] ?? 'http://127.0.0.1:17650';
  * 正确做法是在**代理侧**把它对齐，而不是让服务端把 5173 加进白名单 ——
  * 那等于为了开发方便在产品里留一个永久的信任缺口。
  */
-function rewriteOrigin(proxy: { on: (e: string, cb: (p: { setHeader: (k: string, v: string) => void }) => void) => void }): void {
+function rewriteOrigin(proxy: {
+  on: (e: string, cb: (p: { setHeader: (k: string, v: string) => void }) => void) => void;
+}): void {
   proxy.on('proxyReq', (proxyReq) => {
     proxyReq.setHeader('origin', DAEMON);
   });

@@ -24,12 +24,12 @@
 
 ### 1.1 现状（动手前查清楚的）
 
-| 问题 | 实情 |
-|---|---|
-| 编辑器里有没有半成品入口？ | **没有。** `features/mindmap/api.ts` 只有 `useMindmapQuery`(GET) 与 `useSaveMindmapMutation`(PATCH)，**全仓没有任何一处调 `POST /api/notes/:uid/mindmap`** |
+| 问题                                    | 实情                                                                                                                                                                                 |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 编辑器里有没有半成品入口？              | **没有。** `features/mindmap/api.ts` 只有 `useMindmapQuery`(GET) 与 `useSaveMindmapMutation`(PATCH)，**全仓没有任何一处调 `POST /api/notes/:uid/mindmap`**                           |
 | `packages/mindmap` 的查看器接上了没有？ | **接上了，而且是完整的**：`MindmapView` 真 mind-elixir（拖拽/撤销/重做）、`export.ts` 矢量导出、PATCH 保存已打开（T-1xx 把 `MINDMAP_SAVE_SUPPORTED` 整个删了）。**唯独没有"从哪来"** |
-| 空态说了什么？ | 详情页 tab：一句 `mindmap.empty`（"还没有思维导图"）。全屏页：`EmptyState` 带 `emptyHint`「转写完成后**可以让 AI 生成**，也可以从空白开始手动整理」—— **一句描述了不存在功能的文案** |
-| 后端呢？ | 全通。`content.ts:310` POST → `queue.enqueue({type:'mindmap', lane:'gpu.llm'})` → `runners/mindmap.ts`（LLM → validate → 落库 → `note.updated{changed:['mindmap']}`） |
+| 空态说了什么？                          | 详情页 tab：一句 `mindmap.empty`（"还没有思维导图"）。全屏页：`EmptyState` 带 `emptyHint`「转写完成后**可以让 AI 生成**，也可以从空白开始手动整理」—— **一句描述了不存在功能的文案** |
+| 后端呢？                                | 全通。`content.ts:310` POST → `queue.enqueue({type:'mindmap', lane:'gpu.llm'})` → `runners/mindmap.ts`（LLM → validate → 落库 → `note.updated{changed:['mindmap']}`）                |
 
 `job-events` 的 T-130 回执 §5③ 已经报过同一件事，并说明它当时是**用 curl 直接打接口**才验到导图 blocked 的。
 
@@ -39,9 +39,9 @@
 
 所以两处都接：
 
-| 位置 | 理由 |
-|---|---|
-| `NoteDetailPage` 的 mindmap tab 空态 | 与 memo.ac 同位。用户点开 tab 发现空的，下一步动作就在眼前 |
+| 位置                                                  | 理由                                                                              |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `NoteDetailPage` 的 mindmap tab 空态                  | 与 memo.ac 同位。用户点开 tab 发现空的，下一步动作就在眼前                        |
 | `MindmapPage`（`/notes/:uid/mindmap`）的 `EmptyState` | 侧栏/详情页的「去导图页编辑」会把人送到这里；到了之后同样得能生成，否则是个死胡同 |
 
 `EmptyState` 本来就有 `action` 槽（D-05 §5.4「空态即入口」，`NotesListPage` 已在用同一模式）—— **没有新造版式**。
@@ -83,6 +83,7 @@ POST → 202 {jobUid}
 附带的第 4 条：REST 列表**刷新后仍在**，纯 SSE 不行。（另：`job-events` 报过的"鉴权关闭时 SSE 起不来"如果成立，走 REST 这条路仍然能显示，走纯事件那条就全瞎了。）
 
 **执行细节：**
+
 - `activeJobId` 从 `lib/api/types.ts` **删除**（不是留着不用），并写清"为什么没有补进 daemon"。
 - `lib/api/mock.ts` 同步改造：以前它在 `note.activeJobId` 上记 job id，**mock 比真后端多长了一个字段 —— 这正是这个 bug 藏了这么久的原因**。现在 mock 与 daemon 走同一条路：把一条真实形状的 `PipelineJob` 放进 `GET /api/jobs`，笔记 DTO 里没有它。
 - 决策规则抽成纯函数 `lib/jobs/noteJobs.ts`（`isActiveJobState` / `activeNoteJobs` / `pickActiveNoteJob`），进 CJS 单测通道，7 条单测逐条钉。
@@ -115,6 +116,7 @@ POST → 202 {jobUid}
 > daemon 侧每次都 `grep` 了 `dist/` 里被删掉的那个字符串，确认 `tsc -b` 真的重建了（PROTOCOL 提过有人被旧 mtime 骗过）。
 
 **① 撤掉 SQL 里的 starred 过滤**（`listNotes` 忽略 `starredOnly`；`grep -c "starred = 1" dist/db/repos.js` → `0`）
+
 ```
 ✖ ★ 筛选必须发生在 limit 之前 —— 否则笔记一多，星标笔记就会无声地漏掉
   AssertionError: ?starred=1&limit=2 没返回那条加了星的笔记 —— 说明 limit 先切、starred 后筛：
@@ -127,9 +129,11 @@ POST → 202 {jobUid}
     ]
 ℹ pass 3  ℹ fail 1
 ```
+
 > **`actual` 就是 bug 本身**：返回的是两条**最新的、没加星的**笔记。
 
 **② 撤掉 400 分支**（改成静默当"不筛"；`grep -c BAD_QUERY_PARAM dist/http/rest/notes.js` → `0`）
+
 ```
 ✖ ★ 认不出的取值一律 400，绝不静默当成"不筛"
   AssertionError: ?starred="0" 被静默忽略了 —— 它会返回**全部**笔记，一个既不报错又和调用方意图相反的结果
@@ -138,6 +142,7 @@ POST → 202 {jobUid}
 ```
 
 **③ 导图 job 不再挂到笔记上**（`enqueue({noteId: undefined})`）
+
 ```
 ✖ ★ 202 的 jobUid 必须能在 /api/jobs 里认领到，且带 kind=mindmap 与 noteUid
   AssertionError: 没有 noteUid 就无从判断它属于哪条笔记
@@ -147,6 +152,7 @@ POST → 202 {jobUid}
 ```
 
 **④ 前端不再带 `?starred=1`**
+
 ```
 ✖ ★ /notes?starred=1 只列星标笔记；/notes 列全部
   AssertionError: 星标页必须把筛选交给端点（实际请求：["/notes","/jobs"]） ——
@@ -157,6 +163,7 @@ POST → 202 {jobUid}
 ```
 
 **⑤ `useActiveNoteJob` 不再从任务流取数**（退回"只认 progressStore"的旧世界）
+
 ```
 ✖ ★ 点完之后按钮立刻不可点 —— AssertionError: 生成已经排上队了，按钮却还可以点
 ✖ ★ 进行中状态来自任务流，所以刷新页面它还在 —— AssertionError: 生成中途刷新页面，按钮又变回"生成"
@@ -167,9 +174,11 @@ POST → 202 {jobUid}
 ✖ ★ 排队中 / 阻塞中也要说话 —— 这两种状态一条 job.progress 都不会发
 ℹ tests 176  ℹ pass 170  ℹ fail 6
 ```
+
 > **这一组同时覆盖了 ① 与 ②** —— 因为它们本来就该共用一个来源，这正是"没有两个事实来源"的证据。
 
 **⑥ 从两个空态里删掉按钮**（组件仍在，只是没人用）
+
 ```
 ✖ ★ 两个空态都真的接上了这个按钮（组件造出来没人用 = 入口仍然不存在）
   AssertionError: features/mindmap/MindmapPage.tsx 没有 import GenerateMindmapButton —— 注释里提一句不算（T-129b 的教训）
@@ -177,6 +186,7 @@ POST → 202 {jobUid}
 ```
 
 **⑦ 把 `blocked` 当成终态**（`isActiveJobState` 只认 running/leased）
+
 ```
 ✖ ★ blocked 算"还没结束" —— AssertionError: blocked 被当成终态 = 一次零报错的卡住又回来了
 ✖ ★ 多条未完成时取最新创建的那条 —— AssertionError: 刚点完还在排队的那条输给了一个早就卡住的旧任务
@@ -184,6 +194,7 @@ POST → 202 {jobUid}
 ```
 
 **⑧ 星标页不再把取消星标的那条移出去**
+
 ```
 ✖ ★ 「星标」那一页：取消星标要把它移出去（否则用户点了没反应）
   AssertionError: 星标页是服务端按 starred=1 筛过的一页，取消星标之后它就不属于这一页了 ——
@@ -224,6 +235,7 @@ GET  /api/notes/:uid/mindmap → {"generatedBy":"llm:deepseek","nodeCount":5,"re
 ```
 
 daemon **真的把请求发出去了**（假服务器的原始记录）：
+
 ```
 POST /v1/chat/completions   Authorization: Bearer sk-fake-not-a-real-key
 model = deepseek-v4-flash
@@ -239,6 +251,7 @@ messages[1] = 下面是转写稿的一部分，每行开头的 [数字] 是段�
 浏览器语言 en-US，所以下面是英文文案。
 
 **① 生成入口**
+
 ```
 ① 空态里有没有生成按钮： 有
    按钮文案： Generate mind map     disabled： false
@@ -246,10 +259,12 @@ messages[1] = 下面是转写稿的一部分，每行开头的 [数字] 是段�
 ③ 生成完成后导图渲染出来了吗： 是
 ④ 浏览器发出的非 GET 请求： [… "POST /api/notes/01KZ43C3VD…/mindmap"]      ← 只有 1 条
 ```
+
 > **连点了两次，只发出 1 条 POST** —— §1.3 那个窗口确实关上了。
 > 截图：`/tmp/wire-up/shots/{1-empty-with-entry,2-generating,3-done}.png`
 
 **③ 星标**
+
 ```
 全部笔记条数： 2
 星标页条数： 1        星标页标题： Starred
@@ -257,6 +272,7 @@ messages[1] = 下面是转写稿的一部分，每行开头的 [数字] 是段�
 ```
 
 **② 进度行（最关键的一条）**
+
 ```
 ② 列表页进度行条数： 2
    #0: On hold 0%
@@ -264,6 +280,7 @@ messages[1] = 下面是转写稿的一部分，每行开头的 [数字] 是段�
    daemon 的笔记 DTO 字段： ["uid","title","status","kind","language","durationMs","starred","tags","createdAt","updatedAt"]
    含 activeJobId？ false
 ```
+
 > **同一次 `GET /api/notes` 的响应里根本没有 `activeJobId`，进度行照样渲染出来了。**
 > 这两条笔记各有一个 `blocked` 的转写任务（这台机器没装 ASR 模型）—— 而 `blocked` 恰恰是旧实现**永远显示不出来**的状态（它一条 `job.progress` 都不会发）。修前这里是 0 条，且永远是 0 条。
 > 截图：`/tmp/wire-up/shots/{4-starred,5-progress-lines}.png`
@@ -362,12 +379,13 @@ git add apps/daemon/src/http/rest/notes.ts \
 
 1. **报上来的是详情页两项同时亮，查下去发现同一个成因有两个方向相反的症状**，逐地址枚举实测：
 
-   | 地址 | 修前高亮项数 | 症状 |
-   |---|---|---|
-   | `/notes/<uid>` · `/notes/<uid>?tab=mindmap` | **2** | 详情页是 `/notes` 的**子路径** → `pathname === linkPath` 不成立 → 交回 `NavLink` 前缀匹配 → 「全部笔记」与「星标」一起亮（你截图里那个） |
-   | **`/models?tab=llm`** | **0** | pathname 相同、查询串不同 → 精确比对判否 → **「模型」自己灭了**，用户切个 Tab 就不知道自己在哪一页 |
+   | 地址                                        | 修前高亮项数 | 症状                                                                                                                                     |
+   | ------------------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+   | `/notes/<uid>` · `/notes/<uid>?tab=mindmap` | **2**        | 详情页是 `/notes` 的**子路径** → `pathname === linkPath` 不成立 → 交回 `NavLink` 前缀匹配 → 「全部笔记」与「星标」一起亮（你截图里那个） |
+   | **`/models?tab=llm`**                       | **0**        | pathname 相同、查询串不同 → 精确比对判否 → **「模型」自己灭了**，用户切个 Tab 就不知道自己在哪一页                                       |
 
    **这条是你没看到的另一半**，我没有只按报上来的那条修。
+
 2. **成因一句话**：那个判据问的是「**地址一样吗**」，而该问的是「**这个地址归谁管**」。
 3. **"什么时候前缀、什么时候精确"的答案不在"有没有查询串"，在"这个查询串是不是某个导航目标本身的一部分"**：
    - **带查询串的条目 = 集合的「筛选视图」**（`/notes?starred=1`）→ **只在地址完全相同时亮**。筛选**不向下延伸到成员**：那条笔记加没加星不一定，用户也可能从「全部笔记」点进去。
@@ -395,6 +413,7 @@ activeNavTarget(targets, {pathname, search}) -> to | undefined
 ```
 
 两处细节写了理由：
+
 - **段边界前缀**（`/notes` 管 `/notes/x`，不管 `/notesomething`）—— 裸 `startsWith` 会算进去。
 - **取最长而不是取第一个** —— 将来若同时有 `/settings` 与 `/settings/advanced`，写"第一个匹配"就变成一条**只有改了数组顺序才会坏、且坏了不报错**的规则。有用例把数组反过来跑一遍。
 - 查询串**归一化后**比较（`?a=1&b=2` 与 `?b=2&a=1` 是同一个地址）。
@@ -406,6 +425,7 @@ activeNavTarget(targets, {pathname, search}) -> to | undefined
 ## §B 反向验证（3 组，真实输出）
 
 **RV-9 退回「逐项各判各的」（把 `App.tsx:203-204` 的原判据原样搬回来）**
+
 ```
 ✖ ★ 笔记详情页只高亮「全部笔记」（此前它和「星标」同时亮）
   AssertionError: 详情页上的侧栏高亮不对（实际：["全部笔记","星标"]）。
@@ -416,18 +436,22 @@ activeNavTarget(targets, {pathname, search}) -> to | undefined
   AssertionError: /notes/01KZ1H8YABCDEFGHJKMNPQRST 上有 2 项同时高亮：["全部笔记","星标"]
 ℹ tests 181  ℹ pass 178  ℹ fail 3
 ```
+
 > **两个症状被逐字复现**，包括你截图里那条。
 
 **RV-10 `Link` 换回 `NavLink`**（证明第 6 条那个换法是**承重的**，不是顺手改风格）
+
 ```
 ✖ ★ 笔记详情页只高亮「全部笔记」 —— AssertionError: 实际：["全部笔记","星标"]
 ✖ ★ 「星标」页只高亮「星标」
 ✖ ★ 穷举：真实地址上侧栏高亮数永远 ≤ 1
 ℹ tests 181  ℹ pass 178  ℹ fail 3
 ```
+
 > 视觉高亮此时是**对的**（`active` 属性还在起作用），红的是 `aria-current` —— `NavLink` 按自己的前缀匹配又把「星标」标成了当前页。**这正是那条看不见的缺陷。**
 
 **RV-11 让「筛选视图」也参与区域前缀匹配**（纯规则层）
+
 ```
 ✖ ★ 详情页只亮「全部笔记」—— 它是 /notes 的子路径，不属于「星标」这个筛选视图
 ✖ ★ 页内视图状态（?tab=）不许把区域的灯弄灭
@@ -456,6 +480,7 @@ activeNavTarget(targets, {pathname, search}) -> to | undefined
 ✅ /models?tab=llm                    高亮=["Models"]     aria-current=["Models"]      ← 修前是 0 项
 ✅ /settings/storage                  高亮=["Settings"]   aria-current=["Settings"]    ← 前缀语义没被改掉
 ```
+
 截图：`/tmp/wire-up/shots/6-sidebar-detail.png`
 
 ---
@@ -491,6 +516,7 @@ git add apps/web/src/App.tsx \
         apps/web/tsconfig.test.json \
         coordination/inbox/wire-up.md
 ```
+
 （前一节 T-138 的清单见 §6；`apps/daemon/src/db/repos.ts` 已被 `a33fe31` 带走，`fda3e66` 之后不必再加。）
 
 ---
@@ -524,11 +550,11 @@ git add apps/web/src/App.tsx \
 
 ## §A 改了什么
 
-| 文件 | 改动 |
-|---|---|
-| `lib/nav/activeNav.ts` | 新增导出 `NAV_FILTER_KEYS`；`activeNavTarget` 加第三参 `filterKeys` —— 当前查询串里出现这些键时，「区域」不再赢下前缀匹配（该亮的是某个筛选视图，可能不在这张清单上） |
-| `App.tsx` | 调用处传 `NAV_FILTER_KEYS` |
-| `features/folders/FolderTree.tsx` | `NavLink` + 裸 `isActive` → `Link` + `activeNavTarget([to], location, NAV_FILTER_KEYS) === to`；抽出 `folderTo(uid)`，**地址只在一处拼**，判定与渲染共用同一个字符串 |
+| 文件                              | 改动                                                                                                                                                                  |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/nav/activeNav.ts`            | 新增导出 `NAV_FILTER_KEYS`；`activeNavTarget` 加第三参 `filterKeys` —— 当前查询串里出现这些键时，「区域」不再赢下前缀匹配（该亮的是某个筛选视图，可能不在这张清单上） |
+| `App.tsx`                         | 调用处传 `NAV_FILTER_KEYS`                                                                                                                                            |
+| `features/folders/FolderTree.tsx` | `NavLink` + 裸 `isActive` → `Link` + `activeNavTarget([to], location, NAV_FILTER_KEYS) === to`；抽出 `folderTo(uid)`，**地址只在一处拼**，判定与渲染共用同一个字符串  |
 
 判据仍然是那条：**`?tab=` 这种页内视图状态不许进 `NAV_FILTER_KEYS`**，否则就退回「一项都不亮」。
 
@@ -537,6 +563,7 @@ git add apps/web/src/App.tsx \
 ## §B 反向验证（2 组，真实输出）
 
 **RV-12 `FolderTree` 退回 `NavLink` + 裸 `isActive`**
+
 ```
 ✖ ★ 文件夹不许在"没选中任何文件夹"的地址上自称当前页
   AssertionError: /notes 上文件夹自称当前页了（整条侧栏：["全部笔记","课程2","播客1"]）
@@ -547,9 +574,11 @@ git add apps/web/src/App.tsx \
 ✖ ★ 穷举：真实地址上**整条侧栏**高亮数永远 ≤ 1（含文件夹树）
 ℹ tests 185  ℹ pass 181  ℹ fail 4
 ```
+
 > 第一条的实际输出**与你给的测量数据同形**（每个文件夹在每个 `/notes*` 上都自称当前页）。
 
 **RV-13 不声明 `folder` 是筛选视图**（`NAV_FILTER_KEYS` 去掉 `folder`）
+
 ```
 ✖ ★ 选中某个文件夹时：只有它一个当前页，一级导航要让位
   AssertionError: 整条侧栏高亮了 2 项：["全部笔记","课程2"]
@@ -557,6 +586,7 @@ git add apps/web/src/App.tsx \
   AssertionError: /notes?folder=01FOLDER… 上整条侧栏有 2 项自称当前页：["全部笔记","课程2"]
 ℹ tests 185  ℹ pass 183  ℹ fail 2
 ```
+
 > 这一组证明第 4/5 条那个显式声明是**承重的**：少了它，跨组件的双当前页立刻回来。
 > 单测那边还有一条配套的正例，断言"**不传** filterKeys 时就是旧行为"—— 免得这条护栏钉的是零。
 
@@ -577,6 +607,7 @@ git add apps/web/src/App.tsx \
 ✅ /models?tab=llm                       当前页 1 项 ["Models"]
 ✅ /settings/storage                     当前页 1 项 ["Settings"]
 ```
+
 截图：`/tmp/wire-up/shots/7-folder-current.png`
 
 ---
@@ -659,6 +690,7 @@ git add apps/web/src/App.tsx \
 ## §A 改法
 
 **daemon**
+
 - `db/repos.ts`：新增模块级 `FOLDER_CLOSURE_CTE`（`anc` 祖先含自身 → `node` 管辖的每个文件夹）。
   `UNION` 而非 `UNION ALL`：脏环也会停下来（沿用 `folderSubtreeIds` 注释里那条理由）；已软删的文件夹不进闭包。
   `folderNoteCounts()` 改为**含子孙**并走这份 CTE；`listNotes(limit, {starredOnly, folderId})` 也走它。
@@ -666,6 +698,7 @@ git add apps/web/src/App.tsx \
 - `http/rest/notes.ts`：解析 `?folder=`，查不到 / 已软删 → `400 BAD_QUERY_PARAM`。
 
 **web**
+
 - `features/notes/api.ts`：`useNotesQuery({starredOnly, folderUid})`，查询串与 queryKey 同源。
 - `features/notes/NotesListPage.tsx`：读 `?folder=`；标题用文件夹名；空文件夹给专属空态。
 - `features/folders/api.ts`：新增 `flattenFolders()`（树 → 扁平，带防环），从 barrel 导出。
@@ -677,16 +710,19 @@ git add apps/web/src/App.tsx \
 ## §B 反向验证（2 组，真实输出）
 
 **RV-14 侧栏计数退回"只数直属"，筛选仍含子孙**（先 `grep` 确认 dist 里坏行在）
+
 ```
 ✖ ★ 侧栏计数 == 筛选返回条数（父 1 + 子 2 = 3）—— 两边分叉就红
   AssertionError: 侧栏计数(1) 与筛选返回条数(3) 不一致 —— 两处各算各的，
   于是侧栏写一个数、点进去是另一个数，而且没有任何一处会报错
   1 !== 3
 ```
+
 > 这正是你要的那条：**两边分叉时它变红**。而且注意红的是"相等"这条断言，
 > 不是"筛出来的都在这个文件夹里" —— 后者在分叉时照样绿。
 
 **RV-15 前端不再把 `folder` 交给端点**
+
 ```
 ✖ ★ 点开文件夹要把 folder 交给端点 —— 此前这个查询串全仓无人读取
   AssertionError: 筛选没交给端点（实际请求：["/notes","/folders","/jobs"]）——
@@ -696,6 +732,7 @@ git add apps/web/src/App.tsx \
 ✖ ★ 空文件夹给它自己的空态（而不是"还没有笔记"）
 ℹ tests 190  ℹ pass 186  ℹ fail 4
 ```
+
 > 第一条的 `实际请求` 把 T-138c 之后那个状态**逐字复现**了出来：高亮是准的，内容是全部。
 
 两组还原后复跑全绿。
@@ -705,9 +742,11 @@ git add apps/web/src/App.tsx \
 ## §C 我第三次踩同一族坑（写出来，不掩盖）
 
 空态那条用例第一版是：
+
 ```ts
 assert.equal(txt.includes(zhNotes['empty']), false, '不该说"还没有笔记"');
 ```
+
 它**红了，但红得没道理** —— `notes.empty` = 「还没有笔记」恰好是我新写的
 `notes.folderEmpty` = 「『课程』里还没有笔记」的**子串**，于是断言被自己的文案匹到。
 

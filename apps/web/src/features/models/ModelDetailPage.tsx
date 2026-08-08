@@ -51,7 +51,8 @@ export default function ModelDetailPage() {
       </div>
     );
   }
-  if (catalog.isLoading) return <p className="p-4 text-xs text-ink-muted">{t('models.detail.loading')}</p>;
+  if (catalog.isLoading)
+    return <p className="p-4 text-xs text-ink-muted">{t('models.detail.loading')}</p>;
   if (!found) {
     return (
       <div className="p-4">
@@ -69,7 +70,10 @@ export default function ModelDetailPage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-4 p-4" data-testid="model-detail-page">
-      <Link to="/models" className="inline-flex items-center gap-1 text-xs text-accent-ink hover:underline">
+      <Link
+        to="/models"
+        className="inline-flex items-center gap-1 text-xs text-accent-ink hover:underline"
+      >
         <ArrowLeft className="size-3.5" aria-hidden />
         {t('models.detail.back')}
       </Link>
@@ -86,7 +90,10 @@ export default function ModelDetailPage() {
       <section className="grid grid-cols-2 gap-3 rounded-lg border border-line bg-surface-1 p-4 text-xs sm:grid-cols-3">
         <Field label={t('models.detail.fieldArch')} value={`${variant.arch} (${variant.format})`} />
         <Field label={t('models.detail.fieldQuant')} value={variant.quantization.toUpperCase()} />
-        <Field label={t('models.detail.fieldSize')} value={formatBytes(variant.totalSizeBytes, locale)} />
+        <Field
+          label={t('models.detail.fieldSize')}
+          value={formatBytes(variant.totalSizeBytes, locale)}
+        />
         <Field label={t('models.detail.fieldLanguages')} value={variant.languages.join(' / ')} />
         <Field label={t('models.detail.fieldLicense')} value={variant.license.id} />
         <Field label={t('models.detail.fieldCatalogVersion')} value={variant.catalogVersion} />

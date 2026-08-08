@@ -18,18 +18,9 @@
       "displayNameZh": "通义千问 3 · 4B（Q4_K_M 量化）",
       "descriptionZh": "默认推荐的语言模型。中文原生能力强，体积适中，适合把转写稿整理成思维导图与摘要。",
       "descriptionEn": "Recommended default LLM. Native Chinese capability, moderate size; well suited to turning transcripts into mindmaps and summaries.",
-      "languages": [
-        "multi",
-        "zh",
-        "en"
-      ],
-      "tags": [
-        "recommended-default",
-        "chinese-native"
-      ],
-      "engines": [
-        "llama.cpp"
-      ],
+      "languages": ["multi", "zh", "en"],
+      "tags": ["recommended-default", "chinese-native"],
+      "engines": ["llama.cpp"],
       "files": [
         {
           "role": "weights",
@@ -60,9 +51,7 @@
         "ramRequiredMB": 4130,
         "vramRequiredMB": 4130,
         "diskRequiredMB": 2747,
-        "cpuFeatures": [
-          "avx2"
-        ],
+        "cpuFeatures": ["avx2"],
         "computedAtContext": 8192
       },
       "gguf": {
@@ -108,17 +97,9 @@
       "displayNameZh": "通义千问 3 · 4B（Q5_K_M 量化）",
       "descriptionZh": "比 Q4_K_M 精度更高，结构化输出更稳定，显存需求略高。",
       "descriptionEn": "Higher precision than Q4_K_M with more stable structured output; slightly more VRAM.",
-      "languages": [
-        "multi",
-        "zh",
-        "en"
-      ],
-      "tags": [
-        "chinese-native"
-      ],
-      "engines": [
-        "llama.cpp"
-      ],
+      "languages": ["multi", "zh", "en"],
+      "tags": ["chinese-native"],
+      "engines": ["llama.cpp"],
       "files": [
         {
           "role": "weights",
@@ -149,9 +130,7 @@
         "ramRequiredMB": 4542,
         "vramRequiredMB": 4542,
         "diskRequiredMB": 3178,
-        "cpuFeatures": [
-          "avx2"
-        ],
+        "cpuFeatures": ["avx2"],
         "computedAtContext": 8192
       },
       "gguf": {
@@ -197,18 +176,9 @@
       "displayNameZh": "通义千问 3 · 8B（Q4_K_M 量化）",
       "descriptionZh": "显存充足时的高质量选择。长转写稿的结构化质量明显优于 4B。",
       "descriptionEn": "The higher-quality option when VRAM allows; noticeably better structure on long transcripts than 4B.",
-      "languages": [
-        "multi",
-        "zh",
-        "en"
-      ],
-      "tags": [
-        "chinese-native",
-        "high-quality"
-      ],
-      "engines": [
-        "llama.cpp"
-      ],
+      "languages": ["multi", "zh", "en"],
+      "tags": ["chinese-native", "high-quality"],
+      "engines": ["llama.cpp"],
       "files": [
         {
           "role": "weights",
@@ -239,9 +209,7 @@
         "ramRequiredMB": 6787,
         "vramRequiredMB": 6787,
         "diskRequiredMB": 5531,
-        "cpuFeatures": [
-          "avx2"
-        ],
+        "cpuFeatures": ["avx2"],
         "computedAtContext": 8192
       },
       "gguf": {
@@ -287,18 +255,9 @@
       "displayNameZh": "通义千问 3 · 1.7B（Q8_0 量化）",
       "descriptionZh": "低配机器的兜底选择。结构化质量下降，但在纯 CPU 上仍可用。",
       "descriptionEn": "Fallback for low-spec machines. Lower structuring quality, but usable on CPU only.",
-      "languages": [
-        "multi",
-        "zh",
-        "en"
-      ],
-      "tags": [
-        "chinese-native",
-        "cpu-friendly"
-      ],
-      "engines": [
-        "llama.cpp"
-      ],
+      "languages": ["multi", "zh", "en"],
+      "tags": ["chinese-native", "cpu-friendly"],
+      "engines": ["llama.cpp"],
       "files": [
         {
           "role": "weights",
@@ -329,9 +288,7 @@
         "ramRequiredMB": 3166,
         "vramRequiredMB": 3166,
         "diskRequiredMB": 2018,
-        "cpuFeatures": [
-          "avx2"
-        ],
+        "cpuFeatures": ["avx2"],
         "computedAtContext": 8192
       },
       "gguf": {
@@ -377,17 +334,9 @@
       "displayNameZh": "Gemma 3 · 4B Instruct（Q4_K_M 量化）",
       "descriptionZh": "Qwen3 之外的备选。中文能力尚可，长上下文（131K）是其优势。注意：使用前需接受 Google 的 Gemma 使用条款。",
       "descriptionEn": "Alternative to Qwen3. Reasonable Chinese ability; its long 131K context is the main draw. Requires accepting Google's Gemma Terms of Use.",
-      "languages": [
-        "multi",
-        "en",
-        "zh"
-      ],
-      "tags": [
-        "long-context"
-      ],
-      "engines": [
-        "llama.cpp"
-      ],
+      "languages": ["multi", "en", "zh"],
+      "tags": ["long-context"],
+      "engines": ["llama.cpp"],
       "files": [
         {
           "role": "weights",
@@ -413,9 +362,7 @@
         "ramRequiredMB": 4055,
         "vramRequiredMB": 4055,
         "diskRequiredMB": 2739,
-        "cpuFeatures": [
-          "avx2"
-        ],
+        "cpuFeatures": ["avx2"],
         "computedAtContext": 8192
       },
       "gguf": {

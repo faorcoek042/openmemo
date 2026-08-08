@@ -11,7 +11,8 @@ import { describe, it } from 'node:test';
 import { pickCheckRemediation, pickCheckText } from './checkText';
 
 const ZH = '已暂时停用：metal（连续 3 次探测失败）。将在约 4 分钟后自动重试。';
-const EN = 'Temporarily disabled: metal (3 consecutive probe failures). Automatic retry in about 4 min.';
+const EN =
+  'Temporarily disabled: metal (3 consecutive probe failures). Automatic retry in about 4 min.';
 
 describe('T-173 自检文案的语言选择', () => {
   it('中文界面永远拿中文原文', () => {
@@ -35,7 +36,10 @@ describe('T-173 自检文案的语言选择', () => {
   });
 
   it('remediation 的回退方向与 detail 一致', () => {
-    assert.equal(pickCheckRemediation(false, '去装后端包', 'Install a backend pack'), 'Install a backend pack');
+    assert.equal(
+      pickCheckRemediation(false, '去装后端包', 'Install a backend pack'),
+      'Install a backend pack',
+    );
     assert.equal(pickCheckRemediation(false, '去装后端包', null), '去装后端包');
     assert.equal(pickCheckRemediation(false, '去装后端包', undefined), '去装后端包');
     assert.equal(pickCheckRemediation(true, '去装后端包', 'Install a backend pack'), '去装后端包');

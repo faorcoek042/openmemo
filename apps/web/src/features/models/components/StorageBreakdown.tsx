@@ -29,8 +29,7 @@ export interface StorageBreakdownProps {
 export function StorageBreakdown({ storage, locale, onGc, gcPending }: StorageBreakdownProps) {
   const { t } = useTranslation();
   const { reclaimable } = storage;
-  const reclaimableBytes =
-    reclaimable.orphanBlobsBytes + reclaimable.stalePartialsBytes;
+  const reclaimableBytes = reclaimable.orphanBlobsBytes + reclaimable.stalePartialsBytes;
 
   // 只展示 Top 4，其余归"其他" —— 不新造第 5 个分类色（tokens.css 的约定）。
   const sorted = [...storage.breakdown].sort((a, b) => b.bytes - a.bytes);
@@ -44,7 +43,14 @@ export function StorageBreakdown({ storage, locale, onGc, gcPending }: StorageBr
       active: x.active,
     })),
     ...(restBytes > 0
-      ? [{ label: t('models.storage.other'), bytes: restBytes, color: 'bg-ink-muted', active: false }]
+      ? [
+          {
+            label: t('models.storage.other'),
+            bytes: restBytes,
+            color: 'bg-ink-muted',
+            active: false,
+          },
+        ]
       : []),
   ];
   const total = segments.reduce((a, s) => a + s.bytes, 0) || 1;
@@ -83,7 +89,9 @@ export function StorageBreakdown({ storage, locale, onGc, gcPending }: StorageBr
           <li key={s.label} className="flex items-center gap-2 text-xs">
             <span className={cn('size-2.5 shrink-0 rounded-sm', s.color)} aria-hidden />
             <span className="min-w-0 flex-1 truncate text-ink">{s.label}</span>
-            {s.active ? <span className="shrink-0 text-good">{t('models.storage.inUse')}</span> : null}
+            {s.active ? (
+              <span className="shrink-0 text-good">{t('models.storage.inUse')}</span>
+            ) : null}
             <span className="shrink-0 tabular-nums text-ink-secondary">
               {formatBytes(s.bytes, locale)}
             </span>

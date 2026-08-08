@@ -160,7 +160,9 @@ export function BreakerNotice({
           <h3 className="text-sm font-medium text-ink">{t('runtime.breaker.title')}</h3>
 
           {/* 停用了什么 / 为什么 / 多久之后重试 —— 一整句，来自 shared */}
-          <p className="mt-1 text-xs break-words text-ink-secondary">{zh ? detail.zh : detail.en}</p>
+          <p className="mt-1 text-xs break-words text-ink-secondary">
+            {zh ? detail.zh : detail.en}
+          </p>
 
           {/*
             "你不用动手" —— 与自检 remediation 同源，只是去掉了那条给 CLI 用的 URL。

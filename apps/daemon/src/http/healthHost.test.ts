@@ -43,10 +43,7 @@ function makeDeps(host: string): ServerDeps {
   };
 }
 
-async function withDaemon(
-  host: string,
-  fn: (port: number) => Promise<void>,
-): Promise<void> {
+async function withDaemon(host: string, fn: (port: number) => Promise<void>): Promise<void> {
   const server: Server = createServer();
   attachHttpHandlers(server, makeDeps(host));
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));

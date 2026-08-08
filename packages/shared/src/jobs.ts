@@ -45,7 +45,13 @@ export const TERMINAL_JOB_STATES: readonly JobState[] = ['succeeded', 'failed', 
  * 它必须**看得见**：实测这一步要 16 s 上下（真机 UNKNOWN），进度条上不说一句话，
  * 用户只会以为卡死了。只有 macOS 会出现这个步骤，其余平台直接从 `installing` 收尾。
  */
-export const JOB_STEPS = ['resolving', 'downloading', 'verifying', 'installing', 'warming'] as const;
+export const JOB_STEPS = [
+  'resolving',
+  'downloading',
+  'verifying',
+  'installing',
+  'warming',
+] as const;
 export type JobStep = (typeof JOB_STEPS)[number];
 
 export const JOB_KINDS = ['model', 'backend-pack'] as const;

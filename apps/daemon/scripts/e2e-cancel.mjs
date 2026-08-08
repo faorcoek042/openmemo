@@ -75,14 +75,19 @@ const before = await transcript(imp.noteUid);
 const segBefore = before.segments?.length ?? 0;
 const laneBefore = (await status()).lanes;
 console.log(`[2] 取消前: 已落段=${segBefore}  ASR 子进程=${asrChildren().length}`);
-console.log(`    lanes gpu.asr=${JSON.stringify(laneBefore['gpu.asr'])} gpu.exclusive=${JSON.stringify(laneBefore['gpu.exclusive'])}`);
+console.log(
+  `    lanes gpu.asr=${JSON.stringify(laneBefore['gpu.asr'])} gpu.exclusive=${JSON.stringify(laneBefore['gpu.exclusive'])}`,
+);
 if (segBefore === 0) {
   console.log('❌ 还没落任何段就到时限了，无法验证"保留已完成 chunk"');
 }
 
 // ---- 取消 ----
 const t0 = Date.now();
-const cancelRes = await fetch(`${base}/api/jobs/${imp.jobUid}/cancel`, { method: 'POST', headers: H });
+const cancelRes = await fetch(`${base}/api/jobs/${imp.jobUid}/cancel`, {
+  method: 'POST',
+  headers: H,
+});
 console.log(`\n[3] POST /api/jobs/${imp.jobUid}/cancel → HTTP ${cancelRes.status}`);
 
 // ---- 验证 1：子进程真的死了 ----
@@ -95,7 +100,9 @@ for (let i = 0; i < 40; i++) {
   }
 }
 const killMs = Date.now() - t0;
-console.log(`\n【验证 1】子进程回收: ${childrenGone ? `✅ 已全部退出（${killMs}ms）` : '❌ 仍有存活'}`);
+console.log(
+  `\n【验证 1】子进程回收: ${childrenGone ? `✅ 已全部退出（${killMs}ms）` : '❌ 仍有存活'}`,
+);
 if (!childrenGone) console.log(`    残留: ${asrChildren().join(' | ')}`);
 console.log(`    （取消前观察到的 ASR 进程: ${ranChildren[0] ?? '(未捕获)'}）`);
 
@@ -158,5 +165,7 @@ console.log(`  1 子进程回收        : ${pass1 ? '✅' : '❌'}`);
 console.log(`  2 已完成 chunk 保留 : ${pass2 ? '✅' : '❌'}`);
 console.log(`  3 permit 不泄漏     : ${pass3 ? '✅' : '❌'}`);
 const pass4 = resumeRes.status === 202 && resumeKept;
-console.log(`  4 续跑接得上        : ${pass4 ? '✅' : '❌'}（HTTP ${resumeRes.status}, ${segAfter}→${segResume} 段）`);
+console.log(
+  `  4 续跑接得上        : ${pass4 ? '✅' : '❌'}（HTTP ${resumeRes.status}, ${segAfter}→${segResume} 段）`,
+);
 process.exitCode = pass1 && pass2 && pass3 && pass4 ? 0 : 1;

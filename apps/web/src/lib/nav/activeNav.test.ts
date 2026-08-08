@@ -86,7 +86,10 @@ describe('T-138b 侧栏高亮：哪一项该亮', () => {
 
   test('★ 查询串参数顺序不同仍是同一个地址', () => {
     assert.equal(
-      activeNavTarget(['/notes?starred=1&sort=new'], { pathname: '/notes', search: '?sort=new&starred=1' }),
+      activeNavTarget(['/notes?starred=1&sort=new'], {
+        pathname: '/notes',
+        search: '?sort=new&starred=1',
+      }),
       '/notes?starred=1&sort=new',
     );
   });

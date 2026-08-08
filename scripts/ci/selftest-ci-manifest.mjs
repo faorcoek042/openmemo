@@ -52,7 +52,11 @@ function check(name, fn) {
     console.log(`  ✔ ${name}`);
     passed += 1;
   } catch (err) {
-    console.log(`  ✘ ${name}\n      ${String(err.message ?? err).split('\n').join('\n      ')}`);
+    console.log(
+      `  ✘ ${name}\n      ${String(err.message ?? err)
+        .split('\n')
+        .join('\n      ')}`,
+    );
     failures.push(name);
   }
 }
@@ -63,7 +67,11 @@ async function acheck(name, fn) {
     console.log(`  ✔ ${name}`);
     passed += 1;
   } catch (err) {
-    console.log(`  ✘ ${name}\n      ${String(err.message ?? err).split('\n').join('\n      ')}`);
+    console.log(
+      `  ✘ ${name}\n      ${String(err.message ?? err)
+        .split('\n')
+        .join('\n      ')}`,
+    );
     failures.push(name);
   }
 }
@@ -92,21 +100,36 @@ async function fakePack(id, files) {
 }
 
 async function emit(id, opts = {}) {
-  const { stage, archive } = await fakePack(id, opts.files ?? { 'whisper-cli': 'x', 'libggml.so': 'y' });
+  const { stage, archive } = await fakePack(
+    id,
+    opts.files ?? { 'whisper-cli': 'x', 'libggml.so': 'y' },
+  );
   const out = join(TMP, `${id}.json`);
   const r = run(EMIT, [
-    '--pack-id', id,
-    '--engine', 'whisper.cpp',
-    '--engine-version', 'v1.9.1',
-    '--ggml-abi', opts.abi ?? '0.15.1',
-    '--backend', opts.backend ?? 'vulkan',
-    '--os', opts.os ?? 'linux',
-    '--arch', 'x64',
-    '--tier', 'downloadable',
-    '--archive', archive,
-    '--stage', opts.stage ?? stage,
-    '--catalog-version', '2026.08.05',
-    '--out', out,
+    '--pack-id',
+    id,
+    '--engine',
+    'whisper.cpp',
+    '--engine-version',
+    'v1.9.1',
+    '--ggml-abi',
+    opts.abi ?? '0.15.1',
+    '--backend',
+    opts.backend ?? 'vulkan',
+    '--os',
+    opts.os ?? 'linux',
+    '--arch',
+    'x64',
+    '--tier',
+    'downloadable',
+    '--archive',
+    archive,
+    '--stage',
+    opts.stage ?? stage,
+    '--catalog-version',
+    '2026.08.05',
+    '--out',
+    out,
   ]);
   return { r, out };
 }
@@ -160,11 +183,17 @@ check('providesFiles 是 stage 里真实存在的文件，不是猜的', () => {
   assert.deepEqual([...goodFragment.providesFiles].sort(), ['libggml.so', 'whisper-cli']);
 });
 
-await acheck('★反向：ggmlAbi 探不到时不许写字符串 "unknown"（那会被当成一个真 ABI 值）', async () => {
-  const { out } = await emit('whispercpp-cpu-linux-x64-abitest', { abi: 'unknown', backend: 'cpu' });
-  const f = JSON.parse(await readFile(out, 'utf8'));
-  assert.equal(f.ggmlAbi, null);
-});
+await acheck(
+  '★反向：ggmlAbi 探不到时不许写字符串 "unknown"（那会被当成一个真 ABI 值）',
+  async () => {
+    const { out } = await emit('whispercpp-cpu-linux-x64-abitest', {
+      abi: 'unknown',
+      backend: 'cpu',
+    });
+    const f = JSON.parse(await readFile(out, 'utf8'));
+    assert.equal(f.ggmlAbi, null);
+  },
+);
 
 await acheck('★反向：stage 为空必须失败（tar 对空目录照样成功 —— 空包会一路绿灯）', async () => {
   const emptyStage = join(TMP, 'empty-stage');
@@ -202,7 +231,15 @@ check('★反向：旧 fragment 被真 schema 拒绝，且理由点名了缺失/
   assert.equal(v.ok, false, '旧 fragment 居然通过了 schema —— 那这条防线是假的');
   const msg = v.errors.join('\n');
   // 钉的是"它对哪些字段有意见"，不是错误文案的措辞。
-  for (const field of ['displayName', 'totalSizeBytes', 'requiresDriver', 'license', 'providesFiles', 'priority', 'catalogVersion']) {
+  for (const field of [
+    'displayName',
+    'totalSizeBytes',
+    'requiresDriver',
+    'license',
+    'providesFiles',
+    'priority',
+    'catalogVersion',
+  ]) {
     assert.ok(msg.includes(field), `错误里没有提到缺失的必填字段 ${field}：\n${msg}`);
   }
 });
@@ -285,18 +322,25 @@ await acheck('同 id 的 CI 产物被忽略，上游的 mirrors 原样保留', a
 
 console.log('\n⑤ 失败即红 —— 空目录 / 坏 fragment 必须非零退出，且不写任何文件');
 
-await acheck('★反向：零 fragment 必须失败（download-artifact 拿不到东西时是"成功"的）', async () => {
-  const emptyDir = join(TMP, 'frags-empty');
-  await mkdir(emptyDir, { recursive: true });
-  const work = join(TMP, 'backends-empty.json');
-  const original = `${JSON.stringify(realManifest, null, 2)}\n`;
-  await writeFile(work, original);
+await acheck(
+  '★反向：零 fragment 必须失败（download-artifact 拿不到东西时是"成功"的）',
+  async () => {
+    const emptyDir = join(TMP, 'frags-empty');
+    await mkdir(emptyDir, { recursive: true });
+    const work = join(TMP, 'backends-empty.json');
+    const original = `${JSON.stringify(realManifest, null, 2)}\n`;
+    await writeFile(work, original);
 
-  const r = run(MERGE, ['--fragments', emptyDir, '--manifest', work]);
-  assert.notEqual(r.status, 0, 'merge 在零 fragment 时居然成功了 —— 这就是 C4');
-  assert.match(r.stderr, /fragment/);
-  assert.equal(await readFile(work, 'utf8'), original, 'manifest 被改动了 —— 失败路径必须一个字不写');
-});
+    const r = run(MERGE, ['--fragments', emptyDir, '--manifest', work]);
+    assert.notEqual(r.status, 0, 'merge 在零 fragment 时居然成功了 —— 这就是 C4');
+    assert.match(r.stderr, /fragment/);
+    assert.equal(
+      await readFile(work, 'utf8'),
+      original,
+      'manifest 被改动了 —— 失败路径必须一个字不写',
+    );
+  },
+);
 
 await acheck('★反向：坏 fragment 必须失败，且 manifest 一个字不改', async () => {
   const badDir = join(TMP, 'frags-bad');
@@ -309,15 +353,22 @@ await acheck('★反向：坏 fragment 必须失败，且 manifest 一个字不�
   const r = run(MERGE, ['--fragments', badDir, '--manifest', work]);
   assert.notEqual(r.status, 0, 'merge 吃下了一个 schema 不过的 fragment');
   assert.match(r.stderr, /BackendPackSchema|schema/i);
-  assert.equal(await readFile(work, 'utf8'), original, 'manifest 被改动了 —— 失败路径必须一个字不写');
+  assert.equal(
+    await readFile(work, 'utf8'),
+    original,
+    'manifest 被改动了 —— 失败路径必须一个字不写',
+  );
 });
 
-await acheck('★反向：published 却没有 mirror 的包会被 superRefine 拒（不是"少个 URL"而已）', async () => {
-  const noUrl = { ...goodFragment, id: 'whispercpp-cpu-fake-x64', availability: 'published' };
-  const v = validatePack(noUrl);
-  assert.equal(v.ok, false);
-  assert.ok(v.errors.join('\n').includes('mirror'));
-});
+await acheck(
+  '★反向：published 却没有 mirror 的包会被 superRefine 拒（不是"少个 URL"而已）',
+  async () => {
+    const noUrl = { ...goodFragment, id: 'whispercpp-cpu-fake-x64', availability: 'published' };
+    const v = validatePack(noUrl);
+    assert.equal(v.ok, false);
+    assert.ok(v.errors.join('\n').includes('mirror'));
+  },
+);
 
 /* ══════════════════ ⑥ 现仓库的 manifest 本身 ══════════════════ */
 
@@ -330,7 +381,10 @@ check('vendor/manifests/backends.json 通过 schema', () => {
 
 check('目录里没有 engine=llama.cpp 的包（ADR-016 决策 3）', () => {
   assert.ok(realManifest.packs.length >= 5, '包太少，这条断言失去意义');
-  assert.deepEqual(realManifest.packs.filter((p) => p.engine === 'llama.cpp').map((p) => p.id), []);
+  assert.deepEqual(
+    realManifest.packs.filter((p) => p.engine === 'llama.cpp').map((p) => p.id),
+    [],
+  );
 });
 
 /* ══════════════════ 结果 ══════════════════ */

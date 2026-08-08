@@ -12,9 +12,13 @@
 用例 6 条全绿、反向验证也红过。**但它在产品里一次都没生效过，而且是必然的。**
 
 认领规则是
+
 ```ts
-if (asked.backend !== outcome.backendUsed) { 拒绝写 }
+if (asked.backend !== outcome.backendUsed) {
+  拒绝写;
+}
 ```
+
 `asked.backend` 是 `Backend` 枚举（`'cpu'`）。
 `outcome.backendUsed` 由 `packages/runtime/src/selfTest.ts` 的 `parseBackendUsed()`
 从 whisper 的 **stderr** 里解析，真实取值是 `'CPU'` / `'CPU (ggml-cpu-zen4)'` /
@@ -22,6 +26,7 @@ GPU 设备名 / `null`。**`'CPU' !== 'cpu'`** → 这条比较恒真 → **恒�
 `selfTest` 照旧永远是 null → 「通过徽章 / 失败徽章 / anyFailed 横幅」三条 UI 分支照旧不亮。
 
 **用例为什么没抓到**：它们喂的是 `backendUsed: 'cpu'` —— 一个**产品里不存在的形状**。
+
 > 断言钉的是测试自己造的形状，不是产出方的真实形状。
 
 已修，并留了一条正面护栏：拿 `parseBackendUsed()` 的**真实输出**（喂 whisper 真日志逐字样本）
@@ -30,10 +35,10 @@ GPU 设备名 / `null`。**`'CPU' !== 'cpu'`** → 这条比较恒真 → **恒�
 
 ## 点名的两条
 
-| # | 结论 |
-|---|---|
+| #                                                | 结论                                                                                                                                                                                                                           |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **①** `POST /api/backends/selftest` 不收 pack id | ✅ **做了**。请求体里的 `{id}`（前端每张卡片本来就在发）现在**真的钉住那个包**：跑的是那个包目录里的 whisper-cli，结果**只**记到那个包上；那个包里没有 whisper-cli 就 `blocked` 并点名说明，**绝不回退到别的包再把结果记上去** |
-| **②** 给旧安装记录回填 `priority` | ✅ **不写用户的库，也不接目录 —— 而且这是有证据的结论，不是省事**。见下 |
+| **②** 给旧安装记录回填 `priority`                | ✅ **不写用户的库，也不接目录 —— 而且这是有证据的结论，不是省事**。见下                                                                                                                                                        |
 
 ## ② 的结论：**读取侧已经在往对的方向兜底，目录回查救不了真正需要救的那些**
 
@@ -110,6 +115,7 @@ CLI 出口直接用 `discoverTools()` 的答案（→ warn）。
 `scripts/ci/**`、`scripts/lib/`、根 `package.json`（`platform-backlog` / `runner-migrate`）。
 
 **两处真的重叠**（都申报过，`git add` 请逐 hunk 看）：
+
 - `apps/daemon/src/http/rest/backends.ts` —— `ui-backlog` 在改 `InapplicableKind` 搬家（第 8–30 行、第 71–85 行）；
   **我只改了文件头那段注释**（订正"`selfTest` 恒为 null"），两块不相交。
 - `packages/shared/src/backends.ts` —— 我加了一个**可选**字段 `BackendSelfTest.backendUsed?`。
@@ -121,7 +127,7 @@ CLI 出口直接用 `discoverTools()` 的答案（→ warn）。
 2. **收工那一刻 `tsc -b` 变红 3 条，不是我。** 成因是 §3 B-14（删 `markmap-lib`/`markmap-view`）
    正在进行中：`packages/mindmap/src/adapters/markmap.ts` **已被删**、`index.ts` 与
    `mindmap.test.ts` 已跟上，而 `timecode.test.ts:28` 那句 `import { toMarkmap } from
-   './adapters/markmap.js'` **还没删**：
+'./adapters/markmap.js'` **还没删**：
    ```
    packages/mindmap/src/index.ts(22,15):        TS2307 Cannot find module './adapters/markmap.js'
    packages/mindmap/src/mindmap.test.ts(13,52): TS2307 同上
@@ -140,12 +146,13 @@ CLI 出口直接用 `discoverTools()` 的答案（→ warn）。
 
 `BackendToolPreference` 加一个可选 `packId`。**语义是硬限制，不是偏好**：
 
-| | 找不到时 | 依据 |
-|---|---|---|
-| `selectedBackend`（T-162） | **回退 + 出声** | 不回退的话，一个装了一半的包会把整条转写链打死；而这个函数同时在解析 ffmpeg / yt-dlp |
-| `packId`（T-166） | **返回 `null`** | 它回答的是"**这一个**包行不行"。回退等于换个包去跑，再把结果记到用户点的那张卡片上 —— **发明一条不成立的证据** |
+|                            | 找不到时        | 依据                                                                                                           |
+| -------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------- |
+| `selectedBackend`（T-162） | **回退 + 出声** | 不回退的话，一个装了一半的包会把整条转写链打死；而这个函数同时在解析 ffmpeg / yt-dlp                           |
+| `packId`（T-166）          | **返回 `null`** | 它回答的是"**这一个**包行不行"。回退等于换个包去跑，再把结果记到用户点的那张卡片上 —— **发明一条不成立的证据** |
 
 配套两格，都容易漏：
+
 - **扁平命中也要先证明属于那个包**：`by-name/backend/<name>` 是所有单文件包共用的一格，
   不查来源就等于"钉住"被一个同名文件绕过去（反向验证 M2）。
 - **钉住时 `degraded` 恒 false**：不回退就没有"退了一档"这回事，报真会变成一个
@@ -189,12 +196,12 @@ CLI 出口直接用 `discoverTools()` 的答案（→ warn）。
 
 # §2 插队那条（VAD）的完整定性
 
-| | 位置 | 改前 | 改后 |
-|---|---|---|---|
-| 桶 | `by-name/` | 只翻 `asr` | `vad` → `asr` → 扁平旧布局 |
-| 名 | — | 三个写死的文件名 | `*.bin` 且含 `silero` |
-| 收 | — | `isGgmlModelFile` | 不变（读头四字节，正是 whisper 自己会检查的东西） |
-| 实现份数 | — | **2 份**（daemon 一份、pipeline 一份，规则不同） | **1 份**，daemon 那边改成调它 |
+|          | 位置       | 改前                                             | 改后                                              |
+| -------- | ---------- | ------------------------------------------------ | ------------------------------------------------- |
+| 桶       | `by-name/` | 只翻 `asr`                                       | `vad` → `asr` → 扁平旧布局                        |
+| 名       | —          | 三个写死的文件名                                 | `*.bin` 且含 `silero`                             |
+| 收       | —          | `isGgmlModelFile`                                | 不变（读头四字节，正是 whisper 自己会检查的东西） |
+| 实现份数 | —          | **2 份**（daemon 一份、pipeline 一份，规则不同） | **1 份**，daemon 那边改成调它                     |
 
 daemon 侧独有的两层证据（环境变量覆盖、按 `role` 读安装记录）**保留**，排在兜底之前 ——
 它们只会让 daemon 找到**更多**，不会让两边给出不同的 `status`。
@@ -217,21 +224,21 @@ daemon 侧独有的两层证据（环境变量覆盖、按 `role` 读安装记�
 > **A 组那几行以他们的 `ui-backlog.md §3` 为准，不以我下表为准** —— 我只对
 > 「我未碰」这半句负责。我全部改动都是在这两次提交**之后**重跑的门禁（1259/0）。
 
-| §3 编号 | 项 | 我这轮的状态 |
-|---:|---|---|
-| — | （不在 §3 上）**T-164 自检回写在真机上恒失败** | ✅ **已修 + 已加根因护栏**。这是本轮最重的一条 |
-| — | （不在 §3 上）`meta.sameSource: model.vad` | ✅ **已修**（插队项），两个出口现在共用一份规则 |
-| — | （不在 §3 上）自检的 ASR 模型会挑中 VAD 权重 | ✅ **已修**。它是回写接通之后才会显形的 |
-| **A1** | `/runtime` 对已装 ffmpeg 显示「Install 119 MB」 | ✅ **`ui-backlog` T-165 做掉了**（`f7fef9c`，`backendReconcile.ts`）。**我未碰** |
-| **A2** | 「推荐」徽章零信息量 | ✅ **`ui-backlog` T-165 做掉了**（`f7fef9c`）。**我未碰** |
-| **A3** | `inapplicableKind` 白做了 | ✅ **`ui-backlog` T-165 做掉了**（`f7fef9c`，类型搬进 `@openmemo/shared`）。**我未碰** |
-| **A4** | `openmemo-probe` 没有分发通道 | ⛔ 我做不了（要建 release 资产）。⚠️ 收工前 `3ef8734`（T-167 ①「探针随包出厂」）落地了，这一条**可能已经解了**，请以那份回执为准 |
-| **A5** | `ytdlp-macos-arm64` arch 声明 | ⛔ `vendor/manifests/` 是 `platform-backlog` 地盘，未碰 |
-| **A6** | `sourceBaseUrl` 是半截（`models.ts:953` 唯一写入、零读取） | ❌ **未做**，预算用完了。结论不变：`progress-audit` 建议删（连同 `SelectSourceRequest.baseUrl`），我同意。⚠️ `ui-backlog` 报「A-6 在 web 这一侧不欠债」——**daemon 侧那个零读取的字段仍然在**，两句话说的不是同一半 |
-| **A7** | 组件「回滚」 | ⛔ 产品裁决（写进 ADR） |
-| **B15 / C7** | 老安装记录补 `role` 迁移 | ❌ **未做**，但给出定性：**与 ② 同形，而且更没得救** —— `roleMap.ts` 文件头自己写着「搬文件才需要迁移；不看目录就不需要」，四个读取方全部已改成扫全桶按 `role` 判。真正进 `skippedWithoutRole` 的是**记录里压根没有 `role` 字段**的那些，读取侧**无从补**（信息不在盘上），只能回查目录。**是否值得，与 ② 是同一道题**，建议一起裁。⚠️ 我**没有**在真实数据目录上核过 `skippedWithoutRole > 0`（`/root/data-memo` 禁碰）→ `[未验证]` |
-| **C19 / B4** | `unpackArchive` 失败自清 → 写进契约 + 断言 | ❌ **未做**，预算用完 |
-| 其余 | — | 未碰，状态与 `backlog-work §3` 相同 |
+|      §3 编号 | 项                                                         | 我这轮的状态                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| -----------: | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+|            — | （不在 §3 上）**T-164 自检回写在真机上恒失败**             | ✅ **已修 + 已加根因护栏**。这是本轮最重的一条                                                                                                                                                                                                                                                                                                                                                                                       |
+|            — | （不在 §3 上）`meta.sameSource: model.vad`                 | ✅ **已修**（插队项），两个出口现在共用一份规则                                                                                                                                                                                                                                                                                                                                                                                      |
+|            — | （不在 §3 上）自检的 ASR 模型会挑中 VAD 权重               | ✅ **已修**。它是回写接通之后才会显形的                                                                                                                                                                                                                                                                                                                                                                                              |
+|       **A1** | `/runtime` 对已装 ffmpeg 显示「Install 119 MB」            | ✅ **`ui-backlog` T-165 做掉了**（`f7fef9c`，`backendReconcile.ts`）。**我未碰**                                                                                                                                                                                                                                                                                                                                                     |
+|       **A2** | 「推荐」徽章零信息量                                       | ✅ **`ui-backlog` T-165 做掉了**（`f7fef9c`）。**我未碰**                                                                                                                                                                                                                                                                                                                                                                            |
+|       **A3** | `inapplicableKind` 白做了                                  | ✅ **`ui-backlog` T-165 做掉了**（`f7fef9c`，类型搬进 `@openmemo/shared`）。**我未碰**                                                                                                                                                                                                                                                                                                                                               |
+|       **A4** | `openmemo-probe` 没有分发通道                              | ⛔ 我做不了（要建 release 资产）。⚠️ 收工前 `3ef8734`（T-167 ①「探针随包出厂」）落地了，这一条**可能已经解了**，请以那份回执为准                                                                                                                                                                                                                                                                                                     |
+|       **A5** | `ytdlp-macos-arm64` arch 声明                              | ⛔ `vendor/manifests/` 是 `platform-backlog` 地盘，未碰                                                                                                                                                                                                                                                                                                                                                                              |
+|       **A6** | `sourceBaseUrl` 是半截（`models.ts:953` 唯一写入、零读取） | ❌ **未做**，预算用完了。结论不变：`progress-audit` 建议删（连同 `SelectSourceRequest.baseUrl`），我同意。⚠️ `ui-backlog` 报「A-6 在 web 这一侧不欠债」——**daemon 侧那个零读取的字段仍然在**，两句话说的不是同一半                                                                                                                                                                                                                   |
+|       **A7** | 组件「回滚」                                               | ⛔ 产品裁决（写进 ADR）                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **B15 / C7** | 老安装记录补 `role` 迁移                                   | ❌ **未做**，但给出定性：**与 ② 同形，而且更没得救** —— `roleMap.ts` 文件头自己写着「搬文件才需要迁移；不看目录就不需要」，四个读取方全部已改成扫全桶按 `role` 判。真正进 `skippedWithoutRole` 的是**记录里压根没有 `role` 字段**的那些，读取侧**无从补**（信息不在盘上），只能回查目录。**是否值得，与 ② 是同一道题**，建议一起裁。⚠️ 我**没有**在真实数据目录上核过 `skippedWithoutRole > 0`（`/root/data-memo` 禁碰）→ `[未验证]` |
+| **C19 / B4** | `unpackArchive` 失败自清 → 写进契约 + 断言                 | ❌ **未做**，预算用完                                                                                                                                                                                                                                                                                                                                                                                                                |
+|         其余 | —                                                          | 未碰，状态与 `backlog-work §3` 相同                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 **清了几条说几条：§3 那 24 条里我直接动了 0 条**，本轮的价值全在
 「点名的两条 + 插队那条 + 顺着它们挖出来的三条 §3 上没有的真缺陷」。
@@ -254,21 +261,22 @@ daemon 侧独有的两层证据（环境变量覆盖、按 `role` 读安装记�
   ✔ apps/daemon(selfTestRecord): exit=0 pass=7 fail=0
 ```
 
-| 撤掉什么（= 缺陷原状） | 结果 | 红在哪（真实输出节选） |
-|---|---|---|
-| **M1** `packId` 对目录的硬过滤（钉住 = 无效果） | ✔ 红 **5 + 2** | `✖ ★ 同一份布局：钉 cpu 得 cpu 包，钉 vulkan 得 vulkan 包`、`✖ ★ 同一份磁盘布局：点 CPU 卡片测 CPU 包，点 Vulkan 卡片测 Vulkan 包` |
-| **M2** 钉住时也允许扁平命中 | ✔ 红 1 | `✖ ★ 单文件包的扁平命中也要先证明它属于那个包` |
-| **M3** 钉住时仍报 `degraded` | ✔ 红 1 | `degraded 报了真 —— 那会变成一个永远说不清指向谁的假红灯` |
-| **M4** 缺 `priority` 按"高于任何已知值"处理（② 的方向反过来） | ✔ 红 1 | `缺 priority 的默认值被改成了"高于已知值" —— 老 CPU 包会把新装的加速包顶掉` |
-| **M5** 自检忽略 `packId`（回到 T-164：id 只是候选） | ✔ 红 2 | `钉住 whispercpp-vulkan-linux-x64 却解析到了 …/whisper-bin-ubuntu-x64/whisper-cli` |
-| **M6** 钉住找不到时回退到别的包 | ✔ 红 1 | `钉住 whispercpp-cpu-linux-x64 却跑了 …/bin/runtime/whisper-cli —— 那个二进制不属于任何包` |
-| **M7** 自检 ASR 模型不再排除 silero | ✔ 红 1 | `自检挑了 …/by-name/asr/ggml-silero-v6.2.0.bin 当 ASR 模型` |
-| **M8** `discoverTools` 回到只翻 `by-name/asr` | ✔ 红 **3** | `✖ ★ T-149 之后的正式位置 by-name/vad/ —— 缺陷原状下 CLI 那边是 null` |
-| **M9** VAD 判据回到固定文件名清单 | ✔ 红 1 | `✖ ★ 上游发一个新版本号也不许把任何一边打哑` |
-| **M10** 认领规则回到 T-164 的字符串比对 | ✔ 红 **4** | `没写成：你点的是 whispercpp-cpu-linux-x64，而这次实际跑的是 whispercpp-cpu-linux-x64 包里的 whisper-cli` ← 恒假比较的原样复现 |
-| **M11** 不再把 `backendUsed` 记进安装记录 | ✔ 红 1 | `selfTest.backendUsed` 为 null |
+| 撤掉什么（= 缺陷原状）                                        | 结果           | 红在哪（真实输出节选）                                                                                                             |
+| ------------------------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **M1** `packId` 对目录的硬过滤（钉住 = 无效果）               | ✔ 红 **5 + 2** | `✖ ★ 同一份布局：钉 cpu 得 cpu 包，钉 vulkan 得 vulkan 包`、`✖ ★ 同一份磁盘布局：点 CPU 卡片测 CPU 包，点 Vulkan 卡片测 Vulkan 包` |
+| **M2** 钉住时也允许扁平命中                                   | ✔ 红 1         | `✖ ★ 单文件包的扁平命中也要先证明它属于那个包`                                                                                     |
+| **M3** 钉住时仍报 `degraded`                                  | ✔ 红 1         | `degraded 报了真 —— 那会变成一个永远说不清指向谁的假红灯`                                                                          |
+| **M4** 缺 `priority` 按"高于任何已知值"处理（② 的方向反过来） | ✔ 红 1         | `缺 priority 的默认值被改成了"高于已知值" —— 老 CPU 包会把新装的加速包顶掉`                                                        |
+| **M5** 自检忽略 `packId`（回到 T-164：id 只是候选）           | ✔ 红 2         | `钉住 whispercpp-vulkan-linux-x64 却解析到了 …/whisper-bin-ubuntu-x64/whisper-cli`                                                 |
+| **M6** 钉住找不到时回退到别的包                               | ✔ 红 1         | `钉住 whispercpp-cpu-linux-x64 却跑了 …/bin/runtime/whisper-cli —— 那个二进制不属于任何包`                                         |
+| **M7** 自检 ASR 模型不再排除 silero                           | ✔ 红 1         | `自检挑了 …/by-name/asr/ggml-silero-v6.2.0.bin 当 ASR 模型`                                                                        |
+| **M8** `discoverTools` 回到只翻 `by-name/asr`                 | ✔ 红 **3**     | `✖ ★ T-149 之后的正式位置 by-name/vad/ —— 缺陷原状下 CLI 那边是 null`                                                              |
+| **M9** VAD 判据回到固定文件名清单                             | ✔ 红 1         | `✖ ★ 上游发一个新版本号也不许把任何一边打哑`                                                                                       |
+| **M10** 认领规则回到 T-164 的字符串比对                       | ✔ 红 **4**     | `没写成：你点的是 whispercpp-cpu-linux-x64，而这次实际跑的是 whispercpp-cpu-linux-x64 包里的 whisper-cli` ← 恒假比较的原样复现     |
+| **M11** 不再把 `backendUsed` 记进安装记录                     | ✔ 红 1         | `selfTest.backendUsed` 为 null                                                                                                     |
 
 **把名字遮住之后这些断言什么时候会失败**（自问自答）：
+
 - M1/M2/M5/M6 → 任何人让"钉住"退化成一档偏好，或让钉住的那次走上一条不属于该包的二进制；
 - M3 → 任何人让不回退的路径也报降级（假红灯）；
 - M4 → 任何人翻转"未知 priority"的默认方向；
@@ -294,6 +302,7 @@ daemon 侧独有的两层证据（环境变量覆盖、按 `role` 读安装记�
 # §5 交付文件（**请 `git add` 后用 `git diff --cached --name-only` 逐条核对**）
 
 改：
+
 ```
 packages/pipeline/src/tools.ts                  BackendToolPreference.packId（硬钉）+ findWhisperVadWeights()
                                                 + 删除零调用方的 findInstalledModel + ByNameBucket
@@ -308,6 +317,7 @@ apps/daemon/src/http/rest/selfTestRecord.test.ts 改写为结构认领 + 新增�
 ```
 
 新增：
+
 ```
 packages/pipeline/src/__tests__/backendPackPin.test.ts   8 条（钉住规则 + ② 排序方向）
 apps/daemon/src/runtime/selfTestPin.test.ts              6 条（自检钉包的接线，**一次推理都不跑**）
@@ -321,34 +331,34 @@ coordination/inbox/daemon-backlog.md                     本文件
 
 # §6 纪律申报
 
-| 条 | 结果 |
-|---|---|
-| `apps/web/dist` | ✅ **我没有构建过**。全程只跑 `pnpm build:safe`（`--filter "!@openmemo/web"`）、`npx tsc -b`、`node --test`；`vite build` / `pnpm -r build` **一次都没跑**。⚠️ **如实报告一条观测**：`apps/web/dist/index.html` mtime 是 `14:31:34`，晚于我开工（`build-info` 记的 `14:00:03`）——**那不是我**，而且结构上不可能是我：`apps/web/tsconfig.json` 是 `emitDeclarationOnly` + `outDir: dist-types`，`tsc -b` 碰不到 `dist/`。时间上最接近的是 T-165（`f7fef9c`，同一时段在改 `apps/web`），请 Manager 与 `ui-backlog` 对一下 —— 如果那是 Manager 授权的重启前构建就很好（`progress-audit 🔴1` 终于解了），不是的话 PROTOCOL §7 这条线又被跨了一次 |
-| `pnpm -r build` | ✅ 未跑 |
-| `:10000` | ✅ **一个请求都没发**（连 GET 都没有）。未重启、未 kill、未占用 |
-| `/root/data-memo` | ✅ **未读未写**。所有验证走 `mkdtemp` 沙箱与 `/tmp/daemon-backlog/` |
-| 指针文件 | ✅ sha256 仍是 `7f930979b85204d4c05b221f4c17a5cf5936a4d432a46488816727f60da233f3`（收工复核）。三个新测试全部在**模块顶层** `delete OPENMEMO_MODELS` 等，窗口为零、无清理代码（PROTOCOL §9-bis） |
-| `pkill -f` | ✅ 未用 |
-| release | ✅ 未建/未改/未删。`gh` 一次都没用 |
-| 本机 whisper 转写 | ✅ **一次都没跑**。`selfTestPin.test.ts` 刻意让夹具**没有 ASR 模型**，自检必然停在 `blocked` ——而"whisper-cli 解析到了谁"恰恰在跑之前就定下来了，`resolved` 里如实带着。夹具里的 `whisper-cli` 是 `#!/bin/sh; exit 0` 的壳，**从未被执行** |
-| 反向验证 | ✅ 全部在 `/tmp/daemon-backlog/rv` 隔离副本（PROTOCOL §10），**先跑对照组**；共享树未被改动过一秒 |
-| `findInBackendPacks()` / `resolveBackendTool()` | ✅ **没造第二个解析器**。钉住能力加在它自己身上，自检改成调它（此前它自己解析），VAD 也收成一份 |
-| `grep -r` 陷阱 | ✅ 全仓扫描用 Node 读 `git ls-files`，**含 NUL 字节的文件单独列出来**（实测 561 个文本 / 82 个二进制），不静默跳过 |
-| 空集陷阱 | ✅ 每条"找不到"的断言都配了**阳性对照**（先证明"不钉住时确实找得到一个"），否则 `null` 与"这条路本来就走不通"长得一样 |
-| 新增 `src/**/*.test.ts` 登记 | ✅ 本轮新增测试在 `packages/pipeline/src/__tests__/` 与 `apps/daemon/src/{runtime,pipeline}/`，两个包的 tsconfig 都是 `include: ["src/**/*"]`；`tsconfig.test.json` 全仓**只有 `apps/web` 一个**，本轮没有新增 web 测试。两个包的 test 脚本前置守卫（源码 test 数 = dist test 数）本轮**真的响过一次**，所以它是活的 |
-| `.github/**` · `vendor/**` · `scripts/**` | ✅ **一个字未改**（`vendor/manifests/backends.json` 只用 Node 读过） |
-| `apps/web/**` | ✅ **一个字未改** |
-| `HANDOFF.md` / `00-CHARTER.md` / `BOARD.md` / `ROSTER.md` / `docs/adr/**` / `PENDING-USER-DECISIONS.md` / `README.md` / `SECURITY.md` | ✅ 一个字未改 |
-| 派出的 subagent | 0 个 |
+| 条                                                                                                                                    | 结果                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/dist`                                                                                                                       | ✅ **我没有构建过**。全程只跑 `pnpm build:safe`（`--filter "!@openmemo/web"`）、`npx tsc -b`、`node --test`；`vite build` / `pnpm -r build` **一次都没跑**。⚠️ **如实报告一条观测**：`apps/web/dist/index.html` mtime 是 `14:31:34`，晚于我开工（`build-info` 记的 `14:00:03`）——**那不是我**，而且结构上不可能是我：`apps/web/tsconfig.json` 是 `emitDeclarationOnly` + `outDir: dist-types`，`tsc -b` 碰不到 `dist/`。时间上最接近的是 T-165（`f7fef9c`，同一时段在改 `apps/web`），请 Manager 与 `ui-backlog` 对一下 —— 如果那是 Manager 授权的重启前构建就很好（`progress-audit 🔴1` 终于解了），不是的话 PROTOCOL §7 这条线又被跨了一次 |
+| `pnpm -r build`                                                                                                                       | ✅ 未跑                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `:10000`                                                                                                                              | ✅ **一个请求都没发**（连 GET 都没有）。未重启、未 kill、未占用                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `/root/data-memo`                                                                                                                     | ✅ **未读未写**。所有验证走 `mkdtemp` 沙箱与 `/tmp/daemon-backlog/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 指针文件                                                                                                                              | ✅ sha256 仍是 `7f930979b85204d4c05b221f4c17a5cf5936a4d432a46488816727f60da233f3`（收工复核）。三个新测试全部在**模块顶层** `delete OPENMEMO_MODELS` 等，窗口为零、无清理代码（PROTOCOL §9-bis）                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `pkill -f`                                                                                                                            | ✅ 未用                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| release                                                                                                                               | ✅ 未建/未改/未删。`gh` 一次都没用                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 本机 whisper 转写                                                                                                                     | ✅ **一次都没跑**。`selfTestPin.test.ts` 刻意让夹具**没有 ASR 模型**，自检必然停在 `blocked` ——而"whisper-cli 解析到了谁"恰恰在跑之前就定下来了，`resolved` 里如实带着。夹具里的 `whisper-cli` 是 `#!/bin/sh; exit 0` 的壳，**从未被执行**                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 反向验证                                                                                                                              | ✅ 全部在 `/tmp/daemon-backlog/rv` 隔离副本（PROTOCOL §10），**先跑对照组**；共享树未被改动过一秒                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `findInBackendPacks()` / `resolveBackendTool()`                                                                                       | ✅ **没造第二个解析器**。钉住能力加在它自己身上，自检改成调它（此前它自己解析），VAD 也收成一份                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `grep -r` 陷阱                                                                                                                        | ✅ 全仓扫描用 Node 读 `git ls-files`，**含 NUL 字节的文件单独列出来**（实测 561 个文本 / 82 个二进制），不静默跳过                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 空集陷阱                                                                                                                              | ✅ 每条"找不到"的断言都配了**阳性对照**（先证明"不钉住时确实找得到一个"），否则 `null` 与"这条路本来就走不通"长得一样                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 新增 `src/**/*.test.ts` 登记                                                                                                          | ✅ 本轮新增测试在 `packages/pipeline/src/__tests__/` 与 `apps/daemon/src/{runtime,pipeline}/`，两个包的 tsconfig 都是 `include: ["src/**/*"]`；`tsconfig.test.json` 全仓**只有 `apps/web` 一个**，本轮没有新增 web 测试。两个包的 test 脚本前置守卫（源码 test 数 = dist test 数）本轮**真的响过一次**，所以它是活的                                                                                                                                                                                                                                                                                                                         |
+| `.github/**` · `vendor/**` · `scripts/**`                                                                                             | ✅ **一个字未改**（`vendor/manifests/backends.json` 只用 Node 读过）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `apps/web/**`                                                                                                                         | ✅ **一个字未改**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `HANDOFF.md` / `00-CHARTER.md` / `BOARD.md` / `ROSTER.md` / `docs/adr/**` / `PENDING-USER-DECISIONS.md` / `README.md` / `SECURITY.md` | ✅ 一个字未改                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 派出的 subagent                                                                                                                       | 0 个                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ## SHARED-CHANGE
 
-| 文件 | 归属 | 我做了什么 | 冲突风险 |
-|---|---|---|---|
-| `packages/shared/src/backends.ts` | `model-mgmt` | `BackendSelfTest` 加一个**可选**字段 `backendUsed?`。可选是刻意的：T-166 之前写下的记录没有它，必填在补齐所有构造点之前红是必然的（PROTOCOL §10 推论） | 低 |
-| `packages/pipeline/src/tools.ts` | `pack-select` 刚交付 | `BackendToolPreference` 加可选 `packId`；**不传时行为逐字不变**（有一条阴性对照专门钉这一点）。另删除零调用方的 `findInstalledModel` | 中低（`pack-select` 已交付，树上无其未完成改动） |
-| `apps/daemon/src/http/rest/backends.ts` | `model-mgmt` / **`ui-backlog` 在途** | **只改文件头注释**（订正一句已经不成立的话） | ⚠️ **中**：该文件此刻有别人的未完成改动，两块不相交，见边界申报 |
-| `apps/daemon/src/pipeline/setup.ts` | `oss-scout` / `gpu-runtime` | `resolveWhisperVadModel` 的 by-name 兜底改成调 pipeline 那一份，**结论不变、少一份实现** | 低 |
+| 文件                                    | 归属                                 | 我做了什么                                                                                                                                             | 冲突风险                                                        |
+| --------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| `packages/shared/src/backends.ts`       | `model-mgmt`                         | `BackendSelfTest` 加一个**可选**字段 `backendUsed?`。可选是刻意的：T-166 之前写下的记录没有它，必填在补齐所有构造点之前红是必然的（PROTOCOL §10 推论） | 低                                                              |
+| `packages/pipeline/src/tools.ts`        | `pack-select` 刚交付                 | `BackendToolPreference` 加可选 `packId`；**不传时行为逐字不变**（有一条阴性对照专门钉这一点）。另删除零调用方的 `findInstalledModel`                   | 中低（`pack-select` 已交付，树上无其未完成改动）                |
+| `apps/daemon/src/http/rest/backends.ts` | `model-mgmt` / **`ui-backlog` 在途** | **只改文件头注释**（订正一句已经不成立的话）                                                                                                           | ⚠️ **中**：该文件此刻有别人的未完成改动，两块不相交，见边界申报 |
+| `apps/daemon/src/pipeline/setup.ts`     | `oss-scout` / `gpu-runtime`          | `resolveWhisperVadModel` 的 by-name 兜底改成调 pipeline 那一份，**结论不变、少一份实现**                                                               | 低                                                              |
 
 ---
 
@@ -414,11 +424,11 @@ CPU 包里**根本没有** `libggml-vulkan.so`（实测目录清单，23 个文�
 
 ## 它不止一处出口，而且有一条**闭环锁死**
 
-| 出口 | 缺陷原状 | 用户看到 |
-|---|---|---|
-| `/runtime`「为什么这些后端不可用」 | 原样渲染那句话 | 「驱动缺失或过旧」→ 去折腾没坏的驱动 |
-| `catalog` 的 `inapplicableKind` | 落到 `'unsupported'` | 一个完好的包被标「本机不支持」 |
-| `POST /api/backends/select` | 409 CONFLICT | **选了 CPU 之后再也选不回 Vulkan** |
+| 出口                               | 缺陷原状             | 用户看到                             |
+| ---------------------------------- | -------------------- | ------------------------------------ |
+| `/runtime`「为什么这些后端不可用」 | 原样渲染那句话       | 「驱动缺失或过旧」→ 去折腾没坏的驱动 |
+| `catalog` 的 `inapplicableKind`    | 落到 `'unsupported'` | 一个完好的包被标「本机不支持」       |
+| `POST /api/backends/select`        | 409 CONFLICT         | **选了 CPU 之后再也选不回 Vulkan**   |
 
 第三条是闭环：选 cpu → 包排序把 cpu 包排最前 → `backendDir` 指向 cpu 包 →
 探测报 `vulkan.available=false` → 想选回 vulkan 被 409 拒绝，
@@ -489,6 +499,7 @@ sel=vulkan  vulkan reason="installed but enumerated no devices (driver missing o
 # §1 改了什么（请 `git add` 后逐条核对）
 
 改：
+
 ```
 packages/shared/src/hardware.ts        BackendStatus 新增必填 probed: boolean（含判据与实测记录）
 packages/shared/src/schemas.ts         zod 镜像 +probed
@@ -507,6 +518,7 @@ packages/runtime/src/backends/applicability.test.ts  夹具补 probed；"装了�
 ```
 
 新增：
+
 ```
 packages/runtime/src/probe/probedBackends.ts              扫描器（唯一实现）
 packages/runtime/src/backends/notProbedVsUnavailable.test.ts  9 条
@@ -533,16 +545,16 @@ daemon 侧那条 `★ 判据不依赖文案` 同理：把 `unavailableReason` �
 软链回真仓库会把跨包变异**吃掉并伪装成"变异存活"**（`daemon-backlog §4.1` 第 2 条）。
 脚本 `/tmp/backenddir-gap/rv.mjs` 可重跑。
 
-| 变异（= 缺陷原状） | 结果 | 红在哪 |
-|---|---|---|
-| **M1** `probed` 不再看目录，探针跑了就算探过 | ✔ 红 2 | `✖ 显式选 CPU 时，已装的 Vulkan 包不许被说成驱动有问题` / `✖ 两种情形给出的话必须不同` |
-| **M2** 目录扫描不看文件名（"顺手简化"） | ✔ 红 1 | `✖ 真的读一次磁盘：读不出来的目录必须返回空集` + 出厂清单那条 |
-| **M3** 目录读不到时谎称六个后端都加载过 | ✔ 红 1 | 同上 |
-| **M4** 解环通道退回只看 `installed` | ✔ 红 1 | `✖ T-168：装了、但这次探测根本没加载它 → 那不是裁决` |
-| **M5** `inapplicableKind` 退回只嗅探字符串 | ✔ 红 3 | `✖ 装了但这次没探它 → undetermined` |
-| **M6** select 闸门退回「available 不为真就 409」 | ✔ 红 2 | `✖ 装了但这次没探它 → 必须放行` |
-| **M7** ★ 让 `probed` 恒为假（= 把真驱动诊断一起删掉） | ✔ 红 2 | `✖ 阴性对照：探针真的加载过它却没枚举到设备 → 驱动那句必须照旧报得出来` |
-| **M8** 枚举到设备不再蕴含 `probed` | ✔ 红 1 | `✖ available 为真时 probed 必须也为真` |
+| 变异（= 缺陷原状）                                    | 结果   | 红在哪                                                                                 |
+| ----------------------------------------------------- | ------ | -------------------------------------------------------------------------------------- |
+| **M1** `probed` 不再看目录，探针跑了就算探过          | ✔ 红 2 | `✖ 显式选 CPU 时，已装的 Vulkan 包不许被说成驱动有问题` / `✖ 两种情形给出的话必须不同` |
+| **M2** 目录扫描不看文件名（"顺手简化"）               | ✔ 红 1 | `✖ 真的读一次磁盘：读不出来的目录必须返回空集` + 出厂清单那条                          |
+| **M3** 目录读不到时谎称六个后端都加载过               | ✔ 红 1 | 同上                                                                                   |
+| **M4** 解环通道退回只看 `installed`                   | ✔ 红 1 | `✖ T-168：装了、但这次探测根本没加载它 → 那不是裁决`                                   |
+| **M5** `inapplicableKind` 退回只嗅探字符串            | ✔ 红 3 | `✖ 装了但这次没探它 → undetermined`                                                    |
+| **M6** select 闸门退回「available 不为真就 409」      | ✔ 红 2 | `✖ 装了但这次没探它 → 必须放行`                                                        |
+| **M7** ★ 让 `probed` 恒为假（= 把真驱动诊断一起删掉） | ✔ 红 2 | `✖ 阴性对照：探针真的加载过它却没枚举到设备 → 驱动那句必须照旧报得出来`                |
+| **M8** 枚举到设备不再蕴含 `probed`                    | ✔ 红 1 | `✖ available 为真时 probed 必须也为真`                                                 |
 
 **M7 是刻意加的**：它证明阴性对照**有牙齿** —— 否则"把驱动诊断整句删掉"也能全绿，
 而那是本次改动最像成功的失败方式（把假阳性换成假阴性）。
@@ -566,30 +578,30 @@ daemon 侧那条 `★ 判据不依赖文案` 同理：把 `unavailableReason` �
 
 # §4 纪律申报
 
-| 条 | 结果 |
-|---|---|
-| `apps/web/dist` | ✅ **未构建**。全程只跑 `pnpm build:safe`（输出可见：shared/db/downloader/llm/mindmap/runtime/pipeline/daemon **八个包，没有 web**）、`npx tsc -b`、`node --test`；`vite build` / `pnpm -r build` **一次都没跑**。⚠️ 如实报一条观测（与上一轮同形）：`apps/web/dist/{,assets/,index.html}` mtime 全部是 `16:20:20.7203–.7208`，比 commit `e28f5e5` 的提交时间 `16:20:19` 晚一秒。**`UNKNOWN`：我无法归因**，只能排除自己 —— `build:safe` 按 `--filter "!@openmemo/web"` 过滤，`gen-build-info.mjs` 只写 `apps/daemon/dist/build-info.json`（已读源码确认）。**不猜是谁**，请 Manager 与那次提交的作者对一下 |
-| `pnpm -r build` | ✅ 未跑 |
-| `:10000` | ✅ **一个请求都没发**。未重启、未 kill、未占用；本轮起的端口只有 node:test 自己的 ≥19000 段 |
-| `/root/data-memo` | ✅ **未读未写**。全部验证在 `mkdtemp`（`/tmp/om-backenddir-*`）与 `/tmp/backenddir-gap/` |
-| 指针文件 | ✅ 开工与收工两次核对，sha256 均为 `7f930979b85204d4c05b221f4c17a5cf5936a4d432a46488816727f60da233f3`，内容仍是 `/root/data-memo`。复现脚本在**第一行**就 `delete` 掉 `OPENMEMO_{MODELS,DATA_DIR,EXT_DIR,PROBE,BACKEND_DIR,WHISPER_CLI,ASR_MODEL,POINTER_FILE}`；新增的 daemon 用例在**模块顶层**钉 `OPENMEMO_MODELS`/`OPENMEMO_EXT_DIR` 到 tmp，窗口为零、无清理代码（PROTOCOL §9-bis） |
-| `pkill -f` | ✅ 未用（一次 kill 都没有） |
-| release / `gh` | ✅ 未建/未改/未删。只用过一次匿名 `fetch` 列 release 资产名（只读） |
-| 本机 whisper 转写 | ✅ **一次都没跑**。跑过的二进制只有 `openmemo-probe`（只读枚举，两个目录各一次） |
-| 反向验证 | ✅ 全部在 `/tmp/backenddir-gap/rv` 隔离副本，**先跑对照组**；共享工作树未坏过一秒；跑完已 `rm -rf` |
-| 只造一个解析器 | ✅ `probedBackendsInDir()` 一份实现，`detectHardware()` 与 daemon 的 `composeHardware()` 都调它 |
-| 空集陷阱 | ✅ 每条"找不到/不许出现"的断言都配阳性对照（先证明另一种情形下确实找得到），否则 `false` 与"这条路本来就走不通"长得一样 |
-| `.github/**` · `vendor/**` · `scripts/**` · `apps/web/**` · ADR / CHARTER / BOARD / HANDOFF | ✅ **一个字未改**（`vendor/manifests/backends.json` 只用 Node 读过） |
-| 派出的 subagent | 1 个（只读扫 `BackendStatus` 的全部消费方，未改任何文件） |
+| 条                                                                                          | 结果                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/dist`                                                                             | ✅ **未构建**。全程只跑 `pnpm build:safe`（输出可见：shared/db/downloader/llm/mindmap/runtime/pipeline/daemon **八个包，没有 web**）、`npx tsc -b`、`node --test`；`vite build` / `pnpm -r build` **一次都没跑**。⚠️ 如实报一条观测（与上一轮同形）：`apps/web/dist/{,assets/,index.html}` mtime 全部是 `16:20:20.7203–.7208`，比 commit `e28f5e5` 的提交时间 `16:20:19` 晚一秒。**`UNKNOWN`：我无法归因**，只能排除自己 —— `build:safe` 按 `--filter "!@openmemo/web"` 过滤，`gen-build-info.mjs` 只写 `apps/daemon/dist/build-info.json`（已读源码确认）。**不猜是谁**，请 Manager 与那次提交的作者对一下 |
+| `pnpm -r build`                                                                             | ✅ 未跑                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `:10000`                                                                                    | ✅ **一个请求都没发**。未重启、未 kill、未占用；本轮起的端口只有 node:test 自己的 ≥19000 段                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `/root/data-memo`                                                                           | ✅ **未读未写**。全部验证在 `mkdtemp`（`/tmp/om-backenddir-*`）与 `/tmp/backenddir-gap/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 指针文件                                                                                    | ✅ 开工与收工两次核对，sha256 均为 `7f930979b85204d4c05b221f4c17a5cf5936a4d432a46488816727f60da233f3`，内容仍是 `/root/data-memo`。复现脚本在**第一行**就 `delete` 掉 `OPENMEMO_{MODELS,DATA_DIR,EXT_DIR,PROBE,BACKEND_DIR,WHISPER_CLI,ASR_MODEL,POINTER_FILE}`；新增的 daemon 用例在**模块顶层**钉 `OPENMEMO_MODELS`/`OPENMEMO_EXT_DIR` 到 tmp，窗口为零、无清理代码（PROTOCOL §9-bis）                                                                                                                                                                                                                    |
+| `pkill -f`                                                                                  | ✅ 未用（一次 kill 都没有）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| release / `gh`                                                                              | ✅ 未建/未改/未删。只用过一次匿名 `fetch` 列 release 资产名（只读）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 本机 whisper 转写                                                                           | ✅ **一次都没跑**。跑过的二进制只有 `openmemo-probe`（只读枚举，两个目录各一次）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 反向验证                                                                                    | ✅ 全部在 `/tmp/backenddir-gap/rv` 隔离副本，**先跑对照组**；共享工作树未坏过一秒；跑完已 `rm -rf`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 只造一个解析器                                                                              | ✅ `probedBackendsInDir()` 一份实现，`detectHardware()` 与 daemon 的 `composeHardware()` 都调它                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 空集陷阱                                                                                    | ✅ 每条"找不到/不许出现"的断言都配阳性对照（先证明另一种情形下确实找得到），否则 `false` 与"这条路本来就走不通"长得一样                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `.github/**` · `vendor/**` · `scripts/**` · `apps/web/**` · ADR / CHARTER / BOARD / HANDOFF | ✅ **一个字未改**（`vendor/manifests/backends.json` 只用 Node 读过）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 派出的 subagent                                                                             | 1 个（只读扫 `BackendStatus` 的全部消费方，未改任何文件）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 ## SHARED-CHANGE
 
-| 文件 | 归属 | 我做了什么 | 冲突风险 |
-|---|---|---|---|
-| `packages/shared/src/hardware.ts` + `schemas.ts` + `openapi.yaml` | `model-mgmt` | `BackendStatus` 加**必填** `probed`。必填是刻意的，理由见 TL;DR | 中：契约变更，但全仓只有一个真实产出方，已全部补齐 |
-| `packages/runtime/src/backends/manager.ts` / `applicability.ts` | `gpu-runtime` / `gates-fix` | 加一档理由 + 放宽解环条件。**`applicability.ts` 文件头那套推理没有被推翻**，我改的是它自己写下的一个前提（"装上之后 probe 已经有过机会"）—— 那个前提在单值 `backendDir` 下不成立 | 中低 |
-| `apps/daemon/src/http/rest/backends.ts` | `model-mgmt` / `ui-backlog` | 改了 `inapplicableKind` 与 select 闸门两处；**没碰** `InapplicableKind` 类型、`startPackInstall`、`toInstalledRecord` | 中：该文件近期多人动过，请逐 hunk 看 |
-| `packages/downloader/scripts/reference-server.mjs` | `downloader` | mock 补字段 + 改掉编造的驱动理由 | 低（仅开发用参考服务器） |
+| 文件                                                              | 归属                        | 我做了什么                                                                                                                                                                       | 冲突风险                                           |
+| ----------------------------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `packages/shared/src/hardware.ts` + `schemas.ts` + `openapi.yaml` | `model-mgmt`                | `BackendStatus` 加**必填** `probed`。必填是刻意的，理由见 TL;DR                                                                                                                  | 中：契约变更，但全仓只有一个真实产出方，已全部补齐 |
+| `packages/runtime/src/backends/manager.ts` / `applicability.ts`   | `gpu-runtime` / `gates-fix` | 加一档理由 + 放宽解环条件。**`applicability.ts` 文件头那套推理没有被推翻**，我改的是它自己写下的一个前提（"装上之后 probe 已经有过机会"）—— 那个前提在单值 `backendDir` 下不成立 | 中低                                               |
+| `apps/daemon/src/http/rest/backends.ts`                           | `model-mgmt` / `ui-backlog` | 改了 `inapplicableKind` 与 select 闸门两处；**没碰** `InapplicableKind` 类型、`startPackInstall`、`toInstalledRecord`                                                            | 中：该文件近期多人动过，请逐 hunk 看               |
+| `packages/downloader/scripts/reference-server.mjs`                | `downloader`                | mock 补字段 + 改掉编造的驱动理由                                                                                                                                                 | 低（仅开发用参考服务器）                           |
 
 ---
 

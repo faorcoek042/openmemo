@@ -6,7 +6,11 @@
  */
 
 import type { QueryClient } from '@tanstack/react-query';
-import type { BackendInstalledEvent, BackendRemovedEvent, HardwareChangedEvent } from '@openmemo/shared';
+import type {
+  BackendInstalledEvent,
+  BackendRemovedEvent,
+  HardwareChangedEvent,
+} from '@openmemo/shared';
 
 import { bus } from '../../lib/events/bus';
 import { qk } from '../../app/query';

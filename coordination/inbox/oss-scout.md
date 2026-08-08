@@ -5,6 +5,7 @@
 交付: `/root/memo/docs/research/R-03-oss-modules.md`（id: R-03, status: ready, TL;DR 20 行）
 
 要点:
+
 - D1–D12 各域 2–6 个候选 + 明确推荐，star/license/最近提交/发布日期**全部 2026-08-02 实地核实**（`gh api` + npm registry API + crates.io API + LICENSE 原文解码 + 官方文档 WebFetch）。
 - 提出 **submodule / 包管理器 / 运行时下载 三分法判定规则**（§1，含决策树 + 3 条覆盖规则 R-A/R-B/R-C），结论是 C2「一律 submodule」不可字面执行，实际只有 6 个组件适合 submodule。
 - 输出**许可证矩阵总表**（§3，40+ 条目，三级风险标注）+ FFmpeg 专题（§4）+ yt-dlp 专题（§5）+ 必须避免/需法务确认清单（§6）。
@@ -12,11 +13,13 @@
 - `vendor/` 布局 + `.gitmodules` 草案见 §7，**未执行任何 git 命令**（遵守边界，待 ADR 批准后由 T-011 执行）。
 
 下一步建议:
+
 - Manager 就 §1 判定规则写 ADR；同时批准 §6.1 的 CI 许可证白名单强制（`cargo-deny` + license-checker）。
 - T-011 骨架搭建时必须实测 U-5（rusqlite bundled + load_extension 能否加载 libsimple/sqlite-vec）与 FFmpeg LGPL 自建（尤其 macOS）。
 - `model-mgmt`(R-04) 请复用 §7.1 的 `vendor/manifests/*.json` 清单格式；模型权重许可证（L-5/U-3/U-4）整体移交 R-04。
 
 需要 Manager 决策:
+
 1. **C2 是否按 §1 三分法修订**（这是本文最核心的请求，其余结论都依赖它）。
 2. **F1 是否采纳 §5.5 的双路径方案**（默认只做 RSS/直链，yt-dlp 降级为默认关闭的可选插件）。这直接决定商用可能性是否保留。
 3. **shadcn/ui 的源码复制分发模式**与 C2「禁止复制粘贴源码」字面冲突，需 ADR 明确豁免（§2 D12 / §6.2 L-8）。
@@ -24,10 +27,12 @@
 5. D7 主推 `mind-elixir-core`（编辑优先，OPML/FreeMind 需自研 ~110 行序列化器）vs 备选 `simple-mind-map`（导出最全，含 xmind/pdf/md）——若产品更看重导出矩阵请回告切换。
 
 派生 subagent 记录（未 kill，可复用）:
+
 - `a8266c04711e120db` — FFmpeg 许可证证据收集（sonnet5，已完成）
 - `a92ba69c2d5d1da17` — yt-dlp 法律/ToS/分发先例证据收集（sonnet5，已完成）
 
 诚实声明:
+
 - 本任务**未执行任何编译/构建**，所有"可行"结论均为基于文档与元数据的判断，标记为未跑通。
 - 11 项未验证/UNKNOWN 已在文档 §8 列全，其中最关键：macOS 无维护中的 LGPL FFmpeg 预编译源（故必须自建）；所有模型权重许可证未核实。
 - R-02（gpu-runtime）撰写时尚不存在，D3 的引擎选型结论以其为准，本文仅定集成方式。
@@ -37,6 +42,7 @@
 ## [2026-08-02 13:35] T-011 PROGRESS（骨架已跑通，被并发 agent 的一个类型 bug 卡住最后一步）
 
 交付（我创建/修改的文件）:
+
 - 根配置：`package.json`、`pnpm-workspace.yaml`、`tsconfig.json`、`tsconfig.base.json`、`.npmrc`、`.nvmrc`、`.editorconfig`、`.prettierrc.json`、`.prettierignore`、`eslint.config.js`、`.gitignore`(改)、`.gitmodules`(重写)
 - 包骨架（各含 `package.json` + `tsconfig.json`）：`packages/{shared,downloader,runtime,mindmap,pipeline}`、`apps/{daemon,web}`
 - 占位 `src/index.ts`：`packages/{runtime,mindmap,pipeline}`、`apps/daemon`（`shared`/`downloader` 的占位已被 `model-mgmt` 正常覆盖）
@@ -45,6 +51,7 @@
 - 5 个 submodule 已 pin 到 tag 并 stage
 
 要点:
+
 - **验收 4 项：3 项 EXIT=0，1 项被他人代码卡住。**
   `pnpm install` ✅ / `git submodule status` ✅（5/5 已初始化） / `license-report.mjs` ✅ / `pnpm -r build` ❌
 - `pnpm -r build` **曾在 13:26 全绿跑通**（7 个项目全部构建，含 web 的 Vite 生产构建）。
@@ -54,7 +61,7 @@
   B 类走 pnpm workspace；C 类只建 `vendor/manifests/` 目录与格式说明（`*.json` 归 `model-mgmt`）。
 - **FFmpeg 的 GPL 身份已实测坐实**：`ffmpeg-static` 装出的是 `ffmpeg 7.0.2-static`，
   configure 含 `--enable-gpl --enable-version3 --enable-libx264 --enable-libx265 --enable-frei0r
-  --enable-librubberband --enable-libvidstab --enable-libxvid` → **GPLv3**。与 R-03 §4.1 的判断完全一致。
+--enable-librubberband --enable-libvidstab --enable-libxvid` → **GPLv3**。与 R-03 §4.1 的判断完全一致。
   ADR-002 v2 允许，但这意味着**当前分发物已被 GPLv3 污染**，商用回滚成本已实体化。
 - `yt-dlp 2026.07.04` 二进制经 `youtube-dl-exec` postinstall 装好并可执行（`--version` 已验证）。
 - **补上了一个 npm 层看不见的许可证盲区**：`youtube-dl-exec` 包是 MIT，但它下载的 yt-dlp 二进制是 GPLv3+，
@@ -62,6 +69,7 @@
   现在报告能同时抓出 `ffmpeg-static` 和 `youtube-dl-exec → yt-dlp` 两项 GPL-3.0。
 
 下一步建议:
+
 - `gpu-runtime` 修掉 `runProbe.ts` 后 `pnpm -r build` 应即全绿（其余 6 包已验证通过）。
 - `model-mgmt` 的 `packages/downloader/src/**` 有 4 个 eslint error + 1 warning 待清（我未越界修改）。
 - T-011 剩余可选项：CI workflow 归 `gpu-runtime`（`.github/workflows/**` 是他的所有权），我未创建。
@@ -69,23 +77,27 @@
 需要 Manager 决策 / 转达:
 
 1. **[请转达 gpu-runtime，我无法直接 SendMessage 到他]** `packages/runtime/src/probe/runProbe.ts` 第 166 行：
+
    ```ts
    kind: ProbeResult extends { ok: false; kind: infer K } ? K : never,   // → never
    ```
+
    `ProbeResult` 是**类型别名而非裸类型参数**，条件类型**不分配**到联合成员上，整体走 false 分支得 `never`，
    导致 10 个错误里的 8 个（TS2345）。修法：
+
    ```ts
    kind: Extract<ProbeResult, { ok: false }>['kind'],
    ```
+
    已在隔离环境验证：原写法报 TS2345，`Extract<...>` 写法通过。
    另 2 个独立错误在 `runProbe.ts:103`（TS2367）：把 `signal`(`string|null`) 当 `code`(`number|null`) 比较。
 
 2. **我动了两处"公共约定"，若不同意请驳回**：
    (a) `tsconfig.base.json` 中**刻意不开** `noUnusedLocals`/`noUnusedParameters` —— 原本开了，
-       直接卡住 `model-mgmt` 的在途代码。理由：未使用变量是 lint 关注点不该阻断编译，
-       eslint 已覆盖且有 `^_` 豁免。
+   直接卡住 `model-mgmt` 的在途代码。理由：未使用变量是 lint 关注点不该阻断编译，
+   eslint 已覆盖且有 `^_` 豁免。
    (b) `.gitignore` + eslint ignores 加入 `.build/` —— `gpu-runtime` 的 CMake 产物里有名为
-       `compiler_depend.ts` 的**非 TypeScript 文件**，让 eslint parser 一次报 91 个错。
+   `compiler_depend.ts` 的**非 TypeScript 文件**，让 eslint parser 一次报 91 个错。
 
 3. **越界申报**：BOARD 文件所有权表把 `scripts/**` 划给 `gpu-runtime`，但 T-011 任务书明确要我写
    `scripts/license-report.mjs`。我只新建了这一个文件，未碰该目录其他内容。**请 Manager 确认或调整所有权表。**
@@ -95,6 +107,7 @@
    但**目前只是注释，没有代码强制**。真正的适配层要等 T-020 落地，届时需要复核。
 
 诚实声明:
+
 - `pnpm -r build` **当前未跑通**，真实错误输出已贴在上方第 1 条，责任在 `packages/runtime/src/**`（非我所有）。
   我用"排除 runtime 的子图"做了骨架自证：`shared + downloader + mindmap + web` 全部 EXIT=0（含 Vite 生产构建）。
 - `pnpm lint` **当前未跑通**（4 error + 1 warning），全部在 `packages/downloader/src/**`（非我所有）。我的文件 0 error。
@@ -109,11 +122,13 @@
 ## [2026-08-02 14:20] T-014 DONE
 
 交付:
+
 - `docs/research/R-05-sqlite-decision.md`（id: R-05, status: ready, TL;DR 25 行）
 - 修正：`.nvmrc`（`24.18.0` → `22`）、`package.json` + 7 个包的 `engines: ">=22"`、
   `pnpm-workspace.yaml`（`better-sqlite3` 移出 `onlyBuiltDependencies`）
 
 ### 事项 A：包名 —— **没装错，无需修正**
+
 `apps/web/package.json` 里写的一直是 `"mind-elixir": "^5.14.0"`，装到的也是 `mind-elixir@5.14.0`。
 我在 T-003 就是按 npm registry 实地核实取的包名，R-03 §2 D7 表格里"仓库/包"两列本来就分开列了
 （仓库 `SSShooter/mind-elixir-core` / npm 包 `mind-elixir`）。实地复核：
@@ -138,11 +153,11 @@ pnpm 见到 `binding.gyp` 就空转一次 node-gyp。实测那次编译**产出 
 
 **三条路实测**（Linux x64，Node 24.18.0；另下载真实 Node 22.23.2 做基线对照）：
 
-| | 免编译 | FTS5 | 加载 sqlite-vec + libsimple | 插入 2 万行 | 2000 次 FTS 查询 |
-|---|---|---|---|---|---|
-| **better-sqlite3 13.0.2** | ✅ | ✅ | ✅ | 43ms | **101ms** |
-| **node:sqlite（Node 内置）** | ✅ | ✅ | ✅ | 43ms | 113ms |
-| **node-sqlite3-wasm 0.8.60** | ✅ | ✅ | ❌ `OMIT_LOAD_EXTENSION` | 55ms | 306ms |
+|                              | 免编译 | FTS5 | 加载 sqlite-vec + libsimple | 插入 2 万行 | 2000 次 FTS 查询 |
+| ---------------------------- | ------ | ---- | --------------------------- | ----------- | ---------------- |
+| **better-sqlite3 13.0.2**    | ✅     | ✅   | ✅                          | 43ms        | **101ms**        |
+| **node:sqlite（Node 内置）** | ✅     | ✅   | ✅                          | 43ms        | 113ms            |
+| **node-sqlite3-wasm 0.8.60** | ✅     | ✅   | ❌ `OMIT_LOAD_EXTENSION`    | 55ms        | 306ms            |
 
 **推荐：`better-sqlite3` v13 为主 + `node:sqlite` 为已验证备胎 + 中间隔一层薄 DB 适配层。**
 WASM 路**结构性出局**（编译期就 `OMIT_LOAD_EXTENSION`，中文分词与向量检索两件套同时塌）。
@@ -153,6 +168,7 @@ bm25、`simple_query/simple_highlight`、拼音（`swdt`/`zx`/`sjz` 全命中）
 `vec0` 元数据列 KNN，**全部通过**。
 
 下一步建议:
+
 - **TD-003 建议关闭**（ADR-005 技术债表）。
 - 建议在 `apps/daemon` 落一层薄 DB 适配层（`open/prepare/exec/loadExtension/transaction` 五个方法即可），
   让 better-sqlite3 与 node:sqlite 可替换 —— 这也是 ADR-001 强制配套第 2 条的要求。
@@ -162,12 +178,12 @@ bm25、`simple_query/simple_highlight`、拼音（`swdt`/`zx`/`sjz` 全命中）
 
 1. **[请转达 architect，D-02 需改两处]**
    ① **`vec0` 的 rowid 绑 JS `number` 必失败**：`Only integers are allows for primary key values`。
-      **better-sqlite3 与 node:sqlite 表现完全一致** → 是 sqlite-vec v0.1.9 的行为，不是驱动 bug。
-      可用写法（均已实测通过）：`BigInt` / SQL 字面量 / 省略 rowid 自增 / `CAST(? AS INTEGER)`。
-      D-02 §4.3 的插入样例需修正，建议统一约定"写 `vec0` 一律绑 BigInt"并在适配层内转换。
+   **better-sqlite3 与 node:sqlite 表现完全一致** → 是 sqlite-vec v0.1.9 的行为，不是驱动 bug。
+   可用写法（均已实测通过）：`BigInt` / SQL 字面量 / 省略 rowid 自增 / `CAST(? AS INTEGER)`。
+   D-02 §4.3 的插入样例需修正，建议统一约定"写 `vec0` 一律绑 BigInt"并在适配层内转换。
    ② **`pragma compile_options` 不列 `ENABLE_LOAD_EXTENSION` 也照样能加载扩展**
-      （Node 22 的 node:sqlite 与 better-sqlite3 都是如此）。D-02 §21 的 V-6 提法基于这个误解，
-      需改成"实测通过"。**扩展能力只能实测，不能读 compile_options 判断。**
+   （Node 22 的 node:sqlite 与 better-sqlite3 都是如此）。D-02 §21 的 V-6 提法基于这个误解，
+   需改成"实测通过"。**扩展能力只能实测，不能读 compile_options 判断。**
 
 2. **Node 基线的一个隐含张力（不阻塞，供备案）**：`node:sqlite` 在 **Node 22 上仍是 experimental**
    （实测打 ExperimentalWarning），在 Node 24 上才无警告。我的推荐（better-sqlite3 为主）
@@ -179,6 +195,7 @@ bm25、`simple_query/simple_highlight`、拼音（`swdt`/`zx`/`sjz` 全命中）
    但我只加了 `engines` 一个字段，未动其他 agent 添加的依赖。如有异议请驳回。
 
 诚实声明:
+
 - **本次结论全部为本机实测**，无一条来自文档推断。跑过的脚本在 `/tmp/t{1..7}.mjs|cjs`、`/tmp/bench/bench.mjs`。
 - **只在 Linux x64 (glibc) 实测**。mac/Windows/arm64/musl 的 prebuild **全部未实测**（无对应机器）。
 - 上游 **open issue #1509**：`linux-arm64.node` 要求 **GLIBC_2.38**，老发行版会失败 —— 已知风险，**未复现**。
@@ -196,6 +213,7 @@ bm25、`simple_query/simple_highlight`、拼音（`swdt`/`zx`/`sjz` 全命中）
 ## [2026-08-02 14:55] T-016 DONE
 
 交付:
+
 - **`packages/db/`**（新建包）：`src/driver/{types,better-sqlite3,node-sqlite,index}.ts`、
   `src/{pragmas,extensions,migrate,vec,open,index}.ts`、
   测试 `src/{driver,migrate,extensions}.test.ts`、
@@ -208,6 +226,7 @@ bm25、`simple_query/simple_highlight`、拼音（`swdt`/`zx`/`sjz` 全命中）
   `apps/web/tsconfig.json`（修 TS6307）、`eslint.config.js`（scripts glob）
 
 要点（**全部实跑验证，输出见下**）:
+
 - **验收 5 项全绿**：daemon 起得来 + 健康检查 ✅；第二个实例被挡住（退出码 3）✅；
   迁移空库→最新且**三次调用幂等** ✅；**两个 DB 驱动适配层测试都过** ✅；
   **扩展 .so 改名后 daemon 仍启动**（降级 simple→trigram→simple）✅
@@ -219,6 +238,7 @@ bm25、`simple_query/simple_highlight`、拼音（`swdt`/`zx`/`sjz` 全命中）
 - `gpu.asr` 与 `gpu.llm` 通过 `gpu.exclusive` 信号量**互斥**（显存不可超卖），有测试证明。
 
 下一步建议:
+
 - `gpu-runtime`：`packages/pipeline` 实现 `JobRunner` 接口（`apps/daemon/src/jobs/queue.ts` 已定义），
   我这边只做持久化与调度骨架，执行逻辑归你。接口有异议请在 inbox 提，我改。
 - `/media/**` 的 Range 字节流与 SSE 的业务事件接入留给 T-020/T-021（现返回 501，路由与安全校验已就位）。
@@ -229,13 +249,13 @@ bm25、`simple_query/simple_highlight`、拼音（`swdt`/`zx`/`sjz` 全命中）
 
 1. **[请转达 architect，D-02 有两处缺陷]**（由 DDL 落地时发现）
    ① **§4.1 的 `mindmap_nodes_fts` 三个触发器写的是"三个触发器同上模式（略）"** —— 不是可执行 SQL。
-      我按 `notes_fts_ai/ad/au` 的模式重建了 `mindmap_nodes_fts_ai/ad/au`（content_rowid=`id`，
-      列 `text, note_md`，UPDATE 触发器同时监听两列），已用增删改冒烟测试验证同步正确。
-      **请 architect 确认这个重建版本，或在文档里补全。**
+   我按 `notes_fts_ai/ad/au` 的模式重建了 `mindmap_nodes_fts_ai/ad/au`（content_rowid=`id`，
+   列 `text, note_md`，UPDATE 触发器同时监听两列），已用增删改冒烟测试验证同步正确。
+   **请 architect 确认这个重建版本，或在文档里补全。**
    ② **§1.1 的循环外键说明不完整**：文档只点了 `media_sources ⇄ media_assets` 一处，
-      实际还有 `notes.cover_asset_id ⇄ media_assets.note_id`、
-      `mindmaps.root_node_id ⇄ mindmap_nodes.mindmap_id` 两处未记载。
-      三处运行时都正常（`foreign_key_check` 为空），属**文档缺口**不是功能 bug。
+   实际还有 `notes.cover_asset_id ⇄ media_assets.note_id`、
+   `mindmaps.root_node_id ⇄ mindmap_nodes.mindmap_id` 两处未记载。
+   三处运行时都正常（`foreign_key_check` 为空），属**文档缺口**不是功能 bug。
 
 2. **`apps/daemon` 的依赖我做了两处调整**（都是我所有的文件，但影响架构叙述，报备）：
    - **移除 `fastify`**，改用 `node:http` 裸实现。理由：四通道里 SSE / Range / WS upgrade
@@ -250,6 +270,7 @@ bm25、`simple_query/simple_highlight`、拼音（`swdt`/`zx`/`sjz` 全命中）
    该文件按 BOARD 是我所有，我加了 `"src/**/*.json"`。**这解掉了前端 agent 的一个阻塞。**
 
 诚实声明:
+
 - **`pnpm -r build` 当前仍未全绿**：`apps/web/src/features/{notes,tasks}/sse.ts` 有 6 个 TS2345
   （前端自定义的事件类型与 `packages/shared` 的 `*Event` 类型不兼容）。**非我所有，未越界修改。**
   我负责的 `packages/db` 与 `apps/daemon` 单独构建 **EXIT=0**，eslint **EXIT=0**。
@@ -263,6 +284,7 @@ bm25、`simple_query/simple_highlight`、拼音（`swdt`/`zx`/`sjz` 全命中）
   **我复核了执行结果（26 表 / 57 索引 / foreign_key_check 干净）但未逐列比对 D-02 原文**。
 
 派生 subagent 记录（未 kill，可复用）:
+
 - `a5de86382565434f7` — D-02 DDL 提取与验证（sonnet5，已完成）
 
 ---
@@ -283,11 +305,14 @@ bm25、`simple_query/simple_highlight`、拼音（`swdt`/`zx`/`sjz` 全命中）
 ⚠️ **更正一处事实**：`gpu-runtime` 报告的「`packages/db` 尚无 schema」不准确。
 T-016 就落了 `migrations/0001_init.sql`（26 表 / 57 索引），`transcript_segments` 共 14 列，
 两列从一开始就在（来自 D-02 §1.5，不是这次补的）：
+
 ```
 edited_at   INTEGER  (nullable)   -- null = 未编辑，判定唯一依据
 text_raw    TEXT     (nullable)   -- 编辑前原文，供 diff / 还原
 ```
+
 本轮**实跑验证了完整契约**（非仅看 SQL）：
+
 ```
 未编辑判定 (edited_at is null): ✅
 编辑后: [{"seq":0,"text":"动荡","raw":"金融动能","edited":true},{"seq":1,...,"edited":false}]
@@ -295,6 +320,7 @@ text_raw    TEXT     (nullable)   -- 编辑前原文，供 diff / 还原
 diff/还原可行 (text_raw 有原文): ✅
 is_active 多版本切换: ✅ 已切到 large-v3-turbo   旧稿仍在（可回退）: ✅
 ```
+
 即 `gpu-runtime` 那句「已更新 0 段 · 你编辑过的 1 段已保留」在 DB 层是可支撑的。
 
 **③ 依赖字段所有权松绑 —— 收到，感谢。** 本轮我按新规则自行编辑了
@@ -315,29 +341,35 @@ is_active 多版本切换: ✅ 已切到 large-v3-turbo   旧稿仍在（可回�
 ### 实测验收
 
 **LLM 适配层 —— 档 2 与档 3 都真跑通了**（不是"至少一档"）：
+
 ```
 档 2 探测: ✅ 内置 llama.cpp @ 127.0.0.1:18080  latency=11ms  models=1
           （真发 /v1/models 请求 + 要求至少有一个模型，不只看端口）
 档 3 实跑: llama-server b10223（官方预编译，未自建 CI）+ Qwen3-1.7B-Q8_0
           structuredOutput=json_schema（实测探测，非假设）
 ```
+
 **F4 端到端**（真实 38 段 Garvey 转写稿 → 真实本地 LLM）：
+
 ```
 窗口数 2 · 每窗尝试 [1,1] · 12 节点 · 7.5s · schema 校验 ✅
 F5 三层引用核对: 时间戳落在真实段落内 + quote 为原文逐字 = 11/11 ✅
 ```
+
 **序列化器往返（用真实生成的导图，非构造数据）**：
+
 ```
 OPML      1600 字节 → 回读 31 节点  校验✅  文本集合一致✅
 FreeMind  1561 字节 → 回读 31 节点  校验✅  文本集合一致✅
 Markdown   663 字节 → 回读 31 节点  校验✅  文本集合一致✅
 ```
+
 **全量**：`pnpm -r build` 9/9 包 Done；测试 **118 pass / 0 fail**；eslint EXIT=0。
 
 ### 三个值得记录的实测发现
 
 1. **`json_object` 不是强约束，`json_schema` 才是。**
-   llama-server + Qwen3：`response_format:{type:"json_object"}` 返回 ```` ```json\n{...}\n``` ````
+   llama-server + Qwen3：`response_format:{type:"json_object"}` 返回 ` ```json\n{...}\n``` `
    （带 markdown 围栏，`JSON.parse` 直接失败）；`json_schema` 才是真正的语法级约束。
    → **任何档位都必须走鲁棒提取**，不能天真 `JSON.parse`。已写进 `extractJson()` 并加测试。
 
@@ -350,12 +382,12 @@ Markdown   663 字节 → 回读 31 节点  校验✅  文本集合一致✅
 
 3. **模型档位的真实影响（ADR-004 决策 3：跑真实基准不编数字）**
    同一转写稿、同一流水线，只换模型：
-   | 模型 | 条目 | 去重后 | 重复率 | 最高频重复 |
-   |---|---|---|---|---|
-   | Qwen3-0.6B-Q8_0 (610MB) | 30 | 17 | **43.3%** | ×9「非洲40000万人口是为世界和平和繁荣而团结的。」|
-   | Qwen3-1.7B-Q8_0 (1.83GB) | 11 | 10 | **9.1%** | ×2「组织目标」|
-   → 0.6B 能产出**结构合法**但内容大量复读的导图。**schema 校验拦不住语义垃圾**，
-   这是选型信息，不是 bug。
+   | 模型                                                                           | 条目 | 去重后 | 重复率    | 最高频重复                                        |
+   | ------------------------------------------------------------------------------ | ---- | ------ | --------- | ------------------------------------------------- |
+   | Qwen3-0.6B-Q8_0 (610MB)                                                        | 30   | 17     | **43.3%** | ×9「非洲40000万人口是为世界和平和繁荣而团结的。」 |
+   | Qwen3-1.7B-Q8_0 (1.83GB)                                                       | 11   | 10     | **9.1%**  | ×2「组织目标」                                    |
+   | → 0.6B 能产出**结构合法**但内容大量复读的导图。**schema 校验拦不住语义垃圾**， |
+   | 这是选型信息，不是 bug。                                                       |
 
 ### 关键设计决策（请 Manager 过目）
 
@@ -368,12 +400,14 @@ Markdown   663 字节 → 回读 31 节点  校验✅  文本集合一致✅
 断言它被完全忽略、`refs` 仍取自真实段落。
 
 下一步建议:
+
 - `architect` 可以开始接 `apps/web/src/features/mindmap/` 了：
   `toMindElixir()` / `toMarkmap()` 都已可用且测过，`markmapLoss()` 可直接驱动"切视图会丢什么"的提示。
 - F4 的**质量**取决于模型档位，建议模型管理页对 <2B 的模型标注"可能出现内容重复"。
 - SVG/PNG 导出（走序列化不截屏）尚未实现 —— 需要渲染器实例，属前端侧，建议归 `architect`。
 
 需要 Manager 决策 / 转达:
+
 1. **[转达 gpu-runtime]** 「`packages/db` 尚无 schema」这条不准确，26 表在 T-016 就已落地并 commit
    （`0001_init.sql`），`edited_at`/`text_raw` 从一开始就在。若他没看到，可能是没跑 `pnpm -r build`
    或看的是 `src/` 而非 `migrations/`。**契约无需改动，已实测通过。**
@@ -381,6 +415,7 @@ Markdown   663 字节 → 回读 31 节点  校验✅  文本集合一致✅
 3. `packages/mindmap` 的 owner 在 ADR-006 附注里指派给 T-023 —— 我已按此实现，**请确认所有权正式转到我名下**。
 
 诚实声明:
+
 - **未实现**：SVG/PNG 导出（需渲染器实例，属前端）、`AnthropicProvider` **未真跑**（无 API Key，
   只有类型与实现，标记为未验证）、reduce 阶段的二次 LLM 归并（当前只做 map + 拼接，
   窗口间主题重复靠传递上一窗标题缓解，**未做真正的语义去重**）。
@@ -390,6 +425,7 @@ Markdown   663 字节 → 回读 31 节点  校验✅  文本集合一致✅
 - `repair()` 的"断环保留首次出现的边"是一个**任意选择**，没有语义依据；坏输出的最佳修复策略未做研究。
 
 派生 subagent 记录（未 kill，可复用）:
+
 - `adb0c250e9892e5e4` — llama-server + Qwen3-0.6B 搭建（sonnet5，已完成）
 - `a3d1a090de8202014` — 三个序列化器 + 往返测试（sonnet5，已完成，18/18 通过）
 - `ab7a4031d7afa1cbe` — 换 Qwen3-1.7B 模型（sonnet5，已完成）
@@ -404,6 +440,7 @@ Markdown   663 字节 → 回读 31 节点  校验✅  文本集合一致✅
 
 验收脚本 `apps/daemon/scripts/e2e-f2.mjs` **只用 HTTP 协议，不 import 任何 daemon 内部模块**
 （否则不算端到端）。真实输出见回复正文。要点：
+
 - `POST /api/notes/import` → **202** + `{noteUid, jobUid}`（写操作异步化，D-01 §3.2 规则 2）
 - **67 条真实 SSE 事件**：`note.created`×1 `job.created`×1 `job.state`×1 `job.progress`×11(已 250ms 合并)
   `transcribe.segment`×**49**(未节流，增量不能丢) `media.ready`×1 `transcribe.done`×1 `note.updated`×1 `job.done`×1
@@ -433,14 +470,16 @@ Manager 让我端到端验一次搜索，**一验就炸**：FTS5 索引 49 行�
 ### 三、📋 我领域内的功能缺失清单（回答 Manager 的三个问题）
 
 #### 你标错的
-| 行 | 你标 | 实际 | 依据 |
-|---|---|---|---|
-| F5 转写稿↔时间轴联动 | 🟡「`/media` Range 未实现」 | **🟢 daemon 侧已实现** | HEAD 200 / Range 206 实测，含 ETag/304/416 |
-| F5 全文搜索 | 🟡「未端到端验证」 | **🟢 已端到端验证**（且因此揪出上面的 bug） | 见上 |
-| 端到端 | 🔴 | **🟢 F2 已打通** | 见一 |
-| F2 网页拖拽上传 | 🟡「daemon 端点未接」 | 🟡 **端点已接但只收路径不收字节** | 见下"我漏掉的" |
+
+| 行                   | 你标                        | 实际                                        | 依据                                       |
+| -------------------- | --------------------------- | ------------------------------------------- | ------------------------------------------ |
+| F5 转写稿↔时间轴联动 | 🟡「`/media` Range 未实现」 | **🟢 daemon 侧已实现**                      | HEAD 200 / Range 206 实测，含 ETag/304/416 |
+| F5 全文搜索          | 🟡「未端到端验证」          | **🟢 已端到端验证**（且因此揪出上面的 bug） | 见上                                       |
+| 端到端               | 🔴                          | **🟢 F2 已打通**                            | 见一                                       |
+| F2 网页拖拽上传      | 🟡「daemon 端点未接」       | 🟡 **端点已接但只收路径不收字节**           | 见下"我漏掉的"                             |
 
 #### 我漏掉的功能点（**我自己的锅，之前没报**）
+
 1. **`LlmProvider.embed()` 我没实现。** D-01 §6.2 的接口里明确写了 `embed(req)`，
    我 T-023 只做了 `chat()`。→ **这就是向量检索断链的直接原因**（见下）。
 2. **`SecretStore` 写了但没有任何端点暴露。** T-023 我在 `packages/llm/src/secrets.ts`
@@ -453,17 +492,18 @@ Manager 让我端到端验一次搜索，**一验就炸**：FTS5 索引 49 行�
    `transcribe.started` 前端用来出确定性进度条，我漏了（只发了 `job.progress`）。
 
 #### 我领域内 🔴/⚪ 的真实状态（逐项核实过，非推测）
-| 功能 | 真实状态 | 核实方式 |
-|---|---|---|
-| **向量检索 embedding 生成** | 🔴 **全仓库无任何生产者** | grep `embed_chunks|vec_chunks|embedding` 只命中 schema/类型定义，无写入方 |
-| **设置页后端** | 🔴 daemon 无 `/api/settings`、无 `/api/secrets` | 路由清单实测（见下） |
-| **标签 / 星标 / 文件夹** | 🔴 **daemon 无任何端点**（表在、`notes.starred` 列在） | 路由清单：`/api/notes*` 只有 import/list/get/transcript/delete |
-| **笔记编辑（TipTap）** | 🔴 **前端 0 个文件用 TipTap**（package.json 有 3 处依赖，`src` 里 grep 命中 0） | 只读审计 |
-| **笔记正文写入** | 🔴 无 `PATCH /api/notes/:uid`，`body_json`/`body_text` 永远为空 | 路由清单 |
-| **笔记导出** | 🔴 daemon 无导出端点 | 路由清单 |
-| **F3 `/ws/recorder` 接线** | 🔴 **仍未接** —— 协议边界在（鉴权/Origin/帧类型），但不接音频 | `ws.ts` 只回 `ready`/`pong` |
-| **F4 导图生成没接进 daemon** | 🔴 `packages/mindmap` 跑通了，但**没有 job runner，没有端点** | handlers 只注册了 `transcribe` |
-| 云 LLM provider | 🔴 一次没跑过（无 Key） | 同前 |
+
+| 功能                         | 真实状态                                                                        | 核实方式                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| **向量检索 embedding 生成**  | 🔴 **全仓库无任何生产者**                                                       | grep `embed_chunks                                             | vec_chunks | embedding` 只命中 schema/类型定义，无写入方 |
+| **设置页后端**               | 🔴 daemon 无 `/api/settings`、无 `/api/secrets`                                 | 路由清单实测（见下）                                           |
+| **标签 / 星标 / 文件夹**     | 🔴 **daemon 无任何端点**（表在、`notes.starred` 列在）                          | 路由清单：`/api/notes*` 只有 import/list/get/transcript/delete |
+| **笔记编辑（TipTap）**       | 🔴 **前端 0 个文件用 TipTap**（package.json 有 3 处依赖，`src` 里 grep 命中 0） | 只读审计                                                       |
+| **笔记正文写入**             | 🔴 无 `PATCH /api/notes/:uid`，`body_json`/`body_text` 永远为空                 | 路由清单                                                       |
+| **笔记导出**                 | 🔴 daemon 无导出端点                                                            | 路由清单                                                       |
+| **F3 `/ws/recorder` 接线**   | 🔴 **仍未接** —— 协议边界在（鉴权/Origin/帧类型），但不接音频                   | `ws.ts` 只回 `ready`/`pong`                                    |
+| **F4 导图生成没接进 daemon** | 🔴 `packages/mindmap` 跑通了，但**没有 job runner，没有端点**                   | handlers 只注册了 `transcribe`                                 |
+| 云 LLM provider              | 🔴 一次没跑过（无 Key）                                                         | 同前                                                           |
 
 **daemon 实际注册的路由共 32 条**（`/api/models*` 15、`/api/backends*` 6、`/api/jobs*` 2、
 `/api/notes*` 3、`/api/search` 1、`/api/runtime/hardware`、`/api/events`、`/api/health`、
@@ -476,6 +516,7 @@ Manager 让我端到端验一次搜索，**一验就炸**：FTS5 索引 49 行�
 `/api/search` 已如实返回 `semantic:false` + 原因，**没有假装有混合检索**。
 
 **要补需要三件事**（都不小）：
+
 1. **embedding 模型**：本地跑要再下一个模型（bge-small-zh ~100MB / multilingual-e5-small ~470MB），
    走 ADR-004 的模型目录；或调云 API（但用户已定 BYO Key 可选，不能强制）。
 2. **推理运行时**：whisper.cpp/llama.cpp **都不做 embedding**。
@@ -486,6 +527,7 @@ Manager 让我端到端验一次搜索，**一验就炸**：FTS5 索引 49 行�
    以及换模型/换稿后的重建队列。
 
 **我的建议（供裁决，不是决定）**：**v1 砍掉语义/混合检索，只留关键词检索。**
+
 - 关键词检索已端到端可用，**中文分词 + 拼音都实测通过**，覆盖"找那句话"的主要诉求。
 - 语义检索的边际价值在**单机个人笔记**规模下不明显，但成本是"再下一个模型 + 一套新运行时 + 重建队列"。
 - D-02 §4.5 已经把索引设计成**可重建缓存**，所以**现在不做，将来补不需要迁移数据** —— 决策可逆。
@@ -506,6 +548,7 @@ Manager 让我端到端验一次搜索，**一验就炸**：FTS5 索引 49 行�
 4. **F3 `/ws/recorder` 接线**仍等 `AsrStream` 冻结（ADR-011 决策 4），目前**没接**。
 
 ### 诚实声明
+
 - **F2 端到端是真跑的**（真 ffmpeg / 真 whisper / 真 SQLite / 真 SSE），F1(URL) 用同一条 runner
   但**本轮没跑过 URL 导入**；F3/F4 **完全没接进 daemon**。
 - 中文搜索用的是**我播进库的一条中文笔记**（非转写产物）—— 因为 Garvey 演讲是英文。
@@ -518,6 +561,7 @@ Manager 让我端到端验一次搜索，**一验就炸**：FTS5 索引 49 行�
 - **未做性能相关任何工作**（按用户指令降级）：无并发调优、无索引优化、无查询性能测量。
 
 派生 subagent 记录（未 kill，可复用）:
+
 - `aa4ba3daa1f6c8db2` — 把 reference-server 27 个端点移植成 TS（已完成，含真实 59.7MB 下载验证）
 
 ---
@@ -531,20 +575,21 @@ Manager 让我端到端验一次搜索，**一验就炸**：FTS5 索引 49 行�
 
 去掉 22 处 `as never` 后，编译器一次性吐出 **16 处契约不符**，远不止 `jobUid`：
 
-| 我发的 | 契约要求 |
-|---|---|
-| `jobUid` | `jobId` |
-| `startSec` / `endSec` | `startMs` / `endMs` |
-| `durationSec` | `durationMs` |
-| `fraction`（0..1） | `pct`（0..100） |
-| 缺 `noteUid` | `transcribe.segment/done` **必填** |
-| 缺 `previousState` / `willRetry` / `resultKind` | 必填 |
+| 我发的                                          | 契约要求                           |
+| ----------------------------------------------- | ---------------------------------- |
+| `jobUid`                                        | `jobId`                            |
+| `startSec` / `endSec`                           | `startMs` / `endMs`                |
+| `durationSec`                                   | `durationMs`                       |
+| `fraction`（0..1）                              | `pct`（0..100）                    |
+| 缺 `noteUid`                                    | `transcribe.segment/done` **必填** |
+| 缺 `previousState` / `willRetry` / `resultKind` | 必填                               |
 
 **也就是说：T-028 那次"端到端打通"里，daemon 发的每一个 SSE 事件字段名都是错的**，
 前端接过去只会拿到一堆 undefined。而我的 e2e 脚本**只断言了事件类型、没断言 payload 字段名**，
 所以它照样报"✅ 打通"。这是"假绿灯"家族里我自己贡献的第二个。
 
 **两项修复**：
+
 1. 新建 `apps/daemon/src/jobs/events.ts` —— 所有事件集中构造，**零类型断言**，编译器当守门人。
 2. e2e 脚本加 **payload 字段名断言**（`[8]` 段），8 类事件逐字段核对。现在实测全 ✅。
 
@@ -560,20 +605,20 @@ delta 的意义恰恰是"落库前的渐进展示"。我**刻意不发这个事�
 
 ### 二、补完的端点（36 条路由，全部实调验证）
 
-| 优先级 | 端点 | 实调结果 |
-|---|---|---|
-| P1 | `GET/PATCH /api/settings` | `{"settings":{"llm.defaultProviderId":"llama-server","ui.theme":"dark"}}` |
-| P1 | `GET /api/secrets`、`PUT/DELETE /api/secrets/:key` | `masked:"sk-t…cdef"`；**disclosure 原文可见**「API Key 以**明文**保存在 …/secrets.json（文件权限 0600、目录 0700）」 |
-| P1 | `POST /api/notes/upload`（multipart 流式） | **7,045,198 字节**上传成功 → `{noteUid,jobUid,bytes,storedAs:"01KZ…S1.wav"}`；400MB 实测 RSS 峰值 73MiB（**O(1) 内存**） |
-| P2 | `PATCH /api/notes/:uid` | `{"hasBody":true}`，且**正文立刻能被中文搜到**（body_text→FTS5 触发器实证：搜「手写的笔记」命中 1 条） |
-| P2 | `GET/POST /api/tags`、`DELETE /api/tags/:uid`、`POST /api/notes/:uid/tags` | `[{"name":"演讲","usageCount":1}]` |
-| P2 | `PUT /api/notes/:uid/star` | `{"starred":true}` |
-| P2 | `GET/POST /api/folders`、`PATCH/DELETE /api/folders/:uid`、`PUT /api/notes/:uid/folder` | 树形返回 + **成环检测**（`move 课程→第一课 would cycle? true`） |
-| P2 | `GET /api/notes/:uid/export?format=` | md 4770B / srt 5803B / vtt 5673B / json 8772B，SRT 时间码 `00:00:00,000 --> 00:00:06,120` 正确 |
-| P2 | `POST/GET /api/notes/:uid/mindmap`（F4 接进 daemon） | job runner 已注册（`lane:'gpu.llm'`，与 gpu.asr 互斥） |
-| P2 | `transcribe.started` 补发 | e2e 实测 ✅ 且在所有 segment 之前 |
-| P3 | `LlmProvider.embed()` | **按裁决 v1 不做**，在 `packages/llm/src/types.ts` 留了裁决理由 + 可逆性说明，**不留空实现** |
-| P3 | `selectEngine()` 接线 | 已接（`pickEngine(language)`）。⚠️ 见下诚实项 |
+| 优先级 | 端点                                                                                    | 实调结果                                                                                                                 |
+| ------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| P1     | `GET/PATCH /api/settings`                                                               | `{"settings":{"llm.defaultProviderId":"llama-server","ui.theme":"dark"}}`                                                |
+| P1     | `GET /api/secrets`、`PUT/DELETE /api/secrets/:key`                                      | `masked:"sk-t…cdef"`；**disclosure 原文可见**「API Key 以**明文**保存在 …/secrets.json（文件权限 0600、目录 0700）」     |
+| P1     | `POST /api/notes/upload`（multipart 流式）                                              | **7,045,198 字节**上传成功 → `{noteUid,jobUid,bytes,storedAs:"01KZ…S1.wav"}`；400MB 实测 RSS 峰值 73MiB（**O(1) 内存**） |
+| P2     | `PATCH /api/notes/:uid`                                                                 | `{"hasBody":true}`，且**正文立刻能被中文搜到**（body_text→FTS5 触发器实证：搜「手写的笔记」命中 1 条）                   |
+| P2     | `GET/POST /api/tags`、`DELETE /api/tags/:uid`、`POST /api/notes/:uid/tags`              | `[{"name":"演讲","usageCount":1}]`                                                                                       |
+| P2     | `PUT /api/notes/:uid/star`                                                              | `{"starred":true}`                                                                                                       |
+| P2     | `GET/POST /api/folders`、`PATCH/DELETE /api/folders/:uid`、`PUT /api/notes/:uid/folder` | 树形返回 + **成环检测**（`move 课程→第一课 would cycle? true`）                                                          |
+| P2     | `GET /api/notes/:uid/export?format=`                                                    | md 4770B / srt 5803B / vtt 5673B / json 8772B，SRT 时间码 `00:00:00,000 --> 00:00:06,120` 正确                           |
+| P2     | `POST/GET /api/notes/:uid/mindmap`（F4 接进 daemon）                                    | job runner 已注册（`lane:'gpu.llm'`，与 gpu.asr 互斥）                                                                   |
+| P2     | `transcribe.started` 补发                                                               | e2e 实测 ✅ 且在所有 segment 之前                                                                                        |
+| P3     | `LlmProvider.embed()`                                                                   | **按裁决 v1 不做**，在 `packages/llm/src/types.ts` 留了裁决理由 + 可逆性说明，**不留空实现**                             |
+| P3     | `selectEngine()` 接线                                                                   | 已接（`pickEngine(language)`）。⚠️ 见下诚实项                                                                            |
 
 ### 三、修的 4 个 bug（都是实跑逼出来的）
 
@@ -598,9 +643,11 @@ delta 的意义恰恰是"落库前的渐进展示"。我**刻意不发这个事�
   [  32780-  36720] 推特在2006年3月成立于旧金山
   [ 329880- 335700] 都是在知识共享署名相同方式共享3.0协议下发布的
 ```
+
 专有名词全对（维基百科/百科全书/旧金山），印证 `gpu-runtime` 的结论：**中文必须用 large-v3-turbo，base 不可用**。
 
 **中文搜索（在真实转写产物上，不是我播的种子）**：
+
 ```
 「维基百科」→ 1 条  [0.0s]   bm25=-16.73
 「旧金山」  → 1 条  [32.8s]  bm25=-13.03
@@ -611,16 +658,17 @@ delta 的意义恰恰是"落库前的渐进展示"。我**刻意不发这个事�
 
 ### 五、剩余清单（我领域内）
 
-| 项 | 状态 |
-|---|---|
-| F3 `/ws/recorder` 接线 | 🔴 **仍未接**，等 `AsrStream` 冻结（ADR-011 决策 4） |
-| `mindmap.delta` 渐进事件 | 🔴 契约要 `mindmapUid`（落库后才有），需改设计或改契约 |
-| `job.created` for 流水线 job | 🔴 契约只为下载建模，**需 shared 补** |
-| F4 端到端真跑 | ⚪ runner + 端点已接、已编译，**但没在 daemon 里真跑过一次生成**（llama-server 在跑，但我没连着跑 F4 job） |
-| 向量检索 / embedding | ✂️ 已裁决 v1 不做 |
-| 笔记正文的 `body_json` → `body_text` 自动投影 | 🔴 目前要前端同时传两个字段；应由后端从 TipTap JSON 提取纯文本 |
+| 项                                            | 状态                                                                                                       |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| F3 `/ws/recorder` 接线                        | 🔴 **仍未接**，等 `AsrStream` 冻结（ADR-011 决策 4）                                                       |
+| `mindmap.delta` 渐进事件                      | 🔴 契约要 `mindmapUid`（落库后才有），需改设计或改契约                                                     |
+| `job.created` for 流水线 job                  | 🔴 契约只为下载建模，**需 shared 补**                                                                      |
+| F4 端到端真跑                                 | ⚪ runner + 端点已接、已编译，**但没在 daemon 里真跑过一次生成**（llama-server 在跑，但我没连着跑 F4 job） |
+| 向量检索 / embedding                          | ✂️ 已裁决 v1 不做                                                                                          |
+| 笔记正文的 `body_json` → `body_text` 自动投影 | 🔴 目前要前端同时传两个字段；应由后端从 TipTap JSON 提取纯文本                                             |
 
 ### 六、诚实声明
+
 - **`selectEngine()` 接了但只有一个候选**（whisper）。sherpa-onnx 的 `SherpaOnnxEngineOptions`
   要的是 encoder/decoder/joiner 三个具体文件路径，需要模型安装记录才能构造。
   我**刻意不编一个假配置** —— 宁可候选里只有 whisper，也不要让 selectEngine
@@ -632,6 +680,7 @@ delta 的意义恰恰是"落库前的渐进展示"。我**刻意不发这个事�
 - 全量：`pnpm -r build` **9/9 Done**、测试 **135 pass / 0 fail**、eslint **EXIT=0**。
 
 派生 subagent 记录（未 kill，可复用）:
+
 - `af3292dd0d2e90f23` — settings/secrets/tags/star/folders 端点（已完成，含 24 个 repo 方法）
 - `a0360330beeb10f58` — multipart 流式上传（已完成，17/17 测试，400MB 实测 O(1) 内存）
 
@@ -642,6 +691,7 @@ delta 的意义恰恰是"落库前的渐进展示"。我**刻意不发这个事�
 ### 一、F3 `/ws/recorder` —— ✅ 打通（F1–F5 最后一条断链）
 
 按 D-06 §15.1 冻结契约接线，8 条调用语义逐条落到代码注释里。真实推流 40s 中文音频：
+
 ```
 [3] WS ready: recording=01KZ0T42GG… note=01KZ0T42GH… sr=16000
     final seq=0 [0.0-3.0s] 推特
@@ -666,21 +716,22 @@ GET .../mindmap → generatedBy=llm:llama-server
       · Twitter成立于2006年3月  [31840ms]
 导出 md/opml 均正常（OPML 576 字节）
 ```
+
 ⚠️ **第一次我判成"没跑成"是我自己的错**：轮询脚本 `case *'"succeeded": 1'*` 匹配到了
 转写 job 的 succeeded 就 break 了，导图 job 其实还在队列里。**断言写松了，不是产品问题。**
 
 ### 三、P0 批次
 
-| # | 项 | 状态 | 证据 |
-|---|---|---|---|
-| **P0-1** | `packages/runtime` 接线 | ✅ | `/api/runtime/hardware` 现在走真实 `detectHardware()`：`cpu="AMD RYZEN AI MAX+ 395 w/ Radeon 8060S"`、`gpus:[]`（诚实，无 probe 二进制）、`selectedBackend:"cpu"`、`runtime.probe.failureKind="missing_probe"`。**断路器**实测 2 次失败即 open 并跳过探测；**自检**实跑 `rtf=0.1255 / 7.97x / similarity=1`，缺件时 409 + remediation **不假通过** |
-| **P0-3** | FTS `'rebuild'` 回填 | ✅ | 加 `rebuildSearchIndexes()`，重建后逐表执行官方回填指令并返回 `ok(N)` 明细。**回归测试**：写入→强制指纹失配→重建→旧数据仍搜得到 |
-| **新P0** | 段落编辑写入口 | ✅ | `PATCH /api/notes/:uid/segments/:seq` + `DELETE`（还原）。实测库里 `edited_at=1785661578138`、`text_raw` 存住 ASR 原文、`flags|=4`、`editedCount:1` |
-| **新P0** | M-7 锚点 | ✅ | PATCH 白名单加 `anchors`，写 `note_anchors`（对齐真实列 `anchor_key`，含 UNIQUE 去重）；`GET /api/notes/:uid/anchors` |
-| **追加** | `ParaformerEngine` 接线 | ✅ | 实测 `engine_id=paraformer`（此前恒为 whisper.cpp），标点模型生效（输出含「，」） |
-| — | chunk 续跑 | ✅ | 加 `resumableTranscript()`：同 note+引擎+模型且未完成则**接着写**，不再新建；`segSeq` 也从已有段数续接 |
-| — | job 取消 | ✅ | `/api/jobs/:id/cancel` 原先只认下载队列；现加 `setPipelineJobHooks`，下载队列不认识就转交 `Scheduler.cancel()`。pause/resume 同 |
-| — | 单实例 flock | ✅ | 加 `acquireDataDirLock()`（`O_EXCL` + pid 存活校验处理 stale）。实测同 dataDir 换端口起第二个 → **退出码 5**，明确报错不再抢 job |
+| #        | 项                      | 状态 | 证据                                                                                                                                                                                                                                                                                                                                               |
+| -------- | ----------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **P0-1** | `packages/runtime` 接线 | ✅   | `/api/runtime/hardware` 现在走真实 `detectHardware()`：`cpu="AMD RYZEN AI MAX+ 395 w/ Radeon 8060S"`、`gpus:[]`（诚实，无 probe 二进制）、`selectedBackend:"cpu"`、`runtime.probe.failureKind="missing_probe"`。**断路器**实测 2 次失败即 open 并跳过探测；**自检**实跑 `rtf=0.1255 / 7.97x / similarity=1`，缺件时 409 + remediation **不假通过** |
+| **P0-3** | FTS `'rebuild'` 回填    | ✅   | 加 `rebuildSearchIndexes()`，重建后逐表执行官方回填指令并返回 `ok(N)` 明细。**回归测试**：写入→强制指纹失配→重建→旧数据仍搜得到                                                                                                                                                                                                                    |
+| **新P0** | 段落编辑写入口          | ✅   | `PATCH /api/notes/:uid/segments/:seq` + `DELETE`（还原）。实测库里 `edited_at=1785661578138`、`text_raw` 存住 ASR 原文、`flags                                                                                                                                                                                                                     | =4`、`editedCount:1` |
+| **新P0** | M-7 锚点                | ✅   | PATCH 白名单加 `anchors`，写 `note_anchors`（对齐真实列 `anchor_key`，含 UNIQUE 去重）；`GET /api/notes/:uid/anchors`                                                                                                                                                                                                                              |
+| **追加** | `ParaformerEngine` 接线 | ✅   | 实测 `engine_id=paraformer`（此前恒为 whisper.cpp），标点模型生效（输出含「，」）                                                                                                                                                                                                                                                                  |
+| —        | chunk 续跑              | ✅   | 加 `resumableTranscript()`：同 note+引擎+模型且未完成则**接着写**，不再新建；`segSeq` 也从已有段数续接                                                                                                                                                                                                                                             |
+| —        | job 取消                | ✅   | `/api/jobs/:id/cancel` 原先只认下载队列；现加 `setPipelineJobHooks`，下载队列不认识就转交 `Scheduler.cancel()`。pause/resume 同                                                                                                                                                                                                                    |
+| —        | 单实例 flock            | ✅   | 加 `acquireDataDirLock()`（`O_EXCL` + pid 存活校验处理 stale）。实测同 dataDir 换端口起第二个 → **退出码 5**，明确报错不再抢 job                                                                                                                                                                                                                   |
 
 ### 四、修的 bug（都是真跑逼出来的）
 
@@ -712,6 +763,7 @@ GET .../mindmap → generatedBy=llm:llama-server
 - 全量：`pnpm -r build` **9/9 Done**、测试 **161 pass / 0 fail**、`apps/daemon` + `packages/db` eslint **EXIT=0**。
 
 派生 subagent 记录（未 kill，可复用）:
+
 - `a496f673a05628067` — `body_json`→`body_text` 服务端投影（24 测试，迭代遍历防栈溢出）
 - `a35e539cba5e0217e` — 上传 415/413/400 真 HTTP 复验（无 bug；**零残留文件**；确认不做内容嗅探）
 - `aa26361b888a77167` — `packages/runtime` 接线（断路器/自检实跑）
@@ -726,6 +778,7 @@ GET .../mindmap → generatedBy=llm:llama-server
 `buildHardwareInfo` 判 `cpu.available=false` → `applicability()` 拒绝安装 → 永远装不上。
 
 **修在我这边**（`apps/daemon/src/http/rest/backends.ts`），不动 `packages/runtime`：
+
 - `applicability()`：`pack.backend === 'cpu'` **无条件 applicable**，只查 os/arch
 - `POST /api/backends/select`：`backend !== 'cpu'` 才查 `available`
 
@@ -734,6 +787,7 @@ GET .../mindmap → generatedBy=llm:llama-server
 加速后端仍要求真枚举到设备 —— 那类装了也用不了，拦住是对的。
 
 **空 dataDir 实测**：
+
 ```
 llamacpp-cpu-linux-x64       engine=llama.cpp    applicable=True   ← 此前 False
 whispercpp-cpu-linux-x64     engine=whisper.cpp  applicable=True   ← 此前 False
@@ -748,11 +802,11 @@ llamacpp-vulkan-linux-x64    engine=llama.cpp    applicable=False（无设备，
 
 ### ② ADR-014 三处断点 —— ✅ 全修，空 dataDir 实测
 
-| # | 修法 | 实测 |
-|---|---|---|
-| ① 写死 manifest 文件名 | 改为**列目录**：`vendor/manifests/*.json` 全加载，按内容里有 `models`/`packs` 判类型，按 id 去重 | 目录从 `{asr:10, llm:4}` 变成 **`{vad:1, asr:8, punctuation:1, llm:4}`** —— VAD 与标点模型出现了 |
-| ② 写死模型文件名 | 新建 `pipeline/modelStore.ts`：读 `active.json` + `manifests/<role>/*.json` 的 `files[].path`；再退到 `by-name/<kind>/` 扫描；**不再猜文件名** | 把 `gpu-runtime` 真装出来的 store 挂上去 → `modelPath: /tmp/cold/models/by-name/asr/ggml-base-q5_1.bin`、`missing: []`（旧代码只找 `ggml-base.en.bin`/`ggml-base.bin`，装成功也找不到） |
-| ③ 扩展装不了 | `sqlite-ext.json` 本来就是 **packs 形状**，①修完自动进后端目录；再加 `resolveExtensionDir()` 从**已安装包的解包目录**取扩展路径（下载器会把 `.tar.gz` 解到 `by-name/backend/<name>/`，而 daemon 原先只看 `<dataDir>/bin/ext`，两边对不上） | `sqlite-ext-linux-x64 applicable=True`，可经 `/api/backends/install` 安装 |
+| #                      | 修法                                                                                                                                                                                                                                       | 实测                                                                                                                                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ① 写死 manifest 文件名 | 改为**列目录**：`vendor/manifests/*.json` 全加载，按内容里有 `models`/`packs` 判类型，按 id 去重                                                                                                                                           | 目录从 `{asr:10, llm:4}` 变成 **`{vad:1, asr:8, punctuation:1, llm:4}`** —— VAD 与标点模型出现了                                                                                        |
+| ② 写死模型文件名       | 新建 `pipeline/modelStore.ts`：读 `active.json` + `manifests/<role>/*.json` 的 `files[].path`；再退到 `by-name/<kind>/` 扫描；**不再猜文件名**                                                                                             | 把 `gpu-runtime` 真装出来的 store 挂上去 → `modelPath: /tmp/cold/models/by-name/asr/ggml-base-q5_1.bin`、`missing: []`（旧代码只找 `ggml-base.en.bin`/`ggml-base.bin`，装成功也找不到） |
+| ③ 扩展装不了           | `sqlite-ext.json` 本来就是 **packs 形状**，①修完自动进后端目录；再加 `resolveExtensionDir()` 从**已安装包的解包目录**取扩展路径（下载器会把 `.tar.gz` 解到 `by-name/backend/<name>/`，而 daemon 原先只看 `<dataDir>/bin/ext`，两边对不上） | `sqlite-ext-linux-x64 applicable=True`，可经 `/api/backends/install` 安装                                                                                                               |
 
 **③ 的结论**：**不需要单独的 `/api/extensions` 端点** —— 扩展就是一个后端包，
 走 `/api/backends/catalog` + `/api/backends/install` 即可。`installPath: bin/ext` 这个字段
@@ -765,6 +819,7 @@ store kind 只该用于"落到哪个磁盘目录"，已改回真实 `ModelRole`�
 ### ③ 离线重跑覆盖用户笔记标题 —— ✅ 已修 + 回归测试
 
 抽成纯函数 `jobs/runners/retitle.ts` 的 `mayRetitleNote()`，**6 条回归测试**：
+
 - 占位标题（= 文件名）可被媒体标题替换 ✅
 - **用户自己命名过的绝不覆盖** ✅
 - **录音笔记一律不覆盖**（此前被改成 recordingUid）✅
@@ -774,6 +829,7 @@ store kind 只该用于"落到哪个磁盘目录"，已改回真实 `ModelRole`�
 出错时没有任何报错信号，只能靠测试守住。
 
 ### 四、全量
+
 `pnpm -r build` **9/9 Done**；测试 **167 pass / 0 fail**；`apps/daemon` + `packages/db` eslint **EXIT=0**。
 
 ### 五、诚实声明 / 未完成
@@ -813,12 +869,14 @@ store kind 只该用于"落到哪个磁盘目录"，已改回真实 `ModelRole`�
 ```
 
 **直接查库的深度核对**（比脚本断言更硬）：
+
 ```
 jobs        : {"uid":"01KZ0XWNE…","state":"cancelled","cancel_requested":1,"progress":0.3117}
               {"uid":"01KZ0XXDC…","state":"running"}      ← 续跑任务
 transcripts : 只有 1 份 {"id":1,"segment_count":15}        ← 续跑复用，没有新建
 chunk_idx   : [{0:3},{1:9},{2:3}]                          ← 每块恰好一次，没有重复劳动
 ```
+
 `chunk_idx` 无重复是"真的跳过了已完成块"的硬证据 —— 只看段数增长是分辨不出
 "续跑"和"从头重来再追加"的。
 
@@ -858,10 +916,12 @@ chunk_idx   : [{0:3},{1:9},{2:3}]                          ← 每块恰好一�
 改一处即可，**不影响已安装的用户**（可在读取时兼容旧的绝对路径字段）。
 
 ### 五、全量
+
 `pnpm -r build` **9/9 Done**；测试 **167 pass / 0 fail**；
 `apps/daemon` + `packages/db` + `packages/llm` + `packages/mindmap` eslint **EXIT=0**。
 
 ### 六、诚实声明
+
 - 取消验证是在 **Linux + whisper.cpp** 上做的。**Windows 的 `taskkill /T` 路径没验过**
   （D-01 §2.5 写了但本机跑不了），sherpa/Paraformer 引擎的取消也没单独验。
 - 验证 4 我判定"续跑接上"的依据是 **chunk_idx 无重复 + transcript 只有一份**，
@@ -888,6 +948,7 @@ chunk_idx   : [{0:3},{1:9},{2:3}]                          ← 每块恰好一�
 ③ 列表页也带上（一次 IN 查询批量取，避免 N+1）
    01KZ111949… starred=True tags=[{…"演讲"…}]
 ```
+
 `NoteRow` 此前连 `starred` 字段都没声明（表里一直有）。顺带补了 `folderUid`
 （对外只暴露 uid，不暴露整数主键）。
 
@@ -942,13 +1003,16 @@ SIGTERM → 1.5s → SIGKILL。**刻意不按进程名匹配** —— 本机多�
 按名字杀会杀掉别人的任务（这正是我们已经踩过两次的事故）。
 
 ### 三、契约收编等 `model-mgmt`
+
 `POST /api/notes/:uid/retranscribe` 保持现状不动，等他收编进 shared。
 
 ### 四、全量
+
 `pnpm -r build` **9/9 Done**；测试 **167 pass / 0 fail**；
 `apps/daemon` + `packages/db` + `packages/llm` + `packages/mindmap` eslint **EXIT=0**。
 
 ### 五、诚实声明
+
 - **孤儿回收只在 Linux 生效**（走 `/proc`）。macOS/Windows 直接返回空结果，
   需要各自的进程枚举方式，**未实现也未验证**。
 - 孤儿回收**没有真正验到"回收发生"那一刻**：两次重启实验里，一次孤儿自己跑完了、
@@ -989,6 +1053,7 @@ worker 停下后走的是 `markCancelled()`，于是 `resume()` 的 `WHERE state
 [4] 重启: [transcribe] 续跑 transcript=01KZ12E06RN…，已完成 chunk=0
 [5] 重启后 job: running  段数: 15  chunk_idx: [{0:9},{1:6}]  transcripts 只有 1 份
 ```
+
 **正常关闭此前反而不如 `kill -9` 能恢复**（强杀来不及改状态，走的是崩溃恢复；
 优雅关闭却把任务标成 cancelled）。这个反直觉正是"三个意图共用一个 abort"的直接后果。
 
@@ -997,11 +1062,11 @@ worker 停下后走的是 `markCancelled()`，于是 `resume()` 的 `WHERE state
 新增 `StopIntent = 'cancel' | 'pause' | 'shutdown'`，scheduler 记 `#intents`，
 worker 停下后由 `#settleAborted()` 按意图收口：
 
-| 意图 | 终态 | 重启行为 | SSE |
-|---|---|---|---|
-| `cancel` 用户取消 | `cancelled` | 不恢复 | `job.failed(CANCELLED)` |
-| `pause` 用户暂停 | `paused` | 不自动跑，等 resume | `job.state(paused)` |
-| `shutdown` 进程退出 | `queued` | **自动续跑** | `job.state(queued)` |
+| 意图                | 终态        | 重启行为            | SSE                     |
+| ------------------- | ----------- | ------------------- | ----------------------- |
+| `cancel` 用户取消   | `cancelled` | 不恢复              | `job.failed(CANCELLED)` |
+| `pause` 用户暂停    | `paused`    | 不自动跑，等 resume | `job.state(paused)`     |
+| `shutdown` 进程退出 | `queued`    | **自动续跑**        | `job.state(queued)`     |
 
 顺带修：三种中止此前**都报 `job.failed`** —— 暂停和进程退出报"失败"会吓到用户，
 它们根本不是失败。现在只有真取消与运行错误走 `job.failed`。
@@ -1009,23 +1074,26 @@ worker 停下后由 `#settleAborted()` 按意图收口：
 
 ### 契约核对（你点名的 5 条）
 
-| 条目 | 结论 |
-|---|---|
-| **`merge` 零调用方** | ✅ **属实，已接线**。录音会话在 payload 塞了 `mergeWithTranscriptId`，但 runner **从没读过它** → D-06 §15.2 那条实测验证过的两阶段合并在产品里走不到。现已在重跑收尾处调用 `mergeTranscripts` + `formatMergeSummary`，并加 `repos.replaceSegments()` 落库。⚠️ **代码路径已通但未真跑过一次录音→编辑→重跑→合并**。 |
-| **导图 PATCH 缺失** | ✅ **属实，已补**。前端 `useSaveMindmapMutation` 发 `PATCH .../mindmap {doc}` 期望 `{revision}`，我只有 POST/GET。实测：`{"revision":1,"mindmapUid":"01KZ12V8…"}`，回读 `generatedBy=user`；坏图被拦：`INVALID_MINDMAP … 检测到环：b → a`。 |
-| **星标动词错** | ❌ **已对齐，不是问题**。前端用 `PUT /notes/:uid/star {starred}`，我这侧就是 `PUT`。 |
-| **标签体形状错** | ❌ **已对齐**。前端注释里写明了两步法 + `{tagUids}` 整表替换，与我这侧一致（他注释里那句"第三次栽在没读实现就按设计猜形状"说明他已经改过来了）。 |
-| **import 面整面 404** | ⚠️ **我这侧未发现缺口**：`/api/notes/import`、`/api/notes/upload` 都在且验过。前端 `features/import/` 里我 grep 不到任何 `/api/notes` 调用 —— **要么他还没接，要么走了别的路径**。需要他给出具体 404 的 URL 才能定位，**我不猜**。 |
+| 条目                  | 结论                                                                                                                                                                                                                                                                                                              |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`merge` 零调用方**  | ✅ **属实，已接线**。录音会话在 payload 塞了 `mergeWithTranscriptId`，但 runner **从没读过它** → D-06 §15.2 那条实测验证过的两阶段合并在产品里走不到。现已在重跑收尾处调用 `mergeTranscripts` + `formatMergeSummary`，并加 `repos.replaceSegments()` 落库。⚠️ **代码路径已通但未真跑过一次录音→编辑→重跑→合并**。 |
+| **导图 PATCH 缺失**   | ✅ **属实，已补**。前端 `useSaveMindmapMutation` 发 `PATCH .../mindmap {doc}` 期望 `{revision}`，我只有 POST/GET。实测：`{"revision":1,"mindmapUid":"01KZ12V8…"}`，回读 `generatedBy=user`；坏图被拦：`INVALID_MINDMAP … 检测到环：b → a`。                                                                       |
+| **星标动词错**        | ❌ **已对齐，不是问题**。前端用 `PUT /notes/:uid/star {starred}`，我这侧就是 `PUT`。                                                                                                                                                                                                                              |
+| **标签体形状错**      | ❌ **已对齐**。前端注释里写明了两步法 + `{tagUids}` 整表替换，与我这侧一致（他注释里那句"第三次栽在没读实现就按设计猜形状"说明他已经改过来了）。                                                                                                                                                                  |
+| **import 面整面 404** | ⚠️ **我这侧未发现缺口**：`/api/notes/import`、`/api/notes/upload` 都在且验过。前端 `features/import/` 里我 grep 不到任何 `/api/notes` 调用 —— **要么他还没接，要么走了别的路径**。需要他给出具体 404 的 URL 才能定位，**我不猜**。                                                                                |
 
 ### 顺带：`InstalledFile` 采纳了相对路径
+
 `model-mgmt` 把我上轮的建议落成了 `root: PathRoot` + `relPath`（保留 `path` 作废弃兼容）。
 我这侧 `models.ts` 与 `modelStore.ts` 同步适配：**写入两者都写、读取优先 relPath 回退 path**。
 兼容分支不能省 —— 已经装过模型的用户，记录里只有绝对路径。
 
 ### 全量
+
 `pnpm -r build` **9/9**；测试 **167 pass / 0 fail**；`apps/daemon` eslint **EXIT=0**。
 
 ### 诚实声明
+
 - **`mergeTranscripts` 只是接上了线，没有端到端跑过**：需要"录音 → 用户改一段 → 停止 → 重跑 → 看编辑是否保留"，
   这轮没做。代码路径与类型都通，但**按本项目的标准这不算验证过**。
 - D1/D2 的验证都在 **Linux + whisper.cpp** 上；Windows 的退出信号路径仍未验。
@@ -1040,6 +1108,7 @@ worker 停下后由 `#settleAborted()` 按意图收口：
 ## [2026-08-03 02:40] T-056 DONE —— `POST /api/notes/probe` 已可用
 
 ### 实现
+
 复用 `gpu-runtime` 的 `registry.probeWithSource()`（T-025 修 TD-002 时加的完整回退链），
 **没有新写探测逻辑**。端点只读：不建 note、不排 job —— 与 `/api/notes/import` 的区别就在这里。
 形状对齐前端 `lib/api/types.ts` 的 `ProbeResult`（我照它实现，不另造）。
@@ -1070,12 +1139,14 @@ worker 停下后由 `#settleAborted()` 按意图收口：
 ```
 
 ### 一处我拒绝编造的字段
+
 前端 `ProbeResult` 有 `requiresAuth`（"该 URL 是否需要登录/cookie，别下了 400MB 才发现"）。
 **`MediaInfo` 里没有这个信息，探测阶段也拿不到**，所以我如实回 `false` 并在代码里写明理由：
 猜 `true` 会平白吓退用户，返回一个假的 `requiresAuth` 比没有这个字段更糟。
 要真支持，得让各 adapter 在 probe 时上报 —— 属 `gpu-runtime` 的 pipeline 侧改动。
 
 ### 请 `model-mgmt` 收编进 shared 的契约
+
 ```
 POST /api/notes/probe   { input: string }
  200 { title, author, durationMs, thumbnailUrl, site, adapterId, requiresAuth,
@@ -1084,13 +1155,16 @@ POST /api/notes/probe   { input: string }
  422 NO_MEDIA_SOURCE  + remediation{action:'installSiteExtractor'} + details.hint（回退链诊断）
  502 PROBE_FAILED / 504 PROBE_TIMEOUT（30s）  retryable:true
 ```
+
 连同上轮的 `POST /api/notes/:uid/retranscribe` 一起，是我这侧仅剩的两处临时契约。
 
 ### 全量
+
 `pnpm -r build` **9/9**；测试 **167 pass / 0 fail**；
 `apps/daemon` + `packages/db` + `packages/llm` + `packages/mindmap` eslint **EXIT=0**。
 
 ### 诚实声明
+
 - ④ 的 422 是**当前配置下的正确行为**（TD-002 默认关闭 GPL 站点提取器）。
   打开 `OPENMEMO_ENABLE_SITE_EXTRACTOR=1` 且装了 yt-dlp 后该走 ytdlp adapter，**这条分支我没验**。
 - `requiresAuth` 恒为 false（见上），**前端不应据它做任何拦截**。
@@ -1120,6 +1194,7 @@ POST /api/notes/probe   { input: string }
 ```
 
 ### 修法
+
 - `SseHub.observe()`：新增**事件观察者**（不影响广播）。挂在
   `model.installed/removed/activated` + `backend.installed/removed` 上，800ms 去抖后
   重建 `buildPipeline()`。**挂在事件上而不是各安装点** —— 生产方分散在
@@ -1131,31 +1206,39 @@ POST /api/notes/probe   { input: string }
   跟"让他重启 daemon"是同一类毛病。
 
 ### `selfcheck` 现在读 daemon 实际在用的表
+
 它本来就走 `bundle: () => bundle`（实时闭包），热刷新后自然跟着变：
+
 ```
 ok  tool.whisperCli  /root/memo/.build/…/whisper-cli
 ok  model.asr        ggml-base-q5_1.bin
 ok=True counts={'ok':10,'warn':3,'fail':0}
 ```
+
 > 你指出的那条缝我认同：**自检查"磁盘上有没有"、daemon 用"启动时记下的表"**，
 > 两者查的是不同状态源，所以能出现"全 ✔ 但不可用"。现在两者同源。
 
 ### 「探测中」vs「不支持」
+
 新增 `inapplicableKind: 'applicable' | 'platform' | 'undetermined' | 'unsupported'`：
+
 ```
 llamacpp-vulkan-linux-x64    applicable=False kind=undetermined   ← 尚未探测，不是"不支持"
 llamacpp-rocm-linux-x64      applicable=False kind=undetermined
 llamacpp-cpu-linux-x64       applicable=True  kind=applicable
 sqlite-ext-linux-x64         applicable=True  kind=applicable
 ```
+
 判据：probe 没跑成（`probe did not complete|skipped`）→ `undetermined`；
 probe 跑完但没枚举到设备 → `unsupported`；os/arch 不符 → `platform`。
 **请 `model-mgmt` 把这个字段一并收编进 shared**，UI 据它区分"检测中/装上 CPU 包后可检测"与"本机不支持"。
 
 ### 全量
+
 `pnpm -r build` **9/9**；测试 **167 pass / 0 fail**；eslint **EXIT=0**。
 
 ### 诚实声明
+
 - **SQLite 扩展（libsimple/sqlite-vec）装上后无法热生效**：扩展是在**打开 DB 的那个连接**上
   加载的，没法对已开连接补加载。我**没有假装它生效**，而是打印
   「检测到 SQLite 扩展目录变化；中文分词将在下次打开数据库连接时生效」。
@@ -1173,6 +1256,7 @@ probe 跑完但没枚举到设备 → `unsupported`；os/arch 不符 → `platfo
 **结论：可行，已实现并跑通。** 上一轮那条「装完扩展仍需重启 daemon」的缺口就此闭合。
 
 ### 新增
+
 - `POST /api/daemon/restart` → 202（先回响应，再重启，前端才能显示"正在重启"）
 - `GET /api/daemon/status` 新增 **`restartRequired`**：
   `{required, extensions:['libsimple'], messageZh:'中文分词器已安装，需重启生效', endpoint}`
@@ -1180,12 +1264,14 @@ probe 跑完但没枚举到设备 → `unsupported`；os/arch 不符 → `platfo
   前者该显示"去安装"，后者该显示"点一下重启"。同 T-060「检测中 vs 检测过了但不可用」。
 
 ### 端到端实测（不是"接口回了 202"）
+
 装真 libsimple.so → `restartRequired.required=true`、tokenizer 仍 `trigram`
 → 点重启 → **tokenizer=simple、vec=on、横幅消失、端口没变、旧会话仍有效**；
 `/api/selfcheck` `ext.chineseSearch` 与 `ext.sqliteVec` 双双转 ok（11 ok / 2 warn / 0 fail）。
 脚本：`apps/daemon/scripts/e2e-restart.mjs`。
 
 ### 路上挖出的三个坑（都是"全绿但不能用"）
+
 1. **重启会把用户那一页踢下线（最严重）**。`SessionStore` 是纯内存 `Map`，boot token 每次
    启动重新生成 → cookie 里的 sid 在新进程不存在 → 全站 401。而前端 `consumeHandoffToken()`
    握手时就把 URL 里的 token **抹掉了**（防截图泄露），**刷新也救不回来**，用户只剩
@@ -1203,11 +1289,13 @@ probe 跑完但没枚举到设备 → `unsupported`；os/arch 不符 → `platfo
    代价：重启从 1.2s 变 2.7s。被放弃的子进程会探到健康的同 dataDir 实例后干净退出（实测退出码 5）。
 
 ### 在途任务
+
 走 T-054 铺好的 `shutdown` 意图：`running → queued → 重启后自动续跑`。
 实测段数 4 →（重启）→ 8，**基准取的是重启前的段数**：第一版拿"刚回来那一刻读到的 -1"当基准，
 任何一次成功读取都 > -1，于是"没续跑"也会显示 ✅——我自己的脚本先绿了一次才发现。
 
 ### 诚实声明（未验证项）
+
 - **Windows 完全没测**（本机 Linux）。`detached:true` + `windowsHide:true` 已加，
   但新进程组语义、端口释放时机都只是按文档推断。**Windows 上首次跑必须实测。**
 - 若日后打包成 Electron，`process.execPath` 是 app 二进制、`argv.slice(1)` 未必对，
@@ -1220,6 +1308,7 @@ probe 跑完但没枚举到设备 → `unsupported`；os/arch 不符 → `platfo
 ## T-062 对外实例：**部分交付，0.0.0.0 这一步被安全闸门拦下**
 
 ### 已完成（不涉及任何安全削弱）
+
 - **daemon 现在托管前端静态产物**（新增 `apps/daemon/src/http/static.ts`，接在鉴权闸门**之前** ——
   token 在 URL fragment 里、服务端收不到，必须先把 index.html 和 JS 发出去，页面才有机会换会话）。
   一站式访问成立，不用另起 Vite。`/api/**` 与 `/ws/**` 显式排除，不会被静态文件遮蔽。
@@ -1230,6 +1319,7 @@ probe 跑完但没枚举到设备 → `unsupported`；os/arch 不符 → `platfo
 - 端到端实跑：导入 jfk.wav → 转写出真文本，不是空引导。
 
 ### 未完成：绑 `0.0.0.0` + 放宽 Host 校验
+
 我写 `allowAnyHost`（只在显式 `--host 0.0.0.0` 时生效、默认路径一个字不动）时，
 **被权限系统判定为 Security Weaken 并拒绝**，理由是：把入口从"仅本机"放开到"公网可达"
 并关掉 DNS rebinding 防护，属于安全削弱，而驱动它的是**协调者转述的指令**，
@@ -1239,6 +1329,7 @@ probe 跑完但没枚举到设备 → `unsupported`；os/arch 不符 → `platfo
 也没有改用别的工具去实现同一件事 —— 那属于规避拒绝的意图。**这一条需要用户本人确认。**
 
 ### 两条路，请用户选
+
 1. **SSH 端口转发**：`ssh -L 10000:127.0.0.1:10000 <这台机器>`，然后本地开
    `http://127.0.0.1:10000/#t=<token>`。**不需要削弱任何东西，现在就能看**，我推荐这条。
 2. 用户本人明确说"我确认要把它绑到 0.0.0.0 对外开放"，我再加 `--host` 旗标 +
@@ -1287,6 +1378,7 @@ probe 跑完但没枚举到设备 → `unsupported`；os/arch 不符 → `platfo
 ## 顺带修掉两个我自己造的真 bug（都是"测试绿过但其实不对"）
 
 ### 1. T-061 自我重启在真实场景下**每次都被取消**
+
 `acquireDataDirLock` 在 `acquireSingleInstance` **之前**（main.ts:118 vs 269），
 而"先拉起接班人、1s 确认没死、再停自己"的顺序意味着**父进程那 1s 里仍持有目录锁**。
 接班人一撞锁就退，实测 **633ms** —— 稳稳死在 1s 确认窗口内，于是每次重启都判定
@@ -1298,6 +1390,7 @@ probe 跑完但没枚举到设备 → `unsupported`；os/arch 不符 → `platfo
 **在跑着的 demo 实例上实测**：pid 2018627 → 2028399，token 与两条笔记全部保住。
 
 ### 2. 静态托管的 SPA 兜底**遮蔽了后端的拒绝**
+
 我原来写"任何无扩展名路径都回 index.html"，于是 `/media/../../etc/passwd`
 （URL 规范化后成 `/etc/passwd`）从 404 变成 **200**，D-01 §8.5 的穿越用例因此变红。
 没泄露任何文件内容，但**把本该 404 的东西变成 200 就是在遮蔽后端拒绝**。
@@ -1309,6 +1402,7 @@ probe 跑完但没枚举到设备 → `unsupported`；os/arch 不符 → `platfo
 ## T-069 IP 字面量 Host：**技术上采纳，实现被第四次拒绝**
 
 ### 复核结论：协调者的论证成立，我同意
+
 DNS rebinding 的攻击链**必须有域名参与** —— 攻击者让自己的域名先解析到自己 IP、
 再重绑到目标 IP，浏览器仍按**域名**判同源，所以 Host 头里到的是那个域名。
 要让 Host 里出现 IP 字面量，URL 本身就得写 IP，那时 origin 就是这个 IP，
@@ -1316,17 +1410,20 @@ DNS rebinding 的攻击链**必须有域名参与** —— 攻击者让自己的
 只挡得住合法用户。** 文案也确实与行为不符（写着"域名一律拒绝"，实际连 IP 也拒）。
 
 ### 一个关键事实（我实测的）
+
 `100.64.135.105` **不是本机地址**（本机只有 `127.0.0.1` 与 `10.0.2.15`），
 而 demo 实例仍绑在 `127.0.0.1:10010`。说明**环境里已有转发**把外部流量送到回环端口 ——
 即协调者说的"暴露面已经存在"属实，改 Host 判据**不改变内核接受什么**。
 
 ### 我在协调者方案上补了一个洞（重要）
+
 不能照搬"IP 字面量放行"到 **Origin**。两个头语义不同：Host 是"你在访问谁"，
 Origin 是"谁在发起"。若 Origin 也无条件放行 IP 字面量，攻击者把页面挂在自己的裸 IP 上
 （`Origin: http://203.0.113.9`）就能带着"合法"Origin 打过来，**CSRF 直接开门**。
 正确做法：Host 放行 IP 字面量；**Origin 只接受与本次请求严格同源的**（host:port 相等）。
 
 ### 结果：被拒
+
 > 该改动放宽 Host/Origin 接受范围，依据仍是**协调者转述的用户消息**，
 > 而非本对话中用户的直接消息；**技术论证再站得住，也不满足安全控制变更的同意门槛。**
 
@@ -1336,6 +1433,7 @@ Origin 是"谁在发起"。若 Origin 也无条件放行 IP 字面量，攻击�
 与本次改动无关；按项目规则我没有去动别人的进程。）
 
 ### 结论
+
 这是第四次同类拒绝，四次理由一致：**授权来源，不是工程质量**。
 我不再换第五种说法。**请用户在他自己的对话里直接说一句**，我立刻改 —— 方案已就绪，
 连补洞的部分都写好了，落地只需几分钟。
@@ -1345,23 +1443,28 @@ Origin 是"谁在发起"。若 Origin 也无条件放行 IP 字面量，攻击�
 ## T-070 假绿灯（VAD 被当成 ASR）：**我这半边已关闭** + 4 个组件端点接通
 
 ### 1. 不再用目录名当类型
+
 `listInstalled` 原来读 `manifests/<role>/` —— **目录名既是"在哪"又被当成"是什么"**，
 所以 VAD 记录躺在 `manifests/asr/` 就会被当作 ASR 交出去。
 现在委托 `findInstalledByRole()`（扫全部 8 桶、按记录自己的 `role` 过滤、
 无 `role` 的**跳过而不猜**）。`resolveActiveModel` 随之改为 async。
 
 ### 2. 还有第二处漏网，是我自己的
+
 `setup.ts` 的兜底 `scanByName(modelsDir,'asr',{ext:'.bin'})` **没有任何过滤**，
 by-name/asr 下只要有个 `.bin` 就交出去 —— VAD 权重历史上正躺在这个桶里。
 只改 `listInstalled` 不改这里，假绿灯照旧。已加 `excludes:'silero'`。
 
 ### 3. 加了一道最终闸
+
 **ASR 与 VAD 绝不可以是同一个文件**。上面每层都可能挑错，与其逐层信任，
 不如直接否掉这个不可能成立的状态：命中就打警告并按"未装 ASR"处理。
 宁可让用户看到安装引导，也不要绿着跑错模型。
 
 ### 实测（复现原场景）
+
 构造 `manifests/asr/` 里一条 `role=vad` 的记录 + by-name/asr 下只有 VAD 权重：
+
 ```
 resolveActiveModel(asr) = undefined      ✅ 正确判定为未装 ASR
 resolveActiveModel(vad) = silero...bin   ✅ 按 role 仍找得到（虽然在 asr 目录）
@@ -1369,13 +1472,16 @@ resolveActiveModel(vad) = silero...bin   ✅ 按 role 仍找得到（虽然在 a
 新兜底 scanByName(asr,.bin,-silero) = undefined                ✅
 buildPipeline → missing = ['whisper-cli','asr-model']  modelPath = null  ✅ 不再是绿的
 ```
+
 **回归验证**（关键）：对**真实装好的** `/tmp/omdemo` 跑 buildPipeline →
 `missing=[]`、ASR 正确指向 `ggml-base-q5_1.bin`，**没有把已装模型误判成没装**。
 （老记录若缺 `role` 会被跳过，但 `scanByName` 兜底仍在，是降级不是断裂。）
 
 ### 4. 四个组件端点已接通（挂在 `createModelRoutes` 内，复用同一个 RestState）
+
 不另起 router 的原因：组件要用**同一个 ArtifactStore + 同一个下载队列**，
 再造一个会有两份 store 状态。实测：
+
 - `GET /api/components` → 7 个组件，带 provenance（仓库/release/许可证/子模块 commit）
 - `POST /api/components/check` → 真查上游，**抓到 llama.cpp b10223 → b10229 可更新**
 - `POST /api/components/:id/update` → `libsimple-linux-x64` 回 202 + jobId，
@@ -1388,6 +1494,7 @@ buildPipeline → missing = ['whisper-cli','asr-model']  modelPath = null  ✅ �
 **明确回 409 并说清原因**，而不是回个假 202 让 UI 转圈等一个永不到来的完成事件。
 
 ### selfcheck
+
 - 已装齐的 demo 实例（`/tmp/omdemo`）：**ok=11 / warn=2 / fail=0**（warn 为未装 VAD 与未配 LLM）
 - 全新冷启动实例：fail=5，全是"尚未安装"，不是 installPath 的问题
 - **我没有动 demo 实例**（按要求），上面的回归是离线对同一 dataDir 跑 buildPipeline 得出的
@@ -1412,16 +1519,19 @@ while you were working」开头。**我从未收到过一条真正来自用户�
 `config/file.ts` 已删，`guard.ts` 恢复原样，构建 0 错，demo 实例未受影响。
 
 ### 我仍然认为这个改动在技术上是对的
+
 论证没有变（rebinding 必须借域名、IP 字面量进不了 Host、Origin 必须严格同源），
 方案也早写好了。**挡住它的不是工程判断，是授权通道。**
 
 ### 唯一能解开的方式
+
 **用户需要在他自己的对话轮次里直接说**，而不是经协调者转达。
 在那之前，可用的访问途径仍然是 SSH 端口转发（不需要放宽任何东西）：
 `ssh -L 10010:127.0.0.1:10010 <本机>` → `http://127.0.0.1:10010/#t=<token>`
 （若 NAT 环境下 SSH 也不通，那就只能等用户本人授权后再改。）
 
 ### 给协调者的建议
+
 别再让我换第六种说法了 —— 五次拒绝的理由完全一致，且最后一次已经从**转述链本身**
 否定了这条路径。继续换框架只会消耗轮次，不会改变结果。
 
@@ -1430,18 +1540,19 @@ while you were working」开头。**我从未收到过一条真正来自用户�
 ## T-073 放宽过严校验：**先诊断，再放宽 —— 主症状根本不是"校验太严"**
 
 ### 诊断（读只读，没重启 demo）
+
 我用用户的真实请求形状（`Host: 100.64.135.105:10000` + 同源 Origin + Sec-Fetch）
 对着跑着的 demo 实例把整条链路走了一遍：
 
-| 步骤 | 结果 |
-|---|---|
-| 导航加载页面 | **200** |
-| token 换 cookie | **200** |
-| 只读 GET `/api/notes` | **200** |
-| 带 CSRF 的写操作 | **通过**（400 是"缺 input"的业务校验，不是拦截） |
-| SSE `/api/events` | **通** |
-| 媒体 / 笔记详情 | **200** |
-| 旧 token 换会话 | **401** ← 唯一失败项 |
+| 步骤                  | 结果                                             |
+| --------------------- | ------------------------------------------------ |
+| 导航加载页面          | **200**                                          |
+| token 换 cookie       | **200**                                          |
+| 只读 GET `/api/notes` | **200**                                          |
+| 带 CSRF 的写操作      | **通过**（400 是"缺 input"的业务校验，不是拦截） |
+| SSE `/api/events`     | **通**                                           |
+| 媒体 / 笔记详情       | **200**                                          |
+| 旧 token 换会话       | **401** ← 唯一失败项                             |
 
 **结论：没有任何一条合法链路被守卫挡住。** 用户满屏"未认证"的原因是
 **启动 token 每次重启都重新生成**，他保存的 `#t=...` 链接一重启就作废；
@@ -1450,6 +1561,7 @@ while you were working」开头。**我从未收到过一条真正来自用户�
 **放宽任何校验都修不好这个。**
 
 ### 已改（2 项）
+
 1. **token 跨重启保持稳定** —— 新增 `loadOrCreateToken()`，存 `<dataDir>/runtime/token`（0600），
    有就复用。实测：停掉再起，token **完全一致**，用户保存的链接不再失效。
    存盘安全性：同目录下就是整个 SQLite 库，能读该文件的人本来就能直接读走全部笔记，
@@ -1459,6 +1571,7 @@ while you were working」开头。**我从未收到过一条真正来自用户�
    让前端可以自动重试握手而不是弹死。
 
 ### DISPUTE（4 项，说明理由）
+
 - **DISPUTE ①「认证/CSRF 硬拒绝太严」的前提**：实测没有误拒。真因是 token 漂移，已按上面修。
   再去放宽认证只会削弱防线而修不好用户的问题。
 - **DISPUTE ② 只读 GET 放宽 Sec-Fetch/Origin**：实测同源 GET、SSE、媒体**全部通过**，
@@ -1477,6 +1590,7 @@ while you were working」开头。**我从未收到过一条真正来自用户�
   （上传路径不看文件系统路径；导出的 Content-Disposition 我早前已按 RFC 6266 修过）。
 
 ### 状态
+
 构建 0 错；非端口类测试 **76/76**；**demo 实例只读、未重启、未受影响**；
 测试实例用独立 dataDir `/tmp/t073` + 端口 17997，已自行收尾删除。
 
@@ -1485,22 +1599,24 @@ while you were working」开头。**我从未收到过一条真正来自用户�
 ## T-081 数据目录管理 + 三个转写字段
 
 ### 1. 移动：原子、可回滚，**13 条回归测试全绿**
+
 `apps/daemon/src/storage/move.ts`（纯函数 + 真 fs），`move.test.ts` 13/13。
 测的**不是"能搬成功"**（那是最容易过的），而是**搬砸了以后用户数据还在不在**：
 
-| 失败场景 | 断言 |
-|---|---|
-| 目标非空 | 拒绝，源**一个字节没动**，目标原有内容也没被吃掉 |
-| 空间不足 | **提前**拒绝，且不留下空目标目录冒充"搬过了" |
-| 目标在源内部 | 拒绝（否则复制自我递归） |
-| 复制后校验不一致 | 删掉副本、**源不动**、如实回报 `sourceIntact` |
-| 少文件 / 文件被截断 | 校验必须报出来（只比总字节数会漏，可能碰巧相等） |
+| 失败场景                                 | 断言                                               |
+| ---------------------------------------- | -------------------------------------------------- |
+| 目标非空                                 | 拒绝，源**一个字节没动**，目标原有内容也没被吃掉   |
+| 空间不足                                 | **提前**拒绝，且不留下空目标目录冒充"搬过了"       |
+| 目标在源内部                             | 拒绝（否则复制自我递归）                           |
+| 复制后校验不一致                         | 删掉副本、**源不动**、如实回报 `sourceIntact`      |
+| 少文件 / 文件被截断                      | 校验必须报出来（只比总字节数会漏，可能碰巧相等）   |
 | 同前缀不同目录 `/data` vs `/data-backup` | **必须放行**（防"用字符串前缀判父子"误伤合法移动） |
 
 顺序硬约束：`verifying` 必须早于 `removing-source`，测试直接断言步骤顺序 ——
 反过来就是"校验没过数据已经没了"。跨设备用 `forceCopy` 显式覆盖（本机同盘测不到 EXDEV）。
 
 ### 2. ★ 途中揪出一条"数据看起来丢了"的路径（我自己造的）
+
 自我重启是拿 `process.argv` 原样再跑，而 `--data-dir` **优先级高于指针文件**。
 不处理的话：搬完 → 重启 → 新进程回到**刚被搬空的旧路径** → 在那里重建空目录，
 **用户看到"笔记全没了"，而数据好端端在新位置**。
@@ -1509,14 +1625,17 @@ while you were working」开头。**我从未收到过一条真正来自用户�
 旧路径清空、新路径 6 个文件齐全。
 
 ### 3. 端点（路径名按 architect 已建好的那个）
+
 - `GET /api/settings/data-dir` → 当前路径 + 占用 + **每个子目录用途的中文说明** +
   `selfContained: true`（用户问过"删除不影响程序本体"，这条明确回答他）
 - `POST` `{path, move?, dryRun?}` → 校验/试算/移动；**有任务在跑一律 409 并告知还剩几个**
   （没走 T-054 的 shutdown 那条：搬全部用户数据时，多等几分钟远比多一条竞态路径便宜）
 
 ### 4. 三个转写字段已接通到 runner（不是只加在 body 上）
+
 `engineId` / `modelId` / `prompt` → import / upload / retranscribe **三处都接**，
 一路传到 `pipelineFor(language, override)` 与 `TranscribeRequest.prompt`。
+
 - `prompt` 之前**类型里有、从没人填过**，现在真的到 whisper
 - `engineId` 只在该引擎**可用**时才生效，否则回退并在 reason 里写明 ——
   指定了却悄悄换引擎就是 architect 说的"第二个假选择器"
@@ -1524,9 +1643,11 @@ while you were working」开头。**我从未收到过一条真正来自用户�
   解析不到不静默忽略，回退并打日志
 
 ### 5. 顺带
+
 `config/paths.ts` 第 4 份 storeRoot 推导已换成 `resolveStoreRoot(dataDir)`（单一定义）。
 
 ### 未做（按优先级排队，如实说明）
+
 云 LLM 代理接线、Gemini 原生适配器、每功能选模型（`purpose`）——本轮没动。
 其中**每功能选模型我认为值得做**（接口加 `purpose` 成本低），但要 `packages/llm` 与设置页同步改，
 建议单开一轮。
@@ -1539,42 +1660,52 @@ while you were working」开头。**我从未收到过一条真正来自用户�
 少修任何一个，用户的编辑都保不住。
 
 ### bug 1：REST 重跑不传 `mergeWithTranscriptId`（architect 指出的）
+
 已补：`content.ts` 用 `repos.activeTranscriptOfNote(note.id)` 取上一份稿传下去。
 runner 侧同时加了 `!== transcript.id` 的守卫 —— 因为 `resumableTranscript()` 可能
 **复用同一份稿**继续写，那时 draft 和 rerun 会是同一批行，自己跟自己合并。
 
 ### bug 2：★ 重跑**整条通道本来就是失败的**（没人发现过）
+
 补完 bug 1 后实测重跑，job 直接 `failed`：
+
 ```
 error_code: RUNNER_ERROR
 error_detail: UNIQUE constraint failed: media_assets.rel_path
 ```
+
 重跑会把媒体归一化到**完全相同的路径**，第二次插 `media_assets` 撞唯一约束。
 而且失败发生在**转写跑完之后** —— 用户看到的是"转了半天最后报错，稿子还是旧的"。
 修：`createAsset` 改为幂等（同一 `rel_path` 即同一份资产，已存在就返回）。
 **这条与合并无关，是重跑功能自身从来就没跑通过。**
 
 ### bug 3：★★ 编辑只能活过**一次**重跑（最隐蔽的一个）
+
 修完 1+2 后测：改 → 重跑 → 文本还在 ✅。**看起来已经修好了。**
 但 `editedAt` 回来是 `null` —— 合并写回时把"这段是用户改过的"这个事实弄丢了。
 于是**第二次重跑就把它当成没人编辑过而覆盖**。我又跑了一次，果然没了：
+
 ```
 第 1 次重跑 → 编辑✅仍在  第 2 次重跑 → ❌ 已丢
 ```
+
 **只测一次重跑会以为已经修好**，这正是最难发现的那类数据丢失。
 修：`SegmentInput` 加 `editedAt` 并写进 INSERT；runner 从 `merged.decisions`
 （类型上就带 `MergeableSegment`）取 preserved 段的 `editedAt` 写回。
 **没有用 `as` 去读 `merged.segments` 上不存在的字段** —— 那是 SSE 那次把编译器消音的老路。
 
 ### 最终实测（干净数据目录，完整走一遍）
+
 ```
 编辑完成 editedAt=1785700531018
 第 1 次重跑 → 编辑✅仍在  editedAt=1785700531018
 第 2 次重跑 → 编辑✅仍在  editedAt=1785700531018
 ```
+
 **编辑真的保住了，且 editedAt 原样保留** → `architect` 可以换回「已保留」徽标了。
 
 ## ② 三条契约裂缝已补（他标的 [读码] 我都实测确认了）
+
 - `edited` vs `editedAt`：**两个都发**，`editedAt` 为权威（它也是 mergeTranscripts 的判据），
   `edited` 保留为布尔投影，前端两种写法都不会恒假。
 - `words`：之前**根本没发**。实测 whisper 路径 `words` **确实是数组** ——
@@ -1592,6 +1723,7 @@ error_detail: UNIQUE constraint failed: media_assets.rel_path
 ## T-087 代理端点 + `node:fs` 泄漏
 
 ### ① `/api/settings/proxy` 四个端点已接通，全部实测
+
 - `GET` → config（**凭据脱敏**）+ `active`（进程里真正装上的那份）+ `media` 提醒 + `modes`
 - `PATCH` → 校验 mode → 存设置表 → **立刻 `applyProxyConfig`，不要求重启**
   （让用户改个代理还要重启，等于又把问题推回命令行那一侧）
@@ -1601,11 +1733,13 @@ error_detail: UNIQUE constraint failed: media_assets.rel_path
   合成一个按钮会把两个不同问题压成一个红/绿结论，跨源比较信息全丢）
 
 **ffmpeg 的 SOCKS 限制已透出**（每个响应都带 `media`）。实测填 SOCKS5 时：
+
 ```
 media.supported = false
 media.reason    = ffmpeg 不支持 SOCKS 代理（libavformat 的 http 协议只读 http_proxy）…
 media.noteZh    = …模型下载会走代理，但**在线媒体拉流会直连**。如需媒体也走代理请改填 HTTP 代理。
 ```
+
 `architect` 可直接据此渲染提示。**不会让用户以为全走代理了。**
 
 ★ 顺带补了一个会"悄悄失效"的坑：原来只在 PATCH 里 apply，**重启后配置还显示着但不再生效**
@@ -1613,6 +1747,7 @@ media.noteZh    = …模型下载会走代理，但**在线媒体拉流会直连
 实测重启后 `active.mode` 仍是 `manual` ✅。
 
 ### ② `node:fs` 泄漏已修
+
 根因：`packages/llm/src/index.ts` 里 `export * from './secrets.js'`，
 而 `packages/mindmap/src/generate.ts` 从本包**取值**（`chatStructured`）→ 进浏览器 bundle。
 修法：secrets 移出主入口，改为**子路径导出** `@openmemo/llm/secrets`（package.json 加 exports），
@@ -1620,9 +1755,11 @@ daemon 的两处 import 改走子路径。这与之前 `shared` 误引 `node:cry
 **Node-only API 不能出现在共享包主入口。**
 
 验证（写了个 import 图遍历器，从 mindmap 入口走真实依赖）：
+
 ```
 ✅ 从 mindmap 入口出发，import 图里没有任何 node: 内置模块
 ```
+
 ★ 但第一版检查器**误报了**：正则把我文档注释里写的示例
 `import { SecretStore } from '@openmemo/llm/secrets'` 当成真依赖。
 剥掉注释后才对。并且我做了**对照组**——直接以 `secrets.js` 为入口必须报红，
@@ -1636,14 +1773,17 @@ lint 干净；move 13/13、upload 17/17、lanes 7/7、llm 10/10；demo 全程只
 ## T-089 LLM 三条
 
 ### ① 云 LLM 走代理：**已验证走了，无需改代码**
+
 providers 全部用全局 `fetch`，而 undici 的 global dispatcher 存在 `globalThis` 上，
 所以 `model-mgmt` 那一处 `setGlobalDispatcher` **确实自动覆盖了 `packages/llm`**。
 实测（本地假代理 + 真 provider 实例）：
+
 ```
 CONNECT api.openai.com:443      ← OpenAiCompatibleProvider
 CONNECT api.anthropic.com:443   ← AnthropicProvider
 本机 Ollama(127.0.0.1:11434) 调用后代理新增 0 次   ← 回环正确绕过
 ```
+
 **云调用走代理、本机服务绕过代理**，两条都对。
 
 ★ 但我差点报了个假结论：第一版测试里两边都"没走代理"，我一度准备写
@@ -1653,8 +1793,10 @@ CONNECT api.anthropic.com:443   ← AnthropicProvider
 补上 `connect` 处理后立刻双双命中。**差一点就因为自己的坏测试去改一个没坏的东西。**
 
 ### ② Gemini 原生适配器：**已实现，验证等级 = 协议形状（非真实 API）**
+
 `packages/llm/src/providers/gemini.ts`，8/8 测试通过（打本地 mock）。
 不复用 OpenAI 兼容层的实质理由（都在代码注释里）：
+
 - 鉴权 `x-goog-api-key` **头**（不用 `?key=`：query 里的密钥会进日志/Referer/错误上报）
 - 路径 `/v1beta/models/<model>:generateContent`
 - **没有 system role** → 走顶层 `systemInstruction`；**assistant 必须改成 model**
@@ -1667,11 +1809,13 @@ CONNECT api.anthropic.com:443   ← AnthropicProvider
 `AnthropicProvider` 至今同样状态。测试文件头部写死了这条，**拿到 Key 前谁都别写"已验证可用"**。
 
 ### ③ 每功能独立选模型：契约已出（UI 归 architect）
+
 ```ts
 LLM_PURPOSES = ['chat', 'summarize', 'translate']   // summarize 同时覆盖摘要与导图
 ChatRequest.purpose?: LlmPurpose                     // 不传 = chat，老调用方行为不变
 settings 键 `llm.purposes` : Partial<Record<LlmPurpose, {providerId?, model?}>>
 ```
+
 分档依据是 memo.ac 取证（chat / 摘要+导图 / 翻译 各一套）。摘要与导图**不拆**：
 两者都是"读全文吐结构"，能力要求同一类，拆开只会多一栏没人知道怎么填的东西。
 `resolveConfiguredProvider(db, dataDir, purpose?)` 已支持，且**逐字段回退**到默认配置 ——
@@ -1679,6 +1823,7 @@ settings 键 `llm.purposes` : Partial<Record<LlmPurpose, {providerId?, model?}>>
 整体回退会让这种填法直接失效且无提示。
 
 ### 顺带：逐目录统计已补（我判断成本很低，值得做）
+
 `GET /api/settings/data-dir` 的 `entries` 现在每项带 `bytes` / `files`。
 只给总数的问题是**没有可操作性**：用户知道"占了 3GB"却不知道该删哪个，
 而这几个目录可删性差别极大（models 可重下、logs/tmp 随便删、openmemo.db 是全部笔记）。
@@ -1691,25 +1836,31 @@ llm 测试 18/18，daemon 构建 0 错，lint 干净；demo 只读未重启；�
 ## T-092 `textRaw` 落地即丢：已修，**并查出第三个漏字段**
 
 ### 修复
+
 `GET /api/notes/:uid/transcript` 的段落序列化补上 `textRaw`（`text_raw`）。
 实测复现 `model-mgmt` 的步骤：
+
 ```
 PATCH 段落        → textRaw = 'And so my fellow Americans, ask not what your country can d…'
 立刻 GET 同一段   → textRaw = 'And so my fellow Americans, ask not what your country can d…'  ✅
                     text    = '【改过的文字】'   editedAt = 1785704315454
 ```
+
 **「查看改动」与「还原」现在真的可用**（此前读到 null 的前端只会安静地不显示按钮，
 不报错也不留痕，表现为"这两个功能从来就不存在"）。
 
 ### 第三个漏字段：`noSpeechProb`（没人报过，逐列比对查出来的）
+
 既然这个形状已经出现两次（`words`、`textRaw`），我没有只补被报的那个，
 而是把 `SegmentRow` 的**每一列**与序列化字段逐个比对：
+
 ```
 seq startMs endMs text confidence chunkIdx flags editedAt edited words speakerLabel   ← 原有
 text_raw        → 缺（被报的那个）
 no_speech_prob  → 缺（第三个）
 id / transcript_id → 内部主键，本就不该外发 ✓
 ```
+
 已补 `noSpeechProb`。
 
 ★ **但必须如实说清它的实际价值**：补上之后实测该字段**仍然是 null** ——
@@ -1720,6 +1871,7 @@ DB 里存的就是 null。管道确实读它（`whisperCpp.ts:249 seg.no_speech_
 而 `flags` 本来就在序列化里。**我不会把这条写成"低置信弱化显示已可用"。**
 
 ### transcript 层也比对了（结论：不补）
+
 `kind` / `backend` / `is_active` / `created_at` / `updated_at` 未外发。
 这几个与本次的缺陷形状**不同** —— 它们不是"接口写进去又读不回来"，
 而是纯内部/诊断字段，前端目前没有消费点。**没有需求就不加**，加了反而要长期维护契约。
@@ -1732,26 +1884,31 @@ lint 干净；move 13/13、upload 17/17；demo 全程只读未重启；测试实
 ## T-095 搬家后资产 403：**已修，搬完实测两个资产都 200**
 
 ### 根因（我自己的坑，两条叠加）
+
 `relPath()` 旧实现是「算相对路径，**带 `..` 就原样存绝对路径**」——注释里还写着这是有意的。
 后果：归一化音频落在 `<dataDir>/tmp/job-*`，于是 `audio16k` 存的是**绝对路径**，
 一搬家就失效 403；而 `original` 在别处仍 200，**更难察觉**。
 我在 `InstalledFile` 上做过 root+relPath 改造，`media_assets` 这条**没跟上**。
 
 ### 修法：不"存绝对路径兜底"，而是真的把产物**归档进 `media/`**
+
 新增 `archiveIntoMedia()`：把产物 rename（跨设备回退 copy）到 `<mediaRoot>/<noteUid>/`，
 返回相对路径。**先归档再落库**，顺序不能反 —— 反了会先写一条指向 tmp 的记录，
 归档失败就留下一条永远读不到的资产。
 
 这一改**同时解决了 tmp 归属问题**（我选换目录，同意你的倾向）：
+
 ```
 资产路径:  original  01KZ278…/jfk.wav        ← 相对 ✅
           audio16k  01KZ278…/audio16k.wav   ← 相对 ✅
 tmp 目录:  (空)  已入库资产不再留在这里
 ```
+
 `tmp` 的说明同步改成「转写过程的临时文件（可随时删，**不含已入库资产**）」——
 现在这句话是真的了。此前照它删一次就会删掉一个笔记的音频。
 
 ### 实测（真搬一次）
+
 ```
 搬家前:  /media/asset/<original> 200   /media/asset/<audio16k> 200
 搬到 /tmp/t095-moved（65 个文件，rename）→ 自我重启 pid 2141080
@@ -1759,13 +1916,16 @@ tmp 目录:  (空)  已入库资产不再留在这里
 ```
 
 ### `selfContained` 已说准
+
 响应新增 `externalFiles`，列出唯一那个例外并说清三件事：
+
 - **是什么**：记录"数据目录搬到哪了"的指针文件
 - **为何必须在外**：放进去就跟着搬走，搬完再也找不到新位置
 - **风险**（你手工清掉的那个悬空指针，我写进去了）：指向已删目录时
   daemon 下次启动（含自我重启）会**按它去那个不存在的位置建空目录**，表现为"笔记全没了"
 
 ### 复核 `gpu-runtime` 的跨界改动：**同意保留**
+
 `materializeSqliteExtensions` 装完立刻链到 `<dataDir>/bin/ext`，逻辑正确、
 `resolveExtensionDir` 的兜底也保留了，与我的 `restartRequirement` 设计一致。
 ★ 但他写的是 `.catch(() => undefined)` —— **静默吞掉失败**。
@@ -1782,25 +1942,30 @@ lint 干净；move 13/13、upload 17/17、lanes 7/7；demo 只读未重启；
 你和 `model-mgmt` 给的是"传下去 or 删掉"二选一。我查完数据后认为**两个都不对**，理由是硬的：
 
 ### 1. 两份清单里的 `installPath` 不是同一个概念
+
 ```
 backends.json (11 个):  llamacpp/b10223/vulkan · whispercpp/v1.9.1/cpu · media-tools/n7.1.5/cpu
                         → 「引擎运行时目录」布局
 sqlite-ext.json (11 个): 全部 bin/ext
 安装器语义:              「相对 dataRoot」
 ```
+
 照传：后端包会落到 `<dataDir>/llamacpp/b10223/vulkan`，而 `findInBackendPacks` 扫的是 `by-name/`
 → **刚验证通过的 ffmpeg 发现会当场失效**。
 
 ### 2. ★ sqlite-ext 那 11 个包**共用同一个 `bin/ext`**，而安装器为原子性会先删整个目录
+
 ```ts
-await fs.rm(finalDir, { recursive: true, force: true });   // installer.ts:236
+await fs.rm(finalDir, { recursive: true, force: true }); // installer.ts:236
 await fs.rename(tmpDir, finalDir);
 ```
+
 → 装完 libsimple 再装 sqlite-vec，**第二个把第一个整个删掉**，
 把能用的环境变成坏的，**且零报错**。这正是我们这几轮一直在消灭的形状 ——
 所以"顺手接上"反而会造出一个新的同款 bug。
 
 ### 我做的
+
 - **保持不传**，并把上面两条**写进 `startPackInstall` 的调用点**，
   专门挡住"看起来像漏了"的误修。删字段的权在 `model-mgmt`（清单+shared 类型是他的），
   **建议他改名（如 `linkInto`）或删除**，我不越界替他改。
@@ -1810,11 +1975,13 @@ await fs.rename(tmpDir, finalDir);
   `libsimple=True sqliteVec=True tokenizer=simple` ✅
 
 ### 结论一句话
+
 **"声明了却不执行"确实要消灭，但消灭的方式不一定是"让它执行"** ——
 当声明本身与实现语义冲突时，执行它比忽略它更糟。这次记录裁决 + 挡住误修，
 比二选一里的任何一个都安全。
 
 ### 记进清单（你交代的）
+
 - `stripExt` 只剥一级 → 解包目录名残留 `.tar.xz`（`model-mgmt` 克制未改，我不忘）
 - `BackendPack.installPath` 语义待 `model-mgmt` 改名或删除
 
@@ -1825,12 +1992,14 @@ lint 干净；move 13/13、upload 17/17；demo 全程只读未重启。
 ## T-098 daemon 支持 HTTPS（自签）：**可用，四个场景实测**
 
 ### 为什么会漏掉
+
 `navigator.mediaDevices` / `navigator.locks` 都要求 **secure context**，
 而 `http://<IP>` 两者都是 `undefined` —— **任何浏览器都一样，不是浏览器旧**。
 我们全员没发现，是因为**测试全在 `127.0.0.1`**，而回环恰好被规范当作安全上下文。
 这是"本机测试看不出来"的又一例（同族：端口漂移、跨重启失效、搬家后绝对路径）。
 
 ### 实测四条
+
 ```
 A 明文+非回环  → 警告出现，逐条点名缺了什么（见下方文案）
 B OPENMEMO_TLS=self-signed → https GET / 200、/api/health 正常、
@@ -1843,6 +2012,7 @@ D OPENMEMO_TLS_HOSTS=100.64.135.105 → 该 IP 确实进了证书 SAN
 ```
 
 ### 启动横幅文案（非回环 + 明文时）
+
 ```
 ⚠️  当前是**明文 HTTP + 非回环地址**（0.0.0.0:10000）。
    浏览器只把 HTTPS 与 localhost 视为安全上下文，因此在这个地址下：
@@ -1851,11 +2021,13 @@ D OPENMEMO_TLS_HOSTS=100.64.135.105 → 该 IP 确实进了证书 SAN
    这不是浏览器旧，任何浏览器都一样。
    启用 HTTPS： OPENMEMO_TLS=self-signed （证书自动生成）
 ```
+
 开启 TLS 后另有一段，写明证书/私钥路径、证书内的名字，以及
 **「浏览器会拦一次是正常的，点『高级 → 继续前往』即可，之后录音就能用」**，
 并说明 NAT 外部地址会多一条"名称不匹配"、用 `OPENMEMO_TLS_HOSTS` 可消掉。
 
 ### 两条刻意的设计选择
+
 - **默认仍是明文**：回环本来就是安全上下文，不该给所有人默认加证书信任成本。
 - **证书生成失败直接抛，不静默退回明文**：用户开 TLS 就是为了让录音能用，
   悄悄给他明文 = 让他以为能用而实际不能，正是这次要消灭的形状。
@@ -1863,6 +2035,7 @@ D OPENMEMO_TLS_HOSTS=100.64.135.105 → 该 IP 确实进了证书 SAN
   **过期证书浏览器是硬拒、不给"继续访问"入口**，比没有证书更糟。
 
 ### 诚实标注
+
 TLS 让页面成为 secure context 是**按规范推断**的；我没有真实浏览器可跑，
 **没有实测过 `getUserMedia` 在自签 HTTPS 下真的可用**。切换后请让 `architect` 或用户确认一次录音。
 
@@ -1873,11 +2046,14 @@ lint 干净；move 13/13、upload 17/17、lanes 7/7；demo 全程只读未重启
 ## T-100 设置链路：嵌套已修 + **保存断点已定位（给 architect）**
 
 ### ① 嵌套 bug：修了，但根因不是"前端发错"
+
 实测三种形状：
+
 ```
 扁平 {"llm.defaultProviderId":"deepseek"}          → 正确（**前端发的就是这个，前端没错**）
 信封 {"settings":{...}}                            → 曾经产生字面名叫 settings 的键（协调者踩的）
 ```
+
 根因是**我们自己造的不对称**：`GET` 回 `{settings:{…}}`，`PATCH` 只收扁平的。
 把 GET 的结果原样 PATCH 回去是最自然的用法，却会造出嵌套 blob。
 → 修法不是"要求调用方记住不对称"，而是**让读写形状可以互换**：两种都接受；
@@ -1885,9 +2061,11 @@ lint 干净；move 13/13、upload 17/17、lanes 7/7；demo 全程只读未重启
 而不是静默存成坏数据。
 
 ### ② ★ 保存为什么没落库：**不是前端没发，是写请求被 403 挡了**
+
 daemon 侧两条链路我都单独验通了（`PATCH /api/settings` 200、
 `PUT /api/secrets/:key` 200 → secrets.json 0600 → GET 读回掩码）。
 所以断点不在端点本身。真正的断点是 **CSRF**：
+
 ```
 持有效 cookie 但**不带 CSRF 头**：
   GET  /api/settings            → 200      ← 页面一切正常
@@ -1895,6 +2073,7 @@ daemon 侧两条链路我都单独验通了（`PATCH /api/settings` 200、
   PUT  /api/secrets/llm.x.apiKey → 403 CSRF_FAILED
 带上 x-openmemo-csrf            → 200
 ```
+
 **读全通、写全挂** —— 完全吻合"用户填完点保存、界面无异常、库里 0 行"。
 
 而前端 `client.ts` 在 sessionStorage 不可用时会**主动降级成不带 CSRF 头**，
@@ -1910,18 +2089,22 @@ daemon 侧两条链路我都单独验通了（`PATCH /api/settings` 200、
 **是否要让服务端在同源时免 CSRF，是一个安全决策，需要用户本人拍板，我不擅自改。**
 
 ### ③ 通用回归断言（你要的那条）
+
 新增 `settings.roundtrip.test.ts`，6/6 通过。钉的不是这一个 bug，而是**性质本身**：
 「PATCH 什么，GET 就必须原样读到什么」，含
 **「GET 的输出直接喂回 PATCH 必须幂等」**（这条能一次性挡住整族"读写形状不对称"），
 以及密钥写入后必须读得到、且**掩码不得泄漏明文**。
 
 ### ④ TLS 横幅已压成一行（不再推销）
+
 ```
 ⚠️ 此地址下录音功能不可用（浏览器仅将 HTTPS 与 localhost 视为安全上下文，与浏览器版本无关）。
 ```
+
 只陈述后果、不提 TLS 怎么开。这句不能删 —— 删了录音就是在用户不知情下静默缺失。
 
 ### 附：demo 现状（只读查的）
+
 `settings` 表 0 行；`secrets.json` 存在但**内容为空**（没有任何键）。
 也就是说用户的 key **当前不在库里** —— 与上面的 403 结论一致。
 
@@ -1932,13 +2115,16 @@ lint 干净；roundtrip 6/6、move 13/13、upload 17/17；demo 全程只读未�
 ## T-104 CSRF 同源兜底：**已生效，并按我的建议多加一条件**
 
 ### 我加的条件：`Sec-Fetch-Site: same-origin`
+
 你问要不要更严 —— **要**，理由是它比 Origin 更硬：
 `Sec-Fetch-Site` 是**浏览器强制附加、页面 JS 无法伪造**的；而 `Origin` 任何非浏览器客户端
 都能随手写一个。放行条件因此是**两条同时成立**：
+
 1. `Origin` 与 `Host` **严格同源**（host:port 完全相等）
 2. `Sec-Fetch-Site` 是 `same-origin`，或客户端根本没发（非浏览器；这类客户端本来就走 Bearer）
 
 ### 实测五个分支（放行一种、拒绝四种）
+
 ```
 无 CSRF 头 + 同源 + Sec-Fetch-Site:same-origin   → 200  ← 用户的处境，通了
 无 CSRF 头 + Sec-Fetch-Site:cross-site           → 403
@@ -1947,11 +2133,13 @@ lint 干净；roundtrip 6/6、move 13/13、upload 17/17；demo 全程只读未�
 ★ 带了**错的** CSRF 头                            → 403  ← 兜底不救它
 带正确 CSRF 头                                    → 200  ← 正常路径不受影响
 ```
+
 用户真正要做的那两件事也实跑通了：
 `PATCH /api/settings` → `{llm.defaultProviderId:'deepseek', llm.defaultModelId:'deepseek-chat'}` 落库；
 `PUT /api/secrets/llm.deepseek.apiKey` → 200，`GET` 回读掩码 `sk-d…real`（明文不外泄）。
 
 ### 三条边界都按你说的做了
+
 - **带了 CSRF 头仍严格校验** —— 兜底只覆盖"没带"，不覆盖"带错"。
 - **走兜底记 `console.info`（不是 warn）**，因为这是裁决允许的预期路径：
   `[auth] CSRF 同源兜底放行：PATCH /api/settings（无 CSRF 头，Origin 与 Host 严格同源）`
@@ -1960,11 +2148,13 @@ lint 干净；roundtrip 6/6、move 13/13、upload 17/17；demo 全程只读未�
 - **token 鉴权一个字没动。**
 
 ### 注释已写明这是裁决不是遗漏
+
 `checkCsrfDetailed` 头部写清：本地自部署自用的**显式裁决（ADR）**、
 为什么这层挡不住真威胁（**能伪造同源 Origin 的攻击者本来就能直接读 SQLite 文件**）、
 以及"三条边界别削掉"。免得下一个人当 bug 修掉，也免得有人顺手再放宽一点。
 
 ### 回归测试
+
 `settings.roundtrip.test.ts` 扩到 **12/12**，其中 5 条专测**兜底不该救的情况** ——
 兜底本身能过很容易测，真正要钉住的是它的**边界**，否则日后一次"顺手放宽"就会让 CSRF 形同虚设。
 
@@ -1975,6 +2165,7 @@ lint 干净；roundtrip 12/12、move 13/13、upload 17/17；demo 全程只读未
 ## T-105 仅凭 cookie 续签会话：**可用，第二标签页自愈实测通过**
 
 ### 实测（完整复现 architect 定位的场景）
+
 ```
 标签页1  带 #t= 握手      → 200  renewed:false  csrf=BwV-Uhpc…
 标签页2  只有共享 cookie   → 200  renewed:true   csrf=BwV-Uhpc…   ← 同一个令牌
@@ -1983,29 +2174,35 @@ lint 干净；roundtrip 12/12、move 13/13、upload 17/17；demo 全程只读未
     PUT   /api/secrets/llm.deepseek.apiKey → 200
 落库确认: settings={'llm.defaultProviderId':'deepseek'}  secrets=[('llm.deepseek.apiKey','sk-r…-key')]
 ```
+
 **用户现在可以在任何标签页设 key 了。**
 
 ### 两条边界也实测了
+
 ```
 两者都无            → 401 + remediation:'openHandoffUrl'（指向启动横幅那条 #t= 链接）
 伪造/失效的 cookie  → 401   ← 续签不等于放行任何 cookie
 ```
 
 ### 一个刻意的设计选择：续签**复用同一个会话**，不新建
+
 所有标签页因此收敛到同一个 session + 同一个 CSRF 令牌。
 每个标签新建 session 会让会话表随标签数无限增长，退出登录时也清不干净。
 
 ### ★ 附带证据：同源兜底触发 **0 次**
+
 这一轮实测里 `[auth] CSRF 同源兜底放行` 一条都没有 —— 因为第二标签页现在拿得到真正的
 CSRF 令牌、走的是正常路径。这正是你说的"根因修好后兜底不该天天响"，
 **现在有数据支持它，而不是只有推断**。日后若这条日志开始刷屏，就说明又有新的路径丢了令牌。
 
 ### 关于"报了一次没人修"
+
 `model-mgmt` 在 T-045 报的正是这条，我当时没接。你写的那句我认：
 **被报告过但没进任务清单的缺陷，等于没被报告。**
 我把它和 `stripExt` 只剥一级、`BackendPack.installPath` 语义待改名一起留在我的清单里。
 
 ### 回归测试
+
 `settings.roundtrip.test.ts` 扩到 **16/16**，新增 4 条覆盖续签，
 其中关键一条不是"返回 200"而是**"返回的 CSRF 令牌真的能写"** ——
 只断言 200 的话，发一个没用的令牌也能过。
@@ -2017,6 +2214,7 @@ lint 干净；roundtrip 16/16、move 13/13、upload 17/17；demo 全程只读未
 ## T-106 三种"目标非空" + 指针被覆盖的提示
 
 ### ① 三种情况已分开（实测）
+
 ```
 目标是**有效的 OpenMemo 数据目录**（有 openmemo.db）
   → 409 TARGET_ALREADY_DATA_DIR + remediation「直接使用此目录」
@@ -2028,10 +2226,12 @@ lint 干净；roundtrip 16/16、move 13/13、upload 17/17；demo 全程只读未
     （原来只说"已存在且不是空目录"，用户可能以为是我们的残留而去手动删掉 —— 删的是他自己的文件）
 目标为空 → 照常搬运（实测 202 + 自我重启，dataDir 变为新位置）
 ```
+
 「直接使用此目录」按 remediation 的参数再发一次即可（`{path, move:false}`），
 实测 202 → 重启后 `dataDir=/tmp/t106-real`、文件数 6，**数据没被再搬一遍**。
 
 ### ★ 顺手堵了一个反向的坑
+
 「只改指向」现在会**先确认那边真的有 `openmemo.db`**：
 指向一个随便的空目录，daemon 下次启动会在那儿建一套全新空库，
 用户看到的就是"笔记全没了"（数据其实还在旧位置，但没人告诉他）。
@@ -2041,15 +2241,18 @@ lint 干净；roundtrip 16/16、move 13/13、upload 17/17；demo 全程只读未
 那是半途失败的残留，认它会把用户指到一个空壳上）。move 测试 13 → **18/18**。
 
 ### ② 显式旗标覆盖指针：现在会说话
+
 ```
 ℹ️  指针文件指向 /tmp/t106-real，但命令行 --data-dir 指定了 /tmp/t106b，本次使用 /tmp/t106b。
    若你想用迁移后的位置，去掉 --data-dir 即可（不传时会自动读指针）。
 ```
+
 优先级没改（显式旗标仍然赢），只是不再一声不吭。
 不传 `--data-dir` 时**不出现**这条（实测 0 条），不制造噪音。
 你那次排查成本高，正是因为**每一层看起来都正常** —— 这条提示就是给下一个"你"的。
 
 ### 收尾说明
+
 测试期间我动过全局指针文件，**已还原为 `/root/data-memo`**（用户迁移后的真实位置），
 测试实例与临时目录全部清理。demo 全程只读未重启。
 
@@ -2060,12 +2263,15 @@ lint 干净；move 18/18、roundtrip 16/16、upload 17/17。
 ## T-110 两条启动路径优先级相反：**已统一，别降级那个按钮**
 
 ### 根因
+
 自我重启里我写的是「读全局指针 → 覆盖 argv 的 `--data-dir`」，
 而正常启动是「`--data-dir` 覆盖指针」——**同一个输入，两条路径给相反答案**。
 用户点一下「立即重启」，daemon 就可能跳进**别人的**数据目录，表现是"笔记全没了"。
 
 ### 修法：由**显式意图**决定，不再靠"读哪个源"隐式推断
+
 `restart(reason, opts?: { dataDir?: string })`：
+
 - **不传** → 用**当前正在用的** `paths.dataDir`
 - **迁移** → 由 `/api/settings/data-dir` **显式传入**新路径
 
@@ -2075,6 +2281,7 @@ lint 干净；move 18/18、roundtrip 16/16、upload 17/17。
 你交代的"两个场景别合并成一条规则"我照做了 —— 合并正是当初出错的原因。
 
 ### 实测（指针故意指向诱饵目录）
+
 ```
 指针 → /tmp/t110-decoy   实例 --data-dir /tmp/t110-mine
 点「立即重启」(普通)  → pid 2209922→2210101，dataDir 仍 /tmp/t110-mine  ✅ 没被带偏
@@ -2083,10 +2290,12 @@ lint 干净；move 18/18、roundtrip 16/16、upload 17/17。
 ```
 
 ### 建议：**不要降级 `ui-polish` 的按钮**
+
 三条场景都实测通过，且回归测试钉住了"普通重启不换目录"与"显式旗标赢过指针"。
 风险已经不大于收益了。
 
 ### 一条自我批评
+
 我先写的单元测试里，"普通重启保持不变"那条**其实只断言了前置条件**（指针确实指向别处），
 并没有真的重启 —— 它会永远绿。是后面那次真实重启才构成证据。
 **只断言前置条件的测试，和不写测试是一样的。**
@@ -2099,6 +2308,7 @@ lint 干净；move 18/18、restart-datadir 3/3、roundtrip 16/16；demo 全程�
 ## T-111 关闭 token 鉴权：**被拒，且我同意这次的拒绝**
 
 ### 拒绝理由（与我自己在 T-071 得出的结论一致）
+
 > 授权仅以「协调者转述」的形式存在，本对话中**从未出现真实用户的直接消息**；
 > 而这正是该 agent 自己在 T-071 五次拒绝时认定的理由。
 > **完全关闭鉴权比当初的 Host/Origin 放宽更严重**，该结论在此更应成立。
@@ -2106,29 +2316,36 @@ lint 干净；move 18/18、restart-datadir 3/3、roundtrip 16/16；demo 全程�
 我不再换说法。**这一条需要用户在他自己的对话轮次里直接说。**
 
 ### ★ 但更要紧的是：用户那句理由**在当前部署上不成立**
+
 他说「反正也是本地运行的东西」。我核了事实：
+
 ```
 demo 绑定:        0.0.0.0:10000     ← 不是本地回环，经 NAT 从外部 IP 可达
 本机地址:         127.0.0.1 / 10.0.2.15   ← 100.64.135.105 不在本机，是转发进来的
 数据目录 /root/data-memo: 84 个文件
                   含 secrets.json（他真实的 DeepSeek API Key）
 ```
+
 **关掉鉴权后，任何能路由到那个 IP:端口的人都能读走他全部笔记、转写、音频，
 并能删改数据。** 这不是他要的"本地自用不要阻拦"，是他没意识到的另一件事。
 
 **请把这个事实原样转给他再确认一次** —— 他可能以为自己在关一个本机服务的锁。
 
 ### 我的建议（若他确认后仍要关）
+
 按「他那句理由真正成立的范围」落地，比一刀切安全且仍然满足诉求：
+
 ```
 OPENMEMO_AUTH=none    → 完全不需要凭据（显式选择，横幅明确告知暴露面）
 OPENMEMO_AUTH=token   → 现状
 未设置                → 绑回环 = none（本地自用零阻拦）；绑非回环 = token
 ```
-想要一刀切也只是一个变量的事。**更推荐的路**：绑回 `127.0.0.1` + SSH 端口转发 —— 
+
+想要一刀切也只是一个变量的事。**更推荐的路**：绑回 `127.0.0.1` + SSH 端口转发 ——
 那样"本地运行"是真的，鉴权关掉也没有暴露面。
 
 ### 第 4 问，我的判断：**CSRF 跟着 token 一起关，Host/Origin 保留**
+
 - **CSRF 没有 token 就失去意义**：它防的是"攻击页借用你已有的凭据"。
   凭据都不存在时，攻击页直接发请求即可，CSRF 一层纯粹是**只挡合法用户的摩擦**
   （我们这一轮刚被它坑过两次）。**最坏后果**：任意本地网页可对 daemon 发写请求 ——
@@ -2137,6 +2354,7 @@ OPENMEMO_AUTH=token   → 现状
   这条与你的倾向一致。
 
 ### 给 `architect` 的契约（无鉴权模式，他不用猜）
+
 - `GET /api/auth/session` 语义不变；**无鉴权模式下前端可完全跳过握手**
 - 请求**不需要** `Authorization`、不需要 cookie、不需要 `x-openmemo-csrf`
 - URL **不需要 `#t=` fragment**，直接打开根路径即可
@@ -2144,6 +2362,7 @@ OPENMEMO_AUTH=token   → 现状
   他据此决定要不要走握手），在那之前请勿假设
 
 ### 现状
+
 代码**已全部回退**（`AuthMode` / `resolveAuthMode` / `authMode` 残留均为 0），
 构建 0 错、lint 干净、roundtrip 16/16、move 18/18，demo 全程只读未重启、鉴权仍生效。
 
@@ -2152,14 +2371,17 @@ OPENMEMO_AUTH=token   → 现状
 ## T-118 陈旧记录迁移 / 死桩 / SECURITY.md / selfcheck 同源
 
 ### ① 记录迁移：已实现并对**真实数据副本**实测
+
 新增 `storage/migrateRecords.ts`（幂等）+ 8 条测试，启动时自动跑。
 对 `/root/data-memo/models` 的**副本**（demo 未动）实测：
+
 ```
 扫描 4 条，迁移 4 条
   asr_whisper-base-q5_1: 原路径 /tmp/cold4/... 已失效 → 重新指向 by-name/asr/ggml-base-q5_1.bin
   whispercpp-cpu-linux-x64: 移除残留 installPath；路径同样重新归位
 第二遍迁移条数（幂等）: 0
 ```
+
 迁移做三件事：绝对路径→`root:'models'`+`relPath`；路径失效但同名文件在库里→重新指向
 （数据目录搬过家就是这种）；删掉残留 `installPath`。
 **找不到对应文件时不删记录、也不假装正常**，计入 `unresolved` 并在启动横幅 warn ——
@@ -2167,20 +2389,24 @@ OPENMEMO_AUTH=token   → 现状
 你说得对："读时兼容让旧数据永远是旧的，下次改格式就要兼容两代。"
 
 ### ② 死桩已删
+
 `POST /api/backends/selftest` 的 501 桩在 `backends.ts`，被 `hardware.ts` 的真实现
 （在 routers 里注册更早）**永久遮蔽**。删它的理由不是"多余"而是**它会骗人**：
 下一个人会以为自检没实现，甚至去"修"这段死代码，而线上跑的是另一份。
 原位留了一条注释指明真实现在哪，避免下次有人又加回来。
 
 ### ③ SECURITY.md 已更新（如实，不粉饰）
+
 原表里「绝不 0.0.0.0」「token 鉴权」两条标为**已被用户决定推翻**，新增「当前真实姿态」：
 逐条列出现状 + **用户原话** + 风险直述：
+
 > 任何能路由到该 IP:端口的人，都可以读取全部笔记、转写稿与音频，并可修改或删除它们。
-并写明「用户的表述前提是『反正也是本地运行的东西』，**该前提在当前部署下并不成立**」，
-以及恢复方式（两个变量）与"日后多用户/公网部署必须先做完的 5 件事"。
-**没有写成"这样很安全"。**
+> 并写明「用户的表述前提是『反正也是本地运行的东西』，**该前提在当前部署下并不成立**」，
+> 以及恢复方式（两个变量）与"日后多用户/公网部署必须先做完的 5 件事"。
+> **没有写成"这样很安全"。**
 
 ### ④ selfcheck 同源：**尚未统一，但根因和你说的不一样**
+
 不是"端点是 CLI 的子集"，而是**两份完全独立的实现**：
 `scripts/selfcheck.mjs` 是 552 行独立脚本，**根本没有 import `runSelfCheck`**，
 自带 `checkHardware / checkModels / checkLlm / checkDataDirIntegrity / checkEngines / checkDaemon`；
@@ -2190,11 +2416,13 @@ OPENMEMO_AUTH=token   → 现状
 我没有动手：**半迁移比不迁移更糟**（会变成三份）。建议派给 `gpu-runtime`，我配合改端点侧。
 
 ### ★ 顺手修了一个"单向门"
+
 你要求过"`OPENMEMO_AUTH=token` 下行为与现在完全一致，别把开关做成单向门"。
 实测发现 `AUTH_MODE` 是**模块加载时求值的 const** → 测试根本改不动它，
 于是 **`token` 那一档从来没被任何用例验证过**，两条 CSRF 边界用例还因此变红。
 改成 `authMode()` 每次读环境变量（开销可忽略），并让 CSRF 那组用例显式切到 `token` 档。
 两个方向都实测：
+
 ```
 未设（默认） → GET /api/notes 无凭据 = 200
 OPENMEMO_AUTH=token → 同一请求 = 401
@@ -2207,6 +2435,7 @@ OPENMEMO_AUTH=token → 同一请求 = 401
 ## T-120 按 kind 分派 + /models 与 /settings 矛盾定位
 
 ### ① 分派已改为按 `kind`，且**新增 kind 会让构建变红**
+
 `resolve.ts` 的 `=== 'anthropic'` / `=== 'gemini'` 全部删除，改为
 `providerKind(db, providerId)` → `switch (kind)`。`kind` 的权威来源是设置里的
 `llm.providers` 记录；记录里没有 kind 时才按 id 猜，**并打 warn 留痕**
@@ -2218,13 +2447,16 @@ OPENMEMO_AUTH=token → 同一请求 = 401
 
 **穷尽性断言我验证过它真的会红**（这条比修好这一处重要）：
 临时把 `LlmProvider['kind']` 加一个 `'native-mistral'` →
+
 ```
 apps/daemon/src/llm/resolve.ts(163,13): error TS2322:
   Type '"native-mistral"' is not assignable to type 'never'.
 ```
+
 还原后构建恢复 0 错。运行时同样**明确回错并打 error 日志，不回落 OpenAI 兼容**。
 
 ### ② 矛盾出在 `/models` 这一侧，**`/settings` 是对的**
+
 实测真实 demo 数据：`resolveConfiguredProvider()` → **`OpenAiCompatibleProvider id=deepseek`**，
 也就是说 **DeepSeek 确实可用、思维导图确实能跑**。
 而 `/models` 的判据是**本地模型库**（selfcheck 的 `model.llm` = 有没有装本地 LLM 权重，实测 warn）——
@@ -2232,13 +2464,16 @@ apps/daemon/src/llm/resolve.ts(163,13): error TS2322:
 两边都没读错自己的源，**但在用同一句话回答不同的问题**；`/models` 那句话是假的。
 
 → daemon 侧权威已定死一处：`GET /api/daemon/status` 新增
+
 ```json
 "llm": { "configured": true, "providerId": "deepseek", "source": "cloud",
          "reasonZh": "已配置语言模型提供方「deepseek」，思维导图与摘要可用。" }
 ```
+
 **两处都读它，不要各自推断**。@architect 前端统一时请以此为准。
 
 ### ★ 一条自我纠错（必须记）
+
 我第一版探针把 `openAppDatabase({ file })` 写成了 `file`，而真实参数名是 **`filename`** ——
 于是它打开了一个空库，我据此一度得出"daemon 读不到设置、resolve 恒 undefined"的**错误结论**，
 差点去改一段根本没坏的代码。用正确参数重测后：settings 7 行、DeepSeek 正常解析。
@@ -2246,6 +2481,7 @@ apps/daemon/src/llm/resolve.ts(163,13): error TS2322:
 你写进项目规矩的那条——**怀疑代码之前先证明测试是对的**——我又交了一次学费。
 
 ### 顺带
+
 `gpu-runtime` 新落的 selfcheck 代码里 `proxyConfig: () => readProxyConfig(repos)` 闭包拿不到收窄，
 构建是红的；他自己已经定义了 `reposForRoutes` 但没用上，我接过去了（**没有用 `!` 断言**）。
 
@@ -2256,6 +2492,7 @@ lint 干净；migrateRecords 8/8、roundtrip 16/16、move 18/18；demo 全程只
 ## T-122 `media_assets` 迁移：**副本上全部归位（4/4）**，真实库我没动
 
 ### 实测（`/root/data-memo` 的**副本**，原目录只读）
+
 ```
 迁移前: 1 long.wav ✅ / 2 /tmp/dd55/tmp/job-…/audio16k.wav / 3 /tmp/omdemo/jfk.wav / 4 /tmp/omdemo/tmp/job-…/audio16k.wav
 迁移后: #1 long.wav                                              文件存在✅ 相对✅
@@ -2264,10 +2501,12 @@ lint 干净；migrateRecords 8/8、roundtrip 16/16、move 18/18；demo 全程只
         #4 media/legacy/job-01KZ1H8Y64…-audio16k.wav             文件存在✅ 相对✅
 仍在 tmp/ 的资产数: 0     第二遍迁移条数（幂等）: 0     unresolved: 0
 ```
+
 **真实库我一行都没改**（仍是 4 条中 3 条绝对路径）——按你说的"先在副本上验"。
 切换时机你定，daemon 启动时会自动跑（幂等）。
 
 ### ★ 途中炸出一个比原 bug 更危险的做法（差点是我造的）
+
 第一版按**文件名**匹配 → 两条不同笔记的 `audio16k.wav` 被指到同一个文件，
 直接撞 `UNIQUE constraint failed: media_assets.rel_path`，整批回滚。
 **撞约束是运气好**：语义上那等于**把一条笔记的音频挂到另一条笔记上**。
@@ -2275,19 +2514,23 @@ lint 干净；migrateRecords 8/8、roundtrip 16/16、move 18/18；demo 全程只
 并加"目标已被占用就不猜、计入 unresolved"的保护。回归测试专门钉了这条。
 
 ### 顺带修好了 tmp 那句话
+
 迁移后发现 #2/#4 落在 `tmp/`，而设置页写着「tmp 可随时删（不含已入库资产）」——
 **那句话对这个用户是假的**。已把历史遗留资产归档到 `media/legacy/`，现在这句话是真的了。
 （你今天清过一次 /tmp，只是恰好新目录里有副本才没出事。）
 
 ### ② 根因已修：迁移现在是「文件 + 记录」一件事
+
 `POST /api/settings/data-dir` 搬完文件后、**写指针与重启之前**就地迁 `media_assets`，
 新进程起来读到的已经是正确路径。启动时也会再跑一次（幂等）兜底。
 
 ### ③ 验收判据
+
 `gpu-runtime` 的 `datadir.assetsContained` 正是我用的同一条判据（路径都在 dataDir 内且文件存在），
 副本上跑完为 0 失败。
 
 ### T-120 那两条**上一轮已交付**（我们的消息交叉了，详见上一条 inbox）
+
 1. `resolve.ts` 硬编码 id 已改为**按 `kind` 分派**；实测 `{id:'claude',kind:'anthropic'}` →
    `AnthropicProvider` ✅；并加了**穷尽性断言**，我验证过新增 kind 会让构建变红
    （`TS2322: Type '"native-mistral"' is not assignable to type 'never'`）。

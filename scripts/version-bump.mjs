@@ -34,7 +34,10 @@ import { REPO_ROOT, VERSION_RE, productTag, readRootPackageJson } from './lib/ve
 
 const argv = process.argv.slice(2);
 const isFix = argv.includes('--fix');
-const summary = argv.filter((a) => a !== '--fix').join(' ').trim();
+const summary = argv
+  .filter((a) => a !== '--fix')
+  .join(' ')
+  .trim();
 
 if (!summary) {
   console.error(
@@ -51,7 +54,9 @@ const { path: pkgPath, text: pkgText, json: pkg } = readRootPackageJson();
 const cur = pkg.version;
 const m = VERSION_RE.exec(cur ?? '');
 if (!m) {
-  console.error(`✘ 当前 version = ${JSON.stringify(cur)}，不符合 0.N.P，不敢自动递增。先手工修好。`);
+  console.error(
+    `✘ 当前 version = ${JSON.stringify(cur)}，不符合 0.N.P，不敢自动递增。先手工修好。`,
+  );
   process.exit(1);
 }
 
@@ -103,7 +108,9 @@ writeFileSync(clPath, head + entry + rest);
 console.log(`✔ ${cur} → ${next}`);
 console.log(`  已更新: package.json, CHANGELOG.md`);
 console.log(`\n下一步（本脚本**不替你做**，因为打 tag / push 是不可撤销的）：`);
-console.log(`  git add package.json CHANGELOG.md && git commit -m "release: ${next} —— ${summary}"`);
+console.log(
+  `  git add package.json CHANGELOG.md && git commit -m "release: ${next} —— ${summary}"`,
+);
 console.log(`  git tag ${productTag(next)}`);
 console.log(
   `\n  tag 用 \`v\` 前缀，和 Releases 页上 \`backend-packs-*\` / \`model-mirror-*\` 刻意分开：\n` +

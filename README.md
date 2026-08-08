@@ -12,10 +12,10 @@
 去 [**Releases**](https://github.com/faorcoek042/openmemo/releases) 下你系统那一个,解开就能跑。
 **自带 Node 运行时** —— 机器上**不需要装 Node、不需要 pnpm、不需要 git**。
 
-| 系统 | 文件 | 下载 | 解开后 |
-|---|---|---:|---:|
-| Linux x64 | `openmemo-<版本>-linux-x64.tar.xz` | 41 MiB | 176 MiB |
-| Windows x64 | `openmemo-<版本>-win-x64.zip` | 49 MiB | 132 MiB |
+| 系统        | 文件                                  |   下载 |  解开后 |
+| ----------- | ------------------------------------- | -----: | ------: |
+| Linux x64   | `openmemo-<版本>-linux-x64.tar.xz`    | 41 MiB | 176 MiB |
+| Windows x64 | `openmemo-<版本>-win-x64.zip`         | 49 MiB | 132 MiB |
 | macOS arm64 | `openmemo-<版本>-darwin-arm64.tar.gz` | 60 MiB | 192 MiB |
 
 解开后跑里面的启动脚本,打开它打印的地址即可。
@@ -49,11 +49,11 @@ node apps/daemon/dist/main.js        # 打开终端里打印的地址,默认 htt
 
 组件、模型、数据库、媒体文件**全在同一个数据目录**下,默认位置:
 
-| 系统 | 默认数据目录 |
-|---|---|
-| Linux | `~/.local/share/openmemo/`(跟随 `XDG_DATA_HOME`) |
-| macOS | `~/Library/Application Support/OpenMemo/` |
-| Windows | `%APPDATA%\OpenMemo\` |
+| 系统    | 默认数据目录                                     |
+| ------- | ------------------------------------------------ |
+| Linux   | `~/.local/share/openmemo/`(跟随 `XDG_DATA_HOME`) |
+| macOS   | `~/Library/Application Support/OpenMemo/`        |
+| Windows | `%APPDATA%\OpenMemo\`                            |
 
 **这个位置可以改。** 网页上「设置 → 数据目录」能**查看、修改、整体搬走、统计各部分占多大**;
 也可以启动时用 `--data-dir <路径>` 指定。**删掉整个数据目录不会弄坏程序本体** ——
@@ -64,12 +64,12 @@ node apps/daemon/dist/main.js        # 打开终端里打印的地址,默认 htt
 
 ## 能跑在哪
 
-| 平台 | 状态 |
-|---|---|
-| **Linux x64**(glibc ≥ 2.34) | ✅ CPU;另有 Vulkan 包,**没在真 GPU 上验过** |
-| **Windows x64**(需 VC++ 2015-2022 运行时) | ✅ CPU;CUDA 包**可能已经好了但验不了**(要真 N 卡) |
-| **macOS arm64**(≥ 13.3,**部分功能要 ≥ 15.5**,见下) | ✅ CPU + Metal + ANE(ANE 仅 `large-v3-turbo`) |
-| **AMD(ROCm)** · **macOS Intel** · **linux-arm64** | ❌ 不构建 |
+| 平台                                               | 状态                                              |
+| -------------------------------------------------- | ------------------------------------------------- |
+| **Linux x64**(glibc ≥ 2.34)                        | ✅ CPU;另有 Vulkan 包,**没在真 GPU 上验过**       |
+| **Windows x64**(需 VC++ 2015-2022 运行时)          | ✅ CPU;CUDA 包**可能已经好了但验不了**(要真 N 卡) |
+| **macOS arm64**(≥ 13.3,**部分功能要 ≥ 15.5**,见下) | ✅ CPU + Metal + ANE(ANE 仅 `large-v3-turbo`)     |
+| **AMD(ROCm)** · **macOS Intel** · **linux-arm64**  | ❌ 不构建                                         |
 
 判据是**「屏蔽宿主 PATH 的干净机器上真的转出非空文本」**,不是「代码写完了」。最近一轮
 `cold-start-audit` run 31167151669 三平台各一次,5 个工具全由产品自己下载校验、**借宿主 PATH 的 0 个**。
@@ -80,11 +80,11 @@ node apps/daemon/dist/main.js        # 打开终端里打印的地址,默认 htt
 
 **macOS 的系统版本下限是分层的**(`[CI 实测]`,逐个二进制读 `LC_BUILD_VERSION`):
 
-| 要用什么 | 最低 macOS | 来源 |
-|---|---|---|
-| 核心:转写、播放、笔记、**中文全文检索** | **11.0** | node · better-sqlite3 · libsimple 都是 11.0 |
-| 向量检索(`vec0`)、流式 ASR / VAD(`sherpa-onnx`) | **14.0** | 上游预编译 |
-| 同上的 ONNX 运行时 | **15.5** | 上游预编译 |
+| 要用什么                                        | 最低 macOS | 来源                                        |
+| ----------------------------------------------- | ---------- | ------------------------------------------- |
+| 核心:转写、播放、笔记、**中文全文检索**         | **11.0**   | node · better-sqlite3 · libsimple 都是 11.0 |
+| 向量检索(`vec0`)、流式 ASR / VAD(`sherpa-onnx`) | **14.0**   | 上游预编译                                  |
+| 同上的 ONNX 运行时                              | **15.5**   | 上游预编译                                  |
 
 我们承诺 **13.3** 是因为 whisper.cpp 那个包;**13.3–14.x 上向量检索与流式 ASR 会静默失效**
 ——不报错,只是不工作。这几个数字来自上游的预编译产物,**不是我们能选的**。
@@ -110,10 +110,10 @@ node apps/daemon/dist/main.js        # 打开终端里打印的地址,默认 htt
 
 ## 更多文档
 
-| | |
-|---|---|
-| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | **部署手册**:系统要求、端口绑定、数据目录、密钥、自检怎么读、备份恢复卸载、故障排查 |
-| [`docs/SECURITY.md`](docs/SECURITY.md) | 威胁模型、子进程参数注入防护、**两个已知未修复的缺口** |
-| [`docs/00-CHARTER.md`](docs/00-CHARTER.md) | 项目章程(F1–F5、平台矩阵、要求 2.1/2.2) |
-| [`docs/design/D-11-ci-platform-facts.md`](docs/design/D-11-ci-platform-facts.md) | 上面那张平台表的事实来源 |
-| [`docs/adr/`](docs/adr/) · [`HANDOFF.md`](HANDOFF.md) | 16 份架构决策记录 · 给下一个接手者 |
+|                                                                                  |                                                                                     |
+| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)                                       | **部署手册**:系统要求、端口绑定、数据目录、密钥、自检怎么读、备份恢复卸载、故障排查 |
+| [`docs/SECURITY.md`](docs/SECURITY.md)                                           | 威胁模型、子进程参数注入防护、**两个已知未修复的缺口**                              |
+| [`docs/00-CHARTER.md`](docs/00-CHARTER.md)                                       | 项目章程(F1–F5、平台矩阵、要求 2.1/2.2)                                             |
+| [`docs/design/D-11-ci-platform-facts.md`](docs/design/D-11-ci-platform-facts.md) | 上面那张平台表的事实来源                                                            |
+| [`docs/adr/`](docs/adr/) · [`HANDOFF.md`](HANDOFF.md)                            | 16 份架构决策记录 · 给下一个接手者                                                  |

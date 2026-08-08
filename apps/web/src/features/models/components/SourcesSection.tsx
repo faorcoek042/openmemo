@@ -61,7 +61,9 @@ export function SourcesSection({ locale }: { locale: string }): React.ReactEleme
   ];
 
   const label = (id: ProviderId | 'auto'): string =>
-    id === 'auto' ? t('models.sources.auto') : t(`models.sources.provider.${id}`, { defaultValue: id });
+    id === 'auto'
+      ? t('models.sources.auto')
+      : t(`models.sources.provider.${id}`, { defaultValue: id });
 
   return (
     <section
@@ -98,7 +100,11 @@ export function SourcesSection({ locale }: { locale: string }): React.ReactEleme
         <Emphasis text={t('models.sources.hint')} />
       </p>
 
-      <div className="mt-3 flex flex-wrap gap-2" role="radiogroup" aria-label={t('models.sources.title')}>
+      <div
+        className="mt-3 flex flex-wrap gap-2"
+        role="radiogroup"
+        aria-label={t('models.sources.title')}
+      >
         {options.map((id) => {
           const p = id === 'auto' ? undefined : probeById.get(id);
           const active = data.selected === id;
@@ -158,7 +164,9 @@ export function SourcesSection({ locale }: { locale: string }): React.ReactEleme
                  * 失败原因**原样显示**。翻成一句"连接失败"会把仅有的线索换成一句废话
                  * —— 与 `queue.ts` 对 `INTERNAL` 保留 detail 是同一条。
                  */
-                <span className="text-ink-secondary">{p.error ?? t('models.sources.unknownError')}</span>
+                <span className="text-ink-secondary">
+                  {p.error ?? t('models.sources.unknownError')}
+                </span>
               )}
               <span className="ml-auto text-ink-muted">
                 {new Date(p.probedAt).toLocaleTimeString(locale)}

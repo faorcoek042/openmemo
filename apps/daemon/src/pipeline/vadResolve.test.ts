@@ -93,9 +93,7 @@ async function makeStore(f: Fixture): Promise<string> {
         role: 'vad',
         engines,
         integrity: 'ok',
-        files: [
-          { role: 'weights', name, root: 'models', relPath: join('by-name', 'asr', name) },
-        ],
+        files: [{ role: 'weights', name, root: 'models', relPath: join('by-name', 'asr', name) }],
       }),
     );
   };

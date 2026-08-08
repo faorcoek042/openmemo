@@ -3,6 +3,7 @@
 ## [2026-08-07 22:40] T-170 DONE —— 三条「声称已做、全仓零实现」+ 一条字符串嗅探
 
 交付:
+
 - `packages/pipeline/src/subprocess/runner.ts`（① 补实现 + 改注释）
 - `packages/pipeline/src/subprocess/__tests__/killTree.test.ts`（新）
 - `packages/pipeline/src/subprocess/argGuard.ts`（③ 两条注释，不是一条）
@@ -11,6 +12,7 @@
 - `docs/adr/ADR-003-runtime-and-process-model.md`（② 就地改 + 文末 §7 订正）
 
 要点:
+
 - **① Windows 孙进程**：补了 `taskkill /T`（不是只改注释）。理由是 `[实测 CI]` —— `taskkill` 在
   windows-2025 runner 上 exit 0（`D-11 §3.1`），且 `D-01 §2.5` 早就把这对命令写死了。**"泄不泄漏"两半分开答，见 §1。**
 - **② macOS quarantine**：**没补实现，改了 ADR**，因为清 quarantine = 关掉 Gatekeeper 对自家产物的检查，
@@ -20,6 +22,7 @@
 - **树上另一位（T-169）的 `packages/shared` 正红**，不是我的，见 §6。
 
 下一步建议:
+
 - ADR-003 §7 的三选一需要 Manager/用户一句话，在此之前决策 4 那半句仍是不实的。
 - `commentRefsResolve` 这条守卫只抓 `see <驼峰>` 形状；`taskkill` 那种散文式假注释它抓不到（已写在文件头）。
 - yt-dlp 到底有没有孙进程，本机取不到（§1.2），有真 Windows / 能装 yt-dlp 的机器时值得 5 分钟确认。
@@ -51,11 +54,11 @@ Windows 上还有一种可能是作业对象（job object）替我们兜了底 �
 
 ### 1.2 (a) 有没有孙进程这半：**一个实测证伪，一个 UNKNOWN**
 
-| 工具 | 有没有孙进程 | 级别 |
-|---|---|---|
-| **ffmpeg** | **0 个**。本机两次真转码（`wav→mp3`、`mp4→wav`），全程采样 `/proc`，直接子进程数峰值 **= 0** | `[实测 本机]` |
-| **yt-dlp** | **UNKNOWN** | 取不到，见下 |
-| whisper-cli / sherpa | 未测（二进制不在本机） | `[未验证]` |
+| 工具                 | 有没有孙进程                                                                                 | 级别          |
+| -------------------- | -------------------------------------------------------------------------------------------- | ------------- |
+| **ffmpeg**           | **0 个**。本机两次真转码（`wav→mp3`、`mp4→wav`），全程采样 `/proc`，直接子进程数峰值 **= 0** | `[实测 本机]` |
+| **yt-dlp**           | **UNKNOWN**                                                                                  | 取不到，见下  |
+| whisper-cli / sherpa | 未测（二进制不在本机）                                                                       | `[未验证]`    |
 
 ⚠️ **修复前那条注释写的是「ffmpeg and yt-dlp **both** spawn helpers」—— `ffmpeg` 那半我实测证伪了。**
 新注释里已经把它改成只提 yt-dlp。
@@ -106,10 +109,10 @@ Windows 上还有一种可能是作业对象（job object）替我们兜了底 �
 
 **而且这个问题问得还不够细 —— 它其实是两条必须分开的路径**，混在一起谈会得出相反的结论：
 
-| # | 路径 | 级别 |
-|---|---|---|
-| ① 用户在**浏览器**里下发布包 → Finder 解压 | 属性会传播给解出来的文件 | `[报告]`（Apple 公开行为，**本轮没在真机验过**） |
-| ② **daemon 自己**下后端包（undici/Node + 我们自己的 `unpack.ts`） | 普通文件写入，不经 LaunchServices → **可能压根不会被打上 quarantine** | `[未验证]`，**这是假说** |
+| #                                                                 | 路径                                                                  | 级别                                             |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------ |
+| ① 用户在**浏览器**里下发布包 → Finder 解压                        | 属性会传播给解出来的文件                                              | `[报告]`（Apple 公开行为，**本轮没在真机验过**） |
+| ② **daemon 自己**下后端包（undici/Node + 我们自己的 `unpack.ts`） | 普通文件写入，不经 LaunchServices → **可能压根不会被打上 quarantine** | `[未验证]`，**这是假说**                         |
 
 **ADR 原文说的是路径 ②（"首次运行时由 daemon 自动清除"）。**
 如果 ② 根本不会被打上 quarantine，那**缺的是论证不是代码**，ADR 改一句就闭合；
@@ -221,15 +224,15 @@ Windows 上还有一种可能是作业对象（job object）替我们兜了底 �
 
 ## §5 门禁
 
-| 门禁 | 结果 |
-|---|---|
-| `npx tsc -b` | ✅ exit 0 |
-| `npx eslint .` | ✅ exit 0 |
-| `pnpm build:safe` | ✅ exit 0（**未跑 `pnpm -r build`，未碰 `apps/web/dist`**） |
-| `pnpm lint-workflows` | ✅ 562 条断言 / 6 个 workflow 全过 |
-| `pnpm check:orphans` | ✅ `没有新的零引用导出，基线也没有过期条目`（新增的 2 个导出在本文件与测试里都有引用） |
+| 门禁                         | 结果                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------ |
+| `npx tsc -b`                 | ✅ exit 0                                                                                        |
+| `npx eslint .`               | ✅ exit 0                                                                                        |
+| `pnpm build:safe`            | ✅ exit 0（**未跑 `pnpm -r build`，未碰 `apps/web/dist`**）                                      |
+| `pnpm lint-workflows`        | ✅ 562 条断言 / 6 个 workflow 全过                                                               |
+| `pnpm check:orphans`         | ✅ `没有新的零引用导出，基线也没有过期条目`（新增的 2 个导出在本文件与测试里都有引用）           |
 | `pnpm -r test`（我改动的包） | ✅ pipeline **227/227**（222+5）、runtime **89/89**（85+4）、daemon **434/434**、web **406/406** |
-| `pnpm -r test`（全量） | ⚠️ **红在 `packages/shared`，不是我的** —— 见 §6 |
+| `pnpm -r test`（全量）       | ⚠️ **红在 `packages/shared`，不是我的** —— 见 §6                                                 |
 
 改动前**先跑过基线**：`1301 tests / fail 0`，与任务书给的基线逐字吻合。我净增 **9** 条 → **1310**。
 
@@ -241,6 +244,7 @@ Windows 上还有一种可能是作业对象（job object）替我们兜了底 �
 （`回环 ::1 上的 http 应当放行` → `false !== true`）。
 
 判定依据：
+
 - 该包及其测试文件（`schemas.test.ts` / `contract.test.ts` / `jobs.test.ts`）**是本轮新出现的**，
   作者自陈 T-169（`packages/shared/package.json` 的 `_comment:test` 写着"这个包此前 0 个测试文件"）——
   正是 `closure-audit` 🟡-6 那条。
@@ -270,6 +274,7 @@ Windows 上还有一种可能是作业对象（job object）替我们兜了底 �
   **原文一个字没删**（用删除线保留），§1–§6 与附录 A 除那两行外未动。**请 Manager 追认或改写。**
 
 ### 本轮"没验就说没验"的清单
+
 - Windows 上是否真的泄漏孙进程 → `[未验证：需真 Windows]`
 - yt-dlp 有没有孙进程 → `UNKNOWN`（本机无该二进制、无出网，**两条路都堵死**）
 - macOS Gatekeeper 实际行为（两条路径） → `[未验证：需真 Mac]` / `[报告]`

@@ -308,8 +308,16 @@ describe('POST /api/settings/data-dir —— 「不要搬」必须真的不搬�
      */
     assert.equal(status, 202, `期望 202，实际 ${status} ${JSON.stringify(json)}`);
     assert.equal(json['moved'], false, '响应说搬了 —— 但用户选的是不搬');
-    assert.deepEqual([...snapshot(src).entries()].sort(), [...beforeSrc.entries()].sort(), '源目录被动过');
-    assert.deepEqual([...snapshot(dst).entries()].sort(), [...beforeDst.entries()].sort(), '目标目录被动过');
+    assert.deepEqual(
+      [...snapshot(src).entries()].sort(),
+      [...beforeSrc.entries()].sort(),
+      '源目录被动过',
+    );
+    assert.deepEqual(
+      [...snapshot(dst).entries()].sort(),
+      [...beforeDst.entries()].sort(),
+      '目标目录被动过',
+    );
   });
 
   it('★ 缺省（完全不给这个字段）也不搬', async () => {
@@ -372,7 +380,11 @@ describe('POST /api/settings/data-dir —— 「不要搬」必须真的不搬�
     assert.equal(off.status, 200);
     assert.equal(off.json['willMove'], false);
     assert.equal(on.json['willMove'], true);
-    assert.deepEqual([...snapshot(src).entries()].sort(), [...beforeSrc.entries()].sort(), '试算动了文件');
+    assert.deepEqual(
+      [...snapshot(src).entries()].sort(),
+      [...beforeSrc.entries()].sort(),
+      '试算动了文件',
+    );
   });
 
   it('★ 409 的补救载荷必须发前端真正会读的那个键名', async () => {
@@ -384,7 +396,10 @@ describe('POST /api/settings/data-dir —— 「不要搬」必须真的不搬�
     await unmount();
 
     assert.equal(status, 409);
-    const rem = (json['error'] as Record<string, unknown>)['remediation'] as Record<string, unknown>;
+    const rem = (json['error'] as Record<string, unknown>)['remediation'] as Record<
+      string,
+      unknown
+    >;
     const params = rem['params'] as Record<string, unknown>;
     assert.equal(rem['action'], 'useExistingDataDir');
     assert.equal(

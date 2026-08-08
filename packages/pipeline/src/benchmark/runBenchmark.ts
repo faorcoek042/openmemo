@@ -99,11 +99,24 @@ export async function decodeClip(
 
   const argv = buildArgv({
     flags: [
-      '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
+      '-nostdin',
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
       // Local decode only; no network protocol has any business here.
-      '-protocol_whitelist', 'file',
-      '-i', opusPath,
-      '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-f', 'wav',
+      '-protocol_whitelist',
+      'file',
+      '-i',
+      opusPath,
+      '-ac',
+      '1',
+      '-ar',
+      '16000',
+      '-c:a',
+      'pcm_s16le',
+      '-f',
+      'wav',
       wavPath,
     ],
     operands: [],
@@ -124,8 +137,17 @@ export async function decodeClip(
  */
 export async function runBenchmark(options: RunBenchmarkOptions): Promise<BenchmarkReport> {
   const {
-    engine, modelPath, tools, backend, deviceName,
-    language, threads, runs = 2, signal, clip: clipOverride, workRoot,
+    engine,
+    modelPath,
+    tools,
+    backend,
+    deviceName,
+    language,
+    threads,
+    runs = 2,
+    signal,
+    clip: clipOverride,
+    workRoot,
   } = options;
 
   const availability = await engine.isAvailable();
@@ -159,7 +181,10 @@ export async function runBenchmark(options: RunBenchmarkOptions): Promise<Benchm
       });
       const wall = (Date.now() - startedAt) / 1000;
       rtfPerRun.push(wall / clip.durationSec);
-      transcript = segments.map((s) => s.text).join(' ').trim();
+      transcript = segments
+        .map((s) => s.text)
+        .join(' ')
+        .trim();
     }
 
     // Best run: the first is polluted by model load and cold cache. Reporting the mean
@@ -208,9 +233,7 @@ export function toBenchmarkResult(report: BenchmarkReport): BenchmarkOutcome {
 export function formatBenchmark(report: BenchmarkReport): string {
   const perHourSec = report.rtf * 3600;
   const perHour =
-    perHourSec < 90
-      ? `${perHourSec.toFixed(0)} 秒`
-      : `${(perHourSec / 60).toFixed(1)} 分钟`;
+    perHourSec < 90 ? `${perHourSec.toFixed(0)} 秒` : `${(perHourSec / 60).toFixed(1)} 分钟`;
   return (
     `${report.engineId} @ ${report.backend}：${report.speedup.toFixed(0)} 倍速` +
     `（1 小时录音约需 ${perHour}）`

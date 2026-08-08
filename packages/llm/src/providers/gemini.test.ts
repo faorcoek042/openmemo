@@ -27,7 +27,9 @@ const server = http.createServer((req, res) => {
     captured = {
       path: req.url ?? '',
       headers: req.headers,
-      body: chunks.length ? (JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>) : {},
+      body: chunks.length
+        ? (JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>)
+        : {},
     };
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(

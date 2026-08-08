@@ -389,9 +389,7 @@ async function main() {
           const { readFile } = await import('node:fs/promises');
           const raw = JSON.parse(await readFile(join(DATA_DIR, 'secrets.json'), 'utf8'));
           // 只列**键名**。这里刻意不解构 value —— 明文 Key 连进变量都不该进。
-          hasKey = Object.keys(raw?.secrets ?? raw ?? {}).some((k) =>
-            /^llm\..+\.apiKey$/.test(k),
-          );
+          hasKey = Object.keys(raw?.secrets ?? raw ?? {}).some((k) => /^llm\..+\.apiKey$/.test(k));
         } catch {
           // 文件不存在 = 一个 Key 都没存过，这是全新安装的正常状态
           hasKey = false;
@@ -495,13 +493,7 @@ async function main() {
   const failures = rows.filter((r) => r.status === 'fail' && r.required);
 
   if (JSON_OUT) {
-    console.log(
-      JSON.stringify(
-        { ...report, results: rows, ok: failures.length === 0 },
-        null,
-        2,
-      ),
-    );
+    console.log(JSON.stringify({ ...report, results: rows, ok: failures.length === 0 }, null, 2));
   } else {
     console.log('\x1b[1mOpenMemo 自检\x1b[0m');
     console.log(`  dataDir   ${report.dataDir}`);
@@ -525,12 +517,18 @@ async function main() {
         last = r.layer;
       }
       const mark =
-        r.status === 'ok' ? '\x1b[32m✔\x1b[0m' : r.status === 'warn' ? '\x1b[33m!\x1b[0m' : '\x1b[31m✘\x1b[0m';
+        r.status === 'ok'
+          ? '\x1b[32m✔\x1b[0m'
+          : r.status === 'warn'
+            ? '\x1b[33m!\x1b[0m'
+            : '\x1b[31m✘\x1b[0m';
       console.log(`  ${mark} ${r.labelZh.padEnd(30)} ${r.detail}`);
     }
     const okN = rows.filter((r) => r.status === 'ok').length;
     const warnN = rows.filter((r) => r.status === 'warn').length;
-    console.log(`\n\x1b[1m结果\x1b[0m  通过 ${okN} · 警告 ${warnN} · \x1b[31m失败 ${failures.length}\x1b[0m`);
+    console.log(
+      `\n\x1b[1m结果\x1b[0m  通过 ${okN} · 警告 ${warnN} · \x1b[31m失败 ${failures.length}\x1b[0m`,
+    );
     for (const f of failures) {
       console.log(`  \x1b[31m✘ ${f.labelZh}\x1b[0m — ${f.detail}`);
       if (f.remediation) console.log(`      → ${f.remediation}`);

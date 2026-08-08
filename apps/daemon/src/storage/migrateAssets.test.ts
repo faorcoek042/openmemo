@@ -44,9 +44,11 @@ after(async () => {
 async function seed(dir: string, rows: Array<{ role: string; rel: string }>): Promise<AppDatabase> {
   await fs.mkdir(join(dir, 'media'), { recursive: true });
   const h = openAppDatabase({ filename: join(dir, 'openmemo.db') });
-  h.db.prepare(
-    `INSERT INTO notes(uid,title,kind,status,created_at,updated_at) VALUES ('N1','t','media','ready',1,1)`,
-  ).run();
+  h.db
+    .prepare(
+      `INSERT INTO notes(uid,title,kind,status,created_at,updated_at) VALUES ('N1','t','media','ready',1,1)`,
+    )
+    .run();
   let i = 0;
   for (const r of rows) {
     i += 1;

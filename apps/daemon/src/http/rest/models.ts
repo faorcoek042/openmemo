@@ -341,7 +341,10 @@ async function pullModel(
   }
 
   // ADR-004 决策 2：受限权重我们**从不转存**，必须用户自己去上游接受条款。
-  if ((model.license.gated || model.license.requiresAcceptance) && body['licenseAccepted'] !== true) {
+  if (
+    (model.license.gated || model.license.requiresAcceptance) &&
+    body['licenseAccepted'] !== true
+  ) {
     sendError(
       res,
       403,
@@ -580,11 +583,7 @@ async function activateModel(
 
 /* -------------------------------- delete --------------------------------- */
 
-async function deleteModel(
-  state: RestState,
-  res: ServerResponse,
-  id: string,
-): Promise<boolean> {
+async function deleteModel(state: RestState, res: ServerResponse, id: string): Promise<boolean> {
   const installed = await state.listInstalled();
   const record = installed.find((m) => m.id === id);
   if (!record) {
@@ -676,7 +675,8 @@ async function verifyModel(
           });
         });
         hashedBefore += f.sizeBytes;
-        if (!result.ok) mismatched.push(`${f.name}: 期望 ${result.expected}，实测 ${result.actual}`);
+        if (!result.ok)
+          mismatched.push(`${f.name}: 期望 ${result.expected}，实测 ${result.actual}`);
       }
 
       const updated: InstalledModel = {
@@ -895,9 +895,7 @@ async function runGc(
   const body = await readBody(req);
   const requested = asStringArray(body['targets']);
   const targets: GcTarget[] =
-    requested.length === 0
-      ? [...GC_TARGETS]
-      : GC_TARGETS.filter((t) => requested.includes(t));
+    requested.length === 0 ? [...GC_TARGETS] : GC_TARGETS.filter((t) => requested.includes(t));
 
   if (targets.length === 0) {
     sendError(

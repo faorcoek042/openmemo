@@ -41,7 +41,12 @@ export interface ProxyConfig {
 
 export type ProxyValidation =
   | { ok: true; url: string; scheme: ProxyScheme; hostname: string }
-  | { ok: false; code: 'empty' | 'too_long' | 'control_characters' | 'leading_dash' | 'unparseable' | 'bad_scheme'; message: string };
+  | {
+      ok: false;
+      code:
+        'empty' | 'too_long' | 'control_characters' | 'leading_dash' | 'unparseable' | 'bad_scheme';
+      message: string;
+    };
 
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARS = /[\x00-\x1f\x7f]/;
@@ -55,16 +60,25 @@ const CONTROL_CHARS = /[\x00-\x1f\x7f]/;
  * does not apply — the user is declaring their own egress path.
  */
 export function validateProxyUrl(input: unknown): ProxyValidation {
-  if (typeof input !== 'string') return { ok: false, code: 'empty', message: 'proxy URL must be a string' };
+  if (typeof input !== 'string')
+    return { ok: false, code: 'empty', message: 'proxy URL must be a string' };
   const trimmed = input.trim();
   if (trimmed.length === 0) return { ok: false, code: 'empty', message: 'proxy URL is empty' };
   if (Buffer.byteLength(trimmed, 'utf8') > MAX_PROXY_URL_BYTES) {
-    return { ok: false, code: 'too_long', message: `proxy URL exceeds ${MAX_PROXY_URL_BYTES} bytes` };
+    return {
+      ok: false,
+      code: 'too_long',
+      message: `proxy URL exceeds ${MAX_PROXY_URL_BYTES} bytes`,
+    };
   }
   // Checked before parsing: `new URL()` silently strips tabs and newlines, so parsing
   // first would launder a hostile string into a clean-looking one.
   if (CONTROL_CHARS.test(trimmed)) {
-    return { ok: false, code: 'control_characters', message: 'proxy URL contains control characters' };
+    return {
+      ok: false,
+      code: 'control_characters',
+      message: 'proxy URL contains control characters',
+    };
   }
   // It becomes an argv element for `yt-dlp --proxy`; a leading dash would be read as a flag.
   if (trimmed.startsWith('-')) {
@@ -87,7 +101,12 @@ export function validateProxyUrl(input: unknown): ProxyValidation {
     };
   }
 
-  return { ok: true, url: url.href.replace(/\/$/, ''), scheme: scheme as ProxyScheme, hostname: url.hostname };
+  return {
+    ok: true,
+    url: url.href.replace(/\/$/, ''),
+    scheme: scheme as ProxyScheme,
+    hostname: url.hostname,
+  };
 }
 
 /** Loopback must never be proxied — that would route our own API through the proxy. */

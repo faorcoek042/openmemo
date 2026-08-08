@@ -75,11 +75,11 @@ AFTER rm(source): dst_verbatim/libwhisper.so -> libwhisper.so.1              => 
 你要求的是两条：加 `verbatimSymlinks`、让 `verifyTreesMatch` 纳入符号链接。做完这两条之后
 我发现**还有一条路是完全裸的**，而且它是**默认路径**：
 
-| 场景 | `verbatimSymlinks` 管用吗 | `verifyTreesMatch` 管用吗 |
-|---|---|---|
-| `fs.cp` 改写相对链接（本次事故） | ✅ 修掉 | ✅ 能变红 |
+| 场景                                                          | `verbatimSymlinks` 管用吗   | `verifyTreesMatch` 管用吗           |
+| ------------------------------------------------------------- | --------------------------- | ----------------------------------- |
+| `fs.cp` 改写相对链接（本次事故）                              | ✅ 修掉                     | ✅ 能变红                           |
 | 数据里**本来就有**绝对路径自指链接（`/旧位置/a → /旧位置/b`） | ❌ **原样保留正是它的职责** | ❌ **两棵树逐字相同，必然报"一致"** |
-| **同盘 rename 快路径**（`forceCopy=false`，即默认） | — | ❌ **根本不调用它** |
+| **同盘 rename 快路径**（`forceCopy=false`，即默认）           | —                           | ❌ **根本不调用它**                 |
 
 后两行合起来是：**同盘移动 + 已有绝对链接 = 又是一次静默弄坏 + 绿灯**，和这次事故一模一样，
 只是触发条件换了一个。所以我加了 `findStaleLinks(newDir, oldDir)`：查的是**后果**
@@ -100,6 +100,7 @@ AFTER rm(source): dst_verbatim/libwhisper.so -> libwhisper.so.1              => 
 ✖ ★ copy（跨盘慢路径）：搬完源目录删掉后，两级 .so 链仍然可加载
   AssertionError: false !== true            ← moveDataDir 返回 ok:false
 ```
+
 护栏拦住了：新的 `verifyTreesMatch` 抓到链接目标不一致 → **回滚，源一个字节没删**。
 这是"修复没了但护栏在"的正确行为。
 
@@ -147,6 +148,7 @@ AFTER rm(source): dst_verbatim/libwhisper.so -> libwhisper.so.1              => 
 ✖ ★ rename 快路径也要查 stale 链接（它根本不调用 verifyTreesMatch）
   AssertionError: 0 !== 1
 ```
+
 （这一组跑的时候 E1 的改动还没还原，所以 copy 那条也一并红了 3 条。）
 
 #### 还原后
@@ -159,13 +161,13 @@ AFTER rm(source): dst_verbatim/libwhisper.so -> libwhisper.so.1              => 
 
 ### 5. 测试清单（19 条新增，原 13 条原封不动）
 
-| 分组 | 条数 | 钉住的性质 |
-|---|---|---|
-| `verifyTreesMatch` 符号链接 | 4 | 目标被改写 → 报「链接目标不一致」（两级链 **6 条**逐条对上）；verbatim → 通过；被 deref 成真文件 → 报「类型不一致」；少一条链接 → 报「缺失」 |
-| `measureTree` | 2 | 链接单独计数且不并进 `files`；**不跟随目录链接**（含一条指向父目录的，跟随即死循环） |
-| `findStaleLinks` | 3 | 绝对链接指向旧目录 → 抓到；同目录相对链接 → **不误报**；指向 `/usr/lib` → 不误报 |
-| T-128 端到端 | 5 | rename / copy **两条策略各一条**：搬完删源后 `readlink` 两跳都还是相对的，且**顺着链真读到目标内容**；校验必须拦下被改写的树；已有绝对自指链接 → `staleLinks` 报出来（rename 路径单独再钉一次） |
-| 合计 | **19** | |
+| 分组                        | 条数   | 钉住的性质                                                                                                                                                                                      |
+| --------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `verifyTreesMatch` 符号链接 | 4      | 目标被改写 → 报「链接目标不一致」（两级链 **6 条**逐条对上）；verbatim → 通过；被 deref 成真文件 → 报「类型不一致」；少一条链接 → 报「缺失」                                                    |
+| `measureTree`               | 2      | 链接单独计数且不并进 `files`；**不跟随目录链接**（含一条指向父目录的，跟随即死循环）                                                                                                            |
+| `findStaleLinks`            | 3      | 绝对链接指向旧目录 → 抓到；同目录相对链接 → **不误报**；指向 `/usr/lib` → 不误报                                                                                                                |
+| T-128 端到端                | 5      | rename / copy **两条策略各一条**：搬完删源后 `readlink` 两跳都还是相对的，且**顺着链真读到目标内容**；校验必须拦下被改写的树；已有绝对自指链接 → `staleLinks` 报出来（rename 路径单独再钉一次） |
+| 合计                        | **19** |                                                                                                                                                                                                 |
 
 **断言写法上的一条纪律**：`.so` 那几条的最终断言是
 `readFile(dst/.../libwhisper.so)` 的**内容以 `libwhisper-REAL-BYTES` 开头**，
@@ -312,6 +314,7 @@ cat: …: No such file or directory        ← 链接确实断了
 ### 3. selfcheck：`backend.libLinks`（同源已实跑校验）
 
 判据**必须是"顺着链真的读到内容"**，所以用 `open()` + 读**首 4 字节**：
+
 - `lstat()` 不跟随链接，**对彻底悬空的链接照样成功** → 用它等于把这条检查写成永远绿；
 - `access()` 虽然跟随、悬空会失败，但只回答"能不能"，**不产生可核对的证据**；
 - 读 4 字节代价是常数，不受 `.so` 体积影响，且顺带能抓出"指向空文件/被截断"。
@@ -386,14 +389,14 @@ E9b 快路径**完全**还原成我最初写错的样子（连 renamed 标志也
 按你要的三个特征（`try` 内 return / catch 里做破坏性操作 / 成功路径与回滚路径共享状态）
 把 `move.ts` 逐段过了一遍：
 
-| # | 位置 | 形状 | 结论 |
-|---|---|---|---|
-| 1 | 快路径 `return await succeeded('rename')` 在 try 内 | try 内 return + catch 落到复制路径 | **我自己写出来的，已修**（`renamed` 标志把 return 提到 try 外） |
-| 2 | **慢路径 `fs.rm(from)` 在会回滚的 try 内** | catch 做 `fs.rm(to)` 破坏性操作 | **新发现，已修** —— 见下 |
-| 3 | 慢路径 `return await succeeded('copy')` | 已在 try 外 | 安全（改动时就放在外面） |
-| 4 | 快路径 catch 里的 `fs.mkdir(to)` | catch 内操作 | 非破坏性，安全 |
-| 5 | 快路径 rename 前的 `fs.rm(to)` | 破坏性 | 安全：前面已拒过"目标非空"，且有测试钉住 |
-| 6 | `succeeded()` 读闭包里的 `size` | 成功/回滚共享状态 | 只读，安全 |
+| #   | 位置                                                | 形状                               | 结论                                                            |
+| --- | --------------------------------------------------- | ---------------------------------- | --------------------------------------------------------------- |
+| 1   | 快路径 `return await succeeded('rename')` 在 try 内 | try 内 return + catch 落到复制路径 | **我自己写出来的，已修**（`renamed` 标志把 return 提到 try 外） |
+| 2   | **慢路径 `fs.rm(from)` 在会回滚的 try 内**          | catch 做 `fs.rm(to)` 破坏性操作    | **新发现，已修** —— 见下                                        |
+| 3   | 慢路径 `return await succeeded('copy')`             | 已在 try 外                        | 安全（改动时就放在外面）                                        |
+| 4   | 快路径 catch 里的 `fs.mkdir(to)`                    | catch 内操作                       | 非破坏性，安全                                                  |
+| 5   | 快路径 rename 前的 `fs.rm(to)`                      | 破坏性                             | 安全：前面已拒过"目标非空"，且有测试钉住                        |
+| 6   | `succeeded()` 读闭包里的 `size`                     | 成功/回滚共享状态                  | 只读，安全                                                      |
 
 **第 2 处的后果**：删源删到一半失败（权限 / 文件被占用 / EBUSY）→ catch 触发 `fs.rm(to)`
 → **把刚刚校验通过的唯一一份完整数据删掉**，而源已经缺了一半。**那不是回滚，是两份都毁。**
@@ -431,6 +434,7 @@ DEBUG state newPath = []                                    ← 而 React state 
 **两边合起来才算验过；单独任何一边我都不会说它通了。**
 
 反向验证（把渲染从 `DataLocationSection` 里摘掉）：
+
 ```
 ✖ ★ DataLocationSection 确实把 daemon 的 warningZh 接进了这个组件
   AssertionError: mutation 的返回没有被读取
@@ -466,6 +470,7 @@ scripts/selfcheck.mjs --daemon           同源 25 项逐 id 一致（完好与�
 ```
 
 **红的两条，是别人的，我不冒领也不掩盖**：
+
 - `apps/web/src/features/models/ModelsPage.tsx(276,15)` TS2322 → `models-page-fix`（该文件 +113/−66，我没碰过）
 - `apps/daemon/dist/http/upload.test.js` 1 条失败 → `job-events`（正在改 `upload.ts`/`jobs/{events,queue,scheduler}.ts`，
   正是 `note.created + job.created` 那条断言的正主）。已 `grep` 确认 upload 链路**零处**引用我改的文件。

@@ -99,7 +99,9 @@ function score(c: EngineCandidate, input: SelectEngineInput): number {
       const supports =
         claimsLang === 'auto' ||
         (Array.isArray(claimsLang) &&
-          claimsLang.some((l) => input.language !== undefined && input.language.toLowerCase().startsWith(l)));
+          claimsLang.some(
+            (l) => input.language !== undefined && input.language.toLowerCase().startsWith(l),
+          ));
       if (!supports) return 0;
       s = 40;
     } else if (c.engine.id === 'whisper.cpp') {
@@ -185,11 +187,12 @@ function describe(c: EngineCandidate, input: SelectEngineInput, reason: string):
     .filter((x) => x.engine.id !== c.engine.id && x.available)
     .map((x) => ({
       engineId: x.engine.id,
-      benefit: x.capabilities.wordTimestamps && !c.capabilities.wordTimestamps
-        ? '提供逐字时间戳'
-        : x.capabilities.modes.includes('stream') && !c.capabilities.modes.includes('stream')
-          ? '支持实时字幕'
-          : '备选引擎',
+      benefit:
+        x.capabilities.wordTimestamps && !c.capabilities.wordTimestamps
+          ? '提供逐字时间戳'
+          : x.capabilities.modes.includes('stream') && !c.capabilities.modes.includes('stream')
+            ? '支持实时字幕'
+            : '备选引擎',
     }));
 
   return { engine: c.engine, engineId: c.engine.id, reason, tradeoffs, alternatives };

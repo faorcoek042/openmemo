@@ -109,10 +109,7 @@ export function scoreProbe(o: ProbeOutcome, official: boolean): number {
   return official ? base : base * 0.8;
 }
 
-export function rankSources(
-  targets: ProbeTarget[],
-  outcomes: ProbeOutcome[],
-): ProbeTarget[] {
+export function rankSources(targets: ProbeTarget[], outcomes: ProbeOutcome[]): ProbeTarget[] {
   const byProvider = new Map(outcomes.map((o) => [o.provider, o]));
   return [...targets]
     .map((t) => {

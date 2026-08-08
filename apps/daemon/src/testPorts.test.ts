@@ -140,7 +140,9 @@ for (const file of walk(join(REPO, 'apps', 'daemon', 'src'))) {
       return;
     }
     // ── 形态 B：随机 `const port = 19_940 + Math.floor(Math.random() * 40);`
-    const rand = /^([0-9][0-9_]*)\s*\+\s*Math\.floor\(Math\.random\(\)\s*\*\s*([0-9_]+)\)$/.exec(rhs);
+    const rand = /^([0-9][0-9_]*)\s*\+\s*Math\.floor\(Math\.random\(\)\s*\*\s*([0-9_]+)\)$/.exec(
+      rhs,
+    );
     if (rand) {
       const base = num(rand[1] as string);
       const span = num(rand[2] as string);
@@ -161,7 +163,8 @@ for (const file of walk(join(REPO, 'apps', 'daemon', 'src'))) {
 function referenceServerDefaultPort(): { where: string; port: number } {
   const rel = 'packages/downloader/scripts/reference-server.mjs';
   const src = readFileSync(join(REPO, rel), 'utf8');
-  const m = /const PORT = Number\(argv\[argv\.indexOf\('--port'\) \+ 1\]\)\s*\|\|\s*([0-9_]+);/.exec(src);
+  const m =
+    /const PORT = Number\(argv\[argv\.indexOf\('--port'\) \+ 1\]\)\s*\|\|\s*([0-9_]+);/.exec(src);
   assert.notEqual(m, null, `${rel} 里的 PORT 默认值写法变了，本检查器已经看不懂它 —— 请更新这条`);
   return { where: rel, port: num((m as RegExpExecArray)[1] as string) };
 }
@@ -198,7 +201,11 @@ describe('测试端口不许撞上用户的真实实例', () => {
     assert.equal(rs.port >= MIN_BASE, true, `${rs.where} 默认端口 ${rs.port} 低于 ${MIN_BASE}`);
     // 也不许落进任何一个测试段
     const clash = bands.filter((b) => rs.port >= b.base && rs.port <= b.hi);
-    assert.deepEqual(clash.map((b) => b.where), [], `参考服务器默认端口 ${rs.port} 落在测试段里`);
+    assert.deepEqual(
+      clash.map((b) => b.where),
+      [],
+      `参考服务器默认端口 ${rs.port} 落在测试段里`,
+    );
   });
 
   it('★ 各段之间不许挨太近 —— node:test 并行跑，两个文件挑同一段就会互抢', () => {
@@ -213,10 +220,14 @@ describe('测试端口不许撞上用户的真实实例', () => {
       const prev = sorted[i - 1] as Band;
       const cur = sorted[i] as Band;
       if (cur.base - prev.base < MIN_GAP) {
-        problems.push(`${prev.where}(base=${prev.base}) 与 ${cur.where}(base=${cur.base}) 相距不足 ${MIN_GAP}`);
+        problems.push(
+          `${prev.where}(base=${prev.base}) 与 ${cur.where}(base=${cur.base}) 相距不足 ${MIN_GAP}`,
+        );
       }
       if (prev.form === 'random' && cur.base <= prev.hi) {
-        problems.push(`${prev.where}[${prev.base}..${prev.hi}] 压住了 ${cur.where}(base=${cur.base})`);
+        problems.push(
+          `${prev.where}[${prev.base}..${prev.hi}] 压住了 ${cur.where}(base=${cur.base})`,
+        );
       }
     }
     assert.deepEqual(
@@ -233,6 +244,10 @@ describe('测试端口不许撞上用户的真实实例', () => {
      * `walk()` 扫出空集，上面每一条断言都变成"对空数组成立"——**全绿，且什么都没验**。
      * ⑤A-2 那一族的形状：空集永远是绿的。
      */
-    assert.equal(bands.length >= 6, true, `只扫到 ${bands.length} 个端口段，比预期少 —— 扫描路径可能不对了`);
+    assert.equal(
+      bands.length >= 6,
+      true,
+      `只扫到 ${bands.length} 个端口段，比预期少 —— 扫描路径可能不对了`,
+    );
   });
 });

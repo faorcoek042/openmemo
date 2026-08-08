@@ -41,7 +41,9 @@ for (const q of terms) {
   console.log(`\n  查询「${q}」 → ftsQuery=${body.ftsQuery}  命中 ${body.hits.length} 条`);
   for (const h of body.hits.slice(0, 4)) {
     const t = h.startMs !== null ? `[${(h.startMs / 1000).toFixed(1)}s]` : '[笔记]';
-    console.log(`      ${h.source.padEnd(8)} ${t.padEnd(10)} bm25=${h.score.toFixed(4)}  ${h.snippet.trim().slice(0, 58)}`);
+    console.log(
+      `      ${h.source.padEnd(8)} ${t.padEnd(10)} bm25=${h.score.toFixed(4)}  ${h.snippet.trim().slice(0, 58)}`,
+    );
   }
   if (body.hits.length === 0) console.log('      （无命中）');
 }

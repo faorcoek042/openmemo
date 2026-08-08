@@ -44,7 +44,9 @@ import type { TranscriptSegmentDto } from '../../lib/events/types';
  * ⚠️ 判据必须是 `editedAt` 而不是"文本看起来没变"：
  * `editedAt` 丢了但文本还在时，**第一次重跑看着完全正常，第二次才把编辑覆盖掉**。
  */
-export function isSegmentEdited(seg: Partial<TranscriptSegmentDto> & { edited?: boolean }): boolean {
+export function isSegmentEdited(
+  seg: Partial<TranscriptSegmentDto> & { edited?: boolean },
+): boolean {
   if (seg.editedAt != null) return true;
   return seg.edited === true;
 }

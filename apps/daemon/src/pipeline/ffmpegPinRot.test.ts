@@ -66,14 +66,16 @@ interface ComponentEntry {
 }
 
 async function components(): Promise<ComponentEntry[]> {
-  const raw = (await readJson('components.json')) as { components?: ComponentEntry[] } | ComponentEntry[];
+  const raw = (await readJson('components.json')) as
+    { components?: ComponentEntry[] } | ComponentEntry[];
   const list = Array.isArray(raw) ? raw : (raw.components ?? []);
   assert.ok(list.length > 0, 'components.json 解析出 0 条 —— 这是"工具返回空集被读成没有"的形状');
   return list;
 }
 
 /** `.../releases/download/<tag>/<file>` 里的 `<tag>`；取不到返回 null。 */
-const tagFromUrl = (url: string): string | null => url.split('/releases/download/')[1]?.split('/')[0] ?? null;
+const tagFromUrl = (url: string): string | null =>
+  url.split('/releases/download/')[1]?.split('/')[0] ?? null;
 
 /** 该月最后一天（`new Date(y, m, 0)` 里 day=0 = 上个月最后一天）。 */
 const lastDayOfMonth = (year: number, month1to12: number): number =>
@@ -92,7 +94,10 @@ export function btbnTagSurvives(tag: string): { ok: boolean; why: string } {
   }
   const m = /^autobuild-(\d{4})-(\d{2})-(\d{2})-\d{2}-\d{2}$/.exec(tag);
   if (m === null) {
-    return { ok: false, why: `tag "${tag}" 不是 autobuild-YYYY-MM-DD-HH-MM 形态，无法判断它会不会被清理` };
+    return {
+      ok: false,
+      why: `tag "${tag}" 不是 autobuild-YYYY-MM-DD-HH-MM 形态，无法判断它会不会被清理`,
+    };
   }
   const [year, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
   const last = lastDayOfMonth(year, month);
@@ -122,7 +127,10 @@ describe('T-161 ffmpeg 的 pin 会不会烂掉（上游会删 tag，"钉死"≠"
      * 这里守的是"backends.json 里一个 BtbN 链接都没找到"（= 什么都没检查），
      * 而不是"有几个链接是坏的"。
      */
-    assert.ok(btbn.length >= 2, `backends.json 里只找到 ${btbn.length} 个 BtbN 链接 —— 这条守卫等于没在检查`);
+    assert.ok(
+      btbn.length >= 2,
+      `backends.json 里只找到 ${btbn.length} 个 BtbN 链接 —— 这条守卫等于没在检查`,
+    );
 
     const rotten = btbn
       .map(({ id, url }) => {
@@ -133,13 +141,20 @@ describe('T-161 ffmpeg 的 pin 会不会烂掉（上游会删 tag，"钉死"≠"
       })
       .filter((x): x is string => x !== null);
 
-    assert.deepEqual(rotten, [], `以下 pin 会在上游被删掉（届时下载变 404，而这里的校验全都会照常通过）：\n  ${rotten.join('\n  ')}`);
+    assert.deepEqual(
+      rotten,
+      [],
+      `以下 pin 会在上游被删掉（届时下载变 404，而这里的校验全都会照常通过）：\n  ${rotten.join('\n  ')}`,
+    );
   });
 
   it('★ components.json 的 pinnedVersion 与升级检查器也不许推荐会被删的 tag', async () => {
     const list = await components();
     const btbn = list.filter((c) => c.upstream?.repo === 'BtbN/FFmpeg-Builds');
-    assert.ok(btbn.length >= 2, `components.json 里只有 ${btbn.length} 条 BtbN 组件 —— 守卫等于没在检查`);
+    assert.ok(
+      btbn.length >= 2,
+      `components.json 里只有 ${btbn.length} 条 BtbN 组件 —— 守卫等于没在检查`,
+    );
 
     for (const c of btbn) {
       assert.ok(c.pinnedVersion, `${c.id} 没有 pinnedVersion`);
@@ -160,8 +175,16 @@ describe('T-161 ffmpeg 的 pin 会不会烂掉（上游会删 tag，"钉死"≠"
       );
       // 反向：确认这个 pattern 真的会拒掉一个非月末的 tag（不能只看它长得对）
       const re = new RegExp(pat);
-      assert.equal(re.test('autobuild-2026-08-02-13-17'), false, `${c.id} 的 tagPattern 仍然接受非月末的 autobuild-2026-08-02-13-17`);
-      assert.equal(re.test('autobuild-2026-07-31-14-10'), true, `${c.id} 的 tagPattern 拒掉了合法的月末 tag`);
+      assert.equal(
+        re.test('autobuild-2026-08-02-13-17'),
+        false,
+        `${c.id} 的 tagPattern 仍然接受非月末的 autobuild-2026-08-02-13-17`,
+      );
+      assert.equal(
+        re.test('autobuild-2026-07-31-14-10'),
+        true,
+        `${c.id} 的 tagPattern 拒掉了合法的月末 tag`,
+      );
       assert.equal(re.test('latest'), false, `${c.id} 的 tagPattern 接受了滚动的 latest`);
     }
   });
@@ -170,10 +193,22 @@ describe('T-161 ffmpeg 的 pin 会不会烂掉（上游会删 tag，"钉死"≠"
     // 月末 —— 受 KEEP_MONTHLY 保护
     assert.equal(btbnTagSurvives('autobuild-2026-07-31-14-10').ok, true);
     assert.equal(btbnTagSurvives('autobuild-2026-06-30-13-34').ok, true);
-    assert.equal(btbnTagSurvives('autobuild-2026-02-28-12-59').ok, true, '2026 不是闰年，2 月最后一天是 28');
-    assert.equal(btbnTagSurvives('autobuild-2024-02-29-00-00').ok, true, '2024 是闰年，2 月有 29 日');
+    assert.equal(
+      btbnTagSurvives('autobuild-2026-02-28-12-59').ok,
+      true,
+      '2026 不是闰年，2 月最后一天是 28',
+    );
+    assert.equal(
+      btbnTagSurvives('autobuild-2024-02-29-00-00').ok,
+      true,
+      '2024 是闰年，2 月有 29 日',
+    );
     // 非月末 —— 会被删
-    assert.equal(btbnTagSurvives('autobuild-2026-08-02-13-17').ok, false, '这就是 T-161 之前我们钉的那个');
+    assert.equal(
+      btbnTagSurvives('autobuild-2026-08-02-13-17').ok,
+      false,
+      '这就是 T-161 之前我们钉的那个',
+    );
     assert.equal(btbnTagSurvives('autobuild-2026-02-29-00-00').ok, false, '2026 年 2 月没有 29 日');
     assert.equal(btbnTagSurvives('autobuild-2026-07-30-13-32').ok, false, '差一天也不行');
     // 滚动 / 形态不对

@@ -39,6 +39,7 @@ depends_on: D-01, ADR-001, ADR-002, ADR-003, ADR-004, R-01, R-03, R-04
 > `[设计]` = 我的决策，未执行过 SQL；`[待核实]` = 需要实证；`UNKNOWN` = 查不到，不编。
 >
 > **DDL 的执行状态（2026-08-02 二次更新）**：
+>
 > - ✅ **§4 检索部分**（FTS5 + libsimple + sqlite-vec）由 `oss-scout` 在 T-014 实测跑通。
 > - ✅ **§1 的全部业务表**由 `oss-scout` 在 `packages/db` 落地跑通：
 >   **26 表 + 57 索引 + 3 个 FTS5 虚拟表 + 11 个触发器**，`PRAGMA foreign_key_check` 输出为空。
@@ -68,32 +69,33 @@ PRAGMA trusted_schema = OFF;      -- 安全：禁止 schema 中的函数在未�
 ```
 
 注：
+
 - `foreign_keys` 是**连接级**设置，`better-sqlite3` 每建一个连接都要重设。忘了这条 = 外键形同虚设。
 - `mmap_size` 在 Windows 上与部分杀软/网络盘冲突 `[待核实]`；提供设置项可关。
 - **不开 `PRAGMA case_sensitive_like`**；中文场景无意义。
 
 ### 1.1 全局约定
 
-| 约定 | 规则 | 为什么 |
-|---|---|---|
-| **主键** | `id INTEGER PRIMARY KEY`（= rowid 别名） | FTS5 外部内容表要求 `content_rowid` 是整数；sqlite-vec 的 `rowid` 关联同理；整数 FK 更小更快 |
-| **对外 ID** | 顶层实体加 `uid TEXT NOT NULL UNIQUE`（**ULID**，26 字符，字典序 ≈ 时间序） | API 只暴露 `uid`；将来导出/合并/多设备不会主键撞车；不暴露自增数量 |
-| **子行** | 不加 `uid`（segments / nodes / steps / events…），它们永远在父实体上下文中被引用 | 少一列少一个索引 |
-| **时间戳** | `INTEGER` = Unix **毫秒** | 整数可索引、无时区歧义、无解析开销。API 边界转 ISO-8601 UTC |
-| **媒体时间** | `INTEGER` = 毫秒，列名后缀 `_ms` | 浮点秒会累积误差且无法做主键/区间索引 |
-| **软删除** | 用户可见实体有 `deleted_at INTEGER`（NULL = 未删） | 误删可恢复；硬删走 `?purge=true` |
-| **JSON 列** | 后缀 `_json`，存文本，用 SQLite 的 `json_*()` 查询 | 半结构化数据（参数快照、样式）不值得建表 |
-| **排序** | `sort_order REAL`（分数索引） | 在两项之间插入只需取中值，不必重排整列 |
-| **路径** | 一律**相对路径**（相对各自的根） | 数据目录可整体搬迁/改盘符 |
-| **枚举** | `TEXT` + `CHECK` 约束 | 可读、可 grep；性能差异在本地规模下可忽略 |
+| 约定         | 规则                                                                             | 为什么                                                                                       |
+| ------------ | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| **主键**     | `id INTEGER PRIMARY KEY`（= rowid 别名）                                         | FTS5 外部内容表要求 `content_rowid` 是整数；sqlite-vec 的 `rowid` 关联同理；整数 FK 更小更快 |
+| **对外 ID**  | 顶层实体加 `uid TEXT NOT NULL UNIQUE`（**ULID**，26 字符，字典序 ≈ 时间序）      | API 只暴露 `uid`；将来导出/合并/多设备不会主键撞车；不暴露自增数量                           |
+| **子行**     | 不加 `uid`（segments / nodes / steps / events…），它们永远在父实体上下文中被引用 | 少一列少一个索引                                                                             |
+| **时间戳**   | `INTEGER` = Unix **毫秒**                                                        | 整数可索引、无时区歧义、无解析开销。API 边界转 ISO-8601 UTC                                  |
+| **媒体时间** | `INTEGER` = 毫秒，列名后缀 `_ms`                                                 | 浮点秒会累积误差且无法做主键/区间索引                                                        |
+| **软删除**   | 用户可见实体有 `deleted_at INTEGER`（NULL = 未删）                               | 误删可恢复；硬删走 `?purge=true`                                                             |
+| **JSON 列**  | 后缀 `_json`，存文本，用 SQLite 的 `json_*()` 查询                               | 半结构化数据（参数快照、样式）不值得建表                                                     |
+| **排序**     | `sort_order REAL`（分数索引）                                                    | 在两项之间插入只需取中值，不必重排整列                                                       |
+| **路径**     | 一律**相对路径**（相对各自的根）                                                 | 数据目录可整体搬迁/改盘符                                                                    |
+| **枚举**     | `TEXT` + `CHECK` 约束                                                            | 可读、可 grep；性能差异在本地规模下可忽略                                                    |
 
 > **循环外键说明**（2026-08-02 补全：原文只列了 1 组，实际有 **3 组**）：
 >
-> | # | 循环 | 断环列（可空 + `ON DELETE SET NULL`） |
-> |---|---|---|
-> | 1 | `media_sources.thumbnail_asset_id → media_assets` ⇄ `media_assets.source_id → media_sources` | `thumbnail_asset_id` |
-> | 2 | `notes.cover_asset_id → media_assets` ⇄ `media_assets.note_id → notes` | `cover_asset_id` |
-> | 3 | `mindmaps.root_node_id → mindmap_nodes` ⇄ `mindmap_nodes.mindmap_id → mindmaps` | `root_node_id` |
+> | #   | 循环                                                                                         | 断环列（可空 + `ON DELETE SET NULL`） |
+> | --- | -------------------------------------------------------------------------------------------- | ------------------------------------- |
+> | 1   | `media_sources.thumbnail_asset_id → media_assets` ⇄ `media_assets.source_id → media_sources` | `thumbnail_asset_id`                  |
+> | 2   | `notes.cover_asset_id → media_assets` ⇄ `media_assets.note_id → notes`                       | `cover_asset_id`                      |
+> | 3   | `mindmaps.root_node_id → mindmap_nodes` ⇄ `mindmap_nodes.mindmap_id → mindmaps`              | `root_node_id`                        |
 >
 > SQLite 在**运行时**解析外键（不要求建表顺序），且每组都有一条**可空 + `ON DELETE SET NULL`**
 > 的"断环列"，因此三组都合法。
@@ -277,15 +279,15 @@ CREATE INDEX idx_media_assets_sha        ON media_assets(sha256) WHERE sha256 IS
 
 **`role` 的语义**
 
-| role | 内容 | 谁产生 |
-|---|---|---|
-| `original` | 下载/上传的原始媒体 | F1 yt-dlp / F2 上传 |
-| `audio16k` | 16kHz 单声道 PCM16 WAV —— **ASR 的唯一输入格式** | ffmpeg |
-| `transcode` | 浏览器可播的 mp4/m4a（原始格式浏览器放不了时才生成） | ffmpeg |
-| `peaks` | 预计算波形峰值（`Uint8Array`），**必须有**，否则前端要 decode 整个音频（D-01 §5 F5） | ffmpeg + 后处理 |
-| `thumbnail` / `screenshot` | 封面 / 时间点截图（摘要配图） | ffmpeg |
-| `subtitle` / `export` | 导出产物（SRT/VTT/DOCX/…），可随时重建 | 导出 job |
-| `archive` | F3 录音的压缩存档（webm/opus） | 浏览器 MediaRecorder 上传 |
+| role                       | 内容                                                                                 | 谁产生                    |
+| -------------------------- | ------------------------------------------------------------------------------------ | ------------------------- |
+| `original`                 | 下载/上传的原始媒体                                                                  | F1 yt-dlp / F2 上传       |
+| `audio16k`                 | 16kHz 单声道 PCM16 WAV —— **ASR 的唯一输入格式**                                     | ffmpeg                    |
+| `transcode`                | 浏览器可播的 mp4/m4a（原始格式浏览器放不了时才生成）                                 | ffmpeg                    |
+| `peaks`                    | 预计算波形峰值（`Uint8Array`），**必须有**，否则前端要 decode 整个音频（D-01 §5 F5） | ffmpeg + 后处理           |
+| `thumbnail` / `screenshot` | 封面 / 时间点截图（摘要配图）                                                        | ffmpeg                    |
+| `subtitle` / `export`      | 导出产物（SRT/VTT/DOCX/…），可随时重建                                               | 导出 job                  |
+| `archive`                  | F3 录音的压缩存档（webm/opus）                                                       | 浏览器 MediaRecorder 上传 |
 
 ### 1.5 转写：段落、说话人、词级时间戳
 
@@ -659,59 +661,67 @@ CREATE INDEX idx_note_anchors_time ON note_anchors(transcript_id, start_ms);
 ```jsonc
 {
   "schemaVersion": 1,
-  "uid": "01J8…",                    // = mindmaps.uid
+  "uid": "01J8…", // = mindmaps.uid
   "title": "深度学习导论 第 3 讲",
   "rootKey": "n_01J8…",
-  "revision": 7,                      // 乐观锁，PATCH 必带
+  "revision": 7, // 乐观锁，PATCH 必带
 
   // ★ map-of-nodes，不是嵌套树 ★
   "nodes": {
     "n_01J8…": {
       "key": "n_01J8…",
-      "text": "反向传播",              // 【必填】纯文本 —— 最小公分母，markmap 只需要这个
-      "children": ["n_01J9…", "n_01JA…"],   // 有序数组，顺序即显示顺序
-      "richMd":   null,               // 可选：Markdown 片段（**加粗**、`code`、[链接]）
-      "noteMd":   null,               // 可选：节点备注
+      "text": "反向传播", // 【必填】纯文本 —— 最小公分母，markmap 只需要这个
+      "children": ["n_01J9…", "n_01JA…"], // 有序数组，顺序即显示顺序
+      "richMd": null, // 可选：Markdown 片段（**加粗**、`code`、[链接]）
+      "noteMd": null, // 可选：节点备注
       "collapsed": false,
-      "side":     "auto",             // auto|left|right（仅根的直接子节点有意义）
-      "style":    null,               // {color,background,fontSize,bold,italic}
-      "icons":    [],                 // ["🔥"]
-      "tags":     [],
+      "side": "auto", // auto|left|right（仅根的直接子节点有意义）
+      "style": null, // {color,background,fontSize,bold,italic}
+      "icons": [], // ["🔥"]
+      "tags": [],
       "hyperlink": null,
       "imageAssetUid": null,
-      "refs": [                       // ★ F5 联动：该节点对应音频的哪一段
-        { "transcriptUid": "01J…", "startMs": 754000, "endMs": 812000,
-          "quote": "所以我们对损失函数求偏导…", "matchScore": 0.93 }
+      "refs": [
+        // ★ F5 联动：该节点对应音频的哪一段
+        {
+          "transcriptUid": "01J…",
+          "startMs": 754000,
+          "endMs": 812000,
+          "quote": "所以我们对损失函数求偏导…",
+          "matchScore": 0.93,
+        },
       ],
       "meta": { "generatedBy": "llm:qwen3-8b", "confidence": 0.81 },
-      "ext":  {}                      // 节点级渲染器私有数据（往返保真）
-    }
+      "ext": {}, // 节点级渲染器私有数据（往返保真）
+    },
   },
 
-  "edges": [                          // 自由连线（跨层级关联）
-    { "key": "e_01J…", "from": "n_01J9…", "to": "n_01JB…", "label": "导致", "style": null }
+  "edges": [
+    // 自由连线（跨层级关联）
+    { "key": "e_01J…", "from": "n_01J9…", "to": "n_01JB…", "label": "导致", "style": null },
   ],
 
-  "summaries": [                      // 概要括号
-    { "key": "s_01J…", "parent": "n_01J8…", "fromIndex": 0, "toIndex": 2, "text": "三步推导" }
+  "summaries": [
+    // 概要括号
+    { "key": "s_01J…", "parent": "n_01J8…", "fromIndex": 0, "toIndex": 2, "text": "三步推导" },
   ],
 
   "layout": { "direction": "right", "theme": "light" },
 
   // 渲染器私有数据的隔离沙箱：核心 schema 保持干净，往返不丢信息
-  "extensions": { "mind-elixir": { /* … */ }, "markmap": { /* … */ } }
+  "extensions": { "mind-elixir": {/* … */}, "markmap": {/* … */} },
 }
 ```
 
 ### 2.2 五条设计约束（每条都有具体理由）
 
-| # | 约束 | 理由 |
-|---|---|---|
-| 1 | **`nodes` 是 map 不是嵌套树** | ① 稳定 key → 渲染器往返、PATCH op、`refs` 外链都靠它；② O(1) 查节点；③ diff/patch 容易；④ 避免深嵌套 JSON 在 TS 里递归类型爆炸。子节点顺序用显式 `children` 数组表达，不靠对象键序（JSON 对象键序不可依赖） |
-| 2 | **除 `key/text/children` 外全部可选** | markmap 只吃 `text + children`；任何"高级"字段缺失都必须能渲染。这条是"库无关"的可验证判据 |
-| 3 | **`refs` 用时间区间做权威，`segmentId` 不进 JSON** | 重新转写后 segment id 全变。时间 + `quote` 能重定位；id 只在 DB 里当缓存 |
-| 4 | **`extensions` / `ext` 命名空间** | 渲染器要存自己的东西（mind-elixir 的展开态、坐标缓存等）→ 给它一个隔离盒子，而不是往核心 schema 里加字段。**转换器必须原样保存与回填**，否则"编辑一次就丢样式"会成为顽疾 |
-| 5 | **校验规则内建**：单根、无环、`children` 引用必须存在、深度 ≤ 32、单节点文本 ≤ 4096 字符、总节点 ≤ 20000 | LLM 会生成环和悬空引用。不校验就等着渲染器栈溢出。校验在 `packages/mindmap` 的 `validate()`，写库前必调 |
+| #   | 约束                                                                                                     | 理由                                                                                                                                                                                                        |
+| --- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **`nodes` 是 map 不是嵌套树**                                                                            | ① 稳定 key → 渲染器往返、PATCH op、`refs` 外链都靠它；② O(1) 查节点；③ diff/patch 容易；④ 避免深嵌套 JSON 在 TS 里递归类型爆炸。子节点顺序用显式 `children` 数组表达，不靠对象键序（JSON 对象键序不可依赖） |
+| 2   | **除 `key/text/children` 外全部可选**                                                                    | markmap 只吃 `text + children`；任何"高级"字段缺失都必须能渲染。这条是"库无关"的可验证判据                                                                                                                  |
+| 3   | **`refs` 用时间区间做权威，`segmentId` 不进 JSON**                                                       | 重新转写后 segment id 全变。时间 + `quote` 能重定位；id 只在 DB 里当缓存                                                                                                                                    |
+| 4   | **`extensions` / `ext` 命名空间**                                                                        | 渲染器要存自己的东西（mind-elixir 的展开态、坐标缓存等）→ 给它一个隔离盒子，而不是往核心 schema 里加字段。**转换器必须原样保存与回填**，否则"编辑一次就丢样式"会成为顽疾                                    |
+| 5   | **校验规则内建**：单根、无环、`children` 引用必须存在、深度 ≤ 32、单节点文本 ≤ 4096 字符、总节点 ≤ 20000 | LLM 会生成环和悬空引用。不校验就等着渲染器栈溢出。校验在 `packages/mindmap` 的 `validate()`，写库前必调                                                                                                     |
 
 ### 2.3 渲染器映射 `[已核实：直接读取上游源码]`
 
@@ -725,23 +735,23 @@ CREATE INDEX idx_note_anchors_time ON note_anchors(transcript_id, start_ms);
 `MindElixirData = { nodeData: NodeObj; arrows?; summaries?; direction?: 0|1|2|3; theme?; compact?; meta? }`
 （**已核实：没有 `linkData` 字段**，自由连线只有 `arrows`）
 
-| MindMapDoc | mind-elixir `NodeObj`（已核实字段名） | 备注 |
-|---|---|---|
-| `nodes[k].key` | `id` | 直接透传，保证往返 |
-| `nodes[k].text` | `topic` | |
-| `children` 数组 | `children`（**嵌套树**） | 转换时由 map 展开成嵌套；回写时摊平。注意 `parent` 是运行时注入字段，**不得手动设置、不得序列化** |
-| `collapsed` | `expanded`（**布尔取反**） | 语义相反，易错点 |
-| `side: auto/left/right` | `direction: 0 \| 1`（0=Left, 1=Right） | **枚举是数字不是字符串**；`auto` → 省略该字段 |
-| `style` | `style: {fontSize,fontFamily,color,background,fontWeight,width,border,textDecoration}` | 我们的 `style_json` 按此子集存 |
-| `icons` | `icons: string[]` | |
-| `tags` | `tags: (string \| {text,style?,className?})[]` | 我们只用 `string` 形式 |
-| `hyperlink` / `noteMd` | `hyperLink` / `note` | 注意 `hyperLink` 的大写 L |
-| `imageAssetUid` | `image: {url,width,height,fit?}` | `url` 填 `/media/asset/<uid>` |
-| — | `branchColor` | 存进我们的 `style_json` |
-| `edges` | 顶层 `arrows` | |
-| `summaries` | 顶层 `summaries` | |
-| `refs` / `meta` / `ext` | **`metadata`（NodeObj 的通用扩展字段）** | ✅ 上游明确提供了泛型 `metadata?: M` 作为扩展位 —— 正好承载我们的 `refs`/`meta`，无需额外 hack |
-| — | `dangerouslySetInnerHTML` | **禁用**（XSS 面）。我们的 `richMd` 走安全渲染，不用这条 |
+| MindMapDoc              | mind-elixir `NodeObj`（已核实字段名）                                                  | 备注                                                                                              |
+| ----------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `nodes[k].key`          | `id`                                                                                   | 直接透传，保证往返                                                                                |
+| `nodes[k].text`         | `topic`                                                                                |                                                                                                   |
+| `children` 数组         | `children`（**嵌套树**）                                                               | 转换时由 map 展开成嵌套；回写时摊平。注意 `parent` 是运行时注入字段，**不得手动设置、不得序列化** |
+| `collapsed`             | `expanded`（**布尔取反**）                                                             | 语义相反，易错点                                                                                  |
+| `side: auto/left/right` | `direction: 0 \| 1`（0=Left, 1=Right）                                                 | **枚举是数字不是字符串**；`auto` → 省略该字段                                                     |
+| `style`                 | `style: {fontSize,fontFamily,color,background,fontWeight,width,border,textDecoration}` | 我们的 `style_json` 按此子集存                                                                    |
+| `icons`                 | `icons: string[]`                                                                      |                                                                                                   |
+| `tags`                  | `tags: (string \| {text,style?,className?})[]`                                         | 我们只用 `string` 形式                                                                            |
+| `hyperlink` / `noteMd`  | `hyperLink` / `note`                                                                   | 注意 `hyperLink` 的大写 L                                                                         |
+| `imageAssetUid`         | `image: {url,width,height,fit?}`                                                       | `url` 填 `/media/asset/<uid>`                                                                     |
+| —                       | `branchColor`                                                                          | 存进我们的 `style_json`                                                                           |
+| `edges`                 | 顶层 `arrows`                                                                          |                                                                                                   |
+| `summaries`             | 顶层 `summaries`                                                                       |                                                                                                   |
+| `refs` / `meta` / `ext` | **`metadata`（NodeObj 的通用扩展字段）**                                               | ✅ 上游明确提供了泛型 `metadata?: M` 作为扩展位 —— 正好承载我们的 `refs`/`meta`，无需额外 hack    |
+| —                       | `dangerouslySetInnerHTML`                                                              | **禁用**（XSS 面）。我们的 `richMd` 走安全渲染，不用这条                                          |
 
 > **[已核实] mind-elixir 没有通用 Markdown 导入/导出**：`Options.markdown` 只是"节点 topic 文本的渲染钩子"
 > （你自己传 `marked`/`markdown-it`，它不内置解析器）。它另有 `mindElixirToPlaintext` / `plaintextToMindElixir`
@@ -753,13 +763,13 @@ CREATE INDEX idx_note_anchors_time ON note_anchors(transcript_id, start_ms);
 `IPureNode = { content: string; payload?: { fold?: number; [k]: unknown }; children: IPureNode[] }`
 （布局态在 `INode.state.{id,path,key,depth,size,rect}`，由 markmap 运行时填充，我们不产出）
 
-| MindMapDoc | markmap `IPureNode` |
-|---|---|
-| `text` / `richMd` | `content`（**HTML 字符串**，不是 Markdown；`richMd` 需先渲染成安全 HTML） |
-| `children` | `children` |
-| `collapsed` | `payload.fold`（非 0 即折叠） |
-| `refs` / `meta` | 塞进 `payload` 的自定义键（markmap 会原样保留） |
-| `edges` / `summaries` / `style` / `icons` | **无对应，丢失** → UI 必须明示（§2.3 损失矩阵） |
+| MindMapDoc                                | markmap `IPureNode`                                                       |
+| ----------------------------------------- | ------------------------------------------------------------------------- |
+| `text` / `richMd`                         | `content`（**HTML 字符串**，不是 Markdown；`richMd` 需先渲染成安全 HTML） |
+| `children`                                | `children`                                                                |
+| `collapsed`                               | `payload.fold`（非 0 即折叠）                                             |
+| `refs` / `meta`                           | 塞进 `payload` 的自定义键（markmap 会原样保留）                           |
+| `edges` / `summaries` / `style` / `icons` | **无对应，丢失** → UI 必须明示（§2.3 损失矩阵）                           |
 
 > **[已核实] 关键实现决策**：`markmap-lib.transform()` **只接受 Markdown 字符串**
 > （内部 `markdown-it` → HTML → `markmap-html-parser.buildTree`），**不能直接喂 JSON 树**。
@@ -770,27 +780,27 @@ CREATE INDEX idx_note_anchors_time ON note_anchors(transcript_id, start_ms);
 
 **损失矩阵（切到 markmap 视图时 UI 必须明示）**
 
-| 特性 | mind-elixir | markmap | 导出 MD | OPML | FreeMind |
-|---|---|---|---|---|---|
-| 层级 + 文本 | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 折叠态 | ✅ | ✅ | ❌ | ✅(`_note`?) | ✅ |
-| 节点备注 | ✅ | 降级为子项 | ✅ | ✅ | ✅ |
-| 逐节点样式 | ✅ | ❌ | ❌ | ❌ | 部分 |
-| 图标/标签 | ✅ | ❌ | 降级为文本 | ❌ | 部分 |
-| **自由连线 `edges`** | ✅ | ❌ | ❌ | ❌ | ✅(`arrowlink`) |
-| **概要 `summaries`** | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **时间戳 `refs`** | 我们自绘 | 我们自绘 | 可导出为 `[12:34]` | ❌ | ❌ |
-| 图片 | ✅ | ❌ | ✅(`![]()`) | ❌ | ✅ |
+| 特性                 | mind-elixir | markmap    | 导出 MD            | OPML         | FreeMind        |
+| -------------------- | ----------- | ---------- | ------------------ | ------------ | --------------- |
+| 层级 + 文本          | ✅          | ✅         | ✅                 | ✅           | ✅              |
+| 折叠态               | ✅          | ✅         | ❌                 | ✅(`_note`?) | ✅              |
+| 节点备注             | ✅          | 降级为子项 | ✅                 | ✅           | ✅              |
+| 逐节点样式           | ✅          | ❌         | ❌                 | ❌           | 部分            |
+| 图标/标签            | ✅          | ❌         | 降级为文本         | ❌           | 部分            |
+| **自由连线 `edges`** | ✅          | ❌         | ❌                 | ❌           | ✅(`arrowlink`) |
+| **概要 `summaries`** | ✅          | ❌         | ❌                 | ❌           | ❌              |
+| **时间戳 `refs`**    | 我们自绘    | 我们自绘   | 可导出为 `[12:34]` | ❌           | ❌              |
+| 图片                 | ✅          | ❌         | ✅(`![]()`)        | ❌           | ✅              |
 
 ### 2.4 导出格式（由 `MindMapDoc` 直出，**不经过渲染器**）
 
-| 格式 | 生成方式 | 备注 |
-|---|---|---|
-| **Markdown** | 标题层级或嵌套列表（可选） | 可回读（`fromMarkdown`），是与 markmap 的桥 |
-| **OPML 2.0** | `<outline text="…" _note="…">` 嵌套 | 大纲工具通用（Workflowy/Dynalist/幕布） |
-| **FreeMind `.mm`** | `<node TEXT="…" ID="…" FOLDED="true">`，连线用 `<arrowlink DESTINATION="…"/>` | XMind/FreeMind/MindManager 都能读；**唯一能带自由连线的通用格式** |
-| **JSON** | `MindMapDoc` 原样 | 我们自己的完整备份格式，零损失 |
-| **SVG / PNG** | 渲染器 `export()` → `XMLSerializer` 序列化 SVG，位图用指定 `scale` 光栅化 | **不用 `html2canvas` 截屏** —— 直接修掉 memo.ac issue #133（导出图片文字模糊，R-01 §C10 #8） |
+| 格式               | 生成方式                                                                      | 备注                                                                                         |
+| ------------------ | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| **Markdown**       | 标题层级或嵌套列表（可选）                                                    | 可回读（`fromMarkdown`），是与 markmap 的桥                                                  |
+| **OPML 2.0**       | `<outline text="…" _note="…">` 嵌套                                           | 大纲工具通用（Workflowy/Dynalist/幕布）                                                      |
+| **FreeMind `.mm`** | `<node TEXT="…" ID="…" FOLDED="true">`，连线用 `<arrowlink DESTINATION="…"/>` | XMind/FreeMind/MindManager 都能读；**唯一能带自由连线的通用格式**                            |
+| **JSON**           | `MindMapDoc` 原样                                                             | 我们自己的完整备份格式，零损失                                                               |
+| **SVG / PNG**      | 渲染器 `export()` → `XMLSerializer` 序列化 SVG，位图用指定 `scale` 光栅化     | **不用 `html2canvas` 截屏** —— 直接修掉 memo.ac issue #133（导出图片文字模糊，R-01 §C10 #8） |
 
 **导入**：Markdown / OPML / FreeMind / JSON 反向转换，统一产出 `MindMapDoc` 后再入库（走同一套 `validate()`）。
 
@@ -832,13 +842,13 @@ CREATE INDEX idx_note_anchors_time ON note_anchors(transcript_id, start_ms);
 
 ### 3.3 反向：点击 → 定位
 
-| 触发 | 数据路径 |
-|---|---|
-| 点转写段 | `segment.start_ms / 1000` → `audio.currentTime` |
-| 点笔记里的时间锚点 | `note_anchors.start_ms`（或正文 `timeAnchor` 节点的 `attrs.startMs`） |
-| 点思维导图节点 | `mindmap_node_refs.start_ms`（多个 ref 时取第一个，UI 给"下一处"按钮） |
-| 点搜索结果 | FTS 命中 `transcript_segments.id` → 该行 `start_ms` → 打开笔记 + seek |
-| 拖波形 | 像素 → 时间（`peaks` 的采样率固定，见下）→ seek |
+| 触发               | 数据路径                                                               |
+| ------------------ | ---------------------------------------------------------------------- |
+| 点转写段           | `segment.start_ms / 1000` → `audio.currentTime`                        |
+| 点笔记里的时间锚点 | `note_anchors.start_ms`（或正文 `timeAnchor` 节点的 `attrs.startMs`）  |
+| 点思维导图节点     | `mindmap_node_refs.start_ms`（多个 ref 时取第一个，UI 给"下一处"按钮） |
+| 点搜索结果         | FTS 命中 `transcript_segments.id` → 该行 `start_ms` → 打开笔记 + seek  |
+| 拖波形             | 像素 → 时间（`peaks` 的采样率固定，见下）→ seek                        |
 
 ### 3.4 波形（`role='peaks'`）格式 `[设计]`
 
@@ -848,6 +858,7 @@ CREATE INDEX idx_note_anchors_time ON note_anchors(transcript_id, start_ms);
       [数据: Int8 × N × 2 (min,max)]
 采样：默认 samplesPerPixel = 256（16kHz 下 = 16ms/像素）→ 1 小时音频 ≈ 2×225000 = 450 KB
 ```
+
 - 前端一次 `fetch` 成 `ArrayBuffer`，`Int8Array` 直接画 canvas，**零解码开销**。
 - 为什么必须预计算：浏览器 `decodeAudioData` 一个 2 小时文件会占数百 MB 内存并阻塞主线程（D-01 §5 F5）。
 
@@ -864,6 +875,7 @@ CREATE INDEX idx_note_anchors_time ON note_anchors(transcript_id, start_ms);
 ```
 
 重转写后的重定位流程 `[设计，未验证准确率]`：
+
 ```
 对每个 ref/anchor：
   1. 在新稿中取 [start_ms - 5s, end_ms + 5s] 窗口内的所有段
@@ -874,6 +886,7 @@ CREATE INDEX idx_note_anchors_time ON note_anchors(transcript_id, start_ms);
 ```
 
 **其它稳定性规则**
+
 - **删除段落 ≠ 删除时间**：用户删掉某段转写文本，锚点仍指向该时间点（音频还在）。
 - **编辑段落文本**：`text_raw` 保留 ASR 原文 → `quote` 匹配仍可用原文比对。
 - **transcript 切换 `is_active`**：refs 记的是 `transcript_uid`；若指向的稿被停用，回退到该 note 的当前活跃稿并触发重定位。
@@ -994,6 +1007,7 @@ END;
 ```
 
 **注意事项**
+
 1. **软删除与 FTS**：`notes.deleted_at` 置位时行还在 → FTS 仍含它。查询时 `JOIN notes ... WHERE deleted_at IS NULL` 过滤。
    （不用触发器删 FTS 行，因为恢复时还得重插，得不偿失。）
 2. **批量写入**：转写按 chunk 插入 segments，触发器会逐行更新 FTS。大批量导入时可
@@ -1037,14 +1051,14 @@ LIMIT :limit;
 
 > `[已核实]` `sqlite-vec` **v0.1.9**（2026-03-31，npm 同版本）。语法从 README + `sqlite-vec.c` 源码交叉验证：
 >
-> | 语法 | 含义 |
-> |---|---|
-> | `CREATE VIRTUAL TABLE t USING vec0(emb float[8])` | 基本形式 |
-> | `float[N]` / `int8[N]` / `bit[N]` | 支持的三种向量元素类型 |
-> | `col TYPE` （普通列） | **元数据列**：可用于 `WHERE` 过滤，不参与向量索引 |
-> | `+col TYPE` （加号前缀） | **辅助列**：仅透传存储，不可过滤 |
-> | `col TYPE partition key` | **分区键列**，例 `user_id integer partition key` |
-> | 插入值 | JSON 字符串或紧凑二进制格式均可 |
+> | 语法                                              | 含义                                              |
+> | ------------------------------------------------- | ------------------------------------------------- |
+> | `CREATE VIRTUAL TABLE t USING vec0(emb float[8])` | 基本形式                                          |
+> | `float[N]` / `int8[N]` / `bit[N]`                 | 支持的三种向量元素类型                            |
+> | `col TYPE` （普通列）                             | **元数据列**：可用于 `WHERE` 过滤，不参与向量索引 |
+> | `+col TYPE` （加号前缀）                          | **辅助列**：仅透传存储，不可过滤                  |
+> | `col TYPE partition key`                          | **分区键列**，例 `user_id integer partition key`  |
+> | 插入值                                            | JSON 字符串或紧凑二进制格式均可                   |
 >
 > ⚠️ **源码级限制**：分区键列**不能与 rescore / IVF / DiskANN 索引同时使用**。
 > ⚠️ 上游 README 明确警告仍是 pre-v1，"expect breaking changes" → 见 §4.5 的可重建原则（这正是我们把
@@ -1100,13 +1114,13 @@ Error: Only integers are allows for primary key values
 
 **四种可用写法（均已实测通过）**：
 
-| 写法 | 示例 |
-|---|---|
-| ✅ **绑 `BigInt`**（**我们的统一约定**） | `stmt.run(BigInt(chunkId), embJson, BigInt(noteId))` |
-| ✅ SQL 字面量 | `INSERT INTO vec_chunks(chunk_id, …) VALUES (123, …)` |
-| ✅ 省略 rowid 让其自增 | `INSERT INTO vec_chunks(embedding) VALUES (?)` |
-| ✅ `CAST(? AS INTEGER)` | `VALUES (CAST(? AS INTEGER), ?)` |
-| ❌ 绑 JS `number` | `stmt.run(123, …)` → 报上面的错 |
+| 写法                                     | 示例                                                  |
+| ---------------------------------------- | ----------------------------------------------------- |
+| ✅ **绑 `BigInt`**（**我们的统一约定**） | `stmt.run(BigInt(chunkId), embJson, BigInt(noteId))`  |
+| ✅ SQL 字面量                            | `INSERT INTO vec_chunks(chunk_id, …) VALUES (123, …)` |
+| ✅ 省略 rowid 让其自增                   | `INSERT INTO vec_chunks(embedding) VALUES (?)`        |
+| ✅ `CAST(? AS INTEGER)`                  | `VALUES (CAST(? AS INTEGER), ?)`                      |
+| ❌ 绑 JS `number`                        | `stmt.run(123, …)` → 报上面的错                       |
 
 **约定（写死，不给选择余地）**：
 
@@ -1132,6 +1146,7 @@ Error: Only integers are allows for primary key values
 语义路（vec kNN）      →  排名列表 B
 融合：score(d) = Σ_over_lists 1 / (k + rank_i(d))    ，k = 60（RRF 常用值）
 ```
+
 选 RRF 而非加权和的理由：bm25 与余弦距离**量纲完全不同**，加权和需要按语料调参且不稳定；
 RRF 只用**名次**，无量纲、无需调参、对异常分值鲁棒。`[设计，未做效果评测]`
 
@@ -1139,13 +1154,13 @@ RRF 只用**名次**，无量纲、无需调参、对异常分值鲁棒。`[设�
 
 ### 4.5 索引 = 可重建缓存（关键原则）
 
-| 场景 | 行为 |
-|---|---|
-| libsimple 加载失败 | FTS5 降级为内置 `tokenize='trigram'`（中文可用，效果差些）→ 标记 `search_index_version` 变更 → 后台重建 |
-| sqlite-vec 加载失败 | 语义/混合检索关闭，关键词照常；UI 灰掉开关并说明原因 |
-| sqlite-vec 升级导致格式不兼容 | `DROP TABLE vec_chunks` → 重建虚拟表 → 从 `embed_chunks.text` **重新算向量**（要重跑 embedding，是耗时任务，进后台队列 priority=30）|
-| 换 embedding 模型 | 同上；`app_meta.embed_model_id` 与 `embed_dim` 变更即触发 |
-| FTS 索引损坏 | `INSERT INTO xxx_fts(xxx_fts) VALUES('rebuild')` |
+| 场景                          | 行为                                                                                                                                 |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| libsimple 加载失败            | FTS5 降级为内置 `tokenize='trigram'`（中文可用，效果差些）→ 标记 `search_index_version` 变更 → 后台重建                              |
+| sqlite-vec 加载失败           | 语义/混合检索关闭，关键词照常；UI 灰掉开关并说明原因                                                                                 |
+| sqlite-vec 升级导致格式不兼容 | `DROP TABLE vec_chunks` → 重建虚拟表 → 从 `embed_chunks.text` **重新算向量**（要重跑 embedding，是耗时任务，进后台队列 priority=30） |
+| 换 embedding 模型             | 同上；`app_meta.embed_model_id` 与 `embed_dim` 变更即触发                                                                            |
+| FTS 索引损坏                  | `INSERT INTO xxx_fts(xxx_fts) VALUES('rebuild')`                                                                                     |
 
 **因此：`PRAGMA user_version`（业务 schema）与 `app_meta.search_index_version`（索引）是两条独立的版本线。**
 索引版本不匹配**不阻塞启动**，只在后台重建并在 UI 显示进度。这条设计直接消解了 R-03 §D9 提出的
@@ -1194,6 +1209,7 @@ PRAGMA foreign_keys = ON;
 ```
 
 **硬性规则**：
+
 1. 任何重建表的迁移**必须**在同一个 `.sql` 里重建其全部索引与触发器（尤其 FTS 同步触发器 —— 漏了会导致索引静默停止更新，是最难查的一类 bug）。
 2. 重建含 FTS 外部内容的表后，**必须**跟一条 `rebuild` 指令重建 FTS 索引。
 3. 迁移里**禁止**调用任何扩展函数（libsimple/vec 可能没加载成功）。索引相关的重建走 §4.5 的独立版本线。
@@ -1202,17 +1218,18 @@ PRAGMA foreign_keys = ON;
 ### 5.3 数据修复迁移
 
 某些变更需要读写数据（如把旧的 `mindmap` Markdown 字段转成规范化节点表）。这类走 `.ts` 迁移：
+
 - 分批处理（每批 500 行一个事务），带进度日志；
 - 大库（>100 万行）时在 daemon 启动后**后台执行**，UI 显示"正在升级数据（可继续使用）"，并对未迁移数据降级只读 `[设计]`。
 
 ### 5.4 备份与恢复
 
-| 时机 | 动作 |
-|---|---|
-| 每次 schema 升级前 | `VACUUM INTO backups/openmemo-v<n>-<ts>.db`（保留 3 份） |
-| 用户手动 | 设置页"立即备份" |
-| 定期（可选，默认关） | 每周一次，保留 4 份 |
-| **恢复** | 停 daemon → 校验目标文件的 `user_version` ≤ 当前支持 → 把当前库改名为 `.corrupt-<ts>` → 复制备份就位 → 启动 |
+| 时机                 | 动作                                                                                                        |
+| -------------------- | ----------------------------------------------------------------------------------------------------------- |
+| 每次 schema 升级前   | `VACUUM INTO backups/openmemo-v<n>-<ts>.db`（保留 3 份）                                                    |
+| 用户手动             | 设置页"立即备份"                                                                                            |
+| 定期（可选，默认关） | 每周一次，保留 4 份                                                                                         |
+| **恢复**             | 停 daemon → 校验目标文件的 `user_version` ≤ 当前支持 → 把当前库改名为 `.corrupt-<ts>` → 复制备份就位 → 启动 |
 
 **`VACUUM INTO` 而非文件拷贝**：它在事务中生成一致快照，不需要停机，且顺带整理碎片。
 直接拷 `.db` 而不拷 `-wal` 会得到一个**旧且不完整**的库 —— 这是常见的备份事故。
@@ -1223,14 +1240,15 @@ PRAGMA foreign_keys = ON;
 
 ### 6.1 各 OS 根目录
 
-| 用途 | macOS | Windows | Linux |
-|---|---|---|---|
-| **数据根** `<data_root>` | `~/Library/Application Support/OpenMemo` | `%LOCALAPPDATA%\OpenMemo` | `${XDG_DATA_HOME:-~/.local/share}/openmemo` |
-| **缓存**（可安全删） | `~/Library/Caches/OpenMemo` | `%LOCALAPPDATA%\OpenMemo\Cache` | `${XDG_CACHE_HOME:-~/.cache}/openmemo` |
-| **配置**（可选独立） | 同数据根 | 同数据根 | `${XDG_CONFIG_HOME:-~/.config}/openmemo` |
-| **日志** | `<data_root>/logs`（不用 `~/Library/Logs`，保持诊断包自包含） | `<data_root>\logs` | `<data_root>/logs` |
+| 用途                     | macOS                                                         | Windows                         | Linux                                       |
+| ------------------------ | ------------------------------------------------------------- | ------------------------------- | ------------------------------------------- |
+| **数据根** `<data_root>` | `~/Library/Application Support/OpenMemo`                      | `%LOCALAPPDATA%\OpenMemo`       | `${XDG_DATA_HOME:-~/.local/share}/openmemo` |
+| **缓存**（可安全删）     | `~/Library/Caches/OpenMemo`                                   | `%LOCALAPPDATA%\OpenMemo\Cache` | `${XDG_CACHE_HOME:-~/.cache}/openmemo`      |
+| **配置**（可选独立）     | 同数据根                                                      | 同数据根                        | `${XDG_CONFIG_HOME:-~/.config}/openmemo`    |
+| **日志**                 | `<data_root>/logs`（不用 `~/Library/Logs`，保持诊断包自包含） | `<data_root>\logs`              | `<data_root>/logs`                          |
 
 **两条硬规则** `[已定，R-04 §6.1]`：
+
 1. **模型与媒体绝不放 Caches 目录**——macOS 会在磁盘紧张时自动清理，几 GB 模型被静默删掉是灾难。
 2. **Windows 用 `LOCALAPPDATA` 不用 `Roaming`**——域环境下漫游配置会尝试同步，几 GB 会拖垮登录。
 
@@ -1292,14 +1310,14 @@ PRAGMA foreign_keys = ON;
 
 ### 6.3 落盘规则
 
-| 规则 | 内容 |
-|---|---|
-| **文件名一律我们生成** | 用户提供的名字只进 `media_assets.display_name`。从根上消灭路径穿越、Windows 保留名、NTFS ADS、Unicode 同形字、尾随点/空格（D-01 §8.5）|
-| **DB 只存相对路径** | 相对各自的根（`media/` 或 `backends/`）。数据目录可整体搬迁 |
-| **写入用临时名 + rename** | 先写 `<name>.tmp-<rand>`，`fsync` 后 `rename` 到目标（同卷 rename 原子）。**保证不存在"写了一半的 asset"** |
-| **删除先移 `tmp/orphans/`** | 保留 7 天再真删，防误判 |
-| **磁盘空间预检** | 下载/转码前检查目标卷剩余空间 ≥ 预估需求 × 1.3，不足则 job → `blocked(RESOURCE_DISK_FULL)` |
-| **跨卷不硬链接** | `by-name/` 硬链接失败时降级为不创建（记 warning，非致命）`[已定，R-04 §6.2]` |
+| 规则                        | 内容                                                                                                                                   |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| **文件名一律我们生成**      | 用户提供的名字只进 `media_assets.display_name`。从根上消灭路径穿越、Windows 保留名、NTFS ADS、Unicode 同形字、尾随点/空格（D-01 §8.5） |
+| **DB 只存相对路径**         | 相对各自的根（`media/` 或 `backends/`）。数据目录可整体搬迁                                                                            |
+| **写入用临时名 + rename**   | 先写 `<name>.tmp-<rand>`，`fsync` 后 `rename` 到目标（同卷 rename 原子）。**保证不存在"写了一半的 asset"**                             |
+| **删除先移 `tmp/orphans/`** | 保留 7 天再真删，防误判                                                                                                                |
+| **磁盘空间预检**            | 下载/转码前检查目标卷剩余空间 ≥ 预估需求 × 1.3，不足则 job → `blocked(RESOURCE_DISK_FULL)`                                             |
+| **跨卷不硬链接**            | `by-name/` 硬链接失败时降级为不创建（记 warning，非致命）`[已定，R-04 §6.2]`                                                           |
 
 ### 6.4 GC 与引用计数
 
@@ -1311,27 +1329,28 @@ PRAGMA foreign_keys = ON;
 后端：按 backend_installs 记录；state='disabled' 且 90 天未用 → 提示用户清理
 临时：tmp/ 启动即清；exports/ 30 天未访问提示清理
 ```
+
 GC 是 `priority=30` 的维护 job，**只在空闲时跑**（无 running job 且 5 分钟无 API 请求）。
 
 ---
 
 ## §7 待验证清单（诚实）
 
-| # | 事项 | 影响 | 状态 |
-|---|---|---|---|
-| V-1 | 本文 DDL 是否能在真实 SQLite 上跑通 | 全局 | ✅ **已实证关闭（T-014，`oss-scout`）**：§4 的**全部 DDL 在真实 SQLite 上跑了一遍** —— 外部内容表、三组同步触发器、`tokenize='simple'`、bm25、`simple_query`/`simple_highlight`、**拼音检索**（`swdt`/`zx`/`sjz` 全命中）、WAL、外键、`vec0` 元数据列 KNN，**全部通过**。<br>✅ **§1 的 26 张业务表 DDL 也已整体执行**：`packages/db/migrations/0001_init.sql` 落地 **26 表 / 57 索引 / 2 触发器**，`0002_search.sql` 再补 **3 个 FTS5 + 9 个同步触发器**（合计与 TL;DR 的"26 表 + 57 索引 + 3 FTS5 + 11 触发器"逐项对上）。<br>⚠️ **此前这一格的尾巴写着"仍未跑通的部分：§1 的 26 张业务表 DDL（jobs/notes/mindmap 等）尚未整体执行，T-016 落 `0001_init.sql` 时仍需实测"** —— 它与本文档 TL;DR 第 23 行（"DDL 已整体实证"）直接矛盾，**以已执行为准**。 |
-| V-2 | `mind-elixir` 的包名/版本/`NodeObj` 字段名 | §2.3 映射表 | ✅ **已核实**（读源码 `src/types/index.ts`）。**订正：npm 包名是 `mind-elixir` v5.14.0，不是 `mind-elixir-core`**；`MindElixirData` **无 `linkData`** |
-| V-3 | `markmap-lib.transform()` 的输入 | §2.3 / 只读视图实现 | ✅ **已核实**：只吃 Markdown 字符串；但 `Markmap.create()` 吃 `IPureNode` → **改为直接构造 `IPureNode`** |
-| V-4 | libsimple 的加载与 `tokenize='simple'`、辅助函数、拼音 | §4.1/§4.2 | ✅ **已核实**（README 原文）。函数**形参级签名**仍 UNKNOWN，只有用法级示例 |
-| V-5 | `sqlite-vec` 的 `vec0` 语法/类型/元数据列/分区键 | §4.3 | ✅ **已核实**（README + `sqlite-vec.c` 源码交叉验证，v0.1.9） |
-| V-6 | `better-sqlite3` 能否加载 libsimple / sqlite-vec | §4 全部 | ✅ **已实证关闭（T-014）**：两个扩展均加载成功、功能跑通。**R-03 §U-5 的实测项已完成。**<br>📌 本项原提法（"查 `compile_options` 是否有 `ENABLE_LOAD_EXTENSION`"）**基于错误前提**，已在 §4.1 写入方法论更正：**扩展能力只能实测，不能读 `compile_options` 推断** |
-| V-6b | `vec0` 主键/rowid 的绑定方式 | §4.3 | ✅ **已实证（T-014）**：绑 JS `number` **必失败**（`Only integers are allows for primary key values`），两驱动一致 → 是 sqlite-vec v0.1.9 的行为。**已在 §4.3 写死"一律绑 `BigInt`，转换收口到 DB 适配层"** |
-| V-6c | 驱动选型 | §1.0/§4 | ✅ **已定案（ADR-005 决策 6）**：`better-sqlite3` v13 为主 + `node:sqlite` 已验证备胎 + 薄 DB 适配层。**D-02 本就按 better-sqlite3 写，无需改动。**<br>⚠️ 残留风险（`oss-scout` 如实记录）：**只在 Linux x64 glibc 实测**；mac/Win/arm64/musl 的 prebuild 全未实测；上游 open issue **#1509**（`linux-arm64.node` 要求 GLIBC_2.38）未复现 |
-| V-7 | 重转写后 `quote` 相似度重定位的实际准确率与阈值（0.75/0.4） | §3.5 | 未验证，需 Wave 3 用真实数据调 |
-| V-8 | RRF 融合的检索效果 | §4.4 | 未做评测 |
-| V-9 | 波形格式的 `samplesPerPixel=256` 是否合适（体积 vs 精度） | §3.4 | 未验证 |
-| V-10 | `PRAGMA mmap_size` 在 Windows 上的兼容性 | §1.0 | 未验证（无 Windows 机器） |
-| V-11 | `whisper.cpp` 是否输出可用的词级时间戳（供 `words_json`） | §1.5 / karaoke 高亮 | **待核实** |
+| #    | 事项                                                        | 影响                | 状态                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---- | ----------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| V-1  | 本文 DDL 是否能在真实 SQLite 上跑通                         | 全局                | ✅ **已实证关闭（T-014，`oss-scout`）**：§4 的**全部 DDL 在真实 SQLite 上跑了一遍** —— 外部内容表、三组同步触发器、`tokenize='simple'`、bm25、`simple_query`/`simple_highlight`、**拼音检索**（`swdt`/`zx`/`sjz` 全命中）、WAL、外键、`vec0` 元数据列 KNN，**全部通过**。<br>✅ **§1 的 26 张业务表 DDL 也已整体执行**：`packages/db/migrations/0001_init.sql` 落地 **26 表 / 57 索引 / 2 触发器**，`0002_search.sql` 再补 **3 个 FTS5 + 9 个同步触发器**（合计与 TL;DR 的"26 表 + 57 索引 + 3 FTS5 + 11 触发器"逐项对上）。<br>⚠️ **此前这一格的尾巴写着"仍未跑通的部分：§1 的 26 张业务表 DDL（jobs/notes/mindmap 等）尚未整体执行，T-016 落 `0001_init.sql` 时仍需实测"** —— 它与本文档 TL;DR 第 23 行（"DDL 已整体实证"）直接矛盾，**以已执行为准**。 |
+| V-2  | `mind-elixir` 的包名/版本/`NodeObj` 字段名                  | §2.3 映射表         | ✅ **已核实**（读源码 `src/types/index.ts`）。**订正：npm 包名是 `mind-elixir` v5.14.0，不是 `mind-elixir-core`**；`MindElixirData` **无 `linkData`**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| V-3  | `markmap-lib.transform()` 的输入                            | §2.3 / 只读视图实现 | ✅ **已核实**：只吃 Markdown 字符串；但 `Markmap.create()` 吃 `IPureNode` → **改为直接构造 `IPureNode`**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| V-4  | libsimple 的加载与 `tokenize='simple'`、辅助函数、拼音      | §4.1/§4.2           | ✅ **已核实**（README 原文）。函数**形参级签名**仍 UNKNOWN，只有用法级示例                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| V-5  | `sqlite-vec` 的 `vec0` 语法/类型/元数据列/分区键            | §4.3                | ✅ **已核实**（README + `sqlite-vec.c` 源码交叉验证，v0.1.9）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| V-6  | `better-sqlite3` 能否加载 libsimple / sqlite-vec            | §4 全部             | ✅ **已实证关闭（T-014）**：两个扩展均加载成功、功能跑通。**R-03 §U-5 的实测项已完成。**<br>📌 本项原提法（"查 `compile_options` 是否有 `ENABLE_LOAD_EXTENSION`"）**基于错误前提**，已在 §4.1 写入方法论更正：**扩展能力只能实测，不能读 `compile_options` 推断**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| V-6b | `vec0` 主键/rowid 的绑定方式                                | §4.3                | ✅ **已实证（T-014）**：绑 JS `number` **必失败**（`Only integers are allows for primary key values`），两驱动一致 → 是 sqlite-vec v0.1.9 的行为。**已在 §4.3 写死"一律绑 `BigInt`，转换收口到 DB 适配层"**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| V-6c | 驱动选型                                                    | §1.0/§4             | ✅ **已定案（ADR-005 决策 6）**：`better-sqlite3` v13 为主 + `node:sqlite` 已验证备胎 + 薄 DB 适配层。**D-02 本就按 better-sqlite3 写，无需改动。**<br>⚠️ 残留风险（`oss-scout` 如实记录）：**只在 Linux x64 glibc 实测**；mac/Win/arm64/musl 的 prebuild 全未实测；上游 open issue **#1509**（`linux-arm64.node` 要求 GLIBC_2.38）未复现                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| V-7  | 重转写后 `quote` 相似度重定位的实际准确率与阈值（0.75/0.4） | §3.5                | 未验证，需 Wave 3 用真实数据调                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| V-8  | RRF 融合的检索效果                                          | §4.4                | 未做评测                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| V-9  | 波形格式的 `samplesPerPixel=256` 是否合适（体积 vs 精度）   | §3.4                | 未验证                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| V-10 | `PRAGMA mmap_size` 在 Windows 上的兼容性                    | §1.0                | 未验证（无 Windows 机器）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| V-11 | `whisper.cpp` 是否输出可用的词级时间戳（供 `words_json`）   | §1.5 / karaoke 高亮 | **待核实**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 ---
 
@@ -1342,32 +1361,32 @@ GC 是 `priority=30` 的维护 job，**只在空闲时跑**（无 running job �
 
 **它的 9 张表**：`workspace` · `folder` · `resource` · `doc` · `note` · `download` · `tag` · `note_tag` · `doc_tag`
 
-| 我们的做法 | memo.ac 的做法 | 差异理由 |
-|---|---|---|
-| `PRAGMA user_version` + 有序迁移 + 升级前自动备份（§5） | **无版本机制**：运行时 `hasTable` → 不存在则 `createTable` 的幂等构建。全库 grep **`PRAGMA user_version` 零命中** | 它无法做"改列/加约束"这类演进，只能加表。我们必须能演进 |
-| 笔记正文 `notes.body_json` **存库** | DB 里 `note.content` 只是索引，真正内容在磁盘 `<workspace>/<folder>/<noteId>/notes/data.json` | 内容进库才能事务一致、才能被 FTS5 索引、才能原子回滚。它的双层结构会有"DB 与文件不同步"的经典问题 |
+| 我们的做法                                                                        | memo.ac 的做法                                                                                                                                                                                     | 差异理由                                                                                               |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `PRAGMA user_version` + 有序迁移 + 升级前自动备份（§5）                           | **无版本机制**：运行时 `hasTable` → 不存在则 `createTable` 的幂等构建。全库 grep **`PRAGMA user_version` 零命中**                                                                                  | 它无法做"改列/加约束"这类演进，只能加表。我们必须能演进                                                |
+| 笔记正文 `notes.body_json` **存库**                                               | DB 里 `note.content` 只是索引，真正内容在磁盘 `<workspace>/<folder>/<noteId>/notes/data.json`                                                                                                      | 内容进库才能事务一致、才能被 FTS5 索引、才能原子回滚。它的双层结构会有"DB 与文件不同步"的经典问题      |
 | `transcript_segments` 带 `confidence` / `no_speech_prob` / `words_json` / `flags` | **只有 `{start, end, text(+speaker)}`**。全库 grep `avg_logprob` / `no_speech_prob` **零命中**，`confidence` 的 1 处命中是术语表匹配度、`probability` 的 5 处是语言检测概率，**都与 ASR 段落无关** | 没有置信度就做不了"低置信高亮""幻觉检测""只重跑坏块"（R-01 §C11 #7 的 whisper 重复顽疾正因此无从下手） |
-| 思维导图规范化表 + 库无关 `MindMapDoc`（§1.6/§2） | **`markmap-common/lib/view@^0.15.5`，无自定义 schema**——导图就是一段 Markdown 大纲文本 | 印证 ADR-002 决策 3 的判断：markmap 路线天然不可做节点级编辑、不可给节点挂时间戳、不可存自由连线 |
-| `tags` + `note_tags`（含 `source='user'\|'ai'`） | **`tag` / `note_tag` / `doc_tag` 三张表确实存在** | ⚠️ **这一条订正 R-01 §A2.5 的"未发现标签系统"判定**——底层已实现，可能只是 UI 未开放。建议 Manager 知悉 |
-| 无 workspace 层（建议，见 §9 决策项 2） | 有 `workspace` 表（`{name, folder, icon, thumbnail, backgroundColor}`）+ `workspaces/index.json` | 它是为"共用电脑"设计的（R-01 §A2.5）。我们的场景是个人自用，多一层导航成本大于收益 |
-| 数据根 `~/Library/Application Support/OpenMemo`（§6.1） | `~/Library/Application Support/Memo/{storage/local.db, models/, temp/, plugins/, conf/setting.conf, locales/, workspaces/index.json}` | 布局约定一致，印证 §6.1 的选择是行业惯例 |
-| 单笔记目录内固定文件名（§6.2） | `thumbnail / transcribe / transcode / metadata.json / source / subtitle / project.json / resource.json / data.json` | 结构可借鉴，我们更进一步：文件名全部由我们生成（D-01 §8.5） |
+| 思维导图规范化表 + 库无关 `MindMapDoc`（§1.6/§2）                                 | **`markmap-common/lib/view@^0.15.5`，无自定义 schema**——导图就是一段 Markdown 大纲文本                                                                                                             | 印证 ADR-002 决策 3 的判断：markmap 路线天然不可做节点级编辑、不可给节点挂时间戳、不可存自由连线       |
+| `tags` + `note_tags`（含 `source='user'\|'ai'`）                                  | **`tag` / `note_tag` / `doc_tag` 三张表确实存在**                                                                                                                                                  | ⚠️ **这一条订正 R-01 §A2.5 的"未发现标签系统"判定**——底层已实现，可能只是 UI 未开放。建议 Manager 知悉 |
+| 无 workspace 层（建议，见 §9 决策项 2）                                           | 有 `workspace` 表（`{name, folder, icon, thumbnail, backgroundColor}`）+ `workspaces/index.json`                                                                                                   | 它是为"共用电脑"设计的（R-01 §A2.5）。我们的场景是个人自用，多一层导航成本大于收益                     |
+| 数据根 `~/Library/Application Support/OpenMemo`（§6.1）                           | `~/Library/Application Support/Memo/{storage/local.db, models/, temp/, plugins/, conf/setting.conf, locales/, workspaces/index.json}`                                                              | 布局约定一致，印证 §6.1 的选择是行业惯例                                                               |
+| 单笔记目录内固定文件名（§6.2）                                                    | `thumbnail / transcribe / transcode / metadata.json / source / subtitle / project.json / resource.json / data.json`                                                                                | 结构可借鉴，我们更进一步：文件名全部由我们生成（D-01 §8.5）                                            |
 
 **它的 342 个 IPC 通道分类**（我们的 REST 面应覆盖等价能力，用作**完备性自检清单**）：
 
-| 域 | 数量 | 代表通道 | 我们的对应 |
-|---|---|---|---|
-| `llm:*` | 16 | `llm:get-services` / `llm:model-registry:update` / `llm:test-service` | LLM 适配层 + 设置（D-01 §6.2）|
-| `correction:*` | 16 | `correction:correct-subtitles` / `correction:create-glossary` | v1 不做（AI 字幕纠错/术语表），预留 |
-| `translate:*` | 14 | `translate:create-glossary` | `segment_translations` 已预留（§1.5），启用与否见决策项 3 |
-| `ytdlp:*` | 12 | `ytdlp:download-version` / `ytdlp:check-update` / `ytdlp:export-cookies` | 媒体源适配层 + downloader（D-01 §6.4，含"独立更新 yt-dlp"）|
-| 模型管理 | ~25 | `download-model` / `check-model-sha` / `import-models` | T-013 的模型 API + `model_installs`（§1.8）|
-| 下载基建 | ~22 | `start-download` / `check-download-folder-space` | 统一 downloader（ADR-003 决策 6）+ 磁盘预检（§6.3）|
-| 引擎/插件 | ~19–25 | `install-extensions` / `checkExtensionExists` | `backend_installs`（§1.8）+ 运行时页 |
-| Whisper 控制 | 8 | `startWhisperServer` / `checkWhisperCudaExist` | ASR 适配层（D-01 §6.1）|
-| 实体 CRUD | 5 条**多路复用**通道 | `note-data` / `doc-data` / `workspace-data` / `folder-data` / `resource-data` | 我们用 RESTful 资源路由，**不做单通道多路复用**（那会让契约无法用 schema 描述） |
-| 窗口/导出/设备 | ~15 | `export-video` / `get-device-manager-info` | 导出 job + 运行时探测 |
-| AI 顶层 | 3 | `ai-mindmap` / `ai-summarize` / `chat` | F4 结构化 job（D-01 §5 F4）|
+| 域             | 数量                 | 代表通道                                                                      | 我们的对应                                                                      |
+| -------------- | -------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `llm:*`        | 16                   | `llm:get-services` / `llm:model-registry:update` / `llm:test-service`         | LLM 适配层 + 设置（D-01 §6.2）                                                  |
+| `correction:*` | 16                   | `correction:correct-subtitles` / `correction:create-glossary`                 | v1 不做（AI 字幕纠错/术语表），预留                                             |
+| `translate:*`  | 14                   | `translate:create-glossary`                                                   | `segment_translations` 已预留（§1.5），启用与否见决策项 3                       |
+| `ytdlp:*`      | 12                   | `ytdlp:download-version` / `ytdlp:check-update` / `ytdlp:export-cookies`      | 媒体源适配层 + downloader（D-01 §6.4，含"独立更新 yt-dlp"）                     |
+| 模型管理       | ~25                  | `download-model` / `check-model-sha` / `import-models`                        | T-013 的模型 API + `model_installs`（§1.8）                                     |
+| 下载基建       | ~22                  | `start-download` / `check-download-folder-space`                              | 统一 downloader（ADR-003 决策 6）+ 磁盘预检（§6.3）                             |
+| 引擎/插件      | ~19–25               | `install-extensions` / `checkExtensionExists`                                 | `backend_installs`（§1.8）+ 运行时页                                            |
+| Whisper 控制   | 8                    | `startWhisperServer` / `checkWhisperCudaExist`                                | ASR 适配层（D-01 §6.1）                                                         |
+| 实体 CRUD      | 5 条**多路复用**通道 | `note-data` / `doc-data` / `workspace-data` / `folder-data` / `resource-data` | 我们用 RESTful 资源路由，**不做单通道多路复用**（那会让契约无法用 schema 描述） |
+| 窗口/导出/设备 | ~15                  | `export-video` / `get-device-manager-info`                                    | 导出 job + 运行时探测                                                           |
+| AI 顶层        | 3                    | `ai-mindmap` / `ai-summarize` / `chat`                                        | F4 结构化 job（D-01 §5 F4）                                                     |
 
 ---
 

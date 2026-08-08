@@ -18,13 +18,7 @@ import {
 } from '../../subprocess/argGuard.js';
 import type { ToolPaths } from '../../tools.js';
 import { isExecutable } from '../../tools.js';
-import type {
-  Availability,
-  FetchRequest,
-  FetchedMedia,
-  MediaInfo,
-  MediaSource,
-} from '../types.js';
+import type { Availability, FetchRequest, FetchedMedia, MediaInfo, MediaSource } from '../types.js';
 
 export interface LocalFileSourceOptions {
   tools: ToolPaths;
@@ -116,7 +110,9 @@ export class LocalFileSource implements MediaSource {
     const st = await stat(path);
 
     if (st.size > req.maxBytes) {
-      throw new Error(`file is ${String(st.size)} bytes, over the ${String(req.maxBytes)} byte limit`);
+      throw new Error(
+        `file is ${String(st.size)} bytes, over the ${String(req.maxBytes)} byte limit`,
+      );
     }
 
     const probed = await probeMedia(this.opts.tools, path, { cwd: this.opts.cwd });

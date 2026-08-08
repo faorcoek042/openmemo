@@ -86,8 +86,7 @@ export const useSurfaceStore = create<SurfaceStore>((set) => ({
   states: initial,
   health: null,
   authed: false,
-  set: (s, v) =>
-    set((st) => (st.states[s] === v ? st : { states: { ...st.states, [s]: v } })),
+  set: (s, v) => set((st) => (st.states[s] === v ? st : { states: { ...st.states, [s]: v } })),
   setHealth: (health) => set({ health }),
   setAuthed: (authed) => set({ authed }),
 }));

@@ -199,10 +199,12 @@ describe('listProviderModels —— 出网那条走注入 fetch，本机不联�
     const enumerable = (cat?.providers ?? []).filter(
       (p) => p.modelListSource.type !== 'official-doc',
     );
-    assert.deepEqual(
-      enumerable.map((p) => p.id).sort(),
-      ['lmstudio', 'ollama', 'openrouter', 'siliconcloud'],
-    );
+    assert.deepEqual(enumerable.map((p) => p.id).sort(), [
+      'lmstudio',
+      'ollama',
+      'openrouter',
+      'siliconcloud',
+    ]);
   });
 
   it('★ Ollama 的地址要补 `/v1` —— 目录给的是原生 API 的根，不是 OpenAI 兼容面', async () => {
@@ -219,32 +221,50 @@ describe('listProviderModels —— 出网那条走注入 fetch，本机不联�
   });
 
   it('★ 枚举到 0 个算失败 —— 空下拉会被读成"我的账号没有模型"', async () => {
-    const out = await listProviderModels(db, '/tmp/om-llm-enum-nonexistent', manifestDir, 'openrouter', {
-      fetchImpl: (() =>
-        Promise.resolve(new Response(JSON.stringify({ data: [] }), { status: 200 }))) as never,
-    });
+    const out = await listProviderModels(
+      db,
+      '/tmp/om-llm-enum-nonexistent',
+      manifestDir,
+      'openrouter',
+      {
+        fetchImpl: (() =>
+          Promise.resolve(new Response(JSON.stringify({ data: [] }), { status: 200 }))) as never,
+      },
+    );
     assert.equal(out.ok, false);
     assert.equal(out.ok === false && out.failure.kind, 'request-failed');
   });
 
   it('正常响应：去重 + 排序', async () => {
-    const out = await listProviderModels(db, '/tmp/om-llm-enum-nonexistent', manifestDir, 'openrouter', {
-      fetchImpl: (() =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify({ data: [{ id: 'z-model' }, { id: 'a-model' }, { id: 'a-model' }] }),
-            { status: 200 },
-          ),
-        )) as never,
-    });
+    const out = await listProviderModels(
+      db,
+      '/tmp/om-llm-enum-nonexistent',
+      manifestDir,
+      'openrouter',
+      {
+        fetchImpl: (() =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({ data: [{ id: 'z-model' }, { id: 'a-model' }, { id: 'a-model' }] }),
+              { status: 200 },
+            ),
+          )) as never,
+      },
+    );
     assert.equal(out.ok, true);
     assert.deepEqual(out.ok === true ? out.value.models : [], ['a-model', 'z-model']);
   });
 
   it('★ 上游 4xx/5xx 原样带回状态，不许当成"没有模型"', async () => {
-    const out = await listProviderModels(db, '/tmp/om-llm-enum-nonexistent', manifestDir, 'siliconcloud', {
-      fetchImpl: (() => Promise.resolve(new Response('nope', { status: 401 }))) as never,
-    });
+    const out = await listProviderModels(
+      db,
+      '/tmp/om-llm-enum-nonexistent',
+      manifestDir,
+      'siliconcloud',
+      {
+        fetchImpl: (() => Promise.resolve(new Response('nope', { status: 401 }))) as never,
+      },
+    );
     assert.equal(out.ok, false);
     assert.equal(
       out.ok === false && out.failure.kind === 'request-failed' ? out.failure.detail : '',
@@ -253,10 +273,18 @@ describe('listProviderModels —— 出网那条走注入 fetch，本机不联�
   });
 
   it('★ 不是 OpenAI 兼容形状（没有 data 数组）→ 说清楚，别静默变成 0 个', async () => {
-    const out = await listProviderModels(db, '/tmp/om-llm-enum-nonexistent', manifestDir, 'openrouter', {
-      fetchImpl: (() =>
-        Promise.resolve(new Response(JSON.stringify({ models: ['x'] }), { status: 200 }))) as never,
-    });
+    const out = await listProviderModels(
+      db,
+      '/tmp/om-llm-enum-nonexistent',
+      manifestDir,
+      'openrouter',
+      {
+        fetchImpl: (() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ models: ['x'] }), { status: 200 }),
+          )) as never,
+      },
+    );
     assert.equal(out.ok, false);
     assert.equal(
       out.ok === false && out.failure.kind === 'request-failed'

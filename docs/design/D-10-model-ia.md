@@ -13,13 +13,13 @@ scope: 只写规格，零代码。实现归 `architect`（`apps/web/src/**`）/ 
 > 本文自我描述里有「**最急**」「**必须先拆的雷**」这类措辞，正是最容易被照单重开的一类。
 > `[实测]` 2026-08-06（读码 + 剥注释 grep，HEAD `2896562`）：
 >
-> | TL;DR 的断言 | 今天 | 证据 |
-> |---|---|---|
-> | 「`/models` 读 `active.llm`（**永远 null**）→ **在谎报功能不可用**」（§0.1，自称"最重要的发现"） | ✅ **已修** | `apps/web/src/features/models/ModelsPage.tsx:198` 与 `:259-262` 直接引用「D-10 #8」并改读 `llm.defaultProviderId` / `llm.defaultModelId`，注释里逐字记着"这里原本读 `active.llm`" |
-> | 🚨「daemon 靠**硬编码 id** 分派协议（`=== 'anthropic'`，`llm/resolve.ts:89`），一旦改吃 24 家目录 Anthropic 会静默坏掉」（§8-D1，自称"最急"） | ✅ **已修** | `apps/daemon/src/llm/resolve.ts:63-76` 已改成读 `kind` 分派；`:114` 的注释写着"这里原来是 `providerId === 'anthropic'`"。`:82` 残留的 id 判断是**老配置没有 `kind` 字段时的兜底**，且 `:88` 会打警告，不是原来那条雷 |
-> | 「`POST /api/llm/detect` 端点不存在」（#23） | 🔴 **仍然成立** | daemon 全仓 `llm/detect` 剥注释后 0 命中。[探测本机] 仍依赖一个不存在的端点 |
-> | 「`role=vad`(2) + `role=punctuation`(1) 在 UI 里完全不可见」（#10） | 🔴 **仍然成立** | `ModelsPage.tsx` 里 `'vad'` / `'punctuation'` 零命中 |
-> | 「`/models` 的语言模型 Tab 装的是 ADR-016 已砍掉的 GGUF，整条线下架」（#7 #12 #22） | 🟡 **只做了一半** | `vendor/manifests/models-llm.json` 仍有 **5** 条 GGUF；`llama.cpp` 的后端包已于 `07584d9`（T-144①）整族摘掉。**目录条目还在，后端包没了** |
+> | TL;DR 的断言                                                                                                                                  | 今天              | 证据                                                                                                                                                                                                                 |
+> | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+> | 「`/models` 读 `active.llm`（**永远 null**）→ **在谎报功能不可用**」（§0.1，自称"最重要的发现"）                                              | ✅ **已修**       | `apps/web/src/features/models/ModelsPage.tsx:198` 与 `:259-262` 直接引用「D-10 #8」并改读 `llm.defaultProviderId` / `llm.defaultModelId`，注释里逐字记着"这里原本读 `active.llm`"                                    |
+> | 🚨「daemon 靠**硬编码 id** 分派协议（`=== 'anthropic'`，`llm/resolve.ts:89`），一旦改吃 24 家目录 Anthropic 会静默坏掉」（§8-D1，自称"最急"） | ✅ **已修**       | `apps/daemon/src/llm/resolve.ts:63-76` 已改成读 `kind` 分派；`:114` 的注释写着"这里原来是 `providerId === 'anthropic'`"。`:82` 残留的 id 判断是**老配置没有 `kind` 字段时的兜底**，且 `:88` 会打警告，不是原来那条雷 |
+> | 「`POST /api/llm/detect` 端点不存在」（#23）                                                                                                  | 🔴 **仍然成立**   | daemon 全仓 `llm/detect` 剥注释后 0 命中。[探测本机] 仍依赖一个不存在的端点                                                                                                                                          |
+> | 「`role=vad`(2) + `role=punctuation`(1) 在 UI 里完全不可见」（#10）                                                                           | 🔴 **仍然成立**   | `ModelsPage.tsx` 里 `'vad'` / `'punctuation'` 零命中                                                                                                                                                                 |
+> | 「`/models` 的语言模型 Tab 装的是 ADR-016 已砍掉的 GGUF，整条线下架」（#7 #12 #22）                                                           | 🟡 **只做了一半** | `vendor/manifests/models-llm.json` 仍有 **5** 条 GGUF；`llama.cpp` 的后端包已于 `07584d9`（T-144①）整族摘掉。**目录条目还在，后端包没了**                                                                            |
 >
 > §1–§7 的信息架构规格、定名三规则、五槽状态表、§7 的 memo.ac 取证**全部仍然有效**，
 > 那是本文的主体价值。上表只订正 TL;DR 里会被当成待办重开的那几条。
@@ -63,12 +63,12 @@ scope: 只写规格，零代码。实现归 `architect`（`apps/web/src/**`）/ 
 **环境**：`:10000` 用户演示实例，`dataDir=/root/data-memo`，**全程只读**——未重启、未 PATCH、未下载。
 Chromium 1440×2600 全页截图，`localStorage['openmemo.locale']='zh-CN'`。截图落在仓库外 `/tmp/ia-design/`：
 
-| 页面 | 截图 |
-|---|---|
-| `/models`（转写模型 Tab） | `/tmp/ia-design/models.png` |
+| 页面                      | 截图                                |
+| ------------------------- | ----------------------------------- |
+| `/models`（转写模型 Tab） | `/tmp/ia-design/models.png`         |
 | `/models`（语言模型 Tab） | `/tmp/ia-design/models-llm-tab.png` |
-| `/runtime` | `/tmp/ia-design/runtime.png` |
-| `/settings/general` | `/tmp/ia-design/settings.png` |
+| `/runtime`                | `/tmp/ia-design/runtime.png`        |
+| `/settings/general`       | `/tmp/ia-design/settings.png`       |
 
 ### 0.1 ★ 本文最要紧的一条：两处对同一个问题给出相反答案 `[实测]`
 
@@ -96,13 +96,13 @@ Chromium 1440×2600 全页截图，`localStorage['openmemo.locale']='zh-CN'`。�
 
 ### 0.2 「模型」一词今天的五种含义 `[实测 + 读码]`
 
-| # | 位置 | 「模型」在这里指 | 数据源 | 单位 |
-|---|---|---|---|---|
-| 1 | `/models` → 转写模型 Tab | 要下载到本机的 ASR 权重文件 | `GET /api/models/catalog` `role=asr` | 12 组 / 25 变体 |
-| 2 | `/models` → 语言模型 Tab | 要下载到本机的 GGUF 权重文件 | 同上 `role=llm` | 4 组 / 5 变体（**ADR-016 已砍**） |
-| 3 | `/runtime` → 加速后端包 | 推理用的可执行二进制 + 动态库 | `GET /api/backends/catalog` | 22 个包 |
-| 4 | 设置 → AI 模型 | 一个远端 HTTP 服务的地址与凭据 | `settings['llm.providers']` | 11 个预设 |
-| 5 | 设置 → 按用途分别配置模型 | ④ 的一个字符串型号名（如 `deepseek-chat`） | `settings['llm.purposes']` | 3 个用途 |
+| #   | 位置                      | 「模型」在这里指                           | 数据源                               | 单位                              |
+| --- | ------------------------- | ------------------------------------------ | ------------------------------------ | --------------------------------- |
+| 1   | `/models` → 转写模型 Tab  | 要下载到本机的 ASR 权重文件                | `GET /api/models/catalog` `role=asr` | 12 组 / 25 变体                   |
+| 2   | `/models` → 语言模型 Tab  | 要下载到本机的 GGUF 权重文件               | 同上 `role=llm`                      | 4 组 / 5 变体（**ADR-016 已砍**） |
+| 3   | `/runtime` → 加速后端包   | 推理用的可执行二进制 + 动态库              | `GET /api/backends/catalog`          | 22 个包                           |
+| 4   | 设置 → AI 模型            | 一个远端 HTTP 服务的地址与凭据             | `settings['llm.providers']`          | 11 个预设                         |
+| 5   | 设置 → 按用途分别配置模型 | ④ 的一个字符串型号名（如 `deepseek-chat`） | `settings['llm.purposes']`           | 3 个用途                          |
 
 五个位置、五种单位，**共用一个词**。用户的原话「模型，语言模型，和设置，AI 模型，重复了」说的就是 ①②④⑤。
 
@@ -110,23 +110,23 @@ Chromium 1440×2600 全页截图，`localStorage['openmemo.locale']='zh-CN'`。�
 
 `GET /api/models/catalog` → **20 组 / 35 变体**：
 
-| role | 组数 | 变体数 | UI 可见？ |
-|---|---|---|---|
-| `asr`（whisper） | 12 | 25 | ✅ 转写 Tab（中文档实渲染 8 张卡，13 个变体被 ADR-011 语言过滤隐藏） |
-| `asr`（paraformer / sherpa 流式） | 2 | 2 | ✅ 同上，与 whisper 混在一列 |
-| `llm`（qwen3 ×3 + gemma3） | 4 | 5 | ⚠️ 语言模型 Tab —— **ADR-016 已砍，应下架** |
-| `vad`（silero，onnx + ggml 两份） | 1 | 2 | ❌ **不可见**（`ROLE_TABS` 无此项） |
-| `punctuation`（ct-transformer 中英） | 1 | 1 | ❌ **不可见** |
+| role                                 | 组数 | 变体数 | UI 可见？                                                            |
+| ------------------------------------ | ---- | ------ | -------------------------------------------------------------------- |
+| `asr`（whisper）                     | 12   | 25     | ✅ 转写 Tab（中文档实渲染 8 张卡，13 个变体被 ADR-011 语言过滤隐藏） |
+| `asr`（paraformer / sherpa 流式）    | 2    | 2      | ✅ 同上，与 whisper 混在一列                                         |
+| `llm`（qwen3 ×3 + gemma3）           | 4    | 5      | ⚠️ 语言模型 Tab —— **ADR-016 已砍，应下架**                          |
+| `vad`（silero，onnx + ggml 两份）    | 1    | 2      | ❌ **不可见**（`ROLE_TABS` 无此项）                                  |
+| `punctuation`（ct-transformer 中英） | 1    | 1      | ❌ **不可见**                                                        |
 
 `GET /api/backends/catalog` → **22 个包**：
 
-| 家族 | 个数 | 是"加速后端"吗 | 处置 |
-|---|---|---|---|
-| `llamacpp-*`（cpu/vulkan/cuda/rocm/metal × 平台） | **7** | 是，但 **ADR-016 已砍整条线** | **下架** |
-| `whispercpp-*`（cpu ×2 + cuda-win） | 3 | ✅ 是 | 留在「转写加速后端」 |
-| `media-tools-*`（ffmpeg/ffprobe） | 1 | ❌ 不是，是媒体解码工具 | 移到「功能组件」 |
-| `libsimple-*`（中文分词器） | 6 | ❌ 不是，是 SQLite 扩展 | 移到「功能组件」 |
-| `sqlite-vec-*`（向量检索） | 5 | ❌ 不是，是 SQLite 扩展 | 移到「功能组件」 |
+| 家族                                              | 个数  | 是"加速后端"吗                | 处置                 |
+| ------------------------------------------------- | ----- | ----------------------------- | -------------------- |
+| `llamacpp-*`（cpu/vulkan/cuda/rocm/metal × 平台） | **7** | 是，但 **ADR-016 已砍整条线** | **下架**             |
+| `whispercpp-*`（cpu ×2 + cuda-win）               | 3     | ✅ 是                         | 留在「转写加速后端」 |
+| `media-tools-*`（ffmpeg/ffprobe）                 | 1     | ❌ 不是，是媒体解码工具       | 移到「功能组件」     |
+| `libsimple-*`（中文分词器）                       | 6     | ❌ 不是，是 SQLite 扩展       | 移到「功能组件」     |
+| `sqlite-vec-*`（向量检索）                        | 5     | ❌ 不是，是 SQLite 扩展       | 移到「功能组件」     |
 
 **22 个里 12 个不是加速后端**，却挂在「加速后端包」标题下 ——
 这是 `/runtime` 页内的同型命名混淆，与用户点名的那个是同一个病。
@@ -227,7 +227,7 @@ Tab 的代价是"看不见另一边"，而这个代价已经被页顶常驻的�
 
 1. **ADR-016 决策 3 已经定了在线是主路径**，本地只保留"复用你已装的"。
    `llm-catalog.ts:22-25` 的注释把这条写得很直白：
-   *"用户要的是「和 memo 一样用在线」，界面就不该让本地看起来是默认答案。"*
+   _"用户要的是「和 memo 一样用在线」，界面就不该让本地看起来是默认答案。"_
    两个对等的 Tab 恰恰是在说"这两条路一样正当"。
 2. **本地侧没有可浏览的清单。** ADR-016 之后本地只剩 2 个候选（Ollama / LM Studio），
    而且它们不是"目录里的条目"，是"你机器上有没有"的探测结果。
@@ -237,10 +237,10 @@ Tab 的代价是"看不见另一边"，而这个代价已经被页顶常驻的�
 
 ### 2.3 但"分组"必须解决"本地"一词的二义 —— 这是我要订正的一处
 
-| 出现位置 | 「本地」指 | 我们对它做什么 | 失败长什么样 |
-|---|---|---|---|
-| 转写 → 本机模型 | **一个我们下载并拥有的权重文件** | 下载、校验 SHA-256、删除、量化选档 | 「下载失败」 |
-| 语言模型 → 本地模型 | **一个别人装好的常驻服务** | 只探测、只填地址，**不下载不管理** | 「没检测到 Ollama 在运行」 |
+| 出现位置            | 「本地」指                       | 我们对它做什么                     | 失败长什么样               |
+| ------------------- | -------------------------------- | ---------------------------------- | -------------------------- |
+| 转写 → 本机模型     | **一个我们下载并拥有的权重文件** | 下载、校验 SHA-256、删除、量化选档 | 「下载失败」               |
+| 语言模型 → 本地模型 | **一个别人装好的常驻服务**       | 只探测、只填地址，**不下载不管理** | 「没检测到 Ollama 在运行」 |
 
 同一个词、两种东西、两套失败模式。**如果不处理，「本地」就会变成新的「模型」** ——
 用户这次抱怨的就是这个模式。处置：
@@ -289,11 +289,11 @@ ADR-016 决策 2「本地 ASR 不再扩容」管的是本地扩容，**没有**�
 
 **⚠️ 我必须承认的反证（不藏）：三处真实耦合。**
 
-| 耦合点 | 事实 `[实测]` | 处置 |
-|---|---|---|
-| 共用磁盘 | `/models` 页尾「磁盘占用」把 `Whisper base` 与 `whispercpp-cpu-linux-x64`、`libsimple`、`sqlite-vec` **列在同一张表里** | ✅ 保持共用一个 `StorageBreakdown` 组件。**磁盘是一个跨域视图，不是一个分类依据** |
-| 共用下载机制 | 两者都走 `JOB_KINDS = ['model','backend-pack']`、同一套 SSE、同一个任务中心 | ✅ 保持。这是实现共用，不是概念同类 |
-| 共用「使用中」芯片 | `BackendChipState.active` 与模型的 `使用中` 是同一个词 | ✅ **正是 §5 要统一的那一格**。共用状态词恰恰说明它们是"两类东西的同一个生命周期槽位"，不是同一类东西 |
+| 耦合点             | 事实 `[实测]`                                                                                                           | 处置                                                                                                  |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| 共用磁盘           | `/models` 页尾「磁盘占用」把 `Whisper base` 与 `whispercpp-cpu-linux-x64`、`libsimple`、`sqlite-vec` **列在同一张表里** | ✅ 保持共用一个 `StorageBreakdown` 组件。**磁盘是一个跨域视图，不是一个分类依据**                     |
+| 共用下载机制       | 两者都走 `JOB_KINDS = ['model','backend-pack']`、同一套 SSE、同一个任务中心                                             | ✅ 保持。这是实现共用，不是概念同类                                                                   |
+| 共用「使用中」芯片 | `BackendChipState.active` 与模型的 `使用中` 是同一个词                                                                  | ✅ **正是 §5 要统一的那一格**。共用状态词恰恰说明它们是"两类东西的同一个生命周期槽位"，不是同一类东西 |
 
 **耦合处必须双向导流**（否则拆开就是甩锅）：
 
@@ -369,11 +369,11 @@ ADR-016 决策 2「本地 ASR 不再扩容」管的是本地扩容，**没有**�
 
 **三个分组的依据是"用户想干的事"，不是引擎、不是体积**：
 
-| 组 | 回答的问题 | 装什么 | 数据驱动（不写死） |
-|---|---|---|---|
-| 推荐 | "我就想转个中文/多语种，装哪个？" | Paraformer（中文）+ large-v3-turbo（多语种）。**只放 2 张，多一张就不叫推荐** | `tags` 含 `recommended-default-zh` / `recommended-default` |
-| 实时字幕组件 | "为什么我录音时不出字？" | sherpa 流式 + Silero VAD + 标点恢复。**一条链路的三个零件，不是彼此的替代品** | `tags` 含 `required-for-f3`，加 `role∈{vad,punctuation}` |
-| 更多档位 | "我要更快 / 更准 / 仅英文 / 复现旧结果" | 其余 10 组，按 `speedClass` 分三档 | `speedClass ∈ {fast, balance, quality}` |
+| 组           | 回答的问题                              | 装什么                                                                        | 数据驱动（不写死）                                         |
+| ------------ | --------------------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| 推荐         | "我就想转个中文/多语种，装哪个？"       | Paraformer（中文）+ large-v3-turbo（多语种）。**只放 2 张，多一张就不叫推荐** | `tags` 含 `recommended-default-zh` / `recommended-default` |
+| 实时字幕组件 | "为什么我录音时不出字？"                | sherpa 流式 + Silero VAD + 标点恢复。**一条链路的三个零件，不是彼此的替代品** | `tags` 含 `required-for-f3`，加 `role∈{vad,punctuation}`   |
+| 更多档位     | "我要更快 / 更准 / 仅英文 / 复现旧结果" | 其余 10 组，按 `speedClass` 分三档                                            | `speedClass ∈ {fast, balance, quality}`                    |
 
 > 为什么把 VAD 与标点从"看不见"提到这里：`[API]` 它们在目录里（`vad/silero-vad` 2 个变体、
 > `punctuation/ct-transformer-zh-en` 1 个 · 299 MB），但 `ROLE_TABS` 只有 `asr`/`llm`
@@ -384,12 +384,12 @@ ADR-016 决策 2「本地 ASR 不再扩容」管的是本地扩容，**没有**�
 
 `[读码]` `packages/shared/src/models.ts:113-142` 把这件事写得很清楚，我照单采纳：
 
-| | `ModelEntry.speedClass` | `FitResult.speedTier`（+ `speedSource`） |
-|---|---|---|
-| 值 | `fast` / `balance` / `quality` | `fast` / `moderate` / `slow` / `very_slow` / `unknown` |
+|        | `ModelEntry.speedClass`                              | `FitResult.speedTier`（+ `speedSource`）                                  |
+| ------ | ---------------------------------------------------- | ------------------------------------------------------------------------- |
+| 值     | `fast` / `balance` / `quality`                       | `fast` / `moderate` / `slow` / `very_slow` / `unknown`                    |
 | 是什么 | **目录常量**，按模型体积人工分档，**与你的机器无关** | **按你这台机器算出来的**，带 `speedSource` 说明是本机实测 / 参考机 / 未知 |
-| 谁给的 | manifest 里写死 | daemon 用硬件快照算 |
-| UI 词 | **「档位」**：快 / 均衡 / 高质量 | **「在你的机器上」**：1 小时音频约 23 分钟（参考机实测） |
+| 谁给的 | manifest 里写死                                      | daemon 用硬件快照算                                                       |
+| UI 词  | **「档位」**：快 / 均衡 / 高质量                     | **「在你的机器上」**：1 小时音频约 23 分钟（参考机实测）                  |
 
 **硬约束 R-M1：UI 上不许把这两个都叫"速度"。**
 一个 `CatalogVariant` 同时带着 `v.speedClass` 与 `v.fitness.speedTier` ——
@@ -412,11 +412,11 @@ ADR-016 决策 2「本地 ASR 不再扩容」管的是本地扩容，**没有**�
 
 `[API]` 我实测了 `语言 × speedClass` 的组数矩阵：
 
-| | fast | balance | quality |
-|---|---|---|---|
-| `zh`（专为中文训练） | **2**（sherpa 流式 / Paraformer） | **0** | **0** |
-| `multi`（多语种） | 2 | 2 | 4（其中 2 个 `superseded`） |
-| `en`（仅英文） | 2 | 2 | **0** |
+|                      | fast                              | balance | quality                     |
+| -------------------- | --------------------------------- | ------- | --------------------------- |
+| `zh`（专为中文训练） | **2**（sherpa 流式 / Paraformer） | **0**   | **0**                       |
+| `multi`（多语种）    | 2                                 | 2       | 4（其中 2 个 `superseded`） |
+| `en`（仅英文）       | 2                                 | 2       | **0**                       |
 
 `zh × balance` 与 `zh × quality` 确实是空的 —— 但 **`en × quality` 也是空的**（这一格没被提到）。
 
@@ -508,15 +508,15 @@ ADR-016 决策 2「本地 ASR 不再扩容」管的是本地扩容，**没有**�
 
 `[读码]` `packages/shared/src/providers.ts` + `[API]` `vendor/manifests/llm-providers.json`（本次逐字段核实）：
 
-| 事实 | 值 |
-|---|---|
-| 目录规模 | **24 家**，`catalogVersion 2026.08.03` |
-| 分桶函数 | `bucketProviders(all, configuredIds)` → `{ configured, mainstreamUnconfigured, more }` |
-| 置顶六家（固定顺序） | `openai` → `claude` → `gemini` → `deepseek` → `ollama` → `lmstudio`（`MAINSTREAM_PROVIDER_IDS`） |
-| `more` | 其余 **18** 家，按 `displayName` 本地化排序 |
-| 可刷新模型列表 | **只有 4 家**：`openrouter` / `siliconcloud`（`official-api`）+ `ollama` / `lmstudio`（`local-api`） |
-| 其余 20 家 | `official-doc` —— 人工从文档转录，**没有端点可调**，带 `checkedAt`（2026-04-28 ~ 05-31） |
-| 表单字段 | 由 `configFieldKeys` 驱动，**逐家不同** |
+| 事实                 | 值                                                                                                   |
+| -------------------- | ---------------------------------------------------------------------------------------------------- |
+| 目录规模             | **24 家**，`catalogVersion 2026.08.03`                                                               |
+| 分桶函数             | `bucketProviders(all, configuredIds)` → `{ configured, mainstreamUnconfigured, more }`               |
+| 置顶六家（固定顺序） | `openai` → `claude` → `gemini` → `deepseek` → `ollama` → `lmstudio`（`MAINSTREAM_PROVIDER_IDS`）     |
+| `more`               | 其余 **18** 家，按 `displayName` 本地化排序                                                          |
+| 可刷新模型列表       | **只有 4 家**：`openrouter` / `siliconcloud`（`official-api`）+ `ollama` / `lmstudio`（`local-api`） |
+| 其余 20 家           | `official-doc` —— 人工从文档转录，**没有端点可调**，带 `checkedAt`（2026-04-28 ~ 05-31）             |
+| 表单字段             | 由 `configFieldKeys` 驱动，**逐家不同**                                                              |
 
 **四条硬约束（给 `architect`）**
 
@@ -532,8 +532,8 @@ ADR-016 决策 2「本地 ASR 不再扩容」管的是本地扩容，**没有**�
 > **R-P3 表单字段由 `configFieldKeys` 渲染，不写死"每家都有 apiKey/baseURL/model"。**
 > 实测反例：`ollama` 的 `configFieldKeys` 是 `['baseURL','model','temperature']` —— **没有 apiKey**；
 > `mistralai` 的 `baseUrl.editable === false` —— 地址栏必须只读。
-> `providers.ts:86-90` 的注释点名了这个坑：*"让用户给 Ollama 编一个假 key，是竞品真在做的事，
-> 而它教会用户这个程序不理解自己的配置。"*
+> `providers.ts:86-90` 的注释点名了这个坑：_"让用户给 Ollama 编一个假 key，是竞品真在做的事，
+> 而它教会用户这个程序不理解自己的配置。"_
 
 > **R-P4 出厂 `configured` 为空，且必须空得体面。** `bucketProviders(all, [])` 返回 `configured: []` ——
 > **不预置任何 provider**。`providers.ts:117-126` 记录了理由：memo.ac 出厂高亮一个
@@ -613,14 +613,14 @@ ADR-016 决策 2「本地 ASR 不再扩容」管的是本地扩容，**没有**�
 
 ### 5.2 先看今天有几套 `[读码]`
 
-| 域 | 定义处 | 值 | 渲染成的中文 |
-|---|---|---|---|
-| 模型安装态 | `models.ts:203` `integrity` | `ok / unverified / corrupt / missing_files` | 已校验 / 未校验 / — / — |
-| 模型适配度 | `fitness.ts:15-21` `FIT_TIERS` | `recommended / slow_partial / slow_cpu / unsupported / blocked_disk` | 推荐 / 可跑但慢 / 可跑但慢 / 跑不动 / 空间不足 |
-| 下载作业 | `jobs.ts:21-30` `JOB_STATES` | `queued / blocked / leased / running / paused / succeeded / failed / cancelled` | 排队中 / 暂时无法继续 / … |
-| 作业步骤 | `jobs.ts:43` `JOB_STEPS` | `resolving / downloading / verifying / installing` | 正在选择下载源 / 下载中 / 正在校验完整性 / 正在安装 |
-| 后端包芯片 | `BackendChip.tsx:16` | `active / installed / available / not-installed / failed` | **使用中 / 已安装 / 可安装 / 不可用 / 自检失败** |
-| LLM 服务商 | `LlmSettingsSection.tsx:164-174` | （无枚举，就地拼串） | **使用中 / 已设置 sk-… / 未设置 Key / 本地，无需 Key** |
+| 域         | 定义处                           | 值                                                                              | 渲染成的中文                                           |
+| ---------- | -------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| 模型安装态 | `models.ts:203` `integrity`      | `ok / unverified / corrupt / missing_files`                                     | 已校验 / 未校验 / — / —                                |
+| 模型适配度 | `fitness.ts:15-21` `FIT_TIERS`   | `recommended / slow_partial / slow_cpu / unsupported / blocked_disk`            | 推荐 / 可跑但慢 / 可跑但慢 / 跑不动 / 空间不足         |
+| 下载作业   | `jobs.ts:21-30` `JOB_STATES`     | `queued / blocked / leased / running / paused / succeeded / failed / cancelled` | 排队中 / 暂时无法继续 / …                              |
+| 作业步骤   | `jobs.ts:43` `JOB_STEPS`         | `resolving / downloading / verifying / installing`                              | 正在选择下载源 / 下载中 / 正在校验完整性 / 正在安装    |
+| 后端包芯片 | `BackendChip.tsx:16`             | `active / installed / available / not-installed / failed`                       | **使用中 / 已安装 / 可安装 / 不可用 / 自检失败**       |
+| LLM 服务商 | `LlmSettingsSection.tsx:164-174` | （无枚举，就地拼串）                                                            | **使用中 / 已设置 sk-… / 未设置 Key / 本地，无需 Key** |
 
 ### 5.3 为什么"全都统一成一套词"是错的
 
@@ -637,19 +637,19 @@ ADR-016 决策 2「本地 ASR 不再扩容」管的是本地扩容，**没有**�
 
 ### 5.4 方案：一根**可用性轴**，5 个槽位，**槽位统一 / 措辞按域**
 
-| 槽 | 语义 | 转写模型 / 后端包（要获取的） | 在线 AI 模型（要配置的） | 本地 AI 服务（要探测的） | 视觉 |
-|---|---|---|---|---|---|
-| 0 | 本机没有，可获取 | **未安装** | **未设置 Key** | **未检测到** | 中性描边 chip |
-| 1 | 正在进行 | **下载中→校验中→安装中** | **测试中** | **探测中** | running 脉动，进度条 |
-| 2 | 已就绪，未生效 | **已安装** | **已配置** | **已发现** | good 描边 chip |
-| 3 | **正在被用** | **使用中** | **使用中** | **使用中** | **accent 实心 chip（全域同一实现）** |
-| 4 | **异常** | **异常**（+ 一句因由：文件损坏 / 安装失败 / 自检失败） | **异常**（连接失败 / Key 无效） | **异常**（服务已离线） | serious 实心 chip |
+| 槽  | 语义             | 转写模型 / 后端包（要获取的）                          | 在线 AI 模型（要配置的）        | 本地 AI 服务（要探测的） | 视觉                                 |
+| --- | ---------------- | ------------------------------------------------------ | ------------------------------- | ------------------------ | ------------------------------------ |
+| 0   | 本机没有，可获取 | **未安装**                                             | **未设置 Key**                  | **未检测到**             | 中性描边 chip                        |
+| 1   | 正在进行         | **下载中→校验中→安装中**                               | **测试中**                      | **探测中**               | running 脉动，进度条                 |
+| 2   | 已就绪，未生效   | **已安装**                                             | **已配置**                      | **已发现**               | good 描边 chip                       |
+| 3   | **正在被用**     | **使用中**                                             | **使用中**                      | **使用中**               | **accent 实心 chip（全域同一实现）** |
+| 4   | **异常**         | **异常**（+ 一句因由：文件损坏 / 安装失败 / 自检失败） | **异常**（连接失败 / Key 无效） | **异常**（服务已离线）   | serious 实心 chip                    |
 
 **规则（给 `architect` 的硬约束）**
 
 - **R-S1** 槽 3 `使用中` 与槽 4 `异常` **全域逐字相同、组件相同**（提升为
   `components/common/` 的单一实现，D-05 §3.3 的提升协议）。用户只想快速回答两个问题：
-  *"现在在用哪个？"* 和 *"哪里坏了？"* —— 这两个词是那两个问题的答案，不许有方言。
+  _"现在在用哪个？"_ 和 _"哪里坏了？"_ —— 这两个词是那两个问题的答案，不许有方言。
 - **R-S2** 槽 0/1/2 **按域用各自的动词**。给在线 API 写「未安装」是**撒谎**——没有东西可装；
   给 Ollama 写「未安装」更糟——它可能装了只是没运行。**准确 > 整齐。**
 - **R-S3** 后端包的 `available` **改词为「未安装」**，与模型对齐（同槽同词）。
@@ -670,37 +670,37 @@ ADR-016 决策 2「本地 ASR 不再扩容」管的是本地扩容，**没有**�
 > 「现在在哪」列全部是 `[实测]`/`[读码]` 核实过的真实位置，不是转述。
 > 责任列按 ADR-005 所有权表。
 
-| # | 现在在哪（区块 · 文件:行） | 应该在哪 | 理由 | 责任 |
-|---|---|---|---|---|
-| 1 | 设置 →「AI 模型」的服务商卡片列表 · `LlmSettingsSection.tsx` | `/models` → Tab「语言模型」→「在线 AI 模型」组 | 用户找"我的 AI 模型"第一站是「模型」；且今天它与 `/models` 语言模型 Tab **互相矛盾**（§0.1） | `architect` |
-| 2 | 设置 →「AI 模型」的 9 个在线预设「+ 添加」按钮 · `llm-catalog.ts:41-49`（`tier:'online'`） | 同上，「在线 AI 模型」组末尾 | 预设清单是**目录**，不是**设置** | `architect` |
-| 3 | 设置 →「AI 模型」的 2 个本地预设「+ Ollama」「+ LM Studio」· `llm-catalog.ts:51-52`（`tier:'local'`） | `/models` → Tab「语言模型」→「本地模型」组，**改成 [探测本机] 按钮 + 探测结果卡**；手填地址降为回退入口 | ADR-016 档 2 的语义是"复用你已装的"，本质是探测不是选目录。今天给两个预设按钮，等于让用户猜自己装没装 | `architect`（依赖 #23 的端点） |
-| 4 | 设置 →「AI 模型」的「当前生效: X · Y」行 · `LlmSettingsSection.tsx:106-111` | `/models` 页顶常驻「当前使用」区块的**语言模型行** | R3：同一问题一个出处。与「转写」行并列，用户一眼看全 | `architect` |
-| 5 | 设置 →「AI 模型」的明文 Key 警告 · i18n `settings.plaintextTitle/Detail` | 跟随卡片走，置于「在线 AI 模型」组首（Key 输入框上方） | ADR-006 决策 1 要求显式告知；告知必须紧邻输入处，否则等于没说 | `architect` |
-| 6 | 设置 →「按用途分别配置模型」整块 · `PurposeBindingsSection.tsx` | `/models` → Tab「语言模型」底部 | 它的服务商下拉必须是同页上方清单的**子集**（约束②）。跨页正是上次漂移的成因（`llm-catalog.ts:4-25` 记录在案） | `architect` |
-| 7 | `/models` → Tab「语言模型」的 4 张 GGUF 下载卡（通义千问 3 · 4B/8B/1.7B、Gemma 3 · 4B）· `vendor/manifests/models-llm.json` | **下架**（整文件停用，或 `role=llm` 从目录过滤） | ADR-016 决策 3 砍掉内置 `llama.cpp`。留着 = 用户能下载 5 GB 权重、下完**没有引擎能跑它** | `model-mgmt` |
-| 8 | `/models` →「当前使用 · 语言模型：未选择 —— 思维导图功能不可用」· `ModelsPage.tsx:177-213` 读 `active.llm` | 改读 `settings['llm.defaultProviderId'] + ['llm.defaultModelId']` | `active.llm` 永远是 `null`（在线 provider 不进 `installed` 表），今天它在**谎报功能不可用** | `architect` |
-| 9 | `/models` → Tab「转写模型」的 8 张平铺卡 · `ModelsPage.tsx:316-332` | 拆三组：**推荐** / **实时字幕组件** / **▸更多 Whisper 档位**（折叠） | 12 个 whisper 组里 v1/v2 被 v3/turbo 严格支配；流式引擎与离线批量引擎不是替代关系却混在一列（§4.1） | `architect` |
-| 10 | 目录里 `role=vad`（2 变体）+ `role=punctuation`（1 变体）· **UI 完全不可见**，`ROLE_TABS` 只有 asr/llm（`ModelsPage.tsx:39-42`） | `/models` → Tab「转写」→「实时字幕组件」组 | 它们是 sherpa 流式的 VAD 与 Paraformer 的标点，**是链路必需件**。今天没有任何途径装上 → 不是分类问题，是功能缺件 | `architect` |
-| 11 | `/models` 页尾「磁盘占用」· `StorageBreakdown` 组件 | **两处都保留，共用同一组件**：`/models` 页尾 + 设置→数据位置 | 磁盘是跨域视图（模型 + 后端包 + 数据目录），不是分类依据。共用组件 ⇒ 不可能出现两个数字（§3.2 反证表） | `architect` |
-| 12 | `/runtime` →「加速后端包」里的 **7 个 `llamacpp-*` 包** · `GET /api/backends/catalog` | **下架** | 同 #7，ADR-016 砍掉 llama.cpp 整条线。`:10000` 上「llama.cpp · CPU 后端（Linux x64）[安装 16 MB]」**现在还点得动** | `gpu-runtime` |
-| 13 | `/runtime` →「加速后端包」里的 `media-tools`(1) / `libsimple`(6) / `sqlite-vec`(5) = **12 个包** | `/runtime` 页内新分区「**功能组件**」 | 它们与 GPU 加速无关（ffmpeg 是解码器，另两个是 SQLite 扩展）。挂在「加速后端包」下是同型命名混淆（§3.3） | `architect` + `gpu-runtime` |
-| 14 | `/runtime` →「加速后端包」里的 `whispercpp-*`(3) | `/runtime` 页内分区「**转写加速后端**」 | 下架 llama.cpp 后，这是唯一名副其实的加速后端 | `architect` |
-| 15 | `/runtime` → 你的硬件卡片 + 6 个 `BackendChip` | **原地不动** | 硬件是运行时依赖，不是模型（§3.2 判断②） | — |
-| 16 | 设置 →「网络代理」 | **原地不动** | 作用域是全进程出网（下载 + 云 LLM + yt-dlp），不属于任何单一模型 | — |
-| 17 | 设置 →「数据位置」 | **原地不动**，并入 #11 的共用存储数字 | ADR-016 决策 4 的四个功能（定义/修改/移动/统计）都是全程序级 | — |
-| 18 | 设置 →「通用」（语言/主题）、「关于」 | **原地不动** | 全程序开关与元信息 | — |
-| 19 | `/settings/storage` 整页 · `StorageSettingsPage.tsx`，**路由注册在 `Models.routes.tsx:17`** | 内容并入 设置→数据位置；路由保留为 **302 → `/settings`**（保住既有链接） | 与「数据位置」讲同一件事；且路由归属错乱（models feature 注册了 settings 路由） | `architect` |
-| 20 | 死 i18n 键 `settings.asr`「转写」/ `settings.storage`「存储」· `zh-CN.json:281,283` | **删除** | D-05 §1.2 规划过 `/settings/asr`、`/settings/storage` 分页，实现改走 `/models`，词条成了残留。留着下一个人会照它建页 | `architect` |
-| 21 | **转写模型选择器已存在且已做对** —— `components/common/AsrModelPicker.tsx`（走 `POST /api/models/activate`，只列 `installed` 且 `role==='asr'`）。**但它只在 `/record` 露出**：`TranscribeOptions` 在 `RecorderPage.tsx:306` 带 `showModel`，而 `CapturePage.tsx:167` 与 `RetranscribeButton.tsx:132` **不带** | `/models` 页顶「当前使用 · 转写」的 `[更换]` **直接复用这同一个 `AsrModelPicker`**，不要新写一个 | ⚠️ **我在 R-06 的转述基础上先写错了一版**：R-06 说的写死 `useState<'paraformer'\|'turbo'>` 假选择器**已经被修掉了**（`RecorderPage.tsx:59-61` 留着记录）。所以这条不是"去修"，是"**别再造第二个**" | `architect` |
-| 22 | `DEFAULT_CANDIDATES` 里的 `llama-server` /「内置 llama.cpp」候选 · `packages/llm/src/detect.ts:31` | **删除该候选** | ADR-016 砍了档 3。留着会探测到一个我们不再分发的服务，探到了也没法解释它从哪来 | `oss-scout` |
-| 23 | `detectLocalBackends()` **只在** `apps/daemon/src/jobs/runners/mindmap.ts:43` 内部调用，**无任何 HTTP 端点**（全仓 grep 无 `/api/llm/detect`） | **新增** `POST /api/llm/detect` → 返回 `DetectedBackend[]`，供 §4.2 的 [探测本机] | 没有端点，「本地模型」就只能靠用户手填 IP —— 那等于 ADR-016 档 2 没做 | `oss-scout`（daemon）+ `model-mgmt`（契约 `ENDPOINTS` 表） |
-| 24 | 前端写死的 **11 个** `LLM_PRESETS` · `llm-catalog.ts:39-52` | 换成 `vendor/manifests/llm-providers.json` 的 **24 家** + `bucketProviders()` 三桶渲染（§4.2.1 R-P1） | 24 > 11，且目录带 `contextLength`/`abilities`/`checkedAt`/`configFieldKeys`，写死清单一条都没有 | `architect` |
-| 25 | ⚠️ **provider id 两套且会静默走错分支**：前端用 `anthropic`/`zhipu`/`dashscope`/`siliconflow`；目录用 `claude`/`zhipuai`/`aliyun`+`qwen`/`siliconcloud`。而 daemon 靠 **硬编码 id** 分派协议：`providerId === 'gemini'`（`llm/resolve.ts:75`）、`=== 'anthropic'`（`llm/resolve.ts:89`） | 改用目录的 `kind` 字段（`anthropic-native`/`google-native`/`openai-compatible`/…）分派，**不再用 id 判断**；并定一次 id 迁移映射 | `[读码]` 用目录 id `claude` 存进 `llm.defaultProviderId`，daemon 的 `=== 'anthropic'` **不会命中** → 落到 OpenAI 兼容分支 → **Anthropic 直接坏掉且没有报错**。这是本次核实里最容易在合并时踩爆的一条 | **需 Manager 派单**（跨 daemon + shared，见 §8-D1） |
-| 26 | 模型下拉旁的「刷新模型列表」（尚未实现，但合并时必然要加） | **只对 `canRefreshModelList(p)===true` 的 4 家**（openrouter/siliconcloud/ollama/lmstudio）渲染；其余 20 家显示「清单更新于 {{checkedAt}}」 | 一律给按钮 = 20 个按不动的按钮。`official-doc` 是人工转录，没有端点可调 | `architect` |
-| 27 | provider 卡片的表单字段（今天固定渲染 baseUrl + model + apiKey 三件套） | 由 `configFieldKeys` 驱动逐家渲染；`baseUrl.editable===false` 时只读 | `[API]` 实测 `ollama` 的 `configFieldKeys` **没有 apiKey**；`mistralai` 的 baseUrl **不可编辑**。让用户给 Ollama 编一个假 Key 是竞品的已知 bug（R-01 §C11 #12） | `architect` |
-| 28 | 出厂空状态（今天：`settings.noProviders` 一句话） | §4.2.2 的完整空状态：说清为什么空 + 6 个常用按钮 + 探测本机入口；**不预选任何 provider** | `bucketProviders(all, [])` 出厂 `configured: []`。memo.ac 出厂高亮一个没凭据的 `openai/gpt-5.4-mini`，把第一次生成导图变成没头没脑的失败 | `architect` |
-| 29 | `/models` 转写 Tab 的排序（今天按目录顺序平铺） | 按 `speedClass` 分「快/均衡/高质量」三档；`tags` 含 `superseded` 的收进 `▸ 已被新版本取代的 N 个`（显示 `2 (+2)`） | `[API]` `multi × quality` 实测 **4 组**，其中 large-v1/v2 带 `superseded`。平铺 4 张里有 2 张是不该选的 | `architect` |
+| #   | 现在在哪（区块 · 文件:行）                                                                                                                                                                                                                                                                                     | 应该在哪                                                                                                                                    | 理由                                                                                                                                                                                                 | 责任                                                       |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| 1   | 设置 →「AI 模型」的服务商卡片列表 · `LlmSettingsSection.tsx`                                                                                                                                                                                                                                                   | `/models` → Tab「语言模型」→「在线 AI 模型」组                                                                                              | 用户找"我的 AI 模型"第一站是「模型」；且今天它与 `/models` 语言模型 Tab **互相矛盾**（§0.1）                                                                                                         | `architect`                                                |
+| 2   | 设置 →「AI 模型」的 9 个在线预设「+ 添加」按钮 · `llm-catalog.ts:41-49`（`tier:'online'`）                                                                                                                                                                                                                     | 同上，「在线 AI 模型」组末尾                                                                                                                | 预设清单是**目录**，不是**设置**                                                                                                                                                                     | `architect`                                                |
+| 3   | 设置 →「AI 模型」的 2 个本地预设「+ Ollama」「+ LM Studio」· `llm-catalog.ts:51-52`（`tier:'local'`）                                                                                                                                                                                                          | `/models` → Tab「语言模型」→「本地模型」组，**改成 [探测本机] 按钮 + 探测结果卡**；手填地址降为回退入口                                     | ADR-016 档 2 的语义是"复用你已装的"，本质是探测不是选目录。今天给两个预设按钮，等于让用户猜自己装没装                                                                                                | `architect`（依赖 #23 的端点）                             |
+| 4   | 设置 →「AI 模型」的「当前生效: X · Y」行 · `LlmSettingsSection.tsx:106-111`                                                                                                                                                                                                                                    | `/models` 页顶常驻「当前使用」区块的**语言模型行**                                                                                          | R3：同一问题一个出处。与「转写」行并列，用户一眼看全                                                                                                                                                 | `architect`                                                |
+| 5   | 设置 →「AI 模型」的明文 Key 警告 · i18n `settings.plaintextTitle/Detail`                                                                                                                                                                                                                                       | 跟随卡片走，置于「在线 AI 模型」组首（Key 输入框上方）                                                                                      | ADR-006 决策 1 要求显式告知；告知必须紧邻输入处，否则等于没说                                                                                                                                        | `architect`                                                |
+| 6   | 设置 →「按用途分别配置模型」整块 · `PurposeBindingsSection.tsx`                                                                                                                                                                                                                                                | `/models` → Tab「语言模型」底部                                                                                                             | 它的服务商下拉必须是同页上方清单的**子集**（约束②）。跨页正是上次漂移的成因（`llm-catalog.ts:4-25` 记录在案）                                                                                        | `architect`                                                |
+| 7   | `/models` → Tab「语言模型」的 4 张 GGUF 下载卡（通义千问 3 · 4B/8B/1.7B、Gemma 3 · 4B）· `vendor/manifests/models-llm.json`                                                                                                                                                                                    | **下架**（整文件停用，或 `role=llm` 从目录过滤）                                                                                            | ADR-016 决策 3 砍掉内置 `llama.cpp`。留着 = 用户能下载 5 GB 权重、下完**没有引擎能跑它**                                                                                                             | `model-mgmt`                                               |
+| 8   | `/models` →「当前使用 · 语言模型：未选择 —— 思维导图功能不可用」· `ModelsPage.tsx:177-213` 读 `active.llm`                                                                                                                                                                                                     | 改读 `settings['llm.defaultProviderId'] + ['llm.defaultModelId']`                                                                           | `active.llm` 永远是 `null`（在线 provider 不进 `installed` 表），今天它在**谎报功能不可用**                                                                                                          | `architect`                                                |
+| 9   | `/models` → Tab「转写模型」的 8 张平铺卡 · `ModelsPage.tsx:316-332`                                                                                                                                                                                                                                            | 拆三组：**推荐** / **实时字幕组件** / **▸更多 Whisper 档位**（折叠）                                                                        | 12 个 whisper 组里 v1/v2 被 v3/turbo 严格支配；流式引擎与离线批量引擎不是替代关系却混在一列（§4.1）                                                                                                  | `architect`                                                |
+| 10  | 目录里 `role=vad`（2 变体）+ `role=punctuation`（1 变体）· **UI 完全不可见**，`ROLE_TABS` 只有 asr/llm（`ModelsPage.tsx:39-42`）                                                                                                                                                                               | `/models` → Tab「转写」→「实时字幕组件」组                                                                                                  | 它们是 sherpa 流式的 VAD 与 Paraformer 的标点，**是链路必需件**。今天没有任何途径装上 → 不是分类问题，是功能缺件                                                                                     | `architect`                                                |
+| 11  | `/models` 页尾「磁盘占用」· `StorageBreakdown` 组件                                                                                                                                                                                                                                                            | **两处都保留，共用同一组件**：`/models` 页尾 + 设置→数据位置                                                                                | 磁盘是跨域视图（模型 + 后端包 + 数据目录），不是分类依据。共用组件 ⇒ 不可能出现两个数字（§3.2 反证表）                                                                                               | `architect`                                                |
+| 12  | `/runtime` →「加速后端包」里的 **7 个 `llamacpp-*` 包** · `GET /api/backends/catalog`                                                                                                                                                                                                                          | **下架**                                                                                                                                    | 同 #7，ADR-016 砍掉 llama.cpp 整条线。`:10000` 上「llama.cpp · CPU 后端（Linux x64）[安装 16 MB]」**现在还点得动**                                                                                   | `gpu-runtime`                                              |
+| 13  | `/runtime` →「加速后端包」里的 `media-tools`(1) / `libsimple`(6) / `sqlite-vec`(5) = **12 个包**                                                                                                                                                                                                               | `/runtime` 页内新分区「**功能组件**」                                                                                                       | 它们与 GPU 加速无关（ffmpeg 是解码器，另两个是 SQLite 扩展）。挂在「加速后端包」下是同型命名混淆（§3.3）                                                                                             | `architect` + `gpu-runtime`                                |
+| 14  | `/runtime` →「加速后端包」里的 `whispercpp-*`(3)                                                                                                                                                                                                                                                               | `/runtime` 页内分区「**转写加速后端**」                                                                                                     | 下架 llama.cpp 后，这是唯一名副其实的加速后端                                                                                                                                                        | `architect`                                                |
+| 15  | `/runtime` → 你的硬件卡片 + 6 个 `BackendChip`                                                                                                                                                                                                                                                                 | **原地不动**                                                                                                                                | 硬件是运行时依赖，不是模型（§3.2 判断②）                                                                                                                                                             | —                                                          |
+| 16  | 设置 →「网络代理」                                                                                                                                                                                                                                                                                             | **原地不动**                                                                                                                                | 作用域是全进程出网（下载 + 云 LLM + yt-dlp），不属于任何单一模型                                                                                                                                     | —                                                          |
+| 17  | 设置 →「数据位置」                                                                                                                                                                                                                                                                                             | **原地不动**，并入 #11 的共用存储数字                                                                                                       | ADR-016 决策 4 的四个功能（定义/修改/移动/统计）都是全程序级                                                                                                                                         | —                                                          |
+| 18  | 设置 →「通用」（语言/主题）、「关于」                                                                                                                                                                                                                                                                          | **原地不动**                                                                                                                                | 全程序开关与元信息                                                                                                                                                                                   | —                                                          |
+| 19  | `/settings/storage` 整页 · `StorageSettingsPage.tsx`，**路由注册在 `Models.routes.tsx:17`**                                                                                                                                                                                                                    | 内容并入 设置→数据位置；路由保留为 **302 → `/settings`**（保住既有链接）                                                                    | 与「数据位置」讲同一件事；且路由归属错乱（models feature 注册了 settings 路由）                                                                                                                      | `architect`                                                |
+| 20  | 死 i18n 键 `settings.asr`「转写」/ `settings.storage`「存储」· `zh-CN.json:281,283`                                                                                                                                                                                                                            | **删除**                                                                                                                                    | D-05 §1.2 规划过 `/settings/asr`、`/settings/storage` 分页，实现改走 `/models`，词条成了残留。留着下一个人会照它建页                                                                                 | `architect`                                                |
+| 21  | **转写模型选择器已存在且已做对** —— `components/common/AsrModelPicker.tsx`（走 `POST /api/models/activate`，只列 `installed` 且 `role==='asr'`）。**但它只在 `/record` 露出**：`TranscribeOptions` 在 `RecorderPage.tsx:306` 带 `showModel`，而 `CapturePage.tsx:167` 与 `RetranscribeButton.tsx:132` **不带** | `/models` 页顶「当前使用 · 转写」的 `[更换]` **直接复用这同一个 `AsrModelPicker`**，不要新写一个                                            | ⚠️ **我在 R-06 的转述基础上先写错了一版**：R-06 说的写死 `useState<'paraformer'\|'turbo'>` 假选择器**已经被修掉了**（`RecorderPage.tsx:59-61` 留着记录）。所以这条不是"去修"，是"**别再造第二个**"   | `architect`                                                |
+| 22  | `DEFAULT_CANDIDATES` 里的 `llama-server` /「内置 llama.cpp」候选 · `packages/llm/src/detect.ts:31`                                                                                                                                                                                                             | **删除该候选**                                                                                                                              | ADR-016 砍了档 3。留着会探测到一个我们不再分发的服务，探到了也没法解释它从哪来                                                                                                                       | `oss-scout`                                                |
+| 23  | `detectLocalBackends()` **只在** `apps/daemon/src/jobs/runners/mindmap.ts:43` 内部调用，**无任何 HTTP 端点**（全仓 grep 无 `/api/llm/detect`）                                                                                                                                                                 | **新增** `POST /api/llm/detect` → 返回 `DetectedBackend[]`，供 §4.2 的 [探测本机]                                                           | 没有端点，「本地模型」就只能靠用户手填 IP —— 那等于 ADR-016 档 2 没做                                                                                                                                | `oss-scout`（daemon）+ `model-mgmt`（契约 `ENDPOINTS` 表） |
+| 24  | 前端写死的 **11 个** `LLM_PRESETS` · `llm-catalog.ts:39-52`                                                                                                                                                                                                                                                    | 换成 `vendor/manifests/llm-providers.json` 的 **24 家** + `bucketProviders()` 三桶渲染（§4.2.1 R-P1）                                       | 24 > 11，且目录带 `contextLength`/`abilities`/`checkedAt`/`configFieldKeys`，写死清单一条都没有                                                                                                      | `architect`                                                |
+| 25  | ⚠️ **provider id 两套且会静默走错分支**：前端用 `anthropic`/`zhipu`/`dashscope`/`siliconflow`；目录用 `claude`/`zhipuai`/`aliyun`+`qwen`/`siliconcloud`。而 daemon 靠 **硬编码 id** 分派协议：`providerId === 'gemini'`（`llm/resolve.ts:75`）、`=== 'anthropic'`（`llm/resolve.ts:89`）                       | 改用目录的 `kind` 字段（`anthropic-native`/`google-native`/`openai-compatible`/…）分派，**不再用 id 判断**；并定一次 id 迁移映射            | `[读码]` 用目录 id `claude` 存进 `llm.defaultProviderId`，daemon 的 `=== 'anthropic'` **不会命中** → 落到 OpenAI 兼容分支 → **Anthropic 直接坏掉且没有报错**。这是本次核实里最容易在合并时踩爆的一条 | **需 Manager 派单**（跨 daemon + shared，见 §8-D1）        |
+| 26  | 模型下拉旁的「刷新模型列表」（尚未实现，但合并时必然要加）                                                                                                                                                                                                                                                     | **只对 `canRefreshModelList(p)===true` 的 4 家**（openrouter/siliconcloud/ollama/lmstudio）渲染；其余 20 家显示「清单更新于 {{checkedAt}}」 | 一律给按钮 = 20 个按不动的按钮。`official-doc` 是人工转录，没有端点可调                                                                                                                              | `architect`                                                |
+| 27  | provider 卡片的表单字段（今天固定渲染 baseUrl + model + apiKey 三件套）                                                                                                                                                                                                                                        | 由 `configFieldKeys` 驱动逐家渲染；`baseUrl.editable===false` 时只读                                                                        | `[API]` 实测 `ollama` 的 `configFieldKeys` **没有 apiKey**；`mistralai` 的 baseUrl **不可编辑**。让用户给 Ollama 编一个假 Key 是竞品的已知 bug（R-01 §C11 #12）                                      | `architect`                                                |
+| 28  | 出厂空状态（今天：`settings.noProviders` 一句话）                                                                                                                                                                                                                                                              | §4.2.2 的完整空状态：说清为什么空 + 6 个常用按钮 + 探测本机入口；**不预选任何 provider**                                                    | `bucketProviders(all, [])` 出厂 `configured: []`。memo.ac 出厂高亮一个没凭据的 `openai/gpt-5.4-mini`，把第一次生成导图变成没头没脑的失败                                                             | `architect`                                                |
+| 29  | `/models` 转写 Tab 的排序（今天按目录顺序平铺）                                                                                                                                                                                                                                                                | 按 `speedClass` 分「快/均衡/高质量」三档；`tags` 含 `superseded` 的收进 `▸ 已被新版本取代的 N 个`（显示 `2 (+2)`）                          | `[API]` `multi × quality` 实测 **4 组**，其中 large-v1/v2 带 `superseded`。平铺 4 张里有 2 张是不该选的                                                                                              | `architect`                                                |
 
 ### 6.2 三条必须写进代码注释的不变量
 
@@ -746,29 +746,29 @@ ADR-016 决策 2「本地 ASR 不再扩容」管的是本地扩容，**没有**�
 **独立地被另一个产品验证了一次**。§1.1 的 R2（按用途分类，不按实现分类）因此不只是我的偏好。
 
 **但它止步于此，代价也明显**：三个用途各在一个设置分页里，**没有任何一处能同时回答
-"我转写用什么 + 我 AI 用什么"**。我们的页顶常驻「当前使用」两行（§4.1）就是补这个 —— 
+"我转写用什么 + 我 AI 用什么"**。我们的页顶常驻「当前使用」两行（§4.1）就是补这个 ——
 **我们比它多一步，不是少一步。**
 
 ### 7.2 ASR 的 47 条墙：它用**两层**挡，而且第一层是"引擎"不是"模型"
 
 `[取证]` 47 = whisper 15（`whisper-models.js`）+ sherpa/parakeet/funasr 32（`extra-transcription-plugins.json` 的 `asr` 类）。逐条核对吻合。
 
-| 层 | 做法 | 标签串 |
-|---|---|---|
-| **L1 引擎选择器** | 顶层给的是**一个引擎下拉**（一次只选一个引擎），未安装的引擎置灰；旁边一个「管理引擎」按钮跳到 设置→三方集成 | `transcription.select engine`=「选择引擎」、「管理引擎」 |
-| **L1.5 引擎管理页** | 引擎卡片分**两个可折叠组** | **「本地插件」**（whisper / sherpa-onnx / funasr / parakeet）· **「在线插件」**（Deepgram / ElevenLabs / Groq / OpenAI Whisper） |
-| **L2 单引擎内的模型列表** | 一个**语言下拉** + 按语言分段的小标题；下拉默认值是 **`multi`（多语种）**，另有「全部模型」 | `model.available models`=「可用模型」；`model.all models`/`multi language`/`only english`/`only chinese`/`only japanese` |
+| 层                        | 做法                                                                                                         | 标签串                                                                                                                           |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| **L1 引擎选择器**         | 顶层给的是**一个引擎下拉**（一次只选一个引擎），未安装的引擎置灰；旁边一个「管理引擎」按钮跳到 设置→三方集成 | `transcription.select engine`=「选择引擎」、「管理引擎」                                                                         |
+| **L1.5 引擎管理页**       | 引擎卡片分**两个可折叠组**                                                                                   | **「本地插件」**（whisper / sherpa-onnx / funasr / parakeet）· **「在线插件」**（Deepgram / ElevenLabs / Groq / OpenAI Whisper） |
+| **L2 单引擎内的模型列表** | 一个**语言下拉** + 按语言分段的小标题；下拉默认值是 **`multi`（多语种）**，另有「全部模型」                  | `model.available models`=「可用模型」；`model.all models`/`multi language`/`only english`/`only chinese`/`only japanese`         |
 
 **★ 这里有一条直接影响我的设计、我必须诚实处理的发现：它的模型分组键是「语言」，不是体积/速度。**
 我在初稿的 §7 里写过"若它按语言分组，§4.1 的依据需要重新论证"。现在需要兑现这句话：
 
 **重新论证的结论：语言作为分组键对它成立，对我们不成立 —— 因为两边目录的语言分布完全不同。**
 
-| | memo.ac | 我们 |
-|---|---|---|
-| 模型主体 | sherpa 一族 **27 条**，真实跨 `zh/en/ja/ko/yue/multi` **6 种以上** | whisper 一族 **12 组**：`multi` **8 组** + `en-only` **4 组** |
-| 专用语言模型 | 多语言各有专用模型 | 只有 `zh` 2 条（Paraformer / sherpa 流式） |
-| 按语言分组的结果 | 6 个大小相近的桶 —— **有效** | 多语种 8 / 仅英文 4 / 中文 2 —— **一个大桶 + 两个零头，且 `multi` 本身覆盖所有语言** |
+|                  | memo.ac                                                            | 我们                                                                                 |
+| ---------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| 模型主体         | sherpa 一族 **27 条**，真实跨 `zh/en/ja/ko/yue/multi` **6 种以上** | whisper 一族 **12 组**：`multi` **8 组** + `en-only` **4 组**                        |
+| 专用语言模型     | 多语言各有专用模型                                                 | 只有 `zh` 2 条（Paraformer / sherpa 流式）                                           |
+| 按语言分组的结果 | 6 个大小相近的桶 —— **有效**                                       | 多语种 8 / 仅英文 4 / 中文 2 —— **一个大桶 + 两个零头，且 `multi` 本身覆盖所有语言** |
 
 → **语言在我们这里分不开东西**（8/12 组都是 `multi`，落进每一个语言格子）。
 这也正是 §4.1.3 的 **R-M2** 的由来：按 `languages` 排他筛选会把 8 个多语种模型从中文用户眼前抹掉。
@@ -798,10 +798,10 @@ ADR-016 决策 2「本地 ASR 不再扩容」管的是本地扩容，**没有**�
 
 → **这恰好把判断① 夹在了中间，而我的位置是有理由的**：
 
-| | memo.ac | 用户的骨架 | **D-10（本文）** |
-|---|---|---|---|
-| 本地/在线 | **不分**（靠读说明文字） | 两个并列节点 | **两个分组，权重不等** |
-| 代价 | 用户得读完文案才知道 Ollama 是本地的 | 暗示两条路同等正当，与 ADR-016 矛盾 | 分组给了可见性，折叠 + 排序给了取向 |
+|           | memo.ac                              | 用户的骨架                          | **D-10（本文）**                    |
+| --------- | ------------------------------------ | ----------------------------------- | ----------------------------------- |
+| 本地/在线 | **不分**（靠读说明文字）             | 两个并列节点                        | **两个分组，权重不等**              |
+| 代价      | 用户得读完文案才知道 Ollama 是本地的 | 暗示两条路同等正当，与 ADR-016 矛盾 | 分组给了可见性，折叠 + 排序给了取向 |
 
 **我不抄它的"不分组"**：它能不分组，是因为它的本地是"再多一个服务商"；
 我们的本地是"**探测**你已装的服务"，动作和失败模式都不同（§2.3），不标出来用户就会去填一个假 Key。
@@ -827,21 +827,21 @@ ADR-016 决策 2「本地 ASR 不再扩容」管的是本地扩容，**没有**�
 
 ### 7.5 状态词表交叉验证：三处一致、**两处我们更好**
 
-| 项 | memo.ac `[取证]` | D-10 §5.4 | 结论 |
-|---|---|---|---|
-| 获取态 | 未下载 / 下载中… / 解压中… / 安装中 / 已安装 / 未安装 / 卸载中… | 未安装 / 下载中→校验中→安装中 / 已安装 | ✅ **槽位一一对应**，我们的"校验中"多一步（它有 `check sha` 但只做 spinner，没给文案） |
-| 进行中 | 百分比进度条 + 「取消」 | 同 + D-09 的 `verifying` 解释文案 | ✅ 同构 |
-| **使用中** | **没有文字标签** —— 绿色勾图标（已下载）vs 主色勾图标（当前选中）+ 「使用」按钮 | **文字 chip，全域逐字统一** | ⚠️ **我们不同，且我坚持我们的**：靠"绿勾 vs 主色勾"区分"已装"与"在用"，是**纯色彩编码**，色觉障碍用户完全分不出，正常用户也要放大了看。这恰恰是全页最需要一眼捞出来的信息（R-S1） |
-| **推荐** | **全库无「推荐」徽标**（唯一一处"推荐"是 YouTube cookie 的排错提示） | 有 `推荐` / `官方默认` | ⚠️ **我们不同，且我坚持我们的**：我们 25 个 whisper 变体里有 13 个在中文下实测不可接受（ADR-011）。**一个有已知劣项的目录不给推荐，等于把选择成本全推给用户** |
-| API Key 未配 | 「API Key 未配置，请前往对应服务商获取 Key 进行配置。」 | 「未设置 Key」+ §4.2 的明文存储告知 | ✅ 同槽位，我们多一条 ADR-006 要求的明文告知 |
+| 项           | memo.ac `[取证]`                                                                | D-10 §5.4                              | 结论                                                                                                                                                                              |
+| ------------ | ------------------------------------------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 获取态       | 未下载 / 下载中… / 解压中… / 安装中 / 已安装 / 未安装 / 卸载中…                 | 未安装 / 下载中→校验中→安装中 / 已安装 | ✅ **槽位一一对应**，我们的"校验中"多一步（它有 `check sha` 但只做 spinner，没给文案）                                                                                            |
+| 进行中       | 百分比进度条 + 「取消」                                                         | 同 + D-09 的 `verifying` 解释文案      | ✅ 同构                                                                                                                                                                           |
+| **使用中**   | **没有文字标签** —— 绿色勾图标（已下载）vs 主色勾图标（当前选中）+ 「使用」按钮 | **文字 chip，全域逐字统一**            | ⚠️ **我们不同，且我坚持我们的**：靠"绿勾 vs 主色勾"区分"已装"与"在用"，是**纯色彩编码**，色觉障碍用户完全分不出，正常用户也要放大了看。这恰恰是全页最需要一眼捞出来的信息（R-S1） |
+| **推荐**     | **全库无「推荐」徽标**（唯一一处"推荐"是 YouTube cookie 的排错提示）            | 有 `推荐` / `官方默认`                 | ⚠️ **我们不同，且我坚持我们的**：我们 25 个 whisper 变体里有 13 个在中文下实测不可接受（ADR-011）。**一个有已知劣项的目录不给推荐，等于把选择成本全推给用户**                     |
+| API Key 未配 | 「API Key 未配置，请前往对应服务商获取 Key 进行配置。」                         | 「未设置 Key」+ §4.2 的明文存储告知    | ✅ 同槽位，我们多一条 ADR-006 要求的明文告知                                                                                                                                      |
 
 ### 7.6 它有而我们**不抄**的三样（连同理由，免得日后有人当成缺口）
 
-| 它有 | 我们不做 | 依据 |
-|---|---|---|
-| 语音合成（TTS，第 7 项） | ❌ | ADR-016 决策 1 |
-| 空间管理（Workspace，第 2 项，与磁盘目录一一绑定） | ❌ 只做"数据目录管理" | ADR-006 决策 4 + ADR-016 决策 4 |
-| 提示词模板 / 三方集成 / 实验室 / Pro（4 个设置分区） | ❌ | 章程外；且它们正是把设置页撑到 12 项的原因 |
+| 它有                                                 | 我们不做              | 依据                                       |
+| ---------------------------------------------------- | --------------------- | ------------------------------------------ |
+| 语音合成（TTS，第 7 项）                             | ❌                    | ADR-016 决策 1                             |
+| 空间管理（Workspace，第 2 项，与磁盘目录一一绑定）   | ❌ 只做"数据目录管理" | ADR-006 决策 4 + ADR-016 决策 4            |
+| 提示词模板 / 三方集成 / 实验室 / Pro（4 个设置分区） | ❌                    | 章程外；且它们正是把设置页撑到 12 项的原因 |
 
 ### 7.7 它有而**值得记一笔、但本轮不做**的一样
 
@@ -860,11 +860,11 @@ ADR-016 决策 2「本地 ASR 不再扩容」管的是本地扩容，**没有**�
 
 ## §8 需 Manager 裁决
 
-| # | 事项 | 我的建议 | 为什么不能我自己定 |
-|---|---|---|---|
+| #      | 事项                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | 我的建议                                                                                                                                                                                                                                                                                    | 为什么不能我自己定                                                                                                                    |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | **D1** | 🚨 **两份真相 + 一个会静默炸的 id 冲突（合并前必须裁决，否则 P1 一上线就坏）。** `[读码]` ① daemon 的 `resolveConfiguredProvider()`（`llm/resolve.ts:59-77`）**只读** `llm.defaultProviderId`/`llm.defaultModelId`/`llm.baseUrl.<id>`，**从不读 `llm.providers`**，靠前端"两边都写"维持一致；② 它靠**硬编码 id** 分派协议：`providerId === 'gemini'`（:75）、`=== 'anthropic'`（:89）；③ 而新目录 `vendor/manifests/llm-providers.json` 的 id 是 **`claude`** 不是 `anthropic`（另有 `zhipuai`≠`zhipu`、`aliyun`/`qwen`≠`dashscope`、`siliconcloud`≠`siliconflow`）。**→ 一旦按 R-P1 改吃目录，Anthropic 会落到 OpenAI 兼容分支，坏掉且不报错。** | **两步**：① 分派改用目录的 `kind` 字段（`anthropic-native`/`google-native`/`openai-compatible`/…），**不再用 id 判断** —— 用户加一个自定义网关也不会走错；② 让 daemon 读 `llm.providers` 成为唯一清单，`llm.defaultProviderId` 只存"选了哪一个"；③ 定一次 `anthropic→claude` 等 id 迁移映射 | 跨 `apps/daemon`（`oss-scout`）与 `packages/shared` 契约（`model-mgmt`）两个所有权域，还牵动 `CONTRACT_VERSION`。**我只能报，不能改** |
-| **D2** | **`role=llm` 下架的范围**：只是前端隐藏 Tab，还是把 `vendor/manifests/models-llm.json` 整个停用、并从 `MODEL_ROLES` 里移除 `llm`？ | **停用 manifest（服务端不再返回 `role=llm`），保留类型联合里的 `llm`**。理由：`active.llm` 字段、`MISSING_LLM` 错误码、任务通道 `gpu.llm` 都还在用这个词；动类型会波及 D-02 与契约 | 涉及 ADR-016 的执行边界，且要动 `packages/shared`（`model-mgmt` 独占） |
-| **D3** | **一级导航「运行时」是否改名「本机组件」** | **建议改**（"运行时"是工程师词汇），但**路由 `/runtime` 不改**。风险低但影响 D-05 §1.1 的既有骨架与 `nav.runtime` 词条 | 一级导航词条是产品面，且 D-05 是 `architect` 的交付物，我不改他人交付物（PROTOCOL §1.3） |
+| **D2** | **`role=llm` 下架的范围**：只是前端隐藏 Tab，还是把 `vendor/manifests/models-llm.json` 整个停用、并从 `MODEL_ROLES` 里移除 `llm`？                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | **停用 manifest（服务端不再返回 `role=llm`），保留类型联合里的 `llm`**。理由：`active.llm` 字段、`MISSING_LLM` 错误码、任务通道 `gpu.llm` 都还在用这个词；动类型会波及 D-02 与契约                                                                                                          | 涉及 ADR-016 的执行边界，且要动 `packages/shared`（`model-mgmt` 独占）                                                                |
+| **D3** | **一级导航「运行时」是否改名「本机组件」**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | **建议改**（"运行时"是工程师词汇），但**路由 `/runtime` 不改**。风险低但影响 D-05 §1.1 的既有骨架与 `nav.runtime` 词条                                                                                                                                                                      | 一级导航词条是产品面，且 D-05 是 `architect` 的交付物，我不改他人交付物（PROTOCOL §1.3）                                              |
 
 ---
 
@@ -872,27 +872,27 @@ ADR-016 决策 2「本地 ASR 不再扩容」管的是本地扩容，**没有**�
 
 不要一次全改，按"先止血、再搬家、后美化"三批：
 
-| 批次 | 内容 | 迁移表条目 | 为什么这个顺序 |
-|---|---|---|---|
-| **P0 止血** | ① 修「语言模型 未选择」谎报 ② 下架 `role=llm` 的 4 张下载卡 ③ 下架 7 个 llama.cpp 包 | #8 #7 #12 #22 | 这三条**现在就在误导用户**，且都不依赖新端点。做完用户至少不会下载一个跑不了的 5 GB 文件 |
-| **P0.5 拆雷** | ⓪ **先裁决并修掉 §8-D1 的 id 冲突**（`anthropic` vs `claude`，分派改吃 `kind`） | #25 | ⚠️ **必须排在 P1 之前**：P1 一改吃 24 家目录，Anthropic 就静默走错分支。这条不做，P1 就是在埋雷 |
-| **P1 搬家** | ④ 「AI 模型」+「按用途」整体搬进 `/models` 语言模型 Tab ⑤ 页顶常驻「当前使用」 ⑥ 换成 24 家目录 + 三桶 ⑦ 出厂空状态 ⑧ 设置页留指路牌 | #1 #2 #4 #5 #6 #19 #20 #24 #26 #27 #28 | 用户点名的"重复"在这一批消失。**INV-1 必须带测试一起搬** |
-| **P2 补件与整形** | ⑨ 转写 Tab 三分组 + `speedClass` 分档 + `superseded` 折叠 ⑩ 放出 VAD/标点 ⑪ `/runtime` 页内两分区 ⑫ 状态词 5 槽统一 ⑬ 本地探测按钮 | #9 #29 #10 #13 #14 #21 §5.4 #3 #23 | ⑬ 卡在 #23 的端点上，别让它挡住前面十几条 |
+| 批次              | 内容                                                                                                                                 | 迁移表条目                             | 为什么这个顺序                                                                                  |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| **P0 止血**       | ① 修「语言模型 未选择」谎报 ② 下架 `role=llm` 的 4 张下载卡 ③ 下架 7 个 llama.cpp 包                                                 | #8 #7 #12 #22                          | 这三条**现在就在误导用户**，且都不依赖新端点。做完用户至少不会下载一个跑不了的 5 GB 文件        |
+| **P0.5 拆雷**     | ⓪ **先裁决并修掉 §8-D1 的 id 冲突**（`anthropic` vs `claude`，分派改吃 `kind`）                                                      | #25                                    | ⚠️ **必须排在 P1 之前**：P1 一改吃 24 家目录，Anthropic 就静默走错分支。这条不做，P1 就是在埋雷 |
+| **P1 搬家**       | ④ 「AI 模型」+「按用途」整体搬进 `/models` 语言模型 Tab ⑤ 页顶常驻「当前使用」 ⑥ 换成 24 家目录 + 三桶 ⑦ 出厂空状态 ⑧ 设置页留指路牌 | #1 #2 #4 #5 #6 #19 #20 #24 #26 #27 #28 | 用户点名的"重复"在这一批消失。**INV-1 必须带测试一起搬**                                        |
+| **P2 补件与整形** | ⑨ 转写 Tab 三分组 + `speedClass` 分档 + `superseded` 折叠 ⑩ 放出 VAD/标点 ⑪ `/runtime` 页内两分区 ⑫ 状态词 5 槽统一 ⑬ 本地探测按钮   | #9 #29 #10 #13 #14 #21 §5.4 #3 #23     | ⑬ 卡在 #23 的端点上，别让它挡住前面十几条                                                       |
 
 ---
 
 ## §10 自检：我有没有回答完题面
 
-| 题面要求 | 位置 | 结论一句话 |
-|---|---|---|
-| 顶层导航长什么样 / 「模型」是页面还是分区 | §1.2 | **一个页面 `/models`**，页内两 Tab，页顶常驻「当前使用」；不开子路由（三条理由） |
-| 转写与语言模型怎么并列 / 各自放什么 | §1.2 §4.1 §4.2 | 同级 Tab。转写=三组（推荐/实时字幕组件/更多档位）；语言模型=在线组+本地组+按用途 |
-| 本地/在线 是 tab、分组还是筛选器 | §2 | **分组**。在线默认展开在上，本地折叠在下且是探测按钮。骨架作分类学成立、作版面权重不成立 |
-| GPU 后端包/运行时算不算模型 | §3 | **不算**（4 条论证 + 3 条我承认的耦合反证 + 双向导流方案）；`/runtime` 保持一级，页内再拆两区 |
-| 设置页还该剩什么 | §4.3 | 通用 / 网络代理 / 数据位置 / 关于 + 一行指路牌。判据："全程序开关"留，"某功能用哪个模型"搬 |
-| 逐项迁移表，不许含糊 | §6.1 | **29 条**，每条到区块 + 文件:行 + 责任 agent |
-| 约束① whisper 25 条的墙 | §4.1 | 墙已被 `groupId` + 语言过滤挡掉一半（实渲染 8 张）；剩下的是**排序与混装**，按用途分三组 + `speedClass` 分档 + `superseded` 折叠成 `2 (+2)` |
-| `model-mgmt` 新数据层的 4 条约束 | §4.1.1–4.1.3 §4.2.1–4.2.2 | 全部核实并采纳：`speedClass`≠`fitness.speedTier`（R-M1）、`superseded` 折叠、三桶 + 只对 4 家给刷新按钮（R-P2）、`configFieldKeys` 驱动表单（R-P3）、出厂空状态（R-P4）。**订正一条**：空档位文案不能写"暂无中文模型"（R-M2） |
-| 约束② 用途下拉 ⊆ 已配置 provider | §6.2 INV-1 | **代码里已经做对了**（附证据链）；本文把它写成不变量 + 测试，并用 INV-2 扩到转写侧 |
-| 约束③ 状态词统一还是分开 | §5 | **统一轴与视觉，不统一动词**；只有 `使用中`/`异常` 逐字统一；`FIT_TIERS` 独立轴不合并 |
-| 与 memo.ac 对照 | §7（7.1–7.7） | 取证已回。**验证**了按用途拆分（它也是 语言模型/转写设置/语音合成 三并列）；**采纳**折叠组 + 默认筛过的视野；**不抄**它的引擎选择器、无分组 LLM 列表、纯色彩编码的"使用中"、无推荐徽标、分散的 4 份用途清单；**不做**它的 TTS/空间管理/提示词/实验室；**记一笔但不做**转写预设（§7.7） |
+| 题面要求                                  | 位置                      | 结论一句话                                                                                                                                                                                                                                                                             |
+| ----------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 顶层导航长什么样 / 「模型」是页面还是分区 | §1.2                      | **一个页面 `/models`**，页内两 Tab，页顶常驻「当前使用」；不开子路由（三条理由）                                                                                                                                                                                                       |
+| 转写与语言模型怎么并列 / 各自放什么       | §1.2 §4.1 §4.2            | 同级 Tab。转写=三组（推荐/实时字幕组件/更多档位）；语言模型=在线组+本地组+按用途                                                                                                                                                                                                       |
+| 本地/在线 是 tab、分组还是筛选器          | §2                        | **分组**。在线默认展开在上，本地折叠在下且是探测按钮。骨架作分类学成立、作版面权重不成立                                                                                                                                                                                               |
+| GPU 后端包/运行时算不算模型               | §3                        | **不算**（4 条论证 + 3 条我承认的耦合反证 + 双向导流方案）；`/runtime` 保持一级，页内再拆两区                                                                                                                                                                                          |
+| 设置页还该剩什么                          | §4.3                      | 通用 / 网络代理 / 数据位置 / 关于 + 一行指路牌。判据："全程序开关"留，"某功能用哪个模型"搬                                                                                                                                                                                             |
+| 逐项迁移表，不许含糊                      | §6.1                      | **29 条**，每条到区块 + 文件:行 + 责任 agent                                                                                                                                                                                                                                           |
+| 约束① whisper 25 条的墙                   | §4.1                      | 墙已被 `groupId` + 语言过滤挡掉一半（实渲染 8 张）；剩下的是**排序与混装**，按用途分三组 + `speedClass` 分档 + `superseded` 折叠成 `2 (+2)`                                                                                                                                            |
+| `model-mgmt` 新数据层的 4 条约束          | §4.1.1–4.1.3 §4.2.1–4.2.2 | 全部核实并采纳：`speedClass`≠`fitness.speedTier`（R-M1）、`superseded` 折叠、三桶 + 只对 4 家给刷新按钮（R-P2）、`configFieldKeys` 驱动表单（R-P3）、出厂空状态（R-P4）。**订正一条**：空档位文案不能写"暂无中文模型"（R-M2）                                                          |
+| 约束② 用途下拉 ⊆ 已配置 provider          | §6.2 INV-1                | **代码里已经做对了**（附证据链）；本文把它写成不变量 + 测试，并用 INV-2 扩到转写侧                                                                                                                                                                                                     |
+| 约束③ 状态词统一还是分开                  | §5                        | **统一轴与视觉，不统一动词**；只有 `使用中`/`异常` 逐字统一；`FIT_TIERS` 独立轴不合并                                                                                                                                                                                                  |
+| 与 memo.ac 对照                           | §7（7.1–7.7）             | 取证已回。**验证**了按用途拆分（它也是 语言模型/转写设置/语音合成 三并列）；**采纳**折叠组 + 默认筛过的视野；**不抄**它的引擎选择器、无分组 LLM 列表、纯色彩编码的"使用中"、无推荐徽标、分散的 4 份用途清单；**不做**它的 TTS/空间管理/提示词/实验室；**记一笔但不做**转写预设（§7.7） |

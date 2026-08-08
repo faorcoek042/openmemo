@@ -17,11 +17,11 @@ D-05 §3 的解法是**结构性**的，不是"记得别同时改"这种君子�
 
 ## 所有权矩阵（硬约束，D-05 §3.2）
 
-| 路径 | 独占 owner | 其他人 |
-|---|---|---|
-| `features/capture,notes,transcript,player,recorder,search,tasks,settings/**` | T-021 | 只读 |
-| `features/runtime,models/**` | **T-022** | 只读 |
-| `features/mindmap/**` + `packages/mindmap/**` | **T-023** | 只读 |
+| 路径                                                                          | 独占 owner               | 其他人                 |
+| ----------------------------------------------------------------------------- | ------------------------ | ---------------------- |
+| `features/capture,notes,transcript,player,recorder,search,tasks,settings/**`  | T-021                    | 只读                   |
+| `features/runtime,models/**`                                                  | **T-022**                | 只读                   |
+| `features/mindmap/**` + `packages/mindmap/**`                                 | **T-023**                | 只读                   |
 | `app/`、`lib/`、`components/`、`styles/`、`main.tsx`、`App.tsx`、`routes.tsx` | T-021 首建，之后为共享区 | 见下方"共享区变更协议" |
 
 "只读"是字面意思：改别人目录里的文件，即使你觉得是顺手修个 bug，也会在合并时造成谁都说不清的冲突。发现问题 → 在
@@ -91,17 +91,17 @@ lib/*              ──禁止──> features/* · components/*
 
 ## 命名约定（D-05 §3.6）
 
-| 类型 | 约定 | 例 |
-|---|---|---|
-| 组件文件 | `PascalCase.tsx`，一个文件一个默认导出组件 | `ModelCard.tsx` |
-| hooks | `use*.ts` | `useHardwareProbe.ts` |
-| Zustand | `*.store.ts`，导出 `use<Name>Store` | `downloadQueue.store.ts` |
-| Query hooks | `api.ts` 内，`useXxxQuery` / `useXxxMutation` | `useModelsCatalogQuery` |
-| 路由片段 | `<Name>.routes.tsx` | `Models.routes.tsx` |
-| SSE 片段 | `sse.ts`，导出 `<name>Sse` | `models/sse.ts` 导出 `modelsSse` |
-| 类型 | 与 `@openmemo/shared` 同名类型禁止本地重定义，一律 import | — |
-| i18n key | `<feature>.<区块>.<语义>` | `models.card.fitBadge.blocked` |
-| test id | `data-testid="<feature>-<element>"` | `models-download-button` |
+| 类型        | 约定                                                      | 例                               |
+| ----------- | --------------------------------------------------------- | -------------------------------- |
+| 组件文件    | `PascalCase.tsx`，一个文件一个默认导出组件                | `ModelCard.tsx`                  |
+| hooks       | `use*.ts`                                                 | `useHardwareProbe.ts`            |
+| Zustand     | `*.store.ts`，导出 `use<Name>Store`                       | `downloadQueue.store.ts`         |
+| Query hooks | `api.ts` 内，`useXxxQuery` / `useXxxMutation`             | `useModelsCatalogQuery`          |
+| 路由片段    | `<Name>.routes.tsx`                                       | `Models.routes.tsx`              |
+| SSE 片段    | `sse.ts`，导出 `<name>Sse`                                | `models/sse.ts` 导出 `modelsSse` |
+| 类型        | 与 `@openmemo/shared` 同名类型禁止本地重定义，一律 import | —                                |
+| i18n key    | `<feature>.<区块>.<语义>`                                 | `models.card.fitBadge.blocked`   |
+| test id     | `data-testid="<feature>-<element>"`                       | `models-download-button`         |
 
 ## 设计令牌速查（D-05 §7，详见 `styles/tokens.css`）
 

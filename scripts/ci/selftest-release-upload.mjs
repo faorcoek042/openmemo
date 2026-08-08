@@ -58,7 +58,9 @@ function check(name, fn) {
       passed += 1;
       console.log(`  ✔ ${name}`);
     } catch (e) {
-      failures.push(`${name}\n      ${e instanceof Error ? e.message.split('\n').join('\n      ') : String(e)}`);
+      failures.push(
+        `${name}\n      ${e instanceof Error ? e.message.split('\n').join('\n      ') : String(e)}`,
+      );
       console.log(`  ✘ ${name}`);
     }
   })();
@@ -139,7 +141,9 @@ function startStub({ draft = false, exists = true, assets = new Map() } = {}) {
     return json(404, { message: 'unexpected request' });
   });
   return new Promise((r) => {
-    server.listen(0, '127.0.0.1', () => r({ state, server, base: `http://127.0.0.1:${server.address().port}` }));
+    server.listen(0, '127.0.0.1', () =>
+      r({ state, server, base: `http://127.0.0.1:${server.address().port}` }),
+    );
   });
 }
 
@@ -240,13 +244,31 @@ console.log('① 正向：release 已存在且已发布，资产还没有 → �
   const src = await makeSrc({ 'pack-a.tar.gz': 'AAAA', 'pack-b.tar.gz': 'BBBB' });
   tmpDirs.push(src);
   const st = stage();
-  const up = await run(UPLOAD, [
-    '--repo', REPO, '--tag', TAG, '--from', src, '--stage', st,
-    '--api-base', stub.base, '--download-base', stub.base,
-  ], { GITHUB_TOKEN: 'stub-token' });
+  const up = await run(
+    UPLOAD,
+    [
+      '--repo',
+      REPO,
+      '--tag',
+      TAG,
+      '--from',
+      src,
+      '--stage',
+      st,
+      '--api-base',
+      stub.base,
+      '--download-base',
+      stub.base,
+    ],
+    { GITHUB_TOKEN: 'stub-token' },
+  );
   await check('① 上传成功退出 0，且真的传了 2 个', () => {
     assert.equal(up.status, 0, up.out);
-    assert.equal(stub.state.uploads.length, 2, `实际上传 ${stub.state.uploads.length} 个\n${up.out}`);
+    assert.equal(
+      stub.state.uploads.length,
+      2,
+      `实际上传 ${stub.state.uploads.length} 个\n${up.out}`,
+    );
   });
   const vout = stage();
   const ve = await run(VERIFY, ['--plan', st, '--out', vout]);
@@ -259,10 +281,24 @@ console.log('① 正向：release 已存在且已发布，资产还没有 → �
   });
   /* 重跑一遍：这次两个资产都已存在且一致 → 必须**跳过**，且不再发 POST。 */
   const st2 = stage();
-  const again = await run(UPLOAD, [
-    '--repo', REPO, '--tag', TAG, '--from', src, '--stage', st2,
-    '--api-base', stub.base, '--download-base', stub.base,
-  ], { GITHUB_TOKEN: 'stub-token' });
+  const again = await run(
+    UPLOAD,
+    [
+      '--repo',
+      REPO,
+      '--tag',
+      TAG,
+      '--from',
+      src,
+      '--stage',
+      st2,
+      '--api-base',
+      stub.base,
+      '--download-base',
+      stub.base,
+    ],
+    { GITHUB_TOKEN: 'stub-token' },
+  );
   await check('① 重跑：已存在且 sha256 一致 → 跳过并说明理由，不重复上传', () => {
     assert.equal(again.status, 0, again.out);
     assert.match(again.out, /跳过：已存在且 sha256 一致/);
@@ -278,10 +314,24 @@ console.log('① 正向：release 已存在且已发布，资产还没有 → �
   tmpDirs.push(src);
   await mkdir(join(src, 'probe'), { recursive: true });
   await writeFile(join(src, 'probe', 'openmemo-probe'), 'ELF-ish');
-  const r = await run(UPLOAD, [
-    '--repo', REPO, '--tag', TAG, '--from', src, '--stage', stage(),
-    '--api-base', stub.base, '--download-base', stub.base,
-  ], { GITHUB_TOKEN: 'stub-token' });
+  const r = await run(
+    UPLOAD,
+    [
+      '--repo',
+      REPO,
+      '--tag',
+      TAG,
+      '--from',
+      src,
+      '--stage',
+      stage(),
+      '--api-base',
+      stub.base,
+      '--download-base',
+      stub.base,
+    ],
+    { GITHUB_TOKEN: 'stub-token' },
+  );
   await check('①b 没有清单的目录整个跳过，且逐个报出文件名（不许一个字不说地跳过）', () => {
     assert.equal(r.status, 0, r.out);
     assert.match(r.out, /⏭ 整个跳过[\s\S]*openmemo-probe/);
@@ -299,10 +349,24 @@ console.log('② 反向验证 —— 每一条都必须红');
   const src = await makeSrc({ 'pack-a.tar.gz': 'AAAA' });
   tmpDirs.push(src);
   await writeFile(join(src, 'artifact-a', 'pack-a.tar.gz'), 'TAMPERED');
-  const r = await run(UPLOAD, [
-    '--repo', REPO, '--tag', TAG, '--from', src, '--stage', stage(),
-    '--api-base', stub.base, '--download-base', stub.base,
-  ], { GITHUB_TOKEN: 'stub-token' });
+  const r = await run(
+    UPLOAD,
+    [
+      '--repo',
+      REPO,
+      '--tag',
+      TAG,
+      '--from',
+      src,
+      '--stage',
+      stage(),
+      '--api-base',
+      stub.base,
+      '--download-base',
+      stub.base,
+    ],
+    { GITHUB_TOKEN: 'stub-token' },
+  );
   await check('RV1 · 产物 sha256 与自带清单不符 → 红，且一个字节都没传上去', () => {
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /本地实算/);
@@ -313,13 +377,29 @@ console.log('② 反向验证 —— 每一条都必须红');
 
 /* RV2 · release 上已经有同名资产但内容不同（"故意传一个已存在但内容不同的资产"）。 */
 {
-  const stub = await startStub({ assets: new Map([['pack-a.tar.gz', { buf: Buffer.from('OLD-BYTES') }]]) });
+  const stub = await startStub({
+    assets: new Map([['pack-a.tar.gz', { buf: Buffer.from('OLD-BYTES') }]]),
+  });
   const src = await makeSrc({ 'pack-a.tar.gz': 'NEW-BYTES' });
   tmpDirs.push(src);
-  const r = await run(UPLOAD, [
-    '--repo', REPO, '--tag', TAG, '--from', src, '--stage', stage(),
-    '--api-base', stub.base, '--download-base', stub.base,
-  ], { GITHUB_TOKEN: 'stub-token' });
+  const r = await run(
+    UPLOAD,
+    [
+      '--repo',
+      REPO,
+      '--tag',
+      TAG,
+      '--from',
+      src,
+      '--stage',
+      stage(),
+      '--api-base',
+      stub.base,
+      '--download-base',
+      stub.base,
+    ],
+    { GITHUB_TOKEN: 'stub-token' },
+  );
   await check('RV2 · 同名资产内容不同 → 红（不 clobber、不删、不改名）', () => {
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /已有同名资产，但\*\*内容不同\*\*/);
@@ -334,10 +414,24 @@ console.log('② 反向验证 —— 每一条都必须红');
   const stub = await startStub({ draft: true });
   const src = await makeSrc({ 'pack-a.tar.gz': 'AAAA' });
   tmpDirs.push(src);
-  const r = await run(UPLOAD, [
-    '--repo', REPO, '--tag', TAG, '--from', src, '--stage', stage(),
-    '--api-base', stub.base, '--download-base', stub.base,
-  ], { GITHUB_TOKEN: 'stub-token' });
+  const r = await run(
+    UPLOAD,
+    [
+      '--repo',
+      REPO,
+      '--tag',
+      TAG,
+      '--from',
+      src,
+      '--stage',
+      stage(),
+      '--api-base',
+      stub.base,
+      '--download-base',
+      stub.base,
+    ],
+    { GITHUB_TOKEN: 'stub-token' },
+  );
   await check('RV3 · draft release → 红，且**不会**替你 publish（那需要 PATCH）', () => {
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /是 \*\*draft\*\*/);
@@ -356,7 +450,9 @@ console.log('② 反向验证 —— 每一条都必须红');
   await writeFile(
     join(st, 'RELEASE-UPLOAD-PLAN.json'),
     JSON.stringify({
-      repo: REPO, tag: TAG, downloadBase: stub.base,
+      repo: REPO,
+      tag: TAG,
+      downloadBase: stub.base,
       assets: [{ name: 'pack-a.tar.gz', sha256: sha(buf), sizeBytes: buf.length, action: 'skip' }],
     }),
   );
@@ -374,15 +470,32 @@ console.log('② 反向验证 —— 每一条都必须红');
   const stub = await startStub({ exists: false });
   const src = await makeSrc({ 'pack-a.tar.gz': 'AAAA' });
   tmpDirs.push(src);
-  const r = await run(UPLOAD, [
-    '--repo', REPO, '--tag', TAG, '--from', src, '--stage', stage(),
-    '--api-base', stub.base, '--download-base', stub.base,
-  ], { GITHUB_TOKEN: 'stub-token' });
-  await check('RV4 · tag 不存在 → 红，并明说"本 job 不会替你建"；桩没收到建 release 的 POST', () => {
-    assert.equal(r.status, 1, r.out);
-    assert.match(r.out, /不会替你建/);
-    assert.deepEqual(stub.state.violations, []);
-  });
+  const r = await run(
+    UPLOAD,
+    [
+      '--repo',
+      REPO,
+      '--tag',
+      TAG,
+      '--from',
+      src,
+      '--stage',
+      stage(),
+      '--api-base',
+      stub.base,
+      '--download-base',
+      stub.base,
+    ],
+    { GITHUB_TOKEN: 'stub-token' },
+  );
+  await check(
+    'RV4 · tag 不存在 → 红，并明说"本 job 不会替你建"；桩没收到建 release 的 POST',
+    () => {
+      assert.equal(r.status, 1, r.out);
+      assert.match(r.out, /不会替你建/);
+      assert.deepEqual(stub.state.violations, []);
+    },
+  );
   stub.server.close();
 }
 
@@ -396,7 +509,9 @@ console.log('② 反向验证 —— 每一条都必须红');
   await writeFile(
     join(st, 'RELEASE-UPLOAD-PLAN.json'),
     JSON.stringify({
-      repo: REPO, tag: TAG, downloadBase: stub.base,
+      repo: REPO,
+      tag: TAG,
+      downloadBase: stub.base,
       assets: [{ name: 'pack-a.tar.gz', sha256: wrong, sizeBytes: buf.length, action: 'upload' }],
     }),
   );
@@ -417,12 +532,16 @@ console.log('② 反向验证 —— 每一条都必须红');
   await writeFile(
     join(st, 'RELEASE-UPLOAD-PLAN.json'),
     JSON.stringify({
-      repo: REPO, tag: TAG, downloadBase: stub.base,
+      repo: REPO,
+      tag: TAG,
+      downloadBase: stub.base,
       assets: [{ name: 'pack-a.tar.gz', sha256: sha(buf), sizeBytes: buf.length, action: 'skip' }],
     }),
   );
   const clean = await run(VERIFY, ['--plan', st, '--out', stage()]);
-  const dirty = await run(VERIFY, ['--plan', st, '--out', stage()], { GITHUB_TOKEN: 'oops-someone-added-this' });
+  const dirty = await run(VERIFY, ['--plan', st, '--out', stage()], {
+    GITHUB_TOKEN: 'oops-someone-added-this',
+  });
   await check('RV6 · 环境里出现 GITHUB_TOKEN → 红（同一份输入，不带 token 时是绿的）', () => {
     assert.equal(clean.status, 0, `不带 token 本该绿：\n${clean.out}`);
     assert.equal(dirty.status, 1, dirty.out);
@@ -436,15 +555,32 @@ console.log('② 反向验证 —— 每一条都必须红');
   const stub = await startStub();
   const dir = mkdtempSync(join(tmpdir(), 'ci-upload-src-'));
   tmpDirs.push(dir);
-  for (const [sub, content] of [['a', 'FROM-A'], ['b', 'FROM-B']]) {
+  for (const [sub, content] of [
+    ['a', 'FROM-A'],
+    ['b', 'FROM-B'],
+  ]) {
     await mkdir(join(dir, sub), { recursive: true });
     await writeFile(join(dir, sub, 'tokens.txt'), content);
     await writeFile(join(dir, sub, 'SHA256SUMS'), `${sha(Buffer.from(content))}  tokens.txt\n`);
   }
-  const r = await run(UPLOAD, [
-    '--repo', REPO, '--tag', TAG, '--from', dir, '--stage', stage(),
-    '--api-base', stub.base, '--download-base', stub.base,
-  ], { GITHUB_TOKEN: 'stub-token' });
+  const r = await run(
+    UPLOAD,
+    [
+      '--repo',
+      REPO,
+      '--tag',
+      TAG,
+      '--from',
+      dir,
+      '--stage',
+      stage(),
+      '--api-base',
+      stub.base,
+      '--download-base',
+      stub.base,
+    ],
+    { GITHUB_TOKEN: 'stub-token' },
+  );
   await check('RV7 · 两个 artifact 里同名不同内容 → 红（否则后一个会顶掉前一个且不报错）', () => {
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /资产名 tokens\.txt 在两个来源里内容不同/);
@@ -458,10 +594,24 @@ console.log('② 反向验证 —— 每一条都必须红');
   const stub = await startStub();
   const src = await makeSrc({ 'pack-a.tar.gz': 'AAAA' }, { extra: { 'forgotten.bin': 'ZZZZ' } });
   tmpDirs.push(src);
-  const r = await run(UPLOAD, [
-    '--repo', REPO, '--tag', TAG, '--from', src, '--stage', stage(),
-    '--api-base', stub.base, '--download-base', stub.base,
-  ], { GITHUB_TOKEN: 'stub-token' });
+  const r = await run(
+    UPLOAD,
+    [
+      '--repo',
+      REPO,
+      '--tag',
+      TAG,
+      '--from',
+      src,
+      '--stage',
+      stage(),
+      '--api-base',
+      stub.base,
+      '--download-base',
+      stub.base,
+    ],
+    { GITHUB_TOKEN: 'stub-token' },
+  );
   await check('RV8 · 有文件没列进 SHA256SUMS → 红', () => {
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /forgotten\.bin/);
@@ -475,10 +625,24 @@ console.log('② 反向验证 —— 每一条都必须红');
   const stub = await startStub();
   const dir = mkdtempSync(join(tmpdir(), 'ci-upload-src-'));
   tmpDirs.push(dir);
-  const r = await run(UPLOAD, [
-    '--repo', REPO, '--tag', TAG, '--from', dir, '--stage', stage(),
-    '--api-base', stub.base, '--download-base', stub.base,
-  ], { GITHUB_TOKEN: 'stub-token' });
+  const r = await run(
+    UPLOAD,
+    [
+      '--repo',
+      REPO,
+      '--tag',
+      TAG,
+      '--from',
+      dir,
+      '--stage',
+      stage(),
+      '--api-base',
+      stub.base,
+      '--download-base',
+      stub.base,
+    ],
+    { GITHUB_TOKEN: 'stub-token' },
+  );
   await check('RV9 · 空目录 → 红（不许"什么都没传"却绿灯）', () => {
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /没有找到任何可上传的 artifact 目录/);
@@ -493,10 +657,24 @@ console.log('② 反向验证 —— 每一条都必须红');
   });
   const src = await makeSrc({ 'pack-a.tar.gz': 'AAAA' });
   tmpDirs.push(src);
-  const r = await run(UPLOAD, [
-    '--repo', REPO, '--tag', TAG, '--from', src, '--stage', stage(),
-    '--api-base', stub.base, '--download-base', stub.base,
-  ], { GITHUB_TOKEN: 'stub-token' });
+  const r = await run(
+    UPLOAD,
+    [
+      '--repo',
+      REPO,
+      '--tag',
+      TAG,
+      '--from',
+      src,
+      '--stage',
+      stage(),
+      '--api-base',
+      stub.base,
+      '--download-base',
+      stub.base,
+    ],
+    { GITHUB_TOKEN: 'stub-token' },
+  );
   await check('RV10 · 同名资产卡在 state=starter → 红，并说明本 job 无权删除', () => {
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /state=starter/);
@@ -526,19 +704,40 @@ console.log('② 反向验证 —— 每一条都必须红');
     JSON.stringify({
       schemaVersion: 1,
       catalogVersion: 'selftest',
-      packs: [{ id: 'pack-a', license: { id: 'GPL-3.0-or-later' }, files: [{ name: 'pack-a.tar.gz' }] }],
+      packs: [
+        { id: 'pack-a', license: { id: 'GPL-3.0-or-later' }, files: [{ name: 'pack-a.tar.gz' }] },
+      ],
     }),
   );
-  const r = await run(UPLOAD, [
-    '--repo', REPO, '--tag', TAG, '--from', src, '--stage', stage(),
-    '--api-base', stub.base, '--download-base', stub.base,
-    '--manifests', gplDir,
-  ], { GITHUB_TOKEN: 'stub-token' });
+  const r = await run(
+    UPLOAD,
+    [
+      '--repo',
+      REPO,
+      '--tag',
+      TAG,
+      '--from',
+      src,
+      '--stage',
+      stage(),
+      '--api-base',
+      stub.base,
+      '--download-base',
+      stub.base,
+      '--manifests',
+      gplDir,
+    ],
+    { GITHUB_TOKEN: 'stub-token' },
+  );
   await check('RV11 · 资产的许可证是 GPL → 红，且一个字节都没传上去', () => {
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /GPL-3\.0-or-later/);
     assert.match(r.out, /硬阻断|conveying/);
-    assert.equal(stub.state.uploads.length, 0, `不该传任何东西，实际传了 ${stub.state.uploads.length} 个`);
+    assert.equal(
+      stub.state.uploads.length,
+      0,
+      `不该传任何东西，实际传了 ${stub.state.uploads.length} 个`,
+    );
   });
   stub.server.close();
 }
@@ -551,15 +750,34 @@ console.log('② 反向验证 —— 每一条都必须红');
   const emptyDir = mkdtempSync(join(tmpdir(), 'ci-upload-manifests-empty-'));
   tmpDirs.push(emptyDir);
   writeFileSync(join(emptyDir, 'fixture.json'), JSON.stringify({ schemaVersion: 1, packs: [] }));
-  const r = await run(UPLOAD, [
-    '--repo', REPO, '--tag', TAG, '--from', src, '--stage', stage(),
-    '--api-base', stub.base, '--download-base', stub.base,
-    '--manifests', emptyDir,
-  ], { GITHUB_TOKEN: 'stub-token' });
+  const r = await run(
+    UPLOAD,
+    [
+      '--repo',
+      REPO,
+      '--tag',
+      TAG,
+      '--from',
+      src,
+      '--stage',
+      stage(),
+      '--api-base',
+      stub.base,
+      '--download-base',
+      stub.base,
+      '--manifests',
+      emptyDir,
+    ],
+    { GITHUB_TOKEN: 'stub-token' },
+  );
   await check('RV12 · 资产查不到许可证 → 红（"不认识就放行"的闸门等于没有闸门）', () => {
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /查不到许可证/);
-    assert.equal(stub.state.uploads.length, 0, `不该传任何东西，实际传了 ${stub.state.uploads.length} 个`);
+    assert.equal(
+      stub.state.uploads.length,
+      0,
+      `不该传任何东西，实际传了 ${stub.state.uploads.length} 个`,
+    );
   });
   stub.server.close();
 }
@@ -570,7 +788,9 @@ for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
 
 console.log('');
 if (failures.length > 0) {
-  console.log(`✘ selftest-release-upload: ${failures.length} 个用例失败（共 ${passed + failures.length} 个）`);
+  console.log(
+    `✘ selftest-release-upload: ${failures.length} 个用例失败（共 ${passed + failures.length} 个）`,
+  );
   for (const f of failures) console.log(`  - ${f}`);
   process.exit(1);
 }

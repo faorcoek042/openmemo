@@ -146,7 +146,10 @@ describe('extractPlainText / 块级分隔', () => {
       ],
     };
     const out = extractPlainText(doc);
-    assert.ok(!out.includes('结束开始'), `跨块粘连会污染 FTS 索引，实际得到：${JSON.stringify(out)}`);
+    assert.ok(
+      !out.includes('结束开始'),
+      `跨块粘连会污染 FTS 索引，实际得到：${JSON.stringify(out)}`,
+    );
     assert.equal(out, '第一段到此结束\n\n开始讲第二段');
   });
 
@@ -157,8 +160,14 @@ describe('extractPlainText / 块级分隔', () => {
         {
           type: 'orderedList',
           content: [
-            { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: '甲' }] }] },
-            { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: '乙' }] }] },
+            {
+              type: 'listItem',
+              content: [{ type: 'paragraph', content: [{ type: 'text', text: '甲' }] }],
+            },
+            {
+              type: 'listItem',
+              content: [{ type: 'paragraph', content: [{ type: 'text', text: '乙' }] }],
+            },
           ],
         },
       ],
@@ -176,8 +185,14 @@ describe('extractPlainText / 块级分隔', () => {
             {
               type: 'tableRow',
               content: [
-                { type: 'tableCell', content: [{ type: 'paragraph', content: [{ type: 'text', text: '左格' }] }] },
-                { type: 'tableCell', content: [{ type: 'paragraph', content: [{ type: 'text', text: '右格' }] }] },
+                {
+                  type: 'tableCell',
+                  content: [{ type: 'paragraph', content: [{ type: 'text', text: '左格' }] }],
+                },
+                {
+                  type: 'tableCell',
+                  content: [{ type: 'paragraph', content: [{ type: 'text', text: '右格' }] }],
+                },
               ],
             },
           ],
@@ -190,11 +205,7 @@ describe('extractPlainText / 块级分隔', () => {
   it('hardBreak 落成换行', () => {
     const doc = {
       type: 'paragraph',
-      content: [
-        { type: 'text', text: '上' },
-        { type: 'hardBreak' },
-        { type: 'text', text: '下' },
-      ],
+      content: [{ type: 'text', text: '上' }, { type: 'hardBreak' }, { type: 'text', text: '下' }],
     };
     assert.equal(extractPlainText(doc), '上\n下');
   });
@@ -256,9 +267,12 @@ describe('extractPlainText / 恶意与畸形输入', () => {
   it('原始值与空容器一律返回空串，绝不抛异常', () => {
     for (const bad of [null, undefined, 42, NaN, 'a string', true, [], {}, Symbol('x')]) {
       let out: string | undefined;
-      assert.doesNotThrow(() => {
-        out = extractPlainText(bad);
-      }, `输入 ${String(bad)} 不该抛`);
+      assert.doesNotThrow(
+        () => {
+          out = extractPlainText(bad);
+        },
+        `输入 ${String(bad)} 不该抛`,
+      );
       assert.equal(out, '', `输入 ${String(bad)} 应得到空串`);
     }
   });

@@ -44,7 +44,11 @@ function freshRepos(): Repos {
 }
 
 /** 一页页翻到底，返回按顺序收集到的全部 uid。 */
-function pageThrough(repos: Repos, pageSize: number, opts: { starredOnly?: boolean } = {}): string[] {
+function pageThrough(
+  repos: Repos,
+  pageSize: number,
+  opts: { starredOnly?: boolean } = {},
+): string[] {
   const total = repos.countNotes(opts);
   const seen: string[] = [];
   for (let offset = 0; offset < total; offset += pageSize) {
@@ -81,7 +85,10 @@ describe('T-157 ③ 笔记翻页：created_at 撞车时也不许重复或漏条'
     // 两个数字各自都算对了，只有用户觉得这软件有点怪。
     const repos = freshRepos();
     const SAME_MS = 1_760_000_000_000;
-    const uids = Array.from({ length: 5 }, (_, i) => repos.createNote({ title: `n${i}`, now: SAME_MS }).uid);
+    const uids = Array.from(
+      { length: 5 },
+      (_, i) => repos.createNote({ title: `n${i}`, now: SAME_MS }).uid,
+    );
     repos.setNoteStarred(repos.noteByUid(uids[0] as string)!.id, true);
     repos.setNoteStarred(repos.noteByUid(uids[1] as string)!.id, true);
 

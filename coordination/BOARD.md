@@ -5,15 +5,18 @@
 ## 已生效的决策（**所有 agent 必读**）
 
 > ⚠️ 此前本清单只列到 ADR-004。实测 `docs/adr/` 现有 **16 份**，且其中两条已被后续 ADR 收窄：
+>
 > - **ADR-003 决策 2**（自建 whisper.cpp CI）适用范围已被 **ADR-015** 收窄为「仅 macOS/Vulkan/ROCm 按需」
 > - **ADR-004** 的「可导入任意 HF GGUF」已被 `rest/models.ts:728-733` 的硬 501 推翻
 > - 另有 **ADR-015 上游预编译优先**、**ADR-016 用户范围裁剪**（停 SenseVoice / AMD ASR 自建 CI）
+
 - `docs/adr/ADR-001` 依赖引入三分法（submodule / 包管理器 / 运行时下载）
 - `docs/adr/ADR-002` 许可证政策 **v2 = 个人自用档**（用户已定：仅自用 + 直接内置 yt-dlp）
 - `docs/adr/ADR-003` **进程模型 = 本地 daemon + 浏览器 UI（web-first）**、GPU 后端策略、ad-hoc 签名
 - `docs/adr/ADR-004` 模型管理：镜像运行时探测、schema 补量化与显存字段、SSE 单流
 
 ## 仓库布局（Manager 定，不得擅改）
+
 ```
 apps/daemon/      Node.js + TS 本地服务（默认 0.0.0.0，可用 OPENMEMO_HOST 收回回环）
 
@@ -31,42 +34,46 @@ scripts/          构建脚本
 ```
 
 ## Wave 1 — 研究 ✅ 全部完成
-| ID | 任务 | agent | 交付物 | 状态 |
-|----|------|-------|--------|------|
-| T-001 | memo.ac 产品与技术取证 | `memo-researcher` | `R-01-memo-ac.md` | 🟢 |
-| T-002 | 跨平台 GPU/ASR 运行时 | `gpu-runtime` | `R-02-runtime-gpu.md` | 🟢 |
-| T-003 | 开源选型 + 许可证 | `oss-scout` | `R-03-oss-modules.md` | 🟢 |
-| T-004 | 模型管理方案 | `model-mgmt` | `R-04-model-mgmt.md` | 🟢 |
+
+| ID    | 任务                   | agent             | 交付物                | 状态 |
+| ----- | ---------------------- | ----------------- | --------------------- | ---- |
+| T-001 | memo.ac 产品与技术取证 | `memo-researcher` | `R-01-memo-ac.md`     | 🟢   |
+| T-002 | 跨平台 GPU/ASR 运行时  | `gpu-runtime`     | `R-02-runtime-gpu.md` | 🟢   |
+| T-003 | 开源选型 + 许可证      | `oss-scout`       | `R-03-oss-modules.md` | 🟢   |
+| T-004 | 模型管理方案           | `model-mgmt`      | `R-04-model-mgmt.md`  | 🟢   |
 
 ## Wave 2 — 架构与骨架 ~~（进行中，4 并发跑满）~~ → ✅ **早已完成（本表停在 2026-08-02）**
 
 > 📝 **此前 T-010…T-013 全标 🔵 进行中。** 实测四项交付物均已存在，项目已跑到 **T-153**，
 > `coordination/inbox/` 有 32 份报告。**本表仅供追溯。**
-| ID | 任务 | agent | 交付物 | 状态 |
-|----|------|-------|--------|------|
-| T-010 | 总体架构 + 数据模型 | `architect` 🆕 | `docs/design/D-01`, `D-02` | 🔵 |
-| T-011 | 仓库骨架 + submodule 落地 | `oss-scout` ♻️ | monorepo 骨架, `.gitmodules` | 🔵 |
-| T-012 | 构建系统 + **Linux 实测 spike** | `gpu-runtime` ♻️ | `scripts/`, `packages/runtime/`, `D-04` | 🔵 |
-| T-013 | 统一下载器 + API 契约固化 | `model-mgmt` ♻️ | `packages/shared/`, `manifests/`, `D-03` | 🔵 |
+>
+> | ID    | 任务                            | agent            | 交付物                                   | 状态 |
+> | ----- | ------------------------------- | ---------------- | ---------------------------------------- | ---- |
+> | T-010 | 总体架构 + 数据模型             | `architect` 🆕   | `docs/design/D-01`, `D-02`               | 🔵   |
+> | T-011 | 仓库骨架 + submodule 落地       | `oss-scout` ♻️   | monorepo 骨架, `.gitmodules`             | 🔵   |
+> | T-012 | 构建系统 + **Linux 实测 spike** | `gpu-runtime` ♻️ | `scripts/`, `packages/runtime/`, `D-04`  | 🔵   |
+> | T-013 | 统一下载器 + API 契约固化       | `model-mgmt` ♻️  | `packages/shared/`, `manifests/`, `D-03` | 🔵   |
 
 ### 文件所有权（防写冲突，硬约束）
-| agent | 独占写入 |
-|-------|---------|
-| `architect` | `docs/design/D-01*`, `D-02*`（**只写文档，不写代码**）|
-| `oss-scout` | 根配置、`apps/*/package.json`、`vendor/`、`.gitmodules`、各包的 `tsconfig` 与占位 `index.ts` |
-| `gpu-runtime` | `packages/runtime/src/**`、`scripts/**`、`.github/workflows/**`、`docs/design/D-04*` |
-| `model-mgmt` | `packages/shared/src/**`、`packages/downloader/src/**`、`vendor/manifests/*.json`、`docs/design/D-03*` |
+
+| agent         | 独占写入                                                                                               |
+| ------------- | ------------------------------------------------------------------------------------------------------ |
+| `architect`   | `docs/design/D-01*`, `D-02*`（**只写文档，不写代码**）                                                 |
+| `oss-scout`   | 根配置、`apps/*/package.json`、`vendor/`、`.gitmodules`、各包的 `tsconfig` 与占位 `index.ts`           |
+| `gpu-runtime` | `packages/runtime/src/**`、`scripts/**`、`.github/workflows/**`、`docs/design/D-04*`                   |
+| `model-mgmt`  | `packages/shared/src/**`、`packages/downloader/src/**`、`vendor/manifests/*.json`、`docs/design/D-03*` |
 
 ## Wave 3 — 开发 ~~（待启动）~~ → ✅ **全部已交付（本表停在 2026-08-02）**
 
 > 📝 **此前 T-020…T-024 全标 ⚪ 待启动。** 实测 `apps/web/src/features/` 15 个 feature、
 > `packages/mindmap/`、`.github/workflows/` 已就位。**本表仅供追溯。**
-| ID | 任务 | 状态 |
-|----|------|------|
-| T-020 | 转写流水线（F1/F2/F3） | ⚪ |
-| T-021 | 前端：捕获 → 转写 → 笔记 UI | ⚪ |
-| T-022 | 前端：运行时与模型管理页（要求 2.1/2.2） | ⚪ |
-| T-023 | 思维导图生成与编辑（F4） | ⚪ |
-| T-024 | 打包分发 | ⚪ |
+>
+> | ID    | 任务                                     | 状态 |
+> | ----- | ---------------------------------------- | ---- |
+> | T-020 | 转写流水线（F1/F2/F3）                   | ⚪   |
+> | T-021 | 前端：捕获 → 转写 → 笔记 UI              | ⚪   |
+> | T-022 | 前端：运行时与模型管理页（要求 2.1/2.2） | ⚪   |
+> | T-023 | 思维导图生成与编辑（F4）                 | ⚪   |
+> | T-024 | 打包分发                                 | ⚪   |
 
 图例：⚪ 待启动 🔵 进行中 🟢 完成 🔴 阻塞 🆕 新建 ♻️ 复用

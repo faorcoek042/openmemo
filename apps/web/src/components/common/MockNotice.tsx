@@ -39,7 +39,11 @@ export function MockNotice({
         className={cn('inline-flex items-center gap-1 text-xs text-serious', className)}
         title={offline ? t('mock.offlineDetail') : t('mock.notImplementedDetail')}
       >
-        {offline ? <PlugZap className="size-3" aria-hidden /> : <FlaskConical className="size-3" aria-hidden />}
+        {offline ? (
+          <PlugZap className="size-3" aria-hidden />
+        ) : (
+          <FlaskConical className="size-3" aria-hidden />
+        )}
         {label}
       </span>
     );
@@ -118,7 +122,9 @@ export function ConnectivitySummary({ className }: { className?: string }) {
   );
 }
 
-type BuildMeta = NonNullable<NonNullable<ReturnType<typeof useSurfaceStore.getState>['health']>['build']>;
+type BuildMeta = NonNullable<
+  NonNullable<ReturnType<typeof useSurfaceStore.getState>['health']>['build']
+>;
 
 const hms = (iso: string) => new Date(iso).toLocaleTimeString('zh-CN', { hour12: false });
 const mdhms = (iso: string) =>

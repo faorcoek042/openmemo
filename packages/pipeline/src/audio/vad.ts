@@ -115,16 +115,8 @@ export interface VadOptions {
  * reason back — which is the trade this repo has got wrong most expensively.
  * Same family as `--no-prints` hiding the CoreML fallback (T-146 §3.2).
  */
-export function buildVadFlags(
-  vadModel: string,
-  wavPath: string,
-  opts: VadOptions = {},
-): string[] {
-  const flags = [
-    '-f', wavPath,
-    '-vm', vadModel,
-    '-t', String(opts.threads ?? 4),
-  ];
+export function buildVadFlags(vadModel: string, wavPath: string, opts: VadOptions = {}): string[] {
+  const flags = ['-f', wavPath, '-vm', vadModel, '-t', String(opts.threads ?? 4)];
   /*
    * Tuning knobs go out in LONG form. The short aliases are where upstream's usage text
    * and its parser contradict each other (see `minSpeechDurationMs`), and a short flag
@@ -335,7 +327,11 @@ export function planChunks(segments: SpeechSegment[], opts: ChunkPlanOptions): A
  * Fallback when VAD is unavailable or finds nothing but the file clearly has audio:
  * fixed-size windows with a small overlap so a word spanning a boundary survives.
  */
-export function planFixedChunks(totalDurationMs: number, chunkMs = 30_000, overlapMs = 500): AsrChunk[] {
+export function planFixedChunks(
+  totalDurationMs: number,
+  chunkMs = 30_000,
+  overlapMs = 500,
+): AsrChunk[] {
   const chunks: AsrChunk[] = [];
   let start = 0;
   let index = 0;
@@ -413,7 +409,11 @@ export async function planAudioChunks(args: PlanAudioChunksArgs): Promise<ChunkP
   const fixed = (why: string): ChunkPlan => {
     // Degradation, not failure: fixed windows still produce a usable transcript.
     const chunks = planFixedChunks(durationMs, targetChunkMs ?? 30_000);
-    args.onProgress?.({ step: 'vad', fraction: 1, message: `${String(chunks.length)} chunks · ${why}` });
+    args.onProgress?.({
+      step: 'vad',
+      fraction: 1,
+      message: `${String(chunks.length)} chunks · ${why}`,
+    });
     return { chunks, speechMs: durationMs, chunking: 'fixed', warningsZh };
   };
 
@@ -464,6 +464,10 @@ export async function planAudioChunks(args: PlanAudioChunksArgs): Promise<ChunkP
  * job error and the logs, far too long for a UI banner. Keep the headline for humans.
  */
 function firstLine(message: string, max = 200): string {
-  const line = message.split('\n').find((l) => l.trim().length > 0)?.trim() ?? message.trim();
+  const line =
+    message
+      .split('\n')
+      .find((l) => l.trim().length > 0)
+      ?.trim() ?? message.trim();
   return line.length > max ? `${line.slice(0, max)}…` : line;
 }

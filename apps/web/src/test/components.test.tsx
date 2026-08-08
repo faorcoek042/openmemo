@@ -70,15 +70,28 @@ import {
 import { RetranscribeButton, isSegmentEdited } from '../features/notes/RetranscribeButton';
 import { WordLevelBadge } from '../features/transcript';
 import { WordHighlight, findActiveWord } from '../features/transcript/WordHighlight';
-import { DEFAULT_PROXY_CONFIG, LLM_SETTING_KEYS, MAINSTREAM_PROVIDER_IDS, PROVIDER_KINDS } from '@openmemo/shared';
+import {
+  DEFAULT_PROXY_CONFIG,
+  LLM_SETTING_KEYS,
+  MAINSTREAM_PROVIDER_IDS,
+  PROVIDER_KINDS,
+} from '@openmemo/shared';
 import { ProxySettingsSection } from '../features/settings/ProxySettingsSection';
 import ComponentsPage from '../features/components/ComponentsPage';
-import { getPositionMs, setPositionMs, subscribePosition, usePlayerStore } from '../lib/stores/player.store';
+import {
+  getPositionMs,
+  setPositionMs,
+  subscribePosition,
+  usePlayerStore,
+} from '../lib/stores/player.store';
 import { MindmapExportMenu } from '../features/mindmap/MindmapExportMenu';
 import NoteDetailPage from '../features/notes/NoteDetailPage';
 import { Route, Routes } from 'react-router';
 import { useConnectionStore } from '../lib/stores/connection.store';
-import { PurposeBindingsSection, mergePurposeBinding } from '../components/common/llm/PurposeBindingsSection';
+import {
+  PurposeBindingsSection,
+  mergePurposeBinding,
+} from '../components/common/llm/PurposeBindingsSection';
 import { ReadinessBanner } from '../components/common/ReadinessBanner';
 import RecorderPage from '../features/recorder/RecorderPage';
 import {
@@ -317,10 +330,7 @@ describe('JobList（任务分组与动作）', () => {
     const t = text(r.container);
     assert.ok(t.includes('需要处理'), '应有「需要处理」分组');
     assert.ok(t.includes('已完成'), '应有「已完成」分组');
-    assert.ok(
-      t.indexOf('需要处理') < t.indexOf('已完成'),
-      '「需要处理」必须排在「已完成」之前',
-    );
+    assert.ok(t.indexOf('需要处理') < t.indexOf('已完成'), '「需要处理」必须排在「已完成」之前');
     r.unmount();
   });
 
@@ -439,7 +449,11 @@ describe('LlmSettingsSection（API Key 输入）', () => {
     const ollamaRow = rows.find((li) => (li.textContent ?? '').includes('Ollama'));
     assert.ok(ollamaRow, '应渲染出 Ollama 那一行');
 
-    await click(Array.from(ollamaRow!.querySelectorAll('button')).find((b) => b.textContent?.includes('编辑')) ?? null);
+    await click(
+      Array.from(ollamaRow!.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('编辑'),
+      ) ?? null,
+    );
     await r.flush();
     assert.equal(
       ollamaRow!.querySelectorAll('input[type="password"]').length,
@@ -457,8 +471,9 @@ describe('LlmSettingsSection（API Key 输入）', () => {
     const rows = Array.from(r.container.querySelectorAll('li'));
     const openaiRow = rows.find((li) => (li.textContent ?? '').includes('OpenAI'));
     await click(
-      Array.from(openaiRow!.querySelectorAll('button')).find((b) => b.textContent?.includes('编辑')) ??
-        null,
+      Array.from(openaiRow!.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('编辑'),
+      ) ?? null,
     );
     await r.flush();
 
@@ -493,8 +508,9 @@ describe('LlmSettingsSection（API Key 输入）', () => {
       (li.textContent ?? '').includes('OpenAI'),
     );
     await click(
-      Array.from(openaiRow!.querySelectorAll('button')).find((b) => b.textContent?.includes('编辑')) ??
-        null,
+      Array.from(openaiRow!.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('编辑'),
+      ) ?? null,
     );
     await r.flush();
 
@@ -506,7 +522,10 @@ describe('LlmSettingsSection（API Key 输入）', () => {
     await r.flush();
 
     const put = calls.find((c) => c.method === 'PUT');
-    assert.ok(put, `应发出 PUT，实际写请求：${JSON.stringify(calls.filter((c) => c.method !== 'GET'))}`);
+    assert.ok(
+      put,
+      `应发出 PUT，实际写请求：${JSON.stringify(calls.filter((c) => c.method !== 'GET'))}`,
+    );
     assert.equal(put!.path, '/secrets/llm.openai.apiKey');
     assert.deepEqual(put!.body, { value: 'sk-test-12345' }, 'Key 要原样写进去');
     r.unmount();
@@ -521,8 +540,9 @@ describe('LlmSettingsSection（API Key 输入）', () => {
       (li.textContent ?? '').includes('OpenAI'),
     );
     await click(
-      Array.from(openaiRow!.querySelectorAll('button')).find((b) => b.textContent?.includes('编辑')) ??
-        null,
+      Array.from(openaiRow!.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('编辑'),
+      ) ?? null,
     );
     await r.flush();
     await click(r.container.querySelector('[data-testid="llm-save"]'));
@@ -645,9 +665,7 @@ describe('服务端数组缺失时不崩溃', () => {
    */
   test('★ TagEditor 收到 undefined 也要正常渲染，不能整页炸', async () => {
     stubApi({});
-    const r = await render(
-      <TagEditor noteUid="n1" tags={undefined as unknown as never} />,
-    );
+    const r = await render(<TagEditor noteUid="n1" tags={undefined as unknown as never} />);
     assert.ok(buttonByText(r.container, '加标签'), '应正常渲染出「加标签」入口');
     r.unmount();
   });
@@ -687,10 +705,16 @@ describe('状态呈现', () => {
   test('ProgressMeter 夹紧越界值，不产出 aria-valuenow=-20 这种', async () => {
     stubApi({});
     const r1 = await render(<ProgressMeter value={-0.2} label="x" />);
-    assert.equal(r1.container.querySelector('[role="progressbar"]')!.getAttribute('aria-valuenow'), '0');
+    assert.equal(
+      r1.container.querySelector('[role="progressbar"]')!.getAttribute('aria-valuenow'),
+      '0',
+    );
     r1.unmount();
     const r2 = await render(<ProgressMeter value={5} label="x" />);
-    assert.equal(r2.container.querySelector('[role="progressbar"]')!.getAttribute('aria-valuenow'), '100');
+    assert.equal(
+      r2.container.querySelector('[role="progressbar"]')!.getAttribute('aria-valuenow'),
+      '100',
+    );
     r2.unmount();
   });
 });
@@ -709,7 +733,10 @@ describe('状态呈现', () => {
  */
 describe('转写选项：选中的值真的发给后端', () => {
   test('★ 引擎标识来自 shared 联合，"turbo" 不是合法引擎', () => {
-    assert.ok(!(ASR_ENGINE_IDS as readonly string[]).includes('turbo'), '"turbo" 是模型名片段，不是引擎 id');
+    assert.ok(
+      !(ASR_ENGINE_IDS as readonly string[]).includes('turbo'),
+      '"turbo" 是模型名片段，不是引擎 id',
+    );
     assert.deepEqual([...ASR_ENGINE_IDS], ['whisper.cpp', 'paraformer', 'sherpa-onnx']);
     // 展示名的键就是联合本身 —— 编不出后端没有的引擎
     for (const id of ASR_ENGINE_IDS) assert.ok(ASR_ENGINE_LABELS[id], `${id} 缺展示名`);
@@ -776,9 +803,21 @@ describe('转写选项：选中的值真的发给后端', () => {
     stubApi({
       'GET /models/installed': {
         models: [
-          { id: 'asr/a', role: 'asr', displayName: 'Whisper A', quantization: 'q5_0', integrity: 'ok' },
+          {
+            id: 'asr/a',
+            role: 'asr',
+            displayName: 'Whisper A',
+            quantization: 'q5_0',
+            integrity: 'ok',
+          },
           { id: 'llm/b', role: 'llm', displayName: '不该出现的 LLM', integrity: 'ok' },
-          { id: 'asr/c', role: 'asr', displayName: 'Paraformer C', quantization: null, integrity: 'ok' },
+          {
+            id: 'asr/c',
+            role: 'asr',
+            displayName: 'Paraformer C',
+            quantization: null,
+            integrity: 'ok',
+          },
         ],
         active: { asr: 'asr/c' },
       },
@@ -857,7 +896,10 @@ describe('设置 · 数据位置', () => {
     const r = await render(<DataLocationSection />);
     await r.flush();
 
-    assert.equal(r.container.querySelector('[data-testid="data-dir-path"]')?.textContent, '/tmp/omdemo');
+    assert.equal(
+      r.container.querySelector('[data-testid="data-dir-path"]')?.textContent,
+      '/tmp/omdemo',
+    );
     // 容量分项要出现，且是模型占用而不是含糊的"总计"
     assert.ok(text(r.container).includes('模型占用'));
     assert.ok(text(r.container).includes('1.5 GB'), '应换算成人类可读单位');
@@ -995,7 +1037,10 @@ describe('重新转写入口', () => {
     await click(r.container.querySelector('[data-testid="retranscribe-open"]'));
     await r.flush();
     const shown = text(r.container);
-    assert.ok(shown.includes('已保留你编辑过的 2 段'), `应准确报出 2 段，实际：${shown.slice(0, 200)}`);
+    assert.ok(
+      shown.includes('已保留你编辑过的 2 段'),
+      `应准确报出 2 段，实际：${shown.slice(0, 200)}`,
+    );
     assert.ok(!shown.includes('会被覆盖'), '后端已能保留，事前警告必须撤掉');
     r.unmount();
   });
@@ -1146,7 +1191,12 @@ describe('重跑保留编辑（换回「已保留」）', () => {
   test('★ canRetranscribe=false 时按钮事前禁用并说明原因', async () => {
     stubApi({});
     const r = await render(
-      <RetranscribeButton noteUid="n1" segments={[]} currentLanguage="zh" canRetranscribe={false} />,
+      <RetranscribeButton
+        noteUid="n1"
+        segments={[]}
+        currentLanguage="zh"
+        canRetranscribe={false}
+      />,
     );
     const btn = r.container.querySelector('[data-testid="retranscribe-open"]') as HTMLButtonElement;
     assert.equal(btn.disabled, true);
@@ -1235,7 +1285,11 @@ describe('代理配置', () => {
    * 后来照 `rest/proxy.ts` 改组件时被测试直接顶出来了。桩的形状必须照抄实现。
    */
   const wrap = (config: unknown, media?: unknown) => ({
-    'GET /settings/proxy': { config, active: null, media: media ?? { supported: true, reason: null, noteZh: null } },
+    'GET /settings/proxy': {
+      config,
+      active: null,
+      media: media ?? { supported: true, reason: null, noteZh: null },
+    },
   });
   const cfgRoute = wrap(DEFAULT_PROXY_CONFIG);
 
@@ -1243,7 +1297,9 @@ describe('代理配置', () => {
     stubApi(cfgRoute);
     const r = await render(<ProxySettingsSection />);
     await r.flush();
-    const system = r.container.querySelector('[data-testid="proxy-mode-system"]') as HTMLInputElement;
+    const system = r.container.querySelector(
+      '[data-testid="proxy-mode-system"]',
+    ) as HTMLInputElement;
     assert.equal(system.checked, true, 'off 作默认会让最难懂的失败成为默认体验');
     r.unmount();
   });
@@ -1262,8 +1318,14 @@ describe('代理配置', () => {
     await click(r.container.querySelector('[data-testid="proxy-test-sources"]'));
     await r.flush();
 
-    assert.ok(calls.some((c) => c.path === '/settings/proxy/test'), '「测试代理」应打中立主机');
-    assert.ok(calls.some((c) => c.path === '/settings/proxy/sources'), '「测试下载源」应出延迟表');
+    assert.ok(
+      calls.some((c) => c.path === '/settings/proxy/test'),
+      '「测试代理」应打中立主机',
+    );
+    assert.ok(
+      calls.some((c) => c.path === '/settings/proxy/sources'),
+      '「测试下载源」应出延迟表',
+    );
     r.unmount();
   });
 
@@ -1314,7 +1376,10 @@ describe('代理配置', () => {
     const shown = text(r.container);
     // 直接渲染 daemon 给的 noteZh —— 能力边界由做判定的那一方描述
     assert.ok(shown.includes('在线媒体拉流会直连'), 'SOCKS 的真实边界必须说出来');
-    assert.ok(shown.includes('模型下载会走代理'), '同时要说清哪条链路仍然走代理，否则像是整个功能坏了');
+    assert.ok(
+      shown.includes('模型下载会走代理'),
+      '同时要说清哪条链路仍然走代理，否则像是整个功能坏了',
+    );
     r.unmount();
   });
 
@@ -1328,7 +1393,11 @@ describe('代理配置', () => {
 
   test('★ 展示当前生效地址时必须脱敏 —— 密码不能出现在界面上', async () => {
     stubApi(
-      wrap({ ...DEFAULT_PROXY_CONFIG, mode: 'manual', httpProxy: 'http://alice:hunter2@127.0.0.1:7890' }),
+      wrap({
+        ...DEFAULT_PROXY_CONFIG,
+        mode: 'manual',
+        httpProxy: 'http://alice:hunter2@127.0.0.1:7890',
+      }),
     );
     const r = await render(<ProxySettingsSection />);
     await r.flush();
@@ -1454,7 +1523,14 @@ describe('LLM 设置键必须与 daemon 对齐', () => {
       'GET /settings': {
         settings: {
           'llm.providers': [
-            { id: 'openai', kind: 'openai-compatible', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', isLocal: false },
+            {
+              id: 'openai',
+              kind: 'openai-compatible',
+              label: 'OpenAI',
+              baseUrl: 'https://api.openai.com/v1',
+              model: 'gpt-4o-mini',
+              isLocal: false,
+            },
           ],
         },
       },
@@ -1468,7 +1544,11 @@ describe('LLM 设置键必须与 daemon 对齐', () => {
 
     const body = calls.find((c) => c.method === 'PATCH')?.body as Record<string, unknown>;
     assert.ok(body, '应发出 PATCH');
-    assert.equal(body['llm.defaultProviderId'], 'openai', 'daemon 只认这个键，不认 activeProviderId');
+    assert.equal(
+      body['llm.defaultProviderId'],
+      'openai',
+      'daemon 只认这个键，不认 activeProviderId',
+    );
     assert.equal(body['llm.defaultModelId'], 'gpt-4o-mini', '模型缺了同样解析不出 provider');
     assert.equal(body['llm.baseUrl.openai'], 'https://api.openai.com/v1');
     r.unmount();
@@ -1478,8 +1558,22 @@ describe('LLM 设置键必须与 daemon 对齐', () => {
 describe('按用途分档', () => {
   const base = {
     'llm.providers': [
-      { id: 'openai', kind: 'openai-compatible', label: 'OpenAI', baseUrl: 'u', model: 'gpt-4o-mini', isLocal: false },
-      { id: 'deepseek', kind: 'openai-compatible', label: 'DeepSeek', baseUrl: 'u2', model: 'deepseek-chat', isLocal: false },
+      {
+        id: 'openai',
+        kind: 'openai-compatible',
+        label: 'OpenAI',
+        baseUrl: 'u',
+        model: 'gpt-4o-mini',
+        isLocal: false,
+      },
+      {
+        id: 'deepseek',
+        kind: 'openai-compatible',
+        label: 'DeepSeek',
+        baseUrl: 'u2',
+        model: 'deepseek-chat',
+        isLocal: false,
+      },
     ],
     'llm.defaultProviderId': 'openai',
     'llm.defaultModelId': 'gpt-4o-mini',
@@ -1492,7 +1586,10 @@ describe('按用途分档', () => {
     for (const p of ['chat', 'summarize', 'translate']) {
       assert.ok(r.container.querySelector(`[data-testid="purpose-${p}"]`), `缺少 ${p} 档`);
     }
-    assert.ok(text(r.container).includes('摘要 + 思维导图'), '两者能力要求同类，拆开只会多一栏没人会填的');
+    assert.ok(
+      text(r.container).includes('摘要 + 思维导图'),
+      '两者能力要求同类，拆开只会多一栏没人会填的',
+    );
     r.unmount();
   });
 
@@ -1506,9 +1603,15 @@ describe('按用途分档', () => {
     await r.flush();
 
     const row = r.container.querySelector('[data-testid="purpose-translate"]')!;
-    const tags = [...row.querySelectorAll('[data-inherited]')].map((e) => e.getAttribute('data-inherited'));
+    const tags = [...row.querySelectorAll('[data-inherited]')].map((e) =>
+      e.getAttribute('data-inherited'),
+    );
     // provider 继承、model 已覆盖 —— 两个字段各自独立，不是整体回退
-    assert.deepEqual(tags, ['true', 'false'], `translate 档应为 provider 继承 / model 覆盖，实际 ${tags}`);
+    assert.deepEqual(
+      tags,
+      ['true', 'false'],
+      `translate 档应为 provider 继承 / model 覆盖，实际 ${tags}`,
+    );
 
     // 最终生效值要写出来：provider 用的是全局的 openai，model 是自己填的
     const eff = row.querySelector('[data-testid="purpose-translate-effective"]')!.textContent ?? '';
@@ -1522,7 +1625,9 @@ describe('按用途分档', () => {
     const r = await render(<PurposeBindingsSection />);
     await r.flush();
     const row = r.container.querySelector('[data-testid="purpose-chat"]')!;
-    const tags = [...row.querySelectorAll('[data-inherited]')].map((e) => e.getAttribute('data-inherited'));
+    const tags = [...row.querySelectorAll('[data-inherited]')].map((e) =>
+      e.getAttribute('data-inherited'),
+    );
     assert.deepEqual(tags, ['true', 'true']);
     assert.ok(row.textContent!.includes('gpt-4o-mini'));
     r.unmount();
@@ -1637,7 +1742,12 @@ describe('非安全上下文', () => {
   });
 
   test('★ 一切就绪时横幅一个像素都不占 —— 默认状态就该是"什么都不说"', async () => {
-    stubApi({ 'GET /health': { db: { extensions: { libsimple: true, sqliteVec: true } }, pipeline: { missing: [] } } });
+    stubApi({
+      'GET /health': {
+        db: { extensions: { libsimple: true, sqliteVec: true } },
+        pipeline: { missing: [] },
+      },
+    });
     const r = await render(<ReadinessBanner />);
     await r.flush();
     assert.equal(text(r.container), '', `不该渲染任何内容，实际：${text(r.container)}`);
@@ -1647,12 +1757,21 @@ describe('非安全上下文', () => {
   test('★ 非安全上下文只占一行，且默认折叠 —— 七行文字不是动作，是墙', async () => {
     makeInsecure();
     try {
-      stubApi({ 'GET /health': { db: { extensions: { libsimple: true, sqliteVec: true } }, pipeline: { missing: [] } } });
+      stubApi({
+        'GET /health': {
+          db: { extensions: { libsimple: true, sqliteVec: true } },
+          pipeline: { missing: [] },
+        },
+      });
       const r = await render(<ReadinessBanner />);
       await r.flush();
 
       // 折叠态：只有一行摘要，明细一个字都不该出现
-      assert.equal(r.container.querySelector('[data-testid="readiness-details"]'), null, '默认必须折叠');
+      assert.equal(
+        r.container.querySelector('[data-testid="readiness-details"]'),
+        null,
+        '默认必须折叠',
+      );
       assert.ok(text(r.container).includes('未就绪'), '折叠态要给出结论');
       assert.ok(!text(r.container).includes('麦克风'), '原因属于展开态，不该占首屏');
 
@@ -1672,7 +1791,12 @@ describe('非安全上下文', () => {
     try {
       // 即便 SSE 层也报了多标签降级，非安全上下文下也只应合并成一条
       useConnectionStore.getState().setMultiTabDegraded(true);
-      stubApi({ 'GET /health': { db: { extensions: { libsimple: true, sqliteVec: true } }, pipeline: { missing: [] } } });
+      stubApi({
+        'GET /health': {
+          db: { extensions: { libsimple: true, sqliteVec: true } },
+          pipeline: { missing: [] },
+        },
+      });
       const r = await render(<ReadinessBanner />);
       await r.flush();
       await click(r.container.querySelector('[data-testid="readiness-toggle"]'));
@@ -1719,7 +1843,11 @@ describe('非安全上下文', () => {
     assert.ok(hint.includes('localhost'), '要给出满足条件的地址形式');
     assert.ok(hint.includes('换浏览器不会有帮助'), '要主动挡掉"换个浏览器试试"这条弯路');
     // 旧的顶层键必须真的没了，否则两处文案会各自漂移
-    assert.equal((zh.banner as Record<string, unknown>).multiTab, undefined, '旧键应随横幅一起删除');
+    assert.equal(
+      (zh.banner as Record<string, unknown>).multiTab,
+      undefined,
+      '旧键应随横幅一起删除',
+    );
   });
   test('★ 录音页在点击之前就拦住，不是点了报 undefined', async () => {
     makeInsecure();
@@ -1782,7 +1910,14 @@ describe('LLM 配置保存的可见反馈', () => {
     'GET /settings': {
       settings: {
         'llm.providers': [
-          { id: 'deepseek', kind: 'openai-compatible', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', isLocal: false },
+          {
+            id: 'deepseek',
+            kind: 'openai-compatible',
+            label: 'DeepSeek',
+            baseUrl: 'https://api.deepseek.com/v1',
+            model: 'deepseek-chat',
+            isLocal: false,
+          },
         ],
       },
     },
@@ -1796,7 +1931,11 @@ describe('LLM 配置保存的可见反馈', () => {
       'PATCH /settings': () =>
         new Response(
           JSON.stringify({
-            error: { code: 'CSRF_FAILED', message: 'missing or bad CSRF token', messageZh: 'CSRF 校验失败' },
+            error: {
+              code: 'CSRF_FAILED',
+              message: 'missing or bad CSRF token',
+              messageZh: 'CSRF 校验失败',
+            },
           }),
           { status: 403, headers: { 'content-type': 'application/json' } },
         ),
@@ -1816,7 +1955,11 @@ describe('LLM 配置保存的可见反馈', () => {
     // 2) 表单必须还开着 —— 用户刚填的内容不能丢
     assert.ok(r.container.querySelector('[data-testid="llm-save"]'), '失败后表单不该收起');
     // 3) 绝不能同时显示成功
-    assert.equal(r.container.querySelector('[data-testid="llm-saved"]'), null, '失败了还报成功是最坏的情况');
+    assert.equal(
+      r.container.querySelector('[data-testid="llm-saved"]'),
+      null,
+      '失败了还报成功是最坏的情况',
+    );
     r.unmount();
   });
 
@@ -1846,7 +1989,11 @@ describe('LLM 配置保存的可见反馈', () => {
     await click(r.container.querySelector('[data-testid="llm-save"]'));
     await r.flush();
 
-    assert.equal(r.container.querySelector('[data-testid="llm-saved"]'), null, '端点不存在时绝不能显示已保存');
+    assert.equal(
+      r.container.querySelector('[data-testid="llm-saved"]'),
+      null,
+      '端点不存在时绝不能显示已保存',
+    );
     assert.ok(r.container.querySelector('[data-testid="llm-save"]'), '表单保持打开');
     r.unmount();
   });
@@ -1901,7 +2048,16 @@ describe('CSRF 令牌', () => {
       'GET /settings': { settings: {} },
       'GET /secrets': { secrets: [], disclosure: null },
       // 重握手是完整链路：先 GET /health 再 POST /auth/session，两个都得打桩
-      'GET /health': { app: 'openmemo', version: '0.1.0', contractVersion: 1, instanceId: 'i', dataDir: '/tmp', host: '127.0.0.1', port: 17650, pid: 1 },
+      'GET /health': {
+        app: 'openmemo',
+        version: '0.1.0',
+        contractVersion: 1,
+        instanceId: 'i',
+        dataDir: '/tmp',
+        host: '127.0.0.1',
+        port: 17650,
+        pid: 1,
+      },
       'POST /auth/session': { csrf: 'fresh-token' },
       'PATCH /settings': () => {
         attempt += 1;
@@ -1972,7 +2128,11 @@ describe('保存后 daemon 读得到（键对齐）', () => {
     // 用户实际走的路：加一个 provider、填 key、点保存，**没有**另外点"设为默认"
     const patch = buildLlmSettingsPatch({ providers: [], provider, activeId: null });
 
-    assert.equal(patch[LLM_SETTING_KEYS.defaultProviderId], 'deepseek', '缺它 daemon 解析不出 provider');
+    assert.equal(
+      patch[LLM_SETTING_KEYS.defaultProviderId],
+      'deepseek',
+      '缺它 daemon 解析不出 provider',
+    );
     assert.equal(patch[LLM_SETTING_KEYS.defaultModelId], 'deepseek-chat', '缺它同样解析不出');
     assert.equal(patch[`${LLM_SETTING_KEYS.baseUrlPrefix}deepseek`], 'https://api.deepseek.com/v1');
   });
@@ -1988,7 +2148,11 @@ describe('保存后 daemon 读得到（键对齐）', () => {
 
   test('已有默认 provider 时保存另一个，不许悄悄改默认', () => {
     const other = { ...provider, id: 'openai', label: 'OpenAI', model: 'gpt-4o-mini' };
-    const patch = buildLlmSettingsPatch({ providers: [provider], provider: other, activeId: 'deepseek' });
+    const patch = buildLlmSettingsPatch({
+      providers: [provider],
+      provider: other,
+      activeId: 'deepseek',
+    });
     assert.ok(!(LLM_SETTING_KEYS.defaultProviderId in patch), '编辑非默认项不该改动默认 provider');
     // 但它自己的 baseUrl 仍要落库，否则换默认时又缺键
     assert.equal(patch[`${LLM_SETTING_KEYS.baseUrlPrefix}openai`], 'https://api.deepseek.com/v1');
@@ -1996,8 +2160,16 @@ describe('保存后 daemon 读得到（键对齐）', () => {
 
   test('★ 改当前默认 provider 的模型，defaultModelId 必须跟着变', () => {
     const edited = { ...provider, model: 'deepseek-reasoner' };
-    const patch = buildLlmSettingsPatch({ providers: [provider], provider: edited, activeId: 'deepseek' });
-    assert.equal(patch[LLM_SETTING_KEYS.defaultModelId], 'deepseek-reasoner', '否则会用着上一个模型名');
+    const patch = buildLlmSettingsPatch({
+      providers: [provider],
+      provider: edited,
+      activeId: 'deepseek',
+    });
+    assert.equal(
+      patch[LLM_SETTING_KEYS.defaultModelId],
+      'deepseek-reasoner',
+      '否则会用着上一个模型名',
+    );
   });
 
   test('★ 分档配置写的键就是 daemon 读的 llm.purposes', () => {
@@ -2015,7 +2187,10 @@ describe('保存后 daemon 读得到（键对齐）', () => {
     const r = await render(<LlmSettingsSection />);
     await r.flush();
     const eff = r.container.querySelector('[data-testid="llm-effective"]')?.textContent ?? '';
-    assert.ok(eff.includes('未生效'), `清单里有 provider 但缺 default* 键时必须显示未生效，实际：${eff}`);
+    assert.ok(
+      eff.includes('未生效'),
+      `清单里有 provider 但缺 default* 键时必须显示未生效，实际：${eff}`,
+    );
     r.unmount();
   });
 });
@@ -2059,7 +2234,14 @@ describe('LLM 服务商与模型：单一数据源', () => {
       'GET /settings': {
         settings: {
           'llm.providers': [
-            { id: 'deepseek', kind: 'openai-compatible', label: 'DeepSeek', baseUrl: 'u', model: 'my-custom-model', isLocal: false },
+            {
+              id: 'deepseek',
+              kind: 'openai-compatible',
+              label: 'DeepSeek',
+              baseUrl: 'u',
+              model: 'my-custom-model',
+              isLocal: false,
+            },
           ],
           'llm.defaultProviderId': 'deepseek',
           'llm.defaultModelId': 'my-custom-model',
@@ -2080,7 +2262,14 @@ describe('LLM 服务商与模型：单一数据源', () => {
   test('★ 两个区块的候选来自同一个 modelsFor —— 不许那边有这边没有', async () => {
     const settings = {
       'llm.providers': [
-        { id: 'deepseek', kind: 'openai-compatible', label: 'DeepSeek', baseUrl: 'u', model: 'deepseek-reasoner', isLocal: false },
+        {
+          id: 'deepseek',
+          kind: 'openai-compatible',
+          label: 'DeepSeek',
+          baseUrl: 'u',
+          model: 'deepseek-reasoner',
+          isLocal: false,
+        },
       ],
       'llm.defaultProviderId': 'deepseek',
       'llm.defaultModelId': 'deepseek-reasoner',
@@ -2133,7 +2322,14 @@ function modelOptions(c: HTMLElement, testId: string): string[] {
 describe('LLM 模型选择：真下拉（T-126）', () => {
   const settingsWith = (model: string, bindings?: Record<string, unknown>) => ({
     'llm.providers': [
-      { id: 'deepseek', kind: 'openai-compatible', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model, isLocal: false },
+      {
+        id: 'deepseek',
+        kind: 'openai-compatible',
+        label: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com/v1',
+        model,
+        isLocal: false,
+      },
     ],
     'llm.defaultProviderId': 'deepseek',
     'llm.defaultModelId': model,
@@ -2148,7 +2344,10 @@ describe('LLM 模型选择：真下拉（T-126）', () => {
 
     const a = await render(<PurposeBindingsSection />);
     await a.flush();
-    assert.ok(a.container.querySelector('select[data-testid="purpose-chat-model"]'), '分档配置的模型必须是下拉');
+    assert.ok(
+      a.container.querySelector('select[data-testid="purpose-chat-model"]'),
+      '分档配置的模型必须是下拉',
+    );
     assert.equal(a.container.querySelectorAll('datalist').length, 0, '不许再有 datalist');
     a.unmount();
 
@@ -2156,7 +2355,10 @@ describe('LLM 模型选择：真下拉（T-126）', () => {
     await b.flush();
     await click(buttonByText(b.container, '编辑'));
     await b.flush();
-    assert.ok(b.container.querySelector('select[data-testid="llm-model-select"]'), '「AI 模型」的模型必须是下拉');
+    assert.ok(
+      b.container.querySelector('select[data-testid="llm-model-select"]'),
+      '「AI 模型」的模型必须是下拉',
+    );
     assert.equal(b.container.querySelectorAll('datalist').length, 0, '不许再有 datalist');
     b.unmount();
   });
@@ -2164,7 +2366,10 @@ describe('LLM 模型选择：真下拉（T-126）', () => {
   test('★ 两处复用同一个组件 —— 不许各写一遍（用户："该统一和复用的地方要统一复用"）', async () => {
     const a = await readSource('components/common/llm/LlmSettingsSection.tsx');
     const b = await readSource('components/common/llm/PurposeBindingsSection.tsx');
-    for (const [name, src] of [['LlmSettingsSection', a], ['PurposeBindingsSection', b]] as const) {
+    for (const [name, src] of [
+      ['LlmSettingsSection', a],
+      ['PurposeBindingsSection', b],
+    ] as const) {
       assert.ok(src.includes('LlmModelSelect'), `${name} 必须复用共享的 LlmModelSelect`);
       assert.ok(!src.includes('<datalist'), `${name} 里还留着 datalist 自由输入`);
     }
@@ -2183,7 +2388,10 @@ describe('LLM 模型选择：真下拉（T-126）', () => {
     const r = await render(<PurposeBindingsSection />);
     await r.flush();
     const opts = modelOptions(r.container, 'purpose-chat-model');
-    assert.ok(opts.includes('deepseek-v4-flash'), `目录里的型号必须进候选，实际：${JSON.stringify(opts)}`);
+    assert.ok(
+      opts.includes('deepseek-v4-flash'),
+      `目录里的型号必须进候选，实际：${JSON.stringify(opts)}`,
+    );
     assert.ok(opts.includes('deepseek-reasoner'), '目录里的其余型号也要在');
     r.unmount();
   });
@@ -2192,7 +2400,10 @@ describe('LLM 模型选择：真下拉（T-126）', () => {
     assert.ok((catalogProviderFor('anthropic')?.models.length ?? 0) > 0, 'anthropic → claude');
     assert.ok((catalogProviderFor('zhipu')?.models.length ?? 0) > 0, 'zhipu → zhipuai');
     assert.ok((catalogProviderFor('dashscope')?.models.length ?? 0) > 0, 'dashscope → qwen');
-    assert.ok((catalogProviderFor('siliconflow')?.models.length ?? 0) > 0, 'siliconflow → siliconcloud');
+    assert.ok(
+      (catalogProviderFor('siliconflow')?.models.length ?? 0) > 0,
+      'siliconflow → siliconcloud',
+    );
     // 不在目录里的一律回 undefined —— 不编一个"看起来像"的
     assert.equal(catalogProviderFor('my-own-gateway'), undefined);
   });
@@ -2227,7 +2438,9 @@ describe('LLM 模型选择：真下拉（T-126）', () => {
     const r = await render(<PurposeBindingsSection />);
     await r.flush();
 
-    const sel = r.container.querySelector('select[data-testid="purpose-chat-model"]') as HTMLSelectElement;
+    const sel = r.container.querySelector(
+      'select[data-testid="purpose-chat-model"]',
+    ) as HTMLSelectElement;
     const values = [...sel.querySelectorAll('option')].map((o) => (o as HTMLOptionElement).value);
     assert.equal(values.at(-1), '__custom__', '「自定义…」必须是最后一项');
     assert.equal(
@@ -2262,9 +2475,13 @@ describe('LLM 模型选择：真下拉（T-126）', () => {
     const r = await render(<PurposeBindingsSection />);
     await r.flush();
 
-    const sel = r.container.querySelector('select[data-testid="purpose-chat-model"]') as HTMLSelectElement;
+    const sel = r.container.querySelector(
+      'select[data-testid="purpose-chat-model"]',
+    ) as HTMLSelectElement;
     assert.equal(sel.value, '__custom__', '不认识的值必须落到自定义模式，而不是被显示成空');
-    const box = r.container.querySelector('[data-testid="purpose-chat-model-custom"]') as HTMLInputElement;
+    const box = r.container.querySelector(
+      '[data-testid="purpose-chat-model-custom"]',
+    ) as HTMLInputElement;
     assert.ok(box, '必须出现文本框把原值托住');
     assert.equal(box.value, 'gateway/未来的型号-v9', '原值必须一个字符都不改');
     r.unmount();
@@ -2292,7 +2509,14 @@ describe('LLM 模型选择：真下拉（T-126）', () => {
       'GET /settings': {
         settings: {
           'llm.providers': [
-            { id: 'deepseek', kind: 'openai-compatible', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', isLocal: false },
+            {
+              id: 'deepseek',
+              kind: 'openai-compatible',
+              label: 'DeepSeek',
+              baseUrl: 'https://api.deepseek.com/v1',
+              model: 'deepseek-chat',
+              isLocal: false,
+            },
           ],
           'llm.defaultProviderId': 'deepseek',
           'llm.defaultModelId': 'deepseek-v4-flash',
@@ -2307,7 +2531,9 @@ describe('LLM 模型选择：真下拉（T-126）', () => {
     // 表单的型号初值必须是**权威值**，不是 providers[].model —— 否则同屏自相矛盾
     await click(buttonByText(r.container, '编辑'));
     await r.flush();
-    const sel = r.container.querySelector('select[data-testid="llm-model-select"]') as HTMLSelectElement;
+    const sel = r.container.querySelector(
+      'select[data-testid="llm-model-select"]',
+    ) as HTMLSelectElement;
     assert.equal(
       sel.value,
       'deepseek-v4-flash',
@@ -2328,7 +2554,11 @@ describe('LLM 模型选择：真下拉（T-126）', () => {
     );
     // 顺带：记忆值被更新成权威值（是用户显式点了确定的结果，不是隐藏同步）
     const savedProviders = body['llm.providers'] as Array<{ id: string; model: string }>;
-    assert.equal(savedProviders[0]!.model, 'deepseek-v4-flash', '记忆值应向权威值靠拢，而不是反过来');
+    assert.equal(
+      savedProviders[0]!.model,
+      'deepseek-v4-flash',
+      '记忆值应向权威值靠拢，而不是反过来',
+    );
     r.unmount();
   });
 
@@ -2344,23 +2574,38 @@ describe('LLM 模型选择：真下拉（T-126）', () => {
       'GET /settings': {
         settings: {
           'llm.providers': [
-            { id: 'deepseek', kind: 'openai-compatible', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', isLocal: false },
+            {
+              id: 'deepseek',
+              kind: 'openai-compatible',
+              label: 'DeepSeek',
+              baseUrl: 'https://api.deepseek.com/v1',
+              model: 'deepseek-chat',
+              isLocal: false,
+            },
           ],
           'llm.defaultProviderId': 'deepseek',
           'llm.defaultModelId': 'deepseek-v4-flash',
         },
       },
-      'GET /secrets': { secrets: [{ key: 'llm.deepseek.apiKey', masked: 'sk-b…0e11', enc: 'plain', updatedAt: 1 }], disclosure: null },
+      'GET /secrets': {
+        secrets: [{ key: 'llm.deepseek.apiKey', masked: 'sk-b…0e11', enc: 'plain', updatedAt: 1 }],
+        disclosure: null,
+      },
     });
     const r = await render(<LlmSettingsSection />);
     await r.flush();
 
     const eff = r.container.querySelector('[data-testid="llm-effective"]')?.textContent ?? '';
-    assert.ok(eff.includes('deepseek-v4-flash'), `当前生效必须仍是 deepseek-v4-flash，实际：${eff}`);
+    assert.ok(
+      eff.includes('deepseek-v4-flash'),
+      `当前生效必须仍是 deepseek-v4-flash，实际：${eff}`,
+    );
 
     await click(buttonByText(r.container, '编辑'));
     await r.flush();
-    const sel = r.container.querySelector('select[data-testid="llm-model-select"]') as HTMLSelectElement;
+    const sel = r.container.querySelector(
+      'select[data-testid="llm-model-select"]',
+    ) as HTMLSelectElement;
     assert.equal(sel.value, 'deepseek-v4-flash', '表单必须选中权威值，且绝不许变空');
     const values = [...sel.querySelectorAll('option')].map((o) => (o as HTMLOptionElement).value);
     assert.ok(values.includes('deepseek-chat'), '这家"上次选的型号"也不许从候选里消失');
@@ -2524,12 +2769,30 @@ describe('D-10 不变量', () => {
 
   test('★ INV-1：按用途分档的服务商下拉 ⊆ 已配置服务商清单', async () => {
     const providers = [
-      { id: 'deepseek', kind: 'openai-compatible', label: 'DeepSeek', baseUrl: 'u', model: 'm1', isLocal: false },
-      { id: 'openai', kind: 'openai-compatible', label: 'OpenAI', baseUrl: 'u2', model: 'm2', isLocal: false },
+      {
+        id: 'deepseek',
+        kind: 'openai-compatible',
+        label: 'DeepSeek',
+        baseUrl: 'u',
+        model: 'm1',
+        isLocal: false,
+      },
+      {
+        id: 'openai',
+        kind: 'openai-compatible',
+        label: 'OpenAI',
+        baseUrl: 'u2',
+        model: 'm2',
+        isLocal: false,
+      },
     ];
     stubApi({
       'GET /settings': {
-        settings: { 'llm.providers': providers, 'llm.defaultProviderId': 'deepseek', 'llm.defaultModelId': 'm1' },
+        settings: {
+          'llm.providers': providers,
+          'llm.defaultProviderId': 'deepseek',
+          'llm.defaultModelId': 'm1',
+        },
       },
       'GET /secrets': { secrets: [], disclosure: null },
     });
@@ -2830,7 +3093,9 @@ describe('T-129 `**强调**` 不许把裸 Markdown 吐给用户', () => {
     ]);
     // 两段强调，中间那段不许被吞成一整块
     assert.deepEqual(
-      splitEmphasis('a**b**c**d**e').filter((p) => p.strong).map((p) => p.text),
+      splitEmphasis('a**b**c**d**e')
+        .filter((p) => p.strong)
+        .map((p) => p.text),
       ['b', 'd'],
     );
     // 未闭合：原样保留，宁可显示一个星号也不要吃掉半句话
@@ -2939,10 +3204,7 @@ describe('T-129 侧栏「星标」筛选', () => {
       '「星标」点进去和「全部笔记」一模一样 —— starred 查询参数没有被读',
     );
     assert.ok(text(starred.container).includes('starred one'));
-    assert.ok(
-      !text(starred.container).includes('plain one'),
-      '未加星的笔记不该出现在星标列表里',
-    );
+    assert.ok(!text(starred.container).includes('plain one'), '未加星的笔记不该出现在星标列表里');
     starred.unmount();
   });
 
@@ -2981,7 +3243,10 @@ describe('T-129 侧栏「星标」筛选', () => {
     const s = stubApi({
       '/notes': NOTES,
       '/notes?starred=1': STARRED_ONLY,
-      'PUT /notes/01AAAAAAAAAAAAAAAAAAAAAAAA/star': { uid: '01AAAAAAAAAAAAAAAAAAAAAAAA', starred: false },
+      'PUT /notes/01AAAAAAAAAAAAAAAAAAAAAAAA/star': {
+        uid: '01AAAAAAAAAAAAAAAAAAAAAAAA',
+        starred: false,
+      },
     });
     const r = await render(<NotesListPage />, { route: '/notes?starred=1' });
     await r.flush();
@@ -2994,7 +3259,10 @@ describe('T-129 侧栏「星标」筛选', () => {
     await click(r.container.querySelector('button[aria-pressed="true"]'));
     await r.flush();
     const put = s.calls.find((c) => c.method === 'PUT');
-    assert.ok(put, `星标按钮没有发出任何写请求（实际请求：${JSON.stringify(s.calls.map((c) => `${c.method} ${c.path}`))}）`);
+    assert.ok(
+      put,
+      `星标按钮没有发出任何写请求（实际请求：${JSON.stringify(s.calls.map((c) => `${c.method} ${c.path}`))}）`,
+    );
     assert.equal(put!.path, '/notes/01AAAAAAAAAAAAAAAAAAAAAAAA/star');
     assert.deepEqual(put!.body, { starred: false }, '点的是已加星的那条，应该是取消星标');
     r.unmount();
@@ -3219,19 +3487,30 @@ describe('T-132 组件与来源页', () => {
       messages.push(String(m ?? ''));
       return answer;
     };
-    return { messages, restore: () => { w.confirm = prev; } };
+    return {
+      messages,
+      restore: () => {
+        w.confirm = prev;
+      },
+    };
   }
 
   test('★ 更新确认框不许承诺"可以一键回滚"—— 那件事在代码里被保证永远做不到', async () => {
     const cap = captureConfirm(false);
     try {
-      stubApi({ '/components': { components: [INSTALLED_WITH_UPDATE], online: false, checkedAt: null } });
+      stubApi({
+        '/components': { components: [INSTALLED_WITH_UPDATE], online: false, checkedAt: null },
+      });
       const r = await render(<ComponentsPage />);
       await r.flush();
       await click(r.container.querySelector('[data-testid="component-update-ytdlp-linux-x64"]'));
       await r.flush();
 
-      assert.equal(cap.messages.length, 1, `确认框没被调用（拿到 ${cap.messages.length} 次）—— 这条用例就什么都没验`);
+      assert.equal(
+        cap.messages.length,
+        1,
+        `确认框没被调用（拿到 ${cap.messages.length} 次）—— 这条用例就什么都没验`,
+      );
       const msg = cap.messages[0] as string;
       assert.equal(
         /回滚/.test(msg),
@@ -3354,7 +3633,9 @@ const EMPHASIS_REGISTRY: Record<string, string[]> = {
 describe('T-129b 写了 `**` 就必须有人渲染它', () => {
   const flat = (o: unknown, p = ''): [string, string][] =>
     typeof o === 'object' && o !== null
-      ? Object.entries(o as Record<string, unknown>).flatMap(([k, v]) => flat(v, p ? `${p}.${k}` : k))
+      ? Object.entries(o as Record<string, unknown>).flatMap(([k, v]) =>
+          flat(v, p ? `${p}.${k}` : k),
+        )
       : [[p, String(o)]];
 
   /*
@@ -3445,7 +3726,9 @@ describe('T-129b 写了 `**` 就必须有人渲染它', () => {
 
   test('★ title= 这类属性位置只能脱标记：tooltip 里绝不许出现星号', async () => {
     const r = await render(
-      <WordLevelBadge segments={[{ seq: 0, startMs: 0, endMs: 1000, text: 'x', words: [] } as never]} />,
+      <WordLevelBadge
+        segments={[{ seq: 0, startMs: 0, endMs: 1000, text: 'x', words: [] } as never]}
+      />,
     );
     const badge = r.container.querySelector('span[title]');
     assert.ok(badge, '徽标没渲染出来');
@@ -3490,7 +3773,12 @@ describe('T-129b /runtime 不许中英混排', () => {
           disks: [{ path: '/tmp/stub', pathFor: 'models_root', freeMB: 10000, totalMB: 50000 }],
           backends: [
             { id: 'cpu', installed: true, available: true, unavailableReason: null },
-            { id: 'cuda', installed: false, available: false, unavailableReason: 'probe not found' },
+            {
+              id: 'cuda',
+              installed: false,
+              available: false,
+              unavailableReason: 'probe not found',
+            },
           ],
           selectedBackend: 'cpu',
         },
@@ -3564,11 +3852,7 @@ describe('T-129b /runtime 不许中英混排', () => {
       const shown = text(r.container);
       assert.ok(shown.length > 0, '页面应渲染出内容');
       const bad = shown.match(new RegExp(`.{0,24}${CJK.source}.{0,24}`, 'g'));
-      assert.equal(
-        bad,
-        null,
-        `英文界面上出现了硬编码中文 → ${JSON.stringify(bad?.slice(0, 4))}`,
-      );
+      assert.equal(bad, null, `英文界面上出现了硬编码中文 → ${JSON.stringify(bad?.slice(0, 4))}`);
       r.unmount();
     } finally {
       await i18nInstance.changeLanguage('zh-CN');
@@ -3645,12 +3929,18 @@ describe('T-135 ① 安全上下文：逐项说明必须真的渲染出来', () 
   }
   function restore() {
     for (const [k, v] of Object.entries(saved)) {
-      Object.defineProperty(k === 'isSecureContext' ? win : nav, k, { value: v, configurable: true });
+      Object.defineProperty(k === 'isSecureContext' ? win : nav, k, {
+        value: v,
+        configurable: true,
+      });
     }
   }
 
   const HEALTHY = {
-    'GET /health': { db: { extensions: { libsimple: true, sqliteVec: true } }, pipeline: { missing: [] } },
+    'GET /health': {
+      db: { extensions: { libsimple: true, sqliteVec: true } },
+      pipeline: { missing: [] },
+    },
   };
 
   /** 展开横幅，返回明细区。 */
@@ -3811,7 +4101,11 @@ describe('T-135 ② 数据目录用途：daemon 必须给成对的 purpose / pur
       assert.ok(box, '目录清单没渲染 —— 前提不成立');
       const shown = text(box);
       const bad = shown.match(new RegExp(`.{0,24}${CJK.source}.{0,24}`, 'g'));
-      assert.equal(bad, null, `英文界面上出现了 daemon 下发的中文 → ${JSON.stringify(bad?.slice(0, 3))}`);
+      assert.equal(
+        bad,
+        null,
+        `英文界面上出现了 daemon 下发的中文 → ${JSON.stringify(bad?.slice(0, 3))}`,
+      );
       assert.ok(shown.includes('Runtime logs'), `英文用途没渲染出来：${shown}`);
       r.unmount();
     } finally {
@@ -3852,7 +4146,10 @@ describe('T-135 ② 数据目录用途：daemon 必须给成对的 purpose / pur
       const box = r.container.querySelector<HTMLElement>('[data-testid="data-dir-layout"]');
       assert.ok(box, '目录清单没渲染 —— 前提不成立');
       const shown = text(box);
-      assert.ok(shown.includes('运行日志'), `缺英文时必须回落到中文，实际：${JSON.stringify(shown)}`);
+      assert.ok(
+        shown.includes('运行日志'),
+        `缺英文时必须回落到中文，实际：${JSON.stringify(shown)}`,
+      );
       r.unmount();
     } finally {
       await i18nInstance.changeLanguage('zh-CN');
@@ -3870,10 +4167,7 @@ describe('T-135 ② 数据目录用途：daemon 必须给成对的 purpose / pur
       /^import \{[^}]*\bpickLocalized\b[^}]*\} from '[^']*\/localized';$/m.test(src),
       '没有 import pickLocalized',
     );
-    assert.ok(
-      !/\{e\.purposeZh\}/.test(src),
-      '仍有地方直接渲染 e.purposeZh —— 英文界面会退回中文',
-    );
+    assert.ok(!/\{e\.purposeZh\}/.test(src), '仍有地方直接渲染 e.purposeZh —— 英文界面会退回中文');
   });
 });
 
@@ -3962,7 +4256,9 @@ describe('数据目录：意图无损 + 结果如实', () => {
       ['zh-CN', zhLocale],
       ['en', enLocale],
     ] as const) {
-      const d = (loc as unknown as Record<string, Record<string, Record<string, string>>>)['settings']?.['dataDir'];
+      const d = (loc as unknown as Record<string, Record<string, Record<string, string>>>)[
+        'settings'
+      ]?.['dataDir'];
       for (const k of ['resultMoved', 'resultPointed', 'externalTitle']) {
         assert.ok((d?.[k] ?? '').length > 0, `${lang} 缺 settings.dataDir.${k}`);
       }
@@ -4015,9 +4311,16 @@ describe('数据目录：意图无损 + 结果如实', () => {
       ['zh-CN', zhLocale],
       ['en', enLocale],
     ] as const) {
-      const d = (loc as unknown as Record<string, Record<string, Record<string, string>>>)['settings']?.['dataDir'];
+      const d = (loc as unknown as Record<string, Record<string, Record<string, string>>>)[
+        'settings'
+      ]?.['dataDir'];
       const joined = `${d?.['perDirNote'] ?? ''}\n${d?.['sizeScopeNote'] ?? ''}`;
-      for (const lie of ['尚未逐目录统计', '暂无整目录统计接口', 'does not yet measure', 'no whole-directory size endpoint']) {
+      for (const lie of [
+        '尚未逐目录统计',
+        '暂无整目录统计接口',
+        'does not yet measure',
+        'no whole-directory size endpoint',
+      ]) {
         assert.ok(
           !joined.includes(lie),
           `${lang} 的说明里还写着「${lie}」—— 而界面同一屏上正显示着这些数字`,
@@ -4092,9 +4395,7 @@ describe('T-135 ③ 组件卡片：displayNameZh 是两份里的一份，不是�
       stubApi({ '/components': { components: [COMP], online: false, checkedAt: null } });
       const r = await render(<ComponentsPage />);
       await r.flush();
-      const h3 = r.container.querySelector(
-        '[data-testid="component-card-libsimple-linux-x64"] h3',
-      );
+      const h3 = r.container.querySelector('[data-testid="component-card-libsimple-linux-x64"] h3');
       assert.ok(h3, '组件卡片没渲染出来 —— 前提不成立');
       assert.equal(
         h3.textContent,
@@ -4160,7 +4461,9 @@ describe('T-138 ① 思维导图的生成入口', () => {
     const r = await render(<GenerateMindmapButton noteUid={NOTE} />);
     await r.flush();
 
-    const btn = r.container.querySelector('[data-testid="generate-mindmap"]') as HTMLButtonElement | null;
+    const btn = r.container.querySelector(
+      '[data-testid="generate-mindmap"]',
+    ) as HTMLButtonElement | null;
     assert.ok(btn, 'F4 是章程点名的功能之一，界面上必须有地方能触发它');
     assert.equal(btn!.hasAttribute('disabled'), false, '没有任务在跑时按钮应该是可点的');
     assert.ok(text(r.container).includes(zhMindmap.generate));
@@ -4172,7 +4475,11 @@ describe('T-138 ① 思维导图的生成入口', () => {
       post,
       `点了生成按钮但一个写请求都没发出去（实际请求：${JSON.stringify(s.calls.map((c) => `${c.method} ${c.path}`))}）`,
     );
-    assert.equal(post!.path, `/notes/${NOTE}/mindmap`, '路径必须是 daemon 真实存在的那条（content.ts:310）');
+    assert.equal(
+      post!.path,
+      `/notes/${NOTE}/mindmap`,
+      '路径必须是 daemon 真实存在的那条（content.ts:310）',
+    );
     r.unmount();
   });
 
@@ -4187,7 +4494,18 @@ describe('T-138 ① 思维导图的生成入口', () => {
     let posted = false;
     stubApi({
       '/jobs': () => ({
-        jobs: posted ? [pipelineJob({ noteUid: NOTE, kind: 'mindmap', type: 'mindmap', state: 'queued', step: null, progress: 0 })] : [],
+        jobs: posted
+          ? [
+              pipelineJob({
+                noteUid: NOTE,
+                kind: 'mindmap',
+                type: 'mindmap',
+                state: 'queued',
+                step: null,
+                progress: 0,
+              }),
+            ]
+          : [],
         concurrencyLimit: 2,
       }),
       [`POST /notes/${NOTE}/mindmap`]: () => {
@@ -4213,7 +4531,15 @@ describe('T-138 ① 思维导图的生成入口', () => {
     // 全新挂载 + 从没点过：只要服务端说这条笔记有一条导图任务在跑，就得显示"正在生成"
     stubApi({
       '/jobs': {
-        jobs: [pipelineJob({ noteUid: NOTE, kind: 'mindmap', type: 'mindmap', state: 'running', step: 'structure' })],
+        jobs: [
+          pipelineJob({
+            noteUid: NOTE,
+            kind: 'mindmap',
+            type: 'mindmap',
+            state: 'running',
+            step: 'structure',
+          }),
+        ],
         concurrencyLimit: 2,
       },
     });
@@ -4235,7 +4561,12 @@ describe('T-138 ① 思维导图的生成入口', () => {
           // 同一条笔记，但那是转写任务
           pipelineJob({ noteUid: NOTE, kind: 'transcribe' }),
           // 导图任务，但那是别人的笔记
-          pipelineJob({ jobId: 'job_2', noteUid: '01BBBBBBBBBBBBBBBBBBBBBBBB', kind: 'mindmap', type: 'mindmap' }),
+          pipelineJob({
+            jobId: 'job_2',
+            noteUid: '01BBBBBBBBBBBBBBBBBBBBBBBB',
+            kind: 'mindmap',
+            type: 'mindmap',
+          }),
         ],
         concurrencyLimit: 2,
       },
@@ -4268,7 +4599,8 @@ describe('T-138 ① 思维导图的生成入口', () => {
     await r.flush();
     const t = text(r.container);
     assert.ok(t.includes(zhMindmap.generateBlocked), `没说它被挂起了（实际：${t}）`);
-    const reason = (zhLocale as unknown as { mindmap: { blocked: Record<string, string> } }).mindmap.blocked;
+    const reason = (zhLocale as unknown as { mindmap: { blocked: Record<string, string> } }).mindmap
+      .blocked;
     assert.ok(
       t.includes(reason['LLM_NOT_CONFIGURED']!),
       `没说原因（实际：${t}）—— 一个不说为什么的禁用按钮和坏了没有区别`,
@@ -4280,7 +4612,16 @@ describe('T-138 ① 思维导图的生成入口', () => {
   test('★ 认不出的 blockedCode 回落到通用说法，不许渲染成空白', async () => {
     stubApi({
       '/jobs': {
-        jobs: [pipelineJob({ noteUid: NOTE, kind: 'mindmap', type: 'mindmap', state: 'blocked', step: null, blockedCode: 'SOMETHING_NEW' })],
+        jobs: [
+          pipelineJob({
+            noteUid: NOTE,
+            kind: 'mindmap',
+            type: 'mindmap',
+            state: 'blocked',
+            step: null,
+            blockedCode: 'SOMETHING_NEW',
+          }),
+        ],
         concurrencyLimit: 2,
       },
     });
@@ -4288,7 +4629,8 @@ describe('T-138 ① 思维导图的生成入口', () => {
     await r.flush();
     const hint = r.container.querySelector('[data-testid="generate-mindmap-blocked"]');
     assert.equal(!!hint, true, '认不出的 code 让提示整块消失了');
-    const reason = (zhLocale as unknown as { mindmap: { blocked: Record<string, string> } }).mindmap.blocked;
+    const reason = (zhLocale as unknown as { mindmap: { blocked: Record<string, string> } }).mindmap
+      .blocked;
     assert.equal(hint!.textContent, reason['UNKNOWN']);
     r.unmount();
   });
@@ -4300,10 +4642,7 @@ describe('T-138 ① 思维导图的生成入口', () => {
         /^import \{[^}]*\bGenerateMindmapButton\b[^}]*\} from '[^']+';$/m.test(src),
         `${rel} 没有 import GenerateMindmapButton —— 注释里提一句不算（T-129b 的教训）`,
       );
-      assert.ok(
-        /<GenerateMindmapButton\b/.test(src),
-        `${rel} import 了但没渲染 —— 用户仍然点不到`,
-      );
+      assert.ok(/<GenerateMindmapButton\b/.test(src), `${rel} import 了但没渲染 —— 用户仍然点不到`);
     }
   });
 
@@ -4375,7 +4714,10 @@ describe('T-138 ② 笔记进度行在真实响应下必须渲染', () => {
   test('★ 终态任务不算"在跑"（否则转写完了进度条还挂着）', async () => {
     stubApi({
       '/notes': NOTES,
-      '/jobs': { jobs: [pipelineJob({ noteUid: NOTE, state: 'succeeded', progress: 1 })], concurrencyLimit: 2 },
+      '/jobs': {
+        jobs: [pipelineJob({ noteUid: NOTE, state: 'succeeded', progress: 1 })],
+        concurrencyLimit: 2,
+      },
     });
     const r = await render(<NotesListPage />, { route: '/notes' });
     await r.flush();
@@ -4388,7 +4730,8 @@ describe('T-138 ② 笔记进度行在真实响应下必须渲染', () => {
      * 旧实现只读 `progressStore`（由 `job.progress` 喂养），所以就算补上 activeJobId，
      * queued / blocked 的任务仍然什么都不显示 —— 而那正是用户最想知道"它在等什么"的时刻。
      */
-    const zhState = (zhLocale as unknown as { progress: { state: Record<string, string> } }).progress.state;
+    const zhState = (zhLocale as unknown as { progress: { state: Record<string, string> } })
+      .progress.state;
     for (const [state, expected] of [
       ['queued', zhState['queued']!],
       ['blocked', zhState['blocked']!],
@@ -4502,8 +4845,20 @@ describe('T-138b 侧栏高亮不许在详情页上失灵', () => {
    */
   const FOLDERS = {
     folders: [
-      { uid: '01FOLDERAAAAAAAAAAAAAAAAAA', name: '课程', parentUid: null, color: null, noteCount: 2 },
-      { uid: '01FOLDERBBBBBBBBBBBBBBBBBB', name: '播客', parentUid: null, color: null, noteCount: 1 },
+      {
+        uid: '01FOLDERAAAAAAAAAAAAAAAAAA',
+        name: '课程',
+        parentUid: null,
+        color: null,
+        noteCount: 2,
+      },
+      {
+        uid: '01FOLDERBBBBBBBBBBBBBBBBBB',
+        name: '播客',
+        parentUid: null,
+        color: null,
+        noteCount: 1,
+      },
     ],
   };
 
@@ -4544,7 +4899,11 @@ describe('T-138b 侧栏高亮不许在详情页上失灵', () => {
 
   test('★ 兄弟文件夹不许跟着一起亮', async () => {
     const on = await wholeSidebarCurrent('/notes?folder=01FOLDERAAAAAAAAAAAAAAAAAA');
-    assert.equal(on.some((s) => s.startsWith('播客')), false, '另一个文件夹也被标成了当前页');
+    assert.equal(
+      on.some((s) => s.startsWith('播客')),
+      false,
+      '另一个文件夹也被标成了当前页',
+    );
   });
 
   test('★ 穷举：真实地址上**整条侧栏**高亮数永远 ≤ 1（含文件夹树）', async () => {
@@ -4582,7 +4941,11 @@ describe('T-138b 侧栏高亮不许在详情页上失灵', () => {
       '/capture',
     ]) {
       const on = await sidebarCurrent(route);
-      assert.equal(on.length <= 1, true, `${route} 上有 ${on.length} 项同时高亮：${JSON.stringify(on)}`);
+      assert.equal(
+        on.length <= 1,
+        true,
+        `${route} 上有 ${on.length} 项同时高亮：${JSON.stringify(on)}`,
+      );
     }
   });
 });
@@ -4610,7 +4973,9 @@ describe('T-138 ④ 文件夹筛选：链接的目的地不能是空的', () => 
   test('★ 点开文件夹要把 folder 交给端点 —— 此前这个查询串全仓无人读取', async () => {
     const s = stubApi({
       '/folders': FOLDERS,
-      '/notes': { notes: [NOTE, { ...NOTE, uid: '01BBBBBBBBBBBBBBBBBBBBBBBB', title: 'elsewhere' }] },
+      '/notes': {
+        notes: [NOTE, { ...NOTE, uid: '01BBBBBBBBBBBBBBBBBBBBBBBB', title: 'elsewhere' }],
+      },
       [`/notes?folder=${FOLDER}`]: { notes: [NOTE] },
     });
     const r = await render(<NotesListPage />, { route: `/notes?folder=${FOLDER}` });
@@ -4668,7 +5033,9 @@ describe('T-138 ④ 文件夹筛选：链接的目的地不能是空的', () => 
 
   test('★ 「含子孙」这件事要在界面上说出来，别让用户自己猜', async () => {
     // 裁决定的是含子孙；用户看到父级列出子级的笔记时，界面得先讲过这件事
-    const hint = (zhLocale as unknown as { notes: Record<string, string> }).notes['folderEmptyHint'];
+    const hint = (zhLocale as unknown as { notes: Record<string, string> }).notes[
+      'folderEmptyHint'
+    ];
     assert.ok(hint && /子文件夹/.test(hint), `文案没有交代"含子孙"：${String(hint)}`);
     const en = (enLocale as unknown as { notes: Record<string, string> }).notes['folderEmptyHint'];
     assert.ok(en && /sub-folder/i.test(en), `en 没有交代"含子孙"：${String(en)}`);
@@ -4719,7 +5086,8 @@ describe('T-157 ④ 下载源（镜像）', () => {
     stubApi({ '/models/sources': SOURCES });
     const r = await render(<SourcesSection locale="zh-CN" />);
     await r.flush();
-    const line = r.container.querySelector('[data-testid="models-sources-effective"]')?.textContent ?? '';
+    const line =
+      r.container.querySelector('[data-testid="models-sources-effective"]')?.textContent ?? '';
     assert.equal(
       line.includes('ModelScope'),
       true,
@@ -4733,8 +5101,10 @@ describe('T-157 ④ 下载源（镜像）', () => {
     stubApi({ '/models/sources': { ...SOURCES, effective: null, probes: [] } });
     const r = await render(<SourcesSection locale="zh-CN" />);
     await r.flush();
-    const line = r.container.querySelector('[data-testid="models-sources-effective"]')?.textContent ?? '';
-    const zhSources = (zhLocale as unknown as { models: { sources: Record<string, string> } }).models.sources;
+    const line =
+      r.container.querySelector('[data-testid="models-sources-effective"]')?.textContent ?? '';
+    const zhSources = (zhLocale as unknown as { models: { sources: Record<string, string> } })
+      .models.sources;
     assert.equal(line, zhSources['effectiveUnknown'], `没测过时说了别的话：${line}`);
     r.unmount();
   });
@@ -4759,7 +5129,9 @@ describe('T-157 ④ 下载源（镜像）', () => {
     assert.deepEqual(call?.body, { provider: 'hf-mirror' });
     // 选中态要真的跟着服务端的回执走，而不是本地自己记一份
     assert.equal(
-      r.container.querySelector('[data-testid="models-source-hf-mirror"]')?.getAttribute('aria-checked'),
+      r.container
+        .querySelector('[data-testid="models-source-hf-mirror"]')
+        ?.getAttribute('aria-checked'),
       'true',
     );
     r.unmount();
@@ -4798,7 +5170,10 @@ describe('T-157 ④ 下载源（镜像）', () => {
     const r = await render(<SourcesSection locale="zh-CN" />);
     await r.flush();
     assert.equal(r.container.querySelector('[data-testid="models-source-hf"]') === null, false);
-    assert.equal(r.container.querySelector('[data-testid="models-source-modelscope"]') === null, false);
+    assert.equal(
+      r.container.querySelector('[data-testid="models-source-modelscope"]') === null,
+      false,
+    );
     assert.equal(
       r.container.querySelector('[data-testid="models-source-hf-mirror"]') === null,
       true,
@@ -4839,7 +5214,10 @@ describe('T-157 ③ 笔记列表：一页装不下时', () => {
   });
 
   const PAGE1 = {
-    notes: [mkNote('01P1AAAAAAAAAAAAAAAAAAAAAA', '第一条'), mkNote('01P1BBBBBBBBBBBBBBBBBBBBBB', '第二条')],
+    notes: [
+      mkNote('01P1AAAAAAAAAAAAAAAAAAAAAA', '第一条'),
+      mkNote('01P1BBBBBBBBBBBBBBBBBBBBBB', '第二条'),
+    ],
     total: 3,
     limit: 2,
     offset: 0,
@@ -4854,7 +5232,11 @@ describe('T-157 ③ 笔记列表：一页装不下时', () => {
   };
 
   test('★ 点「加载更多」要真的带着 offset 去拿下一页，并把它接到列表后面', async () => {
-    const s = stubApi({ '/notes': PAGE1, '/notes?offset=2': PAGE2, '/jobs': { jobs: [], concurrencyLimit: 2 } });
+    const s = stubApi({
+      '/notes': PAGE1,
+      '/notes?offset=2': PAGE2,
+      '/jobs': { jobs: [], concurrencyLimit: 2 },
+    });
     const r = await render(<NotesListPage />, { route: '/notes' });
     await r.flush();
 
@@ -4903,7 +5285,11 @@ describe('T-157 ③ 笔记列表：一页装不下时', () => {
     await r.flush();
     assert.equal(r.container.querySelector('[data-testid="notes-load-more"]') === null, true);
     const footer = r.container.querySelector('[data-testid="notes-list-count"]')?.textContent ?? '';
-    assert.equal(footer.length > 0, true, '一页装得下时页脚也要说话，否则用户分不出"就这些"和"被截断了"');
+    assert.equal(
+      footer.length > 0,
+      true,
+      '一页装得下时页脚也要说话，否则用户分不出"就这些"和"被截断了"',
+    );
     r.unmount();
   });
 });
@@ -5065,7 +5451,9 @@ describe('T-140 ② ErrorBlock 自己就把补救渲染出来（不再要求调�
   test('普通错误（服务端没给 remediation）不许凭空长出一个按钮', async () => {
     stubApi({});
     const r = await render(
-      <ErrorBlock error={new ApiError(500, { code: 'BOOM', message: 'boom', messageZh: '炸了' })} />,
+      <ErrorBlock
+        error={new ApiError(500, { code: 'BOOM', message: 'boom', messageZh: '炸了' })}
+      />,
     );
     await r.flush();
     assert.equal(
@@ -5177,7 +5565,10 @@ describe('T-140 ③ 走产品真实路径：粘一个链接 → yt-dlp 缺失 �
     );
     await r.flush();
 
-    await type(r.container.querySelector('[data-testid="capture-url-input"]'), 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    await type(
+      r.container.querySelector('[data-testid="capture-url-input"]'),
+      'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    );
     await click(buttonByText(r.container, '开始'));
     await r.flush();
     await r.flush();
@@ -5366,7 +5757,12 @@ describe('T-150 ① /diagnostics 读 /api/selfcheck', () => {
       schemaVersion: 9,
       extensions: { libsimple: true, sqliteVec: true, tokenizer: 'simple' },
     },
-    pipeline: { missing: [], ffmpeg: '/x/ffmpeg', whisperCli: '/x/whisper-cli', vad: { chunking: 'vad' } },
+    pipeline: {
+      missing: [],
+      ffmpeg: '/x/ffmpeg',
+      whisperCli: '/x/whisper-cli',
+      vad: { chunking: 'vad' },
+    },
     scheduler: { running: 0 },
     sseClients: 1,
   };
@@ -5467,7 +5863,12 @@ describe('T-150 ① /diagnostics 读 /api/selfcheck', () => {
   test('★ 自检返回空集不算「一切正常」', async () => {
     const { r } = await renderDiagnostics({
       '/health': HEALTH,
-      '/selfcheck': { ok: true, ranAt: REPORT.ranAt, counts: { ok: 0, warn: 0, fail: 0 }, results: [] },
+      '/selfcheck': {
+        ok: true,
+        ranAt: REPORT.ranAt,
+        counts: { ok: 0, warn: 0, fail: 0 },
+        results: [],
+      },
     });
     assert.ok(
       !!r.container.querySelector('[data-testid="selfcheck-empty"]'),
@@ -5542,8 +5943,8 @@ describe('T-150 ② 服务商目录（D-10 #24 #26 #27 #28）', () => {
     await r.flush();
 
     const idsOf = (prefix: string) =>
-      [...r.container.querySelectorAll(`[data-testid^="${prefix}"]`)].map(
-        (el) => el.getAttribute('data-testid')!.slice(prefix.length),
+      [...r.container.querySelectorAll(`[data-testid^="${prefix}"]`)].map((el) =>
+        el.getAttribute('data-testid')!.slice(prefix.length),
       );
     const addable = idsOf('llm-add-');
     const explained = idsOf('llm-unsupported-');
@@ -6076,7 +6477,9 @@ describe('T-150 ② 服务商目录（D-10 #24 #26 #27 #28）', () => {
       `没说它报了几个模型（期望包含「${expectModels}」）→ ${row!.textContent}`,
     );
 
-    await click(r.container.querySelector('[data-testid="llm-detected-add-ollama"]') as HTMLElement);
+    await click(
+      r.container.querySelector('[data-testid="llm-detected-add-ollama"]') as HTMLElement,
+    );
     await r.flush();
 
     const patch = stub.calls.find((c) => c.method === 'PATCH' && c.path === '/settings');
@@ -6134,7 +6537,12 @@ describe('T-150 ② 转写 Tab 三分组（D-10 #9 #10 #29）', () => {
       engines: ['whisper.cpp'],
       totalSizeBytes: 1_000_000,
       catalogVersion: '2026.08.06',
-      license: { id: 'MIT', url: 'https://example.invalid', requiresAcceptance: false, gated: false },
+      license: {
+        id: 'MIT',
+        url: 'https://example.invalid',
+        requiresAcceptance: false,
+        gated: false,
+      },
       files: [{ name: 'a.bin', sha256: 'x'.repeat(64), sizeBytes: 1_000_000, optional: false }],
       requirements: { ramRequiredMB: 512, vramRequiredMB: 0, computedAtContext: null },
       fitness: {
@@ -6591,7 +6999,9 @@ describe('T-155 笔记的删除 / 重命名入口', () => {
 
     await click(r.container.querySelector('[data-testid="note-actions"]') as HTMLElement);
     await click(r.container.querySelector('[data-testid="note-rename"]') as HTMLElement);
-    const input = r.container.querySelector('[data-testid="note-rename-input"]') as HTMLInputElement;
+    const input = r.container.querySelector(
+      '[data-testid="note-rename-input"]',
+    ) as HTMLInputElement;
     assert.ok(input, '点重命名后应出现输入框');
     assert.equal(input.value, '一条笔记', '输入框初值必须是当前标题，否则用户得从零打一遍');
 
@@ -6612,7 +7022,9 @@ describe('T-155 笔记的删除 / 重命名入口', () => {
     const r = await render(<NoteActionsMenu note={NOTE} />);
     await click(r.container.querySelector('[data-testid="note-actions"]') as HTMLElement);
     await click(r.container.querySelector('[data-testid="note-rename"]') as HTMLElement);
-    const input = r.container.querySelector('[data-testid="note-rename-input"]') as HTMLInputElement;
+    const input = r.container.querySelector(
+      '[data-testid="note-rename-input"]',
+    ) as HTMLInputElement;
     await type(input, '   ');
     await pressKey(input, 'Enter');
     await r.flush();
@@ -6746,9 +7158,7 @@ describe('T-165 ①「不可用」的三档不许长成同一个样子', () => {
       inapplicableReason: reason,
       ...(kind === undefined ? {} : { inapplicableKind: kind }),
     });
-    const r = await render(
-      <BackendPackCard {...NOOP} pack={p as never} />,
-    );
+    const r = await render(<BackendPackCard {...NOOP} pack={p as never} />);
     return { r, shown: text(r.container) };
   }
 
@@ -6783,11 +7193,7 @@ describe('T-165 ①「不可用」的三档不许长成同一个样子', () => {
     const b = await renderKind('unsupported', 'R');
     const c = await renderKind('platform', 'R');
     const set = new Set([a.shown, b.shown, c.shown]);
-    assert.equal(
-      set.size,
-      3,
-      `三档里有两档在屏幕上长得一模一样 → ${JSON.stringify([...set])}`,
-    );
+    assert.equal(set.size, 3, `三档里有两档在屏幕上长得一模一样 → ${JSON.stringify([...set])}`);
     a.r.unmount();
     b.r.unmount();
     c.r.unmount();
@@ -6819,7 +7225,12 @@ describe('T-165 ①「不可用」的三档不许长成同一个样子', () => {
 describe('T-165 ②「推荐」徽章只在真的有得选时才出现', () => {
   /** `[实测 :10000]` 的形状：本机适用的包全是 cpu、全 recommended。 */
   const REAL_SHAPE = [
-    pack({ id: 'whispercpp-cpu-linux-x64', engine: 'whisper.cpp', installed: true, recommended: true }),
+    pack({
+      id: 'whispercpp-cpu-linux-x64',
+      engine: 'whisper.cpp',
+      installed: true,
+      recommended: true,
+    }),
     pack({
       id: 'whispercpp-vulkan-linux-x64',
       engine: 'whisper.cpp',
@@ -6880,7 +7291,12 @@ describe('T-165 ②「推荐」徽章只在真的有得选时才出现', () => {
   test('★ 接线：徽章只落在真有备选的那张卡上，另外四张一个都没有', async () => {
     stubApi({
       '/runtime/hardware': HW_LINUX_X64,
-      '/backends/catalog': { catalogVersion: 'v', source: 'bundled', stale: false, packs: REAL_SHAPE },
+      '/backends/catalog': {
+        catalogVersion: 'v',
+        source: 'bundled',
+        stale: false,
+        packs: REAL_SHAPE,
+      },
       '/backends/installed': { selectedBackend: 'cpu', packs: [] },
     });
     const r = await render(<RuntimePage />, { route: '/runtime' });
@@ -6904,8 +7320,7 @@ describe('T-165 ②「推荐」徽章只在真的有得选时才出现', () => {
       assert.equal(
         badged(id),
         false,
-        `${id} 在这台机器上只有一个包，「推荐」不回答任何问题 —— ` +
-          '这四张卡此前每张都戴着徽章',
+        `${id} 在这台机器上只有一个包，「推荐」不回答任何问题 —— ` + '这四张卡此前每张都戴着徽章',
       );
     }
     r.unmount();
@@ -7037,7 +7452,12 @@ describe('T-165 ③ 自检结果的三条 UI 分支真的会亮', () => {
       }),
       'POST /backends/selftest': () => {
         recorded = PASSED; // daemon 的 recordSelfTest() 写回 manifest 的那一步
-        return { status: 'ran', passed: true, recorded: true, recordedTo: 'whispercpp-cpu-linux-x64' };
+        return {
+          status: 'ran',
+          passed: true,
+          recorded: true,
+          recordedTo: 'whispercpp-cpu-linux-x64',
+        };
       },
     });
 
@@ -7088,10 +7508,7 @@ describe('T-165 ④ /diagnostics 得有一个常驻入口', () => {
     const nav = r.container.querySelector('nav');
     assert.ok(nav, '侧栏没渲染出来');
     const hrefs = [...nav!.querySelectorAll('a')].map((a) => a.getAttribute('href'));
-    assert.ok(
-      hrefs.includes('/diagnostics'),
-      `侧栏里没有诊断页入口 → ${JSON.stringify(hrefs)}`,
-    );
+    assert.ok(hrefs.includes('/diagnostics'), `侧栏里没有诊断页入口 → ${JSON.stringify(hrefs)}`);
 
     /*
      * 高亮是 `aria-current="page"`（SideLink 的实现）。
@@ -7161,7 +7578,11 @@ describe('T-165 ⑤ markmap 整块摘除，不许留半截', () => {
     }
     // 阳性对照：这个断言必须是在**真的检查一个活模块**，而不是在一个空对象上恒真
     assert.equal(typeof mod['toMindElixir'], 'function', '前提自检：mind-elixir 适配器应当还在');
-    assert.equal(typeof mod['toMarkdown'], 'function', '前提自检：导出端点用的 toMarkdown 不许被误删');
+    assert.equal(
+      typeof mod['toMarkdown'],
+      'function',
+      '前提自检：导出端点用的 toMarkdown 不许被误删',
+    );
   });
 
   test('★ 两份 locale 里都不许再有那条词条（留着它，下一个人会把它接回去）', () => {
@@ -7200,11 +7621,7 @@ describe('T-165 ⑤ markmap 整块摘除，不许留半截', () => {
     const r = await render(<MindmapView doc={doc as never} noteUid="01KZ47V1X2YB402JKD60KRHK98" />);
     await r.flush();
     const shown = text(r.container);
-    assert.equal(
-      shown.includes('大纲视图'),
-      false,
-      `界面又在提一个不存在的视图 → ${shown}`,
-    );
+    assert.equal(shown.includes('大纲视图'), false, `界面又在提一个不存在的视图 → ${shown}`);
     r.unmount();
   });
 });
@@ -7242,10 +7659,7 @@ describe('T-165b「跑通了」≠「加速用上了」', () => {
     onSelfTest: () => undefined,
   } as const;
 
-  async function card(
-    packOver: Record<string, unknown>,
-    selfTest: Record<string, unknown> | null,
-  ) {
+  async function card(packOver: Record<string, unknown>, selfTest: Record<string, unknown> | null) {
     const r = await render(
       <BackendPackCard
         {...CARD}
@@ -7328,11 +7742,7 @@ describe('T-165b「跑通了」≠「加速用上了」', () => {
       { passed, ranAt, devicesFound, rtf, errorMessage },
     );
     assert.ok(shown.includes('自检通过'), `枚举到设备就该说通过 → ${shown}`);
-    assert.equal(
-      shown.includes('实际用上的后端'),
-      false,
-      `没有这个字段却渲染了那一行 → ${shown}`,
-    );
+    assert.equal(shown.includes('实际用上的后端'), false, `没有这个字段却渲染了那一行 → ${shown}`);
     r.unmount();
   });
 
@@ -7376,9 +7786,7 @@ describe('T-172 ② 导图导出：四种结构化格式必须真的点得到', 
 
   const menu = async () => {
     stubApi({});
-    const r = await render(
-      <MindmapExportMenu noteUid={NOTE_UID} onExportImage={() => {}} />,
-    );
+    const r = await render(<MindmapExportMenu noteUid={NOTE_UID} onExportImage={() => {}} />);
     await r.flush();
     await click(buttonByText(r.container, '导出'));
     await r.flush();
@@ -7469,11 +7877,7 @@ describe('T-172 ② 导图导出：四种结构化格式必须真的点得到', 
     await click(buttonByText(r.container, '导出'));
     await r.flush();
 
-    assert.equal(
-      hrefs(r.container).length,
-      0,
-      'daemon 不可达时不该再给出可点的服务端导出链接',
-    );
+    assert.equal(hrefs(r.container).length, 0, 'daemon 不可达时不该再给出可点的服务端导出链接');
     // 阳性对照：图片那两个仍在 —— 否则这条用例只是在断言"菜单是空的"
     assert.ok(!!buttonByText(r.container, 'SVG'), 'SVG 不该跟着一起消失，它不经过 daemon');
     assert.ok(!!buttonByText(r.container, 'PNG'), 'PNG 不该跟着一起消失，它不经过 daemon');
@@ -7512,14 +7916,37 @@ describe('T-172 ③ 搜索结果点进去要跳到那一秒', () => {
       bodyJson: null,
       canRetranscribe: false,
       assets: [
-        { uid: 'asset-audio-1', role: 'audio16k', mime: 'audio/wav', bytes: 1, durationMs, state: 'ready' },
+        {
+          uid: 'asset-audio-1',
+          role: 'audio16k',
+          mime: 'audio/wav',
+          bytes: 1,
+          durationMs,
+          state: 'ready',
+        },
       ],
     },
     [`/notes/${UID}/transcript`]: {
-      transcript: { uid: 'tr1', engineId: 'whisper', modelId: null, language: 'zh', status: 'done', progress: 1, durationMs, rtf: null },
+      transcript: {
+        uid: 'tr1',
+        engineId: 'whisper',
+        modelId: null,
+        language: 'zh',
+        status: 'done',
+        progress: 1,
+        durationMs,
+        rtf: null,
+      },
       segments: [
         { seq: 0, startMs: 0, endMs: 5_000, text: '开场', speakerLabel: null, words: null },
-        { seq: 1, startMs: 754_000, endMs: 761_000, text: '这里说到成本', speakerLabel: null, words: null },
+        {
+          seq: 1,
+          startMs: 754_000,
+          endMs: 761_000,
+          text: '这里说到成本',
+          speakerLabel: null,
+          words: null,
+        },
       ],
     },
     [`/notes/${UID}/mindmap`]: { mindmap: null, doc: null },
@@ -7575,11 +8002,7 @@ describe('T-172 ③ 搜索结果点进去要跳到那一秒', () => {
 
   test('★ ①-a 音频要跳到命中的那一秒（这一格是"能跳"本身）', async () => {
     const r = await openAt(`?t=${HIT_MS}`);
-    assert.equal(
-      audioSeconds(r.container),
-      HIT_MS / 1000,
-      '音频没有跳到命中的那一秒',
-    );
+    assert.equal(audioSeconds(r.container), HIT_MS / 1000, '音频没有跳到命中的那一秒');
   });
 
   test('★ ①-b 元数据到达前那次 seek 若被浏览器丢掉，loadedmetadata 必须补回来', async () => {
@@ -7622,11 +8045,7 @@ describe('T-172 ③ 搜索结果点进去要跳到那一秒', () => {
     await new Promise((res) => setTimeout(res, 60)); // 放几帧过去
     await r.flush();
 
-    assert.equal(
-      getPositionMs(),
-      HIT_MS,
-      '待落的 seek 期间，转写稿的位置值被媒体的 0 盖掉了',
-    );
+    assert.equal(getPositionMs(), HIT_MS, '待落的 seek 期间，转写稿的位置值被媒体的 0 盖掉了');
   });
 
   test('★ ①-d 转写稿不必等音频加载：位置值当场就位', async () => {
@@ -7726,7 +8145,10 @@ describe('T-172 ③ 搜索结果点进去要跳到那一秒', () => {
     setPositionMs(0, { immediate: true });
 
     const qc = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 }, mutations: { retry: false } },
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0, staleTime: 0 },
+        mutations: { retry: false },
+      },
     });
     const r = await render(
       <Routes>
@@ -7787,8 +8209,6 @@ describe('T-172 ③ setSource 与待落 seek 的关系', () => {
     assert.equal(usePlayerStore.getState().seekRequest?.ms, 754_000);
   });
 });
-
-
 
 /* ═════════════ T-174/T-175 /runtime 断路器可见 + 「立刻重试」走恢复预算 ═════════════ */
 

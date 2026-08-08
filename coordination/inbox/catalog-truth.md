@@ -3,6 +3,7 @@
 ## [2026-08-06 14:35] T-149 DONE
 
 交付:
+
 - `vendor/manifests/models-asr-support.json`（删 2 处 `required-core`；+1 条实测 ModelScope 镜像）
 - `vendor/manifests/models-whisper.json`（+11 条实测 ModelScope 镜像，**纯追加**）
 - `vendor/manifests/README.md`（新增「`mirrors` 里多一条，不等于多一份冗余」一节）
@@ -18,13 +19,13 @@
 
 **它的语义是"没有语义"** —— 这是查出来的，不是推的：
 
-| 查了什么 | 结果 | 级别 |
-|---|---|---|
-| 谁消费这个标签 | **产品里零消费者**。daemon 只把 `tags` 原样透传（`state.ts:354`），网页只读 `recommended-default`（`ModelCard.tsx:52`）。**唯一的消费方是 `scripts/ci/cold-start-audit.mjs`** | 读源码 |
-| 界面上怎么呈现 | **根本不呈现**。`ModelsPage.tsx:112` 是 `.filter((g) => g.role === role)`，而第 68 行 `const role: ModelRole = 'asr'` 写死 —— `role='vad'` 的两个条目**在网页上一个都看不到**（D-10 #10 独立记过同一件事） | 读源码 |
-| 它标了什么 | 2 个模型，**全是 VAD，零个 ASR** | 清单实读 |
-| 装完能不能转写 | **不能**（`model.asr fail(required)`） | CI 实测（D-11 §7.3 #1） |
-| 「必需」这两个字今天还成立吗 | **不成立**。T-148 之后 VAD 缺失只让切分降级成固定窗口，转写照样出字 | 读源码（`vad.ts` / `vadStatus.ts` / `selfcheck.ts` 的 `required: false`） |
+| 查了什么                     | 结果                                                                                                                                                                                                       | 级别                                                                      |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 谁消费这个标签               | **产品里零消费者**。daemon 只把 `tags` 原样透传（`state.ts:354`），网页只读 `recommended-default`（`ModelCard.tsx:52`）。**唯一的消费方是 `scripts/ci/cold-start-audit.mjs`**                              | 读源码                                                                    |
+| 界面上怎么呈现               | **根本不呈现**。`ModelsPage.tsx:112` 是 `.filter((g) => g.role === role)`，而第 68 行 `const role: ModelRole = 'asr'` 写死 —— `role='vad'` 的两个条目**在网页上一个都看不到**（D-10 #10 独立记过同一件事） | 读源码                                                                    |
+| 它标了什么                   | 2 个模型，**全是 VAD，零个 ASR**                                                                                                                                                                           | 清单实读                                                                  |
+| 装完能不能转写               | **不能**（`model.asr fail(required)`）                                                                                                                                                                     | CI 实测（D-11 §7.3 #1）                                                   |
+| 「必需」这两个字今天还成立吗 | **不成立**。T-148 之后 VAD 缺失只让切分降级成固定窗口，转写照样出字                                                                                                                                        | 读源码（`vad.ts` / `vadStatus.ts` / `selfcheck.ts` 的 `required: false`） |
 
 所以它同时错在三处：**没人执行、用户看不见、内容也是假的**。
 
@@ -44,14 +45,17 @@
 $ curl -I https://hf-mirror.com/…/resolve/9ffd54a…/ggml-silero-v6.2.0.bin
 HTTP/2 308      location: https://huggingface.co/…      server: Caddy
 ```
+
 `/resolve/<40 位 sha>/`、`/resolve/main/`、`/api/models/`、仓库页 **四种路径全部 308**（比 vad-fix 多测了后两种）。
 **跟着跳过去落在哪** —— 这一条 vad-fix 没测，我补了：
+
 ```
 $ curl -L … -w 'final=%{url_effective} code=%{http_code} size=%{size_download}'
 final=https://huggingface.co/…   code=308   size=0
 $ curl -I https://huggingface.co/…
 curl: (28) Connection timed out after 20002 ms
 ```
+
 **端到端证实：跟着"备用来源"走，落在一个从这里够不到的主源上。冗余确实是 0。**
 
 ### ★ 但「冗余是 0」只在**境外出口**成立，所以删掉是错的
@@ -61,7 +65,9 @@ $ curl https://hf-mirror.com/            → HTTP 200，14 KB 页面
    <title>HF-Mirror</title>
    "加速访问Hugging Face的门户。…帮助国内用户无障碍访问 Hugging Face 的资源。"
 ```
+
 而 `packages/downloader/src/probe.ts` 开头的注释**早就写着**：
+
 > it 308-redirects **non-CN** traffic straight back to huggingface.co
 
 **这正是任务书点名的那条判据：「我拿不到那个文件」和「这里没有那个文件」是两回事。**
@@ -80,14 +86,15 @@ $ curl https://hf-mirror.com/            → HTTP 200，14 KB 页面
 **加了 12 条真镜像，每一条都实测过 sha256 逐字符相符**（不是按文件名匹配）：
 
 ```
-预言机可信度先验过：ModelScope files API 报 Sha256=2aa269b785… 
+预言机可信度先验过：ModelScope files API 报 Sha256=2aa269b785…
                     实下 885,098 B 后 sha256sum = 2aa269b785…   ← 逐字符相同
 ```
-| | 之前 | 之后 |
-|---|---|---|
-| 43 个文件里，**只有一个独立来源**的 | **29** | **17** |
-| `vad/silero-vad-ggml`（T-148 那份权重） | 只有 HF | **HF + ModelScope** |
-| 已有的 14 条 ModelScope 条目 | 未验过 | **14/14 全部 MATCH**（顺带查的，它们不是谎） |
+
+|                                         | 之前    | 之后                                         |
+| --------------------------------------- | ------- | -------------------------------------------- |
+| 43 个文件里，**只有一个独立来源**的     | **29**  | **17**                                       |
+| `vad/silero-vad-ggml`（T-148 那份权重） | 只有 HF | **HF + ModelScope**                          |
+| 已有的 14 条 ModelScope 条目            | 未验过  | **14/14 全部 MATCH**（顺带查的，它们不是谎） |
 
 **没找到可验证独立镜像的**：sherpa 三件套 / paraformer / 标点（ModelScope 上 `csukuangfj/*` 全部 `record not found`）。
 这 17 个文件**写进了守卫里当断言对象** —— 「我们知道这些文件没有备份」要写下来，不能靠没人发现。
@@ -140,6 +147,7 @@ sha256 逐字符相同（`2aa269b785…`，885,098 B，本机复核过）。**�
 —— 这正是任务书点名的那个陷阱，我踩了一次，记在这里。
 
 **R1 · 把 `required-core` 加回清单**（`grep` 确认：`models-asr-support.json:25,90` 命中）
+
 ```
 ✖ ★ 每个出现在清单里的标签，都必须在 TAG_MEANINGS 里写明含义
   AssertionError: 这些标签出现在目录里、却没有任何地方定义过它是什么意思 ——
@@ -149,6 +157,7 @@ sha256 逐字符相同（`2aa269b785…`，885,098 B，本机复核过）。**�
 
 **R2 · 一比一还原事故当天**（清单里有 `required-core` + 表里声称 `claimsSufficiency: true`）
 （`grep` 确认坏行在 `apps/daemon/dist/pipeline/modelCatalogTruth.test.js:84`）
+
 ```
 ✖ ★ 声称"这一组装完就够用"的标签，必须真的凑得出一条完整的转写链
   AssertionError: 标签 required-core 说"装完就够用"，实际上：
@@ -160,6 +169,7 @@ sha256 逐字符相同（`2aa269b785…`，885,098 B，本机复核过）。**�
 ```
 
 **R3 · 删掉一条真镜像**（把 ggml VAD 的 ModelScope 条目拿掉）
+
 ```
 ✖ ★ "只有一个来源"的文件清单必须与记录在案的逐字相同
   AssertionError: 「哪些文件没有备份」这件事变了。…
@@ -170,6 +180,7 @@ sha256 逐字符相同（`2aa269b785…`，885,098 B，本机复核过）。**�
 
 **R4 · 把 `hf-mirror` 当成独立来源**（= 事故当天清单被读成的样子）
 （`grep` 确认 `dist/…test.js:189` 有 `REVERSAL-R4`）
+
 ```
 ✖ 别名折叠：hf-mirror.com 与 huggingface.co 算同一个来源
   AssertionError: + 'hf-mirror.com'  - 'huggingface.co'
@@ -179,14 +190,17 @@ sha256 逐字符相同（`2aa269b785…`，885,098 B，本机复核过）。**�
   …（17 条里有 16 条凭空"有了备份"）
 ℹ tests 10 / pass 8 / fail 2
 ```
+
 > R4 这一屏就是这条 bug 的全貌：**把别名当独立来源，16 个没有备份的文件看起来都有备份。**
 
 **R5 · CI 脚本那处改动的必要性证明（不是守卫，如实标注）**
 拿真清单跑新旧两个筛选式：
+
 ```
 旧筛选（按 tag: required-core）选中 0 个 ← VAD 一个都不装 → 冷启动审计的「切分方式」会退回固定窗口
 新筛选（按 role: vad）        选中 2 个：vad/silero-vad-onnx, vad/silero-vad-ggml
 ```
+
 ⚠️ **这条只在本机证了"选择结果"**，没有真跑 `cold-start-audit`（要 daemon + 外网）。
 真跑的判据是 `vad-fix` §5 那句 `✔ 切分方式 = VAD（按静音切分）` 必须保持不变 —— **标 `[未验证：待 CI]`**。
 
@@ -206,7 +220,7 @@ sha256 逐字符相同（`2aa269b785…`，885,098 B，本机复核过）。**�
 ③ 表里不许有清单中已不存在的标签（**这张表自己也会腐烂**）
 ④ ★ 声称"装完就够用"的标签必须真的够用
 ⑤ ★ **一比一复现**：把事故当天那两个 VAD 喂给同一个判定函数，必须被判否 + 理由要说出缺的是 `role='asr'`
-   （**并有反面**：补上任意一个 ASR 必须判为够用，否则那是个"永远说不够"的死结论）
+（**并有反面**：补上任意一个 ASR 必须判为够用，否则那是个"永远说不够"的死结论）
 ⑥ ★ `role=vad` 不许再被标成"必需"
 ⑦ 别名折叠正确（且 `modelscope`/`raw.githubusercontent` **不许**被折叠掉）
 ⑧ ★ 「只有一个来源」的 17 个文件清单逐字不变
@@ -214,6 +228,7 @@ sha256 逐字符相同（`2aa269b785…`，885,098 B，本机复核过）。**�
 ⑩ ModelScope 地址形状 + 末尾必须是该文件名（拼错只会在用户点下载时才 404）
 
 两处**刻意的写法**，对应任务书点名的陷阱：
+
 - ④ 今天 `claiming` 是空集 → 循环一条都不跑。所以判定函数的**活性由 ⑤ 用真数据证明**，
   并补了 `assert.deepEqual(claiming, [])` 把"今天为空"这件事本身钉住。
 - ⑥ 的判据是「这个标签有没有声称完整性」，**不是「名字里有没有 required」** —— 钉后果不钉字面。
@@ -221,13 +236,13 @@ sha256 逐字符相同（`2aa269b785…`，885,098 B，本机复核过）。**�
 
 # §3 门禁
 
-| | 结果 |
-|---|---|
-| `tsc -b` | **0** |
-| `eslint`（我的两个文件） | **0** |
-| `pnpm test:ci-scripts` | **15 + 14 全过** |
-| `apps/daemon` | **302 / 0**（+10） |
-| `packages` 五个 | llm 18 · db 53 · mindmap 51 · runtime 51 · pipeline **184/1** |
+|                          | 结果                                                          |
+| ------------------------ | ------------------------------------------------------------- |
+| `tsc -b`                 | **0**                                                         |
+| `eslint`（我的两个文件） | **0**                                                         |
+| `pnpm test:ci-scripts`   | **15 + 14 全过**                                              |
+| `apps/daemon`            | **302 / 0**（+10）                                            |
+| `packages` 五个          | llm 18 · db 53 · mindmap 51 · runtime 51 · pipeline **184/1** |
 
 ⚠️ **有两条红，都不是我的，我一个字节都没碰过那些文件**（`git diff --stat` 可核）：
 
@@ -281,6 +296,7 @@ sha256 逐字符相同（`2aa269b785…`，885,098 B，本机复核过）。**�
 # §6 SHARED-CHANGE 申报
 
 动 `vendor/manifests/` 前的 `git status --short`（**06:15 逐字抄录**）：
+
 ```
  M apps/daemon/src/http/rest/notes.ts        M apps/web/src/components/common/llm/llm-catalog.ts
  M apps/daemon/src/http/ws.ts                M apps/web/src/features/diagnostics/DiagnosticsPage.tsx
@@ -290,16 +306,17 @@ sha256 逐字符相同（`2aa269b785…`，885,098 B，本机复核过）。**�
  M apps/web/src/app/i18n/locales/zh-CN.json  M packages/shared/src/notes.ts
 ?? apps/daemon/src/ws/recorder.test.ts       ?? coordination/inbox/daemon-contract.md
 ```
+
 更早（06:00）`vendor/manifests/backends.json` 还是 ` M`（`pack-publish` 在填 release URL），
 到我动手时**已不在列**。
 
-| 文件 | 归属 | 我做了什么 | 冲突风险 |
-|---|---|---|---|
-| `vendor/manifests/models-asr-support.json` | `model-mgmt` | 删 2 处 `required-core`；hf 与 hf-mirror **之间**插一条 modelscope | 🟢 低 |
-| `vendor/manifests/models-whisper.json` | `model-mgmt` | **纯追加** 11 条 modelscope，既有条目一个字节没动 | 🟢 低 |
-| `vendor/manifests/README.md` | `oss-scout` | **纯追加**文末一节 | 🟢 低 |
-| `vendor/manifests/backends.json` · `components.json` · `sqlite-ext.json` · `llm-providers.json` · `models-llm.json` | `pack-publish` / `model-mgmt` | **一个字节都没动** | — |
-| `scripts/ci/cold-start-audit.mjs` | `ci-runner`（`pack-publish` 也改过） | 一处筛选 `tags.includes('required-core')` → `m.role === 'vad'`，+ 改它上下两段注释。**改动全在 §3b 那一小块内**，别处未碰 | 🟡 中 —— rebase 时留意 |
+| 文件                                                                                                                | 归属                                 | 我做了什么                                                                                                                | 冲突风险               |
+| ------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| `vendor/manifests/models-asr-support.json`                                                                          | `model-mgmt`                         | 删 2 处 `required-core`；hf 与 hf-mirror **之间**插一条 modelscope                                                        | 🟢 低                  |
+| `vendor/manifests/models-whisper.json`                                                                              | `model-mgmt`                         | **纯追加** 11 条 modelscope，既有条目一个字节没动                                                                         | 🟢 低                  |
+| `vendor/manifests/README.md`                                                                                        | `oss-scout`                          | **纯追加**文末一节                                                                                                        | 🟢 低                  |
+| `vendor/manifests/backends.json` · `components.json` · `sqlite-ext.json` · `llm-providers.json` · `models-llm.json` | `pack-publish` / `model-mgmt`        | **一个字节都没动**                                                                                                        | —                      |
+| `scripts/ci/cold-start-audit.mjs`                                                                                   | `ci-runner`（`pack-publish` 也改过） | 一处筛选 `tags.includes('required-core')` → `m.role === 'vad'`，+ 改它上下两段注释。**改动全在 §3b 那一小块内**，别处未碰 | 🟡 中 —— rebase 时留意 |
 
 > 三份 JSON 都做过 `JSON.stringify(JSON.parse(s),null,2)+'\n' === s` 的**往返一致性检查**
 > （改前改后都成立），所以 diff 是最小的，不会因为程序化改写把整份文件重排。
@@ -325,6 +342,7 @@ sha256 逐字符相同（`2aa269b785…`，885,098 B，本机复核过）。**�
 ## [2026-08-06 15:45] T-149 追加交付（三条决策 + 一次我造成的在途红灯）
 
 交付:
+
 - `apps/daemon/src/http/rest/roleMap.ts`（`roleToStoreKind` 委托给 `bucketForRole`；槽位改自己穷举）
 - `apps/daemon/src/http/rest/state.ts`（`listInstalled()` 扫全部桶 + 新增 `bucketOfInstalled` / `dropInstalledRecord`）
 - `apps/daemon/src/http/rest/models.ts`（删 / 校验 / 安装 / 导入四处不再按 role 反算桶）
@@ -369,12 +387,12 @@ bucketForRole 的调用方数量           = 0
 
 **你批准的联动我做了，而且比原计划多两处** —— 因为查下去发现同一个形状不止一处：
 
-| 处 | 原来 | 不改会怎样 |
-|---|---|---|
-| `state.ts` `listInstalled()` | 写死扫 `['asr','llm']` | **已装的 VAD 从 `/api/models/installed` 里整个消失**（你给的判据） |
-| `models.ts` 删除 | `removeManifest(roleToStoreKind(role))` | 旧布局下删的是**空桶**，而 `fs.rm` 是 `{force:true}` —— **返回 204、事件也发了、记录还在** |
-| `models.ts` 校验 | `writeManifest(roleToStoreKind(role))` | 旧布局下会在新桶写出**第二份**记录 → 同一个模型列两次 |
-| `models.ts` 安装/导入 | 直接写新桶 | 旧机器上重装一次会留下**两份**记录 → 现在先 `dropInstalledRecord` 再写（就地自愈） |
+| 处                           | 原来                                    | 不改会怎样                                                                                 |
+| ---------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `state.ts` `listInstalled()` | 写死扫 `['asr','llm']`                  | **已装的 VAD 从 `/api/models/installed` 里整个消失**（你给的判据）                         |
+| `models.ts` 删除             | `removeManifest(roleToStoreKind(role))` | 旧布局下删的是**空桶**，而 `fs.rm` 是 `{force:true}` —— **返回 204、事件也发了、记录还在** |
+| `models.ts` 校验             | `writeManifest(roleToStoreKind(role))`  | 旧布局下会在新桶写出**第二份**记录 → 同一个模型列两次                                      |
+| `models.ts` 安装/导入        | 直接写新桶                              | 旧机器上重装一次会留下**两份**记录 → 现在先 `dropInstalledRecord` 再写（就地自愈）         |
 
 **⚠️ 还有一处差点被我改坏，记在这里**：`roleToActivationSlot` 原来是
 `roleToStoreKind(role) === 'llm' ? 'llm' : 'asr'`。桶恒等之后
@@ -399,6 +417,7 @@ bucketForRole 的调用方数量           = 0
 > 差别在**引擎**：ggml 那个给 whisper.cpp，`vad/silero-vad-onnx` 给 sherpa 流式，**两者不能互换**。
 
 三件事各有理由：
+
 - **分组名逐字对齐** `asrSections.ts` 的 `realtime` 组 + i18n `models.section.realtime`。
 - **直达地址保留**：那是不依赖列表分组的第二条路（`ModelDetailPage` 查 `catalog('all')`，不过滤 role）。
 - **写明"不能互换"**：`frontend-truth` 发现两个变体 `quantization` 都是 `f16`、
@@ -420,10 +439,12 @@ bucketForRole 的调用方数量           = 0
 ## ③ 那条正则删了，而且**它真的会误杀**，不是理论风险
 
 删掉的两条：
+
 ```
 NON_ASR_NAME    = /silero|vad|punct|ct-transformer|speaker|diariz/i   （T-067）
 VAD_WEIGHT_NAME = /silero|vad/i                                       （T-148）
 ```
+
 `NON_ASR_NAME` **自己的注释就写着**「真正的修法是让安装记录带上 catalog 的 role」——
 而那条修法在 `9683ae3` 就落地了。**又一例"写好了没人调用"。**
 
@@ -434,6 +455,7 @@ VAD_WEIGHT_NAME = /silero|vad/i                                       （T-148�
 改前判据（正则）→ 被 /silero/ 剔掉 → model.asr = ✘ 无        ← 装好了却报没装（假红灯）
 改后判据（role）→ ✔ ASR 模型  silero-asr-en-v1.bin
 ```
+
 同一次跑还证实**旧布局照样读得到**（记录在 `manifests/asr/` 下，role=vad 一样找得到）。
 
 ### ★ 顺带抓到一句我自己差点放过去的错文案
@@ -444,6 +466,7 @@ VAD_WEIGHT_NAME = /silero|vad/i                                       （T-148�
 已装的 VAD 权重 whisper.cpp 用不了（ggml-silero-v6.2.0.bin，那是 sherpa 引擎的 ONNX 格式）
                                     ↑ 它就是 ggml 那一份
 ```
+
 原文案把「解析器没交出可加载权重」直接说成「你装的是 ONNX」—— **那是猜的**：
 也可能是 ggml 但文件读不到 / 被截断 / 权限不对。
 改成只说观测到的事实：「已装的 VAD 权重 whisper.cpp **一个都加载不了**（已装：…）」。
@@ -456,10 +479,10 @@ VAD_WEIGHT_NAME = /silero|vad/i                                       （T-148�
 
 **总共多大**：5.33 GB / 17 个文件。**但风险完全不均匀**，拆开看结论就变了：
 
-| 组 | 文件 | 体积 | 主源挂了会怎样 |
-|---|---|---|---|
-| A：whisper q8_0 档 + turbo 的 CoreML zip | 8 | **4.87 GB** | **有替代**。每一个都有同模型的 q5_0/q5_1/f16 兄弟，而那些**已经有 ModelScope 镜像**（本轮加的）。用户仍装得上同一档位能用的模型 |
-| B：sherpa 流式三件套 + Paraformer + 中文标点 | 9 | **406 MB** | ★ **一个替代都没有**，而且整组都在**中文路径**上：F3 实时字幕、`recommended-default-zh` 的离线引擎、以及"不装中文输出就是一整段没标点的字"的标点模型 |
+| 组                                           | 文件 | 体积        | 主源挂了会怎样                                                                                                                                       |
+| -------------------------------------------- | ---- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A：whisper q8_0 档 + turbo 的 CoreML zip     | 8    | **4.87 GB** | **有替代**。每一个都有同模型的 q5_0/q5_1/f16 兄弟，而那些**已经有 ModelScope 镜像**（本轮加的）。用户仍装得上同一档位能用的模型                      |
+| B：sherpa 流式三件套 + Paraformer + 中文标点 | 9    | **406 MB**  | ★ **一个替代都没有**，而且整组都在**中文路径**上：F3 实时字幕、`recommended-default-zh` 的离线引擎、以及"不装中文输出就是一整段没标点的字"的标点模型 |
 
 **谁来保证同步**：**没有同步问题**，这条我实测核过了 ——
 17 个的下载 URL **全部钉在不可变引用上**（HF 的 40 位 commit sha / GitHub 的 commit sha），
@@ -484,6 +507,7 @@ VAD_WEIGHT_NAME = /silero|vad/i                                       （T-148�
 ⚠️ **上一轮我在这里踩过坑（只 grep 清单没 grep dist），这一轮六组全部先 grep 产物。**
 
 **R6 · `listInstalled()` 退回只扫 `['asr','llm']`**（`grep dist/http/rest/state.js:207` 命中）
+
 ```
 ✖ ★★ 判据：已装的 VAD 必须仍然出现在 /api/models/installed 里
   AssertionError: 改桶之后旧记录读不到了 —— 用户会看到"我装过的东西没了"，而且没有任何报错
@@ -494,6 +518,7 @@ VAD_WEIGHT_NAME = /silero|vad/i                                       （T-148�
 ```
 
 **R7 · `roleToStoreKind` 退回 T-027 的自有映射表**（`grep dist/http/rest/roleMap.js:8` 命中）
+
 ```
 ✖ ★ 七个 role 逐个对齐 —— 两处映射表必然漂移，所以只许有一处
   AssertionError: vad 的桶两边算出来不一样 —— 这正是 VAD 落进 by-name/asr 的成因
@@ -501,20 +526,24 @@ VAD_WEIGHT_NAME = /silero|vad/i                                       （T-148�
 ```
 
 **R8 · 桶恒等 + 槽位退回"由桶推导"**（这才是那个危险组合；`grep dist:56` 命中）
+
 ```
 ✖ ★ 激活槽位**不能**跟着桶一起变：embedding / tts 仍归 llm 槽
 ℹ tests 15 / pass 14 / fail 1
 ```
+
 ⚠️ 我第一次把 R7 与 R8 一起打，**R8 没红** —— 因为老映射表下 `roleToStoreKind('embedding')==='llm'`，
 推导出来仍然对。**两个 bug 互相掩盖，与 ① 里那对是同一种形状。** 拆开单独打才红。
 
 **R9 · 删除退回"按 role 算桶"**（`grep dist/http/rest/state.js:241` 命中）
+
 ```
 ✖ ★ 删除必须把旧桶里的那条也删掉（否则 204 之后模型还在）
 ℹ tests 15 / pass 14 / fail 1
 ```
 
 **R10 · 把 `NON_ASR_NAME` 正则放回去**（`grep packages/runtime/dist/selfcheck.js:554` 命中）
+
 ```
 ✖ ★ 名字里带 silero 的**真** ASR 模型必须算 ASR（旧正则在这里会误杀）
   AssertionError: 记录里 role=asr，就该算 ASR —— 名字里有什么字与它无关
@@ -546,12 +575,12 @@ CLI 走 `node scripts/selfcheck.mjs --data-dir <tmp>` 真实输出（见 TL;DR �
 
 # §D 门禁
 
-| | 结果 |
-|---|---|
-| `tsc -b` | **0** |
-| `eslint .`（**全仓**，不只是我的文件） | **0** |
-| `pnpm test:ci-scripts` | 15 + 14 全过 |
-| `pnpm -r test` | **1028 / 0**（llm 18 · db 53 · mindmap 51 · runtime 53 · pipeline 187 · web 103+10+226 · daemon 327） |
+|                                        | 结果                                                                                                  |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `tsc -b`                               | **0**                                                                                                 |
+| `eslint .`（**全仓**，不只是我的文件） | **0**                                                                                                 |
+| `pnpm test:ci-scripts`                 | 15 + 14 全过                                                                                          |
+| `pnpm -r test`                         | **1028 / 0**（llm 18 · db 53 · mindmap 51 · runtime 53 · pipeline 187 · web 103+10+226 · daemon 327） |
 
 上一轮回执里记的那两条红（`components.test.tsx` 的 NUL 字节、`noteAssets.test.ts` 的 TS2345）
 **已被 `debt-cleanup` 与 `daemon-contract` 各自修掉**，现在全仓是干净的。
@@ -594,10 +623,10 @@ CLI 走 `node scripts/selfcheck.mjs --data-dir <tmp>` 真实输出（见 TL;DR �
 
 ## SHARED-CHANGE 申报（追加）
 
-| 文件 | 归属 | 我做了什么 | 冲突风险 |
-|---|---|---|---|
-| `packages/runtime/src/selfcheck.ts` · `.test.ts` · `index.ts` | `storage-fix` / `gpu-runtime` / `pack-publish` / `vad-fix` | 删两条正则、加一个探针与一个导出、改 `model.asr`/`model.vad` 两项 | 🟡 中 —— **本轮那 25 条红就出在这里**，已修完 |
-| `apps/daemon/src/http/rest/{state,models,roleMap,selfcheck}.ts` | `model-mgmt`（已不在） | 见交付清单 | 🟢 低 |
-| `apps/daemon/src/pipeline/vadResolve.test.ts` | `vad-fix`（已 DONE） | **只改一段注释**：原文说 `roleToStoreKind('vad')==='asr'`「是有意的」，那句话今天是假的。夹具本身一行未动（它现在的身份是"老机器的历史布局"，钉的是向后兼容） | 🟢 低 |
-| `scripts/selfcheck.mjs` | `ci-runner` / 通用 | 加一个探针接线（纯追加 8 行） | 🟢 低 |
-| `apps/web/**` | `frontend-truth` | **一个字节都没动**（只**读**了 `asrSections.ts` 与 i18n 来对齐文案，并把 i18n 当成测试的期望值来源） | — |
+| 文件                                                            | 归属                                                       | 我做了什么                                                                                                                                                    | 冲突风险                                      |
+| --------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `packages/runtime/src/selfcheck.ts` · `.test.ts` · `index.ts`   | `storage-fix` / `gpu-runtime` / `pack-publish` / `vad-fix` | 删两条正则、加一个探针与一个导出、改 `model.asr`/`model.vad` 两项                                                                                             | 🟡 中 —— **本轮那 25 条红就出在这里**，已修完 |
+| `apps/daemon/src/http/rest/{state,models,roleMap,selfcheck}.ts` | `model-mgmt`（已不在）                                     | 见交付清单                                                                                                                                                    | 🟢 低                                         |
+| `apps/daemon/src/pipeline/vadResolve.test.ts`                   | `vad-fix`（已 DONE）                                       | **只改一段注释**：原文说 `roleToStoreKind('vad')==='asr'`「是有意的」，那句话今天是假的。夹具本身一行未动（它现在的身份是"老机器的历史布局"，钉的是向后兼容） | 🟢 低                                         |
+| `scripts/selfcheck.mjs`                                         | `ci-runner` / 通用                                         | 加一个探针接线（纯追加 8 行）                                                                                                                                 | 🟢 低                                         |
+| `apps/web/**`                                                   | `frontend-truth`                                           | **一个字节都没动**（只**读**了 `asrSections.ts` 与 i18n 来对齐文案，并把 i18n 当成测试的期望值来源）                                                          | —                                             |

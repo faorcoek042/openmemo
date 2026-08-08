@@ -1,5 +1,14 @@
 import { useTranslation } from 'react-i18next';
-import { Ban, CheckCircle2, CircleDashed, Cpu, Download, HelpCircle, XCircle, Zap } from 'lucide-react';
+import {
+  Ban,
+  CheckCircle2,
+  CircleDashed,
+  Cpu,
+  Download,
+  HelpCircle,
+  XCircle,
+  Zap,
+} from 'lucide-react';
 import type { Backend } from '@openmemo/shared';
 import { cn } from '../../lib/utils';
 
@@ -62,51 +71,50 @@ const BACKEND_LABEL: Record<Backend, string> = {
 const STATE_STYLE: Record<
   BackendChipState,
   { text: string; labelKey: string; icon: React.ReactNode }
-> =
-  {
-    active: {
-      text: 'text-good',
-      labelKey: 'runtime.chip.active',
-      icon: <Zap className="size-3.5 shrink-0" aria-hidden />,
-    },
-    installed: {
-      text: 'text-good',
-      labelKey: 'runtime.chip.installed',
-      icon: <CheckCircle2 className="size-3.5 shrink-0" aria-hidden />,
-    },
-    available: {
-      text: 'text-ink-secondary',
-      labelKey: 'runtime.chip.available',
-      icon: <Download className="size-3.5 shrink-0" aria-hidden />,
-    },
-    'not-installed': {
-      text: 'text-ink-muted',
-      labelKey: 'runtime.chip.notInstalled',
-      icon: <CircleDashed className="size-3.5 shrink-0" aria-hidden />,
-    },
-    failed: {
-      text: 'text-critical',
-      labelKey: 'runtime.chip.failed',
-      icon: <XCircle className="size-3.5 shrink-0" aria-hidden />,
-    },
-    'other-platform': {
-      text: 'text-ink-muted',
-      labelKey: 'runtime.chip.otherPlatform',
-      icon: <CircleDashed className="size-3.5 shrink-0" aria-hidden />,
-    },
-    /* 「待检测」是**中性偏进行中**，不是坏消息 —— 用 info 而不是 muted，
+> = {
+  active: {
+    text: 'text-good',
+    labelKey: 'runtime.chip.active',
+    icon: <Zap className="size-3.5 shrink-0" aria-hidden />,
+  },
+  installed: {
+    text: 'text-good',
+    labelKey: 'runtime.chip.installed',
+    icon: <CheckCircle2 className="size-3.5 shrink-0" aria-hidden />,
+  },
+  available: {
+    text: 'text-ink-secondary',
+    labelKey: 'runtime.chip.available',
+    icon: <Download className="size-3.5 shrink-0" aria-hidden />,
+  },
+  'not-installed': {
+    text: 'text-ink-muted',
+    labelKey: 'runtime.chip.notInstalled',
+    icon: <CircleDashed className="size-3.5 shrink-0" aria-hidden />,
+  },
+  failed: {
+    text: 'text-critical',
+    labelKey: 'runtime.chip.failed',
+    icon: <XCircle className="size-3.5 shrink-0" aria-hidden />,
+  },
+  'other-platform': {
+    text: 'text-ink-muted',
+    labelKey: 'runtime.chip.otherPlatform',
+    icon: <CircleDashed className="size-3.5 shrink-0" aria-hidden />,
+  },
+  /* 「待检测」是**中性偏进行中**，不是坏消息 —— 用 info 而不是 muted，
        否则它在视觉上与「本机不支持」还是一个样子，拆开就白拆了。 */
-    undetermined: {
-      text: 'text-info',
-      labelKey: 'runtime.chip.undetermined',
-      icon: <HelpCircle className="size-3.5 shrink-0" aria-hidden />,
-    },
-    unsupported: {
-      text: 'text-ink-muted',
-      labelKey: 'runtime.chip.unsupported',
-      icon: <Ban className="size-3.5 shrink-0" aria-hidden />,
-    },
-  };
+  undetermined: {
+    text: 'text-info',
+    labelKey: 'runtime.chip.undetermined',
+    icon: <HelpCircle className="size-3.5 shrink-0" aria-hidden />,
+  },
+  unsupported: {
+    text: 'text-ink-muted',
+    labelKey: 'runtime.chip.unsupported',
+    icon: <Ban className="size-3.5 shrink-0" aria-hidden />,
+  },
+};
 
 export interface BackendChipProps {
   backend: Backend;

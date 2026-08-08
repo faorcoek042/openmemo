@@ -47,21 +47,21 @@ date: 2026-08-05
 
 ## 1.2 二分法（每一步都是实测）
 
-| # | 做了什么 | 结果 |
-|---|---|---|
-| 1 | `gh api .../actions/workflows` | `total_count: 0`，而 `contents/.github/workflows` 里文件确实在（16873 B） |
-| 2 | `gh api .../actions/permissions` | `{"enabled":true,"allowed_actions":"all"}` → **不是账号/仓库级禁用** |
-| 3 | `gh api .../actions/cache/usage` | 正常返回 → Actions 子系统认识这个仓库 |
-| 4 | 推一个 **8 行**的最小 `workflow_dispatch` 文件 | **25 秒内注册**（`total_count` 0→1）。同一时刻 `build-backends.yml` **仍然没注册** |
-| 5 | 把旧 `build-backends.yml` **逐字节复制**成另一个文件名推上去 | **它注册了** → **内容不是原因** |
-| 6 | `gh api .../events` | 首推只留下 `CreateEvent(ref=master)`，**没有 PushEvent** |
+| #   | 做了什么                                                     | 结果                                                                               |
+| --- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| 1   | `gh api .../actions/workflows`                               | `total_count: 0`，而 `contents/.github/workflows` 里文件确实在（16873 B）          |
+| 2   | `gh api .../actions/permissions`                             | `{"enabled":true,"allowed_actions":"all"}` → **不是账号/仓库级禁用**               |
+| 3   | `gh api .../actions/cache/usage`                             | 正常返回 → Actions 子系统认识这个仓库                                              |
+| 4   | 推一个 **8 行**的最小 `workflow_dispatch` 文件               | **25 秒内注册**（`total_count` 0→1）。同一时刻 `build-backends.yml` **仍然没注册** |
+| 5   | 把旧 `build-backends.yml` **逐字节复制**成另一个文件名推上去 | **它注册了** → **内容不是原因**                                                    |
+| 6   | `gh api .../events`                                          | 首推只留下 `CreateEvent(ref=master)`，**没有 PushEvent**                           |
 
 ## 1.3 被证伪的两条猜测（都是我们自己先猜错的）
 
-| 猜测 | 实测 |
-|---|---|
+| 猜测                                        | 实测                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 「`actions/checkout@v6` 等四个 tag 不存在」 | **假的。** 四个全部存在，逐个 `git/ref/tags/<v>` 拿到了 commit sha：`checkout@v6`=`d23441a4…`、`setup-node@v6`=`24997072…`、`upload-artifact@v6`=`b7c566a7…`、`download-artifact@v7`=`37930b1c…`。它们只是**不是最新**（各仓最新为 v7.0.1 / v7.0.0 / v7.0.1 / v8.0.1），不是不存在。`platform` T-141 §4.6 当时查得是对的 |
-| 「等了 2 分钟以上，所以不是索引延迟」 | **推理方向错了。** 不是"延迟"也不是"内容"，是**那一次推送**本身没被索引 —— 等多久都没用，再推一次就好了 |
+| 「等了 2 分钟以上，所以不是索引延迟」       | **推理方向错了。** 不是"延迟"也不是"内容"，是**那一次推送**本身没被索引 —— 等多久都没用，再推一次就好了                                                                                                                                                                                                                  |
 
 ⚠️ **`[UNKNOWN]`**：GitHub 内部为何跳过首推的索引，我查不到官方说明。
 第 6 条（缺 PushEvent）是**相关证据，不是机制证明**。
@@ -73,20 +73,20 @@ date: 2026-08-05
 
 ## 2.1 `build-backends.yml`：12 → **8**
 
-| # | runner | arch | backend | 状态 |
-|---|---|---|---|---|
-| 1 | macos-26 | arm64 | metal | 保留 |
-| 2 | macos-26 | arm64 | cpu | 保留 |
-| 3 | ubuntu-22.04 | x64 | cpu | 保留（**刻意留 22.04 = glibc 基线**） |
-| 4 | ubuntu-24.04 | x64 | vulkan | 保留（**从 22.04 改过来**，见 §4.2） |
-| 5 | ubuntu-24.04 | x64 | cuda | 保留（**从 22.04 改过来**） |
-| 6 | windows-2025 | x64 | cpu | 保留 |
-| 7 | windows-2025 | x64 | vulkan | 保留 |
-| 8 | windows-2022 | x64 | cuda | 保留 |
-| ✂ | ubuntu-24.04 | x64 | **rocm** | **删** —— 用户不需要 |
-| ✂ | ubuntu-24.04-arm | arm64 | cpu | **删** —— 用户不需要（本轮 **success**） |
-| ✂ | ubuntu-24.04-arm | arm64 | vulkan | **删** —— 用户不需要（本轮 **success**） |
-| ✂ | macos-15-intel | x64 | cpu | **删** —— 用户不需要 |
+| #   | runner           | arch  | backend  | 状态                                     |
+| --- | ---------------- | ----- | -------- | ---------------------------------------- |
+| 1   | macos-26         | arm64 | metal    | 保留                                     |
+| 2   | macos-26         | arm64 | cpu      | 保留                                     |
+| 3   | ubuntu-22.04     | x64   | cpu      | 保留（**刻意留 22.04 = glibc 基线**）    |
+| 4   | ubuntu-24.04     | x64   | vulkan   | 保留（**从 22.04 改过来**，见 §4.2）     |
+| 5   | ubuntu-24.04     | x64   | cuda     | 保留（**从 22.04 改过来**）              |
+| 6   | windows-2025     | x64   | cpu      | 保留                                     |
+| 7   | windows-2025     | x64   | vulkan   | 保留                                     |
+| 8   | windows-2022     | x64   | cuda     | 保留                                     |
+| ✂   | ubuntu-24.04     | x64   | **rocm** | **删** —— 用户不需要                     |
+| ✂   | ubuntu-24.04-arm | arm64 | cpu      | **删** —— 用户不需要（本轮 **success**） |
+| ✂   | ubuntu-24.04-arm | arm64 | vulkan   | **删** —— 用户不需要（本轮 **success**） |
+| ✂   | macos-15-intel   | x64   | cpu      | **删** —— 用户不需要                     |
 
 被删的四行**原样保留在 YAML 注释里**，恢复 = 把注释那几行放回去。
 
@@ -127,44 +127,44 @@ docs/00-CHARTER.md:27  | Linux + AMD   | ROCm / Vulkan     |
 
 ## 3.1 逐条对照
 
-| 探针 | linux/x64（对照） | darwin/arm64 | win32/x64 |
-|---|---|---|---|
-| `os.release` | 6.17.0-1020-azure | 25.5.0 | 10.0.26100 |
-| `path.sep` | `/` | `/` | `\` |
-| **大小写不敏感文件系统** | `false` | **`true`** | **`true`** |
-| `chmod(0o755)` → mode | `755` | `755` | **`666`** |
-| `access(X_OK)` | true | true | **true（尽管没有 x 位）** |
-| **`writeFile(mode:0o600)` → mode** | `600` | `600` | **`666`** |
-| `symlink()` | ok | ok | **ok（runner 是管理员，见 §3.4）** |
-| `link()` 硬链接 | ok | ok | ok |
-| `cp(verbatimSymlinks)` 含软链 | ok | ok | ok |
-| `` `file://`+path === pathToFileURL() `` | **false** | **false** | **false** |
-| `join('dd','tmp','job','a.wav').split('/').length` | 4 | 4 | **1** |
-| `isAbsolute('/media/x.wav')` | true | true | **true** |
-| `isAbsolute('C:\\data\\x.wav')` | false | false | true |
-| `resolve('C:\\d\\m\\r.wav')` | `<cwd>/C:\d\m\r.wav` | `<cwd>/C:\d\m\r.wav` | `C:\d\m\r.wav` |
-| `sh` / `bash` | ok / 5.2.21 | ok / **3.2.57** | ok / 5.3.15（Git Bash） |
-| `openssl` | 3.0.13 | **3.6.3（有！）** | **3.6.3（有！）** |
-| `taskkill` | ENOENT | ENOENT | **exit 0（有）** |
-| `find` | GNU 4.9.0 | **`find: illegal option -- -`（BSD）** | **`FIND: Parameter format not correct`** |
-| `zip` / `7z` | 有 / 有 | 有 / 有 | **无 / 有** |
-| **`set -u` + 空数组展开** | exit 0 | **exit 127 `A[@]: unbound variable`** | exit 0 |
+| 探针                                               | linux/x64（对照）    | darwin/arm64                           | win32/x64                                |
+| -------------------------------------------------- | -------------------- | -------------------------------------- | ---------------------------------------- |
+| `os.release`                                       | 6.17.0-1020-azure    | 25.5.0                                 | 10.0.26100                               |
+| `path.sep`                                         | `/`                  | `/`                                    | `\`                                      |
+| **大小写不敏感文件系统**                           | `false`              | **`true`**                             | **`true`**                               |
+| `chmod(0o755)` → mode                              | `755`                | `755`                                  | **`666`**                                |
+| `access(X_OK)`                                     | true                 | true                                   | **true（尽管没有 x 位）**                |
+| **`writeFile(mode:0o600)` → mode**                 | `600`                | `600`                                  | **`666`**                                |
+| `symlink()`                                        | ok                   | ok                                     | **ok（runner 是管理员，见 §3.4）**       |
+| `link()` 硬链接                                    | ok                   | ok                                     | ok                                       |
+| `cp(verbatimSymlinks)` 含软链                      | ok                   | ok                                     | ok                                       |
+| `` `file://`+path === pathToFileURL() ``           | **false**            | **false**                              | **false**                                |
+| `join('dd','tmp','job','a.wav').split('/').length` | 4                    | 4                                      | **1**                                    |
+| `isAbsolute('/media/x.wav')`                       | true                 | true                                   | **true**                                 |
+| `isAbsolute('C:\\data\\x.wav')`                    | false                | false                                  | true                                     |
+| `resolve('C:\\d\\m\\r.wav')`                       | `<cwd>/C:\d\m\r.wav` | `<cwd>/C:\d\m\r.wav`                   | `C:\d\m\r.wav`                           |
+| `sh` / `bash`                                      | ok / 5.2.21          | ok / **3.2.57**                        | ok / 5.3.15（Git Bash）                  |
+| `openssl`                                          | 3.0.13               | **3.6.3（有！）**                      | **3.6.3（有！）**                        |
+| `taskkill`                                         | ENOENT               | ENOENT                                 | **exit 0（有）**                         |
+| `find`                                             | GNU 4.9.0            | **`find: illegal option -- -`（BSD）** | **`FIND: Parameter format not correct`** |
+| `zip` / `7z`                                       | 有 / 有              | 有 / 有                                | **无 / 有**                              |
+| **`set -u` + 空数组展开**                          | exit 0               | **exit 127 `A[@]: unbound variable`**  | exit 0                                   |
 
 ## 3.2 这张表对 T-141 §3 的判决
 
-| T-141 条目 | 原证据级别 | 现在 |
-|---|---|---|
-| #7 大小写不敏感 FS 上的路径解析 | `[实测但用 vfat 模拟]` | ✅ **证实**：macOS 与 Windows 的**默认文件系统就是不敏感的**，触发条件不需要用户做任何特殊操作 |
-| #8 宿主绑定 `isAbsolute` | `[实测 Linux 侧]` | ✅ **证实**：Windows 上 `isAbsolute('/media/x.wav')` 也是 `true`，两侧都会错 |
-| #26 `abs.split('/')` 硬编码 | `[读码]` | ✅ **证实**：Windows 上 `split('/').length === 1` → `matchBySuffix` 永远匹配不上 → **资产迁移静默失效** |
-| #23 `{mode:0o600}` 在 Windows 上失效 | `[推测]` | ✅ **证实**：写 `0o600` 读回来是 **`666`**。`runtime.json`（**内含 auth token**）、`datadir.json`、`tls-key.pem` 在 Windows 上**对本机所有用户可读** |
-| #10 Windows 跳过 chmod 是对的 | `[读码]` | ✅ **证实**：`chmod(0o755)` 在 Windows 上读回来仍是 `666`，而 `access(X_OK)` **照样返回 true** —— `installer.ts:283-284` 写的理由完全正确 |
-| #1 手拼 `file://` | `[实测]` | ✅ **证实且更严重**：**三个平台全部 false**（Linux 上是空格转义，Windows 上是 `file://C:\…` vs `file:///C:/…` 两种形态） |
-| #2/#3 Windows 无 `taskkill` 兜底 | `[实测 grep]` | ✅ **可修**：`taskkill` 在 Windows runner 上 exit 0 存在。缺的是我们的代码，不是系统 |
-| #21/#22 Windows 没有 openssl | `[推测]` | 🔴 **在 runner 上被证伪**：windows-2025 上 `openssl version` = OpenSSL 3.6.3。⚠️ **但 runner 装了一堆开发工具，不能代表普通用户的机器** —— 这条改判为 `[未验证：需干净的 Windows]` |
-| #30 `check-tracked-sources.mjs` 的 POSIX `find` | `[读码]+[推测]` | ✅ **证实，且范围比预测的窄**：Windows 上 `pnpm check:sources` **真的红了**（`✘ 没找到任何源码目录`）；**macOS 上是绿的**（BSD find 认 `-type d`，只是不认 `--version`）。预测"只有 Windows 会断"是对的 |
-| #13 `move.ts:470` 无 Windows 回退 | `[未验证：需真机]` | ⚠️ **CI 结构上验不了**，见 §3.4 |
-| bash 3.2 空数组（**T-141 没有这一条**） | — | 🆕 **新发现**，见 §4.1 |
+| T-141 条目                                      | 原证据级别             | 现在                                                                                                                                                                                                    |
+| ----------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #7 大小写不敏感 FS 上的路径解析                 | `[实测但用 vfat 模拟]` | ✅ **证实**：macOS 与 Windows 的**默认文件系统就是不敏感的**，触发条件不需要用户做任何特殊操作                                                                                                          |
+| #8 宿主绑定 `isAbsolute`                        | `[实测 Linux 侧]`      | ✅ **证实**：Windows 上 `isAbsolute('/media/x.wav')` 也是 `true`，两侧都会错                                                                                                                            |
+| #26 `abs.split('/')` 硬编码                     | `[读码]`               | ✅ **证实**：Windows 上 `split('/').length === 1` → `matchBySuffix` 永远匹配不上 → **资产迁移静默失效**                                                                                                 |
+| #23 `{mode:0o600}` 在 Windows 上失效            | `[推测]`               | ✅ **证实**：写 `0o600` 读回来是 **`666`**。`runtime.json`（**内含 auth token**）、`datadir.json`、`tls-key.pem` 在 Windows 上**对本机所有用户可读**                                                    |
+| #10 Windows 跳过 chmod 是对的                   | `[读码]`               | ✅ **证实**：`chmod(0o755)` 在 Windows 上读回来仍是 `666`，而 `access(X_OK)` **照样返回 true** —— `installer.ts:283-284` 写的理由完全正确                                                               |
+| #1 手拼 `file://`                               | `[实测]`               | ✅ **证实且更严重**：**三个平台全部 false**（Linux 上是空格转义，Windows 上是 `file://C:\…` vs `file:///C:/…` 两种形态）                                                                                |
+| #2/#3 Windows 无 `taskkill` 兜底                | `[实测 grep]`          | ✅ **可修**：`taskkill` 在 Windows runner 上 exit 0 存在。缺的是我们的代码，不是系统                                                                                                                    |
+| #21/#22 Windows 没有 openssl                    | `[推测]`               | 🔴 **在 runner 上被证伪**：windows-2025 上 `openssl version` = OpenSSL 3.6.3。⚠️ **但 runner 装了一堆开发工具，不能代表普通用户的机器** —— 这条改判为 `[未验证：需干净的 Windows]`                      |
+| #30 `check-tracked-sources.mjs` 的 POSIX `find` | `[读码]+[推测]`        | ✅ **证实，且范围比预测的窄**：Windows 上 `pnpm check:sources` **真的红了**（`✘ 没找到任何源码目录`）；**macOS 上是绿的**（BSD find 认 `-type d`，只是不认 `--version`）。预测"只有 Windows 会断"是对的 |
+| #13 `move.ts:470` 无 Windows 回退               | `[未验证：需真机]`     | ⚠️ **CI 结构上验不了**，见 §3.4                                                                                                                                                                         |
+| bash 3.2 空数组（**T-141 没有这一条**）         | —                      | 🆕 **新发现**，见 §4.1                                                                                                                                                                                  |
 
 ## 3.3 跨平台跑 `pnpm -r test` 的结果（给 `test-gaps` / `platform`）
 
@@ -174,12 +174,12 @@ docs/00-CHARTER.md:27  | Linux + AMD   | ROCm / Vulkan     |
 > ⚠️ **计数订正**：本节列的是 **6 条红**，但那是 `pnpm -r test` 被 `bail` **截断后**的计数。
 > T-147 全量重跑得到 **14 条**。**此前 §5 第 2 条也照抄了"6 条"。** 下表的性质判断不变，只是不全。
 
-| 平台 | 红在哪 | 我的判断 |
-|---|---|---|
+| 平台         | 红在哪                                                                                                                                                                                                                                                                                                                      | 我的判断                                                                                                                                                                                                                                                                                                                             |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | darwin/arm64 | `packages/pipeline` `packages/pipeline/src/subprocess/__tests__/argGuard.test.ts:331`「★ under posix rules the same UNC string is merely a weird filename」`false !== true`（**此前写的是裸文件名 `argGuard.test.ts:313`；313 行是另一个用例 `backslash traversal is rejected under win32 rules` 里的 `assertRejected(`**） | **测试自身的宿主假设**：它用 `mkdtemp(tmpdir())` 造根，而 **macOS 的 `/var` 是指向 `/private/var` 的软链**，`assertWithinRoot` 会 realpath 候选、却拿**没 realpath 的 root** 去比 → 判为越界。<br>⚠️ 但它顺带暴露了一条**产品事实**：**任何经过软链的 managed root，在 macOS 上会被整体拒绝** —— 而 macOS 的默认 TMPDIR 就在软链后面 |
-| win32/x64 | `packages/runtime` `assetPaths.test.js` 3 条：期望 `/d/media/a.wav`，实得 `D:\d\media\a.wav` | **测试写死了 POSIX 字符串**，产品代码用的是 `join`（是对的）。后果：**这三条用例在 Windows 上什么都没断言到** |
-| win32/x64 | `packages/runtime` `selfcheck.test.js` 2 条：`'fail' !== 'ok'` / `'fail' !== 'warn'` | 未定性。**疑似**测试造的假二进制没有 `.exe` 后缀，而 `discoverTools` 在 Windows 上找的是带 `.exe` 的名字（`packages/pipeline/src/tools.ts:437`，`discoverTools` 本身在 `:429`；**此前写的是 `tools.ts:346`，那一行是 sqlite 扩展物化循环里的 `findFileInBackendPacks`**）。`[推测，未验证]` |
-| win32/x64 | `pnpm check:sources` → `✘ 没找到任何源码目录，检查脚本本身可能有问题` | **产品/工具链真 bug**，即 T-141 #30。**这条守卫在 Windows 上是坏的，而它坏的方式是"报告脚本自己有问题"** —— 至少它没有静默返回绿。<br>✅ **T-147 已修**：`scripts/check-tracked-sources.mjs` 改用 Node 递归走目录，不再调外部 `find` |
+| win32/x64    | `packages/runtime` `assetPaths.test.js` 3 条：期望 `/d/media/a.wav`，实得 `D:\d\media\a.wav`                                                                                                                                                                                                                                | **测试写死了 POSIX 字符串**，产品代码用的是 `join`（是对的）。后果：**这三条用例在 Windows 上什么都没断言到**                                                                                                                                                                                                                        |
+| win32/x64    | `packages/runtime` `selfcheck.test.js` 2 条：`'fail' !== 'ok'` / `'fail' !== 'warn'`                                                                                                                                                                                                                                        | 未定性。**疑似**测试造的假二进制没有 `.exe` 后缀，而 `discoverTools` 在 Windows 上找的是带 `.exe` 的名字（`packages/pipeline/src/tools.ts:437`，`discoverTools` 本身在 `:429`；**此前写的是 `tools.ts:346`，那一行是 sqlite 扩展物化循环里的 `findFileInBackendPacks`**）。`[推测，未验证]`                                          |
+| win32/x64    | `pnpm check:sources` → `✘ 没找到任何源码目录，检查脚本本身可能有问题`                                                                                                                                                                                                                                                       | **产品/工具链真 bug**，即 T-141 #30。**这条守卫在 Windows 上是坏的，而它坏的方式是"报告脚本自己有问题"** —— 至少它没有静默返回绿。<br>✅ **T-147 已修**：`scripts/check-tracked-sources.mjs` 改用 Node 递归走目录，不再调外部 `find`                                                                                                 |
 
 **给 Manager 的一句话**：跨平台的红**大部分不是产品坏了，是测试从来没在那些平台上跑过**。
 但这两件事在后果上是同一件：**那些用例在 macOS / Windows 上等于不存在。**
@@ -248,11 +248,11 @@ Metal 并进 macOS 核心包（`whispercpp-cpu-macos-arm64`，CPU+Metal+CoreML �
 
 ## 4.2 Linux：三个后端全挂，全是环境名字问题
 
-| job | 报错原文 | 处置 |
-|---|---|---|
-| linux-x64-vulkan | `E: Unable to locate package glslc` | jammy 没有这个包。**同一份包列表在 `ubuntu-24.04-arm` 上同一轮是 success** → x64 改 24.04 |
-| linux-x64-cuda | `E: Unable to locate package cuda-cublas-12-4` / `cuda-cublas-dev-12-4` | CUDA 11 之后 cuBLAS 改名到 `libcublas-*` → 改 sub-packages |
-| linux-x64-rocm | `rocm-hip-runtime : Depends: rocminfo (= 1.0.0.70201-81~22.04) but 5.0.0-1 is to be installed` … `held broken packages` | jammy 的 universe 自带老 ROCm 包，版本号压过 radeon 仓库。已改 noble，**但随即被用户裁掉，可能永远不会验证** |
+| job              | 报错原文                                                                                                                | 处置                                                                                                         |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| linux-x64-vulkan | `E: Unable to locate package glslc`                                                                                     | jammy 没有这个包。**同一份包列表在 `ubuntu-24.04-arm` 上同一轮是 success** → x64 改 24.04                    |
+| linux-x64-cuda   | `E: Unable to locate package cuda-cublas-12-4` / `cuda-cublas-dev-12-4`                                                 | CUDA 11 之后 cuBLAS 改名到 `libcublas-*` → 改 sub-packages                                                   |
+| linux-x64-rocm   | `rocm-hip-runtime : Depends: rocminfo (= 1.0.0.70201-81~22.04) but 5.0.0-1 is to be installed` … `held broken packages` | jammy 的 universe 自带老 ROCm 包，版本号压过 radeon 仓库。已改 noble，**但随即被用户裁掉，可能永远不会验证** |
 
 ## 4.3 Windows：**三个后端全部编译成功**，全部死在同一行
 
@@ -324,15 +324,15 @@ emit-pack-manifest: archive not found: dist/packs/whispercpp-cpu-win-x64.zip
 
 **答案是肯定的，但有两条例外，都在 npm 那条通道上。**
 
-| | 结论 | 证据 |
-|---|---|---|
-| manifest 声明的下载 | **62 个文件，sha256 覆盖 100%，引用钉死 100%** | §6.2 |
-| 这些 URL 真的活着吗 | **62/62 HTTP 206**，且 8 MB 以下的**逐个重算 sha256 全部 MATCH** | §6.2 |
-| 冷启动后工具从哪来 | **5/5 来自数据目录（产品自己下的），借宿主 PATH 的 = 0** | §6.4 |
-| 中文双字词真的搜得到吗 | **`ext.chineseSearch = ok`：用户:1 推特:2 中国:1 服务:2** | §6.5 |
-| 仓库里有二进制吗 | **没有。**最大的已跟踪文件 255 KB（JSON/PNG/文档） | §6.2 |
-| ⚠️ ~~例外 1~~ | ~~`ffmpeg-static` 在 `pnpm install` 期下 **79.8 MB** 的 ffmpeg，钉了 tag 但**无校验和**~~ → ✅ **T-145 已删除整条通道**（不是加锁，是**减少通道**），见 §7.4 | §6.3 / **§7.4** |
-| ⚠️ ~~例外 2~~ | ~~`youtube-dl-exec` 打的是 `releases/**latest**` —— **不钉版本、无校验和**~~ → ✅ **T-145 已删除整条通道**，见 §7.4 | §6.3 / **§7.4** |
+|                        | 结论                                                                                                                                                         | 证据            |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------- |
+| manifest 声明的下载    | **62 个文件，sha256 覆盖 100%，引用钉死 100%**                                                                                                               | §6.2            |
+| 这些 URL 真的活着吗    | **62/62 HTTP 206**，且 8 MB 以下的**逐个重算 sha256 全部 MATCH**                                                                                             | §6.2            |
+| 冷启动后工具从哪来     | **5/5 来自数据目录（产品自己下的），借宿主 PATH 的 = 0**                                                                                                     | §6.4            |
+| 中文双字词真的搜得到吗 | **`ext.chineseSearch = ok`：用户:1 推特:2 中国:1 服务:2**                                                                                                    | §6.5            |
+| 仓库里有二进制吗       | **没有。**最大的已跟踪文件 255 KB（JSON/PNG/文档）                                                                                                           | §6.2            |
+| ⚠️ ~~例外 1~~          | ~~`ffmpeg-static` 在 `pnpm install` 期下 **79.8 MB** 的 ffmpeg，钉了 tag 但**无校验和**~~ → ✅ **T-145 已删除整条通道**（不是加锁，是**减少通道**），见 §7.4 | §6.3 / **§7.4** |
+| ⚠️ ~~例外 2~~          | ~~`youtube-dl-exec` 打的是 `releases/**latest**` —— **不钉版本、无校验和**~~ → ✅ **T-145 已删除整条通道**，见 §7.4                                          | §6.3 / **§7.4** |
 
 > ⚠️ **此前上面这两行把 `ffmpeg-static` 与 `youtube-dl-exec` 列为活着的例外**（"在 `pnpm install` 期无校验和地下二进制"），
 > 而**同一份文档的 §7.4 已经宣布这两个包被删除** —— 这张 TL;DR 表当时没跟着改。
@@ -438,11 +438,11 @@ sqlite3     /usr/bin/sqlite3    python3     /usr/bin/python3    cmake  /usr/loca
 > **此前这里写的是 `selfcheck.ts:390-434` —— 那一段在读符号链接、判悬空**，不是三分类判据。
 > 判据在 `:551-596`：「装在 storeRoot 里 = ok；只在系统 PATH 上 = warn；没有 = fail」。
 
-| 分类 | 数量 | 是哪些 |
-|---|---|---|
+| 分类                        | 数量  | 是哪些                                                                        |
+| --------------------------- | ----- | ----------------------------------------------------------------------------- |
 | ✅ **产品自己下载并校验的** | **5** | `tool.ffmpeg` `tool.ffprobe` `tool.whisperCli` `tool.whisperVad` `tool.ytDlp` |
-| ⚠️ **借宿主 PATH 的** | **0** | （无） |
-| ❌ **装不上 / 不可用** | **0** | （无） |
+| ⚠️ **借宿主 PATH 的**       | **0** | （无）                                                                        |
+| ❌ **装不上 / 不可用**      | **0** | （无）                                                                        |
 
 每一条的路径都实打实落在数据目录里，例如：
 
@@ -475,14 +475,14 @@ ext.sqliteVec       ok                     v0.1.9
 
 ## 6.6 这一轮**没有**验到的（如实列出）
 
-| 项 | 状态 | 说明 |
-|---|---|---|
-| `model.asr` | **fail（required）** | 冷启动**不会自动装 ASR 模型**。我的驱动只调了 `/api/backends/install`，**没有调 `/api/models/pull`** —— 所以这既是"产品的冷启动确实不含模型"，也是"我的审计没覆盖模型下载那条路"。两种读法都成立，别只取一种 |
-| `model.vad` | warn | 同上，VAD 模型没装 → 切分降级为固定窗口 |
-| `hw.probe` | warn | `openmemo-probe 未安装` —— 与 T-141 §2.6 一致 |
-| sherpa-onnx / paraformer 实际加载 | **未验** | 模型没装，引擎没跑起来过 |
-| macOS / Windows 上的冷启动 | **未验** | 本节全部结论只覆盖 `ubuntu-24.04` |
-| npm 那两个二进制的 sha256 | **不存在** | 不是"没验"，是上游就没提供校验（§6.3） |
+| 项                                | 状态                 | 说明                                                                                                                                                                                                         |
+| --------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `model.asr`                       | **fail（required）** | 冷启动**不会自动装 ASR 模型**。我的驱动只调了 `/api/backends/install`，**没有调 `/api/models/pull`** —— 所以这既是"产品的冷启动确实不含模型"，也是"我的审计没覆盖模型下载那条路"。两种读法都成立，别只取一种 |
+| `model.vad`                       | warn                 | 同上，VAD 模型没装 → 切分降级为固定窗口                                                                                                                                                                      |
+| `hw.probe`                        | warn                 | `openmemo-probe 未安装` —— 与 T-141 §2.6 一致                                                                                                                                                                |
+| sherpa-onnx / paraformer 实际加载 | **未验**             | 模型没装，引擎没跑起来过                                                                                                                                                                                     |
+| macOS / Windows 上的冷启动        | **未验**             | 本节全部结论只覆盖 `ubuntu-24.04`                                                                                                                                                                            |
+| npm 那两个二进制的 sha256         | **不存在**           | 不是"没验"，是上游就没提供校验（§6.3）                                                                                                                                                                       |
 
 `meta.sameSource ok — 25 项逐 id 一致（本地 1 失败 / 端点 1 失败）`：
 CLI 与 `GET /api/selfcheck` 给出的是同一份答案，没有"网页绿而 CLI 红"。
@@ -565,7 +565,7 @@ tool.ytDlp       ok     .../data/models/by-name/backend/yt-dlp
 **这就是用户那句「我怕了你」问的东西的准确形态**，而它：
 
 - 在 Linux 上**不存在**（19 个包里 5 个适用，ffmpeg/whisper 都有）；
-- 在 CI 上**不屏蔽就看不见**（ubuntu runner 恰好没装 ffmpeg，macOS runner 也没有 —— 
+- 在 CI 上**不屏蔽就看不见**（ubuntu runner 恰好没装 ffmpeg，macOS runner 也没有 ——
   所以真机上是 `warn+未找到`，而用户机器上会是 `warn+悄悄可用`）。
 
 ⚠️ **诚实边界**：runner 上 `tool.whisperVad` 是"未找到"，而不是借到了什么。
@@ -578,13 +578,13 @@ tool.ytDlp       ok     .../data/models/by-name/backend/yt-dlp
 > 目录 19 → **22 包**，darwin-arm64 适用 3 → **5**（加了 `whispercpp-cpu-macos-arm64` 与 `media-tools-macos-arm64`）。
 > **表里的 macOS 列没有重测，不要当成当前值引用**；重测前请以 `vendor/manifests/*.json` 为准。
 
-| | linux-x64 | darwin-arm64 |
-|---|---|---|
-| ✅ 产品自己下载并校验的 | **5**：ffmpeg / ffprobe / whisperCli / whisperVad / ytDlp | **1**：ytDlp |
-| ⚠️ 借宿主 PATH 的 | **0** | **3**：ffmpeg / ffprobe / whisperCli |
-| ❌ 装不上 / 不可用 | **0** | **1**：whisperVad |
-| 适用的后端包 | 5 / 19 | **3 / 19**（T-146 后为 **5 / 22**） |
-| `ext.chineseSearch` | **ok**（用户:1 推特:2 中国:1 服务:2） | 装上了扩展（`[warm] tokenizer=simple libsimple=true sqliteVec=true`） |
+|                         | linux-x64                                                 | darwin-arm64                                                          |
+| ----------------------- | --------------------------------------------------------- | --------------------------------------------------------------------- |
+| ✅ 产品自己下载并校验的 | **5**：ffmpeg / ffprobe / whisperCli / whisperVad / ytDlp | **1**：ytDlp                                                          |
+| ⚠️ 借宿主 PATH 的       | **0**                                                     | **3**：ffmpeg / ffprobe / whisperCli                                  |
+| ❌ 装不上 / 不可用      | **0**                                                     | **1**：whisperVad                                                     |
+| 适用的后端包            | 5 / 19                                                    | **3 / 19**（T-146 后为 **5 / 22**）                                   |
+| `ext.chineseSearch`     | **ok**（用户:1 推特:2 中国:1 服务:2）                     | 装上了扩展（`[warm] tokenizer=simple libsimple=true sqliteVec=true`） |
 
 **中文检索这条在两个平台都成立** —— libsimple / sqlite-vec 的 darwin-arm64 包
 真的装上并生效了（冷启动时 macOS 找的是 `libsimple.dylib` / `vec0.dylib`，与 Linux 的 `.so` 不同，
@@ -651,12 +651,12 @@ CI 上的反向断言（三平台）：
 
 ## 7.5 这一轮我自己犯的错（继续记账）
 
-| # | 错 | 后果 | 教训 |
-|---|---|---|---|
-| 3 | `/api/models/catalog` 是**分组**结构（`groups[].variants[]`），我按 `body.models` 取 | 拿到 0 个模型、照常往下走，打印出一句读起来像产品结论的话 | **本任务同一形状的第三次：工具安静地返回空集，被读成"没有"。** 现在空集会当场出声 |
-| 4 | job 的字段名是 **`jobId`**，我按 `uid` 比 | 每次都报"不认识这条 job" | `jobs.ts:182` 的注释写「This is D-02 `jobs.uid`」—— **那说的是数据库列名，字段名在下一行**。一条准确但指向别处的注释同样能把人带偏 |
-| 5 | `/tmp/install.log` 写在没有 `shell: bash` 的步骤里 | Windows pwsh 解析成 `D:\tmp\install.log` 当场炸 | 跨平台 workflow 里，**POSIX 路径 + 默认 shell = 只在两个平台上成立** |
-| 6 | 观测用的 `find -perm` 把整步拖红 | "反向核实"步骤红掉，**而它上面刚刚正确报出了结论** | **一个用来看的步骤，不该有能力决定红绿** |
+| #   | 错                                                                                   | 后果                                                      | 教训                                                                                                                               |
+| --- | ------------------------------------------------------------------------------------ | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 3   | `/api/models/catalog` 是**分组**结构（`groups[].variants[]`），我按 `body.models` 取 | 拿到 0 个模型、照常往下走，打印出一句读起来像产品结论的话 | **本任务同一形状的第三次：工具安静地返回空集，被读成"没有"。** 现在空集会当场出声                                                  |
+| 4   | job 的字段名是 **`jobId`**，我按 `uid` 比                                            | 每次都报"不认识这条 job"                                  | `jobs.ts:182` 的注释写「This is D-02 `jobs.uid`」—— **那说的是数据库列名，字段名在下一行**。一条准确但指向别处的注释同样能把人带偏 |
+| 5   | `/tmp/install.log` 写在没有 `shell: bash` 的步骤里                                   | Windows pwsh 解析成 `D:\tmp\install.log` 当场炸           | 跨平台 workflow 里，**POSIX 路径 + 默认 shell = 只在两个平台上成立**                                                               |
+| 6   | 观测用的 `find -perm` 把整步拖红                                                     | "反向核实"步骤红掉，**而它上面刚刚正确报出了结论**        | **一个用来看的步骤，不该有能力决定红绿**                                                                                           |
 
 第 4 条修好之后，安装耗时立刻变得可信（14.1s / 52.3s / 28.1s），
 而第一版全是 `1.0s`——**正好是轮询间隔**。
@@ -679,11 +679,11 @@ CI 上的反向断言（三平台）：
 > 判据不是"能不能编出来"，是**"编出来的东西声明了什么下限"**。
 > 这三条都不是靠读代码发现的，是**解开产物去读它的元数据**发现的。
 
-| 平台 | 被钉死的东西 | 谁定的 | 后果 |
-|---|---|---|---|
-| macOS | `LC_BUILD_VERSION.minos` | `CMAKE_OSX_DEPLOYMENT_TARGET` 缺省 = 构建机系统版本 | 低版本 macOS 上 **dyld 直接拒绝加载** |
-| Linux | 最高 `GLIBC_x.y` 符号版本 | 构建机的 glibc / GCC 版本 | 老发行版上 **`dlopen` 失败** |
-| Windows | `MSVCP140` / `VCRUNTIME140*` 导入 | MSVC 工具链 | 没装 VC++ 可再发行组件的机器上**加载失败** |
+| 平台    | 被钉死的东西                      | 谁定的                                              | 后果                                       |
+| ------- | --------------------------------- | --------------------------------------------------- | ------------------------------------------ |
+| macOS   | `LC_BUILD_VERSION.minos`          | `CMAKE_OSX_DEPLOYMENT_TARGET` 缺省 = 构建机系统版本 | 低版本 macOS 上 **dyld 直接拒绝加载**      |
+| Linux   | 最高 `GLIBC_x.y` 符号版本         | 构建机的 glibc / GCC 版本                           | 老发行版上 **`dlopen` 失败**               |
+| Windows | `MSVCP140` / `VCRUNTIME140*` 导入 | MSVC 工具链                                         | 没装 VC++ 可再发行组件的机器上**加载失败** |
 
 ## 8.1 macOS：`minos` = 构建机的系统版本（**已修**）
 
@@ -707,11 +707,11 @@ runner 是 `macos-26`，而 CMake 不显式设部署目标时就取构建机自�
 
 `[实测]` 三个 Linux 包逐个 ELF 跑 `objdump -T`，取最高 `GLIBC_x.y`：
 
-| 包 | 构建机（§2.1 矩阵） | 最高 GLIBC 需求 | 判定 |
-|---|---|---|---|
-| `whispercpp-cpu-linux-x64` | **ubuntu-22.04** | **2.34** | ✅ Ubuntu 22.04 / Debian 12 都能跑 |
-| `whispercpp-cuda-linux-x64` | ubuntu-24.04 | 2.27 | ✅ **碰巧**安全（只有一个 `.so`，用到的符号少） |
-| `whispercpp-vulkan-linux-x64` | ubuntu-24.04 | **2.38** | 🔴 **Ubuntu 22.04(2.35) / Debian 12(2.36) 上加载失败** |
+| 包                            | 构建机（§2.1 矩阵） | 最高 GLIBC 需求 | 判定                                                   |
+| ----------------------------- | ------------------- | --------------- | ------------------------------------------------------ |
+| `whispercpp-cpu-linux-x64`    | **ubuntu-22.04**    | **2.34**        | ✅ Ubuntu 22.04 / Debian 12 都能跑                     |
+| `whispercpp-cuda-linux-x64`   | ubuntu-24.04        | 2.27            | ✅ **碰巧**安全（只有一个 `.so`，用到的符号少）        |
+| `whispercpp-vulkan-linux-x64` | ubuntu-24.04        | **2.38**        | 🔴 **Ubuntu 22.04(2.35) / Debian 12(2.36) 上加载失败** |
 
 **具体是哪三个符号**（这让它不是推测）：
 
@@ -814,13 +814,13 @@ delta is what makes requirement 2.1 cheap」—— **写着 A，实现是 B，�
 
 ## 9.0 结论先给
 
-| # | 事 | 状态 |
-|---|---|---|
-| ① | 探针**不能**单独分发 —— 它动态链接 ggml，裸跑起不来 | ✅ `[本机实测]` |
-| ② | 探针必须在**每一个**包里，不只是核心包 | ✅ 三条依据，见 §9.2 |
-| ③ | macOS 探针 `minos = 26.0.0`（§8.1 只修了包，没修探针） | ✅ **已修**，`[CI 实测]` 13.3.0 |
-| ④ | Windows 探针的导入表**不需要** VC++ 运行时（只有 UCRT） | ✅ `[本机实测]`，但见 §9.4 |
-| ⑤ | 「探针发出去 → Windows 适用包 5 变 6」 | ❌ **因果关系不成立**，见 §9.5 |
+| #   | 事                                                      | 状态                            |
+| --- | ------------------------------------------------------- | ------------------------------- |
+| ①   | 探针**不能**单独分发 —— 它动态链接 ggml，裸跑起不来     | ✅ `[本机实测]`                 |
+| ②   | 探针必须在**每一个**包里，不只是核心包                  | ✅ 三条依据，见 §9.2            |
+| ③   | macOS 探针 `minos = 26.0.0`（§8.1 只修了包，没修探针）  | ✅ **已修**，`[CI 实测]` 13.3.0 |
+| ④   | Windows 探针的导入表**不需要** VC++ 运行时（只有 UCRT） | ✅ `[本机实测]`，但见 §9.4      |
+| ⑤   | 「探针发出去 → Windows 适用包 5 变 6」                  | ❌ **因果关系不成立**，见 §9.5  |
 
 ## 9.1 ① 探针**不是**自包含的可执行文件
 
@@ -936,12 +936,12 @@ VC++ 可再发行组件（§8.3 未修）。探针会和它们一起起不来。
 
 `[本机实测]` 用**产品自己的** `evaluateApplicability()` 跑真目录（23 个包，Windows x64 占 6 个）：
 
-| 场景 | 适用 |
-|---|---|
-| A 今天的 CI runner（无探针、无 NVIDIA） | **5 / 6**，CUDA 被拒：「尚未探测到硬件能力」 |
-| B 今天的真 N 卡 Windows（无探针，`nvidia-smi` 在） | **6 / 6** ← ★ **今天就是 6，不需要探针** |
-| C 探针发出去后的 CI runner（无 NVIDIA） | **5 / 6**，理由变成「backend package not installed」 |
-| D 探针发出去后的真 N 卡 Windows | **6 / 6** |
+| 场景                                               | 适用                                                 |
+| -------------------------------------------------- | ---------------------------------------------------- |
+| A 今天的 CI runner（无探针、无 NVIDIA）            | **5 / 6**，CUDA 被拒：「尚未探测到硬件能力」         |
+| B 今天的真 N 卡 Windows（无探针，`nvidia-smi` 在） | **6 / 6** ← ★ **今天就是 6，不需要探针**             |
+| C 探针发出去后的 CI runner（无 NVIDIA）            | **5 / 6**，理由变成「backend package not installed」 |
+| D 探针发出去后的真 N 卡 Windows                    | **6 / 6**                                            |
 
 机制：`detect/gpu.ts` 的 Windows 分支先跑 `nvidia-smi`，成功就给
 `candidateBackends: ['cuda','vulkan']`；`Get-CimInstance Win32_VideoController`
@@ -962,13 +962,13 @@ GitHub 的 `windows-2025` runner 没有 NVIDIA 驱动 → 没有 `nvidia-smi` �
 
 `vendor/manifests/backends.json` 现状：
 
-| 包 | 来源 | 里面会有探针吗 |
-|---|---|---|
-| `whispercpp-cpu-linux-x64` | `ggml-org/whisper.cpp` 的 `whisper-bin-ubuntu-x64.tar.gz` | ❌ 上游的包，我们加不进去 |
-| `whispercpp-cpu-win-x64` | `ggml-org/whisper.cpp` 的 `whisper-bin-x64.zip` | ❌ 同上 |
-| `whispercpp-cuda-12.4-win-x64` | `ggml-org` 的 `whisper-cublas-12.4.0-bin-x64.zip` | ❌ 同上 |
-| `whispercpp-cpu-macos-arm64` | **我们自己编的** | ✅ |
-| `whispercpp-vulkan-linux-x64` | **我们自己编的** | ✅ |
+| 包                             | 来源                                                      | 里面会有探针吗            |
+| ------------------------------ | --------------------------------------------------------- | ------------------------- |
+| `whispercpp-cpu-linux-x64`     | `ggml-org/whisper.cpp` 的 `whisper-bin-ubuntu-x64.tar.gz` | ❌ 上游的包，我们加不进去 |
+| `whispercpp-cpu-win-x64`       | `ggml-org/whisper.cpp` 的 `whisper-bin-x64.zip`           | ❌ 同上                   |
+| `whispercpp-cuda-12.4-win-x64` | `ggml-org` 的 `whisper-cublas-12.4.0-bin-x64.zip`         | ❌ 同上                   |
+| `whispercpp-cpu-macos-arm64`   | **我们自己编的**                                          | ✅                        |
+| `whispercpp-vulkan-linux-x64`  | **我们自己编的**                                          | ✅                        |
 
 → **探针要到达 Linux 与 Windows 用户，前两条必须换成我们自己的构建。**
 两个包我们本来就在编、CI 每轮都产出，只是目录一直指向上游。
@@ -1027,11 +1027,11 @@ Manager 2026-08-07 裁定**先不动它**，理由是 §9.5 那张表：
 （`ec29792`，换包后）。两轮只差目录里那四条 —— 判据仍是
 「屏蔽宿主 PATH 的干净机器上，从网页装 → 拉模型 → 走真实转写路径拿到非空文本」。
 
-| 平台 | `hw.probe` 换包前 | `hw.probe` 换包后 | 适用包 | 转写 |
-|---|---|---|---:|---|
-| **linux-x64** | `warn` openmemo-probe 未安装（后端能力未知） | ✅ **`ok` 1 个设备, ggml 0.15.1** | 6 → 6 | succeeded 2.1s，108 字符 |
-| **win32-x64** | `warn` openmemo-probe 未安装（后端能力未知） | ✅ **`ok` 1 个设备, ggml 0.15.1** | 5 → 5 | succeeded 3.7s，108 字符 |
-| **darwin-arm64** | `warn` openmemo-probe 未安装（后端能力未知） | 🟡 **`warn` probe timed out after 10000ms (killed)** | 5 → 5 | succeeded 111.8s，108 字符 |
+| 平台             | `hw.probe` 换包前                            | `hw.probe` 换包后                                    | 适用包 | 转写                       |
+| ---------------- | -------------------------------------------- | ---------------------------------------------------- | -----: | -------------------------- |
+| **linux-x64**    | `warn` openmemo-probe 未安装（后端能力未知） | ✅ **`ok` 1 个设备, ggml 0.15.1**                    |  6 → 6 | succeeded 2.1s，108 字符   |
+| **win32-x64**    | `warn` openmemo-probe 未安装（后端能力未知） | ✅ **`ok` 1 个设备, ggml 0.15.1**                    |  5 → 5 | succeeded 3.7s，108 字符   |
+| **darwin-arm64** | `warn` openmemo-probe 未安装（后端能力未知） | 🟡 **`warn` probe timed out after 10000ms (killed)** |  5 → 5 | succeeded 111.8s，108 字符 |
 
 三平台都是「产品自己下载并校验的 (5) · 借宿主 PATH 的 (0) · 装不上/不可用 (0)」——
 **换包没有弄坏任何东西**，而 Linux 与 Windows 上「网页检测硬件」这一步第一次真的有了答案。

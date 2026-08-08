@@ -73,7 +73,11 @@ async function catalogModels(): Promise<CatalogModel[]> {
   for (const name of MODEL_MANIFESTS) {
     const raw: unknown = JSON.parse(await readFile(join(MANIFEST_DIR, name), 'utf8'));
     const v = validateModelManifest(raw);
-    assert.equal(v.ok, true, v.ok ? '' : `${name} schema 不过：\n${v.errors.slice(0, 5).join('\n')}`);
+    assert.equal(
+      v.ok,
+      true,
+      v.ok ? '' : `${name} schema 不过：\n${v.errors.slice(0, 5).join('\n')}`,
+    );
     out.push(...(raw as { models: CatalogModel[] }).models);
   }
   return out;
@@ -115,7 +119,10 @@ const TAG_MEANINGS: Readonly<Record<string, TagMeaning>> = {
   superseded: { zh: '已被更新的版本取代，保留只为可复现', claimsSufficiency: false },
 
   // —— 推荐，指的是"同类里先选它"，不是"只要它就够" ——
-  'recommended-default': { zh: '该 role 的默认推荐（`ModelCard.tsx` 会打星）', claimsSufficiency: false },
+  'recommended-default': {
+    zh: '该 role 的默认推荐（`ModelCard.tsx` 会打星）',
+    claimsSufficiency: false,
+  },
   'recommended-default-zh': { zh: '中文场景的默认推荐', claimsSufficiency: false },
   'recommended-with-zh': { zh: '做中文时建议一起装', claimsSufficiency: false },
 
@@ -171,7 +178,9 @@ describe('T-149 ① 目录里的标签不许承诺一件不存在的事', () => 
   it('TAG_MEANINGS 里不许有清单中已经不存在的标签（这张表自己也会腐烂）', async () => {
     const models = await catalogModels();
     const used = new Set(models.flatMap((m) => m.tags));
-    const stale = Object.keys(TAG_MEANINGS).filter((t) => !used.has(t)).sort();
+    const stale = Object.keys(TAG_MEANINGS)
+      .filter((t) => !used.has(t))
+      .sort();
     assert.deepEqual(
       stale,
       [],
@@ -310,7 +319,10 @@ describe('T-149 ② 清单里列成"备份"的来源，必须真的是另一个�
     assert.equal(effectiveOrigin('hf-mirror.com'), effectiveOrigin('huggingface.co'));
     // 反面：真镜像不许被折叠掉，否则这条规则会把有效冗余也一起吃掉。
     assert.notEqual(effectiveOrigin('www.modelscope.cn'), effectiveOrigin('huggingface.co'));
-    assert.notEqual(effectiveOrigin('raw.githubusercontent.com'), effectiveOrigin('huggingface.co'));
+    assert.notEqual(
+      effectiveOrigin('raw.githubusercontent.com'),
+      effectiveOrigin('huggingface.co'),
+    );
   });
 
   it('★ "只有一个来源"的文件清单必须与记录在案的逐字相同', async () => {
@@ -338,7 +350,8 @@ describe('T-149 ② 清单里列成"备份"的来源，必须真的是另一个�
       hf: /^huggingface\.co$/,
       'hf-mirror': /^hf-mirror\.com$/,
       modelscope: /^(www\.)?modelscope\.cn$/,
-      github: /^(github\.com|raw\.githubusercontent\.com|objects\.githubusercontent\.com|release-assets\.githubusercontent\.com)$/,
+      github:
+        /^(github\.com|raw\.githubusercontent\.com|objects\.githubusercontent\.com|release-assets\.githubusercontent\.com)$/,
     };
     let checked = 0;
     const bad: string[] = [];
@@ -352,7 +365,8 @@ describe('T-149 ② 清单里列成"备份"的来源，必须真的是另一个�
             bad.push(`${m.id}/${f.name}: 未知 provider ${mi.provider}`);
             continue;
           }
-          if (!re.test(host)) bad.push(`${m.id}/${f.name}: provider=${mi.provider} 但 host=${host}`);
+          if (!re.test(host))
+            bad.push(`${m.id}/${f.name}: provider=${mi.provider} 但 host=${host}`);
           checked += 1;
         }
       }
@@ -366,7 +380,9 @@ describe('T-149 ② 清单里列成"备份"的来源，必须真的是另一个�
     const models = await catalogModels();
     const ms = models.flatMap((m) =>
       m.files.flatMap((f) =>
-        f.mirrors.filter((x) => x.provider === 'modelscope').map((x) => ({ id: m.id, f, url: x.url })),
+        f.mirrors
+          .filter((x) => x.provider === 'modelscope')
+          .map((x) => ({ id: m.id, f, url: x.url })),
       ),
     );
     // 本轮新增 12 条 + 原有 14 条；少于 20 说明有人整批删了。

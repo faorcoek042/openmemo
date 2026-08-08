@@ -158,12 +158,7 @@ console.log('\n① 正向：全部 ≤ 上限时必须绿，并且**报出数到
     '没有打印数量 —— 一个不说自己检查了几个的检查器，绿了也不可信',
     r.out,
   );
-  expect(
-    /实测最高 13\.3\.0/.test(r.out),
-    '打印了实测最高值 13.3.0',
-    '没打印实测最高值',
-    r.out,
-  );
+  expect(/实测最高 13\.3\.0/.test(r.out), '打印了实测最高值 13.3.0', '没打印实测最高值', r.out);
 }
 
 console.log('\n② ★反向：一个 minos=26.0 的探针必须红，并且**点名它**');
@@ -235,7 +230,12 @@ console.log('\n⑦ 版本比较按数字，不是按字符串');
   // 字符串比会把 "9.0" 判成 > "13.3"，于是一个完全合规的产物被报成超标。
   const d = dirWith({ 'libggml.dylib': machO({ minos: '9.0' }) });
   const r = runChecker(['--dir', d, '--max', '13.3']);
-  expect(r.code === 0, 'minos 9.0 ≤ 13.3（数字比较）', '把 9.0 判成大于 13.3 —— 假红同样是谎', r.out);
+  expect(
+    r.code === 0,
+    'minos 9.0 ≤ 13.3（数字比较）',
+    '把 9.0 判成大于 13.3 —— 假红同样是谎',
+    r.out,
+  );
 }
 
 console.log('\n⑧ 老式 LC_VERSION_MIN_MACOSX 也要认');

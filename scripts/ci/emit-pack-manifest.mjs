@@ -158,7 +158,9 @@ async function main() {
         ? 'tar.xz'
         : die(`cannot infer unpack format from ${archiveName}`);
 
-  const staged = await listFiles(args['stage']).catch(() => die(`stage not found: ${args['stage']}`));
+  const staged = await listFiles(args['stage']).catch(() =>
+    die(`stage not found: ${args['stage']}`),
+  );
   if (staged.length === 0) {
     /*
      * 空 stage = 构建其实什么都没产出，而 tar 对空目录**照样成功**。

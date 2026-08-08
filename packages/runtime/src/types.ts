@@ -50,12 +50,7 @@ export interface ProbeOutput {
 }
 
 export type ProbeFailureKind =
-  | 'missing_probe'
-  | 'missing_backend_dir'
-  | 'timeout'
-  | 'crash'
-  | 'exec_error'
-  | 'bad_output';
+  'missing_probe' | 'missing_backend_dir' | 'timeout' | 'crash' | 'exec_error' | 'bad_output';
 
 export type ProbeResult =
   | { ok: true; output: ProbeOutput; durationMs: number; stderr: string }

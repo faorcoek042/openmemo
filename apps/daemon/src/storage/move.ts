@@ -53,7 +53,12 @@ export function planMove(fromRaw: string, toRaw: string): MovePlan {
   const base = { from, to };
 
   if (from === to) {
-    return { ...base, ok: false, reason: 'source and target are the same', reasonZh: '新位置与当前位置相同' };
+    return {
+      ...base,
+      ok: false,
+      reason: 'source and target are the same',
+      reasonZh: '新位置与当前位置相同',
+    };
   }
   // 目标在源**内部** → 复制会把自己不断 copy 进自己，必须否掉
   if (isInside(from, to)) {
@@ -492,7 +497,6 @@ export async function moveDataDir(
         sourceIntact: true,
       };
     }
-
   } catch (err) {
     step('rollback');
     await fs.rm(to, { recursive: true, force: true }).catch(() => {});

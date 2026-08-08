@@ -67,7 +67,9 @@ export async function resumableFetch(opts: ResumableFetchOptions): Promise<Resum
   const info = await probeRemoteFile(url, { signal, timeoutMs: 20_000 });
 
   if (info.sizeBytes !== null && info.sizeBytes > maxBytes) {
-    throw new Error(`file is ${String(info.sizeBytes)} bytes, over the ${String(maxBytes)} byte limit`);
+    throw new Error(
+      `file is ${String(info.sizeBytes)} bytes, over the ${String(maxBytes)} byte limit`,
+    );
   }
 
   const total = info.sizeBytes;
@@ -111,7 +113,11 @@ export async function resumableFetch(opts: ResumableFetchOptions): Promise<Resum
           if (written > maxBytes) {
             throw new Error(`download exceeded the ${String(maxBytes)} byte limit`);
           }
-          opts.onProgress?.(total !== null && total > 0 ? Math.min(1, written / total) : 0, written, total);
+          opts.onProgress?.(
+            total !== null && total > 0 ? Math.min(1, written / total) : 0,
+            written,
+            total,
+          );
           controller.enqueue(chunk);
         },
       });

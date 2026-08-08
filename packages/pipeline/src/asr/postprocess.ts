@@ -22,15 +22,28 @@
 // =========================================================================================
 
 const DIGITS: Record<string, number> = {
-  零: 0, 〇: 0, 一: 1, 幺: 1, 二: 2, 两: 2, 三: 3, 四: 4,
-  五: 5, 六: 6, 七: 7, 八: 8, 九: 9,
+  零: 0,
+  〇: 0,
+  一: 1,
+  幺: 1,
+  二: 2,
+  两: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
 };
 
 const UNITS: Record<string, number> = { 十: 10, 百: 100, 千: 1000 };
 const BIG_UNITS: Record<string, number> = { 万: 10_000, 亿: 100_000_000 };
 
 /** Characters that can appear inside one Chinese number. */
-const NUM_CHARS = new RegExp(`[${Object.keys(DIGITS).join('')}${Object.keys(UNITS).join('')}${Object.keys(BIG_UNITS).join('')}]`);
+const NUM_CHARS = new RegExp(
+  `[${Object.keys(DIGITS).join('')}${Object.keys(UNITS).join('')}${Object.keys(BIG_UNITS).join('')}]`,
+);
 
 /**
  * Parse a positional Chinese numeral (三千七百多万 -> 37000000-ish, 一百四十 -> 140).
@@ -124,7 +137,8 @@ export function zhNumeralsToArabic(text: string): string {
 
   // 3. Quantities followed by a unit/measure word we are confident about.
   //    Restricting to these units is what keeps "一个" and "一种" from being mangled.
-  const UNIT_WORDS = '年|月|日|号|时|点|分|秒|岁|位|名|人|个月|周|天|字|万|亿|元|美元|公里|米|页|集|章|条|次|届|世纪';
+  const UNIT_WORDS =
+    '年|月|日|号|时|点|分|秒|岁|位|名|人|个月|周|天|字|万|亿|元|美元|公里|米|页|集|章|条|次|届|世纪';
   out = out.replace(
     new RegExp(`([零〇一二三四五六七八九两十百千万亿]{2,})(?=(${UNIT_WORDS}))`, 'g'),
     (m: string) => {
@@ -153,19 +167,87 @@ export function zhNumeralsToArabic(text: string): string {
  * the model produced it.
  */
 const KNOWN_TERMS: string[] = [
-  'Twitter', 'Facebook', 'Google', 'YouTube', 'GitHub', 'Microsoft', 'Windows Live',
-  'Windows', 'Apple', 'iPhone', 'iPad', 'macOS', 'Android', 'Linux', 'Ubuntu',
-  'OpenAI', 'ChatGPT', 'Claude', 'Gemini', 'DeepSeek', 'NVIDIA', 'AMD', 'Intel',
-  'Ruby on Rails', 'Ruby', 'Python', 'JavaScript', 'TypeScript', 'Node.js', 'Scala',
-  'Java', 'Rails', 'React', 'Vue', 'Docker', 'Kubernetes',
-  'RSS', 'SMS', 'API', 'URL', 'HTTP', 'HTTPS', 'HTML', 'CSS', 'JSON', 'XML', 'PDF',
-  'CPU', 'GPU', 'RAM', 'SSD', 'USB', 'WiFi', 'IP', 'DNS', 'VPN', 'CEO', 'CTO', 'NBA',
-  'AI', 'ML', 'LLM', 'ASR', 'TTS', 'OCR', 'SDK', 'IDE', 'CLI', 'UI', 'UX',
-  'Alexa', 'Bing', 'Flickr', 'LinkedIn', 'Instagram', 'TikTok', 'WeChat', 'Weibo',
+  'Twitter',
+  'Facebook',
+  'Google',
+  'YouTube',
+  'GitHub',
+  'Microsoft',
+  'Windows Live',
+  'Windows',
+  'Apple',
+  'iPhone',
+  'iPad',
+  'macOS',
+  'Android',
+  'Linux',
+  'Ubuntu',
+  'OpenAI',
+  'ChatGPT',
+  'Claude',
+  'Gemini',
+  'DeepSeek',
+  'NVIDIA',
+  'AMD',
+  'Intel',
+  'Ruby on Rails',
+  'Ruby',
+  'Python',
+  'JavaScript',
+  'TypeScript',
+  'Node.js',
+  'Scala',
+  'Java',
+  'Rails',
+  'React',
+  'Vue',
+  'Docker',
+  'Kubernetes',
+  'RSS',
+  'SMS',
+  'API',
+  'URL',
+  'HTTP',
+  'HTTPS',
+  'HTML',
+  'CSS',
+  'JSON',
+  'XML',
+  'PDF',
+  'CPU',
+  'GPU',
+  'RAM',
+  'SSD',
+  'USB',
+  'WiFi',
+  'IP',
+  'DNS',
+  'VPN',
+  'CEO',
+  'CTO',
+  'NBA',
+  'AI',
+  'ML',
+  'LLM',
+  'ASR',
+  'TTS',
+  'OCR',
+  'SDK',
+  'IDE',
+  'CLI',
+  'UI',
+  'UX',
+  'Alexa',
+  'Bing',
+  'Flickr',
+  'LinkedIn',
+  'Instagram',
+  'TikTok',
+  'WeChat',
+  'Weibo',
 ];
 
-const TERM_PATTERNS: { re: RegExp; replacement: string }[] = KNOWN_TERMS
-  .slice()
+const TERM_PATTERNS: { re: RegExp; replacement: string }[] = KNOWN_TERMS.slice()
   .sort((a, b) => b.length - a.length)
   .map((term) => ({
     // \b does not behave usefully next to CJK, so we assert "not a latin letter/digit"

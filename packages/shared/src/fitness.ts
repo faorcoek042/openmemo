@@ -133,8 +133,7 @@ export function llmMemoryMB(
   kvCacheType: KvCacheType = 'f16',
 ): number {
   const weights = (weightsBytes / 1e6) * 1.05;
-  const kv =
-    (gguf.kvBytesPerToken * contextLength * KV_QUANT_FACTOR[kvCacheType]) / 1e6;
+  const kv = (gguf.kvBytesPerToken * contextLength * KV_QUANT_FACTOR[kvCacheType]) / 1e6;
   return Math.round(weights + kv + LLM_GRAPH_OVERHEAD_MB);
 }
 
@@ -171,8 +170,7 @@ export function vramBudgetMB(hw: HardwareInfo): number {
   if (!gpu) return 0;
   // Never sum across GPUs: LM Studio issue #67 badges dual-3090 setups as
   // "Full GPU Offload Possible" and then OOMs on load.
-  const base =
-    gpu.vramFreeMB ?? (gpu.vramTotalMB ?? 0) * VRAM_TOTAL_FALLBACK_RATIO;
+  const base = gpu.vramFreeMB ?? (gpu.vramTotalMB ?? 0) * VRAM_TOTAL_FALLBACK_RATIO;
   return Math.round(base * VRAM_HEADROOM_RATIO);
 }
 
@@ -181,8 +179,7 @@ export function ramBudgetMB(hw: HardwareInfo): number {
 }
 
 export function modelsRootFreeMB(hw: HardwareInfo): number {
-  const d =
-    hw.disks.find((x) => x.pathFor === 'models_root') ?? hw.disks[0] ?? null;
+  const d = hw.disks.find((x) => x.pathFor === 'models_root') ?? hw.disks[0] ?? null;
   return d ? d.freeMB : 0;
 }
 
@@ -272,8 +269,7 @@ export function computeFit(input: FitInput, hw: HardwareInfo): FitResult {
   const speedTier = speedTierFor(estMinutes);
 
   const lang = input.targetLanguage ?? null;
-  const notRecommendedForLanguage =
-    lang != null && (input.notRecommendedFor ?? []).includes(lang);
+  const notRecommendedForLanguage = lang != null && (input.notRecommendedFor ?? []).includes(lang);
 
   const base = {
     estMinutesPerAudioHour: estMinutes,
@@ -391,9 +387,7 @@ export function computeFit(input: FitInput, hw: HardwareInfo): FitResult {
   if (vram > 0 && needMB <= vram + ram) {
     const layers = estimateGpuLayers(input, vram);
     const layerNote =
-      layers != null && input.blockCount
-        ? `（约 ${layers}/${input.blockCount} 层在显存）`
-        : '';
+      layers != null && input.blockCount ? `（约 ${layers}/${input.blockCount} 层在显存）` : '';
     return {
       tier: 'slow_partial',
       reasonCode: 'partial_gpu_offload',

@@ -33,13 +33,13 @@ supersedes: R-01 B5（「memo.ac 仅支持 CUDA，无 Vulkan/DirectML」，该�
 
 ## 1. 取证方法与产物指纹
 
-| 项 | 值 |
-|---|---|
-| 版本 | v1.7.5（`Makememo/MemoAI` 最新 release，published 2026-06-24；本轮 2026-08-07 复查仍是最新） |
-| Windows 包 | `Memo_1.7.5_win32_x64.exe`，305,233,832 B，sha256 `6a773f00b8f2a6b2b0266ac2779fbc473086981120521e8ec8133d64663e6c97` |
-| macOS 包 | `Memo_1.7.5_darwin_arm64.zip`，322,856,974 B，sha256 `ffb5f8e03d4e5c6e88c111c3f44484dcb9c573ecfe7735efe22d2ca111c13d1d` |
-| 解包链 | NSIS → `$PLUGINSDIR/app-64.7z` → `resources/app.asar`（42,362 条目） |
-| 工具 | `p7zip-full`(7z 26.02) + 自写 asar parser + 自写 PE import 解析（纯 Python） |
+| 项         | 值                                                                                                                      |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------- |
+| 版本       | v1.7.5（`Makememo/MemoAI` 最新 release，published 2026-06-24；本轮 2026-08-07 复查仍是最新）                            |
+| Windows 包 | `Memo_1.7.5_win32_x64.exe`，305,233,832 B，sha256 `6a773f00b8f2a6b2b0266ac2779fbc473086981120521e8ec8133d64663e6c97`    |
+| macOS 包   | `Memo_1.7.5_darwin_arm64.zip`，322,856,974 B，sha256 `ffb5f8e03d4e5c6e88c111c3f44484dcb9c573ecfe7735efe22d2ca111c13d1d` |
+| 解包链     | NSIS → `$PLUGINSDIR/app-64.7z` → `resources/app.asar`（42,362 条目）                                                    |
+| 工具       | `p7zip-full`(7z 26.02) + 自写 asar parser + 自写 PE import 解析（纯 Python）                                            |
 
 **当年解不开的原因是本机没有 7z**；本轮 `apt-get install -y p7zip-full` 后一次成功。
 （另：单连接被限速到 ~24 KB/s，改用 `aria2c -x16` 后 2.3 MB/s，否则 305 MB 要下 3 小时。）
@@ -82,6 +82,7 @@ main.exe     [PE32+]  imports: Whisper.dll, KERNEL32.dll, api-ms-win-core-path-l
 - 对照：CPU 版 `whisper-cli.exe` 导入的是 `ggml.dll`/`whisper.dll`，两条链完全独立。
 
 **provenance（版本资源与符号，实测）**
+
 - 版本资源字符串：`DirectCompute port of whisper.cpp library` ← Const-me/Whisper 的 FileDescription
 - C++ 符号：`.?AUiTensorArena@DirectCompute@@`、`.?AVMlContext@DirectCompute@@`、
   `.?AVDecoderLayerPool@WhisperContext@DirectCompute@@`、`.?AUiSpectrogram@Whisper@@` …
@@ -90,6 +91,7 @@ main.exe     [PE32+]  imports: Whisper.dll, KERNEL32.dll, api-ms-win-core-path-l
   → 不是直接拿的官方 release，是**自己 fork 后重编**（分支名 `em2er-whisper`，构建者 `guochao`）。
 
 `main.exe` 的 CLI（strings 实测）证实它按**图形适配器**选设备，而不是按 CUDA 设备：
+
 ```
 -la,  --list-adapters  List graphic adapters and exit
 -gpu, --use-gpu        The graphic adapter to use for inference
@@ -101,35 +103,39 @@ main.exe     [PE32+]  imports: Whisper.dll, KERNEL32.dll, api-ms-win-core-path-l
 `dist-electron/main/index-f11e3e4b.js`，调度函数（原文，已格式化）：
 
 ```js
-function m0r(t){
-  const e = Ds.platform(), n = Ds.arch(), i = t.windowsWhisperMode;
-  if (e === "darwin") {
-    if (n !== "arm64") throw new Error(`Whisper transcription is not supported on macOS ${n}`);
-    return wjt;                                  // macOS 单一 runner
+function m0r(t) {
+  const e = Ds.platform(),
+    n = Ds.arch(),
+    i = t.windowsWhisperMode;
+  if (e === 'darwin') {
+    if (n !== 'arm64') throw new Error(`Whisper transcription is not supported on macOS ${n}`);
+    return wjt; // macOS 单一 runner
   }
-  if (e === "win32") {
-    if (i === "GPU")    return Asi;              // → DirectCompute
-    if (i === "cuBLAS") return vsi;              // → CUDA
+  if (e === 'win32') {
+    if (i === 'GPU') return Asi; // → DirectCompute
+    if (i === 'cuBLAS') return vsi; // → CUDA
   }
-  return wjt;                                    // 兜底 = CPU
+  return wjt; // 兜底 = CPU
 }
 ```
 
 三个 runner 对象与其**实际 spawn 的二进制**（我用正则定位函数体、逐个核对 spawn 的第 0 参，非推测）：
 
-| runner | run 函数 | spawn 的路径变量 | 实际二进制 |
-|---|---|---|---|
-| `wjt` | `usi` | 局部计算 `f` | `addon/whisper/bin/1.8.6/whisper-cli[.exe]`（mac 上按 mode 走 `coreml/` 子目录） |
-| `vsi` | `_si` | `VJe` | `<userData>/.memo-ai/addon/whisper/win32/x64/cublas/whisper-cli.exe` |
-| `Asi` | `bsi` | `XSe` | `../addon/whisper/bin/gpu/main.exe` |
+| runner | run 函数 | spawn 的路径变量 | 实际二进制                                                                       |
+| ------ | -------- | ---------------- | -------------------------------------------------------------------------------- |
+| `wjt`  | `usi`    | 局部计算 `f`     | `addon/whisper/bin/1.8.6/whisper-cli[.exe]`（mac 上按 mode 走 `coreml/` 子目录） |
+| `vsi`  | `_si`    | `VJe`            | `<userData>/.memo-ai/addon/whisper/win32/x64/cublas/whisper-cli.exe`             |
+| `Asi`  | `bsi`    | `XSe`            | `../addon/whisper/bin/gpu/main.exe`                                              |
 
 另有一处把 mode 翻译成 whisper 参数：
+
 ```js
 S.macOSWhisperMode==="CPU"    && darwin && arm64      → A.use_gpu = false   // 即 -ng
 S.macOSWhisperMode==="coreML" && darwin && arm64 && P → A.use_gpu = true
 S.macOSWhisperMode==="Metal"  && darwin && arm64 && P → A.use_gpu = true
 (b==="GPU" || b==="cuBLAS")   && win32                → A.use_gpu = true
 ```
+
 （`t.use_gpu || T.push("-ng")` —— 关 GPU 就是给 whisper-cli 加 `-ng`。）
 
 ### 2.4 用户界面：三选一分段控件，不是自动探测
@@ -154,11 +160,23 @@ window.AIM.isWindows && <Segmented value={e.windowsWhisperMode || "CPU"}>
 用户自己在三个按钮里挑，挑错了就是慢或者报错。
 
 另有一个**独立**的 FunASR 设备选择器（与 whisper 无关）：
+
 ```js
-function war(){ return isWindows ? [{label:"CPU",value:"cpu"},{label:"CUDA",value:"cuda"}]
-                : isMac ? [{label:"CPU",value:"cpu"},{label:"MPS",value:"mps"}]
-                : [{label:"CPU",value:"cpu"}]; }
+function war() {
+  return isWindows
+    ? [
+        { label: 'CPU', value: 'cpu' },
+        { label: 'CUDA', value: 'cuda' },
+      ]
+    : isMac
+      ? [
+          { label: 'CPU', value: 'cpu' },
+          { label: 'MPS', value: 'mps' },
+        ]
+      : [{ label: 'CPU', value: 'cpu' }];
+}
 ```
+
 ⚠️ **R-01 引的 `["cpu","cuda"]` 就是这个函数**（主进程侧同名实现 `Eai()`）。
 它是 **FunASR 的 device 参数**，不是全 app 的后端枚举 —— 当年把它当成了后者，这是错因。
 
@@ -171,6 +189,7 @@ addon/whisper/bin/1.8.6/         libggml-metal.dylib, libggml-blas, libggml-cpu,
                                  libwhisper.1.8.6.dylib, whisper-cli, whisper-server
 addon/whisper/bin/1.8.6/coreml/  同上 + libwhisper.coreml.dylib
 ```
+
 全 `.app` 内 `-iname` 扫描 vulkan/directml/rocm/opencl/cuda：**零命中**
 （唯一 `hip` 命中是 `Squirrel.framework/.../ShipIt`，误报）。
 → **macOS = CPU(BLAS) / Metal / CoreML，无 Vulkan/DirectML/ROCm。R-01 此处正确。**
@@ -181,14 +200,14 @@ macOS Intel 被硬拒：`if (n !== "arm64") throw new Error("Whisper transcripti
 
 ## 4. 最终答案：memo.ac 的 GPU 后端支持面
 
-| 平台 | 后端 | 实现 | 用户入口 |
-|---|---|---|---|
-| Windows x64 | **CPU** | whisper.cpp 1.8.6（ggml-cpu） | `windowsWhisperMode="CPU"`（默认） |
-| Windows x64 | **DirectCompute (D3D11)** | Const-me/Whisper 自建分支 `em2er-whisper` | `windowsWhisperMode="GPU"` |
-| Windows x64 | **CUDA (cuBLAS 12.2)** | whisper.cpp + ggml-cuda.dll（随包 7z，103 MB） | `windowsWhisperMode="cuBLAS"`，标签 "Cuda" |
-| macOS arm64 | **CPU / Metal / CoreML** | whisper.cpp 1.8.6 + coreml 子目录 | `macOSWhisperMode="CPU"/"Metal"/"coreML"` |
-| macOS x64 (Intel) | ⛔ 抛异常，不支持 | — | — |
-| **Linux** | ⛔ **无任何产物** | — | — |
+| 平台              | 后端                      | 实现                                           | 用户入口                                   |
+| ----------------- | ------------------------- | ---------------------------------------------- | ------------------------------------------ |
+| Windows x64       | **CPU**                   | whisper.cpp 1.8.6（ggml-cpu）                  | `windowsWhisperMode="CPU"`（默认）         |
+| Windows x64       | **DirectCompute (D3D11)** | Const-me/Whisper 自建分支 `em2er-whisper`      | `windowsWhisperMode="GPU"`                 |
+| Windows x64       | **CUDA (cuBLAS 12.2)**    | whisper.cpp + ggml-cuda.dll（随包 7z，103 MB） | `windowsWhisperMode="cuBLAS"`，标签 "Cuda" |
+| macOS arm64       | **CPU / Metal / CoreML**  | whisper.cpp 1.8.6 + coreml 子目录              | `macOSWhisperMode="CPU"/"Metal"/"coreML"`  |
+| macOS x64 (Intel) | ⛔ 抛异常，不支持         | —                                              | —                                          |
+| **Linux**         | ⛔ **无任何产物**         | —                                              | —                                          |
 
 **没有 Vulkan。没有 DirectML。没有 ROCm。没有 OpenCL。没有 SYCL/oneAPI。**
 （`vulkan-1.dll` / `vk_swiftshader.dll` / `vk_swiftshader_icd.json` 确实在包里，
@@ -211,9 +230,9 @@ macOS Intel 被硬拒：`if (n !== "arm64") throw new Error("Whisper transcripti
    `vjt(n,e) = isLocalWhisper(n) && (windowsWhisperMode==="GPU" || ==="cuBLAS" || macOSWhisperMode==="Metal")`
    两个调用点：开始转写前 `vjt(...) && window.AIM.app.useProLimit()`（扣额度）；
    以及 `vjt(pt,Ze) && await window.AIM.app.getProLimit()===0` → 弹窗。
-   文案 `pro.limit`：*"The trial of acceleration capabilities has been used up.
-   You can switch to CPU mode to transcribe content."*，
-   `pro.continue`：*"…2 - 10 times faster transcription speed."*
+   文案 `pro.limit`：_"The trial of acceleration capabilities has been used up.
+   You can switch to CPU mode to transcribe content."_，
+   `pro.continue`：_"…2 - 10 times faster transcription speed."_
 
 ---
 

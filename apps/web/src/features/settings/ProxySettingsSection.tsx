@@ -116,7 +116,8 @@ export function ProxySettingsSection() {
     mutationFn: () => api<ProxyTestReport>('settings', `${ENDPOINT}/test`, { method: 'POST' }),
   });
   const testSources = useMutation({
-    mutationFn: () => api<SourceLatencyReport>('settings', `${ENDPOINT}/sources`, { method: 'POST' }),
+    mutationFn: () =>
+      api<SourceLatencyReport>('settings', `${ENDPOINT}/sources`, { method: 'POST' }),
   });
 
   const patch = (p: Partial<ProxyConfig>) => {
@@ -136,7 +137,11 @@ export function ProxySettingsSection() {
       </h2>
 
       {notImplemented ? (
-        <Banner tone="warning" title={t('settings.proxy.unsupported')} detail={t('settings.proxy.unsupportedDetail')} />
+        <Banner
+          tone="warning"
+          title={t('settings.proxy.unsupported')}
+          detail={t('settings.proxy.unsupportedDetail')}
+        />
       ) : null}
 
       {/* ── 模式：默认跟随系统 ── */}
@@ -166,11 +171,16 @@ export function ProxySettingsSection() {
       {manual ? (
         <div className="mb-4 space-y-2">
           {(['httpProxy', 'httpsProxy', 'socks5'] as const).map((k) => (
-            <label key={k} className="flex flex-col gap-1 text-xs text-ink-secondary sm:flex-row sm:items-center">
+            <label
+              key={k}
+              className="flex flex-col gap-1 text-xs text-ink-secondary sm:flex-row sm:items-center"
+            >
               <span className="w-28 shrink-0">{t(`settings.proxy.fields.${k}`)}</span>
               <input
                 value={cfg[k] ?? ''}
-                onChange={(e) => patch({ [k]: e.target.value.trim() || null } as Partial<ProxyConfig>)}
+                onChange={(e) =>
+                  patch({ [k]: e.target.value.trim() || null } as Partial<ProxyConfig>)
+                }
                 placeholder={k === 'socks5' ? 'socks5://127.0.0.1:1080' : 'http://127.0.0.1:7890'}
                 spellCheck={false}
                 autoComplete="off"
@@ -187,7 +197,12 @@ export function ProxySettingsSection() {
             <textarea
               value={cfg.noProxy.join(', ')}
               onChange={(e) =>
-                patch({ noProxy: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })
+                patch({
+                  noProxy: e.target.value
+                    .split(',')
+                    .map((s) => s.trim())
+                    .filter(Boolean),
+                })
               }
               rows={2}
               placeholder="localhost, .cn, 192.168.1.5"
@@ -242,7 +257,11 @@ export function ProxySettingsSection() {
           data-testid="proxy-test"
           onClick={() => testProxy.mutate()}
         >
-          {testProxy.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Plug className="size-3.5" />}
+          {testProxy.isPending ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <Plug className="size-3.5" />
+          )}
           {t('settings.proxy.testProxy')}
         </Button>
         <Button
@@ -252,7 +271,11 @@ export function ProxySettingsSection() {
           data-testid="proxy-test-sources"
           onClick={() => testSources.mutate()}
         >
-          {testSources.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Gauge className="size-3.5" />}
+          {testSources.isPending ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <Gauge className="size-3.5" />
+          )}
           {t('settings.proxy.testSources')}
         </Button>
       </div>
@@ -288,7 +311,9 @@ export function ProxySettingsSection() {
               <li key={p.url} className="flex flex-wrap items-center gap-2 text-xs">
                 {/* StatusChip 强制要求 label —— 状态绝不只用颜色表达 */}
                 <StatusChip
-                  tone={p.result === 'ok' ? 'good' : p.result === 'skipped' ? 'neutral' : 'critical'}
+                  tone={
+                    p.result === 'ok' ? 'good' : p.result === 'skipped' ? 'neutral' : 'critical'
+                  }
                   label={t(`settings.proxy.probe.${p.result}`)}
                 />
                 <span className="text-ink">{p.target}</span>
@@ -317,14 +342,21 @@ export function ProxySettingsSection() {
           </thead>
           <tbody>
             {arr(testSources.data.rows).map((r) => (
-              <tr key={r.provider} className={r.provider === testSources.data.fastest ? 'text-accent-ink' : 'text-ink'}>
+              <tr
+                key={r.provider}
+                className={r.provider === testSources.data.fastest ? 'text-accent-ink' : 'text-ink'}
+              >
                 <td>
                   {r.label}
-                  {r.provider === testSources.data.fastest ? ` · ${t('settings.proxy.fastest')}` : ''}
+                  {r.provider === testSources.data.fastest
+                    ? ` · ${t('settings.proxy.fastest')}`
+                    : ''}
                 </td>
                 {/* 不可达就写"不可达"，绝不填一个 0ms 或 "—" 让它看起来像最快的 */}
                 <td className="tabular-nums">
-                  {r.reachable && r.latencyMs !== null ? `${r.latencyMs}ms` : t('settings.proxy.unreachable')}
+                  {r.reachable && r.latencyMs !== null
+                    ? `${r.latencyMs}ms`
+                    : t('settings.proxy.unreachable')}
                 </td>
                 <td className="text-ink-muted">
                   {r.viaProxy ? t('settings.proxy.viaProxy') : t('settings.proxy.direct')}
@@ -338,7 +370,8 @@ export function ProxySettingsSection() {
       {/* 当前生效值（凭据已脱敏）—— 让用户能确认"我填的到底存进去没有" */}
       {manual && (cfg.socks5 || cfg.httpProxy || cfg.httpsProxy) ? (
         <p className="mt-3 font-mono text-xs text-ink-muted" data-testid="proxy-effective">
-          {t('settings.proxy.effective')}: {redactProxyUrl(cfg.socks5 ?? cfg.httpsProxy ?? cfg.httpProxy)}
+          {t('settings.proxy.effective')}:{' '}
+          {redactProxyUrl(cfg.socks5 ?? cfg.httpsProxy ?? cfg.httpProxy)}
         </p>
       ) : null}
     </section>

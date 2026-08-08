@@ -7,6 +7,7 @@
 `scripts/selfcheck.mjs` 已经提交完毕，工作区里没有他的文件了）。
 
 我要做的是 T-153 ② 的第 3 处断点：**给默认推荐的量化条目挂上 `coreml-encoder`**。
+
 - **不新增任何 sha256** —— 复用清单里已有的、已被校验过的那两个 encoder 归档
   （上游拼 `.mlmodelc` 路径时主动剥掉 `-qX_X` 后缀，同一份 encoder 给该模型所有量化档共用，
   `pack-publish` §TL;DR ② 已从 `whisper.cpp:3336-3342` 核实）。
@@ -26,12 +27,12 @@
 
 # TL;DR
 
-| # | 事 | 结果 |
-|---|---|---|
-| ① | `POST /api/llm/detect` 不存在 → D-10 #3 卡死 | ✅ **做完**，顺带把 `POST /api/llm/models` 也做了（能做，见下）→ #26 的按钮回到 R-P2 原样 |
-| ② | ANE 编进去了但没接通（3 处断点） | ✅ **三处全修**。判据「装得上 + `asr.coreml` 从 warn 变 ok」的**前半**已由测试钉住；**后半只能在真 Mac 上验，本机验不了**（见 §我没做到的） |
-| ③ | `debt-cleanup` 抛回的三条 | ✅ 三条全做（lint 规则+白名单 / D1 收敛 / runtime 两个真 bug） |
-| ④ | 删 `wavesurfer.js` | ✅ 删了，并加了一条只能钉 `package.json` 的护栏 |
+| #   | 事                                           | 结果                                                                                                                                        |
+| --- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| ①   | `POST /api/llm/detect` 不存在 → D-10 #3 卡死 | ✅ **做完**，顺带把 `POST /api/llm/models` 也做了（能做，见下）→ #26 的按钮回到 R-P2 原样                                                   |
+| ②   | ANE 编进去了但没接通（3 处断点）             | ✅ **三处全修**。判据「装得上 + `asr.coreml` 从 warn 变 ok」的**前半**已由测试钉住；**后半只能在真 Mac 上验，本机验不了**（见 §我没做到的） |
+| ③   | `debt-cleanup` 抛回的三条                    | ✅ 三条全做（lint 规则+白名单 / D1 收敛 / runtime 两个真 bug）                                                                              |
+| ④   | 删 `wavesurfer.js`                           | ✅ 删了，并加了一条只能钉 `package.json` 的护栏                                                                                             |
 
 门禁：`pnpm -r test` **1088 pass / 0 fail**（基线 1005）· `tsc -b` 0 · `eslint` 0 ·
 `verify-offline` **62/62** · `pnpm build:safe` 通过。
@@ -54,10 +55,10 @@
 
 ## 两条设计决定，理由不是口味
 
-| 决定 | 理由 |
-|---|---|
-| 响应必须带 `probed`（探过哪几个地址），不能只回 `detected` | 只说"没探到"，用户分不清**"我的 Ollama 改过端口"**和**"我压根没装"** —— 两种情况的下一步完全不同。⑤A-2 同族：**空集必须自带它的量程** |
-| 是 POST 不是 GET；**不设 `refetchInterval`** | 它会真去敲三个本机端口。GET 会被浏览器与中间层预取/缓存/重放。与 T-150 给自检定的同一条：每隔几秒替用户跑一遍，是拿他的 CPU 换一个他没在看的数字 |
+| 决定                                                       | 理由                                                                                                                                             |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 响应必须带 `probed`（探过哪几个地址），不能只回 `detected` | 只说"没探到"，用户分不清**"我的 Ollama 改过端口"**和**"我压根没装"** —— 两种情况的下一步完全不同。⑤A-2 同族：**空集必须自带它的量程**            |
+| 是 POST 不是 GET；**不设 `refetchInterval`**               | 它会真去敲三个本机端口。GET 会被浏览器与中间层预取/缓存/重放。与 T-150 给自检定的同一条：每隔几秒替用户跑一遍，是拿他的 CPU 换一个他没在看的数字 |
 
 前端首屏说的是「**还没探测过**」，不是「未检测到正在运行的本地服务」——
 后者是一句**我们还没有资格说的话**。（⑤A-2 的镜像：这次是**未测被渲染成了已测**。）
@@ -92,11 +93,11 @@
 
 # ② ANE：三处断点全修，但**"变 ok"这一半我验不了**
 
-| # | 断点 | 修法 | 谁钉住它 |
-|---|---|---|---|
-| 1 | **解包多一层同名目录**（真 bug） | `installer.ts` 在换入前压掉冗余顶层目录 | `packages/downloader/src/installer.test.ts`，**走真的 `install()`**（下载→sha256→硬链→解包→原子换入五个环节全过），断言 `coremldata.bin` 落在 `<X>.mlmodelc/` 第一层 —— 与 `checkCoreMl()` 逐字同一条判据 |
-| 2 | **前端从不传 `includeOptional`** | `ModelCard` 加勾选框 → `ModelsPage` 原样传给 `POST /models/pull` | 组件测试断 **请求体里那个字段**，不是"勾选框变蓝了" |
-| 3 | **只有 f16 挂了 encoder** | 给 `large-v3-q5_0` / `turbo-q5_0` / `turbo-q8_0` 挂上 | `modelCatalogTruth.test.ts` 的单来源清单被迫更新（它当场抓到了我） |
+| #   | 断点                             | 修法                                                             | 谁钉住它                                                                                                                                                                                                  |
+| --- | -------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **解包多一层同名目录**（真 bug） | `installer.ts` 在换入前压掉冗余顶层目录                          | `packages/downloader/src/installer.test.ts`，**走真的 `install()`**（下载→sha256→硬链→解包→原子换入五个环节全过），断言 `coremldata.bin` 落在 `<X>.mlmodelc/` 第一层 —— 与 `checkCoreMl()` 逐字同一条判据 |
+| 2   | **前端从不传 `includeOptional`** | `ModelCard` 加勾选框 → `ModelsPage` 原样传给 `POST /models/pull` | 组件测试断 **请求体里那个字段**，不是"勾选框变蓝了"                                                                                                                                                       |
+| 3   | **只有 f16 挂了 encoder**        | 给 `large-v3-q5_0` / `turbo-q5_0` / `turbo-q8_0` 挂上            | `modelCatalogTruth.test.ts` 的单来源清单被迫更新（它当场抓到了我）                                                                                                                                        |
 
 **判据收得很窄，这一条值得单说**：只在「顶层恰好一个条目 + 它是目录 + 名字**逐字**等于目标目录名」
 时才压。任何更宽的规则（"只有一个目录就压"）都会改坏别的包的布局 ——
@@ -139,11 +140,11 @@
 
 **三条边界，全部写进了 D-01 §8.4 / SECURITY.md L1 ③ / D-06**：
 
-| 边界 | 说明 |
-|---|---|
-| 🔴 **拦不住动态 import** | `verify-offline.mjs:640` 的 `await import('node:child_process')`。**有一条断言专门钉住这个盲区** —— 就是为了防止下一份文档因为"有规则了"再次把这一格写成满格。它红了不代表出 bug，代表 eslint 变强了，那时要**同时**改文档 |
-| **范围只到产品源码** | `scripts/**` / `verify-*.mjs` / `*.test.ts` 不在内。一并禁掉只会逼出十几条 `eslint-disable`，等于没有规则 |
-| ⚠️ **`apps/web/**` 刻意不在范围内** | 不是遗漏：flat config 里同名规则是**整体覆盖不是合并**，圈进来会**悄悄吃掉**两条前端分层护栏。`[实测]` 把范围改成含 web，护栏测试当场红（见 §反向验证 R5） |
+| 边界                                | 说明                                                                                                                                                                                                                       |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🔴 **拦不住动态 import**            | `verify-offline.mjs:640` 的 `await import('node:child_process')`。**有一条断言专门钉住这个盲区** —— 就是为了防止下一份文档因为"有规则了"再次把这一格写成满格。它红了不代表出 bug，代表 eslint 变强了，那时要**同时**改文档 |
+| **范围只到产品源码**                | `scripts/**` / `verify-*.mjs` / `*.test.ts` 不在内。一并禁掉只会逼出十几条 `eslint-disable`，等于没有规则                                                                                                                  |
+| ⚠️ **`apps/web/**` 刻意不在范围内** | 不是遗漏：flat config 里同名规则是**整体覆盖不是合并**，圈进来会**悄悄吃掉**两条前端分层护栏。`[实测]` 把范围改成含 web，护栏测试当场红（见 §反向验证 R5）                                                                 |
 
 **准确口径**：「产品源码里 `child_process` 只能出现在这 7 个文件，由 lint 强制」。
 **不是**「全项目唯一 spawn 出口」—— 那句今天仍然不成立（`whisperServer.ts` 那条真债 +
@@ -167,10 +168,10 @@
 
 ## 3.3 `packages/runtime` 两个真 bug
 
-| bug | 后果 | 判据 |
-|---|---|---|
-| `detect/system.ts` 缺 `killSignal` | 默认 SIGTERM 可被忽略 ⇒ 那个 `timeout` **不是上界**。这条路径跑的是 `lspci`/`wmic`/`sw_vers`，在**启动时**跑 —— daemon 卡在启动上，而唯一本该救它的东西正是坏掉的那个（ADR-014 同族） | **行为断言**：真起一个装了 SIGTERM handler 的子进程，断言 `run()` 在期限内 settle。断字面量的话，换成同样无效的 `'SIGINT'` 照样绿 |
-| `selfTest.ts` **覆盖**而非前置 `LD_LIBRARY_PATH` | conda/nix/HPC 机器上原有搜索路径被整个丢掉 ⇒ 自检与真实转写解析出不同的库，**而自检正是用来预测真实路径的** | 断"原来有什么必须还在"，不是"我们要的那个在不在" |
+| bug                                              | 后果                                                                                                                                                                                  | 判据                                                                                                                              |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `detect/system.ts` 缺 `killSignal`               | 默认 SIGTERM 可被忽略 ⇒ 那个 `timeout` **不是上界**。这条路径跑的是 `lspci`/`wmic`/`sw_vers`，在**启动时**跑 —— daemon 卡在启动上，而唯一本该救它的东西正是坏掉的那个（ADR-014 同族） | **行为断言**：真起一个装了 SIGTERM handler 的子进程，断言 `run()` 在期限内 settle。断字面量的话，换成同样无效的 `'SIGINT'` 照样绿 |
+| `selfTest.ts` **覆盖**而非前置 `LD_LIBRARY_PATH` | conda/nix/HPC 机器上原有搜索路径被整个丢掉 ⇒ 自检与真实转写解析出不同的库，**而自检正是用来预测真实路径的**                                                                           | 断"原来有什么必须还在"，不是"我们要的那个在不在"                                                                                  |
 
 三处 `execFile` 包装合并成 `childEnv.ts` 一份。顺带一条：空值时**不留前导分隔符**
 （`":"` 开头在 glibc 下等价于 `"."`，会让子进程从 cwd 加载 `.so`）。
@@ -200,19 +201,19 @@
 
 # §反向验证（9 组，全部贴过真实红灯，跑之前均 `grep` 确认坏行在即将运行的产物里）
 
-| # | 撤掉什么 | 真实输出（节选） |
-|---|---|---|
-| **R1** | 把 `wavesurfer.js` 加回 `apps/web/package.json` | `✖ ★ dependencies / devDependencies 里都不许出现 wavesurfer` · `+ ['wavesurfer.js']  - []` |
-| **R2** | `prependPathVar` 退回"覆盖"写法 | `✖ ★ 原来有值时必须整个保留下来` · `+ '/packs/whispercpp'  - '/packs/whispercpp:/opt/conda/lib:/usr/local/lib'`（4 条红） |
-| **R3** | `detect/system.ts` 拿掉 `killSignal` | `✖ ★ 忽略 SIGTERM 的子进程超时后，run() 仍然必须在期限内返回`：`'hung' !== 'settled'`，已耗时 6010ms。**第二条更难看**：`✖ 超时返回的是 ok:false` 实得 `{"ok":true,"stdout":""}` —— 15 秒后它把"没跑成"伪装成了空输出 |
-| **R4** | eslint 规则的 `files` 改成匹配不到任何东西 | `✖ ★ 产品源码里 import node:child_process 必须报错`：`apps/daemon/src/http/rest/__probe__.ts 里 import node:child_process 没有被拦下 —— L1 又变回一句空话了` |
-| **R5** | 把 `apps/web` 一起圈进那条规则的范围 | `✖ ★ 前端两条分层护栏仍然生效`：`features/A → features/B 不再报错了 —— flat config 里同名规则是整体覆盖，新块吃掉了它`（**这条证明我避开的那个坑是真的**） |
-| **R6** | `main.ts` 摘掉 `createLlmRoutes` | detect 5 条 + models 4 条全红，含 `✖ ★ 它不是 404（T-150 卡死的全部内容就是这一条）` |
-| **R7** | `LocalLlmSection` 首屏改说"没探到" / 不列探过的地址 / 不显示模型数 | 3 条各自红（第三条见下方"我自己写坏的断言"） |
-| **R8** | `LlmModelSelect` 不渲染刷新按钮 | `✖ ★ #26…`：`可枚举的那 4 家必须有刷新按钮（lmstudio）—— daemon 侧 POST /api/llm/models 已经存在` |
-| **R9** | `installer.ts` 不压那层冗余同名目录 | `✖ ★ zip 自带一层同名顶层目录时…`：`<X>.mlmodelc 里没有 coremldata.bin，whisper 会静默回退到 Metal/CPU。实际内容：["ggml-large-v3-turbo-encoder.mlmodelc"]` |
-| **R10** | `ModelsPage` 不传 `includeOptional` / `ModelCard` 判据退化成"是不是 Mac" | 各 2~4 条红 |
-| **R11** | `PIPELINE_MEDIA_EXTENSIONS` 改回 `∪ PLAYLIST_EXTENSIONS` | `✖ ★ T-153：pipeline 的集合相对收敛前恰好只多了 {mpeg,mpg}`：`多出来的不止 {mpeg,mpg}：.asx .m3u .mpeg .mpg .pls .wpl .xspf` |
+| #       | 撤掉什么                                                                 | 真实输出（节选）                                                                                                                                                                                                      |
+| ------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **R1**  | 把 `wavesurfer.js` 加回 `apps/web/package.json`                          | `✖ ★ dependencies / devDependencies 里都不许出现 wavesurfer` · `+ ['wavesurfer.js']  - []`                                                                                                                            |
+| **R2**  | `prependPathVar` 退回"覆盖"写法                                          | `✖ ★ 原来有值时必须整个保留下来` · `+ '/packs/whispercpp'  - '/packs/whispercpp:/opt/conda/lib:/usr/local/lib'`（4 条红）                                                                                             |
+| **R3**  | `detect/system.ts` 拿掉 `killSignal`                                     | `✖ ★ 忽略 SIGTERM 的子进程超时后，run() 仍然必须在期限内返回`：`'hung' !== 'settled'`，已耗时 6010ms。**第二条更难看**：`✖ 超时返回的是 ok:false` 实得 `{"ok":true,"stdout":""}` —— 15 秒后它把"没跑成"伪装成了空输出 |
+| **R4**  | eslint 规则的 `files` 改成匹配不到任何东西                               | `✖ ★ 产品源码里 import node:child_process 必须报错`：`apps/daemon/src/http/rest/__probe__.ts 里 import node:child_process 没有被拦下 —— L1 又变回一句空话了`                                                          |
+| **R5**  | 把 `apps/web` 一起圈进那条规则的范围                                     | `✖ ★ 前端两条分层护栏仍然生效`：`features/A → features/B 不再报错了 —— flat config 里同名规则是整体覆盖，新块吃掉了它`（**这条证明我避开的那个坑是真的**）                                                            |
+| **R6**  | `main.ts` 摘掉 `createLlmRoutes`                                         | detect 5 条 + models 4 条全红，含 `✖ ★ 它不是 404（T-150 卡死的全部内容就是这一条）`                                                                                                                                  |
+| **R7**  | `LocalLlmSection` 首屏改说"没探到" / 不列探过的地址 / 不显示模型数       | 3 条各自红（第三条见下方"我自己写坏的断言"）                                                                                                                                                                          |
+| **R8**  | `LlmModelSelect` 不渲染刷新按钮                                          | `✖ ★ #26…`：`可枚举的那 4 家必须有刷新按钮（lmstudio）—— daemon 侧 POST /api/llm/models 已经存在`                                                                                                                     |
+| **R9**  | `installer.ts` 不压那层冗余同名目录                                      | `✖ ★ zip 自带一层同名顶层目录时…`：`<X>.mlmodelc 里没有 coremldata.bin，whisper 会静默回退到 Metal/CPU。实际内容：["ggml-large-v3-turbo-encoder.mlmodelc"]`                                                           |
+| **R10** | `ModelsPage` 不传 `includeOptional` / `ModelCard` 判据退化成"是不是 Mac" | 各 2~4 条红                                                                                                                                                                                                           |
+| **R11** | `PIPELINE_MEDIA_EXTENSIONS` 改回 `∪ PLAYLIST_EXTENSIONS`                 | `✖ ★ T-153：pipeline 的集合相对收敛前恰好只多了 {mpeg,mpg}`：`多出来的不止 {mpeg,mpg}：.asx .m3u .mpeg .mpg .pls .wpl .xspf`                                                                                          |
 
 `grep -rn REVERSAL` 在 `apps/**` `packages/**` `eslint.config.js` **全部归零**（源码与 dist 都查过）。
 
@@ -235,34 +236,34 @@ JS 位运算是 32 位有符号，溢出成负数，`writeUInt32LE` 当场 `ERR_
 
 # §我没做到 / 不确定的（如实列）
 
-| 项 | 状态 |
-|---|---|
-| **macOS 上 `asr.coreml` 真的从 warn 变 ok** | ⛔ **未验证**。`checkCoreMl()` 在非 darwin/arm64 上直接 return，本机产生不出这一项。需要一次 macOS runner 上带 `includeOptional` 的 `cold-start-audit`。**我没触发 CI**（不在本任务范围） |
-| tiny/base/small/medium 的 CoreML encoder | ⛔ **没挂**。我们没有它们的 sha256（HF 直连被网络策略挡住），**编一个摘要出来比不挂糟得多** |
-| `POST /api/llm/models` 对**真厂商**发过请求吗 | ⛔ **没有**。不该拿用户的 Key 去试，也不该替他花钱。出网那条走注入 `fetch` 的单测（6 条），真机行为**未验证** |
-| `POST /api/llm/detect` 探到过真的 Ollama 吗 | ⛔ **没有**。本机 11434/1234/18080 全部关闭（跑测试前确认过），所以 `detected` 恒空。**"探到"那条分支只被组件测试的桩覆盖过** |
-| 真浏览器验证 | ⛔ **一次都没开**。「本地模型」折叠组与 CoreML 勾选框只有 tsc + eslint + 234 条组件测试背书，排版与观感未经人眼确认 |
-| `LlmModelSelect` 的刷新按钮在「按用途分别配置」那一处 | 🟡 **刻意不给**（不传 `providerId`）：那里的候选是已配置服务商的子集，在那里刷新会让人以为刷的是那一栏 |
-| `mistralai` | ⛔ 仍然驱动不了（`frontend-truth` 已定性），本轮没碰 |
-| D-05 §7.3a 那句「**待决**：wavesurfer 要么用起来…」 | 🟡 **没改**。它是 `debt-cleanup` 刚订正过的交付物，PROTOCOL §1 规则 3 不许改别人的。裁决与执行都记在 `peaks.ts` 与本回执里。**建议 Manager 顺手把那句"待决"划掉** |
-| `packages/shared` 自己没有测试 | 🟡 沿用 sub-agent 的判断：给它加 test 脚本会牵动 `check-test-scripts.mjs` 那条跨包守卫，超出范围。并集构造由 pipeline/daemon/web 三侧间接钉住 |
+| 项                                                    | 状态                                                                                                                                                                                      |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **macOS 上 `asr.coreml` 真的从 warn 变 ok**           | ⛔ **未验证**。`checkCoreMl()` 在非 darwin/arm64 上直接 return，本机产生不出这一项。需要一次 macOS runner 上带 `includeOptional` 的 `cold-start-audit`。**我没触发 CI**（不在本任务范围） |
+| tiny/base/small/medium 的 CoreML encoder              | ⛔ **没挂**。我们没有它们的 sha256（HF 直连被网络策略挡住），**编一个摘要出来比不挂糟得多**                                                                                               |
+| `POST /api/llm/models` 对**真厂商**发过请求吗         | ⛔ **没有**。不该拿用户的 Key 去试，也不该替他花钱。出网那条走注入 `fetch` 的单测（6 条），真机行为**未验证**                                                                             |
+| `POST /api/llm/detect` 探到过真的 Ollama 吗           | ⛔ **没有**。本机 11434/1234/18080 全部关闭（跑测试前确认过），所以 `detected` 恒空。**"探到"那条分支只被组件测试的桩覆盖过**                                                             |
+| 真浏览器验证                                          | ⛔ **一次都没开**。「本地模型」折叠组与 CoreML 勾选框只有 tsc + eslint + 234 条组件测试背书，排版与观感未经人眼确认                                                                       |
+| `LlmModelSelect` 的刷新按钮在「按用途分别配置」那一处 | 🟡 **刻意不给**（不传 `providerId`）：那里的候选是已配置服务商的子集，在那里刷新会让人以为刷的是那一栏                                                                                    |
+| `mistralai`                                           | ⛔ 仍然驱动不了（`frontend-truth` 已定性），本轮没碰                                                                                                                                      |
+| D-05 §7.3a 那句「**待决**：wavesurfer 要么用起来…」   | 🟡 **没改**。它是 `debt-cleanup` 刚订正过的交付物，PROTOCOL §1 规则 3 不许改别人的。裁决与执行都记在 `peaks.ts` 与本回执里。**建议 Manager 顺手把那句"待决"划掉**                         |
+| `packages/shared` 自己没有测试                        | 🟡 沿用 sub-agent 的判断：给它加 test 脚本会牵动 `check-test-scripts.mjs` 那条跨包守卫，超出范围。并集构造由 pipeline/daemon/web 三侧间接钉住                                             |
 
 ---
 
 # §纪律
 
-| 条 | 结果 |
-|---|---|
-| `apps/web/dist` 未被覆盖 | ✅ `index.html` mtime 仍是 `2026-08-06 02:15:09`（我动手前）。构建**全程 `pnpm build:safe`**，一次 `pnpm -r build` / `vite build` 都没跑（组件测试走 `--ssr --outDir .test-out/`） |
-| `:10000` 只读 | ✅ **一个请求都没发**，未重启、未 kill、未占用。pid `3333930` 仍在 |
-| `/root/data-memo` | ✅ 未读未写，mtime 仍是 `2026-08-06 02:15:14` |
-| `datadir.json` 指针 | ✅ sha256 `7f930979…0da233f3`，与 `frontend-truth` 记录的**逐字符相同**，未碰 |
-| `pkill -f` | ✅ 未用 |
-| release / 仓库可见性 / 分支保护 | ✅ 一个都没碰 |
-| 本机 whisper 转写 | ✅ **一次都没跑** |
-| `git add` | ✅ **逐个文件，45 个，零 `-A`**。见下方两条申报 |
-| 起过的服务 | 测试自己起的：daemon 用 **19800–19819** 段（`testPorts.test.ts` 当场把我第一版的 19880 抓了 —— 与 `noteDetailContract` 的 19860 只隔 20）；downloader 测试的桩服务器绑 `:0`（OS 分配） |
-| 临时文件 | `/tmp/lm-*.bak`（仓库外），已用完 |
+| 条                              | 结果                                                                                                                                                                                   |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/dist` 未被覆盖        | ✅ `index.html` mtime 仍是 `2026-08-06 02:15:09`（我动手前）。构建**全程 `pnpm build:safe`**，一次 `pnpm -r build` / `vite build` 都没跑（组件测试走 `--ssr --outDir .test-out/`）     |
+| `:10000` 只读                   | ✅ **一个请求都没发**，未重启、未 kill、未占用。pid `3333930` 仍在                                                                                                                     |
+| `/root/data-memo`               | ✅ 未读未写，mtime 仍是 `2026-08-06 02:15:14`                                                                                                                                          |
+| `datadir.json` 指针             | ✅ sha256 `7f930979…0da233f3`，与 `frontend-truth` 记录的**逐字符相同**，未碰                                                                                                          |
+| `pkill -f`                      | ✅ 未用                                                                                                                                                                                |
+| release / 仓库可见性 / 分支保护 | ✅ 一个都没碰                                                                                                                                                                          |
+| 本机 whisper 转写               | ✅ **一次都没跑**                                                                                                                                                                      |
+| `git add`                       | ✅ **逐个文件，45 个，零 `-A`**。见下方两条申报                                                                                                                                        |
+| 起过的服务                      | 测试自己起的：daemon 用 **19800–19819** 段（`testPorts.test.ts` 当场把我第一版的 19880 抓了 —— 与 `noteDetailContract` 的 19860 只隔 20）；downloader 测试的桩服务器绑 `:0`（OS 分配） |
+| 临时文件                        | `/tmp/lm-*.bak`（仓库外），已用完                                                                                                                                                      |
 
 ## 🔴 申报 1：PROTOCOL §10（反向验证不许在共享工作树里做）—— **我违反了**
 
@@ -270,15 +271,15 @@ JS 位运算是 32 位有符号，溢出成负数，`writeUInt32LE` 当场 `ERR_
 **我是读了 PROTOCOL 之后开工的，读到的是没有 §10 的那一版**，中途没有重读 —— 这是我的疏漏，
 不是不知道。如实交代时间窗，供撞上红灯的人核对：
 
-| 大致时段 | 哪个包的 `dist` 里装着故意坏掉的代码 | 表现 |
-|---|---|---|
-| ~16:05 | `apps/web/.test-out/unit` | `peaks.test.ts` 1 条红 |
-| ~16:10 / ~16:15 | `packages/runtime/dist` | `childEnv.test.ts` 4 条 / 2 条红（**其中一次那个子进程会活 15 秒**） |
-| ~16:25 / ~16:28 | 无（改的是 `eslint.config.js`，只影响 `pnpm lint` 与那一个测试文件） | `childProcessAllowlist.test.ts` 1 条红 |
-| ~16:45 | `apps/daemon/dist` | `llmRoutes.test.ts` 9 条红 |
-| ~16:50 / ~17:00 | `apps/web/.test-out/components` | 各 1–4 条红 |
-| ~16:58 | `packages/downloader/dist` | `installer.test.ts` 1 条红 |
-| ~17:05 | `packages/shared/dist` → 传导到 `packages/pipeline/dist` | `argGuard.test.ts` 2 条红 |
+| 大致时段        | 哪个包的 `dist` 里装着故意坏掉的代码                                 | 表现                                                                 |
+| --------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| ~16:05          | `apps/web/.test-out/unit`                                            | `peaks.test.ts` 1 条红                                               |
+| ~16:10 / ~16:15 | `packages/runtime/dist`                                              | `childEnv.test.ts` 4 条 / 2 条红（**其中一次那个子进程会活 15 秒**） |
+| ~16:25 / ~16:28 | 无（改的是 `eslint.config.js`，只影响 `pnpm lint` 与那一个测试文件） | `childProcessAllowlist.test.ts` 1 条红                               |
+| ~16:45          | `apps/daemon/dist`                                                   | `llmRoutes.test.ts` 9 条红                                           |
+| ~16:50 / ~17:00 | `apps/web/.test-out/components`                                      | 各 1–4 条红                                                          |
+| ~16:58          | `packages/downloader/dist`                                           | `installer.test.ts` 1 条红                                           |
+| ~17:05          | `packages/shared/dist` → 传导到 `packages/pipeline/dist`             | `argGuard.test.ts` 2 条红                                            |
 
 **每一组都在同一分钟内还原并重建**，`grep -rn REVERSAL` 收尾归零；但按 §10 的判据，
 「最终状态干净」救不了「过程中别人跑了一次」。**如果你在上面这些时段撞到过红，先看这张表。**
@@ -295,18 +296,19 @@ JS 位运算是 32 位有符号，溢出成负数，`writeUInt32LE` 当场 `ERR_
 这是 HANDOFF ⑤J 那一族的**反方向**：不是我 `-A` 扫走别人，是我暂存的东西被别人带走。
 
 **我没有去改写他的提交**（那会动别人的历史）。请 Manager 知悉即可。
+
 > **可推广的一条**：`git add` 之后到自己 `git commit` 之前的那段窗口，
 > 在多 agent 共享工作树里**不是安全的**。要么 add 完立刻 commit，要么别提前 add。
 
 ## SHARED-CHANGE 申报（5 处）
 
-| 文件 | 归属 | 我做了什么 | 风险 |
-|---|---|---|---|
-| `apps/daemon/src/main.ts` | 多人 | **只加我那 16 行**；把工作区里别人在途的两行 `dataDir: paths.dataDir,`（配 `transcribe.ts` / `ws/recorder`）**逐行剔除后才 add**，`git diff --cached` 逐条核对过 | 低（已核） |
-| `apps/web/src/test/components.test.tsx` | 多人热区 | 追加 8 条；**订正 1 条旧断言 + 它的名字**（#26 那条"两档都不给假按钮"，前提已消失）；`EMPHASIS_REGISTRY` 加 2 条 | 🟡 中 |
-| `apps/daemon/src/pipeline/modelCatalogTruth.test.ts` | `catalog-truth` | 单来源清单 +2 行（**是它的守卫逼我更新的**，并写清"不是丢了镜像，是同一个归档挂到了另外两个条目上"） | 低 |
-| `apps/web/src/features/runtime/api.ts` | `architect` | `useHardwareQuery` **提升**到 `lib/api/hardware.ts`，此处改为再导出（分层护栏禁止 features/A → features/B；**再导出而不是复制**，两处共用同一个 queryKey，硬件不会被多探一次） | 低 |
-| `apps/web/tsconfig.test.json` | `frontend-truth` | 追加 2 行（sub-agent 的 `capture/upload.test.ts`）。⚠️ sub-agent 实测：把 `looksLikeMedia` 改回写死正则，**`tsc -b` 与 `eslint` 都是 0** —— 不加这个测试，web 那半个分叉没有任何东西挡得住 | 低 |
+| 文件                                                 | 归属             | 我做了什么                                                                                                                                                                                 | 风险       |
+| ---------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- |
+| `apps/daemon/src/main.ts`                            | 多人             | **只加我那 16 行**；把工作区里别人在途的两行 `dataDir: paths.dataDir,`（配 `transcribe.ts` / `ws/recorder`）**逐行剔除后才 add**，`git diff --cached` 逐条核对过                           | 低（已核） |
+| `apps/web/src/test/components.test.tsx`              | 多人热区         | 追加 8 条；**订正 1 条旧断言 + 它的名字**（#26 那条"两档都不给假按钮"，前提已消失）；`EMPHASIS_REGISTRY` 加 2 条                                                                           | 🟡 中      |
+| `apps/daemon/src/pipeline/modelCatalogTruth.test.ts` | `catalog-truth`  | 单来源清单 +2 行（**是它的守卫逼我更新的**，并写清"不是丢了镜像，是同一个归档挂到了另外两个条目上"）                                                                                       | 低         |
+| `apps/web/src/features/runtime/api.ts`               | `architect`      | `useHardwareQuery` **提升**到 `lib/api/hardware.ts`，此处改为再导出（分层护栏禁止 features/A → features/B；**再导出而不是复制**，两处共用同一个 queryKey，硬件不会被多探一次）             | 低         |
+| `apps/web/tsconfig.test.json`                        | `frontend-truth` | 追加 2 行（sub-agent 的 `capture/upload.test.ts`）。⚠️ sub-agent 实测：把 `looksLikeMedia` 改回写死正则，**`tsc -b` 与 `eslint` 都是 0** —— 不加这个测试，web 那半个分叉没有任何东西挡得住 | 低         |
 
 **未碰**：`packages/runtime/src/selfcheck.ts`（`asr.coreml` 判据一个字没改）、
 `vendor/manifests/` 除 `models-whisper.json` 外的全部、`coordination/BOARD.md` / `ROSTER.md` /

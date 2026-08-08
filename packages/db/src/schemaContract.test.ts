@@ -40,12 +40,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 
-import {
-  MEDIA_ASSET_ROLES,
-  MEDIA_ASSET_STATES,
-  NOTE_KINDS,
-  NOTE_STATUSES,
-} from '@openmemo/shared';
+import { MEDIA_ASSET_ROLES, MEDIA_ASSET_STATES, NOTE_KINDS, NOTE_STATUSES } from '@openmemo/shared';
 
 import { openAppDatabase, type AppDatabase } from './open.js';
 

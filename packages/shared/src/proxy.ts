@@ -192,7 +192,11 @@ export function shouldBypassProxy(hostname: string, noProxy: readonly string[]):
 }
 
 /** Resolve the proxy URL to use for a given target URL, or null for a direct connection. */
-export function proxyUrlFor(cfg: ProxyConfig, targetUrl: string, env: Record<string, string | undefined> = {}): string | null {
+export function proxyUrlFor(
+  cfg: ProxyConfig,
+  targetUrl: string,
+  env: Record<string, string | undefined> = {},
+): string | null {
   if (cfg.mode === 'off') return null;
 
   let host: string;

@@ -192,7 +192,9 @@ export class ArtifactStore {
       for (const f of files) {
         if (!f.endsWith('.json')) continue;
         try {
-          out.push(JSON.parse(await fs.readFile(path.join(this.manifestDir(kind), f), 'utf8')) as T);
+          out.push(
+            JSON.parse(await fs.readFile(path.join(this.manifestDir(kind), f), 'utf8')) as T,
+          );
         } catch {
           /* skip unreadable manifest */
         }
@@ -257,7 +259,11 @@ export class ArtifactStore {
       }
       if (!st.isFile()) continue;
 
-      if (e.endsWith('.partial') || e.endsWith('.partial.json') || e.endsWith('.partial.json.tmp')) {
+      if (
+        e.endsWith('.partial') ||
+        e.endsWith('.partial.json') ||
+        e.endsWith('.partial.json.tmp')
+      ) {
         if (now - st.mtimeMs > stalePartialMs) stalePartials.push({ path: p, bytes: st.size });
         continue;
       }
@@ -361,7 +367,14 @@ export interface InstallRecordLike {
   /** Authoritative type. Never infer this from the containing directory. */
   role?: string;
   integrity?: string;
-  files?: { role?: string; name?: string; sha256?: string; root?: string; relPath?: string; path?: string }[];
+  files?: {
+    role?: string;
+    name?: string;
+    sha256?: string;
+    root?: string;
+    relPath?: string;
+    path?: string;
+  }[];
 }
 
 /**
