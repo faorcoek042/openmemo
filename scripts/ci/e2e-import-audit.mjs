@@ -114,6 +114,10 @@ const hdr = (s) => {
 
 /** 收集所有失败，最后一次性摊开 —— 一次 CI 跑完要能看到全部问题，不是第一个就退。 */
 const failures = [];
+/** 人为跳过的用例。§11：跳过不许渲染成成功 —— 结论区必须把它喊出来。 */
+const skippedOnPurpose = [];
+/** 单次 HTTP 调用的上限（§11：一切外部命令带超时）。轮询靠 waitForJob 的圈数兜。 */
+const HTTP_TIMEOUT_MS = Number(arg('--http-timeout-ms', '120000'));
 const fail = (step, detail) => {
   failures.push({ step, detail });
   say(`   ✘ [${step}] ${detail}`);
@@ -228,9 +232,40 @@ const childEnv = {
     : {}),
 };
 
+/**
+ * PROTOCOL §11：**探测前先证明这个端口是空的。**
+ *
+ * 这条协议里点名的三个实例，有一个就是这条腿：健康检查连上了同端口的一个游离
+ * daemon，**0.5 秒就报「就绪」**，而它自己拉起的那个已经因端口冲突死了
+ * （exit 4）。后面整整一节都在跟别人的进程说话，拿到一串 `DISK_FULL`——
+ * 那串错误看起来像产品有毛病，其实是我连错了进程。
+ *
+ * 此前我修的是**事后**认人（比 `/api/health` 的 pid）。那能抓住，但抓得太晚：
+ * 端口被占时该做的是**当场判失败**，而不是先跑起来再检查。所以这里补事前那一半。
+ */
+async function assertPortFree(port, why) {
+  const { createServer: createProbeServer } = await import('node:net');
+  await new Promise((resolve, reject) => {
+    const srv = createProbeServer();
+    srv.once('error', (e) => {
+      reject(
+        new Error(
+          `端口 ${port} 不是空的（${e.code}）—— ${why}。\n` +
+            `      PROTOCOL §11：起服务再探测的测试，探测前必须先证明端口是空的。\n` +
+            `      占用方可能是上一轮跑剩的 daemon。**不要用 pkill -f**（会打到别人的进程），\n` +
+            `      换一个 --port，或按 pid 收掉那一个。`,
+        ),
+      );
+    });
+    srv.once('listening', () => srv.close(() => resolve()));
+    srv.listen(port, '127.0.0.1');
+  });
+}
+
 let proc = null;
 let daemonLogs = [];
 async function startDaemon(label) {
+  await assertPortFree(PORT, `启动 [${label}] daemon 之前`);
   const logs = [];
   daemonLogs = logs;
   proc = spawn(NODE_BIN, [DAEMON, '--data-dir', DATA_DIR, '--port', String(PORT)], {
@@ -291,12 +326,40 @@ async function startDaemon(label) {
   say(tail(logs, 80));
   throw new Error('daemon did not start');
 }
+/**
+ * PROTOCOL §11：**按 pid 收整棵进程树**，且**绝不用 `pkill -f`**
+ * （模式匹配会打到别人的进程，那是另一种越界）。
+ *
+ * Windows 上 `child.kill()` 只结束直接子进程，孙子进程会留下来继续占着端口 ——
+ * 于是下一轮的健康检查又会连上一个"不是我起的"的东西。用 `taskkill /T` 收整棵树。
+ */
 async function stopDaemon() {
   if (!proc) return;
-  proc.kill('SIGTERM');
-  await new Promise((r) => setTimeout(r, 1500));
-  if (proc.exitCode === null) proc.kill('SIGKILL');
+  const pid = proc.pid;
+  try {
+    if (IS_WIN) {
+      const { spawnSync } = await import('node:child_process');
+      // /T = 连同子孙进程；/F = 强制。带超时，免得收尾这一步自己挂住（§11）。
+      spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 15000 });
+    } else {
+      proc.kill('SIGTERM');
+    }
+  } catch {
+    /* 已经没了 */
+  }
+  for (let i = 0; i < 30 && proc.exitCode === null; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  if (proc.exitCode === null) {
+    try {
+      proc.kill('SIGKILL');
+    } catch {
+      /* 已经没了 */
+    }
+  }
   proc = null;
+  // 端口真的还回来了才算收干净 —— 否则下一次 startDaemon 会当场报错（那正是我们要的）。
+  await new Promise((r) => setTimeout(r, 400));
 }
 function tail(logs, n) {
   return logs
@@ -318,7 +381,12 @@ const j = async (path, init) => {
   let lastErr;
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
-      const res = await fetch(`${BASE}${path}`, init);
+      // §11：一切外部调用带超时。没有超时的步骤既会拖死整条腿，
+      // 又会在被杀时把孙子进程留下来 —— 两个后果它一个人全占。
+      const res = await fetch(`${BASE}${path}`, {
+        ...init,
+        signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+      });
       const text = await res.text();
       try {
         return { status: res.status, headers: res.headers, body: JSON.parse(text) };
@@ -335,7 +403,10 @@ const j = async (path, init) => {
 
 /** 取二进制（`/media` 用）。返回 Buffer + 状态 + 头。 */
 const jbin = async (path, init) => {
-  const res = await fetch(`${BASE}${path}`, init);
+  const res = await fetch(`${BASE}${path}`, {
+    ...init,
+    signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+  });
   const buf = Buffer.from(await res.arrayBuffer());
   return { status: res.status, headers: res.headers, buf };
 };
@@ -1120,7 +1191,16 @@ try {
    */
 
   if (SKIP_F1) {
-    say('   --skip-f1：本轮跳过 F1。');
+    /*
+     * PROTOCOL §11「**跳过不许渲染成成功**」。
+     *
+     * 显式传 `--skip-f1` 是人的选择，不是静默的漏测，所以允许它继续；
+     * 但**必须在结论里显形**，不能让一条少跑了 F1 的腿看起来跟跑全了一样绿。
+     * 下面第 13 节的总表会把它标成"⊘ 跳过"，而 `skippedOnPurpose` 让结论区
+     * 单独再喊一遍 —— 判据是"绿灯要能追溯到它到底验了什么"。
+     */
+    say('   ⚠️ --skip-f1：本轮**跳过 F1**。这一轮的绿灯不包含链接导入。');
+    skippedOnPurpose.push('F1 链接导入（--skip-f1）');
     results.push({
       name: 'F1 链接导入',
       what: 'yt-dlp 取回',
@@ -1140,15 +1220,26 @@ try {
     say(`   ${FIXTURE_HOST} → ${resolved ? resolved.address : '(解析不到)'}`);
 
     if (!loopback) {
-      say('   ⚠️ F1 SKIPPED：这台机器上没有把 fixture 主机名指向回环。');
+      /*
+       * ★ PROTOCOL §11：这是**非自愿**的跳过 —— 环境没准备好，不是人做的决定。
+       *   以前这里只 push 一条 `ok:null` 然后照常 exit 0，也就是
+       *   「跳过渲染成了成功」：workflow 里那条 hosts 步骤哪天悄悄坏掉，
+       *   这条腿会**继续报绿**，而 F1 一次都没跑过。现在当场判失败。
+       */
+      fail(
+        'F1',
+        `fixture 主机名 ${FIXTURE_HOST} 没有指向回环（实测解析到 ${resolved ? resolved.address : '(解析不到)'}）——` +
+          ' F1 一次都没跑。这是环境没准备好，不是"本轮不需要"，所以判失败而不是跳过。',
+      );
+      say('   ⚠️ F1 未执行：这台机器上没有把 fixture 主机名指向回环。');
       say('      本脚本**刻意不去改** hosts 文件 —— 那是机器级状态，改了被 kill 就留在那儿了');
       say('      （PROTOCOL §9-bis）。准备工作由 workflow 在一次性 runner 上做。');
       say(`      需要的一行：127.0.0.1 ${FIXTURE_HOST}`);
       results.push({
         name: 'F1 链接导入',
         what: 'yt-dlp 取回',
-        ok: null,
-        note: 'SKIPPED(主机名没指向回环)',
+        ok: false,
+        note: '未执行（主机名没指向回环）→ 判失败，见 §11',
       });
     } else if (!PRODUCT_YTDLP) {
       fail('F1', `storeRoot 里找不到 yt-dlp（${STORE_ROOT}）—— 站点解析器没装上，F1 走不通`);
@@ -1385,7 +1476,13 @@ try {
   await stopDaemon();
   hdr('结论');
   if (failures.length === 0) {
-    say('   ✔ 全部通过。');
+    if (skippedOnPurpose.length > 0) {
+      say('   ✔ 已执行的用例全部通过，但**本轮不是全量**：');
+      for (const t of skippedOnPurpose) say(`     ⊘ 跳过：${t}`);
+      say('     （PROTOCOL §11：跳过不许渲染成成功 —— 这盏绿灯只覆盖上面跑过的那些。）');
+    } else {
+      say('   ✔ 全部通过。');
+    }
   } else {
     exitCode = 1;
     say(`   ✘ ${failures.length} 处失败：`);
