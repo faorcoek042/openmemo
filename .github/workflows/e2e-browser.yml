@@ -1,0 +1,116 @@
+# 真浏览器里点按钮 —— 我们缺的就是这一层。
+#
+# ── 为什么这条腿存在（用户 2026-08-08，真机 Windows v0.3.0）────────────────────────
+#
+#   > 「点击去安装模型，完全没有任何反应。」
+#   > 「测速也没有任何反应。」
+#
+# 当时已经有四条 e2e 腿，**一条都看不见这类问题** —— 因为**它们一次都没有点过界面**。
+# 全部走 HTTP：按钮死了、事件没绑上、前端抛异常，**API 照样 200、断言照样全绿**。
+#
+# 这是同一形状的第三次：
+#   ① CI 从没执行过启动器      → v0.2.0 双击打不开
+#   ② CI 从没经历过空数据目录  → 组件装不上
+#   ③ **CI 从没点过一下**      → 按钮无反应
+# 三次都是**判据没有对准用户真正会做的动作**。
+#
+# ── 判据（刻意只有一条）─────────────────────────────────────────────────────────
+#
+#   > **点下去要么发生该发生的事，要么给出看得懂的错误 —— 不许没有反应。**
+#
+# ⚠️ **刻意不追求覆盖所有页面**。贪多会让它慢到没人跑，而一条没人跑的腿等于没有。
+# 先把"点击 → 有反应"这条最基本的性质钉住；它已经足够抓住用户报的那两条。
+#
+# ── 这条腿**做不到**什么（如实写在这里，不假装覆盖）──────────────────────────────
+#
+#   · 系统级权限弹窗（麦克风授权）—— 无头浏览器里被自动允许/拒绝，测不出真实体验
+#   · 真实的文件选择对话框、把文件从桌面拖进来
+#   · 操作系统的通知、托盘、双击启动器
+#   · GPU/驱动相关的真实渲染差异
+#
+# 这几项要靠人工清单，见 `coordination/inbox/e2e-browser.md`。
+
+name: e2e-browser
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundleRunId:
+        description: '对哪次 build-bundles 的 artifact 做审计。留空 = 用本次 checkout 现场组装（回归门禁）。'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: e2e-browser-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  browser:
+    # ⚠️ **只跑 ubuntu**，这是刻意的取舍，不是偷懒：
+    #   这条腿要抓的是「按钮有没有反应」，而那是**前端代码**的性质 ——
+    #   同一份 JS 在三个平台上跑的是同一套逻辑。用户是在 Windows 上撞见的，
+    #   但成因（`navigate` 到你已经在的那一页）与操作系统无关，
+    #   `[实测]` 在 Linux 上一模一样地复现了。
+    #   把它铺成三平台会让一条本该几分钟的腿变成十几分钟，而换不到新的事实。
+    #   **真正与平台有关的那些（双击启动器、Gatekeeper、系统弹窗）本来就不在
+    #   无头浏览器的能力范围内** —— 它们归 bundle-launch-sim 与人工清单。
+    name: 真浏览器点按钮（linux-x64）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.15.0
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # ★ playwright 走**全局安装**，刻意不进 package.json。
+      #   进 devDependencies 就要动 pnpm-lock.yaml —— 那是共享文件，
+      #   而这棵树上同时有好几路 agent 在干活。版本钉死，不用 latest。
+      - name: 装 playwright（不进 package.json）
+        run: |
+          npm install -g playwright@1.62.1
+          npx --yes playwright@1.62.1 install --with-deps chromium
+
+      # 网页产物必须是**这次 checkout 编出来的**，否则点的是别人留下的旧界面。
+      # CI runner 是一次性的，PROTOCOL §7 禁的是共享开发树，这里不适用。
+      - name: 构建（含 apps/web/dist —— 缺了用户打开是白页）
+        run: pnpm -r build
+
+      # ── 判据本身 ───────────────────────────────────────────────────────────
+      #
+      # **空数据目录**：用户报的两个按钮都只在"还没装东西"的状态下才出现
+      # （`AsrModelPicker` 只有一个 ASR 模型都没装时才渲染那个 CTA）。
+      # 预装好组件再去点，那个分支根本不会出现 —— 而"CI 从没经历过空数据目录"
+      # 正是本轮第二次事故的成因。脚本自己 `mkdtemp`，不碰任何既有数据目录。
+      #
+      # 脚本内含**变异证明**：给按钮挂一个捕获阶段的监听器让它"还在但点不动"，
+      # 要求同一条断言当场变红。红不了就说明这条腿看不见问题，整步失败。
+      - name: 真浏览器点按钮 + 变异证明
+        timeout-minutes: 30
+        env:
+          # 全局装的 playwright 不在仓库的 node_modules 里，显式指过去
+          PLAYWRIGHT_MODULE: /usr/lib/node_modules/playwright
+        run: |
+          node scripts/ci/e2e-browser-audit.mjs --port 19980
+
+      # 失败时把现场留下来 —— 「点了没反应」这类问题，事后看日志远不如看截图
+      - name: 失败时留下截图
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: browser-shots
+          path: |
+            /tmp/om-e2e-browser-*/shots/**
+          if-no-files-found: ignore

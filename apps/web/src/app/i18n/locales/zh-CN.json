@@ -930,7 +930,8 @@
       "es": "西班牙语",
       "ru": "俄语",
       "custom": "自定义…"
-    }
+    },
+    "installHereHint": "就在这一页里下载安装"
   },
   "secureContext": {
     "title": "当前地址不是安全上下文，部分功能不可用",

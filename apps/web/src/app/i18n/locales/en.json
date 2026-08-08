@@ -930,7 +930,8 @@
       "es": "Spanish",
       "ru": "Russian",
       "custom": "Custom…"
-    }
+    },
+    "installHereHint": "Install one from this page"
   },
   "secureContext": {
     "title": "This address is not a secure context — some features are unavailable",

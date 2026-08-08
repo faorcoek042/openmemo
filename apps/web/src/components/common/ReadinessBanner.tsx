@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import { AlertTriangle, ChevronDown, ChevronRight, XCircle } from 'lucide-react';
 
 import { rawFetch } from '../../lib/api/client';
@@ -78,6 +78,7 @@ export interface ReadinessItem {
 export function ReadinessBanner() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const [open, setOpen] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const multiTabDegraded = useConnectionStore((s) => s.multiTabDegraded);
@@ -229,14 +230,23 @@ export function ReadinessBanner() {
           {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
           {open ? t('readiness.hide') : t('readiness.details')}
         </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="-my-0.5 ml-auto h-5 shrink-0 px-1.5 text-xs"
-          onClick={() => navigate('/diagnostics')}
-        >
-          {t('diagnostics.title')}
-        </Button>
+        {/*
+          ★ 与 `AsrModelPicker` 的「去安装模型」是**同一个形状**（真浏览器横扫查出来的）：
+          这个横幅在**每一页**都渲染，包括 `/diagnostics` 本身 ——
+          在那一页上点它就是 `navigate` 到你已经在的地方，**什么都不会发生**。
+          `[真浏览器实测]` URL 没变、DOM 没变、0 个 /api 请求、0 条异常。
+          已经在目标页上就别渲染它，而不是留一个点不动的按钮。
+        */}
+        {location.pathname.startsWith('/diagnostics') ? null : (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="-my-0.5 ml-auto h-5 shrink-0 px-1.5 text-xs"
+            onClick={() => navigate('/diagnostics')}
+          >
+            {t('diagnostics.title')}
+          </Button>
+        )}
       </div>
 
       {/* ── 展开态：明细 + 每项一个动作 ── */}

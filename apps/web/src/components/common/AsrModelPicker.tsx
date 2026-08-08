@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import { Cpu, Download } from 'lucide-react';
 
 import type { GetInstalledResponse, InstalledModel } from '@openmemo/shared';
@@ -92,6 +92,7 @@ export function useActiveAsrModel(): { id: string | null; displayName: string | 
 export function AsrModelPicker({ className }: { className?: string }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const qc = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -117,13 +118,31 @@ export function AsrModelPicker({ className }: { className?: string }) {
 
   // 一个都没装：给出路，而不是一个空下拉框
   if (models.length === 0) {
+    /*
+     * ★ 用户 2026-08-08 真机报告：「点击去安装模型，完全没有任何反应。」
+     *
+     * 成因不是事件没绑上，是**这个按钮就渲染在 `/models` 上**
+     * （`ModelsPage` 自己用了这个 picker），而它的动作是 `navigate('/models')` ——
+     * **导航到你已经在的那一页 = 什么都不发生**。按钮可点、样式正常、
+     * 控制台干净、请求一条没有 —— 在用户那里与"按钮是死的"完全一样。
+     * `[真浏览器实测]` URL 没变、DOM 没变、0 个 /api 请求、0 条异常。
+     *
+     * 修法：**已经在目标页上时，不要渲染一个什么都做不了的按钮** ——
+     * 改成一句说明，告诉用户"就在这一页里装"。
+     * 判据是"点了要么有事发生、要么给出看得懂的话"，一个不动的按钮两头都不占。
+     */
+    const alreadyOnModels = location.pathname.startsWith('/models');
     return (
       <span className={className}>
         <span className="mr-2 text-xs text-warning">{t('asr.noModel')}</span>
-        <Button size="sm" variant="secondary" onClick={() => navigate('/models')}>
-          <Download className="size-3.5" />
-          {t('asr.goInstall')}
-        </Button>
+        {alreadyOnModels ? (
+          <span className="text-xs text-ink-secondary">{t('asr.installHereHint')}</span>
+        ) : (
+          <Button size="sm" variant="secondary" onClick={() => navigate('/models')}>
+            <Download className="size-3.5" />
+            {t('asr.goInstall')}
+          </Button>
+        )}
       </span>
     );
   }
