@@ -1,0 +1,205 @@
+# F1 链接导入 + F2 本地媒体导入：**用预编译包、走真实 HTTP、端到端真的能用**
+#
+# ── 为什么这个 workflow 存在 ──────────────────────────────────────────────────────
+#
+# 用户下载 v0.2.0 预编译包在真机上用，Windows 双击报错、macOS 被拦、界面打不开。原话：
+#
+#   > 「你应该派多路 agent 去在 CI 中运行一遍把各个流程跑通才能给我交付的啊！」
+#
+# 他是对的。此前 CI 只验了「产品能不能被脚本驱动着转出一段文本」
+# （`cold-start-audit.mjs` 第 7 节：import → job → transcript，判据是非空文本），
+# 而交付的是「**人要用手打开并使用它**」。中间隔着的东西一条没测：
+#
+#   · 网页拖文件进来发的那个 **multipart 上传**（`POST /api/notes/upload`）—— 零覆盖
+#   · 播放器发的那个 **`/media` Range 请求** —— 零覆盖
+#   · 粘一个链接走 **yt-dlp 取回** 那条链 —— 零覆盖（`fetch` 从未被端到端跑过，
+#     `ytdlp.ts:169` 那条「EXIT CODE 101 IS SUCCESS HERE」的注释就是这么来的）
+#
+# **判据从今天起是：这条功能面在 CI 上、用预编译包、走产品自己的 HTTP 路径，
+# 端到端真的能用。** 不是单测绿，不是"代码写了"。
+#
+# ── 判据本体在哪一行 ────────────────────────────────────────────────────────────
+#
+# `scripts/ci/e2e-import-audit.mjs` 的 `assertPlayable()`。最值钱的一条是
+# **sha256 往返**：导进去的文件与 `/media` 吐出来的字节逐字节相同。
+# 它同时否掉「落库了但文件丢了」「归档时截断了」「Range 偏移算错了」——
+# 而这三种在"数据库里有一行"的判据下**全都是绿的**。
+#
+# ── 触发方式：手动 ──────────────────────────────────────────────────────────────
+#
+# 它要下载一个预编译包、真装几百 MB 后端、真跑 5～6 次转写，不适合每次 push 都来。
+# 值得重跑的时机：改了导入/上传/媒体路由、改了 media source 适配器、出了新包。
+
+name: e2e-import
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundleRunId:
+        # 留空 = 自动取最近一次成功的 build-bundles run。
+        # 理由与 PROTOCOL §7 补充那条同源：一个需要人记得去填的参数，
+        # 等价于一个迟早不会被填的参数 —— 而"没填"的后果是这条腿根本跑不起来。
+        description: '取包的 build-bundles run id。留空 = 自动用最近一次成功的 run。'
+        required: false
+        default: ''
+        type: string
+      skipF1:
+        description: '跳过 F1（链接导入）。只在排查 F2 时用。'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-import-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    # ★ 三平台。用户接 GitHub 的**全部理由**就是「在别的系统上跑」，
+    #   而这条功能面此前一个平台都没跑过。
+    #   runner 版本照抄 `cold-start-audit.yml` / `build-bundles.yml`（macOS 是 macos-26）——
+    #   包就是在这些 runner 上打出来的，换一个版本跑等于换了个问题。
+    #
+    #   fail-fast: false —— 一个平台红不该掩盖另外两个平台的事实。
+    name: F1+F2 端到端（${{ matrix.label }}）
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      # 取**另一个 run** 的 artifact 需要它。只读。
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, label: linux-x64, artifact: bundle-linux-x64, port: 19800 }
+          - { runner: macos-26, label: darwin-arm64, artifact: bundle-darwin-arm64, port: 19810 }
+          - { runner: windows-2025, label: win32-x64, artifact: bundle-win-x64, port: 19820 }
+    steps:
+      # ★ `submodules: recursive` 不能省：造样本的源音频是 whisper.cpp submodule 自带的
+      #   `vendor/whisper.cpp/samples/jfk.wav`。不带 submodule 的 checkout 下，
+      #   第 7 节会如实报「源样本不存在 —— submodule 没 checkout？」然后红。
+      #   （cold-start-audit.yml 已经为此栽过一次。）
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      # 这个脚本是零依赖的纯 node —— 不装 workspace。
+      # daemon 用的是**包自带的** Node，宿主这个只用来跑审计脚本本身。
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # ★ 在装任何东西之前记录 runner 自带什么。
+      #   这是"我们装上了"与"它本来就在"的唯一分界线。
+      - name: 宿主基线（装任何东西之前）
+        shell: bash
+        run: |
+          echo "== runner 自带的同名工具 =="
+          for t in ffmpeg ffprobe yt-dlp youtube-dl whisper-cli sqlite3 python3; do
+            printf '%-14s %s\n' "$t" "$(command -v $t || echo '(不在 PATH 上)')"
+          done
+
+      # ① 取预编译包。**硬要求：用户手里是那个包，不是源码树。**
+      #    源码树跑绿证明不了包能用 —— v0.2.0 那次正是这么过去的。
+      - name: 取预编译包（来自 build-bundles 的 artifact）
+        id: bundle
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID_INPUT: ${{ inputs.bundleRunId }}
+          ARTIFACT: ${{ matrix.artifact }}
+        run: |
+          set -euo pipefail
+          RUN_ID="$RUN_ID_INPUT"
+          if [ -z "$RUN_ID" ]; then
+            echo "没传 bundleRunId，取最近一次成功的 build-bundles run："
+            RUN_ID=$(gh run list --repo "$GITHUB_REPOSITORY" \
+              --workflow build-bundles.yml --status success \
+              --limit 1 --json databaseId --jq '.[0].databaseId')
+          fi
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "✘ 找不到任何成功的 build-bundles run —— 先跑一次 build-bundles。"
+            exit 1
+          fi
+          echo "用的 run id：$RUN_ID"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+          mkdir -p dist/e2e-src
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "$ARTIFACT" --dir dist/e2e-src
+          echo "── 取到的东西 ──"
+          ls -l dist/e2e-src
+
+          ARCHIVE=$(ls dist/e2e-src/*.tar.xz dist/e2e-src/*.zip dist/e2e-src/*.tar.gz 2>/dev/null | head -1)
+          if [ -z "$ARCHIVE" ]; then
+            echo "✘ artifact 里没有包归档（*.tar.xz / *.zip / *.tar.gz）"
+            exit 1
+          fi
+          echo "归档：$ARCHIVE"
+
+          mkdir -p dist/e2e-bundle
+          case "$ARCHIVE" in
+            *.tar.xz) tar -xJf "$ARCHIVE" -C dist/e2e-bundle ;;
+            *.tar.gz) tar -xzf "$ARCHIVE" -C dist/e2e-bundle ;;
+            # Windows 上 bsdtar(`tar`) 认 zip；unzip 在 Git Bash 里也有。两个都试。
+            *.zip)    unzip -q "$ARCHIVE" -d dist/e2e-bundle || tar -xf "$ARCHIVE" -C dist/e2e-bundle ;;
+          esac
+
+          # 包的顶层目录名带版本号，不硬编码 —— 靠"里面有 daemon 入口"来认。
+          MAIN=$(find dist/e2e-bundle -type f -path '*/app/daemon/dist/main.js' | head -1)
+          if [ -z "$MAIN" ]; then
+            echo "✘ 解开之后找不到 app/daemon/dist/main.js —— 这不像一个预编译包。目录树："
+            find dist/e2e-bundle -maxdepth 3 | head -50
+            exit 1
+          fi
+          DIR=$(dirname "$(dirname "$(dirname "$(dirname "$MAIN")")")")
+          echo "包目录：$DIR"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          echo "── 包里有什么 ──"
+          ls -l "$DIR"
+
+      # ② ★ 让 fixture 主机名解析到回环。
+      #
+      #    为什么非要这一步：产品的 SSRF 防线（argGuard.ts:isPrivateOrReservedHost）
+      #    拒绝一切私有/回环**字面地址**，而那是**正确行为** —— daemon 自己绑在
+      #    127.0.0.1 上，放行回环等于把产品变成 confused deputy。所以喂本地 fixture
+      #    只能靠一个**公网形状**的主机名。`.test` 是 RFC 6761 保留给测试的 TLD，
+      #    永远不会真的解析到公网上去。
+      #
+      #    ★ 这个改动**只发生在这里**（一次性 runner 的 hosts 文件），
+      #      审计脚本本身**绝不碰** hosts —— 它只查"解析得到吗"，解析不到就如实报
+      #      SKIPPED。判据照 PROTOCOL §9-bis：把脚本 kill -9 在最坏的那一行，
+      #      机器上不会留下任何东西。
+      - name: 让 fixture 主机名指向回环（仅本 runner）
+        shell: bash
+        run: |
+          set -euo pipefail
+          LINE="127.0.0.1 openmemo-e2e-fixture.test"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "$LINE" >> /c/Windows/System32/drivers/etc/hosts
+          else
+            echo "$LINE" | sudo tee -a /etc/hosts > /dev/null
+          fi
+          echo "== 核对（解析不到的话审计脚本会把 F1 报成 SKIPPED，不会假绿）=="
+          node -e "require('node:dns').lookup('openmemo-e2e-fixture.test',(e,a)=>{console.log(e?('解析失败: '+e.message):('→ '+a));})"
+
+      # ③ 判据本体。**用包跑、屏蔽宿主 PATH、走真实 HTTP、验到 Range 能播。**
+      #
+      #    屏蔽宿主 PATH 沿用 cold-start-audit 的做法：在 PATH 最前面放同名假二进制，
+      #    而不是把目录删掉 —— shim 能通过 access(X_OK)，所以「产品会不会去借」
+      #    这个行为**照常发生**，只是借到的一执行就带标记失败。**借用变可见，不是被消除。**
+      #    脚本第 12 节会用产品自己的 selfcheck 判据报出"借了几个"，借了就红。
+      - name: F1+F2 端到端（预编译包 + 屏蔽宿主工具 + 真实 HTTP）
+        if: ${{ !cancelled() }}
+        timeout-minutes: 100
+        shell: bash
+        run: |
+          node scripts/ci/e2e-import-audit.mjs \
+            --bundle "${{ steps.bundle.outputs.dir }}" \
+            --port ${{ matrix.port }} \
+            --fixture-port $(( ${{ matrix.port }} + 1 )) \
+            ${{ inputs.skipF1 && '--skip-f1' || '' }}
