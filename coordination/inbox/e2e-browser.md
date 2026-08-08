@@ -170,3 +170,94 @@ URL 变了=false   DOM 变了=true   /api 请求 1 条 → POST /api/models/sour
 并在跑之前断言该目录存在、不存在就把 `npm root -g` 的内容列出来（commit `b410c59`）。
 
 至此第五节「这条腿还没在 CI 上跑过 `[未验证]`」这一条**已解除**，其余未验证项不变。
+
+---
+
+## [2026-08-08 23:55] master 红灯核查 —— **master 没红；红的是共享工作区**
+
+结论先说，三条都实测过：
+
+| 问题 | 答案 |
+| --- | --- |
+| 引入点是哪次改动？ | **没有这次改动。** 干净 master 上复现不出来 |
+| 门禁为什么没拦住？ | 因为**被测的根本不是 master** —— 见下 |
+| `sourcesRest.test.ts` 那 2 条？ | **已经绿了**（3/3），别人修好了 |
+| master 现在全绿吗？ | ✅ **1596 / 0 失败**（`d941d13`，隔离 worktree + `build:safe`） |
+
+### 一、`ERR_MODULE_NOT_FOUND` 在干净 master 上**复现不出来**
+
+我没有从代码上推断，而是开了隔离 worktree 逐个实测：
+
+```
+acfefbb（我上一轮的 tip）  apps/web components: 312 / 312 pass, 0 fail   —— 没有 ERR_MODULE_NOT_FOUND
+d941d13（当前 origin/master）全仓 pnpm -r test: **1596 tests, 0 fail**
+```
+
+`git log -S '@manifests/llm-providers.json'` 只命中 `e896e2b`（T-126，很早），
+也就是说那个 import **一直都在**，而且 `apps/web` 的组件测试是用
+`vite build --ssr` 编出来再跑的 —— vite 认得 `vite.config.ts:54` 那条
+`@manifests` → `vendor/manifests` 别名，所以它在干净树上**本来就解析得开**。
+
+### 二、门禁的洞（这条最重要）
+
+**在 `/root/memo` 里跑 `pnpm -r test`，测的不是 master，是
+「master + 当时所有 agent 未提交改动的并集」。** 那个并集**谁都没有承诺过它是绿的** ——
+它甚至不对应任何一个存在过的 commit。
+
+所以：
+
+- 那里**红**，不能归给 master，也不能归给任何一个人；
+- 那里**绿**，同样不能证明 master 是绿的。
+
+`[实测]` 此刻（我写这份回执时）在共享树里跑 web 组件测试，得到的是**另一条**红：
+`errors.NOT_IMPLEMENTED.detail` 缺失。追下去是**另一位正在进行中的改动** ——
+`git diff` 显示 `zh-CN.json` / `en.json` 里新加了 `"NOT_IMPLEMENTED": {` 而
+`detail` 还没补完，同时 `ModelDetailPage.tsx` 也改了 17 行（都**未提交**）。
+那位正在做「测速/删除不可逆/文件夹改名」，写到一半是完全正常的。
+**你看到的 `ERR_MODULE_NOT_FOUND` 与我看到的这条，是同一个机制的两次发作**：
+两次都是**别人代码写到一半时被我们的命令撞见了**。
+
+这与 PROTOCOL §10 / §12 是同一族的第三面：
+
+| | 问的是 |
+| --- | --- |
+| §10 | 在最坏的那一秒，**别人看到的是什么？** |
+| §12 | 我据以行动的事实，**在行动那一刻还成立吗？** |
+| **本条** | 我这次跑出来的红，**到底是谁的代码给的？** |
+
+§12 已经写了「工作区有别人在途改动时，门禁跑在隔离 worktree 上」，
+**但没有任何东西会告诉你此刻工作区是脏的** —— 你得自己记得去看。
+一条要靠人记得的规则，等价于一条迟早会被违反的规则（PROTOCOL §7 补充的老话）。
+
+**建议的结构性补法（我没有实施，因为它要动共享的 `package.json`，
+而此刻有四路在途 —— 请 Manager 决定归属）**：
+在 `pnpm -r test` / `pnpm check` 前面挂一个几十毫秒的前置，
+`git status --porcelain` 非空时**先打印一句**：
+
+> ⚠️ 工作区有 N 个未提交文件（列出来）。本次测的是「master + 这些改动」的并集，
+> **红了先看看是不是这些文件的**；要判定 master，请用隔离 worktree。
+
+不阻断、只出声 —— 判据是「跑错了也不会得出错的结论」，而不是「要记得别跑错」。
+
+### 三、`sourcesRest.test.ts` 那 2 条：**已经绿了**
+
+上一轮我标的是「不是我的、没碰」。今天在干净 master 上复核：**3 / 3 全过**。
+`[未验证]` 是谁、哪个 commit 修的 —— 我没去追（不是我的文件，且已不成立）。
+
+### 四、我这一轮**什么都没改**
+
+master 本来就是绿的，没有需要修的东西。**没有为了"交付点什么"而去动代码。**
+按纪律也没碰任何别人在途的文件（`format:check` 那 4 个、以及上面那位的 locale /
+ModelDetailPage 改动，一个字没动）。
+
+### 五、未验证 / UNKNOWN
+
+- 你当时看到的 `ERR_MODULE_NOT_FOUND` 具体由哪位的哪个中间态引起 —— `UNKNOWN`。
+  那个状态已经过去了，`git` 里不留痕（未提交的东西不进历史），**取不到就是取不到**。
+  我能证明的是：**它不在 master 上**（两个 commit、隔离 worktree、逐条实测）。
+- `sourcesRest` 由谁修的 `[未验证]`。
+
+下一步建议:
+
+1. 把上面第二节那个「脏树出声」的前置挂进 `pnpm -r test`（要动 `package.json`，请指派）。
+2. 若 Manager 仍怀疑 master 有问题，请给出**那次观测所在的 commit**，我按 commit 复现。
