@@ -789,7 +789,21 @@ D-01 §5 F3 设计了"流式出稿 → 停止后用离线大模型重跑覆盖"�
 - **`Intl.RelativeTimeFormat` / `Intl.NumberFormat` 无需 polyfill** —— 均已 Baseline widely available 多年（`[文档]` 级，来自 caniuse）。
 - 无论选谁，**必须封装在 `app/i18n/`**，feature 只用 `t()`，以便日后更换。
 
-### 6.2 服务端文案与客户端文案的边界（**有张力，需 Manager 裁决**）
+### 6.2 服务端文案与客户端文案的边界（~~**有张力，需 Manager 裁决**~~ → **已闭合**）
+
+> **✅ 订正（2026-08-08，由 `e2e-runtime` 就地改，依据 PROTOCOL §13）**
+>
+> **本节建议的方案已经是今天的实现，这个"待裁决"标记至少过期数月。** `[实测]`
+>
+> - `apps/web/src/app/i18n/index.ts:13` 的注释就是本节那条建议的逐字落地：
+>   「错误文案按 `code` 查 `errors.<CODE>`；服务端的 `message`/`messageZh` 只作未知 code 的兜底」；
+> - `locales/zh-CN.json` 的 `errors` 节今天有 **13 个具名 CODE**
+>   （`MOCK_NOT_IMPLEMENTED` / `NOTE_NOT_FOUND` / `INPUT_URL_INVALID` / `MISSING_ASR_MODEL` …）
+>   加 `title` / `detailToggle` 两个通用键。
+>
+> 也就是说本节末尾那句「**在裁决前，T-021/T-022 一律先按"code 查本地表 + message 兜底"实现**」
+> 里的**临时方案已经成了长期方案**，两种裁决结果都兼容这一点当时就写明了。
+> ⚠️ 若 Manager 仍想正式追认"前端优先 code 表"为契约，那是一次**追认**，不是一次改造。
 
 `packages/shared` 的 `ApiErrorBody` 是 `{ code, message, messageZh, retryable, details? }` —— **把 zh/en 两种文案硬编码在后端**。
 

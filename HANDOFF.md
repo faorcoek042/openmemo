@@ -575,6 +575,38 @@ node scripts/selfcheck.mjs --json
 
 ## ⑥ 已知未解决 / 未验证
 
+> **★ 复核（2026-08-08，由 `e2e-runtime` 逐条核过代码/CI，依据 PROTOCOL §13）**
+>
+> 用户点名要求把本文档同步到真实状态。判据是那条老规矩：
+> **闭合的判据不是「回执里写了已完成」，而是「能在今天的代码/CI 里验到」。**
+>
+> **本节下面有 4 条今天已经不成立，逐条给证据**（原文保留删除线，不删）：
+>
+> | 原条目                                  | 今天                                                                                                        |
+> | --------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+> | `health.host` 写死 `'127.0.0.1'`        | **已修**：`http/server.ts:172` 是 `host: deps.host()`，注释写明「必须是真实绑定地址」                       |
+> | `upload.ts:656,663` 两处 `as never`     | **已删**：该文件 `:664` 注释原文「两处 `as never` 已删（T-130）」                                           |
+> | 搬迁 `warningZh` 前端没渲染（只做一半） | **已接上**：`DataLocationSection.tsx:485` 渲染 `StaleLinksWarning`，条件是 `warningZh` 本身（不依赖链接数） |
+> | 「`verifying`/`blocked` 两态」          | `blocked` T-114 已补验；`verifying` 与 `serious` 一档仍无真实场景 —— **收窄，不是闭合**                     |
+>
+> **而这之后落地、本节此前完全没有的东西**（都能在 CI 里验到）：
+>
+> - **预编译包 + `v0.3.0` 已发布**（`package.json` 今天是 `0.3.0`）：三平台自带 Node，
+>   用户不再需要装 Node/pnpm/git；`build-bundles` 每条腿都跑冷启动 + 转写可行性证明。
+> - **四条 e2e 腿**（`e2e-runtime` / `e2e-import` / `e2e-record` / `e2e-notes`）：
+>   拿预编译包、屏蔽宿主 PATH、**只走产品自己的 HTTP 路径**跑要求 2.1/2.2 与 F1–F5。
+> - **要求 2.1 主路径上的死胡同已修**：此前「网页装完加速后端 → 点启用 → 409
+>   『backend package not installed』」（而包就是刚装的）。成因是 `RestState.hardware`
+>   是启动快照；现在改成**由输入指纹派生**，装/卸/切三条路都覆盖，有 7 条测试守着。
+> - **断路器不再是死锁**：60s 冷却 + 半开 + 指数退避封顶 1h；且**「探针还没装」不再被算作失败**
+>   （否则全新安装第一次打开诊断页就看到 5 个加速后端被停用）。
+> - **代理覆盖每一条出网路径**（`scripts/ci/proxy-coverage-audit.mjs` 逐条实测）。
+> - **`format:check` 进门禁**；PROTOCOL 新增 **§11**（残留进程造成假通过）、
+>   **§12**（`git diff --cached` 只在检查那一瞬间为真）、**§13**（裁完要回去改原文）。
+>
+> ⚠️ **本节刻意没有被改成"什么都好"**：下面「等硬件 / 结构上验不了」那几条是**真的**，
+> 而且**验不了 ≠ 没做**，不许因为 CI 绿就把它们划掉。
+
 ### 「做了没验」
 
 - **macOS / Windows / arm64 / musl 全部零验证。** T-128 的 `verbatimSymlinks` 同样只在 Linux/ext4 验过（Windows 建符号链接需要额外权限，行为可能不同，**作者明确不声称**）。
@@ -587,13 +619,13 @@ node scripts/selfcheck.mjs --json
 
 - `[实测]` **demo 上 yt-dlp 找不到** → **F1 链接导入在这台机器上现在用不了**。这是本轮新增的 warn。
 - `[实测]` **GPU 探测在 demo 上是空的**：`gpus: []`，四个后端全 `available:false`，原因都是 `probe executable not found`。**要求 2.1 的 L2 加速包在这台机器上装不了**（L1 CPU 包按 ADR-014 豁免 probe 门禁，转写本身不受影响）。
-- `[实测]` **`GET /api/health` 的 `host` 字段写死 `'127.0.0.1'`**（`http/server.ts:121`），而 socket 实际绑在 `0.0.0.0:10000`。
+- ~~`[实测]` **`GET /api/health` 的 `host` 字段写死 `'127.0.0.1'`**~~ → **已修（2026-08-08 复核）**：`http/server.ts:172` = `host: deps.host()`。旧文：（`http/server.ts:121`），而 socket 实际绑在 `0.0.0.0:10000`。
   注释说它是给单实例探测拼提示 URL 用的，但**读它的人会得出"只绑回环"的错误结论** —— 而这恰好是 T-111 里反复强调的安全前提。
   建议要么改名，要么补一个真实的 bind 地址字段。**仍未修。**
-- `[读码]` **`upload.ts:656,663` 还有两处 `as never`**（自己在 650 行标注为已报 Manager 的临时缺口：`shared` 还没给 `notes/upload` 的事件载荷类型）。
+- ~~`[读码]` **`upload.ts:656,663` 还有两处 `as never`**~~ → **已删（T-130，2026-08-08 复核）**。旧文：（自己在 650 行标注为已报 Manager 的临时缺口：`shared` 还没给 `notes/upload` 的事件载荷类型）。
   全仓 `as any` 只剩 1 处；`jobs/events.ts` 零类型断言。→ 这一类基本清干净了，**但 upload 那两处正是 A-1 那个事故的同一形状。**
 - **向量检索链路是断的**（已裁决的取舍，不是 bug）：`/api/search` 的 `modes.semantic = false`，理由是"sqlite-vec 已加载，但尚无 embedding 生成环节"。v1 已拍板砍掉，索引本就设计成可重建缓存。
-- 🔵 **搬迁后的 `warningZh` 出口只做了一半**：T-128 算出了 `staleLinks`/`warningZh`；`[实测]` daemon 侧
+- ~~🔵 **搬迁后的 `warningZh` 出口只做了一半**~~ → **两头都接上了（2026-08-08 复核）**：`DataLocationSection.tsx:485`。旧文：：T-128 算出了 `staleLinks`/`warningZh`；`[实测]` daemon 侧
   `rest/storage.ts` 的响应**已在工作区里加上**（`job-events`，未提交），但**前端 `DataLocationSection.tsx` 还没渲染它**。
   在两头都接上之前，"链接断了"仍然只有读日志的人看得到。
 
@@ -608,6 +640,26 @@ TTS · 说话人分离 · 翻译/双语字幕/字幕导出 · workspace 层级 �
 - ❌ **「可导入任意 HF GGUF 模型」不成立** —— `POST /api/models/import` 的 `kind:'hf_repo'` 硬编码 501。
 - ❌ **「真实 AMD 支持」只覆盖 LLM 不覆盖 ASR** —— vulkan/rocm 后端包全是 llama.cpp；而 ADR-016 又把本地 LLM 砍了。
 - ✅ 站得住的差异化：**量化选择** 与 **显存 fit 预检**（memo.ac 两个硬缺口，我们都实测过）。
+
+### 「结构上验不了」—— ⚠️ **验不了不是没做，不许因为 CI 全绿就划掉**（2026-08-08 补）
+
+这几条是**托管 runner 在结构上给不出答案**的，与"还没做"是两回事：
+
+- **Windows + NVIDIA CUDA `[未验证]`**：目录里有 `whispercpp-cuda-12.4-win-x64`，
+  但**任何 GitHub 托管 runner 都没有 N 卡**。`[CI 实测]` 加速包能装上、
+  `select` 会如实回 409「installed but enumerated no devices」——
+  也就是说**"装"这一段验到了，"装完真的跑起来加速"没有**。要收这一格需要真 NVIDIA 硬件。
+- **真 GPU 上的加速效果 `[未验证]`**（三平台同理）：同上，`A-ACCEL-SWITCH` 在三条腿上
+  都是 **UNKNOWN 而不是绿** —— 这是刻意的，绿会是假的。
+- ⚠️ **macOS 分层下限：13.3 ≤ 系统 < 14.0 / < 15.5 上会有功能静默失效** `[CI 实测]`
+  （`scripts/ci/check-bundle-macos-floors.mjs` 文件头有逐个二进制的实测表）：
+  - `ext/vec0.dylib` **minos 14.0.0** ⇒ 13.3–13.x 上**向量检索加载不了**；
+  - `sherpa-onnx.node` **14.0.0**、`libonnxruntime*.dylib` **15.5.0** ⇒ < 15.5 上**流式 ASR 加载不了**。
+  - **两者的失败都是静默的**（本仓最贵的那一族）。README 承诺的是 macOS arm64 **≥ 13.3**。
+  - → **「还要不要继续宣称支持 13.3」是产品决策，至今没人裁**（脚本文件头自己也这么写）。
+- **`windows-2022 / cuda` 这一格保留的理由 `UNKNOWN`**：`D-11 §85-113` 记着 ——
+  自 2026-08-02 首版架构提交起就是 `windows-2022`，**从未改过、理由从没被写下来**；
+  CI 上它是 success（run `31155359839`）。**不知道为什么当初这么定，就照实写 UNKNOWN。**
 
 ### 「等用户 / 等硬件」（见 `coordination/PENDING-USER-DECISIONS.md`）
 

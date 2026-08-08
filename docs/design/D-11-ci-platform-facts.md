@@ -445,8 +445,23 @@ HuggingFace 侧钉 **commit SHA**（`/resolve/<40 位>/`）。
 3. 落地大小也对不上：npm 那条是 **3.07 MB** 的纯 Python zipapp（运行时要机器上有 Python），
    manifest 那条是 **39.9 MB** 的自包含 `yt-dlp_linux`。**它们不是同一个东西。**
 
-→ 建议（未实施，需 Manager 裁定）：`YOUTUBE_DL_SKIP_DOWNLOAD=1` +
-让运行期只认 manifest 装出来的那个；`ffmpeg-static` 同理。
+→ ~~建议（未实施，需 Manager 裁定）：`YOUTUBE_DL_SKIP_DOWNLOAD=1` +
+让运行期只认 manifest 装出来的那个；`ffmpeg-static` 同理。~~
+
+> **✅ 订正（2026-08-08，由 `e2e-runtime` 就地改，依据 PROTOCOL §13）**
+>
+> **已闭合，而且做得比这条建议更彻底：那两个包被整个删掉了，不是"跳过下载"。** `[实测]`
+>
+> - `packages/pipeline/package.json` 的 `_comment:removed-deps` 记着依据：
+>   T-145 删除 `ffmpeg-static (^5.3.0)` 与 `youtube-dl-exec (^3.1.9)`，
+>   判据是**减少通道**而不是给每条通道加锁 —— 与本节「同一个工具、两条通道、一严一松」同一条理由。
+> - 删除前做了三查（全仓无 import/require、无按路径引用二进制、测试零出现），
+>   删除后 `pnpm -r test` 不变、冷启动审计仍然 5/5 工具来自数据目录。
+> - **而且现在有守卫**：`.github/workflows/cold-start-audit.yml` 里有一条**反向断言** ——
+>   `ffmpeg-static` / `youtube-dl-exec` 不许再出现在 `node_modules` 里，出现即红。
+>
+> 所以这条不需要 Manager 再裁：`YOUTUBE_DL_SKIP_DOWNLOAD=1` 这个方案本身也随之作废
+> （包都不在了，没有 postinstall 可跳）。
 
 ## 6.4 ★ 真跑一次冷启动：三分类表
 

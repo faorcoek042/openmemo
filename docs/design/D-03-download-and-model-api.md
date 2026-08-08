@@ -18,7 +18,8 @@ inputs: R-04, R-02 §C.3, D-01, D-02, D-05, /root/memo-forensics
   manual→有值）→ 预校验形同虚设。改为手动逐跳跟随。这类"静默降级的安全检查"最危险。
 - **`packages/shared` 现在是 F1–F5 的完整 SSE 契约**（ADR-007 决策 1）：事件从 14 → **28 个**，
   补齐 `transcribe.segment/partial`、`mindmap.delta`、`note.*`、`media.ready`、`record.state`、
-  `job.blocked`、`sync.required`。payload 由 D-01 时序图推导（D-05 未给），**需 `architect` 确认**。
+  `job.blocked`、`sync.required`。~~payload 由 D-01 时序图推导（D-05 未给），**需 `architect` 确认**。~~
+  → **已确认，见 §4.2 的订正块**（2026-08-08）。
 - **`Remediation` 已落地**（ADR-007 决策 2），同时挂在 `ApiErrorBody.remediation` 与 `job.blocked` 上
   —— 这是要求 2.1「不碰命令行」的机器可读支点。
 - **双 ID 已对齐 D-02**：`jobId` 改 ULID（= `jobs.uid`），并把我原先的 job 状态机**并入 D-02 词表**
@@ -173,10 +174,30 @@ interface SseEventBase {
 
 `topic` 落地 D-01 §3.3 的 `域.动作[.阶段]` 寻址，是**250ms 节流的合并键**。
 
-> **⚠️ 需 `architect` 裁决的一处偏差**：D-01 §3.3 写的是嵌套信封
-> `{type, ts, topic, payload}`，我实现为**扁平**（字段在顶层）。理由：D-05 §2.3 已按扁平结构
-> 写好（"已有完整 `DownloadJob` 载荷，直接写"），且扁平能让 TypeScript 在 `type` 上做干净的
-> discriminated union。改成嵌套会让 D-05 返工。**我不单方面改，请裁决。**
+> ~~**⚠️ 需 `architect` 裁决的一处偏差**：D-01 §3.3 写的是嵌套信封~~
+> ~~`{type, ts, topic, payload}`，我实现为**扁平**（字段在顶层）。理由：D-05 §2.3 已按扁平结构~~
+> ~~写好（"已有完整 `DownloadJob` 载荷，直接写"），且扁平能让 TypeScript 在 `type` 上做干净的~~
+> ~~discriminated union。改成嵌套会让 D-05 返工。**我不单方面改，请裁决。**~~
+
+> **✅ 订正（2026-08-08，由 `e2e-runtime` 就地改，依据 PROTOCOL §13）**
+>
+> **这条早就被裁了，只有本文原地不动约 3 个月。**
+>
+> - **裁决**：`ADR-010` **决策 2** —— 原文「SSE 信封 = **扁平**，D-01 需订正 ……
+>   D-01 写的是嵌套，D-05 与实现都按扁平。**裁定扁平**：两处已一致，改 D-01 成本最低。」
+> - **D-01 已订正**：见 `D-01-architecture.md` 文件头「2026-08-02 订正批次」第 ④ 条
+>   ——「**SSE 信封改为扁平**（原嵌套 `payload`，ADR-010 决策 2）」。
+> - **实现也是扁平** `[实测 2026-08-08，e2e-runtime 抓的真实帧]`：
+>   `{"type":"model.removed","ts":"…","topic":"models","modelId":"…","freedBytes":885098}`
+>   —— 业务字段在顶层，没有 `payload` 包层。
+> - **上面那条"需 architect 确认 payload 形状"同时闭合** `[实测]`：
+>   `packages/shared/src/events.ts` 的 `SSE_EVENT_TYPES` 今天是 **30 个**（当时 14 个），
+>   F1–F5 全覆盖，且每类事件有具名 payload 接口（`transcribe.segment` 等）——
+>   形状已经落进类型系统，不再是"由我推导"。
+>
+> **为什么就地改而不是在别处挂个说明**：PROTOCOL §13 ——
+> 「在别处挂警告不叫修，那只是把不实搬到一个更少人读的地方」。
+> 原文用删除线保留，可追溯。`D-05-frontend.md:20` 是做对了的先例。
 
 ### 4.3 两类事件，语义完全不同
 
@@ -588,8 +609,8 @@ ModelScope 上 `Qwen/Qwen3-4B-GGUF` 与 HF **10/10 文件 size+sha256 逐字节�
 | 3   | `estimateGpuLayers` 系数标定              | 未验证，需实测 llama.cpp `-ngl` 行为                                                                                                                                                |
 | 4   | RTF 外推系数                              | 未标定，首个真实转写后回写                                                                                                                                                          |
 | 5   | whisper.cpp macOS/Vulkan/ROCm 包          | macOS ✅ **已自建**（`whispercpp-cpu-macos-arm64`，CPU+Metal+CoreML/ANE 一包带齐，T-146）；**Vulkan 仍缺**；ROCm 已按用户指示裁掉（D-11 §2.2）。**此前写着"上游不存在，待自建 CI"** |
-| 6   | SSE 信封扁平 vs D-01 嵌套                 | **需 `architect` 裁决**（§4.2）                                                                                                                                                     |
-| 7   | F1–F5 事件 payload                        | 由我推导，**需 `architect` 确认**（§4.4）                                                                                                                                           |
+| 6   | SSE 信封扁平 vs D-01 嵌套                 | ✅ **已裁决：扁平**（`ADR-010` 决策 2；D-01 已于 2026-08-02 订正；实现实测为扁平）。~~需 `architect` 裁决（§4.2）~~                                                                 |
+| 7   | F1–F5 事件 payload                        | ✅ **已闭合**：`SSE_EVENT_TYPES` 今天 30 个、F1–F5 全覆盖且各有具名 payload 接口（`packages/shared/src/events.ts`）。~~由我推导，需 `architect` 确认（§4.4）~~                      |
 | 8   | `vec0` rowid 必须 BigInt                  | 已知会；`packages/shared` 无 rowid 绑定，不受影响（§12）                                                                                                                            |
 
 ---
