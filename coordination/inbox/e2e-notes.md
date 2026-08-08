@@ -541,3 +541,227 @@ prettier 跑两遍到不动点。
 3. 若要把 `noteById` 显式改名成 `noteByIdIncludingDeleted`，等 `main.ts` 空出来再做。
 
 需要 Manager 决策: 上面第 2、3 条。
+
+---
+
+## [2026-08-08 18:40] 取包/解包脚手架提成共享的一份 DONE
+
+交付:
+
+- `scripts/ci/resolve-bundle.mjs`（新建，共享脚手架）
+- `scripts/ci/selftest-resolve-bundle.mjs`（新建，11 条反向验证，已挂进 `pnpm test:ci-scripts`）
+- 四条腿改用它：`e2e-notes.yml` / `e2e-import.yml` / `e2e-record.yml` / `e2e-runtime.yml`（后者两处）
+- `scripts/ci/e2e-notes-audit.mjs`（补齐 PROTOCOL §11）
+- commit `2824e03` → `5df6679` → `…` → 最终 `31251924045` 验证通过
+
+**CI 实测：run `31251924045`，三平台全绿，各 35 条断言 + 10 条变异证明、0 失败。**
+
+```
+linux-x64    归档 openmemo-0.2.0-linux-x64.tar.xz（43,023,716 B）→ 包根 …/openmemo-0.2.0-linux-x64
+             ✔ app/daemon/dist/main.js   ✔ runtime/node
+darwin-arm64 归档 …-darwin-arm64.tar.gz（62,848,886 B）
+             ✔ app/daemon/dist/main.js   ✔ runtime/node
+win32-x64    归档 …-win-x64.zip（51,405,463 B）
+             ✔ app/daemon/dist/main.js   ✔ runtime/node.exe   ← 拼写按平台，见下
+```
+
+---
+
+### 一、选型：`scripts/ci/` 下的 **Node 脚本**，不是 composite action
+
+两条依据，**第二条是决定性的**：
+
+1. **病因就是 shell 语义本身。** 三次事故全部是「glob 匹配不到时的退出码」与
+   「`cp`/`ls` 碰到目录的行为」。composite action 里装的还是 bash ——
+   等于把同一段危险代码换个地方放，下一次照样撞。
+   换一门**不用 glob 退出码决定成败**的语言，这一整类 bug 在结构上消失。
+2. **composite action 的 bash 在本机永远跑不到。** 本仓 `package.json` 自己写着判据：
+   「`.github/workflows/**` 里的关键步骤在本机跑一遍。**CI 从来没执行过，
+   所以它里面装着从来没被执行过的错误**」——`lint-workflows.mjs` 与
+   `test:ci-scripts` 就是为这件事存在的。放进 `scripts/ci/` 才能被 selftest
+   逐个坏输入量一遍，并挂进**已有**的门禁。
+
+> 一段"只有推上去才知道对不对"的共享脚手架，是把三次事故的成因**集中**了，不是修掉了。
+
+这个判断当场就被验证了 —— 见下面第四节：**共享脚手架自己带着两个 bug 出厂**，
+两个都是 selftest 补上用例之后才钉住的。
+
+（另：`e2e-runtime` 早就有 `scripts/ci/resolve-bundle-run.sh` 干 run-id 解析，
+本仓已有"CI 逻辑放 scripts/ci"的先例，我这份是它的下一段，不重叠。）
+
+### 二、哪些参数**必须各腿自留**（以及为什么）
+
+| 东西 | 处置 | 依据 |
+| --- | --- | --- |
+| **取包方式**（`gh run download` / `actions/download-artifact` / 现场组装） | **各腿自留** | 差异是真的（前者能在 shell 里挑 run，后者有 `run-id` 输入）。所以**接缝定在字节已落盘之后**：给我一个目录，我只管挑归档→解开→找根→验结构。 |
+| **`e2e-runtime` 的 `--skip-archive` 组装路线** | **不走这个脚手架** | 那条路**压根没有归档**，硬套会得到 `NO_ARCHIVE`。只有它的 artifact 路线用共享脚手架。 |
+| **模式默认值**（回归门禁 vs 发布审计） | **各腿自留** | 见第五节，这是一条刻意的不对称。 |
+| **`--require` 要哪些条目** | **各腿自留** | `e2e-import` 只要 daemon 入口；notes/record/runtime 还要包自带 Node。不替它们猜。 |
+| **包自带 Node 的*文件名*** | **收进共享脚手架** | 见下 ⚠️ |
+| **Windows 的 `unzip \|\| tar` 兜底** | **统一** | `import`/`record` 有、`notes`/`runtime` 没有 —— 后两条只是**碰巧**没撞上（runner 镜像里恰好有 unzip）。这不是有意为之的差异，是漏。 |
+
+⚠️ **最值得记的一条**，因为我在这上面栽了一次（`[CI 实测 run 31251484499]`
+linux ✅ darwin ✅ **win32 ✘ MISSING_ENTRIES**）：
+
+> **统一"意图"是对的，统一"拼写"是错的。**
+
+各腿要问的意图是同一个「这个包自带运行时吗」；而文件名在 posix 上是
+`runtime/node`、Windows 上是 `runtime/node.exe`。我一开始三条腿统一写死
+`runtime/node` —— 那是**把拼写也统一了**。但正确的修法**也不是**退回各腿去拼
+`${{ matrix.leg == 'windows' && '.exe' || '' }}`（那等于把同一条知识抄三份，
+下一条腿照样写错）：**拼写是包格式的知识，不是每条腿的知识**，
+所以收进 `resolve-bundle`，各腿只用 `--require-node-runtime` 表达意图。
+
+### 三、三种坏输入的反向验证（`selftest-resolve-bundle.mjs`，11 条，已进 `test:ci-scripts`）
+
+刻意分两组，**别混着看**：
+
+**A 组「必须绿」= 三次真实事故的输入形状。** 那三次都是**假红**（包好好地打出来了，
+是脚手架自己把步骤带走了），所以新脚手架对这些输入必须**成功**：
+
+```
+✔ A1 只有一种扩展名匹配得到（旧写法 `ls a b c 2>/dev/null|head -1` 必炸）→ 成功
+✔ A2 归档旁有暂存目录 + .json 清单（旧写法 `cp dist/bundles/*` 必炸）→ 成功
+✔ A4 --out 目录还不存在 → 自己建出来并成功
+✔ A3 --require + --require-node-runtime 齐全 → 成功
+```
+
+**B 组「必须红，且理由要对」。** 不只要求红，还要求**红出正确的那个代码** ——
+一个"反正失败了"的错误信息和没有错误信息差不多：
+
+```
+✔ B1 一个归档都没有            → NO_ARCHIVE
+✔ B2 两个归档并存              → MULTIPLE_ARCHIVES   ★ 新护栏
+✔ B3 归档是坏的                → EXTRACT_FAILED
+✔ B4 解出多个顶层目录          → MULTIPLE_TOP_DIRS   ★ 新护栏
+✔ B5 包里没有自带 Node          → MISSING_ENTRIES
+✔ B6 归档里没有顶层目录        → NO_TOP_DIR
+✔ B7 --from 目录压根不存在      → NO_ARCHIVE（§11：跳过不许渲染成成功）
+```
+
+★ 两条**新护栏**：四条腿此前全是 `head -1` / `[0]` —— 两个归档并存 / 解出两个顶层目录时
+**随便挑一个然后照常报绿**。那种绿灯追溯不到"到底验的是哪个东西"，正是 §11 的判据要否掉的。
+
+### 四、⚠️ 共享脚手架自己带着两个 bug 出厂 —— 而这正是我在文件头担心的那件事
+
+写文件头时我写了一句：「把三段重复代码合成一段，如果它自己有 bug，
+就从"三条腿各红一次"变成**四条腿一起红**」。**它当天就发生了两次。**
+
+1. **漏了 `mkdirSync(outDir)`**：`tar -C <dir>` / `unzip -d <dir>` 都不会替你建目录。
+   三条腿一起红成 `EXTRACT_FAILED`（e2e-record run 31250861440、e2e-notes run 31251083538）。
+   **为什么 selftest 没抓住 —— 这条比 bug 本身值得记**：夹具 `fresh()` 自己
+   `mkdirSync` 了 out 目录，**比真实调用方更宽容**；夹具替被测代码把前提凑齐了，
+   那个分支于是从来没被走到。**与本仓"断言的字段在夹具里恒为假"是同一族：夹具比现实友善。**
+   → 补了 A4 用例，并在 `/tmp` 隔离副本上反向验证（拿掉 `mkdirSync` → A4 如期红），
+   共享树未被污染（grep 计数复核）。
+2. **`runtime/node` vs `node.exe`**（见第二节）。
+
+两个都已修 + 补用例 + CI 三平台复验通过。
+`e2e-record` 的 owner 当时自己加了 `mkdir -p unpacked` 兜底 —— 修好之后那行是无害的冗余，
+**我没有去动他的文件**。
+
+### 五、PROTOCOL §11 的落实
+
+**`resolve-bundle.mjs`**：外部命令（`tar`/`unzip`）全部走 `spawnSync` 的 `timeout`，
+且 `EXTRACT_TIMEOUT` 与 `EXTRACT_FAILED` **分开报**（一个是环境、一个是坏包，处置不同）；
+**没有任何"没事可做就退 0"的路径** —— `--from` 不存在也是红。
+它不起服务、不占端口，所以「端口」「进程树」两条不适用（适用的是各腿的 daemon 部分）。
+
+**`e2e-notes-audit.mjs`**（我的腿，此前**确实有** §11 那个洞）：
+
+- **起服务前先证明端口是空的**，不空当场判失败。
+  `[实测]` 拿一个冒名 HTTP 服务占住 19960 → 脚本当场红
+  `PORT_IN_USE: 19960 上有残留进程在应答（HTTP 200 version=IMPOSTOR）`，
+  而不是连上它报绿。
+- ⚠️ **只问 HTTP 不够**（这条是实测撞出来的）：上一个占用者**正在关闭**时
+  HTTP 已经连不上（看起来"空了"），而套接字仍被占 —— daemon 起来一 bind 就失败，
+  **静默漂到下一个端口**（`[实测]` 漂到了 `--llm-port`，那之后我再探测就会
+  对着错的进程说话）。所以判据改成「既没人答话、**也能被我 bind 住**」，
+  并对日志里的端口漂移单独出声。
+- **收尾按 pid 收整棵进程树**：Windows 用 `taskkill /T`，POSIX 用 `detached` + 进程组
+  `process.kill(-pid)`。**绝不 `pkill -f`**（模式匹配会打到别人的进程）。
+
+### 六、附带查出的一个真缺陷：「跳过」被渲染成「成功」（§11 的教科书式发作）
+
+`e2e-import` 本轮在三平台红在 `no artifact matches any of the names or patterns provided`
+—— **不是我的改动造成的**。追下去：
+
+```
+build-bundles run 31249135458   conclusion = success
+  success  bundle-macos-arm64
+  skipped  bundle-linux-x64      ← 跳过
+  skipped  bundle-win-x64        ← 跳过
+→ 整个 run 只有 bundle-darwin-arm64 一个 artifact
+```
+
+而 `e2e-import` / `e2e-runtime` / 我的审计模式都用「取**最近一次成功**的 build-bundles run」。
+**一个 2/3 被跳过的 run 对外是绿的**，于是自动选择就选到了它，
+下游拿到一句没头没尾的 `no artifact matches`。
+
+我在**自己的腿**里加了诊断（选定 run 之后核对该 artifact 是否真的存在，
+不存在就说清是"部分平台的 run"并给出处置）。
+`e2e-import` 与 `resolve-bundle-run.sh` 里的同一处**我没动**（不是我的文件）——
+**建议 Manager 派给它们的 owner**，或把「选一个真的有该 artifact 的 run」也收进共享脚手架。
+
+### 七、另一个不是我的文件、但值得记的潜伏 bug
+
+`scripts/build-bundle.mjs` 的 `--out` **不能传相对路径**：归档那一步是
+`execFileAsync('tar', [flag, out, NAME], { cwd: OUT_ROOT })` —— `cwd` 已切进 `OUT_ROOT`，
+而 `out` 仍是相对 `OUT_ROOT` 拼出来的，于是 tar 去找 `bundle-artifact/bundle-artifact/…`。
+`[CI 实测 run 31250696962]` 三平台全红。**我没有动它**，改用默认 `dist/bundles` 绕开
+（共享脚手架本来就吃得下"归档旁边有暂存目录"，selftest A2 就是这个形状）。
+
+### 八、把「回归门禁 vs 发布审计」这条写进正文（Manager 要求）
+
+> **「HEAD 有没有退化」和「发布版 X 有没有这个 bug」是两个不同的问题，
+> 不该共用一个默认值。**
+>
+> · **回归门禁**：对**本次 checkout 组装的包**跑全部断言。它仍然是预编译包 ——
+>   同一个 `build-bundle.mjs`、包自带的 Node、走产品自己的 HTTP，
+>   与用户下载的那个**同一条生产线**，只是更新。这是默认。
+> · **发布审计**：显式指定某次 build-bundles 的 artifact，对它跑同一套断言。
+>
+> **发布审计对着旧包变红是信息，不是故障。** 本轮修掉「软删之后 GET 仍回 200」之后，
+> 拿新断言去量 v0.2.0，它**理应**红 —— 那句红话的意思是"这个发布确实带着那个毛病"。
+> **不要因为它红就去删断言。**
+>
+> 反过来，把默认设成"取最近一次成功的 artifact"，会让门禁的含义随
+> **别人什么时候跑过 build-bundles** 而漂移 —— 那正是本仓最怕的
+> 「结论取决于机器状态」。第六节那个 skipped-as-success 的 run 就是活证据。
+
+### 九、门禁（在 `/var/tmp/e2e-gates2` 干净 worktree 上跑，检出我自己的 commit）
+
+| 门禁 | 结果 |
+| --- | --- |
+| `pnpm -r test` | ✅ **1558 / 0 失败**（基线 1552 守住） |
+| `tsc -b` / `eslint` / `format:check` / `build:safe` | ✅ 全仓干净 |
+| `lint-workflows` | ✅ 1147 条断言（13 个 workflow） |
+| `test:ci-scripts` | ✅ 22 + **resolve-bundle 反向验证 11 条** |
+| `check:orphans` | ✅ **70 / 基线 70** |
+
+⚠️ 每次提交前都核对了 `git diff --cached --name-only` 全量列表。
+⚠️ **我改了三条别人的腿**（`e2e-import` / `e2e-record` / `e2e-runtime`）——
+这是 Manager「让四条 e2e 腿都用它」的明确指派；改动是机械替换 +
+`e2e-import` 的消费者名 `outputs.dir` → `bundle_dir` 对齐，各腿的真实差异都保留了。
+`/tmp` 用完即清，当前 7.2G 空闲；worktree 已 `git worktree remove`。
+
+### 十、未验证 / UNKNOWN
+
+- **只有 `e2e-notes` 这条腿在 CI 上跑通了共享脚手架**（三平台，run 31251924045）。
+  `e2e-record` 的 owner 顺手验到了解包这一步（run 31250861440 的红就是它报的）。
+  **`e2e-import` 与 `e2e-runtime` 改用共享脚手架之后，我没有在 CI 上跑通过整条腿**
+  `[未验证]` —— `e2e-import` 那次红在取包（第六节，与我的改动无关），
+  `e2e-runtime` 我一次都没 dispatch 过（它是别人的腿，且要占三台 runner）。
+  静态上过了 `lint-workflows` 与 YAML 解析，动态上没有。**建议由各自 owner 跑一次收口。**
+- `EXTRACT_TIMEOUT` 这条分支**没有被真的触发过** `[未验证]`：造一个"解压超过 10 分钟"的
+  归档代价太大，selftest 里没有它。代码路径与 `EXTRACT_FAILED` 只差一个判断。
+- 第六节那个「选一个真的有该 artifact 的 run」**只在我的腿里加了诊断，没有加自动挑选**。
+
+下一步建议:
+
+1. 派人处理第六节：`e2e-import` 与 `resolve-bundle-run.sh` 的「最近一次成功 run」
+   要改成「最近一次**真的有该 artifact** 的 run」，或至少加同样的诊断。
+2. `build-bundle.mjs` 的 `--out` 相对路径 bug（第七节）。
+3. `e2e-import` / `e2e-runtime` 各自 dispatch 一次，把共享脚手架那一步收口。
+
+需要 Manager 决策: 上面三条的归属。
