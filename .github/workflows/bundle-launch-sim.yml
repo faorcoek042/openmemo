@@ -1,0 +1,136 @@
+# 模拟用户动作：一个从浏览器下载了包的人，按他自然会做的动作，能不能看到 OpenMemo 的界面。
+#
+# ── 这个 workflow 存在的理由 ──────────────────────────────────────────────────────────
+#
+# build-bundles.yml 那条腿跑的是 `start.sh --port … --data-dir …`：
+# **从一个已经存在的 shell 里、带着参数、由脚本驱动**。
+# 它证明的是「这个包能被脚本跑起来」，**不是「人能不能双击打开它」**。
+#
+# 2026-08-08 用户在真机上的实测把这个缺口捅穿了：
+#   「Windows 上双击运行提示出错，mac 上被安全性各种拦截，也没有窗口打开。」
+# 三平台 CI 当时全绿。**绿的是另一个问题。**
+#
+# 所以判据从今天起改成：**从浏览器下载 → 按系统默认方式解压 → 双击 → 能看到界面。**
+# 「能转出文本」是必要不充分条件。
+#
+# ── 这条腿覆盖得到什么、覆盖不到什么（明写，不假装）────────────────────────────────
+#
+# ✅ 覆盖得到：
+#   · 下载标记（Windows 的 Mark-of-the-Web / macOS 的 com.apple.quarantine）**会不会传播给解出来的文件**
+#   · 双击的**等价执行路径**（Windows 走注册表里 cmdfile 那条命令；macOS 走 `open`）
+#   · Gatekeeper / SmartScreen 的**实际判定结果**与**系统给出的原话**
+#   · 启动脚本在真实代码页下**逐字节**被 cmd.exe 怎么解析
+#
+# ❌ 覆盖不到（无头 runner 的结构性限制，见 ADR-012 那条「最大验证缺口」）：
+#   · 真正的 GUI 弹窗**长什么样**（没有 Finder / Explorer 的交互会话）
+#   · 浏览器**自己**打下载标记的那一刻（runner 上没有浏览器；我们**手工写入**同一个标记，
+#     并且**明确标注这是模拟**）
+#   · 控制台窗口关掉之后用户还剩下什么（窗口生命周期属于 GUI 会话）
+#   这三条对应的人工验证清单写在 docs/design/D-18-launch-experience.md。
+
+name: bundle-launch-sim
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: 'Which platform to simulate'
+        type: choice
+        required: false
+        default: all
+        options: [all, linux, macos, windows]
+      # 默认打 published release 上那份**用户真拿到的字节**，而不是重新组装一个。
+      # 复现阶段这条是关键：重新组装出来的包与用户手里那份**不保证同字节**。
+      source:
+        description: 'release = the exact bytes users downloaded; build = assemble fresh from HEAD'
+        type: choice
+        required: false
+        default: release
+        options: [release, build]
+      tag:
+        description: 'Release tag to pull when source=release'
+        type: string
+        required: false
+        default: v0.2.0
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bundle-launch-sim-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: launch-sim-win-x64
+    if: inputs.legs == 'all' || inputs.legs == 'windows'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Fetch the exact bytes users downloaded
+        if: inputs.source == 'release'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force -Path dl | Out-Null
+          gh release download "${{ inputs.tag }}" -R "$env:GITHUB_REPOSITORY" -p 'openmemo-*-win-x64.zip' -D dl
+          Get-ChildItem dl | Format-List Name,Length
+
+      - name: Simulate the user
+        shell: pwsh
+        run: node scripts/ci/simulate-user-launch.mjs --archive-dir dl --mode diagnose
+
+  macos:
+    name: launch-sim-darwin-arm64
+    if: inputs.legs == 'all' || inputs.legs == 'macos'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Fetch the exact bytes users downloaded
+        if: inputs.source == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dl
+          gh release download "${{ inputs.tag }}" -R "$GITHUB_REPOSITORY" -p 'openmemo-*-darwin-arm64.tar.gz' -D dl
+          ls -la dl
+
+      - name: Simulate the user
+        run: node scripts/ci/simulate-user-launch.mjs --archive-dir dl --mode diagnose
+
+  linux:
+    name: launch-sim-linux-x64
+    if: inputs.legs == 'all' || inputs.legs == 'linux'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Fetch the exact bytes users downloaded
+        if: inputs.source == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dl
+          gh release download "${{ inputs.tag }}" -R "$GITHUB_REPOSITORY" -p 'openmemo-*-linux-x64.tar.xz' -D dl
+          ls -la dl
+
+      - name: Simulate the user
+        run: node scripts/ci/simulate-user-launch.mjs --archive-dir dl --mode diagnose
