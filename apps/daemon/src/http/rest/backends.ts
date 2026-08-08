@@ -344,6 +344,25 @@ export async function handleBackendRoutes(
   pathname: string,
   method: string,
 ): Promise<boolean> {
+  /*
+   * ★★ 回答"这台机器上有什么"之前，**先让硬件快照跟上现实**。
+   *
+   * 这一行修的是要求 2.1 主路径上的一个死胡同（`[CI 实测 run 31250730491]`，三平台全中）：
+   *
+   *   用户在网页上装完加速后端 → 点"启用" → **409「backend package not installed」**
+   *   —— 而那个包就是他上一步刚装的，`/api/backends/installed` 里明明有它。
+   *
+   * 成因是 `state.hardware` 是 `RestState.create()` 那一刻的快照，装包不会刷新它，
+   * 于是 `backends[].installed` 恒为 false，`select` 的闸门据此拒绝。
+   * 同一份陈旧快照还让目录在装完 CPU 基础包之后继续说「请先安装 CPU 基础包」。
+   *
+   * 放在**入口**而不是逐个端点里，是因为这里的每一条路
+   * （catalog 的 applicable / install 的闸门 / select 的闸门）读的都是它 ——
+   * 逐个补是第 N 次修症状，而本轮已经看到"只在 install 后面补"漏掉了卸载与切换。
+   * `freshHardware()` 靠指纹判断要不要真探测，没变化时是一次 readdir，不会拖慢请求。
+   */
+  await state.freshHardware();
+
   /* ---------------------- GET /api/backends/catalog ---------------------- */
   if (pathname === '/api/backends/catalog') {
     if (method !== 'GET') return methodNotAllowed(res, 'GET');

@@ -308,10 +308,32 @@ export interface MoveResult {
    * 但**必须报出来** —— 这正是 T-128 里"绿灯背后功能已经坏了"的那一格。
    */
   readonly staleLinks: readonly StaleLink[];
-  /** 非致命但用户需要知道的情况（目前只有 `staleLinks`）。 */
+  /** 非致命但用户需要知道的情况（`staleLinks`、以及源目录没删掉）。 */
   readonly warningZh?: string;
   /** 失败后源目录是否完好无损。**任何失败路径上它都必须是 true。** */
   readonly sourceIntact: boolean;
+  /**
+   * 源目录**有没有真的被删掉**。
+   *
+   * ## 为什么必须单独有这个字段
+   *
+   * `[CI 实测 2026-08-08 run 31250730491，windows-2025]` 复制路径走完之后
+   * `fs.rm(from)` 失败了（Windows 上删不掉仍被 daemon 打开的 `openmemo.db`），
+   * 而调用方拿到的仍然是 `ok:true, strategy:'copy'`，界面照旧说
+   * **「已移动 54 个文件到新位置」** —— 数据其实**被复制了一份留在原地**，
+   * 里面包含明文的 `secrets.json`（用户的 API Key）。
+   *
+   * 那句话不实，而且是最危险的一种不实：用户据此以为旧位置已经空了。
+   *
+   * 判据（Manager 2026-08-08 裁定）：**不是"让 Windows 也用 rename"**
+   * —— 跨卷 rename 本来就会失败，`copy` 是必要的退路。
+   * **判据是"界面说的和实际发生的必须一致"**。所以这里把"源删没删掉"
+   * 变成一个**结构化字段**，而不是只塞进一句 `warningZh` 里让调用方自己去
+   * 正则匹配（那正是本仓 T-144「产出方与使用方用了两个名字」那一族）。
+   *
+   * `false` ⇒ 调用方**必须**改口，不许再说"已移动"。
+   */
+  readonly sourceRemoved: boolean;
 }
 
 /**
@@ -338,6 +360,7 @@ export async function moveDataDir(
       ...(plan.reason ? { error: plan.reason } : {}),
       ...(plan.reasonZh ? { errorZh: plan.reasonZh } : {}),
       sourceIntact: true,
+      sourceRemoved: false,
     };
   }
 
@@ -356,6 +379,7 @@ export async function moveDataDir(
       error: `cannot read source: ${String(err)}`,
       errorZh: '读不到当前数据目录',
       sourceIntact: true,
+      sourceRemoved: false,
     };
   }
 
@@ -380,8 +404,9 @@ export async function moveDataDir(
     }
     if (removeSourceError !== undefined) {
       warnings.push(
-        `数据已完整复制到新位置并校验通过，但旧目录 ${from} 没能删干净（${removeSourceError}）。` +
-          `新位置的数据是完整的，旧目录可以手动删除。`,
+        `数据已完整复制到新位置并**逐文件校验通过**，但旧目录 ${from} 没能删掉（${removeSourceError}）。` +
+          `新位置的数据是完整的；**旧目录连同其中的 secrets.json 仍然留在原地**，` +
+          `请自行确认后删除。`,
       );
     }
     return {
@@ -392,7 +417,13 @@ export async function moveDataDir(
       links: size.links,
       staleLinks,
       ...(warnings.length > 0 ? { warningZh: warnings.join(' ') } : {}),
-      sourceIntact: false,
+      /*
+       * ★ 源删不掉时 `sourceIntact` 必须是 **true** —— 它以前恒为 false。
+       *   这个字段的语义是"用户的原数据还在不在"，而删除失败时它**就是还在**。
+       *   恒 false 让调用方（storage.ts 的错误文案）在最需要说实话的那一格上说了反话。
+       */
+      sourceIntact: removeSourceError !== undefined,
+      sourceRemoved: removeSourceError === undefined,
     };
   };
 
@@ -410,6 +441,7 @@ export async function moveDataDir(
         error: 'target exists and is not empty',
         errorZh: '新位置已存在且不是空目录',
         sourceIntact: true,
+        sourceRemoved: false,
       };
     }
   } catch {
@@ -432,6 +464,7 @@ export async function moveDataDir(
       error: `insufficient space: need ~${Math.ceil(need)}, free ${free}`,
       errorZh: `目标磁盘空间不足（约需 ${(need / 1e6).toFixed(1)}MB，可用 ${(free / 1e6).toFixed(1)}MB）`,
       sourceIntact: true,
+      sourceRemoved: false,
     };
   }
 
@@ -495,6 +528,7 @@ export async function moveDataDir(
         error: `verification failed: ${v.mismatches.slice(0, 5).join('; ')}`,
         errorZh: `复制后校验不一致（${v.mismatches.length} 处），已回滚，原数据未动`,
         sourceIntact: true,
+        sourceRemoved: false,
       };
     }
   } catch (err) {
@@ -510,6 +544,7 @@ export async function moveDataDir(
       error: String(err),
       errorZh: '移动失败，已回滚，原数据未动',
       sourceIntact: true,
+      sourceRemoved: false,
     };
   }
 

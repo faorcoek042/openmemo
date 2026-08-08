@@ -164,6 +164,90 @@ export class RestState {
     this.store = new ArtifactStore(modelsRoot);
   }
 
+  /* ─────────────────── 硬件快照的失效：结构化，不靠人记得 ─────────────────── */
+
+  /**
+   * 上一次探测时，「机器上有什么」长什么样。`null` = 还没算过。
+   *
+   * 见 `machineFingerprint()` 与 `freshHardware()`。
+   */
+  private hardwareFingerprint: string | null = null;
+
+  /**
+   * 「机器上有什么」的**廉价指纹**：装了哪些后端包 + 用户选了哪个后端 + 模型根目录。
+   *
+   * **不 spawn、不探测**（只是一次 `listManifests` 的 readdir），所以可以在每个
+   * 相关请求上算一遍。
+   *
+   * ## 为什么是指纹，而不是"在 install 后面补一次刷新"
+   *
+   * Manager 2026-08-08 的判据：**一个会过期的快照，不该被当成事实来源；
+   * 如果它必须是快照，那么"谁在什么时候让它失效"必须是显式的、且穷尽的。**
+   *
+   * 「穷尽」是这里的难点。改变"机器上有什么"的动作至少有：装包、卸包、切后端、
+   * 数据目录搬迁、断路器复位 —— 而**本轮实测已经证明"逐个补刷新"这条路走不通**：
+   * 只在 install 后面补，卸载与切后端那两条同样会漂
+   * （`[实测]` 装完加速包后 `select` 回 409「backend package not installed」，
+   * 而包就是刚装上的 —— 读的正是这份没刷新的快照）。
+   *
+   * 所以这里把"失效"变成**从输入派生**的，而不是需要人去调用的：
+   * 指纹变了 ⇒ 快照必然重算。新增一个改变机器状态的动作时，
+   * 只要它影响的是这三样东西之一，**不写任何代码它就已经被覆盖了**；
+   * 影响别的东西时，`hardwareInputsGuard()` 会当场把它逼出来（见下）。
+   */
+  private async machineFingerprint(): Promise<string> {
+    const packs = await this.listInstalledBackends();
+    return [
+      this.modelsRoot,
+      this.prefs.selectedBackend ?? '',
+      ...packs.map((p) => p.id).sort(),
+    ].join('|');
+  }
+
+  /**
+   * **回答"这台机器上有什么"之前必须先调它。**
+   *
+   * 指纹没变 ⇒ 直接用缓存（探测要 spawn probe / nvidia-smi，几百 ms 到几秒，
+   * 不能每个请求都跑）；指纹变了 ⇒ 重新探测一次并把结果写回。
+   *
+   * 用户**显式选过**的后端要在重探之后重新盖上去：`detectLocalHardware()` 会按
+   * 偏好顺序自己算一个 `selectedBackend`，而那是"没人选过时"的默认值，
+   * 不能拿它覆盖用户的选择（`loadPersisted()` 里是同一条规则）。
+   */
+  async freshHardware(): Promise<HardwareInfo> {
+    const fp = await this.machineFingerprint();
+    if (fp === this.hardwareFingerprint) return this.hardware;
+    const detection = await detectLocalHardware(this.modelsRoot);
+    this.hardware = this.prefs.selectedBackend
+      ? { ...detection.hardware, selectedBackend: this.prefs.selectedBackend }
+      : detection.hardware;
+    this.advisoryBackends = detection.advisoryBackends;
+    this.hardwareFingerprint = fp;
+    return this.hardware;
+  }
+
+  /**
+   * 让快照**立刻**失效。给指纹看不见的那些变化用（例如断路器复位 ——
+   * 它改的是 runtime 包里的进程内状态，不在 manifest 里）。
+   *
+   * 刻意不做成"顺手调一下也无妨"的样子：正常路径应当靠指纹，
+   * 需要显式调用的地方都该在这里留下理由。
+   */
+  invalidateHardware(): void {
+    this.hardwareFingerprint = null;
+  }
+
+  /**
+   * 守卫：**新增一个会改变"机器上有什么"的动作、却没让快照失效时，当场红。**
+   *
+   * 判据不是"记得调 invalidate"，而是"忘了也会被抓住"。测试拿它来断言：
+   * 做完某个动作之后，指纹**必须**已经和快照记录的那个不一样了。
+   * 返回 `true` = 快照此刻仍然当真（指纹一致）。
+   */
+  async hardwareSnapshotIsCurrent(): Promise<boolean> {
+    return (await this.machineFingerprint()) === this.hardwareFingerprint;
+  }
+
   static async create(deps: RestStateDeps): Promise<RestState> {
     // 与 downloader 的 `resolveModelsRoot` 语义一致：OPENMEMO_MODELS 优先，
     // 否则落在 daemon 的 dataDir 里（AppPaths.modelsDir 的约定）。

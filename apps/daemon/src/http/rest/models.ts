@@ -168,12 +168,15 @@ export function modelRoutesFor(deps: { sse: SseHub; dataDir: string }): ModelRou
 /* ========================================================================== */
 
 async function buildHardwareResponse(state: RestState): Promise<GetHardwareResponse> {
+  // 先让快照跟上现实，理由见 backends.ts 入口那段：装/卸/切之后不刷新，
+  // 这里回的 `backends[].probed` / `available` 就是上一次启动时的答案。
+  const base = await state.freshHardware();
   // `installed` 反映的是"后端包是否装在磁盘上"，这是我们能确知的事实；
   // `available`（设备是否枚举得到）仍然由探测决定，两者不能互相推断。
   const installedBackends = new Set((await state.listInstalledBackends()).map((p) => p.backend));
   const hardware = {
-    ...state.hardware,
-    backends: state.hardware.backends.map((b) => ({
+    ...base,
+    backends: base.backends.map((b) => ({
       ...b,
       installed: b.id === 'cpu' ? true : installedBackends.has(b.id),
     })),

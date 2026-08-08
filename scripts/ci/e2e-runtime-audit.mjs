@@ -286,6 +286,15 @@ const MUTATIONS = [
     why: '把本轮实测抓到的那个真缺陷种回去：写全部 7 个 role、只读回 asr/llm ⇒ 用户选的 VAD 每次重启都被静默清空，而产品装完组件后还会主动请他重启',
   },
   {
+    id: 'M-stale-hardware-snapshot',
+    file: 'http/rest/backends.js',
+    find: 'await state.freshHardware();',
+    replace: '/* mutation: 回到启动时那份快照 */',
+    proves: ['A-ACCEL-SWITCH'],
+    phases: ['boot', 'backends'],
+    why: '把要求 2.1 的死胡同种回去：硬件快照停在启动那一刻 ⇒ 用户在网页上装完加速后端，点"启用"得到 409「backend package not installed」，而包就是他刚装的',
+  },
+  {
     id: 'M-pointer-hardcoded',
     file: 'config/paths.js',
     find: "return process.env['OPENMEMO_POINTER_FILE'] ?? join(defaultDataDir(), 'datadir.json');",
@@ -634,7 +643,62 @@ function seedPointer(dataDir) {
   writeFileSync(POINTER, JSON.stringify({ dataDir, updatedAt: new Date().toISOString() }, null, 2));
 }
 
+/**
+ * ★ PROTOCOL §11：**起服务之前先证明这个端口是空的。**
+ *
+ * 判据是「一个绿灯必须能追溯到**是我这次启动的那个东西**给的」。
+ * 本仓已经三次栽在残留进程上：泄漏的 daemon 占着端口，于是
+ * 「被 Gatekeeper 拒掉的包」被报成「界面可达 HTTP 200」、
+ * 「自己拉起的那个早死了」被报成「0.5 秒就绪」。
+ *
+ * 端口不空就**当场判失败**，绝不继续跑下去拿一个无意义的绿。
+ */
+async function assertPortFree(label) {
+  try {
+    const res = await fetch(`${BASE}/api/health`, { signal: AbortSignal.timeout(3000) });
+    const body = await res.text().catch(() => '');
+    let who = '';
+    try {
+      const h = JSON.parse(body);
+      who = ` —— 占用者自称 pid=${h.pid} dataDir=${h.dataDir} version=${h.version}`;
+    } catch {
+      /* 不是我们的 daemon，那更糟 */
+    }
+    assert(
+      'A-PORT-FREE',
+      false,
+      `[${label}] 端口 ${PORT} **在我启动任何东西之前就有人应答**${who}。` +
+        `按 §11 当场判失败：继续跑下去拿到的任何绿灯都追溯不到我启动的那个进程。`,
+    );
+    throw new Error(`port ${PORT} already in use`);
+  } catch (e) {
+    if (String(e.message).startsWith(`port ${PORT} already in use`)) throw e;
+    // fetch 失败 = 没人应答 = 端口是空的，这正是我们要的
+    return true;
+  }
+}
+
+/**
+ * 按 **pid 收整棵进程树**（§11）。**不许 `pkill -f`** —— 模式匹配会打到别人的进程。
+ *
+ * Windows 上 `child.kill()` 杀不掉 `cmd.exe` 底下的 `node.exe`，要 `taskkill /T`；
+ * POSIX 上我们没用 shell 包一层，所以直接按 pid 杀就是同一个进程。
+ */
+function killTree(pid) {
+  if (!pid) return;
+  try {
+    if (IS_WIN) {
+      spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+    } else {
+      process.kill(pid, 'SIGKILL');
+    }
+  } catch {
+    /* 已经没了 */
+  }
+}
+
 async function startDaemon(label) {
+  await assertPortFree(label);
   proc = spawn(NODE_BIN, [DAEMON, '--port', String(PORT)], {
     // ★ PATH 在这一刻现取（见 childEnv 上面那段）：屏蔽必然已经发生。
     env: { ...childEnv, PATH: PATH_FOR_DAEMON },
@@ -646,6 +710,8 @@ async function startDaemon(label) {
   if (!h) {
     say(`   [${label}] ✘ daemon 没起来。它最后的输出：`);
     say(tail(daemonLogs, 40));
+    // §11：起不来也要按 pid 把它收干净，否则它会占着端口毒化下一条腿
+    killTree(proc?.pid);
     throw new Error('daemon did not start');
   }
   say(`   [${label}] 起来了：pid=${h.pid} dataDir=${h.dataDir} version=${h.version}`);
@@ -657,7 +723,7 @@ async function waitHealth(maxTries = 120, expectPidNot = null) {
   for (let i = 0; i < maxTries; i++) {
     await sleep(500);
     try {
-      const res = await fetch(`${BASE}/api/health`);
+      const res = await fetch(`${BASE}/api/health`, { signal: AbortSignal.timeout(5000) });
       if (res.ok) {
         const body = await res.json();
         if (body.ready === true && (expectPidNot === null || body.pid !== expectPidNot))
@@ -700,11 +766,18 @@ async function shutdownViaHttp() {
   for (let i = 0; i < 30; i++) {
     await sleep(400);
     try {
-      await fetch(`${BASE}/api/health`);
+      await fetch(`${BASE}/api/health`, { signal: AbortSignal.timeout(3000) });
     } catch {
       return true;
     }
   }
+  /*
+   * §11 兜底：HTTP 关不掉就**按 pid 收整棵树**。
+   * 留一个占着端口的孤儿，下一条腿（或下一次 CI）就会拿到一个
+   * 追溯不到自己启动过程的"绿灯"。
+   */
+  killTree(proc?.pid);
+  await sleep(500);
   return false;
 }
 
@@ -726,7 +799,7 @@ async function j(path, init) {
   let lastErr;
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
-      const res = await fetch(`${BASE}${path}`, init);
+      const res = await fetch(`${BASE}${path}`, { ...init, signal: AbortSignal.timeout(120_000) });
       const text = await res.text();
       try {
         return { status: res.status, body: JSON.parse(text) };

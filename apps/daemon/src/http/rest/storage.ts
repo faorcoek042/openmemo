@@ -250,6 +250,38 @@ export function parseChangeRequest(body: unknown): ChangeRequest {
   };
 }
 
+/**
+ * 搬完之后给用户的那句话。**纯函数**，因为它是"界面说的和实际发生的一致吗"
+ * 这条判据的唯一落点，而那条判据值得被单独测。
+ *
+ * ## 为什么它不能恒说"已移动"
+ *
+ * `[CI 实测 2026-08-08 run 31250730491，windows-2025]`：复制路径走完之后
+ * `fs.rm(from)` 失败了（Windows 删不掉仍被 daemon 打开的 `openmemo.db`），
+ * 而这里照旧回「已移动 54 个文件到新位置」——
+ * 数据其实**被复制了一份留在原地**，其中包含**明文的 `secrets.json`**。
+ * 用户据此以为旧位置已经空了。
+ *
+ * Manager 2026-08-08 裁定：判据**不是**"让 Windows 也用 rename"
+ * （跨卷 rename 本来就会失败，`copy` 是必要退路），
+ * 判据是**"界面说的和实际发生的必须一致"**。两条路都可接受：
+ * 复制完真的删掉源，或者如实说"已复制，源目录仍在，需要你确认后删除"。
+ * 这里选后者 —— 删源发生在**逐文件校验**（`verifyTreesMatch`：路径集合 +
+ * 文件字节数 + 符号链接目标）之后，删不掉时不再赌第二次，
+ * 而是把旧目录的位置原样交还给用户。
+ */
+export function moveMessageZh(
+  result: { files: number; links: number; sourceRemoved: boolean },
+  from: string,
+): string {
+  const what = `${result.files} 个文件` + (result.links > 0 ? `与 ${result.links} 个符号链接` : '');
+  if (result.sourceRemoved) return `已移动 ${what}到新位置，正在重启以生效。`;
+  return (
+    `已复制 ${what}到新位置并逐文件校验通过，正在重启以生效。` +
+    `⚠️ 旧目录 ${from} **没能删掉，仍留在原地**（其中包含 secrets.json），请自行确认后删除。`
+  );
+}
+
 export function createStorageRoutes(deps: StorageRoutesDeps): {
   handle(req: IncomingMessage, res: ServerResponse, url: URL, method: string): Promise<boolean>;
 } {
@@ -523,13 +555,28 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
         links: result.links,
         staleLinks: result.staleLinks,
         ...(result.warningZh ? { warningZh: result.warningZh } : {}),
+        /*
+         * ★ 结构化地告诉调用方「源目录还在不在」。
+         *   前端不该去正则匹配 `warningZh` —— 那是 T-144「产出方与使用方用了两个名字」那一族。
+         */
+        sourceRemoved: result.sourceRemoved,
         from: plan.from,
         to: plan.to,
         restartRequired: true,
-        messageZh:
-          `已移动 ${result.files} 个文件` +
-          (result.links > 0 ? `与 ${result.links} 个符号链接` : '') +
-          '到新位置，正在重启以生效。',
+        /*
+         * ★★ 文案必须跟着**实际发生的事**变，不许恒说"已移动"。
+         *
+         * `[CI 实测 run 31250730491，windows-2025]` 复制路径走完、`fs.rm(from)` 失败
+         * （Windows 删不掉仍被打开的 `openmemo.db`），而这里照旧回
+         * 「已移动 54 个文件到新位置」—— 数据**被复制了一份留在原地**，
+         * 其中包含明文的 `secrets.json`。用户据此以为旧位置空了。
+         *
+         * Manager 裁定：判据不是"让 Windows 也用 rename"（跨卷 rename 本来就会失败，
+         * copy 是必要退路），**判据是"界面说的和实际发生的必须一致"**。
+         * 这里选的是"如实说" —— 删源发生在逐文件校验之后，删不掉时不再赌第二次，
+         * 而是把旧目录的位置原样交还给用户。
+         */
+        messageZh: moveMessageZh(result, plan.from),
       });
       setTimeout(() => deps.requestRestart?.('data-dir moved', { dataDir: plan.to }), 50);
       return true;

@@ -319,6 +319,33 @@ export function recordProbeOutcome(
     return { ...emptyBreaker(), driverFingerprint };
   }
   /*
+   * ★★ 「还没装」不是「装了但坏了」。
+   *
+   * `missing_probe` / `missing_backend_dir` 的含义是**探针二进制/后端目录不存在** ——
+   * 而它们随后端包出厂，所以**全新安装上必然如此**。`runProbe` 对这两种只做
+   * 一次 `existsSync`（微秒级，不 spawn、不碰驱动），也就是说：**什么都没测**。
+   *
+   * 在这之前它们被记成普通失败，后果是**用户什么都没做错就看到断路器跳闸**：
+   * `[实测 2026-08-08]` 全新数据目录、一个后端包都没装，daemon 启动探一发 +
+   * 用户在运行时页点一下「重新检测」再探一发 = 2 次 = 正好到阈值 ⇒
+   *
+   *     verdict=open  blacklistedBackends=[cuda,vulkan,rocm,metal,coreml]
+   *     lastError=probe executable not found: <data>/bin/runtime/openmemo-probe
+   *
+   * 于是他第一次打开诊断页，看到的是「加速后端断路器」告警 + 5 个后端全被停用。
+   * 判据与 T-168 是同一条：**没有证据要被报成没有证据，不能被报成故障。**
+   *
+   * ⚠️ 刻意**没有动**三个常量（`PROBE_TIMEOUT_MS` / `CIRCUIT_BREAKER_THRESHOLD` /
+   * `BREAKER_COOLDOWN_MS`）—— 有测试直接断言它们的值，而且这次要改的本来就不是
+   * 「多久算超时」「几次算坏」，是**「什么算一次失败」**。
+   *
+   * 计数**保持原样**而不是清零：清零会把一次真实的连续失败记录抹掉
+   * （包被卸载的瞬间也会走到这里）。这里只更新 `lastError`，让"为什么没探到"仍然可见。
+   */
+  if (result.kind === 'missing_probe' || result.kind === 'missing_backend_dir') {
+    return { ...state, lastError: result.message, driverFingerprint };
+  }
+  /*
    * 指纹变了 = 被测的东西换了（装了包 / 换了内核）。旧的失败计数说的是**另一个配置**，
    * 不能算在新配置头上 —— 这正是"指纹变化只给一次重试，不是复位"那条缺陷的落点：
    * 放行的那一次若还失败，`state.consecutiveFailures + 1` 会立刻把它按回停用。
