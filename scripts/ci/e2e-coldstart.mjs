@@ -101,6 +101,16 @@ const dump = (label, v, cap = 2600) => {
 
 const ledger = [];
 let exitCode = 0;
+/**
+ * 整条腿是不是被异常打断了。
+ *
+ * ⚠️ 第一版没有这个变量，于是收尾那行按 `red.length === 0` 打出
+ * 「✔ N 条关键断言全部成立」——**而进程正以 exitCode=1 退出**
+ * （`[CI 实测 run 31261593715]` Windows：daemon 在下模型时崩了，
+ *   台账却说"全部成立"）。那是 §11 点名的那种假绿，只不过发作在**我自己的汇报**里：
+ * 「还没跑到的」被渲染成了「跑过且通过的」。
+ */
+let aborted = null;
 function judge(name, r, { fatal = true } = {}) {
   ledger.push({ name, ok: r.ok, reason: r.reason, fatal });
   say(`   ${r.ok ? '✔' : '✘'} ${name}：${r.reason}`);
@@ -834,6 +844,7 @@ try {
     reason: shimHits.length === 0 ? 'shim 零命中' : `借了：${[...new Set(shimHits)].join(', ')}`,
   });
 } catch (e) {
+  aborted = e.message;
   say('');
   say(`✘ e2e-coldstart 中断：${e.message}`);
   if (proc) say(`   daemon: exitCode=${proc.exitCode} signal=${proc.signalCode} pid=${proc.pid}`);
@@ -848,11 +859,20 @@ try {
   }
   const red = ledger.filter((x) => x.ok === false && x.fatal);
   say('');
-  say(
-    red.length === 0
-      ? `✔ ${ledger.filter((x) => x.ok === true).length} 条关键断言全部成立`
-      : `✘ ${red.length} 条不成立：${red.map((x) => x.name).join('；')}`,
-  );
+  if (aborted) {
+    /*
+     * **被打断 ≠ 通过。** 后面那些断言根本没跑到，绝不能因为"没有红"就说全成立。
+     */
+    say(`✘ 整条腿被异常打断：${aborted}`);
+    say(
+      `   打断之前已成立 ${ledger.filter((x) => x.ok === true).length} 条，` +
+        `不成立 ${red.length} 条，**其余的没有跑到**（不是通过）。`,
+    );
+  } else if (red.length === 0) {
+    say(`✔ ${ledger.filter((x) => x.ok === true).length} 条关键断言全部成立`);
+  } else {
+    say(`✘ ${red.length} 条不成立：${red.map((x) => x.name).join('；')}`);
+  }
   say(`   数据目录 ${DATA_DIR} 留在 runner 上，随 runner 一起销毁。`);
 }
 
