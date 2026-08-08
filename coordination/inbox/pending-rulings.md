@@ -413,3 +413,105 @@ D-10 §8-D3 的原意是**用词偏好**："运行时"是工程师词汇，建�
 - `[未验证:需真 Mac]`：13.3 真机上的实际打印。
 - `[未验证]`：Windows 缺 VC++ 时的失败是否**静默**（DEPLOYMENT 暗示有加载错误）。
 - `UNKNOWN`：包里各 DLL 各自要求的 VC++ 版本 —— **今天没有任何东西在量它**。
+
+---
+
+## [2026-08-09 00:40] 裁决 ① / ② 执行 DONE
+
+提交 `93eec54`。门禁在隔离 worktree 检出该 commit 上跑：
+**`pnpm -r test` 1593 pass / 0 fail**（基线 1589 + 我新增 4 条）、`tsc -b`、`eslint`、
+`format:check`、`check:orphans` **70/70** 全绿。
+
+### ① 那个 API 面关在哪一层 —— **`RestState.create()` 里，目录加载之后**
+
+`apps/daemon/src/http/rest/state.ts` 新增 `withoutRetiredRoles()`：
+在 `loadModelCatalog()` **之后、构造 `RestState` 之前**把 `role=llm` 摘掉。
+
+**为什么是这一层（而不是前端、也不是删文件）**
+
+- `/api/models/catalog` 与 `findCatalogModel()`（**`POST /api/models/pull` 的入口**）
+  **读的是同一份 `this.modelCatalog`** —— 在它被构造之前摘掉，
+  **一处收口，两条路一起堵**。这是全链上唯一一个能同时堵住两者的点。
+- **不在前端加过滤**：你划的底线，前端过滤是装饰不是闸门。
+  而且实测已经证明了这一点 —— 前端**本来就**滤掉了（`ASR_TAB_ROLES`），
+  可 API 面照样是活的。
+- **不删 `models-llm.json`**：删文件会让下一个人看不出这里曾经有过什么、为什么没了，
+  于是很可能加回来 —— §13 那张表就是这么来的。
+
+**一个刻意的例外，写进了注释**：**已装在盘上的记录不受影响**。
+`listInstalled()` 读 `manifests/` 下的安装记录而不是这份目录 ——
+用户此前装过的东西不该因为我们改了主意就从界面消失，那是"数据在界面上消失"那一族。
+**关的是新的下载入口，不是已有的东西。**
+
+**对照实验（证明它本来真的是活的）**：绕过过滤直接问加载器 ——
+`role=llm` 交出 **5 条**（`llm/qwen3-4b-q4_k_m` …），总条目 **35**；
+过滤后目录里 `role=llm` 为 **0**。
+
+**守卫** `apps/daemon/src/http/rest/retiredRoles.test.ts` 4 条，
+夹具**直接用真清单里的条目**（手搓过一版，连撞两轮 schema 校验，
+而那些字段与要验的事情毫无关系；用真条目还让"那 5 条进不来"字面为真）：
+
+1. 目录里不许再出现那 5 个 id
+2. **`findCatalogModel()` 按 id 也必须找不到** —— 这条才是 pull 的闸门，
+   只测列表会漏掉"看不见但拉得到"这种最难发现的形态
+3. **反方向**：`asr` / `vad` 一条都不许被误伤（"把什么都过滤掉"同样能骗过前两条）
+4. `role=llm` 一条不剩
+
+### ADR-016 / D-10 里那段历史怎么写的
+
+**`ADR-016` 决策 3 下面加了「执行补记」**（原文一字未改，补记在其后）：
+点名那 5 个 id、写清 `[实测]` 当时"服务端零过滤 + 前端挡住"的真实状态与对照数字、
+引用你的裁决理由原话（**不许留半个功能 / 它是活的只是今天没人走**）、
+写明关在哪一层与为什么不是前端、为什么不删 manifest、以及那个"已装记录不受影响"的例外。
+
+**`D-10 §8` 的 D2 / D3 两行**：把我上一轮写的"仍成立"用删除线划掉，改成
+**已裁并已执行（2026-08-08）**，各自写明做法与出处。D2 那条特别记了一句：
+本条当年建议的"保留类型联合里的 `llm`"**照办了** ——
+`active.llm`、`MISSING_LLM`、`gpu.llm` 全部未动。
+
+### ② 导航文案改完之后，还有没有别处面向用户写着"运行时"
+
+**有，而且比 `nav.runtime` 多得多 —— 一共 11 处，全改了。**
+
+只改导航会得到「点进去叫本机组件、别处叫你去运行时页」，
+那正是本仓「同一个问题两个出处」的形状，所以我没有只改那一处：
+
+| 位置                                     | 处数    | 说明                                                                             |
+| ---------------------------------------- | ------- | ---------------------------------------------------------------------------------- |
+| `locales/{zh-CN,en}.json`                | **5**   | `nav.runtime`、`runtime.title`、`onboarding.openRuntime`、`asr.goInstallRuntime`、`jobToast.gotoRuntime`（中英各改） |
+| `packages/runtime/src/selfcheck.ts`      | **7**   | 补救文案里的「运行时」页 → 「本机组件」页 —— **这些是诊断页给用户的下一步指引**，不改就会把人指向一个已经不叫那个名字的页面 |
+| `apps/web/src/test/components.test.tsx`  | 2 处断言 | 跟着改（否则测试红）                                                              |
+
+英文对应：`nav.runtime` = **`Local components`**，
+`runtime.title` = `Local components and acceleration backends`，其余同族。
+
+**刻意没动的一处**：`apps/daemon/src/http/rest/storage.ts:98`
+`purposeZh: '运行时状态与访问令牌'` —— 那描述的是数据目录下 `runtime/` **这个目录本身**，
+不是那个页面，「运行时状态」在那里是准确的。
+
+**路由 `/runtime` 一个字没动** —— 按你说的，URL 是可分享物，
+README / DEPLOYMENT / 各处文档与任务书都写着它。
+
+⚠️ 顺带一个**没有撞上但值得知道**的事实：`nav` 里**没有** `components` 条目
+（`/components`「组件与来源」页不在侧栏，D-10 §3.2 刻意不给它第二个一级入口），
+所以「本机组件」这个名字**今天不会和侧栏里任何一项撞车**。
+如果将来有人把 `/components` 放进侧栏，这两个名字会很接近 —— 记在这里。
+
+### 边界申报（四路并行）
+
+提交时工作区里有**另外三路**的在途改动，我用 `git commit -- <pathspec>` 逐文件点名，
+`git show --stat` 复核确认只有我的 8 个文件：
+
+- **没碰**（探针/冷启动那路）：`apps/daemon/src/runtime/setup.ts`、`scripts/build-bundle.mjs`、`package.json`
+- **没碰**（浏览器那路）：`scripts/ci/e2e-browser-audit.mjs`（未跟踪）
+- **没碰**（文档同步那路）：`docs/DEPLOYMENT.md`、`coordination/inbox/docs-sync.md`、`scripts/ci/check-doc-freshness.mjs`
+- ⚠️ **与浏览器那路有一处潜在重叠**：我改了 `apps/web/src/test/components.test.tsx` 的
+  **2 处断言**（因为我改了 locale，不改它必红）与 `locales/*.json` 的 5 个键。
+  他此刻没有改这两个文件（`git status` 为证），但**他那条腿会驱动真浏览器断言界面文案** ——
+  如果他手里有写死「运行时」的断言，会在他那边红。**在此说明边界，请他以本次文案为准。**
+
+### 诚实标记
+
+- `[实测]` 对照实验、过滤前后条目数、11 处文案的位置与处数，都是程序数出来/跑出来的。
+- `[未验证]`：改完文案之后**真浏览器上的视觉效果**（我没跑那条腿，那是别人的地界）。
+- `UNKNOWN`：无。
