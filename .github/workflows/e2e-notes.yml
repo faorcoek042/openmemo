@@ -35,18 +35,39 @@ name: e2e-notes
 on:
   workflow_dispatch:
     inputs:
+      # ── 两种模式，用途**不同**，别把其中一种当成另一种的替身 ──────────────────────
+      #
+      # ① `assembleFromSource: true`（**默认**）＝ **回归门禁**
+      #    用本次 checkout 现场组装一个包，再对它跑全部断言。
+      #    它仍然是"预编译包"：同一个 `scripts/build-bundle.mjs` 组装、包自带的 Node 起、
+      #    走产品自己的 HTTP —— 与用户下载的那个东西**同一条生产线**，只是更新。
+      #
+      # ② `assembleFromSource: false` ＋ `bundleRunId` ＝ **发布审计**
+      #    对着某一次 build-bundles 的 artifact（用户真正下载的那个）跑同一套断言。
+      #
+      # ★ 为什么默认是 ①（这一条是本轮学到的，写下来免得下一个人再撞）：
+      #   本轮修掉「软删之后 GET 仍回 200」之后，E2E 里多了一条
+      #   「已删除的笔记必须回 404」。而 v0.2.0 那个 artifact 是**修复之前**编出来的 ——
+      #   拿新断言去量旧产物，它**理应**红。
+      #
+      #   这不是 bug，是两件事：**「HEAD 有没有回归」和「某个已发布的包有没有这个毛病」
+      #   是两个不同的问题，不该共用一个默认值。**
+      #   默认取"最近一次成功的 artifact"会让门禁的含义随别人什么时候跑 build-bundles
+      #   而漂移 —— 那正是本仓最怕的那种"结论取决于机器状态"。
+      #
+      #   所以：默认回答"HEAD 好不好"；要审计某个发布产物时，**显式**指定 run。
+      #   模式 ② 对着旧包报红是**有价值的信息**（"这个发布确实带着那个毛病"），
+      #   不要因为它红就去把断言删掉。
+      assembleFromSource:
+        description: '默认 true = 用本次 checkout 现场组装包跑回归门禁。设为 false 则改对 bundleRunId 指定的发布产物做审计。'
+        required: false
+        default: true
+        type: boolean
       bundleRunId:
-        description: '从哪个 build-bundles run 取预编译包。留空 = 自动取最近一次成功的那个。'
+        description: '仅当 assembleFromSource=false 时有意义：对哪一次 build-bundles 的 artifact 做发布审计。留空 = 最近一次成功的那个。'
         required: false
         default: ''
         type: string
-      assembleFromSource:
-        # 刻意默认 false 并且描述里写明后果 —— 一个"顺手打开就不知道自己在验什么"的开关
-        # 正是本仓最贵的那类失败的土壤。
-        description: '不取 artifact，改用本次 checkout 现场组装一个包（**这样验的就不是发布产物了**）'
-        required: false
-        default: false
-        type: boolean
 
 # 需要 actions: read 才能跨 workflow 下载 build-bundles 的 artifact。
 # 其余一律只读：这个 workflow 不建 release、不推 commit、不改任何远端状态。
