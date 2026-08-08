@@ -56,6 +56,8 @@ import {
  */
 import { breakerDetail, breakerRemediation, breakerTripped } from '@openmemo/shared';
 
+import { MACOS_FLOORS, detectMacosProductVersion, evaluateOsFloors } from './platform/osFloors.js';
+
 import { mediaAssetRoots, probeAssetFile } from './assetPaths.js';
 import { detectCpu, detectMemory, detectOs } from './detect/system.js';
 import { runProbe } from './probe/runProbe.js';
@@ -240,6 +242,14 @@ export interface SelfCheckProbes {
   localLlmServices?: () => Promise<DetectedLlmService[] | null>;
   /** 档 1：配没配在线 provider + Key。**只读配置，绝不代发请求。** */
   llmKeyConfig?: () => Promise<LlmKeyConfig | null>;
+  /**
+   * 本机 macOS 产品版本（如 `13.6`）。**只在 darwin 上有意义**，别的平台回 `null`。
+   *
+   * 做成可注入的探针，是因为「13.3 上该说什么」这条逻辑**必须能在 Linux 的 CI 上被测到**
+   * —— 真机那一格结构性验不了，但判定逻辑不许因此没人守。
+   * 不注入时由 `detectMacosProductVersion()` 现取（`sw_vers`，带 5s 硬超时）。
+   */
+  macosProductVersion?: () => Promise<string | null>;
   /** 代理配置摘要（URL 必须已脱敏）。 */
   proxy?: () => Promise<ProxySummary | null>;
   /** 真发一次外网请求验代理。只在 `proxyTest` 为真时被调用。 */
@@ -350,6 +360,94 @@ export function coreMlEncoderNameFor(modelFileName: string): string {
  * `by-name/asr/<X>.mlmodelc/`，而 zip 内部**自带一层同名顶层目录**，
  * 于是真实结构是 `<X>.mlmodelc/<X>.mlmodelc/coremldata.bin` —— 外层是个空壳。
  */
+/**
+ * 上游二进制的系统版本下限 —— **把"静默不可用"变成"说得出为什么"**。
+ *
+ * ## 它防的那一档
+ *
+ * 我们承诺 macOS arm64 ≥ 13.3，而包里两个**上游预编译**的东西下限更高：
+ * `vec0.dylib` 要 **14.0**（语义检索），`libonnxruntime*.dylib` 要 **15.5**（流式 ASR）。
+ * `[CI 实测 2026-08-08 run 31204790920]`
+ *
+ * 于是 13.3 ≤ 系统 < 14.0 的那台 Mac：核心功能全好使，这两样**一加载就失败，
+ * 而且没有任何地方说得出为什么** —— 用户只会以为功能坏了，或者是自己配错了。
+ * 本仓把这一档叫作最坏的一档：**装得上、跑不了、自检看不见。**
+ *
+ * ## 为什么是 `warn` 而不是 `fail`
+ *
+ * Manager 2026-08-08 裁定「**保留 13.3 的承诺，把静默变响亮**」——
+ * 抬到 15.5 会把一台其实能用核心功能的 Mac 挡在门外，**问题不在版本号，在"静默"**。
+ *
+ * 而在一台 13.3 的 Mac 上「语义检索不可用」**是事实，不是故障**。
+ * CLI 的退出码是 `status === 'fail' && required`（`scripts/selfcheck.mjs`），
+ * 报 `fail` 会让一台**完全符合我们承诺**的机器退出码变 1 ——
+ * 那是一条会常态变红的门禁，等于训练所有人忽略它。
+ * 所以低于下限 → **`warn` + `required:false`**；达标 → `ok`；取不到版本 → `warn` 并说明取不到。
+ *
+ * ## 平台门
+ *
+ * 非 darwin 上这两项**根本不出现**（与 `asr.coreml` 同一条规矩）——
+ * 一个在 Linux 上永远 ok 的检查项是纯噪音。
+ * ⚠️ Windows 的 VC++ 运行时是同族问题，但**我们今天没有任何一处在运行时探测它**，
+ * 所以这里没有对应项 —— 见回执，那是一条已知未做，不是漏了。
+ */
+async function checkOsFloors(input: SelfCheckInput, add: (r: CheckResult) => void): Promise<void> {
+  if ((input.platform ?? process.platform) !== 'darwin') return;
+
+  const productVersion = input.probes.macosProductVersion
+    ? await input.probes.macosProductVersion()
+    : await detectMacosProductVersion(input.platform ?? process.platform);
+
+  for (const r of evaluateOsFloors(MACOS_FLOORS, productVersion)) {
+    const f = r.floor;
+    if (r.verdict === 'ok') {
+      add({
+        layer: 'hardware',
+        id: f.id,
+        label: f.label,
+        labelZh: f.labelZh,
+        status: 'ok',
+        detail: `macOS ${r.productVersion} ≥ ${f.floor}，${f.labelZh}可用`,
+        detailEn: `macOS ${r.productVersion} ≥ ${f.floor}; ${f.label} is available`,
+        required: false,
+        remediation: null,
+      });
+    } else if (r.verdict === 'below-floor') {
+      add({
+        layer: 'hardware',
+        id: f.id,
+        label: f.label,
+        labelZh: f.labelZh,
+        status: 'warn',
+        // ★ 文案要同时给出**三件事**：丢了什么、为什么、下一步。少任何一件都会让用户去猜。
+        detail:
+          `你的 macOS 是 ${r.productVersion}，低于 ${f.floor} —— ${f.losesZh}。` +
+          `这不是故障，也不是你配错了：${f.sourceZh}，而本产品承诺的下限是 13.3，` +
+          `所以这台机器上核心功能（转写、播放、笔记、中文全文检索）全都正常。`,
+        detailEn:
+          `Your macOS is ${r.productVersion}, below ${f.floor} — ${f.loses}. ` +
+          `This is not a fault and not a misconfiguration: ${f.source}. ` +
+          `Core features (transcription, playback, notes, Chinese full-text search) work fine here.`,
+        required: false,
+        remediation: `升级到 macOS ${f.floor} 或更高即可启用；不升级也不影响核心功能`,
+      });
+    } else {
+      add({
+        layer: 'hardware',
+        id: f.id,
+        label: f.label,
+        labelZh: f.labelZh,
+        status: 'warn',
+        // 取不到就说取不到。**不假设它够新**（那会把洞盖回去），也不假设它太旧（那是假警报）。
+        detail: `没能取到 macOS 系统版本，无法判断 ${f.labelZh} 是否可用（需要 ≥ ${f.floor}）`,
+        detailEn: `could not determine the macOS version, so cannot tell whether ${f.label} is available (needs ≥ ${f.floor})`,
+        required: false,
+        remediation: `手动核对：终端跑 sw_vers -productVersion，低于 ${f.floor} 则该功能不可用`,
+      });
+    }
+  }
+}
+
 async function checkCoreMl(
   input: SelfCheckInput,
   realAsr: string[],
@@ -1060,6 +1158,7 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
   });
 
   await checkCoreMl(input, realAsr, add);
+  await checkOsFloors(input, add);
 
   /*
    * ---- LLM（ADR-016 之后只剩在线）------------------------------------------------

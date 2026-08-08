@@ -44,9 +44,14 @@ export default function SettingsPage() {
             onChange={(e) => setTheme(e.target.value as ThemeMode)}
             className="h-8 rounded-md border border-line bg-surface-0 px-2 text-sm text-ink"
           >
-            <option value="system">system</option>
-            <option value="light">light</option>
-            <option value="dark">dark</option>
+            {/*
+              ★ 这三行原本是硬编码的 `system` / `light` / `dark`（D-09 §6 #3 记了很久）。
+              后果不大但很实在：中文界面上这一处永远是三个英文单词，
+              而它旁边的标签「主题」是翻译过的 —— 用户看到的是半截中文。
+            */}
+            <option value="system">{t('app.themeSystem')}</option>
+            <option value="light">{t('app.themeLight')}</option>
+            <option value="dark">{t('app.themeDark')}</option>
           </select>
         </label>
       </section>

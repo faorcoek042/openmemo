@@ -5,7 +5,10 @@
     "tasksBadge_one": "{{count}} 个任务进行中",
     "tasksBadge_other": "{{count}} 个任务进行中",
     "theme": "主题",
-    "language": "语言"
+    "language": "语言",
+    "themeSystem": "跟随系统",
+    "themeLight": "浅色",
+    "themeDark": "深色"
   },
   "nav": {
     "newCapture": "新建捕获",

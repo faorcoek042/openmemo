@@ -5,7 +5,10 @@
     "tasksBadge_one": "{{count}} task running",
     "tasksBadge_other": "{{count}} tasks running",
     "theme": "Theme",
-    "language": "Language"
+    "language": "Language",
+    "themeSystem": "System",
+    "themeLight": "Light",
+    "themeDark": "Dark"
   },
   "nav": {
     "newCapture": "New capture",
