@@ -25,7 +25,7 @@
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.2.0/whispercpp-cpu-linux-x64.tar.gz",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.3.0/whispercpp-cpu-linux-x64.tar.gz",
               "official": true
             }
           ]
@@ -89,7 +89,7 @@
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.2.0/whispercpp-vulkan-linux-x64.tar.gz",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.3.0/whispercpp-vulkan-linux-x64.tar.gz",
               "official": true
             }
           ]
@@ -156,7 +156,7 @@
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.2.0/whispercpp-cpu-macos-arm64.tar.gz",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.3.0/whispercpp-cpu-macos-arm64.tar.gz",
               "official": true
             }
           ]
@@ -212,7 +212,7 @@
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.2.0/whispercpp-cpu-win-x64.zip",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.3.0/whispercpp-cpu-win-x64.zip",
               "official": true
             }
           ]
@@ -286,7 +286,10 @@
         "gated": false,
         "url": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE"
       },
-      "providesFiles": ["ggml-cuda.dll", "whisper-cli.exe"],
+      "providesFiles": [
+        "ggml-cuda.dll",
+        "whisper-cli.exe"
+      ],
       "priority": 90,
       "benchmark": null,
       "catalogVersion": "2026.08.02"
@@ -326,7 +329,10 @@
         "gated": false,
         "url": "https://www.gnu.org/licenses/gpl-3.0.html"
       },
-      "providesFiles": ["ffmpeg", "ffprobe"],
+      "providesFiles": [
+        "ffmpeg",
+        "ffprobe"
+      ],
       "priority": 10,
       "benchmark": null,
       "catalogVersion": "2026.08.03"
@@ -366,7 +372,10 @@
         "gated": false,
         "url": "https://www.gnu.org/licenses/gpl-3.0.html"
       },
-      "providesFiles": ["ffmpeg.exe", "ffprobe.exe"],
+      "providesFiles": [
+        "ffmpeg.exe",
+        "ffprobe.exe"
+      ],
       "priority": 10,
       "benchmark": null,
       "catalogVersion": "2026.08.06"
@@ -408,7 +417,10 @@
         "gated": false,
         "url": "https://www.gnu.org/licenses/gpl-3.0.html"
       },
-      "providesFiles": ["ffmpeg", "ffprobe"],
+      "providesFiles": [
+        "ffmpeg",
+        "ffprobe"
+      ],
       "priority": 10,
       "benchmark": null,
       "catalogVersion": "2026.08.06"
@@ -448,7 +460,9 @@
         "gated": false,
         "url": "https://www.gnu.org/licenses/gpl-3.0.html"
       },
-      "providesFiles": ["yt-dlp"],
+      "providesFiles": [
+        "yt-dlp"
+      ],
       "priority": 10,
       "benchmark": null,
       "catalogVersion": "2026.08.03"
@@ -488,7 +502,9 @@
         "gated": false,
         "url": "https://www.gnu.org/licenses/gpl-3.0.html"
       },
-      "providesFiles": ["yt-dlp"],
+      "providesFiles": [
+        "yt-dlp"
+      ],
       "priority": 10,
       "benchmark": null,
       "catalogVersion": "2026.08.03"
@@ -528,7 +544,9 @@
         "gated": false,
         "url": "https://www.gnu.org/licenses/gpl-3.0.html"
       },
-      "providesFiles": ["yt-dlp"],
+      "providesFiles": [
+        "yt-dlp"
+      ],
       "priority": 10,
       "benchmark": null,
       "catalogVersion": "2026.08.03"
@@ -568,7 +586,9 @@
         "gated": false,
         "url": "https://www.gnu.org/licenses/gpl-3.0.html"
       },
-      "providesFiles": ["yt-dlp.exe"],
+      "providesFiles": [
+        "yt-dlp.exe"
+      ],
       "priority": 10,
       "benchmark": null,
       "catalogVersion": "2026.08.03"
@@ -595,7 +615,7 @@
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.2.0/whispercpp-vulkan-win-x64.zip",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.3.0/whispercpp-vulkan-win-x64.zip",
               "official": true
             }
           ]
@@ -656,7 +676,7 @@
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.2.0/whispercpp-metal-macos-arm64.tar.gz",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.3.0/whispercpp-metal-macos-arm64.tar.gz",
               "official": true
             }
           ]
