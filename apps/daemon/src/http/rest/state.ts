@@ -250,8 +250,30 @@ export class RestState {
     try {
       const raw: unknown = JSON.parse(await fs.readFile(this.activeFile, 'utf8'));
       const rec = raw as Partial<Record<ModelRole, string | null>>;
-      this.active.asr = typeof rec.asr === 'string' ? rec.asr : null;
-      this.active.llm = typeof rec.llm === 'string' ? rec.llm : null;
+      /*
+       * ★ **按 `MODEL_ROLES` 遍历，不要逐个字面量写。**
+       *
+       * 这里原本只有 `asr` 与 `llm` 两行，而 `persistActive()` 写的是
+       * `JSON.stringify(this.active)` —— **全部 7 个 role**。
+       * 写七个、读两个，于是 vad / punctuation / diarization / embedding / tts
+       * 这五个槽位**每次重启都被静默清空**。
+       *
+       * `[实测 2026-08-08]` 网页上把 VAD 切到 `vad/silero-vad-ggml` → `active.json`
+       * 里确实写着它 → `POST /api/daemon/restart` → `GET /api/models/active`
+       * 回来 `vad: null`。文件没坏、没有任何报错，用户的选择就是没了；
+       * 之后 pipeline 退回"任意已装记录（readdir 原序）"去挑权重。
+       * 这条正落在章程要求 2.2 的「切换」上，而产品自己在装完组件后
+       * **还会主动请用户重启** —— 也就是说这条路几乎必然被走到。
+       *
+       * 为什么它能活这么久：上面 `active` 声明处那句注释说得没错 ——
+       * 初始化器漏了 role 编译器会红。但**这里是逐个属性赋值**，
+       * 漏掉一个 role 类型完全合法，编译器一个字都不会说。
+       * 改成遍历之后，新增 role 自动被带上，不再依赖"有人记得回来加一行"。
+       */
+      for (const role of MODEL_ROLES) {
+        const v = rec[role];
+        this.active[role] = typeof v === 'string' ? v : null;
+      }
     } catch {
       /* 首次运行 */
     }
