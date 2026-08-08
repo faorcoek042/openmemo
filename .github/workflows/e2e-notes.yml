@@ -195,7 +195,17 @@ jobs:
           pnpm --filter @openmemo/web build
           node scripts/build-bundle.mjs --target "${{ matrix.target }}"
           mkdir -p bundle-artifact
-          cp dist/bundles/* bundle-artifact/
+          # ★ `cp dist/bundles/*` 会炸：那个目录里除了归档，还有组装用的**暂存目录**
+          #   （`openmemo-<版本>-<target>/`），`cp` 没有 -r 碰到目录就 exit 1 ——
+          #   `[CI 实测 run 31249161030]` 三个平台就红在这一行，而包已经好好地打出来了。
+          #   仍然用 nullglob 数组按扩展名挑，和「解开归档」那步同一个理由：
+          #   不让 shell 的退出码语义决定成败。（这是同一类坑的第三次，记在这儿。）
+          shopt -s nullglob
+          built=(dist/bundles/*.tar.xz dist/bundles/*.tar.gz dist/bundles/*.zip dist/bundles/*.json)
+          if [ ${#built[@]} -eq 0 ]; then
+            echo "::error::组装脚本跑完了，但 dist/bundles 里没有归档"; ls -la dist/bundles; exit 1
+          fi
+          cp "${built[@]}" bundle-artifact/
           ls -la bundle-artifact
 
       # ── 解开归档：验的是**归档解开之后的样子** ────────────────────────────────
