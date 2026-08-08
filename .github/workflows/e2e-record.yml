@@ -98,7 +98,18 @@ jobs:
           LEGS: ${{ inputs.legs }}
         run: |
           set -euo pipefail
-          # 环境变量传入，不拼进脚本 —— 避免 ${{ }} 注入，也不用管默认 shell 是什么
+          # 用 env: 传入，不把 inputs 拼进脚本正文 —— 既避免表达式注入，
+          # 也不用管这台 runner 的默认 shell 是 pwsh 还是 bash。
+          #
+          # ⚠️ 顺带记一条实测：这几行**在 `run:` 的块标量里**，也就是说它们是
+          #    shell 脚本正文，不是 YAML 注释 —— GitHub 会在这里展开表达式。
+          #    原本这里写了一对**空的**定界符当例子，结果整个 workflow 被拒收：
+          #    `HTTP 422 failed to parse workflow: (Line: 99, Col: 14):
+          #     An expression was expected`。
+          #    对照：cold-start-audit.yml 第 202 行有同样一对空定界符却没事 ——
+          #    因为**它在 YAML 注释里**（`#` 顶格，属于 YAML 层），进不到表达式解析。
+          #    差别只在"这个 `#` 是 YAML 的还是 shell 的"，而 YAML 解析器两边都看不出问题：
+          #    `scripts/ci/lint-workflows.mjs` 照常放行（它明写自己不校验表达式）。
           node -e '
             const all = [
               { runner: "ubuntu-24.04",  label: "linux-x64",    artifact: "bundle-linux-x64",   leg: "linux"   },
