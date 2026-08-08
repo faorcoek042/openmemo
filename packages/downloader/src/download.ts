@@ -341,8 +341,29 @@ async function downloadFromSource(
         await writeSidecar(partialPath, sidecar!);
       }
     };
+    /*
+     * ★★ 定时器里的 promise **必须有 catch**，否则一次写盘失败会把整个 daemon 打死。
+     *
+     * 原本是 `void persist()` —— 一个 floating promise。它一旦 reject 就是
+     * **unhandled rejection**，而 Node 的默认行为是 `--unhandled-rejections=throw`：
+     * **进程直接退出，exit code 1**。
+     * `[本机实测 2026-08-08]` 照这个形状写个最小复现，进程当场 exit=1。
+     * `[CI 实测 run 31261593715, win32-x64]` 用户点一次下载，daemon 整个没了 ——
+     * **daemon 一死，页面上每个请求同时失败，表现就是"点按钮完全没反应"。**
+     *
+     * 代价上限必须是「这次下载失败并告诉用户」，而不是「所有页面一起变砖」。
+     * 而周期性写边车**连"这次下载失败"都不该触发**：它只是断点续传的记账，
+     * 写丢一次最多下次多下一小段。真正要紧的那次写在下面
+     * （`finally` 里的 `await persist()` 与函数末尾的 `await writeSidecar`），
+     * 那两处是 **await 的**，失败会正常冒泡成这次下载失败 —— 用户看得见。
+     *
+     * 所以这里：记下来、不静默、不升级成崩溃。
+     */
+    let lastPersistError: unknown = null;
     const persistTimer = setInterval(() => {
-      void persist();
+      void persist().catch((e: unknown) => {
+        lastPersistError = e;
+      });
     }, 2000);
 
     const worker = async (): Promise<void> => {
@@ -376,7 +397,19 @@ async function downloadFromSource(
       await Promise.all(Array.from({ length: limit }, () => worker()));
     } finally {
       clearInterval(persistTimer);
+      /*
+       * ⚠️ `clearInterval` **不会取消已经开始执行的那一次** ——
+       *   那正是 tmp 名字必须唯一的原因（见 sidecar.ts 里那段）。
+       */
       await persist();
+      if (lastPersistError !== null) {
+        // 不改变红绿（周期性记账失败不该让一次成功的传输变成失败），但绝不静默。
+        console.warn(
+          `[downloader] 周期性写断点续传边车失败过（已忽略，不影响本次传输）：${
+            lastPersistError instanceof Error ? lastPersistError.message : String(lastPersistError)
+          }`,
+        );
+      }
     }
 
     if (!isComplete(sidecar)) {

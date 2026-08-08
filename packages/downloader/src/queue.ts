@@ -162,7 +162,29 @@ export class DownloadQueue extends EventEmitter<DownloadQueueEvents> {
       const entry = this.entries.get(id);
       if (!entry || entry.job.state === 'cancelled') continue;
       this.running.add(id);
-      void this.run(entry);
+      /*
+       * ★ 同 download.ts 那条：floating promise 的 reject = unhandled rejection =
+       *   **整个 daemon 退出**。`run()` 内部确实有 try/catch，但它**只包住
+       *   `await entry.task(ctx)`** —— 在它之前的 `transition()` / ctx 构造
+       *   一旦抛出，就从这里漏成未捕获。
+       *   一个任务起不来，代价上限是**这个任务失败**，不是所有页面一起变砖。
+       */
+      void this.run(entry).catch((e: unknown) => {
+        this.running.delete(id);
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`[downloader] 任务 ${id} 在启动阶段就失败了（已隔离，daemon 继续）：${msg}`);
+        try {
+          entry.job.error = {
+            code: 'INTERNAL',
+            message: msg,
+            messageZh: `任务启动失败：${msg}`,
+            retryable: false,
+          };
+          this.forceState(entry.job, 'failed');
+        } catch {
+          /* 连记录失败状态都失败了也不许再往上抛 —— 这里是最后一道 */
+        }
+      });
     }
   }
 

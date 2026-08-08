@@ -718,11 +718,35 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
        * 所以改成三件事：① 说清这是正常的；② 说清下一步去哪；③ 说清代价（任务先等着，不丢）。
        * 不降级成 console.log：它确实是"功能还不完整"的状态，只是不该被读成故障。
        */
+      /*
+       * ★ 两处补强（2026-08-08，冷启动那位提的，Manager 采纳）：
+       *
+       * ① **内部 id 换成用户认得的词**。`whisper-cli` / `asr-model` 是我们的内部叫法，
+       *    用户没有任何办法把它对应到界面上的任何一个按钮。
+       * ② **给出体积**。没人知道 `asr-model` 要下几百 MB ——
+       *    而**十分钟的静默等待本身就是另一种"没反应"**：用户会以为它卡死了，
+       *    然后去点别的、或者直接关掉。说清量级，等待才变成"预期之中"。
+       *
+       * 体积是**量级提示**，不是精确值：真实大小取决于平台包与用户选的模型
+       * （`[实测 2026-08-08 读 vendor/manifests]` ASR 模型 31 MB–4 GB，
+       *  media-tools 约 119 MB，whisper 引擎包约 6 MB）。所以这里写区间与约数，
+       * **不写一个会烂掉的精确数字**。
+       */
+      const FRIENDLY: Record<string, string> = {
+        ffmpeg: '音视频解码器 ffmpeg（约 119 MB，和 ffprobe 同一个包）',
+        ffprobe: '音视频信息读取 ffprobe（与 ffmpeg 同包，不额外下载）',
+        'whisper-cli': '语音转文字引擎 whisper.cpp（约 6 MB）',
+        'whisper-vad': '语音活动检测 VAD（约 2 MB）',
+        'asr-model': '语音识别模型（31 MB–4 GB，取决于你选哪个；小的够用，大的更准）',
+        'yt-dlp': '链接下载器 yt-dlp（约 30 MB）',
+      };
+      const pretty = bundle.missing.map((m) => FRIENDLY[m] ?? m);
       console.warn(
-        `[daemon] 以下组件还没装: ${bundle.missing.join(', ')}\n` +
-          `[daemon]    这是首次启动的正常状态，不是出错了。\n` +
-          `[daemon]    打开网页后在「设置 → 组件」里点安装，装好会自动生效（不用重启）。\n` +
-          `[daemon]    在此之前，转写类任务会先排队等着（blocked），不会丢。`,
+        `[daemon] 还有 ${bundle.missing.length} 个组件没装：\n` +
+          pretty.map((p) => `[daemon]    · ${p}`).join('\n') +
+          `\n[daemon]    这是首次启动的正常状态，不是出错了。\n` +
+          `[daemon]    打开网页后在「设置 → 本机组件」里点安装，装好会自动生效（不用重启）。\n` +
+          `[daemon]    下载要花几分钟到十几分钟，期间界面不会卡 —— 转写类任务会先排队等着（blocked），不会丢。`,
       );
     }
 
@@ -1222,7 +1246,48 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
 }
 
 /** CLI 入口。 */
+/**
+ * **进程级兜底：一个后台 promise 炸了，不许把整个 daemon 带走。**
+ *
+ * ## 为什么这一条比"修好那个具体的 bug"更重要
+ *
+ * `[CI 实测 run 31261593715, win32-x64]` 用户点一次「下载模型」，
+ * `writeSidecar()` 的 `rename` 撞上 ENOENT，而那个调用挂在
+ * `setInterval(() => void persist())` 上 —— 一个 floating promise。
+ * Node 默认 `--unhandled-rejections=throw`：**进程直接退出，exit code 1**。
+ *
+ * > **daemon 一死，页面上每个请求同时失败 —— 那就是用户报的"点按钮完全没反应"。**
+ *
+ * 具体那两处已经各自修好了（sidecar 的 tmp 命名、download/queue 的 catch）。
+ * 但**那只修了已经被发现的那两处**。这个 daemon 是个长活进程，前台是一个网页：
+ * 任何一个后台任务的 promise 漏了 catch，代价都是**用户所有页面同时变砖**，
+ * 而且现场只留下一行 stack —— 用户既不会看，也读不懂。
+ *
+ * ## 判据：代价上限 = 那一个任务失败，不是整个进程没了
+ *
+ * ⚠️ 它**不是**"把错误吞掉"。吞掉会变成本仓最贵的那类故障（静默）。
+ * 所以这里**只做一件事：把它吼出来，然后继续服务**。
+ * 真正该让用户知道的失败，仍然由各自被 await 的路径冒泡成任务失败 ——
+ * 那条路径不受这里影响。
+ *
+ * ⚠️ `uncaughtException` **刻意不接管**：那一族（同步抛到栈顶）通常意味着状态已经坏了，
+ * 继续跑比退出更危险。这里只接 promise 那一族，它的典型成因是"某个后台调用没写 catch"，
+ * 而那与进程状态是否可信无关。
+ */
+function installCrashGuards(): void {
+  process.on('unhandledRejection', (reason: unknown) => {
+    const e = reason instanceof Error ? reason : new Error(String(reason));
+    console.error(
+      '[daemon] ⚠️  有一个后台任务的 promise 没有被 catch。**daemon 不会因此退出**，' +
+        '但这是个需要修的缺陷，请把下面这段贴给开发者：',
+    );
+    console.error(`[daemon]     ${e.name}: ${e.message}`);
+    if (e.stack) console.error(e.stack);
+  });
+}
+
 async function mainCli(): Promise<void> {
+  installCrashGuards();
   const args = process.argv.slice(2);
   const portArg = args.indexOf('--port');
   const dataArg = args.indexOf('--data-dir');

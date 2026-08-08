@@ -62,7 +62,28 @@ export class Scheduler {
   start(): void {
     if (this.#timer) return;
     const tick = this.deps.tickMs ?? 250;
-    this.#timer = setInterval(() => void this.#pump(), tick);
+    /*
+     * ★ `#pump()` 里**没有 try/catch**，而这里是 `void` 掉的 —— 它一旦 reject
+     *   就是 unhandled rejection，Node 默认直接**退出进程**。
+     *   而调度器每 250ms 跑一次、驱动所有任务：它把 daemon 带走的话，
+     *   用户看到的是**所有页面同时失败**（"点按钮完全没反应"）。
+     *
+     *   同一形状 2026-08-08 在 `downloader` 里真的发作过一次
+     *   （`writeSidecar` 的 ENOENT 挂在 `setInterval(() => void persist())` 上，
+     *    `[CI 实测 run 31261593715, win32-x64]` daemon exitCode=1）。
+     *   这里是**横扫时找到的同形第三处**，还没发作，先堵上。
+     *
+     *   代价上限：这一拍没调度成，250ms 后自然再来一次。
+     */
+    this.#timer = setInterval(() => {
+      void this.#pump().catch((e: unknown) => {
+        console.error(
+          `[scheduler] 这一拍调度失败（已隔离，250ms 后重试，daemon 继续）：${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      });
+    }, tick);
     this.#timer.unref?.();
   }
 

@@ -101,13 +101,42 @@ export async function readSidecar(partialPath: string): Promise<Sidecar | null> 
  * offset and silently produce a corrupt file — the digest check would catch it, but only
  * after re-downloading gigabytes.
  */
+let sidecarTmpSeq = 0;
+
 export async function writeSidecar(partialPath: string, s: Sidecar): Promise<void> {
   const target = sidecarPath(partialPath);
-  const tmp = `${target}.tmp`;
+  /*
+   * ★★ 临时文件名必须**每次调用都不同**。
+   *
+   * 这里原本是写死的 `${target}.tmp`，而**同一个 partialPath 会有并发写者**：
+   * `download.ts` 里有一个每 2s 一次的 `setInterval(() => void persist())`，
+   * 而 `clearInterval` **不会取消已经开始执行的那一次**。于是"定时器那次还在飞"
+   * 与"传输结束后那次无条件 `writeSidecar`"可以重叠：
+   *
+   *     定时器: writeFile(tmp) ──────────────► rename(tmp→target)   ✘ ENOENT
+   *     收尾:        writeFile(tmp) ► rename(tmp→target) ✓（tmp 已经被搬走）
+   *
+   * `[本机实测 2026-08-08]` 同一路径并发调用 600 次：**400 次 ENOENT**。
+   * 也就是说这**不是 Windows 特有**的 —— Windows 只是把窗口拉宽了
+   * （文件操作更慢：Defender、无 page-cache 语义），所以先在那儿被撞见。
+   * `[CI 实测 run 31261593715, win32-x64]` daemon 因此整个退出，exitCode=1。
+   *
+   * 唯一名字之后，每个写者 rename 的是**自己那一份**，谁也搬不走谁的。
+   * 「谁最后落地谁生效」对进度边车是安全的：边车只影响断点续传的起点，
+   * 落后一点最多重下一小段，而**撕裂**（这个函数真正要防的东西）由 rename 的
+   * 原子性保证，与并发无关。
+   */
+  const tmp = `${target}.${process.pid}.${sidecarTmpSeq++}.tmp`;
   s.updatedAt = new Date().toISOString();
   await fs.mkdir(path.dirname(target), { recursive: true });
-  await fs.writeFile(tmp, JSON.stringify(s, null, 2), 'utf8');
-  await fs.rename(tmp, target);
+  try {
+    await fs.writeFile(tmp, JSON.stringify(s, null, 2), 'utf8');
+    await fs.rename(tmp, target);
+  } catch (e) {
+    // 失败时别把半个 tmp 留在 blobs 目录里（那会让"目录里有什么"这件事变脏）
+    await fs.rm(tmp, { force: true }).catch(() => undefined);
+    throw e;
+  }
 }
 
 export async function removeSidecar(partialPath: string): Promise<void> {
