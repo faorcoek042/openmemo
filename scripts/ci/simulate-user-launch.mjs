@@ -85,13 +85,20 @@ function hdr(t) {
 /**
  * 跑一条命令。
  *
- * ⚠️ **一律带超时。** `[CI 实测 run 31246584116]` macOS 腿卡到 30 分钟超时，
- * 元凶是一条**诊断用**的 `log show`（扫系统日志归档，能跑十几分钟）——
- * 而它后面排着的是**本轮最重要的那次测量**（quarantine 路径②）。
+ * ⚠️ **一律带超时。** `[CI 实测 run 31246584116]` macOS 腿卡到 30 分钟超时。
  *
- * > **教训不是"log show 慢"，是"最贵的测量不该排在一条无上限的诊断后面"。**
+ * ★ 我一开始归因给了 `log show`（扫日志归档，确实慢）。**那个归因是错的。**
+ *   翻日志才看到：最后一条跑完的是"直接执行带 quarantine 的 node"，
+ *   卡住的是**下一条** —— `sh -c '"OpenMemo.command" --version | head -20'`。
+ *   `--version` 不是提前退出的旗标，于是它**真的把 daemon 起起来了**，
+ *   daemon 长驻不退、`head -20` 又永远等不到第 20 行，管道就再也不关。
  *
- * 所以两件事一起做：这里给默认超时，调用方把关键测量**排到诊断之前**。
+ * > 两条教训，第二条更贵：
+ * > ① **最贵的测量不该排在无上限的步骤后面**（所以关键测量已前移）；
+ * > ② **"我猜是哪一条慢"和"日志里最后一条是什么"是两回事** ——
+ * >    我差点把一个错误归因写进文档，而那正是本轮在修的那类东西。
+ *
+ * 那条 `--version` 已删（它对结论没有贡献，却会起一个 daemon）。
  */
 function sh(cmd, args, opts = {}) {
   const r = spawnSync(cmd, args, {
@@ -574,10 +581,13 @@ async function macos() {
     '直接执行带 quarantine 的 node（看内核/Gatekeeper 给的原话）',
     sh(join(tree, 'runtime', 'node'), ['-e', 'console.log("node-ran-ok")']),
   );
-  dump(
-    'sh OpenMemo.command --help 等价的直接执行',
-    sh('/bin/sh', ['-c', `"${join(tree, 'OpenMemo.command')}" --version 2>&1 | head -20`]),
-  );
+  /*
+   * ⚠️ 这里**曾经**有一条 `"OpenMemo.command" --version | head -20`。已删。
+   *   `--version` 不是提前退出的旗标 —— 它会**真的把 daemon 起起来**并长驻，
+   *   `head -20` 永远等不到第 20 行，于是整条腿卡死 28 分钟
+   *   （`[CI 实测 run 31246584116]`）。它对结论也没有任何贡献：
+   *   Gatekeeper 的判定原话上面三条 spctl/codesign 已经给全了。
+   */
 
   assertReadMeFirst(tree);
 
@@ -621,6 +631,28 @@ async function macos() {
   }
 
   hdr('④ 双击等价路径：open OpenMemo.command');
+  /*
+   * ★★ 先证明端口是干净的，否则这一步的"成功"可能根本不是它带来的。
+   *
+   * `[CI 实测 run 31247860854]` 就栽了一次：③ 里一条 `--version` 步骤悄悄起了个
+   * daemon 并泄漏下来，于是 ④ 报「界面可达 200」——**而那个 200 是泄漏进程answered 的**，
+   * `open` 自己其实是 ETIMEDOUT。
+   *
+   * > **一个本该失败的测试，被一个无关的残留进程变成了"通过"。**
+   * > 这比测试失败危险得多：它会让我去报告"macOS 双击是好的"，
+   * > 而用户手里的包明明打不开。
+   *
+   * 所以：**先探端口，脏了就当场说清楚，别让后面的结论建立在它上面。**
+   */
+  const preflight = await httpGet(DEFAULT_PORT, '/');
+  if (preflight.status && preflight.status !== 0) {
+    fail(
+      `④ 之前 ${DEFAULT_PORT} 端口上已经有人在应答（HTTP ${preflight.status}）——` +
+        `本步骤的任何"可达"结论都不可信（有残留 daemon）。这次结果作废。`,
+    );
+  } else {
+    ok(`端口 ${DEFAULT_PORT} 干净（没有残留 daemon），④ 的结论才有意义`);
+  }
   dump('open OpenMemo.command（= 访达里双击）', sh('open', [join(tree, 'OpenMemo.command')]));
   info('等待 40s 看界面起没起来…');
   const ui = await waitForUi(DEFAULT_PORT, 40);
