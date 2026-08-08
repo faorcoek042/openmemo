@@ -16,6 +16,7 @@
  * **`onChunkComplete` 必须在段落真正落盘后才 resolve** —— pipeline 把 resolve 当作
  * "这一块已安全持久化"，不会再重放（D-01 §4.5）。
  */
+import { realpathSync } from 'node:fs';
 import { copyFile, mkdir, rename } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative } from 'node:path';
 
@@ -96,6 +97,33 @@ export interface TranscribePayload {
   readonly mergeWithTranscriptId?: number;
 }
 
+/**
+ * 把一个路径规范化到**同一种写法**再拿去比较。
+ *
+ * `relative()` 是**纯字符串运算** —— 同一个文件在两种合法写法下算出来的相对路径
+ * 完全不同，而两边都"对"。本仓已经为此付过账（见 `archiveIntoMedia` 里的说明）。
+ * 两个真实来源：
+ *   · macOS：`os.tmpdir()` 给的是 `/var/folders/…`，而 `/var` 是指向 `/private/var`
+ *     的符号链接 —— 解析过的路径与没解析过的对不上；
+ *   · Windows：`%TEMP%` 常常是 8.3 短名（`C:\Users\RUNNER~1\…`），长名是
+ *     `C:\Users\runneradmin\…`。
+ *
+ * `realpathSync.native` 两种都能拉平（Windows 上它返回长名，POSIX 上它解符号链接），
+ * 没有 native 就退回 JS 版；路径还不存在就原样返回 —— **绝不抛**，
+ * 因为这个函数只是"把比较放到同一个坐标系里"，它失败不该让归档失败。
+ */
+function canonical(p: string): string {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  }
+}
+
 /** 把绝对路径转成相对 media 根的路径（D-02 §1.1：绝不存绝对路径，数据目录可搬迁）。 */
 /**
  * 把产物**归档进 media 根**，返回相对路径。
@@ -111,13 +139,33 @@ export interface TranscribePayload {
  * 所以不再"存绝对路径兜底"，而是**真的把文件搬进 media/**：
  * 相对路径天然成立，`tmp/` 也重新变回名副其实的"可随时删"。
  */
-async function archiveIntoMedia(
+export async function archiveIntoMedia(
   mediaRoot: string,
   noteUid: string,
   abs: string,
   name: string,
 ): Promise<string> {
-  const rel = relative(mediaRoot, abs);
+  /*
+   * ★ 比较之前**两边都要规范化**（CI run 31247843782 抓到的）。
+   *
+   * 事故形态：F3 录音停止后，WAV 就躺在 `<mediaRoot>/recordings/<ULID>.wav`，
+   * 本该命中下面那句「已经在 media/ 里就别动它」。但在 **macOS 与 Windows** 上
+   * 这句判断落空了（`/var` vs `/private/var`；8.3 短名 vs 长名），于是录音被
+   * `rename()` **搬到** `<mediaRoot>/<noteUid>/` 下，并新插一条 `role='original'`。
+   * 后果两条，都是用户可见的：
+   *   ① 原来那条 `original` 资产的 `rel_path` 指向一个已经空掉的位置 ——
+   *      `/media/asset/<uid>` **404**，笔记详情页的播放器当场废掉
+   *      （实测：同一条笔记上出现两条 `role='original'`，先来的那条 404）；
+   *   ② `media_sources.input_url` 记的也是那个老位置，于是**之后每一次
+   *      「重新转写」都失败**：`no media source can handle this input`。
+   *      实测 macOS/Windows 第一次重转成功、第二次起全挂；Linux 三次全过 ——
+   *      因为 `/tmp` 既没有符号链接也没有短名，**这个 bug 在 Linux 上不可见**。
+   *
+   * 判据不是"记得传规范化过的路径进来"，是"**传什么写法进来结论都一样**"。
+   */
+  const rootC = canonical(mediaRoot);
+  const absC = canonical(abs);
+  const rel = relative(rootC, absC);
   // 已经在 media/ 里就别动它（重跑时会走到这里）
   if (!rel.startsWith('..') && !isAbsolute(rel)) return rel;
 
