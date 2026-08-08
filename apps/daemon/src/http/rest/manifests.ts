@@ -86,7 +86,34 @@ async function listManifestFiles(manifestDir: string): Promise<string[]> {
 /**
  * 定位 `vendor/manifests`。
  *
- * 顺序：环境变量 > 相对本模块的仓库路径（src 与 dist 层级相同，都是 5 层）> cwd。
+ * ## 兜底从三条收敛成两条（2026-08-08），因为第三条是缺陷的一部分
+ *
+ * 原来是：环境变量 > 模块相对 > **`process.cwd()`**。
+ * `[实测]` 用户双击打开之后 `packs = 0, groups = 0` —— 组件页整个是空的，
+ * 于是 ffmpeg / whisper / yt-dlp 一个都装不了，导入和转写全废。三条**全落空**：
+ *   ① 环境变量 —— 没人设；
+ *   ② 模块相对 —— **包里当时没有 `vendor/`**（现已随包出厂，见 build-bundle.mjs）；
+ *   ③ cwd —— **启动器 `cd` 进了 `app/daemon`**。
+ *
+ * **而 CI 一直是绿的**：旧的直接启动方式 cwd = 仓库检出目录，那里正好有
+ * `vendor/manifests` —— 第三条**碰巧**落上，把前两条的失败遮了几个月。
+ *
+ * 所以第三条被删掉，不是因为它"没用"，是因为**它让前两条的失败不可见**：
+ * 一条碰巧成立的兜底，等价于一个关掉的告警。
+ *
+ * 剩下的两条里，第 ② 条**在两种布局里算出来的都是对的**（都是上溯 5 层）：
+ *   仓库   `apps/daemon/{src,dist}/http/rest` → 仓库根 → `vendor/manifests` ✔
+ *   包内   `app/daemon/dist/http/rest`        → 包根   → `vendor/manifests` ✔
+ * 一条规则同时覆盖"双击 / 终端跑启动器 / 从别的目录调启动器 / CI 直接起 daemon"
+ * 四种启动方式 —— 它们的差别只在 cwd，而这一条**不看 cwd**。
+ *
+ * ## 找不到时**必须出声**
+ *
+ * 旧实现返回一个不存在的路径，`listManifestFiles()` 会 catch 掉 readdir 的错
+ * 并返回 `[]` —— 于是"目录空的"和"根本没找到目录"在下游**长得一模一样**。
+ * 用户看到的是一个空列表，没有任何一处说过发生了什么。
+ * 现在找不到就打一行醒目的日志（含找过哪些位置），让它可诊断。
+ *
  * 必须同步，因为 server.ts 的接线点没有 await 的余地。
  */
 export function resolveManifestDir(): string {
@@ -94,11 +121,17 @@ export function resolveManifestDir(): string {
   if (fromEnv) return fromEnv;
 
   const here = path.dirname(fileURLToPath(import.meta.url));
-  // apps/daemon/{src,dist}/http/rest → 仓库根
-  const repoRelative = path.resolve(here, '..', '..', '..', '..', '..', 'vendor', 'manifests');
-  if (existsSync(repoRelative)) return repoRelative;
+  // {仓库根|包根}/…/{src,dist}/http/rest 上溯 5 层；两种布局层级相同
+  const moduleRelative = path.resolve(here, '..', '..', '..', '..', '..', 'vendor', 'manifests');
+  if (existsSync(moduleRelative)) return moduleRelative;
 
-  return path.join(process.cwd(), 'vendor', 'manifests');
+  console.warn(
+    `[daemon] ⚠️ 找不到组件目录 vendor/manifests —— 组件页与模型页会是空的，` +
+      `装不了 ffmpeg / whisper / 模型。\n` +
+      `   找过：OPENMEMO_MANIFEST_DIR（未设）、${moduleRelative}（不存在）。\n` +
+      `   预编译包里它应当随包出厂；开发树里它应当在仓库根的 vendor/manifests。`,
+  );
+  return moduleRelative;
 }
 
 async function readJsonFile(file: string): Promise<unknown> {
@@ -153,4 +186,30 @@ export async function loadBackendCatalog(manifestDir: string): Promise<BackendCa
   }
 
   return { catalogVersion, packs };
+}
+
+/**
+ * 随预编译包出厂的 **CPU 基线运行时**目录（`<包根>/runtime/probe`）。
+ *
+ * ## 为什么这里也要有一条"模块相对"的解析
+ *
+ * 启动脚本会设 `OPENMEMO_BUNDLED_WHISPER_DIR`，但那**只修双击那一条路**。
+ * `[CI 实测 2026-08-08 run 31263973429]` 我自己那条冷启动腿是**直接起 daemon** 的
+ * （cwd = 检出目录、不经启动器），于是包里明明带了 whisper-cli，
+ * `pipeline.missing` 里**照样有 `whisper-cli`** —— 与 manifests 那条是同一个病：
+ * **能不能用，不该取决于你从哪儿启动。**
+ *
+ * 所以按与 `resolveManifestDir()` 完全相同的方式上溯 5 层：
+ *   包内   `app/daemon/dist/http/rest` → 包根 → `runtime/probe` ✔
+ *   仓库   `apps/daemon/dist/http/rest` → 仓库根 → `runtime/probe`（不存在 → 返回 null，
+ *          开发树本来就该走已安装的后端包，不该有包内兜底）
+ *
+ * 返回 `null` 表示"这不是一个自带 CPU 运行时的布局"，调用方据此不设那个环境变量。
+ */
+export function resolveBundledWhisperDir(): string | null {
+  const fromEnv = process.env['OPENMEMO_BUNDLED_WHISPER_DIR'];
+  if (fromEnv) return fromEnv;
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const guess = path.resolve(here, '..', '..', '..', '..', '..', 'runtime', 'probe');
+  return existsSync(guess) ? guess : null;
 }

@@ -54,6 +54,8 @@ import {
   constants as fsConstants,
 } from 'node:fs';
 import { request as httpRequest } from 'node:http';
+
+import { killTree as killTreeShared, spawnViaLauncher } from './launcher-spawn.mjs';
 import { tmpdir } from 'node:os';
 import { join, delimiter } from 'node:path';
 
@@ -862,56 +864,47 @@ try {
     reason: `最终 missing = ${JSON.stringify(missingFinal)}`,
   });
 
-  /* ── 7. 按**启动器**的方式再起一次：不传 --data-dir ── */
+  /* ── 7. ★ 通过**启动器**起一次：`packs > 0` 才算数 ── */
 
-  hdr('7. 按启动器的方式再起一次 —— **不传 --data-dir**，走产品自己的默认数据目录解析');
+  hdr('7. ★ 通过启动器起一次 —— 判据是「组件目录里真的有包」，不是「文件在」');
   /*
-   * ★ 这一节补的是一条**此前所有腿都绕过去**的路径。
+   * ★ 这一节整个换成了 `spawnViaLauncher()`（四条腿共用的那一份）。
    *
-   * `start.cmd` / `OpenMemo.command` / `start.sh` 只设
-   * `OPENMEMO_WEB_DIST` / `OPENMEMO_EXT_DIR` / `OPENMEMO_BUNDLED_PROBE_DIR` /
-   * `OPENMEMO_OPEN_BROWSER`，然后 `node dist/main.js %*` —— **既不传 `--data-dir`，
-   * 也不设 `OPENMEMO_DATA_DIR`**。而我们每一条 e2e 腿都传了。
-   * 也就是说「产品自己算数据目录」这段代码，**在 CI 上从来没跑过**，
-   * 而它正是用户双击之后真正会走的那一段。
+   * 上一版是我自己 spawn `main.js` 并手工模拟启动器设的几个环境变量 ——
+   * **而那恰恰漏掉了启动器真正独有的那一件：`cd "$DIR/app/daemon"`。**
+   * `[实测 2026-08-08]` 用户"装不了任何组件"的真因就藏在这一步里：
+   *   `resolveManifestDir()` 的第三条兜底是 `process.cwd()/vendor/manifests`，
+   *   而启动器 cd 进了 `app/daemon` → 落空 → `packs = 0` → 组件页整个是空的。
+   *   CI 一直看不见，是因为直接起 daemon 时 cwd = 检出目录，那里**正好**有
+   *   `vendor/manifests` —— 一条碰巧落上的兜底，把前两条的失败遮了几个月。
    *
-   * PROTOCOL §9 / §9-bis：默认解析会落到机器级位置（`~/.local/share/openmemo` 一类）。
-   * 所以这一节给子进程一个**假 HOME**（`HOME` / `USERPROFILE` / `XDG_DATA_HOME` /
-   * `APPDATA` / `LOCALAPPDATA` 全部改指临时目录）——
-   * 默认解析**照常真跑**，落点却在我的临时目录里。
-   * 判据不是"记得别在真机上跑"，是"**在任何机器上跑都不会留下机器级状态**"。
+   * 所以判据必须是**通过启动器起来之后 `packs > 0`**，而不是"包里有那个文件"。
+   * 这一整轮的教训就是**存在 ≠ 能跑**（探针那位刚在 macOS 上被 dyld 打过一次脸：
+   * 三条文件存在性检查全绿，只有"真的跑一次"红了）。
    */
   await stopDaemon();
+  await assertPortFree('launcher');
   const fakeHome = join(ROOT, 'fakehome');
   mkdirSync(fakeHome, { recursive: true });
-  await assertPortFree('launcher-style');
-  const launcherProc = spawn(NODE_BIN, [DAEMON, '--port', String(PORT)], {
+  const launcherProc = spawnViaLauncher({
+    bundleDir: BUNDLE,
+    args: ['--port', String(PORT)],
     env: {
-      ...process.env,
-      PATH: PATH_FOR_DAEMON,
       OPENMEMO_AUTH: 'none',
-      // 启动器设的就这几个
-      OPENMEMO_WEB_DIST: join(BUNDLE, 'app', 'apps', 'web', 'dist'),
-      OPENMEMO_EXT_DIR: join(BUNDLE, 'ext'),
-      // ★ 假 HOME：默认解析真跑，但绝不写机器级位置
+      // PROTOCOL §9-bis：默认数据目录解析照常真跑，但落在假 HOME 里
       HOME: fakeHome,
       USERPROFILE: fakeHome,
       XDG_DATA_HOME: join(fakeHome, '.local', 'share'),
       XDG_CONFIG_HOME: join(fakeHome, '.config'),
       APPDATA: join(fakeHome, 'AppData', 'Roaming'),
       LOCALAPPDATA: join(fakeHome, 'AppData', 'Local'),
-      // 显式清掉，确保走的是"产品自己算"
-      OPENMEMO_DATA_DIR: undefined,
-      OPENMEMO_POINTER_FILE: undefined,
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: !IS_WIN,
   });
   const lLogs = [];
-  launcherProc.stdout.on('data', (d) => lLogs.push(String(d)));
-  launcherProc.stderr.on('data', (d) => lLogs.push(String(d)));
+  launcherProc.stdout?.on('data', (d) => lLogs.push(String(d)));
+  launcherProc.stderr?.on('data', (d) => lLogs.push(String(d)));
   let launcherUp = false;
-  for (let i = 0; i < 120; i += 1) {
+  for (let i = 0; i < 180; i += 1) {
     await sleep(500);
     try {
       const r = await httpOnce('/api/health', { timeoutMs: 4000 });
@@ -924,22 +917,43 @@ try {
     }
     if (launcherProc.exitCode !== null) break;
   }
-  dump('不传 --data-dir 时的启动输出（用户双击后看到的那一段）', lLogs.join('').trim(), 2500);
-  judge('★ 不传 --data-dir 时，产品自己算得出数据目录并正常起来（启动器走的就是这条）', {
+  dump('启动器的输出（用户双击之后看到的那一段）', lLogs.join('').trim(), 2500);
+  judge('★ 通过启动器起得来（不传 --data-dir，走产品自己的默认数据目录解析）', {
     ok: launcherUp,
-    reason: launcherUp
-      ? '起来了，默认数据目录解析成功'
-      : `没起来（exitCode=${launcherProc.exitCode}）—— 而这正是用户双击之后走的那条路`,
+    reason: launcherUp ? '起来了' : `没起来（exitCode=${launcherProc.exitCode}）`,
   });
+
   if (launcherUp) {
+    cookie = '';
+    await http('/api/auth/session', { method: 'POST', body: {} });
+    const lcat = await http('/api/backends/catalog', { timeoutMs: 90_000 });
+    const lpacks = lcat.body?.packs ?? lcat.body?.items ?? [];
+    const lmcat = await http('/api/models/catalog', { timeoutMs: 90_000 });
+    const lgroups = lmcat.body?.groups ?? [];
+    /*
+     * ★★ 本节的判据。用户报的那一条在 API 层就长这样：packs=0 / groups=0。
+     */
+    judge('★★ 通过启动器起来之后，组件目录里真的有包（packs > 0）', {
+      ok: lpacks.length > 0,
+      reason:
+        lpacks.length > 0
+          ? `packs = ${lpacks.length}`
+          : `**packs = 0** —— 组件页整个是空的，ffmpeg / whisper / 模型一个都装不了。` +
+            `这就是用户报的那一条在 API 层的样子。`,
+    });
+    judge('★ 通过启动器起来之后，模型目录里也有东西（groups > 0）', {
+      ok: lgroups.length > 0,
+      reason: lgroups.length > 0 ? `groups = ${lgroups.length}` : '**groups = 0**',
+    });
     const lh = await http('/api/health');
-    observe(
-      '默认数据目录下的 pipeline.missing',
-      `${JSON.stringify(lh.body?.pipeline?.missing ?? [])}（全新的默认目录，所以又是一套空的）`,
-    );
+    const lmissing = lh.body?.pipeline?.missing ?? [];
+    judge('★ 通过启动器起来时，包内 CPU 引擎也被认出来了（missing 里没有 whisper-cli）', {
+      ok: !lmissing.includes('whisper-cli'),
+      reason: `启动器 + 全新默认数据目录下 pipeline.missing = ${JSON.stringify(lmissing)}`,
+    });
   }
-  killTree(launcherProc.pid);
-  await sleep(800);
+  killTreeShared(launcherProc.pid);
+  await sleep(1000);
 
   const shimHits = [...bootLog.join('').matchAll(new RegExp(`${SHIM_MARK} (\\S+)`, 'g'))].map(
     (m) => m[1],

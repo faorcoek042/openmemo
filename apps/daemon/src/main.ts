@@ -73,7 +73,7 @@ import { createSearchRoutes } from './http/rest/search.js';
 import { createStorageRoutes } from './http/rest/storage.js';
 import { createProxyRoutes, readProxyConfig } from './http/rest/proxy.js';
 import { createLlmRoutes } from './http/rest/llm.js';
-import { resolveManifestDir } from './http/rest/manifests.js';
+import { resolveBundledWhisperDir, resolveManifestDir } from './http/rest/manifests.js';
 import { createMediaRoutes } from './http/media.js';
 import type { RouteModule } from './http/server.js';
 
@@ -194,6 +194,21 @@ export class StartupConflictError extends Error {
 }
 
 export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemon> {
+  /*
+   * ★ 随包出厂的 CPU 基线运行时：**没设环境变量时自己算出来**（2026-08-08）。
+   *
+   * 启动脚本会设 `OPENMEMO_BUNDLED_WHISPER_DIR`，但那只覆盖"双击"这一条路。
+   * `[CI 实测 run 31263973429]` 直接起 daemon（CI 与开发者都这么跑）时，
+   * 包里明明带了 whisper-cli，`pipeline.missing` 里照样有它 ——
+   * 与 `vendor/manifests` 那条是同一个病：**能不能用不该取决于你从哪儿启动。**
+   * 在这里补一次模块相对的解析，四种启动方式就都成立了。
+   * 只在"算得出且真的存在"时设，且**不覆盖**用户/启动脚本已设的值。
+   */
+  if (!process.env['OPENMEMO_BUNDLED_WHISPER_DIR']) {
+    const bundled = resolveBundledWhisperDir();
+    if (bundled) process.env['OPENMEMO_BUNDLED_WHISPER_DIR'] = bundled;
+  }
+
   const paths = resolvePaths(opts.dataDir);
 
   /*

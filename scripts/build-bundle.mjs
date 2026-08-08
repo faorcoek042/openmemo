@@ -915,6 +915,52 @@ async function assembleProbeRuntime() {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────────
+ * ④-ter 组件目录（`vendor/manifests`）—— 用户"装不了任何组件"的**真因**
+ * ───────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * 把 `vendor/manifests` 放进包里。
+ *
+ * ## 这是那条"点安装没有任何反应"的真因
+ *
+ * `[实测 2026-08-08，改走启动器那位量的]` 双击打开之后：
+ * ```
+ * packs = 0, groups = 0        ← 组件目录整个是空的
+ * ```
+ * 同一个包、同一个启动器，只加 `OPENMEMO_MANIFEST_DIR` → **0 变成 25**。
+ *
+ * `resolveManifestDir()` 的三条兜底**全落空**：
+ *   ① 环境变量 —— 没人设；
+ *   ② 模块相对的 `<bundle>/vendor/manifests` —— **包里根本没有 `vendor/`**；
+ *   ③ `process.cwd()/vendor/manifests` —— **而启动器 `cd` 进了 `app/daemon`**。
+ * 用户后果：组件页空的 → 装不了 ffmpeg / whisper / yt-dlp → **导入和转写全都用不了**。
+ *
+ * ## 为什么 CI 从来没看见
+ *
+ * 旧的直接启动方式 cwd = 仓库检出目录，那里**正好**有 `vendor/manifests` ——
+ * 第三条兜底是**碰巧**落上的，把前两条的失败完全遮住了。
+ *
+ * ## 为什么是"打进包"而不是"让启动器设环境变量"
+ *
+ * **模块相对的兜底不依赖你从哪儿启动。** 而环境变量方案只修双击那一条路：
+ * 从终端跑 `./start.sh`、从别的目录调启动器、CI 直接起 daemon —— 三条都还漏着。
+ * 放进包之后 `resolveManifestDir()` 的第 ② 条**在两种布局里算出来的都是对的**：
+ *   仓库   `apps/daemon/dist/http/rest` 上溯 5 层 = 仓库根 → `vendor/manifests` ✔
+ *   包内   `app/daemon/dist/http/rest`  上溯 5 层 = 包根   → `vendor/manifests` ✔
+ * 一条规则同时对两种布局成立，这才是它该有的样子。
+ */
+async function assembleManifests() {
+  hdr('④-ter 组件目录 vendor/manifests（缺了它用户的组件页是空的）');
+  const src = join(REPO_ROOT, 'vendor', 'manifests');
+  const dst = join(STAGE, 'vendor', 'manifests');
+  await mkdir(dst, { recursive: true });
+  const names = (await readdir(src)).filter((n) => n.endsWith('.json'));
+  if (names.length === 0) die(`${src} 里一个 .json 都没有 —— 组件目录会是空的`);
+  for (const n of names) await cp(join(src, n), join(dst, n));
+  say(`   ✔ vendor/manifests/  ${names.length} 份清单（${mib(await dirSize(dst))}）：${names.join(', ')}`);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────────
  * ⑤ 启动脚本
  * ───────────────────────────────────────────────────────────────────────────────── */
 
@@ -1379,6 +1425,7 @@ async function main() {
   await assembleNodeModules();
   await assembleExtensions();
   await assembleProbeRuntime();
+  await assembleManifests();
   await writeLauncher();
   await writeNotices();
 

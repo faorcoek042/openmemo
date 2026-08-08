@@ -208,6 +208,10 @@ function fixtureFiles(target) {
     0o755,
   );
   put(`runtime/probe/libwhisper.${L.libext}`, 'WHISPER-LIB-STUB\n');
+  /* 组件目录：缺了它用户的组件页是空的（用户 2026-08-08 报的第一条的真因）。 */
+  put('vendor/manifests/backends.json', JSON.stringify({ packs: [{ id: 'stub' }] }) + '\n');
+  put('vendor/manifests/models-whisper.json', JSON.stringify({ models: [] }) + '\n');
+  put('vendor/manifests/models-llm.json', JSON.stringify({ models: [] }) + '\n');
 
   put(L.launcher, '#!/bin/sh\n', 0o755);
   put('LICENSE', 'UNLICENSED\n');
@@ -540,6 +544,15 @@ console.log('⑧ ⑨ win-x64 参数化 —— .dll / node.exe / start.cmd / win3
       assert.match(r.out, /libwhisper/);
     });
   }
+
+  {
+    const r = run('linux-x64', { mutate: (f) => f.delete('vendor/manifests/backends.json') });
+    check('㉒ ★ 包里没有 backends.json → 红（用户的组件页会是空的：packs=0）', () => {
+      assert.equal(r.status, 1, r.out);
+      assert.match(r.out, /manifests/);
+    });
+  }
+
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════════

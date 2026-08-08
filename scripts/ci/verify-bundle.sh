@@ -169,6 +169,27 @@ fi
 # ★ 与探针**共用** runtime/probe/ 这一个目录（共享同一份 ggml，不长第二份）。
 # ─────────────────────────────────────────────────────────────────────────────────
 echo
+echo "── 组件目录 vendor/manifests（缺了它用户的组件页是空的，什么都装不了）"
+need_dir_nonempty "vendor/manifests" "★ 缺了它 packs=0 / groups=0，ffmpeg / whisper / 模型一个都装不了"
+NMAN=$(find "$B/vendor/manifests" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+if [ "$NMAN" -ge 3 ]; then
+  ok "vendor/manifests/ 里有 $NMAN 份清单"
+else
+  bad "vendor/manifests/ 只有 $NMAN 份清单 —— 至少要有 backends/models 那几份"
+fi
+# 后端目录必须真的解析得出包：`[实测]` 用户那边 packs=0 的表现就是这一格空的
+if [ -f "$B/vendor/manifests/backends.json" ]; then
+  NPACKS=$(node -e "try{const m=require('$B/vendor/manifests/backends.json');console.log((m.packs||[]).length)}catch(e){console.log(0)}" 2>/dev/null || echo 0)
+  if [ "${NPACKS:-0}" -ge 1 ]; then
+    ok "backends.json 解析得出 $NPACKS 个包"
+  else
+    bad "backends.json 解析出 0 个包 —— 组件页会是空的"
+  fi
+else
+  bad "缺 vendor/manifests/backends.json"
+fi
+
+echo
 echo "── CPU 基线转写链（不装任何东西就能转写的那条）"
 if [ "$TARGET" = "win-x64" ]; then CLIBIN="whisper-cli.exe"; else CLIBIN="whisper-cli"; fi
 need_file "runtime/probe/$CLIBIN" "缺了它用户必须先下一个引擎包才能转写第一段音频"
@@ -241,8 +262,8 @@ echo
 echo "─────────────────────────────────────────────"
 echo "检查了 $CHECKED 条，失败 $FAILED 条"
 # C5 的教训：一个什么都没检查的检查器是最坏的那种绿。
-if [ "$CHECKED" -lt 26 ]; then
-  echo "::error::只检查了 $CHECKED 条（应 ≥26）—— 断言集被意外缩小了，这不是通过"
+if [ "$CHECKED" -lt 29 ]; then
+  echo "::error::只检查了 $CHECKED 条（应 ≥29）—— 断言集被意外缩小了，这不是通过"
   exit 1
 fi
 if [ "$FAILED" -ne 0 ]; then
