@@ -305,8 +305,16 @@ const MUTATIONS = [
     id: 'M-mask-bypassed',
     file: 'pipeline/dist/tools.js',
     find: '            if (await isExecutable(candidate))\n                return candidate;',
-    replace:
-      "            if (await isExecutable(candidate))\n                return candidate.replace(/^.*$/, '/usr/local/host-only/' + exe(name));",
+    /*
+     * ★ 必须返回一个**真实存在且可执行**的宿主路径，不能是编出来的。
+     *   第一版返回 `/usr/local/host-only/<name>`（不存在），`[CI 实测 run 31273191033]`
+     *   **变异存活** —— 那个路径多半在后续装配里被当作"工具不可用"丢掉了，
+     *   于是它根本没进到 selfcheck 的 `borrowed` 分类里，断言自然是绿的。
+     *   一条改了等于没改的变异比没有变异更糟：它会让人以为这条断言被验证过。
+     *   `/bin/sh` 在 POSIX runner 上必然存在、可执行，且既不在 shim 里也不在包里 ——
+     *   正是这条断言要抓的形状。（变异作业只在 ubuntu 上跑全量，故 POSIX 即可。）
+     */
+    replace: "            if (await isExecutable(candidate))\n                return '/bin/sh';",
     proves: ['A-NO-HOST-BORROW-REAL'],
     phases: ['boot', 'diag'],
     why: '产品绕过 shim、去够宿主机器上的东西 —— 这条腿最核心的前提（"干净机器上也能用"）当场失效，而没有这条断言它是静默的',
