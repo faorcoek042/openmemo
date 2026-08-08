@@ -16,7 +16,7 @@
  * **`onChunkComplete` 必须在段落真正落盘后才 resolve** —— pipeline 把 resolve 当作
  * "这一块已安全持久化"，不会再重放（D-01 §4.5）。
  */
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { copyFile, mkdir, rename } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative } from 'node:path';
 
@@ -288,8 +288,26 @@ export async function runTranscribeJob(
    *     error: failed to initialize whisper context
    * 用户（和我们自己）对着它猜了三轮。现在直接说出是谁拿了谁的模型。
    */
+  /*
+   * ⚠️ **只在文件真的存在时才判**。
+   *
+   * `canEngineLoad` 对"文件不在"和"格式不对"都回 false —— 对**挑候选**来说这样很对
+   * （两种都不该选它）。但在这里它们是两回事：
+   *   · 格式不对 → 就是本闸要抓的那个，报出来
+   *   · 文件不在 → 是另一条路上的失败（模型没装/被删），它有自己的处置
+   *     （上游的 `MISSING_ASR_MODEL` blocked 态、或引擎自己的报错）
+   * 不分开的话，本闸会把"没装模型"说成"引擎加载不了这个模型"，
+   * 把人往完全错误的方向指 —— 而"失败得可诊断"正是这道闸存在的全部理由。
+   * （`[实测]` 第一版没分，`mergeWords.test.ts` 里 3 条 T-164 回归用例当场红：
+   *   它们的夹具声明了一个从不创建的 modelPath。那个红是对的，红的是我这道闸。）
+   */
   const chosenEngine = asAsrEngineId(chosen.engineId);
-  if (chosen.modelPath && chosenEngine && !(await canEngineLoad(chosenEngine, chosen.modelPath))) {
+  if (
+    chosen.modelPath &&
+    chosenEngine &&
+    existsSync(chosen.modelPath) &&
+    !(await canEngineLoad(chosenEngine, chosen.modelPath))
+  ) {
     throw new Error(
       `引擎 ${chosen.engineId} 加载不了这个模型：${chosen.modelPath}` +
         `（它要的是 ${MODEL_FORMAT_BY_ENGINE[chosenEngine]} 格式）。` +
