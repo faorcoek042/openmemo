@@ -78,24 +78,53 @@ if (!BUNDLE_RUN || !/^\d+$/.test(BUNDLE_RUN)) {
   die(`--bundle-run 必须是纯数字的 build-bundles run id，实得 ${JSON.stringify(BUNDLE_RUN)}`);
 }
 
-/** 调 gh api。**带超时**（PROTOCOL §11：一切外部命令带超时）。 */
-function gh(path) {
-  const r = spawnSync('gh', ['api', path], {
-    encoding: 'utf8',
-    timeout: 60_000,
-    maxBuffer: 32 * 1024 * 1024,
-  });
-  if (r.status !== 0) {
-    return {
-      ok: false,
-      error: `gh api ${path} 失败（exit ${r.status}）：${(r.stderr || '').slice(0, 400)}`,
-    };
+/**
+ * 调 gh api。**带超时**（PROTOCOL §11：一切外部命令带超时）+ **有限重试**。
+ *
+ * ## 为什么加重试，而"查不动 = 拒绝"这条又不能松
+ *
+ * `[实测]` 第一次拿这道闸去问 v0.3.0 那批包时，`record` 那一格撞上
+ * `net/http: TLS handshake timeout` —— 闸门于是**拒绝了一批其实已经验全的包**。
+ * 拒绝本身没错（"我没问到"决不能渲染成"它没问题"），但**闸门不能是抖的**：
+ *
+ * > 一道会因为网络抖动随机变红的闸门，会训练所有人「先重跑一次再说」——
+ * > 而那正是「学会忽略它」的第一步。
+ *
+ * 本仓已经为同一族吃过亏（"一条永远红的守卫等于一条被删掉的守卫"），
+ * 这是它的**抖动版**：不是永远红，是随机红，后果一样。
+ *
+ * 所以两件事必须同时成立：
+ *   · **重试**把传输层抖动吸收掉 —— 网络问题不该变成判断；
+ *   · **重试用尽仍失败 = 拒绝** —— 真的问不到时，缺省依旧是拒绝。
+ *
+ * 只对**传输层**失败重试。HTTP 4xx 是语义答案（例如"这条腿的 workflow 不存在"），
+ * 立刻返回，不用重试去掩盖一个确定的答案。
+ */
+function gh(path, attempts = 3) {
+  let last = '';
+  for (let i = 1; i <= attempts; i++) {
+    const r = spawnSync('gh', ['api', path], {
+      encoding: 'utf8',
+      timeout: 60_000,
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    if (r.status === 0) {
+      try {
+        return { ok: true, value: JSON.parse(r.stdout) };
+      } catch (e) {
+        return { ok: false, error: `gh api ${path} 的输出不是 JSON：${e.message}` };
+      }
+    }
+    last = `gh api ${path} 失败（exit ${r.status}）：${(r.stderr || '').slice(0, 400)}`;
+    // 4xx 是语义答案（比如"这条腿的 workflow 不存在"），不是抖动 —— 立刻返回，
+    // 别拿重试去掩盖一个确定的答案。
+    if (/HTTP 4\d\d/.test(r.stderr ?? '')) break;
+    if (i < attempts) {
+      say(`   （第 ${i} 次查询失败，重试中：${last.slice(0, 120)}）`);
+      spawnSync(process.execPath, ['-e', `setTimeout(() => {}, ${i * 1500})`], { timeout: 10_000 });
+    }
   }
-  try {
-    return { ok: true, value: JSON.parse(r.stdout) };
-  } catch (e) {
-    return { ok: false, error: `gh api ${path} 的输出不是 JSON：${e.message}` };
-  }
+  return { ok: false, error: last };
 }
 
 say('─'.repeat(94));
@@ -165,9 +194,31 @@ say('── 这不是"闸门坏了"，这就是它要拦的那件事 ───�
 say('   e2e 腿测的是**包**，不是**树**：它绿只说明那一批包好，不说明 HEAD 好；');
 say('   反过来 HEAD 修好了它也不会自己变绿 —— 得先重新出包、再跑腿。');
 say('');
-say('   要放行，先把缺的腿对**这一批包**跑一遍（各腿都收 bundleRunId 输入）：');
+/*
+ * ★ 每条腿的输入**不一样**，这里必须逐条给对的那一条。
+ *   `[实测]` 有人照着一句通用的 `-f bundleRunId=…` 去触发 e2e-runtime，
+ *   吃了一个 **HTTP 422** —— 那条腿的输入叫 `bundlesRunId`（**多一个 s**）。
+ *   一句会 422 的提示比不给提示更糟：它让人以为是闸门坏了。
+ */
+const DISPATCH_HINT = {
+  import: (b) => `gh workflow run e2e-import.yml --ref master -f bundleRunId=${b}`,
+  // 现场组装模式给不了已发布包的背书，所以必须显式关掉。
+  notes: (b) =>
+    `gh workflow run e2e-notes.yml --ref master -f assembleFromSource=false -f bundleRunId=${b}`,
+  // legs 必须是 all：只跑一个平台的 run 不该发三平台凭证。
+  record: (b) => `gh workflow run e2e-record.yml --ref master -f bundleRunId=${b} -f legs=all`,
+  // ⚠️ bundlesRunId，多一个 s；且必须 artifact 模式。
+  runtime: (b) =>
+    `gh workflow run e2e-runtime.yml --ref master -f bundleSource=artifact -f bundlesRunId=${b}`,
+};
+say('   要放行，先把缺的腿对**这一批包**跑一遍（注意各腿的输入名不同）：');
 for (const m of missing) {
-  say(`     gh workflow run e2e-${m.leg}.yml --ref master -f bundleRunId=${BUNDLE_RUN}`);
+  const hint = DISPATCH_HINT[m.leg];
+  say(
+    hint
+      ? `     ${hint(BUNDLE_RUN)}`
+      : `     （腿 ${m.leg} 没有登记触发方式 —— 去它的 workflow 里看 workflow_dispatch 的输入名）`,
+  );
 }
 say('');
 say('   ⚠️ 如果某条腿**从来没发过凭证**，那是它还没接上这套契约。接法是在它的 workflow');
