@@ -552,7 +552,6 @@ console.log('⑧ ⑨ win-x64 参数化 —— .dll / node.exe / start.cmd / win3
       assert.match(r.out, /manifests/);
     });
   }
-
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════════

@@ -957,7 +957,9 @@ async function assembleManifests() {
   const names = (await readdir(src)).filter((n) => n.endsWith('.json'));
   if (names.length === 0) die(`${src} 里一个 .json 都没有 —— 组件目录会是空的`);
   for (const n of names) await cp(join(src, n), join(dst, n));
-  say(`   ✔ vendor/manifests/  ${names.length} 份清单（${mib(await dirSize(dst))}）：${names.join(', ')}`);
+  say(
+    `   ✔ vendor/manifests/  ${names.length} 份清单（${mib(await dirSize(dst))}）：${names.join(', ')}`,
+  );
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────────
