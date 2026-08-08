@@ -12,7 +12,7 @@
       "pinnedVersion": "v1.9.1",
       "provenance": {
         "repoUrl": "https://github.com/ggml-org/whisper.cpp",
-        "releaseUrl": "https://github.com/faorcoek042/openmemo/releases/tag/whisper-packs-2026.08.08",
+        "releaseUrl": "https://github.com/faorcoek042/openmemo/releases/tag/v0.2.0",
         "license": "MIT",
         "licenseUrl": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE",
         "submodulePath": "vendor/whisper.cpp",
@@ -35,7 +35,7 @@
       "pinnedVersion": "v1.9.1",
       "provenance": {
         "repoUrl": "https://github.com/ggml-org/whisper.cpp",
-        "releaseUrl": "https://github.com/faorcoek042/openmemo/releases/tag/whisper-packs-2026.08.08",
+        "releaseUrl": "https://github.com/faorcoek042/openmemo/releases/tag/v0.2.0",
         "license": "MIT",
         "licenseUrl": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE",
         "submodulePath": "vendor/whisper.cpp",
@@ -58,7 +58,7 @@
       "pinnedVersion": "v1.9.1",
       "provenance": {
         "repoUrl": "https://github.com/ggml-org/whisper.cpp",
-        "releaseUrl": "https://github.com/faorcoek042/openmemo/releases/tag/whisper-packs-2026.08.08",
+        "releaseUrl": "https://github.com/faorcoek042/openmemo/releases/tag/v0.2.0",
         "license": "MIT",
         "licenseUrl": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE",
         "submodulePath": "vendor/whisper.cpp",
@@ -207,7 +207,7 @@
       "pinnedVersion": "v1.9.1",
       "provenance": {
         "repoUrl": "https://github.com/ggml-org/whisper.cpp",
-        "releaseUrl": "https://github.com/faorcoek042/openmemo/releases/tag/whisper-packs-2026.08.08",
+        "releaseUrl": "https://github.com/faorcoek042/openmemo/releases/tag/v0.2.0",
         "license": "MIT",
         "licenseUrl": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE",
         "submodulePath": "vendor/whisper.cpp",

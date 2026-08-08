@@ -7,13 +7,26 @@
 
 ## 装它
 
-**没有安装包。** 没有 `.exe` / `.dmg` / `.AppImage`,也没有 npm 包 —— 唯一的方式是**克隆源码自己构建**。
+### 方式一:下预编译包(推荐,开箱即用)
 
-⚠️ **Releases 页那些 `backend-packs-*` / `model-mirror-*` 不是给你下的。** 那是产品运行时自己去取的
-后端二进制与模型;你在网页上点"安装",daemon 按钉死的 sha256 下载校验。手动下载没有用 ——
-放哪、叫什么、要不要建硬链接全由安装器决定。
+去 [**Releases**](https://github.com/faorcoek042/openmemo/releases) 下你系统那一个,解开就能跑。
+**自带 Node 运行时** —— 机器上**不需要装 Node、不需要 pnpm、不需要 git**。
 
-前置只有 **Node ≥ 22** 和 **pnpm 10.15.0**。ffmpeg / whisper / yt-dlp / CUDA **都不用预装**。
+| 系统 | 文件 | 下载 | 解开后 |
+|---|---|---:|---:|
+| Linux x64 | `openmemo-<版本>-linux-x64.tar.xz` | 41 MiB | 176 MiB |
+| Windows x64 | `openmemo-<版本>-win-x64.zip` | 49 MiB | 132 MiB |
+| macOS arm64 | `openmemo-<版本>-darwin-arm64.tar.gz` | 60 MiB | 192 MiB |
+
+解开后跑里面的启动脚本,打开它打印的地址即可。
+
+⚠️ **同一个 Release 里那些 `whispercpp-*` 不是给你下的** —— 那是产品**自己在网页上下载安装**的
+后端依赖(按钉死的 sha256 校验)。手动下载没有用:放哪、叫什么、要不要建硬链接全由安装器决定。
+`model-mirror-*` 那个 Release 同理。
+
+### 方式二:克隆源码自己构建
+
+前置 **Node ≥ 22** + **pnpm 10.15.0**。ffmpeg / whisper / yt-dlp / CUDA **都不用预装**。
 
 ```bash
 git clone https://github.com/faorcoek042/openmemo.git
@@ -29,8 +42,8 @@ node apps/daemon/dist/main.js        # 打开终端里打印的地址,默认 htt
 2. **模型**(`/models`)→ 转写 Tab → 下一个语音识别模型
    ⚠️ **装完组件不等于能转写** —— 冷装之后一个模型都没有,自检会用 `model.asr fail` 告诉你
 
-第一次要从网上取 **几百 MB 到 1 GB+**(依赖 + 组件 + 你选的模型:最小 ~30 MB,`large-v3-turbo` ~1.6 GB)。
-全部在网页上点,可随时删掉重下。
+第一次要从网上取 **几百 MB 到 1 GB+**(组件 + 你选的模型:最小 ~30 MB,`large-v3-turbo` ~1.6 GB;
+走方式二还要加上 `pnpm install` 的依赖)。全部在网页上点,可随时删掉重下。
 
 ### 东西都下到哪了
 
