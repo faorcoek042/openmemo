@@ -21,6 +21,14 @@
  *   （诚实地说：本仓库没有 CI、没有 git hook、`pnpm check` 也没人跑 ——
  *   多加一条没人跑的门禁没有意义，所以这里不装作它是门禁。）
  *
+ * ★ format-debt（本轮）更正上面那个括号：**「本仓库没有 CI」今天已经不成立了。**
+ *   `.github/workflows/ci.yml` 在跑，push/PR 自动触发，`pnpm check` 的六个成员
+ *   今天也全部有自动调用方了。**结论不变**（这条仍然不进门禁），但**理由只剩下**
+ *   前面那句真正成立的：它要几分钟、要先 build，且它测的是**护栏本身**不是产品。
+ *   留着那个已经作废的理由很危险 —— 下一个人会照着它推出「反正没 CI」这种今天错的结论。
+ *   另：当初挡着它进 CI 的隔离问题（变异体跑在 /tmp 副本 + 假 HOME）**已经解决**，
+ *   所以现在不接是**成本取舍**，不再是**做不到**。
+ *
  * ## 两条设计决定，都是被真实的坑逼出来的
  *
  * 1. **锚点是源文本，不是行号。** T-137 自评「每 3 个 `file:line` 引用约有 1 个
@@ -52,7 +60,15 @@
  * 退出码：有任何一条**存活**（改坏了测试还是绿的）、或任何锚点失效 → 1。
  */
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -179,8 +195,7 @@ const MUTATIONS = [
      * ⚠️ 第一版我把这条的锚点写成了和 `E2-origin-sameorigin` 同一行 ——
      * 那是同一个变异写了两遍，只会把数字做大，不增加任何覆盖。
      */
-    find:
-      "    const unbracket = (h) => (h.startsWith('[') && h.endsWith(']') ? h.slice(1, -1) : h).toLowerCase();",
+    find: "    const unbracket = (h) => (h.startsWith('[') && h.endsWith(']') ? h.slice(1, -1) : h).toLowerCase();",
     replace: "    const unbracket = (_h) => '';",
     why: '归一化把不同主机折叠成同源：任意站点带着"合法" Origin 打进来，CSRF 开门 —— 而 IPv6 那几条用例照样绿，看起来像是修对了',
   },
@@ -211,7 +226,8 @@ const MUTATIONS = [
     artifact: '.test-out/unit/lib/api/client.js',
     tests: ['.test-out/unit/lib/api/client.test.js'],
     find: "            if (!isWrite && mockFetcher) {\n                (0, surfaces_1.markSurface)(surface, 'mock');",
-    replace: "            if (mockFetcher) {\n                (0, surfaces_1.markSurface)(surface, 'mock');",
+    replace:
+      "            if (mockFetcher) {\n                (0, surfaces_1.markSurface)(surface, 'mock');",
     why: '路由不存在时写操作静默"成功"：用户以为改动保存了，实际什么都没发生。项目自己的定性是"比报错糟糕得多"',
   },
   {
@@ -238,7 +254,8 @@ const MUTATIONS = [
     artifact: '.test-out/unit/lib/api/client.js',
     tests: ['.test-out/unit/lib/api/client.test.js'],
     find: '        if (csrf)\n            h.set(CSRF_HEADER, csrf);\n        if (idempotencyKey)',
-    replace: '        if (false)\n            h.set(CSRF_HEADER, csrf);\n        if (idempotencyKey)',
+    replace:
+      '        if (false)\n            h.set(CSRF_HEADER, csrf);\n        if (idempotencyKey)',
     why: '读全通、写全 403：界面一切正常，所有保存静默失败，库里 0 行（这是发生过的事故）',
   },
   {
@@ -269,7 +286,9 @@ const listOnly = argv.includes('--list');
 
 const selected = MUTATIONS.filter((m) => !only || m.id.startsWith(only));
 if (selected.length === 0) {
-  console.error(`没有匹配 --only ${only} 的变异。可用：\n  ${MUTATIONS.map((m) => m.id).join('\n  ')}`);
+  console.error(
+    `没有匹配 --only ${only} 的变异。可用：\n  ${MUTATIONS.map((m) => m.id).join('\n  ')}`,
+  );
   process.exit(1);
 }
 
@@ -352,7 +371,9 @@ for (const m of selected) {
   try {
     pristine = readFileSync(target, 'utf8');
   } catch {
-    problems.push(`${m.id}: 产物不存在 ${m.pkg}/${m.artifact} —— 先 pnpm build:safe（web 还要 pnpm --filter @openmemo/web test:unit 编一次）`);
+    problems.push(
+      `${m.id}: 产物不存在 ${m.pkg}/${m.artifact} —— 先 pnpm build:safe（web 还要 pnpm --filter @openmemo/web test:unit 编一次）`,
+    );
     continue;
   }
 
@@ -366,7 +387,12 @@ for (const m of selected) {
       problems.push(
         `${m.id}: **对照组就不是绿的**（未变异时 exit=${c.code}）—— 本组全部作废。\n` +
           `    先把 ${m.tests.join(' ')} 跑绿，再谈变异。\n` +
-          c.out.split('\n').filter((l) => l.includes('✖') || l.includes('Error')).slice(0, 5).map((l) => `    ${l}`).join('\n'),
+          c.out
+            .split('\n')
+            .filter((l) => l.includes('✖') || l.includes('Error'))
+            .slice(0, 5)
+            .map((l) => `    ${l}`)
+            .join('\n'),
       );
       controlled.add(controlKey);
       results.push({ id: m.id, status: 'VOID' });
@@ -394,9 +420,7 @@ for (const m of selected) {
   const detected = r.code !== 0;
   results.push({ id: m.id, status: detected ? 'RED' : 'SURVIVED', why: m.why });
   if (!detected) {
-    problems.push(
-      `${m.id}: **存活** —— 把这条行为整句改坏，测试依然全绿。\n    后果：${m.why}`,
-    );
+    problems.push(`${m.id}: **存活** —— 把这条行为整句改坏，测试依然全绿。\n    后果：${m.why}`);
   }
 }
 
@@ -407,7 +431,9 @@ const survived = results.filter((r) => r.status === 'SURVIVED').length;
 
 console.log('');
 for (const r of results) {
-  const mark = { RED: '✔ 红', SURVIVED: '✘ 存活', ANCHOR: '⚠ 锚点失效', VOID: '⚠ 对照组不绿' }[r.status];
+  const mark = { RED: '✔ 红', SURVIVED: '✘ 存活', ANCHOR: '⚠ 锚点失效', VOID: '⚠ 对照组不绿' }[
+    r.status
+  ];
   console.log(`  ${mark}  ${r.id}`);
 }
 console.log(`\n共 ${results.length} 条：${red} 条被测出，${survived} 条存活。`);

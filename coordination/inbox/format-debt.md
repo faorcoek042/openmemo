@@ -1,0 +1,355 @@
+# format-debt
+
+## [2026-08-08 14:05] format-debt DONE —— 全仓格式化 + `format:check` 接进 CI
+
+交付:
+
+- `72093b9` style: 全仓 prettier 格式化（365 个文件，纯格式化）
+- `.github/workflows/ci.yml`（新增 `Format check` 步骤）
+- `.prettierignore`（补 5 条**生成物**忽略，见下）
+- `package.json`（`pnpm check` 加入 `format:check`）
+- `packages/downloader/scripts/e2e-firstrun.mjs`（格式化打断了一条 eslint 指令，已修）
+- `scripts/mutation-check.mjs`（更正一条今天已不成立的注释）
+- 本文件
+
+要点:
+
+- **重新量的数是 508**，不是 476 / 481 / 403 —— 那三个都已过期。
+- 格式化前后全量测试**逐 suite 计数完全一致**：1508/1508/0，这是"纯格式化"的证据。
+- 格式化**打断了一条 `eslint-disable-next-line`**，全量测试抓不到，eslint 抓到了。
+- prettier 3.9.6 在本仓**不是一次收敛**的：3 个文件要跑第二遍 `pnpm format`。
+- 那两条"合理地不接"**今天仍然不该接，但两条的理由都已经过期**，已就地更正。
+
+下一步建议:
+
+- `verify-unpack.mjs` 的 53 条解包安全断言仍然**没有任何自动调用方**（见 §6）。
+- prettier 非幂等那 3 处可以顺手改掉源文本，让 `pnpm format` 一次到不动点。
+
+需要 Manager 决策: 见 §7（`coordination/inbox/**` 现在也被门禁盯着了，这是个取舍）
+
+---
+
+## 1. 到底多少个文件不合格：**508**
+
+```
+$ pnpm format:check
+[warn] Code style issues found in 508 files. Run Prettier with --write to fix.
+```
+
+交叉核对过：`[warn]` 开头共 509 行，其中 1 行是 prettier 自己的汇总行，**508 个文件**。
+
+按扩展名：`ts` 160、`js` 139、`md` 105、`mjs` 45、`tsx` 41、`json` 15、`yml/yaml` 3。
+按目录：`apps/web` 216、`apps/daemon` 65、`coordination/inbox` 53、`packages/pipeline` 35、
+`packages/downloader` 24，其余分散。
+
+**508 里只有 367 个是版本库里的文件**，另外 141 个是被 git 忽略的生成物
+（140 个 `apps/web/.test-out/**` + 1 个 `.claude/settings.local.json`）——
+这条差异很重要，见 §4。
+
+## 2. 「纯格式化」的证据：前后测试数**一模一样**
+
+判据是任务里定的那条：格式化前后各跑一次全量测试，两次必须完全一致。
+
+|              | tests | pass | fail | skipped | todo |
+| ------------ | ----- | ---- | ---- | ------- | ---- |
+| 格式化**前** | 1508  | 1508 | 0    | 0       | 0    |
+| 格式化**后** | 1508  | 1508 | 0    | 0       | 0    |
+
+而且不只是比总数 —— 我把 11 个 suite 的分项计数各自排序后逐行 `diff`，**输出为空**。
+（总数相同但内部此消彼长，是这条判据最容易被糊弄过去的地方。）
+
+### 2-bis 另一条独立证据：词袋比对
+
+测试相同只能说明"行为没变"，不能直接说明"内容没变"。所以另做了一次机械比对：
+把每个文件的**词元多重集**（标识符 / 数字 / 中日韩词串）取出来，前后对比。
+prettier 只挪空白、换引号、补尾逗号、重排换行 —— 这些都不改词元。
+
+结果：**367 个格式化文件里 367 个词袋完全相同**（把 markdown 强调符 `_`/`*`
+从词元边界剥掉之后；不剥的话有 18 个 md 文件因 `*x*` → `_x_` 而不同）。
+唯一 3 个词袋有差异的文件，正是我**手工改过**的那 3 个（`ci.yml` /
+`.prettierignore` / `package.json`）—— 这个检查确实能抓到人工改动，不是空转。
+
+### 2-ter 测试覆盖不到的那批文件另外验了
+
+本仓有一批 e2e 驱动脚本**没有任何自动调用方**（`pnpm -r test` 碰不到它们），
+所以"测试数一样"对它们是无效证明。补了两条机械检查：
+
+- 改动过的 45 个 `.mjs`/`.js`：**全部 `node --check` 通过**（语法没坏）
+- 改动过的 13 个 `.json`：**全部 `JSON.parse` 通过**
+
+## 3. ⚠️ 格式化**确实弄坏了一样东西**（已修）—— 而测试抓不到它
+
+`packages/downloader/scripts/e2e-firstrun.mjs`：
+
+```
+  292:3  warning  Unused eslint-disable directive (no problems were reported from 'no-undef')
+  294:9  error    'document' is not defined                                                    no-undef
+```
+
+成因：那里原本是 `/* eslint-disable-next-line no-undef */`，盖住下一行的
+`page.evaluate(() => [...document.querySelectorAll(...)])`。**prettier 把箭头体折到了下一行**，
+于是 `document` 从"下一行"变成"下下行" —— 指令一个字没改、位置也没动，
+**但它盖住的已经不是那一行了**。
+
+这条值得单独记住的地方有两点：
+
+1. **它是"纯格式化"这个说法的真实反例。** 格式化对 AST 是中性的，
+   但对**任何按行号生效的东西**（eslint 行指令、`// prettier-ignore`、
+   带行号的注释锚、覆盖率忽略标记）**不是中性的**。
+2. **全量测试对它完全无感** —— 这个脚本没有任何自动调用方，1508 条测试一条都碰不到它。
+   `[实测]` 前后测试数完全一致，而 eslint 是红的。
+   **"测试数没变"证明不了"没坏"，只有把所有门禁都跑一遍才行。**
+
+修法没有沿用 `disable-next-line`，改成**成对的 `disable` / `enable`**：
+判据同 PROTOCOL §7 补充 —— **不依赖行号，下次再被重排也不会失效**。
+
+反向验证：坏的那一版的红灯是**真实观测到的**（上面那段就是 `npx eslint .` 的原始输出，
+退出码 1），修完退出码 0、`0 problems`。不是"改完看着对"。
+
+顺带核了一遍**其它 6 条 `eslint-disable-next-line` 有没有被同样打断**：
+eslint 默认就会把失配的指令报成 `Unused eslint-disable directive`，
+而全仓只有上面这一处报了 —— 所以**只有这一条被打断**，其余 6 条仍然盖在正确的行上。
+
+## 4. `.prettierignore` 今天忽略了什么
+
+### 4.1 本来就有的（我没动）
+
+| 条目                                                                                 | 是什么                     | 判断                                                                                                    |
+| ------------------------------------------------------------------------------------ | -------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `vendor/whisper.cpp/` `vendor/sherpa-onnx/` `vendor/sqlite-vec/` `vendor/libsimple/` | 第三方源码（ADR-001 A 类） | **合理**。核过：这四条**恰好就是 `.gitmodules` 里的四个 submodule**，一个不多一个不少（共 7617 个文件） |
+| `**/dist/` `**/build/` `**/*.tsbuildinfo` `pnpm-lock.yaml`                           | 构建产物 / 锁文件          | **合理**。顺带满足 PROTOCOL §7：`apps/web/dist` 被 `**/dist/` 盖住，格式化碰不到它                      |
+| `apps/web/src/components/ui/`                                                        | shadcn/ui 复制进来的源码   | **合理但今天是空的**，见下                                                                              |
+
+⚠️ 关于最后一条，一个如实的观察：**它今天实际只挡住 1 个文件**，
+而且那个文件是 `SOURCE.md` —— 我们自己写的豁免说明，不是上游代码。
+`git ls-files apps/web/src/components/ui/` 只有这一个，组件清单表格里写着"目前为空"。
+也就是说"保持与上游一致便于 diff"这个理由**今天还用不上**。
+我**没有动它**：它是 ADR-002 预先登记的豁免，是为将来加组件准备的，
+现在收窄它只会让下一个加组件的人踩坑。记在这里只是让你知道它当前的实际覆盖面 = 1。
+
+`vendor/manifests/`（7 个文件）**不在**忽略里，是对的 —— 它是我们自己写的清单，
+不是第三方源码。这次它们被正常格式化了。
+
+### 4.2 本轮**新加**的 5 条 —— 以及为什么这不是"把债藏起来"
+
+新加：`**/.test-out/`、`**/dist-types/`、`.build/`、`license-report.json` /
+`license-report.md`、`.claude/`。
+
+先把最要紧的说清楚：**这 5 条一个版本库里的文件都没挡住。**
+
+```
+$ git ls-files | grep -E '(^|/)\.test-out/|(^|/)dist-types/|^\.build/|^\.claude/|^license-report\.(json|md)$'
+（无输出，命中 0）
+```
+
+所以受门禁覆盖的**源码**一个没少，508 里那 367 个真文件**全部**被格式化、
+且**全部**仍在 `format:check` 的射程内。加这几条**不改变任何一个源文件的命运**。
+
+真正的理由是**门禁必须确定**。关键事实：**prettier 不读 `.gitignore`**，只读
+`.prettierignore`。而 `apps/web/.test-out/` 这类目录**只在跑过测试之后才存在**。
+实测这个链条：
+
+```
+全仓格式化到干净  →  pnpm format:check 绿
+  →  跑一次 pnpm -r test（重新生成 .test-out）
+  →  pnpm format:check 当场红 **95 个文件，其中 92 个是 .test-out/**
+```
+
+也就是**同一棵树会给出两种答案，取决于"你之前跑没跑过测试"**。
+在 CI 上 `format:check` 排在 test 前面 → 永远绿；本地的人通常先跑测试 → 经常红。
+**一条"本地红、CI 绿"的门禁，和一条永远红的门禁，对人的训练效果是同一个** ——
+都教人别信这盏灯。这正是本仓一直在清的那个病（"没跑"和"跑了并通过"长得一样）的变体。
+
+反向验证（在 `/tmp/pi-test` 隔离副本上做的，没碰共享树，**先跑对照组**）：
+
+```
+对照组 apps/web/src/control.js（故意写坏、不该被忽略）  →  被判红 ✓（证明检查在跑，不是空集）
+apps/web/.test-out/artifact.js                         →  已忽略 ✓
+.build/artifact.js                                     →  已忽略 ✓
+packages/x/dist-types/artifact.js                      →  已忽略 ✓
+.claude/settings.local.json                            →  已忽略 ✓
+license-report.json                                    →  已忽略 ✓
+```
+
+`.claude/` 那条要单独说一句：**不加它时 `prettier --write .` 会去改写
+`.claude/settings.local.json`** —— 那是本机 harness 配置，不是本仓源码
+（被全局 gitignore 忽略，不在版本库里）。本轮第一次跑 `pnpm format` 时它**已经被改写过一次**。
+`[未验证]` 我没有它的改写前副本可以逐字节比对（文件不在版本库里，也没有备份），
+只能确认**改写后仍是合法 JSON、顶层键集不变（只有 `permissions`）**，
+且 prettier 对 JSON 只改空白不改键值。加上这条之后不会再发生。
+
+## 5. ⚠️ prettier 3.9.6 在本仓**不是一次收敛**的
+
+跑完一遍 `pnpm format` 之后，`pnpm format:check` **仍然是红的**——有 3 个文件
+prettier 自己的输出还不满足自己的检查：
+
+| 文件                                          | 非幂等的成因                           |
+| --------------------------------------------- | -------------------------------------- |
+| `coordination/BOARD.md`                       | 一个嵌在 blockquote 里的 markdown 表格 |
+| `docs/research/R-04-model-mgmt.md`            | 一处 `_`/`*` 混用且不配对的强调        |
+| `packages/downloader/scripts/e2e-browser.mjs` | 一条链式调用的折行反复横跳             |
+
+`[实测]` 在 `/tmp` 副本上逐轮打哈希，三个**都在第 2 遍到不动点**（第 1 遍改，第 2 遍不动）。
+所以本轮跑了两遍 `pnpm format`。
+
+**这件事必须写进 CI 注释**，否则下一个人的体验是"我明明跑了 format，CI 还是红"，
+然后开始怀疑门禁坏了 —— 已经写进 `ci.yml` 的 `Format check` 步骤和
+`package.json` 的 `_comment:check-format` 里了。
+
+## 6. `pnpm check` 的成员今天全部有自动调用方了
+
+先更正一处**旧对账里的错数**：`ci.yml` 里原本写着「`pnpm check` 的五个成员」，
+**实际是六个** —— 漏数了 `node scripts/check-version-sync.mjs`。
+结论不受影响（它确实有调用方），但**错的数目最容易被下一个人照抄**，已就地更正。
+
+| `pnpm check` 的成员         | 自动调用方                                               |
+| --------------------------- | -------------------------------------------------------- |
+| `check-tracked-sources.mjs` | `ci.yml` → Tracked-sources guard；`ci-crossplatform.yml` |
+| `check-orphan-exports.mjs`  | `ci.yml` → Orphan-exports ratchet                        |
+| `tsc -b`                    | `ci.yml` → Typecheck                                     |
+| `pnpm build:safe`           | `ci.yml` → Build (workspace packages)                    |
+| `check-version-sync.mjs`    | **只经由** `test:ci-scripts` 的第一个成员（无独立步骤）  |
+| `eslint .`                  | `ci.yml` → Lint                                          |
+
+聚合脚本 `pnpm check` **本身**仍然没有自动调用方（这没问题 —— 它是给人用的便捷入口，
+六个成员各自都被 CI 单独跑了；直接在 CI 调它会把 build 跑第二遍）。
+
+本轮把 `format:check` 也加进了 `pnpm check`（排在最前面，它只要 prettier，不 build）。
+理由不是"补全"，是防一个具体的坏味道：`format:check` 同一轮进了 `ci.yml`，
+如果本地 `pnpm check` 不含它，就会出现**本地全绿、推上去 CI 红**。
+
+### 6.1 那两条"合理地不接" —— **结论都仍然成立，但两条的理由都已经过期**
+
+任务要求核实、不要照抄。核完的结果是：**两条都不该接进 CI（结论不变），
+但它们各自写着的理由今天都已经不成立了**，已就地更正。
+
+**(a) `check:selfcheck`（`scripts/selfcheck.mjs`）**
+
+旧理由：「要真数据目录 + 跑着的 daemon」。逐条核：
+
+- 「要跑着的 daemon」→ **今天不成立**。`const DAEMON = argOf('--daemon', null)`，
+  所有用到它的地方都有 `if (!DAEMON) return null` 兜底，没 daemon 不会产生任何
+  `required` 失败。daemon 是**可选**的。
+- 「读机器级指针 `datadir.json`」→ **不成立，而且从来没成立过**。
+  `grep -c 'datadir.json' scripts/selfcheck.mjs` = **0**。它自己算 `defaultDataDir()`。
+  （这条关系到 PROTOCOL §9，所以特意查了 —— 它**不碰**那个全局单例。）
+- 「要真数据目录」→ **成立**。`packages/runtime/src/selfcheck.ts` 里有多条
+  `required: true` 的检查（ASR 模型、中文分词扩展等），空目录上必红，
+  而 `selfcheck.mjs` 的退出码就是 `failures.length === 0 ? 0 : 1`。
+  有 `OPENMEMO_DATA_DIR` / `OPENMEMO_MODELS` / `OPENMEMO_EXT_DIR` 覆盖，
+  但**没有 fixture 模式** —— 指向空目录照样红。
+
+**旧判断漏掉的最要紧一条**：`scripts/selfcheck.mjs` **本身其实已经有自动调用方了** ——
+`scripts/ci/cold-start-audit.mjs:410` 会 `--data-dir ... --daemon ... --json` 地调它，
+而那个脚本由 `build-bundles.yml` 与 `cold-start-audit.yml` 自动跑，
+并且**拿它的退出码当判据**。所以准确的说法是：
+
+> **脚本已经被 CI 真跑了**，只是跑在一条**先铺好真资产、再把 daemon 起起来**的
+> 重型工作流里，而不是 `ci.yml` 的一个裸步骤。没有调用方的是
+> **`check:selfcheck` 这个 npm 别名**，不是那个脚本。
+
+→ **不接进 `ci.yml` 仍然正确**，但理由要换成"它已经在该在的地方被跑了"，
+而不是"它跑不了"。
+
+**(b) `scripts/mutation-check.mjs`**
+
+结论仍然成立：**不进门禁**。但它文件头写的理由里有一句今天是**假的**：
+
+```
+（诚实地说：本仓库没有 CI、没有 git hook、`pnpm check` 也没人跑 ——
+多加一条没人跑的门禁没有意义，所以这里不装作它是门禁。）
+```
+
+`.github/workflows/ci.yml` 今天在跑、push/PR 自动触发，`pnpm check` 六个成员
+也全部有自动调用方了。留着这句会让下一个人推出「反正没 CI」这种今天错的结论 ——
+本仓自己的话：**一条描述得很具体的错注释，比没有注释更能误导人**。已就地更正。
+
+另外核了一遍**当初挡着它的隔离问题**：变异体已经跑在 `/tmp` 副本 + 假 `HOME`/
+`XDG_DATA_HOME` 里（正是 PROTOCOL §9-bis 推论要求的形状），每个目标包还先跑对照组。
+**所以今天不接是成本取舍（要几分钟、要先 build、它测的是护栏不是产品），
+不再是"做不到"。**
+
+### 6.2 顺手数到的、但**不在**本轮范围内的
+
+`packages/downloader/scripts/verify-unpack.mjs` 装着 **53 条解包安全断言**
+（zip-slip / 绝对路径 / 符号链接逃逸 / zip 炸弹），`docs/SECURITY.md` 与 ADR-015
+都拿它当"这些控制已实现"的证据 —— 而它**没有任何自动调用方**。
+`scripts/orphan-exports-baseline.json` 里已经记着这件事了。
+同类的还有 20 个 e2e 驱动脚本（`apps/daemon/scripts/e2e-*.mjs`、
+`packages/downloader/scripts/e2e-*.mjs`、`packages/mindmap/scripts/demo-f4.mjs`）。
+**这是下一轮值得单独立一条的债**，形状和 `check:orphans` 当初那条一模一样：
+锁造好了，挂在没人经过的门上。
+
+## 7. 需要 Manager 决策：`coordination/inbox/**` 现在也被门禁盯着
+
+53 个 `coordination/inbox/*.md` 这次被格式化了，而 `format:check` 进 CI 之后，
+**agent 每次追加回执都要满足 prettier 的 markdown 风格**，否则 CI 红。
+
+我**没有**把 `coordination/` 加进 `.prettierignore` —— 任务里明确说了不许为了让数字
+好看而扩大忽略范围，而且 inbox 是版本库里的真文件，不是生成物。
+
+但这条取舍你应该知道：prettier 对 markdown 主要动**表格对齐**和**强调符归一化**
+（`*x*` → `_x_`），而 agent 手写的表格几乎不可能一次对齐。实际影响是
+**写了表格的回执大概率会让 CI 红一次**，然后作者要跑一遍 `pnpm format`。
+
+三个选项，我倾向 (1)：
+
+1. **保持现状**：回执也守格式，作者跑 `pnpm format` 即可（一条命令，且 `pnpm check` 里也有）。
+2. 把 `coordination/inbox/` 加进 `.prettierignore`：代价是这批文件从此无人管，
+   而它们是版本库里的真内容 —— 这才是真正的"把债藏起来"。
+3. 只对 markdown 关掉表格对齐：prettier 没有这个开关，做不到。
+
+## 8. 门禁与纪律
+
+全绿，基线**没有升**：
+
+| 门禁                   | 结果                                         |
+| ---------------------- | -------------------------------------------- |
+| `pnpm -r test`         | **1508 / 1508 / fail 0**（= 基线，未升未降） |
+| `npx tsc -b`           | 0                                            |
+| `npx eslint .`         | 0（修掉 §3 那条之后；修之前是 1 error）      |
+| `pnpm build:safe`      | 0                                            |
+| `pnpm lint-workflows`  | ✔ 774 条断言全过（8 个 workflow）            |
+| `pnpm test:ci-scripts` | 0                                            |
+| `pnpm check:orphans`   | ✔ 无新增零引用导出，**基线 70**，无过期条目  |
+| `pnpm format:check`    | ✔ All matched files use Prettier code style  |
+
+纪律核对：
+
+- **PROTOCOL §7**：全程 `pnpm build:safe`，从未跑 `pnpm -r build` / `vite build`。
+  `apps/web/dist` 在格式化前后各做了一次全目录 sha256，**指纹相同**，一个字节没动。
+  另外事前核过：508 个待格式化文件里**没有任何一个**在 `dist/` / `build/` /
+  `node_modules/` 下。
+- **PROTOCOL §10**：两次反向验证（`.prettierignore` 的 5 条规则、prettier 非幂等）
+  **都在 `/tmp` 隔离副本上做**，共享树里没有出现过中间态；`.prettierignore`
+  那次**先跑了对照组**确认检查不是空集。
+- **共享索引**：两次 commit 前都核了 `git diff --cached --name-only` 的**全量**列表
+  （不只是自己 `add` 的）。开工时索引是空的；两次 staged 数量与预期逐条相符。
+- 没碰 `:10000`、没碰 `/root/data-memo`、没碰 `~/.local/share/openmemo/datadir.json`、
+  没有 `pkill`、没有建/改/删 release。
+
+## 9. 一处**不是**纯格式化的改动，如实记下来
+
+`docs/research/R-04-model-mgmt.md` 有一行的强调符本来就是坏的（`_*…_*`，不配对），
+prettier 给那个 `*` 加了转义：
+
+```diff
+-→ _*这与我的 §7.3 三档（recommended / slow_* / unsupported）几乎完全同构…_*
++→ _\*这与我的 §7.3 三档（recommended / slow_* / unsupported）几乎完全同构…_*
+```
+
+词元一个没少（词袋比对通过），但这是本轮**唯一一处字符层面新增内容**的改动，
+渲染结果可能与之前不同。原文本身是坏的 markdown，prettier 的处理是合理的，
+但"纯格式化"这个说法在这一行上有个星号，所以写在这里。
+
+## 10. 提交为什么分两个
+
+- `72093b9` —— **纯格式化，365 个文件**。这是 `pnpm format` 的输出，
+  **一个字节的人工判断都没有**，将来 `git blame` 追一行代码时可以整跳过。
+- 第二个提交 —— 接门禁（`ci.yml` / `.prettierignore` / `package.json`）
+  - 两个**除了格式化还带人工改动**的文件（§3 的 eslint 修复、§6.1(b) 的注释更正）
+  - 本文件。
+
+那两个文件之所以从第一个提交里拿出来，正是为了保住第一个提交"可以整跳过"这个性质 ——
+混进去就毁了。代价是第一个提交的树还不是完全格式化干净的（差那 2 个文件），
+但那个提交**没有**引入 `format:check` 门禁，所以不存在"提交进去就是红的"的问题。

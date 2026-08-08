@@ -10,5 +10,31 @@ vendor/libsimple/
 **/*.tsbuildinfo
 pnpm-lock.yaml
 
+# ★ format-debt（本轮）：下面这几条与上面 `**/dist/` **同类**，当初只是漏了。补它们不是为了让
+# 数字好看 —— `[实测]` **一条被忽略的都不是版本库里的文件**（`git ls-files` 命中 0），
+# 所以受门禁覆盖的**源码**一个没少。
+#
+# 真正的理由是**门禁必须确定**：prettier **不读 `.gitignore`**（只读本文件），
+# 而这些目录**只在跑过测试/构建之后才存在**。不忽略的话：
+#
+#   `[实测]` 全仓格式化到干净 → 跑一次 `pnpm -r test` → `pnpm format:check`
+#            立刻变红 **95 个文件，其中 92 个是 apps/web/.test-out/**
+#
+# 也就是说同一棵树会给出两种答案，取决于"你之前跑没跑过测试"。
+# 而 CI 里 format:check 排在 test 前面、本地的人通常排在后面 ——
+# **一条在 CI 上绿、在本地红的门禁，训练人忽略它**，与永远红等价。
+# 判据同 PROTOCOL §7 补充：**跑错顺序也不该改变结论。**
+**/.test-out/
+**/dist-types/
+.build/
+
+# 生成的报告（`pnpm license:report` 的产物，已被 .gitignore 忽略）
+license-report.json
+license-report.md
+
+# 本机 harness 配置，不是本仓源码（由全局 gitignore 忽略，不在版本库里）。
+# `[实测]` 少了这条，`prettier --write .` 会**改写用户的 settings.local.json**。
+.claude/
+
 # shadcn/ui 复制进来的源码（ADR-002 决策 2 豁免）—— 保持与上游一致，便于 diff
 apps/web/src/components/ui/

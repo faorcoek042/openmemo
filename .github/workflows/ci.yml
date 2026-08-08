@@ -99,6 +99,41 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # 全仓格式门禁（format-debt 本轮）。
+      #
+      # ── 为什么它到今天才进来 ──────────────────────────────────────────────────
+      #
+      # `format:check` 从很早就在 `package.json` 里，却**从来没接进任何自动流程**。
+      # 不是忘了，是**接不进来**：`[实测]` 接之前全仓有 **508 个文件**不合格，
+      # 直接加这一步就是一条开局即红的门禁。判据是本仓反复吃过亏的那条：
+      # **一条永远红的守卫等于一条被删掉的守卫，而且会训练人忽略红灯。**
+      #
+      # 所以顺序是**先还债再上锁，且必须同一轮做完**：
+      # 只格式化不上锁，几天后烂回去；只上锁不格式化，就是造那条永远红的守卫。
+      # 还债那一步单独一个提交（纯格式化，`git blame` 时可以整跳过），本步骤是上锁那个。
+      #
+      # ── 为什么放在 Install 之后、Build 之前 ──────────────────────────────────
+      #
+      # 它只用到 node_modules 里的 prettier，不需要 build、不需要类型信息，
+      # 放最前面失败得最快。
+      #
+      # ★ 但**顺序不影响结论**这件事是花了力气买来的，不是天然的：
+      #   prettier **不读 `.gitignore`**（只读 `.prettierignore`），而
+      #   `apps/web/.test-out/` 这类目录**只在跑过测试之后才存在**。
+      #   `[实测]` 补 `.prettierignore` 之前：全仓格式化到干净 → 跑一次 `pnpm -r test`
+      #   → `format:check` 当场红 **95 个文件，其中 92 个是 `.test-out/`**。
+      #   即**同一棵树，跑没跑过测试会给出两种答案** —— CI 上绿、本地红，
+      #   而"本地红 CI 绿"训练人忽略红灯的效果和"永远红"是一样的。
+      #   已在 `.prettierignore` 里堵掉；被新忽略的**没有一个是版本库里的文件**
+      #   （`git ls-files` 对那几条 pattern 命中 **0**），所以门禁覆盖的源码一个没少。
+      #
+      # ⚠️ prettier 3.9.6 在本仓**不是一次收敛**的：有 3 个文件要跑**第二遍**
+      #   `pnpm format` 才到不动点（一个 blockquote 里的表格、一处 `_`/`*` 混用的
+      #   强调、一条 JS 链式调用）。本地跑完 `pnpm format` 后这里若仍红，
+      #   **再跑一遍 `pnpm format`** —— 那是 prettier 的非幂等，不是 CI 坏了。
+      - name: Format check
+        run: pnpm format:check
+
       # ★ `pnpm build:safe`，**不是 `pnpm -r build`**（PROTOCOL §7 补充）。
       #
       # 在 CI 上这条区别其实不要紧（runner 是一次性的），但**保持和本地同一条命令**
@@ -140,6 +175,12 @@ jobs:
       # 后三样上面已经各有一步了，直接调 `pnpm check` 会把 build 跑第二遍。
       # 这里只补真正缺的那一条。
       # （对账：`pnpm check` 的五个成员，此前只有 `check:orphans` 不在 CI 里，现在补齐。）
+      #
+      # ★ format-debt（本轮）更正上面这行对账：`pnpm check` 是**六个**成员，不是五个 ——
+      #   漏数了 `node scripts/check-version-sync.mjs`。结论不受影响（它确实有自动调用方，
+      #   是 `test:ci-scripts` 的第一个成员，见下面那一步），但**数目本身是错的**，
+      #   而这种"对完账的错账"最容易被下一个人照抄。逐条复核见
+      #   `coordination/inbox/format-debt.md`：六个成员今天全部有自动调用方。
       - name: Orphan-exports ratchet
         run: pnpm check:orphans
 
