@@ -99,10 +99,15 @@ jobs:
       # 要求同一条断言当场变红。红不了就说明这条腿看不见问题，整步失败。
       - name: 真浏览器点按钮 + 变异证明
         timeout-minutes: 30
-        env:
-          # 全局装的 playwright 不在仓库的 node_modules 里，显式指过去
-          PLAYWRIGHT_MODULE: /usr/lib/node_modules/playwright
+        shell: bash
         run: |
+          # ★ 全局安装的位置**不要写死**。`[CI 实测 run 31262130079]` 我写死了
+          #   /usr/lib/node_modules，而 setup-node 管理的 npm 全局前缀不在那儿，
+          #   于是这条腿红在「找不到 playwright」——脚本拒绝跳过是对的（§11），
+          #   但那次红是**我的路径错**，不是产品的问题。用 `npm root -g` 问出来。
+          export PLAYWRIGHT_MODULE="$(npm root -g)/playwright"
+          echo "PLAYWRIGHT_MODULE=$PLAYWRIGHT_MODULE"
+          test -d "$PLAYWRIGHT_MODULE" || { echo "::error::全局 playwright 不在 $PLAYWRIGHT_MODULE"; ls "$(npm root -g)"; exit 1; }
           node scripts/ci/e2e-browser-audit.mjs --port 19980
 
       # 失败时把现场留下来 —— 「点了没反应」这类问题，事后看日志远不如看截图
