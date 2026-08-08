@@ -302,6 +302,25 @@ const MUTATIONS = [
     why: '把要求 2.1 的死胡同种回去：硬件快照停在启动那一刻 ⇒ 用户在网页上装完加速后端，点"启用"得到 409「backend package not installed」，而包就是他刚装的',
   },
   {
+    id: 'M-mask-bypassed',
+    file: 'pipeline/dist/tools.js',
+    find: '            if (await isExecutable(candidate))\n                return candidate;',
+    replace:
+      "            if (await isExecutable(candidate))\n                return candidate.replace(/^.*$/, '/usr/local/host-only/' + exe(name));",
+    proves: ['A-NO-HOST-BORROW-REAL'],
+    phases: ['boot', 'diag'],
+    why: '产品绕过 shim、去够宿主机器上的东西 —— 这条腿最核心的前提（"干净机器上也能用"）当场失效，而没有这条断言它是静默的',
+  },
+  {
+    id: 'M-path-never-consulted',
+    file: 'pipeline/dist/tools.js',
+    find: 'const fromPath = async (name) => {',
+    replace: 'const fromPath = async (_name) => { if (1) return null;',
+    proves: ['A-MASK-EFFECTIVE'],
+    phases: ['boot', 'diag'],
+    why: '产品根本不查 PATH ⇒ 屏蔽**观测不到**。这正是本轮栽过的那种形态：屏蔽从来没生效，而输出与"生效了"一模一样',
+  },
+  {
     id: 'M-pointer-hardcoded',
     file: 'config/paths.js',
     find: "return process.env['OPENMEMO_POINTER_FILE'] ?? join(defaultDataDir(), 'datadir.json');",
@@ -2205,8 +2224,43 @@ async function phaseDiagnostics() {
    */
   const detailOf = (c) => String(c.detail ?? '');
   const onShim = borrowed.filter((c) => detailOf(c).includes(MASK_BIN));
-  const realHost = borrowed.filter((c) => !detailOf(c).includes(MASK_BIN));
+  /*
+   * ★★ 「包**自己带的**工具」不是「借宿主的」—— 这条判据被 0.4.0 那批包证伪了。
+   *
+   * ── 此前的预期，以及它为什么曾经成立 ────────────────────────────────────
+   *
+   * 原判据是：**selfcheck 归到 `warn`(来自 PATH) 且路径不在 shim 目录里 ⇒ 借了宿主的**。
+   * 它当时是对的，因为那个世界里**包里一个工具都不带** ——
+   * storeRoot 之外的路径必然来自宿主机器。
+   *
+   * ── 哪次改动让它过期 ────────────────────────────────────────────────────
+   *
+   * `[CI 实测 run 31272189218，三平台全中同一条]` 0.4.0 起
+   * **CPU 基线转写链随包出厂**，与探针共用一份 ggml，落在包内 `runtime/probe/`
+   * （`scripts/build-bundle.mjs:855-861` 明写把 `whisper-vad-speech-segments`
+   * 与 `whisper-cli` 塞进去，理由是"为了不长出第二份 ggml"）。于是：
+   *
+   *   ✘ A-NO-HOST-BORROW-REAL 屏蔽被绕过：tool.whisperVad →
+   *     <解压出来的包>/runtime/probe/whisper-vad-speech-segments
+   *
+   * 那个路径**在包里面**：既不是宿主的东西，也不是屏蔽被绕过 ——
+   * 就是产品自己带的那一份。**红的是判据，不是产品。**
+   *
+   * ── 判据改成什么（守的东西一个字没松）────────────────────────────────────
+   *
+   * 真正的"借宿主" = 解析到的路径**既不在 shim 里、也不在包里**。
+   * （storeRoot 里的 selfcheck 本来就归 `ok`，进不到 `borrowed`。）
+   * **产品去够宿主机器上的东西，仍然当场红。**
+   */
+  const inBundle = (c) => BUNDLE_DIR !== null && detailOf(c).includes(BUNDLE_DIR);
+  const fromBundle = borrowed.filter((c) => !detailOf(c).includes(MASK_BIN) && inBundle(c));
+  const realHost = borrowed.filter((c) => !detailOf(c).includes(MASK_BIN) && !inBundle(c));
   say('');
+  if (fromBundle.length > 0) {
+    say('');
+    say(`   ⓘ 包自己带的工具 ${fromBundle.length} 个（**不算借宿主**）：`);
+    for (const c of fromBundle) say(`      ${c.id} → ${detailOf(c).slice(0, 110)}`);
+  }
   say(`   ★ 借宿主工具几个：**${MASK ? onShim.length : borrowed.length}** 个`);
   say('     （屏蔽下它们落在 shim 上；不屏蔽的话，产品会去借的就是这几个：');
   say(
@@ -2231,11 +2285,11 @@ async function phaseDiagnostics() {
   if (MASK && tools.length > 0) {
     assert(
       'A-MASK-EFFECTIVE',
-      onShim.length > 0 || own.length === tools.length,
+      onShim.length > 0 || own.length + fromBundle.length === tools.length,
       onShim.length > 0
         ? `${onShim.length} 个工具解析到了 shim ⇒ 屏蔽确实传到 daemon 里了`
-        : own.length === tools.length
-          ? '所有工具都由产品自己提供（storeRoot 内），没有东西需要去 PATH 上找'
+        : own.length + fromBundle.length === tools.length
+          ? '所有工具都由产品自己提供（storeRoot 内或包内），没有东西需要去 PATH 上找'
           : '**没有任何工具落在 shim 上，产品也没有自己装齐** —— 屏蔽很可能压根没生效',
     );
   }
