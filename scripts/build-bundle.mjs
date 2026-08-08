@@ -781,7 +781,23 @@ async function assembleProbeRuntime() {
    *   要多花 13.6 MB，而对"能不能跑起来"这个判据没有增量。
    */
   const entries = await readdir(srcDir);
-  const isCore = (n) => /ggml-base/.test(n) || /^(lib)?ggml\.(so|dll|dylib)/.test(n) || /^(lib)?ggml\.so\./.test(n);
+  /*
+   * ggml **核心库**（`ggml` 与 `ggml-base`），三平台的命名各不相同：
+   *   linux   libggml.so · libggml.so.0 · libggml.so.0.15.1 · libggml-base.so.0.15.1
+   *   macOS   libggml.dylib · **libggml.0.dylib** · libggml-base.0.15.1.dylib   ← 版本在扩展名**前面**
+   *   win     ggml.dll · ggml-base.dll
+   *
+   * `[CI 实测 2026-08-08 run 31261013823]` 第一版只认 `libggml.so*` 那种形状，
+   * 于是 macOS 上漏掉了 `libggml.0.dylib`：包里只进了 6 个文件（linux 是 8），
+   * **三条文件存在性断言全绿**（ggml-base 在、CPU 模块在），
+   * 而 `verify-bundle.sh` 里那条「**真的跑一次**」当场红：
+   *     dyld: Library not loaded: @rpath/libggml.0.dylib
+   * —— 这正是那条断言存在的理由：**存在 ≠ 能跑**。
+   *
+   * 版本段只允许数字/点/连字符，所以 `libggml-cpu-x64.so` / `libggml-cpu.so`
+   * （含字母的后端后缀）不会被误判成核心库。
+   */
+  const isCore = (n) => /^(lib)?ggml(-base)?[-.0-9]*\.(so|dylib|dll)(\.[0-9.]+)?$/.test(n);
   const cpuMods = entries.filter((n) => /ggml-cpu/.test(n));
   const chosenCpu = cpuMods.find((n) => /ggml-cpu-x64/.test(n)) ?? cpuMods[0];
   if (!chosenCpu) die(`${T.probePackId} 里一个 ggml-cpu 模块都没有 —— 探针会枚举出 0 个设备`);

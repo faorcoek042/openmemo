@@ -12,6 +12,20 @@
 #
 # It is deliberately a SEPARATE EXECUTABLE, not an N-API addon: with no CPU backend
 # present ggml calls ggml_abort() and the process dies with SIGABRT (measured: exit 134).
+#
+# ★ 订正（2026-08-08，`prebuilt`，PROTOCOL §13：谁发现原文不实谁就地改）
+#   上面那句**按字面读是不成立的**。`[本机实测 2026-08-08]` 把探针与 ggml 核心
+#   （libggml-base + libggml）单独放一个目录、**一个后端模块都不给**，然后直接跑：
+#       exit 0 · {"deviceCount": 0, "devices": []}
+#   —— **没有 abort，正常退出并如实报告"我一个设备都没枚举到"**。
+#   （ggml 0.15.1 / commit f049fff9；来源是钉死校验过的 whispercpp-cpu-linux-x64 归档。）
+#
+#   ⚠️ 但这**不推翻**"独立进程而非 N-API"这个决策，也不推翻 probe.c:18 那句更窄的话
+#   （它说的是 `ggml_backend_dev_backend_reg()` 里对**已枚举到的设备**取 reg 时会
+#   abort，而上面这次实测 deviceCount=0，那条路径根本没走到 —— **没测到 ≠ 证伪**）。
+#   GPU 驱动故障导致进程整个死掉这一条仍然成立，独立进程仍然是对的。
+#   这里订正的只是"没有 CPU 后端就必然 exit 134"这个**过宽**的说法 ——
+#   它恰好是"包里只带一个 CPU 模块的最小探针运行时"能否成立的前提（ADR-015 §7.5）。
 # In-process, that would kill the daemon.
 #
 # Usage:

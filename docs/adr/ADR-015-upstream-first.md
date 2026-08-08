@@ -144,3 +144,82 @@ supersedes: ADR-003 决策 2（自建 whisper.cpp CI）的适用范围
 并且这四个例外 id 必须各自带着 `sha256Provenance` 里那段理由。
 少了理由会当场红 —— 免得哪天有人"顺手统一"把它们改回上游，
 而那件事的后果（硬件探测全线失效）在界面上是**静默**的。
+
+### 7.5 订正（2026-08-08，`prebuilt` 就地改，Manager 当轮授权）：§7 是对的，但**不完整**
+
+§7.2 的三条实测事实**今天逐条复核，全部仍然成立**
+（`[本机实测 2026-08-08]` `objdump -p openmemo-probe` 仍是
+`NEEDED libggml-base.so.0 · NEEDED libggml.so.0 · RUNPATH $ORIGIN`）。
+**这一节的结论没有被推翻。** 被订正的是它**漏掉的那一半**。
+
+#### 漏掉的那一半：探针只在**装完包之后**才存在
+
+~~上游 `ggml-org` 的归档里永远不会有我们的探针 ⇒ 探针只能随包出厂。~~
+→ 前半句仍然对；**后半句少说了一句「那用户装包之前怎么办」**。
+
+`[用户真机实测 2026-08-08, Windows, v0.3.0]` 用户下载 zip、解压、运行，
+**本机组件页六个后端全部**报：
+
+```
+probe did not complete: probe executable not found:
+  C:\Users\...\AppData\Roaming\OpenMemo\bin\runtime\openmemo-probe.exe
+```
+
+`[本机复现 2026-08-08, linux-x64, 全新空数据目录]` 六行一模一样。
+
+**这是一个环**：探针随 whisper 包出厂 → 可用户**要先探测硬件才知道该装哪个包**。
+章程要求 2.1「网页检测硬件 → 推荐后端」那一步，在**任何包都还没装的时候**
+恰恰是最需要的 —— 而那正是它唯一不可用的时候。
+
+**CI 为什么没撞到**：`e2e-runtime` 那条腿自己调
+`POST /api/backends/install` **直接指定包 id** 去装，**跳过了「探测→推荐」这一步**。
+产品最常见的第一屏，此前没有任何一条 CI 腿走过。
+
+#### 订正后的形状：**随包出厂 + 预编译包自带一份最小的兜底**
+
+预编译包（D-17）现在自带 `runtime/probe/`：探针 + ggml 核心 + **一个** CPU 后端模块。
+`[本机实测 2026-08-08]` 共 **1,681,444 B（1.60 MiB）**，包体 176.3 → **178.0 MiB**。
+来源是**已经钉死并校验过的** `whispercpp-cpu-*` 归档（manifest 的 sha256），
+**没有新开获取通道**，也没有引入第二份 ggml 来源 —— §4 决策 1/3 不受影响。
+
+**它排在探针查找顺序的最后一位**，这一点是本次订正里最要紧的约束：
+
+```
+OPENMEMO_PROBE > <dataDir>/bin/runtime > 已安装的后端包 > 包内兜底
+```
+
+因为 `backendDir = dirname(probePath)`（§7.2 第 2 条），而包内那个目录**只有 CPU 模块**。
+它一旦排到已安装后端包**前面**，用户装完 Vulkan 包之后探针仍会去扫包内目录，
+于是「**装了却检测不到**」—— 那比原来的 bug 更糟，因为它发生在用户**以为已经装好之后**。
+
+#### 它**不能**回答什么（写下来，别让下一个人以为环已经全解开了）
+
+**「验证后端 X 能用」在装 X 之前结构上无解。** `libggml-cuda.so` 本身就有 564 MB ——
+那正是用户要决定装不装的东西。包内探针只能枚举 CPU。
+
+但这**不是**静默降级：`packages/runtime/src/backends/manager.ts` 的判定链是
+`!probe.ok` → `!installed` → `!probed` → …，**`installed` 排在 `probed` 之前**。
+所以探针一旦跑得起来，未装的后端得到的是
+**`backend package not installed`** —— 一句真话，既不是带内部路径的
+`probe did not complete`，也不是「你没有 CUDA」这种自信的假阴性。
+
+`[本机实测 2026-08-08，同一个空数据目录，前后对比]`
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| cuda / vulkan / rocm / metal / coreml | `probe did not complete: probe executable not found: …` | **`backend package not installed`** |
+| cpu | 同上 | **`available=true probed=true`** |
+
+顺带买到的一件事：ADR-003 决策 3 的 **L1「内置 CPU 后端 · 永不失败的兜底」
+此前从来没有被真正验证过**（没有探针 ⇒ CPU 这一档也只是推断）。现在它是实测的。
+
+#### 守卫
+
+`scripts/ci/verify-bundle.sh` 加了 4 条（26 → 30）：探针在 / ggml 核心在 /
+有 CPU 模块 / **同平台时真的跑一次且 `deviceCount ≥ 1`**。
+`scripts/ci/diagnose-probe-bootstrap.mjs` 进了三条打包腿：
+空数据目录 + 什么都不装，**任一后端报 `probe did not complete` 即失败**。
+
+`[反向验证，/tmp 隔离副本，PROTOCOL §10]` 抽掉探针 → 红；抽掉 `libggml-base` →
+**「探针跑不起来」**（文件存在性检查会放行，只有真跑那一条抓得到）；
+抽掉 CPU 模块 → 红；还原 → 绿。
