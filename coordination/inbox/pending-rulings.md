@@ -278,3 +278,138 @@
   调用数做的判断，没有逐行分离注释与 JSX 文本）；D-09 §6 #6；D-10 §8-D1 的建议 ②
   （daemon 是否已让 `llm.providers` 成为唯一清单）。
 - `UNKNOWN`：`windows-2022/cuda` 的保留理由 —— 全历史只有 3 个 commit 命中且从未改过。
+
+---
+
+## [2026-08-08 23:55] 裁决 ② / ③ 执行 DONE
+
+提交 `4c94775`（代码）+ 本条回执。门禁在隔离 worktree 检出 `4c94775` 上跑：
+**`pnpm -r test` 1589 pass / 0 fail**（基线 1578 + 我新增 11 条）、`tsc -b`、`eslint`、
+`format:check`、`check:orphans` **70/70**、`lint-workflows` 1292 全绿。
+
+### ② macOS 分层下限 —— 三档实际文案（真实输出，不是我编的）
+
+判定逻辑做成纯函数后，我用注入版本号真跑了一遍 `runSelfCheck`，以下是**原样复制**：
+
+**macOS 13.3（我们承诺的下限）—— 两项都 `warn`**
+
+```
+[warn] os.macos.semanticSearch  required=false
+ zh: 你的 macOS 是 13.3，低于 14.0 —— 语义检索与混合检索用不了（关键词全文检索不受影响，
+     仍然可用）。这不是故障，也不是你配错了：sqlite-vec v0.1.9 官方 macos-aarch64 产物的
+     minos = 14.0.0，而本产品承诺的下限是 13.3，所以这台机器上核心功能（转写、播放、笔记、
+     中文全文检索）全都正常。
+ en: Your macOS is 13.3, below 14.0 — semantic and hybrid search are unavailable (keyword
+     full-text search still works). This is not a fault and not a misconfiguration: the
+     official sqlite-vec v0.1.9 macos-aarch64 build has minos = 14.0.0. Core features
+     (transcription, playback, notes, Chinese full-text search) work fine here.
+ 补救: 升级到 macOS 14.0 或更高即可启用；不升级也不影响核心功能
+[warn] os.macos.streamingAsr  —— 同形，下限 15.5，丢的是「录音实时字幕」
+     （录完之后的整段转写不受影响）
+```
+
+**macOS 14.6 —— 语义检索回来了，流式 ASR 仍 `warn`**
+
+```
+[ok]   os.macos.semanticSearch : macOS 14.6 ≥ 14.0，语义 / 混合检索（sqlite-vec）可用
+[warn] os.macos.streamingAsr   : 你的 macOS 是 14.6，低于 15.5 —— 录音实时字幕用不了…
+```
+
+**macOS 15.5+ —— 两项都 `ok`**
+
+```
+[ok] os.macos.semanticSearch : macOS 15.5 ≥ 14.0，…可用
+[ok] os.macos.streamingAsr   : macOS 15.5 ≥ 15.5，…可用
+```
+
+**版本取不到 —— `warn`，但说的是"取不到"**
+
+```
+[warn] zh: 没能取到 macOS 系统版本，无法判断 语义 / 混合检索（sqlite-vec） 是否可用（需要 ≥ 14.0）
+       补救: 手动核对：终端跑 sw_vers -productVersion，低于 14.0 则该功能不可用
+```
+
+#### 我选了 `warn` + `required:false`，理由
+
+CLI 退出码的规则是 `status === 'fail' && required`（`scripts/selfcheck.mjs:493`）。
+
+- 在一台 13.3 的 Mac 上「语义检索不可用」**是事实，不是故障** —— 那台机器**完全符合
+  我们对外承诺的下限**。报 `fail` 会让它自检退出码变 1，
+  即**你点名不许的"会常态变红的门禁"**，而常态红等于训练所有人忽略它。
+- `warn` 永远不参与红绿，所以这两项**不会**让任何一条 CI 腿变红。
+- **取不到版本也用 `warn`**，但文案完全不同：说"没能取到，无法判断"，
+  并给出手动核对命令。**不假设够新**（那会把洞盖回去）、**不假设太旧**（那是假警报）。
+- **非 darwin 上这两项根本不出现**（与 `asr.coreml` 同一条规矩）—— 一个在 Linux 上
+  永远 ok 的检查项是纯噪音。
+
+#### 在 Linux 上怎么验的 / 什么没验
+
+判定被拆成纯函数 `evaluateOsFloors(floors, productVersion)`，**11 条测试**覆盖：
+13.3 / 14.0 / 14.6 / 15.5 / 15.4.9 / 26.0 / null / 空串 / 非数字。
+两条**边界**单独钉：`15.5.0` 必须算达标（写成 `>` 会把一台正常机器报成不可用）。
+
+- `[未验证:需真 Mac]` —— **"一台真 13.3 的 Mac 上自检确实打印这段话"**。
+  托管 runner 给不了 13.3 的 macOS，这一格结构上验不了；但判定逻辑有人守。
+- Darwin→macOS 用**查表不用公式**：Apple 在 Darwin 25 把产品号从 16 跳到 **26**，
+  任何"加 11"的算法都会在那里算错，**而算错的结果是一个看起来很确定的错版本号**。
+  未知一律回 `null`，让上层如实说"取不到"。
+
+### 同形的其它下限：我找到几条
+
+**一条同族、一条结构上不可能有、一条 UNKNOWN。**
+
+| 平台        | 结论                                                                                                                                                                                   |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **macOS**   | 2 条（本轮已做）                                                                                                                                                                          |
+| **Linux**   | **结构上今天不可能有缺口**：`check-elf-glibc.mjs --dir <整个包> --max 2.34` 是对**整包**跑的，而 2.34 正是我们承诺的下限 ⇒ 包里任何一个 ELF 都不可能高于承诺。所以没有对应自检项，不是漏了 |
+| **Windows** | ⚠️ **同族，且今天完全没有测量** —— `build-bundles.yml` 自己写着「Windows 上没有 ELF / Mach-O 守卫可跑」。VC++ 2015-2022 只写在 `docs/DEPLOYMENT.md`，**没有任何打包期测量、也没有运行时自检** |
+
+Windows 那条我**没有做**，理由是不能猜：要给它一个诚实的自检项，先得知道包里每个 DLL
+到底要哪个 VC++ 版本，而**今天没有任何东西在量它**。`[未验证]` 它是否真的静默
+（`DEPLOYMENT.md:698` 暗示缺 VC++ 时会有加载错误，那可能是"响亮"的）。
+→ **建议单独派一轮**：先量（打包期加 Windows 侧守卫），再决定要不要自检项。
+我在 `osFloors.ts` 的注释里写明了「这里没有 Windows 项是已知未做，不是漏了」。
+
+### ③ 逐条处置
+
+**`<option>system</option>` 硬编码 —— 顺手修了。** 3 个键 + 3 行 JSX
+（`app.themeSystem/themeLight/themeDark`，中英都加）。它旁边的标签「主题」本来就是
+翻译过的，用户看到的是半截中文。代价确实成比例。
+
+**`settings/:section` 五个 section 渲染同一页 —— 不修，已在 D-09 §6 的复核块里写明理由。**
+拆页要动路由结构 + 五个 section 的挂载，属 `architect` 的骨架；
+而它今天**没有用户可见故障**（每个 section 都到得了、内容都在）。
+按 §13 我已经把它从"待裁决"改成有明确判定的条目，不再挂着"请裁决"的样子。
+
+**`models-llm.json` 今天到底影响了什么 —— 答案：`[实测]` 用户看不到，但 API 还发着。**
+
+- 服务端：`manifests.ts` 已改成**列目录加载所有 `*.json`**，所以这 5 条
+  （`llm/qwen3-4b-q4_k_m` 等）**确实进了 `/api/models/catalog` 的响应**，服务端无过滤。
+- 前端：`ModelsPage.tsx:73` 的 `ASR_TAB_ROLES = ['asr','vad','punctuation']` 把它们**滤掉了**，
+  转写 Tab 上一条都不显示；语言模型 Tab 显示的是在线 provider，不是这些 GGUF 权重。
+- ⇒ **今天没有用户可见缺陷**。但它是一条**活着的 API 面**：
+  `POST /api/models/pull` 直接喂 `llm/qwen3-8b-q4_k_m` 仍然能下载一个 ADR-016 已经砍掉的东西，
+  而且任何客户端（或哪天有人把 role 白名单放宽）都会把它显示出来。
+  **所以这是"一条该被写清的历史 + 一个待收口的 API 面"，不是今天的故障。**
+  D2 的范围问题（停用 manifest 还是只隐藏）**仍然需要你裁**，我没有替你定。
+
+**`nav.runtime` 仍是"运行时" —— 说清它到底哪里不对：其实没有"不对"。**
+D-10 §8-D3 的原意是**用词偏好**："运行时"是工程师词汇，建议改叫"本机组件"，
+**路由 `/runtime` 不改**。也就是说：**没有任何东西是坏的**，
+它是一次产品命名判断，需要的是"要不要改这个词"的一句话，不是修复。
+我按原样保留并在 D-10 的复核块里写明了这一点。
+
+### 边界申报
+
+- **没碰** `README.md` / `docs/DEPLOYMENT.md` / `docs/SECURITY.md` —— `docs-sync` 正在改。
+  ⚠️ `prettier --check .` 报 `docs/DEPLOYMENT.md` 未格式化，**那是他工作区里的未提交改动，
+  我刻意没有 `--write` 它**（格式化会把他的东西带进我的提交）。我的文件全部已格式化。
+- **没碰** `.github/workflows/**` —— 另一位在接凭证。
+- 本轮我动的 `docs/`：**零**（上一轮动的 5 份已提交，本轮只动代码 + 本回执）。
+- 没碰 `:10000`、`/root/data-memo`、机器级指针；没用 `pkill -f`；没建/改/删 release。
+
+### 诚实标记
+
+- `[未验证:需真 Mac]`：13.3 真机上的实际打印。
+- `[未验证]`：Windows 缺 VC++ 时的失败是否**静默**（DEPLOYMENT 暗示有加载错误）。
+- `UNKNOWN`：包里各 DLL 各自要求的 VC++ 版本 —— **今天没有任何东西在量它**。
