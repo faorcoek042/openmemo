@@ -134,7 +134,18 @@ jobs:
           echo "── 取到的东西 ──"
           ls -l dist/e2e-src
 
-          ARCHIVE=$(ls dist/e2e-src/*.tar.xz dist/e2e-src/*.zip dist/e2e-src/*.tar.gz 2>/dev/null | head -1)
+          # ★ 不要写成 `ARCHIVE=$(ls a b c 2>/dev/null | head -1)`。
+          #   `[CI 实测 run 31247156655]` 三个平台**全部**死在那一行：
+          #   三个 glob 里必然有两个匹配不到，`ls` 因此以非零退出，
+          #   而 `set -e` 让赋值语句当场把整步带走 —— 退出码正好是
+          #   linux/windows 的 `ls` 用 2、macOS 的 BSD `ls` 用 1，
+          #   与三条腿观察到的 2/1/2 逐一对上。`2>/dev/null` 只吞了**信息**，
+          #   没吞掉**退出码**，于是这一行看起来是防御性的，实际是引爆点。
+          #   （这条 workflow 自己就是"从来没被执行过所以看起来没问题"的又一例。）
+          ARCHIVE=""
+          for f in dist/e2e-src/*.tar.xz dist/e2e-src/*.tar.gz dist/e2e-src/*.zip; do
+            if [ -f "$f" ]; then ARCHIVE="$f"; break; fi
+          done
           if [ -z "$ARCHIVE" ]; then
             echo "✘ artifact 里没有包归档（*.tar.xz / *.zip / *.tar.gz）"
             exit 1
