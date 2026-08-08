@@ -83,7 +83,7 @@
     "actions": "更多操作",
     "delete": "删除",
     "deleteConfirm": "删除「{{title}}」？",
-    "deleteHint": "删除后它不再出现在列表与搜索里；当前界面上没有恢复入口。",
+    "deleteHint": "删除后它不再出现在列表与搜索里；删完可以立刻撤销（数据是软删除，不会被真的抹掉）。",
     "export": "导出",
     "exportFormats": {
       "txt": "纯文本 (.txt)",
@@ -99,7 +99,10 @@
     "shownOfTotal": "已显示 {{shown}} / {{total}} 条",
     "loadMore": "加载更多",
     "loadingMore": "加载中…",
-    "allLoaded": "共 {{total}} 条，已全部显示"
+    "allLoaded": "共 {{total}} 条，已全部显示",
+    "deleted": "已删除",
+    "undo": "撤销",
+    "undoFailed": "撤销失败"
   },
   "models": {
     "title": "模型管理",
@@ -543,6 +546,10 @@
       "title": "与本地服务的连接已失效",
       "detail": "通常是本地服务重启过。点「重新连接」即可，无需重开浏览器。",
       "action": "重新连接"
+    },
+    "NOT_IMPLEMENTED": {
+      "title": "「测速」还没有实现",
+      "detail": "真实的速度要在你这台机器上跑一次推理才算数，而这一步还没接通。产品不会拿论文或厂商标称的数字充数 —— 所以这里宁可空着，也不给你一个假的。"
     }
   },
   "common": {

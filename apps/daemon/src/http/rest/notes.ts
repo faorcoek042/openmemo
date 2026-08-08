@@ -346,6 +346,50 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
       }
 
       // ---- GET /api/notes ----
+      /*
+       * ---- POST /api/notes/:uid/restore —— 撤销删除 ----------------------------------
+       *
+       * **必须排在按 uid 取笔记的那一段之前**，理由是结构性的：
+       * 那一段用 `repos.noteByUid()`，而它**按设计查不到已删的**
+       * （`... AND deleted_at IS NULL`，那条过滤是对的，不改）。
+       * 恢复要处理的恰恰是"已删"的那一条 —— 走那条路必然 404，
+       * 于是这个端点会变成一个**永远够不到的实现**。
+       *
+       * 这条路径存在的理由见 `repos.restoreNote()` 的注释：
+       * 在它之前全 daemon 零 restore 路径，「软删除」只兑现了"软"字的前一半。
+       */
+      const restoreMatch = /^\/api\/notes\/([^/]+)\/restore$/.exec(p);
+      if (restoreMatch && method === 'POST') {
+        const uid = decodeURIComponent(restoreMatch[1] ?? '');
+        const ok = repos.restoreNote(uid);
+        if (!ok) {
+          // 分不清"没这条"和"它本来就没被删"时，**不要编一个成功** —— 两种都给 404 并说清楚。
+          sendError(
+            res,
+            404,
+            'NOTE_NOT_FOUND',
+            `no deleted note ${uid}`,
+            '没有找到这条已删除的笔记（可能它从未被删除，或者已经被恢复过了）',
+          );
+          return true;
+        }
+        const restored = repos.noteByUid(uid);
+        sse.publish(
+          makeEvent('note.updated', topics.note(uid), {
+            noteUid: uid,
+            /*
+             * `changed` 的取值是契约里钉死的 6 个（`shared/events.ts:441`），
+             * 没有"deleted_at"这一档 —— **不擅自往契约里加值**（那要改 shared，
+             * 是别人的地界，且会波及所有消费方）。用 `title`：
+             * 恢复之后列表里重新出现的正是这条笔记的标题，消费方据此重拉是对的。
+             */
+            changed: ['title'],
+          }),
+        );
+        sendJson(res, 200, { ok: true, uid, title: restored?.title ?? null });
+        return true;
+      }
+
       if (p === '/api/notes' && method === 'GET') {
         const limit = Math.min(200, Number(url.searchParams.get('limit') ?? 50) || 50);
         /*

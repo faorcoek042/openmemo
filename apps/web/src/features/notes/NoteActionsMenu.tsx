@@ -5,7 +5,7 @@ import { MoreHorizontal } from 'lucide-react';
 import { Button } from '../../components/common/Button';
 import { surfaceState } from '../../lib/api/surfaces';
 import type { NoteDetail } from '../../lib/api/types';
-import { useDeleteNoteMutation, useRenameNoteMutation } from './api';
+import { useDeleteNoteMutation, useRenameNoteMutation, useRestoreNoteMutation } from './api';
 
 /**
  * 笔记的「重命名 / 删除」入口（T-155）。
@@ -38,12 +38,20 @@ export function NoteActionsMenu({ note }: { note: Pick<NoteDetail, 'uid' | 'titl
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   /** 'menu' = 两个入口；'rename' = 输入框；'delete' = 二次确认。 */
-  const [mode, setMode] = useState<'menu' | 'rename' | 'delete'>('menu');
+  /*
+   * `'deleted'` 是 T-? 本轮新增的一档：删完**不立刻收起**，先给一次撤销的机会。
+   * `useDeleteNoteMutation` 的注释从一开始就写着「配合 Toast 的「撤销」」——
+   * 而在 `POST /api/notes/:uid/restore` 落地之前，那句话**没有任何东西兑现它**：
+   * 全 daemon 零 restore 路径，删掉的笔记永远留在盘上、用户永远拿不回来、
+   * 而且看不出它还在。Manager 2026-08-08：**软删除之所以叫"软"，就是因为它可逆。**
+   */
+  const [mode, setMode] = useState<'menu' | 'rename' | 'delete' | 'deleted'>('menu');
   const [draft, setDraft] = useState(note.title);
   const boxRef = useRef<HTMLSpanElement | null>(null);
 
   const del = useDeleteNoteMutation();
   const rename = useRenameNoteMutation();
+  const restore = useRestoreNoteMutation();
 
   // daemon 不可达时这两件事都做不成 —— 与其给一个点了没反应的按钮，不如禁用
   // （与 ExportMenu 同一条判断，理由也一样）。
@@ -85,7 +93,14 @@ export function NoteActionsMenu({ note }: { note: Pick<NoteDetail, 'uid' | 'titl
      * 详情页那边靠 `note.deleted` SSE + 查询失效自然回到"笔记不存在"，
      * 在这里硬写一个 `navigate('/notes')` 会让列表行用它的时候莫名其妙跳走。
      */
-    del.mutate(note.uid, { onSettled: close });
+    /*
+     * 成功后切到 `'deleted'` 而不是 `close()` —— 撤销的入口必须**出现在他刚动手的地方**。
+     * 失败仍然收起（错误由 mutation 自己的状态呈现，与本轮 ① 同一条规矩：不许静默失败）。
+     */
+    del.mutate(note.uid, {
+      onSuccess: () => setMode('deleted'),
+      onError: () => close(),
+    });
   };
 
   return (
@@ -162,12 +177,41 @@ export function NoteActionsMenu({ note }: { note: Pick<NoteDetail, 'uid' | 'titl
             </div>
           ) : null}
 
+          {mode === 'deleted' ? (
+            <div className="px-3 py-2" data-testid="note-deleted-undo">
+              {/*
+                撤销的入口**出现在他刚动手的地方** —— 不是另建一个回收站页面。
+                回收站也可以做，但那是更大的一块；而"删错了立刻能回来"是这条路上
+                最先需要、也最便宜的那一半。
+              */}
+              <p className="text-xs text-ink">{t('notes.deleted')}</p>
+              <div className="mt-2 flex justify-end gap-1.5">
+                <Button size="sm" variant="ghost" onClick={close}>
+                  {t('common.close')}
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={restore.isPending}
+                  onClick={() => restore.mutate(note.uid, { onSuccess: close })}
+                  data-testid="note-restore"
+                >
+                  {t('notes.undo')}
+                </Button>
+              </div>
+              {/* 撤销失败也不许静默 —— 与本轮 ①「测速」同一条规矩 */}
+              {restore.isError ? (
+                <p className="mt-1 text-[11px] text-critical">{t('notes.undoFailed')}</p>
+              ) : null}
+            </div>
+          ) : null}
+
           {mode === 'delete' ? (
             <div className="px-3 py-2">
               {/*
-                说"删除后不可在界面里恢复"而不是"永久删除"：DB 里是软删除（`deleted_at`），
-                说成永久是不实；但当前**确实没有任何恢复入口**，说成"可恢复"更糟。
-                照实说它现在是什么样。
+                ⚠️ 这段文案**本轮改过**。原文写的是「当前界面上没有恢复入口」——
+                那句话当时是**实话**（全 daemon 零 restore 路径），
+                但 `POST /api/notes/:uid/restore` 与下面那个「撤销」落地之后它就不实了。
+                留着不改，就是把一句过期的话继续说给用户听（PROTOCOL §13 同一条）。
               */}
               <p className="text-xs text-ink">{t('notes.deleteConfirm', { title: note.title })}</p>
               <p className="mt-1 text-[11px] text-ink-muted">{t('notes.deleteHint')}</p>

@@ -288,6 +288,25 @@ export function useDeleteNoteMutation() {
   });
 }
 
+/**
+ * 撤销删除 —— `useDeleteNoteMutation` 上面那句注释里的「撤销」，**现在真的有了**。
+ *
+ * 在 `POST /api/notes/:uid/restore` 落地之前，全 daemon 零 restore 路径：
+ * 删掉的东西永远留在盘上、用户永远拿不回来、而且看不出它还在。
+ * Manager 2026-08-08：**软删除之所以叫"软"，就是因为它可逆。**
+ */
+export function useRestoreNoteMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (noteUid: string) =>
+      api<{ ok: true; uid: string }>('notes', `/notes/${noteUid}/restore`, { method: 'POST' }),
+    onSuccess: (_d, noteUid) => {
+      void qc.invalidateQueries({ queryKey: qk.notes.all });
+      void qc.invalidateQueries({ queryKey: qk.notes.detail(noteUid) });
+    },
+  });
+}
+
 export function useRenameNoteMutation() {
   const qc = useQueryClient();
   return useMutation({

@@ -184,7 +184,18 @@ export default function ModelDetailPage() {
               size="sm"
               variant="secondary"
               disabled={!installedRec || benchmark.isPending}
-              onClick={() => void benchmark.mutateAsync(variant.id)}
+              /*
+               * ★ `mutate` 而不是 `void mutateAsync` —— 这不是风格问题。
+               *
+               * `void mutateAsync(...)` 把 promise 的 rejection **丢掉**：服务端此刻回的是
+               * 501（基准测试要在本机真跑推理，ADR-004 决策 3 禁止编造数字，所以宁可不实现），
+               * 而用户点下去**什么都不会发生** —— 按钮看起来是坏的。
+               * `[用户实测 2026-08-08]` 这正是他报的三条之一「点测速完全没反应」。
+               *
+               * 判据（Manager 2026-08-08）：**不许静默失败。** 要么发生该发生的事，
+               * 要么让他看到一句能读懂的话。501 是当前的正确状态，那就如实说出来。
+               */
+              onClick={() => benchmark.mutate(variant.id)}
               data-testid="model-benchmark-button"
             >
               <Gauge className="size-3.5" aria-hidden />
@@ -193,6 +204,11 @@ export default function ModelDetailPage() {
             {!installedRec ? (
               <p className="text-xs text-ink-muted">{t('models.detail.benchNeedsInstall')}</p>
             ) : null}
+            {/*
+              失败必须渲染出来。文案按 `code` 查 `errors.<CODE>`（i18n/index.ts:13 的既定规矩），
+              服务端的 message 只作未知 code 的兜底 —— 501 的 code 是 `NOT_IMPLEMENTED`。
+            */}
+            {benchmark.isError ? <ErrorBlock error={benchmark.error} /> : null}
           </div>
         )}
       </section>

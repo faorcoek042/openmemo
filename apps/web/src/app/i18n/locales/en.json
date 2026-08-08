@@ -83,7 +83,7 @@
     "actions": "More actions",
     "delete": "Delete",
     "deleteConfirm": "Delete \"{{title}}\"?",
-    "deleteHint": "It will disappear from lists and search. There is no restore action in the UI today.",
+    "deleteHint": "It will disappear from lists and search; you can undo it right after (the row is soft-deleted, not erased).",
     "export": "Export",
     "exportFormats": {
       "txt": "Plain text (.txt)",
@@ -99,7 +99,10 @@
     "shownOfTotal": "Showing {{shown}} of {{total}}",
     "loadMore": "Load more",
     "loadingMore": "Loading…",
-    "allLoaded": "All {{total}} shown"
+    "allLoaded": "All {{total}} shown",
+    "deleted": "Deleted",
+    "undo": "Undo",
+    "undoFailed": "Undo failed"
   },
   "models": {
     "title": "Model management",
@@ -543,6 +546,10 @@
       "title": "The session with the local service expired",
       "detail": "Usually the local service restarted. Click Reconnect — no need to reopen the browser.",
       "action": "Reconnect"
+    },
+    "NOT_IMPLEMENTED": {
+      "title": "Benchmarking is not implemented yet",
+      "detail": "A real speed number has to come from running inference on your own machine, and that step is not wired up yet. The product will not fill it in with numbers from a paper or a vendor page — better blank than fake."
     }
   },
   "common": {
