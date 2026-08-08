@@ -765,3 +765,125 @@ build-bundles run 31249135458   conclusion = success
 3. `e2e-import` / `e2e-runtime` 各自 dispatch 一次，把共享脚手架那一步收口。
 
 需要 Manager 决策: 上面三条的归属。
+
+---
+
+## [2026-08-08 20:10] `…IncludingDeleted` 显式改名 + D-11 考古 DONE
+
+交付:
+
+- `apps/daemon/src/db/repos.ts`（拆成过滤版 + 显式变体）
+- `apps/daemon/src/db/repos.softDelete.test.ts`（不对称改钉在新名字上，+1 条）
+- `main.ts` / `mindmap.ts` / `transcribe.ts` / `organize.ts` / `content.ts`（各自写下理由）
+- `docs/design/D-11-ci-platform-facts.md`（考古路径，**结论仍是 UNKNOWN**）
+- commit `270b1b0`（改名）、`40ed4ab`（D-11）
+
+### 一、回报重点：**改完之后变异 C 还红不红 → 红**
+
+变异 C 的**性质**没变，只是挪到了新名字上（原 C 打的是 `noteById`，
+而现在"过滤 `noteById`"已经是**正确行为**了）。`/tmp` 隔离副本实测：
+
+```
+对照组（未变异）                                  pass 7 / fail 0
+C′ 把 noteByIdIncludingDeleted 也「顺手统一」成过滤   fail 1   ← 原 C 的等价体，**仍然红**
+D  把 folderByIdIncludingDeleted 统一成过滤          fail 1
+E  把过滤版 noteById 放宽回去（默认不再安全）        fail 1   ← 新增的那一侧
+还原后对照组                                      pass 7 / fail 0
+```
+
+⚠️ **C′ 与 E 必须同时存在**，这是这次新学到的一点：
+只有 C′ 时，把 `noteById` 也做成宽容的**仍然全绿**；
+只有 E 时，把两个都做成过滤的**也全绿**。
+两条一起才钉住「**一个宽容、一个安全，而且各自是哪一个**」——
+单钉一侧只能证明"有过差别"，证明不了"差别在哪一边"。
+
+隔离副本跑完已清理，共享树未被污染。
+
+### 二、四个合法消费者，各自的理由（不是"历史如此"）
+
+| 消费者 | 用哪个 | 理由 |
+| --- | --- | --- |
+| `main.ts` job→标题（×3） | **IncludingDeleted** | **job 的生命期比笔记长。** 用户能在 job 还排队时删掉笔记，而那条 job 仍在任务中心 —— 标题变空白的话，用户根本认不出这条失败任务是哪来的。 |
+| `folderAncestorIds()` 环检测 | **IncludingDeleted** | 它问的是「**库里**这条 parent 链有没有环」，不是「用户看得见的树上有没有环」。被已删节点挡住 = 提前停在链中间，**真实存在的环会被判成"没有环"**——而那正是这个函数存在的理由（D-02 §1.3）。**这里读已删行不是宽容，是正确性。** |
+| `softDeleteFolderTree()` / `folderSubtreeIds()` | 自己的递归 SQL | 它们**就是删除路径本身**，必须能重扫一棵已删子树（`markDeleted` 带 `AND deleted_at IS NULL` 保证幂等）。**不经过这两个函数**，所以不受本次改名影响。 |
+| 插入后回读（`createNote`/`createFolder`/`updateFolder`）、`content.ts` 回读 | **过滤版** | 刚写的行必然未删；`content.ts` 那条笔记刚在同一函数开头由 `noteByUid` 验过。**没有理由要宽容版。** |
+
+顺带把另外三处也**明确**改到过滤版并写下理由（此前它们只是"碰巧"用了宽容版）：
+
+- 两个 job runner（`mindmap` / `transcribe`）：**不为一条用户已删的笔记做工** ——
+  继续跑既浪费算力，产物也永远没人看得到（列表与搜索都已排除它）。
+  这是**行为变更**：笔记在排队期间被删 → job 现在会失败而不是照常跑完。
+- `organize.ts` 的 `parentUidOf`：父文件夹已删时**回 `null` 才对** ——
+  报一个用户在侧栏里根本看不到的 uid，前端只会拿它去请求然后 404。
+
+### 三、回报重点：`windows-2022 / cuda` —— **查不到，保持 UNKNOWN**
+
+按交办"查得到就补，查不到就别补"。**查不到。** 已把**考古路径**写进 D-11
+（补的不是理由，是"找过哪些地方"，免得下一个人重做）：
+
+| 查了什么 | 结果 |
+| --- | --- |
+| `git log -S "windows-2022"` 全历史 | 3 个 commit 命中，最早 `27d052f`（2026-08-02，**首版架构提交**） |
+| `27d052f` 里那一行的上下文 | 三行矩阵紧挨着，**cuda 那行没有任何解释性注释** |
+| 那一行改过没有 | **从未改过**，自引入起一直是 `windows-2022` |
+| 有没有 `windows-2025 + cuda` 的尝试 | **一次都没有** |
+| `docs/` `ADR` `coordination/` | 只有描述性引用，**没有一处给理由** |
+| `ci-runner` 那轮逐格取舍 | 邻居都带 `←` 理由（glibc 基线 / jammy 没有 glslc），**唯独这一格没有** |
+| CI 实测 | `windows-x64-cuda` 在 2022 上 **success**（run `31155359839`） |
+
+**推论只到这一步**：它是**首版写下时就这么选的**，当时 CI 一次都还没跑过 ——
+所以它**不可能**来自"在 2025 上试过、失败了"的实测。
+您提示的那条最顺口的猜测（CUDA 12.4 × MSVC 兼容性）**在本仓没有任何证据支持**，
+我没有把它写成结论。这一格照旧 `UNKNOWN`。
+
+另记一条对后来人有用的：`windows-2022` 已被 GitHub 标记弃用，这一格早晚要动；
+而**"它现在是绿的"不是"必须是 2022"的理由**。真要收口，就是把 cuda 那条腿在
+`windows-2025` 上跑一次用结果说话 —— 那一步我**没有做** `[未验证]`
+（要占一台 runner 编 CUDA，不在本次授权范围内）。
+
+### 四、门禁
+
+| 门禁 | 结果 |
+| --- | --- |
+| `pnpm -r test` | **1578 条 / 2 失败** —— 那 2 条**不是我的**，见下 |
+| `tsc -b` | ✅ |
+| `eslint` | ✅ 全仓 0 条 |
+| `check:orphans` | ✅ **70 / 基线 70**（新增的两个是类方法，不产生零引用导出） |
+| `lint-workflows` | ✅ 1228 条断言 |
+| `test:ci-scripts` | ✅ 22 passed / 0 failed |
+| `format:check` | ⚠️ 全仓红在 **3 个我没碰过的文件**上，见下 |
+
+⚠️ **两处红都不是我的，且都已独立核实：**
+
+1. **`pnpm -r test` 的 2 条失败**：`apps/daemon/src/http/sourcesRest.test.ts` 的
+   「available 非空…」与「选一个源之后要真的记住」。
+   **核实方法**：拿 `37383b4`（我动手之前的 HEAD）开了一个隔离 worktree，
+   单独跑那个文件 → **同样 fail 2**。也就是说 **master 上那条腿现在就是红的**，
+   与本次改名无关。基线 1577 → 我这轮 1578（我加了 1 条用例），**失败数没变**。
+2. **`format:check` 的 3 个文件**：`scripts/ci/emit-bundles-complete.mjs`、
+   `scripts/ci/selftest-bundle.mjs`、`vendor/manifests/backends.json`。
+   `git diff --stat` 对这三个是**空的** —— 我一个字没改，
+   它们**在 HEAD 上就是不合格式的**（有人提交了未跑 prettier 的文件）。
+   按纪律**不代为格式化别人的交付物**。
+
+**建议 Manager 派人收这两条**（`sourcesRest` 那条腿是红的、那 3 个文件的格式）。
+
+⚠️ 按 **PROTOCOL §12** 提交：两次都用 `git commit -- <pathspec>`（选择与提交是同一个动作），
+**提交后**立刻 `git show --stat` 复核，两次的文件列表都恰好是我的、**没有夹带**。
+
+### 五、未验证 / UNKNOWN
+
+- 两个 job runner 改用过滤版是**行为变更**（笔记排队期间被删 → job 由"照常跑完"变成
+  失败并报 `note <id> 不存在`）。**没有在真跑的 job 上验过这条时序** `[未验证]` ——
+  单测覆盖的是仓储层的读取语义，不是 runner 在并发删除下的表现。
+- 任务中心在"笔记已删、job 还在"时的**界面表现**没有在真浏览器里看过 `[未验证]`；
+  我验的是 `noteByIdIncludingDeleted` 仍然返回标题这一层。
+- `windows-2022 / cuda` 的真实理由 —— `UNKNOWN`（第三节已说明为什么取不到）。
+
+下一步建议:
+
+1. `sourcesRest.test.ts` 那 2 条红是 master 现状，派人收。
+2. 那 3 个未格式化的已提交文件，派给各自 owner 跑一遍 prettier。
+3. `windows-2022 → 2025` 的 cuda 迁移验证（弃用早晚要动），需要一次 runner 授权。
+
+需要 Manager 决策: 上面三条的归属。
