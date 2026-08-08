@@ -28,15 +28,11 @@
 | **macOS**   | **双击 `OpenMemo.command` 什么都没发生**,或「无法验证开发者」 | **右键点 `OpenMemo.command` →「打开」→ 弹窗里再点「打开」**。只需做这一次。macOS 15+ 可能要去「系统设置 → 隐私与安全性」点「仍要打开」 |
 | **Linux**   | 不拦                                                          | 在终端里跑 `./start.sh`(文件管理器里双击 `.sh` 通常只会用文本编辑器打开它)                                                             |
 
-⚠️ **macOS 上"双击没反应"是最容易被误判成"包坏了"的一种**:Gatekeeper 拦在**打开脚本**
-那一步,所以终端窗口**根本没被启动**,你也看不到任何错误。
-
-⚠️ **换成命令行 `tar xzf` 解压并不能绕开它。** 我们实测过(2026-08-08, macOS CI):
-归档带 `com.apple.quarantine` 时,访达的「归档实用工具」和命令行 `tar` **都会**把该属性
-传给解出来的每一个文件。v0.2.0 的说明里写过"用命令行解压就不会被拦",**那句话是错的**。
-
-另一条路是自己清掉隔离属性:`xattr -dr com.apple.quarantine "<解压出来的文件夹>"`。
-⚠️ 它**等于对这些文件关掉 Gatekeeper 检查**,请确认你信任这个来源再执行。
+⚠️ **macOS 上"双击没反应"最容易被误判成"包坏了"**:Gatekeeper 拦在**打开脚本**那一步,
+终端窗口根本没被启动,你也看不到任何错误。**换命令行 `tar` 解压绕不开它**(实测:访达与
+`tar` 都会传播隔离属性;~~v0.2.0 说的"命令行解压就不会被拦"~~ 是错的)。另一条路是
+`xattr -dr com.apple.quarantine "<文件夹>"` —— 它**等于对这些文件关掉 Gatekeeper 检查**,
+先确认你信任来源。实测细节见 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §8.9。
 
 #### 第一次启动会说"以下组件还没装" —— 那是正常的
 
@@ -96,6 +92,8 @@ node apps/daemon/dist/main.js        # 打开终端里打印的地址,默认 htt
 
 判据是**「屏蔽宿主 PATH 的干净机器上真的转出非空文本」**,不是「代码写完了」。最近一轮
 `cold-start-audit` run 31167151669 三平台各一次,5 个工具全由产品自己下载校验、**借宿主 PATH 的 0 个**。
+此外 F1–F5 各有一条**端到端腿**(用预编译包、走真实 HTTP、三平台各跑一次),
+外加一条**"人能不能双击打开"**的腿;**没跑过就发不出去**。清单见 `DEPLOYMENT.md` §1.5。
 
 ⚠️ 有一族**装得上、跑不了、自检看不见**的下限(macOS < 13.3 · Linux glibc 过低 · Windows 缺 VC++):
 下载成功、sha256 通过、安装记录 succeeded、自检全绿,**只有真正去执行时才死**。三条见
@@ -127,9 +125,11 @@ node apps/daemon/dist/main.js        # 打开终端里打印的地址,默认 htt
 
 ## 许可证
 
-`UNLICENSED`,无 LICENSE 文件 —— 个人自用项目(ADR-002)。
-⚠️ ffmpeg 与 yt-dlp 是 **GPL-3.0-or-later**:自用不触发分发义务,**一旦要分发就是硬阻断**。
-逐条清单见 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) 附录 A 或 `pnpm license:report`。
+`package.json` 仍是 `UNLICENSED`(ADR-002);仓库根目录有一份 `LICENSE` 说明授权状态,
+预编译包内另带 `THIRD-PARTY-NOTICES`。(~~无 LICENSE 文件~~ ~~一旦要分发就是硬阻断~~
+—— 这两句 2026-08-08 起不再为真,订正见 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) 附录 A.0。)
+ffmpeg 与 yt-dlp 是 **GPL-3.0-or-later**,但**它们的字节从不经过我们**:由你的机器直连上游取,
+我们只以命令行方式调用 —— 所以发预编译包不触发 GPL。逐条依据见附录 A 或 `pnpm license:report`。
 
 ## 更多文档
 
