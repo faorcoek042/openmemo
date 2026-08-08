@@ -72,7 +72,52 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── 为什么要有这个 job：**跳过的平台不许报绿** ────────────────────────────────────
+  #
+  # 第一版是在**每个 step** 上挂 `if: legs=='all' || legs==matrix.leg`。
+  # 第一次真跑（run 31246863443，`legs=linux`）的结果是：
+  #     F3 端到端（darwin-arm64）: success
+  #     F3 端到端（win32-x64）  : success
+  # ——**两个平台一步都没跑，却都是绿的**。那正是本仓最贵的那类失败：
+  # 一盏"我什么都没做，所以我成功了"的灯。
+  #
+  # 修不了的原因是 `jobs.<id>.if` **拿不到 `matrix` 上下文**（只有 github/needs/vars/inputs），
+  # 所以没法在 job 级别按 leg 过滤。build-bundles.yml 的办法是写三个平行 job；
+  # 这里的 step 有八条，抄三份等于把同一段逻辑放三个地方漂。
+  # 改成先算出矩阵：**被过滤掉的平台根本不会有 job**，于是"没跑"在界面上
+  # 就是"没有这一格"，而不是一个绿勾。
+  plan:
+    name: 算矩阵（跳过的平台不许变成绿勾）
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        env:
+          LEGS: ${{ inputs.legs }}
+        run: |
+          set -euo pipefail
+          # 环境变量传入，不拼进脚本 —— 避免 ${{ }} 注入，也不用管默认 shell 是什么
+          node -e '
+            const all = [
+              { runner: "ubuntu-24.04",  label: "linux-x64",    artifact: "bundle-linux-x64",   leg: "linux"   },
+              { runner: "macos-26",      label: "darwin-arm64", artifact: "bundle-darwin-arm64", leg: "macos"   },
+              { runner: "windows-2025",  label: "win32-x64",    artifact: "bundle-win-x64",     leg: "windows" },
+            ];
+            const legs = process.env.LEGS || "all";
+            const include = legs === "all" ? all : all.filter((x) => x.leg === legs);
+            // 空矩阵会让下游 job 直接报错，而那与"跳过"是两回事 —— 当场说清楚
+            if (include.length === 0) {
+              console.error(`::error::legs=${legs} 没有匹配到任何平台`);
+              process.exit(1);
+            }
+            console.log(`选中 ${include.length} 个平台：${include.map((x) => x.label).join(", ")}`);
+            require("node:fs").appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`);
+          '
+
   e2e:
+    needs: plan
     # ⚠️ runner 版本**照抄 cold-start-audit.yml 与 build-bundles.yml 现用的那三个**：
     #    ubuntu-24.04 / macos-26 / windows-2025。
     #    任务书上写的是 `macos-14`，但全仓 8 个 workflow 里 `macos-14` 一次都没出现过，
@@ -85,32 +130,25 @@ jobs:
     # fail-fast: false —— 一个平台红不该掩盖另外两个平台的事实
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { runner: ubuntu-24.04, label: linux-x64, artifact: bundle-linux-x64, leg: linux }
-          - { runner: macos-26, label: darwin-arm64, artifact: bundle-darwin-arm64, leg: macos }
-          - { runner: windows-2025, label: win32-x64, artifact: bundle-win-x64, leg: windows }
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       # `submodules: recursive` **不能省**：录音要推的音频是 whisper.cpp submodule 自带的
       # `vendor/whisper.cpp/samples/jfk.wav`（真人语音，11 秒）。
       # 不带 submodule 的 checkout 下，脚本会如实报「样本不存在」然后红 ——
       # cold-start-audit.yml 已经为这条栽过一次。
       - uses: actions/checkout@v6
-        if: ${{ inputs.legs == 'all' || inputs.legs == matrix.leg }}
         with:
           submodules: recursive
 
       # 驱动脚本跑在**宿主** node 上；被测的 daemon 跑在**包自带的** node 上。
       # 钉住 22 与仓库其余 workflow 一致（ADR-006 决策 7）。
       - uses: actions/setup-node@v6
-        if: ${{ inputs.legs == 'all' || inputs.legs == matrix.leg }}
         with:
           node-version: '22'
 
       # 装任何东西之前先记录 runner 自带什么 —— 这是"我们装上了"与"它本来就在"
       # 的唯一分界线。
       - name: 宿主基线（屏蔽之前）
-        if: ${{ inputs.legs == 'all' || inputs.legs == matrix.leg }}
         shell: bash
         run: |
           for t in ffmpeg ffprobe yt-dlp whisper-cli sox python3; do
@@ -119,7 +157,6 @@ jobs:
 
       # ★ 判据的对象：**用户下载的那个包**，不是这棵源码树。
       - name: 取预编译包（build-bundles run ${{ inputs.bundleRunId }} 的 artifact）
-        if: ${{ inputs.legs == 'all' || inputs.legs == matrix.leg }}
         uses: actions/download-artifact@v6
         with:
           name: ${{ matrix.artifact }}
@@ -130,7 +167,6 @@ jobs:
       # 解归档并定位包根。三种归档格式各一条命令；**解不出来就红**，不猜。
       - name: 解开归档
         id: unpack
-        if: ${{ inputs.legs == 'all' || inputs.legs == matrix.leg }}
         shell: bash
         run: |
           set -euo pipefail
@@ -153,7 +189,6 @@ jobs:
       # 变异证明先跑：它不需要包、不需要网络，几百毫秒。
       # 放在最前面是因为 —— **断言本身失效的话，后面那一大段绿灯毫无意义**。
       - name: 断言的变异证明（每条断言在事实为假时真的会红）
-        if: ${{ inputs.legs == 'all' || inputs.legs == matrix.leg }}
         run: node scripts/ci/selftest-e2e-record.mjs
 
       # 预检：WebSocket 客户端 + 闸门。**20 秒，跑在重活之前。**
@@ -164,7 +199,6 @@ jobs:
       # 顺便反向确认闸门真的在拦（Host 用域名 → 403、不带 Origin → 403），
       # 否则后面"握手成功"那条绿灯证明不了什么。
       - name: 预检：WS 客户端 + 闸门（对着包里的 daemon）
-        if: ${{ inputs.legs == 'all' || inputs.legs == matrix.leg }}
         shell: bash
         run: |
           node scripts/ci/ws-client.smoke.mjs \
@@ -177,7 +211,6 @@ jobs:
       #   macOS runner 上 tiny 转 11 秒音频实测要 ~112s（虚拟化 3 核），
       #   所以窗口给到 75 分钟。
       - name: F3 端到端（屏蔽宿主 PATH，全程走 HTTP / WebSocket）
-        if: ${{ inputs.legs == 'all' || inputs.legs == matrix.leg }}
         timeout-minutes: 75
         shell: bash
         run: |

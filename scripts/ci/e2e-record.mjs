@@ -268,7 +268,7 @@ let cookie = '';
 let csrf = '';
 
 /** 发一次真实 HTTP 请求。**Host 必须是 IP 字面量** —— `localhost` 会被闸门 403。 */
-function http(path, { method = 'GET', body = null, headers = {}, raw = false } = {}) {
+function httpOnce(path, { method = 'GET', body = null, headers = {}, raw = false } = {}) {
   return new Promise((resolvePromise, reject) => {
     const payload = body === null ? null : Buffer.from(JSON.stringify(body));
     const req = httpRequest(
@@ -277,6 +277,19 @@ function http(path, { method = 'GET', body = null, headers = {}, raw = false } =
         port: PORT,
         path,
         method,
+        /*
+         * ★ `agent: false` —— **不复用连接**。
+         *
+         * 第一次真跑（run 31246863443）就死在这条上：装到第 3 个后端包时
+         * `read ECONNRESET`，而 daemon **是活着的**（exitCode=null，日志停在「就绪」）。
+         * Node 19 起全局 agent 默认 `keepAlive: true`，于是一个被对端回收的空闲 socket
+         * 被拿来发下一个请求 —— 典型的 keep-alive 竞态。
+         * cold-start-audit 当时是靠重试盖过去的；这里连成因一起去掉：
+         * 每个请求一条新连接。请求量只有几十个，代价可以忽略，
+         * 而**"测试客户端自己的脆弱"绝不该被记成产品的失败**。
+         * （`apps/daemon/src/http/media.test.ts` 里为同一个理由也写了 `agent: false`。）
+         */
+        agent: false,
         headers: {
           host: `${HOST}:${PORT}`,
           ...(payload
@@ -317,6 +330,30 @@ function http(path, { method = 'GET', body = null, headers = {}, raw = false } =
     req.end();
   });
 }
+
+/**
+ * 带重试的版本。**重试的是网络层的抖动，不是产品的失败**：
+ * 只对连接类错误重试，任何拿到了 HTTP 状态码的响应（哪怕 500）都原样返回 ——
+ * 把 500 重试掉才是真的在掩盖问题。连续 4 次都连不上仍然抛出去。
+ */
+async function http(path, opts = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      return await httpOnce(path, opts);
+    } catch (e) {
+      const code = e?.code ?? '';
+      const transient =
+        ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT'].includes(code) ||
+        /socket hang up/i.test(String(e?.message ?? ''));
+      if (!transient) throw e;
+      lastErr = e;
+      await sleep(300 * (attempt + 1));
+    }
+  }
+  throw new Error(`${path}: ${lastErr?.message ?? '连不上'}（已重试 4 次；daemon 可能已经死了）`);
+}
+
 /*
  * WebSocket 客户端在 `./ws-client.mjs`。
  *
@@ -399,6 +436,27 @@ try {
   }
 
   /*
+   * ★ 地面真相：**不信 job 的自述**，另问一次"到底装上了哪些"。
+   *
+   * 这一步不是保险起见。`cold-start-audit.mjs` 有过一次真实的假绿：
+   * 119 MB 的下载报 `succeeded (1.0s)`，而 1.0s 恰好是轮询间隔 ——
+   * 也就是说它第一次轮询就"看到成功了"。那次的成因是取 job 时
+   * `?? arr[0]` 拿别人的成功顶了上来。
+   * 这里的 `waitForJob` 认不出就如实报认不出、绝不回退，但**"我没写那个 bug"
+   * 不是一条证据**。所以照样用一个独立来源核对一遍。
+   */
+  const inst = await http('/api/backends/installed');
+  const instArr = Array.isArray(inst.body)
+    ? inst.body
+    : (inst.body?.packs ?? inst.body?.installed ?? []);
+  const installedIds = new Set(instArr.map((x) => x.id ?? x.packId));
+  say('');
+  say(`   ── 独立核对：/api/backends/installed 返回 ${instArr.length} 条 ──`);
+  for (const p of packs) {
+    say(`   ${p.id.padEnd(32)} ${installedIds.has(p.id) ? '✅ 真的在已安装列表里' : '❌ 不在'}`);
+  }
+
+  /*
    * 模型三件套，每一件都有非它不可的理由：
    *   · sherpa 流式 —— **不装它 `/ws/recorder` 根本起不来**
    *     （`setup.ts:537` 拿不到 sherpa 就 `openStream` 返回 undefined，
@@ -422,6 +480,29 @@ try {
       `   ${id.padEnd(32)} ${st.state} ${st.detail}  (${((Date.now() - t0) / 1000).toFixed(1)}s)`,
     );
   }
+
+  // 同上：模型也要独立核对一次，而不是只信 job 说它成功了。
+  const minst = await http('/api/models/installed');
+  const minstArr = Array.isArray(minst.body)
+    ? minst.body
+    : (minst.body?.models ?? minst.body?.installed ?? []);
+  const minstIds = new Set(minstArr.map((m) => m.id ?? m.modelId));
+  say('');
+  say(`   ── 独立核对：/api/models/installed 返回 ${minstArr.length} 条 ──`);
+  for (const id of [MODELS.stream, MODELS.asrA, MODELS.asrB]) {
+    say(`   ${id.padEnd(32)} ${minstIds.has(id) ? '✅ 真的在已安装列表里' : '❌ 不在'}`);
+  }
+  /*
+   * 这三个模型是后面每一步的前提：流式模型决定 `/ws/recorder` 起不起得来，
+   * 两个 whisper 决定"换模型重转"有没有第二个模型可换。
+   * 缺了就**当场说清楚**，而不是让后面的失败去替它背锅。
+   */
+  judge('三个模型都真的装上了（独立核对，不信 job 自述）', {
+    ok: [MODELS.stream, MODELS.asrA, MODELS.asrB].every((id) => minstIds.has(id)),
+    reason: [MODELS.stream, MODELS.asrA, MODELS.asrB]
+      .map((id) => `${id}=${minstIds.has(id) ? '在' : '**不在**'}`)
+      .join('，'),
+  });
 
   hdr('4. 重启 daemon —— 装完不重启，pipeline 还是冷启动那一份');
   await stopDaemon();

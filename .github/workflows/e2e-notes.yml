@@ -1,0 +1,250 @@
+# F4（思维导图）+ F5（笔记管理与检索）的端到端验收 —— **用预编译包，在三个平台上，走真 HTTP**。
+#
+# ── 这个 workflow 存在的理由 ────────────────────────────────────────────────────────
+#
+# 用户 2026-08-08 下载 v0.2.0 预编译包在真机上用，Windows 双击报错、macOS 被拦、
+# 界面打不开。他的原话：
+#
+#   > 「你应该派多路 agent 去在 CI 中运行一遍把各个流程跑通才能给我交付的啊！」
+#
+# 他是对的。在此之前 CI 对 F4/F5 的覆盖只有一句话能概括：**产品能不能被脚本驱动着
+# 转出一段文本**。导图生成、四种导出、增删改查、中文检索、时间点跳转 —— 一条都没有
+# 在干净机器上、用预编译包、走产品自己的 HTTP 路径跑过。
+#
+# 所以判据从今天起只有这一条：
+#
+#   > **在 CI 上、用预编译包、走产品自己的 HTTP 接口，这条功能面真的能用。**
+#
+# ── 为什么必须先跑一遍 cold-start-audit ─────────────────────────────────────────────
+#
+# F4 的硬前提是「这条笔记有转写稿」（`runMindmapJob` 没有转写稿会 blocked: NO_TRANSCRIPT）。
+# 造这个前提要真下载后端包与模型、真跑一次 ASR —— 而 `cold-start-audit.mjs` 已经把
+# 这条路走通并守住了。**这里不另写一份。** 判据只要有两份实现就会漂成两条
+# （PROTOCOL 的老规矩），而且另写一份的话，绿灯证明的是那份新脚本。
+#
+# 两步共用同一个 `--root`：冷启动那步把数据目录留在那儿，E2E 那步接着用。
+#
+# ── 为什么不许"取不到 artifact 就现场编一个" ────────────────────────────────────────
+#
+# 那会变成一盏假绿灯：报告上写着「预编译包验过了」，实际验的是本次 checkout 现编的东西。
+# 取不到就**红**，并说清是取不到，不是功能坏了。要故意验 HEAD 的话有单独的开关，
+# 而且它会在日志里大声说明本轮验的不是发布产物。
+
+name: e2e-notes
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundleRunId:
+        description: '从哪个 build-bundles run 取预编译包。留空 = 自动取最近一次成功的那个。'
+        required: false
+        default: ''
+        type: string
+      assembleFromSource:
+        # 刻意默认 false 并且描述里写明后果 —— 一个"顺手打开就不知道自己在验什么"的开关
+        # 正是本仓最贵的那类失败的土壤。
+        description: '不取 artifact，改用本次 checkout 现场组装一个包（**这样验的就不是发布产物了**）'
+        required: false
+        default: false
+        type: boolean
+
+# 需要 actions: read 才能跨 workflow 下载 build-bundles 的 artifact。
+# 其余一律只读：这个 workflow 不建 release、不推 commit、不改任何远端状态。
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: e2e-notes-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    # 三个平台的 runner 版本**照抄 cold-start-audit.yml 现用的那一份**（ubuntu-24.04 /
+    # macos-26 / windows-2025）。让两个 workflow 的平台口径分叉，等于让"某平台验过了"
+    # 这句话失去意义。
+    #
+    # fail-fast: false —— 一个平台红不该掩盖另外两个平台的事实。中文分词这条尤其：
+    # Windows 上有 `simple.dll` vs `libsimple.dll` 的命名陷阱，那一格的答案
+    # **只能由 Windows 那条腿给出**。
+    name: F4/F5 端到端（${{ matrix.label }}）
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {
+              runner: ubuntu-24.04,
+              label: linux-x64,
+              target: linux-x64,
+              artifact: bundle-linux-x64,
+            }
+          - {
+              runner: macos-26,
+              label: darwin-arm64,
+              target: darwin-arm64,
+              artifact: bundle-darwin-arm64,
+            }
+          - { runner: windows-2025, label: win32-x64, target: win-x64, artifact: bundle-win-x64 }
+    steps:
+      # submodules 不能省：冷启动那步的转写样本是 whisper.cpp 自带的
+      # vendor/whisper.cpp/samples/jfk.wav。cold-start-audit.yml 已经为此栽过一次
+      # （三个平台一模一样的一行「样本不存在 —— submodule 没 checkout？」）。
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # 在装任何东西**之前**记录 runner 自带什么。这是"我们装上了"与"它本来就在"
+      # 的唯一分界线；E2E 脚本自己也会屏蔽这些名字，但屏蔽前的基线只有这里有。
+      - name: 宿主基线（装任何东西之前）
+        shell: bash
+        run: |
+          echo "== runner 自带的同名工具 =="
+          for t in ffmpeg ffprobe yt-dlp youtube-dl whisper-cli sqlite3 python3; do
+            printf '%-14s %s\n' "$t" "$(command -v $t || echo '(不在 PATH 上)')"
+          done
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.15.0
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # cold-start-audit.mjs 要用宿主 node 跑 scripts/selfcheck.mjs，并 import
+      # packages/{runtime,pipeline}/dist —— 所以这些 dist 必须存在。
+      # ★ `build:safe` 而不是 `pnpm -r build`：后者含 vite build（PROTOCOL §7）。
+      #   这里也**不需要** apps/web/dist —— 网页 bundle 从包里来，不从这次 checkout 来。
+      - name: Build（build:safe —— 不碰 apps/web/dist）
+        run: pnpm build:safe
+
+      # ── 取预编译包 ────────────────────────────────────────────────────────────
+      #
+      # 默认取 build-bundles 最近一次成功 run 的 artifact —— 那才是用户下载的那个东西。
+      # 取不到就红，**绝不静默回落到现场组装**（那会让报告说的和实际验的是两回事）。
+      - name: 解析要用哪个 build-bundles run
+        id: pick
+        if: ${{ !inputs.assembleFromSource }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WANT: ${{ inputs.bundleRunId }}
+        run: |
+          set -euo pipefail
+          if [ -n "$WANT" ]; then
+            RUN_ID="$WANT"
+            echo "用显式指定的 run：$RUN_ID"
+          else
+            RUN_ID="$(gh run list --workflow=build-bundles.yml --status=success \
+                        --limit 1 --json databaseId --jq '.[0].databaseId')"
+            echo "自动选中最近一次成功的 build-bundles run：$RUN_ID"
+          fi
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "::error::找不到任何成功的 build-bundles run —— 无法取得预编译包。"
+            echo "::error::这不是功能坏了，是取包这一步没成。先跑一次 build-bundles。"
+            exit 1
+          fi
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: 下载预编译包 artifact
+        if: ${{ !inputs.assembleFromSource }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p bundle-artifact
+          gh run download "${{ steps.pick.outputs.run_id }}" \
+            --name "${{ matrix.artifact }}" --dir bundle-artifact
+          echo "== 取回来的东西 =="
+          ls -la bundle-artifact
+
+      # 现场组装：只有显式打开 assembleFromSource 才走这条，而且大声说明后果。
+      - name: （备选）现场组装一个包 —— 本轮验的不是发布产物
+        id: assemble
+        if: ${{ inputs.assembleFromSource }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::warning::assembleFromSource=true —— 本轮验的是本次 checkout 现编的包，不是 build-bundles 发出去的那个。"
+          pnpm --filter @openmemo/web build
+          node scripts/build-bundle.mjs --target "${{ matrix.target }}"
+          mkdir -p bundle-artifact
+          cp dist/bundles/* bundle-artifact/
+          ls -la bundle-artifact
+
+      # ── 解开归档：验的是**归档解开之后的样子** ────────────────────────────────
+      #
+      # 组装脚本自己会在缺件时退出 1，但那检查的是它刚摆好的目录。用户拿到的是归档，
+      # 而 tar/zip 那一段有它自己的失败方式（glob 漏掉、排除规则、符号链接没跟随）。
+      - name: 解开归档
+        id: extract
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p extracted
+          A="$(ls bundle-artifact/*.tar.xz bundle-artifact/*.tar.gz bundle-artifact/*.zip 2>/dev/null | head -1)"
+          if [ -z "$A" ]; then
+            echo "::error::bundle-artifact/ 里没有归档文件"; ls -la bundle-artifact; exit 1
+          fi
+          echo "归档：$A"
+          case "$A" in
+            *.tar.xz) tar -xJf "$A" -C extracted ;;
+            *.tar.gz) tar -xzf "$A" -C extracted ;;
+            *.zip)    unzip -q "$A" -d extracted ;;
+          esac
+          B="$(find extracted -maxdepth 1 -mindepth 1 -type d | head -1)"
+          [ -n "$B" ] || { echo "::error::归档里没有顶层目录"; exit 1; }
+          echo "包根：$B"
+          echo "bundle_dir=$B" >> "$GITHUB_OUTPUT"
+
+      # ── 把包里的 ext/ 摊开 ────────────────────────────────────────────────────
+      #
+      # 这一步只观测、不判红绿，但它回答的是本轮最容易静默坏的那个问题：
+      # Windows 上上游归档里叫 `simple.dll`（MSVC 不加 lib 前缀），而加载侧
+      # `defaultExtensionPaths()` 找的是 `libsimple.dll`。这一格错了的后果**不是报错，
+      # 是中文两字词搜索静默返回 0 条**。判红绿的是 E2E 脚本里那条真搜索，
+      # 这里只是把现场留给下一个人看。
+      - name: 包里的 ext/ 实况（libsimple 命名陷阱的现场）
+        shell: bash
+        run: |
+          echo "== ${{ steps.extract.outputs.bundle_dir }}/ext =="
+          ls -la "${{ steps.extract.outputs.bundle_dir }}/ext" || echo "(没有 ext 目录)"
+          echo
+          echo "== runtime/ =="
+          ls -la "${{ steps.extract.outputs.bundle_dir }}/runtime" || true
+
+      # ── 前置：真下载后端包与模型、真转写一次 ─────────────────────────────────
+      #
+      # 这一步跑的是**别人已经守住的那套判据**（屏蔽宿主 PATH + 真下载 + 真转写出
+      # 非空文本），不是我另写的。它同时把 F4 的硬前提造出来：一条带转写稿的笔记。
+      # `--root` 显式给死，下一步接着用同一个数据目录。
+      - name: 前置：冷启动 + 真转写（造出 F4 需要的转写稿）
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          node scripts/ci/cold-start-audit.mjs \
+            --bundle "${{ steps.extract.outputs.bundle_dir }}" \
+            --root "${{ runner.temp }}/e2e-notes-shared" \
+            --port 19700 --transcribe
+
+      # ── 判据本身 ─────────────────────────────────────────────────────────────
+      #
+      # F4：真走 OpenAI 兼容链路生成导图（对面是本地假端点 —— 不花用户一分钱，
+      #     产品侧一段不绕）、可编辑、四种导出各自真发 HTTP 拿回正文并断言内容。
+      # F5：增删改查、文件夹筛选、星标 + 分页边界（真造 56 条跨过第 50 条）、
+      #     中文两字词检索、?t= 的服务端半条链。
+      # 每条关键断言都配一条变异证明；最后另起一个没有 libsimple 的实例，
+      # 要求同一条中文检索断言**变红**。
+      - name: F4/F5 端到端（预编译包 + 真 HTTP + 变异证明）
+        timeout-minutes: 45
+        shell: bash
+        run: |
+          node scripts/ci/e2e-notes-audit.mjs \
+            --bundle "${{ steps.extract.outputs.bundle_dir }}" \
+            --data-dir "${{ runner.temp }}/e2e-notes-shared/data" \
+            --port 19960 --llm-port 19961 --mutation-port 19970
