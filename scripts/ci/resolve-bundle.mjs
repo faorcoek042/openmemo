@@ -113,6 +113,21 @@ const REQUIRE = String(arg('--require', 'app/daemon/dist/main.js'))
   .map((s) => s.trim())
   .filter(Boolean);
 
+/*
+ * ★ `--require-node-runtime`：**意图是共享的，拼写是平台的。**
+ *
+ * 包自带的 Node 在 posix 上叫 `runtime/node`，在 Windows 上叫 `runtime/node.exe`。
+ * 各腿要问的问题是同一个（"这个包自带运行时吗"），而**文件名是包格式的知识**，
+ * 不该让每条腿各自去拼 `${{ matrix.leg == 'windows' && '.exe' || '' }}`——
+ * `[CI 实测 run 31251484499]` 我就是这么栽的：三条腿统一写了 `runtime/node`，
+ * linux/macOS 绿、**Windows 报 MISSING_ENTRIES**。
+ *
+ * 这是"顺手统一"的另一面：**统一意图是对的，统一拼写是错的。**
+ * 所以把拼写收进这里（懂包格式的地方），把意图留给各腿用一个开关表达。
+ */
+const REQUIRE_NODE = argv.includes('--require-node-runtime');
+if (REQUIRE_NODE) REQUIRE.push(process.platform === 'win32' ? 'runtime/node.exe' : 'runtime/node');
+
 const say = (s = '') => console.log(s);
 
 /** 唯一的失败出口：代码 + 人话 + 现场。**不存在"安静地失败"这条路。** */

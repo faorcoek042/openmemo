@@ -243,7 +243,7 @@ jobs:
         run: |
           node scripts/ci/resolve-bundle.mjs \
             --from dist/bundles --out extracted \
-            --require app/daemon/dist/main.js,runtime/node
+            --require app/daemon/dist/main.js --require-node-runtime
 
       # ── 把包里的 ext/ 摊开 ────────────────────────────────────────────────────
       #

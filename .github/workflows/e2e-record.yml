@@ -201,7 +201,7 @@ jobs:
           mkdir -p unpacked
           node scripts/ci/resolve-bundle.mjs \
             --from incoming --out unpacked \
-            --require app/daemon/dist/main.js,runtime/node
+            --require app/daemon/dist/main.js --require-node-runtime
 
       # 变异证明先跑：它不需要包、不需要网络，几百毫秒。
       # 放在最前面是因为 —— **断言本身失效的话，后面那一大段绿灯毫无意义**。

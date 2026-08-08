@@ -149,8 +149,12 @@ console.log('\n\x1b[1mA 组「必须绿」：三次真实事故的输入形状�
   // A3 —— 各腿自己声明"我需要包里有什么"（差异保留在参数里，不是写死）。
   const from = fresh('a3-from');
   makeBundleArchive(from, 'openmemo-0.2.0-linux-x64.tar.gz', { withNode: true });
-  const r = run(from, fresh('a3-out'), ['--require', 'app/daemon/dist/main.js,runtime/node']);
-  if (r.status === 0) ok('A3 --require 多项齐全 → 成功');
+  const r = run(from, fresh('a3-out'), [
+    '--require',
+    'app/daemon/dist/main.js',
+    '--require-node-runtime',
+  ]);
+  if (r.status === 0) ok('A3 --require + --require-node-runtime 齐全 → 成功（拼写由脚本按平台定）');
   else bad(`A3 应当成功，实得 exit ${r.status}\n${r.out.slice(0, 600)}`);
 }
 
@@ -198,12 +202,24 @@ const mustFail = (name, code, fromDir, outDir, extra = []) => {
 }
 
 {
+  /*
+   * B5 —— 包里没有自带 Node。
+   *
+   * 用 `--require-node-runtime` 而不是写死 `runtime/node`：
+   * `[CI 实测 run 31251484499]` 我一开始三条腿统一写了 `runtime/node`，
+   * linux/macOS 绿而 **Windows 报 MISSING_ENTRIES** —— 那儿叫 `node.exe`。
+   * **统一"意图"是对的，统一"拼写"是错的**；拼写是包格式的知识，
+   * 收在 resolve-bundle 里，各腿只表达意图。
+   */
   const from = fresh('b5-from');
   makeBundleArchive(from, 'openmemo-0.2.0-linux-x64.tar.gz', { withNode: false });
-  mustFail('B5 包里缺 runtime/node（结构不对）', 'MISSING_ENTRIES', from, fresh('b5-out'), [
-    '--require',
-    'app/daemon/dist/main.js,runtime/node',
-  ]);
+  mustFail(
+    'B5 包里没有自带 Node（--require-node-runtime）',
+    'MISSING_ENTRIES',
+    from,
+    fresh('b5-out'),
+    ['--require-node-runtime'],
+  );
 }
 
 {

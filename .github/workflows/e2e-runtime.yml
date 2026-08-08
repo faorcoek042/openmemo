@@ -181,7 +181,7 @@ jobs:
         run: |
           node scripts/ci/resolve-bundle.mjs \
             --from bundle-artifact --out extracted \
-            --require app/daemon/dist/main.js,runtime/node
+            --require app/daemon/dist/main.js --require-node-runtime
 
       # ── 判据本身 ──────────────────────────────────────────────────────────────
       #
@@ -302,7 +302,7 @@ jobs:
         run: |
           node scripts/ci/resolve-bundle.mjs \
             --from bundle-artifact --out extracted \
-            --require app/daemon/dist/main.js,runtime/node
+            --require app/daemon/dist/main.js --require-node-runtime
 
       # 逐条跑。**一条存活就整步红** —— 存活的意思是"把安全性质拿掉，断言照样绿"，
       # 那条断言此刻等于不存在，修它比修产品更急。
