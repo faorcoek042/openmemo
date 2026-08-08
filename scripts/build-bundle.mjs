@@ -71,7 +71,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { execFile } from 'node:child_process';
@@ -134,6 +134,7 @@ const TARGETS = {
     prebuild: 'linux-x64.node',
     sherpaPkg: 'sherpa-onnx-linux-x64',
     extPackIds: ['libsimple-linux-x64', 'sqlite-vec-linux-x64'],
+    probePackId: 'whispercpp-cpu-linux-x64',
     archiveExt: '.tar.xz',
     launcher: 'start.sh',
   },
@@ -147,6 +148,7 @@ const TARGETS = {
     extPackIds: ['libsimple-win32-x64', 'sqlite-vec-win32-x64'],
     // Windows 只能用 .zip：系统自带解压认它，而 .tar.xz 要用户另装工具。
     // 代价是 deflate 压得比 xz 差不少，`[实测]` 同一棵 linux 树 xz 37.4 MiB / zip 56.0 MiB。
+    probePackId: 'whispercpp-cpu-win-x64',
     archiveExt: '.zip',
     launcher: 'start.cmd',
   },
@@ -158,6 +160,7 @@ const TARGETS = {
     prebuild: 'darwin-arm64.node',
     sherpaPkg: 'sherpa-onnx-darwin-arm64',
     extPackIds: ['libsimple-darwin-arm64', 'sqlite-vec-darwin-arm64'],
+    probePackId: 'whispercpp-cpu-macos-arm64',
     archiveExt: '.tar.gz',
     launcher: 'OpenMemo.command',
   },
@@ -684,6 +687,117 @@ async function findUnder(root, name) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────────
+ * ④-bis 最小探针运行时（鸡生蛋的那一环）
+ * ───────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * 把 `openmemo-probe` 与它**跑得起来所必需的最小 ggml** 放进包里。
+ *
+ * ## 为什么非放不可 —— 一个用户真的撞上的环
+ *
+ * `[用户真机实测 2026-08-08, Windows, v0.3.0]` 解压即运行，运行时页**六个后端全部**报：
+ * ```
+ * probe did not complete: probe executable not found:
+ *   C:\Users\...\AppData\Roaming\OpenMemo\bin\runtime\openmemo-probe.exe
+ * ```
+ * `[本机复现 2026-08-08, linux-x64, 全新空数据目录]` 一模一样。
+ *
+ * 环是这样的：探针**随 whisper 包出厂**（ADR-015 §7 的例外），
+ * 而用户**要先探测硬件才知道该装哪个包** —— 探针在包里面。
+ * CI 从没撞到，因为 `e2e-runtime` 直接 `POST /api/backends/install` 指定包 id，
+ * **跳过了"探测→推荐"这一步**。
+ *
+ * ## 为什么是"最小 ggml"而不是别的形状
+ *
+ * ADR-015 §7.2 的三条实测事实**今天仍然成立**：探针动态链接 ggml（`RUNPATH $ORIGIN`）、
+ * `backendDir = dirname(probePath)`、`probe.c` 只加载与自己同目录的后端模块。
+ * 所以"探针放哪"和"它能不能跑"是绑死的 —— 只搬 exe 不搬 ggml 是搬不动的。
+ *
+ * `[本机实测 2026-08-08]` 最小集只要 **1.60 MiB**（linux-x64）：
+ * ```
+ * openmemo-probe            14,552 B     ← 探针本体只有 14 KB
+ * libggml-base.so.0.15.1   825,528 B
+ * libggml.so.0.15.1         47,632 B
+ * libggml-cpu-x64.so       821,056 B     ← 一个通用 CPU 后端模块
+ * ```
+ *
+ * ## ⚠️ 它**不能**、也不打算回答"我该装 CUDA 还是 Vulkan"
+ *
+ * 探针只能枚举**与自己同目录**的后端模块，而 `libggml-cuda.so` 本身就有 **564 MB**
+ * —— 那正是用户要决定装不装的东西。**"验证后端 X 能用"在装 X 之前structurally 无解。**
+ *
+ * 但这不构成静默降级，因为 `manager.ts` 的判定链是
+ *   `!probe.ok` → `!installed` → `!probed` → …
+ * **`installed` 在 `probed` 之前**。探针一旦跑得起来，未装的后端会得到
+ * **`backend package not installed`** —— 一句真话，而不是"你没有 CUDA"这种
+ * 自信的假阴性，也不是今天那句带内部路径的 `probe did not complete`。
+ *
+ * ## 来源：**已经钉死并校验过的那个包**，不另开通道
+ *
+ * 直接取 `vendor/manifests/backends.json` 里 `whispercpp-cpu-*` 的归档（钉死 tag + sha256），
+ * 只抽出上面那四个文件。不新建构建通道、不引入第二份 ggml 来源。
+ * whisper.cpp 是 MIT，随包分发不触发任何 copyleft（D-17 §1）。
+ */
+async function assembleProbeRuntime() {
+  hdr('④-bis 最小探针运行时（否则用户第一屏六个后端全报"找不到探针"）');
+  const manifest = JSON.parse(await readFile(join(REPO_ROOT, 'vendor/manifests/backends.json'), 'utf8'));
+  const pack = manifest.packs.find((p) => p.id === T.probePackId);
+  if (!pack) die(`backends.json 里没有 pack ${T.probePackId} —— 探针没有来源`);
+  const file = pack.files.find((f) => f.role === 'archive');
+  const mirror = file.mirrors.find((m) => m.official) ?? file.mirrors[0];
+
+  const local = await fetchToCache(mirror.url, file.name);
+  const got = await sha256Of(local);
+  if (got !== file.sha256) die(`${T.probePackId} 摘要与 manifest 不符\n   期望 ${file.sha256}\n   实得 ${got}`);
+  say(`   ✔ ${T.probePackId}  sha256 对着 manifest 校验通过`);
+
+  const work = await mkdtemp(join(tmpdir(), 'om-probe-'));
+  const { unpackArchive } = await import(pathToFileURL(join(REPO_ROOT, 'packages/downloader/dist/index.js')).href);
+  await unpackArchive(local, work, kindOf(file.name));
+
+  const probeName = T.platform === 'win32' ? 'openmemo-probe.exe' : 'openmemo-probe';
+  const probeSrc = await findUnder(work, probeName);
+  if (!probeSrc) {
+    die(
+      `${T.probePackId} 的归档里没有 ${probeName}。\n` +
+        `   探针是"网页检测硬件"那一步的执行者（ADR-003 决策 3）；缺了它，用户第一屏\n` +
+        `   六个后端会全部报 "probe did not complete" —— 用户 2026-08-08 真机撞到过。\n` +
+        `   **不允许降级放行。**`,
+    );
+  }
+
+  const dst = join(STAGE, 'runtime', 'probe');
+  await mkdir(dst, { recursive: true });
+  const srcDir = dirname(probeSrc);
+  await cp(probeSrc, join(dst, probeName));
+  if (T.platform !== 'win32') await chmod(join(dst, probeName), 0o755);
+
+  /*
+   * ggml 核心 + **一个** CPU 后端模块。
+   * · 核心：`ggml-base` 与 `ggml`（含 `.so.0` 这类版本软链 —— `NEEDED` 写的是软链名，
+   *   丢了链探针就起不来）。用 `dereference:false` 保住链本身。
+   * · CPU 模块：优先 `*ggml-cpu-x64*`（通用基线），没有就取第一个 `*ggml-cpu*`。
+   *   只要有**一个能加载**，探针就能枚举出 CPU 设备；多带 13 个变体在 linux 上
+   *   要多花 13.6 MB，而对"能不能跑起来"这个判据没有增量。
+   */
+  const entries = await readdir(srcDir);
+  const isCore = (n) => /ggml-base/.test(n) || /^(lib)?ggml\.(so|dll|dylib)/.test(n) || /^(lib)?ggml\.so\./.test(n);
+  const cpuMods = entries.filter((n) => /ggml-cpu/.test(n));
+  const chosenCpu = cpuMods.find((n) => /ggml-cpu-x64/.test(n)) ?? cpuMods[0];
+  if (!chosenCpu) die(`${T.probePackId} 里一个 ggml-cpu 模块都没有 —— 探针会枚举出 0 个设备`);
+
+  let copied = 0;
+  for (const n of entries) {
+    if (!isCore(n) && n !== chosenCpu) continue;
+    await cp(join(srcDir, n), join(dst, n), { verbatimSymlinks: true });
+    copied += 1;
+  }
+  if (copied === 0) die(`没有复制任何 ggml 库 —— 探针一定起不来`);
+  await rm(work, { recursive: true, force: true });
+  say(`   ✔ runtime/probe/  探针 + ggml 核心 + ${chosenCpu}（共 ${copied + 1} 个文件，${mib(await dirSize(dst))}）`);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────────
  * ⑤ 启动脚本
  * ───────────────────────────────────────────────────────────────────────────────── */
 
@@ -729,8 +843,12 @@ fi
 # 已设则尊重用户的值；未设才用包内的
 : "\${OPENMEMO_WEB_DIST:=$DIR/app/apps/web/dist}"
 : "\${OPENMEMO_EXT_DIR:=$DIR/ext}"
+# 随包出厂的最小探针运行时（探针 + ggml 核心 + 一个 CPU 后端模块）。
+# 缺了它，用户第一屏六个后端会全部报 "probe did not complete"。
+# daemon 把它排在**最后**：已安装的后端包优先，否则装完 Vulkan 也检测不到（见 setup.ts）。
+: "\${OPENMEMO_BUNDLED_PROBE_DIR:=$DIR/runtime/probe}"
 : "\${OPENMEMO_OPEN_BROWSER:=1}"
-export OPENMEMO_WEB_DIST OPENMEMO_EXT_DIR OPENMEMO_OPEN_BROWSER
+export OPENMEMO_WEB_DIST OPENMEMO_EXT_DIR OPENMEMO_BUNDLED_PROBE_DIR OPENMEMO_OPEN_BROWSER
 cd "$DIR/app/daemon"
 exec "$DIR/runtime/node" dist/main.js "$@"
 `;
@@ -789,6 +907,7 @@ if not exist "%DIR%app\\daemon\\dist\\main.js" goto :incomplete
 
 if not defined OPENMEMO_WEB_DIST set "OPENMEMO_WEB_DIST=%DIR%app\\apps\\web\\dist"
 if not defined OPENMEMO_EXT_DIR set "OPENMEMO_EXT_DIR=%DIR%ext"
+if not defined OPENMEMO_BUNDLED_PROBE_DIR set "OPENMEMO_BUNDLED_PROBE_DIR=%DIR%runtime\\probe"
 if not defined OPENMEMO_OPEN_BROWSER set "OPENMEMO_OPEN_BROWSER=1"
 
 cd /d "%DIR%app\\daemon"
@@ -1139,6 +1258,7 @@ async function main() {
   await assembleOurCode();
   await assembleNodeModules();
   await assembleExtensions();
+  await assembleProbeRuntime();
   await writeLauncher();
   await writeNotices();
 

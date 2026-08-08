@@ -118,6 +118,14 @@ jobs:
             --archive "${{ steps.bundle.outputs.archive }}" --mode guard
 
       # ── 判据本身：干净机器 + 屏蔽宿主 PATH + 真下载 + 真转写出非空文本 ────────
+
+      # ★★ 用户视角的第一屏 —— 这一步是本轮唯一能证明"鸡生蛋"被解开的东西。
+      #    全新空数据目录 + 刚组装的包 + 什么都不装，直接读运行时页的数据源。
+      #    判据：任何后端报 `probe did not complete` 即失败。
+      #    `e2e-runtime` 走不到这里（它直接 POST /api/backends/install 指定包 id），
+      #    所以用户 2026-08-08 撞到的那一屏此前**没有任何一条 CI 腿覆盖**。
+      - name: 用户第一屏（空数据目录，什么都不装）
+        run: node scripts/ci/diagnose-probe-bootstrap.mjs --bundle "${{ steps.bundle.outputs.bundle_dir }}"
       - name: Cold start + transcription proof（用包自带的 Node）
         if: ${{ inputs.coldStart }}
         timeout-minutes: 60
@@ -200,6 +208,14 @@ jobs:
           node scripts/ci/simulate-user-launch.mjs \
             --archive "${{ steps.bundle.outputs.archive }}" --mode guard
 
+
+      # ★★ 用户视角的第一屏 —— 这一步是本轮唯一能证明"鸡生蛋"被解开的东西。
+      #    全新空数据目录 + 刚组装的包 + 什么都不装，直接读运行时页的数据源。
+      #    判据：任何后端报 `probe did not complete` 即失败。
+      #    `e2e-runtime` 走不到这里（它直接 POST /api/backends/install 指定包 id），
+      #    所以用户 2026-08-08 撞到的那一屏此前**没有任何一条 CI 腿覆盖**。
+      - name: 用户第一屏（空数据目录，什么都不装）
+        run: node scripts/ci/diagnose-probe-bootstrap.mjs --bundle "${{ steps.bundle.outputs.bundle_dir }}"
       - name: Cold start + transcription proof（用包自带的 Node）
         if: ${{ inputs.coldStart }}
         timeout-minutes: 60
@@ -269,6 +285,15 @@ jobs:
           node scripts/ci/simulate-user-launch.mjs \
             --archive "${{ steps.bundle.outputs.archive }}" --mode guard
 
+
+      # ★★ 用户视角的第一屏 —— 这一步是本轮唯一能证明"鸡生蛋"被解开的东西。
+      #    全新空数据目录 + 刚组装的包 + 什么都不装，直接读运行时页的数据源。
+      #    判据：任何后端报 `probe did not complete` 即失败。
+      #    `e2e-runtime` 走不到这里（它直接 POST /api/backends/install 指定包 id），
+      #    所以用户 2026-08-08 撞到的那一屏此前**没有任何一条 CI 腿覆盖**。
+      - name: 用户第一屏（空数据目录，什么都不装）
+        shell: bash
+        run: node scripts/ci/diagnose-probe-bootstrap.mjs --bundle "${{ steps.bundle.outputs.bundle_dir }}"
       - name: Cold start + transcription proof（用包自带的 Node）
         if: ${{ inputs.coldStart }}
         timeout-minutes: 60

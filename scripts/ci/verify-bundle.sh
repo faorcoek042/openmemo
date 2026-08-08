@@ -131,6 +131,36 @@ need_file "ext/vec0.$LIBEXT"
 need_dir_nonempty "ext/dict" "jieba 词典"
 
 echo
+echo "── 最小探针运行时（鸡生蛋那一环 —— 用户 2026-08-08 真机撞到过）"
+# ★ 这道守卫的存在理由：`v0.3.0` 的包**没有探针**，用户解压运行后运行时页
+#   六个后端全部报 `probe did not complete: probe executable not found`。
+#   包里缺探针这件事，此前**只有用户能发现** —— 现在打包时当场红。
+if [ "$TARGET" = "win-x64" ]; then PROBEBIN="openmemo-probe.exe"; else PROBEBIN="openmemo-probe"; fi
+need_file "runtime/probe/$PROBEBIN" "缺了它用户第一屏六个后端全报找不到探针"
+# 探针**动态链接 ggml**（ADR-015 §7.2，RUNPATH \$ORIGIN），只搬 exe 搬不动
+NGGML=$(find "$B/runtime/probe" -maxdepth 1 -name '*ggml-base*' 2>/dev/null | wc -l | tr -d ' ')
+if [ "$NGGML" -ge 1 ]; then ok "runtime/probe/ 里有 ggml 核心（$NGGML 个 ggml-base 文件/软链）"; else bad "runtime/probe/ 缺 ggml-base —— 探针动态链接它，缺了根本起不来"; fi
+NCPU=$(find "$B/runtime/probe" -maxdepth 1 -name '*ggml-cpu*' 2>/dev/null | wc -l | tr -d ' ')
+if [ "$NCPU" -ge 1 ]; then ok "runtime/probe/ 里有 $NCPU 个 CPU 后端模块（否则只能枚举出 0 个设备）"; else bad "runtime/probe/ 没有任何 ggml-cpu 模块 —— 探针会枚举出 0 个设备"; fi
+
+# ★★ 同平台时**真的跑一次**：存在 ≠ 能跑（缺软链、架构不符、权限位丢失都只在这里显形）。
+#    判据是 deviceCount ≥ 1 —— 「探针在」和「探针能答出东西」是两件事。
+if [ "$HOST" = "$TARGET" ]; then
+  if OUT="$("$B/runtime/probe/$PROBEBIN" 2>&1)"; then
+    DC=$(printf '%s' "$OUT" | tr -d ' \n' | sed -n 's/.*"deviceCount":\([0-9]*\).*/\1/p')
+    if [ -n "$DC" ] && [ "$DC" -ge 1 ]; then
+      ok "探针真的跑起来并枚举出 $DC 个设备"
+    else
+      bad "探针跑起来了但 deviceCount=${DC:-?} —— 等于没有答案（CPU 模块没加载上？）"
+    fi
+  else
+    bad "探针跑不起来：$(printf '%s' "$OUT" | head -1)"
+  fi
+else
+  echo "  · 跳过「真的跑一次」——宿主是 ${HOST:-未知}，包是 $TARGET"
+fi
+
+echo
 echo "── 启动与许可证"
 need_file "$LAUNCHER"
 need_file "LICENSE" "公开分发必须说明自身授权状态"
@@ -173,8 +203,8 @@ echo
 echo "─────────────────────────────────────────────"
 echo "检查了 $CHECKED 条，失败 $FAILED 条"
 # C5 的教训：一个什么都没检查的检查器是最坏的那种绿。
-if [ "$CHECKED" -lt 20 ]; then
-  echo "::error::只检查了 $CHECKED 条 —— 断言集被意外缩小了，这不是通过"
+if [ "$CHECKED" -lt 24 ]; then
+  echo "::error::只检查了 $CHECKED 条（应 ≥24）—— 断言集被意外缩小了，这不是通过"
   exit 1
 fi
 if [ "$FAILED" -ne 0 ]; then

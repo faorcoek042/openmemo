@@ -223,11 +223,31 @@ export async function resolveRuntimeLayout(input: RuntimePathsInput): Promise<Ru
   const envProbe = process.env['OPENMEMO_PROBE'];
   const envBackendDir = process.env['OPENMEMO_BACKEND_DIR'];
 
+  /*
+   * ★★ 随预编译包出厂的**最小探针运行时**（2026-08-08，鸡生蛋那一环）。
+   *
+   * 用户 `[真机实测 Windows v0.3.0]` 解压即运行，运行时页六个后端**全部**报
+   * `probe did not complete: probe executable not found: …\openmemo-probe.exe`。
+   * 成因是一个环：探针**随 whisper 包出厂**（ADR-015 §7），
+   * 而用户**要先探测硬件才知道该装哪个包**。
+   *
+   * 预编译包现在自带 `runtime/probe/`（探针 + ggml 核心 + 一个 CPU 后端模块，
+   * `[实测]` linux-x64 共 1.60 MiB），启动脚本用 `OPENMEMO_BUNDLED_PROBE_DIR` 指过来。
+   *
+   * ★ 它**排在最后**，这一点是本次改动里最要紧的一行：
+   *   `backendDir = dirname(probePath)`，而包内那个目录**只有 CPU 模块**。
+   *   一旦它排到已安装后端包**前面**，用户装完 Vulkan 包之后探针仍然会去扫包内目录，
+   *   于是"装了却检测不到" —— 那比现在这个 bug 更糟，因为它发生在用户以为已经装好之后。
+   *   所以顺序是：显式环境变量 > dataDir/bin/runtime > 已安装的后端包 > **包内兜底**。
+   */
+  const bundledProbeDir = process.env['OPENMEMO_BUNDLED_PROBE_DIR'];
+
   const found =
     envProbe ??
     (await findUnder(runtimesRoot, named(probeBinaryName()))) ??
     // ← 与 discoverTools() 用的是同一个函数，所以两边对"它在不在"不可能给出不同答案
-    (await findInBackendPacks(modelsRoot, probeBinaryName()));
+    (await findInBackendPacks(modelsRoot, probeBinaryName())) ??
+    (bundledProbeDir ? await findUnder(bundledProbeDir, named(probeBinaryName())) : null);
   const probePath = found ?? path.join(runtimesRoot, probeBinaryName());
 
   /*
