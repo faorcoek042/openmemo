@@ -515,3 +515,106 @@ README / DEPLOYMENT / 各处文档与任务书都写着它。
 - `[实测]` 对照实验、过滤前后条目数、11 处文案的位置与处数，都是程序数出来/跑出来的。
 - `[未验证]`：改完文案之后**真浏览器上的视觉效果**（我没跑那条腿，那是别人的地界）。
 - `UNKNOWN`：无。
+
+---
+
+## [2026-08-09 02:10] 三条用户可感知缺口：① ② 已修，③ 未做（如实报）
+
+提交 `5f46e6e`（① ②）+ `a8b6bed`（顺手修好 master 上红着的 format 门禁）。
+门禁在隔离 worktree 检出 `5f46e6e` 上跑：**1600 pass / 0 fail**、`tsc -b`、`eslint`、
+`check:orphans` **70/70** 全绿。
+
+### ① 「测速」现在点下去，用户看到什么（真实文案）
+
+**修前**：`void benchmark.mutateAsync(...)` 把 rejection 丢掉，服务端回 501 ——
+**点了什么都不发生，按钮看起来是坏的**。这正是用户报的三条之一。
+
+**修后**：按钮下方渲染 `ErrorBlock`，文案按 `code` 查本地表（`errors.NOT_IMPLEMENTED`）：
+
+- **zh** 标题：「**测速」还没有实现**」
+  正文：「真实的速度要在你这台机器上跑一次推理才算数，而这一步还没接通。
+  产品不会拿论文或厂商标称的数字充数 —— 所以这里宁可空着，也不给你一个假的。」
+- **en** 标题：`Benchmarking is not implemented yet`
+  正文：`A real speed number has to come from running inference on your own machine,
+  and that step is not wired up yet. The product will not fill it in with numbers
+  from a paper or a vendor page — better blank than fake.`
+
+**没有裁「要不要做 benchmark」** —— 按你说的，那是产品决定，今天不动。
+判据只落在「不许静默失败」上。
+
+⚠️ 两条新文案我本来写了 `**…**`，但 `ErrorBlock` 与那个 `<p>` **都不走 `<Emphasis>`** ——
+会把裸标记吐给用户。**去掉了**，而不是去登记表里登记一个不实的声明
+（组件测试里那条"带 `**` 必须在登记表里"当场抓到了它，护栏有效）。
+
+### ② 我选了「给恢复路径」，依据
+
+**依据是：数据事实上还在盘上。** 把它叫作"永久删除"会是一句**新的假话**，
+而且是隐私方向的（用户以为抹掉了，其实那行还在库里）。所以选可逆。
+
+- `repos.restoreNote(uid)`：`deleted_at = NULL`，返回是否真改了一行；
+- `POST /api/notes/:uid/restore`；
+- ⚠️ **它必须排在按 uid 取笔记那一段之前** —— 那段用 `noteByUid()`，
+  而它**按设计查不到已删的**（那条过滤是对的，不改）。排后面的话，
+  这个端点会变成一个**永远够不到的实现**：装了、单测过了、用户点了永远 404。
+  测试第 2 条专门钉这个顺序。
+- 前端：删成功后菜单切到「已删除 · 撤销」——**撤销入口出现在他刚动手的地方**，
+  而不是另建一个回收站页面（回收站也可以做，但"删错了立刻能回来"是这条路上
+  最先需要、也最便宜的那一半）。撤销失败也渲染，不静默。
+- ⚠️ 顺手改掉一句**已经不实的文案**：`notes.deleteHint` 原文写着
+  「当前界面上没有恢复入口」—— 那句当时是实话，现在不是了（§13 同一条）。
+
+**4 条 HTTP 往返测试**（真 daemon）：删→恢复→重新出现在列表；
+没删过 / 不存在的 uid 都 404，**不编一个成功**。
+
+### ③ **没做，如实报** —— 但你要的那个核实我做完了
+
+**「零调用者」我按你的提醒核了，含 `.mjs`：** 两条 hook
+（`useRenameFolderMutation` / `useMoveNoteMutation`）全仓引用**只有三类**：
+定义本身、barrel 再导出、以及**回执/文档/脚本注释里的文字**
+（`scripts/check-orphan-exports.mjs:62-63` 那两处是**注释**，不是调用）。
+**没有任何 `.mjs`/`.cjs` 真的调用它们** —— 与那次验签函数的形状不同，
+那次是脚本真在用而孤儿检查器只扫 `.tsx?`。**结论：零调用者成立。**
+
+接线位置也踩好点了：`useMoveNoteMutation` → `NoteActionsMenu`（已挂在
+`NoteDetailPage.tsx:196`，已有改名/删除两项，加"移动到文件夹"是同一处）；
+`useRenameFolderMutation` → `FolderTree`（今天**没有任何改名入口**）。
+
+**没做的原因**：本轮时间用在 ① ② 上（① 你要求最先做，② 牵出服务端 + 前端 + 测试）。
+**我不把它做一半** —— 半个 UI 比没有更糟。留给下一轮，接线点与核实结论都在上面。
+
+### 横扫 `void mutateAsync` 同形 —— **14 处，其中 9 处完全不渲染错误**
+
+给真浏览器那位（**我没有动这些文件**，都在他地界）：
+
+| 文件 | mutation | 是否渲染错误 |
+| --- | --- | --- |
+| `features/runtime/RuntimePage.tsx` | `install` | ❌ **0** |
+| `features/runtime/RuntimePage.tsx` | `remove` | ❌ **0** |
+| `features/models/ModelsPage.tsx` | `activate` | ❌ 0 |
+| `features/models/ModelsPage.tsx` | `cancelJob` | ❌ 0 |
+| `features/models/ModelsPage.tsx` | `retryJob` | ❌ 0 |
+| `features/models/ModelsPage.tsx` | `gc` | ❌ 0 |
+| `features/models/ModelDetailPage.tsx` | `verify` | ❌ 0 |
+| `features/models/StorageSettingsPage.tsx` | `gc` | ❌ 0 |
+| `features/components/ComponentsPage.tsx` | `check` | ❌ 0 |
+| `features/models/ModelsPage.tsx` | `del` | ✅ 有 |
+| `features/models/components/SourcesSection.tsx` | `probe` / `select` | ✅ 有 |
+| `features/runtime/RuntimePage.tsx` | `select` / `selfTest` | ✅ 有 |
+
+⚠️ **`RuntimePage` 的 `install` / `remove` 那两条最值得先看** —— 它们正是
+「本机组件页点安装没反应」的落点，与用户报的症状同一族。
+
+### 越界申报
+
+- `a8b6bed`：`docs/research/memoac/F1-F5-PARITY.md` **纯格式化，零语义改动**。
+  它由 `6da92ef` 提交时漏了 prettier，于是 **master 上 `format:check` 对所有人都是红的**。
+  不是我的文件，但一条对谁都红的门禁等于没有门禁。已在 commit message 里写明。
+- **没碰**三路在途：`packages/downloader/src/sidecar.ts`、`scripts/ci/launcher-spawn.mjs`、
+  `scripts/build-bundle.mjs`、`scripts/ci/e2e-*.mjs`、`docs/adr/ADR-003`、
+  `packages/pipeline/src/tools.ts` 等，`git show --stat` 已复核只有我的 8 个文件。
+
+### 诚实标记
+
+- `[未验证]`：撤销面板与 `ErrorBlock` 在**真浏览器**里的视觉效果（组件测试 312 全绿，
+  但真浏览器那条腿今天仍因缺 playwright 没跑起来）。
+- `UNKNOWN`：无。
