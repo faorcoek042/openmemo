@@ -46,6 +46,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   writeFileSync,
   chmodSync,
   existsSync,
@@ -460,6 +461,110 @@ try {
       reason: `HTTP ${r.status}，${r.raw.length} 字节`,
     });
   }
+
+  /* ── 1b. ★ 判据本体：不装任何东西，能不能直接转写 ── */
+
+  hdr('1b. ★ 什么都不装，直接转写一段音频 —— 「可失败环节」到底还剩几个');
+  /*
+   * Manager 2026-08-08 裁决把 CPU 基线引擎打进了包里，判据是
+   * 「可失败环节从 2 降到 1」。**但这句话不能照抄** —— 还需要 ffmpeg 抽音轨，
+   * 所以严格说仍会剩环节。这一节**不预设答案**：真的在什么都没装的状态下
+   * 打一次转写，然后把产品**自己报出来的缺件**原样记下来。
+   * 数出来是几就是几，不为了凑"1"说过头话。
+   */
+  const sample = join(BUNDLE, 'app', 'apps', 'web', 'dist', 'index.html'); // 占位，下面换成真音频
+  void sample;
+  const wavPath = join(ROOT, 'coldstart-sample.wav');
+  /*
+   * 造一段 1 秒 16 kHz 单声道 PCM16 WAV（正弦）。**不是为了识别准确率** ——
+   * 这一步问的是"这条链走不走得到 whisper"，不是"它听清了没有"。
+   * 自己造而不是取 submodule 里的 jfk.wav：这条 workflow 刻意不 checkout submodule。
+   */
+  {
+    const sr = 16000;
+    const n = sr;
+    const data = Buffer.alloc(n * 2);
+    for (let i = 0; i < n; i += 1) {
+      data.writeInt16LE(Math.round(Math.sin((2 * Math.PI * 440 * i) / sr) * 8000), i * 2);
+    }
+    const h = Buffer.alloc(44);
+    h.write('RIFF', 0);
+    h.writeUInt32LE(36 + data.length, 4);
+    h.write('WAVE', 8);
+    h.write('fmt ', 12);
+    h.writeUInt32LE(16, 16);
+    h.writeUInt16LE(1, 20);
+    h.writeUInt16LE(1, 22);
+    h.writeUInt32LE(sr, 24);
+    h.writeUInt32LE(sr * 2, 28);
+    h.writeUInt16LE(2, 32);
+    h.writeUInt16LE(16, 34);
+    h.write('data', 36);
+    h.writeUInt32LE(data.length, 40);
+    writeFileSync(wavPath, Buffer.concat([h, data]));
+  }
+  // importRoots = [dataDir, …]，所以样本必须先落进数据目录
+  const inData = join(DATA_DIR, 'coldstart-sample.wav');
+  writeFileSync(inData, readFileSync(wavPath));
+
+  const imp = await http('/api/notes/import', {
+    method: 'POST',
+    body: { input: inData, title: '冷启动直接转写', language: 'en' },
+    timeoutMs: 60_000,
+  });
+  dump('POST /api/notes/import（什么都没装的状态下）', { status: imp.status, body: imp.body });
+  let coldChain = 'UNKNOWN';
+  if (imp.status === 202 && imp.body?.jobUid) {
+    let st = 'unknown';
+    let jobFull = null;
+    for (let i = 0; i < 600; i += 1) {
+      await sleep(1000);
+      const jr = await http(`/api/jobs/${encodeURIComponent(imp.body.jobUid)}`, {
+        timeoutMs: 20_000,
+      });
+      const job = jr.body?.job ?? jr.body;
+      if ((job?.jobId ?? job?.uid ?? job?.id) !== imp.body.jobUid) {
+        st = '认不出这个 job';
+        break;
+      }
+      jobFull = job;
+      if (['succeeded', 'failed', 'cancelled', 'blocked'].includes(job.state)) {
+        st = job.state;
+        break;
+      }
+    }
+    dump('这一单转写 job 的终态全文', jobFull, 1800);
+    coldChain = st;
+    if (st === 'succeeded') {
+      const tr = await http(`/api/notes/${encodeURIComponent(imp.body.noteUid)}/transcript`);
+      const segs = tr.body?.segments ?? [];
+      observe(
+        '★ 不装任何东西直接转写',
+        `**成功** —— ${segs.length} 段。可失败环节 = 0（引擎与 ffmpeg 都不用另装）`,
+      );
+    } else {
+      observe(
+        '★ 不装任何东西直接转写',
+        `${st} —— 产品报的缺件见上面 job 全文；这就是"还剩几个环节"的实测答案`,
+      );
+    }
+  } else {
+    observe('★ 不装任何东西直接转写', `导入没排上队：HTTP ${imp.status}`);
+  }
+  /*
+   * ★ 这一条**不是判据**（`fatal:false`）：剩几个环节是**事实**，不是对错。
+   *   把它写成判据就等于我先替产品决定了答案该是几 —— 而 Manager 明确要求
+   *   "把真实的链条数清楚并如实报，别为了凑 1 而说过头话"。
+   *   真正的判据是下面那条：**whisper-cli 必须来自包内，不许还要用户去装**。
+   */
+  const h1b = await http('/api/health');
+  const missing1b = h1b.body?.pipeline?.missing ?? [];
+  judge('★ 引擎已在盒子里：什么都不装时，缺件清单里**不再有 whisper-cli**', {
+    ok: !missing1b.includes('whisper-cli'),
+    reason:
+      `什么都没装时 pipeline.missing = ${JSON.stringify(missing1b)}` +
+      `（转写 job 终态：${coldChain}）`,
+  });
 
   /* ── 2. 探测 → 推荐 → 安装：走用户会走的那条路 ── */
 

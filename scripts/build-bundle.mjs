@@ -814,9 +814,92 @@ async function assembleProbeRuntime() {
     copied += 1;
   }
   if (copied === 0) die(`没有复制任何 ggml 库 —— 探针一定起不来`);
+
+  /*
+   * ─────────────────────────────────────────────────────────────────────────────
+   * ★★ CPU 基线转写链：**与探针共用这一个目录**（Manager 2026-08-08 裁决）
+   * ─────────────────────────────────────────────────────────────────────────────
+   *
+   * ## 裁决依据（三条，都不是体积上的）
+   *
+   * 1. **许可证理由不成立。** whisper.cpp 是 **MIT**，随包分发不触发
+   *    ffmpeg / yt-dlp 那条 GPL 传染（D-17 §1 的顾虑只对那两个成立）。
+   *    所以"不打包"此前只剩体积理由，而用户 2026-08-08 明确说过
+   *    「你只管功能有效就行，不要管性能先」—— 体积不是他的约束。
+   * 2. **它补上一个从来没被验证过的洞。** `ADR-003` 决策 3 的 L1
+   *    「永不失败的兜底」**一次都没有被验证过**，因为兜底的那个包根本不在包里。
+   * 3. **对照 memo.ac 量出的结构差距**：它把引擎装在盒子里，我们发的是一个安装器。
+   *
+   * ## 为什么塞进 `runtime/probe/` 而不是新开一个目录
+   *
+   * **为了不长出第二份 ggml。** 探针与 whisper-cli 需要的 ggml 核心
+   * （`libggml` / `libggml-base` / 一个 CPU 后端模块）**是同一份**，
+   * 而两者都按 `$ORIGIN` / `@rpath` 找同目录的库。
+   * 各放一份的话，同一个包里会有两套 ggml —— 既白占体积，又制造出
+   * "两份可能不同版本的 ggml"这种以后一定会咬人的状态。
+   *
+   * ⚠️ 所以这个目录现在装的是「**随包出厂的 CPU 基线运行时**」，
+   * 名字仍叫 `probe/` 是**刻意保留**的：`OPENMEMO_BUNDLED_PROBE_DIR` 这个契约
+   * 刚刚落地，`launcher-spawn.mjs`、`selftest-bundle.mjs`、两个启动脚本都在引用它。
+   * 为了一个更贴切的名字去动那四处，收益不抵风险。**改名留作后续。**
+   *
+   * ## 只抽必需的三件，不是把 17 MB 整包塞进来
+   *
+   * `[本机实测 2026-08-08, linux-x64]` 归档解开 17 MB，而跑得起来的最小集
+   * （探针 + whisper-cli + ggml 核心 + 一个 CPU 模块 + libwhisper）只要 **3.0 MB**，
+   * 其中探针那部分（1.60 MiB）**已经在上面复制过了**，
+   * 本段的**增量**只有 whisper-cli(840 KB) + libwhisper(523 KB) + VAD 切分器(548 KB)。
+   * 不带的：`whisper-bench`、`libparakeet*`、其余 13 个 `ggml-cpu-*` 变体
+   * （多带它们在 linux 上要再花 13.6 MB，而对"能不能转写"这个判据没有增量）。
+   *
+   * `whisper-vad-speech-segments` **带上**：VAD 权重不随包出厂，所以它现在用不上，
+   * 但一旦用户装了 ggml VAD 模型而没装 whisper 包，就会出现
+   * 「有权重没切分器」这种新的半吊子状态。548 KB 买断这个半状态。
+   */
+  const cliName = T.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli';
+  const vadName =
+    T.platform === 'win32' ? 'whisper-vad-speech-segments.exe' : 'whisper-vad-speech-segments';
+  const cliSrc = await findUnder(work, cliName);
+  if (!cliSrc) {
+    die(
+      `${T.probePackId} 的归档里没有 ${cliName}。\n` +
+        `   CPU 基线转写链是 ADR-003 决策 3 里 L1「永不失败的兜底」的执行者；\n` +
+        `   缺了它，用户解压之后仍然必须先下一个引擎包才能转写第一段音频。\n` +
+        `   **不允许降级放行。**`,
+    );
+  }
+  /*
+   * `libwhisper` 的命名与 ggml 同构（三平台各不相同，且带版本软链）：
+   *   linux  libwhisper.so · libwhisper.so.1 · libwhisper.so.1.9.1
+   *   macOS  libwhisper.dylib · libwhisper.1.dylib · libwhisper.1.9.1.dylib
+   *   win    whisper.dll
+   * 软链必须原样保留（`verbatimSymlinks`）—— `NEEDED` 写的是软链名，
+   * 丢了链 whisper-cli 就起不来。这一条与上面 ggml 那段栽过的坑是同一个。
+   */
+  const isWhisperLib = (n) => /^(lib)?whisper[-.0-9]*\.(so|dylib|dll)(\.[0-9.]+)?$/.test(n);
+  let cliCopied = 0;
+  for (const n of entries) {
+    if (!isWhisperLib(n)) continue;
+    await cp(join(srcDir, n), join(dst, n), { verbatimSymlinks: true });
+    cliCopied += 1;
+  }
+  await cp(cliSrc, join(dst, cliName));
+  if (T.platform !== 'win32') await chmod(join(dst, cliName), 0o755);
+  cliCopied += 1;
+  const vadSrc = await findUnder(work, vadName);
+  if (vadSrc) {
+    await cp(vadSrc, join(dst, vadName));
+    if (T.platform !== 'win32') await chmod(join(dst, vadName), 0o755);
+    cliCopied += 1;
+  } else {
+    // 不致命（没有 VAD 权重时本来就走固定窗口），但要出声，不许静默少一件
+    say(`   ⚠️ 归档里没有 ${vadName} —— 装了 ggml VAD 权重的用户会退回固定窗口切分`);
+  }
+
   await rm(work, { recursive: true, force: true });
   say(
-    `   ✔ runtime/probe/  探针 + ggml 核心 + ${chosenCpu}（共 ${copied + 1} 个文件，${mib(await dirSize(dst))}）`,
+    `   ✔ runtime/probe/  探针 + ggml 核心 + ${chosenCpu} + CPU 转写链` +
+      `（共 ${copied + cliCopied + 1} 个文件，${mib(await dirSize(dst))}）`,
   );
 }
 
@@ -870,8 +953,10 @@ fi
 # 缺了它，用户第一屏六个后端会全部报 "probe did not complete"。
 # daemon 把它排在**最后**：已安装的后端包优先，否则装完 Vulkan 也检测不到（见 setup.ts）。
 : "\${OPENMEMO_BUNDLED_PROBE_DIR:=$DIR/runtime/probe}"
+# 同一个目录还装着 CPU 基线转写链（whisper-cli + libwhisper，与探针共用 ggml）
+: "\${OPENMEMO_BUNDLED_WHISPER_DIR:=$DIR/runtime/probe}"
 : "\${OPENMEMO_OPEN_BROWSER:=1}"
-export OPENMEMO_WEB_DIST OPENMEMO_EXT_DIR OPENMEMO_BUNDLED_PROBE_DIR OPENMEMO_OPEN_BROWSER
+export OPENMEMO_WEB_DIST OPENMEMO_EXT_DIR OPENMEMO_BUNDLED_PROBE_DIR OPENMEMO_BUNDLED_WHISPER_DIR OPENMEMO_OPEN_BROWSER
 cd "$DIR/app/daemon"
 exec "$DIR/runtime/node" dist/main.js "$@"
 `;
@@ -931,6 +1016,7 @@ if not exist "%DIR%app\\daemon\\dist\\main.js" goto :incomplete
 if not defined OPENMEMO_WEB_DIST set "OPENMEMO_WEB_DIST=%DIR%app\\apps\\web\\dist"
 if not defined OPENMEMO_EXT_DIR set "OPENMEMO_EXT_DIR=%DIR%ext"
 if not defined OPENMEMO_BUNDLED_PROBE_DIR set "OPENMEMO_BUNDLED_PROBE_DIR=%DIR%runtime\\probe"
+if not defined OPENMEMO_BUNDLED_WHISPER_DIR set "OPENMEMO_BUNDLED_WHISPER_DIR=%DIR%runtime\\probe"
 if not defined OPENMEMO_OPEN_BROWSER set "OPENMEMO_OPEN_BROWSER=1"
 
 cd /d "%DIR%app\\daemon"

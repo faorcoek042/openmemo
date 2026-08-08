@@ -160,6 +160,44 @@ else
   echo "  · 跳过「真的跑一次」——宿主是 ${HOST:-未知}，包是 $TARGET"
 fi
 
+# ─────────────────────────────────────────────────────────────────────────────────
+# CPU 基线转写链（Manager 2026-08-08 裁决：把引擎装进盒子里）
+#
+# 判据不是"文件在"，是**用户解压之后不装引擎就能转写第一段音频**。
+# 之前这一格是空的：`ADR-003` 决策 3 的 L1「永不失败的兜底」从来没被验证过，
+# 因为兜底的那个包根本不在包里。
+# ★ 与探针**共用** runtime/probe/ 这一个目录（共享同一份 ggml，不长第二份）。
+# ─────────────────────────────────────────────────────────────────────────────────
+echo
+echo "── CPU 基线转写链（不装任何东西就能转写的那条）"
+if [ "$TARGET" = "win-x64" ]; then CLIBIN="whisper-cli.exe"; else CLIBIN="whisper-cli"; fi
+need_file "runtime/probe/$CLIBIN" "缺了它用户必须先下一个引擎包才能转写第一段音频"
+
+NWHISPER=$(find "$B/runtime/probe" -maxdepth 1 -name '*whisper*' \
+  ! -name "$CLIBIN" ! -name 'whisper-vad*' 2>/dev/null | wc -l | tr -d ' ')
+if [ "$NWHISPER" -ge 1 ]; then
+  ok "runtime/probe/ 里有 libwhisper（$NWHISPER 个文件/软链）"
+else
+  bad "runtime/probe/ 缺 libwhisper —— whisper-cli 动态链接它，缺了起不来"
+fi
+
+# ★★ 同平台时**真的跑一次**。与探针那条同一个理由：存在 ≠ 能跑。
+#    `[本机实测 2026-08-08 linux-x64]` 只搬 exe 不搬 libwhisper/ggml 时，
+#    报的是 `error while loading shared libraries` —— 只有真跑才看得见。
+if [ "$HOST" = "$TARGET" ]; then
+  if OUT="$("$B/runtime/probe/$CLIBIN" --help 2>&1)"; then
+    if printf '%s' "$OUT" | grep -q "usage:"; then
+      ok "whisper-cli 真的跑起来了（--help 打出 usage）"
+    else
+      bad "whisper-cli 跑起来了但输出不像 usage：$(printf '%s' "$OUT" | head -1)"
+    fi
+  else
+    bad "whisper-cli 跑不起来：$(printf '%s' "$OUT" | head -1)"
+  fi
+else
+  echo "  · 跳过「真的跑一次」——宿主是 ${HOST:-未知}，包是 $TARGET"
+fi
+
 echo
 echo "── 启动与许可证"
 need_file "$LAUNCHER"
@@ -203,8 +241,8 @@ echo
 echo "─────────────────────────────────────────────"
 echo "检查了 $CHECKED 条，失败 $FAILED 条"
 # C5 的教训：一个什么都没检查的检查器是最坏的那种绿。
-if [ "$CHECKED" -lt 24 ]; then
-  echo "::error::只检查了 $CHECKED 条（应 ≥24）—— 断言集被意外缩小了，这不是通过"
+if [ "$CHECKED" -lt 26 ]; then
+  echo "::error::只检查了 $CHECKED 条（应 ≥26）—— 断言集被意外缩小了，这不是通过"
   exit 1
 fi
 if [ "$FAILED" -ne 0 ]; then

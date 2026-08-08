@@ -125,6 +125,7 @@ const LAYOUT = {
   'linux-x64': {
     nodeExe: 'node',
     probeExe: 'openmemo-probe',
+    whisperCliExe: 'whisper-cli',
     libext: 'so',
     launcher: 'start.sh',
     prebuild: 'linux-x64.node',
@@ -135,6 +136,7 @@ const LAYOUT = {
   'win-x64': {
     nodeExe: 'node.exe',
     probeExe: 'openmemo-probe.exe',
+    whisperCliExe: 'whisper-cli.exe',
     libext: 'dll',
     launcher: 'start.cmd',
     prebuild: 'win32-x64.node',
@@ -195,6 +197,17 @@ function fixtureFiles(target) {
   put(`runtime/probe/libggml-base.${L.libext}`, 'GGML-CORE-STUB\n');
   put(`runtime/probe/libggml.${L.libext}`, 'GGML-CORE-STUB\n');
   put(`runtime/probe/libggml-cpu-x64.${L.libext}`, 'GGML-CPU-STUB\n');
+  /*
+   * CPU 基线转写链（Manager 2026-08-08 裁决）。`whisper-cli` 同样必须是**可执行的桩** ——
+   * `verify-bundle.sh` 会真的跑一次 `--help` 并要求打出 `usage:`，
+   * 桩不可执行的话那条最有价值的断言会静默跳过（与探针那条同一个道理）。
+   */
+  put(
+    `runtime/probe/${L.whisperCliExe}`,
+    "#!/bin/sh\necho 'usage: whisper-cli [options] file0 file1 ...'\n",
+    0o755,
+  );
+  put(`runtime/probe/libwhisper.${L.libext}`, 'WHISPER-LIB-STUB\n');
 
   put(L.launcher, '#!/bin/sh\n', 0o755);
   put('LICENSE', 'UNLICENSED\n');
@@ -497,6 +510,34 @@ console.log('⑧ ⑨ win-x64 参数化 —— .dll / node.exe / start.cmd / win3
     check('⑲ 缺 CPU 后端模块 → 红（探针会枚举出 0 个设备 = 等于没有答案）', () => {
       assert.equal(r.status, 1, r.out);
       assert.match(r.out, /ggml-cpu/);
+    });
+  }
+
+  /* ── CPU 基线转写链的反向验证（Manager 2026-08-08 要求：抽掉 → 当场红）── */
+
+  {
+    const r = run('linux-x64', {
+      mutate: (f) => f.delete(`runtime/probe/${L.whisperCliExe}`),
+    });
+    check('⑳ ★ 包里没有 whisper-cli → 红（用户就得先下一个引擎包才能转写第一段）', () => {
+      assert.equal(r.status, 1, r.out);
+      assert.match(r.out, /缺文件：runtime\/probe\/whisper-cli/);
+    });
+  }
+
+  {
+    /*
+     * ★ 与 ⑱ 同一类、也同样值钱：libwhisper 缺了之后**文件存在性检查会放行**
+     *   （whisper-cli 在、ggml 在），只有「真的跑一次 --help」那条抓得到。
+     *   `[本机实测 2026-08-08 linux-x64]` 只搬 exe 不搬 libwhisper：
+     *   `error while loading shared libraries: libwhisper.so.1`。
+     */
+    const r = run('linux-x64', {
+      mutate: (f) => f.delete(`runtime/probe/libwhisper.${L.libext}`),
+    });
+    check('㉑ ★ 缺 libwhisper → 红（存在性检查会放行，只有"真的跑一次"抓得到）', () => {
+      assert.equal(r.status, 1, r.out);
+      assert.match(r.out, /libwhisper/);
     });
   }
 }

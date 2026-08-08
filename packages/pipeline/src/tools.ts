@@ -851,8 +851,34 @@ export async function discoverTools(
     return null;
   };
 
+  /*
+   * ★★ 随预编译包出厂的 **CPU 基线运行时**（2026-08-08 Manager 裁决）。
+   *
+   * 启动脚本把 `OPENMEMO_BUNDLED_WHISPER_DIR` 指向包内 `runtime/probe/`
+   * （那个目录同时装着探针、ggml 核心与 whisper-cli —— 共用一份 ggml，
+   *   不长第二份，见 `scripts/build-bundle.mjs` 的说明）。
+   *
+   * ★ 它**排在最后**，与探针那条同一个理由，而且这一条比探针更要紧：
+   *   包内目录**只有 CPU 后端模块**。一旦它排到已安装后端包前面，
+   *   用户装完 Vulkan/CUDA 包之后仍然会跑到包内这个 CPU 二进制上 ——
+   *   表现是"装了加速却没变快"，比现在这个"要先下一个包"更难查，
+   *   因为它发生在用户以为已经装好之后。
+   *   所以顺序是：**已安装的后端包 > 系统 PATH > 包内兜底**。
+   *
+   * 因为它只在前两级都落空时才出手，这条改动**结构上不可能让既有安装变差**：
+   * 任何已经能解析到 whisper-cli 的机器，走的还是原来那条路。
+   */
+  const bundledDir = process.env['OPENMEMO_BUNDLED_WHISPER_DIR'];
+  const fromBundle = async (name: string): Promise<string | null> => {
+    if (!bundledDir) return null;
+    const candidate = join(bundledDir, exe(name));
+    return (await isExecutable(candidate)) ? candidate : null;
+  };
+
   const resolve = async (name: string): Promise<string | null> =>
-    (await findInBackendPacks(storeRoot, exe(name), { selectedBackend })) ?? (await fromPath(name));
+    (await findInBackendPacks(storeRoot, exe(name), { selectedBackend })) ??
+    (await fromPath(name)) ??
+    (await fromBundle(name));
 
   /*
    * VAD model ships as a ggml file inside the whisper.cpp pack's sibling model store.
