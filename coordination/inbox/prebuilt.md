@@ -170,3 +170,99 @@ useBreakerQuery / useBreakerResetMutation` —— 断路器那条线的在途产
 —— 只看自己 add 了什么会漏掉别人先 stage 的东西。
 
 需要 Manager 决策: 无。
+
+---
+
+## [2026-08-08 18:50] ①「跳过」渲染成「成功」 + ② --out 相对路径 DONE
+
+交付: `.github/workflows/build-bundles.yml`（新增 `complete` job）·
+`scripts/ci/emit-bundles-complete.mjs`（新）· `.github/workflows/e2e-{notes,import,record}.yml`（收敛）·
+`scripts/build-bundle.mjs`（`--out` 绝对化 + `--print-paths`）· `scripts/ci/selftest-bundle.mjs`（13→20 例）
+
+### ① 判定放在**消费方**，由**生产方**发一个正面凭证 —— 依据
+
+- **不能"让 skipped 算失败"**：手动只跑单平台是合法用法（`legs` 就是为此加的），
+  判红会训练所有人忽略红灯 —— 而那正是本仓最贵的失败得以长期存活的土壤。
+- **`conclusion` 在结构上装不下"产物在不在"**：它是 job 结果的汇总，
+  而**跳过既非成功也非失败**。拿它当判据，问的问题和答的问题就不是同一个。
+- **§11 的判据是「绿灯必须能追溯到这次 run 真的产出的东西」** ——
+  而 **artifact 就是那个东西本身**。所以判定必须落在 artifact 上，不能落在 conclusion 上。
+
+实现：`complete` job `needs: [linux, macos, windows]` 且**不带任何 `if:`**。
+任一腿跳过/失败它就跳过 ⇒ 那种 run 里**根本不存在** `bundles-complete` 这个 artifact。
+消费方问"有没有完整一套"就是问这个名字在不在。与 `build-backends.yml` 的
+`merge-manifest` 同形同理（C4：`if: always()` 曾让三条腿全挂写出 `packs: []` 然后报绿）。
+`emit-bundles-complete.mjs` 缺件时 exit 1 且**一个字节都不写**（说半句真话的凭证比没有更糟），
+三平台版本号不一致也拒（那说明不是同一次构建的产物）。
+
+### 四个消费方**全部**覆盖到了（而且是收敛，不是逐个打补丁）
+
+判定逻辑此前有**三份拷贝**。三份都写对了同一件事，但那不是安全 ——
+`resolve-bundle-run.sh` 的文件头记着它诞生的原因：同一段 shell 抄了两份、只修了一份。
+
+| 消费方 | 改前 | 改后 |
+|---|---|---|
+| `e2e-runtime` | 已用 `resolve-bundle-run.sh` | 不动 |
+| `e2e-notes` | `gh run list --status=success --limit 1` + 存在性检查→**取不到就红** | 改调共享脚本 |
+| `e2e-import` | 自己一份"往回找"的拷贝（逻辑对，但是第三份） | 改调共享脚本 |
+| `e2e-record` | **只认显式 `bundleRunId`，没传就死在 `run-id:` 空串** | 没传就走共享脚本往回找 |
+| Manager（手工发 release） | 「取最近一次成功」 | `resolve-bundle-run.sh bundles-complete` |
+
+`grep` 复核：`.github/workflows/` 下已**无任何** "最近一次 success" 判据。
+
+### ★ 反向验证（真跑，不是推理）
+
+**造了"两条腿跳过"的情形** —— `legs=linux`，`[CI 实测 run 31252840410]`：
+
+```
+✓ bundle-linux-x64      ← 跑了
+- bundle-win-x64        ← skipped
+- bundle-macos-arm64    ← skipped
+- bundles-complete      ← **跟着 skipped（正是判据所在）**
+conclusion: success     ← 陷阱仍在，且我们没试图改它
+artifacts: bundle-linux-x64   ← **没有 bundles-complete**
+```
+
+消费方当场拒绝：
+- `resolve-bundle-run.sh bundles-complete` → **exit 1**，并给出处置建议（跑 legs=all 或显式指定）
+- `resolve-bundle-run.sh bundle-darwin-arm64` → **跳过 31252840410**，往回选中 31252437851
+
+**正面路径也验了** `[CI 实测 run 31253028609，legs=all]`：`bundles-complete` job 跑了 17s，
+凭证识别出 3 个平台（`.tar.xz` / `.zip` / `.tar.gz`，版本 0.2.0），
+`resolve-bundle-run.sh bundles-complete` 选中它。
+
+### ② `--out` 相对路径
+
+病灶：`makeArchive()` 的 `tar` 带 `cwd: OUT_ROOT`，归档路径**跨了一次 cwd 边界**。
+`[/tmp 隔离实测]` 还原 `resolve()` 后：`outRoot="rel/out"`、`archive="rel/out/…"`，
+tar 以 `cwd=rel/out` 再解析一次 ⇒ 实际落到 `rel/out/rel/out/…`，**而脚本 exit 0**。
+下游 glob 匹配不到，表现成"这次构建没有产物"，与"构建失败"长得完全不一样。
+
+修法：`--out` / `--cache` 在 parse 时 `resolve()`。新增 `--print-paths`（只打印解析结果、
+不碰网络不写盘），让这条性质**可测** —— 真跑一次要下 ~180 MB，那正是它此前漏掉的原因。
+用例 ⑩⑪⑫ 覆盖相对 / 绝对 / 含 `..`；`[/tmp 隔离实测]` 还原修复后 ⑩ 的 `isAbsolute` 断言当场红。
+
+### 门禁（隔离 worktree 检出 `20176f2`）
+
+`pnpm -r test` **1577 / fail 0**（基线 1558）· `tsc -b` clean · `eslint` clean ·
+`build:safe` 0 · `lint-workflows` **1177 条 / 13 workflow** · `test:ci-scripts` EXIT=0
+（`selftest-bundle` **20 例**）· `check:orphans` 绿。
+
+### 纪律
+
+- 已按**新收的 §12** 事后复核 `git show --stat 20176f2`：**恰好 7 个文件，无夹带**。
+  本条回执改用 `git commit -- <pathspec>` 提交。
+- `/tmp` 我清了自己的约 650 MB（`bundletest` / `bt2` / `rv` / `prebuilt-research` / 旧 worktree）；
+  只留 `/tmp/bundlecache` 46 MB（Node/sherpa/ext 归档缓存，删了要重下几百 MB）。
+  当前 `/tmp` 4.0G / 12G。隔离 worktree 用完即删。
+- 未碰 `:10000`、`/root/data-memo`、机器指针；未 `pkill`；**未建/改/删任何 release**
+  （只 `workflow_dispatch`，workflow 权限是 `contents: read`）。
+- 未碰另两路的文件（`apps/**`、`packages/**`、`main.ts` 与模型槽）。
+
+需要 Manager 决策: 无。
+
+⚠️ 一条**遗留事实**（不是我引入的，也没被我消除）：**部分跑的 run，
+`conclusion` 仍然是 `success`。** 我没有去改它 —— 按你给的判据，
+手动跑单平台是合法用法，不该被判红。现在的保证是"**消费方问得到真话**"，
+而不是"conclusion 变得诚实"。任何新的消费方**只要还去读 `conclusion`，
+就仍然会被骗** —— 这条建议写进给下一个人的文档里。
