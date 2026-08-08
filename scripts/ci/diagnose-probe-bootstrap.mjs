@@ -74,8 +74,16 @@ const proc = spawn(NODE, [MAIN, '--data-dir', DATA, '--port', String(PORT)], {
     OPENMEMO_POINTER_FILE: join(ROOT, 'pointer.json'),
     OPENMEMO_WEB_DIST: join(BUNDLE, 'app', 'apps', 'web', 'dist'),
     OPENMEMO_EXT_DIR: join(BUNDLE, 'ext'),
-    // ★ 刻意**不设** OPENMEMO_PROBE —— 要走的就是启动脚本给的那条包内兜底路径
-    OPENMEMO_BUNDLED_PROBE_DIR: join(BUNDLE, 'runtime', 'probe'),
+    /*
+     * ★★ 刻意**既不设 `OPENMEMO_PROBE`、也不设 `OPENMEMO_BUNDLED_PROBE_DIR`**。
+     *
+     * 这一步是**直接起 daemon**（不经启动器）。此前它预设了后者，于是它验的其实是
+     * "环境变量给对了会怎样" —— 而**只有启动器会设那个变量**，
+     * 所以"直接起的 daemon 找不到包内探针"这个真实缺陷，它一次都没测到。
+     *
+     * 现在什么都不设：走的就是 `resolveBundledWhisperDir()` 那条**模块相对**的路。
+     * 三个平台每轮都在这个形态下跑一遍 —— 那条规则的覆盖从此靠测试，不靠"应该没问题"。
+     */
     OPENMEMO_OPEN_BROWSER: '0',
   },
   stdio: ['ignore', 'pipe', 'pipe'],

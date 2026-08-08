@@ -39,6 +39,13 @@ import { ArtifactStore } from '@openmemo/downloader';
  * **同一个问题只准有一个回答的人。**
  */
 import { findInBackendPacks, resolveBackendTool } from '@openmemo/pipeline';
+
+/*
+ * ★ 刻意复用 `manifests.ts` 里那一个，而不是在这里再写一份模块相对解析：
+ *   探针与 CPU 基线链**共用同一份 ggml**（去重过，每平台只多 ~2.1–2.4 MiB）。
+ *   两份解析器 = 两条会各自漂移的规则，而它们本该永远指向同一个目录。
+ */
+import { resolveBundledWhisperDir } from '../http/rest/manifests.js';
 import {
   CIRCUIT_BREAKER_THRESHOLD,
   PROBE_RECOVERY_TIMEOUT_MS,
@@ -231,8 +238,39 @@ export async function resolveRuntimeLayout(input: RuntimePathsInput): Promise<Ru
    * 成因是一个环：探针**随 whisper 包出厂**（ADR-015 §7），
    * 而用户**要先探测硬件才知道该装哪个包**。
    *
-   * 预编译包现在自带 `runtime/probe/`（探针 + ggml 核心 + 一个 CPU 后端模块，
-   * `[实测]` linux-x64 共 1.60 MiB），启动脚本用 `OPENMEMO_BUNDLED_PROBE_DIR` 指过来。
+   * 预编译包现在自带 `runtime/probe/`（探针 + ggml 核心 + 一个 CPU 后端模块）。
+   *
+   * ## ★ 定位不再依赖"启动器设了环境变量"（2026-08-08 订正）
+   *
+   * 原本只有 `OPENMEMO_BUNDLED_PROBE_DIR` 一条路，而**只有启动器会设它** ——
+   * 于是**直接起 daemon 的人（含 CI）永远找不到包内探针**。
+   * 这与 `resolveManifestDir()` 那条是同一个病，`scripts` 那位当轮的原话：
+   * **「能不能用，不该取决于你从哪儿启动。」**
+   *
+   * 修法**不另起一套，直接用他那个函数** `resolveBundledWhisperDir()`：
+   * 它算的就是同一个目录 `<包根>/runtime/probe`（探针与 CPU 基线链**共用一份 ggml**，
+   * 没有第二份 —— 复用同一个解析器，这个去重就不可能被我这边写歪）。
+   * 它是**模块相对**的、**不看 cwd**，所以一条规则同时覆盖
+   * 「双击 / 终端跑启动器 / 从别的目录调启动器 / 直接起 daemon」四种启动方式 ——
+   * 它们的差别只在 cwd。
+   *
+   * ## 兜底留两条，为什么不像他那样删到一条
+   *
+   * 他删掉的第三条是 `process.cwd()`：**它会"碰巧"落对**（CI 的 cwd 正好是检出目录），
+   * 于是把另外两条的失败**遮了几个月**。判据是「一条碰巧成立的兜底 = 一个关掉的告警」。
+   *
+   * `OPENMEMO_BUNDLED_PROBE_DIR` **不具备那个性质**：环境变量**永远不会被碰巧设上**，
+   * 必须有人明确去设。所以它遮不住模块相对那条的失败。保留它的理由有三条：
+   *   ① 它是启动器与 daemon 之间**已经写下的契约**（`scripts/ci/launcher-spawn.mjs`
+   *      把它列进"归启动器设、调用方不许预设"的名单，并有断言钉着）；
+   *   ② 布局被搬动时（相对路径算不对）需要一个明确的逃生口；
+   *   ③ 它排在模块相对**前面**只是"显式覆盖优先"，不是兜底叠加。
+   *
+   * ⚠️ 但保留它有一个代价必须被抵消：**真实用户走启动器时永远命中环境变量，
+   * 模块相对那条就成了只有 CI 才走的路**。所以
+   * `scripts/ci/diagnose-probe-bootstrap.mjs` **刻意不再预设**这个变量 ——
+   * 三平台每轮都在**直接起 daemon** 的形态下验模块相对那条。
+   * 覆盖靠测试，而不是靠"它应该没问题"。
    *
    * ★ 它**排在最后**，这一点是本次改动里最要紧的一行：
    *   `backendDir = dirname(probePath)`，而包内那个目录**只有 CPU 模块**。
@@ -240,7 +278,8 @@ export async function resolveRuntimeLayout(input: RuntimePathsInput): Promise<Ru
    *   于是"装了却检测不到" —— 那比现在这个 bug 更糟，因为它发生在用户以为已经装好之后。
    *   所以顺序是：显式环境变量 > dataDir/bin/runtime > 已安装的后端包 > **包内兜底**。
    */
-  const bundledProbeDir = process.env['OPENMEMO_BUNDLED_PROBE_DIR'];
+  const bundledProbeDir =
+    process.env['OPENMEMO_BUNDLED_PROBE_DIR'] ?? resolveBundledWhisperDir() ?? undefined;
 
   const found =
     envProbe ??
@@ -248,6 +287,26 @@ export async function resolveRuntimeLayout(input: RuntimePathsInput): Promise<Ru
     // ← 与 discoverTools() 用的是同一个函数，所以两边对"它在不在"不可能给出不同答案
     (await findInBackendPacks(modelsRoot, probeBinaryName())) ??
     (bundledProbeDir ? await findUnder(bundledProbeDir, named(probeBinaryName())) : null);
+  /*
+   * ★ 让"落空"变响（`scripts` 那位在 manifests 那条上指出的同一个吞法）。
+   *
+   * 旧代码在找不到时**返回一个不存在的路径**，下游 `readdir` 的错被 catch 成
+   * 空结果 —— 于是「目录是空的」和「根本没找到」长得一模一样。
+   *
+   * 这里的对应情形是：**包内布局明明在（`runtime/probe/` 存在），探针却不在里面**
+   * —— 那只可能是包被打坏了或被人删过文件，而它此前会**静默**退化成
+   * "探针未安装"，与"用户还没装组件"在界面上完全一样。
+   * 注意只在**这一种**情形出声：开发树里 `bundledProbeDir` 本来就是 null，
+   * 那是正常状态，不该每次启动都吼一遍（一条常态告警等于没有告警）。
+   */
+  if (found === null && bundledProbeDir !== undefined) {
+    console.warn(
+      `[daemon] ⚠️ 包内有 ${bundledProbeDir}，但里面找不到 ${probeBinaryName()} —— ` +
+        `硬件探测会退化成"探测不到任何加速器"，而那与"这台机器真的没有 GPU"在界面上一样。\n` +
+        `   这多半是包被解坏了或少解了文件，建议重新完整解压一次。`,
+    );
+  }
+
   const probePath = found ?? path.join(runtimesRoot, probeBinaryName());
 
   /*
