@@ -371,3 +371,141 @@ mtime =2026-08-04 01:06:59.523602110 +0800   size=78
 
 - 等 run 31249873183 出结果，把三平台的实际数字补进本回执与章程 §3。
 - 缺陷 ① 已修并有变异守着；②③ 建议派一路专门处理。
+
+---
+
+## [2026-08-08 19:40] 三条裁定的修复 DONE
+
+交付: `apps/daemon/src/http/rest/state.ts`、`backends.ts`、`models.ts`、`storage.ts`、
+`apps/daemon/src/storage/move.ts`、`packages/runtime/src/probe/runProbe.ts`、
+`scripts/ci/e2e-runtime-audit.mjs`，+3 个新测试文件。
+
+提交: `b4957e4` → `8835880` → `5ec1c1c`（已 push）
+**CI 实测 run 31252528894：五个 job 全绿**（此前四轮全红）。
+
+| job                  | 结果                              |
+| -------------------- | --------------------------------- |
+| 端到端 linux-x64     | **PASS 49 / FAIL 0 / UNKNOWN 1**  |
+| 端到端 win32-x64     | PASS 43 / FAIL 0 / UNKNOWN 6      |
+| 端到端 darwin-arm64  | PASS 41 / FAIL 0 / UNKNOWN 7      |
+| 变异验证 ×2          | ✅ 11 条变异全部被抓住            |
+
+### ① 快照失效做成了什么形状：**从输入派生，不是靠人记得调**
+
+`RestState.hardware` 保留为快照（探测要 spawn probe / nvidia-smi，不能每请求跑），
+但**是否过期不再由人判断**，而是由一个廉价指纹决定：
+
+```
+machineFingerprint() = modelsRoot | prefs.selectedBackend | sorted(已装包 id)
+```
+
+只 readdir、不 spawn。`freshHardware()` 在指纹变了时才重探；
+`handleBackendRoutes()` 入口与 `buildHardwareResponse()` 各调一次。
+
+**为什么不是"在 install 后面补一次刷新"**：那是第 N 次修症状。
+
+### 卸载 / 切换那几条路径**确实同病** —— 这是被实测确认的，不是推测
+
+`hardwareSnapshot.test.ts` 逐条钉死（**都不调用任何 invalidate**）：
+
+- 装一个包 → 快照必须失效 ✔
+- **卸一个包 → 快照必须失效** ✔（"只在 install 后面补"漏掉的第一条）
+- **切后端 → 快照必须失效** ✔（backendDir 单值，切了就该重探；漏掉的第二条）
+- 重探后用户显式选过的后端不许被默认值盖掉 ✔
+- 指纹没变时不重复探测 ✔
+- `invalidateHardware()` 能强制失效（给指纹看不见的变化用，如断路器复位）✔
+
+**守得住**：新增一个改变机器状态的动作时，只要它影响那三样之一，
+**不写任何代码就已经被覆盖**；影响别的东西时，在这个文件里加一行
+`hardwareSnapshotIsCurrent() === false` 就会当场把遗漏逼出来。
+
+**修好的证据是措辞变了**（run 31250730491 → 31252071989 同一格）：
+
+```
+修前：409「本机无法使用 metal：backend package not installed」   ← 假话，包就是刚装的
+修后：409「本机无法使用 metal：installed but enumerated no devices」← 测出来的真结论
+```
+
+⚠️ 顺带修掉我自己埋的一个坑：指纹初值留 `null` 会让第一个请求必然重探一遍
+（白跑，且会冲掉调用方手里的 hardware —— `backendNotProbed.test.ts` 就是这么红的）。
+改成在 `create()` 的 `reconcileBackends()` **之后**钉住。
+
+### ② 断路器现在怎么分「还没装」和「装了但坏了」
+
+判据落在 **`recordProbeOutcome()`**（唯一的记账点，交互探测与后台恢复探测都走它）：
+
+- `missing_probe` / `missing_backend_dir` → **不计数**。这两种 `runProbe` 只做一次
+  `existsSync`（微秒级、不 spawn、不碰驱动）= **什么都没测**。
+- `timeout` / `crash` / `bad_output` / `exec_error` → 照旧计数、照旧跳闸。
+
+计数**不清零**（卸包瞬间也会走到这里，清零等于抹掉一次真实的连续失败），
+只更新 `lastError` 让"为什么没探到"仍然可见。
+
+⚠️ **三个常量一个字未改**（`PROBE_TIMEOUT_MS` / `CIRCUIT_BREAKER_THRESHOLD` /
+`BREAKER_COOLDOWN_MS`）——改的是"什么算一次失败"，不是"多久算超时""几次算坏"。
+`breakerNotInstalled.test.ts` 7 条守着，其中两条专门钉**反方向**：
+真故障必须照旧跳闸，这条修复不许把断路器整个关掉。
+
+### ③ Windows 那条：我选了「如实说」
+
+**没有**改成"让 Windows 也用 rename"（跨卷 rename 本来就会失败，copy 是必要退路）。
+
+- `MoveResult` 新增结构化字段 **`sourceRemoved`**（不让调用方去正则匹配 `warningZh`）；
+- 文案提成纯函数 `moveMessageZh()` 并按它分叉：源没删掉时**不出现"已移动"**，
+  改说「已复制…并逐文件校验通过；⚠️ 旧目录 <path> 没能删掉，仍留在原地
+  （其中包含 secrets.json），请自行确认后删除」；
+- 顺带修掉 `sourceIntact` 在删源失败时恒为 `false` 的反话。
+
+**删源前的完整性校验**：沿用既有的 `verifyTreesMatch()` —— 比的是
+**路径集合 + 每个普通文件的字节数 + 每条符号链接的 readlink 目标**，
+不是"看目录存不存在"。校验不过就删掉刚复制的那份、源一个字节不动；
+过了才删源，且删源在 try **之外**（删到一半失败不许触发回滚把唯一完整的一份删掉）。
+
+`moveTruthfulness.test.ts` 5 条守着，核心一条是「`sourceRemoved:false` ⇒
+文案里不许出现"已移动"」，并要求点名 `secrets.json`
+（"有个目录没删掉"听起来像洁癖问题，"里面有你的 API Key"才会让人真去处理）。
+
+### 那三条红现在还剩几条：**0 条**
+
+三平台全部 FAIL 0。剩下的都是 UNKNOWN，逐条有名有姓：
+
+- `A-ACCEL-SWITCH`（三平台）：托管 runner 没有真 GPU，探针**如实**枚举不到设备，
+  409 是真话。**已改成分清「拒绝」与「用假理由拒绝」**：包确实装着却被告知"没装"
+  才是红；测出来的真结论是 UNKNOWN。**真 GPU 上能否切过去仍是 UNKNOWN。**
+- `A-BREAKER-*`（macOS/Windows 4 条）：注入故障后 `runtime.probe` 回 `null`，
+  观测不到"探测真的跑了并且失败了" ⇒ 前提不成立。**Linux 上这几条全绿**
+  （跳闸 → retryAt−blacklistedAt==60000 → 冷却期零探测 → 半开 → 计数清零，指纹全程未变）。
+  `runtime.probe=null` 的成因**仍然 UNKNOWN**，本轮没查出来，不硬编解释。
+- `A-MODEL-RESUME`（macOS/Windows）：只在 Linux 腿开 `--resume-test`。
+  Linux 上实测通过（打断留下 2 个 .partial → 重启 → 续上 → succeeded）。
+  ⚠️ 上一轮（31252071989）这条在 Linux 上红过一次（`打断后重新下载 → failed`），
+  本轮绿。**两次之间没改过续传相关代码，所以它可能是不稳定的**，`[未验证]` 是哪一种。
+
+### 我这条腿按 §11 补了什么
+
+- **起服务前先证明端口是空的**（`A-PORT-FREE`）：不空**当场判失败**并打印占用者
+  自称的 pid/dataDir/version，不再继续跑下去拿一个追溯不到来源的绿；
+- **收尾按 pid 收整棵进程树**（`killTree`，Windows 走 `taskkill /T /F`）：
+  daemon 起不来、HTTP 关不掉两条路径都收；**没有用 `pkill -f`**；
+- **所有 fetch 带超时**（health 3–5s、业务 120s）；
+- 「跳过」一律渲染成 UNKNOWN，从来不是 PASS（本来就是这么做的）。
+
+### 与其它腿的边界
+
+F3 那一路动的是 `main.ts` + 模型槽；我这轮碰的是
+`http/rest/{state,backends,models,storage}.ts`、`storage/move.ts`、
+`probe/runProbe.ts` —— **没有交集**，`git status` 全程只有我自己的文件。
+
+⚠️ 一次操作事故，已完全恢复、如实记下：我 `git commit --amend` 时 HEAD 已经被
+另一路推进了一格，于是**我把别人的提交改写了**（`0853b8e` → 本地 `571861b`）。
+发现后 `git diff` 确认只多了我那一个文件、他们的内容一个字未动，
+`git reset --soft 0853b8e` 复位，再把我的改动作为独立提交推上去。
+origin 上他们的提交始终是原样。**教训：多路并行时 `--amend` 前必须先看 HEAD 是不是自己的。**
+
+### 门禁（worktree 检出 `8835880` 跑，避开别人的在途改动）
+
+`pnpm -r test` **1577 pass / 0 fail**（基线 1558 + 我新增 19 条）、`tsc -b`、
+`eslint`、`format:check`、`check:orphans` **70/70**、`lint-workflows` 1147、
+`test:ci-scripts`、`check:sources`、`check:version` 全绿。
+
+真实机器指针全程未变：`sha256=7f930979…`，`mtime=2026-08-04 01:06:59`。
