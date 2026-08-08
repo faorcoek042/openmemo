@@ -174,34 +174,14 @@ jobs:
       # 解归档。判据在**解开之后**的那棵树上 —— 归档与解归档之间有它自己的坑
       # （glob 漏掉、tar 排除规则、符号链接没跟随），build-bundles 已经为此
       # 单独立了一步 verify-bundle.sh。
-      - name: 解开预编译包
+      - name: 解开预编译包 + 验结构（共享脚手架）
         id: bundle
         if: ${{ inputs.bundleSource == 'artifact' }}
         shell: bash
         run: |
-          set -euo pipefail
-          mkdir -p extracted
-          shopt -s nullglob
-          archives=(bundle-artifact/*.tar.xz bundle-artifact/*.tar.gz bundle-artifact/*.zip)
-          if [ ${#archives[@]} -eq 0 ]; then
-            echo "::error::artifact 里没有归档文件："; ls -R bundle-artifact; exit 1
-          fi
-          a="${archives[0]}"
-          echo "归档：$a"
-          case "$a" in
-            *.tar.xz) tar -xJf "$a" -C extracted ;;
-            *.tar.gz) tar -xzf "$a" -C extracted ;;
-            *.zip)    unzip -q "$a" -d extracted ;;
-          esac
-          # 解出来是 openmemo-<version>-<target>/ 一层壳
-          dirs=(extracted/*/)
-          if [ ${#dirs[@]} -ne 1 ]; then
-            echo "::error::解开后期望恰好 1 个顶层目录，实际 ${#dirs[@]} 个："; ls -la extracted; exit 1
-          fi
-          d="${dirs[0]%/}"
-          echo "bundle_dir=$d" >> "$GITHUB_OUTPUT"
-          echo "包目录：$d"
-          ls "$d"
+          node scripts/ci/resolve-bundle.mjs \
+            --from bundle-artifact --out extracted \
+            --require app/daemon/dist/main.js,runtime/node
 
       # ── 判据本身 ──────────────────────────────────────────────────────────────
       #
@@ -315,25 +295,14 @@ jobs:
           run-id: ${{ steps.runid.outputs.id }}
           github-token: ${{ github.token }}
 
-      - name: 解开预编译包
+      - name: 解开预编译包 + 验结构（共享脚手架）
         id: bundle
         if: ${{ inputs.bundleSource == 'artifact' }}
         shell: bash
         run: |
-          set -euo pipefail
-          mkdir -p extracted
-          shopt -s nullglob
-          archives=(bundle-artifact/*.tar.xz bundle-artifact/*.tar.gz bundle-artifact/*.zip)
-          [ ${#archives[@]} -gt 0 ] || { echo "::error::artifact 里没有归档"; ls -R bundle-artifact; exit 1; }
-          a="${archives[0]}"
-          case "$a" in
-            *.tar.xz) tar -xJf "$a" -C extracted ;;
-            *.tar.gz) tar -xzf "$a" -C extracted ;;
-            *.zip)    unzip -q "$a" -d extracted ;;
-          esac
-          dirs=(extracted/*/)
-          [ ${#dirs[@]} -eq 1 ] || { echo "::error::解开后顶层目录不是 1 个"; ls -la extracted; exit 1; }
-          echo "bundle_dir=${dirs[0]%/}" >> "$GITHUB_OUTPUT"
+          node scripts/ci/resolve-bundle.mjs \
+            --from bundle-artifact --out extracted \
+            --require app/daemon/dist/main.js,runtime/node
 
       # 逐条跑。**一条存活就整步红** —— 存活的意思是"把安全性质拿掉，断言照样绿"，
       # 那条断言此刻等于不存在，修它比修产品更急。

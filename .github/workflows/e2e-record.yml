@@ -175,27 +175,25 @@ jobs:
           run-id: ${{ inputs.bundleRunId }}
           github-token: ${{ github.token }}
 
-      # 解归档并定位包根。三种归档格式各一条命令；**解不出来就红**，不猜。
-      - name: 解开归档
+      # 解归档并定位包根 —— 走**共享脚手架**（Manager 2026-08-08 裁决）。
+      #
+      # 这段「挑归档 → 解开 → 找包根」四条 e2e 腿以前各写一份 bash，
+      # 同一类 shell 坑撞了三次，三次都是**假红**（包是好的，脚手架把步骤带走了）。
+      # 现在统一到 `scripts/ci/resolve-bundle.mjs`：用 Node 是因为病因就是
+      # shell 的 glob/退出码语义，而且它能被 `selftest-resolve-bundle.mjs`
+      # 在本机逐个坏输入量一遍（已挂进 `pnpm test:ci-scripts`）。
+      #
+      # 顺带补上两条这条腿以前没有的护栏：**两个归档并存**、**解出多个顶层目录**
+      # 以前都是 `head -1` 安静挑一个 —— 那样的绿灯追溯不到它验的是谁。
+      #
+      # `--require` 各腿自己声明：这条腿要用包自带的 Node 起 daemon，所以两样都要。
+      - name: 解开归档 + 验结构（共享脚手架）
         id: unpack
         shell: bash
         run: |
-          set -euo pipefail
-          mkdir -p unpacked
-          ARCHIVE="$(find incoming -type f \( -name '*.tar.xz' -o -name '*.tar.gz' -o -name '*.zip' \) | head -1)"
-          [ -n "$ARCHIVE" ] || { echo "::error::artifact 里没有归档文件"; ls -R incoming; exit 1; }
-          echo "归档：$ARCHIVE"
-          case "$ARCHIVE" in
-            *.tar.xz) tar -xJf "$ARCHIVE" -C unpacked ;;
-            *.tar.gz) tar -xzf "$ARCHIVE" -C unpacked ;;
-            # Windows 上 bsdtar 认 zip；unzip 不一定在。两条都试，都不行才红。
-            *.zip)    unzip -q "$ARCHIVE" -d unpacked || tar -xf "$ARCHIVE" -C unpacked ;;
-          esac
-          DIR="$(find unpacked -maxdepth 1 -mindepth 1 -type d | head -1)"
-          [ -n "$DIR" ] || { echo "::error::归档里没有顶层目录"; exit 1; }
-          echo "包根：$DIR"
-          ls "$DIR"
-          echo "bundle_dir=$DIR" >> "$GITHUB_OUTPUT"
+          node scripts/ci/resolve-bundle.mjs \
+            --from incoming --out unpacked \
+            --require app/daemon/dist/main.js,runtime/node
 
       # 变异证明先跑：它不需要包、不需要网络，几百毫秒。
       # 放在最前面是因为 —— **断言本身失效的话，后面那一大段绿灯毫无意义**。
