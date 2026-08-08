@@ -65,7 +65,18 @@ const BUNDLE = arg('--bundle', null);
 const PORT = Number(arg('--port', '19810'));
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32';
-const MASK = !argv.includes('--no-mask');
+/*
+ * ★ **默认不屏蔽**（`--mask` 才开）—— 这条腿要的是「用户那台干净机器」，
+ *   而假二进制制造的是「有一个坏掉的 ffmpeg」，那是**另一回事**。
+ *
+ * `[CI 实测 run 31260530952]` 第一版默认屏蔽，后果是首屏读数三平台不一致：
+ *   · Linux   `missing = ["asr-model"]`         ← shim 无扩展名 + chmod +x，被当成"装了"
+ *   · Windows `missing = ["ffmpeg","ffprobe","whisper-cli","asr-model"]` ← 产品找 .exe，shim 是 .cmd
+ * 用户报的正是 Windows 那一行。也就是说**Linux 那一行是我自己伪造出来的**，
+ * 而它恰恰是本腿第 1 问要回答的东西。屏蔽对 e2e-record 是对的（那里要让"借用"可见），
+ * 对这里是错的。改成默认不屏蔽 + 下面那条「首屏读数没被宿主污染」的断言。
+ */
+const MASK = argv.includes('--mask');
 
 const ROOT = mkdtempSync(join(tmpdir(), 'openmemo-coldstart-e2e-'));
 /** ★ 判据要求「一个**从不存在**的数据目录」—— 所以只算路径，**不建**，交给产品自己建。 */
@@ -333,7 +344,25 @@ try {
     reason: existsSync(DATA_DIR) ? '它已经存在了，那就不是冷启动' : '不存在，交给产品自己建',
   });
   say(`   宿主自带：`);
-  for (const t of HOST_TOOLS) say(`     ${t.padEnd(12)} ${which(t) ?? '(不在 PATH 上)'}`);
+  const hostHas = [];
+  for (const t of HOST_TOOLS) {
+    const p = which(t);
+    say(`     ${t.padEnd(12)} ${p ?? '(不在 PATH 上)'}`);
+    if (p && t !== 'python3') hostHas.push(t);
+  }
+  /*
+   * ★ 这条腿第 1 问是「用户打开看到什么」。如果这台 runner 自带 ffmpeg，
+   *   产品就会找到它，首屏读数与用户机器上的**不是同一件事** ——
+   *   那不是"小瑕疵"，是**这一问在这台机器上答不了**。所以当场判红，
+   *   而不是打一行小字然后照常报绿。（python3 不计：它不在 pipeline.missing 的口径里。）
+   */
+  judge('首屏读数没有被宿主自带的工具污染（否则这一问在这台 runner 上答不了）', {
+    ok: hostHas.length === 0,
+    reason:
+      hostHas.length === 0
+        ? '流水线相关的工具在宿主 PATH 上一个都没有 —— 首屏读数与用户机器可比'
+        : `宿主自带 ${hostHas.join(', ')}，产品会找到它们，首屏的"缺少工具"清单会比用户机器上短`,
+  });
 
   if (MASK) {
     mkdirSync(MASK_BIN, { recursive: true });
@@ -486,6 +515,7 @@ try {
 
   hdr('3. 装一个组件：每一步的真实响应');
   let installedOk = false;
+  const queuedExtra = [];
   if (!canInstallSomething) {
     /*
      * ★ §11：「跳过」不许渲染成「成功」。
@@ -498,9 +528,17 @@ try {
         '这不是"跳过"，这是"到不了"：它就是用户报的那个故障。',
     });
   } else {
-    // 挑产品自己判定可装的第一个（**不硬编码 id**）
+    /*
+     * ★ **把产品判定可装的全部装一遍**，不是只装第一个。
+     *
+     * 第一版只装 `applicable[0]`，于是跑完 `missing` 里还剩 ffmpeg/ffprobe ——
+     * 那不是产品的缺陷，是我根本没装 media-tools。一个照着向导走的用户
+     * 会把推荐的那些都装上，判据必须跟他一致。
+     * id 仍然**只来自产品自己交出来的目录**，一个都不是我写死的。
+     */
+    for (const p of applicable.slice(1)) queuedExtra.push(p.id);
     const pick = applicable[0];
-    say(`   从产品自己给的可装列表里挑第一个：${pick.id}`);
+    say(`   产品判定可装的共 ${applicable.length} 个，逐个装。先装：${pick.id}`);
     const t0 = Date.now();
     const r = await http('/api/backends/install', {
       method: 'POST',
@@ -556,6 +594,44 @@ try {
         reason: `/api/backends/installed 有 ${arr.length} 条；${pick.id} ${installedOk ? '在' : '**不在**'}`,
       });
     }
+
+    /* 其余可装的逐个装完 —— 照着向导走的用户会把推荐的那些都装上。 */
+    for (const id of queuedExtra) {
+      const rr = await http('/api/backends/install', {
+        method: 'POST',
+        body: { id },
+        timeoutMs: 60_000,
+      });
+      const jid = rr.body?.jobId ?? rr.body?.uid ?? rr.body?.id;
+      let st2 = `HTTP ${rr.status}`;
+      if (jid) {
+        for (let i = 0; i < 900; i += 1) {
+          await sleep(1000);
+          const jr = await http(`/api/jobs/${encodeURIComponent(jid)}`, { timeoutMs: 20_000 });
+          const job = jr.body?.job ?? jr.body;
+          if ((job?.jobId ?? job?.uid ?? job?.id) !== jid) {
+            st2 = '认不出这个 job';
+            break;
+          }
+          if (['succeeded', 'failed', 'cancelled'].includes(job.state)) {
+            st2 = job.state + (job.error ? ` — ${JSON.stringify(job.error).slice(0, 200)}` : '');
+            break;
+          }
+        }
+      }
+      say(`   ${String(id).padEnd(32)} ${st2}`);
+    }
+
+    const inst2 = await http('/api/backends/installed');
+    const arr2 = Array.isArray(inst2.body)
+      ? inst2.body
+      : (inst2.body?.packs ?? inst2.body?.installed ?? []);
+    judge('产品判定可装的那些，最后都真的装上了', {
+      ok: arr2.length >= applicable.length,
+      reason: `可装 ${applicable.length} 个，已安装列表 ${arr2.length} 条：${arr2
+        .map((x) => x.id ?? x.packId)
+        .join(', ')}`,
+    });
   }
 
   /* ── 4. 装完重启，缺失清单要真的变短 ── */
@@ -610,8 +686,18 @@ try {
     .map((m) => ({ m, bytes: sizeOf(m) }))
     .filter((x) => x.bytes > 0)
     .sort((a, b) => a.bytes - b.bytes);
+  /*
+   * ★ **只在 `role === 'asr'` 里挑**。
+   *
+   * 第一版写的是「先找全目录里带 `recommended-default` 的」——
+   * `[CI 实测 run 31260530952]` 它在三个平台上都挑中了 `llm/qwen3-4b-q4_k_m`
+   * （**一个 2.4 GB 的大语言模型**），下完当然还是 `missing: ['asr-model']`。
+   * 那是**我的脚本的缺陷，不是产品的**：差一点就把它写成一条产品 bug 报上去。
+   * 判据是"用户为了转写要装的那个"，所以推荐标签也必须在 role 内部找。
+   */
+  const asrModels = models.filter((m) => m.role === 'asr');
   const recommended =
-    models.find((m) => (m.tags ?? []).includes('recommended-default')) ?? asr[0]?.m ?? null;
+    asrModels.find((m) => (m.tags ?? []).includes('recommended-default')) ?? asr[0]?.m ?? null;
 
   if (!recommended) {
     judge('模型安装链路', { ok: false, reason: '**没跑** —— 目录里挑不出可装的模型条目' });
