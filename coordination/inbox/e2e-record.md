@@ -273,3 +273,190 @@ whisper.cpp 拿到它就 `failed to initialize whisper context`。
    同一轮把那条观测项改成判据。这是 F3 现在唯一还坏着的路径。
 2. `?t=` 的"点了真的跳过去"需要一个带浏览器的腿才能收口；在那之前它是 `UNKNOWN`。
 3. `/tmp` 清理需要一个所有人认账的规则，否则它会以"测试莫名其妙挂了"的形式持续咬人。
+
+---
+
+## [2026-08-08 18:35] e2e-record 追加 DONE —— 自动重跑那条：**修了根因，观测已翻成门禁**
+
+交付:
+
+- `apps/daemon/src/pipeline/modelStore.ts`（根因修复：`ModelQuery.engine` 必填 + `MODEL_FORMAT_BY_ENGINE` + `canEngineLoad`）
+- `apps/daemon/src/pipeline/engineModelFormat.test.ts`（新，6 条契约用例）
+- `apps/daemon/src/pipeline/setup.ts`（两处调用点：VAD / ASR 都要说出引擎；删掉手写的 `accept`）
+- `apps/daemon/src/jobs/runners/transcribe.ts`（先定引擎再解析模型 + 一道响亮失败的闸）
+- `apps/daemon/src/pipeline/vadResolve.test.ts`（前提断言改写 —— 旧写法现在编译不过了）
+- `scripts/ci/e2e-record.mjs`（那条观测 → **判据**）
+
+要点:
+
+- **三平台全绿，每平台 21 条断言**（比上一轮多的那条就是新翻上来的门禁）。
+- 选的是**结构性修法**，不是退而求其次。
+- 顺带申报两件不体面的事（§5）：一次共享索引竞态把我的改动吞了、把别人的带了进来；
+  以及我第一版的闸把"没装模型"说成"格式不对"，被别人的 T-164 回归用例当场抓住。
+
+需要 Manager 决策: 无（§5 两条是申报，不是请示）。
+
+### 1. 根因在哪一层
+
+不在任何一个调用点。在**查询的形状**上：
+
+```
+resolveActiveModel(dir, 'asr')      ← 回答「这个 role 下的某个模型」
+调用方真正要问的                     ← 「这个 role 下、**我这个引擎加载得动**的那个」
+```
+
+**引擎从来不是查询的一部分**，所以"把 A 引擎的模型交给 B 引擎"在类型上完全合法，
+只能靠每个调用点自己记得加判断。于是同一根因换了四次面目：
+
+| 面目                                            | 当时的补法                     |
+| ----------------------------------------------- | ------------------------------ |
+| T-148 sherpa 的 `silero_vad.onnx` 当成 whisper 的 VAD | 调用点加 `accept: isGgmlModelFile` |
+| `by-name/asr` 下的 VAD 当成 ASR                 | 调用点加 `excludes:'silero'`（**按文件名**） |
+| ASR 与 VAD 解析到同一个文件                     | 调用点加 `asrIsActuallyVad` 路径相等判断 |
+| **本轮** `asr/sherpa-streaming-zh-14m` 交给 whisper.cpp | 前三道补丁**一个都没接住** |
+
+前三道补丁**全都在 `setup.ts` 的同一屏里**，一道叠一道 —— 这本身就是根因还在的证据。
+
+还有一处旁证：`pipelineFor()` 的返回类型注释自己写着
+「**该引擎自己的**模型路径 —— 传错会让 sherpa 拿 ggml .bin 当 ONNX 加载而崩」。
+**危险是已知的，只是被写成了散文**，没有任何东西执行它。
+
+### 2. 我选了结构性修法，理由与代价
+
+两条一起生效，缺一条都退回"靠记性"：
+
+1. **`ModelQuery.engine` 必填** —— 不说"谁来加载"就拿不到路径。
+   漏判不再是"忘了加一句"，而是**编译不过**。
+   `[实测]` 这一条改完，`tsc -b` 当场逼出 **4 个**调用点（setup ×2、transcribe ×1、测试 ×1）。
+2. **`MODEL_FORMAT_BY_ENGINE` 是 `satisfies Record<AsrEngineId, ModelFormat>`** ——
+   将来加引擎，不声明它读什么格式就编译不过，而不是默默继承"什么都能读"。
+
+判据仍是**文件内容**（ggml 那 4 字节正是 whisper.cpp 自己会检查的），
+不是文件名、也不是安装记录里的字段 —— `InstallRecordLike` **根本没有 `engines` 这一项**，
+按它过滤等于按一个不存在的东西过滤。陌生格式一律判"不能加载"：
+错判成不能 → 用户看到"没有可用模型"；错判成能 → 用户看到引擎崩在一个看不懂的 exit code 上。
+
+**代价（如实说）**：`resolveActiveModel` / `resolveModelById` 的签名变了，
+调用方必须改。这正是我要的代价 —— 它是一次性的、编译器帮你找全的，
+而旧的代价是"每个新调用点都可能再漏一次"，无限期、且只在用户机器上显形。
+
+顺带**收敛**：VAD 那处手写的 `accept: isGgmlModelFile` 删掉，改由格式表回答。
+本轮的意义就是不让同一条规则在每个调用点各写一遍。
+
+另加一道**响亮失败**（这是 Manager 说的"退而求其次"那一档，我两档都做了）：
+引擎与模型在 transcribe runner 里第一次真正碰面时对一次账，守的是**绕过解析器的那些路**
+（`OPENMEMO_ASR_MODEL`、`scanByName` 兜底、用户手工拷进 `by-name/` 的文件）。
+报错直接说出是谁拿了谁的模型，而不是 `whisper-cli exited with code 3`。
+
+### 3. 三平台的自动重跑，实测是什么结果
+
+| 平台         | e2e-record run   | 包（build-bundles run） | 结果             |
+| ------------ | ---------------- | ----------------------- | ---------------- |
+| linux-x64    | **31251250308**  | 31250595475             | ✅ **21/21** |
+| win32-x64    | **31252050628**  | 31250595475             | ✅ **21/21** |
+| darwin-arm64 | **31252656659**  | 31252437851             | ✅ **21/21** |
+
+三平台那一条都是：
+
+```
+✔ ★ 停止录音后，产品自己发起的那次离线重跑必须成功
+```
+
+修复前同一条（run 31248849155，三平台一字不差）：
+
+```
+ⓘ 停止录音后自动排的离线重跑：failed
+  {"code":"RUNNER_ERROR","message":"…/whispercpp-*/whisper-cli exited with code 3
+   error: failed to initialize whisper context"}
+```
+
+**red → green 成对，两侧都是真产物、真 runner。**
+
+### 4. 那条断言翻成门禁之后长什么样
+
+```js
+if (stopped?.rerunJobUid) {
+  const st = await waitForJob(stopped.rerunJobUid);
+  if (st.state !== 'succeeded') { /* 把 job.error 全文打出来再判 */ }
+  judge('★ 停止录音后，产品自己发起的那次离线重跑必须成功', {
+    ok: st.state === 'succeeded',
+    reason: st.state === 'succeeded' ? 'succeeded'
+      : `${st.state} —— ${st.detail}；用户录完音什么都没做错，这一步失败他只会看到一条转写任务挂了`,
+  });
+} else {
+  judge('★ 停止录音后必须自动排一次离线重跑', { ok: false, reason:
+    `没有排（segmentCount=…）。recorder.ts 只在流式产出 ≥1 段时才排 —— 所以这里红有两种读法：` +
+    `要么排队那一段坏了，要么流式引擎这一轮一段都没识别出来。两种都要查。` });
+}
+```
+
+两条要点：**"没排队"也是红**（否则一个把 enqueue 弄没的退化会把门禁静默关掉），
+且红的时候**先把 `job.error` 全文打出来**再判 —— `waitForJob` 只截 400 字符，
+第一轮真跑正好断在最关键的那个字上。
+
+### 5. 申报两件不体面的事
+
+**① 共享索引竞态：我的 commit 749c949 少了一半、还带走了别人两个 hunk。**
+
+我按纪律做了 hunk 级暂存（`git apply --cached` 只放我那几个 hunk，并核对过
+`git diff --cached --name-only` 与暂存内容里没有别人的标记）。**核对当时是干净的。**
+但在 `git apply --cached` 与 `git commit` 之间，另一路 agent 提交了一次，
+**共享索引被刷掉** —— 结果 749c949 里 `transcribe.ts` 只有对方的两个 hunk
+（`mime` 那段注释、`hasVideo: result.media.audioOnly === false`），我的一个没进。
+
+- 我的改动一直安全地留在工作区，已在 **66718b0** 原样补上并当场 `git show` 核对。
+- 对方那两个 hunk 的**内容是对的、也是他们想要的**，所以我**没有回滚** ——
+  回滚等于把别人的成果从 master 删掉。代价是那两处的作者署名记在了我的 commit 上，
+  **在此申报**，请对方知悉（他们再提交时会发现那两处已无差异，不会重复）。
+- 教训：**`git diff --cached` 的核对只在"核对那一刻"成立。** 共享索引下，
+  暂存与提交之间存在窗口，而窗口里别人的一次提交就能把它清空。
+  可靠的做法是 `git commit -- <pathspec>`（直接读工作区，不经过索引）
+  或在独立 worktree 里提交。后面几个 commit 我都改用了前者，并且**提交后立刻 `git show` 核对**。
+
+**② 我第一版的那道闸把"没装模型"说成"格式不对"。**
+
+`canEngineLoad` 对"文件不在"和"格式不对"都回 false —— 挑候选时这样很对，
+但在那道闸里它们是两回事。第一版没分，`mergeWords.test.ts` 里 **3 条 T-164 回归用例当场红**
+（它们的夹具声明了一个从不创建的 modelPath）。**那个红是对的，红的是我这道闸**（df2310d 已修）。
+一道用来"让失败可诊断"的闸，第一版自己把人往错误方向指 —— 记在这里。
+
+### 6. 别人的东西，我没动，但报一下
+
+- `scripts/ci/resolve-bundle.mjs`（2824e03 提成的共享脚手架）**没有先建输出目录**，
+  直接 `tar -C <out>` → 三条 e2e 腿一起红在
+  `EXTRACT_FAILED — tar: unpacked: Cannot open: No such file or directory`
+  （`[CI 实测]` run 31250861440）。**我没有改他们的脚本**，只在自己的 workflow 里
+  加了一行 `mkdir -p unpacked` 解堵（86f1706）。他们随后自己修好了（脚本里已有 `mkdirSync`），
+  我那一行现在是无害的幂等，可删。
+- 同一次重构把 `--require runtime/node` 写死了，Windows 上包自带的是 `node.exe` ——
+  win 腿红在 `MISSING_ENTRIES 缺 1 项：runtime/node`，而**包其实是好的**
+  （`[CI 实测]` run 31251628013，一个纯粹的假红）。他们已用 `--require-node-runtime` 修好（0853b8e）。
+- `build-bundles` 的 macOS 腿一度红在**别人新加的**「模拟用户动作（Gatekeeper）」步骤上
+  （`ditto: cpio read error: bad file format`），且它排在 upload-artifact 之前，
+  于是**拿不到 macOS 包**。我等他们修好后才跑成 macOS 那一腿（包 = run 31252437851）。
+
+### 7. 门禁（在**独立 worktree** 里跑我自己那个 commit，不受别人在途改动干扰）
+
+工作区当时有三路 agent 的未提交改动，所以按 Manager 说的另开 worktree
+（`git worktree add --detach <我的 commit>`，`node_modules` 用链接，
+**但 `@openmemo/*` 重新指向 worktree 自己的包** —— 第一次没重指，
+结果 tsc 红在别人**未提交**的 `BuildRegistryOptions.proxy` 必填上，那不是我的红）。
+
+| 门禁              | 结果                                        |
+| ----------------- | ------------------------------------------- |
+| `pnpm -r test`    | **1558 / fail 0**（基线 1552，+6 = 我新增的 6 条契约用例） |
+| `tsc -b`          | 0                                           |
+| `eslint .`（全仓）  | 0                                           |
+| `prettier --check .`（全仓） | 0                                |
+| `lint-workflows`  | 1147 条断言全过（13 个 workflow）           |
+| `test:ci-scripts` | 0（22 passed）                              |
+| `check:orphans`   | 零引用导出 **70**（基线 70），无新增        |
+
+基线只升不降那一侧：测试 1552 → 1558（只加不减），orphans 70 → 70。
+
+### 8. 仍然没收口的
+
+- **`?t=` "点了真的跳过去"** 仍是 `UNKNOWN` —— 要一条带浏览器的腿。服务端一侧已验（命中的 `startMs` 落在真实段落起点上）。
+- **`GET /api/notes/:uid/anchors` 恒 0 个锚点**：锚点要正文里有 `[[t:…]]`，录音笔记没有。是 `ⓘ`，不是绿也不是红。
+- **流式识别的准确率**：目录里唯一的流式 ASR 是中文模型，样本是英语，所以识别**内容**不作判据（只判"音频真的被收到并处理了"）。要验中文流式质量得先有中文样本。
+- `macos-14` vs `macos-26` 那条差异同上一份回执 §7，仍待 Manager 确认。
