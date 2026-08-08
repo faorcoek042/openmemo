@@ -194,8 +194,27 @@ export function ReadinessBanner() {
       key: 'pipeline',
       // 缺 ffmpeg / ASR 引擎 = 转写这件事**根本跑不了**，与诊断页的 `fail` 对齐
       tone: 'critical',
-      text: t('readiness.items.pipeline'),
-      hint: t('health.pipelineMissing', { items: missing.join(', ') }),
+      /*
+       * ★ 用户看到的**第一句**（用户 2026-08-08 真机反馈 + `sidecar-crash` 备好的文案）。
+       *
+       * 三条硬要求，都不是措辞偏好：
+       *   ① **第一个词不许是「缺」** —— 首次启动本来就什么都没装，
+       *      上来一句「缺 X」会让人以为装坏了。先说「这是正常的」。
+       *   ② **给体积量级，而且写区间不写精确值**（`[读 vendor/manifests]`
+       *      ASR 模型 31 MB–4 GB / media-tools ~119 MB / whisper ~6 MB）——
+       *      写死一个精确数，换个模型就烂了。
+       *      ⚠️ 曾经流传过一个 574 MB，**对不上任何一个包，别用**。
+       *   ③ **内部 id 换成用户认得的词**（`componentNames`），
+       *      并且导航词统一叫「本机组件」——「运行时」是已经改掉的旧词。
+       *
+       * 还有一条隐性的：**十分钟的静默等待本身就是另一种"没反应"**，
+       * 所以这句话必须把"要几分钟"说出来。
+       */
+      text: t('readiness.items.pipeline', { count: missing.length }),
+      hint: t('health.pipelineMissing', {
+        items: missing.map((m) => t(`componentNames.${m}`, { defaultValue: m })).join('、'),
+        size: t('health.pipelineSize'),
+      }),
       actionLabel: t('health.fix'),
       onAction: () => navigate(missing.includes('asr-model') ? '/models' : '/runtime'),
     });

@@ -849,12 +849,13 @@
   "health": {
     "tokenizerDegraded": "中文分词未启用（当前 {{tokenizer}}），中文搜索可能不准确",
     "semanticDisabled": "向量检索未启用，语义搜索暂不可用",
-    "pipelineMissing": "转写组件缺失（{{items}}），导入的音视频暂时无法转写",
+    "pipelineMissing": "要装的是：{{items}}。点「安装」即可，下载约 {{size}}，要几分钟；装好自动生效，不用重启。",
     "fix": "去修复",
     "restartRequired": "{{items}} 已安装，需重启本地服务才会生效",
     "restartNow": "立即重启",
     "restarting": "正在重启…",
-    "restartFailed": "重启失败，请手动重启本地服务"
+    "restartFailed": "重启失败，请手动重启本地服务",
+    "pipelineSize": "31 MB–4 GB"
   },
   "diagnostics": {
     "title": "诊断",
@@ -1001,7 +1002,7 @@
       "multiTab": "多标签页选主不可用，每个标签会各自建立一条连接",
       "tokenizer": "中文分词未启用，中文搜索可能不准",
       "vec": "向量检索未启用，语义搜索暂不可用",
-      "pipeline": "转写组件缺失，导入的音视频暂时无法转写"
+      "pipeline": "还有 {{count}} 个组件没装 —— 首次启动，这是正常的"
     }
   },
   "jobState": {
@@ -1013,5 +1014,12 @@
     "succeeded": "已完成",
     "failed": "失败",
     "cancelled": "已取消"
+  },
+  "componentNames": {
+    "whisper-cli": "语音转文字引擎（约 6 MB）",
+    "asr-model": "语音识别模型（31 MB–4 GB，小的够用、大的更准）",
+    "ffmpeg": "音视频解码器（约 119 MB）",
+    "ffprobe": "音视频解码器（约 119 MB）",
+    "yt-dlp": "链接下载器"
   }
 }

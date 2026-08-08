@@ -177,6 +177,21 @@ export default function RuntimePage() {
         />
       ) : null}
 
+      {/*
+        ★ 用户 2026-08-08：「点击去安装模型，完全没有任何反应。」
+        那条已经修掉一个源头（按钮导航到自己所在的页面）。**这是第二个源头**：
+        请求真的发了、失败了，而 `void install.mutateAsync(id)` 把 rejection 吞掉，
+        界面上一个字都不说 —— **在用户眼里与死按钮一模一样**。
+
+        判据：点了一个按钮，要么发生该发生的事，要么看到一句读得懂的话。**没有第三种。**
+        这里复用本页已有的 `ErrorBlock`（`select` / `selfTest` 本来就是这么渲染的），
+        不另发明一套。
+      */}
+      {install.isError ? (
+        <ErrorBlock error={install.error} onRetry={() => install.reset()} />
+      ) : null}
+      {remove.isError ? <ErrorBlock error={remove.error} onRetry={() => remove.reset()} /> : null}
+
       {hardware.isError ? (
         <ErrorBlock error={hardware.error} onRetry={() => void hardware.refetch()} />
       ) : null}

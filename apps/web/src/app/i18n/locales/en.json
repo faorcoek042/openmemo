@@ -849,12 +849,13 @@
   "health": {
     "tokenizerDegraded": "Chinese tokenizer is not enabled (currently {{tokenizer}}); Chinese search may be inaccurate",
     "semanticDisabled": "Vector index is not enabled; semantic search is unavailable",
-    "pipelineMissing": "Transcription components missing ({{items}}); imported media cannot be transcribed yet",
+    "pipelineMissing": "To install: {{items}}. Click Install; about {{size}} to download, a few minutes. Takes effect automatically, no restart needed.",
     "fix": "Fix",
     "restartRequired": "{{items}} installed — restart the local service for it to take effect",
     "restartNow": "Restart now",
     "restarting": "Restarting…",
-    "restartFailed": "Restart failed; please restart the local service manually"
+    "restartFailed": "Restart failed; please restart the local service manually",
+    "pipelineSize": "31 MB–4 GB"
   },
   "diagnostics": {
     "title": "Diagnostics",
@@ -1001,7 +1002,7 @@
       "multiTab": "Cross-tab leader election unavailable; each tab opens its own connection",
       "tokenizer": "Chinese tokenizer not enabled — Chinese search may be inaccurate",
       "vec": "Vector search not enabled — semantic search unavailable",
-      "pipeline": "Transcription components missing — imported media cannot be transcribed yet"
+      "pipeline": "{{count}} component(s) still to install — this is normal on first launch"
     }
   },
   "jobState": {
@@ -1013,5 +1014,12 @@
     "succeeded": "Done",
     "failed": "Failed",
     "cancelled": "Cancelled"
+  },
+  "componentNames": {
+    "whisper-cli": "speech-to-text engine (~6 MB)",
+    "asr-model": "speech recognition model (31 MB–4 GB)",
+    "ffmpeg": "media decoder (~119 MB)",
+    "ffprobe": "media decoder (~119 MB)",
+    "yt-dlp": "link downloader"
   }
 }
