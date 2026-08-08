@@ -98,6 +98,8 @@ interface Recorded {
   /** 库里全部资产（按 id）—— ③ 要看 `peaks` 那一条真的存在且只有一条。 */
   assets: Array<{ uid: string; rel_path: string; bytes: number | null; role: string }>;
   note: { uid: string; status: string };
+  /** `media_sources` 那一行 —— `input_url` 决定了这条笔记能不能被重新转写。 */
+  source: { kind: string; input_url: string | null };
   jobs: Array<{ type: string; payload_json: string }>;
   events: string[];
 }
@@ -213,11 +215,27 @@ async function record(frames: number): Promise<Recorded> {
     )
     .get({});
   assert.ok(note, '录音结束后 notes 里一行都没有');
+  const source = handle.db
+    .prepare<{ kind: string; input_url: string | null }>(
+      'SELECT kind, input_url FROM media_sources ORDER BY id DESC LIMIT 1',
+    )
+    .get({});
+  assert.ok(source, '录音结束后 media_sources 里一行都没有');
   const jobs = handle.db
     .prepare<{ type: string; payload_json: string }>('SELECT type, payload_json FROM jobs')
     .all();
 
-  return { dataDir, messages, pcm: Buffer.concat(chunks), asset, assets, note, jobs, events };
+  return {
+    dataDir,
+    messages,
+    pcm: Buffer.concat(chunks),
+    asset,
+    assets,
+    note,
+    source,
+    jobs,
+    events,
+  };
 }
 
 describe('F3 录音落盘 —— 走真 WebSocket 的 harness', () => {
@@ -274,6 +292,46 @@ describe('F3 录音落盘 —— 走真 WebSocket 的 harness', () => {
       `rel_path 不是"相对 media 根"这一档：${r.asset.rel_path}`,
     );
     assert.equal(probe.abs, probe.tried[0], '第一个候选就该是它，走到后面的根说明形态不规范');
+  });
+
+  it('★ 录音也要能「重新转写」—— input_url 不许是 NULL（同一缺陷的第三次）', async () => {
+    /*
+     * `rest/notes.ts:648` 的 `canRetranscribe` 判据就是 `input_url != null`，
+     * 而 `rest/content.ts` 的重跑端点在它为空时回 409 `NO_SOURCE_INPUT`。
+     * 录音这条路径原来不传 `originalUrl` → **每一条录音笔记**的「重新转写」按钮
+     * 永久禁用，换语言/换模型/失败重跑一律不可用。
+     * 同样的缺陷 `rest/notes.ts`（本地导入）与 `http/upload.ts`（拖拽上传）
+     * 各修过一次，录音是第三次 —— 所以这条护栏钉的是**三个入口的同一个性质**。
+     *
+     * 断言钉的是"它等于那份真的躺在盘上的 WAV"，不是"它非空" ——
+     * 随便写个字符串也能让 `canRetranscribe` 变真，但重跑会找不到文件。
+     */
+    const r = await record(2);
+    assert.equal(r.source.kind, 'recording');
+    assert.equal(
+      r.source.input_url === null,
+      false,
+      'input_url 是 NULL —— 这条录音笔记的「重新转写」按钮会永久禁用',
+    );
+    const probe = await probeAssetFile(mediaAssetRoots(r.dataDir), r.asset.rel_path);
+    assert.equal(
+      r.source.input_url,
+      probe.abs,
+      `input_url 指的不是那份真的落了盘的录音（input_url=${r.source.input_url} 实际=${probe.abs}）`,
+    );
+    /*
+     * 与 `stop()` 排的那个离线重跑用的是**同一个值** —— 两条通道指向同一个文件，
+     * 否则"自动重跑能跑、手动重跑跑不了"会变成一个没人解释得清的差异。
+     */
+    const rerun = r.jobs.find((j) => j.type === 'transcribe');
+    if (rerun) {
+      const payload = JSON.parse(rerun.payload_json) as { input?: string };
+      assert.equal(
+        payload.input,
+        r.source.input_url,
+        '离线重跑用的 input 与 input_url 不是同一个文件',
+      );
+    }
   });
 
   it('WAV 头在停止时被回填成真实长度（否则播放器只认出 0 秒）', async () => {

@@ -1,0 +1,186 @@
+# F3「录音 → 转写 → 时间轴」端到端 —— **用预编译包，走产品自己的 HTTP / WebSocket**。
+#
+# ── 这条腿为什么存在 ────────────────────────────────────────────────────────────────
+#
+# 用户 2026-08-08，在真机上打开 v0.2.0 的包之后：
+#
+#   「你应该派多路 agent 去在 CI 中运行一遍把各个流程跑通才能给我交付的啊！」
+#
+# 他说得对。在这之前，CI 验的是「**产品能不能被脚本驱动着转出一段文本**」
+# （`cold-start-audit` 第 7 节：`POST /api/notes/import` → 拿到非空文本）。
+# 而交付出去的是「**人要用手打开并使用它**」。两者之间隔着一整条功能面：
+# 浏览器推上来的那条 WebSocket、落盘的音频资产、波形、时间轴、搜索深链 ——
+# **一条都没有在 CI 上跑过**。
+#
+# 所以判据从今天起是：**这条功能面在 CI 上、用预编译包、走产品自己的
+# HTTP/WS 路径，端到端真的能用。**
+#
+# ── 它验什么（每条都是断言，不是打印）────────────────────────────────────────────
+#
+#   · 录音链路：`/ws/recorder` 真收到音频 → 落盘成**可播放**的资产（含 Range 回放）
+#     → 建笔记。CI 里没有麦克风，所以**喂真实 PCM16**（那本来就是浏览器发的东西），
+#     但**服务端一段都不绕过**：升级闸门、鉴权、RecorderSession、WAV 头回填、
+#     资产入库、波形计算、离线重跑排队，全是产品自己的代码在真端口上跑。
+#   · 转写：真 whisper-cli 子进程 → 分段 → **词级时间戳** → 落库 → 从 HTTP 读得出来。
+#   · 重新转写：**换一个模型**再转一次，判据是「稿子自报的 modelId 真的变了」
+#     **且**词级时间戳没丢（T-164 ④ 那次事故的回归护栏）。
+#   · VAD：装了 / 没装两种都跑到；没装时必须是**明确降级**（有理由、仍转得出文本），
+#     不是静默出错。
+#   · 波形：与**独立算出来的**峰值逐桶逐值比对 —— 「每条波形都是编的」是真实事故，
+#     所以判据不能是"有数据"（正弦波也有）。
+#   · 时间轴：段落与音频同一条时间轴、有序不重叠（双向定位的前提）；
+#     搜索命中带得出 `?t=` 要用的时间点，且它落在真实段落起点上。
+#
+# ── 三条纪律 ────────────────────────────────────────────────────────────────────
+#
+#   1. **用包，不用源码树。** 用户手里是那个包，源码树跑绿证明不了它。
+#      所以这个 workflow **不 `pnpm install`、不 build** —— 它只下载 artifact 然后跑。
+#      驱动脚本自己不依赖任何 npm 包（WebSocket 客户端是手写的 RFC 6455）。
+#   2. **屏蔽宿主 PATH，并报出借了几个。** 借了就是失败。
+#   3. **每条关键断言都有变异证明。** 断言实现在 `scripts/ci/e2e-record-assertions.mjs`，
+#      变异证明在 `scripts/ci/selftest-e2e-record.mjs`（已挂进 `pnpm test:ci-scripts`，
+#      每次 CI 都跑）。本仓刚栽过两次坏断言：一次字段在夹具里恒为假、
+#      一次盯的是"报出来的预算"而不是"实际用的预算"。
+#      判据不是"我写了断言"，是"**这条断言在事实为假时真的会红**"。
+
+name: e2e-record
+
+on:
+  workflow_dispatch:
+    inputs:
+      # ★ 必填，且**故意不给默认值**。
+      #   给一个默认 run id 只会让它慢慢过期，然后某天变成"下载失败"这种
+      #   与被测对象无关的红 —— 而那种红训练所有人忽略这盏灯。
+      bundleRunId:
+        description: '从哪个 build-bundles run 取包（run id）。这是"用户手里那个包"的唯一来源。'
+        required: true
+        type: string
+      legs:
+        description: 'Which platform to run'
+        type: choice
+        required: false
+        default: all
+        options: [all, linux, macos, windows]
+
+permissions:
+  contents: read
+  # 跨 run 下载 artifact 需要它（download-artifact 带 run-id 时走 API）
+  actions: read
+
+concurrency:
+  group: e2e-record-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    # ⚠️ runner 版本**照抄 cold-start-audit.yml 与 build-bundles.yml 现用的那三个**：
+    #    ubuntu-24.04 / macos-26 / windows-2025。
+    #    任务书上写的是 `macos-14`，但全仓 8 个 workflow 里 `macos-14` 一次都没出现过，
+    #    而 darwin 那个包**就是在 macos-26 上编出来的**。在 macos-14 上跑它会撞上
+    #    另一件事（上游预编译 dylib 的 minos 高于 14），那是
+    #    `check-bundle-macos-floors.mjs` 的地界，不是 F3 的 —— 混在一起只会得到
+    #    一个说不清在红什么的红。这里如实沿用仓库现状，并把这条差异写在回执里。
+    name: F3 端到端（${{ matrix.label }}）
+    runs-on: ${{ matrix.runner }}
+    # fail-fast: false —— 一个平台红不该掩盖另外两个平台的事实
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, label: linux-x64, artifact: bundle-linux-x64, leg: linux }
+          - { runner: macos-26, label: darwin-arm64, artifact: bundle-darwin-arm64, leg: macos }
+          - { runner: windows-2025, label: win32-x64, artifact: bundle-win-x64, leg: windows }
+    steps:
+      # `submodules: recursive` **不能省**：录音要推的音频是 whisper.cpp submodule 自带的
+      # `vendor/whisper.cpp/samples/jfk.wav`（真人语音，11 秒）。
+      # 不带 submodule 的 checkout 下，脚本会如实报「样本不存在」然后红 ——
+      # cold-start-audit.yml 已经为这条栽过一次。
+      - uses: actions/checkout@v6
+        if: ${{ inputs.legs == 'all' || inputs.legs == matrix.leg }}
+        with:
+          submodules: recursive
+
+      # 驱动脚本跑在**宿主** node 上；被测的 daemon 跑在**包自带的** node 上。
+      # 钉住 22 与仓库其余 workflow 一致（ADR-006 决策 7）。
+      - uses: actions/setup-node@v6
+        if: ${{ inputs.legs == 'all' || inputs.legs == matrix.leg }}
+        with:
+          node-version: '22'
+
+      # 装任何东西之前先记录 runner 自带什么 —— 这是"我们装上了"与"它本来就在"
+      # 的唯一分界线。
+      - name: 宿主基线（屏蔽之前）
+        if: ${{ inputs.legs == 'all' || inputs.legs == matrix.leg }}
+        shell: bash
+        run: |
+          for t in ffmpeg ffprobe yt-dlp whisper-cli sox python3; do
+            printf '%-14s %s\n' "$t" "$(command -v $t || echo '(不在 PATH 上)')"
+          done
+
+      # ★ 判据的对象：**用户下载的那个包**，不是这棵源码树。
+      - name: 取预编译包（build-bundles run ${{ inputs.bundleRunId }} 的 artifact）
+        if: ${{ inputs.legs == 'all' || inputs.legs == matrix.leg }}
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: incoming
+          run-id: ${{ inputs.bundleRunId }}
+          github-token: ${{ github.token }}
+
+      # 解归档并定位包根。三种归档格式各一条命令；**解不出来就红**，不猜。
+      - name: 解开归档
+        id: unpack
+        if: ${{ inputs.legs == 'all' || inputs.legs == matrix.leg }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p unpacked
+          ARCHIVE="$(find incoming -type f \( -name '*.tar.xz' -o -name '*.tar.gz' -o -name '*.zip' \) | head -1)"
+          [ -n "$ARCHIVE" ] || { echo "::error::artifact 里没有归档文件"; ls -R incoming; exit 1; }
+          echo "归档：$ARCHIVE"
+          case "$ARCHIVE" in
+            *.tar.xz) tar -xJf "$ARCHIVE" -C unpacked ;;
+            *.tar.gz) tar -xzf "$ARCHIVE" -C unpacked ;;
+            # Windows 上 bsdtar 认 zip；unzip 不一定在。两条都试，都不行才红。
+            *.zip)    unzip -q "$ARCHIVE" -d unpacked || tar -xf "$ARCHIVE" -C unpacked ;;
+          esac
+          DIR="$(find unpacked -maxdepth 1 -mindepth 1 -type d | head -1)"
+          [ -n "$DIR" ] || { echo "::error::归档里没有顶层目录"; exit 1; }
+          echo "包根：$DIR"
+          ls "$DIR"
+          echo "bundle_dir=$DIR" >> "$GITHUB_OUTPUT"
+
+      # 变异证明先跑：它不需要包、不需要网络，几百毫秒。
+      # 放在最前面是因为 —— **断言本身失效的话，后面那一大段绿灯毫无意义**。
+      - name: 断言的变异证明（每条断言在事实为假时真的会红）
+        if: ${{ inputs.legs == 'all' || inputs.legs == matrix.leg }}
+        run: node scripts/ci/selftest-e2e-record.mjs
+
+      # 预检：WebSocket 客户端 + 闸门。**20 秒，跑在重活之前。**
+      #
+      # 这条腿的客户端是手写的 RFC 6455（为了让整条腿不依赖 npm install）。
+      # 它写错的表现是"连不上 / 收不到消息" —— 与"产品坏了"长得一模一样。
+      # 先单独把它钉住，红了就知道错在这一层，而不是等 40 分钟后从下载日志里猜。
+      # 顺便反向确认闸门真的在拦（Host 用域名 → 403、不带 Origin → 403），
+      # 否则后面"握手成功"那条绿灯证明不了什么。
+      - name: 预检：WS 客户端 + 闸门（对着包里的 daemon）
+        if: ${{ inputs.legs == 'all' || inputs.legs == matrix.leg }}
+        shell: bash
+        run: |
+          node scripts/ci/ws-client.smoke.mjs \
+            --daemon "${{ steps.unpack.outputs.bundle_dir }}/app/daemon/dist/main.js" \
+            --node "${{ steps.unpack.outputs.bundle_dir }}/runtime/node${{ matrix.leg == 'windows' && '.exe' || '' }}" \
+            --port 19795
+
+      # ★ 判据本体。
+      #   要真下载几百 MB（后端包 + 3 个模型 + VAD）、真推 12 秒音频、真跑 3 遍转写。
+      #   macOS runner 上 tiny 转 11 秒音频实测要 ~112s（虚拟化 3 核），
+      #   所以窗口给到 75 分钟。
+      - name: F3 端到端（屏蔽宿主 PATH，全程走 HTTP / WebSocket）
+        if: ${{ inputs.legs == 'all' || inputs.legs == matrix.leg }}
+        timeout-minutes: 75
+        shell: bash
+        run: |
+          node scripts/ci/e2e-record.mjs \
+            --bundle "${{ steps.unpack.outputs.bundle_dir }}" \
+            --port 19790

@@ -158,6 +158,13 @@ export class RecorderSession {
       return;
     }
 
+    /*
+     * 落盘路径要**先算出来**（真正建目录/建流在下面），因为 `media_sources.input_url`
+     * 需要它 —— 见紧接着 `createSource` 的那段说明。
+     */
+    const dir = join(this.deps.mediaDir, 'recordings');
+    this.#wavPath = join(dir, `${this.recordingUid}.wav`);
+
     const note = repos.createNote({
       title: init.title ?? `录音 ${new Date().toLocaleString('zh-CN')}`,
       kind: 'recording',
@@ -165,7 +172,30 @@ export class RecorderSession {
     });
     this.#noteId = note.id;
     this.#noteUid = note.uid;
-    repos.createSource({ noteId: note.id, kind: 'recording', title: note.title });
+    /*
+     * ★ `originalUrl` **必须存**，这里原来是不传（于是 `input_url` 恒为 NULL）。
+     *
+     * 这是**同一个缺陷的第三次**，前两次的修法和理由都已经写在隔壁：
+     *   · `rest/notes.ts` 的本地导入分支：「本地路径**也要存**。D-02 对 `input_url`
+     *     的定义是"用户原始输入"，不限于 URL。之前存 null，结果**取消后无法重跑**
+     *     （不知道源文件在哪），续跑、换模型重跑、重新转写全都做不了。」
+     *   · `http/upload.ts` 的拖拽上传分支：同一段话，标题写的是「**upload 没跟上**」。
+     * **录音这条也没跟上。** 后果链一字不差地闭合在 F3 的每一条笔记上：
+     *   `rest/notes.ts:648` 的 `canRetranscribe: input_url != null` → **恒 false**
+     *   → 「重新转写」按钮在**每一条录音笔记**上永久禁用；
+     *   绕过按钮直接打 `POST /api/notes/:uid/retranscribe`，`rest/content.ts:256`
+     *   也回 409 `NO_SOURCE_INPUT`。换语言、换模型、失败重跑 —— 对录音一律不可用。
+     *
+     * 存的就是**停止录音时会写进去的那个 WAV**，与 `stop()` 里排离线重跑用的
+     * `input: this.#wavPath` 是同一个值 —— 也就是说这条通道走的是一条
+     * **产品已经在走**的路径，不是新开的。
+     */
+    repos.createSource({
+      noteId: note.id,
+      kind: 'recording',
+      title: note.title,
+      originalUrl: this.#wavPath,
+    });
 
     // 流式稿标 kind='streaming'：后面离线重跑会产出 kind='final' 的新稿并接管 is_active
     const transcript = repos.createTranscript({
@@ -179,9 +209,8 @@ export class RecorderSession {
     this.#transcriptUid = transcript.uid;
 
     // 原始 PCM 落盘 —— 离线重跑要用它，而且用户可能想保留录音
-    const dir = join(this.deps.mediaDir, 'recordings');
+    // （路径在上面建 note 之前就算好了，`input_url` 要用同一个值）
     await mkdir(dir, { recursive: true });
-    this.#wavPath = join(dir, `${this.recordingUid}.wav`);
     this.#wav = createWriteStream(this.#wavPath);
     this.#wav.write(wavHeaderPlaceholder());
 
