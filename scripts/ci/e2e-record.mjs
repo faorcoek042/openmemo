@@ -54,7 +54,6 @@
  * · 数据目录走 `mkdtemp`，端口用 19790 段（避开 :10000 / 17650 / 冷启动的 19700）
  * · 不 `pkill`，只对自己 spawn 的子进程发信号
  */
-import { spawn } from 'node:child_process';
 import {
   mkdirSync,
   mkdtempSync,
@@ -67,6 +66,8 @@ import {
 } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
+
+import { spawnDaemon, killTree, killTreeHard, launcherPath } from './launcher-spawn.mjs';
 import { join, resolve, dirname, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -185,10 +186,17 @@ if (!BUNDLE) {
   );
   process.exit(2);
 }
-const DAEMON = join(BUNDLE, 'app', 'daemon', 'dist', 'main.js');
+/*
+ * ★★ 从**启动器**起 daemon（`start.cmd` / `OpenMemo.command` / `start.sh`），
+ *   不再直接起 `dist/main.js`。完成度审计查出的第四类「CI 结构上看不见」：
+ *   凡是只有启动器才做的事（WEB_DIST / EXT_DIR / **BUNDLED_PROBE_DIR** / 工作目录 /
+ *   macOS quarantine），CI 直接起入口时**结构上都看不见**。
+ *   入口与收尾都在 `./launcher-spawn.mjs`，本文件因此不再出现 daemon 入口路径。
+ */
 const NODE_BIN = join(BUNDLE, 'runtime', IS_WIN ? 'node.exe' : 'node');
 for (const [what, p] of [
-  ['daemon 入口', DAEMON],
+  // 用户双击的就是启动器 —— 它不在，这个包对用户来说打不开。
+  ['启动器', launcherPath(BUNDLE)],
   ['包自带的 Node', NODE_BIN],
 ]) {
   if (!existsSync(p)) {
@@ -204,8 +212,7 @@ const childEnv = {
   OPENMEMO_DATA_DIR: DATA_DIR,
   // PROTOCOL §9：绝不碰全局指针。模块级设定，窗口为零。
   OPENMEMO_POINTER_FILE: POINTER,
-  OPENMEMO_WEB_DIST: join(BUNDLE, 'app', 'apps', 'web', 'dist'),
-  OPENMEMO_EXT_DIR: join(BUNDLE, 'ext'),
+  // ⚠️ WEB_DIST / EXT_DIR / BUNDLED_PROBE_DIR 归**启动器**设 —— 这里预设就等于又把它架空。
 };
 
 let proc = null;
@@ -213,10 +220,13 @@ let daemonLogs = [];
 async function startDaemon(label) {
   const logs = [];
   daemonLogs = daemonLogs.concat(logs);
-  proc = spawn(NODE_BIN, [DAEMON, '--data-dir', DATA_DIR, '--port', String(PORT)], {
+  const _started = spawnDaemon({
+    bundleDir: BUNDLE,
+    args: ['--data-dir', DATA_DIR, '--port', String(PORT)],
     env: childEnv,
-    stdio: ['ignore', 'pipe', 'pipe'],
   });
+  say(`   起法：${_started.note}`);
+  proc = _started.proc;
   const keep = (d) => {
     logs.push(String(d));
     daemonLogs.push(String(d));
@@ -248,9 +258,10 @@ async function startDaemon(label) {
 }
 async function stopDaemon() {
   if (!proc) return;
-  proc.kill('SIGTERM');
+  // PROTOCOL §11：按 pid 收整棵树。Windows 上 cmd.exe 底下的 node.exe 只有 /T 带得走。
+  say(`   收尾：${killTree(proc.pid)}`);
   await sleep(1500);
-  if (proc.exitCode === null) proc.kill('SIGKILL');
+  if (proc.exitCode === null) killTreeHard(proc.pid);
   proc = null;
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

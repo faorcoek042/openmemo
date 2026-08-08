@@ -62,6 +62,8 @@ import { join, resolve, dirname, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 
+import { spawnDaemon, killTree, killTreeHard, launcherName } from './launcher-spawn.mjs';
+
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const argv = process.argv.slice(2);
 const arg = (name, dflt) => {
@@ -198,22 +200,21 @@ if (MASK) {
  *   Node（宿主上没有 node 正是这个包存在的理由）、网页 bundle 与 SQLite 扩展指向包内。
  */
 const BUNDLE = arg('--bundle', null);
-const DAEMON = BUNDLE
-  ? join(BUNDLE, 'app', 'daemon', 'dist', 'main.js')
-  : join(REPO, 'apps', 'daemon', 'dist', 'main.js');
-if (!existsSync(DAEMON)) {
-  console.error(
-    BUNDLE
-      ? `✘ 找不到 ${DAEMON} —— --bundle 指向的目录不像一个预编译包`
-      : `✘ 找不到 ${DAEMON} —— 先跑 pnpm build:safe`,
-  );
-  process.exit(2);
-}
-const NODE_BIN = BUNDLE ? join(BUNDLE, 'runtime', IS_WIN ? 'node.exe' : 'node') : process.execPath;
-if (BUNDLE && !existsSync(NODE_BIN)) {
-  console.error(`✘ 包里没有自带的 Node 运行时：${NODE_BIN}`);
-  process.exit(2);
-}
+
+/*
+ * ★★ **从启动器起 daemon，不再直接起 `dist/main.js`。**
+ *
+ * 完成度审计查出第四类「CI 结构上看不见」：CI 直接起入口，而用户双击的是
+ * `start.cmd` / `OpenMemo.command` / `start.sh`。**凡是只有启动器才做的事，
+ * CI 结构上都看不见** —— `OPENMEMO_WEB_DIST` / `OPENMEMO_EXT_DIR` /
+ * **`OPENMEMO_BUNDLED_PROBE_DIR`** / 工作目录 / macOS quarantine 那一整套。
+ *
+ * `[grep 实测]` 探针那个变量此前**四条 e2e 腿一条都没引用过**，
+ * 所以探针进包那条修复在启动器路径上是 `[未验证]` —— 而它恰恰只通过启动器生效。
+ *
+ * 入口与收尾都收进 `./launcher-spawn.mjs`：**这条腿的源码里不再出现 daemon 入口路径**，
+ * 于是"又绕回去直接起 main.js"这件事可以被一条没有判断空间的守卫钉住。
+ */
 
 const childEnv = {
   ...process.env,
@@ -224,12 +225,11 @@ const childEnv = {
   OPENMEMO_DATA_DIR: DATA_DIR,
   // ★ PROTOCOL §9：绝不碰全局指针。
   OPENMEMO_POINTER_FILE: POINTER,
-  ...(BUNDLE
-    ? {
-        OPENMEMO_WEB_DIST: join(BUNDLE, 'app', 'apps', 'web', 'dist'),
-        OPENMEMO_EXT_DIR: join(BUNDLE, 'ext'),
-      }
-    : {}),
+  /*
+   * ⚠️ **这里不再预设 OPENMEMO_WEB_DIST / OPENMEMO_EXT_DIR / OPENMEMO_BUNDLED_PROBE_DIR。**
+   *   它们归启动器设 —— 预设了就等于又把启动器架空一次，而那正是本轮要修的东西。
+   *   （`launcher-spawn.mjs` 的 `assertNoLauncherOverrides()` 会当场拦下。）
+   */
 };
 
 /**
@@ -263,15 +263,21 @@ async function assertPortFree(port, why) {
 }
 
 let proc = null;
+let viaLauncher = false;
 let daemonLogs = [];
 async function startDaemon(label) {
   await assertPortFree(PORT, `启动 [${label}] daemon 之前`);
   const logs = [];
   daemonLogs = logs;
-  proc = spawn(NODE_BIN, [DAEMON, '--data-dir', DATA_DIR, '--port', String(PORT)], {
+  const started = spawnDaemon({
+    bundleDir: BUNDLE,
+    repoRoot: REPO,
+    args: ['--data-dir', DATA_DIR, '--port', String(PORT)],
     env: childEnv,
-    stdio: ['ignore', 'pipe', 'pipe'],
   });
+  proc = started.proc;
+  viaLauncher = started.viaLauncher;
+  say(`   [${label}] 起法：${started.note}`);
   proc.stdout.on('data', (d) => logs.push(String(d)));
   proc.stderr.on('data', (d) => logs.push(String(d)));
   for (let i = 0; i < 240; i++) {
@@ -299,7 +305,19 @@ async function startDaemon(label) {
            * 产品自己早就把答案摆在这个端点上了（`server.ts:151-175` 的注释写着
            * 这几个身份字段就是给 EADDRINUSE 之后认人用的）：比 `pid`。
            */
-          if (body?.pid !== undefined && body.pid !== proc.pid) {
+          /*
+           * ★★ Windows 上 `proc.pid` 是 **cmd.exe** 的，不是 daemon 的
+           *   —— `start.cmd` 没有 exec，node.exe 是它的子进程。
+           *   所以那边不能比 pid，否则会把一次正确的启动判成"别人的 daemon"。
+           *
+           *   POSIX 上启动器最后是 `exec`，shell 把自己换成 node，pid 相同，照比。
+           *
+           *   两边都比 `dataDir`：它是本轮 `mkdtemp` 出来的**唯一**路径，
+           *   别的 daemon 不可能报出同一个 —— 在 Windows 上这就是身份证明本身，
+           *   §11 要的"绿灯能追溯到我这次启动的东西"由它承担。
+           */
+          const canComparePid = !IS_WIN || !viaLauncher;
+          if (canComparePid && body?.pid !== undefined && body.pid !== proc.pid) {
             say(`   [${label}] ✘ 端口 ${PORT} 上应答的不是我起的那个 daemon。`);
             say(`      我 spawn 的 pid=${proc.pid}，应答方 pid=${body.pid}`);
             say(`      应答方 dataDir=${body.dataDir}`);
@@ -336,31 +354,20 @@ async function startDaemon(label) {
 async function stopDaemon() {
   if (!proc) return;
   const pid = proc.pid;
-  try {
-    if (IS_WIN) {
-      const { spawnSync } = await import('node:child_process');
-      // /T = 连同子孙进程；/F = 强制。带超时，免得收尾这一步自己挂住（§11）。
-      spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 15000 });
-    } else {
-      proc.kill('SIGTERM');
-    }
-  } catch {
-    /* 已经没了 */
-  }
+  /*
+   * PROTOCOL §11：按 pid 收**整棵进程树**，绝不 `pkill -f`（模式匹配会打到别人的进程；
+   * Manager 2026-08-08 裁决：`pkill -0 -f` 做存在性探测同样不行 —— 这条明线不开例外）。
+   * 三个平台的收法不一样，具体见 `launcher-spawn.mjs`：**统一意图，不统一拼写。**
+   */
+  say(`   收尾：${killTree(pid)}`);
   for (let i = 0; i < 30 && proc.exitCode === null; i++) {
     await new Promise((r) => setTimeout(r, 100));
   }
-  if (proc.exitCode === null) {
-    try {
-      proc.kill('SIGKILL');
-    } catch {
-      /* 已经没了 */
-    }
-  }
+  if (proc.exitCode === null) killTreeHard(pid);
   proc = null;
-  // 端口真的还回来了才算收干净 —— 否则下一次 startDaemon 会当场报错（那正是我们要的）。
   await new Promise((r) => setTimeout(r, 400));
 }
+
 function tail(logs, n) {
   return logs
     .join('')
@@ -510,7 +517,8 @@ try {
   hdr('2. 冷启动（全新临时数据目录）');
   if (BUNDLE) {
     say(`   预编译包：${BUNDLE}`);
-    say(`   解释器 = 包自带的 ${NODE_BIN}（**不是**宿主的 ${process.execPath}）`);
+    // 起法由启动器决定（它自己去找 runtime/node）——这条腿不再自己拼解释器路径。
+    say(`   入口 = 启动器 ${launcherName()}（用户双击的就是它），由它 exec 包自带的 Node`);
   } else {
     say(`   ⚠️ 源码树模式（没传 --bundle）—— 这一轮证明不了"用户下载的那个包能用"。`);
   }

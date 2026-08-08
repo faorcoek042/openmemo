@@ -87,6 +87,8 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { spawnDaemon } from './launcher-spawn.mjs';
+
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const IS_WIN = process.platform === 'win32';
 
@@ -549,9 +551,6 @@ if (mutation && BUNDLE_DIR) {
   BUNDLE_DIR = copy;
 }
 
-const DAEMON = BUNDLE_DIR
-  ? join(BUNDLE_DIR, 'app', 'daemon', 'dist', 'main.js')
-  : join(REPO, 'apps', 'daemon', 'dist', 'main.js');
 const NODE_BIN = BUNDLE_DIR
   ? join(BUNDLE_DIR, 'runtime', IS_WIN ? 'node.exe' : 'node')
   : process.execPath;
@@ -560,14 +559,6 @@ if (REQUIRE_BUNDLE && !BUNDLE_DIR) {
   console.error('✘ --require-bundle：本轮必须跑预编译包，但没有给 --bundle。');
   console.error(
     '  （不给就会静默回退到源码树 dist —— 那样绿灯证明的是仓库，不是用户下载的那个包。）',
-  );
-  process.exit(2);
-}
-if (!existsSync(DAEMON)) {
-  console.error(
-    BUNDLE_DIR
-      ? `✘ 找不到 ${DAEMON} —— --bundle 指向的目录不像一个预编译包`
-      : `✘ 找不到 ${DAEMON} —— 先跑 pnpm build:safe`,
   );
   process.exit(2);
 }
@@ -631,8 +622,7 @@ const childEnv = {
   LOCALAPPDATA: join(FAKE_HOME, 'AppData', 'Local'),
   ...(BUNDLE_DIR
     ? {
-        OPENMEMO_WEB_DIST: join(BUNDLE_DIR, 'app', 'apps', 'web', 'dist'),
-        OPENMEMO_EXT_DIR: join(BUNDLE_DIR, 'ext'),
+        // ⚠️ 归**启动器**设（见 launcher-spawn.mjs）：预设 = 又把启动器架空一次。
       }
     : {}),
 };
@@ -704,11 +694,20 @@ function killTree(pid) {
 
 async function startDaemon(label) {
   await assertPortFree(label);
-  proc = spawn(NODE_BIN, [DAEMON, '--port', String(PORT)], {
+  /*
+   * ★★ 走**启动器**：这条腿验的是 2.1/2.2（网页检测硬件 → 推荐后端 → 装 → 自检），
+   *   而"第一屏六个后端全是 probe did not complete"正是**只有启动器才设**的
+   *   `OPENMEMO_BUNDLED_PROBE_DIR` 在管的事。直接起入口，这条腿就测不到它要测的东西。
+   */
+  const _started = spawnDaemon({
+    bundleDir: BUNDLE_DIR,
+    repoRoot: REPO,
+    args: ['--port', String(PORT)],
     // ★ PATH 在这一刻现取（见 childEnv 上面那段）：屏蔽必然已经发生。
     env: { ...childEnv, PATH: PATH_FOR_DAEMON },
-    stdio: ['ignore', 'pipe', 'pipe'],
   });
+  say(`   起法：${_started.note}`);
+  proc = _started.proc;
   proc.stdout.on('data', (d) => daemonLogs.push(String(d)));
   proc.stderr.on('data', (d) => daemonLogs.push(String(d)));
   const h = await waitHealth(120);

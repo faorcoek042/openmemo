@@ -83,7 +83,7 @@
  *   · 端口用 199xx 段（测试文件的最高游标是 19900+30，这里从 19960 起）；
  *   · 不 `pkill`，只 kill 自己 spawn 出来的那个 child。
  */
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import {
   mkdirSync,
   mkdtempSync,
@@ -97,6 +97,8 @@ import {
 import { join, resolve, dirname, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
+
+import { spawnDaemon } from './launcher-spawn.mjs';
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 
@@ -347,17 +349,6 @@ if (MASK) {
 
 /* ═══════════════════════════ daemon 启停 ══════════════════════════════════════ */
 
-const DAEMON = BUNDLE
-  ? join(BUNDLE, 'app', 'daemon', 'dist', 'main.js')
-  : join(REPO, 'apps', 'daemon', 'dist', 'main.js');
-if (!existsSync(DAEMON)) {
-  console.error(
-    BUNDLE
-      ? `✘ 找不到 ${DAEMON} —— --bundle 指向的目录不像一个预编译包`
-      : `✘ 找不到 ${DAEMON} —— 先跑 pnpm build:safe`,
-  );
-  process.exit(2);
-}
 const NODE_BIN = BUNDLE ? join(BUNDLE, 'runtime', IS_WIN ? 'node.exe' : 'node') : process.execPath;
 if (BUNDLE && !existsSync(NODE_BIN)) {
   console.error(`✘ 包里没有自带的 Node 运行时：${NODE_BIN}`);
@@ -380,12 +371,13 @@ function envFor(dataDir, extraEnv = {}) {
     OPENMEMO_DATA_DIR: dataDir,
     // ★ PROTOCOL §9：绝不碰 ~/.local/share/openmemo/datadir.json。模块级设定，窗口为零。
     OPENMEMO_POINTER_FILE: POINTER,
-    ...(BUNDLE
-      ? {
-          OPENMEMO_WEB_DIST: join(BUNDLE, 'app', 'apps', 'web', 'dist'),
-          OPENMEMO_EXT_DIR: join(BUNDLE, 'ext'),
-        }
-      : {}),
+    /*
+     * ⚠️ 不再预设 OPENMEMO_WEB_DIST / OPENMEMO_EXT_DIR / OPENMEMO_BUNDLED_PROBE_DIR：
+     *   它们归**启动器**设。预设了这条腿就只是"看起来"在走启动器，
+     *   而启动器那一段仍然没被验到（完成度审计的第四类盲区）。
+     *   `extraEnv` 仍然可以覆盖它们 —— 变异验证正需要那样（见 startDaemon 的
+     *   allowLauncherOverrides）。
+     */
     ...extraEnv,
   };
 }
@@ -450,12 +442,21 @@ async function assertPortFree(port, label) {
 async function startDaemon(label, { dataDir, port, extraEnv = {} }) {
   await assertPortFree(port, label);
   const logs = [];
-  const proc = spawn(NODE_BIN, [DAEMON, '--data-dir', dataDir, '--port', String(port)], {
+  /*
+   * ★★ 走**启动器**（用户双击的那个文件），不再直接起 daemon 入口。
+   *   `allowLauncherOverrides` 只在调用方**显式**给了 extraEnv 里那几个变量时才打开
+   *   —— 那是变异验证（例如把 OPENMEMO_EXT_DIR 指到空目录证明中文检索会红），
+   *   与"忘了让启动器自己设"是相反的两件事。
+   */
+  const _started = spawnDaemon({
+    bundleDir: BUNDLE,
+    repoRoot: REPO,
+    args: ['--data-dir', dataDir, '--port', String(port)],
     env: envFor(dataDir, extraEnv),
-    stdio: ['ignore', 'pipe', 'pipe'],
-    // POSIX 上自成进程组，收尾才能按 pid **收整棵树**（见 stopDaemon）。
-    ...(IS_WIN ? {} : { detached: true }),
+    allowLauncherOverrides: true,
   });
+  say(`   [${label}] 起法：${_started.note}`);
+  const proc = _started.proc;
   children.add(proc);
   proc.stdout.on('data', (d) => logs.push(String(d)));
   proc.stderr.on('data', (d) => logs.push(String(d)));
