@@ -5,7 +5,14 @@ import { MoreHorizontal } from 'lucide-react';
 import { Button } from '../../components/common/Button';
 import { surfaceState } from '../../lib/api/surfaces';
 import type { NoteDetail } from '../../lib/api/types';
-import { useDeleteNoteMutation, useRenameNoteMutation, useRestoreNoteMutation } from './api';
+import {
+  useDeleteNoteMutation,
+  useFolderChoicesQuery,
+  useMoveNoteToFolderMutation,
+  useRenameNoteMutation,
+  useRestoreNoteMutation,
+} from './api';
+import { ErrorBlock } from '../../components/common/ErrorBlock';
 
 /**
  * 笔记的「重命名 / 删除」入口（T-155）。
@@ -45,7 +52,10 @@ export function NoteActionsMenu({ note }: { note: Pick<NoteDetail, 'uid' | 'titl
    * 全 daemon 零 restore 路径，删掉的笔记永远留在盘上、用户永远拿不回来、
    * 而且看不出它还在。Manager 2026-08-08：**软删除之所以叫"软"，就是因为它可逆。**
    */
-  const [mode, setMode] = useState<'menu' | 'rename' | 'delete' | 'deleted'>('menu');
+  const [mode, setMode] = useState<'menu' | 'rename' | 'delete' | 'deleted' | 'move'>('menu');
+  // 只有真的展开「移动到文件夹」面板时才去拉列表（见 useFoldersQuery 的说明）
+  const folders = useFolderChoicesQuery(mode === 'move');
+  const move = useMoveNoteToFolderMutation();
   const [draft, setDraft] = useState(note.title);
   const boxRef = useRef<HTMLSpanElement | null>(null);
 
@@ -103,6 +113,15 @@ export function NoteActionsMenu({ note }: { note: Pick<NoteDetail, 'uid' | 'titl
     });
   };
 
+  const doMove = (folderUid: string | null) => {
+    move.mutate(
+      { noteUid: note.uid, folderUid },
+      // 成功才收起面板；失败**留在原地**并显示错误 —— 收起来的话用户
+      // 分不清"移好了"还是"被吞了"，那正是我这两轮一直在清的那种沉默。
+      { onSuccess: () => setMode('menu') },
+    );
+  };
+
   return (
     <span className="relative" ref={boxRef}>
       <Button
@@ -138,6 +157,28 @@ export function NoteActionsMenu({ note }: { note: Pick<NoteDetail, 'uid' | 'titl
                   {t('notes.rename')}
                 </button>
               </li>
+              {/*
+                ★ 「移动到文件夹」放在**笔记自己的 ⋯ 菜单**里。
+                依据：用户是**站在一条笔记上**决定"把它收到哪儿去"的，
+                而不是先去文件夹页再回头找笔记。本文件的文件头本来就把
+                `useMoveNoteMutation` 列在同一批里 —— 它一直缺的就是这个入口。
+                ⚠️ 就地展开一个列表，**不跳转** —— 不再制造
+                「按钮 navigate 到自己所在那一页」那种死按钮。
+              */}
+              <li>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    move.reset();
+                    setMode('move');
+                  }}
+                  data-testid="note-move"
+                  className="w-full px-3 py-1.5 text-left text-xs text-ink-secondary hover:bg-fill-hover hover:text-ink"
+                >
+                  {t('notes.moveToFolder')}
+                </button>
+              </li>
               <li>
                 <button
                   type="button"
@@ -150,6 +191,40 @@ export function NoteActionsMenu({ note }: { note: Pick<NoteDetail, 'uid' | 'titl
                 </button>
               </li>
             </ul>
+          ) : null}
+
+          {mode === 'move' ? (
+            <div className="p-2" data-testid="note-move-panel">
+              <p className="mb-1 px-1 text-xs text-ink-secondary">{t('notes.moveToFolder')}</p>
+              <ul role="menu" className="max-h-48 overflow-auto">
+                <li>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => doMove(null)}
+                    className="w-full px-2 py-1 text-left text-xs text-ink-secondary hover:bg-fill-hover hover:text-ink"
+                    data-testid="note-move-root"
+                  >
+                    {t('notes.moveToRoot')}
+                  </button>
+                </li>
+                {(folders.data ?? []).map((f) => (
+                  <li key={f.uid}>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => doMove(f.uid)}
+                      className="w-full px-2 py-1 text-left text-xs text-ink-secondary hover:bg-fill-hover hover:text-ink"
+                    >
+                      {f.name}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {/* 失败要说话：目标文件夹已被删 → 400 FOLDER_NOT_FOUND，这里照实显示 */}
+              {move.isError ? <ErrorBlock error={move.error} /> : null}
+              {folders.isError ? <ErrorBlock error={folders.error} /> : null}
+            </div>
           ) : null}
 
           {mode === 'rename' ? (

@@ -342,3 +342,64 @@ export function useSaveNoteBodyMutation(noteUid: string) {
     },
   });
 }
+
+/* ═══════════════ 移动到文件夹 ═══════════════════════════════════════════════
+ *
+ * ⚠️ 这两个 hook **刻意放在 notes 这一侧**，而不是从 `features/folders/api` 里 import。
+ *
+ * eslint 的 `no-restricted-imports` 当场拦住了我那么写（D-05 §3.5：
+ * features/A 不得 import features/B），而它拦得对 —— 我第一版正是
+ * `import { useFoldersQuery, useMoveNoteMutation } from '../folders/api'`。
+ *
+ * 归属上也是这一侧更正：端点是 **`PUT /api/notes/:uid/folder`**，
+ * 它是"给这条笔记换个归属"，不是"对文件夹做什么"。
+ * 共享的只有 `qk` 与 `api`（都在 lib/app 里），依赖方向仍然是 features → lib。
+ */
+
+/** 供「移动到文件夹」挑选用的文件夹列表。`enabled` 让调用方按需拉。 */
+export function useFolderChoicesQuery(enabled = true) {
+  return useQuery({
+    queryKey: qk.folders,
+    queryFn: () => api<unknown>('notes', '/folders'),
+    enabled,
+    select: (d: unknown): { uid: string; name: string }[] => {
+      const walk = (nodes: unknown): { uid: string; name: string }[] => {
+        if (!Array.isArray(nodes)) return [];
+        const out: { uid: string; name: string }[] = [];
+        for (const n of nodes) {
+          const o = n as { uid?: unknown; name?: unknown; children?: unknown };
+          if (typeof o?.uid === 'string' && typeof o?.name === 'string') {
+            out.push({ uid: o.uid, name: o.name });
+            out.push(...walk(o.children));
+          }
+        }
+        return out;
+      };
+      const raw = d as { folders?: unknown };
+      return walk(Array.isArray(d) ? d : raw?.folders);
+    },
+  });
+}
+
+/**
+ * 把这条笔记移到某个文件夹（`null` = 移出到「未分类」）。
+ *
+ * ⚠️ 端点是 `PUT /api/notes/:uid/folder`，**不是** `PATCH /api/notes/:uid` ——
+ * 后者的处理器根本不读 `folderUid`，却照样回 200：那会是"成功了、笔记原地不动"。
+ * （这条坑在 `features/folders/api.ts` 的原注释里记过，搬过来一并留着。）
+ */
+export function useMoveNoteToFolderMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { noteUid: string; folderUid: string | null }) =>
+      api<{ uid: string; folderUid: string | null }>('notes', `/notes/${v.noteUid}/folder`, {
+        method: 'PUT',
+        body: { folderUid: v.folderUid },
+      }),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: qk.notes.detail(v.noteUid) });
+      void qc.invalidateQueries({ queryKey: qk.notes.all });
+      void qc.invalidateQueries({ queryKey: qk.folders });
+    },
+  });
+}

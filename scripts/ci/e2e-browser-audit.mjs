@@ -63,7 +63,7 @@
  */
 /* global document, getComputedStyle */
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -940,6 +940,208 @@ try {
       after.ok === true || after.failed === true,
       '点完既没有"已复制"也没有"复制失败"（这条变异本就该红）',
     );
+  });
+
+  /* ── 3d. 文件夹改名 / 笔记移动 —— 两条刚接上的线 ──────────────────────────── */
+  hdr('3d. 文件夹改名 + 笔记移动到文件夹（两条 mutation 刚接上入口）');
+
+  // 侧栏文件夹树在每一页都在，随便挑一页
+  await page.goto(`${BASE}/notes`, { waitUntil: 'networkidle', timeout: 30_000 });
+  await page.waitForTimeout(1200);
+
+  /*
+   * 改名按钮是 hover 才显形的（`opacity-0 group-hover:opacity-100`），
+   * 所以**不能靠可见性去点** —— 用 force 点，模拟鼠标移上去之后的那一下。
+   * 这也是为什么它不走通用的 clickAndObserve：那个函数会先要求 visible。
+   */
+  const renameOpened = await (async () => {
+    const btn = page.locator('[data-testid="folder-rename"]').first();
+    if ((await btn.count()) === 0) return false;
+    await btn.click({ force: true, timeout: 8000 });
+    await page.waitForTimeout(600);
+    return (await page.locator('[data-testid="folder-rename-input"]').count()) > 0;
+  })();
+  say(`   点「重命名」后出现输入框 = ${renameOpened}`);
+
+  await check('B8 ★ 文件夹改名有入口，且点了真的展开就地编辑（不是死按钮）', () => {
+    ok(renameOpened === true, '点了重命名按钮，输入框没出现 —— 入口是死的');
+    return '出现 folder-rename-input';
+  });
+
+  // 真的改一次名，并确认发出了 PATCH /api/folders/:uid
+  const renameReqs = [];
+  const onReq = (r) => {
+    try {
+      if (new URL(r.url()).pathname.startsWith('/api/folders/') && r.method() === 'PATCH') {
+        renameReqs.push(r.method());
+      }
+    } catch {
+      /* 忽略 */
+    }
+  };
+  page.on('request', onReq);
+  /*
+   * ⚠️ 整段包在 try 里：这一步**点不动也只该让这条断言红**，不该把整轮审计带走。
+   * `[实测]` 第一版没包，submit 按钮点超时直接抛出去 —— B10/B11 一条都没跑到，
+   * 汇总里看不到它们，等于"跳过被渲染成了没有问题"（§11 那条的变形）。
+   * 同样用 force：这一行的控件是 hover 才显形的。
+   */
+  try {
+    /*
+     * ★ 用**回车**提交，不用点那个 ✓ 按钮。
+     *   两个理由，第二个是实测出来的：
+     *   ① 回车才是用户改完名字最自然的动作；
+     *   ② `[实测]` 对 ✓ 按钮 `click({force:true})` **点不动** ——
+     *      force 会跳过"这个元素真的收得到指针事件吗"这项检查，
+     *      于是坐标落在了别的元素上而我毫无察觉：请求 0 条、编辑框还开着。
+     *      换成回车之后立刻看到 `PATCH /api/folders/<uid>` + 列表失效 + 编辑框关闭。
+     *      **那是我的点法不对，不是产品坏了** —— 这类"测试看不见它"和"它坏了"
+     *      长得一模一样，本轮已经栽过两次（B6 也是）。
+     */
+    await page
+      .locator('[data-testid="folder-rename-input"]')
+      .first()
+      .pressSequentially(` 改名${Date.now() % 1000}`, { delay: 15 });
+    await page.locator('[data-testid="folder-rename-input"]').first().press('Enter');
+    await page.waitForTimeout(1500);
+  } catch (e) {
+    say(`   ⚠️ 提交改名时出错：${String(e.message).slice(0, 120)}`);
+  }
+  page.off('request', onReq);
+  say(`   PATCH /api/folders/:uid 发出 ${renameReqs.length} 条`);
+
+  await check('B9 ★ 改名真的打到了 PATCH /api/folders/:uid（不是只动了本地状态）', () => {
+    ok(
+      renameReqs.length > 0,
+      '输入框有、按钮能点，但一条 PATCH 都没发出去 —— 那是"看起来能用"的假象',
+    );
+    return `${renameReqs.length} 条 PATCH`;
+  });
+
+  /*
+   * ── 笔记移动：入口在笔记自己的「⋯」菜单里 ──
+   *
+   * ⚠️ 先造一条笔记：本脚本刻意用**空数据目录**（那两个按钮只有"还没装东西"时才出现），
+   * 而空目录里**一条笔记都没有**，菜单自然也不存在。
+   * `[实测]` 第一版就是这么拿到 `moveOpened = null` 的 —— 那不是"入口是死的"，
+   * 是**这一节根本没有被执行**。§11：跳过不许被渲染成通过，所以这里
+   * 走产品自己的导入端点真的建一条出来，建不出来就如实红。
+   */
+  const dummyPath = join(DATA_DIR, 'e2e-browser-move.wav');
+  writeFileSync(dummyPath, Buffer.alloc(64));
+  const imported = await fetch(`${BASE}/api/notes/import`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ input: dummyPath, title: '移动测试用的笔记' }),
+  })
+    .then((r) => r.json().then((b) => ({ status: r.status, uid: b?.noteUid })))
+    .catch(() => ({ status: 0, uid: undefined }));
+  say(`   为移动测试建了一条笔记：HTTP ${imported.status} uid=${imported.uid ?? '(无)'}`);
+  /*
+   * ⚠️ `NoteActionsMenu` 只渲染在**笔记详情页**（`NoteDetailPage.tsx:196`），
+   * 列表页上没有它。`[实测]` 第一版建完笔记还停在 `/notes` 列表页，
+   * 于是 `note-actions` 一直找不到 —— 又一次"我的测试没走到那儿"被误读成"入口是死的"。
+   */
+  if (imported.uid) {
+    await page.goto(`${BASE}/notes/${imported.uid}`, {
+      waitUntil: 'networkidle',
+      timeout: 30_000,
+    });
+    await page.waitForTimeout(1500);
+  }
+
+  /* ── 笔记移动：入口在笔记自己的「⋯」菜单里 ── */
+  const moveOpened = await (async () => {
+    try {
+      const act = page.locator('[data-testid="note-actions"]').first();
+      if ((await act.count()) === 0) return null; // 一条笔记都没有 —— 不算失败，如实说
+      await act.click({ timeout: 8000 });
+      await page.waitForTimeout(400);
+      const mv = page.locator('[data-testid="note-move"]').first();
+      if ((await mv.count()) === 0) return false;
+      await mv.click({ timeout: 8000 });
+      await page.waitForTimeout(900);
+      return (await page.locator('[data-testid="note-move-panel"]').count()) > 0;
+    } catch (e) {
+      say(`   ⚠️ 打开移动面板时出错：${String(e.message).slice(0, 120)}`);
+      return false;
+    }
+  })();
+  say(`   点「移动到文件夹」后出现面板 = ${moveOpened}`);
+
+  await check('B10 ★ 笔记「移动到文件夹」有入口且点得开（不是死按钮）', () => {
+    ok(moveOpened !== null, '页面上一条笔记都没有 —— 这一节没有被真的执行（§11）');
+    ok(moveOpened === true, '点了「移动到文件夹」，面板没出现 —— 入口是死的');
+    return '出现 note-move-panel';
+  });
+
+  /*
+   * ★ 失败要说话：把目标文件夹**移到一个已经不存在的 uid** 上会得到
+   *   404 `FOLDER_NOT_FOUND`。这里注入它，要求界面真的说一句。
+   */
+  await page.route(
+    (u) => {
+      try {
+        return /^\/api\/notes\/[^/]+\/folder$/.test(new URL(u).pathname);
+      } catch {
+        return false;
+      }
+    },
+    (route) =>
+      route.fulfill({
+        status: 404,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: { code: 'FOLDER_NOT_FOUND', message: 'gone', messageZh: '文件夹不存在' },
+        }),
+      }),
+  );
+  let moveSpoke = false;
+  if (moveOpened === true) {
+    const before = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
+    await page.click('[data-testid="note-move-root"]', { timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(1800);
+    const after = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
+    moveSpoke = FAIL_WORDS.test(after.replace(before, ''));
+  }
+  await page.unroute((u) => {
+    try {
+      return /^\/api\/notes\/[^/]+\/folder$/.test(new URL(u).pathname);
+    } catch {
+      return false;
+    }
+  });
+  say(`   移动失败（注入 404）后界面说话了吗 = ${moveSpoke}`);
+
+  await check('B11 ★ 移动失败时界面必须说话（目标文件夹已被删）', () => {
+    ok(moveOpened === true, '面板没打开，这条无从谈起');
+    ok(moveSpoke === true, '端点回了 404 FOLDER_NOT_FOUND，而界面一个字都没说 —— 又一处吞错误');
+    return '出现了可读的错误';
+  });
+
+  // 变异①（死按钮那一种）：把「移动到文件夹」变成点不动，B10 必须红
+  await mutation('B10 的证伪能力（把「移动到文件夹」弄成死按钮，必须红）', async () => {
+    await page.goto(`${BASE}/notes`, { waitUntil: 'networkidle', timeout: 30_000 });
+    await page.waitForTimeout(1000);
+    await page.locator('[data-testid="note-actions"]').first().click({ timeout: 8000 });
+    await page.waitForTimeout(400);
+    await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="note-move"]');
+      if (el) {
+        el.addEventListener(
+          'click',
+          (ev) => {
+            ev.stopImmediatePropagation();
+            ev.preventDefault();
+          },
+          true,
+        );
+      }
+    });
+    await page.locator('[data-testid="note-move"]').first().click({ timeout: 8000 });
+    await page.waitForTimeout(900);
+    const opened = (await page.locator('[data-testid="note-move-panel"]').count()) > 0;
+    ok(opened === true, '点了「移动到文件夹」，面板没出现 —— 入口是死的');
   });
 
   /* ── 4. 变异证明：把按钮弄"死"，同一条断言必须红 ───────────────────────── */

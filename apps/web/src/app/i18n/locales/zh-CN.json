@@ -102,7 +102,9 @@
     "allLoaded": "共 {{total}} 条，已全部显示",
     "deleted": "已删除",
     "undo": "撤销",
-    "undoFailed": "撤销失败"
+    "undoFailed": "撤销失败",
+    "moveToFolder": "移动到文件夹…",
+    "moveToRoot": "移出到「未分类」"
   },
   "models": {
     "title": "模型管理",
@@ -550,6 +552,14 @@
     "NOT_IMPLEMENTED": {
       "title": "「测速」还没有实现",
       "detail": "真实的速度要在你这台机器上跑一次推理才算数，而这一步还没接通。产品不会拿论文或厂商标称的数字充数 —— 所以这里宁可空着，也不给你一个假的。"
+    },
+    "FOLDER_NOT_FOUND": {
+      "title": "文件夹不存在",
+      "detail": "它可能刚被删掉了。侧栏刷新后重新选一个。"
+    },
+    "FOLDER_CYCLE": {
+      "title": "不能移到自己里面",
+      "detail": "目标是这个文件夹自己或它的子文件夹，那样会形成一个环。请选一个不在它下面的位置。"
     }
   },
   "common": {
@@ -844,7 +854,8 @@
     "collapse": "折叠",
     "expand": "展开",
     "delete": "删除文件夹 {{name}}",
-    "deleteHint": "删除文件夹；里面的笔记会移到「未分类」，不会被删除"
+    "deleteHint": "删除文件夹；里面的笔记会移到「未分类」，不会被删除",
+    "rename": "重命名文件夹 {{name}}"
   },
   "health": {
     "tokenizerDegraded": "中文分词未启用（当前 {{tokenizer}}），中文搜索可能不准确",

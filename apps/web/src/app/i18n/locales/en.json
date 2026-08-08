@@ -102,7 +102,9 @@
     "allLoaded": "All {{total}} shown",
     "deleted": "Deleted",
     "undo": "Undo",
-    "undoFailed": "Undo failed"
+    "undoFailed": "Undo failed",
+    "moveToFolder": "Move to folder…",
+    "moveToRoot": "Move to Uncategorized"
   },
   "models": {
     "title": "Model management",
@@ -550,6 +552,14 @@
     "NOT_IMPLEMENTED": {
       "title": "Benchmarking is not implemented yet",
       "detail": "A real speed number has to come from running inference on your own machine, and that step is not wired up yet. The product will not fill it in with numbers from a paper or a vendor page — better blank than fake."
+    },
+    "FOLDER_NOT_FOUND": {
+      "title": "Folder not found",
+      "detail": "It may have just been deleted. Refresh the sidebar and pick another one."
+    },
+    "FOLDER_CYCLE": {
+      "title": "Cannot move into itself",
+      "detail": "The target is this folder or one of its descendants, which would create a cycle. Pick a location outside it."
     }
   },
   "common": {
@@ -844,7 +854,8 @@
     "collapse": "Collapse",
     "expand": "Expand",
     "delete": "Delete folder {{name}}",
-    "deleteHint": "Delete the folder; notes inside move to Unfiled and are not deleted"
+    "deleteHint": "Delete the folder; notes inside move to Unfiled and are not deleted",
+    "rename": "Rename folder {{name}}"
   },
   "health": {
     "tokenizerDegraded": "Chinese tokenizer is not enabled (currently {{tokenizer}}); Chinese search may be inaccurate",
