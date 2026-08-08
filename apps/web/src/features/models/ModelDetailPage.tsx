@@ -209,6 +209,8 @@ export default function ModelDetailPage() {
               服务端的 message 只作未知 code 的兜底 —— 501 的 code 是 `NOT_IMPLEMENTED`。
             */}
             {benchmark.isError ? <ErrorBlock error={benchmark.error} /> : null}
+            {/* 同上：`verify` 失败以前完全静默，而隔壁 benchmark 一直是渲染的 */}
+            {verify.isError ? <ErrorBlock error={verify.error} /> : null}
           </div>
         )}
       </section>

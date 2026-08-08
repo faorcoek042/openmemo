@@ -489,6 +489,16 @@ export default function ModelsPage() {
         */}
         {pull.isError ? <ErrorBlock error={pull.error} /> : null}
         {del.isError ? <ErrorBlock error={del.error} /> : null}
+        {/*
+          ★ 这四条以前是 `void X.mutateAsync(...)` —— 失败时界面一个字都不说。
+          它们**不是刻意静默**：本页紧挨着的 `pull` / `del` 就是这么渲染错误的，
+          也就是说这套写法一直在手边，只是这几处漏了。判据与用户报的那条同一条：
+          点了一个按钮，要么发生该发生的事，要么看到一句读得懂的话，没有第三种。
+        */}
+        {activate.isError ? <ErrorBlock error={activate.error} /> : null}
+        {cancelJob.isError ? <ErrorBlock error={cancelJob.error} /> : null}
+        {retryJob.isError ? <ErrorBlock error={retryJob.error} /> : null}
+        {gc.isError ? <ErrorBlock error={gc.error} /> : null}
         {catalog.isLoading ? <p className="text-xs text-ink-muted">{t('models.loading')}</p> : null}
 
         {!catalog.isLoading && groups.length === 0 ? (

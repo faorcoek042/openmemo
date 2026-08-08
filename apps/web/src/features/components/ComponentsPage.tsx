@@ -141,6 +141,8 @@ export default function ComponentsPage() {
       ) : null}
 
       {q.isError ? <ErrorBlock error={q.error} onRetry={() => void q.refetch()} /> : null}
+      {/* 「检查」失败以前完全静默；本页的查询错误一直是渲染的，这里只是漏了 */}
+      {check.isError ? <ErrorBlock error={check.error} /> : null}
       {q.isLoading ? <p className="text-xs text-ink-muted">正在读取组件清单…</p> : null}
 
       {!q.isLoading && components.length === 0 ? (

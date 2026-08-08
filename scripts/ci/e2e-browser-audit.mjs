@@ -792,6 +792,108 @@ try {
     return '0 条';
   });
 
+  /* ── 3b. ★ 第二种死法：点到了、请求发了、失败了，**然后没人说话** ────────────
+   *
+   * 我原有的变异（捕获阶段监听器）只证明得了"点击到不了 handler"。
+   * 但用户报的「点安装没反应」有**第二个源头**，形状完全不同：
+   * 请求真的发出去、服务端回了错，而 `void mutateAsync()` 把 rejection 吞掉 ——
+   * 界面一个字都不说。**在用户眼里这两种一模一样，而我此前只看得见第一种。**
+   *
+   * ⚠️ 这条断言第一版是**红的，而且红错了原因**，值得记：
+   *   · 我用 `getByText('安装')` 定位，`.first()` 命中的是一个**被禁用**的按钮
+   *     （`/runtime` 上有 20+ 个「安装 …」按钮，大多数在空数据目录下不可点）；
+   *   · 路由用通配前缀去拦 `/api/backends/install`，**把 `/api/backends/installed`
+   *     那个 GET 也一起拦了**，于是"看到错误"可能来自列表查询失败而不是安装失败。
+   *   两个都是**我的测量错**，不是产品的问题。`[实测]` 修正之后：
+   *   恰好 1 条 `POST /api/backends/install` 被拦，页面上出现「本轮人为注入的失败」。
+   */
+  hdr('3b. ★ 请求失败时界面必须说话（第二种"没反应"）');
+
+  const FAIL_WORDS = /失败|错误|重试|无法|不可用|出错|error|failed|retry/i;
+
+  await page.route(
+    (u) => {
+      try {
+        return new URL(u).pathname === '/api/backends/install';
+      } catch {
+        return false;
+      }
+    },
+    (route) =>
+      route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: { code: 'INJECTED', message: 'boom', messageZh: '本轮人为注入的失败' },
+        }),
+      }),
+  );
+  await page.goto(`${BASE}/runtime`, { waitUntil: 'networkidle', timeout: 30_000 });
+  await page.waitForTimeout(1800);
+
+  const beforeInstall = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
+  // 挑第一个**没有被禁用**、文案以「安装 」开头的按钮，并打标再点（不靠 getByText）
+  const targetLabel = await page.evaluate(() => {
+    const b = [...document.querySelectorAll('button')].find(
+      (e) => !e.disabled && /^安装\s/.test((e.textContent || '').trim()),
+    );
+    if (!b) return null;
+    b.setAttribute('data-b6', '1');
+    return (b.textContent || '').trim();
+  });
+  let installClicked = false;
+  if (targetLabel) {
+    try {
+      await page.click('[data-b6="1"]', { timeout: 8000 });
+      installClicked = true;
+    } catch {
+      /* 下面按未点到处理 */
+    }
+    await page.waitForTimeout(2500);
+  }
+  const afterInstall = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
+  const installAdded = afterInstall.replace(beforeInstall, '');
+  await page.unroute((u) => {
+    try {
+      return new URL(u).pathname === '/api/backends/install';
+    } catch {
+      return false;
+    }
+  });
+  say(`   目标按钮：${targetLabel ?? '(没找到可点的安装按钮)'}`);
+  say(`   注入 500 后新增文字里像错误提示 = ${FAIL_WORDS.test(installAdded)}`);
+
+  await check('B6 ★ 安装失败时界面必须出现读得懂的话（不许静默吞掉）', () => {
+    ok(
+      targetLabel !== null,
+      '/runtime 上没有一个可点的「安装」按钮 —— 先确认目录不是空的（本轮 catalog 有 25 个包）',
+    );
+    ok(installClicked === true, '按钮点不动');
+    ok(
+      FAIL_WORDS.test(installAdded) === true,
+      '端点回了 500，而界面上一个字都没说 —— `void mutateAsync()` 把 rejection 吞掉了；' +
+        '这在用户眼里与"按钮是死的"完全一样',
+      installAdded.slice(0, 200),
+    );
+    return `点了「${targetLabel}」，界面说了话`;
+  });
+
+  /*
+   * 变异：把**同一个谓词**拿去量"没注入故障"的那一轮 —— 那时界面本来就不该冒出错误话。
+   * 它必须红，才证明 B6 量的是"失败时说话"，而不是"页面上随便有点字"。
+   */
+  await mutation('B6 的证伪能力（没注入故障那轮不该有错误话，同一谓词必须红）', async () => {
+    await page.goto(`${BASE}/runtime`, { waitUntil: 'networkidle', timeout: 30_000 });
+    await page.waitForTimeout(1500);
+    const base0 = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
+    await page.waitForTimeout(1200);
+    const base1 = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
+    ok(
+      FAIL_WORDS.test(base1.replace(base0, '')) === true,
+      '没注入故障时界面本来就没有错误话（这条变异本就该红）',
+    );
+  });
+
   /* ── 4. 变异证明：把按钮弄"死"，同一条断言必须红 ───────────────────────── */
 
   hdr('4. ★ 变异证明：让按钮"还在但点不动"，同一条断言必须红');

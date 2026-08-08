@@ -25,6 +25,8 @@ export default function StorageSettingsPage() {
       {storage.isError ? (
         <ErrorBlock error={storage.error} onRetry={() => void storage.refetch()} />
       ) : null}
+      {/* 「清理」失败以前完全静默 —— 用户点完不知道是清理了还是没清理 */}
+      {gc.isError ? <ErrorBlock error={gc.error} /> : null}
 
       {storage.data ? (
         <>
