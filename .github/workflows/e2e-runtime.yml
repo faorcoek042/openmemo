@@ -112,46 +112,19 @@ jobs:
       # ── 取预编译包 ────────────────────────────────────────────────────────────
       #
       # build-bundles 是 workflow_dispatch 的，产物不在本次 run 里，所以要跨 run 取。
-      # 留空时自动找**最近一次成功**的那次 —— 让这条腿可以一键跑，
-      # 而不是每次都要人先去翻一个 run id（"需要人记得填的参数"等价于
-      # "迟早不会被填的参数"，PROTOCOL §7 补充那条判据）。
+      # 挑哪一次的判据在 `scripts/ci/resolve-bundle-run.sh` 里（**只有一份**，
+      # audit 与 mutations 两个 job 调的是同一个脚本 —— 这里原本是抄了两份的
+      # shell，`[实测 run 31249523201]` 我只修了其中一份，另一份就把整条
+      # linux 变异腿挂在了 `Artifact not found` 上）。
       - name: 解析 build-bundles 的 run id
         id: runid
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          GIVEN: ${{ inputs.bundlesRunId }}
         run: |
           set -euo pipefail
-          if [ -n "${GIVEN:-}" ]; then
-            echo "id=$GIVEN" >> "$GITHUB_OUTPUT"
-            echo "用指定的 run id：$GIVEN"
-            exit 0
-          fi
-          # ★ 判据是「**这次 run 里有我这条腿要的那个 artifact，且没过期**」，
-          #   不是「它是最近一次成功的 run」。
-          #
-          #   build-bundles 有个 `legs` 输入，可以只编一条腿 —— `[实测 2026-08-08]`
-          #   最近一次成功的 run（31249135458）就**只有 bundle-darwin-arm64**。
-          #   按"最近一次成功"去取，Linux/Windows 两条腿会拿不到产物而红，
-          #   而那个红与产品毫无关系，纯粹是取件取错了地方。
-          #   artifact 还有 90 天保留期的问题，所以"存在"和"没过期"都要看。
-          want='${{ matrix.artifact }}'
-          id=''
-          for cand in $(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/build-bundles.yml/runs?status=success&per_page=20" \
-                          --jq '.workflow_runs[].id'); do
-            if gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${cand}/artifacts" \
-                 --jq '.artifacts[] | select(.expired==false) | .name' 2>/dev/null | grep -qx "$want"; then
-              id="$cand"; break
-            fi
-            echo "  run $cand 里没有未过期的 $want，继续往前找"
-          done
-          if [ -z "$id" ]; then
-            echo "::error::最近 20 次成功的 build-bundles run 里都没有未过期的 $want —— 先跑一次 build-bundles（legs=all），或用 bundlesRunId 指定"
-            exit 1
-          fi
-          echo "id=$id" >> "$GITHUB_OUTPUT"
-          echo "选中 build-bundles run $id（它有未过期的 $want）"
+          id=$(bash scripts/ci/resolve-bundle-run.sh '${{ matrix.artifact }}' '${{ inputs.bundlesRunId }}')
+          echo "id=${id}" >> "$GITHUB_OUTPUT"
 
       - name: 下载预编译包
         uses: actions/download-artifact@v6
@@ -269,15 +242,10 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          GIVEN: ${{ inputs.bundlesRunId }}
         run: |
           set -euo pipefail
-          if [ -n "${GIVEN:-}" ]; then echo "id=$GIVEN" >> "$GITHUB_OUTPUT"; exit 0; fi
-          id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/build-bundles.yml/runs?status=success&per_page=1" \
-                 --jq '.workflow_runs[0].id // empty')
-          [ -n "$id" ] || { echo "::error::找不到成功的 build-bundles run"; exit 1; }
-          echo "id=$id" >> "$GITHUB_OUTPUT"
-
+          id=$(bash scripts/ci/resolve-bundle-run.sh '${{ matrix.artifact }}' '${{ inputs.bundlesRunId }}')
+          echo "id=${id}" >> "$GITHUB_OUTPUT"
       - name: 下载预编译包
         uses: actions/download-artifact@v6
         with:
@@ -327,7 +295,7 @@ jobs:
             port=$((port+1))
             echo ""
             echo "════════════════════════════════════════════════════════════════"
-            echo "  变异 $m （port $port）"
+            echo "  变异 $m （port ${port}）"
             echo "════════════════════════════════════════════════════════════════"
             if node scripts/ci/e2e-runtime-audit.mjs \
                  --bundle "${{ steps.bundle.outputs.bundle_dir }}" \
