@@ -697,6 +697,53 @@ try {
     }
     const st = await waitForJob(r.body.jobUid);
     say(`   [${label}] 转写 job：${st.state} ${st.detail}`);
+    /*
+     * 失败时把 job.error **全文**再取一次。`waitForJob` 截到 400 字符，
+     * 对轮询摘要够用，对定位远远不够 —— 第一轮真跑就正好断在最关键的那个字上
+     * （`whisper-cli exited with code 3\nload_backend: lo` …）。
+     */
+    if (st.state !== 'succeeded') {
+      const full = await http(`/api/jobs/${encodeURIComponent(r.body.jobUid)}`);
+      const err = (full.body?.job ?? full.body)?.error;
+      if (err) {
+        say(`   [${label}] ── job.error 全文 ──`);
+        for (const line of JSON.stringify(err, null, 2).slice(0, 4000).split('\n')) {
+          say(`      ${line}`);
+        }
+      }
+    }
+    /*
+     * ★ 每转一次都把资产列表重新摊开，并**再确认一次原始录音还播得出来**。
+     *
+     * 这不是凑数：第一轮真跑（run 31247324575）里，macOS 与 Windows 上
+     * **第一次重转成功、之后每一次都 `no media source can handle this input`**，
+     * 而 Linux 三次全过。两者的差别很可能在
+     * `archiveIntoMedia` 那句「已经在 media/ 里就别动它」——
+     * 它是拿 `relative()` 做**字符串**判断，而 macOS 的 `/var` 是指向
+     * `/private/var` 的符号链接、Windows 的 tmpdir 是 8.3 短名（`RUNNER~1`）。
+     * 判断落空的话，录音会被 `rename()` 搬走，于是它自己的 `input_url` 指空。
+     *
+     * 但这仍然只是**假设**。所以这里不写结论，写一个能分辨真假的探针：
+     * 如果录音被搬走了，`/media/asset/<uid>` 会当场取不到字节 —— 那就是证据。
+     * 顺带它本身也是一条用户可见的性质：**重转一次不许把原始录音弄丢**。
+     */
+    const after = (await http(`/api/notes/${noteUid}`)).body;
+    say(`   [${label}] 转写后的资产：`);
+    for (const a of after?.assets ?? []) {
+      say(`      role=${String(a.role).padEnd(10)} state=${a.state} bytes=${a.bytes} url=${a.url}`);
+    }
+    const orig = (after?.assets ?? []).find((x) => x.role === 'original');
+    if (orig) {
+      const probe = await http(orig.url, { raw: true, headers: { range: 'bytes=0-43' } });
+      judge(`[${label}] 重转之后原始录音仍然取得到字节（rel_path 没有被搬空）`, {
+        ok: probe.status === 206 && probe.body.length === 44,
+        reason:
+          probe.status === 206
+            ? `HTTP 206，WAV 头 44 字节取得到`
+            : `HTTP ${probe.status} —— 录音文件不在 rel_path 指的位置了；` +
+              `这正是后续「重新转写」报 no media source can handle this input 的成因候选`,
+      });
+    }
     const tr = (await http(`/api/notes/${noteUid}/transcript`)).body;
     return { ok: true, status: r.status, job: st, transcript: tr };
   }
