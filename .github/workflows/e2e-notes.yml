@@ -187,7 +187,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p extracted
-          A="$(ls bundle-artifact/*.tar.xz bundle-artifact/*.tar.gz bundle-artifact/*.zip 2>/dev/null | head -1)"
+          # ★ 用 nullglob 数组挑归档，**不要用 `ls a b c 2>/dev/null | head -1`**。
+          #   `[CI 实测 run 31247230961]` 那种写法三个平台一起红：linux 上只有 .tar.xz，
+          #   `ls` 对另外两个不存在的 glob 返回非零，`2>/dev/null` 只挡住了 stderr、
+          #   **挡不住退出码**，于是 `set -e` 在赋值那一行就把整步毙了 ——
+          #   而上一步刚刚成功下载了 43 MB 的包。错在我，不在产品。
+          #   纯 bash 数组没有管道、没有子命令退出码，这类坑在结构上不存在。
+          shopt -s nullglob
+          archives=(bundle-artifact/*.tar.xz bundle-artifact/*.tar.gz bundle-artifact/*.zip)
+          A="${archives[0]-}"
           if [ -z "$A" ]; then
             echo "::error::bundle-artifact/ 里没有归档文件"; ls -la bundle-artifact; exit 1
           fi
@@ -197,8 +205,10 @@ jobs:
             *.tar.gz) tar -xzf "$A" -C extracted ;;
             *.zip)    unzip -q "$A" -d extracted ;;
           esac
-          B="$(find extracted -maxdepth 1 -mindepth 1 -type d | head -1)"
-          [ -n "$B" ] || { echo "::error::归档里没有顶层目录"; exit 1; }
+          dirs=(extracted/*/)
+          B="${dirs[0]-}"
+          [ -n "$B" ] || { echo "::error::归档里没有顶层目录"; ls -la extracted; exit 1; }
+          B="${B%/}"
           echo "包根：$B"
           echo "bundle_dir=$B" >> "$GITHUB_OUTPUT"
 
