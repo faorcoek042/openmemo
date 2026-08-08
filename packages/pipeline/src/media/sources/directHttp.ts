@@ -14,6 +14,7 @@ import { stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { normalizeToPcm16k, probeMedia } from '../../audio/ffmpeg.js';
+import type { ProxyResolver } from '../../subprocess/proxy.js';
 import {
   assertHostNotPrivate,
   hasAllowedMediaExtension,
@@ -32,6 +33,20 @@ export interface DirectHttpSourceOptions {
   /** Overridable for tests. */
   fetchImpl?: typeof fetch;
   requestTimeoutMs?: number;
+  /**
+   * Outbound proxy, resolved per target URL.
+   *
+   * This adapter reaches the network two different ways, and only ONE of them was
+   * covered before:
+   *   · `fetch` (HEAD probe, `resumableFetch`) — in-process, so `setGlobalDispatcher`
+   *     already routes it. Nothing to do here.
+   *   · **ffprobe / ffmpeg reading the URL directly** (`remote: true`) — a SUBPROCESS.
+   *     The global dispatcher cannot reach it; it only obeys `http_proxy` in its own
+   *     environment, which `ffmpegProxySupport()` supplies from this value.
+   * `[实测]` before this was wired, ffprobe went direct while the settings page said the
+   * proxy was applied.
+   */
+  proxy?: ProxyResolver | null;
 }
 
 export class DirectHttpSource implements MediaSource {
@@ -95,6 +110,7 @@ export class DirectHttpSource implements MediaSource {
         remote: true,
         signal,
         timeoutMs: 30_000,
+        proxy: this.opts.proxy?.(url) ?? null,
       });
       durationMs = probed.durationMs;
       tracks = probed.streams
@@ -141,6 +157,7 @@ export class DirectHttpSource implements MediaSource {
         remote: true,
         signal: req.signal,
         onProgress: req.onProgress,
+        proxy: this.opts.proxy?.(url) ?? null,
       });
       return {
         path: out.path,

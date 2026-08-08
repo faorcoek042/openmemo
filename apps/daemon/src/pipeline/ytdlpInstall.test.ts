@@ -378,6 +378,8 @@ describe('T-132 ④ 站点提取器默认是开的', () => {
       cwd: root,
       allowedRoot: root,
       enableSiteExtractor: siteExtractorEnabled({}),
+      // 本用例只验适配器在不在，不出网：显式声明「直连」。
+      proxy: () => null,
     });
     const ids = registry.list().map((s) => s.id);
     assert.ok(ids.includes('yt-dlp'), `站点提取器不在 registry 里：${ids.join(', ')}`);
@@ -387,6 +389,8 @@ describe('T-132 ④ 站点提取器默认是开的', () => {
       cwd: root,
       allowedRoot: root,
       enableSiteExtractor: siteExtractorEnabled({ OPENMEMO_ENABLE_SITE_EXTRACTOR: '0' }),
+      // 本用例只验适配器在不在，不出网：显式声明「直连」。
+      proxy: () => null,
     });
     assert.ok(!off.list().some((s) => s.id === 'yt-dlp'), '关掉之后不该还在');
 
@@ -396,6 +400,8 @@ describe('T-132 ④ 站点提取器默认是开的', () => {
       cwd: root,
       allowedRoot: root,
       enableSiteExtractor: true,
+      // 本用例只验适配器在不在，不出网：显式声明「直连」。
+      proxy: () => null,
     });
     const src = bare.list().find((s) => s.id === 'yt-dlp');
     assert.ok(src);

@@ -21,6 +21,7 @@ import { RssSource } from './media/sources/rss.js';
 import { YtDlpSource } from './media/sources/ytdlp.js';
 import { MediaSourceRegistry } from './media/registry.js';
 import type { ToolPaths } from './tools.js';
+import type { ProxyResolver } from './subprocess/proxy.js';
 
 export const PACKAGE_NAME = '@openmemo/pipeline' as const;
 
@@ -70,7 +71,12 @@ export {
  * 仍然拿得到东西，且拿到的一定是唯一那份。
  */
 export { redactProxyUrl } from '@openmemo/shared';
-export type { ProxyConfig, ProxyScheme, ProxyValidation } from './subprocess/proxy.js';
+export type {
+  ProxyConfig,
+  ProxyResolver,
+  ProxyScheme,
+  ProxyValidation,
+} from './subprocess/proxy.js';
 
 // -- tools ---------------------------------------------------------------------------------
 export {
@@ -275,6 +281,23 @@ export interface BuildRegistryOptions {
    * everything else keeps working.
    */
   enableSiteExtractor?: boolean;
+  /**
+   * Outbound proxy, resolved per target URL. **Required on purpose.**
+   *
+   * Every adapter here that spawns a subprocess (yt-dlp; ffmpeg/ffprobe reading a remote
+   * URL) is invisible to `setGlobalDispatcher` and can only be proxied by being told.
+   * Before this field existed the daemon simply never told them, so a user who had
+   * configured a proxy still went direct on every link import — while the settings page
+   * answered `appliedImmediately: true`.
+   *
+   * It is required rather than optional so that the compiler asks the question. An
+   * optional field would have been left unset exactly the way the old code left it unset,
+   * and the failure is silent: everything still "works" on a machine that has no need for
+   * a proxy, which is every machine we develop and test on.
+   *
+   * Pass `() => null` to mean "always direct" — but say it deliberately.
+   */
+  proxy: ProxyResolver;
 }
 
 /**
@@ -288,10 +311,10 @@ export function buildDefaultRegistry(opts: BuildRegistryOptions): MediaSourceReg
   registry.register(
     new LocalFileSource({ tools: opts.tools, allowedRoot: opts.allowedRoot, cwd: opts.cwd }),
   );
-  registry.register(new DirectHttpSource({ tools: opts.tools, cwd: opts.cwd }));
+  registry.register(new DirectHttpSource({ tools: opts.tools, cwd: opts.cwd, proxy: opts.proxy }));
   registry.register(new RssSource());
   registry.register(
-    new YtDlpSource({ tools: opts.tools, cwd: opts.cwd }),
+    new YtDlpSource({ tools: opts.tools, cwd: opts.cwd, proxy: opts.proxy }),
     opts.enableSiteExtractor ?? true,
   );
   return registry;

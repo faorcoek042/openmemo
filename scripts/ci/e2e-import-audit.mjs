@@ -384,6 +384,52 @@ async function jobErrorFull(jobUid) {
   return JSON.stringify(err, null, 2).slice(0, 6000);
 }
 
+/**
+ * `media.ready` 的 SSE 事件收集器。
+ *
+ * ★ 为什么非要收这个：`hasVideo` 这个契约字段此前是**写死的 `false`**，
+ *   导入一个 mp4 也报"没有视频"。它一度被判成"零读者可以删"，而那个判断错了 ——
+ *   真读者在 `apps/daemon/scripts/e2e-f2.mjs:185` 与 `packages/shared/openapi.yaml`，
+ *   `grep` 只扫 `.ts/.tsx` 时看不见。有读者的契约字段必须给真值，
+ *   而"真值"只有在**真的导入一个带视频的文件**时才验得出来。
+ */
+const mediaReady = new Map();
+let sseAbort = null;
+async function startSse() {
+  sseAbort = new AbortController();
+  const res = await fetch(`${BASE}/api/events`, {
+    headers: { accept: 'text/event-stream' },
+    signal: sseAbort.signal,
+  });
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  (async () => {
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const frames = buf.split('\n\n');
+        buf = frames.pop() ?? '';
+        for (const f of frames) {
+          const ev = /^event:\s*(.+)$/m.exec(f)?.[1]?.trim();
+          const dataLine = /^data:\s*(.+)$/m.exec(f)?.[1];
+          if (ev !== 'media.ready' || dataLine === undefined) continue;
+          try {
+            const d = JSON.parse(dataLine);
+            if (d?.noteUid) mediaReady.set(d.noteUid, d);
+          } catch {
+            /* 半个帧，忽略 */
+          }
+        }
+      }
+    } catch {
+      /* abort 或断流 */
+    }
+  })();
+}
+
 let exitCode = 0;
 let fixtureServer = null;
 /** 命中记录：谁真的来取过 fixture（判断"是不是 yt-dlp 去取的"唯一硬证据）。 */
@@ -566,6 +612,7 @@ try {
   hdr('5. 重启 daemon（materializeSqliteExtensions 只在启动时跑）');
   await stopDaemon();
   await startDaemon('warm');
+  await startSse();
   const h1 = await j('/api/health');
   const ext = h1.body?.db?.extensions ?? {};
   say(`   tokenizer=${ext.tokenizer}  libsimple=${ext.libsimple}  sqliteVec=${ext.sqliteVec}`);
@@ -947,7 +994,28 @@ try {
       results.push({ name: fx.name, what: fx.what, ok: false, note: st.state });
       continue;
     }
-    const ok = await assertPlayable(`F2:${fx.name}`, up.body.noteUid, fx.sha, fx.bytes);
+    let ok = await assertPlayable(`F2:${fx.name}`, up.body.noteUid, fx.sha, fx.bytes);
+    /*
+     * ★ `media.ready.hasVideo` 必须说真话：带视频的 mp4 → true，纯音轨 → false。
+     *   事件是异步来的，给它一点时间；**收不到就如实说收不到，不当成通过**。
+     */
+    const wantVideo = fx.name === 'f2-video.mp4';
+    let ready = null;
+    for (let i = 0; i < 20 && !ready; i++) {
+      ready = mediaReady.get(up.body.noteUid) ?? null;
+      if (!ready) await new Promise((r) => setTimeout(r, 250));
+    }
+    if (!ready) {
+      say(`   ⚠️ 没收到 media.ready（noteUid=${up.body.noteUid}）—— hasVideo 本例未验证`);
+    } else if (ready.hasVideo !== wantVideo) {
+      fail(
+        `F2:${fx.name}`,
+        `media.ready.hasVideo=${ready.hasVideo}，期望 ${wantVideo}（${fx.what}）—— 契约字段在说谎`,
+      );
+      ok = false;
+    } else {
+      say(`   ✔ media.ready.hasVideo=${ready.hasVideo}（与"${fx.what}"相符）`);
+    }
     results.push({ name: fx.name, what: fx.what, ok, note: ok ? '可播放' : '播放断言失败' });
   }
 
@@ -1308,6 +1376,11 @@ try {
   }
   failures.push({ step: 'fatal', detail: e.message });
 } finally {
+  try {
+    sseAbort?.abort();
+  } catch {
+    /* 已经断了 */
+  }
   if (fixtureServer) await new Promise((r) => fixtureServer.close(r));
   await stopDaemon();
   hdr('结论');

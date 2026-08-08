@@ -39,6 +39,24 @@ export interface ProxyConfig {
   noProxy?: string;
 }
 
+/**
+ * Resolve the proxy to use for one specific target URL, **at request time**.
+ *
+ * A function rather than a snapshot, for two reasons that are both load-bearing:
+ *
+ *  1. **`no_proxy` and http-vs-https are per-target decisions.** A snapshot would have
+ *     to pick one answer for every destination, which is wrong for exactly the users who
+ *     need a proxy most (a bypass list that silently stops applying is worse than none).
+ *  2. **The user can change the proxy while the process runs.** The registry is built
+ *     once at startup; if it captured a snapshot, `PATCH /api/settings/proxy` would only
+ *     take effect after a restart — while the endpoint claims `appliedImmediately: true`.
+ *     Resolving per request is what makes that claim honest for subprocesses too.
+ *
+ * Returning `null` means "go direct" — that is a legitimate answer (mode `off`, or the
+ * target matched `no_proxy`), not a missing value.
+ */
+export type ProxyResolver = (targetUrl: string) => ProxyConfig | null;
+
 export type ProxyValidation =
   | { ok: true; url: string; scheme: ProxyScheme; hostname: string }
   | {

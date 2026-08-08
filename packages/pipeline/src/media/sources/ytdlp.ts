@@ -37,7 +37,7 @@ import { join } from 'node:path';
 
 import { buildArgv, validateHttpUrl } from '../../subprocess/argGuard.js';
 import { run, runOrThrow } from '../../subprocess/runner.js';
-import { ytDlpProxyArgs, type ProxyConfig } from '../../subprocess/proxy.js';
+import { ytDlpProxyArgs, type ProxyResolver } from '../../subprocess/proxy.js';
 import { SubprocessError } from '../../subprocess/runner.js';
 import type { ToolPaths } from '../../tools.js';
 import { isExecutable } from '../../tools.js';
@@ -60,8 +60,14 @@ export interface YtDlpSourceOptions {
   cwd: string;
   probeTimeoutMs?: number;
   fetchTimeoutMs?: number;
-  /** Outbound proxy. yt-dlp honours both http(s) and SOCKS. */
-  proxy?: ProxyConfig | null;
+  /**
+   * Outbound proxy, resolved per target URL. yt-dlp honours both http(s) and SOCKS.
+   *
+   * ⚠️ This used to be a plain `ProxyConfig` — and **nothing ever passed it**, so every
+   * link import went direct while the settings page reported the proxy as applied.
+   * `buildDefaultRegistry` now requires a resolver, so that gap cannot reopen silently.
+   */
+  proxy?: ProxyResolver | null;
 }
 
 export class YtDlpSource implements MediaSource {
@@ -98,12 +104,13 @@ export class YtDlpSource implements MediaSource {
   async probe(input: string, signal: AbortSignal): Promise<MediaInfo> {
     const bin = this.requireBin();
     const url = this.requireSafeUrl(input);
+    const probeProxy = this.opts.proxy?.(url) ?? null;
 
     // -J = dump metadata as JSON, implies --simulate: nothing is written to disk.
     const argv = buildArgv({
       flags: [
         ...HARDENING_FLAGS,
-        ...ytDlpProxyArgs(this.opts.proxy ?? null),
+        ...ytDlpProxyArgs(probeProxy),
         '--dump-single-json',
         '--simulate',
       ],
@@ -117,6 +124,9 @@ export class YtDlpSource implements MediaSource {
       cwd: this.opts.cwd,
       timeoutMs: this.opts.probeTimeoutMs ?? 60_000,
       signal,
+      // Both the flag above and the env here: yt-dlp itself obeys `--proxy`, but it can
+      // spawn ffmpeg for muxing, and that child only ever sees the environment.
+      proxy: probeProxy,
     });
 
     return this.toMediaInfo(result.stdout, url);
@@ -125,10 +135,11 @@ export class YtDlpSource implements MediaSource {
   async fetch(req: FetchRequest): Promise<FetchedMedia> {
     const bin = this.requireBin();
     const url = this.requireSafeUrl(req.input);
+    const fetchProxy = this.opts.proxy?.(url) ?? null;
 
     const flags = [
       ...HARDENING_FLAGS,
-      ...ytDlpProxyArgs(this.opts.proxy ?? null),
+      ...ytDlpProxyArgs(fetchProxy),
       // Output stays inside the directory WE chose.
       '--paths',
       req.destDir,
@@ -159,6 +170,8 @@ export class YtDlpSource implements MediaSource {
       cwd: this.opts.cwd,
       timeoutMs: req.signal.aborted ? 1 : (this.opts.fetchTimeoutMs ?? 60 * 60_000),
       signal: req.signal,
+      // See probe(): flag for yt-dlp, env for any ffmpeg it spawns to mux.
+      proxy: fetchProxy,
       onStdoutLine: (line) => {
         // "[download]  12.3% of ..." — the only line shape we parse.
         const m = /\[download\]\s+([\d.]+)%/.exec(line);
@@ -248,6 +261,7 @@ export class YtDlpSource implements MediaSource {
     const bin = this.opts.tools.ytDlp;
     if (bin === null) return null;
     try {
+      // proxy-not-needed: `yt-dlp --version` 只读本地二进制自报的版本号，不出网。
       const r = await run({ bin, argv: ['--version'], cwd: this.opts.cwd, timeoutMs: 15_000 });
       return r.code === 0 ? r.stdout.trim() : null;
     } catch {

@@ -187,6 +187,24 @@ export function applyProxyConfig(
   void previous?.close().catch(() => previous.destroy().catch(() => undefined));
 }
 
+/**
+ * The proxy config **currently in effect for this process**, unredacted.
+ *
+ * Why this exists (and why it is not `activeProxySummary`): subprocesses — yt-dlp,
+ * ffmpeg — cannot use `setGlobalDispatcher`. They need the real URL so it can be handed
+ * to them as an argv flag / named env var. `activeProxySummary()` deliberately redacts
+ * credentials because it feeds an HTTP response; this one is for in-process wiring only
+ * and must never be serialised into a response body.
+ *
+ * Reading it at request time (rather than snapshotting at startup) is what makes
+ * `PATCH /api/settings/proxy`'s `appliedImmediately: true` true for the subprocess paths
+ * as well: `applyProxyConfig` updates `active` on every PATCH, so the next spawn picks
+ * up the new value without a restart.
+ */
+export function activeProxyConfig(): ProxyConfig | null {
+  return active?.cfg ?? null;
+}
+
 /** What is currently installed — for `/api/settings` readback and diagnostics. */
 export function activeProxySummary(): { mode: string; proxy: string | null } | null {
   if (!active) return null;

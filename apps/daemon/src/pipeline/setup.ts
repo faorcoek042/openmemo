@@ -36,7 +36,8 @@ import {
   type ToolPaths,
 } from '@openmemo/pipeline';
 
-import { isGgmlModelFile } from '@openmemo/downloader';
+import { activeProxyConfig, isGgmlModelFile } from '@openmemo/downloader';
+import { proxyUrlFor } from '@openmemo/shared';
 
 import type { AppPaths } from '../config/paths.js';
 import { whisperCliName } from '../runtime/setup.js';
@@ -256,6 +257,46 @@ export async function resolveWhisperVadModel(
  *   OPENMEMO_FFMPEG / OPENMEMO_FFPROBE / OPENMEMO_WHISPER_CLI /
  *   OPENMEMO_WHISPER_VAD / OPENMEMO_VAD_MODEL / OPENMEMO_ASR_MODEL / OPENMEMO_YTDLP
  */
+/**
+ * 子进程（yt-dlp / ffmpeg 远端读）用的代理解析器。
+ *
+ * ## 为什么必须单独有这么一个东西
+ *
+ * 进程内的 `fetch`（模型下载、LLM 调用、direct-http 的 HEAD 与断点续传）由
+ * `applyProxyConfig()` 装的**全局 undici dispatcher** 统一接管，call site 无从绕过。
+ * **子进程接不到那个 dispatcher** —— 它们只认自己 argv 里的 `--proxy`
+ * 和自己环境里的 `http_proxy`。在此之前没有任何代码把配置递给它们，
+ * 于是「设置页说代理已生效」对链接导入是**假的**。
+ *
+ * ## 为什么读 `activeProxyConfig()` 而不是把配置传进来
+ *
+ * `buildPipeline()` 只在启动时（以及组件装好后热重建时）跑，而用户随时可能改代理。
+ * 快照会让 `PATCH /api/settings/proxy` 的 `appliedImmediately: true` 变成谎话。
+ * `applyProxyConfig()` 在**每次 PATCH** 都会更新那份模块级状态，
+ * 所以在这里**每次请求现读**，下一次 spawn 就是新值，不需要重启。
+ *
+ * ## 为什么按 targetUrl 逐次解析
+ *
+ * `no_proxy` 与 http/https 的取舍**是每个目标各自的事**。给所有目标一个统一答案，
+ * 恰恰会在最需要代理的那群用户身上出错（绕行名单悄悄失效比没有更糟）。
+ * `proxyUrlFor()` 是 shared 里那份唯一实现，这里不另写一套判定。
+ *
+ * ⚠️ **没有动子进程环境白名单**（`buildChildEnv` 的 ALLOWED）。那份白名单是参数注入
+ * 防护的一部分：它拒绝**继承** `process.env` 里任何没列名的变量，正是为了挡
+ * `LD_PRELOAD` / `DYLD_INSERT_LIBRARIES` / `NODE_OPTIONS` 这类加载器变量。
+ * 代理变量走的是另一条路 —— `proxyEnv()` 从**已校验的配置**里**具名注入**，
+ * 而不是从环境里继承（`runner.ts` 原话：「added deliberately, never inherited」）。
+ * 所以正确修法是把配置递下去，而不是把白名单拆开。
+ */
+function subprocessProxyResolver(targetUrl: string): { url: string; noProxy?: string } | null {
+  const cfg = activeProxyConfig();
+  if (!cfg) return null;
+  const url = proxyUrlFor(cfg, targetUrl, process.env);
+  if (url === null || url.length === 0) return null;
+  const noProxy = (cfg.noProxy ?? []).join(',');
+  return noProxy.length > 0 ? { url, noProxy } : { url };
+}
+
 export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
   const env = process.env;
 
@@ -381,6 +422,7 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
     allowedRoot: paths.dataDir,
     // TD-002 的开关。**默认开**，理由见 siteExtractorEnabled()。
     enableSiteExtractor: siteExtractorEnabled(env),
+    proxy: subprocessProxyResolver,
   });
 
   const whisper = new WhisperCppEngine({
