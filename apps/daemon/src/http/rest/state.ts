@@ -276,6 +276,19 @@ export class RestState {
     await state.store.init();
     await state.loadPersisted();
     await state.reconcileBackends();
+    /*
+     * ★ 把指纹**钉在这一刻**，而不是留成 `null`。
+     *
+     * 留 null 的话，`freshHardware()` 的第一次调用必然判定"过期"并**再探一遍** ——
+     * 而上面几行刚探过。那既是白跑一次（探测要 spawn probe / nvidia-smi），
+     * 也会把调用方手里那份 hardware 换掉：`backendNotProbed.test.ts` 正是这么红的
+     * （它 `create()` 之后手工注入一份"vulkan 装了但没探过"的状态来复现 T-168，
+     * 而第一个请求就把它冲掉了）。
+     *
+     * 必须放在 `reconcileBackends()` **之后**：对账会给"盘上有、记录没有"的包补记录，
+     * 那本身就会改变指纹。放在它前面的话，启动完第一个请求又会重探一次。
+     */
+    state.hardwareFingerprint = await state.machineFingerprint();
     state.bridgeQueueToSse();
     return state;
   }
