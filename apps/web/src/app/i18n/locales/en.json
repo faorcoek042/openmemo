@@ -914,7 +914,9 @@
         "engines": "Transcription engines",
         "proxy": "Network proxy"
       }
-    }
+    },
+    "copied": "Copied to clipboard",
+    "copyFailed": "Copy failed — the browser blocks clipboard access here; select the text below manually"
   },
   "asr": {
     "modelLabel": "ASR model",

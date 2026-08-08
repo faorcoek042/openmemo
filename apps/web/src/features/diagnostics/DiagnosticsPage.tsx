@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { copyText } from '../../lib/secure-context';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
+import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, Copy, RefreshCw, XCircle } from 'lucide-react';
 
 import { ApiError, rawFetch } from '../../lib/api/client';
@@ -143,6 +144,16 @@ export default function DiagnosticsPage() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const surfaces = useSurfaceStore((s) => s.states);
+  /*
+   * ⚠️ **必须放在任何 early return 之前。**
+   * 第一版我把这两行写在 `if (isError || !data) return …` 后面，React 当场报
+   * `Rendered more hooks than during the previous render` —— 组件在出错分支里
+   * 少调两个 hook，hook 顺序对不上。表现是**整页塌掉**，6 条既有用例一起红，
+   * 而我当时只看到"copyState 没更新"，把它记成了 UNKNOWN。
+   * 成因不是剪贴板、也不是安全上下文，是**违反了 Rules of Hooks**。
+   */
+  const [copyState, setCopyState] = useState<'idle' | 'ok' | 'failed'>('idle');
+  const [fallbackText, setFallbackText] = useState<string | null>(null);
   const zh = i18n.language.toLowerCase().startsWith('zh');
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
@@ -355,8 +366,24 @@ export default function DiagnosticsPage() {
       null,
       2,
     );
-    // 非安全上下文下 clipboard 是 undefined，copyText 会回退到 execCommand
-    void copyText(text);
+    /*
+     * ★ Manager 2026-08-08 裁决：**成功必须出声。**
+     * 点完什么都不说，用户没法判断是复制成功了、还是又一个死按钮 ——
+     * 而他今天刚被两个死按钮教育过。
+     *
+     * `[实测]` 本产品在 `http://127.0.0.1` 下 **isSecureContext=true**，
+     * `navigator.clipboard` 也存在，但 `writeText()` 会因**权限**被拒
+     * （无头里是 NotAllowedError）。`copyText()` 把它 catch 掉后回退到
+     * `execCommand`，**只返回布尔、从不抛** —— 所以这里用 then 的两个分支就够了。
+     *
+     * 失败时不只是说一句"失败"，还要**给退路**：把全文摊出来让用户自己选中复制。
+     * 绑非回环地址 + 明文 HTTP 时剪贴板会被浏览器直接关掉，那时这条退路就是唯一出路。
+     */
+    setFallbackText(null);
+    void copyText(text).then((okCopied) => {
+      setCopyState(okCopied ? 'ok' : 'failed');
+      if (!okCopied) setFallbackText(text);
+    });
   };
 
   const recheck = () => {
@@ -373,6 +400,19 @@ export default function DiagnosticsPage() {
             <Copy className="size-3.5" />
             {t('diagnostics.copy')}
           </Button>
+          {copyState === 'ok' ? (
+            <span className="self-center text-xs text-success" data-testid="diagnostics-copy-ok">
+              {t('diagnostics.copied')}
+            </span>
+          ) : null}
+          {copyState === 'failed' ? (
+            <span
+              className="self-center text-xs text-warning"
+              data-testid="diagnostics-copy-failed"
+            >
+              {t('diagnostics.copyFailed')}
+            </span>
+          ) : null}
           <Button
             size="sm"
             variant="secondary"
@@ -386,6 +426,25 @@ export default function DiagnosticsPage() {
           </Button>
         </span>
       </header>
+
+      {/*
+        失败时的**退路**：把全文摊出来让用户自己选中复制。
+        绑非回环地址 + 明文 HTTP 时浏览器会直接关掉剪贴板（README 里
+        「录音会直接不可用」是同一个成因），那时这条退路就是唯一出路。
+      */}
+      {fallbackText !== null ? (
+        <div
+          className="rounded-lg border border-warning/40 bg-surface-1 p-3"
+          data-testid="diagnostics-copy-fallback"
+        >
+          <textarea
+            readOnly
+            aria-label={t('diagnostics.copy')}
+            className="h-40 w-full resize-y rounded bg-surface-2 p-2 font-mono text-xs text-ink"
+            value={fallbackText}
+          />
+        </div>
+      ) : null}
 
       {/* 说清楚两个区块各答什么 —— 上面问"功能能不能用"，下面问"组件在不在" */}
       <p className="rounded-md border border-line bg-surface-1 px-3 py-2 text-xs text-ink-secondary">

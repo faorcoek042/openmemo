@@ -683,10 +683,13 @@ try {
    * 清单里的某条被修好了 → 也红（提醒把它划掉），清单不会烂在这儿。
    */
   const KNOWN_DEAD = [
-    // 「复制诊断信息」：点了没有任何可见反馈。`[实测]` 连 clipboard 权限都授予之后
-    // 仍然正文不变、无异常 —— 所以**不是无头浏览器的限制**，是真的没有"已复制"提示。
-    // 复制成没成功用户无从判断，体验上与死按钮一样。需要产品决定加什么提示。
-    '复制诊断信息',
+    /*
+     * 空了 —— 「复制诊断信息」已修（Manager 2026-08-08 裁决"成功必须出声"）：
+     * 点完出现「已复制」，失败时出现「复制失败」并把全文摊出来给退路。
+     * 把它留在清单里会让 B3 一直红（清单里的条目被修好也要红，
+     * 提醒把它划掉）—— 这条机制刚刚**真的**发挥了作用：修完之后 B3 当场红，
+     * 逼我回来更新清单，而不是让一条过期的"已知缺陷"烂在这儿。
+     */
   ];
 
   await check('B3 横扫：不许出现**清单之外**的死按钮', () => {
@@ -891,6 +894,51 @@ try {
     ok(
       FAIL_WORDS.test(base1.replace(base0, '')) === true,
       '没注入故障时界面本来就没有错误话（这条变异本就该红）',
+    );
+  });
+
+  /* ── 3c. 「复制诊断信息」：成功要出声，失败也要出声 ────────────────────────── */
+  hdr('3c. 「复制诊断信息」点完必须出声（Manager 裁决：成功必须出声）');
+  await page.goto(`${BASE}/diagnostics`, { waitUntil: 'networkidle', timeout: 30_000 });
+  await page.waitForTimeout(1200);
+  const copyR = await clickAndObserve(page, { name: '「复制诊断信息」', text: '复制诊断信息' });
+  const copyFeedback = await page.evaluate(() => ({
+    ok: !!document.querySelector('[data-testid="diagnostics-copy-ok"]'),
+    failed: !!document.querySelector('[data-testid="diagnostics-copy-failed"]'),
+    fallback: !!document.querySelector('[data-testid="diagnostics-copy-fallback"]'),
+  }));
+  say(`   反馈：成功=${copyFeedback.ok} 失败=${copyFeedback.failed} 退路=${copyFeedback.fallback}`);
+
+  await check('B7 ★ 「复制诊断信息」点完必须出声（成功或失败都算，沉默不算）', () => {
+    ok(copyR.clicked === true, `按钮没点到：${copyR.clickError}`);
+    ok(
+      copyFeedback.ok === true || copyFeedback.failed === true,
+      '点完既没有"已复制"也没有"复制失败" —— 用户没法判断是成功了还是又一个死按钮',
+    );
+    // 失败时必须同时给退路，否则用户拿不到那段文本
+    if (copyFeedback.failed === true) {
+      ok(copyFeedback.fallback === true, '说了失败却没给退路 —— 用户还是拿不到诊断信息');
+    }
+    return copyFeedback.ok ? '出现「已复制」' : '出现「复制失败」+ 全文退路';
+  });
+
+  // 变异：把反馈元素摘掉，同一条断言必须红 —— 证明它量的是"有没有出声"。
+  await mutation('B7 的证伪能力（把反馈元素摘掉，同一条断言必须红）', async () => {
+    await page.evaluate(() => {
+      for (const sel of [
+        '[data-testid="diagnostics-copy-ok"]',
+        '[data-testid="diagnostics-copy-failed"]',
+      ]) {
+        for (const el of document.querySelectorAll(sel)) el.remove();
+      }
+    });
+    const after = await page.evaluate(() => ({
+      ok: !!document.querySelector('[data-testid="diagnostics-copy-ok"]'),
+      failed: !!document.querySelector('[data-testid="diagnostics-copy-failed"]'),
+    }));
+    ok(
+      after.ok === true || after.failed === true,
+      '点完既没有"已复制"也没有"复制失败"（这条变异本就该红）',
     );
   });
 
