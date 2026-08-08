@@ -290,3 +290,61 @@ when thinking is disabled`（配置错误，非网络）。`curl` / `gh` / 二�
 - `abc7951ebc7336551` (Explore) — 我方 F1–F5 + 2.1/2.2 实现真伪审计（含"写了但触发不了"清单）
 - `a14a443fdd54ce997` (general-purpose) — memo.ac 功能/IPC/设置/引擎/导出五份台账
 - `aa4dac81d158e2a16` (general-purpose) — 我方 backends/模型/LLM/导出/接口/设置/组织 八项清点
+
+## [2026-08-08 22:41] T-180 DONE（功能对齐点复核：加第三层判据「用户能不能走到」）
+
+交付: `docs/research/memoac/F1-F5-PARITY.md` **就地订正**（按 §13：裁完回去改原文，不另挂警告）
+—— 新增文首「已过期」对照块、新增 §2.5 第三层判据、TL;DR 整块重写、§4 差距清单按后果重排、
+8 处行内过期标记就地更新。**memo.ac 侧未重新解包**（`docs/research/memoac/` 取证材料仍有效）。
+
+### 与「完成度审计」那位的边界
+**我管「和 memo 比怎么样」，他管「照章程做完了没有」。** 同一处缺陷两边都可能出现，
+但判据不同：我只在**竞品对照**里给它位置（它有/我们有/差在哪 + 用户走不走得到），
+**不判定章程条目是否闭合**。冲突以他的为准。
+
+要点（我本人在代码/产物里复核，**未引用任何回执**）:
+- **变好，5 条**：① gap 1 Windows 非 N 卡零 GPU 加速**已闭** ——
+  `backends.json` 有 `whispercpp-vulkan-win-x64`(`backend=vulkan`,`mirrors=1`)，
+  **v0.3.0 release 里真有那个 23 MB 的 zip**；whisper 包 5→**7**，
+  `whispercpp-metal-macos-arm64` 已单独成包且**正确标 `backend=metal`**（不再是假 `cpu` 标签）。
+  ② 导图 4 种结构化导出**已闭**（`MindmapExportMenu.tsx:49` 且**真被渲染**于 `MindmapView.tsx:176`）。
+  ③ 搜索 `?t=` **已闭**（`NoteDetailPage.tsx:139` → `requestSeek`，带 `(noteUid,t)` 闩）。
+  ④ 代理**已闭**（`ytdlp.ts` argv + 子进程 env 双路，覆盖 memo.ac 漏掉的 ffmpeg）。
+  ⑤ 笔记改名/删除已接线（`NoteActionsMenu` 渲染于 `NoteDetailPage.tsx:196`）。
+- **变坏 / 被真机推翻，3 条**：① **要求 2.1 我上一轮判的「我们全面强于 memo.ac」不再成立** ——
+  设计仍远强，但**健壮性它赢**（详见下条）。② **gap 5「测速」仍是永久 501 且不渲染错误**
+  （`models.ts:282` + `ModelDetailPage.tsx:187` `void mutateAsync`）——
+  **我 08-07 就点名了，没修，现在成了用户报的三条故障之一**。
+  ③ 软删已正确 404，但**全 daemon 零 restore 路径** → **删除现在不可逆**，后果比首版更重。
+- **第三层判据带来的唯一结构性发现**：**它把引擎装在盒子里，我们发的是一个安装器。**
+  `[实测]` memo.ac 的 `resources/addon/whisper/bin/1.8.6/` 直接躺着 whisper-cli + dll（CPU 版），
+  `bin/gpu/` 躺着 DirectCompute 版；我们 v0.3.0 **刻意不打包 whisper.cpp**
+  （`build-bundle.mjs:10`）。→ 新用户到第一次转写：**它 1 个可失败环节，我们 2 个**，
+  而 08-08 真机上那两个都塌了。**我们赢在能力上限，它赢在下限；用户第一次打开看到的是下限。**
+- **不再是差距**：多工作区（用户 08-08 裁定不做）；「yt-dlp 非出厂自带」
+  （`build-bundle.mjs:10-15` 写明是**主动规避 GPL-3.0 传染**，是决策不是遗漏）。
+
+下一步建议（差距清单已按**用户可感知后果**重排，不按工作量）:
+1. **G2「测速」静默失败 —— 立刻做，代价极低**（隐藏/禁用并注明未实现，或把 501 的 message 渲染出来）。
+   判据不是"要不要做 benchmark"，是**"不许静默失败"**。这是唯一一条我上轮点名、代价极低、却因没人做而变成真机故障的。
+2. **G3 删除不可逆** —— 加 `?deleted=1` 列表 + 把 `deleted_at` 置 NULL 的端点。代价低。
+3. **G5 文件夹改不了名、笔记移不进文件夹** —— `useRenameFolderMutation`/`useMoveNoteMutation` 两条都写好了、**都零调用者**，接线即可。
+
+需要 Manager 决策:
+1. **G1：要不要把 CPU 基线包随包出厂**（Linux 6 MB / macOS 1 MB / Win 3 MB），
+   把"能失败的环节"从 2 个降回 1 个。**许可证上与 ffmpeg/yt-dlp 不同 —— whisper.cpp 是 MIT，不触发 GPL 传染**，
+   所以不打包它的理由只剩体积。这动的是 ADR 级分发策略，**我不替你选**；
+   我的倾向是**做**，理由是本轮教训正是"下限决定第一印象"。
+2. **Linux CUDA 维持现状的话，对外口径要改** —— R-06 提过、我 08-07 提过，**仍未做**，属 §13 那一类。
+
+诚实声明:
+- **只读审计，未改任何产品代码**；未碰 `:10000`、`/root/data-memo`、机器级指针；未跑构建；
+  未建/改/删 release；未用 `pkill`。本次只改了我自己的两份交付物。
+- 上面每条「已闭/未闭」**都是我本人 grep/读码/`gh release view` 核到的**，**未引用任何 agent 回执**。
+- `[报告]`（非我所验）：三条真机故障的**修复状态**属 `probe-bootstrap` / `e2e-coldstart` / `e2e-browser` 三路的成果。
+  我只验到「`build-bundle.mjs:763-773` 缺探针即 `die()`」这一行**代码存在**，
+  **没有验证产品在真机上的运行时行为** —— Manager 称三路尚无结论，我不替他们宣布闭合。
+  另：`e2e-coldstart` 最新 run 31262257036 为绿，但**该路自己在 `f5a93dd` 里申报过"被打断会假绿"**，故不作为证据。
+- `[未验证]`：Windows CUDA 需真 N 卡、真 GPU 加速需真硬件 —— **托管 runner 结构上答不了**，不写成"没做"。
+- `UNKNOWN`：memo.ac 的回收站/星标行为、Pro 额度数值与单位（沿用上轮，本轮未追）。
+- 本轮**未派生 subagent**（复核范围明确，且四路在场，避免撞车）。
