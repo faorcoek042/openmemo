@@ -648,3 +648,145 @@ Node，所以补上了。**`resolve-bundle.mjs` 本身一个字没动。**
 本轮我只动了自己的两个文件（`.github/workflows/e2e-import.yml`、
 `scripts/ci/e2e-import-audit.mjs`）。**没有碰** `resolve-bundle.mjs`、`build-bundle.mjs`、
 `build-bundles.yml`，也没有碰另外三路的文件。
+
+---
+
+## [2026-08-08 22:10] e2e-import(发布前闸门) DONE
+
+交付:
+
+- `scripts/ci/emit-e2e-attestation.mjs`（新）—— 发凭证
+- `scripts/ci/verify-e2e-attestation.mjs`（新）—— 发布前闸门
+- `.github/workflows/e2e-import.yml` —— 本腿新增 `attest` job
+- `.github/workflows/release-upload.yml` —— 新增 `e2e-gate` job，`upload` needs 它
+- `docs/design/D-17-prebuilt-bundles.md` §11 —— 把那条性质本身写下来
+- 提交 `91f6168`
+
+要点:
+
+- 凭证放在**e2e 腿这一侧**，判定落在 **artifact 名字**上（与 `bundles-complete` 同形）。
+- 消费方是 `release-upload.yml` 的 `e2e-gate` job —— **不过闸就没有上传这回事**。
+- **不建议**每次 build-bundles 都跑四条腿，依据见 §C。
+- 反向验证 7 条全部实测通过（§D）。
+- ⚠️ **现在四条腿里只有 import 接上了**（我只能改自己的 workflow）。闸门因此对
+  v0.3.0 那批包**正确地拒绝**，并把缺的三条点名 + 打出要加的步骤原文（§E）。
+
+需要 Manager 决策: 另外三条腿各加一个 job（约 15 行）由谁来加 —— 我没动他们的文件。
+
+### A. 凭证放在哪一侧、长什么样
+
+**放在每条 e2e 腿自己的 run 里**，是一个 artifact：
+
+```
+名字：e2e-attest-<leg>-<bundleRunId>      ← 判定本身
+内容：{ leg, bundleRunId, platforms[], e2eRunId, e2eCommit, emittedAt }  ← 只供事后审计
+```
+
+三条设计依据：
+
+1. **判定落在名字上，不在内容上。** 消费方不下载、不解析、不需要相信文件里写了什么。
+   一个需要读内容才能判定的凭证，迟早会有人读错。
+   （与 `bundles-complete` 同一形状同一理由：PROTOCOL §11「绿灯必须能追溯到
+   **这次 run 真的产出的东西**」，而 artifact 就是那个东西本身。）
+2. **名字里带 `bundleRunId` ⇒ 换一批包就是另一个名字，旧凭证自动失效。**
+   这正是事故里缺的那一环：在此之前，「跑过 e2e」是一个**没有宾语**的句子。
+3. **发凭证的 job `needs:` 全部平台且不带任何 `if:`。** 任一平台失败或被跳过 →
+   该 job 被跳过 → **凭证根本不存在**。"部分跑"的 run 里不会出现半真的凭证。
+
+### B. 消费方怎么问
+
+**不用问 —— 问不到就发不出去。** 闸门是 `release-upload.yml` 里的 `e2e-gate` job，
+而 `upload`（全仓唯一有 `contents: write` 的 job）`needs: [e2e-gate]`：
+
+- 先看 `run_id` 里有没有 `bundle-*` / `bundles-complete` 产物；
+  **不是包**就明说"这批不是包，本项判定不适用"并放行
+  （静默跳过的闸门等于没有闸门 —— 所以它会把这句话打出来）。
+- 是包 → 跑 `verify-e2e-attestation.mjs --bundle-run <run_id>`，
+  四条腿的凭证不齐就 exit 1，`upload` 根本不会开始。
+
+手工也能问（不改任何东西，只读）：
+
+```bash
+GH_TOKEN=… GITHUB_REPOSITORY=faorcoek042/openmemo \
+  node scripts/ci/verify-e2e-attestation.mjs --bundle-run <build-bundles run id>
+```
+
+**缺省是拒绝**：查不到、查不动（API 报错）、腿名对不上 —— 一律拒绝。
+这道闸存在的全部理由就是挡住"没人记得去跑"，而"没人记得"在数据上的样子恰恰是"查不到"。
+
+### C. 该不该每次 build-bundles 都自动跑四条腿 —— **我判断不该**
+
+依据三条：
+
+1. **多数 build-bundles 跑不是为了发布**（调试打包脚本、`legs=linux` 单腿、
+   验证某个平台的构建）。四条腿 × 三平台是十几个 job，每条腿还要真下几百 MB 后端
+   并真跑转写 —— 绝大多数开销买不到任何判断。
+2. **「发布前」与「每次构建」是两个不同的时机。** 要挡的是"发出去的东西没验过"，
+   不是"构建过的东西没验过"。挂错时机会让闸门既昂贵又不精确。
+3. 昂贵而多数时候无意义的门禁，最终会被人用参数绕开 —— **那时它就变成一条被删掉的
+   守卫**，正是本仓反复吃亏的形状（"一条永远红/永远烦的守卫等于没有守卫"）。
+
+**正确形状：构建随便跑，发布必须查。** 闸门在发布那一侧，且不可绕过。
+
+### D. 反向验证（全部本机实测）
+
+| # | 造的情形 | 期望 | 实测 |
+| - | -------- | ---- | ---- |
+| 1 | 一批**从没跑过四条腿**的包（31248640972） | 拒绝 | ✅ exit 1，4/4 条腿点名 |
+| 2 | `--bundle-run` 非纯数字 | 拒绝 | ✅ exit 1 |
+| 3 | 腿名对不上（`e2e-ghostleg`，API 404） | 拒绝 | ✅ exit 1，"查不动"也算拒绝 |
+| 4 | 发凭证侧：`--leg` 缺失 | exit 1 且**不写文件** | ✅ 文件不存在 |
+| 5 | 发凭证侧：`--bundle-run` 带空格 | exit 1 且不写文件 | ✅ 文件不存在 |
+| 6 | 发凭证侧：`--platforms` 为空 | exit 1 且不写文件 | ✅ 文件不存在 |
+| 7 | **正向**：本腿对 31253583769 跑绿并发了凭证 | 放行 | ✅ exit 0 |
+
+第 5 条不是凑数：`bundleRunId` 会**拼进 artifact 名字**，带一个空格就会生成
+一个消费方**永远问不到**的名字 —— 那条腿看起来"发过凭证了"，闸门却永远说没有。
+这是本轮最容易做出来的一种假通过，所以在发凭证那一侧就拒掉。
+
+### E. 现状：四条腿里只有 `import` 接上了（如实报）
+
+我只能改自己的 workflow，所以现在：
+
+```
+import    ✔ e2e-attest-import-31253583769（来自 e2e-import.yml run 31258300507）
+notes     ✘ 没找到 e2e-attest-notes-31253583769
+record    ✘ 没找到 e2e-attest-record-31253583769
+runtime   ✘ 没找到 e2e-attest-runtime-31253583769
+✘ **拒绝发布**：3/4 条腿没有对这批包的凭证。
+```
+
+**这不是闸门坏了，这就是它要拦的那件事** —— 它对 `v0.3.0` 那批包的回答是"没验全"，
+而那正是事实（另外三条腿确实没对这批包发过凭证）。
+
+顺带：我**对 v0.3.0 实际发出去的那批包**（build-bundles run **31253583769**）
+补跑了一遍本腿 —— run **31258300507**，三平台全绿，凭证已发。
+所以 import 这一格现在对已发布的 v0.3.0 是**有据可查**的。
+
+另外三条腿接上只需在各自 workflow 末尾加一个 job（闸门失败时会把这段原样打出来）：
+
+```yaml
+attest:
+  needs: [<矩阵 job 名>] # 不带任何 if: —— 任一平台失败/跳过 → 凭证不存在
+  steps:
+    - run: node scripts/ci/emit-e2e-attestation.mjs --leg <notes|record|runtime> \
+             --bundle-run "${{ needs.<job>.outputs.bundle_run_id }}" \
+             --platforms linux-x64,darwin-arm64,win32-x64 --out dist/e2e-attest.json
+    - uses: actions/upload-artifact@v6
+      with:
+        name: e2e-attest-<leg>-${{ needs.<job>.outputs.bundle_run_id }}
+        path: dist/e2e-attest.json
+        if-no-files-found: error
+```
+
+（需要各腿把实际用到的 bundle run id 抬成 job output，我这条腿是
+`outputs: { bundle_run_id: steps.bundle.outputs.run_id }`。）
+
+### F. 门禁
+
+`pnpm -r test` **1578 / fail 0**（基线 1577）、`tsc -b` 0、`build:safe` 0、
+`test:ci-scripts` 0、`lint-workflows` **1228 条断言全过**、`check:orphans` 干净、
+`eslint` / `format:check`（我的文件）通过。
+
+按 PROTOCOL §12 提交：`git commit -- <pathspec>`（新文件先 `git add -N`），
+**提交后**用 `git show --stat` 复核 —— 恰好 5 个文件，全是我的。
