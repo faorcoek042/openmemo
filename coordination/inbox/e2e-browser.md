@@ -261,3 +261,77 @@ ModelDetailPage 改动，一个字没动）。
 
 1. 把上面第二节那个「脏树出声」的前置挂进 `pnpm -r test`（要动 `package.json`，请指派）。
 2. 若 Manager 仍怀疑 master 有问题，请给出**那次观测所在的 commit**，我按 commit 复现。
+
+---
+
+## [2026-08-09 01:40] 首屏文案 + RuntimePage 静默失败 —— **部分交付，两件没做完**
+
+commit `9400118`。**先说没做完的**，免得被当成全做完了：
+
+| 交办 | 状态 |
+| --- | --- |
+| ① 首屏第一句文案 | ✅ 已做 |
+| ② `RuntimePage` install/remove 不再静默 | ✅ 已做（**但我的断言没验到它**，见下） |
+| ③ 14 处 `void mutateAsync` 逐处过 | ❌ **只做了点名的 2 处**，其余 7 处没动 |
+| ④ 「复制诊断信息」成功/失败都出声 | ❌ **做了又撤了** |
+| ⑤ 「请求失败但界面不说话」新断言 + 变异证明 | 🟡 **变异证明成了，断言没成，已撤** |
+
+### ① 首屏第一句（已交付）
+
+```
+中：还有 {{count}} 个组件没装 —— 首次启动，这是正常的
+    要装的是：语音转文字引擎（约 6 MB）、语音识别模型（31 MB–4 GB，小的够用、大的更准）…
+    点「安装」即可，下载约 31 MB–4 GB，要几分钟；装好自动生效，不用重启。
+英：{{count}} component(s) still to install — this is normal on first launch
+    To install: … Click Install; about 31 MB–4 GB to download, a few minutes. …
+```
+
+第一个词不再是「缺」；体积**写区间不写精确值**；**没用那个 574 MB**；
+内部 id 走新增的 `componentNames` 词表；文案里**没有 `**加粗**`**（那两处不走 Markdown）。
+
+### ②/⑤ 这两件连在一起，必须如实说
+
+`RuntimePage` 的 `install`/`remove` 加了 `ErrorBlock`（复用本页 `select`/`selfTest`
+已有的渲染方式）。**但我为它写的新断言 B6 没跑通** ——
+注入 500 之后界面上没出现可读的话，`spoke=false`。
+
+⚠️ **我不知道是修没生效、还是我的测试没点到那个按钮**（空数据目录下 `/runtime`
+上的「安装」按钮要目录加载出来才有），**`UNKNOWN`，没有定论就不写结论。**
+
+**新断言的变异证明本身是成的**：把同一个谓词拿去量"没注入故障"那一轮 → **如期红**
+（MUT-OK），证明它量的是"失败时说话"而不是"页面上随便有点字"。
+**但断言本体没绿，所以我把 B6 整块撤掉了** —— 一条挂在腿上的红断言，
+比没有这条断言更糟（会训练所有人忽略这盏灯）。**这件事没做完，请重新排期。**
+
+### ④ 「复制诊断信息」：做了又撤了
+
+按裁决实现了成功/失败都出声 + 非安全上下文把全文摊出来让用户自选。
+**但它打破了 4 条既有组件测试**（`/api/selfcheck` 那一组），
+而且真浏览器里 `copyState` 始终没更新（`copyText()` 只返回布尔、不抛，
+所以 `.then` 应当触发 —— **为什么没触发我没查出来，`UNKNOWN`**）。
+
+**没有把红的东西留在树上**：整块 revert，locale 里加的三个键也撤了。
+`pnpm --filter @openmemo/web test` 回到 **312/312 全绿**。
+
+### ③ 14 处只做了 2 处
+
+点名的 `RuntimePage.install/remove` 做了。**其余 7 处（ModelsPage 的
+activate/cancelJob/retryJob/gc、ModelDetailPage.verify、StorageSettingsPage.gc、
+ComponentsPage.check）我没动，也没有逐处判断"刻意还是漏的"** ——
+交办要求"逐处说清依据"，我没有做到，不编依据。
+
+### 门禁
+
+`tsc -b` ✅ / `eslint` ✅ / `format:check`（我的文件）✅ /
+`pnpm --filter @openmemo/web test` **312 + 136 + 10，0 失败**。
+⚠️ 我**没有跑全仓 `pnpm -r test`**（上下文耗尽），所以基线 1600 这一条
+**`[未验证]`** —— 我的改动只碰 `apps/web`，但没验就是没验。
+
+⚠️ 提交前 `git status --porcelain` 确认树上只有我自己的 4 个文件；
+按 §12 用 `git commit -- <pathspec>`，提交后 `git show --stat` 复核，无夹带。
+
+### 下一步（建议重新排期）
+
+1. **B6 那条断言**：查清是修没生效还是测试没点到，然后把断言放回去。
+2. **「复制诊断信息」**：需要同时解决那 4 条组件测试与 `copyState` 不更新。
+3. **剩下 7 处 `void mutateAsync`** 的逐处判断。
