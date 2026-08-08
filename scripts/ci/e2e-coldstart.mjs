@@ -886,7 +886,18 @@ try {
   await assertPortFree('launcher');
   const fakeHome = join(ROOT, 'fakehome');
   mkdirSync(fakeHome, { recursive: true });
-  const launcherProc = spawnViaLauncher({
+  /*
+   * ⚠️ `spawnViaLauncher()` 返回的是 **`{ proc, launcher, argv }`**，不是 ChildProcess。
+   *
+   * `[CI 实测 run 31265444624]` 第一版直接把返回值当子进程用，于是
+   * `launcherProc.exitCode` 恒为 `undefined` —— 而我的等待循环里写的是
+   * `if (proc.exitCode !== null) break`，`undefined !== null` 为真，
+   * **第一轮 500ms 就 break 了**。
+   * linux/macOS 侥幸绿（daemon 恰好在头 500ms 内起来），Windows 红。
+   * **那两个绿是运气，不是结论** —— 与本轮一直在打的那类假绿同形，
+   * 只不过这次发作在我自己对共享模块的用法上。
+   */
+  const { proc: launcherProc, launcher: launcherFile } = spawnViaLauncher({
     bundleDir: BUNDLE,
     args: ['--port', String(PORT)],
     env: {
@@ -900,6 +911,7 @@ try {
       LOCALAPPDATA: join(fakeHome, 'AppData', 'Local'),
     },
   });
+  say(`   启动器：${launcherFile}`);
   const lLogs = [];
   launcherProc.stdout?.on('data', (d) => lLogs.push(String(d)));
   launcherProc.stderr?.on('data', (d) => lLogs.push(String(d)));
