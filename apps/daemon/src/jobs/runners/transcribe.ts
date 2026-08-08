@@ -379,6 +379,24 @@ export async function runTranscribeJob(
     'audio16k.wav',
   );
 
+  /*
+   * ★ `mime` **刻意不填**（判断，不是遗漏 —— 写在这里免得下一个人"顺手补上"）。
+   *
+   * `media_assets.mime` 对 original/audio16k 一直是 NULL，而 `/media/asset/:uid`
+   * 在 mime 为空时按**扩展名** `guessMime(abs)` 兜底。`[CI 实测 run 31247374404]`
+   * 三平台 × 四种容器（wav/mp3/m4a/mp4）的 Content-Type **全部正确**。
+   *
+   * 那"补上真值"不是更好吗？—— 不是，因为能拿到的那个值**更不可信**：
+   *   · 上传那条路的 `contentType` 来自浏览器 multipart 里的一行字，
+   *     E2E 脚本发的就是 `application/octet-stream`；真填进去，`/media` 就会
+   *     用它替掉现在这个正确答案，**mp3 反而变得不可播**（浏览器不认）。
+   *   · 链接导入那条来自远端服务器的响应头，同样是对方说了算。
+   * 也就是说：把一个"别人声称的类型"写进库，会挤掉一个"我们自己算得准的类型"。
+   * D-01 §8.5 的原则也是这个方向 —— 信 ffprobe / 我们自己的判定，不信对端的声明。
+   *
+   * 所以结论是：**保持 NULL，由 `/media` 按扩展名判定**。将来真要用 mime 的消费者，
+   * 应当调 `guessMime()`，不要读这一列。
+   */
   const originalAsset = repos.createAsset({
     noteId: note.id,
     role: 'original',
@@ -427,7 +445,18 @@ export async function runTranscribeJob(
       mediaUid: originalAsset.uid,
       durationMs: result.durationMs,
       title: result.info.title ?? null,
-      hasVideo: false,
+      /*
+       * ★ 这里此前是写死的 `false`，**导入一个 mp4 也报"没有视频"**。
+       *
+       * 它一度被判成"零读者、可以删"——那个判断是错的，因为 `grep` 只扫了
+       * `.ts/.tsx`：真正的读者在 `apps/daemon/scripts/e2e-f2.mjs:185`
+       * （`media.ready` 的字段契约断言）和 `packages/shared/openapi.yaml` 里。
+       * 有读者的契约字段，就该给它**真值**，而不是删掉或继续说谎。
+       *
+       * `audioOnly` 是适配器**实际探到**的结果（`FetchedMedia.audioOnly`，由 ffprobe
+       * 的流信息得出，不是靠扩展名猜的），所以取反就是"这份媒体有没有视频轨"。
+       */
+      hasVideo: result.media.audioOnly === false,
     }),
   );
 

@@ -669,14 +669,45 @@ try {
 
   hdr('7. ★ 转写：真 whisper-cli 子进程 → 分段 → 词级时间戳（VAD 尚未安装）');
 
+  /*
+   * ★★ 这一条从"观测"翻成了**判据**。
+   *
+   * 它原本是 `observe()` —— 只打印、不变红。当时的理由是：三平台都红，而修它要动
+   * 引擎/模型选型，不该由我单方面决定。Manager 裁了「修」，修完之后这条就没有理由
+   * 继续只打印了 —— 一条只打印不变红的东西，下次退化没有人会知道。
+   *
+   * 它守的是用户视角最直白的那句话：**录完音，产品自己发起的那次转写必须成功。**
+   * 用户没做错任何事，这一步失败他甚至看不到原因（在修复前只有一行
+   * `whisper-cli exited with code 3`）。
+   */
   if (stopped?.rerunJobUid) {
     const st = await waitForJob(stopped.rerunJobUid);
-    observe('停止录音后自动排的离线重跑', `${st.state} ${st.detail}`);
+    if (st.state !== 'succeeded') {
+      const full = await http(`/api/jobs/${encodeURIComponent(stopped.rerunJobUid)}`);
+      const err = (full.body?.job ?? full.body)?.error;
+      if (err) {
+        say('   ── 自动重跑 job.error 全文 ──');
+        for (const line of JSON.stringify(err, null, 2).slice(0, 4000).split('\n')) {
+          say(`      ${line}`);
+        }
+      }
+    }
+    judge('★ 停止录音后，产品自己发起的那次离线重跑必须成功', {
+      ok: st.state === 'succeeded',
+      reason:
+        st.state === 'succeeded'
+          ? 'succeeded'
+          : `${st.state} —— ${st.detail || '(无 error 详情)'}；` +
+            `用户录完音什么都没做错，这一步失败他只会看到一条转写任务挂了`,
+    });
   } else {
-    observe(
-      '停止录音后自动排的离线重跑',
-      '没有排（`recorder.ts` 只在流式产出 ≥1 段时才排）—— 下面改用产品自己的「重新转写」通道',
-    );
+    judge('★ 停止录音后必须自动排一次离线重跑', {
+      ok: false,
+      reason:
+        `没有排（stopped.segmentCount=${stopped?.segmentCount ?? '?'}）。` +
+        `recorder.ts 只在流式产出 ≥1 段时才排 —— 所以这里红有两种读法：` +
+        `要么排队那一段坏了，要么流式引擎这一轮一段都没识别出来。两种都要查。`,
+    });
   }
 
   /**

@@ -138,11 +138,27 @@ describe('resolveWhisperVadModel —— 交出去的权重必须是 whisper.cpp 
      */
     const root = await makeStore({ ggml: true, onnx: true, active: 'vad/silero-vad-onnx' });
 
-    const byRoleOnly = await resolveActiveModel(root, 'vad');
+    /*
+     * ⚠️ 这条前提原来写的是 `resolveActiveModel(root, 'vad')` —— **"只按 role 挑"**，
+     * 用来证明朴素解析确实会挑中 ONNX。那个调用现在**在类型上就写不出来了**
+     * （`ModelQuery.engine` 必填），而那正是本轮根因修复要的效果：
+     * 提不出这个问题，就不会拿到这个错答案。
+     *
+     * 所以前提换成等价、且同样有对抗性的形式：**同一份仓库状态**下换个引擎问，
+     * sherpa-onnx 必须挑中那个 ONNX —— 它同时证明了两件事：
+     * ONNX 文件确实在、`active.json` 确实指着它。这两件不成立的话，
+     * 下面那条"whisper 挑中 ggml"就成了空转。
+     */
+    const forSherpa = await resolveActiveModel(root, { role: 'vad', engine: 'sherpa-onnx' });
     assert.equal(
-      await isGgmlModelFile(byRoleOnly?.path ?? null),
+      forSherpa === undefined,
       false,
-      '前提失效：只按 role 挑本应挑中 ONNX；这条不成立时下面那条就不再是在防什么了',
+      '前提失效：sherpa-onnx 应当能挑中那个 ONNX（说明它确实装着且被 active.json 指着）',
+    );
+    assert.equal(
+      await isGgmlModelFile(forSherpa?.path ?? null),
+      false,
+      '前提失效：sherpa 挑中的应当是 ONNX 而不是 ggml',
     );
 
     const resolved = await resolveWhisperVadModel(root, {});

@@ -23,7 +23,8 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { copyFile, link, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { ArtifactStore, findInstalledByRole } from '@openmemo/downloader';
+import { ArtifactStore, findInstalledByRole, isGgmlModelFile } from '@openmemo/downloader';
+import type { AsrEngineId } from '@openmemo/shared';
 
 /** `active.json` 的形状：role → 已激活的模型 id（未激活为 null）。 */
 type ActiveMap = Partial<Record<string, string | null>>;
@@ -117,6 +118,81 @@ function weightsPathOf(modelsDir: string, rec: InstallRecord): string | undefine
   return undefined;
 }
 
+/* ══════════════════════ 引擎 ↔ 模型格式：唯一的一份真相 ══════════════════════ */
+
+/**
+ * 一个模型权重的**容器格式**。判据是"谁能加载它"，不是"它是干什么用的"。
+ *
+ * `role`（asr / vad / punctuation）说的是**用途**，`ModelFormat` 说的是**能被谁读**。
+ * 本仓所有"模型串台"事故的根因都是把这两件事当成了一件。
+ */
+export type ModelFormat = 'ggml' | 'onnx';
+
+/**
+ * **每个 ASR 引擎只能加载哪种格式。**
+ *
+ * ## 这张表是本轮的根因修复，请不要把它退回成"在调用点各判一次"
+ *
+ * 在它之前，`resolveActiveModel(dir, 'asr')` 回答的是「这个 role 下的某个模型」，
+ * 而调用方真正要问的**永远**是「这个 role 下、**我这个引擎加载得动**的那个」。
+ * 引擎从来不是查询的一部分 —— 于是"把 A 引擎的模型交给 B 引擎"在类型上完全合法，
+ * 只能靠每个调用点自己记得加判断。实际发生的是（同一个根因，三种面目）：
+ *
+ * | 事故 | 面目 | 当时的补法 |
+ * |---|---|---|
+ * | T-148 | sherpa 的 `silero_vad.onnx` 被当成 whisper 的 VAD 权重 | 调用点加 `accept: isGgmlModelFile` |
+ * | —     | `by-name/asr` 下的 VAD 权重被当成 ASR 模型 | 调用点加 `excludes: 'silero'`（**按文件名**） |
+ * | —     | ASR 与 VAD 解析到同一个文件 | 调用点加 `asrIsActuallyVad` 路径相等判断 |
+ * | 本轮  | `asr/sherpa-streaming-zh-14m` 被交给 whisper.cpp | ← 三道补丁一个都没接住 |
+ *
+ * 三次都修在症状上，所以第四次照常发生：`error: failed to initialize whisper context`，
+ * 三平台一字不差（`[CI 实测]` run 31247324575 / 31248849155 的自动重跑那一条）。
+ *
+ * ## 为什么这张表能让它"表达不出来"
+ *
+ * 两条一起生效：
+ *   1. `ModelQuery.engine` 是**必填**的 —— 不说"谁来加载"就拿不到路径，
+ *      漏判不再是"忘了加一句"，而是**编译不过**；
+ *   2. 这张表是 `Record<AsrEngineId, …>` —— 将来加一个引擎，**不在这里声明它读什么格式
+ *      就编译不过**，而不是默默继承"什么都能读"。
+ *
+ * `satisfies` 而不是类型标注：既要求键穷尽，又保留字面量类型给下面的判据用。
+ */
+export const MODEL_FORMAT_BY_ENGINE = {
+  'whisper.cpp': 'ggml',
+  // paraformer 与流式 sherpa 都跑在 sherpa-onnx 运行时上，读的是 ONNX
+  'sherpa-onnx': 'onnx',
+  paraformer: 'onnx',
+} as const satisfies Record<AsrEngineId, ModelFormat>;
+
+/**
+ * **这个引擎加载得动这个文件吗。**
+ *
+ * 判据是**文件内容**，不是文件名、不是安装记录里的字段：
+ *   · 安装记录里**没有** `engines` 字段（`InstallRecordLike` 就没有这一项），
+ *     按字段过滤等于按一个不存在的东西过滤；
+ *   · 按文件名过滤已经试过了（`excludes:'silero'`），下一个模型换个名字就漏。
+ *
+ * ggml 一侧钉的正是 whisper.cpp 自己会检查的那 4 个字节（`isGgmlModelFile`），
+ * 所以"我们判它能加载"与"它真的能加载"是同一件事。
+ * onnx 一侧没有同等可靠的魔数，判据取**双向**的：既要不是 ggml，又要长得像 onnx
+ * （`.onnx` 后缀，或者是个目录 —— sherpa 的模型常常是一整个目录）。
+ * **宁可对陌生格式说"不能加载"**：错判成不能，用户看到的是一条明确的"没有可用模型"；
+ * 错判成能，用户看到的是引擎崩在一个看不懂的 exit code 上。
+ */
+export async function canEngineLoad(engine: AsrEngineId, path: string): Promise<boolean> {
+  const want = MODEL_FORMAT_BY_ENGINE[engine];
+  const isGgml = await isGgmlModelFile(path);
+  if (want === 'ggml') return isGgml;
+  if (isGgml) return false;
+  try {
+    if (statSync(path).isDirectory()) return true;
+  } catch {
+    return false;
+  }
+  return path.toLowerCase().endsWith('.onnx');
+}
+
 /**
  * 调用方对候选模型的额外要求。
  *
@@ -146,6 +222,24 @@ export interface ModelAcceptance {
 }
 
 /**
+ * 一次模型查询。**`engine` 是必填的** —— 这一条就是本轮的根因修复。
+ *
+ * 「拿一个 role 的模型」这个问题**没有**正确答案，因为同一个 role 底下躺着
+ * 互相加载不了的文件。唯一有答案的问题是「拿一个 role 的、**我这个引擎读得动**的模型」。
+ * 把 `engine` 设成必填之后，问错问题**编译不过**，而不是运行时崩在引擎里。
+ *
+ * `accept` 仍然保留，但它现在是**额外**约束（叠加在引擎格式之上），不是替代品 ——
+ * 调用方不能再用它把格式判断"实现成别的样子"。
+ */
+export interface ModelQuery {
+  readonly role: string;
+  /** 谁来加载它。必填 —— 见上。 */
+  readonly engine: AsrEngineId;
+  readonly accept?: ModelAcceptance['accept'];
+  readonly onRejected?: ModelAcceptance['onRejected'];
+}
+
+/**
  * 解析某个 role 当前该用哪个模型。
  *
  * 顺序：`active.json` 指定的 → 该 role 下任意一个已装且完好的。
@@ -156,9 +250,9 @@ export interface ModelAcceptance {
  */
 export async function resolveActiveModel(
   modelsDir: string,
-  role: string,
-  opts?: ModelAcceptance,
+  query: ModelQuery,
 ): Promise<ResolvedModel | undefined> {
+  const { role, engine } = query;
   const active = readJson<ActiveMap>(join(modelsDir, 'active.json'));
   const wantedId = active?.[role] ?? null;
 
@@ -180,13 +274,22 @@ export async function resolveActiveModel(
     const p = weightsPathOf(modelsDir, rec);
     if (!rec.id || !p) continue;
     const resolved: ResolvedModel = { id: rec.id, role, path: p };
-    if (opts && !(await opts.accept(p, rec))) {
+    /*
+     * ★ 引擎格式先判，且**对 `active.json` 指定的那个同样生效**。
+     *   出事的那两次恰恰都是 `active.json` 指着一个别的引擎的模型
+     *   （"先装的赢"，见 `rest/models.ts` 的 `!state.active[role]`）。
+     */
+    if (!(await canEngineLoad(engine, p))) {
+      rejected.push(resolved);
+      continue;
+    }
+    if (query.accept && !(await query.accept(p, rec))) {
       rejected.push(resolved);
       continue;
     }
     return resolved;
   }
-  if (rejected.length > 0) opts?.onRejected?.(rejected);
+  if (rejected.length > 0) query.onRejected?.(rejected);
   return undefined;
 }
 
@@ -198,14 +301,23 @@ export async function resolveActiveModel(
  */
 export async function resolveModelById(
   modelsDir: string,
-  role: string,
-  id: string,
+  query: Pick<ModelQuery, 'role' | 'engine'> & { id: string },
 ): Promise<ResolvedModel | undefined> {
+  const { role, engine, id } = query;
   const installed = await listInstalled(modelsDir, role);
   const rec = installed.find((r) => r.id === id);
   if (!rec) return undefined;
   const p = weightsPathOf(modelsDir, rec);
-  return p ? { id, role, path: p } : undefined;
+  if (!p) return undefined;
+  /*
+   * ★ 用户显式选的模型**同样要过格式关**。
+   *
+   * 「他自己选的，就按他说的办」在这里是错的：界面上的模型列表按 role 列，
+   * 一个中文流式 sherpa 模型和一堆 whisper 模型并排躺着，用户没有任何线索
+   * 知道它们不能被同一个引擎加载 —— 让他选中即崩溃，是把我们的建模缺陷
+   * 记在他头上。返回 undefined，调用方会退回自动选择并把这件事记进日志。
+   */
+  return (await canEngineLoad(engine, p)) ? { id, role, path: p } : undefined;
 }
 
 /**
