@@ -179,7 +179,12 @@ else
 fi
 # 后端目录必须真的解析得出包：`[实测]` 用户那边 packs=0 的表现就是这一格空的
 if [ -f "$B/vendor/manifests/backends.json" ]; then
-  NPACKS=$(node -e "try{const m=require('$B/vendor/manifests/backends.json');console.log((m.packs||[]).length)}catch(e){console.log(0)}" 2>/dev/null || echo 0)
+  # ⚠️ 路径**用环境变量递进去**，绝不拼进 JS 源码。
+  #    `[CI 实测 run 31264740214]` 第一版把 $B 拼进字符串字面量，
+  #    Windows 上的 `D:\a\...` 里的反斜杠被当成转义 → require 失败 → catch 成 0
+  #    → 报「backends.json 解析出 0 个包」。**包是好的，红的是这条守卫自己。**
+  #    linux/macOS 都过，只有 Windows 红 —— 典型的路径转义坑。
+  NPACKS=$(OM_MANIFEST="$B/vendor/manifests/backends.json" node -e "try{const m=require(process.env.OM_MANIFEST);console.log((m.packs||[]).length)}catch(e){console.log(0)}" 2>/dev/null || echo 0)
   if [ "${NPACKS:-0}" -ge 1 ]; then
     ok "backends.json 解析得出 $NPACKS 个包"
   else
