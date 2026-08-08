@@ -76,7 +76,7 @@
  * 退出码：0 = 拿到并验过包根；1 = 上面任何一种失败。
  */
 import { spawnSync } from 'node:child_process';
-import { readdirSync, existsSync, statSync, appendFileSync } from 'node:fs';
+import { readdirSync, existsSync, statSync, appendFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const argv = process.argv.slice(2);
@@ -185,7 +185,24 @@ const archive = archives[0];
 const ext = ARCHIVE_EXTS.find((e) => archive.endsWith(e));
 say(`   归档：${archive}（${statSync(archive).size} B）`);
 
-/* ── ② 解开（外部命令一律带超时，PROTOCOL §11）────────────────────────────── */
+/* ── ② 解开（外部命令一律带超时，PROTOCOL §11）──────────────────────────────
+ *
+ * ★ **先把 --out 建出来。** `tar -C <dir>` 与 `unzip -d <dir>` 都**不会**替你建目录，
+ *   `tar` 只会回一句 `Cannot open: No such file or directory` 然后 exit 2。
+ *
+ *   `[CI 实测]` 这个脚手架第一版漏了这行，三条 e2e 腿一起红成 `EXTRACT_FAILED`
+ *   （e2e-record run 31250861440、e2e-notes run 31251083538）——
+ *   **正是我在文件头担心的那件事**：把三段重复代码合成一段，
+ *   如果它自己有 bug，就从"三条腿各红一次"变成"四条腿一起红"。
+ *
+ *   ⚠️ 而我的 selftest **没抓住它**，原因值得记：`fresh()` 这个测试夹具
+ *   自己 `mkdirSync` 了 out 目录，**比真实调用方更宽容** ——
+ *   夹具替被测代码把前提凑齐了，于是那个前提缺失的分支从来没被走到。
+ *   （与本仓"断言的字段在夹具里恒为假"是同一族：**夹具比现实友善**。）
+ *   现在 selftest 里补了一条"out 目录不存在"的用例。
+ */
+
+mkdirSync(outDir, { recursive: true });
 
 const attempts = [];
 let extracted = false;

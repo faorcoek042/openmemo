@@ -124,6 +124,28 @@ console.log('\n\x1b[1mA 组「必须绿」：三次真实事故的输入形状�
 }
 
 {
+  /*
+   * A4 —— **--out 目录还不存在**。
+   *
+   * 这条是补上来的，因为脚手架第一版就漏了 `mkdirSync(outDir)`：
+   * `tar -C <dir>` / `unzip -d <dir>` 都不会替你建目录，只回
+   * `Cannot open: No such file or directory` 然后 exit 2。
+   * 三条 e2e 腿一起红成 EXTRACT_FAILED（e2e-record run 31250861440、
+   * e2e-notes run 31251083538）——正是"把三个坑合成一个更深的坑"那个风险。
+   *
+   * ⚠️ 而**旧 selftest 抓不住它**：`fresh()` 自己 mkdir 了 out 目录，
+   * 夹具比真实调用方宽容，于是那个分支从来没被走到。
+   * （与"断言的字段在夹具里恒为假"同一族：**夹具比现实友善**。）
+   */
+  const from = fresh('a4-from');
+  makeBundleArchive(from, 'openmemo-0.2.0-linux-x64.tar.gz');
+  const notYet = join(scratch, 'a4-out-does-not-exist', 'nested');
+  const r = run(from, notYet);
+  if (r.status === 0) ok('A4 --out 目录不存在 → 自己建出来并成功（第一版就是漏了这行）');
+  else bad(`A4 应当成功，实得 exit ${r.status}\n${r.out.slice(0, 600)}`);
+}
+
+{
   // A3 —— 各腿自己声明"我需要包里有什么"（差异保留在参数里，不是写死）。
   const from = fresh('a3-from');
   makeBundleArchive(from, 'openmemo-0.2.0-linux-x64.tar.gz', { withNode: true });
@@ -216,7 +238,7 @@ if (failed > 0) {
   process.exit(1);
 }
 // 判据用"数到 0 条就红"（build-backends C5 的教训：`for f in <不匹配的 glob>` 检查了零个文件然后报绿）
-if (checked < 10) {
+if (checked < 11) {
   console.log(`\x1b[31m✘ 只跑了 ${checked} 条断言 —— 少于预期，先怀疑这个自检本身瞎了\x1b[0m`);
   process.exit(1);
 }
