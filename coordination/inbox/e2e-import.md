@@ -314,3 +314,205 @@ PATH 上放着本脚本的屏蔽 shim，于是**六个用例全部**失败在
 - 没改别人的 workflow —— 新建 `.github/workflows/e2e-import.yml`
 - 端口用 198xx 段，避开 :10000 / 17650 / 冷启动审计的 197xx
 - 脚本**不修改 hosts 文件**；那一步只发生在 workflow 里的一次性 runner 上
+
+---
+
+## [2026-08-08 17:40] e2e-import(代理缺陷修复) DONE
+
+交付:
+
+- `packages/pipeline/src/subprocess/proxy.ts` —— 新增 `ProxyResolver` 类型
+- `packages/pipeline/src/index.ts` —— `BuildRegistryOptions.proxy` **必填**并透传两个适配器
+- `packages/pipeline/src/media/sources/{ytdlp,directHttp}.ts` —— 真的把代理递给子进程
+- `packages/downloader/src/proxy.ts` —— 新增 `activeProxyConfig()`
+- `apps/daemon/src/pipeline/setup.ts` —— 逐次解析的 `subprocessProxyResolver`
+- `scripts/ci/proxy-coverage-audit.mjs`（新）—— 起真代理逐条量出网路径
+- 守卫：`packages/pipeline/src/subprocess/__tests__/proxyCoverage.test.ts`（新）、
+  `packages/pipeline/src/audio/__tests__/ffmpegProxyEnv.test.ts`（新）
+- 提交 `f275deb`
+
+要点:
+
+- **先量后改**：6 条出网路径逐条实测，改前 2 条绕过代理，改后全部走代理。
+- **没动子进程环境白名单** —— 那道防线与代理无关，正确修法是把配置递下去。
+- 守卫已反向验证：**6 个变异体全部变红**，还原后全绿。
+- `hasVideo` **不是零读者**（我上一轮判错了），已改成真值并端到端验证。
+- `media_assets.mime` 判断为**不值得修**，理由见 §D。
+
+需要 Manager 决策: 无。
+
+### A. 每条出网路径实测（本机，真代理，非代码推断）
+
+判据设计：探针主机名用一个**本机解析不出来**的 `.test` 名字。走代理时主机名由代理去解，
+所以"通了"本身就是走了代理的证据；不走代理则 DNS 失败。不需要额外推断。
+
+| 出网路径                        | 机制         | 改前     | 改后         |
+| ------------------------------- | ------------ | -------- | ------------ |
+| ① 模型/组件下载                 | 进程内 fetch | ✅ 走     | ✅ 走         |
+| ② LLM API（openrouter 实测 200）| 进程内 fetch | UNKNOWN¹ | ✅ 走         |
+| ③ direct-http probe（HEAD）     | 进程内 fetch | ✅ 走     | ✅ 走         |
+| ④ ffprobe 远端读                | **子进程**   | UNKNOWN² | UNKNOWN²（单测守） |
+| ⑤ yt-dlp probe                  | **子进程**   | ❌ **绕过** | ✅ 走      |
+| ⑥ yt-dlp fetch                  | **子进程**   | ❌ **绕过** | ✅ 走      |
+| ⑦ 改回 `off` 后立即生效         | —            | 未测     | ✅ 立即生效   |
+
+¹ 头一轮挑了 `openai`，而 `canRefreshModelList()` 只对 `official-api`/`local-api` 为真，
+其余 20 家会在**发请求之前** 400。改挑 `openrouter` 后测到了。
+² 明文 http 上**结构性测不到**：`audio/ffmpeg.ts:45` 的
+`REMOTE_PROTOCOLS = 'https,tls,tcp,crypto,httpproxy'` **不含 `http`**，ffprobe 在
+`-protocol_whitelist` 就拒了，**一个包都不发**。"代理没看到 ffprobe"的真实含义是
+"ffprobe 根本没跑"。改由 `ffmpegProxyEnv.test.ts` 守。
+
+**规律**：进程内 `fetch` 由 `setGlobalDispatcher()` 一处接全局，call site 无从绕过；
+**子进程**只认自己 argv 的 `--proxy` / 自己 env 的 `http_proxy`，**必须被显式告知**。
+漏一个就是一个静默的洞。
+
+### B. 怎么在不拆掉白名单防护的前提下把代理递下去
+
+`buildChildEnv` 的 ALLOWED 白名单（POSIX 侧 `PATH/HOME/TMPDIR/LANG/LC_ALL/TZ`）
+是参数注入防护的一部分：它拒绝**继承** `process.env` 里任何没列名的变量，
+挡的是 `LD_PRELOAD` / `DYLD_INSERT_LIBRARIES` / `NODE_OPTIONS`。
+
+代理变量本来就走另一条路 —— `proxyEnv()` 从**已校验的配置具名注入**
+（`runner.ts` 原话「Proxy vars are added deliberately, never inherited」）。
+**所以一个字都没动白名单**，只是把配置递下去：
+
+1. `ProxyResolver = (targetUrl) => ProxyConfig | null` —— **按目标逐次解析**。
+   不用快照，因为 `no_proxy` 与 http/https 的取舍本来就是每个目标各自的事；
+   给所有目标一个统一答案，恰恰会在最需要代理的那群用户身上出错。
+2. `BuildRegistryOptions.proxy` **必填**。可选字段会被原样漏掉，
+   而漏掉之后一切照常工作 —— 在不需要代理的机器上，也就是我们所有的开发机上。
+   （改成必填当场逼红了 3 个既有调用点，它们现在显式写 `proxy: () => null`。）
+3. daemon 侧 `activeProxyConfig()` **每次现取**。
+
+⚠️ 有一条**反向**用例专门钉住「白名单没被拆开」：把 `http_proxy` 塞进宿主 env，
+断言它**不会**漏进子进程。
+
+### C. `appliedImmediately` 现在是真话（两个方向都验了）
+
+- **开**：registry 是 daemon **启动时**建的，代理是启动**之后**才 PATCH 进去的
+  —— ⑤⑥ 照样走代理，**没有重启**。
+- **关**：PATCH `mode=off` 之后下一次 yt-dlp **立刻不再**经过代理（代理命中 0 条）。
+  只验一个方向的话，"配置被读到了"与"值被写死成代理"分不开。
+
+### D. 守卫怎么保证下一条新增的出网路径不会再绕过去
+
+| 守卫 | 拦什么 |
+| ---- | ------ |
+| `BuildRegistryOptions.proxy` 必填（编译期） | daemon 必须回答这个问题 |
+| `proxyCoverage.test.ts` 扫 `run()/runOrThrow()` 调用点 | **新增的子进程调用点默认是红的** |
+| 同上：`proxy: opts.proxy` 必须真的传给两个适配器 | 从构造里删掉时 TS 不报错，这条报 |
+| 同上：`proxy` 不许被改回可选 | 防"顺手简化" |
+| `ffmpegProxyEnv.test.ts` | 注入要生效；**白名单要仍然挡着继承** |
+
+豁免走**逐调用点**的 `proxy-not-needed: 理由` 标记，不是文件级白名单 ——
+`ytdlp.ts` 里既有出网的 probe/fetch，也有纯本地的 `--version`，文件级粒度只能二选一。
+理由长在做决定的地方。
+
+**反向验证**（`/root/rv-proxy` 隔离副本，不在共享树里做，PROTOCOL §10）：
+
+| 变异 | 结果 |
+| ---- | ---- |
+| 对照组（不改） | pass 11 / fail 0 |
+| A `proxy` 改成可选 | **红** |
+| B registry 不递 proxy 给 YtDlpSource | **红** |
+| C 不再拼 `--proxy` | **红** |
+| D 新增一个没传 proxy 的出网调用点 | **红** |
+| E `buildChildEnv` 不再注入代理 | **红** |
+| F 把 `http_proxy` 加进继承白名单 | **红** |
+| 还原后 | pass 11 / fail 0 |
+
+F 这条尤其要紧：它挡住"为了让代理过去而拆掉白名单"这条错误修法。
+
+⚠️ 自陈：A–D 头一轮只改 `src` 而测试跑的是 `dist`，所以 E 显示"不红" ——
+那不是守卫的洞，是**我验证方法的洞**。改成直接变异 `dist` 下的产物后 E/F 都红。
+
+### E. `hasVideo`：**我上一轮判错了，它不是零读者**
+
+Manager 提醒的 `.mjs` 盲区**正中要害**。全类型 grep 之后：
+
+```
+apps/daemon/scripts/e2e-f2.mjs:185  'media.ready': [...,'hasVideo']   ← 真读者（契约断言）
+packages/shared/openapi.yaml                                          ← 公开契约
+```
+
+上一轮只 grep 了 `.ts/.tsx` 所以看不见。按既定原则「有真实读者就补契约补测试」：
+**没有删，改成真值** `hasVideo: result.media.audioOnly === false`
+（`audioOnly` 是 ffprobe 探到的流信息，不是按扩展名猜的）。
+
+端到端实测（`e2e-import-audit.mjs` 新增 SSE 断言，收 `media.ready` 逐条比对）：
+
+```
+✔ media.ready.hasVideo=false（PCM / WAV / 仅音轨）
+✔ media.ready.hasVideo=false（MP3 / MPEG / 仅音轨）
+✔ media.ready.hasVideo=false（AAC / MP4 / 仅音轨）
+✔ media.ready.hasVideo=true （H.264+AAC / MP4 / **带视频**）
+```
+
+`ws/recorder.ts` 那处 `false` **没动**：现场录音本来就没有视频轨，那是真话；
+而且该文件正被 F3 那一路改着。
+
+### F. `media_assets.mime` 恒 NULL：**判断为不值得修**
+
+能拿到的"真值"**比现在这个更不可信**：
+
+- 上传那条路的 `contentType` 来自浏览器 multipart 里的一行字（E2E 脚本发的就是
+  `application/octet-stream`）。真填进去，`/media` 就会用它替掉现在那个正确答案，
+  **mp3 反而变得不可播**。
+- 链接导入那条来自远端服务器的响应头，同样是对方说了算。
+
+而现状是：mime 为空 → `/media` 按**扩展名** `guessMime()` 兜底，
+`[CI 实测 run 31247374404]` 三平台 × 四种容器 Content-Type **全部正确**。
+把"别人声称的类型"写进库，会挤掉"我们自己算得准的类型" —— 与 D-01 §8.5 同向。
+
+**结论：保持 NULL。** 已在 `transcribe.ts` 的 `createAsset` 上方写明这是判断不是遗漏，
+并注明将来的消费者应调 `guessMime()` 而不是读这一列。
+
+### G. 自陈：第一版测量是错的，三条结论作废过
+
+1. **undici 的 `ProxyAgent` 对明文 http 目标也发 CONNECT**（不只 https 才隧道）。
+   我照着去 `netConnect` 一个解析不出来的主机 → 失败 → 客户端狂重试，
+   一轮收到 **306,685 次 CONNECT**，把 89k/209k 这种数量级写成了"证据"。
+   **数量级不对的证据比没有证据更危险 —— 它看起来像是测到了。**
+   改成：探针主机的 CONNECT 在本地终结隧道，交给内置源站服务。
+2. 把「路由层在发请求**之前**就 400」读成"绕过代理"。→ 改判 UNKNOWN。
+3. 把「job 因缺 ASR 而 `blocked`、fetch 压根没跑」读成"绕过代理"。→ 装上 ASR 再测。
+4. UA 判别写成"不是 OpenMemo 就算 yt-dlp"，而 direct-http 的 ranged 兜底**不带 UA**
+   → 误算成 yt-dlp。改成认 yt-dlp 伪装的浏览器 UA 特征。
+5. 守卫自己曾**假装在看**：从 `dist` 跑时 `../..` 落在 dist，而 `.d.ts` 也以 `.ts` 结尾
+   被收进扫描集 → 一行真源码没看过却全绿。已改成向上找 package.json 再进 `src/`，
+   并加了"必须读到实现文件"的前提自检。
+
+### H. 门禁
+
+| 门禁 | 结果 |
+| ---- | ---- |
+| `tsc -b` | ✅ 0 |
+| `build:safe` | ✅ 0 |
+| `lint-workflows` | ✅ 1147 条断言全过（13 个 workflow） |
+| `check:orphans` | ✅ 没有新的零引用导出，基线没过期 |
+| `eslint`（我的文件） | ✅ 0 |
+| `format:check`（我的文件） | ✅ 通过 |
+| `packages/pipeline` 测试 | ✅ **238 / fail 0**（含我新增的 11 条守卫） |
+| `pnpm -r test` 合计 | 1558 条，**fail 3** |
+
+⚠️ 那 3 条**不是我的**，证据确凿：全在 `apps/daemon/src/jobs/mergeWords.test.ts`，
+报错是 `引擎 whisper.cpp 加载不了这个模型…（它要的是 ggml 格式）`，
+抛自 commit **`749c949`**（模型格式那一路）新加的 `canEngineLoad` 校验拒绝了该用例的
+夹具模型。我改的东西不碰 merge、不碰模型格式。开工时是 6 条，现在 3 条 —— 那一路在修。
+
+### I. 共享树的两处摩擦（如实记，未擅自处置）
+
+1. **`apps/daemon/src/jobs/runners/transcribe.ts` 是共享文件**：我在里面改 `hasVideo`
+   的同时，模型格式那一路也在改它（约 100 行）。`git add` 会把他们**没写完**的代码
+   一起提交。处置：用 `git hash-object` + `update-index --cacheinfo` 构造
+   「HEAD 版本 + 只有我那两处改动」的 blob 来暂存。
+   ⚠️ 后来发现 commit `749c949` 已经把工作区里我那两处改动**一并提交了**，
+   所以最终我这条提交里**不含** `transcribe.ts`（暂存内容与 HEAD 相同）。
+   `hasVideo` 的修复现在在 `749c949` 里，**不是我的提交**，但确实已经落地并验过。
+2. **`.github/workflows/e2e-import.yml` 被别人改了**（把取包那步提成共享脚本，
+   对应 `037a6ef`「消灭抄两份」）。那是合理的去重，**我没有回退、也没有暂存它**，
+   留在工作区里由改动方自己提交。
+
+⚠️ 全树 `format:check` / `eslint` 我最后一次检查时仍有别人在飞的文件红着，
+我只对自己的文件跑 prettier，**没有把 `--write` 打进共享索引**。
