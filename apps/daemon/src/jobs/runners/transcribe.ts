@@ -28,7 +28,7 @@ import {
   transcribeSegmentEvent,
   transcribeStartedEvent,
 } from '../events.js';
-import { makeEvent, topics } from '@openmemo/shared';
+import { ASR_ENGINE_IDS, makeEvent, topics, type AsrEngineId } from '@openmemo/shared';
 import {
   PLAN_VERSION,
   formatMergeSummary,
@@ -43,7 +43,11 @@ import { generatePeaksAsset } from '../../media/peaksAsset.js';
 import { mayRetitleNote } from './retitle.js';
 import type { SseHub } from '../../http/sse.js';
 import type { JobQueue, JobRow } from '../queue.js';
-import { resolveModelById } from '../../pipeline/modelStore.js';
+import {
+  canEngineLoad,
+  MODEL_FORMAT_BY_ENGINE,
+  resolveModelById,
+} from '../../pipeline/modelStore.js';
 import { noteVadRuntimeFailure, noteVadRuntimeSuccess } from '../../pipeline/vadStatus.js';
 
 export interface TranscribeRunnerDeps {
@@ -124,6 +128,16 @@ function canonical(p: string): string {
   }
 }
 
+/**
+ * `pipelineFor()` 返回的 `engineId` 是 `string`，而格式表按 `AsrEngineId` 索引。
+ *
+ * 认不出来时返回 `undefined` 而**不是**抛 —— 这个函数是用来加固的，
+ * 它自己不该成为一条新的失败路径。认不出的引擎 = 不做这层检查（与改动前同）。
+ */
+function asAsrEngineId(id: string): AsrEngineId | undefined {
+  return (ASR_ENGINE_IDS as readonly string[]).includes(id) ? (id as AsrEngineId) : undefined;
+}
+
 /** 把绝对路径转成相对 media 根的路径（D-02 §1.1：绝不存绝对路径，数据目录可搬迁）。 */
 /**
  * 把产物**归档进 media 根**，返回相对路径。
@@ -198,11 +212,40 @@ export async function runTranscribeJob(
    * 用户显式指定的模型 id → 真实权重路径。解析不到就**不静默忽略**：
    * 退回自动选择，但把这件事记进日志，否则"我选了 large-v3 却跑了 base"无从发现。
    */
+  /*
+   * ★ 先问一次「不给覆盖的话会用哪个引擎」，再拿这个引擎去解析用户指定的模型。
+   *
+   * 顺序不能反。模型能不能用**取决于谁来加载它** —— 在知道引擎之前，
+   * 「这个 modelId 可用吗」这个问题没有答案。原来的代码先解析模型、再选引擎，
+   * 于是一个 sherpa 的 ONNX 模型可以一路走到 whisper.cpp 手里
+   * （`[CI 实测]` 那正是录音后自动重跑三平台全挂的成因）。
+   * `pipelineFor` 只是把几个引用装进对象并带缓存，问两次是廉价的。
+   */
+  const baseline = deps.pipelineFor(payload.language ?? undefined, {
+    ...(payload.engineId ? { engineId: payload.engineId } : {}),
+  });
+  const baselineEngine = asAsrEngineId(baseline.engineId);
+
   let overrideModelPath: string | undefined;
   if (payload.modelId) {
-    const m = await resolveModelById(deps.modelsDir, 'asr', payload.modelId);
+    const m = baselineEngine
+      ? await resolveModelById(deps.modelsDir, {
+          role: 'asr',
+          engine: baselineEngine,
+          id: payload.modelId,
+        })
+      : undefined;
     if (m) overrideModelPath = m.path;
-    else console.warn(`[transcribe] 指定的模型 ${payload.modelId} 未安装，回退到自动选择`);
+    else {
+      /*
+       * 分两种情形说清楚 —— 它们的处置完全不同，混成一句"未安装"会把人带偏：
+       * 装了但引擎读不了 ≠ 没装。
+       */
+      console.warn(
+        `[transcribe] 指定的模型 ${payload.modelId} 不可用（未安装，` +
+          `或 ${baseline.engineId} 加载不了它的格式），回退到自动选择`,
+      );
+    }
   }
   const chosenEarly = deps.pipelineFor(payload.language ?? undefined, {
     ...(payload.engineId ? { engineId: payload.engineId } : {}),
@@ -231,6 +274,30 @@ export async function runTranscribeJob(
   // 按语言选引擎（ADR-013 决策 1：中文默认 Paraformer）。
   // engine_id 落库的是**实际用的**引擎，不是硬编码 —— 否则永远看不出选择有没有生效。
   const chosen = chosenEarly;
+
+  /*
+   * ★★ 最后一道闸：**引擎与模型在这里第一次真正碰面，就在这里对一次账。**
+   *
+   * 上游（`ModelQuery.engine` 必填 + `MODEL_FORMAT_BY_ENGINE`）已经让"拿到一个
+   * 本引擎读不了的模型"在类型上表达不出来。这一条不是重复那件事，它守的是
+   * **绕过解析器的那些路**：`OPENMEMO_ASR_MODEL` 环境变量、`scanByName` 兜底扫描、
+   * 用户手工拷进 `by-name/` 的文件 —— 它们都不经过 `resolveActiveModel`。
+   *
+   * 判据是"失败得响亮且可诊断"。在此之前，这条路上的失败长这样：
+   *     whisper-cli exited with code 3
+   *     error: failed to initialize whisper context
+   * 用户（和我们自己）对着它猜了三轮。现在直接说出是谁拿了谁的模型。
+   */
+  const chosenEngine = asAsrEngineId(chosen.engineId);
+  if (chosen.modelPath && chosenEngine && !(await canEngineLoad(chosenEngine, chosen.modelPath))) {
+    throw new Error(
+      `引擎 ${chosen.engineId} 加载不了这个模型：${chosen.modelPath}` +
+        `（它要的是 ${MODEL_FORMAT_BY_ENGINE[chosenEngine]} 格式）。` +
+        `多半是 active.json 里该 role 指向了另一个引擎的模型，` +
+        `或 OPENMEMO_ASR_MODEL 指到了别的格式。` +
+        `请在「模型」页把 asr 切到一个 ${chosen.engineId} 能用的模型再重试。`,
+    );
+  }
   /*
    * 续跑（D-01 §4.5）：先找有没有同引擎同模型、还没跑完的稿。
    * 有就**接着写**，不新建 —— 新建会让 completedChunks 查到空表而全量重跑，
@@ -388,7 +455,7 @@ export async function runTranscribeJob(
    *
    * 那"补上真值"不是更好吗？—— 不是，因为能拿到的那个值**更不可信**：
    *   · 上传那条路的 `contentType` 来自浏览器 multipart 里的一行字，
-   *     E2E 脚本发的就是 `application/octet-stream`；真填进去，`/media` 就会
+   *     本脚本发的就是 `application/octet-stream`；真填进去，`/media` 就会
    *     用它替掉现在这个正确答案，**mp3 反而变得不可播**（浏览器不认）。
    *   · 链接导入那条来自远端服务器的响应头，同样是对方说了算。
    * 也就是说：把一个"别人声称的类型"写进库，会挤掉一个"我们自己算得准的类型"。
