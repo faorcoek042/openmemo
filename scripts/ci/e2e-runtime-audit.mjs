@@ -435,10 +435,30 @@ function setUpMasking() {
   mkdirSync(MASK_BIN, { recursive: true });
   for (const t of HOST_TOOLS) {
     if (IS_WIN) {
-      // Windows 上无扩展名的 `#!/bin/sh` 文件**不是可执行文件**，写 .cmd 才挡得住。
+      // Windows 上无扩展名的 `#!/bin/sh` 文件**不是可执行文件**，写 .cmd 才挡得住 PATH 查找。
       writeFileSync(
         join(MASK_BIN, `${t}.cmd`),
         `@echo off\r\necho E2E-RUNTIME: host '${t}' was invoked - MASKED shim 1>&2\r\nexit /b 127\r\n`,
+      );
+      /*
+       * ★ **`.exe` 也要写，否则 Windows 上这层屏蔽等于不存在。**
+       *
+       * `packages/pipeline/src/tools.ts` 的 `fromPath()` 拼的是
+       * `join(dir, exe(name))`，而 `exe()` 在 win32 上**写死加 `.exe`** ——
+       * 它根本不看 PATHEXT，所以 `.cmd` 和无扩展名那两个 shim 它一个都找不到。
+       *
+       * `[CI 实测 run 31249873183]` windows 那条腿上 `A-MASK-EFFECTIVE` 当场红：
+       * 「没有任何工具落在 shim 上」。当时 runner 恰好也没装 ffmpeg，
+       * 所以**屏没屏蔽的输出一模一样** —— 这正是那条反向守卫存在的理由，
+       * 没有它，一个从未生效的屏蔽会一直绿着。
+       *
+       * 内容随便（产品只 `access(X_OK)` 判存在，真执行时才炸），
+       * 但要能被找到。`cold-start-audit.mjs` 有同一个缺口，本轮只修我这条腿，
+       * 那边归它自己的作者改（不动别人的交付物，PROTOCOL §1.3）。
+       */
+      writeFileSync(
+        join(MASK_BIN, `${t}.exe`),
+        `E2E-RUNTIME MASKED shim for '${t}' — not a real executable\r\n`,
       );
     }
     const shim = join(MASK_BIN, t);
@@ -1290,8 +1310,20 @@ async function phaseBackends() {
 async function phaseBreaker() {
   hdr('9. ★ 别退化：断路器跳闸后能自愈（60s 冷却 + 半开，T-173）');
 
+  /*
+   * ★ 探针路径**现问一次**，绝不用 phaseBackends 存下来的那个。
+   *
+   * `[CI 实测 run 31249873183]` 用旧值在 macOS / Windows 上直接把这一整段变成了空转：
+   * phaseBackends 后半段会卸载再重装、还可能装上一个加速包，
+   * 而 `backendDir` 是**单值**的 —— 装完 metal 之后 daemon 用的是 metal 包里的探针，
+   * 我却对着 cpu 包里那个旧路径注入故障。结果探测一路成功、断路器根本没跳，
+   * 三条断言一起红，而红的原因与断路器毫无关系。
+   *
+   * 教训与本文件里其它几处同源：**别把"刚才看到的值"当成"现在的值"**。
+   */
+  const hwNow = await j('/api/runtime/hardware');
+  const probePath = hwNow.body?.runtime?.probe?.probePath ?? null;
   const b0 = await j('/api/runtime/breaker');
-  const probePath = b0.body?.backendDir ? state.probePath : null;
   if (!probePath || !existsSync(probePath)) {
     unknown(
       'A-BREAKER-TRIP',

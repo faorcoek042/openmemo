@@ -36,8 +36,22 @@ name: e2e-runtime
 on:
   workflow_dispatch:
     inputs:
+      bundleSource:
+        # ★ 默认对**本次 checkout 组装的包**跑 —— 与 e2e-notes 同一个判据。
+        #
+        #   `[CI 实测 run 31249873183]` 拿 artifact 跑时踩到两件事，都是同一个成因
+        #   「**包和脚本来自不同的提交**」：
+        #     · 变异锚点在旧包里找不到（`M-active-partial-load` 锚的是本轮刚落地的修复）；
+        #     · 断言守的性质旧包里还没有，红得没有意义。
+        #   门禁要回答的是"**现在这棵树**交付出去能不能用"，所以默认 checkout。
+        #   `artifact` 模式留着，用来审计**已经发出去的那个包**（那是另一个问题）。
+        description: '包从哪来：checkout=本次代码现组装（默认）／artifact=取 build-bundles 的产物'
+        required: false
+        default: checkout
+        type: choice
+        options: [checkout, artifact]
       bundlesRunId:
-        description: '取哪一次 build-bundles 的产物（留空 = 自动找最近一次成功的）'
+        description: 'artifact 模式下取哪一次 build-bundles 的产物（留空 = 自动找含本平台产物的最近一次）'
         required: false
         type: string
       resumeTest:
@@ -116,8 +130,30 @@ jobs:
       # audit 与 mutations 两个 job 调的是同一个脚本 —— 这里原本是抄了两份的
       # shell，`[实测 run 31249523201]` 我只修了其中一份，另一份就把整条
       # linux 变异腿挂在了 `Artifact not found` 上）。
+      # ── 路线 A（默认）：用**本次 checkout** 现组装一个预编译包 ──────────────
+      #
+      # 它仍然是"预编译包"：同一个 scripts/build-bundle.mjs 组装、包自带的 Node 起、
+      # 屏蔽宿主 PATH —— 判据一个字没松。差别只是它来自**这棵树**，
+      # 所以变异锚点与断言守的性质必然对得上。
+      - name: 装依赖（现组装模式）
+        if: ${{ inputs.bundleSource != 'artifact' }}
+        run: npm install -g pnpm@10.15.0 && pnpm install --frozen-lockfile
+
+      # `pnpm -r build` 含 vite build：**CI runner 是一次性的**，PROTOCOL §7 禁的是
+      # 共享开发树。缺了 apps/web/dist 的包用户打开是白页，build-bundles 也是这么做的。
+      - name: 构建（现组装模式）
+        if: ${{ inputs.bundleSource != 'artifact' }}
+        run: pnpm -r build
+
+      - name: 组装预编译包（现组装模式）
+        id: assemble
+        if: ${{ inputs.bundleSource != 'artifact' }}
+        run: node scripts/build-bundle.mjs --target '${{ matrix.target }}' --skip-archive
+
+      # ── 路线 B：取 build-bundles 的产物（审计已发出去的那个包）──────────────
       - name: 解析 build-bundles 的 run id
         id: runid
+        if: ${{ inputs.bundleSource == 'artifact' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -127,6 +163,7 @@ jobs:
           echo "id=${id}" >> "$GITHUB_OUTPUT"
 
       - name: 下载预编译包
+        if: ${{ inputs.bundleSource == 'artifact' }}
         uses: actions/download-artifact@v6
         with:
           name: ${{ matrix.artifact }}
@@ -139,6 +176,7 @@ jobs:
       # 单独立了一步 verify-bundle.sh。
       - name: 解开预编译包
         id: bundle
+        if: ${{ inputs.bundleSource == 'artifact' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -174,7 +212,7 @@ jobs:
         timeout-minutes: 45
         run: |
           node scripts/ci/e2e-runtime-audit.mjs \
-            --bundle "${{ steps.bundle.outputs.bundle_dir }}" \
+            --bundle "${{ steps.assemble.outputs.bundle_dir || steps.bundle.outputs.bundle_dir }}" \
             --require-bundle \
             --port 19820 \
             ${{ (matrix.target == 'linux-x64' && inputs.resumeTest) && '--resume-test' || '' }} \
@@ -237,8 +275,30 @@ jobs:
         with:
           node-version: '22'
 
+      # ── 路线 A（默认）：用**本次 checkout** 现组装一个预编译包 ──────────────
+      #
+      # 它仍然是"预编译包"：同一个 scripts/build-bundle.mjs 组装、包自带的 Node 起、
+      # 屏蔽宿主 PATH —— 判据一个字没松。差别只是它来自**这棵树**，
+      # 所以变异锚点与断言守的性质必然对得上。
+      - name: 装依赖（现组装模式）
+        if: ${{ inputs.bundleSource != 'artifact' }}
+        run: npm install -g pnpm@10.15.0 && pnpm install --frozen-lockfile
+
+      # `pnpm -r build` 含 vite build：**CI runner 是一次性的**，PROTOCOL §7 禁的是
+      # 共享开发树。缺了 apps/web/dist 的包用户打开是白页，build-bundles 也是这么做的。
+      - name: 构建（现组装模式）
+        if: ${{ inputs.bundleSource != 'artifact' }}
+        run: pnpm -r build
+
+      - name: 组装预编译包（现组装模式）
+        id: assemble
+        if: ${{ inputs.bundleSource != 'artifact' }}
+        run: node scripts/build-bundle.mjs --target '${{ matrix.target }}' --skip-archive
+
+      # ── 路线 B：取 build-bundles 的产物（审计已发出去的那个包）──────────────
       - name: 解析 build-bundles 的 run id
         id: runid
+        if: ${{ inputs.bundleSource == 'artifact' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -247,6 +307,7 @@ jobs:
           id=$(bash scripts/ci/resolve-bundle-run.sh '${{ matrix.artifact }}' '${{ inputs.bundlesRunId }}')
           echo "id=${id}" >> "$GITHUB_OUTPUT"
       - name: 下载预编译包
+        if: ${{ inputs.bundleSource == 'artifact' }}
         uses: actions/download-artifact@v6
         with:
           name: ${{ matrix.artifact }}
@@ -256,6 +317,7 @@ jobs:
 
       - name: 解开预编译包
         id: bundle
+        if: ${{ inputs.bundleSource == 'artifact' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -298,7 +360,7 @@ jobs:
             echo "  变异 $m （port ${port}）"
             echo "════════════════════════════════════════════════════════════════"
             if node scripts/ci/e2e-runtime-audit.mjs \
-                 --bundle "${{ steps.bundle.outputs.bundle_dir }}" \
+                 --bundle "${{ steps.assemble.outputs.bundle_dir || steps.bundle.outputs.bundle_dir }}" \
                  --require-bundle --port "$port" --mutate "$m" 2>&1 | tee -a mutations-${{ matrix.label }}.log; then
               echo "  → 抓住了（或本平台构造不出前提，已如实报 UNKNOWN）"
             else
