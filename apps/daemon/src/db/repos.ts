@@ -283,12 +283,66 @@ export class Repos {
     return this.noteById(r.lastInsertRowid) as NoteRow;
   }
 
+  /*
+   * ══ 软删除的读取契约（T-e2e-notes）══════════════════════════════════════════════
+   *
+   * **`uid` 是对外标识，`id` 是内部 rowid —— 两者的删除语义刻意不同：**
+   *
+   *   · `*ByUid()`  → **只看未删的**。uid 是 HTTP 上唯一能被外界说出来的名字，
+   *                    所以凡是从 uid 进来的请求，"已删"就必须等于"不存在"。
+   *   · `*ById()`   → **包含已删的**。id 只有已经握着引用的内部代码才拿得到
+   *                    （job payload、刚 INSERT 的 rowid、闭包查询的结果），
+   *                    它们要的是"那一行还在不在库里"，不是"用户还看不看得见它"。
+   *
+   * 为什么必须写下来：这两个函数以前**都不过滤**，于是同一份 API 对
+   * 「这条笔记还存不存在」给出了两个答案 —— 列表和搜索当它不存在
+   * （`listNotes` 的 `n.deleted_at IS NULL`、`search.ts` 的同名条件），
+   * 而任何 `/api/notes/:uid` 路径照常 200 + 全文返回。
+   *
+   * `[CI 实测 run 31247533926]` 三平台复现：删掉之后 `GET /api/notes/:uid` 仍回
+   * **200 + 完整正文**，旧链接 / 书签 / `?t=` 深链照样打得开。
+   * 而且**不止 GET** —— `noteByUid` 有 10 个调用点，全是 API 入口：
+   * 改标题、改正文、锚点、重新转写、导图、导出、打星标、改标签、移动文件夹。
+   * 也就是说一条"已删除"的笔记，此前**还能被继续编辑和重新转写**。
+   *
+   * Manager 2026-08-08 裁决 **404，不是 410**：软删在语义上是可逆的，
+   * 410 Gone 隐含"永久移除"，会让"可恢复"在协议层说不通；
+   * 而"不存在"在这个产品里已经有一个既定表达（列表与搜索），
+   * **同一个事实不该有两种表达**。将来真做回收站/恢复，
+   * 那条路径应当**显式**带一个 include-deleted 参数，
+   * 而不是靠"裸 GET 也能读到"这个副作用 —— 今天这个行为不是回收站的地基，它只是一个漏。
+   *
+   * ⚠️ 改这两行时请一并看 `repos.softDelete.test.ts`：那里把
+   * 「uid 读不到、id 读得到」两侧都钉死了。只钉一侧的话，
+   * 哪天有人"顺手统一"成两边都过滤，job 中心里那些笔记已被删的任务就会集体失去标题，
+   * 而**没有任何测试会红**。
+   */
+
+  /**
+   * 按内部 rowid 取笔记。**包含已软删的行** —— 见上方契约块。
+   *
+   * 现存的合法消费者（都不是从 uid 进来的用户请求）：
+   *   · `createNote()` 刚 INSERT 完回读自己那一行；
+   *   · `main.ts` 把 job 列表里的 `note_id` 翻成标题 —— 笔记被删了，
+   *     那条 job 仍然存在于任务中心，标题不该因此变成空白；
+   *   · `content.ts` 写完之后回读（那条笔记刚由 `noteByUid` 验过，必然未删）；
+   *   · 两个 job runner 从 payload 里拿 `noteId`。
+   */
   noteById(id: number): NoteRow | undefined {
     return this.db.prepare<NoteRow>(`SELECT * FROM notes WHERE id = :id`).get({ id });
   }
 
+  /**
+   * 按对外 uid 取笔记。**已软删的一律当作不存在**（返回 `undefined` → 调用方回 404）。
+   *
+   * 这一个条件同时关掉 10 个 API 入口的同一个漏，所以修在仓储层，
+   * 而不是在每个处理器里补一句 `if (note.deleted_at)`——那种修法漏一个就等于没修，
+   * 而且下一个新增的路由不会知道有这回事。
+   */
   noteByUid(uid: string): NoteRow | undefined {
-    return this.db.prepare<NoteRow>(`SELECT * FROM notes WHERE uid = :uid`).get({ uid });
+    return this.db
+      .prepare<NoteRow>(`SELECT * FROM notes WHERE uid = :uid AND deleted_at IS NULL`)
+      .get({ uid });
   }
 
   /**
@@ -866,13 +920,42 @@ export class Repos {
       .all();
   }
 
-  /** 不过滤 `deleted_at` —— 由调用方决定"已删"要回 404 还是照常处理。 */
+  /**
+   * 按内部 rowid 取文件夹。**包含已软删的行** —— 与 `noteById` 同一条契约。
+   *
+   * ⚠️ 这里原来的注释是「不过滤 `deleted_at` —— 由调用方决定"已删"要回 404 还是照常处理」。
+   * 那句话描述的是一个**不存在的分工**：`folderByUid` 的 5 个调用点**没有一个**
+   * 检查过 `deleted_at`。一条把责任推给调用方、而调用方并不知情的注释，
+   * 比没有注释更坏 —— 读到它的人会以为这件事已经有人管了，于是不去建。
+   *
+   * 现存的合法消费者（都需要看见已删的行）：
+   *   · `folderAncestorIds()` 环检测 —— 被一个已删节点挡住就等于瞎了；
+   *   · `folderSubtreeIds()` / `softDeleteFolderTree()` —— 它自己就是删除路径，
+   *     必须能重扫已删子树（`markDeleted` 里带 `AND deleted_at IS NULL` 保证幂等）；
+   *   · `createFolder()` / `updateFolder()` 回读刚写的那一行。
+   */
   folderById(id: number): FolderRow | undefined {
     return this.db.prepare<FolderRow>(`SELECT * FROM folders WHERE id = :id`).get({ id });
   }
 
+  /**
+   * 按对外 uid 取文件夹。**已软删的一律当作不存在。**
+   *
+   * 这是本轮审计查出的**第二个**同形漏（第一个是 `noteByUid`），此前没有人撞到过。
+   * 5 个调用点全是 API 入口：建子文件夹时认父、改名/改图标、删文件夹、
+   * 把笔记移进某个文件夹、以及 `GET /api/notes?folder=<uid>` 的筛选。
+   *
+   * 最难看的一格是「把笔记移进一个已删的文件夹」：请求会成功（200），
+   * 而侧栏的文件夹树来自 `listFolders()`（过滤已删）、计数来自
+   * `folderNoteCounts()`（走 `FOLDER_CLOSURE_CTE`，同样过滤已删）——
+   * 于是那条笔记挂在一个**界面上不存在的文件夹**下面。
+   * 它仍然出现在「全部笔记」里，所以不是丢数据，但归属是错的，而且用户改不回来
+   * （那个文件夹他根本点不到）。
+   */
   folderByUid(uid: string): FolderRow | undefined {
-    return this.db.prepare<FolderRow>(`SELECT * FROM folders WHERE uid = :uid`).get({ uid });
+    return this.db
+      .prepare<FolderRow>(`SELECT * FROM folders WHERE uid = :uid AND deleted_at IS NULL`)
+      .get({ uid });
   }
 
   /**

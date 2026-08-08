@@ -576,14 +576,35 @@ try {
   /* ───────────────── 3. 前置：找一条真有转写稿的笔记 ───────────────── */
 
   hdr('3. 前置核对：必须已经有一条带转写稿的笔记（F4 的硬前提）');
-  const list0 = await j('/api/notes?limit=200');
-  const notes0 = list0.body?.notes ?? [];
-  say(
-    `   GET /api/notes → HTTP ${list0.status}，${notes0.length} 条（total=${list0.body?.total}）`,
-  );
+
+  /*
+   * ★ 必须**翻完所有页**，不能只看第一页。
+   *
+   * `[实测]` 第一版写的是 `GET /api/notes?limit=200` 然后在那一页里找。
+   * CI 上碰巧一直是对的（全新数据目录里只有 jfk + 本轮造的那几十条），
+   * 但本机连跑几轮之后笔记攒到 200 条以上，而 jfk 是**最早**建的那条 ——
+   * 按 `created_at DESC` 它掉出了第一页，于是脚本报「一条带转写稿的笔记都没有」。
+   * 那句话读起来像个产品结论，其实是我的窗口太小。
+   * 一个"数据一多就换答案"的前置检查，和一盏坏掉的灯没有区别。
+   *
+   * 顺便按 `durationMs > 0` 先粗筛：列表 DTO 里就有这个字段，
+   * 而本脚本造的哑笔记全是 0 —— 省掉几百次详情请求，但**筛不到时会退回全扫**，
+   * 不让这层优化变成新的静默依赖。
+   */
+  const allNotes = [];
+  for (let off = 0; off < 20000; off += 200) {
+    const page = await j(`/api/notes?limit=200&offset=${off}`);
+    if (page.status !== 200) break;
+    allNotes.push(...(page.body?.notes ?? []));
+    if (page.body?.hasMore !== true) break;
+  }
+  say(`   GET /api/notes 翻完所有页 → 共 ${allNotes.length} 条`);
+
+  const withDuration = allNotes.filter((n) => Number(n.durationMs ?? 0) > 0);
+  say(`   其中 durationMs>0 的 ${withDuration.length} 条（先查这些，查不到再全扫）`);
 
   let subject = null;
-  for (const n of notes0) {
+  for (const n of [...withDuration, ...allNotes]) {
     const d = await j(`/api/notes/${encodeURIComponent(n.uid)}`);
     if (d.status === 200 && d.body?.transcriptUid && (d.body?.segmentCount ?? 0) > 0) {
       subject = d.body;
@@ -1009,35 +1030,55 @@ try {
   });
 
   /*
-   * ★ 观测项，**刻意不参与红绿**（与 cold-start-audit 第 6b 节同一个理由）。
+   * ★★ 这里**曾经是一条"只打印、不判红绿"的观测项**，现在翻成了真的断言。
    *
-   * `[实测]` 软删之后 `GET /api/notes/:uid` 仍然回 **200 + 完整正文**：
-   * `repos.noteByUid()` 是 `SELECT * FROM notes WHERE uid = :uid`，**没有**
-   * `deleted_at IS NULL`，而 GET 处理器自己也没补这一条。
-   * 列表（`notesFilter`）与搜索（SQL 里的 `n.deleted_at IS NULL`）都筛掉了它 ——
-   * 也就是说**同一份 API 对"这条笔记还在不在"给出两种答案**。
+   * 当时不判红绿的理由是成立的：缺陷刚被查出来，修法有两种（404 还是 410），
+   * 那是 notes 那条线 owner 的决定；而一个**永远红**的门禁等于没有门禁。
    *
-   * 用户能碰到的形态：删掉一条笔记之后，任何还留着的链接/书签/搜索结果深链
-   * （`/notes/<uid>?t=`）打开仍然是那条笔记的完整内容与音频。
+   * 缺陷已修（`repos.noteByUid()` 补上 `deleted_at IS NULL`），
+   * Manager 2026-08-08 裁决 **404，不是 410** —— 软删在语义上可逆，
+   * 410 Gone 隐含"永久移除"，会让"可恢复"在协议层说不通。
+   * 修好之后就必须把观察翻成断言，**否则下次退化没人知道**。
    *
-   * 为什么不在这里判红：修法有两种（404 还是 410、要不要保留"回收站"语义），
-   * 那是 notes 那条线的 owner 的决定，不是这个审计脚本该替他做的。
-   * 而一个**永远红**的门禁等于没有门禁 —— 它训练所有人忽略这盏灯。
-   * 所以这里如实打印、写进回执，由 Manager 派人定夺。
+   * 断言的是 404 这个具体码，不是"反正别 200"：
+   * 400/500 也不是 200，但它们都不是"这条笔记不存在"的正确表达。
    */
-  say('');
-  say('   ── 观测（不判红绿）：软删之后直接 GET 这条笔记会怎样 ──');
-  if (deletedGet) {
-    say(`   GET /api/notes/<已删除的 uid> → HTTP ${deletedGet.status}`);
-    if (deletedGet.status === 200) {
-      say('   ⚠️ **仍然回 200 + 完整正文**。列表与搜索都已经筛掉它，只有这一个出口没筛。');
-      say('      成因：repos.noteByUid() 没有 `deleted_at IS NULL`，GET 处理器也没补。');
-      say('      用户形态：删完之后旧链接/书签/深链打开还是那条笔记。');
-      say('      → 已写进 coordination/inbox/e2e-notes.md，交给 notes 线的 owner 定夺。');
-    } else {
-      say(`   ✔ 回的是 ${deletedGet.status} —— 与列表、搜索一致。（此前实测是 200，看来已经修了）`);
-    }
-  }
+  await check('F5-a5 ★ 软删之后 GET 这条笔记回 404 —— 与列表、搜索口径一致', () => {
+    ok(!!deletedGet, 'F5-a4 没跑成，这条无从谈起');
+    eq(deletedGet.status, 404, '已删除笔记的 GET 状态码');
+    eq(deletedGet.body?.error?.code, 'NOTE_NOT_FOUND', '错误码');
+    return 'HTTP 404 NOTE_NOT_FOUND';
+  });
+
+  /*
+   * 同一个缺陷在**写路径**上更难看：`noteByUid` 有 10 个调用点，全是 API 入口。
+   * 只验 GET 的话，「已删除的笔记还能被继续编辑」这一半仍然没人看着。
+   */
+  await check(
+    'F5-a6 ★ 已删除的笔记不能再被编辑 / 打星标 / 重新转写（写路径同样 404）',
+    async () => {
+      const patch = await j(
+        `/api/notes/${encodeURIComponent(newUid)}`,
+        jsonReq({ title: '不该改得动' }, 'PATCH'),
+      );
+      eq(patch.status, 404, '改标题的状态码');
+      const star = await j(
+        `/api/notes/${encodeURIComponent(newUid)}/star`,
+        jsonReq({ starred: true }, 'PUT'),
+      );
+      eq(star.status, 404, '打星标的状态码');
+      const exp = await j(`/api/notes/${encodeURIComponent(newUid)}/export?what=mindmap&format=md`);
+      eq(exp.status, 404, '导出的状态码');
+      return 'PATCH / PUT star / export 全是 404';
+    },
+  );
+
+  // 变异：同一条"必须 404"的谓词拿去量一条**活着的**笔记 —— 必须红。
+  // 否则"删掉的回 404"可能只是因为这个 uid 从来就不存在（拼错也 404）。
+  await mutation('F5-a5 的证伪能力（拿活着的笔记去量"必须 404"，必须红）', async () => {
+    const alive = await j(`/api/notes/${encodeURIComponent(subject.uid)}`);
+    eq(alive.status, 404, '活着的笔记的 GET 状态码');
+  });
 
   /* ───────────────── 8. F5-b：文件夹筛选 ───────────────── */
 
