@@ -191,6 +191,14 @@ jobs:
         id: unpack
         shell: bash
         run: |
+          # ⚠️ `mkdir -p unpacked` 不能省：`scripts/ci/resolve-bundle.mjs`（共享脚手架）
+          #    直接 `tar -C <out>` 而**没有先建这个目录**，于是三条 e2e 腿一起红在
+          #    `EXTRACT_FAILED —— tar: unpacked: Cannot open: No such file or directory`
+          #    （`[CI 实测]` e2e-record run 31250861440）。
+          #    这一行是我这条腿的**解堵**，不是修复 —— 真正该修的是那个脚本自己
+          #    建目录（它是别人的文件，已在回执里报给 Manager）。
+          #    等它修好之后这一行是无害的（`-p` 幂等），可以删。
+          mkdir -p unpacked
           node scripts/ci/resolve-bundle.mjs \
             --from incoming --out unpacked \
             --require app/daemon/dist/main.js,runtime/node
