@@ -62,14 +62,42 @@ function ok(msg) {
 function info(msg) {
   console.log(`     ${msg}`);
 }
+/**
+ * **已知事实，不是回归。**
+ *
+ * 有些结论是真的、也是坏的，但**修它需要用户本人拍板**（例如清除 Gatekeeper
+ * 隔离属性属于 Security Weaken）。把这类事实写成 `fail()` 会让 build-bundles
+ * 永远红着 —— 而一条永远红的门禁等于没有门禁：人会开始忽略它，
+ * 于是它再也挡不住**真正的**回归。
+ *
+ * 所以它们走这条通道：**照样打印、照样刺眼，但不判定失败。**
+ * 判据与 `check-bundle-macos-floors.mjs` 那次分层是同一条：
+ * 已知事实不该每次都伪装成新问题。
+ */
+function known(msg) {
+  notes.push(msg);
+  console.log(`   ⚠️ [已知事实·待用户裁决] ${msg}`);
+}
 function hdr(t) {
   console.log(`\n══════ ${t} ══════`);
 }
 
+/**
+ * 跑一条命令。
+ *
+ * ⚠️ **一律带超时。** `[CI 实测 run 31246584116]` macOS 腿卡到 30 分钟超时，
+ * 元凶是一条**诊断用**的 `log show`（扫系统日志归档，能跑十几分钟）——
+ * 而它后面排着的是**本轮最重要的那次测量**（quarantine 路径②）。
+ *
+ * > **教训不是"log show 慢"，是"最贵的测量不该排在一条无上限的诊断后面"。**
+ *
+ * 所以两件事一起做：这里给默认超时，调用方把关键测量**排到诊断之前**。
+ */
 function sh(cmd, args, opts = {}) {
   const r = spawnSync(cmd, args, {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
+    timeout: 120_000,
     ...opts,
   });
   return {
@@ -94,6 +122,42 @@ function findArchive(patternExts) {
     (f) => f.startsWith('openmemo-') && patternExts.some((e) => f.endsWith(e)),
   );
   return hit ? join(ARCHIVE_DIR, hit) : null;
+}
+
+/**
+ * 共用断言：**用户在窗口里读到的那段文字**，本身就是被测对象。
+ *
+ * 这三条都是 2026-08-08 用户实测报回来的，逐条对应一次真实的误解：
+ *   · 鉴权关着却打 token → 「怎么还有 token？不是早都删除了吗」
+ *   · 只有一个裸 URL     → 双击进来的人不知道该干什么
+ *   · 报错文本混进来      → 「双击运行提示出错」
+ */
+function assertBannerIsHumanReadable(out) {
+  if (!out) return;
+  /*
+   * `OPENMEMO_AUTH` 默认是 `none`，此时那串 token **不承担任何作用**，
+   * 出现在最显眼的位置只会让人以为还要过一道验证。
+   */
+  if (out.includes('#t='))
+    fail('启动横幅里仍然带 `#t=<token>` —— 而默认鉴权是 none，这串东西不起任何作用');
+  else ok('启动横幅不含 token（鉴权关闭时不该出现）');
+
+  if (/浏览器/.test(out)) ok('横幅里有一句人能照着做的话（提到"浏览器"）');
+  else fail('横幅里只有一个裸 URL，没有一句告诉用户该做什么的话');
+
+  if (/is not recognized as an internal or external command/i.test(out))
+    fail('输出里混进了 cmd.exe 的报错 —— 用户会读成"双击运行提示出错"');
+}
+
+/** 包根目录必须有一份**不需要执行任何东西就能读到**的说明。 */
+function assertReadMeFirst(root) {
+  if (existsSync(join(root, 'READ-ME-FIRST.txt')))
+    ok('包内有 READ-ME-FIRST.txt（Gatekeeper 拦住时用户唯一读得到的东西）');
+  else
+    fail(
+      '包内没有 READ-ME-FIRST.txt —— macOS 上 Gatekeeper 拦住 .command 时，' +
+        '写在脚本里的解法用户一个字也看不到（v0.2.0 正是如此）',
+    );
 }
 
 /* ── 共用：启动器跑起来之后，界面到底在不在 ──────────────────────────────────────
@@ -293,13 +357,35 @@ Write-Output "extracted_items=$((Get-ChildItem -Recurse -Force '${dest.replace(/
     );
     // 只把**可执行行**（非 rem/空行）里的非 ASCII 字节挑出来 —— 那才是会炸的东西
     const lines = raw.toString('latin1').split('\n');
+    let high = 0;
     lines.forEach((l, i) => {
       const isComment = /^\s*(rem\b|::)/i.test(l);
-      const high = [...l].filter((c) => c.charCodeAt(0) >= 0x80).length;
-      if (high > 0) {
-        info(`  L${i + 1} 非ASCII字节=${high} ${isComment ? '（rem 注释行）' : '★（可执行行！）'}`);
+      const n = [...l].filter((c) => c.charCodeAt(0) >= 0x80).length;
+      high += n;
+      if (n > 0) {
+        info(`  L${i + 1} 非ASCII字节=${n} ${isComment ? '（rem 注释行）' : '★（可执行行！）'}`);
       }
     });
+    /*
+     * ★★ 这一条是本轮最重要的断言。
+     *
+     * `[CI 实测 run 31246584116]` v0.2.0 的 start.cmd 在**代码页 936**（中文 Windows）
+     * 下双击，用户看到的第一行是：
+     *     'm' is not recognized as an internal or external command,
+     * 而在 437 下没有 —— **代码页是唯一变量**。
+     *
+     * 成因不是"换行被吞"（GBK 的 trail byte 是 0x40–0xFE，0x0A 不可能被吞），
+     * 而是 GBK 解码器在中文 rem 注释里**错位配对**，把 `rem` 的 `r`/`e` 吃掉，
+     * 剩下一个 `m` 漏出来当命令执行。
+     *
+     * 判据因此不是"注释行里的中文无所谓"，而是 **.cmd 文件必须整体纯 ASCII**。
+     */
+    if (high === 0) ok('start.cmd 纯 ASCII —— 任何 OEM 代码页都不会把它解坏');
+    else
+      fail(
+        `start.cmd 含 ${high} 个非 ASCII 字节。cmd.exe 按 OEM 代码页解析 .cmd，` +
+          `cp936 下会错位配对并漏出命令片段（实测："'m' is not recognized…"）`,
+      );
   }
 
   hdr('⑥ 双击等价路径：cmd /c "<path>\\start.cmd"，分别在 437 与 936 代码页下');
@@ -322,7 +408,9 @@ Write-Output "extracted_items=$((Get-ChildItem -Recurse -Force '${dest.replace(/
     });
     if (r.ui.status === 200) ok(`代码页 ${cp}: 界面可达 (HTTP 200)`);
     else fail(`代码页 ${cp}: 界面不可达 (${r.ui.body})`);
+    assertBannerIsHumanReadable(r.out);
   }
+  assertReadMeFirst(root);
 
   hdr('⑦ 结尾有没有 pause —— 出错时窗口会不会一闪就关');
   if (existsSync(launcher)) {
@@ -491,32 +579,24 @@ async function macos() {
     sh('/bin/sh', ['-c', `"${join(tree, 'OpenMemo.command')}" --version 2>&1 | head -20`]),
   );
 
-  hdr('④ 双击等价路径：open OpenMemo.command');
-  dump('open OpenMemo.command（= 访达里双击）', sh('open', [join(tree, 'OpenMemo.command')]));
-  info('等待 40s 看界面起没起来…');
-  const ui = await waitForUi(DEFAULT_PORT, 40);
-  info(`[实测] 双击后界面 GET / => ${ui.status || 'unreachable'} (${ui.body.slice(0, 120)})`);
-  if (ui.status === 200) ok('双击后界面可达');
-  else fail(`双击后界面不可达 —— 这正是用户说的"也没有窗口打开"`);
+  assertReadMeFirst(tree);
 
-  dump(
-    'syspolicy 日志（Gatekeeper 判定的原话）',
-    sh('log', [
-      'show',
-      '--last',
-      '5m',
-      '--predicate',
-      'subsystem == "com.apple.syspolicy"',
-      '--style',
-      'compact',
-    ]),
-  );
-
+  /*
+   * ★ 顺序是有讲究的：**最贵的那次测量排在最前面。**
+   *
+   * `[CI 实测 run 31246584116]` 上一版把 quarantine 路径② 排在一条 `log show`
+   * 之后，那条诊断跑了十几分钟、把整条腿拖到 30 分钟超时 ——
+   * **于是本轮最该拿到的那个值，恰恰是唯一没拿到的。**
+   * 现在：⑤ 路径②（便宜、不占端口）→ ④ 双击（会被拦，什么都不会起）
+   *      → ⑥ 放行后（要占端口）→ 最后才是诊断日志。
+   */
   hdr('⑤ 路径②：daemon 自己下载的文件会不会被打上 quarantine（ADR-003 §7.2 的正题）');
   /*
    * ADR-003 §7.6 裁决 (A)：先量一量。量的是**Node 写下去的文件**有没有 quarantine 位。
    * 这里用**包自带的那个 node**（不是 runner 的 node）去下载并落盘，
    * 因为路径②的定义就是"daemon 进程自己写的"。
+   *
+   * ⚠️ 阴性结果只有在 ① 的阳性对照成立时才有意义 —— 两者必须一起读。
    */
   const nodeBin = join(tree, 'runtime', 'node');
   const outFile = join(base, 'downloaded-by-node.bin');
@@ -528,15 +608,82 @@ async function macos() {
        w.on('finish',()=>console.log('written'));});`,
   ]);
   dump('用包自带的 node 下载并写盘', dl);
+  // 落盘是异步的，给它一点时间
+  for (let i = 0; i < 10 && !existsSync(outFile); i++) sh('sleep', ['1']);
   if (existsSync(outFile)) {
     const qd = sh('xattr', ['-p', 'com.apple.quarantine', outFile]);
     dump('xattr -p com.apple.quarantine <node 写的文件>', qd);
     if (qd.code !== 0)
-      ok('[实测] 路径②：Node 写下去的文件**没有** quarantine 位 —— 与阳性对照对比后成立');
+      ok('[实测] 路径②：Node 写下去的文件**没有** quarantine 位 —— 与 ① 的阳性对照并读后成立');
     else fail('[实测] 路径②：Node 写下去的文件**带** quarantine 位');
   } else {
-    info('UNKNOWN：下载没落盘（runner 网络受限？），路径②这次取不到值');
+    info('UNKNOWN：下载没落盘（runner 网络受限？），路径② 这次取不到值 —— 不许据此下结论');
   }
+
+  hdr('④ 双击等价路径：open OpenMemo.command');
+  dump('open OpenMemo.command（= 访达里双击）', sh('open', [join(tree, 'OpenMemo.command')]));
+  info('等待 40s 看界面起没起来…');
+  const ui = await waitForUi(DEFAULT_PORT, 40);
+  info(`[实测] 双击后界面 GET / => ${ui.status || 'unreachable'} (${ui.body.slice(0, 120)})`);
+  if (ui.status === 200) ok('双击后界面可达');
+  else
+    known(
+      `双击（open）后界面不可达 —— 这正是用户 2026-08-08 说的"也没有窗口打开"。` +
+        `成因是 Gatekeeper 拦在 LaunchServices 那一步（见 ③ 的 spctl 原话）。` +
+        `修它要么买签名证书、要么清 quarantine（Security Weaken，需用户拍板），` +
+        `所以这里**不判定为回归**，只如实记录。`,
+    );
+
+  hdr('⑥ 放行之后呢：用户过了 Gatekeeper 这一关，界面和横幅对不对');
+  /*
+   * ④ 量的是"被拦住"，这一步量的是"**放行之后**" —— 两者都要有结论。
+   *
+   * ⚠️ 这里的 `xattr -dr` 跑在**一次性 runner 的临时副本**上，用来模拟
+   *   "用户右键→打开、或自己决定清掉隔离属性"之后的状态。
+   *   **它不是产品行为**：产品里一行清 quarantine 的代码都没有，
+   *   那属于 Security Weaken，必须用户本人拍板（ADR-003 §7.5）。
+   */
+  const clean = extracted['tar'];
+  if (clean) {
+    sh('xattr', ['-dr', 'com.apple.quarantine', clean]);
+    const left = sh('xattr', ['-p', 'com.apple.quarantine', join(clean, 'OpenMemo.command')]);
+    info(
+      `[模拟] 已在临时副本上放行（xattr -dr）；回读: ${left.code === 0 ? left.stdout : '已无该属性'}`,
+    );
+    const r = await runLauncher({
+      label: '放行后运行 OpenMemo.command（不带任何参数，= 双击）',
+      cmd: '/bin/sh',
+      args: ['-c', `"${join(clean, 'OpenMemo.command')}"`],
+      cwd: clean,
+      waitSec: 100,
+    });
+    if (r.ui.status === 200) ok('放行后界面可达 (HTTP 200)');
+    else fail(`放行后界面仍不可达 (${r.ui.body}) —— 这就不是 Gatekeeper 的问题了`);
+    assertBannerIsHumanReadable(r.out);
+  } else {
+    info('UNKNOWN：没有可用的干净副本，⑥ 取不到值');
+  }
+
+  /*
+   * ⚠️ 这条是**诊断**，不是判据 —— Gatekeeper 的判定原话 ③ 的 spctl 已经给了。
+   *   它扫系统日志归档，实测能跑十几分钟，所以：**排在所有测量之后 + 硬超时 60s**。
+   */
+  dump(
+    'syspolicy 日志（Gatekeeper 判定的原话；诊断用，超时即放弃）',
+    sh(
+      'log',
+      [
+        'show',
+        '--last',
+        '2m',
+        '--predicate',
+        'subsystem == "com.apple.syspolicy"',
+        '--style',
+        'compact',
+      ],
+      { timeout: 60_000 },
+    ),
+  );
 }
 
 /* ════════════════════════════════════════════════════════════════════════════════
@@ -580,6 +727,8 @@ async function linux() {
   });
   if (r.ui.status === 200) ok('界面可达 (HTTP 200)');
   else fail(`界面不可达 (${r.ui.body})`);
+  assertBannerIsHumanReadable(r.out);
+  assertReadMeFirst(root);
 }
 
 /* ── main ─────────────────────────────────────────────────────────────────────── */

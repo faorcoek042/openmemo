@@ -38,9 +38,11 @@ import { readDataDirPointer, resolvePaths, type AppPaths } from './config/paths.
 import { isDirectRun } from './bootstrap/entrypoint.js';
 import { reclaimOrphans } from './bootstrap/orphans.js';
 import { ensureSelfSignedCert, tlsEnabled } from './bootstrap/tls.js';
+import { openFailedHint, openerFor, shouldOpenBrowser } from './bootstrap/open-browser.js';
+import { readyBannerLines, readyUrl } from './bootstrap/ready-banner.js';
 import { migrateInstallRecords } from './storage/migrateRecords.js';
 import { migrateMediaAssets } from './storage/migrateAssets.js';
-import { SessionStore, loadOrCreateToken, type Session } from './http/auth.js';
+import { SessionStore, authRequired, loadOrCreateToken, type Session } from './http/auth.js';
 import { attachHttpHandlers } from './http/server.js';
 import { SseHub } from './http/sse.js';
 import { attachWebSocket } from './http/ws.js';
@@ -691,8 +693,26 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       refreshTimer.unref?.();
     });
     if (bundle.missing.length > 0) {
+      /*
+       * ★ 这句话是**冷装用户看到的第一行**（它打在就绪横幅之前）。
+       *
+       * 原文是「⚠️ 流水线缺少工具: … —— 相关任务会转 blocked」。**内容没错**：
+       * 冷装之后本来就没有 ffmpeg / whisper-cli / 模型。但对一个刚双击开包的人来说，
+       * 它读起来像**"这个软件坏了"** —— 一个警告符号、一串他没见过的名字、
+       * 一个他不知道是什么意思的状态词（blocked）。
+       *
+       * 判据：**「尚未完成的一步」和「出错了」必须区分得开。**
+       * 这是本仓"不适用 vs 不支持"那条的同一族 —— 差别不在措辞好不好听，
+       * 在于用户据此做出的下一个动作是"去装组件"还是"卸载算了"。
+       *
+       * 所以改成三件事：① 说清这是正常的；② 说清下一步去哪；③ 说清代价（任务先等着，不丢）。
+       * 不降级成 console.log：它确实是"功能还不完整"的状态，只是不该被读成故障。
+       */
       console.warn(
-        `[daemon] ⚠️  流水线缺少工具: ${bundle.missing.join(', ')} —— 相关任务会转 blocked`,
+        `[daemon] 以下组件还没装: ${bundle.missing.join(', ')}\n` +
+          `[daemon]    这是首次启动的正常状态，不是出错了。\n` +
+          `[daemon]    打开网页后在「设置 → 组件」里点安装，装好会自动生效（不用重启）。\n` +
+          `[daemon]    在此之前，转写类任务会先排队等着（blocked），不会丢。`,
       );
     }
 
@@ -981,7 +1001,53 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
   if (portWarning) console.warn(`[daemon] ⚠️  ${portWarning}`);
 
   const scheme = tls ? 'https' : 'http';
-  console.log(`[daemon] 就绪 ${scheme}://${BIND_HOST}:${boundPort}/#t=${token}`);
+  /*
+   * ★ 鉴权关着的时候，**那串 token 不该出现在用户眼前**。
+   *
+   * 用户 2026-08-08 的原话：「怎么还有 token？不是早都删除了这套安全验证流程吗」。
+   * 鉴权确实是关的（`auth.ts` 的 `authMode()` 默认 `'none'`，
+   * `http/server.ts` 的鉴权闸门整段跳过），但横幅照样把 `#t=<token>` 打出来 ——
+   * 它今天**不承担任何作用**，只是让人以为还要过一道验证。
+   *
+   * 判据：**打印出来的东西必须对应一个真实存在的机制。**
+   * 一个不起作用的凭据出现在最显眼的位置，与一句假注释是同一类东西
+   * —— 它让读的人对系统建立了错误的模型。
+   *
+   * ⚠️ `OPENMEMO_AUTH=token` 那条恢复路径**要留着**：开着的时候当然要打，
+   *   否则用户拿不到唯一的入口。两个方向都有用例钉着（见 startup-banner.test.ts）。
+   *
+   * ★★ 另一半：**不是打个 URL 就完事**。双击打开的人面对的是一个控制台窗口，
+   *   一个裸 URL 不告诉他该干什么。所以这里给的是**一句他能照着做的话**。
+   */
+  const bannerInput = {
+    scheme,
+    host: BIND_HOST,
+    port: boundPort,
+    token,
+    authRequired: authRequired(),
+  };
+  const openUrl = readyUrl(bannerInput);
+  for (const line of readyBannerLines(bannerInput)) console.log(`[daemon] ${line}`);
+
+  /*
+   * ★ 双击进来的人没有别的入口 —— 启动器会设 OPENMEMO_OPEN_BROWSER=1，这里替他打开。
+   *   默认关；脚本 / CI 直接跑 dist/main.js 因而不受影响。理由见 open-browser.ts。
+   *
+   *   spawn 留在本文件而不是 open-browser.ts：D-01 §8.4 L1 的白名单恰好 7 个文件
+   *   且有守卫测试钉着，不该为了开个浏览器再加一行（详见 open-browser.ts 顶部）。
+   *   detached + unref：浏览器的生命周期与 daemon 无关，否则 daemon 会因为
+   *   还挂着一个活子进程而迟迟不退出。
+   */
+  if (shouldOpenBrowser()) {
+    const { cmd, args } = openerFor(process.platform, openUrl);
+    try {
+      const opener = spawn(cmd, args, { stdio: 'ignore', detached: true });
+      opener.on('error', () => console.warn(openFailedHint(cmd)));
+      opener.unref();
+    } catch {
+      console.warn(openFailedHint(cmd));
+    }
+  }
 
   /*
    * ★ 非回环 + 明文时**必须显式警告**。

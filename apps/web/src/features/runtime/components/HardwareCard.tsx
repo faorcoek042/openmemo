@@ -69,8 +69,19 @@ export function HardwareCard({ hw, locale }: { hw: HardwareInfo; locale: string 
               logical: hw.cpu.logicalCores,
             })}
           </span>
-          {!hw.cpu.features.includes('avx2') ? (
-            // AVX2 缺失是硬约束：预编译的 CPU 后端普遍要求它
+          {/*
+            AVX2 缺失是**硬约束**：预编译的 CPU 后端普遍要求它。
+            但它是 **x86 专属**的维度 —— 在 arm64（Apple Silicon）上根本不存在这个概念。
+
+            ⚠️ 原来这里只判 `!features.includes('avx2')`，于是 M 系列 Mac 上必然为真，
+            用户看到的是「Apple M4 · 10 核 / 10 线程 · **不支持 AVX2**」并且是红色告警色。
+            用户 2026-08-08 因此以为自己的 M4 缺了什么 —— 而 M4 不支持 AVX2
+            既不是缺陷也不是降级，**是一个不适用的维度**。
+
+            判据：**「不适用」和「不支持」必须区分得开。**
+            前者不该出现，后者才该报警。所以这一行只在 x64 上渲染。
+          */}
+          {hw.os.arch === 'x64' && !hw.cpu.features.includes('avx2') ? (
             <span className="text-critical">{t('runtime.hw.noAvx2')}</span>
           ) : null}
         </Row>

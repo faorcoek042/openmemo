@@ -654,55 +654,247 @@ async function findUnder(root, name) {
  *   用户搬完家下次启动又被脚本拽回来 —— 这正是 PROTOCOL §9 那一族
  *   「进程级配置覆盖了机器级状态」的形状。数据目录的解析权留给 daemon 自己。
  */
-const LAUNCHERS = {
-  'start.sh': `#!/bin/sh
-# OpenMemo 启动脚本。用法：./start.sh [--port 17650] [--data-dir /路径]
-set -e
+/*
+ * ★ 双击进来的人**没有控制台可以读 URL**，所以启动器请 daemon 自己开浏览器。
+ *   用户已设则尊重他的值（`OPENMEMO_OPEN_BROWSER=0` 可关）。
+ *   实现在 apps/daemon/src/bootstrap/open-browser.ts，**默认关**——
+ *   只有启动器（= 双击入口）才打开它，脚本/CI 直接跑 `dist/main.js` 因而不受影响。
+ */
+
+/** POSIX 两个启动器共用的正文；差别只在文件名与注释。 */
+const posixBody = (self) => `set -e
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+# 缺件预检：说清"缺什么、多半是为什么、下一步做什么"，而不是让 node 抛一个
+# 用户看不懂的 MODULE_NOT_FOUND。
+if [ ! -x "$DIR/runtime/node" ] || [ ! -f "$DIR/app/daemon/dist/main.js" ]; then
+  echo ""
+  echo "  OpenMemo 无法启动：这个包看起来不完整。"
+  echo ""
+  echo "  期望在 ${self} 旁边找到："
+  echo "      runtime/node"
+  echo "      app/daemon/dist/main.js"
+  echo "  当前目录：$DIR"
+  echo ""
+  echo "  常见原因：只解开了一部分，或者把 ${self} 单独拷了出来。"
+  echo "  重新完整解压一次再试。"
+  echo ""
+  exit 1
+fi
+
 # 已设则尊重用户的值；未设才用包内的
 : "\${OPENMEMO_WEB_DIST:=$DIR/app/apps/web/dist}"
 : "\${OPENMEMO_EXT_DIR:=$DIR/ext}"
-export OPENMEMO_WEB_DIST OPENMEMO_EXT_DIR
+: "\${OPENMEMO_OPEN_BROWSER:=1}"
+export OPENMEMO_WEB_DIST OPENMEMO_EXT_DIR OPENMEMO_OPEN_BROWSER
 cd "$DIR/app/daemon"
 exec "$DIR/runtime/node" dist/main.js "$@"
-`,
-  'OpenMemo.command': `#!/bin/sh
-# OpenMemo 启动脚本（macOS 上可双击）。
+`;
+
+const LAUNCHERS = {
+  'start.sh': `#!/bin/sh
+# OpenMemo 启动脚本。用法：./start.sh [--port 17650] [--data-dir /路径]
 #
-# ⚠️ 首次运行如果被 Gatekeeper 拦住（"无法验证开发者"），原因是浏览器下载的归档
-#    带 com.apple.quarantine，用「访达」解压会把它传播给解出来的文件。
-#    两种解法（任选其一）：
-#      · 用命令行解压：tar xzf openmemo-*.tar.gz   （不传播 quarantine）
-#      · 已经解开了：  xattr -dr com.apple.quarantine "$(dirname "$0")"
-set -e
-DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-: "\${OPENMEMO_WEB_DIST:=$DIR/app/apps/web/dist}"
-: "\${OPENMEMO_EXT_DIR:=$DIR/ext}"
-export OPENMEMO_WEB_DIST OPENMEMO_EXT_DIR
-cd "$DIR/app/daemon"
-exec "$DIR/runtime/node" dist/main.js "$@"
-`,
+# 在文件管理器里双击本文件通常**不会运行它**（GNOME Files 等默认用文本编辑器打开
+# 脚本）。Linux 上请在终端里跑：  ./start.sh
+${posixBody('start.sh')}`,
+
+  'OpenMemo.command': `#!/bin/sh
+# OpenMemo 启动脚本（macOS 上可双击 —— .command 后缀会用「终端」打开）。
+#
+# ⚠️ 如果双击**什么都没发生**、或弹出"无法打开，因为无法验证开发者"：
+#    那是 Gatekeeper 在拦，**不是这个脚本出错** —— 它根本没被执行到，
+#    所以你也读不到这段话。**解法必须写在包外**：见同目录的 READ-ME-FIRST.txt
+#    与 Release 正文。
+#
+#    （v0.2.0 的教训：那时解法只写在本文件里 ——
+#     把说明书锁在了它要解释的那扇门后面。）
+${posixBody('OpenMemo.command')}`,
+
+  /*
+   * ★★ 这个文件**必须保持纯 ASCII**。
+   *
+   * `cmd.exe` 读 `.cmd` 用的是**控制台的 OEM 代码页**（中文系统常是 936，英文 437），
+   * 不是 UTF-8。文件里任何非 ASCII 字节在不同机器上会被解成不同东西。
+   *
+   * `[实测 2026-08-08]` v0.2.0 那版的 rem 注释里有中文，但**非 ASCII 字节全部落在
+   * rem 行内**，可执行行是纯 ASCII；且 GBK 的 trail byte 范围是 0x40–0xFE，
+   * 换行符 0x0A **不可能**被前一个 lead byte 吞掉。所以"代码页把脚本解坏"这条
+   * **没有成立**（见 D-18）。保持 ASCII 是为了**从结构上取消这一整类问题**，
+   * 而不是因为它已经炸了 —— 判据照 PROTOCOL §7 补充：跑错了也不该有后果。
+   *
+   * `chcp 65001` 管的是**另一件事**：daemon 自己的输出是 UTF-8 中文，
+   * 在 cp437 控制台上会显示成乱码。那是**渲染**，不是解析。两者不要混。
+   */
   'start.cmd': `@echo off
-rem OpenMemo 启动脚本。用法：start.cmd [--port 17650] [--data-dir C:\\路径]
+rem OpenMemo launcher for Windows.  Usage: start.cmd [--port 17650] [--data-dir C:\\path]
 rem
-rem ⚠️ 首次运行可能弹 SmartScreen（"Windows 已保护你的电脑"）——我们不签名，
-rem    点「更多信息」→「仍要运行」。这是 ADR-003 决策 4 的已知后果。
+rem KEEP THIS FILE PURE ASCII -- cmd.exe parses .cmd with the console OEM code page
+rem (936 on Chinese Windows, 437 on English), not UTF-8.  See docs/design/D-18.
 setlocal
+title OpenMemo
+
+rem The daemon prints UTF-8.  Without this, its startup instructions render as
+rem mojibake on an English (cp437) console.  This affects rendering, not parsing.
+chcp 65001 >nul 2>&1
+
 set "DIR=%~dp0"
+
+if not exist "%DIR%runtime\\node.exe" goto :incomplete
+if not exist "%DIR%app\\daemon\\dist\\main.js" goto :incomplete
+
 if not defined OPENMEMO_WEB_DIST set "OPENMEMO_WEB_DIST=%DIR%app\\apps\\web\\dist"
 if not defined OPENMEMO_EXT_DIR set "OPENMEMO_EXT_DIR=%DIR%ext"
+if not defined OPENMEMO_OPEN_BROWSER set "OPENMEMO_OPEN_BROWSER=1"
+
 cd /d "%DIR%app\\daemon"
 "%DIR%runtime\\node.exe" dist\\main.js %*
+set "RC=%ERRORLEVEL%"
+if not "%RC%"=="0" goto :failed
+endlocal
+exit /b 0
+
+:incomplete
+echo.
+echo   OpenMemo cannot start: this package looks incomplete.
+echo.
+echo   Expected next to start.cmd:
+echo       runtime\\node.exe
+echo       app\\daemon\\dist\\main.js
+echo   Current folder: %DIR%
+echo.
+echo   Most common cause: start.cmd was launched from *inside* the .zip.
+echo   Windows only unpacks the single file you double-click, so everything
+echo   else is missing.
+echo.
+echo   Fix: right-click the .zip -^> "Extract All...", open the extracted
+echo        folder, and double-click start.cmd there.
+echo.
+pause
+endlocal
+exit /b 1
+
+:failed
+echo.
+echo   OpenMemo stopped with exit code %RC%.
+echo   The real error is printed ABOVE this line -- please read it.
+echo.
+echo   If it mentions VCRUNTIME140.dll or "side-by-side configuration",
+echo   install "Microsoft Visual C++ 2015-2022 Redistributable (x64)".
+echo.
+pause
+endlocal
+exit /b %RC%
 `,
 };
+
+/*
+ * 包内的「首次运行请先看我」。
+ *
+ * ★ 为什么它必须是**包外可读的一个文件**，而不是启动脚本里的注释：
+ *   macOS 上 Gatekeeper 拦的时候，`OpenMemo.command` **根本没被执行**，
+ *   写在它里面的解法用户一个字也看不到。v0.2.0 恰恰就是这么写的 ——
+ *   **把说明书锁在了它要解释的那扇门后面。**
+ *   同一句话必须同时出现在：这个文件、README、以及 Release 正文。
+ */
+const READ_ME_FIRST = `OpenMemo —— 首次运行请先看我
+================================
+
+Windows
+-------
+1. 先把 .zip **完整解压**出来（右键 →「全部解压缩」）。
+   ⚠️ 不要直接在压缩包里双击 start.cmd —— Windows 只会解开你点的那一个文件，
+      其余全都不在，于是必然失败。
+2. 打开解压出来的文件夹，双击 start.cmd。
+3. 首次运行可能弹「Windows 已保护你的电脑」（SmartScreen）——
+   我们没有购买代码签名证书，这是预期内的。
+   点「更多信息」→「仍要运行」。
+4. 浏览器会自动打开。没自动打开的话，看控制台窗口里那行地址。
+
+macOS
+-----
+1. 双击 .tar.gz 解压（访达会解成一个文件夹）。
+2. **如果双击 OpenMemo.command 什么都没发生，或提示"无法验证开发者"：**
+   那是 Gatekeeper 在拦 —— 浏览器下载的文件带 com.apple.quarantine 属性，
+   解压会把它传播给解出来的所有文件。
+
+   ⚠️ 注意：**换成命令行 tar xzf 解压并不能绕开它。**
+      我们实测过（2026-08-08，macOS CI）：归档带 quarantine 时，
+      访达的「归档实用工具」和命令行 tar **都会**把该属性传给解出来的文件。
+      v0.2.0 的说明里写过"用命令行解压就不会被拦"，**那句话是错的**。
+
+   解法（任选其一）：
+     · 右键点 OpenMemo.command →「打开」→ 在弹窗里再点「打开」。
+       只需要做这一次；之后双击就正常了。
+       （macOS 13–14 是这个流程；macOS 15+ 可能要去
+        「系统设置 → 隐私与安全性」，在下方点「仍要打开」。）
+     · 或者在「终端」里跑一次：
+         xattr -dr com.apple.quarantine "<解压出来的文件夹>"
+       ⚠️ 这条命令会**清除整个文件夹的隔离标记**，等于对这些文件关掉 Gatekeeper 检查。
+          请确认你信任这个来源再执行。
+3. 放行之后会打开一个「终端」窗口，浏览器随后自动打开。
+
+Linux
+-----
+在终端里跑：  ./start.sh
+（文件管理器里双击 .sh 通常不会运行它，而是用文本编辑器打开。）
+
+共通
+----
+· 关闭 OpenMemo：回到那个控制台/终端窗口按 Ctrl+C，或直接关掉窗口。
+· 首次启动会提示"以下组件还没装"——这是正常的，不是出错。
+  打开网页后在「设置 → 组件」里点安装即可。
+· 数据保存在系统的用户数据目录里，**不在这个解压出来的文件夹里**。
+  升级时直接删掉旧文件夹、解压新的即可，数据不受影响。
+`;
 
 async function writeLauncher() {
   hdr('⑤ 启动脚本');
   const name = T.launcher;
   const p = join(STAGE, name);
-  await writeFile(p, LAUNCHERS[name], 'utf8');
-  if (!name.endsWith('.cmd')) await chmod(p, 0o755);
-  say(`   ✔ ${name}`);
+  const body = LAUNCHERS[name];
+
+  /*
+   * ★ Windows 启动器**必须是纯 ASCII + CRLF**，而且这条要在**组装时**就验，
+   *   不能等到用户双击才发现。
+   *
+   *   · 纯 ASCII：cmd.exe 按控制台 OEM 代码页解析 .cmd（见 LAUNCHERS 里的长注释）。
+   *   · CRLF：`.cmd` 的传统行尾。LF-only 在多数情况下能跑，但它是又一个
+   *     "在别人机器上才显形"的自由度，而这里消灭它的成本是零。
+   *
+   *   这不是"记得别写中文"，是**写了就当场退出 1** —— 判据同 PROTOCOL §7 补充。
+   */
+  if (name.endsWith('.cmd')) {
+    const bad = [...body].filter((c) => c.charCodeAt(0) > 0x7f);
+    if (bad.length > 0) {
+      die(
+        `start.cmd 含 ${bad.length} 个非 ASCII 字符（${JSON.stringify(bad.slice(0, 10).join(''))}）——` +
+          ` cmd.exe 按 OEM 代码页解析 .cmd，非 ASCII 在中文/英文系统上解出来的东西不一样。`,
+      );
+    }
+    const crlf = body.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n');
+    await writeFile(p, crlf, 'latin1');
+    say(`   ✔ ${name}（纯 ASCII 已校验 · CRLF 行尾 · ${crlf.length} 字节）`);
+  } else {
+    await writeFile(p, body, 'utf8');
+    await chmod(p, 0o755);
+    say(`   ✔ ${name}（0755）`);
+  }
+
+  /*
+   * 「首次运行请先看我」必须是**不需要执行任何东西就能读到**的文件。
+   * macOS 上 Gatekeeper 拦住 .command 时，写在脚本里的解法用户一个字都看不到。
+   */
+  /*
+   * ⚠️ 文件名保持 **纯 ASCII**，理由与 start.cmd 同源：zip 里非 ASCII 文件名是否
+   *   被标成 UTF-8（通用位标记 bit 11）取决于打包工具 —— `zip(1)` 与 Python 的
+   *   `zipfile` 行为不同，而 Windows 资源管理器对没标记的名字按 OEM 代码页解。
+   *   一个叫「首次运行请先看我.txt」的文件很可能在用户机器上显示成乱码，
+   *   **恰好是它要解决的那类问题**。正文用中文，文件名用英文。
+   */
+  const readme = join(STAGE, 'READ-ME-FIRST.txt');
+  await writeFile(readme, READ_ME_FIRST, 'utf8');
+  say(`   ✔ READ-ME-FIRST.txt`);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────────

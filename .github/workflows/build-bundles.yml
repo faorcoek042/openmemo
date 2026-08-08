@@ -105,6 +105,18 @@ jobs:
       - name: Verify extracted archive
         run: bash scripts/ci/verify-bundle.sh --archive "${{ steps.bundle.outputs.archive }}" --target linux-x64
 
+      # ── ★ 模拟用户动作：从浏览器下载 → 按系统默认方式解压 → 双击 ──────────────
+      #
+      # 上面那些步骤跑的都是 `dist/main.js` 或只检查启动器**存在**
+      # （verify-bundle.sh 是 `need_file "$LAUNCHER"`）——
+      # `[实测]` 在这一步加进来之前，**没有任何一条 CI 腿执行过任何一个启动器**。
+      # 这就是 v0.2.0 那个双击打不开的包能一路绿灯发出去的结构性原因。
+      - name: 模拟用户动作（双击 / 下载标记 / Gatekeeper）
+        shell: bash
+        run: |
+          node scripts/ci/simulate-user-launch.mjs \
+            --archive "${{ steps.bundle.outputs.archive }}" --mode guard
+
       # ── 判据本身：干净机器 + 屏蔽宿主 PATH + 真下载 + 真转写出非空文本 ────────
       - name: Cold start + transcription proof（用包自带的 Node）
         if: ${{ inputs.coldStart }}
@@ -176,6 +188,18 @@ jobs:
       - name: Verify extracted archive
         run: bash scripts/ci/verify-bundle.sh --archive "${{ steps.bundle.outputs.archive }}" --target darwin-arm64
 
+      # ── ★ 模拟用户动作：从浏览器下载 → 按系统默认方式解压 → 双击 ──────────────
+      #
+      # 上面那些步骤跑的都是 `dist/main.js` 或只检查启动器**存在**
+      # （verify-bundle.sh 是 `need_file "$LAUNCHER"`）——
+      # `[实测]` 在这一步加进来之前，**没有任何一条 CI 腿执行过任何一个启动器**。
+      # 这就是 v0.2.0 那个双击打不开的包能一路绿灯发出去的结构性原因。
+      - name: 模拟用户动作（双击 / 下载标记 / Gatekeeper）
+        shell: bash
+        run: |
+          node scripts/ci/simulate-user-launch.mjs \
+            --archive "${{ steps.bundle.outputs.archive }}" --mode guard
+
       - name: Cold start + transcription proof（用包自带的 Node）
         if: ${{ inputs.coldStart }}
         timeout-minutes: 60
@@ -232,6 +256,18 @@ jobs:
       - name: Verify extracted archive
         shell: bash
         run: bash scripts/ci/verify-bundle.sh --archive "${{ steps.bundle.outputs.archive }}" --target win-x64
+
+      # ── ★ 模拟用户动作：从浏览器下载 → 按系统默认方式解压 → 双击 ──────────────
+      #
+      # 上面那些步骤跑的都是 `dist/main.js` 或只检查启动器**存在**
+      # （verify-bundle.sh 是 `need_file "$LAUNCHER"`）——
+      # `[实测]` 在这一步加进来之前，**没有任何一条 CI 腿执行过任何一个启动器**。
+      # 这就是 v0.2.0 那个双击打不开的包能一路绿灯发出去的结构性原因。
+      - name: 模拟用户动作（双击 / 下载标记 / Gatekeeper）
+        shell: bash
+        run: |
+          node scripts/ci/simulate-user-launch.mjs \
+            --archive "${{ steps.bundle.outputs.archive }}" --mode guard
 
       - name: Cold start + transcription proof（用包自带的 Node）
         if: ${{ inputs.coldStart }}
