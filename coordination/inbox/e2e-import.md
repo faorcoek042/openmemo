@@ -516,3 +516,135 @@ packages/shared/openapi.yaml                                          ← 公开
 
 ⚠️ 全树 `format:check` / `eslint` 我最后一次检查时仍有别人在飞的文件红着，
 我只对自己的文件跑 prettier，**没有把 `--write` 打进共享索引**。
+
+---
+
+## [2026-08-08 19:30] e2e-import(三平台实跑 + §11) DONE
+
+交付: `.github/workflows/e2e-import.yml`、`scripts/ci/e2e-import-audit.mjs`（提交 `0303e53`）
+
+要点:
+
+- **三平台全绿：CI run `31253127981`**（linux-x64 / darwin-arm64 / win32-x64 全 success）。
+- 头一轮 run `31252636757` **三平台全红**，只红在一条断言上 —— 而那是**对的**：
+  包比修复旧。详见 §B，这条值得单独记。
+- Manager 提醒的「取最近一次 success 可能选到残缺 run」**是真的会咬到我的**，已修（§C）。
+- 没再撞到脚手架的问题；`unzip || tar` 我是**走共享脚手架**那一档，两条都有（§D）。
+- §11 四条已逐条满足，端口那条做了反向验证（§A）。
+
+需要 Manager 决策: 无。
+
+### A. 这条腿现在满不满足 §11
+
+协议里点名的三个实例有一个就是我这条（健康检查连上游离 daemon、0.5 秒报"就绪"）。逐条：
+
+| §11 条款 | 此前 | 现在 |
+| --- | --- | --- |
+| 探测前先证明端口是空的 | ❌ 只在健康检查**之后**比 pid —— 能抓住但太晚 | ✅ `assertPortFree()` 在每次 spawn 前跑，不空**当场判失败** |
+| 按 pid 收整棵进程树 | ⚠️ 只 `child.kill()`，Windows 上孙子进程会留下 | ✅ Windows 走 `taskkill /PID <pid> /T /F`（带超时）；**仍然按 pid，没用 pkill -f** |
+| 一切外部命令带超时 | ⚠️ HTTP 调用没有上限 | ✅ 统一挂 `AbortSignal.timeout`（默认 120s）；ffmpeg 造样本本来就有 |
+| 跳过不许渲染成成功 | ❌ F1 跳过时 push `ok:null` 然后 exit 0 | ✅ 见下 |
+
+**"跳过"分两种，处置不同**（这一条我改得比原来重）：
+
+- **非自愿跳过**（fixture 主机名没指向回环 = workflow 那步坏了）→ **当场判失败**。
+  以前它会继续报绿，而 F1 一次都没跑过 —— 正是 §11 最廉价的那种发作。
+- **显式 `--skip-f1`**（人的选择）→ 允许继续，但结论区必须单独喊
+  「已执行的用例全部通过，但**本轮不是全量**」，把跳过的列出来。
+
+**反向验证**（占住端口再跑）：
+
+```
+✘ E2E 导入审计中断：端口 19890 不是空的（EADDRINUSE）—— 启动 [cold] daemon 之前。
+      PROTOCOL §11：起服务再探测的测试，探测前必须先证明端口是空的。
+```
+
+正是此前那个"0.5 秒报就绪"的场景，现在**立刻红**。
+
+### B. 头一轮三平台全红 —— 而那是对的（这条比绿灯更值钱）
+
+run **31252636757**（对 bundle run `31248640972`）：三平台**各自只有一条**失败，其余全过
+（sha256 往返、206/416 Range、audio16k、F1 走 yt-dlp、借宿主 0 个）：
+
+```
+✘ [F2:f2-video.mp4] media.ready.hasVideo=false，期望 true（H.264+AAC / MP4 / **带视频**）—— 契约字段在说谎
+```
+
+追因：那个包的 head sha 是 **`9539e4b`（08-08 08:32Z）**，而 `hasVideo` 的修复在
+**`749c949`（08-08 17:18）**才落地 —— `git merge-base --is-ancestor` 判定
+**包早于修复**。所以断言是对的，**包是旧的**。
+
+> **结论（结构性，建议记住）：这条腿验的是"用户下载的那个包"，
+> 所以任何产品侧修复在**重新出包之前**都不会在这条腿上显形。**
+> 换句话说：这条腿红了，第一件要问的不是"代码对不对"，而是
+> **"我手里这个包是从哪个 commit 出来的"**。
+
+处置：从当前 master 重新出包（build-bundles run **`31252923419`**，sha `20176f2f`，
+三平台产物齐全），再跑 e2e-import run **`31253127981`** → 三平台全绿：
+
+```
+✔ media.ready.hasVideo=false（PCM / WAV / 仅音轨）
+✔ media.ready.hasVideo=false（MP3 / MPEG / 仅音轨）
+✔ media.ready.hasVideo=false（AAC / MP4 / 仅音轨）
+✔ media.ready.hasVideo=true （H.264+AAC / MP4 / **带视频**）
+✔ 产品报告 adapterId=yt-dlp，且 fixture 真的被取了 4 次
+⚠️ **借宿主 PATH 的 (0)**：(无)      ✔ 一个都没借。
+✔ 全部通过。
+```
+
+Windows 侧确认用的是包自带的解释器（`--require-node-runtime` 生效）：
+
+```
+解释器 = 包自带的 D:\a\...\openmemo-0.2.0-win-x64\runtime\node.exe
+        （**不是**宿主的 C:\hostedtoolcache\windows\node\22.23.2\x64\node.exe）
+```
+
+### C. 「最近一次 success」这个坑**确实会咬到我**，已修
+
+`[实测 2026-08-08]` 最近一次 `conclusion: success` 的 build-bundles run
+**`31249135458` 只有 `bundle-darwin-arm64` 一个产物**（另外两条腿 skipped 也算 success）。
+我的自动选取原本就是"取最近一次 success" —— 留空跑的话，linux/win 会死在
+"artifact 不存在"，而那个错误**读起来像"我的腿坏了"**。
+
+判据改成**这条腿要的那个产物在不在**，而不是"那一轮绿不绿"：往回最多找 15 次，
+逐个查 artifacts 列表，命中即用；找不到就如实说找不到，**不拿残缺的 run 凑数**。
+（Manager 说这条已派给 build-bundles 的主人从源头修 —— 我这条是消费侧的兜底，
+两边不冲突：即使上游修好了，"我要的产物在不在"仍然是这条腿该自己确认的事。）
+
+### D. 脚手架：没再撞到问题；`unzip || tar` 我属于"有"的那一档
+
+我这条腿**走共享的 `scripts/ci/resolve-bundle.mjs`**，而它内部已经是
+`unzip` → 失败回退 `tar` 的两级（并对两者都挂了 `spawnSync` 的 timeout）。
+所以 Manager 问的"四条腿里两条有两条没有、没有的只是运气好"——**我这条现在是有的**，
+而且不是我自己写了一份，是共享那一份带的。
+
+本轮实测三平台的脚手架输出，**没有撞到任何新问题**：
+
+```
+win  : 归档 …win-x64.zip（51405797 B）→ 解开：unzip -q … → ✔ app/daemon/dist/main.js ✔ runtime/node.exe
+linux: 归档 …linux-x64.tar.xz（43038116 B）→ 解开：tar -xJf … → ✔ app/daemon/dist/main.js ✔ runtime/node
+```
+
+Windows 上 `unzip` 这次是在的（Git Bash 带），所以**回退分支本轮没有被执行到** ——
+也就是说"回退真的能用"这一条我**没有验到**，标 `[未验证]`。
+（要真验它得在没有 `unzip` 的环境里跑，本轮不具备。）
+
+⚠️ 我给共享脚手架**加了一个参数没有改它的代码**：`--require-node-runtime`。
+脚手架自己写明"要 `runtime/node` 的腿自己加，我不替它们猜"，而我这条腿确实用包自带的
+Node，所以补上了。**`resolve-bundle.mjs` 本身一个字没动。**
+
+### E. 门禁
+
+| 门禁 | 结果 |
+| --- | --- |
+| `pnpm -r test` | ✅ **1577 / fail 0**（基线 1558；+19 来自并行 agent，我没加测试） |
+| `tsc -b` | ✅ 0 |
+| `build:safe` | ✅ 0 |
+| `test:ci-scripts` | ✅ 0 |
+| `lint-workflows` | ✅ 1177 条断言全过（13 个 workflow） |
+| `check:orphans` | ✅ 没有新的零引用导出，基线没过期 |
+| `eslint` / `format:check`（我的文件） | ✅ 通过 |
+
+本轮我只动了自己的两个文件（`.github/workflows/e2e-import.yml`、
+`scripts/ci/e2e-import-audit.mjs`）。**没有碰** `resolve-bundle.mjs`、`build-bundle.mjs`、
+`build-bundles.yml`，也没有碰另外三路的文件。
