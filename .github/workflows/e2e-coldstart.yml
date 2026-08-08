@@ -1,0 +1,154 @@
+# 冷启动：**一个刚解压的最小包 + 一个从不存在的数据目录 + 一个什么都没装的用户。**
+#
+# ── 这条腿为什么存在 ──────────────────────────────────────────────────────────────
+#
+# 用户 2026-08-08 在 Windows 上下了 v0.3.0 的 zip、解压、运行，
+# **发现根本没法通过向导下载 whisper / asr-model 等任何组件 ——
+#   点「安装模型」完全没有任何反应。** 然后他问了一句，而他问对了：
+#
+#   「你测试的时候是不是把全部组件准备好了来模拟环境，
+#     而不是按照只模拟最小压缩包的形式探测功能缺失？」
+#
+# **是的。** 已有的四条 e2e 腿**自己调 `POST /api/backends/install` 把包装上**，
+# 然后才开始断言 —— 它们跑的全是「组件已就位之后各条流程正不正常」，
+# 而「一个刚解压的最小包，用户从零开始」这一整类**从来没跑过**。
+#
+# 和上一次是同一个病：上次是「CI 从没执行过启动器」，
+# 这次是「**CI 从没经历过一个空的数据目录**」。
+#
+# ── 判据 ────────────────────────────────────────────────────────────────────────
+#
+# **一个刚解压的包、一个从不存在的数据目录、一个什么都没装的用户，
+#   能不能一步步把产品用起来。**
+#
+# 覆盖：首屏（自检每一项 + 两个页面路由）→ 探测 → 目录 → 装组件（每一步真实响应）
+#      → 装到一半重启 → 装模型 → 终局「缺少工具」清单还剩什么。
+#
+# ── 两条纪律 ────────────────────────────────────────────────────────────────────
+#
+# 1. **绝不硬编码包 id 去跳过「探测 → 推荐」。** 包 id 只能来自产品自己交出来的目录。
+#    目录里一个可装的都没有 —— **那就是结论本身**（用户点什么都没有），不是换个 id 再试。
+# 2. **PROTOCOL §11**：起服务前先证明端口是空的、按 pid 收进程树、外部命令带超时、
+#    **「跳过」不许渲染成「成功」**（这条腿的脚本里，走不到的步骤记成红并写明"到不了"，
+#    而不是安静地不跑）。
+#
+# ── 已知会撞到、但不由这条腿修的 ────────────────────────────────────────────────
+#
+# 探针不在包里（`probe executable not found: …\runtime\openmemo-probe.exe`），
+# 由另一路在解。这条腿的判据刻意写成**用户视角**（「能不能装上东西」），
+# 不写成「探针在不在」—— 它被修好之后这条腿**自动变绿**，不需要有人回来改脚本。
+
+name: e2e-coldstart
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundleRunId:
+        description: '从哪个 build-bundles run 取包（run id）。留空 = 自动找最近一个带该 artifact 的成功 run。'
+        required: false
+        type: string
+      legs:
+        description: 'Which platform to run'
+        type: choice
+        required: false
+        default: all
+        options: [all, linux, macos, windows]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: e2e-coldstart-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 先算矩阵：**被过滤掉的平台根本不会有 job**。
+  # 在 step 上挂 if 会让跳过的平台报出「成功，零步骤」——
+  # 那是 PROTOCOL §11 点名的最廉价的一种假绿，我自己上一轮刚栽过。
+  plan:
+    name: 算矩阵（跳过的平台不许变成绿勾）
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        env:
+          LEGS: ${{ inputs.legs }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const all = [
+              { runner: "ubuntu-24.04", label: "linux-x64",    artifact: "bundle-linux-x64",    leg: "linux"   },
+              { runner: "macos-26",     label: "darwin-arm64", artifact: "bundle-darwin-arm64", leg: "macos"   },
+              { runner: "windows-2025", label: "win32-x64",    artifact: "bundle-win-x64",      leg: "windows" },
+            ];
+            const legs = process.env.LEGS || "all";
+            const include = legs === "all" ? all : all.filter((x) => x.leg === legs);
+            if (include.length === 0) { console.error(`::error::legs=${legs} 没有匹配到任何平台`); process.exit(1); }
+            console.log(`选中 ${include.length} 个平台：${include.map((x) => x.label).join(", ")}`);
+            require("node:fs").appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`);
+          '
+
+  coldstart:
+    name: 冷启动（${{ matrix.label }}）
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      # 这条腿**不需要 submodule**（不推音频、不转写），checkout 只为拿脚本。
+      - uses: actions/checkout@v6
+
+      # 驱动脚本跑在宿主 node 上；被测的 daemon 跑在**包自带的** node 上。
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # 装任何东西之前先记录 runner 自带什么 —— "我们装上了"与"它本来就在"的分界线。
+      - name: 宿主基线（屏蔽之前）
+        shell: bash
+        run: |
+          for t in ffmpeg ffprobe yt-dlp whisper-cli python3; do
+            printf '%-14s %s\n' "$t" "$(command -v $t || echo '(不在 PATH 上)')"
+          done
+
+      - name: 定位 build-bundles run
+        id: runid
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          id=$(bash scripts/ci/resolve-bundle-run.sh '${{ matrix.artifact }}' '${{ inputs.bundleRunId }}')
+          echo "id=${id}" >> "$GITHUB_OUTPUT"
+
+      # ★ 判据的对象：**用户下载的那个包**，不是这棵源码树。
+      - name: 取预编译包（build-bundles run ${{ steps.runid.outputs.id }} 的 artifact）
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: incoming
+          run-id: ${{ steps.runid.outputs.id }}
+          github-token: ${{ github.token }}
+
+      # 解归档 + 定位包根 —— 走共享脚手架（同一类 shell 坑撞过三次，都是假红）。
+      - name: 解开归档 + 验结构（共享脚手架）
+        id: unpack
+        shell: bash
+        run: |
+          mkdir -p unpacked
+          node scripts/ci/resolve-bundle.mjs \
+            --from incoming --out unpacked \
+            --require app/daemon/dist/main.js --require-node-runtime
+
+      # ★ 判据本体。要真下载组件与模型，给足窗口。
+      - name: 冷启动：从零把产品用起来
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          node scripts/ci/e2e-coldstart.mjs \
+            --bundle "${{ steps.unpack.outputs.bundle_dir }}" \
+            --port 19810
