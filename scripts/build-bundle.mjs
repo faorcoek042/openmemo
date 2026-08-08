@@ -71,7 +71,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { execFile } from 'node:child_process';
@@ -210,10 +210,54 @@ const SKIP_ARCHIVE = argv.includes('--skip-archive');
 
 // 顶层 await（本文件是 ESM）——版本号的来源可能是两条路之一，见 loadVersion()。
 const { version: VERSION, root: REPO_ROOT, via: VERSION_VIA } = await loadVersion();
-const OUT_ROOT = arg('--out', join(REPO_ROOT, 'dist', 'bundles'));
-const CACHE = arg('--cache', join(REPO_ROOT, '.build', 'bundle-cache'));
+/*
+ * ★★ `--out` / `--cache` **必须在这里就绝对化**。
+ *
+ * 病灶是 `makeArchive()` 里那句
+ *   `execFileAsync('tar', [flag, out, BUNDLE_NAME], { cwd: OUT_ROOT })`
+ * —— 归档路径**跨了一次 `cwd` 边界**。`--out` 给相对路径时 `out` 也是相对的，
+ * 于是 tar 把它**再相对 OUT_ROOT 解析一次**，产物落到
+ *   `dist/bundles/dist/bundles/openmemo-….tar.xz`
+ * 而不是 `dist/bundles/openmemo-….tar.xz`。
+ *
+ * **而脚本照样 exit 0** —— 它确实打了个包，只是打在没人会去看的地方。
+ * 下游 `upload-artifact` 的 glob 匹配不到，表现成"这次构建没有产物"，
+ * 与"构建失败"长得完全不一样。这正是本仓那个招牌形状：**成功地什么都没做**。
+ *
+ * 判据不是"记得传绝对路径"，是**传什么都不会错**：任何要跨 `cwd` 边界、
+ * 或者要写进 `$GITHUB_OUTPUT` 给别的 step 当路径用的值，一律先 `resolve()`。
+ * （`$GITHUB_OUTPUT` 那一路同理：读它的 step 未必在同一个工作目录。）
+ */
+const OUT_ROOT = resolve(arg('--out', join(REPO_ROOT, 'dist', 'bundles')));
+const CACHE = resolve(arg('--cache', join(REPO_ROOT, '.build', 'bundle-cache')));
 const BUNDLE_NAME = `openmemo-${VERSION}-${TARGET}`;
 const STAGE = join(OUT_ROOT, BUNDLE_NAME);
+
+/*
+ * `--print-paths`：只把解析后的路径打成 JSON 然后退出，**不做任何事、不碰网络**。
+ *
+ * 加它是为了让上面那条性质**可测**：真跑一次要下 ~180 MB、要网络，
+ * 于是"路径算得对不对"这件事在此之前只能靠读代码 —— 而它已经错过一次了。
+ * 现在 `selftest-bundle.mjs` 用它把相对 / 绝对 / 含 `..` 三种输入各钉一条。
+ */
+if (argv.includes('--print-paths')) {
+  console.log(
+    JSON.stringify(
+      {
+        version: VERSION,
+        target: TARGET,
+        outRoot: OUT_ROOT,
+        stage: STAGE,
+        cache: CACHE,
+        archive: join(OUT_ROOT, `${BUNDLE_NAME}${T.archiveExt}`),
+        meta: join(OUT_ROOT, `${BUNDLE_NAME}.json`),
+      },
+      null,
+      2,
+    ),
+  );
+  process.exit(0);
+}
 
 /* ─────────────────────────────────────────────────────────────────────────────────
  * 小工具

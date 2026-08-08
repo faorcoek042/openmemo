@@ -114,35 +114,20 @@ jobs:
           ARTIFACT: ${{ matrix.artifact }}
         run: |
           set -euo pipefail
-          RUN_ID="$RUN_ID_INPUT"
-          if [ -z "$RUN_ID" ]; then
-            # ★★ **不能取"最近一次 success"。**
-            #
-            #   `build-bundles` 支持只跑其中一条腿（`legs=linux` 等），另外两条
-            #   `skipped` 时整个 run 仍然 `conclusion: success`。
-            #   `[实测 2026-08-08]` 最近一次成功的 run 31249135458 **只有
-            #   bundle-darwin-arm64 一个产物** —— 拿它当输入，linux/win 两条腿会死在
-            #   "artifact 不存在"，而那个错误读起来像"我的腿坏了"。
-            #
-            #   判据换成**这条腿要的那个产物在不在**，而不是"那一轮绿不绿"。
-            #   逐个往回找，找到为止；找不到就如实说找不到，不拿一个残缺的 run 凑数。
-            echo "没传 bundleRunId，往回找**含 $ARTIFACT 产物**的最近一次 run："
-            for cand in $(gh run list --repo "$GITHUB_REPOSITORY" \
-              --workflow build-bundles.yml --status success \
-              --limit 15 --json databaseId --jq '.[].databaseId'); do
-              names=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$cand/artifacts" \
-                --jq '[.artifacts[]|select(.expired==false)|.name]|join(",")' 2>/dev/null || echo '')
-              echo "    run $cand → [$names]"
-              case ",$names," in
-                *",$ARTIFACT,"*) RUN_ID="$cand"; break ;;
-              esac
-            done
-          fi
-          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "✘ 最近 15 次成功的 build-bundles 里没有一次带 $ARTIFACT 产物。"
-            echo "  （注意：只跑一条腿的 run 也会是 success，但它只有一个平台的产物。）"
-            exit 1
-          fi
+          # ★★ 判定「哪一次 run 里有我要的产物」**只有一份实现**：
+          #    `scripts/ci/resolve-bundle-run.sh`。
+          #
+          #    这里以前是这段逻辑的**第三份拷贝**（另两份在 resolve-bundle-run.sh
+          #    与 e2e-notes 里）。三份都写对了同一件事，但那不是安全 ——
+          #    resolve-bundle-run.sh 的文件头记着它诞生的原因：**同一段 shell 抄了两份，
+          #    只修了一份，另一份继续按"最近一次成功"取件**，于是 mutations 那条腿
+          #    整个挂在 `Artifact not found`。
+          #    判据照本仓老规矩：不是"记得几处一起改"，是**不可能只改一边**。
+          #
+          #    它的判据是「这次 run 里有我这条腿要的 artifact，且没过期」，
+          #    而不是「它是最近一次成功的 run」—— 后者会选中一个只跑了单平台的 run
+          #    （那种 run 的 conclusion 仍然是 success，PROTOCOL §11）。
+          RUN_ID=$(bash scripts/ci/resolve-bundle-run.sh "$ARTIFACT" "$RUN_ID_INPUT")
           echo "用的 run id：$RUN_ID"
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
 

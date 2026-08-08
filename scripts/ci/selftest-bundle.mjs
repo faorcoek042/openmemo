@@ -74,9 +74,9 @@
  */
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /*
@@ -430,6 +430,129 @@ console.log('⑧ ⑨ win-x64 参数化 —— .dll / node.exe / start.cmd / win3
   });
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════════════
+ * ⑩–⑫ `build-bundle.mjs --out` 的路径解析
+ *
+ * 病灶：`makeArchive()` 里 `execFileAsync('tar', [flag, out, …], { cwd: OUT_ROOT })`
+ * —— 归档路径**跨了一次 `cwd` 边界**。`--out` 给相对路径时 `out` 也是相对的，
+ * tar 会把它**再相对 OUT_ROOT 解析一次**，产物落到
+ * `dist/bundles/dist/bundles/…tar.xz`，**而脚本照样 exit 0**。
+ * 下游 upload-artifact 的 glob 匹配不到，表现成"这次构建没有产物" ——
+ * 与"构建失败"长得完全不一样（本仓招牌形状：成功地什么都没做）。
+ *
+ * 这三条用 `--print-paths` 验（那个 flag 只打印解析结果、不碰网络也不写盘），
+ * 因为真跑一次要下 ~180 MB —— 而"路径算得对不对"正是因为跑不起而漏掉的那一格。
+ * ═══════════════════════════════════════════════════════════════════════════════════ */
+{
+  const BUILDER = join(REPO_ROOT, 'scripts', 'build-bundle.mjs');
+  const paths = (out, cwd) => {
+    const r = spawnSync(process.execPath, [BUILDER, '--target', 'linux-x64', '--out', out, '--print-paths'], {
+      encoding: 'utf8',
+      cwd,
+    });
+    if (r.status !== 0) throw new Error(`--print-paths 退出码 ${r.status}: ${r.stdout}${r.stderr}`);
+    return JSON.parse(r.stdout);
+  };
+
+  // 建在 WORK 底下，收尾时随 WORK 一起删（不另开一个要自己记得清的目录）
+  const tmpCwd = mkdtempSync(join(WORK, 'outpath-'));
+
+  check('⑩ 相对 --out 必须解析成绝对路径（相对 cwd，不是相对仓库根）', () => {
+    const p = paths('rel/out', tmpCwd);
+    assert.equal(isAbsolute(p.outRoot), true, `outRoot 不是绝对路径：${p.outRoot}`);
+    assert.equal(p.outRoot, join(tmpCwd, 'rel', 'out'));
+    // 归档必须**正好**在 outRoot 底下一层，不许出现 outRoot 套 outRoot
+    assert.equal(p.archive, join(p.outRoot, `openmemo-${p.version}-linux-x64.tar.xz`));
+    assert.equal(/rel\/out\/.*rel\/out/.test(p.archive), false, `路径套娃了：${p.archive}`);
+  });
+
+  check('⑪ 绝对 --out 原样保留', () => {
+    const abs = join(tmpCwd, 'abs-out');
+    const p = paths(abs, tmpCwd);
+    assert.equal(p.outRoot, abs);
+    assert.equal(p.stage, join(abs, `openmemo-${p.version}-linux-x64`));
+  });
+
+  check('⑫ 含 `..` 的 --out 必须被规范化掉（`..` 留在路径里会跨 cwd 时再解析一次）', () => {
+    const p = paths(join('a', 'b', '..', 'c'), tmpCwd);
+    assert.equal(p.outRoot, join(tmpCwd, 'a', 'c'));
+    assert.equal(p.outRoot.includes('..'), false, `没规范化：${p.outRoot}`);
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════
+ * ⑬–⑯ `emit-bundles-complete.mjs` —— 「三平台齐全」的正面凭证
+ *
+ * 它存在的理由：`legs` 允许只跑一条腿，而**被跳过的 job 既不算成功也不算失败，
+ * 整个 run 的 `conclusion` 仍然是 `success`**。`[实测 run 31249135458]`
+ * 三条腿里两条 skipped，conclusion 照样 success，于是"取最近一次成功的 run"
+ * 会取到一个只有 darwin 产物的 run —— 而 Manager 发 release 正是从这里取包的。
+ *
+ * 判据落在 artifact 上而不是 conclusion 上（PROTOCOL §11：绿灯必须能追溯到
+ * 这次 run 真的产出的东西）。这几条钉的是「缺件时**不许**写出凭证」。
+ * ═══════════════════════════════════════════════════════════════════════════════════ */
+{
+  const EMIT = join(REPO_ROOT, 'scripts', 'ci', 'emit-bundles-complete.mjs');
+  const meta = (target, version = '0.2.0') => ({
+    name: `openmemo-${version}-${target}`,
+    version,
+    target,
+    rawBytes: 123,
+    archive: { file: `openmemo-${version}-${target}.tar.xz`, bytes: 45, sha256: 'a'.repeat(64) },
+  });
+  const emit = (targets, { versions = {} } = {}) => {
+    const dir = mkdtempSync(join(WORK, 'complete-'));
+    for (const t of targets) {
+      const m = meta(t, versions[t] ?? '0.2.0');
+      writeFileSync(join(dir, `${m.name}.json`), JSON.stringify(m));
+    }
+    const out = join(dir, 'out', 'bundles-complete.json');
+    const r = spawnSync(process.execPath, [EMIT, '--from', dir, '--out', out], { encoding: 'utf8' });
+    return { ...r, out, combined: `${r.stdout}${r.stderr}` };
+  };
+  const ALL = ['linux-x64', 'win-x64', 'darwin-arm64'];
+
+  check('⑬ 三平台齐全 → exit 0 并写出凭证（含 sha256）', () => {
+    const r = emit(ALL);
+    assert.equal(r.status, 0, r.combined);
+    const doc = JSON.parse(readFileSync(r.out, 'utf8'));
+    assert.equal(doc.version, '0.2.0');
+    assert.deepEqual(Object.keys(doc.targets).sort(), [...ALL].sort());
+    assert.equal(doc.targets['linux-x64'].sha256.length, 64);
+  });
+
+  /*
+   * ★ 这一条就是那次事故的形状：只有 macOS 跑了。
+   *   判据是**既要红、又要不留下文件** —— 留下一个"部分"的凭证比没有更糟，
+   *   因为下游会把它当成"完整"。
+   */
+  check('⑭ ★ 只有 darwin（复现 run 31249135458）→ exit 1，且**一个字节都不写**', () => {
+    const r = emit(['darwin-arm64']);
+    assert.equal(r.status, 1, r.combined);
+    assert.match(r.combined, /缺 linux-x64, win-x64/);
+    assert.match(r.combined, /§11/);
+    assert.equal(existsSync(r.out), false, '缺件却写出了凭证');
+  });
+
+  check('⑮ 缺一个平台（win 没跑）→ exit 1，且点名缺的是谁', () => {
+    const r = emit(['linux-x64', 'darwin-arm64']);
+    assert.equal(r.status, 1, r.combined);
+    assert.match(r.combined, /缺 win-x64/);
+    assert.equal(existsSync(r.out), false);
+  });
+
+  /*
+   * ★ 版本不一致 = 这些 artifact 不是同一次构建的产物。
+   *   拼在一起发出去会得到"版本号相同但内容不同源"的 release —— 事后无法追溯。
+   */
+  check('⑯ 三平台齐全但版本号不一致 → exit 1（不是同一次构建的产物）', () => {
+    const r = emit(ALL, { versions: { 'win-x64': '0.3.0' } });
+    assert.equal(r.status, 1, r.combined);
+    assert.match(r.combined, /版本号不一致/);
+    assert.equal(existsSync(r.out), false);
+  });
+}
+
 /* ── 收尾 ─────────────────────────────────────────────────────────────────────────── */
 
 console.log('');
@@ -440,4 +563,4 @@ if (failures.length > 0) {
   for (const f of failures) console.log(`  - ${f}`);
   process.exit(1);
 }
-console.log(`\x1b[32m✔\x1b[0m selftest-bundle: ${passed} 个用例全部通过（4 条正向 + 9 条反向）`);
+console.log(`\x1b[32m✔\x1b[0m selftest-bundle: ${passed} 个用例全部通过（5 条正向 + 12 条反向 + 3 条 --out 路径）`);

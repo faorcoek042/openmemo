@@ -289,3 +289,62 @@ jobs:
             dist/bundles/*.zip
             dist/bundles/*.json
           if-no-files-found: error
+
+  # =====================================================================================
+  # ★★★ 完整性凭证 —— 「这次 run 三个平台都真的造出来了」的**正面证据**
+  #
+  # ## 它修的是什么
+  #
+  # `legs` 允许只跑一条腿，而 GitHub 的语义是：**被 `if:` 跳过的 job 既不算成功
+  # 也不算失败，整个 run 的 `conclusion` 仍然是 `success`**。
+  # `[实测 run 31249135458]` 三条腿里两条 skipped（只跑了 macOS），conclusion 照样 success。
+  # 于是任何"取最近一次**成功**的 run"的消费方都会取到一个只有 darwin 产物的 run ——
+  # `e2e-import` 当天就因此在 linux/windows 上红了，而 Manager 发 v0.2.0
+  # **正是从 build-bundles 的产物里取包的**：同一个陷阱下一次就可能发出一个残缺的 release。
+  #
+  # 这就是 PROTOCOL §11：**「跳过」不许渲染成「成功」**。
+  #
+  # ## 判定放在哪一侧，以及为什么
+  #
+  # **放在消费方，但由生产方发一个正面凭证。**
+  #   · 不能"让 skipped 算失败"：手动只跑一条腿是合法用法，把它判红会训练所有人忽略红灯。
+  #   · `conclusion` **在结构上**装不下"产物在不在"——它是 job 结果的汇总，
+  #     而跳过既非成功也非失败。
+  #   · §11 的判据是「绿灯必须能追溯到**是我这次启动的那个东西**给的」，
+  #     而 **artifact 就是这次 run 真的产出的东西本身**。所以判定必须落在 artifact 上。
+  #
+  # ## 因此这个 job **不带任何 `if:`**
+  #
+  # 它 `needs:` 三条腿：只要有一条被跳过或失败，它自己就被跳过 ——
+  # 于是"部分跑"的 run 里**根本不存在** `bundles-complete` 这个 artifact。
+  # 消费方问"你有没有完整的一套"，问的就是这个名字在不在
+  # （`scripts/ci/resolve-bundle-run.sh bundles-complete` 即可）。
+  #
+  # 与 build-backends.yml 的 `merge-manifest` 是同一形状同一理由（那里的 C4：
+  # `if: always()` 曾让"三条腿全挂"写出一个 `packs: []` 然后报绿）。
+  # =====================================================================================
+  complete:
+    name: bundles-complete
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - uses: actions/download-artifact@v7
+        with:
+          path: incoming
+          merge-multiple: true
+
+      # 缺任何一个平台就退出 1 且**不写文件** —— 一个说了半句真话的凭证比没有更糟。
+      - name: Emit completeness certificate
+        run: node scripts/ci/emit-bundles-complete.mjs --from incoming --out dist/bundles-complete.json
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: bundles-complete
+          path: dist/bundles-complete.json
+          if-no-files-found: error

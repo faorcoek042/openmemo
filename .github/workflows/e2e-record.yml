@@ -166,13 +166,33 @@ jobs:
             printf '%-14s %s\n' "$t" "$(command -v $t || echo '(不在 PATH 上)')"
           done
 
+      # ★★ 选 run 走**共享的那一份**：`scripts/ci/resolve-bundle-run.sh`。
+      #
+      #   这条腿以前**只认显式传入的 `bundleRunId`**，没传就直接死在
+      #   download-artifact 的 `run-id:` 上（空字符串）。那不是"安全的默认"，
+      #   而是把选 run 这件事推给了人 —— 人会去 Actions 页上挑"最近一次绿的"，
+      #   而 `legs=linux` 那种单腿 run **也是绿的、只有一个平台的产物**
+      #   （PROTOCOL §11：「跳过」不许渲染成「成功」）。
+      #
+      #   现在没传就自己往回找「**带我这条腿要的那个 artifact 且没过期**」的 run，
+      #   判据与另外三条 e2e 腿逐字相同（同一个脚本）。
+      - name: 选定 build-bundles run
+        id: runid
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          id=$(bash scripts/ci/resolve-bundle-run.sh '${{ matrix.artifact }}' '${{ inputs.bundleRunId }}')
+          echo "id=${id}" >> "$GITHUB_OUTPUT"
+
       # ★ 判据的对象：**用户下载的那个包**，不是这棵源码树。
-      - name: 取预编译包（build-bundles run ${{ inputs.bundleRunId }} 的 artifact）
+      - name: 取预编译包（build-bundles run ${{ steps.runid.outputs.id }} 的 artifact）
         uses: actions/download-artifact@v6
         with:
           name: ${{ matrix.artifact }}
           path: incoming
-          run-id: ${{ inputs.bundleRunId }}
+          run-id: ${{ steps.runid.outputs.id }}
           github-token: ${{ github.token }}
 
       # 解归档并定位包根 —— 走**共享脚手架**（Manager 2026-08-08 裁决）。

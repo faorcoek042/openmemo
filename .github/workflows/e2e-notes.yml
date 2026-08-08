@@ -156,38 +156,21 @@ jobs:
           WANT: ${{ inputs.bundleRunId }}
         run: |
           set -euo pipefail
-          if [ -n "$WANT" ]; then
-            RUN_ID="$WANT"
-            echo "用显式指定的 run：$RUN_ID"
-          else
-            RUN_ID="$(gh run list --workflow=build-bundles.yml --status=success \
-                        --limit 1 --json databaseId --jq '.[0].databaseId')"
-            echo "自动选中最近一次成功的 build-bundles run：$RUN_ID"
-          fi
-          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "::error::找不到任何成功的 build-bundles run —— 无法取得预编译包。"
-            echo "::error::这不是功能坏了，是取包这一步没成。先跑一次 build-bundles。"
-            exit 1
-          fi
-
-          # ★ 「最近一次**成功**的 run」不等于「那次 run 里有我要的这个 artifact」。
-          #   `[实测]` build-bundles run 31249135458 的 conclusion 是 success，
-          #   而它三条腿里**两条是 skipped**（只跑了 macOS），所以整个 run 只有
-          #   `bundle-darwin-arm64` 一个 artifact。`e2e-import` 同一天就因此在
-          #   linux/windows 上拿到一句没头没尾的 `no artifact matches`。
+          # ★★ 判定「哪一次 run 里有我要的产物」**只有一份实现**：
+          #    `scripts/ci/resolve-bundle-run.sh`。
           #
-          #   这正是 PROTOCOL §11 的那条：**「跳过」不许渲染成「成功」** ——
-          #   一个 2/3 被跳过的 run 对外是绿的，于是"取最近一次成功的"就取到了它。
-          #   这里不猜、不换一个 run，而是**当场说清楚是哪一种失败**，
-          #   并告诉操作者怎么办（显式指定一个跑了全矩阵的 run）。
-          if ! gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" \
-                 --jq '.artifacts[].name' | grep -qx "${{ matrix.artifact }}"; then
-            echo "::error::run $RUN_ID 里没有 ${{ matrix.artifact }} —— 它多半是一次只跑了部分平台的 build-bundles"
-            echo "::error::（那种 run 的 conclusion 仍然是 success，PROTOCOL §11：跳过不许渲染成成功）"
-            echo "::error::处置：用 bundleRunId 显式指定一次跑了全矩阵的 run。该 run 实际有的 artifact："
-            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[].name' || true
-            exit 1
-          fi
+          #    这里以前是这段逻辑的另一份拷贝，而且是**最危险的那个版本**：
+          #    它取「最近一次 success」然后只做一次存在性检查，**取不到就红**。
+          #    `[实测 run 31249135458]` 那一次三条腿里两条 skipped（只跑了 macOS），
+          #    conclusion 照样 success —— 于是这条腿在 linux/win 上稳定红，
+          #    而那个红读起来像"包坏了"，其实是"取包这一步选错了 run"。
+          #
+          #    共享脚本的判据是「**这次 run 里有我要的 artifact，且没过期**」，
+          #    并且会**往回找**而不是认死最近一次：一次只跑单平台的 run 不该
+          #    连累另外两个平台的 e2e。
+          #    （PROTOCOL §11：「跳过」不许渲染成「成功」——
+          #      所以不能拿 conclusion 当判据，要拿产物本身当判据。）
+          RUN_ID=$(bash scripts/ci/resolve-bundle-run.sh "${{ matrix.artifact }}" "$WANT")
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
 
       - name: 下载预编译包 artifact
