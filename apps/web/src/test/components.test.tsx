@@ -855,7 +855,7 @@ describe('转写选项：选中的值真的发给后端', () => {
     assert.ok(!shown.includes('turbo'), '认不出的引擎 id 应被丢弃，不能照抄进 UI');
     // 用不了的要说原因 + 给出路，而不是灰掉了事
     assert.ok(shown.includes('OPENMEMO_PARAFORMER_DIR'), '应展示 daemon 给的真实原因');
-    assert.ok(shown.includes('去安装运行时'));
+    assert.ok(shown.includes('去安装本机组件'));
     r.unmount();
   });
 
@@ -869,7 +869,7 @@ describe('转写选项：选中的值真的发给后端', () => {
     // 全集来自 shared 联合，不是 daemon 返回什么就只显示什么
     assert.ok(shown.includes('Paraformer'), '缺席的引擎也要露出来，否则用户不知道它存在');
     assert.ok(shown.includes('Sherpa-ONNX'));
-    assert.ok(shown.includes('去安装运行时'), '没装的要给出路，而不是灰掉或隐藏');
+    assert.ok(shown.includes('去安装本机组件'), '没装的要给出路，而不是灰掉或隐藏');
     r.unmount();
   });
 });
@@ -5713,7 +5713,7 @@ describe('T-150 ① /diagnostics 读 /api/selfcheck', () => {
         status: 'warn',
         detail: '未找到',
         required: false,
-        remediation: '在「运行时」页安装对应组件',
+        remediation: '在「本机组件」页安装对应组件',
       },
       {
         layer: 'tools',
@@ -5822,7 +5822,7 @@ describe('T-150 ① /diagnostics 读 /api/selfcheck', () => {
     assert.ok(shown.includes('yt-dlp（可选，GPL）'), 'warn 档的自检项没出现在界面上');
     assert.ok(shown.includes('未找到'), '自检给的 detail 没显示');
     assert.ok(
-      shown.includes('在「运行时」页安装对应组件'),
+      shown.includes('在「本机组件」页安装对应组件'),
       'daemon 连修复建议都算好发过来了，界面上一个字都不显示',
     );
     assert.ok(shown.includes('交出来的那份权重 whisper.cpp 加载不了'), 'fail 档的 detail 没显示');

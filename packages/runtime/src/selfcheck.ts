@@ -152,7 +152,7 @@ export interface ProxyConnectivity {
  * 用户既不知道也影响不了。这个结构回答两个问题：**选的是谁**、**跑的是谁**。
  */
 export interface BackendSelectionInfo {
-  /** 用户在「运行时」页选中的后端；`null` = 从未选过（此时按 `priority` 挑）。 */
+  /** 用户在「本机组件」页选中的后端；`null` = 从未选过（此时按 `priority` 挑）。 */
   selectedBackend: string | null;
   /** 实际提供 whisper-cli 的包 id；`null` = 不是从后端包来的（环境变量 / PATH）。 */
   packId: string | null;
@@ -882,7 +882,7 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
     status: backendPacks.length > 0 ? 'ok' : 'warn',
     detail: backendPacks.length > 0 ? backendPacks.join(', ') : '无',
     required: false,
-    remediation: backendPacks.length > 0 ? null : '在「运行时」页安装 CPU 基础包',
+    remediation: backendPacks.length > 0 ? null : '在「本机组件」页安装 CPU 基础包',
   });
 
   /*
@@ -905,7 +905,7 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         status: 'warn',
         detail: 'whisper-cli 不是从后端包解析出来的（环境变量覆盖 / 系统 PATH / 未找到）',
         required: false,
-        remediation: '在「运行时」页安装后端包，让产品自己的安装通道提供 whisper-cli',
+        remediation: '在「本机组件」页安装后端包，让产品自己的安装通道提供 whisper-cli',
       });
     } else {
       const chosen = sel.selectedBackend ?? '未选择（按 priority 挑）';
@@ -921,7 +921,7 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         required: false,
         remediation: sel.degraded
           ? '选中的后端包里没有 whisper-cli，已退回另一个包 —— 加速不会生效。' +
-            '重装该后端包，或在「运行时」页改选一个真的能用的后端'
+            '重装该后端包，或在「本机组件」页改选一个真的能用的后端'
           : null,
       });
     }
@@ -965,7 +965,7 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         status: required ? 'fail' : 'warn',
         detail: '未找到',
         required,
-        remediation: '在「运行时」页安装对应组件',
+        remediation: '在「本机组件」页安装对应组件',
       });
     } else if (fromStore(path)) {
       add({
@@ -1034,8 +1034,8 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
       brokenLinks.length === 0
         ? null
         : looksLikeMovedDataDir(brokenLinks)
-          ? '这些链接指向的是旧数据目录（多半是移动数据目录后留下的）。在「运行时」页重新安装该后端包即可修复；数据与笔记不受影响。'
-          : '在「运行时」页重新安装该后端包 —— 链接的目标文件已不存在，whisper 会报 "cannot open shared object file" 而无法加载。',
+          ? '这些链接指向的是旧数据目录（多半是移动数据目录后留下的）。在「本机组件」页重新安装该后端包即可修复；数据与笔记不受影响。'
+          : '在「本机组件」页重新安装该后端包 —— 链接的目标文件已不存在，whisper 会报 "cannot open shared object file" 而无法加载。',
   });
 
   /*

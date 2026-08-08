@@ -123,6 +123,60 @@ export interface RestStateDeps {
   manifestDir: string;
 }
 
+/**
+ * 已被裁掉、但清单里还留着条目的 role。
+ *
+ * 今天只有一个：**`llm`** —— `ADR-016` 决策 3 砍掉了内置本地 LLM
+ * （`llama-server` 线整体下线），只保留在线的 BYO API Key 与探测已装的 Ollama / LM Studio。
+ */
+const RETIRED_ROLES: ReadonlySet<string> = new Set(['llm']);
+
+/**
+ * 把已裁掉的 role 从模型目录里**摘掉 —— 在服务端，不是在前端**。
+ *
+ * ## 为什么必须在这一层
+ *
+ * `[实测 2026-08-08]` 在此之前：`vendor/manifests/models-llm.json` 的 5 条 GGUF
+ * （`llm/qwen3-4b-q4_k_m` 等）**确实到达 `/api/models/catalog`** ——
+ * `manifests.ts` 已改成列目录加载所有 `*.json`，服务端没有任何过滤；
+ * 只是 `apps/web` 的 `ASR_TAB_ROLES = ['asr','vad','punctuation']` 把它们挡在了界面外。
+ *
+ * 也就是说它是**一个活着的 API 面，只是今天没人走**：
+ * `POST /api/models/pull` 直接喂 `llm/qwen3-8b-q4_k_m` 仍然能下载一个
+ * **`ADR-016` 已经裁掉的东西**，而且任何客户端（或哪天有人把那个 role 白名单放宽）
+ * 都会重新把它显示出来。
+ *
+ * Manager 2026-08-08 裁定「**关掉**」，依据是本仓这一整轮反复用的同一条：
+ *
+ * > **不许留半个功能。** 零读者字段最坏的地方不是浪费空间，
+ * > 是**下一个人会以为它在起作用**。而这条比零读者更糟 —— **它是活的，只是今天没人走。**
+ *
+ * 并明确：**前端过滤是装饰不是闸门**，要关在服务端。
+ *
+ * ## 为什么是"过滤"而不是"删掉那个 manifest 文件"
+ *
+ * 删文件会让下一个人**看不出这里曾经有过什么、以及为什么没了**，
+ * 于是他很可能把它加回来（§13 那张表就是这么来的）。
+ * 留着文件 + 在这里摘掉 + 在 `ADR-016` 里写清历史，三件事一起才叫关完。
+ *
+ * ## 一个刻意的例外
+ *
+ * **已经装在盘上的记录不受影响** —— `listInstalled()` 读的是 `manifests/` 下的
+ * 安装记录，不是这份目录。用户此前装过的东西不该因为我们改了主意就从界面上消失，
+ * 那是"数据在界面上消失"那一族。这里关的是**新的下载入口**。
+ */
+function withoutRetiredRoles(catalog: ModelCatalog): ModelCatalog {
+  const kept = catalog.models.filter((m) => !RETIRED_ROLES.has(m.role));
+  const dropped = catalog.models.length - kept.length;
+  if (dropped > 0) {
+    // 出声一次：静默地少几条目录，下一个人排查"我的模型去哪了"会很难受。
+    console.log(
+      `[models] 目录里摘掉 ${dropped} 条已裁 role 的条目（${[...RETIRED_ROLES].join('、')}）—— ADR-016 决策 3`,
+    );
+  }
+  return { ...catalog, models: kept };
+}
+
 export class RestState {
   readonly store: ArtifactStore;
   /**
@@ -254,10 +308,11 @@ export class RestState {
     // 与 pipeline 共用同一个定义（D-08 D4）——各算各的正是"装了却找不到"的成因。
     const modelsRoot = resolveStoreRoot(deps.dataDir);
 
-    const [modelCatalog, backendCatalog] = await Promise.all([
+    const [loadedModelCatalog, backendCatalog] = await Promise.all([
       loadModelCatalog(deps.manifestDir),
       loadBackendCatalog(deps.manifestDir),
     ]);
+    const modelCatalog = withoutRetiredRoles(loadedModelCatalog);
     await fs.mkdir(modelsRoot, { recursive: true });
     const detection = await detectLocalHardware(modelsRoot);
 
