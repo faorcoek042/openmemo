@@ -128,14 +128,30 @@ jobs:
             echo "用指定的 run id：$GIVEN"
             exit 0
           fi
-          id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/build-bundles.yml/runs?status=success&per_page=1" \
-                 --jq '.workflow_runs[0].id // empty')
+          # ★ 判据是「**这次 run 里有我这条腿要的那个 artifact，且没过期**」，
+          #   不是「它是最近一次成功的 run」。
+          #
+          #   build-bundles 有个 `legs` 输入，可以只编一条腿 —— `[实测 2026-08-08]`
+          #   最近一次成功的 run（31249135458）就**只有 bundle-darwin-arm64**。
+          #   按"最近一次成功"去取，Linux/Windows 两条腿会拿不到产物而红，
+          #   而那个红与产品毫无关系，纯粹是取件取错了地方。
+          #   artifact 还有 90 天保留期的问题，所以"存在"和"没过期"都要看。
+          want='${{ matrix.artifact }}'
+          id=''
+          for cand in $(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/build-bundles.yml/runs?status=success&per_page=20" \
+                          --jq '.workflow_runs[].id'); do
+            if gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${cand}/artifacts" \
+                 --jq '.artifacts[] | select(.expired==false) | .name' 2>/dev/null | grep -qx "$want"; then
+              id="$cand"; break
+            fi
+            echo "  run $cand 里没有未过期的 $want，继续往前找"
+          done
           if [ -z "$id" ]; then
-            echo "::error::找不到任何成功的 build-bundles run —— 先手动跑一次 build-bundles，或用 bundlesRunId 指定"
+            echo "::error::最近 20 次成功的 build-bundles run 里都没有未过期的 $want —— 先跑一次 build-bundles（legs=all），或用 bundlesRunId 指定"
             exit 1
           fi
           echo "id=$id" >> "$GITHUB_OUTPUT"
-          echo "自动选中最近一次成功的 build-bundles run：$id"
+          echo "选中 build-bundles run $id（它有未过期的 $want）"
 
       - name: 下载预编译包
         uses: actions/download-artifact@v6
