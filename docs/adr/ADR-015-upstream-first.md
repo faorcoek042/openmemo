@@ -205,10 +205,10 @@ OPENMEMO_PROBE > <dataDir>/bin/runtime > 已安装的后端包 > 包内兜底
 
 `[本机实测 2026-08-08，同一个空数据目录，前后对比]`
 
-| | 修复前 | 修复后 |
-|---|---|---|
+|                                       | 修复前                                                  | 修复后                              |
+| ------------------------------------- | ------------------------------------------------------- | ----------------------------------- |
 | cuda / vulkan / rocm / metal / coreml | `probe did not complete: probe executable not found: …` | **`backend package not installed`** |
-| cpu | 同上 | **`available=true probed=true`** |
+| cpu                                   | 同上                                                    | **`available=true probed=true`**    |
 
 顺带买到的一件事：ADR-003 决策 3 的 **L1「内置 CPU 后端 · 永不失败的兜底」
 此前从来没有被真正验证过**（没有探针 ⇒ CPU 这一档也只是推断）。现在它是实测的。

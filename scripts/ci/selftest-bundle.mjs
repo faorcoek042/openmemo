@@ -124,6 +124,7 @@ function check(name, fn) {
 const LAYOUT = {
   'linux-x64': {
     nodeExe: 'node',
+    probeExe: 'openmemo-probe',
     libext: 'so',
     launcher: 'start.sh',
     prebuild: 'linux-x64.node',
@@ -133,6 +134,7 @@ const LAYOUT = {
   },
   'win-x64': {
     nodeExe: 'node.exe',
+    probeExe: 'openmemo-probe.exe',
     libext: 'dll',
     launcher: 'start.cmd',
     prebuild: 'win32-x64.node',
@@ -177,6 +179,22 @@ function fixtureFiles(target) {
   put(`ext/libsimple.${L.libext}`, 'SQLITE-EXT-STUB\n');
   put(`ext/vec0.${L.libext}`, 'SQLITE-EXT-STUB\n');
   put('ext/dict/jieba.dict.utf8', '词典\n');
+
+  /*
+   * 最小探针运行时（鸡生蛋那一环，ADR-015 §7.5）。
+   * 与 node 桩同理：`verify-bundle.sh` 在**同平台**时会**真的跑一次探针**并要求
+   * `deviceCount >= 1` —— `[CI 实测 run 31261013823]` macOS 上正是这条抓到了
+   * "文件都在、但 dyld 加载不了 libggml.0.dylib"。所以这里的探针必须是可执行的桩，
+   * 否则那条断言会在自检里静默跳过，而它恰恰是最有价值的一条。
+   */
+  put(
+    `runtime/probe/${L.probeExe}`,
+    '#!/bin/sh\necho \'{"schemaVersion":1,"deviceCount":1,"devices":[{"name":"CPU"}]}\'\n',
+    0o755,
+  );
+  put(`runtime/probe/libggml-base.${L.libext}`, 'GGML-CORE-STUB\n');
+  put(`runtime/probe/libggml.${L.libext}`, 'GGML-CORE-STUB\n');
+  put(`runtime/probe/libggml-cpu-x64.${L.libext}`, 'GGML-CPU-STUB\n');
 
   put(L.launcher, '#!/bin/sh\n', 0o755);
   put('LICENSE', 'UNLICENSED\n');
@@ -439,6 +457,51 @@ console.log('⑧ ⑨ win-x64 参数化 —— .dll / node.exe / start.cmd / win3
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════════
+ * ⑰–⑲ 最小探针运行时（鸡生蛋那一环）
+ *
+ * `[用户真机 2026-08-08, Windows v0.3.0]` 解压即运行，本机组件页**六个后端全部**报
+ * `probe did not complete: probe executable not found`。包里根本没有探针。
+ * 这三条把「包里没有探针」钉成**打包时当场红**，而不是等用户报。
+ * ═══════════════════════════════════════════════════════════════════════════════════ */
+{
+  const L = LAYOUT['linux-x64'];
+
+  {
+    const r = run('linux-x64', { mutate: (f) => f.delete(`runtime/probe/${L.probeExe}`) });
+    check('⑰ ★ 包里没有探针 → 红（复现用户 v0.3.0 那一屏的成因）', () => {
+      assert.equal(r.status, 1, r.out);
+      assert.match(r.out, /缺文件：runtime\/probe\/openmemo-probe/);
+    });
+  }
+
+  /*
+   * ★ 这条是三条里最有价值的：ggml 核心缺了之后，**文件存在性检查全绿**
+   *   （探针在、CPU 模块在），只有「真的跑一次」那条会红。
+   *   `[CI 实测 run 31261013823]` macOS 上真的这么发生过：
+   *   `dyld: Library not loaded: @rpath/libggml.0.dylib`。
+   */
+  {
+    const r = run('linux-x64', {
+      mutate: (f) => f.delete(`runtime/probe/libggml-base.${L.libext}`),
+    });
+    check('⑱ ★ 缺 ggml 核心 → 红（存在性检查会放行，只有"真的跑一次"抓得到）', () => {
+      assert.equal(r.status, 1, r.out);
+      assert.match(r.out, /ggml-base/);
+    });
+  }
+
+  {
+    const r = run('linux-x64', {
+      mutate: (f) => f.delete(`runtime/probe/libggml-cpu-x64.${L.libext}`),
+    });
+    check('⑲ 缺 CPU 后端模块 → 红（探针会枚举出 0 个设备 = 等于没有答案）', () => {
+      assert.equal(r.status, 1, r.out);
+      assert.match(r.out, /ggml-cpu/);
+    });
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════
  * ⑩–⑫ `build-bundle.mjs --out` 的路径解析
  *
  * 病灶：`makeArchive()` 里 `execFileAsync('tar', [flag, out, …], { cwd: OUT_ROOT })`
@@ -578,5 +641,5 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  `\x1b[32m✔\x1b[0m selftest-bundle: ${passed} 个用例全部通过（5 条正向 + 12 条反向 + 3 条 --out 路径）`,
+  `\x1b[32m✔\x1b[0m selftest-bundle: ${passed} 个用例全部通过（5 条正向 + 15 条反向 + 3 条 --out 路径）`,
 );

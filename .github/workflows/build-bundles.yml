@@ -208,7 +208,6 @@ jobs:
           node scripts/ci/simulate-user-launch.mjs \
             --archive "${{ steps.bundle.outputs.archive }}" --mode guard
 
-
       # ★★ 用户视角的第一屏 —— 这一步是本轮唯一能证明"鸡生蛋"被解开的东西。
       #    全新空数据目录 + 刚组装的包 + 什么都不装，直接读运行时页的数据源。
       #    判据：任何后端报 `probe did not complete` 即失败。
@@ -284,7 +283,6 @@ jobs:
         run: |
           node scripts/ci/simulate-user-launch.mjs \
             --archive "${{ steps.bundle.outputs.archive }}" --mode guard
-
 
       # ★★ 用户视角的第一屏 —— 这一步是本轮唯一能证明"鸡生蛋"被解开的东西。
       #    全新空数据目录 + 刚组装的包 + 什么都不装，直接读运行时页的数据源。

@@ -740,7 +740,9 @@ async function findUnder(root, name) {
  */
 async function assembleProbeRuntime() {
   hdr('④-bis 最小探针运行时（否则用户第一屏六个后端全报"找不到探针"）');
-  const manifest = JSON.parse(await readFile(join(REPO_ROOT, 'vendor/manifests/backends.json'), 'utf8'));
+  const manifest = JSON.parse(
+    await readFile(join(REPO_ROOT, 'vendor/manifests/backends.json'), 'utf8'),
+  );
   const pack = manifest.packs.find((p) => p.id === T.probePackId);
   if (!pack) die(`backends.json 里没有 pack ${T.probePackId} —— 探针没有来源`);
   const file = pack.files.find((f) => f.role === 'archive');
@@ -748,11 +750,14 @@ async function assembleProbeRuntime() {
 
   const local = await fetchToCache(mirror.url, file.name);
   const got = await sha256Of(local);
-  if (got !== file.sha256) die(`${T.probePackId} 摘要与 manifest 不符\n   期望 ${file.sha256}\n   实得 ${got}`);
+  if (got !== file.sha256)
+    die(`${T.probePackId} 摘要与 manifest 不符\n   期望 ${file.sha256}\n   实得 ${got}`);
   say(`   ✔ ${T.probePackId}  sha256 对着 manifest 校验通过`);
 
   const work = await mkdtemp(join(tmpdir(), 'om-probe-'));
-  const { unpackArchive } = await import(pathToFileURL(join(REPO_ROOT, 'packages/downloader/dist/index.js')).href);
+  const { unpackArchive } = await import(
+    pathToFileURL(join(REPO_ROOT, 'packages/downloader/dist/index.js')).href
+  );
   await unpackArchive(local, work, kindOf(file.name));
 
   const probeName = T.platform === 'win32' ? 'openmemo-probe.exe' : 'openmemo-probe';
@@ -810,7 +815,9 @@ async function assembleProbeRuntime() {
   }
   if (copied === 0) die(`没有复制任何 ggml 库 —— 探针一定起不来`);
   await rm(work, { recursive: true, force: true });
-  say(`   ✔ runtime/probe/  探针 + ggml 核心 + ${chosenCpu}（共 ${copied + 1} 个文件，${mib(await dirSize(dst))}）`);
+  say(
+    `   ✔ runtime/probe/  探针 + ggml 核心 + ${chosenCpu}（共 ${copied + 1} 个文件，${mib(await dirSize(dst))}）`,
+  );
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────────

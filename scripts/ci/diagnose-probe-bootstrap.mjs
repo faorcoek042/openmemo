@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * **「用户解压完、第一次打开运行时页，到底看到什么」** —— 三平台各答一次。
+ * **「用户解压完、第一次打开「本机组件」页，到底看到什么」** —— 三平台各答一次。
  *
  * ## 为什么这一步要永久存在
  *
- * `[用户真机 2026-08-08, Windows, v0.3.0]` 解压即运行，运行时页**六个后端全部**报：
+ * `[用户真机 2026-08-08, Windows, v0.3.0]` 解压即运行，「本机组件」页**六个后端全部**报：
  * ```
  * probe did not complete: probe executable not found:
  *   C:\Users\...\AppData\Roaming\OpenMemo\bin\runtime\openmemo-probe.exe
@@ -14,7 +14,7 @@
  * 也就是说：产品最常见的第一屏，此前没有任何一条 CI 腿走过。
  *
  * 所以这个脚本刻意**什么都不装**：全新空数据目录 + 刚解压的包 + 直接读
- * 运行时页的数据源 `GET /api/runtime/hardware`，把每个后端的
+ * 「本机组件」页的数据源 `GET /api/runtime/hardware`，把每个后端的
  * `available / probed / unavailableReason` 原样打出来。
  *
  * ## 判据（会红的那条）
@@ -58,7 +58,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const ROOT = await mkdtemp(join(tmpdir(), 'om-probe-boot-'));
 const DATA = join(ROOT, 'data');
 
-console.log('\n\x1b[1m用户视角：全新空数据目录 + 刚解压的包，运行时页看到什么\x1b[0m');
+console.log('\n\x1b[1m用户视角：全新空数据目录 + 刚解压的包，「本机组件」页看到什么\x1b[0m');
 console.log(`  包       ${BUNDLE}`);
 console.log(`  数据目录 ${DATA}（全新，什么都没装）`);
 console.log(`  平台     ${process.platform}/${process.arch}`);
@@ -107,14 +107,18 @@ const hw = (await (await fetch(`${BASE}/api/runtime/hardware`)).json()).hardware
 
 console.log('');
 console.log(`  CPU  ${hw.cpu?.brand ?? '?'}（${hw.cpu?.logicalCores ?? '?'} 线程）`);
-console.log(`  GPU  ${hw.gpus?.length ? hw.gpus.map((g) => `${g.vendor ?? '?'} ${g.name ?? ''}`).join(' · ') : '(未检出，runner 上通常如此)'}`);
+console.log(
+  `  GPU  ${hw.gpus?.length ? hw.gpus.map((g) => `${g.vendor ?? '?'} ${g.name ?? ''}`).join(' · ') : '(未检出，runner 上通常如此)'}`,
+);
 console.log('');
 console.log('  后端           available  probed   unavailableReason');
 console.log('  ' + '─'.repeat(88));
 let broken = 0;
 for (const b of hw.backends ?? []) {
   const reason = b.unavailableReason ?? '(无 —— 可用)';
-  console.log(`  ${String(b.id).padEnd(14)} ${String(b.available).padEnd(10)} ${String(b.probed).padEnd(8)} ${reason}`);
+  console.log(
+    `  ${String(b.id).padEnd(14)} ${String(b.available).padEnd(10)} ${String(b.probed).padEnd(8)} ${reason}`,
+  );
   if (/probe did not complete/i.test(reason)) broken += 1;
 }
 
