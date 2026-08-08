@@ -151,6 +151,7 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
           anchorCount = replaceAnchors(deps.db, note.id, parsed);
           if (!changed.includes('body')) changed.push('body');
         }
+        // 用**过滤版**即可：这条笔记刚在本函数开头由 `noteByUid` 验过，必然未删。
         const updated = repos.noteById(note.id);
         sse.publish(
           makeEvent('note.updated', topics.note(note.uid), {

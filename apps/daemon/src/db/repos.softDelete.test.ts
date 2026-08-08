@@ -68,7 +68,7 @@ describe('软删除的读取契约：uid 看不见，id 仍看得见', () => {
     assert.equal(repos.noteByUid(note.uid) === undefined, true);
   });
 
-  it('★ 笔记：删之后 noteById 仍然读得到 —— 这个不对称是刻意的', () => {
+  it('★ 笔记：删之后 noteByIdIncludingDeleted 仍然读得到 —— 这个不对称是刻意的', () => {
     const repos = freshRepos();
     const note = repos.createNote({ title: 'job 中心还要拿它的标题' });
     repos.softDeleteNote(note.id);
@@ -76,10 +76,29 @@ describe('软删除的读取契约：uid 看不见，id 仍看得见', () => {
     /*
      * `main.ts` 把 job 列表里的 `note_id` 翻成标题。笔记被删了，那条 job
      * 仍然存在于任务中心 —— 标题不该因此变成空白。
-     * 这条要是红了，说明有人把 `*ById` 也一起过滤了：请先想清楚 job 中心怎么办。
+     * 这条要是红了，说明有人把这个显式变体也一起过滤了：请先想清楚 job 中心怎么办。
+     *
+     * ⚠️ 这条断言此前钉的是 `noteById`。把"连已删一起读"的意图挪进函数名之后，
+     * 它跟着挪到了 `noteByIdIncludingDeleted` 上 —— **被保护的性质没有变**，
+     * 变的只是它挂在哪个名字上。
      */
-    assert.equal(repos.noteById(note.id)?.title, 'job 中心还要拿它的标题');
-    assert.equal(typeof repos.noteById(note.id)?.deleted_at, 'number');
+    assert.equal(repos.noteByIdIncludingDeleted(note.id)?.title, 'job 中心还要拿它的标题');
+    assert.equal(typeof repos.noteByIdIncludingDeleted(note.id)?.deleted_at, 'number');
+  });
+
+  it('★ 笔记：删之后**过滤版** noteById 读不到 —— 默认必须是安全的那一侧', () => {
+    const repos = freshRepos();
+    const note = repos.createNote({ title: '默认就该看不见' });
+
+    assert.equal(repos.noteById(note.id)?.uid, note.uid); // 前提：删之前读得到
+    repos.softDeleteNote(note.id);
+
+    /*
+     * 这条与上一条**必须同时存在**：只有上一条时，把 `noteById` 也做成宽容的
+     * 仍然全绿；只有这一条时，把两个都做成过滤的也全绿。
+     * 两条一起才钉住"**一个宽容、一个安全，而且各自是哪一个**"。
+     */
+    assert.equal(repos.noteById(note.id) === undefined, true);
   });
 
   it('笔记：列表与计数同样当它不存在（"不存在"在本产品里的既定表达）', () => {
@@ -113,12 +132,15 @@ describe('软删除的读取契约：uid 看不见，id 仍看得见', () => {
     );
   });
 
-  it('文件夹：删之后 folderById 仍然读得到 —— 环检测与删除路径都要看见它', () => {
+  it('文件夹：删之后 folderByIdIncludingDeleted 仍然读得到 —— 环检测要看见它', () => {
     const repos = freshRepos();
     const folder = repos.createFolder({ name: '已删但仍要能被扫到' });
     repos.softDeleteFolderTree(folder.id);
 
-    assert.equal(repos.folderById(folder.id)?.name, '已删但仍要能被扫到');
+    // 过滤版看不见（默认安全的那一侧）……
+    assert.equal(repos.folderById(folder.id) === undefined, true);
+    // ……显式变体看得见（环检测问的是"库里有没有环"，不是"用户看得见的树上有没有环"）
+    assert.equal(repos.folderByIdIncludingDeleted(folder.id)?.name, '已删但仍要能被扫到');
     /*
      * `softDeleteFolderTree` 自己就是删除路径：它必须能重扫一棵已删的子树
      * （幂等），否则重复删除会静默少标记节点。

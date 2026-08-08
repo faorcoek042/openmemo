@@ -319,16 +319,41 @@ export class Repos {
    */
 
   /**
-   * 按内部 rowid 取笔记。**包含已软删的行** —— 见上方契约块。
+   * 按内部 rowid 取笔记。**不含已软删的行**（与 `noteByUid` 同口径）。
    *
-   * 现存的合法消费者（都不是从 uid 进来的用户请求）：
-   *   · `createNote()` 刚 INSERT 完回读自己那一行；
-   *   · `main.ts` 把 job 列表里的 `note_id` 翻成标题 —— 笔记被删了，
-   *     那条 job 仍然存在于任务中心，标题不该因此变成空白；
-   *   · `content.ts` 写完之后回读（那条笔记刚由 `noteByUid` 验过，必然未删）；
-   *   · 两个 job runner 从 payload 里拿 `noteId`。
+   * 要连已删的一起读，用 `noteByIdIncludingDeleted()` —— **那个意图必须在函数名里说出来**。
    */
   noteById(id: number): NoteRow | undefined {
+    return this.db
+      .prepare<NoteRow>(`SELECT * FROM notes WHERE id = :id AND deleted_at IS NULL`)
+      .get({ id });
+  }
+
+  /**
+   * 按内部 rowid 取笔记，**连已软删的一起返回**。
+   *
+   * ## 为什么这个名字这么长
+   *
+   * 这里原本只有一个 `noteById()`，它"碰巧"能读到已删行，而**理由写在注释里**。
+   * 本仓刚被同一个形状咬过：`folderById` 的注释声称「由调用方决定"已删"算不算 404」，
+   * 而**五个调用方没有一个真去检查** —— 一条描述了从不存在的分工的注释。
+   *
+   * > **注释不执行任何东西。** 名字执行。
+   *
+   * 所以"我要连已删的一起读"从注释挪进了函数名：写下这个名字的人必须先想一遍
+   * 自己为什么需要它，而读到它的人一眼就知道这里可能拿到一条用户已经删掉的笔记。
+   *
+   * ## 唯一的合法消费者，及其理由
+   *
+   * **`main.ts` 把 job 列表里的 `note_id` 翻成标题。** 理由不是"历史如此"，是：
+   * **job 的生命期比笔记长** —— 用户可以在一条转写/导图 job 还排着队时删掉那条笔记，
+   * 而那条 job 仍然存在于任务中心。此时标题**不该因此变成空白**：
+   * 一条没有标题的失败任务，用户根本认不出它是哪来的。
+   *
+   * ⚠️ 别"顺手统一"把这里也改成过滤 —— 那会**静默抽掉任务中心的标题**，
+   * 而不会有任何东西报错。`repos.softDelete.test.ts` 里有一条用例专门钉这个。
+   */
+  noteByIdIncludingDeleted(id: number): NoteRow | undefined {
     return this.db.prepare<NoteRow>(`SELECT * FROM notes WHERE id = :id`).get({ id });
   }
 
@@ -921,20 +946,39 @@ export class Repos {
   }
 
   /**
-   * 按内部 rowid 取文件夹。**包含已软删的行** —— 与 `noteById` 同一条契约。
+   * 按内部 rowid 取文件夹。**不含已软删的行**（与 `folderByUid` 同口径）。
    *
    * ⚠️ 这里原来的注释是「不过滤 `deleted_at` —— 由调用方决定"已删"要回 404 还是照常处理」。
    * 那句话描述的是一个**不存在的分工**：`folderByUid` 的 5 个调用点**没有一个**
    * 检查过 `deleted_at`。一条把责任推给调用方、而调用方并不知情的注释，
    * 比没有注释更坏 —— 读到它的人会以为这件事已经有人管了，于是不去建。
+   * **这一条正是本次把意图挪进函数名的直接理由。**
    *
-   * 现存的合法消费者（都需要看见已删的行）：
-   *   · `folderAncestorIds()` 环检测 —— 被一个已删节点挡住就等于瞎了；
-   *   · `folderSubtreeIds()` / `softDeleteFolderTree()` —— 它自己就是删除路径，
-   *     必须能重扫已删子树（`markDeleted` 里带 `AND deleted_at IS NULL` 保证幂等）；
-   *   · `createFolder()` / `updateFolder()` 回读刚写的那一行。
+   * 要连已删的一起读，用 `folderByIdIncludingDeleted()`。
    */
   folderById(id: number): FolderRow | undefined {
+    return this.db
+      .prepare<FolderRow>(`SELECT * FROM folders WHERE id = :id AND deleted_at IS NULL`)
+      .get({ id });
+  }
+
+  /**
+   * 按内部 rowid 取文件夹，**连已软删的一起返回**。
+   *
+   * ## 唯一的合法消费者，及其理由
+   *
+   * **`folderAncestorIds()` 的环检测。** 理由是：它要回答的是
+   * 「**库里**这条 parent 链上有没有环」，而不是「用户看得见的树上有没有环」。
+   * 被一个已删节点挡住就等于**提前停在链的中间**，于是一个真实存在的环
+   * （脏数据、或删除与移动交错留下的）会被判成"没有环"——
+   * 那正是这个函数存在的理由（D-02 §1.3 要求应用层做环检测）。
+   * 换句话说：**这里读已删行不是宽容，是正确性。**
+   *
+   * ⚠️ `folderSubtreeIds()` / `softDeleteFolderTree()` 同样要看见已删行，
+   * 但它们走的是自己的递归 SQL，不经过这个函数 —— 它们**就是删除路径本身**，
+   * 必须能重扫一棵已删子树（`markDeleted` 带 `AND deleted_at IS NULL` 保证幂等）。
+   */
+  folderByIdIncludingDeleted(id: number): FolderRow | undefined {
     return this.db.prepare<FolderRow>(`SELECT * FROM folders WHERE id = :id`).get({ id });
   }
 
@@ -1065,12 +1109,12 @@ export class Repos {
   folderAncestorIds(folderId: number, maxDepth = 64): number[] {
     const out: number[] = [];
     const seen = new Set<number>([folderId]);
-    let cur = this.folderById(folderId)?.parent_id ?? null;
+    let cur = this.folderByIdIncludingDeleted(folderId)?.parent_id ?? null;
     while (cur !== null && out.length < maxDepth) {
       if (seen.has(cur)) break;
       seen.add(cur);
       out.push(cur);
-      cur = this.folderById(cur)?.parent_id ?? null;
+      cur = this.folderByIdIncludingDeleted(cur)?.parent_id ?? null;
     }
     return out;
   }

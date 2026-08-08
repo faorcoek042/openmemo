@@ -553,6 +553,8 @@ function toFolderNode(
 /** 单个文件夹的响应里也要带 parentUid —— 前端拿它决定插到树的哪一层。 */
 function parentUidOf(repos: Repos, folder: FolderRow): string | null {
   if (folder.parent_id === null) return null;
+  // 用**过滤版**：父文件夹已被删时，这里回 null 才对 ——
+  // 报出一个用户在侧栏里根本看不到的 uid，前端只会拿它去请求然后 404。
   return repos.folderById(folder.parent_id)?.uid ?? null;
 }
 

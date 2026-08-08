@@ -59,6 +59,12 @@ export async function runMindmapJob(
   const { repos, mindmaps, sse, queue } = deps;
   const payload = JSON.parse(job.payload_json) as MindmapPayload;
 
+  /*
+   * 用**过滤版** `noteById`：笔记在 job 排队期间被删掉的话，这里就该停。
+   * 理由是"不为一条用户已经删掉的笔记做工" —— 继续生成导图既浪费算力，
+   * 产物也永远不会被任何人看到（列表与搜索都已经排除它了）。
+   * 下面那句 `note ${payload.noteId} 不存在` 因此同时覆盖"从来没有"与"已被删除"。
+   */
   const note = repos.noteById(payload.noteId);
   if (!note) throw new Error(`note ${payload.noteId} 不存在`);
 

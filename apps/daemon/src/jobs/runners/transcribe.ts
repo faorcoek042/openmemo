@@ -204,6 +204,10 @@ export async function runTranscribeJob(
   const { repos, sse, queue } = deps;
   const payload = JSON.parse(job.payload_json) as TranscribePayload;
 
+  /*
+   * 用**过滤版** `noteById`：与 mindmap runner 同一条理由 ——
+   * 笔记在排队期间被删掉就该停，不为已删笔记转写（还会白白落一份媒体文件）。
+   */
   const note = repos.noteById(payload.noteId);
   if (!note) throw new Error(`note ${payload.noteId} 不存在`);
 

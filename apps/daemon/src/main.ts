@@ -578,7 +578,17 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
      * 而且**不会有任何东西报错**。
      */
     queue = new JobQueue(database.db, instanceId, (row) => {
-      const note = row.note_id === null ? undefined : repos?.noteById(row.note_id);
+      /*
+       * ★ 这里**刻意**用 `noteByIdIncludingDeleted` —— 理由不是"历史如此"：
+       * **job 的生命期比笔记长。** 用户可以在一条转写/导图 job 还排着队时删掉那条笔记，
+       * 而那条 job 仍然在任务中心里。此时标题不该变成空白 ——
+       * 一条没有标题的失败任务，用户根本认不出它是哪来的。
+       * 本文件另外两处（jobs 列表 / 单条 get）同理。
+       *
+       * ⚠️ 别"顺手统一"改成过滤版：那会**静默抽掉任务中心的标题**，不会有任何东西报错。
+       * `db/repos.softDelete.test.ts` 有一条用例专门钉这个。
+       */
+      const note = row.note_id === null ? undefined : repos?.noteByIdIncludingDeleted(row.note_id);
       const event = jobCreatedEvent(row, note ? { uid: note.uid, title: note.title } : undefined);
       // 下载类 job 不走这条队列；认不出的类型 `jobCreatedEvent` 返回 undefined，宁可不发也不编。
       if (event) sse.publish(event);
@@ -792,7 +802,8 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       list: (limit) => {
         const out: PipelineJob[] = [];
         for (const row of queue_.list(limit)) {
-          const note = row.note_id === null ? undefined : repos?.noteById(row.note_id);
+          const note =
+            row.note_id === null ? undefined : repos?.noteByIdIncludingDeleted(row.note_id);
           const job = pipelineJobOf(row, note ? { uid: note.uid, title: note.title } : undefined);
           // 认不出类型的（将来可能有别的 job.type）宁可不列，也不给它编一个 kind
           if (job) out.push(job);
@@ -802,7 +813,8 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       get: (uid) => {
         const row = queue_.byUid(uid);
         if (!row) return undefined;
-        const note = row.note_id === null ? undefined : repos?.noteById(row.note_id);
+        const note =
+          row.note_id === null ? undefined : repos?.noteByIdIncludingDeleted(row.note_id);
         return pipelineJobOf(row, note ? { uid: note.uid, title: note.title } : undefined);
       },
       retry: (uid) => {
