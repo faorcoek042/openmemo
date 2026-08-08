@@ -88,8 +88,79 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ═══════════════════════════════════════════════════════════════════════════════════
+  # 发布前闸门：**这一批包，四条 e2e 腿都对着它跑绿过了吗？**
+  #
+  # ## 它挡的是一次真事故
+  #
+  # `v0.3.0` 发出去之后才发现，四条 e2e 腿此前跑的**都是更早的包**
+  # （全在 `aa92cba3` 之前）。是用户追问「确定各平台都验过了吗」才查出来的。
+  # 与 `v0.2.0`「CI 从没执行过启动器」是**同一形状**：
+  # **判据没有对准交付物，而且靠人记得。**
+  #
+  # 根因是一条容易被读漏的性质：
+  #   **e2e 腿测的是「包」，不是「树」** —— 它绿只说明**那一批包**好；
+  #   反过来 HEAD 修好了它也不会自己变绿，得先重新出包。
+  # 所以"跑过 e2e"必须有个宾语。凭证名字里的 `bundleRunId` 就是那个宾语。
+  #
+  # ## 为什么放在这里，而不是做成一份给人看的清单
+  #
+  # 本仓已经立过判据：**「一个需要人记得去填的参数，等价于一个迟早不会被填的参数。」**
+  # 清单同理。放成 `upload` 的 `needs:` 之后，**不通过就没有上传这回事** ——
+  # 判定从"人记得检查"变成"机器拦得住"。
+  #
+  # ## 只对**包**生效
+  #
+  # 这个 workflow 也给 build-backends / mirror-model-blobs 传东西，那些不归 e2e 腿管。
+  # 所以先看 run_id 里到底有没有 `bundle-*` 产物：没有就明说"这批不是包，跳过闸门"，
+  # **并把这句话打出来** —— 一个静默跳过的闸门与没有闸门等价。
+  # ═══════════════════════════════════════════════════════════════════════════════════
+  e2e-gate:
+    name: 发布前闸门（这批包跑过四条 e2e 腿吗）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      # 只读，且只读 Actions —— 它只需要问"有没有那个 artifact 名字"。
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: 这批产物是不是「包」
+        id: kind
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          names=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/${{ github.event.inputs.run_id }}/artifacts" \
+            --jq '[.artifacts[]|select(.expired==false)|.name]|join(",")')
+          echo "run ${{ github.event.inputs.run_id }} 的产物：[$names]"
+          case ",$names," in
+            *",bundle-"*|*",bundles-complete,"*) echo "is_bundle=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "is_bundle=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: 四条 e2e 腿的凭证核对
+        if: steps.kind.outputs.is_bundle == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/verify-e2e-attestation.mjs --bundle-run "${{ github.event.inputs.run_id }}"
+
+      # 不是包就说清楚为什么没查 —— 静默跳过的闸门等于没有闸门（PROTOCOL §11）。
+      - name: （非包产物）说明为什么跳过
+        if: steps.kind.outputs.is_bundle != 'true'
+        run: |
+          echo "这个 run 里没有 bundle-* / bundles-complete 产物 —— 不是一批包，"
+          echo "e2e 闸门不适用（四条 e2e 腿验的是预编译包）。本次不做该项判定。"
+
   upload:
     name: 上传到已存在的 release（唯一一个有写权限的 job）
+    # ★ 闸门不过就没有上传这回事 —— 判定从"人记得检查"变成"机器拦得住"。
+    needs: [e2e-gate]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:

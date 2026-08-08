@@ -67,6 +67,11 @@ jobs:
     name: F1+F2 端到端（${{ matrix.label }}）
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
+    # ★ 把**实际用到的**那个包的 run id 抬到 job 级 —— 下面发凭证要绑定它。
+    #   矩阵三条腿解析出的是同一个 id（要么人工指定，要么同一套挑选规则），
+    #   所以谁最后写谁都一样；凭证文件里另存了平台清单可供事后审计。
+    outputs:
+      bundle_run_id: ${{ steps.bundle.outputs.run_id }}
     permissions:
       contents: read
       # 取**另一个 run** 的 artifact 需要它。只读。
@@ -199,3 +204,56 @@ jobs:
             --port ${{ matrix.port }} \
             --fixture-port $(( ${{ matrix.port }} + 1 )) \
             ${{ inputs.skipF1 && '--skip-f1' || '' }}
+
+  # ═══════════════════════════════════════════════════════════════════════════════════
+  # 发一张「这条腿对着**这一批包**跑绿过」的凭证。
+  #
+  # ## 为什么要有它
+  #
+  # `v0.3.0` 发出去之后才发现：四条 e2e 腿此前跑的**都是更早的包**。
+  # 是用户追问「确定各平台都验过了吗」才查出来的。与 v0.2.0「CI 从没执行过启动器」
+  # 是同一形状 —— **判据没有对准交付物，而且靠人记得。**
+  #
+  # 根因是一条容易被读漏的性质：**e2e 腿测的是「包」，不是「树」。**
+  # 它绿只说明**那一批包**好；HEAD 修好了它也不会自己变绿。
+  # 所以"跑过 e2e"必须有个宾语，而这张凭证就是那个宾语。
+  #
+  # ## 判定落在 artifact **名字**上（与 bundles-complete 同一形状）
+  #
+  # 名字是 `e2e-attest-import-<bundleRunId>`：换一批包就是另一个名字，
+  # **旧凭证自动失效**。消费方（发布前那道闸）只问名字在不在，不读内容 ——
+  # 一个需要读内容才能判定的凭证，迟早会有人读错。
+  #
+  # ## 这个 job **不带任何 `if:`**，且 `needs:` 矩阵全部
+  #
+  # 任何一个平台失败或被跳过 → 它自己被跳过 → **凭证根本不存在**。
+  # "部分跑"的 run 里不会出现一张说了半句真话的凭证（PROTOCOL §11）。
+  # ═══════════════════════════════════════════════════════════════════════════════════
+  attest:
+    name: e2e 凭证（三平台全绿才发）
+    needs: [e2e]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: 写凭证
+        id: attest
+        run: |
+          node scripts/ci/emit-e2e-attestation.mjs \
+            --leg import \
+            --bundle-run "${{ needs.e2e.outputs.bundle_run_id }}" \
+            --platforms linux-x64,darwin-arm64,win32-x64 \
+            --out dist/e2e-attest.json
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: e2e-attest-import-${{ needs.e2e.outputs.bundle_run_id }}
+          path: dist/e2e-attest.json
+          if-no-files-found: error
