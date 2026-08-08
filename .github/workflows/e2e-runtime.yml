@@ -82,6 +82,10 @@ jobs:
   audit:
     name: 要求 2.1/2.2 端到端（${{ matrix.label }}）
     runs-on: ${{ matrix.runner }}
+    # 把**实际用到的**那一批包的 run id 抬到 job 级，供下面的 attest 绑定
+    # （artifact 模式下 `bundlesRunId` 可以留空自动挑，所以必须取解析后的真值）。
+    outputs:
+      bundle_run_id: ${{ steps.runid.outputs.id }}
     # fail-fast: false —— 一个平台红不该掩盖另外两个平台的事实。
     # 这条腿存在的全部意义就是"三个平台各自到底怎么样"。
     strategy:
@@ -349,3 +353,54 @@ jobs:
           name: e2e-runtime-mutations-${{ matrix.label }}
           path: mutations-${{ matrix.label }}.log
           if-no-files-found: warn
+
+  # ═══════════════════════════════════════════════════════════════════════════════════
+  # 发一张「这条腿对着**这一批包**跑绿过」的凭证（契约见 D-17 §11）。
+  #
+  # 判定落在 artifact **名字** `e2e-attest-runtime-<bundleRunId>` 上，不在文件内容上：
+  # 消费方（`release-upload.yml` 的 `e2e-gate`）只问名字在不在。名字里带 bundleRunId，
+  # 所以**换一批包就是另一个名字，旧凭证自动失效** —— 在此之前，
+  # 「我们跑过 e2e」是一个**没有宾语的句子**，`v0.3.0` 就是这么发出去的。
+  #
+  # ## 这个 job 的 `if:` 管的是**模式**，绝不是**结果**
+  #
+  # `needs:` 已经管住了结果：任一平台失败/取消 → 本 job 被跳过 → **凭证根本不存在**
+  # （GitHub 对带 `needs` 的 job 默认要求 needs 全部 success，普通布尔表达式不会解除它）。
+  # 下面那个 `if:` 只用来排除**这张凭证没有意义**的模式。
+  # ⚠️ **永远不要把它改成 `always()` / `!cancelled()`** —— 那会解除默认的 success 要求，
+  #    于是"部分跑"也能发出凭证，而这正是本机制要挡的那件事。
+  # ═══════════════════════════════════════════════════════════════════════════════════
+  attest:
+    name: e2e 凭证（仅 artifact 模式，三平台全绿才发）
+    needs: [audit]
+    # ★★ 只有 `bundleSource=artifact` 才发凭证。
+    #
+    #   `checkout` 模式（默认）跑的是**本次代码现组装**的包，那是回归门禁；
+    #   它证明不了"某一批已发布的包好"—— 两者不是同一堆字节。
+    #
+    #   ⚠️ 这条腿的输入叫 `bundlesRunId`（**多一个 s**，与另外三条腿不同）。
+    #      名字拼错不会报错，只会让表达式求值成空串，于是凭证名变成
+    #      `e2e-attest-runtime-`，消费方永远问不到 —— 那正是"看起来已认证"的假通过。
+    #      所以这里绑的是**解析后的 job output**，不是输入本身。
+    if: ${{ inputs.bundleSource == 'artifact' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: 写凭证
+        run: |
+          node scripts/ci/emit-e2e-attestation.mjs \
+            --leg runtime \
+            --bundle-run "${{ needs.audit.outputs.bundle_run_id }}" \
+            --platforms linux-x64,darwin-arm64,win32-x64 \
+            --out dist/e2e-attest.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: e2e-attest-runtime-${{ needs.audit.outputs.bundle_run_id }}
+          path: dist/e2e-attest.json
+          if-no-files-found: error

@@ -91,6 +91,10 @@ jobs:
     name: F4/F5 端到端（${{ matrix.label }}）
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
+    # 把**实际用到的**那一批包的 run id 抬到 job 级，供下面的 attest 绑定。
+    # （只在发布审计模式下有值；现场组装模式那一步被 if: 跳过，输出为空。）
+    outputs:
+      bundle_run_id: ${{ steps.pick.outputs.run_id }}
     strategy:
       fail-fast: false
       matrix:
@@ -274,3 +278,52 @@ jobs:
             --bundle "${{ steps.extract.outputs.bundle_dir }}" \
             --data-dir "${{ runner.temp }}/e2e-notes-shared/data" \
             --port 19960 --llm-port 19961 --mutation-port 19970
+
+  # ═══════════════════════════════════════════════════════════════════════════════════
+  # 发一张「这条腿对着**这一批包**跑绿过」的凭证（契约见 D-17 §11）。
+  #
+  # 判定落在 artifact **名字** `e2e-attest-notes-<bundleRunId>` 上，不在文件内容上：
+  # 消费方（`release-upload.yml` 的 `e2e-gate`）只问名字在不在。名字里带 bundleRunId，
+  # 所以**换一批包就是另一个名字，旧凭证自动失效** —— 在此之前，
+  # 「我们跑过 e2e」是一个**没有宾语的句子**，`v0.3.0` 就是这么发出去的。
+  #
+  # ## 这个 job 的 `if:` 管的是**模式**，绝不是**结果**
+  #
+  # `needs:` 已经管住了结果：任一平台失败/取消 → 本 job 被跳过 → **凭证根本不存在**
+  # （GitHub 对带 `needs` 的 job 默认要求 needs 全部 success，普通布尔表达式不会解除它）。
+  # 下面那个 `if:` 只用来排除**这张凭证没有意义**的模式。
+  # ⚠️ **永远不要把它改成 `always()` / `!cancelled()`** —— 那会解除默认的 success 要求，
+  #    于是"部分跑"也能发出凭证，而这正是本机制要挡的那件事。
+  # ═══════════════════════════════════════════════════════════════════════════════════
+  attest:
+    name: e2e 凭证（仅发布审计模式，三平台全绿才发）
+    needs: [e2e]
+    # ★★ 只有**发布审计**模式才发凭证。
+    #
+    #   `assembleFromSource=true`（默认）跑的是**本次 checkout 现场组装**的包 ——
+    #   那是回归门禁，证明的是"当前代码组装出来的东西好"。
+    #   它**不能给一批已经发布的包背书**：两者根本不是同一堆字节。
+    #   拿现场组装的绿去发凭证，等于让闸门相信一件它没验过的事 ——
+    #   而这个闸门存在的全部理由就是挡住这种"看起来验过了"。
+    if: ${{ !inputs.assembleFromSource }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: 写凭证
+        run: |
+          node scripts/ci/emit-e2e-attestation.mjs \
+            --leg notes \
+            --bundle-run "${{ needs.e2e.outputs.bundle_run_id }}" \
+            --platforms linux-x64,darwin-arm64,win32-x64 \
+            --out dist/e2e-attest.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: e2e-attest-notes-${{ needs.e2e.outputs.bundle_run_id }}
+          path: dist/e2e-attest.json
+          if-no-files-found: error
