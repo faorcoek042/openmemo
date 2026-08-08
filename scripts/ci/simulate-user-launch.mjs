@@ -591,6 +591,53 @@ async function macos() {
 
   assertReadMeFirst(tree);
 
+  hdr('⑦ ★ 说明书自己会不会也被拦（它必须比那道门先到）');
+  /*
+   * 这一步是整份修复的**支点**。
+   *
+   * v0.2.0 的错不是"没写解法"，是**把解法写进了 Gatekeeper 拦住的那个文件里**。
+   * 现在解法搬到了 `READ-ME-FIRST.txt` —— 但如果这个 .txt **同样打不开**，
+   * 那我只是把说明书从一扇锁着的门后面，搬到了另一扇锁着的门后面。
+   *
+   * **所以必须实测，不能推断"纯文本应该不会被拦"。**
+   *
+   * 判据不是 `spctl` 怎么说（它对任何未签名文件都会说 rejected，
+   * 那是"当代码执行"的策略，不是"当文档打开"的策略），
+   * 而是：**带着 quarantine，用户到底读不读得到这些字节。**
+   */
+  const rmf = join(tree, 'READ-ME-FIRST.txt');
+  if (!existsSync(rmf)) {
+    info('本包里没有 READ-ME-FIRST.txt（v0.2.0 就没有）→ 这一格取不到值');
+  } else {
+    const q = sh('xattr', ['-p', 'com.apple.quarantine', rmf]);
+    info(`[实测] 它${q.code === 0 ? ' **也带** quarantine → ' + q.stdout : '不带 quarantine'}`);
+    const rd = sh('/bin/cat', [rmf]);
+    if (rd.code === 0 && rd.stdout.length > 0)
+      ok(
+        `[实测] 带着 quarantine 仍然完整读得出来（${Buffer.byteLength(rd.stdout)} 字节）` +
+          ` —— 说明书不会被那道门挡住`,
+      );
+    else
+      fail(
+        '[实测] 带 quarantine 的 READ-ME-FIRST.txt 读不出来 —— ' +
+          '那这份说明书等于不存在，等于把解法搬到了另一扇锁着的门后面',
+      );
+    /*
+     * ★ 同一棵树、同一个 quarantine 值下的**对照**：
+     *   `.command` 被拒（source=no usable signature），`.txt` 能读 ——
+     *   两者的差别正是"可执行代码" vs "文档"，这条对照比任何单独的结论都有说服力。
+     */
+    dump(
+      'spctl -t open READ-ME-FIRST.txt（对照用：它对文档给的是什么答案）',
+      sh('spctl', ['-a', '-vvv', '-t', 'open', '--context', 'context:primary-signature', rmf]),
+    );
+    dump('open READ-ME-FIRST.txt（= 访达里双击这个文本文件）', sh('open', [rmf]));
+    info(
+      '⚠️ GUI 层「TextEdit 有没有真的弹出来、有没有额外弹窗」在无头 runner 上测不到（UNKNOWN）；' +
+        '这里给的是"字节读得到 + open 的返回值"，以及与 .command 的对照。',
+    );
+  }
+
   /*
    * ★ 顺序是有讲究的：**最贵的那次测量排在最前面。**
    *
