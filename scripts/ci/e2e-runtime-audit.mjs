@@ -164,6 +164,11 @@ function unknown(id, why) {
   results.push({ id, status: 'UNKNOWN', detail: String(why) });
   say(`   ? ${String(id).padEnd(30)} UNKNOWN — ${why}`);
 }
+/** 观测项：只打印，不参与红绿。有些事实值得说，但不该决定红绿。 */
+function note(msg) {
+  say(`   ${msg}`);
+}
+
 /** 真实缺陷：记下来，单独汇总。**不改退出码** —— 它是产品的问题，不是本脚本的判据。 */
 const findings = [];
 function finding(title, detail) {
@@ -1308,11 +1313,46 @@ async function phaseBackends() {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ backend: accel.backend }),
     });
-    assert(
-      'A-ACCEL-SWITCH',
-      sw.status === 200 && sw.body?.selectedBackend === accel.backend,
-      `切到 ${accel.backend} → HTTP ${sw.status} ${JSON.stringify(sw.body).slice(0, 160)}`,
-    );
+
+    /*
+     * ── 判据要分清「拒绝」和「**用假理由**拒绝」──────────────────────────────
+     *
+     * 托管 runner 上没有真 GPU，所以探针**如实**枚举不到设备，
+     * 「本机无法使用 vulkan/metal」是一句**真话** —— 这一格在这里
+     * 结构上就走不完，应当是 UNKNOWN，不是红。
+     *
+     * 但它必须与那个真缺陷区分开：`[CI 实测 run 31250730491]` 当时的 409 说的是
+     * **「backend package not installed」**，而那个包就是上一步刚装的 ——
+     * 陈旧快照让 `installed` 恒为 false。同样是 409，一句是测出来的结论，
+     * 一句是编的。**只有后者是缺陷。**
+     *
+     * `[CI 实测 run 31252071989]` 修完之后同一格的措辞变成了
+     * 「installed but enumerated no devices」—— 说明快照真的跟上了：
+     * 它现在知道包装着、也知道自己探过了。
+     */
+    const zh = String(sw.body?.error?.messageZh ?? '');
+    const en = String(sw.body?.error?.message ?? '');
+    const claimsNotInstalled = /not installed|未安装|没有安装/i.test(`${zh} ${en}`);
+    const installedNow = (await j('/api/backends/installed')).body?.packs ?? [];
+    const reallyInstalled = installedNow.some((p) => p.id === accel.id);
+
+    if (sw.status === 200 && sw.body?.selectedBackend === accel.backend) {
+      assert('A-ACCEL-SWITCH', true, `切到 ${accel.backend} 成功（HTTP 200）`);
+    } else if (claimsNotInstalled && reallyInstalled) {
+      assert(
+        'A-ACCEL-SWITCH',
+        false,
+        `**用假理由拒绝**：包 ${accel.id} 此刻确实在已安装列表里，而 select 回 HTTP ${sw.status}「${zh || en}」。` +
+          `这正是陈旧硬件快照那条死胡同 —— 用户装完点"启用"，被告知"你没装"。`,
+      );
+    } else {
+      unknown(
+        'A-ACCEL-SWITCH',
+        `本 runner 上没有真 GPU，select 回 HTTP ${sw.status}「${zh || en}」——` +
+          `这是**测出来的真结论**（包装着、也探过了），不是那句假话。` +
+          `「装完能不能真的切过去并跑起来」需要一台有真实 GPU 的机器才答得了。`,
+      );
+    }
   }
 
   /* 切回 CPU：它是 L1 兜底，**选它永远合法**（ADR-014 决策 1） */
@@ -2001,15 +2041,45 @@ async function phaseDataDir() {
   say(`   搬之后：源 [${srcAfter.join(' ')}]`);
   say(`           新 [${dstAfter.join(' ')}]`);
   say(`   重启后 health.dataDir = ${h?.dataDir}`);
+  /*
+   * ── 判据是「界面说的和实际发生的一致」，**不是**「必须走 rename」───────────
+   *
+   * Manager 2026-08-08 裁定：跨卷 rename 在 Windows 上本来就会失败，`copy` 是
+   * 必要退路；所以不许拿"源目录空没空"单独当红线。
+   *
+   * `[CI 实测 run 31250730491，windows-2025]` 真正的缺陷是**那句话**：
+   * copy 走完、`fs.rm(from)` 失败（删不掉仍被打开的 openmemo.db），
+   * 而返回里照旧写着「已移动 54 个文件到新位置」——
+   * 数据被复制了一份留在原地，其中含明文 `secrets.json`，用户以为旧位置空了。
+   *
+   * 所以这里查三件事：
+   *   ① 数据真的到了新位置、重启后 daemon 也挂在那儿（这条无论哪种策略都必须成立）；
+   *   ② `sourceRemoved` 必须**如实**反映源目录还在不在；
+   *   ③ 源目录还在时，文案**不许**出现"已移动"，而且要点名旧目录的位置。
+   */
+  const srcEmpty = srcAfter.length === 0;
+  const claimsMoved = String(mv.body?.messageZh ?? '').includes('已移动');
+  const landed =
+    mv.status === 202 &&
+    mv.body?.moved === true &&
+    dstAfter.includes('openmemo.db') &&
+    h?.dataDir === dst;
+  const honest = mv.body?.sourceRemoved === srcEmpty && (srcEmpty || !claimsMoved);
   assert(
     'A-DATADIR-MOVE',
-    mv.status === 202 &&
-      mv.body?.moved === true &&
-      srcAfter.length === 0 &&
-      dstAfter.includes('openmemo.db') &&
-      h?.dataDir === dst,
-    `moved=${mv.body?.moved} strategy=${mv.body?.strategy} files=${mv.body?.files}；源已空=${srcAfter.length === 0}；新位置有 openmemo.db=${dstAfter.includes('openmemo.db')}；重启后挂在 ${h?.dataDir}`,
+    landed && honest,
+    `strategy=${mv.body?.strategy} files=${mv.body?.files}；数据到位=${landed}；` +
+      `源已空=${srcEmpty}，sourceRemoved=${mv.body?.sourceRemoved}（两者必须一致）；` +
+      `文案说"已移动"=${claimsMoved}` +
+      (srcEmpty ? '' : `（源目录还在时说这句就是假话）`) +
+      `；重启后挂在 ${h?.dataDir}`,
   );
+  if (!srcEmpty) {
+    note(
+      `ⓘ 本平台走的是 copy 且源目录没删掉（Windows 删不掉仍被打开的 openmemo.db）——` +
+        `只要产品如实说了，这**不是**缺陷。产品的原话：${String(mv.body?.messageZh ?? '').slice(0, 160)}`,
+    );
+  }
 
   /* ── 只切换不搬 ── */
   hdr('18. 数据目录 ④：★ 只切换不搬（moveExisting:false）—— 别让 T-174 退化');
