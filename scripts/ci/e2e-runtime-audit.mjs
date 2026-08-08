@@ -254,9 +254,17 @@ const MUTATIONS = [
   {
     id: 'M-driver-lie',
     file: 'runtime/dist/backends/manager.js',
-    find: "'installed, but this detection run did not load it: only the backend directory ' +",
-    replace:
-      "'installed but enumerated no devices (driver missing or too old)'; unavailableReason = '' + ",
+    /*
+     * ★ 变异要**关掉 T-168 那条分支**，让控制流落到最后那句真正的
+     *   「driver missing or too old」上 —— 那才是修复前的行为。
+     *
+     * `[CI 实测 run 31250206184]` 第一版改的是分支里那句字符串的**头一段**，
+     * 结果拼接表达式的后半段又把值覆盖回去了 ⇒ 最终文案里根本没有"driver"，
+     * 断言合理地保持绿色，**变异存活**。
+     * 一条改了等于没改的变异比没有变异更糟：它会让人以为这条断言被验证过。
+     */
+    find: 'else if (!probed) {',
+    replace: 'else if (false) {',
     proves: ['A-CPU-NO-DRIVER-LIE'],
     phases: ['boot', 'backends'],
     /*
@@ -1373,8 +1381,41 @@ async function phaseBreaker() {
     utimesSync(probePath, origAtime, origMtime);
     say('   已注入：探针内容置零（size / mtime 保持不变 ⇒ 指纹不变）');
 
-    // 连打两发检测（阈值 CIRCUIT_BREAKER_THRESHOLD = 2）
-    for (let i = 0; i < 2; i++) await j('/api/runtime/hardware?refresh=1');
+    /*
+     * ── 先确认前提真的成立，再谈跳没跳闸 ────────────────────────────────────────
+     *
+     * `[CI 实测 run 31250206184]` macOS / Windows 上这三条一起红，而**根本原因
+     * 不是断路器**：两发 `?refresh=1` 在 0.5 秒内返回，`runtime.probe.ran` 是
+     * `undefined`，`consecutiveFailures` 从 0 到 0 —— 也就是说**那两发压根没探**。
+     * 探针路径是对的、注入也做了，但这一轮"注了故障还成功"的形态与
+     * 「断路器坏了」长得一模一样，于是红灯指向了错误的方向。
+     *
+     * 判据补一层：**注入之后必须观测到"探测真的跑了并且失败了"**。
+     *   · 观测得到 → 前提成立，下面的跳闸/冷却/半开才有意义；
+     *   · 观测不到 → 这台 runner 上构造不出前提，如实报 UNKNOWN 并**把原始
+     *     runtime 块打出来**，让下一轮有据可查 —— 而不是留一个方向错误的红。
+     */
+    let probedAndFailed = false;
+    let lastRuntime = null;
+    for (let i = 0; i < 2; i++) {
+      const r = await j('/api/runtime/hardware?refresh=1');
+      lastRuntime = r.body?.runtime ?? null;
+      if (lastRuntime?.probe?.ran === true && lastRuntime?.probe?.ok === false)
+        probedAndFailed = true;
+      say(
+        `   第 ${i + 1} 发 refresh：HTTP ${r.status} probe.ran=${lastRuntime?.probe?.ran} ok=${lastRuntime?.probe?.ok} kind=${lastRuntime?.probe?.failureKind ?? '-'}`,
+      );
+    }
+    if (!probedAndFailed) {
+      unknown(
+        'A-BREAKER-TRIP',
+        `注入故障后没有观测到"探测真的跑了并且失败了" —— 前提不成立，跳闸与否说明不了断路器的死活。原始 runtime.probe=${JSON.stringify(lastRuntime?.probe ?? null).slice(0, 300)}`,
+      );
+      unknown('A-BREAKER-RETRYAT', '前提不成立（见上）');
+      unknown('A-BREAKER-QUIET', '前提不成立（见上）');
+      unknown('A-BREAKER-HEAL', '前提不成立（见上）');
+      return;
+    }
     const b1 = await j('/api/runtime/breaker');
     const br = b1.body?.breaker ?? {};
     say('');
