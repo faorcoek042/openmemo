@@ -552,8 +552,24 @@ export async function handleBackendRoutes(
       sendError(res, 404, 'NOT_FOUND', `backend pack ${id} is not installed`, '未安装该后端包');
       return true;
     }
+    /*
+     * ★★ T-192：**先按记录删文件，再删记录** —— 顺序不能反（记录没了就不知道该删哪些文件）。
+     *
+     * 此前这里只有 `removeManifest` + `collectGarbage(['orphan_blobs'])`，
+     * 而 `findGarbage()` **只扫 `blobs/`**：`by-name/backend/<归档名>` 那条硬链和
+     * 解开的目录原封不动 ⇒ blob 的 inode 仍被引用 ⇒ **磁盘一个字节都不回收**，
+     * 事件里却照样报一个 `freedBytes`（`[实测]` 差值恒为 0，而报的是整包大小）。
+     *
+     * 第二个后果更重：`by-name/backend/` 是 `findInBackendPacks()` 的**发现路径**。
+     * 一个"已卸载"的包留在那儿**仍然会被解析到并真的跑起来** ——
+     * 用户以为删了，产品还在用它。
+     *
+     * 与 T-164 在模型那一格修的是同一件事、同一个成因；那次**没有覆盖 backend 桶**
+     * （`dropInstalledFiles()` 里那句 `if (kind === 'backend') continue`）。
+     */
+    await state.dropInstalledFiles(id, ['backend']);
     await state.store.removeManifest('backend', id);
-    // 删 manifest 之后原来的 blob 就成了孤儿，立刻回收
+    // 链都删干净了，blob 这才真的成为孤儿 —— 现在回收它才对得上账
     const gc = await state.store.collectGarbage(['orphan_blobs']);
     state.publish(
       makeEvent('backend.removed', topics.backends(), { packId: id, freedBytes: gc.freedBytes }),

@@ -809,10 +809,31 @@ export class RestState {
    * 删不掉不阻断删除流程：manifest 必须走掉，否则用户会卡在"删不掉"上；
    * 留下的孤儿链下一轮还能再清。
    */
-  async dropInstalledFiles(id: string): Promise<void> {
+  /**
+   * @param kinds 只清这几个桶。默认是**除 `backend` 外的全部** —— 与 T-164 的行为一字不差。
+   *
+   * ★★ T-192：加这个参数，是因为 `backend` 那一格**从来没有人清过**，
+   * 而它的后果比模型那一格更重：
+   *
+   * `[实测 2026-08-10]` `DELETE /api/backends/:id` 只做两件事 ——
+   * `removeManifest()` + `collectGarbage(['orphan_blobs'])`。
+   * 而 `findGarbage()` **只扫 `blobs/`**，`by-name/backend/<归档名>` 那条硬链
+   * 与解开的目录**原封不动** ⇒ blob 的 inode 还被引用着 ⇒
+   * **磁盘一个字节都不回收**，而事件里照样报一个 `freedBytes`。
+   *
+   * 第二个后果更难查：`by-name/backend/` 是 `findInBackendPacks()` 的**发现路径**。
+   * 一个"已卸载"的后端包留在那里**仍然会被解析到并真的跑起来** ——
+   * 用户以为删了，产品还在用它。
+   *
+   * 不把 `backend` 直接并进默认集合：`dropInstalledRecord()`（模型那条路）
+   * 也调这个函数，而模型 id 与后端包 id 撞名时会误删。**显式传 kinds，别猜。**
+   */
+  async dropInstalledFiles(
+    id: string,
+    kinds: readonly (typeof STORE_KINDS)[number][] = STORE_KINDS.filter((k) => k !== 'backend'),
+  ): Promise<void> {
     const roots = { models: this.store.root };
-    for (const kind of STORE_KINDS) {
-      if (kind === 'backend') continue;
+    for (const kind of kinds) {
       const rec = await this.store.readManifest<InstalledModel>(kind, id);
       if (!rec) continue;
       for (const f of rec.files ?? []) {

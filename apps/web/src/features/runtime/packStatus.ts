@@ -40,6 +40,7 @@
  */
 import type {
   BackendSelfTest,
+  Engine,
   GetBackendCatalogResponse,
   InapplicableKind,
 } from '@openmemo/shared';
@@ -183,4 +184,106 @@ export function selfTestVerdict(
   if (!selfTest.passed) return 'failed';
   if (packBackend === 'cpu') return 'passed';
   return selfTest.devicesFound > 0 ? 'passed' : 'passed-not-accelerated';
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════
+ * T-192：**`pack.backend` 这个轴被当成三个用了。**
+ *
+ * `[实测 2026-08-10]` 目录 25 个包里 **18 个**（sqlite-ext 11 + yt-dlp 4 + ffmpeg 3）
+ * 的 `backend` 都是 `'cpu'` —— 而那个字段的含义是「**用哪块算力跑推理**」，
+ * 跟"这个包是不是推理包"毫无关系。于是同一个字符串被三处拿去回答三个不同的问题：
+ *
+ *   ① 「设为当前后端」按钮 → `select(pack.backend)`：在 libsimple / yt-dlp / ffmpeg 卡上
+ *      点一下 = **一键把 whisper 从 GPU 静默降级到 CPU**，并让 `/models` 的显存预算归零
+ *      （`shared/fitness.ts:182`）。可达性还正好互补：这 18 个都是 cpu，
+ *      所以只有当用户**选了 cuda/vulkan/metal** 时这个按钮才出现。
+ *   ② `isActive = selectedBackend === pack.backend && installed` →
+ *      一个 SQLite 分词扩展的卡片上写着「CPU ⚡使用中」。
+ *   ③ `isLoadBearing = tier==='builtin' || backend==='cpu'` → 这 18 个包
+ *      **永远卸载不掉**（清单里没有任何 `builtin`，所以只有后半句在起作用），
+ *      而 daemon 那边**照删不误** —— UI 是唯一的门，它挡下的是一个服务端支持的合法动作。
+ *      用户想回收 yt-dlp / ffmpeg / libsimple 的磁盘空间，**产品里没有任何路径**。
+ *
+ * 修法不是"再加一个 if"，是**把三个问题各自交给能回答它的东西**：
+ *
+ * | 问题 | 由什么回答 |
+ * |---|---|
+ * | 这个包的 `backend` 是不是"算力"的意思 | `engine` —— {@link BACKEND_IS_COMPUTE_AXIS} |
+ * | 这个包是不是当前活动后端 | {@link isActivePack}（先问上面那条，再比 backend） |
+ * | 这个包能不能卸载 | {@link isLoadBearingPack}（对准 ggml SIGABRT 那条真实约束） |
+ *
+ * ⚠️ **没有给 `pack.backend` 增加新含义** —— 共用槽位正是这个 bug 的成因。
+ * ══════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * 这个 engine 的包，`selectedBackend` 那个偏好**管不管它**。
+ *
+ * 换句话说：它的 `backend` 字段是不是「用哪块算力跑推理」的意思。
+ *
+ * ## 为什么是一张穷尽表
+ *
+ * 与同一个文件里 `SELF_TEST_APPLIES` 用同一个形状（`Record<Engine, boolean>`）：
+ * 新加一种 engine 时**在编译期就必须表态**，而不是默默继承一个隐含假设。
+ *
+ * ⚠️ **它和 `SELF_TEST_APPLIES` 是两张表，不能合并** —— 它们回答的是两个问题，
+ * 而且答案不同：`llama.cpp` 的 `backend` 是算力（true），但今天的自检只跑 ASR 推理，
+ * 对它没有可执行的检查（false）。合成一张就是又一次共用槽位。
+ */
+export const BACKEND_IS_COMPUTE_AXIS: Record<Engine, boolean> = {
+  /** `selectedBackend` 今天驱动的就是它（`resolveBackendTool` 按它挑 whisper-cli）。 */
+  'whisper.cpp': true,
+  /** 同为 ggml 推理引擎，`backend` 同义。今天目录里没有它的包。 */
+  'llama.cpp': true,
+  /**
+   * ASR 引擎，但它走 onnxruntime 而不是 ggml，`selectedBackend` **今天不驱动它**，
+   * 目录里也没有任何 sherpa 的**后端包**（sherpa 的东西都在模型目录里）。
+   * 与 `SELF_TEST_APPLIES` 同一条口径：等它真被支持时再翻成 true，
+   * 现在标 true 等于替一件没发生的事下结论。
+   */
+  'sherpa-onnx': false,
+  /** 转码器 —— 不是推理引擎，它的 `backend: 'cpu'` 只是 schema 的填充值。 */
+  ffmpeg: false,
+  /** 下载器 —— 同上。 */
+  'yt-dlp': false,
+  /** SQLite 分词扩展 —— 同上。用户在它的卡片上看到「CPU ⚡使用中」。 */
+  'sqlite-ext': false,
+};
+
+/**
+ * 「这个包是不是**当前活动的后端**」。
+ *
+ * 三个条件缺一不可：它的 `backend` 得真是算力轴、它得装了、而且得正是选中的那个。
+ * 少了第一条，18 张非推理包的卡片会集体亮「⚡使用中」（T-192 ②）。
+ */
+export function isActivePack(
+  pack: Pick<CatalogPack, 'engine' | 'backend' | 'installed'>,
+  selectedBackend: string | null | undefined,
+): boolean {
+  if (!BACKEND_IS_COMPUTE_AXIS[pack.engine]) return false;
+  return pack.installed && selectedBackend === pack.backend;
+}
+
+/**
+ * 「这个包**能不能卸载**」—— 判据对准的是真实约束，不是放宽。
+ *
+ * ## 真实约束只有一条（ADR-003 附录 A.3）
+ *
+ * 删光 ggml 的 CPU 后端之后，whisper.cpp 在 `ggml_backend_dev_backend_reg()` 里
+ * `ggml_abort()`，进程 SIGABRT（实测 exit 134）。**这是推理引擎专属的**：
+ * 删掉 yt-dlp 或 libsimple 不可能让 ggml SIGABRT。
+ *
+ * 所以锁只落在「**推理引擎包 ∧ 它是那个 CPU 兜底**」上。
+ * 其余的包 daemon 本来就允许删（`DELETE /api/backends/:id` 照删不误），
+ * 而用户明确要求过「组件要能删除、能看到空间回收，且删除不影响程序本体运行」。
+ *
+ * ⚠️ **不是"什么都能删"**：whisper 的 CPU 包仍然锁着，删了它转写会直接崩。
+ * ⚠️ 也**不是**"删了没后果"：删掉 ffmpeg 会让转写停摆 —— 但那是**可恢复**的
+ * （重新装回来即可）、daemon 允许的、而且自检里 `tool.ffmpeg` 会立刻出声。
+ * 把它锁死换来的不是安全，是"用户拿不回自己的磁盘"。
+ */
+export function isLoadBearingPack(
+  pack: Pick<CatalogPack, 'engine' | 'backend' | 'tier'>,
+): boolean {
+  if (!BACKEND_IS_COMPUTE_AXIS[pack.engine]) return false;
+  return pack.tier === 'builtin' || pack.backend === 'cpu';
 }

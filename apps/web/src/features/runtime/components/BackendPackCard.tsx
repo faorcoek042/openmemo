@@ -1,12 +1,14 @@
 import { useTranslation } from 'react-i18next';
 import { Download, Lock, Play, Trash2 } from 'lucide-react';
-import type { BackendSelfTest, Engine, GetBackendCatalogResponse } from '@openmemo/shared';
+import type { Backend, BackendSelfTest, Engine, GetBackendCatalogResponse } from '@openmemo/shared';
 import { Button } from '../../../components/common/Button';
 import { StatusChip } from '../../../components/common/StatusChip';
 import { BackendChip, type BackendChipState } from '../../../components/common/BackendChip';
 import { formatBytes } from '../../../lib/format/bytes';
 import { localizedName } from '../../../lib/format/localized';
 import {
+  BACKEND_IS_COMPUTE_AXIS,
+  isLoadBearingPack,
   packStatus,
   selfTestVerdict,
   STATUS_NEEDS_EXPLANATION,
@@ -54,7 +56,15 @@ export interface BackendPackCardProps {
   recommended?: boolean;
   onInstall: (id: string) => void;
   onRemove: (id: string) => void;
-  onSelect: (pack: Pack) => void;
+  /**
+   * 选中某个**算力后端**。
+   *
+   * ⚠️ T-192：参数从 `pack` 换成了 `backend`。原来传 pack、由调用方去取
+   * `pack.backend`，正是"把这个包和这个包的算力后端混为一谈"那个 bug 的载体
+   * —— 「改用 CPU」那个按钮传的是自己那张卡，于是它切到的是刚刚失败的那个后端。
+   * 现在类型上就只能传"要选哪个"。
+   */
+  onSelect: (backend: Backend) => void;
   onSelfTest: (id: string) => void;
 }
 
@@ -105,8 +115,16 @@ export function BackendPackCard({
   onSelfTest,
 }: BackendPackCardProps) {
   const { t } = useTranslation();
-  // 承重墙：内置 CPU 档不允许卸载
-  const isLoadBearing = pack.tier === 'builtin' || pack.backend === 'cpu';
+  /*
+   * 承重墙：**推理引擎的 CPU 兜底**不允许卸载（ADR-003 附录 A.3 的 ggml SIGABRT）。
+   * T-192：此前写的是 `tier==='builtin' || backend==='cpu'`，而目录里 25 个包
+   * 没有一个是 `builtin`，于是只有后半句在起作用 —— 18 个非推理包（sqlite-ext /
+   * yt-dlp / ffmpeg，它们的 `backend` 也都是 `'cpu'`）跟着被锁死，**永远删不掉**，
+   * 而 daemon 照删不误。判据现在对准真实约束，见 `isLoadBearingPack()`。
+   */
+  const isLoadBearing = isLoadBearingPack(pack);
+  /** 「设为当前后端」只对**算力轴上**的包有意义 —— 见 `BACKEND_IS_COMPUTE_AXIS`。 */
+  const onComputeAxis = BACKEND_IS_COMPUTE_AXIS[pack.engine];
   /**
    * 已构建、摘要已核实，但**还没有发布地址**（仓库无 git remote，CI 从未跑过）。
    * 必须在按钮上就说清楚，而不是让用户点下去等一个必然失败的下载 ——
@@ -161,8 +179,17 @@ export function BackendPackCard({
           {installing ? t('runtime.pack.installing') : t('runtime.pack.update')}
         </Button>
       ) : null}
-      {!isActive ? (
-        <Button size="sm" variant="secondary" onClick={() => onSelect(pack)}>
+      {/*
+        ★★ T-192 ①：**非算力轴的包不渲染这个按钮**，而不是渲染完再让它做错事。
+
+        `[实测]` 它调 `select(pack.backend)` → 落盘 `selectedBackend`。在 libsimple /
+        yt-dlp / ffmpeg 卡上按下去，不是"启用 libsimple"，是**把 whisper 的算力后端
+        改成 cpu**，并让 `/models` 的显存预算归零（`shared/fitness.ts:182`）——
+        **而且不作声**。可达性正好互补：这 18 个包的 backend 都是 cpu，
+        所以它恰恰只在用户选了 cuda/vulkan/metal 时才出现。
+      */}
+      {onComputeAxis && !isActive ? (
+        <Button size="sm" variant="secondary" onClick={() => onSelect(pack.backend)}>
           {t('runtime.pack.setActive')}
         </Button>
       ) : null}
@@ -362,7 +389,13 @@ export function BackendPackCard({
                     {t('runtime.pack.retrySelfTest')}
                   </Button>
                 ) : null}
-                <Button size="sm" variant="ghost" onClick={() => onSelect(pack)}>
+                {/*
+                  ★★ T-192 ④：这里原来是 `onSelect(pack)` = `select(pack.backend)`，
+                  而它唯一出现的场合是**一个非 cpu 的包自检失败**时 ——
+                  于是「改用 CPU」**重新选中了那个刚刚失败的后端**。
+                  标签承诺的和处理器做的正好相反。现在它真的切到 cpu。
+                */}
+                <Button size="sm" variant="ghost" onClick={() => onSelect('cpu')}>
                   {t('runtime.pack.switchToCpu')}
                 </Button>
               </div>

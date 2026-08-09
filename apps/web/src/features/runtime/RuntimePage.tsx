@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { Boxes, ChevronRight, Cpu } from 'lucide-react';
-import type { GetBackendCatalogResponse } from '@openmemo/shared';
+import type { Backend, GetBackendCatalogResponse } from '@openmemo/shared';
 
 import { Banner } from '../../components/common/Banner';
 import { Emphasis } from '../../components/common/Emphasis';
@@ -20,7 +20,7 @@ import {
 import { HardwareCard } from './components/HardwareCard';
 import { BreakerNotice } from './components/BreakerNotice';
 import { BackendPackCard } from './components/BackendPackCard';
-import { isMeaningfulRecommendation } from './packStatus';
+import { isActivePack, isMeaningfulRecommendation } from './packStatus';
 
 /**
  * 运行时与加速后端页 —— 章程要求 2.1 的主界面。
@@ -97,8 +97,15 @@ export default function RuntimePage() {
     [packs],
   );
 
-  function handleSelect(pack: GetBackendCatalogResponse['packs'][number]) {
-    void select.mutateAsync(pack.backend);
+  /**
+   * 选中一个**算力后端**。
+   *
+   * T-192：参数从 `pack` 换成了 `backend` —— 由卡片说清"要选哪个"，
+   * 而不是这里替它从 `pack.backend` 里推。那次推导正是
+   * 「改用 CPU 按钮切回了刚刚失败的那个后端」的成因。
+   */
+  function handleSelect(backend: Backend) {
+    void select.mutateAsync(backend);
   }
 
   /** 两处（主列表 / 折叠区）渲染同一种卡片，抽出来免得两边漂移。 */
@@ -108,7 +115,8 @@ export default function RuntimePage() {
         key={p.id}
         pack={p}
         locale={locale}
-        isActive={installed.data?.selectedBackend === p.backend && p.installed}
+        /* T-192 ②：先问"它的 backend 是不是算力轴"，否则 18 张非推理包的卡会集体亮「⚡使用中」 */
+        isActive={isActivePack(p, installed.data?.selectedBackend)}
         selfTest={selfTestById.get(p.id) ?? null}
         installing={install.isPending && install.variables === p.id}
         recommended={recommendedIds.has(p.id)}

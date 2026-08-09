@@ -42,6 +42,8 @@
     "src/features/models/asrSections.ts",
     "src/features/models/engineFit.test.ts",
     "src/features/models/engineFit.ts",
+    "src/features/runtime/packAxes.test.ts",
+    "src/features/runtime/packStatus.ts",
     "src/lib/safe.ts",
     "src/lib/remediation/routes.test.ts",
     "src/lib/remediation/routes.ts",
