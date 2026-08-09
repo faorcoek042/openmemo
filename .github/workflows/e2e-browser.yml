@@ -63,19 +63,36 @@ concurrency:
 
 jobs:
   browser:
-    # ⚠️ **只跑 ubuntu**，这是刻意的取舍，不是偷懒：
-    #   这条腿要抓的是「按钮有没有反应」，而那是**前端代码**的性质 ——
-    #   同一份 JS 在三个平台上跑的是同一套逻辑。用户是在 Windows 上撞见的，
-    #   但成因（`navigate` 到你已经在的那一页）与操作系统无关，
-    #   `[实测]` 在 Linux 上一模一样地复现了。
-    #   把它铺成三平台会让一条本该几分钟的腿变成十几分钟，而换不到新的事实。
-    #   **真正与平台有关的那些（双击启动器、Gatekeeper、系统弹窗）本来就不在
-    #   无头浏览器的能力范围内** —— 它们归 bundle-launch-sim 与人工清单。
-    name: 真浏览器点按钮（linux-x64）
-    runs-on: ubuntu-24.04
+    # ── 平台矩阵 ────────────────────────────────────────────────────────────────
+    #
+    # ⚠️ 这条腿**曾经只跑 ubuntu**，理由是「按钮有没有反应是前端代码的性质，
+    #    同一份 JS 三平台一致」。那个理由**在调查阶段成立，在给用户发包的阶段不够**：
+    #
+    #    · 用户正在 **Windows** 上用，他报的两个死按钮就是在 Windows 上撞到的；
+    #      我们修好之后**只在 Linux 上验过**。
+    #    · "跨平台一致"这个假设本仓刚被打脸过：另一位在 Windows 上撞到
+    #      「把路径插进 JS 字符串、`D:\a\...` 的反斜杠破坏了 require」——
+    #      **Linux 和 macOS 过了是运气不是正确。**
+    #    · 浏览器层同样有平台差异：字体与 DPI 影响可见性判定、路径分隔符、
+    #      剪贴板权限模型、`open`/`start` 的行为。
+    #
+    #    所以铺开。**Windows 优先**（用户在那儿），macOS 次之。
+    #
+    # fail-fast: false —— 一个平台红不该掩盖另一个平台的事实。
+    name: 真浏览器点按钮（${{ matrix.label }}）
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # runner 版本照抄 build-bundles / cold-start-audit 现用的那一组
+          - { runner: windows-2025, label: win32-x64, artifact: bundle-win-x64 }
+          - { runner: ubuntu-24.04, label: linux-x64, artifact: bundle-linux-x64 }
+          - { runner: macos-26, label: darwin-arm64, artifact: bundle-darwin-arm64 }
     # 把**实际用到的**那一批包的 run id 抬到 job 级，供 attest 绑定。
-    # artifact 模式下 bundleRunId 可以留空自动挑，所以必须取解析后的真值。
+    # ⚠️ 矩阵下 job output 由最后完成的那一格写入；这里三格解析出的是**同一个** run id
+    #    （同一个输入、同一段逻辑），所以取哪一格都一样。
     outputs:
       bundle_run_id: ${{ steps.pick.outputs.run_id }}
     steps:
@@ -85,16 +102,22 @@ jobs:
         with:
           node-version: '22'
 
+      # ⚠️ 从这里往下，凡是 `run:` 的都显式写 `shell: bash`。
+      #    Windows runner 默认是 **pwsh**，而本文件里全是 POSIX 写法 ——
+      #    本仓已经为这条栽过一次（`/tmp/install.log` 被 pwsh 解析成 `D:\tmp\install.log`）。
       - name: Install pnpm
+        shell: bash
         run: npm install -g pnpm@10.15.0
 
       - name: Install
+        shell: bash
         run: pnpm install --frozen-lockfile
 
       # ★ playwright 走**全局安装**，刻意不进 package.json。
       #   进 devDependencies 就要动 pnpm-lock.yaml —— 那是共享文件，
       #   而这棵树上同时有好几路 agent 在干活。版本钉死，不用 latest。
       - name: 装 playwright（不进 package.json）
+        shell: bash
         run: |
           npm install -g playwright@1.62.1
           npx --yes playwright@1.62.1 install --with-deps chromium
@@ -103,6 +126,7 @@ jobs:
       # CI runner 是一次性的，PROTOCOL §7 禁的是共享开发树，这里不适用。
       - name: 构建（含 apps/web/dist —— 缺了用户打开是白页）
         if: ${{ inputs.assembleFromSource }}
+        shell: bash
         run: pnpm -r build
 
       # ── artifact 模式：对**已经发出去的那批字节**跑 ────────────────────────
@@ -132,8 +156,8 @@ jobs:
           # 「最近一次成功的 run」不等于「那次 run 里有我要的 artifact」：
           # 跳过 2/3 条腿的 run 其 conclusion 仍是 success（PROTOCOL §11）。
           if ! gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" \
-                 --jq '.artifacts[].name' | grep -qx 'bundle-linux-x64'; then
-            echo "::error::run $RUN_ID 里没有 bundle-linux-x64 —— 多半是只跑了部分平台的 build-bundles"
+                 --jq '.artifacts[].name' | grep -qx '${{ matrix.artifact }}'; then
+            echo "::error::run $RUN_ID 里没有 ${{ matrix.artifact }} —— 多半是只跑了部分平台的 build-bundles"
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[].name' || true
             exit 1
           fi
@@ -148,7 +172,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist/bundles
-          gh run download "${{ steps.pick.outputs.run_id }}" --name bundle-linux-x64 --dir dist/bundles
+          gh run download "${{ steps.pick.outputs.run_id }}" --name "${{ matrix.artifact }}" --dir dist/bundles
           ls -la dist/bundles
 
       # 解包走**共享脚手架**（同一类 shell 坑撞过三次之后提出来的那一份）
@@ -178,9 +202,17 @@ jobs:
           #   /usr/lib/node_modules，而 setup-node 管理的 npm 全局前缀不在那儿，
           #   于是这条腿红在「找不到 playwright」——脚本拒绝跳过是对的（§11），
           #   但那次红是**我的路径错**，不是产品的问题。用 `npm root -g` 问出来。
-          export PLAYWRIGHT_MODULE="$(npm root -g)/playwright"
+          # ⚠️ Windows 上 `npm root -g` 回的是**原生路径**（`C:\npm\...`，反斜杠）。
+          #    Git Bash 里拿它去 `test -d` 会失败，而 Node 本身**认正斜杠** ——
+          #    所以统一转成正斜杠再用。这正是"别假设跨平台一致"的一个具体例子：
+          #    同一行命令在三个平台上回的东西形状不同。
+          export PLAYWRIGHT_MODULE="$(npm root -g | tr '\\' '/')/playwright"
           echo "PLAYWRIGHT_MODULE=$PLAYWRIGHT_MODULE"
-          test -d "$PLAYWRIGHT_MODULE" || { echo "::error::全局 playwright 不在 $PLAYWRIGHT_MODULE"; ls "$(npm root -g)"; exit 1; }
+          if [ ! -d "$PLAYWRIGHT_MODULE" ]; then
+            echo "::error::全局 playwright 不在 $PLAYWRIGHT_MODULE"
+            ls "$(npm root -g | tr '\\' '/')" || true
+            exit 1
+          fi
           if [ "${{ inputs.assembleFromSource }}" = "true" ]; then
             echo "== 回归门禁模式：用本次 checkout 现组装的界面 =="
             node scripts/ci/e2e-browser-audit.mjs --port 19980
