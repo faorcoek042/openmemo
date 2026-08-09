@@ -344,9 +344,24 @@ export function BackendPackCard({
                 {selfTest.errorMessage ?? t('runtime.pack.unknownReason')}
               </p>
               <div className="mt-2 flex gap-2">
-                <Button size="sm" variant="secondary" onClick={() => onSelfTest(pack.id)}>
-                  {t('runtime.pack.retrySelfTest')}
-                </Button>
+                {/*
+                  ★ 同一张 `SELF_TEST_APPLIES` 表。
+                    「重试自检」调的是 `onSelfTest()` —— **和上面那个被门控掉的按钮是同一个调用**。
+                    只门控其中一个，就是把同一个必然失败的动作留了第二个入口。
+                    今天走不到这里（非推理包拿不到 selfTest 记录：daemon 侧 blocked 只回 409、
+                    不落记录，`recordSelfTest` 还会拒绝 `requestedId !== packId`），
+                    但那是**别人的规则在替这里挡**，不是这里判对了。
+                */}
+                {SELF_TEST_APPLIES[pack.engine] ? (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => onSelfTest(pack.id)}
+                    data-testid={`backend-selftest-retry-${pack.id}`}
+                  >
+                    {t('runtime.pack.retrySelfTest')}
+                  </Button>
+                ) : null}
                 <Button size="sm" variant="ghost" onClick={() => onSelect(pack)}>
                   {t('runtime.pack.switchToCpu')}
                 </Button>

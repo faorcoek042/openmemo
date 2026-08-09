@@ -7257,6 +7257,64 @@ describe('★ 自检按钮：非推理包不渲染，而不是渲染完再 block
   });
 
   /**
+   * ★ 同一个动作的**第二个入口**：自检失败卡片里的「重试自检」也调 `onSelfTest()`。
+   *
+   * 只门控其中一个 = 把同一个必然失败的动作留了条后门。
+   * 今天非推理包走不到这里（daemon 侧 blocked 只回 409、不落 selfTest 记录），
+   * 但那是**别人的规则在替这里挡**。这条钉的是"这里自己也判对了"。
+   */
+  test('★ 「重试自检」这第二个入口也必须门控', async () => {
+    const failed = {
+      packId: 'libsimple-linux-x64',
+      passed: false,
+      errorMessage: '假的失败记录：用来逼出这个分支',
+      devicesFound: 0,
+      rtf: null,
+    };
+    const p = pack({ id: 'libsimple-linux-x64', engine: 'sqlite-ext', installed: true });
+    const r = await render(
+      <BackendPackCard {...NOOP} pack={p as never} selfTest={failed as never} />,
+    );
+    assert.ok(
+      text(r.container).includes('假的失败记录'),
+      '没渲染到自检失败分支，这条就没在测第二个入口',
+    );
+    assert.equal(
+      r.container.querySelector('[data-testid="backend-selftest-retry-libsimple-linux-x64"]') !==
+        null,
+      false,
+      '「重试自检」没门控 —— 同一个必然失败的动作留了第二个入口',
+    );
+    r.unmount();
+  });
+
+  test('★ 反向：whisper.cpp 自检失败时，「重试自检」必须还在', async () => {
+    const failed = {
+      packId: 'whispercpp-vulkan-linux-x64',
+      passed: false,
+      errorMessage: 'vulkan device lost',
+      devicesFound: 0,
+      rtf: null,
+    };
+    const p = pack({
+      id: 'whispercpp-vulkan-linux-x64',
+      backend: 'vulkan',
+      engine: 'whisper.cpp',
+      installed: true,
+    });
+    const r = await render(
+      <BackendPackCard {...NOOP} pack={p as never} selfTest={failed as never} />,
+    );
+    assert.ok(
+      r.container.querySelector(
+        '[data-testid="backend-selftest-retry-whispercpp-vulkan-linux-x64"]',
+      ) !== null,
+      '把唯一真能重试的那档也吃掉了 —— 自检失败后就再也重试不了',
+    );
+    r.unmount();
+  });
+
+  /**
    * ★ 门控写成穷尽表的**理由**就钉在这里：新加一种 engine 必须表态。
    * `[实测数过]` `vendor/manifests` 今天 25 个包只用了 4 种 engine
    * （sqlite-ext 11 / yt-dlp 4 / ffmpeg 3 / whisper.cpp 7），
