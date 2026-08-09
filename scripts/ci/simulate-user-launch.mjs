@@ -752,7 +752,9 @@ async function macos() {
   dump('open OpenMemo.command（= 访达里双击）', sh('open', [join(tree, 'OpenMemo.command')]));
   info('等待 40s 看界面起没起来…');
   const ui = await waitForReady(DEFAULT_PORT, 40);
-  info(`[实测] 双击后界面 GET / => ${ui.status || 'unreachable'} (${ui.body.slice(0, 120)})`);
+  info(
+    `[实测] 双击后 40s 内 /api/health 是否 200 => ${ui.status || '从未就绪'} (${ui.body.slice(0, 120)})`,
+  );
   if (ui.status === 200) ok('双击后界面可达');
   else
     known(
