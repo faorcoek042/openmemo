@@ -71,6 +71,20 @@ jobs:
   gate:
     name: typecheck + lint + test
     runs-on: ubuntu-24.04
+    # ★ 这些 outputs 只喂给下面的 `gate-summary` job（三态汇总，见该 job 的注释
+    #   和 scripts/ci/summarize-gate.mjs 顶部注释）。不影响 gate 自己的 fail-fast：
+    #   一个 step 没跑到，`steps.<id>.outcome` 就是 GitHub 自己给出的 `skipped`，
+    #   这里原样透传，不代表 gate 允许它们在失败后继续跑。
+    outputs:
+      format_check: ${{ steps.format_check.outcome }}
+      build: ${{ steps.build.outcome }}
+      typecheck: ${{ steps.typecheck.outcome }}
+      lint: ${{ steps.lint.outcome }}
+      tracked_sources: ${{ steps.tracked_sources.outcome }}
+      orphan_exports: ${{ steps.orphan_exports.outcome }}
+      ci_scripts_selftest: ${{ steps.ci_scripts_selftest.outcome }}
+      test: ${{ steps.test.outcome }}
+      mutation_anchors: ${{ steps.mutation_anchors.outcome }}
     steps:
       # submodules 刻意**不拉**：TS 侧一行都不需要 vendor/ 里的 C++ 源码，
       # 而 whisper.cpp / sherpa-onnx 加起来是几百 MB 的 checkout。
@@ -132,6 +146,7 @@ jobs:
       #   强调、一条 JS 链式调用）。本地跑完 `pnpm format` 后这里若仍红，
       #   **再跑一遍 `pnpm format`** —— 那是 prettier 的非幂等，不是 CI 坏了。
       - name: Format check
+        id: format_check
         run: pnpm format:check
 
       # ★ `pnpm build:safe`，**不是 `pnpm -r build`**（PROTOCOL §7 补充）。
@@ -141,17 +156,21 @@ jobs:
       # 正在 `:10000` 上看的那个前端 —— 而且不会有任何东西报错。两名 agent 先后踩过。
       # 前端的编译检查由下面的 `tsc -b` 覆盖（web 的 tsconfig 在 project references 里）。
       - name: Build (workspace packages)
+        id: build
         run: pnpm build:safe
 
       - name: Typecheck
+        id: typecheck
         run: pnpm typecheck
 
       - name: Lint
+        id: lint
         run: pnpm lint
 
       # 源码目录被 .gitignore 误伤的防线（真实事故：11 个源文件从未进过版本库，
       # 且 Tailwind 因此漏扫了整个目录）。它用 POSIX `find`，在 Linux runner 上没问题。
       - name: Tracked-sources guard
+        id: tracked_sources
         run: pnpm check:sources
 
       # 「零调用方导出」棘轮（T-157 立，**T-169 才真正接进 CI**）。
@@ -182,14 +201,17 @@ jobs:
       #   而这种"对完账的错账"最容易被下一个人照抄。逐条复核见
       #   `coordination/inbox/format-debt.md`：六个成员今天全部有自动调用方。
       - name: Orphan-exports ratchet
+        id: orphan_exports
         run: pnpm check:orphans
 
       # CI 脚本自身的正反向自检（T-144）。放在 test 前面：它比较快，
       # 而且它红的时候意味着 build-backends 那条线是坏的 —— 那是更要紧的信号。
       - name: CI scripts self-test
+        id: ci_scripts_selftest
         run: pnpm test:ci-scripts
 
       - name: Test
+        id: test
         run: pnpm -r test
 
       # ★ 变异规格的**锚点体检**（秒级，实测 0.086s）。
@@ -207,6 +229,7 @@ jobs:
       # 从此**什么都没测**，而没有任何东西会说出来 —— 因为唯一会说出来的那一档没人跑。
       # 这一步 0.086 秒，本来能在那天当场抓住它。
       - name: Mutation-spec anchors (只查锚点在不在 ≠ 规格还有牙齿)
+        id: mutation_anchors
         run: node scripts/mutation-check.mjs --anchors-only
 
       # ★ 不加 `if: always()`、不加 `continue-on-error`。
@@ -214,3 +237,61 @@ jobs:
       # 这个仓库的核心病症是「失败被写成成功」（build-backends 的 merge job 就是
       # 一个现成的样本：三个构建全挂，它照样写出一个空 manifest 并绿灯）。
       # 任何让步骤"失败了也往下走"的写法，都会把这个 job 变成同一个东西。
+      #
+      # ── 2026-08-10：那"跳过看着像没跑过"的另一半，用一个独立 job 补 ──────────
+      #
+      # 上面这条铁律不变，但它有个没写出来的副作用：`gate` 一红，后面几个 step
+      # 在 Actions 页面上全部显示成灰色 Skipped —— 这一天里连续 4 次 CI 运行，
+      # `Test` 和 `Mutation-spec anchors` 一次都没真的执行过，页面上却只显得像
+      # "某一步红了"，不像"9 条门禁里 5 条没跑"。`scripts/ci/lint-workflows.mjs`
+      # 的 `MUST_FAIL_LOUDLY` 不许在**这个** job 里用 `always()` 治它（会撤回上面
+      # 这条铁律要防的东西），所以治法搬到下面这个独立、只读不判定的
+      # `gate-summary` job：它 `needs: gate` + `if: always()`
+      # （不在 `MUST_FAIL_LOUDLY` 名单里），读上面 `outputs:` 透传出来的
+      # `steps.<id>.outcome`，把"通过 / 失败 / 未验证"三态摊开数清楚。
+      # 详细设计（包括为什么不是直接在这里加 always()）写在
+      # `scripts/ci/summarize-gate.mjs` 顶部注释。
+
+  gate-summary:
+    name: gate 三态汇总（通过 / 失败 / 未验证）
+    needs: gate
+    # 这一步本身不许被跳过：一个用来报告"谁没跑到"的 step，如果自己也因为
+    # gate 失败而 skipped，那就白做了。不在 lint-workflows.mjs 的
+    # MUST_FAIL_LOUDLY 名单里（只有 `gate` 在），因为这个 job 不做任何判定，
+    # 只读 gate 已经产生的 outcome 并数清楚，不会重演"没跑却报绿"。
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: 汇总
+        env:
+          GATE_RESULT: ${{ needs.gate.result }}
+          GATE_STEP_NAMES: format_check,build,typecheck,lint,tracked_sources,orphan_exports,ci_scripts_selftest,test,mutation_anchors
+          GATE_STEP_FORMAT_CHECK: ${{ needs.gate.outputs.format_check }}
+          GATE_STEP_BUILD: ${{ needs.gate.outputs.build }}
+          GATE_STEP_TYPECHECK: ${{ needs.gate.outputs.typecheck }}
+          GATE_STEP_LINT: ${{ needs.gate.outputs.lint }}
+          GATE_STEP_TRACKED_SOURCES: ${{ needs.gate.outputs.tracked_sources }}
+          GATE_STEP_ORPHAN_EXPORTS: ${{ needs.gate.outputs.orphan_exports }}
+          GATE_STEP_CI_SCRIPTS_SELFTEST: ${{ needs.gate.outputs.ci_scripts_selftest }}
+          GATE_STEP_TEST: ${{ needs.gate.outputs.test }}
+          GATE_STEP_MUTATION_ANCHORS: ${{ needs.gate.outputs.mutation_anchors }}
+        run: node scripts/ci/summarize-gate.mjs
+
+# ── TODO（登记，带过期谓词，不是"以后有空再说"）───────────────────────────────
+#
+# 现在 `gate` 仍是单个 job、9 个 step 顺序跑、一红全停 —— 这次只加了"跑完之后
+# 数清楚"的 gate-summary，没有拆成 9 个可以互相独立报告状态的并行 job（15 job
+# 那种结构性大改）。不做的理由：这一天里多个 agent 在同时推同一个 master
+# （`concurrency.cancel-in-progress: true` 已经在这次任务里把两次在飞的 run
+# 取消掉），这时候动一次影响整个门禁结构的大重构，风险和收益不成比例。
+#
+# 什么时候值得重新评估这条 TODO（可执行的判据，不是"以后"）：
+#   连续检查 3 次、每次间隔 ≥ 1 小时，`git log --oneline --since=1.hour.ago | wc -l`
+#   都 ≤ 1，**且** `gh run list --status in_progress --limit 5` 同一时刻看到的
+#   在飞 run 数 ≤ 1 —— 也就是并发烈度真的降下来了，再做拆分；到那时单个 gate
+#   job 顺序跑 9 个 step 的墙钟时间本身也会成为独立的理由。
+# 在满足这条判据之前，"job 内不动、job 外补视野"是刻意的折中，不是偷懒。
