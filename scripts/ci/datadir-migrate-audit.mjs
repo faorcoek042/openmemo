@@ -190,67 +190,87 @@ const TMP = await mkdtemp(join(tmpdir(), 'ddaudit-'));
 }
 
 /* ── C4 ★核心★ 删源失败 → 目标必须保住 + 界面必须改口 ──
- *   Windows：把源里的文件**打开不关**（正是用户遇到的 openmemo.db 被 daemon 占用）
- *   POSIX  ：把源的父目录设成只读（CI 以非 root 运行，因此有效）
+ *
+ * ## 注入方式为什么必须是"真的 SQLite 句柄"
+ *
+ * 第一版用 `fs.openSync(db,'r+')` 保持打开，`[CI 实测 run 31296434416]`
+ * **在 Windows 上没能拦住删除**（报了 SKIP，没有假绿）——
+ * 因为 libuv 开文件时带 `FILE_SHARE_DELETE`，这种句柄不阻止删除。
+ * 而产品里握着 `openmemo.db` 的是 **better-sqlite3**，SQLite 在 Windows 上
+ * 用的共享模式**不含** `FILE_SHARE_DELETE` → 删不掉。
+ * 所以要复现用户那次故障，就得握一个**真的** SQLite 句柄，别用等价物。
+ *
+ * ## 为什么 POSIX 上这一格结构上测不到
+ *
+ * POSIX 允许 unlink 一个仍被打开的文件（目录项先消失，inode 等最后一个 fd 关闭）。
+ * 所以同样的注入在 Linux/macOS 上**必然删得掉** —— 这不是注入失败，
+ * **这正是"为什么它只在 Windows 上出事"的答案**。这种情况报 SKIP 并说明原因。
  */
 {
   const holder = await mkdtemp(join(TMP, 'c4-'));
   const from = join(holder, 'src');
-  const to = join(holder, 'dst');
+  // ⚠️ 目标必须在 holder **之外**：第一版把它放在 holder 里，
+  //    而 POSIX 分支又把 holder 设成只读 → `mkdir(to)` 先 EACCES，
+  //    整条腿在 linux/macOS 上直接崩。`[CI 实测 run 31296434416]`
+  //    那是**脚本的缺陷，不是产品的**。
+  const to = join(TMP, 'c4-dst-' + Date.now());
   await makeDataDir(from);
-  const victim = join(from, 'openmemo.db');
-  let fd = null;
-  let injected = 'none';
-  try {
-    if (IS_WIN) {
-      fd = openSync(victim, 'r+'); // 保持打开 → Windows 上删不掉
-      injected = 'windows: 保持 openmemo.db 打开';
-    } else {
-      const { chmod } = await import('node:fs/promises');
-      await chmod(holder, 0o555);
-      injected = 'posix: 源的父目录只读';
-    }
-    const r = await MV.moveDataDir(from, to, { forceCopy: true });
-    const miss = missingOf(to);
-    const msg = ST.moveMessageZh(
-      { files: r.files, links: r.links, sourceRemoved: r.sourceRemoved },
-      from,
-    );
 
-    if (r.sourceRemoved === true) {
-      // 注入没生效（比如以 root 跑、或该平台允许删打开的文件）——不许当成通过
-      rec(
-        'C4',
-        `删源失败分支（注入：${injected}）`,
-        'SKIP',
-        `注入未生效：源真的被删掉了（sourceRemoved=true），这一格没测到。\n` +
-          `不把它算作通过 —— 参见 PROTOCOL §11。`,
+  let db = null;
+  try {
+    // better-sqlite3 装在 packages/db 下，从那儿解析
+    const { createRequire } = await import('node:module');
+    const req = createRequire(pathToFileURL(join(REPO, 'packages/db/package.json')).href);
+    const Database = req('better-sqlite3');
+    // `makeDataDir` 放的是个占位文本文件，SQLite 会拒绝打开（file is not a database）。
+    // 删掉让 SQLite 自己建一个**真的**库 —— 这一格要的就是真实句柄。
+    await rm(join(from, 'openmemo.db'), { force: true });
+    db = new Database(join(from, 'openmemo.db'));
+    db.exec('CREATE TABLE IF NOT EXISTS notes(uid TEXT PRIMARY KEY)');
+    db.prepare('INSERT OR IGNORE INTO notes(uid) VALUES (?)').run('n1');
+  } catch (e) {
+    rec('C4', '删源失败分支', 'SKIP', `打不开真实 SQLite 句柄，无法复现产品情形：${e.message}`);
+    db = null;
+  }
+
+  if (db !== null) {
+    try {
+      const r = await MV.moveDataDir(from, to, { forceCopy: true });
+      const miss = missingOf(to);
+      const msg = ST.moveMessageZh(
+        { files: r.files, links: r.links, sourceRemoved: r.sourceRemoved },
+        from,
       );
-    } else {
-      const honest = !msg.includes('已移动') && msg.includes('已复制');
-      const ok = r.ok === true && miss.length === 0 && honest;
-      rec(
-        'C4',
-        `★ 删源失败 → 目标保住且界面改口（注入：${injected}）`,
-        ok ? 'PASS' : 'FAIL',
-        `ok=${r.ok} sourceRemoved=${r.sourceRemoved} sourceIntact=${r.sourceIntact}\n` +
-          `目标缺失=${miss.join(',') || '无(完整)'}\n` +
-          `界面文案=${msg}\n` +
-          `【记录】源目录残留=${existsSync(from) ? (await readdir(from)).join(',') : '(已不存在)'}`,
-      );
-    }
-  } finally {
-    if (fd !== null) {
+      if (r.sourceRemoved === true) {
+        rec(
+          'C4',
+          '删源失败分支（注入：持有真实 better-sqlite3 句柄）',
+          'SKIP',
+          `这个平台允许删除仍被打开的文件（POSIX unlink 语义），源真的被删掉了。\n` +
+            `这一格在本平台**结构上测不到** —— 而这正是"为什么它只在 Windows 上出事"。\n` +
+            `不把它算作通过 —— PROTOCOL §11。`,
+        );
+      } else {
+        const honest = !msg.includes('已移动') && msg.includes('已复制');
+        const ok = r.ok === true && miss.length === 0 && honest;
+        rec(
+          'C4',
+          '★ 删源失败 → 目标保住且界面改口（注入：真实 SQLite 句柄）',
+          ok ? 'PASS' : 'FAIL',
+          `ok=${r.ok} sourceRemoved=${r.sourceRemoved} sourceIntact=${r.sourceIntact}\n` +
+            `目标缺失=${miss.join(',') || '无(完整)'}\n` +
+            `界面文案=${msg}\n` +
+            `【记录】源目录残留=${existsSync(from) ? (await readdir(from)).join(',') : '(已不存在)'}`,
+        );
+      }
+    } finally {
       try {
-        closeSync(fd);
+        db.close();
       } catch {}
     }
-    if (!IS_WIN) {
-      const { chmod } = await import('node:fs/promises');
-      await chmod(holder, 0o755).catch(() => {});
-    }
-    await rm(holder, { recursive: true, force: true }).catch(() => {});
   }
+  await rm(holder, { recursive: true, force: true }).catch(() => {});
+  await rm(to, { recursive: true, force: true }).catch(() => {});
 }
 
 /* ── C5 目标非空 → 拒绝，源与目标里别人的东西都不许动 ── */
