@@ -3,9 +3,18 @@
  *
  * daemon 只做装配，纯逻辑在 `packages/pipeline`（D-01 §1.2）。
  *
- * ⚠️ 工具路径解析：生产环境应当读「已安装 pack 的 manifest」，
- * `discoverTools()` 会搜 PATH，那在 D-01 §8.4 L2 里是被禁止的注入面。
- * 因此这里**优先用环境变量显式指定的绝对路径**，只有在开发/自检时才回退到 PATH 搜索。
+ * ⚠️ 工具路径解析（2026-08-10 订正，与 `packages/pipeline/src/tools.ts` 同日订正
+ * 同源）：下面 `discoverTools()` 在生产和开发环境走的是**同一条**解析链——已装
+ * 后端包 → …（ffmpeg/ffprobe/yt-dlp 内置排 PATH 之前；whisper-cli/VAD 相反，
+ * 具体顺序与理由见 `tools.ts` 的 `RESOLUTION_PLANS`）。**没有"只在开发/自检时才
+ * 回退到 PATH"这回事**：生产环境同样会用到 PATH 兜底，这正是用户策略"允许借
+ * 系统 ffmpeg，只是优先级低于产品自己的"能生效的原因。
+ * 原文这里写过「`discoverTools()` 会搜 PATH，那在 D-01 §8.4 L2 里是被禁止的注入
+ * 面」——`[实测]` 该断言是编造的：D-01 §8.4 L2（`docs/design/D-01-architecture.md:
+ * 1172`，"绝不经过 shell"）只禁 shell 调用，通篇没有禁止 PATH 解析。`tools.ts`
+ * 同一天已订正同一句话；这里此前没跟着改，是同一句误引在仓库里的第二份副本
+ * （全仓 grep 复核见 `tools.ts` 订正块）。下面 `env['OPENMEMO_FFMPEG']` 等透传
+ * 只是"显式覆盖优先于任何解析结果"这条通用规则的体现，与"是不是生产环境"无关。
  */
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -353,7 +362,8 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
     modelsDir: storeRoot,
   };
 
-  // 显式路径优先；找不到才退回 PATH 搜索（仅开发期）
+  // 显式路径优先（env 覆盖）；没设时走 discoverTools() 的统一解析链——生产和开发
+  // 同一条，PATH 不是"仅开发期"才会用到，见文件头 2026-08-10 订正。
   const discovered = await discoverTools({
     // ← D-08 D4：必须显式传，否则非默认 dataDir 下找不到已装的包
     storeRoot,

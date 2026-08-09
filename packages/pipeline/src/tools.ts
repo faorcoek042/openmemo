@@ -1,17 +1,22 @@
 /**
  * Tool resolution.
  *
- * Every native tool this package drives is an absolute path supplied by the caller —
- * never a bare command name resolved through PATH. Two reasons:
- *   1. D-01 §8.4 L2: a PATH lookup is an injection vector (a hostile `ffmpeg` earlier in
- *      PATH wins). We always spawn an absolute path we chose.
+ * Every native tool this package drives is spawned by its resolved absolute path —
+ * never a bare command name. Two reasons:
+ *   1. Never spawning a bare name defeats PATH injection (a hostile `ffmpeg` earlier in
+ *      PATH would win if we ever did). This is D-01 §8.4 L2, "never through shell"
+ *      (`D-01:1172`) — L2 bans shell invocation, not resolving via PATH. Those are
+ *      different steps: resolution (may walk PATH — see `RESOLUTION_PLANS` below) always
+ *      happens before spawn (never a bare name). ⚠️ An earlier version of this comment
+ *      conflated the two into "D-01 §8.4 L2 forbids PATH lookups" — that claim was
+ *      fabricated. See the 2026-08-09/08-10 correction below `discoverTools`.
  *   2. ADR-001 class C: these binaries are runtime downloads under our managed runtime
  *      directory, not system packages. Their location is ours to know.
  *
- * `discoverTools` is the **production** resolver (installed packs first, then PATH);
- * callers may still pass paths explicitly, and the installed-pack records win when present.
- * ~~exists for tests and local development only~~ —— 见下面 `discoverTools` 上方
- * 2026-08-09 那段订正：借用系统工具是**受支持的兜底**，不是"仅供开发"。
+ * `discoverTools` is the **production** resolver. Each tool declares its own tier order
+ * explicitly — see `RESOLUTION_PLANS` below — because "installed packs, then PATH, then
+ * bundle" is not the right order for every tool. Callers may still pass paths explicitly,
+ * and those always win.
  */
 
 import { access, constants, cp, mkdir, readdir, readFile, rm, symlink } from 'node:fs/promises';
@@ -807,44 +812,130 @@ export async function listInstalledModels(
 }
 
 /**
+ * The three tiers any of these tools might be found in.
+ *
+ * Which order to *check* them in is per-tool, not shared — see `RESOLUTION_PLANS` below.
+ */
+export type ResolutionTier = 'pack' | 'path' | 'bundle';
+
+export interface ResolutionPlan {
+  order: readonly [ResolutionTier, ResolutionTier, ResolutionTier];
+  /** One sentence, non-empty by construction — see `toolResolutionOrder.test.ts`. */
+  reason: string;
+}
+
+/**
+ * ⚠️ 每个工具必须显式声明解析顺序 —— **键的类型直接派生自 `ToolPaths`**
+ * （`Exclude<keyof ToolPaths, 'vadModel'>`；`vadModel` 走另一条解析路径，见
+ * `discoverTools` 里 `findWhisperVadWeights` 那一段），不是手抄的白名单：
+ * 给 `ToolPaths` 加一个新字段却忘了在这里补一条，`tsc` 直接编译不过。
+ * `toolResolutionOrder.test.ts` 补运行时那一半 —— 断言每条 `reason` 非空，
+ * 防止有人用空字符串把编译器糊弄过去。**新工具不许静默继承别的工具的顺序。**
+ *
+ * 2026-08-10 Manager 裁决：内置（随包出厂）该排在系统 PATH 之前 —— 但只对
+ * **没有多档加速变体**的工具成立。这正是 ffmpeg/ffprobe/yt-dlp 与
+ * whisper-cli/whisper-vad 的分野，不是一刀切，理由见各条目自己的注释。
+ */
+export const RESOLUTION_PLANS: Record<Exclude<keyof ToolPaths, 'vadModel'>, ResolutionPlan> = {
+  /*
+   * ffmpeg/ffprobe：内置排在 PATH 之前。
+   *   · 本仓的 ffmpeg pack 目录里没有"多档加速变体"这回事（不像 whisper.cpp 有
+   *     CPU/Vulkan/CUDA 各一个包）—— 内置排前面不会有"装了加速却没用上"的
+   *     regression，whisper 那条顾虑在这里不成立。
+   *   · 内置这份**比下载更是"产品自己的"**：Linux/Windows 内置字节与下载走的是
+   *     同一个 `backends.json` pack（`build-bundle.mjs` 的 `assembleFfmpeg()`
+   *     直接引用 `T.ffmpegPackId`），sha256 对着 manifest 校验过，构建时还
+   *     额外跑 `ffmpeg -L` 核对横幅真的是 Lesser；系统 PATH 上那份完全不受控，
+   *     可能是任意年份、任意构建选项（甚至专利编码器）的产物。
+   *   · 用户原话"产品自己下载的优先级大于系统自带的" —— 内置字面上比下载更"自己"，
+   *     排在下载之后、PATH 之前，是把这句话往强处兑现，不是违反它。
+   */
+  ffmpeg: {
+    order: ['pack', 'bundle', 'path'],
+    reason:
+      'no acceleration-tier variants exist for ffmpeg in this repo; built-in is sha256- and `-L`-verified, more "our own" than a system binary, so it outranks PATH',
+  },
+  ffprobe: {
+    order: ['pack', 'bundle', 'path'],
+    reason: 'same build/pack as ffmpeg — see ffmpeg.reason',
+  },
+  /*
+   * whisper-cli/whisper-vad：内置维持排最后，原样保留（2026-08-08 Manager 裁决）。
+   *   包内目录只有 CPU 后端模块。一旦排到已安装后端包/PATH 前面，用户装完
+   *   Vulkan/CUDA 包之后仍可能落到包内这个 CPU 二进制上 —— 表现是"装了加速却
+   *   没变快"，比"要先下一个包"更难查，因为它发生在用户以为已经装好之后。
+   *   它只在前两级都落空时才出手，结构上不可能让既有安装变差：任何已经能
+   *   解析到 whisper-cli 的机器，走的还是原来那条路。
+   *   ⚠️ 这条理由是 whisper.cpp 专属的 —— ffmpeg 没有这个顾虑，两者顺序不同
+   *   不是漏改，是同一份 `resolveByOrder()` 用了两组不同的、各自写明理由的参数。
+   */
+  whisperCli: {
+    order: ['pack', 'path', 'bundle'],
+    reason:
+      'whisper.cpp ships multiple acceleration-tier packs (CPU/Vulkan/CUDA); ranking bundle above an installed accelerated pack would silently downgrade it to the CPU-only bundled binary',
+  },
+  whisperVad: {
+    order: ['pack', 'path', 'bundle'],
+    reason: 'same binary family/pack as whisper-cli — see whisperCli.reason',
+  },
+  /*
+   * yt-dlp：今天没有内置档（`fromBundle()` 恒返回 null）—— `build-bundle.mjs`
+   * 文件头与 D-17 §1 都写着"不打包 yt-dlp"，理由是 GPL 传染顾虑 + D-20 §1.1
+   * 的二进制内嵌依赖清点（mutagen/readline）还没扫完，扫完之前不许打进包。
+   * ⚠️ 但那条审计将来完成、yt-dlp 真的进了 `runtime/probe/` 的那天：它和 ffmpeg
+   * 一样，本仓的 yt-dlp pack 也是每平台一个、没有多档加速变体，排到 PATH 之前
+   * 不会有 whisper 那种"盖掉加速包"的风险。**现在就把顺序声明成 ffmpeg 那一档**，
+   * 这样"内置字节哪天真的落地"和"顺序该怎么排"这两件事不用绑在一起处理 ——
+   * 不会重演这次 ffmpeg 排最后、顺序被动继承、没人单独论证过的事。
+   */
+  ytDlp: {
+    order: ['pack', 'bundle', 'path'],
+    reason:
+      'no bundle exists yet (GPL/embedded-dep audit gate — D-17 §1 / D-20 §1.1), but yt-dlp has no acceleration-tier variants either; declared like ffmpeg now so the order does not need remembering later',
+  },
+};
+
+/**
  * Resolve the native tools.
  *
- * Search order, and the reasoning behind it:
- *   1. explicit override        — caller knows best (env vars, tests)
- *   2. installed backend packs  — THE PRODUCTION PATH (ADR-001 class C artifacts)
- *   3. PATH                     — ~~development convenience ONLY~~
- *                                 **a supported fallback, deliberately lower priority**
+ * Every tool is resolved through the same three possible tiers — installed backend
+ * pack, system PATH, packed-in-the-app bundle — via the single `resolveByOrder()`
+ * walker below. **Which order to check them in is declared per tool** in
+ * `RESOLUTION_PLANS` above; there is exactly one implementation of "walk a declared
+ * order, return the first hit," only the order argument varies.
  *
- * Step 2 used to be missing entirely, which is why a correctly installed backend pack
- * still left the daemon reporting `pipeline.missing: ["whisper-cli"]`: nothing ever
- * looked in the place the installer writes to.
+ * Step 2 (installed backend packs) used to be missing entirely, which is why a
+ * correctly installed backend pack still left the daemon reporting
+ * `pipeline.missing: ["whisper-cli"]`: nothing ever looked in the place the installer
+ * writes to.
  *
- * ⚠️ **顺带订正一处误引**：原文写「D-01 §8.4 L2 forbids PATH lookups for real invocations」。
- * `[实测]` 去查了 D-01 §8.4：**L2 是「绝不经过 shell」，通篇没有禁止 PATH 查找**。
- * 那条禁令是本注释**自己发明并挂到文档名下的** —— 文档没错，错的是这句引用。
- * D-01 真正说的是 spawn 时用**绝对路径**（`§8.4` 第三层与文件头 §「命令注入防护」），
- * 那与"解析阶段能不能查 PATH"是两件事，见下。
+ * ── 一处误引，两次订正 ──────────────────────────────────────────────────────────
  *
- * ── 订正（2026-08-09，依据用户原话，PROTOCOL §13）────────────────────────────────
+ * 本文件与 `discoverTools` 早前都写过「D-01 §8.4 L2 forbids PATH lookups for real
+ * invocations」。`[实测]` 去查了 D-01 §8.4：**L2 是「绝不经过 shell」，通篇没有
+ * 禁止 PATH 查找** —— 那条禁令是这段注释自己发明并挂到文档名下的，文档没错，
+ * 错的是引用。D-01 真正说的是 spawn 时用**绝对路径**（`§8.4` 第三层），
+ * "解析阶段能不能查 PATH" 是另一件事。
  *
- * 原文把第 3 条写成 **"development convenience ONLY"**，并说
- * **"D-01 §8.4 L2 forbids PATH lookups for real invocations"**。**那句话描述错了产品立场。**
+ * **2026-08-09 第一次订正只改了这里，漏了两份同一句话的副本**
+ * （本文件文件头、`apps/daemon/src/pipeline/setup.ts:7`）——
+ * 订正也需要数有几份副本在场，这轮漏数了。**2026-08-10 全仓 grep 复核，一并改掉。**
  *
- * 用户 2026-08-09 明确：
+ * 用户 2026-08-09 原话（`PROTOCOL §13`）：
  *
  * > 「早先我们定的策略是**允许**用系统里的 ffmpeg 啊，只是**优先用产品自己下载的**，
  * >   产品自己下载的**优先级大于**系统自带的。」
  *
- * 也就是说：**顺序一直是对的，错的是我们对第 3 条的描述** ——
- * 它不是"仅供开发"，是**受支持的兜底**，只是排在自带的后面。
- * `[实测 2026-08-09，linux]` 行为本来就是"借"：数据目录里没有 ffmpeg、
- * `/usr/bin/ffmpeg` 存在时，daemon 直接用了它并在自检里如实报出绝对路径。
- * 所以**要改的是文字与呈现，不是行为**。
+ * **2026-08-10 追加裁决**：内置（随包出厂）比下载**更是"产品自己的"** ——
+ * sha256 校验过，Linux/Windows 的 ffmpeg 内置那份构建时还真的跑过 `ffmpeg -L`
+ * 核对 Lesser 横幅；系统那份完全不受控。所以 ffmpeg/ffprobe/yt-dlp 的内置档
+ * 这次改到 PATH 之前，whisper-cli/whisper-vad 维持内置排最后 —— 理由各自写在
+ * `RESOLUTION_PLANS` 对应条目旁边，不是一刀切。
  *
- * ── 安全那一半**一个字没松** ────────────────────────────────────────────────────
+ * ── 安全那一半**一个字没变** ────────────────────────────────────────────────────
  *
  * D-01 §8.4 L2 真正在防的是**注入**：PATH 里靠前的一个恶意 `ffmpeg` 会赢。
- * 这条威胁是真的，缓解措施**保持不变且不许动**：
+ * 这条威胁是真的，缓解措施**与顺序无关，保持不变且不许动**：
  *   · **永远 spawn 解析后的绝对路径，绝不 spawn 裸命令名**（本文件与 subprocess/ 一直如此）；
  *   · 借到的那一个**必须在自检里报出绝对路径**，让用户看得见自己用的是哪一个。
  * "允许借" ≠ "不设防"：允许的是**使用**，防的是**冒名**。
@@ -885,27 +976,15 @@ export async function discoverTools(
   };
 
   /*
-   * ★★ 随预编译包出厂的 **CPU 基线运行时**（2026-08-08 Manager 裁决）。
+   * 随预编译包出厂的 **CPU 基线运行时**（`runtime/probe/`，2026-08-08 Manager 裁决
+   * 落地，同一个目录里还装着探针与 ggml 核心 —— 共用一份 ggml，不长第二份，见
+   * `scripts/build-bundle.mjs` 的说明）。这个函数只回答"这个目录里有没有这个可
+   * 执行文件"——**它在几个工具的解析顺序里排第几，不由这个函数决定**，
+   * 由调用方传入的 `order`（见下方 `RESOLUTION_PLANS`）决定。
    *
-   * 启动脚本把 `OPENMEMO_BUNDLED_WHISPER_DIR` 指向包内 `runtime/probe/`
-   * （那个目录同时装着探针、ggml 核心与 whisper-cli —— 共用一份 ggml，
-   *   不长第二份，见 `scripts/build-bundle.mjs` 的说明）。
-   *
-   * ★ 它**排在最后**，与探针那条同一个理由，而且这一条比探针更要紧：
-   *   包内目录**只有 CPU 后端模块**。一旦它排到已安装后端包前面，
-   *   用户装完 Vulkan/CUDA 包之后仍然会跑到包内这个 CPU 二进制上 ——
-   *   表现是"装了加速却没变快"，比现在这个"要先下一个包"更难查，
-   *   因为它发生在用户以为已经装好之后。
-   *   所以顺序是：**已安装的后端包 > 系统 PATH > 包内兜底**。
-   *
-   * 因为它只在前两级都落空时才出手，这条改动**结构上不可能让既有安装变差**：
-   * 任何已经能解析到 whisper-cli 的机器，走的还是原来那条路。
-   */
-  /*
-   * ⚠️ 这里原来只读 `OPENMEMO_BUNDLED_WHISPER_DIR`。那**只覆盖"经启动器起"这一条路**：
-   * `scripts/selfcheck.mjs` 直接调 `discoverTools()`、CI 直接起 daemon，都看不见包内那份。
-   * 与 `vendor/manifests` 那次是同一个病：**能不能用不该取决于你从哪儿启动。**
-   * 改用 `bundledRuntimeDir()`（环境变量优先，取不到就从模块位置向上找），
+   * ⚠️ 这里不直接读 `OPENMEMO_BUNDLED_WHISPER_DIR`：那**只覆盖"经启动器起"这一条路**，
+   * `scripts/selfcheck.mjs` 直接调 `discoverTools()`、CI 直接起 daemon，都看不见包内
+   * 那份。改用 `bundledRuntimeDir()`（环境变量优先，取不到就从模块位置向上找），
    * 三个消费者共用同一份解析规则。
    */
   const fromBundle = async (name: string): Promise<string | null> => {
@@ -915,10 +994,27 @@ export async function discoverTools(
     return (await isExecutable(candidate)) ? candidate : null;
   };
 
-  const resolve = async (name: string): Promise<string | null> =>
-    (await findInBackendPacks(storeRoot, exe(name), { selectedBackend })) ??
-    (await fromPath(name)) ??
-    (await fromBundle(name));
+  const fromPack = (name: string): Promise<string | null> =>
+    findInBackendPacks(storeRoot, exe(name), { selectedBackend });
+
+  /** 三档查找函数各自的名字，与 `ResolutionTier` 的三个字面量一一对应。 */
+  const TIER_LOOKUP = {
+    pack: fromPack,
+    path: fromPath,
+    bundle: fromBundle,
+  } satisfies Record<ResolutionTier, (name: string) => Promise<string | null>>;
+
+  /** 单一实现：按声明的顺序逐档查找，返回第一个命中的。顺序本身不写在这里。 */
+  const resolveByOrder = async (
+    name: string,
+    order: readonly ResolutionTier[],
+  ): Promise<string | null> => {
+    for (const tier of order) {
+      const hit = await TIER_LOOKUP[tier](name);
+      if (hit !== null) return hit;
+    }
+    return null;
+  };
 
   /*
    * VAD model ships as a ggml file inside the whisper.cpp pack's sibling model store.
@@ -935,11 +1031,17 @@ export async function discoverTools(
   const vadModel = overrides.vadModel ?? (await findWhisperVadWeights(storeRoot));
 
   return {
-    ffmpeg: overrides.ffmpeg ?? (await resolve('ffmpeg')) ?? '',
-    ffprobe: overrides.ffprobe ?? (await resolve('ffprobe')) ?? '',
-    whisperCli: overrides.whisperCli ?? (await resolve('whisper-cli')),
-    whisperVad: overrides.whisperVad ?? (await resolve('whisper-vad-speech-segments')),
+    ffmpeg:
+      overrides.ffmpeg ?? (await resolveByOrder('ffmpeg', RESOLUTION_PLANS.ffmpeg.order)) ?? '',
+    ffprobe:
+      overrides.ffprobe ?? (await resolveByOrder('ffprobe', RESOLUTION_PLANS.ffprobe.order)) ?? '',
+    whisperCli:
+      overrides.whisperCli ??
+      (await resolveByOrder('whisper-cli', RESOLUTION_PLANS.whisperCli.order)),
+    whisperVad:
+      overrides.whisperVad ??
+      (await resolveByOrder('whisper-vad-speech-segments', RESOLUTION_PLANS.whisperVad.order)),
     vadModel,
-    ytDlp: overrides.ytDlp ?? (await resolve('yt-dlp')),
+    ytDlp: overrides.ytDlp ?? (await resolveByOrder('yt-dlp', RESOLUTION_PLANS.ytDlp.order)),
   };
 }
