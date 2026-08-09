@@ -46,7 +46,17 @@ export function HardwareCard({ hw, locale }: { hw: HardwareInfo; locale: string 
           ) : hw.unifiedMemory ? (
             <span className="text-ink">{t('runtime.hw.unifiedMemory')}</span>
           ) : (
-            <span className="text-ink-secondary">{t('runtime.hw.noGpu')}</span>
+            /*
+              ★ 这一格此前说的是「未检测到可用 GPU」—— 一句**我们没资格说的话**。
+                GPU 枚举是探针干的，而探针随后端包出厂；后端包没装时我们**根本没查过**，
+                与 CPU 特性那条是同一个病：把"没查"渲染成"查过且没有"。
+                所以按有没有装过后端包分两句话说，并给一个能去装的入口。
+            */
+            <span className="text-ink-secondary">
+              {hw.backends.some((b) => b.installed)
+                ? t('runtime.hw.noGpu')
+                : t('runtime.hw.gpuUnknownNoBackend')}
+            </span>
           )}
         </Row>
 
@@ -81,7 +91,20 @@ export function HardwareCard({ hw, locale }: { hw: HardwareInfo; locale: string 
             判据：**「不适用」和「不支持」必须区分得开。**
             前者不该出现，后者才该报警。所以这一行只在 x64 上渲染。
           */}
-          {hw.os.arch === 'x64' && !hw.cpu.features.includes('avx2') ? (
+          {/*
+            ★★ 三态，不是两态。上一次修复只分出了「不适用」与「不支持」，
+            而**空集合仍然被渲染成"已知的不支持"** —— 那正是 Windows 上的现状：
+            `detectCpuWin32()` 无条件返回 `features: []`，它**从来没查过任何指令集标志**。
+            于是每一台 Windows 机器都被红字告知「不支持 AVX2」，包括支持 AVX2/AVX-512 的
+            Ryzen 7 7840HS。**用户读到的是"我的 CPU 不行"，而真相是"我们从来没看过"。**
+
+            · arm64            → 一个字都不说（AVX2 是 x86 概念，**不适用**）
+            · x64 且查到了特性 → 有 avx2 就不说；没有才红字「不支持」（**确实查过**）
+            · x64 但特性集为空 → 灰字「无法确认」（**未知**）——不报警、也不假称支持
+          */}
+          {hw.os.arch !== 'x64' ? null : hw.cpu.features.length === 0 ? (
+            <span className="text-ink-secondary">{t('runtime.hw.avx2Unknown')}</span>
+          ) : !hw.cpu.features.includes('avx2') ? (
             <span className="text-critical">{t('runtime.hw.noAvx2')}</span>
           ) : null}
         </Row>

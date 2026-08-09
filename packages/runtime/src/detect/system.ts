@@ -177,16 +177,38 @@ async function detectCpuDarwin(brand: string, logicalCores: number): Promise<Cpu
 }
 
 /**
- * UNVERIFIED — no Windows machine available.
+ * ⚠️ **We do not detect CPU instruction-set flags on Windows at all.** `features` is
+ * always `[]` here — and that empty array means **"not measured"**, never "absent".
  *
- * Windows has no /proc/cpuinfo equivalent reachable from pure Node, and `wmic` is
- * deprecated (removed from the Windows 11 24H2 default image), so we do not use it.
- * `Get-CimInstance Win32_Processor` does not report ISA flags at all.
+ * Why there is no query: Windows has no /proc/cpuinfo reachable from pure Node; `wmic`
+ * is deprecated (gone from the Windows 11 24H2 image); and `Get-CimInstance
+ * Win32_Processor` does not report ISA flags at all.
  *
- * We therefore infer the ISA from the CPU backend ggml ACTUALLY selected — see
- * `inferIsaFromBackendPath` — which is better evidence than any flag query, because it
- * is the same decision the inference engine made. Until the probe has run, we report a
- * conservative empty set rather than guessing.
+ * ── What this comment used to say, and why that was worse than saying nothing ──
+ *
+ * It used to claim we "therefore infer the ISA from the CPU backend ggml actually
+ * selected — see `inferIsaFromBackendPath`". **That function had zero callers in the
+ * entire repo.** The comment described an intention as if it were code, so every reader
+ * — including the audit that first looked here — came away believing Windows had a
+ * mitigation it did not have. The function has been deleted; describing a plan in the
+ * present tense is how a plan gets mistaken for a guarantee.
+ *
+ * ── What the empty set is allowed to cause, and what it is not ──
+ *
+ * Downstream MUST treat `features.length === 0` as *unknown*:
+ *   · `packages/shared/src/fitness.ts` only concludes `missing_cpu_feature` when it has
+ *     features to compare against, and otherwise reports `cpuFeaturesUnverified`;
+ *   · the UI renders a third state ("could not determine"), not a red "unsupported".
+ * Before that, every Windows machine was told 「CPU 不支持所需指令集（avx2）」 for the 5
+ * models requiring avx2 — on hardware that supports it.
+ *
+ * ── If someone implements this later ──
+ *
+ * The documented, reliable source is `IsProcessorFeaturePresent` (kernel32), e.g.
+ * `PF_AVX2_INSTRUCTIONS_AVAILABLE = 40`, reachable via PowerShell `Add-Type` P/Invoke.
+ * **Do not ship it unverified on a real Windows machine**: a half-built detector just
+ * produces a different false sentence, and this field's whole problem has been that it
+ * spoke with more confidence than it had earned.
  */
 async function detectCpuWin32(brand: string, logicalCores: number): Promise<CpuInfo> {
   let physicalCores = logicalCores;
@@ -203,88 +225,6 @@ async function detectCpuWin32(brand: string, logicalCores: number): Promise<CpuI
   }
 
   return { brand, physicalCores, logicalCores, features: [] };
-}
-
-/**
- * Map a ggml CPU backend filename to the ISA level it implies.
- *
- * The probe's stderr contains a line like:
- *   load_backend: loaded CPU backend from .../libggml-cpu-zen4.so
- * That is ground truth about which instruction sets are usable, so on platforms where
- * flag enumeration is awkward (Windows) we prefer it over any API.
- *
- * Variant names come from ggml/src/ggml-cpu/CMakeLists.txt and were confirmed against a
- * real build on the T-012 box.
- */
-const ISA_BY_VARIANT: Record<string, string[]> = {
-  sse42: ['sse4_2'],
-  x64: ['sse4_2'],
-  sandybridge: ['sse4_2', 'avx'],
-  ivybridge: ['sse4_2', 'avx', 'f16c'],
-  piledriver: ['sse4_2', 'avx', 'f16c', 'fma'],
-  haswell: ['sse4_2', 'avx', 'avx2', 'f16c', 'fma', 'bmi2'],
-  alderlake: ['sse4_2', 'avx', 'avx2', 'f16c', 'fma', 'bmi2', 'avx_vnni'],
-  skylakex: ['sse4_2', 'avx', 'avx2', 'f16c', 'fma', 'bmi2', 'avx512f'],
-  cannonlake: ['sse4_2', 'avx', 'avx2', 'f16c', 'fma', 'bmi2', 'avx512f', 'avx512_vbmi'],
-  cascadelake: ['sse4_2', 'avx', 'avx2', 'f16c', 'fma', 'bmi2', 'avx512f', 'avx512_vnni'],
-  icelake: [
-    'sse4_2',
-    'avx',
-    'avx2',
-    'f16c',
-    'fma',
-    'bmi2',
-    'avx512f',
-    'avx512_vbmi',
-    'avx512_vnni',
-  ],
-  cooperlake: [
-    'sse4_2',
-    'avx',
-    'avx2',
-    'f16c',
-    'fma',
-    'bmi2',
-    'avx512f',
-    'avx512_vnni',
-    'avx512_bf16',
-  ],
-  zen4: [
-    'sse4_2',
-    'avx',
-    'avx2',
-    'f16c',
-    'fma',
-    'bmi2',
-    'avx512f',
-    'avx512_vbmi',
-    'avx512_vnni',
-    'avx512_bf16',
-  ],
-  sapphirerapids: [
-    'sse4_2',
-    'avx',
-    'avx2',
-    'f16c',
-    'fma',
-    'bmi2',
-    'avx512f',
-    'avx512_vbmi',
-    'avx512_vnni',
-    'avx512_bf16',
-    'amx_tile',
-    'amx_int8',
-  ],
-};
-
-export function inferIsaFromBackendPath(probeStderr: string): {
-  variant: string | null;
-  features: string[];
-} {
-  const m = /ggml-cpu-([a-z0-9]+)\.(?:so|dll|dylib)/i.exec(probeStderr);
-  const variant = m?.[1]?.toLowerCase() ?? null;
-  if (variant === null) return { variant: null, features: [] };
-  return { variant, features: ISA_BY_VARIANT[variant] ?? [] };
 }
 
 /** Lowercase, keep only flags anyone downstream cares about, de-duplicate. */

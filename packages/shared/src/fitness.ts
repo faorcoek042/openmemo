@@ -58,6 +58,20 @@ export interface FitResult {
   speedTier: SpeedTier;
   /** Provenance of `estMinutesPerAudioHour` — never show a reference figure as if local. */
   speedSource: SpeedSource;
+  /**
+   * Required CPU features we could **not verify**, because we never detected any.
+   *
+   * ⚠️ This is deliberately NOT the same thing as `missing_cpu_feature`, and the UI must
+   * never render it as such. "Your CPU lacks AVX2" and "we could not check whether your
+   * CPU has AVX2" are different sentences, and only one of them is ever true on Windows
+   * today: `detectCpuWin32()` returns an empty feature set unconditionally — it has never
+   * queried any instruction-set flag at all.
+   *
+   * Empty when there is nothing to caveat (either we detected features, or none were
+   * required). Non-empty means: verdict computed **as if** the requirement were met, and
+   * the user should be told we could not confirm it.
+   */
+  cpuFeaturesUnverified: string[];
   /** True when the model is measured-unsuitable for the requested language (ADR-011). */
   notRecommendedForLanguage: boolean;
   /** Diagnostic numbers, surfaced in the detail panel so users can sanity-check us. */
@@ -271,12 +285,21 @@ export function computeFit(input: FitInput, hw: HardwareInfo): FitResult {
   const lang = input.targetLanguage ?? null;
   const notRecommendedForLanguage = lang != null && (input.notRecommendedFor ?? []).includes(lang);
 
+  /* 三态判定要在 `base` 之前算出来 —— `base` 要把 unverified 带给每一个返回分支。 */
+  const required = input.requirements.cpuFeatures;
+  const featuresKnown = hw.cpu.features.length > 0;
+  const cpuFeaturesUnverified = featuresKnown ? [] : [...required];
+  const missing = featuresKnown
+    ? required.filter((f) => !hw.cpu.features.includes(f.toLowerCase()))
+    : [];
+
   const base = {
     estMinutesPerAudioHour: estMinutes,
     speedTier,
     speedSource,
     notRecommendedForLanguage,
     detail,
+    cpuFeaturesUnverified,
   };
 
   const gb = (mb: number) => (mb / 1000).toFixed(1);
@@ -316,10 +339,28 @@ export function computeFit(input: FitInput, hw: HardwareInfo): FitResult {
     };
   }
 
-  // Rule 2 — required CPU features.
-  const missing = input.requirements.cpuFeatures.filter(
-    (f) => !hw.cpu.features.includes(f.toLowerCase()),
-  );
+  /*
+   * Rule 2 — required CPU features. **Three states, not two.**
+   *
+   * ⚠️ An EMPTY detected feature set means "we never looked", not "the CPU has nothing".
+   *   `detectCpuWin32()` (packages/runtime/src/detect/system.ts) returns `features: []`
+   *   unconditionally — it only ever asked PowerShell for the physical core count and has
+   *   never queried a single instruction-set flag. Treating that empty set as evidence of
+   *   absence made **every Windows machine** report
+   *       「CPU 不支持所需指令集（avx2）」
+   *   for the 5 models that declare `cpuFeatures: ['avx2']`
+   *   (llm/qwen3-{1.7b-q8_0,4b-q4_k_m,4b-q5_k_m,8b-q4_k_m}, llm/gemma-3-4b-it-q4_k_m)
+   *   — including on a Ryzen 7 7840HS (Zen 4), which supports AVX2 and AVX-512.
+   *
+   *   **The user read "my CPU is inadequate" when the truth was "we never checked."**
+   *   An unsupported verdict built on an unasked question is worse than no verdict: it is
+   *   confidently wrong, and it silently removed working models from their choices.
+   *
+   * So: only conclude "missing" when we actually have evidence to compare against.
+   * With no evidence we do NOT flip to "supported" either — we proceed with the rest of
+   * the verdict (RAM/GPU are independent and still meaningful) and hand the caller an
+   * explicit `cpuFeaturesUnverified` list so the UI can say the honest third sentence.
+   */
   if (missing.length > 0) {
     return {
       tier: 'unsupported',

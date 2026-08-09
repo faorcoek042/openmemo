@@ -345,7 +345,9 @@
       "diskFree": "{{free}} free of {{total}}",
       "backendsLabel": "Backends:",
       "whyUnavailable": "Why these backends are unavailable ({{n}})",
-      "detectedAt": "Probed at {{at}} · {{platform}}/{{arch}} {{version}}"
+      "detectedAt": "Probed at {{at}} · {{platform}}/{{arch}} {{version}}",
+      "avx2Unknown": " · AVX2 support could not be determined",
+      "gpuUnknownNoBackend": "No GPU backend pack installed yet — cannot detect"
     },
     "breaker": {
       "title": "GPU acceleration is temporarily disabled",

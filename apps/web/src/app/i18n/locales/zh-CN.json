@@ -345,7 +345,9 @@
       "diskFree": "剩余 {{free}} / {{total}}",
       "backendsLabel": "后端：",
       "whyUnavailable": "为什么这些后端不可用（{{n}} 项）",
-      "detectedAt": "探测于 {{at}} · {{platform}}/{{arch}} {{version}}"
+      "detectedAt": "探测于 {{at}} · {{platform}}/{{arch}} {{version}}",
+      "avx2Unknown": " · 无法确认是否支持 AVX2",
+      "gpuUnknownNoBackend": "尚未安装 GPU 后端包，无法检测"
     },
     "breaker": {
       "title": "GPU 加速已暂时停用",

@@ -77,7 +77,6 @@ export {
   detectMemory,
   detectOs,
   detectUnifiedMemory,
-  inferIsaFromBackendPath,
 } from './detect/system.js';
 export { SOFTWARE_ADAPTER_NAMES, detectGpus } from './detect/gpu.js';
 
