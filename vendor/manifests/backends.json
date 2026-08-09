@@ -25,7 +25,7 @@
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.4.0/whispercpp-cpu-linux-x64.tar.gz",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.6.0/whispercpp-cpu-linux-x64.tar.gz",
               "official": true
             }
           ]
@@ -89,7 +89,7 @@
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.4.0/whispercpp-vulkan-linux-x64.tar.gz",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.6.0/whispercpp-vulkan-linux-x64.tar.gz",
               "official": true
             }
           ]
@@ -156,7 +156,7 @@
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.4.0/whispercpp-cpu-macos-arm64.tar.gz",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.6.0/whispercpp-cpu-macos-arm64.tar.gz",
               "official": true
             }
           ]
@@ -212,7 +212,7 @@
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.4.0/whispercpp-cpu-win-x64.zip",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.6.0/whispercpp-cpu-win-x64.zip",
               "official": true
             }
           ]
@@ -595,7 +595,7 @@
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.4.0/whispercpp-vulkan-win-x64.zip",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.6.0/whispercpp-vulkan-win-x64.zip",
               "official": true
             }
           ]
@@ -656,7 +656,7 @@
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.4.0/whispercpp-metal-macos-arm64.tar.gz",
+              "url": "https://github.com/faorcoek042/openmemo/releases/download/v0.6.0/whispercpp-metal-macos-arm64.tar.gz",
               "official": true
             }
           ]
