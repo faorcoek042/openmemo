@@ -167,11 +167,13 @@ say('── 清单漂移：本轮那个 bug 的一句话诊断');
 check('★★ 包内 v0.3.0 / 目录 v0.4.0 → 点名 whispercpp（真实复现）', () => {
   const bundle = {
     'whispercpp-cpu-linux-x64': 'https://github.com/x/y/releases/download/v0.3.0/w.tar.gz',
-    'media-tools-linux-x64': 'https://github.com/BtbN/FFmpeg-Builds/releases/download/auto/f.tar.xz',
+    'media-tools-linux-x64':
+      'https://github.com/BtbN/FFmpeg-Builds/releases/download/auto/f.tar.xz',
   };
   const checkout = {
     'whispercpp-cpu-linux-x64': 'https://github.com/x/y/releases/download/v0.4.0/w.tar.gz',
-    'media-tools-linux-x64': 'https://github.com/BtbN/FFmpeg-Builds/releases/download/auto/f.tar.xz',
+    'media-tools-linux-x64':
+      'https://github.com/BtbN/FFmpeg-Builds/releases/download/auto/f.tar.xz',
   };
   const d = driftedPacks(bundle, checkout);
   assert.equal(d.length, 1);
