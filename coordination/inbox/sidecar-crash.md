@@ -473,3 +473,75 @@ repoSampleAudio() → 上溯 4 层 + vendor/whisper.cpp/samples/jfk.wav
 - 本轮**未改任何代码**，仅调查；仓库只新增本回执。
 - 未碰 `:10000`、`/root/data-memo`、机器指针；**未建/改/删 release**；未用任何形式的 `pkill`。
 - 未动他人在途文件（`apps/web`、`e2e-browser`、`packages/runtime`、`docs/**`）。
+
+---
+
+## [2026-08-09] 「停在正在安装」：后端包那条路的实测事件序列（PROGRESS）
+
+走的是 `POST /api/backends/install`（**不是**模型下载那条），
+接 `/api/events` **真事件流**（不轮询，所以"太短没抓到"在构造上被排除）。
+`whispercpp-cpu-linux-x64`（6.75 MB），linux-x64。
+
+### 完整序列（相对提交时刻）
+
+```
+t=    73ms  job.created
+t=    78ms  job.state     state=running
+t=  2877ms  job.progress  step=resolving    pct=0
+t=  3194ms  job.progress  step=downloading  pct=null
+t=  3446ms  job.progress  step=downloading  pct=0
+   …（下载期间 16 条 pct 递增：0.0024 → 0.9163）…
+t=  9266ms  job.progress  step=verifying    pct=null
+t=  9402ms  job.progress  step=verifying    pct=1
+t=  9406ms  job.progress  step=installing   pct=null      ← 有载体
+t=  9420ms  job.state     state=succeeded
+t=  9425ms  job.done
+```
+
+### 是 (a)(b)(c) 哪一种：**都不是，是第四种 —— 而它恰好长得和 (c) 一样**
+
+- **(a) 事件没发 → 排除。** 四个阶段**全都有载体**，含 `installing`。
+- **(c) 真的卡住 → 排除。** 全程 9.4 秒走完，没有任何一段停滞。
+- **(b) 发了没渲染 → 也不是。** 事件按序到达，终态没有超车
+  （`installing` 在 `succeeded` **之前** 14ms 到，上一轮修的那条在这条路上是有效的）。
+
+**真正的形状是：`installing` 只有"开始"这一个点，之后到 `succeeded` 之间
+`[实测]` 有 0 个事件、间隔 14ms。**
+
+也就是说 **「正在安装」的显示时长 ≡ 解包+chmod+写清单的耗时，而那整段是全黑的**。
+在 linux 上它是 **14 毫秒**，所以没人看得见；
+**在 Windows 上那一段要解包一个归档、且每个解出来的文件都会被 Defender 实时扫**，
+它可以是几十秒到几分钟 —— 而**期间一个事件都不会有**。
+
+⇒ 用户看到的"停在正在安装然后没有后续进展"，**在这条路上不是 bug 触发，
+是这个阶段本来就没有进度**。它与"真的卡住"在界面上完全无法区分 ——
+**这正是它该被修的理由，但修法不是"补一个 installing 事件"（那个已经有了），
+而是"在 installing 期间给出进度"**（逐文件解包进度，或至少"正在解包 N/M 个文件"）。
+
+⚠️ **我没有在 Windows 上量过这一段有多长**，标 `[未验证]`。
+这条是本结论唯一的缺口：上面的推断建立在"Windows 上解包+AV 比 linux 慢得多"
+这个**合理但未实测**的前提上。要坐实，把同一段观测跑在 windows-2025 上即可
+（事件流已经足够，不需要新打点）。
+
+### `resolving` 那个异常：**这条路上不出现**
+
+`[实测]` `resolving` **有播报**（t=2877ms, pct=0）。
+所以那个标着 `UNKNOWN` 的"resolving 没触发"**不是全局的**，
+至少后端包这条路是正常的 —— 这对定位它是有用的负面结论
+（说明成因在模型那条路自己身上，不在共用的事件层）。
+
+### `builtinBaseline` 还成不成立：**没重核，标 `[未验证]`**
+
+你说别人可能已从另一头解决（`resolveBackendTool` / `fromBundle` 都补了包内兜底）。
+那两处解决的是**工具解析**（能不能跑），而 `builtinBaseline` 想解决的是
+**目录页的显示**（`/api/backends/catalog` 的 `installed` 仍由安装记录决定）。
+两者不是同一格 —— 但我**这轮没有实测复核**，不下结论。
+
+### 纪律
+
+- 本轮**未改任何代码**，仅观测；仓库只新增本回执。
+- 起 daemon 用的是普通启动 + 独占临时数据目录，**没有另写端口探测**
+  （`assertPortFree`/`killTree` 那两份共享实现我没有碰，也没有复制）。
+- 收尾**按 pid** 结束，未用任何形式的 `pkill`。
+- 未碰 `:10000`、`/root/data-memo`、机器指针；**未建/改/删 release**。
+- 未动他人在途文件。
