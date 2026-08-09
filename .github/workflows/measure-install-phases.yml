@@ -1,0 +1,123 @@
+# 量 `installing → succeeded` 那一段：**三平台，重点是 Windows。**
+#
+# ── 这条腿为什么存在 ────────────────────────────────────────────────────────────
+#
+# 用户报「任务中心停在**正在安装**」。SSE 实测已排除三种解释
+# （事件没发 / 被终态超车 / 真的卡住）—— **是第四种**：
+#
+# > `installing` 只有"开始"这一个点。`[实测 linux-x64]` 它与 `succeeded` 之间
+# > **0 个事件、14ms**。「正在安装」的显示时长 ≡ 解包 + chmod + 写清单的耗时，
+# > 而那一整段是**全黑的**。
+#
+# Linux 上 14ms 没人看得见。Windows 上要解开归档、且每个解出的文件会被 Defender
+# 实时扫 —— **推断**是数十秒到数分钟。
+#
+# ⚠️ **那是推断，不是实测。这条腿就是来把它变成数的。**
+#
+# **如果 Windows 上也是毫秒级，那用户的卡住另有原因** —— 这条腿的产出会直接
+# 推翻"解包慢"这个假设，而不是替它背书。**别让一个未实测的推断替真因背锅。**
+#
+# ── 它不是门禁 ────────────────────────────────────────────────────────────────
+#
+# 只测量、不判红绿（拿不到数才失败）。阈值目前无人知道该定在哪 ——
+# **先有数，再谈判据**。
+
+name: measure-install-phases
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundleRunId:
+        description: '从哪个 build-bundles run 取包（留空 = 自动找最近一个成功 run）'
+        required: false
+        type: string
+      legs:
+        description: 'Which platform to run'
+        type: choice
+        required: false
+        default: all
+        options: [all, linux, macos, windows]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: measure-install-phases-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: 算矩阵（跳过的平台不许变成绿勾）
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        env:
+          LEGS: ${{ inputs.legs }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const all = [
+              { runner: "ubuntu-24.04", label: "linux-x64",    artifact: "bundle-linux-x64"   , leg: "linux"   },
+              { runner: "macos-26",     label: "darwin-arm64", artifact: "bundle-darwin-arm64", leg: "macos"   },
+              { runner: "windows-2025", label: "win32-x64",    artifact: "bundle-win-x64"     , leg: "windows" },
+            ];
+            const legs = process.env.LEGS || "all";
+            const include = legs === "all" ? all : all.filter((x) => x.leg === legs);
+            if (include.length === 0) { console.error(`::error::legs=${legs} 没有匹配到任何平台`); process.exit(1); }
+            console.log(`选中 ${include.length} 个平台：${include.map((x) => x.label).join(", ")}`);
+            require("node:fs").appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`);
+          '
+
+  measure:
+    name: 量安装阶段（${{ matrix.label }}）
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: 定位 build-bundles run
+        id: runid
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          id=$(bash scripts/ci/resolve-bundle-run.sh '${{ matrix.artifact }}' '${{ inputs.bundleRunId }}')
+          echo "id=${id}" >> "$GITHUB_OUTPUT"
+
+      # ★ 量的对象是**用户下载的那个包**，不是这棵源码树。
+      - name: 取预编译包
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: incoming
+          run-id: ${{ steps.runid.outputs.id }}
+          github-token: ${{ github.token }}
+
+      - name: 解开归档 + 验结构（共享脚手架）
+        id: unpack
+        shell: bash
+        run: |
+          mkdir -p unpacked
+          node scripts/ci/resolve-bundle.mjs \
+            --from incoming --out unpacked \
+            --require app/daemon/dist/main.js --require-node-runtime
+
+      # Windows 上如果真要几分钟，这里必须等得起。
+      - name: 量 installing → succeeded
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          node scripts/ci/measure-install-phases.mjs \
+            --bundle "${{ steps.unpack.outputs.bundle_dir }}" \
+            --port 19741
