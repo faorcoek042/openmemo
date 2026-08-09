@@ -40,6 +40,8 @@
     "src/lib/nav/activeNav.ts",
     "src/features/models/asrSections.test.ts",
     "src/features/models/asrSections.ts",
+    "src/features/models/engineFit.test.ts",
+    "src/features/models/engineFit.ts",
     "src/lib/safe.ts",
     "src/lib/remediation/routes.test.ts",
     "src/lib/remediation/routes.ts",

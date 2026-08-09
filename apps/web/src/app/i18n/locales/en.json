@@ -270,8 +270,9 @@
     },
     "engineFit": {
       "fits": "For {{engines}}",
-      "mismatch": "For {{engines}} · not usable now",
-      "mismatchHint": "None of the engines available on this machine are in that list — installing it will not make it load. It becomes usable if you switch engines."
+      "mismatchHint": "The engine this model needs is not enabled on this machine yet — installing it now will not load it. It becomes usable once that engine is enabled.",
+      "notEnabled": "For {{engines}} · engine not enabled yet",
+      "notEnabledWithReason": "For {{engines}} · {{reason}}"
     }
   },
   "runtime": {

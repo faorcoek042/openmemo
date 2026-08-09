@@ -12,6 +12,7 @@ import { localizedDescription, localizedName } from '../../../lib/format/localiz
 import { useAsrEngines } from '../../../components/common/AsrEngineStatus';
 import { useIsAppleSilicon } from '../../../lib/api/hardware';
 import { QuantSelector } from './QuantSelector';
+import { engineFit } from '../engineFit';
 
 /**
  * 目录里的一张模型卡（R-04 §9.1 线框）。
@@ -41,21 +42,58 @@ import { QuantSelector } from './QuantSelector';
  * > 判据是"**用户在点之前就知道这个适用不适用于他现在的引擎**"。
  *
  * 所以这里只做**标注**：永远把 `engines` 显示出来；当它与本机**当前可用**的引擎
- * 不相交时，额外标一句"当前用不上"。**什么都不隐藏**，换引擎的人照样找得到另一个。
+ * 不相交时，额外标一句「该引擎尚未启用」并**照抄 daemon 给的原因**（T-191 ④：原文是
+ * "当前用不上"，而它与 daemon 自己那句「装这个就能启用」直接打架）。
+ * **什么都不隐藏**，换引擎的人照样找得到另一个。
  * 这与 `ModelsPage` 对语言不匹配变体的既有做法同源（默认折叠 + 明说藏了几个，
  * 而不是删掉）。
  *
  * ⚠️ 空数组**不渲染**：`shared/models.ts:495` 明说空 `engines` 的语义是
  * "nothing can load this"，那是清单缺陷，不该在卡片上冒充成一句结论。
  */
+/**
+ * ★★ T-191 ④：「当前用不上」这句话在用户机器上**与 daemon 自己的话直接打架**。
+ *
+ * `[用户真机实测 2026-08-09，:10000]` `GET /api/health` 的原文是：
+ *
+ * ```json
+ * { "id": "sherpa-onnx", "available": false,
+ *   "reason": "未安装流式中文模型 —— 去「模型」页装 “sherpa 流式中文 zh-14M” 即可启用录音转文字" }
+ * ```
+ *
+ * 而目录里带 `engines:['sherpa-onnx']` 的**只有 4 条**，其中两条正是
+ * `asr/sherpa-streaming-zh-14m` 与 `asr/paraformer-zh-small` ——
+ * **daemon 让他装的那两个模型，卡片上写着「当前用不上」。**
+ * 同一个页面上，一句说"装这个就能用"，一句说"用不上"。
+ *
+ * 更糟的是那句 tooltip：「**换引擎后它就能用**」。这里根本不需要换引擎 ——
+ * 装上它本身就是启用那个引擎的办法。**它在把用户往反方向推。**
+ *
+ * ── 判据（Manager 2026-08-09）：这行字要能让人分清三件事 ────────────────────────
+ *
+ *   (a) 是"有更好的替代所以用不上"，还是 (b) "出了问题所以用不上"；(c) 该做什么。
+ *
+ * 原文三件都答不了：「当前用不上」既不说是哪一种，也不给下一步。
+ *
+ * ── 修法：**不自己造话，念 daemon 已经算好的那句** ─────────────────────────────
+ *
+ * `useAsrEngines()` 一直带着每个引擎的 `reason`（`AsrEngineStatus.tsx` 里
+ * 「reason 是 daemon 实测给的，不是我编的文案」那条规矩），而这里此前把它丢了。
+ * 现在：
+ *   · 引擎不可用但 daemon 给了原因 ⇒ **原样念它**（它自带 (b) 与 (c)）；
+ *   · daemon 没给原因 ⇒ 退回一句不发明因果的中性说明，**不再说"换引擎"**。
+ *
+ * 措辞也从"用不上"改成"**引擎未启用**"：前者听起来像"这东西对你没用"（(a)），
+ * 后者说的是事实 —— 引擎还没启用，而下一句正好告诉他怎么启用。
+ */
 function EngineFitChip({ engines }: { engines: readonly string[] }) {
   const { t } = useTranslation();
   const { engines: local, ready } = useAsrEngines();
   if (!engines || engines.length === 0) return null;
 
-  const usable = new Set(local.filter((e) => e.available).map((e) => e.id as string));
-  // `ready === false` = 还不知道本机有哪些引擎 ⇒ **只标适配，不下"用不上"的判断**。
-  const mismatch = ready && engines.every((e) => !usable.has(e));
+  // 判据抽在 `../engineFit`（纯函数，单测直接钉）—— 这里只负责怎么把它画出来。
+  const { kind, reasons } = engineFit({ engines, local, ready });
+  const mismatch = kind === 'not-enabled';
 
   return (
     <span
@@ -65,10 +103,21 @@ function EngineFitChip({ engines }: { engines: readonly string[] }) {
           ? 'rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[11px] text-warning'
           : 'rounded border border-line px-1.5 py-0.5 text-[11px] text-ink-secondary'
       }
-      title={mismatch ? t('models.engineFit.mismatchHint') : undefined}
+      title={
+        mismatch
+          ? reasons.length > 0
+            ? reasons.join('\n')
+            : t('models.engineFit.mismatchHint')
+          : undefined
+      }
     >
       {mismatch
-        ? t('models.engineFit.mismatch', { engines: engines.join(' / ') })
+        ? reasons.length > 0
+          ? t('models.engineFit.notEnabledWithReason', {
+              engines: engines.join(' / '),
+              reason: reasons[0],
+            })
+          : t('models.engineFit.notEnabled', { engines: engines.join(' / ') })
         : t('models.engineFit.fits', { engines: engines.join(' / ') })}
     </span>
   );
