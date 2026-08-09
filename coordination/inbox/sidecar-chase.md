@@ -236,3 +236,76 @@ t= 11239ms  job.state     state=succeeded
   `warmProbeCache` 内部能否分段；真机上预热要多久。
 - 未碰 `:10000`、`/root/data-memo`、机器级指针；未建/改/删 release；未用 `pkill`。
 - 动手前 `git status` 确认 `apps/web` 与 `packages/downloader` 当时**无人在改**。
+
+## [2026-08-09] T-187 模型那条路已量 —— **也排除了**，用户那条仍然 `UNKNOWN`
+
+`[CI 实测 windows-2025, run 31311495152]` 模型 `asr/whisper-large-v2-q8_0`，**1656.1 MB**。
+
+### 一、它和后端包**不是**两套实现（这条先答）
+
+`[已核实]` `models.ts:423` 与 `backends.ts` **都是 `import { install } from '@openmemo/downloader'`**
+—— **同一个下载器，两个封装**，不是重复实现。差别在封装层：
+
+| | 后端包 | 模型 |
+|---|---|---|
+| 装完之后 | `writeManifest` → **`warming`（GPU 着色器预热）** | `dropInstalledRecord` → `writeManifest` → **激活** |
+| 额外动作 | 扩展链接 | `model.activated` 事件 |
+
+模型那条**没有**多分片/合并/格式转换/二次校验这类额外动作。
+
+### 二、完整时间线（1.66 GB，Windows）
+
+| step | 停留 | 事件数 |
+|---|---|---|
+| resolving | 0 ms | 1 |
+| **downloading** | **28,313 ms** | **60** |
+| verifying | 2,011 ms | 2 |
+| **installing** | **9 ms** | **0** |
+
+**黑窗（相邻事件间隔 > 1s、0 事件）共 4 段，最长 2,405 ms**：
+
+```
+⚠️ 2405 ms  downloading → downloading   （网络停顿，进度随后恢复）
+⚠️ 2361 ms  downloading → downloading
+⚠️ 2294 ms  downloading → downloading
+⚠️ 1795 ms  verifying   → installing     ← 1.6 GB 的 sha256 静默段
+```
+
+### 三、结论：**模型那条也排除了**
+
+`installing → succeeded` = **9 ms**。三个数量级的三个点：
+**4 MB → 5ms · 25 MB → 6ms · 1656 MB → 9ms** —— **这一段不随体积增长**。
+外推到 3 GB 仍是毫秒级，**而这次外推有依据**（三点跨三个数量级都不增长），不是拿小的替大的背书。
+
+⇒ **两条路都量过了，都不解释「正在安装然后没有后续进展」。我不去凑一个解释，维持 `UNKNOWN`。**
+
+⚠️ 降档说明：我量的是 **1.66 GB** 不是 3 GB（CI 上 3 GB 太贵）。
+**这不影响 `installing` 那一格的结论**（不随体积增长，已有三点）；
+**会影响 `verifying`**（它随体积线性：1.66 GB → 2.0 s，3 GB 约 3.6 s）—— 仍是秒级不是分钟级。
+
+### 四、顺带查出一处真实缺陷（代码，未修）
+
+`download.ts:196` 调 `verifyFile(partialPath, digest, res.sizeBytes, **undefined**, signal)`
+—— **第 4 个参数（进度回调）传的是 `undefined`**，所以整段 sha256 **一个事件都不发**。
+而 `verifyFile` 是支持进度回调的：`models.ts:681`（verifyModel）与 `:817`（importModel`）
+**都传了**。⇒ **三个调用点，两个报进度，只有安装这条不报。**
+实测后果就是上面那段 **1795 ms 的黑窗**（3 GB 上约 3.6 s）。
+
+**这解释的是用户最早那句「卡在验证校验值」**，不是这次这句。**我没有改它** —— 
+它属于 `packages/downloader`，而另一路正在大改那个包，**等它落地再动，避免对撞**。
+
+### 五、我的 `[未验证]` 没能清掉（如实说）
+
+你让我跑一次 `measure-install-phases` 坐实 `unpacking`。`[CI 实测 run 31311266235]` 跑了，
+**但 `unpacking` 没有出现** —— 成因不是它没生效，是**这条腿用的是预编译包
+（`build-bundles` run 31304151166），那个包早于我加 `unpacking` 的提交**。
+⇒ **要坐实得先出一个新包。这条 `[未验证]` 我留着，不改口。**
+
+### 六、诚实声明
+
+- ⚠️ **本轮我的脚本又错了一次并已修**：模型目录形状猜成 `mcat.models`，实际是
+  `groups[].variants[]`，取到空数组后报「目录里没有可装模型」——
+  **那和"目录真的是空的"长得一模一样**。这是我这一轮第三次栽在**拿猜的字段名当事实**上，
+  已写进代码注释（`878ba1c`）。
+- `[未验证]`：3 GB 模型未实测（降档理由见上）；macOS/linux 的模型路径未量（只量了 Windows）。
+- `UNKNOWN`：用户那条「正在安装无后续」的真因 —— **两条安装路径都已排除**。
