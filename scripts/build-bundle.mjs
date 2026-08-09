@@ -141,6 +141,10 @@ const TARGETS = {
     sherpaPkg: 'sherpa-onnx-linux-x64',
     extPackIds: ['libsimple-linux-x64', 'sqlite-vec-linux-x64'],
     probePackId: 'whispercpp-cpu-linux-x64',
+    // ffmpeg-lgpl-manifest（Manager 2026-08-09 裁定）：Linux/Windows 的 ffmpeg 从
+    // "下载" 改判 "内置"（见 assembleFfmpeg()）。macOS 没有这个字段——供应商
+    // （jellyfin-ffmpeg）不发 LGPL 变体，维持下载 + GPL-3.0-or-later，见该函数注释。
+    ffmpegPackId: 'media-tools-linux-x64',
     archiveExt: '.tar.xz',
     launcher: 'start.sh',
   },
@@ -155,6 +159,7 @@ const TARGETS = {
     // Windows 只能用 .zip：系统自带解压认它，而 .tar.xz 要用户另装工具。
     // 代价是 deflate 压得比 xz 差不少，`[实测]` 同一棵 linux 树 xz 37.4 MiB / zip 56.0 MiB。
     probePackId: 'whispercpp-cpu-win-x64',
+    ffmpegPackId: 'media-tools-win-x64',
     archiveExt: '.zip',
     launcher: 'start.cmd',
   },
@@ -167,6 +172,9 @@ const TARGETS = {
     sherpaPkg: 'sherpa-onnx-darwin-arm64',
     extPackIds: ['libsimple-darwin-arm64', 'sqlite-vec-darwin-arm64'],
     probePackId: 'whispercpp-cpu-macos-arm64',
+    // 刻意不写 ffmpegPackId：macOS 的 ffmpeg（jellyfin-ffmpeg）供应商不发 LGPL 变体
+    // （D-20 §13.4 供应商缺口），维持"下载 + GPL-3.0-or-later"，不随包内置。
+    // assembleFfmpeg() 见 `T.ffmpegPackId` 缺失时直接跳过，不是漏配。
     archiveExt: '.tar.gz',
     launcher: 'OpenMemo.command',
   },
@@ -966,6 +974,118 @@ async function assembleProbeRuntime() {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────────
+ * ④-sexies ffmpeg / ffprobe（仅 Linux/Windows，随包内置，LGPL-3.0-or-later）
+ * ───────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * 把 ffmpeg / ffprobe 的字节放进 `runtime/probe/`（与探针、whisper-cli 同一个目录——
+ * 理由与 `assembleProbeRuntime()` 那段相同：`discoverTools()` 的 `fromBundle()`
+ * 兜底只认 `bundledRuntimeDir()` 这**一个**目录，工具名任意，ffmpeg/ffprobe 不例外，
+ * 不必新开一条 ArtifactStore 导入通道（模型才需要，见 `modelReconcile.ts` 顶部注释；
+ * 这里更接近 `assembleProbeRuntime()` 那条"包内兜底"先例，机制上不是新东西）。
+ *
+ * ══ 只在 Linux/Windows 跑 ══════════════════════════════════════════════════════
+ *
+ * `T.ffmpegPackId` 只有这两个平台的 `TARGETS` 条目里有——`ffmpeg-lgpl-manifest` 那路
+ * 把 Linux/Windows 的 ffmpeg 换成了 BtbN 的 LGPL-3.0-or-later 变体（与原 GPL 变体
+ * 同一个 release tag、同一个源码 commit，见 `vendor/manifests/backends.json` 的
+ * `sha256Provenance`），随包内置不再触发 GPL 传染顾虑；macOS 的供应商
+ * （jellyfin-ffmpeg）不发 LGPL 变体（D-20 §13.4 供应商缺口），维持"下载 + GPL"，
+ * 这里遇到 `T.ffmpegPackId` 缺失直接跳过，不是遗漏。
+ *
+ * ══ 为什么这里只抽两个可执行文件，不需要像 ggml 那样搜集一堆共享库 ══════════════
+ *
+ * `[本机实测 2026-08-09]` BtbN 这份 LGPL 变体是**静态链接**：`ldd bin/ffmpeg` 只
+ * 挂了 libc/libm/libdl/librt/libpthread/libmvec/libgcc_s ——全部是 glibc 基线自带
+ * 的系统库，归档里除了 `bin/{ffmpeg,ffprobe,ffplay}` 没有任何 `.so`；Windows 的
+ * `.exe` 同理（PE 静态链接，`bin/` 下同样只有三个 `.exe`，没有伴随 `.dll`）。
+ * 不像 `assembleProbeRuntime()` 里的 ggml/whisper 需要额外复制版本化共享库软链。
+ *
+ * ══ LICENSE.txt 必须随行——这不是可选项 ══════════════════════════════════════════
+ *
+ * `writeNotices()` 对 Linux/Windows 的那段新文字（`ffmpeg-lgpl-manifest` 加的）
+ * 原文是：*"'许可证全文可得'义务由 ffmpeg 归档自带的 LICENSE.txt 满足——该文件随
+ * ffmpeg 归档整份分发，未在本 NOTICES 中另行摘抄。"* ——这句话能不能算真话，
+ * 完全取决于这份 LICENSE.txt 有没有真的进包。所以在这里把它一并复制进
+ * `runtime/probe/`，**原名 `LICENSE.txt` 不改名**。`[本机实测 2026-08-09]`
+ * 第一版曾改名成 `ffmpeg-LICENSE.txt`"避免撞名"，结果 `scripts/ci/verify-bundle.sh`
+ * 那条双向核对（`find … -iname 'LICENSE.txt' …`）按**精确 basename 白名单**找
+ * LICENSE 类文件，不是前缀/包含匹配——改了名字的文件它找不到，于是报
+ * "翻遍 LICENSE/COPYING/NOTICE 类文件都没找到 Lesser General Public License 正文"，
+ * 即使文本明明就在包里。改回原名后 `runtime/probe/` 目录里不会撞名（这里目前只有
+ * ffmpeg 一家自带 LICENSE 文件；whisper.cpp 的 MIT 许可证是在 NOTICES 里引 URL，
+ * 没有随文件进包），真出现第二个的那天再处理。`[本机核对 2026-08-09]`
+ * 归档里的 LICENSE.txt 开头即是「GNU LESSER GENERAL PUBLIC LICENSE / Version 3」，
+ * 与 `components.json` 的 `sha256Provenance` 记录的核对结果一致。
+ *
+ * ══ 二进制名字从 `providesFiles` 读，不在这里另猜一遍 ══════════════════════════
+ *
+ * `pack.providesFiles`（Linux 是 `["ffmpeg","ffprobe"]`，Windows 是
+ * `["ffmpeg.exe","ffprobe.exe"]`）已经是 `discoverTools()` 在该平台查找的**确切
+ * 文件名**（`platformPacks.test.ts` 有断言守着这条一致性），直接复用，不在本函数
+ * 里重复 `T.platform === 'win32' ? … : …` 这种判断——单一事实来源，减少一处
+ * "两边分别写、以后分叉"的风险。
+ */
+async function assembleFfmpeg() {
+  if (!T.ffmpegPackId) {
+    say('   （本平台 ffmpeg 维持下载，不随包内置——跳过，见 TARGETS 里的注释）');
+    return;
+  }
+  hdr('④-sexies ffmpeg / ffprobe（LGPL-3.0-or-later，随包内置）');
+  const manifest = JSON.parse(
+    await readFile(join(REPO_ROOT, 'vendor/manifests/backends.json'), 'utf8'),
+  );
+  const pack = manifest.packs.find((p) => p.id === T.ffmpegPackId);
+  if (!pack) die(`backends.json 里没有 pack ${T.ffmpegPackId} —— ffmpeg 没有来源`);
+  const file = pack.files.find((f) => f.role === 'archive');
+  const mirror = file.mirrors.find((m) => m.official) ?? file.mirrors[0];
+
+  const local = await fetchToCache(mirror.url, file.name);
+  const got = await sha256Of(local);
+  if (got !== file.sha256)
+    die(`${T.ffmpegPackId} 摘要与 manifest 不符\n   期望 ${file.sha256}\n   实得 ${got}`);
+  say(`   ✔ ${T.ffmpegPackId}  sha256 对着 manifest 校验通过`);
+
+  const work = await mkdtemp(join(tmpdir(), 'om-ffmpeg-'));
+  const { unpackArchive } = await import(
+    pathToFileURL(join(REPO_ROOT, 'packages/downloader/dist/index.js')).href
+  );
+  await unpackArchive(local, work, kindOf(file.name));
+
+  const dst = join(STAGE, 'runtime', 'probe');
+  await mkdir(dst, { recursive: true });
+
+  let copied = 0;
+  for (const name of pack.providesFiles) {
+    const src = await findUnder(work, name);
+    if (!src) {
+      die(
+        `${T.ffmpegPackId} 的归档里没有 ${name}（backends.json 的 providesFiles 声明有它）。\n` +
+          `   ffmpeg/ffprobe 是导入与转写前必经的音视频解码步骤；缺了它，"随包内置"这条\n` +
+          `   兜底就是一句空话。**不允许降级放行。**`,
+      );
+    }
+    await cp(src, join(dst, name));
+    if (T.platform !== 'win32') await chmod(join(dst, name), 0o755);
+    copied += 1;
+  }
+
+  const licenseSrc = await findUnder(work, 'LICENSE.txt');
+  if (!licenseSrc) {
+    die(
+      `${T.ffmpegPackId} 的归档里没有 LICENSE.txt —— writeNotices() 对 ${T.platform} 的\n` +
+        '   声明依赖这份文件随包分发来满足 LGPL "许可证全文可得" 义务；缺了它，\n' +
+        '   NOTICES 里那句话就是假话。**不允许降级放行。**',
+    );
+  }
+  await cp(licenseSrc, join(dst, 'LICENSE.txt'));
+  copied += 1;
+
+  await rm(work, { recursive: true, force: true });
+  say(`   ✔ runtime/probe/  ffmpeg + ffprobe + LICENSE.txt（共 ${copied} 个文件，${mib(await dirSize(dst))}）`);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────────
  * ④-ter 组件目录（`vendor/manifests`）—— 用户"装不了任何组件"的**真因**
  * ───────────────────────────────────────────────────────────────────────────────── */
 
@@ -1745,6 +1865,7 @@ async function main() {
   await assembleManifests();
   await assembleModels();
   await assembleSampleAudio();
+  await assembleFfmpeg();
   await writeLauncher();
   await writeNotices();
 
