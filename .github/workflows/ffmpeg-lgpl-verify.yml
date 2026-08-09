@@ -1,0 +1,108 @@
+# 补 D-20 §13 里 Windows 那一格的空白：Linux 已经真跑过 LGPL 构建
+# （19/19 通过），但 Windows 只有"同 release tag / 同 commit，理论上应该一致"
+# —— 那是推断。这条腿在真的 windows-2025 runner 上把它变成数。
+#
+# 只测量、只交结果，不改任何产品代码、不改 vendor/manifests/backends.json、
+# 不建/改/删 release。ffmpeg 的定案（D-20 §9.2「ffmpeg → 下载」）在这条腿跑完、
+# 且用户拍板之前维持不变。
+
+name: ffmpeg-lgpl-verify
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffmpeg-lgpl-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 与 vendor/manifests/backends.json 里 media-tools-win-x64 完全同一个
+  # release tag / 同一个 FFmpeg 源码 commit —— 只是变体不同（gpl 造样本 / lgpl 被测）。
+  GPL_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n8.1.2-34-g9b6c8969e0-win64-gpl-8.1.zip
+  GPL_SIZE: '167405723'
+  LGPL_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-8.1.zip
+  LGPL_SIZE: '145349121'
+
+jobs:
+  verify:
+    name: LGPL 解码覆盖面（win32-x64，真机）
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: 下载 GPL（仅用于造样本）+ LGPL（被测对象）
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL -o gpl.zip "$GPL_URL"
+          curl -fL -o lgpl.zip "$LGPL_URL"
+          gpl_actual=$(stat -c%s gpl.zip 2>/dev/null || stat -f%z gpl.zip)
+          lgpl_actual=$(stat -c%s lgpl.zip 2>/dev/null || stat -f%z lgpl.zip)
+          echo "gpl: expected $GPL_SIZE actual $gpl_actual"
+          echo "lgpl: expected $LGPL_SIZE actual $lgpl_actual"
+          if [ "$gpl_actual" != "$GPL_SIZE" ]; then
+            echo "::error::GPL 包字节数与 backends.json 声明值不符 —— 拒绝继续（可能是下载被截断或上游换了资产）"
+            exit 1
+          fi
+          if [ "$lgpl_actual" != "$LGPL_SIZE" ]; then
+            echo "::error::LGPL 包字节数与 GitHub API 查到的值不符 —— 拒绝继续"
+            exit 1
+          fi
+
+      - name: 解压两份（各自独立目录，不许混在一起）
+        shell: pwsh
+        run: |
+          Expand-Archive -Path gpl.zip -DestinationPath gpl-extracted -Force
+          Expand-Archive -Path lgpl.zip -DestinationPath lgpl-extracted -Force
+
+      - name: 定位 ffmpeg.exe / ffprobe.exe（不假设压缩包内部目录层级）
+        id: locate
+        shell: pwsh
+        run: |
+          $gplFfmpeg = Get-ChildItem -Path gpl-extracted -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $lgplFfmpeg = Get-ChildItem -Path lgpl-extracted -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $lgplFfprobe = Get-ChildItem -Path lgpl-extracted -Recurse -Filter ffprobe.exe | Select-Object -First 1
+          if (-not $gplFfmpeg) { Write-Error "gpl-extracted 里没找到 ffmpeg.exe"; exit 1 }
+          if (-not $lgplFfmpeg) { Write-Error "lgpl-extracted 里没找到 ffmpeg.exe"; exit 1 }
+          if (-not $lgplFfprobe) { Write-Error "lgpl-extracted 里没找到 ffprobe.exe"; exit 1 }
+          "gpl_ffmpeg=$($gplFfmpeg.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "lgpl_ffmpeg=$($lgplFfmpeg.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "lgpl_ffprobe=$($lgplFfprobe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: 确认 LGPL 构建的 LICENSE.txt 确实是 LGPL（不是 GPL 混进来）
+        shell: pwsh
+        run: |
+          $lic = Get-ChildItem -Path lgpl-extracted -Recurse -Filter LICENSE.txt | Select-Object -First 1
+          if (-not $lic) { Write-Error "lgpl-extracted 里没有 LICENSE.txt"; exit 1 }
+          $head = Get-Content $lic.FullName -TotalCount 3 -Raw
+          Write-Host $head
+          if ($head -notmatch 'LESSER GENERAL PUBLIC LICENSE') {
+            Write-Error "LICENSE.txt 头三行没有 'LESSER GENERAL PUBLIC LICENSE' —— 这份构建可能不是 LGPL"
+            exit 1
+          }
+
+      - name: 跑覆盖面实测（19 项扩展名 + sliceWav + 远端 + ffprobe，判据同 Linux 那一轮）
+        shell: bash
+        run: |
+          node scripts/ci/ffmpeg-lgpl-verify.mjs \
+            --gpl-ffmpeg "${{ steps.locate.outputs.gpl_ffmpeg }}" \
+            --lgpl-ffmpeg "${{ steps.locate.outputs.lgpl_ffmpeg }}" \
+            --lgpl-ffprobe "${{ steps.locate.outputs.lgpl_ffprobe }}" \
+            --workdir "${{ runner.temp }}/ffmpeg-lgpl-verify"
+
+      - name: 上传结果（JSON + 解出的样本，供复核）
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ffmpeg-lgpl-verify-win32-x64
+          path: |
+            ${{ runner.temp }}/ffmpeg-lgpl-verify/ffmpeg-lgpl-verify-result.json
+            ${{ runner.temp }}/ffmpeg-lgpl-verify/out
+          retention-days: 14
+          if-no-files-found: warn
