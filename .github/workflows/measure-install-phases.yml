@@ -36,6 +36,16 @@ on:
         required: false
         default: false
         type: boolean
+      model:
+        description: '量**模型**那条路（POST /api/models/pull）而不是后端包那条'
+        required: false
+        default: false
+        type: boolean
+      modelMaxMb:
+        description: '模型体积上限 MB（CI 上 3GB 太贵，默认 2000；降档要在结论里说明）'
+        required: false
+        default: '2000'
+        type: string
       legs:
         description: 'Which platform to run'
         type: choice
@@ -120,9 +130,10 @@ jobs:
 
       # Windows 上如果真要几分钟，这里必须等得起。
       - name: 量 installing → succeeded
-        timeout-minutes: 30
+        timeout-minutes: 45
         shell: bash
         run: |
           node scripts/ci/measure-install-phases.mjs \
             --bundle "${{ steps.unpack.outputs.bundle_dir }}" \
-            --port 19741 ${{ inputs.largest && '--largest' || '' }}
+            --port 19741 ${{ inputs.largest && '--largest' || '' }} \
+            ${{ inputs.model && format('--model --model-max-mb {0}', inputs.modelMaxMb) || '' }}
