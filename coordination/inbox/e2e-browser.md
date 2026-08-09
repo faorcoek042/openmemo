@@ -1182,3 +1182,74 @@ B6/B6b/B6c 读的仍然是 `/tasks`。`/models` 上的 `DownloadRow` **仍然没
 
 - 只跑了单测与 tsc/eslint，**没有在真浏览器里看过 `/models` 那一行** `[未验证]`。
 - 英文两处改动**没有任何断言在盯**（中英断言目前只钉中文）`[未验证]`。
+
+---
+
+## [2026-08-09 · #65 三态契约] 主产出：区分在界面上活下来了，并且有腿
+
+commit `5da68c8`。干净 worktree：`pnpm -r test` **1626 / 0**、`eslint` 0、`orphans` 70/70。
+
+⚠️ **我把清点结果逐条自己复核了一遍**（你提醒过它更早那份已过期）。
+**有两处与转述不符，见下。**
+
+### 一、非法组合现在还能不能被表达：**能，类型层没动**
+
+`available:true, probed:false` 仍然是**类型上可表达**的 —— 三个独立布尔，8 种组合。
+守它的仍然只有那条运行时断言（`notProbedVsUnavailable.test.ts:245`
+`if (b.available) assert.equal(b.probed, true, …)` —— 我读过，确实在）。
+
+**这轮没有做"让它不可表达"**，是刻意的取舍：判别联合重构必然改到
+`manager.ts:208-256` 那 8 种结局，而那里有一条对**编译产物**做文本匹配的绊线（见第三节）；
+而主产出（界面区分 + 腿）**不需要动生产者**。先把用户看得见的那半做完。
+
+### 二、`HardwareCard` 那 7 个读点有几个有腿了：**从 0 到 2 组断言覆盖了关键路径**
+
+复核确认了缺口：那 7 个读点**一条断言都没有**；
+更糟的是 fixture 里**一个 `probed` 字段都没有** —— 它表达的是一个类型上不合法的形状。
+（且 T-165 之前那份桩路径是错的，`<HardwareCard>` 一次都没被渲染过。）
+
+**修的是根**：芯片分支此前 `selected → installed → available → 未安装`，**全程不读 `probed`**，
+于是 `installed:true, probed:false` 与真正加载成功的**显示同一个「已安装」**。
+新增 `installed-unprobed` 一档（「已安装 · 本轮未加载」），**刻意不用 `text-good`** ——
+它不是一个已验证可用的状态。
+
+新增两条断言：① 装了但没被探测的不许与加载成功的同状态；② `whyUnavailable` 计数 + 两条 reason 逐条。
+⚠️ **能红**：「本轮未加载」这串字唯一来源就是新增那一档（grep 过：locale ×2 + BackendChip ×1）。
+
+### 三、源码文本匹配那类守卫全仓有几处：**2 个文件、21 条**
+
+| 文件 | 条数 | 匹配对象 |
+| --- | --- | --- |
+| `scripts/mutation-check.mjs` | 12 | **`dist/**/*.js`**（如 `dist/http/rest/notes.js`） |
+| `scripts/ci/e2e-runtime-audit.mjs` | 9 | **`dist/**/*.js`**（如 `runtime/dist/backends/manager.js`） |
+
+⚠️ **与转述不符的第一处**：它们匹配的是**编译产物**，不是 `.ts` 源码。
+这让问题**比你说的更阴**：grep `manager.ts` 找不到它，grep `manager.js` 才行 ——
+**连"去 grep 源文件名"这个正确动作都会漏掉它**。
+（`mutation-check.mjs` 自己的文件头就写着"锚点是源文本，不是行号"，
+理由是行号引用会漂 —— 那个理由成立，代价是重构会静默失效。两难，如实记下。）
+
+### 四、⚠️ 与转述不符的第二处：那句"说大话的注释"不在 `hardware.ts:76-77`
+
+它在 **`packages/shared/src/hardware.ts:76`**（`BackendStatus.installed` 的 JSDoc），
+不是 `apps/daemon/src/http/rest/hardware.ts`。内容属实：写着 "present on disk **and loadable**"，
+而生产者是 `installedBackends.has(id)` —— 纯集合成员判断。
+按 §13 **回原处把注释改对，语义没动**，并写明可加载性是另一条轴。
+
+### 五、我自己读的那条 `[未验证]`：**结论明确**
+
+`packages/runtime/src/probe/probedBackends.ts` 头部注释明说：
+> "it is also correct for a backend whose library is present but fails to dlopen"
+
+即 **库在但 dlopen 失败**，仍然算 `probed`。所以：
+**第四条轴（可加载）确实不能塞进 `probed`** —— 这印证了你的判断，也印证了
+"唯一真加载证据是 `BackendSelfTest`"。**第四轴这轮没加**（等 `acad48cc`）。
+
+### 六、没做 / 未验证
+
+- **类型层没做**（第一节）—— 非法组合仍可表达 `[未做]`。
+- **没有动 `manager.ts`**（绊线在第三节）。
+- 那 7 个读点里，`hw.backends.some((b) => b.installed)`（:56，"有没有装过后端"）
+  与 GPU 那几处**仍然没有单独断言** `[未验证]` —— 我补的是**三态区分**那条关键路径，
+  不是 7 个读点逐个。**别把"关键路径有腿了"读成"7 个都有腿了"。**
+- 新芯片档**没有在真浏览器里看过** `[未验证]`（组件测试是 jsdom）。
