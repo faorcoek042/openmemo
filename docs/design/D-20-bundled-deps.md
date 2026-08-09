@@ -738,7 +738,7 @@ Readline（GPL-3.0-or-later，不是 libedit 替代品）。按 TL;DR 与 §9 �
 | macos-arm64 | **否**    | `readline.cpython-314-darwin.so` 动态链接到 `/usr/lib/libedit.3.dylib`（macOS **系统自带**，BSD 许可，未被内嵌进包内）；`strings` 命中 `_libedit_version_tag`／`_using_libedit_emulation` —— 是 libedit 仿真层，不是真 GNU readline |
 | win-x64     | **否**    | `PYZ.pyz` 原始字节 `strings` 扫描 **0 处** `readline`／`pyreadline` 字符串；Windows CPython 标准库本来就不带 `readline` 模块，符合预期                          |
 
-### 14.4 非阻断项：MPL-2.0 / Apache-2.0 组件与告知义务（供写 NOTICES 时用）
+### 14.4 非阻断项：MPL-2.0 / Apache-2.0 组件与告知义务（~~供写 NOTICES 时用~~）
 
 | 组件                                                            | 许可证                                                                              | 覆盖平台                                                                    | 义务                                                    |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------- |
@@ -749,6 +749,14 @@ Readline（GPL-3.0-or-later，不是 libedit 替代品）。按 TL;DR 与 §9 �
 | OpenSSL                                                            | 3.x 系 Apache-2.0；1.1.x 系 OpenSSL/SSLeay 双许可（老文本）                            | linux/macos 用 `libssl.so.3`／`libssl.3.dylib`（3.x）；**win 用 `libssl-1_1.dll`／`libcrypto-1_1.dll`（1.1.x，版本线不同）** | 附**对应版本**许可证正文，三平台不能只抄一份                 |
 | `yt_dlp_ejs/yt/solver/{core,lib}.min.js`（内嵌 JS 求解器，D-20 §1.1 写成单一 Unlicense） | **不是单一 Unlicense** —— 压缩包内明文可见混入至少一段 **ISC License**（`Copyright (c) 2015, David Bonnet`）与一段 `Copyright (c) 2019 and later, KFlash and others.`，外加 Unlicense 字样，是多个 JS 库打包进一个 min.js 的复合许可证 | 4/4                                                                           | 均为宽松许可证，不阻断；但附件里要列复合清单，不能只写"Unlicense" |
 | CPython 运行时本体                                                 | **PSF License**（宽松，类 BSD）                                                        | 4/4                                                                           | 附 PSF LICENSE 正文；无阻断义务                              |
+
+**✅ 2026-08-09 已裁定（追加，task ④）**：标题原来的"（供写 NOTICES 时用）"是过时的框架性
+描述，已划掉。§9.2 裁定 yt-dlp 改"下载"之后，这张表里的每一项都是 yt-dlp **官方二进制内部**
+的依赖——而 NOTICES 的义务边界是"随本包分发的字节"，yt-dlp 的字节从没进过我们的分发流水线
+（用户机器直连官方 GitHub 下载，我们既不转存也不重新分发）。所以结论是：**这张表最终不会有
+任何一行喂进 `scripts/build-bundle.mjs` 的 `writeNotices()`**——已经在该函数里加了一段代码
+注释说明这个判断（紧邻"本包不含 ffmpeg 与 yt-dlp"那行免责声明），不在这里重复。这张表本身
+依然保留，作为"yt-dlp 官方二进制内部构成"的事实记录，只是不再宣称它是给 NOTICES 用的清单。
 
 ### 14.5 次级项：未逐一重新核实，低优先级、如实标注
 
@@ -823,10 +831,18 @@ schema 了。`docs/design/D-17-prebuilt-bundles.md:113` 一并订正，见该文
   自己的提交记录（理由从"yt-dlp 项目本身是 GPL"订正为"官方二进制内嵌 GPL 依赖"）。
 - **没有创建** `THIRD-PARTY-NOTICES` 文件（`find` 遍历本仓 `dist/`／`.build/`／源码树，
   除 `node_modules/.pnpm/{prettier,rolldown}` 里两个同名无关文件外，**这份文件目前在这个
-  checkout 里不存在**——与"已经在产物里"的说法对不上，如实记录这个出入，不是我漏找），
-  也没有改 `scripts/build-bundle.mjs` 的 `writeNotices()`——它现在生成的文案明确写"包不含
+  checkout 里不存在**——与"已经在产物里"的说法对不上，如实记录这个出入，不是我漏找）。
+  ~~也没有改 `scripts/build-bundle.mjs` 的 `writeNotices()`——它现在生成的文案明确写"包不含
   ffmpeg/yt-dlp，均在用户机器上按需下载"，这与"是否要内置 yt-dlp"是同一个悬而未决问题的
-  下游；在 14.6 的冲突裁定之前动它，会把一个还没定案的架构决策悄悄焊死进构建脚本。
+  下游；在 14.6 的冲突裁定之前动它，会把一个还没定案的架构决策悄悄焊死进构建脚本。~~
+  **2026-08-09 已改（task ④，追加）**：14.6 的冲突已裁定"下载"，前提不再成立。
+  改了两处：①"本包不含 ffmpeg 与 yt-dlp"那行免责声明补上 yt-dlp 项目本身 Unlicense、
+  GPL 是官方二进制内嵌依赖这层区分，并加代码注释说明 mutagen/Readline/OpenSSL 等
+  14.4 表里的项目为什么不逐条列进 NOTICES（见 14.4 结尾追记）；②补上此前完全没覆盖的
+  一个真实缺口——随包出厂的 CPU 基线转写引擎（`assembleProbeRuntime()` 装进
+  `runtime/probe/` 的 whisper.cpp + ggml，MIT，与"要不要内置 yt-dlp"无关，纯粹是先前
+  漏写），许可证从 `vendor/manifests/backends.json` 的 `T.probePackId` 那条 pack 动态读，
+  不在函数里另抄一份文字。
 - **未建/改/删任何 release**；未碰 `:10000` demo、`/root/data-memo`、任何机器级指针；
   未用过 `pkill`（含 `-0`）。
 - 14.5 的次级原生库清单**没有逐一重新核实**，明确标注为低置信度，不能当成和 14.2/14.3
