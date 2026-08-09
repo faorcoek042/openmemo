@@ -272,13 +272,13 @@ function killTree(pid) {
     /* 已经没了 */
   }
 }
-async function startDaemon(label, extraEnv = {}) {
+async function startDaemon(label, extraEnv = {}, dataDir = DATA_DIR) {
   await assertPortFree(label);
-  proc = spawn(NODE_BIN, [DAEMON, '--data-dir', DATA_DIR, '--port', String(PORT)], {
+  proc = spawn(NODE_BIN, [DAEMON, '--data-dir', dataDir, '--port', String(PORT)], {
     env: {
       ...process.env,
       OPENMEMO_AUTH: 'none',
-      OPENMEMO_DATA_DIR: DATA_DIR,
+      OPENMEMO_DATA_DIR: dataDir,
       OPENMEMO_POINTER_FILE: join(ROOT, 'pointer.json'), // §9：绝不写全局指针
       OPENMEMO_WEB_DIST: join(BUNDLE, 'app', 'apps', 'web', 'dist'),
       OPENMEMO_EXT_DIR: join(BUNDLE, 'ext'),
@@ -815,11 +815,25 @@ try {
    */
   const doctored = join(ROOT, 'manifests-doctored');
   mkdirSync(doctored, { recursive: true });
+  /*
+   * ⚠️ 样本必须挑**本平台适用**的那一个。
+   *
+   * `[CI 实测 run 31301671541]` 第一版按名字挑，在 linux 上挑中了
+   * `libsimple-darwin-arm64` —— 安装路由在下载**之前**就回 409
+   * 「该后端包不适用于本机」，于是根本没走到下载那一步。
+   * 好在前提断言（"这一步必须真的失败"）当场把它抓住了，
+   * 否则代理那条会在一个**从未发生过的失败**上报绿。
+   * 所以 id 只能来自产品自己判定 applicable 的那一批。
+   */
+  const victimIds = new Set(
+    applicable.filter((p) => /libsimple|sqlite-vec/.test(p.id)).map((p) => p.id),
+  );
+  if (victimIds.size === 0) for (const p of applicable.slice(0, 1)) victimIds.add(p.id);
   let doctoredId = null;
   for (const f of readdirSync(manifestDir).filter((n) => n.endsWith('.json'))) {
     const j = JSON.parse(readFileSync(join(manifestDir, f), 'utf8'));
     if (!doctoredId) {
-      const victim = (j.packs ?? []).find((p) => /libsimple|sqlite-vec/.test(p.id));
+      const victim = (j.packs ?? []).find((p) => victimIds.has(p.id));
       if (victim) {
         doctoredId = victim.id;
         for (const file of victim.files ?? []) {
@@ -838,8 +852,13 @@ try {
     });
   } else {
     say(`   拿 ${doctoredId} 做失败样本（只改我复制出来的那份清单，包内原件未动）`);
+    /*
+     * ★ 用一个**全新的空数据目录**：第 4 节已经把所有适用的包都装过一遍了，
+     *   在原数据目录上再装一次可能被去重/直接成功，那样这一节测的就不是失败路径。
+     */
+    const freshData = join(ROOT, 'data-proxyhint');
     await stopDaemon();
-    await startDaemon('proxyhint', { OPENMEMO_MANIFEST_DIR: doctored });
+    await startDaemon('proxyhint', { OPENMEMO_MANIFEST_DIR: doctored }, freshData);
     cookie = '';
     await local('/api/auth/session', { method: 'POST', body: {} });
     const r = await local('/api/backends/install', {
