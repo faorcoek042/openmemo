@@ -56,7 +56,7 @@ const arg = (name, dflt = undefined) => {
 const REPO = arg('--repo', process.env.GITHUB_REPOSITORY);
 const BUNDLE_RUN = arg('--bundle-run');
 /**
- * 四条腿。**写死在这里是有意的**：一条新腿加进来必须显式登记，
+ * 登记在案的腿。**写死在这里是有意的**：一条新腿加进来必须显式登记，
  * 否则这道闸会在"腿变多了"的时候悄悄放宽 —— 那正是它要挡的那类漂移。
  */
 /*
@@ -134,7 +134,7 @@ function gh(path, attempts = 3) {
 }
 
 say('─'.repeat(94));
-say(`── 发布前闸门：build-bundles run ${BUNDLE_RUN} 是不是四条腿都跑绿过？`);
+say(`── 发布前闸门：build-bundles run ${BUNDLE_RUN} 是不是 ${LEGS.length} 条腿都跑绿过？`);
 say('─'.repeat(94));
 say(`   仓库：${REPO}`);
 say(`   要找的凭证：${LEGS.map((l) => `e2e-attest-${l}-${BUNDLE_RUN}`).join('\n               ')}`);
@@ -143,9 +143,26 @@ say('');
 const missing = [];
 const found = [];
 
+/**
+ * 腿名 → workflow 文件名。
+ *
+ * 默认按 `e2e-<腿名>.yml` 推导（四条老腿都对得上），**但腿名不总等于文件名**：
+ * `browser-linux` 这条的后缀是**覆盖面声明**（那条腿只跑 ubuntu），
+ * 而 workflow 文件仍叫 `e2e-browser.yml`。
+ *
+ * ⚠️ `[实测]` 第一版没有这张表，于是它去查 `e2e-browser-linux.yml` 得到 404，
+ *    然后**如实报「查不动」并拒绝放行** —— 那个行为是对的（不把"我没问到"
+ *    渲染成"它没问题"），但拒绝的理由是错的：凭证其实好好地在那儿。
+ *    把映射显式写出来，比让腿名去迁就文件名好 ——
+ *    **覆盖面声明属于腿名，它是给读闸门的人看的。**
+ */
+const WORKFLOW_OF = {
+  'browser-linux': 'e2e-browser.yml',
+};
+
 for (const leg of LEGS) {
   const want = `e2e-attest-${leg}-${BUNDLE_RUN}`;
-  const wf = `e2e-${leg}.yml`;
+  const wf = WORKFLOW_OF[leg] ?? `e2e-${leg}.yml`;
   const runs = gh(`repos/${REPO}/actions/workflows/${wf}/runs?status=success&per_page=${SCAN}`);
   if (!runs.ok) {
     // 查不动 = 拒绝。不把"我没问到"渲染成"它没问题"。
@@ -187,7 +204,7 @@ for (const leg of LEGS) {
 say('');
 say('─'.repeat(94));
 if (missing.length === 0) {
-  say(`✔ 四条腿都对 build-bundles run ${BUNDLE_RUN} 跑绿过 —— 这批包可以发。`);
+  say(`✔ ${LEGS.length} 条腿都对 build-bundles run ${BUNDLE_RUN} 跑绿过 —— 这批包可以发。`);
   for (const f of found) say(`   · ${f.leg}: ${f.want}（e2e run ${f.runId}）`);
   process.exit(0);
 }
