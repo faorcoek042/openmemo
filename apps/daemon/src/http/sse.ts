@@ -141,6 +141,37 @@ export class SseHub {
       }
     }
     if (throttleTopic === undefined) {
+      /*
+       * ★★ 先把**同一个 topic** 上还压着的节流事件放出去，再发这一条。
+       *
+       * ## 不这么做会怎样（用户真机症状就是它）
+       *
+       * 节流事件进 `#pending` 等 250ms，而未节流事件走 `#flushOne` **立刻发**。
+       * 于是终态事件会**超车**：客户端收到的**最后一条**是一条过期的进度。
+       *
+       * `[实测 2026-08-09，接 SSE 流而不是轮询]` 拉一个模型，事件流末尾是：
+       *
+       *   23836ms  job.state  state=succeeded
+       *   23836ms  job.done
+       *   24029ms  job.progress  step=verifying  pct=1     ← **比终态晚 193ms**
+       *
+       * 也就是说：活儿早干完了，而界面收到的最后一句话是「正在校验完整性 100%」——
+       * 它会**永远停在那儿**。用户报的正是这个：界面卡在"正在校验完整性"，
+       * 而 `missing` 变空说明事情其实做完了。
+       * **「界面停在上一个收到的状态」和「某一步真的很久」，在用户眼里一模一样。**
+       *
+       * ## 为什么是"按 topic 冲刷"而不是"全部冲刷"
+       *
+       * `job.progress` 与 `job.done` 用的是**同一个 topic**（`topics.job(jobId)`），
+       * 所以按 topic 冲刷足以恢复这一条流水线上的**因果顺序**，
+       * 又不会因为别的 job 发了个终态就把全局节流一起打掉
+       * （那会让 8 MB/s 的下载重新把渲染循环打满 —— 节流本来要省的就是这个）。
+       */
+      const stale = this.#pending.get(event.topic);
+      if (stale !== undefined) {
+        this.#pending.delete(event.topic);
+        this.#flushOne(stale);
+      }
       this.#flushOne(event);
       return;
     }
