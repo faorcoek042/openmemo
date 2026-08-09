@@ -489,10 +489,11 @@ Windows 用户永远用不到。**1.10 GB 里有 12% 是别的平台的二进制
 
 ## 13. §2.3 三项实测（`lgpl-verify` 2026-08-09，**真跑二进制，不是读 configure 猜**）
 
-**一句话结论：Linux 上 19/19 全部实测通过（含远端协议、切片、ffprobe）；Windows 同源同
-commit 但本轮没能在沙箱里真跑（无 wine）；macOS 当前供应商（jellyfin-ffmpeg）根本不发
-LGPL 变体 —— 这不是配置问题，是供应商缺口。§9 的"ffmpeg 下载"定案本节不改，只交测试
-结果，换不换由 Manager/用户在读完平台缺口后裁。**
+**一句话结论：Linux 上 19/19 全部实测通过（含远端协议、切片、ffprobe）；Windows 起初因
+沙箱无 wine 未能验证，已于 2026-08-09 在真实 `windows-2025` GitHub Actions runner 上补测，
+同样 19/19 全部通过（§13.7，判据与 Linux 那一轮逐条相同，未放宽任何一条）；macOS 当前
+供应商（jellyfin-ffmpeg）根本不发 LGPL 变体 —— 这不是配置问题，是供应商缺口，本轮按指示
+未触碰。§9 的"ffmpeg 下载"定案本节仍不改，只交测试结果，换不换由 Manager/用户裁。**
 
 ### 13.1 方法：真下载、真跑产品的真命令行
 
@@ -590,7 +591,7 @@ linux64-lgpl-8.1.tar.xz  111,679,252 字节（实际下载，非声明值）
 | 平台 | 供应商 | 与当前 GPL 包同源同 commit 的 LGPL 资产 | 本轮验证方式 |
 | --- | --- | --- | --- |
 | **Linux x64** | BtbN | `ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-lgpl-8.1.tar.xz`，**实测存在，已下载并逐项跑通**（§13.1–13.2） | **实机跑过 19/19 + sliceWav + 远端 + ffprobe** |
-| **Windows x64** | BtbN | `ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-8.1.zip`，`[实测]` 该 release tag 下**确实存在**这个资产（GitHub API 核实过文件名与字节数） | ⚠️ **本轮没有真跑**——沙箱里没有 `wine`（`apt-cache policy wine` 显示未安装），装新系统包超出"只验证不改动"的授权范围，没有强行装。**同源同 commit，理论上应与 Linux 结果一致，但这是推断，不是实测**，如实标注，不冒充测过。 |
+| **Windows x64** | BtbN | `ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-8.1.zip`，145,349,121 字节，`[实测]` 已下载并核对字节数 | **实机跑过 19/19 + sliceWav + 远端 + ffprobe**（2026-08-09 补测，见 §13.7；GitHub Actions `windows-2025` 真机，判据与 Linux 那一轮完全相同，未放宽） |
 | **macOS arm64/x64** | **jellyfin-ffmpeg**（不是 BtbN，供应商本身不同） | `[实测]` 查了 `jellyfin/jellyfin-ffmpeg` 在 `v8.1.2-2`（与 `backends.json` 当前 macOS 那条完全同版本）下的**全部**发布资产（deb ×12、portable ×6，覆盖 linux/mac/win 全部目标）——**没有一个文件名带 `lgpl`，只有 `-gpl` 后缀**。 | **无法验证，因为不存在**——这不是"没跑"，是这条路目前**根本没有 LGPL 选项**。换 LGPL 对 macOS 意味着**换一个完全不同的上游供应商**（比如换回 BtbN，但 BtbN 不发 macOS 资产；或自己交叉编译一份），工作量和风险都远大于"改一个 URL"。 |
 
 ### 13.5 体积对比（供 Manager/用户判断"值不值得换"用，不是结论）
@@ -614,9 +615,51 @@ linux64-lgpl-8.1.tar.xz  111,679,252 字节（实际下载，非声明值）
   在本次提交后依然是当前定案；本节只是把 §9.7/§2.3 点名要做的三项实测结果交出来，
   换不换、Windows 那条要不要补测、macOS 那道供应商缺口怎么办——**都交 Manager/用户裁**，
   不在这里替他们改 §9。
-- **Windows 未实机验证**（无 wine，未装新工具链去凑）、**macOS 无 LGPL 可换**——
-  这两条是本节交出的"限制"，不是"待办打勾"，务必在转达结论时一并带上，
-  不能只说"Linux 过了"就让人以为三平台都能换。
+- **Windows 已于 2026-08-09 在真实 CI（`windows-2025` runner）补测，19/19 通过**（§13.7）——
+  不再是"待验证"；**macOS 无 LGPL 可换，本轮按指示未触碰**——这条仍是本节交出的"限制"，
+  不是"待办打勾"，务必在转达结论时一并带上，不能因为 Linux/Windows 都过了就让人以为
+  macOS 也能换。
+
+### 13.7 Windows 补测（2026-08-09 追加，`windows-2025` 真机 CI，非本地沙箱）
+
+`[实测]` §13.4 上一轮里 Windows 那格标的是"没条件测"（沙箱没有 `wine`），不是"测不过"。
+本轮在真实 GitHub Actions `windows-2025` runner 上把它变成数：新增
+`.github/workflows/ffmpeg-lgpl-verify.yml` + `scripts/ci/ffmpeg-lgpl-verify.mjs`
+（仅 CI/脚本基础设施，**未改动任何产品代码**，`workflow_dispatch` 手动触发，不挂在任何
+门禁上，不影响任何 release 流程）。判据与 §13.1–13.2 那一轮**逐条相同，未放宽任何一条**：
+
+- 同一个 BtbN release tag（`autobuild-2026-07-31-14-10`）、同一个 FFmpeg 源码 commit
+  （`n8.1.2-34-g9b6c8969e0`）——与 `vendor/manifests/backends.json` 里 Windows GPL 那条
+  pin 住的完全一致，只换 gpl→lgpl 变体。GPL 构建（167,405,723 字节）只用于造样本，
+  LGPL 构建（145,349,121 字节）才是被测对象；两者字节数在 CI 里先做下载校验，
+  不一致直接 `exit 1`，不继续往下跑。
+- LGPL 构建的 `LICENSE.txt` 头三行实测确为 `GNU LESSER GENERAL PUBLIC LICENSE
+  Version 3`——不是信文件名/URL，是真的读了压缩包解出来的文件内容。
+- 19 个扩展名（同样从 `UPLOAD_MEDIA_EXTENSIONS` 现场重新 grep 出来，不是抄清单）
+  逐个用 GPL 构建现造样本，再用 LGPL 构建跑产品里逐字抄下来的真实 argv
+  （`normalizeToPcm16k`），判据同样是 `volumedetect` 量出的真实电平，不是退出码/文件非空：
+  **19/19 全部产出非静音 PCM**，`mean_volume` 分布与 Linux 那一轮同一量级（约 -20 ~ -25 dB）。
+- `sliceWav`（`-ss`/`-t`）：`pass`，`meanDb=-21.5`。
+- `ffprobe` 本地：19/19 JSON 全部可解析且正确识别各自的编解码器。
+- `-protocol_whitelist` 远端：对同一个公网 HTTPS mp3（`interactive-examples.mdn.mozilla.net`）
+  `probeMedia`/`normalizeToPcm16k` 均 `pass`，`mean_volume -24.8 dB`（非静音——与 Linux 那
+  一轮同一份远端资源测出的 -24.8 dB 完全一致，两个平台独立取流结果吻合，顺带是一次交叉验证）。
+- 明文 `http://` 回归：同一份 LGPL 二进制上把 URL 换成 `http://`，实测**仍被拒**
+  （`Protocol 'http' not on whitelist`），白名单行为在 Windows 上与 Linux 一致，没有变松。
+
+**CI 跑了两次，不是一次就绿**：第一次运行（run `31313423081`）在 LICENSE.txt 校验步骤就
+失败了——不是判据被卡，是脚本自身的 bug：PowerShell 7 的 `Get-Content` 不允许同时给
+`-Raw` 和 `-TotalCount`（本地沙箱没有 `pwsh` 7，这个 bug 只有真的在 Windows runner 上跑
+才会暴露，属于"CI 结构上看不见"的又一个真实例子）。修好（改成
+`(Get-Content ... -TotalCount 3) -join "`n"`）、按 §12 提交协议提交（commit `667caab`）、
+rebase 检查、推送后，第二次运行（run `31313577280`，27 秒完成）**19/19 全部通过**，
+结果 JSON 里 `overallOk: true`。结果 JSON 与生成的样本已作为 artifact
+（`ffmpeg-lgpl-verify-win32-x64`）随 run 上传，供复核。
+
+**结论：19/19（Linux）+ 19/19（Windows，真机 CI）——两个平台的 LGPL 解码覆盖面已用真实
+二进制逐项验证完毕，判据全程一致，没有为了让 Windows"看起来过了"而放宽任何一条。macOS
+按指示本轮未触碰（供应商缺口，见 §13.4，不是改个下载 URL 能解决的），§9.2「ffmpeg → 下载」
+定案维持不变，是否换、是否值得为此单独解决 macOS 供应商问题，交 Manager/用户裁。**
 
 ---
 
