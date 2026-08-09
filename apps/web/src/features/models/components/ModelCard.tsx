@@ -9,6 +9,7 @@ import { StatusChip } from '../../../components/common/StatusChip';
 import { FitBadge, FitEta, FitGpuLayers } from '../../../components/common/FitBadge';
 import { formatBytes } from '../../../lib/format/bytes';
 import { localizedDescription, localizedName } from '../../../lib/format/localized';
+import { useAsrEngines } from '../../../components/common/AsrEngineStatus';
 import { useIsAppleSilicon } from '../../../lib/api/hardware';
 import { QuantSelector } from './QuantSelector';
 
@@ -19,6 +20,59 @@ import { QuantSelector } from './QuantSelector';
  * 也是唯一合理的组织方式 —— 同一个 Whisper large-v3-turbo 有 q5_0/q8_0/f16 三个变体，
  * 平铺成三张卡会让列表长三倍且难以比较。
  */
+
+/**
+ * 「这个条目适配哪个推理引擎」——**用户在点之前就该知道的那件事**。
+ *
+ * ## 它修的是什么
+ *
+ * `[用户真机 2026-08-09, Windows]` 用户装了 `vad/silero-vad-onnx`
+ * （`engines: ['sherpa-onnx']`），而他的引擎是 whisper.cpp，需要的是
+ * `vad/silero-vad-ggml`（`engines: ['whisper.cpp']`）。装完之后 daemon 每次装配
+ * 都警告一次「已安装的 VAD 权重 whisper.cpp 加载不了」——
+ * **但从没说过"你该装的是另一个"，而目录里 `engines` 字段一直写着答案。**
+ *
+ * `[实测 2026-08-09]` 在此之前 `engines` 在 `features/models/**` 里**零引用** ——
+ * 也就是说这个字段**从来没有被显示给用户看过**（是"确定不存在"，不是"没找到"）。
+ *
+ * ## 判据：标注，**不过滤**（Manager 2026-08-09 裁定）
+ *
+ * > 不是"过滤掉不匹配的" —— 用户可能会换引擎，把另一个藏起来会制造新的困惑。
+ * > 判据是"**用户在点之前就知道这个适用不适用于他现在的引擎**"。
+ *
+ * 所以这里只做**标注**：永远把 `engines` 显示出来；当它与本机**当前可用**的引擎
+ * 不相交时，额外标一句"当前用不上"。**什么都不隐藏**，换引擎的人照样找得到另一个。
+ * 这与 `ModelsPage` 对语言不匹配变体的既有做法同源（默认折叠 + 明说藏了几个，
+ * 而不是删掉）。
+ *
+ * ⚠️ 空数组**不渲染**：`shared/models.ts:495` 明说空 `engines` 的语义是
+ * "nothing can load this"，那是清单缺陷，不该在卡片上冒充成一句结论。
+ */
+function EngineFitChip({ engines }: { engines: readonly string[] }) {
+  const { t } = useTranslation();
+  const { engines: local, ready } = useAsrEngines();
+  if (!engines || engines.length === 0) return null;
+
+  const usable = new Set(local.filter((e) => e.available).map((e) => e.id as string));
+  // `ready === false` = 还不知道本机有哪些引擎 ⇒ **只标适配，不下"用不上"的判断**。
+  const mismatch = ready && engines.every((e) => !usable.has(e));
+
+  return (
+    <span
+      data-testid="model-engine-fit"
+      className={
+        mismatch
+          ? 'rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[11px] text-warning'
+          : 'rounded border border-line px-1.5 py-0.5 text-[11px] text-ink-secondary'
+      }
+      title={mismatch ? t('models.engineFit.mismatchHint') : undefined}
+    >
+      {mismatch
+        ? t('models.engineFit.mismatch', { engines: engines.join(' / ') })
+        : t('models.engineFit.fits', { engines: engines.join(' / ') })}
+    </span>
+  );
+}
 
 export interface ModelCardProps {
   group: CatalogGroupWithFitness;
@@ -96,6 +150,7 @@ export function ModelCard({
           <div className="flex flex-wrap items-center gap-2">
             <FitBadge fitness={variant.fitness} />
             <h3 className="text-sm font-medium text-ink">{localizedName(locale, group)}</h3>
+            <EngineFitChip engines={variant.engines} />
             {isDefault ? (
               <StatusChip
                 tone="neutral"

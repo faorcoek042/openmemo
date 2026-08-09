@@ -272,6 +272,11 @@
       "speed": "{{kbps}} KB/s",
       "ttfb": "TTFB {{ms}} ms",
       "unknownError": "Reason unknown"
+    },
+    "engineFit": {
+      "fits": "For {{engines}}",
+      "mismatch": "For {{engines}} · not usable now",
+      "mismatchHint": "None of the engines available on this machine are in that list — installing it will not make it load. It becomes usable if you switch engines."
     }
   },
   "runtime": {

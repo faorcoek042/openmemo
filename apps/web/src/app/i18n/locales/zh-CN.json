@@ -272,6 +272,11 @@
       "speed": "{{kbps}} KB/s",
       "ttfb": "首字节 {{ms}} ms",
       "unknownError": "失败原因未知"
+    },
+    "engineFit": {
+      "fits": "适配 {{engines}}",
+      "mismatch": "适配 {{engines}} · 当前用不上",
+      "mismatchHint": "你这台机器上当前可用的引擎不在这个列表里 —— 装了也不会被加载。换引擎后它就能用。"
     }
   },
   "runtime": {
