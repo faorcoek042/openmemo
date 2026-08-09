@@ -375,7 +375,24 @@ export async function handleBackendRoutes(
   /* ---------------------- GET /api/backends/catalog ---------------------- */
   if (pathname === '/api/backends/catalog') {
     if (method !== 'GET') return methodNotAllowed(res, 'GET');
-    const installedIds = new Set((await state.listInstalledBackends()).map((p) => p.id));
+    const installedRecords = await state.listInstalledBackends();
+    const installedIds = new Set(installedRecords.map((p) => p.id));
+    /**
+     * 「装的是不是目录里现在这一版」——按**内容**（sha256 集合）算，不是按 id。
+     *
+     * `[用户真机实测 2026-08-09]` 这一格此前不存在，后果是：T-167 把
+     * `whispercpp-cpu-linux-x64` 从上游归档换成我们自建的那一份（多了
+     * `openmemo-probe`）之后，08-02 装过它的机器上 `installed` 恒为 true，
+     * 界面上没有任何地方说它是旧的，而硬件探测整条链是死的（六个后端全不可用）。
+     *
+     * 判据取 sha256 的**集合**而不是拼接串：同一个包里文件的顺序不该影响结论。
+     * 任一侧缺 sha256（老记录 / 目录里没写）⇒ **不下结论**（返回 false），
+     * 因为"我比不了"不等于"它是旧的" —— 报一句假的"有更新"会把用户推去做
+     * 一次没有必要的下载，那是另一种谎。
+     */
+    const shaSetOf = (files: readonly { sha256?: string }[] | undefined): string =>
+      [...new Set((files ?? []).map((f) => f.sha256 ?? ''))].sort().join(',');
+    const installedShaById = new Map(installedRecords.map((p) => [p.id, shaSetOf(p.files)]));
     const body: GetBackendCatalogResponse = {
       catalogVersion: state.backendCatalog.catalogVersion,
       source: 'bundled',
@@ -383,9 +400,16 @@ export async function handleBackendRoutes(
       stale: true,
       packs: state.backendCatalog.packs.map((pack) => {
         const { applicable, reason, kind } = applicability(state, pack);
+        const installedSha = installedShaById.get(pack.id);
+        const catalogSha = shaSetOf(pack.files);
         return {
           ...pack,
           installed: installedIds.has(pack.id),
+          updateAvailable:
+            installedSha !== undefined &&
+            installedSha !== '' &&
+            catalogSha !== '' &&
+            installedSha !== catalogSha,
           applicable,
           /**
            * 区分"还没测出来"和"测完了不支持"。UI 据此决定说

@@ -281,6 +281,26 @@ export interface GetBackendCatalogResponse {
     /** Why not applicable, when applicable=false. */
     inapplicableReason: string | null;
     recommended: boolean;
+    /**
+     * 装是装了，但**装的不是目录里现在这一版**（同一个 id，字节不同）。
+     *
+     * ## 为什么需要这一格：`installed` 只回答了半个问题
+     *
+     * `[用户真机实测 2026-08-09]` 目录里 `whispercpp-cpu-linux-x64` 在 T-167 从
+     * 上游归档换成了我们自建的那一份（**多了 `openmemo-probe`**），而用户机器上
+     * 08-02 装的还是上游那份。`installed` 按 **id** 算 ⇒ 恒为 `true` ⇒
+     * 界面说"已安装"、没有任何地方说它是旧的，而硬件探测整条链是死的。
+     *
+     * 更糟的是**他在界面上无路可走**：已安装分支只有 设为活动 / 自测 / 卸载，
+     * 而卸载对 `backend === 'cpu'` 的包是禁用的（load-bearing）。
+     * 也就是说产品在教他做一件他做不到的事。
+     *
+     * **可选**是刻意的，与 `inapplicableKind` 同一条理由：老 daemon 不发这个字段，
+     * 客户端必须能表达"我不知道"。缺失时正确的行为是**什么都不说**
+     * （按老行为渲染），而不是默认成 `false` —— 那会让界面替 daemon
+     * 说出一句"你装的就是最新版"，而它并不知道。
+     */
+    updateAvailable?: boolean;
   })[];
 }
 

@@ -110,8 +110,18 @@ async function seed(): Promise<RestState> {
   return await RestState.create({ sse: new SseHub(), dataDir, manifestDir });
 }
 
-/** 直接写一份安装记录 —— 等价于"装了一个包"，但不需要真的下载。 */
-async function writeInstalledPack(state: RestState, id: string, backend: string): Promise<void> {
+/**
+ * 直接写一份安装记录 —— 等价于"装了一个包"，但不需要真的下载。
+ *
+ * `files` 参数（T-191）：**同一个 id 换内容**要靠它表达。默认空数组，
+ * 老用例一个字不用改。
+ */
+async function writeInstalledPack(
+  state: RestState,
+  id: string,
+  backend: string,
+  files: { name: string; sha256: string }[] = [],
+): Promise<void> {
   const dir = join(state.modelsRoot, 'manifests', 'backend');
   await mkdir(dir, { recursive: true });
   await writeFile(
@@ -126,7 +136,7 @@ async function writeInstalledPack(state: RestState, id: string, backend: string)
       verifiedAt: new Date().toISOString(),
       integrity: 'ok',
       priority: 10,
-      files: [],
+      files,
       selfTest: null,
     }),
     'utf8',
@@ -155,6 +165,40 @@ describe('硬件快照必须跟着"机器上有什么"一起变（要求 2.1 的
       await state.hardwareSnapshotIsCurrent(),
       false,
       '装了包而快照仍自称当真 ⇒ select/catalog 会读到 installed=false，用户会看到那句假话',
+    );
+  });
+
+  /**
+   * ★★ T-191：**同一个 id 重装成不同的字节** —— 上一版指纹漏掉的就是这一格。
+   *
+   * 上一版指纹是「模型根 + 选中的后端 + 装了哪些包的 **id**」，注释里还写着
+   * 「不写任何代码它就已经被覆盖了」。而这个动作装前装后 **id 集合一模一样**。
+   *
+   * `[用户真机实测 2026-08-09，:10000]` 后果：08-02 装的是上游
+   * `whisper-bin-ubuntu-x64.tar.gz`（**不含 `openmemo-probe`**），T-167 把同一个 id
+   * 换成我们自建的那份（**含探针**）。走产品自己的安装路重装之后 ——
+   * **磁盘上探针出现了，`/api/runtime/hardware` 照旧说 `probe executable not found`**，
+   * 六个后端全部不可用；`?refresh=1` 一发就对（`cpu available=true`）。
+   *
+   * **注意这里同样没有调用任何 `invalidate`** —— 判据仍是"忘了调也会被抓住"。
+   */
+  it('★ 同一个 id 重装成不同的字节之后，快照必须失效（T-191，用户真机上咬到的）', async () => {
+    const state = await seed();
+    await writeInstalledPack(state, 'hwsnap-cpu', 'cpu', [
+      { name: 'whisper-bin-ubuntu-x64.tar.gz', sha256: 'f3bf3b43'.repeat(8) },
+    ]);
+    await state.freshHardware();
+    assert.equal(await state.hardwareSnapshotIsCurrent(), true);
+
+    // 同一个 id、同一个 backend，只有内容变了 —— 这正是换目录条目之后重装的形状
+    await writeInstalledPack(state, 'hwsnap-cpu', 'cpu', [
+      { name: 'whispercpp-cpu-linux-x64.tar.gz', sha256: '7075ef1c'.repeat(8) },
+    ]);
+
+    assert.equal(
+      await state.hardwareSnapshotIsCurrent(),
+      false,
+      '换了字节而快照仍自称当真 ⇒ 装上带探针的新包之后，界面照旧说「probe executable not found」',
     );
   });
 

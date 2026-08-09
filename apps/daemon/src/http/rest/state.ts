@@ -75,6 +75,58 @@ import { roleToActivationSlot } from './roleMap.js';
 export const HARDWARE_SNAPSHOT_ID = 'hw-local';
 
 /**
+ * 已安装后端记录里**不进硬件指纹**的字段 —— 与 `machineFingerprint()` 配套。
+ *
+ * ## 为什么是"排除表"而不是"包含表"
+ *
+ * 上一版的指纹是手挑三样（模型根 / 选中的后端 / 包 **id**），并在注释里承诺
+ * 「不写任何代码它就已经被覆盖了」。**那句承诺是假的**：把同一个 id 重装成不同的
+ * 字节落在三样之外，于是用户机器上探针装上了、界面照旧说没有（T-191，用户真机实测）。
+ *
+ * 包含表的失效模式是**沉默**：漏了一样，没有任何东西会说话。
+ * 排除表反过来 —— 新增字段默认进指纹，想让它不进就**必须在这里写下来**，
+ * 而这是一处看得见的 diff，还有 `hardwareFingerprintCoverage.test.ts` 逐字段变异钉着。
+ *
+ * ## 这三个为什么可以排除（每条都有代价说明，不是"看着像没用"）
+ *
+ * · `installedAt` / `verifiedAt` —— 时间戳。它们会在**内容没变**时更新
+ *   （重新校验完整性就会写 `verifiedAt`）。放进指纹的话，每一次完整性校验
+ *   都会触发一次真探测（spawn probe / nvidia-smi，几百 ms 到几秒），
+ *   而探测结果**必然与上次相同** —— 那是纯粹的开销，换不到任何新信息。
+ *   ⚠️ 代价：如果哪天有人**只改时间戳来表达"内容变了"**，这里会漏。
+ *   今天不会：安装器换内容必然换 `files[].sha256`。
+ * · `selfTest` —— 自检结果是**探测的产物**，不是探测的输入。
+ *   放进去会成环：跑自检 → 写回结果 → 指纹变 → 重探 → …
+ */
+export const FINGERPRINT_IGNORED_FIELDS: readonly string[] = [
+  'installedAt',
+  'verifiedAt',
+  'selfTest',
+];
+
+/**
+ * 一条已安装记录的规范化指纹：**全文，减去 {@link FINGERPRINT_IGNORED_FIELDS}**。
+ *
+ * 键按字典序输出，所以 JSON 里字段顺序的变化不会被误报成"机器变了"。
+ * 导出是为了让守卫能直接对它做逐字段变异，而不是去构造整个 `RestState`。
+ */
+export function canonicalPackFingerprint(record: unknown): string {
+  const canon = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(canon);
+    if (v !== null && typeof v === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+        if (FINGERPRINT_IGNORED_FIELDS.includes(k)) continue;
+        out[k] = canon((v as Record<string, unknown>)[k]);
+      }
+      return out;
+    }
+    return v;
+  };
+  return JSON.stringify(canon(record));
+}
+
+/**
  * 队列事件的类型收窄。
  *
  * `DownloadQueueEvents` 带 `[k: string]: unknown[]` 索引签名（downloader 那边为了让
@@ -256,16 +308,51 @@ export class RestState {
    * 而包就是刚装上的 —— 读的正是这份没刷新的快照）。
    *
    * 所以这里把"失效"变成**从输入派生**的，而不是需要人去调用的：
-   * 指纹变了 ⇒ 快照必然重算。新增一个改变机器状态的动作时，
-   * 只要它影响的是这三样东西之一，**不写任何代码它就已经被覆盖了**；
-   * 影响别的东西时，`hardwareInputsGuard()` 会当场把它逼出来（见下）。
+   * 指纹变了 ⇒ 快照必然重算。
+   *
+   * ══ ★ T-191：上一版这里写着一句**免检承诺，而且它是假的** ═══════════════════
+   *
+   * 原文是：
+   *
+   * > 「新增一个改变机器状态的动作时，只要它影响的是这三样东西之一，
+   * >   **不写任何代码它就已经被覆盖了**」
+   *
+   * 那三样是「模型根 + 选中的后端 + 装了哪些包的 **id**」。
+   * **而"把同一个 id 重装成不同的字节"恰好落在三样之外**，于是它没有被覆盖，
+   * 而那句话让人不必去想这件事。`[用户真机实测 2026-08-09，:10000]`：
+   *
+   *   08-02  用户装 `whispercpp-cpu-linux-x64` —— 当时目录指向**上游**
+   *          `whisper-bin-ubuntu-x64.tar.gz`（9,379,235 B，**里面没有 openmemo-probe**）
+   *   08-07  T-167 把**同一个 id** 换成我们自建的那份（6,752,275 B，**带探针**）
+   *   今天   `installed: true`、`recommended: true`，而六个后端全部
+   *          「probe executable not found」
+   *
+   *   走产品自己的安装路重装之后，**磁盘上探针出现了，接口照旧说找不到** ——
+   *   装前装后 id 集合一模一样，指纹没变，快照就不重算。
+   *   `?refresh=1` 一发就对（`cpu available=true`）⇒ 解析链没瞎，是失效条件漏了一格。
+   *
+   * ── 修法：**不再承诺完整性，而是让它由构造保证、并且可检验** ──────────────────
+   *
+   * 指纹不再是"手挑几样"，而是**已安装记录的全文**（规范化 JSON），
+   * 只显式排除 {@link FINGERPRINT_IGNORED_FIELDS} 里那几个。于是：
+   *
+   *   · `InstalledBackendPack` 上**新增任何字段**，它自动进指纹 —— 不需要谁记得；
+   *   · 想让某个字段不进指纹，**必须把它写进那个集合**，那是一处看得见的 diff；
+   *   · `hardwareFingerprintCoverage.test.ts` 会逐字段变异一遍：
+   *     不在排除集里的字段，改了它指纹**必须**变；在排除集里的，**必须**不变。
+   *     新加字段而忘了表态 ⇒ 当场红。
+   *
+   * **判据从"记得覆盖"变成了"漏了会红"** —— 这正是上一版那句免检承诺缺的东西。
+   *
+   * ⚠️ 仍然**不 spawn、不探测**：`listInstalledBackends()` 本来就把这些 manifest
+   *   读进内存了，这里只是把它们序列化一遍。
    */
   private async machineFingerprint(): Promise<string> {
     const packs = await this.listInstalledBackends();
     return [
       this.modelsRoot,
       this.prefs.selectedBackend ?? '',
-      ...packs.map((p) => p.id).sort(),
+      ...packs.map((p) => canonicalPackFingerprint(p)).sort(),
     ].join('|');
   }
 
