@@ -522,9 +522,45 @@ jobs:
       #    它跑在宿主上（objdump 读的是文件，与谁编的无关），验的是容器里编出来的东西。
       - name: Guard glibc floor
         run: |
+          # ★★★ T-190：**C++ 运行时那两条上限显式传，而且传的是量出来的值。**
+          #
+          # 脚本的默认值是 `GLIBCXX_3.4.29 / CXXABI_1.3.9` —— 那是**给安装包**定的，
+          # 由它内含的第三方 prebuilt 决定（`better-sqlite3` 的 `linux-x64.node` 就是
+          # `GLIBCXX_3.4.29 / CXXABI_1.3.9`，见该脚本文件头的实测表）。
+          # **对这条产包链它是错的**，而且是"比构建环境本身还严"的那种错：
+          #
+          #   `[本机实测]` 从各发行版自己的 libstdc++ 包里读最高符号版本：
+          #     Ubuntu 22.04  libstdc++.so.6.0.30  → GLIBCXX_3.4.30 · CXXABI_1.3.13
+          #     Debian 12     libstdc++.so.6.0.30  → GLIBCXX_3.4.30 · CXXABI_1.3.13
+          #     Rocky 9(RHEL9) libstdc++.so.6.0.29 → GLIBCXX_3.4.29 · CXXABI_1.3.13
+          #
+          #   而 buildbox 是 jammy（g++ 11.4 + libstdc++ 6.0.30）。红的只有**一个符号**：
+          #     (GLIBCXX_3.4.30) _ZNSt18condition_variable4waitERSt11unique_lockISt5mutexE
+          #   jammy 的 libstdc++ 同时导出它的 `GLIBCXX_3.4.11` 与 `GLIBCXX_3.4.30` 两个版本，
+          #   **默认版本是 3.4.30**，所以任何用到 `condition_variable::wait` 的编译单元
+          #   都会绑到 3.4.30 —— 与编译器版本无关，源码也改不掉。
+          #   （与 T-161 那条 `fmod@@GLIBC_2.38` 是同一族：**下限由构建机库里的默认符号版本决定**。）
+          #
+          # ⚠️ **这不是一次回归，守卫只是第一次把已经在的事实说出来。**
+          #   `[本机实测]` 把**已经发布的 v0.6.0** 两个包下下来跑同一个守卫：
+          #     whispercpp-cpu-linux-x64    whisper-server      需要 GLIBCXX_3.4.30 / CXXABI_1.3.13
+          #     whispercpp-vulkan-linux-x64 libggml-vulkan.so   需要 GLIBCXX_3.4.30
+          #   也就是说 **RHEL9 系（libstdc++ 6.0.29）今天就装不动那个 Vulkan 加速模块**，
+          #   而且是静默的（`GGML_BACKEND_DL` 下 dlopen 失败只是"后端没注册上"）。
+          #
+          # ⚠️ **代价点名**：把上限提到 3.4.30，等于把 RHEL 9 / Rocky 9 / Alma 9
+          #   （glibc 2.34，满足 README 那条承诺）排除在 GPU 包之外。**这条已经是事实，
+          #   不是本次引入的**；要真的支持它们，得把 buildbox 换成 RHEL9 系镜像
+          #   （glibc 2.34 + libstdc++ 6.0.29 同时满足）——**那是产品决定，报 Manager，
+          #   README 里那个数字我不改。**
+          #
+          # ⚠️ CXXABI 提到 1.3.13 是**零代价**的：上面三个发行版**全部**提供到 1.3.13
+          #   （连 Rocky 9 的 6.0.29 也有）。它的默认值 1.3.9 单纯是偏严。
           node scripts/ci/check-elf-glibc.mjs \
             --dir "${{ steps.build.outputs.stage_dir }}" \
-            --max 2.34
+            --max 2.34 \
+            --max-glibcxx 3.4.30 \
+            --max-cxxabi 1.3.13
 
       # T-167：探针不再单独编译一次 —— build-whisper.sh 已经把它编进包里了
       # （理由见该脚本里 "探针随包出厂" 那一段：它动态链接 libggml-base，
