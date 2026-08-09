@@ -433,3 +433,91 @@ describe('解包进度（zip）：分母来自 EOCD，不是猜的', () => {
     }
   });
 });
+
+
+/* ============ ★ T-63 —— 校验阶段的 1795 ms 黑窗（三处只有一处漏传参数）============ */
+
+/**
+ * `[已核实]` 量模型安装路径时抓到的：1.66 GB 模型的安装过程里有一段
+ * **1795 ms 的黑窗**（耗时 > 1s 且 0 条事件），落在 `verifying → installing` 之间。
+ *
+ * 成因是**一个漏传的参数**，不是设计问题 —— 同一个 `verifyFile`，三个调用点：
+ *
+ * ```
+ * models.ts:681  校验已装模型   传了进度回调 ✔
+ * models.ts:817  导入本地模型   传了进度回调 ✔（走 sha256File）
+ * download.ts    安装           undefined   ✘
+ * ```
+ *
+ * 校验就是把整个文件读一遍算 sha256，它**天然有进度可报**。不报的那 1.8 秒里，
+ * 进度条还停在下载结束时的满格 —— **"正在校验"和"卡住了"长得一模一样**。
+ *
+ * 判据钉的是**后果**：校验期间必须有多于一条事件，而且数值必须真的在前进。
+ * 只断言"传了参数"是没用的（那是形式）；只断言"有 verifying 事件"也不够 ——
+ * 漏传参数的旧版本**也会发一条** `verifying` 事件（满格那条），
+ * 所以下面专门有一条断言排除"只有满格那一条"。
+ */
+describe('★ T-63 校验阶段必须报进度（1795 ms 黑窗）', () => {
+  it('★ verifying 阶段的事件不止一条，且 completedBytes 真的在前进', async () => {
+    // 必须大于 sha256File 的 4 MB highWaterMark，否则整个文件只有一个 chunk、
+    // 只会回调一次 —— 那样这条用例就分不出"有进度"和"只有起点那一条"。
+    const body = Buffer.alloc(9 * 1024 * 1024, 0x41);
+    const sha = createHash('sha256').update(body).digest('hex');
+    served.set('/big.bin', body);
+
+    const store = new ArtifactStore(
+      join(await mkdtemp(join(tmpdir(), 'om-verifyprog-')), 'models'),
+    );
+    const seen: Array<{ phase: string; done: number; total: number }> = [];
+
+    await install({
+      store,
+      target: {
+        id: 'asr/verify-progress',
+        kind: 'asr',
+        displayName: 'verify progress',
+        files: [
+          {
+            role: 'weights',
+            name: 'big.bin',
+            sizeBytes: body.length,
+            sha256: sha,
+            mirrors: [{ provider: 'custom', url: `${origin}/big.bin`, official: true }],
+          },
+        ],
+      },
+      maxParts: 1,
+      onProgress: (p) => seen.push({ phase: p.phase, done: p.completedBytes, total: p.totalBytes }),
+    });
+
+    const verifying = seen.filter((e) => e.phase === 'verifying');
+    assert.ok(
+      verifying.length >= 2,
+      `★ 校验期间只报了 ${verifying.length} 条事件 —— 那 1.8 秒的黑窗就是这么来的：` +
+        JSON.stringify(seen.slice(-8)),
+    );
+
+    // 真的在前进：非递减，且最后一条走到了满格
+    for (let i = 1; i < verifying.length; i++) {
+      assert.ok(
+        verifying[i]!.done >= verifying[i - 1]!.done,
+        `★ 校验进度回退了：${JSON.stringify(verifying)}`,
+      );
+    }
+    assert.equal(
+      verifying[verifying.length - 1]!.done,
+      body.length,
+      '★ 最后一条应当是整个文件都算完了',
+    );
+
+    /*
+     * ★ 排除"只有满格那一条"：漏传参数的旧版本会发**恰好一条** completedBytes=total
+     * 的 verifying 事件，然后原地不动 1.8 秒。所以必须存在至少一条**严格小于**满格的，
+     * 否则这条用例就退化成了"有 verifying 事件就算数"。
+     */
+    assert.ok(
+      verifying.some((e) => e.done < body.length),
+      `★ 全部 verifying 事件都是满格 —— 进度条会停在 100% 一动不动：${JSON.stringify(verifying)}`,
+    );
+  });
+});

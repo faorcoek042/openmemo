@@ -184,16 +184,45 @@ export async function downloadFile(opts: DownloadOptions): Promise<DownloadResul
       const res = await downloadFromSource(source, digest, partialPath, opts);
       bytesTransferred += res.bytesTransferred;
 
-      opts.onProgress?.({
-        completedBytes: res.sizeBytes,
-        totalBytes: res.sizeBytes,
-        speedBps: 0,
-        etaSeconds: null,
-        phase: 'verifying',
-        provider: source.provider,
-      });
+      /*
+       * ★ T-63：校验阶段必须**报进度**，而这里曾经传的是 `undefined`。
+       *
+       * 同一个 `verifyFile`，三个调用点，只有"安装"这一条不报：
+       *   · `models.ts:681`（校验已装模型）传了回调 ✔
+       *   · `models.ts:817`（导入本地模型，走 `sha256File`）传了回调 ✔
+       *   · 这里（安装）                                   ✘ ← 漏的就是这一个参数
+       *
+       * 后果是量出来的，不是推的：1.66 GB 模型安装过程里有一段 **1795 ms 的黑窗**
+       * （耗时 > 1s 且 0 条事件），正落在 `verifying → installing` 之间。
+       * 校验就是**把整个文件读一遍算 sha256**，它天然有进度可报 ——
+       * 不报的那 1.8 秒里，界面上什么都不动，而进度条还停在下载结束时的 100%，
+       * 于是"正在校验"看起来和"卡住了"一模一样。
+       *
+       * 起点报 0 而不是 `res.sizeBytes`：校验刚开始时**确实一个字节都还没算**。
+       * 报成满格再原地不动 1.8 秒，正是让人以为卡死的那种画法。
+       *
+       * 不在这里另做节流：`job.progress` 在 SSE 层已经按 topic 合并 250ms
+       * （`sse.ts:126`），而另外两个调用点也都是直接透传 —— 同一个用途不再分叉。
+       */
+      const onVerifyProgress = (hashed: number): void => {
+        opts.onProgress?.({
+          completedBytes: hashed,
+          totalBytes: res.sizeBytes,
+          speedBps: 0,
+          etaSeconds: null,
+          phase: 'verifying',
+          provider: source.provider,
+        });
+      };
+      onVerifyProgress(0);
 
-      const verdict = await verifyFile(partialPath, digest, res.sizeBytes, undefined, opts.signal);
+      const verdict = await verifyFile(
+        partialPath,
+        digest,
+        res.sizeBytes,
+        onVerifyProgress,
+        opts.signal,
+      );
       if (!verdict.ok) {
         // Bad bytes: discard everything from this source and try the next one.
         await fs.rm(partialPath, { force: true });
