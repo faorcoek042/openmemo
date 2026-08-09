@@ -137,9 +137,13 @@
 | **macOS arm64**                        | CPU + Metal + CoreML（同在核心包里） | 95.2s —— **正常，见 §8.3** |
 | linux-arm64 / macOS Intel / Linux ROCm | ✂ 用户 2026-08-05 明确裁掉，无产物   | —                          |
 
-三平台都是**产品自己下载并校验那 5 个工具**（`ffmpeg` / `ffprobe` / `whisper-cli` /
-`whisper-vad-speech-segments` / `yt-dlp`），**一个都没有借你机器上已有的** ——
-所以你不需要预装任何东西。中文双字词**真的搜得到**（判据不是"扩展文件下下来了"）。
+那 5 个工具（`ffmpeg` / `ffprobe` / `whisper-cli` / `whisper-vad-speech-segments` / `yt-dlp`）
+**产品会自己下载并校验，而且优先用自己下的那一份**；机器上已有的同名工具是**受支持的兜底**，
+不是禁止项（用户 2026-08-09 明确：允许用系统的，但产品自己下的优先级更高）。
+
+**在屏蔽宿主 PATH 的冷启动审计里，三平台"借宿主的"都是 0** —— 这条实测证明的是
+**你不需要预装任何东西**，不是"我们从不使用系统里的工具"。
+中文双字词**真的搜得到**（判据不是"扩展文件下下来了"）。
 
 > **这张表的逐格出处、重核过程、以及"目录变了该重测哪几格"的触发条件**，
 > 都在 [`docs/design/D-19-user-doc-provenance.md`](design/D-19-user-doc-provenance.md)。
