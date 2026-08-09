@@ -959,12 +959,29 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
   /*
    * 「找到了」和「装上了」是两件事。
    *
-   * `discoverTools()` 的第 3 顺位是 PATH，那是**开发便利**，不是产品路径。
-   * 开发机上有 `/usr/bin/ffmpeg`，于是这条一直是绿的 —— 但用户机器上没有，
-   * 而 ffmpeg 目前**没有任何 HTTP 安装通道**（T-093 实测三个安装端点全拒）。
-   * 报绿等于把"这台开发机恰好有"当成"产品能装上"，正是自检要防的那种假绿灯。
+   * ⚠️ 2026-08-10 订正：这里原来写「`discoverTools()` 的第 3 顺位是 PATH，那是开发便利，
+   * 不是产品路径」——**"仅开发便利"是同一句已经在 `tools.ts` / `setup.ts` 订正过的旧说法**，
+   * PATH 在生产环境同样会被真正用到，不是只在开发机上生效；而且"统一第 3 顺位"这个说法本身
+   * 现在也不对所有五个工具成立了。`RESOLUTION_PLANS`（`packages/pipeline/src/tools.ts`）把
+   * 顺序按工具拆开声明：ffmpeg / ffprobe / yt-dlp 是 pack → bundle → path（PATH 最后，第 3 位）；
+   * whisper-cli / whisper-vad 是 pack → path → bundle（PATH 第 2 位，bundle 才是最后一档）。
    *
-   * 判据：装在 storeRoot 里 = ok；只在系统 PATH 上 = warn（能跑，但不可分发）；没有 = fail。
+   * 但下面这条判据不受顺序变化影响：不管 PATH 排第几位，**只要最终落地的路径是从系统 PATH
+   * 来的**，就说明它既不在 storeRoot 里（不是本产品装的），也不是 bundled runtime 路径（不是
+   * 随包出厂的）——换句话说是"借"来的：这台机器能跑，换一台没装过这个工具的用户机器上不一定有。
+   * 报绿等于把"这台机器恰好有"当成"产品能装上"，正是自检要防的那种假绿灯。
+   *
+   * ⚠️ 另一处一并订正：原文举的例子是「ffmpeg 目前没有任何 HTTP 安装通道（T-093 实测三个安装
+   * 端点全拒）」——**这个例子现在是假的**：`vendor/manifests/backends.json` 的
+   * `media-tools-linux-x64` / `media-tools-win-x64` 已经把 ffmpeg/ffprobe 收进可下载的后端包，
+   * T-093 报的那个洞已经被 `model-mgmt` 那一路解决（见 `coordination/inbox/gpu-runtime.md`
+   * 2026-08-03「T-119 selfcheck 真正同源」一节的复测记录）——现在通过后端包装上的 ffmpeg 会
+   * 落在 storeRoot 里，走上面 ok 分支，
+   * 不再是这里说的"只能借系统 PATH"。这段话按其字面意思现在会误导人去找一个已经不存在的洞；
+   * 判据本身没有依赖这个例子是否成立，例子过时不影响下面的分支逻辑。
+   *
+   * 判据：装在 storeRoot 里 = ok；随预编译包出厂（bundled runtime 路径）= ok；只在系统 PATH
+   * 上 = warn（能跑，但不可分发）；没有 = fail（必需工具）或 warn（可选工具，如 yt-dlp / VAD）。
    */
   const fromStore = (p: string | null): boolean => p !== null && p.startsWith(input.storeRoot);
   /*
