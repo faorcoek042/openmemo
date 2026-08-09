@@ -493,6 +493,29 @@ export class RestState {
    * 装完之后，仍是空的 role 槽位就地激活成刚装好的那个——与 `models.ts` 的
    * `startModelPull()` 里"没人选过就用这次装的"是同一条规则。不然内置模型
    * 装完了却没人在用它，用户看到的还是"没有可用的 ASR/VAD"。
+   *
+   * ══ 必须发 `model.installed`/`model.activated`（真实机器上跑出来才发现的洞）══════
+   *
+   * `[实测 2026-08-09]` 用真实构建的包（`build-bundle.mjs` 产物）跑通首次启动：
+   * `RestState.create()` 是**懒的**——只在第一次命中 `/api/models/*` 之类的路由时
+   * 才真正执行（`models.ts` 的 `statePromise ??= RestState.create(deps)`）。而
+   * `main.ts` 在启动时就**无条件、提前**跑了一遍 `buildPipeline()` 把结果缓存进
+   * `bundle`，之后只在收到 `main.ts` 里 `REFRESH_EVENTS`
+   * （`model.installed` / `model.removed` / `model.activated` / `backend.installed` /
+   * `backend.removed`）时才会重算。这份 SSE 监听是 `main.ts` 自己挂的，本文件写
+   * `ArtifactStore` 不会自动触发它。
+   *
+   * 后果实测复现：`curl /api/models/installed` 确认三个内置模型都已导入
+   * （`verifiedAt` 是本次启动时间），但同一进程的 `curl /api/health` 里
+   * `pipeline.missing` 仍然是 `["asr-model"]`、`streamAvailable:false`、
+   * `vad.model:null`——**界面说"已安装"，转写流水线说"还没有"，两边各读各的缓存**。
+   * 不发事件的话，这个分裂状态会一直持续到用户凑巧触发了另一次真实的模型/后端安装
+   * （顺带把 `bundle` 整体重算一次），或者重启 daemon（下次启动时 `ArtifactStore` 里
+   * 已经有记录，`buildPipeline()` 第一次跑就是对的）——但**冷装第一次**、也就是这个
+   * 机制最该生效的那一次，反而看不到效果。
+   *
+   * 修法：装完之后照抄 `models.ts` 走完整安装流程时发的两个事件，**不发明新事件类型**
+   * ——`main.ts` 的监听集合已经认这两个名字，不需要它跟着改。
    */
   private async reconcileModels(): Promise<void> {
     try {
@@ -507,13 +530,28 @@ export class RestState {
         );
         const model = this.modelCatalog.models.find((m) => m.id === r.modelId);
         if (model && !this.active[model.role]) {
+          const previous = this.active[model.role];
           this.active[model.role] = model.id;
           await this.persistActive();
+          this.publish(
+            makeEvent('model.activated', topics.models(), {
+              role: roleToActivationSlot(model.role),
+              modelId: model.id,
+              previous,
+            }),
+          );
         }
+        this.publish(
+          makeEvent('model.installed', topics.models(), {
+            modelId: r.modelId,
+            active: model ? this.active[model.role] === r.modelId : false,
+          }),
+        );
       }
       for (const s of report.skipped) {
         console.warn(`[models] ${s.modelId} 没有导入：${s.reason}`);
       }
+      if (report.imported.length > 0) await this.emitStorageChanged();
     } catch (err: unknown) {
       console.warn(`[models] 内置模型首次运行导入失败：${String(err)} —— 本次启动没有内置模型可用`);
     }
