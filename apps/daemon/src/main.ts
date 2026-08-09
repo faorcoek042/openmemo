@@ -52,6 +52,7 @@ import { jobCreatedEvent, jobStateEvent, pipelineJobOf, pipelineKindOf } from '.
 import { LanePool } from './jobs/lanes.js';
 import { Repos } from './db/repos.js';
 import { buildPipeline, type PipelineBundle } from './pipeline/setup.js';
+import { toolRefreshMessage } from './bootstrap/tool-refresh-message.js';
 import { resolveExtensionDir } from './pipeline/modelStore.js';
 import { vadHealth } from './pipeline/vadStatus.js';
 import { Scheduler, type JobHandler } from './jobs/scheduler.js';
@@ -666,14 +667,19 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         refreshTimer = undefined;
         void (async () => {
           try {
-            const before = bundle?.missing.join(',') ?? '';
+            const before = [...(bundle?.missing ?? [])];
             const next = await buildPipeline(paths);
             bundle = next;
-            const after = next.missing.join(',');
-            if (before !== after) {
-              console.log(
-                `[daemon] 工具表已热刷新: missing [${before || '无'}] → [${after || '无'}]`,
-              );
+            const after = [...next.missing];
+            if (before.join(',') !== after.join(',')) {
+              /*
+               * ★ 措辞抽到 `bootstrap/tool-refresh-message.ts`，因为它**被用户读反过**：
+               *   原来是 `missing [asr-model] → [无]`，而那个「无」是"缺失列表空了"
+               *   ＝好消息 —— 可它被放进了本该列工具名的方括号里，
+               *   到底修饰"缺失项"还是"工具"一个字都没交代。
+               *   抽成纯函数后，措辞变成可断言的性质（见同目录 .test.ts）。
+               */
+              console.log(`[daemon] ${toolRefreshMessage(before, after)}`);
             }
             /*
              * 扩展（libsimple / sqlite-vec）装上后要让检索从 trigram 切回 simple。
