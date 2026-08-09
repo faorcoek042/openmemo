@@ -217,6 +217,13 @@ if (!TARGET || !(TARGET in TARGETS)) {
 const T = TARGETS[TARGET];
 const SKIP_ARCHIVE = argv.includes('--skip-archive');
 
+/**
+ * 残包标记文件名。`scripts/ci/verify-bundle.sh` 见到它就当场拒绝。
+ * ⚠️ 刻意**不导出**：唯一的读者是同文件里的两处 + 一个 bash 脚本（按字面量比对），
+ * 导出会变成一条零引用导出而抬高 check:orphans 的棘轮。
+ */
+const INCOMPLETE_MARKER = '.openmemo-build-incomplete';
+
 // 顶层 await（本文件是 ESM）——版本号的来源可能是两条路之一，见 loadVersion()。
 const { version: VERSION, root: REPO_ROOT, via: VERSION_VIA } = await loadVersion();
 /*
@@ -1681,6 +1688,29 @@ async function main() {
   await rm(STAGE, { recursive: true, force: true });
   await mkdir(STAGE, { recursive: true });
 
+  /*
+   * ★ 残包标记：**构建一开始就落，成功走完才删。**
+   *
+   * `[实测 2026-08-09]` 本机断网时构建中止在 `assembleModels()`（要联网），
+   * 而 `writeLauncher()` 排在它**后面** —— 于是留下一个
+   * `app/ext/runtime` 齐全、**却没有 start.sh** 的目录：
+   * **看起来像个包，其实用户双击不开，而且没有任何东西说它是残的。**
+   *
+   * 这与本仓那一族完全同形（探针不在包里、`vendor/manifests` 不在包里、
+   * `copy_if_exists` 缺文件不吭声）：**"看起来成了，其实没成"。**
+   *
+   * ⚠️ 刻意**不做成"检查文件齐不齐"的清单**（Manager 2026-08-09 明确）：
+   * 清单会和现实漂移 —— 今天列 8 个文件，明天多一个没人回来加，
+   * 于是清单绿着而包是残的。**标记不会漂**：它只回答一个问题
+   * 「这次构建有没有跑完」，而那正是要问的。
+   */
+  await writeFile(
+    join(STAGE, INCOMPLETE_MARKER),
+    '这次构建还没跑完。看到这个文件说明包是**残的**，不要分发、也不要拿它当产物验证。\n' +
+      'This build did not finish. This bundle is INCOMPLETE — do not ship or verify against it.\n',
+    'utf8',
+  );
+
   await acquireNode();
   await assembleOurCode();
   await assembleNodeModules();
@@ -1691,6 +1721,9 @@ async function main() {
   await assembleSampleAudio();
   await writeLauncher();
   await writeNotices();
+
+  // 走到这里 = 所有装配步骤都成功了。**删标记必须在归档之前**，否则残包标记会被打进归档。
+  await rm(join(STAGE, INCOMPLETE_MARKER), { force: true });
 
   const raw = await dirSize(STAGE);
   hdr('汇总');

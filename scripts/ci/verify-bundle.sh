@@ -54,6 +54,18 @@ B="$(find "$WORK" -maxdepth 1 -mindepth 1 -type d | head -1)"
 echo "包根：$B"
 echo
 
+# ★ 残包标记：构建一开始就落、成功走完才删（见 scripts/build-bundle.mjs）。
+#   看到它就说明那次构建**中止在半路**，产物是残的 —— 立刻拒绝，不要往下逐项检查。
+#   `[实测 2026-08-09]` 断网时构建停在 assembleModels()，而 writeLauncher() 排在其后，
+#   于是留下一个 app/ext/runtime 齐全、却没有 start.sh 的目录：
+#   **看起来像个包，其实双击打不开，且没有任何东西说它是残的。**
+#   判据刻意不是"逐个文件点名"（清单会和现实漂移），而是"这次构建有没有跑完"。
+if [ -f "$B/.openmemo-build-incomplete" ]; then
+  echo "::error::这个包是**残的** —— 构建没有跑完（存在 .openmemo-build-incomplete 标记）" >&2
+  cat "$B/.openmemo-build-incomplete" >&2
+  exit 1
+fi
+
 CHECKED=0
 FAILED=0
 
