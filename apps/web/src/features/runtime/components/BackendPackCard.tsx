@@ -126,6 +126,41 @@ export function BackendPackCard({
 
   const actions = pack.installed ? (
     <>
+      {/*
+        ★★ T-191：**「更新」—— 已安装分支此前没有任何"再装一次"的出口。**
+
+        `[用户真机实测 2026-08-09，:10000]` 他看到的是一条死路：
+          · 自检说「安装后端包后会带上 openmemo-probe」；
+          · 这张卡片说它**已安装**，而已安装分支只有 设为活动 / 自测 / 卸载；
+          · 卸载又 `disabled={isLoadBearing}`，而 `isLoadBearing` 对 `backend==='cpu'`
+            恒真 —— 也就是说**这个包他既不能更新也不能卸**。
+        产品在教他做一件他在界面上根本做不到的事。
+
+        成因不在这张卡片：目录里 `whispercpp-cpu-linux-x64` 在 T-167 换成了带探针的
+        自建包，而他 08-02 装的是当时那份上游归档（**不含探针**），
+        `installed` 按 **id** 算 ⇒ 恒为 true ⇒ 没有任何地方说他手里那份是旧的。
+
+        daemon 现在把这件事发出来了（`updateAvailable`，T-191 ② 新开的一个轴：
+        它按**内容**算，与 `installed` 正交，也与上面 `CHIP_STATE` 那一轴正交 ——
+        芯片说"这个包处于什么状态"，这里说"该做什么"，两件事不共用槽位）。
+        这里只做一件事：**让它变成一个真能点、点了那个报错真的会消失的按钮。**
+
+        ⚠️ 字段**可选**，缺失时（老 daemon）什么都不渲染 —— 不替它说
+        "你装的就是最新版"，那是它没说过的话。判据与 `inapplicableKind` 同源。
+      */}
+      {pack.updateAvailable === true ? (
+        <Button
+          size="sm"
+          variant="primary"
+          disabled={installing}
+          title={t('runtime.pack.updateTitle')}
+          onClick={() => onInstall(pack.id)}
+          data-testid={`backend-update-${pack.id}`}
+        >
+          <Download className="size-3.5" aria-hidden />
+          {installing ? t('runtime.pack.installing') : t('runtime.pack.update')}
+        </Button>
+      ) : null}
       {!isActive ? (
         <Button size="sm" variant="secondary" onClick={() => onSelect(pack)}>
           {t('runtime.pack.setActive')}

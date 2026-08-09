@@ -7343,6 +7343,114 @@ describe('T-165 ①「不可用」的三档不许长成同一个样子', () => {
 });
 
 /**
+ * ## T-191 ③ 「装的是旧版」必须有一个**真能点**的出口
+ *
+ * `[用户真机实测 2026-08-09，:10000]` 他被困在一条死路上：
+ *
+ *   · 自检说「安装后端包后会带上 openmemo-probe」；
+ *   · `/runtime` 说这个包**已安装**，而已安装分支只有 设为活动 / 自测 / 卸载；
+ *   · 卸载 `disabled={isLoadBearing}`，而 `isLoadBearing` 对 `backend==='cpu'` 恒真。
+ *
+ * ⇒ **既不能更新也不能卸**，产品在教他做一件他做不到的事。
+ * （成因在别处：目录里同一个 id 在 T-167 换成了带探针的自建包，而 `installed`
+ *   按 id 算，所以没有任何地方说他手里那份是旧的。daemon 现在发 `updateAvailable`。）
+ *
+ * ── 把名字遮住，这些断言什么时候会失败 ────────────────────────────────────────
+ * 任何人把这个按钮删掉、或者把它塞进 `installed` / 芯片那一轴去表达（共用槽位），
+ * 或者反过来在 daemon 没说话时也渲染它（替它说"你装的就是最新版"的镜像错误）。
+ */
+describe('★ T-191：装的是旧版时，已安装分支必须给出「更新」', () => {
+  const NOOP = {
+    locale: 'zh-CN',
+    isActive: false,
+    selfTest: null,
+    installing: false,
+    onInstall: () => undefined,
+    onRemove: () => undefined,
+    onSelect: () => undefined,
+    onSelfTest: () => undefined,
+  } as const;
+
+  /** 用户那张卡的真实形状：已安装、`backend: 'cpu'`（⇒ 卸载按钮被禁用）。 */
+  const stale = (over: Record<string, unknown> = {}) =>
+    pack({ id: 'whispercpp-cpu-linux-x64', backend: 'cpu', installed: true, ...over });
+
+  test('★ `updateAvailable: true` → 「更新」按钮在，而且能点', async () => {
+    const r = await render(
+      <BackendPackCard {...NOOP} pack={stale({ updateAvailable: true }) as never} />,
+    );
+    const btn = r.container.querySelector<HTMLButtonElement>(
+      '[data-testid="backend-update-whispercpp-cpu-linux-x64"]',
+    );
+    assert.equal(btn === null, false, `已安装分支没有「更新」出口 → ${text(r.container)}`);
+    assert.equal(
+      btn?.disabled,
+      false,
+      '按钮在但点不动，等于没有出口 —— 用户那张卡的卸载就是这么灰的',
+    );
+    r.unmount();
+  });
+
+  test('★ 那张卡的卸载确实是灰的 —— 所以「更新」是唯一出口，不是锦上添花', async () => {
+    const r = await render(
+      <BackendPackCard {...NOOP} pack={stale({ updateAvailable: true }) as never} />,
+    );
+    const remove = r.container.querySelector<HTMLButtonElement>(
+      '[data-testid="backend-remove-whispercpp-cpu-linux-x64"]',
+    );
+    assert.equal(remove === null, false, '卸载按钮不见了，这条前提就不成立了');
+    assert.equal(
+      remove?.disabled,
+      true,
+      'cpu 包的卸载若不再禁用，本组用例的前提（"无路可走"）就变了，请重新判断',
+    );
+    r.unmount();
+  });
+
+  test('★ daemon 没说话（字段缺失）时不渲染 —— 不许替它说"你装的就是最新版"', async () => {
+    const r = await render(<BackendPackCard {...NOOP} pack={stale() as never} />);
+    assert.equal(
+      r.container.querySelector('[data-testid="backend-update-whispercpp-cpu-linux-x64"]') === null,
+      true,
+      '老 daemon 不发这个字段，界面却渲染了一个"要更新/不用更新"的结论',
+    );
+    r.unmount();
+  });
+
+  test('★ `updateAvailable: false`（装的就是这一版）同样不渲染', async () => {
+    const r = await render(
+      <BackendPackCard {...NOOP} pack={stale({ updateAvailable: false }) as never} />,
+    );
+    assert.equal(
+      r.container.querySelector('[data-testid="backend-update-whispercpp-cpu-linux-x64"]') === null,
+      true,
+      '装的就是目录里这一版，还提示"更新"会把用户推去做一次无谓的下载',
+    );
+    r.unmount();
+  });
+
+  test('★ 没装的包不受影响：走的仍是「安装」那条分支', async () => {
+    const r = await render(
+      <BackendPackCard
+        {...NOOP}
+        pack={pack({ id: 'x', installed: false, updateAvailable: true }) as never}
+      />,
+    );
+    assert.equal(
+      r.container.querySelector('[data-testid="backend-update-x"]') === null,
+      true,
+      '未安装的包上冒出「更新」——那句话没有意义',
+    );
+    assert.equal(
+      r.container.querySelector('[data-testid="backend-install-x"]') === null,
+      false,
+      '安装按钮被顺手弄丢了',
+    );
+    r.unmount();
+  });
+});
+
+/**
  * ## T-165 ②「推荐」徽章只在真的有得选时才出现
  *
  * daemon 算的是 `recommended = applicable && pack.backend === selectedBackend`。
