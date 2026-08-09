@@ -1015,3 +1015,88 @@ setProgress: (p) => { …; this.emit('job.progress', job); }  // ← 只有它�
 - 未碰 `:10000` / `/root/data-memo` / 机器级指针；未用 `pkill`（daemon 走
   `/api/daemon/shutdown` 关停）；未建改删 release；未动他路在途文件
   （`packages/downloader/**`、`docs/**`、`e2e-browser.*` 等）。
+
+---
+
+## [2026-08-09 22:40] e2e-import：给 `installing` 一个载体 DONE（4 件里做了 2 件，另 2 件明说没做）
+
+交付: `packages/downloader/src/queue.ts`、`apps/daemon/src/http/rest/state.ts`、
+`apps/web/{features/models/sse.ts,lib/stores/progress.store.ts,features/tasks/api.ts,
+features/recorder/RecorderPage.tsx}`、两份 i18n。提交 `7a48b3b`。
+
+### A. 加了载体之后，SSE 流里五个 step 的实际顺序与时刻
+
+**用真 SSE 流量的**（起 daemon → 接 `/api/events` → 拉 `vad/silero-vad-ggml` 0.9 MB），
+不是单测：
+
+```
+    ms   event         step          pct
+    73   job.created   -             -
+    73   job.state     -             -        (running)
+  5331   job.progress  resolving     0
+ 15811   job.progress  resolving     0
+ 23143   job.progress  downloading   null     ← 阶段公告（新）
+ 23393   job.progress  downloading   0
+ 27096…28279  job.progress downloading 0.017→0.59
+ 28279   job.progress  verifying     null     ← 阶段公告（新）
+ 28284   job.progress  verifying     1
+ 28284   job.progress  installing    null     ← **以前根本不存在**
+ 28290   job.state     -             (succeeded)
+ 28290   job.done      -             -
+```
+
+**两条判据都成立**：
+
+- `installing` **出现了**，且 `pct=null`（没有编百分比）。
+- **最后一个 `job.progress` = 28284ms（installing） < `job.done` = 28290ms**
+  —— **没有任何进度事件晚于终态**，顺序修复覆盖到了新事件。
+  （对照：修之前那位量到的是 `job.done` 23836ms、`job.progress verifying` 24029ms，晚 193ms。）
+
+还能看到设计生效的痕迹：每个阶段都是**先到未节流的公告（null）、再到节流的数值**
+（23143 null → 23393 0；28279 null → 28284 1）。
+
+⚠️ **一处异常，如实报**：`resolving` **没有产生阶段公告**（只有 5331ms 那条 pct=0 的
+节流进度）。`startModelPull` 确实调了 `ctx.setStep('resolving')`，`job.step` 初值是
+`null` 所以"变化"判定应当为真，而 `downloading`/`verifying`/`installing` 三个都正常发出。
+**成因 `UNKNOWN`** —— 我没有把它查到底就停了（预算），也没有编一个解释。
+影响面小（resolving 阶段本来就有节流进度在走，界面不会空白），但它是个真缺口，建议后续查。
+
+### B. 界面在安装阶段现在显示什么
+
+- 事件：`step='installing'`、`pct=null`、字节计数一并 null
+  （留着上一阶段的字节，界面会继续画一条"574MB/574MB"的满条，看起来像还在下载）。
+- `features/models/sse.ts` 以前把 `pct: null` **兜底成 0** —— 于是"正在安装"会渲染成
+  **一条停在 0% 的进度条**，一个看起来精确的假话。现在原样传 `null`，
+  `progress.store` 的 `progress` 改成 `number | null`。
+  ⚠️ 改成可空之后**编译器当场逼出两个消费者**（`RecorderPage.tsx`、`tasks/api.ts`），
+  都按"不确定"处置了 —— 这也是这次唯一算得上"守卫"的东西：类型让漏网无处可去。
+- 文案：`jobToast.installingHint` 原文是「正在解压并写入模型目录，**马上就好**。」
+  / 「…, **almost done**.」—— **两处都是没量过的时长承诺**，已删。
+  现在：「正在解压并写入模型目录。这一步没有进度刻度，请稍候。」/
+  「Unpacking and writing to the models folder. This step has no progress scale — please wait.」
+
+**契约没动**：`JobProgressEvent.pct` 本来就是 `number | null`，注释原话
+「Null when the step genuinely cannot report a fraction.」—— 载体一直在，只是没人用。
+
+### C. 没做的两件（明说）
+
+1. **`unpack.ts` 注释与实现互相矛盾那笔债 —— 没做。**
+   `[未核实]` 我**连打开都没打开**，与上一位同样标 `UNKNOWN`。不是判断它不重要
+   （§14 同族、一句让人停止追问的话），是预算到这里已经不够再开一条线，
+   而**半读一遍再下结论**正是这一族毛病本身。留给下一位，或我下一轮。
+2. **`OPENMEMO_TIMING=1` 接到「每个组件都下一遍」那条腿 —— 没做。**
+   那条腿的主人正在查 `whispercpp-*` 全族装不上，Manager 已提示别抢那个文件。
+   我判断此刻去动它**收益不确定、冲突确定**。82MB / 574MB 在 Windows 上的耗时
+   仍然 `[未量]` —— 所以本轮**一个时长数字都没写进产品**（见 §B）。
+
+### D. 门禁
+
+`tsc -b` 0、`build:safe` 0、`check:orphans` 干净、
+`@openmemo/downloader` 40/0、`apps/web` 136+10+312 全 0 fail、
+我的 8 个文件 `eslint` / `format:check` 通过。
+
+⚠️ 全量 `pnpm -r test`（基线 1605）**没有量**：脏树提示显示 Windows 搬迁那一路正在动
+`apps/daemon/src/storage/*` 与 `http/rest/storage.ts`。按那条提示自己的规矩 ——
+**在那里绿也不能证明 master 绿**。标 `[未验证]`。
+
+⚠️ §12：本次提交后**按 hash（`7a48b3b`）复核**而不是 HEAD —— 8 个文件全在、且都是我的。
