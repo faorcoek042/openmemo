@@ -99,8 +99,11 @@ F1–F5 各有一条端到端腿(用预编译包、走真实 HTTP、三平台各
 `package.json` 仍是 `UNLICENSED`(ADR-002);仓库根目录有一份 `LICENSE` 说明授权状态,
 预编译包内另带 `THIRD-PARTY-NOTICES`。(~~无 LICENSE 文件~~ ~~一旦要分发就是硬阻断~~
 —— 这两句 2026-08-08 起不再为真,订正见 [`docs/design/D-19-user-doc-provenance.md`](docs/design/D-19-user-doc-provenance.md)。)
-ffmpeg 与 yt-dlp 是 **GPL-3.0-or-later**,但**它们的字节从不经过我们**:由你的机器直连上游取,
-我们只以命令行方式调用 —— 所以发预编译包不触发 GPL。逐条依据见附录 A 或 `pnpm license:report`。
+**ffmpeg** 是 **GPL-3.0-or-later**,而**它的字节从不经过我们**:由你的机器直连上游取,
+我们只以命令行方式调用 —— 所以发预编译包不触发 GPL。
+**yt-dlp 是 [Unlicense](https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE)(公共领域),与 GPL 无关**
+(此处此前误写成 GPL-3.0-or-later,2026-08-09 读上游 LICENSE 原文订正)。
+逐条依据见附录 A 或 `pnpm license:report`。
 
 ## 更多文档
 
