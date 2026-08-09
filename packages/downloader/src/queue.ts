@@ -228,7 +228,12 @@ export class DownloadQueue extends EventEmitter<DownloadQueueEvents> {
       if (entry.controller.signal.aborted && job.state !== 'failed') {
         this.forceState(job, 'cancelled');
       } else {
-        const err = e as { code?: string; message?: string; retryable?: boolean };
+        const err = e as {
+          code?: string;
+          message?: string;
+          retryable?: boolean;
+          messageZh?: string;
+        };
         const code = (err.code ?? 'INTERNAL') as NonNullable<DownloadJob['error']>['code'];
         const detail = err.message ?? String(e);
         /*
@@ -250,7 +255,15 @@ export class DownloadQueue extends EventEmitter<DownloadQueueEvents> {
         job.error = {
           code,
           message: detail,
-          messageZh: zh && code !== 'INTERNAL' ? zh : detail,
+          /*
+           * ★ 抛出方给了 `messageZh` 就**优先用它**，码表退居兜底。
+           *   码表保证"任何码都有中文"，但它是「一个码一句固定的话」——
+           *   于是 `PROVIDER_UNREACHABLE` 永远只说「下载源无法访问」，
+           *   把主机名、失败在哪一步、下一步能做什么**全盖掉了**
+           *   （`[用户真机 2026-08-08]` 看到的就是这句 + 一个 `(1/3)`）。
+           *   现场信息只有抛出方有，所以由它给；码表仍然兜住没人给文案的那些码。
+           */
+          messageZh: err.messageZh ?? (zh && code !== 'INTERNAL' ? zh : detail),
           // 抛出方没说 retryable 时，按码本查 —— 而不是一律当成"不可重试"。
           // 说错了的后果是可重试的失败（超时/限流/换源可救的校验失败）拿不到重试入口。
           retryable: err.retryable ?? ERROR_RETRYABLE[code as ErrorCode] ?? false,

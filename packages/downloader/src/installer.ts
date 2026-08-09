@@ -191,6 +191,26 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
       official: t.official,
     }));
 
+    /*
+     * ★ 逐步打点（`OPENMEMO_TIMING=1` 打开）。
+     *
+     * 用户 `[真机 2026-08-09]`：「其他组件都能下，只是卡在验证校验值那一步」，
+     * 且**连 2.3 MB 的也卡** —— 2.3 MB 算 sha256 是毫秒级，
+     * **所以慢的一定不在哈希上**。而它最终会完成，**所以是"久"不是"死"**。
+     * 也就是说时间花在「校验之后、完成之前」的某一步，而界面全程不吭声。
+     *
+     * 在拿到每一步的真实毫秒数之前，任何修法都是猜。打点只加观测、不改行为。
+     */
+    const TIMING = process.env['OPENMEMO_TIMING'] === '1';
+    const t0 = Date.now();
+    let tMark = t0;
+    const mark = (label: string): void => {
+      if (!TIMING) return;
+      const now = Date.now();
+      console.log(`[timing] ${f.name} · ${label}: ${now - tMark}ms (累计 ${now - t0}ms)`);
+      tMark = now;
+    };
+
     const res = await downloadFile({
       sha256: f.sha256,
       sizeBytes: f.sizeBytes,
@@ -217,7 +237,9 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
     bytesTransferred += res.bytesTransferred;
     completedBefore += f.sizeBytes;
 
+    mark('下载+校验（downloadFile 内含 sha256 与比对）');
     const linked = await store.linkByName(target.kind, f.sha256, f.name);
+    mark('硬链接 linkByName');
 
     // Archives are expanded only after their digest has been verified — never unpack
     // unverified bytes.
@@ -241,6 +263,7 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
       try {
         await fs.rm(tmpDir, { recursive: true, force: true });
         await unpackArchive(linked, tmpDir, f.unpack, { signal: opts.signal });
+        mark('解包 unpackArchive');
         // Replace any previous (possibly incomplete) install atomically.
         await fs.rm(finalDir, { recursive: true, force: true });
         await fs.mkdir(path.dirname(finalDir), { recursive: true });
@@ -250,6 +273,7 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
          */
         const source = await collapseRedundantTopLevel(tmpDir, path.basename(finalDir));
         await fs.rename(source, finalDir);
+        mark('落位 rename');
         if (source !== tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
         expandedTo = finalDir;
       } catch (e) {
@@ -306,6 +330,7 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
      */
     if (!f.unpack && f.role === 'binary' && process.platform !== 'win32') {
       await fs.chmod(linked, 0o755);
+      mark('chmod');
     }
 
     const portable = toPortableRecord(linked, store.root);
@@ -325,6 +350,9 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
     opts.onFileDone?.(rec);
   }
 
+  if (process.env['OPENMEMO_TIMING'] === '1') {
+    console.log(`[timing] install() 整个返回前 —— 循环外的收尾已完成`);
+  }
   return { id: target.id, files: records, totalBytes, bytesTransferred, installedTo: expandedTo };
 }
 

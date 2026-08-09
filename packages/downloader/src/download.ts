@@ -82,16 +82,52 @@ export interface DownloadResult {
 }
 
 export class DownloadError extends Error {
+  /**
+   * 中文文案。**给了就优先于 `ERROR_MESSAGES_ZH` 的码表。**
+   *
+   * 为什么需要它：码表是「一个码一句固定的话」，于是
+   * `PROVIDER_UNREACHABLE` 永远只会说「下载源无法访问」——
+   * `[用户真机 2026-08-08]` 用户看到的就是这句 + 一个 `(1/3)`，
+   * **既不知道是哪台主机、也不知道失败在哪一步、更不知道下一步能做什么**。
+   * 码表本身没错（它保证任何码都有中文），但它**盖掉了现场**。
+   * 所以现场信息由抛出方直接给，码表退化成兜底。
+   */
+  readonly messageZh?: string;
+
   constructor(
     message: string,
     readonly code: string,
     readonly retryable: boolean,
     readonly provider?: string,
+    messageZh?: string,
   ) {
     super(message);
     this.name = 'DownloadError';
+    if (messageZh !== undefined) this.messageZh = messageZh;
   }
 }
+
+/** 只取主机名给用户看 —— 完整 URL 又长又带签名参数，帮不上忙还吓人。 */
+export function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * 「配代理」这句提示。
+ *
+ * `[本机实测 2026-08-09]` 起本地 CONNECT 代理、经产品自己的
+ * `PATCH /api/settings/proxy` 打开，再走正常安装通道下载：
+ * 代理**确实收到** `CONNECT raw.githubusercontent.com:443`，任务 `succeeded`；
+ * 而对照组（不配代理）代理命中 0 次。
+ * 也就是说这句话**有实测背书**，不是安慰话 —— 组件与模型的下载真的走用户配的代理。
+ */
+export const PROXY_HINT_ZH = '如果你在网络受限的地区，可在「设置 → 代理」里填一个代理再试。';
+export const PROXY_HINT_EN =
+  'If you are on a restricted network, set a proxy under Settings → Proxy and retry.';
 
 const DEFAULT_STALL_TIMEOUT_MS = 30_000;
 
@@ -204,10 +240,12 @@ export async function downloadFile(opts: DownloadOptions): Promise<DownloadResul
   // so the UI can offer "all sources failed" rather than blaming one mirror.
   if (lastError && opts.sources.length > 1) {
     throw new DownloadError(
-      `All ${opts.sources.length} sources failed; last error from ${lastError.provider ?? 'unknown'}: ${lastError.message}`,
+      `All ${opts.sources.length} source(s) failed after ${attempts} attempt(s); last error from ${lastError.provider ?? 'unknown'}: ${lastError.message}. ${PROXY_HINT_EN}`,
       'INTEGRITY_ALL_SOURCES_FAILED',
       false,
       lastError.provider,
+      `${opts.sources.length} 个下载源都失败了（共重试 ${attempts} 次）。` +
+        `最后一次来自 ${lastError.provider ?? '未知来源'}：${lastError.messageZh ?? lastError.message}`,
     );
   }
   throw (
@@ -244,7 +282,32 @@ async function downloadFromSource(
     provider: source.provider,
   });
 
-  const info = await probeRemoteFile(source.url, { signal: opts.signal, token: opts.token });
+  /*
+   * ★ 探大小这一步**单独兜住并点名**。
+   *
+   * 它与真正的下载**不是同一种请求**：`GET` + `Range: bytes=0-0` + `redirect:'manual'`
+   * （再自己跟最多 5 跳）。也就是说它**比真正的下载多两个可失败面**。
+   * `[本机实测 2026-08-08]` 有一次它抛 `fetch failed`，而同一个 URL 用 curl 与裸 fetch
+   * 都能 2.5s 下完 —— 我**没能再现**，所以那次的成因仍是 `[未验证]`。
+   *
+   * 正因为没定罪，才更要让它在出错时**自报家门**：下次用户再撞到，
+   * 消息里会直接写着"卡在探测文件大小"，而不是笼统的"下载源无法访问" ——
+   * 那时我们就有证据，不用再猜。
+   */
+  let info: Awaited<ReturnType<typeof probeRemoteFile>>;
+  try {
+    info = await probeRemoteFile(source.url, { signal: opts.signal, token: opts.token });
+  } catch (e) {
+    if (opts.signal?.aborted) throw e;
+    const de = toDownloadError(e, source.provider);
+    throw new DownloadError(
+      `Failed while probing file size at ${hostOf(source.url)} (before any bytes were transferred): ${de.message}. ${PROXY_HINT_EN}`,
+      de.code,
+      de.retryable,
+      source.provider,
+      `连接 ${hostOf(source.url)} 失败：卡在**探测文件大小**这一步，还没开始传字节。${PROXY_HINT_ZH}`,
+    );
+  }
   const total = info.sizeBytes ?? opts.sizeBytes ?? 0;
   if (total <= 0) {
     throw new DownloadError(
