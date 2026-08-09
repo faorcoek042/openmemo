@@ -135,6 +135,37 @@ function auditBinaryPayloadCoverage() {
     );
 }
 
+/**
+ * ★ 本次修复新增守卫：C 类（vendor/manifests/*.json）里 license 仍是 UNKNOWN 的比例。
+ *
+ * ⚠️ 同样刻意用 exit 1，而不是只打印 —— 理由和上面 auditBinaryPayloadCoverage() 一样：
+ *   ADR-002 v2「恒定退出码 0」管的是"某个许可证需要人工留意"这类判断题；
+ *   而"collectManifests() 到底有没有读进去真实数据"是事实题，不该被那条豁免盖住。
+ *
+ * 阈值定在 10%：修复前的 bug 是「7 份文件、100% 条目 UNKNOWN」——
+ *   collectManifests() 从没真正按 MANIFEST_SHAPES 逐条读进去过，无论谁、什么时候，
+ *   只要这个函数又退回"整份文件当一条 item"的老路，比例会重新冲到 100%，远超 10%。
+ *   10% 的余量是留给"某一条真实数据里许可证字段确实没填"这种个例的，
+ *   不是留给"结构没读对"的 —— ⚠️ 不能把这个阈值设成能放过"全部 UNKNOWN"的数字。
+ *
+ * N/A（llm-providers.json 的远程 API 服务商）不计入分母：那不是"不知道"，
+ * 是"这类条目本来就没有许可证"，混进分母会把阈值的意义搅浑。
+ */
+function auditManifestLicenseCoverage(manifests) {
+  const applicable = manifests.filter((e) => e.license !== 'N/A');
+  if (applicable.length === 0) return null;
+  const unknown = applicable.filter((e) => e.license === 'UNKNOWN');
+  const ratio = unknown.length / applicable.length;
+  const THRESHOLD = 0.1;
+  if (ratio <= THRESHOLD) return null;
+  return {
+    ratio,
+    unknownCount: unknown.length,
+    total: applicable.length,
+    names: unknown.map((e) => e.name),
+  };
+}
+
 function flagsFor(license) {
   const text = String(license ?? 'UNKNOWN');
   return WATCHLIST.filter((w) => w.match.test(text)).map((w) => w.label);
@@ -228,6 +259,62 @@ function collectPackages() {
   return { error: null, entries };
 }
 
+/**
+ * ⚠️ vendor/manifests/*.json 每个文件的顶层数组字段名不一样，字段里许可证的取法也不一样。
+ * 之前的 bug 就是把这件事想当然了：不管文件形状，一律 `Array.isArray(json) ? json : [json]`——
+ * 而这 7 份文件全都是顶层对象、不是数组，于是永远把"整份文件"当成一条假 item，
+ * `item.license` 自然永远读不到，逐条 fallback 成 'UNKNOWN'。7 份文件、100% UNKNOWN，
+ * 没有一次真正读进去过任何一条真实数据 —— 但脚本退出码是 0，报告照常生成，没人喊。
+ *
+ * 这里改成显式登记表：新增 manifest 文件必须先在这里登记形状，登记不到的文件
+ * 会被 collectManifests() 当场报错（见下方 UNRECOGNIZED 分支），而不是被悄悄猜成任意形状。
+ */
+const MANIFEST_SHAPES = {
+  'backends.json': {
+    arrayKey: 'packs',
+    version: (item) => item.engineVersion,
+    license: (item) => item.license?.id,
+    licenseUrl: (item) => item.license?.url,
+  },
+  'sqlite-ext.json': {
+    arrayKey: 'packs',
+    version: (item) => item.engineVersion,
+    license: (item) => item.license?.id,
+    licenseUrl: (item) => item.license?.url,
+  },
+  'components.json': {
+    arrayKey: 'components',
+    version: (item) => item.pinnedVersion,
+    license: (item) => item.provenance?.license,
+    licenseUrl: (item) => item.provenance?.licenseUrl,
+  },
+  'models-whisper.json': {
+    arrayKey: 'models',
+    version: (item) => item.source?.revision,
+    license: (item) => item.license?.id,
+    licenseUrl: (item) => item.license?.url,
+  },
+  'models-llm.json': {
+    arrayKey: 'models',
+    version: (item) => item.source?.revision,
+    license: (item) => item.license?.id,
+    licenseUrl: (item) => item.license?.url,
+  },
+  'models-asr-support.json': {
+    arrayKey: 'models',
+    version: (item) => item.source?.revision,
+    license: (item) => item.license?.id,
+    licenseUrl: (item) => item.license?.url,
+  },
+  'llm-providers.json': {
+    arrayKey: 'providers',
+    // 远程 API 服务商（Claude / OpenAI 等），不分发代码或二进制 —— 许可证概念本来就不适用，
+    // 不是"忘了填"。与 scripts/dependency-audit.mjs 对这份文件的排除口径一致。
+    // 用 'N/A' 而不是 'UNKNOWN'：前者是"问题不存在"，后者是"不知道答案"，两件事不能混在一起统计。
+    notApplicable: '远程 API 服务商，不分发代码/二进制，许可证不适用',
+  },
+};
+
 /** C 类：vendor/manifests/*.json 的 license 字段。 */
 function collectManifests() {
   const dir = join(ROOT, 'vendor', 'manifests');
@@ -235,6 +322,21 @@ function collectManifests() {
 
   const out = [];
   for (const f of readdirSync(dir).filter((f) => f.endsWith('.json') && f !== 'schema.json')) {
+    const shape = MANIFEST_SHAPES[f];
+    if (!shape) {
+      // 没登记过形状的新文件 —— 之前的 bug 就是靠"不管形状、一律硬吞"才发生的，
+      // 这次不重蹈覆辙：宁可显式报错，逼人来登记，也不要猜一个形状然后继续吐假 UNKNOWN。
+      out.push({
+        klass: 'C',
+        name: f,
+        version: 'UNKNOWN',
+        license: 'UNKNOWN',
+        flags: ['清单结构未登记'],
+        note: `collectManifests() 不认识 ${f} 的结构，需要先在 MANIFEST_SHAPES 里补一条`,
+      });
+      continue;
+    }
+
     let json;
     try {
       json = JSON.parse(readFileSync(join(dir, f), 'utf8'));
@@ -249,14 +351,45 @@ function collectManifests() {
       });
       continue;
     }
-    for (const item of Array.isArray(json) ? json : [json]) {
+
+    const items = json[shape.arrayKey];
+    if (!Array.isArray(items)) {
       out.push({
         klass: 'C',
-        name: item.component ?? f,
-        version: item.version ?? 'UNKNOWN',
-        license: item.license ?? 'UNKNOWN',
-        note: item.license_note ?? '',
-        flags: flagsFor(item.license),
+        name: f,
+        version: 'UNKNOWN',
+        license: 'UNKNOWN',
+        flags: ['清单结构对不上登记表'],
+        note: `期望 ${f} 顶层有数组字段 \`${shape.arrayKey}\`，实际没有 —— MANIFEST_SHAPES 里的登记可能过期了`,
+      });
+      continue;
+    }
+
+    if (shape.notApplicable) {
+      // 不计入许可证 / UNKNOWN 统计：这不是"不知道"，是"这类条目本来就没有许可证"。
+      for (const item of items) {
+        out.push({
+          klass: 'C',
+          name: item.id ?? item.displayName ?? f,
+          version: '',
+          license: 'N/A',
+          note: shape.notApplicable,
+          flags: [],
+          notApplicable: true,
+        });
+      }
+      continue;
+    }
+
+    for (const item of items) {
+      const license = shape.license(item) ?? 'UNKNOWN';
+      out.push({
+        klass: 'C',
+        name: item.id ?? item.displayName ?? f,
+        version: shape.version(item) ?? 'UNKNOWN',
+        license,
+        note: shape.licenseUrl?.(item) ?? '',
+        flags: flagsFor(license),
       });
     }
   }
@@ -381,6 +514,22 @@ if (coverageGaps.length > 0) {
   process.exit(1);
 }
 console.log(`  ✔ 二进制 payload 许可证覆盖完整（onlyBuiltDependencies 逐个核对过）`);
+
+const manifestGap = auditManifestLicenseCoverage(manifests);
+if (manifestGap) {
+  console.error('');
+  console.error(
+    `✘ C 类（vendor/manifests/）许可证覆盖不足：${manifestGap.unknownCount}/${manifestGap.total} 条仍是 UNKNOWN` +
+      `（${(manifestGap.ratio * 100).toFixed(1)}% > 10% 阈值）`,
+  );
+  for (const n of manifestGap.names) console.error(`    - ${n}`);
+  console.error(
+    '  修法：先确认 MANIFEST_SHAPES 里对应文件的登记（arrayKey / license 取法）是否正确；',
+  );
+  console.error('        排除结构问题后，若是个别条目真的缺许可证字段，去源头 manifest 补上。');
+  process.exit(1);
+}
+console.log(`  ✔ C 类许可证覆盖充分（UNKNOWN 占比 ≤ 10%，N/A 的远程 API 服务商条目不计入分母）`);
 
 // ADR-002 v2：报告模式，恒定成功退出。
 process.exit(0);

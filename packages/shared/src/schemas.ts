@@ -418,6 +418,8 @@ export const BackendPackSchema = z
     schemaVersion: z.literal(1),
     id: z.string().min(1),
     engine: z.enum(['whisper.cpp', 'llama.cpp', 'sherpa-onnx', 'ffmpeg', 'yt-dlp', 'sqlite-ext']),
+    // Not guaranteed to equal ComponentStatus.pinnedVersion for the same id — see the
+    // doc comment on BackendPack.engineVersion in backends.ts for why.
     engineVersion: z.string().min(1),
     ggmlAbi: z.string().nullable(),
     backend: BackendSchema,

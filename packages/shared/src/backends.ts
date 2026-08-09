@@ -85,6 +85,26 @@ export interface BackendPack {
   /** e.g. "whispercpp-vulkan-win-x64". */
   id: string;
   engine: Engine;
+  /**
+   * The engine build's OWN self-reported version string — whatever identifier scheme
+   * that upstream project uses, taken as-is (may be a semver tag, or for autobuild-style
+   * artifacts like BtbN's FFmpeg-Builds, a git-describe string such as
+   * `n8.1.2-34-g9b6c8969e0`).
+   *
+   * ⚠️ NOT guaranteed to equal `ComponentStatus.pinnedVersion` for the same logical
+   * component, even though the two names sound like synonyms. Checked programmatically
+   * across all 23 overlapping ids between backends.json/sqlite-ext.json and
+   * components.json (2026-08-09): 3 differ, all `media-tools-*` — because
+   * `pinnedVersion` there is sourced from the release/tag we actually pinned when
+   * downloading (for BtbN autobuilds, a date-stamped tag like
+   * `autobuild-2026-07-31-14-10`), which is a *different identifier scheme* than what
+   * the binary reports about itself via `engineVersion`. There is no derivable rule
+   * that converts one into the other for that case, so no consistency guard was built —
+   * see `ffmpegStableOnly.test.ts` for the one case (`media-tools-macos-arm64`) where
+   * they happen to carry the same underlying version and a guard was worth pinning.
+   * Do not assume the two fields agree; they answer different questions ("what does the
+   * engine call itself" vs "what did we pin when we fetched it").
+   */
   engineVersion: string;
   /**
    * ggml ABI version this pack was built against. R-02 verified the soname as 0.15.1
@@ -175,6 +195,7 @@ export interface InstalledBackendPack {
   schemaVersion: 1;
   id: string;
   engine: Engine;
+  /** See {@link BackendPack.engineVersion} — same field, same caveat about `pinnedVersion`. */
   engineVersion: string;
   backend: Backend;
   installedAt: string;

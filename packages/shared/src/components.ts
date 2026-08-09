@@ -82,7 +82,17 @@ export interface ComponentStatus {
   /** "backend-pack" | "model" | "sqlite-ext" | "media-tool" */
   category: string;
 
-  /** Version pinned in the git-committed manifest. Always known. */
+  /**
+   * Version pinned in the git-committed manifest. Always known.
+   *
+   * ⚠️ For components that also appear as a backend/sqlite-ext pack, this is NOT
+   * guaranteed to equal that pack's `engineVersion` (see the doc comment there for the
+   * full explanation and the 2026-08-09 count: 3 of 23 overlapping ids differ, all
+   * `media-tools-*`). This field records the release/tag identifier we actually pinned
+   * when fetching the artifact; `engineVersion` records what the binary itself reports
+   * as its version. Same underlying artifact, two independently-sourced facts about
+   * it — not synonyms, despite the similar names.
+   */
   pinnedVersion: string;
   /** Version actually present on this machine; null when not installed. */
   installedVersion: string | null;
