@@ -145,6 +145,6 @@ describe('runtime 布局解析：读安装器真正写下的位置', () => {
       `引擎二进制已装在 by-name/backend 里，自检却说它没装：${r.missing.join(', ')}`,
     );
     assert.equal(r.missing.includes('asr-model'), true);
-    assert.equal(r.remediation.action, 'install_model');
+    assert.equal(r.remediation?.action, 'install_model');
   });
 });

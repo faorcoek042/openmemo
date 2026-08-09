@@ -915,7 +915,15 @@ export interface SelfTestBlocked {
   readonly missing: string[];
   readonly message: string;
   readonly messageZh: string;
-  readonly remediation: Remediation;
+  /**
+   * 可执行的下一步。**`null` = 没有任何页面能解决它**，不是"忘了填"。
+   *
+   * ⚠️ 典型 `null` 场景：whisper 包**已经装了**，只是用户点的是别的包
+   * （libsimple / ffmpeg / yt-dlp）的自检。这时"要安装的东西"根本不存在，
+   * 给一句「去安装后端包」照着做会发现无事可做 —— 那正是本轮要治的那种引导。
+   * 去处写在 `messageZh` 里（"请到 <whisper 包> 那张卡片上点"）。
+   */
+  readonly remediation: Remediation | null;
   readonly resolved: { whisperCli: string | null; model: string | null; audio: string | null };
   /** 请求方点名要测的包（`{id}`）。没点名时 `null`。 */
   readonly requestedPackId: string | null;
@@ -1080,6 +1088,16 @@ export async function runBackendSelfTest(
     ? JFK_TRANSCRIPT
     : (env['OPENMEMO_SELFTEST_TRANSCRIPT'] ?? '').toLowerCase();
 
+  /*
+   * ★ 不钉 packId 再解析一次：回答"whisper-cli 是不是装在**别的**包里"。
+   *   这只用于**措辞与引导**，绝不参与 passed 判定 —— 钉住 packId 那条硬过滤
+   *   一个字没动（ADR-003 决策 3：不拿别的包的二进制冒充这张卡片的结果）。
+   */
+  const whisperElsewhere =
+    requestedPackId !== null && whisperCli === null
+      ? ((await resolveBackendTool(layout.modelsRoot, whisperCliName()))?.packId ?? null)
+      : null;
+
   const missing: string[] = [];
   if (whisperCli === null) missing.push('whisper-cli');
   if (model === null) missing.push('asr-model');
@@ -1095,21 +1113,57 @@ export async function runBackendSelfTest(
       message: `self-test cannot run: missing ${missing.join(', ')}`,
       messageZh:
         `自检无法运行，缺少：${missing.join('、')}。` +
+        /*
+         * ★ 主语必须是**行为方**，不能是 `requestedPackId`。
+         *
+         * 这句原本是「已安装的 ${'${requestedPackId}'} 包里没有 whisper-cli」——
+         * 语义是"我不拿它冒充"，但**读起来是"这个包该带 whisper-cli 却没带"**。
+         * `[用户实测 2026-08-09]` 他点了 `libsimple-linux-x64` 的自检，
+         * 读完的反应是「为什么连开发环境都没有 whisper？是不是配置改错了？」——
+         * **他读得对**：那句话的主语位置上站着 libsimple。
+         * 而实际什么都没坏：whisper 在盘上、安装记录 ok、指着它跑 `passed:true`。
+         *
+         * 换成行为方作主语之后，它说的是"我拒绝做什么"，而不是"谁缺了什么"。
+         */
         (requestedPackId !== null && whisperCli === null
-          ? `已安装的 ${requestedPackId} 包里没有 ${whisperCliName()} —— ` +
-            '不会拿别的包的二进制去跑再把结果记到它头上（那是发明证据）。'
+          ? `不会用别的包里的 ${whisperCliName()} 去跑，再把结果记到 ${requestedPackId} 这张卡片上` +
+            '（那是发明证据）。' +
+            (whisperElsewhere !== null
+              ? `${whisperCliName()} 装在 ${whisperElsewhere} 里 —— 要跑自检，请到那张卡片上点。`
+              : '')
           : '') +
         '自检必须跑一次真实推理（ADR-003 决策 3），缺前提时只报 blocked，不会返回伪造的"通过"。',
-      remediation: {
-        action: missing.includes('asr-model') ? 'install_model' : 'install_backend',
-        params: {
-          missing: missing.join(','),
-          runtimesRoot: layout.runtimesRoot,
-          modelsRoot: layout.modelsRoot,
-        },
-        labelZh: missing.includes('asr-model') ? '去安装 ASR 模型' : '去安装后端包',
-        label: missing.includes('asr-model') ? 'Install an ASR model' : 'Install a backend pack',
-      },
+      /*
+       * ★ 引导要指向**真的能解决问题**的地方（用户 2026-08-09 的裁决）。
+       *   whisper 包已经装了、只是**这张卡片**没有那个二进制时，
+       *   给「去安装后端包」是错的：照着做会发现无事可做。
+       *   这种情况下没有"要安装的东西"，只有"点错了卡片" ——
+       *   所以不发明一个动作，把去处写进上面那句话里。
+       */
+      remediation: missing.includes('asr-model')
+        ? {
+            action: 'install_model' as const,
+            params: {
+              missing: missing.join(','),
+              runtimesRoot: layout.runtimesRoot,
+              modelsRoot: layout.modelsRoot,
+            },
+            labelZh: '去安装 ASR 模型',
+            label: 'Install an ASR model',
+          }
+        : whisperElsewhere === null
+          ? {
+              action: 'install_backend' as const,
+              params: {
+                missing: missing.join(','),
+                runtimesRoot: layout.runtimesRoot,
+                modelsRoot: layout.modelsRoot,
+              },
+              labelZh: '去安装后端包',
+              label: 'Install a backend pack',
+            }
+          : // whisper 已装在别的包里 —— 没有"要安装的东西"，只有"点错了卡片"
+            null,
       resolved: { whisperCli, model, audio },
       requestedPackId,
     };

@@ -291,7 +291,13 @@ export function createRuntimeRoutes(deps: RuntimeRoutesDeps): {
           // 409 而不是 501：这不是"没实现"，是"前提不满足"，且给得出补救动作。
           sendError(res, 409, 'SELF_TEST_BLOCKED', result.message, result.messageZh, {
             retryable: true,
-            remediation: result.remediation,
+            /*
+             * `null` → **不下发这个字段**，前端就不会渲染一个按钮。
+             * 这不是丢信息：`null` 的含义正是"没有任何页面能解决它"
+             * （whisper 已装、只是用户点错了卡片），去处已经写在 messageZh 里。
+             * 硬凑一个「去安装后端包」才是丢信息 —— 照做会发现无事可做。
+             */
+            remediation: result.remediation ?? undefined,
             details: { missing: result.missing, resolved: result.resolved },
           });
           return true;
