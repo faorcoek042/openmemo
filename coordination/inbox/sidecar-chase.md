@@ -157,3 +157,82 @@ t= 11239ms  job.state     state=succeeded
 - 未碰 `:10000`、`/root/data-memo`、机器级指针；未建/改/删 release；未用 `pkill`；
   端口与收尾用的是刚收敛的共享 `assertPortFree` / `killTree`。
 - **`packages/downloader` 我一行没改**（②/③ 未做），故未撞到你提的那条 Windows 已知红。
+
+## [2026-08-09 19:23] T-186 三条裁决执行 —— ③先答、②已定性、①已落地
+
+### ③ 先答：**`v0.5.0` 含那条 SSE 修复 ⇒ 用户那条没被闭掉，仍是 `UNKNOWN`**
+
+按你要求用 `git merge-base --is-ancestor` 判，**没看时间戳**：
+
+```
+7306f3d fix(sse): 终态事件不许超车过期进度   → ✔ 是 ed82e74c(v0.5.0) 的祖先
+7a48b3b fix(jobs): 给 installing 一个载体     → ✔ 是 ed82e74c(v0.5.0) 的祖先
+```
+
+⇒ **两条修复 v0.5.0 都带着。** 所以用户在 v0.5.0 上看到的**不是**那个已修的 bug。
+**这条闭不掉，我标 `UNKNOWN`，不宣布它好了。**
+
+⚠️ 一条**没有排除**的可能，留给下一轮（我没验，标 `[未验证]`）：
+我量的是**后端包**那条路（`backends.ts`）。用户点的可能是**模型**那条（`models.ts`）——
+模型体积大得多（`ggml-large-v3` 约 3 GB），两条路的代码不同。
+**在量过模型那条之前，不该说"安装路径没问题"。**
+
+### ② macOS 那 10.6 秒：**是真事，不是白等**
+
+`backends.ts:295` 起调 `warmProbeCache()` —— **GPU 着色器缓存预热**。
+代码自己的注释就写着「**它要转十几秒**」，与我量到的 10.6 s / 16.9 s 吻合。
+它有两层 try/catch 且契约上永不抛，因为"捂热是优化不是安装的前提"。
+
+⇒ 按你的判据：**它需要的是"告诉用户在等什么"，不是消除它。**
+
+**而它此前连名字都没有**：`warming` 在 `JOB_STEPS` 里，但 `DownloadRow.tsx` 的
+`STEP_KEY` 与 locale **都没有它的词条** —— 于是那 10.6 秒界面显示的是**上一档**的文案。
+本轮已补词条（中「正在预热 GPU 着色器缓存」/ 英 "Warming up GPU shader cache"）。
+
+⚠️ **我没有写时长**。你说过别写没量过的时长，而我只有 CI runner 的两个数
+（10.6 s / 16.9 s，macos-26），**真机 UNKNOWN** —— 要写"大约多久"得先有真机的数。
+**分段进度也没做**：`warmProbeCache` 内部能不能分段我没查，那是下一轮的事。
+
+### ① `unpacking` 已落地（提交 `130e706`）
+
+**解包期间界面显示什么：从「正在校验完整性」改成「正在解压」。**
+
+契约两侧一起改，没只加一半：
+`shared/JOB_STEPS` 插入 `unpacking`（**位置就在它真实发生的 `verifying` 与 `installing` 之间**）
+→ `downloader` 的 `DownloadProgress.phase` → daemon 两处 `setStep` 映射
+（`backends.ts` + `models.ts`）→ web 的 `STEP_KEY` + 中英词条。
+
+**分母一个都没编**：zip 用 EOCD 的 `entriesTotal`（解包前已知）；tar 用 `offset/raw.length`
+（`extractTar` 先整个解压进 `raw`，是真值）。
+⚠️ zip 在**循环开头**计数而不是各个出口 —— 那个循环体有三条 `continue`
+（目录 / 软链 / mac 垃圾条目），在出口计数**必然漏一条，而且漏得不显眼**（进度停在 97% 那种）。
+
+**节流在 `installer.ts` 不在 `unpack.ts`**：与下载那条同一个理由（解包几千个小文件
+同样能打满渲染循环）、同一速率（~4 Hz）。**在 unpack 内部节流会让"解包走到哪了"本身不可观测。**
+
+**两道守卫：仍然全绿。** `packages/downloader` 40 → **42 条**（新增 2 条），
+`fail 0`，其中 zip-bomb（`LIMIT_EXCEEDED`）与路径穿越 / 软链（`PATH_TRAVERSAL`、
+`SYMLINK_REJECTED`）各用例一条没动、一条没红。全仓 `pnpm -r test` 全绿（daemon 583、web 136）。
+
+**变异证明（跑在隔离 worktree 上，§10）**：
+
+| 变异 | 结果 |
+| --- | --- |
+| 摘掉 zip 的 `onProgress` 上报 | **红 1 条** |
+| 摘掉 tar 的 `onProgress` 上报 | **红 1 条** |
+| **把分母改成编的（固定 100）** | **红 1 条** |
+
+第三条是关键：它证明用例钉的是**"分母是真值"**，而不只是"回调有没有被调" ——
+一个编出来的分母会让进度走到 80% 然后跳完，那和没有进度一样不可信，只是更难发现。
+
+### 诚实声明
+
+- `[未验证]`：**`unpacking` 在真机/真 CI 上的事件序列我没有重跑**。
+  本轮验的是单元层（真分母 + 三个变异）与全仓测试；
+  "界面上真的显示『正在解压』"是**读码 + 词条**得出的，没有真浏览器截图。
+  要坐实，重跑一次 `measure-install-phases`（它会把新的 `unpacking` 事件打出来）即可。
+- `[未验证]`：模型那条路（`models.ts`）的映射我改了但**没实测**（只量过后端包那条）。
+- `UNKNOWN`：用户那条 Windows「停在正在安装」的真因（③ 已排除"是那个已修的 bug"）；
+  `warmProbeCache` 内部能否分段；真机上预热要多久。
+- 未碰 `:10000`、`/root/data-memo`、机器级指针；未建/改/删 release；未用 `pkill`。
+- 动手前 `git status` 确认 `apps/web` 与 `packages/downloader` 当时**无人在改**。
