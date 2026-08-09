@@ -110,8 +110,19 @@ ffmpeg/yt-dlp 仍由用户自己在网页上下载"。这个边界成立，但**
 | 组件                               | 许可证                       | 谁提供字节                                                             |
 | ---------------------------------- | ---------------------------- | ---------------------------------------------------------------------- |
 | ffmpeg / ffprobe (`media-tools-*`) | 🔴 GPL-3.0-or-later          | `github.com/BtbN/FFmpeg-Builds`、`github.com/jellyfin/jellyfin-ffmpeg` |
-| yt-dlp (`ytdlp-*`)                 | 🔴 GPL-3.0-or-later          | `github.com/yt-dlp/yt-dlp`                                             |
+| yt-dlp (`ytdlp-*`)                 | 🔴 GPL-3.0-or-later\*        | `github.com/yt-dlp/yt-dlp`                                             |
 | libsimple / sqlite-vec / 模型      | MIT / Apache-2.0 / Gemma ToU | wangfenjin、asg017、HuggingFace、ModelScope                            |
+
+\* **订正于 2026-08-09**（见 D-20 §14，commit `9b3ea96`；回执
+`coordination/inbox/ytdlp-binary-audit.md`）：这一行此前的隐含理由是"yt-dlp 项目本身
+是 GPL"——**那是错的**，**yt-dlp 项目自身的许可证是 Unlicense**（公共领域）。真正的
+GPL 来源是官方发布的 PyInstaller 可执行二进制里静态打包进去的运行时依赖，且**逐平台
+不同**：四个平台全部内嵌 `mutagen`（GPL-2.0-or-later）；Linux x64/arm64 额外内嵌
+GNU Readline（GPL-3.0-or-later）——单元格取的是四个平台里最强的一档，macOS/Windows
+实际只到 GPL-2.0-or-later（`vendor/manifests/backends.json` 已按平台分别订正）。
+**巧的是"🔴 需要当 GPL 处理"这个结论仍然成立**，只是把理由从"错的"换成上面这条；
+ffmpeg 那一行不受影响——ffmpeg 的 GPL 构建本身就是以 GPL-3.0-or-later 发布的项目，
+两行的归因链条并不相同，不要类推。
 
 我们自己的 Release 上**只有 6 个资产，全部是 whisper.cpp，全部 MIT**
 （`backend-packs-2026.08.07b` / `-2026.08.08` 里的 `whispercpp-*`）。
