@@ -218,16 +218,33 @@ let db: AppDatabase | undefined;
 let base = '';
 let src = '';
 const restarts: unknown[] = [];
+/** 关库/重开的调用顺序 —— 「搬迁必须发生在库关着的时候」靠它来钉。 */
+const dbEvents: string[] = [];
 
 /** 每条用例换一套目录：搬迁是破坏性的，共用会互相污染。 */
 async function mount(dataDir: string): Promise<void> {
   const { resolvePaths } = await import('../../config/paths.js');
   const paths = resolvePaths(dataDir);
   db = openAppDatabase({ filename: paths.dbFile });
+  dbEvents.length = 0;
   const routes = createStorageRoutes({
     paths,
     db: db.db,
     runningJobs: () => 0,
+    /*
+     * ★ 搬迁期间关库 —— Windows 上不关就删不掉源（`FILE_SHARE_DELETE`）。
+     *   这里如实照做，顺便把调用顺序记下来给 `dbEvents` 那条用例断言。
+     */
+    closeDatabase: () => {
+      dbEvents.push('close');
+      db?.close();
+      db = undefined;
+    },
+    reopenDatabase: (dataDir) => {
+      dbEvents.push(`reopen:${dataDir}`);
+      db = openAppDatabase({ filename: join(dataDir, 'openmemo.db') });
+      return db.db;
+    },
     requestRestart: (reason, opts) => restarts.push({ reason, opts }),
   });
   server = createServer((req, res) => {
@@ -408,6 +425,36 @@ describe('POST /api/settings/data-dir —— 「不要搬」必须真的不搬�
       '★ 补救载荷用的还是前端读不到的键名 —— 那个按钮会永远点不成',
     );
     assert.equal('move' in params, false, '同一件事不许再出现第二个名字');
+  });
+
+  /*
+   * ★★ 这条钉的是 Windows 上那个"必然发生"的缺陷的修法。
+   *
+   * `[CI 实测 run 31296921806, windows-2025]` 搬迁本身在 Windows 上没问题，
+   * 卡住的是 `openmemo.db` 还开着：POSIX 允许 unlink 已打开的文件，
+   * 而 **Windows 的 SQLite 共享模式不含 `FILE_SHARE_DELETE`** → 删源必然失败。
+   *
+   * ⚠️ 所以**这条断言在 Linux 上永远不会因为"忘了关库"而变红** ——
+   * 文件系统层面看不出区别。因此它断言的不是结果，是**顺序**：
+   * 关库必须发生在搬迁之前，重开必须落在**新位置**。
+   * 顺序错了在任何平台上都当场红，而不必等到有人在 Windows 上试。
+   */
+  it('★★ 搬迁必须发生在库关着的时候，且搬完在新位置重开（顺序，不是结果）', async () => {
+    src = makeDataDir('src8');
+    const dst = join(tmp('holder8'), 'newloc');
+
+    await mount(src);
+    const { status } = await post({ path: dst, moveExisting: true });
+    await unmount();
+
+    assert.equal(status, 202, '搬迁应当成功');
+    assert.deepEqual(
+      dbEvents,
+      ['close', `reopen:${dst}`],
+      '★ 期望「先关库 → 搬 → 在新位置重开」；顺序不对就是 Windows 上删不掉源的那个成因',
+    );
+    assert.equal(existsSync(join(dst, 'openmemo.db')), true, '库文件应当在新位置');
+    assert.equal(existsSync(src), false, '源目录应当已被删掉');
   });
 });
 

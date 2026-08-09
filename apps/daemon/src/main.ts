@@ -964,6 +964,30 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         paths,
         db: database.db,
         runningJobs: () => scheduler?.runningCount ?? 0,
+        /*
+         * ★★ 搬迁期间必须关库 —— 否则 Windows 上删不掉源目录。
+         *
+         * `[CI 实测 run 31296921806, windows-2025]` 搬迁本身在 Windows 上是好的
+         * （同卷真 rename、跨卷真删源）；卡住的是 `openmemo.db` 还开着：
+         * POSIX 允许 unlink 已打开的文件，而 **Windows 的 SQLite 共享模式不含
+         * `FILE_SHARE_DELETE`** → 删源必然失败 → 用户每一次搬迁都留下一份
+         * 含明文 `secrets.json` 的旧目录。
+         *
+         * ⚠️ 重开出来的新句柄**只给"搬完迁 media_assets"用**。
+         * 本进程里另外 10 处消费方（`Repos` / `JobQueue` / `MindMapRepo` …）
+         * 手上的旧句柄已经作废，且它们缓存了 prepared statement ——
+         * **只有重启能把它们全部重建**，所以搬迁成功/失败两条路都会请求重启。
+         */
+        closeDatabase: () => database?.db.close(),
+        reopenDatabase: (dataDir) => {
+          const reopened = openAppDatabase({
+            filename: join(dataDir, 'openmemo.db'),
+            extensions: defaultExtensionPaths(extensionRoot),
+            backupDir: join(dataDir, 'backups'),
+          });
+          database = reopened;
+          return reopened.db;
+        },
         requestRestart: (reason, o) => void restartHook.run?.(reason, o),
       }),
       // 功能级自检（一份实现两个出口：gpu-runtime 的 CLI + 这个端点）

@@ -20,6 +20,7 @@ import type { DatabaseHandle } from '@openmemo/db';
 import { migrateMediaAssets } from '../../storage/migrateAssets.js';
 
 import { looksLikeDataDir, measureTree, moveDataDir, planMove } from '../../storage/move.js';
+import { moveDataDirWithDatabase } from '../../storage/moveWithDb.js';
 import { readJsonBody, sendError, sendJson } from '../respond.js';
 
 export interface StorageRoutesDeps {
@@ -28,6 +29,19 @@ export interface StorageRoutesDeps {
   readonly db: DatabaseHandle;
   /** 有任务在跑就不能搬 —— 搬到一半任务还在写文件，必然不一致。 */
   readonly runningJobs: () => number;
+  /**
+   * 搬迁前关库、搬迁后重开。**必填，不给可选兜底。**
+   *
+   * `[CI 实测 run 31296921806]` Windows 的 SQLite 共享模式不含 `FILE_SHARE_DELETE`，
+   * 开着库搬 ⇒ 删源**必然**失败 ⇒ 用户每次搬迁都留下一份含明文 `secrets.json` 的旧目录。
+   *
+   * 为什么不设成可选：可选就意味着存在一条"没注入时照旧开着库搬"的路径，
+   * 而它平时在 POSIX 上**完全看不出区别** —— 正是本仓反复栽的那种
+   * 「写了但从没触发 / 触发了也没人发现」的形状。必填让漏接线变成编译错误。
+   */
+  readonly closeDatabase: () => void;
+  /** 在指定 dataDir 重新打开库，返回新句柄（搬完要用它迁 `media_assets`）。 */
+  readonly reopenDatabase: (dataDir: string) => DatabaseHandle;
   /** 搬完要重启才能挂到新位置（复用 T-061 的自我重启）。 */
   readonly requestRestart?: (reason: string, opts?: { dataDir?: string }) => void;
 }
@@ -271,14 +285,38 @@ export function parseChangeRequest(body: unknown): ChangeRequest {
  * 而是把旧目录的位置原样交还给用户。
  */
 export function moveMessageZh(
-  result: { files: number; links: number; sourceRemoved: boolean },
+  result: {
+    files: number;
+    links: number;
+    sourceRemoved: boolean;
+    sourceResidue?: readonly string[];
+  },
   from: string,
 ): string {
   const what = `${result.files} 个文件` + (result.links > 0 ? `与 ${result.links} 个符号链接` : '');
   if (result.sourceRemoved) return `已移动 ${what}到新位置，正在重启以生效。`;
+  /*
+   * ★ 旧目录里剩什么，**必须照着念，不许照着猜**。
+   *
+   * 这句原来无条件写着「其中包含 secrets.json」。
+   * `[CI 实测 2026-08-09 run 31296921806, windows-2025]` 删源是**删到一半**失败的：
+   * 实际剩下的是 `models` 与 `openmemo.db`，**`secrets.json` 已经被删掉了**。
+   * 方向虽然保守，**但保守的假话仍然是假话** —— 它会让用户去找一个不在那里的文件，
+   * 然后开始怀疑别的提示是不是也在瞎说。
+   *
+   * 判据仍是 Manager 2026-08-08 那条：**界面说的和实际发生的必须一致**。
+   */
+  const residue = result.sourceResidue ?? [];
+  const tail =
+    residue.length > 0
+      ? `**里面还剩下：${residue.join('、')}**，请自行确认后删除。` +
+        (residue.includes('secrets.json')
+          ? '（`secrets.json` 是明文的 API Key，注意别外传。）'
+          : '')
+      : `目录本身还在，但里面已经空了。`;
   return (
     `已复制 ${what}到新位置并逐文件校验通过，正在重启以生效。` +
-    `⚠️ 旧目录 ${from} **没能删掉，仍留在原地**（其中包含 secrets.json），请自行确认后删除。`
+    `⚠️ 旧目录 ${from} **没能删掉，仍留在原地**。${tail}`
   );
 }
 
@@ -507,16 +545,77 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
         /* 目标不存在 = 最好的情况，继续搬 */
       }
 
-      const result = await moveDataDir(plan.from, plan.to);
-      if (!result.ok) {
+      /*
+       * ★★ 搬迁**必须在库关着的时候**进行 —— 否则 Windows 上删不掉源。
+       *
+       * `[CI 实测 run 31296921806, windows-2025]` 搬迁本身在 Windows 上没问题
+       * （同卷真 rename、跨卷真删源）；出问题的是**谁还攥着 `openmemo.db`**：
+       * POSIX 允许 unlink 已打开的文件，Windows 的 SQLite 共享模式不含
+       * `FILE_SHARE_DELETE`。所以此前"开着库搬"在 Linux/macOS 上毫无症状，
+       * 而 **Windows 用户每一次搬迁都必然留下一份旧数据**。
+       *
+       * 顺序编排（含"失败要把库开回原位"）抽在 `moveWithDb.ts`，那里有穷举测试 ——
+       * 危险的不是搬迁，是搬迁失败之后库还开不开得起来。
+       */
+      let dbAfterMove = deps.db;
+      const outcome = await moveDataDirWithDatabase(plan.from, plan.to, {
+        closeDb: deps.closeDatabase,
+        reopenDb: (dir) => {
+          dbAfterMove = deps.reopenDatabase(dir);
+        },
+        move: () => moveDataDir(plan.from, plan.to),
+        succeeded: (r) => r.ok,
+      });
+
+      /*
+       * 库彻底开不回来 —— 唯一一个"用户必须重启才能继续"的状态。**不许静默。**
+       * 这时不谈搬迁成没成功，先把这件事说清楚。
+       */
+      if (outcome.databaseLost) {
+        sendError(
+          res,
+          500,
+          'DATABASE_REOPEN_FAILED',
+          `database could not be reopened: ${outcome.reopenError ?? outcome.closeError ?? 'unknown'}`,
+          `数据库在搬迁后没能重新打开（${outcome.reopenError ?? outcome.closeError ?? '原因未知'}）。` +
+            `**你的数据没有丢**，但这个进程已经用不了了，请重启 OpenMemo。`,
+        );
+        deps.requestRestart?.('database reopen failed', { dataDir: plan.from });
+        return true;
+      }
+
+      // 关库就失败 ⇒ 根本没搬。如实说"没动过"。
+      if (!outcome.attempted) {
+        sendError(
+          res,
+          409,
+          'DB_CLOSE_FAILED',
+          `cannot close database: ${outcome.closeError ?? 'unknown'}`,
+          `搬迁前没能关闭数据库（${outcome.closeError ?? '原因未知'}），因此**没有做任何搬迁** ——` +
+            `原数据完好，未做任何改动。请先停掉正在进行的操作再试。`,
+        );
+        return true;
+      }
+
+      const result = outcome.result;
+      if (result === undefined || !result.ok) {
         sendError(
           res,
           409,
           'MOVE_FAILED',
-          result.error ?? 'move failed',
+          result?.error ?? outcome.moveError ?? 'move failed',
           // sourceIntact 必须如实回报 —— 用户最关心的就是"我的数据还在吗"
-          `${result.errorZh ?? '移动失败'}${result.sourceIntact ? '（原数据完好，未做任何改动）' : ''}`,
+          `${result?.errorZh ?? '移动失败'}${result?.sourceIntact ? '（原数据完好，未做任何改动）' : ''}`,
         );
+        /*
+         * ★ 库已经在原位置重开了（`moveWithDb` 保证），但**本进程里还有 11 处
+         *   持有旧句柄的消费方**（Repos / JobQueue / MindMapRepo 都缓存了 prepared
+         *   statement），它们手上那个已经作废了。只有重启才能把它们全部重建。
+         *   所以失败路径也要重启 —— 回到**原来的** dataDir。
+         */
+        deps.requestRestart?.('data-dir move failed, reopening at original location', {
+          dataDir: plan.from,
+        });
         return true;
       }
 
@@ -528,7 +627,8 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
        * 这里在**重启之前**就地迁好，新进程起来读到的已经是正确路径。
        */
       try {
-        const am = await migrateMediaAssets(deps.db, plan.to, join(plan.to, 'media'));
+        // ★ 用**重开之后**的句柄：`deps.db` 已经在搬迁前被关掉了
+        const am = await migrateMediaAssets(dbAfterMove, plan.to, join(plan.to, 'media'));
         if (am.migrated > 0) console.log(`[storage] 搬家后重挂媒体资产 ${am.migrated} 条`);
         for (const u of am.unresolved) console.warn(`[storage] ⚠️ 媒体资产无法解析：${u}`);
       } catch (err) {

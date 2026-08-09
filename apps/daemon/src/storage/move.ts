@@ -313,6 +313,23 @@ export interface MoveResult {
   /** 失败后源目录是否完好无损。**任何失败路径上它都必须是 true。** */
   readonly sourceIntact: boolean;
   /**
+   * 删源失败时，旧目录里**实际还剩下什么**（顶层条目名，已排序）。
+   *
+   * ## 为什么不能靠猜
+   *
+   * `[CI 实测 2026-08-09 run 31296921806, windows-2025]` 删源是**删到一半**失败的：
+   * 旧目录里剩下的是 `models` 与 `openmemo.db`，而 **`secrets.json` 其实已经被删掉了**。
+   * 当时的文案却无条件写着「其中包含 secrets.json」——
+   * 方向虽然保守（让用户去看一个更干净的地方），**但保守的假话仍然是假话**，
+   * 而且它会让用户去找一个已经不在那里的文件。
+   *
+   * 判据仍是 Manager 2026-08-08 那条：**界面说的和实际发生的必须一致**。
+   * 所以这里如实列出剩下的东西，让文案照着念，而不是照着猜。
+   *
+   * 成功删掉时为空数组。
+   */
+  readonly sourceResidue: readonly string[];
+  /**
    * 源目录**有没有真的被删掉**。
    *
    * ## 为什么必须单独有这个字段
@@ -361,6 +378,7 @@ export async function moveDataDir(
       ...(plan.reasonZh ? { errorZh: plan.reasonZh } : {}),
       sourceIntact: true,
       sourceRemoved: false,
+      sourceResidue: [],
     };
   }
 
@@ -380,6 +398,7 @@ export async function moveDataDir(
       errorZh: '读不到当前数据目录',
       sourceIntact: true,
       sourceRemoved: false,
+      sourceResidue: [],
     };
   }
 
@@ -402,11 +421,23 @@ export async function moveDataDir(
           `这类链接多来自已安装的后端（如 whisper.cpp 的 .so），可能需要重新安装该后端。`,
       );
     }
+    /*
+     * 删源失败时**读一次旧目录**，如实拿到还剩什么 —— 不猜。
+     * 读不到就给空数组（宁可不说，也不编）。
+     */
+    let residue: string[] = [];
     if (removeSourceError !== undefined) {
+      try {
+        residue = (await fs.readdir(from)).sort();
+      } catch {
+        residue = [];
+      }
       warnings.push(
         `数据已完整复制到新位置并**逐文件校验通过**，但旧目录 ${from} 没能删掉（${removeSourceError}）。` +
-          `新位置的数据是完整的；**旧目录连同其中的 secrets.json 仍然留在原地**，` +
-          `请自行确认后删除。`,
+          `新位置的数据是完整的；` +
+          (residue.length > 0
+            ? `**旧目录里还剩下：${residue.join('、')}**，请自行确认后删除。`
+            : `旧目录已经空了，但目录本身还在。`),
       );
     }
     return {
@@ -424,6 +455,7 @@ export async function moveDataDir(
        */
       sourceIntact: removeSourceError !== undefined,
       sourceRemoved: removeSourceError === undefined,
+      sourceResidue: residue,
     };
   };
 
@@ -442,6 +474,7 @@ export async function moveDataDir(
         errorZh: '新位置已存在且不是空目录',
         sourceIntact: true,
         sourceRemoved: false,
+        sourceResidue: [],
       };
     }
   } catch {
@@ -465,6 +498,7 @@ export async function moveDataDir(
       errorZh: `目标磁盘空间不足（约需 ${(need / 1e6).toFixed(1)}MB，可用 ${(free / 1e6).toFixed(1)}MB）`,
       sourceIntact: true,
       sourceRemoved: false,
+      sourceResidue: [],
     };
   }
 
@@ -529,6 +563,7 @@ export async function moveDataDir(
         errorZh: `复制后校验不一致（${v.mismatches.length} 处），已回滚，原数据未动`,
         sourceIntact: true,
         sourceRemoved: false,
+        sourceResidue: [],
       };
     }
   } catch (err) {
@@ -545,6 +580,7 @@ export async function moveDataDir(
       errorZh: '移动失败，已回滚，原数据未动',
       sourceIntact: true,
       sourceRemoved: false,
+      sourceResidue: [],
     };
   }
 
