@@ -482,3 +482,136 @@ memo 的做法**不能当作"可以内置"的先例** —— 那不是一条更�
 （`sherpa-onnx-darwin-arm64` 70.8 MB + `sherpa-onnx-darwin-x64` 59.2 MB）——
 Windows 用户永远用不到。**1.10 GB 里有 12% 是别的平台的二进制。**
 我们按平台切包时，这类"整包塞进去"的省事写法要有守卫挡住。
+
+## 13. §2.3 三项实测（`lgpl-verify` 2026-08-09，**真跑二进制，不是读 configure 猜**）
+
+**一句话结论：Linux 上 19/19 全部实测通过（含远端协议、切片、ffprobe）；Windows 同源同
+commit 但本轮没能在沙箱里真跑（无 wine）；macOS 当前供应商（jellyfin-ffmpeg）根本不发
+LGPL 变体 —— 这不是配置问题，是供应商缺口。§9 的"ffmpeg 下载"定案本节不改，只交测试
+结果，换不换由 Manager/用户在读完平台缺口后裁。**
+
+### 13.1 方法：真下载、真跑产品的真命令行
+
+`[实测]` 从与当前 `vendor/manifests/backends.json` 里 Linux/Windows 那两个 GPL 包**完全同一个
+release tag、同一个 FFmpeg 源码 commit** 的 BtbN 发布里，另外下载 `lgpl` 变体：
+
+```
+release tag: autobuild-2026-07-31-14-10
+commit:      n8.1.2-34-g9b6c8969e0
+linux64-lgpl-8.1.tar.xz  111,679,252 字节（实际下载，非声明值）
+```
+
+解压后 `bin/ffmpeg`、`bin/ffprobe` 与 `LICENSE.txt`（**实测确为 GNU LGPL v3 全文**，非 GPL）。
+`ffmpeg -version` 的 `configuration:` 行**实测**带 `--enable-version3` 与
+`--disable-avisynth --disable-frei0r --disable-libdavs2 --disable-librubberband
+--disable-libvidstab --disable-libx264 --disable-libx265 --disable-libxavs2 --disable-libxvid`
+—— 与 FFmpeg 自己 `LICENSE.md` 列的 GPL-only 组件清单一致，且**全部落在编码器/滤镜侧**。
+
+用 `packages/shared/src/media-extensions.ts` 的 `UPLOAD_MEDIA_EXTENSIONS`
+（**独立重新从源码 grep 出来的，不是抄 D-20 已有的清单**，两者核对后确实一致）逐个格式各造
+一份约 2 秒的样本（视频轨用 h264/xvid/vp9/mpeg1/mpeg2/flv/wmv2 等真实编解码器组合，
+不是同一种编码器套 19 个壳），再用 `packages/pipeline/src/audio/ffmpeg.ts` 里
+**逐字抄下来的产品真实 argv**（`normalizeToPcm16k`／`sliceWav`／`probeMedia`）跑这份 LGPL 二进制。
+
+### 13.2 结果：19/19 全过，且不是"文件非空"这么弱的判据
+
+判据不是"退出码 0"或"文件存在"，是 `ffmpeg -af volumedetect` **实测量出的平均电平**
+（真的解出了声音，不是产出一个只有 WAV 头的空壳）：
+
+| 扩展名 | mean_volume | 扩展名 | mean_volume | 扩展名 | mean_volume |
+| --- | --- | --- | --- | --- | --- |
+| .mp3 | -21.5 dB | .mp4 | -21.1 dB | .mpg | -21.1 dB |
+| .m4a | -21.1 dB | .m4v | -21.1 dB | .flv | -21.6 dB |
+| .wav | -21.1 dB | .mkv | -21.1 dB | .wmv | -21.2 dB |
+| .flac | -21.1 dB | .mov | -21.1 dB | .ts | -21.2 dB |
+| .ogg | -21.0 dB | .avi | -21.6 dB | | |
+| .opus | -21.1 dB | .webm | -21.1 dB | | |
+| .aac | -21.2 dB | .mpeg | -21.1 dB | | |
+| .wma | -21.2 dB | | | | |
+
+**19/19 全部产出非静音 PCM。** 没有一个扩展名解不出来 —— GPL-only 的那几个组件
+（avisynth/frei0r/libdavs2/librubberband/libvidstab/libx264/libx265/libxavs2/libxvid）
+**确实都在编码/滤镜侧，不在我们唯一用到的解码路径上**，§2.1 的判断被实测坐实，不是推测。
+
+另外三条也实测过，不是只测了本地文件解码：
+
+- **`sliceWav`（`-ss`/`-t`）**：`mp3_sliced.wav` 同样非静音，切片正常。
+- **`-protocol_whitelist` 远端路径**：`probeMedia` + `normalizeToPcm16k` 带
+  `REMOTE_PROTOCOLS`（`https,tls,tcp,crypto,httpproxy`）实测对一个真实公网 HTTPS
+  mp3（`interactive-examples.mdn.mozilla.net`）取流成功，`remote.wav` mean_volume
+  **-24.8 dB**（非静音）。**顺手做的安全回归**：同一份 LGPL 二进制上，把 URL 换成
+  `http://`（明文）时**实测被拒**——`Protocol 'http' not on whitelist 'https,tls,tcp,crypto,httpproxy'!`，
+  退出码 234，**没有产出任何输出文件**——白名单在 LGPL 构建下行为不变。
+- **`-map`**：`normalizeToPcm16k` 每一次调用都带 `-map 0:a:0`，上面 19 条本身就是带
+  `-map` 跑的，不是单独一条。
+- **`ffprobe`**：19 个样本逐个跑 `probeMedia` 的真实 argv，**JSON 全部可解析**且
+  `streams` 里能正确识别出各自的视频/音频编解码器（如 `v.mp4` → `format=mov,mp4,m4a,3gp,3g2,mj2`,
+  `streams=[('video','h264'),('audio','aac')]`）；远端路径下 `ffprobe` 对同一个 HTTPS mp3
+  也正确识别出 `format=mp3, streams=[('audio','mp3')]`。**ffprobe 与 ffmpeg 两个二进制都测了，
+  不是只测了 ffmpeg。**
+
+⚠️ `[已知，非本轮新增]` §2.3③ 提前警告过的副作用**确实存在**：`scripts/ci/e2e-import-audit.mjs`
+用 `libmp3lame`/`libx264` **编码**造测试样本，LGPL 构建没有这两个编码器，那条 CI 腿会当场坏。
+**产品本身不受影响**（产品只解码），但如果真的换 LGPL，那个脚本的造样本方式要改
+（本轮的样本改用系统另一份 GPL 构建生成，CI 脚本本身**一行没动**，因为纪律不许碰产品/脚本代码）。
+
+### 13.3 LGPL 义务分析：subprocess ≠ 链接，但"分发"本身的义务还在
+
+`[已核实]` `packages/pipeline/src/subprocess/runner.ts` 唯一的子进程调用方式是
+`spawn(absoluteBin, argv, { shell: false })`；全仓 TS 源码里没有 `dlopen`、没有对
+`libavcodec`/`libavformat`/`libavutil` 的任何链接（无论静态还是动态），ffmpeg/ffprobe
+永远是**独立可执行文件**，通过命令行参数与我们的代码通信。
+
+这一点法律上是否重要，**不是我能替用户/法务下最终结论的问题**（§8 那条 `UNKNOWN`
+仍然是 `UNKNOWN`，本节不改它），但可以把已验证的事实和 FSF/LGPL 文本本身摆出来：
+
+- **LGPL v2.1 §6（以及 v3 的对应条款）字面上是"链接"触发的**——它管的是把
+  proprietary 的 "work that uses the Library" 与 Library **link** 到一起时，
+  必须允许用户替换/重链接这个 Library。我们**没有 link** 这个 Library
+  （无论静态动态），只是 `spawn` 一个独立可执行文件，把参数摆上命令行、
+  从 stdout/文件读结果——这正是 FSF GPL FAQ 里 `#MereAggregation` / `#GPLPlugins`
+  等条目描述的"通过管道/命令行通信的独立程序"的形态，不是"合并成单一作品"的形态。
+- **即便如此，"分发一份 LGPL 程序的拷贝"本身的义务不会消失，也不该被这一节的
+  论证悄悄抹掉**：附带许可证全文、保留版权声明、（若被问起）能提供对应版本的源码
+  或指向上游源码的位置。这些是**分发 ffmpeg 这个可执行文件**的义务，
+  与"我们的应用是不是被认定为衍生作品"是两件事——前者几乎零成本能满足
+  （§13.2 已确认 `LICENSE.txt` 就在压缩包里，原样带上即可），后者才是那个 `UNKNOWN`。
+- **"允许用户替换库"这条 LGPL 的核心诉求，在我们这个形态下天然更强**：ffmpeg 以
+  独立可执行文件的形式放在自己的目录里，用户/我们随时可以整个换掉这个文件
+  （不需要重新链接、不需要重新编译应用本体）——这比 LGPL 要求的"可替换的共享库
+  机制"提供的保证更直接。
+
+### 13.4 平台覆盖：不是三个平台同一个答案
+
+| 平台 | 供应商 | 与当前 GPL 包同源同 commit 的 LGPL 资产 | 本轮验证方式 |
+| --- | --- | --- | --- |
+| **Linux x64** | BtbN | `ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-lgpl-8.1.tar.xz`，**实测存在，已下载并逐项跑通**（§13.1–13.2） | **实机跑过 19/19 + sliceWav + 远端 + ffprobe** |
+| **Windows x64** | BtbN | `ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-8.1.zip`，`[实测]` 该 release tag 下**确实存在**这个资产（GitHub API 核实过文件名与字节数） | ⚠️ **本轮没有真跑**——沙箱里没有 `wine`（`apt-cache policy wine` 显示未安装），装新系统包超出"只验证不改动"的授权范围，没有强行装。**同源同 commit，理论上应与 Linux 结果一致，但这是推断，不是实测**，如实标注，不冒充测过。 |
+| **macOS arm64/x64** | **jellyfin-ffmpeg**（不是 BtbN，供应商本身不同） | `[实测]` 查了 `jellyfin/jellyfin-ffmpeg` 在 `v8.1.2-2`（与 `backends.json` 当前 macOS 那条完全同版本）下的**全部**发布资产（deb ×12、portable ×6，覆盖 linux/mac/win 全部目标）——**没有一个文件名带 `lgpl`，只有 `-gpl` 后缀**。 | **无法验证，因为不存在**——这不是"没跑"，是这条路目前**根本没有 LGPL 选项**。换 LGPL 对 macOS 意味着**换一个完全不同的上游供应商**（比如换回 BtbN，但 BtbN 不发 macOS 资产；或自己交叉编译一份），工作量和风险都远大于"改一个 URL"。 |
+
+### 13.5 体积对比（供 Manager/用户判断"值不值得换"用，不是结论）
+
+| 平台 | 当前 GPL 包（manifest 声明值） | 同源 LGPL 包（**实测下载值**） | 差 |
+| --- | --- | --- | --- |
+| Linux x64 | 124,917,816 字节（119.1 MB） | 111,679,252 字节（106.5 MB） | **-12.6 MB（-10.6%）** |
+| Windows x64 | 167,405,723 字节（159.7 MB） | 145,349,121 字节（138.6 MB）`[实测資產存在，字节数经 GitHub API 核实，未下载执行]` | **-22.1 MB（-13.2%）** |
+| macOS arm64 | 32,894,656 字节（31.4 MB，jellyfin-ffmpeg） | **不存在** | — |
+
+体积差不大（多数字节是编解码器共用代码，x264/x265/xvid 只是其中一部分），
+**换 LGPL 省下的是"能不能不下载"的资格，不是显著的包体空间**。
+
+### 13.6 本节明确没做、没改的事（如实登记）
+
+- **产品代码一行没动**——`packages/pipeline`、`packages/shared`、`build-bundle.mjs`、
+  任何 CI 脚本，全部只读，未写。
+- **没建/改/删任何 release**；未碰 `:10000` demo、`/root/data-memo`、任何机器级指针；
+  未用过 `pkill`。
+- **没有改动 §1–§12 任何一条已有决策或定案表**——§9.2「ffmpeg / ffprobe → 下载」
+  在本次提交后依然是当前定案；本节只是把 §9.7/§2.3 点名要做的三项实测结果交出来，
+  换不换、Windows 那条要不要补测、macOS 那道供应商缺口怎么办——**都交 Manager/用户裁**，
+  不在这里替他们改 §9。
+- **Windows 未实机验证**（无 wine，未装新工具链去凑）、**macOS 无 LGPL 可换**——
+  这两条是本节交出的"限制"，不是"待办打勾"，务必在转达结论时一并带上，
+  不能只说"Linux 过了"就让人以为三平台都能换。
+
+---
