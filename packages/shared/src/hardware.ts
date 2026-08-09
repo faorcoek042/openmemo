@@ -73,7 +73,23 @@ export interface BackendStatus {
   id: Backend;
   /** Device enumeration succeeded and returned >= 1 device. NOT a file-existence check. */
   available: boolean;
-  /** The backend package is present on disk and loadable. */
+  /**
+   * The backend pack is recorded as installed. **Set membership only.**
+   *
+   * ⚠️ This used to read "present on disk and loadable". That was a bigger claim than the
+   * producer makes: `manager.ts` computes it as `installedBackends.has(id)` — nothing
+   * anywhere checks that the library actually loads. A pack whose `.so` is corrupt, or
+   * whose CUDA runtime deps are missing, still reports `installed: true`.
+   *
+   * Loadability is a genuinely separate axis and it is NOT this field, and NOT `probed`
+   * either (see `probe/probedBackends.ts`: a library that is present but fails to dlopen
+   * still counts as probed — the directory listing cannot tell the difference). The only
+   * real load evidence in the system today is `BackendSelfTest`, and that hangs off
+   * `InstalledBackendPack`, not off this type.
+   *
+   * Fixed per §13: the comment was corrected to match the code, the semantics were left
+   * alone — changing what `installed` means would move a load-bearing wall.
+   */
   installed: boolean;
   /**
    * Did this detection run actually LOAD this backend's library?

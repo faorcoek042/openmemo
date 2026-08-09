@@ -323,7 +323,8 @@
       "failed": "自检失败",
       "otherPlatform": "其它平台",
       "undetermined": "待检测",
-      "unsupported": "本机不支持"
+      "unsupported": "本机不支持",
+      "installedUnprobed": "已安装 · 本轮未加载"
     },
     "kind": {
       "undetermined": "还没探测到这台机器的加速能力 —— 这不代表你的机器不支持。探测需要先装上基础包，装好后会自动重测。",

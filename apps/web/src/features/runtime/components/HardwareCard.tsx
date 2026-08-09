@@ -135,10 +135,18 @@ export function HardwareCard({ hw, locale }: { hw: HardwareInfo; locale: string 
             key={b.id}
             backend={b.id}
             state={
+              /*
+               * ★ 这里此前**不读 `probed`** —— `installed:true, probed:false` 的后端
+               *   与真正加载成功的显示同一个「已安装」，T-168 建立的区分
+               *   在最后一跳上死掉了（那句"这一轮没有去加载它"只在折叠的 details 里）。
+               *   现在装在盘上但这轮没被加载的单独成一档。
+               */
               hw.selectedBackend === b.id
                 ? 'active'
                 : b.installed
-                  ? 'installed'
+                  ? b.probed
+                    ? 'installed'
+                    : 'installed-unprobed'
                   : b.available
                     ? 'available'
                     : 'not-installed'

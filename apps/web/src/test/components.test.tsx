@@ -3772,11 +3772,24 @@ describe('T-129b /runtime 不许中英混排', () => {
           unifiedMemory: false,
           disks: [{ path: '/tmp/stub', pathFor: 'models_root', freeMB: 10000, totalMB: 50000 }],
           backends: [
-            { id: 'cpu', installed: true, available: true, unavailableReason: null },
+            { id: 'cpu', installed: true, available: true, probed: true, unavailableReason: null },
+            /*
+             * ★ 三态里最要紧的那一格：**装在盘上，但这一轮没被加载**。
+             *   它此前在界面上与真正加载成功的后端显示同一个「已安装」。
+             */
+            {
+              id: 'vulkan',
+              installed: true,
+              available: false,
+              probed: false,
+              // 用英文：这串是服务端原样渲染的，中文会撞上「英文界面不许出现中文」那条
+              unavailableReason: 'not probed this round',
+            },
             {
               id: 'cuda',
               installed: false,
               available: false,
+              probed: false,
               unavailableReason: 'probe not found',
             },
           ],
@@ -3857,6 +3870,46 @@ describe('T-129b /runtime 不许中英混排', () => {
     } finally {
       await i18nInstance.changeLanguage('zh-CN');
     }
+  });
+
+  /*
+   * ── HardwareCard 的三态：此前 7 个读点**一条断言都没有** ────────────────────
+   *
+   * T-168 在类型层辛苦建立了 `installed` / `available` / `probed` 三态，
+   * 四份形状副本也都更新了 —— 但**界面从头到尾不读 `probed`**，
+   * 于是 `installed:true, probed:false` 的后端与真正加载成功的显示同一个「已安装」。
+   * **区分在最后一跳上死掉了，而没有任何东西会红。**
+   *
+   * 现有那两条用例只断言「英文界面无中文」与「无裸 **」——
+   * 它们在 HardwareCard 上等于没测。这一组补的就是那个缺口。
+   */
+  test('★ 装了但这一轮没被探测的后端，不许和真正加载成功的显示同一个状态', async () => {
+    stubRuntimePage();
+    const r = await render(<RuntimePage />, { route: '/runtime' });
+    const shown = r.container.textContent ?? '';
+    // cpu：installed + probed  → 「已安装」
+    assert.ok(
+      shown.includes('已安装'),
+      `应出现「已安装」（cpu 真的加载了），实际：${shown.slice(0, 300)}`,
+    );
+    // vulkan：installed 但 probed=false → 必须**另有说法**，不能也只是「已安装」
+    assert.ok(
+      shown.includes('本轮未加载'),
+      `installed:true/probed:false 的后端必须与「已安装」区分开，实际：${shown.slice(0, 400)}`,
+    );
+  });
+
+  test('★ whyUnavailable 的计数与理由逐条渲染（此前零断言）', async () => {
+    stubRuntimePage();
+    const r = await render(<RuntimePage />, { route: '/runtime' });
+    const shown = r.container.textContent ?? '';
+    // fixture 里有两条带 unavailableReason 且 available=false：vulkan 与 cuda
+    assert.ok(
+      shown.includes('为什么这些后端不可用（2 项）'),
+      `计数应为 2，实际：${shown.slice(0, 400)}`,
+    );
+    assert.ok(shown.includes('probe not found'), '缺 cuda 的那条 reason');
+    assert.ok(shown.includes('not probed this round'), '缺 vulkan 的那条 reason');
   });
 
   test('★ RTF 那句提示不许把裸 ** 吐给用户（它原本是硬编码在 JSX 里的）', async () => {

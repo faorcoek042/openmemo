@@ -323,7 +323,8 @@
       "failed": "Self-test failed",
       "otherPlatform": "Other platform",
       "undetermined": "Not yet detected",
-      "unsupported": "Not supported here"
+      "unsupported": "Not supported here",
+      "installedUnprobed": "Installed · not loaded this round"
     },
     "kind": {
       "undetermined": "This machine has not been probed for acceleration yet — that is not the same as \"unsupported\". Probing needs the base pack installed first; it re-runs automatically afterwards.",

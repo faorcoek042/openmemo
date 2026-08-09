@@ -48,6 +48,16 @@ import { cn } from '../../lib/utils';
 export type BackendChipState =
   | 'active'
   | 'installed'
+  /**
+   * 装在盘上，但**这一轮探测没有加载它**（`installed:true, probed:false`）。
+   *
+   * ⚠️ 这一档是 T-168 精心建立的区分，而它此前**在最后一跳上死掉了**：
+   * `HardwareCard` 的芯片分支是 `selected → installed → available → 未安装`，
+   * 于是没被探测到的后端与真正加载成功的后端**显示同一个「已安装」**，
+   * 那句"这一轮没有去加载它"只躺在折叠的 `<details>` 里。
+   * 界面从头到尾**不读 `probed`** —— 类型层辛苦区分出来的东西，用户看不到。
+   */
+  | 'installed-unprobed'
   | 'available'
   | 'not-installed'
   | 'failed'
@@ -81,6 +91,12 @@ const STATE_STYLE: Record<
     text: 'text-good',
     labelKey: 'runtime.chip.installed',
     icon: <CheckCircle2 className="size-3.5 shrink-0" aria-hidden />,
+  },
+  'installed-unprobed': {
+    // 不用 text-good：它**不是**一个已经验证可用的状态，颜色不该和「已安装」一样
+    text: 'text-warning',
+    labelKey: 'runtime.chip.installedUnprobed',
+    icon: <CircleDashed className="size-3.5 shrink-0" aria-hidden />,
   },
   available: {
     text: 'text-ink-secondary',
