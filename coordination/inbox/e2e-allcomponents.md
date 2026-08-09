@@ -546,3 +546,117 @@ run **31302119271**（包 = build-bundles run 31298961998，commit `ed82e74`）�
 - **`mode=full`（39.4 GB）保持 `[未验证]`**。
 - `--assert-live` 仍未在一次真实 `release-upload` 运行里执行过（`[未验证]`）。
 - probe 成功之后的失败是否也该带代理提示 —— `[未验证]`，见 §2 末。
+
+---
+
+## [2026-08-09 17:40] 追加 DONE —— 用户那批字节里**有** whisper-cli.exe；咬他的是自检那条链
+
+要点:
+
+- ⚠️ **先答第一问：`whisper-cli.exe` 在他那批字节里，479,232 B，`start.cmd` 也确实设了变量。** 不是打包缺陷。
+- 咬他的是**自检那条解析链压根没有包内这一档**；我这条 `fromBundle()` 只读环境变量是**同族但不同处**，两条都修了。
+- **对着他那批字节实测**：自检从 `null` 变成真的跑起来并通过（`rtf 0.135`、`7.39x`、`transcriptSimilarity 1`）。
+
+需要 Manager 决策: 无。macOS 那一格 `[未验证]`，原因见 §5。
+
+### 1. 用户那批字节里到底有没有 `whisper-cli.exe` —— **有**
+
+拉的是他真正在用的那批（`build-bundles` run **31298961998** 的 `bundle-win-x64`），
+**没有现建新包**：
+
+```
+runtime/probe/  ggml-base.dll 656,384 · ggml-cpu-x64.dll 776,704 · ggml.dll 67,584
+                openmemo-probe.exe 21,068
+                **whisper-cli.exe 479,232**          ← 在
+                whisper-vad-speech-segments.exe 362,496
+                **whisper.dll 1,366,016**            ← 在
+start.cmd:  if not defined OPENMEMO_BUNDLED_WHISPER_DIR set "…=%DIR%runtime\probe"   ← 设了
+            %DIR%runtime\probe                                                        ← 存在
+```
+
+**所以「没打进去」与「启动器没设变量」两条都排除。** 和你说的一样，① 解释不了他这一例。
+
+### 2. 解析链每一档的实际返回值
+
+自检走的是 `resolveBackendTool()`，它**只认已安装的后端包**，**从头到尾没有包内这一档**。
+他那句「已安装的 `ytdlp-win-x64` 包里没有 `whisper-cli.exe` —— 不会拿别的包的二进制去跑」
+说明解析器**看了已装包、正确地拒绝了**，然后 —— **没有下一档可落**，直接 `null`。
+
+对着他那批字节（把修复后的 dist 覆盖进去，空数据目录，按启动器方式设环境变量）实测：
+
+| | 修复前（调查那位实测） | 修复后（我实测） |
+| --- | --- | --- |
+| `GET /api/selfcheck` → `tool.whisperCli` | 找得到 | 找得到 |
+| `POST /api/backends/selftest` → `resolved.whisperCli` | **null** | `…/runtime/probe/whisper-cli` |
+| `resolved.audio` | **null** | `…/vendor/whisper.cpp/samples/jfk.wav` |
+| 缺什么 | whisper-cli + model + audio | **只剩 `asr-model`**（仍报 `blocked` + remediation） |
+
+### 3. 改了什么（三处同源，收敛成一份解析器）
+
+新增 `packages/runtime/src/bundledRuntime.ts`。放 `runtime` 是因为 `pipeline → runtime`
+这条依赖已存在（反过来不行），而 `shared` 被网页引用、不能碰 `node:fs`。
+
+| 处 | 原来 | 现在 |
+| --- | --- | --- |
+| `pipeline` 的 `fromBundle()` | 只读 `OPENMEMO_BUNDLED_WHISPER_DIR` ⇒ **不经启动器**起的 daemon 与 `scripts/selfcheck.mjs` 看不见 | 共用解析器：环境变量优先，取不到就**从模块位置向上找** `runtime/probe` |
+| daemon 自检 `resolveBackendTool()` 那条 | **没有包内这一档** | 补上，**排在最后** |
+| `runtime` 的 `selfcheck.ts` 标签 | 「来自系统 PATH，非本产品安装 —— 用户机器上不一定有」 | ok +「随预编译包出厂」 |
+
+⚠️ **不写死上溯层数**：包内 `app/node_modules/@openmemo/*/dist` 上溯 5 层是包根，
+仓库 `packages/*/dist` 上溯 3 层是仓库根 —— 层数不同，所以逐层向上找
+「有没有 `runtime/probe`」。仓库根下没有 `runtime/` 目录（已核实），
+所以开发树上它一定返回 `null`，那也是对的。
+
+⚠️ **顺序守住了**：**已安装包 > 环境变量/手工布局 > 包内兜底**。
+包内只有 CPU 后端，排到前面会让装了 CUDA/Vulkan 的人自检跑包内 CPU，**RTF 就是错的**
+—— 那比"自检说没有"更糟，因为它给出一个看起来正常的错数字。
+**钉住某个包自测那一支不加兜底**，缺前提照旧 `blocked`，判据一点没放宽。
+
+### 4. `jfk.wav`：按原路径原名打进包，零代码改动
+
+`repoSampleAudio()` 上溯 4 层在包内正是包根 —— **代码早就在找对地方，只是那儿一直是空的**，
+所以 `audio: null` 对**每个包用户**都是必然。打包日志：
+`✔ vendor/whisper.cpp/samples/jfk.wav（0.3 MiB，原名不可改）`。
+
+**原名生效的证据**：装上 `whisper-tiny` 之后再点自检 ——
+
+```
+status:"ran"  passed:true
+rtf 0.13527   speedup 7.39x   backendUsed CPU   audioSeconds 11
+**transcriptSimilarity: 1**
+summary: Self-test passed on CPU backend: 11.0s of audio in 1.49s — about 7x real time
+```
+
+`transcriptSimilarity: 1` 只有在自检用上**内置参考文本**时才可能 —— 而它靠的就是 `jfk.wav` 这个名字。
+
+顺带一条**它做对了、值得留着**的行为：`recorded: false`，理由
+「这次跑的 whisper-cli 不属于任何已安装的后端包…无法认领 —— 不会随便挑一个包记上去」。
+包内那份确实不属于任何包卡片，**它没有去冒领**。
+
+### 5. 三平台上自检真的能跑起来吗
+
+| 平台 | 结论 |
+| --- | --- |
+| linux-x64 | ✅ **实测跑起来并通过**（上面那组数，对着 v0.5.0 真包 + 修复后的 dist） |
+| win32-x64 | 包已产出（run 31305488356），`e2e-allcomponents` 未回归；**自检那一跑 `[未验证]`** |
+| darwin-arm64 | ⚠️ **拿不到包** —— 打包在**别人那条**「模拟用户动作（双击/Gatekeeper）」步骤上失败（`ditto: cpio read error`、横幅文案断言），**排在 upload-artifact 之前**，所以没有产物。**`[未验证]`** |
+
+`[实测]` 我这一步在三平台的打包日志里都是绿的（`④-quater … 0.3 MiB`），
+macOS 只是**后面**别人那步红了。**我没有碰他们的文件。**
+
+`e2e-allcomponents` 对新包（linux）**全绿**（run 31305857150），无回归。
+
+### 6. 「正在安装」那条：**我没量，明说**
+
+用户装的是**后端包**，与此前量过的模型下载不是同一条路径，上次那组数不能套。
+这一轮我把预算花在了定位与三处修复上，**没有量**。`[未验证]`，建议另派。
+
+### 7. 门禁（隔离 worktree 检出 `3c4543e`）
+
+| 门禁 | 结果 |
+| --- | --- |
+| `pnpm -r test` | **1615 / fail 0**（基线 1615） |
+| `tsc -b` / `build:safe` | 0 / 0 |
+| `eslint .` / `prettier --check .`（全仓） | 0 / 0 |
+| `test:ci-scripts` | 0 |
+| `check:orphans` | 零引用导出 **70**（基线 70） |
