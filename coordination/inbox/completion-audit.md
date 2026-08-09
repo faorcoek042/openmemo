@@ -846,3 +846,80 @@ PowerShell `Add-Type` P/Invoke）、**以及不要在没有真 Windows 机器验
 ⚠️ 全量 `pnpm -r test`（基线 1600）**没有量**：脏树提示显示同期有别人在飞的改动
 （`apps/web` 的 locale 与 `ModelCard.tsx`＝VAD 那一路、`packages/downloader/src/download.ts`），
 按那条提示自己的规矩 —— **在那里绿也不能证明 master 绿**。标 `[未验证]`。
+
+---
+
+# 引擎适配标注 + §14 落地（2026-08-09）
+
+提交 `e5bcefb`（界面 + 守卫）、`coordination/PROTOCOL.md` §14、本回执。
+
+## ⚠️ 先更正我上一轮的一个错误结论
+
+我上轮说：「`engines` 在 `features/models/**` **零引用** ⇒ 界面从来没显示过适配信息，
+这是**确定不存在**而不是没找到」。**那句话是错的。**
+
+`[实测]` 我把 `grep` 输出 `head -8` 截断了，漏看了
+`apps/web/src/features/models/components/QuantSelector.tsx:47-51` ——
+它**一直在**按 `enginesOf(v)` 给量化档打标（`git log -S` 定位到 `f02332a`，
+**早于**用户 2026-08-09 那次事故）。
+
+**所以 `engines` 不是零读者。** 我那句"确定不存在"本身就是一次
+**"没找到当成不存在"** —— 正是我这几轮反复在别处指出的形状，这次犯在我自己身上。收回。
+
+**真实缺口比我说的窄**：标注**只在量化下拉里**、且**只在同组变体 engines 不同时**才出现；
+卡片主体没有常驻标识，**也没有任何地方把它与本机当前可用的引擎对照**。
+
+## ① `/models` 上用户现在看到什么（真实文案）
+
+卡片标题旁常驻一枚 chip（`data-testid="model-engine-fit"`）：
+
+| 情形 | zh | en |
+| --- | --- | --- |
+| 适配、本机可用 | **适配 whisper.cpp** | **For whisper.cpp** |
+| 适配、但本机当前引擎不在其列 | **适配 sherpa-onnx · 当前用不上**（警告色） | **For sherpa-onnx · not usable now** |
+| hover | 你这台机器上当前可用的引擎不在这个列表里 —— 装了也不会被加载。换引擎后它就能用。 | None of the engines available on this machine are in that list — installing it will not make it load. It becomes usable if you switch engines. |
+
+**判据按裁定：标注、不过滤** —— 什么都不隐藏，换引擎的人照样找得到另一个。
+引擎还没探回来（`ready === false`）时**只标适配、不下"用不上"的判断**（三态，不猜）。
+空 `engines` 不渲染（`shared/models.ts:495` 明说其语义是 "nothing can load this"，
+那是清单缺陷，不该在卡片上冒充成结论）。
+
+⚠️ `[未验证]`：**三平台真浏览器上的实际渲染**。web 组件测试 312 pass / 0 fail，
+但真浏览器那条腿归别人，我没跑。
+
+## ② 零读者守卫的反向验证
+
+`scripts/check-contract-fields-shown.mjs` —— 孤儿导出那招的**反面**：
+「已经送到前端的字段，界面必须真的读它」。规则**人挑、逐条附"坏了会怎样"**。
+
+- **对照组（今天）**：✔ 绿，`engines` 有 **2 个读者**（`ModelCard` / `QuantSelector`）。
+- **反向验证**：`/tmp` 隔离副本里把**两个读者都**改名 → **`exit 1` 当场红**，并打印后果。
+- ⚠️ **只拿掉其中一个不会红** —— 我第一次的反向验证正是这么"没红"的，
+  也正是它逼我发现上面那个更正。这条守卫守的是**"有没有人显示"**，不是"显示得够不够"，
+  **边界已写进脚本注释**。
+- 匹配**标识符**（`\bengines\b`）不是散文 ——「靠散文措辞撑着的守卫会静默停止工作」。
+
+## ③ 警告的界面入口
+
+`console.warn` 那行上一轮已改成说清"去装 `vad/silero-vad-ggml`"；本轮补上**界面侧对照** ——
+用户拿着日志回到 `/models`，卡片上直接写着哪个适配 whisper.cpp、哪个"当前用不上"。
+⚠️ **没做**从日志直接跳转的深链（需 daemon 往日志塞 URL，且要与"日志文案"那一路对齐）。
+
+## ④ PROTOCOL §14 已写入
+
+一节两小条、不合并，统一句用原话
+「**让人停止追问的那句话，必须自己先被追问一次。**」
+§14.1 声称已做实则零实现（可机械化，点名两个现成实现）；
+§14.2 声称有出处而出处里没有（与 §13 反向，写明它把产品立场写反了）。
+**机械化只收锚点存在性**，明写语义比对做不到（会常态红），故本条不配套检查。
+
+## ⑤ 边界与诚实标记
+
+- `[实测]`：`QuantSelector` 早已读 `engines` 及其落地 commit；守卫对照组与反向验证；
+  web 组件测试 312/0。
+- `[未验证]`：三平台真浏览器渲染；用户看到新 chip 后能否自行解决。
+- `UNKNOWN`：无。
+- 我的提交 `e5bcefb` 经 `git show --name-only` 按 **hash** 复核 = 恰好我的 4 个文件，无夹带。
+  ⚠️ 期间 HEAD 被别人推进了数次，所以我按 §12 用 hash 复核而不是看 HEAD。
+- 未碰 `:10000` / `/root/data-memo` / 机器级指针；未用 `pkill`；未建改删 release；
+  未动 `packages/downloader/**`、`e2e-browser.*`、`docs/**` 等他路在途文件。
