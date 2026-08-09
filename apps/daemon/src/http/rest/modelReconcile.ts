@@ -49,6 +49,7 @@ import { fileURLToPath } from 'node:url';
 import { sha256File, toPortableRecord, type ArtifactStore } from '@openmemo/downloader';
 import {
   BUNDLED_MODEL_IDS,
+  type BundledModelId,
   type InstalledFile,
   type InstalledModel,
   type ModelEntry,
@@ -57,13 +58,24 @@ import {
 import { roleToStoreKind } from './roleMap.js';
 
 export interface BundledModelImportReport {
+  /*
+   * ★ `modelId` 用 `BundledModelId` 而不是 `string`。
+   *
+   * 这份报告里的每一个 id 都来自 `for (const id of BUNDLED_MODEL_IDS)`——
+   * 写成 `string` 时，**"随便哪个目录里的模型"也能被报进"随包出厂模型导入报告"**，
+   * 而编译器一个字都不会说。这正是本文件头警告的那种漂移，只不过发生在读的那一侧。
+   * 收窄之后，"这份报告只谈随包出厂的那几个 id"从注释变成编译期事实。
+   *
+   * `[门禁实测]` 这个类型此前是零引用导出（`check:orphans` 的 ✘）——
+   * 它不是死代码，是**这一半没接上**：清单常量接了，由它派生的类型没接。
+   */
   /** 成功导入的模型（附本次落地的字节数）。 */
-  readonly imported: { readonly modelId: string; readonly bytes: number }[];
+  readonly imported: { readonly modelId: BundledModelId; readonly bytes: number }[];
   /**
    * 没导入的模型 + 原因。**只收"包内看起来有点东西、但不敢认"的那些**——
    * 包内完全没有该模型痕迹（例如开发树）不算异常，不会出现在这里。
    */
-  readonly skipped: { readonly modelId: string; readonly reason: string }[];
+  readonly skipped: { readonly modelId: BundledModelId; readonly reason: string }[];
 }
 
 export interface BundledModelImportOptions {
@@ -101,8 +113,8 @@ export function resolveBundledModelsDir(): string | null {
 export async function reconcileBundledModels(
   opts: BundledModelImportOptions,
 ): Promise<BundledModelImportReport> {
-  const imported: { modelId: string; bytes: number }[] = [];
-  const skipped: { modelId: string; reason: string }[] = [];
+  const imported: { modelId: BundledModelId; bytes: number }[] = [];
+  const skipped: { modelId: BundledModelId; reason: string }[] = [];
 
   const bundledDir =
     opts.bundledModelsDir !== undefined ? opts.bundledModelsDir : resolveBundledModelsDir();
@@ -205,7 +217,12 @@ export async function reconcileBundledModels(
       catalogVersion: model.catalogVersion,
     };
     await opts.store.writeManifest(kind, model.id, record);
-    imported.push({ modelId: model.id, bytes: totalBytes });
+    /*
+     * 用循环变量 `id` 而不是 `model.id`：两者由上面 `find((m) => m.id === id)`
+     * 保证相等，但只有 `id` 带着"它来自 BUNDLED_MODEL_IDS"这个出处。
+     * `model.id` 是 `string`，用它就等于把出处丢掉，收窄也就白收了。
+     */
+    imported.push({ modelId: id, bytes: totalBytes });
   }
 
   return { imported, skipped };

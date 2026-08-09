@@ -1314,11 +1314,28 @@ commit `5da68c8`。干净 worktree：`pnpm -r test` **1626 / 0**、`eslint` 0、
 
 - **`packages/runtime/src/selfcheck.ts` 的 `probeInstalledPacks`**：不是我的，
   我从没碰过 `packages/runtime/`。**现在已经好了** —— 定义在 :780，全仓 build 通过。
-- **`check:orphans` 71 vs 基线 70**，新增的是
+- ~~**`check:orphans` 71 vs 基线 70**，新增的是
   `packages/runtime/src/selfTest.ts :: estimateDuration`。它自 `4018e23`（08-02 骨架）
-  就存在，是**调用方最近被摘掉**才变孤儿的；只剩 `index.ts:170` 一句再导出。
+  就存在，是**调用方最近被摘掉**才变孤儿的；只剩 `index.ts:170` 一句再导出。~~
   **不是我的两个提交**（都没碰 `packages/runtime`）。我没有登记进基线 ——
   不知道为什么没调用方就登记，正是那份名单自己警告的事。
+
+  ⚠️ **上面删除线那两句是错的，错的是我，留在这里不删（§13）。**
+  **`estimateDuration` 根本不是那条红。** 我把门禁输出读错了一档：
+  它有三档，我抄的是**第三档（`⚠` 只被再导出，只打印、不判红）**的那一行，
+  而真正判红的是**第一档的 `✘`**。两档由脚本定义**互斥**
+  （`check-orphan-exports.mjs:445-453`：`orphans` 要求 `prod === 0`，
+  而"只被再导出"要求 `prod > 0`）—— `index.ts:170` 那句再导出让它 `prod === 1`，
+  **它结构上就不可能进红名单**。
+  顺带，我推的"调用方最近被摘掉"也是错的：全历史 `-S` 搜下来，
+  `estimateDuration` 从 `4018e23` 出生起**就没有过任何调用方**
+  （同一次提交里、同一个文件的 `formatSelfTest` 都是把那句乘法**内联**写的，
+  `selfTest.ts:250`）。**"它自 08-02 就存在"这句我自己写对了，
+  正是它否掉了"最近被摘掉"这个推断 —— 我没顺着自己的证据往下想。**
+
+- **真正的那条红是 `packages/shared/src/bundled.ts :: BundledModelId`**
+  （另一路 `5d3cc8c` 08-09 加的类型导出，加了没人用）。**已接上，不是登记进基线**：
+  见下一节。
 
 ### 一次事故（记下来给下一个人）
 
@@ -1384,3 +1401,51 @@ commit `5da68c8`。干净 worktree：`pnpm -r test` **1626 / 0**、`eslint` 0、
 而 `a534e2e5…` 正在同一个页面上作业（本轮我已经被它的 `git stash -u` 卷走过一次）。
 **要不要我接着修，请裁。** 建议顺序：③（用户拿不回磁盘空间，且 daemon 不拦）→
 ①（有实害：静默降级 + VRAM 预算归零）→ ②（显示错，但不改变行为）。
+
+---
+
+## `check:orphans` 那条红：**选了 (A) 接回去**，基线一格没动
+
+⚠️ **先纠正我自己**：这条红**不是** `estimateDuration`（那是我读错了门禁的档位，
+更正写在上一节的删除线块里）。真正的 `✘` 是
+**`packages/shared/src/bundled.ts :: BundledModelId`** —— 另一路 `5d3cc8c`（08-09,
+D-20 §11.2 随包出厂模型）加的**类型**导出，加了之后没有任何人用。
+
+**为什么选 (A) 接回去、而不是 (B) 删掉：**
+
+`BUNDLED_MODEL_IDS`（常量）**是有人用的**（`build-bundle.mjs` 与
+`modelReconcile.ts:111`），只有由它派生的类型没接。而 `bundled.ts` 的文件头自己写着
+这个模块存在的**唯一理由**是"打包侧与发现侧读同一份清单，否则'随包出厂'就不再是一句真话"。
+**那份保证的编译期一半，正是这个类型。** 所以它不是死代码，是**这一半没接上** ——
+删掉等于把门禁刚指出来的那半个保证丢掉。
+
+**接在哪：`modelReconcile.ts` 的 `BundledModelImportReport`。**
+那份报告里每一个 `modelId` 都来自 `for (const id of BUNDLED_MODEL_IDS)`，
+但类型写的是 `string` —— 也就是说**任何一个目录里的模型 id 都能被报进
+"随包出厂模型导入报告"，编译器一个字不说**。收窄成 `BundledModelId` 之后，
+"这份报告只谈那 3 个 id"从注释变成编译期事实。
+
+⚠️ 顺带修掉一处**真的会丢出处**的写法：`imported.push({ modelId: model.id, … })`
+用的是 `model.id`（`string`），改成循环变量 `id`。两者由
+`find((m) => m.id === id)` 保证相等，但只有 `id` 带着"它来自 `BUNDLED_MODEL_IDS`"这个出处。
+
+**突变验证（编译期）**：把 `id` 换回 `model.id` →
+`error TS2322: Type 'string' is not assignable to type
+'"vad/silero-vad-ggml" | "asr/whisper-tiny-q5_1" | "asr/sherpa-streaming-zh-14m"'`。
+**收窄是真的在拦，不是摆设。**
+
+**门禁**：`70 个（基线 70 个）· ✔ 没有新的零引用导出`。**基线一格没动** ——
+按协调者的话，棘轮只能往下走。
+
+### 关于 `estimateDuration` 本身（不是红，供下一个人判）
+
+`packages/runtime/src/selfTest.ts:258-261`，一行乘法 `rtf * mediaSeconds`。
+`[全历史核实]` 自 `4018e23` 出生起**零调用方、零测试**；
+同文件 `formatSelfTest`（:250）把同一句乘法**内联**写了。
+今天真正在做这件事的是 `apps/web/src/lib/format/time.ts:91` 的 `estimateRerunMs()`
+（带 null / 非有限 / 非正数守卫 + ADR-004 决策 3 的"不许发明数字"契约，**更好不是更差**）。
+`BackendPackCard.tsx:312` 与 `ModelDetailPage.tsx:164` 各自内联了一次 `rtf * 60`，
+**语义上就是 `estimateDuration(rtf, 60)`** —— 但 `apps/web` **没有依赖
+`@openmemo/runtime`**（只有 `apps/daemon` 依赖），为省一个乘号把 Node 侧包拉进浏览器
+包体是错的交易。**要去重，正确的家是 `packages/shared` 或 `time.ts`，不是 `selfTest.ts`。**
+它是打印档、不判红，**我没动它** —— 那是另一条独立的裁决，不该混进"把红收掉"这件事里。
