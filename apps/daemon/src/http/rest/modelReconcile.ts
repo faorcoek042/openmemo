@@ -173,7 +173,10 @@ export async function reconcileBundledModels(
     }
     if (!sawSomething) continue; // 包内完全没有这个模型——不是异常，静默跳过
     if (landedFiles.length !== model.files.length) {
-      skipped.push({ modelId: id, reason: '包内只有部分文件 —— 装到一半，不算完整，不能记成已安装' });
+      skipped.push({
+        modelId: id,
+        reason: '包内只有部分文件 —— 装到一半，不算完整，不能记成已安装',
+      });
       continue;
     }
 

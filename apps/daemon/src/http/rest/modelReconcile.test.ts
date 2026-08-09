@@ -72,7 +72,9 @@ function synthEntry(raw: Record<string, unknown>): ModelEntry {
   } as unknown as ModelEntry;
 }
 
-const RAW_VAD = realModels('models-asr-support.json').find((m) => m['id'] === 'vad/silero-vad-ggml');
+const RAW_VAD = realModels('models-asr-support.json').find(
+  (m) => m['id'] === 'vad/silero-vad-ggml',
+);
 const RAW_TINY = realModels('models-whisper.json').find((m) => m['id'] === 'asr/whisper-tiny-q5_1');
 const RAW_STREAMING = realModels('models-asr-support.json').find(
   (m) => m['id'] === 'asr/sherpa-streaming-zh-14m',
@@ -111,7 +113,11 @@ describe('D-20 §11.2 reconcileBundledModels', () => {
     const bundledDir = mkdtempSync(join(TEST_ROOT, 'bundled-'));
     for (const e of ALL_THREE) await seedBundledFile(bundledDir, e);
 
-    const report = await reconcileBundledModels({ store, models: ALL_THREE, bundledModelsDir: bundledDir });
+    const report = await reconcileBundledModels({
+      store,
+      models: ALL_THREE,
+      bundledModelsDir: bundledDir,
+    });
     assert.equal(report.imported.length, 3, `期望 3 个导入，实得 ${JSON.stringify(report)}`);
     assert.equal(report.skipped.length, 0, `不该有任何跳过：${JSON.stringify(report.skipped)}`);
 
@@ -134,7 +140,11 @@ describe('D-20 §11.2 reconcileBundledModels', () => {
       for (const f of rec!.files) {
         assert.equal(f.root, 'models');
         assert.ok(f.relPath, `${e.id}/${f.name} 缺 relPath`);
-        assert.equal(await store.hasBlob(f.sha256), true, `${f.name} 的 blob 没有真的落到 store 里`);
+        assert.equal(
+          await store.hasBlob(f.sha256),
+          true,
+          `${f.name} 的 blob 没有真的落到 store 里`,
+        );
       }
     }
   });
@@ -166,7 +176,11 @@ describe('D-20 §11.2 reconcileBundledModels', () => {
 
     // 传入完整的 ALL_THREE（更贴近真实调用方式），但只给 TINY 造了字节——另外两个
     // 因为"包内完全没有痕迹"而静默跳过，不应该污染下面对 skipped.length 的断言。
-    const first = await reconcileBundledModels({ store, models: ALL_THREE, bundledModelsDir: bundledDir });
+    const first = await reconcileBundledModels({
+      store,
+      models: ALL_THREE,
+      bundledModelsDir: bundledDir,
+    });
     assert.equal(first.imported.length, 1);
     assert.equal(first.skipped.length, 0);
 
@@ -178,7 +192,11 @@ describe('D-20 §11.2 reconcileBundledModels', () => {
       benchmark: { rtf: 0.05, measuredAt: '2026-08-09T00:00:00.000Z' },
     });
 
-    const second = await reconcileBundledModels({ store, models: ALL_THREE, bundledModelsDir: bundledDir });
+    const second = await reconcileBundledModels({
+      store,
+      models: ALL_THREE,
+      bundledModelsDir: bundledDir,
+    });
     assert.equal(second.imported.length, 0, '第二遍不该再"导入"一次已经装好的模型');
     assert.equal(second.skipped.length, 0, '"已经装了"不是异常，不该出现在 skipped 里刷屏');
 
@@ -200,7 +218,11 @@ describe('D-20 §11.2 reconcileBundledModels', () => {
     const tampered = Buffer.alloc(original.length, 0x58 /* 'X' */);
     await writeFile(join(bundledDir, VAD.id, VAD.files[0]!.name), tampered);
 
-    const report = await reconcileBundledModels({ store, models: ALL_THREE, bundledModelsDir: bundledDir });
+    const report = await reconcileBundledModels({
+      store,
+      models: ALL_THREE,
+      bundledModelsDir: bundledDir,
+    });
     assert.equal(report.imported.length, 0);
     assert.equal(report.skipped.length, 1);
     assert.match(report.skipped[0]!.reason, /sha256/, '跳过原因必须点名是摘要不符，不能只说"失败"');
@@ -220,7 +242,11 @@ describe('D-20 §11.2 reconcileBundledModels', () => {
     await seedBundledFile(bundledDir, TINY);
     // 故意不给 STREAMING 造任何文件——目录里连 asr/sherpa-streaming-zh-14m/ 都不存在
 
-    const report = await reconcileBundledModels({ store, models: ALL_THREE, bundledModelsDir: bundledDir });
+    const report = await reconcileBundledModels({
+      store,
+      models: ALL_THREE,
+      bundledModelsDir: bundledDir,
+    });
     assert.equal(report.imported.length, 2, 'vad 与 tiny 仍应正常导入');
     assert.equal(
       report.skipped.some((s) => s.modelId === STREAMING.id),
@@ -249,7 +275,11 @@ describe('D-20 §11.2 reconcileBundledModels', () => {
 
   it('★ bundledModelsDir 为 null（不是包内布局，例如开发树）→ 整体 no-op', async () => {
     const store = await freshStore();
-    const report = await reconcileBundledModels({ store, models: ALL_THREE, bundledModelsDir: null });
+    const report = await reconcileBundledModels({
+      store,
+      models: ALL_THREE,
+      bundledModelsDir: null,
+    });
     assert.deepEqual(report, { imported: [], skipped: [] });
   });
 });

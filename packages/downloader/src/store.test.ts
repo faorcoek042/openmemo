@@ -82,7 +82,11 @@ describe('ArtifactStore.importBlob', () => {
     await store.importBlob(decoy, digest);
 
     const blobStat = statSync(store.blobPath(digest));
-    assert.equal(blobStat.mtimeMs, firstMtimeMs, '第二次调用不该碰这个文件——hasBlob 应该让它提前返回');
+    assert.equal(
+      blobStat.mtimeMs,
+      firstMtimeMs,
+      '第二次调用不该碰这个文件——hasBlob 应该让它提前返回',
+    );
     assert.equal(blobStat.ino, firstIno, 'dest 不该被重新 link 成 decoy 的 inode');
     assert.notEqual(blobStat.ino, statSync(decoy).ino, 'decoy 不该被 link 进 store');
   });
