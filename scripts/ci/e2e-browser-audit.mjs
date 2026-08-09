@@ -1524,13 +1524,66 @@ try {
         }),
       }),
   );
+  /*
+   * ── B11 的判据在 2026-08-10 被重写。原来那版**两个方向都是错的**，记在这里。 ──
+   *
+   * 原判据：
+   *     const before = innerText; click(note-move-root); const after = innerText;
+   *     moveSpoke = FAIL_WORDS.test(after.replace(before, ''));
+   *
+   * ① **假红**：`FAIL_WORDS = /失败|错误|重试|无法|不可用|出错|error|failed|retry/i`，
+   *    而产品对 `FOLDER_NOT_FOUND` 渲染的是「文件夹不存在 / 它可能刚被删掉了。
+   *    侧栏刷新后重新选一个。」——**一个关键词都不含**。
+   *    `[实测 jsdom]` 走产品真实路径注入 404：
+   *      新增文字 = "文件夹不存在它可能刚被删掉了。侧栏刷新后重新选一个。查看详情"
+   *      FAIL_WORDS 命中 = false
+   *    也就是说：**产品说话了，这条断言却报「界面一个字都没说」。**
+   *    文案写得越好（不吼"错误！"，而是说清发生了什么 + 下一步怎么办），
+   *    关键词判据就越判不出来 —— 它在惩罚好文案。
+   *
+   * ② **假绿**：`after.replace(before, '')` 只在 `before` 是 `after` 的**连续子串**时
+   *    才是"新增文字"；页面上任何**无关**文字变了一个字（这一页正躺着一条注定失败的
+   *    转写任务，它的状态随时会从「转写中」翻成「失败」），`replace` 就原样返回 `after`，
+   *    于是**整页**被拿去匹配 —— 而 zh-CN 里命中 FAIL_WORDS 的词条有 63 条。
+   *    `[实测]` 复刻这两种情形：
+   *      before ⊆ after  → diff="文件夹不存在…"                 → false（红）
+   *      before ⊄ after  → diff=整页（含别处的「失败/重试」）    → true （绿）
+   *    **绿的那次和"移动失败"没有半点关系。** 这正是它在门禁里绿、在慢一些的诊断运行里
+   *    红的原因：快慢决定了那条无关文字有没有恰好在两次快照之间翻面。
+   *
+   * → 新判据钉**结构**，两条都必须成立，且都不看具体用词：
+   *     (a) 面板**仍然开着**（失败不许静默收起 —— 收起来用户分不清"移好了"还是"被吞了"）；
+   *     (b) 面板**内部**出现了一个错误块（`[data-testid="error-block"]`，
+   *         同时带 `role="alert"`），且它有非空文字。
+   *   "面板内部"是关键：不许被页面别处的错误（比如那条失败的转写任务）顶替。
+   */
   let moveSpoke = false;
+  let moveDiag = '';
   if (moveOpened === true) {
-    const before = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
-    await page.click('[data-testid="note-move-root"]', { timeout: 8000 }).catch(() => {});
+    /*
+     * ⚠️ 点击失败**不许再被 `.catch(() => {})` 吞掉**。
+     * 原来吞了之后 `moveSpoke` 保持 false，B11 会报「端点回了 404 而界面一个字都没说」
+     * —— 一句**假指控**：请求可能压根没发出去。现在把它记下来单独说。
+     */
+    let clickErr = '';
+    await page.click('[data-testid="note-move-root"]', { timeout: 8000 }).catch((e) => {
+      clickErr = String(e.message).slice(0, 120);
+    });
     await page.waitForTimeout(1800);
-    const after = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
-    moveSpoke = FAIL_WORDS.test(after.replace(before, ''));
+    const probe = await page.evaluate(() => {
+      const panel = document.querySelector('[data-testid="note-move-panel"]');
+      if (!panel) return { panel: false, block: false, text: '' };
+      const el = panel.querySelector('[data-testid="error-block"]');
+      return {
+        panel: true,
+        block: el !== null,
+        text: ((el && el.textContent) || '').replace(/\s+/g, ' ').trim(),
+      };
+    });
+    moveSpoke = probe.panel === true && probe.block === true && probe.text.length > 0;
+    moveDiag =
+      (clickErr ? `点击失败：${clickErr}；` : '') +
+      `面板还开着=${probe.panel} 错误块=${probe.block} 文字=${JSON.stringify(probe.text.slice(0, 80))}`;
   }
   await page.unroute((u) => {
     try {
@@ -1539,12 +1592,17 @@ try {
       return false;
     }
   });
-  say(`   移动失败（注入 404）后界面说话了吗 = ${moveSpoke}`);
+  say(`   移动失败（注入 404）后界面说话了吗 = ${moveSpoke}  ${moveDiag}`);
 
   await check('B11 ★ 移动失败时界面必须说话（目标文件夹已被删）', () => {
     ok(moveOpened === true, '面板没打开，这条无从谈起');
-    ok(moveSpoke === true, '端点回了 404 FOLDER_NOT_FOUND，而界面一个字都没说 —— 又一处吞错误');
-    return '出现了可读的错误';
+    ok(
+      moveSpoke === true,
+      '端点回了 404 FOLDER_NOT_FOUND，而移动面板里没有出现错误块 —— 又一处吞错误。' +
+        '（判据是结构不是用词：面板仍开着 + 面板内有 [data-testid="error-block"] 且文字非空）',
+      moveDiag,
+    );
+    return '面板里出现了错误块';
   });
 
   // 变异①（死按钮那一种）：把「移动到文件夹」变成点不动，B10 必须红

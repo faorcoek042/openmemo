@@ -104,7 +104,26 @@ export function ErrorBlock({ error, onRetry, onRemediate, className }: ErrorBloc
     : String(error);
 
   return (
-    <div className={cn('rounded-lg border border-line bg-surface-1 p-4', className)}>
+    /*
+     * ★ `role="alert"` + `data-testid` 是**结构标记**，不是测试脚手架。
+     *
+     * ① 无障碍：这块的含义是"你刚才那个动作失败了"，读屏必须当场播报。
+     *    此前它只是个普通 `<div>`，键盘/读屏用户点完按钮**什么都不会被告知**。
+     * ② 可判定：`e2e-browser-audit.mjs` 的 B11 原来用**关键词表**
+     *    （`/失败|错误|重试|无法|不可用|出错|error|failed|retry/i`）判断"界面说话了没有"，
+     *    而本组件对 `FOLDER_NOT_FOUND` 渲染的是「文件夹不存在 / 它可能刚被删掉了。
+     *    侧栏刷新后重新选一个。」——**一个关键词都不含**。
+     *    `[实测 jsdom]` 注入 404 走产品真实路径：新增文字 =
+     *    "文件夹不存在它可能刚被删掉了。侧栏刷新后重新选一个。查看详情"，FAIL_WORDS 命中 = false。
+     *    → 产品说了话，断言却报「界面一个字都没说」。
+     *    **文案写得越好（不吼"错误！"而是说清发生了什么 + 下一步），关键词判据越判不出来** ——
+     *    它在惩罚好文案。判据必须钉结构，不能钉词。
+     */
+    <div
+      role="alert"
+      data-testid="error-block"
+      className={cn('rounded-lg border border-line bg-surface-1 p-4', className)}
+    >
       <div className="flex items-start gap-2.5">
         <AlertTriangle className="mt-0.5 size-4 shrink-0 text-critical" aria-hidden />
         <div className="min-w-0 flex-1">

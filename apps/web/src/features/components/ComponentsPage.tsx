@@ -143,6 +143,18 @@ export default function ComponentsPage() {
       {q.isError ? <ErrorBlock error={q.error} onRetry={() => void q.refetch()} /> : null}
       {/* 「检查」失败以前完全静默；本页的查询错误一直是渲染的，这里只是漏了 */}
       {check.isError ? <ErrorBlock error={check.error} /> : null}
+      {/*
+        ★ 「安装 / 更新」失败此前**一个字都不显示**。
+        `handleUpdate` 是 `await update.mutateAsync(...)` 包在 `try { } finally { }` 里
+        —— **没有 catch**，调用点又是 `void handleUpdate(x)`，rejection 直接漏成
+        unhandled rejection；而 `update.isError` 全仓零渲染点（`ComponentCard` 里
+        连 `error` 这个词都没出现过，它只收 `busy`）。
+        用户点「更新到 X」，sha256 对不上 / 上游 404 / 磁盘满 —— 界面什么都没有，
+        按钮只是从「更新中…」变回「更新到 X」，与"按钮是死的"完全一样。
+        ⚠️ 上一轮「7 处 void mutateAsync 全部补上」在本文件里**只加了 `check` 那一行**，
+        `update` 从头到尾不在那份名单上 —— 这是**当时漏的**，不是刻意留的。
+      */}
+      {update.isError ? <ErrorBlock error={update.error} /> : null}
       {q.isLoading ? <p className="text-xs text-ink-muted">正在读取组件清单…</p> : null}
 
       {!q.isLoading && components.length === 0 ? (

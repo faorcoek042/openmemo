@@ -92,7 +92,12 @@ export function NoteActionsMenu({ note }: { note: Pick<NoteDetail, 'uid' | 'titl
       close();
       return;
     }
-    rename.mutate({ noteUid: note.uid, title }, { onSettled: close });
+    /*
+     * ★ 只在**成功**时收起（原来是 `onSettled`，成功失败都收）。
+     * 失败也收起来的话，用户看到的是"面板关了、标题没变"—— 他分不清是改了没刷新、
+     * 还是被吞了。这与下面 `doMove` 的注释是同一条规矩，只是当时漏了这一处。
+     */
+    rename.mutate({ noteUid: note.uid, title }, { onSuccess: close });
   };
 
   const submitDelete = () => {
@@ -105,12 +110,15 @@ export function NoteActionsMenu({ note }: { note: Pick<NoteDetail, 'uid' | 'titl
      */
     /*
      * 成功后切到 `'deleted'` 而不是 `close()` —— 撤销的入口必须**出现在他刚动手的地方**。
-     * 失败仍然收起（错误由 mutation 自己的状态呈现，与本轮 ① 同一条规矩：不许静默失败）。
+     *
+     * ⚠️ **这里原本是 `onError: () => close()`，且注释声称"错误由 mutation 自己的状态
+     * 呈现"—— 那个渲染点根本不存在。** 全文件只渲染 `move` / `folders` / `restore`
+     * 三个 isError，`del.isError` 一处都没有。于是删除失败 = 面板关掉、笔记还在、
+     * 一个字都没有，用户只会以为自己没点中。
+     * **一句写着"已经处理了"的注释比没有注释更糟** —— 下一个人读到它就不会再去查。
+     * 现在：失败**留在原地**并渲染错误（与 `doMove` 同一条规矩）。
      */
-    del.mutate(note.uid, {
-      onSuccess: () => setMode('deleted'),
-      onError: () => close(),
-    });
+    del.mutate(note.uid, { onSuccess: () => setMode('deleted') });
   };
 
   const doMove = (folderUid: string | null) => {
@@ -249,6 +257,8 @@ export function NoteActionsMenu({ note }: { note: Pick<NoteDetail, 'uid' | 'titl
                   {t('common.confirm')}
                 </Button>
               </div>
+              {/* 改名失败要说话 —— 此前这一条与删除一样是完全静默的 */}
+              {rename.isError ? <ErrorBlock error={rename.error} className="mt-2" /> : null}
             </div>
           ) : null}
 
@@ -298,6 +308,8 @@ export function NoteActionsMenu({ note }: { note: Pick<NoteDetail, 'uid' | 'titl
                   {t('notes.delete')}
                 </Button>
               </div>
+              {/* 删除失败要说话 —— 上面那段注释曾经声称这件事已经做了，实际没有 */}
+              {del.isError ? <ErrorBlock error={del.error} className="mt-2" /> : null}
             </div>
           ) : null}
         </div>

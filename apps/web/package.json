@@ -11,10 +11,12 @@
     "clean": "tsc -b --clean",
     "dev": "vite",
     "preview": "vite preview",
-    "test": "pnpm run test:unit && pnpm run test:components",
+    "test": "pnpm run test:unit && pnpm run test:components && pnpm run test:silent",
     "_comment:test:unit": "★ T-135：这里的 glob **必须带引号**（它一直是带的，别顺手去掉）——pnpm 用系统 sh 跑脚本，不带引号的 `**` 会被 sh 展开成「恰好两层」，`apps/daemon` 就是这么把 13 个测试文件跑成 9 个、还漏掉 7 条红的（同轮已修）。web 这条**不能**改成 db/pipeline/daemon 那种「不给位置参数」的写法：node 的默认发现会把 `.test-out/components/` 与 `.test-out/host/` 一并扫进来，组件套件会在单测这一步被重复跑一遍。前置守卫断的是另一个面：`tsconfig.test.json` 的 include 是一张**显式白名单**，新写一个 `src/**/*.test.ts` 却忘了加进去，它就**永远不会被编译、也永远不会被跑，一个字都不报**（⑤A-2 同族，该文件自己的注释里也写着这条）。",
     "test:unit": "tsc -p tsconfig.test.json && node -e \"const{globSync,writeFileSync}=require('node:fs');writeFileSync('.test-out/unit/package.json','{\\\"type\\\":\\\"commonjs\\\"}');const s=globSync('src/**/*.test.ts').length,d=globSync('.test-out/unit/**/*.test.js').length;if(s===0||d!==s)throw new Error('test discovery broken: '+s+' 个 src/**/*.test.ts vs '+d+' 个编进 .test-out/unit —— 新加的单测要写进 tsconfig.test.json 的 include；node --test 对空集/漏集一律返回绿')\" && node --test \".test-out/unit/**/*.test.js\"",
     "test:components": "pnpm run test:host && vite build --ssr src/test/components.test.tsx --outDir .test-out/components --logLevel warn && node --test .test-out/components/components.test.js",
+    "_comment:test:silent": "★ 「写操作失败时界面必须说话」这条**横切规则**的回归腿，单独一个 bundle。不并进 components.test.tsx 是因为判据不同：那份测的是「这个组件对不对」，这份测的是一条跨 15+ 个调用点的规则。断言一律钉 [data-testid=error-block] 这个**结构**，**绝不钉关键词** —— e2e 的 B11 曾用关键词表判「界面说话了没有」，而产品对 FOLDER_NOT_FOUND 说的是「文件夹不存在／它可能刚被删掉了…」，一个关键词都不含，于是产品说了话、断言却报「一个字都没说」。**文案写得越好，关键词判据越判不出来。**",
+    "test:silent": "vite build --ssr src/test/silentFailures.test.tsx --outDir .test-out/silent --logLevel warn && node --test .test-out/silent/silentFailures.test.js",
     "_comment:test:host": "★ T-133：宿主自证套件必须**跑在组件测试之前**。宿主一旦退化（type() 驱动不了受控输入框），后面那 150 条不会报错，只会静默地少测一大片 —— 先看到这条红，才不会去怀疑产品。",
     "test:host": "vite build --ssr src/test/host.test.tsx --outDir .test-out/host --logLevel warn && node --test .test-out/host/host.test.js"
   },
