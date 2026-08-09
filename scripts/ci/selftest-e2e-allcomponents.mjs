@@ -23,6 +23,8 @@ import {
   classifyProbeRows,
   collectReleaseRefs,
   driftedPacks,
+  isSingleSource,
+  ratchetSingleSource,
   kindByExt,
   magicOf,
   tagOf,
@@ -230,6 +232,49 @@ check('换一个 ownerRepo 就该挑出另一批（判据本身没写死本仓�
   const r = collectReleaseRefs(mixed, 'BtbN/FFmpeg-Builds');
   assert.equal(r.length, 1);
   assert.equal(r[0].id, 'media-tools-linux-x64');
+});
+
+say('');
+say('── 单一来源棘轮（2026-08-09 用户裁决之后的新判据）');
+const rr = [
+  { id: 'p1', file: 'a.zip', mirrors: [{ host: 'github.com' }] },
+  { id: 'm1', file: 'b.bin', mirrors: [{ host: 'huggingface.co' }, { host: 'hf-mirror.com' }] },
+];
+const BASE = ['p1::a.zip'];
+check('★ 基线内的单一来源 → 接受，不红', () => {
+  const r = ratchetSingleSource(rr, BASE);
+  assert.equal(r.ok, true);
+  assert.equal(r.singleCount, 1);
+  assert.equal(r.unexpected.length, 0);
+});
+check('★★ 变异：本来有两个源的模型掉到一个源 → **红**（这才是意外）', () => {
+  /*
+   * 这一条就是新判据存在的全部理由：已接受的状态不红，
+   * 而"上游把 hf-mirror 撤了"这种真正的退化必须红。
+   */
+  const bad = structuredClone(rr);
+  bad[1].mirrors = [{ host: 'huggingface.co' }];
+  const r = ratchetSingleSource(bad, BASE);
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.unexpected, ['m1::b.bin']);
+});
+check('★ 变异：新加一个只配了一个源的组件 → 红（逼一次显式决定）', () => {
+  const bad = [...rr, { id: 'p2', file: 'c.zip', mirrors: [{ host: 'github.com' }] }];
+  const r = ratchetSingleSource(bad, BASE);
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.unexpected, ['p2::c.zip']);
+});
+check('基线过期（它变好了）→ 报 stale 但**不红**（收紧是好事，不该拦人）', () => {
+  const better = structuredClone(rr);
+  better[0].mirrors = [{ host: 'github.com' }, { host: 'mirror.example' }];
+  const r = ratchetSingleSource(better, BASE);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.stale, ['p1::a.zip']);
+});
+check('isSingleSource 按**去重后的主机数**算，不是按主机名长相', () => {
+  assert.equal(isSingleSource({ mirrors: [{ host: 'github.com' }, { host: 'github.com' }] }), true);
+  assert.equal(isSingleSource({ mirrors: [{ host: 'github.com' }, { host: 'hf.co' }] }), false);
+  assert.equal(isSingleSource({ mirrors: [] }), true);
 });
 
 say('');

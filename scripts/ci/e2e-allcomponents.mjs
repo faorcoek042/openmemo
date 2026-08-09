@@ -43,16 +43,27 @@
  * 那么它在中国就是装不上的 —— 这一条与我从哪儿跑无关，见第 3 节。
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import BASELINE from './single-source-baseline.json' with { type: 'json' };
 import {
   classifyProbeRows,
   driftedPacks,
+  isSingleSource,
+  ratchetSingleSource,
   kindByExt as KIND_BY_EXT,
   magicOf,
   tagOf,
@@ -261,7 +272,7 @@ function killTree(pid) {
     /* 已经没了 */
   }
 }
-async function startDaemon(label) {
+async function startDaemon(label, extraEnv = {}) {
   await assertPortFree(label);
   proc = spawn(NODE_BIN, [DAEMON, '--data-dir', DATA_DIR, '--port', String(PORT)], {
     env: {
@@ -271,6 +282,7 @@ async function startDaemon(label) {
       OPENMEMO_POINTER_FILE: join(ROOT, 'pointer.json'), // §9：绝不写全局指针
       OPENMEMO_WEB_DIST: join(BUNDLE, 'app', 'apps', 'web', 'dist'),
       OPENMEMO_EXT_DIR: join(BUNDLE, 'ext'),
+      ...extraEnv,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: !IS_WIN,
@@ -524,7 +536,7 @@ try {
   if (!cls.ok) {
     judge('A 层分类的前提成立（探到了东西）', { ok: false, reason: cls.reason });
   }
-  const { noMirror, sizeMismatch, kindMismatch, githubOnly } = cls;
+  const { noMirror, sizeMismatch, kindMismatch } = cls;
   const reachableAll = compRows.length - noMirror.length;
 
   say('');
@@ -564,18 +576,54 @@ try {
 
   /* ── 3. 镜像结构：用户装不上的那一半，CI 上唯一能诚实回答的部分 ── */
 
-  hdr('3. ★ 镜像结构 —— 「CI 可达 ≠ 用户可达」里，CI 能诚实回答的那一半');
-  say('   判据与我从哪儿跑无关：**一个组件如果只有 github.com 一个来源，它在中国就是装不上的。**');
-  say(`   只有 github 系来源的文件：**${githubOnly.length} / ${compRows.length}**`);
-  for (const r of githubOnly) say(`     ${String(r.id).padEnd(34)} ${r.file}`);
-  judge('★ 每个组件都至少有一个非 github 的镜像（否则中国用户装不上）', {
-    ok: githubOnly.length === 0,
-    reason:
-      githubOnly.length === 0
-        ? '全部组件都有备用来源'
-        : `**${githubOnly.length} 个文件只有 github 一个来源** —— 用户 2026-08-09 在中国实测撞的就是这一类` +
-          `（whispercpp-cpu-win-x64：0 B / 4.0 MB、下载源无法访问）。模型那边早就挂了 hf-mirror / ModelScope，` +
-          `后端包这边一条都没有。**有人在修，这条腿如实报出来。**`,
+  hdr('3. 来源结构 —— **已知且已接受的状态**，看得见但不该红');
+  /*
+   * ★★ 这一节的判据在 2026-08-09 被用户裁决改过，改动本身值得记下来。
+   *
+   * 用户原话：**「不管什么中国托管，有代理作为兜底就行，你不应该操心这么多。」**
+   * 所以"后端包没有中国可达兜底"从此是**已知且已接受的状态**，不是缺口。
+   *
+   * 我此前把它挂成**永久红**。那是错的，而且错在一个本仓反复在治的模式上：
+   * **一条为已被接受的状态永远亮着的红灯，等于一条被删掉的守卫** ——
+   * 它不会让任何人去修（没什么可修的），只会训练所有人忽略红灯，
+   * 顺带把**真正的意外**淹掉。
+   *
+   * 但**判据的能力不许一起删掉**。变的是"这个数是几时该红"，不是"要不要数"。
+   * 所以改成**棘轮**（与 `check:orphans` 基线 70 同形）：
+   *   · 基线里已有的单一来源 → 接受，只计数
+   *   · **基线之外**新出现的单一来源 → **红**
+   * 那才是意外：一个**本来有镜像**的组件掉到了单一来源（上游撤了 hf-mirror /
+   * ModelScope 那一份），或者有人新加组件只配了一个源 —— 后者也该被逼着
+   * 做一次显式决定，而不是顺手混进来。
+   */
+  const singleRows = compRows.filter((r) => isSingleSource(r));
+  say(
+    `   共 ${compRows.length} 个文件，其中**单一来源** ${singleRows.length} 个（按去重后的主机数算）。`,
+  );
+  const byKind = { pack: 0, model: 0 };
+  for (const r of singleRows) byKind[r.kind] = (byKind[r.kind] ?? 0) + 1;
+  say(`     后端包 ${byKind.pack ?? 0} 个、模型 ${byKind.model ?? 0} 个`);
+  say('   ── 用户裁决（2026-08-09）──');
+  say('     「不管什么中国托管，有代理作为兜底就行，你不应该操心这么多。」');
+  say('     → 后端包全部单一来源是**已接受的状态**；用户在受限网络下走代理。');
+  say('     → 失败消息里必须带得出代理这句提示（第 7 节真的去撞一次失败来验它）。');
+
+  const ratchet = ratchetSingleSource(compRows, BASELINE.entries);
+  if (ratchet.stale.length > 0) {
+    // 基线过期 = 它变好了。提醒收紧，但不红（收紧是好事，不该拦住任何人）。
+    say('');
+    say(
+      `   ⓘ 基线里有 ${ratchet.stale.length} 项现在已经不是单一来源了（变好了，建议把基线收紧）：`,
+    );
+    for (const k of ratchet.stale) say(`     ${k}`);
+  }
+  judge('★ 单一来源没有**新增**（棘轮：已接受的接受，基线之外的才是意外）', {
+    ok: ratchet.ok,
+    reason: ratchet.ok
+      ? `单一来源 ${ratchet.singleCount} 个，全部在基线（${ratchet.acceptedCount} 项）之内 —— 没有新增`
+      : `**基线之外新出现 ${ratchet.unexpected.length} 个单一来源**：${ratchet.unexpected.join('、')}\n` +
+        `      这才是意外：要么上游把某个镜像撤了，要么新加的组件只配了一个源。\n` +
+        `      确认是有意为之的话，把它显式加进 scripts/ci/single-source-baseline.json。`,
   });
 
   /* ── 4. B 层：产品自己的完整安装路径 ── */
@@ -747,6 +795,75 @@ try {
         ? `${toolChecks.length} 项 tool.* 全部非 fail`
         : badTools.map((c) => `${c.id}: ${String(c.detail ?? '').slice(0, 80)}`).join('；'),
   });
+  /* ── 7. ★ 代理那句提示，在真实失败路径上到底出不出得来 ── */
+
+  hdr('7. ★ 用户撞到失败时，看不看得到「去设置代理」这句');
+  /*
+   * 用户裁决「有代理作为兜底就行」之后，**代理就是官方答案**。
+   * 那么一个撞到下载失败的用户**必须在错误里看到它** ——
+   * 否则"有兜底"只是我们知道、他不知道，与没有兜底在体验上等价。
+   *
+   * ## 怎么验：**真的去撞一次失败**，不是读代码
+   *
+   * 把包内清单**复制一份**，把其中一个包的地址改成一个必然 404 的 URL，
+   * 用产品自己支持的 `OPENMEMO_MANIFEST_DIR` 指过去，然后走**真实安装路径**。
+   * 改的是我复制出来的那份，**包内那份一个字节都没动**。
+   *
+   * 判据是错误文案里出现「设置 → 代理」——
+   * `packages/downloader/src/download.ts:308` 在 probe 失败分支拼上了 PROXY_HINT_ZH，
+   * 而 probe 失败正是用户那条（连不上 / DNS / TLS）与本例（404）共同经过的那一步。
+   */
+  const doctored = join(ROOT, 'manifests-doctored');
+  mkdirSync(doctored, { recursive: true });
+  let doctoredId = null;
+  for (const f of readdirSync(manifestDir).filter((n) => n.endsWith('.json'))) {
+    const j = JSON.parse(readFileSync(join(manifestDir, f), 'utf8'));
+    if (!doctoredId) {
+      const victim = (j.packs ?? []).find((p) => /libsimple|sqlite-vec/.test(p.id));
+      if (victim) {
+        doctoredId = victim.id;
+        for (const file of victim.files ?? []) {
+          for (const m of file.mirrors ?? []) {
+            m.url = `https://github.com/faorcoek042/openmemo/releases/download/v0.0.0-does-not-exist/${file.name}`;
+          }
+        }
+      }
+    }
+    writeFileSync(join(doctored, f), JSON.stringify(j));
+  }
+  if (!doctoredId) {
+    judge('代理提示出现在失败路径上', {
+      ok: false,
+      reason: '**没跑** —— 清单里挑不出一个可以拿来制造失败的小包（不是跳过，是到不了）',
+    });
+  } else {
+    say(`   拿 ${doctoredId} 做失败样本（只改我复制出来的那份清单，包内原件未动）`);
+    await stopDaemon();
+    await startDaemon('proxyhint', { OPENMEMO_MANIFEST_DIR: doctored });
+    cookie = '';
+    await local('/api/auth/session', { method: 'POST', body: {} });
+    const r = await local('/api/backends/install', {
+      method: 'POST',
+      body: { id: doctoredId },
+      timeoutMs: 60_000,
+    });
+    const jid = r.body?.jobId ?? r.body?.uid ?? r.body?.id;
+    const st = jid ? await waitJob(jid, 600) : { state: `HTTP ${r.status}`, job: null };
+    const errText = JSON.stringify(st.job?.error ?? st.job ?? {});
+    say(`   安装 job：${st.state}`);
+    say(`   错误全文：${errText.slice(0, 600)}`);
+    judge('★ 下载失败时**真的**失败了（前提：这一步必须红，否则下面那条恒真）', {
+      ok: st.state === 'failed',
+      reason: `job=${st.state}`,
+    });
+    judge('★★ 失败消息里带得出「设置 → 代理」这句（代理是官方兜底，用户必须看得见）', {
+      ok: /设置\s*→\s*代理/.test(errText) || /Settings\s*→\s*Proxy/i.test(errText),
+      reason:
+        /设置\s*→\s*代理/.test(errText) || /Settings\s*→\s*Proxy/i.test(errText)
+          ? '出现了'
+          : `**没有出现** —— 用户撞到失败时看不到官方兜底办法。错误原文：${errText.slice(0, 300)}`,
+    });
+  }
 } catch (e) {
   aborted = e.message;
   say('');

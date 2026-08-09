@@ -127,3 +127,59 @@ export function collectReleaseRefs(urls, ownerRepo = 'faorcoek042/openmemo') {
   }
   return out;
 }
+
+/**
+ * 一个文件"只有单一来源"吗（按**不同主机数**算，不是按主机名长相）。
+ *
+ * ⚠️ 判据是**主机去重后 < 2**，不是"是不是 github"。
+ * 上一版写的是"所有镜像都在 github 系" —— 那会把
+ * `media-tools`（指上游 BtbN 的 GitHub release）和我们自建的包混为一谈，
+ * 也答不了"某个模型从两个源掉到一个源"这种真正的意外。
+ */
+export function isSingleSource(row) {
+  const hosts = new Set((row?.mirrors ?? []).map((m) => String(m.host ?? '')));
+  return hosts.size < 2;
+}
+
+/**
+ * 单一来源的**棘轮**判据（2026-08-09，用户裁决之后重写）。
+ *
+ * ## 为什么不再是"有单一来源就红"
+ *
+ * 用户 2026-08-09 原话：**「不管什么中国托管，有代理作为兜底就行，你不应该操心这么多。」**
+ * 所以"后端包没有中国可达兜底"从此是**已知且已接受的状态**，不是缺口。
+ *
+ * 而我此前把它挂成永久红 —— **那是本仓反复在治的那个反模式**：
+ * 一条为已被接受的状态永远亮着的红灯，等于一条被删掉的守卫，
+ * 而且会训练所有人忽略红灯。
+ *
+ * ## 但判据的**能力**不许一起删掉
+ *
+ * 变的是"这个数是几时该红"，不是"要不要数"。所以改成**棘轮**
+ * （与 `check:orphans` 的基线 70 同一个形状）：
+ *
+ *   · 基线里已有的单一来源 → **接受**，只计数、不红；
+ *   · **基线之外**出现新的单一来源 → **红**。
+ *
+ * 那才是"意外"：一个**本来有镜像**的组件掉到了单一来源
+ * （典型：上游把 hf-mirror / ModelScope 那一份撤了），
+ * 或者有人新加了一个组件却只配了一个源 —— 后者也该被逼着做一次显式决定。
+ *
+ * · 基线里有、现在却不是单一来源了 → 说明它变好了，报"基线过期"提醒收紧，不红。
+ */
+export function ratchetSingleSource(rows, baseline) {
+  const keyOf = (r) => `${r.id}::${r.file}`;
+  const accepted = new Set(baseline ?? []);
+  const current = (rows ?? []).filter(isSingleSource).map(keyOf);
+  const currentSet = new Set(current);
+  const unexpected = current.filter((k) => !accepted.has(k));
+  const stale = [...accepted].filter((k) => !currentSet.has(k));
+  return {
+    ok: unexpected.length === 0,
+    total: (rows ?? []).length,
+    singleCount: current.length,
+    acceptedCount: accepted.size,
+    unexpected,
+    stale,
+  };
+}
