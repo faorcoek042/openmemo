@@ -798,6 +798,35 @@ if [[ "${BACKEND}" == "cuda" ]]; then
                \( -iname 'EULA*.txt' -o -iname 'LICENSE' -o -iname 'LICENSE.txt' -o -iname 'copyright' \) \
                -type f 2>/dev/null | sort)
   fi
+  # ── Windows 上 toolkit 里**一份许可证文本都没有** ────────────────────────────────────
+  #
+  # `[CI 实测 run 31328389044 / windows-x64-cuda]` 打印出来的 `C:\…\CUDA\v12.4\` 顶层：
+  #     bin  extras  include  lib  nvvm  src  version.json
+  # 深度 3 内搜 `*.txt` / `LICENSE*` / `copyright` —— **一条都没有**。
+  # `Jimver/cuda-toolkit` 只解出所选组件的 bin/lib/include，NVIDIA redist 归档根上那份
+  # `LICENSE` 没被保留。**所以 Windows 上取不到"toolkit 自带的那份"，这是事实不是配置问题。**
+  #
+  # → 仓库里存一份 NVIDIA 自己的全文（`vendor/licenses/NVIDIA-CUDA-EULA-12.4.txt`，
+  #   逐字节取自 `cuda-cudart-12-4_12.4.127-1_amd64.deb` 里的
+  #   `usr/share/doc/cuda-cudart-12-4/copyright`，63,021 B）。
+  #
+  # ⚠️ **存一份就有漂的风险，所以它是自校验的**：Linux 上 toolkit 里有那份文本，
+  #    于是**两份必须逐字节相同，不同就当场红**。也就是说 CUDA 版本一升、上游一改文案，
+  #    Linux 腿会立刻告诉我们仓库里这份过期了 —— 而不是等到 Windows 上悄悄发出一份旧的。
+  NV_EULA_VENDORED="${REPO_ROOT}/vendor/licenses/NVIDIA-CUDA-EULA-12.4.txt"
+  if [[ -n "${NV_EULA_SRC}" ]]; then
+    if [[ -f "${NV_EULA_VENDORED}" ]] && ! cmp -s "${NV_EULA_SRC}" "${NV_EULA_VENDORED}"; then
+      die "toolkit 里的 EULA 与仓库里存的那份不一致：
+  toolkit  ${NV_EULA_SRC}  ($(wc -c < "${NV_EULA_SRC}") B)
+  仓库     ${NV_EULA_VENDORED}  ($(wc -c < "${NV_EULA_VENDORED}") B)
+  仓库那份是给 **Windows** 用的（那边 toolkit 一份许可证文本都没有）。
+  两份不同 = 仓库那份过期了，Windows 包会发出一份旧的 EULA。
+  修法：用 toolkit 那份覆盖仓库那份，并在提交信息里写清 CUDA 版本。"
+    fi
+  elif [[ -f "${NV_EULA_VENDORED}" ]] && [[ "$(wc -c < "${NV_EULA_VENDORED}")" -gt 1024 ]]; then
+    NV_EULA_SRC="${NV_EULA_VENDORED}"
+    log "toolkit 里没有 EULA 文本，改用仓库里存的那份（Windows 走这条）"
+  fi
   if [[ -z "${NV_EULA_SRC}" ]]; then
     # **失败自带证据**：下一轮不用靠猜"那个目录里到底有什么"。
     { echo "==> CUDA_ROOT (${CUDA_ROOT:-未设}) 的顶两层："
@@ -807,10 +836,8 @@ if [[ "${BACKEND}" == "cuda" ]]; then
         \( -iname '*.txt' -o -iname 'LICENSE*' -o -iname 'copyright' \) -type f 2>/dev/null | head -40 || true
     } >&2
     die "找不到 NVIDIA CUDA EULA 全文，而这个包里有 NVIDIA 的可再分发运行库。
-  找过：固定路径（\${CUDA_ROOT}/{EULA.txt,LICENSE,LICENSE.txt,doc/EULA.txt}、
-  /usr/share/doc/{cuda-cudart,libcublas,cuda-toolkit}-*/copyright）+ \${CUDA_ROOT} 下深度 3 递归。
-  上面已经把该目录的实际内容打出来了 —— 照着补一条候选路径即可。
-  **不许先发包、以后再补许可证** —— 那中间就是一个"已经在分发、但没带许可证"的状态。"
+  toolkit 里没有，仓库里那份（${NV_EULA_VENDORED}）也不在或太小。
+  **不许先发包、以后再补许可证** —— 那中间就是一个\"已经在分发、但没带许可证\"的状态。"
   fi
   cp -f "${NV_EULA_SRC}" "${NV_EULA_DST}"
   log "NVIDIA EULA: ${NV_EULA_SRC} → $(basename "${NV_EULA_DST}") ($(wc -c < "${NV_EULA_DST}") B)"
