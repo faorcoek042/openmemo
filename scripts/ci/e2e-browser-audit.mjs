@@ -804,6 +804,8 @@ try {
   let sawAsciiToken = null;
   let sawRegressAfterLate = null;
   let toastSaidInstallWhileDownloading = null;
+  /** 解包阶段界面上那串百分比文本（B6c 用）。采不到就保持 null，不猜。 */
+  let unpackingPercentText = null;
 
   if (packToInstall !== null) {
     await page.goto(`${BASE}/tasks`, { waitUntil: 'networkidle', timeout: 30_000 });
@@ -828,6 +830,10 @@ try {
           return el ? (el.textContent || '').replace(/\s+/g, ' ') : '';
         });
         if (toast.includes('安装')) toastSaidInstallWhileDownloading ??= toast.slice(0, 80);
+      }
+      // B6c：解压那一段的百分比，采到一次就够（钉住集合用）
+      if (snap.body.includes('正在解压') && unpackingPercentText === null) {
+        unpackingPercentText = (/(\d+(?:\.\d+)?\s*%)/.exec(snap.body) ?? [])[1] ?? '(无百分比)';
       }
       const done = await page.evaluate(async () => {
         const r = await fetch('/api/backends/installed');
@@ -854,6 +860,55 @@ try {
       `已经走到后段之后又显示「${REGRESS_ZH}」—— 阶段倒退，是在说一件假的事（序列：${sawRegressAfterLate}）`,
     );
     return `依次出现：${seenLabels.join(' → ')}`;
+  });
+
+  /* ─────────────────────────────────────────────────────────────────────────
+   * B6c ★ 已知未修的界面谎话:**钉住集合**,不是断言它必须消失
+   *
+   * ## 为什么不做成一条"必须为真"的断言
+   *
+   * `e2e-browser` **现在在发布门禁里**。一条红的断言会挡住**每一次**发布,
+   * 包括与它完全无关的修复 —— 而本仓自己的判据是
+   * **「一个永远红的门禁等于没有门禁,它训练所有人无视这盏灯」**。
+   * Manager 2026-08-09 接受了这条反对,改用与 `KNOWN_DEAD` 同一种机制。
+   *
+   * ## 钉住集合的语义(两个方向都红)
+   *
+   * · 清单**之外**出现新的谎话 → 红(有新缺陷);
+   * · 清单**之内**的那条被修好了 → **也红**(逼人回来把它划掉,清单不会烂在这儿)。
+   *
+   * ## 登记的这一条(信息要足够下一个人直接开修)
+   *
+   * **解包期间百分比掉回 0%。**
+   *   · `lib/format/bytes.ts:32-37` 的 `formatPercent` 把 `null`/`NaN` **一律渲染成 0%**,
+   *     **没有"未知"这一档**;
+   *   · 而 `installer.ts:79` 在解包阶段**只给比例、不再更新字节计数**,
+   *     于是分子分母缺失 → `null` → 显示 0%。
+   *   ⇒ 用户看到进度**从 90% 多掉回 0%**,而实际上正在解压。**它在说谎。**
+   *   修法方向(**不由本腿决定**):`formatPercent` 给出"未知"的表达(如 `—`),
+   *   或解包阶段照常推进比例。
+   * ───────────────────────────────────────────────────────────────────────── */
+  const KNOWN_UI_LIES = ['unpacking-percent-resets-to-zero'];
+  const observedLies = [];
+  if (unpackingPercentText !== null && /(^|\D)0\s*%/.test(unpackingPercentText)) {
+    observedLies.push('unpacking-percent-resets-to-zero');
+  }
+  say(`   解包期间百分比文本：${unpackingPercentText ?? '(没采到解压那一段)'}`);
+
+  await check('B6c 已知界面谎话的集合必须与清单一致（多了少了都红）', () => {
+    const unexpected = observedLies.filter((x) => !KNOWN_UI_LIES.includes(x));
+    ok(unexpected.length === 0, `出现了清单之外的新谎话：${unexpected.join('、')}`);
+    if (unpackingPercentText === null) {
+      // 没采到解压那一段就无从判断 —— 不当成"已修",也不当成"仍在"。
+      return '本轮没采到解压阶段，这一条无从判断（不是通过）';
+    }
+    const fixed = KNOWN_UI_LIES.filter((x) => !observedLies.includes(x));
+    ok(
+      fixed.length === 0,
+      `清单里的「${fixed.join('、')}」看起来已经被修好了 —— ` +
+        `**请把它从 KNOWN_UI_LIES 里划掉**（清单被修好也要红，否则它会烂在这儿）`,
+    );
+    return `已知谎话仍在：${observedLies.join('、')}`;
   });
 
   await check('B6b 下载期间 Toast 标题不许出现「安装」二字', () => {
