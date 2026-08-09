@@ -144,6 +144,24 @@ jobs:
             *) echo "is_bundle=false" >> "$GITHUB_OUTPUT" ;;
           esac
 
+      # ★★ 发包之前：目录里指向**我们自己 release** 的地址必须都还活着。
+      #
+      # 2026-08-09 的事故：预编译包**内嵌** vendor/manifests，所以
+      # **包出厂那一刻它要下载的 URL 就冻住了**。删掉一个 release 就永久打死
+      # 所有还指着它的、已经在用户机器上的包 —— 用户只看到"点安装没反应"。
+      # 实测后果：三平台 whisper.cpp 一族（含 GPU 加速）全部装不上。
+      #
+      # Manager 裁决「从现在起不删 release」。但判据不能是"记得别删"
+      # （本仓立过：**跑错了也不会造成后果**才算修好）。所以这一步放在
+      # 发包之前：**就算真有人删了，包也发不出去**，而不是等用户装不上。
+      #
+      # ⚠️ 它拦不住"人在本地敲 gh release delete"（仓库里没有服务端钩子）——
+      # 那一侧由 `--tag` 模式服务（删之前问一句"还有谁指着它"）。
+      # 这一步管的是**后果**：删了就发不出新包，事故止于此。
+      - name: 目录指向的 release 必须还活着（内嵌清单 = 出厂即冻结）
+        if: steps.kind.outputs.is_bundle == 'true'
+        run: node scripts/ci/check-release-refs.mjs --assert-live
+
       - name: 四条 e2e 腿的凭证核对
         if: steps.kind.outputs.is_bundle == 'true'
         env:

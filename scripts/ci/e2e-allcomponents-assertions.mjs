@@ -105,3 +105,25 @@ export function driftedPacks(inBundle, inCheckout) {
 export function tagOf(url) {
   return /download\/([^/]+)\//.exec(String(url ?? ''))?.[1] ?? '?';
 }
+
+/**
+ * 从一堆 `{id, file, url}` 里挑出**指向我们自己 release** 的那些，并带上 tag。
+ *
+ * 判据是"这条地址会不会因为我们删掉一个 release 而失效" —— 所以只认
+ * `<owner>/<repo>/releases/download/<tag>/`，**不认上游的 release**
+ * （BtbN 的 ffmpeg、yt-dlp 的官方包也长这个形状，但删不删由不得我们，
+ *   把它们算进来会让"我们能不能删"这个问题得到一个错误的答案）。
+ *
+ * `ownerRepo` 默认本仓；测试可以传别的来验判据本身。
+ */
+export function collectReleaseRefs(urls, ownerRepo = 'faorcoek042/openmemo') {
+  const out = [];
+  const re = new RegExp(
+    `^https://github\\.com/${ownerRepo.replace('/', '\\/')}/releases/download/([^/]+)/`,
+  );
+  for (const u of urls ?? []) {
+    const m = re.exec(String(u?.url ?? ''));
+    if (m) out.push({ ...u, tag: m[1] });
+  }
+  return out;
+}

@@ -21,6 +21,7 @@ import { strict as assert } from 'node:assert';
 
 import {
   classifyProbeRows,
+  collectReleaseRefs,
   driftedPacks,
   kindByExt,
   magicOf,
@@ -188,6 +189,47 @@ check('反向：两边一致时不许报漂移（否则每次都在喊狼来了�
 check('tagOf 取不到时回 "?"，不瞎猜', () => {
   assert.equal(tagOf('https://example.com/plain.tar.gz'), '?');
   assert.equal(tagOf(null), '?');
+});
+
+say('');
+say('── 只认我们自己的 release（删 release 那条守卫的判据）');
+const mixed = [
+  {
+    id: 'whispercpp-cpu-linux-x64',
+    url: 'https://github.com/faorcoek042/openmemo/releases/download/v0.4.0/w.tar.gz',
+  },
+  {
+    id: 'media-tools-linux-x64',
+    url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-x/f.tar.xz',
+  },
+  { id: 'asr/whisper-tiny', url: 'https://huggingface.co/x/resolve/main/ggml-tiny.bin' },
+];
+check('★★ 只挑我们自己 release 的地址，并带上 tag', () => {
+  const r = collectReleaseRefs(mixed);
+  assert.equal(r.length, 1);
+  assert.equal(r[0].id, 'whispercpp-cpu-linux-x64');
+  assert.equal(r[0].tag, 'v0.4.0');
+});
+check('★★ 反向：**上游**的 release 不许被算进来（删不删由不得我们）', () => {
+  /*
+   * 这一条是本条守卫最容易被写坏的地方：BtbN 的 ffmpeg 也长着
+   * `…/releases/download/<tag>/` 的样子。把它算进来，"我能不能删这个 tag"
+   * 就会得到一个错误的答案 —— 而且是**偏保守**的错误，看起来还很像对的。
+   */
+  const r = collectReleaseRefs(mixed);
+  assert.equal(
+    r.some((x) => x.id === 'media-tools-linux-x64'),
+    false,
+  );
+});
+check('★ 空集：没有任何我们自己的 release 地址时回空数组（调用方负责出声）', () => {
+  assert.equal(collectReleaseRefs([]).length, 0);
+  assert.equal(collectReleaseRefs(null).length, 0);
+});
+check('换一个 ownerRepo 就该挑出另一批（判据本身没写死本仓）', () => {
+  const r = collectReleaseRefs(mixed, 'BtbN/FFmpeg-Builds');
+  assert.equal(r.length, 1);
+  assert.equal(r[0].id, 'media-tools-linux-x64');
 });
 
 say('');
