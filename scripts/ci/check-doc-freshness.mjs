@@ -44,8 +44,8 @@ function packCount(rel) {
 
 const CLAIMS = [
   {
-    id: 'DEPLOYMENT §1.3 目录条数',
-    doc: 'docs/DEPLOYMENT.md',
+    id: 'D-19 §1.3 迁入块 · 目录条数',
+    doc: 'docs/design/D-19-user-doc-provenance.md',
     /**
      * 文档里声明的那个数。
      *
@@ -68,7 +68,7 @@ const CLAIMS = [
       '  1. 跑一轮  gh workflow run cold-start-audit.yml   （三平台，约 6 分钟/平台，会真下载几百 MB）',
       '  2. 从三个 job 日志里抄「目录共 N 个包，适用于本机 M 个」，逐平台更新 §1.3 的表',
       '  3. 更新 §1.3 里 `[A]` 的 run id、正文里那句「今天目录是 N 个」，',
-      '     以及文档顶部那行对账标记  <!-- doc-freshness: catalogPacks=N -->',
+      '     以及 D-19 里那行对账标记  <!-- doc-freshness: catalogPacks=N -->',
       '',
       '⚠️ 不许用「目录多了 2 个包所以适用数 +1」这类推算填表 —— 推算出来的数不是实测值。',
     ],

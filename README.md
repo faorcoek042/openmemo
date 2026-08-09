@@ -7,10 +7,8 @@
 
 ## 装它
 
-### 方式一:下预编译包(推荐,开箱即用)
-
-去 [**Releases**](https://github.com/faorcoek042/openmemo/releases) 下你系统那一个,解开就能跑。
-**自带 Node 运行时** —— 机器上**不需要装 Node、不需要 pnpm、不需要 git**。
+去 [**Releases**](https://github.com/faorcoek042/openmemo/releases) 下你系统那一个,解开后跑里面的启动脚本,
+浏览器会自动打开。**自带 Node 运行时** —— 不需要装 Node、pnpm、git。包内另有一份 `READ-ME-FIRST.txt`。
 
 | 系统        | 文件                                  |   下载 |  解开后 |
 | ----------- | ------------------------------------- | -----: | ------: |
@@ -18,9 +16,10 @@
 | Windows x64 | `openmemo-<版本>-win-x64.zip`         | 49 MiB | 132 MiB |
 | macOS arm64 | `openmemo-<版本>-darwin-arm64.tar.gz` | 60 MiB | 192 MiB |
 
-解开后跑里面的启动脚本,浏览器会自动打开。包里还有一份 `READ-ME-FIRST.txt`,内容与下面一致。
+想从源码构建:见 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §1.1 路线 B(需 Node ≥ 22 + pnpm 10.15.0;
+ffmpeg / whisper / yt-dlp / CUDA 都不用预装)。
 
-#### 首次运行:系统大概率会拦你一次(我们没有买代码签名证书)
+### 首次运行:系统大概率会拦你一次(我们没有买代码签名证书)
 
 | 系统        | 你会看到                                                      | 怎么过                                                                                                                                 |
 | ----------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
@@ -29,57 +28,30 @@
 | **Linux**   | 不拦                                                          | 在终端里跑 `./start.sh`(文件管理器里双击 `.sh` 通常只会用文本编辑器打开它)                                                             |
 
 ⚠️ **macOS 上"双击没反应"最容易被误判成"包坏了"**:Gatekeeper 拦在**打开脚本**那一步,
-终端窗口根本没被启动,你也看不到任何错误。**换命令行 `tar` 解压绕不开它**(实测:访达与
-`tar` 都会传播隔离属性;~~v0.2.0 说的"命令行解压就不会被拦"~~ 是错的)。另一条路是
-`xattr -dr com.apple.quarantine "<文件夹>"` —— 它**等于对这些文件关掉 Gatekeeper 检查**,
+终端窗口根本没被启动,你也看不到任何错误。**换命令行 `tar` 解压绕不开它**
+(实测访达与 `tar` 都会传播隔离属性;~~v0.2.0 说的"命令行解压就不会被拦"~~ 是错的)。
+另一条路 `xattr -dr com.apple.quarantine "<文件夹>"` —— 它**等于对这些文件关掉 Gatekeeper 检查**,
 先确认你信任来源。实测细节见 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §8.9。
 
-#### 第一次启动会说"以下组件还没装" —— 那是正常的
+### 第一次启动会说"以下组件还没装" —— 那是正常的
 
-冷装之后本来就没有 ffmpeg / whisper-cli / 模型。打开网页后在「设置 → 组件」里点安装,
-装好会自动生效,不用重启。在此之前转写类任务会先排队等着(blocked),不会丢。
+冷装之后本来就没有 ffmpeg / whisper-cli / 模型。打开网页后在「设置 → 组件」里点安装(装完按提示重启),
+再去「模型」下一个语音识别模型。⚠️ **装完组件不等于能转写** —— 一个模型都没有时自检会报 `model.asr fail`。
+在此之前转写类任务会先排队等着(blocked),不会丢。第一次要从网上取 **几百 MB 到 1 GB+**
+(最小模型 ~30 MB,`large-v3-turbo` ~1.6 GB),全部在网页上点,可随时删掉重下。
 
-⚠️ **同一个 Release 里那些 `whispercpp-*` 不是给你下的** —— 那是产品**自己在网页上下载安装**的
-后端依赖(按钉死的 sha256 校验)。手动下载没有用:放哪、叫什么、要不要建硬链接全由安装器决定。
-`model-mirror-*` 那个 Release 同理。
-
-### 方式二:克隆源码自己构建
-
-前置 **Node ≥ 22** + **pnpm 10.15.0**。ffmpeg / whisper / yt-dlp / CUDA **都不用预装**。
-
-```bash
-git clone https://github.com/faorcoek042/openmemo.git
-cd openmemo
-pnpm install
-pnpm -r build                        # ★ 网页 bundle 只有这条会产出
-node apps/daemon/dist/main.js        # 打开终端里打印的地址,默认 http://127.0.0.1:17650/
-```
-
-**进去之后先做两件事**,否则转写会 blocked:
-
-1. **运行时**(`/runtime`)→ 装本机适用的组件(转写引擎、ffmpeg、yt-dlp、中文分词),装完点提示里的重启
-2. **模型**(`/models`)→ 转写 Tab → 下一个语音识别模型
-   ⚠️ **装完组件不等于能转写** —— 冷装之后一个模型都没有,自检会用 `model.asr fail` 告诉你
-
-第一次要从网上取 **几百 MB 到 1 GB+**(组件 + 你选的模型:最小 ~30 MB,`large-v3-turbo` ~1.6 GB;
-走方式二还要加上 `pnpm install` 的依赖)。全部在网页上点,可随时删掉重下。
+⚠️ **同一个 Release 里那些 `whispercpp-*` 不是给你下的** —— 那是产品**自己在网页上下载安装**的后端依赖
+(按钉死的 sha256 校验)。手动下载没有用:放哪、叫什么、要不要建硬链接全由安装器决定。`model-mirror-*` 同理。
 
 ### 东西都下到哪了
 
-组件、模型、数据库、媒体文件**全在同一个数据目录**下,默认位置:
+组件、模型、数据库、媒体文件**全在同一个数据目录**:Linux `~/.local/share/openmemo/`(跟随 `XDG_DATA_HOME`)、
+macOS `~/Library/Application Support/OpenMemo/`、Windows `%APPDATA%\OpenMemo\`。
+网页上「设置 → 数据目录」能查看、修改、整体搬走、统计占用,也可启动时用 `--data-dir <路径>` 指定。
+**删掉整个数据目录不会弄坏程序本体** —— 下次启动会重建一个空的。
 
-| 系统    | 默认数据目录                                     |
-| ------- | ------------------------------------------------ |
-| Linux   | `~/.local/share/openmemo/`(跟随 `XDG_DATA_HOME`) |
-| macOS   | `~/Library/Application Support/OpenMemo/`        |
-| Windows | `%APPDATA%\OpenMemo\`                            |
-
-**这个位置可以改。** 网页上「设置 → 数据目录」能**查看、修改、整体搬走、统计各部分占多大**;
-也可以启动时用 `--data-dir <路径>` 指定。**删掉整个数据目录不会弄坏程序本体** ——
-下次启动会重建一个空的,组件和模型重新装即可。
-
-⚠️ 记录"数据目录搬到哪了"的**指针文件**不在数据目录里(否则搬完就找不到了),
-它固定在上表那个默认位置下的 `datadir.json`。**这一份是全机器共享的。**
+⚠️ 记录"数据目录搬到哪了"的**指针文件**不在数据目录里(否则搬完就找不到了),它固定在上述默认位置下的
+`datadir.json`。**这一份是全机器共享的。** 详见 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §3。
 
 ## 能跑在哪
 
@@ -90,10 +62,9 @@ node apps/daemon/dist/main.js        # 打开终端里打印的地址,默认 htt
 | **macOS arm64**(≥ 13.3,**部分功能要 ≥ 15.5**,见下) | ✅ CPU + Metal + ANE(ANE 仅 `large-v3-turbo`)     |
 | **AMD(ROCm)** · **macOS Intel** · **linux-arm64**  | ❌ 不构建                                         |
 
-判据是**「屏蔽宿主 PATH 的干净机器上真的转出非空文本」**,不是「代码写完了」。最近一轮
-`cold-start-audit` run 31167151669 三平台各一次,5 个工具全由产品自己下载校验、**借宿主 PATH 的 0 个**。
-此外 F1–F5 各有一条**端到端腿**(用预编译包、走真实 HTTP、三平台各跑一次),
-外加一条**"人能不能双击打开"**的腿;**没跑过就发不出去**。清单见 `DEPLOYMENT.md` §1.5。
+判据是**「屏蔽宿主 PATH 的干净机器上真的转出非空文本」**,不是「代码写完了」。
+F1–F5 各有一条端到端腿(用预编译包、走真实 HTTP、三平台各跑一次),外加一条**"人能不能双击打开"**的腿,
+**没跑过就发不出去**;证据与边界见 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §1.5。
 
 ⚠️ 有一族**装得上、跑不了、自检看不见**的下限(macOS < 13.3 · Linux glibc 过低 · Windows 缺 VC++):
 下载成功、sha256 通过、安装记录 succeeded、自检全绿,**只有真正去执行时才死**。三条见
@@ -127,7 +98,7 @@ node apps/daemon/dist/main.js        # 打开终端里打印的地址,默认 htt
 
 `package.json` 仍是 `UNLICENSED`(ADR-002);仓库根目录有一份 `LICENSE` 说明授权状态,
 预编译包内另带 `THIRD-PARTY-NOTICES`。(~~无 LICENSE 文件~~ ~~一旦要分发就是硬阻断~~
-—— 这两句 2026-08-08 起不再为真,订正见 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) 附录 A.0。)
+—— 这两句 2026-08-08 起不再为真,订正见 [`docs/design/D-19-user-doc-provenance.md`](docs/design/D-19-user-doc-provenance.md)。)
 ffmpeg 与 yt-dlp 是 **GPL-3.0-or-later**,但**它们的字节从不经过我们**:由你的机器直连上游取,
 我们只以命令行方式调用 —— 所以发预编译包不触发 GPL。逐条依据见附录 A 或 `pnpm license:report`。
 
