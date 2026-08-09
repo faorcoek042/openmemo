@@ -155,11 +155,7 @@ describe('buildCatalog(): 组代表文案不能只看"清单数组第一个"', (
     // ★ 关键：故意把带标签的那个放在数组第二位 —— 真清单里它现在恰好排第一，
     // 直接用原顺序测不出"顺序被打乱还对不对"，必须颠倒过来才是在测机制本身。
     const reordered = [untagged!, tagged!];
-    assert.notEqual(
-      reordered[0],
-      tagged,
-      '前提：颠倒后带标签的变体不再是数组第一个',
-    );
+    assert.notEqual(reordered[0], tagged, '前提：颠倒后带标签的变体不再是数组第一个');
 
     const state = await seedCatalog(reordered);
     const catalog = await state.buildCatalog('all', null);
