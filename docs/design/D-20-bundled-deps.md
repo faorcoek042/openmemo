@@ -833,3 +833,241 @@ schema 了。`docs/design/D-17-prebuilt-bundles.md:113` 一并订正，见该文
   同等强度的结论使用。
 
 ---
+
+## 15. CUDA 那 678 MB 里到底是什么 —— §12.3 留的那个 `UNKNOWN`（`amd-vulkan` 2026-08-09，取证，未改本文任何决策）
+
+> **一句话**：678 MB 里 **418.6 MB（61.8%）是 NVIDIA 运行库**，251.4 MB（37.1%）是我们编的
+> `ggml-cuda.dll`，其余 7.8 MB（1.1%）是引擎本体。
+> **我们自己那一半砍得动（153.6 MB → 39.7 MB），运行库那一半砍不动** ——
+> 光 cuBLAS 一项的地板就是 **398.7 MB**，**是 100 MB 界线的 4.0 倍**。
+> **⇒ §9.2「whisper CUDA 下载」的定案不变，而且理由从"体积超线"变成了一条更硬的"结构上超线"。**
+
+**本节一行产品代码没改，`build-bundle.mjs` 一个字节没碰。**
+
+### 15.1 678 MB 的逐项拆解（`[实测]`，**没有下载那 678 MB**）
+
+做法：HTTP `Range` 只取 ZIP 尾部，解析 **EOCD + 中央目录**，拿到 44 条记录的
+压缩/解压字节数（形状抄 `pack-publish` T-150 读 artifact 中央目录那次）。
+解析出的条数 44 与 EOCD 声明的 44 一致 —— 对不上就不作结论。
+
+| 分类 | 压缩(B) | 解压(B) | 占压缩包 | 条数 |
+| --- | ---: | ---: | ---: | ---: |
+| **NVIDIA 运行库** | **418,649,015** | 624,576,512 | **61.8%** | 6 |
+| **`ggml-cuda.dll`（我们编的）** | **251,437,412** | 564,585,984 | **37.1%** | 1 |
+| 其余（whisper/ggml/CPU 变体/示例/SDL2） | 7,795,096 | 20,325,376 | 1.1% | 37 |
+| 合计 | 677,881,523 | 1,209,487,872 | 100% | 44 |
+
+NVIDIA 那 6 个逐条：
+
+| 文件 | 压缩(B) | 解压(B) | 必须随包吗 |
+| --- | ---: | ---: | --- |
+| `cublasLt64_12.dll` | 328,398,141 | 473,551,360 | ✅ **必须**（见 15.3） |
+| `cublas64_12.dll` | 70,150,084 | 100,033,536 | ✅ **必须** |
+| `cudart64_12.dll` | 171,402 | 553,984 | ✅ **必须** |
+| `nvrtc64_120_0.dll` | 18,614,676 | 44,738,048 | ❌ **不需要** |
+| `nvrtc-builtins64_124.dll` | 1,180,912 | 5,367,808 | ❌ **不需要** |
+| `nvblas64_12.dll` | 133,800 | 331,776 | ❌ **不需要** |
+| **必需小计** | **398,719,627** | 574,138,880 | |
+| 白带的 | 19,929,388 | 50,437,632 | |
+
+**那 19.9 MB 是上游 `xcopy` 扫进来的**，不是需要：`release.yml:386-394` 把
+`cuda_nvrtc` / `libcublas` 等整个 redist 归档 `xcopy /E` 进 toolkit 目录再整目录打包。
+证据两条，互相独立：① 本仓 `vendor/whisper.cpp/ggml/` 全树 grep `nvrtc` / `nvblas` **零命中**；
+② 我们自己编的 `ggml-cuda.dll` 导入表里也没有它们（15.2）。
+
+### 15.2 ⚠️ 顺带查出一个**现存缺陷**：我们自己的两个 CUDA 包**没带运行库，装上加载不了**
+
+`[实测]` 读我们自己 CI 产物（run **31155359839**，`3ef8734`，全绿）里
+`ggml-cuda.dll` 的 **PE 导入表**：
+
+```
+cublas64_12.dll        ← Toolkit 组件，用户机器上没有
+cudart64_12.dll        ← Toolkit 组件，用户机器上没有
+nvcuda.dll             ← 显示驱动带的，正常
+ggml-base.dll          ← 在包里 ✔
+MSVCP140 / VCRUNTIME140{,_1}.dll + api-ms-win-crt-*   ← D-11 §8.3 那条老债
+（没有 nvrtc，没有 nvblas）
+```
+
+Linux 侧同形（`objdump -p libggml-cuda.so`）：
+`NEEDED libcudart.so.12` / `libcublas.so.12` / `libcuda.so.1`。
+
+而这两个包的 `providesFiles` 里**一个 CUDA 运行库都没有**：
+
+```
+whispercpp-cuda-win-x64   143,594,259 B   19 个文件，无 cudart64 / cublas64 / cublasLt64
+whispercpp-cuda-linux-x64 152,248,220 B   24 个文件，无 libcudart.so.12 / libcublas.so.12
+```
+
+成因在 `scripts/build-whisper.sh` 的打包分支：`copy_if_exists "${BIN_DIR}/cudart64_"*.dll …`
+只在**构建输出目录**里找，而 CMake 不会把 toolkit 的 DLL 拷到 `bin/Release`；
+Linux 侧那几个 glob 是 Windows 命名（`cudart64_*.dll`），**在 Linux 上永远匹配不到**。
+`copy_if_exists` 的语义是"有就拷、没有就算"，**所以它一声不吭**。
+
+**后果是本仓最贵的那一族**：`GGML_BACKEND_DL=ON` 下 `dlopen` 失败**不是错误**，
+只是"这个后端没注册上" → whisper 照常用 CPU 跑完 → 用户只会觉得"装了 CUDA 包但没变快"。
+`[未验证]` 我们没有 N 卡 runner，**没有实测过这条失败路径**；上述是从导入表 + 包内容推出的，
+不是跑出来的。**但它不需要实测就已经是缺陷**：包里没有它必需的文件，这是清单事实。
+
+> ⚠️ 这条**不属于本节的取证任务**，我也**没有修**（纪律：不改产品代码）。
+> 记在这里是因为它改变了 §12.3 那张对照表的读法：
+> **我们那两个 143/152 MB 的包和上游那个 678 MB 的不是同一类东西** ——
+> 前者缺了后者里那 398.7 MB 的运行库。拿 143 MB 去和 100 MB 界线比是**比错了**。
+
+### 15.3 `cublasLt` 为什么砍不掉（这条决定了整个结论）
+
+`[实测]` 从那 678 MB 的 zip 里**只取出 `cublas64_12.dll` 这一条**
+（Range 取该 entry 的 70,150,084 B → inflate 得到 100,033,536 B，与中央目录声明一致），
+读它的 PE 导入表：
+
+```
+Release/cublas64_12.dll 的 PE 导入表（2 条）：
+   KERNEL32.dll
+   cublasLt64_12.dll        ← ★ 硬导入，不是可选加载
+```
+
+**所以 `cublasLt64_12.dll`（473.6 MB 解压 / 328.4 MB 压缩）随 cuBLAS 一起是强制的。**
+
+而 cuBLAS 本身也去不掉：本仓 `ggml/CMakeLists.txt:199-210` 里
+**没有任何"不链 cuBLAS"的开关**（`GGML_CUDA_FORCE_MMQ` 只改**优先走哪条 matmul 路径**，
+不改链接；`ggml-cuda` 的 `*.cu`/`*.cuh` 里 **66 行**出现 `cublas`，且不在任何「不用 cuBLAS」的条件编译里）。
+
+NVIDIA 官方 redist 清单（`developer.download.nvidia.com/compute/cuda/redist/redistrib_12.4.0.json`）
+给的归档体积也对得上这个量级：`libcublas` linux-x86_64 **466,144,480 B**、
+windows-x86_64 **391,101,865 B**（含静态库与头文件，比我们只取两个 DLL 略大）。
+
+⚠️ `UNKNOWN`：**有没有办法只保留 cuBLAS 里我们用到的那些架构**。我没找到 NVIDIA 提供的
+"精简版 cuBLAS"或按架构裁剪的官方途径，也没找到可信的社区做法。
+**我不提一个查不到出处的瘦身方案。**
+`GGML_STATIC=ON` 会改链 `cublas_static` + `cublasLt_static`（`ggml-cuda/CMakeLists.txt:158-171`），
+理论上链接器可以只保留用到的符号 —— **但我没有实测过静态链接后的体积**，
+而且源码注释自己写着「As of 12.3.1 CUDA Toolkit for Windows does not offer a static cublas library」。
+标 `[未验证]`，**不作为方案提出**。
+
+### 15.4 `ggml-cuda` 那一半：**95% 是 fatbin，而且砍得动**
+
+`[实测]` 我们自己的 Linux 产物 `libggml-cuda.so` = 393,191,672 B，段大小：
+
+```
+.nv_fatbin   373,465,832   (95.0%)      ← 设备代码
+.text         13,922,786
+.rodata        4,322,120
+```
+
+Windows 同形：`ggml-cuda.dll` 388,632,576 B，`.nv_fatb` 375,064,576 B（96.5%）。
+
+**把 `.nv_fatbin` 按条目拆开数**（解析 fatbin 容器头 + entry 头；
+先把前 8 条 entry 的原始字段打出来核对布局解对了没有，再统计；
+**统计覆盖 373,463,624 / 373,465,832 = 100.0%**，138 个容器）：
+
+| 类型 | 架构 | 字节 | 占 `.nv_fatbin` |
+| --- | --- | ---: | ---: |
+| CUBIN（SASS） | sm_86 | 118,403,568 | 31.7% |
+| CUBIN（SASS） | sm_89 | 118,040,304 | 31.6% |
+| PTX（JIT 源） | compute_86 | 68,598,656 | 18.4% |
+| PTX（JIT 源） | compute_89 | 68,421,096 | 18.3% |
+
+也就是说 **PTX 占了 36.7%** —— 那是"将来的新卡也能跑"的前向兼容兜底。
+（`CMAKE_CUDA_ARCHITECTURES="86;89"` 在 CMake ≥3.18 下同时产 real + virtual，
+所以两种都在。写成 `86-real;89-real` 就只剩 CUBIN。）
+
+### 15.5 各档位的**实际压缩体积**（`[实测]`，不是按比例估）
+
+做法：把该保留的字节**真的拼出来再真跑 gzip**，不用任何压缩率假设。
+**校准**：对"现状"档算出 153,617,353 B，而 CI 真打出来的 tar.gz 是 152,248,220 B ——
+**误差 +0.9%，方向是上界**（分块拼接比整体压缩略差）。其余各行按同一方法同一误差量级读。
+
+| 档位 | 整包压缩(B) | 相对现状 | 谁能用 / 谁静默失效 |
+| --- | ---: | ---: | --- |
+| ① **现状** 86+89，CUBIN+PTX | **153,617,353** | — | sm_86/sm_89 原生；**其它 NVIDIA 卡靠 PTX JIT**（首次启动慢） |
+| ② 86+89，去掉 PTX | 68,647,003 | −55% | **只剩 sm_86 / sm_89**。其它算力全部失效（`[报告]` 卡型对应 sm_75≈RTX 20xx / sm_61≈GTX 10xx / sm_80≈A100 / sm_90≈H100 / sm_120≈RTX 50xx —— **这条对应关系我没有逐个查证出处**） |
+| ③ 只 86（CUBIN+PTX） | 82,233,489 | −46% | sm_86 原生；sm_89 及更新的靠 JIT（**RTX 40xx 每次冷启动要 JIT 一份 68 MB 的 PTX**） |
+| ④ 只 89（CUBIN+PTX） | 82,067,837 | −47% | sm_89 原生；**sm_86（RTX 30xx）失效** —— PTX 不能往低版本回退 |
+| ⑤ 只 86 CUBIN | 39,695,937 | −74% | **只剩 sm_86 一代卡**。其余全部失效 |
+| ⑥ 只 PTX(compute_86) | 52,693,891 | −66% | 全部靠 JIT，**没有一张卡是原生的** |
+
+⚠️ **"失效"是什么形态**：CUDA 找不到匹配的 kernel image 时报
+`no kernel image is available for execution on the device`。`[报告]` 这条报错文本来自 CUDA 的通用行为，**我没有在真卡上复现过**。
+`[实测读码]` `ggml-cuda.cu` 的设备枚举（`ggml_cuda_info()`）**只读 compute capability，
+不检查有没有对应的 cubin/PTX** —— 也就是说后端会**注册成功**，
+然后在第一次 kernel launch 时才死。**这正是"装得上、跑不了"那一族。**
+`[未验证]` 没有 N 卡 runner，这条失败路径我们没跑过。
+
+### 15.6 加上运行库之后：**没有一档能进 100 MB**
+
+**必需运行库地板 = 398,719,627 B（cudart + cublas + cublasLt，15.1/15.3 实测），
+它自己就是 100 MB 界线的 4.0 倍。** 我们那一半再怎么砍也追不回来：
+
+| 方案 | 我们的部分 | + 必需运行库 | 合计 | 进 100 MB 线？ |
+| --- | ---: | ---: | ---: | --- |
+| 现状（86+89，CUBIN+PTX） | 153,617,353 | 398,719,627 | **552,336,980** | ❌ 5.5× |
+| 去 PTX（②） | 68,647,003 | 398,719,627 | **467,366,630** | ❌ 4.7× |
+| 最激进（⑤，只 sm_86 CUBIN） | 39,695,937 | 398,719,627 | **438,415,564** | ❌ 4.4× |
+| 理论下界（我们的部分 = 0） | 0 | 398,719,627 | **398,719,627** | ❌ 4.0× |
+
+> **结论：砍不动。** 不是"差一点"，是**最好情况仍然超线 4 倍**，
+> 而且那 4 倍全在一个我们无权也无法裁剪的第三方运行库里。
+> **§9.2「whisper CUDA → 下载」不变。** 唯一要更新的是**理由**：
+> 从"非 GPL 但超线 6.8 倍"改成"**cuBLAS 运行库的地板就是 4.0 倍，与我们编多少个架构无关**"。
+
+### 15.7 我们**不是** memo 那道选择题
+
+§12.3 猜测"如果大头也是运行库，那就变成和 memo 同一道选择题"。**取证之后：不是。**
+
+- memo 的 18.2 MB 包**只有** `ggml-cuda.dll`，把约 560 MB 运行库推给用户单独下 `cublas` zip。
+- **我们今天的两个自建包，事实上处在同一个状态 —— 但是无意的，而且没有那个"让用户另下"的通道**（15.2）。
+  memo 至少给了用户一条路；我们的包是**缺了必需件却什么都不说**。
+- 所以对照结论反过来了：**不是"我们要不要学 memo 把运行库推给用户"，
+  而是"我们那两个包现在就是坏的，得先补上运行库"** —— 而补上之后它们会变成 ~550 MB，
+  正好落回 §9.2 已经定好的"下载"那一栏。
+
+### 15.8 与 NVIDIA 许可证的关系（`[报告]`，我不是律师）
+
+若日后真要随包分发那三个运行库，`docs.nvidia.com/cuda/eula` 的 Attachment A
+把 `cudart` / `cublas` / `cublasLt`（以及 `nvblas` / `nvrtc`）都列为**可再分发**，
+并允许"文件名里带版本号/架构信息的变体"。附带义务（原文见 §1.1.2 Distribution Requirements）：
+
+- "Your application must have material additional functionality, beyond the included portions of the SDK."
+- "The distributable portions of the SDK shall only be accessed by your application."
+- 二进制**不得修改**（§2.3："the object code files are not modified in any way (except for unzipping of compressed files)"）。
+- 下游条款须与该 EULA 一致。
+
+⚠️ **`nvcuda.dll` / `libcuda.so` 是驱动带的**（`docs.nvidia.com/deploy/cuda-compatibility/why-cuda-compatibility.html`
+原文："The driver package includes both the user mode CUDA driver (`libcuda.so`) and kernel mode components"），
+上游的 678 MB 包里也确实**没有**它 —— 这一条我们和上游都做对了。
+
+⚠️ **一条现存的清单不准确**：`backends.json` 里 `whispercpp-cuda-12.4-win-x64` 的
+`license` 写的是 `MIT`（whisper.cpp 的证），**而那个包里 61.8% 的字节是 NVIDIA 的再分发件，
+不是 MIT**。`[报告]` 这是许可证标注的覆盖不全，**我没有改**（不在本次取证范围，且
+`components.json` 的来源页也要跟着改）。**建议派人处理。**
+
+### 15.9 驱动版本下限（顺带核实，因为它决定"用户装了能不能跑"）
+
+`[实测]` `docs.nvidia.com/cuda/cuda-toolkit-release-notes` Table 3：
+CUDA **12.4 GA** 要求 Linux x86_64 **≥ 550.54.14**、Windows x86_64 **≥ 551.61**。
+Table 2（minor version compatibility）对 **12.x 家族**给的是 **≥ 525 且 < 580**。
+→ `backends.json` 现写的 `requiresDriver.nvidiaDriver: "550"` **与 12.4 GA 的 550.54.14 同一量级，是对的**。
+
+⚠️ 但有一条**与 15.5 直接打架、必须写下来**：走 minor version compatibility（驱动 ≥525 但低于 550.54.14）时，
+官方明写限制是 **"No PTX (requires SASS), NVCC target architecture required"**
+（`why-cuda-compatibility.html`）—— **也就是那种情况下 PTX 兜底是不生效的，只有精确匹配的 CUBIN 才行。**
+所以 15.5 表里"靠 JIT"那几档，**只对驱动足够新的用户成立**。
+
+### 15.10 本节没做 / 没验的（如实列）
+
+| 项 | 状态 |
+| --- | --- |
+| 任何一档裁剪后的包**在真 N 卡上能不能跑** | `[未验证]` —— 没有 N 卡 runner，**不拿"包能装上"当"能跑"** |
+| 裁剪档位的体积是**重编实测**吗 | ❌ **不是**。是把真实字节按档位拼出来真跑 gzip，对"现状"档校准误差 **+0.9%**。重编一次布局会略有不同 |
+| 15.2 那条缺陷的**失败形态** | `[未验证]`（从导入表 + 包内容推出；缺件本身是清单事实） |
+| cuBLAS 静态链接后的实际体积 | `[未验证]`，**没有实测，不作为方案提出** |
+| cuBLAS 有没有官方瘦身途径 | `UNKNOWN` —— 查不到，不编 |
+| Linux 侧 `libcublas.so.12` / `libcublasLt.so.12` 的**单文件**体积 | `UNKNOWN` —— 只拿到 NVIDIA redist 归档整体 466,144,480 B（含静态库与头文件）。Windows 侧是逐文件实测的 |
+
+### 15.11 纪律
+
+- **一行产品代码没改**；`scripts/build-bundle.mjs` 一个字节没碰；本节只**追加**，
+  D-20 已有的任何决策一个字没动。
+- **未建/改/删任何 release**；未碰 `:10000`、`/root/data-memo`、任何机器级指针；未用过 `pkill`（含 `-0`）。
+- 那 678 MB **没有整个下载**：中央目录走 Range 取尾部 256 KB，
+  另外只取了 `cublas64_12.dll` 那一条 entry（70,150,084 B）用来读导入表。
