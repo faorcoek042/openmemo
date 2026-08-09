@@ -745,3 +745,104 @@ PowerShell `Add-Type` P/Invoke）、**以及不要在没有真 Windows 机器验
 - 未碰 `:10000` / `/root/data-memo` / 机器级指针；未用 `pkill`；未建改删 release；
   未动另外四路在改的文件（`packages/runtime/**`、`fitness.ts`、`HardwareCard.tsx`、
   两份 locale、`packages/downloader/**`、`docs/**`）。
+
+---
+
+## [2026-08-09 18:10] e2e-import：「missing [无]」那一行 DONE
+
+交付: `apps/daemon/src/bootstrap/tool-refresh-message.{ts,test.ts}`（新）、
+`apps/daemon/src/main.ts`。提交 `0bbc201` + `65a126d`。
+
+### A. 改完之后那一行长什么样
+
+```
+[daemon] 工具表已热刷新：四项必需组件（ffmpeg、ffprobe、whisper-cli、asr-model）都装齐了，当前一项都不缺。
+[daemon] 工具表已热刷新：现在缺 2 项：whisper-cli、asr-model（刚才还是齐的）。
+[daemon] 工具表已热刷新：仍缺 1 项：asr-model（此前缺 2 项：whisper-cli、asr-model）。
+```
+
+三条规则：**状态词绝不进列表位**；三个方向（装齐／变缺／中间态）都说得出；
+数量为 0 时**根本不进"缺 N 项"句式**，所以不可能出现「缺 0 项」这种读法。
+
+⚠️ **刻意没写「转写可以用了」** —— 理由见 §C。这条日志没有资格替运行时打包票。
+
+**关于中英**：`[未做，有依据]` daemon 控制台**没有任何 i18n 机制**，
+从启动横幅到每一条 `[daemon]` 日志全部是中文（`ready-banner.ts` 亦然）。
+把其中**一行**做成双语，只会让这块界面变得不一致。要做就该整块做，
+那是另一件事、也不是这一轮该顺手开的。英文措辞若将来要用：
+`All four required components (ffmpeg, ffprobe, whisper-cli, asr-model) are installed — nothing is missing.` /
+`Now missing 2: whisper-cli, asr-model (they were all present a moment ago).` /
+`Still missing 1: asr-model (previously missing 2: whisper-cli, asr-model).`
+
+### B. 横扫同形：**真阳性只有这一处**
+
+全仓扫了 `join(...) || '…'`、`[${… || '无'}]`、以及 `${n} 个` 这三类
+（`apps/*/src`、`packages/*/src`、`scripts/`），命中约 20 处，逐条判读之后：
+
+| 判定 | 数量 | 例子与理由 |
+| --- | --- | --- |
+| **确实有歧义** | **1** | `main.ts:675` 本条 —— 状态词占着名字的位置，且标签只写 `missing` |
+| 其实没问题（名词自带） | 多 | `selfcheck.ts:748` `…|| '未检出'`（**恰好就是 AVX2 那一课的正解**）、`selfcheck.ts:1484` `'无探针结果'`、`verify-offline.mjs` `'无残留'` —— 那个词**自己带着名词**，读不反 |
+| 其实没问题（数量在旁边） | 多 | `probe-cold-timing.mjs:188` `后端库（${libs.length}）：${… || '(无)'}` —— **数量和列表并排**，`（0）：(无)` 不可能读反 |
+| 计数类 | 5 | `还有 N 个组件没装` / `解除 N 个任务的阻塞` / `N 个符号链接` —— 名词都写死在句子里，0 也不歧义 |
+
+**结论：这个形状在本仓是罕见的，绝大多数地方已经写对了。** 所以我只改了这一处，
+没有为了"横扫"去动本来没问题的行（尤其 `packages/downloader` 与 `docs/` 正有别人在飞）。
+
+### C. `pipeline.missing` 为空 **不严格等价于**「能转写」——但用户确实可以转写
+
+`missing` 只由四项构成（`setup.ts:359-432`）：`ffmpeg` / `ffprobe` / `whisper-cli` / `asr-model`
+（其中 asr-model 还过了一道「ASR 绝不能等于 VAD 权重」的闸）。
+
+**不在 `missing` 里、但会影响转写的**：
+
+1. **VAD** —— **刻意不算缺件**。缺 VAD 会退回固定窗口切分，**仍然转得出字**（T-148），
+   只是切分质量差一档。所以它不该阻塞，现状是对的。
+2. **引擎与模型格式是否匹配** —— 由 `canEngineLoad` 判，而它跑在
+   **job 运行时**（`jobs/runners/transcribe.ts:313`），不是 `buildPipeline` 时。
+   正常安装路径有安装记录、`resolveModelById` 带 `engine:'whisper.cpp'` 过滤，
+   到不了这里；但 setup 的**回退** `scanByName(…, {ext:'.bin', excludes:'silero'})`
+   （`modelStore.ts:329`）**只按扩展名和文件名挑，不过 engine 过滤** ——
+   手工塞一个非 ggml 的 `.bin` 就会：`missing` 为空、健康检查绿，**转写在 job 里才失败**。
+   好消息是它**响亮地失败**（「引擎 whisper.cpp 加载不了这个模型…（它要的是 ggml 格式）」），
+   不是静默出垃圾。
+
+**对用户这一问的回答**：他的 `missing` 已空 ⇒ 四项必需组件都在 ⇒ **他可以转写**。
+上面第 2 条是理论缺口，只在手工摆放模型时才会碰到；他是走产品自己的组件安装流程装的。
+
+⚠️ Manager 那句"你已经装齐了"**结论对、方法错**（没核就说）——
+这次是核过的：`missing` 的构成、VAD 不阻塞、`canEngineLoad` 的时机，逐条读过源码。
+⚠️ `[未验证]` 我没有在用户那台机器上真跑一次转写。
+
+### D. 守卫：**做不成全仓机器判据**，只做成了这一处的性质断言
+
+**做不成的依据是量出来的**：候选约 20 处，真阳性 1 处。
+一条禁止 `|| '无'` 的正则会把 `'未检出'`、`'无探针结果'`、`'无残留'`、
+以及"数量并排"那几处**全部误报** —— 命中率 1/20。
+本仓已经有明规矩：**一条常态红的守卫等于一条被删掉的守卫**；
+一条 95% 误报的守卫会更快地训练所有人无视它。
+"这个空值占的是不是列表位"需要理解**语义**，正则读不出来。
+
+**做成了的那一半**：把措辞抽成纯函数（与 `ready-banner.ts` 同一理由 ——
+让措辞变成可断言的性质），5 条用例钉的是**性质**不是具体字句，其中一条遍历四种
+前后组合，断言**任何一支都不许把 无/空/none/N/A 渲染进方括号或圆括号的列表位**。
+这一行再退回去，当场红。
+
+### E. 一件事故：我的 `main.ts` 改动在两条命令之间被还原了
+
+第一次提交 `0bbc201` **只落了纯函数与用例，调用点没进去** ——
+`git commit -- <pathspec>` 执行时 `main.ts` 已经没有 diff 了：
+在我改完它与提交之间，那个文件被别人还原过（同期 `a79baad` 等提交在动 main.ts）。
+
+**这正是 §12 那条**：「一个在检查那一刻为真的结论，不等于在你据此行动那一刻仍然为真」。
+`git show --stat` 的提交后复核**当场抓到了**（预期 3 个文件、实得 2 个），
+已用 `65a126d` 补上，且重放脚本用 `assert` 钉住锚点：**对不上就停手，不猜**。
+
+### F. 门禁
+
+`tsc -b` 0、`build:safe` 0、`check:orphans` 干净、`@openmemo/daemon` **573/573 fail 0**
+（含新增 5 条）、我的 3 个文件 `eslint` / `format:check` 通过。
+
+⚠️ 全量 `pnpm -r test`（基线 1600）**没有量**：脏树提示显示同期有别人在飞的改动
+（`apps/web` 的 locale 与 `ModelCard.tsx`＝VAD 那一路、`packages/downloader/src/download.ts`），
+按那条提示自己的规矩 —— **在那里绿也不能证明 master 绿**。标 `[未验证]`。
