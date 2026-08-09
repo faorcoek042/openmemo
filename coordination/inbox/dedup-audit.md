@@ -188,3 +188,111 @@ A 留下的残留进程正是 PROTOCOL §11 点名的那个假通过源头。
 - 未碰 `:10000`、`/root/data-memo`、机器级指针；未建/改/删 release；未跑构建。
 - **没有为凑数把不该合的列成该合的**：真重复 **3 条**（R-1/R-2/R-3），
   刻意不对称 **3 条**（N-1/N-2/N-3），已收敛 **1 条**，`UNKNOWN` **2 条**。
+
+## [2026-08-09 17:28] T-184 DONE（执行裁决 R-2 / R-3；R-1 按裁决只核不动）
+
+交付：`ffcb756`（9 个文件，+393 / **−234**）
+
+- `scripts/ci/launcher-spawn.mjs` —— 新增共享 `assertPortFree`（判据与理由写进注释）
+- 六条腿改用共享实现；新增 `scripts/ci/selftest-proc-lifecycle.mjs`，已接进 `test:ci-scripts`
+
+---
+
+### 一、「bind 住但不答 HTTP」的占用者，现在所有腿都判得出（实测）
+
+收敛后**全仓只剩一份判据**（`grep 'function assertPortFree'` 在 `scripts/ci/` 下
+只剩 `launcher-spawn.mjs` 那一份，外加 `e2e-runtime-audit` 一层**薄包装**，见下）。
+自检里那一格直接造这个占用者：
+
+```
+✔ 空端口 → 放行
+✔ 对照组：只问 HTTP 判成"空的"（这正是被收敛掉的那一类的行为）
+✔ ★ 共享实现判出占用者（EADDRINUSE），且 code=PORT_IN_USE
+```
+
+**对照组是刻意的**：先证明这一格**确实能骗过**旧判据，否则「共享实现判出来了」这句话
+证明不了任何东西（可能只是恒真）。两条都绿，才说明判据真的换了。
+
+**保留的差异（统一意图，不统一拼写）**：`timeoutMs` / `log` / `label` 三个参数；
+`e2e-runtime-audit` 保留一层薄包装 —— 它要把失败记成 `A-PORT-FREE` 这个断言 id，
+那是它真正需要的东西。**判据本身不给参数**，那正是当初分叉的地方。
+
+### 二、`killTree` 少负号那条的测试怎么写的
+
+**判据不是"父进程退没退"，是"子进程死没死"** —— 因为少负号时父进程**照样退出**，
+在多数环境里看起来就是收干净了，残留要到下一轮才发作。所以测试起一棵真的
+`detached` 父子树，然后：
+
+```
+✔ 对照组：少负号 → 子进程存活（症状看起来像"收干净了"，正是它难被发现的原因）
+✔ ★ 共享 killTree：父与子都已收掉
+✔ killTree(SIGTERM) 与 killTreeHard(SIGKILL) 两档并存（刻意的升级顺序，不许合并）
+```
+
+第三条钉的是**不许把两档压成一个** —— 这是你确认过的刻意不对称。
+
+**反向验证（跑在 `/tmp` 隔离副本上，§10，没有在共享树里拆过修复）**：
+
+| 变异 | 结果 |
+| --- | --- |
+| A 拆掉 bind 那一步（退回"只问 HTTP"） | 「判出 bind 住但不答 HTTP 的占用者」**当场红** |
+| B `killTree` 去掉负号 | 「必须把整棵树带走」**当场红** |
+| C 不导出 `killTreeHard` | **导入即失败**（两档被压掉时根本跑不起来） |
+
+⚠️ 只操作本脚本自己起的进程与自己占的端口，**全程没有 `pkill`**（含 `-0`）。
+
+### 三、删掉拷贝之后，哪条腿的行为**变了**（逐条说，不含糊）
+
+| 腿 | 变化 | 性质 |
+| --- | --- | --- |
+| `e2e-allcomponents` · `e2e-runtime-audit` · `e2e-coldstart` | 端口判据**从"只问 HTTP"变成"HTTP + 真 bind"** | **变严了 —— 这正是裁决要的**。它们此前会放行"bind 住但不答 HTTP"的占用者 |
+| `e2e-runtime-audit` | `killTree` 从**只收组长**变成**按进程组收** | **变严了 —— 这是那个 bug 的修复** |
+| `e2e-import-audit` | 端口判据多了一层 HTTP 探测（**只用于说清占用者是谁**，不改判据强弱） | 诊断信息变多；空端口上 fetch 立即 ECONNREFUSED，无可测量的延迟 |
+| `e2e-notes-audit` · `e2e-browser-audit` | `killTree(proc,signal)` → 共享的 `killTree(pid)` / `killTreeHard(pid)` 两档 | 等价。原实现会在 `proc.exitCode !== null` 时提前返回，共享版不判、直接发信号并接住 `ESRCH` —— 对已退出的进程结果相同 |
+| `e2e-coldstart` | 此前**共享与本地两份并存**（共享的只用于启动器进程），现在只剩一份 | 行为等价，少了一处"看起来已经统一过了"的假象 |
+
+**判据没有在任何一条腿上被放松。** 三条变严、三条等价。
+
+### 四、R-1 复核：**4/4，收敛了**（你要的那个数）
+
+另一路的修复已落地（`3c4543e`）。我**用自己那套方法**重核 —— 判据不变：
+**造一个"包内有、一个后端包都没装"的布局，不设任何环境变量**，看各出口找不找得到。
+这次把布局做成**真包形状**（`<包根>/app/node_modules/@openmemo/*` + `<包根>/runtime/probe/`），
+因为新的 `bundledRuntimeDir()` 是**从模块位置向上找**的，用合成路径测不出来。
+
+```
+环境变量：全部未设   已安装后端包：无   包内自带：/tmp/pkgcheck/runtime/probe/whisper-cli
+
+✔ ① 探针目录 resolveBundledWhisperDir()      = /tmp/pkgcheck/runtime/probe
+✔ ② resolveManifestDir()                    = /tmp/pkgcheck/vendor/manifests
+✔ ③ discoverTools().whisperCli              = /tmp/pkgcheck/runtime/probe/whisper-cli
+✔ ④ runBackendSelfTest → resolved.whisperCli = /tmp/pkgcheck/runtime/probe/whisper-cli
+
+收敛出口：4/4
+```
+
+- 上一轮我测出的是 **2/4**，现在是 **4/4** —— ③ 与 ④ 都补上了。
+- ④ 那一格是**跑真的 `runBackendSelfTest`** 拿到的，不是读代码推的。
+  （`resolveBackendTool()` 本身仍然只看已装包并返回 null，那是**对的** ——
+  包内兜底由调用方补在最后一档，顺序仍是「已装包 > … > 包内兜底」。）
+
+⚠️ **一处我自己的假阳性，记下来**：第一版探针给出 ③ = null，我差点报"还没收敛"。
+成因是**我的测试台**：伪包里 `@openmemo/pipeline` 的 `node_modules` 我整个软链回了仓库，
+于是它解析到的 `@openmemo/runtime` 是**仓库那份**，向上找当然找不到 `runtime/probe`。
+把 `@openmemo/*` 从软链里排除、让它落到伪包那一层之后才是真实情形。
+**测试台的缺陷会长得和产品缺陷一模一样**，这条值得记住。
+
+### 五、诚实声明
+
+- 门禁：`npm run test:ci-scripts` 在**干净工作区、我自己那个 commit 上**跑，**EXIT=0**，
+  新自检在里面（`✔ selftest-proc-lifecycle 全部通过`）。
+  `lint-workflows` 1586 条断言全过。`eslint scripts/ci/*.mjs` **0 error**。
+- `[未验证]`：**我没有把六条 e2e 腿真跑一遍**（要取包/artifact，成本远超本次改动）。
+  我验到的是：语法、lint、共享实现自身的行为（含三个变异）、以及门禁。
+  **各腿在 CI 上的端到端行为本轮未验** —— 但改动面是"换一个函数来源"，
+  且六个调用点逐个核对过参数形状。
+- 动手前逐个 `git status` 看过八个脚本文件，**当时无人在改**；提交按 §12 用 pathspec，
+  提交后按 **hash** 复核（`ffcb756`，9 个文件，全是我的）。
+- **R-1 我一行没动**（裁决要求），只核。`bundledRuntime.ts` 及其接线是另一路的成果。
+- UNKNOWN 两条（错误码文案）**维持 UNKNOWN**，本轮没有新增证据，不宣布干净。
+- 未碰 `:10000`、`/root/data-memo`、机器级指针；未建/改/删 release。
