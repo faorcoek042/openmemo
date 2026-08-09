@@ -756,8 +756,6 @@ if [[ "${BACKEND}" == "cuda" ]]; then
     --search "${CUDA_ROOT}/targets/sbsa-linux/lib"
   )
   command -v node >/dev/null || die "node is required to collect the CUDA runtime libraries"
-  node "${REPO_ROOT}/scripts/ci/pack-native-deps.mjs" \
-    --collect --dir "${STAGE}" --record "${NATIVE_DEPS_RECORD}" "${CUDA_SEARCH[@]}"
 fi
 
 # ── 许可证：**和二进制同一次进包，不分两步** ─────────────────────────────────────────────
@@ -799,6 +797,24 @@ if [[ -f "${SRC_DIR}/LICENSE" ]]; then
   log "whisper.cpp LICENSE → LICENSE-whisper.cpp.txt ($(wc -c < "${STAGE}/LICENSE-whisper.cpp.txt") B)"
 else
   die "找不到 ${SRC_DIR}/LICENSE —— 包里全是 whisper.cpp 的二进制，MIT 要求随附版权声明。"
+fi
+
+# ── 到这里许可证已经就位，**现在**才把第三方二进制拷进来 ────────────────────────────────
+#
+# ⚠️ **顺序是 CI 真跑之后改的，而且改的理由不是洁癖。**
+# `[CI 实测 run 31319586628]` 收集与许可证原来是"先收集、后放许可证"，于是
+# `--collect` 末尾那次守卫（收集与验证共用同一份判据）当场红：
+#
+#     ✔ 3 个第三方二进制与源文件逐字节相同（EULA §2.3：不得修改）
+#     ✘ NVIDIA CUDA Toolkit EULA —— 触发它的文件：libcublas.so.12, libcublasLt.so.12, libcudart.so.12
+#
+# **守卫是对的，顺序是错的**：它说的正是"这一刻包里有别人的二进制、却没有许可证"。
+# 我本来可以把 collect 那次守卫放宽（"收集时先别查许可证"）—— **那才是错的修法**，
+# 因为它等于承认"中间可以有一个没许可证的状态"，而这恰恰是要消灭的那个状态。
+# 正确的修法是**让那个状态不存在**：许可证先进包，二进制后进包。
+if [[ "${BACKEND}" == "cuda" ]]; then
+  node "${REPO_ROOT}/scripts/ci/pack-native-deps.mjs" \
+    --collect --dir "${STAGE}" --record "${NATIVE_DEPS_RECORD}" "${CUDA_SEARCH[@]}"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════════════

@@ -413,6 +413,36 @@ console.log('\n⑩ ★第三方二进制不许被改动（NVIDIA EULA §2.3）�
   }
 }
 
+console.log('\n⑪ ★ `--collect` 末尾也要过许可证那一关（CI 真跑抓到的顺序错误）');
+{
+  // `[CI 实测 run 31319586628]` 原来是"先收集、后放许可证"，于是 --collect 末尾
+  // 那次守卫当场红 —— 守卫是对的，顺序是错的。这条用例把那个顺序钉住：
+  // **许可证必须先进包**，否则连收集这一步都不许成功。
+  const src = join(WORK, 'nv-src');
+  mkdirSync(src, { recursive: true });
+  copyFileSync('/bin/true', join(src, 'libcublas.so.12'));
+
+  // 造一个"要 libcublas.so.12"的最小 ELF：直接拿 git 当壳不行（它不引用这个名字），
+  // 所以退一步：把 libcublas.so.12 直接放进包，验的是"包里有 NVIDIA 库时收集也必须红"。
+  const noLic = join(WORK, 'nv-nolic');
+  mkdirSync(noLic, { recursive: true });
+  copyFileSync('/bin/true', join(noLic, 'whisper-cli'));
+  copyFileSync(join(src, 'libcublas.so.12'), join(noLic, 'libcublas.so.12'));
+  const r1 = run(['--collect', '--dir', noLic, '--search', src]);
+  expect(
+    r1.code === 1,
+    '包里有 NVIDIA 库但没许可证时，--collect 也必须红',
+    '--collect 放过了没许可证的状态',
+    r1.out,
+  );
+  expect(/LICENSE-NVIDIA-CUDA-EULA/.test(r1.out), '红的理由就是缺许可证', '理由不对', r1.out);
+
+  // 许可证先进包 → 同一份输入变绿。这就是 build-whisper.sh 现在的顺序。
+  writeFileSync(join(noLic, 'LICENSE-NVIDIA-CUDA-EULA.txt'), 'x'.repeat(2048));
+  const r2 = run(['--collect', '--dir', noLic, '--search', src]);
+  expect(r2.code === 0, '★ 许可证先进包之后，同一份输入变绿（对照组）', '放了许可证仍然红', r2.out);
+}
+
 console.log('');
 if (fail === 0) console.log(`\x1b[32m✔\x1b[0m selftest-pack-deps: ${pass} 个用例全部通过`);
 else {
