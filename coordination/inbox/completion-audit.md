@@ -923,3 +923,95 @@ PowerShell `Add-Type` P/Invoke）、**以及不要在没有真 Windows 机器验
   ⚠️ 期间 HEAD 被别人推进了数次，所以我按 §12 用 hash 复核而不是看 HEAD。
 - 未碰 `:10000` / `/root/data-memo` / 机器级指针；未用 `pkill`；未建改删 release；
   未动 `packages/downloader/**`、`e2e-browser.*`、`docs/**` 等他路在途文件。
+
+---
+
+# SSE 流实测：是 ②，而且比"没推"更具体（2026-08-09）
+
+提交 `7306f3d`。**先答你要的那条。**
+
+## ① 五个 step 各自发没发、什么时刻发（接 `/api/events`，不是轮询）
+
+`[实测 2026-08-09, linux, 拉 vad/silero-vad-ggml]` 完整事件流（ms 自订阅起）：
+
+```
+   928  job.created
+   928  job.state       state=running
+  5931  sources.probed
+  6187  job.progress    step=resolving     pct=0
+ 16665  job.progress    step=resolving     pct=0
+ 21499  job.progress    step=downloading   pct=0
+ 22287  job.progress    step=downloading   pct=0.017
+ …
+ 23665  job.progress    step=downloading   pct=0.572
+ 23835  model.activated / model.installed / storage.changed
+ 23836  job.state       state=succeeded
+ 23836  job.done
+ 24029  job.progress    step=verifying     pct=1        ← ★ 比终态晚 193ms
+```
+
+| step | 发了吗 | 何时 |
+| --- | --- | --- |
+| `resolving`  | ✔ | 6187ms（下载前） |
+| `downloading`| ✔ | 21499ms 起，多条 |
+| `verifying`  | ✔ **但排在终态之后** | **24029ms，`job.done` 之后 193ms** |
+| `installing` | ✘ **一次都没有** | — |
+| `succeeded`  | ✔（`job.state`） | 23836ms |
+
+## ② 是 ① 还是 ②：**是 ②，两种形态**
+
+**不是"太短被漏掉"** —— SSE **不采样**，发了就一定收得到。所以：
+
+- **`installing` 是真的没推**（0 次）；
+- **`verifying` 推了，但顺序是错的** —— 它在 `job.done` **之后**才到，
+  于是客户端收到的**最后一条**是「正在校验完整性 100%」，**界面就永远停在那儿**。
+
+⚠️ **这正好是用户症状的形状**，而且解释了为什么"活儿干完了界面还卡着"：
+**界面显示的是它收到的最后一个状态，而那个状态是过期的。**
+
+## ③ 丢在哪一层 —— 两层，分别是
+
+**(a) 顺序：`apps/daemon/src/http/sse.ts` 的 `publish()`**（已修）
+
+节流事件进 `#pending` 等 **250ms**；未节流事件走 `#flushOne` **立刻发**。
+⇒ 终态**超车**过期进度。
+**修法**：未节流事件发出前，先把**同一 topic** 上压着的那条节流事件放出去。
+`job.progress` 与 `job.done` 同用 `topics.job(jobId)`，按 topic 冲刷即可恢复因果顺序，
+**又不会**因为别的 job 发终态而打掉全局节流。
+`[实测·修后同一观测]` `verifying` 现在排在 `job.state succeeded` / `job.done` **之前**。
+
+**(b) `installing` 从来没有载体：`packages/downloader/src/queue.ts:208-211`**（**未修**）
+
+```ts
+setStep: (s) => { job.step = s; job.updatedAt = …; },   // ← 不 emit 任何东西
+setProgress: (p) => { …; this.emit('job.progress', job); }  // ← 只有它发事件
+```
+
+`step` **本身不是一个事件**，它只是**搭 `job.progress` 的车**（该事件的载荷里带 `step`，
+契约 `events.ts:129` 确实有这个字段）。安装阶段不报字节进度 ⇒ 没有车可搭 ⇒
+`installing` 永远到不了前端。
+
+**我没有顺手加 emit**，因为你说的那条：**"别改成多发几个事件就完事"**。
+`installing` 该怎么表达是个产品判断（要不要给它一个不确定进度条？要不要说"这一步通常几秒"？），
+而且它与「82MB/574MB 在 Windows 上到底多久」是同一个问题的两半 —— **建议一起裁**。
+
+## ④ 那三件顺带的：我只做了 0 件，如实说
+
+`builtinBaseline` 独立字段、`unpack.ts` 注释与实现互相矛盾（§14 同族）、
+82MB/574MB 的 Windows 耗时 —— **一件都没做**。
+理由：本轮预算全部用在 SSE 观测 + 定位 + 修顺序 + 验证上。
+⚠️ 其中 **`unpack.ts:16-19` vs `:169-183`** 我连**读都没读**，
+所以**连"哪边对"都还不知道** —— 标 `UNKNOWN`，不猜。
+
+## ⑤ 诚实标记
+
+- `[实测]`：上面整张事件表（修前/修后各跑一次真下载，接 SSE 非轮询）；
+  `setStep` 不 emit；节流与 `#flushOne` 的分支；daemon http 测试 113 pass / 0 fail。
+- `[未验证]`：**Windows 上的同一张表**（本轮只在 linux 上跑）。
+  ⚠️ 修的是**顺序**，与平台无关；但"Windows 上某一步是不是真的很久"仍然没有数据 ——
+  按你的判断那本来就该由「每个组件都下一遍」那条腿去量。
+- `UNKNOWN`：`unpack.ts` 那处矛盾谁对；`installing` 该以什么形式呈现。
+- 我的提交 `7306f3d` 按 **hash** 复核 = 只有 `apps/daemon/src/http/sse.ts`，无夹带。
+- 未碰 `:10000` / `/root/data-memo` / 机器级指针；未用 `pkill`（daemon 走
+  `/api/daemon/shutdown` 关停）；未建改删 release；未动他路在途文件
+  （`packages/downloader/**`、`docs/**`、`e2e-browser.*` 等）。
