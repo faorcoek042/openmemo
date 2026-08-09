@@ -138,7 +138,14 @@ function scanDaemonActions(roots: string[]): Map<string, string[]> {
   for (const file of files) {
     const lines = stripComments(readFileSync(file, 'utf8')).split('\n');
     for (let i = 0; i < lines.length; i++) {
-      const m = /^\s*action:\s*(.+?),?\s*$/.exec(lines[i]!);
+      /*
+       * ⚠️ 两种写法都要认：
+       *   · daemon 侧把 `action:` 单独占一行（`^\s*action:`）；
+       *   · `packages/llm` 侧把整个 remediation 塞在一行里
+       *     （`{ action: 'openSettings', params: {...} }`）。
+       * 只认前者的话，llm 那 5 条**整整齐齐地绕过这道护栏** —— 实测就是这么发生的。
+       */
+      const m = /(?:^|[{,])\s*action:\s*([^,}]+)/.exec(lines[i]!);
       if (!m) continue;
       const expr = m[1]!;
       // `action: string`（函数签名）之类没有字面量的，不是 remediation
@@ -149,7 +156,15 @@ function scanDaemonActions(roots: string[]): Map<string, string[]> {
        * 而多收只会让人来这里补一条理由 —— 漏收才是会放行 bug 的方向。
        */
       const ctx = lines.slice(Math.max(0, i - 16), i + 1).join('\n');
-      if (!/[Rr]emediation/.test(ctx)) continue;
+      /*
+       * ⚠️ 判据不能只认 "remediation" 这个词。
+       * `packages/llm` 是把 remediation 作为 `new LlmError(...)` 的**第 6 个位置参数**
+       * 传进去的，上下文里字面上没有那个词 —— 于是那 5 条 llm 引导
+       * **整整齐齐地绕过了这道护栏**（`[实测 2026-08-09]`：
+       * 它们既不在 ROUTES 也不在 UNROUTED，界面上一个按钮都不渲染，而护栏是绿的）。
+       * 一道看不见半个仓库的护栏，比没有护栏更坏：它让人以为已经有人在盯了。
+       */
+      if (!/[Rr]emediation|LlmError/.test(ctx)) continue;
       /*
        * 三目：`missing.includes('asr-model') ? 'install_model' : 'install_backend'`
        * —— 条件里的 `'asr-model'` 不是 action。取 `?` 之后的分支。

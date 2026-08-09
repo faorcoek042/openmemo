@@ -69,6 +69,28 @@ export const REMEDIATION_ROUTES: Readonly<
     const id = str(p, 'modelId');
     return id ? `/models/${encodeURIComponent(id)}` : '/models';
   },
+  /*
+   * ── `packages/llm` 的三条：落点是 `/models?tab=llm`，**不是 `/settings`** ────
+   *
+   * ⚠️ action 名叫 `openSettings`、params 里写着 `section:'llm'`，读起来像该去设置页。
+   *    **实测不是**：`LlmSettingsSection`（apiKey / baseUrl / model 三件套的编辑处）
+   *    挂在 `ModelsPage`（`features/models/ModelsPage.tsx:433`），
+   *    `LocalLlmSection`（「本地模型」+ `POST /api/llm/detect` 真去敲本机端口）
+   *    又嵌在它里面（`LlmSettingsSection.tsx:371`）。**设置页里没有这些控件。**
+   *    照名字把它routed 到 `/settings`，就会造出本仓已经栽过三次的那种按钮：
+   *    跳过去了、页面也"相关"，但用户在那儿做不成这件事。
+   *
+   * 判据（用户 2026-08-09 裁决）：**跳过去之后他照着做完，那个报错真的会消失。**
+   *   · `LLM_AUTH_FAILED`（Key 无效/过期）→ 在那儿改 apiKey → 错误消失 ✔
+   *   · `LLM_NOT_CONFIGURED`（没配 LLM）→ 在那儿加一个 provider → 错误消失 ✔
+   *   · `LLM_CONNECTION_FAILED`（连不上本地后端）→ 在那儿点检测/改 baseUrl ✔
+   *   · 结构化输出失败建议换个更大的模型 → 在那儿改 model ✔
+   * `?tab=llm` 是 `ModelsPage` 真读的 query（`ModelsPage.tsx:87`），不是我编的。
+   */
+  openSettings: () => '/models?tab=llm',
+  checkLocalBackend: () => '/models?tab=llm',
+  retryWithLargerModel: () => '/models?tab=llm',
+
   /** `rest/backends.ts:330` · `runtime/setup.ts:277,574` —— 后端包缺失 / probe 装不上。 */
   install_backend: () => '/runtime',
   /** `runtime/setup.ts:284` —— probe 跑失败（不是没装），重试入口在运行时页。 */
@@ -116,6 +138,13 @@ export const UNROUTED_ACTIONS: Readonly<Record<string, string>> = {
    * 「重新连接」按钮（走 `lib/api/connect.resetConnection()`），跳任何路由都只会
    * 带着同一个失效令牌再撞一次墙。
    */
+  /**
+   * `packages/llm/src/errors.ts:79` —— 429 `LLM_RATE_LIMITED`。
+   * 用户**什么都不用做也做不了**：产品自己会重试（文案就是「稍后会自动重试」）。
+   * 没有哪一页能"加快限流解除"，给按钮等于把一件自动完成的事说成需要人管
+   * —— 与 `reauth` 同一类。
+   */
+  wait: '产品自己会重试；没有哪一页能解除限流，给按钮是把自动完成的事说成要人管',
   openHandoffUrl: 'ErrorBlock 的 isAuth 分支已给「重新连接」，跳路由解决不了令牌失效',
   /**
    * `http/server.ts:327` —— 403 CSRF_FAILED。

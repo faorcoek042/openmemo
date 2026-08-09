@@ -89,7 +89,17 @@ export function mapHttpError(status: number, body: string, providerId: string): 
       `context exceeded on ${providerId}: ${snippet}`,
       '转写稿超出模型上下文窗口，将自动分段处理',
       false,
-      { action: 'reduceChunkSize' },
+      /*
+       * ⚠️ 这里原本挂着 （原 action 名 “reduceChunkSize” ），而**界面上没有任何地方能改分段大小**
+       * （全 web 搜不到 chunkSize 控件）。于是 `RemediationButton` 在
+       * `!onAct && target === null` 时返回 null —— **产品叫用户"去调小分段"，
+       * 却一个按钮都不渲染**。
+       *
+       * 用户 2026-08-09 裁决：**能解决就补按钮，解决不了就删掉引导**。
+       * 这一条解决不了（没有那个控件），所以**去掉行动号召，保留诊断文案** ——
+       * 而且这句话本身已经说了产品会自己处理（「将自动分段处理」），
+       * 用户本来就不需要做任何事。留着一个点不出来的动作，只会让他以为自己漏了一步。
+       */
     );
   }
   if (status >= 500) {

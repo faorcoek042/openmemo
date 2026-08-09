@@ -61,9 +61,18 @@ export function extractJson(text: string): unknown {
       'LLM_STRUCTURED_OUTPUT_FAILED',
       `model output looks truncated (unbalanced JSON, ${trimmed.length} chars). ` +
         `Raise maxTokens or reduce the requested output size. Tail: ${trimmed.slice(-120)}`,
-      'LLM 输出被截断（JSON 未闭合）——通常是 max_tokens 不够，或要求它输出的内容太多',
+      'LLM 输出被截断（JSON 未闭合）——通常是 max_tokens 不够，或要求它输出的内容太多。已自动重试；若反复出现，换一个上下文更大的模型',
       true,
-      { action: 'increaseMaxTokens' },
+      /*
+       * ⚠️ 原本挂着 （原 action 名 “increaseMaxTokens” ），而 `maxTokens` 是本仓
+       * **刻意不给控件**的字段之一：`LlmSettingsSection.tsx:491` 明写
+       * 「目录声明了、但我们存不下也不会发出去…不给控件（一个改了不生效的输入框是假控件）」。
+       * 也就是说这条引导**在结构上永远无处可点**，`RemediationButton` 对它返回 null。
+       *
+       * 按用户 2026-08-09 的裁决删掉行动号召，但**诊断信息不能一起删**（§13）：
+       * 把"能做什么"并进文案本身（已自动重试 / 反复出现就换个更大的模型）——
+       * 换模型是用户**真的做得到**的事，而它在 `/models?tab=llm` 上有控件。
+       */
     );
   }
 
