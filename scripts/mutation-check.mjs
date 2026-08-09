@@ -52,12 +52,35 @@
  * ## 用法
  *
  * ```bash
- * pnpm build:safe                     # 变异跑的是编译产物，必须先 build
- * node scripts/mutation-check.mjs             # 全部
+ * pnpm build:safe                             # 变异跑的是编译产物，必须先 build
+ * node scripts/mutation-check.mjs             # 全部（几分钟，不在门禁里）
  * node scripts/mutation-check.mjs --only E1   # 只跑某几条（前缀匹配）
  * node scripts/mutation-check.mjs --list      # 只列清单，不跑
+ * node scripts/mutation-check.mjs --anchors-only   # 秒级：只查锚点还在不在（★ 在门禁里）
  * ```
  * 退出码：有任何一条**存活**（改坏了测试还是绿的）、或任何锚点失效 → 1。
+ *
+ * ── ★ 要重构被守护的文件（例如 `manager.ts` 那 8 种结局）之前，先读这一段 ──────────
+ *
+ * 这些规格的锚点钉在**编译产物**（`dist/**` / `.test-out/**`）的源文本上，
+ * 所以「改契约前按源文件名 grep 谁在钉它」这条纪律**对它们无效** ——
+ * 你 grep `manager.ts` 一条都找不到，得 grep `manager.js`。
+ *
+ * 用这个代替 grep：
+ *
+ * ```bash
+ * pnpm build:safe && node scripts/mutation-check.mjs --anchors-only > /tmp/anchors-before.txt
+ * # …重构…
+ * pnpm build:safe && node scripts/mutation-check.mjs --anchors-only > /tmp/anchors-after.txt
+ * diff /tmp/anchors-before.txt /tmp/anchors-after.txt   # 差集 = 这次重构踩到的规格清单
+ * ```
+ *
+ * 踩到的那几条：**重新指锚点，不要删**。删掉等于顺手把那条不变量的守卫删了。
+ * 重构落地后再跑一次**完整**那一档，确认它们不只是"锚点还在"，而是"还抓得住"。
+ *
+ * `[实测]` `E1-state-dropped` 就是这么死的：T-151 ⑥ 把
+ * `state: a.state` 改成 `state: assetStateOf(a.state)`，锚点从此失配，
+ * 而**完整那一档没人跑**，所以它安静地什么都没测了好几周。
  */
 import { spawnSync } from 'node:child_process';
 import {
@@ -361,10 +384,26 @@ if (argv.includes('--anchors-only')) {
     console.error(
       `\n✘ mutation-check --anchors-only：${bad.length}/${selected.length} 条锚点失效\n  ${bad.join('\n  ')}`,
     );
+    console.error(
+      '\n  ── 这条门禁在说什么 ─────────────────────────────────────────────────\n' +
+        '  它只回答一个问题：**这些规格还指得到东西吗。**\n' +
+        '  上面每一条 ✘ 都意味着那条规格现在**一次都没在测**（不是"测得不准"，是"没测"）。\n' +
+        '  你多半是刚重构了被守护的那几个文件 —— 锚点钉的是**编译产物**里的源文本，\n' +
+        '  所以「按源文件名 grep 谁在钉我」找不到它们（grep `manager.ts` 找不到，得 grep `manager.js`）。\n' +
+        '\n' +
+        '  修法：打开 scripts/mutation-check.mjs，把那几条的 `find` 重新指到改后的那段文本。\n' +
+        '        **不要删规格** —— 删掉等于把那条不变量的守卫一起删了。\n' +
+        '  改完先 `pnpm build:safe`，再跑 `node scripts/mutation-check.mjs --anchors-only`。\n' +
+        '\n' +
+        '  ⚠️ 这一档绿**不等于**规格还有牙齿。它证明的是"锚点还在"，\n' +
+        '     "改坏了会不会红"要跑完整那一档：`node scripts/mutation-check.mjs`（几分钟，不在门禁里）。',
+    );
     process.exit(1);
   }
   console.log(
-    `\n✔ ${selected.length} 条锚点全部命中（各恰好 1 次）。注意：这**不**证明它们还抓得住变异。`,
+    `\n✔ ${selected.length} 条锚点全部命中（各恰好 1 次）。\n` +
+      '  ⚠️ 这只证明「锚点还指得到东西」，**不**证明「改坏了还会红」——\n' +
+      '     后者要跑完整那一档：`node scripts/mutation-check.mjs`（几分钟，有意不在门禁里）。',
   );
   process.exit(0);
 }
@@ -428,7 +467,21 @@ function sandboxFor(pkg) {
 
 const problems = [];
 const results = [];
-const controlled = new Set();
+/**
+ * 对照组结果，**按组缓存的是结论，不是"查过了"**。
+ *
+ * ★ 这里原本是 `const controlled = new Set()`，只记「这组查过没有」。
+ * 于是对照组红掉时：**只有该组第一条**被记 `VOID`，`controlled.add()` 之后，
+ * **同组其余各条直接跳过对照检查**，拿着一个本来就红的包去跑变异 ——
+ * 而 `detected = code !== 0` 在一个本来就红的包上**恒真**，于是它们全被报成 `✔ 红`。
+ *
+ * 整轮仍然 exit 1（第一条已经进了 `problems`），所以不是静默通过；
+ * **但逐条报告里会出现一片证明不了任何事的绿勾**，而逐条报告正是给人排查用的东西。
+ * 这与本仓刚查出的那条同形：**判据没有变红，它变成了恒真。**
+ *
+ * 现在缓存 `true/false`：对照组没成立的组，**每一条都报 VOID，一个绿勾都不许有**。
+ */
+const controlOk = new Map();
 
 for (const m of selected) {
   let sandbox;
@@ -453,11 +506,12 @@ for (const m of selected) {
   // 不做这一步的话，一个本来就红的产物会让每条变异都"被检测到"，
   // 存活率漂亮得不像话，而它什么都没证明。
   const controlKey = `${m.pkg}::${m.tests.join(',')}`;
-  if (!controlled.has(controlKey)) {
+  if (!controlOk.has(controlKey)) {
     const c = runTests(sandbox, m.tests);
+    controlOk.set(controlKey, c.code === 0);
     if (c.code !== 0) {
       problems.push(
-        `${m.id}: **对照组就不是绿的**（未变异时 exit=${c.code}）—— 本组全部作废。\n` +
+        `${m.id} 所在的组: **对照组就不是绿的**（未变异时 exit=${c.code}）—— 本组全部作废。\n` +
           `    先把 ${m.tests.join(' ')} 跑绿，再谈变异。\n` +
           c.out
             .split('\n')
@@ -466,11 +520,15 @@ for (const m of selected) {
             .map((l) => `    ${l}`)
             .join('\n'),
       );
-      controlled.add(controlKey);
-      results.push({ id: m.id, status: 'VOID' });
-      continue;
     }
-    controlled.add(controlKey);
+  }
+  if (controlOk.get(controlKey) === false) {
+    /*
+     * ★ 同组的**每一条**都要落到这里，不只是第一条。
+     * 在一个本来就红的包上跑变异，`detected` 恒真 —— 报出来的 `✔ 红` 证明不了任何事。
+     */
+    results.push({ id: m.id, status: 'VOID' });
+    continue;
   }
 
   // 锚点必须唯一：找不到或找到多处，一律当错误停下来，绝不猜一个位置改下去。

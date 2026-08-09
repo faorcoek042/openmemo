@@ -192,6 +192,23 @@ jobs:
       - name: Test
         run: pnpm -r test
 
+      # ★ 变异规格的**锚点体检**（秒级，实测 0.086s）。
+      #
+      # 放在 Test **之后**是有原因的：18 条规格里有 6 条钉在 `apps/web/.test-out/**`，
+      # 而那个目录是 `pnpm -r test` 里 web 的 test 脚本编出来的（`build:safe` 不编它）。
+      # 放到 Test 前面，那 6 条会因为"产物不存在"而红 —— 一条假红。
+      #
+      # ⚠️ 它只回答「这些规格还指得到东西吗」，**不**回答「它们还抓得住变异吗」。
+      #    后者是 `node scripts/mutation-check.mjs` 完整那一档，要几分钟，
+      #    **有意不在门禁里**（它测的是护栏本身，不是产品）。
+      #    这一步绿 ≠ 那一档可以不跑。脚本的输出里也写了同样的话。
+      #
+      # 为什么值得占门禁一格：`E1-state-dropped` 的锚点在 T-151 ⑥ 那次重构里失配，
+      # 从此**什么都没测**，而没有任何东西会说出来 —— 因为唯一会说出来的那一档没人跑。
+      # 这一步 0.086 秒，本来能在那天当场抓住它。
+      - name: Mutation-spec anchors (只查锚点在不在 ≠ 规格还有牙齿)
+        run: node scripts/mutation-check.mjs --anchors-only
+
       # ★ 不加 `if: always()`、不加 `continue-on-error`。
       #
       # 这个仓库的核心病症是「失败被写成成功」（build-backends 的 merge job 就是
