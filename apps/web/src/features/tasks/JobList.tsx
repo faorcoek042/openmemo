@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router';
 
 import { stepLabel as stepLabelOf } from '../../lib/format/stepLabel';
 import { Pause, Play, RotateCcw, ShieldCheck, X } from 'lucide-react';
@@ -9,7 +10,7 @@ import { jobStateTone } from '../../components/common/statusTone';
 import { Button } from '../../components/common/Button';
 import { approxEta } from '../../lib/format/time';
 import { formatBytes, formatPercent, formatSpeed } from '../../lib/format/bytes';
-import { groupJobs, useJobActions, type MergedJob } from './api';
+import { groupJobs, jobResultHref, useJobActions, type MergedJob } from './api';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 
 /**
@@ -66,6 +67,9 @@ function JobRow({ job, compact }: { job: MergedJob; compact?: boolean }) {
   const actionError =
     actions.pause.error ?? actions.resume.error ?? actions.retry.error ?? actions.cancel.error;
 
+  /** 这条任务做出来的东西在哪；null = 没有可去的地方（下载类任务），那就不给链接。 */
+  const href = jobResultHref(job);
+
   // 颜色判定不在这里做（T-114）：六个渲染点各写一份 switch 已经分叉过一次。
   const tone = jobStateTone(job.state);
   // fallback 分支原来把机器枚举值（queued / cancelled）直接当标签渲染 ——
@@ -85,7 +89,36 @@ function JobRow({ job, compact }: { job: MergedJob; compact?: boolean }) {
   return (
     <li className="rounded-lg border border-line bg-surface-0 p-3">
       <div className="mb-1 flex items-start justify-between gap-2">
-        <span className="min-w-0 truncate text-sm text-ink">{job.displayName || job.type}</span>
+        {/*
+          ★ T-192：**标题是通往「这条任务做出来的东西」的链接**（用户报的
+          「任务中心列表点击无法进入查看历史记录」）。
+
+          `[实测]` 修之前在真浏览器里点过：点击**完整冒泡到 LI 和 UL**、
+          `defaultPrevented:false` —— 没有任何东西吞它，是**路径上一个监听器都没有**；
+          行内 `<a href>` 0 个、可聚焦元素 0 个（键盘同样到不了）、`cursor:auto`
+          （连"这里能点"的手型都没有）、控制台零报错。
+
+          ⚠️ **为什么只把标题做成链接，而不是整行可点** —— 这是判断，不是偷懒：
+          非终态的行下面有 4 个动作按钮（暂停/继续/重试/取消）。整行可点就得靠
+          `stopPropagation` 去躲它们，而"点击被父元素抢走 / 被 preventDefault 吃掉"
+          **正是这次排查刚刚排除掉的那种失败模式**（第 2 种）。在修第 1 种的时候
+          造出一个第 2 种，是这一族 bug 最典型的复发方式。
+          → 标题是链接、按钮是按钮，两者永远不在同一个命中区域。
+          **下一个人如果想"顺手让整行可点"，请先读完这一段。**
+
+          没有落点时（下载类任务）**退回纯文本**，不给一个点了到不了地方的假出口。
+        */}
+        {href ? (
+          <Link
+            to={href}
+            className="min-w-0 truncate text-sm text-ink hover:text-accent-ink hover:underline"
+            data-testid="job-result-link"
+          >
+            {job.displayName || job.type}
+          </Link>
+        ) : (
+          <span className="min-w-0 truncate text-sm text-ink">{job.displayName || job.type}</span>
+        )}
         <StatusChip
           tone={running ? 'running' : tone}
           label={label}

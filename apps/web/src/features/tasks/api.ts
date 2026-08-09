@@ -64,8 +64,40 @@ export interface MergedJob {
   attempt: number;
   maxAttempts: number;
   error: DownloadJob['error'];
+  /**
+   * 这条任务做出来的东西挂在哪条笔记上。**下载类任务恒为 null**（契约上就没有）。
+   *
+   * ⚠️ T-192：这个字段此前**不在这个接口里**，`mergeOne()` 两个分支都没拷贝它 ——
+   * daemon 一直在发（`:10000` 上每条 job 都带），`packages/shared/src/jobs.ts` 的契约
+   * 注释还写着它存在的理由：*"Owning note, so the UI can offer 'open the note'
+   * without a lookup table."* —— **UI 想接也没有料，因为料在这一行被丢掉了。**
+   *
+   * 用户报的「任务中心列表点不进历史记录」就断在这里。与 T-140 那次
+   * `ApiError` 把服务端的 `labelZh` 解析掉是同一形状：**服务端算好发出，
+   * 客户端离终点一行把它扔了，全程零报错。**
+   */
+  noteUid: string | null;
   /** true = 这条只在内存里有，服务端还没收录（刚创建的瞬间） */
   transientOnly: boolean;
+}
+
+/**
+ * 这条任务「做出来的东西」在哪 —— `null` = 没有可去的地方。
+ *
+ * ★ 落点与 `JobToaster.tsx` 的完成态按钮**逐字相同**（`/notes/:uid`），这是刻意的：
+ * 「这条任务的产物在哪」只准有一个答案。本仓在 A15 上吃过一次亏 ——
+ * 两张 remediation 路由表对同一个 action 给了两个落点，
+ * 于是点错误块和点任务提示会去不同的地方。
+ *
+ * **导图任务也落在笔记页**，不额外指向 `/notes/:uid/mindmap`：笔记页自带「思维导图」
+ * 页签，到得了；而分出第二个落点就又是"同一个问题两个答案"。
+ *
+ * 下载类任务（模型/后端包）**不给落点**：`DownloadJob` 契约上根本没有 `noteUid`
+ * （只有 `targetId`）。按 `JobToaster.tsx` 自己立的规矩 ——
+ * **"没有 noteUid 就不给按钮，而不是给一个点了跳到模型页的假出口"**。
+ */
+export function jobResultHref(job: Pick<MergedJob, 'noteUid'>): string | null {
+  return job.noteUid ? `/notes/${encodeURIComponent(job.noteUid)}` : null;
 }
 
 function mergeOne(job: AnyJob, live: JobProgressSnapshot | undefined): MergedJob {
@@ -89,6 +121,7 @@ function mergeOne(job: AnyJob, live: JobProgressSnapshot | undefined): MergedJob
       attempt: job.attempt,
       maxAttempts: job.maxAttempts,
       error: job.error,
+      noteUid: job.noteUid,
       transientOnly: false,
     };
   }
@@ -108,6 +141,8 @@ function mergeOne(job: AnyJob, live: JobProgressSnapshot | undefined): MergedJob
     attempt: job.attempt,
     maxAttempts: job.maxAttempts,
     error: job.error,
+    // `DownloadJob` 契约上就没有这个字段（只有 targetId）—— 如实为 null，不编
+    noteUid: null,
     transientOnly: false,
   };
 }
@@ -149,6 +184,13 @@ export function useMergedJobs(): {
       attempt: 0,
       maxAttempts: 0,
       error: null,
+      /*
+       * 内存快照里没有 noteUid（`features/tasks/sse.ts:25` 记着 shared 的
+       * `JobProgressEvent` 不带它，已上报）。这一支只存在于"刚 POST 完、服务端还没收录"
+       * 那一瞬间，下一次 `/jobs` 刷新就会被服务端那条顶掉并带上真值。
+       * 这里**不猜**：宁可这一瞬间没有链接，也不编一个可能指错的 uid。
+       */
+      noteUid: null,
       transientOnly: true,
     });
   }

@@ -357,3 +357,147 @@ ytdlp-linux-x64   applicable=True  installed=False  backend=cpu  recommended=Tru
 | 本地 whisper 转写                  | ✅ 未跑                                                                                                                                                                                                                                                         |
 | `git add -A` / commit              | ✅ 未做（精确清单在交付段）                                                                                                                                                                                                                                     |
 | 临时变异体残留                     | ✅ `apps/daemon/src/http/rest/__t140_mutant.ts` 已删，核对 0 残留                                                                                                                                                                                               |
+
+---
+
+## [2026-08-10 02:20] T-192 任务中心「点不进历史记录」追查 — PROGRESS（诊断阶段；**A 档已于 03:10 落地，见下条**）
+
+### 一句话
+
+**三种可能里的第 1 种：功能没做 —— 任务中心的行从来就不是可点的。**
+但**不是"要从零造个功能"**：契约里为这个动作留的字段在发、动作本身也已经在产品里跑着（只在瞬时 Toast 上），**断的是任务中心把字段解析掉了 + 行上没有任何 handler**。
+
+### 用户现在到底怎么看历史记录
+
+1. **"有哪些任务跑过"看得到，而且真的持久** —— `:10000` 此刻列着 6 条，最早 8 月 2 日（8 天前）。服务端口径 `pipelineJobs.list(50)` + 下载队列（`rest/jobs.ts:79`），即**最近 50 条流水线任务**。
+2. **"从某一条任务点进它做出来的东西" —— 做不到。** 今天唯一办法：侧栏「全部笔记」→ **按标题自己对**（job 的 `displayName` 就是笔记标题，对得上，但界面上没有任何地方告诉他可以这么对）。
+3. 那个**正确的出口只在任务刚跑完的几秒内、以 Toast 形式出现一次**（`JobToaster.tsx:476-486` 的「去看笔记」），刷新 / 切页 / 手动关掉 / 在另一个标签页 —— 四种情况全丢（这四种正是 `tasks/api.ts:243-249` 自己列的）。
+
+> **任务中心本来就是为了补 Toast 的易失性才做的持久层（`api.ts:10-31` 白纸黑字），却唯独没继承 Toast 唯一那个出口。**
+
+### 实测证据（真浏览器，`:10000` 只读，`/tmp/tasks-click/probe.mjs`）
+
+先确认安全：`GET /api/jobs` 6 条**全是 `succeeded`** ⇒ 按 `JobList.tsx:131-155` 四个动作按钮一个都不渲染 ⇒ 点行不可能触发任何 mutation。
+
+```
+① 任务中心行数 = 6   当前 URL = /tasks
+② 第一行体检（结构判据）：
+    tag=LI  onclickAttr=null  role=null  tabindex=null  cursor="auto"
+    anchorCount=0  anchorHrefs=[]  buttonCount=0  buttonTexts=[]
+    text="JFK 就职演说片段 | 已完成"
+③ 真的点一下：
+   点击事件被派发了吗 = true  {"tag":"SPAN","defaultPrevented":false,
+                              "path":"SPAN < DIV < LI < UL < SECTION < DIV"}
+   URL 变了吗 = false (/tasks → /tasks)
+   点击后新增 API 请求 = ["GET /api/events","GET /api/health","GET /api/folders"]（都是轮询，与点击无关）
+   控制台报错 = (无)
+④ 整行其它位置（进度条区/空白处）再点：URL 不变
+⑤ 双击：URL 不变
+⑥ 行内可聚焦元素数 = 0   ← 键盘用户同样到不了
+```
+
+**为什么这排除了第 2 种（有 handler 但无效）**：捕获期监听器证明**点击事件确实完整冒泡到了 LI 和 UL**，`defaultPrevented:false` —— **没有任何东西吞它、没有 `preventDefault`、没有父元素抢**。事件到齐了，只是**路径上一个监听器都没有**。`cursor:auto`（连"这里能点"的手型都没有）与 `tabindex=null` 是同一结论的旁证。
+
+### 断在哪一跳（file:line）
+
+| 跳 | 状态 |
+|---|---|
+| daemon 算 | ✅ `:10000` 6 条 job **每条都带 `noteUid`**（实测） |
+| 契约声明 | ✅ `packages/shared/src/jobs.ts:302-303` 原话：<br>`/** Owning note, so the UI can offer "open the note" without a lookup table. */`<br>`noteUid: string | null;` —— **契约就是为这个动作准备的** |
+| **前端 DTO** | 🔴 **`apps/web/src/features/tasks/api.ts:52-69` 的 `MergedJob` 里没有 `noteUid`**，`mergeOne()`（`:71-113`）**两个分支都没拷贝它** → 字段在这里被解析掉 |
+| 渲染 | 🔴 `apps/web/src/features/tasks/JobList.tsx:86` 的 `<li>` 是纯展示节点，无 `onClick` / `<Link>` / `role` / `tabindex` |
+| 同一动作的既有实现 | ✅ `apps/web/src/components/common/JobToaster.tsx:476-486` `navigate('/notes/'+noteUid)`，`data-testid="job-toast-goto-note"` —— **已上线、已验证，只活在瞬时层** |
+
+**这与我 T-140 修的 `ApiError` 丢 `labelZh` 是同一形状**：服务端算好并发出，客户端在离终点一行的地方把它解析掉，全程零报错。也是 `debt-audit` C11「daemon 发了、前端一处都不读的字段」那一族。
+
+### 落地页真有他要的东西吗（判据不是"跳转发生了"）
+
+实测三个候选落点，全部有实质内容（`/tmp/tasks-click/landing.mjs`）：
+
+```
+transcribe job → /notes/01KZ1H8Y…      标题 ["JFK 就职演说片段","转写稿"]  正文 183 字
+                                        "And so my fellow Americans, ask not what your country can do for you…"
+mindmap  job  → /notes/01KZ1H8Y…/mindmap  真实导图节点："JFK 就职演说片段 | 公民责任号召 | 呼吁公民为国家贡献力量"
+另一条笔记     → /notes/01KZ12HV…      标题 ["孤儿回收测试","转写稿"]     正文 19,827 字
+```
+
+### 选项梯子（**请 Manager 定做到哪一档，我没有自作主张动手**）
+
+- **A｜最小（约 15 行）** —— `MergedJob` 带上 `noteUid`；`JobRow` 在**有 `noteUid`** 时把**标题**渲染成 `<Link>`（`transcribe` → `/notes/:uid`，`mindmap` → `/notes/:uid/mindmap`）。**复用 `JobToaster` 已验证的落点，不造第二套**。顺带把行内可聚焦元素从 0 变成 1（键盘可达）。
+  ⚠️ 只给**流水线**任务：`DownloadJob`（`shared/jobs.ts:213-224`）**没有 `noteUid`**，只有 `targetId`。按 `JobToaster.tsx:473` 自己立的规矩「没有 noteUid 就不给按钮，而不是给一个点了跳到模型页的假出口」，下载类任务**不给链接**。
+- **B｜中** —— A + **整行可点**。⚠️ 我不推荐先做这个：非终态的行上有 4 个动作按钮（暂停/继续/重试/取消），整行点击与它们抢事件，正是"点击被别的元素吃掉"那一类的温床 —— 而那恰好是这次要排除的第 2 种。
+- **C｜大** —— 真做任务详情页 `/tasks/:jobId`。**后端已具备**：`GET /api/jobs/:jobId` 实测 **200**（`rest/jobs.ts:95`）。能承载 attempt / 错误 / 时间线。但这是新页面 + 新路由 + 新 IA，属"大功能"，按指示**不自作主张**。
+
+### 冲突提醒
+
+`apps/web/src/features/tasks/{JobList.tsx,api.ts}` **此刻正被另一路改着**（未提交：`JobList.tsx` +24 = `actionError` 的 `<ErrorBlock>`；`api.ts` +40 = `countUnfinishedJobs` / `useUnfinishedJobCount` 侧栏徽标）。选项 A 要动 `MergedJob` 接口 + `mergeOne` + `JobRow` 标题行 —— **与其在 `JobRow` 的改动区域相邻**。动手前需要与 `a75a8a6c…` 对一次。
+
+### 纪律核对
+
+未改任何产品代码 · 未 `git add` / commit / stash · `:10000` 只发 GET 且只点了**零按钮**的 succeeded 行（未重启、未 kill、未占端口） · 未碰 `/root/data-memo` · 探针脚本在仓库外 `/tmp/tasks-click/`。
+
+---
+
+## [2026-08-10 03:10] T-192 A 档落地 — DONE
+
+### TL;DR
+
+- **A 档落地了。** 任务行的**标题**变成通往「这条任务做出来的东西」的链接（`/notes/:uid`），落点与 `JobToaster.tsx` 完成态按钮**逐字相同**。
+- **真浏览器复验（我自己的 vite dev，只读代理到 demo 数据）**：`href=/notes/01KZ1H8Y…` · `cursor` 从 `auto` 变 `pointer` · **可聚焦元素 0 → 1** · **Tab 第 16 次停在链接上、直接回车就进去了**（全程不用鼠标） · 落地页出现真实转写文字 `And so my fellow Americans…` · **全程零写请求**、零页面异常。
+- **反向验证 4 组，逐组贴红**。其中第 3 组（"图省事给每行都套链接"）**只让那一条鉴别腿变红** —— 证明它不是恒真。
+- **笔记已被删**：daemon 回 `404 NOTE_NOT_FOUND`，`NoteDetailPage` 渲染 `ErrorBlock` → 界面说「笔记不存在 / 它可能已被删除。」。**已加腿钉住**，并用变异体（把 `note.isError` 改成 `return null` 造白屏）验证它会红。
+- **"为什么不整行可点"写在 `JobList.tsx:101-107` 的注释里**，理由就是这次刚排除掉的第 2 种失败模式。
+- ✅ `tsc -b` 0 · `eslint apps/web/src` 0 · web 全套 **509 pass / 0 fail**（158+10+332+9），其中本轮新增 **7 条**。`check-contract-fields-shown.mjs` 通过。
+
+### 改了什么（精确清单）
+
+| 文件 | 改动 |
+|---|---|
+| `apps/web/src/features/tasks/api.ts` | `MergedJob` 补 `noteUid`；`mergeOne()` 两个分支 + transient 分支各自如实赋值；新增导出 `jobResultHref()` |
+| `apps/web/src/features/tasks/JobList.tsx` | 标题按 `href` 渲染成 `<Link data-testid="job-result-link">`，无落点时退回 `<span>` |
+| `apps/web/src/test/components.test.tsx` | `job()` 工厂补 `noteUid: null`；追加 7 条腿 |
+
+**三处赋值都是"如实"而不是"填个值"**：流水线取 `job.noteUid`；下载类恒 `null`（`DownloadJob` 契约上就没有这个字段）；transient 那一支也是 `null` —— 内存快照里没有 noteUid（`features/tasks/sse.ts:25` 记着这件事），**宁可那一瞬间没有链接，也不编一个可能指错的 uid**。
+
+### 键盘可达的断言长什么样
+
+```ts
+const focusables = li.querySelectorAll(
+  'a[href],button,input,select,textarea,[tabindex]:not([tabindex="-1"])',
+).length;
+assert.equal(focusables > 0, true, '已完成的行上一个可聚焦元素都没有 —— 鼠标点不了，键盘也 Tab 不到');
+```
+
+⚠️ **刻意用 `succeeded` 的行**：非终态的行会渲染暂停/取消等按钮，那些按钮会把这个计数顶成非 0 ——
+于是断言会在**最该失败的那种行上恒真**。选 `succeeded` 才让这条腿有鉴别力（也正是 demo 上的真实状态：6 条全 succeeded）。
+
+真浏览器侧另有一条端到端复验：Tab 到链接 → 按 Enter → URL 真的变成 `/notes/:uid`。
+
+### 反向验证（4 组，真实输出）
+
+| # | 变异 | 结果 |
+|---|---|---|
+| 1 | `mergeOne` 里 `noteUid: job.noteUid` → `null`（撤掉接线） | **7 条腿全红** |
+| 2 | `JobList` 渲染侧 `{href ? (` → `{false ? (`（撤掉链接） | **7 条腿全红** |
+| 3 | `jobResultHref` 改成 `` `/notes/${noteUid ?? ''}` ``（**图省事：每行都给链接**） | **只有「下载类不给假出口」那一条红** —— 鉴别力成立 |
+| 4 | `NoteDetailPage` 的 `if (note.isError)` → `return null`（造白屏） | **「笔记已被删必须说话」那条红**：<br>`AssertionError: 笔记已被删时点进去是白屏 —— 那就是在修第 1 种失败模式的时候造出了第 2 种` |
+
+第 3 组是这次特意设计的：它和第 1/2 组**互为鉴别** —— 功能被删 → 1、2 红；功能被做过头 → 3 红。
+变异体全部还原并核对 `grep -c MUTANT` = 0。
+
+### 一条我没有做成"跳转发生了"的地方
+
+最强那条腿本来想断言**转写段落的文字**出现在落地页上，`[实测]` 做不到：`TranscriptList` 用
+`@tanstack/react-virtual`，jsdom 里滚动容器高度恒 0，`getVirtualItems()` 返回空 ——
+**段落在这个宿主里永远渲染不出来，与产品无关**（真浏览器上有：`:10000` 那条笔记渲染出
+`And so my fellow Americans…`，另一条 19,827 字）。
+
+所以没有退化成关键词匹配，也没有把断言删掉，而是换成**四条结构判据**：
+① 路由真的变成 `/notes/:uid`；② 落地页上出现 `[data-testid="note-actions"]`；
+③ 页面上出现**只有笔记接口才给得出的标题**（刻意与任务行的 displayName 取不同字符串，
+所以点击前必然为假 —— 这三条都配了"前提"断言防恒真）；④ 打桩记录里真的有
+`GET /notes/:uid` 与 `GET /notes/:uid/transcript`。理由写在用例下方，免得下一个人以为是漏了。
+
+### 纪律
+
+`git commit` 带 pathspec（提交时索引里有别人 `git add` 的 `catalogDescriptionRank.test.ts`，**没被卷进来**）· 未 `git stash` · 未 `--amend` · `:10000` 全程只读（vite dev 代理过去，实测**零写请求**）· 未碰 `/root/data-memo` / 机器级指针 · 未 `pkill -f`（vite 按 PID kill，端口已释放）· 门禁那条 `packStatus.ts :: isActivePack` 是别人的，未碰。

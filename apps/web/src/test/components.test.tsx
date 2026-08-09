@@ -115,6 +115,7 @@ import { MindmapView } from '../features/mindmap/MindmapView';
 import type { MindMapDoc } from '@openmemo/mindmap';
 import type { PipelineJob } from '@openmemo/shared';
 import RuntimePage from '../features/runtime/RuntimePage';
+import TasksPage from '../features/tasks/TasksPage';
 import { BackendPackCard } from '../features/runtime/components/BackendPackCard';
 import { isMeaningfulRecommendation } from '../features/runtime/packStatus';
 import { splitEmphasis } from '../components/common/Emphasis';
@@ -311,6 +312,8 @@ const job = (over: Partial<MergedJob> = {}): MergedJob => ({
   attempt: 0,
   maxAttempts: 5,
   error: null,
+  // 工厂默认造的是 download.model —— 契约上就没有 noteUid，如实 null
+  noteUid: null,
   transientOnly: false,
   ...over,
 });
@@ -8883,5 +8886,391 @@ describe('★ T-174/T-175 /runtime 断路器可见 + 立刻重试', () => {
     } finally {
       await i18nInstance.changeLanguage('zh-CN');
     }
+  });
+});
+
+/* ══════════ T-192 任务中心:做完的任务点得进它做出来的东西 ══════════ */
+
+/**
+ * 用户原话:「任务中心 的列表点击无法进入查看历史记录,是没做这个功能,还是列表有问题?」
+ *
+ * `[实测]` 真浏览器在 `:10000` 上点过(捕获期监听器):点击**完整冒泡到 LI 和 UL**、
+ * `defaultPrevented:false` —— **没有任何东西吞它,是路径上一个监听器都没有**。
+ * 行内 `<a href>` 0 个、`<button>` 0 个、`role`/`tabindex` 均 null、`cursor:auto`、
+ * **可聚焦元素 0 个**(键盘用户同样到不了)。URL 不变、无 API 请求、**控制台零报错**。
+ *
+ * 但断的不是"功能没做",是**最后两跳**:
+ * - `packages/shared/src/jobs.ts:302` 的契约注释原话就是
+ *   *"Owning note, so the UI can offer 'open the note' without a lookup table."*,
+ *   daemon 也真的在发(`:10000` 上 6 条 job 每条都带 `noteUid`);
+ * - **`features/tasks/api.ts` 的 `MergedJob` 把它解析掉了** —— `mergeOne()` 两个分支
+ *   都没拷贝,于是 `JobList` 想接也没有料。
+ * - 而**同一个动作早就上线了,只活在瞬时层**:`JobToaster.tsx:476` 完成态给
+ *   「去看笔记」→ `navigate('/notes/'+noteUid)`。**任务中心正是为了补 Toast 的易失性
+ *   才做的持久层(`tasks/api.ts` 文件头),却唯独没继承它唯一那个出口。**
+ *
+ * ⚠️ 这一族的测试必须走 `TasksPage`(喂**服务端形状**的 `/jobs`),
+ * 不能直接 `<JobList jobs={[手搓的 MergedJob]}/>` —— bug 就在 `mergeOne` 那一跳,
+ * 手搓 `MergedJob` 会**正好绕过被测的那一跳**(规矩 3:要覆盖产品的真实路径)。
+ */
+describe('T-192 任务中心 → 它做出来的东西', () => {
+  const NOTE = '01KZ1H8Y5XJ6DMJFW08P7DVA4Q';
+  const TRANSCRIBE = pipelineJob({
+    jobId: 'jt1',
+    kind: 'transcribe',
+    type: 'transcribe',
+    displayName: 'JFK 就职演说片段',
+    noteUid: NOTE,
+    state: 'succeeded',
+    step: 'done',
+    progress: 1,
+  });
+  const MINDMAP = pipelineJob({
+    jobId: 'jm1',
+    kind: 'mindmap',
+    type: 'mindmap',
+    displayName: 'JFK 就职演说片段',
+    noteUid: NOTE,
+    state: 'succeeded',
+    step: 'map 1/1',
+    progress: 1,
+  });
+  /** 下载类任务:契约上**根本没有 `noteUid`**(`shared/jobs.ts:213-224` 只有 `targetId`)。 */
+  const DOWNLOAD = {
+    jobId: 'jd1',
+    kind: 'model' as const,
+    type: 'download.model',
+    targetId: 'asr/whisper-base',
+    displayName: 'Whisper base',
+    state: 'succeeded' as const,
+    step: null,
+    completedBytes: 100,
+    totalBytes: 100,
+    speedBps: null,
+    etaSeconds: null,
+    attempt: 0,
+    maxAttempts: 5,
+    error: null,
+    createdAt: '2026-08-01T00:00:00.000Z',
+    updatedAt: '2026-08-01T00:00:00.000Z',
+  };
+
+  const openTasks = async (jobs: unknown[]) => {
+    stubApi({ '/jobs': { jobs, concurrencyLimit: 2 } });
+    const r = await render(<TasksPage />, { route: '/tasks' });
+    await r.flush();
+    return r;
+  };
+
+  /** 某一行(按显示名定位)里的链接 href 清单。**钉结构,不钉文案**。 */
+  const rowHrefs = (c: HTMLElement, displayName: string): string[] => {
+    const li = [...c.querySelectorAll('li')].find((el) =>
+      (el.textContent ?? '').includes(displayName),
+    );
+    assert.ok(li, `没找到显示名为「${displayName}」的行 —— 前提不成立`);
+    return [...li!.querySelectorAll('a[href]')].map((a) => a.getAttribute('href') ?? '');
+  };
+
+  test('★ 转写任务:标题是链接,href 指向那条笔记', async () => {
+    const r = await openTasks([TRANSCRIBE]);
+    assert.deepEqual(
+      rowHrefs(r.container, 'JFK 就职演说片段'),
+      [`/notes/${NOTE}`],
+      '任务行上没有通往结果的链接 —— daemon 发了 noteUid,MergedJob 把它解析掉了',
+    );
+    r.unmount();
+  });
+
+  /**
+   * ★ 这一条钉的是**不许分叉**,不是"能跳"。
+   *
+   * `JobToaster.tsx:483` 对**所有**流水线 kind 都跳 `/notes/:uid`。任务中心必须逐字相同 ——
+   * 给同一个问题("这条任务做出来的东西在哪")两个答案,正是本仓 A15 那次的形状
+   * (两张 remediation 路由表对同一个 action 给不同落点)。
+   * 导图任务落在笔记页也到得了:笔记页自带「思维导图」页签。
+   */
+  test('★ 导图任务落在**同一个**地方 —— 与 JobToaster 逐字相同,不给同一个问题两个答案', async () => {
+    const r = await openTasks([MINDMAP]);
+    assert.deepEqual(rowHrefs(r.container, 'JFK 就职演说片段'), [`/notes/${NOTE}`]);
+    r.unmount();
+  });
+
+  /**
+   * ★ 与上一条**互为鉴别**:
+   * - 有人把功能整个删掉 → 上面两条红;
+   * - 有人图省事给每一行都套链接 → 这一条红。
+   * 单独看这一条今天恒真(现在每行都是 0 个链接),所以它**必须和有链接的那行同屏**。
+   */
+  test('★ 同一张列表里:下载类任务不给链接(它契约上就没有 noteUid,给了就是假出口)', async () => {
+    const r = await openTasks([TRANSCRIBE, DOWNLOAD]);
+    assert.deepEqual(
+      rowHrefs(r.container, 'JFK 就职演说片段'),
+      [`/notes/${NOTE}`],
+      '前提:流水线那行必须有链接,否则下面那条断言等于什么都没测',
+    );
+    assert.deepEqual(
+      rowHrefs(r.container, 'Whisper base'),
+      [],
+      '下载任务没有 noteUid,不该编一个出口 —— JobToaster.tsx:473 自己立的规矩',
+    );
+    r.unmount();
+  });
+
+  /**
+   * ★ 键盘可达 —— `[实测]` 修之前 `:10000` 上这个数是 **0**。
+   *
+   * 刻意用 `succeeded`:非终态的行会渲染暂停/取消等按钮,那些按钮会把这个计数
+   * 顶成非 0,于是这条断言在**最该失败的那种行上**恒真。
+   */
+  test('★ 已完成的任务行必须有可聚焦元素(修之前是 0 —— 键盘用户完全到不了)', async () => {
+    const r = await openTasks([TRANSCRIBE]);
+    const li = [...r.container.querySelectorAll('li')].find((el) =>
+      (el.textContent ?? '').includes('JFK 就职演说片段'),
+    );
+    assert.ok(li, '前提:行没渲染出来');
+    const focusables = li!.querySelectorAll(
+      'a[href],button,input,select,textarea,[tabindex]:not([tabindex="-1"])',
+    ).length;
+    assert.equal(
+      focusables > 0,
+      true,
+      '已完成的行上一个可聚焦元素都没有 —— 鼠标点不了,键盘也 Tab 不到',
+    );
+    r.unmount();
+  });
+
+  test('★ href 指向的必须是**真实注册过的路由**,不是一个看起来对的字符串', async () => {
+    const r = await openTasks([TRANSCRIBE]);
+    const href = rowHrefs(r.container, 'JFK 就职演说片段')[0] ?? '';
+    r.unmount();
+    const { routes } = await import('../routes');
+    const shell = routes[0]?.children ?? [];
+    // `/notes/<uid>` 必须匹配到 `notes/:noteUid` 这条已注册路由
+    const hit = shell.filter((rt) => rt.path === 'notes/:noteUid');
+    assert.equal(hit.length, 1, '路由表里没有 notes/:noteUid —— 链接会落到空白页');
+    assert.equal(
+      new RegExp(`^/notes/[^/]+$`).test(href),
+      true,
+      `href「${href}」对不上 notes/:noteUid 的形状`,
+    );
+  });
+});
+
+/**
+ * ★ 最强的一条腿:**点下去,落地页上真有那条笔记的内容**。
+ *
+ * 判据不是"跳转发生了" —— 那正是本仓反复吃亏的地方(llm 引导按钮跳到当前页、
+ * 自检按钮点了必然 blocked)。这里把 `/tasks` 与 `/notes/:noteUid` 同时挂进路由,
+ * **真的点那个链接**,然后断言笔记页把**我打桩的那段转写文字**渲染出来了。
+ *
+ * ⚠️ 卸载挂在 `afterEach` 上,不靠每条用例自己记得:`PlayerBar`/`TranscriptList`
+ * 各有一个 rAF 自循环,断言失败时若没卸载,`node --test` **不报红而是整个文件挂住**
+ * (PROTOCOL §8 那一族:一条断言失败伪装成环境问题)。
+ */
+describe('T-192 落地页真有他要的东西(不是"跳转发生了")', () => {
+  const NOTE = '01KZ1H8Y5XJ6DMJFW08P7DVA4Q';
+  /**
+   * ★ 刻意让**笔记接口给的标题**与**任务行上的显示名**不是同一个字符串。
+   *
+   * 这样"页面上出现了这个标题"就只可能来自**落地页真的取到并渲染了这条笔记的响应**，
+   * 而不可能是任务行自己的文字漏过来 —— 断言因此在点击前必然为假、点击后才为真。
+   * （用同一个字符串是这一族最典型的假绿：断言在点之前就已经成立了。）
+   */
+  const NOTE_TITLE = '这个标题只有笔记接口给得出来';
+  const JOB_NAME = 'JFK 就职演说片段';
+  const mounted: { unmount: () => void }[] = [];
+  afterEach(() => {
+    while (mounted.length) {
+      try {
+        mounted.pop()?.unmount();
+      } catch {
+        /* 卸载失败不该掩盖用例本身的失败原因 */
+      }
+    }
+  });
+
+  test('★ 点任务行的链接 → 真的落到这条笔记的页面,且页面渲染的是这条笔记的数据', async () => {
+    const S = stubApi({
+      '/jobs': {
+        jobs: [
+          pipelineJob({
+            jobId: 'jt1',
+            noteUid: NOTE,
+            displayName: JOB_NAME,
+            state: 'succeeded',
+            step: 'done',
+            progress: 1,
+          }),
+        ],
+        concurrencyLimit: 2,
+      },
+      [`/notes/${NOTE}`]: {
+        uid: NOTE,
+        title: NOTE_TITLE,
+        kind: 'media',
+        status: 'ready',
+        language: 'zh',
+        durationMs: 11_000,
+        segmentCount: 1,
+        transcriptUid: 'tr1',
+        folderUid: null,
+        tags: [],
+        starred: false,
+        createdAt: '2026-08-01T00:00:00.000Z',
+        summaryMd: null,
+        bodyJson: null,
+        canRetranscribe: false,
+        assets: [],
+      },
+      [`/notes/${NOTE}/transcript`]: {
+        transcript: {
+          uid: 'tr1',
+          engineId: 'whisper',
+          modelId: null,
+          language: 'zh',
+          status: 'done',
+          progress: 1,
+          durationMs: 11_000,
+          rtf: null,
+        },
+        segments: [
+          { seq: 0, startMs: 0, endMs: 5_000, text: '开场白', speakerLabel: null, words: null },
+        ],
+      },
+      [`/notes/${NOTE}/mindmap`]: { mindmap: null, doc: null },
+    });
+
+    const r = await render(
+      <>
+        <Routes>
+          <Route path="/tasks" element={<TasksPage />} />
+          <Route path="/notes/:noteUid" element={<NoteDetailPage />} />
+        </Routes>
+        <LocationProbe />
+      </>,
+      { route: '/tasks' },
+    );
+    mounted.push(r);
+    await r.flush();
+
+    /* ── 前提：这三条在点击前必须**全部为假**，否则下面的断言等于恒真 ── */
+    assert.equal(locOf(r.container), '/tasks', '前提：还在任务中心');
+    assert.equal(
+      text(r.container).includes(NOTE_TITLE),
+      false,
+      '前提：笔记接口给的标题此刻不该出现 —— 出现了说明这条断言恒真，测不出东西',
+    );
+    assert.equal(
+      !!r.container.querySelector('[data-testid="note-actions"]'),
+      false,
+      '前提：笔记页此刻不该已经挂着',
+    );
+
+    const link = r.container.querySelector('[data-testid="job-result-link"]');
+    assert.ok(link, '任务行上没有可点的链接');
+    await click(link!);
+    /*
+     * 落地是**两跳**：先换路由 → NoteDetailPage 挂载 → 它才去查这条笔记。
+     * 连推四次 flush 而不是 sleep —— sleep 会把"慢"和"根本没发生"混成同一种绿。
+     */
+    for (let i = 0; i < 4; i++) await r.flush();
+
+    /* ── ① 路由真的换了 ── */
+    assert.equal(locOf(r.container), `/notes/${NOTE}`, '没跳到这条笔记');
+
+    /* ── ② 落地页真的是笔记详情页（结构判据，不是文案匹配）── */
+    assert.equal(
+      !!r.container.querySelector('[data-testid="note-actions"]'),
+      true,
+      '落到了一个不是笔记详情页的地方',
+    );
+
+    /* ── ③ 页面上的内容真的来自**这条笔记的响应**（不是任务行的文字漏过来）── */
+    assert.equal(
+      text(r.container).includes(NOTE_TITLE),
+      true,
+      '"跳转发生了"不等于"他要的那件事发生了"：路由换了，但页面没有这条笔记的数据',
+    );
+
+    /* ── ④ 它真的按这个 uid 去取了这条笔记的正文数据 ── */
+    const paths = S.calls.map((c) => `${c.method} ${c.path}`);
+    assert.equal(
+      paths.includes(`GET /notes/${NOTE}`) && paths.includes(`GET /notes/${NOTE}/transcript`),
+      true,
+      `落地页没有去取这条笔记的内容（实际请求：${JSON.stringify(paths)}）`,
+    );
+  });
+
+  /**
+   * ⚠️ 上面刻意**不断言转写段落的文字**，理由写在这里免得下一个人以为是漏了：
+   * `TranscriptList` 用 `@tanstack/react-virtual`，jsdom 里滚动容器高度恒为 0，
+   * `getVirtualItems()` 返回空 —— **段落在这个宿主里永远渲染不出来，与产品无关**。
+   * 真实浏览器上是有的：`[实测]` `:10000` 的 `/notes/01KZ1H8Y…` 渲染出
+   * "And so my fellow Americans, ask not what your country can do for you…"，
+   * 另一条笔记 19,827 字。
+   * 所以这里用**结构判据 + 只有笔记接口才给得出的标题**来钉"落地页真有他要的东西"，
+   * 而不是退化成一个在 jsdom 里永远为假的断言（那只会被下一个人删掉）。
+   */
+
+  test('★ 笔记已被删：点进去必须**说话**，不能是白屏或什么都不发生', async () => {
+    const GONE = '01ZZZZZZZZZZZZZZZZZZZZZZZZ';
+    stubApi({
+      '/jobs': {
+        jobs: [
+          pipelineJob({
+            jobId: 'jt2',
+            noteUid: GONE,
+            displayName: '已经被删掉的那条',
+            state: 'succeeded',
+            step: 'done',
+            progress: 1,
+          }),
+        ],
+        concurrencyLimit: 2,
+      },
+      /* 逐字照抄 daemon 的真实响应：`[实测]` curl :10000/api/notes/<不存在> → 404 */
+      [`/notes/${GONE}`]: () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              code: 'NOTE_NOT_FOUND',
+              message: `no note ${GONE}`,
+              messageZh: '笔记不存在',
+              retryable: false,
+            },
+          }),
+          { status: 404, headers: { 'content-type': 'application/json' } },
+        ),
+    });
+
+    const r = await render(
+      <>
+        <Routes>
+          <Route path="/tasks" element={<TasksPage />} />
+          <Route path="/notes/:noteUid" element={<NoteDetailPage />} />
+        </Routes>
+        <LocationProbe />
+      </>,
+      { route: '/tasks' },
+    );
+    mounted.push(r);
+    await r.flush();
+
+    await click(r.container.querySelector('[data-testid="job-result-link"]'));
+    for (let i = 0; i < 4; i++) await r.flush();
+
+    assert.equal(locOf(r.container), `/notes/${GONE}`, '前提：确实跳过去了');
+    /*
+     * 判据钉的是**结构**（错误块这个组件在不在），不是关键词。
+     * 本仓刚查出 B11 用关键词表判"界面有没有说话"，结果产品说的是
+     * 「文件夹不存在／它可能刚被删掉了…」一个关键词都不含 —— **文案写得越好越判不出来**。
+     */
+    assert.equal(
+      !!r.container.querySelector('[data-testid="error-block"]'),
+      true,
+      '笔记已被删时点进去是白屏 —— 那就是在修第 1 种失败模式的时候造出了第 2 种',
+    );
+    const shown = text(r.container).trim();
+    assert.equal(shown.length > 0, true, '页面上一个字都没有');
   });
 });
