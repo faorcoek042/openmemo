@@ -163,6 +163,44 @@ export class ArtifactStore {
     return target;
   }
 
+  /**
+   * Land externally-verified bytes into the blob store under their digest, without going
+   * through the downloader at all.
+   *
+   * For bundled-model first-run import (`apps/daemon/src/http/rest/modelReconcile.ts`):
+   * the caller has already recomputed `digest` from `sourcePath` and confirmed it matches
+   * what the catalog declares. This method trusts that check — it does not hash anything
+   * itself — and only moves bytes into place.
+   *
+   * Idempotent: a no-op if the blob already exists, so calling this on every daemon start
+   * does not re-copy ~56 MB every time. Hardlink-with-copy-fallback, same policy as
+   * `linkByName`: same-volume costs zero extra disk, cross-volume (or a filesystem that
+   * refuses hardlinks — `EXDEV`/`EPERM`/`ENOTSUP`) degrades silently to a copy. Any other
+   * error (e.g. disk full) propagates rather than being swallowed.
+   *
+   * Lands via temp-name-then-rename, unlike a plain `fs.link`/`fs.copyFile` to the final
+   * path: the blob's filename IS the integrity promise (`sha256-<hex>`), so no
+   * partial-content window is acceptable at that path, exactly as `writeManifest` uses
+   * tmp+rename for the same reason on the manifest side.
+   */
+  async importBlob(sourcePath: string, digest: string): Promise<void> {
+    if (await this.hasBlob(digest)) return;
+    await fs.mkdir(this.blobDir, { recursive: true });
+    const dest = this.blobPath(digest);
+    const tmp = `${dest}.importing-${process.pid}-${Date.now()}`;
+    try {
+      await fs.link(sourcePath, tmp);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === 'EXDEV' || code === 'EPERM' || code === 'ENOTSUP') {
+        await fs.copyFile(sourcePath, tmp);
+      } else {
+        throw e;
+      }
+    }
+    await fs.rename(tmp, dest);
+  }
+
   async writeManifest(kind: StoreKind, id: string, data: unknown): Promise<string> {
     const dir = this.manifestDir(kind);
     await fs.mkdir(dir, { recursive: true });

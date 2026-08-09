@@ -69,6 +69,7 @@ import {
   type BackendCatalog,
   type ModelCatalog,
 } from './manifests.js';
+import { reconcileBundledModels } from './modelReconcile.js';
 import { roleToActivationSlot } from './roleMap.js';
 
 export const HARDWARE_SNAPSHOT_ID = 'hw-local';
@@ -341,6 +342,7 @@ export class RestState {
     await state.store.init();
     await state.loadPersisted();
     await state.reconcileBackends();
+    await state.reconcileModels();
     /*
      * ★ 把指纹**钉在这一刻**，而不是留成 `null`。
      *
@@ -389,6 +391,44 @@ export class RestState {
       console.warn(
         `[backends] 启动对账失败：${String(err)} —— 已装但没记录的包会继续显示成"未安装"`,
       );
+    }
+  }
+
+  /**
+   * 首次运行对账：把随包出厂的模型字节"装"进 ArtifactStore（D-20 §11.2）。
+   *
+   * 与 `reconcileBackends()` 同一条纪律，细节全部在 `modelReconcile.ts` 的文件头：
+   * sha256 现算、`installedAt` 取文件本身的 mtime、`verifiedAt` 才是"现在"、
+   * 已经装过的 role/id 组合绝不覆盖。**不阻断启动**：这是一次修补，不是前置条件——
+   * 失败的最坏结果是回到"没有内置模型"的老样子，抛出去会把一个可修的缺口
+   * 升级成宕机。但**必须出声**：静默的自愈与静默的降级是同一族。
+   *
+   * 装完之后，仍是空的 role 槽位就地激活成刚装好的那个——与 `models.ts` 的
+   * `startModelPull()` 里"没人选过就用这次装的"是同一条规则。不然内置模型
+   * 装完了却没人在用它，用户看到的还是"没有可用的 ASR/VAD"。
+   */
+  private async reconcileModels(): Promise<void> {
+    try {
+      const report = await reconcileBundledModels({
+        store: this.store,
+        models: this.modelCatalog.models,
+      });
+      for (const r of report.imported) {
+        console.warn(
+          `[models] ${r.modelId} 内置模型已导入 ArtifactStore（${String(r.bytes)} 字节，` +
+            `包内那份原样保留——同盘是硬链接、不占双份空间，跨盘才会真复制）`,
+        );
+        const model = this.modelCatalog.models.find((m) => m.id === r.modelId);
+        if (model && !this.active[model.role]) {
+          this.active[model.role] = model.id;
+          await this.persistActive();
+        }
+      }
+      for (const s of report.skipped) {
+        console.warn(`[models] ${s.modelId} 没有导入：${s.reason}`);
+      }
+    } catch (err: unknown) {
+      console.warn(`[models] 内置模型首次运行导入失败：${String(err)} —— 本次启动没有内置模型可用`);
     }
   }
 
