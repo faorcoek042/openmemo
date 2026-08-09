@@ -373,3 +373,137 @@ EOF
 `pnpm -r test` 报的是"**到目前为止撞到的**"，不是"总共有的"。
 想知道总数，要么 `--no-bail`，要么像这次一样**一层一层修着走**
 （我这轮走了四层：runtime 5 → pipeline 5 → daemon 3 → daemon 2，共 14，起点报的是 6）。
+
+---
+
+## [2026-08-09 21:05] 任务 #63 DONE（含附带的 1795 ms 黑窗）
+
+交付（已 push）:
+- `f17a2aa` 产品修复 ① 软链逃逸守卫在 Windows 上空转 + ② 边车替换 EPERM
+  （⚠️ 这条的 **message 没覆盖它自己的全部内容**，见下面「自我申报」）
+- `d9b7ffd` 产品修复 ③ 校验阶段 1795 ms 黑窗（附带任务）
+- `72dbb01` 用例修复 ④ downloader 修完后露出的下一层（pipeline 两条宿主假设）
+
+# 回报你点名的三问
+
+## 1. 红的根因
+
+**`packages/downloader` 在 Windows 上 7 红，是两条独立的产品缺陷。**
+
+### ① 软链逃逸守卫**整个是空转的**（4 红）— 安全相关
+
+根因不在守卫的判据里，在它的**根**：
+
+```
+'C:\Users\x\dest'.split(/[\\/]+/)  →  ['C:', 'Users', 'x', 'dest']
+path.win32.join('C:\', 'C:')       →  'C:\C:'          ← 盘符成了一段路径
+```
+
+`resolveRoot()` 把整条绝对路径喂给按段前进的 `walk()`，于是解析出来的根是
+`C:\C:\Users\…\dest` —— **一个不存在的路径**。此后每次 `lstat` 都落空，
+**没有任何东西会被认成软链**，而 `real.startsWith(rootReal + sep)` 在那棵幻影树里
+对一切候选恒真。
+
+> **守卫没有变红，它变成了恒真。** T-157 那次修复的全部内容 ——
+> resolve-then-check 这一半 —— **在 Windows 上从落地那天起就没有执行过一行**。
+> POSIX 上恰好是对的（前导空段被跳过），所以它能一直藏着。
+
+这正是你说的那条主线教训的又一例：**"CI 结构上看不见"**。
+守卫在那儿、测试在那儿、代码走过去了，只是它检查的那棵树不存在。
+
+### ② 边车的原子替换会 EPERM（3 红）
+
+`rename` 到已存在目标走 `MoveFileEx(REPLACE_EXISTING)`；目标正被另一次替换持有句柄时
+Windows 返回 ACCESS_DENIED → **EPERM**。实测 600 次并发调用 **44 次失败（7.3%）**。
+
+**并发源不是测试造的**：`download.ts` 那个 2s `setInterval` 与收尾写的重叠 ——
+和你提到的 `writeSidecar` 那次 ENOENT 事故**同一个源，第二种失败方式**，
+后果也一样（抛出去 → daemon 退出 exitCode=1 → 用户看到"点按钮完全没反应"）。
+唯一 tmp 名解掉了 ENOENT，但**替换同一个 target 本身**仍会互撞 —— 那一层它没覆盖到。
+
+## 2. 是用例的问题，还是产品在 Windows 上的真 bug
+
+| | 定性 | 修在哪 |
+|---|---|---|
+| ① 软链逃逸守卫空转 | 🔴 **产品真 bug（安全相关）** | `unpack.ts` |
+| ② 边车替换 EPERM | 🔴 **产品真 bug** | `sidecar.ts` |
+| ③ 1795 ms 黑窗（附带） | 🔴 **产品真 bug**（漏传参数） | `download.ts` |
+| ④ 后来露出的 pipeline 两条 | 🟡 用例的宿主假设 | 两个 test 文件 |
+
+④ 是**修完 ①② 之后 CI 才走到的下一层**（又一次"bail 截断计数"）：
+- `backendSelect.test.ts`：夹具落 `whisper-cli`，产品在 win32 上找 `whisper-cli.exe`
+  → 那几条用例在 Windows 上测的不是"选包对不对"，是"名字对不对"。
+- `sourceIsGreppable.test.ts`：`endsWith('packages/…/argGuard.ts')` 是写死的 POSIX 串，
+  而 `files` 由 `join()` 造出。**这条"前提自检"自己成了那个不成立的前提**，
+  于是"源码必须是纯文本"那条守卫在 Windows 上从未生效。
+
+## 3. 有没有削任何用例
+
+**没有。一条都没删、没跳过、没放宽。** 净增：`unpack.test.ts` +6 条、
+`installer.test.ts` +1 条（共 +11 处断言）。
+你点名要保持绿的两道守卫：zip 炸弹与路径穿越/软链 —— **后者正是这次修好的那条**
+（它此前在 Windows 上根本没在守）。
+
+# CI 实测（判据不是"参数传上了"）
+
+```
+run 31313108614 / win32-x64:  packages/downloader  49 / 49  ✅   （修复前 33/40，7 红）
+                              darwin-arm64 Test 步骤也转绿
+```
+
+反向验证（本机 Linux，**这个 Windows 缺陷现在在这里就抓得到**）：
+- `splitAbsolute` 改回 `rest: abs` → 新增 4 条当场红
+- 给 `resolveRoot` 注入幻影根 → **14 条**逃逸/误杀用例全红（证明守卫真的在拦，不是恒真）
+- ③ 把回调改回 `undefined` + 起点改回满格 → 用例当场红，并把旧行为原样打了出来：
+  `★ 校验期间只报了 1 条事件 …{"phase":"verifying","done":9437184,"total":9437184}`
+  —— **恰好一条、且是满格的**，那 1.8 秒黑窗就是这么来的
+- ② 的 EPERM 在 POSIX 上复现不了（内核不产生该 errno），**只能靠 CI**，已由上面那轮验证
+
+# ⚠️ 自我申报：我踩了 §12 的一个新形态
+
+`f17a2aa` 的 message **只描述了它一半的内容**（写了软链守卫，没写 sidecar EPERM）。
+
+成因：我 `git commit` 之后发现消息没覆盖 sidecar，于是 `git commit --amend` 去补 ——
+**而在这两条命令之间，另一位把原提交推了出去**。amend 出来的新 hash 与远端分叉，
+`git push` 被拒。我**没有 force-push**，改为 `git reset --mixed origin/master`
+（不动工作树，别人的脏文件原封不动）后只重建第二个提交。
+
+> **§12 说的是"检查与行动之间世界会变"；这次变的是"提交与改提交之间"。**
+> 推论：**`--amend` 只对"确信还没被推出去"的提交安全，而共享 clone 里没人能确信这一点。**
+> 正确做法是消息一次写对，写漏了就用**新提交**补说明，不要回头改历史。
+> 被漏掉的那段说明现在在 `d9b7ffd` 的 message 尾部与 `sidecar.ts` 的 40 行注释里。
+
+# ⚠️ 当前 master 是红的，但**不是这条线的红**
+
+我推完 `72dbb01` 之后那一轮（run 31313661935）**三个平台全红**，逐条核过：
+
+| 红 | 归属 | 证据 |
+|---|---|---|
+| `Lint`（三平台） | 别人 | `scripts/ci/ffmpeg-lgpl-verify.mjs` 两条 `no-useless-assignment` |
+| `Test` 在 `packages/llm` bail | 别人 | `extractJson`「截断的输出报被截断」——**linux 也红**，平台无关；上一轮 win32 还是 18/18 |
+| `CI scripts self-test`（mac/win） | 别人/历史 | `check-elf-glibc` 调 `objdump`，那两个平台没有 —— 与 `check:sources` 调 `find` 同族 |
+
+**后果对我这条线**：`packages/llm` 在 `packages/pipeline` **之前**，所以 ④ 那两条修复
+**在 Windows CI 上还没被跑到**，标 `[未验证：CI 上未跑到]`（本机 `packages/pipeline` 238/238）。
+①②③ 已由 run 31313108614 验证，不受影响。
+
+⚠️ 我**没有去动别人的红**（PROTOCOL：冲突报给你，别硬合）。
+
+# 门禁口径（如实记）
+
+本机 `pnpm -r test` / `tsc` / `eslint` 此刻**被共享脏树污染** —— 跑出来的红
+（`JobToaster.tsx` 缺 `stepLabelOf`、上面那两条 lint、未跟踪的 `store.test.ts`
+对着在改的 `store.ts` 红 1 条）**没有一条落在我碰过的文件上**。
+按你这一轮加的纪律，我没有拿它当结论，改为按包验：
+`packages/pipeline` **238/238** · `packages/downloader` **52/53**（那 1 条即上述未跟踪的新文件）。
+
+需要 Manager 决策:
+1. `packages/llm` 的 `extractJson` 红与 `ffmpeg-lgpl-verify` 的 lint 红**挡住了整条 Windows 线**
+   —— 在它们修好之前，`packages/pipeline` 之后的所有包（含 `apps/daemon`）在 Windows 上
+   **一条都跑不到**。派给谁？
+2. `check-elf-glibc` 的自检在 macOS/Windows 上必然红（依赖 `objdump`）。
+   与 `check:sources` 那条同一族：**一条永远红的守卫等价于被删掉的守卫**。要不要一并治？
+
+下一步建议:
+1. 等 1 修好后重跑 `ci-crossplatform`，确认 ④ 那两条在 Windows 上真的绿。
+2. Windows 线的下一层大概率还在后面（`apps/daemon` 至今**从没在 Windows 上跑完过**）。
