@@ -169,10 +169,20 @@ function withoutRetiredRoles(catalog: ModelCatalog): ModelCatalog {
   const kept = catalog.models.filter((m) => !RETIRED_ROLES.has(m.role));
   const dropped = catalog.models.length - kept.length;
   if (dropped > 0) {
-    // 出声一次：静默地少几条目录，下一个人排查"我的模型去哪了"会很难受。
-    console.log(
-      `[models] 目录里摘掉 ${dropped} 条已裁 role 的条目（${[...RETIRED_ROLES].join('、')}）—— ADR-016 决策 3`,
-    );
+    /*
+     * ⚠️ **降级为 debug（2026-08-09）。** 原意是对的 —— 静默地少几条目录，
+     *   下一个人排查"我的模型去哪了"会很难受，所以要出声。
+     *   但出声的**对象搞错了**：cmd 窗口里这些行，对一个双击启动的 Windows 用户
+     *   来说**就是产品的界面**，而"已裁 role 的条目 / ADR-016 决策 3"对他毫无意义
+     *   （用户实测把它和别的噪音一起贴出来问这是什么）。
+     *   它服务的是**排查的人**，所以挪到 `OPENMEMO_DEBUG=1` 后面：需要的人拿得到，
+     *   不需要的人看不见。**没有删** —— 删了就又变回"静默地少几条"。
+     */
+    if (process.env.OPENMEMO_DEBUG === '1') {
+      console.log(
+        `[models] 目录里摘掉 ${dropped} 条已裁 role 的条目（${[...RETIRED_ROLES].join('、')}）—— ADR-016 决策 3`,
+      );
+    }
   }
   return { ...catalog, models: kept };
 }

@@ -249,21 +249,43 @@ export async function resolveWhisperVadModel(
            * （目录里写着 `engines: ['sherpa-onnx']`），而他的引擎是 whisper.cpp，
            * 需要的是 `vad/silero-vad-ggml`（`engines: ['whisper.cpp']`）。
            * **两个都在目录里、产品自己知道谁配谁，却从没告诉过他"你该装的是另一个"**
-           * —— 只反复说"加载不了"。这条日志是用户会贴出来、也会拿去搜的东西，
-           * 所以中英都给。
+           * —— 只反复说"加载不了"。
+           *
+           * ⚠️ **英文半句已经拿掉（2026-08-09）**，理由不是它没用，是它**放错了地方**：
+           *   daemon 控制台**没有 i18n 机制**，从启动横幅到每一条 `[daemon]` 都是中文。
+           *   在一个全中文的面上插一条中英连排的长句，既不一致、也救不了英文用户
+           *   （他在别处照样读不懂）。用户实测反馈：这一条**一次启动出现 3 遍、
+           *   每遍中英全文，占了半屏**。
+           *   英文该去**有 i18n 的那一侧**（网页）。⚠️ 但那需要把 `reasonZh` 换成
+           *   reason **code** 再由前端翻译，是另一件事，**本轮没做** —— 所以现在
+           *   英文用户在这条上拿不到母语提示，如实记在这里。
            */
           `已安装的 VAD 权重 whisper.cpp 加载不了（${rejected
             .map((p) => p.split(/[\\/]/).pop() ?? p)
             .join('、')}）—— 切分降级为固定窗口，转写仍可完成但断句会变差。` +
           `你装的多半是 sherpa-onnx 用的那一个；whisper.cpp 需要「vad/silero-vad-ggml」，` +
-          `去「模型」页装上它即可恢复按静音切分。` +
-          ` / Installed VAD weights cannot be loaded by whisper.cpp — falling back to ` +
-          `fixed-window chunking (transcription still works, segmentation gets worse). ` +
-          `You most likely installed the sherpa-onnx one; whisper.cpp needs ` +
-          `"vad/silero-vad-ggml" — install it from the Models page to restore silence-based chunking.`
+          `去「模型」页装上它即可恢复按静音切分。`
         : '未安装 VAD 模型 → 切分降级为固定窗口';
 
   return { path, rejected, reasonZh };
+}
+
+/**
+ * VAD 那条警告：**全文只说一次，之后同一条原因只提一句短的。**
+ *
+ * ⚠️ 重复本身是**真实的重测**：`buildPipeline()` 在启动与热重建各跑一次，
+ *   每次都是新测出来的结论，所以**不去重**（去重会把"装上之后仍然不行"藏起来）。
+ *   但「同一条真话说三遍、每遍全文」是另一回事 —— 用户实测那一条一次启动出现
+ *   **3 遍**，把半屏刷满了。所以保留次数、压缩篇幅。
+ */
+let lastVadWarn: string | null = null;
+function warnVadOnce(reasonZh: string): void {
+  if (reasonZh === lastVadWarn) {
+    console.warn('[daemon] ⚠️ VAD 仍不可用（同上，原因未变）');
+    return;
+  }
+  lastVadWarn = reasonZh;
+  console.warn(`[daemon] ⚠️ ${reasonZh}`);
 }
 
 /**
@@ -353,7 +375,7 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
   const tools: ToolPaths = { ...discovered, vadModel: vad.path };
   if (vad.rejected.length > 0) {
     // 这条**必须**出声：它的形态是"用户装了 VAD，结果比没装更糟"。
-    console.warn(`[daemon] ⚠️ ${vad.reasonZh}`);
+    warnVadOnce(vad.reasonZh);
   }
 
   const missing: string[] = [];
