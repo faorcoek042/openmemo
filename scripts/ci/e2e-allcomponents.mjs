@@ -369,16 +369,49 @@ try {
    */
   const manifestDir = join(REPO, 'vendor', 'manifests');
   let manifestPacks = 0;
-  let manifestModels = 0;
+  const manifestModelIds = [];
+  const manifestLlmIds = [];
   for (const f of readdirSync(manifestDir).filter((n) => n.endsWith('.json'))) {
     const j = JSON.parse(readFileSync(join(manifestDir, f), 'utf8'));
     manifestPacks += (j.packs ?? []).length;
-    manifestModels += (j.models ?? []).length;
+    for (const m of j.models ?? []) {
+      if (m.role === 'llm') manifestLlmIds.push(m.id);
+      else manifestModelIds.push(m.id);
+    }
   }
-  judge('目录枚举与清单对得上（少了就是 API 把谁静默过滤掉了）', {
-    ok: packs.length >= manifestPacks && variants.length >= manifestModels,
-    reason: `目录 ${packs.length} 包 / ${variants.length} 变体；清单 ${manifestPacks} 包 / ${manifestModels} 模型`,
+  /*
+   * ★ 判据要**对得上各自的口径**，不能拿总数硬比。
+   *
+   * `[CI 实测 run 31295033171]` 第一版拿"目录变体数 ≥ 清单模型数"比，结果三平台都红：
+   * 目录 30 / 清单 35。追下去差的**恰好是 5 个 `role=llm`** ——
+   * `/api/models/catalog` 不列 LLM（它们归 `/api/llm/models` 那条线）。
+   * **那是我的断言口径错了，不是产品少了东西** —— 差一点报成一条产品缺陷。
+   * 现在按 role 分开比，并把 LLM 那一格单列成覆盖缺口（见下）。
+   */
+  const catalogIds = new Set(variants.map((v) => v.id));
+  const missingFromCatalog = manifestModelIds.filter((id) => !catalogIds.has(id));
+  judge('目录枚举与清单对得上（非 llm 那部分；少了就是 API 把谁静默过滤掉了）', {
+    ok: packs.length >= manifestPacks && missingFromCatalog.length === 0,
+    reason:
+      `目录 ${packs.length} 包 / ${variants.length} 变体；` +
+      `清单 ${manifestPacks} 包 / ${manifestModelIds.length} 非 llm 模型 + ${manifestLlmIds.length} 个 llm` +
+      (missingFromCatalog.length ? `；**目录里没有**：${missingFromCatalog.join(', ')}` : ''),
   });
+
+  /*
+   * ★ LLM 那 5 个：`/api/models/catalog` 不列它们，所以**这条腿的 B 层覆盖不到**。
+   *   A 层照常逐个探过它们的每一个镜像（URL 可达性与哪个端点列它无关）。
+   *   用户能不能从 `/api/llm/models` 那条线把它们装上，我**没有验**。
+   */
+  const llmProbe = await local('/api/llm/models', { timeoutMs: 30_000 }).catch(() => null);
+  say('');
+  say(`   ⓘ role=llm 的 ${manifestLlmIds.length} 个变体不在 /api/models/catalog 里：`);
+  for (const id of manifestLlmIds) say(`     ${id}`);
+  say(
+    `     它们归 /api/llm/models（本轮探测 HTTP ${llmProbe?.status ?? '(取不到)'}）——` +
+      `**本腿 B 层覆盖不到它们**，A 层已逐个探过镜像。` +
+      `用户能否从那条线装上：\`[未验证]\`。`,
+  );
 
   /* ── 2. A 层：每一个组件的每一个镜像，真发一次请求 ── */
 
