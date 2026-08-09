@@ -1332,3 +1332,55 @@ commit `5da68c8`。干净 worktree：`pnpm -r test` **1626 / 0**、`eslint` 0、
 另外提交那一刻并发 lane 刚 `git add` 了 `scripts/build-bundle.mjs`，
 被我 `git add` 后的 `commit` 一起带进去了；已 `reset --soft` + `restore --staged` 摘掉，
 改用 §12 的 `git commit -- <pathspec>` 形式。**`git status` 与 `git commit` 之间有窗口。**
+
+### 同族扫出几条：**4 条（3 条活的 + 1 条潜伏）**，全部命中同样的 **18/25 个包**
+
+18 = 全部非 `whisper.cpp` 的包（sqlite-ext 11 + yt-dlp 4 + ffmpeg 3），**它们的 `backend` 全是 `cpu`**。
+根因同一句：`onSelect(pack)` / `isActive` / `isLoadBearing` 判的都是 **`pack.backend` 字符串**，
+而那个轴是"用哪块算力跑 whisper"，**跟这个包是不是推理包无关**。
+
+**① 「设为当前后端」在这 18 张卡上语义是错的，而且有实害**
+`BackendPackCard.tsx:129-133` → `RuntimePage.tsx:100-102` `select.mutateAsync(pack.backend)`
+→ `backends.ts:525-526` 写 `selectedBackend`（**落盘 prefs**）。
+按下去不是"启用 libsimple"，是**把 whisper 的算力后端改成 cpu**。
+`[链路已核实]` `packages/shared/src/fitness.ts:182`：`selectedBackend === 'cpu'` → VRAM 预算归零，
+`/models` 上每一条模型适配结论**跟着翻成 CPU-only**。
+⚠️ 可达性正好互补：这 18 个都是 cpu，所以 `isActive` 在 `selectedBackend==='cpu'` 时为真、按钮**被藏起来**；
+**它恰恰在用户选了 cuda/vulkan/metal 时才出现** —— 也就是说，
+在 libsimple/yt-dlp/ffmpeg 卡上点一下 = **一键把 whisper 从 GPU 降级到 CPU，且不作声**。
+
+**② 这 18 张卡会显示「⚡使用中」**
+`RuntimePage.tsx:111` `selectedBackend === p.backend && p.installed`（engine 全盲）
+→ `packStatus.ts:84` 第一分支 → `BackendPackCard.tsx:198` → `BackendChip.tsx:85-89` → 「使用中」。
+默认 cpu 时，一个 SQLite 分词扩展的卡片上写着 **"CPU ⚡使用中"**。
+`[旁证]` `coordination/inbox/progress-audit.md:349` 早就记过这条；
+当时「推荐」那一半修了（`isMeaningfulRecommendation`），**`isActive` 这一半没修**。
+
+**③ 这 18 个包永远卸载不掉（新发现，我原本没料到）**
+`BackendPackCard.tsx:109` `isLoadBearing = pack.tier === 'builtin' || pack.backend === 'cpu'`。
+`vendor/manifests` 里**没有任何包是 `builtin`**（25 个全 `downloadable`），
+所以只有 `backend === 'cpu'` 这半句在起作用 → 卸载按钮 disabled + 「兜底后端」锁图标
++ 「CPU 后端是永不失败的兜底，不可卸载」。
+但那条理由是 **ASR 专属**的（ADR-003 附录 A.3:176,178：删光 CPU 后端 → ggml `ggml_abort()` → SIGABRT）。
+**删掉 yt-dlp 或 libsimple 不可能让 ggml SIGABRT。**
+而 daemon **不拦**（`backends.ts:544-566` 照删不误）—— 所以 UI 是唯一的门，
+它挡下的是一个**服务端支持的合法动作**：想回收 yt-dlp/ffmpeg/libsimple 的磁盘空间，
+**产品里没有任何路径**。
+
+**④（潜伏，已在本轮 `5ef6c72` 修掉）** 「重试自检」是 `onSelfTest()` 的第二个入口，没门控。
+
+### 一条相邻但**不同族**的（没算进 4 条里，报给协调者定夺）
+
+`BackendPackCard.tsx` 自检失败卡片里的 **「改用 CPU」** 按钮调的是 `onSelect(pack)`
+= `select.mutateAsync(pack.backend)`。而它唯一会出现的场合是
+**一个非 cpu 的 whisper 包自检失败**时 —— 于是它**重新选中那个刚刚失败的后端**，
+而不是切到 cpu。**标签承诺的和处理器做的正好相反。**
+它盲的是 *backend* 不是 *engine*，所以不算同族；但根因同一句
+（`onSelect(pack)` 把"这个包"和"这个包的算力后端"混为一谈），一次重构能一起治。
+
+### 我没有动 ①②③
+
+协调者的指令是「顺手数一遍」。①②③ 都在 `RuntimePage` / `BackendPackCard` 上，
+而 `a534e2e5…` 正在同一个页面上作业（本轮我已经被它的 `git stash -u` 卷走过一次）。
+**要不要我接着修，请裁。** 建议顺序：③（用户拿不回磁盘空间，且 daemon 不拦）→
+①（有实害：静默降级 + VRAM 预算归零）→ ②（显示错，但不改变行为）。
