@@ -21,6 +21,7 @@ import {
   mkdtempSync,
   mkdirSync,
   writeFileSync,
+  readFileSync,
   copyFileSync,
   rmSync,
   existsSync,
@@ -311,8 +312,17 @@ console.log('\n⑦ PE（Windows）那一半：现造一个最小 PE，验导入�
 
   // 补齐之后必须变绿 —— 否则上面那条红可能只是"它对什么都报红"
   writeFileSync(join(dir, 'cublas64_12.dll'), makePe(['KERNEL32.dll']));
+  // ★ 这一步是 ⑨ 那条许可证守卫**顺带证明自己会连锁生效**的地方：
+  //   把 cublas64_12.dll 放进包就触发了"必须带 EULA"，所以对照组也得把 EULA 放进去。
+  //   （本轮实测：不放的话这条对照组红在许可证上 —— 守卫是复合生效的，不是各管各的。）
+  writeFileSync(join(dir, 'LICENSE-NVIDIA-CUDA-EULA.txt'), 'x'.repeat(2048));
   const r2 = run(['--verify', '--dir', dir]);
-  expect(r2.code === 0, '把 cublas64_12.dll 放进去之后变绿（对照组）', '补齐了仍然红', r2.out);
+  expect(
+    r2.code === 0,
+    '把 cublas64_12.dll + EULA 放进去之后变绿（对照组）',
+    '补齐了仍然红',
+    r2.out,
+  );
 }
 
 console.log('\n⑧ Mach-O：认得出、读不了 —— 必须**打印**成未覆盖，而不是当成"没有二进制"');
@@ -333,6 +343,74 @@ console.log('\n⑧ Mach-O：认得出、读不了 —— 必须**打印**成未�
     '摘要里没有 Mach-O 计数',
     r.out,
   );
+}
+
+console.log('\n⑨ ★带了别人的二进制 ⇒ 必须带别人的许可证（NVIDIA EULA）');
+{
+  const dir = join(WORK, 'lic');
+  mkdirSync(dir, { recursive: true });
+  copyFileSync('/bin/true', join(dir, 'whisper-cli'));
+  // 逐字用真实产物里的名字：libcublasLt.so.12 是那三个必需件里最大的一个
+  copyFileSync('/bin/true', join(dir, 'libcublasLt.so.12'));
+  const r = run(['--verify', '--dir', dir]);
+  expect(r.code === 1, 'exit 1', '带了 NVIDIA 库却没带 EULA 也报绿', r.out);
+  expect(/LICENSE-NVIDIA-CUDA-EULA\.txt/.test(r.out), '说清了要哪个文件', '没说要哪个文件', r.out);
+  expect(/libcublasLt\.so\.12/.test(r.out), '点名了是哪个二进制触发的', '没点名触发者', r.out);
+  expect(
+    /再分发方/.test(r.out),
+    '说清了"放进包的那一刻我们就是再分发方"',
+    '错误信息没说清理由',
+    r.out,
+  );
+
+  // 对照组：放一份 > 1 KB 的文本进去就该变绿 —— 否则上面那条红可能只是"它对什么都报红"
+  writeFileSync(join(dir, 'LICENSE-NVIDIA-CUDA-EULA.txt'), 'x'.repeat(2048));
+  expect(run(['--verify', '--dir', dir]).code === 0, '放进许可证之后变绿（对照组）', '放了仍然红');
+
+  // 占位符挡不住：1 KB 阈值防的是"文件在、内容是一行字"
+  writeFileSync(join(dir, 'LICENSE-NVIDIA-CUDA-EULA.txt'), 'TODO\n');
+  expect(
+    run(['--verify', '--dir', dir]).code === 1,
+    '一行占位符不算数（> 1 KB 阈值）',
+    '占位符被当成了许可证',
+  );
+}
+
+console.log('\n⑩ ★第三方二进制不许被改动（NVIDIA EULA §2.3）—— 记录 + 出厂前复算');
+{
+  const dir = join(WORK, 'unmod');
+  const src = join(WORK, 'unmod-src');
+  mkdirSync(dir, { recursive: true });
+  mkdirSync(src, { recursive: true });
+  copyFileSync('/usr/bin/git', join(dir, 'git'));
+  for (const n of ['libpcre2-8.so.0', 'libz.so.1']) {
+    const found = LIBDIRS.map((d) => join(d, n)).find((p2) => existsSync(p2));
+    if (found) copyFileSync(found, join(src, n));
+  }
+  const rec = join(WORK, 'unmod-record.json');
+  const c = run(['--collect', '--dir', dir, '--record', rec, '--search', src]);
+  if (c.code !== 0) {
+    bad('准备阶段：收集失败，⑩ 验不了', c.out);
+  } else {
+    expect(existsSync(rec), '--collect 写出了记录文件', '没写记录', c.out);
+    expect(
+      run(['--verify', '--dir', dir, '--record', rec]).code === 0,
+      '未改动时是绿的',
+      '未改动却红了',
+    );
+    // 改一个字节 —— 用 strip 不可靠：库可能本来就是 stripped 的，那样"反向验证"会假绿。
+    // （这一条是本轮实测踩到的：第一次用 strip，文件根本没变，守卫"正确地"报了绿。）
+    const victim = join(dir, 'libz.so.1');
+    if (existsSync(victim)) {
+      writeFileSync(victim, Buffer.concat([readFileSync(victim), Buffer.from([0])]));
+      const r = run(['--verify', '--dir', dir, '--record', rec]);
+      expect(r.code === 1, 'exit 1', '改了字节却报绿', r.out);
+      expect(/不再逐字节相同/.test(r.out), '说清了"与源文件不再逐字节相同"', '理由不对', r.out);
+      expect(/strip/.test(r.out), '点名了最常见的成因（strip 扫过整个 stage）', '没给成因', r.out);
+    } else {
+      bad('准备阶段：没有 libz.so.1 可改，⑩ 的反向没验到', '不算通过');
+    }
+  }
 }
 
 console.log('');

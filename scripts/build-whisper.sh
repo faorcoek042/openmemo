@@ -535,61 +535,6 @@ else
   而 GGML_BACKEND_DL 下 whisper 不会为此报任何错。"
   fi
 
-  # ★★★ T-190：**这一段以前是坏的，而且坏得一声不吭。**
-  #
-  # 原文是：
-  #   case "${BACKEND}" in
-  #     cuda) copy_if_exists "${BIN_DIR}/cudart64_"*.dll "${BIN_DIR}/cublas64_"*.dll \
-  #                          "${BIN_DIR}/cublasLt64_"*.dll "${BIN_DIR}/nvrtc"*.dll ;;
-  #   esac
-  #
-  # 三层同时失效，任何一层单独出现都足以让包坏掉：
-  #   ① 它只在 **BIN_DIR**（构建输出目录）里找，而 CMake **不会**把 toolkit 的
-  #      DLL / .so 拷到那里 —— 那些库在 `$CUDA_PATH` 底下；
-  #   ② Linux 侧那几个 glob 是 **Windows 命名**（`cudart64_*.dll`），
-  #      在 Linux 上**永远匹配不到**；
-  #   ③ `copy_if_exists` 是「有就拷、没有就算」—— **它一声不吭**。
-  #
-  # `[实测 2026-08-09]` 后果：`whispercpp-cuda-win-x64` / `whispercpp-cuda-linux-x64`
-  # 的 `providesFiles` 里**一个 CUDA 运行库都没有**，而 `ggml-cuda` 的导入表要
-  # `cublas64_12.dll` + `cudart64_12.dll`（Linux: `libcudart.so.12` / `libcublas.so.12`）。
-  # → 装得上、`dlopen` 失败、而 `GGML_BACKEND_DL=ON` 下失败不是错误，
-  #   只是"这个后端没注册上" → 静默回落 CPU。**装了不会变快，没有任何一处会说话。**
-  #
-  # 换成 `scripts/ci/pack-native-deps.mjs --collect`，判据整个换了一层：
-  #   · **要哪些库是问二进制自己的**（ELF `DT_NEEDED` / PE 导入表），不是手写清单 ——
-  #     手写清单会漂（上面 ② 就是漂的结果）；
-  #   · **传递闭包**：拷进 `libcublas.so.12` 之后再问它一遍，`libcublasLt.so.12`
-  #     被自动带上，**不需要有人知道它的存在**（它是 328 MB 里最大的一块）；
-  #   · **找不到就 die**，不再有"没有就算"这一档；
-  #   · 只带真正被引用的 —— 上游 `release.yml` 用 `xcopy /E` 把整个 redist 目录扫进包里，
-  #     于是多了 `nvrtc`×2 + `nvblas` 共 19.9 MB。**ggml 全树零引用，我们不抄。**
-  #
-  # ⚠️ 不带 `libcuda.so.1` / `nvcuda.dll`：那是 **显示驱动**带的，
-  #    不在 NVIDIA 可再分发清单里（脚本的 `DRIVER_PROVIDED` 一类**永远不收集**）。
-  if [[ "${BACKEND}" == "cuda" ]]; then
-    CUDA_ROOT="${CUDA_PATH:-${CUDA_HOME:-}}"
-    if [[ -z "${CUDA_ROOT}" ]] && command -v nvcc >/dev/null 2>&1; then
-      CUDA_ROOT="$(cd "$(dirname "$(command -v nvcc)")/.." && pwd)"
-    fi
-    [[ -n "${CUDA_ROOT}" ]] || die "找不到 CUDA toolkit 根目录（CUDA_PATH / CUDA_HOME / PATH 上的 nvcc 都没有）。
-  运行库必须从 toolkit 里取 —— CMake 不会把它们拷进构建输出目录。"
-    log "CUDA toolkit: ${CUDA_ROOT}"
-    # 各平台的库都在哪：Windows 是 `bin/`（DLL 与 exe 同目录），Linux 是 `lib64/`
-    # 或 `targets/<triple>/lib/`。**全都给出去，让脚本自己找** —— 少给一个目录的表现
-    # 是"找不到 → 红"，那至少是响的；写死一个目录的表现才是静默。
-    CUDA_SEARCH=(
-      --search "${BIN_DIR}"
-      --search "${CUDA_ROOT}/bin"
-      --search "${CUDA_ROOT}/lib64"
-      --search "${CUDA_ROOT}/lib"
-      --search "${CUDA_ROOT}/targets/x86_64-linux/lib"
-      --search "${CUDA_ROOT}/targets/sbsa-linux/lib"
-    )
-    command -v node >/dev/null || die "node is required to collect the CUDA runtime libraries"
-    node "${REPO_ROOT}/scripts/ci/pack-native-deps.mjs" \
-      --collect --dir "${STAGE}" "${CUDA_SEARCH[@]}"
-  fi
 fi
 
 # ★ 守卫：**任何**包里都必须至少有一个 ggml CPU 后端模块 + whisper-cli 本体。
@@ -743,6 +688,120 @@ if [[ "${HOST_OS}" == "darwin" && "${ADHOC_SIGN}" == "1" ]]; then
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════════════
+# ★★★ T-190：**第三方运行库的收集必须排在 `strip` 之后。**
+#
+# 上面那段 strip 是 `find "${STAGE}" -type f -exec strip …` —— 它**扫整个 stage**。
+# 而 NVIDIA CUDA EULA §2.3 的原文（我读的是 deb 装出来的那份全文，不是转述）：
+#
+#     "Those portions of the SDK designed exclusively for use on the Linux or FreeBSD
+#      operating systems … may be copied and redistributed for use in accordance with
+#      this Agreement, **provided that the object code files are not modified in any
+#      way** (except for unzipping of compressed files)."
+#
+# `strip --strip-unneeded` 就是"modify"。所以收集排在 strip 之后。
+# ⚠️ 但"排在后面"是一条**靠顺序维持的性质**，而本仓的判据是「改错了会当场红」：
+#    `--record` 记下源文件 sha256，出厂前 `--verify --record` 逐个复算，
+#    **谁把顺序调回去、或者再加一遍 strip，都会当场红**，不需要有人记得这段注释。
+# ══════════════════════════════════════════════════════════════════════════════════════
+NATIVE_DEPS_RECORD="${BUILD_DIR}/native-deps.json"
+# ★★★ T-190：**这一段以前是坏的，而且坏得一声不吭。**
+#
+# 原文是：
+#   case "${BACKEND}" in
+#     cuda) copy_if_exists "${BIN_DIR}/cudart64_"*.dll "${BIN_DIR}/cublas64_"*.dll \
+#                          "${BIN_DIR}/cublasLt64_"*.dll "${BIN_DIR}/nvrtc"*.dll ;;
+#   esac
+#
+# 三层同时失效，任何一层单独出现都足以让包坏掉：
+#   ① 它只在 **BIN_DIR**（构建输出目录）里找，而 CMake **不会**把 toolkit 的
+#      DLL / .so 拷到那里 —— 那些库在 `$CUDA_PATH` 底下；
+#   ② Linux 侧那几个 glob 是 **Windows 命名**（`cudart64_*.dll`），
+#      在 Linux 上**永远匹配不到**；
+#   ③ `copy_if_exists` 是「有就拷、没有就算」—— **它一声不吭**。
+#
+# `[实测 2026-08-09]` 后果：`whispercpp-cuda-win-x64` / `whispercpp-cuda-linux-x64`
+# 的 `providesFiles` 里**一个 CUDA 运行库都没有**，而 `ggml-cuda` 的导入表要
+# `cublas64_12.dll` + `cudart64_12.dll`（Linux: `libcudart.so.12` / `libcublas.so.12`）。
+# → 装得上、`dlopen` 失败、而 `GGML_BACKEND_DL=ON` 下失败不是错误，
+#   只是"这个后端没注册上" → 静默回落 CPU。**装了不会变快，没有任何一处会说话。**
+#
+# 换成 `scripts/ci/pack-native-deps.mjs --collect`，判据整个换了一层：
+#   · **要哪些库是问二进制自己的**（ELF `DT_NEEDED` / PE 导入表），不是手写清单 ——
+#     手写清单会漂（上面 ② 就是漂的结果）；
+#   · **传递闭包**：拷进 `libcublas.so.12` 之后再问它一遍，`libcublasLt.so.12`
+#     被自动带上，**不需要有人知道它的存在**（它是 328 MB 里最大的一块）；
+#   · **找不到就 die**，不再有"没有就算"这一档；
+#   · 只带真正被引用的 —— 上游 `release.yml` 用 `xcopy /E` 把整个 redist 目录扫进包里，
+#     于是多了 `nvrtc`×2 + `nvblas` 共 19.9 MB。**ggml 全树零引用，我们不抄。**
+#
+# ⚠️ 不带 `libcuda.so.1` / `nvcuda.dll`：那是 **显示驱动**带的，
+#    不在 NVIDIA 可再分发清单里（脚本的 `DRIVER_PROVIDED` 一类**永远不收集**）。
+if [[ "${BACKEND}" == "cuda" ]]; then
+  CUDA_ROOT="${CUDA_PATH:-${CUDA_HOME:-}}"
+  if [[ -z "${CUDA_ROOT}" ]] && command -v nvcc >/dev/null 2>&1; then
+    CUDA_ROOT="$(cd "$(dirname "$(command -v nvcc)")/.." && pwd)"
+  fi
+  [[ -n "${CUDA_ROOT}" ]] || die "找不到 CUDA toolkit 根目录（CUDA_PATH / CUDA_HOME / PATH 上的 nvcc 都没有）。
+运行库必须从 toolkit 里取 —— CMake 不会把它们拷进构建输出目录。"
+  log "CUDA toolkit: ${CUDA_ROOT}"
+  # 各平台的库都在哪：Windows 是 `bin/`（DLL 与 exe 同目录），Linux 是 `lib64/`
+  # 或 `targets/<triple>/lib/`。**全都给出去，让脚本自己找** —— 少给一个目录的表现
+  # 是"找不到 → 红"，那至少是响的；写死一个目录的表现才是静默。
+  CUDA_SEARCH=(
+    --search "${BIN_DIR}"
+    --search "${CUDA_ROOT}/bin"
+    --search "${CUDA_ROOT}/lib64"
+    --search "${CUDA_ROOT}/lib"
+    --search "${CUDA_ROOT}/targets/x86_64-linux/lib"
+    --search "${CUDA_ROOT}/targets/sbsa-linux/lib"
+  )
+  command -v node >/dev/null || die "node is required to collect the CUDA runtime libraries"
+  node "${REPO_ROOT}/scripts/ci/pack-native-deps.mjs" \
+    --collect --dir "${STAGE}" --record "${NATIVE_DEPS_RECORD}" "${CUDA_SEARCH[@]}"
+fi
+
+# ── 许可证：**和二进制同一次进包，不分两步** ─────────────────────────────────────────────
+#
+# 「把别人的二进制放进包的那一刻，我们就是再分发方了。」分两步做，中间必然存在一个
+# **已经在分发、但没带许可证**的状态 —— 而本仓有太多"分两步、第二步没人做"的先例。
+#
+# 取哪一份：**NVIDIA 自己随 toolkit 装出来的那份全文**，不是我们抄的、也不是从网页扒的。
+# `[实测 2026-08-09]` `cuda-cudart-12-4_12.4.127-1_amd64.deb` 里就一个文档文件：
+#   `./usr/share/doc/cuda-cudart-12-4/copyright`  63,021 B  —— 内容是 EULA 全文
+#   （含 §1.1.2 Distribution Requirements、§2.3 不得修改、§2.6 Attachment A 可再分发清单）。
+# Windows 侧 toolkit 根目录带的是 `EULA.txt`。两种布局都找，**找不到就 die**。
+if [[ "${BACKEND}" == "cuda" ]]; then
+  NV_EULA_DST="${STAGE}/LICENSE-NVIDIA-CUDA-EULA.txt"
+  NV_EULA_SRC=""
+  for cand in \
+      "${CUDA_ROOT:-/nonexistent}/EULA.txt" \
+      "${CUDA_ROOT:-/nonexistent}/LICENSE" \
+      "${CUDA_ROOT:-/nonexistent}/doc/EULA.txt" \
+      /usr/share/doc/cuda-cudart-*/copyright \
+      /usr/share/doc/libcublas-*/copyright \
+      /usr/share/doc/cuda-toolkit-*/copyright ; do
+    # `> 1 KB` 是为了挡住那种"文件在、内容是一行占位符"的情况
+    if [[ -f "${cand}" ]] && [[ "$(wc -c < "${cand}")" -gt 1024 ]]; then NV_EULA_SRC="${cand}"; break; fi
+  done
+  [[ -n "${NV_EULA_SRC}" ]] || die "找不到 NVIDIA CUDA EULA 全文，而这个包里有 NVIDIA 的可再分发运行库。
+  找过：\${CUDA_ROOT}/{EULA.txt,LICENSE,doc/EULA.txt}、/usr/share/doc/{cuda-cudart,libcublas,cuda-toolkit}-*/copyright
+  **不许先发包、以后再补许可证** —— 那中间就是一个"已经在分发、但没带许可证"的状态。"
+  cp -f "${NV_EULA_SRC}" "${NV_EULA_DST}"
+  log "NVIDIA EULA: ${NV_EULA_SRC} → $(basename "${NV_EULA_DST}") ($(wc -c < "${NV_EULA_DST}") B)"
+fi
+
+# whisper.cpp 自己的 MIT 文本。**这条不是本任务派的，但不带它是同一类缺口**：
+# MIT 要求"The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software"，而这个包里全是 whisper.cpp 的二进制。
+# 只补 NVIDIA 那份、把 MIT 那份继续漏着，就是"分两步、第二步没人做"的下一个实例。
+if [[ -f "${SRC_DIR}/LICENSE" ]]; then
+  cp -f "${SRC_DIR}/LICENSE" "${STAGE}/LICENSE-whisper.cpp.txt"
+  log "whisper.cpp LICENSE → LICENSE-whisper.cpp.txt ($(wc -c < "${STAGE}/LICENSE-whisper.cpp.txt") B)"
+else
+  die "找不到 ${SRC_DIR}/LICENSE —— 包里全是 whisper.cpp 的二进制，MIT 要求随附版权声明。"
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════════════
 # ★★★ T-190 守卫：**包里必须提供它自己导入表所要求的每一个非系统库。**
 #
 # 上面那几条守卫钉的是"某个我们知道名字的文件在不在"（whisper-cli / ggml-cpu* /
@@ -764,7 +823,8 @@ fi
 #    打包之前 —— 也就是「包里最终有什么」定下来的那一刻。
 # ══════════════════════════════════════════════════════════════════════════════════════
 if command -v node >/dev/null 2>&1; then
-  node "${REPO_ROOT}/scripts/ci/pack-native-deps.mjs" --verify --dir "${STAGE}"
+  node "${REPO_ROOT}/scripts/ci/pack-native-deps.mjs" --verify --dir "${STAGE}" \
+    --record "${NATIVE_DEPS_RECORD:-/nonexistent}"
 else
   die "node is required to run the pack dependency guard (scripts/ci/pack-native-deps.mjs)"
 fi

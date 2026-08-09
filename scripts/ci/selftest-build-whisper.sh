@@ -159,6 +159,11 @@ make_stub_src() {
   printf '/* stub */\n' > "${srcdir}/ggml/include/ggml.h"
   printf '/* stub */\n' > "${srcdir}/ggml/include/ggml-backend.h"
   printf 'cmake_minimum_required(VERSION 3.10)\n' > "${srcdir}/CMakeLists.txt"
+  # ★ T-190：真的 `vendor/whisper.cpp` 里有 `LICENSE`（MIT），而 build-whisper.sh 现在
+  #   **必须**把它放进包（包里全是 whisper.cpp 的二进制，MIT 要求随附版权声明）。
+  #   假源码树也得有 —— 夹具与现实不一致时，红的是夹具，指向的却是产品，最费时间。
+  printf 'MIT License\n\nCopyright (c) 2023-2024 The ggml authors\n(stub for selftest)\n' \
+    > "${srcdir}/LICENSE"
   git -C "${srcdir}" init -q 2>/dev/null || true
   git -C "${srcdir}" -c user.email=ci@example.com -c user.name=ci \
       -c commit.gpgsign=false add -A 2>/dev/null || true

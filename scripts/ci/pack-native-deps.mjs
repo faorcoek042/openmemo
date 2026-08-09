@@ -50,7 +50,16 @@
  * 等于在 Windows 上什么都没断言（D-11 §3.3 那一族）。
  */
 
-import { readdirSync, readFileSync, statSync, copyFileSync, realpathSync } from 'node:fs';
+import {
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+  statSync,
+  copyFileSync,
+  realpathSync,
+  existsSync,
+} from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, basename } from 'node:path';
 
 // =======================================================================================
@@ -152,6 +161,40 @@ const KNOWN_GAPS = [
   {
     re: /^VCOMP140(_\d+)?\.DLL$/i,
     why: 'OpenMP 运行时，同属 VC++ 可再发行组件。★ 本守卫首次运行时新发现，D-11 §8.3 原来没列它',
+  },
+];
+
+/**
+ * ★★ **随包分发第三方二进制 ⇒ 同一个包里必须带它的许可证文本。**
+ *
+ * 这张表是**法律事实**，导不出来 —— 二进制自己不会说"我需要附一份 EULA"。
+ * 所以它手写，但**失败方向是关的**：触发了却找不到文本 = 红。
+ *
+ * NVIDIA CUDA Toolkit EULA（deb 装出来是 `/usr/share/doc/cuda-<组件>-12-4/copyright` 的全文，
+ * 也就是 docs.nvidia.com/cuda/eula 的同一份），我逐条读过原文之后，
+ * 与"打包"直接相关的是这两条：
+ *
+ *   §1.1.2(5) "The terms under which you distribute your application must be
+ *              consistent with the terms of this Agreement…"
+ *              → 把 EULA 全文放进包里，是让这一条可核验的最小做法。
+ *   §2.3      "…may be copied and redistributed … **provided that the object code
+ *              files are not modified in any way** (except for unzipping of
+ *              compressed files)."
+ *              → 所以这些库**绝不能被 strip**。见下面 `--record` / `--assert-unmodified`：
+ *                收集时记下源文件 sha256，出厂前再比一次，**改过就是红**。
+ *
+ * ⚠️ 覆盖面按**实际带了什么**算：我们只带 cudart + cublas + cublasLt 三个，
+ *    `nvrtc` / `nvblas` 虽然也在 Attachment A 里，但我们不带，也就不在清单上。
+ */
+const LICENSE_REQUIRED = [
+  {
+    name: 'NVIDIA CUDA Toolkit EULA',
+    // 真实文件名：libcublas.so.12 / libcublasLt.so.12 / libcudart.so.12 /
+    //             cublas64_12.dll / cublasLt64_12.dll / cudart64_12.dll
+    trigger: /^(lib)?(cublasLt|cublas|cudart|nvrtc|nvblas)(64_\d+\.dll|\.so(\.\d+)*|\.dylib)$/i,
+    file: 'LICENSE-NVIDIA-CUDA-EULA.txt',
+    url: 'https://docs.nvidia.com/cuda/eula/index.html',
+    spdx: 'LicenseRef-NVIDIA-CUDA-EULA',
   },
 ];
 
@@ -449,13 +492,38 @@ if (doCollect) {
   **这一步不许"找不到就算了"** —— 那正是这个包坏掉的原因（静默 no-op）。`);
       }
       copyFileSync(src, join(dir, name)); // 目标名 = DT_NEEDED/导入表里的那个名字
-      copied.push({ name, src, bytes: statSync(src).size, by: [...who].join(', ') });
+      const bytes = statSync(src).size;
+      copied.push({
+        name,
+        src,
+        bytes,
+        sha256: createHash('sha256').update(readFileSync(src)).digest('hex'),
+        by: [...who].join(', '),
+      });
       progressed = true;
     }
     if (!progressed) break;
     if (round === 16) die('依赖闭包 16 轮还没收敛 —— 大概率是解析出错，不再继续');
   }
   if (copied.length === 0) console.log('  没有缺件，什么都没拷');
+  const recordPath = args.get('record');
+  if (recordPath !== undefined) {
+    // 记下**源文件**的 sha256。出厂前再比一次（--assert-unmodified），
+    // 就把 NVIDIA EULA §2.3「object code files are not modified in any way」
+    // 从"记得别在收集之后再 strip"变成"改了会当场红"。
+    writeFileSync(
+      recordPath,
+      JSON.stringify(
+        {
+          generatedAt: new Date().toISOString(),
+          files: copied.map(({ name, src, bytes, sha256 }) => ({ name, src, bytes, sha256 })),
+        },
+        null,
+        2,
+      ),
+    );
+    console.log(`  记录写入 ${recordPath}（${copied.length} 条，出厂前会逐个复算）`);
+  }
   for (const c of copied)
     console.log(
       `  + ${c.name.padEnd(28)} ${String(c.bytes).padStart(12)} B   （${c.by} 要的）  ← ${c.src}`,
@@ -482,6 +550,72 @@ if (machos.length > 0) {
 
 if (binaries.length === 0 && machos.length === 0) {
   die(`${dir} 里一个可解析的二进制都没有 —— 守卫等于没在检查（ci-prep C5 那一族）。`);
+}
+
+// ── ★ 第三方二进制不许被改动（NVIDIA EULA §2.3）────────────────────────────────────────
+const recordPath = args.get('record');
+if (recordPath !== undefined && existsSync(recordPath)) {
+  const rec = JSON.parse(readFileSync(recordPath, 'utf8'));
+  const bad = [];
+  for (const f of rec.files ?? []) {
+    const p = join(dir, f.name);
+    if (!existsSync(p)) {
+      bad.push(`${f.name}：收集过，出厂前不见了`);
+      continue;
+    }
+    const now = createHash('sha256').update(readFileSync(p)).digest('hex');
+    if (now !== f.sha256)
+      bad.push(
+        `${f.name}：与源文件不再逐字节相同（${f.sha256.slice(0, 12)}… → ${now.slice(0, 12)}…）`,
+      );
+  }
+  if (bad.length > 0) {
+    console.error('');
+    console.error('\x1b[31m✘ 随包分发的第三方二进制被改动过：\x1b[0m');
+    for (const b of bad) console.error(`    ${b}`);
+    console.error('');
+    console.error('NVIDIA CUDA EULA §2.3 原文："…may be copied and redistributed for use in');
+    console.error('accordance with this Agreement, **provided that the object code files are not');
+    console.error('modified in any way** (except for unzipping of compressed files)."');
+    console.error('最常见的成因：`strip` 扫过了整个 stage —— 收集必须排在 strip **之后**。');
+    process.exit(1);
+  }
+  console.log(
+    `  \x1b[32m✔\x1b[0m ${(rec.files ?? []).length} 个第三方二进制与源文件逐字节相同（EULA §2.3：不得修改）`,
+  );
+}
+
+// ── ★ 带了别人的二进制，就得带别人的许可证 ──────────────────────────────────────────
+{
+  const namesInPack = new Set(listFiles(dir).map((f) => basename(f)));
+  const licMissing = [];
+  for (const L of LICENSE_REQUIRED) {
+    const hits = [...namesInPack].filter((n) => L.trigger.test(n));
+    if (hits.length === 0) continue;
+    const lic = join(dir, L.file);
+    const okFile = existsSync(lic) && statSync(lic).size > 1024;
+    if (okFile) {
+      console.log(
+        `  \x1b[32m✔\x1b[0m ${L.name}：包里带了 ${L.file}（${statSync(lic).size} B），覆盖 ${hits.join(', ')}`,
+      );
+    } else {
+      licMissing.push({ L, hits });
+    }
+  }
+  if (licMissing.length > 0) {
+    console.error('');
+    console.error('\x1b[31m✘ 包里有第三方可再分发二进制，却没有随附它的许可证文本：\x1b[0m');
+    for (const { L, hits } of licMissing) {
+      console.error(`    ${L.name} —— 触发它的文件：${hits.join(', ')}`);
+      console.error(`      需要包内有 ${L.file}（> 1 KB），SPDX ${L.spdx}，出处 ${L.url}`);
+    }
+    console.error('');
+    console.error(
+      '**把二进制放进包的那一刻，我们就是再分发方了。** 许可证必须和二进制同一次进包 ——',
+    );
+    console.error('分两步做，中间就存在一个"已经在分发、但没带许可证"的状态。');
+    process.exit(1);
+  }
 }
 
 if (missing.size > 0) {
