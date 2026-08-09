@@ -33,8 +33,45 @@
  *
  * ⚠️ **匹配的是标识符，不是散文**。上一位刚栽过
  * 「一条靠散文措辞撑着的守卫，是一条会静默停止工作的守卫」——
- * 所以这里只找 `\bengines\b` 这种**词边界标识符**，不去正则匹配注释里的中文说法。
- * 注释怎么改都不影响判定；只有**代码真的不再读它**才会红。
+ * 所以这里不去正则匹配注释里的中文说法。
+ *
+ * ## ★ 2026-08-10：判据从「出现过」收紧成「真的从对象上读了」
+ *
+ * 上一版的判据是 `\bfield\b` 命中**整个文件原文**。它挡掉了散文，**但没挡掉两件事**：
+ * **注释里的标识符**，和**恰好同名的局部变量/参数**。
+ *
+ * `[实测]` 拿今天这个真实缺陷当靶子 —— 用户报「任务中心点不进历史记录」，
+ * 根因是 `noteUid` 在 `features/tasks/api.ts` 的 `MergedJob` 里被丢掉
+ * （而 `shared/jobs.ts` 的契约注释原话是
+ * 「Owning note, so the UI can offer "open the note" without a lookup table.」
+ * —— **字段就是为这个动作准备的**）。
+ * 给它加一条规则，在**修复之前**的代码上跑上一版判据：
+ *
+ * ```
+ * ✔ noteUid   apps/web/src/features/tasks/** 里有 2 个读者
+ *      api.ts   ← 其实只是 useActiveNoteJob 的一个**参数名**，与任务中心列表毫无关系
+ *      sse.ts   ← 其实只是一句**注释**
+ * ```
+ *
+ * **绿的。** 两个"读者"一个是注释、一个是同名参数，而用户点不进去。
+ * 这正是这条守卫要防的那类损失 —— **它却可以被一句注释伪装成已修复。**
+ *
+ * ### 为什么"剥掉注释"不够（这一条是判断的关键）
+ *
+ * 剥注释只干掉 `sse.ts` 那一处；`api.ts` 那两处是**真代码**
+ * （`useActiveNoteJob(noteUid: string | undefined, …)` 的形参 + 把它当实参传下去）。
+ * 也就是说**只剥注释，这个靶子仍然是绿的**。
+ *
+ * → 所以判据换成「**真的从一个对象上读了这个字段**」：属性访问 `x.field` / `x?.field`，
+ *   或解构 `const { field } = x`。这两种形态才对应"消费了契约里的那个字段"；
+ *   而形参名、实参、类型声明里的同名键，都不是。
+ *
+ * ### 自检：这条守卫自己会不会瞎
+ *
+ * 匹配器上线前先跑一组**阳性/阴性对照**（`assertMatcherWorks`）：
+ * 认得出 4 种真读取、且不把 4 种假读取算进去，任一条不符**当场退出**。
+ * 判据与 `check-orphan-exports.mjs` 同一条：
+ * **先证明探针能看见你已知存在的东西，再相信它说"没有"。**
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -56,6 +93,74 @@ const RULES = [
       '而界面从头到尾没告诉过他该装另一个（2026-08-09 用户真机）。',
   },
 ];
+
+/**
+ * 剥掉块注释与行注释。
+ *
+ * ⚠️ 必要但**不充分** —— 见文件头：靶子里那两处是真代码（形参 + 实参），剥注释救不了。
+ * 它在这里的作用是把"注释里提过"这一种彻底排除掉，剩下的交给下面的读取形态判定。
+ */
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/^\s*\/\/[^\n]*$/gm, ' ')
+    .replace(/([^:"'`])\/\/[^\n]*/g, '$1 ');
+}
+
+/**
+ * 这段代码里，有没有**真的从某个对象上读出 `field`**？
+ *
+ * 认两种形态，其余一律不算：
+ *   1. 属性访问：`x.field` / `x?.field` / `x.field?.y`
+ *   2. 解构赋值：`const { field } = x` / `const { a, field } = x`
+ *      —— 末尾那个 `=` 是关键：它把**类型声明** `type T = { field: string }` 排除掉
+ *      （那里的 `=` 在花括号**之前**）。
+ *
+ * **不算**：形参名、实参、`interface`/`type` 里的同名键、字符串字面量。
+ * 它们都只说明"这个词出现过"，不说明"这个事实被消费了"。
+ */
+function readsField(code, field) {
+  const f = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const propertyAccess = new RegExp(`[.?]\\s*${f}\\b`);
+  const destructuring = new RegExp(`\\{[^{}]*\\b${f}\\b[^{}]*\\}\\s*=`);
+  return propertyAccess.test(code) || destructuring.test(code);
+}
+
+/**
+ * ★ 匹配器自检：**先证明探针能看见你已知存在的东西，再相信它说"没有"。**
+ *
+ * 阴性样本里那两条（形参、实参）**逐字来自这次的真实靶子**
+ * （`useActiveNoteJob(noteUid: string | undefined, …)`），
+ * 它们正是上一版判据放行的东西。
+ */
+function assertMatcherWorks() {
+  const yes = [
+    'const x = job.noteUid;',
+    'const y = job?.noteUid;',
+    'const { noteUid } = job;',
+    'const { jobId, noteUid, state } = job;',
+  ];
+  const no = [
+    'function useActiveNoteJob(noteUid: string | undefined) {}',
+    'const job = pickActiveNoteJob(jobs, noteUid, kind);',
+    'interface MergedJob { noteUid: string | null }',
+    'type T = { noteUid: string };',
+  ];
+  const wrong = [
+    ...yes.filter((c) => !readsField(c, 'noteUid')).map((c) => `漏判（应算读取）：${c}`),
+    ...no.filter((c) => readsField(c, 'noteUid')).map((c) => `误判（不该算读取）：${c}`),
+  ];
+  if (wrong.length) {
+    console.error('✘ 匹配器自检未通过 —— **在报告任何结论之前**先停下：\n');
+    for (const w of wrong) console.error(`   · ${w}`);
+    console.error(
+      '\n一个判不准的匹配器，绿和红都不作数。' +
+        '（`interface`/`type` 那两条阴性是刻意的：契约类型里当然有这个键，' +
+        '但"类型上有"不等于"界面读了"。）\n',
+    );
+    process.exit(1);
+  }
+}
 
 /** 递归收集某目录下的 `.ts` / `.tsx`（跳过测试与 dist）。 */
 function sources(dir) {
@@ -81,6 +186,8 @@ function sources(dir) {
   return out;
 }
 
+assertMatcherWorks();
+
 let bad = 0;
 console.log('契约字段的界面读者检查');
 console.log('─'.repeat(78));
@@ -96,12 +203,30 @@ for (const rule of RULES) {
   }
 
   const files = sources(abs);
-  // 词边界匹配标识符，避免 `enginesFoo` / 注释里的中文说法造成假阳或假阴。
-  const re = new RegExp(`\\b${rule.field}\\b`);
-  const readers = files.filter((f) => re.test(readFileSync(f, 'utf8')));
+  const readers = files.filter((f) =>
+    readsField(stripComments(readFileSync(f, 'utf8')), rule.field),
+  );
 
   if (readers.length === 0) {
-    console.error(`✘ 字段 \`${rule.field}\` 在 ${rule.dir}/** 里**零读者**`);
+    /*
+     * 把"提都没提过"和"提了但没真读"分开报 —— 两者的下一步动作完全不同：
+     * 前者是功能没做，后者往往是**做了一半**（类型上接了、渲染那一米丢了），
+     * 而后者正是这条守卫存在的理由。
+     */
+    const mentioned = files.filter((f) =>
+      new RegExp(`\\b${rule.field}\\b`).test(stripComments(readFileSync(f, 'utf8'))),
+    );
+    console.error(`✘ 字段 \`${rule.field}\` 在 ${rule.dir}/** 里**没有任何真实读取**`);
+    if (mentioned.length > 0) {
+      console.error(
+        `   ⚠️ 它在 ${mentioned.length} 个文件里出现过，但**都不是从对象上读它**` +
+          `（形参名 / 实参 / 类型声明里的同名键都不算）：`,
+      );
+      for (const m of mentioned.slice(0, 4)) console.error(`     ${m.replace(REPO + '/', '')}`);
+      console.error(
+        `   判据：属性访问 \`x.${rule.field}\` 或解构 \`const { ${rule.field} } = x\`。`,
+      );
+    }
     console.error(`   坏了会怎样：${rule.why}`);
     bad++;
   } else {
