@@ -126,17 +126,17 @@
       "provenance": {
         "repoUrl": "https://github.com/BtbN/FFmpeg-Builds",
         "releaseUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-07-31-14-10",
-        "license": "GPL-3.0-or-later",
-        "licenseUrl": "https://www.gnu.org/licenses/gpl-3.0.html"
+        "license": "LGPL-3.0-or-later",
+        "licenseUrl": "https://www.gnu.org/licenses/lgpl-3.0.html"
       },
       "upstream": {
         "kind": "github-release",
         "repo": "BtbN/FFmpeg-Builds",
         "tagPattern": "^autobuild-\\d{4}-\\d{2}-(2[89]|3[01])-"
       },
-      "sizeBytes": 124917816,
-      "sha256": "09fc77be269c7053e438b7e96548e4af97604faf96a42c4a3c56a1ad74c22c0a",
-      "sha256Provenance": "本机下载全部 124,917,816 字节后独立复算，并与 GitHub Releases API 的 digest 逐字符比对一致（2026-08-07，T-161）。★ tag 必须是**每月最后一天**：上游 util/prunetags.sh 只保留「最近 14 个日构建」+「每月最后一个（24 个月）」，实测 BtbN 全仓库只剩 37 个 release（22 个月末 + 最近 14 个日构建）。此前钉的 autobuild-2026-08-02-13-17 是日构建，约 9 个日构建后会连同资产一起被删除、URL 变 404 —— 而清单校验与 sha256 全都不会有任何反应。守卫见 apps/daemon/src/pipeline/ffmpegPinRot.test.ts。"
+      "sizeBytes": 111679252,
+      "sha256": "8c8b2897f2a8093ae2d985f7f1867d218451d4c567c1b2437f86a7c73a950b9f",
+      "sha256Provenance": "★ 2026-08-09 由 GPL 变体（gpl-8.1.tar.xz，124,917,816 字节，GPL-3.0-or-later）换成同一个 release tag、同一个 FFmpeg 源码 commit（n8.1.2-34-g9b6c8969e0）下的 LGPL 变体（lgpl-8.1.tar.xz，111,679,252 字节）——Manager 依据 docs/design/D-20-bundled-deps.md §13.7 的真机实测（Linux 19/19、Windows windows-2025 真机 CI 19/19）裁定 Linux/Windows 由「下载」改判「内置」（D-20 §9.2）；macOS（jellyfin-ffmpeg，供应商不同、不发 LGPL 变体，见 §13.4）不受影响，维持 GPL-3.0-or-later + 下载。本机下载全部 111,679,252 字节后独立复算 sha256，并与 GitHub Releases API 的 digest 逐字符比对一致；解压后 LICENSE.txt 实测为「GNU Lesser General Public License ... either version 3 of the License, or (at your option) any later version」（`ffmpeg -L` 输出同一段原文），对应 LGPL-3.0-or-later，不是 LGPL-3.0-only。★ tag 必须是**每月最后一天**：上游 util/prunetags.sh 只保留「最近 14 个日构建」+「每月最后一个（24 个月）」——这条约束继承自 GPL 变体那条记录，同一个 tag，判断不变。守卫见 apps/daemon/src/pipeline/ffmpegPinRot.test.ts。"
     },
     {
       "id": "sherpa-onnx-node",
@@ -231,8 +231,8 @@
       "provenance": {
         "repoUrl": "https://github.com/ggml-org/whisper.cpp",
         "releaseUrl": "https://github.com/ggml-org/whisper.cpp/releases/tag/v1.9.1",
-        "license": "MIT",
-        "licenseUrl": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE",
+        "license": "LicenseRef-NVIDIA-CUDA-EULA",
+        "licenseUrl": "https://docs.nvidia.com/cuda/eula/index.html",
         "submodulePath": "vendor/whisper.cpp",
         "submoduleCommit": "f049fff95a089aa9969deb009cdd4892b3e74916"
       },
@@ -242,7 +242,8 @@
         "stableOnly": true
       },
       "sizeBytes": 677887125,
-      "sha256": "106a2030eff8998e4ef320fe72e263a78449e9040386ee27c41ea80b001b601b"
+      "sha256": "106a2030eff8998e4ef320fe72e263a78449e9040386ee27c41ea80b001b601b",
+      "sha256Provenance": "★ 2026-08-09 订正：这一条原来 license 写的是「MIT」（whisper.cpp / ggml 自身的证），但那只覆盖这个 677,887,125 字节归档里 38.2% 的字节。用 HTTP Range 只读该 zip 的 EOCD + 中央目录（未下载全部 678 MB，本机独立复算，44 个条目，与 D-20 §15.1 的表逐字节比对一致）确认：cublasLt64_12.dll(328,398,141) / cublas64_12.dll(70,150,084) / nvrtc64_120_0.dll(18,614,676) / nvrtc-builtins64_124.dll(1,180,912) / cudart64_12.dll(171,402) / nvblas64_12.dll(133,800) 六个 NVIDIA 运行库共 418,649,015 字节（61.8%）是 NVIDIA 的再分发件，不受 MIT 覆盖。归档内 44 个条目里没有任何 LICENSE/EULA 文本文件随附。已直接读取 NVIDIA 官方 EULA 现行文本（docs.nvidia.com/cuda/eula/index.html，curl 200，2026-08-09 抓取，非转述）核实：Attachment A 明确把 cublas / cublasLt / cudart / nvrtc / nvblas 列入可再分发组件清单；该 EULA 是随 SDK 附带的合同条款，不要求终端用户点击接受（与 gated 模型权重那条不同 —— 那条走的是 ADR-004 决策 2 的上游 click-through），所以 gated/requiresAcceptance 均未置位。license.id 改用 SPDX 的 LicenseRef-<name> 记法指向 NVIDIA 这份非 SPDX 登记的 EULA，口径与 ytdlp-*（同类：单值 license 字段取分发字节里最强/最受限的那个）一致，未扩 LicenseInfoSchema 支持复合表达（理由见 D-20 §14.7 与本次追加小节）。"
     },
     {
       "id": "media-tools-win-x64",
@@ -253,17 +254,17 @@
       "provenance": {
         "repoUrl": "https://github.com/BtbN/FFmpeg-Builds",
         "releaseUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-07-31-14-10",
-        "license": "GPL-3.0-or-later",
-        "licenseUrl": "https://www.gnu.org/licenses/gpl-3.0.html"
+        "license": "LGPL-3.0-or-later",
+        "licenseUrl": "https://www.gnu.org/licenses/lgpl-3.0.html"
       },
       "upstream": {
         "kind": "github-release",
         "repo": "BtbN/FFmpeg-Builds",
         "tagPattern": "^autobuild-\\d{4}-\\d{2}-(2[89]|3[01])-"
       },
-      "sizeBytes": 167405723,
-      "sha256": "cc4156d51387566ea8ba653fc3a04897bdf812fddf652428d9030bbf7ae24835",
-      "sha256Provenance": "本机下载全部 167,405,723 字节后独立复算，并与 GitHub Releases API 的 digest 逐字符比对一致（2026-08-07，T-161）。与 Linux 包同一个 tag，且该 tag 是 7 月最后一天 —— 见 media-tools-linux-x64 那条里关于上游 prunetags.sh 的说明。"
+      "sizeBytes": 145349121,
+      "sha256": "089e4169e93b2b3f3acbfced3c0704d24276a225641bdda04d796d28b07a2a38",
+      "sha256Provenance": "★ 2026-08-09 由 GPL 变体（gpl-8.1.zip，167,405,723 字节，GPL-3.0-or-later）换成同一个 release tag、同一个 FFmpeg 源码 commit（n8.1.2-34-g9b6c8969e0）下的 LGPL 变体（lgpl-8.1.zip，145,349,121 字节）——理由与 media-tools-linux-x64 那条相同（D-20 §9.2/§13.7，Manager 裁定，Windows 真机 windows-2025 CI 19/19）。本机下载全部 145,349,121 字节后独立复算 sha256，并与 GitHub Releases API 的 digest 逐字符比对一致；解压后 LICENSE.txt 与 Linux 那份字节内容一致，同为「GNU Lesser General Public License ... version 3 ... or (at your option) any later version」，对应 LGPL-3.0-or-later。与 Linux 包同一个 tag，且该 tag 是 7 月最后一天 —— 见 media-tools-linux-x64 那条里关于上游 prunetags.sh 的说明。"
     },
     {
       "id": "media-tools-macos-arm64",
@@ -317,8 +318,8 @@
       "provenance": {
         "repoUrl": "https://github.com/yt-dlp/yt-dlp",
         "releaseUrl": "https://github.com/yt-dlp/yt-dlp/releases/tag/2026.07.04",
-        "license": "GPL-3.0-or-later",
-        "licenseUrl": "https://www.gnu.org/licenses/gpl-3.0.html"
+        "license": "GPL-2.0-or-later",
+        "licenseUrl": "https://www.gnu.org/licenses/old-licenses/gpl-2.0.html"
       },
       "upstream": {
         "kind": "github-release",
@@ -326,7 +327,8 @@
         "stableOnly": true
       },
       "sizeBytes": 38256544,
-      "sha256": "498bd0dae17855c599d371d68ec5bafc439a9d8640e838be25c765a9792f261b"
+      "sha256": "498bd0dae17855c599d371d68ec5bafc439a9d8640e838be25c765a9792f261b",
+      "sha256Provenance": "★ 2026-08-09 订正：与 backends.json 同一处（Phase 2 当时只改了 backends.json，漏了这份并行目录，本次一并补上）。yt-dlp 项目本身是 Unlicense，官方 PyInstaller 二进制按平台内嵌不同的 GPL 依赖：macOS/Windows 官方构建内嵌 mutagen（GPL-2.0-or-later，全平台），但不内嵌 GNU Readline（那是 Linux 专属依赖），所以这两个平台的最强/最受限许可证是 GPL-2.0-or-later，不是 Linux 那两条的 GPL-3.0-or-later。取证与口径见 D-20 §1.1 / §14。"
     },
     {
       "id": "ytdlp-win-x64",
@@ -337,8 +339,8 @@
       "provenance": {
         "repoUrl": "https://github.com/yt-dlp/yt-dlp",
         "releaseUrl": "https://github.com/yt-dlp/yt-dlp/releases/tag/2026.07.04",
-        "license": "GPL-3.0-or-later",
-        "licenseUrl": "https://www.gnu.org/licenses/gpl-3.0.html"
+        "license": "GPL-2.0-or-later",
+        "licenseUrl": "https://www.gnu.org/licenses/old-licenses/gpl-2.0.html"
       },
       "upstream": {
         "kind": "github-release",
@@ -346,7 +348,8 @@
         "stableOnly": true
       },
       "sizeBytes": 18226085,
-      "sha256": "52fe3c26dcf71fbdc85b528589020bb0b8e383155cfa81b64dd447bbe35e24b8"
+      "sha256": "52fe3c26dcf71fbdc85b528589020bb0b8e383155cfa81b64dd447bbe35e24b8",
+      "sha256Provenance": "★ 2026-08-09 订正：与 macOS 那条同理（同一次补漏，见 ytdlp-macos-arm64 条目的说明）。Windows 官方 PyInstaller 二进制内嵌 mutagen（GPL-2.0-or-later），不内嵌 GNU Readline（Linux 专属），最强/最受限许可证是 GPL-2.0-or-later。取证与口径见 D-20 §1.1 / §14。"
     },
     {
       "id": "libsimple-darwin-arm64",

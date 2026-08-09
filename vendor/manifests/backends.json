@@ -282,14 +282,14 @@
         "nvidiaDriver": "550"
       },
       "license": {
-        "id": "MIT",
+        "id": "LicenseRef-NVIDIA-CUDA-EULA",
         "gated": false,
-        "url": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE"
+        "url": "https://docs.nvidia.com/cuda/eula/index.html"
       },
       "providesFiles": ["ggml-cuda.dll", "whisper-cli.exe"],
       "priority": 90,
       "benchmark": null,
-      "catalogVersion": "2026.08.02"
+      "catalogVersion": "2026.08.09"
     },
     {
       "schemaVersion": 1,
@@ -306,30 +306,30 @@
       "files": [
         {
           "role": "archive",
-          "name": "ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-gpl-8.1.tar.xz",
-          "sizeBytes": 124917816,
-          "sha256": "09fc77be269c7053e438b7e96548e4af97604faf96a42c4a3c56a1ad74c22c0a",
+          "name": "ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-lgpl-8.1.tar.xz",
+          "sizeBytes": 111679252,
+          "sha256": "8c8b2897f2a8093ae2d985f7f1867d218451d4c567c1b2437f86a7c73a950b9f",
           "unpack": "tar.xz",
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-gpl-8.1.tar.xz",
+              "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-lgpl-8.1.tar.xz",
               "official": true
             }
           ]
         }
       ],
-      "totalSizeBytes": 124917816,
+      "totalSizeBytes": 111679252,
       "requiresDriver": null,
       "license": {
-        "id": "GPL-3.0-or-later",
+        "id": "LGPL-3.0-or-later",
         "gated": false,
-        "url": "https://www.gnu.org/licenses/gpl-3.0.html"
+        "url": "https://www.gnu.org/licenses/lgpl-3.0.html"
       },
       "providesFiles": ["ffmpeg", "ffprobe"],
       "priority": 10,
       "benchmark": null,
-      "catalogVersion": "2026.08.03"
+      "catalogVersion": "2026.08.09"
     },
     {
       "schemaVersion": 1,
@@ -346,30 +346,30 @@
       "files": [
         {
           "role": "archive",
-          "name": "ffmpeg-n8.1.2-34-g9b6c8969e0-win64-gpl-8.1.zip",
-          "sizeBytes": 167405723,
-          "sha256": "cc4156d51387566ea8ba653fc3a04897bdf812fddf652428d9030bbf7ae24835",
+          "name": "ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-8.1.zip",
+          "sizeBytes": 145349121,
+          "sha256": "089e4169e93b2b3f3acbfced3c0704d24276a225641bdda04d796d28b07a2a38",
           "unpack": "zip",
           "mirrors": [
             {
               "provider": "github",
-              "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n8.1.2-34-g9b6c8969e0-win64-gpl-8.1.zip",
+              "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-8.1.zip",
               "official": true
             }
           ]
         }
       ],
-      "totalSizeBytes": 167405723,
+      "totalSizeBytes": 145349121,
       "requiresDriver": null,
       "license": {
-        "id": "GPL-3.0-or-later",
+        "id": "LGPL-3.0-or-later",
         "gated": false,
-        "url": "https://www.gnu.org/licenses/gpl-3.0.html"
+        "url": "https://www.gnu.org/licenses/lgpl-3.0.html"
       },
       "providesFiles": ["ffmpeg.exe", "ffprobe.exe"],
       "priority": 10,
       "benchmark": null,
-      "catalogVersion": "2026.08.06"
+      "catalogVersion": "2026.08.09"
     },
     {
       "schemaVersion": 1,
