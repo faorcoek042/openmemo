@@ -214,3 +214,20 @@ if (problems.length > 0) {
 console.log(
   `✔ check-test-scripts: ${covered.length} 个含测试的包都有 test 脚本 —— ${covered.join(' ')}`,
 );
+
+/*
+ * ★ 顺带把「这棵树是脏的」提示打出来。
+ *
+ * 挂在这里的理由是**结构性的**，不是图方便：`pnpm -r` **不含 workspace root**
+ * （`[实测]` "Scope: 9 of 10 workspace projects"），所以 root 的 `package.json`
+ * **没有任何办法**在 `pnpm -r test` 上挂前置步骤 —— 而那恰恰是最常跑的一条。
+ * 本文件是 8 个包的 test 脚本都会调的那一处，也就是 `pnpm -r test` 唯一必经的地方。
+ *
+ * 它**永远不会让任何命令变红**（自己 exit 0，且这里也不看它的退出码）。
+ */
+try {
+  const { dirtyTreeNotice } = await import('./dirty-tree-notice.mjs');
+  dirtyTreeNotice();
+} catch {
+  /* 提示坏了绝不拖累门禁 */
+}
