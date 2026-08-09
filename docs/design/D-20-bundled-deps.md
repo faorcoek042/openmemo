@@ -69,13 +69,25 @@ $ grep -ci "unlicense|public domain" → 3
 **内置前必须把该二进制的内嵌依赖清单逐个过一遍**（尤其有没有 GPL 的可选依赖被打进去）。
 这是**可执行的一步**，不是"注意合规"。
 
-⚠️ **`yt-dlp-ejs` 那一项本身也订正**：上面把它记成单一 **Unlicense** 不准确。
-§14.4 逐个打开压缩包内的 `yt_dlp_ejs/yt/solver/{core,lib}.min.js` 后，明文可见
-**至少三种版权/许可标注混在一起**：Unlicense 字样、一段 **ISC License**
-（`Copyright (c) 2015, David Bonnet`）、以及一段独立的
-`Copyright (c) 2019 and later, KFlash and others.`——是多个 JS 库打包进同一个
-`min.js` 的**复合许可证**，不是单一 Unlicense。三者都是宽松许可证，**不构成新的阻断**，
-但"单一 Unlicense"这个说法本身讲得过于简单，如实订正为复合。
+⚠️ **`yt-dlp-ejs` 那一项本身也订正（2026-08-10 重新核实，上一版把两段版权/许可标注挂反了）**：
+上面把它记成单一 **Unlicense** 不准确，但也不是"两个文件混在一起各贴各的"。
+`[实测]` 直接读 `/root/memoac-fx/mac/Memo.app/Contents/Resources/yt-dlp/_internal/yt_dlp_ejs/yt/solver/{core,lib}.min.js`
+的明文文件头，两个文件**结论不一样**：
+
+- **`core.min.js`**：文件头只有 `SPDX-License-Identifier: Unlicense` 一行，**没有任何
+  `Bundled Dependencies` 段**——单一 Unlicense，这一个文件的旧描述是对的。
+- **`lib.min.js`**：文件头是 `SPDX-License-Identifier: Unlicense`（本文件自身），后面跟一段
+  显式的 `Bundled Dependencies:` 清单，列了两个库，各自独立署名：
+  - `meriyah` v6.1.4，**License: ISC**，`Copyright (c) 2019 and later, KFlash and others.`
+  - `astring` v1.9.0，**License: MIT**，`Copyright (c) 2015, David Bonnet <david@bonnet.cc>`
+
+  即 `lib.min.js` = Unlicense（自身）+ ISC（meriyah/KFlash）+ MIT（astring/David Bonnet）
+  三证并存，是复合许可证的 min.js，但只在 `lib.min.js` 这一个文件里，不是"两个文件都复合"。
+
+  **上一版把这两段署名挂反了**：写成"一段 ISC License（Copyright (c) 2015, David Bonnet）"——
+  `Copyright (c) 2015, David Bonnet` 那段实际是 **MIT**（astring），ISC 那段的版权人其实是
+  **KFlash**（meriyah）。三者都是宽松许可证，挂反并不构成新的阻断，但既然是订正就把归属核对
+  准确，不能再抄上一版的说法（上一版本身就是这次要修的错）。
 
 ### 1.2 `libsimple` / `sqlite-vec` —— **不在"要下载"那一栏，它们已经内置了**
 
@@ -762,7 +774,8 @@ Readline（GPL-3.0-or-later，不是 libedit 替代品）。按 TL;DR 与 §9 �
 | packaging                                                                                | Apache-2.0 OR BSD-2-Clause（双许可）                                                                                                                                                                                                   | 4/4                                                                                                                          | 同上                                                              |
 | cryptography                                                                             | Apache-2.0 OR BSD-3-Clause（双许可，含 Rust 组件）                                                                                                                                                                                     | **仅 linux-x64/arm64**；macOS/Windows 改用 Cryptodome + 标准库 `ssl`，不含此包                                               | 附许可证正文                                                      |
 | OpenSSL                                                                                  | 3.x 系 Apache-2.0；1.1.x 系 OpenSSL/SSLeay 双许可（老文本）                                                                                                                                                                            | linux/macos 用 `libssl.so.3`／`libssl.3.dylib`（3.x）；**win 用 `libssl-1_1.dll`／`libcrypto-1_1.dll`（1.1.x，版本线不同）** | 附**对应版本**许可证正文，三平台不能只抄一份                      |
-| `yt_dlp_ejs/yt/solver/{core,lib}.min.js`（内嵌 JS 求解器，D-20 §1.1 写成单一 Unlicense） | **不是单一 Unlicense** —— 压缩包内明文可见混入至少一段 **ISC License**（`Copyright (c) 2015, David Bonnet`）与一段 `Copyright (c) 2019 and later, KFlash and others.`，外加 Unlicense 字样，是多个 JS 库打包进一个 min.js 的复合许可证 | 4/4                                                                                                                          | 均为宽松许可证，不阻断；但附件里要列复合清单，不能只写"Unlicense" |
+| `yt_dlp_ejs/yt/solver/core.min.js`（内嵌 JS 求解器之一）                                                    | 单一 **Unlicense**（文件头仅 `SPDX-License-Identifier: Unlicense`，无 `Bundled Dependencies` 段）                                                                                                                                       | 4/4                                                                                                                          | 宽松许可证，不阻断                                                 |
+| `yt_dlp_ejs/yt/solver/lib.min.js`（内嵌 JS 求解器之一，D-20 §1.1 曾写成单一 Unlicense，2026-08-10 订正） | **不是单一 Unlicense** —— 文件头 Unlicense（自身）后跟显式 `Bundled Dependencies:` 清单：`meriyah` v6.1.4 **ISC**（`Copyright (c) 2019 and later, KFlash and others.`）+ `astring` v1.9.0 **MIT**（`Copyright (c) 2015, David Bonnet`）。上一版把这两段版权/许可署名挂反了，见 §1.1 订正 | 4/4                                                                                                                          | 均为宽松许可证，不阻断；但附件里要列复合清单（Unlicense+ISC+MIT），不能只写"Unlicense" |
 | CPython 运行时本体                                                                       | **PSF License**（宽松，类 BSD）                                                                                                                                                                                                        | 4/4                                                                                                                          | 附 PSF LICENSE 正文；无阻断义务                                   |
 
 **✅ 2026-08-09 已裁定（追加，task ④）**：标题原来的"（供写 NOTICES 时用）"是过时的框架性

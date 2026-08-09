@@ -862,13 +862,13 @@ Developer ID 签名）。它拦在**打开脚本**那一步，所以**终端窗�
 **C 类 —— 运行时下载的二进制**（`vendor/manifests/backends.json` 11 个 + `sqlite-ext.json` 11 个
 = 目录里的 **22** 个包，逐条带 sha256）。下表逐条读自各 pack 的 `license.id` 字段 `[本机实测]`：
 
-| 组件                                    | 包数 | 许可证                  | 备注                                                        |
-| --------------------------------------- | ---- | ----------------------- | ----------------------------------------------------------- |
-| **ffmpeg / ffprobe**（`media-tools-*`） | 3    | 🔴 **GPL-3.0-or-later** | Linux/Windows 用 BtbN 的 gpl 构建，macOS 用 jellyfin-ffmpeg |
-| **yt-dlp**（`ytdlp-*`）                 | 4    | 🔴 **GPL-3.0-or-later** | 钉死 `engineVersion` = `2026.07.04`                         |
-| whisper.cpp 二进制包（`whispercpp-*`）  | 4    | MIT                     | 含那个装不上的 `whispercpp-cuda-12.4-win-x64`               |
-| libsimple                               | 6    | MIT                     |                                                             |
-| sqlite-vec                              | 5    | MIT                     |                                                             |
+| 组件                                    | 包数 | 许可证                                                                  | 备注                                                                                 |
+| --------------------------------------- | ---- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| **ffmpeg / ffprobe**（`media-tools-*`） | 3    | Linux/Windows 🟡 **LGPL-3.0-or-later**；macOS 🔴 **GPL-3.0-or-later**（订正，见下） | Linux/Windows 换成 BtbN 的 lgpl 构建（随包内置）；macOS 仍是 jellyfin-ffmpeg 的 gpl 构建（继续下载） |
+| **yt-dlp**（`ytdlp-*`）                 | 4    | 项目本身 **Unlicense**；官方二进制内嵌 🔴 GPL（订正，见下）                | 钉死 `engineVersion` = `2026.07.04`                                                    |
+| whisper.cpp 二进制包（`whispercpp-*`）  | 4    | MIT / `whispercpp-cuda-12.4-win-x64` 为 `LicenseRef-NVIDIA-CUDA-EULA`   | 含那个装不上的 `whispercpp-cuda-12.4-win-x64`（CUDA 运行库许可证 2026-08-09 订正，见 D-20 §16.1） |
+| libsimple                               | 6    | MIT                                                                     |                                                                                       |
+| sqlite-vec                              | 5    | MIT                                                                     |                                                                                       |
 
 **模型权重** —— **[本机实测]** 读自 `vendor/manifests/models-*.json` 的 `license` 字段
 
@@ -878,9 +878,29 @@ Developer ID 签名）。它拦在**打开脚本**那一步，所以**终端窗�
 | silero-vad 等切分/标点支持模型     | 5    | 2 条 MIT + 3 条 **Apache-2.0**（sherpa 流式 zh-14M / Paraformer 中文 / ct-transformer 中英标点） |
 | 本地 LLM（ADR-016 后已不是主路径） | 5    | 4 条 Apache-2.0（Qwen3 系列）+ 1 条 **Gemma Terms of Use**（Gemma-3-4b，**不是 OSI 许可证**）    |
 
-> ⚠️ **GPL 那两行是这份清单里唯一需要动脑子的地方。** 个人自用不触发 GPL 的分发义务
+> ⚠️ **ffmpeg／yt-dlp 这两行是这份清单里唯一需要动脑子的地方。** 个人自用不触发 GPL 的分发义务
 > （GPL 约束的是分发行为），所以 ADR-002 v2 允许直接内置。
 > **一旦你要分发这个东西，这两条就是硬阻断。**
+>
+> ⚠️ **订正（2026-08-09/10）**：上面这两行的许可证标签在本轮之前是错的/过期的，**不是同一个
+> 错误，分开说**：
+>
+> - **ffmpeg 那行**：此前写 `media-tools-*` 三个包统一 `GPL-3.0-or-later`（Linux/Windows/macOS
+>   用同一个 BtbN gpl 构建）。**2026-08-09 起三个平台不再是同一个答案**：Linux/Windows 换成
+>   BtbN 同源同 commit 的 **LGPL-3.0-or-later** 变体（`D-20 §13` 真机实测 19/19 通过后由
+>   Coordinator 裁定随包内置，见 `vendor/manifests/backends.json` catalogVersion 2026.08.09）；
+>   macOS 供应商 jellyfin-ffmpeg **不发 LGPL 变体**（供应商缺口，`D-20 §13.4`），继续维持
+>   GPL-3.0-or-later、继续下载，**未变**。⚠️ 截至本文档最后一次核实（`scripts/ci/verify-bundle.sh`
+>   对 Linux/Windows 仍报 `warn`），**这份 LGPL 字节本身是否已经落进实际构建产物，与本表
+>   记录的 manifest/清单口径是两件事**——manifest 已经改了，产物是否已经带着新字节走完一次完整
+>   打包+校验，请以 CI 当次运行结果为准，不要只看这张清单。
+> - **yt-dlp 那行**：此前写整包 `GPL-3.0-or-later`，是把"yt-dlp 项目许可证"认错了——项目本身是
+>   **Unlicense**（`D-20 §1.1` `[实测]` 拉官方 `LICENSE` 核实）。但这不代表这一行可以直接改成
+>   `Unlicense`：`D-20 §14` 静态提取四平台官方二进制后证实**官方 PyInstaller 二进制无条件内嵌
+>   `mutagen`（GPL-2.0-or-later，四平台全部命中）**，Linux x64/arm64 另内嵌 GNU Readline
+>   （GPL-3.0-or-later）。`vendor/manifests/backends.json` 现在按平台分别取"分发字节里实际
+>   出现的最强许可证"（Linux 两条 GPL-3.0-or-later，macOS/Windows 两条 GPL-2.0-or-later），
+>   不是简单的 Unlicense 或简单的 GPL-3.0-or-later 二选一。
 
 > ⚠️ **订正（2026-08-09）**：这里原来记着「报告脚本自身的两个已知偏差」，其中第①条
 > 现在已经**修掉了，不再是需要人工绕过的偏差**——如实更新如下：

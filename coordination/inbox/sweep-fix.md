@@ -483,3 +483,260 @@ posix 下同样会拒。**那条用例根本没有执行到 platform 分支。**
    #8（Windows 上传报"网络错误"）、#9（`/api/health` 的 `host` 硬编码）、
    #10（`result_json` 写得进读不回）、#11（转写稿内搜索）。
    其中 **#9 是一行改动且是安全结论的前提**，建议下一轮优先。
+
+---
+
+## [2026-08-10] B11 追查 + 「吞掉的错误」同族第二轮 —— 提交 `abce462`（已 push，`merge-base` 已复核）
+
+# TL;DR（两句先答问）
+
+1. **404 一跳都没被吞掉。** B11 报的「端点回了 404 FOLDER_NOT_FOUND，而界面一个字都没说」
+   是**假指控** —— 产品一直在说话，是 B11 的判据看不见它（它钉的是关键词，
+   而这条文案一个关键词都不含）。
+2. **同族还有 16 处完全不出声 + 5 处条件性不出声。** 我本轮修了其中 3 处，
+   **剩 13 + 5 未修**，逐条清单在 §3，按用户点击频率排了序。
+
+⚠️ **另有一条必须报给你：B11 在门禁里是「空过」** —— 与 B6b 同病。见 §2。
+
+---
+
+# §1 B11：404 走到哪一层断的
+
+**哪一层都没断。** `[实测 jsdom，走产品真实路径注入 404]`：
+
+```
+发出的请求   = [..., "PUT /notes/<uid>/folder"]
+新增文字     = "文件夹不存在它可能刚被删掉了。侧栏刷新后重新选一个。查看详情"
+面板还开着吗 = true
+★ FAIL_WORDS 命中新增文字 = false
+★ FAIL_WORDS 命中整页文字 = false
+```
+
+逐跳追下来，每一跳都是通的：
+
+| 跳 | 位置 | 行为 |
+|---|---|---|
+| HTTP → client | `apps/web/src/lib/api/client.ts:395-401` | 404 落进 `isNotImplemented` 分支，但**写操作 `throw err`**（"写操作永不静默回落 mock"），不吞 |
+| client → mutation | `features/notes/api.ts:391` `useMoveNoteToFolderMutation` | 只有 `onSuccess`，没有 `onError` 覆盖 → rejection 进 react-query 的 `isError` |
+| mutation → UI | `NoteActionsMenu.tsx:117` `move.mutate(…, { onSuccess })` | **成功才收面板**，失败留在原地 |
+| UI 渲染 | `NoteActionsMenu.tsx:233` | `{move.isError ? <ErrorBlock error={move.error} /> : null}` |
+
+**是"当时只接了成功路径"还是"后来回归了"？两者都不是。**
+这条路是 `0442b8e`（`feat(web): 文件夹改名 + 笔记移动到文件夹 —— 两条零调用者 mutation
+接上入口，**失败会说话**`）落地时就接好的，错误文案 `errors.FOLDER_NOT_FOUND`
+也是同一个提交加的。它从第一天起就是对的。
+
+## 那 B11 为什么会红 —— 判据本身两个方向都坏
+
+**① 假红（这次的直接原因）**
+判据是关键词表：
+
+```js
+const FAIL_WORDS = /失败|错误|重试|无法|不可用|出错|error|failed|retry/i;
+```
+
+而产品对 `FOLDER_NOT_FOUND` 说的是「**文件夹不存在** / 它可能刚被删掉了。侧栏刷新后重新选一个。」
+—— **一个关键词都不含**。
+
+> **文案写得越好（不吼"错误！"，而是说清发生了什么 + 下一步怎么办），
+> 关键词判据越判不出来。它在惩罚好文案。**
+
+这是「钉关键词不钉结构」的又一例，而且是最贵的那种形态：**它把一个做对了的功能报成缺陷**，
+于是有人会去"修"一个没有坏的东西。
+
+**② 假绿（更要紧）** —— 见 §2。
+
+---
+
+# §2 ⚠️ B11 在门禁里是**空过** —— 与 B6b 同病，报给你
+
+原判据的第二半：
+
+```js
+const before = innerText;  click(note-move-root);  const after = innerText;
+moveSpoke = FAIL_WORDS.test(after.replace(before, ''));
+```
+
+`after.replace(before, '')` **只在 `before` 是 `after` 的连续子串时**才等于"新增文字"。
+页面上任何**无关**文字变一个字，`replace` 就原样返回 `after` → **整页**被拿去匹配。
+而 zh-CN 里命中该正则的词条有 **63 条**。
+
+`[实测]` 复刻两种情形：
+
+```
+before ⊆ after  → diff = "文件夹不存在…"                   → false（红）
+before ⊄ after  → diff = 整页（含别处的「失败/重试」）        → true （绿）
+```
+
+**绿的那次和"移动失败"没有半点关系。**
+
+而 B11 测的那条笔记是脚本自己造的 **64 字节假 WAV**（`e2e-browser-audit.mjs` 里
+`writeFileSync(dummyPath, Buffer.alloc(64))`），在空数据目录里**必然转写失败** ——
+它的状态文字会从「转写中」翻成「失败」。**那一翻恰好落在两次快照之间与否，
+就决定了 B11 是绿还是红。** 门禁跑得快、诊断运行跑得慢（大文件下载在抢资源），
+这正好解释了「只在诊断运行里红」。
+
+> **结论：B11 从来没有真正检查过它声称检查的那件事。**
+> 红是假指控，绿是整页扫到了别处的词。**判据从没被真正检查过 —— 与 B6b 完全同形。**
+
+## 已修
+
+- 判据换成**结构**：面板**仍开着** **且** 面板**内部**出现 `[data-testid="error-block"]`
+  且文字非空。"面板内部"是关键 —— 不许被页面别处的错误（比如那条失败的转写任务）顶替。
+- `ErrorBlock` 加 `role="alert"` + `data-testid="error-block"`。
+  **这不是测试脚手架**：此前读屏用户点完按钮**完全不会被告知**动作失败了。
+- 原来 `page.click(...).catch(() => {})` 把点击失败吞了 —— 于是"请求压根没发出去"
+  也会被报成「界面一个字都没说」。现在单独记录并打印诊断串。
+
+---
+
+# §3 同族扫描：**16 处完全不出声 + 5 处条件性**
+
+判据：**任何一个用户点出来的写操作，失败时界面必须说话。**
+先确认两条全局前提（它们决定了所有判定）：
+
+- `app/query.ts` 的 `createQueryClient()` **没有任何全局 mutation 错误处理**
+  （`defaultOptions.mutations` 只有 `retry: 0`，全仓也没有 `new MutationCache({onError})`）
+  → **没有兜底，每一处都得自己说话。**
+- `JobToaster` **不能当兜底**：它订阅的是 SSE 的 `job.failed`/`job.blocked`，
+  只在 job **建起来之后**才有话说；同步返回的 4xx/5xx（建 job 之前就拒了）它永远看不到。
+
+## 本轮已修 3 处
+
+| 位置 | 原状 |
+|---|---|
+| `NoteActionsMenu.tsx:110` **删除** | `onError: () => close()` 卸载整个下拉，而 `del.isError` **零渲染点**。⚠️ 旁边注释写着"错误由 mutation 自己的状态呈现"——**那个渲染点不存在**。**一句写着"已经处理了"的注释比没有注释更糟**：下一个人读到就不会再去查 |
+| `NoteActionsMenu.tsx:95` **改名** | `onSettled: close` 成功失败都收起 ⇒ 失败等于静默 |
+| `ComponentsPage.tsx:80` **安装/更新** | `await update.mutateAsync()` 在 `try{}finally{}` 里**没有 catch**，调用点是 `void handleUpdate(x)`；`update.isError` 全仓零渲染点（`ComponentCard` 连 `error` 这个词都没出现过）。sha256 对不上 / 上游 404 / 磁盘满 —— 界面什么都没有 |
+
+⚠️ **`ComponentsPage.update` 这条要更正一个前提**：上一轮「7 处 `void mutateAsync` 全部补上」
+在这个文件里**只加了 `check` 那一行**，`update` **从头到尾不在那份名单上**。
+所以它是**当时漏的**，不是刻意留的。
+
+## 剩下 13 处完全不出声（按用户点击频率排序，未修）
+
+| # | 位置 | 动作 | 失败时用户看到 |
+|---:|---|---|---|
+| 1 | `features/tasks/JobList.tsx:125` | 暂停任务 | 什么都没有。⚠️ daemon 对 pause/resume 回 **501 + `cancel_job` remediation**（`rest/jobs.ts:182`），**那条建议在产品里到不了屏幕**。`lib/remediation/routes.ts:174` 自己记着这个洞 |
+| 2 | `JobList.tsx:130` | 继续任务 | 同上 |
+| 3 | `JobList.tsx:137` | 重试任务 | 同上 |
+| 4 | `JobList.tsx:144` | 取消任务 | 同上（`:116` 那个 `<p>` 渲染的是 **job 数据里的** error，不是 mutation 的） |
+| 5 | `components/common/AsrModelPicker.tsx:158` | 切换 ASR 模型 | 下拉**悄悄弹回旧值**，零文案 |
+| 6 | `components/common/llm/PurposeBindingsSection.tsx:97` | 按用途绑定模型 | 什么都没有。⚠️ 本组件持有**自己那份** `usePatchSettingsMutation()`，`:176` 的 ErrorBlock 属于 `LlmSettingsSection` 的另一个实例，救不了这里 |
+| 7 | `PurposeBindingsSection.tsx:215` | 重置全部绑定 | 同上 |
+| 8 | `features/folders/FolderTree.tsx:35` | **新建文件夹** | 什么都没有。⚠️ 同一个文件的改名(:113)/删除(:235)**都修了，就漏这个**；而 `:245` 那句注释写着"我刚清完 14 处吞错误的，不新增第 15 处" |
+| 9 | `features/notes/TagEditor.tsx:32` | 加标签 | 整个文件零错误 UI |
+| 10 | `TagEditor.tsx:45` | 删标签 | 同上 |
+| 11 | `features/transcript/TranscriptList.tsx:147` | 段落编辑 | 只回滚缓存；文字"跳回原样"，用户分不清"服务端拒了"和"我没改动" |
+| 12 | `TranscriptList.tsx:148` | 段落还原 | 同上 |
+| 13 | `features/notes/NotesListPage.tsx:169` | 星标 | `onError` 只做乐观回滚；只看到"星星弹回去" |
+
+## 另外 5 处条件性不出声（渲染点在，但在某些状态下够不着）
+
+| 位置 | 什么时候够不着 |
+|---|---|
+| `features/notes/NoteEditor.tsx:82` 正文保存 | 失败后徽标停在「未保存」，**与"还在防抖/正在打字"完全同形**，没有一个字提到失败 |
+| `features/models/ModelDetailPage.tsx:223` 校验 | `verify.isError` 的渲染点(:213)在 `bench ? … : …` 的 **else 分支**里，而按钮在无条件 section 里 ⇒ **已跑过基准的模型，校验失败零表达** |
+| `features/models/ModelsPage.tsx:355 / :356 / :584` 取消/重试/GC | 三个按钮渲染在 tabpanel **之外**（两个 tab 下都可见），而它们的 ErrorBlock(:499/:500/:501) 在 `className={tab==='asr' ? … : 'hidden'}` 的面板**之内** ⇒ **`?tab=llm` 下点这三个，错误块被 `hidden` 吞掉** |
+
+**建议排期**：#1–#4（任务操作）一组，#5–#7（模型/绑定下拉）一组，#8–#13（笔记域）一组，
+条件性那 5 处单独一组（它们改的是**布局**不是回调，别混进来）。
+我没有一次全做 —— `apps/web` 现在至少两路在动，一次改 18 处必然撞车。
+
+---
+
+# §4 腿
+
+新增 `apps/web/src/test/silentFailures.test.tsx` + `test:silent` 脚本（**独立 bundle**）。
+**没有并进 `components.test.tsx`：动手时那个文件正被另一路改着。**
+
+5 条断言，全部钉结构（`[data-testid="error-block"]` + 面板/输入框是否还在），**一条都不钉词**。
+
+## 反向验证（/tmp 隔离副本，仓库产物零改动，PROTOCOL §10）
+
+```
+控制组                                        5 pass / 0 fail
+① 摘掉 del 的错误渲染点                        ★「删除失败」红
+② 把 onError: close 放回去（事故原状）          ★「删除失败」红
+③ 摘掉 rename 的错误渲染点                     ★「改名失败」红
+④ 摘掉 move 的错误渲染点（B11 真该抓的那个）     ★ 2 条红
+⑤ 摘掉 role="alert"                          ★「结构标记」红
+⑥ 把渲染条件写成恒真                           ★「还没失败时不许有错误块」红
+还原                                          5 pass / 0 fail
+```
+
+⚠️ **反向验证抓到我自己一次，如实记下**：第 ⑥ 条守卫**第一版是空的**。
+我原来写的是"移动**成功之后**不许有错误块"，而移动成功会 `setMode('menu')`，
+**面板连同错误块一起卸载** —— "没有错误块"是**卸载**保证的，跟渲染条件写成什么完全无关，
+恒真变异照样绿。改成"面板刚打开、还没点任何东西"才具备鉴别力。
+（这正是 B11 那个病的同形：**一条因为正确的结果、错误的理由通过的断言**。）
+
+---
+
+# §5 「任务进行中刷新页面，Toast 回不来」—— 我的判断
+
+**结论：算缺陷，但很轻；而且正确的修法不是"重放 Toast"。**
+
+按你给的判据（用户中途刷新还能不能知道任务状态）逐条核实：
+
+| 刷新后 | 状态 |
+|---|---|
+| Toast 层 | **空**（`JobToaster` 的列表由 SSE `job.created` 喂养，已发生的事件不重放） |
+| 侧栏「任务」入口 | **在**（`App.tsx:78`，静态导航项，任何页面都可见） |
+| `/tasks` 页面 | **有**，且是活的：`useJobsQuery` 先拉快照、再叠 SSE 增量 |
+
+所以答案是：**能知道，但要他自己想起来去点「任务」。**
+
+**为什么不建议重放 Toast**：Toast 是**瞬时通知**，刷新丢掉瞬时通知是几乎所有应用的正常行为；
+把已经发生过的 `job.created` 重放，会让用户每次刷新都被一堆旧通知糊一脸 —— 那是更糟的设计。
+
+**真正的缺口不是 Toast 没了，是刷新之后没有任何"有东西在跑"的环境信号**：
+`[实测 grep]` 侧栏那个「任务」是个**静态图标，没有徽标/计数**。
+
+**建议（未做，等你排期）**：给侧栏「任务」加一个「进行中 N」的徽标。
+数据源现成（`useJobsQuery` + SSE，`TasksPage`/`JobList` 已经在用），成本小；
+而且它同时覆盖**没刷新但切到别的页、或把 Toast 手动关掉**这一整类情况 ——
+比重放 Toast 覆盖面宽得多。
+我没有直接做：这是一个**新的 UI 元素**（产品决定），而且 `apps/web` 正热。
+
+---
+
+# §6 ⚠️ 一次事故：我的未提交改动被别人的 `git stash` 卷走
+
+本轮中途 HEAD 从 `8b6a651` 跳到 `2360bf1`，**我在 `apps/web` 的三处未提交改动
+连同那个 scratch 复现文件一起消失了**（`git status` 显示三个文件干净 = 回到 HEAD）。
+`scripts/ci/` 那处因为不在 `apps/web` 下，侥幸活着。
+
+另一路的回执标题里写着「**一次被 stash 卷走的事故**」—— 与现象吻合。
+我**重做了一遍并立刻提交+push**，没有硬合任何东西。
+
+**建议写进 PROTOCOL**：`git stash` 是**全工作区**操作，在多 agent 共享工作树里
+等价于"把别人正在写的东西拿走"，而且**被拿走的一方看不到任何报错** ——
+它和"我还没写"长得一模一样。判据与 §10 同源：**在最坏的那一秒，别人看到的是什么。**
+
+---
+
+# §7 纪律自查
+
+- ✅ **没碰 `:10000`**（pid 2037 全程未动）、**没碰 `/root/data-memo`**、**没碰机器级指针**
+- ✅ **没用 `pkill -f`**（含 `-0`）；本轮没有起过任何 daemon
+- ✅ **没用 `--amend`**；push 用具体 hash（`git push origin abce462:master`），
+  push 后 `git merge-base --is-ancestor abce462 origin/master` **复核通过**
+- ✅ **新文件显式 `git add`**（`silentFailures.test.tsx`），`git add` 后
+  `git diff --cached --name-only` **逐条核对 = 6 个，与预期一致**
+- ✅ **没有夹带别人的文件**：`docs/design/D-20-bundled-deps.md`（他人在改）全程未暂存
+- ✅ scratch 复现文件**已删除，未提交**
+- ✅ 反向验证全部在 `/tmp/sf2/` 的隔离副本上，**仓库源码与 `.test-out` 零改动**
+- ✅ **没有构建 `apps/web/dist`**（只用 `vite build --ssr --outDir .test-out/…`）
+- ✅ 门禁：`tsc -b` **0** · `eslint` **0** · `prettier --check` **通过** ·
+  `apps/web` 测试 **136+10+323+5 = 474，0 failed**
+
+# §8 未验证 / UNKNOWN
+
+- **B11 修好之后没有在真浏览器里跑过。** 本地没有可直接 `require` 的 playwright
+  （模块在 `node_modules/.pnpm/` 下，脚本有 `PLAYWRIGHT_MODULE` 逃生口），
+  且跑一次完整审计要起 daemon + 下大文件。**新判据的正确性是靠 jsdom 等价复现
+  + 6 个变异证明的，不是靠真浏览器。** 建议下一次 e2e 运行时留意它。
+- **"诊断运行里那次红，具体是不是被转写失败文字翻面导致"** —— 机制我用构造复刻证明了，
+  但**那两次具体运行的页面文字我没有取到**，标 `[未验证]`。
+- 剩下 13 + 5 处静默失败**只做了静态判定**（读码 + 渲染点核对），**没有逐处实跑**。

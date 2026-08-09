@@ -25,7 +25,7 @@ OpenMemo 当前的部署形态（ADR-003 决策 1）：
 浏览器（本机）──HTTP/SSE/WS──> daemon（**代码默认 `127.0.0.1`**；本机演示实例显式设了 `OPENMEMO_HOST=0.0.0.0`。鉴权默认关闭，见下方「当前真实姿态」）
                                    │ 子进程
                                    ├─ ffmpeg / ffprobe
-                                   ├─ yt-dlp（内置，GPLv3+）
+                                   ├─ yt-dlp（内置，Unlicense；官方二进制内嵌 GPL 依赖，见下方订正）
                                    ├─ whisper-cli / whisper-vad-speech-segments
                                    └─ llama-server
 ```
@@ -39,6 +39,16 @@ OpenMemo 当前的部署形态（ADR-003 决策 1）：
 > - **此前写着**「yt-dlp（**可选**，GPLv3+）」。那是 ADR-002 **v1** 红线时期的口径；
 >   `ADR-002-license-redlines.md:14,23`（v2）已改为「**F1 直接内置 yt-dlp，不做双路径区分**」，
 >   `vendor/manifests/backends.json` 里 4 个 `ytdlp-*` 包已发货。
+> - **2026-08-10 追加订正**：「GPLv3+」这个许可证标签本身也是错的，不是"可选/内置"那一个问题，
+>   是"许可证认错了"的另一个问题。`yt-dlp` 项目本身是 **Unlicense**（`D-20-bundled-deps.md §1.1`
+>   `[实测]` 拉官方 `LICENSE` 文件核实：0 处 "GNU GENERAL PUBLIC"、3 处 "public domain"）；
+>   官方 PyInstaller 二进制里**无条件内嵌** `mutagen`（GPL-2.0-or-later，四平台全部命中），
+>   Linux x64/arm64 另外内嵌 GNU Readline（GPL-3.0-or-later），macOS/Windows 没有
+>   （`D-20 §14.2/§14.3` 静态提取四平台二进制逐条核实）。这张图上的「内置」说的是
+>   **F1 功能层面**「无条件包含这个能力，不做可选开关」（ADR-002 v2 的口径，见上一条），
+>   跟"这份二进制的字节会不会被我们下载分发进产物"是两个不同的轴——**后一个问题的答案
+>   仍是"下载"**（`D-20 §9.2/§14.6` 已裁定，字节不进我们的分发流水线，用户机器直连官方
+>   GitHub），不受这条订正影响，本图的"内置"二字因此不改，只改许可证标签。
 
 > ⚠️ **以下两条假设已被用户显式推翻，见下方「当前真实姿态」。本表保留的是原始设计意图。**
 
