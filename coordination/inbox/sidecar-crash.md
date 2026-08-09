@@ -393,3 +393,83 @@ messageZh : 连接 <host> 失败：卡在**探测文件大小**这一步，还�
   `downloader` 40 条用例全绿、eslint 与 prettier 干净。
   ⚠️ **完整门禁（`pnpm -r test` 等）本轮未跑** —— 预算见底，如实标 `[未验证]`。
   改动集中在 downloader，且该包用例全绿。
+
+---
+
+## [2026-08-09] v0.5.0 自检「缺 whisper-cli / test-audio」：调查结论（PROGRESS）
+
+### ① 「缺 whisper-cli」这句话 —— **多半不对，但我没能坐实用户那台为什么是 null**
+
+逐条实测：
+
+| 查什么 | 结果 |
+|---|---|
+| **win-x64 包里到底有没有** | **有。** 现建一个 win 包，`runtime/probe/` 7 个文件：`openmemo-probe.exe` · **`whisper-cli.exe`** · `whisper-vad-speech-segments.exe` · `whisper.dll` · `ggml{,-base,-cpu-x64}.dll` |
+| **Windows 启动器有没有设那个变量** | **设了。** `start.cmd` 与 sh 启动器**都**设 `OPENMEMO_BUNDLED_WHISPER_DIR` |
+| `isExecutable()` 在 Windows 上会不会误判 | **不会。** 它是 `access(X_OK)`，Node 在 Windows 上等价于 `F_OK` |
+
+⇒ **文件在包里、变量也设了**，所以「缺 whisper-cli」这句**大概率不是事实**，
+而是自检没找到包内那份。**但我没能确定用户那台的具体成因，标 `[未验证]`。**
+
+**已经确定的那个洞**（与你说的同族，且比我上次描述的更具体）：
+
+`packages/pipeline/src/tools.ts:903` 的 `fromBundle()` **只读环境变量**：
+
+```ts
+const bundledDir = process.env['OPENMEMO_BUNDLED_WHISPER_DIR'];
+if (!bundledDir) return null;
+```
+
+**我上一轮把探针那条改成了模块相对（`resolveBundledWhisperDir()`），
+但 `tools.ts` 这条没跟着改。** 于是：**凡是不经启动器起的 daemon，
+包内 whisper-cli 一律看不见** —— 这正是"能不能用取决于你从哪儿启动"的第三个出口。
+
+**修法**（未做）：把 `fromBundle` 换成 `resolveBundledWhisperDir()`，与探针那条同一个函数。
+⚠️ 顺序**必须保持** `已安装后端包 > PATH > 包内兜底`，否则用户装了 CUDA 仍会跑包内 CPU 二进制。
+
+### ② `test-audio` 该不该随包出厂 —— **该，而且现在必然缺**
+
+`setup.ts:1036-1040` 的三条候选：
+
+```
+OPENMEMO_SELFTEST_AUDIO（没人设）
+<dataDir>/selftest/jfk.wav（产品从不往那儿写）
+repoSampleAudio() → 上溯 4 层 + vendor/whisper.cpp/samples/jfk.wav
+```
+
+**三条在预编译包里全落空** ⇒ `audio: null` 对**每一个包用户都是必然**，不是偶发。
+用户日志里的 `audio: null` 与这个推导一致。
+
+**好消息：代码已经在找对地方了。** `repoSampleAudio()` 上溯 4 层，
+在包内布局（`app/daemon/dist/runtime/`）算出来正是**包根** ——
+所以只要把 `vendor/whisper.cpp/samples/jfk.wav` **按原路径打进包**，
+**一行代码都不用改**就会被找到。
+
+代价：**352,078 B（344 KB）**，whisper.cpp 是 MIT，随包分发无许可证问题。
+而且自检**认得出**它叫 `jfk.wav` 才会用内置时长与参考文本
+（`isKnownSample`）—— 换个名字会退化成"要调用方自己给时长和文本"，**所以必须原名原路径**。
+
+### ③ 我没有碰自检的判据
+
+你说的那条克制我认同也没动：自检仍然只在前提齐全时才跑，
+**缺前提只报 blocked，不会拿别的包的二进制去跑再记到它头上**。
+上面两条修的都是**让它真的找得到包内那份**，不是放宽判据。
+
+### ④ 「正在安装」那条：**本轮没量，如实说**
+
+预算见底，**没有接 SSE 复现**，所以 (a) 事件没发 / (b) 发了没渲染 / (c) 真卡住
+**一个都没排除**，标 `[未验证]`。
+⚠️ 我也接受你的提醒：用户这次装的是**后端包**，与我上次量的**模型下载**不是同一条路径，
+**上次那组数不能套过来**。
+
+### 下一步建议（按性价比排）
+
+1. `tools.ts` 的 `fromBundle` 改模块相对（复用 `resolveBundledWhisperDir()`）—— 小、清楚、与探针同一条。
+2. `jfk.wav` 打进包（344 KB，**零代码改动**）。
+3. 再接 SSE 量「正在安装」。
+
+### 纪律
+
+- 本轮**未改任何代码**，仅调查；仓库只新增本回执。
+- 未碰 `:10000`、`/root/data-memo`、机器指针；**未建/改/删 release**；未用任何形式的 `pkill`。
+- 未动他人在途文件（`apps/web`、`e2e-browser`、`packages/runtime`、`docs/**`）。
