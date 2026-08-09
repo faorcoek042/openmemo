@@ -7,21 +7,27 @@
  *
  * ## 它不做什么（这条比它做什么更重要）
  *
- * **不打包 ffmpeg / yt-dlp / whisper.cpp / 模型。** 那四样仍然由产品在网页上按需下载，
+ * **不打包 ffmpeg / yt-dlp / GPU 后端 / 大模型。** 这些仍然由产品在网页上按需下载，
  * 钉死 tag + sha256（ADR-001 / ADR-015）。理由有两层：
- *   · 体积：whisper 的 CUDA 包一个就 677 MB，模型动辄 1.6 GB；
- *   · **许可证：ffmpeg 与 yt-dlp 是 GPL-3.0-or-later。** 我们把它们的字节放进自己的
- *     产物、再发到 Release 上，就是 conveying —— ADR-002 的「一旦要分发就是硬阻断」
- *     当场触发。让用户的机器直连 BtbN / yt-dlp 官方 GitHub 取，这条就不触发。
- *     **这不是形式主义，是这个包能不能存在的前提**（D-17 §1）。
+ *   · 体积：whisper 的 CUDA 包一个就 677 MB，多数模型动辄百 MB 到 GB 级；
+ *   · **许可证：ffmpeg 与 yt-dlp 曾被认为是 GPL-3.0-or-later。** 我们把它们的字节放进
+ *     自己的产物、再发到 Release 上，就是 conveying —— ADR-002 的「一旦要分发就是硬
+ *     阻断」当场触发。让用户的机器直连官方源取，这条就不触发（D-17 §1）。
+ *     ⚠️ D-20 §1.1 已核实 **yt-dlp 实际是 Unlicense**，但它的二进制内嵌依赖清点是
+ *     另一条发布阻断线（未完成前不许打进包），所以它眼下仍然只走下载。
  *
  * ## 它打包什么
  *
  *   runtime/node            官方 Node 二进制，**原样不改**
+ *   runtime/probe/          最小探针 + CPU 基线转写链（whisper.cpp，MIT，见 assembleProbeRuntime）
  *   app/daemon              daemon 的 dist
  *   app/node_modules        生产依赖闭包（扁平化，非符号链接）
  *   app/apps/web/dist       ★ 网页 bundle —— 缺了用户打开是白页
  *   ext/                    libsimple + sqlite-vec（用户 2026-08-08 裁决 ②）
+ *   models/                 ★ D-20 §9/§11 定案的 3 个非 GPL、体积可控模型（≈55.7 MB，
+ *                            见 assembleModels）——首次启动由
+ *                            `apps/daemon/src/http/rest/modelReconcile.ts` 导入 ArtifactStore，
+ *                            这里只负责把字节、连同 sha256 校验，落进包里
  *
  * ### 为什么 Node 二进制**原样不改**
  *
@@ -309,6 +315,44 @@ async function fetchToCache(url, fileName) {
   const { rename } = await import('node:fs/promises');
   await rename(tmp, dst);
   return dst;
+}
+
+/**
+ * 与 `fetchToCache()` 相同的缓存/下载语义，但**按 manifest 里的镜像顺序依次重试**
+ * （`official` 优先），而不是只认第一个。
+ *
+ * 不能直接复用 `fetchToCache()`：它在 HTTP 非 2xx 时调用 `die()`——那是
+ * `process.exit(1)`，不是抛异常，包不住，也就没法"这个源不行，换下一个"。
+ * `vendor/manifests` 里的每个文件本来就带 2–3 个镜像，就是为了应对
+ * "某个源在当前网络环境下不可达"这种情况（`[实测]` 这个沙箱能连 `hf-mirror.com`
+ * / `modelscope.cn`，连不上 `huggingface.co`）——只试 official 一个会把这种
+ * 可恢复的情况变成整个构建直接退出。
+ */
+async function fetchModelMirror(mirrors, fileName) {
+  await mkdir(CACHE, { recursive: true });
+  const dst = join(CACHE, fileName);
+  if (await exists(dst)) {
+    say(`   缓存命中 ${fileName}`);
+    return dst;
+  }
+  const ordered = [...mirrors].sort((a, b) => (b.official ? 1 : 0) - (a.official ? 1 : 0));
+  const errors = [];
+  for (const m of ordered) {
+    try {
+      say(`   下载 ${m.url}`);
+      const res = await fetch(m.url, { redirect: 'follow' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const tmp = `${dst}.partial`;
+      await pipeline(Readable.fromWeb(res.body), createWriteStream(tmp));
+      const { rename } = await import('node:fs/promises');
+      await rename(tmp, dst);
+      return dst;
+    } catch (e) {
+      errors.push(`${m.url} → ${e instanceof Error ? e.message : String(e)}`);
+      say(`   ⚠️ 这个镜像取不到，换下一个`);
+    }
+  }
+  return die(`${fileName} 所有镜像都取不到：\n${errors.map((s) => `   ${s}`).join('\n')}`);
 }
 
 /**
@@ -968,8 +1012,100 @@ async function assembleProbeRuntime() {
  *
  * 344 KB，MIT（随 whisper.cpp submodule 一起进来的官方样本）。
  */
+/* ─────────────────────────────────────────────────────────────────────────────────
+ * ④-quater 随包出厂模型（D-20 §11.2）
+ * ───────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * 把 D-20 §9/§11 定案的 3 个非 GPL、体积可控模型的字节打进包
+ * （`<包根>/models/<id>/<file.name>`）。
+ *
+ * ## 这只是半件事——"能不能被产品发现"是另一半，在别的文件里
+ *
+ * `[实测]` `grep -rn "BUNDLED_MODELS|bundledModels|resolveBundledModel"` 在这个改动
+ * 之前是 0 命中：模型的唯一发现路径是 `ArtifactStore`（数据目录下的
+ * `blobs/` + `manifests/`），这里放的字节它一个都不认，且不会报任何错
+ * （D-20 §11.1）。真正"装上"发生在 daemon **首次启动**时的
+ * `apps/daemon/src/http/rest/modelReconcile.ts`（`reconcileBundledModels`）——
+ * 那一步会把这里放的文件哈希重新校验一遍、硬链接（同盘）或复制（跨盘）进
+ * ArtifactStore、写出一份诚实的安装记录。**这个函数只负责把字节落进包里**，
+ * 且每个字节在落包前都已经对着 vendor/manifests 的 sha256 校验过。
+ *
+ * ## id 从哪来：`BUNDLED_MODEL_IDS`，唯一权威
+ *
+ * 与 `modelReconcile.ts` 共享同一个常量（`packages/shared/src/bundled.ts`），
+ * 不在这里重新拍一遍清单——两处分别抄一份 id 列表，就是 `roleMap.ts` 文件头
+ * 点名警告过的"同一份映射分裂成两份认知，迟早漂移"。
+ *
+ * ## 清单怎么找：与 `loadModelCatalog()`（ADR-014）同一套判类规则
+ *
+ * 不写死是哪个文件名——`vendor/manifests` 下所有 `*.json`，含 `models` 数组的才算数。
+ * 这里读的是仓库里 committed 的那份原始文件（不是 `assembleManifests()` 已经复制到
+ * `STAGE` 里的那份副本），两者内容相同，只是**读取时机不同**，不构成两个事实来源。
+ *
+ * ## `yt-dlp` 为什么不在这里
+ *
+ * Manager 明令：嵌入依赖清点没做完之前不许打进包（发布阻断条件，另有一路在做）。
+ * 这个函数只处理模型，不碰 `extPackIds`/`probePackId` 之外的任何新增打包项。
+ */
+async function assembleModels() {
+  hdr('④-quater 随包出厂模型（D-20 §11.2：VAD + whisper-tiny + sherpa 流式，≈55.7 MB）');
+  const { BUNDLED_MODEL_IDS } = await import(
+    pathToFileURL(join(REPO_ROOT, 'packages/shared/dist/index.js')).href
+  );
+
+  const manifestDir = join(REPO_ROOT, 'vendor', 'manifests');
+  const catalogFiles = (await readdir(manifestDir)).filter(
+    (n) => n.endsWith('.json') && n !== 'schema.json',
+  );
+  const byId = new Map();
+  for (const name of catalogFiles) {
+    const raw = JSON.parse(await readFile(join(manifestDir, name), 'utf8'));
+    if (!Array.isArray(raw.models)) continue; // 不是模型目录（backends.json 之类），跳过
+    for (const m of raw.models) byId.set(m.id, m);
+  }
+
+  const modelsDir = join(STAGE, 'models');
+  await mkdir(modelsDir, { recursive: true });
+
+  let totalFiles = 0;
+  for (const id of BUNDLED_MODEL_IDS) {
+    const model = byId.get(id);
+    if (!model) {
+      die(
+        `BUNDLED_MODEL_IDS 里的 ${id} 在 vendor/manifests 里找不到 —— 常量与实际目录\n` +
+          `   已经不同步（packages/shared/src/bundled.ts vs vendor/manifests/*.json）。`,
+      );
+    }
+    const dir = join(modelsDir, id);
+    await mkdir(dir, { recursive: true });
+    for (const f of model.files) {
+      if (!f.mirrors || f.mirrors.length === 0) die(`${id} 的文件 ${f.name} 一个镜像都没有`);
+      // 缓存文件名带上 id，避免不同模型间正好同名（如多个 tokens.txt）互相覆盖缓存。
+      const local = await fetchModelMirror(f.mirrors, `${id.replace(/\//g, '_')}-${f.name}`);
+      const got = await sha256Of(local);
+      if (got !== f.sha256) {
+        die(
+          `${id}/${f.name} 摘要与 vendor/manifests 不符\n   期望 ${f.sha256}\n   实得 ${got}\n` +
+            `   不允许把一个校验不过的文件打进"内置"产物——那会让"内置"这个词本身\n` +
+            `   失去意义（与 D-20 §11.3 第③条"不许改已内置项 sha256"同一条纪律）。`,
+        );
+      }
+      await cp(local, join(dir, f.name));
+      totalFiles += 1;
+    }
+    say(`   ✔ ${id}  ${model.files.length} 个文件，sha256 全部对着 vendor/manifests 校验通过`);
+  }
+
+  const bytes = await dirSize(modelsDir);
+  say(
+    `   ✔ models/  ${totalFiles} 个文件，${mib(bytes)}` +
+      `（首次启动由 modelReconcile.ts 导入 ArtifactStore，此刻只是落包）`,
+  );
+}
+
 async function assembleSampleAudio() {
-  hdr('④-quater 自检样本音频 vendor/whisper.cpp/samples/jfk.wav');
+  hdr('④-quinquies 自检样本音频 vendor/whisper.cpp/samples/jfk.wav');
   const src = join(REPO_ROOT, 'vendor', 'whisper.cpp', 'samples', 'jfk.wav');
   if (!existsSync(src)) {
     die(
@@ -1049,8 +1185,12 @@ fi
 : "\${OPENMEMO_BUNDLED_PROBE_DIR:=$DIR/runtime/probe}"
 # 同一个目录还装着 CPU 基线转写链（whisper-cli + libwhisper，与探针共用 ggml）
 : "\${OPENMEMO_BUNDLED_WHISPER_DIR:=$DIR/runtime/probe}"
+# 随包出厂的模型字节（D-20 §11.2）。首次启动由 modelReconcile.ts 读这里、
+# 逐字节校验、导入 ArtifactStore —— 与 MANIFEST_DIR 同样能靠模块相对路径自己找到，
+# 这条环境变量只是给双击那条路多一层保险（与 PROBE_DIR / WHISPER_DIR 同样的理由）。
+: "\${OPENMEMO_BUNDLED_MODELS_DIR:=$DIR/models}"
 : "\${OPENMEMO_OPEN_BROWSER:=1}"
-export OPENMEMO_WEB_DIST OPENMEMO_EXT_DIR OPENMEMO_BUNDLED_PROBE_DIR OPENMEMO_BUNDLED_WHISPER_DIR OPENMEMO_OPEN_BROWSER
+export OPENMEMO_WEB_DIST OPENMEMO_EXT_DIR OPENMEMO_BUNDLED_PROBE_DIR OPENMEMO_BUNDLED_WHISPER_DIR OPENMEMO_BUNDLED_MODELS_DIR OPENMEMO_OPEN_BROWSER
 cd "$DIR/app/daemon"
 exec "$DIR/runtime/node" dist/main.js "$@"
 `;
@@ -1111,6 +1251,7 @@ if not defined OPENMEMO_WEB_DIST set "OPENMEMO_WEB_DIST=%DIR%app\\apps\\web\\dis
 if not defined OPENMEMO_EXT_DIR set "OPENMEMO_EXT_DIR=%DIR%ext"
 if not defined OPENMEMO_BUNDLED_PROBE_DIR set "OPENMEMO_BUNDLED_PROBE_DIR=%DIR%runtime\\probe"
 if not defined OPENMEMO_BUNDLED_WHISPER_DIR set "OPENMEMO_BUNDLED_WHISPER_DIR=%DIR%runtime\\probe"
+if not defined OPENMEMO_BUNDLED_MODELS_DIR set "OPENMEMO_BUNDLED_MODELS_DIR=%DIR%models"
 if not defined OPENMEMO_OPEN_BROWSER set "OPENMEMO_OPEN_BROWSER=1"
 
 cd /d "%DIR%app\\daemon"
@@ -1328,8 +1469,26 @@ async function writeNotices() {
   parts.push('本文件列出随本预编译包一同分发的第三方组件。');
   parts.push('OpenMemo 自身的代码不在此列（见同目录 LICENSE）。');
   parts.push('');
-  parts.push('⚠️ 本包**不含** ffmpeg 与 yt-dlp（GPL-3.0-or-later）。');
-  parts.push('   那两个组件由产品在你的机器上按需从上游官方 GitHub 下载，');
+  /*
+   * 2026-08-09（ytdlp-binary-audit Phase 2）：这行原来写"yt-dlp（GPL-3.0-or-later）"，
+   * 把"官方二进制内嵌了什么"和"项目本身的许可证"混为一谈——yt-dlp 项目本身是
+   * Unlicense，GPL 是官方 PyInstaller 二进制里内嵌的运行时依赖（mutagen 全平台
+   * GPL-2.0-or-later、GNU Readline 仅 Linux x64/arm64 GPL-3.0-or-later，实测见
+   * D-20 §14）。已按下面这行改准；但这不改变本段的结论——ffmpeg 与 yt-dlp 内部
+   * 无论嵌了多少层什么许可证，那都是**它们自己发布物**的声明义务，不是我们的：
+   * NOTICES 的边界是"随本包分发的字节"，而这两个组件的字节从没进过这条流水线
+   * （用户机器直连上游官方仓库下载，我们既不转存也不重新分发）。因此 mutagen /
+   * Readline / certifi / requests / packaging / cryptography / yt-dlp 内嵌的
+   * OpenSSL（Linux/macOS 3.x·Apache-2.0 与 Windows 1.1.x·旧 OpenSSL 许可证·已
+   * EOL 这条版本分叉，同样见 D-20 §14）都**不**在这份 NOTICES 里逐条列出——
+   * 不是漏了，是判断后排除在外：这些字节从没随我们的包分发过，义务不在我们。
+   * D-20 §14.4 那张"供写 NOTICES 时用"的表，结论恰恰是这张表最终不喂给这个
+   * 函数；那句框架性描述已经过时，留给 D-20 自己的订正处理，这里不重复改。
+   */
+  parts.push('⚠️ 本包**不含** ffmpeg 与 yt-dlp。ffmpeg 是 GPL-3.0-or-later；');
+  parts.push('   yt-dlp 项目本身是 Unlicense，但官方发行的二进制内嵌了 GPL 组件');
+  parts.push('   （mutagen 等，详见 docs/design/D-20-bundled-deps.md §14）。');
+  parts.push('   这两个组件都由产品在你的机器上按需从上游官方 GitHub 下载，');
   parts.push('   我们既不转存也不重新分发它们的字节。详见 docs/adr/ADR-002。');
   parts.push('');
   parts.push('─'.repeat(78));
@@ -1365,6 +1524,71 @@ async function writeNotices() {
   parts.push(
     '      正文见运行时上游发行包内的 LICENSE：https://github.com/nodejs/node/blob/main/LICENSE）',
   );
+
+  /*
+   * 随包出厂的模型（D-20 §11.2，assembleModels()）——同样必须声明许可证与来源。
+   * 从 vendor/manifests 里的 license/source 字段生成，不在这里另抄一份文字，
+   * 避免"清单改了，NOTICES 没跟着改"这类漂移。
+   */
+  parts.push('');
+  parts.push('─'.repeat(78));
+  parts.push('随包出厂的模型（不经 npm，来自 vendor/manifests，D-20 §11.2）');
+  parts.push('─'.repeat(78));
+  {
+    const modelManifestDir = join(REPO_ROOT, 'vendor', 'manifests');
+    const modelById = new Map();
+    for (const name of (await readdir(modelManifestDir)).filter((n) => n.endsWith('.json'))) {
+      const raw = JSON.parse(await readFile(join(modelManifestDir, name), 'utf8'));
+      if (!Array.isArray(raw.models)) continue;
+      for (const m of raw.models) modelById.set(m.id, m);
+    }
+    const { BUNDLED_MODEL_IDS } = await import(
+      pathToFileURL(join(REPO_ROOT, 'packages/shared/dist/index.js')).href
+    );
+    for (const id of BUNDLED_MODEL_IDS) {
+      const m = modelById.get(id);
+      if (!m) continue; // assembleModels() 已经 die() 过这种情况，这里只是不重复报
+      parts.push(`  ${m.displayName ?? id} (${id})  —  ${m.license?.id ?? 'UNKNOWN'}`);
+      if (m.source?.provider === 'hf') {
+        parts.push(
+          `      来源 https://huggingface.co/${m.source.repo}  revision ${m.source.revision}`,
+        );
+      }
+      if (m.license?.url) parts.push(`      许可证 ${m.license.url}`);
+    }
+  }
+
+  /*
+   * 2026-08-09（ytdlp-binary-audit Phase 2 task ④）：随包出厂的 CPU 基线转写引擎
+   * （assembleProbeRuntime() 装进 runtime/probe/ 的那份 whisper.cpp + ggml）此前
+   * 完全没有出现在 NOTICES 里——即使上面加了模型那一节之后依然是空白，这是一个
+   * 真实的覆盖缺口，不是口径判断。许可证同样从 vendor/manifests/backends.json 的
+   * T.probePackId 那条 pack 读，理由与模型那节相同：不在这里另抄一份文字，避免
+   * "清单改了、NOTICES 没跟着改"这类漂移。assembleProbeRuntime() 早于本函数运行
+   * （见 main()），已经对同一个 T.probePackId 校验过存在性，这里理论上不会再 die。
+   */
+  parts.push('');
+  parts.push('─'.repeat(78));
+  parts.push('随包出厂的 CPU 基线转写引擎（runtime/probe/，来自 vendor/manifests/backends.json）');
+  parts.push('─'.repeat(78));
+  {
+    const backendsManifest = JSON.parse(
+      await readFile(join(REPO_ROOT, 'vendor/manifests/backends.json'), 'utf8'),
+    );
+    const probePack = backendsManifest.packs.find((p) => p.id === T.probePackId);
+    if (!probePack) {
+      die(
+        `writeNotices: backends.json 里没有 pack ${T.probePackId} —— ` +
+          'assembleProbeRuntime() 理应已经先 die 过，这里不应该走到',
+      );
+    }
+    parts.push(
+      `  ${probePack.displayName ?? T.probePackId}  —  ${probePack.license?.id ?? 'UNKNOWN'}`,
+    );
+    const engineLine = `      engine ${probePack.engine ?? 'whisper.cpp'} ${probePack.engineVersion ?? ''}`;
+    parts.push(engineLine.trimEnd());
+    if (probePack.license?.url) parts.push(`      许可证 ${probePack.license.url}`);
+  }
 
   if (missing.length > 0) {
     parts.push('');
@@ -1463,6 +1687,7 @@ async function main() {
   await assembleExtensions();
   await assembleProbeRuntime();
   await assembleManifests();
+  await assembleModels();
   await assembleSampleAudio();
   await writeLauncher();
   await writeNotices();
