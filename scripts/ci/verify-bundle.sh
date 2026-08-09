@@ -71,6 +71,9 @@ FAILED=0
 
 ok()   { CHECKED=$((CHECKED+1)); printf '  \033[32m✔\033[0m %s\n' "$1"; }
 bad()  { CHECKED=$((CHECKED+1)); FAILED=$((FAILED+1)); printf '  \033[31m✘\033[0m %s\n' "$1"; }
+# 计入 CHECKED 但不计入 FAILED —— 用于"今天理应如此、明天会自动升级成 bad()"的过渡态。
+# 见下面 ffmpeg 双向核对：这是本文件唯一允许出现 warn() 的地方，不要当成通用的降级出口。
+warn() { CHECKED=$((CHECKED+1)); printf '  \033[33m⚠\033[0m %s\n' "$1"; }
 
 need_file() {
   if [ -f "$B/$1" ]; then ok "$1${2:+  ($2)}"; else bad "缺文件：$1${2:+  —— $2}"; fi
@@ -249,7 +252,119 @@ else
 fi
 
 echo
-echo "── 反向断言：GPL 组件**不许**在包里"
+echo "── THIRD-PARTY-NOTICES ↔ 包内容 双向核对（ffmpeg / ffprobe）"
+# 这条守卫要防的事故形状，本仓已经栽过三次，全部是**人肉**发现，机器从没抓过一次：
+#   ① 文档写了探针在包里，包里其实没有；② 设计文档写了 vendor/manifests 随包出厂，
+#   包里其实没有；③ CUDA 后端的 providesFiles —— 一份**手写清单** —— 写着它提供后端，
+#   实际一个 CUDA 运行时库都没列进去。手写清单和产物之间没有任何机制保证同步，
+#   它们只在写下的那一刻是对的，之后只会漂移，且没人会自动发现。
+#
+# 所以两侧都不查"清单"，而是互相拿对方现场核对：
+#   「声称」这一侧：不在这里重新判断"这个平台该不该内置 ffmpeg"——那是
+#     writeNotices()（scripts/build-bundle.mjs，按 T.platform 分叉）已经决定过一次
+#     的平台策略。这里只读它写进 THIRD-PARTY-NOTICES 的**结论原文**（两条互斥的
+#     固定措辞）。如果在这里用 $TARGET 再判断一次"是不是 linux/win"，就会长出第二份
+#     独立维护的平台策略——两处一旦分叉，没人会发现，这正是清单类 bug 的形状。
+#   「事实」这一侧：不用手写的"ffmpeg 应该包含哪些文件"清单（那正是 providesFiles
+#     出事的地方），而是复用下面「反向断言」那条已经吃过一次教训的 basename 匹配
+#     （ffmpeg.js 误伤事故之后收窄成"恰好等于工具名"）去现场问包"文件真的在不在"。
+#
+# 四种结果，只有一种不阻断：
+#   声称内置 + 实际没有 → ⚠️ warn，不阻断。这是**今天**在 Linux/Windows 上的真实状态
+#     （ec641fd 让 writeNotices() 按平台无条件声明"内置"，但把 ffmpeg 字节真的搬进
+#     stage 是打包实现那一路的活，见 D-20 §13.6 / a6553151…，此刻还没有落地）。
+#     这条 warn 本身就是可执行的过期判据：**一旦某次构建真的把 ffmpeg 字节搬进了
+#     stage，这个分支会在那次构建上自动滑到下面「声称内置+实际存在」的阻断分支——
+#     不需要谁记得回来把 warn 改成 bad，判据就是"文件出现了没有"，不是日期。**
+#   声称内置 + 实际存在 → 真的把关（阻断，无过渡期）：LICENSE 类文件里必须能找到
+#     LGPL 许可证全文；同平台时 ffmpeg 自己的 `-L` 版权横幅也必须承认 Lesser——
+#     GPL-only 版和 LGPL 版 basename 完全一样，唯一能分辨的是它自己怎么说自己。
+#   声称不含 + 实际存在 → 阻断，不分平台、没有过渡期：未声明的第三方二进制混进包里，
+#     比"声称了没验到"更危险。
+#   声称不含 + 实际没有 → 通过（今天 macOS 的真实状态）。
+FFCLAIM="unknown"
+if grep -qF '本包**内置** ffmpeg' "$B/THIRD-PARTY-NOTICES" 2>/dev/null; then
+  FFCLAIM="bundled"
+elif grep -qF '本包**不含** ffmpeg' "$B/THIRD-PARTY-NOTICES" 2>/dev/null; then
+  FFCLAIM="not-bundled"
+fi
+
+FFBINS=$(find "$B" -type f \( -name 'ffmpeg' -o -name 'ffmpeg.exe' -o -name 'ffprobe' -o -name 'ffprobe.exe' \) 2>/dev/null)
+
+case "$FFCLAIM" in
+  unknown)
+    bad "THIRD-PARTY-NOTICES 里找不到「内置 ffmpeg」或「不含 ffmpeg」这两句固定措辞中的任何一句 —— writeNotices() 的文案改了但这条核对没跟着改，锚点失效，不能再判断声称与事实是否一致（先去对 scripts/build-bundle.mjs 里 T.platform 分叉那两句）"
+    ;;
+  bundled)
+    if [ -z "$FFBINS" ]; then
+      warn "THIRD-PARTY-NOTICES 声称内置 ffmpeg，但包里没找到 ffmpeg/ffprobe 二进制 —— 打包实现还没把字节真的搬进 stage（已知过渡态，不阻断；见上面注释）"
+    else
+      ok "THIRD-PARTY-NOTICES 声称内置 ffmpeg，包里确实有：$(printf '%s\n' "$FFBINS" | head -1 | sed "s#^$B/##")"
+
+      # 许可证义务：LGPL 全文必须真的出现在某个随包出厂的 LICENSE 类文件里，
+      # 不能只是 NOTICES 里一句话带过（那是义务的转述，不是义务本身）。
+      # ★ `grep -F` 是逐行匹配的：真实许可证文本按 ~70-80 列硬换行是常态，
+      #   "Lesser General Public License" 这个短语完全可能被硬换行劈成两行
+      #   （本地拿合成 fixture 复现过一次：换行点恰好落在这句话中间，逐行 grep
+      #   因此漏判为"没找到"，而人眼一看那明明就是 LGPL 全文）。
+      #   所以先把整份文件的换行压成空格，按"一整段话"去找，不按"一行"去找。
+      LICENSE_FILES=$(find "$B" -type f \( -iname 'LICENSE' -o -iname 'LICENSE.txt' -o -iname 'LICENSE.md' \
+        -o -iname 'LICENCE' -o -iname 'LICENCE.txt' -o -iname 'COPYING' -o -iname 'COPYING.md' -o -iname 'NOTICE' \) 2>/dev/null)
+      LGPLFOUND=""
+      if [ -n "$LICENSE_FILES" ]; then
+        while IFS= read -r lf; do
+          [ -n "$lf" ] || continue
+          if tr '\n' ' ' < "$lf" 2>/dev/null | grep -qF "Lesser General Public License"; then
+            LGPLFOUND="$lf"
+            break
+          fi
+        done <<< "$LICENSE_FILES"
+      fi
+      if [ -n "$LGPLFOUND" ]; then
+        ok "LGPL 许可证全文真的在包里：$(printf '%s\n' "$LGPLFOUND" | sed "s#^$B/##")"
+      else
+        bad "包里内置了 ffmpeg，但翻遍 LICENSE/COPYING/NOTICE 类文件都没找到 Lesser General Public License 的正文 —— 许可证全文可得这条义务没被满足"
+      fi
+
+      # 同平台时问 ffmpeg 自己，而不是只信文件名 —— GPL-only 版和 LGPL 变体
+      # basename 完全一样（都叫 ffmpeg），唯一能分辨的是它自己 -L 报的横幅。
+      if [ "$HOST" = "$TARGET" ]; then
+        FFMPEG_BIN=""
+        while IFS= read -r fb; do
+          [ -n "$fb" ] || continue
+          case "$(basename "$fb")" in
+            ffmpeg|ffmpeg.exe) FFMPEG_BIN="$fb"; break ;;
+          esac
+        done <<< "$FFBINS"
+        if [ -n "$FFMPEG_BIN" ]; then
+          if BANNER="$("$FFMPEG_BIN" -L 2>&1)"; then
+            if printf '%s' "$BANNER" | tr '\n' ' ' | grep -qF "Lesser General Public License"; then
+              ok "ffmpeg -L 真的执行了，横幅自认 Lesser（不是猜文件名，是它自己说的）"
+            else
+              bad "ffmpeg -L 跑起来了，但横幅里没有 Lesser General Public License —— 这可能是 GPL-only 构建，ADR-002 不许出厂"
+            fi
+          else
+            bad "ffmpeg -L 执行失败：$(printf '%s' "$BANNER" | head -1)"
+          fi
+        else
+          echo "  · FFBINS 里没有 ffmpeg 本体（只有 ffprobe）—— 跳过 -L 执行检查"
+        fi
+      else
+        echo "  · 跳过「-L 真的执行一次」——宿主是 ${HOST:-未知}，包是 $TARGET（跨平台，跑不动是正常的）"
+      fi
+    fi
+    ;;
+  not-bundled)
+    if [ -n "$FFBINS" ]; then
+      bad "THIRD-PARTY-NOTICES 声称不含 ffmpeg，但包里真的找到了：$(printf '%s\n' "$FFBINS" | head -3 | sed "s#^$B/##" | tr '\n' ' ') —— 未声明的第三方二进制混进了包里"
+    else
+      ok "THIRD-PARTY-NOTICES 声称不含 ffmpeg，包里也确实没有"
+    fi
+    ;;
+esac
+
+echo
+echo "── 反向断言：GPL 组件**不许**在包里（yt-dlp / libav 系；ffmpeg / ffprobe 已改由上面那条双向核对以平台+许可证文本的完整精度把关，这里不再重复判断，避免同一件事有两处独立维护的判据）"
 # 这条是 D-17 §1 那整套论证的最后一道闸：论证再对，也架不住有人往包里塞一个 ffmpeg。
 #
 # ★ 匹配的是**二进制本身的文件名**，不是"名字里含 ffmpeg 的任何文件"。
@@ -262,14 +377,18 @@ echo "── 反向断言：GPL 组件**不许**在包里"
 #   所以：basename 必须**恰好**是工具名（可带 .exe），
 #   并且排掉源码/文本类后缀。真的 ffmpeg 二进制叫 `ffmpeg` 或 `ffmpeg.exe`，
 #   不叫 `ffmpeg.js`。
+#
+#   ★ 2026-08-09（ffmpeg-lgpl-manifest 之后）：ffmpeg / ffprobe 从这份"逮到就阻断"的
+#   清单里**拿掉了**——Linux/Windows 现在允许内置 LGPL 变体，"basename 是 ffmpeg"
+#   本身不再等于违规，需要看平台 + 许可证文本，那份精度已经在上面「THIRD-PARTY-NOTICES
+#   ↔ 包内容 双向核对」里做了，两处都判会变成两份独立维护的判据，删掉这里重复的半份。
+#   yt-dlp / youtube-dl / libav* 不受这条 ffmpeg 裁决影响，原样留在这份硬清单里。
 GPLHITS=$(find "$B" -type f \
-  \( -name 'ffmpeg' -o -name 'ffmpeg.exe' \
-  -o -name 'ffprobe' -o -name 'ffprobe.exe' \
-  -o -name 'yt-dlp' -o -name 'yt-dlp.exe' \
+  \( -name 'yt-dlp' -o -name 'yt-dlp.exe' \
   -o -name 'youtube-dl' -o -name 'youtube-dl.exe' \
   -o -name 'libav*.so*' -o -name 'libav*.dylib' -o -name 'avcodec*.dll' \) | head -5)
 if [ -z "$GPLHITS" ]; then
-  ok "包里没有 ffmpeg / ffprobe / yt-dlp（GPL-3.0-or-later）"
+  ok "包里没有 yt-dlp / libav 系（GPL-3.0-or-later，ffmpeg/ffprobe 见上面的双向核对）"
 else
   bad "包里发现 GPL 组件 —— 这会当场触发 ADR-002 的分发阻断："
   echo "$GPLHITS" | sed 's/^/        /'
