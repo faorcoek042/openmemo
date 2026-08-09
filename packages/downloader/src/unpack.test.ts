@@ -48,6 +48,7 @@ import {
   isMacArchiveJunk,
   lexicalEntryPath,
   lexicalLinkTarget,
+  splitAbsolute,
   unpackArchive,
   unpackTarGz,
 } from './unpack.js';
@@ -553,4 +554,92 @@ describe('解包进度：分母必须是真的，不许编', () => {
    * zip 那一条放在 `installer.test.ts` —— 手写 ZIP 的 `makeZip()` 在那边。
    * **不在这里再抄一份 zip 写入器**：同一个用途两份实现正是刚清理掉的那类债。
    */
+});
+
+
+/* ========== ★ T-63 —— 容器检查曾经在 Windows 上整个是空转的 ========== */
+
+/**
+ * ★ 这一组钉的是 `walk()` 的**输入分解**，不是它的文件系统行为。
+ *
+ * 事故形状（`[CI 实测 run 31304708529, win32-x64]`）：上面那四条逃逸用例
+ * 全部报「解包本该被拒，却成功返回了」。根因不在守卫的判据里，而在它的**根**：
+ *
+ * ```
+ * 'C:\Users\x\dest'.split(/[\\/]+/)  →  ['C:', 'Users', 'x', 'dest']
+ * path.win32.join('C:\', 'C:')       →  'C:\C:'            ← 盘符成了一段路径
+ * ```
+ *
+ * 于是解析出来的根是 `C:\C:\Users\…\dest` —— **一个不存在的路径**。
+ * 之后每一次 `lstat` 都落空，**没有任何东西会被认成软链**，
+ * 而 `real.startsWith(rootReal + sep)` 在那棵幻影树里对一切候选恒真。
+ *
+ * > **守卫没有变红，它变成了恒真。** 这是本仓「假绿灯家族」里最难看见的一种：
+ * > 检查还在跑、还在返回"通过"，只是它检查的那棵树不存在。
+ *
+ * `realpath` 是宿主绑定的，所以 `walk()` 的**文件系统**那一半在 Linux 上没法替
+ * Windows 跑；但**出问题的那一半是纯字符串**，所以它可以、也必须在这里被跑到。
+ */
+describe('★ T-63 splitAbsolute —— 绝对路径的根不许变成路径段', () => {
+  /**
+   * 逐字复刻 `walk()` 的分段循环，**去掉文件系统那部分**（幻影树里 lstat 必然落空，
+   * 等价于每一段都走 catch 分支）。这是"就地复刻旧判据"的同一套手法，
+   * 与本文件上面 `legacyVerdict` 那处一致：**先证明用例钉的不是零。**
+   */
+  function replayWalk(p: path.PlatformPath, root: string, rest: string): string {
+    let cur = root;
+    for (const seg of rest.split(/[\\/]+/)) {
+      if (seg === '' || seg === '.') continue;
+      if (seg === '..') {
+        cur = p.dirname(cur);
+        continue;
+      }
+      cur = p.join(cur, seg);
+    }
+    return cur;
+  }
+
+  const WIN = 'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\om-unpack-X\\dest';
+  const POSIX = '/tmp/om-unpack-X/dest';
+
+  it('win32：盘符是根，不是第一段', () => {
+    assert.deepEqual(splitAbsolute(WIN, path.win32), {
+      root: 'C:\\',
+      rest: 'Users\\RUNNER~1\\AppData\\Local\\Temp\\om-unpack-X\\dest',
+    });
+  });
+
+  it('posix：`/` 是根', () => {
+    assert.deepEqual(splitAbsolute(POSIX, path.posix), {
+      root: '/',
+      rest: 'tmp/om-unpack-X/dest',
+    });
+  });
+
+  it('win32 UNC：`\\\\server\\share\\` 整个是根', () => {
+    const { root, rest } = splitAbsolute('\\\\srv\\share\\a\\b', path.win32);
+    assert.equal(root, '\\\\srv\\share\\');
+    assert.equal(rest, 'a\\b');
+  });
+
+  it('★ 前提自检：旧写法（把整串当 rest）在 win32 上真的会走进幻影树', () => {
+    const phantom = replayWalk(path.win32, path.win32.parse(WIN).root, WIN);
+    assert.equal(phantom, 'C:\\C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\om-unpack-X\\dest');
+    assert.notEqual(phantom, WIN, '如果这两个相等，下面那条断言就钉不住任何东西');
+    // 幻影根一旦成立，包含性判断对**任何**候选都为真 —— 守卫从此恒绿
+    const anything = path.win32.join(phantom, 'OUTSIDE.txt');
+    assert.equal(anything.startsWith(phantom + path.win32.sep), true);
+  });
+
+  it('★ 修复后：win32 绝对路径解析回它自己（幻影根消失）', () => {
+    const { root, rest } = splitAbsolute(WIN, path.win32);
+    assert.equal(replayWalk(path.win32, root, rest), WIN);
+  });
+
+  it('posix 侧没有回归：解析同样回到它自己', () => {
+    const { root, rest } = splitAbsolute(POSIX, path.posix);
+    assert.equal(replayWalk(path.posix, root, rest), POSIX);
+    // 旧写法在 posix 上**恰好**也是对的（前导空段被跳过）—— 这正是它能藏这么久的原因
+    assert.equal(replayWalk(path.posix, path.posix.parse(POSIX).root, POSIX), POSIX);
+  });
 });

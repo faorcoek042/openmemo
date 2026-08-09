@@ -103,6 +103,51 @@ export async function readSidecar(partialPath: string): Promise<Sidecar | null> 
  */
 let sidecarTmpSeq = 0;
 
+/**
+ * `rename(tmp, target)`，**在 target 已存在且可能正被别人替换时也要成立**。
+ *
+ * ── ★ 为什么 rename 还需要重试（T-63，Windows 上实测出来的第二层）───────────────────
+ * 唯一 tmp 名解掉了 ENOENT（谁也搬不走谁的 tmp），但**替换同一个 target 本身**在
+ * Windows 上仍会互相撞。`rename` 到一个已存在的目标走的是
+ * `MoveFileEx(..., MOVEFILE_REPLACE_EXISTING)`，而当目标此刻正被另一次替换持有句柄时，
+ * Windows 返回 `ERROR_ACCESS_DENIED` → Node 报 **EPERM**：
+ *
+ * ```
+ * [CI 实测 run 31304708529, win32-x64]
+ *   EPERM: operation not permitted, rename '…\sha256-cafe.partial.json.8100.601.tmp'
+ *                                        -> '…\sha256-cafe.partial.json'
+ *   200 轮 × 3 并发 = 600 次调用 → 44 次失败（7.3%）
+ * ```
+ *
+ * **这不是测试造出来的并发**：`download.ts` 里有 `setInterval(() => void persist(), 2000)`，
+ * 而 `clearInterval` 不取消已经开始执行的那一次，收尾时的 `writeSidecar` 会和它重叠 ——
+ * 这正是上面那条 ENOENT 事故的同一个并发源。同一个源，第二种失败方式。
+ * 而后果也一样：`writeSidecar` 抛出去 → 用户点一次「下载模型」→ daemon 退出 exitCode=1。
+ *
+ * 处置：**有界重试**。要搬的是我们**自己**那份唯一命名的 tmp（没有别人会动它），
+ * 所以重试是幂等的；"谁最后落地谁生效"的语义也不变。
+ * 不按平台分支：这三个 errno 在 POSIX 上本来就不会因这条路径出现，
+ * 写成无条件的，**在哪个平台上写错都不会有后果**（而"记得在 Windows 上加重试"是一条
+ * 迟早会被违反的纪律）。
+ * 总等待上界 ≈ 8+16+32+64+128+256 ≈ 0.5s，仍失败就把原错误抛出去 —— 不吞。
+ */
+const REPLACE_RETRY_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
+async function renameReplacing(tmp: string, target: string): Promise<void> {
+  let delay = 8;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fs.rename(tmp, target);
+      return;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code ?? '';
+      if (attempt >= 6 || !REPLACE_RETRY_CODES.has(code)) throw e;
+      await new Promise((r) => setTimeout(r, delay));
+      delay *= 2;
+    }
+  }
+}
+
 export async function writeSidecar(partialPath: string, s: Sidecar): Promise<void> {
   const target = sidecarPath(partialPath);
   /*
@@ -131,7 +176,7 @@ export async function writeSidecar(partialPath: string, s: Sidecar): Promise<voi
   await fs.mkdir(path.dirname(target), { recursive: true });
   try {
     await fs.writeFile(tmp, JSON.stringify(s, null, 2), 'utf8');
-    await fs.rename(tmp, target);
+    await renameReplacing(tmp, target);
   } catch (e) {
     // 失败时别把半个 tmp 留在 blobs 目录里（那会让"目录里有什么"这件事变脏）
     await fs.rm(tmp, { force: true }).catch(() => undefined);

@@ -335,6 +335,44 @@ export function lexicalLinkTarget(
  */
 const MAX_LINK_HOPS = 40;
 
+/**
+ * Split an absolute path into its root and the remainder BELOW that root.
+ *
+ * ── ★ Why this exists (T-63, a real Windows-only hole in the guard below) ─────────────
+ * `walk()` takes a *relative* remainder and applies it segment by segment. Feeding it a
+ * full absolute path works on POSIX by luck — `'/a/b'.split(/[\\/]+/)` yields a leading
+ * empty segment, which the loop skips. On Windows it does not:
+ *
+ * ```
+ * 'C:\\Users\\x\\dest'.split(/[\\/]+/)   →  ['C:', 'Users', 'x', 'dest']
+ * path.win32.join('C:\\', 'C:')          →  'C:\\C:'          ← the drive became a segment
+ * ```
+ *
+ * `[本机实测]` replaying `walk()`'s segment loop under `path.win32`, the resolved root
+ * came out as `C:\C:\Users\…\dest` — **a path that does not exist**. Everything downstream
+ * then walks a phantom tree: every `lstat` misses, so nothing is ever seen as a symlink,
+ * and `real.startsWith(rootReal + sep)` is trivially true for every candidate.
+ *
+ * > **Consequence: the entire resolve-then-check half of the symlink-escape guard was
+ * > INERT on Windows.** The lexical half still ran, and the lexical half is exactly the
+ * > one this file exists to prove insufficient. `[CI 实测 run 31304708529, win32-x64]`
+ * > all four T-157 ① escape cases came back "解包本该被拒，却成功返回了".
+ *
+ * The same defect applied to an ABSOLUTE symlink target (`walk`'s recursive branch),
+ * so both call sites go through here.
+ *
+ * `p` is injectable so both platforms' behaviour is reachable from a test on any host —
+ * `realpath` is host-bound, but this decomposition is pure string work and is where the
+ * bug lived.
+ */
+export function splitAbsolute(
+  abs: string,
+  p: path.PlatformPath = path,
+): { root: string; rest: string } {
+  const root = p.parse(abs).root;
+  return { root, rest: abs.slice(root.length) };
+}
+
 async function walk(startReal: string, rest: string, hops: { n: number }): Promise<string> {
   let cur = startReal;
   // Split on BOTH separators: a tar written on Windows can embed `\`, and on a Windows
@@ -366,9 +404,14 @@ async function walk(startReal: string, rest: string, hops: { n: number }): Promi
       );
     }
     const target = await fs.readlink(next);
-    cur = path.isAbsolute(target)
-      ? await walk(path.parse(target).root, target, hops)
-      : await walk(cur, target, hops);
+    if (path.isAbsolute(target)) {
+      // ★ split the root OFF — see splitAbsolute: passing the whole absolute path makes
+      // the drive letter a path segment on Windows and lands us in a phantom tree.
+      const { root, rest: below } = splitAbsolute(target);
+      cur = await walk(root, below, hops);
+    } else {
+      cur = await walk(cur, target, hops);
+    }
   }
   return cur;
 }
@@ -399,7 +442,30 @@ async function resolveWithinRoot(
 /** Resolve the destination root itself with the same walker (see trap 3 above). */
 async function resolveRoot(destDir: string): Promise<string> {
   const abs = path.resolve(destDir);
-  return walk(path.parse(abs).root, abs, { n: 0 });
+  const { root, rest } = splitAbsolute(abs);
+  const real = await walk(root, rest, { n: 0 });
+  /*
+   * ★ 守卫，而不是纪律：**解析出来的根必须真的存在。**
+   *
+   * 两个调用点都在紧挨着的上一行 `fs.mkdir(destRoot, {recursive:true})`，
+   * 所以"根存在"是**这个函数被调用时的既定事实**，不是期望。
+   *
+   * 加这一条是因为上面那个 bug 的形状：解析器悄悄算出一个**不存在**的根
+   * （`C:\C:\Users\…`），然后所有包含性判断都在那棵幻影树里做，
+   * 而幻影树里一切都"在根内" —— **守卫没有变红，它变成了恒真**。
+   * 这类失败不会以"报错"的形式出现，只会以"再也拦不住任何东西"的形式出现。
+   * 现在它会当场炸，而不是安静地放行。
+   */
+  try {
+    await fs.lstat(real);
+  } catch {
+    throw new UnpackError(
+      `Resolved destination root does not exist: "${destDir}" → "${real}". ` +
+        `The containment guard cannot run against a path that is not there.`,
+      'CORRUPT',
+    );
+  }
+  return real;
 }
 
 /** Directory part of an archive entry name, in the archive's own (separator-agnostic) terms. */
