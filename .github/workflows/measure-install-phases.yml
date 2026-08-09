@@ -31,6 +31,11 @@ on:
         description: '从哪个 build-bundles run 取包（留空 = 自动找最近一个成功 run）'
         required: false
         type: string
+      largest:
+        description: '挑本平台最大的那个包（验"大包是不是也毫秒级"；Windows CUDA 约 678 MB）'
+        required: false
+        default: false
+        type: boolean
       legs:
         description: 'Which platform to run'
         type: choice
@@ -120,4 +125,4 @@ jobs:
         run: |
           node scripts/ci/measure-install-phases.mjs \
             --bundle "${{ steps.unpack.outputs.bundle_dir }}" \
-            --port 19741
+            --port 19741 ${{ inputs.largest && '--largest' || '' }}

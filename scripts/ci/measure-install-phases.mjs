@@ -40,6 +40,13 @@ const argOf = (name, dflt = null) => {
 const BUNDLE = argOf('--bundle');
 const REPO = argOf('--repo', process.cwd());
 const PORT = Number(argOf('--port', '19741'));
+/*
+ * `--largest`：挑本平台**最大**的那个包。
+ * 理由：`[CI 实测 run 31309026824]` 用 4.0 MB / 18 个文件的 cpu 包量到 5ms，
+ * 但 Windows 的 CUDA 包是 **677.9 MB** —— 170 倍。
+ * 「小包毫秒级」**不能**推出「大包也毫秒级」，要下结论就得把大的那个也量一遍。
+ */
+const LARGEST = args.includes('--largest');
 const BASE = `http://127.0.0.1:${PORT}`;
 const say = (s) => console.log(s);
 
@@ -138,9 +145,9 @@ try {
     say(JSON.stringify(cat).slice(0, 800));
     process.exit(1);
   }
-  // 选最小的那个：量的是阶段耗时，不是带宽
   packs.sort((a, b) => (a.totalSizeBytes ?? 0) - (b.totalSizeBytes ?? 0));
-  const pick = packs[0];
+  // 默认挑最小（量阶段耗时不是带宽）；`--largest` 挑最大（验"大包是不是也毫秒级"）
+  const pick = LARGEST ? packs[packs.length - 1] : packs[0];
   say(`   选中：${pick.id}（${((pick.totalSizeBytes ?? 0) / 1e6).toFixed(2)} MB，来自产品目录）`);
 
   t0 = Date.now();
