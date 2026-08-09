@@ -1253,3 +1253,82 @@ commit `5da68c8`。干净 worktree：`pnpm -r test` **1626 / 0**、`eslint` 0、
   与 GPU 那几处**仍然没有单独断言** `[未验证]` —— 我补的是**三态区分**那条关键路径，
   不是 7 个读点逐个。**别把"关键路径有腿了"读成"7 个都有腿了"。**
 - 新芯片档**没有在真浏览器里看过** `[未验证]`（组件测试是 jsdom）。
+
+---
+
+## 自检按钮挂在范畴上不可能自检的包上（用户报了两次）
+
+**已推：`d062194`（①门控）· `5d30251`（②③措辞与引导）。全仓 build 通过、`pnpm -r test` 0 fail。**
+
+### engine 取值全集与门控判据
+
+`[实测数过]` `vendor/manifests` 25 个包**只用了 4 种** engine：
+
+| engine | 包数 | backend |
+|---|---|---|
+| `sqlite-ext` | 11 | 全 cpu |
+| `whisper.cpp` | 7 | cpu 3 / vulkan 2 / cuda 1 / metal 1 |
+| `yt-dlp` | 4 | 全 cpu |
+| `ffmpeg` | 3 | 全 cpu |
+
+而 schema（`packages/shared/src/schemas.ts:420`）允许 **6** 种：多 `llama.cpp` 与
+`sherpa-onnx` —— **今天零个包在用**。协调者点名问的 `sherpa-onnx`：它确实是 ASR 引擎，
+但**自检链路只认 `whisper-cli`**，所以判据不是"是不是 ASR"，是
+**"今天这条自检链路跑不跑得动它"** —— 于是它填 `false`，并在注释里写明
+"等它真被支持时再翻成 true"。
+
+判据落成 `Record<Engine, boolean>` **穷尽表**而不是 `=== 'whisper.cpp'`：
+新加第 7 种 engine 会在**编译期**逼下一个人表态，而不是默默继承
+"whisper 才行"的隐含假设。**每一格都写了理由。**
+
+### 三处各改成什么
+
+① `BackendPackCard.tsx` —— `SELF_TEST_APPLIES[pack.engine]` 为假就**不渲染**按钮
+   （不是渲染完再 blocked）。4 条用例 + 2 次突变：
+   门控恒真（回到旧行为）→ 3 条红；门控恒假（"全都不渲染"这种偷懒变绿法）
+   → 反向那条 + 既有 T-165 一条红。
+
+② `setup.ts` 措辞 —— 主语从 `requestedPackId` 换成**行为方**：
+   「不会用别的包里的 whisper-cli 去跑，再把结果记到 <包> 这张卡片上（那是发明证据）。」
+   whisper 装在别处时再补一句**它在哪张卡片上**。
+
+③ `setup.ts` remediation —— whisper 已装、只是本包没有该二进制时给 `null`
+   （类型 `Remediation | null`，`null` 的含义写进 doc：**没有任何页面能解决它**），
+   409 那层 `?? undefined` 于是不下发字段、前端不渲染死按钮。
+   **反向那条钉死**：真的一个引擎包都没装时 `install_backend` 必须还在 ——
+   否则"把 remediation 一律抹成 null"也能变绿。
+
+**ADR-003 决策 3 一个字没削**：第一条用例就钉着 `resolved.whisperCli` 仍是 `null`、
+仍然只报 blocked。
+
+### 两条我自己的教训（都被反向用例照出来）
+
+1. **假绿**：第一版按记忆写「运行自检」，而按钮上其实只有「自检」，
+   三条否定断言**全部空转通过**。是反向那条（"whisper.cpp 必须还有"）把它照出来的。
+   已改用 `data-testid`。**否定断言必须配一条正向的，否则它测的是"我拼错了"。**
+2. **夹具比现实友善**（第三次了）：第一版没摆 ASR 模型，`missing` 里多出 `asr-model`，
+   remediation 走的是另一条分支 —— **根本没测到本轮改的那一段**。
+   用户实际那次消息里只有「缺少：whisper-cli」，说明他模型是装好的。
+
+### 不是我的两件（报给协调者，我没动）
+
+- **`packages/runtime/src/selfcheck.ts` 的 `probeInstalledPacks`**：不是我的，
+  我从没碰过 `packages/runtime/`。**现在已经好了** —— 定义在 :780，全仓 build 通过。
+- **`check:orphans` 71 vs 基线 70**，新增的是
+  `packages/runtime/src/selfTest.ts :: estimateDuration`。它自 `4018e23`（08-02 骨架）
+  就存在，是**调用方最近被摘掉**才变孤儿的；只剩 `index.ts:170` 一句再导出。
+  **不是我的两个提交**（都没碰 `packages/runtime`）。我没有登记进基线 ——
+  不知道为什么没调用方就登记，正是那份名单自己警告的事。
+
+### 一次事故（记下来给下一个人）
+
+写 ②③ 期间**另一路 rebase 时 `git stash -u`，把我未提交的 4 个文件连同未跟踪的
+新测试文件一起卷走了**。`git status` 一片干净、文件从磁盘上消失。
+恢复办法（**没有动那个 stash，别人的 WIP 还在里面**）：
+先确认 `stash@{0}^1` 就是当前 HEAD（无漂移），再
+`git diff stash@{0}^1 stash@{0} -- <只挑自己的路径> | git apply`，
+未跟踪的那个从 `git show stash@{0}^3:<path>` 取回。
+**教训：多路在途时，未提交的活随时会被别人的 rebase 卷走 —— 早提交。**
+另外提交那一刻并发 lane 刚 `git add` 了 `scripts/build-bundle.mjs`，
+被我 `git add` 后的 `commit` 一起带进去了；已 `reset --soft` + `restore --staged` 摘掉，
+改用 §12 的 `git commit -- <pathspec>` 形式。**`git status` 与 `git commit` 之间有窗口。**
