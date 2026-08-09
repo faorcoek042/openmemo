@@ -84,10 +84,7 @@ function run(bin, argv, opts = {}) {
  * §1：从源码读白名单，不抄文档 —— 与 Linux 那一轮同一条纪律。
  */
 async function readUploadExtensions() {
-  const src = await readFile(
-    join(REPO_ROOT, 'packages/shared/src/media-extensions.ts'),
-    'utf8',
-  );
+  const src = await readFile(join(REPO_ROOT, 'packages/shared/src/media-extensions.ts'), 'utf8');
   const m = /export const UPLOAD_MEDIA_EXTENSIONS[^[]*\[([\s\S]*?)\]\);/.exec(src);
   if (m?.[1] === undefined) {
     throw new Error('没能在 media-extensions.ts 里找到 UPLOAD_MEDIA_EXTENSIONS —— 拒绝伪造清单');
@@ -108,59 +105,169 @@ const RECIPES = {
   '.aac': (i, o) => ['-f', 'lavfi', '-i', 'sine=frequency=440:duration=2', '-c:a', 'aac', o],
   '.wma': (i, o) => ['-f', 'lavfi', '-i', 'sine=frequency=440:duration=2', '-c:a', 'wmav2', o],
   '.mp4': (i, o) => [
-    '-f', 'lavfi', '-i', 'testsrc=size=320x240:duration=2:rate=15',
-    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
-    '-c:v', 'libx264', '-c:a', 'aac', o,
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc=size=320x240:duration=2:rate=15',
+    '-f',
+    'lavfi',
+    '-i',
+    'sine=frequency=440:duration=2',
+    '-c:v',
+    'libx264',
+    '-c:a',
+    'aac',
+    o,
   ],
   '.m4v': (i, o) => [
-    '-f', 'lavfi', '-i', 'testsrc=size=320x240:duration=2:rate=15',
-    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
-    '-c:v', 'libx264', '-c:a', 'aac', o,
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc=size=320x240:duration=2:rate=15',
+    '-f',
+    'lavfi',
+    '-i',
+    'sine=frequency=440:duration=2',
+    '-c:v',
+    'libx264',
+    '-c:a',
+    'aac',
+    o,
   ],
   '.mkv': (i, o) => [
-    '-f', 'lavfi', '-i', 'testsrc=size=320x240:duration=2:rate=15',
-    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
-    '-c:v', 'libx264', '-c:a', 'aac', o,
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc=size=320x240:duration=2:rate=15',
+    '-f',
+    'lavfi',
+    '-i',
+    'sine=frequency=440:duration=2',
+    '-c:v',
+    'libx264',
+    '-c:a',
+    'aac',
+    o,
   ],
   '.mov': (i, o) => [
-    '-f', 'lavfi', '-i', 'testsrc=size=320x240:duration=2:rate=15',
-    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
-    '-c:v', 'libx264', '-c:a', 'aac', o,
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc=size=320x240:duration=2:rate=15',
+    '-f',
+    'lavfi',
+    '-i',
+    'sine=frequency=440:duration=2',
+    '-c:v',
+    'libx264',
+    '-c:a',
+    'aac',
+    o,
   ],
   '.avi': (i, o) => [
-    '-f', 'lavfi', '-i', 'testsrc=size=320x240:duration=2:rate=15',
-    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
-    '-c:v', 'libxvid', '-c:a', 'libmp3lame', o,
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc=size=320x240:duration=2:rate=15',
+    '-f',
+    'lavfi',
+    '-i',
+    'sine=frequency=440:duration=2',
+    '-c:v',
+    'libxvid',
+    '-c:a',
+    'libmp3lame',
+    o,
   ],
   '.webm': (i, o) => [
-    '-f', 'lavfi', '-i', 'testsrc=size=320x240:duration=2:rate=15',
-    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
-    '-c:v', 'libvpx-vp9', '-c:a', 'libopus', o,
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc=size=320x240:duration=2:rate=15',
+    '-f',
+    'lavfi',
+    '-i',
+    'sine=frequency=440:duration=2',
+    '-c:v',
+    'libvpx-vp9',
+    '-c:a',
+    'libopus',
+    o,
   ],
   '.mpeg': (i, o) => [
-    '-f', 'lavfi', '-i', 'testsrc=size=320x240:duration=2:rate=25',
-    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
-    '-c:v', 'mpeg1video', '-c:a', 'mp2', o,
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc=size=320x240:duration=2:rate=25',
+    '-f',
+    'lavfi',
+    '-i',
+    'sine=frequency=440:duration=2',
+    '-c:v',
+    'mpeg1video',
+    '-c:a',
+    'mp2',
+    o,
   ],
   '.mpg': (i, o) => [
-    '-f', 'lavfi', '-i', 'testsrc=size=320x240:duration=2:rate=25',
-    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
-    '-c:v', 'mpeg2video', '-c:a', 'mp2', o,
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc=size=320x240:duration=2:rate=25',
+    '-f',
+    'lavfi',
+    '-i',
+    'sine=frequency=440:duration=2',
+    '-c:v',
+    'mpeg2video',
+    '-c:a',
+    'mp2',
+    o,
   ],
   '.flv': (i, o) => [
-    '-f', 'lavfi', '-i', 'testsrc=size=320x240:duration=2:rate=15',
-    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
-    '-c:v', 'flv', '-c:a', 'libmp3lame', o,
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc=size=320x240:duration=2:rate=15',
+    '-f',
+    'lavfi',
+    '-i',
+    'sine=frequency=440:duration=2',
+    '-c:v',
+    'flv',
+    '-c:a',
+    'libmp3lame',
+    o,
   ],
   '.wmv': (i, o) => [
-    '-f', 'lavfi', '-i', 'testsrc=size=320x240:duration=2:rate=15',
-    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
-    '-c:v', 'wmv2', '-c:a', 'wmav2', o,
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc=size=320x240:duration=2:rate=15',
+    '-f',
+    'lavfi',
+    '-i',
+    'sine=frequency=440:duration=2',
+    '-c:v',
+    'wmv2',
+    '-c:a',
+    'wmav2',
+    o,
   ],
   '.ts': (i, o) => [
-    '-f', 'lavfi', '-i', 'testsrc=size=320x240:duration=2:rate=15',
-    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
-    '-c:v', 'libx264', '-c:a', 'aac', o,
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc=size=320x240:duration=2:rate=15',
+    '-f',
+    'lavfi',
+    '-i',
+    'sine=frequency=440:duration=2',
+    '-c:v',
+    'libx264',
+    '-c:a',
+    'aac',
+    o,
   ],
 };
 
@@ -177,12 +284,28 @@ async function generateSample(ext, outPath) {
 async function normalize(input, output, opts = {}) {
   const protocols = opts.remote === true ? REMOTE_PROTOCOLS : LOCAL_PROTOCOLS;
   const argv = [
-    '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
-    '-protocol_whitelist', protocols,
-    '-progress', 'pipe:1',
-    '-i', input,
-    '-vn', '-map', '0:a:0',
-    '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-f', 'wav',
+    '-nostdin',
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-y',
+    '-protocol_whitelist',
+    protocols,
+    '-progress',
+    'pipe:1',
+    '-i',
+    input,
+    '-vn',
+    '-map',
+    '0:a:0',
+    '-ac',
+    '1',
+    '-ar',
+    '16000',
+    '-c:a',
+    'pcm_s16le',
+    '-f',
+    'wav',
     output,
   ];
   return run(LGPL_FFMPEG, argv);
@@ -190,11 +313,27 @@ async function normalize(input, output, opts = {}) {
 
 async function slice(input, output) {
   const argv = [
-    '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
-    '-protocol_whitelist', LOCAL_PROTOCOLS,
-    '-ss', '0.000', '-t', '1.000',
-    '-i', input,
-    '-c:a', 'pcm_s16le', '-ar', '16000', '-ac', '1', '-f', 'wav',
+    '-nostdin',
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-y',
+    '-protocol_whitelist',
+    LOCAL_PROTOCOLS,
+    '-ss',
+    '0.000',
+    '-t',
+    '1.000',
+    '-i',
+    input,
+    '-c:a',
+    'pcm_s16le',
+    '-ar',
+    '16000',
+    '-ac',
+    '1',
+    '-f',
+    'wav',
     output,
   ];
   return run(LGPL_FFMPEG, argv);
@@ -203,18 +342,32 @@ async function slice(input, output) {
 async function probe(input, opts = {}) {
   const protocols = opts.remote === true ? REMOTE_PROTOCOLS : LOCAL_PROTOCOLS;
   const argv = [
-    '-v', 'error', '-hide_banner',
-    '-protocol_whitelist', protocols,
-    '-print_format', 'json', '-show_format', '-show_streams',
-    '-i', input,
+    '-v',
+    'error',
+    '-hide_banner',
+    '-protocol_whitelist',
+    protocols,
+    '-print_format',
+    'json',
+    '-show_format',
+    '-show_streams',
+    '-i',
+    input,
   ];
   return run(LGPL_FFPROBE, argv);
 }
 
 async function volumeDetect(wavPath) {
   const argv = [
-    '-nostdin', '-hide_banner', '-i', wavPath,
-    '-af', 'volumedetect', '-f', 'null', '-',
+    '-nostdin',
+    '-hide_banner',
+    '-i',
+    wavPath,
+    '-af',
+    'volumedetect',
+    '-f',
+    'null',
+    '-',
   ];
   const r = await run(LGPL_FFMPEG, argv);
   const m = /mean_volume:\s*(-?[\d.]+|-inf)\s*dB/.exec(r.stderr);
@@ -277,14 +430,16 @@ async function main() {
   } catch (err) {
     sliceResult.error = String(err?.message ?? err).slice(0, 300);
   }
-  console.log(`sliceWav (-ss/-t): ${sliceResult.ok ? 'pass' : 'FAIL'} meanDb=${sliceResult.meanDb}`);
+  console.log(
+    `sliceWav (-ss/-t): ${sliceResult.ok ? 'pass' : 'FAIL'} meanDb=${sliceResult.meanDb}`,
+  );
 
   // ffprobe 本地 —— 对已生成的每个样本跑一遍
   const probeResults = [];
   for (const ext of exts) {
     const samplePath = join(WORKDIR, 'samples', `s${ext}`);
     const r = await probe(samplePath);
-    let ok = false;
+    let ok;
     let info = null;
     try {
       const j = JSON.parse(r.stdout);
@@ -324,12 +479,15 @@ async function main() {
 
   // 安全回归：明文 http:// 必须被拒
   let httpRejected = false;
-  let httpRejectError = null;
+  let httpRejectError;
   try {
     const httpUrl = REMOTE_URL.replace(/^https:/, 'http:');
     const rejectOut = join(WORKDIR, 'out', 'should-not-exist.wav');
     const r = await normalize(httpUrl, rejectOut, { remote: true });
-    const fileExists = await stat(rejectOut).then(() => true, () => false);
+    const fileExists = await stat(rejectOut).then(
+      () => true,
+      () => false,
+    );
     httpRejected = r.code !== 0 && !fileExists;
     httpRejectError = r.stderr.slice(0, 300);
   } catch (err) {
@@ -340,7 +498,12 @@ async function main() {
   const allDecodePass = results.every((r) => r.normalize === 'pass');
   const allProbePass = probeResults.every((p) => p.ok);
   const overallOk =
-    allDecodePass && allProbePass && sliceResult.ok && remoteProbe.ok && remoteNormalize.ok && httpRejected;
+    allDecodePass &&
+    allProbePass &&
+    sliceResult.ok &&
+    remoteProbe.ok &&
+    remoteNormalize.ok &&
+    httpRejected;
 
   const summary = {
     platform: 'win32-x64',
@@ -357,7 +520,10 @@ async function main() {
     totalCount: results.length,
     overallOk,
   };
-  await writeFile(join(WORKDIR, 'ffmpeg-lgpl-verify-result.json'), JSON.stringify(summary, null, 2));
+  await writeFile(
+    join(WORKDIR, 'ffmpeg-lgpl-verify-result.json'),
+    JSON.stringify(summary, null, 2),
+  );
 
   // GitHub Step Summary（若在 CI 里跑）
   const md = [
@@ -367,9 +533,7 @@ async function main() {
     ``,
     `| 扩展名 | 造样本 | 解码 | mean_volume dB |`,
     `| --- | --- | --- | --- |`,
-    ...results.map(
-      (r) => `| ${r.ext} | ${r.sample} | ${r.normalize} | ${r.meanDb ?? 'n/a'} |`,
-    ),
+    ...results.map((r) => `| ${r.ext} | ${r.sample} | ${r.normalize} | ${r.meanDb ?? 'n/a'} |`),
     ``,
     `- sliceWav (-ss/-t): **${sliceResult.ok ? 'pass' : 'FAIL'}**`,
     `- ffprobe local: **${probeResults.filter((p) => p.ok).length}/${probeResults.length}**`,
