@@ -888,10 +888,28 @@ try {
    *   修法方向(**不由本腿决定**):`formatPercent` 给出"未知"的表达(如 `—`),
    *   或解包阶段照常推进比例。
    * ───────────────────────────────────────────────────────────────────────── */
-  const KNOWN_UI_LIES = ['unpacking-percent-resets-to-zero'];
+  /*
+   * ⚠️ **这条登记项在 2026-08-09 被实测订正过一次，过程本身值得留着看。**
+   *
+   * 我最初按读码登记的是「解包期间百分比**掉回 0%**」（依据：`formatPercent` 把
+   * `null`/`NaN` 一律渲染成 0%）。`[CI 实测 run 31314976975, win32-x64]`
+   * 真跑出来是 **`100%`** —— 不是 0%。
+   *
+   * ⇒ 真实形态是「**解包期间百分比停在下载结束时的 100%**」：
+   *   它不刷新，而不是它归零。**对用户仍然是假话**（正在解压，却显示 100%），
+   *   但**和我登记的那句话不是同一句**。
+   *
+   * ★ 这正是钉住集合该起的作用：它**当场变红**，逼我回来把登记改成实测的样子，
+   *   而不是让一条**读码读出来的、听起来很对的**描述长期占着位置。
+   *   （如果我当初把它写成一条断言并让它红，红的会是产品；而实际上错的是我的描述。）
+   *
+   * 判据统一成「解包期间百分比是不是一个**不随解压推进而变化的定值**」，
+   * 0% 与 100% 都算命中 —— 两者是同一个成因（解包阶段字节计数不再更新）的两种表现。
+   */
+  const KNOWN_UI_LIES = ['unpacking-percent-frozen'];
   const observedLies = [];
-  if (unpackingPercentText !== null && /(^|\D)0\s*%/.test(unpackingPercentText)) {
-    observedLies.push('unpacking-percent-resets-to-zero');
+  if (unpackingPercentText !== null && /(^|\D)(0|100)(\.0+)?\s*%/.test(unpackingPercentText)) {
+    observedLies.push('unpacking-percent-frozen');
   }
   say(`   解包期间百分比文本：${unpackingPercentText ?? '(没采到解压那一段)'}`);
 
