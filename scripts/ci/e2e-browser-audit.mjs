@@ -752,6 +752,147 @@ try {
    *   由此产生的未捕获拒绝是**我造的**，把它算进产品的账上就是一条假缺陷。
    *   （第一版没分段，B4 当场被自己的注入弄红了。）
    */
+  /* ─────────────────────────────────────────────────────────────────────────
+   * B6 ★ 任务中心卡片上**依次出现的那行中文**
+   *
+   * ## 为什么这条必须存在
+   *
+   * 「正在安装」那组文案缺陷被修好了（中性标题、补 `progress.unpacking`、
+   * 三处兜底收敛进 `lib/format/stepLabel.ts`）—— **但没有任何一条腿在守它**。
+   * 而这一整轮的主线教训正是「CI 结构上看不见」：修完没有断言，
+   * 等于亲手又造了一个盲区。
+   *
+   * ## 判据（Manager 2026-08-09 原文）
+   *
+   * > **判据是客户端最终显示的字，不是发出了哪个事件。**
+   *
+   * 所以这里**只读 DOM 文本**，一个 `/api/events` 都不看。
+   * 三条硬性质：
+   *   ① 出现过的阶段文案必须来自那张中文表（`EXPECTED_ZH`）；
+   *   ② **任一时刻不许出现 ASCII-only 的 step token**（`unpacking` 这种机器枚举值）；
+   *   ③ **不许从后段回退到「排队中」**（那是在说一件假的事：进度倒回起点）。
+   *
+   * ⚠️ 采样式观测**只能证伪不能证实**：没采到某一段不代表它没出现过
+   * （安装那几步实测是毫秒级）。所以下面**不断言"五个都出现"** ——
+   * 断言"出现过的都合法、且没有说谎的那两种形态"。把"必须五个都出现"写死
+   * 会造出一条随机红的断言，而随机红的断言等于没人信的断言。
+   * ───────────────────────────────────────────────────────────────────────── */
+  const EXPECTED_ZH = ['正在选择下载源', '下载中', '正在校验完整性', '正在解压', '正在安装'];
+  /** 阶段倒退的那个词 —— 出现在后段之后就是谎话。 */
+  const REGRESS_ZH = '排队中';
+
+  await page.goto(`${BASE}/models`, { waitUntil: 'networkidle', timeout: 30_000 });
+  await page.waitForTimeout(800);
+
+  // 起一个真实安装：走产品自己的 HTTP 路径，但**观测只看界面**。
+  const packToInstall = await page.evaluate(async () => {
+    const r = await fetch('/api/backends/catalog');
+    const b = await r.json();
+    const p = (b.packs ?? []).find((x) => x.applicable === true);
+    if (!p) return null;
+    await fetch('/api/backends/install', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: p.id }),
+    });
+    return p.id;
+  });
+  say(`   起了一个真实安装：${packToInstall ?? '(本机没有适用包)'}`);
+
+  /** 界面上出现过的阶段文本，按首次出现排序。 */
+  const seenLabels = [];
+  let sawAsciiToken = null;
+  let sawRegressAfterLate = null;
+  let toastSaidInstallWhileDownloading = null;
+
+  if (packToInstall !== null) {
+    await page.goto(`${BASE}/tasks`, { waitUntil: 'networkidle', timeout: 30_000 });
+    for (let i = 0; i < 150; i++) {
+      const snap = await page.evaluate(() => ({
+        body: document.body.innerText.replace(/\s+/g, ' '),
+      }));
+      for (const zh of ['正在选择下载源', '下载中', '正在校验完整性', '正在解压', '正在安装']) {
+        if (snap.body.includes(zh) && !seenLabels.includes(zh)) seenLabels.push(zh);
+      }
+      // ② ASCII-only 的 step token：机器枚举值漏到界面上
+      for (const tok of ['resolving', 'downloading', 'verifying', 'unpacking', 'installing']) {
+        if (new RegExp(`(^|[^a-z])${tok}([^a-z]|$)`).test(snap.body)) sawAsciiToken ??= tok;
+      }
+      // ③ 已经走到后段之后又出现「排队中」= 阶段倒退
+      const late = seenLabels.some((l) => l !== '正在选择下载源' && l !== '下载中');
+      if (late && snap.body.includes(REGRESS_ZH)) sawRegressAfterLate ??= seenLabels.join(' → ');
+      // ④ Toast 标题在 downloading 期间不许出现「安装」
+      if (snap.body.includes('下载中') && !seenLabels.includes('正在安装')) {
+        const toast = await page.evaluate(() => {
+          const el = document.querySelector('[data-testid="job-toaster"], [role="status"]');
+          return el ? (el.textContent || '').replace(/\s+/g, ' ') : '';
+        });
+        if (toast.includes('安装')) toastSaidInstallWhileDownloading ??= toast.slice(0, 80);
+      }
+      const done = await page.evaluate(async () => {
+        const r = await fetch('/api/backends/installed');
+        return ((await r.json()).packs ?? []).length > 0;
+      });
+      if (done) break;
+      await page.waitForTimeout(200);
+    }
+  }
+  say(`   界面上依次出现过的阶段文案：${JSON.stringify(seenLabels)}`);
+  say(`   ASCII step token=${sawAsciiToken ?? '(无)'}  后段回退=${sawRegressAfterLate ?? '(无)'}`);
+
+  await check('B6 任务中心卡片上的阶段文案必须是中文、且不许阶段倒退', () => {
+    ok(packToInstall !== null, '本机没有适用的后端包，这条无从谈起（不是通过）');
+    ok(seenLabels.length > 0, '整个安装过程中界面上一个阶段文案都没出现过');
+    const illegal = seenLabels.filter((l) => !EXPECTED_ZH.includes(l));
+    ok(illegal.length === 0, `出现了不在预期表里的阶段文案：${illegal.join('、')}`);
+    ok(
+      sawAsciiToken === null,
+      `界面上出现了 ASCII step token「${sawAsciiToken}」—— 机器枚举值漏给用户看了`,
+    );
+    ok(
+      sawRegressAfterLate === null,
+      `已经走到后段之后又显示「${REGRESS_ZH}」—— 阶段倒退，是在说一件假的事（序列：${sawRegressAfterLate}）`,
+    );
+    return `依次出现：${seenLabels.join(' → ')}`;
+  });
+
+  await check('B6b 下载期间 Toast 标题不许出现「安装」二字', () => {
+    ok(packToInstall !== null, '没起成安装，这条无从谈起（不是通过）');
+    ok(
+      toastSaidInstallWhileDownloading === null,
+      `还在下载时 Toast 就说「安装」了：${toastSaidInstallWhileDownloading}`,
+    );
+    return '下载期间标题是中性的';
+  });
+
+  /* ─────────────────────────────────────────────────────────────────────────
+   * B7 ★ 三条 llm 引导动作：**落地页上要真的有那个控件**
+   *
+   * 上一路把它们接到了 `/models?tab=llm` 而**不是** `/settings` ——
+   * 那个动作名字叫 `openSettings`、参数写着 `section:'llm'`，
+   * 但控件全在 `ModelsPage` 上；**按名字接线就会重造一个死按钮**。
+   *
+   * 所以判据不是"跳转发生了"，是**"落到的那个页面上真的有他要用的控件"**。
+   * ───────────────────────────────────────────────────────────────────────── */
+  await page.goto(`${BASE}/models?tab=llm`, { waitUntil: 'networkidle', timeout: 30_000 });
+  await page.waitForTimeout(1000);
+  const llmLanding = await page.evaluate(() => ({
+    hasProviderPicker: !!document.querySelector(
+      '[data-testid*="llm"], select, [data-testid*="provider"]',
+    ),
+    text: document.body.innerText.replace(/\s+/g, ' ').slice(0, 400),
+  }));
+  say(`   /models?tab=llm 上有 llm 相关控件=${llmLanding.hasProviderPicker}`);
+
+  await check('B7 llm 引导落地页上必须真的有可操作的控件（不是只发生了跳转）', () => {
+    ok(
+      llmLanding.hasProviderPicker === true,
+      '落地页上找不到任何 llm 相关控件 —— 引导把用户送到了一个他做不了事的地方',
+      [llmLanding.text.slice(0, 200)],
+    );
+    return '落地页有控件';
+  });
+
   await check('B4 正常路径上没有未捕获的前端异常', () => {
     ok(
       normalPhaseErrors.length === 0,
