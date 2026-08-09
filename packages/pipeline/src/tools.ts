@@ -19,6 +19,7 @@ import { homedir } from 'node:os';
 import { delimiter, join, relative } from 'node:path';
 
 import { isGgmlModelFile, unpackDirName } from '@openmemo/downloader';
+import { bundledRuntimeDir } from '@openmemo/runtime';
 import { BACKENDS, type Backend } from '@openmemo/shared';
 
 export interface ToolPaths {
@@ -900,9 +901,16 @@ export async function discoverTools(
    * 因为它只在前两级都落空时才出手，这条改动**结构上不可能让既有安装变差**：
    * 任何已经能解析到 whisper-cli 的机器，走的还是原来那条路。
    */
-  const bundledDir = process.env['OPENMEMO_BUNDLED_WHISPER_DIR'];
+  /*
+   * ⚠️ 这里原来只读 `OPENMEMO_BUNDLED_WHISPER_DIR`。那**只覆盖"经启动器起"这一条路**：
+   * `scripts/selfcheck.mjs` 直接调 `discoverTools()`、CI 直接起 daemon，都看不见包内那份。
+   * 与 `vendor/manifests` 那次是同一个病：**能不能用不该取决于你从哪儿启动。**
+   * 改用 `bundledRuntimeDir()`（环境变量优先，取不到就从模块位置向上找），
+   * 三个消费者共用同一份解析规则。
+   */
   const fromBundle = async (name: string): Promise<string | null> => {
-    if (!bundledDir) return null;
+    const bundledDir = bundledRuntimeDir();
+    if (bundledDir === null) return null;
     const candidate = join(bundledDir, exe(name));
     return (await isExecutable(candidate)) ? candidate : null;
   };

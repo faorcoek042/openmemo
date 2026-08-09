@@ -232,3 +232,6 @@ export async function detectHardware(options: DetectHardwareOptions): Promise<Ha
     probedBackends,
   });
 }
+
+/* 包内 CPU 基线运行时的定位 —— pipeline 与自检共用这一份（见该文件头）。 */
+export { bundledRuntimeDir, isBundledRuntimePath } from './bundledRuntime.js';

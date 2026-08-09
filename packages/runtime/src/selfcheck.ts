@@ -31,6 +31,7 @@
  * 检查项列表在任何情况下都是同一份、同一个顺序 —— 否则"两边一致"就无从比对。
  */
 
+import { isBundledRuntimePath } from './bundledRuntime.js';
 import { access, constants, open, readdir, readlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 
@@ -975,6 +976,28 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         labelZh,
         status: 'ok',
         detail: path as string,
+        required,
+        remediation: null,
+      });
+    } else if (isBundledRuntimePath(path as string)) {
+      /*
+       * ★ 随预编译包出厂的那一份（包内 `runtime/probe/`）。
+       *
+       * 它**不在 store 里**，所以此前落到了下面那个分支，被标成
+       * 「来自系统 PATH，非本产品安装 —— 用户机器上不一定有」——
+       * **每一句都是反的**：它就是本产品装的，它随包分发，用户机器上一定有。
+       * 把自家发的东西说成借来的，会让人去"修"一个不存在的问题。
+       *
+       * 状态是 `ok` 而不是 `warn`：warn 那一档的语义是"能跑但不可分发"，
+       * 而这一份恰恰是可分发的 —— 它就是我们发出去的。
+       */
+      add({
+        layer: 'tools',
+        id,
+        label,
+        labelZh,
+        status: 'ok',
+        detail: `${path as string}（随预编译包出厂）`,
         required,
         remediation: null,
       });

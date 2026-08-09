@@ -57,7 +57,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, existsSync } from 'node:fs';
 import {
   access,
   chmod,
@@ -949,6 +949,41 @@ async function assembleProbeRuntime() {
  *   包内   `app/daemon/dist/http/rest`  上溯 5 层 = 包根   → `vendor/manifests` ✔
  * 一条规则同时对两种布局成立，这才是它该有的样子。
  */
+/**
+ * 把 `vendor/whisper.cpp/samples/jfk.wav` **按原路径原名**打进包。
+ *
+ * ## 为什么零代码改动就能被找到
+ *
+ * `apps/daemon/src/runtime/setup.ts` 的 `repoSampleAudio()` 从模块位置上溯 4 层：
+ *   仓库   `apps/daemon/{src,dist}/runtime` → 仓库根 → `vendor/whisper.cpp/samples/jfk.wav`
+ *   包内   `app/daemon/dist/runtime`        → **包根** → 同一条相对路径
+ * 也就是说**代码早就在找对地方了，只是那个位置一直是空的** ——
+ * 自检的三条候选（环境变量 / `<dataDir>/selftest/jfk.wav` / 上面这条）在包里全部落空，
+ * 所以 `audio: null` **对每个包用户都是必然**，不是偶发。
+ *
+ * ## ⚠️ 必须原名 `jfk.wav`
+ *
+ * 自检靠**这个文件名**才用内置的时长与参考文本去核对识别结果。
+ * 改名会让它退回"只知道跑完了、不知道跑对没有"。
+ *
+ * 344 KB，MIT（随 whisper.cpp submodule 一起进来的官方样本）。
+ */
+async function assembleSampleAudio() {
+  hdr('④-quater 自检样本音频 vendor/whisper.cpp/samples/jfk.wav');
+  const src = join(REPO_ROOT, 'vendor', 'whisper.cpp', 'samples', 'jfk.wav');
+  if (!existsSync(src)) {
+    die(
+      `找不到 ${src} —— submodule 没 checkout？\n` +
+        `   缺了它，**每一个包用户**的自检都会停在「没有测试音频」（audio: null），\n` +
+        `   而那是必然发生、不是偶发的。**不允许降级放行。**`,
+    );
+  }
+  const dst = join(STAGE, 'vendor', 'whisper.cpp', 'samples');
+  await mkdir(dst, { recursive: true });
+  await cp(src, join(dst, 'jfk.wav'));
+  say(`   ✔ vendor/whisper.cpp/samples/jfk.wav（${mib(await dirSize(dst))}，原名不可改）`);
+}
+
 async function assembleManifests() {
   hdr('④-ter 组件目录 vendor/manifests（缺了它用户的组件页是空的）');
   const src = join(REPO_ROOT, 'vendor', 'manifests');
@@ -1428,6 +1463,7 @@ async function main() {
   await assembleExtensions();
   await assembleProbeRuntime();
   await assembleManifests();
+  await assembleSampleAudio();
   await writeLauncher();
   await writeNotices();
 

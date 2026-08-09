@@ -39,6 +39,7 @@ import { ArtifactStore } from '@openmemo/downloader';
  * **同一个问题只准有一个回答的人。**
  */
 import { findInBackendPacks, resolveBackendTool } from '@openmemo/pipeline';
+import { bundledRuntimeDir } from '@openmemo/runtime';
 
 /*
  * ★ 刻意复用 `manifests.ts` 里那一个，而不是在这里再写一份模块相对解析：
@@ -1008,6 +1009,25 @@ export async function runBackendSelfTest(
    * 手工布局都不属于任何包，拿它们去跑再把结果记到用户点的那张卡片上，
    * 就是在为另一个二进制作证（`scripts/selfcheck.mjs` 的同一条判据）。
    */
+  /*
+   * ★★ 包内兜底**必须排在最后**（2026-08-09）。
+   *
+   * `[实测]` 用户 v0.5.0 双击启动、空数据目录：
+   *     GET  /api/selfcheck         → tool.whisperCli 找得到（…/runtime/probe/whisper-cli）
+   *     POST /api/backends/selftest → 409，resolved.whisperCli: **null**
+   * 同一个 daemon、同一时刻、同一个二进制，两条路径给出相反的答案 ——
+   * 因为**自检这条从头到尾没有"包内"这一档**：`resolveBackendTool()` 只认已安装的包。
+   * 二进制在包里、可执行，而自检说没有。
+   *
+   * ⚠️ 顺序：**已安装的包 > 环境变量/runtimes 手工布局 > 包内兜底**。
+   * 包内那份只有 CPU 后端；一旦它排到已安装包前面，装了 CUDA/Vulkan 的人
+   * 自检会去跑包内的 CPU 二进制，**报出来的 RTF 就是错的** ——
+   * 那比"自检说没有"更糟，因为它给出一个看起来正常的错数字。
+   *
+   * ⚠️ `requestedPackId !== null`（钉住某个包自测）那一支**不加兜底**：
+   * 那条路的语义就是"只认这个包给的二进制"，回退到包内就是拿别的东西
+   * 冒充这张卡片的结果。缺前提照旧报 `blocked`，不放宽判据。
+   */
   const whisperCli =
     requestedPackId !== null
       ? (resolved?.path ?? null)
@@ -1015,6 +1035,9 @@ export async function runBackendSelfTest(
           env['OPENMEMO_WHISPER_CLI'],
           (await findUnder(layout.runtimesRoot, named(whisperCliName()))) ?? undefined,
           resolved?.path ?? undefined,
+          bundledRuntimeDir() !== null
+            ? path.join(bundledRuntimeDir() as string, whisperCliName())
+            : undefined,
         );
 
   /*
