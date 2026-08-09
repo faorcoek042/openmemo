@@ -124,6 +124,10 @@ jobs:
       #   而这些失败模式的共同表现是**安静地返回空集合**。只有真机看得见。
       #   只报告不断言：Windows 上 features 仍为空，就是这次改动没成。
       - name: CPU 指令集探测实测（真机）
+        # ★ 这一步是**取证**，不是门禁，所以不该被别人的红连坐。
+        #   第一次跑它被前面 Test 的失败跳过了（那是 downloader 的并发用例，与它无关），
+        #   于是"Windows 上到底探到什么"一个字都没拿到。
+        if: ${{ !cancelled() }}
         run: node scripts/ci/probe-cpu-features.mjs
 
       - name: CI scripts self-test
