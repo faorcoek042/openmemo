@@ -1425,14 +1425,50 @@ async function phaseBackends() {
       `本 runner 上构造不出前提：没有任何「installed=true 且 probed=false」的后端（已装包=${state.installedPackIds.join(',') || '仅 CPU'}）。要构造它需要同一台机器上装得下两个后端包，而加速包在这里装不上（没有 GPU 硬件证据）`,
     );
   } else {
-    const LIE = /driver missing or too old|驱动缺失|驱动.*过旧/i;
-    const liars = unprobedInstalled.filter((b) => LIE.test(String(b.unavailableReason ?? '')));
+    /*
+     * ★ 2026-08-10：判据从**黑名单**翻成**白名单**。失败方向从绿翻成红。
+     *
+     * 旧判据：`LIE = /driver missing or too old|驱动缺失|驱动.*过旧/i`，命中即红。
+     * 它要求产品**逐字**说出这几种措辞之一才抓得到。产品换个说法
+     * （「显卡驱动版本太低」「未检测到可用的图形驱动」）——正则落空、`liars` 为空、
+     * **这条断言变绿，而产品正在撒同一个谎**。
+     *
+     * `[实测 A/B，见本轮回执]` 同一份事故数据
+     * `{installed:true, probed:false, unavailableReason:'显卡驱动版本太低，请更新驱动'}`：
+     *     旧判据 → liars=0 → **绿（假过）**
+     *     新判据 → 不在白名单 → **红**
+     *
+     * ⚠️ 黑名单在这类判定上**结构性地不成立**：要穷举"所有可能的撒谎说法"，
+     * 而产品每改一次文案就多一种。白名单反过来 ——
+     * **只列举"允许出现的、代表『没测过』的说法"，任何新措辞都落到红**，
+     * 逼人来这里显式分类。这就是 Manager 那条：
+     * **失败方向是红的守卫，坏了会有人来烦你；失败方向是绿的，坏了没有人知道。**
+     *
+     * 契约本身也是这么设计的（`packages/shared/src/hardware.ts` 的 `probed` 注释）：
+     * 「Why this is a separate field, and not prose in `unavailableReason`」——
+     * `probed` 就是为了让这件事**不必靠读句子**。产品侧 `backends.ts:117` 已经照做
+     * （`if (status?.installed === true && status.probed !== true) return 'undetermined'`），
+     * 这条腿是最后一处还在嗅字符串的。
+     */
+    const NOT_MEASURED = [
+      /^$/,
+      /^probe did not complete\b/i,
+      /^probe skipped\b/i,
+      /^disabled after repeated failures\b/i,
+    ];
+    const liars = unprobedInstalled.filter((b) => {
+      const why = String(b.unavailableReason ?? '').trim();
+      return !NOT_MEASURED.some((re) => re.test(why));
+    });
     assert(
       'A-CPU-NO-DRIVER-LIE',
       liars.length === 0,
       liars.length === 0
-        ? `${unprobedInstalled.length} 个「装了但这次没探它」的后端，措辞都没有声称驱动故障：${unprobedInstalled.map((b) => b.id).join(', ')}`
-        : `**退化**：${liars.map((b) => `${b.id} → "${b.unavailableReason}"`).join(' | ')}`,
+        ? `${unprobedInstalled.length} 个「装了但这次没探它」的后端，措辞都属于"没测过"那一类：${unprobedInstalled.map((b) => b.id).join(', ')}`
+        : `**退化或新措辞**：${liars.map((b) => `${b.id} → "${b.unavailableReason}"`).join(' | ')}\n` +
+            `      这几条不在"没测过"白名单里。它要么真的在替一次**没做过的探测**下结论（缺陷），\n` +
+            `      要么是一句新的、合法的"没测过"说法 —— 那就把它加进上面的 NOT_MEASURED 并说明理由。\n` +
+            `      **不许因为"看起来没问题"就放宽成模糊匹配**：那正是这条判据被翻掉的原因。`,
     );
 
     const cat3 = await j('/api/backends/catalog');
@@ -2082,20 +2118,45 @@ async function phaseDataDir() {
    *   ③ 源目录还在时，文案**不许**出现"已移动"，而且要点名旧目录的位置。
    */
   const srcEmpty = srcAfter.length === 0;
-  const claimsMoved = String(mv.body?.messageZh ?? '').includes('已移动');
+  /*
+   * ★ 2026-08-10：从"文案里有没有『已移动』这三个字"改成**数据核对**。
+   *
+   * 旧判据 `claimsMoved = messageZh.includes('已移动')`。产品把话改成
+   * 「已搬迁」「迁移完成」「转移到新位置」—— `claimsMoved` 变 false，
+   * `honest` 变 true，**这条断言绿，而它正在对一次不可逆操作撒谎**。
+   * `[实测 A/B]` 同一份事故数据（源目录还在、文案写着「已搬迁 54 个文件到新位置」）：
+   *     旧判据 → claimsMoved=false → honest=true → **绿（假过）**
+   *     新判据 → 残留清单没被念出来 → **红**
+   *
+   * 新判据不读措辞，只核对**数据**：
+   *   ① `sourceRemoved` 与磁盘一致（原有，结构）；
+   *   ② 源目录还在时，`sourceResidue` 必须与磁盘上真实剩下的东西一致 —— 这是"诚实"本身；
+   *   ③ 且这些**文件名**必须逐个出现在给用户的那句话里。
+   * 文件名是**数据不是措辞**：句子怎么重写，它们都得在，否则用户不知道去哪儿找。
+   * （产品侧 `rest/storage.ts:298` 的注释亲口写着「旧目录里剩什么，必须照着念，不许照着猜」——
+   *  这条腿现在核对的正是那句话。）
+   */
+  const residue = Array.isArray(mv.body?.sourceResidue) ? mv.body.sourceResidue.map(String) : [];
+  const msgZh = String(mv.body?.messageZh ?? '');
+  const residueMatchesDisk =
+    srcEmpty ||
+    (residue.length > 0 &&
+      residue.every((r) => srcAfter.some((f) => String(f).includes(r) || r.includes(String(f)))));
+  const residueSpokenOut = srcEmpty || residue.every((r) => msgZh.includes(r));
   const landed =
     mv.status === 202 &&
     mv.body?.moved === true &&
     dstAfter.includes('openmemo.db') &&
     h?.dataDir === dst;
-  const honest = mv.body?.sourceRemoved === srcEmpty && (srcEmpty || !claimsMoved);
+  const honest = mv.body?.sourceRemoved === srcEmpty && residueMatchesDisk && residueSpokenOut;
   assert(
     'A-DATADIR-MOVE',
     landed && honest,
     `strategy=${mv.body?.strategy} files=${mv.body?.files}；数据到位=${landed}；` +
       `源已空=${srcEmpty}，sourceRemoved=${mv.body?.sourceRemoved}（两者必须一致）；` +
-      `文案说"已移动"=${claimsMoved}` +
-      (srcEmpty ? '' : `（源目录还在时说这句就是假话）`) +
+      `残留清单与磁盘一致=${residueMatchesDisk}（sourceResidue=${JSON.stringify(residue)}，磁盘上=${JSON.stringify(srcAfter)}）；` +
+      `残留逐个念给了用户=${residueSpokenOut}` +
+      (srcEmpty ? '' : `（源目录还在，就必须点名剩下的是什么 —— 不许只说"完成了"）`) +
       `；重启后挂在 ${h?.dataDir}`,
   );
   if (!srcEmpty) {

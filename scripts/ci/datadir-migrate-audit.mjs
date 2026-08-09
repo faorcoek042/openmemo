@@ -304,7 +304,22 @@ const TMP = await mkdtemp(join(tmpdir(), 'ddaudit-'));
             `不把它算作通过 —— PROTOCOL §11。`,
         );
       } else {
-        const honest = !msg.includes('已移动') && msg.includes('已复制');
+        /*
+         * ★ 2026-08-10：不再读措辞，改为核对**数据**。
+         *
+         * 旧判据 `!msg.includes('已移动') && msg.includes('已复制')` 有两个方向都坏：
+         *   · 产品改说「已搬迁」→ 第一项放行；改说「拷贝完成」→ 第二项**红**（假红）。
+         *   · 也就是说它**同时**惩罚好文案、又放过换了说法的假话。
+         * `[实测 A/B]` 事故数据（源还在、文案「已搬迁 N 个文件到新位置」）：
+         *     旧判据 → !includes('已移动')=true，但 includes('已复制')=false → 红（**理由是错的**）
+         *     换成「拷贝完成，旧目录仍在，里面还剩下：models、openmemo.db」：
+         *     旧判据 → 红（假红，这是一句诚实的话）；新判据 → 绿
+         *
+         * 新判据：源没删干净时，**剩下的东西必须被逐个念出来**。
+         * 文件名是数据不是措辞 —— 句子怎么重写它们都得在，否则用户不知道去哪儿找。
+         */
+        const residue = Array.isArray(r.sourceResidue) ? r.sourceResidue.map(String) : [];
+        const honest = residue.length > 0 && residue.every((x) => msg.includes(x));
         const ok = r.ok === true && miss.length === 0 && honest;
         rec(
           'C4',

@@ -242,12 +242,25 @@ describe('★ T-143 符号链接不许把数据目录外的文件流出去', () 
     const d = await seedDataDir({});
     await fs.symlink(await secretOutside(), join(d, 'media', 'escape.wav'));
     const err = JSON.parse((await get(d, 'escape.wav')).body).error;
+    /*
+     * ★ 2026-08-10：判据从"文案里别出现这几个词"改成**钉住错误码**。
+     *
+     * 旧判据 `/不存在|已删除|丢失/.test(messageZh) === false` 是一条**否定断言**，
+     * 失败方向是**绿**：daemon 把话改成「找不到这个文件」「该媒体已不可用」——
+     * 正则落空、断言通过，**而它正在说同一句假话**（文件明明在，只是不许从这里读）。
+     *
+     * 换成正向钉码有三重好处：
+     *   ① `code` 是契约，不是措辞，重写句子改不动它；
+     *   ② **用户看到的那句话本来就是从 code 推出来的**（`ErrorBlock` 走 `errors.<CODE>`
+     *      查本地文案，服务端 message 只作未知 code 的兜底）——
+     *      **钉住 code 就钉住了用户看到的语义**，比检查这一条 messageZh 覆盖面更宽；
+     *   ③ 失败方向翻成红：daemon 若改回 404/换码，这里当场红。
+     *
+     * `assert.notEqual(code, 'ASSET_FILE_MISSING')` 保留 —— 它是这条用例的原始意图
+     * （⑤A-20 规矩 3：不许把"不许读"说成"没有"），而正向断言把它变成了必然成立的推论。
+     */
+    assert.equal(err.code, 'ASSET_OUT_OF_ROOT', `越界必须报越界，实际：${JSON.stringify(err)}`);
     assert.notEqual(err.code, 'ASSET_FILE_MISSING');
-    assert.equal(
-      /不存在|已删除|丢失/.test(String(err.messageZh)),
-      false,
-      `不许说文件没了：${err.messageZh}`,
-    );
   });
 
   it('★ 合法的相对软链照常 200（别把产品自己的链接一起杀了）', async () => {
