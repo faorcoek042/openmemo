@@ -119,6 +119,13 @@ jobs:
       #   等于「用 Linux 的行为去证明 Windows 上的判定是对的」—— 本仓最贵的那类假绿。
       #   先让它红出来，再决定是修脚本还是按平台收窄。**红了不要加 continue-on-error**
       #   （文件头 ⚠️ 那条判据），要么修，要么把这段话改成实测结论。
+      # ★ 真机 CPU 探测实测：`detectCpuWin32()` 补上 IsProcessorFeaturePresent 之后，
+      #   "写完了"与"真的查得出来"是两件事（Add-Type 可能被策略挡、P/Invoke 签名可能对不上），
+      #   而这些失败模式的共同表现是**安静地返回空集合**。只有真机看得见。
+      #   只报告不断言：Windows 上 features 仍为空，就是这次改动没成。
+      - name: CPU 指令集探测实测（真机）
+        run: node scripts/ci/probe-cpu-features.mjs
+
       - name: CI scripts self-test
         if: ${{ !cancelled() }}
         run: pnpm test:ci-scripts

@@ -210,6 +210,32 @@ async function detectCpuDarwin(brand: string, logicalCores: number): Promise<Cpu
  * produces a different false sentence, and this field's whole problem has been that it
  * spoke with more confidence than it had earned.
  */
+/**
+ * Windows 上的指令集探测。**唯一可靠的来源是 `IsProcessorFeaturePresent`（kernel32）。**
+ *
+ * 为什么不是别的：
+ *   · `/proc/cpuinfo` —— Windows 没有；
+ *   · `wmic` —— 已废弃（Windows 11 24H2 起不在默认镜像里），且它也不报 ISA；
+ *   · `Get-CimInstance Win32_Processor` —— **完全不报指令集标志**（只有型号/核数）。
+ *
+ * 所以走 PowerShell 的 `Add-Type` P/Invoke 调 Win32 API。常量取自微软文档
+ * （winnt.h 的 `PF_*`），一次进程里把要问的都问完，避免起 8 个 PowerShell。
+ *
+ * ⚠️ **拿不到就返回空集合＝"未知"，绝不退回猜测。** 三态结构不变
+ * （`fitness.ts` 只有在有证据时才判 `missing_cpu_feature`，UI 有独立的"未知"档）。
+ * 这一版要让"未知"这一档**变少**，不是把它消灭 —— 消灭它只能靠编。
+ */
+const PF_QUERIES: ReadonlyArray<readonly [number, string]> = [
+  // [PF_* 常量, 我们内部用的特性名]
+  [13, 'sse3'],
+  [36, 'ssse3'],
+  [37, 'sse4_1'],
+  [38, 'sse4_2'],
+  [39, 'avx'],
+  [40, 'avx2'],
+  [41, 'avx512f'],
+];
+
 async function detectCpuWin32(brand: string, logicalCores: number): Promise<CpuInfo> {
   let physicalCores = logicalCores;
 
@@ -224,7 +250,44 @@ async function detectCpuWin32(brand: string, logicalCores: number): Promise<CpuI
     if (Number.isFinite(n) && n > 0) physicalCores = n;
   }
 
-  return { brand, physicalCores, logicalCores, features: [] };
+  /*
+   * 一条 PowerShell 里定义 P/Invoke 并把所有 PF_* 问一遍，输出 `名字=0/1` 逐行。
+   * `Add-Type` 是在内存里编译，不受脚本执行策略限制；失败时下面按"未知"处理。
+   */
+  /*
+   * ⚠️ `Add-Type` 那一句**必须是数组里的一个元素**。
+   *   第一版把 `-MemberDefinition '`、C# 正文、`'` 拆成三个元素再 `join('; ')`，
+   *   于是分隔符被塞进了 C# 字符串里：`-MemberDefinition '; [DllImport…];; '`
+   *   —— 编译当场失败、探测永远返回空、界面永远显示"无法确认"。
+   *   **一个建到一半的探测器只会产出另一句假话**，这就是它的样子；
+   *   本机把拼出来的脚本打出来看了一眼才发现。
+   */
+  const memberDef =
+    '[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(uint f);';
+  const script = [
+    '$ErrorActionPreference="Stop"',
+    `Add-Type -Namespace OM -Name Cpu -MemberDefinition '${memberDef}'`,
+    ...PF_QUERIES.map(
+      ([pf, name]) => `Write-Output ("${name}=" + [int][OM.Cpu]::IsProcessorFeaturePresent(${pf}))`,
+    ),
+  ].join('; ');
+
+  const q = await run('powershell', ['-NoProfile', '-NonInteractive', '-Command', script]);
+  const features: string[] = [];
+  if (q.ok) {
+    for (const line of q.stdout.split(/\r?\n/)) {
+      const m = /^([a-z0-9_]+)=([01])$/.exec(line.trim());
+      if (m && m[2] === '1' && m[1] !== undefined) features.push(m[1]);
+    }
+  }
+
+  /*
+   * ⚠️ 查询整体失败（Add-Type 被策略挡、powershell 不在、超时）→ `features` 保持空。
+   *   空集合在下游的含义是**"没测到"**，不是"没有"（`fitness.ts` / HardwareCard 都按三态处理）。
+   *   ★ 一条也没解析出来时也保持空 —— **不许因为"命令跑通了"就把空当成结论**：
+   *     跑通但输出对不上，说明我们读错了它，那同样是"未知"。
+   */
+  return { brand, physicalCores, logicalCores, features: normaliseFeatures(features) };
 }
 
 /** Lowercase, keep only flags anyone downstream cares about, de-duplicate. */
