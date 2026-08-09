@@ -106,3 +106,71 @@ STATUS: DONE
 核对确实只改了目标文件（④ 例外，已如上声明）。
 
 需要 Manager 决策: 无——五项均已落地，§14.6 冲突已闭环。
+
+## [2026-08-09 22:02] whispercpp-cuda-* license 补标 + 全 manifest 扫描 DONE
+
+STATUS: DONE
+背景: Coordinator 在 Phase 2 收尾后追加一条同形状的任务——另一路（`amd-vulkan`）
+在 D-20 §15.8 里点名发现 `whispercpp-cuda-12.4-win-x64` 的 `license.id` 写
+`MIT`，但归档里 61.8% 字节是 NVIDIA 再分发件；要求用与 ytdlp-* 相同的口径处理，
+核实 NVIDIA 条款读原文不读转述，并系统扫一遍 `vendor/manifests/` 看还有没有
+别的包中招；边界要求不碰 CUDA 包内容/构建脚本（另一路在修缺件问题）。
+
+交付与 commit：`2282cc1`（已确认在 `origin/master` 顶端，`HEAD` 与
+`origin/master` 同一提交，`merge-base --is-ancestor` 双向核对一致）。
+
+独立核实（未照抄 coordinator 的转述）：
+- 用 HTTP Range 只读 678,887,125 字节 zip 的 EOCD + 中央目录（Azure Blob 对
+  `bytes=-N` 后缀区间返回 501，改绝对区间才行），解出 44 个条目，与 D-20 §15.1
+  逐字节比对一致；**44 个条目里没有任何 LICENSE/EULA 文本文件随附**。
+- `WebFetch` 对 `docs.nvidia.com` 报安全校验失败被挡，改用 `curl -sL` 直接抓
+  NVIDIA 现行 EULA 原文（HTTP 200，2026-08-09 抓取，非转述）：Attachment A
+  确认 cublas/cublasLt/cudart/nvrtc/nvblas 在可再分发清单内；分发义务约束的
+  是再分发方，没有找到终端用户点击接受的条款（与 Llama 那种 gated 模型走的
+  机制不同）——`gated`/`requiresAcceptance` 都不置位。
+
+改动：
+- `backends.json` + `components.json` 的 `whispercpp-cuda-12.4-win-x64`：
+  `license` 从 `{ id: "MIT", url: whisper.cpp/LICENSE }` 改成
+  `{ id: "LicenseRef-NVIDIA-CUDA-EULA", gated: false, url: docs.nvidia.com/cuda/eula }`。
+  口径与 §14.7 的 ytdlp 判例统一：单值字段取分发字节里最强/最受限的那个，不扩
+  `LicenseInfoSchema` 支持复合表达（`.strict()`、全仓无先例，且此时
+  `backends.json` 至少三路并发在改）。已用 `BackendManifestSchema.safeParse()`
+  直接验证通过。
+- `components.json` 的 4 条 `ytdlp-*`：发现 Phase 2 时的一个自己的漏项——当时
+  只改了 `backends.json`，没改这份并行清单（两份结构不同：前者驱动 UI/理论上
+  的 gating，后者是 `ComponentCard.tsx` 纯展示用的独立字符串）。这次补：
+  linux-x64/linux-arm64 本来就对不用改；macos-arm64/win-x64 从
+  `GPL-3.0-or-later` 改成 `GPL-2.0-or-later`（与 `backends.json` 同步）。
+- D-20 §15.8 原地划掉旧的"我没有改，建议派人处理"，追加 §16 完整收录取证过程、
+  改动明细、口径统一说明，以及扫描方法与结论。
+
+扫一遍 `vendor/manifests/` 的结论（如实写，即便是"其余都对"）：
+- 正则扫全部 8 个 manifest 文件的数组字段找可疑厂商名，只命中 1 处
+  （`ggml-cuda.dll`，自己的文件名，非新发现）。
+- `sqlite-ext.json`（11 pack）/ `models-{asr-support,llm,whisper}.json`
+  （35 条模型权重）/ `llm-providers.json`（纯 API 元数据，不含许可证字段）——
+  逐条人工核对，全部正确，结构上也不存在"一个归档混多个来源"的风险。
+- 除 CUDA 外的 6 个 `whispercpp-*` 后端包——不满足于名字匹配，逐个拿到真实
+  归档内容（Windows 两个用 Range 读中央目录；Linux/macOS 四个完整下载
+  `tar tzvf`，沙箱网络中途降速，退避重试后补齐全部）：全部只有自己编译的产物，
+  没有第三方 SDK 二进制、没有 Vulkan loader、没有 LICENSE/EULA 文件，`MIT`
+  标注准确。
+- `media-tools-*`（ffmpeg）当时正被另一路并发改动（Linux/Windows 切 LGPL），
+  按边界要求完全没碰，其准确性由那一路自己负责，不在本次结论范围内。
+
+PROTOCOL §12 声明：提交 `backends.json`/`components.json` 时工作区里同时存在
+ffmpeg 那一路尚未提交的改动（`media-tools-{linux,win}-x64` 两条 GPL→LGPL），
+按 §12 一并进了 `2282cc1`，未回退，已在 commit message 里声明。
+
+未做/超范围：未创建/修改/删除任何 release；未碰 `:10000` demo、
+`/root/data-memo`、任何机器级指针；未用 `pkill`（含 `-0`）；未用 `--amend`；
+未碰 CUDA 包内容/`providesFiles`/`build-whisper.sh`/`pack-native-deps.mjs`
+（`amd-vulkan` 那一路在修缺件问题，边界点名不让碰）。提交前 `git fetch` +
+`merge-base --is-ancestor` 核对未漂移；push 用具体 hash，遇到一次 remote
+ref 竞态（`cannot lock ref`），重新 `fetch` 核对后确认目标 commit 已在
+`origin/master` 顶端，未做任何强制操作。
+
+需要 Manager 决策: 无——两处 license 字段已改齐、口径统一，全 manifest 扫描
+已完成，全部 6 个非 CUDA 的 `whispercpp-*` 后端包与其余全部 manifest 均已
+实测确认无误，如实记录在 D-20 §16.3。
