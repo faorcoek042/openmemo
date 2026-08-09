@@ -2617,3 +2617,155 @@ stash 里只取回我自己的文件（这一步本身安全，我没有 pop/dro
   虽然最终零数据丢失（靠对方自己冷静地只读 stash 而不是 pop），但"零丢失"是运气好加对方
   处理得当，不是我操作得当——这条不该算在我"做对了"的那一栏。已经如实写进协议，
   以后不会再用 `-u` stash 碰共享树。
+
+## [2026-08-10 02:55] 裁决二落地 —— 组代表文案根因普查、免责声明渲染证据链、更新检测公钥方案提案
+
+### 1. 多变体组普查（先数再声称）
+
+`vendor/manifests/*.json` 里共 20 个 `groupId`，其中 **9 个是多变体组**：
+
+| groupId | 变体数 | 第一个变体 | =随包内置？ | =带 tag 的默认档？ | 现状 |
+| --- | --- | --- | --- | --- | --- |
+| `asr/whisper-base` | 3 | `-q5_1` | 否 | **是**（`recommended-default`） | 安全（信号与顺序恰好一致） |
+| `asr/whisper-large-v2` | 3 | `-q5_0` | 否 | 否（无标签） | 无默认信号，"第一个"是唯一依据，谈不上对错 |
+| `asr/whisper-large-v3` | 2 | `-q5_0` | 否 | 否 | 同上 |
+| `asr/whisper-large-v3-turbo` | 3 | `-q5_0` | 否 | **是** | 安全（也是我测试机制用的组——见下） |
+| `asr/whisper-medium` | 3 | `-q5_0` | 否 | 否 | 无默认信号 |
+| `asr/whisper-small` | 3 | `-q5_1` | 否 | 否 | 无默认信号 |
+| **`asr/whisper-tiny`** | 3 | `-q5_1` | **是** | 否 | ⚠️ **选中的变体是对的，但内容曾经挂错**（见下） |
+| `llm/qwen3-4b` | 2 | `-q4_k_m` | 否 | **是** | role=llm 被 `RETIRED_ROLES` 剔除，压根不出现在目录响应里，不可见 |
+| **`vad/silero-vad`** | 2 | `-onnx` | **否**（ggml 才是） | 否 | ⚠️ **选中的变体本身就错**（见下） |
+
+**根因不是同一类，是两类，数完才看清：**
+
+1. **`vad/silero-vad`：UI/服务端"取数组第一个"这条规则本身有问题。** 清单里 onnx 排第一，
+   但真正随包落地到用户机器的是 ggml——旧 `buildCatalog()` 选中 onnx 的文案，组描述因此讲
+   "sherpa-onnx 专用格式，whisper.cpp 用不了这个文件"，**与用户实际拿到的文件正好说反**。
+   这一条只能靠改选择逻辑修，manifest 文案本身没写错。
+2. **`asr/whisper-tiny`：不是选择逻辑错，是文案挂错了变体。** `q5_1` 本来就排数组第一位、
+   本来就是随包默认档，旧逻辑选中的**本来就是它**——问题是 `q5_1` 自己的 `descriptionZh/En`
+   以前没有质量警示，警示文字被写进了 `f16`（既不随包也不是默认档，组描述从来选不到它）身上。
+   这一条只改 manifest 文案就够，`buildCatalog()` 的选择结果本来就没错。
+
+**结论**：两类根因都存在，不是单一原因，所以**两处都改了**：
+- `apps/daemon/src/http/rest/state.ts` 新增 `catalogDescriptionRank()`：
+  0=随包内置（`BUNDLED_MODEL_IDS`）> 1=带 `recommended-default`/`benchmark-default` 标签 >
+  2=其它（先到先得），只在严格更靠前时覆盖代表文案——修的是 `vad/silero-vad` 这一类，
+  同时给另外 6 个"当前恰好安全"的组补上防呆（以后清单重排/插新变体不会静默讲错话）。
+- `vendor/manifests/models-whisper.json`：把质量警示从 `f16` 挪到 `q5_1`，并顺手订正了
+  `f16` 一处**独立的事实错误**——原文案说它是"最小的多语种模型"，实测 `f16` 77.7MB 反而是
+  tiny 三个量化档里**最大**的一个（`q5_1` 32.2MB／`q8_0` 43.5MB），不是"顺序错"，是这句话
+  本身就没做实测，属于组级别的事实（tiny 这个*档位*整体最小/质量最低）被误写成了
+  某个*量化*的属性。
+- **`llm/qwen3-4b` 现状安全但只是因为它整个组都被剔除，不代表"选择规则没问题"** ——
+  如果哪天 `RETIRED_ROLES` 里去掉 `llm`，它会立刻暴露在同一套选择逻辑下；好在它现在
+  first==tagged-default，即使那天到来也不会立刻出错，只是"安全"和"规则本身没问题"是两回事，
+  如实记录，不夸大也不轻描淡写。
+
+### 2. 免责声明现在在哪条路径上会被真的渲染（结构式证据链，非关键词匹配）
+
+完整链路，四跳，每跳都有独立测试覆盖：
+
+1. **manifest → 服务端选择**：`vendor/manifests/models-whisper.json` 里
+   `asr/whisper-tiny-q5_1.descriptionZh` 现在带警示文本
+   （"⚠️ tiny 是全目录里体积最小、质量最低的档位…"）。
+   `RestState.buildCatalog()` 的 `catalogDescriptionRank()` 给它 rank 0（随包内置），
+   在遍历该 groupId 全部变体后成为 `CatalogGroup.descriptionZh` 的来源。
+   **证据**：`apps/daemon/src/http/rest/catalogDescriptionRank.test.ts`
+   ——用真清单数据断言 `group.descriptionZh === q5_1.descriptionZh`（对象相等，不是
+   子串/关键词匹配），且 `!== f16.descriptionZh`。另一条用例把 `whisper-large-v3-turbo` 组
+   两个真实变体**颠倒数组顺序**后重跑，证明这套优先级不依赖当前恰好正确的排列。
+2. **服务端 → API**：`/api/models/catalog` 直接把 `CatalogGroup`（含上面选中的
+   `descriptionZh/En`）序列化下发，无额外转换。
+3. **API → 组件**：`apps/web/src/features/models/ModelsPage.tsx` 在 ASR 标签页
+   （`/models` 路由，用户浏览/安装模型的标准入口，不需要任何特殊操作即可到达）为
+   每个 `role==='asr'` 的组渲染一张 `<ModelCard key={g.groupId} .../>`——`asr/whisper-tiny`
+   包含在内。`ModelCard.tsx:231` 用
+   `<Emphasis text={localizedDescription(locale, group)} />` 渲染组描述；
+   `ModelDetailPage.tsx:87`（点进详情页）走同一个 `localizedDescription(locale, group)`。
+   两处都是"组"的描述，不按用户当前选中的具体变体单独取——这正是为什么"组代表文案该来自谁"
+   这件事本身值得较真：一旦选错，装哪个变体都看不到正确的那一份。
+4. **渲染是否会吞掉文字**：`q5_1`/`ggml` 现在的警示文案本身**不含 `**加粗**` 标记**（纯文本 +
+   ⚠️ 符号），所以不落入"裸星号"那类渲染问题；但 `<Emphasis>` 组件处理带 `**` 的目录描述
+   （例如 `vad/silero-vad-ggml` 自己的 descriptionZh 就带 `**whisper.cpp 专用 ggml 格式**`）
+   走的是同一段代码（`ModelCard.tsx:231`），已有
+   `apps/web/src/test/components.test.tsx`「★ 目录描述里的 Markdown 强调不许把裸星号吐给用户」
+   覆盖：断言 `card.textContent` 包含原文全文、不含裸 `**`、且对应片段渲染成了真实的
+   `<strong>` 标签——同一个渲染入口，机制已验证不吞字、不漏加粗。
+
+**判据小结**：①+②+③ 三段拼起来证明"用户在装/用 whisper-tiny 的标准路径（`/models` →
+ASR 标签页 → whisper-tiny 卡片）上，服务端选中的确实是带警示的那份文案，且确实会被
+序列化下发、确实会被组件取用渲染"；④ 证明"这类文案的渲染机制本身不会把字丢了或漏加粗"。
+四段合起来才是"真实用户会看到这句话"的完整证据，缺任何一段都不够——这正是这次刻意
+分四层验证、不用单一关键词断言的原因。
+
+`apps/daemon` 全量测试（608 用例）与新增 3 条一起跑，0 失败。
+
+### 3. 更新检测的公钥方案（提案，不是决定——按你的要求，选哪个由你拍板）
+
+先复核 D-20 §11.3 的三条前提，**仍然成立，无需修改**：
+1. 签名 + 客户端钉死公钥；
+2. 验证失败 → 回退到包内那份目录，不是"没有目录"（要避开的正是用户之前撞到的 `packs 0`）；
+3. 远端目录不许改已内置项的 sha256，否则"内置"这个词不成立；新增项才允许来自远端。
+在这三条真正接线之前，"检测更新"只应该做到"告诉用户有新版本"，不自动改任何东西——这次
+没有碰任何接线代码，`manifest.ts`/`signature.ts` 现状原封不动。
+
+**加密原语已经不是空白，是既有事实，不需要我重新选**：`packages/downloader/src/signature.ts`
+（T-171 时因为"验签函数有真实调用方，拒删并留证"被保留下来）已经实现了
+**Ed25519 detached-signature 校验**，零外部依赖（纯 `node:crypto`），能接受 PEM/DER SPKI/
+裸 32 字节/hex/base64 好几种公钥形状。`OPENMEMO_CATALOG_PUBLIC_KEY` 目前如实写着
+`null`，注释原话："no such key exists yet... a fake key that happens to verify nothing
+gives a false sense of the feature being on"——`verifyCatalogSignature` 在这个值是 null
+时**拒绝校验并抛错**（fail closed），不会误当成"通过"或"跳过"。**所以唯一悬而未决的是
+你点名要我提的那部分：这把 Ed25519 公钥怎么产生、发布物里的公钥常量怎么落地、私钥存哪、
+谁能用它签目录。**
+
+以下三个维度各给选项，供你组合拍板，我不预设哪个组合：
+
+**(a) 密钥怎么产生**
+- A1：本地一次性生成（`node -e "require('crypto').generateKeyPairSync('ed25519')"`），
+  私钥当场导出、之后只在离线介质保存，生成过程不落任何 CI 日志。最简单，但"谁的本地"
+  就是唯一的信任根，丢了机器＝丢了密钥（除非有备份）。
+- A2：CI（GitHub Actions 一次性 workflow）生成，生成后立即把私钥写进 CI 的加密 Secret、
+  同时导出一份供人工离线备份，工作流本身跑完即弃。比 A1 多一层"CI 供应链"暴露面，
+  换来的是生成过程可审计（有 workflow run 记录）。
+- 不建议 A3（在打包脚本里"顺手"生成）——密钥生命周期不该和构建产物的生命周期绑在一起。
+
+**(b) 公钥怎么落地到发布物**
+- 不管 (a)(c) 怎么选，这一格几乎是唯一合理答案：把公钥字节**硬编码进
+  `signature.ts` 的 `OPENMEMO_CATALOG_PUBLIC_KEY`**（现在的 `null` 换成真实值），
+  随源码一起提交、随构建一起烘焙进产物——这与"客户端钉死公钥"这条前提本身是同一件事：
+  公钥不该是运行时可配置的，否则钉死就没有意义。
+
+**(c) 私钥存哪、谁能用**
+- C1：只存在于运营者本人可控的介质（例如密码管理器 + 一份离线备份，如硬件安全key
+  或加密 U 盘），**不进任何 CI Secret**。签目录是本地手动操作，`sign-catalog.mjs`
+  这类脚本读本地文件路径签完就退出。最小暴露面，代价是"签发新目录"这个动作不能自动化，
+  必须有人手动跑一次。
+- C2：进 CI 加密 Secret（如 GitHub Actions Secrets），发布流水线自动签名。能自动化，
+  但**任何能触发该 workflow 或有仓库 Secret 读权限的人/进程，理论攻击面都变大**——
+  D-20 原文已经点出"密钥一旦泄漏，等于可以给所有用户投毒"，这条在 C2 下的暴露面显著大于 C1。
+- 不建议密钥托管给我（agent）或写进这个共享工作树——工作树是多 lane 共享、
+  git 历史会被推送到远端仓库，两者都是私钥绝对不能出现的地方。
+
+**我的读法（仅供参考，不替你决定）**：D-20 已经把"密钥泄漏=给所有用户投毒"的严重性
+写得很清楚，而这个项目现在的发布节奏似乎还没有到"需要频繁签新目录"的量级，所以
+**A1（本地生成）+ C1（本地离线存储、手动签）** 的最小自动化程度、最小暴露面组合看起来
+最匹配当前阶段；(b) 无论如何都是硬编码进源码。但这终究是你要拍板的三选项组合，
+以上只是把选项和各自代价摆清楚。
+
+### 4. 一次共享索引竞态事故（已单独 SendMessage 报备，这里存档）
+
+提交自己隔离出的 `state.ts` hunk（56 行）时，两次检查之间共享 git 索引被另一条线
+（`a534e2e5…`，backend-disk-reclaim，`duBytes()`/`findUnclaimedFiles()`/`collectUnclaimed()`，
+约 193 行）`git add` 进了同一个索引，导致我的 pathspec commit `81c5091` 把两边一起提了进去
+（249 insertions）。按 §12：**没有 revert**（会丢掉真实工作），**已宣布并通知 Manager**。
+Manager 已打两个备份指针（`backup/81c5091-mixed` / `backup/unpushed-head`）、已知会原作者
+认领审查，指示**推送等原作者确认后再放行**，其间不 push/reset/rebase/amend 那两个提交。
+
+### 5. 这一轮的提交（均未 push，等 Manager 放行 §4 那个混合提交后一并处理）
+
+- `81c5091` `fix(catalog): buildCatalog() 组代表文案不再只看数组第一个变体`
+  ——⚠️ 内含另一条线的 193 行（见上）
+- `2f9c4bd` `fix(manifest): whisper-tiny 质量警示搬到真正随包默认档 q5_1；订正 f16 的错误体积描述`
+- `b16e4ba` `test(catalog): buildCatalog() 组代表文案 —— 真数据验证 + 顺序无关性验证`
