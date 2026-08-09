@@ -86,6 +86,18 @@ const MEDIA_TOOLS: PackSpec = {
   binaries: ['ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-gpl-8.1/bin/ffmpeg'],
 };
 
+/**
+ * 落盘名要带平台后缀。
+ *
+ * ★ T-63：夹具原本一律落 `whisper-cli`，而产品在 win32 上找的是 `whisper-cli.exe`
+ * （`tools.ts` 的 `exe()`）—— `[CI 实测 run 31313108614, win32-x64]`
+ * `resolveBackendTool()` 返回 null，断言拿到 `null !== 'C:\\…\\whisper-cli'`。
+ * 与 T-147 修过的 `ytdlpInstall.test.ts` 是同一族：**夹具按 POSIX 造名字，
+ * 于是那几条用例在 Windows 上测的不是"选包对不对"，而是"名字对不对"。**
+ * 传给产品的**逻辑名**仍然是 `whisper-cli`（那是它的 API），只有落盘名带后缀。
+ */
+const exe = (name: string): string => (process.platform === 'win32' ? `${name}.exe` : name);
+
 async function installPack(
   root: string,
   spec: PackSpec,
@@ -94,7 +106,7 @@ async function installPack(
   const packDir = join(root, 'by-name', 'backend', spec.dir);
   await mkdir(packDir, { recursive: true });
   for (const rel of spec.binaries) {
-    const full = join(packDir, rel);
+    const full = join(packDir, exe(rel));
     await mkdir(join(full, '..'), { recursive: true });
     await writeFile(full, `#!/bin/sh\necho ${spec.id}\n`);
     // `findInBackendPacks` 用 access(X_OK)，安装器也确实会 chmod —— 少这一步就是
@@ -128,9 +140,9 @@ async function writePrefs(root: string, selectedBackend: unknown): Promise<void>
 }
 
 const CPU_CLI = (root: string): string =>
-  join(root, 'by-name', 'backend', CPU_LINUX.dir, 'whisper-cli');
+  join(root, 'by-name', 'backend', CPU_LINUX.dir, exe('whisper-cli'));
 const VK_CLI = (root: string): string =>
-  join(root, 'by-name', 'backend', VULKAN_LINUX.dir, 'whisper-cli');
+  join(root, 'by-name', 'backend', VULKAN_LINUX.dir, exe('whisper-cli'));
 
 /* ═════════════════ ① 同一份布局，改偏好就要换答案 ═════════════════ */
 

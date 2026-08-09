@@ -96,7 +96,10 @@ describe('★ 源码必须是纯文本 —— 否则 grep -r 会静默跳过它'
     // ⑤A-2：本项目已有四种"对空集返回绿"的形态。守卫的第一条断言必须是"我真的看到东西了"。
     assert.equal(files.length > 500, true, `只扫到 ${files.length} 个源码文件，扫描范围坏了`);
     assert.equal(
-      files.some((f) => f.endsWith('packages/pipeline/src/subprocess/argGuard.ts')),
+      // ★ T-63：期望值要用 `join()` 拼。`files` 是 `join()` 造出来的，Windows 上带反斜杠，
+      // 而写死的 POSIX 串永远匹配不上 —— `[CI 实测 run 31313108614, win32-x64]`
+      // 这条"前提自检"自己成了那个不成立的前提，于是整条守卫在 Windows 上从未生效。
+      files.some((f) => f.endsWith(join('packages', 'pipeline', 'src', 'subprocess', 'argGuard.ts'))),
       true,
       '当初出问题的那个文件必须在扫描范围内，否则这条守卫钉的是零',
     );
