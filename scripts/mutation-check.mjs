@@ -111,7 +111,13 @@ const MUTATIONS = [
     pkg: 'apps/daemon',
     artifact: 'dist/http/rest/notes.js',
     tests: ['dist/http/noteDetailContract.test.js'],
-    find: '                        state: a.state,\n',
+    /*
+     * ⚠️ 锚点在 T-151 ⑥ 那次重构里烂掉过：`state: a.state` → `state: assetStateOf(a.state)`。
+     * **规格没变**（还是"把 state 整个从载荷里拿掉"），变的只是锚文本。
+     * 它烂掉之后这条一直是哑弹 —— 完整那一档会报 ANCHOR 并 exit 1，
+     * 但**没有人在跑完整那一档**。所以现在有了 `--anchors-only`（秒级）。
+     */
+    find: '                        state: assetStateOf(a.state),\n',
     replace: '',
     why: '前端筛 `a.state === "ready"` → 恒 false → `<audio>` 根本不进 DOM：波形在、播放键在，点了什么都不发生，零报错（T-139 A1）',
   },
@@ -294,6 +300,72 @@ if (selected.length === 0) {
 
 if (listOnly) {
   for (const m of selected) console.log(`${m.id}\n    ${m.why}\n    ← ${m.pkg}/${m.artifact}`);
+  process.exit(0);
+}
+
+/**
+ * `--anchors-only`：**只问「每条锚点还指得到东西吗」，不跑任何测试。**
+ *
+ * ## 为什么单独有这一档
+ *
+ * 完整的变异跑要先 build、要为每个包起沙箱、要把测试跑 N 遍 —— 几分钟起步，
+ * 所以它（有意地）不进门禁。代价是：**锚点烂掉这件事没有任何人在看。**
+ * 而锚点烂掉的后果不是"这条变异不准"，是"这条规格从此什么都没测"——
+ * 本仓刚刚在别处付过这笔账（软链守卫在 Windows 上解析出一个幻影根，
+ * 于是 `lstat` 全落空、包含性判断恒真：**守卫没有变红，它变成了恒真**）。
+ *
+ * 这一档只做字符串比对，**秒级**，因此可以随时跑、也可以进门禁。
+ *
+ * ## 它**不**回答什么
+ *
+ * 它只回答「锚点还在」，不回答「这条变异还抓得住」。
+ * 后者仍然要跑完整的那一档 —— 别拿这一档的绿去替代它。
+ *
+ * ## 用法
+ *
+ * ```bash
+ * node scripts/mutation-check.mjs --anchors-only          # 秒级；改完被守护的文件先跑这个
+ * ```
+ *
+ * ⚠️ 锚点钉的是**编译产物**（`dist/**` / `.test-out/**`），所以先 `pnpm build:safe`；
+ * 也因此「按源文件名 grep 谁在钉我」这条纪律对它们无效 —— 你 grep `manager.ts`
+ * 找不到，得 grep `manager.js`。这一档正是那条纪律的替代品：**改完直接问它。**
+ */
+if (argv.includes('--anchors-only')) {
+  const bad = [];
+  for (const m of selected) {
+    const file = join(REPO, m.pkg, m.artifact);
+    let src;
+    try {
+      src = readFileSync(file, 'utf8');
+    } catch {
+      bad.push(
+        `${m.id}: 产物不存在 ${m.pkg}/${m.artifact} —— 先 pnpm build:safe` +
+          `（web 还要 pnpm --filter @openmemo/web test:unit 编一次）`,
+      );
+      continue;
+    }
+    const hits = src.split(m.find).length - 1;
+    if (hits === 1) {
+      console.log(`  ✔ ${m.id}`);
+    } else {
+      console.log(`  ✘ ${m.id}  锚点出现 ${hits} 次（要求 1 次）`);
+      bad.push(
+        `${m.id}: 锚点在 ${m.pkg}/${m.artifact} 里出现 ${hits} 次（要求恰好 1 次）——\n` +
+          `    这条规格现在**什么都没测**。请重新指锚点，别把它删掉。锚文本：\n` +
+          `    ${JSON.stringify(m.find.slice(0, 90))}`,
+      );
+    }
+  }
+  if (bad.length > 0) {
+    console.error(
+      `\n✘ mutation-check --anchors-only：${bad.length}/${selected.length} 条锚点失效\n  ${bad.join('\n  ')}`,
+    );
+    process.exit(1);
+  }
+  console.log(
+    `\n✔ ${selected.length} 条锚点全部命中（各恰好 1 次）。注意：这**不**证明它们还抓得住变异。`,
+  );
   process.exit(0);
 }
 
