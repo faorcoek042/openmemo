@@ -118,6 +118,20 @@ function check(name, fn) {
 /* ── 夹具 ─────────────────────────────────────────────────────────────────────────── */
 
 /**
+ * `writeNotices()`（scripts/build-bundle.mjs，按 `T.platform` 分叉）对非 darwin / darwin
+ * 平台各自声明的那句**互斥固定措辞**——`verify-bundle.sh` 的 ffmpeg↔NOTICES 双向核对
+ * 靠 `grep -qF` 逐字匹配这两句里的一句。逐字抄自 `writeNotices()` 现在的原文，不是
+ * 自己另造一份近似的话：抄错/抄旧都会让下面的夹具"看起来对但其实没测到"。
+ *
+ * ⚠️ 2026-08-10 事故记录：这两个常量在这条门禁加入 `verify-bundle.sh`（ffmpeg-notices-
+ * crossref）时**没有同步加进夹具**——`fixtureFiles()` 的 THIRD-PARTY-NOTICES 从来没
+ * 写过这两句里的任何一句。后果是①~⑨ 全部因为同一个"锚点失效"分支各多红一条，
+ * 而这条分支本身反而是从被写下来那天起唯一没被单独验证过的（见下面 ⑦c）。
+ * linux-x64 / win-x64 都是非 darwin，所以夹具默认走 BUNDLED 那句。
+ */
+const FFMPEG_CLAIM_BUNDLED = '⚠️ 本包**内置** ffmpeg / ffprobe（LGPL-3.0-or-later）。\n';
+
+/**
  * 每个 target 的命名支路。**逐项抄自 `verify-bundle.sh:33-38` 的那张 case 表** ——
  * 夹具与被测者共用同一份事实，所以那张表被改坏时这里会红，而不是"夹具跟着一起错"。
  */
@@ -217,7 +231,8 @@ function fixtureFiles(target) {
   put('LICENSE', 'UNLICENSED\n');
   put(
     'THIRD-PARTY-NOTICES',
-    'libsimple — MIT OR GPL-3.0\nOpenMemo elects the MIT option for libsimple.\n',
+    'libsimple — MIT OR GPL-3.0\nOpenMemo elects the MIT option for libsimple.\n' +
+      FFMPEG_CLAIM_BUNDLED,
   );
   return f;
 }
@@ -358,24 +373,34 @@ console.log('② ～ ⑦ 反向验证 —— 每一条都必须红');
 }
 
 /*
- * ⑤ GPL 反向断言 —— **两个方向都要断言**。
+ * ⑤ ffmpeg 二进制的两个方向 —— 假阳性钉住 + 架构迁移钉住。
  *
- * 只验"有 ffmpeg 会红"是不够的：第一版守卫写的是 `-iname 'ffmpeg*'`，它当然会红，
- * 但它同时把 `@openmemo/pipeline/dist/audio/ffmpeg.js`（**我们自己的代码**，
- * 那个去 spawn ffmpeg 的模块）也判成了 GPL 组件。那次假阳性已经修成"basename 必须
- * 恰好是工具名"，下面这两条把修复钉住 —— 少任何一条，模式被改回 `ffmpeg*` 都不会红。
+ * ⚠️ 2026-08-09（ffmpeg-lgpl-manifest，D-20 §9.2/§13.7）之后 ⑤a 的语义变了：
+ * ffmpeg 在 linux/win 上从"禁止携带的 GPL 组件"变成了"应当内置的 LGPL 组件"，
+ * `verify-bundle.sh` 的「反向断言：GPL 组件不许在包里」那节已经把 ffmpeg/ffprobe
+ * **明确排除**（见该节标题注释："已改由上面那条双向核对…这里不再重复判断"），
+ * 改由 THIRD-PARTY-NOTICES↔包内容 双向核对以更高精度把关：不是"存在就禁止"，
+ * 而是"声称内置就必须证明许可证义务和可执行性都满足"。下面 ⑤a 的假 ffmpeg 桩
+ * 两条都不满足（没有 LGPL 全文、执行 -L 失败），红在双向核对那节，不再是旧的
+ * "包里发现 GPL 组件"消息——那句消息今天已经打不出来了（不是断言变宽松，是
+ * 真的换了个说法，2026-08-10 本机实测确认）。
+ *
+ * ⑤b 钉的仍是原来那次真实发生过的假阳性：`@openmemo/pipeline/dist/audio/ffmpeg.js`
+ * （我们自己去 spawn ffmpeg 的模块）不许被任何一条判据误伤。
  */
 {
   const r = run('linux-x64', {
     mutate: (f) => f.set('app/bin/ffmpeg', { content: 'ELF\n', mode: 0o755 }),
   });
-  check('⑤a 包里有一个名为 ffmpeg 的二进制 → 红，并点名 GPL / ADR-002 分发阻断', () => {
-    assert.equal(r.status, 1, r.out);
-    assert.match(r.out, /包里发现 GPL 组件/);
-    assert.match(r.out, /ADR-002/);
-    assert.match(r.out, /app\/bin\/ffmpeg/);
-    assert.equal(tally(r.out).failed, 1, r.out);
-  });
+  check(
+    '⑤a 包里有一个假的 ffmpeg 二进制 → 红在双向核对（缺 LGPL 全文 + -L 执行失败），不再是旧的 GPL 反向断言',
+    () => {
+      assert.equal(r.status, 1, r.out);
+      assert.match(r.out, /没找到 Lesser General Public License 的正文/);
+      assert.match(r.out, /ffmpeg -L 执行失败/);
+      assert.equal(tally(r.out).failed, 2, r.out);
+    },
+  );
 }
 {
   const r = run('linux-x64', {
@@ -386,8 +411,8 @@ console.log('② ～ ⑦ 反向验证 —— 每一条都必须红');
       }),
   });
   check('⑤b 反过来：我们自己的 ffmpeg.js **不许**被判成 GPL（这条假阳性真的发生过）', () => {
-    assert.equal(r.status, 0, `ffmpeg.js 把守卫触发了 —— 模式又被写回 'ffmpeg*' 了：\n${r.out}`);
-    assert.match(r.out, /包里没有 ffmpeg \/ ffprobe \/ yt-dlp/);
+    assert.equal(r.status, 0, `ffmpeg.js 把守卫触发了：\n${r.out}`);
+    assert.match(r.out, /包里没有 yt-dlp \/ libav 系/);
     assert.equal(tally(r.out).failed, 0, r.out);
   });
 }
@@ -411,14 +436,21 @@ console.log('② ～ ⑦ 反向验证 —— 每一条都必须红');
   });
 }
 
-/* ⑦a 声明文件整个不在 —— MIT/Apache-2.0 都要求保留版权声明，这是公开分发的硬条件。 */
+/*
+ * ⑦a 声明文件整个不在 —— MIT/Apache-2.0 都要求保留版权声明，这是公开分发的硬条件。
+ * ⚠️ 文件不在 ⇒ 三条独立判据各自查不到自己要找的东西，各红一次：need_file 本身、
+ * libsimple 的 MIT election、以及下面的 ffmpeg↔NOTICES 双向核对（两句固定措辞
+ * 都读不到 ⇒ 锚点失效，见 ⑦c）。这不是新加的判据把这条用例"改坏"了——
+ * 是三条本来就该同时红的判据，第三条直到 2026-08-10 才第一次被正确地跑到。
+ */
 {
   const r = run('linux-x64', { mutate: (f) => f.delete('THIRD-PARTY-NOTICES') });
-  check('⑦a 缺 THIRD-PARTY-NOTICES → 红（文件缺失与 election 缺失各红一条）', () => {
+  check('⑦a 缺 THIRD-PARTY-NOTICES → 红（文件缺失 + election 缺失 + 锚点失效，各红一次）', () => {
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /缺文件：THIRD-PARTY-NOTICES/);
-    /* 文件不在 ⇒ grep 也查不到 election，两条独立断言各红一次。 */
-    assert.equal(tally(r.out).failed, 2, r.out);
+    assert.match(r.out, /没有 libsimple 的 MIT election/);
+    assert.match(r.out, /锚点失效/);
+    assert.equal(tally(r.out).failed, 3, r.out);
   });
 }
 
@@ -426,21 +458,58 @@ console.log('② ～ ⑦ 反向验证 —— 每一条都必须红');
  * ⑦b 文件在、但没写 MIT election。这一条比 ⑦a 更该有：**它看起来是合规的**。
  * libsimple 是 MIT-OR-GPL 双许可 —— 不声明我们选了哪一边，就可能被读成 GPL-3.0，
  * 而那会当场推翻 D-17 §1 的整套结论。
+ *
+ * ⚠️ 覆盖内容里带上 `FFMPEG_CLAIM_BUNDLED`：这条用例只想孤立"缺 election"这一件事，
+ * 不想顺带把 ffmpeg 锚点也测没了（那是 ⑦c 单独的职责）——两件事各自只用一条用例证。
  */
 {
   const r = run('linux-x64', {
     mutate: (f) =>
       f.set('THIRD-PARTY-NOTICES', {
-        content: 'libsimple — dual licensed.\n',
+        content: 'libsimple — dual licensed.\n' + FFMPEG_CLAIM_BUNDLED,
         mode: 0o644,
       }),
   });
-  check('⑦b THIRD-PARTY-NOTICES 在但没写 "elects the MIT option" → 红', () => {
-    assert.equal(r.status, 1, r.out);
-    assert.match(r.out, /没有 libsimple 的 MIT election/);
-    assert.match(r.out, /可能被读成 GPL-3\.0/);
-    assert.equal(tally(r.out).failed, 1, r.out);
+  check(
+    '⑦b THIRD-PARTY-NOTICES 在但没写 "elects the MIT option" → 红（且不牵连 ffmpeg 锚点）',
+    () => {
+      assert.equal(r.status, 1, r.out);
+      assert.match(r.out, /没有 libsimple 的 MIT election/);
+      assert.match(r.out, /可能被读成 GPL-3\.0/);
+      assert.equal(tally(r.out).failed, 1, r.out);
+    },
+  );
+}
+
+/*
+ * ⑦c ★ THIRD-PARTY-NOTICES 在、election 也写了，但「本包**内置** ffmpeg」/
+ * 「本包**不含** ffmpeg」这两句固定措辞**一句都没有** → 红「锚点失效」。
+ *
+ * 这条钉的是 2026-08-10 那次真实事故本身：`verify-bundle.sh` 加了这条 ffmpeg↔
+ * NOTICES 双向核对之后，`fixtureFiles()` 的默认 THIRD-PARTY-NOTICES 从来没有
+ * 补上任何一句 ffmpeg 声明——于是①~⑨ 全部因为同一个"锚点失效"分支各多红一条，
+ * 而这个分支自己，从被写下来那天起反而是唯一没被单独验证过的（本仓在别处已经
+ * 吃过这个形状的亏：判据本身没有反向证据说它真的会红）。现在补上；以后如果
+ * `writeNotices()` 的措辞真的又变了（不管是因为平台策略变了还是单纯有人把话
+ * 说得更好了），这条会在第一时间红，而不必等到②~⑨ 集体多红一条才被人肉发现。
+ */
+{
+  const r = run('linux-x64', {
+    mutate: (f) =>
+      f.set('THIRD-PARTY-NOTICES', {
+        content: 'libsimple — MIT OR GPL-3.0\nOpenMemo elects the MIT option for libsimple.\n',
+        mode: 0o644,
+      }),
   });
+  check(
+    '⑦c ★ THIRD-PARTY-NOTICES 里没有任何一句 ffmpeg 声明 → 红「锚点失效」（钉住 2026-08-10 事故本身）',
+    () => {
+      assert.equal(r.status, 1, r.out);
+      assert.match(r.out, /锚点失效/);
+      assert.match(r.out, /先去对 scripts\/build-bundle\.mjs 里 T\.platform 分叉那两句/);
+      assert.equal(tally(r.out).failed, 1, r.out);
+    },
+  );
 }
 
 console.log('');
@@ -693,6 +762,11 @@ if (failures.length > 0) {
   for (const f of failures) console.log(`  - ${f}`);
   process.exit(1);
 }
-console.log(
-  `\x1b[32m✔\x1b[0m selftest-bundle: ${passed} 个用例全部通过（5 条正向 + 15 条反向 + 3 条 --out 路径）`,
-);
+/*
+ * ⚠️ 这行只报总数，不再逐类拆数字——之前那句"5 条正向 + 15 条反向 + 3 条 --out 路径"
+ * 加总是 23，但 `passed` 实测一直是 26（后来是 27）：拆分早就没跟上新增的用例
+ * （⑬–⑯ 的三平台凭证、⑰–㉒ 的探针链）。手写的分类计数和 `check()` 实际跑过的次数
+ * 之间没有任何机制保证同步，就是这份清单里反复出现的"清单与现实漂移"那个形状，
+ * 发生在这份自检自己身上。总数从 `passed` 变量现算，不会再漂。
+ */
+console.log(`\x1b[32m✔\x1b[0m selftest-bundle: ${passed} 个用例全部通过`);
