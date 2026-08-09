@@ -146,22 +146,39 @@ try {
     process.exit(1);
   }
   packs.sort((a, b) => (a.totalSizeBytes ?? 0) - (b.totalSizeBytes ?? 0));
-  // 默认挑最小（量阶段耗时不是带宽）；`--largest` 挑最大（验"大包是不是也毫秒级"）
-  const pick = LARGEST ? packs[packs.length - 1] : packs[0];
-  say(`   选中：${pick.id}（${((pick.totalSizeBytes ?? 0) / 1e6).toFixed(2)} MB，来自产品目录）`);
-
-  t0 = Date.now();
-  const res = await fetch(`${BASE}/api/backends/install`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ id: pick.id }),
-  });
-  say(`   POST /api/backends/install → ${res.status}`);
-  if (res.status >= 400) {
-    say(`✘ 安装请求被拒（${res.status}）—— **量不到就是量不到**，不许渲染成成功。`);
-    say(`   响应：${(await res.text()).slice(0, 400)}`);
-    process.exitCode = 1;
+  /*
+   * `--largest` 从最大往小试，**被 409 拒了就退一个**。
+   *
+   * `[CI 实测 run 31309232381]` 最大的那个是 `whispercpp-cuda-12.4-win-x64`（677.89 MB），
+   * 在没有 N 卡的 runner 上被**正确地** 409 拒掉（适用性判定）——
+   * 那不是缺陷，是产品该有的行为，但它让这一格量不到。
+   * 退到次大的（Vulkan 25 MB）仍然比 cpu 包大 6 倍，足以回答"包变大会不会变慢"。
+   */
+  const order = LARGEST ? [...packs].reverse() : packs;
+  let pick = null;
+  let res = null;
+  for (const cand of order) {
+    say(`   试：${cand.id}（${((cand.totalSizeBytes ?? 0) / 1e6).toFixed(2)} MB，来自产品目录）`);
+    t0 = Date.now();
+    const r = await fetch(`${BASE}/api/backends/install`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: cand.id }),
+    });
+    say(`   POST /api/backends/install → ${r.status}`);
+    if (r.status < 400) {
+      pick = cand;
+      res = r;
+      break;
+    }
+    say(`   （被拒：${(await r.text()).slice(0, 200)}）`);
+    if (!LARGEST) break; // 只有 --largest 才逐个退，默认那档不该悄悄换包
   }
+  if (pick === null || res === null) {
+    say('✘ 没有一个包能装上 —— **量不到就是量不到**，不许渲染成成功。');
+    process.exit(1);
+  }
+  say(`   选中：${pick.id}（${((pick.totalSizeBytes ?? 0) / 1e6).toFixed(2)} MB）`);
 
   // 等终态（最多 10 分钟 —— 如果 Windows 真的要几分钟，这里必须等得起）
   const deadline = Date.now() + 600_000;
