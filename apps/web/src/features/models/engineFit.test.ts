@@ -42,7 +42,8 @@ const LIVE: LocalEngine[] = [
   {
     id: 'paraformer',
     available: false,
-    reason: '未安装离线中文模型 —— 去「模型」页装 “Paraformer 中文 small” 即可启用（ADR-013：中文默认引擎）',
+    reason:
+      '未安装离线中文模型 —— 去「模型」页装 “Paraformer 中文 small” 即可启用（ADR-013：中文默认引擎）',
   },
 ];
 

@@ -24,18 +24,29 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import {
-  BACKEND_IS_COMPUTE_AXIS,
-  isActivePack,
-  isLoadBearingPack,
-} from './packStatus';
+import { BACKEND_IS_COMPUTE_AXIS, isActivePack, isLoadBearingPack } from './packStatus';
 
 /** `[实测]` 目录里真实存在的四类包（engine → 一条代表）。 */
-const WHISPER_CPU = { engine: 'whisper.cpp', backend: 'cpu', tier: 'downloadable', installed: true } as const;
-const WHISPER_VULKAN = { engine: 'whisper.cpp', backend: 'vulkan', tier: 'downloadable', installed: true } as const;
+const WHISPER_CPU = {
+  engine: 'whisper.cpp',
+  backend: 'cpu',
+  tier: 'downloadable',
+  installed: true,
+} as const;
+const WHISPER_VULKAN = {
+  engine: 'whisper.cpp',
+  backend: 'vulkan',
+  tier: 'downloadable',
+  installed: true,
+} as const;
 const FFMPEG = { engine: 'ffmpeg', backend: 'cpu', tier: 'downloadable', installed: true } as const;
 const YTDLP = { engine: 'yt-dlp', backend: 'cpu', tier: 'downloadable', installed: true } as const;
-const LIBSIMPLE = { engine: 'sqlite-ext', backend: 'cpu', tier: 'downloadable', installed: true } as const;
+const LIBSIMPLE = {
+  engine: 'sqlite-ext',
+  backend: 'cpu',
+  tier: 'downloadable',
+  installed: true,
+} as const;
 
 const NON_INFERENCE = [FFMPEG, YTDLP, LIBSIMPLE];
 

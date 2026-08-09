@@ -281,9 +281,7 @@ export function isActivePack(
  * （重新装回来即可）、daemon 允许的、而且自检里 `tool.ffmpeg` 会立刻出声。
  * 把它锁死换来的不是安全，是"用户拿不回自己的磁盘"。
  */
-export function isLoadBearingPack(
-  pack: Pick<CatalogPack, 'engine' | 'backend' | 'tier'>,
-): boolean {
+export function isLoadBearingPack(pack: Pick<CatalogPack, 'engine' | 'backend' | 'tier'>): boolean {
   if (!BACKEND_IS_COMPUTE_AXIS[pack.engine]) return false;
   return pack.tier === 'builtin' || pack.backend === 'cpu';
 }

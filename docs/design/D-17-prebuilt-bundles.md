@@ -147,12 +147,12 @@ ffmpeg 不受影响，仍是"用户自己在网页上下载"）：
 
 把 `vendor/manifests/` 里的 `url` / `license` 字段逐条列出来：
 
-| 组件                                                                    | 许可证                                              | 谁提供字节                                                             |
-| ------------------------------------------------------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------ |
-| ffmpeg / ffprobe，**macOS**（`media-tools-darwin-arm64`）                | 🔴 GPL-3.0-or-later                                  | `github.com/jellyfin/jellyfin-ffmpeg`（用户机器直连，我们不转存）      |
-| ffmpeg / ffprobe，**Linux/Windows**（`media-tools-{linux,win}-x64`）     | 🟡 **计划改判 LGPL-3.0-or-later**（BtbN 变体，同源同 commit）；**今天还没进包**，见上方订正 | **将来**是我们——随包内置；今天仍是用户机器直连下载（旧 GPL 变体，见上方订正） |
-| yt-dlp (`ytdlp-*`)                                                       | 🔴 GPL-3.0-or-later\*                                | `github.com/yt-dlp/yt-dlp`（用户机器直连，我们不转存，三平台一致）     |
-| libsimple / sqlite-vec / 模型                                           | MIT / Apache-2.0 / Gemma ToU                        | wangfenjin、asg017、HuggingFace、ModelScope                            |
+| 组件                                                                 | 许可证                                                                                      | 谁提供字节                                                                    |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| ffmpeg / ffprobe，**macOS**（`media-tools-darwin-arm64`）            | 🔴 GPL-3.0-or-later                                                                         | `github.com/jellyfin/jellyfin-ffmpeg`（用户机器直连，我们不转存）             |
+| ffmpeg / ffprobe，**Linux/Windows**（`media-tools-{linux,win}-x64`） | 🟡 **计划改判 LGPL-3.0-or-later**（BtbN 变体，同源同 commit）；**今天还没进包**，见上方订正 | **将来**是我们——随包内置；今天仍是用户机器直连下载（旧 GPL 变体，见上方订正） |
+| yt-dlp (`ytdlp-*`)                                                   | 🔴 GPL-3.0-or-later\*                                                                       | `github.com/yt-dlp/yt-dlp`（用户机器直连，我们不转存，三平台一致）            |
+| libsimple / sqlite-vec / 模型                                        | MIT / Apache-2.0 / Gemma ToU                                                                | wangfenjin、asg017、HuggingFace、ModelScope                                   |
 
 \* **订正于 2026-08-09**（见 D-20 §14，commit `9b3ea96`；回执
 `coordination/inbox/ytdlp-binary-audit.md`）：这一行此前的隐含理由是"yt-dlp 项目本身

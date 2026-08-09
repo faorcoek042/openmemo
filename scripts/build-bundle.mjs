@@ -1096,7 +1096,9 @@ async function assembleFfmpeg() {
   copied += 1;
 
   await rm(work, { recursive: true, force: true });
-  say(`   ✔ runtime/probe/  ffmpeg + ffprobe + LICENSE.txt（共 ${copied} 个文件，${mib(await dirSize(dst))}）`);
+  say(
+    `   ✔ runtime/probe/  ffmpeg + ffprobe + LICENSE.txt（共 ${copied} 个文件，${mib(await dirSize(dst))}）`,
+  );
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────────

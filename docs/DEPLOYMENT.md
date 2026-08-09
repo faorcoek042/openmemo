@@ -862,13 +862,13 @@ Developer ID 签名）。它拦在**打开脚本**那一步，所以**终端窗�
 **C 类 —— 运行时下载的二进制**（`vendor/manifests/backends.json` 11 个 + `sqlite-ext.json` 11 个
 = 目录里的 **22** 个包，逐条带 sha256）。下表逐条读自各 pack 的 `license.id` 字段 `[本机实测]`：
 
-| 组件                                    | 包数 | 许可证                                                                  | 备注                                                                                 |
-| --------------------------------------- | ---- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| 组件                                    | 包数 | 许可证                                                                              | 备注                                                                                                 |
+| --------------------------------------- | ---- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | **ffmpeg / ffprobe**（`media-tools-*`） | 3    | Linux/Windows 🟡 **LGPL-3.0-or-later**；macOS 🔴 **GPL-3.0-or-later**（订正，见下） | Linux/Windows 换成 BtbN 的 lgpl 构建（随包内置）；macOS 仍是 jellyfin-ffmpeg 的 gpl 构建（继续下载） |
-| **yt-dlp**（`ytdlp-*`）                 | 4    | 项目本身 **Unlicense**；官方二进制内嵌 🔴 GPL（订正，见下）                | 钉死 `engineVersion` = `2026.07.04`                                                    |
-| whisper.cpp 二进制包（`whispercpp-*`）  | 4    | MIT / `whispercpp-cuda-12.4-win-x64` 为 `LicenseRef-NVIDIA-CUDA-EULA`   | 含那个装不上的 `whispercpp-cuda-12.4-win-x64`（CUDA 运行库许可证 2026-08-09 订正，见 D-20 §16.1） |
-| libsimple                               | 6    | MIT                                                                     |                                                                                       |
-| sqlite-vec                              | 5    | MIT                                                                     |                                                                                       |
+| **yt-dlp**（`ytdlp-*`）                 | 4    | 项目本身 **Unlicense**；官方二进制内嵌 🔴 GPL（订正，见下）                         | 钉死 `engineVersion` = `2026.07.04`                                                                  |
+| whisper.cpp 二进制包（`whispercpp-*`）  | 4    | MIT / `whispercpp-cuda-12.4-win-x64` 为 `LicenseRef-NVIDIA-CUDA-EULA`               | 含那个装不上的 `whispercpp-cuda-12.4-win-x64`（CUDA 运行库许可证 2026-08-09 订正，见 D-20 §16.1）    |
+| libsimple                               | 6    | MIT                                                                                 |                                                                                                      |
+| sqlite-vec                              | 5    | MIT                                                                                 |                                                                                                      |
 
 **模型权重** —— **[本机实测]** 读自 `vendor/manifests/models-*.json` 的 `license` 字段
 

@@ -85,7 +85,10 @@ describe('硬件指纹的完整性由构造保证，并且逐字段可检验（T
     let checked = 0;
 
     for (const key of Object.keys(RECORD)) {
-      const mutated = { ...(RECORD as Record<string, unknown>), [key]: mutate(RECORD[key as keyof typeof RECORD]) };
+      const mutated = {
+        ...(RECORD as Record<string, unknown>),
+        [key]: mutate(RECORD[key as keyof typeof RECORD]),
+      };
       const changed = canonicalPackFingerprint(mutated) !== base;
       const ignored = FINGERPRINT_IGNORED_FIELDS.includes(key);
       checked += 1;
@@ -133,7 +136,10 @@ describe('硬件指纹的完整性由构造保证，并且逐字段可检验（T
     assert.ok(FINGERPRINT_IGNORED_FIELDS.length > 0, '排除表空了 —— 那这条断言在空跑');
     for (const key of FINGERPRINT_IGNORED_FIELDS) {
       if (!(key in RECORD)) continue;
-      const mutated = { ...(RECORD as Record<string, unknown>), [key]: mutate(RECORD[key as keyof typeof RECORD]) };
+      const mutated = {
+        ...(RECORD as Record<string, unknown>),
+        [key]: mutate(RECORD[key as keyof typeof RECORD]),
+      };
       assert.equal(
         canonicalPackFingerprint(mutated),
         base,
