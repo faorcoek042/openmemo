@@ -39,8 +39,15 @@ export const modelsSse: SseBinding = (qc: QueryClient) => [
       jobId: e.jobId,
       jobType: 'download',
       state: e.state,
+      /*
+       * ★ `pct: null` 的意思是「这一步报不出进度」（契约原话：
+       *   "Null when the step genuinely cannot report a fraction."），
+       *   **不是 0%**。以前这里兜底成 0，于是"正在安装"显示成停在 0% 的进度条 ——
+       *   一条看起来精确的假话。现在原样传 null，由渲染层用**不确定表达**去画。
+       */
       progress:
-        e.pct ?? (e.totalBytes && e.completedBytes != null ? e.completedBytes / e.totalBytes : 0),
+        e.pct ??
+        (e.totalBytes && e.completedBytes != null ? e.completedBytes / e.totalBytes : null),
       step: e.step,
       completedBytes: e.completedBytes,
       totalBytes: e.totalBytes,

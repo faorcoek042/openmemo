@@ -83,7 +83,7 @@ export const HARDWARE_SNAPSHOT_ID = 'hw-local';
  */
 function onJob(
   queue: DownloadQueue,
-  event: 'job.created' | 'job.progress' | 'job.done' | 'job.failed',
+  event: 'job.created' | 'job.progress' | 'job.step' | 'job.done' | 'job.failed',
   fn: (job: DownloadJob) => void,
 ): void {
   queue.on(event, (...args: unknown[]) => {
@@ -475,6 +475,32 @@ export class RestState {
         }),
         // ★ 唯一需要节流的事件：8 MB/s 下逐字节推送会把浏览器渲染循环打满
         topics.job(job.jobId),
+      );
+    });
+
+    /*
+     * ★ step 变化：发一条**只带 step、不带刻度**的 job.progress。
+     *
+     * · `pct: null` 是契约里就写好的表达（"Null when the step genuinely cannot
+     *   report a fraction."）—— 安装/解压没有字节刻度，**绝不编一个百分比**。
+     * · 字节计数一并置 null：它们是上一阶段（下载）的数，留着会让界面继续画
+     *   一条"已完成 574MB/574MB"的满条，看起来像还在下载。
+     * · **刻意不传 throttleTopic**：这是低频的阶段公告（每阶段一次），
+     *   走未节流那条路才能①立刻到达②顺手把同 topic 上压着的旧进度先冲出去
+     *   —— 否则它自己就会变成下一个被终态超车的受害者。
+     */
+    onJob(this.queue, 'job.step', (job) => {
+      this.publish(
+        makeEvent('job.progress', topics.job(job.jobId), {
+          jobId: job.jobId,
+          step: job.step,
+          pct: null,
+          completedBytes: null,
+          totalBytes: null,
+          speedBps: null,
+          etaSeconds: null,
+          state: job.state,
+        }),
       );
     });
 

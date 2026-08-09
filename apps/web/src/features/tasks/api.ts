@@ -139,7 +139,9 @@ export function useMergedJobs(): {
       type: live.jobType,
       state: live.state as JobState,
       step: live.step,
-      progress: live.progress,
+      // 契约里 PipelineJob.progress 是 number；不确定时按 0 记账，
+      // **但渲染层要看 step 而不是这个数**（见 JobToaster：installing 走不确定表达）。
+      progress: live.progress ?? 0,
       completedBytes: live.completedBytes,
       totalBytes: live.totalBytes,
       speedBps: live.speedBps,

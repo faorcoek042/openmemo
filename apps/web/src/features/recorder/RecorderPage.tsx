@@ -149,7 +149,9 @@ export default function RecorderPage() {
   const rerunSnap = useProgressStore((st) => (rerunJobUid ? st.byJob[rerunJobUid] : undefined));
   useEffect(() => {
     if (!rerunSnap) return;
-    setRerunProgress(rerunSnap.progress);
+    // 进度可能是 null（那一步报不出刻度）——录音重跑这里只画一个数值条，
+    // 拿不到刻度就保持上一次的值，别把"不确定"渲染成 0%。
+    if (rerunSnap.progress !== null) setRerunProgress(rerunSnap.progress);
     if (rerunSnap.state === 'succeeded') setPhase('done');
     if (rerunSnap.state === 'failed') {
       setPhase('done');

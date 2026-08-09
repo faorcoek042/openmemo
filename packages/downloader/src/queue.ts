@@ -206,8 +206,21 @@ export class DownloadQueue extends EventEmitter<DownloadQueueEvents> {
       },
       setState: (s) => this.transition(job, s),
       setStep: (s) => {
+        /*
+         * ★★ **`installing` 此前一次都没推过。**
+         *
+         * `setStep()` 原来只改字段、不发任何事件；`step` 是搭在 `job.progress` 里
+         * 顺路走的 —— **而安装阶段没有字节进度，所以没有车可搭**。
+         * 于是界面上最后一条消息永远停在下载/校验那一步，用户看到的是"卡住了"。
+         *
+         * 现在**只在 step 真的变了的时候**发一条。只在变化时发很要紧：
+         * `setStep()` 也被下载进度回调按帧调用（`models.ts` 的 onProgress 里），
+         * 每次都发就会把节流白白打掉。
+         */
+        const changed = job.step !== s;
         job.step = s;
         job.updatedAt = new Date().toISOString();
+        if (changed) this.emit('job.step', job);
       },
       setProvider: (p) => {
         job.provider = p;

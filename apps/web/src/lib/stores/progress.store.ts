@@ -18,7 +18,15 @@ export interface JobProgressSnapshot {
   jobType: string;
   noteUid?: string;
   state: string;
-  progress: number;
+  /**
+   * 0..1；**`null` = 这一步没有可报的进度**（例如"正在安装"：解压写盘没有字节刻度）。
+   *
+   * ⚠️ 不确定的进度必须用**不确定的表达**（转圈 / 无刻度条）渲染。
+   *   以前 `pct: null` 在 `features/models/sse.ts` 被兜底成 `0`，于是"正在安装"
+   *   会显示成一个**停在 0% 的进度条** —— 一个看起来精确的假话，
+   *   和"卡在正在校验完整性"是同一族毛病。
+   */
+  progress: number | null;
   step: string | null;
   stepIndex?: number;
   stepCount?: number;
