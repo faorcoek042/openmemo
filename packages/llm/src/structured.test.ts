@@ -47,7 +47,32 @@ describe('extractJson', () => {
         assert.ok(err instanceof LlmError);
         assert.equal(err.code, 'LLM_STRUCTURED_OUTPUT_FAILED');
         assert.match(err.message, /truncated/i, `应明确指出截断，实际：${err.message}`);
-        assert.equal(err.remediation?.action, 'increaseMaxTokens');
+        /*
+         * ★ 这里原本钉的是 `remediation.action === 'increaseMaxTokens'`。
+         *   用户 2026-08-09 裁决「引导跳过去解决不了问题就删掉」之后，那条行动号召
+         *   被移除了 —— 因为 `maxTokens` 是本仓**刻意不给控件**的字段
+         *   （`LlmSettingsSection.tsx:491`：「改了不生效的输入框是假控件」），
+         *   界面上永远无处可点，`RemediationButton` 对它返回 null。
+         *
+         * ⚠️ 但**不能把这行断言删掉了事** —— 那是"放宽断言变绿"。
+         *   改成钉**新的契约**，而且比原来更具体：
+         *     ① 确实不带行动号召（不许再冒出一个点不出来的按钮）；
+         *     ② 诊断信息没有被一起删掉（§13）——中文文案要说清"被截断"；
+         *     ③ 要给出用户**真的做得到**的那条出路（换更大的模型，
+         *        控件就在 /models?tab=llm）。
+         *   ②③ 是原来那版**没有**钉的，所以这不是把守卫削弱了。
+         */
+        assert.equal(
+          err.remediation,
+          undefined,
+          '不该再带行动号召：maxTokens 没有任何界面控件，按钮点不出来',
+        );
+        assert.match(err.messageZh, /截断/, `中文文案要说清"被截断"，实际：${err.messageZh}`);
+        assert.match(
+          err.messageZh,
+          /更大的模型/,
+          `要给出用户真的做得到的出路（换更大的模型），实际：${err.messageZh}`,
+        );
         return true;
       },
     );
