@@ -158,3 +158,99 @@ run `31298418469`：`linux-x64 (control)` **success**，`darwin-arm64` 与 `win3
    而不是让它一直红 —— 一条常态红的腿等于一条被删掉的腿。
 3. `e2e-coldstart` 的重叠问题，由它的主人给一句话，再决定合并还是留。
 4. **本轮删除数 = 0**，这是量出来的结论，不是没查。
+
+---
+
+## [2026-08-09] Windows AVX2 真探测 + 控制台三处噪音 DONE
+
+交付: `packages/runtime/src/detect/system.ts`、`scripts/ci/probe-cpu-features.mjs`（新）、
+`.github/workflows/ci-crossplatform.yml`、`apps/daemon/src/pipeline/setup.ts`、
+`apps/daemon/src/http/rest/state.ts`。提交 `490dda1`、`c87f537`、`bf8111d`。
+
+### A. Windows 真机上探到的指令集（实测，run `31304708529`）
+
+```
+── CPU 探测实测（win32/x64）        ← windows-2025 runner
+   brand          : AMD EPYC 7763 64-Core Processor
+   physicalCores  : 2
+   logicalCores   : 4
+   features ( 3)  : avx, avx2, sse4_2
+   ★ avx2 : 探到了 ✔
+```
+
+对照（同一次 run）：
+
+```
+── CPU 探测实测（darwin/arm64）：features (4) : asimd, dotprod, fp16, neon   ★ avx2 没探到（arm64 上本就不适用）
+── CPU 探测实测（linux/x64）  ：features (14): avx, avx2, avx512f, …          ★ avx2 探到了
+```
+
+**做法**：`Get-CimInstance Win32_Processor` **完全不报 ISA**，`wmic` 已废弃且同样不报 ——
+唯一可靠来源是 kernel32 的 `IsProcessorFeaturePresent`，经 PowerShell `Add-Type`
+P/Invoke 调用（`Add-Type` 在内存里编译，不受脚本执行策略限制）。
+一条 PowerShell 里把 7 个 `PF_*` 问完，避免起 7 个进程。
+
+**多来源的优先级与失败模式**（按要求说清）：
+
+| 来源 | 用不用 | 失败模式 |
+| --- | --- | --- |
+| `IsProcessorFeaturePresent`（kernel32） | **用，唯一** | `Add-Type` 被策略挡 / powershell 不在 / 超时 → 空集合＝未知 |
+| `Get-CimInstance Win32_Processor` | 只取核数 | **它根本不报 ISA**，不是"取不到"，是"没有这个字段" |
+| `wmic` | 不用 | 已废弃（Win11 24H2 起不在默认镜像），且同样不报 ISA |
+| 从 ggml 后端变体反推 | **不用** | 需要探针先跑过；且 `inferIsaFromBackendPath` 已因零调用方+注释撒谎被删，**没有挖回来** |
+
+### B. ⚠️ 自陈：第一版拼错了，而它的失败方式正是当初担心的那种
+
+我把 `-MemberDefinition '`、C# 正文、`'` 拆成三个数组元素再 `join('; ')`，
+于是分隔符被塞进了 C# 字符串里：
+
+```
+-MemberDefinition '; [DllImport("kernel32.dll")] …;; '
+```
+
+**编译当场失败 → 探测永远返回空 → 界面永远显示"无法确认" —— 而且一声不响。**
+这正是当初跳过第 3 步时担心的「一个建到一半的探测器只会产出另一句假话」，
+**只是这次是我自己造的**。本机把拼出来的脚本 `console.log` 出来看了一眼才发现。
+`[已修正]` 改成单个数组元素，真机验证如 §A。
+
+### C. "未知"这一档现在还剩哪些情形
+
+**三态结构一个字没动**，变的只是"未知"变少了：
+
+| 情形 | 现在的档 |
+| --- | --- |
+| Windows，查询成功 | **不再是未知** —— 实测 avx/avx2/sse4_2 |
+| Windows，`Add-Type` 被执行策略挡 / powershell 不可用 / 超时 | **未知**（空集合） |
+| **查询跑通了但一行都解析不出来** | **未知** —— ★ 跑通≠读懂，不许因为"命令成功"就把空当结论 |
+| arm64（macOS） | **不适用**（AVX2 是 x86 概念，UI 一个字都不说） |
+| Linux / macOS | 本来就有来源，不受影响 |
+
+⚠️ `[未验证]` 我没有在**开启了严格执行策略或锁定 Add-Type** 的 Windows 上测过 ——
+那一格会落到"未知"，但我没有真机证据说它确实优雅降级。
+
+### D. 控制台三条各自的处理
+
+| # | 问题 | 处理 | 依据 |
+| --- | --- | --- | --- |
+| ① | VAD 警告一次启动 **3 遍** | **保留次数、压缩篇幅**：全文只说一次，之后同一条原因只说「VAD 仍不可用（同上，原因未变）」 | 重复是**真实重测**（buildPipeline 启动+热重建各一次），去重会把"装了还是不行"藏起来；但"同一条真话说三遍全文"是另一回事 |
+| ② | 中英同句，与周围不一致 | **英文移出控制台，跟随周围走（全中文）** | daemon 控制台**没有 i18n 机制**，横幅到每条 `[daemon]` 都是中文；在全中文的面上插一条中英连排长句既不一致、也救不了英文用户（他在别处照样读不懂） |
+| ③ | `[models] …已裁 role…ADR-016 决策 3` | **降级到 `OPENMEMO_DEBUG=1`，没有删** | 原意对（静默少几条目录、排查的人会难受），但**出声对象搞错了**：cmd 窗口对双击的用户就是产品界面。删了会退回"静默地少几条"，所以是降级不是删除 |
+
+⚠️ ②**没做完的那一半**：英文该去有 i18n 的那一侧（网页），但那要把 `reasonZh`
+换成 reason **code** 再由前端翻译 —— 是另一件事，**本轮没做**。
+**结果是英文用户在这条上暂时拿不到母语提示**，如实记着，不假称已解决。
+
+### E. 顺带发现（不是我的，未动）
+
+`ci-crossplatform` 的 Windows `Test` 步骤有**与本轮无关的红**：
+`packages/downloader` 的「并发写同一个边车」「中间软链 + `..`」等用例在 Windows 上失败。
+那是 downloader 那一路的地盘，**我一个字都没动**，只把自己的取证步骤加了
+`if: ${{ !cancelled() }}` —— 第一次跑它被这个红连坐跳过，
+「Windows 上到底探到什么」一个字都没拿到。**取证步骤不该被别人的红连坐。**
+
+### F. 门禁
+
+`tsc -b` 0、`build:safe` 0、`check:orphans` 干净、
+`@openmemo/daemon` 583/0、`@openmemo/runtime` 130/0、`lint-workflows` 1586（+4，来自新步骤）。
+⚠️ 全量 `pnpm -r test`（基线 1615）**没有量**：`packages/downloader` 在 Windows 上的红
+与另一路正在改的东西重叠，按脏树提示的规矩不据此对 master 下结论。标 `[未验证]`。
