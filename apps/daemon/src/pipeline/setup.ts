@@ -242,9 +242,25 @@ export async function resolveWhisperVadModel(
     path !== null
       ? 'VAD 可用：按静音切分'
       : rejected.length > 0
-        ? `已安装的 VAD 权重 whisper.cpp 加载不了（${rejected
+        ? /*
+           * ★ 这句话必须**说清下一步**，否则它只是每次装配都重复一遍的噪音。
+           *
+           * `[用户真机 2026-08-09, Windows]` 他装的是 `vad/silero-vad-onnx`
+           * （目录里写着 `engines: ['sherpa-onnx']`），而他的引擎是 whisper.cpp，
+           * 需要的是 `vad/silero-vad-ggml`（`engines: ['whisper.cpp']`）。
+           * **两个都在目录里、产品自己知道谁配谁，却从没告诉过他"你该装的是另一个"**
+           * —— 只反复说"加载不了"。这条日志是用户会贴出来、也会拿去搜的东西，
+           * 所以中英都给。
+           */
+          `已安装的 VAD 权重 whisper.cpp 加载不了（${rejected
             .map((p) => p.split(/[\\/]/).pop() ?? p)
-            .join('、')}）—— 切分降级为固定窗口，转写仍可完成但断句会变差`
+            .join('、')}）—— 切分降级为固定窗口，转写仍可完成但断句会变差。` +
+          `你装的多半是 sherpa-onnx 用的那一个；whisper.cpp 需要「vad/silero-vad-ggml」，` +
+          `去「模型」页装上它即可恢复按静音切分。` +
+          ` / Installed VAD weights cannot be loaded by whisper.cpp — falling back to ` +
+          `fixed-window chunking (transcription still works, segmentation gets worse). ` +
+          `You most likely installed the sherpa-onnx one; whisper.cpp needs ` +
+          `"vad/silero-vad-ggml" — install it from the Models page to restore silence-based chunking.`
         : '未安装 VAD 模型 → 切分降级为固定窗口';
 
   return { path, rejected, reasonZh };
