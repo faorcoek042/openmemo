@@ -101,8 +101,16 @@ F1–F5 各有一条端到端腿(用预编译包、走真实 HTTP、三平台各
 —— 这两句 2026-08-08 起不再为真,订正见 [`docs/design/D-19-user-doc-provenance.md`](docs/design/D-19-user-doc-provenance.md)。)
 **ffmpeg** 是 **GPL-3.0-or-later**,而**它的字节从不经过我们**:由你的机器直连上游取,
 我们只以命令行方式调用 —— 所以发预编译包不触发 GPL。
-**yt-dlp 是 [Unlicense](https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE)(公共领域),与 GPL 无关**
-(此处此前误写成 GPL-3.0-or-later,2026-08-09 读上游 LICENSE 原文订正)。
+**yt-dlp 项目本身是 [Unlicense](https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE)(公共领域),
+但官方发布的可执行二进制内嵌了另外的 GPL 组件**:全平台内嵌 mutagen(GPL-2.0-or-later),
+Linux x64/arm64 额外内嵌 GNU Readline(GPL-3.0-or-later)——
+`[实测]` 见 [`docs/design/D-20-bundled-deps.md` §14](docs/design/D-20-bundled-deps.md)。
+这与上面 ffmpeg 是**同一条逃逸路径**:字节从不经过我们,由你的机器直连 yt-dlp 官方 GitHub 取,
+我们只以命令行方式调用 —— 所以发预编译包同样不触发 GPL。
+~~yt-dlp 是 Unlicense(公共领域),与 GPL 无关~~
+(此处 2026-08-09 第一次订正时把"项目本身的许可证"和"官方二进制里内嵌了什么依赖"
+混为一谈,"与 GPL 无关"这句话讲过头了;同日晚些时候按 D-20 §14 的二进制实测再次订正,
+订正人:执行 ytdlp-binary-audit 任务的 agent)。
 逐条依据见附录 A 或 `pnpm license:report`。
 
 ## 更多文档
