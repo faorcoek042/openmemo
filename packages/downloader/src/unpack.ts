@@ -66,6 +66,21 @@ export interface UnpackOptions {
   /** Zip-bomb guard: refuse an archive with more entries than this. Default 20000. */
   maxEntries?: number;
   signal?: AbortSignal;
+  /**
+   * 解包进度。**两种格式都给得出真分母，一个都不用编**：
+   *
+   * | 格式 | `done` / `total` | 依据 |
+   * |---|---|---|
+   * | zip | 已处理条目 / 中央目录条目总数 | EOCD 里的 `entriesTotal`，**解包前就已知** |
+   * | tar | 已消费字节 / 解压后总字节 | `extractTar` 先整个解压进 `raw`，`raw.length` 是真值 |
+   *
+   * `unit` 让调用方能说人话（"第 N/M 个文件" vs 字节比例）而不必猜语义。
+   *
+   * ⚠️ **本回调不节流**：它每个条目都调一次。节流是调用方的事
+   * （`installer.ts` 与下载那条共用同一个理由与同一个速率）——
+   * 在这里节流会让"解包到底走到哪了"这件事本身变得不可观测。
+   */
+  onProgress?: (done: number, total: number, unit: 'entries' | 'bytes') => void;
 }
 
 export type UnpackErrorCode =
@@ -615,9 +630,20 @@ export async function unpackZip(
     const eocd = await findEndOfCentralDirectory(fh, fileSize);
     const cdBuf = await readAt(fh, eocd.cdOffset, eocd.cdSize);
     const entries = parseCentralDirectory(cdBuf, budget);
+    // 真分母：中央目录里的条目总数，**解包一个字节之前就已知**
+    const entriesTotal = entries.length;
+    let entriesDone = 0;
 
     for (const entry of entries) {
       checkAborted(opts?.signal);
+      /*
+       * ★ 在**循环开头**计数，不在各个出口。
+       * 这个循环体里有三条 `continue`（目录 / 符号链接 / mac 垃圾条目），
+       * 在出口计数必然漏一条，而且漏得不显眼 —— 进度会停在 97% 那种。
+       * 语义是"正在处理第 N 个 / 共 M 个"，对每条路径都成立。
+       */
+      entriesDone += 1;
+      opts?.onProgress?.(entriesDone, entriesTotal, 'entries');
 
       /*
        * 垃圾条目：**先验名，再整条跳过**（见 `isMacArchiveJunk`）。
@@ -805,6 +831,12 @@ async function extractTar(
 
   while (offset + TAR_BLOCK <= raw.length) {
     checkAborted(opts?.signal);
+    /*
+     * 真分母：`raw` 是**已经整个解压出来**的 buffer（见 `unpackTarGz`/`unpackTarXz`），
+     * 所以 `raw.length` 是真值，`offset/raw.length` 是**真实**比例，不是估的。
+     * 报字节而不是条目：tar 的条目总数要走完才知道，而字节数一开始就知道。
+     */
+    opts?.onProgress?.(offset, raw.length, 'bytes');
 
     const header = raw.subarray(offset, offset + TAR_BLOCK);
     if (isZeroBlock(header)) break; // end-of-archive marker (two zero blocks; one is enough to stop)

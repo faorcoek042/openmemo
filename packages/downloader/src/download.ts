@@ -47,7 +47,7 @@ export interface DownloadProgress {
   totalBytes: number;
   speedBps: number;
   etaSeconds: number | null;
-  phase: 'resolving' | 'downloading' | 'verifying';
+  phase: 'resolving' | 'downloading' | 'verifying' | 'unpacking';
   provider: string;
 }
 

@@ -33,6 +33,8 @@ import { createServer, type Server } from 'node:http';
 import { mkdtemp, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { deflateRawSync } from 'node:zlib';
+
+import { unpackArchive } from './unpack.js';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
@@ -387,5 +389,47 @@ describe('T-157 ② 更新失败不许破坏当前版本', () => {
       [],
       `留下了临时目录：${JSON.stringify(byName)}`,
     );
+  });
+});
+
+/**
+ * 解包进度（zip）：**分母必须是真的**（2026-08-09 裁决 ①）。
+ *
+ * 判据不是"有没有回调"，是**分母是不是真值**。zip 的真值在 EOCD 里
+ * （`entriesTotal`，解包前就已知），所以这里断言它**恒等于真实条目数** ——
+ * 一个编出来的分母（固定 100 / 按体积估）会让进度走到 80% 然后跳完，
+ * 那和没有进度一样不可信，只是更难被发现。
+ *
+ * 放在本文件而不是 `unpack.test.ts`：手写 ZIP 的 `makeZip()` 在这边，
+ * **不为此再抄一份 zip 写入器**。
+ */
+describe('解包进度（zip）：分母来自 EOCD，不是猜的', () => {
+  it('★ total 恒等于真实条目数，且每个条目都被计到（含被跳过的分支）', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'zip-prog-'));
+    const names = ['one.txt', 'two.txt', 'three.txt', 'dir/four.txt'];
+    const zip = makeZip(names.map((n) => ({ name: n, data: Buffer.from(`x-${n}`) })));
+    const src = join(dir, 'p.zip');
+    await fs.writeFile(src, zip);
+
+    const seen: Array<{ done: number; total: number; unit: string }> = [];
+    await unpackArchive(src, join(dir, 'out'), 'zip', {
+      onProgress: (done, total, unit) => seen.push({ done, total, unit }),
+    });
+
+    assert.ok(seen.length > 0, '★ 一次都没报进度 —— 解包期间界面会停在上一档 verifying');
+    assert.equal(seen[0]?.unit, 'entries', 'zip 报的是条目数');
+    assert.equal(
+      seen[0]!.total,
+      names.length,
+      '★ 分母不等于真实条目数 —— 说明它是估的/编的，而 EOCD 里明明有真值',
+    );
+    assert.equal(seen.at(-1)!.done, names.length, '★ 最后一条没走到 total，进度会停在中途');
+    for (let i = 1; i < seen.length; i++) {
+      assert.equal(
+        seen[i]!.done,
+        seen[i - 1]!.done + 1,
+        '★ 条目计数跳号 —— 循环里有 continue 分支被漏计（目录/软链/mac 垃圾）',
+      );
+    }
   });
 });

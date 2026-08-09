@@ -21,7 +21,15 @@ const STEP_KEY: Record<string, string> = {
   resolving: 'models.download.resolving',
   downloading: 'models.download.downloading',
   verifying: 'models.download.verifying',
+  /*
+   * ★ `unpacking` / `warming` 两档此前**没有词条** —— 而它们都是真实会停留的阶段：
+   *   · 解包：`[CI 实测]` Windows 25 MB 包 171ms；大包按比例更久
+   *   · 预热：`[CI 实测 macos]` GPU 着色器缓存 10.6–16.9 s，期间 0 个事件
+   * 没有词条时这一行显示的是**上一档**的文案 —— 也就是说界面在说一句不实的话。
+   */
+  unpacking: 'models.download.unpacking',
   installing: 'models.download.installing',
+  warming: 'models.download.warming',
 };
 
 /** ETA 文案：D-05 §4.1 规则 4 —— 只在有依据时显示，且四舍五入到"约 X 分钟"。

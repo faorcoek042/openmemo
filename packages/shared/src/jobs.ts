@@ -45,10 +45,26 @@ export const TERMINAL_JOB_STATES: readonly JobState[] = ['succeeded', 'failed', 
  * 它必须**看得见**：实测这一步要 16 s 上下（真机 UNKNOWN），进度条上不说一句话，
  * 用户只会以为卡死了。只有 macOS 会出现这个步骤，其余平台直接从 `installing` 收尾。
  */
+/*
+ * ★ `unpacking` 为什么必须单独成一档（2026-08-09 裁决 ①）
+ *
+ * 判据**不是**"让进度好看"，是**"界面说的必须是实际正在发生的"**。
+ *
+ * `[CI 实测]` 解包发生在**最后一个 `verifying` 事件与 `installing` 之间**：
+ * `unpackArchive()` 在 `installFiles` 内部被调用且一个事件都不发，
+ * 而 `setStep('installing')` 是 `installFiles` **返回之后**才设的。
+ * ⇒ 解包期间界面上显示的是「**正在校验完整性**」—— **一句不实的话**。
+ *
+ * 而这句不实的话**已经让用户误报过一次原因**：他说"卡在验证校验值"，
+ * 那时候产品其实在解包。界面说的和实际发生的不一致，代价由用户承担。
+ *
+ * 顺序必须在 `verifying` 与 `installing` 之间 —— 那正是它真实发生的位置。
+ */
 export const JOB_STEPS = [
   'resolving',
   'downloading',
   'verifying',
+  'unpacking',
   'installing',
   'warming',
 ] as const;

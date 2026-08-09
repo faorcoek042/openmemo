@@ -76,6 +76,8 @@ export interface InstallOptions {
     currentFile: string;
     phase: string;
     provider: string;
+    /** 解包比例（0–1）。只有 `phase === 'unpacking'` 时给，且**分母是真的**。 */
+    unpackedRatio?: number;
   }) => void;
   onFileDone?: (f: InstalledFileRecord) => void;
 }
@@ -262,7 +264,41 @@ export async function install(opts: InstallOptions): Promise<InstallResult> {
       const tmpDir = `${finalDir}.tmp-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
       try {
         await fs.rm(tmpDir, { recursive: true, force: true });
-        await unpackArchive(linked, tmpDir, f.unpack, { signal: opts.signal });
+        /*
+         * ★ 解包期间必须播报，否则界面上显示的是**上一档** `verifying`
+         * —— 而那句话是不实的：产品这时在解包，不在校验。
+         * 用户已经因此误报过一次原因（"卡在验证校验值"）。
+         *
+         * ⚠️ **节流在这里，不在 `unpack.ts` 里**：与下载那条同一个理由
+         * （8MB/s 不节流会打满渲染循环；解包几千个小文件同样能打满），
+         * 也同一个速率（~4 Hz）。在 unpack 内部节流会让"解包走到哪了"不可观测。
+         */
+        let lastUnpackEmit = 0;
+        await unpackArchive(linked, tmpDir, f.unpack, {
+          signal: opts.signal,
+          onProgress: (done, total, unit) => {
+            const now = Date.now();
+            if (now - lastUnpackEmit < 250) return;
+            lastUnpackEmit = now;
+            /*
+             * `pct` 只在有真分母时给 —— 两种格式都给得出（zip 条目数 / tar 字节数），
+             * 所以这里不会出现编造的百分比。`total<=0` 时宁可不报比例。
+             */
+            const ratio = total > 0 ? done / total : 0;
+            opts.onProgress?.({
+              completedBytes: completedBefore + f.sizeBytes,
+              totalBytes,
+              speedBps: 0,
+              etaSeconds: null,
+              fileIndex: i,
+              fileCount: files.length,
+              currentFile: unit === 'entries' ? `${f.name}（${done}/${total}）` : f.name,
+              phase: 'unpacking',
+              provider: 'local',
+              unpackedRatio: ratio,
+            });
+          },
+        });
         mark('解包 unpackArchive');
         // Replace any previous (possibly incomplete) install atomically.
         await fs.rm(finalDir, { recursive: true, force: true });

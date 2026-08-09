@@ -178,7 +178,9 @@
       "cancel": "取消",
       "progressLabel": "{{name}} 下载进度",
       "etaUnderMinute": "剩余不到 1 分钟",
-      "etaMinutes": "剩余约 {{minutes}} 分钟"
+      "etaMinutes": "剩余约 {{minutes}} 分钟",
+      "unpacking": "正在解压",
+      "warming": "正在预热 GPU 着色器缓存"
     },
     "quant": {
       "current": "量化 {{quant}}",

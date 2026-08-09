@@ -505,3 +505,52 @@ describe('C-19 unpackArchive 失败契约：不自清，原子性由调用方负
     assert.equal(err.code, 'UNSUPPORTED');
   });
 });
+
+/**
+ * 解包进度：**分母必须是真的**（2026-08-09 裁决 ①）。
+ *
+ * 这一组钉的不是"有没有回调"，是**回调给出的分母是不是真值** ——
+ * 因为一个编出来的分母（比如固定 100、或按体积估）会让进度条走到 80% 然后跳完，
+ * 而那与"没有进度"一样不可信，只是更难被发现。
+ *
+ * 两种格式的真分母各不相同，各钉各的：
+ *   · zip → 中央目录里的条目总数（**解包前就已知**）
+ *   · tar → `raw.length`（`extractTar` 先整个解压出来，是真值）
+ */
+describe('解包进度：分母必须是真的，不许编', () => {
+  it('★ tar：total 恒等于解压后总字节，done 单调不减且不越界', async () => {
+    const base = mkdtempSync(path.join(os.tmpdir(), 'unpack-prog-tar-'));
+    const tgz = makeTarGz(path.join(base, 'p.tar.gz'), [
+      { name: 'a.txt', data: 'A'.repeat(2000) },
+      { name: 'b.txt', data: 'B'.repeat(3000) },
+      { name: 'c.txt', data: 'C'.repeat(1000) },
+    ]);
+    const seen: Array<{ done: number; total: number; unit: string }> = [];
+    await unpackArchive(tgz, path.join(base, 'out'), 'tar.gz', {
+      onProgress: (done, total, unit) => seen.push({ done, total, unit }),
+    });
+
+    assert.ok(seen.length > 0, '★ 一次都没报进度 —— 解包期间界面还是会停在上一档');
+    assert.equal(seen[0]?.unit, 'bytes', 'tar 报的是字节比例');
+    const total = seen[0]!.total;
+    assert.ok(total > 0, 'total 必须是正数');
+    assert.ok(
+      seen.every((s) => s.total === total),
+      '★ 分母中途变了 —— 那说明它不是"解压后总字节"这个真值',
+    );
+    // 真值校验：分母应当就是解开后的字节数（3 个头 + 3 个数据块，按 512 对齐）
+    assert.equal(total % 512, 0, '★ tar 的 raw 必然是 512 的整数倍，不是估出来的数');
+    for (let i = 1; i < seen.length; i++) {
+      assert.ok(seen[i]!.done >= seen[i - 1]!.done, '★ done 回退了');
+    }
+    assert.ok(
+      seen.every((s) => s.done <= s.total),
+      '★ done 超过了 total —— 百分比会 >100%',
+    );
+  });
+
+  /*
+   * zip 那一条放在 `installer.test.ts` —— 手写 ZIP 的 `makeZip()` 在那边。
+   * **不在这里再抄一份 zip 写入器**：同一个用途两份实现正是刚清理掉的那类债。
+   */
+});

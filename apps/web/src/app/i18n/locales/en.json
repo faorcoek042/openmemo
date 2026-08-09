@@ -178,7 +178,9 @@
       "cancel": "Cancel",
       "progressLabel": "{{name}} download progress",
       "etaUnderMinute": "less than 1 minute left",
-      "etaMinutes": "about {{minutes}} min left"
+      "etaMinutes": "about {{minutes}} min left",
+      "unpacking": "Extracting",
+      "warming": "Warming up GPU shader cache"
     },
     "quant": {
       "current": "Quant {{quant}}",

@@ -234,7 +234,16 @@ export function startPackInstall(
         onProgress: (p) => {
           ctx.setProvider(p.provider);
           ctx.setFile(p.currentFile, p.fileIndex, p.fileCount);
-          if (p.phase === 'downloading' || p.phase === 'resolving' || p.phase === 'verifying') {
+          /*
+           * `unpacking` 与其余三档一样是**实际正在发生的事** —— 解包期间不报它，
+           * 界面就会停在上一档 `verifying`，而那句话是不实的（用户已因此误报过原因）。
+           */
+          if (
+            p.phase === 'downloading' ||
+            p.phase === 'resolving' ||
+            p.phase === 'verifying' ||
+            p.phase === 'unpacking'
+          ) {
             ctx.setStep(p.phase);
           }
           ctx.progress({
