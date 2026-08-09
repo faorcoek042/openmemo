@@ -1179,3 +1179,122 @@ mlmodelc 与本机 CoreML 版本不兼容、ANE 被降级、
 它复用的是第 6 节末尾同一个机制（`if (sc.status !== 0) exitCode = 1`），
 但"复用了同一个机制"不等于"跑过"。我不打算为此再烧一次 1.7 GB 的 runner，
 **记在这里而不是当它绿了。**
+
+---
+
+## [2026-08-10 03:20] T-191 / T-192 —— 探针那条链的下游：四条假话 + 一个被当成三个用的轴
+
+# TL;DR
+
+**用户在 `:10000` 上看到的「探针未安装 / 6 项后端不可用」不是"源码运行必然如此"，
+也不是 `3c4543e` 那个"字节在、解析链瞎"** —— `find /root/data-memo -name 'openmemo-probe*'`
+**0 命中**。真正的链条是：
+
+> 08-02 装的是当时目录指向的**上游归档**（不含探针）→ 08-07 T-167 把**同一个 id**
+> 换成我们自建的那份（含探针）→ 而**全仓判断"机器上有什么"都按 pack id，不按内容** ⇒
+> `installed: true` 恒成立，没有任何地方说他手里那份是旧的。
+
+| # | 事 | 提交 |
+|---|---|---|
+| ① | 硬件指纹只认 id ⇒ 重装同一个 id 不刷新快照 | `7986be9` |
+| ② | `installed` 之外新开 `updateAvailable` 轴（按内容算） | `7986be9` |
+| ③ | 两句给用户看的引导语在他机器上是假的 + 已安装分支是死路 | `8b49527` `d14b14e` |
+| ④ | 「适配 sherpa-onnx · 当前用不上」与 daemon 自己的话打架 | `2e10afc` |
+| ⑤ | `pack.backend` 被当成三个轴用（18/25 个包）+ 卸载不回收磁盘 | `d7f755e` |
+
+# §18 那三个问题各自由什么回答（T-192）
+
+| 问题 | 之前 | 现在 |
+|---|---|---|
+| 这个包的 `backend` 是不是"算力"的意思 | 没人问，直接假定是 | **`engine`** → `BACKEND_IS_COMPUTE_AXIS`（`Record<Engine, boolean>` 穷尽表） |
+| 这个包是不是当前活动后端 | `selectedBackend === pack.backend && installed` | `isActivePack()`：**先问算力轴**，再比 |
+| 这个包能不能卸载 | `tier==='builtin' \|\| backend==='cpu'` | `isLoadBearingPack()`：**推理引擎包 ∧ 它是 CPU 兜底**（对准 ggml SIGABRT） |
+
+**没有给 `pack.backend` 增加新含义。** 穷尽表复用 `SELF_TEST_APPLIES` 的形状，
+但**是两张表**：`llama.cpp` 的 backend 是算力（true），而自检只跑 ASR 推理（false）——
+合成一张就是又一次共用槽位。
+`onSelect` 的类型也从 `(pack) => void` 改成 `(backend: Backend) => void`：
+那次"从 pack 推它的算力后端"本身就是 ④「改用 CPU 切回刚失败的后端」的载体。
+
+⚠️ **不是放宽**：whisper 的 CPU 包仍然锁着（阴性对照用例钉着这一条）。
+
+# §19 ★ 用户现在能不能真的删掉一个组件并看到空间回收
+
+**能了 —— 但今天之前是三层都不通，我修了两层，第三层如实报给你。**
+
+| 层 | 之前 | 现在 |
+|---|---|---|
+| UI 能不能点 | ❌ 18 个包的卸载按钮全是灰的（`backend==='cpu'`） | ✅ 非推理包可卸载 |
+| daemon 删不删干净 | ❌ **只删 manifest + GC blobs**，而 `findGarbage()` 只扫 `blobs/`，`by-name/` 的硬链与解开的目录原封不动 ⇒ **一个字节都不回收**，事件里却报 `freedBytes` | ✅ 先按记录删文件再删记录 |
+| 「已用空间」看得见吗 | 🟡 看得见，但**报的数字是错的**（见下） | 🟡 **没修，不在本轮范围** |
+
+`[实测]` 缺陷版本下删一个 4 MiB 的包，磁盘只少 **558 字节**（manifest 本身）。
+第二个后果更重：`by-name/backend/` 是 `findInBackendPacks()` 的**发现路径** ——
+一个"已卸载"的包**仍然会被解析到并真的跑起来**，用户以为删了，产品还在用它。
+
+## 🔴 第三层：`GET /api/models/storage` 报的已用空间**少算 3.5 倍**（未修，报你）
+
+`[用户真机实测 2026-08-10，:10000]`：
+
+```
+usedBytes 报                240,162,578   （= models/blobs 的大小）
+du -sb /root/data-memo/models  1,080,661,687   ← 真实占用
+差额                        840,494,883   = models/by-name/ 整个目录
+```
+
+成因：`usedBytes()` 只数 `blobs/`。而**解开的目录不是硬链，是解压出来的第二份副本**：
+
+```
+by-name/backend/ffmpeg-…-gpl-7.1.tar.xz/   436,315,665   ← 解开的 ffmpeg
+by-name/backend/media-tools-linux-x64/     278,693,531   ← 同一个 ffmpeg 的第二个落点
+```
+
+**一个 ffmpeg 在盘上有 715 MB**，而"已用空间"里一个字节都没算它。
+→ 这一条属于 storage 那一路，我没碰。**但它决定了"看到空间回收"这半句今天成立到什么程度**：
+删除之后 `breakdown` 里那一行会消失、`usedBytes` 会掉，而真正掉的那 700 MB
+从来没有出现在那个数字里。
+
+## 🔴 顺带：用户机器上已经躺着 33.6 MB 谁也回收不了的孤儿
+
+```
+by-name/backend/whisper-bin-ubuntu-x64/        24,259,400   ← 08-02 那次装的上游包
+by-name/backend/whisper-bin-ubuntu-x64.tar.gz   9,379,235
+```
+
+**它们没有 manifest**（我按产品的路重装之后，记录指向了新归档），所以
+`breakdown` 里查不到、UI 上删不掉、GC 也不扫这里。
+对账：`usedBytes(240,162,578) − breakdown∑(230,783,343) = 9,379,235` ——
+**正好是那个孤儿归档**，也就是用户看到的"有 9.4 MB 说不清是什么、也删不掉"。
+T-192 的修法只在**卸载时**清；这两份是历史遗留，需要一次一次性清理或一条 GC 覆盖 `by-name/`。
+
+# §20 反向验证
+
+| 变异 | 结果 |
+|---|---|
+| 指纹退回"只按 id" | ✔ 恰好 1 条红（同一个 id 重装成不同字节 → 快照必须失效），其余 7 条不连坐 |
+| `canonicalPackFingerprint` 退回"手挑几样" | ✔ 红并**点名** `schemaVersion, engine, engineVersion, backend, integrity` |
+| `engineFit` 丢掉 daemon 的 reason | ✔ 3 条红 |
+| `engineFit` 去掉 `ready` 守卫 | ✔ 1 条红（"我还不知道"被渲染成"我知道它不行"） |
+| backend 桶又被跳过 | ✔ 2 条红，原文 `磁盘只少了 558 字节，至少应当少 4194304` |
+
+全部跑在 `/tmp/pb-rv*` 隔离副本上，**每一条都先跑对照组**（PROTOCOL §10）。
+
+# §21 纪律
+
+- **`:10000` 没碰进程**：只发过 GET，以及**你授权的那一次** `POST /api/backends/install`
+  （产品自己的安装路，job succeeded）。**没有手动往 `/root/data-memo` 塞过文件、没删过东西。**
+- **没建/改/删 release；没碰机器级指针；没有 `pkill`（含 `-0`）；没有 `git stash`。**
+- 新文件**先 `git add`** 再提交（`backendDiskReclaim.test.ts` / `packAxes.test.ts` /
+  `engineFit.test.ts` / `hardwareFingerprintCoverage.test.ts`）。
+- `state.ts` 与别人的在途改动共用：**用 `git apply --cached` 只把我那两个 hunk 进索引**，
+  提交后核对过 `git diff --cached` 里没有对方的 `reconcileModels`。
+- 每次 push 都用**具体 hash** + `merge-base --is-ancestor` 复核。
+
+# §22 还开着的
+
+| 项 | 状态 | 归属 |
+|---|---|---|
+| `usedBytes` 少算 840 MB（解开的目录不进统计） | 🔴 **未修**，§19 有实测数字 | storage 那一路 |
+| 用户机器上 33.6 MB 孤儿（无 manifest，UI 删不掉、GC 不扫） | 🔴 **未修** | 需要一条覆盖 `by-name/` 的 GC |
+| `:10000` 要重建重启才能看到 ①–⑤ | ⏳ **你来做**，我不碰进程 | 你 |
+| macOS 探针 10 秒超时 | ⚠️ `UNKNOWN`，需要真 Mac | 待定 |
