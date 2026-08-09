@@ -62,7 +62,13 @@ import { join, resolve, dirname, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 
-import { spawnDaemon, killTree, killTreeHard, launcherName } from './launcher-spawn.mjs';
+import {
+  spawnDaemon,
+  killTree,
+  killTreeHard,
+  launcherName,
+  assertPortFree,
+} from './launcher-spawn.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const argv = process.argv.slice(2);
@@ -243,30 +249,16 @@ const childEnv = {
  * 此前我修的是**事后**认人（比 `/api/health` 的 pid）。那能抓住，但抓得太晚：
  * 端口被占时该做的是**当场判失败**，而不是先跑起来再检查。所以这里补事前那一半。
  */
-async function assertPortFree(port, why) {
-  const { createServer: createProbeServer } = await import('node:net');
-  await new Promise((resolve, reject) => {
-    const srv = createProbeServer();
-    srv.once('error', (e) => {
-      reject(
-        new Error(
-          `端口 ${port} 不是空的（${e.code}）—— ${why}。\n` +
-            `      PROTOCOL §11：起服务再探测的测试，探测前必须先证明端口是空的。\n` +
-            `      占用方可能是上一轮跑剩的 daemon。**不要用 pkill -f**（会打到别人的进程），\n` +
-            `      换一个 --port，或按 pid 收掉那一个。`,
-        ),
-      );
-    });
-    srv.once('listening', () => srv.close(() => resolve()));
-    srv.listen(port, '127.0.0.1');
-  });
-}
+/*
+ * `assertPortFree` 改用共享实现（裁决 R-2）。本腿原来是"只 bind 不问 HTTP" ——
+ * 判据够强，但少一层"谁在占"的诊断信息；共享版把两者都给了。
+ */
 
 let proc = null;
 let viaLauncher = false;
 let daemonLogs = [];
 async function startDaemon(label) {
-  await assertPortFree(PORT, `启动 [${label}] daemon 之前`);
+  await assertPortFree(PORT, { label: `启动 [${label}] daemon 之前` });
   const logs = [];
   daemonLogs = logs;
   const started = spawnDaemon({

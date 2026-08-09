@@ -62,13 +62,13 @@
  * 刻意**不**整file关掉 no-undef：那会连 Node 侧真正的拼写错误一起放过。
  */
 /* global document, getComputedStyle */
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
+import { assertPortFree, killTree, killTreeHard } from './launcher-spawn.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const argv = process.argv.slice(2);
@@ -170,52 +170,18 @@ async function mutation(id, fn) {
 }
 
 /* ── §11：端口必须是空的 ─────────────────────────────────────────────────── */
-async function assertPortFree(port) {
-  let answered = false;
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/api/health`, {
-      signal: AbortSignal.timeout(3000),
-    });
-    answered = true;
-    say(`   ✘ 端口 ${port} 上已经有人在应答（HTTP ${r.status}）`);
-  } catch {
-    /* 空 */
-  }
-  if (answered) {
-    throw new Error(`PORT_IN_USE: ${port} 有残留进程在应答 —— 我的绿灯会追溯不到是谁给的`);
-  }
-  await new Promise((done, fail) => {
-    const probe = createServer();
-    probe.once('error', (e) => fail(new Error(`PORT_IN_USE: ${port} 占不住（${e.code}）`)));
-    probe.listen(port, '127.0.0.1', () => probe.close(() => done()));
-  });
-  say(`   端口 ${port} 起服务前确认为空 ✔（没人答话，也能被我占住）`);
-}
+/*
+ * `assertPortFree` 改用 `launcher-spawn.mjs` 的共享实现（Manager 2026-08-09 裁决 R-2）。
+ * ⚠️ 本腿原来那份就是**正确的那一类**（HTTP + 真 bind），它注释里那句
+ * 「光问一句 HTTP 不够」正是这次收敛方向的依据 —— 判据没有被放松，只是不再有六份。
+ */
 
 /* ── §11：按 pid 收整棵进程树，绝不 pkill -f ─────────────────────────────── */
-function killTree(proc, signal) {
-  if (!proc || proc.exitCode !== null) return;
-  try {
-    if (IS_WIN) {
-      spawnSync(
-        'taskkill',
-        ['/PID', String(proc.pid), '/T', ...(signal === 'SIGKILL' ? ['/F'] : [])],
-        {
-          timeout: 15_000,
-          stdio: 'ignore',
-        },
-      );
-    } else {
-      process.kill(-proc.pid, signal);
-    }
-  } catch {
-    try {
-      proc.kill(signal);
-    } catch {
-      /* 已经死了 */
-    }
-  }
-}
+/*
+ * 本地 `killTree(proc, signal)` 已删 —— 改用共享的
+ * `killTree`(SIGTERM) / `killTreeHard`(SIGKILL)（裁决 R-3）。
+ * ⚠️ 两档是**刻意的升级顺序**（先温和后强硬），不许压回一个 signal 参数。
+ */
 
 const DAEMON = BUNDLE
   ? join(BUNDLE, 'app', 'daemon', 'dist', 'main.js')
@@ -289,7 +255,7 @@ try {
   hdr('0. 起一个 daemon —— **空数据目录**，什么组件都不预装');
   say(`   数据目录：${DATA_DIR}（全新）`);
   say(`   网页产物：${WEB_DIST}`);
-  await assertPortFree(PORT);
+  await assertPortFree(PORT, { log: say });
 
   daemon = spawn(NODE_BIN, [DAEMON, '--data-dir', DATA_DIR, '--port', String(PORT)], {
     env: {
@@ -1193,9 +1159,9 @@ try {
       /* 已经关了 */
     }
   }
-  killTree(daemon, 'SIGTERM');
+  killTree(daemon?.pid);
   await new Promise((r) => setTimeout(r, 1200));
-  killTree(daemon, 'SIGKILL');
+  killTreeHard(daemon?.pid);
   rmSync(SCRATCH, { recursive: true, force: true });
 }
 

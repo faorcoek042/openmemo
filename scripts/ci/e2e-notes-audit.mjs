@@ -83,7 +83,6 @@
  *   · 端口用 199xx 段（测试文件的最高游标是 19900+30，这里从 19960 起）；
  *   · 不 `pkill`，只 kill 自己 spawn 出来的那个 child。
  */
-import { spawnSync } from 'node:child_process';
 import {
   mkdirSync,
   mkdtempSync,
@@ -98,7 +97,7 @@ import { join, resolve, dirname, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 
-import { spawnDaemon } from './launcher-spawn.mjs';
+import { spawnDaemon, assertPortFree, killTree, killTreeHard } from './launcher-spawn.mjs';
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 
@@ -394,53 +393,14 @@ const children = new Set();
  *
  * **判据：一个绿灯必须能追溯到"是我这次启动的那个东西"给的。追溯不到，它就不是证据。**
  */
-async function assertPortFree(port, label) {
-  let answered = false;
-  let detail = '';
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
-      signal: AbortSignal.timeout(3000),
-    });
-    answered = true;
-    detail = `HTTP ${res.status}`;
-    try {
-      const b = await res.json();
-      detail += ` version=${b?.version ?? '?'} dataDir=${b?.dataDir ?? '?'}`;
-    } catch {
-      /* 不是我们的 daemon 也算占用 */
-    }
-  } catch {
-    /* 连不上 = 端口是空的，正是我们要的 */
-  }
-  if (answered) {
-    say(`   ✘ 端口 ${port} 上已经有人在应答（${detail}）`);
-    say('     这不是"可以复用"，是 PROTOCOL §11 说的那个假通过源头：');
-    say('     我接下来的健康检查会连上它，而我这次启动的那个可能根本没起来。');
-    say('     —— 当场判失败，不继续跑下去拿一个无意义的绿。');
-    throw new Error(`PORT_IN_USE: ${port} 上有残留进程在应答（${detail}）`);
-  }
-
-  /*
-   * ★ 光问一句 HTTP **不够**。`[实测]` 上一个占用者正在关闭时，
-   *   HTTP 请求已经连不上（看起来"空了"），而**套接字仍然是被占的** ——
-   *   于是 daemon 起来一 bind 就失败，悄悄漂到下一个端口去。
-   *   真正的判据不是"有没有人答话"，是"**我现在能不能占住它**"。
-   */
-  await new Promise((done, fail) => {
-    const probe = createServer();
-    probe.once('error', (e) => {
-      say(`   ✘ 端口 ${port} 占不住：${e.code ?? e.message}`);
-      say('     有人 bind 着它但不答 HTTP（正在关闭的残留进程最常见）。');
-      fail(new Error(`PORT_IN_USE: ${port} 无法绑定（${e.code ?? e.message}）`));
-    });
-    probe.listen(port, '127.0.0.1', () => probe.close(() => done()));
-  });
-
-  say(`   [${label}] 端口 ${port} 起服务前确认为空 ✔（既没人答话，也能被我占住）`);
-}
+/*
+ * `assertPortFree` 改用 `launcher-spawn.mjs` 的共享实现（Manager 2026-08-09 裁决 R-2）。
+ * ⚠️ 本腿原来那份就是**正确的那一类**（HTTP + 真 bind），它注释里那句
+ * 「光问一句 HTTP 不够」正是这次收敛方向的依据 —— 判据没有被放松，只是不再有六份。
+ */
 
 async function startDaemon(label, { dataDir, port, extraEnv = {} }) {
-  await assertPortFree(port, label);
+  await assertPortFree(port, { label, log: say });
   const logs = [];
   /*
    * ★★ 走**启动器**（用户双击的那个文件），不再直接起 daemon 入口。
@@ -513,36 +473,16 @@ async function startDaemon(label, { dataDir, port, extraEnv = {} }) {
  * **仍然按 pid，绝不 `pkill -f`** —— 模式匹配会打到别人的进程，那是另一种越界。
  * 外部命令带超时（§11 第三条：没有超时的收尾既会拖死整条腿，又会在被杀时留下孙子进程）。
  */
-function killTree(proc, signal) {
-  if (!proc || proc.exitCode !== null) return;
-  try {
-    if (IS_WIN) {
-      spawnSync(
-        'taskkill',
-        ['/PID', String(proc.pid), '/T', ...(signal === 'SIGKILL' ? ['/F'] : [])],
-        {
-          timeout: 15_000,
-          stdio: 'ignore',
-        },
-      );
-    } else {
-      process.kill(-proc.pid, signal);
-    }
-  } catch {
-    // 进程组已经没了（正常结束）或权限不足 —— 退回只收自己那一个
-    try {
-      proc.kill(signal);
-    } catch {
-      /* 已经死了 */
-    }
-  }
-}
+/*
+ * 本地 `killTree(proc, signal)` 已删 —— 改用共享的 `killTree`(SIGTERM) / `killTreeHard`(SIGKILL)。
+ * ⚠️ 两档是**刻意的升级顺序**（先温和后强硬），不许压成一个参数。
+ */
 
 async function stopDaemon(d) {
   if (!d?.proc) return;
-  killTree(d.proc, 'SIGTERM');
+  killTree(d.proc?.pid);
   await new Promise((r) => setTimeout(r, 1200));
-  if (d.proc.exitCode === null) killTree(d.proc, 'SIGKILL');
+  if (d.proc.exitCode === null) killTreeHard(d.proc?.pid);
   children.delete(d.proc);
 }
 
@@ -1623,7 +1563,7 @@ try {
   if (llmServer) await new Promise((r) => llmServer.close(r));
   for (const c of children) {
     try {
-      killTree(c, 'SIGKILL');
+      killTreeHard(c?.pid ?? c);
     } catch {
       /* 已经死了 */
     }

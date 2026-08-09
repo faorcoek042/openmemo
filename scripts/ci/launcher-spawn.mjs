@@ -65,6 +65,8 @@
  *    而那正是这个模块存在的理由。下面 `assertNoLauncherOverrides()` 会当场拦下。
  */
 import { spawn, spawnSync } from 'node:child_process';
+// `createServer` 只用于「端口能不能被我占住」那条判据（见 assertPortFree）
+import { createServer as createNetServer } from 'node:net';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -195,6 +197,92 @@ export function killTree(pid) {
       return `进程已经不在了（${e2.code}）`;
     }
   }
+}
+
+/**
+ * 起服务之前证明端口是空的（PROTOCOL §11）。**六条腿共用的那一份。**
+ *
+ * ## 判据：既没人答话，**也能被我占住**
+ *
+ * 这两句不是一件事，而**第二句才是判据**。
+ *
+ * 本仓曾有六份各写各的实现，分成两类：三份"只问 HTTP"、三份"真的去 bind"。
+ * `[实测]` 造一个 bind 住端口但**不答 HTTP** 的占用者，两类给出**相反**的答案：
+ *
+ * ```
+ * 只问 HTTP   → 端口是空的？ true
+ * 真的去 bind → 端口是空的？ false（EADDRINUSE）
+ * ```
+ *
+ * 而"bind 住但不答 HTTP"**正是残留进程正在关闭时的样子**：
+ * HTTP 已经连不上（看起来空了），套接字却还被占着 ——
+ * 于是 daemon 起来一 bind 就失败，**悄悄漂到下一个端口**，
+ * 后面测到的一切都追溯不到自己启动的那个进程。**那就是 §11 要防的假通过。**
+ *
+ * ⚠️ **所以收敛方向是"真去 bind"这一类，不是"只问 HTTP"那个多数。**
+ * 六份里"只问 HTTP"占三份，是多数，**但它是错的** ——
+ * 照多数收敛会把另外两份**用实测换来的**判据一起抹掉。
+ * （这段话写在这里，是为了下一个人别按多数改回去。Manager 2026-08-09 裁决。）
+ *
+ * ## 统一意图，不统一拼写
+ *
+ * 各腿真正需要的差异用参数保留：`timeoutMs`（HTTP 探测多久算没人）、
+ * `log`（有的腿要把过程打进自己的输出流）、`label`（报错里说清是哪一步之前）。
+ * 而**判据本身不给参数** —— 那正是当初分叉的地方。
+ *
+ * @param {number} port
+ * @param {{label?: string, timeoutMs?: number, log?: (s: string) => void}} [opts]
+ * @throws {Error} 端口非空时抛，`err.code === 'PORT_IN_USE'`，`err.detail` 是占用者信息
+ */
+export async function assertPortFree(port, opts = {}) {
+  const { label = '', timeoutMs = 3000, log = () => {} } = opts;
+  const where = label ? `[${label}] ` : '';
+
+  // ── ① HTTP：只用来**说清占用者是谁**，不作为判据 ──────────────────────────
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    let detail = `HTTP ${res.status}`;
+    try {
+      const h = await res.json();
+      // 是我们自己的 daemon 时，把身份一并说出来 —— 排查残留进程第一个要看的就是它
+      detail += ` pid=${h?.pid ?? '?'} dataDir=${h?.dataDir ?? '?'} version=${h?.version ?? '?'}`;
+    } catch {
+      detail += '（不是我们的 daemon —— 那更糟：说明有别的东西占着这个端口）';
+    }
+    log(`   ✘ ${where}端口 ${port} 上已经有人在应答（${detail}）`);
+    const err = new Error(
+      `PORT_IN_USE: ${where}端口 ${port} 上已经有人在应答（${detail}）。\n` +
+        `      §11：继续跑下去拿到的任何绿灯都追溯不到我这次启动的进程。\n` +
+        `      **不要用 pkill -f**（会打到别人的进程）——换一个 --port，或按 pid 收掉那一个。`,
+    );
+    err.code = 'PORT_IN_USE';
+    err.detail = detail;
+    throw err;
+  } catch (e) {
+    if (e?.code === 'PORT_IN_USE') throw e;
+    /* fetch 失败 = 没人答话。**但这不等于端口是空的**，继续走第 ② 步。 */
+  }
+
+  // ── ② bind：真正的判据 ────────────────────────────────────────────────────
+  await new Promise((done, fail) => {
+    const probe = createNetServer();
+    probe.once('error', (e) => {
+      log(`   ✘ ${where}端口 ${port} 占不住：${e.code ?? e.message}`);
+      const err = new Error(
+        `PORT_IN_USE: ${where}端口 ${port} 无法绑定（${e.code ?? e.message}）。\n` +
+          `      有人 bind 着它但不答 HTTP —— 正在关闭的残留进程最常见。\n` +
+          `      **不要用 pkill -f**；换一个 --port，或按 pid 收掉那一个。`,
+      );
+      err.code = 'PORT_IN_USE';
+      err.detail = e.code ?? e.message;
+      fail(err);
+    });
+    probe.listen(port, '127.0.0.1', () => probe.close(() => done()));
+  });
+
+  log(`   ${where}端口 ${port} 起服务前确认为空 ✔（既没人答话，也能被我占住）`);
 }
 
 /** SIGTERM 之后还赖着不走时的最后一手，同样按 pid。 */

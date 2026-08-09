@@ -66,7 +66,7 @@
  * 退出码：任何一条断言 FAIL → 1。`--mutate` 模式下**语义反过来**：
  * 目标断言没有变红 → 1（因为那说明这条断言证明不了任何东西）。
  */
-import { spawn } from 'node:child_process';
+
 import { createHash } from 'node:crypto';
 import {
   accessSync,
@@ -87,7 +87,11 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { spawnDaemon } from './launcher-spawn.mjs';
+import {
+  spawnDaemon,
+  killTree,
+  assertPortFree as sharedAssertPortFree,
+} from './launcher-spawn.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const IS_WIN = process.platform === 'win32';
@@ -676,28 +680,21 @@ function seedPointer(dataDir) {
  * 端口不空就**当场判失败**，绝不继续跑下去拿一个无意义的绿。
  */
 async function assertPortFree(label) {
+  /*
+   * 判据用共享实现（`launcher-spawn.mjs`），**报告仍走本腿自己的 assert 框架** ——
+   * 这条腿要把失败记成 `A-PORT-FREE` 这个断言 id，那是它真正需要的差异。
+   * 统一意图，不统一拼写（Manager 2026-08-09 裁决 R-2）。
+   *
+   * ⚠️ 本地那份此前属于"只问 HTTP"那一类：`[实测]` 看不见「bind 住但不答 HTTP」
+   * 的占用者 —— 而那正是残留进程正在关闭时的样子。
+   */
   try {
-    const res = await fetch(`${BASE}/api/health`, { signal: AbortSignal.timeout(3000) });
-    const body = await res.text().catch(() => '');
-    let who = '';
-    try {
-      const h = JSON.parse(body);
-      who = ` —— 占用者自称 pid=${h.pid} dataDir=${h.dataDir} version=${h.version}`;
-    } catch {
-      /* 不是我们的 daemon，那更糟 */
-    }
-    assert(
-      'A-PORT-FREE',
-      false,
-      `[${label}] 端口 ${PORT} **在我启动任何东西之前就有人应答**${who}。` +
-        `按 §11 当场判失败：继续跑下去拿到的任何绿灯都追溯不到我启动的那个进程。`,
-    );
-    throw new Error(`port ${PORT} already in use`);
+    await sharedAssertPortFree(PORT, { label });
   } catch (e) {
-    if (String(e.message).startsWith(`port ${PORT} already in use`)) throw e;
-    // fetch 失败 = 没人应答 = 端口是空的，这正是我们要的
-    return true;
+    assert('A-PORT-FREE', false, e.message);
+    throw e;
   }
+  return true;
 }
 
 /**
@@ -706,18 +703,6 @@ async function assertPortFree(label) {
  * Windows 上 `child.kill()` 杀不掉 `cmd.exe` 底下的 `node.exe`，要 `taskkill /T`；
  * POSIX 上我们没用 shell 包一层，所以直接按 pid 杀就是同一个进程。
  */
-function killTree(pid) {
-  if (!pid) return;
-  try {
-    if (IS_WIN) {
-      spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
-    } else {
-      process.kill(pid, 'SIGKILL');
-    }
-  } catch {
-    /* 已经没了 */
-  }
-}
 
 async function startDaemon(label) {
   await assertPortFree(label);

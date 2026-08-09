@@ -42,7 +42,7 @@
  * 「用户能不能装上东西」而不是「探针在不在」—— 这样它被修好之后**自动变绿**，
  * 不需要有人回来改这个脚本。
  */
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import {
   mkdirSync,
   mkdtempSync,
@@ -55,7 +55,7 @@ import {
 } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 
-import { killTree as killTreeShared, spawnViaLauncher } from './launcher-spawn.mjs';
+import { assertPortFree, killTree, spawnViaLauncher } from './launcher-spawn.mjs';
 import { tmpdir } from 'node:os';
 import { join, delimiter } from 'node:path';
 
@@ -205,37 +205,15 @@ async function http(path, opts = {}) {
  * 该提成 `scripts/ci/lib/` 了，但那要动别的 agent 正在改的文件，本轮不做，
  * 已在回执里记给 Manager。
  */
-async function assertPortFree(label) {
-  try {
-    const r = await httpOnce('/api/health', { timeoutMs: 3000 });
-    throw new Error(
-      `端口 ${PORT} 上已经有人在应答（HTTP ${r.status}）——` +
-        `${label} 之前必须是空的，否则后面测到的一切都可能是别人给的（PROTOCOL §11）`,
-    );
-  } catch (e) {
-    if (/已经有人在应答/.test(e.message)) throw e;
-    // 连不上 = 没人应答 = 端口是空的，正是我们要的
-  }
-}
-
-/** 按 **pid 收整棵进程树**（§11）。**不许 `pkill -f`** —— 模式匹配会打到别人的进程。 */
-function killTree(pid) {
-  if (!pid) return;
-  try {
-    if (IS_WIN) {
-      spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { timeout: 15_000 });
-    } else {
-      // 负号 = 整个进程组（daemon 是用 detached 起的，见 startDaemon）
-      try {
-        process.kill(-pid, 'SIGTERM');
-      } catch {
-        process.kill(pid, 'SIGTERM');
-      }
-    }
-  } catch {
-    /* 已经没了 */
-  }
-}
+/*
+ * `assertPortFree` 与 `killTree` 都改用 `launcher-spawn.mjs` 的共享实现
+ * （Manager 2026-08-09 裁决 R-2 / R-3）。
+ *
+ * 本地那份 `assertPortFree` 属于"只问 HTTP"那一类 —— `[实测]` 看不见
+ * 「bind 住端口但不答 HTTP」的占用者（残留进程正在关闭时正是这个样子）。
+ * 另外本文件此前**同时**持有共享的 `killTreeShared`（只用于启动器进程）与
+ * 一份本地 `killTree`（用于 daemon pid）—— 两份并存最容易让人以为已经统一过了。
+ */
 
 /* ─────────────────────────────── daemon ─────────────────────────────── */
 
@@ -245,7 +223,7 @@ const NODE_BIN = BUNDLE ? join(BUNDLE, 'runtime', IS_WIN ? 'node.exe' : 'node') 
 let proc = null;
 let bootLog = [];
 async function startDaemon(label) {
-  await assertPortFree(label);
+  await assertPortFree(PORT, { label });
   const logs = [];
   proc = spawn(NODE_BIN, [DAEMON, '--data-dir', DATA_DIR, '--port', String(PORT)], {
     env: {
@@ -883,7 +861,7 @@ try {
    * 三条文件存在性检查全绿，只有"真的跑一次"红了）。
    */
   await stopDaemon();
-  await assertPortFree('launcher');
+  await assertPortFree(PORT, { label: 'launcher' });
   const fakeHome = join(ROOT, 'fakehome');
   mkdirSync(fakeHome, { recursive: true });
   /*
@@ -964,7 +942,7 @@ try {
       reason: `启动器 + 全新默认数据目录下 pipeline.missing = ${JSON.stringify(lmissing)}`,
     });
   }
-  killTreeShared(launcherProc.pid);
+  killTree(launcherProc.pid);
   await sleep(1000);
 
   const shimHits = [...bootLog.join('').matchAll(new RegExp(`${SHIM_MARK} (\\S+)`, 'g'))].map(

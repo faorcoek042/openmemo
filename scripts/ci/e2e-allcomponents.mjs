@@ -42,7 +42,7 @@
  * 能在 CI 上诚实回答的那一半是**镜像结构**：一个组件如果只有 `github.com` 这一个来源，
  * 那么它在中国就是装不上的 —— 这一条与我从哪儿跑无关，见第 3 节。
  */
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -59,6 +59,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import BASELINE from './single-source-baseline.json' with { type: 'json' };
+import { assertPortFree, killTree } from './launcher-spawn.mjs';
 import {
   classifyProbeRows,
   driftedPacks,
@@ -253,27 +254,16 @@ const NODE_BIN = BUNDLE ? join(BUNDLE, 'runtime', IS_WIN ? 'node.exe' : 'node') 
 let proc = null;
 const bootLog = [];
 
-/** PROTOCOL §11：起服务前先证明端口是空的，否则测到的"通过"可能是别人给的。 */
-async function assertPortFree(label) {
-  try {
-    const r = await localOnce('/api/health', { timeoutMs: 3000 });
-    throw new Error(`端口 ${PORT} 上已经有人应答（HTTP ${r.status}）—— ${label} 之前必须是空的`);
-  } catch (e) {
-    if (/已经有人应答/.test(e.message)) throw e;
-  }
-}
-/** 按 pid 收整棵进程树（§11）。**绝不 `pkill -f`**（含 `-0`）。 */
-function killTree(pid) {
-  if (!pid) return;
-  try {
-    if (IS_WIN) spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 20_000 });
-    else process.kill(-pid, 'SIGTERM');
-  } catch {
-    /* 已经没了 */
-  }
-}
+/*
+ * `assertPortFree` / `killTree` 此前在这里各有一份本地拷贝，现改用
+ * `launcher-spawn.mjs` 的共享实现（Manager 2026-08-09 裁决 R-2 / R-3）。
+ *
+ * 本地那份 `assertPortFree` 属于"只问 HTTP"那一类 —— `[实测]` 它**看不见**
+ * 「bind 住端口但不答 HTTP」的占用者（残留进程正在关闭时就是这个样子），
+ * 会判成"端口是空的"然后继续跑。判据与理由见共享实现的文件内注释。
+ */
 async function startDaemon(label, extraEnv = {}, dataDir = DATA_DIR) {
-  await assertPortFree(label);
+  await assertPortFree(PORT, { label });
   proc = spawn(NODE_BIN, [DAEMON, '--data-dir', dataDir, '--port', String(PORT)], {
     env: {
       ...process.env,
