@@ -507,3 +507,98 @@ development convenience / 开发方便`（`.ts` `.tsx` `.md`，排除 `dist/`）
   未用 `pkill`；未建改删 release；未动另外四路在改的文件
   （`packages/runtime/**`、`packages/shared/src/fitness.ts`、`HardwareCard.tsx`、
   两份 locale、`HANDOFF.md`、`docs/SECURITY.md`、`D-19`、`packages/downloader/**`）。
+
+---
+
+## [2026-08-09 14:20] e2e-import 接手：Windows「CPU 不支持 avx2」 DONE（第 3 步未做，有依据）
+
+交付: `packages/shared/src/fitness.ts`、`packages/runtime/src/detect/system.ts`、
+`packages/runtime/src/index.ts`、`apps/web/.../HardwareCard.tsx`、两份 i18n。
+提交 `b4a7ce1`。
+
+### A. 那 5 个模型在 Windows 上现在是什么状态（核心）
+
+**从 `unsupported`（不可下载）变回可用。** `[实测]` 用真实形状的硬件快照跑 `computeFit`：
+
+| 场景 | tier | reasonCode | cpuFeaturesUnverified |
+| --- | --- | --- | --- |
+| **Windows：特性集为空（＝从没查过）** | `slow_cpu` | `cpu_only_slow` | `["avx2"]` |
+| 查到了 avx2 | `slow_cpu` | `cpu_only_slow` | `[]` |
+| **查过、确实没有 avx2** | `unsupported` | `missing_cpu_feature` | `[]` |
+
+第三行是关键：**真检查一点没被削弱** —— 有证据时该拦的照样拦。
+被解锁的 5 个：`llm/qwen3-1.7b-q8_0`、`llm/qwen3-4b-q4_k_m`、`llm/qwen3-4b-q5_k_m`、
+`llm/qwen3-8b-q4_k_m`、`llm/gemma-3-4b-it-q4_k_m`。
+
+**没走到另一个极端**：未知**不等于**支持。做法是不动主判据（RAM/GPU 各自独立、仍然有意义），
+另加一个**正交**字段 `cpuFeaturesUnverified: string[]`。把"没能确认"塞进 `reasonCode`
+会逼它和"不支持"共用一个位置，而那正是这次事故的成因。
+
+### B. 三态在界面上各自说什么话
+
+| 状态 | 条件 | 中文 | English | 颜色 |
+| --- | --- | --- | --- | --- |
+| **不适用** | `arch !== 'x64'` | （一个字都不说） | (nothing) | — |
+| **未知** | x64 且 `features.length === 0` | ` · 无法确认是否支持 AVX2` | ` · AVX2 support could not be determined` | 次要灰 |
+| **不支持** | x64 且查到了特性但没有 avx2 | ` · 不支持 AVX2` | ` · no AVX2 support` | `text-critical` 红 |
+
+上一次修复只分出了前两态里的"不适用"，**空集合仍然落进红色的"不支持"** —— 那就是 Windows 的现状。
+
+### C. GPU 那一栏：**找到了**（上一位标的 UNKNOWN 可以撤销）
+
+他搜不到是因为**那句话在 i18n 里，不在 tsx 里**：
+
+```
+apps/web/src/app/i18n/locales/zh-CN.json:341   "noGpu": "未检测到可用 GPU"
+apps/web/src/app/i18n/locales/en.json:341      "noGpu": "No usable GPU detected"
+apps/web/src/features/runtime/components/HardwareCard.tsx:49   {t('runtime.hw.noGpu')}
+```
+
+（搜 `gpus.length` 也搜不到，是因为那里判的是 `hw.gpus.length > 0 ? … : unifiedMemory ? … : noGpu`
+这条三元链的**最后一支**。）
+
+已按他的建议改成同病同治：**没装过任何后端包时**说
+「尚未安装 GPU 后端包，无法检测」/「No GPU backend pack installed yet — cannot detect」，
+装过了才说「未检测到可用 GPU」。判据是 `hw.backends.some((b) => b.installed)`。
+理由与 CPU 那条完全一样：**GPU 枚举是探针干的，探针随后端包出厂 —— 没装就是没查过。**
+
+⚠️ `[未验证]` 我没有真机跑过这一屏；改的是渲染分支，`apps/web` 458 条测试全绿，
+但"它在浏览器里长什么样"本轮没有截图证据。
+
+### D. `inferIsaFromBackendPath` 的处置：**删了**
+
+- 全仓引用只有三处：它自己的定义、`packages/runtime/src/index.ts` 的转发、
+  以及 `detectCpuWin32()` 上面那段**声称在用它**的注释。**零真实调用方**，零测试。
+- 它本来就挂在 `check:orphans` 基线上。删掉之后 `check:orphans` 仍然
+  「没有新的零引用导出，基线也没有过期条目」。
+- 与被删掉的 `degradationChain` 同一形状，按本仓既定原则处理。
+
+**更要紧的是那段注释**：它写着"我们因此从 ggml 实际选中的后端推断 ISA —— 见
+`inferIsaFromBackendPath`"，读起来像一层已经存在的缓解。
+**注释描述的是意图，不是代码**，于是每个读到这里的人（包括第一次审计）都以为
+Windows 有这层保护。现已改写成：我们没做、为什么没做（wmic 已废、CIM 不报 ISA）、
+将来要做该用 `IsProcessorFeaturePresent`（kernel32，`PF_AVX2_INSTRUCTIONS_AVAILABLE = 40`，
+PowerShell `Add-Type` P/Invoke）、**以及不要在没有真 Windows 机器验证的情况下发出去**。
+
+### E. 第 3 步（真的去查 Windows 指令集）：**这轮没做**，依据如下
+
+1. **我没有 Windows 机器。** 唯一可靠的来源是 `IsProcessorFeaturePresent`，
+   而它要 P/Invoke；`Add-Type` 需要现场编译，可能被执行策略挡。
+   这些失败模式**只能在真 Windows 上才看得见**。
+2. 上一位不修的理由在这里同样成立、而且更强：
+   **「一个改到一半的探测器只会产出另一句假话」** ——
+   而这个字段的全部毛病，恰恰就是"说得比它有资格说的更确定"。
+3. 不做的代价现在是**有界且诚实的**：Windows 永远是"未知"，
+   界面如实说"无法确认"，模型不再被误锁。**这比一个猜出来的 true/false 好。**
+
+### F. 门禁
+
+`tsc -b` 0、`build:safe` 0、`check:orphans` 干净（且少了一个孤儿）、
+`@openmemo/shared` 47/0、`@openmemo/runtime` 130/0、`apps/web` 136+10+312 全 0 fail、
+我的 6 个文件 `eslint` / `format:check` 通过。
+
+⚠️ 全量 `pnpm -r test`（基线 1600）本轮**没有量**：按我自己那条脏树提示，
+工作区里有别人在飞的改动（`HANDOFF.md`、`docs/SECURITY.md`、
+`scripts/ci/e2e-allcomponents.mjs`、`scripts/ci/check-pending-claims.mjs`，
+以及**有人正在扩写我那份 `verify-e2e-attestation.mjs` 去支持第 5 条腿**），
+**在那里红不能归因于 master，在那里绿也不能证明 master 绿**。所以标 `[未验证]`，不假称量过。
