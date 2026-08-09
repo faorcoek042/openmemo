@@ -115,12 +115,27 @@ try {
 
   // ── 装哪个包，由产品自己的目录回答 ────────────────────────────────────────
   const cat = await (await fetch(`${BASE}/api/backends/catalog`)).json();
+  /*
+   * ⚠️ **必须按本平台过滤**。
+   *
+   * `[CI 实测 run 31308462522]` 第一版只按"最小"挑，于是三平台都挑中了
+   * `whispercpp-metal-macos-arm64`（2.01 MB）—— 在 windows/linux 上
+   * `POST /api/backends/install` 当场 **409**，脚本却等满 10 分钟然后报
+   * 「整段里没有 step=installing」。**那是我的脚本的缺陷，不是产品的**，
+   * 而且它长得和"产品真的不发 installing"一模一样。
+   */
   const packs = (cat.packs ?? cat.available ?? []).filter(
-    (p) => p.engine === 'whisper.cpp' && (p.installed === false || p.installed === undefined),
+    (p) =>
+      p.engine === 'whisper.cpp' &&
+      (p.installed === false || p.installed === undefined) &&
+      (p.os === undefined || p.os === process.platform) &&
+      (p.arch === undefined || p.arch === process.arch),
   );
   if (packs.length === 0) {
-    say('目录里没有可装的 whisper.cpp 包 —— 这本身就是结论，不换 id 再试。');
-    say(JSON.stringify(cat).slice(0, 500));
+    say(
+      `目录里没有适用于 ${process.platform}-${process.arch} 的 whisper.cpp 包 —— 这本身就是结论。`,
+    );
+    say(JSON.stringify(cat).slice(0, 800));
     process.exit(1);
   }
   // 选最小的那个：量的是阶段耗时，不是带宽
@@ -135,6 +150,11 @@ try {
     body: JSON.stringify({ id: pick.id }),
   });
   say(`   POST /api/backends/install → ${res.status}`);
+  if (res.status >= 400) {
+    say(`✘ 安装请求被拒（${res.status}）—— **量不到就是量不到**，不许渲染成成功。`);
+    say(`   响应：${(await res.text()).slice(0, 400)}`);
+    process.exitCode = 1;
+  }
 
   // 等终态（最多 10 分钟 —— 如果 Windows 真的要几分钟，这里必须等得起）
   const deadline = Date.now() + 600_000;
@@ -179,8 +199,10 @@ try {
   say('\n──── 本腿要回答的那一格 ────');
   if (!firstInstalling) {
     say('✘ 整段里**没有** step=installing —— 与 linux 基准不同，这本身是结论。');
+    process.exitCode = 1;
   } else if (!terminal) {
     say('✘ 没等到终态 —— installing 之后确实没有终点（这正是"卡住"的形状）。');
+    process.exitCode = 1;
   } else {
     const between = events.filter(
       (e) => e.at > firstInstalling.at && e.at < terminal.at && e.ev?.type === 'job.progress',
