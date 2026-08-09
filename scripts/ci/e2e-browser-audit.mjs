@@ -151,6 +151,30 @@ const brief = (v) => {
 function ok(cond, msg, got) {
   if (cond !== true) throw new Error(`${msg}${got === undefined ? '' : `（实得：${brief(got)}）`}`);
 }
+/**
+ * ★ 第三种结局：**无从判断**（既不是通过，也不是失败）。
+ *
+ * ## 为什么必须有它
+ *
+ * 在此之前这个脚手架只有 PASS / FAIL 两档，于是「**这一轮压根没采到那个阶段**」
+ * 只能靠 `return '……无从判断'` 表达 —— 而它在汇总里**仍然记成 PASS**。
+ * B6b 就是这么连着两轮"通过"的：第一轮 `下载中` 从没出现（空过），
+ * 第二轮选择器抓错了元素（抓到就绪横幅，不是任务 Toast），**照样绿**。
+ *
+ * 一条**永远绿**的断言比没有这条断言更坏：它让人以为这块被看住了。
+ * PROTOCOL §11 的原话是「跳过不许渲染成成功」，这里补上那一档。
+ *
+ * ## 它不计入 failed（故意的）
+ *
+ * 采不到阶段往往是**平台差异**（Linux 上没有适用的后端包 → 没有解压阶段），
+ * 不是缺陷。让它红会训练所有人无视这盏灯。所以：**单独一档、单独计数、
+ * 汇总里单独列**，谁都能一眼看出"这条这轮没被验过"。
+ */
+class Undecided extends Error {}
+function undecided(msg) {
+  throw new Undecided(msg);
+}
+
 async function check(id, fn) {
   try {
     const detail = await fn();
@@ -158,6 +182,11 @@ async function check(id, fn) {
     say(`   ✔ ${id}${detail ? `  —— ${detail}` : ''}`);
     return true;
   } catch (e) {
+    if (e instanceof Undecided) {
+      results.push({ id, status: 'UNDECIDED', detail: e.message });
+      say(`   ？ ${id}  —— 无从判断：${e.message}`);
+      return false;
+    }
     failed += 1;
     results.push({ id, status: 'FAIL', detail: e.message });
     say(`   ✘ ${id}`);
@@ -818,6 +847,10 @@ try {
   let sawAsciiToken = null;
   let sawRegressAfterLate = null;
   let toastSaidInstallWhileDownloading = null;
+  /** 真的处在 downloading 的采样轮数（B6b 的元断言用：没采到就不许算通过）。 */
+  let downloadingMoments = 0;
+  /** downloading 期间**任务 Toast 标题**的原文。空数组 = 这一轮压根没看见过标题。 */
+  const toastTitlesWhileDownloading = [];
   /** 解包阶段界面上那串百分比文本（B6c 用）。采不到就保持 null，不猜。 */
   let unpackingPercentText = null;
 
@@ -838,12 +871,32 @@ try {
       const late = seenLabels.some((l) => l !== '正在选择下载源' && l !== '下载中');
       if (late && snap.body.includes(REGRESS_ZH)) sawRegressAfterLate ??= seenLabels.join(' → ');
       // ④ Toast 标题在 downloading 期间不许出现「安装」
+      //
+      // ⚠️ 选择器踩过两次坑，别再改回去：
+      //   · `[role="status"]` 在这个页面上**不止一个** —— 文档序里第一个是
+      //     首页的**就绪横幅**（「有 N 项能力未就绪」），根本不是任务 Toast。
+      //     `querySelector` 取第一个匹配，于是上一轮采到的全是横幅的字。
+      //   · 容器是 `[data-testid="job-toaster"]`，每条是 `job-toast-<jobId>`；
+      //     **标题**是那条里的第一个 `<p>`（JobToaster.tsx:349 `titleFor()`）。
+      //     注意 `job-toast-goto-note` 等**按钮**的 testid 前缀也一样，
+      //     但按钮里没有 `<p>`，所以用 `querySelector('p')` 天然把它们滤掉。
       if (snap.body.includes('下载中') && !seenLabels.includes('正在安装')) {
-        const toast = await page.evaluate(() => {
-          const el = document.querySelector('[data-testid="job-toaster"], [role="status"]');
-          return el ? (el.textContent || '').replace(/\s+/g, ' ') : '';
+        downloadingMoments += 1;
+        const titles = await page.evaluate(() => {
+          const box = document.querySelector('[data-testid="job-toaster"]');
+          if (box === null) return null;
+          return [...box.querySelectorAll('[data-testid^="job-toast-"]')]
+            .map((row) => row.querySelector('p'))
+            .filter((p) => p !== null)
+            .map((p) => (p.textContent || '').replace(/\s+/g, ' ').trim())
+            .filter((s) => s.length > 0);
         });
-        if (toast.includes('安装')) toastSaidInstallWhileDownloading ??= toast.slice(0, 80);
+        if (titles !== null && titles.length > 0) {
+          toastTitlesWhileDownloading.push(...titles);
+          for (const t of titles) {
+            if (t.includes('安装')) toastSaidInstallWhileDownloading ??= t.slice(0, 80);
+          }
+        }
       }
       // B6c：解压那一段的百分比，采到一次就够（钉住集合用）
       if (snap.body.includes('正在解压') && unpackingPercentText === null) {
@@ -920,6 +973,18 @@ try {
    * 判据统一成「解包期间百分比是不是一个**不随解压推进而变化的定值**」，
    * 0% 与 100% 都算命中 —— 两者是同一个成因（解包阶段字节计数不再更新）的两种表现。
    */
+  /*
+   * ★ 这条登记项**适用于哪条路径**（2026-08-09 查清，之前没写清楚）
+   *
+   * 只适用于**带压缩包的安装**：后端包（backend pack）一律是 `.tar.zst`/`.zip`，
+   * 必经解压；模型侧则**看清单里的 `files[].unpack`** —— 有这个字段的才解压。
+   * 抽查 `vendor/manifests/models-whisper.json` 的 `asr/whisper-large-v2-q8_0`：
+   * 单文件 `ggml-large-v2-q8_0.bin`、`unpack` 缺省 ⇒ **这条模型路径根本没有解压阶段**。
+   * 这解释了 D1 那一轮（win32，1.7 GB 模型）阶段序列里为什么没有「正在解压」：
+   * **不是没推事件，是这条路径本来就没有这一段。**
+   * ⇒ 所以 B6c 在"只装了这类模型"的机器上会亮**无从判断**，那是对的；
+   *   要验它必须走**后端包**或**带 `unpack` 的模型**。
+   */
   const KNOWN_UI_LIES = ['unpacking-percent-frozen'];
   const observedLies = [];
   if (unpackingPercentText !== null && /(^|\D)(0|100)(\.0+)?\s*%/.test(unpackingPercentText)) {
@@ -932,7 +997,8 @@ try {
     ok(unexpected.length === 0, `出现了清单之外的新谎话：${unexpected.join('、')}`);
     if (unpackingPercentText === null) {
       // 没采到解压那一段就无从判断 —— 不当成"已修",也不当成"仍在"。
-      return '本轮没采到解压阶段，这一条无从判断（不是通过）';
+      // （这里以前是 `return`，会被汇总记成 PASS；现在走 UNDECIDED 那一档。）
+      undecided('本轮没采到解压阶段');
     }
     const fixed = KNOWN_UI_LIES.filter((x) => !observedLies.includes(x));
     ok(
@@ -943,13 +1009,44 @@ try {
     return `已知谎话仍在：${observedLies.join('、')}`;
   });
 
+  say(
+    `   downloading 采样轮数=${downloadingMoments} · 采到的 Toast 标题=` +
+      `${JSON.stringify([...new Set(toastTitlesWhileDownloading)])}`,
+  );
+
+  /* ─────────────────────────────────────────────────────────────────────────
+   * B6b ★ 空过和真过必须分得开
+   *
+   * 判据没变：**`downloading` 期间 Toast 标题不许出现「安装」二字**
+   * （用户看到的字是"正在安装"、进度条却在下载，这是在说一件假的事）。
+   *
+   * 变的是**它凭什么敢说"过了"**。这条断言此前"绿"过两轮，两轮都是假的：
+   *   · 第一轮：那台机器上 `下载中` 从没出现 → 判据的前件为空 → 空过；
+   *   · 第二轮：选择器抓到的是**就绪横幅**而不是任务 Toast → 采的字全无关 → 空过。
+   * 两次都记成 PASS，于是"下载期间不说安装"这件事**从来没有真的被验过一次**。
+   *
+   * 所以下面两个前提**任一不满足就报无从判断**，不许落到"通过"那一档：
+   *   ① 这一轮真的采到过 downloading（`downloadingMoments > 0`）；
+   *   ② 那期间真的读到过**任务 Toast 的标题**（`toastTitlesWhileDownloading` 非空）。
+   * ②是关键：选择器再抓错，得到的是**空**，于是这条会亮"无从判断"而不是"通过" ——
+   * **抓错元素不再能伪装成好消息。**
+   * ───────────────────────────────────────────────────────────────────────── */
   await check('B6b 下载期间 Toast 标题不许出现「安装」二字', () => {
-    ok(packToInstall !== null, '没起成安装，这条无从谈起（不是通过）');
+    if (packToInstall === null) undecided('本机没有适用的后端包，压根没起安装');
+    if (downloadingMoments === 0) undecided('整轮没采样到 downloading 阶段');
+    if (toastTitlesWhileDownloading.length === 0) {
+      undecided(
+        `downloading 采到 ${downloadingMoments} 轮，但任务 Toast 一个标题都没读到 —— ` +
+          `要么 Toast 没渲染，要么选择器又抓错了元素（当前用 job-toaster > job-toast-* > p）`,
+      );
+    }
     ok(
       toastSaidInstallWhileDownloading === null,
-      `还在下载时 Toast 就说「安装」了：${toastSaidInstallWhileDownloading}`,
+      `还在下载时 Toast 标题就说「安装」了：${toastSaidInstallWhileDownloading}`,
     );
-    return '下载期间标题是中性的';
+    return `读到 ${toastTitlesWhileDownloading.length} 条标题，都不含「安装」：${JSON.stringify(
+      [...new Set(toastTitlesWhileDownloading)].slice(0, 3),
+    )}`;
   });
 
   /* ─────────────────────────────────────────────────────────────────────────
@@ -1002,13 +1099,22 @@ try {
     for (let i = 0; i < 900; i++) {
       const s = await page.evaluate(() => {
         const body = document.body.innerText.replace(/\s+/g, ' ');
-        const toastEl = document.querySelector('[data-testid="job-toaster"], [role="status"]');
+        // 同 B6b：只认 `job-toaster`。`[role="status"]` 会先命中就绪横幅。
+        const toastEl = document.querySelector('[data-testid="job-toaster"]');
         return {
           pct: (/(\d+(?:\.\d+)?)\s*%/.exec(body) ?? [])[1] ?? null,
           // 「12.3 MB / 1.66 GB」这种；只取第一处
           bytes: (/([\d.]+\s*[KMG]i?B)\s*\/\s*([\d.]+\s*[KMG]i?B)/.exec(body) ?? [])[0] ?? null,
           speed: (/([\d.]+\s*[KMG]i?B\/s)/.exec(body) ?? [])[0] ?? null,
-          eta: (/(剩余|ETA)[^,;。]{0,20}/.exec(body) ?? [])[0] ?? null,
+          // ⚠️ 上一轮这里报「ETA 0 个不同值」，是**我的正则错了**，不是产品没渲染：
+          // 界面根本不写「剩余」或「ETA」这两个词。`lib/format/time.ts:70 approxEta()`
+          // 出的字面是「不到 1 分钟 / 约 N 分钟 / 约 N 小时」（en: less than a minute /
+          // about N min / about N hr），由 JobToaster.tsx:369、JobList.tsx:100、
+          // NoteProgressLine.tsx:68 三处以 ` · ${eta}` 拼在阶段行尾。按这个改。
+          eta:
+            (/(不到\s*1\s*分钟|约\s*\d+\s*(?:分钟|小时)|less than a minute|about\s+\d+\s*(?:min|hr))/.exec(
+              body,
+            ) ?? [])[0] ?? null,
           toast: toastEl ? (toastEl.textContent || '').replace(/\s+/g, ' ').slice(0, 60) : null,
           body,
         };
@@ -1489,7 +1595,15 @@ for (const r of results) say(`   ${String(r.id).padEnd(58)} ${r.status}`);
 say('');
 const pass = results.filter((r) => r.status === 'PASS').length;
 const mut = results.filter((r) => r.status === 'MUT-OK').length;
-say(`   断言通过 ${pass} 条 · 变异证明 ${mut} 条 · 失败 ${failed} 条`);
+const undec = results.filter((r) => r.status === 'UNDECIDED');
+say(
+  `   断言通过 ${pass} 条 · 变异证明 ${mut} 条 · 失败 ${failed} 条 · 无从判断 ${undec.length} 条`,
+);
+if (undec.length > 0) {
+  // 单独列出来：**这些不是通过**。不列的话它们会混在一片绿里被当成覆盖到了。
+  say('   ？ 本轮无从判断（这一轮没验到，别当成绿）：');
+  for (const r of undec) say(`     · ${r.id} —— ${r.detail}`);
+}
 say('');
 say('   ⚠️ 无头浏览器**做不到**的（如实列出，不假装覆盖）：');
 say('     · 系统级权限弹窗（麦克风授权）—— headless 里被自动允许/拒绝，测不出真实体验');
