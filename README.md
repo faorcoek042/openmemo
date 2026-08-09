@@ -99,8 +99,17 @@ F1–F5 各有一条端到端腿(用预编译包、走真实 HTTP、三平台各
 `package.json` 仍是 `UNLICENSED`(ADR-002);仓库根目录有一份 `LICENSE` 说明授权状态,
 预编译包内另带 `THIRD-PARTY-NOTICES`。(~~无 LICENSE 文件~~ ~~一旦要分发就是硬阻断~~
 —— 这两句 2026-08-08 起不再为真,订正见 [`docs/design/D-19-user-doc-provenance.md`](docs/design/D-19-user-doc-provenance.md)。)
-**ffmpeg** 是 **GPL-3.0-or-later**,而**它的字节从不经过我们**:由你的机器直连上游取,
-我们只以命令行方式调用 —— 所以发预编译包不触发 GPL。
+~~**ffmpeg** 是 **GPL-3.0-or-later**,而**它的字节从不经过我们**:由你的机器直连上游取,
+我们只以命令行方式调用 —— 所以发预编译包不触发 GPL。~~
+（2026-08-09 起，此句只对 **macOS** 仍成立：供应商 jellyfin-ffmpeg，**GPL-3.0-or-later**，
+继续由你的机器直连上游下载，字节不经过我们。**Linux / Windows 已改为随包内置**
+（BtbN 的 LGPL 变体，**LGPL-3.0-or-later**，与原下载的 GPL 变体同源同 commit）——
+字节这次确实随我们的包分发，但我们仍只以 `spawn` 命令行方式调用可执行文件，不
+`dlopen`、不链接其库，LGPL 的链接触发义务不适用；许可证全文由 ffmpeg 归档自带的
+`LICENSE.txt` 满足，随归档整份分发。三个平台现在不是同一个答案、也不是同一个供应商，
+详见 [`docs/design/D-20-bundled-deps.md` §9.2/§13](docs/design/D-20-bundled-deps.md)，
+逐条以 `vendor/manifests/backends.json` 每条 `license.id` 为准。此为 Manager 依据两轮
+真机验证结果（§13.7）所作裁定。）
 **yt-dlp 项目本身是 [Unlicense](https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE)(公共领域),
 但官方发布的可执行二进制内嵌了另外的 GPL 组件**:全平台内嵌 mutagen(GPL-2.0-or-later),
 Linux x64/arm64 额外内嵌 GNU Readline(GPL-3.0-or-later)——
