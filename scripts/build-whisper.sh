@@ -771,9 +771,15 @@ fi
 if [[ "${BACKEND}" == "cuda" ]]; then
   NV_EULA_DST="${STAGE}/LICENSE-NVIDIA-CUDA-EULA.txt"
   NV_EULA_SRC=""
+  # 候选路径：先试已知的固定位置，再在 toolkit 根下**有界递归**找。
+  # ⚠️ 固定列表在 Windows 上不够 —— `[CI 实测 run 31325891690]` windows-x64-cuda 死在
+  #    「找不到 NVIDIA CUDA EULA 全文」：Jimver 装出来的 v12.4 目录里没有
+  #    `EULA.txt` / `LICENSE` / `doc/EULA.txt` 这三个名字中的任何一个。
+  #    **写死路径 = 换一种安装方式就失效**，所以改成"按名字找、限定深度"。
   for cand in \
       "${CUDA_ROOT:-/nonexistent}/EULA.txt" \
       "${CUDA_ROOT:-/nonexistent}/LICENSE" \
+      "${CUDA_ROOT:-/nonexistent}/LICENSE.txt" \
       "${CUDA_ROOT:-/nonexistent}/doc/EULA.txt" \
       /usr/share/doc/cuda-cudart-*/copyright \
       /usr/share/doc/libcublas-*/copyright \
@@ -781,9 +787,31 @@ if [[ "${BACKEND}" == "cuda" ]]; then
     # `> 1 KB` 是为了挡住那种"文件在、内容是一行占位符"的情况
     if [[ -f "${cand}" ]] && [[ "$(wc -c < "${cand}")" -gt 1024 ]]; then NV_EULA_SRC="${cand}"; break; fi
   done
-  [[ -n "${NV_EULA_SRC}" ]] || die "找不到 NVIDIA CUDA EULA 全文，而这个包里有 NVIDIA 的可再分发运行库。
-  找过：\${CUDA_ROOT}/{EULA.txt,LICENSE,doc/EULA.txt}、/usr/share/doc/{cuda-cudart,libcublas,cuda-toolkit}-*/copyright
+  if [[ -z "${NV_EULA_SRC}" ]] && [[ -d "${CUDA_ROOT:-/nonexistent}" ]]; then
+    # 有界递归：深度 3 足以覆盖 `<root>/`、`<root>/doc/`、`<root>/<component>/` 三种布局，
+    # 又不至于把整个 toolkit（几 GB）走一遍。
+    while IFS= read -r cand; do
+      [[ -f "${cand}" ]] || continue
+      [[ "$(wc -c < "${cand}")" -gt 1024 ]] || continue
+      NV_EULA_SRC="${cand}"; break
+    done < <(find "${CUDA_ROOT}" -maxdepth 3 \
+               \( -iname 'EULA*.txt' -o -iname 'LICENSE' -o -iname 'LICENSE.txt' -o -iname 'copyright' \) \
+               -type f 2>/dev/null | sort)
+  fi
+  if [[ -z "${NV_EULA_SRC}" ]]; then
+    # **失败自带证据**：下一轮不用靠猜"那个目录里到底有什么"。
+    { echo "==> CUDA_ROOT (${CUDA_ROOT:-未设}) 的顶两层："
+      ls -la "${CUDA_ROOT:-/nonexistent}" 2>&1 | head -40 || true
+      echo "==> 深度 3 内所有 *.txt / LICENSE* / copyright："
+      find "${CUDA_ROOT:-/nonexistent}" -maxdepth 3 \
+        \( -iname '*.txt' -o -iname 'LICENSE*' -o -iname 'copyright' \) -type f 2>/dev/null | head -40 || true
+    } >&2
+    die "找不到 NVIDIA CUDA EULA 全文，而这个包里有 NVIDIA 的可再分发运行库。
+  找过：固定路径（\${CUDA_ROOT}/{EULA.txt,LICENSE,LICENSE.txt,doc/EULA.txt}、
+  /usr/share/doc/{cuda-cudart,libcublas,cuda-toolkit}-*/copyright）+ \${CUDA_ROOT} 下深度 3 递归。
+  上面已经把该目录的实际内容打出来了 —— 照着补一条候选路径即可。
   **不许先发包、以后再补许可证** —— 那中间就是一个"已经在分发、但没带许可证"的状态。"
+  fi
   cp -f "${NV_EULA_SRC}" "${NV_EULA_DST}"
   log "NVIDIA EULA: ${NV_EULA_SRC} → $(basename "${NV_EULA_DST}") ($(wc -c < "${NV_EULA_DST}") B)"
 fi
