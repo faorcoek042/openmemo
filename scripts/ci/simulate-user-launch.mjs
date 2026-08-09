@@ -189,13 +189,35 @@ function httpGet(port, path, timeoutMs = 3000) {
   });
 }
 
-async function waitForUi(port, seconds = 90) {
+/**
+ * 等**真的就绪**，判据是 `/api/health` 回 200 —— **不是** `GET /` 有响应。
+ *
+ * ## 为什么不能用 `GET /`（这条是用一次 macOS 假红换来的）
+ *
+ * daemon **在 ready 之前就会开始供静态产物**：`http/server.ts` 里静态那一段排在
+ * 就绪闸门**前面**，所以 `GET /` 在启动早期就已经回 200 了。
+ * 而 `/api/health` 在没 ready 时**明确回 503 + `ready:false`**（同文件 `:188`）。
+ *
+ * 旧写法一拿到 `GET /` 的 200 就返回，`runLauncher` 紧接着就把 daemon 杀了 ——
+ * **在它打出就绪横幅之前**。于是"横幅里没有那句话"这条断言变红，
+ * 而真正的原因是**我们没等它说完话就把它掐了**。
+ *
+ * `[CI 实测 run 31305488356]` 这正是 macOS 那条腿红、而 Linux/Windows 绿的原因：
+ * 三个平台跑的是同一份代码，只有 macOS 慢到"静态已经能供、但还没 ready"这个窗口
+ * 被撞上了。**平台差异只是让窗口变宽，窗口本身一直在。**
+ *
+ * daemon 自己已经保证了正确的判据：**「横幅说'可以用了'和 health 说 200，
+ * 必须是同一件事」**（`main.ts` 里 `isReady = true` 就在打横幅之前）。
+ * 所以这里等的就是那一件事。
+ */
+async function waitForReady(port, seconds = 90) {
+  const t0 = Date.now();
   for (let i = 0; i < seconds; i++) {
-    const r = await httpGet(port, '/');
-    if (r.status && r.status !== 0) return r;
+    const h = await httpGet(port, '/api/health');
+    if (h.status === 200) return { ...h, waitedMs: Date.now() - t0 };
     await new Promise((r2) => setTimeout(r2, 1000));
   }
-  return { status: 0, body: 'never came up' };
+  return { status: 0, body: 'never became ready', waitedMs: Date.now() - t0 };
 }
 
 /**
@@ -236,8 +258,16 @@ async function runLauncher({
   child.stderr.on('data', (c) => (out += c));
   child.on('exit', (code, sig) => (exited = { code, sig }));
 
-  const ui = await waitForUi(port, waitSec);
-  const health = ui.status ? await httpGet(port, '/api/health') : { status: 0, body: '-' };
+  /*
+   * ★ 先等**真就绪**（health 200），再看界面 —— 顺序不能反。
+   *   反过来（`GET /` 一响就往下走）会在 daemon 打出横幅之前把它杀掉，
+   *   于是"横幅里没有那句话"变红，而真因是我们没等它说完（见 waitForReady 的注释）。
+   */
+  const ready = await waitForReady(port, waitSec);
+  const ui = ready.status === 200 ? await httpGet(port, '/') : { status: 0, body: 'not ready' };
+  const health = ready;
+  if (ready.status === 200) info(`就绪耗时 ${(ready.waitedMs / 1000).toFixed(1)}s`);
+  else info(`⚠️ ${waitSec}s 内 /api/health 没有回 200（最后一次：${ready.body.slice(0, 80)}）`);
 
   /*
    * 收尾：**只杀我们自己 spawn 的那棵进程树**（按 pid，不许 pkill -f，见 PROTOCOL）。
@@ -484,11 +514,26 @@ async function macos() {
       label: '命令行 tar xzf（用户照 README 敲的那条）',
       run: (d) => sh('tar', ['xzf', tgz, '-C', d]),
     },
-    {
-      id: 'ditto',
-      label: 'ditto -x（Apple 自己的解压库）',
-      run: (d) => sh('ditto', ['-x', '-z', tgz, d]),
-    },
+    /*
+     * ⚠️ **这里曾经有一条 `ditto -x -z`，已删。**
+     *
+     * `ditto` 的 `-z` 解的是 **PKZip**，而我们的 macOS 产物是 `.tar.gz` ——
+     * 它每一轮都必然失败并往日志里吐一行：
+     *
+     *     ditto: cpio read error: bad file format
+     *
+     * 那一行**不影响任何结论**（本步骤只是"顺带看看第三种解压器"，
+     * 失败时记 UNKNOWN 就继续），但它长得像一条**打包失败**。
+     *
+     * `[实测 2026-08-09]` 它真的造成了一次误诊：这行错误被读成
+     * 「macOS 打包卡在 Gatekeeper/签名那一步、产物整个发不出来」，
+     * 并按此立了一条阻断项 —— 而当时 macOS 产物**一直在正常构建**
+     * （`verify-bundle` 36 条全过），真正红的是另一条断言。
+     *
+     * 判据：**一条不影响结论、却长得像故障的日志，是负资产。**
+     * 与本仓「假绿灯」同族的反面 —— 假红灯同样会消耗人的判断力。
+     * `.tar.gz` 本来就没有对应的 ditto 模式，所以这一格直接说清楚，不再跑。
+     */
     {
       id: 'archiveutil',
       label: 'Archive Utility（★ 访达里双击 .tar.gz 走的就是它）',
@@ -512,6 +557,10 @@ async function macos() {
       },
     },
   ];
+  info(
+    'ditto 这一格不测：`.tar.gz` 没有对应的 ditto 模式（`-z` 解的是 PKZip）。' +
+      '此前每轮都会吐一行 `ditto: cpio read error`，那是无意义的假红，已删除。',
+  );
   const extracted = {};
   for (const w of ways) {
     const d = join(base, w.id);
@@ -544,7 +593,7 @@ async function macos() {
   }
 
   hdr('③ Gatekeeper 到底拦在哪一步、原话是什么');
-  const tree = extracted['archiveutil'] ?? extracted['ditto'] ?? extracted['tar'];
+  const tree = extracted['archiveutil'] ?? extracted['tar'];
   if (!tree) {
     fail('没有任何一种解压方式产出可用目录，③④ 无法进行');
     return;
@@ -702,7 +751,7 @@ async function macos() {
   }
   dump('open OpenMemo.command（= 访达里双击）', sh('open', [join(tree, 'OpenMemo.command')]));
   info('等待 40s 看界面起没起来…');
-  const ui = await waitForUi(DEFAULT_PORT, 40);
+  const ui = await waitForReady(DEFAULT_PORT, 40);
   info(`[实测] 双击后界面 GET / => ${ui.status || 'unreachable'} (${ui.body.slice(0, 120)})`);
   if (ui.status === 200) ok('双击后界面可达');
   else
