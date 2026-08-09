@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { stepLabel as stepLabelOf } from '../../lib/format/stepLabel';
 import { useActiveNoteJob } from '../tasks';
 import { ProgressMeter } from '../../components/common/ProgressMeter';
 import { approxEta } from '../../lib/format/time';
@@ -44,8 +45,14 @@ export function NoteProgressLine({
    * 有 step 就说 step（"转写中" / "整理笔记"），没有就说状态（"排队中" / "暂时无法继续"）。
    * **不能只认 step**：排队中与阻塞中都没有 step，那正是用户最想知道"它在等什么"的时刻。
    */
-  const stepLabel = job.step
-    ? t(`progress.${job.step}`, { defaultValue: job.step })
+  /*
+   * ⚠️ 这里此前是**第四份**实现，而且兜底是 `defaultValue: job.step` ——
+   *   缺词条时把 `unpacking` 这种**英文机器枚举值**直接摆给用户看
+   *   （与 `JobList` 收敛前那份同一个毛病）。收敛到共享实现。
+   *   无 step 那一档（排队/阻塞）保持原样：那不是词条缺失，是真的没有阶段。
+   */
+  const stepText = job.step
+    ? stepLabelOf(job.step, t, (k: string) => i18n.exists(k))
     : t(`progress.state.${job.state}`, { defaultValue: job.state });
   const eta = approxEta(job.etaSeconds, i18n.language);
 
@@ -53,7 +60,7 @@ export function NoteProgressLine({
     <div className={className} data-testid="note-progress-line">
       <div className="mb-1 flex items-center justify-between gap-2 text-xs text-ink-secondary">
         <span className="truncate">
-          {stepLabel}
+          {stepText}
           {job.stepIndex && job.stepCount ? ` · ${job.stepIndex}/${job.stepCount}` : ''}
         </span>
         <span className="shrink-0 tabular-nums text-ink-muted">
@@ -61,7 +68,7 @@ export function NoteProgressLine({
           {eta ? ` · ${eta}` : ''}
         </span>
       </div>
-      <ProgressMeter value={job.progress} label={stepLabel} />
+      <ProgressMeter value={job.progress} label={stepText} />
       {hint ? <p className="mt-1 text-xs text-ink-muted">▸ {hint}</p> : null}
     </div>
   );

@@ -7,6 +7,7 @@ import { ProgressMeter } from '../../../components/common/ProgressMeter';
 import { StatusChip } from '../../../components/common/StatusChip';
 import { useProgressStore } from '../../../lib/stores/progress.store';
 import { formatBytes, formatSpeed } from '../../../lib/format/bytes';
+import { stepLabel } from '../../../lib/format/stepLabel';
 
 /**
  * 下载中的一行（R-04 §9.3 线框）。
@@ -16,22 +17,20 @@ import { formatBytes, formatSpeed } from '../../../lib/format/bytes';
  * store 内部已节流到 200ms，服务端也限流到 4 次/秒/job。
  */
 
-/** 阶段 → 词条 key。**存 key 不存文案** —— 存文案的话切语言不会重算这张常量表。 */
-const STEP_KEY: Record<string, string> = {
-  resolving: 'models.download.resolving',
-  downloading: 'models.download.downloading',
-  verifying: 'models.download.verifying',
-  /*
-   * ★ `unpacking` / `warming` 两档此前**没有词条** —— 而它们都是真实会停留的阶段：
-   *   · 解包：`[CI 实测]` Windows 25 MB 包 171ms；大包按比例更久
-   *   · 预热：`[CI 实测 macos]` GPU 着色器缓存 10.6–16.9 s，期间 0 个事件
-   * 没有词条时这一行显示的是**上一档**的文案 —— 也就是说界面在说一句不实的话。
-   */
-  unpacking: 'models.download.unpacking',
-  installing: 'models.download.installing',
-  warming: 'models.download.warming',
-};
-
+/*
+ * ★ 这里原本有一张 `STEP_KEY` 表 + 一整套 `models.download.*` 阶段词条 ——
+ *   **和 `progress.*` 是同一件事的第二份实现。**
+ *
+ * 后果不是"多写了几行"，是**两份实现会各自漂**：`[实测]` 收敛前
+ * `warming` 在两套词条里是两句不同的中文，`unpacking` 一度只有其中一套有；
+ * 而三个渲染点（任务中心 / Toast / 这一行）读的是不同的套，
+ * 于是同一时刻同一个 job，两个页面可以说两句互相矛盾的话。
+ *
+ * 现已收敛到 `lib/format/stepLabel.ts` —— **一份实现**。
+ * 兜底也随之统一：缺词条时给中性的「处理中」，
+ * **不是「排队中」**（那是在断言一件假事：进度倒退回起点），
+ * **也不是原始英文 key**（把机器枚举值摆给用户看）。
+ */
 /** ETA 文案：D-05 §4.1 规则 4 —— 只在有依据时显示，且四舍五入到"约 X 分钟"。
  *  不显示"剩余 03:47"这种假精确：实测速率波动很大。 */
 function formatEta(
@@ -51,7 +50,7 @@ export interface DownloadRowProps {
 }
 
 export function DownloadRow({ job, locale, onCancel, onRetry }: DownloadRowProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const live = useProgressStore(useShallow((s) => s.byJob[job.jobId]));
 
   const completed = live?.completedBytes ?? job.completedBytes;
@@ -83,7 +82,14 @@ export function DownloadRow({ job, locale, onCancel, onRetry }: DownloadRowProps
               </span>
             ) : (
               <>
-                {step && STEP_KEY[step] ? t(STEP_KEY[step]) : t('models.download.queued')}
+                {/*
+                  `step` 为空 = 这个 job **真的还在排队**（不是词条缺失），
+                  所以这一档仍然说「排队中」—— 那是事实。
+                  词条缺失那一档由 `stepLabel` 兜成「处理中」。两者别混。
+                */}
+                {step
+                  ? stepLabel(step, t, (k: string) => i18n.exists(k))
+                  : t('progress.state.queued')}
                 {job.provider
                   ? ` · ${t('models.download.source', { provider: job.provider })}`
                   : ''}

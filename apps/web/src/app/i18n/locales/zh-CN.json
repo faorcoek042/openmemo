@@ -165,11 +165,6 @@
       }
     },
     "download": {
-      "resolving": "正在选择下载源",
-      "downloading": "下载中",
-      "verifying": "正在校验完整性",
-      "installing": "正在安装",
-      "queued": "排队中",
       "source": "来源 {{provider}}",
       "failed": "下载失败",
       "attempt": "（第 {{attempt}}/{{max}} 次）",
@@ -178,9 +173,7 @@
       "cancel": "取消",
       "progressLabel": "{{name}} 下载进度",
       "etaUnderMinute": "剩余不到 1 分钟",
-      "etaMinutes": "剩余约 {{minutes}} 分钟",
-      "unpacking": "正在解压",
-      "warming": "正在预热 GPU 着色器缓存"
+      "etaMinutes": "剩余约 {{minutes}} 分钟"
     },
     "quant": {
       "current": "量化 {{quant}}",

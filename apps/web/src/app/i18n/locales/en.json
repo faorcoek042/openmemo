@@ -165,11 +165,6 @@
       }
     },
     "download": {
-      "resolving": "Choosing a download source",
-      "downloading": "Downloading",
-      "verifying": "Verifying integrity",
-      "installing": "Installing",
-      "queued": "Queued",
       "source": "from {{provider}}",
       "failed": "Download failed",
       "attempt": " (attempt {{attempt}}/{{max}})",
@@ -178,9 +173,7 @@
       "cancel": "Cancel",
       "progressLabel": "{{name}} download progress",
       "etaUnderMinute": "less than 1 minute left",
-      "etaMinutes": "about {{minutes}} min left",
-      "unpacking": "Extracting",
-      "warming": "Warming up GPU shader cache"
+      "etaMinutes": "about {{minutes}} min left"
     },
     "quant": {
       "current": "Quant {{quant}}",
@@ -424,7 +417,7 @@
     "stopping": "Stopping…",
     "retry": "Retry",
     "queued": "Queued",
-    "resolving": "Choosing a source",
+    "resolving": "Choosing a download source",
     "downloading": "Downloading",
     "verifying": "Verifying checksum",
     "installing": "Installing",
