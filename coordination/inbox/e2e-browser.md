@@ -1043,3 +1043,72 @@ POST /api/backends/selftest → 409 SELF_TEST_BLOCKED
   **真前提仍然没找到** `UNKNOWN`。
 - 全仓 `pnpm -r test` **没跑**（上下文用尽）`[未验证]`；`apps/web` 三套单测
   312 + 136 + 10 全绿、`tsc -b` 0 错、`eslint` 0 错。
+
+---
+
+## [2026-08-09 23:05] 停线修复：`extractJson` 那条红**是我带出来的**，已修，master 绿了
+
+commit `a068636`。
+
+### 一、是我带出来的，成因很直接
+
+上一轮按用户裁决「引导跳过去解决不了问题就删掉」，我把 `increaseMaxTokens`
+那条行动号召从 `packages/llm/src/structured.ts` 移除了（`maxTokens` 是本仓
+**刻意不给控件**的字段，界面上永远无处可点）。
+
+**而 `structured.test.ts` 还钉着 `remediation.action === 'increaseMaxTokens'`。**
+平台无关（linux 也红），因为它是源码断言不是环境问题。
+它挡住了 `packages/pipeline` 之后的所有包 —— 别人的 Windows 修复因此标着 `[未验证]`，
+这笔账算我的。
+
+⚠️ **我改产品行为时没有回头看谁在钉这个行为。** 那条断言就在同一个包里、
+文件名只差一个 `.test`。这是这次真正该记住的：
+**删掉一个契约之前，先问"谁在断言它"** —— `grep` 一下就能看见。
+
+### 二、没有用"放宽断言"变绿
+
+那一行是四条断言里的一条，钉的是「截断要报成截断」。删掉它就是把守卫削薄 ——
+而我上一轮刚补好一条"护栏看不见半个仓库"的洞，再削一条就把那件事白做了。
+
+改成钉**新的契约**，三条，其中两条是原来**没有**的：
+
+| | 断言 | 原来有吗 |
+| --- | --- | --- |
+| ① | `remediation === undefined` —— 不许再冒出点不出来的按钮 | 否（原来钉的是它**等于**某个 action） |
+| ② | 中文文案必须说清「截断」—— 诊断不许跟着 CTA 一起被删（§13） | **新增** |
+| ③ | 中文文案必须给出用户**真的做得到**的出路（换更大的模型，控件在 `/models?tab=llm`） | **新增** |
+
+所以这次改动**净增了约束**，不是放宽。
+
+### 三、master 绿了
+
+干净 worktree 检出 `a068636`：
+
+```
+pnpm -r test      1624 通过 / 0 失败
+eslint            0
+check:orphans     70 / 基线 70
+```
+
+⚠️ `scripts/ci/ffmpeg-lgpl-verify.mjs` 那条 Lint 红**我没碰**（另一路的）——
+在我这个 commit 上 `pnpm lint` 已经是 0，说明那一路已经修掉了。
+
+### 四、关于"漏提交文件"那条：**没有漏**
+
+有人在共享脏树里看到 `JobToaster.tsx` 缺 `stepLabelOf`、以及未跟踪的 `store.test.ts`。
+逐个核过：
+
+- `apps/web/src/lib/format/stepLabel.ts` —— **在 master 上**（上一轮我先 `git add` 再 pathspec 提交）；
+- `JobToaster.tsx` 的 `stepLabelOf` import —— **在 master 上**（`git show HEAD:` 里能查到）；
+- `packages/downloader/src/store.test.ts` —— **不是我的文件**，我没建过它，
+  它属于正在改 `packages/downloader` 的那一路。
+
+所以那两条是**共享脏树的瞬时状态**被看见了，不是我漏提交（§10 的老形状：
+「最终状态干净救不了过程中别人跑了一次」）。⚠️ 但你提醒的那条机制是真的：
+**pathspec 对未跟踪文件是静默 no-op**，新文件必须先 `git add` —— 我上一轮确实是这么做的。
+
+### 五、未验证
+
+- 只在 Linux 上验（本机）`[未验证]` Windows —— 但这条是**源码断言**，与平台无关。
+- 上一轮遗留的仍然遗留：**没有任何一路真在浏览器里看过那行进度文案**（第七类盲区），
+  百分比掉 0% 未修，Windows 上 job 真卡住的**真前提仍 UNKNOWN**。
