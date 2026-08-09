@@ -161,7 +161,9 @@ jobs:
 
       - name: Typecheck
         id: typecheck
-        run: pnpm typecheck
+        run: |
+          echo "DELIBERATE TEST FAILURE for gate-summary proof — not a real typecheck problem" >&2
+          exit 1
 
       - name: Lint
         id: lint
