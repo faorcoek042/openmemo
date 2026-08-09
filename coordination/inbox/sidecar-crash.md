@@ -295,3 +295,101 @@ whisper 引擎约 **6 MB**）。**写区间不写精确数字** —— 精确值
 - 全程未用任何形式的 `pkill`（含 `-0`）；测试 daemon 与代理**按 pid 结束**，端口确认释放为 0。
 - 未动他人在途文件（`docs/**`、`packages/runtime/src/detect/`、`packages/shared/src/fitness.ts`、
   `packages/pipeline/src/tools.ts`）。**本轮未改任何产品代码**，故无门禁影响。
+
+---
+
+## [2026-08-09] 逐步打点：数拿到了，**Linux 上复现不出用户的症状**（PROGRESS）
+
+### 先认一件事
+
+你转述错了一层，但**源头是我**：我上一轮写的是
+「`verifying` 之后 hardlink/unpack/写清单不发事件」——
+那解释的是**「标签为什么一直停在校验」**，**不解释「为什么要那么久」**。
+我当时没把这两句话分开写，才让它读起来像是后者的答案。**这是我的表述错误。**
+
+### ① 三种体量的逐步耗时（先答，不带修改）
+
+打点已落地（`OPENMEMO_TIMING=1`），覆盖：
+下载+校验 / 硬链接 / 解包 / 落位 / chmod / 收尾。
+
+**`[本机实测 linux-x64] vad/silero-vad-onnx（2.33 MB）** —— 你说的最关键那个：
+
+| 节点 | 时刻 / 耗时 |
+|---|---|
+| `resolving` | t=83ms |
+| `downloading` | t=1406ms |
+| **下载+校验（含 sha256 与比对）** | **2545ms** |
+| **硬链接 linkByName** | **1ms** |
+| 解包 | **不适用**（`.onnx` 是裸文件，没有解包这一步） |
+| `succeeded` | **t=3822ms** |
+
+⚠️ **纯网络 fetch 我单独量过是 2538ms** ⇒ **sha256 在这 2545ms 里只占毫秒级**。
+**哈希这条彻底排除了**，和你的判断一致。
+
+⚠️ **但更重要的结论是：Linux 上全程约 4 秒，复现不出用户的"卡住"。**
+82 MB 与 574 MB 两个**我没量**（上下文预算见底，且它们在 Linux 上大概率同样不复现）——
+**如实标 `[未量]`，不拿 Linux 的数去替 Windows 回答。**
+
+### ② Windows 那一半：**没量，这是本轮最大的缺口**
+
+你点的两个嫌疑（杀毒实时扫描每次读写整文件、NTFS 上 rename/硬链接）
+**在 Linux 上结构性地不存在**，所以上面那组数**不能用来否定它们**。
+打点已经进了代码，**在 windows-2025 上跑一次即可拿到同样一张表** ——
+建议接到「每个组件都下一遍」那条新腿上（它本来就要在三平台各装一遍），
+`OPENMEMO_TIMING=1` 打开即可，不需要额外改动。
+
+### ③ 「完成状态没被推到前端」这条：**没排除，而且有一条可疑线索**
+
+`[实测]` 我按 200ms 轮询 `/api/jobs`，观察到的 step 序列是：
+
+```
+running/resolving → running/downloading → succeeded/None
+```
+
+**`verifying` 与 `installing` 这两个 step 我一次都没观测到**
+（`models.ts` 里明明有 `ctx.setStep('installing')`）。
+两种解释我都还不能排除：① 它们太短，200ms 轮询漏掉了；
+② 它们**没被推到前端**。**这两件在用户眼里一模一样**，而第二条正是你说的那种病。
+
+要分辨只需一步：**看 SSE 事件流而不是轮询**（`/api/events`）。
+我没做 —— 预算见底，**如实标 `[未验证]`**。这条我建议排在 Windows 打点前面，
+因为如果是 ②，那么"某一步慢"这个前提可能根本不成立。
+
+### ④ 失败消息已改（这条做完了）
+
+`[实测]` 现在的文案（中英都有，daemon 直接给，**没碰 `apps/web` 的 locale**）：
+
+```
+message   : Failed while probing file size at <host> (before any bytes were
+            transferred): fetch failed. If you are on a restricted network,
+            set a proxy under Settings → Proxy and retry.
+messageZh : 连接 <host> 失败：卡在**探测文件大小**这一步，还没开始传字节。
+            如果你在网络受限的地区，可在「设置 → 代理」里填一个代理再试。
+```
+
+三样都在：**哪一步**（探大小 vs 真正下载）、**哪台主机**、**可以配代理**。
+「(1/3)」改成 `All N source(s) failed after M attempt(s)` /
+「N 个下载源都失败了（共重试 M 次）」—— **它是重试次数**。
+
+⚠️ 顺带：探大小那一步现在**自报家门**，所以**下次用户再撞到 `PROVIDER_UNREACHABLE`，
+我们就能直接看出是不是 `probeRemoteFile` 干的** —— 那条 `[未验证]` 的怀疑
+从此有取证手段，不用再猜。
+
+### 本轮**没做**的（如实说明）
+
+- **① 的 `builtinBaseline`**：只读到 `backends.ts:379` 的 `installed:` 组装点，**没动**。
+- **`unpack.ts` 那笔债**：**没核**。
+- 82 MB / 574 MB 的量、Windows 的量、SSE 那条排除：都没做。
+- 未碰 `packages/shared`（`engines` 那位在里面），未碰 `apps/web` locale（两路在改）。
+
+**原因是上下文预算见底，不是判断它们不重要。** 按你给的优先级
+（"三种体量的耗时这条先答"），我把预算花在了拿数与保证数可复现上。
+
+### 纪律
+
+- 未碰 `:10000`、`/root/data-memo`、机器指针；**未建/改/删 release**。
+- 全程未用任何形式的 `pkill`（含 `-0`）；测试 daemon **按 pid 结束**。
+- 本次提交 3 个文件（`download.ts` / `queue.ts` / `installer.ts`），§12 复核无夹带；
+  `downloader` 40 条用例全绿、eslint 与 prettier 干净。
+  ⚠️ **完整门禁（`pnpm -r test` 等）本轮未跑** —— 预算见底，如实标 `[未验证]`。
+  改动集中在 downloader，且该包用例全绿。
