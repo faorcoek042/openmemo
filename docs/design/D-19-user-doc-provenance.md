@@ -397,3 +397,114 @@ result: PWNED file created? -> NO ✅ --ignore-config held
 权威订正记录（含实测表与阴阳对照）在
 [`docs/design/D-17-prebuilt-bundles.md`](D-17-prebuilt-bundles.md) §5.1，
 那里同样以删除线保留了 D-17 原文的那半句。
+
+---
+
+## 迁自 `docs/SECURITY.md` §2 —— 五类防护的实现细节与取证
+
+> **原位置**：`docs/SECURITY.md` §2（2.1 路径与文件名 / 2.2 媒体协议白名单 /
+> 2.3 RSS·XML / 2.4 解压 / 2.5 崩溃隔离）。**搬运时间**：2026-08-09。
+> **原文整块搬运，一字未改。**
+>
+> **为什么搬**：这些回答的是"我们怎么挡住的、验到什么程度、行号在哪"，
+> **不会改变用户的任何一个动作**。用户文档里保留的是每一类**挡住了什么**的结论。
+>
+> ⚠️ **这一块里有两条不是"证据"、需要单独盯着的东西**（搬运时整块保留）：
+> ① §2.4 那条 `PROTOCOL §13` 式订正 ——「symlink/hardlink 一律拒绝」曾是原文，
+> 实际实现是**按目标判定**（一律拒绝会让官方 whisper.cpp 的 `libwhisper.so` 软链装不上）；
+> ② 由 ① 带出的**代码侧未修债**：`unpack.ts:16-19` 的文件头注释**至今仍写着**
+> "never created / Rejected outright"，与 `:169-183` 的实现打架。
+> **这条债今天仍然成立**，不因为文档搬了家而消失。
+
+## 2. 其它已实施的防护
+
+### 2.1 路径与文件名（D-01 §8.5）
+
+**根本策略：用户永远不提供文件名。** 所有落盘文件名由我们生成，用户提供的标题只存在 DB 的
+展示字段里。这从根上消灭了 `../../../.ssh/authorized_keys`、Windows 保留名（`CON`/`PRN`/`COM1`）、
+NTFS ADS（`file.txt:evil`）、Unicode 同形字、尾随空格/点等一整族问题。
+
+必须接受路径的少数入口（"从磁盘导入"）走 `assertWithinRoot`：
+**先 `realpath` 再比较** —— 只做 `path.resolve` 的词法比较会被 symlink 骗过（有对应测试）。
+
+### 2.2 媒体协议白名单 —— 已用真实攻击验证（T-026）
+
+ffmpeg 不只是转码器，它是一个**协议客户端**，认识 `concat:`、`subfile:`、`file:` 等。
+一个精心构造的 HLS 播放列表可以让它**读取本地任意文件并拼进输出**。
+
+**这不是理论风险，实测确认过。** 构造了引用 `file:///tmp/attack/secret.ts` 的恶意播放列表：
+
+```
+对照组（允许 file 协议）：
+  [in#0] Opening 'file:///tmp/attack/secret.ts' for reading      ← 攻击成立，真的读了本地文件
+
+我们的白名单：
+  [file @ …] Protocol 'file' not on whitelist 'http,https,tls,tcp,crypto,httpproxy'!
+```
+
+三种变体（`file:` / `concat:` / `subfile:`）全部被挡。
+
+> ⚠️ **测试方法论教训**：第一次用 `.txt` 金丝雀，攻击"失败"了——但挡住它的是 ffmpeg 8.x 自己的
+> `allowed_segment_extensions`，**不是我们的白名单**。换成 `.ts` 扩展名才隔离出真正起作用的层。
+> 与 ADR-008 记录的"假绿灯"同源：**必须确认"挡住了"是被哪一层挡住的。**
+
+#### ⚠️ 由此查出并修复的一个真实漏洞（本地播放列表导入）
+
+远程路径安全，**本地路径当时不安全**。`LocalFileSource` 的扩展名白名单包含 `.m3u8`，
+而本地分支必须传 `-protocol_whitelist file`（否则普通本地媒体解不了）。实测：
+
+```
+$ ffmpeg -protocol_whitelist file -i /tmp/attack/local_evil.m3u8 …
+[in#0] Opening 'file:///tmp/attack/secret.ts' for reading      ← 越过了受管根目录
+```
+
+**协议白名单在这里救不了我们** —— 播放列表是通过一个我们**故意启用**的协议读本地文件，
+直接绕过 `assertWithinRoot` 的保证。攻击路径：用户下载/收到恶意 `.m3u8`，当作本地媒体导入。
+
+**已修复**：① 本地导入拒绝一切播放列表扩展名（`.m3u8 .m3u .pls .xspf .asx .wpl`）；
+② 双保险——`ffprobe` 的 `format_name` 命中 `hls|applehttp|m3u` 也拒绝（防改名绕过）；
+③ `match()` 对播放列表返回 0。**远程 HLS 不受影响**（白名单里没有 `file`，已验证能挡住同一攻击）。
+
+- 处理本地文件：`-protocol_whitelist file`
+- 处理远程/HLS：`-protocol_whitelist https,tls,tcp,crypto,httpproxy` —— **不含 `file`**
+
+另外：**用户可控字符串绝不进 `-filter_complex` / `-vf` / `-metadata`**。
+filter 语法有自己的转义规则（`:` `,` `[` `]` `'` `\`），是嵌在单个 argv 元素**内部**的第二套注入语法。
+
+### 2.3 RSS / XML
+
+`RssSource` 用小型标签扫描器而非通用 XML 解析器。理由：我们只需要四个字段，而 XML 解析器是
+经典的 XXE 载体。**我们不实现实体展开、不取 DTD、不跟随外部引用**，并且**携带 `<!DOCTYPE>` 或
+`<!ENTITY>` 的 feed 直接拒绝**。
+
+feed 里的每个 enclosure URL **都要重新过一遍 `validateHttpUrl`** —— 恶意 feed 只是提供
+`file:///etc/passwd` 的另一种方式。
+
+### 2.4 解压（GPU 后端包）
+
+实现：`packages/downloader/src/unpack.ts`（742 行）；独立验证脚本
+`packages/downloader/scripts/verify-unpack.mjs`（**53/53**，见 ADR-015:44）。
+
+- **Zip-Slip / 绝对路径 / `..` 段**：一律拒绝。绝对路径覆盖 POSIX `/`、Windows `C:\` 与 UNC `\\`
+  三种写法（`unpack.ts:131-143`）；`..` 段单独拒（`:148-149`）；resolve 之后**再做一次前缀比对**
+  作为纵深防御（`:165`）。
+- **链接条目（symlink/hardlink）：按目标判定，不是一律拒绝。**
+  绝对目标 → 拒；解析后逃出 `destRoot` → 拒；落在根内 → 放行（`unpack.ts:169-208`）。
+  > 📝 **此前这一节写着「symlink/hardlink 条目…一律拒绝」。** 订正原因写在 `unpack.ts:169-183` 的注释里：
+  > 「Rejecting EVERY symlink is too blunt and breaks real software」——**官方 whisper.cpp tarball
+  > 自带 `libwhisper.so -> libwhisper.so.1.7.6`，一律拒绝会让我们自己的 ASR 后端装不上。**
+  > ⚠️ 附带一条代码侧的债（不在本次文档订正范围，但值得同批修）：`unpack.ts:16-19` 的文件头注释
+  > **自己也还写着 "never created / Rejected outright"**，与 `:169-183` 的实现打架。
+- **资源上限**：条目数上限 `maxEntries`（默认 20000，`:60-61, 96, 104-107`）、未压缩总字节上限
+  （默认 4 GiB，`:58-59, 119`）、`zlib.maxOutputLength` 解压中途中止（`:401`）、
+  xz 解压中途字节天花板（`:652-657`）——防 zip bomb。
+- **解压前先校验整包 SHA256**（`packages/downloader/src/verify.ts` + `install()` 路径；
+  ADR-004 决策 5 —— Ollama 的下载器没做校验，我们必须补上）。
+
+### 2.5 崩溃隔离
+
+所有原生工具走**子进程**（ADR-003 决策 1）。这不只是架构洁癖：T-012 实测发现，
+whisper.cpp 在后端库缺失时会调 `ggml_abort()` 直接 SIGABRT 退出（exit 134），
+**进程内 N-API 绑定会把整个 daemon 一起打死**。
+
+---

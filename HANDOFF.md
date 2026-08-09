@@ -282,6 +282,11 @@ node scripts/selfcheck.mjs --json
 - ⚠️ **路由"先注册先赢"**（`main.ts` 里 `routers.push(...)` 的顺序）。`POST /api/backends/selftest` 曾因此有一处不可达死码 ——
   **已清**：`backends.ts:350` 现在只留一条注释说明真实现在 `hardware.ts:195`。真桩仍有一个：`POST /api/models/benchmark` → 501。
 - 更细的读 `docs/design/D-01`（架构）、`D-02`（26 表数据模型）、`D-05`（前端规范）、`D-10`（模型域信息架构）。**别把它们全文抄进这里。**
+- **面向用户那几份文档（`README` / `DEPLOYMENT` / `SECURITY`）的证据链与订正账在
+  [`docs/design/D-19-user-doc-provenance.md`](docs/design/D-19-user-doc-provenance.md)。**
+  2026-08-09 起，run 号、逐格出处、测量方法、以及 `PROTOCOL §13` 的删除线原文
+  **都从用户文档搬到了那里** —— 用户文档只留"会改变他下一步做什么"的结论。
+  **要核对我们凭什么这么说，去 D-19；别以为那些记录被删了。**
 
 ---
 
