@@ -1,0 +1,312 @@
+#!/usr/bin/env node
+/**
+ * 数据目录搬迁的三平台审计腿。
+ *
+ * ## 为什么需要它
+ *
+ * 用户 2026-08-09 明确决定：数据目录**保持 OS 默认位置**，
+ * 「设置 → 数据目录」那条搬迁路径因此从"锦上添花"变成**他唯一的搬家手段**。
+ *
+ * 而这条路径在 Windows 上刚出过事（`[CI 实测 2026-08-08 run 31250730491]`）：
+ * `copy` 走完后 `fs.rm(源)` 失败（Windows 删不掉仍被 daemon 打开的 `openmemo.db`），
+ * 界面却照说「已移动 54 个文件」—— 数据其实被**复制**了一份留在原地，
+ * 里面有明文 `secrets.json`。那条已改成如实告知，
+ * **但"Windows 上到底能不能真的移动"从来没有被回答过。这条腿就是来回答它的。**
+ *
+ * ## 判据（Manager 2026-08-08 裁定）
+ *
+ * **不是**"让 Windows 也用 rename"（跨卷 rename 本来就会失败，copy 是必要退路），
+ * **而是"界面说的和实际发生的必须一致"**。
+ *
+ * ## §11：跳过不许渲染成成功
+ *
+ * 跨卷那格在某些 runner 上确实做不到（没有第二个卷）。做不到就**明确报 SKIP
+ * 并在汇总里单列**，而不是悄悄不跑然后一片绿。`--require-crossvol` 可以把
+ * "跳过"升级成失败，供以后 runner 具备条件时钉死。
+ */
+import { mkdtemp, mkdir, writeFile, symlink, rm, readdir, stat } from 'node:fs/promises';
+import { existsSync, openSync, closeSync, mkdtempSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir, platform } from 'node:os';
+import { join, dirname } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const REPO = process.env['REPO_ROOT'] ?? process.cwd();
+const distUrl = (p) => pathToFileURL(join(REPO, p)).href;
+const MV = await import(distUrl('apps/daemon/dist/storage/move.js'));
+const ST = await import(distUrl('apps/daemon/dist/http/rest/storage.js'));
+
+const IS_WIN = platform() === 'win32';
+const REQUIRE_CROSSVOL = process.argv.includes('--require-crossvol');
+
+const results = [];
+const rec = (id, name, status, detail) => {
+  results.push({ id, name, status });
+  console.log(`[${status}] ${id} ${name}`);
+  if (detail) for (const l of String(detail).split('\n')) console.log(`        ${l}`);
+};
+
+/* ── 造一个五类数据齐全的数据目录（含两级符号链接） ── */
+async function makeDataDir(root) {
+  await mkdir(join(root, 'media'), { recursive: true });
+  await mkdir(join(root, 'models', 'by-name', 'backend'), { recursive: true });
+  await mkdir(join(root, 'bin', 'ext'), { recursive: true });
+  await mkdir(join(root, 'runtime'), { recursive: true });
+  await writeFile(join(root, 'openmemo.db'), 'DB'.repeat(500));
+  await writeFile(join(root, 'secrets.json'), '{"key":"sk-PLAINTEXT"}');
+  await writeFile(join(root, 'media', 'a.mp3'), 'AUDIO'.repeat(50));
+  await writeFile(join(root, 'models', 'by-name', 'backend', 'ggml.bin'), 'M'.repeat(300));
+  await writeFile(join(root, 'bin', 'ext', 'libwhisper.so.1.9.1'), 'ELF'.repeat(80));
+  // Windows 上非管理员建不了符号链接 —— 建不成就跳过这两条，但要说出来
+  try {
+    await symlink('libwhisper.so.1.9.1', join(root, 'bin', 'ext', 'libwhisper.so.1'));
+    await symlink('libwhisper.so.1', join(root, 'bin', 'ext', 'libwhisper.so'));
+  } catch (e) {
+    console.log(`        (符号链接未建成: ${e.code} —— 该平台/权限下不支持，链接相关断言将不覆盖)`);
+  }
+  await writeFile(join(root, 'runtime', 'runtime.json'), '{"installed":[]}');
+}
+const FIVE = [
+  ['数据库', 'openmemo.db'],
+  ['媒体', 'media/a.mp3'],
+  ['模型', 'models/by-name/backend/ggml.bin'],
+  ['组件', 'bin/ext/libwhisper.so.1.9.1'],
+  ['运行时', 'runtime/runtime.json'],
+];
+const missingOf = (root) => FIVE.filter(([, r]) => !existsSync(join(root, r))).map(([l]) => l);
+
+/* ── 找第二个卷；找不到返回 null（由调用方报 SKIP） ── */
+async function secondVolumeRoot() {
+  const cands = [];
+  if (IS_WIN) {
+    for (const d of ['D:\\', 'E:\\']) cands.push(join(d, 'om-datadir-audit'));
+  } else if (platform() === 'linux') {
+    cands.push('/dev/shm/om-datadir-audit'); // tmpfs，与 $HOME 的磁盘不同设备
+  }
+  for (const c of cands) {
+    try {
+      await mkdir(c, { recursive: true });
+      await writeFile(join(c, '.probe'), 'x');
+      await rm(join(c, '.probe'));
+      return c;
+    } catch {
+      /* 下一个 */
+    }
+  }
+  return null;
+}
+
+/* ── C1 同卷 ── */
+const TMP = await mkdtemp(join(tmpdir(), 'ddaudit-'));
+{
+  const from = join(TMP, 'c1-from');
+  const to = join(TMP, 'c1-to');
+  await makeDataDir(from);
+  const r = await MV.moveDataDir(from, to);
+  const miss = missingOf(to);
+  const ok = r.ok && r.sourceRemoved === true && !existsSync(from) && miss.length === 0;
+  rec(
+    'C1',
+    '同卷搬迁：源必须消失、五类数据必须齐全',
+    ok ? 'PASS' : 'FAIL',
+    `strategy=${r.strategy} sourceRemoved=${r.sourceRemoved} 源还在=${existsSync(from)} 缺失=${miss.join(',') || '无'}`,
+  );
+}
+
+/* ── C2 跨卷（真跨设备；没有第二个卷就 SKIP，不假装成功） ── */
+{
+  const vol = await secondVolumeRoot();
+  if (vol === null) {
+    rec(
+      'C2',
+      '跨卷搬迁',
+      REQUIRE_CROSSVOL ? 'FAIL' : 'SKIP',
+      `这台 runner 上找不到第二个可写卷（${IS_WIN ? '试过 D:\\ E:\\' : platform() === 'linux' ? '试过 /dev/shm' : 'macOS 未内置候选'}）。\n` +
+        `需要什么才能做到：Windows 需要一台带第二个卷（D:）的 runner；\n` +
+        `macOS 需要 hdiutil 建 RAM disk 并 newfs_hfs 挂载；Linux 需要 /dev/shm 可写或一个 loop 设备。`,
+    );
+  } else {
+    const from = join(TMP, 'c2-from');
+    const to = join(vol, 'dest-' + Date.now());
+    await makeDataDir(from);
+    // 先证明这两条路径**真的**跨设备：否则这一格测的还是同卷
+    let realCross = false;
+    try {
+      const probeSrc = join(TMP, 'xdev-probe');
+      await mkdir(probeSrc, { recursive: true });
+      const { rename } = await import('node:fs/promises');
+      await rename(probeSrc, join(vol, 'xdev-probe'));
+      await rm(join(vol, 'xdev-probe'), { recursive: true, force: true });
+    } catch (e) {
+      realCross = e.code === 'EXDEV';
+    }
+    const r = await MV.moveDataDir(from, to);
+    const miss = missingOf(to);
+    const ok = r.ok && miss.length === 0 && r.strategy === 'copy';
+    rec(
+      'C2',
+      `跨卷搬迁（真跨设备=${realCross}）：必须退化成 copy 且数据齐全`,
+      ok ? 'PASS' : 'FAIL',
+      `strategy=${r.strategy} sourceRemoved=${r.sourceRemoved} sourceIntact=${r.sourceIntact}\n` +
+        `源还在=${existsSync(from)} 缺失=${miss.join(',') || '无'}\n` +
+        `界面文案=${ST.moveMessageZh({ files: r.files, links: r.links, sourceRemoved: r.sourceRemoved }, from)}`,
+    );
+    await rm(vol, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/* ── C3 删源前的逐文件校验：五种坏法都要抓到 ── */
+{
+  const a = join(TMP, 'c3-a');
+  const b = join(TMP, 'c3-b');
+  const mk = async () => {
+    await rm(b, { recursive: true, force: true });
+    await makeDataDir(b);
+  };
+  await makeDataDir(a);
+  const out = [];
+  await mk();
+  await rm(join(b, 'media', 'a.mp3'));
+  out.push(['缺文件', await MV.verifyTreesMatch(a, b)]);
+  await mk();
+  await writeFile(join(b, 'EXTRA'), 'x');
+  out.push(['多文件', await MV.verifyTreesMatch(a, b)]);
+  await mk();
+  await writeFile(join(b, 'openmemo.db'), 'SHORT');
+  out.push(['文件截断', await MV.verifyTreesMatch(a, b)]);
+  if (existsSync(join(b, 'bin', 'ext', 'libwhisper.so'))) {
+    await mk();
+    await rm(join(b, 'bin', 'ext', 'libwhisper.so'));
+    await writeFile(join(b, 'bin', 'ext', 'libwhisper.so'), 'ELF'.repeat(80));
+    out.push(['链接被deref成真文件', await MV.verifyTreesMatch(a, b)]);
+  }
+  const all = out.every(([, v]) => v.ok === false);
+  rec(
+    'C3',
+    '删源前逐文件校验（路径集合+字节数+链接目标）',
+    all ? 'PASS' : 'FAIL',
+    out.map(([n, v]) => `${n}: 抓到=${!v.ok} 首条=${v.mismatches[0] ?? '(无)'}`).join('\n'),
+  );
+}
+
+/* ── C4 ★核心★ 删源失败 → 目标必须保住 + 界面必须改口 ──
+ *   Windows：把源里的文件**打开不关**（正是用户遇到的 openmemo.db 被 daemon 占用）
+ *   POSIX  ：把源的父目录设成只读（CI 以非 root 运行，因此有效）
+ */
+{
+  const holder = await mkdtemp(join(TMP, 'c4-'));
+  const from = join(holder, 'src');
+  const to = join(holder, 'dst');
+  await makeDataDir(from);
+  const victim = join(from, 'openmemo.db');
+  let fd = null;
+  let injected = 'none';
+  try {
+    if (IS_WIN) {
+      fd = openSync(victim, 'r+'); // 保持打开 → Windows 上删不掉
+      injected = 'windows: 保持 openmemo.db 打开';
+    } else {
+      const { chmod } = await import('node:fs/promises');
+      await chmod(holder, 0o555);
+      injected = 'posix: 源的父目录只读';
+    }
+    const r = await MV.moveDataDir(from, to, { forceCopy: true });
+    const miss = missingOf(to);
+    const msg = ST.moveMessageZh(
+      { files: r.files, links: r.links, sourceRemoved: r.sourceRemoved },
+      from,
+    );
+
+    if (r.sourceRemoved === true) {
+      // 注入没生效（比如以 root 跑、或该平台允许删打开的文件）——不许当成通过
+      rec(
+        'C4',
+        `删源失败分支（注入：${injected}）`,
+        'SKIP',
+        `注入未生效：源真的被删掉了（sourceRemoved=true），这一格没测到。\n` +
+          `不把它算作通过 —— 参见 PROTOCOL §11。`,
+      );
+    } else {
+      const honest = !msg.includes('已移动') && msg.includes('已复制');
+      const ok = r.ok === true && miss.length === 0 && honest;
+      rec(
+        'C4',
+        `★ 删源失败 → 目标保住且界面改口（注入：${injected}）`,
+        ok ? 'PASS' : 'FAIL',
+        `ok=${r.ok} sourceRemoved=${r.sourceRemoved} sourceIntact=${r.sourceIntact}\n` +
+          `目标缺失=${miss.join(',') || '无(完整)'}\n` +
+          `界面文案=${msg}\n` +
+          `【记录】源目录残留=${existsSync(from) ? (await readdir(from)).join(',') : '(已不存在)'}`,
+      );
+    }
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+    if (!IS_WIN) {
+      const { chmod } = await import('node:fs/promises');
+      await chmod(holder, 0o755).catch(() => {});
+    }
+    await rm(holder, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/* ── C5 目标非空 → 拒绝，源与目标里别人的东西都不许动 ── */
+{
+  const from = join(TMP, 'c5-from');
+  const to = join(TMP, 'c5-to');
+  await makeDataDir(from);
+  await mkdir(to, { recursive: true });
+  await writeFile(join(to, 'SOMEONE_ELSE.txt'), 'do not touch');
+  const r = await MV.moveDataDir(from, to);
+  const ok =
+    r.ok === false && missingOf(from).length === 0 && existsSync(join(to, 'SOMEONE_ELSE.txt'));
+  rec(
+    'C5',
+    '目标非空 → 拒绝且两边都不动',
+    ok ? 'PASS' : 'FAIL',
+    `ok=${r.ok} errorZh=${r.errorZh} 源完好=${missingOf(from).length === 0} 别人的文件还在=${existsSync(join(to, 'SOMEONE_ELSE.txt'))}`,
+  );
+}
+
+/* ── C6 "只切换不搬"：缺省与显式 false 都不许搬 ── */
+{
+  const cs = [
+    ['只给 path', { path: '/x' }, false],
+    ['moveExisting:false', { path: '/x', moveExisting: false }, false],
+    ['moveExisting:true', { path: '/x', moveExisting: true }, true],
+    ['旧别名 move:false', { path: '/x', move: false }, false],
+  ];
+  const lines = [];
+  let ok = true;
+  for (const [n, body, want] of cs) {
+    const p = ST.parseChangeRequest(body);
+    const got = p.ok === true ? p.move : `REJECT`;
+    if (!(p.ok === true && got === want)) ok = false;
+    lines.push(
+      `${p.ok === true && got === want ? 'OK ' : 'BAD'} ${n}: move=${String(got)} 期望=${want}`,
+    );
+  }
+  const conflict = ST.parseChangeRequest({ path: '/x', moveExisting: false, move: true });
+  if (conflict.ok !== false) ok = false;
+  lines.push(`${conflict.ok === false ? 'OK ' : 'BAD'} 新旧别名冲突 → 拒绝`);
+  rec('C6', '"只切换不搬"：缺省 false、显式 false 都不搬', ok ? 'PASS' : 'FAIL', lines.join('\n'));
+}
+
+await rm(TMP, { recursive: true, force: true }).catch(() => {});
+
+/* ── 汇总：SKIP 单列，绝不混进 PASS ── */
+console.log('\n================ 汇总 ================');
+for (const r of results) console.log(`${r.status.padEnd(4)}  ${r.id}  ${r.name}`);
+const fail = results.filter((r) => r.status === 'FAIL');
+const skip = results.filter((r) => r.status === 'SKIP');
+console.log(
+  `\n平台=${platform()}  PASS=${results.filter((r) => r.status === 'PASS').length}  FAIL=${fail.length}  SKIP=${skip.length}`,
+);
+if (skip.length > 0) {
+  console.log(`\n⚠️ 有 ${skip.length} 格没测到（不是通过）：`);
+  for (const s of skip) console.log(`   - ${s.id} ${s.name}`);
+}
+process.exit(fail.length > 0 ? 1 : 0);

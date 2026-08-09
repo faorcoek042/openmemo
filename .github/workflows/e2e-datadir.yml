@@ -1,0 +1,140 @@
+# 数据目录搬迁：**三平台把「设置 → 数据目录」这条路验到底。**
+#
+# ── 这条腿为什么存在 ──────────────────────────────────────────────────────────────
+#
+# 用户 2026-08-09 明确决定：数据目录**保持 OS 默认位置**，不改成包旁边。
+# 这个决定把「设置 → 数据目录」从"锦上添花"抬成了**他唯一的搬家手段** ——
+# 也就是说，这条路径坏了，他就没有别的办法了。
+#
+# 而它在 Windows 上刚出过事（`[CI 实测 2026-08-08 run 31250730491]`）：
+# `copy` 走完后 `fs.rm(源)` 失败（Windows 删不掉仍被 daemon 打开的 `openmemo.db`），
+# 界面却照说「已移动 54 个文件到新位置」—— 数据其实被**复制**了一份留在原地，
+# 其中包含明文 `secrets.json`。用户据此以为旧位置已经空了。
+#
+# 那句话已经改成如实告知，**但「Windows 上到底能不能真的移动」从来没有被回答过** ——
+# 只是不再说谎而已。**这条腿就是来回答它的。**
+#
+# ── 判据（Manager 2026-08-08 裁定） ──────────────────────────────────────────────
+#
+# **不是**"让 Windows 也用 rename"（跨卷 rename 本来就会失败，`copy` 是必要退路），
+# **而是"界面说的和实际发生的必须一致"**：
+# 用户按界面指引走完之后，数据真的在新位置、旧位置真的没了 ——
+# 或者他被清楚告知旧位置还在、以及为什么。
+#
+# ── 六格覆盖 ────────────────────────────────────────────────────────────────────
+#
+#   C1 同卷        能不能真 rename，源目录搬完还在不在
+#   C2 跨卷        rename 必然 EXDEV → 退化成 copy；复制完到底删不删源
+#   C3 中途失败    删源之前必须逐文件校验（路径集合 + 字节数 + 链接目标）
+#   C4 删源失败 ★  目标必须保住，界面必须改口 —— 正是 Windows 上出过事的那一格
+#   C5 目标非空    拒绝，且两边都不许动
+#   C6 只切换不搬  取消勾选后**真的**不搬（缺省也不许解释成"搬"）
+#
+# ── PROTOCOL §11：跳过不许渲染成成功 ────────────────────────────────────────────
+#
+# C2 需要第二个卷、C4 需要注入"源删不掉"。任一在某台 runner 上做不到时，
+# 脚本报 **SKIP** 并在汇总里**单列**，而不是安静地不跑然后一片绿。
+# `--require-crossvol` 可以把"跳过"升级成失败，供以后 runner 具备条件时钉死。
+#
+# ⚠️ 本机（开发者以 root 跑）C4 会 SKIP：root 绕过目录权限位，注入不生效。
+#    这不是缺陷，正是该机制在起作用 —— **真正要拿结论的是 CI 上的非 root 运行**。
+
+name: e2e-datadir
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: 'Which platform to run'
+        type: choice
+        required: false
+        default: all
+        options: [all, linux, macos, windows]
+      requireCrossvol:
+        description: '把「跨卷跳过」升级成失败（runner 确定有第二个卷时用）'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-datadir-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 被过滤掉的平台**根本不会有 job**：在 step 上挂 if 会让跳过的平台
+  # 报出「成功，零步骤」—— PROTOCOL §11 点名的最廉价的一种假绿。
+  plan:
+    name: 算矩阵（跳过的平台不许变成绿勾）
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        env:
+          LEGS: ${{ inputs.legs }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const all = [
+              { runner: "ubuntu-24.04", label: "linux-x64",    leg: "linux"   },
+              { runner: "macos-26",     label: "darwin-arm64", leg: "macos"   },
+              { runner: "windows-2025", label: "win32-x64",    leg: "windows" },
+            ];
+            const legs = process.env.LEGS || "all";
+            const include = legs === "all" ? all : all.filter((x) => x.leg === legs);
+            if (include.length === 0) { console.error(`::error::legs=${legs} 没有匹配到任何平台`); process.exit(1); }
+            console.log(`选中 ${include.length} 个平台：${include.map((x) => x.label).join(", ")}`);
+            require("node:fs").appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`);
+          '
+
+  datadir:
+    name: 数据目录搬迁（${{ matrix.label }}）
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.15.0
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # 这条腿只需要 daemon 的 dist（storage/move.js 与 http/rest/storage.js）。
+      # ⚠️ 用 build:safe：`pnpm -r build` 含 `vite build`，会覆盖 apps/web/dist（PROTOCOL §7）。
+      - name: Build（build:safe —— 不碰 apps/web/dist）
+        run: pnpm build:safe
+
+      # 这台 runner 上有哪些卷？跨卷那一格成不成立全看它，所以先如实记下来。
+      - name: 卷清单（跨卷那格能不能成立，看这里）
+        shell: bash
+        run: |
+          echo "--- platform: ${{ matrix.label }} ---"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            powershell -Command "Get-PSDrive -PSProvider FileSystem | Format-Table Name,Used,Free,Root"
+          else
+            df -h || true
+          fi
+
+      # ⚠️ 指针必须指到临时路径（PROTOCOL §9）：它是机器级单例，
+      #    测试写它就已经越界了。这条腿其实不写指针，设它是结构性防线。
+      - name: 跑审计
+        shell: bash
+        env:
+          REPO_ROOT: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          export OPENMEMO_POINTER_FILE="${RUNNER_TEMP}/om-datadir-pointer.json"
+          echo "OPENMEMO_POINTER_FILE=$OPENMEMO_POINTER_FILE"
+          node scripts/ci/datadir-migrate-audit.mjs ${{ inputs.requireCrossvol && '--require-crossvol' || '' }}
