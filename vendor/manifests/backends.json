@@ -524,9 +524,9 @@
       "totalSizeBytes": 38256544,
       "requiresDriver": null,
       "license": {
-        "id": "GPL-3.0-or-later",
+        "id": "GPL-2.0-or-later",
         "gated": false,
-        "url": "https://www.gnu.org/licenses/gpl-3.0.html"
+        "url": "https://www.gnu.org/licenses/old-licenses/gpl-2.0.html"
       },
       "providesFiles": ["yt-dlp"],
       "priority": 10,
@@ -564,9 +564,9 @@
       "totalSizeBytes": 18226085,
       "requiresDriver": null,
       "license": {
-        "id": "GPL-3.0-or-later",
+        "id": "GPL-2.0-or-later",
         "gated": false,
-        "url": "https://www.gnu.org/licenses/gpl-3.0.html"
+        "url": "https://www.gnu.org/licenses/old-licenses/gpl-2.0.html"
       },
       "providesFiles": ["yt-dlp.exe"],
       "priority": 10,
