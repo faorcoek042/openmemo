@@ -19,7 +19,11 @@ date: 2026-08-09
 - **体积**（下载体积，压缩态）：最小可用组合 **linux 201 MB / win 252 MB / mac 129 MB**（今天是 43/51/63 MB）。
 - **CUDA 678 MB 不该内置**，Vulkan（25–30 MB）可考虑。
 - **「检测更新」必须有一个远端可问的东西** —— 而我们刚删掉那条线。这是真实的设计回摆，代价见 §5。
-- 未验证/存疑：lgpl ffmpeg 的解码覆盖面、yt-dlp **二进制**内嵌依赖的完整许可证清单、GPL 合规清单的法律充分性（我不是律师）。
+- 未验证/存疑：~~lgpl ffmpeg 的解码覆盖面~~（Linux 已实测 19/19 通过，Windows/macOS 有缺口，见 §13）、
+  ~~yt-dlp **二进制**内嵌依赖的完整许可证清单~~（`ytdlp-binary-audit` 2026-08-09 已交卷，见 §14 ——
+  **⚠️ 结果是二进制里有 GPL：四平台全部内嵌 mutagen(GPL-2.0-or-later)，Linux 两平台另内嵌 GNU
+  Readline(GPL-3.0-or-later)，与 §9.2「yt-dlp → 内置」冲突，未改 §9.2，交裁**）、GPL 合规清单的
+  法律充分性（我不是律师）。
 - 对其他 agent 的影响：若换 lgpl ffmpeg，**我那份 `e2e-import-audit.mjs` 会坏**（它用 libmp3lame/libx264 造样本）。
 
 ---
@@ -613,5 +617,132 @@ linux64-lgpl-8.1.tar.xz  111,679,252 字节（实际下载，非声明值）
 - **Windows 未实机验证**（无 wine，未装新工具链去凑）、**macOS 无 LGPL 可换**——
   这两条是本节交出的"限制"，不是"待办打勾"，务必在转达结论时一并带上，
   不能只说"Linux 过了"就让人以为三平台都能换。
+
+---
+
+## 14. yt-dlp 二进制内嵌依赖清点 —— §1.1/§8/§9.2 点名要的那份清单（`ytdlp-binary-audit` 2026-08-09，静态提取四平台二进制，未运行目标二进制）
+
+**一句话结论（跟 §9.2 冲突，本节不改 §9.2，交 Manager/用户裁）：二进制里有 GPL。四平台
+全部内嵌 `mutagen`（GPL-2.0-or-later），Linux x64/arm64 两个平台额外内嵌真正的 GNU
+Readline（GPL-3.0-or-later，不是 libedit 替代品）。按 TL;DR 与 §9 开头用户自己定的规则
+「GPL → 仍然下载；非 GPL → 内置」，这条规则问的是"这份要分发的字节里有没有 GPL"，不是
+"上游项目主许可证是什么"——对 yt-dlp 这个二进制 pack 而言，答案是有，判定应为**下载**，
+与 §9.2 表格当前写的"内置"矛盾。**本节不替换 §9.2 的结论，只把冲突摆出来。**
+
+### 14.1 方法
+
+- 直接用 `vendor/manifests/backends.json` 当前 pin 住的 4 个 `ytdlp-*` 资产
+  （`engineVersion: 2026.07.04`），逐个下载后 `sha256sum` 核对与 manifest 完全一致
+  （4/4 字节级 match，不是信任 manifest 里写的哈希）。
+- 用 `pyinstxtractor.py`（extremecoders-re/pyinstxtractor v2.0）**静态**解包 PyInstaller
+  onefile 归档 —— **全程未运行任何一个目标二进制**。Linux x64/arm64、macOS 三平台的
+  PYZ 内部 Python 字节码完整反编译到目录树；Windows 因二进制是 **CPython 3.10** 构建，
+  而本沙箱环境是 Python 3.14（`marshal` 版本不兼容，且 `apt-get install python3.10` 在
+  本沙箱不可用），改用对 `PYZ.pyz` 原始字节做 `strings` 扫描核对 PyInstaller 目录表里
+  的模块名明文 —— **这一条置信度低于其余三平台，逐条标注，不冒充同等强度**。
+
+### 14.2 结论 A（阻断性）：`mutagen`，GPL-2.0-or-later，四平台全部命中
+
+| 平台         | 证据                                                                                                                                                                  |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| linux-x64    | `PYZ.pyz_extracted/mutagen/` 目录存在（完整反编译，`find` 直接命中）                                                                                                |
+| linux-arm64  | 同上，独立解包核实                                                                                                                                                  |
+| macos-arm64  | 同上，独立解包核实                                                                                                                                                  |
+| win-x64      | `strings -n6 PYZ.pyz` 命中 **48 处** `mutagen.*` 字符串（`mutagen._constants`／`mutagen.aac`／`mutagen.asf.*` 等一批合法子模块名，非随机撞字），`PYZ.pyz_extracted` 因版本不兼容未完整反编译。`[置信度略低于其余三平台，但证据落在 PyInstaller 目录表的明文层，伪造概率极低]` |
+
+许可证本身用两条独立来源核实（不是只信一处）：① PyPI `mutagen` 包的 `license_expression`
+元数据；② 上游 `github.com/quodlibet/mutagen` 在对应版本 tag 下 `COPYING` 文件的正文——
+确为 GPL-2.0-or-later 全文。mutagen 在 yt-dlp 里用于读取媒体文件标签/元数据，**但它是无
+条件被打进四平台 PyInstaller 归档的**，不是"按需 import 才触发"——打包那一刻起就已经是
+二进制字节的一部分，不需要用户触发任何特定功能。
+
+### 14.3 结论 B（平台限定）：GNU Readline，GPL-3.0-or-later，仅 Linux 两个平台
+
+| 平台        | 是否内嵌  | 证据                                                                                                                                                             |
+| ----------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| linux-x64   | **是**    | `libreadline.so.6` 位于归档顶层；`nm -D` 命中 `rl_gnu_readline_p` 符号（这是真 GNU readline 独有的符号，libedit 的仿真层没有它）；`strings` 命中版权/GNU 字样 |
+| linux-arm64 | **是**    | 同上，独立解包核实                                                                                                                                              |
+| macos-arm64 | **否**    | `readline.cpython-314-darwin.so` 动态链接到 `/usr/lib/libedit.3.dylib`（macOS **系统自带**，BSD 许可，未被内嵌进包内）；`strings` 命中 `_libedit_version_tag`／`_using_libedit_emulation` —— 是 libedit 仿真层，不是真 GNU readline |
+| win-x64     | **否**    | `PYZ.pyz` 原始字节 `strings` 扫描 **0 处** `readline`／`pyreadline` 字符串；Windows CPython 标准库本来就不带 `readline` 模块，符合预期                          |
+
+### 14.4 非阻断项：MPL-2.0 / Apache-2.0 组件与告知义务（供写 NOTICES 时用）
+
+| 组件                                                            | 许可证                                                                              | 覆盖平台                                                                    | 义务                                                    |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| certifi                                                            | **MPL-2.0**（文件级弱 copyleft，未修改其源码）                                        | 4/4                                                                           | 附许可证正文 + 声明使用了该文件；不要求公开我们自己的源码   |
+| requests                                                           | Apache-2.0                                                                             | 4/4                                                                           | 附 LICENSE（+ NOTICE，若上游带）                             |
+| packaging                                                          | Apache-2.0 OR BSD-2-Clause（双许可）                                                   | 4/4                                                                           | 同上                                                          |
+| cryptography                                                       | Apache-2.0 OR BSD-3-Clause（双许可，含 Rust 组件）                                     | **仅 linux-x64/arm64**；macOS/Windows 改用 Cryptodome + 标准库 `ssl`，不含此包 | 附许可证正文                                                 |
+| OpenSSL                                                            | 3.x 系 Apache-2.0；1.1.x 系 OpenSSL/SSLeay 双许可（老文本）                            | linux/macos 用 `libssl.so.3`／`libssl.3.dylib`（3.x）；**win 用 `libssl-1_1.dll`／`libcrypto-1_1.dll`（1.1.x，版本线不同）** | 附**对应版本**许可证正文，三平台不能只抄一份                 |
+| `yt_dlp_ejs/yt/solver/{core,lib}.min.js`（内嵌 JS 求解器，D-20 §1.1 写成单一 Unlicense） | **不是单一 Unlicense** —— 压缩包内明文可见混入至少一段 **ISC License**（`Copyright (c) 2015, David Bonnet`）与一段 `Copyright (c) 2019 and later, KFlash and others.`，外加 Unlicense 字样，是多个 JS 库打包进一个 min.js 的复合许可证 | 4/4                                                                           | 均为宽松许可证，不阻断；但附件里要列复合清单，不能只写"Unlicense" |
+| CPython 运行时本体                                                 | **PSF License**（宽松，类 BSD）                                                        | 4/4                                                                           | 附 PSF LICENSE 正文；无阻断义务                              |
+
+### 14.5 次级项：未逐一重新核实，低优先级、如实标注
+
+以下原生库按公开常识判断为宽松许可证：zlib/zstd 系（zlib 许可）、bzip2（BSD 系）、liblzma
+（公有领域/0BSD）、libffi（MIT）、mpdecimal（BSD）、util-linux 的 libuuid（BSD/MIT 双许可）、
+glibc 附带的 `libgcc_s`／`libstdc++`（名义上 GPLv3，但受 **GCC Runtime Library Exception**
+豁免其传染性，编译产物分发不受影响）。**`[未验证，低优先级]` 本轮没有逐个重新去官方仓库
+核实版权文件**，只是基于二进制里看到的库名做的常识性归类，核实强度与 14.2/14.3 那两条
+阻断性结论不在一个量级，不应混为一谈。
+
+### 14.6 与 §9.2 的冲突（不改 §9.2 表格文字，写冲突交裁）
+
+§9.2 当前那一行原文：`yt-dlp | Unlicense（实测 LICENSE，非 GPL）| 18.2–39.9MB | **内置** |
+非 GPL ✔ 体积 ✔ ⚠️ 二进制内嵌依赖待清点（§1.1）`。
+
+§1.1 与 §8 都明确把"二进制内嵌依赖清单"列为内置前必须做完的前置条件，**本节就是那份清单**，
+交出的结果是：**条件没有通过**。二进制资产本身含有真实的、无条件被打包进去的
+GPL-2.0-or-later 代码（mutagen，四平台），Linux 平台还额外多一条 GPL-3.0-or-later
+（Readline）。按用户自己在 TL;DR/§9 定的规则，这应当把 yt-dlp 判回"下载"一栏，而不是维持
+"内置"。
+
+**本节不替换 §9.2 表格里的结论文字**，只在此把冲突摆出来 —— 是否要因此把 yt-dlp 从"内置"
+改回"下载"，还是走工程规避（比如打包脚本里剔除 mutagen 依赖树、Linux 平台换成不带
+readline 支持的构建），两条路径的代价都没有评估过，需要 Manager/用户拍板。
+
+### 14.7 关于 `vendor/manifests/backends.json` 我为什么没有按字面要求去改
+
+字面指令是把 4 个 `ytdlp-*` 的 `license.id` 从 `GPL-3.0-or-later` 改成 `Unlicense`（跟随
+§1.1 的更正方向）。**没有照做**，原因：
+
+1. 那会引入一个新的事实错误——14.2/14.3 证明这份要分发的二进制字节**确实含有** GPL 代码，
+   单独把这个 pack 标成 `Unlicense` 是不准确的，比现在这个错误更具误导性（现在的
+   `GPL-3.0-or-later` 虽然理由错了——它当初是把 yt-dlp 项目主许可证认错——但方向歪打
+   正着是对的：这份二进制资产确实含 GPL）。
+2. `LicenseInfoSchema`（`packages/shared/src/schemas.ts:206`）的 `license.id` 是单值字符
+   串，直接被 UI 原样展示给用户（`apps/web/src/features/models/ModelDetailPage.tsx:98`、
+   `ComponentCard.tsx:243` 是同一模式的先例）；`vendor/manifests/*.json` 全仓迄今没有一个
+   复合许可证字符串的先例（都是单一 SPDX id，含 ffmpeg/sherpa/whisper 等全部条目核对过）。
+   这个字段本身表达不了"上游项目是 Unlicense，但要分发的这份二进制资产里混了 GPL 依赖"这种
+   组合事实——是清单 schema 的表达力缺口，不是我单方面发明一个复合字符串就能解决的。
+3. 这个字段该填什么，取决于 §9.2 那个还没被裁定的架构问题。若最终裁定"下载"，这条 pack 记录
+   大概率维持现状字面不必改（下载态的 GPL 资产在本仓的既有写法就是照抄上游主许可证，参照
+   ffmpeg 那几条）；若裁定"内置"，需要的可能不是改一个字符串，而是给 schema 加一个"内嵌子
+   依赖许可证清单"字段——这是代码改动，超出本节授权（只清点，不改产品/构建代码）。
+
+**所以这里维持 `backends.json` 原字面不变**，把冲突和两条可能路径都摆在这里，交
+Manager/用户与 §9.2 的裁定一起处理。同理未改 `docs/design/D-17-prebuilt-bundles.md:113`
+（同样写着 GPL-3.0-or-later）——不在本次被指派范围内，且它当前取值的结论方向（GPL）与
+本节的二进制层结论恰好一致，先不动，此处点名标注，留给持有那份文档的人处理。
+
+### 14.8 本节没做的事（如实登记）
+
+- **没有运行任何一个目标二进制**——全程静态提取，未执行。
+- **没有修改 §1–§13 任何已有决策或定案表**；§9.2「yt-dlp → 内置」在本次提交后表格文字不变，
+  冲突写在 14.6，不在此处替 Manager/用户下结论。
+- **没有修改** `vendor/manifests/backends.json` 的 4 个 `ytdlp-*` `license.id` 字段——理由见
+  14.7。
+- **没有修改** `docs/design/D-17-prebuilt-bundles.md:113`——不在指派范围内，理由见 14.7 末尾。
+- **没有创建** `THIRD-PARTY-NOTICES` 文件（`find` 遍历本仓 `dist/`／`.build/`／源码树，
+  除 `node_modules/.pnpm/{prettier,rolldown}` 里两个同名无关文件外，**这份文件目前在这个
+  checkout 里不存在**——与"已经在产物里"的说法对不上，如实记录这个出入，不是我漏找），
+  也没有改 `scripts/build-bundle.mjs` 的 `writeNotices()`——它现在生成的文案明确写"包不含
+  ffmpeg/yt-dlp，均在用户机器上按需下载"，这与"是否要内置 yt-dlp"是同一个悬而未决问题的
+  下游；在 14.6 的冲突裁定之前动它，会把一个还没定案的架构决策悄悄焊死进构建脚本。
+- **未建/改/删任何 release**；未碰 `:10000` demo、`/root/data-memo`、任何机器级指针；
+  未用过 `pkill`（含 `-0`）。
+- 14.5 的次级原生库清单**没有逐一重新核实**，明确标注为低置信度，不能当成和 14.2/14.3
+  同等强度的结论使用。
 
 ---
