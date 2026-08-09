@@ -6,7 +6,17 @@ import StarterKit from '@tiptap/starter-kit';
 import { TimeAnchor, collectAnchors } from './TimeAnchor';
 import { usePlayerStore } from '../../lib/stores/player.store';
 import { localKey } from '../../lib/utils';
-import { Bold, Check, Clock, Italic, List, ListOrdered, Loader2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  Bold,
+  Check,
+  Clock,
+  Italic,
+  List,
+  ListOrdered,
+  Loader2,
+} from 'lucide-react';
+import { ErrorBlock } from '../../components/common/ErrorBlock';
 
 import { useSaveNoteBodyMutation } from './api';
 import { getPositionMs } from '../../lib/stores/player.store';
@@ -168,6 +178,20 @@ export function NoteEditor({
                 <Loader2 className="size-3 animate-spin" aria-hidden />
                 {t('editor.saving')}
               </>
+            ) : /*
+             * ★ 失败必须是**自己一档**，不能落回「未保存」。
+             *
+             * 修之前失败后 `dirty` 保持 true ⇒ 徽标停在「未保存」——
+             * 而「未保存」在正常打字时**也是这个样子**（800ms 防抖窗口里一直是它）。
+             * 于是"存不进去"和"我刚敲了一个字"在屏幕上**完全同形**，
+             * 用户会继续打字、直到关掉页面才发现正文没了。
+             * 这是"条件性静默"里最贵的一种：**它有反馈，只是那个反馈说的是别的事。**
+             */
+            save.isError ? (
+              <span className="inline-flex items-center gap-1 text-critical">
+                <AlertTriangle className="size-3" aria-hidden />
+                {t('editor.saveFailed')}
+              </span>
             ) : dirty ? (
               t('editor.unsaved')
             ) : (
@@ -179,6 +203,9 @@ export function NoteEditor({
           </span>
         </div>
       ) : null}
+
+      {/* 徽标只说"失败了"，原因（磁盘满 / 401 / 笔记已删）要能读到 */}
+      {save.isError ? <ErrorBlock error={save.error} className="mx-3 mb-2" /> : null}
 
       <div className="min-h-0 flex-1 overflow-auto">
         <EditorContent editor={editor} />

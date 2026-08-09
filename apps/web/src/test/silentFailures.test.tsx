@@ -28,6 +28,7 @@ import assert from 'node:assert/strict';
 
 import { render, click, type, stubApi } from './host';
 import { NoteActionsMenu } from '../features/notes/NoteActionsMenu';
+import { countUnfinishedJobs } from '../features/tasks/api';
 
 const UID = '01B11AAAAAAAAAAAAAAAAAAAAA';
 const NOTE = { uid: UID, title: '一条笔记' };
@@ -179,5 +180,56 @@ describe('ErrorBlock 的结构标记本身', () => {
     const el = r.container.querySelector('[data-testid="error-block"]');
     assert.equal(el === null, false, '没有 data-testid="error-block" —— B11 那条浏览器腿会瞎掉');
     assert.equal(el?.getAttribute('role'), 'alert');
+  });
+});
+
+/* ══════════════ 侧栏「任务」徽标：环境信号不许只在 Toast 里 ══════════════ */
+
+/**
+ * `JobToaster` 的列表是 SSE `job.created` 喂养的 React 状态，**已发生的事件不重放**。
+ * 于是 SPA 一重挂 Toast 层就空了 —— 而这不止"刷新"一种：
+ * **切页 / 手动关掉 Toast / 开着另一个标签页**，用户都会失去唯一的进度反馈。
+ *
+ * 判据（Manager 2026-08-10）：**用户不需要"想起来去点"，屏幕上就有东西告诉他还有任务在跑。**
+ *
+ * ⚠️ 这里只钉**纯函数口径**。徽标的渲染由 `App.tsx` 的 `SideLink` 负责，
+ * 而那条路要挂整个 App（路由 + 七个 provider），成本远高于它能挡住的东西；
+ * 真正会错的是**"算哪些任务"**，那正是这个纯函数。
+ * （渲染那一层由 e2e 的 D 组覆盖 —— 那里本来就在点侧栏。）
+ */
+describe('侧栏「任务」徽标的计数口径', () => {
+  const job = (state: string) => ({ state }) as { state: never };
+
+  test('★ 计的是"还没结束的"，不是"正在跑的" —— blocked 必须算进去', () => {
+    // blocked 永远不会自己结束，正是最该把用户叫过去的那一种。
+    assert.equal(countUnfinishedJobs([job('blocked')]), 1);
+    assert.equal(
+      countUnfinishedJobs([job('queued'), job('leased'), job('running'), job('paused')]),
+      4,
+    );
+  });
+
+  test('★ failed 不许算进去 —— 它是终态且永远留在列表里，算了徽标就永不归零', () => {
+    // 徽标永不归零 = 徽标疲劳 = 等于没有徽标（⑤B「假红会训练人忽略告警」同一条）。
+    assert.equal(countUnfinishedJobs([job('failed')]), 0);
+    assert.equal(countUnfinishedJobs([job('succeeded'), job('cancelled')]), 0);
+  });
+
+  test('★ 没有任何未完成任务时必须是 0（徽标要真的会消失，不能恒亮）', () => {
+    assert.equal(countUnfinishedJobs([]), 0);
+    assert.equal(countUnfinishedJobs([job('succeeded'), job('failed'), job('cancelled')]), 0);
+  });
+
+  test('★ 混合场景：只数未完成的那几条', () => {
+    assert.equal(
+      countUnfinishedJobs([
+        job('running'),
+        job('succeeded'),
+        job('blocked'),
+        job('failed'),
+        job('queued'),
+      ]),
+      3,
+    );
   });
 });

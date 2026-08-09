@@ -49,6 +49,16 @@ export function FolderTree() {
         </button>
       </div>
 
+      {/*
+        ★ 新建文件夹失败此前**一个字都不显示**（第 15 处）。
+        ⚠️ 同一个文件下面 `:248/:249` 的注释写着「我刚清完 14 处吞错误的，**不新增第 15 处**」——
+        而**第 15 处就在这个文件里，在那句话上面**：改名和删除都接了 ErrorBlock，
+        `create` 漏了。重名会被服务端回 409 `FOLDER_NAME_TAKEN`，
+        用户此前看到的是"输入框合上了、树上没有新文件夹"，与"我是不是没按到回车"完全同形。
+        **一句"我已经清干净了"的注释，挡住的恰好是它自己脚下那一处。**
+      */}
+      {create.isError ? <ErrorBlock error={create.error} className="mx-2.5 mb-1" /> : null}
+
       {adding ? (
         <input
           autoFocus

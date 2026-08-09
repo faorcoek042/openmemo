@@ -3,6 +3,8 @@ import { arr } from '../../lib/safe';
 import { useTranslation } from 'react-i18next';
 import { Plus, X } from 'lucide-react';
 
+import { ErrorBlock } from '../../components/common/ErrorBlock';
+
 import { useAddTagMutation, useRemoveTagMutation } from './api';
 
 /**
@@ -31,6 +33,8 @@ export function TagEditor({
     setAdding(false);
     if (name) add.mutate({ noteUid, name, existingTagUids: arr(tags).map((t) => t.uid) });
   };
+
+  const tagError = add.error ?? remove.error;
 
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5">
@@ -78,6 +82,14 @@ export function TagEditor({
           {t('notes.addTag')}
         </button>
       )}
+
+      {/*
+        ★ 加标签 / 删标签失败此前**整个文件零错误 UI**。
+        加标签是两步（先 `POST /api/tags` 建或取回，再整表替换 `tagUids`）——
+        第二步失败时第一步已经生效，用户看到的是"标签没加上"，
+        而库里其实多了一个孤立标签。这种半成功状态最需要说出来。
+      */}
+      {tagError ? <ErrorBlock error={tagError} className="mt-1 w-full" /> : null}
     </span>
   );
 }

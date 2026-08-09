@@ -341,6 +341,22 @@ export default function ModelsPage() {
         </ul>
       </section>
 
+      {/*
+        ★ 取消 / 重试 / 清理 的错误块**搬到 tabpanel 外面**。
+
+        它们原来写在 `id="models-panel-asr"` 那个 section 里，而那个 section 是
+        `className={tab === 'asr' ? 'space-y-3' : 'hidden'}` ——
+        **`?tab=llm` 下点这三个按钮，错误块被 `hidden` 吞掉，一个字都看不到。**
+        而这三个按钮（下载行的取消/重试、页尾的清理）渲染在**两个 tab 下都可见**的位置。
+
+        这是"渲染点在，但在某些状态下够不着"的第二个形态：
+        不是分支不对，是**它和触发它的控件不在同一个可见性作用域里**。
+        判据与 ModelDetailPage 那处同一条：**错误的渲染点必须和控件同处一个条件/可见性作用域。**
+      */}
+      {cancelJob.isError ? <ErrorBlock error={cancelJob.error} /> : null}
+      {retryJob.isError ? <ErrorBlock error={retryJob.error} /> : null}
+      {gc.isError ? <ErrorBlock error={gc.error} /> : null}
+
       {/* 下载中 */}
       {activeJobs.length > 0 ? (
         <section className="space-y-2" aria-label={t('models.downloadingLabel')}>
@@ -496,9 +512,6 @@ export default function ModelsPage() {
           点了一个按钮，要么发生该发生的事，要么看到一句读得懂的话，没有第三种。
         */}
         {activate.isError ? <ErrorBlock error={activate.error} /> : null}
-        {cancelJob.isError ? <ErrorBlock error={cancelJob.error} /> : null}
-        {retryJob.isError ? <ErrorBlock error={retryJob.error} /> : null}
-        {gc.isError ? <ErrorBlock error={gc.error} /> : null}
         {catalog.isLoading ? <p className="text-xs text-ink-muted">{t('models.loading')}</p> : null}
 
         {!catalog.isLoading && groups.length === 0 ? (

@@ -22,6 +22,7 @@ import { SearchBox } from './features/search';
 import { FolderTree } from './features/folders';
 import { Button } from './components/common/Button';
 import { TasksDrawer } from './features/tasks/TasksDrawer';
+import { useUnfinishedJobCount } from './features/tasks/api';
 import { useUiStore } from './lib/stores/ui.store';
 import { useConnectionStore } from './lib/stores/connection.store';
 import { useProgressStore } from './lib/stores/progress.store';
@@ -32,6 +33,8 @@ import { cn } from './lib/utils';
 export default function App() {
   const { t } = useTranslation();
   const setTasksDrawer = useUiStore((s) => s.setTasksDrawer);
+  // 侧栏「任务」徽标：与任务中心同一个数据源，不许各拉各的
+  const unfinishedJobs = useUnfinishedJobCount();
   const conn = useConnectionStore((s) => s.state);
   const activeCount = useProgressStore((s) => Object.keys(s.byJob).length);
 
@@ -75,7 +78,20 @@ export default function App() {
   const systemNav = [
     { to: '/runtime', icon: <Cpu className="size-4" />, label: t('nav.runtime') },
     { to: '/models', icon: <Package className="size-4" />, label: t('nav.models') },
-    { to: '/tasks', icon: <Activity className="size-4" />, label: t('nav.tasks') },
+    /*
+     * ★ 「任务」带一个「进行中 N」徽标。
+     *
+     * 缺口不是"刷新丢了 Toast"这一种，是**屏幕上没有任何环境信号**：
+     * 切页、手动关掉 Toast、开着另一个标签页 —— 四种情况下用户都失去了唯一的进度反馈，
+     * 而侧栏这一项此前只是个静态图标。判据：**用户不需要"想起来去点"。**
+     * 计数口径与任务中心同源（`useUnfinishedJobCount` → `useMergedJobs`），见那边的说明。
+     */
+    {
+      to: '/tasks',
+      icon: <Activity className="size-4" />,
+      label: t('nav.tasks'),
+      badge: unfinishedJobs,
+    },
     /*
      * ★ T-165：`/diagnostics` 此前**在界面上没有任何常驻入口**。
      *
@@ -270,15 +286,27 @@ function SideLink({
   icon,
   label,
   active,
+  badge,
 }: {
   to: string;
   icon: ReactNode;
   label: string;
   active: boolean;
+  /** 可选的计数徽标。`undefined` 或 0 = 不渲染任何东西（**不许渲染一个 0**）。 */
+  badge?: number | undefined;
 }) {
+  const { t } = useTranslation();
+  const showBadge = typeof badge === 'number' && badge > 0;
   return (
     <Link
       to={to}
+      /*
+       * ★ 计数必须进**可及名称**，不能只做一个视觉小圆点。
+       * 只给颜色/数字的话，读屏用户读到的仍然只是"任务"——
+       * 而这个徽标存在的全部理由就是"告诉用户还有活在跑"，
+       * 对读不到它的人来说等于没做。
+       */
+      aria-label={showBadge ? t('nav.tasksBadgeLabel', { label, n: badge }) : undefined}
       aria-current={active ? 'page' : undefined}
       className={cn(
         'flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors',
@@ -297,6 +325,16 @@ function SideLink({
     >
       {icon}
       {label}
+      {showBadge ? (
+        <span
+          data-testid="nav-badge"
+          /* aria-hidden：数字已经进了上面的 aria-label，这里再念一遍是重复播报 */
+          aria-hidden
+          className="ml-auto min-w-[1.25rem] rounded-full bg-accent px-1.5 py-0.5 text-center text-[11px] font-medium tabular-nums text-accent-fg"
+        >
+          {badge}
+        </span>
+      ) : null}
     </Link>
   );
 }

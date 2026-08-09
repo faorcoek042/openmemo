@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 
 import type { TranscriptSegmentDto } from '../../lib/events/types';
 import { SegmentRow } from './SegmentRow';
+import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { useEditSegmentMutation, useRevertSegmentMutation } from './api';
 import { findActiveIndex, getPositionMs, usePlayerStore } from '../../lib/stores/player.store';
 import { useUiStore } from '../../lib/stores/ui.store';
@@ -37,6 +38,8 @@ export function TranscriptList({
 }) {
   const edit = useEditSegmentMutation(noteUid);
   const revert = useRevertSegmentMutation(noteUid);
+  // 两个动作共用一个渲染点：同一时刻用户只可能在一段上做一件事
+  const segError = edit.error ?? revert.error;
   /**
    * ★ 逐字时间戳是否可用（ADR-013 §0）。
    *
@@ -113,6 +116,20 @@ export function TranscriptList({
       aria-label={t('detail.transcript')}
       data-highlight={highlightGranularity}
     >
+      {/*
+        ★ 段落编辑 / 还原失败此前**只回滚缓存**：文字"跳回原样"，零文案。
+        用户分不清"服务端拒了"和"我根本没改动" —— 而这两件事的下一步完全不同。
+
+        ⚠️ 放在虚拟列表**外面**、用 sticky 顶在滚动容器上：
+        塞进 `getVirtualItems()` 里会被虚拟化的绝对定位和高度计算一起算错，
+        而且滚出视野就消失 —— 一条会自己跑掉的错误提示等于没有。
+      */}
+      {segError ? (
+        <div className="sticky top-0 z-10 px-4 pt-2">
+          <ErrorBlock error={segError} />
+        </div>
+      ) : null}
+
       <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
         {virtualizer.getVirtualItems().map((row) => {
           const seg = segments[row.index];

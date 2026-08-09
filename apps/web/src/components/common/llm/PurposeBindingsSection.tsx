@@ -9,6 +9,7 @@ import {
 } from '@openmemo/shared';
 
 import { Button } from '../Button';
+import { ErrorBlock } from '../ErrorBlock';
 import {
   LLM_PURPOSES_KEY,
   readPurposeBindings,
@@ -217,6 +218,15 @@ export function PurposeBindingsSection() {
           {t('settings.purposes.resetAll')}
         </Button>
       ) : null}
+
+      {/*
+        ★ 「按用途绑定模型」与「重置全部」失败此前**完全静默**（两处 `patch.mutate`）。
+        ⚠️ 本组件持有**自己那一份** `usePatchSettingsMutation()`；
+        `LlmSettingsSection` 里那个 ErrorBlock 属于**另一个实例**，救不了这里 ——
+        两个组件各调一次 hook 就是两份独立状态，看着像"上层已经处理了"，实际没有。
+        用户点完下拉，值悄悄弹回继承态，一个字都没有。
+      */}
+      {patch.isError ? <ErrorBlock error={patch.error} className="mt-3" /> : null}
     </section>
   );
 }

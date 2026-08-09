@@ -209,18 +209,30 @@ export default function ModelDetailPage() {
               服务端的 message 只作未知 code 的兜底 —— 501 的 code 是 `NOT_IMPLEMENTED`。
             */}
             {benchmark.isError ? <ErrorBlock error={benchmark.error} /> : null}
-            {/* 同上：`verify` 失败以前完全静默，而隔壁 benchmark 一直是渲染的 */}
-            {verify.isError ? <ErrorBlock error={verify.error} /> : null}
           </div>
         )}
       </section>
+
+      {/*
+        ★ 校验失败的渲染点**搬到这里**（原来在上面 `bench ? … : …` 的 **else 分支**里）。
+        而「校验」按钮在下面这个**无条件** section 里 ⇒
+        **已经跑过基准的模型（`bench` 为真），校验失败零表达**。
+        这是"渲染点在，但在某些状态下够不着"——比完全没有渲染点更难发现：
+        读代码看得到 `verify.isError`，只有走到那个状态才知道它不在同一棵子树上。
+        判据：**错误的渲染点必须和触发它的控件在同一个条件分支下。**
+      */}
+      {verify.isError ? <ErrorBlock error={verify.error} className="mb-2" /> : null}
 
       <section className="flex flex-wrap items-center gap-2">
         {installedRec ? (
           <Button
             size="sm"
             variant="secondary"
-            onClick={() => void verify.mutateAsync(variant.id)}
+            /*
+             * `mutate` 而不是 `void mutateAsync` —— 与上面 benchmark 那段同一条理由：
+             * `void` 把 rejection 丢掉，变成 unhandled rejection。
+             */
+            onClick={() => verify.mutate(variant.id)}
             disabled={verify.isPending}
           >
             <ShieldCheck className="size-3.5" aria-hidden />

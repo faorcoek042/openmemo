@@ -21,7 +21,8 @@
     "models": "Models",
     "settings": "Settings",
     "tasks": "Tasks",
-    "diagnostics": "Diagnostics"
+    "diagnostics": "Diagnostics",
+    "tasksBadgeLabel": "{{label}}, {{n}} in progress"
   },
   "banner": {
     "mockTitle": "MOCK mode: local service not connected",
@@ -853,7 +854,8 @@
     "saved": "Saved",
     "unsaved": "Unsaved",
     "insertAnchor": "Cite this moment",
-    "insertAnchorHint": "Insert the current playback position; click it to jump back"
+    "insertAnchorHint": "Insert the current playback position; click it to jump back",
+    "saveFailed": "Save failed"
   },
   "folders": {
     "create": "New folder",

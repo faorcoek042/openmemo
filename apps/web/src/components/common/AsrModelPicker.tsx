@@ -9,6 +9,7 @@ import { api } from '../../lib/api/client';
 import { qk } from '../../app/query';
 import { arr } from '../../lib/safe';
 import { Button } from './Button';
+import { ErrorBlock } from './ErrorBlock';
 
 /**
  * 语音识别模型选择器 —— **列表来自后端，选择真的生效**。
@@ -185,6 +186,13 @@ export function AsrModelPicker({ className }: { className?: string }) {
       </select>
       {/* 说清楚这是全局切换，不是"本次任务用哪个" —— 免得用户以为可以按任务选 */}
       <span className="ml-2 text-xs text-ink-muted">{t('asr.activeIsGlobal')}</span>
+      {/*
+        ★ 切换失败此前**完全静默**：`activate.mutate()` 没有 onError，也没有任何 isError 渲染点。
+        `<select>` 是受控的（`value={activeId ?? ''}`），失败后 `activeId` 没变 ⇒
+        **下拉悄悄弹回旧值**。用户看到的是"我选了，它自己跳回去了"——
+        与"这个下拉坏了"完全同形，而真实原因（模型文件损坏 / 引擎构造不起来）一个字都没有。
+      */}
+      {activate.isError ? <ErrorBlock error={activate.error} className="mt-2" /> : null}
     </label>
   );
 }

@@ -10,6 +10,7 @@ import { Button } from '../../components/common/Button';
 import { approxEta } from '../../lib/format/time';
 import { formatBytes, formatPercent, formatSpeed } from '../../lib/format/bytes';
 import { groupJobs, useJobActions, type MergedJob } from './api';
+import { ErrorBlock } from '../../components/common/ErrorBlock';
 
 /**
  * 任务列表（抽屉与整页共用）。
@@ -58,6 +59,12 @@ function JobRow({ job, compact }: { job: MergedJob; compact?: boolean }) {
   const running = job.state === 'running' || job.state === 'leased';
   const verifying = running && job.step === 'verifying';
   const attention = job.state === 'blocked' || job.state === 'failed';
+  /*
+   * 四个动作共用一个渲染点：同一时刻用户只可能点了其中一个，
+   * 分成四个 ErrorBlock 只会让同一条错误有四个出处（D-10 §3.2 R3）。
+   */
+  const actionError =
+    actions.pause.error ?? actions.resume.error ?? actions.retry.error ?? actions.cancel.error;
 
   // 颜色判定不在这里做（T-114）：六个渲染点各写一份 switch 已经分叉过一次。
   const tone = jobStateTone(job.state);
@@ -153,6 +160,23 @@ function JobRow({ job, compact }: { job: MergedJob; compact?: boolean }) {
           </span>
         ) : null}
       </div>
+
+      {/*
+        ★ 这四个按钮（暂停/继续/重试/取消）此前**失败时一个字都不显示**。
+
+        ⚠️ 上面 `:116` 那个 `<p>` 渲染的是 **job 数据里的 error**（服务端记在任务上的），
+        **不是这四次 mutation 的 error** —— 两者是不同的东西，而它长得很像"已经处理了"，
+        这正是这处漏了这么久的原因。
+
+        后果最重的是暂停/继续：daemon 对它们回 **501 + `cancel_job` remediation**
+        （`rest/jobs.ts`），也就是说**服务端算好了"这个做不到，但你可以取消"这句建议，
+        而它在产品里到不了屏幕**。`ErrorBlock` 自 T-140 起默认渲染 remediation，
+        所以接上这一行的同时那个按钮也就活了。
+
+        `useJobActions()` 是在 **JobRow 里**调的（不是 JobList），四个 mutation 实例
+        每行各一份 —— 所以这里不会把 A 行的错误显示到 B 行上。
+      */}
+      {actionError ? <ErrorBlock error={actionError} className="mt-2" /> : null}
     </li>
   );
 }

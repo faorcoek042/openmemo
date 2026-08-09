@@ -140,6 +140,12 @@ export default function NotesListPage() {
             : t('notes.title')}
       </h1>
       <MockNotice surface="notes" className="mb-3" />
+      {/*
+        ★ 星标失败此前只做乐观回滚（`onError` 里把缓存写回去），**零文案**。
+        用户看到的是"星星自己弹回去了"——与"我没点中"完全同形。
+        乐观更新的回滚是**状态正确性**，不是**告知**；这两件事一直被当成一件。
+      */}
+      {toggleStar.isError ? <ErrorBlock error={toggleStar.error} className="mb-3" /> : null}
       <ul className="flex flex-col gap-2" role="list" data-testid="notes-list">
         {visible.map((n) => (
           <li key={n.uid}>

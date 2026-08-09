@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AnyJob, DownloadJob, JobState, PipelineJobKind } from '@openmemo/shared';
-import { isPipelineJob } from '@openmemo/shared';
+import { isPipelineJob, TERMINAL_JOB_STATES } from '@openmemo/shared';
 
 import { api } from '../../lib/api/client';
 import { qk } from '../../app/query';
@@ -235,4 +235,42 @@ export function useJobActions() {
     resume: useMutation({ mutationFn: jobAction('resume'), onSuccess: invalidate }),
     retry: useMutation({ mutationFn: jobAction('retry'), onSuccess: invalidate }),
   };
+}
+
+/**
+ * 还没结束的任务条数 —— 侧栏「任务」徽标的唯一数据源。
+ *
+ * ## 为什么需要它（这是一整类缺口，不只是"刷新丢 Toast"）
+ *
+ * `JobToaster` 的列表由 SSE `job.created` 喂养的 React 状态，**已经发生过的事件不重放**。
+ * 于是只要 SPA 重挂，Toast 层就是空的。最先被发现的形态是"任务进行中刷新页面"，
+ * 但同一个缺口还覆盖：**切了页**（Toast 被 unmount）、**用户手动关掉了 Toast**、
+ * **开着的是另一个标签页**。四种情况下用户都**失去了唯一的进度反馈**。
+ *
+ * ⚠️ **修法刻意不是"重放已发生的 `job.created`"**：那会让用户每次刷新都被一堆旧通知糊一脸，
+ * 比现在更糟。Toast 是**瞬时通知**，丢掉瞬时通知是正常的。
+ * 真正缺的是**环境信号** —— 屏幕上没有任何东西说"还有活在跑"，
+ * 侧栏那个「任务」只是个静态图标。
+ *
+ * > **判据：用户不需要"想起来去点"，屏幕上就有东西告诉他还有任务在跑。**
+ *
+ * ## 口径：为什么是"非终态"而不是"running"
+ *
+ * 终态取 `@openmemo/shared` 的 `TERMINAL_JOB_STATES`（`succeeded|failed|cancelled`），
+ * **不在这里另写一份**——任务中心、Toast、徽标三处对"结束了没有"必须是同一个定义，
+ * 分叉的表现是"徽标写 1、点进去什么都没有"，而两个数字各自都算得对。
+ *
+ * 于是计入的是 `queued | blocked | leased | running | paused`：
+ * - `blocked` **要计入**：它永远不会自己结束，正是最该把用户叫过去的那一种；
+ * - `failed` **不计入**：它是终态且会一直留在列表里，计入的话徽标永不归零 →
+ *   徽标疲劳，等于没有徽标（本仓 ⑤B「假红会训练人忽略告警」同一条）。
+ */
+export function countUnfinishedJobs(jobs: readonly { state: JobState }[]): number {
+  return jobs.filter((j) => !TERMINAL_JOB_STATES.includes(j.state)).length;
+}
+
+/** 侧栏徽标用。与任务中心**同一个数据源**（`useMergedJobs`），不许各拉各的。 */
+export function useUnfinishedJobCount(): number {
+  const { jobs } = useMergedJobs();
+  return countUnfinishedJobs(jobs);
 }
