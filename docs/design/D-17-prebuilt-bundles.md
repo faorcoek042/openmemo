@@ -32,9 +32,30 @@ input: 用户 2026-08-08 口述；README.md；ADR-002；ADR-015；D-11；D-12；
 ## TL;DR（≤ 25 行，Manager 只读这里）
 
 - **GPL 不触发 —— 但理由不是"我们没装 ffmpeg"，而是比那更强的三条**：①【实测】整个 npm 依赖闭包
-  **268 个包里 0 个 GPL/AGPL/LGPL**；② ffmpeg / yt-dlp 由**用户机器**直连 BtbN / yt-dlp 官方
-  GitHub 取，我们不转存；③ 我们调用它们的方式是 `spawn(绝对路径, argv, {shell:false})`
+  **268 个包里 0 个 GPL/AGPL/LGPL**；② ~~ffmpeg / yt-dlp 由**用户机器**直连 BtbN / yt-dlp 官方
+  GitHub 取，我们不转存~~；③ 我们调用它们的方式是 `spawn(绝对路径, argv, {shell:false})`
   —— 独立进程、命令行边界，不是链接。**结论：可以发。**
+  > ⚠️ **订正（2026-08-09，ffmpeg-lgpl-manifest；2026-08-09 :10000 实测后再订正一次，
+  > 见下方"三种情况"）**：②**这条现在只对 yt-dlp（三平台都成立）与 macOS 上的
+  > ffmpeg 成立**。Linux/Windows 的 ffmpeg **计划**改判**随包内置**
+  > （BtbN 的 LGPL-3.0-or-later 变体，与原下载的 GPL 变体同源同 commit）——但
+  > ⚠️ **这件事今天还没发生**：`scripts/ci/verify-bundle.sh` 里核对 NOTICES 与包内容
+  > 是否一致的那条守卫，今天对 Linux/Windows 报的是 `warn`（"NOTICES 说有，包里还没有"），
+  > 这本身就是"字节尚未进包"的实测证据。所以准确说法要分三种情况，缺一不可：
+  > **(a) 将来拿到真正内置 LGPL 字节的新预编译包的人**——字节确实经过我们，
+  > "我们不转存"对这批人不再是真话；**(b) macOS 用户**——不变，仍是 GPL、仍是下载、
+  > 字节不经过我们；**(c) 已经装过 `media-tools-{linux,win}-x64` 组件的老用户**——
+  > 他机器上装的**可能仍是旧的 GPL 变体**，且产品目前按 pack id 而非内容判断"机器上
+  > 装了什么"（`backends.ts:378`、`machineFingerprint()`），**同一个 id 的归档被换掉
+  > 时产品并不知道**，这条已由另一路登记为独立的病灶（不是许可证判断本身的错），
+  > 在它被修好、且用户重装之前，这批人的判定应视同 (b) 而非 (a)。
+  > ③ 因此升级成**双重理由**（对 (a) 生效，其余情况见上）：
+  > 对 macOS 的 ffmpeg 与全平台的 yt-dlp，它仍是"就算被读成传播也不构成衍生作品"的
+  > 兜底；对 Linux/Windows **将来**内置的 ffmpeg，它是 **LGPL 链接触发义务不适用的
+  > 直接原因**——我们只 `spawn` 不 `dlopen`/链接，仍需满足的只是"许可证全文可得"，
+  > 靠随归档分发的 `LICENSE.txt` 满足。**结论不变，且一旦落地就没有一个新发的字节
+  > 是 GPL**——Linux/Windows 计划内置的是 **LGPL**，不是 GPL；详见 §1.1 第二层的订正与
+  > `docs/design/D-20-bundled-deps.md` §9.2/§13。
 - **⚠️ ADR-002 第 24 行那条 `@blocknote/xl-*` (GPL-3.0) ✅允许 是个空头许可**：该包
   **从未被采用**（package.json / lockfile / node_modules / 源码 四处 grep 全 0 命中）。
   实际用的富文本编辑器是 TipTap（全 MIT）。建议 Manager 删掉那一行 —— 留着它等于
@@ -69,8 +90,13 @@ input: 用户 2026-08-08 口述；README.md；ADR-002；ADR-015；D-11；D-12；
 ### 1.1 结论：不触发。可以发。
 
 用户的判据是"我们发的是我们自己的产物（Node runtime + 我们的 JS + 原生模块），
-ffmpeg/yt-dlp 仍由用户自己在网页上下载"。这个边界成立，但**它成立的原因比表述更强**，
-分三层，每层单独就够用：
+~~ffmpeg/yt-dlp 仍由用户自己在网页上下载~~"。这个边界**在写下这句话时**成立，
+但**它成立的原因比表述更强**，分三层，每层单独就够用（⚠️ 这句表述对 Linux/Windows
+的 ffmpeg **计划**要变——那两个平台**将来**改判随包内置，但**今天还没变**：
+`verify-bundle.sh` 的 NOTICES↔包内容双向核对今天对这两个平台报的是 `warn`，
+说明字节尚未进包，见第二层订正；已经装过组件的老用户机器上目前也可能仍是旧的
+GPL 版本，与"包里将来是 LGPL"是两件事，同样见第二层订正。yt-dlp 与 macOS 的
+ffmpeg 不受影响，仍是"用户自己在网页上下载"）：
 
 #### 第一层：我们要发的字节里，一个 GPL 包都没有【实测】
 
@@ -103,15 +129,30 @@ ffmpeg/yt-dlp 仍由用户自己在网页上下载"。这个边界成立，但**
 > 但注意 `scripts/license-report.mjs` 的 `WATCHLIST` **没有 MPL/EPL/CDDL 的模式**，
 > 也就是说这一项是我人工发现的，工具不会告诉你。
 
-#### 第二层：GPL 的那两个，字节从来不经过我们【实测】
+#### 第二层：GPL 的那两个，字节从来不经过我们【实测】——⚠️ Linux/Windows 的 ffmpeg 这行**计划中**要变，今天还没变
 
-把 `vendor/manifests/` 全部 7 个文件里的 `url` 字段逐条列出来：
+> **订正（2026-08-09，ffmpeg-lgpl-manifest；同日 `:10000` 实测后再订正**）：这一层
+> 原本把 ffmpeg 和 yt-dlp 当同一种情况——"两个 GPL 组件字节都不经过我们"。
+> **这句话的 ffmpeg 部分计划要变，但今天仍然为真**：Linux/Windows 的 ffmpeg
+> **将来**改判随包内置（下表已按此拆成两行），但 `scripts/ci/verify-bundle.sh` 新增的
+> NOTICES↔包内容双向核对，今天对 Linux/Windows 报的是 `warn`——即"NOTICES 已经这么
+> 声称，但包里实测还没有这些字节"，这本身就是"还没发生"的实测证据，不是我的推测。
+> 另外，**已经装过 `media-tools-{linux,win}-x64` 组件的老用户**，机器上装的**可能仍是
+> 旧的 GPL 变体**——产品目前按 pack id 而非内容判断"机器上装了什么"
+> （`backends.ts:378`、`machineFingerprint()`），同一个 id 的归档换成 LGPL 变体后，
+> 产品并不知道用户机器上那份还是旧的 GPL 字节，直到用户重装。这条已由另一路登记为
+> 独立病灶（不是本节许可证判断的错），修好之前**不要把"内置 LGPL"当成对所有 Linux/
+> Windows 用户都成立的话**。依据：`docs/design/D-20-bundled-deps.md` §9.2/§13；
+> `verify-bundle.sh` 的 warn 输出；Manager 2026-08-09 的 `:10000` 实测通报。
 
-| 组件                               | 许可证                       | 谁提供字节                                                             |
-| ---------------------------------- | ---------------------------- | ---------------------------------------------------------------------- |
-| ffmpeg / ffprobe (`media-tools-*`) | 🔴 GPL-3.0-or-later          | `github.com/BtbN/FFmpeg-Builds`、`github.com/jellyfin/jellyfin-ffmpeg` |
-| yt-dlp (`ytdlp-*`)                 | 🔴 GPL-3.0-or-later\*        | `github.com/yt-dlp/yt-dlp`                                             |
-| libsimple / sqlite-vec / 模型      | MIT / Apache-2.0 / Gemma ToU | wangfenjin、asg017、HuggingFace、ModelScope                            |
+把 `vendor/manifests/` 里的 `url` / `license` 字段逐条列出来：
+
+| 组件                                                                    | 许可证                                              | 谁提供字节                                                             |
+| ------------------------------------------------------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------ |
+| ffmpeg / ffprobe，**macOS**（`media-tools-darwin-arm64`）                | 🔴 GPL-3.0-or-later                                  | `github.com/jellyfin/jellyfin-ffmpeg`（用户机器直连，我们不转存）      |
+| ffmpeg / ffprobe，**Linux/Windows**（`media-tools-{linux,win}-x64`）     | 🟡 **计划改判 LGPL-3.0-or-later**（BtbN 变体，同源同 commit）；**今天还没进包**，见上方订正 | **将来**是我们——随包内置；今天仍是用户机器直连下载（旧 GPL 变体，见上方订正） |
+| yt-dlp (`ytdlp-*`)                                                       | 🔴 GPL-3.0-or-later\*                                | `github.com/yt-dlp/yt-dlp`（用户机器直连，我们不转存，三平台一致）     |
+| libsimple / sqlite-vec / 模型                                           | MIT / Apache-2.0 / Gemma ToU                        | wangfenjin、asg017、HuggingFace、ModelScope                            |
 
 \* **订正于 2026-08-09**（见 D-20 §14，commit `9b3ea96`；回执
 `coordination/inbox/ytdlp-binary-audit.md`）：这一行此前的隐含理由是"yt-dlp 项目本身
@@ -121,15 +162,30 @@ GPL 来源是官方发布的 PyInstaller 可执行二进制里静态打包进去
 GNU Readline（GPL-3.0-or-later）——单元格取的是四个平台里最强的一档，macOS/Windows
 实际只到 GPL-2.0-or-later（`vendor/manifests/backends.json` 已按平台分别订正）。
 **巧的是"🔴 需要当 GPL 处理"这个结论仍然成立**，只是把理由从"错的"换成上面这条；
-ffmpeg 那一行不受影响——ffmpeg 的 GPL 构建本身就是以 GPL-3.0-or-later 发布的项目，
-两行的归因链条并不相同，不要类推。
+这条订正跟 ffmpeg 两行无关——ffmpeg 是发行版本身声明的许可证，不像 yt-dlp 有"项目
+许可证 vs 内嵌依赖许可证"的落差，不要类推。ffmpeg 两行是因为**另一件完全不同的事**
+（Linux/Windows 计划内置）分裂开的，见上方表格与订正。
 
-我们自己的 Release 上**只有 6 个资产，全部是 whisper.cpp，全部 MIT**
-（`backend-packs-2026.08.07b` / `-2026.08.08` 里的 `whispercpp-*`）。
+我们自己的 Release 上，`backend-packs-*` 系列**只有 6 个资产，全部是 whisper.cpp，
+全部 MIT**（`backend-packs-2026.08.07b` / `-2026.08.08` 里的 `whispercpp-*`）——这一条
+**仍然成立**，数的是"作为独立可下载 pack 发布的资产"。⚠️ 但它**将来**不能再读成
+"我们发布的 Release 资产里没有 GPL/LGPL 字节"：`openmemo-<version>-{linux,win}-x64`
+那个**产品预编译包本身**（另一类 Release 资产）计划内置 LGPL 的 ffmpeg——**今天这个
+包里还没有这些字节**（同上方 `verify-bundle` warn），一旦真的进包，这条"只有 6 个
+资产"就需要补一句限定：它说的是"待用户按需下载的组件 pack"这一类，不是"我们发布的
+一切"。
 下载确实发生在用户机器上：`packages/downloader` 跑在 daemon 进程内，
-用户在网页点"安装"→ `POST /api/backends/install`。
+用户在网页点"安装"→ `POST /api/backends/install`——**这条对 yt-dlp、macOS 的 ffmpeg，
+以及今天的 Linux/Windows ffmpeg（因为还没切换）都成立**；只有在 Linux/Windows 的
+LGPL 内置真正落地之后，那一种情况才会改走"构建时就在包里"。
 
-**这条是 GPL 判定的核心：GPL 约束的是"conveying（传播）"行为。我们没有传播那两个二进制。**
+~~**这条是 GPL 判定的核心：GPL 约束的是"conveying（传播）"行为。我们没有传播那两个二进制。**~~
+—— **对 yt-dlp（三平台）与 macOS 的 ffmpeg 仍然成立**：我们没有传播它们的二进制。
+**对 Linux/Windows 的 ffmpeg，今天仍然成立**（字节还没进包，用户仍是直连下载）；
+**一旦 LGPL 内置落地，这条对那两个平台会变成不成立**——我们届时确实会传播
+（conveying）它，但传播的是 **LGPL** 变体，不是 GPL；LGPL 允许传播，前提是满足它
+自己的义务（许可证全文可得，见第三层）。**没有一个字节曾经、或计划以 GPL 身份
+被我们传播过。**
 
 #### 第三层：就算退一万步，我们与 ffmpeg 的关系是进程边界，不是链接【实测】
 
@@ -140,6 +196,14 @@ ffmpeg 那一行不受影响——ffmpeg 的 GPL 构建本身就是以 GPL-3.0-o
 
 所以即便有人主张"你引导用户下载 = 你在分发"，第三层也堵住了"衍生作品"这条路。
 
+> **订正（2026-08-09，ffmpeg-lgpl-manifest）**：写下这一层时，它的角色是**兜底/假设性
+> 防线**——"就算你不认可第二层的 conveying 论证，第三层也还有一道"。**Linux/Windows
+> 的 LGPL 内置一旦落地，这一层对那两个平台会从"兜底"升级成"直接生效、必须成立的
+> 理由"**：届时我们确实 conveying 了 ffmpeg 字节（第二层已订正），LGPL 的强义务
+> （链接触发的那些）能不能被绕开，**直接取决于**这里说的"只 spawn、不 dlopen/链接"
+> 是不是真的——不再是"就算…也…"的假设句，而是"因为…所以…"的必要条件。对 macOS
+> 的 ffmpeg 与全平台的 yt-dlp，它的角色不变，仍是兜底。
+
 ### 1.2 但有三件事会把它翻过来 —— 必须钉住
 
 这三条今天都**没有**触发，但都是**一步之遥**，且都不会有任何东西报错：
@@ -148,6 +212,12 @@ ffmpeg 那一行不受影响——ffmpeg 的 GPL 构建本身就是以 GPL-3.0-o
    OpenMemo 格式的 pack（脚本自己的注释：_"we emit our own tar.gz with our own manifest"_）。
    ADR-015 §4 决策 2 只是把它降级为"可选重打包"，没删。
    **谁跑一次它、再用 `scripts/ci/release-upload.mjs` 传上去，我们当场变成 GPL 二进制的分发者。**
+   > ⚠️ **别跟下面这件事搞混（2026-08-09 补注）**：Linux/Windows **计划**随包内置的
+   > ffmpeg 走的是**另一条、有意为之**的路——BtbN 的 **LGPL** 变体，经 §1.1 第二/三层
+   > 论证过义务能被满足，且今天连字节都还没实际进包（`verify-bundle.sh` 报 `warn`）。
+   > 这一条第 1 点警告的是**这个脚本**——它重新打包的是 **GPL** 变体，跑了它才会把
+   > 我们变成 GPL 分发者，跟上面那条计划中的 LGPL 内置是两回事、两个变体、两种后果，
+   > 不要因为"反正现在也要内置 ffmpeg 了"就误以为这个脚本变安全了——它没有。
 2. **`scripts/ci/mirror-model-blobs.mjs` 按设计就是把第三方 blob 转存到我们的 Release 上。**
    今天的 `MIRROR_MODEL_IDS` 只有 3 个 Apache-2.0 的模型，安全。但它是**手工维护的
    白名单，没有许可证闸门** —— 有人加一个 GPL 或 Gemma ToU 的条目进去，会静默生效。
