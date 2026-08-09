@@ -776,6 +776,8 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
     notProbed('hardware', 'hw.probe', 'device enumeration (subprocess)', 'probe 子进程枚举设备');
   } else {
     const probePath = await input.probes.probePath();
+    // 「装了没有」这件事，下面那条分叉要用它来决定说哪句话（T-191）。
+    const probeInstalledPacks = await input.probes.installed('backend');
     if (probePath === null || !(await exists(probePath, constants.X_OK))) {
       add({
         layer: 'hardware',
@@ -783,9 +785,35 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         label: 'device enumeration (subprocess)',
         labelZh: 'probe 子进程枚举设备',
         status: 'warn',
-        detail: 'openmemo-probe 未安装（后端能力未知）',
+        /*
+         * ★★ T-191：原文那句「安装后端包后会带上 openmemo-probe」**在用户真机上是假的**。
+         *
+         * `[用户真机实测 2026-08-09，:10000]` 他**已经装了**后端包
+         * （`whispercpp-cpu-linux-x64`，`integrity: ok`），而这一行照旧让他"去安装后端包"。
+         * 成因：他 08-02 装的是当时目录指向的**上游归档**
+         * `whisper-bin-ubuntu-x64.tar.gz`，**上游的包里没有我们的探针**；
+         * T-167 把同一个 id 换成了自建的那份（带探针），而"已安装"按 **id** 算，
+         * 于是没有任何地方说他手里那份是旧的。照这句话做，**什么都不会发生**。
+         *
+         * 判据（Manager 2026-08-09）：**一句引导语要能让人做完之后那个报错真的消失。**
+         * 所以按"到底装没装后端包"分叉，两句话各自成立：
+         *   · 一个都没装 ⇒「先装一个」本来就是对的；
+         *   · 装了却仍然没有探针 ⇒ 手里那份是**旧版**，要做的是**更新**，不是再装一次。
+         *
+         * ⚠️ 这里**不比对 sha256 去断言"是旧版"**：那是目录侧的知识
+         * （`GET /api/backends/catalog` 的 `updateAvailable`），自检拿不到目录。
+         * 能确知的只有"装了却没有探针"，而那已经**足够指向唯一正确的动作**。
+         */
+        detail:
+          probeInstalledPacks.length === 0
+            ? 'openmemo-probe 未安装（后端能力未知）'
+            : `已装的后端包里没有 openmemo-probe（后端能力未知）：${probeInstalledPacks.join(', ')}`,
         required: false,
-        remediation: '安装后端包后会带上 openmemo-probe；在此之前只能按 CPU 保守选择',
+        remediation:
+          probeInstalledPacks.length === 0
+            ? '在「本机组件」页安装一个后端包，它会带上 openmemo-probe；在此之前只能按 CPU 保守选择'
+            : '你装的后端包是旧版（不含探针）。去「本机组件」页对它点「更新」，' +
+              '装上目录里现在这一版即可；在此之前只能按 CPU 保守选择',
       });
     } else {
       const r = await runProbe({ probePath, backendDir: dirname(probePath) });

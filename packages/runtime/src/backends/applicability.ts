@@ -154,9 +154,30 @@ export function evaluateApplicability(input: ApplicabilityInput): ApplicabilityR
     if (advisory.includes(pack.backend)) {
       return { applicable: true, reason: null, tier: 'l2' };
     }
+    /*
+     * ★★ T-191：原文是「尚未探测到硬件能力；请先安装 CPU 基础包，安装后会自动重新探测」，
+     *   `[用户真机实测 2026-08-09，:10000]` **两个分句在那台机器上都是假的**：
+     *
+     *   ① 「请先安装 CPU 基础包」—— 他早就装了（`whispercpp-cpu-linux-x64`，`integrity: ok`），
+     *      照做无事可发生。真原因是他 08-02 装的是当时目录指向的**上游归档**，
+     *      而**上游的包里没有我们的探针**；T-167 把同一个 id 换成了自建的那份（带探针），
+     *      可"已安装"按 **id** 算，于是没人告诉他手里那份是旧的。
+     *   ② 「安装后会自动重新探测」—— 当时**不会**：硬件快照的指纹只认 pack id，
+     *      重装同一个 id 不改变指纹（实测：装完探针在盘上，接口照旧报
+     *      `probe executable not found`，`?refresh=1` 一发才对）。
+     *      这一条已由 T-191 ① 修好（指纹改成按内容），所以下面**保留**了它。
+     *
+     * 这里**刻意不新增输入去判断"装没装"**：本模块是纯策略函数，输入只有
+     * 「探针说了什么」+「advisory 说了什么」。塞进"装了哪些包"会让它变成第二份
+     * 安装状态的事实来源，而 `backends[].installed` 已经是那一份 —— 两份必然漂移。
+     * 改的是措辞本身：让它在**两种状态下都成立、且都指向一个真能点的控件**。
+     */
     return {
       applicable: false,
-      reason: '尚未探测到硬件能力；请先安装 CPU 基础包，安装后会自动重新探测',
+      reason:
+        '尚未探测到硬件能力 —— 需要一个带 openmemo-probe 的后端包。' +
+        '还没装过就先装 CPU 基础包；已经装了却仍是这一句，说明手里那份是旧版，' +
+        '去「本机组件」页对它点「更新」。装好后会自动重新探测',
       tier: 'l2',
     };
   }
