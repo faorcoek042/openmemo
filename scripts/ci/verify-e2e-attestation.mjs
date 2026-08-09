@@ -60,12 +60,13 @@ const BUNDLE_RUN = arg('--bundle-run');
  * 否则这道闸会在"腿变多了"的时候悄悄放宽 —— 那正是它要挡的那类漂移。
  */
 /*
- * ⚠️ `browser-linux` 的后缀是**故意的**，不是笔误：浏览器那条腿只跑 ubuntu。
- *    闸门给的是"这批包可以发"的保证，而一个叫 `browser` 的条目读起来像
- *    "界面三平台都验过"。把覆盖面写进腿名，**限制就出现在做判定的这一行上**，
- *    而不是藏在某份文档里。将来铺成三平台时改回 `browser` —— 那是一次显式扩权。
+ * ⚠️ `browser` 这一条曾经叫 `browser-linux` —— 那时它只跑 ubuntu，
+ *    而把覆盖面写进腿名，是为了让**限制出现在做判定的这一行上**，不藏在文档里。
+ *    `[CI 实测 run 31295977228]` 三平台都跑通之后才改回 `browser`：
+ *    **先验证、再改名**，反过来就是"先承诺再看能不能做到"。
+ *    哪天某个平台掉了，这个名字要**跟着缩回去**。
  */
-const LEGS = String(arg('--legs', 'import,notes,record,runtime,browser-linux'))
+const LEGS = String(arg('--legs', 'import,notes,record,runtime,browser'))
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
@@ -144,21 +145,14 @@ const missing = [];
 const found = [];
 
 /**
- * 腿名 → workflow 文件名。
+ * 腿名 → workflow 文件名。默认按 `e2e-<腿名>.yml` 推导。
  *
- * 默认按 `e2e-<腿名>.yml` 推导（四条老腿都对得上），**但腿名不总等于文件名**：
- * `browser-linux` 这条的后缀是**覆盖面声明**（那条腿只跑 ubuntu），
- * 而 workflow 文件仍叫 `e2e-browser.yml`。
- *
- * ⚠️ `[实测]` 第一版没有这张表，于是它去查 `e2e-browser-linux.yml` 得到 404，
- *    然后**如实报「查不动」并拒绝放行** —— 那个行为是对的（不把"我没问到"
- *    渲染成"它没问题"），但拒绝的理由是错的：凭证其实好好地在那儿。
- *    把映射显式写出来，比让腿名去迁就文件名好 ——
- *    **覆盖面声明属于腿名，它是给读闸门的人看的。**
+ * 这张表现在是空的：`browser-linux` 改回 `browser` 之后，五条腿的名字都与文件名对得上。
+ * **留着这张表而不是删掉**，是因为那次 404 证明了这里存在一条隐式耦合 ——
+ * 下一个想在腿名里写点什么（覆盖面、变体）的人，需要有个地方安放它，
+ * 而不是被迫把腿名迁就文件名。
  */
-const WORKFLOW_OF = {
-  'browser-linux': 'e2e-browser.yml',
-};
+const WORKFLOW_OF = {};
 
 for (const leg of LEGS) {
   const want = `e2e-attest-${leg}-${BUNDLE_RUN}`;

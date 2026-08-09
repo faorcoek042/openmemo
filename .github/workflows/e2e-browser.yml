@@ -239,27 +239,22 @@ jobs:
   # （`release-upload.yml` 的 `e2e-gate`）只问名字在不在，不下载、不解析、不相信内容。
   # 名字里带 bundleRunId，所以换一批包 = 换一个名字 = 旧凭证自动失效。
   #
-  # ## ⚠️ 为什么 leg 名是 `browser-linux` 而不是 `browser`
+  # ## ⚠️ 腿名从 `browser-linux` 改回 `browser` —— 一次**刻意的、可见的**扩权
   #
-  # **这条腿只跑 ubuntu**（取舍理由：要抓的"按钮有没有反应"是前端代码的性质，
-  # 同一份 JS 三平台一致，而我确实在 Linux 上复现了 Windows 用户报的那个 bug）。
+  # 它曾经叫 `browser-linux`，因为那时这条腿**只跑 ubuntu**，而闸门给的是
+  # "这批包可以发"的保证 —— 一张叫 `browser` 的凭证读起来像"三平台都验过"。
+  # **一个不说明覆盖面的凭证，会让闸门给出比实际更强的保证。**
   #
-  # 但接进**发布闸门**之后，性质变了：闸门给出的是"这批包可以发"的保证，
-  # 而一张叫 `e2e-attest-browser-*` 的凭证读起来像"界面在三个平台上都验过"。
-  # **一个不说明覆盖面的凭证，会让闸门给出比实际更强的保证** —— 而这正是这一整轮在治的病
-  # （第四类问"是不是用户启动它的方式"，第五类问"是不是用户下载到的那批字节"，
-  #   这里是第三个同族问题：**"是不是用户所在的那个平台"**）。
+  # 现在三平台都真的跑通了（`[CI 实测 run 31295977228]` 对着
+  # `build-bundles 31268366005`：win32 / linux / darwin 各 11 条断言 + 4 条变异证明、
+  # 0 失败），所以名字跟着覆盖面走，改回 `browser`。
   #
-  # 所以把覆盖面**写进名字**：`browser-linux`。
-  # 它同时出现在 `verify-e2e-attestation.mjs` 的默认腿列表里，
-  # 于是**任何人读那一行就知道浏览器这条只覆盖 linux** —— 限制写在做判定的那个地方，
-  # 而不是藏在某份文档里等人去查。
-  #
-  # 将来若把它铺成三平台，leg 名改回 `browser` 并同步改闸门列表 ——
-  # 那会是一次**显式的、看得见的**扩权，而不是悄悄变宽。
+  # ⚠️ **顺序不能反**：先验证、再改名。名字是对外的承诺，
+  #    先改名后验证就是"先承诺再看能不能做到"。
+  #    同理，将来若哪个平台掉了，名字要**跟着缩回去**。
   # ═══════════════════════════════════════════════════════════════════════════════════
   attest:
-    name: e2e 凭证（仅 artifact 模式，linux 绿才发）
+    name: e2e 凭证（仅 artifact 模式，三平台全绿才发）
     needs: [browser]
     # ★ 只有 artifact 模式才发凭证：现组装的绿**不能给一批已发布的字节背书**，
     #   两者之间隔着整条 build-bundles 流水线。
@@ -280,12 +275,12 @@ jobs:
       - name: 写凭证
         run: |
           node scripts/ci/emit-e2e-attestation.mjs \
-            --leg browser-linux \
+            --leg browser \
             --bundle-run "${{ needs.browser.outputs.bundle_run_id }}" \
-            --platforms linux-x64 \
+            --platforms linux-x64,darwin-arm64,win32-x64 \
             --out dist/e2e-attest.json
       - uses: actions/upload-artifact@v6
         with:
-          name: e2e-attest-browser-linux-${{ needs.browser.outputs.bundle_run_id }}
+          name: e2e-attest-browser-${{ needs.browser.outputs.bundle_run_id }}
           path: dist/e2e-attest.json
           if-no-files-found: error
