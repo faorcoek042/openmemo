@@ -58,13 +58,35 @@ const REQUIRE_CROSSVOL = process.argv.includes('--require-crossvol');
     );
     process.exit(2);
   }
-  if (home && resolvePath(pf).startsWith(resolvePath(home) + sep)) {
-    console.error(
-      `::error::OPENMEMO_POINTER_FILE 落在 $HOME 里（${pf}）—— 那就是机器级指针本身，拒绝`,
-    );
+  /*
+   * 判据是「**它是不是那一份机器级指针**」，不是「它在不在 $HOME 底下」。
+   *
+   * 第一版写成了后者，`[CI 实测 run 31298064458]` 当场误伤：
+   * GitHub runner 的 `$RUNNER_TEMP` 就是 `/home/runner/work/_temp` ——
+   * 一个完全合法的临时目录，却被判成"机器级指针本身"，linux/macOS 两条腿直接 exit 2
+   * （Windows 侥幸过关，只因为它的 `RUNNER_TEMP` 在 D: 盘）。
+   * 一条**过宽**的安全检查和一条不生效的安全检查一样有害：它逼下一个人去绕开它。
+   *
+   * 现在按 `defaultDataDir()` 的同一套规则算出真实位置，逐一比对。
+   */
+  const realPointers = [];
+  if (home) {
+    if (IS_WIN) {
+      const appData = process.env['APPDATA'] ?? join(home, 'AppData', 'Roaming');
+      realPointers.push(join(appData, 'OpenMemo', 'datadir.json'));
+    } else if (platform() === 'darwin') {
+      realPointers.push(join(home, 'Library', 'Application Support', 'OpenMemo', 'datadir.json'));
+    } else {
+      const xdg = process.env['XDG_DATA_HOME'] ?? join(home, '.local', 'share');
+      realPointers.push(join(xdg, 'openmemo', 'datadir.json'));
+    }
+  }
+  if (realPointers.some((r) => resolvePath(r) === resolvePath(pf))) {
+    console.error(`::error::OPENMEMO_POINTER_FILE 指向的正是机器级指针（${pf}）—— 拒绝`);
     process.exit(2);
   }
-  console.log(`指针已重定向到临时位置：${pf}`);
+  console.log(`指针已重定向：${pf}`);
+  console.log(`（本机机器级指针在：${realPointers.join(', ') || '未知'}，全程不碰）`);
 }
 
 const results = [];
@@ -265,10 +287,13 @@ const TMP = await mkdtemp(join(tmpdir(), 'ddaudit-'));
     try {
       const r = await MV.moveDataDir(from, to, { forceCopy: true });
       const miss = missingOf(to);
-      const msg = ST.moveMessageZh(
-        { files: r.files, links: r.links, sourceRemoved: r.sourceRemoved },
-        from,
-      );
+      /*
+       * ★ 必须把整个 `r` 传进去（含 `sourceResidue`）—— 产品的路由传的就是整个 result。
+       *   只挑三个字段会让这里印出来的文案**和用户真正看到的那句不一样**：
+       *   `[CI 实测 run 31298064458]` 就出现过"记录里残留 models,openmemo.db，
+       *   而文案说'里面已经空了'"这种自相矛盾 —— 那是本脚本的缺陷，不是产品的。
+       */
+      const msg = ST.moveMessageZh(r, from);
       if (r.sourceRemoved === true) {
         rec(
           'C4',
