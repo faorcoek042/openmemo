@@ -1009,46 +1009,6 @@ try {
     return `已知谎话仍在：${observedLies.join('、')}`;
   });
 
-  say(
-    `   downloading 采样轮数=${downloadingMoments} · 采到的 Toast 标题=` +
-      `${JSON.stringify([...new Set(toastTitlesWhileDownloading)])}`,
-  );
-
-  /* ─────────────────────────────────────────────────────────────────────────
-   * B6b ★ 空过和真过必须分得开
-   *
-   * 判据没变：**`downloading` 期间 Toast 标题不许出现「安装」二字**
-   * （用户看到的字是"正在安装"、进度条却在下载，这是在说一件假的事）。
-   *
-   * 变的是**它凭什么敢说"过了"**。这条断言此前"绿"过两轮，两轮都是假的：
-   *   · 第一轮：那台机器上 `下载中` 从没出现 → 判据的前件为空 → 空过；
-   *   · 第二轮：选择器抓到的是**就绪横幅**而不是任务 Toast → 采的字全无关 → 空过。
-   * 两次都记成 PASS，于是"下载期间不说安装"这件事**从来没有真的被验过一次**。
-   *
-   * 所以下面两个前提**任一不满足就报无从判断**，不许落到"通过"那一档：
-   *   ① 这一轮真的采到过 downloading（`downloadingMoments > 0`）；
-   *   ② 那期间真的读到过**任务 Toast 的标题**（`toastTitlesWhileDownloading` 非空）。
-   * ②是关键：选择器再抓错，得到的是**空**，于是这条会亮"无从判断"而不是"通过" ——
-   * **抓错元素不再能伪装成好消息。**
-   * ───────────────────────────────────────────────────────────────────────── */
-  await check('B6b 下载期间 Toast 标题不许出现「安装」二字', () => {
-    if (packToInstall === null) undecided('本机没有适用的后端包，压根没起安装');
-    if (downloadingMoments === 0) undecided('整轮没采样到 downloading 阶段');
-    if (toastTitlesWhileDownloading.length === 0) {
-      undecided(
-        `downloading 采到 ${downloadingMoments} 轮，但任务 Toast 一个标题都没读到 —— ` +
-          `要么 Toast 没渲染，要么选择器又抓错了元素（当前用 job-toaster > job-toast-* > p）`,
-      );
-    }
-    ok(
-      toastSaidInstallWhileDownloading === null,
-      `还在下载时 Toast 标题就说「安装」了：${toastSaidInstallWhileDownloading}`,
-    );
-    return `读到 ${toastTitlesWhileDownloading.length} 条标题，都不含「安装」：${JSON.stringify(
-      [...new Set(toastTitlesWhileDownloading)].slice(0, 3),
-    )}`;
-  });
-
   /* ─────────────────────────────────────────────────────────────────────────
    * B7 ★ 三条 llm 引导动作：**落地页上要真的有那个控件**
    *
@@ -1116,11 +1076,34 @@ try {
               body,
             ) ?? [])[0] ?? null,
           toast: toastEl ? (toastEl.textContent || '').replace(/\s+/g, ' ').slice(0, 60) : null,
+          // B6b 要的是**标题那一行**，不是整块 Toast 的字（见 B6b 处的选择器说明）。
+          titles:
+            toastEl === null
+              ? []
+              : [...toastEl.querySelectorAll('[data-testid^="job-toast-"]')]
+                  .map((row) => row.querySelector('p'))
+                  .filter((p) => p !== null)
+                  .map((p) => (p.textContent || '').replace(/\s+/g, ' ').trim())
+                  .filter((x) => x.length > 0),
           body,
         };
       });
       for (const zh of ['正在选择下载源', '下载中', '正在校验完整性', '正在解压', '正在安装']) {
         if (s.body.includes(zh) && !labelSeq.includes(zh)) labelSeq.push(zh);
+      }
+      /*
+       * ★ 把 D1 的采样**喂给 B6b**。
+       *
+       * 门禁腿装的是 5.3 MB 的小包，`[CI 实测 run 31314976975]` 三平台**没有一个**
+       * 采到过「下载中」—— 也就是说 B6b 在门禁里**永远**只能报"无从判断"。
+       * 那条判据要想真的被验一次，只能借这次大文件下载的窗口。
+       * 于是：D1 跑的时候顺手把 downloading 期间的标题收进同一个池子，
+       * B6b 的判定挪到 D1 之后。**门禁不填 diagnoseDownload 时这里一行都不执行**，
+       * 所以它不会给门禁加任何时间。
+       */
+      if (s.body.includes('下载中') && !s.body.includes('正在安装')) {
+        downloadingMoments += 1;
+        toastTitlesWhileDownloading.push(...s.titles);
       }
       samples.push({
         t: i * 200,
@@ -1167,6 +1150,46 @@ try {
       }`,
     );
   }
+
+  say(
+    `   downloading 采样轮数=${downloadingMoments} · 采到的 Toast 标题=` +
+      `${JSON.stringify([...new Set(toastTitlesWhileDownloading)])}`,
+  );
+
+  /* ─────────────────────────────────────────────────────────────────────────
+   * B6b ★ 空过和真过必须分得开
+   *
+   * 判据没变：**`downloading` 期间 Toast 标题不许出现「安装」二字**
+   * （用户看到的字是"正在安装"、进度条却在下载，这是在说一件假的事）。
+   *
+   * 变的是**它凭什么敢说"过了"**。这条断言此前"绿"过两轮，两轮都是假的：
+   *   · 第一轮：那台机器上 `下载中` 从没出现 → 判据的前件为空 → 空过；
+   *   · 第二轮：选择器抓到的是**就绪横幅**而不是任务 Toast → 采的字全无关 → 空过。
+   * 两次都记成 PASS，于是"下载期间不说安装"这件事**从来没有真的被验过一次**。
+   *
+   * 所以下面两个前提**任一不满足就报无从判断**，不许落到"通过"那一档：
+   *   ① 这一轮真的采到过 downloading（`downloadingMoments > 0`）；
+   *   ② 那期间真的读到过**任务 Toast 的标题**（`toastTitlesWhileDownloading` 非空）。
+   * ②是关键：选择器再抓错，得到的是**空**，于是这条会亮"无从判断"而不是"通过" ——
+   * **抓错元素不再能伪装成好消息。**
+   * ───────────────────────────────────────────────────────────────────────── */
+  await check('B6b 下载期间 Toast 标题不许出现「安装」二字', () => {
+    if (packToInstall === null) undecided('本机没有适用的后端包，压根没起安装');
+    if (downloadingMoments === 0) undecided('整轮没采样到 downloading 阶段');
+    if (toastTitlesWhileDownloading.length === 0) {
+      undecided(
+        `downloading 采到 ${downloadingMoments} 轮，但任务 Toast 一个标题都没读到 —— ` +
+          `要么 Toast 没渲染，要么选择器又抓错了元素（当前用 job-toaster > job-toast-* > p）`,
+      );
+    }
+    ok(
+      toastSaidInstallWhileDownloading === null,
+      `还在下载时 Toast 标题就说「安装」了：${toastSaidInstallWhileDownloading}`,
+    );
+    return `读到 ${toastTitlesWhileDownloading.length} 条标题，都不含「安装」：${JSON.stringify(
+      [...new Set(toastTitlesWhileDownloading)].slice(0, 3),
+    )}`;
+  });
 
   await check('B7 llm 引导落地页上必须真的有可操作的控件（不是只发生了跳转）', () => {
     ok(
