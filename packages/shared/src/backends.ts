@@ -104,6 +104,19 @@ export interface BackendPack {
    * they happen to carry the same underlying version and a guard was worth pinning.
    * Do not assume the two fields agree; they answer different questions ("what does the
    * engine call itself" vs "what did we pin when we fetched it").
+   *
+   * ── Rename? Not this round (2026-08-09 Manager ruling) ──────────────────────────────
+   * Renaming was considered instead of a doc comment. Declined for now: each field has
+   * ~20-30 consumers (2026-08-09 count, excluding dist/ and manifest JSON:
+   * `engineVersion` in 23 files, `pinnedVersion` in 12), and 7 concurrent work threads
+   * were touching the tree the same day — a mechanical rename's collision risk outweighed
+   * the benefit versus just documenting it at the definition point.
+   * ⚠️ Re-evaluate later, NOT as a vague "someday" — trigger on EITHER:
+   *   (a) `git status --short` is empty across 3 consecutive coordinator status checks
+   *       (tree has gone quiet, no concurrent threads mid-flight), OR
+   *   (b) the combined consumer count of `engineVersion` + `pinnedVersion` (same grep,
+   *       excluding dist/ and *.json) drops below 20 (was 35 on 2026-08-09).
+   * Whoever picks this up: re-run the 23-pair diff count first — it may no longer be 3/23.
    */
   engineVersion: string;
   /**
