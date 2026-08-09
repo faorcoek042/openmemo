@@ -24,11 +24,10 @@
  * 并在汇总里单列**，而不是悄悄不跑然后一片绿。`--require-crossvol` 可以把
  * "跳过"升级成失败，供以后 runner 具备条件时钉死。
  */
-import { mkdtemp, mkdir, writeFile, symlink, rm, readdir, stat } from 'node:fs/promises';
-import { existsSync, openSync, closeSync, mkdtempSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { mkdtemp, mkdir, writeFile, symlink, rm, readdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir, platform } from 'node:os';
-import { join, dirname, resolve as resolvePath, sep } from 'node:path';
+import { join, resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const REPO = process.env['REPO_ROOT'] ?? process.cwd();
@@ -266,7 +265,8 @@ const TMP = await mkdtemp(join(tmpdir(), 'ddaudit-'));
   const to = join(TMP, 'c4-dst-' + Date.now());
   await makeDataDir(from);
 
-  let db = null;
+  /** 真实 SQLite 句柄；打不开就保持 null，由下面报 SKIP。 */
+  let db;
   try {
     // better-sqlite3 装在 packages/db 下，从那儿解析
     const { createRequire } = await import('node:module');
@@ -280,10 +280,10 @@ const TMP = await mkdtemp(join(tmpdir(), 'ddaudit-'));
     db.prepare('INSERT OR IGNORE INTO notes(uid) VALUES (?)').run('n1');
   } catch (e) {
     rec('C4', '删源失败分支', 'SKIP', `打不开真实 SQLite 句柄，无法复现产品情形：${e.message}`);
-    db = null;
+    db = undefined;
   }
 
-  if (db !== null) {
+  if (db !== undefined) {
     try {
       const r = await MV.moveDataDir(from, to, { forceCopy: true });
       const miss = missingOf(to);
@@ -319,7 +319,9 @@ const TMP = await mkdtemp(join(tmpdir(), 'ddaudit-'));
     } finally {
       try {
         db.close();
-      } catch {}
+      } catch {
+        /* 已经关掉了就没别的可做 */
+      }
     }
   }
   await rm(holder, { recursive: true, force: true }).catch(() => {});
@@ -427,7 +429,9 @@ const TMP = await mkdtemp(join(tmpdir(), 'ddaudit-'));
     await new Promise((r) => server.close(r));
     try {
       db.close();
-    } catch {}
+    } catch {
+      /* 已经关掉了就没别的可做 */
+    }
     return { status: resp.status, json, events, restarts };
   }
 
