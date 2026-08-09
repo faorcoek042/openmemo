@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import { ArrowRight, HardDrive, KeyRound, PackagePlus, RefreshCw, Wrench } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { remediationTarget, type RemediationLike } from '../../lib/remediation/routes';
@@ -65,10 +65,37 @@ export function RemediationButton({
   fallbackLabel,
 }: RemediationButtonProps) {
   const navigate = useNavigate();
+  const location = useLocation();
   const target = remediationTarget(remediation);
+
+  /*
+   * ★ 用户 2026-08-09（Windows v0.5.0）：自检报
+   *   `409 SELF_TEST_BLOCKED`，点「去安装后端包」——**无反应**。
+   *
+   * 成因是同一个死法的第三次：那条引导的 action 是 `install_backend`，
+   * 落点是 `/runtime`，而**自检本来就是在 `/runtime` 上点的** ——
+   * `navigate` 到你已经在的那一页，什么都不会发生。
+   * （前两次分别是 `AsrModelPicker` 的「去安装模型」与 `ReadinessBanner` 的「诊断」。）
+   *
+   * 这次修在**通用层**而不是某一个按钮上：任何 remediation，只要落点就是当前页，
+   * 就不再渲染一个点不动的按钮，而是给一句"就在本页"。
+   * 判据仍是那条：**点了要么发生该发生的事，要么给出看得懂的话，没有第三种。**
+   */
+  const alreadyThere = target !== null && location.pathname === target.split('?')[0];
 
   // 没有落点、调用方也不接手 → 什么都不渲染（理由逐条写在 UNROUTED_ACTIONS 里）
   if (!onAct && target === null) return null;
+
+  // 落点就是当前页：给一句话，而不是一个点不动的按钮
+  if (!onAct && alreadyThere) {
+    return (
+      <span className="text-xs text-ink-secondary" data-testid="remediation-already-here">
+        {remediation.labelZh || remediation.label || fallbackLabel || remediation.action}
+        {' —— '}
+        {'就在本页'}
+      </span>
+    );
+  }
 
   const icon = ACTION_ICON[remediation.action] ?? <ArrowRight className="size-3.5" aria-hidden />;
   // 最后一层兜底用原始 action 名：难看，但**看得见** —— 空按钮才是无从排查的那种

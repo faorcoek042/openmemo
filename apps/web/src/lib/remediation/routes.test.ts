@@ -118,8 +118,22 @@ function stripComments(src: string): string {
  * 判据是**结构**（`action:` 这一行出现在一个提到 remediation 的上下文里），
  * 不是关键词匹配某个具体动作名 —— 钉关键词的护栏在改名那天会一起哑掉。
  */
-function scanDaemonActions(daemonSrc: string): Map<string, string[]> {
-  const files = globSync(`${daemonSrc}/**/*.ts`).filter((f) => !f.endsWith('.test.ts'));
+function scanDaemonActions(roots: string[]): Map<string, string[]> {
+  /*
+   * ⚠️ 扫的范围曾经**只有 `apps/daemon/src`**，而引导并不只从那里发出来。
+   * `[实测 2026-08-09]` `packages/llm/` 里有 5 个 action
+   * （openSettings / reduceChunkSize / checkLocalBackend /
+   *  increaseMaxTokens / retryWithLargerModel）——
+   * 它们既不在 REMEDIATION_ROUTES 也不在 UNROUTED_ACTIONS，
+   * 也就是说 `RemediationButton` 对它们**一个按钮都不渲染**：
+   * 产品告诉用户"去做 X"，而用户没有任何入口去做。
+   *
+   * **这道护栏本身是对的，只是它的窗口比现实窄。**
+   * 一个看不见半个仓库的护栏，会让人以为"已经有人在盯了"。
+   */
+  const files = roots
+    .flatMap((r) => globSync(`${r}/**/*.ts`))
+    .filter((f) => !f.endsWith('.test.ts'));
   const found = new Map<string, string[]>();
   for (const file of files) {
     const lines = stripComments(readFileSync(file, 'utf8')).split('\n');
@@ -153,6 +167,8 @@ function scanDaemonActions(daemonSrc: string): Map<string, string[]> {
 
 describe('守卫：daemon 会发的 action，前端必须逐个认领过', () => {
   const daemonSrc = `${process.cwd()}/../daemon/src`;
+  // 引导不只从 daemon 发出来：packages/llm 也发（见 scanDaemonActions 的说明）
+  const scanRoots = [daemonSrc, `${process.cwd()}/../../packages/llm/src`];
 
   test('前提：daemon 源码目录找得到（找不到就不是"没问题"，是没在测）', () => {
     assert.equal(
@@ -163,7 +179,7 @@ describe('守卫：daemon 会发的 action，前端必须逐个认领过', () =>
   });
 
   test('前提：扫得出东西（正则失效 → 空集 → 下面那条会假绿）', () => {
-    const found = scanDaemonActions(daemonSrc);
+    const found = scanDaemonActions(scanRoots);
     assert.equal(
       found.size >= 10,
       true,
@@ -176,7 +192,7 @@ describe('守卫：daemon 会发的 action，前端必须逐个认领过', () =>
   });
 
   test('★ 每个 action 要么有路由，要么在 UNROUTED_ACTIONS 里写明为什么没有', () => {
-    const found = scanDaemonActions(daemonSrc);
+    const found = scanDaemonActions(scanRoots);
     const orphans = [...found.entries()]
       .filter(([a]) => !(a in REMEDIATION_ROUTES) && !(a in UNROUTED_ACTIONS))
       .map(([a, at]) => `${a}（${at.join(' ')}）`);
@@ -189,7 +205,7 @@ describe('守卫：daemon 会发的 action，前端必须逐个认领过', () =>
   });
 
   test('反向：表里不许留 daemon 根本不发的 action（旧表的 switch_source / configure_api_key 就是这么来的）', () => {
-    const found = scanDaemonActions(daemonSrc);
+    const found = scanDaemonActions(scanRoots);
     const dead = [...Object.keys(REMEDIATION_ROUTES), ...Object.keys(UNROUTED_ACTIONS)].filter(
       (a) => !found.has(a),
     );
