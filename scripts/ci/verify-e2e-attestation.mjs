@@ -66,7 +66,7 @@ const BUNDLE_RUN = arg('--bundle-run');
  *    **先验证、再改名**，反过来就是"先承诺再看能不能做到"。
  *    哪天某个平台掉了，这个名字要**跟着缩回去**。
  */
-const LEGS = String(arg('--legs', 'import,notes,record,runtime,browser'))
+const LEGS = String(arg('--legs', 'import,notes,record,runtime,browser,allcomponents'))
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
@@ -224,6 +224,13 @@ const DISPATCH_HINT = {
     `gh workflow run e2e-notes.yml --ref master -f assembleFromSource=false -f bundleRunId=${b}`,
   // legs 必须是 all：只跑一个平台的 run 不该发三平台凭证。
   record: (b) => `gh workflow run e2e-record.yml --ref master -f bundleRunId=${b} -f legs=all`,
+  /*
+   * ★ `allcomponents` **必须显式给 bundleRunId**：它的这个入参是可选的，
+   *   留空会按 artifact 名各自解析，三个平台可能落到**不同批**的包上 ——
+   *   那种 run 不发凭证（见 e2e-allcomponents.yml 的 attest job）。
+   */
+  allcomponents: (b) =>
+    `gh workflow run e2e-allcomponents.yml --ref master -f bundleRunId=${b} -f legs=all`,
   // ⚠️ bundlesRunId，多一个 s；且必须 artifact 模式。
   runtime: (b) =>
     `gh workflow run e2e-runtime.yml --ref master -f bundleSource=artifact -f bundlesRunId=${b}`,

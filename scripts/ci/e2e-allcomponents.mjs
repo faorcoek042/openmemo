@@ -43,12 +43,20 @@
  * 那么它在中国就是装不上的 —— 这一条与我从哪儿跑无关，见第 3 节。
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import {
+  classifyProbeRows,
+  driftedPacks,
+  kindByExt as KIND_BY_EXT,
+  magicOf,
+  tagOf,
+} from './e2e-allcomponents-assertions.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const argv = process.argv.slice(2);
@@ -227,31 +235,6 @@ async function probeFollow(url, hops = 5) {
   return { ok: false, reason: `重定向超过 ${hops} 跳` };
 }
 
-/** 归档/权重的魔数。判据是"它还是不是原来那种东西"，不是精确格式解析。 */
-function magicOf(buf) {
-  if (!buf || buf.length < 4) return 'unknown';
-  const b = buf;
-  if (b[0] === 0x1f && b[1] === 0x8b) return 'gzip';
-  if (b[0] === 0x50 && b[1] === 0x4b) return 'zip';
-  if (b.subarray(0, 4).toString('ascii') === 'GGUF') return 'gguf';
-  if (b.readUInt32LE(0) === 0x67676d6c) return 'ggml';
-  if (b[0] === 0x08 || b[0] === 0x0a) return 'onnx-ish';
-  if (b.subarray(0, 5).toString('ascii') === '<?xml' || b[0] === 0x7b) return 'text/json';
-  return 'other';
-}
-const KIND_BY_EXT = (name) =>
-  /\.tar\.gz$|\.tgz$/.test(name)
-    ? 'gzip'
-    : /\.zip$/.test(name)
-      ? 'zip'
-      : /\.gguf$/.test(name)
-        ? 'gguf'
-        : /\.bin$/.test(name)
-          ? 'ggml'
-          : /\.onnx$/.test(name)
-            ? 'onnx-ish'
-            : 'any';
-
 /* ═══════════════════ daemon ═══════════════════ */
 
 const DAEMON = BUNDLE ? join(BUNDLE, 'app', 'daemon', 'dist', 'main.js') : null;
@@ -367,7 +350,33 @@ try {
    *   手写清单会在有人加包时静默漏掉新的那个 —— 而新加的那个正是最需要被测的。
    *   这里再加一道：目录给的数量必须 ≥ 清单里的数量，否则是 API 把谁过滤掉了。
    */
-  const manifestDir = join(REPO, 'vendor', 'manifests');
+  /*
+   * ★★ 清单**必须读包里那一份**，不是这棵 checkout 的。
+   *
+   * `[CI 实测 run 31295507733]` 第一版读的是 checkout 的清单，于是同一轮里出现了
+   * 自相矛盾的两句话：
+   *     A 层  whispercpp-cpu-linux-x64 → **206**，长度与清单逐字节一致
+   *     B 层  whispercpp-cpu-linux-x64 → **NOT_FOUND**，1.0 秒失败
+   * 我当时把真因记成 UNKNOWN。**真因是这两层读的根本不是同一份清单。**
+   *
+   * 时间线（已核实）：
+   *   99995b8 01:00  打包 → 包内清单里 whispercpp 指向 **v0.3.0**
+   *   ddccef4 03:58  目录重指 **v0.4.0**（比打包晚约 3 小时）
+   *   随后          **v0.3.0 release 被删除**
+   * → 包内那份指向一个**已经不存在的 release**：`curl` 实测 v0.3.0 是 **404**、v0.4.0 是 206。
+   * 只有 whispercpp 一族中招，因为只有它托管在我们自己的 release 上
+   * （media-tools/ytdlp 指上游 BtbN、libsimple/sqlite-vec 也指上游）。
+   *
+   * **用户手里的包用的就是包内那一份** —— 所以判据也只能是它。
+   * checkout 那份仍然读，但只用来做"包内与当前目录是否已经漂开"的比对（见下）。
+   */
+  const bundleManifestDir = join(BUNDLE, 'vendor', 'manifests');
+  const manifestDir = existsSync(bundleManifestDir)
+    ? bundleManifestDir
+    : join(REPO, 'vendor', 'manifests');
+  say(
+    `   清单来源：${manifestDir === bundleManifestDir ? '**包内**（用户实际用的那一份）' : `包内没有，退回 checkout：${manifestDir}`}`,
+  );
   let manifestPacks = 0;
   const manifestModelIds = [];
   const manifestLlmIds = [];
@@ -412,6 +421,46 @@ try {
       `**本腿 B 层覆盖不到它们**，A 层已逐个探过镜像。` +
       `用户能否从那条线装上：\`[未验证]\`。`,
   );
+
+  /*
+   * ★ 包内清单 vs 当前 checkout 的清单：**漂开了就当场点名**。
+   *
+   * 这一条是本轮那个 bug 的**一句话诊断**。没有它的时候，我从"A 层 206 / B 层 404"
+   * 一路追了很久才找到"两层读的不是同一份清单"。有了它，输出直接就是：
+   *   whispercpp-cpu-linux-x64: 包内 v0.3.0 → 目录 v0.4.0
+   *
+   * 判据只提"用户会不会因此装不上"，所以**漂开本身只是警告**（新包总会比旧包新），
+   * **真正判红的是 A 层"包内那个 URL 到底还活着没有"**。
+   * 两者合起来才说得清：漂开 + 旧 URL 已死 = 用户手里那个包永久装不上。
+   */
+  const checkoutDir = join(REPO, 'vendor', 'manifests');
+  if (manifestDir !== checkoutDir && existsSync(checkoutDir)) {
+    const urlsOf = (dir) => {
+      const out = {};
+      for (const f of readdirSync(dir).filter((n) => n.endsWith('.json'))) {
+        const j = JSON.parse(readFileSync(join(dir, f), 'utf8'));
+        for (const p of j.packs ?? []) {
+          const a = (p.files ?? []).find((x) => x.role === 'archive') ?? (p.files ?? [])[0];
+          if (a?.mirrors?.[0]?.url) out[p.id] = a.mirrors[0].url;
+        }
+      }
+      return out;
+    };
+    const inBundle = urlsOf(manifestDir);
+    const inCheckout = urlsOf(checkoutDir);
+    const drifted = driftedPacks(inBundle, inCheckout);
+    say('');
+    if (drifted.length === 0) {
+      say('   ⓘ 包内清单与当前 checkout 一致（没有漂开）');
+    } else {
+      say(
+        `   ⚠️ **包内清单与当前 checkout 已漂开 ${drifted.length} 项**（旧包 + 目录已更新 = 正常，但要看旧 URL 还活着没有）：`,
+      );
+      for (const d of drifted) {
+        say(`     ${String(d.id).padEnd(32)} 包内 ${tagOf(d.bundle)} → 目录 ${tagOf(d.checkout)}`);
+      }
+    }
+  }
 
   /* ── 2. A 层：每一个组件的每一个镜像，真发一次请求 ── */
 
@@ -465,22 +514,18 @@ try {
     }
   }
 
-  let reachableAll = 0;
-  const noMirror = [];
-  const sizeMismatch = [];
-  const kindMismatch = [];
-  const githubOnly = [];
-  for (const row of compRows) {
-    const okMirrors = row.mirrors.filter((m) => m.ok);
-    if (okMirrors.length === 0) noMirror.push(row);
-    else reachableAll += 1;
-    for (const m of okMirrors) {
-      if (m.sizeOk === false) sizeMismatch.push({ row, m });
-      if (m.kindOk === false) kindMismatch.push({ row, m });
-    }
-    const hosts = new Set(row.mirrors.map((m) => m.host));
-    if ([...hosts].every((h) => /github(usercontent)?\.com$/.test(h))) githubOnly.push(row);
+  /*
+   * 分类走 `e2e-allcomponents-assertions.mjs` 的纯函数 —— 那份有变异证明
+   * （`selftest-e2e-allcomponents.mjs`，含"空集不许报全都好"的前提自检）。
+   * 内联一份看起来更省事，但那份**没有人喂过它坏数据**，
+   * 而我上一轮正是差点把一条自己写错的判据报成产品缺陷。
+   */
+  const cls = classifyProbeRows(compRows);
+  if (!cls.ok) {
+    judge('A 层分类的前提成立（探到了东西）', { ok: false, reason: cls.reason });
   }
+  const { noMirror, sizeMismatch, kindMismatch, githubOnly } = cls;
+  const reachableAll = compRows.length - noMirror.length;
 
   say('');
   say(`   ── 结果：${compRows.length} 个文件，${reachableAll} 个至少有一个镜像可达 ──`);
