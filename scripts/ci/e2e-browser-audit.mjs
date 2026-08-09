@@ -1041,7 +1041,22 @@ try {
    * ───────────────────────────────────────────────────────────────────────── */
   if (DIAGNOSE_DOWNLOAD !== null) {
     hdr(`D1 诊断:${DIAGNOSE_DOWNLOAD} 的 downloading 期间,界面上的数字动不动`);
-    await page.goto(`${BASE}/models`, { waitUntil: 'networkidle', timeout: 30_000 });
+    /*
+     * ★ 顺序是判据的一部分：**先落到要观察的那一页，再发起任务。**
+     *
+     * `[CI 实测 run 31317995697, win32-x64]`：downloading 采到 **127** 轮，
+     * Toast 标题却**一条都没有**。原因不在选择器 —— 在这两行的先后：
+     * `JobToaster` 的 toast 列表是 **SSE 事件喂出来的 React state**
+     * （`job.created` → `setToasts`），而 `page.goto` 是**整页导航**，
+     * 会把 SPA 连同这份 state 一起重挂。任务是在导航**之前**发起的，
+     * 那条 `job.created` 早就过去了，重挂后的 Toast 层永远是空的。
+     * ⇒ 先 `goto('/tasks')`，再 POST，事件才落在活着的那个页面上。
+     *
+     * 附带一条**产品观察**（只记，不改）：这意味着**任务进行中刷新页面，
+     * Toast 就再也不出现了**（任务中心里还在，Toast 层空）。
+     * 对"转瞬即逝的通知"来说这也许可以接受，但它是真实存在的行为差异。
+     */
+    await page.goto(`${BASE}/tasks`, { waitUntil: 'networkidle', timeout: 30_000 });
     const started = await page.evaluate(async (id) => {
       const r = await fetch('/api/models/pull', {
         method: 'POST',
@@ -1051,7 +1066,6 @@ try {
       return r.status;
     }, DIAGNOSE_DOWNLOAD);
     say(`   POST /api/models/pull → HTTP ${started}`);
-    await page.goto(`${BASE}/tasks`, { waitUntil: 'networkidle', timeout: 30_000 });
 
     /** 每一次采样：界面上那几个数 + Toast 标题 + 当前阶段文案。 */
     const samples = [];
