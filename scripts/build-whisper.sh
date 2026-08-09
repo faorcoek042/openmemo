@@ -449,6 +449,14 @@ esac
 MOD_EXT="${SO_EXT}"
 [[ "${HOST_OS}" == "darwin" ]] && MOD_EXT="so"
 
+# ⚠️ **这是一个静默 no-op**：找不到就当没这回事，不报错、不影响退出码。
+#    它对"这个平台上本来就没有的可选产物"（whisper-server / parakeet / blas 变体…）是对的，
+#    但对**必需件**是致命的 —— T-190 那条 CUDA 缺件就是这么来的：
+#    glob 写成了 Windows 命名，在 Linux 上永远不匹配，而它一声不吭。
+#    同族：`git commit -- <pathspec>` 对未跟踪文件也是静默 no-op（PROTOCOL §12）。
+#
+#    **判据：凡是"少了它包就不能用"的东西，一律不许只靠这个函数。**
+#    必需件由下面那几条 `die` 守卫 + `pack-native-deps.mjs --verify` 兜底。
 copy_if_exists() { for f in "$@"; do [[ -e "$f" ]] && cp -a "$f" "${STAGE}/"; done; true; }
 
 # ★★ T-161：**每一个包都带上引擎本体**（原来只有 `cpu` 分支带）。
@@ -527,15 +535,61 @@ else
   而 GGML_BACKEND_DL 下 whisper 不会为此报任何错。"
   fi
 
-  # Vendor runtime libraries that ggml links but the OS does not provide.
-  # NOTE: libcuda / nvcuda ships with the NVIDIA *driver* and must NEVER be redistributed.
-  case "${BACKEND}" in
-    cuda)
-      copy_if_exists \
-        "${BIN_DIR}/cudart64_"*.dll "${BIN_DIR}/cublas64_"*.dll \
-        "${BIN_DIR}/cublasLt64_"*.dll "${BIN_DIR}/nvrtc"*.dll
-      ;;
-  esac
+  # ★★★ T-190：**这一段以前是坏的，而且坏得一声不吭。**
+  #
+  # 原文是：
+  #   case "${BACKEND}" in
+  #     cuda) copy_if_exists "${BIN_DIR}/cudart64_"*.dll "${BIN_DIR}/cublas64_"*.dll \
+  #                          "${BIN_DIR}/cublasLt64_"*.dll "${BIN_DIR}/nvrtc"*.dll ;;
+  #   esac
+  #
+  # 三层同时失效，任何一层单独出现都足以让包坏掉：
+  #   ① 它只在 **BIN_DIR**（构建输出目录）里找，而 CMake **不会**把 toolkit 的
+  #      DLL / .so 拷到那里 —— 那些库在 `$CUDA_PATH` 底下；
+  #   ② Linux 侧那几个 glob 是 **Windows 命名**（`cudart64_*.dll`），
+  #      在 Linux 上**永远匹配不到**；
+  #   ③ `copy_if_exists` 是「有就拷、没有就算」—— **它一声不吭**。
+  #
+  # `[实测 2026-08-09]` 后果：`whispercpp-cuda-win-x64` / `whispercpp-cuda-linux-x64`
+  # 的 `providesFiles` 里**一个 CUDA 运行库都没有**，而 `ggml-cuda` 的导入表要
+  # `cublas64_12.dll` + `cudart64_12.dll`（Linux: `libcudart.so.12` / `libcublas.so.12`）。
+  # → 装得上、`dlopen` 失败、而 `GGML_BACKEND_DL=ON` 下失败不是错误，
+  #   只是"这个后端没注册上" → 静默回落 CPU。**装了不会变快，没有任何一处会说话。**
+  #
+  # 换成 `scripts/ci/pack-native-deps.mjs --collect`，判据整个换了一层：
+  #   · **要哪些库是问二进制自己的**（ELF `DT_NEEDED` / PE 导入表），不是手写清单 ——
+  #     手写清单会漂（上面 ② 就是漂的结果）；
+  #   · **传递闭包**：拷进 `libcublas.so.12` 之后再问它一遍，`libcublasLt.so.12`
+  #     被自动带上，**不需要有人知道它的存在**（它是 328 MB 里最大的一块）；
+  #   · **找不到就 die**，不再有"没有就算"这一档；
+  #   · 只带真正被引用的 —— 上游 `release.yml` 用 `xcopy /E` 把整个 redist 目录扫进包里，
+  #     于是多了 `nvrtc`×2 + `nvblas` 共 19.9 MB。**ggml 全树零引用，我们不抄。**
+  #
+  # ⚠️ 不带 `libcuda.so.1` / `nvcuda.dll`：那是 **显示驱动**带的，
+  #    不在 NVIDIA 可再分发清单里（脚本的 `DRIVER_PROVIDED` 一类**永远不收集**）。
+  if [[ "${BACKEND}" == "cuda" ]]; then
+    CUDA_ROOT="${CUDA_PATH:-${CUDA_HOME:-}}"
+    if [[ -z "${CUDA_ROOT}" ]] && command -v nvcc >/dev/null 2>&1; then
+      CUDA_ROOT="$(cd "$(dirname "$(command -v nvcc)")/.." && pwd)"
+    fi
+    [[ -n "${CUDA_ROOT}" ]] || die "找不到 CUDA toolkit 根目录（CUDA_PATH / CUDA_HOME / PATH 上的 nvcc 都没有）。
+  运行库必须从 toolkit 里取 —— CMake 不会把它们拷进构建输出目录。"
+    log "CUDA toolkit: ${CUDA_ROOT}"
+    # 各平台的库都在哪：Windows 是 `bin/`（DLL 与 exe 同目录），Linux 是 `lib64/`
+    # 或 `targets/<triple>/lib/`。**全都给出去，让脚本自己找** —— 少给一个目录的表现
+    # 是"找不到 → 红"，那至少是响的；写死一个目录的表现才是静默。
+    CUDA_SEARCH=(
+      --search "${BIN_DIR}"
+      --search "${CUDA_ROOT}/bin"
+      --search "${CUDA_ROOT}/lib64"
+      --search "${CUDA_ROOT}/lib"
+      --search "${CUDA_ROOT}/targets/x86_64-linux/lib"
+      --search "${CUDA_ROOT}/targets/sbsa-linux/lib"
+    )
+    command -v node >/dev/null || die "node is required to collect the CUDA runtime libraries"
+    node "${REPO_ROOT}/scripts/ci/pack-native-deps.mjs" \
+      --collect --dir "${STAGE}" "${CUDA_SEARCH[@]}"
+  fi
 fi
 
 # ★ 守卫：**任何**包里都必须至少有一个 ggml CPU 后端模块 + whisper-cli 本体。
@@ -567,6 +621,27 @@ if ! ls "${STAGE}/whisper-cli"* >/dev/null 2>&1; then
   die "包 ${PACK_ID} 里没有 whisper-cli。
   ggml 只在 whisper-cli 自己所在的目录里 dlopen 后端模块，
   所以不带引擎的包 = 一堆永远不会被加载的 .so（D-11 §8.4 三条独立证据）。"
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# ★★★ T-190 守卫：**包里必须提供它自己导入表所要求的每一个非系统库。**
+#
+# 上面那几条守卫钉的是"某个我们知道名字的文件在不在"（whisper-cli / ggml-cpu* /
+# ggml-<backend>）。它们**逐条都对，合起来仍然漏掉了整整一族** ——
+# 因为它们检查的是**我们想到的那几个名字**，而 CUDA 运行库那三个**没有人想到**。
+#
+# 这一条不同：**它不带任何名字**。它读每个二进制自己的 `DT_NEEDED` / PE 导入表，
+# 把"谁提供"分成 os / driver / 已立案缺口三类，**其余一律必须在包里**。
+# 判据来自二进制而不是清单，所以：
+#   · 换后端（rocm / 将来的别的）自动覆盖，不需要有人回来加一行；
+#   · 上游改了链接方式（比如某天 ggml 开始链 nvJitLink）会**当场红**，而不是等用户装了不生效。
+#
+# 判据一句话：**"少一个文件"必须是红，不能是"装上去没变快"。**
+# ══════════════════════════════════════════════════════════════════════════════════════
+if command -v node >/dev/null 2>&1; then
+  node "${REPO_ROOT}/scripts/ci/pack-native-deps.mjs" --verify --dir "${STAGE}"
+else
+  die "node is required to run the pack dependency guard (scripts/ci/pack-native-deps.mjs)"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════════════

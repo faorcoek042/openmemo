@@ -113,3 +113,27 @@ if [[ "${MISSING}" == *libggml* ]]; then
   exit 1
 fi
 echo "${MOD} 的 libggml-* 依赖全部解析得到（其余为宿主提供，见上）"
+
+# ★★ T-190：上面那条只问 `libggml-*`。**它答不了 CUDA 补齐运行库之后的那个新问题** ——
+#
+#   `libggml-cuda.so` 的 RUNPATH 是 `$ORIGIN`，而 **RUNPATH 不作用于传递依赖**：
+#   包里放进了 `libcublas.so.12`，但它自己要的 `libcublasLt.so.12` 能不能被找到，
+#   取决于 **libcublas 自己有没有 RPATH/RUNPATH** —— 那是 NVIDIA 决定的，不是我们。
+#   「文件在包里」（`pack-native-deps.mjs --verify` 管这一层）**不等于**「加载得起来」。
+#
+#   所以这里把断言从"libggml-* 不许 not found"扩到"**任何** not found 都算红"，
+#   只放行显式列出的那几个 **驱动提供** 的（与 `pack-native-deps.mjs` 的 DRIVER_PROVIDED 同义）：
+#   runner 上没有 NVIDIA 显示驱动，`libcuda.so.1 => not found` 是**预期**的，
+#   而且它按 NVIDIA 的条款本来就不许随包分发。
+#
+#   ⚠️ 能力边界不变（D-11 §3.4）：runner 上"解析得到"≠ 用户机器上"解析得到"；
+#   只有 runner 上"解析不到"才是硬结论。这一条加的是后者的覆盖面。
+UNEXPECTED="$(printf '%s\n' "${MISSING}" \
+  | grep -v -E '^\s*(libcuda\.so\.[0-9]+|libnvidia-[a-z]+\.so\.[0-9]+|libvulkan\.so\.[0-9]+)\s' || true)"
+if [[ -n "${UNEXPECTED//[[:space:]]/}" ]]; then
+  echo "::error::${MOD} 有解析不到的依赖，而它们不在「驱动提供」白名单里："
+  printf '%s\n' "${UNEXPECTED}"
+  echo "::error::「文件在包里」不等于「加载得起来」—— RUNPATH 不作用于传递依赖。"
+  exit 1
+fi
+echo "${MOD} 的依赖全部解析得到（未解析的只有驱动提供的那几个，见上）"

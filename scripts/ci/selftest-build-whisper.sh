@@ -83,7 +83,12 @@ for f in libggml-base.so.0.15.1 libggml.so.0.15.1 libggml-cpu-haswell.so \
   skip=0
   for o in ${OMIT}; do [[ "$f" == "$o" ]] && skip=1; done
   [[ "$skip" == "1" ]] && continue
-  printf 'fake\n' > "$out/$f"
+  # ★ T-190：假产物必须是**真 ELF**，不能是 `printf 'fake'`。
+  # 新加的 `pack-native-deps.mjs --verify` 守卫会读每个文件的 DT_NEEDED / PE 导入表，
+  # 而"一个可解析的二进制都没有"在它那里是**红**（那正是"什么都没检查"的形状）。
+  # 拿一个真系统二进制当模板：它的 NEEDED 只有 libc，会被归进 os 类，不影响判定，
+  # 但整条链路（解析 → 分类 → 判定）在自检里是**真的跑到了**的。
+  if [ -r /bin/true ]; then cp /bin/true "$out/$f"; else printf 'fake\n' > "$out/$f"; fi
 done
 [[ -e "$out/whisper-cli" ]] && chmod +x "$out/whisper-cli"
 exit 0
