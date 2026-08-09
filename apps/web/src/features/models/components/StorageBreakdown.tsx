@@ -29,7 +29,20 @@ export interface StorageBreakdownProps {
 export function StorageBreakdown({ storage, locale, onGc, gcPending }: StorageBreakdownProps) {
   const { t } = useTranslation();
   const { reclaimable } = storage;
-  const reclaimableBytes = reclaimable.orphanBlobsBytes + reclaimable.stalePartialsBytes;
+  /*
+   * ★ T-193：把「无法识别的残留」算进来。
+   *
+   * `[用户真机实测 2026-08-10]` 他机器上有 33.6 MB 这样的东西（08-02 装的上游包，
+   * 08-07 同一个 id 换成自建包之后没人认领）—— 明细里查不到、界面上删不掉、GC 不扫。
+   * 他看到的就是"说不清也删不掉的 9.4 MB"。
+   *
+   * ⚠️ **可选字段**：老 daemon 不发它，`?? 0` 是"我不知道"而不是"没有"——
+   * 与 `inapplicableKind` 缺失时不替 daemon 说话同一条。
+   * daemon 那边只把**确认没在用**的算进这个数（正在被解析到的一个字节都不算）。
+   */
+  const unclaimedBytes = reclaimable.unclaimedBytes ?? 0;
+  const reclaimableBytes =
+    reclaimable.orphanBlobsBytes + reclaimable.stalePartialsBytes + unclaimedBytes;
 
   // 只展示 Top 4，其余归"其他" —— 不新造第 5 个分类色（tokens.css 的约定）。
   const sorted = [...storage.breakdown].sort((a, b) => b.bytes - a.bytes);
@@ -107,6 +120,7 @@ export function StorageBreakdown({ storage, locale, onGc, gcPending }: StorageBr
           {t('models.storage.reclaimable', {
             partials: formatBytes(reclaimable.stalePartialsBytes, locale),
             orphans: formatBytes(reclaimable.orphanBlobsBytes, locale),
+            unclaimed: formatBytes(unclaimedBytes, locale),
           })}
         </span>
         <Button

@@ -334,21 +334,69 @@ export class ArtifactStore {
     return { freedBytes: freed, removedFiles: removed };
   }
 
-  /** Total bytes held under blobs/. */
+  /**
+   * 这个 store 在磁盘上**真正**占了多少字节 —— `du` 的语义，按 (dev, ino) 去重。
+   *
+   * ## ★★ T-193：上一版只数 `blobs/`，在用户机器上少算了 **3.5 倍**
+   *
+   * `[用户真机实测 2026-08-10，:10000]`：
+   *
+   * ```
+   * usedBytes 报                  240,162,578      ← 只有 blobs/
+   * du -sb /root/data-memo/models 1,080,661,687    ← 真实
+   * 差额                          840,494,883      = by-name/ 整个目录
+   * ```
+   *
+   * 成因是一个**没写下来的前提**：`buildStorage()` 里那句注释写着
+   * 「后端包也占 blobs/ 的空间」—— 它假定 `by-name/` 全是硬链（与 blob 同 inode，
+   * 不占额外空间）。**对归档本身成立，对解开的目录不成立**：
+   * 带 `unpack` 的包解压出来的是**第二份真实副本**，与 blob 不共享 inode。
+   *
+   * `[实测同一台机器]` 一个 ffmpeg 因此占 715 MB：
+   * ```
+   * by-name/backend/ffmpeg-…-gpl-7.1.tar.xz/…/bin/ffmpeg  ino=1097021  139,397,096 B
+   * by-name/backend/media-tools-linux-x64/ffmpeg          ino=314125   139,397,096 B
+   *                                                        ↑ 同样大小、**不同 inode**
+   * ```
+   * 而"已用空间"里一个字节都没算它们 —— 用户看到的数字与 `df` 对不上，
+   * 而这正是他定过的硬要求「数据位置要可统计大小」的那一半。
+   *
+   * ## 为什么必须按 (dev, ino) 去重
+   *
+   * `by-name/<kind>/<归档名>` 与 `blobs/sha256-…` **是同一个 inode**
+   * （`linkByName()` 打的硬链，`[实测]` `ino=289895 links=2`）。
+   * 不去重就会把它数两遍 —— 那是另一个方向的错，而且同样对不上 `df`。
+   */
   async usedBytes(): Promise<number> {
+    const seen = new Set<string>();
     let total = 0;
-    try {
-      for (const e of await fs.readdir(this.blobDir)) {
+    const walk = async (dir: string): Promise<void> => {
+      let entries;
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          await walk(p);
+          continue;
+        }
+        // 软链不占内容的空间，而且它的目标本来就在这棵树里 —— 数它等于数两遍
+        if (!e.isFile()) continue;
         try {
-          const st = await fs.stat(path.join(this.blobDir, e));
-          if (st.isFile()) total += st.size;
+          const st = await fs.stat(p);
+          const key = `${String(st.dev)}:${String(st.ino)}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          total += st.size;
         } catch {
           /* ignore */
         }
       }
-    } catch {
-      /* ignore */
-    }
+    };
+    await walk(this.root);
     return total;
   }
 }

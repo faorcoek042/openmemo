@@ -896,7 +896,15 @@ async function importModel(
 
 /* ---------------------------------- gc ----------------------------------- */
 
-const GC_TARGETS = ['orphan_blobs', 'stale_partials'] as const;
+/**
+ * ★ T-193 新增 `unclaimed_files`：清 `by-name/**` 下没人认领的残留。
+ *
+ * ⚠️ 它与前两个**不同类**：前两个只删 `blobs/` 里内容寻址的文件，
+ * 而这一个删的是**产品的发现路径**上的真实文件。所以它不走 `store.collectGarbage()`，
+ * 走 `state.collectUnclaimed()` —— 那里有第二道闸（`discoverTools()` 当前解析到的
+ * 一律不删；解析器本身失败时一个都不删）。
+ */
+const GC_TARGETS = ['orphan_blobs', 'stale_partials', 'unclaimed_files'] as const;
 type GcTarget = (typeof GC_TARGETS)[number];
 
 async function runGc(
@@ -920,7 +928,20 @@ async function runGc(
     return true;
   }
 
-  const result: GcResponse = await state.store.collectGarbage(targets);
+  const storeTargets = targets.filter(
+    (t): t is 'orphan_blobs' | 'stale_partials' => t !== 'unclaimed_files',
+  );
+  const fromStore =
+    storeTargets.length > 0
+      ? await state.store.collectGarbage(storeTargets)
+      : { freedBytes: 0, removedFiles: 0 };
+  const fromUnclaimed = targets.includes('unclaimed_files')
+    ? await state.collectUnclaimed()
+    : { freedBytes: 0, removedFiles: 0 };
+  const result: GcResponse = {
+    freedBytes: fromStore.freedBytes + fromUnclaimed.freedBytes,
+    removedFiles: fromStore.removedFiles + fromUnclaimed.removedFiles,
+  };
   await state.emitStorageChanged();
   sendJson(res, 200, result);
   return true;

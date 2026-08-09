@@ -191,7 +191,7 @@
       "other": "其他",
       "inUse": "使用中",
       "empty": "还没有安装任何模型",
-      "reclaimable": "可清理：未完成的下载 {{partials}} · 孤立文件 {{orphans}}",
+      "reclaimable": "可清理：未完成的下载 {{partials}} · 孤立文件 {{orphans}} · 无法识别的残留 {{unclaimed}}",
       "gc": "清理 {{size}}"
     },
     "fit": {

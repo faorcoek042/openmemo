@@ -149,11 +149,30 @@ export interface GetStorageResponse {
     orphanBlobsBytes: number;
     stalePartialsBytes: number;
     inactiveModelsBytes: number;
+    /**
+     * 「无法识别的残留」—— `by-name/**` 下没有任何安装记录认领、
+     * **且产品自己的解析器确认当前没在用**的那些字节。
+     *
+     * `[用户真机实测 2026-08-10]` 他机器上有 33.6 MB 这样的东西
+     * （08-02 装的上游包，08-07 同一个 id 换成自建包之后没人认领）——
+     * 明细里查不到、界面上删不掉、GC 也不扫。他看到的就是"说不清也删不掉的 9.4 MB"。
+     *
+     * **可选**：老 daemon 不发这个字段，客户端必须能表达"我不知道"。
+     */
+    unclaimedBytes?: number;
   };
 }
 
 export interface GcRequest {
-  targets: ('orphan_blobs' | 'stale_partials')[];
+  /**
+   * `unclaimed_files`（T-193）：清「无法识别的残留」。
+   *
+   * ⚠️ 它与前两个不同 —— 前两个只删 `blobs/` 里内容寻址的东西，
+   * 而这一个删的是 `by-name/**` 下的真实文件，**那正是产品的发现路径**。
+   * 所以 daemon 侧有第二道闸：`discoverTools()` 当前解析到的路径一律不删，
+   * 解析器本身失败时**一个都不删**。见 `RestState.collectUnclaimed()`。
+   */
+  targets: ('orphan_blobs' | 'stale_partials' | 'unclaimed_files')[];
 }
 
 export interface GcResponse {

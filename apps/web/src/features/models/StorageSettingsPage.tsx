@@ -48,7 +48,11 @@ export default function StorageSettingsPage() {
             storage={storage.data}
             locale={locale}
             gcPending={gc.isPending}
-            onGc={() => void gc.mutateAsync({ targets: ['orphan_blobs', 'stale_partials'] })}
+            onGc={() =>
+              void gc.mutateAsync({
+                targets: ['orphan_blobs', 'stale_partials', 'unclaimed_files'],
+              })
+            }
           />
         </>
       ) : null}
