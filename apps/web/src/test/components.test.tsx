@@ -7191,6 +7191,87 @@ const HW_LINUX_X64 = {
  * 任何人把三档重新合并回一句话（含"顺手简化成 `applicable ? … : '不可用'`"），
  * 或者把缺档位时的兜底改成"本机不支持"（= 替 daemon 说一句它没说过的话）。
  */
+/**
+ * ★ 自检按钮不该出现在**范畴上不可能自检**的包上。
+ *
+ * `[用户实测 :10000]` 他点了 `libsimple-linux-x64`（一个 SQLite 分词扩展）卡片上的
+ * 「运行自检」，得到「缺少 whisper-cli」，于是合理地怀疑是自己配置改坏了。
+ * `[协调者实跑核实]` 环境什么都不缺：`POST /api/backends/selftest
+ * {"packId":"whispercpp-cpu-linux-x64"}` → `passed:true`、`transcriptSimilarity:1`、
+ * 11 秒音频 0.59 秒转完（约 19 倍实时）。**什么都没坏，坏的是这个按钮不该在。**
+ *
+ * daemon 那边"缺前提只报 blocked、绝不返回伪造的通过"是对的（ADR-003 决策 3），
+ * 本轮**没有削它**；治的是"渲染完再 blocked"这一步。
+ *
+ * ── 把名字遮住，这些断言什么时候会失败 ────────────────────────────────────────
+ * 任何人把门控去掉、改回"只要 installed 就渲染"，或者新加一种 engine 时
+ * 顺手在表里填 `true` 让它"先能点"。
+ */
+describe('★ 自检按钮：非推理包不渲染，而不是渲染完再 blocked', () => {
+  const NOOP = {
+    locale: 'zh-CN',
+    isActive: false,
+    selfTest: null,
+    installing: false,
+    onInstall: () => undefined,
+    onRemove: () => undefined,
+    onSelect: () => undefined,
+    onSelfTest: () => undefined,
+  } as const;
+
+  /**
+   * ⚠️ 用 `data-testid` 而不是文案匹配。
+   * 第一版这几条**是假绿的** —— 我按记忆写了「运行自检」，而按钮上其实只有「自检」，
+   * 于是三条否定断言全部空转通过。是下面那条反向用例把它照出来的。
+   */
+  async function selfTestButton(id: string, engine: string) {
+    const p = pack({ id, engine, installed: true });
+    const r = await render(<BackendPackCard {...NOOP} pack={p as never} />);
+    const shown = text(r.container);
+    assert.ok(shown.includes('卸载'), `卡片压根没渲染出来，这条就没在测门控 → ${shown}`);
+    return { r, has: r.container.querySelector(`[data-testid="backend-selftest-${id}"]`) !== null };
+  }
+
+  test('`sqlite-ext`（libsimple，用户撞到的那张卡）上没有自检按钮', async () => {
+    const { r, has } = await selfTestButton('libsimple-linux-x64', 'sqlite-ext');
+    assert.equal(has, false, '分词扩展上仍挂着必然 blocked 的自检按钮');
+    r.unmount();
+  });
+
+  test('`ffmpeg` / `yt-dlp`（转码器、下载器）上同样没有', async () => {
+    for (const [id, engine] of [
+      ['ffmpeg-linux-x64', 'ffmpeg'],
+      ['ytdlp-linux-x64', 'yt-dlp'],
+    ] as const) {
+      const { r, has } = await selfTestButton(id, engine);
+      assert.equal(has, false, `${engine} 不是推理引擎，却挂着自检按钮`);
+      r.unmount();
+    }
+  });
+
+  /** 反向：门控不许把该有的也一起吃掉 —— 否则"全都不渲染"也能让上面两条变绿。 */
+  test('★ 反向：`whisper.cpp` 装好后**必须**还有自检按钮', async () => {
+    const { r, has } = await selfTestButton('whispercpp-cpu-linux-x64', 'whisper.cpp');
+    assert.ok(has, '门控把唯一真能自检的包也吃掉了 —— 用户就再也跑不了自检');
+    r.unmount();
+  });
+
+  /**
+   * ★ 门控写成穷尽表的**理由**就钉在这里：新加一种 engine 必须表态。
+   * `[实测数过]` `vendor/manifests` 今天 25 个包只用了 4 种 engine
+   * （sqlite-ext 11 / yt-dlp 4 / ffmpeg 3 / whisper.cpp 7），
+   * 而 schema 允许 6 种 —— `llama.cpp` 与 `sherpa-onnx` 今天零个包在用。
+   * 它们**不能**因为"没人用"就落进一个隐含默认值。
+   */
+  test('schema 里 6 种 engine 全部有明确表态（新加一种会在编译期逼你选）', async () => {
+    for (const engine of ['llama.cpp', 'sherpa-onnx'] as const) {
+      const { r, has } = await selfTestButton(`x-${engine}`, engine);
+      assert.equal(has, false, `${engine} 今天没有任何自检链路支持它，却渲染了自检按钮`);
+      r.unmount();
+    }
+  });
+});
+
 describe('T-165 ①「不可用」的三档不许长成同一个样子', () => {
   const NOOP = {
     locale: 'zh-CN',

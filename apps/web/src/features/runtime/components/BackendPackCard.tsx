@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { Download, Lock, Play, Trash2 } from 'lucide-react';
-import type { BackendSelfTest, GetBackendCatalogResponse } from '@openmemo/shared';
+import type { BackendSelfTest, Engine, GetBackendCatalogResponse } from '@openmemo/shared';
 import { Button } from '../../../components/common/Button';
 import { StatusChip } from '../../../components/common/StatusChip';
 import { BackendChip, type BackendChipState } from '../../../components/common/BackendChip';
@@ -58,6 +58,40 @@ export interface BackendPackCardProps {
   onSelfTest: (id: string) => void;
 }
 
+/**
+ * 这个引擎的包，「运行自检」对它**有没有意义**。
+ *
+ * ## 为什么是一张穷尽表，而不是 `engine === 'whisper.cpp'`
+ *
+ * 自检的定义是「跑一次真实推理」（ADR-003 决策 3）。对一个 SQLite 分词扩展
+ * 或一个下载器来说，这件事**在范畴上就不适用** —— 不是"暂时缺前提"。
+ *
+ * `[用户实测 2026-08-09]` 他点了 `libsimple-linux-x64`（`engine: sqlite-ext`）卡片上的
+ * 「运行自检」，得到「自检无法运行，缺少 whisper-cli」，然后合理地怀疑
+ * 「是不是配置改错了导致找不到 whisper」。**什么都没坏** ——
+ * whisper 在盘上、指着它跑 `passed:true`。**坏的是这张卡片上不该有这个按钮。**
+ *
+ * 写成 `Record<Engine, …>` 而不是等值比较：清单里今天有 4 种 engine
+ * （`[实测数过]` sqlite-ext 11 / whisper.cpp 7 / yt-dlp 4 / ffmpeg 3），
+ * 而 **schema 允许 6 种**（多 `llama.cpp` / `sherpa-onnx`，今天没有包用）。
+ * 穷尽表让"新加一种 engine"**在编译期就必须表态**，
+ * 而不是默默继承一个"whisper 才行"的隐含假设。
+ */
+const SELF_TEST_APPLIES: Record<Engine, boolean> = {
+  /** 自检本身就是跑一次 whisper 推理。 */
+  'whisper.cpp': true,
+  /** LLM 引擎：今天的自检只会跑 ASR 推理，对它没有可执行的检查。 */
+  'llama.cpp': false,
+  /** ASR 引擎，但自检链只认 whisper-cli；等它真被支持时再翻成 true。 */
+  'sherpa-onnx': false,
+  /** 转码器 —— 不是推理引擎。 */
+  ffmpeg: false,
+  /** 下载器 —— 不是推理引擎。 */
+  'yt-dlp': false,
+  /** SQLite 分词扩展 —— 不是推理引擎。用户撞到的就是这一格。 */
+  'sqlite-ext': false,
+};
+
 export function BackendPackCard({
   pack,
   locale,
@@ -97,10 +131,21 @@ export function BackendPackCard({
           {t('runtime.pack.setActive')}
         </Button>
       ) : null}
-      <Button size="sm" variant="ghost" onClick={() => onSelfTest(pack.id)}>
-        <Play className="size-3.5" aria-hidden />
-        {t('runtime.pack.selfTest')}
-      </Button>
+      {/*
+        ★ 非推理包**不渲染**这个按钮，而不是渲染完再 blocked。
+          判据与上一轮那条一致：一个点了必然失败的按钮就该不存在。
+      */}
+      {SELF_TEST_APPLIES[pack.engine] ? (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => onSelfTest(pack.id)}
+          data-testid={`backend-selftest-${pack.id}`}
+        >
+          <Play className="size-3.5" aria-hidden />
+          {t('runtime.pack.selfTest')}
+        </Button>
+      ) : null}
       <Button
         size="sm"
         variant="ghost"
