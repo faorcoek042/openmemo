@@ -267,3 +267,125 @@ Windows 各 DLL 的 VC++ 版本（`UNKNOWN`，今天仍无任何测量）。
 - `UNKNOWN`：Windows 各 DLL 的 VC++ 版本要求。
 - **只读审计，未改任何产品代码**；未碰 `:10000` / `/root/data-memo` / 机器级指针；
   未用 `pkill`；未建改删 release；未动文档那一路在改的 `README` / `docs/**` / `HANDOFF.md`。
+
+---
+
+# 硬件卡两条假话：定位报告（2026-08-09）
+
+⚠️ **本条只交定位与证据，修复未实施** —— 见末尾"我没做什么"。
+
+## ① 「不支持 AVX2」——**根因不是探测读错了，是 Windows 上压根没有探测**
+
+`[实测·读码]` `packages/runtime/src/detect/system.ts:190-205` 的 `detectCpuWin32()`
+**没有任何分支**，最后一行是无条件的：
+
+```ts
+return { brand, physicalCores, logicalCores, features: [] };
+```
+
+它只用 PowerShell 查了**物理核数**，**从不查任何 ISA 标志**。
+所以 Windows 上 `cpu.features` **恒为空集** —— 与是不是 Zen 4 无关，
+与 CPU 支不支持 AVX2 无关。**用户那台 7840HS 的输出就是复现本身**：
+一台确实支持 AVX2（且支持 AVX-512）的机器被报成"不支持"。
+
+### 它本来有个缓解措施，而那个措施**从来没接上**
+
+同一段注释写着：「我们改从 **ggml 实际选中的 CPU 后端**反推 ISA ——
+见 `inferIsaFromBackendPath`」。
+
+`[实测]` 全仓 grep `inferIsaFromBackendPath`（排除定义处与 `dist/`）：
+**只有 `packages/runtime/src/index.ts:80` 的一句再导出，零个真实调用方。**
+
+⇒ 那个"更好的证据"**一次都没有被使用过**。于是空集不是"探测前的临时状态"，
+而是**Windows 上的永久状态**。这正是本仓反复栽的那个形状：
+**注释描述的是设计意图，不是代码事实。**
+
+## ② 这个错**有没有影响变体选择** —— 你最关心的那条：**没有，但影响的是别的东西，而且更糟**
+
+**变体选择（3.4 倍那条）不受影响** `[实测·读码]`：
+`ADR-003 附录 A.2` 说的 CPU 微架构变体（`libggml-cpu-zen4` / `haswell` / …）
+是 **ggml 自己在加载时挑的**（后端包里并排放着多个 `libggml-cpu-*`），
+**我们的代码里没有任何一处按 `cpu.features` 去挑变体** ——
+`ISA_BY_VARIANT` 只被那个零调用方的 `inferIsaFromBackendPath` 用。
+所以用户**不会**白白损失 3.4 倍。
+
+**但它影响了模型可用性判定，那是用户可见的功能缺陷** `[实测]`：
+
+`packages/shared/src/fitness.ts:319-331` 规则 2：
+
+```ts
+const missing = input.requirements.cpuFeatures.filter(
+  (f) => !hw.cpu.features.includes(f.toLowerCase()),
+);
+if (missing.length > 0) return { tier: 'unsupported', reasonZh: `CPU 不支持所需指令集（…）` };
+```
+
+我数了清单：**35 个模型里有 5 个声明 `requirements.cpuFeatures: ['avx2']`**。
+
+⇒ **在每一台 Windows 机器上，这 5 个模型都会被判成 `unsupported`**，
+理由写着「CPU 不支持所需指令集（avx2）」—— 包括那台 Zen 4。
+**用户看到的是"我的 CPU 不行"，而事实是"我们没去查"。**
+
+⚠️ 这比显示文案严重：它**挡掉了模型**，不只是说错一句话。
+
+## ③ 显示层：同一个坑，上一次只填了一半
+
+`apps/web/.../HardwareCard.tsx:84`：
+
+```tsx
+{hw.os.arch === 'x64' && !hw.cpu.features.includes('avx2') ? <告警> : null}
+```
+
+上一轮已经为 arm64 修过一次（M 系列 Mac 上"不支持 AVX2"是**不适用**维度），
+注释里写着判据：**「不适用」和「不支持」必须区分得开**。
+
+**但它只分了两态。** 这里需要的是**三态**：
+
+| 状态       | 今天                     | 应该                         |
+| ---------- | ------------------------ | ---------------------------- |
+| 不适用（arm64） | 不渲染 ✅               | 不渲染                       |
+| **未知**（win32，没查） | **渲染成"不支持"** ❌ | 「未检测」或不渲染           |
+| 确实不支持（x64 老 CPU） | 渲染 ✅               | 渲染告警                     |
+
+**`空集` 被当成了 `已知不支持`** —— 与 ① 是同一个根因的两个出口。
+
+## ④ GPU 那一栏：技术上成立，但和下一行自相矛盾
+
+用户看到的两句话并排：
+
+```
+显卡：未检测到可用 GPU
+后端：CUDA/Vulkan/ROCm/Metal/CoreML 不可用（backend package not installed）
+```
+
+第一句成立（Vulkan 包没装 ⇒ 探针枚举不到设备），但**用户只会记住第一句**，
+而他的 780M 明明在那儿。判据仍是那条已经用过的：
+**「不适用」「未安装」「真的没有」必须区分得开。**
+
+**建议文案（未实施）**：加速后端包一个都没装时，那一栏不说"未检测到可用 GPU"，
+改说「**尚未安装 GPU 后端包，无法检测**」+ 一个「去安装」入口
+（`remediation` 机制现成，`action: 'install_backend'` 已经在用）。
+`UNKNOWN`：GPU 那一栏的具体渲染位置我**没有定位到**（`HardwareCard.tsx` 里
+grep `未检测到可用 GPU` / `gpus.length` 均无命中），文案可能来自 i18n 键或另一组件。
+
+## ⑤ 我没做什么（诚实边界）
+
+- **两条都没有修** —— 本轮只做到定位。理由：修 ① 要在 Windows 上真的做特性探测
+  （或把 `inferIsaFromBackendPath` 接上），涉及 `detect/system.ts` + `fitness.ts` +
+  `HardwareCard.tsx` 三处与配套测试，我的余量不足以把它做完并跑完门禁 ——
+  **做一半比不做更糟**（半个探测会产生另一种假话）。
+- `[未验证]`：Windows 上 CPUID 实际会报出什么标志 —— **我没有 Windows 机器**，
+  也没有在 Windows runner 上跑过一次特性枚举。但这一条不影响上面的结论：
+  代码路径是**无条件返回空集**，没有"读到了但读错"的可能。
+- `[报告]`：ADR-003 附录 A.2 的 3.4 倍差距我引用未复核。
+- **只读**：未改任何产品代码；未碰 `:10000` / `/root/data-memo` / 机器级指针；
+  未用 `pkill`；未建改删 release；未动文档、浏览器腿、downloader 三路在改的文件。
+
+## ⑥ 给下一轮的最小可行修法（建议，不替 Manager 裁）
+
+1. **`fitness.ts` 先止血**：`features` 为空 ⇒ 那是**未知**，不是**缺失**。
+   规则 2 在空集时不该判 `unsupported`（否则 5 个模型在所有 Windows 上被挡掉）。
+   这一条改动最小、收益最大，且不需要任何新的探测能力。
+2. **把 `inferIsaFromBackendPath` 真的接上**（它已经写好了、零调用方），
+   用探针 stderr 里 `load_backend: … libggml-cpu-zen4…` 反推 —— 那是 ggml 自己的结论。
+3. **显示层改三态**；GPU 栏在"后端包一个都没装"时改说"无法检测"+去安装入口。
