@@ -6,8 +6,8 @@
   "components": [
     {
       "id": "whispercpp-cpu-linux-x64",
-      "displayName": "whisper.cpp CPU backend (Linux x64)",
-      "displayNameZh": "whisper.cpp CPU 后端（Linux x64）",
+      "displayName": "whisper.cpp — CPU (Linux x64)",
+      "displayNameZh": "whisper.cpp · CPU 后端（Linux x64）",
       "category": "backend-pack",
       "pinnedVersion": "v1.9.1",
       "provenance": {
@@ -29,8 +29,8 @@
     },
     {
       "id": "whispercpp-vulkan-linux-x64",
-      "displayName": "whisper.cpp Vulkan backend (Linux x64)",
-      "displayNameZh": "whisper.cpp Vulkan 后端（Linux x64）",
+      "displayName": "whisper.cpp — Vulkan (Linux x64)",
+      "displayNameZh": "whisper.cpp · Vulkan 后端（Linux x64）",
       "category": "backend-pack",
       "pinnedVersion": "v1.9.1",
       "provenance": {
@@ -75,8 +75,8 @@
     },
     {
       "id": "libsimple-linux-x64",
-      "displayName": "libsimple Chinese FTS5 tokenizer (Linux x64)",
-      "displayNameZh": "中文分词器 libsimple（Linux x64）",
+      "displayName": "libsimple — Chinese FTS5 tokenizer (linux/x64)",
+      "displayNameZh": "中文分词器 libsimple（linux/x64）",
       "category": "sqlite-ext",
       "pinnedVersion": "v0.7.1",
       "provenance": {
@@ -97,8 +97,8 @@
     },
     {
       "id": "sqlite-vec-linux-x64",
-      "displayName": "sqlite-vec vector search (Linux x64)",
-      "displayNameZh": "向量检索 sqlite-vec（Linux x64）",
+      "displayName": "sqlite-vec — vector search (linux/x64)",
+      "displayNameZh": "向量检索 sqlite-vec（linux/x64）",
       "category": "sqlite-ext",
       "pinnedVersion": "v0.1.9",
       "provenance": {

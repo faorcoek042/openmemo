@@ -60,6 +60,10 @@ interface PackLike {
   availability?: string;
   providesFiles: string[];
   engineVersion: string;
+  displayName: string;
+  displayNameZh: string;
+  license: { id: string; url: string };
+  totalSizeBytes: number;
   files: { name: string; sha256: string; sizeBytes: number; mirrors: { url: string }[] }[];
 }
 
@@ -231,6 +235,43 @@ describe('T-146 ③ backends/sqlite-ext → components 反方向也必须齐', (
       checked += 1;
     }
     // 数了几个就说几个 —— 零个也能"全部通过"，那正是 C5 修掉的那种守卫。
+    assert.ok(checked >= 15, `只核对了 ${checked} 个，说明两边几乎没有交集`);
+  });
+
+  /*
+   * ★ T-任务「那两份清单该不该收敛」（2026-08-09）：sizeBytes/sha256 早已被上面那条守卫
+   * 盯着，但 license 与 displayName/displayNameZh **从来没人核对过两边一不一致**——
+   * CUDA 包错标 MIT、ytdlp 的 Phase 2 漏改 components.json，两次事故都是从这个缺口钻出来的；
+   * 本次审计另外实测发现 4 个 id（whispercpp-cpu-linux-x64、whispercpp-vulkan-linux-x64、
+   * libsimple-linux-x64、sqlite-vec-linux-x64）的 displayName/displayNameZh 已经在两边
+   * 悄悄漂开（components.json 停留在改版式之前的旧文案），随本次一并修掉。
+   * 这条补齐的正是那个缺口，不是重复 —— 上面那条测的是"字节对不对"，这条测的是
+   * "人话（许可证与展示名）对不对"，两者曾经独立漂过，必须分别守。
+   */
+  it('两份清单里同一个 id 的 license 与展示名也必须一致（不是只有字节数才算数）', async () => {
+    const be = (await readJson('backends.json')) as { packs: PackLike[] };
+    const ext = (await readJson('sqlite-ext.json')) as { packs: PackLike[] };
+    const comps = (await readJson('components.json')) as {
+      components: {
+        id: string;
+        displayName: string;
+        displayNameZh: string;
+        provenance: { license: string; licenseUrl: string };
+      }[];
+    };
+    const byId = new Map(comps.components.map((c) => [c.id, c]));
+
+    let checked = 0;
+    for (const p of [...be.packs, ...ext.packs]) {
+      const c = byId.get(p.id);
+      if (!c) continue;
+      assert.equal(c.provenance.license, p.license.id, `${p.id} 两份清单的 license 对不上`);
+      assert.equal(c.provenance.licenseUrl, p.license.url, `${p.id} 两份清单的 licenseUrl 对不上`);
+      assert.equal(c.displayName, p.displayName, `${p.id} 两份清单的 displayName 对不上`);
+      assert.equal(c.displayNameZh, p.displayNameZh, `${p.id} 两份清单的 displayNameZh 对不上`);
+      checked += 1;
+    }
+    // 同样防"零个也算通过"——见上一条同款注释。
     assert.ok(checked >= 15, `只核对了 ${checked} 个，说明两边几乎没有交集`);
   });
 });
