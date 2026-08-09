@@ -1298,3 +1298,169 @@ T-192 的修法只在**卸载时**清；这两份是历史遗留，需要一次�
 | 用户机器上 33.6 MB 孤儿（无 manifest，UI 删不掉、GC 不扫） | 🔴 **未修** | 需要一条覆盖 `by-name/` 的 GC |
 | `:10000` 要重建重启才能看到 ①–⑤ | ⏳ **你来做**，我不碰进程 | 你 |
 | macOS 探针 10 秒超时 | ⚠️ `UNKNOWN`，需要真 Mac | 待定 |
+
+---
+
+## [2026-08-10 04:10] T-193 —— 那个数字本身是错的（+ 被卷进 `81c5091` 的认领）
+
+# 第一句：**那 193 行是完整的，不是半截。**
+
+`git show 81c5091 -- apps/daemon/src/http/rest/state.ts` 逐块看过，
+我的部分是**其中 5 块**，另外 4 块是 catalog 那一路的（`BUNDLED_MODEL_IDS` 导入、
+`catalogDescriptionRank()`、`buildCatalog` 里的 rank 逻辑）：
+
+| 块 | 内容 | 谁的 |
+|---|---|---|
+| `@@ -10,7` | `discoverTools` 导入 | 我 |
+| `@@ -26,6` | `BUNDLED_MODEL_IDS` 导入 | 他 |
+| `@@ -74,6 +75,42` | `duBytes()` | 我 |
+| `@@ -871 / -882 / -907 / -927` | `catalogDescriptionRank()` + rank 逻辑 | 他 |
+| `@@ -944,12 +1036,145` | `findUnclaimedFiles()` + `collectUnclaimed()` + `Promise.all` 接入 | 我 |
+| `@@ -980,6 +1205,24` | breakdown 里的「无法识别的残留」 | 我 |
+| `@@ -991,6 +1234,10` | `reclaimable.unclaimedBytes` | 我 |
+
+**判"完整"的依据不是我的记忆，是三条可核的事实：**
+
+1. `git status` 里 `state.ts` **没有任何属于我的未提交残留** ⇒ 工作区 == HEAD，
+   我没有"写到一半被卷走"的部分留在外面。
+2. 那份内容上 `tsc -b` **0**；`unclaimedFiles.test.ts` **5/5**、
+   `backendDiskReclaim.test.ts` 3/3、daemon 全量 **613/613**。
+3. **消费方齐了**：`GC_TARGETS` 加 `unclaimed_files`、`runGc` 调 `collectUnclaimed()`、
+   `GetStorageResponse.reclaimable.unclaimedBytes`、前端把它算进「清理」按钮 ——
+   这几处在**我自己的 `510017c`** 里，不在那个混合提交里。
+   也就是说：**功能不是"出口开好了没人走进去"**，整条链是通的。
+
+## ⚠️ `unclaimedFiles.test.ts` 已经 `git add` 并提交了
+
+在 **`510017c`**（带 pathspec，`git show --name-only` 逐条核过，**没卷进别人的文件**）。
+写这封时它已经不是未跟踪状态。
+
+## ⚠️ 关于那次共享索引冲撞：**成因有我一半**
+
+他在 `git add` 与 `git commit` 之间，我对同一个索引也执行了 `git add`。
+**我当时按"我 add 完核对过了"在做事，而那条在共享索引上不成立** ——
+这正是你反复交代的那一条，我在它发生之后才真正理解它的含义。
+我没有 revert / reset / rebase 那两个提交。
+
+---
+
+# §23 ① `usedBytes` 现在算得对不对 —— 给你 `du` 对照数
+
+**在用户真实 store 上跑新实现（只读，构造函数只存路径不写盘）：**
+
+```
+新 usedBytes()   1,080,661,411
+du -sb           1,080,661,687      ← 差 276 字节
+旧口径(只数 blobs/) 240,162,578      ← 少算 840,499,109
+```
+
+**276 字节的差是可解释的、且是对的**：`du` 把**目录 inode 本身**也算进去，
+而这里只数普通文件。三处刻意的口径：目录不计、软链不计（目标本来就在树里，
+数它等于数两遍）、**(dev, ino) 去重**（`by-name/<kind>/<归档名>` 与
+`blobs/sha256-…` 是同一个 inode，`[实测]` `ino=289895 links=2`）。
+
+# §24 ② 孤儿能不能被看见、能不能被删掉
+
+**在用户真机上只读复算（用与 `findUnclaimedFiles()` 完全相同的两个输入）：**
+
+```
+✅可回收   278,693,531  by-name/backend/media-tools-linux-x64
+✅可回收    24,259,262  by-name/backend/whisper-bin-ubuntu-x64
+✅可回收     9,379,235  by-name/backend/whisper-bin-ubuntu-x64.tar.gz
+合计 312,332,028 B（298 MB），其中确认没在用 312,332,028 B
+```
+
+- **看得见**：明细里多一行「无法识别的残留（N 项）」，**正在被用的也列**
+  （只是不计入可回收）—— 藏起来才是把"说不清"变成"看不见"。
+- **删得掉**：GC 目标加 `unclaimed_files`，**复用已有的「清理」按钮**，不新造 UI 概念。
+- ⚠️ **我一个字节都没删**：那是你交代要留的真实样本。上面全是只读复算。
+
+## ★ 比预期多出来的一条：**298 MB 里有 279 MB 是重复的 ffmpeg**
+
+`by-name/backend/media-tools-linux-x64/` 也没人认领。它是 ffmpeg 的**第二份解压**：
+
+```
+产品当前解析到的     by-name/backend/ffmpeg-…-gpl-7.1.tar.xz/…/bin/ffmpeg   ino=1097021
+没人认领、也没人解析  by-name/backend/media-tools-linux-x64/ffmpeg           ino=314125
+                     ↑ 同样 139,397,096 B，**不同 inode**，两份真实副本
+```
+
+# §25 ③ 判"没在用"用的是什么判据
+
+**两道闸，缺一条都不删：**
+
+1. **没有任何安装记录认领它** —— 走记录里点名的 `files[].relPath`
+   （`resolveInstalledFile()` 自带越界检查）+ `unpackDirName(name)` 推出的解压目录
+   + `byModelDir(id)`。不按模式猜。
+2. ★ **产品自己的解析器当前没有把任何工具解析到它里面** ——
+   `discoverTools({ storeRoot })`，**与 `buildPipeline()` 装配时调的是同一个函数**，
+   不是我另写一份判断。命中的标 `inUseBy`、**排除在可回收之外**，也不删。
+
+⚠️ **解析器本身失败时一个都不删**（`collectUnclaimed()` 直接返回 0）——
+「我问不出来」不等于「它没在用」，与 `check-elf-glibc` 对 objdump 缺失、
+`hw.probe` 对探针缺失是同一条。
+
+**为什么必须有第二道**：你提醒的那件事我在 T-192 里刚亲手证明过 ——
+`by-name/backend/` 就是 `findInBackendPacks()` 的发现路径，
+**一个没有 manifest 的目录仍然会被解析到并真的跑起来**。
+用例里专门造了这个形状（残留里放一个 `whisper-cli`，产品真的从那个无记录目录解析到它），
+**拆掉第二道闸时它必红**，红的原话：
+`产品正从它里面解析 whisper-cli，却被判成"没在用" —— 删了转写当场坏，而用户不会知道为什么`。
+
+# §26 ④ 门禁那条 `packStatus.ts :: isActivePack`
+
+**已经收了，而且不是靠登记基线。**
+
+```
+node scripts/check-orphan-exports.mjs → exit=0
+ℹ 零引用导出 70 个（基线 70 个）
+grep isActivePack 报告 / 基线 → 0 / 0
+```
+
+它真实的接线在 `RuntimePage.tsx:119`（`isActive={isActivePack(p, …)}`），
+在 `d7f755e` 里就有了。
+
+⚠️ **那条红是共享工作树的读时序造成的假红**：我第一次跑到 71/70（1 条新增），
+随后连跑 3 次都是 70/70、diff 逐字相同。这个脚本按 `git ls-files` 取路径、
+**读工作区内容**，而当时 web 那一路正在改同一批文件 ——
+它读到的是别人写到一半的中间态。**不是 `isActivePack` 的问题，也不该进基线。**
+
+# §27 ⚠️ 需要你裁：那两份 ffmpeg 是设计还是缺陷
+
+**先摆清楚"两份"到底指什么**（这一点我原来的说法不够准）：
+
+| 东西 | 占额外空间吗 |
+|---|---|
+| `blobs/sha256-…` ↔ `by-name/<kind>/<归档名>` | **不占**。同一个 inode（硬链），`[实测]` `links=2` |
+| 解开的目录 | **占**。是解压出来的第二份真实副本 |
+
+所以"归档 + 解开"本身只多 1 份内容，**这一份我判断是设计**：blob 是内容寻址的
+校验/去重依据（`integrity` 复验、重装不重下都靠它），解开的目录是产品真正执行的东西。
+**没有动它。**
+
+**真正不对劲的是另一件事：同一个归档被解开了两次，落在两套不同的布局里。**
+
+```
+by-name/backend/ffmpeg-…-gpl-7.1.tar.xz/<上游顶层>/bin/ffmpeg   ← 产品当前用的
+by-name/backend/media-tools-linux-x64/ffmpeg                    ← 扁平、按 pack id
+```
+
+后者**没有任何记录认领、产品也没解析到它**（§24 的实测），
+即它是一次**布局约定变更**留下的整份副本。这与"同一个 id 换了内容"是**同一个形状**：
+**换的那一刻没有人负责清掉上一版**，于是事后靠扫。
+
+→ **我没有自作主张删，也没有改留存策略。** 请裁两件事：
+① 那套扁平布局是不是已经废弃（如果是，历史机器上每台都躺着一份完整 ffmpeg）；
+② 根治应该放在"换的那一刻"（安装器写新落点时清掉旧落点），
+   还是继续靠 `unclaimed_files` 事后扫。**前者才是治本，但它要改安装器，不是我这轮的范围。**
+
+# §28 纪律
+
+- **`:10000` 一个请求都没发**（本轮只对 `/root/data-memo` 做过 `find` / `du` / `stat`
+  **只读**取证，以及只读复算；**没有删任何东西、没有塞任何东西**）。
+- 禁 `git stash` ✅ · `git commit` **带 pathspec** ✅（`510017c` 用 `git show --name-only`
+  逐条核过，8 个文件全是我的）· 新文件**先 `git add`** ✅ · 无 `pkill` · 无 `--amend` ·
+  没建/改/删 release · 没碰机器级指针。
+- **没有 revert / reset / rebase `81c5091` 与 `2f9c4bd`。**
+- ⚠️ **`510017c` 尚未推送**：它叠在 `81c5091` 之上，推它就会把那两个（以及 `b16e4ba`、
+  `2676e90`）一起推上去。**按你说的，推送由你放行**，我不自行决定。
