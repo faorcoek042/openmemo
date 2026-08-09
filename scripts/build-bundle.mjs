@@ -1481,22 +1481,48 @@ async function writeNotices() {
    * 把"官方二进制内嵌了什么"和"项目本身的许可证"混为一谈——yt-dlp 项目本身是
    * Unlicense，GPL 是官方 PyInstaller 二进制里内嵌的运行时依赖（mutagen 全平台
    * GPL-2.0-or-later、GNU Readline 仅 Linux x64/arm64 GPL-3.0-or-later，实测见
-   * D-20 §14）。已按下面这行改准；但这不改变本段的结论——ffmpeg 与 yt-dlp 内部
-   * 无论嵌了多少层什么许可证，那都是**它们自己发布物**的声明义务，不是我们的：
-   * NOTICES 的边界是"随本包分发的字节"，而这两个组件的字节从没进过这条流水线
-   * （用户机器直连上游官方仓库下载，我们既不转存也不重新分发）。因此 mutagen /
-   * Readline / certifi / requests / packaging / cryptography / yt-dlp 内嵌的
-   * OpenSSL（Linux/macOS 3.x·Apache-2.0 与 Windows 1.1.x·旧 OpenSSL 许可证·已
-   * EOL 这条版本分叉，同样见 D-20 §14）都**不**在这份 NOTICES 里逐条列出——
-   * 不是漏了，是判断后排除在外：这些字节从没随我们的包分发过，义务不在我们。
-   * D-20 §14.4 那张"供写 NOTICES 时用"的表，结论恰恰是这张表最终不喂给这个
-   * 函数；那句框架性描述已经过时，留给 D-20 自己的订正处理，这里不重复改。
+   * D-20 §14）。已按下面这行改准；但这不改变本段的结论——yt-dlp 内部无论嵌了
+   * 多少层什么许可证，那都是**它自己发布物**的声明义务，不是我们的：NOTICES 的
+   * 边界是"随本包分发的字节"，而 yt-dlp 的字节从没进过这条流水线（用户机器直连
+   * 上游官方仓库下载，我们既不转存也不重新分发）。因此 mutagen / Readline /
+   * certifi / requests / packaging / cryptography / yt-dlp 内嵌的 OpenSSL
+   * （Linux/macOS 3.x·Apache-2.0 与 Windows 1.1.x·旧 OpenSSL 许可证·已 EOL 这条
+   * 版本分叉，同样见 D-20 §14）都**不**在这份 NOTICES 里逐条列出——不是漏了，
+   * 是判断后排除在外：这些字节从没随我们的包分发过，义务不在我们。D-20 §14.4
+   * 那张"供写 NOTICES 时用"的表，结论恰恰是这张表最终不喂给这个函数；那句框架性
+   * 描述已经过时，留给 D-20 自己的订正处理，这里不重复改。
+   *
+   * 2026-08-09（ffmpeg-lgpl-manifest，Manager 裁定，D-20 §9.2/§13.7）：ffmpeg 那半句
+   * 不再对 Linux/Windows 成立——那两个平台从"下载"改成"随包内置"（LGPL-3.0-or-later
+   * 变体，与原 GPL 变体同源同 commit，见 vendor/manifests/backends.json 的
+   * media-tools-{linux,win}-x64）。macOS 不变，供应商（jellyfin-ffmpeg）不发 LGPL
+   * 变体，仍是下载 + GPL-3.0-or-later（D-20 §13.4 供应商缺口）。三平台不再是同一句话，
+   * 按 T.platform 分叉，不在这里重复维护"内置到底有没有落地"的判断——一旦 ffmpeg
+   * 真的没有被打包进某平台的 stage，那是打包实现那一路的 bug，不是这段文字该兜底的事；
+   * 这里只负责在"确实内置"的前提下把 LGPL 的分发义务（许可证全文可得）说清楚。
+   * 本次改动**只碰这段文字**，未触碰任何 ffmpeg 字节的打包/复制逻辑（那由另一路负责，
+   * 见 D-20 §13.6）。
    */
-  parts.push('⚠️ 本包**不含** ffmpeg 与 yt-dlp。ffmpeg 是 GPL-3.0-or-later；');
-  parts.push('   yt-dlp 项目本身是 Unlicense，但官方发行的二进制内嵌了 GPL 组件');
-  parts.push('   （mutagen 等，详见 docs/design/D-20-bundled-deps.md §14）。');
-  parts.push('   这两个组件都由产品在你的机器上按需从上游官方 GitHub 下载，');
-  parts.push('   我们既不转存也不重新分发它们的字节。详见 docs/adr/ADR-002。');
+  if (T.platform === 'darwin') {
+    parts.push('⚠️ 本包**不含** ffmpeg 与 yt-dlp。ffmpeg 是 GPL-3.0-or-later');
+    parts.push('   （jellyfin-ffmpeg 构建）；yt-dlp 项目本身是 Unlicense，但官方发行的');
+    parts.push(
+      '   二进制内嵌了 GPL 组件（mutagen 等，详见 docs/design/D-20-bundled-deps.md §14）。',
+    );
+    parts.push('   这两个组件都由产品在你的机器上按需从上游官方 GitHub 下载，');
+    parts.push('   我们既不转存也不重新分发它们的字节。详见 docs/adr/ADR-002。');
+  } else {
+    parts.push('⚠️ 本包**内置** ffmpeg / ffprobe（LGPL-3.0-or-later，BtbN LGPL 变体，');
+    parts.push('   与本条目下方"随包出厂的 CPU 基线转写引擎"逻辑一致：字节随本包分发）。');
+    parts.push('   我们只以 `spawn` 命令行方式调用 ffmpeg 可执行文件，不 `dlopen`、');
+    parts.push('   不链接其任何库（D-20 §13.3），LGPL 的链接触发义务不适用；仍需满足的');
+    parts.push('   "许可证全文可得"义务由 ffmpeg 归档自带的 LICENSE.txt 满足——该文件');
+    parts.push('   随 ffmpeg 归档整份分发，未在本 NOTICES 中另行摘抄。');
+    parts.push('   本包**不含** yt-dlp：项目本身是 Unlicense，但官方发行的二进制内嵌了');
+    parts.push('   GPL 组件（mutagen 等，详见 docs/design/D-20-bundled-deps.md §14）。');
+    parts.push('   yt-dlp 由产品在你的机器上按需从上游官方 GitHub 下载，我们既不转存也');
+    parts.push('   不重新分发它的字节。详见 docs/adr/ADR-002。');
+  }
   parts.push('');
   parts.push('─'.repeat(78));
   parts.push('汇总');
