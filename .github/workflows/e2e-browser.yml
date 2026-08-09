@@ -35,8 +35,20 @@ name: e2e-browser
 on:
   workflow_dispatch:
     inputs:
+      # ⚠️ 拼法**照抄 `e2e-notes`**（同一个人写的另一条腿）：
+      #    `assembleFromSource`(bool) + `bundleRunId`。
+      #    `e2e-runtime` 用的是 `bundleSource`(choice) + `bundlesRunId`（**多一个 s**）。
+      #    两套拼法并存本身就是个坑 —— 名字拼错不会报错，只会让表达式求值成空串，
+      #    于是凭证名变成 `e2e-attest-browser-linux-`，消费方永远问不到，
+      #    表现为"看起来已认证"的假通过。既然只能选一套，就选与我另一条腿一致的那套，
+      #    并在下面把**解析后的真值**抬成 job output 再用，不直接引用输入。
+      assembleFromSource:
+        description: '默认 true = 用本次 checkout 现场组装跑回归门禁。设为 false 则对 bundleRunId 指定的发布产物做审计（**只有这种模式才发凭证**）。'
+        required: false
+        default: true
+        type: boolean
       bundleRunId:
-        description: '对哪次 build-bundles 的 artifact 做审计。留空 = 用本次 checkout 现场组装（回归门禁）。'
+        description: '仅当 assembleFromSource=false 时有意义：对哪一次 build-bundles 的 artifact 做审计。留空 = 最近一次成功的那个。'
         required: false
         default: ''
         type: string
@@ -62,6 +74,10 @@ jobs:
     name: 真浏览器点按钮（linux-x64）
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    # 把**实际用到的**那一批包的 run id 抬到 job 级，供 attest 绑定。
+    # artifact 模式下 bundleRunId 可以留空自动挑，所以必须取解析后的真值。
+    outputs:
+      bundle_run_id: ${{ steps.pick.outputs.run_id }}
     steps:
       - uses: actions/checkout@v6
 
@@ -86,7 +102,64 @@ jobs:
       # 网页产物必须是**这次 checkout 编出来的**，否则点的是别人留下的旧界面。
       # CI runner 是一次性的，PROTOCOL §7 禁的是共享开发树，这里不适用。
       - name: 构建（含 apps/web/dist —— 缺了用户打开是白页）
+        if: ${{ inputs.assembleFromSource }}
         run: pnpm -r build
+
+      # ── artifact 模式：对**已经发出去的那批字节**跑 ────────────────────────
+      #
+      # 这条腿此前**只有现组装一种模式** —— 它证明的是"这次 checkout 的界面能点"，
+      # 而用户下载到的是 `build-bundles` 出的那批包。两者之间隔着整条打包流水线。
+      # `v0.4.0` 就是在"界面能不能点"零证据的情况下发出去的（第五类盲区）。
+      - name: 解析要用哪个 build-bundles run
+        id: pick
+        if: ${{ !inputs.assembleFromSource }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WANT: ${{ inputs.bundleRunId }}
+        run: |
+          set -euo pipefail
+          if [ -n "$WANT" ]; then
+            RUN_ID="$WANT"
+          else
+            RUN_ID="$(gh run list --workflow=build-bundles.yml --status=success \
+                        --limit 1 --json databaseId --jq '.[0].databaseId')"
+          fi
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "::error::找不到任何成功的 build-bundles run —— 无法取得预编译包。"
+            exit 1
+          fi
+          # 「最近一次成功的 run」不等于「那次 run 里有我要的 artifact」：
+          # 跳过 2/3 条腿的 run 其 conclusion 仍是 success（PROTOCOL §11）。
+          if ! gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" \
+                 --jq '.artifacts[].name' | grep -qx 'bundle-linux-x64'; then
+            echo "::error::run $RUN_ID 里没有 bundle-linux-x64 —— 多半是只跑了部分平台的 build-bundles"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[].name' || true
+            exit 1
+          fi
+          echo "用的 run id：$RUN_ID"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: 下载预编译包
+        if: ${{ !inputs.assembleFromSource }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bundles
+          gh run download "${{ steps.pick.outputs.run_id }}" --name bundle-linux-x64 --dir dist/bundles
+          ls -la dist/bundles
+
+      # 解包走**共享脚手架**（同一类 shell 坑撞过三次之后提出来的那一份）
+      - name: 解开归档 + 验结构（共享脚手架）
+        id: extract
+        if: ${{ !inputs.assembleFromSource }}
+        shell: bash
+        run: |
+          node scripts/ci/resolve-bundle.mjs \
+            --from dist/bundles --out extracted \
+            --require app/apps/web/dist/index.html --require-node-runtime
 
       # ── 判据本身 ───────────────────────────────────────────────────────────
       #
@@ -108,7 +181,14 @@ jobs:
           export PLAYWRIGHT_MODULE="$(npm root -g)/playwright"
           echo "PLAYWRIGHT_MODULE=$PLAYWRIGHT_MODULE"
           test -d "$PLAYWRIGHT_MODULE" || { echo "::error::全局 playwright 不在 $PLAYWRIGHT_MODULE"; ls "$(npm root -g)"; exit 1; }
-          node scripts/ci/e2e-browser-audit.mjs --port 19980
+          if [ "${{ inputs.assembleFromSource }}" = "true" ]; then
+            echo "== 回归门禁模式：用本次 checkout 现组装的界面 =="
+            node scripts/ci/e2e-browser-audit.mjs --port 19980
+          else
+            echo "== 发布审计模式：对 build-bundles run ${{ steps.pick.outputs.run_id }} 的包 =="
+            node scripts/ci/e2e-browser-audit.mjs --port 19980 \
+              --bundle "${{ steps.extract.outputs.bundle_dir }}"
+          fi
 
       # 失败时把现场留下来 —— 「点了没反应」这类问题，事后看日志远不如看截图
       - name: 失败时留下截图
@@ -119,3 +199,61 @@ jobs:
           path: |
             /tmp/om-e2e-browser-*/shots/**
           if-no-files-found: ignore
+
+  # ═══════════════════════════════════════════════════════════════════════════════════
+  # 凭证：「这条腿对着**那一批包**跑绿过」
+  #
+  # 判定落在 artifact **名字**上（`emit-e2e-attestation.mjs` 的设计）：消费方
+  # （`release-upload.yml` 的 `e2e-gate`）只问名字在不在，不下载、不解析、不相信内容。
+  # 名字里带 bundleRunId，所以换一批包 = 换一个名字 = 旧凭证自动失效。
+  #
+  # ## ⚠️ 为什么 leg 名是 `browser-linux` 而不是 `browser`
+  #
+  # **这条腿只跑 ubuntu**（取舍理由：要抓的"按钮有没有反应"是前端代码的性质，
+  # 同一份 JS 三平台一致，而我确实在 Linux 上复现了 Windows 用户报的那个 bug）。
+  #
+  # 但接进**发布闸门**之后，性质变了：闸门给出的是"这批包可以发"的保证，
+  # 而一张叫 `e2e-attest-browser-*` 的凭证读起来像"界面在三个平台上都验过"。
+  # **一个不说明覆盖面的凭证，会让闸门给出比实际更强的保证** —— 而这正是这一整轮在治的病
+  # （第四类问"是不是用户启动它的方式"，第五类问"是不是用户下载到的那批字节"，
+  #   这里是第三个同族问题：**"是不是用户所在的那个平台"**）。
+  #
+  # 所以把覆盖面**写进名字**：`browser-linux`。
+  # 它同时出现在 `verify-e2e-attestation.mjs` 的默认腿列表里，
+  # 于是**任何人读那一行就知道浏览器这条只覆盖 linux** —— 限制写在做判定的那个地方，
+  # 而不是藏在某份文档里等人去查。
+  #
+  # 将来若把它铺成三平台，leg 名改回 `browser` 并同步改闸门列表 ——
+  # 那会是一次**显式的、看得见的**扩权，而不是悄悄变宽。
+  # ═══════════════════════════════════════════════════════════════════════════════════
+  attest:
+    name: e2e 凭证（仅 artifact 模式，linux 绿才发）
+    needs: [browser]
+    # ★ 只有 artifact 模式才发凭证：现组装的绿**不能给一批已发布的字节背书**，
+    #   两者之间隔着整条 build-bundles 流水线。
+    # ⚠️ 这个 `if:` 管的是**模式**，绝不是**结果**。`needs:` 已经管住了结果
+    #   （带 needs 的 job 默认要求 needs 全部 success）。
+    #   **永远不要改成 always() / !cancelled()** —— 那会解除默认的 success 要求，
+    #   于是"部分跑/跑挂了"也能发出凭证，而这正是本机制要挡的那件事。
+    if: ${{ !inputs.assembleFromSource }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: 写凭证
+        run: |
+          node scripts/ci/emit-e2e-attestation.mjs \
+            --leg browser-linux \
+            --bundle-run "${{ needs.browser.outputs.bundle_run_id }}" \
+            --platforms linux-x64 \
+            --out dist/e2e-attest.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: e2e-attest-browser-linux-${{ needs.browser.outputs.bundle_run_id }}
+          path: dist/e2e-attest.json
+          if-no-files-found: error

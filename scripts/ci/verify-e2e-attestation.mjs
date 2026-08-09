@@ -59,7 +59,13 @@ const BUNDLE_RUN = arg('--bundle-run');
  * 四条腿。**写死在这里是有意的**：一条新腿加进来必须显式登记，
  * 否则这道闸会在"腿变多了"的时候悄悄放宽 —— 那正是它要挡的那类漂移。
  */
-const LEGS = String(arg('--legs', 'import,notes,record,runtime'))
+/*
+ * ⚠️ `browser-linux` 的后缀是**故意的**，不是笔误：浏览器那条腿只跑 ubuntu。
+ *    闸门给的是"这批包可以发"的保证，而一个叫 `browser` 的条目读起来像
+ *    "界面三平台都验过"。把覆盖面写进腿名，**限制就出现在做判定的这一行上**，
+ *    而不是藏在某份文档里。将来铺成三平台时改回 `browser` —— 那是一次显式扩权。
+ */
+const LEGS = String(arg('--legs', 'import,notes,record,runtime,browser-linux'))
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
