@@ -78,9 +78,12 @@ const BINARY_PAYLOAD_LICENSES = [
    *   `_comment:removed-deps`。
    *
    * ⚠️ **义务没有消失，它换了记录的地方。** yt-dlp 与 ffmpeg 现在只从 manifest 那条
-   *   通道装，GPLv3+ 记在 `vendor/manifests/backends.json` 每个包的 `license` 字段里
+   *   通道装，许可证记在 `vendor/manifests/backends.json` 每个包的 `license` 字段里
    *   （已核对：ytdlp-linux-x64 / -linux-arm64 / -macos-arm64 / -win-x64 与
-   *   media-tools-linux-x64 全部是 `GPL-3.0-or-later`）——
+   *   media-tools-macos-arm64 仍是 GPL 系；2026-08-09 起 media-tools-linux-x64 /
+   *   media-tools-win-x64 换成了 **LGPL-3.0-or-later**（内置随包分发，Manager 裁定，
+   *   见 D-20 §9.2/§13.7）—— 三个平台从此不是同一份许可证，逐条以 manifest 里
+   *   `license.id` 为准，不要在这里假设它们对称）——
    *   而那条通道本来就在本报告的 A/B 类之外单独成表。
    *
    * ★ **这个数组空着不等于这条防线没用了。** 它盯的是

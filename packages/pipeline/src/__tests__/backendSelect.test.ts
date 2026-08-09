@@ -79,11 +79,13 @@ const MEDIA_TOOLS: PackSpec = {
   id: 'media-tools-linux-x64',
   backend: 'cpu',
   engine: 'ffmpeg',
-  archive: 'ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-gpl-8.1.tar.xz',
+  // 2026-08-09：Linux 由 GPL 变体换成 LGPL 变体（D-20 §9.2/§13.7，Manager 裁定），
+  // 归档名同步更新，逐字抄自 vendor/manifests/backends.json（本文件头部注释的不变式）。
+  archive: 'ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-lgpl-8.1.tar.xz',
   // ★ `.tar.xz` 不在剥离之列 —— 目录名真的带着扩展名（pack-publish §2.3 实测）。
-  dir: 'ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-gpl-8.1.tar.xz',
+  dir: 'ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-lgpl-8.1.tar.xz',
   priority: 10,
-  binaries: ['ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-gpl-8.1/bin/ffmpeg'],
+  binaries: ['ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-lgpl-8.1/bin/ffmpeg'],
 };
 
 /**
