@@ -95,16 +95,93 @@ const RULES = [
 ];
 
 /**
- * 剥掉块注释与行注释。
+ * 剥掉注释**与字符串字面量**，只留下真代码。
  *
  * ⚠️ 必要但**不充分** —— 见文件头：靶子里那两处是真代码（形参 + 实参），剥注释救不了。
- * 它在这里的作用是把"注释里提过"这一种彻底排除掉，剩下的交给下面的读取形态判定。
+ *
+ * ## ★ 为什么还要剥字符串（上线一小时后自己撞上的假绿）
+ *
+ * 只剥注释的版本会把 **i18n 的键**当成属性访问。
+ * `[实测]` 给 `FitResult.detail`（契约注释：`Diagnostic numbers, surfaced in the detail
+ * panel so users can sanity-check us.`）判读者：
+ *
+ * ```
+ * 属性访问正则 /[.?]\s*detail\b/ 在 ModelDetailPage.tsx 里命中 27 次
+ *   …{t('models.detail.loading')}…   ← 全部是 i18n 键，不是属性访问
+ *   …{t('models.detail.back')}…
+ * 而它真正的子字段 needMB / vramBudgetMB / ramBudgetMB / diskFreeMB / diskNeededMB
+ *   在 apps/web 全域各 0 次
+ * ```
+ *
+ * ⇒ **判成"已消费"，而它一次都没被读过。** 与这个守卫本来要抓的那类损失完全同形，
+ * 只是这次假绿的是守卫自己。
+ *
+ * ## 模板字符串里的 `${…}` 要留下
+ *
+ * 反引号里 `${…}` 内是**真代码**，可能正是 `x.field`。所以不能整段抹掉 ——
+ * 下面按字符走一遍，只把**字面文本**替换成空格，`${…}` 原样保留。
+ * （用扫描而不是正则：正则处理不了嵌套与转义，而这个函数是整条守卫的地基。）
  */
-function stripComments(src) {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/^\s*\/\/[^\n]*$/gm, ' ')
-    .replace(/([^:"'`])\/\/[^\n]*/g, '$1 ');
+function stripCommentsAndStrings(src) {
+  let out = '';
+  let i = 0;
+  const n = src.length;
+  while (i < n) {
+    const c = src[i];
+    const c2 = src[i + 1];
+    // 块注释
+    if (c === '/' && c2 === '*') {
+      const end = src.indexOf('*/', i + 2);
+      out += ' ';
+      i = end === -1 ? n : end + 2;
+      continue;
+    }
+    // 行注释
+    if (c === '/' && c2 === '/') {
+      const end = src.indexOf('\n', i);
+      out += ' ';
+      i = end === -1 ? n : end;
+      continue;
+    }
+    // 普通字符串：整段抹成空格（里面不可能有代码）
+    if (c === "'" || c === '"') {
+      i++;
+      while (i < n && src[i] !== c) i += src[i] === '\\' ? 2 : 1;
+      out += ' ';
+      i++;
+      continue;
+    }
+    // 模板字符串：字面文本抹掉，`${…}` 里的代码保留
+    if (c === '`') {
+      i++;
+      while (i < n && src[i] !== '`') {
+        if (src[i] === '\\') {
+          i += 2;
+          continue;
+        }
+        if (src[i] === '$' && src[i + 1] === '{') {
+          let depth = 1;
+          i += 2;
+          const start = i;
+          while (i < n && depth > 0) {
+            if (src[i] === '{') depth++;
+            else if (src[i] === '}') depth--;
+            if (depth > 0) i++;
+          }
+          out += ' ' + src.slice(start, i) + ' ';
+          i++; // 跳过收尾的 }
+          continue;
+        }
+        i++;
+      }
+      out += ' ';
+      i++;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
 }
 
 /**
@@ -146,9 +223,26 @@ function assertMatcherWorks() {
     'interface MergedJob { noteUid: string | null }',
     'type T = { noteUid: string };',
   ];
+  /*
+   * ★ 字符串字面量单独一组：它们要先过 `stripCommentsAndStrings` 才轮到匹配器。
+   * 第一行**逐字来自实测**：`t('models.detail.loading')` 让 `FitResult.detail`
+   * 被判成"已消费"，而它一次都没被读过。
+   */
+  const noAfterStrip = [
+    "const s = t('models.noteUid.loading');",
+    'const s = "job.noteUid";',
+    'const s = `见 job.noteUid 那一段`;',
+  ];
+  const keepsTemplateCode = ['const s = `id=${job.noteUid}`;'];
   const wrong = [
     ...yes.filter((c) => !readsField(c, 'noteUid')).map((c) => `漏判（应算读取）：${c}`),
     ...no.filter((c) => readsField(c, 'noteUid')).map((c) => `误判（不该算读取）：${c}`),
+    ...noAfterStrip
+      .filter((c) => readsField(stripCommentsAndStrings(c), 'noteUid'))
+      .map((c) => `误判（字符串字面量不该算读取）：${c}`),
+    ...keepsTemplateCode
+      .filter((c) => !readsField(stripCommentsAndStrings(c), 'noteUid'))
+      .map((c) => `漏判（模板串里 \${…} 是真代码，必须保留）：${c}`),
   ];
   if (wrong.length) {
     console.error('✘ 匹配器自检未通过 —— **在报告任何结论之前**先停下：\n');
@@ -204,7 +298,7 @@ for (const rule of RULES) {
 
   const files = sources(abs);
   const readers = files.filter((f) =>
-    readsField(stripComments(readFileSync(f, 'utf8')), rule.field),
+    readsField(stripCommentsAndStrings(readFileSync(f, 'utf8')), rule.field),
   );
 
   if (readers.length === 0) {
@@ -214,7 +308,7 @@ for (const rule of RULES) {
      * 而后者正是这条守卫存在的理由。
      */
     const mentioned = files.filter((f) =>
-      new RegExp(`\\b${rule.field}\\b`).test(stripComments(readFileSync(f, 'utf8'))),
+      new RegExp(`\\b${rule.field}\\b`).test(stripCommentsAndStrings(readFileSync(f, 'utf8'))),
     );
     console.error(`✘ 字段 \`${rule.field}\` 在 ${rule.dir}/** 里**没有任何真实读取**`);
     if (mentioned.length > 0) {
