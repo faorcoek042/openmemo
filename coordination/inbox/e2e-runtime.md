@@ -606,3 +606,58 @@ artifact 实测：**`e2e-attest-runtime-31268366005`  377 B  expired=false** ✅
   （`gh api .../logs` 与 `gh run view --log-failed` 都返回空），所以行内路径是截断的原文。
 - `UNKNOWN`：无。
 - 未碰 `:10000` / `/root/data-memo` / 机器级指针；未用 `pkill`；未建改删 release。
+
+---
+
+## 2026-08-09 · B6b 终于真的跑了一次（不是空过）
+
+**先回答那个问题：这一轮 B6b 真执行了。** `[CI 实测 run 31318703812, win32-x64]`
+读到 **146 条**任务 Toast 标题，全是 `正在准备 · Whisper 大模型 v2（Q8_0 量化）`，
+**不含「安装」二字 ⇒ 真通过**。同一次运行的 linux/darwin 两腿报 **UNDECIDED**
+（`整轮没采样到 downloading 阶段`）—— 空过与真过现在分得开了。
+
+### 它此前为什么连着两轮"绿"
+
+1. **前件为空**：门禁装 5.3 MB 小包，三平台都来不及出现「下载中」；
+2. **选择器抓错**：`[data-testid="job-toaster"], [role="status"]` —— 这一页
+   `[role="status"]` 不止一个，文档序第一个是**就绪横幅**，`querySelector` 取第一个。
+
+两次都记成 PASS。所以这条判据**从来没有被真的验过一次**，却一直显示通过。
+
+### 改了什么
+
+- 选择器钉到 `job-toaster` > `job-toast-<jobId>` > 第一个 `<p>`（`titleFor()`）；
+- 脚手架加**第三档 UNDECIDED**（此前只有 PASS/FAIL，"没采到"只能 `return` 一句话，
+  仍记成 PASS）。不计入 `failed`（采不到常是平台差异），但**单独计数、汇总单独列**；
+- B6b 元断言：`downloadingMoments === 0` **或**一条标题都没读到 → UNDECIDED。
+  第二条是关键：**选择器再抓错也只会亮"无从判断"，不会伪装成通过**；
+- B6c 那句 `return '……无从判断'` 同步改走 UNDECIDED；
+- 借 D1 的大文件窗口喂 B6b（门禁不填 `diagnoseDownload` 时一行不执行）。
+
+### 中途抓到的真原因（值得记）
+
+`run 31317995697` 里 downloading 采到 **127** 轮、标题仍然 **0 条** —— 不是选择器，
+是**顺序**：`JobToaster` 的列表是 SSE 喂出来的 React state，`page.goto` 整页导航会把
+它连同 SPA 一起重挂；任务在导航**之前**发起，`job.created` 早过去了，Toast 层永远空。
+先落页再 POST 就有了。
+
+> **附带产品观察（只记不改）：任务进行中刷新页面，Toast 就不再出现**
+> （任务中心里还在，Toast 层空）。对转瞬即逝的通知也许可接受，但这是真实行为差异。
+
+### 另外两问的答案
+
+- **ETA 不是产品缺口，是我的正则错了。** 界面根本不写「剩余」/「ETA」；
+  `lib/format/time.ts:70 approxEta()` 出的是「不到 1 分钟 / 约 N 分钟 / 约 N 小时」，
+  由 `JobToaster.tsx:369`、`JobList.tsx:100`、`NoteProgressLine.tsx:68` 以 ` · ${eta}` 拼行尾。
+  按实际文案改写后：`run 31318703812` **ETA=true（在变）**。上一轮报的"0 个不同值"是我的锅。
+- **`unpacking-percent-frozen` 只适用于「带压缩包的安装」。** 后端包必经解压；
+  模型看清单 `files[].unpack`，`asr/whisper-large-v2-q8_0` 是单个 `.bin`、无 `unpack`
+  ⇒ **这条模型路径压根没有解压阶段**。这就是 D1 阶段序列里没有「正在解压」的原因 ——
+  不是没推事件。适用范围已写进登记项。
+
+### 不是我的那条
+
+`B11 移动失败时界面必须说话`：**只在填了 `diagnoseDownload` 的两次运行里红**
+（`31317995697`/`31318703812`），无诊断的门禁 `31316142174` 三平台全绿。
+失败文本是真的像缺陷（`端点回了 404 FOLDER_NOT_FOUND，而界面一个字都没说`），
+但它对时序敏感、且**不在门禁路径上**。**没动它。**
