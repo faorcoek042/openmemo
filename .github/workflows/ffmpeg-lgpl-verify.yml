@@ -80,7 +80,7 @@ jobs:
         run: |
           $lic = Get-ChildItem -Path lgpl-extracted -Recurse -Filter LICENSE.txt | Select-Object -First 1
           if (-not $lic) { Write-Error "lgpl-extracted 里没有 LICENSE.txt"; exit 1 }
-          $head = Get-Content $lic.FullName -TotalCount 3 -Raw
+          $head = (Get-Content $lic.FullName -TotalCount 3) -join "`n"
           Write-Host $head
           if ($head -notmatch 'LESSER GENERAL PUBLIC LICENSE') {
             Write-Error "LICENSE.txt 头三行没有 'LESSER GENERAL PUBLIC LICENSE' —— 这份构建可能不是 LGPL"
