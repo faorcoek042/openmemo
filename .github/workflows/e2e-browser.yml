@@ -52,6 +52,17 @@ on:
         required: false
         default: ''
         type: string
+      diagnoseDownload:
+        # ★ 一次性诊断，**刻意不进门禁**：填一个模型 id（如 asr/whisper-large-v2-q8_0）
+        #   就会在下载它的整个过程里每 200ms 采一次 DOM，回答
+        #   「downloading 期间百分比/字节/速度/ETA 到底有没有一个在变」。
+        #   门禁腿装的是 5.3 MB 小包，`[CI 实测 run 31314976975]` 三平台**没有一个**
+        #   采到「下载中」—— 窗口不够，那一位就永远答不了。
+        #   留空 = 整段跳过，所以它不可能拖慢门禁。
+        description: '一次性诊断：填模型 id 则在其 downloading 期间逐帧采样界面数字（留空=不跑）'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -215,7 +226,8 @@ jobs:
           fi
           if [ "${{ inputs.assembleFromSource }}" = "true" ]; then
             echo "== 回归门禁模式：用本次 checkout 现组装的界面 =="
-            node scripts/ci/e2e-browser-audit.mjs --port 19980
+            node scripts/ci/e2e-browser-audit.mjs --port 19980 \
+              ${{ (inputs.diagnoseDownload != '' && matrix.label == 'win32-x64') && format('--diagnose-download {0}', inputs.diagnoseDownload) || '' }}
           else
             echo "== 发布审计模式：对 build-bundles run ${{ steps.pick.outputs.run_id }} 的包 =="
             node scripts/ci/e2e-browser-audit.mjs --port 19980 \

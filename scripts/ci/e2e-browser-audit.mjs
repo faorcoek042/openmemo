@@ -80,6 +80,20 @@ const arg = (n, d) => {
 const BUNDLE = arg('--bundle', null);
 const PORT = Number(arg('--port', '19980'));
 const MUTATE = arg('--mutate', null);
+/*
+ * ★ `--diagnose-download <modelId>`：**一次性诊断,刻意不进门禁。**
+ *
+ * 门禁腿装的是 5.3 MB 的小包,`downloading` 快到 200ms 采样窗口之间就过去了 ——
+ * `[CI 实测 run 31314976975]` 三个平台**没有一个**采到「下载中」。
+ * 而要回答的那一位是「`downloading` 期间那几个数字动没动」,窗口不够就永远答不了。
+ *
+ * `[已知基准]` `measure-install-phases` 在 windows-2025 上真下过
+ * `whisper-large-v2-q8_0`(1.66 GB),`downloading` 停留 **28,313 ms / 60 条事件**
+ * ⇒ 200ms 采样约 140 个点,足够。沿用同一个模型,好和那次的时间基准对齐。
+ *
+ * ⚠️ 不传这个参数时整段跳过,所以它**不可能**拖慢门禁。
+ */
+const DIAGNOSE_DOWNLOAD = arg('--diagnose-download', null);
 const BASE = `http://127.0.0.1:${PORT}`;
 const IS_WIN = process.platform === 'win32';
 
@@ -956,6 +970,97 @@ try {
     text: document.body.innerText.replace(/\s+/g, ' ').slice(0, 400),
   }));
   say(`   /models?tab=llm 上有 llm 相关控件=${llmLanding.hasProviderPicker}`);
+
+  /* ─────────────────────────────────────────────────────────────────────────
+   * D1 ★ 一次性诊断:`downloading` 期间那几个数字到底动没动
+   *
+   * **判据仍然只读 DOM** —— 一次 `/api/events` 都不碰。
+   * 采的是用户眼睛能看到的那几个数:百分比 / 已下载字节 / 速度 / ETA,
+   * 以及 Toast 标题(B6b 至今空过,因为「下载中」从没出现过)。
+   *
+   * 结论只有两种,而它决定用户那条线索能不能定案:
+   *   · **只有标题不动、数字在走** ⇒ 就是那个已修的文案缺陷,**定案**;
+   *   · **数字也不动**            ⇒ `downloading` 那一段还藏着别的东西,继续查。
+   * ───────────────────────────────────────────────────────────────────────── */
+  if (DIAGNOSE_DOWNLOAD !== null) {
+    hdr(`D1 诊断:${DIAGNOSE_DOWNLOAD} 的 downloading 期间,界面上的数字动不动`);
+    await page.goto(`${BASE}/models`, { waitUntil: 'networkidle', timeout: 30_000 });
+    const started = await page.evaluate(async (id) => {
+      const r = await fetch('/api/models/pull', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      return r.status;
+    }, DIAGNOSE_DOWNLOAD);
+    say(`   POST /api/models/pull → HTTP ${started}`);
+    await page.goto(`${BASE}/tasks`, { waitUntil: 'networkidle', timeout: 30_000 });
+
+    /** 每一次采样：界面上那几个数 + Toast 标题 + 当前阶段文案。 */
+    const samples = [];
+    const labelSeq = [];
+    for (let i = 0; i < 900; i++) {
+      const s = await page.evaluate(() => {
+        const body = document.body.innerText.replace(/\s+/g, ' ');
+        const toastEl = document.querySelector('[data-testid="job-toaster"], [role="status"]');
+        return {
+          pct: (/(\d+(?:\.\d+)?)\s*%/.exec(body) ?? [])[1] ?? null,
+          // 「12.3 MB / 1.66 GB」这种；只取第一处
+          bytes: (/([\d.]+\s*[KMG]i?B)\s*\/\s*([\d.]+\s*[KMG]i?B)/.exec(body) ?? [])[0] ?? null,
+          speed: (/([\d.]+\s*[KMG]i?B\/s)/.exec(body) ?? [])[0] ?? null,
+          eta: (/(剩余|ETA)[^,;。]{0,20}/.exec(body) ?? [])[0] ?? null,
+          toast: toastEl ? (toastEl.textContent || '').replace(/\s+/g, ' ').slice(0, 60) : null,
+          body,
+        };
+      });
+      for (const zh of ['正在选择下载源', '下载中', '正在校验完整性', '正在解压', '正在安装']) {
+        if (s.body.includes(zh) && !labelSeq.includes(zh)) labelSeq.push(zh);
+      }
+      samples.push({
+        t: i * 200,
+        pct: s.pct,
+        bytes: s.bytes,
+        speed: s.speed,
+        eta: s.eta,
+        toast: s.toast,
+      });
+      const done = await page.evaluate(async () => {
+        const r = await fetch('/api/models/installed');
+        return ((await r.json()).models ?? []).length > 0;
+      });
+      if (done) break;
+      await page.waitForTimeout(200);
+    }
+
+    // 只看**处于 downloading 阶段**的那些采样点
+    const dl = samples.filter((x) => x.toast !== null || x.pct !== null);
+    const distinct = (k) => [...new Set(dl.map((x) => x[k]).filter((v) => v !== null))];
+    const moved = {
+      pct: distinct('pct').length > 1,
+      bytes: distinct('bytes').length > 1,
+      speed: distinct('speed').length > 1,
+      eta: distinct('eta').length > 1,
+    };
+    say(`   采样点 ${samples.length} 个（每 200ms）`);
+    say(`   完整文案序列：${JSON.stringify(labelSeq)}`);
+    say(`   百分比取值 ${distinct('pct').length} 种：${distinct('pct').slice(0, 8).join(', ')}`);
+    say(`   字节文本 ${distinct('bytes').length} 种：${distinct('bytes').slice(0, 4).join(' | ')}`);
+    say(`   速度 ${distinct('speed').length} 种：${distinct('speed').slice(0, 4).join(' | ')}`);
+    say(
+      `   Toast 标题取值 ${distinct('toast').length} 种：${distinct('toast').slice(0, 4).join(' | ')}`,
+    );
+    say('');
+    say(
+      `   ★ downloading 期间「动了没有」：百分比=${moved.pct} 字节=${moved.bytes} 速度=${moved.speed} ETA=${moved.eta}`,
+    );
+    say(
+      `   ★ 定案判据：${
+        moved.pct || moved.bytes || moved.speed
+          ? '**数字在走** ⇒ 用户看到的"没更新"只可能是标题那一处（已修的文案缺陷）'
+          : '**数字也不动** ⇒ downloading 那一段还藏着别的东西，不能定案'
+      }`,
+    );
+  }
 
   await check('B7 llm 引导落地页上必须真的有可操作的控件（不是只发生了跳转）', () => {
     ok(
