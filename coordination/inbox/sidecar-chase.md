@@ -69,3 +69,91 @@
 - 未碰 `:10000`、`/root/data-memo`、机器指针；**未建/改/删 release**；
   未用任何形式的 `pkill`；未动他人在途文件。
 - 未复制 `assertPortFree` / `killTree`（本轮没起 daemon）。
+
+## [2026-08-09 11:05] T-185 ① 已实测 —— **推断被推翻**，②/③ 我没有照原样做（附理由与新交接）
+
+交付：`.github/workflows/measure-install-phases.yml` + `scripts/ci/measure-install-phases.mjs`
+（提交 `18b04c8` · `e6eb6a2` · `84f0541` · 及 409 退避那条）
+
+### 一、先答你点名的那条：Windows 上 `installing → succeeded` 是**毫秒级**
+
+`[CI 实测 windows-2025，接真事件流不轮询]`
+
+| 包 | 体积 / 条目 | `installing → succeeded` | 其间事件 |
+| --- | --- | --- | --- |
+| `whispercpp-cpu-win-x64` | 4.0 MB / 18 | **5 ms** | **0 条** |
+| `whispercpp-vulkan-win-x64` | 25.1 MB / 19 | **6 ms** | **0 条** |
+| （linux 基准） | 6.8 MB / 23 | 3 ms | 0 条 |
+
+**包大 6 倍，那一段没有变长。** 所以「Windows 上要解归档 + Defender 逐文件实时扫，
+可达数十秒到数分钟」这个推断，**在 25 MB 以内被实测推翻**。
+
+⇒ **按你的规则如实说：用户的「停在正在安装」另有原因，解包进度只是改善不是修复。
+我没有让它替真因背锁。**
+
+### 二、一个把前提改掉的结构性发现：**解包根本不在 `installing` 窗口里**
+
+`DownloadProgress['phase']` 只有 `resolving | downloading | verifying`
+（`download.ts:50`）—— **downloader 里压根没有 `installing` 这个 phase**；
+而 `unpackArchive` 在 `installFiles` **内部**被调用（`installer.ts:265`），**一个事件都不发**；
+`ctx.setStep('installing')` 是 daemon 在 `installFiles` **返回之后**才设的（`backends.ts:249`）。
+
+⇒ **解包期间，界面上最后一个 step 仍然是 `verifying`。**
+交接单里那句「`installing` 的显示时长 ≡ 解包 + chmod + 写清单」**不成立** ——
+`installing` 窗口里只有 `writeManifest` + 扩展链接，那正是量到的 5ms。
+
+解包在哪？在**最后一个 `verifying` 事件到 `installing` 之间**那段。实测：
+
+- Windows / 4.0 MB：`verifying pct=1` t=677 → `installing` t=718 = **41 ms**
+- Windows / 25.1 MB：t=882 → t=1053 = **171 ms**（6 倍体积 → 4 倍耗时，量级一致）
+
+**所以即使解包真的慢，用户看到的也会是「正在校验完整性」卡住，不是「正在安装」。**
+这一条直接改变 ② 该往哪儿发事件 —— 也是我不照原样实现的主要原因。
+
+### 三、唯一量到的"黑窗"在别处：**macOS `warming`，10.6 秒 0 事件**
+
+`[CI 实测 macos-26]` `whispercpp-metal-macos-arm64`：
+
+```
+t=   660ms  job.progress  step=warming  pct=1
+t= 11237ms  backend.installed              ← 中间 10.6 秒，0 个事件
+t= 11239ms  job.state     state=succeeded
+```
+
+`installing → succeeded` 名义上 10633 ms，但**时间全在 `warming` 之后那一段**，
+与解包无关。**这是本轮量到的唯一一个数量级足以让人以为"卡住"的窗口**
+（比 install 窗口大 3 个数量级）。两次独立运行都复现（16.9s / 10.6s）。
+
+### 四、②/③：**我没有做，理由如下（不是没时间）**
+
+1. 前提被推翻：按 ① 的数，解包进度**修不了用户报的那个症状**。
+2. 落点错了：真要发，也该发在 `verifying → installing` 那段，或**先给 downloader 加一个
+   `unpacking` phase**，而不是往 `installing` 里塞 —— 这是**契约改动**（`packages/shared` 的 job step），
+   已超出"加个回调"的范围，值得你先裁一次。
+3. `unpack.ts` 同时扛 zip-bomb 与路径穿越两道守卫，**在前提未定时改它**正是本仓一再吃亏的那种改法。
+
+**真分母那条结论仍然成立且可直接用**（zip 的 `entriesTotal` 解包前已知；tar 的 `offset/raw.length` 为真值），
+接手者不必重查。
+
+### 五、建议的下一步（按证据排序，供你裁决）
+
+1. **查 macOS `warming` 那 10.6 秒**（唯一有数的黑窗）—— 它是什么、能不能分段播报。
+2. 若仍要做解包进度：**先定 phase 契约**（新增 `unpacking`？还是把解包并入 `installing` 并提前 `setStep`），再动 `unpack.ts`。
+3. 678 MB 的 CUDA 包**在 GitHub runner 上结构性量不到**（无 N 卡 → 正确 409），
+   要它的数得有真 N 卡机器。按 171ms / 25MB 线性外推是 **≈4.6 秒** ——
+   **那是算术不是实测**，我不拿它当结论。
+
+### 诚实声明
+
+- 三个平台的数都来自 `/api/events` **真事件流**（不轮询，"太短没抓到"在构造上被排除）。
+- ⚠️ **我自己造成过一次假数据并已修**：第一版只按"最小"挑包，三平台都挑中 macOS 的
+  Metal 包，windows/linux 上 **409** 却仍 exit 0，报出「整段没有 installing」——
+  **那和"产品真的不发 installing"长得一模一样**。现在按 os/arch 过滤，且
+  安装被拒 / 没观察到 installing / 没等到终态**一律红**（§11）。
+- `[未验证]`：**真实用户机器上的 Defender 行为**。GitHub Windows runner 的实时扫描
+  是否与用户机器等价，我不知道 —— 标 `UNKNOWN`。所以我的结论限定为
+  「**在 CI windows-2025 上、25 MB 以内的包**」，不外推到所有 Windows 机器。
+- `[未验证]`：678 MB CUDA 包（结构性量不到，见上）。
+- 未碰 `:10000`、`/root/data-memo`、机器级指针；未建/改/删 release；未用 `pkill`；
+  端口与收尾用的是刚收敛的共享 `assertPortFree` / `killTree`。
+- **`packages/downloader` 我一行没改**（②/③ 未做），故未撞到你提的那条 Windows 已知红。
