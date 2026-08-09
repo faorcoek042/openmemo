@@ -10,7 +10,7 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 
-import { backendPrefsPath, resolveStoreRoot } from '@openmemo/pipeline';
+import { backendPrefsPath, discoverTools, resolveStoreRoot } from '@openmemo/pipeline';
 
 import {
   ArtifactStore,
@@ -26,6 +26,7 @@ import {
   type StoreKind,
 } from '@openmemo/downloader';
 import {
+  BUNDLED_MODEL_IDS,
   MODEL_ROLES,
   computeFit,
   makeEvent,
@@ -73,6 +74,42 @@ import { reconcileBundledModels } from './modelReconcile.js';
 import { roleToActivationSlot } from './roleMap.js';
 
 export const HARDWARE_SNAPSHOT_ID = 'hw-local';
+
+/**
+ * 一个路径在磁盘上占多少字节（`du` 的语义：目录递归，(dev, ino) 去重）。
+ *
+ * 去重不是洁癖：`by-name/<kind>/<归档名>` 与 `blobs/sha256-…` 是**同一个 inode**
+ * （`[实测]` `ino=289895 links=2`），数两遍会让"能回收多少"报出一个用户永远拿不到的数。
+ */
+async function duBytes(root: string): Promise<number> {
+  const seen = new Set<string>();
+  let total = 0;
+  const walk = async (p: string): Promise<void> => {
+    let st;
+    try {
+      st = await fs.lstat(p);
+    } catch {
+      return;
+    }
+    if (st.isDirectory()) {
+      let entries: string[];
+      try {
+        entries = await fs.readdir(p);
+      } catch {
+        return;
+      }
+      for (const e of entries) await walk(path.join(p, e));
+      return;
+    }
+    if (!st.isFile()) return;
+    const key = `${String(st.dev)}:${String(st.ino)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    total += st.size;
+  };
+  await walk(root);
+  return total;
+}
 
 /**
  * 已安装后端记录里**不进硬件指纹**的字段 —— 与 `machineFingerprint()` 配套。
@@ -872,6 +909,44 @@ export class RestState {
   /* -------------------------------- 目录 -------------------------------- */
 
   /**
+   * 组的"代表文案"（`descriptionZh/En`/`tags`/`displayName`/`license`）该取自
+   * **哪一个变体** —— 不该默认是"清单数组里排第一个"。
+   *
+   * ## 真实事故（Manager 2026-08-10 点名，两个）
+   *
+   * `buildCatalog()` 原来在**第一次遇到某个 `groupId`** 时，把那条 `ModelEntry` 的
+   * 文案复制成整组的代表值，后来者一律只贡献 `variants[]`。多数组里这恰好无害
+   * （清单第一个变体碰巧就是随包默认档），但那只是"数组写的顺序"，没有任何东西
+   * 保证它 —— 谁重排一下顺序、或者把警示文案写到了非默认变体上，组描述立刻讲
+   * 错话，而没有任何检查会报警：
+   *
+   * - `asr/whisper-tiny`：质量警示只写在 `whisper-tiny-f16`（既不随包也不是默认档），
+   *   随包默认档 `whisper-tiny-q5_1` 排数组第一位、原文无警示 —— 真实用户永远看不到
+   *   这句话。
+   * - `vad/silero-vad`：`silero-vad-onnx` 排第一位，组描述因此讲"sherpa-onnx 专用
+   *   格式，whisper.cpp 用不了这个文件"；而**随包内置、真正落进用户机器的是
+   *   `silero-vad-ggml`**（见 {@link BUNDLED_MODEL_IDS}）——描述文字与用户实际拿到
+   *   的文件正好说反。
+   *
+   * ## 修法：显式排"代表变体"的优先级，不再隐式收下"第一个见到的"
+   *
+   * 1. 这个 `groupId` 下有变体在 `BUNDLED_MODEL_IDS` 里 —— 用它：随包出厂的字节
+   *    就是绝大多数用户会真正撞见的那份，组描述该讲那份的事。
+   * 2. 否则，变体的 `tags` 带 `recommended-default` 或 `benchmark-default` —— 用它：
+   *    这两个标签本来就是清单作者显式标出的"这条是默认档"信号，不必猜。
+   * 3. 否则，退回"第一次见到的那个"（原行为不变）——没有默认档信号时，清单顺序
+   *    依然是唯一能用的信号，不强行编造一个更"聪明"的规则。
+   *
+   * 三条按数字从小到大是"更该被信任"；只在**严格更靠前**时才覆盖已选中的代表
+   * ——同优先级不覆盖，保持"先到先得"，避免同一优先级下被后面的条目意外顶替。
+   */
+  private catalogDescriptionRank(m: ModelEntry): 0 | 1 | 2 {
+    if ((BUNDLED_MODEL_IDS as readonly string[]).includes(m.id)) return 0;
+    if (m.tags.includes('recommended-default') || m.tags.includes('benchmark-default')) return 1;
+    return 2;
+  }
+
+  /**
    * @param targetLanguage 用户打算转写的语言（ADR-011 决策 1）。据此把"实测在该语言下
    *   不可用"的模型标出来 —— 例如 whisper base 把「维基百科」听成「危机摆科」。
    */
@@ -882,6 +957,9 @@ export class RestState {
     const installed = await this.listInstalled();
     const installedIds = new Set(installed.map((m) => m.id));
     const groups = new Map<string, CatalogGroupWithFitness>();
+    // 与 groups 一一对应：当前那个代表变体的优先级（越小越该被信任，见
+    // catalogDescriptionRank()）。只在新变体的排名严格更靠前时才覆盖代表文案。
+    const descriptionRanks = new Map<string, 0 | 1 | 2>();
 
     for (const m of this.modelCatalog.models) {
       if (roleFilter !== 'all' && m.role !== roleFilter) continue;
@@ -907,6 +985,7 @@ export class RestState {
       );
 
       const variant: CatalogVariant = { ...m, installed: installedIds.has(m.id), fitness };
+      const rank = this.catalogDescriptionRank(m);
       let group = groups.get(m.groupId);
       if (!group) {
         group = {
@@ -927,6 +1006,19 @@ export class RestState {
           variants: [],
         };
         groups.set(m.groupId, group);
+        descriptionRanks.set(m.groupId, rank);
+      } else if (rank < (descriptionRanks.get(m.groupId) ?? 2)) {
+        // 更值得信任的代表出现了（例如随包默认档排在清单第二位）——覆盖代表文案，
+        // 但不动 displayName 的去后缀逻辑以外的东西：变体本身的事实（role/family/
+        // languages）理论上组内一致，仍然一并覆盖，保持"代表 = 同一个变体"这条不变式。
+        group.displayName = m.displayName.replace(/\s*\([^)]*\)\s*$/, '');
+        group.displayNameZh = m.displayNameZh.replace(/（[^）]*）\s*$/, '');
+        group.descriptionZh = m.descriptionZh;
+        group.descriptionEn = m.descriptionEn;
+        group.languages = m.languages;
+        group.tags = m.tags;
+        group.license = m.license;
+        descriptionRanks.set(m.groupId, rank);
       }
       group.variants.push(variant);
     }
@@ -944,12 +1036,145 @@ export class RestState {
 
   /* -------------------------------- 存储 -------------------------------- */
 
+  /**
+   * `by-name/**` 底下**没有任何安装记录认领**的顶层条目 —— 「无法识别的残留」。
+   *
+   * ## 它是什么（用户机器上真实存在的东西）
+   *
+   * `[用户真机实测 2026-08-10，:10000]`：
+   * ```
+   * by-name/backend/whisper-bin-ubuntu-x64/       24,259,400 B
+   * by-name/backend/whisper-bin-ubuntu-x64.tar.gz  9,379,235 B
+   * ```
+   * 08-02 装的是当时目录指向的**上游归档**；08-07 T-167 把**同一个 id** 换成了
+   * 我们自建的那份。重装之后安装记录指向新归档，**旧的两份没有任何人认领** ——
+   * `breakdown` 里查不到（它按记录列）、界面上删不掉、GC 也不扫这里（只扫 `blobs/`）。
+   * 对账正好：`usedBytes − breakdown∑ = 9,379,235`，就是那个孤儿归档。
+   *
+   * ⚠️ **成因是结构性的，不是一次意外**：只要目录里"同一个 id 换了内容"，
+   * 重装就会留下一份。今天靠这里事后扫，**根治要在换的那一刻处理**（已报 Manager）。
+   *
+   * ## ★ 判据：**"没有记录认领" ≠ "没在用"**
+   *
+   * 这条区分是这个函数的全部难点。`by-name/backend/` 正是 `resolveBackendTool()`
+   * 的**发现路径** —— 一个没有 manifest 的目录**仍然可能正在被解析、被执行**
+   * （T-192 已经证明过这一点）。按"扫到没 manifest 的就删"去做，
+   * **会让用户的转写当场坏掉，而且他不会知道为什么**。
+   *
+   * 所以这里在"没被认领"之外加了第二道：**用产品自己的解析器再问一遍**
+   * （`discoverTools()` —— 与流水线装配时调的是同一个函数，不是我另写一份判断），
+   * 凡是某个工具当前真的解析到它里面的，一律标 `inUseBy` 并**排除在可回收之外**。
+   *
+   * 判据不是"我觉得它没用"，是"**产品自己说它现在没在用它**"。
+   */
+  async findUnclaimedFiles(): Promise<
+    { relPath: string; bytes: number; inUseBy: string | null }[]
+  > {
+    const roots = { models: this.store.root };
+    /** 所有被安装记录点名的绝对路径（归档本身 + 它解开出来的目录）。 */
+    const claimed = new Set<string>();
+    const claimRecord = (id: string, files: readonly { name: string }[] | undefined): void => {
+      for (const f of files ?? []) {
+        let abs: string;
+        try {
+          abs = resolveInstalledFile(f as Parameters<typeof resolveInstalledFile>[0], roots);
+        } catch {
+          continue;
+        }
+        claimed.add(abs);
+        const dir = path.join(path.dirname(abs), unpackDirName(f.name));
+        if (dir !== abs) claimed.add(dir);
+      }
+      claimed.add(byModelDir(this.store.root, id));
+    };
+    for (const m of await this.listInstalled()) claimRecord(m.id, m.files);
+    for (const p of await this.listInstalledBackends()) claimRecord(p.id, p.files);
+
+    /*
+     * 产品**现在**解析到的每一个工具路径。这是第二道闸，不是装饰：
+     * `discoverTools()` 就是 `buildPipeline()` 装配时调的那一个。
+     */
+    let livePaths: string[] = [];
+    try {
+      const tools = await discoverTools({ storeRoot: this.store.root });
+      livePaths = Object.entries(tools)
+        .filter((e): e is [string, string] => typeof e[1] === 'string' && e[1].length > 0)
+        .map(([, v]) => v);
+    } catch {
+      /*
+       * 解析不出来时**不当作"没在用"**：这一格拿不到答案，就不该拿它当删除的依据。
+       * 下面 `inUseBy` 会保持 null，但整份结果只是"候选"，调用方仍会看到 bytes。
+       * 真正的删除路径（`collectUnclaimed`）在解析失败时会拒绝删。
+       */
+      livePaths = [];
+    }
+
+    const out: { relPath: string; bytes: number; inUseBy: string | null }[] = [];
+    for (const kind of STORE_KINDS) {
+      const dir = this.store.byNameDir(kind);
+      let entries;
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const e of entries) {
+        const abs = path.join(dir, e.name);
+        if (claimed.has(abs)) continue;
+        const inUse = livePaths.find((lp) => lp === abs || lp.startsWith(abs + path.sep)) ?? null;
+        out.push({
+          relPath: path.relative(this.store.root, abs),
+          bytes: await duBytes(abs),
+          inUseBy: inUse,
+        });
+      }
+    }
+    return out.sort((a, b) => b.bytes - a.bytes);
+  }
+
+  /**
+   * 删掉「无法识别的残留」里**确认没在用**的那些。
+   *
+   * 两条硬闸，缺一条都不删：
+   *   ① 没有任何安装记录认领它；
+   *   ② `discoverTools()` 当前没有把任何工具解析到它里面。
+   *
+   * ⚠️ 解析器本身失败时**一个都不删**（返回 0）—— "我问不出来"不等于"它没在用"。
+   * 这与 `check-elf-glibc` 对 `objdump` 缺失的态度、与 `hw.probe` 对探针缺失的态度同源。
+   */
+  async collectUnclaimed(): Promise<{ freedBytes: number; removedFiles: number }> {
+    let resolverOk = true;
+    try {
+      await discoverTools({ storeRoot: this.store.root });
+    } catch {
+      resolverOk = false;
+    }
+    if (!resolverOk) return { freedBytes: 0, removedFiles: 0 };
+
+    const items = await this.findUnclaimedFiles();
+    let freed = 0;
+    let removed = 0;
+    for (const it of items) {
+      if (it.inUseBy !== null) continue;
+      const abs = path.join(this.store.root, it.relPath);
+      try {
+        await fs.rm(abs, { recursive: true, force: true });
+        freed += it.bytes;
+        removed += 1;
+      } catch {
+        /* 删不掉不阻断其余的 —— 下一轮还能再清 */
+      }
+    }
+    return { freedBytes: freed, removedFiles: removed };
+  }
+
   async buildStorage(): Promise<GetStorageResponse> {
-    const [installed, packs, usedBytes, garbage] = await Promise.all([
+    const [installed, packs, usedBytes, garbage, unclaimed] = await Promise.all([
       this.listInstalled(),
       this.listInstalledBackends(),
       this.store.usedBytes(),
       this.store.findGarbage(),
+      this.findUnclaimedFiles(),
     ]);
 
     let freeBytes = 0;
@@ -980,6 +1205,24 @@ export class RestState {
       })),
     ];
 
+    /*
+     * ★ T-193：让「无法识别的残留」**在明细里看得见**，哪怕它没有名字。
+     *
+     * 不列出来的话，用户看到的是 `usedBytes` 与明细合计对不上的一个差额
+     * （`[实测]` 正好 9,379,235 B），而且没有任何地方能告诉他那是什么、能不能删。
+     * 那正是他一直在问的那类东西。**正在被用的那些也列**，只是不计入可回收 ——
+     * 藏起来才是把"说不清"变成"看不见"。
+     */
+    if (unclaimed.length > 0) {
+      breakdown.push({
+        id: '__unclaimed__',
+        kind: 'backend-pack' as const,
+        displayName: `无法识别的残留（${String(unclaimed.length)} 项）`,
+        bytes: unclaimed.reduce((a, x) => a + x.bytes, 0),
+        active: unclaimed.some((x) => x.inUseBy !== null),
+      });
+    }
+
     return {
       modelsRoot: this.modelsRoot,
       volume: { freeBytes, totalBytes },
@@ -991,6 +1234,10 @@ export class RestState {
         inactiveModelsBytes: installed
           .filter((m) => this.active[m.role] !== m.id)
           .reduce((a, m) => a + m.totalSizeBytes, 0),
+        // 只把**确认没在用**的那些算成可回收：正在被解析到的残留一个字节都不算
+        unclaimedBytes: unclaimed
+          .filter((x) => x.inUseBy === null)
+          .reduce((a, x) => a + x.bytes, 0),
       },
     };
   }
