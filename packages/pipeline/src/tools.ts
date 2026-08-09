@@ -8,8 +8,10 @@
  *   2. ADR-001 class C: these binaries are runtime downloads under our managed runtime
  *      directory, not system packages. Their location is ours to know.
  *
- * `discoverTools` exists for tests and local development only; production wiring passes
- * paths explicitly from the installed-pack records.
+ * `discoverTools` is the **production** resolver (installed packs first, then PATH);
+ * callers may still pass paths explicitly, and the installed-pack records win when present.
+ * ~~exists for tests and local development only~~ —— 见下面 `discoverTools` 上方
+ * 2026-08-09 那段订正：借用系统工具是**受支持的兜底**，不是"仅供开发"。
  */
 
 import { access, constants, cp, mkdir, readdir, readFile, rm, symlink } from 'node:fs/promises';
@@ -809,12 +811,42 @@ export async function listInstalledModels(
  * Search order, and the reasoning behind it:
  *   1. explicit override        — caller knows best (env vars, tests)
  *   2. installed backend packs  — THE PRODUCTION PATH (ADR-001 class C artifacts)
- *   3. PATH                     — development convenience ONLY
+ *   3. PATH                     — ~~development convenience ONLY~~
+ *                                 **a supported fallback, deliberately lower priority**
  *
  * Step 2 used to be missing entirely, which is why a correctly installed backend pack
  * still left the daemon reporting `pipeline.missing: ["whisper-cli"]`: nothing ever
- * looked in the place the installer writes to. D-01 §8.4 L2 forbids PATH lookups for
- * real invocations, so PATH stays last and is a development affordance, not the answer.
+ * looked in the place the installer writes to.
+ *
+ * ⚠️ **顺带订正一处误引**：原文写「D-01 §8.4 L2 forbids PATH lookups for real invocations」。
+ * `[实测]` 去查了 D-01 §8.4：**L2 是「绝不经过 shell」，通篇没有禁止 PATH 查找**。
+ * 那条禁令是本注释**自己发明并挂到文档名下的** —— 文档没错，错的是这句引用。
+ * D-01 真正说的是 spawn 时用**绝对路径**（`§8.4` 第三层与文件头 §「命令注入防护」），
+ * 那与"解析阶段能不能查 PATH"是两件事，见下。
+ *
+ * ── 订正（2026-08-09，依据用户原话，PROTOCOL §13）────────────────────────────────
+ *
+ * 原文把第 3 条写成 **"development convenience ONLY"**，并说
+ * **"D-01 §8.4 L2 forbids PATH lookups for real invocations"**。**那句话描述错了产品立场。**
+ *
+ * 用户 2026-08-09 明确：
+ *
+ * > 「早先我们定的策略是**允许**用系统里的 ffmpeg 啊，只是**优先用产品自己下载的**，
+ * >   产品自己下载的**优先级大于**系统自带的。」
+ *
+ * 也就是说：**顺序一直是对的，错的是我们对第 3 条的描述** ——
+ * 它不是"仅供开发"，是**受支持的兜底**，只是排在自带的后面。
+ * `[实测 2026-08-09，linux]` 行为本来就是"借"：数据目录里没有 ffmpeg、
+ * `/usr/bin/ffmpeg` 存在时，daemon 直接用了它并在自检里如实报出绝对路径。
+ * 所以**要改的是文字与呈现，不是行为**。
+ *
+ * ── 安全那一半**一个字没松** ────────────────────────────────────────────────────
+ *
+ * D-01 §8.4 L2 真正在防的是**注入**：PATH 里靠前的一个恶意 `ffmpeg` 会赢。
+ * 这条威胁是真的，缓解措施**保持不变且不许动**：
+ *   · **永远 spawn 解析后的绝对路径，绝不 spawn 裸命令名**（本文件与 subprocess/ 一直如此）；
+ *   · 借到的那一个**必须在自检里报出绝对路径**，让用户看得见自己用的是哪一个。
+ * "允许借" ≠ "不设防"：允许的是**使用**，防的是**冒名**。
  */
 export async function discoverTools(
   overrides: Partial<ToolPaths> & {
