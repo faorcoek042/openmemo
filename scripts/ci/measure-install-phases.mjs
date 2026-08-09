@@ -238,7 +238,14 @@ try {
   // ── 装哪个包，由产品自己的目录回答 ────────────────────────────────────────
   if (MODEL_MODE) {
     const mcat = await (await fetch(`${BASE}/api/models/catalog`)).json();
-    const all = mcat.models ?? mcat.entries ?? [];
+    /*
+     * ⚠️ 目录形状是 `{ groups: [{ variants: [...] }] }`，**不是**顶层 `models`。
+     * `[CI 实测 run 31311345179]` 第一版猜成 `mcat.models ?? mcat.entries`，
+     * 取到空数组，于是报「目录里没有可装模型」——
+     * **那是我脚本的缺陷，不是产品的**，而且它长得和"目录真的是空的"一模一样
+     * （与我这一轮前两次栽的是同一个形状：拿猜的字段名当事实）。
+     */
+    const all = (mcat.groups ?? []).flatMap((g) => g.variants ?? []);
     const cands = all
       .filter(
         (m) =>
