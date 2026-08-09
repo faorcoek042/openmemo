@@ -1112,3 +1112,73 @@ check:orphans     70 / 基线 70
 - 只在 Linux 上验（本机）`[未验证]` Windows —— 但这条是**源码断言**，与平台无关。
 - 上一轮遗留的仍然遗留：**没有任何一路真在浏览器里看过那行进度文案**（第七类盲区），
   百分比掉 0% 未修，Windows 上 job 真卡住的**真前提仍 UNKNOWN**。
+
+---
+
+## [2026-08-09 23:55] `DownloadRow` 收敛完毕 —— 四份实现变一份
+
+commit `6835b64`。干净 worktree 检出：`pnpm -r test` **1624 / 0**、`eslint` 0、`orphans` 70/70。
+
+### 一、收敛后剩几份实现：**一份**
+
+**前：四份实现，四种兜底。**
+
+| 渲染点 | 读哪套 | 缺词条时 |
+| --- | --- | --- |
+| `JobList`（任务中心） | `progress.*` | 原样渲染英文 key |
+| `JobToaster`（Toast） | `progress.*` | 回退「排队中」= **阶段倒退** |
+| `DownloadRow`（/models） | **`models.download.*`** | 回退「排队中」 |
+| `NoteProgressLine`（笔记页） | `progress.*` | 原样渲染英文 key |
+
+**后：`lib/format/stepLabel.ts` 一份，四个渲染点全部用它。**
+`DownloadRow` 的 `STEP_KEY` 表删除；`models.download.*` 里那 7 个阶段词条
+（resolving/downloading/verifying/unpacking/installing/warming/queued）**中英两套全部删除**
+—— 留着就还会漂。`models.download` 里剩下的是它**自己特有**的
+（etaMinutes / failed / attempt / source / progressLabel / verifyingChip），不是重复项。
+
+⚠️ **第四份（`NoteProgressLine`）是这次才浮出来的** —— 上一轮我只数到三份，
+少数的原因就是没去数：`grep` 一下它就在那儿。这和我上一轮总结的
+「改契约前先 grep 谁在钉它」是同一条：**动手前先数清楚有几份**。
+
+### 二、两套中文的差异各选了哪边：**中文零差异，英文两处**
+
+⚠️ 上一轮我已经把 `warming` 的两份不同中文统一、并补齐了 `unpacking`，
+所以这次逐个阶段对下来 **7 个中文标签两套完全一致**，没有需要取舍的。
+
+真正有分歧的只有英文两处：
+
+| 阶段 | `progress.*` | `models.download.*` | 选 | 理由 |
+| --- | --- | --- | --- | --- |
+| resolving | Choosing a source | **Choosing a download source** | 后者 | 更具体，这一步就是在挑下载源 |
+| verifying | **Verifying checksum** | Verifying integrity | 前者 | 产品校的是 sha256，"checksum" 是实话；"integrity" 含糊 |
+
+**兜底统一**成上一轮定的那条：缺词条 → 中性「处理中」；不是「排队中」（断言假事），
+也不是英文 key。⚠️ 与"真在排队"区分开：`step` 为空时 `DownloadRow` 仍说「排队中」、
+`NoteProgressLine` 仍按 `progress.state.*` 说状态 —— **那不是词条缺失，是真的没有阶段**。
+
+### 三、⚠️ `/models` 那条链现在有腿了吗：**没有**
+
+**收敛减少的是实现份数，不是覆盖。这两件事不能混。**
+
+B6/B6b/B6c 读的仍然是 `/tasks`。`/models` 上的 `DownloadRow` **仍然没有任何断言在盯**：
+没有腿去点开 `/models`、看那一行在解包那几秒显示什么。
+
+收敛带来的**真实**收益是：`/models` 现在与 `/tasks` **共用同一份实现与同一套词条**，
+所以 B6 在 `/tasks` 上验到的"阶段文案正确、不倒退、不漏英文 key"，
+**对 `/models` 是同一份代码的同一结论** —— 这比"两份实现各自绿"强得多，
+但它**仍然不是一条腿**：如果 `DownloadRow` 自己的 JSX 把标签渲染错了位置、
+或者那一行压根没渲染，B6 一个字都不会红。
+
+**如实登记：`/models` 渲染链仍然没有腿。** 不把"少了一份实现"说成"多了一条腿"。
+
+### 四、⚠️ 给 Manager：对 `a1f778cf` 那三条断言的影响是**零**
+
+`e2e-browser-audit.mjs:780` 的 `EXPECTED_ZH`
+（正在选择下载源 / 下载中 / 正在校验完整性 / 正在解压 / 正在安装）
+与 `REGRESS_ZH`（排队中）**一个字都没改**：改的两处只在英文（resolving / verifying）。
+**逐条核对过**，它那三条断言不需要同步。
+
+### 五、未验证
+
+- 只跑了单测与 tsc/eslint，**没有在真浏览器里看过 `/models` 那一行** `[未验证]`。
+- 英文两处改动**没有任何断言在盯**（中英断言目前只钉中文）`[未验证]`。
