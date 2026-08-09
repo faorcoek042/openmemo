@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
+import { stepLabel as stepLabelOf } from '../../lib/format/stepLabel';
 import { useNavigate } from 'react-router';
 import { useShallow } from 'zustand/react/shallow';
 import {
@@ -113,7 +114,7 @@ function blockedFallbackName(code: string, t: TFunction): string {
 }
 
 /** 每个阶段的标题。四种 kind × 四个 phase，散在 JSX 三元里写不下第三层。 */
-function titleFor(toast: Toast, t: TFunction): string {
+function titleFor(toast: Toast, t: TFunction, step?: string | null): string {
   const name = toast.name;
   if (toast.phase === 'done') {
     if (toast.kind === 'transcribe') return t('jobToast.doneTranscribe', { name });
@@ -129,6 +130,22 @@ function titleFor(toast: Toast, t: TFunction): string {
   if (toast.phase === 'blocked') return t('jobToast.blockedTitle', { name });
   if (toast.kind === 'transcribe') return t('jobToast.startedTranscribe', { name });
   if (toast.kind === 'mindmap') return t('jobToast.startedMindmap', { name });
+  /*
+   * ★ 用户 2026-08-09：「任务中心 正在安装 然后就没有后续进展了」。
+   *
+   * `Phase` 只有 `active|blocked|failed|done` 四挡，`active` 从 `job.created` 一路
+   * 盖到终态 —— 于是一个后端包从**解析下载源、下载几百 MB、校验、解包**到真正安装，
+   * 标题自始至终是「开始安装组件 · X」。而副行**已经**在准确地说「下载中」。
+   * **两行互相打架时用户信标题**，所以他看到的是"安装卡住了"，
+   * 而实际上那几分钟是在下载。
+   *
+   * 修法：下载/校验/解包这几段用**中性标题**（「正在准备 · X」），
+   * 只有真的走到 `installing` 及以后才说"安装"。不新增 Phase ——
+   * 那要动 `jobToastModel` 的状态机（别人在途），这里只按 step 分档，改动面最小。
+   */
+  const preparing =
+    step === 'resolving' || step === 'downloading' || step === 'verifying' || step === 'unpacking';
+  if (preparing) return t('jobToast.preparing', { name });
   return t(toast.kind === 'backend-pack' ? 'jobToast.startedBackend' : 'jobToast.startedModel', {
     name,
   });
@@ -329,13 +346,15 @@ function ToastRow({ toast, onDismiss }: { toast: Toast; onDismiss: () => void })
       <div className="flex items-start gap-2">
         <ToastIcon phase={toast.phase} verifying={verifying} />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-ink">{titleFor(toast, t)}</p>
+          <p className="truncate text-sm font-medium text-ink">{titleFor(toast, t, step)}</p>
 
           {/* 阶段名 + 字节 + 速度 + ETA。全部用 tabular-nums，数字跳动时不抖行宽。 */}
           {toast.phase === 'active' ? (
             <p className="mt-0.5 text-xs text-ink-secondary">
               <span>
-                {t(`progress.${step ?? toast.state}`, { defaultValue: t('progress.queued') })}
+                {/* 收敛到共享实现：此前缺词条会回退成「排队中」—— 那是**阶段倒退**，
+                    比显示英文更坏（用户会以为进度倒回去了）。见 lib/format/stepLabel。 */}
+                {stepLabelOf(step ?? toast.state, t, (k: string) => i18n.exists(k))}
               </span>
               {total ? (
                 <span className="tabular-nums">

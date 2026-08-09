@@ -1,4 +1,6 @@
 import { useTranslation } from 'react-i18next';
+
+import { stepLabel as stepLabelOf } from '../../lib/format/stepLabel';
 import { Pause, Play, RotateCcw, ShieldCheck, X } from 'lucide-react';
 
 import { ProgressMeter } from '../../components/common/ProgressMeter';
@@ -50,7 +52,8 @@ function JobRow({ job, compact }: { job: MergedJob; compact?: boolean }) {
   const { t, i18n } = useTranslation();
   const actions = useJobActions();
 
-  const stepLabel = job.step ? t(`progress.${job.step}`, { defaultValue: job.step }) : '';
+  // 收敛到共享实现：此前这里缺词条会**原样渲染 step key**（英文机器枚举值）
+  const stepText = stepLabelOf(job.step, t, (k: string) => i18n.exists(k));
   const eta = approxEta(job.etaSeconds, i18n.language);
   const running = job.state === 'running' || job.state === 'leased';
   const verifying = running && job.step === 'verifying';
@@ -61,7 +64,7 @@ function JobRow({ job, compact }: { job: MergedJob; compact?: boolean }) {
   // fallback 分支原来把机器枚举值（queued / cancelled）直接当标签渲染 ——
   // 用户看到的是英文单词。词条缺失时至少退回 tasks.* 的既有中文。
   const label = running
-    ? stepLabel || t('tasks.running')
+    ? stepText || t('tasks.running')
     : job.state === 'failed'
       ? t('notes.failed')
       : job.state === 'blocked'
@@ -89,7 +92,7 @@ function JobRow({ job, compact }: { job: MergedJob; compact?: boolean }) {
             <span className="min-w-0 truncate">
               {job.totalBytes
                 ? `${formatBytes(job.completedBytes, i18n.language)} / ${formatBytes(job.totalBytes, i18n.language)}`
-                : stepLabel}
+                : stepText}
               {job.speedBps ? ` · ${formatSpeed(job.speedBps, i18n.language)}` : ''}
             </span>
             <span className="shrink-0 tabular-nums">
@@ -104,7 +107,7 @@ function JobRow({ job, compact }: { job: MergedJob; compact?: boolean }) {
             // 六个渲染点里这里原本是唯一漏掉 verifying 的：校验阶段没有可信百分比，
             // 画一个卡在 87% 不动的条比画脉动更像故障（D-09 §1.3）。
             indeterminate={verifying}
-            label={stepLabel || job.type}
+            label={stepText || job.type}
           />
         </>
       ) : null}

@@ -428,14 +428,16 @@
     "downloading": "Downloading",
     "verifying": "Verifying checksum",
     "installing": "Installing",
-    "warming": "Initialising GPU shader cache",
+    "warming": "Warming up GPU shader cache",
     "state": {
       "queued": "Queued",
       "blocked": "On hold",
       "leased": "Starting",
       "running": "Working",
       "paused": "Paused"
-    }
+    },
+    "unpacking": "Extracting",
+    "generic": "Working"
   },
   "recorder": {
     "title": "Record and transcribe",
@@ -1011,7 +1013,8 @@
     "doneNoteHint": "The result is in the note — go take a look.",
     "failedJob": "Failed · {{name}}",
     "failedFallback": "Background task",
-    "gotoNote": "Open note"
+    "gotoNote": "Open note",
+    "preparing": "Preparing · {{name}}"
   },
   "readiness": {
     "title": "Not ready",

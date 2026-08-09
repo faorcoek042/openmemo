@@ -428,14 +428,16 @@
     "downloading": "下载中",
     "verifying": "正在校验完整性",
     "installing": "正在安装",
-    "warming": "正在初始化 GPU 着色器缓存",
+    "warming": "正在预热 GPU 着色器缓存",
     "state": {
       "queued": "排队中",
       "blocked": "暂时无法继续",
       "leased": "准备开始",
       "running": "处理中",
       "paused": "已暂停"
-    }
+    },
+    "unpacking": "正在解压",
+    "generic": "处理中"
   },
   "recorder": {
     "title": "录音转文字",
@@ -1011,7 +1013,8 @@
     "doneNoteHint": "结果已经写进这条笔记，可以去看了。",
     "failedJob": "处理失败 · {{name}}",
     "failedFallback": "后台任务",
-    "gotoNote": "打开笔记"
+    "gotoNote": "打开笔记",
+    "preparing": "正在准备 · {{name}}"
   },
   "readiness": {
     "title": "能力未就绪",
