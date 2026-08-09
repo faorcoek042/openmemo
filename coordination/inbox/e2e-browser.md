@@ -871,3 +871,100 @@ browser  ✔ e2e-attest-browser-31268366005（来自 e2e-browser.yml run 3129655
 现在"界面可点"这件事在**三个平台、对着真正发出去的字节**都有证据了，
 且闸门会拦住没有这份证据的发布。**下一个缺口不在这条腿里**，而在它的边界上：
 Firefox 那一格、以及破坏性按钮那条（需要可丢弃对象，是一条新腿）。
+
+---
+
+## [2026-08-09 17:30] 第四种死法：引导指向一个解决不了问题的地方
+
+commit `d79ddbc`。⚠️ **本轮是部分交付**，没做完的写在最后。
+
+### 一、先答你点名要先答的：**「缺 whisper-cli」这句话是错的**
+
+`[实测]` 拿 **v0.5.0 的真包**（`build-bundles 31298961998` 的 artifact，
+解出来是 `openmemo-0.5.0-linux-x64`）+ **空数据目录**起 daemon，
+**同一个实例、同一时刻**问两个端点：
+
+```
+GET  /api/selfcheck        → tool.whisperCli = warn
+                             路径 …/openmemo-0.5.0-linux-x64/runtime/probe/whisper-cli
+POST /api/backends/selftest → 409 SELF_TEST_BLOCKED
+                             missing: ["whisper-cli","asr-model","test-audio"]
+                             resolved: { whisperCli: null, … }
+```
+
+包里那个文件**确实在、而且可执行**（`runtime/probe/whisper-cli`）。
+所以**不是"缺 whisper-cli"，是自检那条解析器看不见包内的那一份。**
+
+成因定位到了：转写流水线走 `packages/pipeline/src/tools.ts`，它有一条
+`OPENMEMO_BUNDLED_WHISPER_DIR` 的包内兜底（启动脚本设，main.ts 也会自推导）；
+而自检走的是 `resolveBackendTool()`（`packages/runtime/src/backends/`），
+**那条解析器全文没有 `BUNDLED_WHISPER` 这个词** —— 它只认已安装的后端包。
+
+⚠️ 这与 T-160 是**同一个形状的重演**（当时是"只搜 `bin/runtime`"，现在是"只认已装包"）。
+
+**我没有去修它** —— 自检 blocked 链是另一位的在途。**这份定位交给他**：
+修的地方是让 `resolveBackendTool()` 也认包内那一份（顺序仍应是
+已安装包 > 系统 PATH > 包内兜底，理由见 `tools.ts` 里那段：包内只有 CPU 模块，
+排前面会让"装了加速却没变快"）。
+
+附带一个更小的错：`/api/selfcheck` 把包内那份标成
+「来自系统 PATH，非本产品安装」——**它不在 PATH 上，它在包里**。
+分类逻辑是"不在 storeRoot 底下就算借来的"，对随包出厂的东西不成立。
+
+### 二、用户点的那个按钮为什么无反应：**同一个死法的第三次**
+
+`SELF_TEST_BLOCKED` 的 remediation 是 `install_backend`，落点 `/runtime`
+（`lib/remediation/routes.ts:73`）—— 而**自检就是在 `/runtime` 上点的**。
+`navigate` 到你已经在的那一页，什么都不发生。
+
+前两次是 `AsrModelPicker` 的「去安装模型」和 `ReadinessBanner` 的「诊断」，
+我都在**各自的组件里**修了。这次修在**通用层**：`RemediationButton` 只要发现
+落点等于当前 pathname，就不再渲染点不动的按钮，改给一句「<标签> —— 就在本页」。
+**一处修好，所有 remediation 都不会再犯。**
+
+### 三、枚举了多少条引导 / 多少条真能解决问题
+
+**19 条**（源码枚举 `action: '…'`，去掉 `added/removed/updated/preserved/wait`
+这类非引导型的）。逐个对照前端两张表：
+
+| | 条数 | 说明 |
+| --- | --- | --- |
+| `REMEDIATION_ROUTES` 里有落点 | 15 | 能跳到某处 |
+| `UNROUTED_ACTIONS` 里明写"故意不给按钮"并附理由 | 4 中的若干 | 已认领 |
+| **两张表都没有** | **5** | `openSettings` / `reduceChunkSize` / `checkLocalBackend` / `increaseMaxTokens` / `retryWithLargerModel` |
+
+那 5 条全部来自 **`packages/llm/`**。`RemediationButton` 在
+`!onAct && target === null` 时**返回 null** —— 也就是说：
+**产品告诉用户"去做 X"，而界面上一个按钮都不渲染。** 用户没有任何入口。
+
+⚠️ **它们不该被读成"故意不给按钮"**：`openSettings` 显然该去
+`/settings`（LLM 那一节），另外四条是"就地重试/换参数"型，需要调用点接 `onAct`。
+**我没有替产品决定这五条各自该怎么办**，只把它们暴露出来。
+
+### 四、那道护栏本身有个洞（这条比上面几条更值得记）
+
+仓里**已经有**一道「daemon 会发的 action，前端必须逐个认领过」的守卫
+（`routes.test.ts`）。它是对的 —— **但它只扫 `apps/daemon/src`**，
+而引导并不只从那里发。**一个看不见半个仓库的护栏，会让人以为"已经有人在盯了"。**
+
+我把扫描根扩到了 `packages/llm/src`。⚠️ **但这一步还不足以抓住那 5 条**：
+护栏的结构判据要求 `action:` 行附近出现 `remediation` 字样，
+而 llm 侧是 `new LlmError(..., { action, params })` 的**第 6 个位置参数**，
+字面上没有那个词。**如实记下，没有假装已经修好。**
+
+### 五、⚠️ 没做完的（本轮是部分交付）
+
+- **第四种死法的浏览器断言 + 变异证明：没做。** 上下文用尽在了定位上。
+  设计已经想清楚：枚举 → 对每条引导点下去 → 断言"到达目标且目标能执行那件事"，
+  变异是**把目标页那个能解决问题的入口摘掉**，断言必须红。**下一轮做。**
+- 那 5 条 llm 引导**没有接上 UI**（见第三节，需要产品决定）。
+- 护栏对 `LlmError` 位置参数的识别**没有修**（见第四节）。
+- 通用层那条修复**只跑了 web 单测（312/312 绿）与 tsc**，
+  **没有在真浏览器里点过** `[未验证]` —— 也没在 Windows 上验过。
+- 任务中心「正在安装无后续」我**没有撞到**（本轮没走到那条链）`UNKNOWN`。
+
+### 六、门禁
+
+`apps/web` 单测 312 + 136 + 10，**0 失败**；`tsc -b` ✅；`eslint` ✅。
+⚠️ **没有跑全仓 `pnpm -r test`**（上下文用尽）`[未验证]` —— 我只动了 `apps/web` 两个文件。
+提交按 §12 用 pathspec，提交后 `git show --stat` 复核，只有我自己的两个文件。
