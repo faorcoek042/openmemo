@@ -28,7 +28,7 @@ import { mkdtemp, mkdir, writeFile, symlink, rm, readdir, stat } from 'node:fs/p
 import { existsSync, openSync, closeSync, mkdtempSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir, platform } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve as resolvePath, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const REPO = process.env['REPO_ROOT'] ?? process.cwd();
@@ -38,6 +38,34 @@ const ST = await import(distUrl('apps/daemon/dist/http/rest/storage.js'));
 
 const IS_WIN = platform() === 'win32';
 const REQUIRE_CROSSVOL = process.argv.includes('--require-crossvol');
+
+/*
+ * ── PROTOCOL §9 的结构性守卫，不是礼貌提醒 ────────────────────────────────────
+ *
+ * C7 走的是**产品自己的那条路**，而那条路会 `writeDataDirPointer()` ——
+ * 指针是**全机器共享的一份**。这个脚本要是在没重定向指针的情况下跑起来，
+ * 就会把跑它那台机器上的数据目录指针改掉；而症状要等下一次重启才显形
+ * （用户的 key、模型、转写记录看起来"全没了"，其实一个字节没丢）。
+ *
+ * 判据照 §9-bis：**不是"记得设"，是"没设就跑不起来"**。
+ */
+{
+  const pf = process.env['OPENMEMO_POINTER_FILE'];
+  const home = process.env['HOME'] ?? process.env['USERPROFILE'] ?? '';
+  if (!pf) {
+    console.error(
+      '::error::OPENMEMO_POINTER_FILE 没设 —— 本脚本会走产品路径写指针，拒绝在真实指针上跑',
+    );
+    process.exit(2);
+  }
+  if (home && resolvePath(pf).startsWith(resolvePath(home) + sep)) {
+    console.error(
+      `::error::OPENMEMO_POINTER_FILE 落在 $HOME 里（${pf}）—— 那就是机器级指针本身，拒绝`,
+    );
+    process.exit(2);
+  }
+  console.log(`指针已重定向到临时位置：${pf}`);
+}
 
 const results = [];
 const rec = (id, name, status, detail) => {
@@ -313,6 +341,122 @@ const TMP = await mkdtemp(join(tmpdir(), 'ddaudit-'));
   if (conflict.ok !== false) ok = false;
   lines.push(`${conflict.ok === false ? 'OK ' : 'BAD'} 新旧别名冲突 → 拒绝`);
   rec('C6', '"只切换不搬"：缺省 false、显式 false 都不搬', ok ? 'PASS' : 'FAIL', lines.join('\n'));
+}
+
+/* ── C7 ★★ 产品自己的那条路 ★★ ──────────────────────────────────────────────
+ *
+ * C1–C6 调的是 `moveDataDir` 这个底层函数；C4 的"删不掉源"是**注入**出来的。
+ * 但用户点的是**界面上那个按钮**，走的是 `createStorageRoutes` →
+ * 关库 → `moveDataDir` → 重开 → 迁 media_assets → 写指针 → 重启。
+ *
+ * **注入式复现不算数**：修完要回答的是「生产路径上，同卷/跨卷各自到底留不留旧目录」。
+ * 所以这一格开一个**真的** SQLite 库（`openAppDatabase`，产品用的同一个入口），
+ * 挂上真的路由，发一个和前端逐字节相同的请求，然后去看文件系统。
+ */
+{
+  const { createStorageRoutes } = await import(distUrl('apps/daemon/dist/http/rest/storage.js'));
+  const { resolvePaths } = await import(distUrl('apps/daemon/dist/config/paths.js'));
+  const { openAppDatabase } = await import(distUrl('packages/db/dist/index.js'));
+  const { createServer } = await import('node:http');
+
+  /** 起一个真路由，发真请求，返回状态码 + 响应体。 */
+  async function moveViaProduct(from, to) {
+    const paths = resolvePaths(from);
+    // `makeDataDir` 放的是占位文本；这一格要的是**真库**，让 openAppDatabase 自己建
+    await rm(paths.dbFile, { force: true });
+    let db = openAppDatabase({ filename: paths.dbFile });
+    const events = [];
+    const restarts = [];
+    const routes = createStorageRoutes({
+      paths,
+      db: db.db,
+      runningJobs: () => 0,
+      closeDatabase: () => {
+        events.push('close');
+        db.close();
+      },
+      reopenDatabase: (dir) => {
+        events.push(`reopen:${dir}`);
+        db = openAppDatabase({ filename: join(dir, 'openmemo.db') });
+        return db.db;
+      },
+      requestRestart: (reason, o) => restarts.push({ reason, dataDir: o?.dataDir }),
+    });
+    const server = createServer((req, res) => {
+      const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+      void routes.handle(req, res, url, req.method ?? 'GET').then((h) => {
+        if (!h) {
+          res.writeHead(404);
+          res.end('unrouted');
+        }
+      });
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const port = server.address().port;
+    const resp = await fetch(`http://127.0.0.1:${port}/api/settings/data-dir`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: to, moveExisting: true }),
+    });
+    const json = await resp.json().catch(() => ({}));
+    await new Promise((r) => server.close(r));
+    try {
+      db.close();
+    } catch {}
+    return { status: resp.status, json, events, restarts };
+  }
+
+  // —— C7a 同卷 ——
+  {
+    const from = join(TMP, 'c7a-from');
+    const to = join(TMP, 'c7a-to');
+    await makeDataDir(from);
+    const r = await moveViaProduct(from, to);
+    const srcGone = !existsSync(from);
+    const miss = missingOf(to);
+    const ok = r.status === 202 && srcGone && miss.length === 0;
+    rec(
+      'C7a',
+      '★★ 生产路径·同卷：旧目录必须不留',
+      ok ? 'PASS' : 'FAIL',
+      `HTTP ${r.status}  moved=${r.json.moved}  strategy=${r.json.strategy}\n` +
+        `关库/重开顺序=${r.events.join(' → ')}\n` +
+        `旧目录还在吗=${existsSync(from) ? '还在(!!)' : '已消失'}  新位置缺失=${miss.join(',') || '无'}\n` +
+        `界面文案=${r.json.messageZh ?? '(无)'}`,
+    );
+  }
+
+  // —— C7b 跨卷（真 EXDEV；没有第二个卷就 SKIP）——
+  {
+    const vol = await secondVolumeRoot();
+    if (vol === null) {
+      rec(
+        'C7b',
+        '生产路径·跨卷',
+        REQUIRE_CROSSVOL ? 'FAIL' : 'SKIP',
+        '这台 runner 上没有第二个可写卷 —— 跨卷的生产路径没测到（不是通过）。',
+      );
+    } else {
+      const from = join(TMP, 'c7b-from');
+      const to = join(vol, 'prod-' + Date.now());
+      await makeDataDir(from);
+      const r = await moveViaProduct(from, to);
+      const srcGone = !existsSync(from);
+      const miss = missingOf(to);
+      const ok = r.status === 202 && srcGone && miss.length === 0;
+      rec(
+        'C7b',
+        '★★ 生产路径·跨卷（真 EXDEV）：旧目录必须不留',
+        ok ? 'PASS' : 'FAIL',
+        `HTTP ${r.status}  moved=${r.json.moved}  strategy=${r.json.strategy}\n` +
+          `关库/重开顺序=${r.events.join(' → ')}\n` +
+          `旧目录还在吗=${existsSync(from) ? '还在(!!) 残留=' + (await readdir(from)).join(',') : '已消失'}\n` +
+          `新位置缺失=${miss.join(',') || '无'}\n` +
+          `界面文案=${r.json.messageZh ?? '(无)'}`,
+      );
+      await rm(vol, { recursive: true, force: true }).catch(() => {});
+    }
+  }
 }
 
 await rm(TMP, { recursive: true, force: true }).catch(() => {});
