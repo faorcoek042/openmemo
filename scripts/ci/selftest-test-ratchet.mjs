@@ -225,6 +225,42 @@ check('★反向：删文件 + --update 之后，门禁**依然是红的**', () 
   if (!r.all.includes(victim)) throw new Error('红了但没点名');
 });
 
+check('★反向：手删 tracked 若干行 + 加新测试 + --update ⇒ floor **不许下降**', () => {
+  // 这条钉的是审计里查出来的那个真 bug：`--update` 里 floor 原本是**重算**不是取 max，
+  // 于是「手删 N 行 → 加 1 个新测试 → --update」能让 floor 静默降 N，
+  // 条件 ③（accounted < floor）从此永远不会响 ——
+  // **一个专门防"守卫帮着擦指纹"的设计，自己留了一道擦指纹的门。**
+  //
+  // 注意必须**同时**加一个新文件：`--update` 在 added.length === 0 时提前返回，
+  // 不写基线；不加新文件就复现不出来。这正是它藏得深的原因 ——
+  // 而"有未登记的新测试"恰恰是最常见的状态（新增未登记已被降级为提示）。
+  const s = sandbox();
+  const before = readBase(s.root);
+  const victims = before.tracked.filter((f) => f !== PROBE).slice(0, 3);
+
+  // ⚠️ 必须**文件也从树上删掉**，否则 `--update` 会把它们当"未登记"直接加回来
+  //    （那反而是自愈的正确行为）。真正的洞是：文件没了 + 名单里那几行也被抹了。
+  for (const v of victims) deleteTracked(s.root, v);
+  const b = readBase(s.root);
+  b.tracked = b.tracked.filter((f) => !victims.includes(f)); // 绕过 removed，直接抹掉 3 行
+  writeBase(s.root, b);
+
+  addCommittedTest(s.root, 'packages/x/src/freshOne.test.ts'); // 制造 added.length > 0
+  const u = run(s.root, ['--update']);
+  if (u.status !== 0) throw new Error(`--update 失败：\n${u.all}`);
+
+  const after = readBase(s.root);
+  if (after.floor < before.floor) {
+    throw new Error(
+      `floor 从 ${before.floor} 掉到了 ${after.floor} —— --update 把擦掉的证据一起洗了`,
+    );
+  }
+  // 而且门禁必须真的红：被抹掉的那 3 个文件其实还在树上，但名单短了 ⇒ accounted < floor
+  const r = run(s.root);
+  if (r.status === 0) throw new Error(`手删名单行 + --update 之后门禁是绿的：\n${r.all}`);
+  if (!/名单本身变短/.test(r.all)) throw new Error(`没归因到"名单变短"：\n${r.all}`);
+});
+
 /* ── ④ 合法删除必须还能做（棘轮 ≠ 禁止删除） ──────────────────────────────── */
 console.log('\n④ 合法删除：挪进 removed + 写 reason 就该放行');
 

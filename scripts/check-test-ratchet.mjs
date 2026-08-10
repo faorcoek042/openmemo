@@ -213,7 +213,18 @@ if (wantUpdate) {
     // ★ 只往里加。**绝不**按当前树重新生成 —— 那会把"被删掉的文件"一起抹掉，
     //   等于守卫帮着擦指纹（见文件头）。
     tracked: [...tracked, ...added].sort(),
-    floor: tracked.length + added.length + removed.length,
+    // ★ 必须取 max，**不能重算**。这是审计里查出来的一个真 bug（我自己写的）：
+    //
+    //   原本写的是 `tracked.length + added.length + removed.length` —— 一次**重算**。
+    //   于是这条路径打开了：手删 `tracked` 里 N 行 → 再加 1 个新测试 → 跑 `--update`
+    //   → floor **静默降 N**，条件 ③ 的 `accounted < floor` 从此永远不会响。
+    //
+    //   文件头承诺「`--update` 只增不减，闭眼跑也不会掩盖删除」——
+    //   那句话对 `tracked[]` 成立，**对 `floor` 不成立**。
+    //   **一个专门防"守卫帮着擦指纹"的设计，自己留了一道擦指纹的门。**
+    //
+    //   取 max 之后 floor 单调不减：删名单行只会让 accounted 掉到 floor 底下 ⇒ 当场红。
+    floor: Math.max(floor, tracked.length + added.length + removed.length),
     generatedAt: new Date().toISOString().slice(0, 10),
   };
   writeFileSync(BASELINE_PATH, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
