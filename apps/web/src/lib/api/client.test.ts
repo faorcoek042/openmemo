@@ -486,3 +486,43 @@ describe('client —— 只要还有端点在回落 mock，标注就不许消失
     assert.equal(surfaceState('notes'), 'live');
   });
 });
+
+/**
+ * ★ T-200 S-4 收尾：**缺失的写路由不许把 MOCK 标注扣在整个面上。**
+ *
+ * S-4 给 `missingEndpoints` 加了 surface 之后，`hasMissingOnSurface()` 数的是
+ * 这个面上**所有**缺失记录 —— 而 `isNotImplemented` 那一支对**写**也记账
+ * （`PATCH /notes/:uid/mindmap` 正是那次事故的正主）。
+ *
+ * 于是：一条缺失的写路由 ⇒ 该面任何一次成功的读都会把它标成 `mock` ⇒
+ * 界面挂出「这些数据是假的」，**而实际上一个读端点都没有回落**（写是如实抛错的）。
+ *
+ * 这就是原注释里那句「按 surface 记会毒化整个面」**从标注这道门又走回来了一次**：
+ * 路由层已经按端点记了，标注层却退回按面记。**假红灯与假绿灯同罪**（本仓 ⑤B）。
+ */
+describe('client —— 缺失的写路由不许污染这个面的 MOCK 标注（T-200 S-4 收尾）', () => {
+  beforeEach(async () => {
+    installFetch();
+    await freshHandshake();
+    routes.set('GET /api/notes/ok', { status: 200, body: { ok: true } });
+  });
+
+  it('★ 写路由 404 之后，同面读端点成功 → 该面必须是 live（没有任何读在回落）', async () => {
+    await api('notes', '/notes/x', { method: 'PATCH', body: {} }).catch(() => undefined);
+    assert.deepEqual(missingEndpointList(), ['PATCH /notes/x'], '前提：写路由确实被记账了');
+
+    await api('notes', '/notes/ok');
+    assert.equal(
+      surfaceState('notes'),
+      'live',
+      '一条缺失的**写**路由把整个面标成了 mock —— 而读端点全通、屏幕上没有一个假数据。' +
+        '这是假红灯：它会教用户忽略 MOCK 标注，而那个标注正是我们指望他信的东西',
+    );
+  });
+
+  it('★ 但读端点缺失时，标注仍然必须挂着（别把上一条修成"永远 live"）', async () => {
+    await api('notes', '/notes/gone').catch(() => undefined);
+    await api('notes', '/notes/ok');
+    assert.equal(surfaceState('notes'), 'mock', '读端点还在回落 mock，标注不许消失');
+  });
+});

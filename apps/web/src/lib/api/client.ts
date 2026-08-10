@@ -292,7 +292,7 @@ export async function api<T>(
  * - `surface`：它属于哪个面 → 让"这个面还有端点在回落 mock"这件事可判定，
  *   否则同面任意一个成功请求就会把 MOCK 标注抹掉（见 `:374` 那一段）。
  */
-const missingEndpoints = new Map<string, { surface: Surface; at: number }>();
+const missingEndpoints = new Map<string, { surface: Surface; at: number; isRead: boolean }>();
 
 /**
  * 被判定"未实现"的端点，隔多久放一次真请求过去探路。
@@ -306,9 +306,18 @@ const missingEndpoints = new Map<string, { surface: Surface; at: number }>();
  */
 const MISSING_RETRY_MS = 60_000;
 
-/** 这个面上还有端点在回落 mock 吗 —— MOCK 标注的存废依据。 */
+/**
+ * 这个面上还有端点**在回落 mock** 吗 —— MOCK 标注的存废依据。
+ *
+ * ⚠️ 只数读（`isRead`）。**写路由缺失不算**：写从不回落 mock，它如实抛错
+ * （见 `isNotImplemented` 那一支），屏幕上不会因此出现任何假数据。
+ * 把它算进来的话，一条缺失的写路由就会让整个面挂上「这些数据是假的」——
+ * 而那正是本文件开头那段事故注释里「按 surface 记会毒化整个面」**从标注这道门
+ * 又走回来一次**。路由层已经按端点记了，标注层不能退回按面记。
+ * 假红灯与假绿灯同罪：它会教用户忽略这个标注，而这个标注正是我们指望他信的东西。
+ */
 function hasMissingOnSurface(s: Surface): boolean {
-  for (const rec of missingEndpoints.values()) if (rec.surface === s) return true;
+  for (const rec of missingEndpoints.values()) if (rec.surface === s && rec.isRead) return true;
   return false;
 }
 
@@ -465,7 +474,7 @@ async function apiCall<T>(surface: Surface, path: string, opts?: ApiOptions): Pr
     }
     if (isNotImplemented(err)) {
       // 只记这一条端点，**不再牵连同面的其它端点**
-      missingEndpoints.set(key, { surface, at: Date.now() });
+      missingEndpoints.set(key, { surface, at: Date.now(), isRead: !isWrite });
       if (!isWrite && mockFetcher) {
         markSurface(surface, 'mock');
         return mockFetcher<T>(path, opts);
