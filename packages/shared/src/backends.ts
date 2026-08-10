@@ -190,6 +190,28 @@ export interface BackendPack {
    * git — but MUST NOT be offered as a download, and MUST NOT carry an invented URL.
    * Publishing a URL that 404s is worse than admitting the gap: the failure surfaces at
    * click time instead of at review time.
+   *
+   * ## ⚠️ 这个标记**关掉了哪些检查**（PROTOCOL §16 要求的那份清单）
+   *
+   * 标成 `pending-ci` 的包会从下面这些判据的**取值范围里消失** —— 不是"检查通过了"，
+   * 是**检查够不着它**。翻回 `published` 时它们会一起醒过来，**预期会红**：
+   *
+   * | 检查 | 判据里怎么写的 | 关掉的后果 |
+   * |---|---|---|
+   * | 伴随条目（`platformPacks.test.ts` ③） | 只查 `availability !== 'pending-ci'` 的包 | `components.json` 里可以没有它 → 用户查不到来源与许可证 |
+   * | macOS 最低系统版本（同上 ⑥） | 只查 `availability === 'published'` | `requiresDriver.macosVersion` 可以是 `null` → 用户不知道自己的 Mac 太旧 |
+   * | 安装按钮（`BackendPackCard.tsx`） | `pendingCi` → `disabled` | 装不了（这一条是**有意**的，另两条不是） |
+   * | 安装闸门（`rest/backends.ts`） | `pending-ci` → 409 | 直接 POST 也装不了（同样有意，T-196 ④ 补的） |
+   *
+   * `[实测 T-196]` 两个包在这个标记下躺了两天，上面前两条一直没红 ——
+   * 翻对标记的那一刻两条同时红，缺口比标记本身早得多。
+   *
+   * **加这个标记之前，先确认上面这些代价可以接受；
+   * 翻掉它之后，预期会红几条，那是检查醒了，不是你弄坏了什么。**
+   *
+   * 另有一条守卫专门防"标记说谎"：`check-release-refs.mjs --assert-availability`
+   * —— `pending-ci` 的地址**如果真的下得到就红**（发完忘了翻标记）。
+   * 它刻意不写成"`pending-ci` 不许带 URL"，那会挡住上面那个合法用法。
    */
   availability: 'published' | 'pending-ci';
 
