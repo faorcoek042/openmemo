@@ -432,9 +432,22 @@ jobs:
     permissions:
       contents: read
     env:
-      # ★ 唯一真源：--expect-labels（求和用）与 --platforms（写凭证用）都从这一个
-      #   变量取值，不再各自抄一份字面量——以后加第 4 个平台，只改这一行，
-      #   不可能出现"改了一处忘了另一处"那种两份清单悄悄对不上的状态。
+      # ★ --expect-labels（求和用）与 --platforms（写凭证用）的唯一真源：两处都从
+      #   这一个变量取值，不再各自抄一份字面量——把"两份重复"降到了"一份"。
+      #
+      #   ⚠️ 老实说清楚这份"唯一真源"止步于哪：它**不是**从上面 `audit` job 的
+      #   `strategy.matrix.include`（第 93 行附近）自动算出来的——GitHub Actions
+      #   没有现成的办法把一个 job 的 matrix 标签列表直接投影进另一个 job 的
+      #   `env:`（要做到得另起一个"先算 matrix JSON 再 fromJSON() 消费"的
+      #   前置 job，是比这次改动大得多的重构，本次没有做）。这里仍然是**手写**的
+      #   一份字符串，加/删平台时要跟 `audit` 的 matrix **手动**保持一致。
+      #
+      #   忘了同步会不会被静默吞掉？不会——`sum-undecided.mjs` 本来就拿
+      #   `--expect-labels` 跟目录里实际下到的文件做双向比对：matrix 多了一格
+      #   而这里没跟着加，多出来的文件会被"未预期文件"分支逮住（对应 selftest 的
+      #   B4 用例）；matrix 少了一格而这里没跟着删，则会被"缺失"分支逮住
+      #   （对应 B1/B2 用例）。两种情况都不是"悄悄少算"，而是响亮警告 + 收敛成
+      #   null，判据不受影响。
       PLATFORMS: linux-x64,darwin-arm64,win32-x64
     steps:
       - uses: actions/checkout@v6
