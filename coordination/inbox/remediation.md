@@ -501,3 +501,46 @@ assert.equal(focusables > 0, true, '已完成的行上一个可聚焦元素都�
 ### 纪律
 
 `git commit` 带 pathspec（提交时索引里有别人 `git add` 的 `catalogDescriptionRank.test.ts`，**没被卷进来**）· 未 `git stash` · 未 `--amend` · `:10000` 全程只读（vite dev 代理过去，实测**零写请求**）· 未碰 `/root/data-memo` / 机器级指针 · 未 `pkill -f`（vite 按 PID kill，端口已释放）· 门禁那条 `packStatus.ts :: isActivePack` 是别人的，未碰。
+
+---
+
+## [2026-08-10 05:40] T-199 ① ② DONE
+
+**② `40e8f40` · ① `db30c25`**，均已 `merge-base --is-ancestor` 复核进 origin/master。
+
+### ② DownloadRow 影子守卫
+
+一行局部重绑（**没抽 helper**，禁令天然满足）：服务端行说这活停了就把 `live` 整份置空，六个字段连同 `ratio` 一起对。
+
+判据**不是** `TERMINAL_JOB_STATES`（漏 `paused`/`blocked`），**也不是** `isActiveJobState()`（它是反过来的谓词，刻意把这两个算作"还没结束"）；`queued` **刻意排除在外**——那是"还没开始"，内存合法领先，算进来会让刚点下去的下载倒退回 0%。
+
+🔴 **一条对简报的更正**：简报给的复现路径「点这行「暂停」→ 服务端行变 `paused`」**今天走不通**——`DownloadRow` 根本没有暂停按钮，`DownloadQueue` 也没有暂停实现（`rest/jobs.ts` 对 pause/resume 直接回 501）。`paused`/`blocked` 今天**零生产者**，我把它们写进守卫是**照 `JOB_TRANSITIONS` 契约布防**，不是照实现。**今天真正会踩到的是 `cancelled` / `failed`**（取消一个正在下的模型）。这一点已如实写进代码注释，免得下一个人以为它验证过 paused。
+
+反向验证 3 组：撤守卫 → 5 条红；退回终态表 → paused/blocked 两条红（正好钉住要害）；守卫做过头 → running/queued 两条红。
+
+### ① corrupt 模型「选得中、跑不了」
+
+只改 C，A/B 不动。谓词复用 B 已有的 `requireIntegrityOk` 契约（`=== 'ok'`），**没发明第三套**。跑不了的 **`disabled` 但不隐藏**，原因写进选项文案。
+
+`/models` 顶部拆三态，`corrupt` 给 critical + 新词条；两份 locale **只新增 key、未重排**。
+
+其中一条腿钉的是**性质本身**：逐个枚举 `integrity` 的四个值，可选性必须与 B 逐格相同——将来加第五个值会立刻要求作者回来表态。
+
+反向验证 3 组：C 退回旧判据 → 3 条红；chip 两态合并 → 2 条红；一刀切全禁 → 2 条红。
+
+### 两条判据自查
+
+- **没用关键词判据**：`/models` 那三条钉 `[data-testid="asr-integrity-chip"]` 这一枚芯片的文字。第一版用整页 `includes` 当场被自己咬到——我新加的选项后缀「（校验未通过，选了也跑不了）」含有芯片那句「校验未通过」，`unverified` 那条因此误红。**同一个词出现在两处，关键词判据分不清是谁说的**（B11 同坑），于是加了结构锚点。
+- **没有"由卸载/跳转保证的恒真"**：每一族都配了**反向鉴别腿**（守卫做过头 / 每行都给链接 / 一刀切全禁），单靠"做没做"过不了。
+
+### 共享树上的两次踩踏（都已消解，记下来）
+
+1. `components.test.tsx` 的 `useProgressStore` 导入与另一路**互相礼让成了谁都没导入** —— 我加、对方加、双方各自撤，来回三轮，中间整棵树 `ReferenceError`。最后合并成一行 `{ pushProgress, useProgressStore }` 收口。
+2. 同文件里对方的新用例引用 `bus` 但未导入，树红；我准备补时对方已自行补上。
+
+**判据不是"谁的锅"，是共享单 bundle 测试文件上"加导入"这个动作没有幂等性** —— 两边同时做就必然撞。建议 Manager 考虑给组件测试拆第二个 bundle（`silentFailures.test.tsx` 已有先例）。
+
+### 纪律
+
+`git commit -- <明确路径>` 两次（提交时索引里都有别人 `git add` 的文件，`git show --stat` 逐次核对**只含我的**）· 未 stash / 未 `checkout --` / 未 `-a` / 未 `--amend` · `pnpm format:changed --write -- <同一份 pathspec>` · 未碰 release/tag · 未碰 `features/tasks/*` 与 `packages/downloader/src/queue.ts`。
+遗留红：`apps/web/src/features/models/sse.ts` 的 `TERMINAL_JOB_STATES`/`useProgressStore` 未定义（另一路在途，非我），我提交时该文件已由对方修好。
