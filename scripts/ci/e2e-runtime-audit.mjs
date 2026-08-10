@@ -1827,9 +1827,9 @@ async function phaseModels() {
    *
    * 判据不变：**改坏之后端点必须说不通过**。改的是"改坏谁"。
    */
-  const ownBlobs = (
-    (inst1.body?.models ?? []).find((m) => m.id === first.id)?.files ?? []
-  ).map((f) => `sha256-${f.sha256}`);
+  const ownBlobs = ((inst1.body?.models ?? []).find((m) => m.id === first.id)?.files ?? []).map(
+    (f) => `sha256-${f.sha256}`,
+  );
   const blobs = listDir(blobDir).filter(
     (f) => /^sha256-[a-f0-9]{64}$/.test(f) && ownBlobs.includes(f),
   );
