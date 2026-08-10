@@ -50,10 +50,33 @@
 #   `OPENMEMO_POINTER_FILE`（`:255-267`）—— 所以它不需要人来搭台子，
 #   这也是这批脚本里唯一一个做得到的。
 #
-# **确切下载量：`UNKNOWN`。** 只有目录总量上界可参照
-# （`backends.json` 14 条合计 1173 MB；`models-whisper.json` 30 条合计 27 GB，它取其中一个）。
-# **没有去读它的选型逻辑，所以不报确切数字。**
-# 下面的 `disk-usage` 步骤会在首跑时把真实占用量到，届时把这一段从上界改成事实。
+# ── 📌 首跑结果（2026-08-11，run 31424996163）—— UNKNOWN 已变成事实 ────────────
+#
+# **确切下载量不再是 UNKNOWN：`[实测]` +551 MB**
+# （root 58642 → 59192 MB；其中临时目录 7 → 558 MB，即下载物基本都落在隔离数据目录里）。
+# 远低于此前只能给的上界参照（`backends.json` 14 条合计 1173 MB；
+# `models-whisper.json` 30 条合计 27 GB —— 它只取其中一个）。**上界作废，以这个数为准。**
+#
+# **首跑结论：`failure`。而这正是这条 workflow 要买的信息** ——
+# 「跑过一次并且红了」比「从没跑过」强得多。它红在**自己的逻辑上**，不是环境上：
+#
+#     ✘ 中断：ENOENT: no such file or directory,
+#             open '/tmp/openmemo-proxy-audit-rzW8WF/clip.mp4'
+#
+# 前七步全绿（装包、起 daemon、装 media-tools/yt-dlp/whisper 都成了），
+# 死在**第 2 步末尾自己造 fixture 那一段**（`proxy-coverage-audit.mjs:474-506`）：
+#
+#   ① `spawn(FFMPEG, …, { stdio: 'ignore' })` —— ffmpeg 的报错**被丢掉了**，
+#      所以真正的原因在日志里根本看不到；
+#   ② `p.on('close', r)` —— **任何退出码都当成功**，非零退出照样往下走；
+#   ③ 紧接着 `readFileSync(out)` 盲读 —— 于是失败以一个**离成因很远**的 ENOENT 现形。
+#
+#   而实质原因多半是：它假设产品自带的那个 ffmpeg 支持 `lavfi` + `libx264` + `aac`，
+#   但本产品的 media-tools 是**面向解码**的构建（同仓另有 `ffmpeg-lgpl-verify.yml`
+#   专门在量解码覆盖面）。**编码器不在，合成 fixture 这条路就走不通。**
+#
+# ⚠️ **没有为了让它绿去改它的断言**（那是本 workflow 文件头写死的禁令）。
+#    上面是诊断，不是修复。修 / 删的取舍见 §「如果首跑发现它跑不起来」，等裁决。
 name: proxy-coverage
 
 on:
