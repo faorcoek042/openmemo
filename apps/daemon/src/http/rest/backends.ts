@@ -567,6 +567,46 @@ export async function handleBackendRoutes(
       );
       return true;
     }
+    /*
+     * ★ T-196 ④：与 `applicability` 并列的第二道闸 —— **「能不能装」以前网页有闸、服务端一个字都不读。**
+     *
+     * 在这之前，这个 handler 只查 `id` + `applicability()`，零处读 `availability`。
+     * 后果是同一个问题两个答案：
+     *   · 网页：按钮 `disabled`，文案「尚未发布，暂不可安装」（`BackendPackCard.tsx`）
+     *   · 服务端：`POST /api/backends/install` 照样 **202**，起一个**必然失败**的 job
+     *
+     * 「必然失败」不是修辞：`pending-ci` 的语义就是"还没有可下载的地址"。
+     * 于是用户得到一个排队中的任务 → 下载阶段报错 → 他去查"为什么下载失败"，
+     * 而正确的问题是"这东西根本还没发布"。**一个 202 把一句本可以立刻说清的话，
+     * 推迟成了一个几十秒后才出现、且指向错误方向的失败。**
+     *
+     * ⚠️ 顺序刻意放在 `applicability` **之后**：一个包既不适用、又没发布时，
+     * 「这是别的平台的包」是关于用户机器的确定事实，比「我们还没发布」更能回答他此刻的疑问。
+     * 这与前端 `packStatus()` 的优先级（`platform` 先于 `not-published`）**是同一条**——
+     * 两层给同一件事排出不同的顺序，就是下一个"两处说法不一致"。
+     *
+     * ⚠️ 这条今天在**数据层**打不起来（`b0cbf08` 之后目录里一个 `pending-ci` 都没有），
+     * 它现在只在**代码层**成立。所以它的用例喂的是自己造的 pending-ci 包，
+     * 而不是依赖目录里恰好有一个 —— 依赖那个的话，这道闸会随着目录变化悄悄失去覆盖。
+     */
+    if (pack.availability === 'pending-ci') {
+      sendError(
+        res,
+        409,
+        'CONFLICT',
+        `pack ${id} is not published yet (availability=pending-ci): it has no downloadable URL`,
+        `该组件尚未发布下载地址，现在装不了 —— 不是你的机器的问题`,
+        {
+          remediation: {
+            action: 'upgradeApp',
+            params: { packId: id },
+            labelZh: '等待新版本',
+            label: 'Wait for a new version',
+          },
+        },
+      );
+      return true;
+    }
     const started = startPackInstall(state, pack);
     sendJson(res, 202, toPullResponse(started.job, started.deduplicated));
     return true;

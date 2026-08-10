@@ -175,6 +175,17 @@ export const UNROUTED_ACTIONS: Readonly<Record<string, string>> = {
    * 那是另一个洞，记在 inbox 里，不在这张表里假装解决。
    */
   cancel_job: '就地取消 job，不是跳转；且该错误当前未被任何 ErrorBlock 渲染（另记）',
+  /**
+   * `rest/backends.ts` —— `409 CONFLICT`：这个后端包标着 `pending-ci`，还没有可下载的地址。
+   *
+   * **应用内没有任何一页能修它。** 清单是**随应用出厂**的（`build-bundle.mjs` 把
+   * `vendor/manifests` 原样打进包），所以"这个包发布了没有"这件事在用户手里那份是**冻住的**
+   * —— 要变，只能换一份新的应用。跳 `/runtime` 只会把他送回他刚才点按钮的那一页。
+   *
+   * 保留 action 而不是不给 remediation：文案本身（「等待新版本」+ 那句"不是你的机器的问题"）
+   * 才是这里唯一有价值的东西，而按钮没有。
+   */
+  upgradeApp: '清单随应用出厂、在用户手里是冻住的；没有哪一页能改"这个包发布了没有"',
 };
 
 /**
