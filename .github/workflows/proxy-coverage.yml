@@ -1,0 +1,118 @@
+# 代理覆盖实测 —— 一个**只为把"从没跑过"变成"跑过、有结论"**而存在的 workflow
+#
+# ── 它存在的唯一目的 ────────────────────────────────────────────────────────────
+#
+# `scripts/ci/proxy-coverage-audit.mjs` 有 **791 行**，写于 2026-08-08，
+# `[实测 2026-08-11]` 全仓审计：**一个执行引用都没有** —— 没有 workflow、
+# 没有 package.json 脚本项、没有任何链会调它。**它从写完那天起一次都没跑过。**
+#
+# 而 `HANDOFF.md` 曾经拿它当"代理覆盖每一条出网路径"的证据（已于 `6bc7a3b` 改正）。
+#
+# 所以真正的缺口**不是**"要不要自动跑"，是：
+#
+#   > **这 791 行到底跑不跑得起来，没有人知道。**
+#
+# 直接挂到 `e2e-import` 那条绿腿上不行 —— 它要连外网、要真下载，本地预跑不了，
+# 那就等于把一个从没跑过的东西红着上线。永远停在"手动脚本"也不行 ——
+# 它连**手动跑过一次**都没有。**这个 workflow 是把未知变成已知的那一步，仅此而已。**
+#
+# ── 🔴 过期判据（可执行，不是"以后有空再说"）──────────────────────────────────
+#
+# > **到 v0.7.2 发布时，本 workflow 要么已被提升为自动跑的一格
+# > （`ci.yml` 的一个 step，或挂进 `e2e-import.yml`），
+# > 要么连同 `scripts/ci/proxy-coverage-audit.mjs` 一起删除。**
+# > **停在这里不算一个终态。**
+#
+# 当前版本 `0.7.0`（`package.json` 是唯一事实来源）。
+# 谁在 v0.7.2 的发版检查里看到这个文件还在、且既没被提升也没被删 —— 那就是它过期了。
+#
+# ── 如果首跑发现它跑不起来，走删的路子，别留永久停车位 ────────────────────────
+#
+# ⚠️ **首跑红了也是收获**：「跑过一次并且红了」比「从没跑过」强得多。
+# **不许为了让它绿去改它的断言** —— 它要是红在自己的逻辑上，那正是要知道的事。
+#
+# 若首跑证明**它根本跑不起来**，或**修它的代价大于它守的那点性质**：
+# 照 ADR-017 那个先例 —— **删掉脚本与本文件，但把知识留档**
+# （它验过哪几条出网路径、当时的结论是什么、为什么不再维护），
+# 写进 `docs/adr/` 或对应的 inbox 回执。
+# **别让"将来接上"变成一个永久停车位** —— 这正是它现在这个状态的成因。
+#
+# ── 它需要什么（首跑之前只能给上界，不许编确切数字）────────────────────────────
+#
+# - **真外网出口 + 真下载**：脚本自己写死了「装 media-tools + yt-dlp + whisper，
+#   **ASR 不能省**」，理由在 `proxy-coverage-audit.mjs:392-396`：缺组件时 job 停在
+#   `blocked`，yt-dlp 的 fetch 一次都没发生，而脚本会把"代理没看到请求"
+#   **误读成"绕过了代理"** —— 一个假绿。
+# - **一个 `openmemo-proxy-probe.test` 真的解析不了的 DNS 环境**（`:64`）。
+#   带通配符解析的网络后面会假红。GitHub runner 正常，自建 runner 要当心。
+# - **已构建的 dist**：`:248-252` 缺了就硬退出并提示 `pnpm build:safe`。
+# - 它**自己 spawn daemon**、自己 `mkdtemp` 隔离数据目录、自己重定向
+#   `OPENMEMO_POINTER_FILE`（`:255-267`）—— 所以它不需要人来搭台子，
+#   这也是这批脚本里唯一一个做得到的。
+#
+# **确切下载量：`UNKNOWN`。** 只有目录总量上界可参照
+# （`backends.json` 14 条合计 1173 MB；`models-whisper.json` 30 条合计 27 GB，它取其中一个）。
+# **没有去读它的选型逻辑，所以不报确切数字。**
+# 下面的 `disk-usage` 步骤会在首跑时把真实占用量到，届时把这一段从上界改成事实。
+name: proxy-coverage
+
+on:
+  # ★ 刻意**只有** workflow_dispatch：它的第一次运行必须是被人发起、被人看着的。
+  #   在它至少跑绿过一次之前，不许自动触发（见上面「过期判据」）。
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proxy-coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: 代理覆盖逐条实测（首跑：把"从没跑过"变成有结论）
+    runs-on: ubuntu-24.04
+    # 真下载 + 真转写，给足时间；超时本身也是一条要记录的结论。
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.15.0
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # 脚本 `:248-252` 缺 dist 会硬退出，所以这一步是**真依赖**。
+      - name: Build (workspace packages)
+        id: build
+        run: pnpm build:safe
+
+      # ★ 把 UNKNOWN 变成事实：记录跑之前的占用，跑完再记一次，差值就是真实下载量。
+      - name: Disk before
+        id: disk_before
+        run: |
+          echo "root_mb=$(df -m --output=used / | tail -1 | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          echo "tmp_mb=$(du -sm /tmp 2>/dev/null | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      # ⚠️ 不加 `continue-on-error`：首跑红了要如实红。
+      #    「跑过一次并且红了」是有信息的结论，把它写成绿就等于白跑。
+      - name: Proxy coverage audit (首跑)
+        id: audit
+        run: node scripts/ci/proxy-coverage-audit.mjs
+
+      # 无论上一步红绿都要量 —— 红着退出时的下载量同样是我们要的那个数。
+      - name: Disk after (量出真实下载量，替换文件头里的 UNKNOWN)
+        if: ${{ !cancelled() }}
+        run: |
+          AFTER_ROOT=$(df -m --output=used / | tail -1 | tr -d ' ')
+          AFTER_TMP=$(du -sm /tmp 2>/dev/null | cut -f1)
+          echo "磁盘占用（MB）  before_root=${{ steps.disk_before.outputs.root_mb }} after_root=${AFTER_ROOT}"
+          echo "临时目录（MB）  before_tmp=${{ steps.disk_before.outputs.tmp_mb }} after_tmp=${AFTER_TMP}"
+          echo "→ 真实下载/占用增量约 $((AFTER_ROOT - ${{ steps.disk_before.outputs.root_mb }})) MB（root）"
+          echo "→ 其中临时目录增量约 $((AFTER_TMP - ${{ steps.disk_before.outputs.tmp_mb }})) MB"
+          echo "把这个数填回 .github/workflows/proxy-coverage.yml 文件头，UNKNOWN 就变成事实了。"
