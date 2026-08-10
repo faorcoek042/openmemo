@@ -826,3 +826,103 @@ Orphan-exports ratchet  ✘
 下一步建议:
 1. 等 ratchet 解开后看一眼 `Mutation-spec anchors` 那一格的第一次真跑。
 2. `manager.ts` 重构开工前，先按脚本文件头那段存一份 `--anchors-only` 基线。
+
+---
+
+## [2026-08-10 02:15] 陈旧 stash 的逐文件取证 —— **没拆，卡在一处**
+
+交付: `dc1bef2`（PROTOCOL §15-bis，已 push 并 `merge-base --is-ancestor` 复核）
+
+# 第一句：**有一处只存在于 stash 里。** 第二句：**没拆 —— 按你的规则 3 停下来报你。**
+
+只存在于 stash 的那一处：
+
+```
+apps/web/src/test/__scratch_b11.tsx   （^3 未跟踪那一档，48 行）
+   HEAD 里：没有        工作树里：没有
+   文件第一行（作者自己写的）：/* 临时复现脚本（B11）—— 不提交，跑完删除。 */
+```
+
+**我已经把它另存到 `/tmp/win-fixes/stash-rescue/__scratch_b11.tsx`** ——
+所以"先不拆、等你裁"的代价是零，而且拆不拆都不会丢内容。
+
+它是什么：`e2e-browser` 那一路查 B11 时的一次性 jsdom 复现脚本，往
+`NoteActionsMenu` 注入 404 `FOLDER_NOT_FOUND`，打印「新增文字」和
+「FAIL_WORDS 命中没有」。**它的结论已经落地并被逐字记进了 HEAD**：
+`ErrorBlock.tsx` 里那段注释就写着 `[实测] jsdom 复现：新增文字 = "文件夹不存在…"，
+FAIL_WORDS 命中 = false`，而 `role="alert"` + `data-testid="error-block"` 也在 HEAD 里。
+
+⚠️ **但"结论已落地"是我的判断，不是证据。** 按你写的第 3 条，
+"只存在于 stash 里 ⇒ 停下来报"，我不替 `e2e-browser` 那一路决定它的 scratch 文件。
+**你或他们说一句"扔"，我就 drop。**
+
+---
+
+# 逐文件核对（12 已跟踪 + 2 未跟踪）
+
+`stash@{0}` 的基是 `2360bf1`；核对对象是当时的 HEAD `3aac781`。
+
+## 已跟踪：12 个，**全部已在 HEAD**
+
+| 文件 | 与 HEAD 的关系 | 对应到哪 |
+|---|---|---|
+| `apps/daemon/src/http/rest/hardware.ts` | **逐字一致** | 已提交 |
+| `apps/daemon/src/runtime/layoutResolve.test.ts` | **逐字一致** | 已提交 |
+| `apps/daemon/src/runtime/setup.ts` | **逐字一致** | 已提交 |
+| `apps/web/src/components/common/ErrorBlock.tsx` | 重做，措辞不同 | HEAD 有 `role="alert"`(123) + `data-testid="error-block"`(124) |
+| `apps/web/src/features/components/ComponentsPage.tsx` | 重做 | HEAD:157 `{update.isError ? <ErrorBlock …>}` |
+| `apps/web/src/features/notes/NoteActionsMenu.tsx` | 重做 | HEAD:100 `onSuccess: close`；261/312 渲染 `rename.isError`/`del.isError`；旧的 `onError: () => close()` 已不存在 |
+| `apps/web/src/features/runtime/components/BackendPackCard.tsx` | HEAD **更全** | HEAD:169 `pack.updateAvailable === true ? …`（那 2 行"缺"的是被改写的注释散文） |
+| `docs/design/D-20-bundled-deps.md` | HEAD **更新一天且更准** | 见下 ★ |
+| `packages/runtime/src/backends/applicability.test.ts` | HEAD 是**超集** | HEAD:193 `/本机组件|运行时|CPU 基础包/`（stash 只有后两个）；196 同一条"理由太短"断言 |
+| `packages/runtime/src/backends/applicability.ts` | HEAD **更靠后** | HEAD:158-168 同一段 T-191 改写，并多一句"①已由 T-191① 修好，所以保留了它" |
+| `packages/runtime/src/selfcheck.ts` | HEAD 已实现分叉 | HEAD:789-810，两句话按"装没装后端包"分叉，落到 809/810 两条文案 |
+| `scripts/build-bundle.mjs` | HEAD **更新** | HEAD:985 等价的那行 say；995 起把 ffmpeg/ffprobe 放进 `runtime/probe/` |
+
+★ **`D-20` 这一条正是你说的"pop 会盖掉更新版本"的活样本**：
+stash 版是 **08-09** 的订正，HEAD 版是 **08-10** 的复核，而 08-10 那版**修正了 08-09 版
+把两段署名挂反的错**（`Copyright (c) 2015, David Bonnet` 那段其实是 MIT/astring，
+ISC 那段的版权人是 KFlash/meriyah）。**pop 一下正好把这个订正盖回去。**
+
+## 未跟踪（`^3`）：2 个
+
+| 文件 | 结论 |
+|---|---|
+| `apps/daemon/src/runtime/selfTestWrongCard.test.ts` | ✅ **已被跟踪**，首次提交 `5d30251`，与 stash 版**逐字一致**；工作树里也在 |
+| `apps/web/src/test/__scratch_b11.tsx` | 🔴 **只在 stash 里**（见上） |
+
+## 核对方法（以及它第一遍骗了我一次）
+
+已跟踪的先 `git diff stash@{0}:<f> HEAD:<f>`：一致的直接过；
+不一致的把 **stash 新增的每一行**拿去 HEAD 同名文件里找，找不到的再人工判"是不是
+换了措辞的同一件事"（判据按你说的：**内容等价，不要求逐字**）。
+
+⚠️ **第一遍那个脚本报「扫到 0 行新增、缺 0 行」，看起来 6 个文件全过** ——
+实际是 `/tmp/win-fixes` 那个目录不在了，`> added.txt` 全部写失败。
+**空集被报成了通过**，正是我这两轮一直在查的那个形状。
+加了一条"扫到 0 行就判核对无效"的前提自检之后，真实数字才出来
+（30 / 27 / 23 / 25 / 34 / 113 行）。这条已写进 §15-bis。
+
+---
+
+# §15-bis 已补（`dc1bef2`）
+
+三条：① 不 pop/apply 整条，只读地取自己那部分；
+② `drop` 前必须逐文件证明内容已在 HEAD ——「当时没丢数据」是关于**过去**的结论，
+「现在可以扔」需要**现在**的证据；③ 有一处只在 stash 里就停下报 Manager，
+**报之前先另存到 /tmp**，让"等一下再决定"的代价为零。
+附了实测有效的核对命令 + 这次的结论当范例（含 D-20 那个"旧盖新"的活样本）。
+
+---
+
+需要 Manager 决策:
+1. **`__scratch_b11.tsx` 扔不扔。** 它自称"不提交、跑完删除"，结论也已进 HEAD 的
+   `ErrorBlock.tsx` 注释；副本在 `/tmp/win-fixes/stash-rescue/`。
+   你或 `e2e-browser` 那一路说一句，我就 `git stash drop` 收尾。
+2. 如果决定保留它，那它应该**进仓库**（否则下一个人还会面对同一颗雷）——
+   但那是 `e2e-browser` 的文件，我不替他们提交。
+
+未做/未碰: 没有 `pop`、没有 `apply`、没有 `drop`，stash 原样挂着；
+`git stash list` 只有这一条（无其余条目）；`:10000`、`/root/data-memo`、机器级指针一律没碰；
+工作树里别人的在途文件（`packages/shared/src/hardware.ts`、
+`apps/web/src/lib/catalog/useModelCatalogNames.ts` 等）一个都没动。
