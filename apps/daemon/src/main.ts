@@ -52,6 +52,7 @@ import { attachWebSocket } from './http/ws.js';
 import { JobQueue } from './jobs/queue.js';
 import type { PipelineJob } from '@openmemo/shared';
 import { jobCreatedEvent, jobStateEvent, pipelineJobOf, pipelineKindOf } from './jobs/events.js';
+import { toolchainMissing } from '@openmemo/shared';
 import { LanePool } from './jobs/lanes.js';
 import { Repos } from './db/repos.js';
 import { buildPipeline, type PipelineBundle } from './pipeline/setup.js';
@@ -496,7 +497,14 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       scheduler: scheduler ? { running: scheduler.runningCount } : null,
       pipeline: bundle
         ? {
-            missing: bundle.missing,
+            /*
+             * ★ #87：`unknown` 时发 **null + 原因**，绝不发空数组 ——
+             * 空数组会被两个 UI 读者和 e2e 断言一致地读成"什么都不缺"。
+             */
+            missing: bundle.toolchain.kind === 'known' ? bundle.toolchain.missing : null,
+            ...(bundle.toolchain.kind === 'unknown'
+              ? { missingUnknownReason: bundle.toolchain.reason }
+              : {}),
             /*
              * ★ `missing` 里**装得到**与**装不到**是两回事（T-199 ①）。
              *
@@ -517,7 +525,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
              * 而且目录**已经加载好才用**（`peekBackendCatalog()` 返回 null = 还没读到
              * ⇒ `'unknown'` ⇒ 什么都不说，保持原样）。
              */
-            unavailableOnPlatform: bundle.missing.filter((m) => {
+            unavailableOnPlatform: toolchainMissing(bundle.toolchain).filter((m) => {
               if (m === 'asr-model') return false;
               return (
                 hasInstallablePackProviding(
@@ -716,10 +724,10 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         refreshTimer = undefined;
         void (async () => {
           try {
-            const before = [...(bundle?.missing ?? [])];
+            const before = bundle ? [...toolchainMissing(bundle.toolchain)] : [];
             const next = await buildPipeline(paths);
             bundle = next;
-            const after = [...next.missing];
+            const after = [...toolchainMissing(next.toolchain)];
             if (before.join(',') !== after.join(',')) {
               /*
                * ★ 措辞抽到 `bootstrap/tool-refresh-message.ts`，因为它**被用户读反过**：
@@ -740,7 +748,47 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
              * 否则用户装完模型，之前那条卡住的导入还是 blocked ——
              * 他得自己找到那条任务点重试，这跟"让他重启 daemon"是同一类毛病。
              */
-            if (next.missing.length === 0 && queue_) {
+            /*
+             * ★★ #87 —— **这一条是本次修复真正的重心。**
+             *
+             * 这里原来是 `next.missing.length === 0`。`missing` 只有两态时那样写是对的；
+             * 加上 UNKNOWN 之后它就变成了「**没能确认工具链 ⇒ 当成什么都不缺 ⇒ 解除阻塞**」，
+             * 也就是**在一条我们没验证过的流水线上真的开始干活**。
+             * 其余消费方改错了只是措辞，这一个改错了产品会做错事。
+             *
+             * 裁决的三段，缺一不可：
+             *   ① UNKNOWN ⇒ 先重解析一次（复用既有的 `buildPipeline()`，不新写一条路径）；
+             *   ② 仍然 UNKNOWN ⇒ **不放行**；
+             *   ③ 而且**必须说出来** —— 一个"因为没能确认工具链所以没开始"的任务，
+             *      要让用户看得到这个理由。
+             *
+             * ★ ③ 不是可选的礼貌：**静默卡住比放行更坏**。放行至少会吵闹地失败，
+             *   静默卡住就是"什么都没发生" —— 正是这一周一直在删的那种形状。
+             */
+            let verdict = next.toolchain;
+            if (verdict.kind === 'unknown') {
+              try {
+                const retried = await buildPipeline(paths);
+                bundle = retried;
+                verdict = retried.toolchain;
+              } catch (e) {
+                verdict = { kind: 'unknown', reason: `重解析也失败：${String(e)}` };
+              }
+            }
+            if (verdict.kind === 'unknown') {
+              /*
+               * 说给两个出口听：控制台（排障）与 SSE（用户正看着的那个页面）。
+               * 不发 `job.state` —— 任务的状态**没有变**，变的是"我们为什么没动它"。
+               */
+              /*
+               * 两个出口，**都不新造通道**：
+               *   · 控制台 —— 排障的人；
+               *   · `/api/health` 的 `missingUnknownReason` —— 用户正看着的那个页面
+               *     （`ReadinessBanner` 每 30 s 轮询它）。上面 `status()` 里已经带上了。
+               * 刻意不发 `job.state`：任务的状态**没有变**，变的是"我们为什么没动它"。
+               */
+              console.warn(`[daemon] 没能确认工具链，暂不解除任务阻塞：${verdict.reason}`);
+            } else if (verdict.missing.length === 0 && queue_) {
               const unblocked = queue_.listBlocked(['MISSING_ASR_MODEL', 'LLM_NOT_CONFIGURED']);
               for (const j of unblocked) {
                 queue_.unblock(j.id);
@@ -772,7 +820,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       }, 800);
       refreshTimer.unref?.();
     });
-    if (bundle.missing.length > 0) {
+    if (toolchainMissing(bundle.toolchain).length > 0) {
       /*
        * ★ 这句话是**冷装用户看到的第一行**（它打在就绪横幅之前）。
        *
@@ -810,9 +858,9 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         'asr-model': '语音识别模型（31 MB–4 GB，取决于你选哪个；小的够用，大的更准）',
         'yt-dlp': '链接下载器 yt-dlp（约 30 MB）',
       };
-      const pretty = bundle.missing.map((m) => FRIENDLY[m] ?? m);
+      const pretty = toolchainMissing(bundle.toolchain).map((m) => FRIENDLY[m] ?? m);
       console.warn(
-        `[daemon] 还有 ${bundle.missing.length} 个组件没装：\n` +
+        `[daemon] 还有 ${toolchainMissing(bundle.toolchain).length} 个组件没装：\n` +
           pretty.map((p) => `[daemon]    · ${p}`).join('\n') +
           `\n[daemon]    这是首次启动的正常状态，不是出错了。\n` +
           `[daemon]    打开网页后在「设置 → 本机组件」里点安装，装好会自动生效（不用重启）。\n` +

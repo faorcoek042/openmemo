@@ -47,6 +47,7 @@ import {
 
 import { activeProxyConfig, isGgmlModelFile } from '@openmemo/downloader';
 import { proxyUrlFor } from '@openmemo/shared';
+import type { ToolchainVerdict } from '@openmemo/shared';
 
 import type { AppPaths } from '../config/paths.js';
 import { whisperCliName } from '../runtime/setup.js';
@@ -63,8 +64,15 @@ export interface PipelineBundle {
   readonly dirs: ManagedDirs;
   readonly registry: MediaSourceRegistry;
   readonly pipeline: TranscribePipeline;
-  /** 缺哪些工具 —— 用于 /api/health 与 job 的 `blocked` 状态（D-01 §4.1）。 */
-  readonly missing: readonly string[];
+  /**
+   * 工具链结论 —— 用于 /api/health 与 job 的 `blocked` 状态（D-01 §4.1）。
+   *
+   * ★ #87：这里原来是 `readonly missing: readonly string[]`，**只有两态**：
+   * 空数组 = 什么都不缺。于是"我没能确认"无处可放，而 `main.ts` 的队列闸
+   * （`missing.length === 0`）会把它当成"齐了"**真的开始干活**。
+   * 换成判别联合之后，那种写法在类型上就写不出来了。见 `ToolchainVerdict`。
+   */
+  readonly toolchain: ToolchainVerdict;
   readonly modelPath: string | null;
   /**
    * 切分方式的真实状态。**必须一路露到界面上**：
@@ -664,7 +672,13 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
     dirs,
     registry,
     pipeline,
-    missing,
+    /*
+     * 这条路径走到这里,`discoverTools()` 与模型解析都已经成功返回 ——
+     * 也就是说我们**真的查过了**,所以是 `known`。
+     * `unknown` 那一支由**按需重算**（步骤 2）在解析失败时产出:
+     * 那时 bundle 仍然存在（不该整包炸掉），但它对工具链已经没有结论。
+     */
+    toolchain: { kind: 'known', missing } as const,
     modelPath: asrModelPath,
     vad,
     candidates,

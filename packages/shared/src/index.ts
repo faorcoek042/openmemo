@@ -17,6 +17,7 @@ export * from './notes.js';
 export * from './components.js';
 export * from './backends.js';
 export * from './breaker.js';
+export * from './toolchain.js';
 export * from './fitness.js';
 export * from './jobs.js';
 export * from './events.js';
