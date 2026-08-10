@@ -162,6 +162,25 @@ jobs:
         if: steps.kind.outputs.is_bundle == 'true'
         run: node scripts/ci/check-release-refs.mjs --assert-live
 
+      # ── T-196：反方向的那一半 ──────────────────────────────────────────────
+      #
+      # 上面那条查的是「published 的地址还活着吗」。**反过来从来没人查**：
+      # 一个包标着 `pending-ci`（"还没发布下载地址"），而地址其实早就能下了。
+      #
+      # `[用户真机 Windows v0.7.0]` 报「whisper.cpp Vulkan 后端没得下载安装使用」——
+      # 真相不是下载失败，是**按钮恒灰、从来没发出过请求**：
+      # 卡片读 `availability === 'pending-ci'` 就把按钮 disabled 掉。
+      # 而那个包早在 v0.6.0 就在架上了；标记写下时是实话，**发完没翻**。
+      # 从那一刻起清单上那句话就是假的，而全仓没有一处判据会发现它。
+      #
+      # ⚠️ 判据刻意**不是**「pending-ci 不许带 URL」——「包构建出来了、URL 已知、
+      # 但还没上架」正是 pending-ci 带 URL 的合法用法，禁掉会挡住正常流程。
+      # 判据钉的是后果：pending-ci 说的是"你现在下不到"，那就去下一下。
+      # **真能下，这句话就是假的。**
+      - name: pending-ci 的地址不许真的下得到（= 发完忘了翻标记）
+        if: steps.kind.outputs.is_bundle == 'true'
+        run: node scripts/ci/check-release-refs.mjs --assert-availability
+
       - name: 四条 e2e 腿的凭证核对
         if: steps.kind.outputs.is_bundle == 'true'
         env:

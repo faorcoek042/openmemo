@@ -34,6 +34,7 @@
  *
  * 用法：
  *   node scripts/ci/check-release-refs.mjs --assert-live          # 发布前闸门用
+ *   node scripts/ci/check-release-refs.mjs --assert-availability  # pending-ci 的地址不许真的下得到
  *   node scripts/ci/check-release-refs.mjs --tag v0.3.0           # 删之前问一句
  *   node scripts/ci/check-release-refs.mjs --manifests <dir>      # 指定清单目录（默认仓库的）
  */
@@ -53,6 +54,7 @@ const arg = (n, d) => {
 const MANIFESTS = arg('--manifests', join(REPO, 'vendor', 'manifests'));
 const TAG = arg('--tag', null);
 const ASSERT_LIVE = argv.includes('--assert-live');
+const ASSERT_AVAILABILITY = argv.includes('--assert-availability');
 
 const say = (s = '') => console.log(s);
 
@@ -183,8 +185,95 @@ if (ASSERT_LIVE) {
   process.exit(0);
 }
 
+/* ── ③「标着 pending-ci、地址却真的能下」= 忘了翻标记 ── */
+if (ASSERT_AVAILABILITY) {
+  /*
+   * ## 这条判据要抓的东西（T-196）
+   *
+   * `[用户真机 Windows v0.7.0]` 报「whisper.cpp Vulkan 后端没得下载安装使用」。
+   * 真相不是下载失败 —— 是**按钮恒灰、从来没发出过请求**：
+   * `whispercpp-vulkan-win-x64` 带着 `availability: "pending-ci"`，
+   * 卡片据此把按钮 `disabled` 掉，文案写「尚未发布，暂不可安装」。
+   * **而那个包早就在 v0.6.0 的架上了。**
+   *
+   * 标记在 `474c210`（2026-08-08）写下时是实话；那次提交自己的说明里就写着
+   * 「发到 release 之后又用不带任何 token 的 curl 匿名重下复算，2/2 吻合」——
+   * **发完了，标记没翻。** 从那一刻起清单上那句话就成了假话，
+   * 而全仓没有任何一处判据会发现它。
+   *
+   * ## 为什么不是「pending-ci 不许带 URL」
+   *
+   * 那个写法会挡住正常流程：**包构建出来了、URL 已知、但还没上架**，
+   * 正是 `pending-ci` 带 URL 的合法用法（`BackendPackSchema` 的 superRefine 允许它）。
+   * 禁掉它等于逼人在"上架前不许写地址"和"上架后必须记得回来补地址"之间选一个 ——
+   * 两个都靠人记得。
+   *
+   * 所以判据钉的是**后果**：`pending-ci` 说的是"你现在下不到"。
+   * 那就去下一下 —— **真能下，这句话就是假的**。
+   *
+   * 与既有两条守卫的分工（它们都在**另一个方向**上）：
+   *   · `BackendManifestSchema`（shared）：`published` ⇒ 必须有 URL
+   *   · `merge-backend-manifest.mjs`：不许把 `published` 降级成 `pending-ci`
+   *   · **本条**：`pending-ci` ⇒ 地址必须真的下不到
+   */
+  const pendingWithUrl = [];
+  for (const f of readdirSync(MANIFESTS).filter((n) => n.endsWith('.json'))) {
+    let j;
+    try {
+      j = JSON.parse(readFileSync(join(MANIFESTS, f), 'utf8'));
+    } catch {
+      continue;
+    }
+    for (const p of j.packs ?? []) {
+      if (p.availability !== 'pending-ci') continue;
+      for (const file of p.files ?? []) {
+        for (const m of file.mirrors ?? []) {
+          if (m.url) pendingWithUrl.push({ id: p.id, file: file.name ?? '?', url: m.url });
+        }
+      }
+    }
+  }
+
+  say('');
+  say(`── pending-ci 且写了地址的：${pendingWithUrl.length} 个 ──`);
+  if (pendingWithUrl.length === 0) {
+    /*
+     * ★ 空集必须出声，但**不是失败**。
+     * 「一个 pending-ci 都没有」是完全正常的状态（全都上架了），
+     * 与 `--assert-live` 那边的空集不同 —— 那边空集意味着"这一轮什么都没验"。
+     * 这里空集意味着"没有可疑对象"，是真结论。两者不能用同一个处置。
+     */
+    say('   （没有 —— 目录里没有任何标着 pending-ci 的包，这一条没有可疑对象。）');
+    process.exit(0);
+  }
+
+  const lying = [];
+  for (const r of pendingWithUrl) {
+    const res = await probe(r.url);
+    if (res.ok) lying.push({ ...r, status: res.status });
+    say(
+      `   ${res.ok ? '✘' : '✔'} ${String(r.id).padEnd(32)} ${res.ok ? `**HTTP ${res.status} —— 真的下得到**` : `下不到（${res.status || res.reason}）`}`,
+    );
+  }
+  say('');
+  if (lying.length > 0) {
+    say(`✘ **${lying.length} 个包标着 pending-ci，地址却真的下得到** —— 是发完之后忘了翻标记。`);
+    for (const d of lying) say(`     ${d.id} → ${d.url}`);
+    say('');
+    say('   后果不是"下载失败"，是**按钮恒灰、点不动、永远不发请求**');
+    say(
+      '   （`BackendPackCard.tsx` 的 `disabled={… || pendingCi}`，文案「尚未发布，暂不可安装」）。',
+    );
+    say('   用户看到的是"这个后端没得下载安装使用"，而东西一直在架上。');
+    say('   → 把这些包的 `availability` 改成 `published`。');
+    process.exit(1);
+  }
+  say(`✔ ${pendingWithUrl.length} 个 pending-ci 的地址确实都还下不到 —— 标记与事实一致。`);
+  process.exit(0);
+}
+
 say('');
-say('（没给 --tag / --assert-live，只做了统计。）');
+say('（没给 --tag / --assert-live / --assert-availability，只做了统计。）');
 for (const t of [...new Set(ours.map((r) => r.tag))]) {
   say(`   ${t}: ${ours.filter((r) => r.tag === t).length} 个组件`);
 }
