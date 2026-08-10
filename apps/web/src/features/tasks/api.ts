@@ -30,16 +30,23 @@ import { isActiveJobState, pickActiveNoteJob } from '../../lib/jobs/noteJobs';
  * 这也正好是 D-01 §3.3 那条原则的实例：**SSE 事件是提示，真相永远在 REST/DB。**
  */
 
-export interface JobsResponse {
-  /**
-   * 下载类 + 流水线类（转写/导图）。
-   *
-   * 这个接口原来只返回下载队列，于是一条**卡在 blocked 等模型**的转写任务
-   * 在任务中心里根本不存在 —— 而"需要处理"那一组正是为它准备的（T-130）。
-   */
-  jobs: AnyJob[];
-  concurrencyLimit: number;
-}
+/*
+ * ★ T-195 收尾：这里原本有一个 `JobsResponse` 接口，**删掉了**。
+ *
+ * 它与 `@openmemo/shared` 的 `GetJobsResponse` **逐字段相同**
+ * （`{ jobs: AnyJob[]; concurrencyLimit: number }`）—— 也就是说本文件把一条
+ * **跨进程契约类型**在 feature 里又手写了一遍。而 `packages/shared` 存在的全部理由
+ * 就是不让这种第二份出现：daemon 那边改了契约，手写的这一份**不会有任何反应**。
+ *
+ * 它此前唯一的消费方是本文件里那个 `useJobsQuery`；把实现收敛到 `lib/api/jobs.ts`
+ * （用的是 `GetJobsResponse`）之后它就零引用了 —— `check:orphans` 当场报了出来。
+ *
+ * ⚠️ **没有登记进基线**：那份名单只准变短。也没有"留着以后用" ——
+ * 一个挂着没人走进去的出口，正是本仓这一整天在清的那族。
+ * 真需要它时，`import type { GetJobsResponse } from '@openmemo/shared'` 就是它。
+ *
+ * 那段讲"两个数据源各司其职"的注释保留在上面：它说的是本文件的设计，与这个类型无关。
+ */
 
 /*
  * ★ T-195：实现搬到 `lib/api/jobs.ts`（唯一一份）。与 `features/models/api.ts`
