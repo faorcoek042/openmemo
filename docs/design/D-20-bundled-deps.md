@@ -1265,3 +1265,26 @@ Phase 2（§14.7 追加段）按平台把 `backends.json` 的 4 条 `ytdlp-*` li
   一并带上，不回退，在提交信息里如实声明。
 - **未建/改/删任何 release**；未碰 `:10000`、`/root/data-memo`、任何机器级指针；
   未用过 `pkill`（含 `-0`）；未用 `--amend`。
+
+### 12.5 按用户目标链的逐环对照（`memo-compare` 2026-08-09，完整版见 `docs/research/memoac/FIVE-RINGS.md`）
+
+用户的目标链是「下载 → 开箱能用 → 下载更多模型 → 其他运行时支持 → runtime 探测完成」。
+沿这五环逐环核完，**结论只有一句**：
+
+> **整条链上，"memo 做了而我们缺"的只有 macOS 的 ffmpeg 一件。**
+
+- **环 2「开箱能用」是唯一有真缺口的一环**，而且**必须把两类缺口分开**：
+  · 🔴 **macOS 的 ffmpeg = 没做到**（jellyfin-ffmpeg 不发 LGPL 变体，卡在供应商）
+  · ⚪ **yt-dlp / OCR / bun = 有意不做**（前者内嵌 GPL，后者 F1–F5 范围外）
+  **混成一类会把唯一那个真缺口盖掉。**
+- **环 2 我们其实赢**：`[已核实]` memo **不带任何转写模型**，它自己的文案就是
+  _"Please download a model first."_；我们 `BUNDLED_MODEL_IDS` **真的进包 3 个**
+  （`assembleModels()` 在 `build-bundle.mjs:1882` 被调用）。
+  ⇒ **"第一次打开能不能转写"这个判据上，我们能，memo 不能。**
+- **环 5「runtime 探测」memo 基本没有这一环**：它有硬件枚举
+  （`check-device`/`get-graphics-card`），但 `[已核实]` **全 locale 零条"推荐后端"文案**，
+  也**没有"真跑一次"的自检**——只有文件存在性检查。这是我们领先最多的一环。
+
+⚠️ **顺带订正本文引用时的两个数**（Coordinator 转述时出的，非本文原文）：
+我们内置的默认 ASR 是 **32.2 MB**（不是 30.7 MB）；内置模型是 **3 个**不是 1 个
+（漏了 `asr/sherpa-streaming-zh-14m`）。
