@@ -68,6 +68,61 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ═══════════════════════════════════════════════════════════════════════════════
+  # Format check —— **独立 job，与 gate 并行**（2026-08-10）
+  # ═══════════════════════════════════════════════════════════════════════════════
+  #
+  # 它原本是 `gate` 的**第一步**。那个位置有一个与它自身价值不相称的副作用：
+  # 一个空格没对齐，`gate` 后面 8 条门禁**全部 skipped** —— 而 skipped 在 Actions
+  # 的 UI 上是灰色的，不是红色的。`[实测 2026-08-10]` 连红五次、四个不同作者，
+  # 其中一次是在别人正清理前一批的**那二十分钟里**落地的；期间
+  # **8 条 × 5 轮 = 40 次检查没有发生**，任何真回归在那段时间里都是不可见的。
+  # 更糟的是它挡住了发版：CI 红着不能在上面构建三平台包。
+  #
+  # ── 挪出来之后，什么变了、什么没变 ────────────────────────────────────────────
+  #
+  # · **没变**：它失败 ⇒ 这个 job 失败 ⇒ **整个 run 仍然是 failure**，分支保护照样拦。
+  #   **红的强度一点没有削弱** —— 变的只有"谁挡着谁"。
+  # · **变了**：格式问题不再让另外 8 条检查消失；而且反馈更快
+  #   （这个 job 只需 install + 一条 prettier，不必排在 build/test 后面）。
+  #
+  # ── 为什么这不是在拆护栏 ─────────────────────────────────────────────────────
+  #
+  # `scripts/ci/lint-workflows.mjs` 的 `MUST_FAIL_LOUDLY['ci.yml'] = ['gate']` 禁止
+  # 给 **`gate` 这个 job 的 step** 加 `if: always()` / `continue-on-error`（防的是
+  # 「三个构建全挂照样绿灯」那一族）。**把一个检查挪到另一个 job 不在它的射程内**，
+  # 而且这里一个 `always()` / `continue-on-error` 都没加 —— 与 `gate-summary`
+  # 当初的思路相同：**绕过限制，而不是拆掉限制。**
+  #
+  # ⚠️ 连带必须做的一件事（已做，见 `gate-summary`）：并行之后
+  # **「gate 绿」不再蕴含「格式绿」**，所以三态汇总必须把这个 job 的 result 也算进去，
+  # 否则会出现「汇总说通过、run 是红的」—— 那正是这套汇总本身要治的病。
+  format:
+    name: Format check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.15.0
+
+      # `--ignore-scripts`：这个 job 只跑 prettier，不需要原生模块编译起来。
+      # （`gate` 那边刻意**不加**这个旗标，因为它要跑真测试。）
+      - name: Install
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # ⚠️ prettier 3.9.6 在本仓**不是一次收敛**的：有 3 个文件要跑第二遍
+      #   `pnpm format` 才到不动点。本地跑完仍红时，**再跑一遍** —— 那是
+      #   prettier 的非幂等，不是 CI 坏了。
+      # ⚠️ 提交前用 `pnpm format:changed <照抄 pathspec>`（0.78s）先自查，
+      #   别等这里红（PROTOCOL §12）。
+      - name: Format check
+        run: pnpm format:check
+
   gate:
     name: typecheck + lint + test
     runs-on: ubuntu-24.04
@@ -76,7 +131,6 @@ jobs:
     #   一个 step 没跑到，`steps.<id>.outcome` 就是 GitHub 自己给出的 `skipped`，
     #   这里原样透传，不代表 gate 允许它们在失败后继续跑。
     outputs:
-      format_check: ${{ steps.format_check.outcome }}
       build: ${{ steps.build.outcome }}
       typecheck: ${{ steps.typecheck.outcome }}
       lint: ${{ steps.lint.outcome }}
@@ -113,48 +167,6 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # 全仓格式门禁（format-debt 本轮）。
-      #
-      # ── 为什么它到今天才进来 ──────────────────────────────────────────────────
-      #
-      # `format:check` 从很早就在 `package.json` 里，却**从来没接进任何自动流程**。
-      # 不是忘了，是**接不进来**：`[实测]` 接之前全仓有 **508 个文件**不合格，
-      # 直接加这一步就是一条开局即红的门禁。判据是本仓反复吃过亏的那条：
-      # **一条永远红的守卫等于一条被删掉的守卫，而且会训练人忽略红灯。**
-      #
-      # 所以顺序是**先还债再上锁，且必须同一轮做完**：
-      # 只格式化不上锁，几天后烂回去；只上锁不格式化，就是造那条永远红的守卫。
-      # 还债那一步单独一个提交（纯格式化，`git blame` 时可以整跳过），本步骤是上锁那个。
-      #
-      # ── 为什么放在 Install 之后、Build 之前 ──────────────────────────────────
-      #
-      # 它只用到 node_modules 里的 prettier，不需要 build、不需要类型信息，
-      # 放最前面失败得最快。
-      #
-      # ★ 但**顺序不影响结论**这件事是花了力气买来的，不是天然的：
-      #   prettier **不读 `.gitignore`**（只读 `.prettierignore`），而
-      #   `apps/web/.test-out/` 这类目录**只在跑过测试之后才存在**。
-      #   `[实测]` 补 `.prettierignore` 之前：全仓格式化到干净 → 跑一次 `pnpm -r test`
-      #   → `format:check` 当场红 **95 个文件，其中 92 个是 `.test-out/`**。
-      #   即**同一棵树，跑没跑过测试会给出两种答案** —— CI 上绿、本地红，
-      #   而"本地红 CI 绿"训练人忽略红灯的效果和"永远红"是一样的。
-      #   已在 `.prettierignore` 里堵掉；被新忽略的**没有一个是版本库里的文件**
-      #   （`git ls-files` 对那几条 pattern 命中 **0**），所以门禁覆盖的源码一个没少。
-      #
-      # ⚠️ prettier 3.9.6 在本仓**不是一次收敛**的：有 3 个文件要跑**第二遍**
-      #   `pnpm format` 才到不动点（一个 blockquote 里的表格、一处 `_`/`*` 混用的
-      #   强调、一条 JS 链式调用）。本地跑完 `pnpm format` 后这里若仍红，
-      #   **再跑一遍 `pnpm format`** —— 那是 prettier 的非幂等，不是 CI 坏了。
-      - name: Format check
-        id: format_check
-        run: pnpm format:check
-
-      # ★ `pnpm build:safe`，**不是 `pnpm -r build`**（PROTOCOL §7 补充）。
-      #
-      # 在 CI 上这条区别其实不要紧（runner 是一次性的），但**保持和本地同一条命令**
-      # 才有意义：本地跑 `pnpm -r build` 会覆盖 `apps/web/dist` —— 也就是用户
-      # 正在 `:10000` 上看的那个前端 —— 而且不会有任何东西报错。两名 agent 先后踩过。
-      # 前端的编译检查由下面的 `tsc -b` 覆盖（web 的 tsconfig 在 project references 里）。
       - name: Build (workspace packages)
         id: build
         run: pnpm build:safe
@@ -254,7 +266,9 @@ jobs:
 
   gate-summary:
     name: gate 三态汇总（通过 / 失败 / 未验证）
-    needs: gate
+    # ★ 也 needs format：并行之后「gate 绿」不再蕴含「格式绿」，
+    #   不把它算进来就会出现「汇总说通过、run 是红的」。
+    needs: [gate, format]
     # 这一步本身不许被跳过：一个用来报告"谁没跑到"的 step，如果自己也因为
     # gate 失败而 skipped，那就白做了。不在 lint-workflows.mjs 的
     # MUST_FAIL_LOUDLY 名单里（只有 `gate` 在），因为这个 job 不做任何判定，
@@ -270,7 +284,11 @@ jobs:
         env:
           GATE_RESULT: ${{ needs.gate.result }}
           GATE_STEP_NAMES: format_check,build,typecheck,lint,tracked_sources,orphan_exports,ci_scripts_selftest,test,mutation_anchors
-          GATE_STEP_FORMAT_CHECK: ${{ needs.gate.outputs.format_check }}
+          # ★ 来自**独立 job** 的 result（不再是 gate 的 step outcome）。
+          #   job result 与 step outcome 用的是同一套词汇（success/failure/skipped/cancelled），
+          #   所以 summarize-gate.mjs 一个字都不用改：失败→「失败」、跳过/取消→「未验证」，
+          #   两者都会让 allPass 为假并令这一步非零退出。
+          GATE_STEP_FORMAT_CHECK: ${{ needs.format.result }}
           GATE_STEP_BUILD: ${{ needs.gate.outputs.build }}
           GATE_STEP_TYPECHECK: ${{ needs.gate.outputs.typecheck }}
           GATE_STEP_LINT: ${{ needs.gate.outputs.lint }}
