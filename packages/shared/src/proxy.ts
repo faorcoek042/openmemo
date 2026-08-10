@@ -85,6 +85,9 @@ export const PROXY_PROBE_RESULTS = [
   'dns_failed',
   /** Probe did not run — e.g. bypassed by `noProxy`. */
   'skipped',
+  /** Could not be attributed to either side. The raw error goes in `detail` —
+   *  a specific-but-wrong verdict is worse than an honest "unknown". */
+  'unclassified',
 ] as const;
 export type ProxyProbeResult = (typeof PROXY_PROBE_RESULTS)[number];
 
