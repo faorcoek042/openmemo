@@ -853,6 +853,18 @@ try {
   const toastTitlesWhileDownloading = [];
   /** 解包阶段界面上那串百分比文本（B6c 用）。采不到就保持 null，不猜。 */
   let unpackingPercentText = null;
+  /**
+   * ★ B6 的"有没有机会看"计数：**界面上真的出现过安装进度**（字节数或百分比）的采样轮数。
+   *
+   * 判据要分开的是两件事，而它们此前都落在同一条红里：
+   *   · **没机会看**：安装太快，整轮没在屏幕上抓到过"正在装"的任何痕迹 → 这一轮什么都没证明；
+   *   · **看了，但界面是哑的**：进度都渲染出来了，**阶段文案却一个都没有** → 这是真缺陷，必须红。
+   *
+   * 用"进度指示"当机会信号，是因为它和阶段文案是**两个不同的 DOM 出口**——
+   * 用阶段文案自己判断"有没有机会看阶段文案"是循环论证。
+   */
+  let progressVisibleSamples = 0;
+  let sampleRounds = 0;
 
   if (packToInstall !== null) {
     await page.goto(`${BASE}/tasks`, { waitUntil: 'networkidle', timeout: 30_000 });
@@ -860,6 +872,14 @@ try {
       const snap = await page.evaluate(() => ({
         body: document.body.innerText.replace(/\s+/g, ' '),
       }));
+      sampleRounds += 1;
+      // 进度指示（字节计数或百分比）= "这一刻界面上确实在显示安装这件事"
+      if (
+        /([\d.]+\s*[KMG]i?B)\s*\/\s*([\d.]+\s*[KMG]i?B)/.test(snap.body) ||
+        /(^|\D)\d+(\.\d+)?\s*%/.test(snap.body)
+      ) {
+        progressVisibleSamples += 1;
+      }
       for (const zh of ['正在选择下载源', '下载中', '正在校验完整性', '正在解压', '正在安装']) {
         if (snap.body.includes(zh) && !seenLabels.includes(zh)) seenLabels.push(zh);
       }
@@ -913,9 +933,36 @@ try {
   say(`   界面上依次出现过的阶段文案：${JSON.stringify(seenLabels)}`);
   say(`   ASCII step token=${sawAsciiToken ?? '(无)'}  后段回退=${sawRegressAfterLate ?? '(无)'}`);
 
+  say(`   B6 采样：共 ${sampleRounds} 轮，其中 ${progressVisibleSamples} 轮界面上有进度指示`);
+
+  /* ─────────────────────────────────────────────────────────────────────────
+   * B6 ★ 采不到样 → UNDECIDED，和姊妹判据 B6b/B6c 对齐
+   *
+   * 此前这条**采不到样直接判死刑**：`seenLabels` 为空就红。
+   * `[CI 实测 darwin-arm64]` 那格的安装窗口只有 ~11.5 秒、历史上也一贯只勉强抓到 1 条，
+   * 于是它红的是 **macOS runner 偏慢导致的采样竞态**，不是产品。
+   * 而**同一个文件里** B6b/B6c 采不到样都会降级成 UNDECIDED —— 唯独 B6 没有。
+   * 我当初立那第三态的原话是「空的和真的，现在分得开了」；这里是它的镜像：
+   * **"不知道"被当成了失败**。同一个混淆，另一个方向。
+   *
+   * ⚠️ 但**不许**顺手把"真的没有阶段文案"也降级掉 —— 那才是这条断言的本职。
+   * 所以用**两个不同的 DOM 出口**把两件事分开：
+   *   · `progressVisibleSamples === 0` → 整轮没在屏幕上见过安装进度 ⇒ **没机会看** ⇒ UNDECIDED；
+   *   · 进度出现过、阶段文案却一条都没有 ⇒ **界面是哑的** ⇒ **照样红**。
+   * ───────────────────────────────────────────────────────────────────────── */
   await check('B6 任务中心卡片上的阶段文案必须是中文、且不许阶段倒退', () => {
-    ok(packToInstall !== null, '本机没有适用的后端包，这条无从谈起（不是通过）');
-    ok(seenLabels.length > 0, '整个安装过程中界面上一个阶段文案都没出现过');
+    if (packToInstall === null) undecided('本机没有适用的后端包，压根没起安装');
+    if (progressVisibleSamples === 0) {
+      undecided(
+        `采样 ${sampleRounds} 轮，界面上**一次都没出现过安装进度**（字节数/百分比都没有）——` +
+          `安装窗口短过采样间隔，这一轮没机会看，什么都证明不了`,
+      );
+    }
+    ok(
+      seenLabels.length > 0,
+      `界面上出现过 ${progressVisibleSamples} 轮安装进度，**却一个阶段文案都没有** —— ` +
+        `这不是没采到（进度采到了），是那一处真的是哑的`,
+    );
     const illegal = seenLabels.filter((l) => !EXPECTED_ZH.includes(l));
     ok(illegal.length === 0, `出现了不在预期表里的阶段文案：${illegal.join('、')}`);
     ok(

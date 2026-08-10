@@ -326,24 +326,56 @@ jobs:
           port=19840
           rc=0
           survived=""
+          caught=""
+          unverified=""
           for m in $ids; do
             port=$((port+1))
             echo ""
             echo "════════════════════════════════════════════════════════════════"
             echo "  变异 $m （port ${port}）"
             echo "════════════════════════════════════════════════════════════════"
-            if node scripts/ci/e2e-runtime-audit.mjs \
-                 --bundle "${{ steps.assemble.outputs.bundle_dir || steps.bundle.outputs.bundle_dir }}" \
-                 --require-bundle --port "$port" --mutate "$m" 2>&1 | tee -a mutations-${{ matrix.label }}.log; then
-              echo "  → 抓住了（或本平台构造不出前提，已如实报 UNKNOWN）"
-            else
-              echo "::error::变异 $m **存活** —— 它对应的断言证明不了任何事"
-              survived="$survived $m"
-              rc=1
-            fi
+            one=0
+            node scripts/ci/e2e-runtime-audit.mjs \
+              --bundle "${{ steps.assemble.outputs.bundle_dir || steps.bundle.outputs.bundle_dir }}" \
+              --require-bundle --port "$port" --mutate "$m" 2>&1 | tee -a mutations-${{ matrix.label }}.log || one=$?
+            # ★ 退出码是**三态**的（脚本文件头有表），这里必须照着分三档。
+            #   此前这里写的是 `if node …; then 抓住 else 存活 fi` —— 只分两档，
+            #   于是 `3 = 跑起来了但什么都没证明` 被并进了"存活"，
+            #   报错说"断言证明不了任何事"，而真相是**前提根本没被构造出来**。
+            #   （3 这个码是我自己后加的，却没同步改这个消费方 —— 就是这么漏的。）
+            case "$one" in
+              0)
+                echo "  → 抓住了：这条断言确实有牙齿"
+                caught="$caught $m"
+                ;;
+              3)
+                # 不算通过，也不算失败 —— 但**绝不许安静地消失**：
+                # 注解 + 汇总 + 步骤摘要，三处都写一遍。
+                echo "::warning title=变异 $m 未被验证::目标断言在本 runner 上全是 UNKNOWN（前提构造不出来），这条变异这次什么都没证明 —— 既没被抓住，也不代表它存活"
+                unverified="$unverified $m"
+                ;;
+              *)
+                echo "::error::变异 $m **存活** —— 它对应的断言证明不了任何事（退出码 $one）"
+                survived="$survived $m"
+                rc=1
+                ;;
+            esac
           done
           echo ""
-          if [ $rc -ne 0 ]; then echo "存活的变异：$survived"; else echo "全部变异都被抓住了。"; fi
+          echo "──────── 本格变异小结 ────────"
+          echo "  抓住：${caught:-（无）}"
+          echo "  未验证（前提构造不出来，不是存活）：${unverified:-（无）}"
+          echo "  存活：${survived:-（无）}"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            {
+              echo "### 变异验证（${{ matrix.label }}）"
+              echo ""
+              echo "- 抓住：\`${caught:-（无）}\`"
+              echo "- **未验证**（前提构造不出来，**不是**存活，也**不是**通过）：\`${unverified:-（无）}\`"
+              echo "- 存活：\`${survived:-（无）}\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ $rc -ne 0 ]; then echo "存活的变异：$survived"; fi
           exit $rc
 
       - name: 留档
