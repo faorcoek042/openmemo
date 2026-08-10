@@ -74,6 +74,7 @@ import { createSearchRoutes } from './http/rest/search.js';
 import { createStorageRoutes } from './http/rest/storage.js';
 import { createProxyRoutes, readProxyConfig } from './http/rest/proxy.js';
 import { createLlmRoutes } from './http/rest/llm.js';
+import { createUpdateRoutes } from './http/rest/updates.js';
 import { resolveBundledWhisperDir, resolveManifestDir } from './http/rest/manifests.js';
 import { createMediaRoutes } from './http/media.js';
 import type { RouteModule } from './http/server.js';
@@ -1041,6 +1042,12 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         mediaRoot: paths.mediaDir,
         extraRoots: [paths.tmpDir, paths.dataDir],
       }),
+      /*
+       * 检测更新（D-20 §17）。只读：查"有没有新版本"，不下载、不安装、不改任何本地状态
+       * ——`checkForUpdates()`（`@openmemo/downloader`）结构上没有写入能力，见其文件头。
+       * `OPENMEMO_CATALOG_UPDATE_URL` 生产里未设时诚实回 `source: 'not-configured'`。
+       */
+      createUpdateRoutes(),
     );
   } catch (err) {
     server.close();

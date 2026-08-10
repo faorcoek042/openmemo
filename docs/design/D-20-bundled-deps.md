@@ -1288,3 +1288,169 @@ Phase 2（§14.7 追加段）按平台把 `backends.json` 的 4 条 `ytdlp-*` li
 ⚠️ **顺带订正本文引用时的两个数**（Coordinator 转述时出的，非本文原文）：
 我们内置的默认 ASR 是 **32.2 MB**（不是 30.7 MB）；内置模型是 **3 个**不是 1 个
 （漏了 `asr/sherpa-streaming-zh-14m`）。
+
+## 17. §11.3 三条前提落地实现（2026-08-10，「检测更新」第一版）
+
+§11.4 承认「上述任何代码都没写」。本节是那句话之后的第一次真正实现 ——
+**只做§11.3 结尾那句话允许的事：告诉用户有没有新版本，不下载、不安装、不改任何本地状态。**
+不是把 T-171 删掉的三层远端加载器接回来（那条路径连同 `loadManifest` /
+`loadModelManifest` / `loadBackendManifest` 仍然是死代码，git 历史里留着，本节不碰）——
+只是让 `verifyCatalogSignature` 这个"删掉的是实现不是需求"的函数第一次有了生产调用方。
+
+### 17.1 分层
+
+```
+signature.ts      Ed25519 原语 + 密钥解析（resolveConfiguredCatalogPublicKey）
+   ↓
+manifest.ts        目录签名校验：fail-closed 版（原有）+ fail-open-but-never-throws 版（新增）
+   ↓
+catalogUpdate.ts    编排：host 白名单 → 拉取 → 验签 → 解析 → 钉死项完整性 → 求 diff（全新文件）
+   ↓
+apps/daemon/…/updates.ts   唯一生产入口：GET /api/updates/check（全新文件）
+```
+
+四层各自单一职责，`checkForUpdates()`（`catalogUpdate.ts`）没有拿到任何
+`ArtifactStore`/`DownloadQueue`/写文件句柄 —— "不自动改任何东西"不是靠人肉审查遵守的
+规矩，是这条调用链**结构上做不到**别的事。
+
+### 17.2 三条前提，各自的落点
+
+1. **签名 + 客户端钉死公钥**
+   - `packages/downloader/src/signature.ts` 新增 `resolveConfiguredCatalogPublicKey(env)`：
+     `OPENMEMO_CATALOG_PUBLIC_KEY_HEX` 环境变量 > 编译进二进制的 `OPENMEMO_CATALOG_PUBLIC_KEY`
+     常量（仍是 `null`）。与 `OPENMEMO_MANIFEST_DIR` / `OPENMEMO_BUNDLED_MODELS_DIR` /
+     `OPENMEMO_BUNDLED_WHISPER_DIR` 是同一个"环境变量覆盖编译期默认值"的套路，不是新发明的
+     口子。`manifest.ts` 的 `verifyCatalogSignature` 默认参数从裸的
+     `OPENMEMO_CATALOG_PUBLIC_KEY` 改成 `resolveConfiguredCatalogPublicKey()` —— CI/生产
+     都不设这个环境变量时，两者取值完全一样（仍是 `null`），`verify-unpack.mjs:706` 那条
+     "默认必须是 null"的断言不受影响。
+   - `manifest.ts` 新增 `verifyCatalogSignatureSafe()`：与原有 `verifyCatalogSignature()`
+     方向相同（无密钥 = 拒绝），形状不同（**返回 `false`，不抛异常**）——
+     `checkForUpdates()` 的每一步失败都要落到"回退"分支而不是异常向上冒，
+     这个版本让调用方不用在每一步都包 try/catch。原有的抛异常版本一字未改，
+     两者并存，互不覆盖。
+   - 私钥**不在这个仓库里，也不该在**：见 §17.5。
+
+2. **验不过 → 回退到包内那份，不是"没有目录"**
+   - `updates.ts` **从不重新加载**本地目录：它调用一次
+     `loadModelCatalog(manifestDir)`（`manifests.ts`，T-153 的三态设计），
+     `checkForUpdates()` 只对这份已经读出来的条目列表做只读比对。
+   - `checkForUpdates()` 的每一个失败分支（`not-configured` / `host-not-allowed` /
+     `fetch-failed` / `no-key-configured` / `verify-failed` / `parse-failed`）都返回
+     `newOrChanged: []`，**没有一条会把"查更新失败"伪装成"本地目录不存在"** ——
+     两者是两个字段：真正的"目录读不了"只可能来自 `local.loadError`
+     （`listManifestFiles()` 读不了 `vendor/manifests` 本身），`updates.ts` 对它单独早退，
+     不与"查更新失败"混成一种结果。
+   - 换句话说："包内那份"从头到尾没被碰过 —— 不是"验不过之后退回去"，
+     是"检测更新"这条支线**根本没有能力影响它**。
+
+3. **不许改已内置项的 sha256**
+   - `catalogUpdate.ts` 的 `checkBundledIntegrity()`：远端条目的 id 若在调用方传入的
+     `bundledIds`（`updates.ts` 传 `BUNDLED_MODEL_IDS`，`packages/shared/src/bundled.ts:49`）
+     里，逐文件比对 `files[].name` + `files[].sha256`（**不是单一顶层 sha256** ——
+     `ModelEntry` 没有那个字段，`modelReconcile.ts:145-166` 校验的也是这一层，本节复用
+     同一种形状，不是另起一套）。不一致就整条丢弃、计入
+     `rejectedBundledTampering`，**绝不出现在 `accepted` 里**，不存在"以远端为准覆盖"
+     这条路。不在钉死集合里的新 id 不受限制，允许被视为"新增"。
+
+### 17.3 CI 覆盖：13 条验签断言从"结构上摸不到"变成"真的会让 CI 变红"
+
+`packages/downloader/scripts/verify-unpack.mjs` 第 8/9 节的 13 条 Ed25519 相关断言
+**没有删**（它还是 53 条解包安全断言的宿主，ADR-010 §附-A 记录过删 `manifest.ts` 的
+爆炸半径），但这个脚本本身仍然**零自动调用方**（不在任何 `package.json` scripts，
+不在任何 workflow）——它至今没有、也不会因为本节而变得能让 CI 变红。
+
+真正让这些断言 CI 可达的是另开的两个文件：
+
+- `packages/downloader/src/signature.test.ts`（`verifyEd25519` 8 例 + 新函数
+  `resolveConfiguredCatalogPublicKey` 4 例）
+- `packages/downloader/src/manifest.test.ts`（`verifyCatalogSignature` fail-closed
+  4 例 + 新函数 `verifyCatalogSignatureSafe` 3 例）
+- 外加 `packages/downloader/src/catalogUpdate.test.ts`（三条前提端到端 12 例：
+  `checkBundledIntegrity` 3 例、`checkForUpdates` 6 例覆盖全部 7 个 `source` 分支中的 6 个
+  失败/成功路径、含一条"真实验签 + 新增识别 + 钉死项篡改拦截"一次走完整条腿的用例）
+
+机制：`packages/downloader/package.json` 的 `test` 脚本是
+`node --test "dist/**` + `/*.test.js"`，`.github/workflows/ci-crossplatform.yml:106`
+的 `pnpm -r test` 在三个平台上都跑（`pnpm build:safe` 之后）——**`.test.ts` 编译进
+`dist/` 的那一刻起，这些断言就是 CI 真的会走、真的能拦的路**，不需要新增任何
+workflow 步骤。三份新文件加起来 82 个用例里的 17 个是本节新增（其余是已有的解包
+安全用例，一并跑过，全绿，未受影响），本机已实测：`pnpm --filter @openmemo/downloader
+build && pnpm --filter @openmemo/downloader test` → **82/82 通过，0 失败**。
+
+### 17.4 生产调用方：0 → 1
+
+`apps/daemon/src/http/rest/updates.ts`：`GET /api/updates/check`，只此一个路由，
+只接受 GET，不读请求体。挂进 `apps/daemon/src/main.ts` 的 `routers` 数组
+（`createMediaRoutes(...)` 之后）。这是 `verifyCatalogSignature`/`checkForUpdates`
+链路第一次被生产代码真正调用 —— 此前是"生产调用方零"。
+
+`OPENMEMO_CATALOG_UPDATE_URL` / `OPENMEMO_CATALOG_UPDATE_SIG_URL` 在生产环境目前
+**未设**（没有服务器托管一份签过名的远端目录），所以端点今天会诚实返回
+`source: "not-configured"` —— 这不是半成品：未设时明确说"未配置"，不假装查过、
+不报错、不回 404。
+
+### 17.5 私钥：谁来生成，为什么不是我
+
+⚠️ 私钥**不属于这个代码库，也不属于任何 agent**：这个工作树多路共享，
+git 历史会被推到远端，任何在这里生成的私钥都等于把"临时用一下"的密钥变成一把
+事实上躺在仓库里的私钥。本节交付的是**基础设施**（公钥怎么嵌、目录怎么签、验不过
+怎么退），密钥本身必须由用户在自己的机器上生成、自己保管，永不进这个仓库。
+
+用户在**自己的机器**（不是这个工作树）上运行：
+
+```bash
+node -e '
+const { generateKeyPairSync, sign } = require("node:crypto");
+const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+const raw = publicKey.export({ type: "spki", format: "der" }).subarray(-32);
+console.log("公钥（嵌进 signature.ts 或设成 OPENMEMO_CATALOG_PUBLIC_KEY_HEX）：");
+console.log(raw.toString("hex"));
+console.log();
+console.log("私钥 PEM（只留在这台机器，不进任何仓库）：");
+console.log(privateKey.export({ type: "pkcs8", format: "pem" }).toString());
+'
+```
+
+拿到公钥 hex 之后，**推荐做法是先用环境变量试**（不改代码、不提交任何东西）：
+
+```bash
+export OPENMEMO_CATALOG_PUBLIC_KEY_HEX=<上面打印的 64 位 hex>
+export OPENMEMO_CATALOG_UPDATE_URL=https://<你的host>/catalog.json
+export OPENMEMO_CATALOG_UPDATE_SIG_URL=https://<你的host>/catalog.json.sig
+```
+
+`<你的host>` 必须先加进 `packages/shared/src/schemas.ts` 的 `ALLOWED_DOWNLOAD_HOSTS`
+（编译期白名单，`updates.ts` 用它拦截未授权 host）—— 这一步**是代码改动**，
+需要经正常的 PR 流程，不属于"私钥专属"的部分。只有确认这套线上验证机制稳定之后，
+才考虑把公钥从环境变量升级为编译进 `signature.ts` 的常量（那一步只动公钥，
+私钥依然、也永远不该出现在这个仓库的任何地方）。
+
+签名一份目录（例如 `vendor/manifests/models-asr.json`）：
+
+```bash
+node -e '
+const { sign } = require("node:crypto");
+const fs = require("node:fs");
+const privateKey = fs.readFileSync("/path/to/your/private-key.pem"); // 只在你自己机器上
+const catalogBytes = fs.readFileSync("vendor/manifests/models-asr.json");
+const sig = sign(null, catalogBytes, { key: privateKey, format: "pem" });
+fs.writeFileSync("models-asr.json.sig", sig);
+'
+```
+
+把 `models-asr.json` 和 `models-asr.json.sig` 一起放到 `OPENMEMO_CATALOG_UPDATE_URL` /
+`_SIG_URL` 指向的地址即可 —— `checkForUpdates()` 会把两者一起拉下来，
+`verifyCatalogSignatureSafe()` 验证 `.sig` 是不是 `catalogBytes` 的合法 Ed25519 签名。
+
+### 17.6 本节没做的（如实登记）
+
+- **没有把公钥编译进 `signature.ts`**：`OPENMEMO_CATALOG_PUBLIC_KEY` 仍是 `null`，
+  这是故意的 —— 那一步需要用户已经生成了真实密钥对，不该由本节替他决定。
+- **没有真正托管一份远端目录**：没有服务器、没有真实的 `.json`/`.sig` 文件对外提供，
+  所以生产环境今天必然回 `not-configured`。
+- **没有前端 UI**：`GET /api/updates/check` 目前只是一个可以被轮询的 HTTP 端点，
+  没有页面消费它、没有"有新版本"的提示条。这是纯粹的后端能力交付。
+- **没有写 `packages/downloader/scripts/sign-catalog.mjs` 这样的独立签名 CLI** ——
+  §17.5 给的是一段可以直接运行的 `node -e`，够用；封装成脚本是锦上添花，
+  不阻塞"三条前提都落地"这个目标，留给以后需要经常签的时候再做。

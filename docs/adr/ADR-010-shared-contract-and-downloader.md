@@ -47,6 +47,10 @@ whisper.cpp v1.9.1 上游**无 macOS / Vulkan / ROCm 包**，`model-mgmt` **拒�
 > **解压那半仍然成立且已落地**（`packages/downloader/src/unpack.ts`，53 条安全断言在
 > `scripts/verify-unpack.mjs`）。**被推翻的是 catalog 验签那半 —— 见文末 §附-A（2026-08-07）。**
 > 本决策原文不许删，留作可追溯。
+>
+> ⚠️ **2026-08-10 追加**：§附-A 结尾"验签函数本身：保留……未执行，等用户看到证据后
+> 再裁"已经有了后续 —— 见文末 §附-B。`verifyCatalogSignature` 现在有了第一个生产
+> 调用方，但**不是**把 §附-A 删掉的那族远端加载器接回来，那族仍然是死代码。
 
 ## 决策 5：双 ID 对齐方式 —— 表彰
 
@@ -167,3 +171,53 @@ zip 炸弹限额、可执行位保留）一起死**，而那正是 `docs/SECURIT
 ⚠️ **另一条没闭的**：`verify-unpack.mjs` 自己**没有任何自动调用方**（不在任何
 `package.json` scripts、不在任何 workflow）。所以上面那 13+53 条断言"有人手敲才跑"。
 这是一条独立的欠债，T-171 没动它。
+
+---
+
+# 附-B：§附-A 结尾"验签函数保留待裁"的裁决落地（2026-08-10）
+
+**何时**：2026-08-10，D-20 §17（"检测更新"实现）。
+**被谁**：本次任务在任务书里明确要求补写这一节（"ADR-012 决策 6 与 ADR-010 §决策4订正
+需要'被取代'文档说明"），承接的是 §附-A 结尾悬置的那句"验签函数本身：保留……未执行，
+等用户看到上面的证据后再裁"——这是那次悬置的后续，不是 agent 就地另起的新决定。
+**依据什么**：D-20 §11.3 早就写好了接回远端目录必须满足的三条前提（签名+客户端钉死
+公钥 / 验不过回退到包内那份 / 不许改已内置项的 sha256），§11.4 当时承认"上述任何代码
+都没写"。本次是把这三条从设计写成代码，第一次让 `verifyCatalogSignature` 有生产调用方。
+
+## 实际执行到什么程度
+
+### 没有做的（§附-A 划的线，原样守住）
+
+- **§附-A 删掉的那族远端加载器**（`loadManifest` / `loadModelManifest` /
+  `loadBackendManifest` 及其专属类型/常量/私有辅助）**没有复活**，git 历史里躺着。
+  本次新写的是另一条独立的调用链（`catalogUpdate.ts` → `apps/daemon/.../updates.ts`），
+  不经过、也不依赖那族被删的代码——两者是平行的两件事，不是"把删掉的接回来"。
+- 生产环境目前仍然**没有**真实远端目录可问（`OPENMEMO_CATALOG_UPDATE_URL` 未设），
+  今天线上行为是诚实返回 `source: "not-configured"`，不是"现在真的会去下载/验证"。
+
+### 做了的
+
+- `manifest.ts` 的 `verifyCatalogSignature` 默认参数改为走新函数
+  `resolveConfiguredCatalogPublicKey()`（`signature.ts`：环境变量覆盖 > 编译期默认值，
+  与 `OPENMEMO_MANIFEST_DIR` 等既有套路一致）。**默认值本身没变**——CI/生产不设该
+  环境变量时取值与改动前完全一致，仍是 `null`；`verify-unpack.mjs:706`
+  "默认必须是 `OPENMEMO_CATALOG_PUBLIC_KEY === null`"那条断言未受影响，实测仍通过。
+- 新增 `verifyCatalogSignatureSafe()`（fail-closed 但不抛异常）与全新文件
+  `catalogUpdate.ts`（编排：host 白名单 → 拉取 → 验签 → 解析 → §11.3 前提 3 的
+  钉死项完整性比对 → 求 diff），把 `verifyCatalogSignature` 接进了第一个、也是
+  唯一一个生产调用方 —— `apps/daemon/src/http/rest/updates.ts` 的
+  `GET /api/updates/check`。至此"生产调用方零"这句话不再成立。
+- §附-A 记录的 13 条验签断言此前"结构上不可能让 CI 变红"（`verify-unpack.mjs`
+  零自动调用方，这条本身仍然真实——脚本没有被接进任何 workflow）。本次新增
+  `signature.test.ts` / `manifest.test.ts` / `catalogUpdate.test.ts`
+  （`packages/downloader/src/`），编译进 `dist/**/*.test.js` 后被
+  `pnpm -r test`（`.github/workflows/ci-crossplatform.yml:106`，三平台都跑）
+  自动发现执行 —— **首次让这条验签逻辑具备"改坏了会被 CI 拦下"的能力**，
+  不依赖任何人手动跑 `verify-unpack.mjs`。`verify-unpack.mjs` 本身未删、
+  未改其模块形状，§附-A 记录的"删 `manifest.ts` 会带走 53 条解包安全断言"那条
+  爆炸半径警告依然适用，本次没有触碰那份脚本。
+- `[实测]` `pnpm --filter @openmemo/downloader build && pnpm --filter
+@openmemo/downloader test` → 82 个用例（含上面新增的 17 个）**全部通过，0 失败**。
+
+完整实现细节、三条前提各自的代码落点、CI 覆盖范围、给用户的密钥生成/签名命令，
+见 `docs/design/D-20-bundled-deps.md` §17。

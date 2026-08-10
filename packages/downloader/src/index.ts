@@ -24,6 +24,7 @@ export * from './store.js';
 export * from './queue.js';
 export * from './installer.js';
 export * from './manifest.js';
+export * from './catalogUpdate.js';
 export * from './upstream.js';
 export * from './components.js';
 export * from './unpack.js';

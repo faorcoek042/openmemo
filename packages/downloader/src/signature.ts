@@ -17,6 +17,7 @@
  */
 
 import { KeyObject, createPublicKey, verify as cryptoVerify } from 'node:crypto';
+import process from 'node:process';
 
 /** Fixed SPKI prefix for an Ed25519 public key: AlgorithmIdentifier(1.3.101.112) + BIT STRING header. */
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
@@ -104,3 +105,36 @@ export function verifyEd25519(
  * than silently accepting or silently no-op-ing.
  */
 export const OPENMEMO_CATALOG_PUBLIC_KEY: string | null = null;
+
+/**
+ * The catalog public key actually in effect: an env override, if set, wins over the
+ * compiled-in constant above (D-20 §17, "签名 + 客户端钉死公钥").
+ *
+ * ── why an env override exists at all ───────────────────────────────────────────────
+ *
+ * The private key that signs a catalog must be generated and held by the user on their
+ * own machine — never by an agent working in this shared tree (git history here gets
+ * pushed to a remote; a key generated in-tree would effectively be a leaked key). That
+ * means an agent cannot simply hardcode a real public key into this file either, because
+ * doing so requires the user to have already run keygen and handed the resulting public
+ * key back — a manual, out-of-band step. `OPENMEMO_CATALOG_PUBLIC_KEY_HEX` lets the user
+ * provision (and rotate) that key by setting an environment variable when they run the
+ * daemon/build, without needing an agent to edit source and cut a new release first. The
+ * exact keygen + this-env-var invocation is documented in `docs/design/D-20-bundled-deps.md`
+ * §17 ("给用户的那条命令").
+ *
+ * This mirrors the existing "env override > compiled default" shape already used
+ * elsewhere in this codebase for exactly the same "don't guess, let the operator say
+ * so" reason — `OPENMEMO_MANIFEST_DIR` / `OPENMEMO_BUNDLED_MODELS_DIR`
+ * (`apps/daemon/src/http/rest/manifests.ts`, `apps/daemon/src/http/rest/modelReconcile.ts`).
+ *
+ * Once a key is trusted for good (e.g. baked into an official release), the maintainer
+ * can also just replace the `null` above directly — the env var is the low-ceremony path
+ * for provisioning/testing, not the only path.
+ */
+export function resolveConfiguredCatalogPublicKey(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const fromEnv = env['OPENMEMO_CATALOG_PUBLIC_KEY_HEX']?.trim();
+  return fromEnv ? fromEnv : OPENMEMO_CATALOG_PUBLIC_KEY;
+}

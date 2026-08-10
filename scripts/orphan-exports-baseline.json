@@ -139,11 +139,6 @@
       "note": "T-157 ② 裁决：**刻意不接**。接上会让 findInBackendPacks 在 .prev-* 目录里挑到旧二进制、且几百 MB 无人回收。要做完的四件事写在该函数上方的注释里。"
     },
     {
-      "file": "packages/downloader/src/manifest.ts",
-      "name": "verifyCatalogSignature",
-      "note": "⚠️ 本条目的 note 在 T-171 被**订正过一次，因为它此前有一处事实错误**：它写着本函数「零单测」，而实际上 `packages/downloader/scripts/verify-unpack.mjs` 第 8/9 节共 13 条断言在跑它（`:50` 顶层 await 动态 import + `:584 :587 :591 :596` 四处实调用），其中包含拿真实 Ed25519 密钥对验一个真签名。棘轮之所以仍把它算成孤儿，是因为 `check-orphan-exports.mjs:112` 的文件过滤是 `/\\.tsx?$/` 且限定 `^(apps|packages)/[^/]+/src/` —— **`.mjs` 脚本结构性地不在扫描范围内**。所以这一条是**扫描器口径下的孤儿，不是真孤儿**，别照着 note 去删它（T-171 用户裁定删整条远端目录管线时，就是撞在这里被拦下的；本仓栽过一次 `toMarkdown` —— 有 daemon 调用方却被删，导出 500）。⚠️ 特别注意爆炸半径：`verify-unpack.mjs:50` 是**顶层 await**，`dist/manifest.js` 一旦消失，整份脚本在模块加载阶段就 `ERR_MODULE_NOT_FOUND`，**53 条解包安全断言（zip-slip / 绝对路径 / 软链逃逸 / zip 炸弹）全部一起死**，而那正是 `docs/SECURITY.md:453` 与 `ADR-015:44` 引为「已实现」的证据来源。—— 其余仍然成立的背景：① 生产**根本没有远端目录**可验，目录是 `vendor/manifests/*.json`（git 跟踪、随仓发布），daemon 走 `rest/manifests.ts` 的 `fs.readdir` 本地读盘，全程不联网；② 会联网取目录的那个分层加载器 `loadManifest` 一族（含全仓唯一一处取目录的 `fetch`）**已于 T-171 删除**，本文件上方原有的 `loadBackendManifest` / `loadModelManifest` 两条基线条目随之移除（72 → 70，只降不升）；③ 今天真正承重的完整性控制是**编译期下载域名白名单** + **每个产物强制 sha256**，不是签名；④ 签名这条线仍然无密钥、无签名产物、无签名脚本。⚠️ 还有一条没闭：`verify-unpack.mjs` 自己**没有任何自动调用方**（不在任何 package.json scripts、不在任何 workflow），所以上面那 13 条断言只在有人手敲时才跑。"
-    },
-    {
       "file": "packages/downloader/src/proxy.ts",
       "name": "DEFAULT_PROBE_TARGETS"
     },
