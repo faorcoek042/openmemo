@@ -2754,6 +2754,14 @@ components:
         engine:
           type: string
           description: The engine that loads this role here — the one that cannot read it.
+        usableInstalled:
+          type: [string, 'null']
+          description: >-
+            Another ALREADY-INSTALLED model of the same role that this engine CAN load.
+            A string means "activate that one" (no download); null means "verified: none
+            installed is usable" (so: install one); the property being ABSENT means we
+            could not tell (a candidate record points at a missing file) — clients must
+            then state the fact and offer NO action rather than guess one.
 
     StorageBreakdownItem:
       type: object

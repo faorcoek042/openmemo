@@ -963,11 +963,38 @@ export class RestState {
       installed ??= await this.listInstalled();
       const rec = installed.find((m) => m.id === id);
       if (rec === undefined) continue; // 记为活动但记录不在了：不是"加载不了"，别混为一谈
-      if ((await loadableByRoleConsumer(this.modelsRoot, rec)) === false) {
-        out[role] = { modelId: id, engine };
-      }
+      if ((await loadableByRoleConsumer(this.modelsRoot, rec)) !== false) continue;
+      out[role] = { modelId: id, engine, ...(await this.usableAlternative(role, id, installed)) };
     }
     return out;
+  }
+
+  /**
+   * 同一个 role 下，**本机已经装了的、这个引擎读得动的另一份**。
+   *
+   * 它决定用户看到的是「**激活**它」还是「**装**一个」——
+   * 两句话对应的动作完全不同，糊在一起就会把已经装好的人送去重下一遍。
+   *
+   * 三态，返回的是**要不要写这个字段**：
+   *   · `{ usableInstalled: id }`   —— 找到了（确知）；
+   *   · `{ usableInstalled: null }` —— 逐个验过，确知一份都没有；
+   *   · `{}`（字段缺失）            —— **说不出**：有候选的判据是 `null`
+   *     （记录指不到文件），那时既不能说"有"也不能说"没有"。
+   *     **宁可什么动作都不给，也不猜一个** —— 猜错的那句话会把人送去一条走不通的路。
+   */
+  private async usableAlternative(
+    role: ModelRole,
+    activeId: string,
+    installed: readonly InstalledModel[],
+  ): Promise<{ usableInstalled?: string | null }> {
+    let sawUnknown = false;
+    for (const m of installed) {
+      if (m.role !== role || m.id === activeId) continue;
+      const verdict = await loadableByRoleConsumer(this.modelsRoot, m);
+      if (verdict === true) return { usableInstalled: m.id };
+      if (verdict === null) sawUnknown = true;
+    }
+    return sawUnknown ? {} : { usableInstalled: null };
   }
 
   async listInstalled(): Promise<InstalledModel[]> {

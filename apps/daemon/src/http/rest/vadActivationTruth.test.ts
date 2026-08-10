@@ -265,7 +265,8 @@ describe('A-4 ② 已经处在这个状态的机器，得能把话说清', () =>
      */
     assert.equal(state.active.vad, 'vad/silero-vad-ggml');
     assert.deepEqual(await state.activeUnusable(), {
-      vad: { modelId: 'vad/silero-vad-ggml', engine: 'whisper.cpp' },
+      // 这台机器上只装了这一份，所以"能用的那个"确知没有 —— 见下面 ③ 那一组
+      vad: { modelId: 'vad/silero-vad-ggml', engine: 'whisper.cpp', usableInstalled: null },
     });
   });
 
@@ -307,5 +308,81 @@ describe('A-4 ② 已经处在这个状态的机器，得能把话说清', () =>
     const state = await bootWith(NOT_GGML, { vad: 'vad/never-installed' });
     assert.equal(state.active.vad, 'vad/never-installed');
     assert.deepEqual(await state.activeUnusable(), {});
+  });
+});
+
+/**
+ * 往 store 里塞**第二份**已装 VAD 记录（真落一个文件，判据要读它的内容）。
+ * `body === null` = 记录里指着一个**不存在**的文件 —— 那是"说不出"那一档的现场。
+ */
+async function seedSecondVad(state: RestState, id: string, body: Buffer | null): Promise<void> {
+  const name = `${id.replace(/[^\w.-]/g, '_')}.bin`;
+  const abs = join(state.modelsRoot, 'by-name', 'vad', name);
+  if (body !== null) {
+    await mkdir(join(state.modelsRoot, 'by-name', 'vad'), { recursive: true });
+    await writeFile(abs, body);
+  }
+  await state.store.writeManifest('vad', id, {
+    schemaVersion: 1,
+    id,
+    groupId: id,
+    role: 'vad',
+    displayName: id,
+    quantization: 'f16',
+    totalSizeBytes: body?.length ?? 1,
+    installedAt: new Date().toISOString(),
+    verifiedAt: new Date().toISOString(),
+    integrity: 'ok',
+    files: [
+      { role: 'weights', name, sha256: 'x'.repeat(64), sizeBytes: body?.length ?? 1, path: abs },
+    ],
+    requirements: { ramRequiredMB: 1, vramRequiredMB: 0, diskRequiredMB: 1, cpuFeatures: [] },
+    license: { id: 'unknown', gated: false, url: '' },
+    source: { provider: 'custom', repo: 'x', revision: 'local' },
+    benchmark: null,
+    catalogVersion: 'test',
+  } as never);
+}
+
+describe('A-4 ③「该装它」还是「该激活它」—— 两句话对应的动作不一样', () => {
+  const SEEDED = { vad: 'vad/silero-vad-ggml' };
+
+  it('★★ 能用的那份**已经装了** ⇒ 点名它（用户该做的是激活，不是重下一遍）', async () => {
+    const state = await bootWith(NOT_GGML, SEEDED);
+    await seedSecondVad(state, 'vad/other-ggml', Buffer.concat([GGML_HEAD, Buffer.from('ok')]));
+    assert.deepEqual(await state.activeUnusable(), {
+      vad: {
+        modelId: 'vad/silero-vad-ggml',
+        engine: 'whisper.cpp',
+        usableInstalled: 'vad/other-ggml',
+      },
+    });
+  });
+
+  it('★★ 逐个验过、确知一份都没有 ⇒ `null`（这时"去装一个"才是真话）', async () => {
+    const state = await bootWith(NOT_GGML, SEEDED);
+    await seedSecondVad(state, 'vad/another-onnx', NOT_GGML);
+    assert.deepEqual(await state.activeUnusable(), {
+      vad: { modelId: 'vad/silero-vad-ggml', engine: 'whisper.cpp', usableInstalled: null },
+    });
+  });
+
+  it('★★ 有候选**说不出**（记录指不到文件）⇒ 字段缺失，**一个动作都不给**', async () => {
+    /*
+     * 这一条是裁决里那句"分不出来就说 UNKNOWN，别猜一个动作"的落点。
+     * 把它折成 `null`（=去装一个）会把一个**可能已经装好了**的人送去重下一遍；
+     * 折成"有"则会让他去激活一个我们并不知道存不存在的东西。
+     */
+    const state = await bootWith(NOT_GGML, SEEDED);
+    await seedSecondVad(state, 'vad/record-points-nowhere', null);
+    const got = await state.activeUnusable();
+    assert.equal(got.vad?.modelId, 'vad/silero-vad-ggml');
+    assert.equal('usableInstalled' in (got.vad ?? {}), false, '说不出的时候不许发这一格');
+  });
+
+  it('★ 一份"能用的"都找得到时，**不许**把活动那一个自己算进去', async () => {
+    // 活动那一个按定义就是加载不了的，若把它算进候选，`usableInstalled` 会指回它自己。
+    const state = await bootWith(NOT_GGML, SEEDED);
+    assert.equal((await state.activeUnusable()).vad?.usableInstalled, null);
   });
 });

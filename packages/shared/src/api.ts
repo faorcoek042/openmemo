@@ -99,6 +99,29 @@ export interface ActiveSlotUnusable {
   modelId: string;
   /** 本机上负责加载这个 role 的引擎，也就是"读不动它"的那一个。 */
   engine: AsrEngineId;
+  /**
+   * **同一个 role 下，本机已经装了的、这个引擎读得动的另一份。**
+   *
+   * ## 为什么这一格是承重的
+   *
+   * 「加载不了」这句话对用户的下一步动作**有两种完全不同的答案**：
+   *   · 能用的那份**已经装了**、只是没被激活 ⇒ 他该做的是**激活它**（零下载）；
+   *   · 本机**一份能用的都没有** ⇒ 他该做的是**装一个**。
+   * 把两者糊成一句"去装吧"，会让已经装好的人被送去重下一遍；
+   * 糊成"去激活吧"，会让没装的人在列表里找一个不存在的东西。
+   * 这一周删掉的正是那种"按钮点得动、跳得走、就是到不了能修的那一页"。
+   *
+   * ## 三态，**分不出来就说不出来**
+   *
+   *   · `string`   —— 已装且读得动的那一份的 id（**确知**，逐个验过文件内容）；
+   *   · `null`     —— 逐个验过，**确知一份都没有**；
+   *   · 字段缺失   —— **说不出**：候选里有记录指不到文件（旧记录 / 文件被挪走），
+   *                   那时既不能说"有"也不能说"没有"。客户端此时**只报事实、不给动作**。
+   *
+   * ⚠️ 判据仍然是文件内容（`canEngineLoad`），**不是目录的 `engines` 字段** ——
+   *    安装记录里根本没有那个字段，按它过滤等于按不存在的东西过滤。
+   */
+  usableInstalled?: string | null;
 }
 
 export interface GetInstalledResponse {
@@ -428,6 +451,49 @@ export interface GetBackendCatalogResponse {
      */
     installedEngineVersion?: string | null;
     installedSizeBytes?: number | null;
+    /**
+     * 这个包提供的某个二进制，**系统里已经有一份正在被我们用**（借宿主 PATH 的那一档）。
+     *
+     * ## 它消掉的是一句跨页矛盾（#87 / 轴1③）
+     *
+     * 解析器（A 侧，`tools.ts` 的 `RESOLUTION_PLANS`）有三档 `pack | bundle | path`，
+     * **`path` 那一档是活的**：用户 `brew install ffmpeg` 之后，流水线真的会用
+     * `/usr/bin/ffmpeg`，于是 `ReadinessBanner` 读的 `pipeline.missing` 是空的、不报警。
+     * 而安装记录（B 侧）只认 manifest —— 于是同一台机器上 `/components` 与 `/runtime`
+     * 显示「可安装 · 145 MB」，**邀请用户把已经有的东西再下一遍**。
+     *
+     * ## ⚠️ 这一格**不是**"已安装"，两侧一个都没合并
+     *
+     * `backendReconcile.ts` 已经逐条论证过：把 `installed` 改成"有 manifest **或**
+     * 文件都在"会造出**第三个答案**（`/backends/installed` 列不出它、`DELETE` 404、
+     * `installedVersion` 仍是 null、`recordSelfTest()` 写不进）。那段论证仍然成立。
+     * 系统 ffmpeg **本来就不该**被认领成我们的包 —— 它不是我们装的，我们也无权删它。
+     * 所以这里只**加信息**：装按钮照旧在，只是旁边多一句实话。
+     *
+     * ## 与三个相邻概念的区别（别再合并它们）
+     *
+     * | 字段 | 说的是 |
+     * |---|---|
+     * | `installedOnDiskButUnrecorded` | **我们自己 store 里**有一份没登记的副本 |
+     * | `InstalledBackendPack.source: 'bundled'` / `BackendStatus.bundled` | **包内自带**那一档（是我们的东西） |
+     * | 本字段 | **借宿主 PATH 的**那一档（**不是**我们的东西） |
+     *
+     * 判据与 `selfcheck.ts` 那条同源、且是**结构性**的：既不在 store 里、也不在
+     * `bundledRuntimeDir()` 底下 ⇒ 那就是借来的。不读解析器的"档位"，因为
+     * `resolveByOrder()` 把命中的档位丢掉了（只返回路径）——
+     * 与其为此加一条新数据通路，不如按路径落在哪儿当场判，**证据就是那条路径本身**。
+     *
+     * ## **可选**：缺失 ≠ 否
+     *
+     * 老 daemon 不发；解析器抛了也**什么都不说**（保持缺失）。
+     * 「我问不出来」不等于「系统里没有」—— 把 UNKNOWN 渲染成"没有"就是又一句假话。
+     */
+    servedFromSystemPath?: {
+      /** 这个包声明提供、而系统里已经有一份的那个文件名（如 `ffmpeg`）。 */
+      file: string;
+      /** 它当前被解析到的绝对路径 —— 证据本身，不是我们的推断。 */
+      path: string;
+    } | null;
   })[];
 }
 
