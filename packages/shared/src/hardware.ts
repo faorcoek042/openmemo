@@ -70,6 +70,45 @@ export interface GpuDevice {
 }
 
 /**
+ * `available: false` 的**成因**，机器可判。
+ *
+ * ## 为什么必须是字段，不是把 `unavailableReason` 拿去做正则
+ *
+ * `unavailableReason` 是一句**英文自由文本**，给排障的人看的。界面要按成因分档
+ * （「本平台不适用」vs「未安装」是两句永远不许合并的话），如果靠匹配那句英文，
+ * 那么改一个标点、加一个括号、翻译一次，界面就静默地退回"全都一样"——
+ * **本仓在正则匹配这类字符串上已经栽过两次。**
+ *
+ * 所以成因单列一格：`manager.ts` 的理由链每一条分支各对应一个值，
+ * 前端 `switch` 这个字段，永远不读那句话。
+ *
+ * ⚠️ 它**只出现在 `available: false` 那条分支上** —— 一个"可用"的后端带着一个
+ * "为什么不可用"的成因，和带着一句不可用理由一样，是自相矛盾的对象。
+ */
+export const BACKEND_UNAVAILABLE_KINDS = [
+  /**
+   * 这个后端在这个操作系统上**根本不可能存在**（Metal / Core ML 之于非 Apple 平台）。
+   *
+   * ★ 与其余各项的区别是**它不依赖任何测量**：探针跑没跑成、包装没装，都不改变结论。
+   * 所以 `manager.ts` 把它排在理由链的最前面。
+   */
+  'platform_unsupported',
+  /** 探针这一轮没跑成（超时/崩溃/找不到）—— 对这个后端什么都没测出来。 */
+  'probe_failed',
+  /** 断路器把它停用了（连续失败），不是它本身的结论。 */
+  'disabled_after_failures',
+  /** 平台上装得了，只是还没装。**这一档才该引导用户去装。** */
+  'not_installed',
+  /** 装了，但这一轮探测没有加载它（`backendDir` 单值，见 `probed`）—— 零信息，不是故障。 */
+  'not_probed_this_run',
+  /** 加载了、枚举到了设备，但没有一个能用（含只有软件渲染器那种）。 */
+  'no_usable_devices',
+  /** 加载了、一个设备都没枚举到（驱动缺失或过旧）。 */
+  'enumerated_none',
+] as const;
+export type BackendUnavailableKind = (typeof BACKEND_UNAVAILABLE_KINDS)[number];
+
+/**
  * `BackendStatus` 里**与"可用不可用"这条轴无关**的那几格。
  *
  * 拆出来只是为了让下面那个判别联合两条分支不必各写一遍；
@@ -150,6 +189,8 @@ export type BackendStatus =
       probed: true;
       /** 可用的后端不许带不可用理由 —— 那是个自相矛盾的对象。 */
       unavailableReason?: null;
+      /** 同理：可用的后端没有"不可用成因"。 */
+      unavailableKind?: null;
     })
   | (BackendStatusCommon & {
       available: false;
@@ -186,6 +227,13 @@ export type BackendStatus =
       probed: boolean;
       /** **必填**：说了"不可用"就必须说得出为什么。 */
       unavailableReason: string;
+      /**
+       * **必填**：那句为什么的**机器可判版本**（T-196）。
+       *
+       * 界面按它分档，绝不去匹配 `unavailableReason` 那句英文自由文本。
+       * 两格必须说同一件事：`manager.ts` 的理由链一条分支同时产出这两格。
+       */
+      unavailableKind: BackendUnavailableKind;
     });
 
 export interface DiskInfo {

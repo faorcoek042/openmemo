@@ -15,6 +15,8 @@
 
 import { z } from 'zod';
 
+import { BACKEND_UNAVAILABLE_KINDS } from './hardware.js';
+
 /* ------------------------------ primitives -------------------------------- */
 
 export const Sha256Schema = z
@@ -152,6 +154,12 @@ export const DownloadUrlSchema = z
 export const ProviderIdSchema = z.enum(['hf', 'hf-mirror', 'modelscope', 'github', 'custom']);
 export const BackendSchema = z.enum(['cuda', 'vulkan', 'rocm', 'metal', 'coreml', 'cpu']);
 export const OsPlatformSchema = z.enum(['darwin', 'win32', 'linux']);
+/**
+ * ⚠️ **直接引 `hardware.ts` 的常量**，不像上面几个那样手抄一遍字面量。
+ * 这一格是判别用的，手抄两份就等于给"零成本漂移"留一个入口 ——
+ * 而这个文件存在的全部理由就是挡住形状漂移。
+ */
+export const BackendUnavailableKindSchema = z.enum(BACKEND_UNAVAILABLE_KINDS);
 export const ArchSchema = z.enum(['x64', 'arm64']);
 
 /* ------------------------------- artifacts -------------------------------- */
@@ -528,6 +536,8 @@ export const HardwareInfoSchema = z.object({
         isa: z.string().nullish(),
         /** 可用的后端不许带不可用理由。 */
         unavailableReason: z.null().optional(),
+        /** 同理：可用的后端没有"不可用成因"。 */
+        unavailableKind: z.null().optional(),
       }),
       z.object({
         id: BackendSchema,
@@ -539,6 +549,8 @@ export const HardwareInfoSchema = z.object({
         isa: z.string().nullish(),
         /** **必填**：说了"不可用"就必须说得出为什么。 */
         unavailableReason: z.string(),
+        /** **必填**：那句为什么的机器可判版本 —— 界面按它分档，不匹配上面那句英文。 */
+        unavailableKind: BackendUnavailableKindSchema,
       }),
     ]),
   ),

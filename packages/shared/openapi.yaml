@@ -874,12 +874,35 @@ components:
             unavailableReason:
               type: 'null'
               description: An available backend must not carry a reason for being unavailable.
+            unavailableKind:
+              type: 'null'
+              description: Likewise, an available backend has no reason-for-unavailability code.
+
+    BackendUnavailableKind:
+      # T-196: the machine-readable cause behind unavailableReason.
+      #
+      # Why a separate field rather than parsing the sentence: unavailableReason is free
+      # English text for humans debugging. The UI has to tell "not possible on this OS"
+      # apart from "just not installed yet" — those two must never collapse into one
+      # sentence, because the second one is an instruction to go install something and the
+      # first one would send the user chasing a package that cannot exist. Matching on the
+      # prose means a punctuation change silently degrades the UI back to one bucket; this
+      # repo has been bitten by exactly that twice.
+      type: string
+      enum:
+        - platform_unsupported # cannot exist on this OS at all (Metal/Core ML off Apple)
+        - probe_failed # the probe did not complete; nothing was measured
+        - disabled_after_failures # parked by the circuit breaker
+        - not_installed # installable here, just not installed yet
+        - not_probed_this_run # installed, but this run scanned a different backendDir
+        - no_usable_devices # loaded and enumerated, but nothing usable
+        - enumerated_none # loaded, enumerated nothing (driver missing or too old)
 
     BackendStatusUnavailable:
       allOf:
         - $ref: '#/components/schemas/BackendStatusCommonProps'
         - type: object
-          required: [available, probed, unavailableReason]
+          required: [available, probed, unavailableReason, unavailableKind]
           properties:
             available:
               const: false
@@ -896,7 +919,10 @@ components:
               type: string
               description: >-
                 REQUIRED here: saying "unavailable" without saying why is the shape this
-                repo keeps cleaning up.
+                repo keeps cleaning up. FREE TEXT, English, for whoever is debugging —
+                clients must NOT pattern-match it; switch on unavailableKind instead.
+            unavailableKind:
+              $ref: '#/components/schemas/BackendUnavailableKind'
 
     DiskInfo:
       type: object

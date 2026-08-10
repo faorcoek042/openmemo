@@ -29,7 +29,16 @@
  *     => The L1 CPU pack is load-bearing and must never be evictable.
  */
 
-import type { Backend, BackendStatus, GpuDevice, HardwareInfo, OsInfo } from '@openmemo/shared';
+import type {
+  Backend,
+  BackendStatus,
+  BackendUnavailableKind,
+  GpuDevice,
+  HardwareInfo,
+  OsInfo,
+} from '@openmemo/shared';
+
+import { isBackendPossibleOnPlatform } from './applicability.js';
 
 import type { AdvisoryDetection, ProbeDevice, ProbeOutput, ProbeResult } from '../types.js';
 
@@ -236,13 +245,36 @@ export function buildHardwareInfo(input: BuildHardwareInfoInput): HardwareInfo {
      * 这正是类型里 `unavailableReason` 在这条分支上必填的依据：
      * 说了"不可用"就必须说得出为什么，不许留空。
      */
-    const unavailableReason: string = ((): string => {
-      if (!probe.ok) {
-        return `probe did not complete: ${probe.message}`;
+    const unavailable: { kind: BackendUnavailableKind; reason: string } = ((): {
+      kind: BackendUnavailableKind;
+      reason: string;
+    } => {
+      /*
+       * ★ T-196：平台判定排在**最前面**，在 `!probe.ok` 之前。
+       *
+       * 现场（用户真机 Windows）：`metal`/`coreml` 报的是
+       * `backend package not installed` —— 而这两个在 Windows 上**永远**装不上。
+       * 说成"未安装"等于叫用户去装一个不存在的东西。
+       *
+       * 为什么必须在探针那条之前：**平台结论不依赖任何测量**。探针超时、崩溃、
+       * 压根没跑，都不会让 Metal 在 Windows 上变得可能。排在后面的话，
+       * 一台探针跑不起来的 Windows 机器会先命中"probe did not complete"，
+       * 又把一个确定的事实降级成一句"没测出来"。
+       */
+      if (!isBackendPossibleOnPlatform(id, os.platform)) {
+        return {
+          kind: 'platform_unsupported',
+          reason: `not available on ${os.platform}: this backend exists only on Apple platforms`,
+        };
+      } else if (!probe.ok) {
+        return { kind: 'probe_failed', reason: `probe did not complete: ${probe.message}` };
       } else if (blacklistedBackends.has(id)) {
-        return 'disabled after repeated failures; re-test to try again';
+        return {
+          kind: 'disabled_after_failures',
+          reason: 'disabled after repeated failures; re-test to try again',
+        };
       } else if (!installed) {
-        return 'backend package not installed';
+        return { kind: 'not_installed', reason: 'backend package not installed' };
       } else if (!probed) {
         /*
          * ★ T-168. The pack IS installed, and this run never loaded it.
@@ -258,33 +290,47 @@ export function buildHardwareInfo(input: BuildHardwareInfoInput): HardwareInfo {
          * look. The last sentence is load-bearing: without it users read any "unavailable"
          * line as a fault to go and fix.
          */
-        return (
-          'installed, but this detection run did not load it: only the backend directory ' +
-          `currently in use is scanned${
-            probeOutput !== null && probeOutput.searchPath.length > 0
-              ? ` (${probeOutput.searchPath})`
-              : ''
-          }, and this backend's library is not in it. ` +
-          'This is not a driver or hardware fault — nothing was measured about it. ' +
-          'Select this backend, or run the self-test on that pack, to get a real answer.'
-        );
+        return {
+          kind: 'not_probed_this_run',
+          reason:
+            'installed, but this detection run did not load it: only the backend directory ' +
+            `currently in use is scanned${
+              probeOutput !== null && probeOutput.searchPath.length > 0
+                ? ` (${probeOutput.searchPath})`
+                : ''
+            }, and this backend's library is not in it. ` +
+            'This is not a driver or hardware fault — nothing was measured about it. ' +
+            'Select this backend, or run the self-test on that pack, to get a real answer.',
+        };
       } else if (devices.length > 0) {
         // The pack loaded but every device it offered was rejected. This is the
         // lavapipe case and it deserves a specific, non-alarming explanation.
-        return devices.some((d) => d.softwareRenderer)
-          ? 'only a software renderer was found (no real GPU); falling back to CPU'
-          : 'backend loaded but reported no usable devices';
+        return {
+          kind: 'no_usable_devices',
+          reason: devices.some((d) => d.softwareRenderer)
+            ? 'only a software renderer was found (no real GPU); falling back to CPU'
+            : 'backend loaded but reported no usable devices',
+        };
       } else {
         /*
          * Now EARNED: the library was in the scanned directory (or failed to dlopen for a
          * missing driver library such as libcuda.so.1, which is the same conclusion), and
          * enumeration still came back empty.
          */
-        return 'installed but enumerated no devices (driver missing or too old)';
+        return {
+          kind: 'enumerated_none',
+          reason: 'installed but enumerated no devices (driver missing or too old)',
+        };
       }
     })();
 
-    return { ...common, available: false as const, probed, unavailableReason };
+    return {
+      ...common,
+      available: false as const,
+      probed,
+      unavailableReason: unavailable.reason,
+      unavailableKind: unavailable.kind,
+    };
   });
 
   // ---- Selection --------------------------------------------------------------------

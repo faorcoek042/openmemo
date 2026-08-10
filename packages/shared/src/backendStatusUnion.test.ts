@@ -56,6 +56,7 @@ const legalRealVerdict: BackendStatus = {
   available: false,
   probed: true,
   unavailableReason: 'installed but enumerated no devices (driver missing or too old)',
+  unavailableKind: 'enumerated_none',
 };
 
 /** ✅ 合法：不可用 + 零信息（这一轮根本没加载它）+ 一句**不谈驱动**的理由。 */
@@ -64,6 +65,7 @@ const legalNotProbed: BackendStatus = {
   available: false,
   probed: false,
   unavailableReason: 'installed, but this detection run did not load it',
+  unavailableKind: 'not_probed_this_run',
 };
 
 /**
@@ -93,6 +95,40 @@ const illegalAvailableWithReason: BackendStatus = {
   available: true,
   probed: true,
   unavailableReason: '这句话不该存在',
+};
+
+/**
+ * ★ T-196：说了"不可用"却给不出**机器可判**的成因。
+ *
+ * 只有那句英文自由文本的话，界面要分档就只能去正则匹配它 ——
+ * 而「本平台不适用」和「还没装」必须分得开：后者是一条"去装吧"的指引，
+ * 前者照着做就是去找一个不可能存在的包。本仓在匹配这类字符串上栽过两次。
+ */
+// @ts-expect-error available: false 分支里 unavailableKind 必填
+const illegalNoKind: BackendStatus = {
+  ...COMMON,
+  available: false,
+  probed: true,
+  unavailableReason: 'installed but enumerated no devices (driver missing or too old)',
+};
+
+/**
+ * ★ 可用却挂着"为什么不可用"的成因 —— 与挂着一句理由同样自相矛盾。
+ *
+ * ⚠️ 注意这里的 `@ts-expect-error` 位置**与上面那条相反**：上面
+ * `illegalAvailableWithReason` 要放在**声明行**，而这一条 `tsc` 把错误报在
+ * **属性那一行**（TS2322），放到声明行上就会变成一条
+ * 「Unused '@ts-expect-error' directive」—— 守卫自己红，而它要守的那件事没被守住。
+ *
+ * **判据不是"按上一条的样子抄"，是"看 `tsc` 到底把错误报在哪一行"。**
+ * 两条都是本文件跑一次 `tsc -b` 照出来的，不是推出来的。
+ */
+const illegalAvailableWithKind: BackendStatus = {
+  ...COMMON,
+  available: true,
+  probed: true,
+  // @ts-expect-error 可用的后端没有不可用成因
+  unavailableKind: 'not_installed',
 };
 
 /* ──────────────────────── 运行时层：zod 也得拦住同样三条 ──────────────────── */
@@ -126,6 +162,36 @@ describe('BackendStatus 的非法组合在类型层不可表达（T-194）', () 
     assert.equal(illegalAvailableNotProbed.id, 'cuda');
     assert.equal(illegalNoReason.id, 'cuda');
     assert.equal(illegalAvailableWithReason.id, 'cuda');
+    assert.equal(illegalNoKind.id, 'cuda');
+    assert.equal(illegalAvailableWithKind.id, 'cuda');
+  });
+
+  it('★ T-196 运行时层：zod 必须拒绝 available:false 而没有 unavailableKind', () => {
+    const r = HardwareInfoSchema.safeParse(
+      withBackends([
+        { ...COMMON, available: false, probed: true, unavailableReason: 'installed but …' },
+      ]),
+    );
+    assert.equal(
+      r.success,
+      false,
+      '只有自由文本没有成因码 —— 界面要分档就只能去匹配那句英文，而那正是要消灭的做法',
+    );
+  });
+
+  it('★ T-196 运行时层：不认识的成因码必须被拒（不是悄悄放行）', () => {
+    const r = HardwareInfoSchema.safeParse(
+      withBackends([
+        {
+          ...COMMON,
+          available: false,
+          probed: true,
+          unavailableReason: 'x',
+          unavailableKind: 'because_i_said_so',
+        },
+      ]),
+    );
+    assert.equal(r.success, false, '成因码是枚举，放行任意字符串等于没有这一格');
   });
 
   it('★ 运行时层：zod 必须拒绝 available:true + probed:false', () => {

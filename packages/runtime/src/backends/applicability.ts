@@ -85,6 +85,46 @@ export function isAlwaysApplicable(backend: Backend, os: OsPlatform): boolean {
   return backend === 'metal' && os === 'darwin';
 }
 
+/**
+ * 只可能存在于 Apple 平台的后端。
+ *
+ * Metal 是 Apple 的图形/计算 API，Core ML 是 Apple 的推理框架 —— 两者都是**操作系统的
+ * 一部分**，不存在 Windows/Linux 版本，也没有任何"装一下就有了"的路径。
+ */
+export const APPLE_ONLY_BACKENDS: readonly Backend[] = ['metal', 'coreml'];
+
+/**
+ * 这个后端在这个操作系统上**有没有可能**存在。
+ *
+ * ## 它回答的是第三种话
+ *
+ * 用户真机（Windows）上「为什么这些后端不可用」逐字是：
+ *
+ * ```
+ * metal：backend package not installed
+ * coreml：backend package not installed
+ * ```
+ *
+ * 而这两个在 Windows 上**永远**装不上。说成"未安装"等于叫用户去装一个不存在的东西 ——
+ * 「本平台不适用」和「还没装」是两件事，压成一件之后用户只能去做一件白费的事。
+ *
+ * ## ⚠️ 为什么判据**不是**"目录里有没有这个后端的包"
+ *
+ * 那个反推法看起来更"数据驱动"，但它是错的，而且错得很隐蔽：
+ * 14 个包里 **rocm 在任何平台都是 0 个包**，**coreml 连 darwin 上都是 0 个**。
+ * 于是"没有包 ⇒ 平台不适用"会在**一台 Mac 上把 CoreML 标成「其它平台」** —— 那是假的。
+ *
+ * **没有包 ≠ 平台上不可能。** 前者是发布进度，后者是操作系统事实。
+ * 所以这里写死成一张平台表，不读任何目录。
+ *
+ * 与 `isAlwaysApplicable()` 是同一件事的两面（都只认 `metal`+`darwin` 这类平台事实），
+ * 放在一起是为了让"只有一个地方决定它"这句话继续成立（见文件头）。
+ */
+export function isBackendPossibleOnPlatform(backend: Backend, os: OsPlatform): boolean {
+  if (APPLE_ONLY_BACKENDS.includes(backend)) return os === 'darwin';
+  return true;
+}
+
 export interface PackDescriptor {
   id: string;
   backend: Backend;

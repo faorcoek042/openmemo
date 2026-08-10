@@ -29,7 +29,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import type { Backend, BackendStatus, OsPlatform } from '@openmemo/shared';
+import type { Backend, BackendStatus, BackendUnavailableKind, OsPlatform } from '@openmemo/shared';
 
 import { evaluateApplicability, isPackApplicable } from './applicability.js';
 
@@ -51,7 +51,13 @@ const pack = (backend: Backend) => ({
  */
 type StatusOverride =
   | { available: true; probed: true; installed?: boolean; unavailableReason?: null }
-  | { available: false; probed: boolean; installed?: boolean; unavailableReason: string };
+  | {
+      available: false;
+      probed: boolean;
+      installed?: boolean;
+      unavailableReason: string;
+      unavailableKind: BackendUnavailableKind;
+    };
 
 /** 一份真实形状的 BackendStatus 表：CPU 已装可用，其余都"没装所以枚举不到"。 */
 function statuses(overrides: Partial<Record<Backend, StatusOverride>> = {}): BackendStatus[] {
@@ -72,6 +78,7 @@ function statuses(overrides: Partial<Record<Backend, StatusOverride>> = {}): Bac
           // 没装的包，其 ggml 库不在被扫描的目录里 → 探针不可能加载过它（T-168）
           probed: false,
           unavailableReason: 'backend package not installed',
+          unavailableKind: 'not_installed' as const,
         };
   });
 }
@@ -136,6 +143,7 @@ describe('L2 适用性：解开"要先装才能被发现"的环', () => {
           probed: true,
           available: false,
           unavailableReason: 'installed but enumerated no devices (driver missing or too old)',
+          unavailableKind: 'enumerated_none',
         },
       }),
       advisoryCandidates: ['cuda', 'vulkan'],
@@ -158,6 +166,7 @@ describe('L2 适用性：解开"要先装才能被发现"的环', () => {
         probed: false,
         available: false,
         unavailableReason: 'installed, but this detection run did not load it: …',
+        unavailableKind: 'not_probed_this_run',
       },
     });
 
@@ -288,6 +297,7 @@ describe('L2 适用性：解开"要先装才能被发现"的环', () => {
         version: null,
         deviceIndex: null,
         unavailableReason: reason,
+        unavailableKind: 'probe_failed' as const,
       }));
 
     const hardwareWith = (backends: BackendStatus[]) => ({
@@ -364,10 +374,11 @@ describe('L2 适用性：解开"要先装才能被发现"的环', () => {
          * 是因为那时两个字段互不相干。
          */
         if (b.id === 'cpu') {
-          const { unavailableReason: _drop, ...rest } = b as Extract<
-            BackendStatus,
-            { available: false }
-          >;
+          const {
+            unavailableReason: _drop,
+            unavailableKind: _dropKind,
+            ...rest
+          } = b as Extract<BackendStatus, { available: false }>;
           return { ...rest, available: true, probed: true, installed: true };
         }
         if (b.id === 'vulkan' && !b.available) return { ...b, installed: true, probed: true };
