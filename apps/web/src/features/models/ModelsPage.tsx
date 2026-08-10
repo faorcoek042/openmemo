@@ -35,7 +35,7 @@ import {
   useModelsStorageQuery,
 } from './api';
 import { ModelCard } from './components/ModelCard';
-import { DownloadRow } from './components/DownloadRow';
+import { DownloadRow } from '../../components/common/DownloadRow';
 import { StorageBreakdown } from './components/StorageBreakdown';
 import { SourcesSection } from './components/SourcesSection';
 import { splitAsrSections } from './asrSections';

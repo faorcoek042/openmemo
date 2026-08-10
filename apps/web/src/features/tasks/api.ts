@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { AnyJob, DownloadJob, JobState, PipelineJobKind } from '@openmemo/shared';
 import { isPipelineJob, TERMINAL_JOB_STATES } from '@openmemo/shared';
 
@@ -41,12 +41,13 @@ export interface JobsResponse {
   concurrencyLimit: number;
 }
 
-export function useJobsQuery() {
-  return useQuery({
-    queryKey: qk.jobs.all,
-    queryFn: () => api<JobsResponse>('jobs', '/jobs'),
-  });
-}
+/*
+ * ★ T-195：实现搬到 `lib/api/jobs.ts`（唯一一份）。与 `features/models/api.ts`
+ * 此前各写一遍同一个查询 —— 而「运行时」页也要用它，第三份不许出现。
+ */
+import { useJobsQuery } from '../../lib/api/jobs';
+
+export { useJobsQuery };
 
 /** 服务端 job + 内存进度的合并视图。 */
 export interface MergedJob {

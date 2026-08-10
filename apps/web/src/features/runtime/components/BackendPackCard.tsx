@@ -1,6 +1,18 @@
 import { useTranslation } from 'react-i18next';
 import { Download, Lock, Play, Trash2 } from 'lucide-react';
-import type { Backend, BackendSelfTest, Engine, GetBackendCatalogResponse } from '@openmemo/shared';
+import type {
+  Backend,
+  BackendSelfTest,
+  DownloadJob,
+  Engine,
+  GetBackendCatalogResponse,
+} from '@openmemo/shared';
+/*
+ * 复用模型页那一份 —— 它刚从四份收敛成一份（`d145aa8`），
+ * 后端包与模型下载走的是同一个 `DownloadQueue` / 同一份 `DownloadJob`。
+ * 再写一份就是第五份，而四份各自漂正是上一次要修的病。
+ */
+import { DownloadRow } from '../../../components/common/DownloadRow';
 import { Button } from '../../../components/common/Button';
 import { StatusChip } from '../../../components/common/StatusChip';
 import { BackendChip, type BackendChipState } from '../../../components/common/BackendChip';
@@ -66,6 +78,19 @@ export interface BackendPackCardProps {
    */
   onSelect: (backend: Backend) => void;
   onSelfTest: (id: string) => void;
+  /**
+   * 这个包**当前正在进行的下载任务**（没有就是 null）。
+   *
+   * ★ T-195：此前这张卡只有一个 `installing` 布尔 —— 按下去按钮变灰，
+   * 然后除了等什么都没有。而数据一直是齐的（`DownloadQueue` 与模型下载共用一条通道，
+   * `job.progress` / `speedBps` / 阶段都在），**缺的只是这一侧没接**。
+   * 一个 678 MB 的 CUDA 包尤其明显：用户只能猜它是不是卡住了。
+   *
+   * ⚠️ 可选：老调用方不传就什么都不渲染，与既有行为一字不差。
+   */
+  job?: DownloadJob | null;
+  onCancelJob?: (jobId: string) => void;
+  onRetryJob?: (jobId: string) => void;
 }
 
 /**
@@ -113,6 +138,9 @@ export function BackendPackCard({
   onRemove,
   onSelect,
   onSelfTest,
+  job = null,
+  onCancelJob,
+  onRetryJob,
 }: BackendPackCardProps) {
   const { t } = useTranslation();
   /*
@@ -348,6 +376,24 @@ export function BackendPackCard({
 
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">{actions}</div>
       </div>
+
+      {/*
+        ★★ T-195：正在下载时给出**真的进度**，而不是一个变灰的按钮。
+
+        复用模型页那一份 `DownloadRow`（百分比 / 速度 / 阶段 / ETA / 取消 / 重试
+        全都在里面，且进度只从 transient store 读，不会因为别的任务刷新而重渲染）。
+        `onCancelJob` / `onRetryJob` 没传时退化成 no-op —— 老调用方行为不变。
+      */}
+      {job ? (
+        <div className="mt-2" data-testid={`backend-progress-${pack.id}`}>
+          <DownloadRow
+            job={job}
+            locale={locale}
+            onCancel={(id) => onCancelJob?.(id)}
+            onRetry={(id) => onRetryJob?.(id)}
+          />
+        </div>
+      ) : null}
 
       {/* 自检结果 —— 失败必须给真实原因，不能只说"自检失败" */}
       {selfTest ? (

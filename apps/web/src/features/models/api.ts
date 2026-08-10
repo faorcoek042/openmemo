@@ -13,7 +13,6 @@ import type {
   GcResponse,
   GetCatalogResponse,
   GetInstalledResponse,
-  GetJobsResponse,
   GetSourcesResponse,
   GetStorageResponse,
   ModelRole,
@@ -64,12 +63,11 @@ export function useModelsSourcesQuery() {
 }
 
 /** 下载任务快照。★ 挂载时必须先拉这个再订阅 SSE，否则会漏掉订阅前发生的事件。 */
-export function useJobsQuery() {
-  return useQuery({
-    queryKey: qk.jobs.all,
-    queryFn: () => api<GetJobsResponse>('/jobs'),
-  });
-}
+/*
+ * ★ T-195：实现搬到 `lib/api/jobs.ts`（唯一一份）。
+ * 这里只再导出，调用点一个字不用改 —— 此前它与 `features/tasks/api.ts` 是同一件事的两份。
+ */
+export { useJobsQuery } from '../../lib/api/jobs';
 
 /**
  * 触发下载。

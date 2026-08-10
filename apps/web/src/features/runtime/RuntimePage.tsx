@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { Boxes, ChevronRight, Cpu } from 'lucide-react';
-import type { Backend, GetBackendCatalogResponse } from '@openmemo/shared';
+import type { Backend, DownloadJob, GetBackendCatalogResponse } from '@openmemo/shared';
 
 import { Banner } from '../../components/common/Banner';
 import { Emphasis } from '../../components/common/Emphasis';
@@ -17,6 +17,19 @@ import {
   useBackendsInstalledQuery,
   useHardwareQuery,
 } from './api';
+/*
+ * ★★ T-195：**复用**模型页那一份 `DownloadRow`，不在这里再写一份。
+ *
+ * 那个组件刚刚才从**四份实现收敛成一份**（`d145aa8`）。收敛的理由不是"少写几行"：
+ * 四份会各自漂 —— `[实测]` 收敛前同一个 job 在两个页面上能说两句互相矛盾的阶段文案。
+ * 后端包的下载与模型下载走的是**同一个 `DownloadQueue`、同一份 `DownloadJob`**，
+ * 所以它是同一件事，不是"长得像的另一件事"。
+ *
+ * ⚠️ 跨 feature 目录 import 是刻意的：宁可路径难看，也不要第五份实现。
+ * （真要摆正，正解是把它提到 `components/common/` —— 那要动模型页的 import，
+ *   而那一带此刻有别人在作业，见回执。）
+ */
+import { useJobCancelMutation, useJobRetryMutation, useJobsQuery } from '../../lib/api/jobs';
 import { HardwareCard } from './components/HardwareCard';
 import { BreakerNotice } from './components/BreakerNotice';
 import { BackendPackCard } from './components/BackendPackCard';
@@ -108,6 +121,28 @@ export default function RuntimePage() {
     void select.mutateAsync(backend);
   }
 
+  /*
+   * ★ T-195：后端包卡片此前**只知道"正在装"这一个布尔** —— 没有百分比、没有速度、
+   * 没有阶段、没有取消。而数据一直是齐的（安装响应就带 `totalBytes`，
+   * `DownloadQueue` 发的 `job.progress` 与模型下载共用一条通道），
+   * `JobList` 那边也早就有 `ProgressMeter` 且**不按 kind 分支** ——
+   * **缺的只是卡片这一侧根本没接**。
+   *
+   * 一个 678 MB 的 CUDA 包按下去之后除了按钮变灰什么都没有，用户只能猜它是不是卡住了。
+   */
+  const jobs = useJobsQuery();
+  const cancelJob = useJobCancelMutation();
+  const retryJob = useJobRetryMutation();
+  const jobByPackId = useMemo(() => {
+    const m = new Map<string, DownloadJob>();
+    for (const j of jobs.data?.jobs ?? []) {
+      // 终态的不占位：装完之后卡片该回到"已安装"的样子，不是永远挂着一条 100% 的进度
+      if (j.kind !== 'backend-pack' || ['succeeded', 'cancelled'].includes(j.state)) continue;
+      if (typeof j.targetId === 'string') m.set(j.targetId, j);
+    }
+    return m;
+  }, [jobs.data]);
+
   /** 两处（主列表 / 折叠区）渲染同一种卡片，抽出来免得两边漂移。 */
   function renderPack(p: GetBackendCatalogResponse['packs'][number]) {
     return (
@@ -128,6 +163,9 @@ export default function RuntimePage() {
         }}
         onSelect={handleSelect}
         onSelfTest={(id) => void selfTest.mutateAsync(id)}
+        job={jobByPackId.get(p.id) ?? null}
+        onCancelJob={(id) => void cancelJob.mutateAsync(id)}
+        onRetryJob={(id) => void retryJob.mutateAsync(id)}
       />
     );
   }

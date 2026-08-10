@@ -7676,6 +7676,82 @@ describe('T-165 ①「不可用」的三档不许长成同一个样子', () => {
  * 任何人把这个按钮删掉、或者把它塞进 `installed` / 芯片那一轴去表达（共用槽位），
  * 或者反过来在 daemon 没说话时也渲染它（替它说"你装的就是最新版"的镜像错误）。
  */
+/**
+ * ## T-195 后端包卡片的下载进度
+ *
+ * `[实测]` 此前这张卡只有一个 `installing` 布尔：按下去按钮变灰，然后除了等什么都没有。
+ * 而数据一直是齐的 —— 安装响应就带 `totalBytes`，`DownloadQueue` 发的 `job.progress`
+ * 与模型下载**共用一条通道**，`JobList` 那边的 `ProgressMeter` 也**不按 kind 分支**。
+ * **缺的只是卡片这一侧根本没接。** 一个 678 MB 的 CUDA 包尤其明显：用户只能猜它卡没卡住。
+ *
+ * ── 把名字遮住，这些断言什么时候会失败 ────────────────────────────────────────
+ * 任何人把这一行删掉、或者反过来在**没有任务**时也渲染一条（那会让装完之后
+ * 永远挂着一条 100% 的进度），或者给它另写一份进度实现（第五份）。
+ */
+describe('★ T-195：后端包卡片要有真的下载进度', () => {
+  const NOOP = {
+    locale: 'zh-CN',
+    isActive: false,
+    selfTest: null,
+    installing: false,
+    onInstall: () => undefined,
+    onRemove: () => undefined,
+    onSelect: () => undefined,
+    onSelfTest: () => undefined,
+  } as const;
+
+  const JOB = {
+    jobId: 'job-1',
+    kind: 'backend-pack',
+    type: 'download',
+    state: 'running',
+    targetId: 'whispercpp-cuda-12.4-win-x64',
+    displayName: 'CUDA 包',
+    progress: 0.42,
+    receivedBytes: 280_000_000,
+    totalBytes: 677_887_125,
+    speedBps: 12_000_000,
+    attempt: 1,
+    maxAttempts: 3,
+    error: null,
+    step: 'downloading',
+  };
+
+  test('★ 有正在进行的任务时，卡片上渲染出进度', async () => {
+    const p = pack({ id: 'whispercpp-cuda-12.4-win-x64', installed: false });
+    const r = await render(
+      <BackendPackCard {...NOOP} pack={p as never} job={JOB as never} />,
+    );
+    assert.equal(
+      r.container.querySelector('[data-testid="backend-progress-whispercpp-cuda-12.4-win-x64"]') ===
+        null,
+      false,
+      `按下去只有一个变灰的按钮，678 MB 的包用户只能猜它卡没卡住 → ${text(r.container)}`,
+    );
+    r.unmount();
+  });
+
+  test('★ 没有任务时不渲染 —— 装完不该永远挂着一条 100% 的进度', async () => {
+    const p = pack({ id: 'x', installed: true });
+    const r = await render(<BackendPackCard {...NOOP} pack={p as never} job={null} />);
+    assert.equal(
+      r.container.querySelector('[data-testid="backend-progress-x"]'),
+      null,
+      '没有任务却渲染了进度',
+    );
+    r.unmount();
+  });
+
+  test('★ 老调用方（不传 job）行为一字不变', async () => {
+    const p = pack({ id: 'y', installed: true });
+    const r = await render(<BackendPackCard {...NOOP} pack={p as never} />);
+    assert.equal(r.container.querySelector('[data-testid="backend-progress-y"]'), null);
+    // 卡片本身仍然渲染得出来（不是整张炸掉换来的"没有进度"）
+    assert.ok(text(r.container).includes('卸载'), '卡片没渲染出来，这条在空跑');
+    r.unmount();
+  });
+});
+
 describe('★ T-191：装的是旧版时，已安装分支必须给出「更新」', () => {
   const NOOP = {
     locale: 'zh-CN',

@@ -1,15 +1,29 @@
+/*
+ * ★★ T-195：从 `features/models/components/` **提升**到这里。
+ *
+ * 理由是 ESLint 的 `no-restricted-imports` 直接写下的那条：
+ * 「features/A 不得 import features/B（D-05 §3.5）。需要复用请把组件**提升**到
+ *   components/common/，并在 inbox 写 SHARED-CHANGE 申报。」
+ *
+ * 后端包的下载与模型下载走的是**同一个 `DownloadQueue`、同一份 `DownloadJob`**，
+ * 所以「运行时」页要的不是"长得像的另一个组件"，就是这一个。
+ * 它刚从**四份实现收敛成一份**（`d145aa8`）—— 再抄一份就是第五份，
+ * 而四份各自漂（同一个 job 在两个页面上说两句矛盾的阶段文案）正是那次要修的病。
+ *
+ * 文件内容除相对路径外**一字未改**。
+ */
 import { useTranslation } from 'react-i18next';
 import { Ban, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import type { DownloadJob } from '@openmemo/shared';
-import { Button } from '../../../components/common/Button';
-import { ProgressMeter } from '../../../components/common/ProgressMeter';
-import { StatusChip } from '../../../components/common/StatusChip';
-import { useProgressStore } from '../../../lib/stores/progress.store';
-import { formatBytes, formatSpeed } from '../../../lib/format/bytes';
-import { stepLabel } from '../../../lib/format/stepLabel';
-import { jobDisplayName } from '../../../lib/format/jobName';
-import { useJobCatalogNames } from '../../../lib/catalog/useJobCatalogNames';
+import { Button } from './Button';
+import { ProgressMeter } from './ProgressMeter';
+import { StatusChip } from './StatusChip';
+import { useProgressStore } from '../../lib/stores/progress.store';
+import { formatBytes, formatSpeed } from '../../lib/format/bytes';
+import { stepLabel } from '../../lib/format/stepLabel';
+import { jobDisplayName } from '../../lib/format/jobName';
+import { useJobCatalogNames } from '../../lib/catalog/useJobCatalogNames';
 
 /**
  * 下载中的一行（R-04 §9.3 线框）。
