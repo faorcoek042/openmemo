@@ -459,9 +459,14 @@ async function jobErrorFull(jobUid) {
  *
  * ★ 为什么非要收这个：`hasVideo` 这个契约字段此前是**写死的 `false`**，
  *   导入一个 mp4 也报"没有视频"。它一度被判成"零读者可以删"，而那个判断错了 ——
- *   真读者在 `apps/daemon/scripts/e2e-f2.mjs:185` 与 `packages/shared/openapi.yaml`，
- *   `grep` 只扫 `.ts/.tsx` 时看不见。有读者的契约字段必须给真值，
+ *   `grep` 只扫 `.ts/.tsx` 时看不见 e2e 侧的读者。有读者的契约字段必须给真值，
  *   而"真值"只有在**真的导入一个带视频的文件**时才验得出来。
+ *
+ * ★ 2026-08-11：当年那个"真读者" `apps/daemon/scripts/e2e-f2.mjs` **已删**
+ *   —— 它要一个外部已经跑着的 daemon，从来没有任何自动调用方。
+ *   **这条契约的读者现在就是本文件下面那条断言**（`ready.hasVideo !== wantVideo`
+ *   → 判红「契约字段在说谎」），而本文件由 `e2e-import.yml` 真的跑。
+ *   也就是说：读者从"没人跑的脚本"变成了"CI 里会红的断言"。
  */
 const mediaReady = new Map();
 let sseAbort = null;

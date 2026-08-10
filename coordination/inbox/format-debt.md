@@ -834,3 +834,68 @@ Canceling since a higher priority waiting request for ci-refs/heads/master exist
 `e2e-allcomponents-assertions.mjs`、`proxy-coverage-audit.mjs`、`__smoke__/render.tsx`。
 **而它们也从没被删过**（0/0）。所以正确的修法不是第二份 JSON 基线，
 而是**用已经证明有效的那个机制**：把它们按名字写进一条真的会跑的链。
+
+### 16. 那 14 个"零保护"文件：查完是 **1 个记错 + 9 个死码 + 3 个真手动 + 1 个该接**
+
+先更正我自己：**`scripts/ci/e2e-allcomponents-assertions.mjs` 从来就不在名单里。**
+它被 `e2e-allcomponents.mjs:71` **和** `selftest-e2e-allcomponents.mjs:31` 双重 import，
+而后者**已经在 `test:ci-scripts` 里**。所以是 13 个，不是 14 —— 我上一轮数错了。
+
+#### 结论先行：**10 个里没有一个能接进链，这是构造上的**
+
+`[实测]` A 组（daemon）6 个 + B 组（downloader）4 个，**全部**从 `argv` 取一个
+**已经跑着的服务器地址**，且**零 `spawn`/`child_process`** —— 它们**自己不起任何进程**。
+把它们塞进 `test:ci-scripts` 不是"要不要"的问题，是**做不到**：
+干净 runner 上没有那个前提。另有 4 个还要连第三方站点（YouTube、samplelib.com），
+3 个会覆写 **git 跟踪的**截图目录（跑一次就把树弄脏，正面撞 `dirty-tree-notice`）。
+
+**唯一真正的接线候选是 `scripts/ci/proxy-coverage-audit.mjs`** —— 它自己 spawn daemon、
+自己 mkdtemp 隔离数据目录、自己断言。见下 §16.3。
+
+#### 16.1 删掉的 9 个，以及**它们守的东西现在在哪**（知识不跟着删）
+
+| 删掉的 | 它当初守什么 | 现在谁守 |
+| --- | --- | --- |
+| `apps/daemon/scripts/e2e-f2.mjs` | `media.ready.hasVideo` 契约字段说真话 | **`scripts/ci/e2e-import-audit.mjs:1113`** 真断言（`hasVideo !== 期望` → 判红「契约字段在说谎」），由 `e2e-import.yml:202` 真跑 |
+| `apps/daemon/scripts/e2e-f3.mjs` | `/ws/recorder` 录音链路 | `scripts/ci/e2e-record.mjs` + `e2e-record-assertions.mjs`（`e2e-record.yml`），且**变异证明已在 `test:ci-scripts`** |
+| `apps/daemon/scripts/e2e-search.mjs` | 全文检索真的搜得到 | `e2e-notes-audit.mjs` / `e2e-record.mjs`。⚠️ 它自己**在空库上根本红不了**（写死查 `Africa`/`组织`，0 条也照样退出 0）——是个不判定的脚本 |
+| `apps/daemon/scripts/demo-degraded-start.mjs` | 扩展加载失败仍能启动 | `packages/db/src/extensions.test.ts`（库层）。⚠️ **daemon 层那一档现在没有自动覆盖**，已写进那个测试的文件头 |
+| `packages/downloader/scripts/e2e-browser.mjs` | 真浏览器点得动 | `scripts/ci/e2e-browser-audit.mjs`（`e2e-browser.yml`），判据更强 |
+| `…/e2e-firstrun.mjs` | 空数据目录首次运行全程 | `scripts/ci/e2e-coldstart.mjs`（`e2e-coldstart.yml`） |
+| `…/e2e-full.mjs` | jsdom 覆盖不到的 14 项 | `e2e-browser-audit.mjs` + `e2e-notes-audit.mjs` |
+| `…/e2e-t057.mjs` | `PATCH /notes/:uid/mindmap` 404 那个 bug | **bug 已修**（`content.ts:42,339`），回归由 `content.mindmapExport.test.ts` 守 |
+| `apps/web/src/__smoke__/render.tsx` | jsdom 渲染冒烟 | **无人**——它的前提本身是假的：文件头说"由 scripts 侧断言"，**那个 driver 从来没被写出来**；它说的"本机没有可用无头浏览器"今天也不成立（playwright 已在用） |
+
+顺带删掉了它在 `orphan-exports-baseline.json` 里的豁免条目 —— 那条棘轮"只准变短"，
+留着就会当场红。**这个强制机制按设计生效了。**
+
+#### 16.2 留下的 3 个：**明确标成"知道它没人跑"**
+
+`e2e-cancel` / `e2e-pause` / `e2e-restart` 各自守着**别处零覆盖**的东西，
+但都要"一个外部已经跑着的 daemon + 真音频"，干净 runner 上凑不出来。
+已在各自文件头写死：**它是手动脚本、没有自动调用方、这是故意的、改相关链路时手动跑。**
+
+⚠️ **`e2e-restart` 差点被我误删。** 初判是"已被 `e2e-runtime-audit.mjs` 取代"——
+**只对了三分之一**：重启换进程 ✓ 已覆盖；但「端口没漂」和「在途任务跨重启续跑」
+**都没覆盖**（runtime-audit 的 `--resume-test` 是断点续传一个下到一半的**下载包**，
+和"转写任务跨进程接上"是两回事）。**照"看起来被取代了"就删，会无声丢掉两条性质。**
+
+#### 16.3 需要你定的一件：`proxy-coverage-audit.mjs`
+
+它是这批里唯一**能被自动跑**的：自己 spawn daemon（`:255-267`）、自己隔离数据目录、
+自己断言，还接受 `--bundle`。而且 **`HANDOFF.md:608` 已经在拿它当覆盖证据**
+（"代理覆盖每一条出网路径，逐条实测"）——**一个没有任何东西在执行的覆盖声明。**
+
+**没有接。** 因为按你的规矩"接进链之前先各自跑一遍，不许红着上线"，
+而它要**连外网 + 真的装 media-tools / yt-dlp / whisper**（`:392`，注释写明"ASR 不能省"）。
+本地跑它等于拉几百 MB 真下载，我判断这超出本轮该自作主张的范围。
+
+**请你定**：① 接进 `e2e-import.yml`（它已有 bundle 脚手架，代价是那条腿变长）
+② 单独一条按需 workflow ③ 暂不接、但把 `HANDOFF.md:608` 那句改成"手动跑"，
+**不要让文档替一个没人跑的脚本背书**。我倾向 ③ 先做（一行，立刻消除假声明），①/② 再排。
+
+#### 16.4 顺带：审计外还发现 3 个同类孤儿
+
+`packages/downloader/scripts/` 下的 `e2e-coldstart.mjs`（与 `scripts/ci/e2e-coldstart.mjs`
+**同名不同文件**，容易看混）、`verify-proxy.mjs`、`gen-whisper-catalog.mjs` —— 零引用。
+**没动它们**（不在本轮范围），登记在此。

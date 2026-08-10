@@ -538,8 +538,14 @@ export async function runTranscribeJob(
        * ★ 这里此前是写死的 `false`，**导入一个 mp4 也报"没有视频"**。
        *
        * 它一度被判成"零读者、可以删"——那个判断是错的，因为 `grep` 只扫了
-       * `.ts/.tsx`：真正的读者在 `apps/daemon/scripts/e2e-f2.mjs:185`
-       * （`media.ready` 的字段契约断言）和 `packages/shared/openapi.yaml` 里。
+       * `.ts/.tsx`：真正的读者在 e2e 侧和 `packages/shared/openapi.yaml` 里。
+       *
+       * ★ 2026-08-11 更新读者指向：原来指的 `apps/daemon/scripts/e2e-f2.mjs` **已删**
+       *   （它要一个外部已经跑着的 daemon + 音频，从来没有任何自动调用方）。
+       *   这条契约现在由 `scripts/ci/e2e-import-audit.mjs:1113` **真断言**
+       *   （`ready.hasVideo !== wantVideo` → 判红「契约字段在说谎」），
+       *   而那个脚本由 `.github/workflows/e2e-import.yml:202` 真的跑。
+       *   **读者从"没人跑的脚本"换成了"CI 里会红的断言"——比原来强。**
        * 有读者的契约字段，就该给它**真值**，而不是删掉或继续说谎。
        *
        * `audioOnly` 是适配器**实际探到**的结果（`FetchedMedia.audioOnly`，由 ffprobe

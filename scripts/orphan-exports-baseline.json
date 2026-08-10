@@ -34,10 +34,6 @@
       "name": "backendPreference"
     },
     {
-      "file": "apps/web/src/__smoke__/render.tsx",
-      "name": "renderRoute"
-    },
-    {
       "file": "apps/web/src/app/i18n/index.ts",
       "name": "currentLocale"
     },

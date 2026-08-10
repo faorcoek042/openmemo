@@ -2,6 +2,24 @@
 /**
  * 取消一个**正在转写**的任务 —— 经 daemon 走完整链路。
  *
+ * ## ⚠️ 这是**手动脚本**，没有自动调用方 —— 而且是**故意**的
+ *
+ * `[实测 2026-08-11]` 全仓审计：本文件零调用方。同批的 9 个同类脚本已删，
+ * 这一个**留下来**，因为它守的东西**别处没有**：
+ * `scripts/ci/e2e-runtime-audit.mjs` 里 "cancel" 只出现 1 次，
+ * **"转写进行到一半时取消"这条路径没有任何自动覆盖**。
+ *
+ * 为什么不接进链：它需要**一个外部已经跑着的 daemon** + token + 真音频，
+ * 而且要 `pgrep -a whisper-cli` 去看子进程是否真的死了 —— 也就是要求
+ * **一个正在转写的 whisper 子进程**。干净 runner 上没有大改造凑不出这个前提
+ * （本文件自己不 spawn 任何进程）。
+ *
+ * **所以它的状态是"知道它没人跑"，不是"以为有人跑"。** 别把它塞进
+ * `test:ci-scripts` 让它假装活着 —— 那样只会得到一条永远红或永远空转的门禁。
+ * 改动取消链路时请手动跑一次：
+ *
+ *   node apps/daemon/scripts/e2e-cancel.mjs <url> <token> <audio>
+ *
  * `gpu-runtime` 在 pipeline 层验过取消，但没验过**经 daemon 取消**；
  * 中间那段（REST → Scheduler → AbortController → SubprocessRunner）正是反复栽的地方。
  *

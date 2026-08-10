@@ -4,7 +4,10 @@
  * Manager 在 T-016 的验收要求：
  *   「扩展加载失败时 daemon 仍能启动（把 .so 改名模拟，跑给我看）」
  *
- * 这里覆盖库层；daemon 层的端到端演示见 apps/daemon/scripts/demo-degraded-start.mjs。
+ * 这里覆盖库层。daemon 层原本有个 `apps/daemon/scripts/demo-degraded-start.mjs`
+ * 做端到端演示，**已删**（它只 console.log 一张表、没有断言也没有退出码，
+ * 而且从 2026-08-02 建库那天起一次都没被跑过 —— 一个不判定的"演示"当不了守卫）。
+ * 降级启动这条性质现在**只由本文件在库层守着**；daemon 层那一档目前没有自动覆盖。
  *
  * 需要真实扩展的用例通过环境变量 `OPENMEMO_TEST_EXT_DIR` 开启；
  * 未设置时这些用例会**显式 skip**（而不是静默通过 —— 那会掩盖回归）。
