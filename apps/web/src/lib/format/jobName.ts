@@ -24,7 +24,7 @@
  * | --- | --- | --- |
  * | 目录还没加载 / 加载失败 | daemon 给的 `displayName` | 首帧必然如此，不能闪空 |
  * | `targetId` 不在目录里 | daemon 给的 `displayName` | 本地导入的模型 id 形如 `asr/imported-<文件名>`（`models.ts:836`），**永远不会在目录里**，而那时 daemon 给的正是**文件名**，恰恰是该显示的东西 |
- * | 后端包（`download.backend`） | daemon 给的 `displayName` | 后端包在**另一份目录**里（`qk.backends.catalog`），不是模型目录 |
+ * | 两份目录都查不到这个 id | daemon 给的 `displayName` | 见上一行 |
  *
  * ⚠️ **兜底绝不返回空串，也绝不返回原始 slug。** daemon 的 `displayName` 在上面三种
  * 情形下都是有意义的人话。只有它自己也空了，才退到 `targetId` ——
@@ -55,6 +55,22 @@ export interface LocalizableEntry {
  */
 export type CatalogLookup = (targetId: string) => LocalizableEntry | null | undefined;
 
+/**
+ * 按 **job 类型**分派的查表 —— 每种 job 去它自己那份目录里查。
+ *
+ * ⚠️ **模型与后端包是两份不同的目录**（`/models/catalog` 与 `/backends/catalog`，
+ * 形状与失效时机都不同），所以这里是一张分派表，不是一份合并后的大目录。
+ * 键就是 `DownloadJob['type']` 的取值，**判别仍然是结构式的**：
+ * 认的是 `job.type`，不是去嗅名字长什么样。
+ *
+ * 没有对应键的 job 类型（`transcribe` / `mindmap`）**天然就查不到任何目录** ——
+ * 它们的 `displayName` 是**用户自己的笔记标题**，本地化它是错的。
+ */
+export interface CatalogLookups {
+  readonly 'download.model'?: CatalogLookup;
+  readonly 'download.backend'?: CatalogLookup;
+}
+
 /** {@link jobDisplayName} 需要从 job 上读的那几个字段（只读这些，不要整个 job）。 */
 export interface JobNameInput {
   /** `packages/shared/src/jobs.ts`：`'download.model' | 'download.backend' | 'transcribe' | …` */
@@ -66,27 +82,35 @@ export interface JobNameInput {
 }
 
 /**
- * ⚠️ **只有模型下载才查目录。**
+ * ⚠️ **只有下载类 job 才查目录，而且各查各的那一份。**
  *
  * `transcribe` / `mindmap` 这些流水线 job 的 `displayName` 是**用户自己的笔记标题**
  * （`apps/daemon/src/jobs/events.ts:81`）—— 把用户数据"本地化"成别的字符串是错的，
- * 而且它们**根本没有 `targetId`**。这里用 `type` 做**结构式**判别，
- * 不是去嗅名字长什么样。
+ * 而且它们**根本没有 `targetId`**。分派表里没有它们的键，于是天然查不到。
+ *
+ * 判别用 `type` 这个**结构式**字段，不是去嗅名字长什么样。
  */
-function usesModelCatalog(type: string): boolean {
-  return type === 'download.model';
+function lookupFor(type: string, lookups: CatalogLookups): CatalogLookup | undefined {
+  if (type === 'download.model') return lookups['download.model'];
+  if (type === 'download.backend') return lookups['download.backend'];
+  return undefined;
 }
 
 /**
  * @param locale 当前界面语言（`i18n.language`），`zh` 前缀算中文。
  * @param job 只读 `type` / `targetId` / `displayName` 三个字段。
- * @param lookup 目录查表；不传 = 没有目录可查，直接走兜底。
+ * @param lookups 按 job 类型分派的目录查表；不传 = 没有目录可查，直接走兜底。
  */
-export function jobDisplayName(locale: string, job: JobNameInput, lookup?: CatalogLookup): string {
+export function jobDisplayName(
+  locale: string,
+  job: JobNameInput,
+  lookups?: CatalogLookups,
+): string {
   const fallback = (job.displayName ?? '').trim();
   const targetId = (job.targetId ?? '').trim();
+  const lookup = lookups === undefined ? undefined : lookupFor(job.type, lookups);
 
-  if (lookup !== undefined && targetId !== '' && usesModelCatalog(job.type)) {
+  if (lookup !== undefined && targetId !== '') {
     const entry = lookup(targetId);
     if (entry !== null && entry !== undefined) {
       const localized = localizedName(locale, entry).trim();

@@ -449,6 +449,90 @@ describe('★ 任务名按界面语言现算（daemon 那份写死的只当兜�
     r.unmount();
   });
 
+  /*
+   * ── 后端包：同一个缺陷的另一半 ────────────────────────────────────────────────
+   * `apps/daemon/src/http/rest/backends.ts:193-199` 同样写死
+   * `displayName: pack.displayNameZh`。
+   * `[数出来的]` `startPackInstall()` 的**产品**调用方一共 **3 个**：
+   *   · `backends.ts:464`   运行时页
+   *   · `models.ts:335`     `/api/models/pull` 传 kind: 'backend-pack'
+   *   · `components.ts:158` **组件页**装 sqlite-ext / media-tool
+   * （另有 5 处在 `installWarmup.test.ts` 里，是测试调用方，不算。）
+   * 三个都走同一个 enqueue、都写 `targetId: pack.id`，而组件页那条是先
+   * `state.findCatalogPack(id)`（`state.ts:812-814`，读的正是 `backendCatalog.packs`）
+   * 把组件 id 映射回后端包 —— **所以三个入口共用一份 `/backends/catalog` 查表**。
+   */
+  const PACK_SLUG = 'libsimple-linux-x64';
+  const PACK_EN = 'libsimple (Chinese tokenizer)';
+  const PACK_ZH = '中文分词扩展';
+
+  /** 组件页装的就是这一类（sqlite-ext），走 components.ts:158 那条入口。 */
+  const PACK_JOB = {
+    ...DL,
+    jobId: 'jp1',
+    kind: 'backend-pack',
+    type: 'download.backend',
+    targetId: PACK_SLUG,
+    displayName: PACK_ZH, // daemon 写死的中文
+  };
+
+  const BACKENDS = {
+    packs: [{ id: PACK_SLUG, displayName: PACK_EN, displayNameZh: PACK_ZH }],
+  };
+
+  const openPackTasks = async (withCatalog: boolean) => {
+    stubApi({
+      '/jobs': { jobs: [PACK_JOB], concurrencyLimit: 2 },
+      ...(withCatalog ? { '/backends/catalog': BACKENDS } : {}),
+    });
+    const r = await render(<TasksPage />, { route: '/tasks' });
+    await r.flush();
+    return r;
+  };
+
+  test('前提自检：后端包夹具两份名字也不同，中文那份真的是中文', () => {
+    assert.notEqual(PACK_EN, PACK_ZH);
+    assert.match(PACK_ZH, /[一-龥]/);
+  });
+
+  test('★ 后端包（组件页装的 sqlite-ext）：英文界面渲染英文包名', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      const r = await openPackTasks(true);
+      const shown = text(r.container);
+      assert.ok(
+        shown.includes(PACK_EN) || shown.includes(PACK_ZH),
+        `后端包那一行压根没渲染出来 —— 前提不成立：${shown}`,
+      );
+      assert.ok(shown.includes(PACK_EN), `英文界面上没有英文包名 → ${shown}`);
+      assert.equal(shown.includes(PACK_ZH), false, `英文界面上仍然渲染了中文包名 → ${shown}`);
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  test('★ 后端包：中文界面仍然是中文包名', async () => {
+    const r = await openPackTasks(true);
+    const shown = text(r.container);
+    assert.ok(shown.includes(PACK_ZH), `中文界面上没有中文包名 → ${shown}`);
+    assert.equal(shown.includes(PACK_EN), false, `中文界面上渲染了英文包名 → ${shown}`);
+    r.unmount();
+  });
+
+  test('★ 后端包目录没加载 → 退回 daemon 的名字，不空白也不摆 pack id', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      const r = await openPackTasks(false);
+      const shown = text(r.container);
+      assert.ok(shown.includes(PACK_ZH), `后端包目录拿不到时把名字弄没了 → ${shown}`);
+      assert.equal(shown.includes(PACK_SLUG), false, `把 pack id 摆给用户看了 → ${shown}`);
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
   test('★ 目录没加载 → 退回 daemon 的名字，绝不空白、绝不摆原始 slug', async () => {
     await i18nInstance.changeLanguage('en');
     try {

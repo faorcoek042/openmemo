@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 
 import { stepLabel as stepLabelOf } from '../../lib/format/stepLabel';
 import { jobDisplayName } from '../../lib/format/jobName';
-import { useModelCatalogNames } from '../../lib/catalog/useModelCatalogNames';
+import { useJobCatalogNames } from '../../lib/catalog/useJobCatalogNames';
 import { Pause, Play, RotateCcw, ShieldCheck, X } from 'lucide-react';
 
 import { ProgressMeter } from '../../components/common/ProgressMeter';
@@ -64,7 +64,7 @@ function JobRow({ job, compact }: { job: MergedJob; compact?: boolean }) {
    *   所以这一行不会让任何原本有名字的行变空。理由见 `lib/format/jobName.ts`。
    */
   // hook 单独一行、无条件调用 —— 别塞进表达式里（Rules of Hooks 被我踩过一次）
-  const catalogNames = useModelCatalogNames();
+  const catalogNames = useJobCatalogNames();
   const shownName = jobDisplayName(i18n.language, job, catalogNames) || job.type;
   const eta = approxEta(job.etaSeconds, i18n.language);
   const running = job.state === 'running' || job.state === 'leased';

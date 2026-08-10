@@ -9,7 +9,7 @@ import { useProgressStore } from '../../../lib/stores/progress.store';
 import { formatBytes, formatSpeed } from '../../../lib/format/bytes';
 import { stepLabel } from '../../../lib/format/stepLabel';
 import { jobDisplayName } from '../../../lib/format/jobName';
-import { useModelCatalogNames } from '../../../lib/catalog/useModelCatalogNames';
+import { useJobCatalogNames } from '../../../lib/catalog/useJobCatalogNames';
 
 /**
  * 下载中的一行（R-04 §9.3 线框）。
@@ -55,7 +55,7 @@ export function DownloadRow({ job, locale, onCancel, onRetry }: DownloadRowProps
   const { t, i18n } = useTranslation();
   const live = useProgressStore(useShallow((s) => s.byJob[job.jobId]));
   // 名字按当前界面语言现算；兜底仍是 daemon 的 displayName（见 lib/format/jobName.ts）
-  const catalogNames = useModelCatalogNames();
+  const catalogNames = useJobCatalogNames();
   const shownName = jobDisplayName(i18n.language, job, catalogNames);
 
   const completed = live?.completedBytes ?? job.completedBytes;

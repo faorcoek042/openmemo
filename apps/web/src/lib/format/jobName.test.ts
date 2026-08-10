@@ -18,14 +18,21 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { jobDisplayName, type CatalogLookup } from './jobName';
+import { jobDisplayName, type CatalogLookup, type CatalogLookups } from './jobName';
 
 const EN = 'Whisper Tiny (Q5_1)';
 const ZH = '超小语音模型（Q5_1 量化）';
 const SLUG = 'asr/whisper-tiny-q5_1';
 
-/** 目录里认识这一个 id，别的一概不认识。 */
-const lookup: CatalogLookup = (id) => (id === SLUG ? { displayName: EN, displayNameZh: ZH } : null);
+/** 模型目录里认识这一个 id，别的一概不认识。 */
+const modelLookup: CatalogLookup = (id) =>
+  id === SLUG ? { displayName: EN, displayNameZh: ZH } : null;
+
+/**
+ * 两份目录的分派表。**后端包那一份故意留空** ——
+ * 好让"后端包不被模型目录污染"那条钉的是 `type` 判别，而不是"碰巧查不到"。
+ */
+const lookup: CatalogLookups = { 'download.model': modelLookup };
 
 /** daemon 实际会给的那个值：写死的中文。 */
 const daemonGave = { type: 'download.model', targetId: SLUG, displayName: ZH };
@@ -57,7 +64,7 @@ describe('jobDisplayName：语言在读的那一刻决定，不在建 job 那一
 
 describe('jobDisplayName：三条兜底都不许把界面弄空、也不许摆原始 slug', () => {
   it('目录还没加载（lookup 一律不认识）→ 用 daemon 的名字', () => {
-    const got = jobDisplayName('en', daemonGave, () => null);
+    const got = jobDisplayName('en', daemonGave, { 'download.model': () => null });
     assert.equal(got, ZH, '目录没加载时把名字弄没了 —— 首帧必然处在这个状态');
   });
 
@@ -74,10 +81,10 @@ describe('jobDisplayName：三条兜底都不许把界面弄空、也不许摆�
     assert.equal(jobDisplayName('en', imported, lookup), 'my-recording.bin');
   });
 
-  it('★ 后端包（download.backend）不查模型目录 —— 它在另一份目录里', () => {
+  it('★ 后端包不许被模型目录污染 —— 拦住它的是 type，不是"碰巧查不到"', () => {
     const pack = {
       type: 'download.backend',
-      // 故意用一个**在模型目录里存在**的 id：证明拦住它的是 type，不是"查不到"
+      // 故意用一个**在模型目录里存在**的 id
       targetId: SLUG,
       displayName: 'CPU 后端包',
     };
@@ -88,22 +95,50 @@ describe('jobDisplayName：三条兜底都不许把界面弄空、也不许摆�
     );
   });
 
+  it('★ 后端包有了自己那份目录之后：英文界面拿英文包名', () => {
+    const both: CatalogLookups = {
+      'download.model': modelLookup,
+      'download.backend': (id) =>
+        id === 'whispercpp-cpu-linux-x64'
+          ? {
+              displayName: 'Whisper.cpp CPU (Linux x64)',
+              displayNameZh: '通用 CPU 后端（Linux x64）',
+            }
+          : null,
+    };
+    const pack = {
+      type: 'download.backend',
+      targetId: 'whispercpp-cpu-linux-x64',
+      displayName: '通用 CPU 后端（Linux x64）', // daemon 写死的中文
+    };
+    assert.equal(jobDisplayName('en', pack, both), 'Whisper.cpp CPU (Linux x64)');
+    assert.equal(jobDisplayName('zh-CN', pack, both), '通用 CPU 后端（Linux x64）');
+  });
+
+  it('★ 两份目录不许串门：模型 id 不会去后端目录里查到东西', () => {
+    const crossed: CatalogLookups = {
+      'download.backend': (id) =>
+        id === SLUG ? { displayName: 'WRONG', displayNameZh: 'WRONG' } : null,
+    };
+    // 这是一个 download.model，而分派表里只有 backend 那一份 → 查不到，走兜底
+    assert.equal(jobDisplayName('en', daemonGave, crossed), ZH);
+  });
+
   it('★ 流水线 job（transcribe）：displayName 是用户的笔记标题，绝不许被"本地化"', () => {
     const note = { type: 'transcribe', targetId: null, displayName: '我的会议录音' };
     assert.equal(jobDisplayName('en', note, lookup), '我的会议录音');
   });
 
   it('目录认识它、但两份名字都是空 → 退回 daemon 的名字，不返回空串', () => {
-    const empty: CatalogLookup = () => ({ displayName: '', displayNameZh: '' });
+    const empty: CatalogLookups = {
+      'download.model': () => ({ displayName: '', displayNameZh: '' }),
+    };
     assert.equal(jobDisplayName('en', daemonGave, empty), ZH);
   });
 
   it('daemon 的名字也没有 → 最后才用 slug（比空白强），且绝不返回空串', () => {
     const nameless = { type: 'download.model', targetId: SLUG, displayName: '' };
-    assert.equal(
-      jobDisplayName('en', nameless, () => null),
-      SLUG,
-    );
+    assert.equal(jobDisplayName('en', nameless, { 'download.model': () => null }), SLUG);
   });
 
   it('★ 什么都没有时也不许抛异常（渲染层不该因为一个名字崩掉）', () => {

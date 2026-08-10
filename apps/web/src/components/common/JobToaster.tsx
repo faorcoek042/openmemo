@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { stepLabel as stepLabelOf } from '../../lib/format/stepLabel';
 import { jobDisplayName } from '../../lib/format/jobName';
-import { useModelCatalogNames } from '../../lib/catalog/useModelCatalogNames';
+import { useJobCatalogNames } from '../../lib/catalog/useJobCatalogNames';
 import { useNavigate } from 'react-router';
 import { useShallow } from 'zustand/react/shallow';
 import {
@@ -357,7 +357,7 @@ function ToastRow({ toast, onDismiss }: { toast: Toast; onDismiss: () => void })
    *   英文界面直接渲染 `toast.name` 就会看到中文名。
    *   兜底仍是 `toast.name`，所以后端包 / 目录没加载时一个字都不会少。
    */
-  const catalogNames = useModelCatalogNames();
+  const catalogNames = useJobCatalogNames();
   const shownName = jobDisplayName(
     i18n.language,
     {
