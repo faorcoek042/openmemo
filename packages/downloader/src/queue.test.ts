@@ -125,8 +125,49 @@ describe('下载失败时交给界面的错误文案', () => {
  */
 describe('★ T-198 取消：状态必须诚实', () => {
   /** 一个"打不断"的任务：**故意不认 signal**，模拟 resolving/installing 那些阶段。 */
+  /**
+   * 一个"打不断"的任务：**故意不认 signal**，模拟 resolving/installing 那些阶段。
+   *
+   * ⚠️ 定时器**绝不能 `.unref()`**（T-198 复盘）。
+   * unref 过的定时器不会把事件循环撑住 —— 当队列此刻没有别的待办时，
+   * node 认为"循环已经空了"，这个 promise 于是**永远不结算**，
+   * 子测试跑不完，父测试先结束，runner 把它们整批取消：
+   *   `failureType: 'cancelledByParent'`
+   *   `error: 'Promise resolution is still pending but the event loop has already resolved'`
+   * 本地能过是**运气**（恰好还有别的东西撑着循环），CI 上就露馅了。
+   * 而"六条钉着头号 bug 的守卫其实什么都没验"，正是这一周一直在修的那个形状。
+   */
   function uninterruptible(ms: number) {
-    return () => new Promise<void>((r) => setTimeout(r, ms).unref?.());
+    return () => new Promise<void>((r) => setTimeout(r, ms));
+  }
+
+  /** 让出若干毫秒。同样**不许 unref**，理由同上。 */
+  const tick = (ms = 10) => new Promise<void>((r) => setTimeout(r, ms));
+
+  /**
+   * 等到这条任务真的进入某个状态 —— **按事件等，不按秒等**。
+   *
+   * 原来是 `await tick(10)` 然后断言 `state === 'running'`。在 CI 那种更慢、
+   * 更拥挤的机器上 10ms 不一定够 pump 跑起来，于是**前提断言**自己会翻脸 ——
+   * 那是本文件第二个不可靠来源（第一个是 unref）。
+   * 改成订阅 `job.state`：状态到了就立刻继续，永远不会等过头，也不会等不够。
+   *
+   * 超时兜底是 **ref 过的**定时器，而且是 `reject` 不是 `resolve`：
+   * 真的等不到时要得到一条**说得出原因的失败**，而不是一个被整批取消的子测试。
+   */
+  function waitForState(q: DownloadQueue, jobId: string, state: string): Promise<void> {
+    if (q.get(jobId)?.state === state) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`等不到 ${jobId} 进入 ${state}（当前 ${String(q.get(jobId)?.state)}）`));
+      }, 5000);
+      q.on('job.state', (...args: unknown[]) => {
+        if ((args[0] as { jobId: string; state: string }).jobId !== jobId) return;
+        if ((args[0] as { state: string }).state !== state) return;
+        clearTimeout(timer);
+        resolve();
+      });
+    });
   }
 
   function enqueueOne(q: DownloadQueue, task: () => Promise<void>) {
@@ -145,7 +186,7 @@ describe('★ T-198 取消：状态必须诚实', () => {
     const q = new DownloadQueue(1);
     const job = enqueueOne(q, uninterruptible(50));
     // 等它真的被 pump 起来（= 已经被 shift 出 waiting，正是出事的那个状态）
-    await new Promise<void>((r) => setTimeout(r, 10).unref?.());
+    await waitForState(q, job.jobId, 'running');
     assert.equal(q.get(job.jobId)?.state, 'running', '前提：它必须真的在跑，否则测不到这个 bug');
 
     assert.equal(q.cancel(job.jobId), true);
@@ -159,7 +200,7 @@ describe('★ T-198 取消：状态必须诚实', () => {
   it('★ 取消时 step 一起清 —— 否则「正在选择下载源」冻在终态之后', async () => {
     const q = new DownloadQueue(1);
     const job = enqueueOne(q, uninterruptible(50));
-    await new Promise<void>((r) => setTimeout(r, 10).unref?.());
+    await waitForState(q, job.jobId, 'running');
     assert.equal(q.get(job.jobId)?.step, 'resolving', '前提：它此刻确实停在 resolving');
 
     q.cancel(job.jobId);
@@ -169,12 +210,12 @@ describe('★ T-198 取消：状态必须诚实', () => {
   it('★★ 打不断的残余工作跑完后，**不许**把状态改回 succeeded', async () => {
     const q = new DownloadQueue(1);
     const job = enqueueOne(q, uninterruptible(40)); // 不认 signal，一定会"成功"跑完
-    await new Promise<void>((r) => setTimeout(r, 10).unref?.());
+    await waitForState(q, job.jobId, 'running');
     q.cancel(job.jobId);
     assert.equal(q.get(job.jobId)?.state, 'cancelled');
 
     // 等残余工作自然结束
-    await new Promise<void>((r) => setTimeout(r, 80).unref?.());
+    await tick(80);
     assert.equal(
       q.get(job.jobId)?.state,
       'cancelled',
@@ -185,9 +226,10 @@ describe('★ T-198 取消：状态必须诚实', () => {
 
   it('★ 取消一个**还在排队**的任务仍然照常工作（不许把老路径改坏）', async () => {
     const q = new DownloadQueue(1);
-    enqueueOne(q, uninterruptible(60)); // 占住唯一的并发位
+    const first = enqueueOne(q, uninterruptible(60)); // 占住唯一的并发位
     const queued = enqueueOne(q, uninterruptible(10));
-    await new Promise<void>((r) => setTimeout(r, 10).unref?.());
+    // 等第一条真的占住了位子，第二条才确定是"排队中"——同样按事件等，不按秒等
+    await waitForState(q, first.jobId, 'running');
     assert.equal(q.get(queued.jobId)?.state, 'queued', '前提：第二条确实还在排队');
 
     assert.equal(q.cancel(queued.jobId), true);
@@ -197,7 +239,7 @@ describe('★ T-198 取消：状态必须诚实', () => {
   it('★ 已经是终态的任务再取消 → 返回 false（端点据此回 409）', async () => {
     const q = new DownloadQueue(1);
     const job = enqueueOne(q, uninterruptible(5));
-    await new Promise<void>((r) => setTimeout(r, 10).unref?.());
+    await waitForState(q, job.jobId, 'running');
     q.cancel(job.jobId);
     assert.equal(q.cancel(job.jobId), false, '第二次取消必须回 false —— 界面据此知道"已经结束了"');
   });
@@ -207,7 +249,7 @@ describe('★ T-198 取消：状态必须诚实', () => {
     const seen: string[] = [];
     q.on('job.state', (...args: unknown[]) => seen.push((args[0] as { state: string }).state));
     const job = enqueueOne(q, uninterruptible(50));
-    await new Promise<void>((r) => setTimeout(r, 10).unref?.());
+    await waitForState(q, job.jobId, 'running');
     q.cancel(job.jobId);
     assert.ok(seen.includes('cancelled'), `没发 job.state(cancelled)，实际: ${seen.join(',')}`);
   });
