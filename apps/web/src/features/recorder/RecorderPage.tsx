@@ -16,6 +16,7 @@ import { ASR_ENGINE_LABELS, ASR_LANGUAGE_AUTO } from '../../lib/asr';
 import { isMicrophoneAvailable, localhostEquivalent } from '../../lib/secure-context';
 import { applyCaption, startRecording, type RecorderHandle } from './asrStream';
 import { useProgressStore } from '../../lib/stores/progress.store';
+import { useJobsQuery } from '../../lib/api/jobs';
 import { useTranscriptQuery } from '../notes';
 import { useConnectionStore } from '../../lib/stores/connection.store';
 import { estimateRerunMs, humanDuration, timecode } from '../../lib/format/time';
@@ -147,17 +148,56 @@ export default function RecorderPage() {
    * `rerunJobUid` 来自服务端的 `stopped` 消息。
    */
   const rerunSnap = useProgressStore((st) => (rerunJobUid ? st.byJob[rerunJobUid] : undefined));
+  /*
+   * ★★ T-198 / S-7：**"这条重跑结束了没有"必须问服务端，不能只看内存快照。**
+   *
+   * 这里原来唯一的真相来源就是 `progressStore` 的快照（`if (!rerunSnap) return;`）。
+   * 那是个 **transient** store —— 它的存在与否取决于 SSE 有没有推、有没有被清理，
+   * 而不是任务的真实状态。两个后果：
+   *
+   * 1. 终态事件一到就清快照（这是对的，否则陈旧的 `running` 会永久压制
+   *    正确的 `cancelled`），本页却**永远等不到那一帧** → 停在「正在用 X 重跑…」。
+   * 2. 掉一帧 SSE、或用户中途切走再回来，同样停住 —— 这一页当时**完全不读**
+   *    `GET /api/jobs`，而那里有权威答案（`rest/jobs.ts:79` 把流水线任务
+   *    和下载队列一起列出来；本文件原注释说"流水线任务不在里面"**已经过期**）。
+   *
+   * 所以：**状态**取服务端行，**进度刻度**才用内存快照（它只是让数字更跟手）。
+   * 与 `features/tasks/api.ts` 立的是同一条规矩 —— 服务端宣布结束，服务端说了算。
+   */
+  const jobsQuery = useJobsQuery();
+  const rerunRow = rerunJobUid
+    ? jobsQuery.data?.jobs.find((j) => j.jobId === rerunJobUid)
+    : undefined;
+  const rerunState = rerunRow?.state ?? rerunSnap?.state;
+
   useEffect(() => {
-    if (!rerunSnap) return;
     // 进度可能是 null（那一步报不出刻度）——录音重跑这里只画一个数值条，
     // 拿不到刻度就保持上一次的值，别把"不确定"渲染成 0%。
-    if (rerunSnap.progress !== null) setRerunProgress(rerunSnap.progress);
-    if (rerunSnap.state === 'succeeded') setPhase('done');
-    if (rerunSnap.state === 'failed') {
+    if (rerunSnap && rerunSnap.progress !== null) setRerunProgress(rerunSnap.progress);
+  }, [rerunSnap]);
+
+  useEffect(() => {
+    if (!rerunState) return;
+    if (rerunState === 'succeeded') setPhase('done');
+    /*
+     * ⚠️ `cancelled` / `blocked` 此前**一个分支都没有** —— 用户取消了重跑，
+     * 或者它因为缺件被拦下，这一页就永远停在「正在用 X 重跑…」。
+     * 三种结束方式都要有话说，而且要说得不一样：失败是出错了，
+     * 取消是他自己按的，blocked 是缺东西、得去装。
+     */
+    if (rerunState === 'failed') {
       setPhase('done');
       setStreamError(t('recorder.rerunFailed'));
     }
-  }, [rerunSnap, t]);
+    if (rerunState === 'cancelled') {
+      setPhase('done');
+      setStreamError(t('jobState.cancelled'));
+    }
+    if (rerunState === 'blocked') {
+      setPhase('done');
+      setStreamError(t('tasks.needsAttention'));
+    }
+  }, [rerunState, t]);
 
   /*
    * 重跑完成后回读转写稿，拿**真实**的段数与"编辑过仍保留"的段数。

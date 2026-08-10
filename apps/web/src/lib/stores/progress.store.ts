@@ -49,13 +49,26 @@ interface ProgressStore {
 export const useProgressStore = create<ProgressStore>()(
   subscribeWithSelector((set) => ({
     byJob: {},
+    /*
+     * ★ T-198 / S-3：**清理必须连待提交的缓冲一起清。**
+     *
+     * `buffer` 是模块级变量、不在 store 里；`clear()` 原来只删 `byJob`，
+     * 而 200ms 后的 `flush()` 会把还躺在 buffer 里的那条快照**重新并回去** ——
+     * 于是"已经清掉了"在一次节流窗口之后自己复活。
+     * （复现路径没能构造出来，标为**理论缺口**；但它与本轮修的
+     * "陈旧快照压过终态"是同一族，清掉它成本为零。）
+     */
     clear: (jobId) =>
       set((s) => {
+        dropBuffered(jobId);
         const next = { ...s.byJob };
         delete next[jobId];
         return { byJob: next };
       }),
-    clearAll: () => set({ byJob: {} }),
+    clearAll: () => {
+      dropBuffered();
+      set({ byJob: {} });
+    },
     _commit: (batch) => set((s) => ({ byJob: { ...s.byJob, ...batch } })),
   })),
 );
@@ -65,6 +78,19 @@ export const useProgressStore = create<ProgressStore>()(
  * 才触碰 React state —— 这是 shared/events.ts 注释里明确要求的两级节流。
  */
 let buffer: Record<string, JobProgressSnapshot> = {};
+
+/**
+ * 丢掉还没 flush 的快照。不传 jobId = 全丢。
+ *
+ * 声明在 store 之前会撞 TDZ，所以放在这里、由上面的 `clear` 通过函数提升引用。
+ */
+function dropBuffered(jobId?: string): void {
+  if (jobId === undefined) {
+    buffer = {};
+    return;
+  }
+  delete buffer[jobId];
+}
 
 const flush = throttle(() => {
   if (Object.keys(buffer).length === 0) return;

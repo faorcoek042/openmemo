@@ -46,7 +46,21 @@ export const tasksSse: SseBinding = (qc: QueryClient) => [
     void qc.invalidateQueries({ queryKey: qk.jobs.all });
   }),
 
-  bus.on('job.state', (_e: JobStateEvent) => {
+  /**
+   * ★ T-198：**终态也要清 `progressStore`。**
+   *
+   * 此前只有上面那条 `job.progress` 在终态时清 store —— 而**取消发的是
+   * `job.state`，不是 `job.progress`**。于是取消之后，那条陈旧的
+   * `running` / `resolving` 快照留在 store 里，`mergeOne()` 又让它压过服务端行，
+   * 用户看到一条"已取消"的任务仍然显示「进行中 · 正在选择下载源」。
+   *
+   * 两处都清是刻意的（不是把上面那条挪下来）：`job.progress` 的终态帧和
+   * `job.state` 谁先到没有保证，少任何一条都会留下同一个残影。
+   */
+  bus.on('job.state', (e: JobStateEvent) => {
+    if ((TERMINAL_JOB_STATES as readonly string[]).includes(e.state)) {
+      useProgressStore.getState().clear(e.jobId);
+    }
     void qc.invalidateQueries({ queryKey: qk.jobs.all });
   }),
 

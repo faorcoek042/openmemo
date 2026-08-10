@@ -20,10 +20,11 @@ import type {
   SourcesProbedEvent,
   StorageChangedEvent,
 } from '@openmemo/shared';
+import { TERMINAL_JOB_STATES } from '@openmemo/shared';
 
 import { bus } from '../../lib/events/bus';
 import { qk } from '../../app/query';
-import { pushProgress } from '../../lib/stores/progress.store';
+import { pushProgress, useProgressStore } from '../../lib/stores/progress.store';
 import type { SseBinding } from '../../lib/events/bindings';
 
 export const modelsSse: SseBinding = (qc: QueryClient) => [
@@ -34,7 +35,25 @@ export const modelsSse: SseBinding = (qc: QueryClient) => [
    * 两个 feature 各自 push 到同一个 store 是幂等的（同 jobId 覆盖）。
    * 这里额外补上模型域独有的信息：下载类任务的 `step` 是 resolving/downloading/verifying/installing。
    */
+  /*
+   * ★★ T-198 / S-2：**这里也必须在终态清 store。**
+   *
+   * `[实测]` `lib/events/bindings.ts` 里 `tasksSse` 注册在 `modelsSse` **之前**，
+   * `lib/events/bus.ts` 按 Set 插入序**同步**遍历。于是一次终态 `job.progress`
+   * 的真实次序是：`tasks push → tasks clear → models push`
+   * —— **tasks 那侧刚清掉的快照，被这里当场写了回去。**
+   *
+   * 也就是说：只在 `features/tasks/sse.ts` 里清是不够的，那个修会被同一个事件的
+   * 下一个订阅者原地撤销，人还会以为自己没修好。两侧都清才成立。
+   *
+   * ⚠️ 这不是"重复代码"，两个 feature 各自订阅同一事件本来就是设计
+   *（上面那段注释写着"并存不冲突"）—— 那么**收尾也各自负责**。
+   */
   bus.on('job.progress', (e: JobProgressEvent) => {
+    if ((TERMINAL_JOB_STATES as readonly string[]).includes(e.state)) {
+      useProgressStore.getState().clear(e.jobId);
+      return;
+    }
     pushProgress({
       jobId: e.jobId,
       jobType: 'download',
