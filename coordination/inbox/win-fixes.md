@@ -1426,3 +1426,80 @@ state.ts:643    注释原话「RestState.create() 是**懒的** —— 只在第
 没用 `git stash` / `git checkout -- <file>` / `-a`；
 提交带 pathspec 一步到位，`git show --stat` 复核只含我那一个文件；
 别人在飞的 `backends.ts`（TS18047）、未跟踪的那些测试文件一个都没动。
+
+---
+
+## [2026-08-10 23:30] ① 已落地并绿 · 附一条独立缺陷留档
+
+交付: `6e0b36c`（②，run **31399139514** 三绿）· `126c568`（①，run **31401964517** 三绿）
+
+# ① 推之前你让我查的那件事：**没有轻动作，「重启」这句保留**
+
+逐条查完：
+
+| 入口 | 实际做了什么 | 能重算 `pipeline.missing` 吗 |
+|---|---|---|
+| 诊断页「重新检测」 | `refetch()` + `selfcheck.refetch()` | ❌ 只是重读端点 |
+| `GET /api/selfcheck` | 读 `deps.bundle()` —— `selfcheck.ts:144` 明写「不另跑一遍解析」 | ❌ |
+| `GET /api/runtime/hardware?refresh=1` | 重探**硬件后端**（GPU 那排芯片） | ❌ 不是工具链 |
+| `buildPipeline()` 的调用点 | 只有两处：启动（`main.ts:643`）+ SSE 观察者（`:680`） | —— |
+
+⇒ **没有任何用户点得到的动作能重算它。** 按你的裁决：**保留「重启」，不硬造轻动作。**
+诚实的重动作 > 虚假的轻动作。
+
+# 🔴 独立缺陷留档（**只记，未修**，按你的要求）
+
+> **热刷新只认「通过产品装」的那条路 —— 用户在系统里装的东西，我们永远不会自己发现。**
+
+`main.ts:663-670` 的 `REFRESH_EVENTS` 只有
+`model.installed / model.removed / model.activated / backend.installed / backend.removed`，
+全部由**产品自己的安装流程**发出。用户 `brew install ffmpeg` / `apt install` /
+手动放进 PATH —— **一个事件都不产生**，daemon 不会重新解析工具链。
+
+⚠️ **它不只影响 ffmpeg**：`RESOLUTION_PLANS` 里**五个二进制都有 `path` 档** ——
+
+```
+ffmpeg / ffprobe / yt-dlp   pack → bundle → path
+whisper-cli / whisper-vad   pack → path → bundle
+```
+
+**任何一个**用户在系统里装的工具，我们都要等重启才认得。而这正是 v0.7.0 发布说明
+告诉 macOS 用户的那条路（自己装 ffmpeg）—— **我们建议了一条路，却不会主动发现用户走完了它。**
+
+这与本仓在清的那一族同形：**把"世界变了"窄化成了"我们自己改变了世界"。**
+可能的表现形式不止横幅一处（自检的 `tool.*`、`/api/daemon/status` 的 `missing`、
+转写前置检查都读同一个 bundle）。
+修它要动刷新的触发条件（加一档周期性/按需重解析，或让"重新检测"真的重建），
+**是另一件事，我没顺手做。**
+
+# ① 落地的样子
+
+- daemon：health 新增 `pipeline.unavailableOnPlatform`，用**②那一提交落的同一个函数**
+  逐二进制算（一处判定）；🔴 **`asr-model` 已排除**（模型不按平台圈定）；
+  目录没加载好 ⇒ `'unknown'` ⇒ 什么都不说。
+- 横幅拆成两档：能装的照旧（报体积/耗时/给按钮）；装不到的那档
+  **没有按钮、不报体积耗时**，主语是"我们"，并明说"装到系统 PATH 上我们会直接用
+  （装好后需要重启才会被认到）"。
+
+## ★ 守卫当场抓到一处我没想到的
+
+「不许报体积」那条断言**红了** —— 因为 `componentNames.ffmpeg` **名字里自带**
+「（约 119 MB）」，体积从**侧门**漏进了这一档。
+→ 新增 `componentPlainNames`（不含体积）+ ffmpeg/ffprobe 同名去重。
+**这不是我预先想到的，是"判据钉后果"抓出来的。**
+
+⚠️ 同时暴露我自己写错的判据：第一版断言扫的是**整个容器**，于是红在同屏
+`asr-model` 那条**本来就该**报体积的正确文案上 —— 已改成只看这一档自己那段。
+**判据写错时，它既可能假绿也可能假红。**
+
+# 推送过程中的一次分叉（记一下手法）
+
+`73134a8` 推被拒（别人在我提交后推了 `d265d5f`）。**没有 rebase 主工作树、没有 autostash**
+——那会碰到 7 路在飞的未提交改动。做法：`git worktree add --detach /tmp/... origin/master`
+→ 在**隔离 worktree** 里 cherry-pick → 从那里 push（`126c568`）→ 主树
+`git reset --mixed` 对齐（索引先确认是空的）→ `git worktree remove`。
+**主工作树一个字节没动。** 两条提交的文件集零重叠，cherry-pick 无冲突。
+
+未做/未碰: 没碰 release / v0.7.0 tag / 发版；没碰 `:10000`；
+locale **只新增**（2 个 key + 1 个新分节），既有键一字未动；
+提交带 pathspec、`git show --stat` 复核只含自己的文件；推完盯到出结论才停。
