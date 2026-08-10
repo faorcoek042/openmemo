@@ -194,6 +194,53 @@ async function readPackFragment(path) {
   return null;
 }
 
+/*
+ * `build-bundle.mjs` 产出的顶层产物描述（`openmemo-<version>-<target>.json`）长这样：
+ *   `{ name, version, target, nodeVersion, rawBytes,
+ *      archive: { file, bytes, sha256 } | null, generatedAt }`
+ *
+ * 这**不是** `emit-pack-manifest.mjs` 的 fragment —— 字段名整套不同
+ * （`archive.file`/`archive.bytes` 而不是 `files[].name`/`files[].sizeBytes`，
+ * 而且描述的永远只有一个文件：那份归档本身），是姊妹格式，不是同一个格式。
+ *
+ * ★ `[实测 2026-08-10]` `release-upload` 的 dry-run 第一次对着真的三平台包跑，
+ * 四个来源目录（三个 `bundle-<target>`、一个 `bundles-complete`）**全部**被
+ * `collectSourceDirs()` 判成"既没有 SHA256SUMS 也没有 pack fragment"而整个跳过 ——
+ * 但 sha256 其实**从来没有丢**：`build-bundle.mjs` 第 1834 行就地算过
+ * （`sha256Of(archive)`），且写进了这份 json 的 `archive.sha256`；只是识别端
+ * 只认得 `emit-pack-manifest.mjs` 那一种形状，没认得这一种。
+ * 也就是说这是**识别端的 bug，不是产物缺东西**——修这里不需要重新出包，
+ * 三平台的 `bundleRunId` 不变，此前六条 e2e 腿的凭证继续有效。
+ *
+ * `bundles-complete.json`（`emit-bundles-complete.mjs` 产出）是**第三种**、
+ * 也不同的形状（`targets.<target>.archive` 是文件名字符串，不是一个带
+ * `file`/`bytes`/`sha256` 三个字段的对象），本函数不会误认它——它的目录里也确实
+ * 没有可上传的字节（三份归档已经分别在另外三个目录里），继续被跳过是对的。
+ */
+async function readBundleMeta(path) {
+  try {
+    const j = JSON.parse(await readFile(path, 'utf8'));
+    const a = j?.archive;
+    if (
+      typeof j?.name === 'string' &&
+      a &&
+      typeof a.file === 'string' &&
+      typeof a.sha256 === 'string' &&
+      typeof a.bytes === 'number'
+    ) {
+      return { files: [{ name: a.file, sha256: a.sha256, sizeBytes: a.bytes }] };
+    }
+  } catch {
+    /* 不是我们的 meta，忽略 */
+  }
+  return null;
+}
+
+/** 两种已知的"一份 json 描述若干资产"的形状，任一种命中即可。 */
+async function readAnyManifest(path) {
+  return (await readPackFragment(path)) ?? (await readBundleMeta(path));
+}
+
 /**
  * 找出所有"够格当一个 artifact 目录"的目录：自带 SHA256SUMS，或者含 pack fragment。
  *
@@ -220,7 +267,7 @@ async function collectSourceDirs(root) {
     let hasFragment = false;
     for (const e of files) {
       if (!e.name.endsWith('.json')) continue;
-      if (await readPackFragment(join(dir, e.name))) {
+      if (await readAnyManifest(join(dir, e.name))) {
         hasFragment = true;
         break;
       }
@@ -241,10 +288,12 @@ async function collectSourceDirs(root) {
  *
  * - `sha256sums`：这份清单是**为了上传而写的**，所以"目录里有、清单里没有"= 有人漏列了，
  *   直接失败。（清单族文件除外 —— 它们没法列出自己。）
- * - `pack-fragment`：fragment 描述的是**一个 pack 是什么**，而 build 的 artifact 里
- *   本来就刻意带着别的构建产物（`openmemo-probe` 至今没有分发通道 ——
- *   `probeExists` 恒 false 是仓里记着的老债，不是本流水线要顺手解决的事）。
- *   所以这里"多出来的文件"是预期内的，**逐个打印名字**但不失败。
+ * - `pack-fragment`：json 描述的是**这个目录里有哪些资产**（`readAnyManifest()` 认
+ *   两种形状：`emit-pack-manifest.mjs` 的 `{id,files[]}`，或 `build-bundle.mjs` 自己的
+ *   `{name,archive:{file,bytes,sha256}}`），而 build 的 artifact 里本来就刻意带着别的
+ *   构建产物（`openmemo-probe` 至今没有分发通道 —— `probeExists` 恒 false 是仓里记着
+ *   的老债，不是本流水线要顺手解决的事）。所以这里"多出来的文件"是预期内的，
+ *   **逐个打印名字**但不失败。
  */
 async function stageOne(src, mode, seen) {
   const staged = [];
@@ -271,7 +320,7 @@ async function stageOne(src, mode, seen) {
     wanted = [];
     const covered = new Set();
     for (const n of names.filter((x) => x.endsWith('.json'))) {
-      const frag = await readPackFragment(join(src.dir, n));
+      const frag = await readAnyManifest(join(src.dir, n));
       if (!frag) continue;
       covered.add(n);
       for (const f of frag.files) {

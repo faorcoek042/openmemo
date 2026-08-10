@@ -340,6 +340,88 @@ console.log('① 正向：release 已存在且已发布，资产还没有 → �
   stub.server.close();
 }
 
+/*
+ * ①c · `build-bundle.mjs` 自己的顶层产物描述（`openmemo-<version>-<target>.json`）也要
+ * 被认出来 —— 它和 `emit-pack-manifest.mjs` 的 fragment 是姊妹格式，不是同一个格式。
+ *
+ * `[实测 2026-08-10]` `release-upload` 第一次对着真的三平台包跑 dry-run，四个来源目录
+ * （三个 `bundle-<target>` + 一个 `bundles-complete`）**全部**被判成
+ * "既没有 SHA256SUMS 也没有 pack fragment" 而整个跳过——但 sha256 其实从来没有丢，
+ * 只是识别端没认得这第二种形状。这条用例同时验证第三种形状
+ * （`bundles-complete.json`，`targets.<t>.archive` 是文件名字符串而不是对象）
+ * **不会**被误认成资产来源——它自己的目录里确实没有可上传的字节。
+ */
+{
+  const stub = await startStub();
+  const dir = mkdtempSync(join(tmpdir(), 'ci-upload-src-'));
+  tmpDirs.push(dir);
+
+  const bundleDir = join(dir, 'bundle-linux-x64');
+  await mkdir(bundleDir, { recursive: true });
+  const buf = Buffer.from('FAKE-ARCHIVE-BYTES');
+  await writeFile(join(bundleDir, 'openmemo-0.7.0-linux-x64.tar.xz'), buf);
+  await writeFile(
+    join(bundleDir, 'openmemo-0.7.0-linux-x64.json'),
+    JSON.stringify({
+      name: 'openmemo-0.7.0-linux-x64',
+      version: '0.7.0',
+      target: 'linux-x64',
+      nodeVersion: 'v22.23.1',
+      rawBytes: 12345,
+      archive: { file: 'openmemo-0.7.0-linux-x64.tar.xz', bytes: buf.length, sha256: sha(buf) },
+      generatedAt: new Date().toISOString(),
+    }),
+  );
+
+  const completeDir = join(dir, 'bundles-complete');
+  await mkdir(completeDir, { recursive: true });
+  await writeFile(
+    join(completeDir, 'bundles-complete.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      version: '0.7.0',
+      targets: {
+        'linux-x64': {
+          name: 'openmemo-0.7.0-linux-x64',
+          archive: 'openmemo-0.7.0-linux-x64.tar.xz',
+          sha256: sha(buf),
+          bytes: buf.length,
+        },
+      },
+    }),
+  );
+
+  const r = await run(
+    UPLOAD,
+    [
+      '--repo',
+      REPO,
+      '--tag',
+      TAG,
+      '--from',
+      dir,
+      '--stage',
+      stage(),
+      '--api-base',
+      stub.base,
+      '--download-base',
+      stub.base,
+    ],
+    { GITHUB_TOKEN: 'stub-token' },
+  );
+  await check(
+    '①c build-bundle.mjs 的顶层 meta 被认出来并正确上传；bundles-complete 形状仍被跳过',
+    () => {
+      assert.equal(r.status, 0, r.out);
+      assert.match(r.out, /模式=pack-fragment/);
+      assert.match(r.out, /⏭ 整个跳过[\s\S]*bundles-complete\.json/);
+      assert.equal(stub.state.uploads.length, 1, `应只传 1 个归档\n${r.out}`);
+      assert.equal(stub.state.uploads[0]?.name, 'openmemo-0.7.0-linux-x64.tar.xz');
+    },
+  );
+  stub.server.close();
+}
+
 console.log('');
 console.log('② 反向验证 —— 每一条都必须红');
 
@@ -794,4 +876,4 @@ if (failures.length > 0) {
   for (const f of failures) console.log(`  - ${f}`);
   process.exit(1);
 }
-console.log(`✔ selftest-release-upload: ${passed} 个用例全部通过（2 组正向 + 10 组反向）`);
+console.log(`✔ selftest-release-upload: ${passed} 个用例全部通过（3 组正向 + 10 组反向）`);
