@@ -211,6 +211,17 @@ export interface SelfCheckProbes {
    */
   installedByRole: (role: string) => Promise<InstalledByRole>;
   /**
+   * 内置目录（`vendor/manifests`）加载结果（T-153）。
+   *
+   * `loaded: false` 表示**清单没读到**，与"清单里零条"是两回事 ——
+   * 用户看到的 `packs 0` / 组件页全空正是前者，而界面上从来没有一处说过这件事。
+   *
+   * 可选：`runSelfCheck` 本身拿不到 daemon 的清单加载器（runtime 不许 import daemon），
+   * 没给就走 `notProbed`（照常出现一条 warn，**id 集合不变** —— 这是 T-119 的规矩：
+   * 两个出口的检查项必须一一对应，缺探针也不许少一条）。
+   */
+  catalogLoad?: () => Promise<CatalogLoadProbe>;
+  /**
    * Run the four-word Chinese FTS5 test.
    * Returns hit counts, or null when the tokenizer could not even be loaded.
    */
@@ -1184,6 +1195,59 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         '`vad/silero-vad-onnx` 给 sherpa 流式，**两者不能互换**。',
   });
 
+  /* ---- 内置目录（T-153）------------------------------------------------------------
+   *
+   * ★ 这一条**必须排在 model.asr 之前**：它回答的是"下面那些'0 个'到底是什么意思"。
+   * 目录没读到的时候，`model.asr` 的「无」、组件页的「0 个包」全都是**同一个原因的复述**，
+   * 而它们每一条单看都像是"你还没装"。先说清这一件，后面那些才不会把人带偏。
+   */
+  if (input.probes.catalogLoad === undefined) {
+    notProbed('models', 'catalog.bundled', 'bundled catalog', '内置目录');
+  } else {
+    const cat = await input.probes.catalogLoad();
+    const total = cat.models + cat.packs;
+    add({
+      layer: 'models',
+      id: 'catalog.bundled',
+      label: 'bundled catalog',
+      labelZh: '内置目录',
+      /*
+       * 三档，逐条说明为什么是这一档：
+       *   fail(required) —— 没读到。产品**装不了任何东西**，这不是降级是坏了。
+       *   warn           —— 读到了但一条都没有。目录本身是随包出厂的，空到这个程度
+       *                     多半是打包漏了；但它与"读不了"是**不同的故障**，
+       *                     所以给不同的档与不同的话，而不是合成一个红。
+       *   ok             —— 读到了、有内容。
+       */
+      status: !cat.loaded ? 'fail' : total === 0 ? 'warn' : 'ok',
+      detail: !cat.loaded
+        ? (cat.reasonZh ?? `内置目录没能读取：${cat.dir}`)
+        : total === 0
+          ? `目录读到了，但里面一条都没有（${cat.dir}）—— 这与"读不到目录"是两回事`
+          : `${cat.models} 个模型 / ${cat.packs} 个组件包（${cat.dir}）`,
+      detailEn: !cat.loaded
+        ? (cat.reasonEn ?? `bundled catalog could not be read: ${cat.dir}`)
+        : total === 0
+          ? `directory read fine but contains no entries (${cat.dir}) - this is NOT the same as "could not read"`
+          : `${cat.models} models / ${cat.packs} component packs (${cat.dir})`,
+      required: true,
+      /*
+       * ⚠️ **刻意不给可点的下一步。**
+       * `apps/web/src/lib/remediation/routes.ts` 记着 26 个调用点里 23 个是刻意不给按钮的，
+       * 理由是「给一个点了没用的按钮，比不给按钮更糟」。这一条正属于那 23 个：
+       * 目录随产品出厂，应用内**没有任何动作**能把它装回来（也不该有 ——
+       * 那等于让一个坏掉的安装自己修自己）。真实的下一步在应用之外。
+       * 所以这里给的是一句**能让人知道发生了什么**的话。
+       */
+      remediation: cat.loaded
+        ? null
+        : '这份目录随应用出厂，应用内无法重新下载。多半是安装包解压不全或被安全软件拦截 —— 重新解压/重装一次即可；界面上那些"0 个"不是"没有东西可装"。',
+      remediationEn: cat.loaded
+        ? null
+        : 'The catalog ships with the app and cannot be re-downloaded from inside it. Most likely the package was extracted incompletely or blocked by security software - reinstall or re-extract. The "0 available" you see is NOT "nothing to install".',
+    });
+  }
+
   /* ---- models ---------------------------------------------------------------------
    *
    * ★ T-149：判据从「`by-name/asr/` 下的文件名，减去一条正则」换成
@@ -1594,6 +1658,29 @@ export async function listByName(storeRoot: string, kind: string): Promise<strin
   } catch {
     return [];
   }
+}
+
+/**
+ * 内置目录的加载结果（T-153）。**三态，不是两态**：
+ *
+ * | | `loaded` | `models+packs` | 含义 |
+ * |---|---|---|---|
+ * | 正常 | `true` | > 0 | 目录读到了、有内容 |
+ * | 真零 | `true` | 0 | 目录读到了、里面确实没有 —— **不是故障** |
+ * | 故障 | `false` | 0 | **没读到**。用户看到的"0 个可用"是这一档 |
+ *
+ * 第二行与第三行在旧代码里返回同一个值，这正是要修的东西。
+ */
+export interface CatalogLoadProbe {
+  loaded: boolean;
+  /** 找的是哪个目录 —— 排查时第一个要问的就是这个。 */
+  dir: string;
+  models: number;
+  packs: number;
+  /** `loaded=false` 时的原因（中文一句话）；正常时 `null`。 */
+  reasonZh: string | null;
+  /** 同上，英文。`detailEn` 不许出现 CJK。 */
+  reasonEn: string | null;
 }
 
 /** 一个 role 的安装情况：文件名 + 那些"记录里没写 role"的条数。 */

@@ -36,14 +36,57 @@ interface BackendManifestDoc {
   packs: BackendPack[];
 }
 
+/**
+ * 清单目录读不了时的原因。**`null` 表示"目录真的读到了"**（哪怕里面零条）。
+ *
+ * ## 为什么必须有这个字段（T-153）
+ *
+ * 在此之前 `listManifestFiles()` 是 `catch { return []; }` —— 目录不存在、没权限、
+ * 或那个路径根本是个文件，全部安静地变成"零条清单"。于是
+ * `loadModelCatalog()` 返回 `{ catalogVersion: '0', models: [] }`，
+ * **和"目录里本来就没有模型"在调用方眼里一模一样。**
+ *
+ * `[实测]` 用户双击打开之后看到 `packs 0`、组件页全空。他会去找"为什么没有包可装"，
+ * 而正确的问题是"为什么清单没加载"。**这两个问题的答案不在同一个地方。**
+ *
+ * 仓库里早就有一句一字不差的判词（`pipeline/probeShipping.test.ts:101`）：
+ *
+ * > **「`backends.json` 解析出 0 个包 —— 空集不是"没问题"，是"什么都没检查"」**
+ *
+ * 同一条道理，在模型/后端目录这一侧从来没有被贯彻。
+ *
+ * 判据形状与本仓已经反复确立的那条相同：**`UNKNOWN` / 空 / 真零，三者必须分得开**
+ * —— 和 `null` vs `[]`（解析器失败 vs 解析器说没有）、`UNDECIDED` vs 绿、
+ * `N/A` vs `UNKNOWN` 是同一件事。
+ *
+ * ⚠️ 对**这个**目录而言，`ENOENT` 也算故障，不算"合法的空"：
+ * `vendor/manifests` 是随产品出厂的东西，它不存在就是安装坏了。
+ * （与 `<模型根>/manifests/<桶>/` 不同 —— 那里 ENOENT 表示"这类东西还没装过"，
+ * 是合法的零。两者不能用同一条规则，所以这里写明。）
+ */
+export interface CatalogLoadError {
+  /** 试图读的目录。 */
+  dir: string;
+  /** `ENOENT` / `EACCES` / `ENOTDIR` …；拿不到就是 `'UNKNOWN'`。 */
+  code: string;
+  /** 原始错误信息，供日志与诊断页显示。 */
+  message: string;
+  /** 给人看的一句话。**不含可点的下一步** —— 见下面 `describeCatalogLoadError` 的注释。 */
+  messageZh: string;
+}
+
 export interface ModelCatalog {
   catalogVersion: string;
   models: ModelEntry[];
+  /** `null` = 清单目录确实读到了（models 为空就是真的零条）。 */
+  loadError: CatalogLoadError | null;
 }
 
 export interface BackendCatalog {
   catalogVersion: string;
   packs: BackendPack[];
+  /** `null` = 清单目录确实读到了（packs 为空就是真的零个）。 */
+  loadError: CatalogLoadError | null;
 }
 
 /*
@@ -69,18 +112,76 @@ function classifyManifest(raw: unknown): ManifestKind {
   return 'unknown';
 }
 
-/** 列出 manifest 目录里所有 `*.json`（排除 schema.json 这类非目录文件）。 */
-async function listManifestFiles(manifestDir: string): Promise<string[]> {
+/**
+ * 列出 manifest 目录里所有 `*.json`（排除 schema.json 这类非目录文件）。
+ *
+ * ★ T-153：返回 `{ files, error }` 而不是光秃秃一个数组。
+ * 旧签名 `Promise<string[]>` 在结构上**没有能力**区分"读不了"与"零条"，
+ * 于是调用方也不可能区分 —— 这不是调用方写得不小心，是返回类型不允许他小心。
+ */
+async function listManifestFiles(
+  manifestDir: string,
+): Promise<{ files: string[]; error: CatalogLoadError | null }> {
   let names: string[];
   try {
     names = await fs.readdir(manifestDir);
-  } catch {
-    return [];
+  } catch (e) {
+    const err = e as NodeJS.ErrnoException;
+    return { files: [], error: describeCatalogLoadError(manifestDir, err) };
   }
-  return names
-    .filter((n) => n.endsWith('.json') && n !== 'schema.json')
-    .sort()
-    .map((n) => path.join(manifestDir, n));
+  return {
+    files: names
+      .filter((n) => n.endsWith('.json') && n !== 'schema.json')
+      .sort()
+      .map((n) => path.join(manifestDir, n)),
+    error: null,
+  };
+}
+
+/**
+ * 把 errno 翻成一句**给人看**的话。
+ *
+ * ## 为什么这里没有 remediation（"可点的下一步"）
+ *
+ * `apps/web/src/lib/remediation/routes.ts` 记着：**26 个调用点里 23 个是刻意不给按钮的**，
+ * 理由写在那份表里 ——「给一个点了没用的按钮，比不给按钮更糟（它教会用户忽略按钮）」。
+ * 这个场景正属于那 23 个：
+ *
+ * - 清单是**随产品出厂**的（`vendor/manifests/`，`build-bundle.mjs` 放进包里）。
+ *   用户在应用内**没有任何动作**能把它装回来 —— 没有"重新下载目录"这个功能，
+ *   也不该有：那等于让一个坏掉的安装自己去修自己。
+ * - 唯一真实的下一步是"重装/重新解压应用"，那**不在应用里**。
+ *
+ * 所以给的是**一句能让人知道发生了什么的话**，而不是一个按钮：
+ * 说清「不是没有包，是清单没读到」+ 读的是哪个路径 + 系统给的原因。
+ * 有了这三样，用户自己或帮他排查的人才问得出对的问题。
+ */
+function describeCatalogLoadError(dir: string, err: NodeJS.ErrnoException): CatalogLoadError {
+  const code = err.code ?? 'UNKNOWN';
+  const why =
+    code === 'ENOENT'
+      ? '目录不存在'
+      : code === 'EACCES' || code === 'EPERM'
+        ? '没有读取权限'
+        : code === 'ENOTDIR'
+          ? '这个路径不是目录'
+          : `读取失败（${code}）`;
+  return {
+    dir,
+    code,
+    message: err.message ?? String(err),
+    /*
+     * ⚠️ 第一句必须是**否定用户会做的那个推断**。
+     * 用户看到的是"0 个可用"，他的默认解释是"确实没有东西可装"；
+     * 不先把这句话推翻，后面写多少路径他都不会读。
+     */
+    messageZh:
+      `不是"没有可用项"，是**内置目录没能读取** —— ${why}。\n` +
+      `找的是：${dir}\n` +
+      `系统原因：${code} ${err.message ?? ''}\n` +
+      `这份目录随应用出厂，应用内没有办法重新下载它；` +
+      `多半是安装包解压不全或被安全软件拦了，重装/重新解压一次即可。`,
+  };
 }
 
 /**
@@ -143,7 +244,11 @@ export async function loadModelCatalog(manifestDir: string): Promise<ModelCatalo
   const seen = new Set<string>();
   let catalogVersion = '0';
 
-  for (const file of await listManifestFiles(manifestDir)) {
+  const listing = await listManifestFiles(manifestDir);
+  // 读不了就**直接把原因带出去**，不要再往下走成一个"零条目录"。
+  if (listing.error) return { catalogVersion, models, loadError: listing.error };
+
+  for (const file of listing.files) {
     const raw = await readJsonFile(file);
     if (classifyManifest(raw) !== 'model') continue; // 后端目录/其它文件跳过
     const checked = validateModelManifest(raw);
@@ -161,7 +266,7 @@ export async function loadModelCatalog(manifestDir: string): Promise<ModelCatalo
     catalogVersion = doc.catalogVersion;
   }
 
-  return { catalogVersion, models };
+  return { catalogVersion, models, loadError: null };
 }
 
 export async function loadBackendCatalog(manifestDir: string): Promise<BackendCatalog> {
@@ -169,7 +274,10 @@ export async function loadBackendCatalog(manifestDir: string): Promise<BackendCa
   const seen = new Set<string>();
   let catalogVersion = '0';
 
-  for (const file of await listManifestFiles(manifestDir)) {
+  const listing = await listManifestFiles(manifestDir);
+  if (listing.error) return { catalogVersion, packs, loadError: listing.error };
+
+  for (const file of listing.files) {
     const raw = await readJsonFile(file);
     if (classifyManifest(raw) !== 'backend') continue;
     const checked = validateBackendManifest(raw);
@@ -185,7 +293,7 @@ export async function loadBackendCatalog(manifestDir: string): Promise<BackendCa
     catalogVersion = doc.catalogVersion;
   }
 
-  return { catalogVersion, packs };
+  return { catalogVersion, packs, loadError: null };
 }
 
 /**

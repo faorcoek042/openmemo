@@ -34,6 +34,7 @@ import { redactProxyUrl, type ProxyConfig } from '@openmemo/shared';
 import type { AppPaths } from '../../config/paths.js';
 import type { PipelineBundle } from '../../pipeline/setup.js';
 import { breakerStatus } from '../../runtime/setup.js';
+import { loadBackendCatalog, loadModelCatalog, resolveManifestDir } from './manifests.js';
 import { sendError, sendJson } from '../respond.js';
 
 export interface SelfCheckRoutesDeps {
@@ -118,6 +119,26 @@ export function createSelfCheckRoutes(deps: SelfCheckRoutesDeps): {
            * 那正是 T-148 事故里 `model.vad` 两边都绿的机制（vad-fix §2）。
            */
           installedByRole: (role) => listInstalledNamesByRole(deps.paths.modelsDir, role),
+
+          /*
+           * T-153：内置目录到底读到了没有。
+           * **调的就是产品自己那两个加载器**（不是重新猜一遍路径）——
+           * 只有同一次调用才敢说"自检看到的和 daemon 看到的是同一件事"，
+           * 而 CLI 那一侧也 import 这同一对函数（`scripts/selfcheck.mjs`）。
+           */
+          catalogLoad: async () => {
+            const dir = resolveManifestDir();
+            const [m, b] = await Promise.all([loadModelCatalog(dir), loadBackendCatalog(dir)]);
+            const err = m.loadError ?? b.loadError;
+            return {
+              loaded: err === null,
+              dir,
+              models: m.models.length,
+              packs: b.packs.length,
+              reasonZh: err ? err.messageZh : null,
+              reasonEn: err ? `${err.code}: ${err.message} (${err.dir})` : null,
+            };
+          },
 
           // probe 挨着 libggml-base 装在后端包**内部**，固定路径永远找不到它。
           probePath: () =>

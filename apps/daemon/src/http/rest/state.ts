@@ -472,6 +472,21 @@ export class RestState {
       loadBackendCatalog(deps.manifestDir),
     ]);
     const modelCatalog = withoutRetiredRoles(loadedModelCatalog);
+    /*
+     * ★ T-153：清单**读不了**和清单**里零条**必须在日志里也分得开。
+     *
+     * `resolveManifestDir()` 已经在"连目录都没找到"时喊过一声，但它管不到
+     * 「路径找到了、readdir 失败了」（没权限 / 是个文件 / 中途被删）。
+     * 那种情况下用户看到的仍然是 `packs 0`，而**日志里一个字都没有**。
+     * 这一行不改变红绿，只保证"什么都没加载"这件事在事后查得到。
+     */
+    const loadError = loadedModelCatalog.loadError ?? backendCatalog.loadError;
+    if (loadError) {
+      console.error(
+        `[daemon] ✘ 内置目录没能读取 —— 组件页/模型页会是空的，但**不是因为没有东西可装**。\n` +
+          `   目录：${loadError.dir}\n   原因：${loadError.code} ${loadError.message}`,
+      );
+    }
     await fs.mkdir(modelsRoot, { recursive: true });
     const detection = await detectLocalHardware(modelsRoot);
 

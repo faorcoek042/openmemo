@@ -630,3 +630,215 @@ CLI 走 `node scripts/selfcheck.mjs --data-dir <tmp>` 真实输出（见 TL;DR �
 | `apps/daemon/src/pipeline/vadResolve.test.ts`                   | `vad-fix`（已 DONE）                                       | **只改一段注释**：原文说 `roleToStoreKind('vad')==='asr'`「是有意的」，那句话今天是假的。夹具本身一行未动（它现在的身份是"老机器的历史布局"，钉的是向后兼容） | 🟢 低                                         |
 | `scripts/selfcheck.mjs`                                         | `ci-runner` / 通用                                         | 加一个探针接线（纯追加 8 行）                                                                                                                                 | 🟢 低                                         |
 | `apps/web/**`                                                   | `frontend-truth`                                           | **一个字节都没动**（只**读**了 `asrSections.ts` 与 i18n 来对齐文案，并把 i18n 当成测试的期望值来源）                                                          | —                                             |
+
+---
+
+## [2026-08-10 13:40] T-153 DONE —— 清单「读不了」不再伪装成「零条」
+
+交付:
+- `apps/daemon/src/http/rest/manifestLoadFailure.test.ts`（**新增**，13 条；**先写腿、先红、再修**）
+- `apps/daemon/src/http/rest/manifests.ts`（三态：`loadError` + `describeCatalogLoadError`）
+- `apps/daemon/src/http/rest/state.ts`（读不了时一行**具体**的 `console.error`）
+- `packages/runtime/src/selfcheck.ts`（新检查项 `catalog.bundled` + 可选探针 `catalogLoad`）
+- `apps/daemon/src/http/rest/selfcheck.ts` · `scripts/selfcheck.mjs`（两个出口接同一对加载器）
+
+---
+
+# 回你的两句
+
+## 第一句：**那条腿写完就是红的 —— 13 条里红 4 条。**
+
+修之前（`grep` 确认腿确实在 `dist/http/rest/manifestLoadFailure.test.js` 里）：
+
+```
+✖ ★ 目录不存在 vs 目录是空的：两者的返回值必须能分辨
+  AssertionError: 「目录压根没找到」与「目录里就是零条」返回了同一个值 ——
+                  调用方无法分辨，界面上只能显示"0 个"，而真相是清单没加载
+    actual:   { catalogVersion: '0', models: [] }
+    expected: { catalogVersion: '0', models: [] }      ← 一模一样，这就是全部问题
+✖ ★ 读不了的时候，返回值里要说得出"为什么" —— 不能只是一个空数组
+✖ ★ 后端目录同一条规则（用户撞到的那个 packs 0 就在这一侧）
+✖ ★ 路径是个文件而不是目录 —— 同样属于"读不了"
+ℹ tests 13 / pass 9 / fail 4
+```
+
+修完 **13/13**。摘掉修复（把 `catch` 退回 `return { files: [], error: null }`）**同样这 4 条当场红**，
+输出见 §C。
+
+## 第二句：**同族「失败降级成空」全仓 —— 三个数，请连着看**
+
+| 口径 | 数 |
+|---|---|
+| 语法命中（全仓，含测试 / e2e / 一次性脚本） | **243** |
+| **出厂代码**里"失败 → 空**集合**"（`apps/*/src` + `packages/*/src`，排除 `*.test.*`） | **16** |
+| 其中真正**承载内容**的（另外 6 个是 `fs.rm` / `fs.mkdir` / `fh.close()` 之类**清理**，不说谎） | **10** |
+
+⚠️ **这三个数各自的口径要说清，否则又是一次"数少了"**：
+
+- 243 里绝大多数是 `e2e-*.mjs` 里的 `click().catch(()=>{})` —— **有意的容错，不是产品会说谎的地方**。
+- 16 是我筛出来的**危险面口径**：出厂代码 + 返回空集合（`[] {} Map Set`）。
+  返回 `false`/`null` 的不算 —— 那类调用方本来就被类型逼着处理"没有"。
+- ⚠️ **上界另有一个数，我一并给出，免得 16 被当成"全部"**：出厂代码里共有 **314 个 `catch`**，
+  其中 **253 个在 8 行内既不 `throw` 也不出声**。那 253 里绝大多数是合法的
+  （"这个可选文件不在很正常"），**但我的扫描器只认得出其中形如 `return 空集合` 的 16 个**。
+  扫描器的盲区：`catch { out = []; }`、`?? []` 兜底、以及 catch 里带逻辑的。
+  **所以准确的说法是「我找到 10 处真同族」，不是「全仓只有 10 处」。**
+
+### 那 10 处，按"用户会看到什么"排序
+
+| # | 位置 | 失败时用户看到 | 我的判断 |
+|---|---|---|---|
+| 1 | `http/rest/manifests.ts:78` `listManifestFiles` | **「0 个包可用」/ 组件页全空** | ✅ **本轮已修** |
+| 2 | `apps/daemon/src/storage/move.ts:262` `findStaleLinks` | 搬完数据目录报「没有失效链接」 | 🔴 **最危险的一条**：`walk()` 中途失败 → 返回**部分**结果，而调用方读成"检查过了、没问题"。**与 T-128 那盏假绿灯（`verifyTreesMatch` 跳过软链却报"两棵树一致"）是同一族** |
+| 3 | `packages/downloader/src/store.ts:242` `listManifests` | 「一个模型都没装」 | 🟠 与 #1 完全同形。⚠️ 但这里 `ENOENT` 是**合法的空**（那类东西还没装过），只有 `EACCES`/`ENOTDIR` 才是故障 —— **要按 errno 分档，不能照抄 #1** |
+| 4 | `packages/pipeline/src/tools.ts:810` `listInstalledModels` | 自检「ASR 模型 无」 | 🟠 同 #3 |
+| 5 | `packages/runtime/src/selfcheck.ts:1595` `listByName` | 同上 | 🟠 同 #3 |
+| 6 | `packages/pipeline/src/tools.ts:408` `listDirs` | 「没有后端包」→ `pipeline.missing: whisper-cli` | 🟠 用户报过的那一类 |
+| 7 | `packages/pipeline/src/tools.ts:527` `listDirs` | 同上 | 🟠 |
+| 8 | `packages/llm/src/providers/anthropic.ts:62` `listModels` | **「这个服务商没有模型」** | 🟠 伤害很直接：断网 / Key 错 / 401 全部渲染成"没有模型"，用户会去**换服务商** |
+| 9 | `packages/llm/src/providers/openai-compatible.ts:70` `listModels` | 同上 | 🟠 同 #8 |
+| 10 | `packages/pipeline/src/media/sources/ytdlp.ts:363` `safeReaddir` | 「没下到文件」 | 🟡 |
+
+**我只修了 #1**（你划的边界：只治本地这条路上的静默变空）。#2–#10 建议按上表顺序派，
+**#2 优先** —— 它不只是"看不出为什么空"，它会**给出一个看起来完整的部分答案**，
+那比空集更难发现。
+
+---
+
+# §A 修法：三态，而且第三态**不是**用空集合表示的
+
+```ts
+export interface ModelCatalog {
+  catalogVersion: string;
+  models: ModelEntry[];
+  loadError: CatalogLoadError | null;   // null = 目录确实读到了（哪怕零条）
+}
+```
+
+`listManifestFiles()` 的签名也从 `Promise<string[]>` 换成 `{ files, error }` ——
+**旧签名在结构上没有能力区分那两件事，于是调用方也不可能小心**。
+判据形状与本轮反复确立的那条同族：**`UNKNOWN` / 空 / 真零，三者必须分得开**。
+
+⚠️ **一条与 #3 相反的取舍，写在代码注释里免得被"统一"掉**：
+对 `vendor/manifests` 而言 **`ENOENT` 也算故障**（它随产品出厂，不在就是装坏了）；
+而对 `<模型根>/manifests/<桶>/` 而言 `ENOENT` 是**合法的零**（那类东西还没装过）。
+**同一个 errno，在两个目录上是两个含义** —— 谁去修 #3 请先读这一段。
+
+# §B 界面：给的是**一句话**，不是按钮 —— 而且是刻意的
+
+按你提醒的那条（`routes.ts:157-161`，26 个调用点里 23 个刻意不给按钮）先判了该不该给：
+
+> **不该给。** 清单随产品出厂（`build-bundle.mjs` 放进包里），
+> 用户在应用内**没有任何动作**能把它装回来 —— 也不该有：那等于让一个坏掉的安装自己修自己。
+> 唯一真实的下一步（重装 / 重新解压）**不在应用里**。
+> 给个按钮就正好是那句「给一个点了没用的按钮，比不给按钮更糟」。
+
+所以走**自检**这条已经在渲染的通道（T-150 已把诊断页接上 `/api/selfcheck`），
+新增一项 `catalog.bundled`，三档：
+
+| 档 | 什么时候 | 为什么不是别的档 |
+|---|---|---|
+| `fail(required)` | 没读到 | 产品**装不了任何东西**，这不是降级是坏了 |
+| `warn` | 读到了、但一条都没有 | 是**另一种**故障（多半打包漏了），必须给**不同的话**，不能和上面合成一个红 |
+| `ok` | 读到了、有内容 | — |
+
+`[本机实测]` 真跑 CLI（`node scripts/selfcheck.mjs`），两种情形逐字对照：
+
+```
+正常：        ✔ 内置目录   35 个模型 / 25 个组件包（/root/memo/vendor/manifests）
+
+OPENMEMO_MANIFEST_DIR=/nope/vendor/manifests：
+              ✘ 内置目录   不是"没有可用项"，是**内置目录没能读取** —— 目录不存在。
+                          找的是：/nope/vendor/manifests
+                          系统原因：ENOENT ENOENT: no such file or directory, scandir '...'
+                          这份目录随应用出厂，应用内没有办法重新下载它；
+                          多半是安装包解压不全或被安全软件拦了，重装/重新解压一次即可。
+              → 界面上那些"0 个"不是"没有东西可装"。
+```
+
+**第一句刻意是"否定用户会做的那个推断"**：他看到 0 个，默认解释是"确实没东西可装"；
+不先把这句推翻，后面写多少路径他都不会读。
+
+★ **两个出口调的是同一对函数**（daemon 的 `rest/selfcheck.ts` 与 CLI 的 `scripts/selfcheck.mjs`
+都 import `manifests.js` 的 `resolveManifestDir` / `loadModelCatalog` / `loadBackendCatalog`）——
+沿用 T-162 那条同源做法，`meta.sameSource` 才有意义。
+探针做成**可选**（缺了走 `notProbed` 出一条 warn），**id 集合不变** —— T-119 的规矩。
+⚠️ 与我上一轮把 `installedByRole` 做成必填的取舍**刚好相反**，理由不同：
+那个可选会留下"退回按文件名猜"的暗道；这个没有暗道可退，缺探针就是"没测"，如实说出来即可。
+
+# §C 反向验证
+
+把 `catch` 退回 `return { files: [], error: null }`（`grep dist/http/rest/manifests.js:35` 命中 `REVERSAL-T153`）：
+
+```
+✖ ★ 目录不存在 vs 目录是空的：两者的返回值必须能分辨
+✖ ★ 读不了的时候，返回值里要说得出"为什么" —— 不能只是一个空数组
+✖ ★ 后端目录同一条规则（用户撞到的那个 packs 0 就在这一侧）
+✖ ★ 路径是个文件而不是目录 —— 同样属于"读不了"
+ℹ tests 13 / pass 9 / fail 4
+```
+还原后 13/13；`grep -rn REVERSAL` 源码 **0** / `dist` **0**。
+
+## ⚠️ 你提醒的"由空集保证的恒真"，我这轮真的被咬了一口
+
+腿里那条**锚点**用例（「真实的 `vendor/manifests` 必须读得到且有内容」）**第一次就红了** ——
+不是产品的问题，是**我自己把仓库根算错了**：这个文件在 `dist/http/rest/`，要上溯 **5** 层，
+我照抄了 `pipeline/*.test.ts` 的 **4** 层，于是指到 `/root/memo/apps/vendor/manifests`。
+
+> **如果没有那条锚点**，上面 4 条"读不了"的用例会在一个
+> **因为我算错路径而读不了**的目录上**全部通过** —— 一条测试自己制造了它要测的现象。
+> 这正是"断言不能只是'返回了空'"的另一面：**连"故障"这一侧也要有一个已知为真的对照**。
+
+# §D 门禁
+
+`tsc -b` 0 · `eslint`（我的 6 个文件）0 · `pnpm -r test` **1758 / 0**
+（shared 52 · llm 18 · db 53 · downloader 53 · mindmap 48 · runtime 130 · pipeline 243 ·
+web 170+10+336+18 · daemon 627）。
+我的 6 个文件字面控制字节 **0**。
+
+⚠️ 中途 `tsc -b` 曾红在 `packages/shared/src/backendStatusUnion.test.ts` 与
+`packages/runtime/src/backends/applicability.test.ts` —— **三态契约类型层那一路的在途状态**，
+不是我的；等了约一分钟再跑就绿了。**我没有碰那两个文件。**
+
+# §E 需要 Manager 决策
+
+1. **#2 `findStaleLinks` 优先派人**（见上表）。它返回**部分结果**而调用方读成"检查完了"，
+   与 T-128 同族；而它出现在**移动数据目录**这条路上 —— 那条路错一次的代价你已经付过。
+2. **#3/#4/#5（`listManifests` / `listInstalledModels` / `listByName`）建议一次派掉**：
+   三处是同一个 `by-name` / `manifests` 目录扫描的三份拷贝，且**必须按 errno 分档**
+   （ENOENT=合法的零、EACCES/ENOTDIR=故障），照抄本轮的写法会造出假红灯。
+3. **#8/#9 两个 `listModels`**：断网/401 现在渲染成"这个服务商没有模型"。
+   这条要不要归到"契约字段第一批"那一路一起做（它们本来就在改服务商那块）？
+
+# §F 纪律
+
+- **`:10000`（`ff24098b` / pid 491899）一次请求都没发**；没碰进程、没删模型、没改活动模型。
+- 不碰 `/root/data-memo`；`~/.local/share/openmemo/datadir.json` 没读没写。
+  跑 CLI 自检一律 `--data-dir /tmp/om-t153-*`，清单目录用 `OPENMEMO_MANIFEST_DIR` 指到假路径。
+- 没有 `pkill`（含 `-0`）；没有 `git stash`；没有 `--amend`；不建/改/删 release。
+- 构建全程 `pnpm build:safe`；`apps/web/dist` 没写过。
+- 提交前 rebase；`git commit` 带 pathspec；新文件先 `git add`。
+
+## SHARED-CHANGE 申报
+
+| 文件 | 归属 / 在途 | 我做了什么 | 冲突风险 |
+|---|---|---|---|
+| `packages/runtime/src/selfcheck.ts` | 三态契约那一路在动 `packages/runtime`（但动的是 `backends/*`） | 加一个可选探针 + 一条检查项，**未碰 backends 相关任何一行** | 🟡 中 |
+| `scripts/selfcheck.mjs` | T-162 在途（sherpa/Paraformer 选型） | **纯追加**一个探针接线（20 行），插在 `installedByRole` 之后 | 🟡 中 |
+| `apps/daemon/src/http/rest/state.ts` | — | `create()` 里加一段读不了时的 `console.error` | 🟢 低 |
+| `apps/daemon/src/http/rest/{manifests,selfcheck}.ts` | — | 见交付 | 🟢 低 |
+| `apps/web/**` · `packages/shared/**` | `frontend-truth` / 契约第一批 | **一个字节都没动**（新检查项走的是已有的通用渲染，不需要前端改） | — |
+
+## §G 一条我提交前才发现的事（如实记，不是指责）
+
+`scripts/selfcheck.mjs` 里我那段 `catalogLoad` 探针，**已经被 `d4a685e`（T-162）带着提交了** ——
+两个 agent 在同一时段落到同一个文件上。
+
+👍 **对方在 commit message 里主动申报了这件事**（原文：「另有一段 T-153 的 catalogLoad 探针
+（同一份文件、同一时段由另一个并发 agent 加的）—— 不是这次改动的内容，一并落在这次提交里
+只是因为它先落到了同一个文件上」）。**这正是正确处置**：不是删掉它、也不是假装没看见。
+
+对我的教训是对称的：**我改共享文件时应当尽快落盘成提交，而不是让它在工作树里躺着** ——
+躺得越久，被别人的 `git add <路径>` 正当地扫进去的概率越大
+（对方没有用 `-A`，他 add 的就是这个文件本身，我的改动恰好在里面）。
+本轮我因此**没有**再提交 `scripts/selfcheck.mjs`，它已经在远端了。
