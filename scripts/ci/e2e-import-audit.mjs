@@ -759,11 +759,37 @@ try {
   }
 
   /*
+   * ★ H.264 编码器的名字**不能写死**，必须直接问这一份真实二进制自己有什么。
+   *
+   * 不同平台的产品 ffmpeg 来自不同上游构建（见 D-20 §18.2）：linux/win32 是
+   * BtbN 的 **LGPL** 构建（`--disable-libx264`，只有 `libopenh264`）；
+   * macOS 是 jellyfin-ffmpeg 的 **GPL** 构建（早就是产品自己发给 macOS 用户
+   * 的那份二进制，不是本脚本新引入的 GPL 接触面——只是这份构建里没有
+   * `libopenh264`，只有 `libx264`）。硬编码任何一个都会在另一批平台上炸：
+   * `[实测 run 31368489758]` 硬编码 `libopenh264` 时 darwin-arm64 报
+   * `Unknown encoder 'libopenh264'`——**先** hard code 成 `libx264` 时则是
+   * linux/win32 报最初那条 `Encoder not found`（本节最初要修的那个）。
+   * 两边都硬编码不出一个对三平台都成立的答案，所以改成探测：谁在场用谁，
+   * 都不在场就出声（不是静默造不出视频样本）。上游哪天换一批 encoder，
+   * 这里不需要跟着改。
+   */
+  async function detectH264Encoder() {
+    if (!PRODUCT_FFMPEG) return null;
+    const probe = await runSync(PRODUCT_FFMPEG, ['-hide_banner', '-encoders']);
+    const listed = probe.out + probe.err;
+    if (/\blibx264\b/.test(listed)) return 'libx264';
+    if (/\blibopenh264\b/.test(listed)) return 'libopenh264';
+    return null;
+  }
+  const H264_ENCODER = await detectH264Encoder();
+  say(`   H.264 编码器（探测，不是写死）: ${H264_ENCODER ?? '(两者都不在——造不出带视频的样本)'}`);
+
+  /*
    * 四个样本，覆盖章程 F2 说的"多种容器/编码"：
    *   · wav  — PCM，只有音轨（不转码，最便宜的对照）
    *   · mp3  — MPEG 容器 + libmp3lame，只有音轨
    *   · m4a  — MP4 容器 + AAC，只有音轨（与 mp4 同容器、不同"有没有视频"）
-   *   · mp4  — MP4 容器 + H.264 视频 + AAC 音轨，**带视频**
+   *   · mp4  — MP4 容器 + H.264 视频 + AAC 音轨，**带视频**（编码器名见上）
    * 视频轨用 ffmpeg 自己的 testsrc 合成，不需要另找素材。
    */
   const FIXTURE_SPECS = [
@@ -782,29 +808,11 @@ try {
       args: (i, o) => ['-y', '-t', CLIP_SECONDS, '-i', i, '-c:a', 'aac', '-b:a', '64k', o],
       what: 'AAC / MP4 / 仅音轨',
     },
-    {
-      /*
-       * ⚠️ 视频编码器是 `libopenh264`，**不是** `libx264`。
-       *
-       * `PRODUCT_FFMPEG`（上面第 6 节验过：来自 storeRoot，产品自己下载校验的
-       * 那份，LGPL 构建）**没有** `libx264` —— BtbN 的 `*-lgpl-*` 发行版明确
-       * `--disable-libx264`（GPL-only），造样本这步之前一直用 `libx264` 硬编码，
-       * 在 win32 上必然 "Encoder not found"。
-       *
-       * ⚠️ 不能反过来在 CI 里换一份 GPL ffmpeg 来造样本 —— 那会让"我们发的字节
-       * 里没有 GPL"这条论证被我们自己在 CI 上破坏（论证需要的是"CI 全程只碰
-       * LGPL 构建"，不只是"最终成品不含 GPL"）。
-       *
-       * `libopenh264`（Cisco 出，BSD-2-Clause）才是这份 LGPL 构建里**真正编译进去**
-       * 的 H.264 编码器 —— 同一个 BtbN release（`n8.1.2-34-g9b6c8969e0-*-lgpl-8.1`）
-       * 的 linux64 与 win64 包共享同一套 configure 参数（`--enable-libopenh264
-       * --disable-libx264`，两边 `ffmpeg -encoders` / 二进制里的 configuration 字符串
-       * 逐字相同），已经拿 sha256 与 vendor/manifests/backends.json 里的
-       * `media-tools-linux-x64` 条目核对过、**在本机真跑通**：
-       * `libopenh264` + `aac`（原生编码器，非 `libfdk_aac`）成功产出 h264/aac 的 mp4，
-       * `ffprobe` 读回 codec_name 正确；同样参数下 `libx264` 复现的正是 CI 报的
-       * "Encoder not found"。见 D-20 §18（2026-08-10）。
-       */
+  ];
+  // 编码器名字探测得到（见上），不是写死的 —— 两边都不在场就不硬凑一条会失败的 spec，
+  // 让第 7 节的 fail() 如实说清楚原因。
+  if (H264_ENCODER) {
+    FIXTURE_SPECS.push({
       name: 'f2-video.mp4',
       args: (i, o) => [
         '-y',
@@ -819,7 +827,7 @@ try {
         '-i',
         'testsrc=size=160x120:rate=10',
         '-c:v',
-        'libopenh264',
+        H264_ENCODER,
         '-pix_fmt',
         'yuv420p',
         '-c:a',
@@ -829,9 +837,11 @@ try {
         '-shortest',
         o,
       ],
-      what: 'H.264(libopenh264)+AAC / MP4 / **带视频**',
-    },
-  ];
+      what: `H.264(${H264_ENCODER})+AAC / MP4 / **带视频**`,
+    });
+  } else {
+    fail('7.样本', `PRODUCT_FFMPEG 既没有 libx264 也没有 libopenh264 —— 造不出带视频的样本`);
+  }
 
   const fixtures = [];
   if (PRODUCT_FFMPEG && existsSync(SAMPLE)) {

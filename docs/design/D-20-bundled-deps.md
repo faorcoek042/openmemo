@@ -1513,7 +1513,39 @@ H.264 编码器——与原生 `aac`（FFmpeg 自带的 LGPL 兼容编码器，�
 不涉及任何产品运行时代码、任何 vendor 二进制、任何新增依赖——`libopenh264`
 本来就已经在被下载分发的那份 ffmpeg 里，只是造样本这一步之前没用对它。
 
-### 18.5 CI 验证状态
+⚠️ **这个写死 `libopenh264` 的版本被真实 CI（见 18.5）证明不够** —— 它只在
+linux-x64/win32-x64 上成立，darwin-arm64 上会炸。原因和修法见 18.5。
 
-本节写下时，win32 真实 CI 跑验尚未完成；见本轮任务的最终回报（提交后另跑
-`e2e-import` 工作流，win32 单平台）。
+### 18.5 darwin-arm64 回归：macOS 的产品 ffmpeg 是另一份、GPL 的构建，没有 `libopenh264`
+
+`[实测 run 31368489758]` 三平台真跑 `e2e-import` 时，win32-x64 与 linux-x64
+按 18.4 的修法转绿，但 **darwin-arm64 红了**：`[vost#0:0] Unknown encoder
+'libopenh264'` / `Error opening output files: Encoder not found`——与 18.1
+最初报的那句错误一字不差，只是换了一个平台、换了一个反过来缺的编码器。
+
+根因：`scripts/ci/single-source-baseline.json` 里 `media-tools-macos-arm64`
+这一份产品 ffmpeg，来源**不是** BtbN 的
+LGPL 构建，而是 `jellyfin-ffmpeg_8.1.2-2_portable_macarm64-gpl.tar.xz`——
+这份构建**有** `libx264`，**没有** `libopenh264`。这不是本节新引入的
+GPL 接触面：这份二进制本来就是产品发给 macOS 用户、当场装到用户机器上的
+那份 ffmpeg（macOS 上没有等价的、许可证干净的 H.264 encoder 可选，产品在
+macOS 平台上的许可证立场与 linux/win32 本来就不同，见本文档前面章节），
+只是这一步造样本之前一直没跑过这份二进制。
+
+结论：linux/win32 的 LGPL 构建只有 `libopenh264`，macOS 的 GPL 构建只有
+`libx264`——**两边互斥，硬编码任何一个都会在另一批平台上炸**，不存在一个
+对三平台都成立的固定字符串。
+
+**修法（把 18.4 的硬编码换成运行时探测）**：`e2e-import-audit.mjs` 新增
+`detectH264Encoder()`，在 `PRODUCT_FFMPEG -hide_banner -encoders` 的输出里
+按 `libx264` → `libopenh264` 的顺序探测，谁在场用谁；两者都不在场时不再
+静默拿一个必然失败的编码器名去调用 ffmpeg，而是在第 7 节用 `fail()` 如实
+报告"造不出带视频的样本"。这样不需要按 `process.platform` 写死一张
+"平台→构建→编码器"的映射表——直接问这一份真实二进制自己有什么，上游
+哪天换一批 encoder 或换一个平台的构建来源，这里都不需要跟着改。
+
+### 18.6 CI 验证状态
+
+`[实测]` 第一轮（18.4 的硬编码版本，run 31368489758）：win32-x64 ✔、
+linux-x64 ✔、darwin-arm64 ✘（见 18.5）。改成运行时探测（18.5 的修法）后
+的三平台复核结果，见本轮任务的最终回报。
