@@ -408,6 +408,38 @@ export function BackendPackCard({
               })}
             </p>
           ) : null}
+          {/*
+            ★ #87 / 轴1③：**系统里已经有一份**（借宿主 PATH 的那一档）。
+
+            解析器（A 侧）有三档 `pack | bundle | path`，`path` 那一档是活的：
+            用户按 v0.7.0 发布说明自己 `brew install ffmpeg` 之后，流水线**真的在用**
+            `/usr/bin/ffmpeg`，`ReadinessBanner` 读的 `pipeline.missing` 因此是空的、
+            不报警。而这张卡读的是 B 侧（安装记录），于是写着「可安装 · 145 MB」——
+            **请用户把已经有的东西再下一遍。**
+
+            ⚠️ 与 `installedOnDiskButUnrecorded` **不是同一件事**，所以不共用这一格：
+            那一格说的是"**我们自己 store 里**有一份没登记的"，这一格说的是
+            "**那根本不是我们的东西**"。系统 ffmpeg 我们没装、也无权删。
+
+            ⚠️ 按钮照旧可点、`installed` 一个字没动：装一次仍然有意义
+            （拿到产品自己那一份，不再依赖宿主上那个不受控的版本）。
+            这里改的只有一件事：**用户点之前知道自己已经有一份能用的。**
+
+            ⚠️ 字段可选，缺失（老 daemon / 解析器失败）时**一个字不说** ——
+            「我问不出来」不等于「系统里没有」。
+          */}
+          {!pack.installed && pack.servedFromSystemPath ? (
+            <p
+              className="mt-1 text-xs text-ink-secondary"
+              data-testid={`backend-system-path-${pack.id}`}
+              title={pack.servedFromSystemPath.path}
+            >
+              {t('runtime.pack.servedFromSystemPath', {
+                file: pack.servedFromSystemPath.file,
+                path: pack.servedFromSystemPath.path,
+              })}
+            </p>
+          ) : null}
           {pack.requiresDriver ? (
             <p className="mt-1 text-[11px] text-ink-muted">
               {t('runtime.pack.requiresDriver')}

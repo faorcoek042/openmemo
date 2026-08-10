@@ -22,7 +22,7 @@ import { install } from '@openmemo/downloader';
 import * as path from 'node:path';
 
 import { discoverTools, materializeSqliteExtensions } from '@openmemo/pipeline';
-import { isPackApplicable } from '@openmemo/runtime';
+import { isBundledRuntimePath, isPackApplicable } from '@openmemo/runtime';
 import {
   BACKENDS,
   makeEvent,
@@ -404,12 +404,21 @@ export async function handleBackendRoutes(
       (p) => !installedIds.has(p.id) && (p.providesFiles ?? []).length > 0,
     );
     let servedFromUnrecorded = new Map<string, { file: string; path: string }>();
+    /**
+     * 「系统里已经有一份」——**借宿主 PATH 的**那一档（#87 / 轴1③）。
+     *
+     * 与上面那一格**分开两个 Map**：一个是"我们 store 里没登记的副本"，
+     * 一个是"根本不是我们的东西"。合成一个就又把两种状态说成同一种了。
+     */
+    let servedFromSystemPath = new Map<string, { file: string; path: string }>();
     if (notInstalled) {
       try {
         const tools = await discoverTools({ storeRoot: state.modelsRoot });
         const claimed = await state.claimedInstallPaths();
         /** 现在真的解析到的路径，按 basename 索引。 */
         const live = new Map<string, string>();
+        /** 借宿主 PATH 的那些，按 basename 索引。 */
+        const onSystemPath = new Map<string, string>();
         const storeRoot = state.modelsRoot.endsWith(path.sep)
           ? state.modelsRoot
           : state.modelsRoot + path.sep;
@@ -425,7 +434,18 @@ export async function handleBackendRoutes(
            * 而本仓专门修过"把借来的说成自家的 / 把自家的说成借来的"那一族
            * （`bundledRuntime.ts` 的表里就记着这条）。借 PATH 那一格由自检负责说。
            */
-          if (!v.startsWith(storeRoot)) continue;
+          if (!v.startsWith(storeRoot)) {
+            /*
+             * ★ #87：落在 store 之外的分两种，**不能一起丢掉**。
+             *   · 包内自带（`runtime/probe/`）—— 那是**我们的**，由 bundled 那条路认领；
+             *   · 其余 ⇒ 借宿主 PATH 的那一份。它就是"用户自己 brew install 了一个"
+             *     的证据，而目录此刻正准备请他再下一遍 145 MB。
+             * 判据是结构性的（路径落在哪儿），与 `selfcheck.ts` 同源 ——
+             * 解析器把命中的档位丢掉了，所以不去问它要"档位"。
+             */
+            if (!isBundledRuntimePath(v)) onSystemPath.set(path.basename(v), v);
+            continue;
+          }
           // 落在已认领范围内的不算"没人记录的副本"
           if ([...claimed].some((c) => v === c || v.startsWith(c + path.sep))) continue;
           live.set(path.basename(v), v);
@@ -439,6 +459,13 @@ export async function handleBackendRoutes(
               break;
             }
           }
+          for (const name of p.providesFiles ?? []) {
+            const hit = onSystemPath.get(name);
+            if (hit !== undefined) {
+              servedFromSystemPath.set(p.id, { file: name, path: hit });
+              break;
+            }
+          }
         }
       } catch {
         /*
@@ -447,6 +474,7 @@ export async function handleBackendRoutes(
          * `check-elf-glibc` 对 objdump 缺失同源。
          */
         servedFromUnrecorded = new Map();
+        servedFromSystemPath = new Map();
       }
     }
     /**
@@ -509,6 +537,13 @@ export async function handleBackendRoutes(
            */
           ...(servedFromUnrecorded.has(pack.id)
             ? { installedOnDiskButUnrecorded: servedFromUnrecorded.get(pack.id) }
+            : {}),
+          /*
+           * 同上，只在真有证据时才发：系统里已经有一份可用的同名二进制。
+           * 前端据此在装按钮旁边说一句实话，而不是继续请用户把已经有的东西再下一遍。
+           */
+          ...(servedFromSystemPath.has(pack.id)
+            ? { servedFromSystemPath: servedFromSystemPath.get(pack.id) }
             : {}),
           /*
            * 没装 ⇒ `null`（不是 undefined 也不是目录的值）：**"我没有"和"我不知道"

@@ -330,7 +330,8 @@
       "update": "Update",
       "updateTitle": "The version you have installed is not the same file as the one in the catalogue. Install the catalogue version (the old one is replaced).",
       "catalogHas": "catalog has {{version}} ({{size}})",
-      "servedFromUnrecorded": "A copy of {{file}} is already on disk and in use, but it has no install record ({{path}}) — installing gets you the catalog version and takes over from it."
+      "servedFromUnrecorded": "A copy of {{file}} is already on disk and in use, but it has no install record ({{path}}) — installing gets you the catalog version and takes over from it.",
+      "servedFromSystemPath": "Your system already has a working {{file}} ({{path}}) and we are using it — installing this only switches to our own copy; it is not required."
     },
     "chip": {
       "active": "In use",
