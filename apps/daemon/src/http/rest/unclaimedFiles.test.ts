@@ -222,6 +222,27 @@ describe('无法识别的残留：看得见 / 删得掉 / 删之前证明没在�
     assert.ok((await stat(claimed)).isFile(), '把有记录的包一起删了');
   });
 
+  it('★ 「报的可回收」与「真删掉的」必须出自同一份判断（否则界面会承诺一件不会发生的事）', async () => {
+    const state = await seed();
+    await installClaimed(state);
+    await leaveOrphan(state, 'whisper-bin-ubuntu-x64', 'some-leftover.bin');
+
+    /*
+     * 上一版 `collectUnclaimed()` 自己又跑了一次 `discoverTools()` 判断能不能删，
+     * 而 `buildStorage()` 用的是 `findUnclaimedFiles()` 的结果 —— **两处各自决定**。
+     * 解析器一失败，界面报一个 298 MB 的可回收，而点下去一个字节都不删。
+     * 现在只有一处判断（`inUseBy`），这条断言把"只有一处"钉住。
+     */
+    const promised = (await state.buildStorage()).reclaimable.unclaimedBytes ?? 0;
+    const delivered = (await state.collectUnclaimed()).freedBytes;
+    assert.equal(
+      delivered,
+      promised,
+      `界面承诺可回收 ${promised}，实际删了 ${delivered} —— 两份判断漂移了`,
+    );
+    assert.ok(promised > 0, '两个都是 0 的话这条断言在空跑');
+  });
+
   it('★ `usedBytes` 必须把解开的目录算进去（那正是少算 840 MB 的成因）', async () => {
     const state = await seed();
     await installClaimed(state);

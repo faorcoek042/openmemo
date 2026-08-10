@@ -81,6 +81,30 @@ export const HARDWARE_SNAPSHOT_ID = 'hw-local';
  * 去重不是洁癖：`by-name/<kind>/<归档名>` 与 `blobs/sha256-…` 是**同一个 inode**
  * （`[实测]` `ino=289895 links=2`），数两遍会让"能回收多少"报出一个用户永远拿不到的数。
  */
+/**
+ * 「工具解析器不可用，因此无法证明这个残留没在用」的具名标记。
+ *
+ * 用一个**会显示给用户**的字符串而不是布尔：这一格出现时，用户看到的是
+ * 「这几项不能回收，因为我们现在问不出它们在不在用」——
+ * 那比一个安静地不出现在可回收里的数字诚实得多。
+ */
+const RESOLVER_UNAVAILABLE = '工具解析器当前不可用，无法证明它没在被使用';
+
+/**
+ * 产品**现在**把工具解析到了哪些路径 —— 「无法识别的残留」的第二道闸。
+ *
+ * 返回 `null` 表示**解析器自己失败了**（不是"没有工具"）。调用方必须把它
+ * 当成"可能在用"，而不是"可以删"。两者混同过一次，代价见 `findUnclaimedFiles()`。
+ */
+async function resolveLiveToolPaths(storeRoot: string): Promise<string[] | null> {
+  try {
+    const tools = await discoverTools({ storeRoot });
+    return Object.values(tools).filter((v): v is string => typeof v === 'string' && v.length > 0);
+  } catch {
+    return null;
+  }
+}
+
 async function duBytes(root: string): Promise<number> {
   const seen = new Set<string>();
   let total = 0;
@@ -1093,21 +1117,18 @@ export class RestState {
     /*
      * 产品**现在**解析到的每一个工具路径。这是第二道闸，不是装饰：
      * `discoverTools()` 就是 `buildPipeline()` 装配时调的那一个。
+     *
+     * ★ `null` 与 `[]` 是**两件事**，这里必须分开：
+     *   · `[]`   —— 解析器跑通了，它说"没有任何工具落在这些残留里"；
+     *   · `null` —— **解析器自己失败了**，我们根本没拿到答案。
+     * 上一版把两者都塞进 `[]`，于是解析器一失败，全部残留都会被算成"可回收" ——
+     * 而真正的删除路径又会拒绝删（它另外做了一次自己的 try/catch）。
+     * 结果是**界面报一个 298 MB 的可回收，点下去一个字节都不删**：
+     * 又一次"产品报告了一件没发生的事"。
+     * （顺带：那一版 `let livePaths = []` 的初值两条分支都会覆盖，
+     *   `no-useless-assignment` 报的就是它 —— **是多余的赋值，不是漏了用**。）
      */
-    let livePaths: string[] = [];
-    try {
-      const tools = await discoverTools({ storeRoot: this.store.root });
-      livePaths = Object.entries(tools)
-        .filter((e): e is [string, string] => typeof e[1] === 'string' && e[1].length > 0)
-        .map(([, v]) => v);
-    } catch {
-      /*
-       * 解析不出来时**不当作"没在用"**：这一格拿不到答案，就不该拿它当删除的依据。
-       * 下面 `inUseBy` 会保持 null，但整份结果只是"候选"，调用方仍会看到 bytes。
-       * 真正的删除路径（`collectUnclaimed`）在解析失败时会拒绝删。
-       */
-      livePaths = [];
-    }
+    const livePaths = await resolveLiveToolPaths(this.store.root);
 
     const out: { relPath: string; bytes: number; inUseBy: string | null }[] = [];
     for (const kind of STORE_KINDS) {
@@ -1121,7 +1142,15 @@ export class RestState {
       for (const e of entries) {
         const abs = path.join(dir, e.name);
         if (claimed.has(abs)) continue;
-        const inUse = livePaths.find((lp) => lp === abs || lp.startsWith(abs + path.sep)) ?? null;
+        /*
+         * 解析器不可用 ⇒ **一律当成"可能在用"**。判据与 `hw.probe` 对探针缺失、
+         * `check-elf-glibc` 对 objdump 缺失同源：「我问不出来」不等于「它没在用」，
+         * 而这一格的代价是**删掉用户正在跑的东西**。
+         */
+        const inUse =
+          livePaths === null
+            ? RESOLVER_UNAVAILABLE
+            : (livePaths.find((lp) => lp === abs || lp.startsWith(abs + path.sep)) ?? null);
         out.push({
           relPath: path.relative(this.store.root, abs),
           bytes: await duBytes(abs),
@@ -1143,14 +1172,16 @@ export class RestState {
    * 这与 `check-elf-glibc` 对 `objdump` 缺失的态度、与 `hw.probe` 对探针缺失的态度同源。
    */
   async collectUnclaimed(): Promise<{ freedBytes: number; removedFiles: number }> {
-    let resolverOk = true;
-    try {
-      await discoverTools({ storeRoot: this.store.root });
-    } catch {
-      resolverOk = false;
-    }
-    if (!resolverOk) return { freedBytes: 0, removedFiles: 0 };
-
+    /*
+     * ★ 不在这里另做一次解析器判断。
+     *
+     * 上一版这里自己 try/catch 了一遍 `discoverTools()`，于是"能不能删"与
+     * "算不算可回收"由**两处**各自决定 —— 解析器一失败，`buildStorage()` 报
+     * 一个 298 MB 的可回收，而这里一个字节都不删。**两份判断必然漂移。**
+     * 现在只有一处：`findUnclaimedFiles()` 在解析器不可用时把每一项都标成
+     * `inUseBy = RESOLVER_UNAVAILABLE`，下面这句 `continue` 自动把它们跳过，
+     * 而同一个字段也让它们不进 `reclaimable.unclaimedBytes`。
+     */
     const items = await this.findUnclaimedFiles();
     let freed = 0;
     let removed = 0;
