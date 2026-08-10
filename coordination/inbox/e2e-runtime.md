@@ -661,3 +661,93 @@ artifact 实测：**`e2e-attest-runtime-31268366005`  377 B  expired=false** ✅
 （`31317995697`/`31318703812`），无诊断的门禁 `31316142174` 三平台全绿。
 失败文本是真的像缺陷（`端点回了 404 FOLDER_NOT_FOUND，而界面一个字都没说`），
 但它对时序敏感、且**不在门禁路径上**。**没动它。**
+
+---
+
+## 2026-08-10 · 第 3 环「还能下载更多模型」·在 :10000 上走真实用户路径
+
+**先回答两句话。**
+
+**① 大模型下下来之后，真的转出非空文本了。** `[用户可达 · 本机实测]`
+`asr/whisper-large-v3-turbo-f16`（1,624,555,275 B）经**网页上的量化档选择器 + 「Download 1.6 GB」按钮**装上，
+`activate` 到 asr 槽后上传 `jfk.wav`（11 秒真人英语），9 秒转完，转出：
+
+> 「And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.」
+
+判据是**文本**不是状态：`segments=1`、108 字符、`transcript.modelId=ggml-large-v3-turbo.bin`、`engineId=whisper.cpp`。
+
+**② 有一处在说假话——准确说是"该说话时全程沉默"：**
+**只要点开过量化选择器，这一次下载就不会有任何任务 Toast。**（详见下面的对照组。）
+其余部分没抓到谎话：百分比/字节/速度/ETA 全程在动，阶段文案没倒退，没漏 ASCII 枚举值。
+
+### 走的是哪条路（不许手塞文件）
+
+`/models?tab=asr` → `model-card-asr/whisper-large-v3-turbo` → 点 `models-quant-selector`
+（**它不是 `<select>`，是 popover listbox**）→ 选单里三档实测：
+`Q5_0 574 MB / 1.4 GB`、`Q8_0 874 MB / 1.7 GB`、`F16 1.6 GB / 2.4 GB`，右列适配语「Runs, but slowly」
+→ 点 F16 → 按钮文案从「Download 574 MB」变成「**Download 1.6 GB**」→ 点它。
+**换档真的生效**（按钮金额跟着变，最终装的确实是 f16）。
+
+### 界面上那几个数：动了
+
+`[本机实测 · 247 秒 · 945 个采样点]` 不同值个数：**百分比 92 · 字节 219 · 速度 39 · ETA 9**。
+ETA 文案是 `about 4 min → about 2 min → about 1 min`，**在变**。
+（对照：`asr/whisper-small-f16` 488 MB 那轮 61/157/34/4；`medium-q5_0` 539 MB 那轮 70/162/34/3。）
+
+### ★ 缺陷：点开过量化选择器 ⇒ 整轮没有任务 Toast（**只报不改**）
+
+五轮对照，**完全可复现**：
+
+| # | 模型 / 体积 | 有没有碰量化选择器 | 任务 Toast |
+|---|---|---|---|
+| 1 | turbo-q5_0 574 MB | **没碰**（默认档） | **有** |
+| 2 | turbo-f16 1.6 GB | 点开 + 选 F16 | **一条都没有** |
+| 3 | small-f16 488 MB | 点开 + 选 F16 | **一条都没有** |
+| 4 | tiny-q5_1 32 MB | **没碰**（默认档） | **有** |
+| 5 | medium-q5_0 539 MB | 点开 + **选原本就选中的那一档** | **一条都没有** |
+
+第 5 轮是关键：**选的还是原来那一档**，Toast 照样消失 ⇒ 触发条件是
+「**点开过那个选择器**」，**不是**「选了非默认档」。给下一个人省一次二分。
+
+- 有 Toast 时它是对的：标题 `Downloading model · …` / `Preparing · …`，阶段行
+  `Working · 0 B / 32 MB` → `Choosing a download source · …` → `Downloading · 22 MB / 32 MB · 3.7 MB/s · less than a minute`。
+- 没 Toast 时**不是全黑**：模型卡上的进度照常走，`/api/jobs` 里 `kind=model state=running step=downloading` 也在。
+  丢的是**那一层浮层反馈**。
+- ⚠️ 影响面正好打在 2.2 上：**认真挑量化档的用户 = 最需要反馈的用户**，恰恰一条 Toast 都收不到。
+
+### 切回小模型：**确认真的生效**（不是只有标记变）
+
+`activate(base-q5_1)` → `/api/health` 的 `pipeline.modelPath` 从
+`ggml-large-v3-turbo.bin` 变回 `ggml-base-q5_1.bin` → **再传一次同一段音频**：
+`transcript.modelId=ggml-base-q5_1.bin`、107 字符、2 秒转完（大模型那次 9 秒）。
+两次权重文件不同 ⇒ **切换对下一次转写真的起作用**。
+（顺带一个质量差的旁证：large 断出「And so, my fellow Americans」有逗号，base 没有。）
+daemon 环境里**没有** `OPENMEMO_ASR_MODEL`，不存在"被环境变量静默压过"。
+
+### 第 5 环 runtime 探测：**没跟上，但这次不该跟**
+
+装完 1.6 GB 模型前后 `/api/runtime/hardware` **逐字段相同**：
+`detectedAt` 都是 `04:09:34.719Z`、`selectedBackend=cpu`、`installedBackends=['cpu']`、
+`probe.ran=true ok=true`、breaker `closed / consecutiveFailures=0 / fingerprint=6be652b896c4852b`。
+查了两个 commit：`7986be9` 的指纹按**后端包内容**算、`d14b14e` 的「更新」按钮在
+**BackendPackCard**（后端包）上 —— 两者管的都是**后端包**，装模型本来就不该动它们。
+⇒ 这次的"没变"是对的，不是漏。**但也就意味着这两条改动这次并没有被验到** `[未验证]`。
+真要验必须走**后端包安装/升级**那条路（而且 `BackendPackCard.tsx` 眼下有别人在改）。
+
+### 另外两条观察（都只报）
+
+- **中英混排**：界面是英文（`Download 1.6 GB` / `Downloading` / `less than a minute`），
+  模型名却是中文（`Whisper 超小模型（Q5_1 量化）`）。Toast 标题因此长成
+  `Downloading model · Whisper 超小模型（Q5_1 量化）`。**`[未验证]` 是不是只在
+  navigator.language=en 的无头浏览器里这样**——真人浏览器可能是中文，形状会不同。
+- `GET /api/jobs` 里模型任务的 `name` 与 `createdAt` 都是 `null`（mindmap 任务有）。
+  Toast 的名字是 SSE `job.created` 带的，**REST 这一路没有** —— 刷新页面后任务中心
+  拿不到名字。与我 8-09 记的「进行中刷新 ⇒ Toast 不再出现」是同一族问题。
+
+### 我动了什么 / 没动什么
+
+- **只走产品 HTTP 路**；没手塞文件、没碰 `/root/data-memo` 里已有的东西、没停任何进程。
+- 新增：5 个模型（共约 3.2 GB，**按要求没删**）+ 2 条取证笔记（`第3环取证 大模型/小模型`）。
+- **活动模型已还原成 `asr/whisper-base-q5_1`**，`/api/health` `ready=true`。
+- 磁盘：**9.3 GB 可用**（81%）。
+- 那 298 MB「无法识别的残留」**一个字节都没动**。
