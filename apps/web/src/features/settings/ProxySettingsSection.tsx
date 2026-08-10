@@ -304,7 +304,14 @@ export function ProxySettingsSection() {
               ? t('settings.proxy.verdictProxyDown')
               : testProxy.data.ok
                 ? t('settings.proxy.verdictAllOk')
-                : t('settings.proxy.verdictUpstreamBlocked')}
+                : /*
+                   * 至少一条探针落在了 'unclassified' —— classify() 也说不清是代理还是
+                   * 目标站的问题。这时绝不能落到 verdictUpstreamBlocked，那句话的原文
+                   * 就是「问题不在你的代理」，对一个诚实的"不知道"来说这是在瞎猜。
+                   */
+                  arr(testProxy.data.probes).some((p) => p.result === 'unclassified')
+                  ? t('settings.proxy.verdictUnclassified')
+                  : t('settings.proxy.verdictUpstreamBlocked')}
           </p>
           <ul className="space-y-1">
             {arr(testProxy.data.probes).map((p) => (
@@ -312,7 +319,11 @@ export function ProxySettingsSection() {
                 {/* StatusChip 强制要求 label —— 状态绝不只用颜色表达 */}
                 <StatusChip
                   tone={
-                    p.result === 'ok' ? 'good' : p.result === 'skipped' ? 'neutral' : 'critical'
+                    p.result === 'ok'
+                      ? 'good'
+                      : p.result === 'skipped' || p.result === 'unclassified'
+                        ? 'neutral'
+                        : 'critical'
                   }
                   label={t(`settings.proxy.probe.${p.result}`)}
                 />
