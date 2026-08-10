@@ -796,7 +796,7 @@ describe('diffSelfCheckReports 真的抓得到漂移', () => {
     dataDir: '',
     storeRoot: '',
     extensionsDir: '',
-    counts: { ok: 0, warn: 0, fail: 0 },
+    counts: { ok: 0, warn: 0, fail: 0, unavailable: 0 },
     results: results.map((r) => ({
       layer: 'x',
       id: r.id,
@@ -1283,5 +1283,75 @@ describe('★ T-174 英文字段里不许出现中文', () => {
     // 中英同形的那三条**不该**被强行拆开 —— 守卫允许相等，见本组头注
     assert.equal(byId(r, 'tool.ffmpeg')?.label, 'ffmpeg');
     assert.equal(byId(r, 'tool.ffmpeg')?.labelZh, 'ffmpeg');
+  });
+});
+
+/* ═════════ ★ 第四态 `unavailable` —— 「没有答案，也没有下一步」 ═════════ */
+
+describe('★ CheckStatus 第四态：hw.cpu 不再对一台没测过的 CPU 下预言', () => {
+  /*
+   * 事故形状：`detectCpu()` 的空 `features` 有三个真实生产者（win32 的 PowerShell
+   * 被执行策略挡住 / 命令跑通却没解析出东西 / 非三大平台的 default 分支无条件返回 []），
+   * 而自检把空集合读成「测过了，没有」，于是一台**装着 AVX2 的正常机器**
+   * 被告知「未检出指令集 → 推理会明显更慢」——**一句关于硬件的预言。**
+   *
+   * ⚠️ 判据钉的是**后果**，不是措辞里的某个词：
+   *   ① 状态不能是 ok / fail（它既不是"好的"也不是"坏了"）；
+   *   ② **`remediation` 必须为 null** —— 原来那句不是动作，是结论，用户找不到终点；
+   *   ③ detail 里必须**明说"不代表这台机器没有"**，否则读的人还是会读成"测过了没有"。
+   */
+  it('本机真实跑一次：features 为空时必须是 unavailable + remediation 为 null', async () => {
+    const r = await runSelfCheck({ ...BASE, probes: minimalProbes() });
+    const cpu = byId(r, 'hw.cpu');
+    assert.ok(cpu, 'hw.cpu 这条必须始终存在（T-119：id 集合不变）');
+
+    if (cpu.detail.includes('本次未能测出')) {
+      // 这台机器没测出指令集 —— 那就必须是第四态，且没有"补救"
+      assert.equal(cpu.status, 'unavailable');
+      assert.equal(cpu.remediation, null, '"没有下一步"的态不许给补救 —— 那是走不出去的路');
+      assert.equal(
+        cpu.detail.includes('不代表这台机器没有'),
+        true,
+        `措辞必须挡住"测过了没有"这种读法：${cpu.detail}`,
+      );
+    } else {
+      // 测出来了 —— 那就是 ok，且同样没有补救
+      assert.equal(cpu.status, 'ok');
+      assert.equal(cpu.remediation, null);
+    }
+  });
+
+  it('★ 任何 unavailable 的检查项都不许带 remediation（这一态的定义就是"没有下一步"）', async () => {
+    const r = await runSelfCheck({ ...BASE, probes: minimalProbes() });
+    const un = r.results.filter((c) => c.status === 'unavailable');
+    for (const c of un) {
+      assert.equal(
+        c.remediation,
+        null,
+        `${c.id} 是 unavailable 却给了补救：${String(c.remediation)}`,
+      );
+      assert.equal(c.remediationEn ?? null, null, `${c.id} 的英文补救也必须为空`);
+    }
+    // 前提自检：这一轮真的产生过这一态才谈得上"守住了"（空集返回绿，⑤A-2）
+    assert.equal(
+      un.length + r.results.filter((c) => c.id === 'hw.cpu' && c.status === 'ok').length > 0,
+      true,
+      'hw.cpu 既不是 unavailable 也不是 ok —— 这条守卫钉的是零',
+    );
+  });
+
+  it('★ unavailable 不进 ok 的判据，但**单独计数**（不许并进 warn）', async () => {
+    const r = await runSelfCheck({ ...BASE, probes: minimalProbes() });
+    assert.equal(typeof r.counts.unavailable, 'number', 'counts 必须有独立的第四档');
+    // 三态并成两态，第三态就消失了 —— 计数必须逐条对得上
+    const sum = r.counts.ok + r.counts.warn + r.counts.fail + r.counts.unavailable;
+    assert.equal(
+      sum,
+      r.results.length,
+      `四档相加 ${String(sum)} ≠ 总数 ${String(r.results.length)}`,
+    );
+    // `ok` 只看 fail && required：unavailable 不许让整份报告变红
+    const requiredFails = r.results.filter((c) => c.status === 'fail' && c.required);
+    assert.equal(r.ok, requiredFails.length === 0);
   });
 });

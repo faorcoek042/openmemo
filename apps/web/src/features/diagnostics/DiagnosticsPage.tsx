@@ -3,7 +3,7 @@ import { copyText } from '../../lib/secure-context';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { useState } from 'react';
-import { AlertTriangle, CheckCircle2, Copy, RefreshCw, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Copy, MinusCircle, RefreshCw, XCircle } from 'lucide-react';
 
 import { ApiError, rawFetch } from '../../lib/api/client';
 import { Button } from '../../components/common/Button';
@@ -80,7 +80,18 @@ interface Health {
   sseClients?: number;
 }
 
-type Level = 'ok' | 'warn' | 'fail';
+/**
+ * ⚠️ 与 `packages/runtime/src/selfcheck.ts` 的 `CheckStatus` 一一对应。
+ *
+ * `'unavailable'` 是第四态：**答案取不到，而且没有用户可执行的下一步**
+ *（本次没测出来，或这台机器的目录里根本没有可下载的包）。
+ *
+ * ★ 加它的同时**必须**改 `LevelIcon`：那个函数是"不是 ok 也不是 warn 就画红叉"的
+ * 写法，新态若不接，用户看到的仍然是一个红叉 —— 那样 daemon 侧那半修复
+ * （不再让整份报告永久红）**在界面上等于没做**。
+ * 这正是本仓记过的「算好发出、离终点一行被丢掉」那一族。
+ */
+type Level = 'ok' | 'warn' | 'fail' | 'unavailable';
 
 /**
  * `GET /api/selfcheck` 的一条结果。
@@ -137,6 +148,13 @@ function LevelIcon({ level }: { level: Level }) {
     return <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-good" aria-hidden />;
   if (level === 'warn')
     return <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />;
+  /*
+   * ★ `unavailable` 用中性图标，**不是红叉也不是黄警告**。
+   * 红叉 = "坏了"，黄警告 = "降级了，你可以处理" —— 这一态两者都不是：
+   * 它是"这里没有答案，而且你没有下一步"。画成红叉会让用户去找一个不存在的修法。
+   */
+  if (level === 'unavailable')
+    return <MinusCircle className="mt-0.5 size-3.5 shrink-0 text-ink-muted" aria-hidden />;
   return <XCircle className="mt-0.5 size-3.5 shrink-0 text-critical" aria-hidden />;
 }
 

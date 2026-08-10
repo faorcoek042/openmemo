@@ -63,7 +63,29 @@ import { mediaAssetRoots, probeAssetFile } from './assetPaths.js';
 import { detectCpu, detectMemory, detectOs } from './detect/system.js';
 import { runProbe } from './probe/runProbe.js';
 
-export type CheckStatus = 'ok' | 'warn' | 'fail';
+/**
+ * `'unavailable'` = **这一格的答案在这台机器上取不到，而且没有用户可执行的下一步。**
+ *
+ * ── 它和另外三态的区别，一句话各一条 ────────────────────────────────────────────
+ *   · `ok`    —— 测了，是好的
+ *   · `warn`  —— 测了，是降级的，**而用户能做点什么**（所以 `remediation` 有内容）
+ *   · `fail`  —— 测了，坏了；`required` 时让整份报告红
+ *   · `unavailable` —— **没有一个用户能据以行动的结论**：要么本次没测出来（`hw.cpu`），
+ *     要么结论有了但这台机器上根本没有下一步（`tool.*`：本平台目录里没有可下载的包）。
+ *
+ * ⚠️ **`remediation` 必须为 `null`。** 这一态的定义里就包含"没有下一步"——
+ * 给它写一句"去装吧"就等于把它退回成 `fail`，而那正是本仓刚清掉的那种
+ * **走不出去的补救**（用户拿着它去找"怎么修"，没有终点）。
+ *
+ * ⚠️ **它不进 `ok:` 的判据**（`ok` 只看 `fail && required`）。理由不是"放宽"，
+ * 是这一态**按定义就不是"坏了"**：Intel Mac 上没有 ffmpeg 包，不代表这台机器的
+ * 产品装坏了，而"整份报告永久红"会让红灯彻底失去信息量（假红与假绿同价，HANDOFF ⑤B）。
+ *
+ * ⚠️ **不许拿它去替换 `notProbed()` 的 `warn`。** T-119 的规矩是「**id 集合不变**」，
+ * 探针没给时那条检查项必须照常出现；那一族说的是"本次运行没提供探针"，
+ * 与这里"探针给了、答案取不到"是两件事。
+ */
+export type CheckStatus = 'ok' | 'warn' | 'fail' | 'unavailable';
 
 export interface CheckResult {
   /** Grouping for display: hardware / tools / models / llm / ext / datadir / engines / proxy. */
@@ -103,7 +125,7 @@ export interface SelfCheckReport {
   dataDir: string;
   storeRoot: string;
   extensionsDir: string;
-  counts: { ok: number; warn: number; fail: number };
+  counts: { ok: number; warn: number; fail: number; unavailable: number };
   results: CheckResult[];
 }
 
@@ -830,7 +852,9 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
     id: 'hw.cpu',
     label: 'CPU instruction sets',
     labelZh: 'CPU 指令集',
-    status: cpuFeaturesUnknown ? 'warn' : 'ok',
+    // ★ 用 `unavailable` 而不是 `warn`：`warn` 的语义里含着"你能做点什么"，
+    //   而这一格恰恰**没有下一步**（见 CheckStatus 的注释）。
+    status: cpuFeaturesUnknown ? 'unavailable' : 'ok',
     detail: cpuFeaturesUnknown
       ? `${cpu.brand} · ${cpu.physicalCores}核 · 本次未能测出指令集（不代表这台机器没有）`
       : `${cpu.brand} · ${cpu.physicalCores}核 · ${cpu.features.slice(0, 6).join(',')}`,
@@ -1732,6 +1756,12 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
     ok: results.filter((r) => r.status === 'ok').length,
     warn: results.filter((r) => r.status === 'warn').length,
     fail: results.filter((r) => r.status === 'fail').length,
+    /*
+     * ★ 单独一档，**不许并进 warn**：并进去就等于说"这也是你能处理的降级"，
+     *   而这一态的定义就是"没有下一步"。三态并成两态，第三态就消失了 ——
+     *   本仓已经因为"把没测过说成测过了"付过好几次账。
+     */
+    unavailable: results.filter((r) => r.status === 'unavailable').length,
   };
 
   return {
