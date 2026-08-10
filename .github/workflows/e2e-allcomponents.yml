@@ -190,6 +190,7 @@ jobs:
             --leg allcomponents \
             --bundle-run "${{ inputs.bundleRunId }}" \
             --platforms linux-x64,darwin-arm64,win32-x64 \
+            --mode "${{ inputs.mode }}" \
             --out dist/e2e-attest.json
       - uses: actions/upload-artifact@v6
         with:

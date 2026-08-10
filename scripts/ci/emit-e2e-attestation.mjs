@@ -31,6 +31,12 @@
  * 文件内容（平台清单、commit、e2e run id）只用于**事后审计**，不参与判定 ——
  * 一个需要读内容才能判定的凭证，迟早会有人读错。
  *
+ * ★ 2026-08-10 补一句，免得上面那段被读成"内容永远没人看"：
+ *   **判定**仍然只看名字（一个字没改）；但闸门现在会**把内容读出来念一遍覆盖面**
+ *   （`undecided` / `mode`）。理由：一条腿可以三平台全绿却带着几条没验到的断言，
+ *   而"名字在不在"讲不出这件事。**读出来 ≠ 参与判定** —— 要不要因此拒绝放行，
+ *   是 Manager 的裁决，不是这个脚本的。
+ *
  * ## 发凭证的 job 必须 `needs:` 全部平台，且**不带任何 `if:`**
  *
  * 任何一个平台失败或被跳过 → 这个 job 自己被跳过 → **那个 artifact 根本不存在**。
@@ -69,6 +75,29 @@ const platforms = String(arg('--platforms', ''))
   .map((s) => s.trim())
   .filter(Boolean);
 const out = arg('--out', 'dist/e2e-attest.json');
+/*
+ * ★ 覆盖面两格（Manager 2026-08-10 裁决）：**一张不说覆盖面的凭证，
+ *   会让闸门给出比实际更强的保证。**
+ *
+ * · `--undecided N`：这条腿本轮有多少条断言是"无从判断"（跑了，但什么都没证明）。
+ *   一条腿可以**三平台全绿**却带着若干条没被验到的断言
+ *   （`[CI 实测 e2e-browser run 31367583056]` darwin 就带着 4 条），
+ *   而凭证只说"跑绿过"，读起来像"全验过"。
+ * · `--mode sample|full`：`allcomponents` 那种抽样覆盖面。
+ *   `mode=sample` 时 18/30 个模型变体被跳过（大号 Whisper 全在跳过里，
+ *   因为 runner 装不下 39.4 GB）—— 那不是"验过了"。
+ *
+ * 两个都是**可选**：不传就写 null，老调用方一个字都不用改（schema 向后兼容）。
+ * ⚠️ artifact 的**名字一个字不改** —— 现有消费方靠名字精确匹配。
+ */
+const undecidedRaw = arg('--undecided', null);
+const mode = arg('--mode', null);
+if (undecidedRaw !== null && !/^\d+$/.test(String(undecidedRaw))) {
+  die(`--undecided 必须是非负整数，实得 ${JSON.stringify(undecidedRaw)}`);
+}
+if (mode !== null && !/^(sample|full)$/.test(String(mode))) {
+  die(`--mode 只能是 sample 或 full，实得 ${JSON.stringify(mode)}`);
+}
 
 if (!leg || !/^[a-z0-9-]+$/.test(leg))
   die(`--leg 缺失或不合法（只允许小写字母/数字/连字符）：${leg}`);
@@ -92,6 +121,15 @@ const attestation = {
   /** 这张凭证绑定的**那一批包**。换一批包就是另一个名字，旧凭证自动失效。 */
   bundleRunId: bundleRun,
   platforms,
+  /**
+   * ★ 覆盖面：**"跑绿过"不等于"全验过"**。
+   * `undecided` = 本轮"无从判断"的断言条数（null = 这条腿没上报，不是 0）。
+   * `mode`      = 抽样覆盖面（sample/full；null = 不适用或没上报）。
+   * ⚠️ null 与 0 **不是一回事**：0 是"报了，确实一条都没有"，
+   *    null 是"这条腿还没接线" —— 闸门必须把这两种说成不同的话。
+   */
+  undecided: undecidedRaw === null ? null : Number(undecidedRaw),
+  mode: mode === null ? null : String(mode),
   /** 以下只用于事后审计，**不参与判定**。 */
   e2eRunId: process.env.GITHUB_RUN_ID ?? null,
   e2eRunAttempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
@@ -112,6 +150,16 @@ console.log('─'.repeat(88));
 console.log(`   腿      ：${leg}`);
 console.log(`   针对包  ：build-bundles run ${bundleRun}`);
 console.log(`   平台    ：${platforms.join(', ')}`);
+console.log(
+  `   覆盖面  ：未决 ${undecidedRaw === null ? '未上报' : `${undecidedRaw} 条`}` +
+    ` · 抽样 ${mode === null ? '不适用/未上报' : mode}`,
+);
+if (undecidedRaw !== null && Number(undecidedRaw) > 0) {
+  console.log(
+    `   ⚠️ 这条腿有 ${undecidedRaw} 条断言**没被验到**（无从判断）——` +
+      ` 这张凭证证明的是"跑绿过"，**不是"全验过"**。`,
+  );
+}
 console.log(`   e2e run ：${attestation.e2eRunId ?? '(本机)'}`);
 console.log(`   写到    ：${out}`);
 console.log('');

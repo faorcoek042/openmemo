@@ -46,6 +46,59 @@
  * 需要 `GH_TOKEN`（`actions: read` 足够）。
  */
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * ★ 把凭证的**覆盖面**读出来念一遍（Manager 2026-08-10 裁决）
+ *
+ * ⚠️ **判定一个字没改**：仍然只看 artifact 名字在不在。这里只是**说出口**。
+ *
+ * 为什么必须有这一段：`emit-e2e-attestation.mjs` 往载荷里写了 `undecided` / `mode`，
+ * 而这道闸此前**只做名字字符串匹配，从不下载、不解析** ——
+ * 于是那两个字段**今天没有任何消费方**。
+ * **一个没有消费方的字段，和没有这个字段是一回事**
+ * （今天早些时候刚修过同形状的一处：`noteUid` 由 daemon 算好、契约注释写着"给界面用"，
+ *   而前端在离终点一行的地方把它丢掉，全程零报错）。
+ *
+ * 读不到就说"读不到"，**绝不猜、也绝不因此拒绝放行** —— 要不要卡，是 Manager 的裁决。
+ * ─────────────────────────────────────────────────────────────────────────── */
+function readCoverage(runId, name) {
+  const dir = mkdtempSync(join(tmpdir(), 'e2e-attest-'));
+  try {
+    const r = spawnSync('gh', ['run', 'download', String(runId), '--name', name, '--dir', dir], {
+      encoding: 'utf8',
+      timeout: 120_000,
+    });
+    if (r.status !== 0)
+      return { ok: false, why: (r.stderr || '').trim().slice(0, 80) || '下载失败' };
+    const f = join(dir, 'e2e-attest.json');
+    if (!existsSync(f)) return { ok: false, why: '包里没有 e2e-attest.json' };
+    const j = JSON.parse(readFileSync(f, 'utf8'));
+    return { ok: true, undecided: j.undecided ?? null, mode: j.mode ?? null };
+  } catch (e) {
+    return { ok: false, why: String(e.message).slice(0, 80) };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** ⚠️ `null`（没上报）与 `0`（报了，确实没有）必须说成两句不同的话。 */
+function coverageText(cov) {
+  if (!cov.ok) return `  〔覆盖面读不到：${cov.why}〕`;
+  const u =
+    cov.undecided === null
+      ? '未决未上报'
+      : cov.undecided === 0
+        ? '未决 0 条'
+        : `**未决 ${cov.undecided} 条**`;
+  const m =
+    cov.mode === null
+      ? ''
+      : ` · 抽样=${cov.mode}${cov.mode === 'sample' ? '（**不是全量**）' : ''}`;
+  return `  〔${u}${m}〕`;
+}
 
 const argv = process.argv.slice(2);
 const arg = (name, dflt = undefined) => {
@@ -190,8 +243,9 @@ for (const leg of LEGS) {
     });
     say(`   ${leg.padEnd(9)} ✘ 没找到 ${want}（翻了 ${ids.length} 次成功的 run）`);
   } else {
-    found.push({ leg, want, runId: hit });
-    say(`   ${leg.padEnd(9)} ✔ ${want}（来自 ${wf} run ${hit}）`);
+    const cov = readCoverage(hit, want);
+    found.push({ leg, want, runId: hit, cov });
+    say(`   ${leg.padEnd(9)} ✔ ${want}（来自 ${wf} run ${hit}）${coverageText(cov)}`);
   }
 }
 
@@ -199,7 +253,28 @@ say('');
 say('─'.repeat(94));
 if (missing.length === 0) {
   say(`✔ ${LEGS.length} 条腿都对 build-bundles run ${BUNDLE_RUN} 跑绿过 —— 这批包可以发。`);
-  for (const f of found) say(`   · ${f.leg}: ${f.want}（e2e run ${f.runId}）`);
+  for (const f of found)
+    say(`   · ${f.leg}: ${f.want}（e2e run ${f.runId}）${coverageText(f.cov)}`);
+  /*
+   * ★ 把"绿"和"全验过"分开说。此前这一行只有一个 ✔ ——
+   *   而一条腿可以三平台全绿却带着若干条没被验到的断言。
+   *   ⚠️ 这里**只提示，不拦**（今天不改闸门松紧：在别人正拿凭证的过程中改规则是另一种坏）。
+   */
+  const withUn = found.filter(
+    (f) => f.cov?.ok && typeof f.cov.undecided === 'number' && f.cov.undecided > 0,
+  );
+  const sampled = found.filter((f) => f.cov?.ok && f.cov.mode === 'sample');
+  const silent = found.filter((f) => !f.cov?.ok || f.cov.undecided === null);
+  if (withUn.length > 0 || sampled.length > 0 || silent.length > 0) {
+    say('');
+    say('⚠️ 「跑绿过」不等于「全验过」——：');
+    for (const f of withUn)
+      say(`   · ${f.leg}：有 **${f.cov.undecided} 条断言没被验到**（无从判断）`);
+    for (const f of sampled) say(`   · ${f.leg}：抽样模式 sample —— **不是全量覆盖**`);
+    for (const f of silent)
+      say(`   · ${f.leg}：**没上报覆盖面**（未接线或读不到）—— 不知道等于没验过，别当成 0`);
+    say('   （以上不影响放行判定；要不要因此卡住，由 Manager 裁。）');
+  }
   process.exit(0);
 }
 
