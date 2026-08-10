@@ -29,6 +29,11 @@ import assert from 'node:assert/strict';
 import { render, click, type, stubApi } from './host';
 import { NoteActionsMenu } from '../features/notes/NoteActionsMenu';
 import { countUnfinishedJobs } from '../features/tasks/api';
+import { JobToaster } from '../components/common/JobToaster';
+import { bus } from '../lib/events/bus';
+import { notifyJobAttached } from '../lib/jobs/attachedNotice';
+import { useModelPullMutation } from '../features/models/api';
+import zhLocale from '../app/i18n/locales/zh-CN.json';
 
 const UID = '01B11AAAAAAAAAAAAAAAAAAAAA';
 const NOTE = { uid: UID, title: '一条笔记' };
@@ -230,6 +235,210 @@ describe('侧栏「任务」徽标的计数口径', () => {
         job('queued'),
       ]),
       3,
+    );
+  });
+});
+
+/* ══════ 点了就得有反应：被服务端去重的那一次，界面也必须说话 ══════ */
+
+/**
+ * 真机缺陷（2026-08-10）：对一个**当前还在下载中**的模型再点一次「下载」，
+ * 界面**一个字都没有**。报成了「打开量化选择器就没有 Toast」，
+ * 而 `[实测 jsdom 三组对照]` 弹出层无关 —— 变量是"这个模型此刻正在下载"。
+ *
+ * 机制：`downloader/queue.ts:111` 命中 `findActiveByTarget` 就 return，
+ * 走不到 `:154` 的 `emit('job.created')` ⇒ Toast 层收不到任何东西。
+ *
+ * ⚠️ 判据是 Manager 点的那条：**重复点两次，第二次仍然要有 toast** ——
+ * 而不是只断言"toast 存在"（第一次的 toast 还在，那条断言恒真，验不出第二次）。
+ * 所以下面先 `dismiss` 掉第一次的 toast（等价于用户手动关掉、或切页回来），
+ * 再发第二次的"已去重"通知，要求它**重新出现**。
+ */
+describe('被去重的那次点击也必须有反应', () => {
+  const jobCreated = (jobId: string) =>
+    bus.emit('job.created', {
+      type: 'job.created',
+      ts: new Date().toISOString(),
+      job: {
+        jobId,
+        kind: 'model',
+        type: 'model_pull',
+        targetId: 'asr/whisper-tiny-q5_1',
+        displayName: 'Whisper 超小模型（Q5_1 量化）',
+        state: 'running',
+        step: 'downloading',
+        provider: null,
+        totalBytes: 40_000_000,
+        completedBytes: 0,
+        speedBps: 0,
+        etaSeconds: null,
+        parts: [],
+        currentFile: null,
+        fileIndex: 0,
+        fileCount: 1,
+        attempt: 1,
+        maxAttempts: 3,
+        error: null,
+        startedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    });
+
+  const toasts = (c: HTMLElement) => c.querySelectorAll('[data-testid^="job-toast-"]');
+
+  test('★ 第一次点：job.created 来了 → 有 toast（前提自检，证明这条用例不是空的）', async () => {
+    stubApi({ '/health': { ok: true } });
+    const r = await render(<JobToaster />);
+    await r.flush();
+    jobCreated('job-1');
+    await r.flush();
+    assert.equal(toasts(r.container).length, 1);
+    r.unmount();
+  });
+
+  test('★ 第二次点（被去重，daemon 不发 job.created）：仍然必须有 toast', async () => {
+    stubApi({ '/health': { ok: true } });
+    const r = await render(<JobToaster />);
+    await r.flush();
+
+    // 第一次：正常创建
+    jobCreated('job-1');
+    await r.flush();
+    assert.equal(toasts(r.container).length, 1, '第一次就没有 toast —— 后面什么都测不了');
+
+    // 用户关掉它（或切页回来），toast 层空了
+    await click(r.container.querySelector('[data-testid="job-toast-job-1"] button'));
+    await r.flush();
+    assert.equal(toasts(r.container).length, 0, '关不掉的话下面那条断言会因为第一条还在而恒真');
+
+    /*
+     * 第二次点击：服务端去重，**没有 job.created**。
+     * 这里走的是产品真实路径的那一半：`useModelPullMutation.onSuccess` 在
+     * `deduplicated === true` 时调的就是这个函数。
+     */
+    notifyJobAttached({ jobId: 'job-1', targetId: 'asr/whisper-tiny-q5_1' });
+    await r.flush();
+
+    const list = toasts(r.container);
+    assert.equal(list.length, 1, '被去重的那次点击，界面一个字都没有 —— 与"按钮是死的"完全一样');
+    const text = (list[0]?.textContent ?? '').replace(/\s+/g, ' ').trim();
+    assert.equal(text.length > 0, true, 'toast 渲染出来了，但一个字都没有');
+    /*
+     * ⚠️ 钉的是「说清了是哪一种情况」，判据取 **i18n 词条本身**（不是我在这里另写一句中文）——
+     * 文案改了词条，这条跟着走；文案被换成一句泛泛的"有反应了"，这条才红。
+     */
+    const zhJobToast = (zhLocale as unknown as { jobToast: Record<string, string> }).jobToast;
+    const expected = (zhJobToast['alreadyRunning'] ?? '').replace(
+      '{{name}}',
+      'asr/whisper-tiny-q5_1',
+    );
+    assert.equal(text.includes(expected), true, `没说清是"已经在进行中"：${text}`);
+    r.unmount();
+  });
+
+  test('★ 已经有 toast 时不许把它改写成「已经在进行中」（那条"开始下载"是真话）', async () => {
+    stubApi({ '/health': { ok: true } });
+    const r = await render(<JobToaster />);
+    await r.flush();
+    jobCreated('job-1');
+    await r.flush();
+    const before = (
+      r.container.querySelector('[data-testid="job-toast-job-1"]')?.textContent ?? ''
+    ).trim();
+
+    notifyJobAttached({ jobId: 'job-1', targetId: 'asr/whisper-tiny-q5_1' });
+    await r.flush();
+    const after = (
+      r.container.querySelector('[data-testid="job-toast-job-1"]')?.textContent ?? ''
+    ).trim();
+    assert.equal(after, before, 'seed 语义被破坏了：已有的 toast 被改写');
+    r.unmount();
+  });
+});
+
+/**
+ * ⚠️ 上面那三条只覆盖了「toaster 收到通知会不会说话」这一半。
+ * **另一半 —— `useModelPullMutation` 在 `deduplicated` 时到底通不通知 —— 才是生产里坏掉的那半。**
+ * （反向验证时发现的：把 `if (data.deduplicated)` 短路掉，上面三条**一条都不红**。）
+ * 所以这里走产品真实路径：真的调那个 hook、真的让 `POST /models/pull` 回 `deduplicated: true`。
+ */
+describe('去重的那次点击：产品真实路径（hook → toaster）', () => {
+  function PullProbe() {
+    const pull = useModelPullMutation();
+    return (
+      <button
+        type="button"
+        data-testid="probe-pull"
+        onClick={() =>
+          pull.mutate({
+            id: 'asr/whisper-tiny-q5_1',
+            kind: 'model',
+            provider: 'auto',
+            licenseAccepted: true,
+            includeOptional: [],
+          })
+        }
+      >
+        下载
+      </button>
+    );
+  }
+
+  test('★ 服务端回 deduplicated:true → 界面必须出现 toast（此前一个字都没有）', async () => {
+    stubApi({
+      '/health': { ok: true },
+      'POST /models/pull': {
+        jobId: 'job-dedup',
+        state: 'running',
+        targetId: 'asr/whisper-tiny-q5_1',
+        totalBytes: 40_000_000,
+        eventsUrl: '/api/events',
+        deduplicated: true,
+      },
+    });
+    const r = await render(
+      <>
+        <PullProbe />
+        <JobToaster />
+      </>,
+    );
+    await r.flush();
+    assert.equal(r.container.querySelectorAll('[data-testid^="job-toast-"]').length, 0);
+
+    await click(r.container.querySelector('[data-testid="probe-pull"]'));
+    await r.flush();
+
+    const list = r.container.querySelectorAll('[data-testid^="job-toast-"]');
+    assert.equal(list.length, 1, '服务端说"已经在跑了"，而界面一个字都没有');
+    assert.equal((list[0]?.textContent ?? '').trim().length > 0, true, 'toast 出来了但没有字');
+  });
+
+  test('★ 正常（deduplicated:false）时不许凭空造 toast —— 那条要等真的 job.created', async () => {
+    // 没有这一条，把通知写成"无条件发"也能让上面那条绿。
+    stubApi({
+      '/health': { ok: true },
+      'POST /models/pull': {
+        jobId: 'job-fresh',
+        state: 'queued',
+        targetId: 'asr/whisper-tiny-q5_1',
+        totalBytes: 40_000_000,
+        eventsUrl: '/api/events',
+        deduplicated: false,
+      },
+    });
+    const r = await render(
+      <>
+        <PullProbe />
+        <JobToaster />
+      </>,
+    );
+    await r.flush();
+    await click(r.container.querySelector('[data-testid="probe-pull"]'));
+    await r.flush();
+    assert.equal(
+      r.container.querySelectorAll('[data-testid^="job-toast-"]').length,
+      0,
+      '没被去重却先造了一条 toast —— 真正的 job.created 来时会变成两条/或说错话',
     );
   });
 });

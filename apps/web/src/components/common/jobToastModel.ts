@@ -58,6 +58,13 @@ export interface Toast {
   willRetry?: boolean;
   /** 完成后是否需要重启才生效（由 /api/health 的 restartRequired 判定） */
   needsRestart?: boolean;
+  /**
+   * 这条 toast 是「你刚点的那次被去重了、挂到了一个已经在跑的任务上」补出来的。
+   *
+   * ⚠️ 它**只在 `seed` 里出现**（= 只在补建时生效）。已经存在的 toast 不许被改成这个
+   * —— 那条 toast 说的是"下载开始了"，而那是真的；改写它等于把一句真话改成另一句。
+   */
+  attached?: boolean;
 }
 
 export type ToastPatch = Partial<Toast> & Pick<Toast, 'jobId'>;

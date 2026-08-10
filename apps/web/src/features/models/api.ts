@@ -24,6 +24,7 @@ import type {
 
 import { api } from '../../lib/api/client';
 import { qk, STALE_TIME_OVERRIDES } from '../../app/query';
+import { notifyJobAttached } from '../../lib/jobs/attachedNotice';
 
 /**
  * @param lang 用户打算转写的语言。服务端据此把"实测在该语言下不可用"的模型
@@ -87,8 +88,21 @@ export function useModelPullMutation() {
         body: req,
         idempotencyKey: `pull:${req.id}`,
       }),
-    onSuccess: () => {
+    onSuccess: (data) => {
       void qc.invalidateQueries({ queryKey: qk.jobs.all });
+      /*
+       * ★ 服务端把这次请求**去重**到了一个已经在跑的 job 上（`toPullResponse` 的
+       * `deduplicated`）。此时它**不会**发 `job.created`
+       * （`downloader/queue.ts:111` 命中就 return，走不到 `:154` 的 emit），
+       * 于是 Toast 层收不到任何东西 —— 用户点了「下载」，界面一个字都没有。
+       * `[真机 2026-08-10]` 报成了"打开量化选择器就没有 Toast"，
+       * 而实测三组对照证明弹出层无关：变量是"这个模型此刻正在下载"。
+       *
+       * 服务端拒绝重复建 job 是对的，不该改服务端；缺的是前端把**已经拿到的事实**用起来。
+       */
+      if (data.deduplicated) {
+        notifyJobAttached({ jobId: data.jobId, targetId: data.targetId });
+      }
     },
   });
 }

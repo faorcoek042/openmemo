@@ -1013,7 +1013,8 @@
     "failedJob": "Failed · {{name}}",
     "failedFallback": "Background task",
     "gotoNote": "Open note",
-    "preparing": "Preparing · {{name}}"
+    "preparing": "Preparing · {{name}}",
+    "alreadyRunning": "Already downloading · {{name}}"
   },
   "readiness": {
     "title": "Not ready",

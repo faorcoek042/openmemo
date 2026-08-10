@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 
 import { bus } from '../../lib/events/bus';
+import { onJobAttached } from '../../lib/jobs/attachedNotice';
 import type { Phase, Toast, ToastAction } from './jobToastModel';
 import { isPipelineKind, reduceToasts, toastActionFor } from './jobToastModel';
 import { rawFetch } from '../../lib/api/client';
@@ -128,6 +129,12 @@ function titleFor(toast: Toast, t: TFunction, step?: string | null): string {
     return t(isPipelineKind(toast.kind) ? 'jobToast.failedJob' : 'jobToast.failedTitle', { name });
   }
   if (toast.phase === 'blocked') return t('jobToast.blockedTitle', { name });
+  /*
+   * ★ 「已经在跑了」要说清是**哪一种**情况。
+   * 只给一条泛泛的 toast，用户知道的是"有反应了"；他真正要知道的是
+   * **"我刚才那下没白点，东西在跑"** —— 这两句话的信息量差很远。
+   */
+  if (toast.attached) return t('jobToast.alreadyRunning', { name });
   if (toast.kind === 'transcribe') return t('jobToast.startedTranscribe', { name });
   if (toast.kind === 'mindmap') return t('jobToast.startedMindmap', { name });
   /*
@@ -218,6 +225,34 @@ export function JobToaster() {
     );
     return () => offs.forEach((off) => off());
   }, [apply, t]);
+
+  /*
+   * ★ 被去重的那次点击，daemon **不会**发 `job.created`（它正确地没有新建 job），
+   * 所以这条 toast 只能由客户端自己补 —— 事实就在那次 HTTP 响应的 `deduplicated` 里。
+   * 见 `lib/jobs/attachedNotice.ts` 的文件头（含真机复现与三组对照）。
+   *
+   * ⚠️ `attached` 只放在 `seed` 里：已经存在的 toast 不许被改写成"已经在跑了"——
+   * 它原本那句"开始下载"是真的。
+   */
+  useEffect(
+    () =>
+      onJobAttached(({ jobId, targetId }) => {
+        apply({
+          kind: 'upsert',
+          jobId,
+          patch: { jobId },
+          seed: {
+            kind: 'model',
+            name: targetId,
+            totalBytes: 0,
+            phase: 'active',
+            state: 'running',
+            attached: true,
+          },
+        });
+      }),
+    [apply],
+  );
 
   /**
    * 成功之后再问一次 `/api/health`：装完的东西是**立刻可用**还是**要重启才生效**。

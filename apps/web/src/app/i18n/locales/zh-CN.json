@@ -1013,7 +1013,8 @@
     "failedJob": "处理失败 · {{name}}",
     "failedFallback": "后台任务",
     "gotoNote": "打开笔记",
-    "preparing": "正在准备 · {{name}}"
+    "preparing": "正在准备 · {{name}}",
+    "alreadyRunning": "这个下载已经在进行中 · {{name}}"
   },
   "readiness": {
     "title": "能力未就绪",
