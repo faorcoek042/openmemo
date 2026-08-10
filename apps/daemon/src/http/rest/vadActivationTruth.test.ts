@@ -57,8 +57,39 @@ const GGML_HEAD = ((): Buffer => {
   return b;
 })();
 
-/** 一份**不是 ggml** 的字节（ONNX 是 protobuf，头四字节不可能是那个魔数）。 */
-const NOT_GGML = Buffer.from('onnx-ish-payload', 'utf8');
+/**
+ * 一份**不是 ggml** 的字节（ONNX 是 protobuf，头四字节不可能是那个魔数）。
+ *
+ * ⚠️ **写成数字，不写裸控制字节。** 这一行原本是把 `0x08 0x03 0x12 0x04` 直接嵌在
+ * 字符串字面量里 —— 字节是对的，但它在 grep / diff / 编辑器里各显示成一个样子，
+ * 被「源码必须可 grep」那条守卫拦下（master 因此连红三跑）。
+ * `[实测]` 换写法后 `080312046f6e6e782d6973682d7061796c6f6164` 逐字节不变。
+ */
+const NOT_GGML = Buffer.from([
+  // 一段 protobuf 开头（ONNX 就是 protobuf）
+  0x08,
+  0x03,
+  0x12,
+  0x04,
+  ...Buffer.from('onnx-ish-payload', 'utf8'),
+]);
+
+/**
+ * **夹具前提本身要钉住。**
+ *
+ * 这一整个文件的意义是"头四个字节不是 ggml 魔数"。哪天有人顺手改了上面那串字节、
+ * 恰好撞上魔数，所有断言会因为**一个完全不同的原因**继续绿 ——
+ * 那正是本仓最贵的那类假绿。所以在模块加载时就用**产品自己的那个常量**比一遍。
+ */
+{
+  const magic = Buffer.alloc(4);
+  magic.writeUInt32LE(GGML_FILE_MAGIC, 0);
+  assert.equal(
+    NOT_GGML.subarray(0, 4).equals(magic),
+    false,
+    'NOT_GGML 的头四字节撞上了 ggml 魔数 —— 这个文件此刻在验一件别的事',
+  );
+}
 
 /**
  * 从**真清单**里取 `vad/silero-vad-ggml`，只把它那一个文件的 `sha256`/`sizeBytes`
