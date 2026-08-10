@@ -147,7 +147,7 @@ function hardwareWith(vulkan: UnavailableVulkan) {
     unifiedMemory: false,
     gpus: [],
     backends: ids.map((id): BackendStatus => {
-      const common = { id, version: null, deviceIndex: null };
+      const common = { id, bundled: false, version: null, deviceIndex: null };
       if (id === 'vulkan') return { ...common, ...vulkan };
       return id === 'cpu'
         ? { ...common, available: true, probed: true, installed: true }
