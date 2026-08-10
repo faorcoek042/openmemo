@@ -273,8 +273,14 @@ const MUTATIONS = [
     pkg: 'apps/web',
     artifact: '.test-out/unit/lib/api/client.js',
     tests: ['.test-out/unit/lib/api/client.test.js'],
-    find: '    if (!isWrite && missingEndpoints.has(key)) {',
-    replace: '    if (missingEndpoints.has(key)) {',
+    /*
+     * ⚠️ 锚点在 `7a6e626`（T-200 S-4「一次 404 不再永久钉死」）里被挪走了：
+     * `if (!isWrite && missingEndpoints.has(key))` → 拆成 `missRec` 两步。
+     * **规格没变**（写请求不许抄近路回 mock），变的只是锚文本 ——
+     * 变异照旧是"把 `isWrite` 那半个守卫拿掉"。
+     */
+    find: '    const missRec = isWrite ? undefined : missingEndpoints.get(key);',
+    replace: '    const missRec = missingEndpoints.get(key);',
     why: '已知缺失的端点上，写请求抄近路回 mock —— daemon 后来补上了路由，用户仍然永远保存失败',
   },
   {
