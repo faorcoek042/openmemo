@@ -45,6 +45,7 @@ import {
 } from './client';
 import type { ApiOptions } from './client';
 import { resetConnection } from './connect';
+import { surfaceState } from './surfaces';
 
 interface Recorded {
   url: string;
@@ -357,5 +358,131 @@ describe('client —— 端点级记账不许牵连同面的其它端点（真�
   it('ULID 与数字段位在记账键里被归一化（否则每个 uid 各记一条，判断永远攒不起来）', async () => {
     await api('notes', '/notes/01ARZ3NDEKTSV4RRFFQ69G5FAV/segments/3').catch(() => undefined);
     assert.deepEqual(missingEndpointList(), ['GET /notes/:uid/segments/:n']);
+  });
+});
+
+/* ══════════ T-200 S-4 一次 404 不许永久钉死，标注也不许被兄弟端点抹掉 ══════════ */
+
+/**
+ * 修之前这条影子是：**设置 = {任意一次读到 404/501}，清理 = ∅（生产环境）**。
+ *
+ * 清理写在"真发出请求并成功时 `delete`"，但命中缓存的早退**让被钉住的 key
+ * 再也发不出请求** ⇒ 那句 `delete` 对被钉住的 key **结构性不可达**。
+ * 唯一的复位口 `forgetMissingEndpoints()` 生产零调用方（只有测试用）。
+ *
+ * 更坏的一半：`markSurface(surface,'live')` 此前是无条件的 ⇒ **同面任意一个成功请求
+ * 就把 MOCK 标注抹掉**，而那个缺失端点仍在返回假数据 ⇒
+ * **页面显示假数据，且不再标注它是假的。**
+ */
+describe('client —— 被钉住的端点必须有翻身的机会（T-200 S-4）', () => {
+  const realNow = Date.now;
+  /** 把时钟往前拨。用真时钟等 60 秒是不可接受的；改窗口常量则会让测试测不到真常量。 */
+  function advanceClock(ms: number): void {
+    const base = realNow();
+    Date.now = () => base + ms;
+  }
+
+  beforeEach(async () => {
+    Date.now = realNow;
+    installFetch();
+    await freshHandshake();
+  });
+
+  it('前提：一次 404 之后，窗口内的再次调用确实不发请求（早退本身是对的，别把它删了）', async () => {
+    await api('notes', '/notes/gone').catch(() => undefined);
+    assert.deepEqual(missingEndpointList(), ['GET /notes/gone']);
+    calls = [];
+    mockCalls = [];
+    await api('notes', '/notes/gone');
+    assert.equal(businessCalls().length, 0, '窗口内不该再往返一次');
+    assert.equal(mockCalls.length, 1, '窗口内应当走 mock');
+    Date.now = realNow;
+  });
+
+  it('★ 窗口过后必须放一次真请求过去 —— 否则服务端永远没有机会说"我现在有这条路由了"', async () => {
+    await api('notes', '/notes/gone').catch(() => undefined);
+    // daemon 升级了，这条路由现在存在
+    routes.set('GET /api/notes/gone', { status: 200, body: { ok: true } });
+
+    advanceClock(61_000);
+    calls = [];
+    mockCalls = [];
+    const out = await api<{ ok?: boolean }>('notes', '/notes/gone');
+
+    assert.equal(businessCalls().length, 1, '窗口过了仍然没发请求 —— 这个 key 被永久钉死了');
+    assert.equal(out.ok, true, '拿到的还是 mock 的假数据');
+    assert.equal(mockCalls.length, 0, '不该再走 mock');
+    Date.now = realNow;
+  });
+
+  it('★ 探路成功之后记录要被清掉（下一次不必再等窗口）', async () => {
+    await api('notes', '/notes/gone').catch(() => undefined);
+    routes.set('GET /api/notes/gone', { status: 200, body: { ok: true } });
+    advanceClock(61_000);
+    await api('notes', '/notes/gone');
+    Date.now = realNow; // 时钟拨回来：如果记录还在，下一次就会走 mock
+    assert.deepEqual(missingEndpointList(), [], '成功之后仍被记为缺失');
+
+    calls = [];
+    mockCalls = [];
+    await api('notes', '/notes/gone');
+    assert.equal(businessCalls().length, 1, '记录没清干净，又回落 mock 了');
+  });
+
+  it('★ 探路失败（仍是 404）要刷新时间戳，不能变成每次都往返', async () => {
+    await api('notes', '/notes/gone').catch(() => undefined);
+    advanceClock(61_000);
+    await api('notes', '/notes/gone'); // 探路：仍 404 → 回落 mock，并刷新 at
+
+    calls = [];
+    mockCalls = [];
+    await api('notes', '/notes/gone'); // 紧接着再来一次：应当又在窗口内
+    assert.equal(businessCalls().length, 0, '探路失败后没有刷新时间戳 —— 会变成每次调用都白跑一趟');
+    assert.equal(mockCalls.length, 1);
+    Date.now = realNow;
+  });
+});
+
+describe('client —— 只要还有端点在回落 mock，标注就不许消失（T-200 S-4）', () => {
+  beforeEach(async () => {
+    installFetch();
+    await freshHandshake();
+    routes.set('GET /api/notes/ok', { status: 200, body: { ok: true } });
+  });
+
+  it('★ 同面兄弟端点成功，不许把 MOCK 标注抹掉 —— 那条缺失端点还在发假数据', async () => {
+    await api('notes', '/notes/gone').catch(() => undefined);
+    assert.equal(surfaceState('notes'), 'mock', '前提：404 之后该面应标 mock');
+
+    await api('notes', '/notes/ok'); // 兄弟端点真的通了
+    assert.equal(
+      surfaceState('notes'),
+      'mock',
+      '兄弟端点一成功就把标注抹成 live 了 —— 而 /notes/gone 仍在返回假数据，' +
+        '最终形态是「显示假数据且不再标注它是假的」',
+    );
+    assert.deepEqual(missingEndpointList(), ['GET /notes/gone'], '前提：那条确实还被记着');
+  });
+
+  /**
+   * ★ 反向鉴别：不许把标注做成"贴上就撕不掉"。
+   * 缺失端点恢复之后，这个面必须回到 live，否则 MOCK 条幅会永远挂着 ——
+   * 假红灯同样会训练用户忽略告警（本仓 ⑤B）。
+   */
+  it('★ 最后一个缺失端点恢复之后，该面必须回到 live', async () => {
+    await api('notes', '/notes/gone').catch(() => undefined);
+    assert.equal(surfaceState('notes'), 'mock');
+
+    routes.set('GET /api/notes/gone', { status: 200, body: { ok: true } });
+    forgetMissingEndpoints(); // 等价于窗口到期后探路成功
+    await api('notes', '/notes/gone');
+
+    assert.deepEqual(missingEndpointList(), []);
+    assert.equal(surfaceState('notes'), 'live', '一个缺失端点都不剩了，标注却还挂着');
+  });
+
+  it('★ 从没缺过的面：一次成功就该标 live（别把所有面都按住不放）', async () => {
+    await api('notes', '/notes/ok');
+    assert.equal(surfaceState('notes'), 'live');
   });
 });

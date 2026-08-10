@@ -278,7 +278,56 @@ export async function api<T>(
  *
  * 我在 D-08 §4.5 里预测过这个失败模式，但没修。这次修掉。
  */
-const missingEndpoints = new Set<string>();
+/**
+ * ★ T-200 S-4：这里原本是 `Set<string>`，于是**设置 = {任意一次 404}、清理 = ∅**。
+ *
+ * 清理写在 `:373`（真发出请求并成功时 `delete`），但上面那个早退**让被钉住的 key
+ * 再也发不出请求** —— 该分支对被钉住的 key **结构性不可达**。唯一的复位口
+ * `forgetMissingEndpoints()` 生产零调用方（只有测试用）。
+ * 也就是说：一次 404 之后，这个端点在这个页面会话里**永久**返回假数据。
+ *
+ * 改成 Map 是为了记两件此前记不下的事：
+ * - `at`：什么时候判定它缺失的 → 过了重试窗口就**放一次真请求过去**，
+ *   让"路由后来补上了"这件事有机会被发现（清理条件 ⊇ 设置条件）；
+ * - `surface`：它属于哪个面 → 让"这个面还有端点在回落 mock"这件事可判定，
+ *   否则同面任意一个成功请求就会把 MOCK 标注抹掉（见 `:374` 那一段）。
+ */
+const missingEndpoints = new Map<string, { surface: Surface; at: number }>();
+
+/**
+ * 被判定"未实现"的端点，隔多久放一次真请求过去探路。
+ *
+ * 取 60s 的理由：这条路径唯一现实的恢复事件是**daemon 升级/重启后补上了路由**，
+ * 那是分钟级的事；而代价上限是「每个真缺失的端点每分钟多一次请求」——
+ * 只落在本来就没实现的端点上，不影响正常路径。
+ *
+ * ⚠️ 判据不是"要记得调用 `forgetMissingEndpoints()`"，是**忘了也会自己恢复**。
+ * 一条需要人记得触发的复位，等价于一条迟早不会被触发的复位（本仓 PROTOCOL §7 同款）。
+ */
+const MISSING_RETRY_MS = 60_000;
+
+/** 这个面上还有端点在回落 mock 吗 —— MOCK 标注的存废依据。 */
+function hasMissingOnSurface(s: Surface): boolean {
+  for (const rec of missingEndpoints.values()) if (rec.surface === s) return true;
+  return false;
+}
+
+/**
+ * 一次成功之后该不该把这个面标成 `live`。
+ *
+ * 只有"这个面上一个已知缺失的端点都不剩"时才标 —— 否则 MOCK 标注会在
+ * **仍有端点返回假数据**的情况下消失。还剩的话就保持 `mock`，不往回退成 live。
+ *
+ * ⚠️ 它**不碰** `offline`：那是整机状态（daemon 没起），由 TypeError 那条分支负责，
+ * 而且那条本来就是自愈的。两者不许合并（见早退那段的说明）。
+ */
+function markLiveIfFullyConnected(s: Surface): void {
+  if (hasMissingOnSurface(s)) {
+    if (surfaceState(s) !== 'mock') markSurface(s, 'mock');
+    return;
+  }
+  if (surfaceState(s) !== 'live') markSurface(s, 'live');
+}
 
 /** 记账键：方法 + 路径模板（把 ULID / 数字段位归一化，避免每个 uid 各记一条）。 */
 function endpointKey(method: string, path: string): string {
@@ -291,7 +340,7 @@ function endpointKey(method: string, path: string): string {
 
 /** 供诊断页/测试查看当前被判定为"未实现"的端点。 */
 export function missingEndpointList(): string[] {
-  return [...missingEndpoints].sort();
+  return [...missingEndpoints.keys()].sort();
 }
 
 /** 端点恢复（例如 daemon 升级后补上了路由）。 */
@@ -343,7 +392,20 @@ async function apiCall<T>(surface: Surface, path: string, opts?: ApiOptions): Pr
    * 而写操作回落 mock 会让用户以为**改动保存了**，实际什么都没发生 ——
    * 这比报错糟糕得多。所以写必须要么真成功、要么把错误抛给用户看见。
    */
-  if (!isWrite && missingEndpoints.has(key)) {
+  /*
+   * ★ T-200 S-4：**只在重试窗口内早退**，窗口过了就放一次真请求过去。
+   *
+   * 早退本身是对的（不必为一条已知不存在的路由每次都往返一次），错的是它此前**没有出口**：
+   * 命中即 `return`，连请求都不发 ⇒ 服务端没有任何机会说"我现在有这条路由了" ⇒
+   * `:373` 那句 `delete` 对被钉住的 key 结构性不可达。
+   *
+   * ⚠️ 这条与下面 `err instanceof TypeError` 那条（offline 回落）**长得像但不是一回事，
+   * 不许合并成一个 helper**：那条本来就是自愈的（下一次成功 `:374` 就翻回 live），
+   * 而这条此前不可恢复。它俩的差别恰恰就是这次要修的东西 ——
+   * 合并会把自愈那一半也拖成不可恢复。
+   */
+  const missRec = isWrite ? undefined : missingEndpoints.get(key);
+  if (missRec && Date.now() - missRec.at < MISSING_RETRY_MS) {
     if (!mockFetcher) {
       throw new ApiError(503, { code: 'NO_BACKEND', message: 'daemon unreachable and no mock' });
     }
@@ -371,7 +433,18 @@ async function apiCall<T>(surface: Surface, path: string, opts?: ApiOptions): Pr
     const out = await realFetch<T>(path, opts);
     // 真接通了：既清掉该端点的"缺失"记录，也把该面标成 live
     missingEndpoints.delete(key);
-    if (surfaceState(surface) !== 'live') markSurface(surface, 'live');
+    /*
+     * ★ T-200 S-4：**只有这个面上一个回落端点都不剩了，才敢把它标成 live。**
+     *
+     * 此前是无条件 `markSurface(surface,'live')`：同面**任意一个**成功请求就把
+     * MOCK 标注抹掉，而那个真正缺失的端点**仍在返回假数据**。
+     * 于是最终形态是「页面显示假数据，且不再标注它是假的」——
+     * 比一直标着 mock 糟得多：标注消失等于告诉用户"这些数字可以信"。
+     *
+     * **标注的粒度必须跟得上事实的粒度**：事实是按端点记的（这正是上面那段注释
+     * 讲的、按面记会毒化整个面的事故），标注就不能按"最近一次请求成功了没有"来记。
+     */
+    markLiveIfFullyConnected(surface);
     return out;
   } catch (err) {
     /**
@@ -387,12 +460,12 @@ async function apiCall<T>(surface: Surface, path: string, opts?: ApiOptions): Pr
     if ((isUnauthenticated(err) || isCsrfFailure(err)) && (await reHandshake())) {
       const out = await realFetch<T>(path, opts);
       missingEndpoints.delete(key);
-      markSurface(surface, 'live');
+      markLiveIfFullyConnected(surface);
       return out;
     }
     if (isNotImplemented(err)) {
       // 只记这一条端点，**不再牵连同面的其它端点**
-      missingEndpoints.add(key);
+      missingEndpoints.set(key, { surface, at: Date.now() });
       if (!isWrite && mockFetcher) {
         markSurface(surface, 'mock');
         return mockFetcher<T>(path, opts);
