@@ -273,15 +273,32 @@ check('★反向：删文件 + 从 tracked 里删掉那一行 → floor 判红',
 /* ── ⑥ ★反向：新增未登记 → 红，并给出可执行的修法 ────────────────────────── */
 console.log('\n⑥ ★反向：新增的测试文件必须登记');
 
-check('★反向：新增一个测试文件但不 --update → 红且点名', () => {
+check('新增一个测试文件但不 --update → **不挡门禁**，但要点名提示', () => {
+  // ⚠️ 这条断言的方向是**被实测改过的**：第一版判红，落地几分钟就被另一条腿的
+  // 新测试撞红了（9 个 agent 同树）。一条经常为合法工作变红的守卫会被所有人忽略，
+  // 连带它真正要抓的"删除"一起失效。所以改成提示。判据见被测脚本里那段注释。
   const s = sandbox();
   const fresh = 'packages/x/src/brandNew.test.ts';
   writeFileSync(join(s.root, fresh), '// fixture\n');
   execFileSync('git', ['add', fresh], { cwd: s.root });
   const r = run(s.root);
-  if (r.status === 0) throw new Error(`未登记的新测试被放行了：\n${r.all}`);
-  if (!r.all.includes(fresh)) throw new Error('没点名');
-  if (!/--update/.test(r.all)) throw new Error('没给出修法');
+  if (r.status !== 0) throw new Error(`未登记的新测试挡住了门禁：\n${r.all}`);
+  if (!r.all.includes(fresh)) throw new Error('没点名新文件');
+  if (!/--update/.test(r.all)) throw new Error('没给出登记方法');
+});
+
+check('★反向：但"未登记"绝不能掩盖"消失" —— 两者同时发生时仍要红', () => {
+  // 这条是上一条的安全网：把 unregistered 降级成提示之后，必须证明
+  // **降级没有顺带把 missing 也放过**（同一次运行里两种情况都在）。
+  const s = sandbox();
+  const victim = s.files.find((f) => f !== PROBE);
+  deleteTracked(s.root, victim); // 少了一个在册的
+  const fresh = 'packages/x/src/brandNew.test.ts'; // 同时多了一个没登记的
+  writeFileSync(join(s.root, fresh), '// fixture\n');
+  execFileSync('git', ['add', fresh], { cwd: s.root });
+  const r = run(s.root);
+  if (r.status === 0) throw new Error(`有文件消失却被放行了：\n${r.all}`);
+  if (!r.all.includes(victim)) throw new Error('没点名消失的那个');
 });
 
 check('新增之后跑 --update → 恢复绿', () => {

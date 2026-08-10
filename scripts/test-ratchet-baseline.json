@@ -17,7 +17,7 @@
   ],
   "generatedAt": "2026-08-10",
   "generatedBy": "test-ratchet（事故：31d3ae3 静默删除 platformUnsupported.test.ts 191 行，7581cff 恢复）",
-  "floor": 150,
+  "floor": 151,
   "tracked": [
     "apps/daemon/src/bootstrap/entrypoint.test.ts",
     "apps/daemon/src/bootstrap/open-browser.test.ts",
@@ -35,6 +35,7 @@
     "apps/daemon/src/http/notesRest.test.ts",
     "apps/daemon/src/http/readiness.test.ts",
     "apps/daemon/src/http/rest/backendDiskReclaim.test.ts",
+    "apps/daemon/src/http/rest/backendInstallAvailability.test.ts",
     "apps/daemon/src/http/rest/backendNotProbed.test.ts",
     "apps/daemon/src/http/rest/backendReconcile.test.ts",
     "apps/daemon/src/http/rest/bundledReconcile.test.ts",
