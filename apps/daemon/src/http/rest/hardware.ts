@@ -208,10 +208,13 @@ export function createRuntimeRoutes(deps: RuntimeRoutesDeps): {
    */
   const structuralFingerprint = async (): Promise<string> => {
     try {
-      const packs = await new ArtifactStore(deps.paths.modelsDir).listManifests<InstalledBackendPack>(
-        'backend',
-      );
-      return packs.map((p) => canonicalPackFingerprint(p)).sort().join('|');
+      const packs = await new ArtifactStore(
+        deps.paths.modelsDir,
+      ).listManifests<InstalledBackendPack>('backend');
+      return packs
+        .map((p) => canonicalPackFingerprint(p))
+        .sort()
+        .join('|');
     } catch {
       /*
        * 读不到安装记录时返回一个**固定**的哨兵，而不是 `Date.now()` 之类。
