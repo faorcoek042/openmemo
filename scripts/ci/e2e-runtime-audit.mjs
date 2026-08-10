@@ -1512,6 +1512,29 @@ async function phaseBackends() {
       /^probe did not complete\b/i,
       /^probe skipped\b/i,
       /^disabled after repeated failures\b/i,
+      /*
+       * ★ 2026-08-10 新增（linux + win32 实测同一句，只有路径不同；darwin 构造不出前提）。
+       *
+       * 产品原句（`packages/runtime/src/backends/manager.ts:262`，`!probed` 那条分支）：
+       *   "installed, but this detection run did not load it: only the backend directory
+       *    currently in use is scanned (<path>), and this backend's library is not in it.
+       *    This is not a driver or hardware fault — nothing was measured about it.
+       *    Select this backend, or run the self-test on that pack, to get a real answer."
+       *
+       * **为什么它算"没测过"而不是"测了且不行"** —— 这正是本断言存在的全部意义：
+       * 这条分支的进入条件是 `!probed`，即**探测这一轮根本没加载这个包的库**。
+       * `backendDir` 是单值的：一次探测只扫一个包目录，别的已装包对它完全不可见。
+       * 所以这里没有任何测量发生 —— 句子本身也只字不提驱动/硬件/是否支持，
+       * 末句还明确写着 "nothing was measured about it"。**没有证据被如实报成没有证据。**
+       *
+       * 对照：**最后一条分支** `'installed but enumerated no devices (driver missing or
+       * too old)'` **绝不能进这张白名单** —— 那句是**挣来的结论**（库确实在被扫的目录里、
+       * 或 dlopen 因缺驱动库失败，枚举仍为空）。产品哪天把它说给一个 `!probed` 的后端听，
+       * 那就正是这条腿要抓的谎。
+       *
+       * 锚在句首、逐字前缀：路径与后续文案可变，进入条件不可变。
+       */
+      /^installed, but this detection run did not load it\b/i,
     ];
     const liars = unprobedInstalled.filter((b) => {
       const why = String(b.unavailableReason ?? '').trim();
