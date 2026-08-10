@@ -312,3 +312,72 @@ export function isPackApplicable(
     ...(advisoryCandidates ? { advisoryCandidates } : {}),
   });
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════════════
+ * 「本平台目录里，有没有一条装得到的包会给出这个二进制」
+ * ═══════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * 三态，**不是布尔**。第三态是承重的，删掉它这条修复上线第一天就会自己造出一句假话。
+ *
+ * · `'yes'`     目录里有一条**适用于本机**的包，装完会给出这个二进制
+ * · `'no'`      目录**读到了**，里面没有这样的包
+ * · `'unknown'` **目录还没读到**（见下）——调用方必须**什么都不说**，保持原有行为
+ */
+export type InstallablePackVerdict = 'yes' | 'no' | 'unknown';
+
+/**
+ * ★★ 这个函数回答的是**关于目录的事实**，不是关于平台能力的推断。
+ *
+ * ── 为什么第三态不能省（`[实测]`，不是假想）────────────────────────────────────────
+ *
+ * daemon 的目录是**懒加载**的：
+ * ```
+ * models.ts:124   statePromise ??= RestState.create(deps)
+ * state.ts:643    「RestState.create() 是**懒的** —— 只在第一次命中
+ *                  /api/models/* 之类的路由时才真正执行」
+ * ```
+ * 而 `/api/selfcheck` **不走那条路由**。所以自检跑的那一刻，目录**可能根本还没加载**。
+ * 把"没加载"折叠进 `false`，用户就会读到「本平台目前没有可下载的组件包」——
+ * **一句因为时序意外而产生的、和这条修复正在消灭的那句一模一样形状的新假话**，
+ * 而且只在"自检先于任何 models 路由被命中"时出现，是最难复现的那一档。
+ *
+ * ⇒ `packs === null` 表示"拿不到目录" ⇒ `'unknown'`。调用方拿到它**什么都别说**。
+ *
+ * ── 为什么不能反推成「本平台不适用」────────────────────────────────────────────────
+ *
+ * 按后端数一遍现有目录：`{cpu: 10, vulkan: 2, cuda: 1, metal: 1}` ——
+ * **`rocm` 与 `coreml` 在任何平台都是 0 条**。若把"没有包"读成"不适用"，
+ * **在一台真能跑 CoreML 的 Mac 上，CoreML 会被说成「其它平台」**。
+ * 所以措辞只能落在目录侧（「目前没有可下载的组件包」），
+ * **绝不复用 `runtime.chip.otherPlatform` 的「其它平台」** ——
+ * 那是 {@link evaluateApplicability} 才有资格说的话。
+ *
+ * ── 逐二进制判，不按平台判 ────────────────────────────────────────────────────────
+ *
+ * `linux/arm64` 是最锋利的反例：目录里只有 `ytdlp-linux-arm64` 一条 ——
+ * **yt-dlp 装得到，ffmpeg / ffprobe / whisper-cli 装不到**。
+ * 按平台判会把这四个一起判错；按 `providesFiles` 判则天然分得开。
+ *
+ * @param binary 落盘文件名。⚠️ 传**平台化之后**的名字（win32 上是 `yt-dlp.exe`），
+ *   因为 `providesFiles` 记的就是落盘名（`ytdlp-win32-x64` 写的是 `yt-dlp.exe`）。
+ * @param packs 目录里的全部包；**`null` = 目录还没读到**（不是"没有包"）。
+ */
+export function hasInstallablePackProviding(
+  binary: string,
+  packs: readonly (PackDescriptor & { providesFiles: readonly string[] })[] | null,
+  platform: { os: OsPlatform; arch: string },
+  opts?: { backends?: BackendStatus[] | null; advisoryCandidates?: readonly Backend[] },
+): InstallablePackVerdict {
+  if (packs === null) return 'unknown';
+  const some = packs.some((p) => {
+    if (!p.providesFiles.includes(binary)) return false;
+    return evaluateApplicability({
+      pack: p,
+      platform,
+      backends: opts?.backends ?? null,
+      advisoryCandidates: opts?.advisoryCandidates,
+    }).applicable;
+  });
+  return some ? 'yes' : 'no';
+}

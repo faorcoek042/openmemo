@@ -117,12 +117,14 @@ export type { BuildHardwareInfoInput } from './backends/manager.js';
 export {
   L1_BACKENDS,
   evaluateApplicability,
+  hasInstallablePackProviding,
   isAlwaysApplicable,
   isPackApplicable,
 } from './backends/applicability.js';
 export type {
   ApplicabilityInput,
   ApplicabilityResult,
+  InstallablePackVerdict,
   PackDescriptor,
 } from './backends/applicability.js';
 

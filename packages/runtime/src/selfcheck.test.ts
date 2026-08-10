@@ -1371,7 +1371,7 @@ describe('★ tool.* 装不到时报 unavailable，而不是让整份报告永�
   it('★ 目录里没有能给出该二进制的包 ⇒ unavailable + 无补救 + 不拖红整份报告', async () => {
     const r = await runSelfCheck({
       ...BASE,
-      probes: minimalProbes({ canInstallBinary: () => Promise.resolve(false) }),
+      probes: minimalProbes({ canInstallBinary: () => Promise.resolve('no' as const) }),
     });
     for (const id of ['tool.ffmpeg', 'tool.ffprobe', 'tool.whisperCli']) {
       const c = byId(r, id);
@@ -1401,7 +1401,7 @@ describe('★ tool.* 装不到时报 unavailable，而不是让整份报告永�
   it('★ 反向：目录里有包时，仍然是原来的「去装」（这条修复不许把能装的也说成装不到）', async () => {
     const r = await runSelfCheck({
       ...BASE,
-      probes: minimalProbes({ canInstallBinary: () => Promise.resolve(true) }),
+      probes: minimalProbes({ canInstallBinary: () => Promise.resolve('yes' as const) }),
     });
     const c = byId(r, 'tool.ffmpeg');
     assert.equal(c?.status, 'fail');
@@ -1415,6 +1415,23 @@ describe('★ tool.* 装不到时报 unavailable，而不是让整份报告永�
       true,
       '能装却没装 = 真的缺东西，这条必须仍然是 required 的 fail',
     );
+  });
+
+  it("★ 'unknown'（目录还没读到）必须退回原行为 —— 时序意外不许变成一句假话", async () => {
+    /*
+     * daemon 的目录是懒加载的（`models.ts:124` 的 `statePromise ??=`），而
+     * `/api/selfcheck` 不走触发它的那条路由 —— 所以"还没读到"是**常态**，不是异常。
+     * 把它折叠进"没有包"，用户会读到「本平台目前没有可下载的组件包」，
+     * 而那句话在一台**明明装得到**的机器上是假的。
+     */
+    const r = await runSelfCheck({
+      ...BASE,
+      probes: minimalProbes({ canInstallBinary: () => Promise.resolve('unknown' as const) }),
+    });
+    const c = byId(r, 'tool.ffmpeg');
+    assert.equal(c?.status, 'fail', "'unknown' 时必须与探针缺席一样，保持原判");
+    assert.equal(c?.detail, '未找到');
+    assert.match(c?.remediation ?? '', /本机组件/);
   });
 
   it('探针没给 ⇒ 退回原行为（不是所有调用方都拿得到目录）', async () => {

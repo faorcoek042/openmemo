@@ -25,17 +25,32 @@ import { ffmpegProxySupport, findInBackendPacks } from '@openmemo/pipeline';
 import type { DatabaseHandle } from '@openmemo/db';
 import {
   CHINESE_PROBE_WORDS,
+  hasInstallablePackProviding,
   listByName,
   listInstalledNamesByRole,
   runSelfCheck,
 } from '@openmemo/runtime';
-import { redactProxyUrl, type ProxyConfig } from '@openmemo/shared';
+import { redactProxyUrl, type BackendPack, type ProxyConfig } from '@openmemo/shared';
+
+import { currentArch } from './hardware.js';
 
 import type { AppPaths } from '../../config/paths.js';
 import type { PipelineBundle } from '../../pipeline/setup.js';
 import { breakerStatus } from '../../runtime/setup.js';
 import { loadBackendCatalog, loadModelCatalog, resolveManifestDir } from './manifests.js';
 import { sendError, sendJson } from '../respond.js';
+
+/**
+ * 本机平台 —— 与 `models.ts` 的 `currentPlatform()` **同一套口径**
+ *（`os` 只认三种，其余归 linux；`arch` 走 `currentArch()`）。
+ * 两处各写一套正是"装了却找不到"那一族的成因，所以这里刻意与它逐字一致。
+ */
+function selfCheckPlatform(): { os: 'linux' | 'darwin' | 'win32'; arch: string } {
+  return {
+    os: process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux',
+    arch: currentArch(),
+  };
+}
 
 export interface SelfCheckRoutesDeps {
   readonly paths: AppPaths;
@@ -48,6 +63,20 @@ export interface SelfCheckRoutesDeps {
   readonly proxyConfig: () => ProxyConfig;
   /** 已存密钥的**键名**（掩码列表即可）。**绝不接受明文。** */
   readonly secretKeys: () => readonly string[];
+  /**
+   * 后端目录 —— **已经加载好才给，没加载好返回 `null`**。
+   *
+   * ⚠️ `null` 的语义是「**还没读到**」，不是「里面没有」。
+   * daemon 的目录是懒加载的（`models.ts` 的 `statePromise ??=`，只在第一次命中
+   * `/api/models/*` 时才执行），而 `/api/selfcheck` **不走那条路由** ——
+   * 所以"自检跑的时候目录还没加载"是**常态**。
+   * 把它折叠成"没有包"，用户会读到一句因为时序意外而产生的假话
+   *（见 `hasInstallablePackProviding` 的注释）。
+   *
+   * ⚠️ 这里**刻意不触发加载**：那条懒加载是为了不给启动路径加 I/O，
+   * 让一个只想"看一眼"的调用方把它拉起来，等于把那条决定悄悄推翻。
+   */
+  readonly peekBackendCatalog: () => { packs: readonly BackendPack[] } | null;
 }
 
 function readSetting(db: DatabaseHandle, key: string): unknown {
@@ -91,6 +120,21 @@ export function createSelfCheckRoutes(deps: SelfCheckRoutesDeps): {
               vadModel: bundle?.tools.vadModel ?? null,
               ytDlp: bundle?.tools.ytDlp ?? null,
             }),
+
+          /*
+           * ★ 「找不到」与「装得到吗」是两个问题（T-199 ②）。
+           *   判定只有一处：`@openmemo/runtime` 的 `hasInstallablePackProviding()`，
+           *   首屏横幅问的是同一个问题、调的也是它 —— 上次「芯片判、按钮不判」
+           *   当场打架的账记在 `packStatus.ts` 的 T-196 注释里。
+           */
+          canInstallBinary: (binary) =>
+            Promise.resolve(
+              hasInstallablePackProviding(
+                binary,
+                deps.peekBackendCatalog()?.packs ?? null,
+                selfCheckPlatform(),
+              ),
+            ),
 
           installed: (kind) => listByName(deps.paths.modelsDir, kind),
 

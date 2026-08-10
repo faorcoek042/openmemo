@@ -61,6 +61,7 @@ import { MACOS_FLOORS, detectMacosProductVersion, evaluateOsFloors } from './pla
 
 import { mediaAssetRoots, probeAssetFile } from './assetPaths.js';
 import { detectCpu, detectMemory, detectOs } from './detect/system.js';
+import type { InstallablePackVerdict } from './backends/applicability.js';
 import { runProbe } from './probe/runProbe.js';
 
 /**
@@ -252,9 +253,14 @@ export interface SelfCheckProbes {
    * 首屏横幅（daemon 的 `pipeline/setup.ts`）问的是同一个问题，调的是同一个函数。
    * 上次「芯片判、按钮不判」当场打架的账记在 `packStatus.ts` 的 T-196 注释里。
    *
-   * 可选：没给就退回原来的行为（"未找到 → 去装"）—— 那在**有包可装**的平台上是对的。
+   * ⚠️ **三态，不是布尔**：`'unknown'` 表示**目录还没读到**（daemon 的目录是懒加载的，
+   * 而 `/api/selfcheck` 不走触发它的那条路由）。把它折叠进"没有包"，
+   * 用户会读到一句**因为时序意外而产生的**假话 —— 见 `hasInstallablePackProviding` 的注释。
+   *
+   * 可选：没给、或给了 `'unknown'`，都退回原来的行为（"未找到 → 去装"）——
+   * 那在**有包可装**的平台上是对的，而且"什么都不说"永远比"说错"安全。
    */
-  canInstallBinary?: (binary: string) => Promise<boolean>;
+  canInstallBinary?: (binary: string) => Promise<InstallablePackVerdict>;
   /**
    * Run the four-word Chinese FTS5 test.
    * Returns hit counts, or null when the tokenizer could not even be loaded.
@@ -1165,9 +1171,14 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
        * ⚠️ 逐**二进制**判，不按平台判：`linux/arm64` 上 yt-dlp 装得到、另外三个装不到，
        *   按平台判会把它们一起判错（判据走 `providesFiles`，天然分得开）。
        */
-      const installable = input.probes.canInstallBinary
+      /*
+       * ★ 只有明确的 `'no'`（目录读到了、里面没有）才算"装不到"。
+       *   `'unknown'`（目录还没读到）与探针缺席一样 —— **什么都不说，保持原样**。
+       */
+      const verdict = input.probes.canInstallBinary
         ? await input.probes.canInstallBinary(toolBinaryName(id))
-        : true;
+        : 'unknown';
+      const installable = verdict !== 'no';
       add({
         layer: 'tools',
         id,

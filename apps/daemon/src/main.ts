@@ -44,6 +44,7 @@ import { migrateInstallRecords } from './storage/migrateRecords.js';
 import { migrateMediaAssets } from './storage/migrateAssets.js';
 import { SessionStore, authRequired, loadOrCreateToken, type Session } from './http/auth.js';
 import { attachHttpHandlers } from './http/server.js';
+import { modelRoutesFor } from './http/rest/models.js';
 import { SseHub } from './http/sse.js';
 import { attachWebSocket } from './http/ws.js';
 import { JobQueue } from './jobs/queue.js';
@@ -413,7 +414,13 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
 
   // 先挂 handler 再绑定 —— 否则会有"端口已通但请求打到空 server"的窗口，
   // 而单实例探测正好靠 /api/health，这个窗口会让探测误判。
-  attachHttpHandlers(server, {
+  /*
+   * ★ 提成 const 而不是内联字面量：`server.ts` 用**这个对象的身份**做记忆化
+   *（`modelRoutesFor(deps)` 走 WeakMap），所以想拿到"它已经建好的那份 RestState"，
+   * 就必须拿着**同一个对象**去问。换一个等值的新对象 = 建第二份 state = 第二份目录缓存，
+   * 而"再造一份缓存"正是本轮明确禁掉的（影子状态）。
+   */
+  const serverDeps = {
     sessions,
     sse,
     instanceId: () => instanceIdRef,
@@ -523,7 +530,8 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
           }
         : null,
     }),
-  });
+  };
+  attachHttpHandlers(server, serverDeps);
 
   const outcome = await acquireSingleInstance({
     server,
@@ -993,6 +1001,14 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       }),
       // 功能级自检（一份实现两个出口：gpu-runtime 的 CLI + 这个端点）
       createSelfCheckRoutes({
+        /*
+         * ★ 非强制窥视口：目录**已经加载好**才给，没加载好给 null（=「还没读到」）。
+         *   走 `serverDeps` 是为了拿到 `server.ts` 已经建好的**同一份** RestState ——
+         *   `modelRoutesFor` 按对象身份记忆化，换个等值对象就会建第二份目录缓存。
+         *   ⚠️ 它**不触发**加载：那条懒加载是为了不给启动路径加 I/O，
+         *      让一个只想"看一眼"的调用方把它拉起来，等于把那条决定悄悄推翻。
+         */
+        peekBackendCatalog: () => modelRoutesFor(serverDeps).peekBackendCatalog(),
         paths,
         db: database.db,
         extensions: {

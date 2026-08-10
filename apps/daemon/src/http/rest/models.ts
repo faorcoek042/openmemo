@@ -54,6 +54,7 @@ import { handleBackendRoutes, startPackInstall } from './backends.js';
 import { createComponentRoutes, resolveComponentRegistryPath } from './components.js';
 import { currentArch } from './hardware.js';
 import { handleJobRoutes, toPullResponse } from './jobs.js';
+import type { BackendCatalog } from './manifests.js';
 import { resolveManifestDir } from './manifests.js';
 import { asString, asStringArray, decodePathSegment, readBody } from './request.js';
 import { HARDWARE_SNAPSHOT_ID, RestState } from './state.js';
@@ -87,6 +88,19 @@ export interface ModelRoutesDeps {
 
 export interface ModelRoutes {
   handle(req: IncomingMessage, res: ServerResponse, url: URL, method: string): Promise<boolean>;
+  /**
+   * ★ **非强制**窥视口：目录**已经加载好**就给出来，否则返回 `null`。
+   *
+   * 三条限制，每条都有具体理由：
+   *   1. **不触发加载。** `RestState.create()` 是懒的（下面 `getState()`），
+   *      刻意不在进程启动路径上做 I/O。让一个只想"看一眼"的调用方把它拉起来，
+   *      等于把那条决定悄悄推翻。
+   *   2. **不新建缓存。** 这里读的就是下面那个 `statePromise` 解析出来的**同一个对象**，
+   *      不另存一份 —— 再造一份缓存 = 再造一份会过期、会和真相分叉的影子状态。
+   *   3. **`null` 的语义是"还没读到"，不是"没有"。** 调用方必须把它当第三态处理
+   *      （见 `hasInstallablePackProviding` 的 `'unknown'`）。
+   */
+  peekBackendCatalog(): BackendCatalog | null;
 }
 
 /** 本模块负责的路径前缀。不匹配就返回 false，交回主路由去 404。 */
@@ -120,15 +134,30 @@ export function createModelRoutes(deps: ModelRoutesDeps): ModelRoutes {
     registryPath: resolveComponentRegistryPath(),
   });
   let statePromise: Promise<RestState> | null = null;
+  /**
+   * 已经解析完成的那个 state。**不是第二份缓存** —— 它就是 `statePromise` 的结果，
+   * 只是把"已经好了"这件事变成同步可读（promise 本身没法同步问"你好了没"）。
+   * 失败时 `statePromise` 会被清掉，这里也跟着回到 `null`。
+   */
+  let resolvedState: RestState | null = null;
   const getState = (): Promise<RestState> => {
-    statePromise ??= RestState.create(deps).catch((err: unknown) => {
-      statePromise = null;
-      throw err;
-    });
+    statePromise ??= RestState.create(deps)
+      .then((st) => {
+        resolvedState = st;
+        return st;
+      })
+      .catch((err: unknown) => {
+        statePromise = null;
+        resolvedState = null;
+        throw err;
+      });
     return statePromise;
   };
 
   return {
+    // ★ 只读、不触发加载：没加载好就如实说 null（见接口上的注释）。
+    peekBackendCatalog: () => resolvedState?.backendCatalog ?? null,
+
     async handle(req, res, url, method): Promise<boolean> {
       const p = url.pathname;
       if (!owns(p)) return false;
