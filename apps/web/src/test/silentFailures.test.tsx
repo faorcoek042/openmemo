@@ -578,3 +578,145 @@ describe('契约字段必须出现在用户走到的路径上', () => {
     r.unmount();
   });
 });
+
+/* ══════════ A-4：「使用中」与「真的用得上」是两件事 ══════════ */
+
+/**
+ * `[用户真机 2026-08-09, Windows]` 同一台机器上两个消费方说相反的话：
+ * 激活态说这个 VAD **正在用**，流水线装配同一时刻说 whisper.cpp **加载不了它**、
+ * 切分降级为固定窗口 —— 那条警告一次启动出现 **3 遍**。
+ *
+ * 服务端（A-4 ②③）已经把事实算出来发在 `activeUnusable` 里了。
+ * 这一组钉的是**用户在他会走到的那条路径上真的看到了**，而且看到的是
+ * **对应他这一种情况的那个动作** —— 三种情况的动作完全不同，糊在一起等于没修。
+ */
+describe('A-4 三态在模型卡上各说各的动作', () => {
+  const UNUSABLE_FIT = {
+    tier: 'recommended',
+    reasonCode: 'ok',
+    reasonZh: '可以跑',
+    reasonEn: 'ok',
+    estGpuLayers: null,
+    estMinutesPerAudioHour: null,
+    speedTier: 'normal',
+    speedSource: 'none',
+    cpuFeaturesUnverified: [],
+    notRecommendedForLanguage: false,
+    detail: { needMB: 1, vramBudgetMB: 0, ramBudgetMB: 8000, diskFreeMB: 5000, diskNeededMB: 2 },
+  };
+
+  const vadGroup = {
+    groupId: 'vad/silero-vad',
+    role: 'vad',
+    displayName: 'Silero VAD',
+    displayNameZh: 'Silero VAD',
+    tags: [],
+    variants: [
+      {
+        id: 'vad/silero-vad-onnx',
+        groupId: 'vad/silero-vad',
+        displayName: 'Silero VAD (ONNX)',
+        displayNameZh: 'Silero VAD (ONNX)',
+        role: 'vad',
+        quantization: 'f16',
+        totalSizeBytes: 2_327_524,
+        engines: ['sherpa-onnx'],
+        license: { id: 'MIT', url: 'https://x', gated: false, requiresAcceptance: false },
+        requirements: { ramRequiredMB: 1, vramRequiredMB: 0, diskRequiredMB: 1, cpuFeatures: [] },
+        fitness: UNUSABLE_FIT,
+        benchmark: null,
+        speedClass: 'fast',
+        files: [],
+        installed: true,
+      },
+    ],
+  };
+
+  const vadCard = (unusable: Record<string, unknown> | null) => (
+    <ModelCard
+      group={vadGroup as never}
+      locale="zh-CN"
+      installedIds={new Set(['vad/silero-vad-onnx'])}
+      activeId={null}
+      pendingId={null}
+      onPull={() => undefined}
+      onDelete={() => undefined}
+      onActivate={() => undefined}
+      unusableActive={unusable as never}
+    />
+  );
+
+  const zhCard = (zhLocale as unknown as { models: { card: Record<string, string> } }).models.card;
+  /** 取词条里**变量之前**那一段做判据 —— 文案改词条这条跟着走，改语义才红。 */
+  const head = (key: string): string => zhCard[key]!.split('{{')[0]!.trim();
+
+  test('★★ 能用的那份已经装了 ⇒ 给一个真按钮（他该做的是激活，不是重下一遍）', async () => {
+    stubApi({});
+    const r = await render(
+      vadCard({
+        modelId: 'vad/silero-vad-onnx',
+        engine: 'whisper.cpp',
+        usableInstalled: 'vad/silero-vad-ggml',
+      }),
+    );
+    await r.flush();
+    const said = text(r.container);
+    assert.equal(
+      said.includes(head('unusableActive')),
+      true,
+      `没说出加载不了：${said.slice(0, 200)}`,
+    );
+    assert.equal(
+      said.includes(head('unusableSwitch')),
+      true,
+      `没说"你已经装了能用的"：${said.slice(0, 200)}`,
+    );
+    assert.equal(
+      r.container.querySelector('[data-testid="model-unusable-switch-vad/silero-vad"]') === null,
+      false,
+      '只说了话、没有可点的出口 —— 那正是这一周在删的那种"到不了能修的那一页"',
+    );
+    r.unmount();
+  });
+
+  test('★★ 确知一份都没有 ⇒ 说"去装一个"，且**不给**那个改用按钮', async () => {
+    stubApi({});
+    const r = await render(
+      vadCard({ modelId: 'vad/silero-vad-onnx', engine: 'whisper.cpp', usableInstalled: null }),
+    );
+    await r.flush();
+    const said = text(r.container);
+    assert.equal(said.includes(head('unusableInstall')), true, said.slice(0, 200));
+    assert.equal(
+      r.container.querySelector('[data-testid="model-unusable-switch-vad/silero-vad"]') === null,
+      true,
+      '一份能用的都没装，却给了"改用那一份" —— 按钮点下去无处可去',
+    );
+    r.unmount();
+  });
+
+  test('★★ 说不出（字段缺失）⇒ 只报事实，**一个动作都不给**', async () => {
+    stubApi({});
+    const r = await render(vadCard({ modelId: 'vad/silero-vad-onnx', engine: 'whisper.cpp' }));
+    await r.flush();
+    const said = text(r.container);
+    assert.equal(said.includes(head('unusableActive')), true, said.slice(0, 200));
+    assert.equal(
+      said.includes(head('unusableUnknown')),
+      true,
+      `没说"这次没查出来"：${said.slice(0, 200)}`,
+    );
+    // 猜一个动作会把已经装好的人送去重下一遍 / 把没装的人送去找不存在的东西
+    assert.equal(said.includes(head('unusableInstall')), false, '说不出的时候不许给"去装一个"');
+    assert.equal(said.includes(head('unusableSwitch')), false, '说不出的时候不许给"改用那一份"');
+    r.unmount();
+  });
+
+  test('★ 反面：没有这一格时不许凭空多出一行警示（缺失 ≠ 否）', async () => {
+    stubApi({});
+    const r = await render(vadCard(null));
+    await r.flush();
+    assert.equal(r.container.querySelector('[data-testid="model-unusable-vad/silero-vad"]'), null);
+    r.unmount();
+  });
+});
