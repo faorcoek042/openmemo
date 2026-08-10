@@ -291,14 +291,34 @@ export default function ModelsPage() {
                 <span className="text-ink-secondary">
                   {formatBytes(asrActive.totalSizeBytes, locale)}
                 </span>
-                <StatusChip
-                  tone={asrActive.integrity === 'ok' ? 'good' : 'warning'}
-                  label={
-                    asrActive.integrity === 'ok'
-                      ? t('models.current.verified')
-                      : t('models.current.unverified')
-                  }
-                />
+                {/*
+                  ★ T-199 ①：`corrupt` 此前被说成「未校验」。
+                  **校验过并且失败了，和从没校验过，是两回事** —— 前者是"这个文件坏了、
+                  现在跑不了"，后者是"还没查过、多半没事"。用同一句话说，
+                  等于把一个确定的坏消息降级成一句无所谓的提示。
+                  三态各自成一格，`corrupt` 给 critical（它确实会让转写起不来）。
+                */}
+                {/* 包一层只为给判据一个**结构锚点**：整页文字匹配会撞上
+                    选择器里那句「（校验未通过，选了也跑不了）」——
+                    同一个词出现在两个地方，关键词判据就分不清是谁说的。 */}
+                <span data-testid="asr-integrity-chip">
+                  <StatusChip
+                    tone={
+                      asrActive.integrity === 'ok'
+                        ? 'good'
+                        : asrActive.integrity === 'corrupt'
+                          ? 'critical'
+                          : 'warning'
+                    }
+                    label={
+                      asrActive.integrity === 'ok'
+                        ? t('models.current.verified')
+                        : asrActive.integrity === 'corrupt'
+                          ? t('models.current.corrupt')
+                          : t('models.current.unverified')
+                    }
+                  />
+                </span>
               </>
             ) : (
               <StatusChip tone="warning" label={t('models.current.noAsr')} />

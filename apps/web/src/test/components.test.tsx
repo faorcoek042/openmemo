@@ -118,6 +118,7 @@ import type { PipelineJob } from '@openmemo/shared';
 import RuntimePage from '../features/runtime/RuntimePage';
 import { tasksSse } from '../features/tasks/sse';
 import { modelsSse } from '../features/models/sse';
+import { bus } from '../lib/events/bus';
 import { pushProgress, useProgressStore } from '../lib/stores/progress.store';
 import { HardwareCard } from '../features/runtime/components/HardwareCard';
 import TasksPage from '../features/tasks/TasksPage';
@@ -10226,5 +10227,306 @@ describe('★ T-196 界面：metal/coreml 在 Windows 上说「本平台不适�
     } finally {
       await i18nInstance.changeLanguage('zh-CN');
     }
+  });
+});
+
+/* ══════════ T-199 ① 选得中、跑不了：选择器和运行器必须同一个谓词 ══════════ */
+
+/**
+ * 三套判据各说各话（裁决：A/B 都对不许合并，要改的是 C）：
+ * - **A** `rest/state.ts` `listInstalled()` —— 只按 `rec?.id` 过滤，答的是"列表该不该显示它"
+ * - **B** `downloader/src/store.ts` `findInstalledByRole(..., {requireIntegrityOk:true})`
+ *   —— 要求 `integrity === 'ok'`，答的是"能不能拿去跑"
+ * - **C** `AsrModelPicker` —— 修之前是 `integrity !== 'missing_files'`
+ *
+ * 分歧样例 `{role:'asr', integrity:'corrupt'}`（`rest/models.ts:757` 真实产出：
+ * 用户点了「校验」且有文件 sha256 对不上）：A 说装了 → C 说可选可激活 → B 说没装
+ * ⇒ 用户选中、激活成功、起转写 → job 转 blocked 弹「去安装模型」，
+ * 而 `/models` 上写着它已安装。**选得中、跑不了。**
+ *
+ * 🔴 `'missing_files'` 全仓**零写入方** ⇒ 旧判据排除的是一个不存在的值、
+ * 放行的是真实存在的那个。
+ */
+describe('T-199 ① corrupt 的模型：显示、但选不中、并说明白为什么', () => {
+  const installed = (models: unknown[], active: string | null = null) => ({
+    'GET /models/installed': { models, active: { asr: active } },
+  });
+  const asr = (id: string, integrity: string, displayName = id) => ({
+    id,
+    role: 'asr',
+    displayName,
+    quantization: null,
+    integrity,
+  });
+
+  const optionsOf = (c: HTMLElement) =>
+    [...c.querySelectorAll('option')].map((o) => ({
+      value: o.getAttribute('value') ?? '',
+      text: o.textContent ?? '',
+      disabled: (o as HTMLOptionElement).disabled,
+    }));
+
+  test('★ corrupt 的模型**不许消失** —— 用户在 /models 上看得见它，这里凭空少一行只会更糊涂', async () => {
+    stubApi(
+      installed([asr('asr/ok', 'ok', 'Whisper 好的'), asr('asr/bad', 'corrupt', 'Whisper 坏的')]),
+    );
+    const r = await render(<AsrModelPicker />);
+    await r.flush();
+    const vals = optionsOf(r.container).map((o) => o.value);
+    assert.equal(
+      vals.includes('asr/bad'),
+      true,
+      `corrupt 的模型被隐藏了（实际选项：${JSON.stringify(vals)}）`,
+    );
+    r.unmount();
+  });
+
+  test('★ 但它必须是 disabled —— 选得中就是在承诺一件跑不了的事', async () => {
+    stubApi(installed([asr('asr/ok', 'ok'), asr('asr/bad', 'corrupt')]));
+    const r = await render(<AsrModelPicker />);
+    await r.flush();
+    const byVal = new Map(optionsOf(r.container).map((o) => [o.value, o]));
+    assert.equal(
+      byVal.get('asr/bad')?.disabled,
+      true,
+      'corrupt 的选项仍可选中 —— 选了会激活成功然后转写 blocked',
+    );
+    r.unmount();
+  });
+
+  /** ★ 反向鉴别：守卫做过头（把所有选项都禁掉）一样是 bug，那样谁都换不了模型。 */
+  test('★ ok 的模型必须仍然可选（不许一刀切全禁掉）', async () => {
+    stubApi(installed([asr('asr/ok', 'ok'), asr('asr/bad', 'corrupt')]));
+    const r = await render(<AsrModelPicker />);
+    await r.flush();
+    const byVal = new Map(optionsOf(r.container).map((o) => [o.value, o]));
+    assert.equal(byVal.get('asr/ok')?.disabled, false, '好的模型也被禁掉了');
+    r.unmount();
+  });
+
+  test('★ 禁用要给得出原因 —— 一个灰掉且不解释的选项等于没说', async () => {
+    stubApi(installed([asr('asr/bad', 'corrupt', 'Whisper 坏的')]));
+    const r = await render(<AsrModelPicker />);
+    await r.flush();
+    const bad = optionsOf(r.container).find((o) => o.value === 'asr/bad');
+    const suffix = (zhLocale as unknown as { asr: Record<string, string> }).asr['unusableSuffix'];
+    assert.ok(suffix, '词条 asr.unusableSuffix 不存在');
+    assert.equal(
+      bad?.text.includes(suffix!),
+      true,
+      `禁用的选项没写原因（实际文案：${JSON.stringify(bad?.text)}）`,
+    );
+    r.unmount();
+  });
+
+  /**
+   * ★★ 谓词对齐：**逐个枚举 `integrity` 的四个值**，可选性必须与 B 的
+   * `requireIntegrityOk`（`=== 'ok'`）逐格相同。
+   *
+   * 钉的是"两边同一口径"这条性质本身，而不是某一个样例 ——
+   * 将来 `integrity` 加了第五个值，这条会立刻要求作者回来表态。
+   */
+  test('★★ 四个 integrity 值逐格对齐 B 的 requireIntegrityOk（只有 ok 可选）', async () => {
+    const ALL = ['ok', 'unverified', 'corrupt', 'missing_files'] as const;
+    stubApi(installed(ALL.map((v) => asr(`asr/${v}`, v))));
+    const r = await render(<AsrModelPicker />);
+    await r.flush();
+    const byVal = new Map(optionsOf(r.container).map((o) => [o.value, o]));
+    for (const v of ALL) {
+      const opt = byVal.get(`asr/${v}`);
+      assert.ok(opt, `integrity=${v} 的模型整个不见了 —— 裁决要求显示而不是隐藏`);
+      assert.equal(
+        opt!.disabled,
+        v !== 'ok',
+        `integrity=${v} 的可选性与运行器不一致（disabled 实际=${opt!.disabled}，应为 ${v !== 'ok'}）`,
+      );
+    }
+    r.unmount();
+  });
+});
+
+describe('T-199 ① /models 顶部：校验失败 ≠ 未校验', () => {
+  /**
+   * 修之前是 `integrity === 'ok' ? good : warning` 两态，于是 `corrupt` 被说成「未校验」。
+   * **校验过并且失败了，和从没校验过，是两回事** —— 后者多半没事，前者是这个文件真的坏了。
+   */
+  const zhCur = (zhLocale as unknown as { models: { current: Record<string, string> } }).models
+    .current;
+
+  /* 形状照 `stubModelsPage()`（本文件既有的那份）—— 自己编一份就是测自己的想象。
+     只把 `/models/installed` 换成带 integrity 的那一条。 */
+  const renderModels = async (integrity: string) => {
+    const catalog = { stale: false, fetchedAt: '2026-08-03T00:00:00.000Z', groups: [] };
+    stubApi({
+      '/models/catalog?role=all&lang=en': catalog,
+      '/models/catalog?role=all&lang=zh': catalog,
+      '/models/installed': {
+        models: [
+          {
+            id: 'asr/x',
+            role: 'asr',
+            displayName: 'Whisper X',
+            quantization: null,
+            totalSizeBytes: 1_000_000,
+            integrity,
+          },
+        ],
+        active: { asr: 'asr/x', llm: null },
+      },
+      '/models/storage': {
+        usedBytes: 0,
+        volume: { freeBytes: 1_000_000_000, totalBytes: 2_000_000_000 },
+        breakdown: [],
+        reclaimable: { orphanBlobsBytes: 0, stalePartialsBytes: 0 },
+      },
+      '/jobs': { jobs: [] },
+      '/settings': { settings: {} },
+      '/secrets': { secrets: [], disclosure: null },
+    });
+    const r = await render(<ModelsPage />, { route: '/models' });
+    await r.flush();
+    return r;
+  };
+
+  /*
+   * ⚠️ 判据钉**那一枚芯片**（`asr-integrity-chip`），不是整页文字。
+   * 整页匹配会撞上选择器里那句「（校验未通过，选了也跑不了）」—— 同一个词
+   * 出现在两个地方，关键词判据分不清是谁说的（本仓 B11 那次的同一个坑）。
+   */
+  const chipText = (c: HTMLElement) =>
+    (c.querySelector('[data-testid="asr-integrity-chip"]')?.textContent ?? '').trim();
+
+  test('★ corrupt 必须说「校验未通过」，不许复用「未校验」那句', async () => {
+    const r = await renderModels('corrupt');
+    assert.equal(chipText(r.container), zhCur['corrupt']);
+    r.unmount();
+  });
+
+  test('★ 真的没校验过时仍然说「未校验」（不许把两态合并成一态）', async () => {
+    const r = await renderModels('unverified');
+    assert.equal(chipText(r.container), zhCur['unverified'], '没校验过被说成了别的 —— 假红灯同族');
+    r.unmount();
+  });
+
+  test('★ ok 仍然说「已校验」', async () => {
+    const r = await renderModels('ok');
+    assert.equal(chipText(r.container), zhCur['verified']);
+    r.unmount();
+  });
+
+  test('★★ 三态互不相同 —— 合并任意两态都必须红', async () => {
+    const seen = new Map<string, string>();
+    for (const v of ['ok', 'unverified', 'corrupt']) {
+      const r = await renderModels(v);
+      seen.set(v, chipText(r.container));
+      r.unmount();
+    }
+    const texts = [...seen.values()];
+    assert.equal(new Set(texts).size, 3, `三态说了重复的话：${JSON.stringify([...seen])}`);
+    for (const [v, txt] of seen) assert.equal(txt.length > 0, true, `${v} 这一格是空的`);
+  });
+
+  test('两份 locale 都要有新词条（只写中文 = en 界面漏 key 名）', () => {
+    for (const [name, loc] of [
+      ['zh-CN', zhLocale],
+      ['en', enLocale],
+    ] as const) {
+      const cur = (loc as unknown as { models: { current: Record<string, string> } }).models
+        .current;
+      const a = (loc as unknown as { asr: Record<string, string> }).asr;
+      assert.ok(cur['corrupt'], `${name} 缺 models.current.corrupt`);
+      assert.ok(a['unusableSuffix'], `${name} 缺 asr.unusableSuffix`);
+    }
+  });
+});
+
+/**
+ * ★★ T-198 / S-2 —— **同一个事件里，后注册的订阅者会不会把前一个刚清掉的快照写回去。**
+ *
+ * 推定（来自代码结构，不是猜）：`lib/events/bindings.ts` 里 `tasksSse` 注册在
+ * `modelsSse` **之前**，`lib/events/bus.ts` 按 Set 插入序**同步**遍历，
+ * 而 `features/models/sse.ts` 的 `job.progress` 处理器原本**只 push、不清理**。
+ * 于是一次终态 `job.progress` 的真实次序是
+ * `tasks push → tasks clear → models push（把刚清掉的写回去）`。
+ *
+ * ⚠️ 这条推定**必须实测**才能落测试 —— 若成立，任何"只在 tasks 那侧清 store"的修
+ * 都会被同一事件的下一个订阅者当场撤销，人还会以为自己没修好。
+ * **实测结论见本文件同名反向验证：把 `models/sse.ts` 的清理去掉，下面这条当场变红。**
+ *
+ * 断言写的是**产品要的性质**（终态之后不许留残影），不是"S-2 存在"。
+ */
+describe('★★ T-198/S-2 终态之后 store 里不许留残影（两个订阅者都要收尾）', () => {
+  const JID = 's2-job';
+
+  /** `pushProgress` 有 200ms 节流，必须等它 flush 完才能断言。 */
+  const afterFlush = () => new Promise((r) => setTimeout(r, 260));
+
+  function withBothBindings<T>(fn: () => T): T {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    /*
+     * ⚠️ 刻意**不** import `registerAllSseBindings`：把整张绑定图拉进这个测试包会连带
+     * `DownloadRow.tsx` 里那个模块级 `[...TERMINAL_JOB_STATES, …]`，在 SSR 打包出来的
+     * chunk 初始化序下会 `ReferenceError`（实测撞到过）。那是别人在途的文件。
+     * 所以只注册这两个，但**注册顺序从 `bindings.ts` 源码里读出来**，
+     * 而不是我自己拍一个 —— 否则测的是我假设的次序，不是产品真实的次序。
+     */
+    const src = readFileSync(`${process.cwd()}/src/lib/events/bindings.ts`, 'utf8');
+    const iTasks = src.indexOf('\n  tasksSse,');
+    const iModels = src.indexOf('\n  modelsSse,');
+    assert.ok(iTasks > 0 && iModels > 0, '前提：bindings.ts 里找不到这两个绑定的注册行');
+    assert.ok(iTasks < iModels, '前提：tasksSse 必须排在 modelsSse 之前（S-2 的前提）');
+    const disposers = [...tasksSse(qc), ...modelsSse(qc)];
+    try {
+      return fn();
+    } finally {
+      disposers.forEach((d) => d());
+      qc.clear();
+    }
+  }
+
+  test('★★ 终态 job.progress：两个订阅者跑完之后，store 里必须干净', async () => {
+    useProgressStore.getState().clear(JID);
+    withBothBindings(() => {
+      bus.emit('job.progress', {
+        type: 'job.progress',
+        jobId: JID,
+        state: 'cancelled',
+        step: 'resolving',
+        pct: 0,
+        completedBytes: 0,
+        totalBytes: 100,
+        speedBps: null,
+        etaSeconds: null,
+      });
+    });
+    await afterFlush();
+    assert.equal(
+      useProgressStore.getState().byJob[JID],
+      undefined,
+      'tasks 清掉的快照被 models 那个订阅者写回去了 —— 只在一侧清是不够的',
+    );
+    useProgressStore.getState().clear(JID);
+  });
+
+  test('★ 非终态仍然照常进 store（别把进度显示修没了）', async () => {
+    useProgressStore.getState().clear(JID);
+    withBothBindings(() => {
+      bus.emit('job.progress', {
+        type: 'job.progress',
+        jobId: JID,
+        state: 'running',
+        step: 'downloading',
+        pct: 0.42,
+        completedBytes: 42,
+        totalBytes: 100,
+        speedBps: 1000,
+        etaSeconds: 5,
+      });
+    });
+    await afterFlush();
+    assert.ok(useProgressStore.getState().byJob[JID], '还在跑的任务必须有进度快照');
+    useProgressStore.getState().clear(JID);
   });
 });

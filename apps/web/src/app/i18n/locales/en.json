@@ -123,6 +123,7 @@
       "llm": "Language model",
       "verified": "Verified",
       "unverified": "Not verified",
+      "corrupt": "Verification failed",
       "noAsr": "None selected — cannot transcribe",
       "noLlm": "Not configured — summaries and mindmaps unavailable",
       "change": "Change"
@@ -960,6 +961,7 @@
     "modelLabel": "ASR model",
     "languageLabel": "Language",
     "notSelected": "Not selected",
+    "unusableSuffix": " (verification failed — selecting it won't run)",
     "noModel": "No speech recognition model installed",
     "goInstall": "Install a model",
     "goInstallRuntime": "Install local components",

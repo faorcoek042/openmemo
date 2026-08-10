@@ -107,10 +107,28 @@ export function AsrModelPicker({ className }: { className?: string }) {
     onSuccess: () => void qc.invalidateQueries({ queryKey: qk.models.installed }),
   });
 
-  // 只列真正装好的 ASR 模型 —— 没装的不灰掉塞在列表里，而是给"去安装"
+  /*
+   * ★ T-199 ①：**选择器和运行器必须用同一个谓词。**
+   *
+   * 修之前这里是 `m.integrity !== 'missing_files'`，而真正决定"能不能拿去跑"的是
+   * `packages/downloader/src/store.ts` 的 `findInstalledByRole(..., {requireIntegrityOk:true})`
+   * —— 它要求 `integrity === 'ok'`。两个谓词的分歧样例是 `{role:'asr', integrity:'corrupt'}`
+   * （用户点过「校验」且有文件 sha256 对不上，`rest/models.ts:757` 写的）：
+   * 这里放行 → 用户选得中、`/models/activate` 也成功 → 起转写时 daemon 那边找不到它
+   * → job 转 `blocked` 弹「去安装模型」，而 `/models` 上明明写着它已安装。
+   * **选得中、跑不了，全程没有一句话解释。**
+   *
+   * 🔴 而 `'missing_files'` **全仓没有任何写入方**（只有类型声明和这一处读取）——
+   * 也就是说这条判据**排除的是一个不存在的值，放行的是真实存在的那个**。
+   *
+   * 修法按裁决：**不隐藏，显示但禁用并给出原因**。隐藏了用户就不知道自己
+   * 那个模型怎么了（他明明在 `/models` 上看得见它）。
+   */
   const models: InstalledModel[] = arr(data?.models).filter(
-    (m) => m.role === 'asr' && m.integrity !== 'missing_files',
+    (m) => m.role === 'asr',
   ) as InstalledModel[];
+  /** 与 `findInstalledByRole` 的 `requireIntegrityOk` 同一口径 —— 只有 `ok` 才真的跑得起来。 */
+  const isRunnable = (m: InstalledModel): boolean => m.integrity === 'ok';
   const activeId = data?.active?.asr ?? null;
 
   if (isLoading) {
@@ -177,8 +195,14 @@ export function AsrModelPicker({ className }: { className?: string }) {
         {groupByFamily(models).map(([family, list]) => (
           <optgroup key={family} label={family}>
             {list.map((m) => (
-              <option key={m.id} value={m.id}>
+              /*
+               * 跑不了的**留在列表里但禁用**，并把原因写进标签 —— 用户在 `/models` 上
+               * 看得见这个模型，这里凭空少一行只会让他以为是自己看花了眼。
+               * `disabled` 是原生语义：鼠标点不中、键盘跳过、读屏器会念"不可用"。
+               */
+              <option key={m.id} value={m.id} disabled={!isRunnable(m)}>
                 {optionLabel(m)}
+                {isRunnable(m) ? '' : t('asr.unusableSuffix')}
               </option>
             ))}
           </optgroup>

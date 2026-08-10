@@ -123,6 +123,7 @@
       "llm": "语言模型",
       "verified": "已校验",
       "unverified": "未校验",
+      "corrupt": "校验未通过",
       "noAsr": "未选择 —— 无法转写",
       "noLlm": "未配置 —— 摘要与思维导图不可用",
       "change": "更换"
@@ -960,6 +961,7 @@
     "modelLabel": "识别模型",
     "languageLabel": "语言",
     "notSelected": "未选择",
+    "unusableSuffix": "（校验未通过，选了也跑不了）",
     "noModel": "尚未安装语音识别模型",
     "goInstall": "去安装模型",
     "goInstallRuntime": "去安装本机组件",
