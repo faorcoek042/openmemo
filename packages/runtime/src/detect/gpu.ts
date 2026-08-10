@@ -29,7 +29,26 @@
  *   Linux   — VERIFIED on the T-012 box (all commands executed; the no-GPU paths are
  *             exactly what produced the reverse-examples above).
  *   macOS   — UNVERIFIED. No Mac available. Commands from Apple documentation.
- *   Windows — UNVERIFIED. No Windows machine available. APIs from Microsoft docs.
+ *   Windows — PARTLY VERIFIED. `[CI 实测 2026-08-10, windows-2025, run 31389910051]`
+ *             `Get-CimInstance Win32_VideoController` **exit=0 且返回合法 JSON** —— 这条命令
+ *             在 win32 上是活的（此前整段标 UNVERIFIED，那是"没查过"，不是"不行"）。
+ *             真实返回（该 runner 只有一块虚拟适配器）：
+ *               {"Name":"Microsoft Hyper-V Video","AdapterRAM":null,
+ *                "DriverVersion":"10.0.26100.1150","PNPDeviceID":"VMBUS\\{DA0A7802-…}\\{5620E0C7-…}"}
+ *             两条由此**从推测变成事实**：
+ *               · 只有一块适配器时顶层是 **object 而不是 array** —— 下面
+ *                 `Array.isArray(raw) ? raw : [raw]` 那条兜底是**必经之路**，不是保险；
+ *               · `nvidia-smi` 不存在时是 `spawnSync … ENOENT`（`run()` 收成 ok:false）。
+ *
+ *             🔴 **同一次实测暴露出一个缺陷，本轮只记录未修**（改它会动到
+ *             `advisoryBackends` → `applicability` 的判定，且手上没有真 Hyper-V+GPU 机器可验）：
+ *             `"Microsoft Hyper-V Video"` **匹配不上** `SOFTWARE_ADAPTER_NAMES`
+ *             （那条正则里是 `microsoft basic`，不是 `hyper-v`），而它的 `PNPDeviceID` 是
+ *             `VMBUS\\…`、**没有 `VEN_xxxx`** ⇒ vendor 落到 `'other'`，然后照样被塞进
+ *             `gpus` 并带上 `candidateBackends: ['vulkan']`。
+ *             也就是说：**任何 Hyper-V/VM 里的 Windows 客户机，都会被我们判成"可能支持 Vulkan"**。
+ *             ⚠️ 修法不能简单粗暴 —— 把"虚拟适配器"筛得太狠会误杀真实核显
+ *             （用户那台的 Radeon 780M 就是核显），所以这条要单独立项、单独验。
  */
 
 import { readFile, readdir } from 'node:fs/promises';
