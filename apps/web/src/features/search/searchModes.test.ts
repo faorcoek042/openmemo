@@ -98,3 +98,42 @@ describe('T-164 ⑤ —— 搜索档位由服务端说了算', () => {
     assert.equal(m.semanticReason, null, '非字符串的 reason 被原样带到界面上');
   });
 });
+
+describe('★ T-200 A-2 分词降级：同一个事实不许两处分叉', () => {
+  /*
+   * 事故形状：daemon 发的键叫 `chineseTokenizer`（boolean），契约声明的却是
+   * `tokenizer: 'simple'|'trigram'` —— **契约那个键全仓没有生产者**，
+   * 而 `normalizeModes` 两个都没读。于是在一台 libsimple 没加载的机器上：
+   *   · 就绪横幅 / 自检页（读 `/api/health` 的另一条路）：**明说降级了**
+   *   · 搜索页：关键词 tab 正常亮着、`semanticReason` 只解释向量路
+   *     ⇒ **用户搜「人工智能」搜不到，却被告知检索一切正常**
+   */
+  it('★ 服务端说 trigram ⇒ 前端必须读到 trigram（这是界面能说出降级的前提）', () => {
+    assert.equal(normalizeModes({ keyword: true, tokenizer: 'trigram' }).tokenizer, 'trigram');
+    assert.equal(normalizeModes({ keyword: true, tokenizer: 'simple' }).tokenizer, 'simple');
+  });
+
+  it('★ 缺省是 simple（不降级）—— 这里"严格"会凭空给好机器扣一顶帽子', () => {
+    /*
+     * 方向与 semantic/hybrid 相反，是刻意的：
+     * 那几个宽松会**把不存在的能力摆出来给人点**；
+     * 这个严格会**对一台好机器说它搜不到中文**。
+     * 判据仍是那句：**哪个默认值会让界面说一句不成立的话。**
+     */
+    assert.equal(normalizeModes({}).tokenizer, 'simple');
+    assert.equal(normalizeModes(undefined).tokenizer, 'simple');
+    // 脏值不许被读成降级
+    assert.equal(normalizeModes({ tokenizer: 'nonsense' }).tokenizer, 'simple');
+    assert.equal(normalizeModes({ tokenizer: 42 }).tokenizer, 'simple');
+  });
+
+  it('★ 旧键名 `chineseTokenizer` 不再被认 —— 收口到契约那一侧', () => {
+    /*
+     * 这条钉的是"分叉真的收掉了"：如果哪天有人把 daemon 改回去发 boolean，
+     * 前端会拿到缺省的 `'simple'`，界面**不会**说降级 —— 而这条用例会红，
+     * 因为它要求 `chineseTokenizer:false` 不产生 `trigram`。
+     * 换句话说：**它逼着两侧用同一个键名，而不是各自兼容对方。**
+     */
+    assert.equal(normalizeModes({ chineseTokenizer: false }).tokenizer, 'simple');
+  });
+});

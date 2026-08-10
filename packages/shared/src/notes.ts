@@ -439,10 +439,27 @@ export interface SearchHit {
   source: SearchSource;
 }
 
-/** Which search backends are actually live; the UI must not offer a dead mode. */
+/**
+ * Which search backends are actually live; the UI must not offer a dead mode.
+ *
+ * ── ★ T-200 A-2：这份声明曾经是**双向说谎**的 ────────────────────────────────────
+ *
+ * · `tokenizer` 声明在这里，**全仓没有任何生产者** —— daemon 发的键叫
+ *   `chineseTokenizer`（而且是 boolean）。按契约读 `resp.modes.tokenizer` 恒得 `undefined`。
+ * · 反过来，daemon **真发**的 `hybrid` / `semanticReason` 契约里没有，
+ *   于是前端只能 `as Record<string, unknown>` 硬取（`features/search/modes.ts`）——
+ *   **一个类型断言，正是"契约在说谎"的另一半**。
+ *
+ * 收在 `tokenizer` 这一侧而不是 boolean：它比"加载了没有"多说一句
+ * **"降级成了什么"**，而那正是用户需要知道的（trigram 下中文双字词可能搜不到）。
+ */
 export interface SearchModeReport {
   keyword: boolean;
   semantic: boolean;
+  /** Hybrid (keyword + vector) — false until an embedding step exists. */
+  hybrid: boolean;
+  /** Why semantic/hybrid is unavailable, in the server's own words. Null when it is. */
+  semanticReason: string | null;
   /** "simple" = libsimple Chinese segmentation; "trigram" = degraded fallback. */
   tokenizer: 'simple' | 'trigram';
 }

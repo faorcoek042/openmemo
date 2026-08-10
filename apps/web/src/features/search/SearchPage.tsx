@@ -108,6 +108,24 @@ export default function SearchPage() {
         不说的话用户只会以为这个产品没设计过语义检索；
         自己编一句理由则是把一个真实的限制换成一句想象 —— 那正是这条要修的病。
       */}
+      {/*
+        ★ T-200 A-2：**分词降级要说出来。**
+
+        此前搜索页对它一个字都不说：`normalizeModes` 根本没读这个字段，
+        于是关键词 tab 正常亮着、`semanticReason` 只解释向量路 ——
+        **用户搜「人工智能」搜不到，界面却告诉他检索一切正常**。
+        而同一台机器上，就绪横幅与自检页（读 `/api/health` 的另一条路）**明说降级了**。
+
+        ⚠️ 措辞：说**降级成了什么 + 影响是什么**，不说「分词器未安装」那种
+        把责任推给用户的话；也**不在这里造动作** —— 装不装得上由组件页判断，
+        搜索页只负责把"你现在搜到的结果可能不全"讲清楚。
+      */}
+      {modes?.tokenizer === 'trigram' ? (
+        <p className="text-xs text-warning" data-testid="search-tokenizer-degraded">
+          {t('search.tokenizerDegraded')}
+        </p>
+      ) : null}
+
       {missing.length > 0 && modes ? (
         <p className="text-xs text-ink-muted" data-testid="search-modes-unavailable">
           {t('search.modesUnavailable', {

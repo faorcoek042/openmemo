@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
+import { validateSearchResponse } from '@openmemo/shared';
+
 import { normalizeModes, type SearchMode } from './modes';
 import { api } from '../../lib/api/client';
 import { qk } from '../../app/query';
@@ -26,6 +28,27 @@ export interface SearchHit {
  * 而前端把它扔了，然后用一个写死的常量恒渲染三个 tab。
  * **裁决"v1 不做向量"没问题；问题是现状在骗人。**
  */
+/**
+ * ★ T-200 A-2：把 `validateSearchResponse()` **接上唯一一个真实调用点**。
+ *
+ * 那个校验器从落地起**全仓没有任何调用者** —— 它把键名声明对了（`tokenizer`），
+ * 而 daemon 一直发的是 `chineseTokenizer`。**本该由它当场拦下的分叉，
+ * 因为没人跑它，安静地活了下来。**
+ * 一个从没被跑过的校验器比没有更糟：它让读代码的人以为这里有守卫。
+ *
+ * ⚠️ 只在 DEV 出声、**只 warn 不抛**：
+ *   · 抛 = 一次字段漂移把整个搜索页打成白屏，比漏报更糟；
+ *   · 生产沉默 = 老 daemon（字段还没跟上）不该把用户界面搞坏。
+ * 判据是「**开发时当场知道**」，不是「运行时更严格」。
+ */
+function assertModesMatchContract(resp: unknown): void {
+  if (!import.meta.env.DEV) return;
+  const v = validateSearchResponse(resp);
+  if (!v.ok) {
+    console.warn(`[search] 响应与契约不符（SearchResponse）：${v.errors.slice(0, 5).join('; ')}`);
+  }
+}
+
 export function useSearchQuery(q: string, mode: SearchMode) {
   return useQuery({
     queryKey: qk.search(q, mode),
@@ -35,7 +58,10 @@ export function useSearchQuery(q: string, mode: SearchMode) {
         `/search?q=${encodeURIComponent(q)}&mode=${mode}`,
       ),
     enabled: q.trim().length > 0,
-    select: (d) => ({ hits: d.hits, modes: normalizeModes(d.modes) }),
+    select: (d) => {
+      assertModesMatchContract(d);
+      return { hits: d.hits, modes: normalizeModes(d.modes) };
+    },
   });
 }
 

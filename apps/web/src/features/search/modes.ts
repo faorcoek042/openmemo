@@ -27,6 +27,19 @@ export interface SearchModes {
   hybrid: boolean;
   /** 为什么没有语义路（服务端给的原话，不由前端编）。 */
   semanticReason: string | null;
+  /**
+   * 关键词那一路**实际用的分词器**（T-200 A-2）。
+   *
+   * `'trigram'` = libsimple 没加载上，FTS5 退回三元组切分 ——
+   * 后果是**中文双字词可能搜不到**（「人工智能」这种）。
+   *
+   * ⚠️ 此前这份信息在响应里**根本没被读过**：`normalizeModes` 只认
+   * keyword/semantic/hybrid/semanticReason，于是关键词 tab 正常亮着、
+   * `semanticReason` 只解释向量路 —— **用户搜不到中文，却被告知检索一切正常**。
+   * 而同一台机器上，就绪横幅与自检页（读的是 `/api/health` 的
+   * `db.extensions.tokenizer`，**另一个端点**）**明说降级了**。同一个事实，两处分叉。
+   */
+  tokenizer: 'simple' | 'trigram';
 }
 
 /** 展示顺序。**不是"有哪几档"** —— 那个只有服务端知道。 */
@@ -53,6 +66,13 @@ export function normalizeModes(raw: unknown): SearchModes {
     semantic: bool(m['semantic'], false),
     hybrid: bool(m['hybrid'], false),
     semanticReason: typeof m['semanticReason'] === 'string' ? m['semanticReason'] : null,
+    /*
+     * ⚠️ 缺省取 `'simple'`（**不降级**），方向与 `semantic` 那几个相反 —— 刻意的：
+     * 这里"宽松"的后果是**少说一句降级**，而"严格"（默认 trigram）的后果是
+     * **对一台好机器凭空说它搜不到中文**。判据仍是那句：
+     * **哪个默认值会让界面说一句不成立的话。**
+     */
+    tokenizer: m['tokenizer'] === 'trigram' ? 'trigram' : 'simple',
   };
 }
 

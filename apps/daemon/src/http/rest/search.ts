@@ -13,6 +13,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import type { DatabaseHandle } from '@openmemo/db';
+import type { SearchModeReport } from '@openmemo/shared';
 
 import { sendError, sendJson } from '../respond.js';
 
@@ -182,11 +183,23 @@ export function createSearchRoutes(deps: SearchRoutesDeps): {
   };
 }
 
-/** 如实报告哪几路检索可用 —— UI 据此灰掉不可用的开关（D-02 §4.5）。 */
-function modeReport(deps: SearchRoutesDeps): Record<string, unknown> {
+/**
+ * 如实报告哪几路检索可用 —— UI 据此灰掉不可用的开关（D-02 §4.5）。
+ *
+ * ★ T-200 A-2：返回类型从 `Record<string, unknown>` 收成 `SearchModeReport`。
+ * 松类型正是这次分叉能存在的原因：发 `chineseTokenizer`（boolean）而契约写的是
+ * `tokenizer`（`'simple'|'trigram'`），**编译器一个字都不会说**。
+ * 收紧之后，键名再漂就是编译错误，而不是"上线半年没人发现"。
+ */
+function modeReport(deps: SearchRoutesDeps): SearchModeReport {
   return {
     keyword: true,
-    chineseTokenizer: deps.hasChineseTokenizer,
+    /*
+     * ★ 发 `tokenizer` 而不是 `chineseTokenizer`：后者只说"加载了没有"，
+     * 前者多说一句**降级成了什么** —— 而用户要知道的正是这个
+     *（trigram 下中文双字词可能搜不到）。与查询执行那一侧用的是**同一个值**。
+     */
+    tokenizer: deps.hasChineseTokenizer ? ('simple' as const) : ('trigram' as const),
     // 向量路：扩展在也没用，因为没有任何地方生成 embedding
     semantic: false,
     semanticReason: deps.hasVectorIndex

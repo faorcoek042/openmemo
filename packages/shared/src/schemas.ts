@@ -684,6 +684,16 @@ export const SearchResponseSchema = z.object({
 export function validateImportNoteRequest(input: unknown) {
   return toResult(ImportNoteRequestSchema.safeParse(input));
 }
+/**
+ * ⚠️ **这个校验器从落地起就没有任何调用点** —— 全仓 grep 只有它自己的定义（T-200 A-2）。
+ *
+ * 它把键名声明对了（`tokenizer`），而 daemon 发的是 `chineseTokenizer`；
+ * **本该由它当场拦下的分叉，因为没人跑它，安静地活了下来** ——
+ * 一个从没被跑过的校验器比没有更糟：它让读代码的人以为这里有守卫。
+ *
+ * 现在接上了调用点（`apps/web/src/features/search/modes.ts` 的 `normalizeModes`
+ * 在 DEV 下用它自检），所以键名再漂会**当场出声**。
+ */
 export function validateSearchResponse(input: unknown) {
   return toResult(SearchResponseSchema.safeParse(input));
 }

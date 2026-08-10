@@ -335,6 +335,7 @@
     "chip": {
       "active": "In use",
       "installed": "Installed",
+      "bundled": "Ships with the app",
       "available": "Installable",
       "notInstalled": "Unavailable",
       "failed": "Self-test failed",
@@ -751,7 +752,8 @@
       "noteApi": "{{n}} in the bundled list · this provider exposes an enumerable endpoint — press Refresh to ask what it actually has now",
       "refresh": "Refresh",
       "refreshing": "Refreshing…",
-      "refreshed": "Just fetched {{n}}"
+      "refreshed": "Just fetched {{n}}",
+      "commitError": "Not saved — your typed value is still shown here, but the save failed. Fix the underlying problem and leave the field to retry."
     },
     "noKeyNeeded": "no API key needed",
     "baseUrlLocked": "This vendor rejects a custom endpoint (baseUrl.editable = false in the catalog), so the field is read-only.",
@@ -835,7 +837,8 @@
     "idle": "Type to search",
     "idleHint": "Chinese word segmentation and pinyin supported. Transcript hits jump straight to that second.",
     "noResults": "No matches",
-    "noResultsHint": "Try different words. Transcript hits jump straight to that second."
+    "noResultsHint": "Try different words. Transcript hits jump straight to that second.",
+    "tokenizerDegraded": "Chinese segmentation has fallen back to trigram — two-character terms may not be found. Your notes are unaffected; search again once it is restored."
   },
   "onboarding": {
     "title": "Welcome to OpenMemo",
