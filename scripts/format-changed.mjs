@@ -37,10 +37,16 @@
  * ## 用法
  *
  * ```bash
- * pnpm format:changed <照抄 git commit -- 后面的那几个路径>   # 提交前
+ * pnpm format:changed <照抄 git commit -- 后面的那几个路径>   # 提交前（★ 必须带路径）
  * pnpm format:changed                                        # push 前：查 origin/master..HEAD
  * pnpm format:changed --write <路径…>                        # 直接改好
  * ```
+ *
+ * ⚠️⚠️ **提交前跑无参数模式 = 什么都没查。** 你还没提交，`origin/master..HEAD` 里
+ * 当然没有你那几个文件。`[真事 2026-08-10]` Manager 向至少八个 agent 广播
+ * 「提交前跑 `pnpm format:changed`」，**漏了"带路径"三个字** ——
+ * 一群人跑了一个结构上查不到东西的检查，然后以为查过了。
+ * 现在这种情况会被 `warnIfUsedAsPreCommitCheck()` 当场点破（见下）。
  * 退出码：有文件未格式化 → 1；**显式给了路径却一个可查文件都没解析出来 → 1**（多半是路径打错了）。
  */
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -75,8 +81,54 @@ function filesAboutToPush() {
     .filter(Boolean);
 }
 
+/**
+ * ★ **无参数模式被当成"提交前自检"用时，当场说破。**
+ *
+ * ── 为什么光把那句话喊响没用 ──────────────────────────────────────────────────
+ *
+ * 「没有检查任何东西」这一句会在**两种完全不同**的处境下出现：
+ *   ① 树是干净的、也没有待 push 的提交 —— 那确实没什么可查，这句话是对的；
+ *   ② **你正准备提交，工作树里全是你的改动** —— 这句话的真实含义是
+ *      **"你跑错模式了"**，而它和 ① 长得一模一样。
+ * 同一句话覆盖两种处境，读的人很快就学会跳过它。
+ *
+ * `[真事 2026-08-10]` Manager 向至少八个 agent 广播「提交前跑 `pnpm format:changed`」，
+ * **漏了"带路径"三个字** —— 一群人跑了一个结构上查不到东西的检查然后以为查过了。
+ * 救场的正是这句诚实输出（`a534e2e5…` 没把它当通过），
+ * **但它救得下来是靠读的人警觉，不是靠这句话本身。**
+ *
+ * 所以这里不是把它喊得更响，而是**把 ② 认出来单独说** —— 只在真的可能用错时出声，
+ * 平时（干净树、推送前复核）一个字都不多说，免得变成又一条被无视的告警。
+ *
+ * ⚠️ **刻意不改成报错**：正常的推送前复核会命中 ①，报错就成了误伤
+ *（假红会训练人忽略告警，和假绿一样贵 —— HANDOFF ⑤B）。
+ */
+function warnIfUsedAsPreCommitCheck() {
+  let dirty;
+  try {
+    dirty = execFileSync('git', ['status', '--porcelain'], { cwd: REPO, encoding: 'utf8' })
+      .split('\n')
+      .filter(Boolean);
+  } catch {
+    return;
+  }
+  if (dirty.length === 0) return;
+  console.log('');
+  console.log(`⚠️  工作树里有 ${dirty.length} 处未提交改动，**本次一个都没查**。`);
+  console.log('    如果你是在做**提交前自检**，那就是跑错模式了 —— 无参数模式查的是');
+  console.log('    `origin/master..HEAD`（**已经提交**、即将 push 的内容），而你还没提交。');
+  console.log('    正确用法：把路径传进来，照抄 `git commit -- ` 后面那一串：');
+  console.log('        pnpm format:changed <你要提交的那几个路径>');
+  console.log('    ⚠️ 只传**你自己**的：这棵树是多路共享的，上面那些改动里有别人的。');
+}
+
 const explicit = paths.length > 0;
 const candidates = explicit ? paths : filesAboutToPush();
+if (!explicit) {
+  console.log(
+    '口径：origin/master..HEAD（**已经提交**、即将 push 的内容）—— 这**不是**提交前自检。',
+  );
+}
 
 // 删掉的文件没法格式化；prettier 对不认识的扩展名用 --ignore-unknown 跳过。
 const targets = candidates.filter((p) => existsSync(resolve(REPO, p)));
@@ -93,7 +145,8 @@ if (targets.length === 0) {
     );
     process.exit(1);
   }
-  console.log('· origin/master..HEAD 里没有改动过的文件 —— **没有检查任何东西**（这不是"通过"）。');
+  console.log('⚠️  没有检查任何东西 —— origin/master..HEAD 里没有改动过的文件。**这不是"通过"。**');
+  warnIfUsedAsPreCommitCheck();
   process.exit(0);
 }
 
@@ -110,6 +163,8 @@ if (r.status === 0) {
     `✔ ${targets.length} 个文件格式正确（口径：${explicit ? '你给的路径' : 'origin/master..HEAD'}）。\n` +
       '  ⚠️ 这**不**等于全仓格式正确 —— 它只看这几个文件；全仓那一档是 CI 的 `Format check`。',
   );
+  // 无参数模式即使查到了东西，查的也只是**已提交**内容；工作树里的还没被看过。
+  if (!explicit) warnIfUsedAsPreCommitCheck();
   process.exit(0);
 }
 
