@@ -20,7 +20,13 @@ import { promises as fs } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as path from 'node:path';
 
-import { DownloadError, install, sha256File, verifyFile } from '@openmemo/downloader';
+import {
+  DownloadError,
+  install,
+  resolveInstalledFile,
+  sha256File,
+  verifyFile,
+} from '@openmemo/downloader';
 import {
   LLM_GRAPH_OVERHEAD_MB,
   MODEL_ROLES,
@@ -60,17 +66,18 @@ function toModelsRelPath(modelsRoot: string, abs: string): string {
   return rel.startsWith('..') ? path.basename(abs) : rel;
 }
 
-/**
- * 安装记录 → 绝对路径。**优先 root+relPath**，旧记录回退到废弃的 `path`。
- * 兼容分支是必须的：已经装过模型的用户，记录里只有绝对路径。
+/*
+ * 安装记录 → 绝对路径，用 `@openmemo/downloader` 导出的那一份 `resolveInstalledFile()`。
+ *
+ * ★ T-193：这里原本有一份**本地私有的同名副本**，它比正版少了两件事：
+ *   ① 不看 `f.root`，一律拿 relPath 去拼 models 根。于是一条声称 `root:'runtimes'`
+ *      的记录会被拿去核 **models 根下同名的那个文件** —— 文件是好的，于是校验"通过"。
+ *      `[实测]` 把记录改成 `root:'runtimes'` 后 `POST /api/models/verify` → `succeeded`。
+ *      这就是"比的是错的东西"。
+ *   ② 没有越界检查（正版遇到逃出根的 relPath 会抛）。
+ * `state.ts` 一直用的是正版（见 dropInstalledFiles）。同一件事两处各做一次、
+ * 而两处不一致 —— 收敛到 downloader 那一份，本文件不再自留副本。
  */
-function resolveInstalledFile(
-  modelsRoot: string,
-  f: { root?: string; relPath?: string; path?: string },
-): string {
-  if (f.relPath) return path.join(modelsRoot, f.relPath);
-  return f.path ?? '';
-}
 
 export interface ModelRoutesDeps {
   sse: SseHub;
@@ -698,12 +705,28 @@ async function verifyModel(
     async (ctx) => {
       ctx.setStep('verifying');
       let hashedBefore = 0;
+      let checked = 0;
       const mismatched: string[] = [];
+
+      /*
+       * ★ T-193：**没有可校验的文件 ≠ 校验通过**。
+       *
+       * `[实测]` 把安装记录改成 `files: []` 之后，下面的循环一次都不进，`mismatched`
+       * 是空的，于是 job 走到 `succeeded` —— 端点对一份"一个字节都没核过"的模型
+       * 回答"完好"。空集恒真是这类校验代码最经典的假绿，必须显式挡掉。
+       */
+      if (record.files.length === 0) {
+        throw new DownloadError(
+          `installed record for ${record.id} lists no files — nothing could be verified`,
+          'NOT_FOUND',
+          false,
+        );
+      }
 
       for (let i = 0; i < record.files.length; i++) {
         const f = record.files[i];
         ctx.setFile(f.name, i, record.files.length);
-        const abs = resolveInstalledFile(state.store.root, f);
+        const abs = resolveInstalledFile(f, { models: state.store.root });
         const result = await verifyFile(abs, f.sha256, f.sizeBytes, (hashed) => {
           ctx.progress({
             completedBytes: hashedBefore + hashed,
@@ -713,8 +736,19 @@ async function verifyModel(
           });
         });
         hashedBefore += f.sizeBytes;
+        checked++;
         if (!result.ok)
           mismatched.push(`${f.name}: 期望 ${result.expected}，实测 ${result.actual}`);
+      }
+
+      // 走到这里 checked 必然等于 files.length（读不出来的文件在上面就抛了），
+      // 但把它断言出来：将来谁在循环里加 `continue`，假绿会当场变成失败而不是通过。
+      if (checked !== record.files.length) {
+        throw new DownloadError(
+          `only ${String(checked)}/${String(record.files.length)} files were hashed`,
+          'INTERNAL',
+          false,
+        );
       }
 
       const updated: InstalledModel = {

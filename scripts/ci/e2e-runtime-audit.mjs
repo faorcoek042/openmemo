@@ -1756,11 +1756,30 @@ async function phaseModels() {
   /* ── sha256 校验失败的处理 ── */
   hdr('12. 要求 2.2 ②b：sha256 校验失败怎么处理（POST /api/models/verify）');
   const blobDir = join(DATA_DIR, 'models', 'blobs');
-  const blobs = listDir(blobDir).filter((f) => /^sha256-[a-f0-9]{64}$/.test(f));
+  /*
+   * ★ 受害 blob 必须是**被校验的那个模型自己的**。
+   *
+   * 这里原本取 `listDir(blobDir).sort()[0]` —— 而 `models/blobs/` 是全局共用的：
+   * `phaseBackends()` 装的后端包、启动时 `modelReconcile` 导入的三个随包模型，
+   * blob 全落在同一个目录里。字典序最小的那个是谁，由 manifest 里写死的 sha256
+   * 决定，**与被校验的模型无关**：
+   *   blobs.sort()[0] = sha256-1c556ea5…  → asr/sherpa-streaming-zh-14m
+   *   而这一段验的是                        → vad/silero-vad-ggml（最小的 role=vad）
+   * 于是"改坏一个字节"改的是另一个模型的权重，verify 如实回答 succeeded。
+   * 摘要因此三个平台一模一样地红 —— digest 是写死的，跨平台完全确定。
+   *
+   * 判据不变：**改坏之后端点必须说不通过**。改的是"改坏谁"。
+   */
+  const ownBlobs = (
+    (inst1.body?.models ?? []).find((m) => m.id === first.id)?.files ?? []
+  ).map((f) => `sha256-${f.sha256}`);
+  const blobs = listDir(blobDir).filter(
+    (f) => /^sha256-[a-f0-9]{64}$/.test(f) && ownBlobs.includes(f),
+  );
   if (blobs.length === 0) {
     unknown(
       'A-MODEL-SHA256-FAIL',
-      `${blobDir} 里找不到 sha256-* 形态的 blob，构造不出"内容被改坏"的前提`,
+      `${blobDir} 里找不到属于 ${first.id} 的 blob（记录声明 ${ownBlobs.length} 个：${ownBlobs.join(', ') || '无'}），构造不出"内容被改坏"的前提`,
     );
   } else {
     const victim = join(blobDir, blobs[0]);
@@ -1770,7 +1789,7 @@ async function phaseModels() {
       const bad = Buffer.from(backup);
       bad[Math.floor(bad.length / 2)] ^= 0xff;
       writeFileSync(victim, bad);
-      say(`   已篡改 1 字节：${victim}`);
+      say(`   已篡改 1 字节：${victim}（属于 ${first.id}，即下面要校验的那个模型）`);
       const v = await j('/api/models/verify', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -1787,6 +1806,51 @@ async function phaseModels() {
       );
     } finally {
       writeFileSync(victim, backup);
+    }
+  }
+
+  /*
+   * ── 空集假绿：一份"没有任何文件可核"的安装记录，不许报"校验通过" ──
+   *
+   * 上面那条只能证明"坏字节会被抓到"。它抓不到另一种假绿：**一个字节都没核过**
+   * 也返回 succeeded。`[实测 2026-08-10]` 把记录改成 `files: []` 之前，
+   * `POST /api/models/verify` → `succeeded`，端点对一份空记录回答"完好"。
+   * 判据是**终态必须不是 succeeded**，不是"某个函数被调用过"。
+   */
+  const manDir = join(DATA_DIR, 'models', 'manifests');
+  const manPath = listDir(manDir)
+    .flatMap((k) => listDir(join(manDir, k)).map((f) => join(manDir, k, f)))
+    .find((p) => {
+      try {
+        return JSON.parse(readFileSync(p, 'utf8')).id === first.id;
+      } catch {
+        return false;
+      }
+    });
+  if (!manPath) {
+    unknown('A-MODEL-VERIFY-EMPTY', `找不到 ${first.id} 的安装记录，构造不出"空记录"的前提`);
+  } else {
+    const manBackup = readFileSync(manPath);
+    try {
+      const rec = JSON.parse(manBackup.toString('utf8'));
+      rec.files = [];
+      writeFileSync(manPath, JSON.stringify(rec));
+      const v2 = await j('/api/models/verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: first.id }),
+      });
+      const vjob2 = v2.body?.jobId;
+      const vres2 = vjob2
+        ? await waitForJob(vjob2, 120)
+        : { state: `HTTP ${v2.status}`, detail: JSON.stringify(v2.body).slice(0, 200) };
+      assert(
+        'A-MODEL-VERIFY-EMPTY',
+        vres2.state !== 'succeeded',
+        `空记录（files: []）verify → ${vres2.state}${vres2.detail ? `：${vres2.detail.slice(0, 160)}` : ''}（不许 succeeded —— 一个字节都没核过不等于完好）`,
+      );
+    } finally {
+      writeFileSync(manPath, manBackup);
     }
   }
 
