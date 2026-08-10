@@ -393,6 +393,26 @@ export async function handleBackendRoutes(
     const shaSetOf = (files: readonly { sha256?: string }[] | undefined): string =>
       [...new Set((files ?? []).map((f) => f.sha256 ?? ''))].sort().join(',');
     const installedShaById = new Map(installedRecords.map((p) => [p.id, shaSetOf(p.files)]));
+    /**
+     * ★ T-193 ③：**机器上那一份**的版本与体积，与目录里的那份分开发。
+     *
+     * `updateAvailable` 只回答了"要不要动"，没回答"我现在手里是哪一份"——
+     * 而卡片副标题渲染的一直是目录的 `engineVersion`，于是屏幕上会出现
+     * 「已安装 · ffmpeg n8.1.2 · 112 MB」而机器上跑的是 **n7.1.5**。
+     * 「已安装」+ 一个它并不拥有的版本号，连起来读就是一句假话。
+     *
+     * 体积按**安装记录里各文件的字节数求和**算，不复用目录的 `totalSizeBytes`：
+     * 换版本时体积往往也变了，拿目录那个数去标"你装的那份有多大"是同一个错。
+     */
+    const installedFactsById = new Map(
+      installedRecords.map((p) => [
+        p.id,
+        {
+          engineVersion: p.engineVersion,
+          sizeBytes: (p.files ?? []).reduce((n, f) => n + (f.sizeBytes ?? 0), 0),
+        },
+      ]),
+    );
     const body: GetBackendCatalogResponse = {
       catalogVersion: state.backendCatalog.catalogVersion,
       source: 'bundled',
@@ -410,6 +430,12 @@ export async function handleBackendRoutes(
             installedSha !== '' &&
             catalogSha !== '' &&
             installedSha !== catalogSha,
+          /*
+           * 没装 ⇒ `null`（不是 undefined 也不是目录的值）：**"我没有"和"我不知道"
+           * 都不该被渲染成"和目录一样"**，那正是这次要修的那句假话的来源。
+           */
+          installedEngineVersion: installedFactsById.get(pack.id)?.engineVersion ?? null,
+          installedSizeBytes: installedFactsById.get(pack.id)?.sizeBytes ?? null,
           applicable,
           /**
            * 区分"还没测出来"和"测完了不支持"。UI 据此决定说

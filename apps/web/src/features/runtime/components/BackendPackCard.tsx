@@ -270,9 +270,49 @@ export function BackendPackCard({
               />
             ) : null}
           </div>
-          <p className="mt-1 text-xs text-ink-secondary">
-            {pack.engine} {pack.engineVersion} · {pack.os}/{pack.arch} ·{' '}
-            {formatBytes(pack.totalSizeBytes, locale)}
+          {/*
+            ★★ T-193 ③：**这一行说的必须是"机器上那一份"，不是"目录说的那一份"。**
+
+            `[用户真机实测 2026-08-09，:10000]` 更新之前这里写着
+            `已安装 · ffmpeg n8.1.2-… · 112 MB`，**而机器上跑的是 n7.1.5** ——
+            目录在 T-167/T-191 被换了新版，而这一行渲染的一直是 `pack.engineVersion`
+            （目录的）。「已安装」+ 一个它并不拥有的版本号，连起来读就是一句假话；
+            唯一的提示只有旁边多出来的那个「更新」按钮，可那要求用户先想到
+            "这个版本号说的不是我这台"——屏幕上没有任何东西这么说过。
+
+            与 `updateAvailable` 是同一个根的两半：那个回答"要不要动"，
+            这里回答"**我现在手里是哪一份**"。少了后者，前者是一条没有主语的建议。
+
+            三档，各说各的真话：
+              · 没装        → 目录的版本与体积（那正是你点下去会拿到的东西）
+              · 装了且是最新 → 机器上那一份（与目录同值，读起来无差别）
+              · 装了但有更新 → **两个都说**：你手里的 + 目录里的
+            `installedEngineVersion` 缺失（老 daemon）时退回老行为，
+            **不替它说"你装的就是最新版"** —— 与 `updateAvailable` 同一条判据。
+          */}
+          <p className="mt-1 text-xs text-ink-secondary" data-testid={`backend-version-${pack.id}`}>
+            {pack.engine}{' '}
+            {pack.installed && pack.installedEngineVersion != null
+              ? pack.installedEngineVersion
+              : pack.engineVersion}{' '}
+            · {pack.os}/{pack.arch} ·{' '}
+            {formatBytes(
+              pack.installed && pack.installedSizeBytes != null
+                ? pack.installedSizeBytes
+                : pack.totalSizeBytes,
+              locale,
+            )}
+            {pack.installed &&
+            pack.updateAvailable === true &&
+            pack.installedEngineVersion != null ? (
+              <span className="text-warning" data-testid={`backend-catalog-version-${pack.id}`}>
+                {' · '}
+                {t('runtime.pack.catalogHas', {
+                  version: pack.engineVersion,
+                  size: formatBytes(pack.totalSizeBytes, locale),
+                })}
+              </span>
+            ) : null}
           </p>
           {/*
             ★ T-165：先说**这是哪一档**，再照抄 daemon 给的原因。

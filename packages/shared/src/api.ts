@@ -320,6 +320,30 @@ export interface GetBackendCatalogResponse {
      * 说出一句"你装的就是最新版"，而它并不知道。
      */
     updateAvailable?: boolean;
+    /**
+     * **机器上那一份**的引擎版本与体积。`null` = 没装（或老记录里没有）。
+     *
+     * ## 为什么这两格必须单独存在（T-193 ③）
+     *
+     * 卡片上那行副标题渲染的一直是 `pack.engineVersion` / `pack.totalSizeBytes` ——
+     * **目录里的值**。装过之后目录被换了新版（正是 `updateAvailable` 要说的那件事），
+     * 于是屏幕上出现的是：
+     *
+     * > `已安装 · ffmpeg n8.1.2-… · 112 MB`   ← 而机器上跑的是 **n7.1.5**
+     *
+     * 「已安装」这三个字 + 一个**它并不拥有**的版本号，连起来读就是一句假话。
+     * 唯一的提示只有旁边多了个「更新」按钮 —— 而那要求用户先意识到
+     * "版本号说的不是我这台"，可屏幕上没有任何东西这么说过。
+     *
+     * 这与 `updateAvailable` 是**同一个根**的两半：界面在显示"目录说的"，
+     * 不是"机器上的"。`updateAvailable` 回答了"要不要动"，这两格回答
+     * "**我现在手里是哪一份**" —— 少了后者，前者是一条没有主语的建议。
+     *
+     * **可选**同上：老 daemon 不发 ⇒ 客户端表达"我不知道" ⇒ 按老行为渲染，
+     * 而不是默认成"和目录一样"（那正是今天这句假话的来源）。
+     */
+    installedEngineVersion?: string | null;
+    installedSizeBytes?: number | null;
   })[];
 }
 

@@ -18,6 +18,7 @@ import { promises as fs } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { ArtifactStore } from '@openmemo/downloader';
+import { detectDisks, detectMemory } from '@openmemo/runtime';
 import type {
   Arch,
   Backend,
@@ -40,6 +41,14 @@ import {
   type RuntimeDetection,
 } from '../../runtime/setup.js';
 import { readJsonBody, sendError, sendJson } from '../respond.js';
+/*
+ * ⚠️ 与 `state.ts` 之间是一个**调用期**的循环引用（它 import 本文件的
+ * `detectLocalHardware`）。两边都只在函数体里用对方，模块初始化期零依赖，ESM 下成立。
+ * 之所以接受这个环而不是抄一份：**抄一份就是两条失效规则**，而"同一件事在两处
+ * 各算一次、只修了一处"正是本次要修的病。真要解环，正解是把指纹提到一个共同的
+ * 下层模块（那要动 state.ts —— 它此刻在别人手里，见回执 §纪律）。
+ */
+import { canonicalPackFingerprint } from './state.js';
 
 /** 硬件快照 id。fit 判定是针对某一份快照算出来的，UI 用它判断缓存是否失效。 */
 export const HARDWARE_SNAPSHOT_ID = 'hw-local';
@@ -179,16 +188,92 @@ export function createRuntimeRoutes(deps: RuntimeRoutesDeps): {
 } {
   // 探测会 spawn（nvidia-smi / probe），不该每个请求都跑一遍；`?refresh=1` 显式绕过缓存。
   let cached: RuntimeDetection | null = null;
+  /** 上一次结构探测时"机器上装了什么"。见 `structuralFingerprint()`。 */
+  let cachedFingerprint: string | null = null;
+
+  /**
+   * ★ T-193 ②：这份缓存**此前唯一的失效方式是 `?refresh=1`**，
+   * 而 `?refresh=1` 在整个网页里**只有一个调用点** —— 断路器 open→closed 的那一刻
+   * （`features/runtime/api.ts` 的 `useHardwareRefresh`）。
+   *
+   * 也就是说：**只要断路器不跳，这份快照可以停在 daemon 第一次探测的那一刻，永远。**
+   * `state.ts` 那份同源快照早就有结构化失效（`machineFingerprint()`，T-191 改成按内容算），
+   * 而这一份漏了 —— 又是"同一件事在两处各算一次，只修了一处"。
+   *
+   * 判据与那边**逐字同一条**：装了什么变了 ⇒ 快照必须重算。
+   * 复用的是 `state.ts` 导出的那个 `canonicalPackFingerprint`（**不是抄一份**）——
+   * 抄一份就等于两条规则，那正是这次要修的病。
+   *
+   * ⚠️ 不 spawn、不探测：只是一次 `listManifests` 的 readdir + 序列化。
+   */
+  const structuralFingerprint = async (): Promise<string> => {
+    try {
+      const packs = await new ArtifactStore(deps.paths.modelsDir).listManifests<InstalledBackendPack>(
+        'backend',
+      );
+      return packs.map((p) => canonicalPackFingerprint(p)).sort().join('|');
+    } catch {
+      /*
+       * 读不到安装记录时返回一个**固定**的哨兵，而不是 `Date.now()` 之类。
+       * 返回一个每次都不同的值会让缓存彻底失效 ⇒ 每个请求都 spawn 一次 probe，
+       * 那是把"缓存永不失效"换成"缓存永远无效"—— 同一枚硬币的另一面。
+       */
+      return '<unreadable>';
+    }
+  };
+
+  /**
+   * ★ T-193 ①：**便宜且一直在变的那几格，根本不进缓存。**
+   *
+   * ── 判断依据（这一条才是本次修法的核心）──────────────────────────────────────
+   *
+   * `HardwareInfo` 把两类**寿命完全不同**的事实装进了同一个 blob：
+   *
+   * | 类 | 字段 | 取一次的代价 | 什么时候变 |
+   * |---|---|---|---|
+   * | **结构事实** | cpu / gpus / backends / unifiedMemory / os | **spawn**：`runProbe`(≤10 s) + `detectGpus`(nvidia-smi / system_profiler，秒级) | 换机器、装卸后端包、驱动升级 |
+   * | **环境读数** | `disks[].freeMB`、`ram.availableMB` | `statfs` ×2 + `os.freemem()`，**零 spawn** | **一直在变**（任何一次下载，甚至别的程序） |
+   *
+   * 缓存的存在理由（"探测要 spawn"）**只对第一类成立**。
+   * 缓存第二类不省任何东西，代价却是**界面上那个数是假的**：
+   * `[实测 2026-08-10，本机 19500 端口的一次性 daemon]`
+   * 写进 500 MB 之后连查两次 `GET /api/runtime/hardware` ⇒ `36147 MB` 纹丝不动；
+   * 手工 `?refresh=1` ⇒ `35623 MB`。差 524 MB，是真的。
+   *
+   * 所以这几格改成**每次请求现算**。这让"下了 112 MB 之后那一格必须变"
+   * **由构造成立** —— 与任何失效规则是否触发无关，哪怕断路器一辈子不跳。
+   *
+   * ── `detectedAt` 为什么**不**跟着刷新 ────────────────────────────────────────
+   *
+   * 卡片上那句「探测于 X」说的是**结构探测**（我们什么时候去问过你的 GPU），
+   * 把它刷成"现在"就是在声称刚跑过一次 probe —— 而我们恰恰**没有**跑，
+   * 那才是这次省下来的东西。所以它保持结构快照的时刻。
+   * 界面那一侧把这两类分开标注（见 `HardwareCard`），不让实时读数
+   * 被"探测于 X"这句话罩住。
+   */
+  const withLiveReadings = async (d: RuntimeDetection): Promise<RuntimeDetection> => ({
+    ...d,
+    hardware: {
+      ...d.hardware,
+      disks: await detectDisks({
+        modelsRoot: d.layout.modelsRoot,
+        runtimesRoot: d.layout.runtimesRoot,
+      }),
+      ram: detectMemory(),
+    },
+  });
 
   const detect = async (refresh: boolean): Promise<RuntimeDetection> => {
-    if (cached !== null && !refresh) return cached;
+    const fp = await structuralFingerprint();
+    if (cached !== null && !refresh && fp === cachedFingerprint) return withLiveReadings(cached);
     const installed = deps.installedBackends ? await deps.installedBackends() : undefined;
     cached = await detectRuntimeHardware({
       dataDir: deps.paths.dataDir,
       modelsDir: deps.paths.modelsDir,
       ...(installed === undefined ? {} : { installedBackends: new Set<Backend>(installed) }),
     });
-    return cached;
+    cachedFingerprint = fp;
+    return withLiveReadings(cached);
   };
 
   return {
