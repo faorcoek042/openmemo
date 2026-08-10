@@ -50,20 +50,35 @@
  * 所以另存一个整数 `floor`，判据是 **`tracked.length + removed.length >= floor`**。
  * 两个名单都只增不减，所以这个和是**单调不减**的；它掉下来 = 有人在改名单本身。
  *
- * ## ⚠️ 一个诚实的残留缺口（不要以为这条守卫全包了）
+ * ## 那个残留缺口，以及 `--against` 怎么堵它
  *
  * 本守卫的记忆**存在版本库里**。所以「**把整棵树回退到一个更早的快照**」这种提交，
- * 会把测试文件**和基线一起**退回去 —— 两边一致，守卫是绿的。
- * 也就是说：**在基线登记之前就被删掉的新文件，本守卫抓不到。**
- * 能抓到那一档的判据只有"和远端历史比"（`origin/master` 的文件集必须是当前的子集），
- * 那需要 CI 侧 `fetch-depth` 的改动，**没有做**，留给下一轮决定。
- * 本守卫能抓到的是：**任何在基线登记之后消失的文件** —— 包括这次事故里那一个。
+ * 会把测试文件**和基线一起**退回去 —— 两边一致，**上面那些判据全是绿的**。
+ * 这就是第一版如实登记的缺口。
+ *
+ * `--against <ref>` 堵它，靠的是**基线只增不减**这条已经立好的规矩：
+ * 既然 `tracked`/`removed` 只增、`floor` 单调不减，那么「**基线自己缩了**」
+ * 本身就是一个可判的异常 —— 而整树回退**正好落在这个信号上**
+ * （回退后的基线必定是某个更早、更短的版本）。
+ *
+ * 只需要读**一份文件**（基准 commit 上的那份基线），所以 CI 里
+ * `git fetch --depth=1 origin <base>` 定点取一个 commit 就够了，
+ * **不用动全局 `fetch-depth`**（那会给每个 job 都加克隆代价）。
+ * `[实测]` depth=1 浅克隆里定点 fetch 一个历史 SHA：**1.8 秒**，随后
+ * `git show <sha>:scripts/test-ratchet-baseline.json` 正常读出。
+ *
+ * ⚠️ **仍然剩下的部分（别读成"现在全包了"）**：
+ * `--against` 只在**给得出基准**时有效。基准取不到（force-push、新分支首推、
+ * fetch 失败）时它**不判红**（那会变成一盏经常为合法情况亮的灯），
+ * 而是**明说"没跑成"**。所以绿输出里永远会写清楚这次到底比没比 ——
+ * **"没比对"和"比过且没问题"绝不能长得一样**，那正是本守卫要防的病本身。
  *
  * ## 用法
  *
- *   node scripts/check-test-ratchet.mjs            # 门禁模式
- *   node scripts/check-test-ratchet.mjs --update   # 把新出现的测试文件登记进基线（只增不减）
- *   node scripts/check-test-ratchet.mjs --json     # 机器可读
+ *   node scripts/check-test-ratchet.mjs                  # 门禁模式
+ *   node scripts/check-test-ratchet.mjs --update         # 登记新测试文件（只增不减）
+ *   node scripts/check-test-ratchet.mjs --against <ref>  # 再和基准比一次基线有没有缩水
+ *   node scripts/check-test-ratchet.mjs --json           # 机器可读
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -89,23 +104,56 @@ const MIN_TEST_FILES = 100;
 const PROBE_FILE = 'packages/runtime/src/backends/platformUnsupported.test.ts';
 
 /**
- * 列出**git 认得的**测试文件。
+ * 列出**已提交的**测试文件（`HEAD` 那棵树，不是索引）。
  *
- * 用 `git ls-files -z` 而不是 `find` / `grep` / shell glob，理由和
+ * 用 `git ls-tree -r HEAD -z` 而不是 `find` / `grep` / shell glob，理由和
  * `check-orphan-exports.mjs:96-102` 记的是同一条：
  * `find` 在 Windows 上会撞见 `find.exe`；`grep -r` 会把含字面控制字节的文件
  * **静默当二进制跳过**；shell 的 `**` 语义各家不同。**在 Node 里过滤最不会骗人。**
  *
- * 另外"git 认得的"这一点是判据本身的一部分：未跟踪的半成品测试不该被算进棘轮
- * （否则别人 `git add` 之前的草稿会让门禁红），而**已提交的文件消失**正是要抓的。
+ * ## ⚠️ 为什么是 `ls-tree HEAD` 而不是 `ls-files`（索引）—— 这条是踩出来的
+ *
+ * 第一版读的是 `git ls-files`，也就是**索引**。在 `/root/memo` 这种 9 个 agent
+ * 共用一棵树的地方，索引里**装着别人 `git add` 了但还没提交的文件**。
+ *
+ * 后果当场发生了：我在共享树上跑了一次 `--update`，把另一条腿**尚未提交的**
+ * `apps/daemon/src/http/rest/backendInstallAvailability.test.ts` 写进了基线并推了上去。
+ * master 那边**基线里有、树上没有** → 棘轮判"文件不见了" → **master 红**。
+ * 红的不是别人删了东西，是**我登记了一个在 master 上根本不存在的文件**。
+ *
+ * 判据因此改成「**已提交**的那棵树」：
+ * - 结论不再取决于**任何人**当下 stage 了什么 —— 同一个提交，在 CI 上和在谁的机器上
+ *   都给同一个答案（和 `.prettierignore` 那轮立的「门禁必须确定」是同一条）；
+ * - `--update` 再也不可能把别人没提交的东西写进基线。
+ *
+ * 代价：本地**提交之前**的陈旧索引删除它看不见了。可以接受 ——
+ * 判据本来就是「**已提交**的文件消失」，而真正的执行点是 CI，那里 `HEAD` 就是被推上去的那个提交。
  */
-function trackedTestFiles() {
-  const out = execFileSync('git', ['ls-files', '-z'], {
+function trackedTestFiles(ref = 'HEAD') {
+  const out = execFileSync('git', ['ls-tree', '-r', '--name-only', '-z', ref], {
     cwd: REPO,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });
   return out.split('\0').filter((p) => p && TEST_FILE.test(p));
+}
+
+/**
+ * 读**另一个 commit** 上的那份基线。用于 `--against`（见文件头「残留缺口」）。
+ * 读不到就返回 null —— 由调用方决定怎么说话，**这里不许默默当成"没问题"**。
+ */
+function baselineAtRef(ref) {
+  try {
+    const raw = execFileSync('git', ['show', `${ref}:scripts/test-ratchet-baseline.json`], {
+      cwd: REPO,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }
 
 function loadBaseline() {
@@ -121,6 +169,11 @@ function loadBaseline() {
 const argv = process.argv.slice(2);
 const wantJson = argv.includes('--json');
 const wantUpdate = argv.includes('--update');
+/** `--against <ref>`：和 `<ref>` 上的那份基线比，看**基线自己有没有缩水**。 */
+const againstIdx = argv.indexOf('--against');
+const againstRef = againstIdx >= 0 ? (argv[againstIdx + 1] ?? '').trim() : '';
+/** 全零 SHA 是 GitHub 在"新分支的第一次 push"时给的 `github.event.before`，不是异常。 */
+const isNullRef = /^0{7,40}$/.test(againstRef);
 
 const current = trackedTestFiles();
 const currentSet = new Set(current);
@@ -279,10 +332,76 @@ if (unregistered.length > 0) {
   );
 }
 
+/* ── ④ `--against <ref>`：堵「整棵树被回退」那个缺口 ─────────────────────────────
+ *
+ * 本守卫的记忆存在版本库里，所以「把整棵树回退到更早快照」的提交会把测试文件
+ * **和基线一起**退回去 —— 两边一致，上面那些判据全是绿的。
+ *
+ * 但**基线只增不减是已经立好的规矩**（`--update` 只增、`floor` 单调不减）。
+ * 所以「**基线自己缩了**」本身就是一个可判的异常信号，而整树回退**正好落在它上面**：
+ * 回退后的基线一定是某个更早的、更短的版本。
+ *
+ * 只读**一份文件**（基准 commit 上的那份基线），所以 CI 里只要
+ * `git fetch --depth=1 origin <base>` 定点取一个 commit 就够了 ——
+ * **不需要动全局 `fetch-depth`**（那会给每个 job 都加克隆代价）。
+ * `[实测]` 在 depth=1 的浅克隆里定点 fetch 一个历史 SHA：**1.8s**，随后
+ * `git show <sha>:scripts/test-ratchet-baseline.json` 能正常读出。
+ */
+let againstNote = '';
+if (againstRef && !isNullRef) {
+  const baseBaseline = baselineAtRef(againstRef);
+  if (baseBaseline === null) {
+    // ⚠️ **不判红**（基准取不到多半是 force-push / 首推 / fetch 没成功，
+    //    判红就是一盏经常为合法情况亮的灯），但**必须大声说没比成** ——
+    //    "没比"和"比过且没问题"绝不能长得一样。
+    againstNote = `⚠️ 历史比对**没跑成**：读不到 ${againstRef} 上的基线（没 fetch 到？force-push？）`;
+  } else {
+    const baseKnown = [
+      ...(baseBaseline.tracked ?? []),
+      ...(baseBaseline.removed ?? []).map((r) => r.file),
+    ];
+    const nowKnown = new Set([...tracked, ...removed.map((r) => r.file)]);
+    const vanished = baseKnown.filter((f) => !nowKnown.has(f));
+    const baseFloor = baseBaseline.floor ?? 0;
+
+    if (vanished.length > 0 || floor < baseFloor) {
+      problems.push('regressed');
+      console.error(`\n✘ **基线自己缩水了**（和 ${againstRef} 比）：\n`);
+      if (vanished.length > 0) {
+        console.error(`   基准上在册、现在整条不见了的有 ${vanished.length} 条：`);
+        for (const f of vanished.slice(0, 20)) console.error(`   − ${f}`);
+        if (vanished.length > 20) console.error(`   …… 还有 ${vanished.length - 20} 条`);
+      }
+      if (floor < baseFloor) console.error(`   floor 从 ${baseFloor} 掉到了 ${floor}`);
+      console.error(
+        [
+          '',
+          '  基线**只增不减**是这条棘轮的规矩，所以它变短本身就是异常。最可能的成因：',
+          '  **这次提交把整棵树（连基线一起）回退到了一个更早的快照** ——',
+          '  典型来源就是**从陈旧索引提交**，而它不会出现在你自己的 diff 里。',
+          '',
+          `  先看一眼这次提交到底动了什么：git show --stat <你的提交>`,
+          `  再对一下基线：git diff ${againstRef} -- scripts/test-ratchet-baseline.json`,
+        ].join('\n'),
+      );
+    } else {
+      againstNote = `历史比对已做（vs ${againstRef}：基准 ${baseKnown.length} 条全部还在，floor ${baseFloor} → ${floor}）`;
+    }
+  }
+} else {
+  againstNote = isNullRef
+    ? '未做历史比对（基准是全零 SHA —— 新分支首推，正常）'
+    : '未做历史比对（没给 --against）';
+}
+
 if (problems.length > 0) {
+  if (againstNote) console.error(`\n${againstNote}`);
   process.exit(1);
 }
 
+// ★ 绿的时候也要把**做了什么**说出来。"没比对"和"比对过且没问题"必须能一眼分开 ——
+//   否则这条守卫就有了一个"看起来在守、其实没跑"的姿势，那正是它自己要防的病。
 console.log(
   `✔ 测试文件棘轮：${current.length} 个在册（floor ${floor}，removed ${removed.length}），一个都没少`,
 );
+console.log(`  ${againstNote}`);

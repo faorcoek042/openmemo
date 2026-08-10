@@ -247,9 +247,32 @@ jobs:
       #   ② 下面 gate-summary 的 `GATE_STEP_NAMES`、③ 那里的 `GATE_STEP_*` env。
       #   `selftest-summarize-gate.mjs` 现在会**逐条比对这三处和 STEP_LABELS 是否一致**，
       #   漏补哪一处都会当场红。
+      # ★ `--against <基准>` 堵的是本守卫**自己申报过**的那个缺口：
+      #   它的记忆存在版本库里，所以「把整棵树回退到更早快照」会把测试文件
+      #   **和基线一起**退回去 —— 两边一致，普通判据全绿。
+      #   而「基线只增不减」是已经立好的规矩，所以**基线自己缩了**就是可判的异常，
+      #   整树回退正好落在这个信号上。
+      #
+      # ⚠️ 只**定点取一个 commit**，不动 checkout 的 `fetch-depth`：
+      #   加深整个克隆会给**每个 job** 都加代价，为一个罕见场景拖慢整条流水线。
+      #   这里只需要读基准上的**一份文件**。
+      #   `[实测]` depth=1 浅克隆里定点 fetch 一个历史 SHA：**1.8 秒**，
+      #   随后 `git show <sha>:scripts/test-ratchet-baseline.json` 正常读出。
+      #
+      # ★ `|| true` 只兜 **fetch** 那一步，**不兜判定**。这不是"失败被写成成功"：
+      #   基准取不到时脚本会在输出里**明说「历史比对没跑成」**，而不是安静放行 ——
+      #   force-push / 新分支首推本来就取不到基准，为它判红等于造一盏
+      #   经常为合法情况亮的灯（那正是本轮把「新增未登记」降级的同一条判据）。
       - name: Test-file ratchet (守卫文件不许静默消失)
         id: test_ratchet
-        run: pnpm check:test-ratchet
+        env:
+          # push 用上一个 master SHA；PR 用目标分支的 base。取不到就是空串。
+          BASE_SHA: ${{ github.event.before || github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            git fetch --depth=1 --no-tags origin "$BASE_SHA" || true
+          fi
+          pnpm check:test-ratchet --against "$BASE_SHA"
 
       # CI 脚本自身的正反向自检（T-144）。放在 test 前面：它比较快，
       # 而且它红的时候意味着 build-backends 那条线是坏的 —— 那是更要紧的信号。
