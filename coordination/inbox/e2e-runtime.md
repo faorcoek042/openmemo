@@ -751,3 +751,80 @@ daemon 环境里**没有** `OPENMEMO_ASR_MODEL`，不存在"被环境变量静�
 - **活动模型已还原成 `asr/whisper-base-q5_1`**，`/api/health` `ready=true`。
 - 磁盘：**9.3 GB 可用**（81%）。
 - 那 298 MB「无法识别的残留」**一个字节都没动**。
+
+---
+
+## 2026-08-10 · 第 5 环「runtime 探测完成」·在 :10000 上真升了一次后端包
+
+**先回答两句话。**
+
+**① 同 id 换内容，"变了"这件事**产品现在**真的能发现**——但我要把话说准：
+能发现它的是 **`updateAvailable`（按 `files[].sha256` 集合比，`backends.ts:395-413`）**，
+`[用户可达 · 本机实测]` 它让「更新」按钮**出现→点完消失**。
+而 `7986be9` 那个 `machineFingerprint()` 的**值本身 HTTP 上不可见**，
+我没法引一个"变前/变后"的数 ⇒ **指纹值 `[未验证]`**，它要保障的行为 `[用户可达]`。
+另一个同名不同物的 `driverFingerprint`（断路器用）**没变**（`6be652b896c4852b`），
+**这是对的**：它 hash 的是 whisper 后端目录的探针+库，我升的是 ffmpeg。
+
+**② 「更新」按钮出现了，点了也真的成功了。** `[用户可达 · 本机实测]`
+`media-tools-linux-x64`：装的是 ffmpeg `n7.1.5-12-g1fdbca85aa`(sha `47b2cc48…`)，
+目录里是 `n8.1.2-34-g9b6c8969e0`(sha `8c8b2897…`) —— **现成的"同 id 不同内容"，不用伪造**。
+点 `backend-update-media-tools-linux-x64`「Update」→ 安装记录变成 `n8.1.2`、`integrity ok`、
+**按钮消失**（卡片只剩 Uninstall）→ `selfcheck` 的 `tool.ffmpeg` 指向
+`…/ffmpeg-n8.1.2-…/bin/ffmpeg` ⇒ **真正在用的二进制也换了**，不是只改了记录。
+
+### ★ 但第 3 条没成立：**装完探测并没有自动跟上**（`[用户可达]` 复现两次）
+
+- 升 112 MB 的 media-tools 全程：`/api/runtime/hardware` 的 `detectedAt` **纹丝不动**（`05:10:28`）；
+- 又重装了一次 61 KB 的 `sqlite-vec-linux-x64`：**还是不动**（`05:21:45`）；
+- 我手工发一次 `?refresh=1`，它才动，且**一动就露馅**——被缓存住的那份里：
+  `detectedAt`、**磁盘可用空间**（刚下完 112 MB，数就该变）、内存、探针耗时**全是旧的**。
+
+⇒ **`?refresh=1` 这条并没有自愈**，原因是结构性的，值得写死在这儿：
+
+> **产品里有两份互相独立的硬件快照，各有各的失效规则，`7986be9` 只修了其中一份。**
+> · `state.ts` 的快照：受 `machineFingerprint()` 把关（hash 已装 manifest 的 JSON），
+>   服务 `/api/backends/*` 与模型目录的适配判断 —— **这份被修好了**；
+> · `hardware.ts:181-193` 的 `cached`：**只认 `?refresh=1`**，服务 `/runtime` 那张硬件卡。
+>   而全站唯一发 `refresh=1` 的地方是 `useHardwareRefresh()`，
+>   只被 `BreakerNotice` 在**断路器 open→closed 那一瞬**调用。
+> ⇒ 只要断路器不跳，那张卡上的「Probed at …」「9.0 GB free of 53 GB」
+>   **可以停留在 daemon 启动后的第一次探测上，任意久**。
+
+**没顺手改。** 修法方向（不由本腿定）：装/升/卸后端包之后一并作废 `hardware.ts` 那份 `cached`，
+或让它也走 `machineFingerprint()` 那道闸 —— 两份快照两套规则本身才是根因。
+
+### ff24098「重装即自删」：**修好了**（`[用户可达]`，两次独立证据）
+
+这一轮做的正是"重装同一个 id"：
+- media-tools 升级后：文件在、`integrity ok`、新解包目录 `13:17` 建好；
+- sqlite-vec 重装后：`vec0.so` **在**（`13:24` 重新解出，159,816 B），
+  且 `selfcheck` 的 `ext.sqliteVec` 仍是 `v0.1.9` **可加载** ——
+  不只是"文件在那儿"，是**真的还能用**。
+
+### 界面全程说的话（沿用那套判据）
+
+Toast **有**（这次没碰量化选择器）：标题 `Preparing · ffmpeg / ffprobe（Linux x64）`。
+字节 `47 MB / 112 MB → 76 MB / 112 MB`、速度 `6.3 → 4.8 MB/s`、ETA `about 3 min`——**在动**。
+`selfcheck` 25 ok / 2 warn / 0 fail（两条 warn 是"没装 VAD 模型"和"没装 Ollama"，都属实）。
+⚠️ 后端包这条路上**没有百分比**（整轮 `pct=null`，只有字节/速度/ETA）；模型那条路上有。`[未验证]` 是否有意为之。
+
+### ★ 另一处在说假话（只报不改）
+
+**已安装卡片显示的是"目录里的版本"，不是"你装的那个版本"。**
+升级**前**卡片原文：`Installed · ffmpeg n8.1.2-34-g9b6c8969e0 · 112 MB`，
+而那台机器上装的是 **n7.1.5**（113 MB）。用户看不出自己落后了，
+**唯一的线索是那颗「更新」按钮存在**。⇒ 「Installed」+ 新版本号连读就是一句假话。
+
+### 顺带一条（磁盘）
+
+升级**不回收**上一版：`ffmpeg-n7.1.5-…tar.xz/` 解包目录仍在，
+加上更早的 `media-tools-linux-x64/{ffmpeg,ffprobe}`（各 139 MB，`Aug 2`，**已不被使用**）
+一共约 279 MB 死重。现在 **9.0 GB 可用**。
+
+### 我动了什么
+
+- 只走产品的路：**点网页上的「更新」** + `POST /api/backends/install {id}`（sqlite-vec 那次）。
+- 没手塞文件、没改活动模型（仍是 `asr/whisper-base-q5_1`）、没停进程；pid **491899 全程没变**。
+- 那 298 MB「无法识别的残留」没动。
+- 我自己发过**一次** `?refresh=1`（取证需要），**这是我发的，不是网页发的** —— 别把它读成"网页会刷"。
