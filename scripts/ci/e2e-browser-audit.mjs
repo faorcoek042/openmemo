@@ -201,6 +201,20 @@ async function mutation(id, fn) {
   } catch (e) {
     threw = e;
   }
+  /*
+   * ★ 变异也有第三态：**前提没构造出来**。
+   *
+   * 变异的意思是「把某个性质拿掉，那条断言必须红」。如果**这一轮连基线都没成立**
+   * （比如页面还在渲染，量不出"静止时不该有错误话"），那它既不能算"变异被抓住"，
+   * 也不能算"变异存活"—— 它什么都没证明。
+   * 压成 MUT-BAD 会把"这次没量成"报成"断言没牙齿"，正是今天在
+   * `e2e-runtime.yml` 那个二元循环上踩过的同一个坑。
+   */
+  if (threw instanceof Undecided) {
+    results.push({ id, status: 'MUT-UNKNOWN', detail: threw.message });
+    say(`   ？ [变异] ${id} —— 无从判断：${threw.message}`);
+    return false;
+  }
   if (threw) {
     results.push({ id, status: 'MUT-OK', detail: threw.message });
     say(`   ✔ [变异] ${id} —— 如期变红：${brief(threw.message)}`);
@@ -1341,7 +1355,16 @@ try {
   say(`   目标按钮：${targetLabel ?? '(没找到可点的安装按钮)'}`);
   say(`   注入 500 后新增文字里像错误提示 = ${FAIL_WORDS.test(installAdded)}`);
 
-  await check('B6 ★ 安装失败时界面必须出现读得懂的话（不许静默吞掉）', () => {
+  /*
+   * ★ 2026-08-10 改名：这条原来也叫 `B6`。
+   *
+   * 本文件里 `B6` 同时是两条**毫不相干**的判据：一条是"任务中心的阶段文案"
+   * （连同 B6b/B6c 一家），另一条就是这条"安装失败必须说话"。
+   * 日志里只印 id，于是读日志的人会把两条当成同一条 —— Manager 自己也差点搞混。
+   * （`B7` 有同样的问题：llm 引导落地页 vs 复制诊断信息，一并改成 `B13`。）
+   * 判据一个字没改，只是把名字分开：**同名不同物比没有名字更坏**。
+   */
+  await check('B12 ★ 安装失败时界面必须出现读得懂的话（不许静默吞掉）', () => {
     ok(
       targetLabel !== null,
       '/runtime 上没有一个可点的「安装」按钮 —— 先确认目录不是空的（本轮 catalog 有 25 个包）',
@@ -1358,17 +1381,50 @@ try {
 
   /*
    * 变异：把**同一个谓词**拿去量"没注入故障"的那一轮 —— 那时界面本来就不该冒出错误话。
-   * 它必须红，才证明 B6 量的是"失败时说话"，而不是"页面上随便有点字"。
+   * 它必须红，才证明 B12 量的是"失败时说话"，而不是"页面上随便有点字"。
+   *
+   * ★ `[CI 实测 darwin-arm64, run 31364427061]` 这条报了 **MUT-BAD**，而它不是缺陷：
+   *   基线取的是 `base1.replace(base0,'')`，**只要这 1.2 秒里页面还在渲染**，
+   *   增量里就会混进 `/runtime` 本来就该有的那些状态字 —— 那一页会列
+   *   「CUDA/Vulkan/ROCm/Metal/CoreML **不可用**（未安装后端包）」五条，
+   *   而 `FAIL_WORDS` 里正好有「不可用」。**慢 runner 上页面画得晚，增量就带上它们。**
+   *   于是谓词为真 ⇒ 断言没红 ⇒ 被记成"变异存活"。
+   *   **量的不是产品，是渲染时序。**
+   *
+   * 修法不是放宽谓词（那会把真正的"失败时不说话"一起放过），而是**先让页面静下来**：
+   * 连续两次取样文本完全一致才算基线成立；一直静不下来就是**这一轮没量成**，
+   * 报"无从判断"，不报"变异存活"。
    */
-  await mutation('B6 的证伪能力（没注入故障那轮不该有错误话，同一谓词必须红）', async () => {
+  await mutation('B12 的证伪能力（没注入故障那轮不该有错误话，同一谓词必须红）', async () => {
     await page.goto(`${BASE}/runtime`, { waitUntil: 'networkidle', timeout: 30_000 });
-    await page.waitForTimeout(1500);
-    const base0 = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
+    const textNow = () => page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
+    let prev = null;
+    let settled = false;
+    for (let i = 0; i < 40; i++) {
+      const now = await textNow();
+      if (prev !== null && now === prev) {
+        settled = true;
+        break;
+      }
+      prev = now;
+      await page.waitForTimeout(300);
+    }
+    if (!settled) {
+      undecided('页面 12 秒内文本一直在变（慢 runner 还在渲染），量不出"静止时不该有错误话"');
+    }
+    const base0 = prev;
     await page.waitForTimeout(1200);
-    const base1 = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
+    const base1 = await textNow();
+    const delta = base1.replace(base0, '');
+    /*
+     * 没红的时候**把证据一起打出来**：到底是哪几个词命中的。
+     * 上一轮这条只留下一句"没有变红"，于是"为什么"只能靠猜 —— 这次让它自己说。
+     */
+    const hits = [...new Set(delta.match(new RegExp(FAIL_WORDS.source, 'gi')) ?? [])];
     ok(
-      FAIL_WORDS.test(base1.replace(base0, '')) === true,
-      '没注入故障时界面本来就没有错误话（这条变异本就该红）',
+      FAIL_WORDS.test(delta) === true,
+      `没注入故障时界面本来就没有错误话（这条变异本就该红）。` +
+        `本轮增量里命中的词=${JSON.stringify(hits)} · 增量前 200 字=${JSON.stringify(delta.slice(0, 200))}`,
     );
   });
 
@@ -1384,7 +1440,7 @@ try {
   }));
   say(`   反馈：成功=${copyFeedback.ok} 失败=${copyFeedback.failed} 退路=${copyFeedback.fallback}`);
 
-  await check('B7 ★ 「复制诊断信息」点完必须出声（成功或失败都算，沉默不算）', () => {
+  await check('B13 ★ 「复制诊断信息」点完必须出声（成功或失败都算，沉默不算）', () => {
     ok(copyR.clicked === true, `按钮没点到：${copyR.clickError}`);
     ok(
       copyFeedback.ok === true || copyFeedback.failed === true,
@@ -1398,7 +1454,7 @@ try {
   });
 
   // 变异：把反馈元素摘掉，同一条断言必须红 —— 证明它量的是"有没有出声"。
-  await mutation('B7 的证伪能力（把反馈元素摘掉，同一条断言必须红）', async () => {
+  await mutation('B13 的证伪能力（把反馈元素摘掉，同一条断言必须红）', async () => {
     await page.evaluate(() => {
       for (const sel of [
         '[data-testid="diagnostics-copy-ok"]',
@@ -1737,7 +1793,7 @@ for (const r of results) say(`   ${String(r.id).padEnd(58)} ${r.status}`);
 say('');
 const pass = results.filter((r) => r.status === 'PASS').length;
 const mut = results.filter((r) => r.status === 'MUT-OK').length;
-const undec = results.filter((r) => r.status === 'UNDECIDED');
+const undec = results.filter((r) => r.status === 'UNDECIDED' || r.status === 'MUT-UNKNOWN');
 say(
   `   断言通过 ${pass} 条 · 变异证明 ${mut} 条 · 失败 ${failed} 条 · 无从判断 ${undec.length} 条`,
 );
