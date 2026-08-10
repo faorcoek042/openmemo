@@ -9,9 +9,11 @@
  * - 结构化输出没有 `response_format`，靠 tool use 或 prompt 约束
  */
 import { LlmError, mapHttpError, mapNetworkError } from '../errors.js';
+import { fetchModelList, parseDataIdList } from '../list-models.js';
 import type {
   ChatRequest,
   ChatResult,
+  ListModelsResult,
   LlmProvider,
   ProviderCapabilities,
   ProviderConfig,
@@ -52,15 +54,18 @@ export class AnthropicProvider implements LlmProvider {
     };
   }
 
-  async listModels(): Promise<string[]> {
-    try {
-      const res = await fetch(`${this.baseUrl}/v1/models`, { headers: this.#headers() });
-      if (!res.ok) return [];
-      const body = (await res.json()) as { data?: Array<{ id?: string }> };
-      return (body.data ?? []).map((m) => m.id).filter((x): x is string => typeof x === 'string');
-    } catch {
-      return [];
-    }
+  /**
+   * 列模型。**失败不再伪装成"没有模型"**（T-167）—— 见 `list-models.ts` 的文件头。
+   * 401 要用户去改 Key，断网要他查网络，两件事不能给同一个答案。
+   */
+  listModels(): Promise<ListModelsResult> {
+    return fetchModelList({
+      url: `${this.baseUrl}/v1/models`,
+      headers: this.#headers(),
+      providerId: this.id,
+      baseUrl: this.baseUrl,
+      parse: parseDataIdList,
+    });
   }
 
   capabilities(): Promise<ProviderCapabilities> {

@@ -126,6 +126,27 @@ export function mapNetworkError(err: unknown, providerId: string, baseUrl: strin
     // 区分"用户取消"与"超时" —— 前者不该重试也不该报错给用户
     return new LlmError('LLM_ABORTED', 'request aborted', '请求已取消', false);
   }
+  /*
+   * ★ 超时必须有**自己**的码（T-167）。
+   *
+   * `AbortSignal.timeout()` 抛的是 `name === 'TimeoutError'` 的 DOMException，
+   * 而不是 `AbortError`。此前这里没有这一支，于是超时掉进最下面那个
+   * `LLM_CONNECTION_FAILED`，和"连不上"说同一句话 —— 可这两件事的下一步不一样：
+   * 连不上多半是**地址或网络配错了**（要去改），超时多半是**这一次慢了**（重试就行）。
+   *
+   * 刻意**不给**可点的下一步：唯一有意义的动作是"再试一次"，那是就地动作，
+   * 不是跳转；`remediation/routes.ts` 记着 26 个调用点里 23 个刻意不给按钮，
+   * 理由是「给一个点了没用的按钮，比不给按钮更糟」。`retryable: true` 已经把
+   * "可以重试"这件事说清楚了。
+   */
+  if (e?.name === 'TimeoutError') {
+    return new LlmError(
+      'LLM_TIMEOUT',
+      `timeout talking to ${baseUrl}`,
+      `连接 LLM 服务超时（${baseUrl}），可以重试`,
+      true,
+    );
+  }
   if (e?.code === 'ECONNREFUSED' || e?.code === 'ENOTFOUND' || e?.code === 'EHOSTUNREACH') {
     return new LlmError(
       'LLM_CONNECTION_FAILED',

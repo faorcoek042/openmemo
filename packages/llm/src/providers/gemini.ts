@@ -16,10 +16,12 @@
  * - 用量字段是 `usageMetadata.{promptTokenCount,candidatesTokenCount,totalTokenCount}`
  */
 import { LlmError, mapHttpError, mapNetworkError } from '../errors.js';
+import { fetchModelList } from '../list-models.js';
 import type {
   ChatMessage,
   ChatRequest,
   ChatResult,
+  ListModelsResult,
   LlmProvider,
   ProviderCapabilities,
   ProviderConfig,
@@ -110,19 +112,30 @@ export class GeminiProvider implements LlmProvider {
     };
   }
 
-  async listModels(): Promise<string[]> {
-    try {
-      const res = await fetch(`${this.baseUrl}/${API_VERSION}/models`, {
-        headers: this.#headers(),
-      });
-      if (!res.ok) return [];
-      const body = (await res.json()) as { models?: Array<{ name?: string }> };
-      return (body.models ?? [])
-        .map((m) => m.name?.replace(/^models\//, ''))
-        .filter((x): x is string => typeof x === 'string');
-    } catch {
-      return []; // 列模型只是便利功能，失败不该冒泡成错误
-    }
+  /**
+   * 列模型。**失败不再伪装成"没有模型"**（T-167）—— 见 `list-models.ts` 的文件头。
+   *
+   * ⚠️ 这一个**不在** T-167 点名的两条里（点名的是 anthropic 与 openai-compatible），
+   * 但它实现同一个 `LlmProvider` 接口 —— 接口的返回类型一改，它**必须**跟着改，
+   * 否则编译不过。留着它用老形状也会立刻制造"同一个方法两种契约"，
+   * 那正是这一族最初的病根。已在回执里如实申报。
+   */
+  listModels(): Promise<ListModelsResult> {
+    return fetchModelList({
+      url: `${this.baseUrl}/${API_VERSION}/models`,
+      headers: this.#headers(),
+      providerId: this.id,
+      baseUrl: this.baseUrl,
+      // Gemini 的形状是 { models: [{ name: 'models/gemini-x' }] }，前缀要剥掉
+      parse: (body) => {
+        const list = (body as { models?: unknown }).models;
+        if (!Array.isArray(list)) return null;
+        return list
+          .map((m) => (m as { name?: unknown }).name)
+          .filter((x): x is string => typeof x === 'string')
+          .map((n) => n.replace(/^models\//, ''));
+      },
+    });
   }
 
   async capabilities(): Promise<ProviderCapabilities> {

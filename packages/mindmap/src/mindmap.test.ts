@@ -7,7 +7,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import type { ChatRequest, ChatResult, LlmProvider, ProviderCapabilities } from '@openmemo/llm';
+import type {
+  ChatRequest,
+  ChatResult,
+  ListModelsResult,
+  LlmProvider,
+  ProviderCapabilities,
+} from '@openmemo/llm';
 
 import { fromMindElixir, toMindElixir } from './adapters/mind-elixir.js';
 import { generateMindMap, planWindows, type TranscriptSegment } from './generate.js';
@@ -196,7 +202,7 @@ function mockProvider(replies: string[]): LlmProvider & { calls: ChatRequest[] }
         contextWindow: 8192,
         vision: false,
       }),
-    listModels: (): Promise<string[]> => Promise.resolve(['mock']),
+    listModels: (): Promise<ListModelsResult> => Promise.resolve({ ok: true, models: ['mock'] }),
     chat: (req: ChatRequest): Promise<ChatResult> => {
       calls.push(req);
       const text = replies[Math.min(i++, replies.length - 1)] ?? '{}';

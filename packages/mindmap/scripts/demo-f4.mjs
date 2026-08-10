@@ -49,11 +49,18 @@ for (const d of detected) {
 if (detected.length === 0) console.log('  （未探测到本地后端）');
 
 // ---- 3. 建 provider ----
-const models = await new OpenAiCompatibleProvider({
+// T-167：listModels 现在返回 { ok, models } / { ok:false, error } —— 失败要说出原因，
+// 不能再把"连不上"静悄悄当成"没有模型"（那正是这次修掉的病）。
+const listed = await new OpenAiCompatibleProvider({
   id: 'probe',
   baseUrl,
   model: 'x',
 }).listModels();
+if (!listed.ok) {
+  console.error(`列模型失败：[${listed.error.code}] ${listed.error.messageZh}`);
+  process.exit(1);
+}
+const models = listed.models;
 const provider = new OpenAiCompatibleProvider({
   id: 'llama-server',
   label: '本地 llama.cpp',

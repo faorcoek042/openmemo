@@ -10,9 +10,11 @@
  * - 结构化输出三级降级：`json_schema` → `json_object` → 纯 prompt 约束。
  */
 import { LlmError, mapHttpError, mapNetworkError } from '../errors.js';
+import { fetchModelList, parseDataIdList } from '../list-models.js';
 import type {
   ChatRequest,
   ChatResult,
+  ListModelsResult,
   LlmProvider,
   ProviderCapabilities,
   ProviderConfig,
@@ -60,15 +62,21 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     return h;
   }
 
-  async listModels(): Promise<string[]> {
-    try {
-      const res = await fetch(`${this.baseUrl}/models`, { headers: this.#headers() });
-      if (!res.ok) return [];
-      const body = (await res.json()) as { data?: Array<{ id?: string }> };
-      return (body.data ?? []).map((m) => m.id).filter((x): x is string => typeof x === 'string');
-    } catch {
-      return [];
-    }
+  /**
+   * 列模型。**失败不再伪装成"没有模型"**（T-167）—— 见 `list-models.ts` 的文件头。
+   *
+   * 这一个尤其要紧：它覆盖 OpenAI/DeepSeek/Groq/… 以及 Ollama/LM Studio，
+   * 「地址少写了 /v1」在这里的表现就是响应形状不对 —— 那必须说成"地址不像模型列表接口"，
+   * 而不是"这家没有模型"。
+   */
+  listModels(): Promise<ListModelsResult> {
+    return fetchModelList({
+      url: `${this.baseUrl}/models`,
+      headers: this.#headers(),
+      providerId: this.id,
+      baseUrl: this.baseUrl,
+      parse: parseDataIdList,
+    });
   }
 
   /**

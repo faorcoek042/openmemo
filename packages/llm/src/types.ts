@@ -11,6 +11,8 @@
  * **`baseUrl` 对所有 provider 都可配；`apiKey` 对本地后端可为空。**
  */
 
+import type { LlmError } from './errors.js';
+
 export type ChatRole = 'system' | 'user' | 'assistant';
 
 export interface ChatMessage {
@@ -129,9 +131,30 @@ export interface LlmProvider {
 
   capabilities(): Promise<ProviderCapabilities>;
   chat(req: ChatRequest): Promise<ChatResult>;
-  /** 列出可用模型。失败返回空数组而不是抛 —— 这只是个便利功能。 */
-  listModels(): Promise<string[]>;
+  /**
+   * 列出可用模型。
+   *
+   * ⚠️ **不返回 `string[]`**（T-167）。它曾经是 `Promise<string[]>` 且"失败返回空数组"，
+   * 于是 401 / 断网 / 超时 / 响应形状不对**全部**变成"这家没有模型" ——
+   * 而这四种情况的下一步互相矛盾（改 Key vs 查网络 vs 重试 vs 改地址）。
+   * 调用方拿到 `[]` 只能说一句话，那句话对其中至少三种是错的，
+   * 用户会据此**去换服务商**。
+   *
+   * 旧签名在结构上没有能力区分"真的零"和"没问到"，于是调用方也不可能小心
+   * （与 `listManifestFiles`、`findStaleLinks` 同一条判词）。
+   */
+  listModels(): Promise<ListModelsResult>;
 }
+
+/**
+ * `listModels()` 的结果。
+ *
+ * `{ ok: true, models: [] }` 是**合法的零** —— 对面好好地回答了"我这儿没有模型"。
+ * 它与 `{ ok: false, error }` 是两件事，且**在类型上就分得开**。
+ */
+export type ListModelsResult =
+  | { readonly ok: true; readonly models: string[] }
+  | { readonly ok: false; readonly error: LlmError };
 
 export interface ProviderConfig {
   readonly id: string;
