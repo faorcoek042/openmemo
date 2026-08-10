@@ -25,7 +25,6 @@ import { TasksDrawer } from './features/tasks/TasksDrawer';
 import { useUnfinishedJobCount } from './features/tasks/api';
 import { useUiStore } from './lib/stores/ui.store';
 import { useConnectionStore } from './lib/stores/connection.store';
-import { useProgressStore } from './lib/stores/progress.store';
 import { activeNavTarget, NAV_FILTER_KEYS } from './lib/nav/activeNav';
 import { cn } from './lib/utils';
 
@@ -36,7 +35,20 @@ export default function App() {
   // 侧栏「任务」徽标：与任务中心同一个数据源，不许各拉各的
   const unfinishedJobs = useUnfinishedJobCount();
   const conn = useConnectionStore((s) => s.state);
-  const activeCount = useProgressStore((s) => Object.keys(s.byJob).length);
+  /*
+   * ★ T-198 / S-1：顶栏「进行中 N」**收敛到与侧栏同一个数据源**。
+   *
+   * 它原来数的是 `progressStore` 的 key 数 —— 一个 transient store，
+   * 里面装的是 SSE 推来的进度快照。于是：
+   *  · 任务已经结束、快照还没被清 ⇒ 顶栏继续显示「进行中 1」（用户真机撞到的僵尸）；
+   *  · 刷新页面 / 掉一帧 SSE ⇒ store 是空的，明明有活在跑却显示 0。
+   * **它数的从来不是"有多少任务在跑"，而是"我手上还留着几条快照"。**
+   *
+   * 同一个文件上面 3 行就有 `useUnfinishedJobCount()`（服务端 `GET /api/jobs`
+   * 为准），却只喂了侧栏徽标 —— 同一个问题，一个页面里两个答案，
+   * 而错的那个还占着最显眼的位置。现在两处共用一个。
+   */
+  const activeCount = unfinishedJobs;
 
   /**
    * 首启引导走**无外壳**布局。
