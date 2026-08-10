@@ -130,6 +130,16 @@ const RULES = [
       '真实后果：装了 sherpa 的那个、whisper.cpp 加载不了，daemon 每次装配警告一遍，' +
       '而界面从头到尾没告诉过他该装另一个（2026-08-09 用户真机）。',
   },
+  {
+    field: 'installedOnDiskButUnrecorded',
+    dir: 'apps/web/src/features/runtime',
+    why:
+      'daemon 算出「这个包该提供的东西，本机现在正从一份没有安装记录的副本用着」（T-197）。' +
+      '零消费 ⇒ 回到那句被举报的假话：`/api/selfcheck` 的 `tool.ffmpeg` 是绿的、' +
+      '流水线正拿盘上那份 7.1.5 在转码，而 `/runtime` 同一时刻写着「安装 119 MB」，' +
+      '用户点下去把同一个东西再下一遍（2026-08-10 用户真机 `:10000`）。' +
+      '这一格是那句话唯一的解药——服务端算了没人读，等于没修。',
+  },
 ];
 
 /**
