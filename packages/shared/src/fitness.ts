@@ -18,6 +18,13 @@ export const FIT_TIERS = [
   'slow_cpu',
   'unsupported',
   'blocked_disk',
+  /**
+   * 磁盘余量**没测到**（不是"不够"）。
+   *
+   * 与 `blocked_disk` 是两件事：那个是"确定装不下"，这个是"我们不知道"。
+   * 压成一个的话，要么谎报能装（旧行为：借隔壁卷的数），要么谎报装不下。
+   */
+  'unknown_disk',
 ] as const;
 export type FitTier = (typeof FIT_TIERS)[number];
 
@@ -30,7 +37,8 @@ export type FitReasonCode =
   | 'missing_cpu_feature'
   | 'insufficient_disk'
   | 'borderline_vram'
-  | 'not_recommended_for_language';
+  | 'not_recommended_for_language'
+  | 'disk_unknown';
 
 /**
  * How fast this will feel, independently of whether it fits in memory.
@@ -79,7 +87,8 @@ export interface FitResult {
     needMB: number;
     vramBudgetMB: number;
     ramBudgetMB: number;
-    diskFreeMB: number;
+    /** `null` = 没测到这个卷（**不是 0**）。见 `modelsRootFreeMB()`。 */
+    diskFreeMB: number | null;
     diskNeededMB: number;
   };
 }
@@ -192,9 +201,25 @@ export function ramBudgetMB(hw: HardwareInfo): number {
   return Math.round(hw.ram.totalMB * RAM_BUDGET_RATIO);
 }
 
-export function modelsRootFreeMB(hw: HardwareInfo): number {
-  const d = hw.disks.find((x) => x.pathFor === 'models_root') ?? hw.disks[0] ?? null;
-  return d ? d.freeMB : 0;
+/**
+ * 模型卷的可用空间；**`null` = 没测到**。
+ *
+ * ⚠️ 这里原本是 `?? hw.disks[0] ?? null`，也就是**模型卷读不到时借第一块盘的数**。
+ * 而 `detectDisks()` 在 `statfs` 抛异常时会把那一项**整条省略**（首次运行目录还没建、
+ * 移动硬盘没插、网络盘没挂 —— 都是合法情况），于是 `disks[0]` 剩下的往往是
+ * `runtimes_root`，**可能是另一个卷**。
+ *
+ * 后果是同一个卷出现两个数，而且其中一个根本不是它的：
+ * fit 判定拿系统盘的 400 GB 说"可安装"，存储页同时显示"剩余 0 B"。
+ * **「我没拿到」被说成了「隔壁那个就是它」** —— 这比报错更难查，因为它给的是个
+ * 看起来很合理的数字。
+ *
+ * 现在：找不到 `models_root` 就如实返回 `null`，由调用方走"未知"那一档。
+ * **不许再用任何别的卷的数字冒充它。**
+ */
+export function modelsRootFreeMB(hw: HardwareInfo): number | null {
+  const d = hw.disks.find((x) => x.pathFor === 'models_root');
+  return d ? d.freeMB : null;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -308,6 +333,27 @@ export function computeFit(input: FitInput, hw: HardwareInfo): FitResult {
     estMinutes != null && (speedTier === 'slow' || speedTier === 'very_slow')
       ? `${zh} · ${SPEED_NOTE_ZH[speedTier]}（1 小时音频约 ${Math.round(estMinutes)} 分钟）`
       : zh;
+
+  /*
+   * Rule 0 — 磁盘余量**没测到**。
+   *
+   * 必须排在 Rule 1 前面，而且必须是独立一档：`diskFree` 为 null 时既不能说"装得下"
+   * （那是旧行为借隔壁卷的数得出的结论），也不能说"装不下"（我们并不知道）。
+   *
+   * 这一档**不硬禁用安装**（`ModelCard` 只对 `blocked_disk` 禁用）：真正的把关在
+   * 装的时候 —— `rest/models.ts` 的磁盘预检会用当时现算的读数拦下来并给可点的补救。
+   * 这里只负责**不假装我们检查过**。
+   */
+  if (diskFree === null) {
+    return {
+      tier: 'unknown_disk',
+      reasonCode: 'disk_unknown',
+      reasonZh: '没能读到模型目录所在卷的可用空间，装之前会再查一次',
+      reasonEn: "Couldn't read free space on the models volume; it is re-checked at install time",
+      estGpuLayers: null,
+      ...base,
+    };
+  }
 
   // Rule 1 — disk. The only deterministic failure; everything else is an estimate.
   if (diskFree < diskNeeded) {

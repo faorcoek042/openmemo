@@ -385,8 +385,24 @@ export async function detectDisks(paths: {
         freeMB: toMB(Number(s.bavail) * Number(s.bsize)),
         totalMB: toMB(Number(s.blocks) * Number(s.bsize)),
       });
-    } catch {
-      // Directory may not exist yet on first run; the caller creates it and re-detects.
+    } catch (err) {
+      /*
+       * The directory may legitimately not exist yet (first run), or the volume may not be
+       * mounted (removable / network drive). That is a valid state — but "legitimately
+       * unmeasurable" and "measured, and it is 0" are still two different things, and this
+       * `catch` used to collapse them into one by dropping the entry without a word.
+       *
+       * The entry stays omitted on purpose: publishing a fabricated `freeMB` is exactly the
+       * failure this whole change is about. What is NOT ok is doing it silently — a missing
+       * `models_root` entry is now load-bearing (`modelsRootFreeMB()` returns null and the
+       * catalog shows an explicit "disk unknown" tier), so the reason has to be recoverable
+       * by whoever is debugging it.
+       */
+      console.warn(
+        `[detect] statfs failed for ${t.pathFor} at ${t.path}: ` +
+          `${err instanceof Error ? err.message : String(err)} — ` +
+          `this volume will be reported as "not measured", not as 0`,
+      );
     }
   }
   return out;

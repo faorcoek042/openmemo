@@ -157,8 +157,11 @@ export default function ModelDetailPage() {
         ★ 诊断数字：契约（`shared/fitness.ts:77`）原话
         `Diagnostic numbers, surfaced in the detail panel so users can sanity-check us.`
         —— **"so users can sanity-check us"**：它存在的理由就是让用户能核对我们的结论，
-        而它此前**一次都没有渲染过**（`[实测]` needMB/vramBudgetMB/ramBudgetMB/
-        diskFreeMB/diskNeededMB 在 apps/web 全域各 0 次）。
+        而它在这一段写出来之前**一次都没有渲染过**（当时 needMB/vramBudgetMB/
+        ramBudgetMB/diskFreeMB/diskNeededMB 在 apps/web 全域各 0 次）。
+        ⚠️ **那句"各 0 次"如今已经不成立了 —— 消费方就是下面这个 `dl`。**
+        （T-201 A-5 复核时撞上：有人照这句注释判断"这些字段零消费、可以随便改契约"。
+        注释描述的是写它那一刻的事实，不是不变量。）
 
         一个只说"跑不动"却不肯说"我按什么算的"的判断，用户既无法反驳也无法信任。
         这一块就是那个"detail panel"。
@@ -180,7 +183,14 @@ export default function ModelDetailPage() {
           ).map(([key, mb]) => (
             <div key={key} className="contents">
               <dt className="text-ink-secondary">{t(`models.detail.diag.${key}`)}</dt>
-              <dd className="tabular-nums text-ink">{formatBytes(mb * 1e6, locale)}</dd>
+              {/*
+                `null` = 没测到（`diskFreeMB` 会有这一档）。**不许渲染成 0 B** ——
+                这一整块存在的意义就是让用户核对我们的算法，
+                给他一个假的 0 比不给更糟。
+              */}
+              <dd className="tabular-nums text-ink">
+                {mb == null ? t('models.fit.unknownDisk') : formatBytes(mb * 1e6, locale)}
+              </dd>
             </div>
           ))}
         </dl>

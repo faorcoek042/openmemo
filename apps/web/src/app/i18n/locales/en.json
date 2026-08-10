@@ -205,6 +205,7 @@
       "slow": "Runs, but slowly",
       "unsupported": "Cannot run",
       "blockedDisk": "Not enough space",
+      "unknownDisk": "Disk space unknown",
       "unknown": "Unknown",
       "speedUnmeasured": "Speed not measured",
       "etaPerHour": "about {{minutes}} min per hour of audio",

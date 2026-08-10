@@ -1,4 +1,11 @@
-import { AlertTriangle, CheckCircle2, HardDrive, OctagonAlert, XCircle } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  CircleHelp,
+  HardDrive,
+  OctagonAlert,
+  XCircle,
+} from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { FitResult, FitTier } from '@openmemo/shared';
@@ -43,6 +50,16 @@ const TIER_STYLE: Record<FitTier, { text: string; icon: ReactNode; labelKey: str
     text: 'text-serious',
     icon: <HardDrive className="size-3.5 shrink-0" aria-hidden />,
     labelKey: 'models.fit.blockedDisk',
+  },
+  /*
+   * ★ T-201 A-5：「没测到」不是「不够」。
+   * 用中性色 + 问号，**不给 serious/critical** —— 它不是坏消息，是"这一格我们没查到"。
+   * 拿 `blocked_disk` 的橙色去表达它，等于把"不知道"说成"装不下"。
+   */
+  unknown_disk: {
+    text: 'text-ink-muted',
+    icon: <CircleHelp className="size-3.5 shrink-0" aria-hidden />,
+    labelKey: 'models.fit.unknownDisk',
   },
 };
 
