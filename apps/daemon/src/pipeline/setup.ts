@@ -724,8 +724,16 @@ interface ResolvedEngineModel<T> {
  *
  * 顺序：`OPENMEMO_SHERPA_STREAM_DIR`（覆盖，开发/自检用）> 已安装模型记录 > 无。
  * **环境变量保留为覆盖手段，不再是唯一开关** —— 它是这条功能死了一整轮的直接原因。
+ *
+ * ★ `export` 是给 `scripts/selfcheck.mjs` 用的（`meta.sameSource`：
+ * `engine.sherpa-onnx 本地=缺 端点=ok`）。那边以前自己攒了一份 `engineList`，
+ * 从不构造 `SherpaOnnxEngine`，永远缺这一项；`resolveOfflineChineseModel()`
+ * 的 Paraformer 检查也是手写的 `by-name/asr/model.int8.onnx` 硬编码路径，
+ * 跟这里"读安装记录 + 按文件形状判定"的正式做法不是一回事，**上游随时可能再分叉一次**。
+ * 现在 CLI 直接 `import(distUrl('apps/daemon/dist/pipeline/setup.js'))` 调这三个函数
+ * 本身（同 `resolveBackendTool()` 的同源做法，见 T-162 注释），不再各写一遍。
  */
-async function resolveStreamingModel(
+export async function resolveStreamingModel(
   modelsDir: string,
   env: NodeJS.ProcessEnv,
 ): Promise<ResolvedEngineModel<SherpaTransducerModel>> {
@@ -759,7 +767,7 @@ async function resolveStreamingModel(
 }
 
 /** 离线中文引擎（ADR-013 决策 1 的中文默认）。顺序同上。 */
-async function resolveOfflineChineseModel(
+export async function resolveOfflineChineseModel(
   modelsDir: string,
   env: NodeJS.ProcessEnv,
 ): Promise<ResolvedEngineModel<ParaformerModel>> {
@@ -798,7 +806,7 @@ async function resolveOfflineChineseModel(
  * 可选不等于不重要：没有它中文转写稿**一个标点都没有**，读起来难受，
  * 作为 F4 的 LLM 输入质量也明显更差。所以能配就配上，但缺了不阻止引擎启用。
  */
-async function resolvePunctuation(
+export async function resolvePunctuation(
   modelsDir: string,
   env: NodeJS.ProcessEnv,
 ): Promise<PunctuationModel | undefined> {

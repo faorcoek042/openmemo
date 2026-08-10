@@ -230,6 +230,21 @@ async function main() {
   const rt = await import(distUrl('packages/runtime/dist/index.js'));
   const pl = await import(distUrl('packages/pipeline/dist/index.js'));
   const shared = await import(distUrl('packages/shared/dist/index.js'));
+  /*
+   * sherpa-onnx / Paraformer 选型：**同一个 `resolveStreamingModel()` /
+   * `resolveOfflineChineseModel()` / `resolvePunctuation()`**，不是重新猜一遍文件名。
+   *
+   * 以前这里手写了一份 `by-name/asr/model.int8.onnx` 硬编码检查，且从不构造
+   * `SherpaOnnxEngine` —— `meta.sameSource` 因此永远给 `engine.sherpa-onnx
+   * 本地=缺 端点=ok`：daemon 的 `buildPipeline()` 用安装记录 + 文件形状判定
+   * （encoder/decoder/joiner+tokens.txt 是 sherpa、onnx+tokens.txt 是 Paraformer）
+   * 正确选出模型，这里从来没看过安装记录。
+   *
+   * 现在直接 import daemon 里那三个函数本身（同 `resolveBackendTool()` 的
+   * 同源做法，见上面 T-162 的注释），两边保证是**同一次调用**，不是"分别实现、
+   * 靠人记得同步"。
+   */
+  const daemonSetup = await import(distUrl('apps/daemon/dist/pipeline/setup.js'));
 
   const tools = await pl.discoverTools({ storeRoot: STORE_ROOT, dataDir: DATA_DIR });
   /*
@@ -249,18 +264,22 @@ async function main() {
 
   // -- ASR 引擎候选：与 daemon 的 buildPipeline 保持同样的构造方式 -----------------------
   const engineList = [new pl.WhisperCppEngine({ tools, cwd: join(DATA_DIR, 'tmp') })];
-  const paraDir = join(STORE_ROOT, 'by-name', 'asr');
-  if (await canRead(join(paraDir, 'model.int8.onnx'))) {
+
+  const stream = await daemonSetup.resolveStreamingModel(STORE_ROOT, process.env);
+  if (stream.model) {
+    engineList.push(new pl.SherpaOnnxEngine({ model: stream.model, provider: 'cpu' }));
+  }
+
+  const para = await daemonSetup.resolveOfflineChineseModel(STORE_ROOT, process.env);
+  if (para.model) {
+    const punctuation = await daemonSetup.resolvePunctuation(STORE_ROOT, process.env);
     engineList.push(
       new pl.ParaformerEngine({
         tools,
         cwd: join(DATA_DIR, 'tmp'),
-        model: {
-          model: join(paraDir, 'model.int8.onnx'),
-          tokens: join(paraDir, 'tokens.txt'),
-          modelId: 'paraformer-zh-small',
-          languages: ['zh'],
-        },
+        model: para.model,
+        ...(punctuation ? { punctuation } : {}),
+        provider: 'cpu',
       }),
     );
   }
@@ -297,6 +316,27 @@ async function main() {
        * 那正是 T-148 里两边都报绿的机制（vad-fix §2）。
        */
       installedByRole: (role) => rt.listInstalledNamesByRole(STORE_ROOT, role),
+
+      /*
+       * T-153：内置目录读到了没有。
+       * **import daemon 里那两个加载器本身**（同 T-162 的同源做法）——
+       * 两边保证是同一次调用，`meta.sameSource` 才有意义。
+       * 自己在这里重写一份"看看目录在不在"，正是它历来出漂移的方式。
+       */
+      catalogLoad: async () => {
+        const mf = await import(distUrl('apps/daemon/dist/http/rest/manifests.js'));
+        const dir = mf.resolveManifestDir();
+        const [m, b] = await Promise.all([mf.loadModelCatalog(dir), mf.loadBackendCatalog(dir)]);
+        const err = m.loadError ?? b.loadError;
+        return {
+          loaded: err === null,
+          dir,
+          models: m.models.length,
+          packs: b.packs.length,
+          reasonZh: err ? err.messageZh : null,
+          reasonEn: err ? `${err.code}: ${err.message} (${err.dir})` : null,
+        };
+      },
 
       // probe 藏在后端包里（挨着 libggml-base），只有 pipeline 的两层扫描找得到。
       probePath: () =>
