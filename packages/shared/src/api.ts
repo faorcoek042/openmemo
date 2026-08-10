@@ -321,6 +321,39 @@ export interface GetBackendCatalogResponse {
      */
     updateAvailable?: boolean;
     /**
+     * **没有安装记录，但这个包该提供的东西，本机现在正从别处用着。**
+     *
+     * ## 它修的是哪个用户症状（T-197）
+     *
+     * `[实测 :10000]` `/runtime` 对**正在被使用的** ffmpeg 显示「安装 119 MB」，
+     * 点下去把它再下一遍。同一时刻 `/api/selfcheck` 的 `tool.ffmpeg` 是绿的、
+     * 流水线正拿它跑转码 —— 盘上那份是 **7.1.5**，而目录已经升到 **8.1.2**：
+     * 归档文件名都不同，对账按目录声明的名字去找，**根本找不到痕迹**，
+     * 于是它既不在 `installed` 里，也不在对账的 skipped 里。
+     *
+     * ## 为什么是新增一格，不是把 `installed` 改成"或"
+     *
+     * `backendReconcile.ts:22-38` 已经论证过：改成「有 manifest **或** 文件都在」
+     * 会造出**第三个答案** —— `GET /api/backends/installed` 仍然列不出它、
+     * `DELETE` 仍然 404、`installedVersion` 仍然 null、`recordSelfTest()` 仍然写不进。
+     * 判据是"同一台机器上，装没装只准有一个回答的人"。
+     * 所以 `installed` 的含义**一个字没动**，这一格只是把**另一件事**说出来。
+     *
+     * 也**不是**复用 {@link updateAvailable}：那一格按 manifest 比字节，
+     * 而这里的前提正是**根本没有 manifest**，它算不出来。
+     *
+     * ## **可选**：缺失 ≠ 否
+     *
+     * 老 daemon 不发这个字段，客户端必须能表达"我不知道"。
+     * 缺失时正确的行为是**什么都不说**，而不是渲染成"没有别处的副本"。
+     */
+    installedOnDiskButUnrecorded?: {
+      /** 这个包声明提供、而本机确实正在用的那个文件名（如 `ffmpeg`）。 */
+      file: string;
+      /** 它当前被解析到的绝对路径 —— 证据本身，不是我们的推断。 */
+      path: string;
+    } | null;
+    /**
      * **机器上那一份**的引擎版本与体积。`null` = 没装（或老记录里没有）。
      *
      * ## 为什么这两格必须单独存在（T-193 ③）

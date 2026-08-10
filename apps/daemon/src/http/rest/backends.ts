@@ -19,7 +19,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { install } from '@openmemo/downloader';
-import { materializeSqliteExtensions } from '@openmemo/pipeline';
+import * as path from 'node:path';
+
+import { discoverTools, materializeSqliteExtensions } from '@openmemo/pipeline';
 import { isPackApplicable } from '@openmemo/runtime';
 import {
   BACKENDS,
@@ -378,6 +380,75 @@ export async function handleBackendRoutes(
     if (method !== 'GET') return methodNotAllowed(res, 'GET');
     const installedRecords = await state.listInstalledBackends();
     const installedIds = new Set(installedRecords.map((p) => p.id));
+
+    /*
+     * ★★ T-197：**没有安装记录，但这个包该提供的东西正被用着** —— 第三态。
+     *
+     * `[实测 :10000]` `/runtime` 对**正在被使用的** ffmpeg 显示「安装 119 MB」。
+     * 同一时刻 `tool.ffmpeg` 是绿的、流水线正拿它转码 —— 盘上是 **7.1.5**、
+     * 目录已升到 **8.1.2**：**归档文件名都不同**，对账按目录声明的名字去 stat，
+     * 连痕迹都找不到（`sawSomething` 恒 false），所以它既不在 `installed` 里、
+     * **也不在对账的 skipped 里** —— 对账那一侧根本没有这半句话可说。
+     *
+     * 所以证据只能来自**解析器**：`discoverTools()` 是流水线装配时调的同一个函数，
+     * 它现在把 ffmpeg 解析到哪儿，哪儿就是用户实际在用的那份。
+     * 如果那个路径**不在任何安装记录认领的范围内**（`claimedInstallPaths()`，
+     * 与 `findUnclaimedFiles()` 共用同一份"认领"定义，不另写一份），
+     * 那就是"有一份没人记录的副本正在服役"。
+     *
+     * ⚠️ 只对 `installed === false` 的包算 —— 已有记录的包本来就该由记录说话。
+     * ⚠️ 代价：一次 `discoverTools()`（几次 fs 查表，不 spawn、不读内容），
+     *    目录接口不是热路径。**不做 `du`**。
+     */
+    const notInstalled = state.backendCatalog.packs.some(
+      (p) => !installedIds.has(p.id) && (p.providesFiles ?? []).length > 0,
+    );
+    let servedFromUnrecorded = new Map<string, { file: string; path: string }>();
+    if (notInstalled) {
+      try {
+        const tools = await discoverTools({ storeRoot: state.modelsRoot });
+        const claimed = await state.claimedInstallPaths();
+        /** 现在真的解析到的路径，按 basename 索引。 */
+        const live = new Map<string, string>();
+        const storeRoot = state.modelsRoot.endsWith(path.sep)
+          ? state.modelsRoot
+          : state.modelsRoot + path.sep;
+        for (const v of Object.values(tools)) {
+          if (typeof v !== 'string' || v.length === 0) continue;
+          /*
+           * ★ 只认**落在我们自己 store 里**的那些。
+           *
+           * ⚠️ 这一条是被用例逼出来的：`discoverTools()` 也会从**系统 PATH** 解析
+           * （`[实测]` 它在这台机器上把 ffprobe 解析到 `/usr/bin/ffprobe`）。
+           * 把那个报成"盘上有一份没人记录的副本"是**说错了一件事的性质** ——
+           * 那是「借宿主 PATH 的」，与「我们 store 里有一份没登记的」是两种状态，
+           * 而本仓专门修过"把借来的说成自家的 / 把自家的说成借来的"那一族
+           * （`bundledRuntime.ts` 的表里就记着这条）。借 PATH 那一格由自检负责说。
+           */
+          if (!v.startsWith(storeRoot)) continue;
+          // 落在已认领范围内的不算"没人记录的副本"
+          if ([...claimed].some((c) => v === c || v.startsWith(c + path.sep))) continue;
+          live.set(path.basename(v), v);
+        }
+        for (const p of state.backendCatalog.packs) {
+          if (installedIds.has(p.id)) continue;
+          for (const name of p.providesFiles ?? []) {
+            const hit = live.get(name);
+            if (hit !== undefined) {
+              servedFromUnrecorded.set(p.id, { file: name, path: hit });
+              break;
+            }
+          }
+        }
+      } catch {
+        /*
+         * 解析器失败 ⇒ **什么都不说**（这一格保持缺失）。
+         * 「我问不出来」不等于「没有别处的副本」—— 与 `hw.probe` 对探针缺失、
+         * `check-elf-glibc` 对 objdump 缺失同源。
+         */
+        servedFromUnrecorded = new Map();
+      }
+    }
     /**
      * 「装的是不是目录里现在这一版」——按**内容**（sha256 集合）算，不是按 id。
      *
@@ -431,6 +502,14 @@ export async function handleBackendRoutes(
             installedSha !== '' &&
             catalogSha !== '' &&
             installedSha !== catalogSha,
+          /*
+           * 只在**真有证据**时才发这一格；没有证据就让它缺失（缺失 ≠ 否）。
+           * 前端据此说「盘上有一份正在用的副本，但它不是目录里这一版」，
+           * 而不是继续把一个正在服役的 ffmpeg 说成「安装 119 MB」。
+           */
+          ...(servedFromUnrecorded.has(pack.id)
+            ? { installedOnDiskButUnrecorded: servedFromUnrecorded.get(pack.id) }
+            : {}),
           /*
            * 没装 ⇒ `null`（不是 undefined 也不是目录的值）：**"我没有"和"我不知道"
            * 都不该被渲染成"和目录一样"**，那正是这次要修的那句假话的来源。

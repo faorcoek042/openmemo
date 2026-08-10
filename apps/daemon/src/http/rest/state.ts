@@ -1178,11 +1178,19 @@ export class RestState {
    *
    * 判据不是"我觉得它没用"，是"**产品自己说它现在没在用它**"。
    */
-  async findUnclaimedFiles(): Promise<
-    { relPath: string; bytes: number; inUseBy: string | null }[]
-  > {
+  /**
+   * **所有被安装记录点名的绝对路径**（归档本身 + 它解开出来的目录 + 每模型独占目录）。
+   *
+   * 抽成方法是因为它有**两个**消费者，而它们问的是同一件事的两面：
+   *   · `findUnclaimedFiles()` —— "盘上这一坨**没人认领**吗"；
+   *   · `/api/backends/catalog` 的第三态（T-197）—— "现在跑着的这个工具，
+   *     是不是来自一份**没人认领**的副本"。
+   * 各写一份的话，两处对"认领"的定义会漂 —— 而这一整轮修的正是那族。
+   *
+   * ⚠️ **不做 `du`、不读内容**：只是把记录里点名的路径算出来，可以每次请求都调。
+   */
+  async claimedInstallPaths(): Promise<Set<string>> {
     const roots = { models: this.store.root };
-    /** 所有被安装记录点名的绝对路径（归档本身 + 它解开出来的目录）。 */
     const claimed = new Set<string>();
     const claimRecord = (id: string, files: readonly { name: string }[] | undefined): void => {
       for (const f of files ?? []) {
@@ -1200,6 +1208,13 @@ export class RestState {
     };
     for (const m of await this.listInstalled()) claimRecord(m.id, m.files);
     for (const p of await this.listInstalledBackends()) claimRecord(p.id, p.files);
+    return claimed;
+  }
+
+  async findUnclaimedFiles(): Promise<
+    { relPath: string; bytes: number; inUseBy: string | null }[]
+  > {
+    const claimed = await this.claimedInstallPaths();
 
     /*
      * 产品**现在**解析到的每一个工具路径。这是第二道闸，不是装饰：
