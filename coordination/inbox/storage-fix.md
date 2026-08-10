@@ -796,3 +796,105 @@ pnpm -r test      = 0
   (没有超时就永远测不出、也永远等不到"超时"这一档),但如实标出。
 - 纪律:未碰 `:10000`(pid 491899 全程存活)、未碰 `/root/data-memo` 与机器级指针、
   未用 `pkill`、未起任何常驻进程、撤销突变一律用备份文件。
+
+---
+
+## [2026-08-10 21:40] T-198 DONE —— 取消 ffmpeg 后那条幽灵任务，四个缺陷全修 + S-1/2/3/7
+
+### 回报你最关心的三句
+
+1. **master 的 lint 红已解，且不是靠删导入解的** —— S-2 用例写完了，那两行导入随之被用上。
+2. **S-2 我实测了，推定成立**。反向验证输出在 §3。**你判得对：只在 tasks 那侧清，会被
+   models 那个订阅者当场撤销** —— 我原来的修在真机上确实会被抵消。
+3. **全绿**：`tsc -b 0` · `eslint . 0` · `pnpm -r test 0`
+   （daemon 669 / web 378+180+18+10 / pipeline 243 / runtime 147 / downloader 102 / …）。
+
+### 1. 五个提交（每步独立编译通过、绿了才推）
+
+| # | hash | 内容 |
+|---|---|---|
+| 1 | `fdd041f` | ①②③ 队列侧：终态无条件落 + step 清 + 取消守卫 + probe 接 signal |
+| 2 | `1cfd547` | ④ 前端真相：服务端终态优先、409 不糊脸、终态不给取消按钮、有界轮询、toast 确认 |
+| 3 | （被 `09382d2` 顺带扫走的半成品，后由他人提交）| S-2 用例 + T-198 四条渲染腿 |
+| 4 | `b32a34c` | S-2 修 + S-3 buffer + S-7 RecorderPage + tasks/sse 终态清 |
+| 5 | `9589d90` | S-1 顶栏计数收敛到 `useUnfinishedJobCount()` |
+
+### 2. 四个缺陷（逐条）
+
+**① 终态落在错误的分支里（核心）**：`forceState(cancelled)` 写在 `if (idx >= 0)` 里，
+而正在跑的任务早被 `pump()` 的 `shift()` 挪出 waiting → `idx === -1` → 终态那句根本不执行，
+端点却照样 `return true` → 204「取消成功」。**改成无条件落**：只要 `cancel()` 回 true，
+任务就一定已经在 `cancelled` 上。刻意**不**从 `running` 里摘掉、也不在这里 `pump()` ——
+残余工作还真占着资源，摘掉会让并发上限变成空话。
+
+**③ `step` 不清**：成功路径是 `job.step = null` 后才 transition，取消路径没有这一句，
+于是「正在选择下载源」冻在终态之后。**状态和阶段是同一条消息的两半，只改一半就是自相矛盾。**
+
+**② abort 在多数阶段是空操作**：`probeSource/probeAll/probeMirrors` 接通外部 signal
+（`AbortSignal.any` 与自己的 5s 超时并起来），`models.ts` / `backends.ts` 把 `ctx.signal` 传下去。
+**`resolving` 正是用户撞到的那个窗口。**
+⚠️ **明说留了什么**：`install.ts` 那半边（`verifying` / `unpacking` / `installing`）**本次没做**，
+仍然不认 signal。由 `run()` 里新加的**取消守卫**兜住状态诚实 —— 残余工作跑完也**不许**把状态改回去。
+这条守卫即便将来每个阶段都认 signal 也该留着：竞态窗口永远存在。
+
+**④ 陈旧快照压过服务端**：`mergeOne()` 每个字段都是 `live?.x ?? job.x`。规则改成
+**服务端宣布终态，服务端就是唯一事实**；内存快照只让"还在跑的"更跟手。
+
+另三条按你的判据做了：409 咽掉并刷新（用户意图本就达成）、终态行不渲染取消按钮
+（判据收敛到 `TERMINAL_JOB_STATES` —— 原判据漏了 `failed`）、有界轮询（有非终态才 5s 兜一次）。
+**没有靠藏卡片交差**：终态就显示「已取消」，`groupJobs` 自己挪进已完成，渲染一行没动。
+
+### 3. S-2：实测结论（你要求先测再改）
+
+推定成立。`bindings.ts` 里 `tasksSse` 在 `modelsSse` 之前、`bus.ts` 按 Set 插入序同步遍历，
+而 `models/sse.ts` 的 `job.progress` 处理器只 push 不清理 ⇒ 真实次序
+`tasks push → tasks clear → models push`。**反向验证（拿掉 models 侧清理）当场红**：
+
+```
+✖ ★★ 终态 job.progress：两个订阅者跑完之后，store 里必须干净
+  AssertionError: tasks 清掉的快照被 models 那个订阅者写回去了 —— 只在一侧清是不够的
+  + actual: { at: 1786367956346, … }
+```
+
+用例刻意**不** import `registerAllSseBindings`：那会把整张绑定图拉进测试包，连带
+`DownloadRow.tsx` 里那个模块级 `[...TERMINAL_JOB_STATES, …]`，在 SSR chunk 初始化序下
+`ReferenceError`（实测撞到）。改为只注册这两个，但**注册顺序从 `bindings.ts` 源码读出来** ——
+否则测的是我假设的次序。`pushProgress` 有 200ms 节流，断言前等 flush。
+
+### 4. S-7 / S-1 / S-3
+
+- **S-7**：`RecorderPage` 改成**状态取服务端行、进度刻度才用内存快照**。
+  文件里"流水线任务不在 `/api/jobs` 里"那句**已过期**（`rest/jobs.ts:79` 两者一起列），已订正。
+  补上 `cancelled` / `blocked` 分支 —— 此前一个都没有，取消重跑或被缺件拦下同样永远停住。
+  **与 `tasks/sse.ts` 的终态清同一步落地**，避免自己造一个新回归。
+- **S-1**：顶栏数的是 `progressStore` 的 key 数 —— **它数的从来不是"有多少任务在跑"，
+  而是"我手上还留着几条快照"**。收敛到 `useUnfinishedJobCount()`，与侧栏同源。
+- **S-3**：`buffer` 纳入 `clear`/`clearAll`。**复现路径我没能构造出来，如实标为理论缺口**。
+
+### 5. 两条禁令都守住了
+
+- `DownloadRow.tsx` 一个字没碰；`tasks/api.ts:173-174` 与它逐字相同的表达式**没抽公共 helper**。
+- `tasks/sse.ts:39` 与 `:62` 两处 clear **没合并**。
+
+### 6. 需要你知道的三件事
+
+1. **`components.test.tsx` 我最后没有用 pathspec 提交**，而是构造 blob + `update-index`
+   只提我自己的增量 —— 因为当时该文件里还有第三个 agent **未提交且正在失败**的 3 条用例
+   （`unclaimedBytes` TypeError），按路径提交等于**拿 lint 红换 test 红**。
+   工作树逐字未动（已 diff 核对还原一致）。后来你们那边先一步把文件提了，我的增量已在 HEAD。
+2. **我被这个争用窗口咬了两次**：一次是我写到一半的导入被别人扫走上了主干（造成 lint 红）；
+   一次是我用**过期行号**做 `sed`，误删了 HEAD 里的一行 import（当场用
+   `comm` 比对 HEAD/工作树的 import 集合发现并补回，**没用 `git checkout`**）。
+   新纪律（改完立刻提 / 提交前逐 hunk 看 / 一步提交）我照做了，后三个提交都是一步到位。
+3. **`DownloadRow.tsx:97` 那个模块级 `[...TERMINAL_JOB_STATES, …]` 是个真的雷**：
+   只要某个测试把绑定图拉进同一个包，chunk 初始化序就会让它 `ReferenceError`。
+   不是我的文件，**没碰**，留档给 `aa2a692…`。
+
+### 7. 自查
+
+- **`queue.test.ts` 此前一个 cancel 用例都没有** —— 这正是它能出厂的原因。补 6 条，
+  断言的是"之后长什么样"，**不是 `cancel()` 返回了 true**（返回值一直是 true，
+  正是它骗过了所有人）。反向验证：把终态放回 `if` 里，6 条里红 4 条。
+- **`install.ts` 那半边没做，已在上面明说**，没有默默跳过。
+- 机器重启把我打断时**一次都没提交**，差点全丢；恢复后逐条核对了你给的清单，
+  没有假设"我写完了"。
