@@ -228,6 +228,41 @@ export interface StaleLink {
   readonly resolved: string;
 }
 
+export interface UnscannedPath {
+  /** 相对新数据目录的路径；根目录本身记作 `.`。 */
+  readonly rel: string;
+  /** `ENOENT` / `ENOTDIR` / `EACCES` / `ENAMETOOLONG` …；拿不到就是 `'UNKNOWN'`。 */
+  readonly code: string;
+  readonly message: string;
+}
+
+/**
+ * 一次符号链接扫描的结果。
+ *
+ * **为什么不能只返回一个数组**（T-166，与 T-153 同族、与 T-128 同一条路）：
+ * 原来的签名是 `Promise<readonly StaleLink[]>`，实现末尾是
+ * `await walk(root).catch(() => {})` —— 遍历中途失败就**吞掉异常返回已收集的部分**。
+ * 于是「扫完了，没有失效链接」和「扫到一半炸了，所以什么都没看到」
+ * **返回值一模一样都是 `[]`**，调用方把后者读成前者，界面说"移动完成"。
+ *
+ * 一次"看起来干净"的搬迁，可能留下没被发现的坏软链 —— 而用户对这条路的要求原话是
+ * 「数据位置要可定义、修改、移动、统计大小」。
+ *
+ * 参照 `listManifestFiles` 那次的判词（`b1ad406`）：
+ * **旧签名在结构上没有能力区分那两件事，于是调用方也不可能小心。**
+ * 所以这里换成对象：拿 `staleLinks` 的人必然会看见 `unscanned` 就在旁边。
+ */
+export interface StaleLinkScan {
+  /** 确认指向旧位置的链接。**只有 `unscanned` 为空时，它才等于"全部"。** */
+  readonly staleLinks: readonly StaleLink[];
+  /**
+   * 没能检查到的位置。
+   *
+   * **非空 = 上面是部分结果**，不是"这些地方没问题"，而是"这些地方根本没看"。
+   */
+  readonly unscanned: readonly UnscannedPath[];
+}
+
 /**
  * 找出 `root` 里**解析后落在 `oldRoot` 之内**的符号链接。
  *
@@ -240,27 +275,70 @@ export interface StaleLink {
  *
  * 所以这里查的是**后果**而不是形式：搬完之后还有没有东西指着一个即将消失的地方。
  * 这条检查对 `rename` 快路径同样有效 —— 而快路径根本不会调用 `verifyTreesMatch`。
+ *
+ * ## ⚠️ 这条路上 `ENOENT` 算**故障**，不算"合法的零"
+ *
+ * 同一个 errno 在本仓已经有两个相反的含义（`manifests.ts` 那次专门写下过），
+ * 所以这里必须自己判、并且写下来，**不许"统一"**：
+ *
+ * - 本函数只在**移动成功之后**被调用，`root` 就是刚刚搬完并校验通过的新数据目录。
+ *   它必然存在、必然装着用户的数据。此刻 `readdir(root)` 报 ENOENT，
+ *   意味着数据目录在我们眼皮底下没了 —— 那是**故障**，绝不是"这里本来就是空的"。
+ * - 走到一半的子目录同理：它的名字是上一次 `readdir` **刚刚**列出来的。
+ *   再去读却 ENOENT，说明有人在并发改动 —— 我们**没有**检查过那一块，不能说它干净。
+ * - `readlink` 失败也一样：dirent 已经说了它是符号链接，读不出目标就是**没看成**，
+ *   不能拿一个占位字符串去参与"指不指向旧位置"的判断（原来就是这么干的，
+ *   于是一条没看成的链接被静悄悄当成了好的）。
+ *
+ * 对照组就在本任务另一半：`packages/runtime` 的 `checkBackendSymlinks()` 那边，
+ * `<storeRoot>/by-name/backend` 的 **ENOENT 是合法的零**（全新安装还没装后端包，
+ * 这个目录本来就不该存在）。**同一个 errno、相邻的两个函数、相反的判定** ——
+ * 判据不是 errno，是「这个位置在当前语境下本来就该不该有东西」。
  */
-export async function findStaleLinks(root: string, oldRoot: string): Promise<readonly StaleLink[]> {
+export async function findStaleLinks(root: string, oldRoot: string): Promise<StaleLinkScan> {
   const old = resolve(oldRoot);
-  const out: StaleLink[] = [];
+  const staleLinks: StaleLink[] = [];
+  const unscanned: UnscannedPath[] = [];
+  const relOf = (p: string): string => relative(root, p) || '.';
+  const note = (p: string, err: unknown): void => {
+    unscanned.push({
+      rel: relOf(p),
+      code: (err as NodeJS.ErrnoException).code ?? 'UNKNOWN',
+      message: (err as Error).message ?? String(err),
+    });
+  };
+
   const walk = async (d: string): Promise<void> => {
-    const entries = await fs.readdir(d, { withFileTypes: true });
+    let entries;
+    try {
+      entries = await fs.readdir(d, { withFileTypes: true });
+    } catch (err) {
+      // 读不了这个目录 = 它**整棵子树**都没被检查。如实记下，不当作"没问题"
+      note(d, err);
+      return;
+    }
     for (const e of entries) {
       const p = join(d, e.name);
       if (e.isSymbolicLink()) {
-        const target = await fs.readlink(p);
+        let target: string;
+        try {
+          target = await fs.readlink(p);
+        } catch (err) {
+          // 读不出目标 = 这条链接**没看成**。绝不能塞个占位串继续往下判
+          note(p, err);
+          continue;
+        }
         const resolved = isAbsolute(target) ? resolve(target) : resolve(dirname(p), target);
         if (resolved === old || isInside(old, resolved)) {
-          out.push({ rel: relative(root, p), target, resolved });
+          staleLinks.push({ rel: relOf(p), target, resolved });
         }
       } else if (e.isDirectory()) {
         await walk(p);
       }
     }
   };
-  await walk(root).catch(() => {});
-  return out;
+  await walk(root);
+  return { staleLinks, unscanned };
 }
 
 /**
@@ -306,8 +384,17 @@ export interface MoveResult {
    *
    * 不作为失败处理：数据确实全部搬到位了，回滚只会让用户更糟。
    * 但**必须报出来** —— 这正是 T-128 里"绿灯背后功能已经坏了"的那一格。
+   *
+   * ⚠️ **它为空只在 `unscannedLinkPaths` 也为空时才等于"没有失效链接"。**
    */
   readonly staleLinks: readonly StaleLink[];
+  /**
+   * 符号链接检查**没能覆盖到**的位置。
+   *
+   * 非空 = `staleLinks` 是部分结果。此时不许对用户说"没发现问题" ——
+   * 正确的话是"有一部分没检查到"（T-166）。
+   */
+  readonly unscannedLinkPaths: readonly UnscannedPath[];
   /** 非致命但用户需要知道的情况（`staleLinks`、以及源目录没删掉）。 */
   readonly warningZh?: string;
   /** 失败后源目录是否完好无损。**任何失败路径上它都必须是 true。** */
@@ -374,6 +461,7 @@ export async function moveDataDir(
       files: 0,
       links: 0,
       staleLinks: [],
+      unscannedLinkPaths: [],
       ...(plan.reason ? { error: plan.reason } : {}),
       ...(plan.reasonZh ? { errorZh: plan.reasonZh } : {}),
       sourceIntact: true,
@@ -394,6 +482,7 @@ export async function moveDataDir(
       files: 0,
       links: 0,
       staleLinks: [],
+      unscannedLinkPaths: [],
       error: `cannot read source: ${String(err)}`,
       errorZh: '读不到当前数据目录',
       sourceIntact: true,
@@ -412,13 +501,28 @@ export async function moveDataDir(
     removeSourceError?: string,
   ): Promise<MoveResult> => {
     step('checking-links');
-    const staleLinks = await findStaleLinks(to, from);
+    const { staleLinks, unscanned } = await findStaleLinks(to, from);
     const warnings: string[] = [];
     if (staleLinks.length > 0) {
       warnings.push(
         `数据已全部移动到新位置，但有 ${staleLinks.length} 个符号链接仍指向旧位置` +
           `（例如 ${staleLinks[0]?.rel} → ${staleLinks[0]?.target}），旧位置删除后它们会失效。` +
           `这类链接多来自已安装的后端（如 whisper.cpp 的 .so），可能需要重新安装该后端。`,
+      );
+    }
+    /*
+     * ⚠️ 扫不全就**必须说出来**，而且要先否定用户默认会做的那个推断。
+     *
+     * 他看到的是"移动完成"+没有报错，默认解释是"检查过了，没问题"。
+     * 而真相是"有一块根本没看"。不先把这句推翻，后面写多少路径他都不会读。
+     * 这是本轮修的缺陷本身：部分结果被当成全部（T-166）。
+     */
+    if (unscanned.length > 0) {
+      warnings.push(
+        `⚠️ 符号链接**没有检查完** —— 有 ${unscanned.length} 个位置没能扫到` +
+          `（例如 ${unscanned[0]?.rel}：${unscanned[0]?.code}）。` +
+          `所以这次**不能**说"没有发现失效链接"：可能有，只是没看到。` +
+          `建议在「运行时」页对已安装的后端跑一次自检。`,
       );
     }
     /*
@@ -447,6 +551,7 @@ export async function moveDataDir(
       files: size.files,
       links: size.links,
       staleLinks,
+      unscannedLinkPaths: unscanned,
       ...(warnings.length > 0 ? { warningZh: warnings.join(' ') } : {}),
       /*
        * ★ 源删不掉时 `sourceIntact` 必须是 **true** —— 它以前恒为 false。
@@ -470,6 +575,7 @@ export async function moveDataDir(
         files: size.files,
         links: size.links,
         staleLinks: [],
+        unscannedLinkPaths: [],
         error: 'target exists and is not empty',
         errorZh: '新位置已存在且不是空目录',
         sourceIntact: true,
@@ -494,6 +600,7 @@ export async function moveDataDir(
       files: size.files,
       links: size.links,
       staleLinks: [],
+      unscannedLinkPaths: [],
       error: `insufficient space: need ~${Math.ceil(need)}, free ${free}`,
       errorZh: `目标磁盘空间不足（约需 ${(need / 1e6).toFixed(1)}MB，可用 ${(free / 1e6).toFixed(1)}MB）`,
       sourceIntact: true,
@@ -559,6 +666,7 @@ export async function moveDataDir(
         files: size.files,
         links: size.links,
         staleLinks: [],
+        unscannedLinkPaths: [],
         error: `verification failed: ${v.mismatches.slice(0, 5).join('; ')}`,
         errorZh: `复制后校验不一致（${v.mismatches.length} 处），已回滚，原数据未动`,
         sourceIntact: true,
@@ -576,6 +684,7 @@ export async function moveDataDir(
       files: size.files,
       links: size.links,
       staleLinks: [],
+      unscannedLinkPaths: [],
       error: String(err),
       errorZh: '移动失败，已回滚，原数据未动',
       sourceIntact: true,

@@ -489,3 +489,172 @@ scripts/selfcheck.mjs --daemon           同源 25 项逐 id 一致（完好与�
 - **仍未做**：Windows/macOS 未验（本仓库无 CI，全平台都是这个状态）；未跑任何转写（按用户指令），
   测试里的 `.so` 是带真 ELF 魔数的占位文件，验的是"链可解析并读到预期内容"，
   **不是** "whisper 真能加载"。
+
+---
+
+## [2026-08-10 14:40] T-166 DONE —— findStaleLinks 的部分结果不再伪装成"检查通过"
+
+### 回报你要的两句
+
+**第一句：腿写完是红的。** 四条腿，四处摘掉修复**全部当场红**（真实输出在 §4）：
+`findStaleLinks` 恢复 `catch{}` → **红 4 条**；`checkBackendSymlinks` 恢复 `catch{return}` → **红 2 条**；
+HTTP 响应去掉 `unscannedLinkPaths` → **红 1 条**；界面去掉未检查那一段 → **红 2 条**。
+
+**第二句：`ENOENT` 在这条路上我判成【故障】。** 理由：`findStaleLinks` **只在移动成功之后**
+跑，`root` 就是刚搬完并校验通过的新数据目录 —— 它**必然存在、必然装着用户的数据**。
+此刻 `readdir` 报 ENOENT，意思是数据目录在我们眼皮底下没了，那是故障，
+不存在"这里本来就该是空的"这一解。走到一半的子目录同理：它的名字是上一次 `readdir`
+**刚刚**列出来的，再读却 ENOENT = 有人在并发改动，我们没检查过那一块。
+
+⚠️ **而且我在同一轮里给出了它的反例，就在隔壁函数**：`packages/runtime` 的
+`checkBackendSymlinks()`，`<storeRoot>/by-name/backend` 的 **ENOENT 是合法的零**
+（全新安装还没装后端包，这个目录本来就不该存在）→ 单独一个 `rootMissing` 字段，不进 `unscanned`。
+**同一个 errno、相邻的两个函数、相反的判定**，两边注释互相点名"不许统一掉"，
+并且**各有一条测试钉住**（§3）。判据不是 errno，是「这个位置在当前语境下本来就该不该有东西」。
+
+### 1. 缺陷与修法
+
+`findStaleLinks` 末尾是 `await walk(root).catch(() => {})`，签名 `Promise<readonly StaleLink[]>`。
+遍历中途失败 → 吞掉异常、返回**已收集的部分**。于是这两件事返回值**一模一样都是 `[]`**：
+
+| | `staleLinks` | 真实含义 |
+|---|---|---|
+| 扫完了，没有失效链接 | `[]` | 干净 |
+| 扫到一半炸了，什么也没看到 | `[]` | **完全不知道** |
+
+`moveDataDir` 把后者读成前者 → `warningZh` 为空 → 界面说"移动完成" ——
+**一次"看起来干净"的搬迁，留下没人知道的坏软链。** 与 T-128 同一条路、与 T-153 同一族。
+
+还有第二处同形状（同一函数内）：`readlink().catch(() => '<readlink 失败>')` ——
+一条**没读成**的链接被塞了个占位串继续参与"指不指向旧位置"的判断，于是被静悄悄当成好的。
+
+**修法照 `b1ad406` 的判词**：*旧签名在结构上没有能力区分那两件事，于是调用方也不可能小心。*
+
+```ts
+findStaleLinks(): Promise<StaleLinkScan>   // { staleLinks, unscanned }
+checkBackendSymlinks(): Promise<BackendSymlinkScan>  // { links, unscanned, rootMissing }
+```
+
+签名一换，**编译器当场把 5 个调用点全指出来**（tsc 报了 8 条 TS2339/TS7053）——
+这正是"调用方不可能小心"的反面：现在他不可能不看见 `unscanned` 就在旁边。
+
+### 2. 判据是"用户看到的话是真的"（你的第 2 条）
+
+- `MoveResult` 加 `unscannedLinkPaths`；**扫不全时 `warningZh` 一定非空**
+  （旧代码在"没发现失效链接 + 没扫完"时 `warningZh` 为空 = 界面报完成）。
+- 文案第一句**先否定用户默认会做的那个推断**（照 `describeCatalogLoadError` 的做法）：
+  > ⚠️ 符号链接**没有检查完** —— 有 N 个位置没能扫到（deep：ENAMETOOLONG）。
+  > 所以这次**不能**说"没有发现失效链接"：可能有，只是没看到。
+- daemon 响应把 `unscannedLinkPaths` 一起回；界面**单独一段**列"未检查：<路径>（<errno>）"
+  —— 刻意不和失效链接混在一起，「查出来是坏的」和「根本没查」是两件事。
+- selfcheck 那侧同理：扫不全 → `fail`，且 detail **不许**再说"该后端包不含符号链接"
+  （那在读不动时是一句假话）。判定顺序特意把"有没有扫全"排在"零条"**前面**。
+
+**真 daemon 实跑**（自建 `:17845`，把 `by-name/backend` 做成文件 → ENOTDIR）：
+
+```
+✘ 后端 .so 符号链接可解析   不是"链接都正常"，是**没有检查完** —— 1 个位置读不动（.:ENOTDIR）。
+                            已检查的 0 条里没发现问题，但没检查的那部分说不了。
+   → 这几个位置读不动，先确认后端目录的权限与磁盘状态；在此之前不要把"没报错"当作后端可用。
+✔ CLI 与 /api/selfcheck 同源   28 项逐 id 一致（本地 6 失败 / 端点 6 失败）
+```
+
+**把那个文件删掉（回到"全新安装"）→ 合法的零仍然是 warn，没有被我搞红**：
+
+```
+! 后端 .so 符号链接可解析   未安装后端包，无可检查的链接
+✔ CLI 与 /api/selfcheck 同源   28 项逐 id 一致（本地 5 失败 / 端点 5 失败）
+```
+
+### 3. 腿（10 条新增）与那条"前提成立"的锚点（你的第 3 条）
+
+⚠️ **`chmod 000` 在这台机器上造不出 `EACCES`** —— 本进程是 root，**实测**
+`chmod 000` 之后 `readdir` 照样成功。拿它当故障源会得到一条**永远绿**的测试，
+正是本轮要修的病。所以改用 **ENAMETOOLONG**：逐层 `chdir` 建 200 字符一段的目录，
+绝对路径越过 PATH_MAX(4096) 之后，从根往下 walk 会在**第 21 层**炸 —— 内核硬限制，root 一样撞。
+
+**锚点**（照你转达的那一课）：先独立确认这棵子树**真的**让遍历"走到一半"才失败，
+且**不是**第 0 层就失败（第 0 层就炸等于"根本没开始"，测不到"中途"）：
+
+```
+✔ ★ 前提成立：造出来的子树确实让遍历"走到一半"才失败
+    assert.equal(code, 'ENAMETOOLONG')      ← 真的炸了
+    assert.ok(depth > 1)                     ← 而且是走进去之后才炸
+```
+
+核心那条钉的是**部分结果**本身，不只是"返回了错误"：
+
+```
+✔ ★ 遍历到一半失败：好的那半照常报出来，坏的那半必须记进 unscanned
+    staleLinks.length === 1   ← 能扫到的那半确实出了结果（证明是"部分成功"）
+    unscanned 含 ENAMETOOLONG，rel 以 'deep' 开头
+```
+
+**调用方那条是重点**（缺陷真正咬人的地方）：
+
+```
+✔ ★★ 调用方：扫不全时**不许**报成干净 —— warningZh 必须说出来
+```
+
+⚠️ **这一条的现场怎么造的，以及为什么这样造是真实的**：我先发现"源目录静态就读不动"
+根本走不到扫描那一步 —— `measureTree` 会抛，`moveDataDir` **当场拒绝**并保源完好
+（已单独加一条测试把这个**已有的正确行为**锁住）。所以扫描失败在生产里的真实形态是
+**并发改动**：`measureTree` 与 `findStaleLinks` 之间隔着整个复制/改名过程，
+中途目录被外部动了（子目录被删 ENOENT / 盘出错 EIO / fd 用尽 ENFILE）。
+于是用本文件既有的 `onStep` 缝隙在 `checking-links` 那一刻把障碍放进新目录 ——
+精确对应"两次遍历之间东西变了"，**不是凭空捏一个错误对象**。
+
+### 4. 反向验证（四处，全部真红）
+
+```
+R1  findStaleLinks 恢复 catch{} 吞掉        43 tests / 39 pass / 4 fail
+  ✖ ★ 遍历到一半失败…            扫不到的那半必须被记下来，不能悄悄当成没问题
+  ✖ ★ 根目录整个读不了（ENOENT）→ 不是"零条"，是"什么都没检查"
+  ✖ ★ 路径是个文件而不是目录（ENOTDIR）→ 同样属于"没检查"
+  ✖ ★★ 调用方：扫不全时不许报成干净   扫不到的位置必须出现在结果里 —— 否则调用方无从知道这是部分结果
+
+R2  checkBackendSymlinks 恢复 catch{return}  53 tests / 51 pass / 2 fail
+  ✖ ★ 后端目录读不动（不是 ENOENT）= 没检查   ENOTDIR 不许被当成"没装后端包"
+  ✖ ★★ 扫不全时 runSelfCheck 不许说"该后端包不含符号链接"   没检查过就不能算通过
+
+R3  HTTP 响应去掉 unscannedLinkPaths
+  ✖ ★ HTTP 层必须把 staleLinks/warningZh 转发出去   响应里没有 unscannedLinkPaths
+
+R4  界面去掉"未检查"那一段
+  ✖ ★ 没检查到的位置必须单独列出来   没检查到的位置要单独一段
+  ✖ ★ DataLocationSection 确实把 daemon 的 warningZh 接进了这个组件   没检查到的位置没有传下去
+```
+
+### 5. 门禁（真实 exit code）
+
+```
+tsc -b（全仓库）        = 0
+eslint .（全仓库）      = 0
+pnpm -r test           = 0   ← 全绿：daemon 647 · web 341+172+18+10 · pipeline 243
+                                · runtime 133 · db 53 · downloader 53 · shared 52 · mindmap 48 · llm 18
+scripts/selfcheck.mjs --daemon   同源 28 项逐 id 一致（ENOTDIR 与"全新安装"两种状态各跑一次）
+```
+
+上一轮我报红的那两条（`ModelsPage.tsx` TS2322 / `upload.test.js`）**已被各自的人修掉**，
+本轮不再存在。`apps/web/dist` mtime `2026-08-10 12:56:16`，**不是我的命令产生的**（全程没跑过 vite build）。
+
+### 6. 同族剩余（不是我的，如实留档）
+
+`packages/runtime/src/selfcheck.ts` 的 `listByName()` 仍是 `catch { return []; }` ——
+同一形状，`installed('backend'|'asr'|'llm')` 三处在用。它是**既有代码、跨多条检查**，
+且 `catalog-truth` 那一路已经把它列进了"其余 9 处"的清单里。
+**我没有顺手改它**，避免和那条线撞车；此处只是把它点名留档。
+
+### 7. 自查（诚实规则）
+
+- ⚠️ **我第一版的"调用方"测试是错的，而且它给了我一个假的红**：我把不可读子树放进**源**目录，
+  测试红在 `assert.equal(r.ok, true)` —— 我差点把它当成"缺陷复现了"。
+  查下去才发现是 `measureTree` **提前拒绝**了整次移动，压根没走到扫描。
+  **那条红证明的是另一件事，不是我要测的东西。** 已改成 `onStep` 注入，并把
+  "静态就坏 → 当场拒绝"单独写成一条测试锁住。
+- **`chmod 000` 造不出 EACCES 是实测得出的**（root 绕过权限位），不是查资料猜的；
+  写进测试注释，免得下一个人再用它写出永远绿的腿。
+- **ENAMETOOLONG 的清理也踩过一次**：绝对路径超了 PATH_MAX，`rm -r` **自己也会 ENAMETOOLONG**。
+  改成 `chdir` 到最深处再逐层往回删，实测清理后目录为空，不留垃圾。
+- 纪律：未碰 `:10000`（pid 491899 全程存活）、未碰 `/root/data-memo`、未碰机器级指针、
+  未构建 `apps/web/dist`、**未用 `pkill`**（自建实例 17845，按 `ps` 精确取 pid 后 `kill`）。

@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
@@ -223,9 +223,10 @@ describe('findStaleLinks —— 搬完之后链接还指着旧位置吗', () => 
     const newDir = join(base, 'new');
     await fs.mkdir(join(newDir, 'models'), { recursive: true });
     await fs.symlink(join(oldDir, 'models', 'x.so.1'), join(newDir, 'models', 'x.so'));
-    const stale = await findStaleLinks(newDir, oldDir);
-    assert.equal(stale.length, 1);
-    assert.equal(stale[0]?.rel, join('models', 'x.so'));
+    const scan = await findStaleLinks(newDir, oldDir);
+    assert.equal(scan.staleLinks.length, 1);
+    assert.equal(scan.staleLinks[0]?.rel, join('models', 'x.so'));
+    assert.deepEqual(scan.unscanned, [], '这棵树是好的，不该有扫不到的位置');
   });
 
   it('★ 同目录相对链接不算 stale（这是正确的形态，不能误报）', async () => {
@@ -234,7 +235,7 @@ describe('findStaleLinks —— 搬完之后链接还指着旧位置吗', () => 
     const newDir = join(base, 'new');
     await fs.mkdir(newDir, { recursive: true });
     await seedBackendSymlinks(newDir);
-    assert.deepEqual(await findStaleLinks(newDir, oldDir), []);
+    assert.deepEqual(await findStaleLinks(newDir, oldDir), { staleLinks: [], unscanned: [] });
   });
 
   it('指向系统目录的链接不算 stale', async () => {
@@ -242,7 +243,224 @@ describe('findStaleLinks —— 搬完之后链接还指着旧位置吗', () => 
     const newDir = join(base, 'new');
     await fs.mkdir(newDir, { recursive: true });
     await fs.symlink('/usr/lib/x86_64-linux-gnu/libm.so.6', join(newDir, 'libm.so'));
-    assert.deepEqual(await findStaleLinks(newDir, join(base, 'old')), []);
+    assert.deepEqual(await findStaleLinks(newDir, join(base, 'old')), {
+      staleLinks: [],
+      unscanned: [],
+    });
+  });
+});
+
+/**
+ * ★ T-166：**"扫完了、没问题" 与 "扫到一半炸了" 必须分得开。**
+ *
+ * 修之前 `findStaleLinks` 的末尾是 `await walk(root).catch(() => {})` ——
+ * 遍历中途失败就吞掉异常、返回**已收集的部分**，签名还是 `Promise<StaleLink[]>`。
+ * 于是这两件完全不同的事在调用方眼里**一模一样都是 `[]`**：
+ *   ① 整棵树扫完了，确实没有失效链接；
+ *   ② 根本没扫到几个地方，所以什么也没发现。
+ * 而 `moveDataDir` 把 ② 读成 ①，界面说"移动完成"，一次"看起来干净"的搬迁
+ * 就此留下没人知道的坏软链 —— 与 T-128 是同一条路上的同一族缺陷。
+ *
+ * 判词照抄 `b1ad406`：**旧签名在结构上没有能力区分那两件事，于是调用方也不可能小心。**
+ */
+describe('★ T-166 部分结果不许被当成"检查通过"', () => {
+  /**
+   * 造一条**真的**会让 `readdir` 中途失败的子树：
+   * 逐层 `chdir` 建 200 字符一段的目录，绝对路径越过 PATH_MAX(4096) 之后，
+   * 从根往下 walk 会在第 ~21 层拿到 `ENAMETOOLONG`。
+   *
+   * 为什么不用 `chmod 000` 造 `EACCES`：**本进程是 root，它绕过权限位**
+   * （已实测：`chmod 000` 之后 `readdir` 照样成功）。用它会得到一条永远绿的测试 ——
+   * 那正是本轮要修的病。ENAMETOOLONG 是内核层面的硬限制，root 一样撞。
+   */
+  function makeUnreadableSubtree(parent: string): { dir: string; cleanup: () => void } {
+    const SEG = 'd'.repeat(200);
+    const dir = join(parent, 'deep');
+    mkdirSync(dir, { recursive: true });
+    const prev = process.cwd();
+    try {
+      process.chdir(dir);
+      for (let i = 0; i < 24; i++) {
+        mkdirSync(SEG);
+        process.chdir(SEG);
+      }
+    } catch {
+      /* 建到建不动为止即可 */
+    } finally {
+      process.chdir(prev);
+    }
+    // 清理也得从最深处往回删：绝对路径超了 PATH_MAX，`rm -r` 自己也会 ENAMETOOLONG
+    const cleanup = (): void => {
+      const back = process.cwd();
+      try {
+        process.chdir(dir);
+        let down = 0;
+        for (;;) {
+          try {
+            process.chdir(SEG);
+            down += 1;
+          } catch {
+            break;
+          }
+        }
+        for (let i = 0; i < down; i++) {
+          process.chdir('..');
+          rmSync(SEG, { recursive: true, force: true });
+        }
+      } catch {
+        /* 尽力而为 */
+      } finally {
+        process.chdir(back);
+      }
+    };
+    return { dir, cleanup };
+  }
+
+  /**
+   * ⚠️ **前提锚点**。没有这一条，下面几条会在一个"其实根本没造出失败"的现场上全部通过 ——
+   * 测试自己制造它要测的现象，是这一族最新的一课（`b1ad406` 的作者被自己算错的路径抓过一次）。
+   * 所以先独立确认：这棵子树**真的**让 `readdir` 炸了，而且**不是**在第 0 层就炸
+   * （在第 0 层炸就成了"根本没开始"，测不到"中途")。
+   */
+  it('★ 前提成立：造出来的子树确实让遍历"走到一半"才失败', async () => {
+    const base = tmp('anchor');
+    const { dir, cleanup } = makeUnreadableSubtree(base);
+    try {
+      let d = dir;
+      let depth = 0;
+      let code = '';
+      for (;;) {
+        try {
+          const es = await fs.readdir(d, { withFileTypes: true });
+          const sub = es.find((e) => e.isDirectory());
+          if (!sub) break;
+          d = join(d, sub.name);
+          depth += 1;
+        } catch (err) {
+          code = (err as NodeJS.ErrnoException).code ?? '';
+          break;
+        }
+      }
+      assert.equal(code, 'ENAMETOOLONG', `没造出遍历失败（走到 ${depth} 层就到底了）`);
+      assert.ok(depth > 1, `失败发生在第 ${depth} 层 —— 太浅，测不到"中途失败"`);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('★ 遍历到一半失败：好的那半照常报出来，坏的那半必须记进 unscanned', async () => {
+    const base = tmp('partial');
+    const oldDir = join(base, 'old');
+    const newDir = join(base, 'new');
+    await fs.mkdir(join(newDir, 'models'), { recursive: true });
+    // 这一条在能扫到的那半，必须被找到（证明扫描确实**部分成功**了）
+    await fs.symlink(join(oldDir, 'models', 'x.so.1'), join(newDir, 'models', 'x.so'));
+    const { cleanup } = makeUnreadableSubtree(newDir);
+    try {
+      const scan = await findStaleLinks(newDir, oldDir);
+      assert.equal(scan.staleLinks.length, 1, '能扫到的那半应该照常出结果');
+      assert.ok(scan.unscanned.length > 0, '扫不到的那半必须被记下来，不能悄悄当成没问题');
+      assert.ok(
+        scan.unscanned.some((u) => u.code === 'ENAMETOOLONG'),
+        `原因要说得出来，实际: ${JSON.stringify(scan.unscanned)}`,
+      );
+      assert.ok(scan.unscanned[0]?.rel.startsWith('deep'), '要指出是哪个位置没扫到');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('★ 根目录整个读不了（ENOENT）→ 不是"零条"，是"什么都没检查"', async () => {
+    const base = tmp('gone');
+    const scan = await findStaleLinks(join(base, '不存在的新目录'), join(base, 'old'));
+    assert.deepEqual(scan.staleLinks, []);
+    assert.equal(scan.unscanned.length, 1);
+    assert.equal(scan.unscanned[0]?.rel, '.', '根目录本身没扫到，要记成 "."');
+    assert.equal(scan.unscanned[0]?.code, 'ENOENT');
+  });
+
+  it('★ 路径是个文件而不是目录（ENOTDIR）→ 同样属于"没检查"', async () => {
+    const base = tmp('notdir');
+    const f = join(base, 'file');
+    await fs.writeFile(f, 'x');
+    const scan = await findStaleLinks(f, join(base, 'old'));
+    assert.equal(scan.unscanned[0]?.code, 'ENOTDIR');
+  });
+
+  /**
+   * 顺带钉住一条**已有的正确行为**：如果源目录一开始就有读不动的地方，
+   * `measureTree` 会抛，`moveDataDir` **当场拒绝**并保源完好。
+   * 也就是说"静态就坏"的那一类根本走不到扫描那一步 —— 这是好事，值得锁住。
+   */
+  it('源目录本来就有读不动的地方 → 移动**当场拒绝**，源完好（不是走到一半才发现）', async () => {
+    const base = tmp('refuse');
+    const from = join(base, 'src');
+    await fs.mkdir(from, { recursive: true });
+    await seed(from);
+    const { cleanup } = makeUnreadableSubtree(from);
+    try {
+      const r = await moveDataDir(from, join(base, 'dst'));
+      assert.equal(r.ok, false);
+      assert.equal(r.sourceIntact, true);
+      assert.match(r.errorZh ?? '', /读不到当前数据目录/);
+    } finally {
+      cleanup();
+    }
+  });
+
+  /**
+   * ★★ 这一条钉的是**调用方**，也就是缺陷真正咬人的地方：
+   * `moveDataDir` 不许把"没扫完"读成"检查过了、没问题"。
+   *
+   * 现场怎么造的、以及**为什么这样造是真实的**：
+   * 上一条已经说明，"静态就读不动"的源目录在 `measureTree` 那一步就被拒了。
+   * 所以扫描失败在生产里的真实形态是**并发改动**：`measureTree` 走完之后、
+   * `findStaleLinks` 走之前（这是**第二次**遍历，中间隔着整个复制/改名过程），
+   * 目录被外部进程动了 —— 子目录被删（ENOENT）、盘出错（EIO）、fd 用尽（ENFILE）。
+   * 这里用本文件既有的 `onStep` 缝隙在 `checking-links` 那一刻把障碍放进新目录，
+   * 精确对应"两次遍历之间东西变了"，而不是凭空捏一个错误对象。
+   */
+  it('★★ 调用方：扫不全时**不许**报成干净 —— warningZh 必须说出来', async () => {
+    const base = tmp('caller');
+    const from = join(base, 'src');
+    const to = join(base, 'dst');
+    await fs.mkdir(from, { recursive: true });
+    await seed(from);
+
+    // 注意：这次**没有任何失效链接**。旧代码在这种情况下 warningZh 为空 = 界面报"完成"，
+    // 而真相是有一大块根本没检查。
+    let cleanup = (): void => {};
+    const r = await moveDataDir(from, to, {
+      onStep: (s) => {
+        if (s === 'checking-links') ({ cleanup } = makeUnreadableSubtree(to));
+      },
+    });
+    try {
+      assert.equal(r.ok, true, '数据确实搬过去了，这一点不变');
+      assert.equal(r.staleLinks.length, 0, '前提：这次确实没发现失效链接');
+      assert.ok(
+        r.unscannedLinkPaths.length > 0,
+        '扫不到的位置必须出现在结果里 —— 否则调用方无从知道这是部分结果',
+      );
+      assert.ok(r.warningZh, '扫不全却一句话都不说 = 界面会说"移动完成，没问题"');
+      assert.match(r.warningZh ?? '', /没有检查完/);
+      assert.match(r.warningZh ?? '', /不能.*没有发现失效链接/s, '必须先否定用户默认的推断');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('★ 扫得干净时不许无中生有地报警告（否则这条警告很快就等于没有）', async () => {
+    const base = tmp('clean');
+    const from = join(base, 'src');
+    const to = join(base, 'dst');
+    await fs.mkdir(from, { recursive: true });
+    await seed(from);
+    await seedBackendSymlinks(from);
+    const r = await moveDataDir(from, to);
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.unscannedLinkPaths, []);
+    assert.equal(r.warningZh, undefined);
   });
 });
 
@@ -424,6 +642,11 @@ describe('★ T-128 移动数据目录不能弄坏符号链接', () => {
     assert.ok(src.includes('staleLinks: result.staleLinks'), '响应里没有 staleLinks');
     assert.ok(src.includes('result.warningZh'), '响应里没有 warningZh');
     assert.ok(src.includes('links: result.links'), '响应里没有链接计数');
+    // T-166：扫不全的位置必须一起回，否则前端又分不出"没问题"与"没检查"
+    assert.ok(
+      src.includes('unscannedLinkPaths: result.unscannedLinkPaths'),
+      '响应里没有 unscannedLinkPaths',
+    );
   });
 
   it('★ rename 快路径也要查 stale 链接（它根本不调用 verifyTreesMatch）', async () => {

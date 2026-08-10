@@ -654,6 +654,12 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
         files: result.files,
         links: result.links,
         staleLinks: result.staleLinks,
+        /*
+         * ⚠️ T-166：`unscannedLinkPaths` 与 `staleLinks` **必须一起回**。
+         * 只回后者的话，"扫完了没问题"和"扫到一半炸了"在前端眼里又变成同一件事
+         * （两种情况 `staleLinks` 都是 `[]`）—— 那正是这次修的缺陷本身。
+         */
+        unscannedLinkPaths: result.unscannedLinkPaths,
         ...(result.warningZh ? { warningZh: result.warningZh } : {}),
         /*
          * ★ 结构化地告诉调用方「源目录还在不在」。

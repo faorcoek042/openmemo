@@ -655,8 +655,11 @@ describe('工具来源要分开：装在 dataDir 里 vs 借系统 PATH 的', () 
  */
 describe('★ T-128 后端 .so 符号链接可解析', () => {
   it('两级相对链完好 → 全部读得到内容', async () => {
-    const links = await checkBackendSymlinks(await seedBackend({ broken: false }));
+    const scan = await checkBackendSymlinks(await seedBackend({ broken: false }));
+    const links = scan.links;
     assert.equal(links.length, 2, '两级链应各算一条');
+    assert.deepEqual(scan.unscanned, [], '这棵树是好的，不该有扫不到的位置');
+    assert.equal(scan.rootMissing, false);
     assert.ok(
       links.every((l) => l.readable),
       JSON.stringify(links),
@@ -666,7 +669,7 @@ describe('★ T-128 后端 .so 符号链接可解析', () => {
   });
 
   it('★ 链接指向已消失的旧数据目录 → 必须报读不到（事故的精确形态）', async () => {
-    const links = await checkBackendSymlinks(await seedBackend({ broken: true }));
+    const { links } = await checkBackendSymlinks(await seedBackend({ broken: true }));
     const broken = links.filter((l) => !l.readable);
     // 两级链断在第二跳，第一跳跟着一起用不了 —— 两条都要报出来
     assert.equal(broken.length, 2, JSON.stringify(links));
@@ -714,6 +717,51 @@ describe('★ T-128 后端 .so 符号链接可解析', () => {
     const c = byId(r, 'backend.libLinks');
     assert.equal(c?.status, 'warn');
     assert.match(c?.detail ?? '', /未安装后端包/);
+  });
+
+  /*
+   * ★ T-166：这里的 `ENOENT` 与 `move.ts` 的 `findStaleLinks` **判定相反**，
+   * 两条都要有测试钉住，免得后来者看见"同一个 errno 两种处理"就去"统一"。
+   */
+  it('★ 后端目录不存在 = **合法的零**（rootMissing），不是"没检查"', async () => {
+    const empty = mkdtempSync(join(tmpdir(), 'om-sc-empty-'));
+    tmpRoots.push(empty);
+    const scan = await checkBackendSymlinks(empty);
+    assert.equal(scan.rootMissing, true, '全新安装还没装后端包 —— 这个目录本来就不该存在');
+    assert.deepEqual(scan.unscanned, [], 'ENOENT 在这一侧不算"扫不到"');
+    assert.deepEqual(scan.links, []);
+  });
+
+  it('★ 后端目录读不动（不是 ENOENT）= 没检查 → 必须进 unscanned', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'om-sc-notdir-'));
+    tmpRoots.push(base);
+    // by-name/backend 是个**文件**而不是目录 → ENOTDIR。这不是"没装"，是"读不了"
+    await fs.mkdir(join(base, 'by-name'), { recursive: true });
+    await fs.writeFile(join(base, 'by-name', 'backend'), 'x');
+    const scan = await checkBackendSymlinks(base);
+    assert.equal(scan.rootMissing, false, 'ENOTDIR 不许被当成"没装后端包"');
+    assert.equal(scan.unscanned.length, 1);
+    assert.equal(scan.unscanned[0]?.code, 'ENOTDIR');
+  });
+
+  it('★★ 扫不全时 runSelfCheck **不许**说"该后端包不含符号链接"（那是假话）', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'om-sc-partial-'));
+    tmpRoots.push(base);
+    await fs.mkdir(join(base, 'by-name'), { recursive: true });
+    await fs.writeFile(join(base, 'by-name', 'backend'), 'x'); // ENOTDIR
+    const r = await runSelfCheck({
+      ...BASE,
+      storeRoot: base,
+      probes: minimalProbes({ installed: () => Promise.resolve(['whisper-bin-ubuntu-x64']) }),
+    });
+    const c = byId(r, 'backend.libLinks');
+    assert.equal(c?.status, 'fail', '没检查过就不能算通过');
+    assert.match(c?.detail ?? '', /没有检查完/);
+    assert.ok(
+      !(c?.detail ?? '').includes('不含符号链接'),
+      `读不动却说"不含符号链接" —— 正是本轮要修的形状。实际: ${c?.detail ?? ''}`,
+    );
+    assert.equal(r.ok, false);
   });
 
   it('★ required 恒为 true —— 它是纯逻辑，不许随 storeRoot 漂移（同源比对的前提）', async () => {

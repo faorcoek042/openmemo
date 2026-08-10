@@ -93,9 +93,17 @@ interface MoveDataDirResponse {
   files?: number;
   links?: number;
   messageZh?: string;
-  /** 非致命警告：数据搬到位了，但有链接失效了。 */
+  /** 非致命警告：数据搬到位了，但有链接失效了 / 有一部分根本没检查到。 */
   warningZh?: string;
   staleLinks?: { rel: string; target: string; resolved: string }[];
+  /**
+   * ⚠️ T-166：**没能检查到**的位置。
+   *
+   * 它和 `staleLinks` 必须一起读：两者都为空才等于"检查过了、没问题"。
+   * 只看 `staleLinks` 的话，"扫完了没发现问题"和"扫到一半炸了什么也没看到"
+   * 会被读成同一件事 —— 一次"看起来干净"的搬迁就此留下没人知道的坏软链。
+   */
+  unscannedLinkPaths?: { rel: string; code: string }[];
 }
 
 /**
@@ -110,9 +118,12 @@ interface MoveDataDirResponse {
 export function StaleLinksWarning({
   warningZh,
   staleLinks,
+  unscanned,
 }: {
   warningZh: string;
   staleLinks?: { rel: string; target: string }[];
+  /** 没能检查到的位置（T-166）。**这一段不能省** —— 省了就等于替用户断言"那边没事"。 */
+  unscanned?: { rel: string; code: string }[];
 }) {
   return (
     <div
@@ -138,6 +149,22 @@ export function StaleLinksWarning({
           ))}
           {staleLinks.length > 5 ? (
             <li className="text-[11px] text-ink-muted">…… 共 {staleLinks.length} 条</li>
+          ) : null}
+        </ul>
+      ) : null}
+      {/*
+        ⚠️ 没检查到的位置要**单独列**，不能和上面失效的链接混在一起 ——
+        「查出来是坏的」和「根本没查」是两件事，混在一起用户会以为都查过了。
+      */}
+      {unscanned?.length ? (
+        <ul className="mt-1.5 space-y-0.5 pl-5" data-testid="data-dir-unscanned">
+          {unscanned.slice(0, 5).map((u) => (
+            <li key={u.rel} className="truncate font-mono text-[11px] text-ink-secondary">
+              未检查：{u.rel}（{u.code}）
+            </li>
+          ))}
+          {unscanned.length > 5 ? (
+            <li className="text-[11px] text-ink-muted">…… 共 {unscanned.length} 个位置未检查</li>
           ) : null}
         </ul>
       ) : null}
@@ -485,6 +512,9 @@ export function DataLocationSection() {
             <StaleLinksWarning
               warningZh={changeDir.data.warningZh}
               {...(changeDir.data.staleLinks ? { staleLinks: changeDir.data.staleLinks } : {})}
+              {...(changeDir.data.unscannedLinkPaths
+                ? { unscanned: changeDir.data.unscannedLinkPaths }
+                : {})}
             />
           ) : null}
 

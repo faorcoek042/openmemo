@@ -1169,6 +1169,28 @@ describe('设置 · 数据位置', () => {
     r.unmount();
   });
 
+  /**
+   * ★ T-166：「查出来是坏的」和「根本没查」是两件事，界面上必须分得开。
+   * daemon 报了"有 N 个位置没检查到"，界面若只显示 staleLinks（空的），
+   * 用户看到的就是"移动完成、没问题" —— 又回到那盏假绿灯。
+   */
+  test('★ 没检查到的位置必须单独列出来，不能和"失效链接"混成一堆', async () => {
+    const r = await render(
+      <StaleLinksWarning
+        warningZh="⚠️ 符号链接**没有检查完** —— 有 1 个位置没能扫到（deep：ENAMETOOLONG）。"
+        unscanned={[{ rel: 'deep/xxx', code: 'ENAMETOOLONG' }]}
+      />,
+    );
+    const warn = r.container.querySelector<HTMLElement>('[data-testid="data-dir-stale-links"]');
+    assert.ok(warn, '扫不全也必须出警告块');
+    assert.ok(text(warn).includes('没有检查完'));
+    const un = r.container.querySelector<HTMLElement>('[data-testid="data-dir-unscanned"]');
+    assert.ok(un, '没检查到的位置要单独一段');
+    assert.ok(text(un).includes('deep/xxx'), '要说清是哪个位置');
+    assert.ok(text(un).includes('ENAMETOOLONG'), '要说清为什么');
+    r.unmount();
+  });
+
   test('链接很多时折叠成计数，不把整页刷满（但不能把"还有多少条"藏掉）', async () => {
     const many = Array.from({ length: 8 }, (_, i) => ({
       rel: `models/lib${i}.so`,
@@ -1190,7 +1212,12 @@ describe('设置 · 数据位置', () => {
     const src = await readSource('features/settings/DataLocationSection.tsx');
     assert.match(src, /changeDir\.data\?\.warningZh/, 'mutation 的返回没有被读取');
     assert.match(src, /<StaleLinksWarning/, '警告组件没有被渲染');
-    assert.match(src, /staleLinks: changeDir\.data\.staleLinks/, '具体链接列表没有传下去');
+    assert.ok(src.includes('staleLinks: changeDir.data.staleLinks'), '具体链接列表没有传下去');
+    // T-166：扫不全的位置同样必须传下去，否则"没检查"又会被显示成"没问题"
+    assert.ok(
+      src.includes('unscanned: changeDir.data.unscannedLinkPaths'),
+      '没检查到的位置没有传下去',
+    );
   });
 
   test('★ 拿不到 dataDir 时绝不编一个"看起来对"的路径', async () => {

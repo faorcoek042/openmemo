@@ -661,21 +661,64 @@ export interface SymlinkHealth {
  * 悬空 → ENOENT；指向空文件/被截断 → 读不满 4 字节。代价是常数级，不受 `.so` 体积影响。
  *
  * 这是 ADR-014 那条标准在这个位置的具体形态：**验功能可用，不验组件存在**。
+ *
+ * ─── T-166：扫不到的地方必须单独报，不能混进"没问题"──────────────────────────────
+ * 这个函数原来是 `catch { return; }` + `readlink().catch(() => '<readlink 失败>')`，
+ * 于是"目录读不动"和"这个包没有符号链接"返回值一样，
+ * 一条读不出目标的链接还会被塞个占位串继续参与判断。见 `BackendSymlinkScan`。
  */
-export async function checkBackendSymlinks(storeRoot: string): Promise<SymlinkHealth[]> {
+export interface BackendSymlinkScan {
+  /** 真正检查过的链接。**只有 `unscanned` 为空时它才等于"全部"。** */
+  links: SymlinkHealth[];
+  /**
+   * 没能检查到的位置（相对 `by-name/backend/`，根目录本身是 `.`）。
+   *
+   * **非空 = 上面是部分结果**。此时不许说"链接都是好的"，只能说"没看全"。
+   */
+  unscanned: { rel: string; code: string }[];
+  /**
+   * `by-name/backend` 这个目录**根本不存在**。
+   *
+   * ⚠️ 这一项**不是故障**，是**合法的零** —— 全新安装还没装过任何后端包时，
+   * 这个目录本来就不该存在。所以它单独一个字段，不进 `unscanned`。
+   *
+   * ⚠️⚠️ **和 `apps/daemon/src/storage/move.ts` 的 `findStaleLinks()` 恰好相反**：
+   * 那边 `ENOENT` 一律算**故障**（它只在移动成功后跑，那个目录必然存在，
+   * 不存在就是数据目录在眼皮底下没了）。**同一个 errno、两个函数、相反的判定** ——
+   * 判据不是 errno，是「这个位置在当前语境下本来就该不该有东西」。**不许"统一"掉。**
+   */
+  rootMissing: boolean;
+}
+
+export async function checkBackendSymlinks(storeRoot: string): Promise<BackendSymlinkScan> {
   const root = join(storeRoot, 'by-name', 'backend');
-  const out: SymlinkHealth[] = [];
+  const links: SymlinkHealth[] = [];
+  const unscanned: { rel: string; code: string }[] = [];
+  let rootMissing = false;
+  const relOf = (p: string): string => (p === root ? '.' : p.slice(root.length + 1));
+
   const walk = async (d: string): Promise<void> => {
     let entries;
     try {
       entries = await readdir(d, { withFileTypes: true });
-    } catch {
-      return; // 目录不存在 = 没装后端包，交给调用方判断，不在这里假装成功
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+      // 只有**根目录**的 ENOENT 是合法的零（没装后端包）。理由见 rootMissing 的注释。
+      if (d === root && code === 'ENOENT') rootMissing = true;
+      else unscanned.push({ rel: relOf(d), code });
+      return;
     }
     for (const e of entries) {
       const p = join(d, e.name);
       if (e.isSymbolicLink()) {
-        const target = await readlink(p).catch(() => '<readlink 失败>');
+        let target: string;
+        try {
+          target = await readlink(p);
+        } catch (err) {
+          // 读不出目标 = 这条链接**没看成**。绝不能塞占位串继续判（原来就是这么干的）
+          unscanned.push({ rel: relOf(p), code: (err as NodeJS.ErrnoException).code ?? 'UNKNOWN' });
+          continue;
+        }
         let readable = false;
         let note: string;
         let fh;
@@ -691,14 +734,14 @@ export async function checkBackendSymlinks(storeRoot: string): Promise<SymlinkHe
         } finally {
           await fh?.close().catch(() => {});
         }
-        out.push({ rel: p.slice(root.length + 1), target, readable, note });
+        links.push({ rel: relOf(p), target, readable, note });
       } else if (e.isDirectory()) {
         await walk(p);
       }
     }
   };
   await walk(root);
-  return out;
+  return { links, unscanned, rootMissing };
 }
 
 /**
@@ -1081,40 +1124,57 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
    * "判据被改分叉了"，所以 required 不能写成依赖 storeRoot 内容的条件表达式
    * （CLI 与 daemon 的 storeRoot 可以不同）。
    */
-  const soLinks = await checkBackendSymlinks(input.storeRoot);
+  const soScan = await checkBackendSymlinks(input.storeRoot);
+  const soLinks = soScan.links;
   const brokenLinks = soLinks.filter((l) => !l.readable);
+  /*
+   * ⚠️ 顺序要紧（T-166）：「有没有扫全」必须排在「零条 = 该包不含链接」**前面**。
+   * 反过来的话，一个读不动的目录会被说成"该后端包不含符号链接" —— 那是一句假话，
+   * 而且正是本轮要修的那个形状：**没检查**被渲染成**没问题**。
+   */
+  const scanIncomplete = soScan.unscanned.length > 0;
   add({
     layer: 'tools',
     id: 'backend.libLinks',
     label: 'backend shared-library symlinks resolve',
     labelZh: '后端 .so 符号链接可解析',
     status:
-      backendPacks.length === 0
-        ? 'warn'
-        : brokenLinks.length > 0
+      brokenLinks.length > 0
+        ? 'fail'
+        : scanIncomplete
           ? 'fail'
-          : soLinks.length === 0
+          : backendPacks.length === 0 || soLinks.length === 0
             ? 'warn'
             : 'ok',
     detail:
-      backendPacks.length === 0
-        ? '未安装后端包，无可检查的链接'
-        : brokenLinks.length > 0
-          ? `${brokenLinks.length}/${soLinks.length} 条链接读不到目标：` +
-            brokenLinks
+      brokenLinks.length > 0
+        ? `${brokenLinks.length}/${soLinks.length} 条链接读不到目标：` +
+          brokenLinks
+            .slice(0, 3)
+            .map((l) => `${l.rel}→${l.target}(${l.note})`)
+            .join('  ')
+        : scanIncomplete
+          ? // 第一句先否定"没报错就是没问题"这个默认推断
+            `不是"链接都正常"，是**没有检查完** —— ${soScan.unscanned.length} 个位置读不动（` +
+            soScan.unscanned
               .slice(0, 3)
-              .map((l) => `${l.rel}→${l.target}(${l.note})`)
-              .join('  ')
-          : soLinks.length === 0
-            ? '该后端包不含符号链接（未做检查，不代表后端可用）'
-            : `${soLinks.length} 条链接全部可读到目标内容`,
+              .map((u) => `${u.rel}:${u.code}`)
+              .join(' ') +
+            `）。已检查的 ${soLinks.length} 条里没发现问题，但没检查的那部分说不了。`
+          : backendPacks.length === 0
+            ? '未安装后端包，无可检查的链接'
+            : soLinks.length === 0
+              ? '该后端包不含符号链接（未做检查，不代表后端可用）'
+              : `${soLinks.length} 条链接全部可读到目标内容`,
     required: true,
     remediation:
-      brokenLinks.length === 0
-        ? null
-        : looksLikeMovedDataDir(brokenLinks)
+      brokenLinks.length > 0
+        ? looksLikeMovedDataDir(brokenLinks)
           ? '这些链接指向的是旧数据目录（多半是移动数据目录后留下的）。在「本机组件」页重新安装该后端包即可修复；数据与笔记不受影响。'
-          : '在「本机组件」页重新安装该后端包 —— 链接的目标文件已不存在，whisper 会报 "cannot open shared object file" 而无法加载。',
+          : '在「本机组件」页重新安装该后端包 —— 链接的目标文件已不存在，whisper 会报 "cannot open shared object file" 而无法加载。'
+        : scanIncomplete
+          ? '这几个位置读不动，先确认后端目录的权限与磁盘状态；在此之前不要把"没报错"当作后端可用。'
+          : null,
   });
 
   /*
