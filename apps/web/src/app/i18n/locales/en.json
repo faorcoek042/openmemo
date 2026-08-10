@@ -684,6 +684,7 @@
       "verdictProxyDown": "The proxy itself is unreachable — check the address, port, and that your client is running.",
       "verdictAllOk": "Proxy works, and every target was reachable.",
       "verdictUpstreamBlocked": "The proxy works, but some targets were unreachable — the problem is the target or its route, not your proxy.",
+      "verdictUnclassified": "At least one probe failed in a way we could not attribute to either side — expand its raw error before ruling either one out.",
       "probe": {
         "ok": "Reachable",
         "proxy_unreachable": "Proxy unreachable",
@@ -691,7 +692,8 @@
         "upstream_unreachable": "Target unreachable",
         "upstream_error": "Target returned an error",
         "dns_failed": "DNS lookup failed",
-        "skipped": "Skipped (matched an exception)"
+        "skipped": "Skipped (matched an exception)",
+        "unclassified": "Could not be determined"
       },
       "viaProxy": "via proxy",
       "direct": "direct",

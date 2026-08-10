@@ -684,6 +684,7 @@
       "verdictProxyDown": "代理本身连不上 —— 先检查代理地址、端口与客户端是否在运行。",
       "verdictAllOk": "代理可用，且各目标站均可达。",
       "verdictUpstreamBlocked": "代理是通的，但部分目标站不可达 —— 问题不在你的代理，而在目标站或它的线路。",
+      "verdictUnclassified": "有探针失败了，但无法判定是代理还是目标站 —— 展开每条的原始错误再判断，别先排除任何一侧。",
       "probe": {
         "ok": "可达",
         "proxy_unreachable": "代理不可达",
@@ -691,7 +692,8 @@
         "upstream_unreachable": "目标站不可达",
         "upstream_error": "目标站返回异常",
         "dns_failed": "域名解析失败",
-        "skipped": "已跳过（命中例外）"
+        "skipped": "已跳过（命中例外）",
+        "unclassified": "无法判定"
       },
       "viaProxy": "经代理",
       "direct": "直连",
