@@ -15,7 +15,7 @@
 import { useTranslation } from 'react-i18next';
 import { Ban, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
-import type { DownloadJob } from '@openmemo/shared';
+import { TERMINAL_JOB_STATES, type DownloadJob } from '@openmemo/shared';
 import { Button } from './Button';
 import { ProgressMeter } from './ProgressMeter';
 import { StatusChip } from './StatusChip';
@@ -65,12 +65,62 @@ export interface DownloadRowProps {
   onRetry: (jobId: string) => void;
 }
 
+/**
+ * 服务端说这条任务**已经不在跑了** —— 这些状态下内存快照必然是陈旧的。
+ *
+ * ## 为什么不能直接用 `TERMINAL_JOB_STATES`
+ *
+ * 它只有 `succeeded|failed|cancelled` 三个，而 `JOB_TRANSITIONS`（shared 的权威表）
+ * 明确允许 `running → paused` 与 `running|queued → blocked`。
+ * 这两个恰恰是「服务端说停了、内存说还在跑」最典型的形态，用终态表一律漏掉。
+ *
+ * ## 为什么不能用 `isActiveJobState()`
+ *
+ * 它是**反过来的**：`lib/jobs/noteJobs.ts` 刻意把 `paused`/`blocked` 算作"还没结束"，
+ * 因为它回答的是另一个问题——"笔记页还要不要继续说这件事"。拿它当这里的守卫，
+ * 正好把要修的两种状态放行。**两个谓词长得像、答的不是同一个问题，不许互相顶替。**
+ *
+ * ## 为什么 `queued` **不**在表里
+ *
+ * `queued` 不是"停了"，是"还没开始"。这一档内存**合法地领先于服务端**
+ * （刚 POST 完，5s 轮询还没把行刷成 running）。把它算进来会让刚点下去的下载
+ * 倒退回 0% 并停住几秒 —— 那是拿一个真 bug 换一个假 bug。
+ *
+ * ## 诚实标注
+ *
+ * `[实测]` `DownloadQueue` 今天**并不产出** `paused`（它没有暂停实现，
+ * `rest/jobs.ts` 对 pause/resume 直接回 501），`blocked` 也没有生产者。
+ * 所以这两项现在是**照契约写的防线，不是照实现写的**——`JOB_TRANSITIONS` 允许它们，
+ * 等哪天有人把暂停做出来，这一行不需要再被修一次。今天真正会踩到的是
+ * `cancelled` / `failed`。
+ */
+const SERVER_SAYS_NOT_RUNNING: readonly string[] = [...TERMINAL_JOB_STATES, 'paused', 'blocked'];
+
 export function DownloadRow({ job, locale, onCancel, onRetry }: DownloadRowProps) {
   const { t, i18n } = useTranslation();
-  const live = useProgressStore(useShallow((s) => s.byJob[job.jobId]));
+  const liveRaw = useProgressStore(useShallow((s) => s.byJob[job.jobId]));
   // 名字按当前界面语言现算；兜底仍是 daemon 的 displayName（见 lib/format/jobName.ts）
   const catalogNames = useJobCatalogNames();
   const shownName = jobDisplayName(i18n.language, job, catalogNames);
+
+  /*
+   * ★ 影子守卫：**服务端行是新鲜的，一旦它说这活停了，内存快照就整份作废。**
+   *
+   * 下面六个字段原本都是 `live?.x ?? job.x` —— 内存快照**无条件胜过**服务端行。
+   * 于是一条陈旧的 `running` 快照会同时压住 state / step / 速率 / 字节数 / ETA，
+   * 连 `ratio` 也跟着继承陈旧值：任务已经取消了，这一行还在画
+   * 「正在下载 · 45% · 3.2 MB/s」。**服务端已经把真相送到这个组件手上，代码主动丢掉。**
+   *
+   * ⚠️ 为什么不能指望 `features/tasks/sse.ts` 去清 store（它确实在终态清，两处都清）：
+   * **那条路依赖事件真的送到**。SSE 掉一帧、页面在后台、多标签页——任意一种下
+   * store 就留着残影，而且**再也不会自愈**（服务端不会重发已经发过的终态）。
+   * 守卫不依赖任何事件送达，它只看服务端行现在怎么说。
+   *
+   * ⚠️ **刻意只做局部重绑，不抽公共 helper。** `features/tasks/api.ts:139` 有一段逐字
+   * 相同的表达式，但两者的差别恰恰在**守卫处在哪一层**（那边在合并函数里、这边在组件里）。
+   * 抽成函数会把这个差别藏起来，下次只改一处就又分叉。
+   */
+  const live = SERVER_SAYS_NOT_RUNNING.includes(job.state) ? undefined : liveRaw;
 
   const completed = live?.completedBytes ?? job.completedBytes;
   const total = live?.totalBytes ?? job.totalBytes;

@@ -53,7 +53,6 @@ async function readSource(rel: string): Promise<string> {
 import { StatusChip } from '../components/common/StatusChip';
 import { ProgressMeter } from '../components/common/ProgressMeter';
 import { DownloadRow } from '../components/common/DownloadRow';
-import { useProgressStore } from '../lib/stores/progress.store';
 import type { MergedJob } from '../features/tasks/api';
 import { arr } from '../lib/safe';
 import { ApiError, api, setCsrf, clearCsrf, hasCsrf } from '../lib/api/client';
@@ -117,11 +116,12 @@ import { MindmapView } from '../features/mindmap/MindmapView';
 import type { MindMapDoc } from '@openmemo/mindmap';
 import type { PipelineJob } from '@openmemo/shared';
 import RuntimePage from '../features/runtime/RuntimePage';
+import { tasksSse } from '../features/tasks/sse';
+import { modelsSse } from '../features/models/sse';
+import { pushProgress, useProgressStore } from '../lib/stores/progress.store';
 import { HardwareCard } from '../features/runtime/components/HardwareCard';
 import TasksPage from '../features/tasks/TasksPage';
 import { BackendPackCard } from '../features/runtime/components/BackendPackCard';
-import { tasksSse } from '../features/tasks/sse';
-import { modelsSse } from '../features/models/sse';
 import { isMeaningfulRecommendation } from '../features/runtime/packStatus';
 import { splitEmphasis } from '../components/common/Emphasis';
 import { ConnectivitySummary } from '../components/common/MockNotice';
@@ -9984,6 +9984,139 @@ describe('T-199 ② DownloadRow 的影子守卫', () => {
     const r = await renderRow({ state: 'queued' });
     const t = text(r.container);
     assert.equal(/·\s*45%/.test(t), true, `queued 时误伤了合法的"内存领先"（实际：${t}）`);
+    r.unmount();
+  });
+});
+
+/**
+ * ★★ T-198 —— **取消之后，界面不许自相矛盾。**
+ *
+ * `[用户真机 Windows v0.7.0]` 取消 ffmpeg 下载后，任务中心同屏出现：
+ * 「进行中 (1)」+ 进度条 0% + 阶段「正在选择下载源」，紧挨着「任务不存在或已结束」，
+ * 点「查看详情」是 `{"code":"CONFLICT","status":409}`。
+ *
+ * 前端这一半的根因有两条，合起来才致命：
+ *  ④a `mergeOne()` 里每个字段都是 `live?.x ?? job.x` —— **内存快照无条件压过服务端**；
+ *  ④b `tasks/sse.ts` 只在终态 **`job.progress`** 时清 `progressStore`，
+ *      而**取消发的是 `job.state`** —— 于是陈旧的 `running/resolving` 永久压制 `cancelled`。
+ * 再加上 `useJobsQuery` 当时没有任何轮询、`refetchOnWindowFocus` 也是 false，
+ * **掉一帧 SSE 就永远错，除非硬刷新。**
+ *
+ * ⚠️ 这些腿刻意**走 `TasksPage`**（服务端形状进、渲染出来断言），不手搓 `MergedJob`：
+ * 被测的那一跳正是 `mergeOne()`，手搓会正好绕过它。同一条规矩上面那族已经写过。
+ */
+describe('★★ T-198 取消之后界面不许自相矛盾', () => {
+  const JID = 'jcancel1';
+  const row = (over: Record<string, unknown>) => ({
+    jobId: JID,
+    kind: 'model',
+    type: 'download.model',
+    targetId: 'tool/ffmpeg',
+    displayName: 'ffmpeg',
+    state: 'running',
+    step: 'resolving',
+    provider: null,
+    totalBytes: 100,
+    completedBytes: 0,
+    speedBps: null,
+    etaSeconds: null,
+    parts: [],
+    currentFile: null,
+    fileIndex: 0,
+    fileCount: 1,
+    attempt: 0,
+    maxAttempts: 5,
+    error: null,
+    startedAt: '2026-08-10T00:00:00.000Z',
+    updatedAt: '2026-08-10T00:00:00.000Z',
+    ...over,
+  });
+
+  /** 往 progressStore 里塞一条**陈旧**快照 —— 正是压住正确状态的那个东西。 */
+  function seedStaleProgress() {
+    pushProgress({
+      jobId: JID,
+      jobType: 'job',
+      state: 'running',
+      progress: 0,
+      step: 'resolving',
+      completedBytes: 0,
+      totalBytes: 100,
+      speedBps: null,
+      etaSeconds: null,
+    });
+  }
+
+  test('★★ 服务端说 cancelled，陈旧的 running 快照不许压过它', async () => {
+    useProgressStore.getState().clear(JID);
+    seedStaleProgress();
+    // 前提自检：快照确实在 store 里，否则这条测的是空气
+    assert.ok(useProgressStore.getState().byJob[JID], '前提：陈旧快照必须真的存在');
+
+    stubApi({ '/jobs': { jobs: [row({ state: 'cancelled', step: null })], concurrencyLimit: 2 } });
+    const r = await render(<TasksPage />, { route: '/tasks' });
+    await r.flush();
+
+    const shown = text(r.container);
+    assert.ok(shown.includes('已取消'), `没显示「已取消」，实际渲染：${shown.slice(0, 300)}`);
+    assert.ok(!shown.includes('正在选择下载源'), '阶段冻在终态之后 —— 同屏自相矛盾');
+    r.unmount();
+    useProgressStore.getState().clear(JID);
+  });
+
+  test('★ 终态行不再渲染「取消」按钮（点了必然 409）', async () => {
+    useProgressStore.getState().clear(JID);
+    for (const st of ['cancelled', 'failed', 'succeeded']) {
+      stubApi({ '/jobs': { jobs: [row({ state: st, step: null })], concurrencyLimit: 2 } });
+      const r = await render(<TasksPage />, { route: '/tasks' });
+      await r.flush();
+      assert.equal(
+        buttonByText(r.container, '取消'),
+        null,
+        `${st} 这一行还带着「取消」按钮 —— 点下去必然 409`,
+      );
+      r.unmount();
+    }
+  });
+
+  test('★ 非终态行仍然有「取消」（别把按钮修没了）', async () => {
+    useProgressStore.getState().clear(JID);
+    stubApi({ '/jobs': { jobs: [row({})], concurrencyLimit: 2 } });
+    const r = await render(<TasksPage />, { route: '/tasks' });
+    await r.flush();
+    assert.ok(buttonByText(r.container, '取消'), '正在跑的任务必须还能取消');
+    r.unmount();
+  });
+
+  test('★★ 取消返回 409（已经结束了）→ 不画错误块，用户意图本来就达成了', async () => {
+    useProgressStore.getState().clear(JID);
+    const { calls } = stubApi({
+      '/jobs': { jobs: [row({})], concurrencyLimit: 2 },
+      'POST /jobs/jcancel1/cancel': () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              code: 'CONFLICT',
+              message: 'job is absent or already terminal',
+              messageZh: '任务不存在或已结束',
+            },
+          }),
+          { status: 409, headers: { 'content-type': 'application/json' } },
+        ),
+    });
+    const r = await render(<TasksPage />, { route: '/tasks' });
+    await r.flush();
+    await click(buttonByText(r.container, '取消'));
+    await r.flush();
+    await r.flush();
+
+    assert.ok(
+      calls.some((c) => c.method === 'POST' && c.path === '/jobs/jcancel1/cancel'),
+      '前提：取消请求要真的发出去',
+    );
+    const shown = text(r.container);
+    assert.ok(!shown.includes('任务不存在或已结束'), '把 409 原样糊在用户脸上了');
+    assert.ok(!shown.includes('CONFLICT'), '原始错误码不该出现在界面上');
     r.unmount();
   });
 });
