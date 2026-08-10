@@ -420,6 +420,32 @@ function startModelPull(
       ctx.setStep('resolving');
       const probes = await state.probeMirrors(model.files[0].mirrors);
 
+      /*
+       * ★ 真事故（`[CI 实测]` run 31352570989，三平台一模一样）：这一步以前排在
+       * `install()` 之后。`install()` 落地文件的路径是**确定性的**
+       * （`by-name/<kind>/<name>`，同 id 每次都落在同一个文件名上），而
+       * `dropInstalledRecord()` 读的是**这次 install 开始前** still 躺在磁盘上的
+       * 旧清单——对一个"已经装过、这次是重装/re-pull"的 id（冷启动里最常见的
+       * 例子：`vad/silero-vad-ggml` 首次运行已经被 `reconcileBundledModels()`
+       * 自动导入，随后审计脚本/用户又显式 pull 了一次同一个 id），旧清单里的
+       * `relPath` 与 `install()` 刚写下的新文件**是同一个路径**。于是「先装后删」
+       * 变成了「装完立刻把自己刚装的文件删掉」——manifest 最后写的是
+       * `integrity:'ok'`，指向一个已经不存在的文件。
+       * `[本机复现]` 用预编译 linux-x64 包冷启动：ggml 经 reconcile 自动装好、
+       * VAD 可用；显式 re-pull 同一个 id 后，`by-name/vad/ggml-silero-v6.2.0.bin`
+       * 从磁盘消失，`resolveActiveModel()` 因为 `weightsPathOf()` 解不出路径而
+       * **静默跳过**这条记录（不算进 rejected），日志因此只字不提 ggml，
+       * 只看见 onnx 被拒——这正是 CI 日志里那个只提 onnx 的怪现象的成因。
+       *
+       * 修法：把清理挪到 `install()` 之前。**不改"先删后写"的既有承诺**——
+       * 承诺针对的是 manifest（不留两条互相矛盾的记录），挪动之后这条承诺依然
+       * 成立（中途崩溃最坏结果仍是"没装"，不会是"两条记录"）；改的只是它不再
+       * 跟"这次 install 刚落的文件"抢同一个路径。且 blob 按内容寻址、不受这步
+       * 影响——`dropInstalledFiles()` 只删 `by-name/` 下的硬链接和清单，从不碰
+       * `blobs/`，所以这里先删不会导致 `install()` 重新下载已经校验过的字节。
+       */
+      await state.dropInstalledRecord(model.id);
+
       const result = await install({
         store: state.store,
         target: {
@@ -498,12 +524,12 @@ function startModelPull(
         catalogVersion: model.catalogVersion,
       };
       /*
-       * ★ T-149 就地自愈：旧布局里同一个 id 可能已经躺在 `manifests/asr/` 下。
-       * 先把所有桶里的旧记录清掉，再写进正确的桶 —— 否则重装一次就会留下两份记录。
-       * 顺序不能反：先删后写，中途崩溃最多退回"没装"，不会留下两条互相矛盾的记录。
+       * ★ T-149 就地自愈的清理已经挪到 `install()` 之前（见上面那条大注释）——
+       * 这里只剩「写新清单」。旧布局里同一个 id 可能躺在别的桶（如
+       * `manifests/asr/`）的问题，挪动后依然被覆盖：`dropInstalledRecord()`
+       * 扫的是全部桶，不只是这次要写的这一个。
+       * blob 先落、manifest 最后写：中途崩溃只会留下可回收的孤儿 blob。
        */
-      await state.dropInstalledRecord(model.id);
-      // blob 先落、manifest 最后写：中途崩溃只会留下可回收的孤儿 blob。
       await state.store.writeManifest(roleToStoreKind(model.role), model.id, record);
 
       if (opts.activateOnSuccess || !state.active[model.role]) {
@@ -811,6 +837,15 @@ async function importModel(
   const { job, deduplicated } = state.queue.enqueue(
     { kind: 'model', targetId: modelId, displayName: fileName, totalBytes: sizeBytes },
     async (ctx) => {
+      /*
+       * ★ 清理挪到最前面（与上面 `startModelPull()` 那次同一个根因，见那边的大注释）。
+       * `modelId` 由文件名派生，重复导入同名文件会撞上同一个 id —— 若清理仍留在
+       * `linkByName()`（第 2 步）之后，就会把这次刚落的硬链接删掉，manifest 却照样
+       * 说 `integrity:'ok'`。这里量不大也没网络请求，但成因和后果与那边一致，
+       * 一并挪，不留第二个出口。
+       */
+      await state.dropInstalledRecord(modelId);
+
       // 1. 真实哈希（几 GB 的文件流式过一遍，恒定内存）
       ctx.setStep('verifying');
       ctx.setFile(fileName, 0, 1);
@@ -876,8 +911,7 @@ async function importModel(
         benchmark: null,
         catalogVersion: 'imported',
       };
-      // T-149：与下载安装同一条纪律 —— 先把旧布局遗留的同 id 记录清掉，再写正确的桶。
-      await state.dropInstalledRecord(modelId);
+      // T-149 的清理已经挪到第 1 步之前（见函数开头的大注释），这里只剩写清单。
       await state.store.writeManifest(roleToStoreKind(role), modelId, record);
 
       state.publish(
