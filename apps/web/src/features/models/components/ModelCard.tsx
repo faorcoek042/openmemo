@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Download, Info, Star, Trash2, Zap } from 'lucide-react';
 import { Link } from 'react-router';
-import type { CatalogGroupWithFitness, CatalogVariant } from '@openmemo/shared';
+import type { ActiveSlotUnusable, CatalogGroupWithFitness, CatalogVariant } from '@openmemo/shared';
 import { Button } from '../../../components/common/Button';
 import { Emphasis } from '../../../components/common/Emphasis';
 import { StatusChip } from '../../../components/common/StatusChip';
@@ -139,6 +139,16 @@ export interface ModelCardProps {
   onDelete: (id: string) => void;
   onActivate: (id: string) => void;
   pendingId: string | null;
+  /**
+   * 这一组里那个**被记为使用中、但本机的引擎加载不了**的变体（A-4）。
+   *
+   * ⚠️ 可选，`null`/缺失 = **什么都不说**，不是"都能用"。
+   *    老 daemon 不发 `activeUnusable`，那时我们确实不知道，
+   *    替它说一句"没问题"就是编 —— 与 `updateAvailable` 同一条判据。
+   * ⚠️ 由 `ModelsPage` **只传给包含那个 id 的那一组**：判据是整份已装清单，
+   *    一张卡自己看不出来（与 `recommended` 那个 prop 同源）。
+   */
+  unusableActive?: ActiveSlotUnusable | null;
 }
 
 export function ModelCard({
@@ -150,6 +160,7 @@ export function ModelCard({
   onDelete,
   onActivate,
   pendingId,
+  unusableActive = null,
 }: ModelCardProps) {
   const { t } = useTranslation();
   const [selectedId, setSelectedId] = useState(
@@ -230,6 +241,51 @@ export function ModelCard({
             className="mt-1 block text-xs text-ink-secondary"
             text={localizedDescription(locale, group)}
           />
+          {/*
+            ★★ A-4：**「记为使用中」与「真的用得上」是两件事，这里把后者说出来。**
+
+            `vad/silero-vad` 这一张卡下面躺着两个**互相加载不了**的变体
+            （ONNX 给 sherpa-onnx / ggml 给 whisper.cpp）。自动激活是"先装的赢"、
+            目录里 onnx 在前，于是 `[用户真机 2026-08-09, Windows]` 上激活态说
+            "这个 VAD 在用"，而流水线装配同一时刻说"whisper.cpp 加载不了，
+            切分降级为固定窗口"，那条警告**一次启动出现 3 遍**。
+
+            ⚠️ **三态分岔，措辞跟着动作走**（裁定原话：分不出来就说 UNKNOWN，别猜一个动作）：
+              · `usableInstalled` 是 id  → 能用的**已经装了** ⇒ 给一个真按钮：改用它（零下载）；
+              · `usableInstalled === null` → 逐个验过**确知没有** ⇒ 让他装一个标着该引擎的变体
+                （这一页每张卡上就有 `EngineFitChip`，照着找得到）；
+              · **字段缺失**（说不出）→ 只报事实，**一个动作都不给** ——
+                猜错的那句话会把已经装好的人送去重下一遍，或让没装的人去找一个不存在的东西。
+
+            ⚠️ 判据不在这里算：服务端按**文件内容**验过（`canEngineLoad`），
+               前端一个字都不推导 —— 再算一遍就是第二份真相，而这一轮修的正是那族。
+          */}
+          {unusableActive ? (
+            <p
+              className="mt-1.5 text-xs text-warning"
+              data-testid={`model-unusable-${group.groupId}`}
+            >
+              {t('models.card.unusableActive', {
+                engine: unusableActive.engine,
+                model: unusableActive.modelId,
+              })}{' '}
+              {unusableActive.usableInstalled != null
+                ? t('models.card.unusableSwitch')
+                : 'usableInstalled' in unusableActive
+                  ? t('models.card.unusableInstall', { engine: unusableActive.engine })
+                  : t('models.card.unusableUnknown')}
+              {unusableActive.usableInstalled != null ? (
+                <button
+                  type="button"
+                  className="ml-1.5 underline underline-offset-2"
+                  data-testid={`model-unusable-switch-${group.groupId}`}
+                  onClick={() => onActivate(unusableActive.usableInstalled as string)}
+                >
+                  {t('models.card.unusableSwitchAction')}
+                </button>
+              ) : null}
+            </p>
+          ) : null}
         </div>
         <Link
           to={`/models/${encodeURIComponent(variant.id)}`}

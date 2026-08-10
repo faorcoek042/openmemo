@@ -242,6 +242,23 @@ export default function ModelsPage() {
       locale={locale}
       installedIds={installedIds}
       activeId={g.role === 'asr' ? active.asr : null}
+      /*
+       * ★★ A-4：**只传给"拥有那个 id"的那一组。**
+       *
+       * 判据是整份已装清单 + 服务端按文件内容验过的结论，一张卡自己看不出来
+       * （与 `BackendPackCard` 的 `recommended` 同源）。
+       *
+       * ⚠️ 刻意**没有**顺手把 VAD 也接上 `activeId`（上面那行仍然只给 asr）：
+       *    「使用中」在 asr 那里意味着"转写就用它"，而 VAD 的"使用中"今天由
+       *    流水线按内容现挑（`resolveActiveModel` 在 `active.json` 指不到时会扫全部），
+       *    两者语义**没确认一致**。没确认就不做 —— 这一格只加警示行。
+       */
+      unusableActive={
+        installed.data?.activeUnusable?.[g.role] != null &&
+        g.variants.some((v) => v.id === installed.data?.activeUnusable?.[g.role]?.modelId)
+          ? installed.data.activeUnusable[g.role]
+          : null
+      }
       pendingId={pendingId}
       onPull={(v, includeOptional) => void handlePull(v, includeOptional)}
       onDelete={(id) => {
