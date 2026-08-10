@@ -204,7 +204,8 @@
       "etaPerHour": "about {{minutes}} min per hour of audio",
       "sourceMeasuredHere": " (measured on this machine)",
       "sourceReference": " (measured on a reference machine, indicative only)",
-      "gpuLayers": "about {{layers}} layers fit in VRAM (estimate)"
+      "gpuLayers": "about {{layers}} layers fit in VRAM (estimate)",
+      "cpuUnverified": "Could not verify whether this machine supports {{features}} — we could not read the instruction-set flags, so the verdict above assumes it does."
     },
     "detail": {
       "loading": "Loading…",
@@ -232,7 +233,16 @@
       "benchNeedsInstall": "The model must be installed before it can be benchmarked.",
       "verifying": "Verifying…",
       "verify": "Verify integrity",
-      "upstream": "Upstream project and license"
+      "upstream": "Upstream project and license",
+      "diagTitle": "The numbers behind this verdict",
+      "diagNote": "Server-computed intermediates, listed so you can sanity-check us — if the verdict looks wrong, see which number is wrong.",
+      "diag": {
+        "needMB": "Model needs",
+        "vramBudgetMB": "VRAM available",
+        "ramBudgetMB": "RAM available",
+        "diskNeededMB": "Disk needed",
+        "diskFreeMB": "Disk free"
+      }
     },
     "section": {
       "recommended": "Recommended",

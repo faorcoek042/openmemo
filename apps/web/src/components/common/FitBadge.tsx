@@ -72,6 +72,38 @@ export function FitBadge({ fitness, showReason = false, className }: FitBadgePro
         // reasonZh 来自服务端（fitness.ts 生成），前端不拼装这句话。
         <span className="text-xs text-ink-secondary">{fitness.reasonZh}</span>
       ) : null}
+      {/*
+        ★ 「我们没查过」是**第三种说法**，不是上面那个结论的修饰。
+
+        契约（`shared/fitness.ts:61-74`）把话说死了：
+        「"Your CPU lacks AVX2" and "we could not check whether your CPU has AVX2"
+         are different sentences, and only one of them is ever true on Windows today:
+         `detectCpuWin32()` returns an empty feature set unconditionally」——
+        **daemon 从没查过任何指令集标志位**，却照样给出了结论。
+
+        真机损失有记录：Windows 用户看到「CPU 不支持所需指令集（avx2）」，
+        而真相是"我们从没查过"。**产品对用户说了一句它并不知道的话。**
+
+        daemon 早就把三态算好发下来了（`cpuFeaturesUnverified` 非空 = 结论是
+        **假设该要求已满足**算出来的），而 `FitBadge` 里此前连 `cpuFeatures`
+        这个词都没有出现过 —— 又一次「算好发出、离终点一行被丢掉」。
+
+        ⚠️ 措辞不许含糊成"可能不支持"：那会把"没查过"重新说成"查过且不行"，
+        等于把这条修复变回原来的谎。
+      */}
+      {/*
+        ⚠️ `?? []`：契约上 `cpuFeaturesUnverified` 是必填 `string[]`，但**实际响应里可能没有**
+        （老 daemon、以及仓库里既有的一批夹具都不带它）。直接 `.length` 会把**整张模型卡打崩**
+        —— 一个"让判断更诚实"的改动，反而让页面渲染不出来，那是比原缺陷更糟的交易。
+        缺席的语义只能是"没有要 caveat 的东西"，与空数组同义。
+      */}
+      {(fitness.cpuFeaturesUnverified ?? []).length > 0 ? (
+        <span className="text-xs text-warning" data-testid="fit-cpu-unverified">
+          {t('models.fit.cpuUnverified', {
+            features: fitness.cpuFeaturesUnverified.join(', '),
+          })}
+        </span>
+      ) : null}
     </div>
   );
 }

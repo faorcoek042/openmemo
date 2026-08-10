@@ -84,6 +84,44 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
  * 不知道它在保护什么，于是最省事的做法就是把规则删掉。
  */
 const RULES = [
+  /*
+   * ★ 2026-08-10：清单从 1 条扩到 5 条。
+   *
+   * 我自己在上一轮说过：**这条守卫的价值取决于清单有多长，而清单只有一条。**
+   * 下面四条都来自「契约里带『我算这个是给你（UI）用的』意图注释」的那份普查
+   * （41 个候选 / 11 个零消费）—— 每一条都是**服务端已经算好发出、界面却从没读过**。
+   */
+  {
+    field: 'cpuFeaturesUnverified',
+    dir: 'apps/web/src/components/common',
+    why:
+      '契约原话：`the UI must never render it as such`——「你的 CPU 不支持 AVX2」和' +
+      '「我们没能查你的 CPU 有没有 AVX2」是两句不同的话，而 Windows 上只有后者为真' +
+      '（`detectCpuWin32()` 无条件返回空特性集，从没查过任何标志位）。' +
+      '零消费 ⇒ 产品对用户说了一句它并不知道的话（真机已发生）。',
+  },
+  {
+    field: 'capabilityCaveats',
+    dir: 'apps/web/src/features/models',
+    why:
+      '契约原话：`shown verbatim in the UI (ADR-013 decision 1)`，且必须在**下载之前**。' +
+      '零消费 ⇒ 用户为速度选了 Paraformer，"无词级时间戳/数字输出为中文/英文一律小写"' +
+      '这些代价要等用起来才发现。',
+  },
+  {
+    field: 'detail',
+    dir: 'apps/web/src/features/models',
+    why:
+      '契约原话：`Diagnostic numbers, surfaced in the detail panel so users can sanity-check us.`' +
+      '零消费 ⇒ 一个只说"跑不动"、不肯说"我按什么算的"的判断，用户既无法反驳也无法信任。',
+  },
+  {
+    field: 'noteUid',
+    dir: 'apps/web/src/features/tasks',
+    why:
+      '契约原话：`Owning note, so the UI can offer "open the note" without a lookup table.`' +
+      '零消费 ⇒ 任务中心点不进那条笔记（真实用户报告 2026-08-10，已由 af01cc1c 修复）。',
+  },
   {
     field: 'engines',
     dir: 'apps/web/src/features/models',

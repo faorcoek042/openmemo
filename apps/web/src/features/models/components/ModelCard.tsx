@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Download, Info, Star, Trash2, Zap } from 'lucide-react';
+import { AlertTriangle, Download, Info, Star, Trash2, Zap } from 'lucide-react';
 import { Link } from 'react-router';
 import type { CatalogGroupWithFitness, CatalogVariant } from '@openmemo/shared';
 import { Button } from '../../../components/common/Button';
@@ -241,6 +241,36 @@ export function ModelCard({
           </span>
         </Link>
       </div>
+
+      {/*
+        ★ 能力取舍**逐字**显示，且必须在**下载之前**。
+
+        契约（`shared/models.ts:433-441`）写着 `shown verbatim in the UI (ADR-013 decision 1)`，
+        理由也写着：「A user who picks it for speed and later needs word-level alignment
+        must be able to learn that BEFORE downloading, not after.」
+        真实内容不是抽象的："无词级时间戳，只有段级" / "数字输出为中文而非阿拉伯数字" /
+        "英文一律小写"（`paraformer-zh-small`），以及 "仅支持中文" / "仅用于流式录音，
+        不能做离线批量转写"（`sherpa-streaming-zh-14m`）。
+        **这些话一次都没有渲染过** —— 用户为速度选了它，代价要等到用起来才发现。
+
+        ⚠️ **不翻译、不改写、不摘要**：契约说的是 verbatim。它是清单作者写给用户的原话，
+        前端再润色一遍就等于替他重新承诺一次。
+        ⚠️ 放在**动作行上方**而不是详情页深处：判据是"用户在他会走到的那条路径上真的看到了"，
+        而他会走到的是这张卡上的下载按钮。
+      */}
+      {variant.capabilityCaveats && variant.capabilityCaveats.length > 0 ? (
+        <ul
+          className="mt-3 space-y-0.5 rounded-md border border-line bg-surface-0 px-2.5 py-1.5"
+          data-testid="model-capability-caveats"
+        >
+          {variant.capabilityCaveats.map((c) => (
+            <li key={c} className="flex items-start gap-1.5 text-xs text-ink-secondary">
+              <AlertTriangle className="mt-0.5 size-3 shrink-0 text-warning" aria-hidden />
+              <span>{c}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
         <QuantSelector

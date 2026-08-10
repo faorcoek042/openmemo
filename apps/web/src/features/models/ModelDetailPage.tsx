@@ -153,6 +153,40 @@ export default function ModelDetailPage() {
         </div>
       </section>
 
+      {/*
+        ★ 诊断数字：契约（`shared/fitness.ts:77`）原话
+        `Diagnostic numbers, surfaced in the detail panel so users can sanity-check us.`
+        —— **"so users can sanity-check us"**：它存在的理由就是让用户能核对我们的结论，
+        而它此前**一次都没有渲染过**（`[实测]` needMB/vramBudgetMB/ramBudgetMB/
+        diskFreeMB/diskNeededMB 在 apps/web 全域各 0 次）。
+
+        一个只说"跑不动"却不肯说"我按什么算的"的判断，用户既无法反驳也无法信任。
+        这一块就是那个"detail panel"。
+      */}
+      <section className="rounded-lg border border-line bg-surface-1 p-4">
+        <h2 className="text-sm font-medium text-ink">{t('models.detail.diagTitle')}</h2>
+        <dl
+          className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs"
+          data-testid="model-fit-detail"
+        >
+          {(
+            [
+              ['needMB', variant.fitness.detail.needMB],
+              ['vramBudgetMB', variant.fitness.detail.vramBudgetMB],
+              ['ramBudgetMB', variant.fitness.detail.ramBudgetMB],
+              ['diskNeededMB', variant.fitness.detail.diskNeededMB],
+              ['diskFreeMB', variant.fitness.detail.diskFreeMB],
+            ] as const
+          ).map(([key, mb]) => (
+            <div key={key} className="contents">
+              <dt className="text-ink-secondary">{t(`models.detail.diag.${key}`)}</dt>
+              <dd className="tabular-nums text-ink">{formatBytes(mb * 1e6, locale)}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="mt-2 text-[11px] text-ink-muted">{t('models.detail.diagNote')}</p>
+      </section>
+
       {/* ★ 准确率 / 速度：ADR-004 决策 3 */}
       <section className="rounded-lg border border-line bg-surface-1 p-4">
         <h2 className="text-sm font-medium text-ink">{t('models.detail.accuracyTitle')}</h2>

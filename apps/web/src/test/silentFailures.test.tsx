@@ -26,13 +26,14 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { render, click, type, stubApi } from './host';
+import { render, click, type, text, stubApi } from './host';
 import { NoteActionsMenu } from '../features/notes/NoteActionsMenu';
 import { countUnfinishedJobs } from '../features/tasks/api';
 import { JobToaster } from '../components/common/JobToaster';
 import { bus } from '../lib/events/bus';
 import { notifyJobAttached } from '../lib/jobs/attachedNotice';
 import { useModelPullMutation } from '../features/models/api';
+import { ModelCard } from '../features/models/components/ModelCard';
 import zhLocale from '../app/i18n/locales/zh-CN.json';
 
 const UID = '01B11AAAAAAAAAAAAAAAAAAAAA';
@@ -440,5 +441,131 @@ describe('去重的那次点击：产品真实路径（hook → toaster）', () 
       0,
       '没被去重却先造了一条 toast —— 真正的 job.created 来时会变成两条/或说错话',
     );
+  });
+});
+
+/* ══════ 契约里"算好给界面用"的字段，必须在用户会走到的路径上真的看到 ══════ */
+
+/**
+ * 判据（Manager 2026-08-10）：**不是"渲染了"、不是"字段传下去了"，
+ * 是"用户在他会走到的那条路径上真的看到了"。**
+ *
+ * 所以下面不去单独渲染 `FitBadge`，而是渲染**模型卡**（`ModelCard`）——
+ * 那是用户点「下载」的地方，也是这三条字段该出现的地方。
+ */
+describe('契约字段必须出现在用户走到的路径上', () => {
+  const FIT = (over: Record<string, unknown> = {}) => ({
+    tier: 'recommended',
+    reasonCode: 'ok',
+    reasonZh: '可以跑',
+    reasonEn: 'ok',
+    estGpuLayers: null,
+    estMinutesPerAudioHour: null,
+    speedTier: 'normal',
+    speedSource: 'none',
+    cpuFeaturesUnverified: [],
+    notRecommendedForLanguage: false,
+    detail: { needMB: 1200, vramBudgetMB: 0, ramBudgetMB: 8000, diskFreeMB: 50000, diskNeededMB: 1400 },
+    ...over,
+  });
+
+  const variant = (over: Record<string, unknown> = {}) => ({
+    id: 'asr/paraformer-zh-small',
+    groupId: 'asr/paraformer',
+    displayName: 'Paraformer small',
+    displayNameZh: 'Paraformer 小模型',
+    role: 'asr',
+    quantization: 'q5_1',
+    totalSizeBytes: 40_000_000,
+    engines: ['sherpa-onnx'],
+    license: { id: 'MIT', url: 'https://x', gated: false, requiresAcceptance: false },
+    requirements: { ramRequiredMB: 400, vramRequiredMB: 0, diskRequiredMB: 60, cpuFeatures: [] },
+    fitness: FIT(),
+    benchmark: null,
+    speedClass: 'fast',
+    files: [],
+    installed: false,
+    ...over,
+  });
+
+  const group = (v: Record<string, unknown>) => ({
+    groupId: 'asr/paraformer',
+    role: 'asr',
+    displayName: 'Paraformer',
+    displayNameZh: 'Paraformer',
+    tags: [],
+    variants: [variant(v)],
+  });
+
+  const card = (v: Record<string, unknown> = {}) => (
+    <ModelCard
+      group={group(v) as never}
+      locale="zh-CN"
+      installedIds={new Set<string>()}
+      activeId={null}
+      pendingId={null}
+      onPull={() => undefined}
+      onDelete={() => undefined}
+      onActivate={() => undefined}
+    />
+  );
+
+  /*
+   * ① 那句**诚实的第三种说法**必须在"没探测过"的现场真的出现。
+   *   `cpuFeaturesUnverified: ['avx2']` 就是 Windows 上的真实形态
+   *   （`detectCpuWin32()` 无条件返回空特性集）。
+   */
+  test('★ ① 没查过指令集时，卡片上必须出现"无法确认"，而不是"不支持"', async () => {
+    stubApi({});
+    const r = await render(card({ fitness: FIT({ cpuFeaturesUnverified: ['avx2'] }) }));
+    await r.flush();
+    const el = r.container.querySelector('[data-testid="fit-cpu-unverified"]');
+    assert.equal(el === null, false, `卡片上没有那句诚实的话：${text(r.container).slice(0, 200)}`);
+    const said = (el?.textContent ?? '').trim();
+    assert.equal(said.includes('avx2'), true, `没说清是哪个指令集：${said}`);
+    /*
+     * ⚠️ 判据取 i18n 词条本身，不在这里另写一句中文 —— 文案改词条这条跟着走，
+     * 被换成"可能不支持"那种把"没查过"重新说成"查过且不行"的措辞时才红。
+     */
+    const zhFit = (zhLocale as unknown as { models: { fit: Record<string, string> } }).models.fit;
+    assert.equal(said.includes(zhFit['cpuUnverified']!.split('{{')[0]!.trim()), true, said);
+    r.unmount();
+  });
+
+  test('★ ① 反面：查过（数组为空）时不许冒出这句话', async () => {
+    // 没有这一条，把渲染条件写成恒真也能让上面那条绿。
+    stubApi({});
+    const r = await render(card());
+    await r.flush();
+    assert.equal(r.container.querySelector('[data-testid="fit-cpu-unverified"]') === null, true);
+    r.unmount();
+  });
+
+  /* ② 能力取舍必须在**下载按钮所在的那张卡**上、且**逐字**。 */
+  test('★ ② 能力取舍逐字显示在下载按钮同一张卡上', async () => {
+    stubApi({});
+    const caveats = ['无词级时间戳，只有段级', '数字输出为中文而非阿拉伯数字', '英文一律小写'];
+    const r = await render(card({ capabilityCaveats: caveats }));
+    await r.flush();
+    const box = r.container.querySelector('[data-testid="model-capability-caveats"]');
+    assert.equal(box === null, false, '能力取舍一个字都没有');
+    for (const c of caveats) {
+      assert.equal((box?.textContent ?? '').includes(c), true, `逐字要求：漏了「${c}」`);
+    }
+    // 必须和下载入口在同一张卡上 —— "下载之前知道"是这条契约的全部理由
+    assert.equal(
+      r.container.querySelector('[data-testid^="model-download"], button') === null,
+      false,
+      '卡片上没有任何可点的东西 —— 这条用例就没有验到"下载之前"',
+    );
+    r.unmount();
+  });
+
+  test('★ ② 反面：没有取舍时不许画一个空框', async () => {
+    stubApi({});
+    const r = await render(card());
+    await r.flush();
+    assert.equal(r.container.querySelector('[data-testid="model-capability-caveats"]') === null, true);
+    r.unmount();
   });
 });
