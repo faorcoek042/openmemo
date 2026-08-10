@@ -148,6 +148,21 @@ export interface RuntimeDiagnostics {
   readonly breaker: BreakerDiagnostics;
   readonly blacklistedBackends: Backend[];
   readonly installedBackends: Backend[];
+  /**
+   * ★ T-195：**advisory 认为本机可能支持的后端。**
+   *
+   * 此前 `RuntimeDetection` 一直算着它（`setup.ts` 的 `advisoryBackends`），
+   * 而这里**没有把它转出去** —— 于是前端拿不到任何"不依赖已装包"的 GPU 证据，
+   * 硬件卡只好拿 `hardware.gpus`（**纯粹由 probe 枚举结果构造**）去回答
+   * "这台机器有没有显卡"。两个问题，一个答案。
+   */
+  readonly advisoryBackends: Backend[];
+  /**
+   * ★ T-195：advisory **逐块看见的**显示适配器 + 探测过程中的问题。
+   * 面板要说的是"我们知道什么"，而 `hardware.gpus` 只说得出"探针枚举到什么"。
+   */
+  readonly advisoryGpus: RuntimeDetection['advisoryGpus'];
+  readonly advisoryWarnings: readonly string[];
   readonly paths: {
     readonly probePath: string;
     readonly backendDir: string;
@@ -166,6 +181,9 @@ function toDiagnostics(d: RuntimeDetection): RuntimeDiagnostics {
     breaker: d.breaker,
     blacklistedBackends: d.blacklistedBackends,
     installedBackends: d.installedBackends,
+    advisoryBackends: d.advisoryBackends,
+    advisoryGpus: d.advisoryGpus,
+    advisoryWarnings: d.advisoryWarnings,
     paths: {
       probePath: d.layout.probePath,
       backendDir: d.layout.backendDir,

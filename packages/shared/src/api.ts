@@ -386,6 +386,41 @@ export interface HardwareRuntimeDiagnostics {
   };
   /** 断路器停用的后端（cpu 永不入列）。 */
   readonly blacklistedBackends: Backend[];
+  /**
+   * **advisory 探测**（nvidia-smi / sysfs DRM / `Get-CimInstance Win32_VideoController`）
+   * 认为本机可能支持的后端 —— 取所有探到的显示适配器的 `candidateBackends` 并集。
+   *
+   * ## 为什么前端需要它（T-195）
+   *
+   * 「这台机器有没有 GPU」和「我们枚举到了 GPU 吗」是**两个问题**，而
+   * `HardwareInfo.gpus` 只回答后者：它**完全由 probe 的枚举结果构造**
+   * （`buildHardwareInfo`），而 probe 只能通过**已经装好的那一个后端包目录**里的
+   * ggml 库去枚举。没装 GPU 后端包 ⇒ 没有库可加载 ⇒ `gpus: []` ——
+   * 这与"这台机器没有显卡"是完全不同的两件事，而界面此前把它们说成同一句话。
+   *
+   * advisory 是**唯一不依赖"包已经装了"的证据**：它直接问操作系统要显示适配器清单。
+   * 有了它，界面才说得出第三种状态：**「系统说你有一块能跑 Vulkan 的卡，
+   * 但我们这轮没有加载任何能枚举它的后端」**。
+   *
+   * ⚠️ 它**不是**"这个后端能用"的结论 —— 那只能来自 probe。
+   * **空数组的含义是"没有独立证据"，不是"本机没有 GPU"**（powershell 失败、
+   * `/sys/class/drm` 读不到，都会让它是空的）。这一点必须在渲染时体现出来。
+   */
+  readonly advisoryBackends?: Backend[];
+  /**
+   * advisory **逐块看见的**显示适配器。**可选**（老 daemon 不发）。
+   *
+   * ⚠️ 它与 `HardwareInfo.gpus` **不是同一件事，也不许被当成同一件事用**：
+   * 那个是 probe 真枚举到、可以拿来算显存与后端可用性的设备；这个只是
+   * 「操作系统说这台机器上插着什么」。**只用来说话，不参与任何判定。**
+   * （`detect/gpu.ts` 抬头有两个实测反例：库在但无 GPU；lavapipe 报一个 CPU 设备。）
+   */
+  readonly advisoryGpus?: readonly {
+    readonly name: string;
+    readonly vendor: string;
+    readonly candidateBackends: readonly Backend[];
+    readonly source: string;
+  }[];
 }
 
 export interface GetHardwareResponse {

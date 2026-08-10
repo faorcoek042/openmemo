@@ -628,6 +628,37 @@ export interface RuntimeDetection {
    * 空数组的含义是"没有独立证据"，不是"本机没有 GPU"。
    */
   readonly advisoryBackends: Backend[];
+  /**
+   * ★ T-195：**advisory 真的看见了哪几块显示适配器**（名字 + 厂商 + 候选后端）。
+   *
+   * 与 {@link advisoryBackends} 是同一次 `detectGpus()` 的两种投影：那个是并集（给 L2
+   * 解环用），这个是**逐块的原始事实**（给界面用）。
+   *
+   * ── 为什么界面非要它不可 ──────────────────────────────────────────────────────
+   * `HardwareInfo.gpus` **完全由 probe 枚举结果构造**（`buildHardwareInfo` 只从
+   * `probe.output.devices` 走），而 probe 只能用它扫的那**一个**包目录里的 ggml 库枚举。
+   * 没装 GPU 后端包 ⇒ 没有 `ggml-vulkan.dll` ⇒ 枚举为空 ⇒ 面板一片空白。
+   *
+   * `[用户真机 2026-08-10，win32/x64 10.0.26200]` AMD Ryzen 7 7840HS **w/ Radeon 780M**
+   * 上面板写「未检测到可用 GPU」。而同一次 `detectGpus()` 的结果**是有那块卡的**
+   * （从他截图里 Vulkan 包显示「可安装」倒推：L2 包在探针没装的情况下要 applicable，
+   * 只能走 `applicability.ts:206` 那条 `advisory.includes('vulkan')` 的环打破器）。
+   * 也就是说：**我们看见了，只是把它扔了。**
+   *
+   * ⚠️ **它不进 `HardwareInfo.gpus`，这是刻意的。** 那个字段是"探针枚举到的、
+   * 可以拿来算显存与后端可用性的设备"，advisory 不具备那个证据强度（本文件与
+   * `detect/gpu.ts` 抬头的两个反例：库在但无 GPU、lavapipe 报一个 CPU 设备）。
+   * 混进去会污染 fit 计算与后端选择。**它只用来说话，不参与任何判定。**
+   */
+  readonly advisoryGpus: readonly {
+    readonly name: string;
+    readonly vendor: string;
+    readonly candidateBackends: readonly Backend[];
+    /** 这条事实的出处（`Get-CimInstance Win32_VideoController` / `sysfs:card0` / …）。 */
+    readonly source: string;
+  }[];
+  /** advisory 探测过程中的非致命问题（命令缺失、权限不足、解析失败）。**空 ≠ 没显卡。** */
+  readonly advisoryWarnings: readonly string[];
 }
 
 /** 已装后端包 = store 里真实存在的 backend manifest。cpu 是内置 L1，恒为已装。 */
@@ -825,6 +856,13 @@ export async function detectRuntimeHardware(
     blacklistedBackends: [...blacklisted],
     installedBackends: [...installed],
     advisoryBackends,
+    advisoryGpus: advisory.gpus.map((g) => ({
+      name: g.name,
+      vendor: g.vendor,
+      candidateBackends: g.candidateBackends,
+      source: g.source,
+    })),
+    advisoryWarnings: advisory.warnings,
   };
 }
 
