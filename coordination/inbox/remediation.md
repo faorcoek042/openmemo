@@ -637,3 +637,38 @@ assert.equal(focusables > 0, true, '已完成的行上一个可聚焦元素都�
 ### 纪律
 
 两次 `git commit -- <明确路径>`，逐次 `git show --stat` + `git status --porcelain` 双核 · 未 stash / 未 `checkout -- <别人的文件>` / 未 `-a` · `format:changed --write --` 带路径 · 未碰 release/tag · 未碰 `mutation-check.mjs` · 变异体残留 `grep MUTANT` = 0。
+
+---
+
+## [2026-08-11 01:45] T-201 A-5 DONE
+
+**`863dee4`。CI run `31414944046` = failure，但失败点是 `scripts/ci/selftest-sum-undecided.mjs` 的两条 lint（`'b2' 未使用` / `no-useless-assignment`）—— 那个文件来自 `655a1ad`（另一路的 e2e-runtime 提交），我 6 个文件 `eslint` 全清。未去改它（共享 CI 脚本，超出授权范围；同类情形上次被权限系统拦过，拦得对）。**
+
+### 改了什么
+
+`modelsRootFreeMB()` 去掉 `?? hw.disks[0]` 跨卷回退 → 返回 `null`；`detail.diskFreeMB` 改可空；`computeFit` 新增 Rule 0 + `unknown_disk` 档（**不硬禁用安装** —— 真正的把关在 `rest/models.ts` 的安装预检，这里只负责不假装检查过）；`detectDisks` 空 catch 留下带原因的 warn（**条目仍然省略**，发布编造的 `freeMB` 正是要治的病，但"合法地取不到"不许再是无声的）；`FitBadge` 给中性色 + 问号，**不给 serious**（那是坏消息的颜色，这不是坏消息）。
+
+### 🔴 「零消费」那条前提不成立
+
+裁决书说 `diskFreeMB` 全前端零消费。**复核时撞上：`ModelDetailPage.tsx:178` 正在渲染它**，而**断言零消费的那句注释就写在它上面 3 行** —— 那句话在写下的当天是真的，后来那一段自己成了消费方。已连注释一起订正。
+
+附带收益：`detail.diskFreeMB` 改可空之后，**编译器直接把这个消费点报了出来**。反向验证时拿掉 unknown 那一档，编译器同时报 `diskFree is possibly null` —— **"忘了处理未知"从测试问题升级成编译期错误**。
+
+### 🟡 B 侧我看过之后决定不动（理由）
+
+`rest/models.ts:427` 的安装预检写的是 `freeBytes > 0 && freeBytes < needBytes` —— **`0` 在它唯一的关键消费方那里就是"未知，别拦"**，是个被想过、而且正被使用的哨兵，注释"取不到就是 0，不猜"说的就是这件事。
+
+真正的缺陷在**展示层**：存储页把它渲染成「剩余 0 B」，读起来像"满了"。那是另一处的事。**不借这次改动顺手推翻一个想过的决定** —— 要改就得连 `models.ts:427` 的 `> 0` 守卫一起改（可空后 `null > 0` 仍为 false，行为可保），属独立一件，建议单开。
+
+### ★ UNKNOWN → 可复现（这半比修复值钱）
+
+`packages/runtime/src/detect/diskUnknown.test.ts` 用**真的** `detectDisks()` 打一个还没建出来的目录，证明"整条省略"在本平台真的发生，而剩下那项**带着一个真实、合理、但属于另一个卷的数字**（借用它不会报错，只会悄悄说错）。
+
+**触发条件就是原注释自己点名的 "first run" —— 不需要任何特殊硬件，首次运行就会走到。** 结论：这条不再是"仍装着子弹的陷阱"，是**装着子弹且扳机在默认路径上**。用户可见后果仍未实测（要看首次运行时目录创建与硬件探测的先后），但触发面比裁决书假设的大。
+
+腿 6 条（含 3 条阴性对照）。反向验证 2 组：恢复 `?? hw.disks[0]` → 2 红；拿掉 unknown 档 → 1 红 + 编译期红。
+
+### 纪律
+
+`git commit -- <明确路径>` 8 个文件，`git show --stat` + `git status --porcelain` 双核 · locale **只做行级新增**（各 +1 行）· 未 stash / 未 `checkout --` / 未 `-a` · `format:changed --write --` 带路径 · 未碰 release/tag · 变异体残留 = 0。
+树上另有两处**非我**的编译红：`packages/downloader/src/components.ts`（`rollbackVersion`，别人未提交的在途）与 `apps/daemon/src/main.ts`（`PipelineBundle.missing`）。
