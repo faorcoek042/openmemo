@@ -794,16 +794,52 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
   });
 
   const cpu = await detectCpu();
+  /*
+   * ★★ **空的指令集集合是「本次没测出来」，不是「测过了，没有」。**
+   *
+   * `detect/system.ts:198-202` 把这条契约写死了：
+   * 「Downstream **MUST** treat `features.length === 0` as *unknown*」——
+   * 而那份"下游必须这么读"的名单只点了 `shared/fitness.ts` 和 UI，
+   * **这一处不在名单上，也确实没照做**。
+   *
+   * 三个空集合的真实生产者（都不是"这台机器没有指令集"）：
+   *   · `system.ts:283-289` win32：PowerShell `Add-Type` 被执行策略挡住 / 没有 powershell / 超时；
+   *   · 同一段：命令跑通了但没解析出东西 —— **不许因为"命令返回 0"就把空当成结论**；
+   *   · `system.ts:98` default 分支：任何非 linux/darwin/win32 的平台**无条件** `features: []`。
+   *
+   * 于是一台**装着 AVX2 的正常机器**会读到「未检出指令集 → 推理会明显更慢」——
+   * **一句关于硬件的预言，而这台硬件从没被测过。**
+   *
+   * ── 措辞：三句话必须分开，不许合并成一句好听的「指令集信息不可用」 ──
+   *   ①「测了，没有」        → 该让人换模型
+   *   ②「**本次未能测出**」   → 该让人**什么都别做**（这一条要的就是它）
+   *   ③「未探测（本次运行未提供该探针）」→ `notProbed()` 专用，**这里不能借用**：
+   *      hw.cpu 的探针是**给了**的，是测的过程失败了，两件事不一样。
+   *
+   * 用词直接抄 `apps/web/src/components/common/FitBadge.tsx:99-105` 对同一个空集合
+   * 已经在用的那句（「无法确认…我们没能读到指令集信息」），别重新发明；
+   * 那里 `:88-92` 的注释也早就写死了这条禁令：**不许含糊成"可能不支持"**，
+   * 那会把"没查过"重新说成"查过且不行"。
+   *
+   * 🔴 `remediation` 必须是 `null`：原来那句**根本不是一个动作，是结论**。
+   * 用户拿着它去找"怎么修"，没有终点。
+   */
+  const cpuFeaturesUnknown = cpu.features.length === 0;
   add({
     layer: 'hardware',
     id: 'hw.cpu',
     label: 'CPU instruction sets',
     labelZh: 'CPU 指令集',
-    status: cpu.features.length > 0 ? 'ok' : 'warn',
-    detail: `${cpu.brand} · ${cpu.physicalCores}核 · ${cpu.features.slice(0, 6).join(',') || '未检出'}`,
+    status: cpuFeaturesUnknown ? 'warn' : 'ok',
+    detail: cpuFeaturesUnknown
+      ? `${cpu.brand} · ${cpu.physicalCores}核 · 本次未能测出指令集（不代表这台机器没有）`
+      : `${cpu.brand} · ${cpu.physicalCores}核 · ${cpu.features.slice(0, 6).join(',')}`,
+    detailEn: cpuFeaturesUnknown
+      ? `${cpu.brand} · ${cpu.physicalCores} cores · could not read the instruction-set flags this run (this does NOT mean the machine lacks them)`
+      : `${cpu.brand} · ${cpu.physicalCores} cores · ${cpu.features.slice(0, 6).join(',')}`,
     required: false,
-    remediation:
-      cpu.features.length > 0 ? null : '未检出指令集 → 只能用最保守的 CPU 后端，推理会明显更慢',
+    remediation: null,
+    remediationEn: null,
   });
 
   const ram = detectMemory();
