@@ -63,56 +63,9 @@ name: ci
 permissions:
   contents: read
 
-# ── 并发：master 的每个提交都要拿到判决；PR 分支保留"新的顶掉旧的" ──────────────
-#
-# ## 为什么改（数是量出来的，不是感觉）
-#
-# 原本是 `group: ci-${{ github.ref }}` + `cancel-in-progress: true`，也就是
-# **master 上所有 push 共用一个组，后来的杀掉在飞的**。`[实测]` 2026-08-10 一天：
-#
-#   ci.yml 84 次 run = 55 failure / 18 **cancelled** / 11 success
-#   → **18/84 = 21.4% 的推送，从头到尾没有拿到任何判决**
-#
-# 而「没判决」在事后和「没问题」**长得一模一样** —— 这正是本仓一整天在清的那个病。
-#
-# 取消换来的收益在这个仓**约等于 0**：
-# - 仓库是 **public**、全部 GitHub 托管标准 runner（全仓无 self-hosted）
-#   ⇒ **免费，没有分钟额度**，省不下钱；
-# - `[实测]` 当天**根本没有排队**：run 领取延迟中位 **7.5 秒**、最大 29 秒；
-#   取消开着时峰值并发 **3 个 run**，按当天到达时间重放建模、关掉取消后是
-#   **5 个 run（≈10 个 job）**，在免费额度 20 个并发 job 之内。
-#
-# 一次完整 run 中位 **160 秒**（gate 136s / format 32s / gate-summary 9s）。
-#
-# ## ⚠️ 为什么不是"把 cancel-in-progress 改成 false"就完事
-#
-# **只改这一个开关做不到目的。** GitHub 的默认是 `queue: single`：
-# 「any existing **pending** job or workflow in the same concurrency group
-# will be canceled」—— 也就是说只要还共用 `ci-${{ github.ref }}` 这一个组，
-# 突发连推时中间那些提交**照样拿不到判决**，只是从"跑到一半被杀"
-# 变成"排着队被顶掉"：**同一个结果，换了个死法。**
-#
-# 所以按 SHA 分组：**push 事件每个提交自己一组**，互不相干、全部并行、全部有判决。
-# PR 事件仍按 ref 分组并保留取消 —— 在 PR 上"最后一版绿"才是要的结论，
-# 中间版本被顶掉没有损失，而那恰恰是取消真正有价值的场景。
-#
-# （没有用 `queue: max`：它能让多个 run 排队而不是互相顶掉，但判决会来得很晚，
-#   而"晚到的判决"本身就削弱门禁；且该属性较新，**没有验证过本账号是否支持**，
-#   为一个拿不准的属性冒配置错的风险不值当。）
-#
-# ## ⚠️ 这条**没有**解决的那一档（别读成"现在每个提交都有判决了"）
-#
-# GitHub **只为一次 push 的 head 提交建 run**。所以**一次推多个提交时，
-# 中间那些非 head 提交仍然拿不到任何判决** —— 按 SHA 分组也修不了这一档。
-# `[实测]` 同一天 93 个提交里有 **9 个**落在这里（合计 66/93 = **71% 有判决**）。
-#
-# 裁决是**不上 merge queue**（重机械，不值当）：它的最坏后果是将来 bisect 时
-# 那几个点没有结论，**不是主干状态没被验**（head 验了）。
-# **这一档目前靠纪律兜着——「每步绿了立刻 commit + push」，一次一个提交——
-# 不靠机器。** 谁要是把这句删了，就等于宣称机器管住了它，而机器并没有。
 concurrency:
-  group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'push' }}
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════════
@@ -184,6 +137,7 @@ jobs:
       tracked_sources: ${{ steps.tracked_sources.outcome }}
       orphan_exports: ${{ steps.orphan_exports.outcome }}
       test_ratchet: ${{ steps.test_ratchet.outcome }}
+      locale_ratchet: ${{ steps.locale_ratchet.outcome }}
       ci_scripts_selftest: ${{ steps.ci_scripts_selftest.outcome }}
       test: ${{ steps.test.outcome }}
       mutation_anchors: ${{ steps.mutation_anchors.outcome }}
@@ -321,6 +275,26 @@ jobs:
           fi
           pnpm check:test-ratchet --against "$BASE_SHA"
 
+      # locale key 守卫。事故：`zh-CN.json` 被另一路**按整文件重写**（中途还出现过
+      # 0 字节的中间态），从一个更早的版本覆盖过去，于是刚加的
+      # `search.tokenizerDegraded` **静默没了** —— 不报错、不冲突、git 也不提示。
+      #
+      # ⚠️ 判据**不是**照抄测试文件棘轮的「在册 key 消失就红」。我先量了历史：
+      #   `[实测]` 75 个改过 locale 的提交里那样会触发 **8 次，8 次全是误报**
+      #   （5 次改名 + 3 次功能整块下线），**真意外丢失 0 次** ——
+      #   而且它连这次事故都抓不到（丢掉的那个 key 从来没提交进 zh-CN）。
+      #   造一盏几乎只为合法工作亮的灯，和今天已经推翻过一次的那个是同一个错。
+      #
+      # 换成三条**量过、误报为 0** 的：
+      #   ① 两份 locale 的 key 集合必须一致 —— **整文件重写恰恰是不对称的**，
+      #      正好落在这条上；`[实测]` 75 个提交里它一次都没误报过。
+      #   ② 源码 `t('…')` 用到的 key，每份 locale 都得有（认 i18next 复数后缀）——
+      #      补 ① 的盲区：两份**同时**被重写时 ① 看不见，但代码还在用它。
+      #   ③ 合法 JSON + key 数地板 —— 直接对着那个 **0 字节中间态**。
+      - name: Locale key guard (翻译 key 不许被静默丢掉)
+        id: locale_ratchet
+        run: pnpm check:locale
+
       # CI 脚本自身的正反向自检（T-144）。放在 test 前面：它比较快，
       # 而且它红的时候意味着 build-backends 那条线是坏的 —— 那是更要紧的信号。
       - name: CI scripts self-test
@@ -388,7 +362,7 @@ jobs:
       - name: 汇总
         env:
           GATE_RESULT: ${{ needs.gate.result }}
-          GATE_STEP_NAMES: format_check,build,typecheck,lint,tracked_sources,orphan_exports,test_ratchet,ci_scripts_selftest,test,mutation_anchors
+          GATE_STEP_NAMES: format_check,build,typecheck,lint,tracked_sources,orphan_exports,test_ratchet,locale_ratchet,ci_scripts_selftest,test,mutation_anchors
           # ★ 来自**独立 job** 的 result（不再是 gate 的 step outcome）。
           #   job result 与 step outcome 用的是同一套词汇（success/failure/skipped/cancelled），
           #   所以 summarize-gate.mjs 一个字都不用改：失败→「失败」、跳过/取消→「未验证」，
@@ -400,6 +374,7 @@ jobs:
           GATE_STEP_TRACKED_SOURCES: ${{ needs.gate.outputs.tracked_sources }}
           GATE_STEP_ORPHAN_EXPORTS: ${{ needs.gate.outputs.orphan_exports }}
           GATE_STEP_TEST_RATCHET: ${{ needs.gate.outputs.test_ratchet }}
+          GATE_STEP_LOCALE_RATCHET: ${{ needs.gate.outputs.locale_ratchet }}
           GATE_STEP_CI_SCRIPTS_SELFTEST: ${{ needs.gate.outputs.ci_scripts_selftest }}
           GATE_STEP_TEST: ${{ needs.gate.outputs.test }}
           GATE_STEP_MUTATION_ANCHORS: ${{ needs.gate.outputs.mutation_anchors }}

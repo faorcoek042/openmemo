@@ -94,6 +94,7 @@ export const STEP_LABELS = {
   tracked_sources: 'Tracked-sources guard',
   orphan_exports: 'Orphan-exports ratchet',
   test_ratchet: 'Test-file ratchet',
+  locale_ratchet: 'Locale key guard',
   ci_scripts_selftest: 'CI scripts self-test',
   test: 'Test',
   mutation_anchors: 'Mutation-spec anchors',

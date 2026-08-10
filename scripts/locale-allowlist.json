@@ -1,0 +1,21 @@
+{
+  "_readme": [
+    "`scripts/check-locale-ratchet.mjs` 的豁免名单。",
+    "",
+    "`asymmetric`：**故意**只存在于一份 locale 的 key。每条必须写 `reason`。",
+    "  默认判据是「两份 locale 的 key 集合必须一致」—— 因为 fallbackLng 是 zh-CN，",
+    "  zh-CN 缺 key 会让界面**直接显示那串 key**，en 缺 key 会让英文界面冒出中文。",
+    "  所以不对称永远是可疑的，必须是一次写下理由的显式决定，没有 `--update` 批量洗白。",
+    "",
+    "`unreferenced`：源码里 `t('…')` 扫得到、但确实不该在 locale 里的 key",
+    "  （例如运行时动态拼接、静态扫描误判）。守卫已经认 i18next 复数后缀",
+    "  （`_one` / `_other` …），所以复数 key **不需要**写进来。",
+    "",
+    "⚠️ 这份名单**只会削弱**门禁：删掉一条，门禁只会更严（当场红），藏不住东西。",
+    "   所以这里不需要测试文件棘轮那种 `floor` 整数 —— 它防的那个方向在这里不存在。"
+  ],
+  "generatedAt": "2026-08-11",
+  "generatedBy": "locale-ratchet（事故：zh-CN.json 被整文件重写，search.tokenizerDegraded 静默丢失）",
+  "asymmetric": [],
+  "unreferenced": []
+}
