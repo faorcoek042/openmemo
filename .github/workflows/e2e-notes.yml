@@ -253,6 +253,13 @@ jobs:
       # 这一步跑的是**别人已经守住的那套判据**（屏蔽宿主 PATH + 真下载 + 真转写出
       # 非空文本），不是我另写的。它同时把 F4 的硬前提造出来：一条带转写稿的笔记。
       # `--root` 显式给死，下一步接着用同一个数据目录。
+      # `--allow-known-gaps`：只在**发布审计**模式（!assembleFromSource）传 ——
+      # 那种模式下 --bundle 指向一次更早冻结下来的 build-bundles artifact，而
+      # cold-start-audit.mjs 调用的 selfcheck.mjs 永远是本次 checkout 的 HEAD，
+      # 二者结构性地不该逐 id 同源（新 check id 老 artifact 天生吐不出来）。
+      # 回归门禁模式（assembleFromSource=true）下 --bundle 也是本次现场组装的，
+      # 理应同源，不传这个开关 —— meta.sameSource 仍是无豁免的硬判据。
+      # 见 scripts/ci/selfcheck-known-gaps.json 文件头。
       - name: 前置：冷启动 + 真转写（造出 F4 需要的转写稿）
         timeout-minutes: 60
         shell: bash
@@ -260,7 +267,8 @@ jobs:
           node scripts/ci/cold-start-audit.mjs \
             --bundle "${{ steps.extract.outputs.bundle_dir }}" \
             --root "${{ runner.temp }}/e2e-notes-shared" \
-            --port 19700 --transcribe
+            --port 19700 --transcribe \
+            ${{ !inputs.assembleFromSource && '--allow-known-gaps' || '' }}
 
       # ── 判据本身 ─────────────────────────────────────────────────────────────
       #

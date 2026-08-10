@@ -86,6 +86,17 @@ const MASK = !argv.includes('--no-mask');
 const TRANSCRIBE = argv.includes('--transcribe');
 
 /*
+ * ★ `--allow-known-gaps` —— 透传给 `scripts/selfcheck.mjs` 的同名开关（第 5 节
+ * `selfCheckJson()` 用）。只在**发布审计**（`--bundle` 指向一个更早冻结下来的
+ * build-bundles artifact，而 `selfcheck.mjs` 本身永远是当场用 HEAD 现编的）时
+ * 由 workflow 显式传入 —— 那种模式下 CLI 认识的 check id 集合结构性地可能比
+ * 老 artifact 新，`meta.sameSource` 会为这类**已登记**的漂移误报。
+ * 默认（回归门禁模式：`--bundle` 也是本次现场组装的，理应逐 id 同源）不传，
+ * 同源比对仍是无豁免的硬判据 —— 见 `scripts/ci/selfcheck-known-gaps.json` 文件头。
+ */
+const ALLOW_KNOWN_GAPS = argv.includes('--allow-known-gaps');
+
+/*
  * ★ `--include-optional <role>[,<role>…]` —— 补的是一个**结构性缺口**，不是加个开关。
  *
  * ── 缺口长什么样 ────────────────────────────────────────────────────────────────
@@ -407,7 +418,15 @@ async function pullModel(m, timeoutSec = 900) {
 function selfCheckJson() {
   const sc = spawnSync(
     process.execPath,
-    [join(REPO, 'scripts', 'selfcheck.mjs'), '--data-dir', DATA_DIR, '--daemon', BASE, '--json'],
+    [
+      join(REPO, 'scripts', 'selfcheck.mjs'),
+      '--data-dir',
+      DATA_DIR,
+      '--daemon',
+      BASE,
+      '--json',
+      ...(ALLOW_KNOWN_GAPS ? ['--allow-known-gaps'] : []),
+    ],
     { env: childEnv, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
   );
   let report = null;

@@ -783,6 +783,28 @@ try {
       what: 'AAC / MP4 / 仅音轨',
     },
     {
+      /*
+       * ⚠️ 视频编码器是 `libopenh264`，**不是** `libx264`。
+       *
+       * `PRODUCT_FFMPEG`（上面第 6 节验过：来自 storeRoot，产品自己下载校验的
+       * 那份，LGPL 构建）**没有** `libx264` —— BtbN 的 `*-lgpl-*` 发行版明确
+       * `--disable-libx264`（GPL-only），造样本这步之前一直用 `libx264` 硬编码，
+       * 在 win32 上必然 "Encoder not found"。
+       *
+       * ⚠️ 不能反过来在 CI 里换一份 GPL ffmpeg 来造样本 —— 那会让"我们发的字节
+       * 里没有 GPL"这条论证被我们自己在 CI 上破坏（论证需要的是"CI 全程只碰
+       * LGPL 构建"，不只是"最终成品不含 GPL"）。
+       *
+       * `libopenh264`（Cisco 出，BSD-2-Clause）才是这份 LGPL 构建里**真正编译进去**
+       * 的 H.264 编码器 —— 同一个 BtbN release（`n8.1.2-34-g9b6c8969e0-*-lgpl-8.1`）
+       * 的 linux64 与 win64 包共享同一套 configure 参数（`--enable-libopenh264
+       * --disable-libx264`，两边 `ffmpeg -encoders` / 二进制里的 configuration 字符串
+       * 逐字相同），已经拿 sha256 与 vendor/manifests/backends.json 里的
+       * `media-tools-linux-x64` 条目核对过、**在本机真跑通**：
+       * `libopenh264` + `aac`（原生编码器，非 `libfdk_aac`）成功产出 h264/aac 的 mp4，
+       * `ffprobe` 读回 codec_name 正确；同样参数下 `libx264` 复现的正是 CI 报的
+       * "Encoder not found"。见 D-20 §18（2026-08-10）。
+       */
       name: 'f2-video.mp4',
       args: (i, o) => [
         '-y',
@@ -797,7 +819,7 @@ try {
         '-i',
         'testsrc=size=160x120:rate=10',
         '-c:v',
-        'libx264',
+        'libopenh264',
         '-pix_fmt',
         'yuv420p',
         '-c:a',
@@ -807,7 +829,7 @@ try {
         '-shortest',
         o,
       ],
-      what: 'H.264+AAC / MP4 / **带视频**',
+      what: 'H.264(libopenh264)+AAC / MP4 / **带视频**',
     },
   ];
 

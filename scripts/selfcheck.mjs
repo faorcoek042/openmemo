@@ -35,6 +35,13 @@
  *   node scripts/selfcheck.mjs --daemon ... --proxy-test   # 额外真发一次外网请求验代理
  *
  * `--token` 仍然接受，但 T-118 起鉴权默认关闭（OPENMEMO_AUTH=none），通常不需要。
+ *
+ * `--allow-known-gaps`：给 `meta.sameSource`（CLI 与 `--daemon` 逐 id 比对）开一个
+ * **棘轮式**豁免 —— 只放行 `scripts/ci/selfcheck-known-gaps.json` 里显式登记的 check id，
+ * 任何未登记的漂移照样红。默认（不带这个开关）完全不读那份登记表，比对是无豁免的硬判据。
+ * 用途：`发布审计`模式下 CLI 是当场用 HEAD 现编的、daemon 却来自更早冻结的 build-bundles
+ * artifact，二者结构性地不可能对每个 check id 都同源；不加这个开关时这类腿会被这条判据
+ * 永久钉死在红，而那个红回答的其实不是「产品同不同源」，是「新老 check id 集合对不上」。
  */
 
 import { access, constants, readdir } from 'node:fs/promises';
@@ -42,6 +49,7 @@ import { homedir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import KNOWN_GAPS from './ci/selfcheck-known-gaps.json' with { type: 'json' };
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -79,6 +87,8 @@ const argOf = (name, fallback = undefined) => {
 const JSON_OUT = argv.includes('--json');
 /** 真发一次外网请求验证代理。默认关闭 —— 自检必须能离线跑完。 */
 const PROXY_TEST = argv.includes('--proxy-test');
+/** 见文件头「--allow-known-gaps」小节。默认关闭 —— meta.sameSource 默认是无豁免的硬判据。 */
+const ALLOW_KNOWN_GAPS = argv.includes('--allow-known-gaps');
 
 function defaultDataDir() {
   const home = homedir();
@@ -496,17 +506,31 @@ async function main() {
        * 本来就该不同的东西（CLI 在仓库根跑，daemon 在自己的进程里跑）。
        * 拿它们当判据只会制造假报警，久了这条就没人看了。
        */
+      /*
+       * --allow-known-gaps：只把「id 在登记表里」的漂移从判据里摘出去，其余
+       * 漂移（哪怕只多一个未登记的 id）照样计入 unexpected → fail。不带这个
+       * 开关时 knownGapIds 是空集，下面两行是 no-op —— 行为与原来逐字相同。
+       */
+      const knownGapIds = new Set(ALLOW_KNOWN_GAPS ? KNOWN_GAPS.gaps.map((g) => g.id) : []);
+      const unexpected = diff.filter((d) => !knownGapIds.has(d.id));
+      const known = diff.filter((d) => knownGapIds.has(d.id));
+      const fmt = (list) =>
+        list.map((d) => `${d.id}: 本地=${d.here ?? '缺'} 端点=${d.there ?? '缺'}`).join(' · ');
       extra.push({
         id: 'meta.sameSource',
         labelZh: 'CLI 与 /api/selfcheck 同源',
-        status: diff.length === 0 ? 'ok' : 'fail',
-        required: true,
+        status: unexpected.length > 0 ? 'fail' : known.length > 0 ? 'warn' : 'ok',
+        required: unexpected.length > 0,
         detail:
-          diff.length === 0
-            ? `${report.results.length} 项逐 id 一致（本地 ${report.counts.fail} 失败 / 端点 ${remote.counts.fail} 失败）`
-            : diff
-                .map((d) => `${d.id}: 本地=${d.here ?? '缺'} 端点=${d.there ?? '缺'}`)
-                .join(' · '),
+          unexpected.length > 0
+            ? fmt(unexpected) +
+              (known.length > 0
+                ? ` （另有 ${known.length} 项已登记的已知缺口，未计入判据：${fmt(known)}）`
+                : '')
+            : known.length > 0
+              ? `${report.results.length} 项逐 id 一致，另有 ${known.length} 项已登记的已知缺口` +
+                `（发布审计模式，见 scripts/ci/selfcheck-known-gaps.json，非新增不计入判据）：${fmt(known)}`
+              : `${report.results.length} 项逐 id 一致（本地 ${report.counts.fail} 失败 / 端点 ${remote.counts.fail} 失败）`,
       });
     } catch (err) {
       extra.push({

@@ -1454,3 +1454,66 @@ fs.writeFileSync("models-asr.json.sig", sig);
 - **没有写 `packages/downloader/scripts/sign-catalog.mjs` 这样的独立签名 CLI** ——
   §17.5 给的是一段可以直接运行的 `node -e`，够用；封装成脚本是锦上添花，
   不阻塞"三条前提都落地"这个目标，留给以后需要经常签的时候再做。
+
+## 18. `e2e-import`（win32）造样本视频的编码器：`libx264` → `libopenh264`（`e2e-ffmpeg-encoder` 2026-08-10，真下载 sha256 校验过的二进制、真执行验证，未改任何产品运行时代码）
+
+### 18.1 现象与判据前提
+
+`e2e-import` 这条 CI 腿在 win32 上报 `Encoder not found`：`scripts/ci/e2e-import-audit.mjs`
+第 6 节确认 `PRODUCT_FFMPEG`（产品自己下载校验、来自 `storeRoot` 的那份 ffmpeg，
+非宿主 PATH 上的）就位后，第 12 节用它现造几个样本文件（wav/mp3/m4a/mp4），
+其中 mp4 那条一直硬编码 `-c:v libx264`。
+
+### 18.2 根因：LGPL 构建里没有 `libx264`
+
+`vendor/manifests/backends.json` 里 `media-tools-linux-x64`（sha256
+`8c8b2897f2a8093ae2d985f7f1867d218451d4c567c1b2437f86a7c73a950b9f`）与
+`media-tools-win-x64`（sha256 `089e4169e93b2b3f3acbfced3c0704d24276a225641bdda04d796d28b07a2a38`）
+都是 BtbN 同一个 release（`n8.1.2-34-g9b6c8969e0-*-lgpl-8.1`）的 **LGPL** 构建。
+BtbN 的 `*-lgpl-*` 发行版对 `libx264`/`libx265` 明确 `--disable-libx264`
+（GPL-only，不能进 LGPL 构建）—— 这不是猜的：直接下载两份归档（先用上面两个
+sha256 核对过与 manifest 一致，不是随便找一份同名文件），Windows 那份用
+`strings <exe> | grep configuration` 从二进制里原样抠出编译时的 configure
+命令行，Linux 那份直接执行 `ffmpeg -version` / `-encoders`，两边看到的是
+逐字相同的一套参数：`--enable-libopenh264 --disable-libx264`（以及一大串
+其它 `--disable-*`）。`libx264` 从来就不在这份构建里，用哪个平台都一样。
+
+### 18.3 排除项：为什么不能换成 GPL ffmpeg，也没有改用固定样本文件
+
+- **不能在 CI 里换一份 GPL ffmpeg 来造样本** —— "我们发的字节里没有 GPL"这条
+  论证的成立条件是"CI 全程只碰 LGPL 构建"，不只是"最终成品不含 GPL"。哪怕只是
+  为了造一个测试样本，在 CI 的任何一步引入 GPL 版 ffmpeg，都会让这条论证被
+  我们自己破坏 —— 这条路线在被交办这个任务时就已经划死，本节没有重新论证，
+  只是确认没有踩上去。
+- **没有改用随仓出厂的固定样本视频文件** —— 需要在"省一次现编"与"样本是否还
+  代表真实输入"之间取舍：固定文件会让这条判据退化成"这一个写死的文件能被
+  产品解析"，而不是"产品自己的 ffmpeg 拿真实参数真的能编出/读出 H.264"；
+  外加体积成本（H.264 mp4 哪怕几秒也是要提交进仓库的二进制）。综合权衡后
+  选择了不改变"现编样本"这个结构，只换掉编码器，见下条。
+
+### 18.4 修法与验证
+
+`libopenh264`（Cisco 出品，BSD-2-Clause）是这份 LGPL 构建里**真正编译进去**的
+H.264 编码器——与原生 `aac`（FFmpeg 自带的 LGPL 兼容编码器，注意不是
+`libfdk_aac`，后者是 nonfree）搭配，产出的仍然是标准 H.264/AAC MP4，样本的
+"代表真实输入"这条属性没有退化，只是换了一个该构建里确实提供的编码器实现。
+
+验证顺序（都在本机对着上面两个 sha256 校验过的真实二进制做，不是读 configure
+猜）：
+
+1. Windows 归档：`strings` 抠出的 configure 字符串确认 `--enable-libopenh264
+--disable-libx264`（无法在 Linux 上执行 exe，只能做静态验证）。
+2. Linux 归档（同一个 BtbN release，可直接执行）：`ffmpeg -c:v libopenh264
+-c:a aac` 真的编出一份 h264/aac mp4，`ffprobe` 读回的 `codec_name` 正确；
+   同一份二进制、同样的输入，换回 `-c:v libx264` 精确复现了 CI 报的那句
+   `Encoder not found`——确认根因定位准确，不是环境差异导致的巧合。
+
+改动落在 `scripts/ci/e2e-import-audit.mjs` 的 `FIXTURE_SPECS`（`f2-video.mp4`
+那一条 spec）：`-c:v libx264` → `-c:v libopenh264`，`-c:a aac` 不变。
+不涉及任何产品运行时代码、任何 vendor 二进制、任何新增依赖——`libopenh264`
+本来就已经在被下载分发的那份 ffmpeg 里，只是造样本这一步之前没用对它。
+
+### 18.5 CI 验证状态
+
+本节写下时，win32 真实 CI 跑验尚未完成；见本轮任务的最终回报（提交后另跑
+`e2e-import` 工作流，win32 单平台）。

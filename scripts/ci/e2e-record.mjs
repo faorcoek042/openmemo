@@ -205,6 +205,31 @@ for (const [what, p] of [
   }
 }
 
+/*
+ * ⚠️ D-20 §11.2（5d3cc8c）之后，daemon **每次启动**都会把随包出厂的模型
+ * 自动导入 ArtifactStore（`state.ts:565-566` → `reconcileModels()`），VAD 也在
+ * 那一批里 —— "新建一个空数据目录"不再等于"没有 VAD"，第 7 节原来靠这个假设
+ * 造"没装 VAD"的现场，现在造不出来了（实际 chunking 变成 vad，不是 fixed）。
+ *
+ * 这里不是产品行为的问题（§11.2 是设计如此），是这条判据的前提过时了。
+ * ⚠️ 判据本身不能删 —— "没装 VAD 时必须明确降级到固定窗口、不能静默出别的错"
+ * 仍然是真实的、必须守住的行为。
+ *
+ * 修法：`OPENMEMO_BUNDLED_MODELS_DIR` 是既有的、非启动器专属的环境变量
+ * （`modelReconcile.ts:106`，与 `OPENMEMO_BUNDLED_WHISPER_DIR` 同一族），
+ * 指向一个存在但空的目录时，`resolveBundledModelsDir()` 原样返回它，
+ * 随包模型逐个 `fs.stat` 全部 ENOENT → 静默跳过、不导入任何东西
+ * （`modelReconcile.ts:148-151` 的 `catch { break }` + `:186` 的
+ * `if (!sawSomething) continue`，这本来就是"开发树里没有随包模型"这个
+ * 分支要处理的合法状态，不是新造的后门）。全程 childEnv 共用同一个对象，
+ * cold/warm 两次重启都吃得到这个空目录，第 9 节显式 `/api/models/pull`
+ * 装 VAD 时走的是下载安装那条路径，不受这个变量影响，互不干扰。
+ * 不在 `launcher-spawn.mjs` 的 `LAUNCHER_OWNED_ENV` 里，预设不会被
+ * `assertNoLauncherOverrides()` 拦。
+ */
+const EMPTY_BUNDLED_MODELS_DIR = join(ROOT, 'empty-bundled-models');
+mkdirSync(EMPTY_BUNDLED_MODELS_DIR, { recursive: true });
+
 const childEnv = {
   ...process.env,
   PATH: PATH_FOR_DAEMON,
@@ -212,6 +237,7 @@ const childEnv = {
   OPENMEMO_DATA_DIR: DATA_DIR,
   // PROTOCOL §9：绝不碰全局指针。模块级设定，窗口为零。
   OPENMEMO_POINTER_FILE: POINTER,
+  OPENMEMO_BUNDLED_MODELS_DIR: EMPTY_BUNDLED_MODELS_DIR,
   // ⚠️ WEB_DIST / EXT_DIR / BUNDLED_PROBE_DIR 归**启动器**设 —— 这里预设就等于又把它架空。
 };
 

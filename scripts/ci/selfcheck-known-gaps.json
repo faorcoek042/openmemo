@@ -1,0 +1,30 @@
+{
+  "_comment": [
+    "meta.sameSource 已知缺口登记表（棘轮式豁免名单，先例见 scripts/orphan-exports-baseline.json、",
+    "scripts/ci/single-source-baseline.json —— 判据都是『只准变短，新增是一次显式决定』）。",
+    "",
+    "只在 `selfcheck.mjs --allow-known-gaps` 时读取生效；不带这个开关（默认 / 回归门禁模式）",
+    "完全不读这个文件，CLI 与 /api/selfcheck 的逐 id 比对照旧是无豁免的硬判据 —— 不许把",
+    "同源比对整个关掉，它在正常模式下抓到过真东西。",
+    "",
+    "适用场景：`e2e-notes.yml` 的『发布审计』模式（assembleFromSource=false）—— 那一轮 CLI",
+    "是当场用 checkout 出来的 HEAD 现编的，daemon 却来自更早某次 build-bundles 冻结下来的",
+    "artifact，二者本来就不该同源：CLI 认识的 check id 集合可能比老 artifact 新。",
+    "",
+    "登记一条之前先问：它是『新代码新增了 check id，老 artifact 结构性地吐不出来』，",
+    "还是『两边现在真的不一致，产品出 bug 了』？只有前者才登记这里；后者要去修产品，",
+    "不是来这里消音。",
+    "",
+    "id 只在『本地=某值 端点=缺』或『本地=缺 端点=某值』时才算命中豁免 —— 只压住这一个",
+    "已登记的 id，任何其它 id 的漂移（哪怕只多一个）照样让 meta.sameSource 变红。"
+  ],
+  "gaps": [
+    {
+      "id": "catalog.bundled",
+      "reason": "b1ad406 在 e2e-notes 发布审计基线所用的冻结 artifact（dc1bef2）落地之后约 64 秒才新增了这个 check id；老 artifact 里的 daemon 代码根本没有能吐出它的分支 —— 不是运行时数据不一致，是产物本身比这个 check id 更早。",
+      "registeredAt": "2026-08-10",
+      "addedInCommit": "b1ad406",
+      "frozenArtifactBaseline": "dc1bef2"
+    }
+  ]
+}
