@@ -130,7 +130,7 @@ function main() {
   /* ═══ B 组：对不上的情形 —— 必须 exit 0 + flag 为空，绝不拼凑 ═══════════════════ */
   console.log('\n\x1b[1mB 组：对不上的情形（必须 exit 0 + null，绝不拼凑、绝不非 0 退出）\x1b[0m');
 
-  let b2 = null; // 供 --prove-regression 复查
+  let b2; // 供 --prove-regression 复查（下面无条件赋值，初值本来就读不到）
   {
     // B2（correction b）—— 缺一格。绝不能等于剩下两格的和（"部分求和"是被明确禁止的旧设计）。
     const dir = makeCellDir(scratch, 'b2', {
@@ -286,16 +286,20 @@ function main() {
   rmSync(scratch, { recursive: true, force: true });
 
   console.log('');
+  // b2 供 --prove-regression 复查：单独把这一格的 flag 带出函数外，
+  // 让回归证明能断言"红的正是这一格、且正是那个被禁止的部分和"，
+  // 而不只是"整套里有什么东西红了"（后者可能撞上无关案例，误报护栏有牙齿）。
+  const b2Flag = b2 ? b2.flag : null;
   if (checked < 11) {
     console.log(`\x1b[31m✘ 只跑了 ${checked} 条断言 —— 少于预期，先怀疑这个自检本身瞎了\x1b[0m`);
-    return false;
+    return { ok: false, b2Flag };
   }
   if (failed > 0) {
     console.log(`\x1b[31m✘ ${checked - failed} passed, ${failed} failed\x1b[0m`);
-    return false;
+    return { ok: false, b2Flag };
   }
   console.log(`\x1b[32m✔ ${checked} passed, 0 failed\x1b[0m`);
-  return true;
+  return { ok: true, b2Flag };
 }
 
 /*
@@ -332,11 +336,23 @@ function proveRegression() {
   );
 
   writeFileSync(SCRIPT, mutated);
-  let regressionCaught = false;
+  let regressionCaught;
   try {
-    const passedWithMutation = main();
-    // main() 里 B2 现在应该变红，所以整体应当报"有失败"，即 passedWithMutation === false。
-    regressionCaught = passedWithMutation === false;
+    const { ok: passedWithMutation, b2Flag: mutatedB2Flag } = main();
+    // 只看"整套是否有红"不够精确——万一红的是别的、不相干的案例，
+    // 会被误判成"这条护栏有牙齿"。所以除了整体判红，还要求 B2 这一格
+    // 具体产出的 flag 恰好等于被明确禁止的"部分和"（5+7=12），
+    // 这样才是真的撞上了这个具体缺陷，不是凑巧撞上了别的失败。
+    const wentRed = passedWithMutation === false;
+    const gotForbiddenPartialSum = mutatedB2Flag === '--undecided 12';
+    regressionCaught = wentRed && gotForbiddenPartialSum;
+    if (!wentRed) {
+      console.log('\x1b[31m✘ 松开护栏后整套自检居然还是绿的 —— B2 这条断言抓不住这个缺陷\x1b[0m');
+    } else if (!gotForbiddenPartialSum) {
+      console.log(
+        `\x1b[31m✘ 整套是红了，但 B2 那格的 flag 实得 ${JSON.stringify(mutatedB2Flag)}，不是被禁止的部分和 "--undecided 12" —— 红的可能是别的案例，这条护栏没被真正撞到\x1b[0m`,
+      );
+    }
   } finally {
     writeFileSync(SCRIPT, original);
     const restored = readFileSync(SCRIPT, 'utf8');
@@ -349,15 +365,16 @@ function proveRegression() {
   }
 
   if (regressionCaught) {
-    console.log('\x1b[32m✔ 松开护栏后 B2 确实变红了 —— 证明这条护栏不是摆设\x1b[0m');
+    console.log(
+      '\x1b[32m✔ 松开护栏后 B2 确实变红了，且拿到的正是被禁止的部分和（5+7=12）—— 证明这条护栏不是摆设\x1b[0m',
+    );
     return true;
   }
-  console.log('\x1b[31m✘ 松开护栏后整套自检居然还是绿的 —— B2 这条断言抓不住这个缺陷\x1b[0m');
   return false;
 }
 
 const wantProve = process.argv.includes('--prove-regression');
-const normalOk = main();
+const { ok: normalOk } = main();
 let finalOk = normalOk;
 if (wantProve) {
   const proveOk = proveRegression();

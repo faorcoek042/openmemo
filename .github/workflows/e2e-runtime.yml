@@ -431,6 +431,11 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+    env:
+      # ★ 唯一真源：--expect-labels（求和用）与 --platforms（写凭证用）都从这一个
+      #   变量取值，不再各自抄一份字面量——以后加第 4 个平台，只改这一行，
+      #   不可能出现"改了一处忘了另一处"那种两份清单悄悄对不上的状态。
+      PLATFORMS: linux-x64,darwin-arm64,win32-x64
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -447,17 +452,15 @@ jobs:
           path: undecided
           merge-multiple: true
 
-      # ★ --expect-labels 这里的字面量与下面 --platforms 的字面量是**同一份清单**
-      #   （唯一真源；以后加第 4 个平台，两处一起改）。任何一格对不上，
-      #   sum-undecided.mjs 只会警告 + 把 undecided_flag 收敛成空字符串，
-      #   **不会**让这一步失败——一个纯展示用的覆盖面统计出故障，不该连累
-      #   下面"写凭证"这一步（那一步产出的 artifact 名字才是闸门真正认的信号）。
+      # 任何一格对不上，sum-undecided.mjs 只会警告 + 把 undecided_flag 收敛成
+      # 空字符串，**不会**让这一步失败——一个纯展示用的覆盖面统计出故障，
+      # 不该连累下面"写凭证"这一步（那一步产出的 artifact 名字才是闸门真正认的信号）。
       - name: 求和覆盖面计数
         id: sum
         run: |
           node scripts/ci/sum-undecided.mjs \
             --dir undecided \
-            --expect-labels linux-x64,darwin-arm64,win32-x64 \
+            --expect-labels "$PLATFORMS" \
             --file-template 'e2e-runtime-undecided-{label}.json' \
             --github-output "$GITHUB_OUTPUT"
 
@@ -466,7 +469,7 @@ jobs:
           node scripts/ci/emit-e2e-attestation.mjs \
             --leg runtime \
             --bundle-run "${{ needs.audit.outputs.bundle_run_id }}" \
-            --platforms linux-x64,darwin-arm64,win32-x64 \
+            --platforms "$PLATFORMS" \
             ${{ steps.sum.outputs.undecided_flag }} \
             --out dist/e2e-attest.json
       - uses: actions/upload-artifact@v6
