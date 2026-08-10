@@ -139,6 +139,18 @@ export interface BuildHardwareInfoInput {
    * no way to spell "do not care", on purpose. See `BackendStatus.probed`.
    */
   probedBackends: ReadonlySet<Backend>;
+  /**
+   * 不需要任何包就能用的后端 —— 随产品出厂的那份（包内 `runtime/probe/`）。
+   *
+   * ⚠️ **必填，理由与 `probedBackends` 同一条**：可选的话，一个未来的调用方
+   * 漏传就会得到「什么都没自带」这个看起来很合理、实际没有任何依据的答案。
+   * 这一格此前根本不存在，于是"cpu 永远算装好了"被**写死在两个不同的地方**
+   * （`models.ts` 与 `setup.ts`），而第三处说的是相反的话。传空集表示"没有自带的"，
+   * 没有办法表达"不关心" —— 故意的。
+   *
+   * 真值由调用方去文件系统查（`bundledRuntimeDir()`），**开发树上就是空集**。
+   */
+  bundledBackends: ReadonlySet<Backend>;
 }
 
 /**
@@ -159,6 +171,7 @@ export function buildHardwareInfo(input: BuildHardwareInfoInput): HardwareInfo {
     installedBackends,
     blacklistedBackends = new Set<Backend>(),
     probedBackends,
+    bundledBackends,
   } = input;
 
   const probeOutput: ProbeOutput | null = probe.ok ? probe.output : null;
@@ -221,6 +234,8 @@ export function buildHardwareInfo(input: BuildHardwareInfoInput): HardwareInfo {
     const common = {
       id,
       installed,
+      // 「包装了没有」与「不装包能不能用」是两个问题，两个名字（T-197）
+      bundled: bundledBackends.has(id),
       version: id === 'cpu' ? (probeOutput?.ggmlVersion ?? null) : null,
       deviceIndex: gpuIdx >= 0 ? gpuIdx : null,
       ...(id === 'cpu' ? { isa: cpu.features.includes('avx2') ? 'avx2' : null } : {}),

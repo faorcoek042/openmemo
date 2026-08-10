@@ -63,7 +63,13 @@ type StatusOverride =
 function statuses(overrides: Partial<Record<Backend, StatusOverride>> = {}): BackendStatus[] {
   const all: Backend[] = ['cuda', 'vulkan', 'rocm', 'metal', 'coreml', 'cpu'];
   return all.map((id): BackendStatus => {
-    const common = { id, installed: id === 'cpu', version: null, deviceIndex: null };
+    const common = {
+      id,
+      installed: id === 'cpu',
+      bundled: false,
+      version: null,
+      deviceIndex: null,
+    };
     const ov = overrides[id];
     if (ov !== undefined) {
       return ov.available
@@ -293,6 +299,7 @@ describe('L2 适用性：解开"要先装才能被发现"的环', () => {
         id,
         available: false,
         installed: false,
+        bundled: false,
         probed: false,
         version: null,
         deviceIndex: null,

@@ -77,3 +77,30 @@ export function isBundledRuntimePath(p: string | null | undefined): boolean {
   const b = resolve(p);
   return b === a || b.startsWith(a.endsWith(sep) ? a : a + sep);
 }
+
+/**
+ * 不需要装任何包就能用的后端 —— **今天只可能是 `cpu`，而且只在包内布局下**。
+ *
+ * ## 为什么这件事值得一个函数
+ *
+ * 「cpu 装了没有」此前被三处各答一次，其中两处**无条件写死 `true`**
+ * （`models.ts` 与 `setup.ts`），第三处（`/api/backends/catalog`）说的是相反的话 ——
+ * 干净机器上同一屏因此自相矛盾：顶部「CPU ⚡使用中」，下面「CPU ⬇可安装 · 42 MB」。
+ *
+ * 写死的那两处**想说的事情是对的**（包内那份 whisper-cli 确实兜得住 CPU），
+ * 错在把它写成了 `installed`——那个字段的语义是"包在不在盘上"。
+ * 所以拆成两个名字（见 `BackendStatus.bundled`），而这里是**唯一**回答后一个问题的地方。
+ *
+ * ## 判据是真的去看文件系统，不是一个常量
+ *
+ * `bundledRuntimeDir()` 逐层向上找包内 `runtime/probe/`；**开发树上恒为 `null`**
+ * （仓库根下没有 `runtime/`，那边本来就该走已安装的后端包）。
+ * 所以这里在开发树上返回**空集** —— 那正是此前两处写死 `cpu → true` 说谎的地方。
+ *
+ * ⚠️ 只给 `cpu`：包内目录**只有 CPU 后端模块**（`tools.ts` 的 `whisperCli.reason`
+ * 写明了这一点，也正是内置那一档排在已安装包之后的理由）。
+ * 将来包内真的带了别的后端，改这里一处即可。
+ */
+export function bundledBackends(): ReadonlySet<'cpu'> {
+  return bundledRuntimeDir() === null ? new Set() : new Set(['cpu'] as const);
+}

@@ -835,10 +835,19 @@ components:
 
     BackendStatusCommonProps:
       type: object
-      required: [id, installed, version, deviceIndex]
+      required: [id, installed, bundled, version, deviceIndex]
       properties:
         id:
           $ref: '#/components/schemas/Backend'
+        bundled:
+          type: boolean
+          # T-197: "works with no pack at all" — the CPU baseline binary that ships inside
+          # the prebuilt bundle. SPLIT FROM `installed` on purpose: those are two different
+          # questions that used to share one field name, and two of the three places that
+          # answered it hardcoded true for cpu. `installed` now answers only "is a pack
+          # recorded on disk" (cpu is NOT special); this answers "is it usable without one".
+          # NOT a conclusion about usability — do not fold `available`/`probed` into it.
+          # NOT a constant either: it is a real filesystem check and is false on a dev tree.
         installed:
           type: boolean
           # ⚠️ Corrected per §13 (was "present on disk and loadable" — a bigger claim than

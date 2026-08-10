@@ -134,6 +134,34 @@ interface BackendStatusCommon {
    * alone — changing what `installed` means would move a load-bearing wall.
    */
   installed: boolean;
+  /**
+   * 这条算路**不需要任何包就能用** —— 随产品出厂的那份二进制（包内 `runtime/probe/`）。
+   *
+   * ## 为什么它必须和 `installed` 分开两个名字（T-197）
+   *
+   * 「cpu 后端装了没有」此前被**三处各答一次，其中两处无条件写死 `true`**
+   * （`models.ts` 的 `b.id === 'cpu' ? true : …`、`setup.ts` 的
+   * `new Set(['cpu', ...])`），而第三处（`/api/backends/catalog` 的 `pack.installed`）
+   * 是纯粹的清单存在性。干净机器上于是同一屏自相矛盾：
+   * 顶部芯片「CPU ⚡使用中」，往下滚两百像素「CPU ⬇可安装 · 42 MB」。
+   *
+   * 两边**各有一半道理**，而且统一到任何一边都会造出一句假话：
+   *   · 写死 `true` 想说的是「CPU 这条算路永远兜得住」（内置那份 whisper-cli 确实在）；
+   *   · 清单侧想说的是「这个包的记录在不在」。
+   *
+   * **它们是两个问题共用了一个字段名。** 所以拆名字，不是统一取值：
+   * `installed` 只回答「包装了没有」（cpu **不特殊**，没装包就是 false），
+   * 这一格回答「不装包能不能用」。
+   *
+   * ⚠️ 它**不是**「能不能用」的结论，别拿它去合并 `available` / `probed`：
+   * 包内那份只有 CPU 后端模块，`bundled: true` 只说明"有一份出厂二进制在"，
+   * 设备枚举得到与否仍然由探测回答。
+   *
+   * ⚠️ 也**不是**常量：`bundledRuntimeDir()` 是真的去文件系统找那个目录，
+   * **开发树上它恒为 `null`**（仓库根下没有 `runtime/`，那边本来就该装后端包）。
+   * 写死成 `cpu → true` 会在开发树上继续说谎 —— 那正是本次要拆掉的东西。
+   */
+  bundled: boolean;
   version: string | null;
   /** Index into HardwareInfo.gpus, when this backend is bound to a specific device. */
   deviceIndex: number | null;

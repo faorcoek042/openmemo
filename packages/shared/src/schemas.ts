@@ -529,6 +529,8 @@ export const HardwareInfoSchema = z.object({
         id: BackendSchema,
         available: z.literal(true),
         installed: z.boolean(),
+        /** 不装包就能用（出厂自带那份）。与 installed 是两个问题，见 hardware.ts。 */
+        bundled: z.boolean(),
         /** 枚举到设备本身就是加载过的证据 —— 这里只能是 true。 */
         probed: z.literal(true),
         version: z.string().nullable(),
@@ -543,6 +545,8 @@ export const HardwareInfoSchema = z.object({
         id: BackendSchema,
         available: z.literal(false),
         installed: z.boolean(),
+        /** 不装包就能用（出厂自带那份）。与 installed 是两个问题，见 hardware.ts。 */
+        bundled: z.boolean(),
         probed: z.boolean(),
         version: z.string().nullable(),
         deviceIndex: z.number().int().nullable(),
@@ -669,6 +673,10 @@ export const SearchResponseSchema = z.object({
   modes: z.object({
     keyword: z.boolean(),
     semantic: z.boolean(),
+    // ★ T-200 A-2：`hybrid` / `semanticReason` 是 daemon **一直在发**的，
+    //   只是契约里没有；前端因此只能 `as Record<string, unknown>` 硬取。
+    hybrid: z.boolean(),
+    semanticReason: z.string().nullable(),
     tokenizer: z.enum(['simple', 'trigram']),
   }),
 });

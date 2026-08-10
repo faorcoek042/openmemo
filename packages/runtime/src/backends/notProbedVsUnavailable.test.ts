@@ -100,6 +100,7 @@ function build(input: {
     probe: input.probe,
     installedBackends: new Set<Backend>(input.installed),
     probedBackends: new Set<Backend>(input.probedBackends),
+    bundledBackends: new Set<Backend>(),
   });
 }
 

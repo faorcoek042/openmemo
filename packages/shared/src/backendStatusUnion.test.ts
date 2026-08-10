@@ -45,7 +45,13 @@ import { HardwareInfoSchema } from './schemas.js';
 
 /* ────────────────────────── 类型层：非法组合编不过 ────────────────────────── */
 
-const COMMON = { id: 'cuda', installed: true, version: null, deviceIndex: null } as const;
+const COMMON = {
+  id: 'cuda',
+  installed: true,
+  bundled: false,
+  version: null,
+  deviceIndex: null,
+} as const;
 
 /** ✅ 合法：枚举到设备 ⇒ 必然探测过。 */
 const legalAvailable: BackendStatus = { ...COMMON, available: true, probed: true };

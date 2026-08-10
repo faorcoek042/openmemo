@@ -77,6 +77,7 @@ function build(platform: OsPlatform, probe: ProbeResult = PROBE_OK_EMPTY): Hardw
     probe,
     installedBackends: new Set<Backend>(),
     probedBackends: new Set<Backend>(),
+    bundledBackends: new Set<Backend>(),
   });
 }
 

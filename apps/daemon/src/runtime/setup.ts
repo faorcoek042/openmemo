@@ -64,6 +64,7 @@ import {
   emptyBreaker,
   formatSelfTest,
   preferenceOrder,
+  bundledBackends,
   probedBackendsInDir,
   recordProbeOutcome,
   runProbe,
@@ -733,6 +734,8 @@ async function composeHardware(
      * 不在这里再写一份（`detectHardware()` 走的也是它）。
      */
     probedBackends: await probedBackendsInDir(layout.backendDir),
+    /* 「不装包能不能用」—— 真去文件系统查包内那份，开发树上就是空集（T-197） */
+    bundledBackends: bundledBackends(),
   });
 }
 
