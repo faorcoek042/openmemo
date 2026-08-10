@@ -15,9 +15,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import YAML from 'yaml';
+
 import { classify, renderMarkdown, renderText, STEP_LABELS, summarize } from './summarize-gate.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./summarize-gate.mjs', import.meta.url));
+/** 仓库根 —— `scripts/ci/` 上溯两层。②-bis 要读 `.github/workflows/ci.yml`。 */
+const REPO = fileURLToPath(new URL('../..', import.meta.url));
 
 let passed = 0;
 function check(label, fn) {
@@ -46,10 +50,55 @@ console.log('② summarize()：全绿 → allPass');
   const names = Object.keys(STEP_LABELS);
   const entries = names.map((name) => ({ name, label: STEP_LABELS[name], outcome: 'success' }));
   const { rows, counts, allPass } = summarize('success', entries);
-  check('9 条全部归类为通过', () => assert.equal(counts['通过'], 9));
+  check(`${names.length} 条全部归类为通过`, () => assert.equal(counts['通过'], names.length));
   check('失败 0 / 未验证 0', () => assert.equal(counts['失败'] + counts['未验证'], 0));
   check('allPass === true', () => assert.equal(allPass, true));
-  check('rows 长度等于输入条数', () => assert.equal(rows.length, 9));
+  check('rows 长度等于输入条数', () => assert.equal(rows.length, names.length));
+}
+
+/**
+ * ★ 三处接线必须一致 —— 这条防的是**加了 step 却没被汇总数到**。
+ *
+ * gate 里每加一格，要同时补三个地方：`gate.outputs` 的一行、gate-summary 的
+ * `GATE_STEP_NAMES`、以及那里的 `GATE_STEP_*` env。漏补任何一处，
+ * 那一格就**从三态汇总里消失** —— 而汇总照样报"全部通过"。
+ * 这正是本仓反复吃的那个亏：**"没跑"和"跑了并通过"在结果里长得一样。**
+ *
+ * 所以这里不比对"有没有跑过"，而是**逐条比对四份名单**：
+ * `STEP_LABELS` / `gate.outputs` / `GATE_STEP_NAMES` / `GATE_STEP_*` env。
+ */
+console.log('②-bis ★ ci.yml 的接线和 STEP_LABELS 必须逐条对齐');
+{
+  const ciYml = readFileSync(join(REPO, '.github', 'workflows', 'ci.yml'), 'utf8');
+  const doc = YAML.parse(ciYml);
+  const labels = Object.keys(STEP_LABELS);
+
+  const outputs = Object.keys(doc.jobs.gate.outputs ?? {});
+  const summaryStep = doc.jobs['gate-summary'].steps.find((s) => s.env && s.env.GATE_STEP_NAMES);
+  const declared = String(summaryStep.env.GATE_STEP_NAMES)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const envKeys = Object.keys(summaryStep.env)
+    .filter((k) => k.startsWith('GATE_STEP_') && k !== 'GATE_STEP_NAMES')
+    .map((k) => k.slice('GATE_STEP_'.length).toLowerCase());
+
+  const sorted = (a) => [...a].sort();
+  check('GATE_STEP_NAMES 与 STEP_LABELS 的键集完全一致', () =>
+    assert.deepEqual(sorted(declared), sorted(labels)),
+  );
+  check('gate.outputs 覆盖了 STEP_LABELS 里除 format_check 外的每一格', () =>
+    // format_check 来自独立 job（needs.format.result），不是 gate 的 step outcome
+    assert.deepEqual(sorted(outputs), sorted(labels.filter((n) => n !== 'format_check'))),
+  );
+  check('每个 GATE_STEP_* env 都对得上一个声明的名字', () =>
+    assert.deepEqual(sorted(envKeys), sorted(declared)),
+  );
+  check('gate 里每个带 id 的 step 都在 STEP_LABELS 里（加了 step 就必须被数到）', () => {
+    const ids = doc.jobs.gate.steps.map((s) => s.id).filter(Boolean);
+    const missing = ids.filter((id) => !labels.includes(id));
+    assert.deepEqual(missing, [], `这些 step 有 id 却没进三态汇总：${missing.join(', ')}`);
+  });
 }
 
 console.log('③ ★ summarize()：这一天现场实测的真实形状 —— 一条红、后面全灰');

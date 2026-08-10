@@ -93,6 +93,7 @@ export const STEP_LABELS = {
   lint: 'Lint',
   tracked_sources: 'Tracked-sources guard',
   orphan_exports: 'Orphan-exports ratchet',
+  test_ratchet: 'Test-file ratchet',
   ci_scripts_selftest: 'CI scripts self-test',
   test: 'Test',
   mutation_anchors: 'Mutation-spec anchors',

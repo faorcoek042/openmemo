@@ -136,6 +136,7 @@ jobs:
       lint: ${{ steps.lint.outcome }}
       tracked_sources: ${{ steps.tracked_sources.outcome }}
       orphan_exports: ${{ steps.orphan_exports.outcome }}
+      test_ratchet: ${{ steps.test_ratchet.outcome }}
       ci_scripts_selftest: ${{ steps.ci_scripts_selftest.outcome }}
       test: ${{ steps.test.outcome }}
       mutation_anchors: ${{ steps.mutation_anchors.outcome }}
@@ -216,6 +217,40 @@ jobs:
         id: orphan_exports
         run: pnpm check:orphans
 
+      # 「守卫文件不许静默消失」棘轮。
+      #
+      # ── 事故（今天，两次）──────────────────────────────────────────────────
+      #
+      # `31d3ae3` 的提交信息自述「**只改注释，零行为变更**」，实际**静默删除了**
+      # `packages/runtime/src/backends/platformUnsupported.test.ts`，**191 行**
+      # （`7581cff` 恢复）。删除在 `git show --stat` 里明明白白，
+      # **但提交者自己的 diff 里看不到** —— 成因是提交前读的是一份陈旧索引。
+      #
+      # > 在共享树上，**从陈旧索引提交 = 静默删除别人已提交的文件**。
+      #
+      # 纪律拦不住它：那 191 行**是可见的**，只是**没人看**。所以判据不建立在
+      # 提交信息上（这次正是提交信息说了假话），也不建立在"有没有人去看 diff"上 ——
+      # **只看一件事实：在册的那个文件现在还在不在。**
+      #
+      # ── 为什么是独立一步，而不是塞进上一步 ────────────────────────────────
+      #
+      # 它的自检已经在下面的 `CI scripts self-test` 里跑了（`test:ci-scripts` 的一员），
+      # 那条里也确实拿真仓库跑了一次真脚本。但**靠自检当门禁是间接的**：
+      # 哪天有人把自检里那条"真仓库"用例删掉，门禁就**无声地消失**，
+      # 而这正是本仓一直在清的病。所以给它一格自己的、能被三态汇总数到的位置。
+      #
+      # ⚠️ 加 step 不是加 job：#75 的教训是 **job** 拆出去之后下游 `needs` 全 skipped。
+      #    step 留在 `gate` 里，一红就整条停，和 orphan 棘轮完全同构。
+      #
+      # ★ 新增 step 必须同时补三处，否则 `gate-summary` 会**数不到它**（= 又一个
+      #   "没跑和跑了并通过长得一样"）：① 上面 `outputs:` 里的一行、
+      #   ② 下面 gate-summary 的 `GATE_STEP_NAMES`、③ 那里的 `GATE_STEP_*` env。
+      #   `selftest-summarize-gate.mjs` 现在会**逐条比对这三处和 STEP_LABELS 是否一致**，
+      #   漏补哪一处都会当场红。
+      - name: Test-file ratchet (守卫文件不许静默消失)
+        id: test_ratchet
+        run: pnpm check:test-ratchet
+
       # CI 脚本自身的正反向自检（T-144）。放在 test 前面：它比较快，
       # 而且它红的时候意味着 build-backends 那条线是坏的 —— 那是更要紧的信号。
       - name: CI scripts self-test
@@ -283,7 +318,7 @@ jobs:
       - name: 汇总
         env:
           GATE_RESULT: ${{ needs.gate.result }}
-          GATE_STEP_NAMES: format_check,build,typecheck,lint,tracked_sources,orphan_exports,ci_scripts_selftest,test,mutation_anchors
+          GATE_STEP_NAMES: format_check,build,typecheck,lint,tracked_sources,orphan_exports,test_ratchet,ci_scripts_selftest,test,mutation_anchors
           # ★ 来自**独立 job** 的 result（不再是 gate 的 step outcome）。
           #   job result 与 step outcome 用的是同一套词汇（success/failure/skipped/cancelled），
           #   所以 summarize-gate.mjs 一个字都不用改：失败→「失败」、跳过/取消→「未验证」，
@@ -294,6 +329,7 @@ jobs:
           GATE_STEP_LINT: ${{ needs.gate.outputs.lint }}
           GATE_STEP_TRACKED_SOURCES: ${{ needs.gate.outputs.tracked_sources }}
           GATE_STEP_ORPHAN_EXPORTS: ${{ needs.gate.outputs.orphan_exports }}
+          GATE_STEP_TEST_RATCHET: ${{ needs.gate.outputs.test_ratchet }}
           GATE_STEP_CI_SCRIPTS_SELFTEST: ${{ needs.gate.outputs.ci_scripts_selftest }}
           GATE_STEP_TEST: ${{ needs.gate.outputs.test }}
           GATE_STEP_MUTATION_ANCHORS: ${{ needs.gate.outputs.mutation_anchors }}
