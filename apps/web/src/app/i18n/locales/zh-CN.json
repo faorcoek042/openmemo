@@ -894,7 +894,8 @@
     "restartNow": "立即重启",
     "restarting": "正在重启…",
     "restartFailed": "重启失败，请手动重启本地服务",
-    "pipelineSize": "31 MB–4 GB"
+    "pipelineSize": "31 MB–4 GB",
+    "pipelineUnavailable": "这不是安装失败 —— 我们还没有为这台机器的系统/架构提供这些组件的下载：{{items}}。如果你自己把它们装到系统 PATH 上，OpenMemo 会直接用那一份（装好后需要重启 OpenMemo 才会被认到）。"
   },
   "diagnostics": {
     "title": "诊断",
@@ -1046,7 +1047,8 @@
       "multiTab": "多标签页选主不可用，每个标签会各自建立一条连接",
       "tokenizer": "中文分词未启用，中文搜索可能不准",
       "vec": "向量检索未启用，语义搜索暂不可用",
-      "pipeline": "还有 {{count}} 个组件没装 —— 首次启动，这是正常的"
+      "pipeline": "还有 {{count}} 个组件没装 —— 首次启动，这是正常的",
+      "pipelineUnavailable": "本平台目前没有可下载的组件包（{{count}} 项）"
     }
   },
   "jobState": {
@@ -1065,5 +1067,12 @@
     "ffmpeg": "音视频解码器（约 119 MB）",
     "ffprobe": "音视频解码器（约 119 MB）",
     "yt-dlp": "链接下载器"
+  },
+  "componentPlainNames": {
+    "whisper-cli": "语音转文字引擎",
+    "ffmpeg": "音视频解码器",
+    "ffprobe": "音视频解码器",
+    "yt-dlp": "链接下载器",
+    "whisper-vad-speech-segments": "语音分段器"
   }
 }

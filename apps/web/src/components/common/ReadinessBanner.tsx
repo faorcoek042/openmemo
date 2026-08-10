@@ -44,7 +44,15 @@ import { worstTone, type StatusTone } from './statusTone';
 
 interface HealthDegradation {
   db?: { extensions?: { tokenizer?: string; libsimple?: boolean; sqliteVec?: boolean } };
-  pipeline?: { missing?: string[] };
+  pipeline?: {
+    missing?: string[];
+    /**
+     * `missing` 里**本平台根本没有可下载的包**的那一部分（daemon 侧算好，T-199 ①）。
+     * ⚠️ 判据是**目录事实**，不是平台能力推断；⚠️ **不含 `asr-model`**（模型不按平台圈定）。
+     * 缺席 = 老 daemon 或目录还没读到 ⇒ 当成空，走原来的分支。
+     */
+    unavailableOnPlatform?: string[];
+  };
   restartRequired?: { required?: boolean; extensions?: string[]; endpoint?: string };
 }
 
@@ -189,7 +197,62 @@ export function ReadinessBanner() {
       onAction: () => navigate('/runtime'),
     });
   }
-  if (missing.length > 0) {
+  /*
+   * ★ T-199 ①：`missing` 里**装得到**与**装不到**必须分开说。
+   *
+   * daemon 侧已经算好了（health 的 `pipeline.unavailableOnPlatform`）——
+   * 判据是**目录事实**（「有没有一条 providesFiles 含它、且适用于本机的包」），
+   * **不是**对平台能力的推断（`rocm`/`coreml` 在任何平台都是 0 条包，
+   * 反推会在一台真能跑 CoreML 的 Mac 上说假话）。
+   *
+   * ⚠️ 缺席 = 老 daemon 或目录还没读到 ⇒ **当成空**，走原来的分支。
+   * "什么都不说"永远比"说错"安全。
+   */
+  const unavailable = data?.pipeline?.unavailableOnPlatform ?? [];
+  const installable = missing.filter((m) => !unavailable.includes(m));
+
+  if (unavailable.length > 0) {
+    items.push({
+      key: 'pipeline-unavailable',
+      tone: 'critical',
+      /*
+       * ★ 这一档**没有** `actionLabel` / `onAction`，也**不报体积和耗时** —— 都是刻意的：
+       *   · 「去修复」会把人送到 `/runtime`，而那页会把这些包如实渲染成「其它平台」
+       *     —— 我们刚清掉的正是这种"按钮点得动、跳得走、就是到不了能修的那一页"。
+       *   · 报体积/耗时等于承诺一次下载，而这里**根本没有可下的东西**。
+       *
+       * ★ 主语是**我们/目录**，不是这台机器：「我们还没有为…提供下载」，
+       *   不能说成「你的平台不支持」。
+       *
+       * ★ 最后那句「装到系统 PATH 上我们会直接用」是**真的**：
+       *   `RESOLUTION_PLANS`（`pipeline/src/tools.ts`）里五个二进制**都带 `path` 档**
+       *   （ffmpeg/ffprobe/yt-dlp 是 pack→bundle→path，whisper-cli/vad 是 pack→path→bundle）。
+       *   ⚠️ 而「装好后要重启」也是真的、且必须说：热刷新只挂在 SSE 的
+       *   `model.installed`/`backend.installed` 等事件上，**只认"通过产品装"那条路**；
+       *   用户自己 `brew install` 不产生任何事件，daemon 不会重新解析工具链。
+       *   `[已核实]` 界面上**没有**任何一个动作能重算它 —— 诊断页那颗「重新检测」
+       *   只是 refetch，`/api/selfcheck` 读的是缓存的 bundle（`selfcheck.ts:144` 明写
+       *   "不另跑一遍解析"）。所以这里给的是**诚实的重动作**，不是虚假的轻动作。
+       */
+      text: t('readiness.items.pipelineUnavailable', { count: unavailable.length }),
+      hint: t('health.pipelineUnavailable', {
+        /*
+         * ⚠️ 用 `componentPlainNames` 而不是 `componentNames`：后者**名字里自带体积**
+         * （「音视频解码器（约 119 MB）」）—— 那是给"能装"那一档准备的，
+         * 在这一档里等于**从侧门报了一次下载体积**，而这里根本没有可下的东西。
+         * `[测试抓到的]` 不是我预先想到的：守卫断言"不许报体积"当场红了。
+         *
+         * ⚠️ 去重：ffmpeg 与 ffprobe 是同一个显示名，不去重会输出
+         * 「音视频解码器、音视频解码器」。
+         */
+        items: [
+          ...new Set(unavailable.map((m) => t(`componentPlainNames.${m}`, { defaultValue: m }))),
+        ].join('、'),
+      }),
+    });
+  }
+
+  if (installable.length > 0) {
     items.push({
       key: 'pipeline',
       // 缺 ffmpeg / ASR 引擎 = 转写这件事**根本跑不了**，与诊断页的 `fail` 对齐
@@ -210,13 +273,13 @@ export function ReadinessBanner() {
        * 还有一条隐性的：**十分钟的静默等待本身就是另一种"没反应"**，
        * 所以这句话必须把"要几分钟"说出来。
        */
-      text: t('readiness.items.pipeline', { count: missing.length }),
+      text: t('readiness.items.pipeline', { count: installable.length }),
       hint: t('health.pipelineMissing', {
-        items: missing.map((m) => t(`componentNames.${m}`, { defaultValue: m })).join('、'),
+        items: installable.map((m) => t(`componentNames.${m}`, { defaultValue: m })).join('、'),
         size: t('health.pipelineSize'),
       }),
       actionLabel: t('health.fix'),
-      onAction: () => navigate(missing.includes('asr-model') ? '/models' : '/runtime'),
+      onAction: () => navigate(installable.includes('asr-model') ? '/models' : '/runtime'),
     });
   }
 

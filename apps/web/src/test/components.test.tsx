@@ -2006,6 +2006,57 @@ describe('非安全上下文', () => {
     }
   });
 
+  test('★ T-199 ①：装不到的那几个不许承诺下载 —— 也不许给一个到不了的按钮', async () => {
+    /*
+     * 事故形状：Intel Mac 上目录里 0 条包，而横幅对整个 `missing` 一律说
+     * 「点「安装」即可，下载约 31 MB–4 GB，要几分钟」+「去修复」→ `/runtime`，
+     * 而 `/runtime` 会把这些包如实渲染成「其它平台」——
+     * **同一次点击，横幅承诺下载量和耗时，落地页说其它平台。**
+     *
+     * ⚠️ 判据钉**后果**，不钉措辞里的某个词：
+     *   ① 不出现体积/耗时（那是一次不存在的下载的承诺）；
+     *   ② **没有动作按钮**（我们刚清掉的正是"点得动、跳得走、到不了"）；
+     *   ③ 要说出"装到系统里我们会用"**和**"要重启"——
+     *      少了后半句，用户照做却看不到变化，会认定产品坏了。
+     */
+    stubApi({
+      'GET /health': {
+        db: { extensions: { libsimple: true, sqliteVec: true } },
+        pipeline: {
+          missing: ['ffmpeg', 'ffprobe', 'asr-model'],
+          // ★ asr-model **不在**这里：模型不按平台圈定（daemon 侧已排除）
+          unavailableOnPlatform: ['ffmpeg', 'ffprobe'],
+        },
+      },
+    });
+    const r = await render(<ReadinessBanner />);
+    await r.flush();
+    await click(r.container.querySelector('[data-testid="readiness-toggle"]'));
+    await r.flush();
+    const t = text(r.container);
+
+    /*
+     * ⚠️ 断言必须**只看这一档自己那段文字**，不能扫整个容器：
+     * 同屏还有 `asr-model` 那条"能装"的，它**本来就该**报体积和耗时。
+     * 第一版我扫了整个容器，于是断言红在别人的正确文案上 —— 判据本身写错了。
+     */
+    const zone = t.slice(t.indexOf('没有可下载的组件包'));
+    const own = zone.slice(0, zone.indexOf('还有') === -1 ? undefined : zone.indexOf('还有'));
+
+    assert.ok(t.includes('没有可下载的组件包'), `要说清是"没得下"而不是"没装上"：${t}`);
+    assert.ok(
+      own.includes('重启'),
+      '必须说出"装好要重启"——热刷新只认通过产品装的那条路，少这句就是一句半真话',
+    );
+    assert.ok(!/MB|GB/.test(own), `装不到的那档不许报体积（含名字里自带的）：${own}`);
+    assert.ok(!own.includes('几分钟'), `装不到的那档不许报耗时：${own}`);
+    assert.ok(!/音视频解码器.*音视频解码器/.test(own), `ffmpeg/ffprobe 同名要去重：${own}`);
+
+    // ③ asr-model 仍然走"能装"那条（它不按平台圈定），所以那条的动作还在
+    assert.ok(t.includes('模型') || t.includes('ASR'), `asr-model 那条应当照常出现：${t}`);
+    r.unmount();
+  });
+
   test('★ 一切就绪时横幅一个像素都不占 —— 默认状态就该是"什么都不说"', async () => {
     stubApi({
       'GET /health': {

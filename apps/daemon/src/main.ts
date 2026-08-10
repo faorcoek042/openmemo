@@ -45,6 +45,8 @@ import { migrateMediaAssets } from './storage/migrateAssets.js';
 import { SessionStore, authRequired, loadOrCreateToken, type Session } from './http/auth.js';
 import { attachHttpHandlers } from './http/server.js';
 import { modelRoutesFor } from './http/rest/models.js';
+import { currentArch } from './http/rest/hardware.js';
+import { hasInstallablePackProviding } from '@openmemo/runtime';
 import { SseHub } from './http/sse.js';
 import { attachWebSocket } from './http/ws.js';
 import { JobQueue } from './jobs/queue.js';
@@ -495,6 +497,44 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       pipeline: bundle
         ? {
             missing: bundle.missing,
+            /*
+             * ★ `missing` 里**装得到**与**装不到**是两回事（T-199 ①）。
+             *
+             * 实测：`darwin/x64` 目录里 0 条包、`win32/arm64` 0 条、`linux/arm64` 只有
+             * `ytdlp-linux-arm64` 一条。而首屏横幅对整个 `missing` 一律说
+             * 「点「安装」即可，下载约 …，要几分钟」+「去修复」→ `/runtime`，
+             * 而 `/runtime` 会把这些包如实渲染成「其它平台」——
+             * **同一次点击，横幅承诺下载量和耗时，落地页说其它平台。**
+             *
+             * 🔴 **`asr-model` 必须排除**：模型**不按平台圈定**
+             *（`models-whisper.json` 只把可选的 `coreml-encoder` sidecar 按 `os: darwin`
+             * 圈住，ggml 底模没有平台字段，每个平台都能下）。把它算进来，
+             * 一台**没装模型**的 Intel Mac 会被告知「本平台没有可下载的组件包」——
+             * **一句和这条修复正在消灭的那句一模一样形状的新假话。**
+             *
+             * ⚠️ 算在这里而不是 `buildPipeline()` 里：那个函数只拿得到 `paths`，
+             * 给它加载一次目录等于给冷启动热路径加 I/O。这里是**请求时**求值，
+             * 而且目录**已经加载好才用**（`peekBackendCatalog()` 返回 null = 还没读到
+             * ⇒ `'unknown'` ⇒ 什么都不说，保持原样）。
+             */
+            unavailableOnPlatform: bundle.missing.filter((m) => {
+              if (m === 'asr-model') return false;
+              return (
+                hasInstallablePackProviding(
+                  process.platform === 'win32' ? `${m}.exe` : m,
+                  modelRoutesFor(serverDeps).peekBackendCatalog()?.packs ?? null,
+                  {
+                    os:
+                      process.platform === 'win32'
+                        ? 'win32'
+                        : process.platform === 'darwin'
+                          ? 'darwin'
+                          : 'linux',
+                    arch: currentArch(),
+                  },
+                ) === 'no'
+              );
+            }),
             modelPath: bundle.modelPath,
             streamAvailable: bundle.streamAvailable,
             streamModelId: bundle.streamModelId,

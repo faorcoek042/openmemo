@@ -894,7 +894,8 @@
     "restartNow": "Restart now",
     "restarting": "Restarting…",
     "restartFailed": "Restart failed; please restart the local service manually",
-    "pipelineSize": "31 MB–4 GB"
+    "pipelineSize": "31 MB–4 GB",
+    "pipelineUnavailable": "This is not an install failure — we do not ship a download of these components for this machine's OS/architecture yet: {{items}}. If you install them on your system PATH yourself, OpenMemo will use that copy (restart OpenMemo after installing so it gets picked up)."
   },
   "diagnostics": {
     "title": "Diagnostics",
@@ -1046,7 +1047,8 @@
       "multiTab": "Cross-tab leader election unavailable; each tab opens its own connection",
       "tokenizer": "Chinese tokenizer not enabled — Chinese search may be inaccurate",
       "vec": "Vector search not enabled — semantic search unavailable",
-      "pipeline": "{{count}} component(s) still to install — this is normal on first launch"
+      "pipeline": "{{count}} component(s) still to install — this is normal on first launch",
+      "pipelineUnavailable": "No downloadable component package for this platform yet ({{count}})"
     }
   },
   "jobState": {
@@ -1065,5 +1067,12 @@
     "ffmpeg": "media decoder (~119 MB)",
     "ffprobe": "media decoder (~119 MB)",
     "yt-dlp": "link downloader"
+  },
+  "componentPlainNames": {
+    "whisper-cli": "Speech-to-text engine",
+    "ffmpeg": "Audio/video decoder",
+    "ffprobe": "Audio/video decoder",
+    "yt-dlp": "Link downloader",
+    "whisper-vad-speech-segments": "Speech segmenter"
   }
 }
