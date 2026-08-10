@@ -309,11 +309,6 @@
       "note": "zod 校验器：与它对应的端点还没有人调用它做入参校验。"
     },
     {
-      "file": "packages/shared/src/schemas.ts",
-      "name": "validateSearchResponse",
-      "note": "zod 校验器：与它对应的端点还没有人调用它做入参校验。"
-    },
-    {
       "file": "packages/shared/src/ulid.ts",
       "name": "isUlid",
       "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
