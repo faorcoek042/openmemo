@@ -1539,3 +1539,43 @@ D-20 §11.2 随包出厂模型）加的**类型**导出，加了之后没有任�
 本轮**没修**：后端包的名字在 `qk.backends.catalog`（另一份目录、另一条查询），
 接进来是另一份工作量；而且 `features/runtime` 那边正有别的路在作业。
 `jobName.ts` 的形状已经预留好了 —— 再加一个 lookup 即可，**判别不用改**。
+
+### 收尾：后端包那条一模一样的写死（已做，`39c8009`）
+
+**`startPackInstall()` 的产品调用方一共 3 个 —— 数出来的，不是推的：**
+
+| # | 位置 | 入口 |
+| --- | --- | --- |
+| 1 | `backends.ts:464` | 运行时页 |
+| 2 | `models.ts:335` | `/api/models/pull` 传 `kind: 'backend-pack'` |
+| 3 | **`components.ts:158`** | **组件页**装 sqlite-ext / media-tool |
+
+另有 **5 处**在 `installWarmup.test.ts`（:133/:161/:178/:197/:224）——
+那是**测试**调用方，不算进产品入口。
+
+**组件页那条覆盖到了，而且是查过才敢说的**：`components.ts:158` 先
+`state.findCatalogPack(id)`（`state.ts:812-814`，读的正是 `backendCatalog.packs`
+—— 和 `/backends/catalog` 同一个来源）把组件 id 映射回后端包，
+**所以它的 `targetId` 一定在那份目录里**，一份查表把三个入口一起覆盖。
+用例里的夹具用的就是 `libsimple-linux-x64`（sqlite-ext，组件页那一类）。
+
+⚠️ **两份目录没有合并**：模型在 `/models/catalog`（group/variant 两层）、
+后端包在 `/backends/catalog`（平铺一层 `packs[]`），形状与失效时机都不同。
+`jobName.ts` 的**判别逻辑一个字没动** —— 仍然按 `job.type` 结构式分派，
+只是第三个参数从"一个 lookup"变成"按 type 分派的一张表"。
+没有键的类型（`transcribe` / `mindmap`）**天然查不到任何目录**，
+因为它们的 `displayName` 是用户自己的笔记标题。
+
+**daemon 那个写死的值一个字没动**（它是兜底）。
+
+**腿**（沿用上一轮那套，喂服务端形状走真实 `TasksPage`，不手搓 DTO）：
+新增 3 条纯函数 + 4 条渲染。渲染那 4 条钉的是
+「`en` 下渲染英文包名**且没有中文包名**」「中文侧反过来」
+「后端目录没加载时退回 daemon 名**且不摆 pack id**」，
+外加一条**前提自检**（两份夹具名确实不同、中文那份真含汉字）。
+
+**突变 2 次，都指名红在同一条**：
+① 摘掉 `download.backend` 那份 lookup（= **只修一半就交差**）→「后端包·英文界面」红；
+② 让后端 job 去查**模型**目录（两份串门）→ 同一条红。
+
+`pnpm -r test` 0 fail、全仓 build 通过、eslint 分层通过。
