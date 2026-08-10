@@ -214,7 +214,7 @@ export function activeProxySummary(): { mode: string; proxy: string | null } | n
   return { mode: cfg.mode, proxy: redactProxyUrl(url) };
 }
 
-type ProxyHealth = 'ok' | 'unreachable' | 'auth_failed';
+type ProxyHealth = 'ok' | 'unreachable' | 'auth_failed' | 'refused';
 
 const isSocks = (p: string) => p === 'socks5:' || p === 'socks:' || p === 'socks5h:';
 
@@ -318,14 +318,33 @@ async function probeProxy(
       const status = Number(/^HTTP\/\d\.\d (\d{3})/.exec(buf)?.[1] ?? 0);
       if (status === 407) return done('auth_failed');
       if (status >= 200 && status < 300) return done('ok');
-      // Any other status means the proxy answered but refused this tunnel; the proxy is
-      // up, so the fault lies beyond it.
-      return done('ok');
+      /*
+       * Any other status (403 / 502 / 503 / …) means the proxy answered but refused this
+       * specific tunnel. This used to be folded into 'ok' on the theory that "the proxy
+       * replied, so it's alive, and the fault lies beyond it" — but a CONNECT refusal is
+       * commonly the proxy's OWN policy (an enterprise ACL blocking this destination or
+       * port), which is exactly the thing to go fix. Reporting 'ok' here fed
+       * `proxyReachable = true` straight into the UI's "the problem is not your proxy"
+       * verdict for a case where it very much might be. 'refused' keeps that claim honest;
+       * see `proxyReachable`'s computation below for how it stays out of both booleans.
+       */
+      return done('refused');
     });
   });
 }
 
-function classify(err: unknown, proxyLive: boolean | null, viaProxy: boolean): ProxyProbeResult {
+/**
+ * Turn a thrown fetch error into a `ProxyProbeResult`.
+ *
+ * Exported (and re-exported via `index.ts`'s `export *`) so it can be unit-tested
+ * directly against synthetic errors — see `proxy.test.ts`. It was previously
+ * module-private with zero test coverage since the day it was written.
+ */
+export function classify(
+  err: unknown,
+  proxyLive: boolean | null,
+  viaProxy: boolean,
+): ProxyProbeResult {
   const e = err as { cause?: unknown; message?: string; code?: string };
   const cause = (e?.cause ?? e) as { code?: string; message?: string };
   const code = cause?.code ?? e?.code ?? '';
@@ -337,7 +356,28 @@ function classify(err: unknown, proxyLive: boolean | null, viaProxy: boolean): P
   if (code === 'ENOTFOUND' || code === 'EAI_AGAIN')
     return viaProxy ? 'upstream_unreachable' : 'dns_failed';
   if (code === 'ECONNREFUSED' && viaProxy) return 'proxy_unreachable';
-  return 'upstream_unreachable';
+  /*
+   * Nothing above matched: we cannot tell which side is at fault. This used to fall back
+   * to 'upstream_unreachable' — a specific-but-possibly-wrong verdict that tells the user
+   * "the problem is not your proxy" (see `ProxySettingsSection.tsx`'s verdict line) and
+   * sends them down a wasted, orthogonal troubleshooting path (switch mirrors, open a VPN,
+   * wait for "target recovery") when the real cause might be their proxy after all.
+   * `detail` on the probe carries the raw error text, so nothing is lost by admitting we
+   * do not know.
+   *
+   * Deliberately NOT split further: TLS-chain errors (UNABLE_TO_VERIFY_LEAF_SIGNATURE /
+   * SELF_SIGNED_CERT_IN_CHAIN / CERT_HAS_EXPIRED — the shape a corporate MITM proxy
+   * produces) land here too, on purpose. There is no "trust this CA" entry point anywhere
+   * in the product yet (checked: no hit for NODE_EXTRA_CA_CERTS / rejectUnauthorized in
+   * packages/, apps/, scripts/, docs/), so a dedicated `tls_intercepted` state would point
+   * at a remediation that does not exist — the same failure shape `lib/remediation/
+   * routes.ts` warns about in its own file header. That single error code also has several
+   * unrelated real causes (enterprise CA, a genuinely broken target cert, clock skew, an
+   * expired root store), so naming it would just manufacture a different specific-but-
+   * possibly-wrong verdict. Upgrade this only once there is a real user report naming it,
+   * or a CI-reproducible red through a MITM proxy (e.g. mitmproxy) — not on inference alone.
+   */
+  return 'unclassified';
 }
 
 /**
@@ -365,7 +405,17 @@ export async function testProxyConnectivity(
   const health: ProxyHealth | null = sampleProxy
     ? await probeProxy(sampleProxy, timeoutMs, sampleHost)
     : null;
-  const proxyReachable = health === null ? null : health !== 'unreachable';
+  /*
+   * 'refused' is deliberately NOT folded into either boolean. `false` would render as
+   * "the proxy itself is unreachable — check the address/port" (verdictProxyDown), which
+   * is just as wrong as the old `true` was: the proxy answered, it is not down. `true`
+   * would re-enable the "the problem is not your proxy" verdict this whole change exists
+   * to stop making. `null` here means "answered, but we cannot vouch for it either way" —
+   * it routes to the per-probe 'unclassified' short-circuit below and, from there, to
+   * `verdictUnclassified` in the UI.
+   */
+  const proxyReachable =
+    health === null ? null : health === 'unreachable' ? false : health === 'refused' ? null : true;
 
   const dispatcher = new RoutingDispatcher(cfg, env);
   const probes: ProxyProbe[] = [];
@@ -375,9 +425,11 @@ export async function testProxyConnectivity(
       const viaProxy = Boolean(proxyUrl);
       const started = Date.now();
 
-      // Both short-circuits come from the CONNECT handshake, which is the only place the
-      // 407 still exists — by the time undici reports back, it has been flattened into a
-      // generic "Request was cancelled."
+      // All three short-circuits come from the CONNECT handshake, which is the only place
+      // the real status line still exists — by the time undici's own fetch reports back
+      // for the same failure, it has been flattened into a generic "Request was
+      // cancelled." Re-attempting the fetch anyway would just rediscover this same
+      // information through a lossier path.
       if (viaProxy && health === 'unreachable') {
         probes.push({
           target: t.target,
@@ -397,6 +449,17 @@ export async function testProxyConnectivity(
           viaProxy,
           elapsedMs: Date.now() - started,
           detail: `代理 ${redactProxyUrl(proxyUrl)} 拒绝了凭据（407）—— 请检查用户名/密码，不是上游的问题`,
+        });
+        continue;
+      }
+      if (viaProxy && health === 'refused') {
+        probes.push({
+          target: t.target,
+          url: t.url,
+          result: 'unclassified',
+          viaProxy,
+          elapsedMs: Date.now() - started,
+          detail: `代理 ${redactProxyUrl(proxyUrl)} 应答了，但拒绝建立到 ${t.target} 的隧道（CONNECT 非 2xx、非 407）—— 常见于按策略拒绝的企业代理；无法进一步判断问题在代理策略还是目标站`,
         });
         continue;
       }
