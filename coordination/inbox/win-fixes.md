@@ -926,3 +926,78 @@ ISC 那段的版权人是 KFlash/meriyah）。**pop 一下正好把这个订正�
 `git stash list` 只有这一条（无其余条目）；`:10000`、`/root/data-memo`、机器级指针一律没碰；
 工作树里别人的在途文件（`packages/shared/src/hardware.ts`、
 `apps/web/src/lib/catalog/useModelCatalogNames.ts` 等）一个都没动。
+
+---
+
+## [2026-08-10 13:50] 陈旧 stash 已拆 —— `git stash list` 现在是空的
+
+交付: `ff197dc`（PROTOCOL §15-bis 补完，已 push 并 `merge-base --is-ancestor` 复核）
+
+# 第一句：**拆了。第二句：`git stash list` 现在是空的（条目数 = 0）。**
+
+```
+Dropped refs/stash@{0} (12023d03c188cbf8a1878ebe33876d8cce92135e)
+条目数 = 0
+```
+
+## drop 前你要求的两项最后确认（都过了才动的）
+
+| 确认项 | 结果 |
+|---|---|
+| `git stash list` 仍只有这一条 | ✔ 条目数 = 1（**没有冒出第二条**） |
+| `/tmp` 副本还在、内容完整 | ✔ 48 行 / 2153 B，首行 = `/* 临时复现脚本（B11）—— 不提交，跑完删除。 */` |
+| （我自己加的一项）副本与 stash 里那份逐字一致 | ✔ `diff` 无输出 |
+
+## 拆的依据（写清楚，按你的要求）
+
+1. **那个文件自己的第一行** —— 作者本人写下的处置意见：
+   `/* 临时复现脚本（B11）—— 不提交，跑完删除。 */`
+2. 作者已确认 B11 的工作**重做并提交**（`abce462`）
+3. **结论逐字进了 HEAD**：`ErrorBlock.tsx` 注释里的
+   `[实测] jsdom 复现：… FAIL_WORDS 命中 = false`，以及 `role="alert"` / `data-testid="error-block"`
+4. `/tmp/win-fixes/stash-rescue/__scratch_b11.tsx` 留有副本
+
+## 拆完之后的兜底（多留一手，如实记）
+
+`git stash drop` 只是解引用，**对象本身在 gc 之前仍然可达**。我在 drop 前记下了两个 id，
+drop 后立刻复验过它们还在：
+
+```
+stash commit      12023d03c188cbf8a1878ebe33876d8cce92135e   → git cat-file -t = commit ✔
+未跟踪那一档 ^3   0cd3642240eaf43684bc4272058a1a2941e1bbdc   → git show <id>:apps/web/src/test/__scratch_b11.tsx ✔
+```
+
+⚠️ **但这条兜底有时效**（下一次 `git gc` 就没了），**不要拿它当保管方案** ——
+真正的副本是 `/tmp` 那份。写在这里只是为了让"万一还要回头看"这件事在今天成本为零。
+
+---
+
+# §15-bis 已补完（`ff197dc`）
+
+按你说的，把「核对脚本被空集骗过」那一次**单独提成一节**，因为它的形状是整条链条：
+
+> **不可逆动作 ← 需要证据 ← 证据来自一份核对 ← 而那份核对本身可能是假绿。**
+> 链条上任何一环无声失败，最终结果都是"删得很有把握"。
+
+关键那句照你的措辞写进去了：**一个失败时报成通过的检查，比没有检查更危险** ——
+没有检查时人会犹豫，有一份绿的检查时人会直接动手。
+
+同时把范例补完整：**"停下来报"和"最终拆掉"都写了** —— 上一版只写到"报了 Manager"，
+下一个人读到会以为这条纪律的结局就是"永远不拆"。现在两半都在，
+连拆的依据（作者自己的第一行 + 三重佐证）也在。
+
+---
+
+未做/未碰: 没有 `pop`、没有 `apply`；除 `stash@{0}` 外没有其它 stash 条目存在过；
+`:10000`（`ff24098b` / pid 491899）一次都没碰；`/root/data-memo`、机器级指针没碰；
+没 `pkill`；别人在途的文件（`packages/shared/src/hardware.ts`、
+`apps/web/src/lib/catalog/useModelCatalogNames.ts` 等）一个都没动；
+两次提交都带 pathspec、按 hash push 并 `merge-base --is-ancestor` 复核，没用 `--amend`。
+
+需要 Manager 决策: 无。
+
+下一步建议:
+1. `/tmp/win-fixes/stash-rescue/` 那份副本随 runner 生命周期存在；如果哪天要正式留档，
+   该由 `e2e-browser` 那一路决定要不要把它变成一个正式的回归用例（它现在的形态是
+   `console.log` + `assert.ok(true)`，**作为用例是零断言的**，不能直接提交）。
+2. §15 这一族现在有了完整实例，建议下次有人要动 stash 时直接指 §15-bis。
