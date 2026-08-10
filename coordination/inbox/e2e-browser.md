@@ -1449,3 +1449,93 @@ D-20 §11.2 随包出厂模型）加的**类型**导出，加了之后没有任�
 `@openmemo/runtime`**（只有 `apps/daemon` 依赖），为省一个乘号把 Node 侧包拉进浏览器
 包体是错的交易。**要去重，正确的家是 `packages/shared` 或 `time.ts`，不是 `selfTest.ts`。**
 它是打印档、不判红，**我没动它** —— 那是另一条独立的裁决，不该混进"把红收掉"这件事里。
+
+---
+
+## 任务显示名写死中文：收敛成一份实现，语言在**读的那一刻**决定
+
+**已推 `c9bedab`。** 全仓 build 通过、`pnpm -r test` 0 fail、eslint 分层规则通过。
+
+### 渲染点一共 **6 个**（不是 4 个），6 个全部走同一个函数
+
+| # | 位置 | 渲染的是 | 改前有 `targetId` 吗 |
+| --- | --- | --- | --- |
+| 1 | `JobToaster.tsx:384` | `titleFor(toast, …)` 的标题 | **没有**（`Toast` 上被丢掉了） |
+| 2 | `JobToaster.tsx:440` | `ProgressMeter` 的 `aria-label` | **没有** |
+| 3 | `JobList.tsx:117` | 结果链接的文字 | **没有**（`mergeOne()` 丢掉了） |
+| 4 | `JobList.tsx:120` | 无链接时的那个 span | **没有** |
+| 5 | `DownloadRow.tsx:74` | 行标题 | 有 |
+| 6 | `DownloadRow.tsx:133` | `ProgressMeter` 的 `aria-label` | 有 |
+
+⚠️ **`NoteProgressLine` 不是渲染点** —— 它只渲染 step 与百分比。
+`useActiveNoteJob` 确实返回 `displayName`，但**没有任何调用方渲染它**。
+（协调者点名让我先数是对的：候选名单里这一个是假的，而真的多出两个 aria-label。）
+
+**两处上游把 `targetId` 丢了**，所以前端"想本地化也无从查起"：
+`jobToastModel.ts` 的 `Toast`、`features/tasks/api.ts` 的 `MergedJob`。
+各补一个可选字段（流水线 job 没有 `targetId`，**写成可选是有意的** ——
+写成必填会逼着那一侧编一个假值）。
+
+### 分层怎么解的（上一个人卡住的地方）
+
+`JobToaster` 在 `components/common`，eslint（D-05 §3.5, `eslint.config.js:82-99`）
+禁止 `lib/` 与 `components/` 依赖 `features/`。**解法不是开豁免**，
+是把"读目录"这件事**降到 `lib/`**：
+
+- `lib/format/jobName.ts` —— **纯函数**，目录由调用方以 `lookup` 注入，不认识任何 feature；
+- `lib/catalog/useModelCatalogNames.ts` —— **薄 hook**，自己持有一条 `qk.models.catalog` 查询。
+  **先例已经有一个**：`components/common/AsrModelPicker.tsx:81-91` 就是这么干的。
+  key 前缀与 `features/models` 相同，所以两边共享缓存与失效。
+
+与 `stepLabel.ts` 完全同形：**一份实现，6 个渲染点共用。**
+
+### 兜底时显示什么
+
+**一律显示 daemon 那个 `displayName`**，三种情形都不是异常、是正常路径：
+
+| 情形 | 显示 | 为什么 |
+| --- | --- | --- |
+| 目录还没加载 / 加载失败 | daemon 的名字 | **首帧必然如此**，不能闪空 |
+| `targetId` 不在目录里 | daemon 的名字 | 本地导入的 id 形如 `asr/imported-<文件名>`（`models.ts:836`），**永远不会在目录里**，而 daemon 给的正是**文件名** —— 恰恰是该显示的东西 |
+| 后端包 `download.backend` | daemon 的名字 | 它在**另一份目录**里（`qk.backends.catalog`） |
+
+**绝不返回空串**；只有 daemon 的名字**也**空了，才退到 slug（"比空白强"）。
+判别用 `job.type` 做**结构式**区分，不去嗅名字长什么样 ——
+流水线 job 的 `displayName` 是**用户自己的笔记标题**，本地化它是错的。
+
+**没有碰 daemon 那个写死的值**（协调者点名不许动）—— 它是兜底。
+
+### 腿钉的是什么
+
+- **纯函数层**（`lib/format/jobName.test.ts`，13 条）：中英各一条 + `zh`/`zh-TW` 前缀
+  + 三条兜底 + "目录认识但两份名字都空" + "什么都没有也不许抛异常"。
+- **渲染层**（`components.test.tsx`，4 条）：`en` 下渲染出英文名**且没有中文名**，
+  `zh-CN` 下反过来，目录拿不到时退回 daemon 名**且不摆 slug**。
+  **不用关键词匹配**（那会惩罚好文案），用的是"目录里两份名字互不相同"这个结构。
+- **防恒真**：先断言"这一行真的渲染出来了"，否则"没看到中文"会被"压根没渲染"白白满足；
+  另有一条**前提自检**钉住中英两份夹具确实不同、中文那份真的含汉字
+  （本仓 `components.test.tsx:4124` 记过这个教训：桩全是 ASCII 时缺陷测不出来）。
+
+**突变验证 2 次，都指名红在哪条**：
+① 渲染点改回 `job.displayName` → 「英文界面」红；
+② `mergeOne()` 不再带 `targetId` → 「英文界面」红。
+
+### ⚠️ 我第一版的腿是假的，记下来
+
+第一版我直接 `<JobList jobs={[手搓的 MergedJob]}/>`。**突变 ② 当时全绿** ——
+因为手搓 `MergedJob` **正好绕过 `mergeOne()` 那一跳**，而那正是丢 `targetId` 的地方。
+改成喂**服务端形状**的 `/jobs` 走 `TasksPage` 之后，两个突变都咬得住。
+
+⚠️ **这条规矩本文件 `T-192` 那一族早就写过**（`components.test.tsx:9026`：
+「不能直接 `<JobList jobs={[手搓的 MergedJob]}/>` —— bug 就在 `mergeOne` 那一跳」）。
+**仓库里已经有的教训，我又踩了一遍**；是突变验证把它照出来的，不是我读到了那句话。
+
+### 同族还有一条（没动，报给协调者）
+
+**后端包是同一个缺陷**：`apps/daemon/src/http/rest/backends.ts:193-199`
+`displayName: pack.displayNameZh` —— 一模一样的写死。
+同一个函数（`startPackInstall`）被 `backends.ts:464`、`models.ts:335`、
+**`components.ts:158`（组件页的 sqlite-ext / media-tool 安装也走这里）** 三处调用。
+本轮**没修**：后端包的名字在 `qk.backends.catalog`（另一份目录、另一条查询），
+接进来是另一份工作量；而且 `features/runtime` 那边正有别的路在作业。
+`jobName.ts` 的形状已经预留好了 —— 再加一个 lookup 即可，**判别不用改**。
