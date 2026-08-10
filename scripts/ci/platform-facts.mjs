@@ -33,6 +33,7 @@ import {
   linkSync,
   rmSync,
   mkdirSync,
+  readdirSync,
   cpSync,
   accessSync,
   constants,
@@ -200,6 +201,80 @@ for (const [bin, args] of [
     `exit=${r2.status}`,
     ((r2.stdout || '') + (r2.stderr || '')).replace(/\r?\n/g, ' | ').trim(),
   );
+}
+
+// ── 9. GPU 枚举：**advisory 那一层在这个平台上到底返回什么**（T-195）─────────────
+//
+// 起因：用户真机 win32/x64 10.0.26200，AMD Ryzen 7 7840HS **w/ Radeon 780M Graphics**，
+// 硬件卡写着「未检测到可用 GPU」。三种可能被压成了同一句话：
+//   ① 真的没有 GPU  ② 有 GPU 但我们支持不了  ③ **我们根本没查到**
+// 而本机（开发容器）只有 Linux、没有显卡，`gpu.ts` 里 Windows 那一段的抬头就写着
+// `UNVERIFIED — no Windows machine available`。这一节就是去把它变成事实。
+//
+// ⚠️ **CI 的 Windows runner 大概率也没有真 GPU** —— 它是「真的没有」那一档的**对照组**，
+//    能证明的是「这条命令在 win32 上到底跑不跑得起来、返回什么形状」，
+//    **不能**拿它冒充用户那台有 780M 的机器。
+{
+  if (process.platform === 'win32') {
+    const ps = spawnSync(
+      'powershell',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        'Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM,DriverVersion,PNPDeviceID | ConvertTo-Json -Compress',
+      ],
+      { encoding: 'utf8', timeout: 20000 },
+    );
+    // 原文照抄，不解析 —— 解析器对不对是另一回事，先把**真实返回值**留在日志里
+    fact(
+      '9.Get-CimInstance Win32_VideoController',
+      `exit=${ps.status}`,
+      ((ps.stdout || '') + (ps.stderr || '')).replace(/\r?\n/g, ' | ').slice(0, 900).trim() ||
+        '(empty)',
+    );
+    // 单个适配器时 CIM 返回**对象**而不是数组 —— 我们的解析器靠 `Array.isArray` 兜这一层，
+    // 这条把"到底是哪一种"记下来，免得又靠推理。
+    const t = (ps.stdout || '').trim();
+    fact(
+      '9.CIM JSON top-level',
+      t.startsWith('[') ? 'array' : t.startsWith('{') ? 'object' : 'neither',
+    );
+    const smi = spawnSync('nvidia-smi', ['--query-gpu=name', '--format=csv,noheader'], {
+      encoding: 'utf8',
+      timeout: 20000,
+    });
+    fact(
+      '9.nvidia-smi',
+      `exit=${smi.status ?? 'spawn-failed'}`,
+      (smi.stdout || smi.error?.message || '').trim().slice(0, 200),
+    );
+  } else if (process.platform === 'linux') {
+    let cards;
+    try {
+      cards =
+        readdirSync('/sys/class/drm')
+          .filter((d) => /^card\d+$/.test(d))
+          .join(',') || '(none)';
+    } catch (e) {
+      cards = `unreadable: ${e.code ?? e.message}`;
+    }
+    fact('9./sys/class/drm cards', cards);
+  } else {
+    const sp = spawnSync(
+      'system_profiler',
+      ['-json', '-detailLevel', 'mini', 'SPDisplaysDataType'],
+      {
+        encoding: 'utf8',
+        timeout: 20000,
+      },
+    );
+    fact(
+      '9.system_profiler SPDisplays',
+      `exit=${sp.status}`,
+      (sp.stdout || '').replace(/\r?\n/g, ' ').slice(0, 400).trim(),
+    );
+  }
 }
 
 rmSync(ROOT, { recursive: true, force: true });
