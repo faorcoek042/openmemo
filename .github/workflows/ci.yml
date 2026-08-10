@@ -192,6 +192,7 @@ jobs:
     #   一个 step 没跑到，`steps.<id>.outcome` 就是 GitHub 自己给出的 `skipped`，
     #   这里原样透传，不代表 gate 允许它们在失败后继续跑。
     outputs:
+      install: ${{ steps.install.outcome }}
       build: ${{ steps.build.outcome }}
       typecheck: ${{ steps.typecheck.outcome }}
       lint: ${{ steps.lint.outcome }}
@@ -228,24 +229,56 @@ jobs:
       #   —— 记在这里是因为**一条描述得很具体的错注释，比没有注释更能误导人**：
       #      它会让下一个想删依赖的人以为"测试要用，动不得"。
       - name: Install
+        id: install
         run: pnpm install --frozen-lockfile
 
+      # ── 为什么下面每一步都带 `if:` —— #75 在这一层的转世 ──────────────────────
+      #
+      # `[实测]` run 31415258130：**一条 lint 红，后面 7 道守卫全部 skipped。**
+      # 跟 #75 是同一个形状（那次是 Format check 红 → 下游 8 个 job 全 skipped），
+      # 只是从 job 层搬到了 step 层。
+      #
+      # ★ 判据不是"全都加 always() 了事"，而是**逐步问一句：
+      #   前面那步失败，这步是不是真的失去意义了？**
+      #   `[实测]` 在一个**没有跑过 build** 的干净 clone 里逐个跑（/tmp/dep-probe）：
+      #
+      #     check:sources / check:orphans / check:test-ratchet / check:locale  → 全部 exit 0
+      #     tsc -b                                                            → exit 0（它自己会编）
+      #     eslint .                                                          → 正常出结论
+      #     test:ci-scripts   → exit 1「加载 @openmemo/shared/dist 失败」  ← **真依赖 build**
+      #     mutation --anchors-only → exit 1「锚点失效」（读 dist/.test-out）← **真依赖 build**
+      #     pnpm -r test      → 每个包的 test 脚本先比 src/dist 数量，缺 dist 直接抛
+      #                          「test discovery broken …先 pnpm build:safe」← **真依赖 build**
+      #
+      # 所以：**6 步只是排在后面（假依赖），3 步是真依赖**。真依赖那几步跳过是**诚实的**，
+      # 假依赖那几步跳过是**信息损失** —— 那正是这次要修的。
+      #
+      # ⚠️ 用 `!cancelled()` 而不是 `always()`：
+      #   ① `always()` 在 run 被取消时还会跑，纯属浪费（我们现在按 SHA 分组，取消变少但仍存在）；
+      #   ② `lint-workflows.mjs` 明确禁 `always()`，那条禁令针对的是**盖住失败**。
+      # ★ 这里**没有**盖住任何失败：**没有任何一步带 `continue-on-error`**，
+      #   失败的那一步照样把整个 job 判红。加 `if:` 只改变"别的步骤要不要跑"，
+      #   **不改变"红不红"**。两者的区别已写进 lint-workflows 的那条断言里。
       - name: Build (workspace packages)
         id: build
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm build:safe
 
       - name: Typecheck
         id: typecheck
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm typecheck
 
       - name: Lint
         id: lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm lint
 
       # 源码目录被 .gitignore 误伤的防线（真实事故：11 个源文件从未进过版本库，
       # 且 Tailwind 因此漏扫了整个目录）。它用 POSIX `find`，在 Linux runner 上没问题。
       - name: Tracked-sources guard
         id: tracked_sources
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm check:sources
 
       # 「零调用方导出」棘轮（T-157 立，**T-169 才真正接进 CI**）。
@@ -277,6 +310,7 @@ jobs:
       #   `coordination/inbox/format-debt.md`：六个成员今天全部有自动调用方。
       - name: Orphan-exports ratchet
         id: orphan_exports
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm check:orphans
 
       # 「守卫文件不许静默消失」棘轮。
@@ -327,6 +361,7 @@ jobs:
       #   经常为合法情况亮的灯（那正是本轮把「新增未登记」降级的同一条判据）。
       - name: Test-file ratchet (守卫文件不许静默消失)
         id: test_ratchet
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         env:
           # push 用上一个 master SHA；PR 用目标分支的 base。取不到就是空串。
           BASE_SHA: ${{ github.event.before || github.event.pull_request.base.sha }}
@@ -354,16 +389,21 @@ jobs:
       #   ③ 合法 JSON + key 数地板 —— 直接对着那个 **0 字节中间态**。
       - name: Locale key guard (翻译 key 不许被静默丢掉)
         id: locale_ratchet
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm check:locale
 
       # CI 脚本自身的正反向自检（T-144）。放在 test 前面：它比较快，
       # 而且它红的时候意味着 build-backends 那条线是坏的 —— 那是更要紧的信号。
+      # ↓ 这三步是**真依赖**（实测：没 build 就直接抛「先 pnpm build:safe」），
+      #   所以它们跳过是**诚实的** —— 不该硬拉起来跑一个注定失败的假红。
       - name: CI scripts self-test
         id: ci_scripts_selftest
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: pnpm test:ci-scripts
 
       - name: Test
         id: test
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: pnpm -r test
 
       # ★ 变异规格的**锚点体检**（秒级，实测 0.086s）。
@@ -380,8 +420,12 @@ jobs:
       # 为什么值得占门禁一格：`E1-state-dropped` 的锚点在 T-151 ⑥ 那次重构里失配，
       # 从此**什么都没测**，而没有任何东西会说出来 —— 因为唯一会说出来的那一档没人跑。
       # 这一步 0.086 秒，本来能在那天当场抓住它。
+      # 真依赖 build **和** Test：18 条锚点里有 6 条钉在 `apps/web/.test-out/**`，
+      # 而那个目录是 `pnpm -r test` 里 web 的 test 脚本编出来的。Test 没跑成 ⇒
+      # 锚点必然对着空气 ⇒ 那是**假红**，跳过才诚实（汇总里会显示为「未验证」）。
       - name: Mutation-spec anchors (只查锚点在不在 ≠ 规格还有牙齿)
         id: mutation_anchors
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.test.outcome == 'success' }}
         run: node scripts/mutation-check.mjs --anchors-only
 
       # ★ 不加 `if: always()`、不加 `continue-on-error`。
@@ -423,12 +467,13 @@ jobs:
       - name: 汇总
         env:
           GATE_RESULT: ${{ needs.gate.result }}
-          GATE_STEP_NAMES: format_check,build,typecheck,lint,tracked_sources,orphan_exports,test_ratchet,locale_ratchet,ci_scripts_selftest,test,mutation_anchors
+          GATE_STEP_NAMES: format_check,install,build,typecheck,lint,tracked_sources,orphan_exports,test_ratchet,locale_ratchet,ci_scripts_selftest,test,mutation_anchors
           # ★ 来自**独立 job** 的 result（不再是 gate 的 step outcome）。
           #   job result 与 step outcome 用的是同一套词汇（success/failure/skipped/cancelled），
           #   所以 summarize-gate.mjs 一个字都不用改：失败→「失败」、跳过/取消→「未验证」，
           #   两者都会让 allPass 为假并令这一步非零退出。
           GATE_STEP_FORMAT_CHECK: ${{ needs.format.result }}
+          GATE_STEP_INSTALL: ${{ needs.gate.outputs.install }}
           GATE_STEP_BUILD: ${{ needs.gate.outputs.build }}
           GATE_STEP_TYPECHECK: ${{ needs.gate.outputs.typecheck }}
           GATE_STEP_LINT: ${{ needs.gate.outputs.lint }}

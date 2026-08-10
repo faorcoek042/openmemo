@@ -184,13 +184,90 @@ for (const file of files.sort()) {
           step?.['continue-on-error'] !== true,
           `${where}[${i}]: continue-on-error: true —— 门禁步骤失败必须变红`,
         );
+        /*
+         * ⚠️ 这条只禁 `always()`，**不禁** `!cancelled()`。两者不是一回事：
+         *
+         * - `continue-on-error: true` → **真的**盖住失败（上面那条禁死它）。
+         * - step 上的 `if:` → **盖不住任何东西**：失败的那一步照样把 job 判红，
+         *   `if:` 只决定"别的步骤要不要跑"。
+         * - `always()` 连**被取消**时也跑，纯浪费，且语义上像在对抗取消 —— 仍然禁。
+         * - `!cancelled()` 是被认可的写法：前面挂了后面照常出结论，取消时老实停。
+         *
+         * 判据：**"失败要不要变红"和"别的检查要不要跑"是两件事**，
+         * 早先这条断言的措辞把它们混成一件，代价是一条 lint 红能静默关掉 7 道守卫。
+         */
         must(
           !/always\s*\(\s*\)/.test(String(step?.if ?? '')),
-          `${where}[${i}]: step 上有 always() —— 前面挂了它还跑，等于把失败盖住`,
+          `${where}[${i}]: step 上有 always() —— 取消时也会跑。要"前面挂了也照常出结论"请用 ` +
+            `\`if: \${{ !cancelled() && … }}\`（它不会盖住失败：没有 continue-on-error，红照样红）`,
         );
       }
     }
   }
+}
+
+/* ── ci.yml 的 gate：一条红不许静默关掉后面的守卫 ──────────────────────────────
+ *
+ * 事故 `[实测]` run 31415258130：**一条 lint 红，后面 7 道守卫全部 skipped。**
+ * 这是 #75 的转世 —— 那次是 Format check 红 → 下游 8 个 job 全 skipped，
+ * 我们把它拆成独立 job 治好了 job 层；**同一个形状在 step 层原封不动地活着。**
+ *
+ * 判据不是"全加 always() 了事"，而是**逐步问：前面挂了，这步是不是真的失去意义？**
+ * 实测（没跑 build 的干净 clone）：6 步是**假依赖**（照样能出结论），
+ * 3 步是**真依赖**（缺 dist 直接抛「先 pnpm build:safe」）。
+ *
+ * 这条断言钉的是**假依赖那几步必须带条件** —— 少一个，它就会在下一条红里
+ * 重新变回 skipped，而 skipped **不是 passed**。
+ */
+{
+  const ci = parse(await readFile(join(WF_DIR, 'ci.yml'), 'utf8'));
+  const steps = ci.jobs?.gate?.steps ?? [];
+  const byId = new Map(steps.filter((s) => s?.id).map((s) => [s.id, s]));
+
+  // 假依赖：只要 install 成功就该跑，前面谁红都不影响它们的结论
+  for (const id of [
+    'build',
+    'typecheck',
+    'lint',
+    'tracked_sources',
+    'orphan_exports',
+    'test_ratchet',
+    'locale_ratchet',
+  ]) {
+    const s = byId.get(id);
+    must(!!s, `ci.yml: gate 里找不到 \`id: ${id}\` 的 step`);
+    must(
+      /!\s*cancelled\s*\(\s*\)/.test(String(s?.if ?? '')),
+      `ci.yml: gate 的 \`${id}\` 少了 \`if: \${{ !cancelled() && … }}\` —— ` +
+        '前面随便哪一步红，它就会被静默 skip。实测过一次：一条 lint 红关掉了 7 道守卫，' +
+        '而 **skipped 不是 passed**',
+    );
+    must(
+      /steps\.install\.outcome\s*==\s*'success'/.test(String(s?.if ?? '')),
+      `ci.yml: gate 的 \`${id}\` 应当只在 install 成功时跑（install 是唯一的真依赖）`,
+    );
+  }
+
+  // 真依赖：跳过是诚实的，但必须写明依赖谁，不能是"恰好排在后面"
+  for (const [id, dep] of [
+    ['ci_scripts_selftest', 'build'],
+    ['test', 'build'],
+    ['mutation_anchors', 'build'],
+  ]) {
+    const s = byId.get(id);
+    must(!!s, `ci.yml: gate 里找不到 \`id: ${id}\` 的 step`);
+    must(
+      new RegExp(`steps\\.${dep}\\.outcome\\s*==\\s*'success'`).test(String(s?.if ?? '')),
+      `ci.yml: gate 的 \`${id}\` 真依赖 \`${dep}\`，必须把这条依赖**写进 if:**，` +
+        '而不是靠"排在它后面"—— 靠顺序的依赖在重排时会无声地失效',
+    );
+  }
+
+  must(
+    /steps\.test\.outcome\s*==\s*'success'/.test(String(byId.get('mutation_anchors')?.if ?? '')),
+    'ci.yml: mutation_anchors 还依赖 `test`（18 条锚点里有 6 条钉在 apps/web/.test-out/**，' +
+      '那是 pnpm -r test 编出来的）—— Test 没跑成时它必然假红，应当跳过',
+  );
 }
 
 /* ── 针对 T-144 改动的定点断言（钉结构，不钉措辞） ── */

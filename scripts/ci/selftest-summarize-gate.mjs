@@ -125,6 +125,47 @@ console.log('③ ★ summarize()：这一天现场实测的真实形状 —— �
   check('allPass === false', () => assert.equal(allPass, false));
 }
 
+/**
+ * ★ 修好之后**应该**长的样子：Lint 红，但后面那几道互不依赖的守卫**照常出结论**。
+ *
+ * 这一条钉的是那次事故的反面。`[实测]` run 31415258130 修复前：
+ * 一条 lint 红 → 后面 7 道守卫全 skipped → 汇总只能说「未验证 7」。
+ * 修复后它们各自带 `if: !cancelled() && steps.install.outcome == 'success'`，
+ * 于是每一格显示的是**它自己的结论**，而不是继承 Lint 的。
+ *
+ * 判据有两半，缺一不可：
+ * ① 那几格**不再是「未验证」**（它们真的跑了）；
+ * ② 整体**仍然不算通过**（Lint 红就是红）——
+ *    "让别的检查跑完"绝不能顺带把"失败"洗掉。
+ */
+console.log('③-bis ★ 修好之后：Lint 红，其余守卫各自出结论（不是继承 Lint）');
+{
+  const entries = [
+    { name: 'format_check', label: STEP_LABELS.format_check, outcome: 'success' },
+    { name: 'build', label: STEP_LABELS.build, outcome: 'success' },
+    { name: 'typecheck', label: STEP_LABELS.typecheck, outcome: 'success' },
+    { name: 'lint', label: STEP_LABELS.lint, outcome: 'failure' },
+    { name: 'tracked_sources', label: STEP_LABELS.tracked_sources, outcome: 'success' },
+    { name: 'orphan_exports', label: STEP_LABELS.orphan_exports, outcome: 'success' },
+    { name: 'test_ratchet', label: STEP_LABELS.test_ratchet, outcome: 'success' },
+    { name: 'locale_ratchet', label: STEP_LABELS.locale_ratchet, outcome: 'success' },
+    { name: 'ci_scripts_selftest', label: STEP_LABELS.ci_scripts_selftest, outcome: 'success' },
+    { name: 'test', label: STEP_LABELS.test, outcome: 'success' },
+    { name: 'mutation_anchors', label: STEP_LABELS.mutation_anchors, outcome: 'success' },
+  ];
+  const { rows, counts, allPass } = summarize('failure', entries);
+  check('未验证 0 —— 守卫真的跑了，不再被一条 lint 红静默关掉', () =>
+    assert.equal(counts['未验证'], 0),
+  );
+  check('失败仍然是 1（Lint）—— 让别的检查跑完不许把失败洗掉', () =>
+    assert.equal(counts['失败'], 1),
+  );
+  check('allPass 仍然为 false', () => assert.equal(allPass, false));
+  check('locale 守卫那一格显示的是它自己的结论（通过），不是继承 Lint 的失败', () =>
+    assert.equal(rows.find((r) => r.name === 'locale_ratchet').state, '通过'),
+  );
+}
+
 console.log('④ ★ summarize()：gate 整体 result 是 success，但某个 output 传丢了');
 {
   // 这一条防的是"字段名打错"那类事故（lint-workflows.mjs 对 steps.<id>.outputs.*

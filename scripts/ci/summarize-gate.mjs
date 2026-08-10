@@ -88,6 +88,7 @@ export function summarize(gateResult, entries) {
 /** 每个 step id 的人类可读标签，顺序即 `ci.yml` 里 `gate` job 的执行顺序。 */
 export const STEP_LABELS = {
   format_check: 'Format check',
+  install: 'Install',
   build: 'Build (workspace packages)',
   typecheck: 'Typecheck',
   lint: 'Lint',
