@@ -215,6 +215,30 @@ export interface InstalledBackendPack {
   verifiedAt: string | null;
   integrity: 'ok' | 'unverified' | 'corrupt' | 'missing_files';
   /**
+   * 这份东西**是怎么到这台机器上的**。
+   *
+   * ## 为什么必须与 `downloaded` 分开（T-196）
+   *
+   * `[用户真机 v0.7.0 Windows]` 组件页对**包里就带着的** ffmpeg 显示「可安装 · 145 MB」——
+   * 因为对账只扫 `ArtifactStore`（按归档文件名 + sha256 认），而随包出厂那份在
+   * `runtime/probe/ffmpeg.exe`：**既不在那个目录，也不是归档形态**，永远对不上。
+   *
+   * 补记录能让页面说对，但**不能顺手也说"完好"**：内置的是**解包后的单个二进制**，
+   * 清单里的 sha256 是**归档**的，两者本来就对不上 —— 我们没有做过逐字节校验。
+   * 所以这一格存在，是为了让"随包出厂、未逐字节校验"成为**第三种状态**，
+   * 而不是复用 `integrity: 'ok'`（那就是又一次"报告一件没发生的事"）。
+   *
+   * 约定（`bundled` 那一档）：
+   *   · `integrity` 必须是 `'unverified'`，**不许是 `'ok'`**；
+   *   · `verifiedAt` 必须是 `null`（没验过就不许有时间戳）；
+   *   · `files[].sha256` 是**空串** = 未计算（没有可比对的期望值，算了也证明不了什么）；
+   *   · `engineVersion` 取自包自身的元数据，**取不到就是 `'unknown'`**，
+   *     绝不默认成目录里那个版本号。
+   *
+   * **可选**：老记录没有这个字段，缺省语义是 `'downloaded'`（它们确实是下载装的）。
+   */
+  source?: 'downloaded' | 'bundled';
+  /**
    * Copy of {@link BackendPack.priority} taken at install time. OPTIONAL because records
    * written before T-162 do not have it.
    *
