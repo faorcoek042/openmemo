@@ -817,26 +817,36 @@ components:
             $ref: '#/components/schemas/Backend'
 
     BackendStatus:
+      # ★★ T-194: a DISCRIMINATED UNION, not four independent booleans.
+      #
+      # The invariant "available: true implies probed: true" used to live only in prose
+      # (here and in hardware.ts) with a single runtime assertion guarding it, so
+      # {available: true, probed: false} was constructible and nothing complained until
+      # that one test ran — and it only covered objects the producer made, never a mock.
+      # Now it is unrepresentable: the available=true branch pins probed to true.
+      #
+      # Second thing pinned here: available=false MUST carry unavailableReason.
+      # "Unavailable with no reason given" is the shape this repo keeps cleaning up.
+      oneOf:
+        - $ref: '#/components/schemas/BackendStatusAvailable'
+        - $ref: '#/components/schemas/BackendStatusUnavailable'
+      discriminator:
+        propertyName: available
+
+    BackendStatusCommonProps:
       type: object
-      required: [id, available, installed, probed, version, deviceIndex]
+      required: [id, installed, version, deviceIndex]
       properties:
         id:
           $ref: '#/components/schemas/Backend'
-        available:
-          type: boolean
-          description: Device enumeration succeeded and returned >= 1 device. NOT a file-existence check.
         installed:
           type: boolean
-          description: The backend package is present on disk and loadable.
-        probed:
-          type: boolean
-          description: >-
-            Did this detection run actually load this backend's library? backendDir is
-            single-valued, so one probe run scans exactly one pack directory and every
-            other installed pack is absent from the result. probed=false means NO
-            measurement was taken: available=false then says nothing about the driver or
-            the hardware, and unavailableReason must not claim otherwise. probed=true with
-            available=false is a real verdict. available=true always implies probed=true.
+          # ⚠️ Corrected per §13 (was "present on disk and loadable" — a bigger claim than
+          # the producer makes). manager.ts computes it as installedBackends.has(id):
+          # SET MEMBERSHIP ONLY. Nothing checks the library actually loads; a pack with a
+          # corrupt .so still reports installed: true. Loadability is a separate axis and
+          # is NOT this field and NOT `probed` either (a present-but-dlopen-failing library
+          # still counts as probed). hardware.ts was fixed earlier; this copy had not been.
         version:
           type: [string, 'null']
         deviceIndex:
@@ -845,9 +855,48 @@ components:
         isa:
           type: [string, 'null']
           description: For the CPU backend, which ISA build is active, e.g. "avx2".
-        unavailableReason:
-          type: [string, 'null']
-          description: Populated when available=false so the UI can explain why.
+
+    BackendStatusAvailable:
+      allOf:
+        - $ref: '#/components/schemas/BackendStatusCommonProps'
+        - type: object
+          required: [available, probed]
+          properties:
+            available:
+              const: true
+              description: Device enumeration succeeded and returned >= 1 device. NOT a file-existence check.
+            probed:
+              const: true
+              description: >-
+                Enumerating a device is itself proof the library loaded, so this can only
+                be true here. Pinned by the type rather than by a comment plus one runtime
+                assertion.
+            unavailableReason:
+              type: 'null'
+              description: An available backend must not carry a reason for being unavailable.
+
+    BackendStatusUnavailable:
+      allOf:
+        - $ref: '#/components/schemas/BackendStatusCommonProps'
+        - type: object
+          required: [available, probed, unavailableReason]
+          properties:
+            available:
+              const: false
+            probed:
+              type: boolean
+              description: >-
+                Did this detection run actually load this backend's library? backendDir is
+                single-valued, so one probe run scans exactly one pack directory and every
+                other installed pack is absent from the result. probed=false means NO
+                measurement was taken: available=false then says nothing about the driver
+                or the hardware, and unavailableReason must not claim otherwise.
+                probed=true with available=false is a real verdict.
+            unavailableReason:
+              type: string
+              description: >-
+                REQUIRED here: saying "unavailable" without saying why is the shape this
+                repo keeps cleaning up.
 
     DiskInfo:
       type: object

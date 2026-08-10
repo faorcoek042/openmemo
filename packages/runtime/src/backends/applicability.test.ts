@@ -42,23 +42,37 @@ const pack = (backend: Backend) => ({
   arch: 'x64',
 });
 
+/**
+ * 覆盖项的形状 —— **本身也是判别联合**（T-194）。
+ *
+ * 夹具此前是 `Partial<BackendStatus>`，于是可以写出
+ * `{ available: true, probed: false }` 这种生产者永远产不出来的对象，
+ * 而被测函数照单全收。**一个能构造非法输入的夹具，验的是另一个产品。**
+ */
+type StatusOverride =
+  | { available: true; probed: true; installed?: boolean; unavailableReason?: null }
+  | { available: false; probed: boolean; installed?: boolean; unavailableReason: string };
+
 /** 一份真实形状的 BackendStatus 表：CPU 已装可用，其余都"没装所以枚举不到"。 */
-function statuses(
-  overrides: Partial<Record<Backend, Partial<BackendStatus>>> = {},
-): BackendStatus[] {
+function statuses(overrides: Partial<Record<Backend, StatusOverride>> = {}): BackendStatus[] {
   const all: Backend[] = ['cuda', 'vulkan', 'rocm', 'metal', 'coreml', 'cpu'];
-  return all.map((id) => {
-    const base: BackendStatus = {
-      id,
-      available: id === 'cpu',
-      installed: id === 'cpu',
-      // 没装的包，其 ggml 库不在被扫描的目录里 → 探针不可能加载过它（T-168）
-      probed: id === 'cpu',
-      version: null,
-      deviceIndex: null,
-      unavailableReason: id === 'cpu' ? null : 'backend package not installed',
-    };
-    return { ...base, ...(overrides[id] ?? {}) };
+  return all.map((id): BackendStatus => {
+    const common = { id, installed: id === 'cpu', version: null, deviceIndex: null };
+    const ov = overrides[id];
+    if (ov !== undefined) {
+      return ov.available
+        ? { ...common, ...ov, available: true, probed: true }
+        : { ...common, ...ov, available: false };
+    }
+    return id === 'cpu'
+      ? { ...common, available: true, probed: true }
+      : {
+          ...common,
+          available: false,
+          // 没装的包，其 ggml 库不在被扫描的目录里 → 探针不可能加载过它（T-168）
+          probed: false,
+          unavailableReason: 'backend package not installed',
+        };
   });
 }
 
@@ -342,13 +356,23 @@ describe('L2 适用性：解开"要先装才能被发现"的环', () => {
       const backends = probeFailed(
         'installed but enumerated no devices (driver missing or too old)',
       );
-      const withVerdict = backends.map((b) =>
-        b.id === 'cpu'
-          ? { ...b, available: true, installed: true, probed: true, unavailableReason: null }
-          : b.id === 'vulkan'
-            ? { ...b, installed: true, probed: true }
-            : b,
-      );
+      const withVerdict: BackendStatus[] = backends.map((b): BackendStatus => {
+        /*
+         * ⚠️ 翻成 available 必须**同时把不可用理由去掉** —— 类型逼出来的：
+         * 一个"可用"的后端还挂着一句"为什么不可用"，是个自相矛盾的对象。
+         * 旧写法 `{ ...b, available: true, … , unavailableReason: null }` 能过，
+         * 是因为那时两个字段互不相干。
+         */
+        if (b.id === 'cpu') {
+          const { unavailableReason: _drop, ...rest } = b as Extract<
+            BackendStatus,
+            { available: false }
+          >;
+          return { ...rest, available: true, probed: true, installed: true };
+        }
+        if (b.id === 'vulkan' && !b.available) return { ...b, installed: true, probed: true };
+        return b;
+      });
       assert.equal(
         isPackApplicable(pack('vulkan'), LINUX, hardwareWith(withVerdict), ['vulkan']).applicable,
         false,

@@ -115,8 +115,21 @@ function jsonReq(body: unknown): IncomingMessage {
   return Readable.from([Buffer.from(JSON.stringify(body), 'utf8')]) as unknown as IncomingMessage;
 }
 
+/**
+ * 这些用例喂的 vulkan 状态**永远是"不可用"那一档**（它们要验的正是
+ * "不可用的两种成因不许混为一谈"）。所以类型就写成那条分支，而不是
+ * `Partial<BackendStatus>` —— 后者能构造出生产者永远产不出来的组合
+ * （T-194 之前 `{available:true, probed:false}` 就是这么进来的）。
+ */
+type UnavailableVulkan = {
+  available: false;
+  probed: boolean;
+  installed: boolean;
+  unavailableReason: string;
+};
+
 /** 一份 vulkan 处于指定状态的硬件快照。其余后端保持"没装"。 */
-function hardwareWith(vulkan: Partial<BackendStatus>) {
+function hardwareWith(vulkan: UnavailableVulkan) {
   const ids: Backend[] = ['cuda', 'vulkan', 'rocm', 'metal', 'coreml', 'cpu'];
   return {
     schemaVersion: 1 as const,
@@ -127,16 +140,17 @@ function hardwareWith(vulkan: Partial<BackendStatus>) {
     unifiedMemory: false,
     gpus: [],
     backends: ids.map((id): BackendStatus => {
-      const base: BackendStatus = {
-        id,
-        available: id === 'cpu',
-        installed: id === 'cpu',
-        probed: id === 'cpu',
-        version: null,
-        deviceIndex: null,
-        unavailableReason: id === 'cpu' ? null : 'backend package not installed',
-      };
-      return id === 'vulkan' ? { ...base, ...vulkan } : base;
+      const common = { id, version: null, deviceIndex: null };
+      if (id === 'vulkan') return { ...common, ...vulkan };
+      return id === 'cpu'
+        ? { ...common, available: true, probed: true, installed: true }
+        : {
+            ...common,
+            available: false,
+            installed: false,
+            probed: false,
+            unavailableReason: 'backend package not installed',
+          };
     }),
     selectedBackend: 'cpu' as Backend,
     selectedGpuIndex: null,
@@ -144,7 +158,7 @@ function hardwareWith(vulkan: Partial<BackendStatus>) {
   };
 }
 
-async function seed(vulkan: Partial<BackendStatus>): Promise<RestState> {
+async function seed(vulkan: UnavailableVulkan): Promise<RestState> {
   const dataDir = mkdtempSync(join(TEST_ROOT, 'data-'));
   process.env['OPENMEMO_MODELS'] = join(dataDir, 'models');
   const manifestDir = mkdtempSync(join(TEST_ROOT, 'manifests-'));
@@ -184,7 +198,7 @@ async function packOf(state: RestState) {
 }
 
 /** 装了、但这次探测没加载它（缺陷现场：用户显式选了 cpu）。 */
-const NOT_PROBED: Partial<BackendStatus> = {
+const NOT_PROBED: UnavailableVulkan = {
   installed: true,
   probed: false,
   available: false,
@@ -193,7 +207,7 @@ const NOT_PROBED: Partial<BackendStatus> = {
 };
 
 /** 装了、探针**真的**加载过、确实没枚举到设备（真结论）。 */
-const REALLY_UNAVAILABLE: Partial<BackendStatus> = {
+const REALLY_UNAVAILABLE: UnavailableVulkan = {
   installed: true,
   probed: true,
   available: false,
@@ -225,7 +239,12 @@ describe('T-168 ★ POST /api/backends/select 不许把用户锁死在 CPU 上',
   });
 
   it('★ 阴性对照：包根本没装 → 照旧 409（理由为真且可操作：去装）', async () => {
-    const state = await seed({ installed: false, probed: false, available: false });
+    const state = await seed({
+      installed: false,
+      probed: false,
+      available: false,
+      unavailableReason: 'backend package not installed',
+    });
     const cap = await selectBackend(state, 'vulkan');
     assert.equal(cap.status(), 409);
     assert.match(cap.body(), /not installed|未枚举到设备|not available/);

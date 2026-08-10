@@ -508,17 +508,39 @@ export const HardwareInfoSchema = z.object({
       backends: z.array(BackendSchema),
     }),
   ),
+  /*
+   * ★★ T-194：与 `hardware.ts` 的 `BackendStatus` 一样是**判别联合**，不是一堆并排的 boolean。
+   *
+   * 这一份是**运行时**那道闸：类型只管本仓自己的代码，而这个 schema 校验的是
+   * 跨进程收进来的 JSON。两边不同步的话，`{available:true, probed:false}`
+   * 编译期写不出来、运行时照样收得进 —— 那正是"四份形状副本"要一起跟上的理由。
+   */
   backends: z.array(
-    z.object({
-      id: BackendSchema,
-      available: z.boolean(),
-      installed: z.boolean(),
-      probed: z.boolean(),
-      version: z.string().nullable(),
-      deviceIndex: z.number().int().nullable(),
-      isa: z.string().nullish(),
-      unavailableReason: z.string().nullish(),
-    }),
+    z.discriminatedUnion('available', [
+      z.object({
+        id: BackendSchema,
+        available: z.literal(true),
+        installed: z.boolean(),
+        /** 枚举到设备本身就是加载过的证据 —— 这里只能是 true。 */
+        probed: z.literal(true),
+        version: z.string().nullable(),
+        deviceIndex: z.number().int().nullable(),
+        isa: z.string().nullish(),
+        /** 可用的后端不许带不可用理由。 */
+        unavailableReason: z.null().optional(),
+      }),
+      z.object({
+        id: BackendSchema,
+        available: z.literal(false),
+        installed: z.boolean(),
+        probed: z.boolean(),
+        version: z.string().nullable(),
+        deviceIndex: z.number().int().nullable(),
+        isa: z.string().nullish(),
+        /** **必填**：说了"不可用"就必须说得出为什么。 */
+        unavailableReason: z.string(),
+      }),
+    ]),
   ),
   selectedBackend: BackendSchema,
   selectedGpuIndex: z.number().int().nullable(),

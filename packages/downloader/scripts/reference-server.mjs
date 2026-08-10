@@ -261,6 +261,19 @@ async function detectHardware() {
      * CPU pack and nothing else, so cpu was loaded and the accelerators never were —
      * hence probed:false, and reasons that say "not installed" rather than blaming a
      * driver nobody measured. See BackendStatus.probed in @openmemo/shared.
+     *
+     * ★★ T-194: `BackendStatus` is now a DISCRIMINATED UNION and this file is one of its
+     * four shape copies (TS interface / zod schema / openapi / this mock). Two rules the
+     * TypeScript side now enforces at compile time — and which this file, being plain JS,
+     * must honour by hand:
+     *   · available: true  => probed MUST be true, and NO unavailableReason;
+     *   · available: false => unavailableReason is REQUIRED (saying "unavailable" without
+     *     saying why is the shape this repo keeps cleaning up).
+     * ⚠️ HONEST GAP: nothing validates this file automatically. It calls `server.listen()`
+     * at module scope, so a test cannot import it without starting a server, and no test
+     * spawns it either. The six entries below were checked by hand against the union on
+     * 2026-08-10 (all six legal). **If you add or edit one, check it by hand too** —
+     * there is no net under this one.
      */
     backends: [
       {

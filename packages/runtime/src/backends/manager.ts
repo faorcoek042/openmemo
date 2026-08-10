@@ -207,14 +207,42 @@ export function buildHardwareInfo(input: BuildHardwareInfoInput): HardwareInfo {
      */
     const probed = probe.ok && (probedBackends.has(id) || devices.length > 0);
 
-    let unavailableReason: string | null = null;
-    if (usable.length === 0) {
+    const gpuIdx = gpus.findIndex((g) => g.backends.includes(id));
+    /** 与"可用不可用"无关的那几格，两条分支共用一份，避免写两遍写漂。 */
+    const common = {
+      id,
+      installed,
+      version: id === 'cpu' ? (probeOutput?.ggmlVersion ?? null) : null,
+      deviceIndex: gpuIdx >= 0 ? gpuIdx : null,
+      ...(id === 'cpu' ? { isa: cpu.features.includes('avx2') ? 'avx2' : null } : {}),
+    };
+
+    /*
+     * ★★ T-194：**先分叉，再算理由** —— 判别联合的生产者侧。
+     *
+     * 枚举到可用设备 ⇒ `probed` 必然为真（设备只可能来自一次成功的探测，
+     * 而 `probed = probe.ok && (probedBackends.has(id) || devices.length > 0)`
+     * 在 `devices.length > 0` 时恒真）。此前这条"必然"只写在注释里，
+     * 类型上 `available` 与 `probed` 是两个各自独立的 boolean，
+     * `{available: true, probed: false}` 构造得出来、编译器不说话，
+     * 唯一守它的是一条运行时断言。**现在它由类型保证。**
+     */
+    if (usable.length > 0) {
+      return { ...common, available: true as const, probed: true as const };
+    }
+
+    /*
+     * 到这里 `available` 必然是 false，而**七条分支每一条都返回一句理由** ——
+     * 这正是类型里 `unavailableReason` 在这条分支上必填的依据：
+     * 说了"不可用"就必须说得出为什么，不许留空。
+     */
+    const unavailableReason: string = ((): string => {
       if (!probe.ok) {
-        unavailableReason = `probe did not complete: ${probe.message}`;
+        return `probe did not complete: ${probe.message}`;
       } else if (blacklistedBackends.has(id)) {
-        unavailableReason = 'disabled after repeated failures; re-test to try again';
+        return 'disabled after repeated failures; re-test to try again';
       } else if (!installed) {
-        unavailableReason = 'backend package not installed';
+        return 'backend package not installed';
       } else if (!probed) {
         /*
          * ★ T-168. The pack IS installed, and this run never loaded it.
@@ -230,7 +258,7 @@ export function buildHardwareInfo(input: BuildHardwareInfoInput): HardwareInfo {
          * look. The last sentence is load-bearing: without it users read any "unavailable"
          * line as a fault to go and fix.
          */
-        unavailableReason =
+        return (
           'installed, but this detection run did not load it: only the backend directory ' +
           `currently in use is scanned${
             probeOutput !== null && probeOutput.searchPath.length > 0
@@ -238,11 +266,12 @@ export function buildHardwareInfo(input: BuildHardwareInfoInput): HardwareInfo {
               : ''
           }, and this backend's library is not in it. ` +
           'This is not a driver or hardware fault — nothing was measured about it. ' +
-          'Select this backend, or run the self-test on that pack, to get a real answer.';
+          'Select this backend, or run the self-test on that pack, to get a real answer.'
+        );
       } else if (devices.length > 0) {
         // The pack loaded but every device it offered was rejected. This is the
         // lavapipe case and it deserves a specific, non-alarming explanation.
-        unavailableReason = devices.some((d) => d.softwareRenderer)
+        return devices.some((d) => d.softwareRenderer)
           ? 'only a software renderer was found (no real GPU); falling back to CPU'
           : 'backend loaded but reported no usable devices';
       } else {
@@ -251,22 +280,11 @@ export function buildHardwareInfo(input: BuildHardwareInfoInput): HardwareInfo {
          * missing driver library such as libcuda.so.1, which is the same conclusion), and
          * enumeration still came back empty.
          */
-        unavailableReason = 'installed but enumerated no devices (driver missing or too old)';
+        return 'installed but enumerated no devices (driver missing or too old)';
       }
-    }
+    })();
 
-    const gpuIdx = gpus.findIndex((g) => g.backends.includes(id));
-
-    return {
-      id,
-      available: usable.length > 0,
-      installed,
-      probed,
-      version: id === 'cpu' ? (probeOutput?.ggmlVersion ?? null) : null,
-      deviceIndex: gpuIdx >= 0 ? gpuIdx : null,
-      ...(id === 'cpu' ? { isa: cpu.features.includes('avx2') ? 'avx2' : null } : {}),
-      unavailableReason,
-    };
+    return { ...common, available: false as const, probed, unavailableReason };
   });
 
   // ---- Selection --------------------------------------------------------------------

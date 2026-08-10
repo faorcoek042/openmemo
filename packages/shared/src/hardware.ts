@@ -69,10 +69,14 @@ export interface GpuDevice {
   backends: Backend[];
 }
 
-export interface BackendStatus {
+/**
+ * `BackendStatus` 里**与"可用不可用"这条轴无关**的那几格。
+ *
+ * 拆出来只是为了让下面那个判别联合两条分支不必各写一遍；
+ * **没有任何一格在这里改变含义**。
+ */
+interface BackendStatusCommon {
   id: Backend;
-  /** Device enumeration succeeded and returned >= 1 device. NOT a file-existence check. */
-  available: boolean;
   /**
    * The backend pack is recorded as installed. **Set membership only.**
    *
@@ -91,41 +95,98 @@ export interface BackendStatus {
    * alone — changing what `installed` means would move a load-bearing wall.
    */
   installed: boolean;
-  /**
-   * Did this detection run actually LOAD this backend's library?
-   *
-   * ── Why this is a separate field, and not prose in `unavailableReason` ──────────────
-   *
-   * `available: false` has two causes that were indistinguishable before T-168, because
-   * they shared one boolean and one free-text slot:
-   *
-   *   1. The probe loaded this backend's ggml library and enumerated no usable device.
-   *      That is a REAL verdict about the driver/hardware.
-   *   2. The probe never loaded it at all. `backendDir` is single-valued — one probe run
-   *      scans exactly one pack directory (`ggml_backend_load_all_from_path`) — so every
-   *      OTHER installed pack is simply absent from the result. That is ZERO information
-   *      about the driver, and any sentence blaming the driver is invented.
-   *
-   * MEASURED (T-168, this box, real install of both Linux packs, probe stderr):
-   *   backendDir = <cpu pack>     -> "loaded CPU backend from libggml-cpu-zen4.so"      (Vulkan never loaded)
-   *   backendDir = <vulkan pack>  -> "ggml_vulkan: No devices found." + loaded Vulkan
-   * Both produced the identical string "installed but enumerated no devices (driver
-   * missing or too old)". In the first case it is FALSE — and it sends the user off to
-   * reinstall a driver that was never the problem.
-   *
-   * The test is structural and cheap: is this backend's ggml library present in the
-   * directory the probe scanned? Present + no devices = a real driver/hardware verdict.
-   * Absent = it never had a chance. `available: true` always implies `probed: true`.
-   */
-  probed: boolean;
   version: string | null;
   /** Index into HardwareInfo.gpus, when this backend is bound to a specific device. */
   deviceIndex: number | null;
   /** For the CPU backend: which ISA build is active, e.g. "avx2". */
   isa?: string | null;
-  /** Populated when available=false so the UI can explain why. */
-  unavailableReason?: string | null;
 }
+
+/**
+ * 一个后端在本机的状态。
+ *
+ * ## ★★ T-194：为什么是判别联合，而不是四个并排的布尔
+ *
+ * 不变量 **`available: true` 蕴含 `probed: true`** 此前只写在两处**散文**里
+ * （上面那段注释 + `openapi.yaml` 的 description），唯一在守它的是一条**运行时断言**
+ * （`notProbedVsUnavailable.test.ts` 里的 `if (b.available) assert.equal(b.probed, true)`）。
+ *
+ * 也就是说：`{ available: true, probed: false }` **可以被构造出来**，
+ * 编译器一个字都不会说，要等那一条测试跑到才会红 ——
+ * 而它只覆盖生产者产出的那些对象，**任何一处 mock / 手写夹具都绕得过去**。
+ * 这正是本仓在清的「用断言代替不可表达」那个形状。
+ *
+ * 现在它由类型保证：`available: true` 那条分支里 `probed` 的类型就是 `true`，
+ * **写 `false` 通不过编译**。
+ *
+ * ## 顺带钉住的第二条：`available: false` 必须说明为什么
+ *
+ * `unavailableReason` 从「可选」变成**在 `available: false` 分支里必填**。
+ * 生产者七条分支本来就每条都赋了值（`manager.ts`），所以这不是新要求，
+ * 只是把一条已经成立的性质写进类型 —— 而它挡住的是
+ * 「界面显示『不可用』却一个字的原因都没有」，那是本仓反复清过的一族。
+ * 反过来在 `available: true` 分支里它只能是 `null`/缺省：
+ * 一个"可用"的后端带着一句不可用理由，同样是非法状态。
+ *
+ * ## ⚠️ 刻意**没有**做的两件事
+ *
+ * 1. **没有新造一个 `state` 判别字段。** 那会把四条独立的轴
+ *    （可用 / 已安装 / 本次探测有没有加载 / 为什么不可用）压进一个槽位 ——
+ *    与 `BACKEND_IS_COMPUTE_AXIS` 拒绝和 `SELF_TEST_APPLIES` 合表是同一条克制。
+ *    `installed` 与 `probed` 在这里仍然是各自独立的轴。
+ * 2. **没有加"可加载性"这第四条轴。** `probe/probedBackends.ts` 已经读实：
+ *    一个存在但 `dlopen` 失败的库**仍然算 probed**，目录列表分辨不了。
+ *    今天系统里唯一真实的加载证据是 `BackendSelfTest`，而它挂在
+ *    `InstalledBackendPack` 上、不在这个类型上。那是另一件事，不在本轮。
+ */
+export type BackendStatus =
+  | (BackendStatusCommon & {
+      /** Device enumeration succeeded and returned >= 1 device. NOT a file-existence check. */
+      available: true;
+      /**
+       * 枚举到设备本身就是"这个后端加载过"的证据，所以这里**只能是 `true`**。
+       * 类型上写死，而不是靠注释 + 一条运行时断言。
+       */
+      probed: true;
+      /** 可用的后端不许带不可用理由 —— 那是个自相矛盾的对象。 */
+      unavailableReason?: null;
+    })
+  | (BackendStatusCommon & {
+      available: false;
+      /**
+       * Did this detection run actually LOAD this backend's library?
+       *
+       * ── Why this is a separate field, and not prose in `unavailableReason` ──────────
+       *
+       * `available: false` has two causes that were indistinguishable before T-168,
+       * because they shared one boolean and one free-text slot:
+       *
+       *   1. The probe loaded this backend's ggml library and enumerated no usable
+       *      device. That is a REAL verdict about the driver/hardware. (`probed: true`)
+       *   2. The probe never loaded it at all. `backendDir` is single-valued — one probe
+       *      run scans exactly one pack directory (`ggml_backend_load_all_from_path`) —
+       *      so every OTHER installed pack is simply absent from the result. That is ZERO
+       *      information about the driver, and any sentence blaming the driver is
+       *      invented. (`probed: false`)
+       *
+       * MEASURED (T-168, this box, real install of both Linux packs, probe stderr):
+       *   backendDir = <cpu pack>     -> "loaded CPU backend from libggml-cpu-zen4.so"  (Vulkan never loaded)
+       *   backendDir = <vulkan pack>  -> "ggml_vulkan: No devices found." + loaded Vulkan
+       * Both produced the identical string "installed but enumerated no devices (driver
+       * missing or too old)". In the first case it is FALSE — and it sends the user off
+       * to reinstall a driver that was never the problem.
+       *
+       * The test is structural and cheap: is this backend's ggml library present in the
+       * directory the probe scanned? Present + no devices = a real verdict.
+       * Absent = it never had a chance.
+       *
+       * ⚠️ 它**只出现在这条分支上**：`available: true` 那条里 `probed` 的类型就是
+       * `true`（T-194），所以「可用但没探测过」在类型层就写不出来了。
+       */
+      probed: boolean;
+      /** **必填**：说了"不可用"就必须说得出为什么。 */
+      unavailableReason: string;
+    });
 
 export interface DiskInfo {
   /** Mount point or drive root. */
