@@ -10120,3 +10120,111 @@ describe('★★ T-198 取消之后界面不许自相矛盾', () => {
     r.unmount();
   });
 });
+
+/* ═══════════ T-196 界面：「本平台不适用」不许和「未安装」显示成同一个东西 ═══════════ */
+
+/**
+ * `[用户真机 v0.7.0 · win32/x64]` 折叠区里五条一模一样的英文：
+ * `metal：backend package not installed` / `coreml：backend package not installed`。
+ *
+ * 两个问题叠在一起：**① 结论是假的**（这两个在 Windows 上永远装不上，
+ * "未安装"是一条可执行但必定白费的指令）；**② 中文界面上是英文原文**。
+ *
+ * ── 把名字遮住，这些断言什么时候会失败 ────────────────────────────────────────
+ *  · 有人把芯片档位改回按 `installed`/`available` 分（metal 会掉回「不可用」那一档）；
+ *  · 有人把判据从 `unavailableKind` 换成匹配 `unavailableReason` 那句英文；
+ *  · 有人"顺手"把英文原文删掉（排障就没得看了）或者把它提到正文（首屏又变成六行英文）；
+ *  · 有人把「本平台不适用」和「未安装」合并成一句好听的中文。
+ */
+describe('★ T-196 界面：metal/coreml 在 Windows 上说「本平台不适用」', () => {
+  /** 用户那台的形状：win32，什么加速包都没装。 */
+  const WIN_HW = (over: Record<string, unknown> = {}) =>
+    ({
+      schemaVersion: 1,
+      detectedAt: '2026-08-10T00:00:00.000Z',
+      os: { platform: 'win32', arch: 'x64', version: '10.0.26200' },
+      cpu: {
+        brand: 'AMD Ryzen 7 7840HS w/ Radeon 780M Graphics',
+        physicalCores: 8,
+        logicalCores: 16,
+        features: ['avx2'],
+      },
+      ram: { totalMB: 32000, availableMB: 16000 },
+      unifiedMemory: false,
+      gpus: [],
+      selectedGpuIndex: null,
+      disks: [{ path: 'C:\\om', pathFor: 'models_root', freeMB: 100000, totalMB: 500000 }],
+      backends: [
+        { id: 'cpu', installed: true, available: true, probed: true },
+        {
+          id: 'cuda',
+          installed: false,
+          available: false,
+          probed: false,
+          unavailableReason: 'backend package not installed',
+          unavailableKind: 'not_installed',
+        },
+        {
+          id: 'metal',
+          installed: false,
+          available: false,
+          probed: false,
+          unavailableReason: 'not available on win32: this backend exists only on Apple platforms',
+          unavailableKind: 'platform_unsupported',
+        },
+      ],
+      selectedBackend: 'cpu',
+      ...over,
+    }) as never;
+
+  test('★ 芯片：metal 落到「其它平台」那一档，不是「不可用」', async () => {
+    const r = await render(<HardwareCard hw={WIN_HW()} locale="zh-CN" />);
+    const shown = r.container.textContent ?? '';
+    assert.ok(
+      shown.includes('其它平台'),
+      `metal 应显示成「其它平台」—— 否则它和「还没装」长得一模一样 → ${shown.slice(0, 400)}`,
+    );
+    r.unmount();
+  });
+
+  test('★ 折叠区：说的是中文结论，且**英文原文仍然留着**当技术尾巴', async () => {
+    const r = await render(<HardwareCard hw={WIN_HW()} locale="zh-CN" />);
+    const shown = r.container.textContent ?? '';
+    assert.ok(shown.includes('本平台不适用'), `中文界面上没说人话 → ${shown.slice(0, 500)}`);
+    // 排障要的那句原文不许被"顺手"删掉（D-05 §5.3：折叠，不是丢弃）
+    assert.ok(shown.includes('only on Apple platforms'), '英文原文被删了 —— 排障的人就没得看了');
+    r.unmount();
+  });
+
+  test('★★ 同一张卡上，cuda 仍然说「未安装」—— 两句话必须分得开', async () => {
+    const r = await render(<HardwareCard hw={WIN_HW()} locale="zh-CN" />);
+    const shown = r.container.textContent ?? '';
+    /*
+     * 这一条才是整件事的判据：两句话**同时**出现且**不同**。
+     * 只断言"metal 说了本平台不适用"是不够的 —— 把两者合并成一句好听的中文
+     * 也能让那条通过，而那正是不许做的事（cuda 是真的该去装）。
+     */
+    assert.ok(shown.includes('本平台不适用'), 'metal 那句没了');
+    assert.ok(
+      shown.includes('backend package not installed'),
+      `cuda 那句「未安装」没了 —— 两档被合并了 → ${shown.slice(0, 500)}`,
+    );
+    r.unmount();
+  });
+
+  test('★ 英文界面：说的是英文那句，不是中文', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      const r = await render(<HardwareCard hw={WIN_HW()} locale="en" />);
+      const shown = r.container.textContent ?? '';
+      assert.ok(
+        shown.includes('Not applicable on this platform'),
+        `英文界面没拿到英文结论 → ${shown.slice(0, 400)}`,
+      );
+      assert.ok(shown.includes('Other platform'), '英文芯片字样没出来');
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+});
