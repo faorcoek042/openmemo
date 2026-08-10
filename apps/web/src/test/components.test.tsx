@@ -7719,9 +7719,7 @@ describe('★ T-195：后端包卡片要有真的下载进度', () => {
 
   test('★ 有正在进行的任务时，卡片上渲染出进度', async () => {
     const p = pack({ id: 'whispercpp-cuda-12.4-win-x64', installed: false });
-    const r = await render(
-      <BackendPackCard {...NOOP} pack={p as never} job={JOB as never} />,
-    );
+    const r = await render(<BackendPackCard {...NOOP} pack={p as never} job={JOB as never} />);
     assert.equal(
       r.container.querySelector('[data-testid="backend-progress-whispercpp-cuda-12.4-win-x64"]') ===
         null,

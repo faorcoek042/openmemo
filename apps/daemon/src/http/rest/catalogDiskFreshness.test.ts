@@ -57,7 +57,9 @@ async function seed(): Promise<RestState> {
 }
 
 /** 目录里所有被判成「装不下」的条目。 */
-function blockedIds(catalog: { groups: { variants: { id: string; fitness: { tier: string } }[] }[] }): string[] {
+function blockedIds(catalog: {
+  groups: { variants: { id: string; fitness: { tier: string } }[] }[];
+}): string[] {
   return catalog.groups.flatMap((g) =>
     g.variants.filter((v) => v.fitness.tier === 'blocked_disk').map((v) => v.id),
   );

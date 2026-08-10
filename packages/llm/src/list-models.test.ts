@@ -58,7 +58,9 @@ const jsonRes = (body: unknown, status = 200): Response =>
 const parseOa = (b: unknown): string[] | null => {
   const data = (b as { data?: unknown }).data;
   if (!Array.isArray(data)) return null;
-  return data.map((m) => (m as { id?: unknown }).id).filter((x): x is string => typeof x === 'string');
+  return data
+    .map((m) => (m as { id?: unknown }).id)
+    .filter((x): x is string => typeof x === 'string');
 };
 
 const base = {
