@@ -200,6 +200,7 @@ jobs:
             --require-bundle \
             --port 19820 \
             ${{ (matrix.target == 'linux-x64' && inputs.resumeTest) && '--resume-test' || '' }} \
+            --undecided-out e2e-runtime-undecided-${{ matrix.label }}.json \
             2>&1 | tee e2e-runtime-${{ matrix.label }}.log
 
       - name: 留档
@@ -208,6 +209,17 @@ jobs:
         with:
           name: e2e-runtime-log-${{ matrix.label }}
           path: e2e-runtime-${{ matrix.label }}.log
+          if-no-files-found: warn
+
+      # ★ 覆盖面（undecided 计数）单独一份 artifact，供 attest job 跨平台求和后
+      # 传给 emit-e2e-attestation.mjs --undecided。与上面的日志留档同形状——
+      # 无条件、失败也传（这是展示用的覆盖面统计，不是判定）。
+      - name: 留档（覆盖面计数）
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: e2e-runtime-undecided-${{ matrix.label }}
+          path: e2e-runtime-undecided-${{ matrix.label }}.json
           if-no-files-found: warn
 
   # ══════════════════════════════════════════════════════════════════════════════
@@ -424,12 +436,38 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
+
+      # 三个矩阵格各自留的覆盖面计数（e2e-runtime-undecided-<label>.json），
+      # merge-multiple 摊平进同一个目录 —— 与 build-backends.yml 的
+      # merge-manifest job 取 fragment 是同一个模式。
+      - name: 下载三平台的覆盖面计数
+        uses: actions/download-artifact@v7
+        with:
+          pattern: e2e-runtime-undecided-*
+          path: undecided
+          merge-multiple: true
+
+      # ★ --expect-labels 这里的字面量与下面 --platforms 的字面量是**同一份清单**
+      #   （唯一真源；以后加第 4 个平台，两处一起改）。任何一格对不上，
+      #   sum-undecided.mjs 只会警告 + 把 undecided_flag 收敛成空字符串，
+      #   **不会**让这一步失败——一个纯展示用的覆盖面统计出故障，不该连累
+      #   下面"写凭证"这一步（那一步产出的 artifact 名字才是闸门真正认的信号）。
+      - name: 求和覆盖面计数
+        id: sum
+        run: |
+          node scripts/ci/sum-undecided.mjs \
+            --dir undecided \
+            --expect-labels linux-x64,darwin-arm64,win32-x64 \
+            --file-template 'e2e-runtime-undecided-{label}.json' \
+            --github-output "$GITHUB_OUTPUT"
+
       - name: 写凭证
         run: |
           node scripts/ci/emit-e2e-attestation.mjs \
             --leg runtime \
             --bundle-run "${{ needs.audit.outputs.bundle_run_id }}" \
             --platforms linux-x64,darwin-arm64,win32-x64 \
+            ${{ steps.sum.outputs.undecided_flag }} \
             --out dist/e2e-attest.json
       - uses: actions/upload-artifact@v6
         with:

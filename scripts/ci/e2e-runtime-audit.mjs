@@ -127,6 +127,16 @@ const MASK = !has('--no-mask');
 const MUTATE = arg('--mutate', null);
 const LIST_MUTATIONS = has('--list-mutations');
 /**
+ * ★ 覆盖面上报（Manager 2026-08-10 裁决，runtime 腿）：`verify-e2e-attestation.mjs`
+ * 只看 artifact 名字判定通过/不通过（不变），但会把 `undecided` 念出来做**建议性**
+ * 展示 —— 前提是这条腿真的把数字报出来。这个 flag 只是把下面「23. 汇总」已经
+ * 算出来的 `unknowns.length` 落盘成一个小文件，供 `attest` job 跨平台求和后
+ * 传给 `emit-e2e-attestation.mjs --undecided`。**只在非变异模式下写**：
+ * 变异模式的汇总是另一套语义（targets/wentRed/allUnknown），与"这条腿本轮
+ * 有多少条断言无从判断"不是同一个问题。
+ */
+const UNDECIDED_OUT = arg('--undecided-out', null);
+/**
  * 断点续传要真的把一个**下到一半**的下载打断。小包（2–6 MB）在 runner 上
  * 常常还没等我们看见就下完了 —— 那样测的是"我手快不快"，不是产品。
  * 所以它默认关闭，只在带宽便宜的那条腿上开，并且**打断不成就如实报未验证**，
@@ -2555,6 +2565,17 @@ const fails = results.filter((r) => r.status === 'FAIL');
 const unknowns = results.filter((r) => r.status === 'UNKNOWN');
 const passes = results.filter((r) => r.status === 'PASS');
 say(`   PASS ${passes.length}   FAIL ${fails.length}   UNKNOWN ${unknowns.length}`);
+/*
+ * ★ 覆盖面落盘（仅非变异模式）。变异模式下面还有一段完全不同的汇总
+ * （targets/wentRed/allUnknown），回答的是另一个问题（"这条变异会不会被抓住"），
+ * 与"这条腿本轮有多少条断言无从判断"不是同一件事，所以这里显式排掉它。
+ * 不看 fails.length —— 这是展示用的覆盖面计数，不是判定，红也要如实落盘。
+ */
+if (!mutation && UNDECIDED_OUT) {
+  mkdirSync(dirname(UNDECIDED_OUT), { recursive: true });
+  writeFileSync(UNDECIDED_OUT, `${JSON.stringify({ unknowns: unknowns.length }, null, 2)}\n`);
+  say(`   覆盖面已写到 ${UNDECIDED_OUT}（unknowns=${unknowns.length}）`);
+}
 if (fails.length) {
   say('');
   say('   红的：');
