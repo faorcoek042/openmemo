@@ -38,6 +38,14 @@ const CHIP_STATE: Record<PackStatus, BackendChipState> = {
   installed: 'installed',
   'self-test-failed': 'failed',
   installable: 'available',
+  /*
+   * ★ T-196：落回 `not-installed`（文案「未安装」）而**不是** `available`（「可安装」）。
+   * 「未安装」是真的，而且与按钮那句「尚未发布，暂不可安装」不矛盾 —— 这正是要修的东西。
+   * ⚠️ 刻意**不新加一档芯片文案**：那需要往 `runtime.chip.*` 加两条 i18n，
+   * 而两份 locale 文件此刻正被别的 agent 改着。等那边落地后可以再给它一档专属文案，
+   * **但那是锦上添花；现在这一步已经把"两句话打架"消掉了。**
+   */
+  'not-published': 'not-installed',
   'other-platform': 'other-platform',
   undetermined: 'undetermined',
   unsupported: 'unsupported',
@@ -158,7 +166,6 @@ export function BackendPackCard({
    * 必须在按钮上就说清楚，而不是让用户点下去等一个必然失败的下载 ——
    * 失败要在看得见的地方发生，不要推迟到点击之后。
    */
-  const pendingCi = (pack as { availability?: string }).availability === 'pending-ci';
   const selfTestFailed = selfTest != null && !selfTest.passed;
   const showRecommended = recommended ?? pack.recommended;
   const verdict = selfTestVerdict(pack.backend, selfTest);
@@ -168,7 +175,17 @@ export function BackendPackCard({
     inapplicableKind: pack.inapplicableKind,
     isActive,
     selfTestFailed,
+    availability: (pack as { availability?: string }).availability,
   });
+  /**
+   * ★ T-196：**从 `status` 读，不再自己判一次。**
+   *
+   * 这一行以前是 `const pendingCi = pack.availability === 'pending-ci'`，
+   * 而顶上的芯片走 `packStatus()`（它当时根本不看这个字段）——
+   * 于是芯片写「可安装」、按钮写「尚未发布，暂不可安装」，**同一张卡两句话打架**。
+   * 一个事实两处判断，两处就一定会漂移；现在只剩一处。
+   */
+  const pendingCi = status === 'not-published';
 
   const actions = pack.installed ? (
     <>

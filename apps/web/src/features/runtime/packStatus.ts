@@ -62,6 +62,15 @@ export type PackStatus =
   | 'self-test-failed'
   /** 没装，但可以装 */
   | 'installable'
+  /**
+   * 没装，而且**现在装不了** —— 清单说这个包还没发布下载地址（`availability: 'pending-ci'`）。
+   *
+   * ★ T-196：这一档以前不存在，于是 `pending-ci` 的包被算成 `installable`，
+   * 芯片写「可安装」、而同一张卡的按钮是灰的、文案写「尚未发布，暂不可安装」。
+   * **同一张卡上两句互相打脸的话** —— 成因是这个事实当时有两处独立判断
+   * （芯片走 `packStatus()`、按钮走它自己的 `pendingCi`），两处必然漂移。
+   */
+  | 'not-published'
   /** os/arch 对不上：这是**别的平台**的包，不是本机的问题 */
   | 'other-platform'
   /** 还没探测到能力 —— **不是**"不支持" */
@@ -79,13 +88,33 @@ export interface PackStatusInput {
   readonly isActive: boolean;
   /** 自检跑过并且没通过 */
   readonly selfTestFailed: boolean;
+  /**
+   * 清单里的 `availability`（`'published'` / `'pending-ci'`，**可缺**）。
+   *
+   * ⚠️ **字段缺失按"已发布"处理**，判据与 `isUsableAsset`「字段缺失 ≠ 不可用」同一条：
+   * **哪个默认值会让界面说一句不成立的话。** 目录里 14 个包有 12 个根本没写这个字段，
+   * 它们全都在架上 —— 默认成"未发布"会把 12 个能装的包一次性变成灰按钮。
+   */
+  readonly availability?: string | undefined;
 }
 
 export function packStatus(p: PackStatusInput): PackStatus {
   if (p.isActive) return 'active';
   if (p.selfTestFailed) return 'self-test-failed';
+  /*
+   * ★ 已装的事实优先于"发没发布"：用户可能在标记翻回去之前就装上了
+   * （服务端**没有**这道闸，`rest/backends.ts` 一个字都没读 `availability`，
+   * 所以直接 POST 是真能装上的）。这时说"尚未发布"是对一个既成事实撒谎。
+   */
   if (p.installed) return 'installed';
-  if (p.applicable) return 'installable';
+  if (p.applicable) {
+    /*
+     * ★ T-196：这一行是本次修复的**全部**。以前这里直接 `return 'installable'`，
+     * 于是芯片与按钮各自判断 `availability`（按钮判、芯片不判），当场打架。
+     * 现在按钮改成读这个结论（`status === 'not-published'`），**一个事实一处判断**。
+     */
+    return p.availability === 'pending-ci' ? 'not-published' : 'installable';
+  }
   switch (p.inapplicableKind) {
     case 'platform':
       return 'other-platform';
