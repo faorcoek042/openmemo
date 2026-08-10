@@ -900,3 +900,83 @@ darwin-arm64 的目录里有**两个**都装得下的 whisper 包：
   这是你说"另有安排"的①②③那一族，**没碰**；我改用 `bundleSource=artifact` 绕过它，
   才让变异循环真的跑到。
 - `A-MODEL-SHA256-FAIL`：**没碰**（已派给别人）。
+
+---
+
+## 2026-08-10 · 收尾两件：MUT-BAD 的真相，和 Metal 那个 `[未验证]`
+
+**先回答两句话。**
+
+**① MUT-BAD 是判据问题，不是产品缺陷 —— 而且坑是我这一轮自己新挖的两个。**
+**② Metal 那一步定位到了，而且结论和大家（包括我）之前的判断相反：**
+**没有任何一步过滤 Metal —— 它在 darwin 上装成功了。**
+
+### ② 先说 Metal，因为它推翻了上一轮的判断
+
+两条独立证据：
+
+1. **本机跑策略函数**（纯函数，合成 darwin 输入）：
+   `evaluateApplicability({pack:metal/darwin/arm64, platform:darwin/arm64, backends:…})`
+   在**探针没跑过 / 探针跑过但 metal 不可用 / 全不可用**三种输入下一律
+   `{applicable:true, tier:'l1'}`；`isAlwaysApplicable('metal','darwin')===true`。
+   （`packages/runtime/src/backends/applicability.ts:72-86` 把 metal-on-darwin 硬编码成 L1，
+   根本不读 `gpus[]`、探针结果、`requiresDriver`、系统版本。）
+2. **darwin 真日志**（`gh api /actions/jobs/<id>/logs` 拿到的，`gh run view --log` 两次都空）：
+```
+   → 装加速包 whispercpp-metal-macos-arm64（backend=metal，1.9 MB）
+   ✔ A-ACCEL-INSTALL   whispercpp-metal-macos-arm64 → succeeded
+   ? A-ACCEL-SWITCH    UNKNOWN — select 回 409「本机无法使用 metal：
+                       installed but enumerated no devices (driver missing or too old)」
+   ? A-CPU-NO-DRIVER-LIE UNKNOWN — 没有任何「installed=true 且 probed=false」的后端
+                       （已装包=whispercpp-cpu-macos-arm64）
+```
+
+⇒ **第二个包装上了。** 那句 UNKNOWN 详情里的
+「要构造它需要同一台机器上装得下两个后端包，**而加速包在这里装不上**」
+**是一句错话** —— 同一轮日志往上三行就写着它装成功了。
+**是这句错话把分诊和我一起带偏的**（我据此判"应该修安装逻辑、2 MB 挡不住"——**那个判断作废**）。
+
+**真正的前提是另一件事**：这条断言要的是「装着、**而这一次探测没有加载它**」（`installed=true 且 probed=false`）。
+而这台 runner 上 metal **被探了**（所以才有 409 里那句"enumerated no devices"）⇒ `probed=true`
+⇒ 前提天然不成立。**不是包装不上，是"装了却没被探"这个状态在这里造不出来。**
+
+⚠️ **所以我没有动 harness 的安装逻辑**（本来打算改的那个方向是错的）。
+留给下一步的是两件**不同**的事，请你定：
+- **(a) 那句 UNKNOWN 详情要改**——它现在陈述了一个与同轮事实相反的原因，
+  是这一整条误诊链的源头。（`e2e-runtime-audit.mjs` 眼下是 `aa4ba3da…` 的地盘，我没碰。）
+- **(b) 要不要让 `A-CPU-NO-DRIVER-LIE` 的前提变得可构造** —— 需要一次"探测只扫一个
+  backendDir、把已装的另一个晾着"的场景。这动的是**探测/选择那一层**，不是安装逻辑。
+
+### ① MUT-BAD：判据问题，两个坑都是我这一轮新挖的
+
+**原因**：基线取 `base1.replace(base0,'')`，只要这 1.2 秒页面还在渲染，
+增量就会带上 `/runtime` 本来就该有的「CUDA/Vulkan/… **不可用**」五条，
+而 `FAIL_WORDS` 里正好有「不可用」⇒ 谓词为真 ⇒ 断言没红 ⇒ 记成"变异存活"。
+**量到的是渲染时序。** 加了"先等页面静下来"之后 `[CI 实测 win32 run 31366579943]` **MUT-OK**。
+
+darwin 仍红，暴露出我自己的两个错：
+
+- **诊断挂错了分支**：我把命中词塞进 `ok()` 的**失败**消息里，
+  而这条变异出问题的那一面**恰恰是 `ok()` 通过** ⇒ 诊断永远不会打印。
+  **诊断挂在断言失败那条路上，等于在它最需要说话的那一刻沉默。** 改成无条件 `say()`。
+- **归因缺一道闸**：静止判定通过之后那 1.2 秒页面**又**可能变（`/runtime` 有轮询重画）。
+  现在 `base1 !== base0` ⇒ 报**无从判断**，不报"变异存活"。
+
+### ①-bis `B6` 的门槛：1 个瞬间不算看过
+
+`[CI 实测 darwin run 31366579943]` `progressVisibleSamples===1` 就宣判"那一处真的是哑的"并且红。
+**一个瞬间支撑不起"从来没有"** —— 上一轮同一台机器采到 2 个瞬间就抓到文案并且绿。
+**n=1 时结论随运气翻面，那不是判据，是抛硬币。**
+改成：`< 3` 个"看得见安装在进行"的瞬间 ⇒ 无从判断；`≥ 3` 还一条文案都没有 ⇒ **照样红**。
+⚠️ 判据没松（仍要求中文阶段文案），松的是**"我看够了没有"这个前提**——
+前提不成立时本来就不该下结论。
+
+### 同名不同物已拆
+
+`B6`（阶段文案，含 B6b/B6c）↔ `B6`（安装失败必须说话）→ 后者改 **B12**；
+`B7`（llm 落地页）↔ `B7`（复制诊断必须出声）→ 后者改 **B13**。**判据一字未改，只改名。**
+
+### 还红着、不是我的
+
+`e2e-browser` win32 这轮红在 `B1「立即测速」点下去有反应` —— 上一轮 win32 是绿的，
+我这轮只动了 `mutation()` 三态、B12/B13 改名和 B12 变异体，**都碰不到 B1**。按疑似 flake 报你。

@@ -966,15 +966,30 @@ try {
    * ───────────────────────────────────────────────────────────────────────── */
   await check('B6 任务中心卡片上的阶段文案必须是中文、且不许阶段倒退', () => {
     if (packToInstall === null) undecided('本机没有适用的后端包，压根没起安装');
-    if (progressVisibleSamples === 0) {
+    /*
+     * ★ 门槛是 3，不是 1 —— 这条边界是 `[CI 实测 darwin-arm64, run 31366579943]` 校出来的。
+     *
+     * 那一轮 `progressVisibleSamples === 1` 就宣判「那一处真的是哑的」并且红了。
+     * **一个瞬间支撑不起"从来没有"这句话**：阶段文案和进度指示是同一张卡上的两行，
+     * 只采到一个瞬间时，"没看见文案"与"恰好错过"在证据上不可分。
+     * 同一台 darwin 上一轮采到 2 个瞬间就抓到了「正在选择下载源」并且绿 ——
+     * **n=1 时结论会随运气翻面，那就不是判据，是抛硬币。**
+     *
+     * 所以：< 3 个"看得见安装在进行"的瞬间 ⇒ 这一轮**没看够**，报无从判断；
+     * ≥ 3 个瞬间还一条文案都没有 ⇒ 那一处确实是哑的 ⇒ **照样红**。
+     * ⚠️ 这不是放宽判据 —— 判据仍是"必须有中文阶段文案"，动的是
+     * **"我到底看够了没有"** 这个前提，而前提不成立时本来就不该下结论。
+     */
+    const MIN_LOOKS = 3;
+    if (progressVisibleSamples < MIN_LOOKS) {
       undecided(
-        `采样 ${sampleRounds} 轮，界面上**一次都没出现过安装进度**（字节数/百分比都没有）——` +
-          `安装窗口短过采样间隔，这一轮没机会看，什么都证明不了`,
+        `采样 ${sampleRounds} 轮，其中只有 ${progressVisibleSamples} 个瞬间看得见安装在进行` +
+          `（需要至少 ${MIN_LOOKS} 个）—— 安装窗口短过采样间隔，这一轮没看够，不下结论`,
       );
     }
     ok(
       seenLabels.length > 0,
-      `界面上出现过 ${progressVisibleSamples} 轮安装进度，**却一个阶段文案都没有** —— ` +
+      `界面上有 ${progressVisibleSamples} 个瞬间看得见安装进度，**却一个阶段文案都没有** —— ` +
         `这不是没采到（进度采到了），是那一处真的是哑的`,
     );
     const illegal = seenLabels.filter((l) => !EXPECTED_ZH.includes(l));
@@ -1417,15 +1432,30 @@ try {
     const base1 = await textNow();
     const delta = base1.replace(base0, '');
     /*
-     * 没红的时候**把证据一起打出来**：到底是哪几个词命中的。
-     * 上一轮这条只留下一句"没有变红"，于是"为什么"只能靠猜 —— 这次让它自己说。
+     * ★ 证据必须**无条件打印**。
+     *
+     * 上一版我把命中词塞进了 `ok()` 的失败消息里 —— 而这条变异**出问题的那一面
+     * 恰恰是 `ok()` 通过**（没红＝MUT-BAD），失败消息永远不会被打出来。
+     * `[CI 实测 darwin-arm64, run 31366579943]` 于是又只留下一句"没有变红"。
+     * 诊断信息挂在"断言失败"那条路上，就等于在**它最需要说话的那一刻沉默**。
      */
     const hits = [...new Set(delta.match(new RegExp(FAIL_WORDS.source, 'gi')) ?? [])];
-    ok(
-      FAIL_WORDS.test(delta) === true,
-      `没注入故障时界面本来就没有错误话（这条变异本就该红）。` +
-        `本轮增量里命中的词=${JSON.stringify(hits)} · 增量前 200 字=${JSON.stringify(delta.slice(0, 200))}`,
+    say(
+      `   [变异基线] 静止=${settled} 增量长度=${delta.length} 命中词=${JSON.stringify(hits)} ` +
+        `增量前 200 字=${JSON.stringify(delta.slice(0, 200))}`,
     );
+    /*
+     * 页面在这 1.2 秒里**又动了**就无从归因（`/runtime` 有轮询刷新，
+     * 状态区本来就会重画，而那一片正当地写着「不可用」——`FAIL_WORDS` 命中的是它）。
+     * 前提没构造出来 ⇒ 报无从判断，不报"变异存活"。
+     */
+    if (base1 !== base0) {
+      undecided(
+        `基线这 1.2 秒里页面又变了（增量 ${delta.length} 字，命中 ${JSON.stringify(hits)}）——` +
+          `无法把"有错误话"归因于注入的故障，这一轮量不成`,
+      );
+    }
+    ok(FAIL_WORDS.test(delta) === true, '没注入故障时界面本来就没有错误话（这条变异本就该红）');
   });
 
   /* ── 3c. 「复制诊断信息」：成功要出声，失败也要出声 ────────────────────────── */
