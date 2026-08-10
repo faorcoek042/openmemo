@@ -1,0 +1,78 @@
+# `discoverTools()` 在三个平台上到底多贵 —— 一个**只产出数字**的 workflow
+#
+# ── 它回答哪个决策 ────────────────────────────────────────────────────────────
+#
+# #87：用户自己 `brew install ffmpeg` / `apt install` 之后界面不变，因为
+# `pipeline.missing` 是 daemon **启动时的一份快照**。修法 A 是「`/api/health` 按需重算」，
+# 而 A 成立的唯一前提是**重算够便宜** —— `/api/health` 被首页横幅每 30 s 轮询一次。
+#
+# `[实测 Linux 开发机, 热页缓存]` 11.5 ms/次。但那是 Linux。
+# **Windows 上反复 stat PATH 目录是经典的杀软/电池投诉**，而那是唯一可能推翻 A 的因素。
+# 所以量一次，而不是猜一次。
+#
+# ── ⚠️ 这个数字不是用户机器的证据 ────────────────────────────────────────────
+#
+# runner 上没有第三方实时防护，Defender 在 runner 镜像上的行为也与用户机器不同。
+# 本 workflow 只能回答**「这件事本身的量级」**（几毫秒？几十？几百？），
+# 回答不了「装着杀软的那台用户机器上是多少」—— 那一格仍然是 UNKNOWN，报告时必须一起报。
+#
+# ── 不会把 CI 弄红 ───────────────────────────────────────────────────────────
+#
+# 不设阈值。它是一次性的事实问题，不是每次 push 需要复核的性质（与 probe-cold-timing 同类）。
+# 值得重跑的时机：换 runner 镜像、改动解析器的档位或实现、有人提出要给 A 加缓存。
+#
+# ── 触发方式：手动 ───────────────────────────────────────────────────────────
+
+name: tool-discovery-timing
+
+on:
+  workflow_dispatch:
+    inputs:
+      samples:
+        description: '每个平台采样多少次（取中位数，抗 CI 抖动）'
+        required: false
+        default: '50'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tool-discovery-timing-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  timing:
+    name: discoverTools 耗时（${{ matrix.os }}）
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # 一个平台失败不该让其余两个也拿不到数 —— 这个 workflow 的产出是三个独立的事实。
+      fail-fast: false
+      matrix:
+        # Windows 是本次要回答的那一格；另外两个是对照，
+        # 没有对照的话"Windows 慢"读不出是平台的事还是 runner 的事。
+        os: [windows-2025, ubuntu-24.04, macos-26]
+    steps:
+      # 刻意不带 submodules：这个 job 不转写、不碰模型，少 checkout 一份就少一分噪音。
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.15.0
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # `build:safe` 而不是 `pnpm -r build`（PROTOCOL §7 补充）：
+      # 这里是 runner 上的一次性工作区，但判据是"跑错了也不会造成后果"。
+      - name: Build
+        run: pnpm build:safe
+
+      - name: 量一次（本 job 的唯一产出）
+        timeout-minutes: 10
+        env:
+          SAMPLES: ${{ inputs.samples }}
+        run: node scripts/ci/tool-discovery-timing.mjs
