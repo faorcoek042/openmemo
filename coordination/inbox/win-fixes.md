@@ -1189,3 +1189,92 @@ gate 三态汇总（独立 job）    ✔
 一个都没动（`git show --name-only` 复核：本次提交只有我那三个文件）；
 没用 `git stash`、没用 `git checkout -- <file>`、没用 `--amend`；
 新文件 `git add` 过；按 hash push 并 `merge-base --is-ancestor` 复核。
+
+---
+
+## [2026-08-10 16:40] ① 已清 · ② B 已落地 · **CI 还差最后一条，不是我的**
+
+交付: `d0910f2`（格式化三个文件）· `22a0ce0`（B：Format check 独立 job）
+
+# 第一句：**还没全绿。** `Format check` 已经绿且**独立**了，`gate` 红在**另一条**：`Orphan-exports ratchet`。
+
+```
+run 31370224187 (22a0ce0)
+  Format check                      ✅ success   ← 新的独立 job，与 gate 并行
+  typecheck + lint + test (gate)    ❌ failure   ← 红在 Orphan-exports ratchet
+  gate 三态汇总                      ❌ failure   ← 正确地跟着红
+```
+
+★ **这正是 B 要买的东西**：以前格式一红，后面 8 条全灰，
+**这条 orphan 违规被挡在后面看不见**；现在它第一次露出来了。
+
+## ① 清红（第四次）
+
+三个文件：`catalogDiskFreshness.test.ts`（`c926626`）、`components.test.tsx`（`e0ada01`）、
+`list-models.test.ts`（`35ce6ef`）—— **都不是我的代码**。
+
+⚠️ 这次和前三次不同：**三个文件此刻都被别人改着**（工作树 `M`）。
+直接 `prettier --write` 再提交会夹带别人未提交的工作。所以先按 §15-quater 验：
+
+```
+prettier(HEAD:<f>)  vs  工作树那份   →  三个 sha 全等（d68b5247… / 44b1d31e… / 8bfa981a…）
+```
+
+**等价于"工作树那份恰好就是 HEAD 版跑一遍 prettier"** —— 那一路已经跑过 prettier
+但还没提交，**这三个文件里没有任何人的语义改动**，所以提交它是安全的。
+（没碰 `scripts/ci/e2e-import-audit.mjs`：它也脏着，但**不在 CI 失败名单里**。）
+
+## ② B 已落地（`22a0ce0`）
+
+- `Format check` → 独立 job，与 `gate` 并行；**没有加任何 `always()` / `continue-on-error`**。
+- **红的强度没变**：它失败 ⇒ job 失败 ⇒ **整个 run failure**。
+- **不碰 `MUST_FAIL_LOUDLY['ci.yml'] = ['gate']`**：挪到另一个 job 不在它射程内。
+  `lint-workflows` **1726 条断言全过**（它把新 job 认了）。
+- ★ **三态口径已同步**：`gate-summary` 改成 `needs: [gate, format]`，
+  `GATE_STEP_FORMAT_CHECK` 读 `needs.format.result`。
+  job result 与 step outcome 是**同一套词汇**，所以 `summarize-gate.mjs` **一个字没改**。
+
+**反向验证了你点名那个风险**（喂进"gate 全绿 + 格式红"）：
+
+```
+结论：通过 8 / 失败 1 / 未验证 0（共 9）
+⚠️ 未全部通过 —— 未验证不算通过，这一步会以非零退出。   exit=1
+```
+
+**汇总不可能在 run 红的时候说"通过"。** `selftest-summarize-gate` 27 条断言仍全过。
+
+---
+
+# 🔴 现在挡着全绿的唯一一条（**不是我的，我没动**）
+
+```
+Orphan-exports ratchet ✘
+   零引用导出 70 个（基线 69 个）
+   ✘ 1 个**新的**零引用导出：apps/web/src/features/tasks/api.ts :: JobsResponse
+```
+
+**来自 `e0ada01`（T-195，后端包卡片下载进度那一路）。** 证据：
+
+- 那次提交把 `useJobsQuery` 提升到了 `apps/web/src/lib/api/jobs.ts`，
+  而新位置用的是 **`@openmemo/shared` 的 `GetJobsResponse`**（`jobs.ts:18,26`）。
+- 老的本地 `JobsResponse` 因此**没有消费方了**：全仓严格 grep（排除 `GetJobsResponse`）
+  只剩**定义那一行**，外加 `dist-types` 里的产物副本 —— **真实引用 0 处**。
+
+⇒ 看起来是**搬家之后留下的死类型**，不是"功能做了一半"。
+
+⚠️ **但删别人的类型是语义改动，不是格式化，我不替那一路决定。**
+棘轮自己给的三条出路（接上它 / 删掉它 / 登记进基线并写明理由）里，
+证据指向**删掉**；`e0ada01` 那一路一句话我就能执行（约一分钟）。
+⚠️ 棘轮的提示里明写「**别只为了让门禁变绿而登记**」，所以我也不会去动基线。
+
+需要 Manager 决策: **`JobsResponse` 怎么处置**（删 / 登记 / 接上）——
+这是三平台构建前的最后一格。
+
+下一步建议:
+1. 定了之后我立刻执行并盯到全绿，然后报你，你再让 `a6553151…` 触发构建。
+2. ⚠️ 我**没有**触发任何构建、**没有**碰 release（按纪律）。
+
+未做/未碰: `:10000`（`ff24098b` / pid 491899）没碰；没触发任何 workflow 构建；
+没碰 `scripts/ci/verify-e2e-attestation.mjs` / `emit-e2e-attestation.mjs`（`a1f778cf…` 在动）；
+别人在飞的 `e2e-import-audit.mjs` 没动；没用 `git stash` / `git checkout -- <file>` / `--amend`；
+两次提交都带 pathspec、按 hash push 并 `merge-base --is-ancestor` 复核。
