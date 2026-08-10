@@ -94,9 +94,21 @@ function bundledGgmlVadEntry(body: Buffer): Record<string, unknown> {
  * 造一台**刚开机的机器**：包内带着一份 VAD，目录认得它，模型根还是空的。
  * `body` 决定包内那份的**真实字节** —— 也就是"whisper.cpp 到底读不读得动"。
  */
-async function bootWith(body: Buffer): Promise<RestState> {
+async function bootWith(
+  body: Buffer,
+  /**
+   * 开机前**盘上已经有的** `active.json`。
+   * 这不是装饰：A-4 ② 要救的正是**已经处在这个状态**的机器 ——
+   * 那一行早就写下了，改激活规则不会把它擦掉。
+   */
+  seedActive?: Record<string, string | null>,
+): Promise<RestState> {
   const dataDir = mkdtempSync(join(TEST_ROOT, 'data-'));
   process.env['OPENMEMO_MODELS'] = join(dataDir, 'models');
+  if (seedActive) {
+    await mkdir(join(dataDir, 'models'), { recursive: true });
+    await writeFile(join(dataDir, 'models', 'active.json'), JSON.stringify(seedActive), 'utf8');
+  }
 
   const entry = bundledGgmlVadEntry(body);
   const manifestDir = mkdtempSync(join(TEST_ROOT, 'manifests-'));
@@ -208,5 +220,61 @@ describe('A-4 ① 判据本身：三态，`null` 是"说不出"而不是"不能"
     await writeFile(good, Buffer.concat([GGML_HEAD, Buffer.from('body')]));
     assert.equal(await loadableByRoleConsumer(TEST_ROOT, withFile(bad)), false);
     assert.equal(await loadableByRoleConsumer(TEST_ROOT, withFile(good)), true);
+  });
+});
+
+describe('A-4 ② 已经处在这个状态的机器，得能把话说清', () => {
+  const SEEDED = { vad: 'vad/silero-vad-ggml' };
+
+  it('★★ `active` 指着一个本机加载不了的权重 ⇒ 这一格必须说出来', async () => {
+    const state = await bootWith(NOT_GGML, SEEDED);
+    /*
+     * 这就是用户那台机器的形状：`active.json` 里那一行早就写下了，
+     * A-4 ① 的新规则救不了它（规则只管**将来**往里写什么）。
+     */
+    assert.equal(state.active.vad, 'vad/silero-vad-ggml');
+    assert.deepEqual(await state.activeUnusable(), {
+      vad: { modelId: 'vad/silero-vad-ggml', engine: 'whisper.cpp' },
+    });
+  });
+
+  it('★★ `active` 的判据一个字没动 —— 它仍然只回答"记录里写的是谁"', async () => {
+    /*
+     * 反过来的那个修法（把 `active` 悄悄换成"实际能用的那个"）会让
+     * 激活按钮的当前值与盘上的记录对不上，而用户按下"激活"后看到的仍是原来那个。
+     * 那是另一句假话，不是修好。所以这里钉死：**`active` 不许被这一格影响。**
+     */
+    const state = await bootWith(NOT_GGML, SEEDED);
+    await state.activeUnusable();
+    assert.equal(state.active.vad, 'vad/silero-vad-ggml');
+  });
+
+  it('★ 没有矛盾时**什么都不说**（缺失 ≠ 否，不发一条"能用"）', async () => {
+    const state = await bootWith(Buffer.concat([GGML_HEAD, Buffer.from('real')]), SEEDED);
+    assert.equal(state.active.vad, 'vad/silero-vad-ggml');
+    assert.deepEqual(await state.activeUnusable(), {});
+  });
+
+  it('★★ 判据说不出的槽位永远不进这一格（`asr` 由 selectEngine 按语言现挑）', async () => {
+    /*
+     * 故意把 `asr` 指到那个**不是 ggml** 的文件上。
+     * 如果哪天有人给 `soleConsumerEngine('asr')` 填一个默认引擎，
+     * 这里会立刻多出一格 —— 而那一格是**编出来的**：
+     * 这台机器上"谁来加载 asr"本来就没有唯一答案。
+     */
+    const state = await bootWith(NOT_GGML, { vad: null, asr: 'vad/silero-vad-ggml' });
+    assert.equal(state.active.asr, 'vad/silero-vad-ggml');
+    assert.deepEqual(await state.activeUnusable(), {});
+  });
+
+  it('★ 记为活动、但记录已经不在了 ⇒ 不算"加载不了"（两件事别混为一谈）', async () => {
+    /*
+     * "槽位指着一个不存在的 id" 与 "指着一个读不动的文件" 是两种病：
+     * 前者该说"它没装"，后者该说"你的引擎读不了它"。
+     * 合成一格的话，用户会被引导去修一个不存在的问题。
+     */
+    const state = await bootWith(NOT_GGML, { vad: 'vad/never-installed' });
+    assert.equal(state.active.vad, 'vad/never-installed');
+    assert.deepEqual(await state.activeUnusable(), {});
   });
 });

@@ -254,9 +254,15 @@ async function handleModelRoutes(
 
     case '/api/models/installed': {
       if (method !== 'GET') return methodNotAllowed(res, 'GET');
+      /*
+       * ★ A-4 ②：`active` 说的是**记录**，`activeUnusable` 说的是**后果**。
+       *   两件事分两格，不共用槽位 —— 把 `active` 悄悄换成"实际能用的那个"，
+       *   会让激活按钮的当前值与盘上的记录对不上，那是另一句假话。
+       */
       const body: GetInstalledResponse = {
         models: await state.listInstalled(),
         active: { ...state.active },
+        activeUnusable: await state.activeUnusable(),
       };
       sendJson(res, 200, body);
       return true;
@@ -264,7 +270,10 @@ async function handleModelRoutes(
 
     case '/api/models/active': {
       if (method !== 'GET') return methodNotAllowed(res, 'GET');
-      sendJson(res, 200, { active: { ...state.active } } satisfies GetActiveResponse);
+      sendJson(res, 200, {
+        active: { ...state.active },
+        activeUnusable: await state.activeUnusable(),
+      } satisfies GetActiveResponse);
       return true;
     }
 

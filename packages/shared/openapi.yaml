@@ -2630,6 +2630,14 @@ components:
           description: Map of ModelRole to active model id (or null).
           additionalProperties:
             type: [string, 'null']
+        activeUnusable:
+          type: object
+          description: >-
+            Map of ModelRole to ActiveSlotUnusable. Optional; a missing key means
+            "no verdict", not "usable". `active` keeps its meaning unchanged — it still
+            answers "what is recorded", this answers "what that record actually means".
+          additionalProperties:
+            $ref: '#/components/schemas/ActiveSlotUnusable'
 
     PullRequest:
       type: object
@@ -2725,6 +2733,27 @@ components:
           description: Map of ModelRole to active model id (or null).
           additionalProperties:
             type: [string, 'null']
+        activeUnusable:
+          type: object
+          description: Map of ModelRole to ActiveSlotUnusable (see GetInstalledResponse).
+          additionalProperties:
+            $ref: '#/components/schemas/ActiveSlotUnusable'
+
+    ActiveSlotUnusable:
+      type: object
+      required: [modelId, engine]
+      description: >-
+        Recorded as active, but the engine that loads this role on THIS machine cannot
+        read the file. Optional and per-role: absence means "we could not tell", NOT
+        "everything is usable". Facts only, no prose — the wording belongs on the side
+        that has i18n (A-4).
+      properties:
+        modelId:
+          type: string
+          description: Same value as active[role]; repeated so callers need no lookup.
+        engine:
+          type: string
+          description: The engine that loads this role here — the one that cannot read it.
 
     StorageBreakdownItem:
       type: object

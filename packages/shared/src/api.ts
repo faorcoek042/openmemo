@@ -10,7 +10,7 @@
  * close it from the start.
  */
 
-import type { BackendPack, InstalledBackendPack } from './backends.js';
+import type { AsrEngineId, BackendPack, InstalledBackendPack } from './backends.js';
 import type { Backend, HardwareInfo } from './hardware.js';
 import type { AnyJob } from './jobs.js';
 import type {
@@ -59,9 +59,53 @@ export interface GetCatalogResponse {
 
 /* ---------------------------- installed ---------------------------------- */
 
+/**
+ * **记为活动、但本机拿它的那个引擎加载不了。** 每个槽位一条，只在**确知**时才出现。
+ *
+ * ## 它修的是哪个用户症状（A-4 ②）
+ *
+ * 目录里 `role:'vad'` 底下躺着两个**互相加载不了**的条目
+ * （`vad/silero-vad-onnx` 给 sherpa-onnx，`vad/silero-vad-ggml` 给 whisper.cpp），
+ * 而自动激活是"先装的赢"、onnx 排在前面。于是同一台机器上两个消费方说相反的话：
+ *
+ *   · 激活态（`active` / 存储页的「使用中」）：这个 VAD **正在用**；
+ *   · 流水线装配（按文件头四字节判）：whisper.cpp **读不了它** ⇒ 切分退回固定窗口，
+ *     `[用户真机 2026-08-09, Windows]` 那条警告一次启动出现 **3 遍**。
+ *
+ * A-4 ① 让**新装**的机器不再产生这个矛盾；这一格是给**已经处在这个状态**的机器用的
+ * —— 用户那台就是。改判据是修不了它的：`active.json` 里那一行已经写下了。
+ *
+ * ## 为什么不是把 `active` 改成"能用的那个"
+ *
+ * `active[role]` 回答的是「**用户/产品把哪个记成了活动**」，
+ * 它同时是激活按钮的当前值、是 `POST /api/models/activate` 的写入目标。
+ * 把它悄悄换成"实际能用的那个"，会让界面上的选择与盘上的记录不一致，
+ * 而用户按下"激活"之后看到的仍然是原来那个 —— 那是另一句假话，不是修好。
+ * **两件事分两格说**：`active` 说记录，这一格说后果。
+ *
+ * ## 缺失 ≠ 否
+ *
+ * 老 daemon 不发这个字段，客户端必须能表达"我不知道"。
+ * 判据说不出的时候（例如 `asr` 由 `selectEngine()` 按语言现挑引擎，
+ * 这个问题在一台机器上本来就没有唯一答案）同样**什么都不说**，
+ * 而不是发一条"能用"。
+ *
+ * ⚠️ **不带人话句子**：只发事实（是哪个模型、哪个引擎读不了它），
+ * 措辞交给有 i18n 的那一侧。daemon 控制台没有 i18n，把中文句子塞进契约
+ * 就等于让英文用户在网页上也读中文 —— 那个坑 `pipeline/setup.ts` 里记着。
+ */
+export interface ActiveSlotUnusable {
+  /** 记在这个槽位里的模型 id —— 与 `active[role]` 同值，便于调用方不用回查。 */
+  modelId: string;
+  /** 本机上负责加载这个 role 的引擎，也就是"读不动它"的那一个。 */
+  engine: AsrEngineId;
+}
+
 export interface GetInstalledResponse {
   models: InstalledModel[];
   active: Record<ModelRole, string | null>;
+  /** 见 {@link ActiveSlotUnusable}。**可选**：缺失 = 没算/算不出，不是"都能用"。 */
+  activeUnusable?: Partial<Record<ModelRole, ActiveSlotUnusable>>;
 }
 
 /* ------------------------------- pull ------------------------------------ */
@@ -128,6 +172,13 @@ export interface ActivateResponse {
 
 export interface GetActiveResponse {
   active: Record<ModelRole, string | null>;
+  /**
+   * 见 {@link ActiveSlotUnusable}。**两个端点都发**：
+   * 只在 `/api/models/installed` 上发的话，任何只问"现在用的是哪个"的调用方
+   * （这个端点存在的全部理由）都会拿到一个**没有下文的 id** ——
+   * 而这一格要说的恰恰是"那个 id 有下文"。
+   */
+  activeUnusable?: Partial<Record<ModelRole, ActiveSlotUnusable>>;
 }
 
 /* ------------------------------ storage ---------------------------------- */

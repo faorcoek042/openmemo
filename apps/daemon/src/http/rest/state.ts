@@ -33,6 +33,7 @@ import {
   makeEvent,
   referenceSpeedOf,
   topics,
+  type ActiveSlotUnusable,
   type Backend,
   type BackendPack,
   type CatalogGroupWithFitness,
@@ -926,6 +927,49 @@ export class RestState {
    * 不是它在哪个目录。同一个 id 万一两个桶里都有（重装过一次的旧机器），
    * 取**桶与 role 对得上**的那一条 —— 而不是"先读到谁算谁"。
    */
+  /**
+   * **记为活动、但本机拿它的那个引擎加载不了的槽位。**（A-4 ②）
+   *
+   * ## 为什么必须有这一格
+   *
+   * A-4 ① 让**新装**的机器不再产生"激活态说在用、流水线说加载不了"这个矛盾。
+   * 但它救不了**已经处在这个状态**的机器 —— 用户那台的 `active.json` 里
+   * 那一行早就写下了，改判据不会把它擦掉。这一格就是说给那台机器听的。
+   *
+   * ## 判据与写入那一侧**是同一个函数**
+   *
+   * `loadableByRoleConsumer()` —— 与 `rest/models.ts` 的安装激活、
+   * 上面 `reconcileModels()` 的内置导入调的是同一个。三处各判一次的话，
+   * 会出现"写的时候认为能用、读的时候认为不能用"这种新的自相矛盾，
+   * 而 A-4 要修的**恰恰就是两个消费方对同一件事说相反的话**。
+   *
+   * ## 三态，缺席 = 说不出
+   *
+   * 只有 `false`（**确知加载不了**）才在结果里占一格。`null` 什么都不写：
+   * 例如 `asr` 由 `selectEngine()` 按语言现挑引擎，"谁来加载它"在一台机器上
+   * 本来就没有唯一答案 —— 那时沉默是唯一诚实的回答。
+   *
+   * ⚠️ 代价：每个**有唯一消费方**的槽位一次 manifest 读 + 一次 4 字节文件读。
+   *    今天只有 `vad` 一个（`soleConsumerEngine()` 先短路），不做 `du`、不 spawn。
+   */
+  async activeUnusable(): Promise<Partial<Record<ModelRole, ActiveSlotUnusable>>> {
+    const out: Partial<Record<ModelRole, ActiveSlotUnusable>> = {};
+    let installed: InstalledModel[] | null = null;
+    for (const role of MODEL_ROLES) {
+      const id = this.active[role];
+      if (id == null) continue;
+      const engine = soleConsumerEngine(role);
+      if (engine === null) continue; // 说不出 ⇒ 什么都不说
+      installed ??= await this.listInstalled();
+      const rec = installed.find((m) => m.id === id);
+      if (rec === undefined) continue; // 记为活动但记录不在了：不是"加载不了"，别混为一谈
+      if ((await loadableByRoleConsumer(this.modelsRoot, rec)) === false) {
+        out[role] = { modelId: id, engine };
+      }
+    }
+    return out;
+  }
+
   async listInstalled(): Promise<InstalledModel[]> {
     const byId = new Map<string, { kind: StoreKind; rec: InstalledModel }>();
     for (const kind of STORE_KINDS) {
