@@ -222,6 +222,87 @@ describe('无法识别的残留：看得见 / 删得掉 / 删之前证明没在�
     assert.ok((await stat(claimed)).isFile(), '把有记录的包一起删了');
   });
 
+  it('★★ 更新路径（同一个 id 换内容）留下的残留，必须被扫到、且可回收', async () => {
+    /*
+     * T-195 追加：Manager 点名要确认的那条。
+     *
+     * `POST /api/backends/install` 打到一个**已装**的 id 上时，安装器写新 blob、
+     * 新硬链、解开到 `by-name/backend/<新归档名>/`，然后**覆盖**安装记录。
+     * 旧归档与旧解压目录**没有任何人认领** —— 既不在新记录的 `files[]` 里，
+     * 也不在任何别的记录里。
+     *
+     * `[用户真机实测 2026-08-10，:10000]` 这正是他机器上那 33.6 MB 的来源
+     * （08-02 装上游包 → 08-07 同一个 id 换成自建包）；另有 279 MB 是同一形状的
+     * 布局约定变更留下的。合计 298 MB，全部确认没在用。
+     *
+     * ⚠️ 这条只证明**事后扫得到、收得回**。**根治仍然在安装器写新落点那一刻**
+     * （Manager 2026-08-10 裁定）—— 事后扫是网，不是治。
+     */
+    const state = await seed();
+
+    // ① 旧版：装上去（有记录、被认领）
+    await installClaimed(state);
+    assert.equal(
+      (await state.findUnclaimedFiles()).some((x) => x.relPath.includes('claimed-pack')),
+      false,
+      '前提：装着的时候它必须是"被认领"的，否则下面证明不了残留是更新造成的',
+    );
+
+    // ② 更新：同一个 id、另一个归档 —— 安装记录被覆盖，旧文件原地留下
+    const v2 = Buffer.concat([PAYLOAD, Buffer.from('v2')]);
+    const newSha = createHash('sha256').update(v2).digest('hex');
+    const newArchive = 'claimed-pack-v2.tar.gz';
+    await writeFile(state.store.blobPath(newSha), v2);
+    await state.store.linkByName('backend', newSha, newArchive);
+    const newUnpacked = join(state.store.root, 'by-name', 'backend', 'claimed-pack-v2');
+    await mkdir(newUnpacked, { recursive: true });
+    await writeFile(join(newUnpacked, 'claimed-cli'), v2, { mode: 0o755 });
+    await state.store.writeManifest('backend', 'claimed-pack', {
+      schemaVersion: 1,
+      id: 'claimed-pack',
+      engine: 'whisper.cpp',
+      engineVersion: 'v1.9.2',
+      backend: 'cpu',
+      installedAt: new Date().toISOString(),
+      verifiedAt: new Date().toISOString(),
+      integrity: 'ok',
+      files: [
+        {
+          role: 'archive',
+          name: newArchive,
+          sha256: newSha,
+          sizeBytes: v2.length,
+          root: 'models',
+          relPath: join('by-name', 'backend', newArchive),
+        },
+      ],
+      selfTest: null,
+    });
+
+    // ③ 旧的那两份现在没人认领 —— 扫得到吗？
+    const found = await state.findUnclaimedFiles();
+    assert.ok(
+      found.some((x) => /claimed-pack(\.tar\.gz)?$/.test(x.relPath)),
+      '更新留下的旧文件没被扫到 —— 用户会看到一份说不清也删不掉的死重：' +
+        found.map((x) => x.relPath).join(', '),
+    );
+    assert.equal(
+      found.some((x) => x.relPath.includes('claimed-pack-v2')),
+      false,
+      '把**刚更新上去的**那一份报成了残留 —— 照这个删会删掉用户刚装的东西',
+    );
+
+    // ④ 收得回吗？按 du 量，不是按"文件不见了"
+    const before = await realBytes(state.store.root);
+    const gc = await state.collectUnclaimed();
+    const after = await realBytes(state.store.root);
+    assert.ok(gc.removedFiles > 0, '一个都没回收');
+    assert.ok(before - after > 0, `磁盘一个字节都没少（报了 ${gc.freedBytes}）`);
+    assert.ok(
+      (await stat(join(newUnpacked, 'claimed-cli'))).isFile(),
+      '把刚更新上去的那一份删掉了',
+    );
+  });
   it('★ 「报的可回收」与「真删掉的」必须出自同一份判断（否则界面会承诺一件不会发生的事）', async () => {
     const state = await seed();
     await installClaimed(state);
