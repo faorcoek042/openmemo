@@ -4,13 +4,10 @@
  * 端点契约见 `packages/shared/src/components.ts`；数据层实现见
  * `packages/downloader/src/components.ts`（`listComponents`）。
  *
- * ⚠️ **这里原来还有一个 `useRollbackComponentMutation`，T-157 ② 删掉了。**
- * daemon 的 `POST /api/components/:id/rollback` 仍然在，而且是诚实的（永远 409
- * `NO_ROLLBACK_POINT`）—— 因为**从来没有任何东西创建过可回滚的备份**
- * （`stashForRollback` 全仓零调用方，另有两处 id↔目录名对不上，逐条写在
- * `packages/downloader/src/components.ts` 里）。
- * 留着一个必然 409 的 hook + 一个恒不渲染的按钮，只会让下一个人以为这条路是通的。
- * 真要做回滚，那边列的四件事得先做完，然后再把这个 hook 写回来（六行）。
+ * ⚠️ **这里原来还有一个 `useRollbackComponentMutation`，T-157 ② 删掉了**，
+ * 而它对面的 `POST /api/components/:id/rollback` 与整条回滚管道现在也删干净了 ——
+ * 那条路从来没有通过一次。决定与理由（含将来真要做得先补哪一环）：
+ * `docs/adr/ADR-017-component-rollback-removed.md`。
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -54,9 +51,8 @@ export function useCheckUpdatesMutation() {
 /**
  * 组件动作的真实路径 —— **id 在路径里，不在 body 里**。
  *
- * daemon 的路由是 `POST /api/components/:id/(update|rollback)`
- * （`http/rest/components.ts` 的 `/^\/api\/components\/([^/]+)\/(update|rollback)$/`）；
- * 前端今天只用得上 `update`（回滚见文件头）。
+ * daemon 的路由是 `POST /api/components/:id/update`
+ * （`http/rest/components.ts` 的 `/^\/api\/components\/([^/]+)\/update$/`）。
  * 这里原来发的是 `POST /api/components/update` + `{ id }` ——
  * **少一段路径，正则不匹配，handler 返回 false，主路由 404**（T-132 查出）。
  * 又一次「测我发了什么，没测对面会读什么」：清单能拉出来、卡片渲染正常、

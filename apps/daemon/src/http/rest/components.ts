@@ -18,7 +18,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import { listComponents, rollback as rollbackComponent } from '@openmemo/downloader';
+import { listComponents } from '@openmemo/downloader';
 import type { GetComponentsResponse } from '@openmemo/shared';
 
 import { dirname, join, resolve } from 'node:path';
@@ -53,15 +53,6 @@ export function resolveComponentRegistryPath(): string {
 
 /** 上游查询的超时。查不到不是错误，只是 latestVersion 为 null。 */
 const UPSTREAM_TIMEOUT_MS = 8000;
-
-/** 只有这三个 kind 有 by-name 目录，回滚才有意义。 */
-function rollbackKindOf(category: string): 'asr' | 'llm' | 'backend' | undefined {
-  if (category === 'model') return 'asr';
-  if (category === 'backend-pack' || category === 'sqlite-ext' || category === 'media-tool') {
-    return 'backend';
-  }
-  return undefined;
-}
 
 export function createComponentRoutes(deps: ComponentRoutesDeps): {
   handle(
@@ -106,36 +97,13 @@ export function createComponentRoutes(deps: ComponentRoutesDeps): {
         return true;
       }
 
-      const m = /^\/api\/components\/([^/]+)\/(update|rollback)$/.exec(path);
+      const m = /^\/api\/components\/([^/]+)\/update$/.exec(path);
       if (m && method === 'POST') {
         const id = decodePathSegment(m[1] ?? '');
-        const action = m[2];
         const current = await load(state, false);
         const comp = current.components.find((c) => c.id === id);
         if (!comp) {
           sendError(res, 404, 'NOT_FOUND', `unknown component: ${id}`, '找不到该组件');
-          return true;
-        }
-        const kind = rollbackKindOf(comp.category);
-
-        // ---- 4. 回滚：把上一版目录换回来 ----
-        if (action === 'rollback') {
-          if (!kind || !comp.rollbackVersion) {
-            sendError(
-              res,
-              409,
-              'NO_ROLLBACK_POINT',
-              'no retained previous version',
-              '没有可回滚的上一版本',
-            );
-            return true;
-          }
-          const ok = await rollbackComponent(state.store, kind, id, comp.rollbackVersion);
-          if (!ok) {
-            sendError(res, 409, 'NO_ROLLBACK_POINT', 'stash missing', '上一版本的备份已不在');
-            return true;
-          }
-          sendJson(res, 200, { ok: true, id, restoredVersion: comp.rollbackVersion });
           return true;
         }
 

@@ -337,7 +337,8 @@ describe('T-168 ① 真归档形状：__MACOSX 不许废掉层级修复', () => 
  *
  * ## 为什么这条测试是这次改动的核心
  *
- * 组件页那句「旧版本会保留，出问题可以一键回滚」是假的（`stashForRollback` 零调用方）。
+ * 组件页那句「旧版本会保留，出问题可以一键回滚」是假的（当时的 `stashForRollback`
+ * 零调用方；那条管道现已整体删除，见 `docs/adr/ADR-017-component-rollback-removed.md`）。
  * 把它换成实话时要先确认：**剩下那半句是不是真的？**
  * 追下去发现也不是 —— `install()` 的 catch 里有一句 `fs.rm(finalDir)`，
  * 那是 temp-then-rename **之前**留下的清理逻辑。当时 `finalDir` 里可能是半个目录，

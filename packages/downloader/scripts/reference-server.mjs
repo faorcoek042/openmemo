@@ -80,9 +80,7 @@ const { install } = await import(path.join(DIST, 'installer.js'));
 const { probeAll } = await import(path.join(DIST, 'probe.js'));
 const { computeFit, makeEvent, referenceSpeedOf, topics, formatSseFrame, formatSseRetry } =
   await import(path.join(SHARED, 'index.js'));
-const { listComponents, rollback: rollbackComponent } = await import(
-  path.join(DIST, 'components.js')
-);
+const { listComponents } = await import(path.join(DIST, 'components.js'));
 const COMPONENT_REGISTRY = path.join(REPO, 'vendor', 'manifests', 'components.json');
 /** Cache the last upstream sweep so the page does not re-hit GitHub on every render. */
 let componentCache = null;
@@ -823,13 +821,8 @@ const server = http.createServer(async (req, res) => {
         toVersion: body.toVersion ?? null,
       });
     }
-    if (p === '/api/components/rollback' && method === 'POST') {
-      const body = await readBody(req);
-      const ok = await rollbackComponent(store, 'backend', String(body.id ?? ''), 'prev').catch(
-        () => false,
-      );
-      return json(res, 200, { ok: true, version: ok ? 'prev' : 'none' });
-    }
+    // 回滚端点已整体删除（docs/adr/ADR-017-component-rollback-removed.md）。
+    // 它此前 mock 的路径 `/api/components/rollback` 跟真路由本来也对不上。
 
     if (p === '/api/models/catalog') {
       return json(

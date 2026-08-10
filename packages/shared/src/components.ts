@@ -121,8 +121,6 @@ export interface ComponentStatus {
    * hash string overstates how much we actually know, so the UI shows this next to it.
    */
   sha256Provenance?: string | null;
-  /** Previous version retained on disk, enabling one-click rollback. */
-  rollbackVersion: string | null;
 }
 
 export interface GetComponentsResponse {

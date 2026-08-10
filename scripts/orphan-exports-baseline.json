@@ -129,16 +129,6 @@
       "name": "vecDelete"
     },
     {
-      "file": "packages/downloader/src/components.ts",
-      "name": "discardRollback",
-      "note": "同上（stashForRollback 的另一半）。没有备份就没有什么可丢弃的。"
-    },
-    {
-      "file": "packages/downloader/src/components.ts",
-      "name": "stashForRollback",
-      "note": "T-157 ② 裁决：**刻意不接**。接上会让 findInBackendPacks 在 .prev-* 目录里挑到旧二进制、且几百 MB 无人回收。要做完的四件事写在该函数上方的注释里。"
-    },
-    {
       "file": "packages/downloader/src/proxy.ts",
       "name": "DEFAULT_PROBE_TARGETS"
     },

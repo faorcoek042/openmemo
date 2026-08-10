@@ -3804,7 +3804,6 @@ describe('T-132 组件与来源页', () => {
     sizeBytes: 39924536,
     sha256: '6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae',
     sha256Provenance: null,
-    rollbackVersion: null,
   };
   /** npm 依赖：清单里如实写着没有制品，所以它**不该**有安装按钮。 */
   const BUNDLED = {
@@ -3884,11 +3883,9 @@ describe('T-132 组件与来源页', () => {
   /**
    * ★ T-157 ②：**「旧版本会保留，出问题可以一键回滚」是假话，而它每次点更新都会说。**
    *
-   * 三处同时坏着：`stashForRollback` 零调用方（`.prev-` 目录从没被创建过）、
-   * `readRollbackVersions` 用目录名建索引而 `listComponents` 用组件 id 查表
-   * （这台机器上 4 个里 3 个对不上）、`rollback()` 也按 id 拼路径。
-   * 于是 `rollbackVersion` 恒为 null，那个回滚按钮**一次都没渲染过** ——
-   * 用户唯一能接触到的"回滚"，就是这句承诺。
+   * 那条回滚管道从来没运行过一次，现在已整体删除
+   * （决定与理由：`docs/adr/ADR-017-component-rollback-removed.md`）。
+   * 用户唯一能接触到的"回滚"，就是这句承诺 —— 所以这条用例留下来看着这句话。
    *
    * 判据钉的是**送到用户眼前的那串字**，不是"页面上有没有出现回滚两个字"。
    */
@@ -3949,34 +3946,22 @@ describe('T-132 组件与来源页', () => {
     }
   });
 
-  test('★ 卡片上不许再出现回滚按钮（它此前恒不渲染，是一张空头支票的另一半）', async () => {
-    stubApi({
-      '/components': {
-        // 连 daemon 真的报了 rollbackVersion 都不许画 —— 今天没有任何东西会产出它，
-        // 画出来点下去只会拿到 409。要恢复它，先做完 components.ts 上写的四件事。
-        components: [{ ...INSTALLED_WITH_UPDATE, rollbackVersion: '2026.06.01' }],
-        online: false,
-        checkedAt: null,
-      },
-    });
-    const r = await render(<ComponentsPage />);
-    await r.flush();
-    /*
-     * ⚠️ 先证明这条"不存在"断言不是空的：同一张卡上的**更新**按钮必须在。
-     * 缺了这一句，卡片根本没渲染出来时它照样绿 —— ⑤A 那一族，一条永远不会失败的断言。
-     */
-    assert.equal(
-      r.container.querySelector('[data-testid="component-update-ytdlp-linux-x64"]') === null,
-      false,
-      '卡片本身就没渲染出来 —— 下面那条"没有回滚按钮"于是什么都没验',
-    );
-    assert.equal(
-      r.container.querySelector('[data-testid="component-rollback-ytdlp-linux-x64"]') === null,
-      true,
-      '回滚按钮又回来了 —— 它对应的备份从来没有被任何代码创建过',
-    );
-    r.unmount();
-  });
+  /*
+   * ⚠️ 这里原本还有一条『卡片上不许再出现回滚按钮』。**删掉了，不是悄悄放弃保护。**
+   *
+   * `rollbackVersion` 契约字段和整条回滚管道都已不存在，那条用例于是变成
+   * **一条钉住零的腿**：它注入一个类型里没有的字段，再断言一个从来不会被渲染的
+   * testid 不在 —— 测的是零。规矩是：一条钉住零的腿，要么明确标注"它现在测的是零"，
+   * 要么删掉；留着不标，下一个人会以为这块守住了。
+   *
+   * 「回滚被重新引入」这件事现在由**两道真的会红的机器判据**接管：契约里再加回
+   * `rollbackVersion` 而没有消费者 → 孤儿导出棘轮 + 契约字段读者门禁。
+   * 判据没丢，只是从一条假装在测的用例换成了两道守卫。
+   * 全部理由见 `docs/adr/ADR-017-component-rollback-removed.md`。
+   *
+   * 上面那条『更新确认框不许承诺可以一键回滚』**保留** —— 它钉的是送到用户眼前的
+   * 那串字，那是活的，不是零。
+   */
 
   test('★ 随应用一起装的 npm 组件不画安装按钮（画了也只会拿到 409，比没有更糟）', async () => {
     stubApi({ '/components': { components: [BUNDLED], online: false, checkedAt: null } });
@@ -5091,7 +5076,6 @@ describe('T-135 ③ 组件卡片：displayNameZh 是两份里的一份，不是�
     sizeBytes: 1_234_567,
     sha256: 'aa'.repeat(32),
     sha256Provenance: null,
-    rollbackVersion: null,
   };
 
   test('★ 英文界面下卡片标题用 displayName，不是 displayNameZh', async () => {
@@ -10727,7 +10711,6 @@ describe('T-200 S-6 组件页必须跟着活查询走', () => {
     sizeBytes: 1000,
     sha256: 'x'.repeat(64),
     sha256Provenance: null,
-    rollbackVersion: null,
   };
 
   function stubConfirmTrue(): () => void {

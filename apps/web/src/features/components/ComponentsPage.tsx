@@ -75,10 +75,9 @@ export default function ComponentsPage() {
         : /*
            * ⚠️ **最后一行原本写着「旧版本会保留，出问题可以一键回滚」。那是假的**（T-157 ②）。
            *
-           * `stashForRollback` 全仓零调用方，`.prev-<version>` 目录从来没有被创建过；
-           * 就算创建了，索引键（目录名）与查表键（组件 id）也对不上。
-           * 于是 `rollbackVersion` 恒为 null，回滚按钮**一次都没渲染过** ——
-           * 而这句承诺**每次点更新都会说出来**。
+           * 那套回滚管道从来没运行过一次，现在已整体删除（决定与理由：
+           * `docs/adr/ADR-017-component-rollback-removed.md`）。这句承诺却**每次点更新
+           * 都会说出来** —— 所以先把话说对。
            *
            * 换成两句真的：
            *   · 失败**确实**不会破坏当前版本 —— `installer.ts` 先解压到 temp、
