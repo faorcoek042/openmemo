@@ -719,3 +719,45 @@ Canceling since a higher priority waiting request for ci-refs/heads/master exist
 ⚠️ 残留：`lint-workflows` 那 3 条断言能让**回退口径的提交变红**，
 但那个提交**仍然会带着旧口径跑一次**，并且可能在那一次里取消掉别人的 run。
 门禁能保证"回退会被发现"，不能保证"回退不产生任何后果"。
+
+### 14. 「不许整文件重写」这条规矩的适用范围 = **所有共享的结构化配置文件**
+
+原来这条是就着 locale 说的。**范围写窄了** —— 今天出事的三次里，有一次落在 `ci.yml`
+（我自己那次），而 `ci.yml` 不是 locale。**病是按「操作方式」发作的，不是按文件类型。**
+
+**规矩（适用于共享工作树 `/root/memo` 里的所有人）：**
+
+> **对任何共享的结构化配置文件，只做行级增删改；
+> 不许"读进来 → 在内存里改 → 整份写回"。**
+
+**适用对象**（不是穷举，判据在下面）：
+
+- `apps/web/src/app/i18n/locales/*.json`（locale）
+- `.github/workflows/*.yml`（workflow）
+- `package.json` / `pnpm-workspace.yaml` / `tsconfig*.json`
+- `scripts/*-baseline.json`、`scripts/locale-allowlist.json` 等棘轮名单
+- `.prettierignore` / `.gitignore` / `eslint.config.js`
+
+**判据（比清单重要）：** 只要一个文件满足
+**「多个 agent 会各自往里加东西」+「整份重写在语法上完全合法」**，它就在范围内。
+这两条一凑齐，就出现那个致命性质：**你把别人刚加的东西覆盖掉，
+不报错、不冲突、git 也不提示** —— 只有碰巧有人读到中间态才暴露。
+
+**具体禁止的姿势**（三次事故用的都是这个）：
+
+```
+读整份 → JSON.parse / yaml.parse → 改对象 → 整份 stringify 写回
+读整份 → python/node 字符串替换 → 整份写回        ← 我那次
+```
+
+**替代姿势：** 用 `Edit`/`sed` 做**定点行级**修改；改完 `git diff --stat` 看一眼
+**增删行数是不是和你以为的一样**（我那次 `-50` 就在 `--stat` 里明明白白，我没看）。
+
+⚠️ **额外一条，来自我自己那次**：如果你在**独立 worktree** 里改过共享文件，
+主工作区那份**不会跟着变**。落地之后要么回主工作区确认内容一致，
+要么后续改动继续在同一个 worktree 里做。否则你下一次 read-modify-write
+读到的就是**旧版**，然后把自己刚做的改动整段写回去 —— 这就是 `e64de10`。
+
+**机器兜底目前只覆盖三种文件**：locale（`check:locale`）、测试文件（`check:test-ratchet`）、
+`ci.yml` 的并发口径（`lint-workflows` 3 条断言）。**其余全靠上面这条纪律。**
+别把这三道守卫读成"配置文件都有人看着了"。
