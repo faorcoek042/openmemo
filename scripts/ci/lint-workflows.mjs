@@ -718,6 +718,42 @@ for (const file of files.sort()) {
   );
 }
 
+/* ── ci.yml 的并发口径不许被静默改回去 ────────────────────────────────────────
+ *
+ * 事故（本轮，**是我自己干的**）：按 SHA 分组那条配置在一个**独立 worktree** 里改的，
+ * 于是 `/root/memo` 工作区那份 `ci.yml` 一直是旧的。后来我在共享树上
+ * read-modify-write 同一个文件，把**自己刚验证过的改动整段写回了旧版**，
+ * 并且被别人的 `git push origin master` 一起带上了主干。
+ * 没有报错、没有冲突、diff 里那 50 行删除**我自己都没看见**。
+ *
+ * 这就是本轮一直在治的那个病 —— 只是它这次落在**没有任何棘轮覆盖的文件**上：
+ * 测试文件棘轮只看 `*.test.ts`，locale 守卫只看 `locales/*.json`，`ci.yml` 谁都没管。
+ *
+ * 判据不建立在"提交信息说了什么"或"有没有人看 diff"上，只看**事实**：
+ * 那两行配置现在是不是还长这样。改口径是可以的 —— 但必须**同时改这条断言**，
+ * 也就是变成一次**显式决定**，而不是一次没人看见的回退。
+ */
+{
+  const ciSrc = await readFile(join(REPO_ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
+  must(
+    /group:\s*ci-\$\{\{\s*github\.event_name == 'push' && github\.sha \|\| github\.ref\s*\}\}/.test(
+      ciSrc,
+    ),
+    "ci.yml: concurrency.group 必须按 **SHA** 分组 push 事件（`ci-${{ github.event_name == 'push' && github.sha || github.ref }}`）—— " +
+      '共用 `github.ref` 会让突发连推时中间的提交拿不到判决（实测一天 18/84 = 21.4% 被取消）',
+  );
+  must(
+    /cancel-in-progress:\s*\$\{\{\s*github\.event_name != 'push'\s*\}\}/.test(ciSrc),
+    "ci.yml: concurrency.cancel-in-progress 必须是 `${{ github.event_name != 'push' }}` —— " +
+      'master 的 push 不许被取消（PR 分支仍然保留取消）',
+  );
+  must(
+    /非 head 提交仍然拿不到任何判决/.test(ciSrc),
+    'ci.yml: 那段「按 SHA 分组**仍然**修不了非 head 提交这一档、目前靠纪律不靠机器」的说明必须留着 —— ' +
+      '删掉它就等于宣称机器管住了它，而机器并没有',
+  );
+}
+
 if (problems.length > 0) {
   console.log(`✘ lint-workflows: ${problems.length} 个问题（共 ${checks} 条断言）`);
   for (const p of problems) console.log(`  - ${p}`);
