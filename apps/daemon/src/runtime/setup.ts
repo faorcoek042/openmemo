@@ -662,11 +662,18 @@ export interface RuntimeDetection {
   readonly advisoryWarnings: readonly string[];
 }
 
-/** 已装后端包 = store 里真实存在的 backend manifest。cpu 是内置 L1，恒为已装。 */
+/**
+ * 已装后端包 = store 里真实存在的 backend manifest。
+ *
+ * ★ T-197：这里以前是 `new Set(['cpu', ...packs])` —— **无条件把 cpu 塞进"已装"**。
+ * 它想说的是「CPU 这条算路永远兜得住」，那句话是对的，但它不是 `installed` 的语义
+ * （`installed` = 包在不在盘上），而且在开发树上连"兜得住"都不成立。
+ * 那件事现在由 `bundledBackends()` 单独回答，所以这里只数真实的 manifest。
+ */
 async function installedBackendsFromStore(modelsRoot: string): Promise<Set<Backend>> {
   const store = new ArtifactStore(modelsRoot);
   const packs = await store.listManifests<InstalledBackendPack>('backend');
-  return new Set<Backend>(['cpu', ...packs.map((p) => p.backend)]);
+  return new Set<Backend>(packs.map((p) => p.backend));
 }
 
 function probeRemediation(probe: ProbeResult, layout: RuntimeLayout): Remediation | null {

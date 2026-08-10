@@ -48,6 +48,7 @@ import {
   type Quantization,
 } from '@openmemo/shared';
 
+import { loadableByRoleConsumer } from '../../pipeline/modelStore.js';
 import { sendError, sendJson } from '../respond.js';
 import type { SseHub } from '../sse.js';
 import { handleBackendRoutes, startPackInstall } from './backends.js';
@@ -207,15 +208,24 @@ async function buildHardwareResponse(state: RestState): Promise<GetHardwareRespo
   // 先让快照跟上现实，理由见 backends.ts 入口那段：装/卸/切之后不刷新，
   // 这里回的 `backends[].probed` / `available` 就是上一次启动时的答案。
   const base = await state.freshHardware();
-  // `installed` 反映的是"后端包是否装在磁盘上"，这是我们能确知的事实；
-  // `available`（设备是否枚举得到）仍然由探测决定，两者不能互相推断。
+  /*
+   * `installed` 反映的是"后端包是否装在磁盘上"，这是我们能确知的事实；
+   * `available`（设备是否枚举得到）仍然由探测决定，两者不能互相推断。
+   *
+   * ★ T-197：这里以前写的是 `b.id === 'cpu' ? true : …` —— **紧邻的这段注释自己
+   * 说着「这是我们能确知的事实」，而 cpu 那一格根本没查盘。** 于是干净机器上
+   * 顶部芯片说「CPU ⚡使用中」，同一页往下滚两百像素的 `BackendPackCard`
+   * 说「CPU ⬇可安装 · 42 MB」——两句话都来自产品自己。
+   *
+   * 写死那句**想说的事情是对的**（包内自带一份 CPU whisper-cli 兜得住），
+   * 错在把它写成了 `installed`。那件事现在有自己的名字：`bundled`，
+   * 由 `bundledBackends()` 真的去文件系统查（开发树上就是空集）。
+   * 这里于是只回答它字面上的那个问题。
+   */
   const installedBackends = new Set((await state.listInstalledBackends()).map((p) => p.backend));
   const hardware = {
     ...base,
-    backends: base.backends.map((b) => ({
-      ...b,
-      installed: b.id === 'cpu' ? true : installedBackends.has(b.id),
-    })),
+    backends: base.backends.map((b) => ({ ...b, installed: installedBackends.has(b.id) })),
   };
   return { hardware, snapshotId: HARDWARE_SNAPSHOT_ID };
 }
@@ -569,7 +579,31 @@ function startModelPull(
        */
       await state.store.writeManifest(roleToStoreKind(model.role), model.id, record);
 
-      if (opts.activateOnSuccess || !state.active[model.role]) {
+      /*
+       * ★★ A-4 ①：**"先装的赢"这条自动激活规则，先问一次"本机读得动吗"。**
+       *
+       * `[用户真机 2026-08-09, Windows]` 目录里 `role:'vad'` 底下躺着两个**互相
+       * 加载不了**的条目，onnx 排在 ggml 前面，于是任何一次冷装 `required-core` 都会
+       * 让 `active.json.vad = 'vad/silero-vad-onnx'`。之后同一台机器上两个消费方
+       * 说相反的话：这里（激活态）说它**正在用**，而流水线装配
+       * （`pipeline/setup.ts` 的 `resolveWhisperVadModel()`）按文件头判定 whisper.cpp
+       * 读不了它，退回固定窗口切分并**一次启动警告 3 遍**。
+       *
+       * ⚠️ 只挡**自动**那一臂。`activateOnSuccess`（用户自己按的"装完就用"）照旧生效 ——
+       *    那是用户的决定，产品无权替他改；它的真话由 `activeUnusable` 那一格去说（②）。
+       *
+       * ⚠️ 判据三态，`null`（说不出）**按放行处理**：`asr` 那个槽位由 `selectEngine()`
+       *    按语言现挑引擎，本来就没有唯一答案，把"不知道"当成"不能用"会让
+       *    ASR 从此再也不自动激活 —— 那是拿一个真 bug 换一个更大的 bug。
+       *    只有**确知加载不了**（`false`）才不占这个槽位。
+       *
+       * ⚠️ 不占槽位**不等于**这个模型没装：`resolveActiveModel()` 在 `active.json`
+       *    指不到时会扫该 role 下所有已装记录，装对了的那个照样会被用上。
+       *    这里少写的只是一句**假话**。
+       */
+      const consumerVerdict = await loadableByRoleConsumer(state.modelsRoot, record);
+      const mayAutoActivate = !state.active[model.role] && consumerVerdict !== false;
+      if (opts.activateOnSuccess || mayAutoActivate) {
         const previous = state.active[model.role];
         state.active[model.role] = model.id;
         await state.persistActive();

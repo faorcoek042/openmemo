@@ -6,6 +6,7 @@ import {
   Cpu,
   Download,
   HelpCircle,
+  PackageCheck,
   XCircle,
   Zap,
 } from 'lucide-react';
@@ -58,6 +59,15 @@ export type BackendChipState =
    * 界面从头到尾**不读 `probed`** —— 类型层辛苦区分出来的东西，用户看不到。
    */
   | 'installed-unprobed'
+  /**
+   * **不装任何包就能用** —— 随产品出厂的那份（今天只有 CPU 基线运行时）。
+   *
+   * ⚠️ 这一档不许并进 `installed`：那是"装了一个包"，这是"根本不需要包"。
+   * 并了就回到 T-197 那个现场 —— 干净机器上顶部说「CPU 已安装/使用中」，
+   * 同一页的 `BackendPackCard` 说「CPU 可安装 · 42 MB」，两句话都来自产品自己。
+   * 分开之后这两句同时为真且不打架：自带的那份在跑，那个**包**确实还没装。
+   */
+  | 'bundled'
   | 'available'
   | 'not-installed'
   | 'failed'
@@ -97,6 +107,12 @@ const STATE_STYLE: Record<
     text: 'text-warning',
     labelKey: 'runtime.chip.installedUnprobed',
     icon: <CircleDashed className="size-3.5 shrink-0" aria-hidden />,
+  },
+  bundled: {
+    // 与「已安装」同为可用绿：它**真的能用**，只是来路不同（出厂自带，不是装的包）
+    text: 'text-good',
+    labelKey: 'runtime.chip.bundled',
+    icon: <PackageCheck className="size-3.5 shrink-0" aria-hidden />,
   },
   available: {
     text: 'text-ink-secondary',

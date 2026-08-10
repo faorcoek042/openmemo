@@ -246,13 +246,16 @@ export function HardwareCard({
                 ? 'active'
                 : b.unavailableKind === 'platform_unsupported'
                   ? 'other-platform'
-                  : b.installed
-                    ? b.probed
-                      ? 'installed'
-                      : 'installed-unprobed'
-                    : b.available
-                      ? 'available'
-                      : 'not-installed'
+                  : b.bundled && !b.installed
+                    ? // 出厂自带那份在兜底：能用，但**没有装任何包**（T-197）
+                      'bundled'
+                    : b.installed
+                      ? b.probed
+                        ? 'installed'
+                        : 'installed-unprobed'
+                      : b.available
+                        ? 'available'
+                        : 'not-installed'
             }
           />
         ))}

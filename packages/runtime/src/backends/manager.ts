@@ -288,7 +288,13 @@ export function buildHardwareInfo(input: BuildHardwareInfoInput): HardwareInfo {
           kind: 'disabled_after_failures',
           reason: 'disabled after repeated failures; re-test to try again',
         };
-      } else if (!installed) {
+      } else if (!installed && !bundledBackends.has(id)) {
+        /*
+         * ★ T-197：`bundled` 的后端走不到这里 —— 它**不需要包**，
+         * 说"backend package not installed"会把一条能用的算路说成缺东西，
+         * 并且把用户指去装一个他本来就不需要的包。
+         * （cpu 在包内布局下就是这一档；开发树上 `bundledBackends` 是空集，照旧报未装。）
+         */
         return { kind: 'not_installed', reason: 'backend package not installed' };
       } else if (!probed) {
         /*
