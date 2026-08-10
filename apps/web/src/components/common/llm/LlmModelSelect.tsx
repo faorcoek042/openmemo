@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RefreshCw } from 'lucide-react';
 
@@ -42,17 +42,44 @@ import type { ModelCatalogNote } from './llm-catalog';
  * - **提交时机两处不同。** 「AI 模型」写的是本地 state（每次输入都同步没问题），
  *   「按用途分别配置」每次提交都会 PATCH 一次（必须等失焦）。
  *   → `commit` 参数，而不是复制一份组件。
+ * - **提交可能失败，草稿不能装作没事。**（S-8）`commit='blur'` 这条路径此前失焦
+ *   一发就完事——PATCH 失败、或者外部 `value` 后来变了，都没有任何回声，草稿会
+ *   永远显示成"已保存"的样子，而同屏别处按服务端真值渲染的地方（比如「按用途分别
+ *   配置」的生效值那一行）还是旧值——两边对不上，且用户一个字的提示都看不到。
+ *   现在 `onChange` 允许回一个 Promise：失败时**保留草稿**（不吞用户刚打的字，
+ *   影子状态本身不是罪）但标红 + 提示"没保存成功"；成功时不在这里手动清，等外部
+ *   `value` 追上草稿时自然退出草稿态——不能"`value` 一变就无脑清"，那是把 S-9
+ *   （后台重取悄悄抹掉正在编辑的字段）原样搬进这个组件。
  */
 
 /** 「自定义…」这一项的 value。用 `__` 前缀，撞不上任何真实型号名。 */
 const CUSTOM_VALUE = '__custom__';
+
+/**
+ * 统一"消化"`onChange` 可能回的 Promise —— 调用方现在允许回一个 `mutateAsync(...)`
+ * 那样的 Promise（见 S-8），但下拉那条路径（选现成选项）从来没人等过它。
+ * 不接住就是 unhandled rejection：换个 provider 失败时控制台会炸一个没人看的红字。
+ */
+function settle(result: void | Promise<unknown>, onError?: () => void): void {
+  if (result && typeof (result as PromiseLike<unknown>).then === 'function') {
+    void (result as PromiseLike<unknown>).then(
+      () => undefined,
+      () => onError?.(),
+    );
+  }
+}
 
 export interface LlmModelSelectProps {
   /** 当前值。空串 = 未选择（`allowEmpty` 时表示"继承全局"）。 */
   value: string;
   /** 候选型号。来自 `useLlmConfig().modelsFor()` —— 两处必须是同一个来源。 */
   models: string[];
-  onChange: (next: string) => void;
+  /**
+   * 可选地回一个 Promise（例如调用方的 `mutateAsync(...)`）——
+   * 这样 `commit='blur'` 那条路径才能在提交失败时知道，见文件头 S-8 那条约束。
+   * 不回 Promise 也完全合法（「AI 模型」区块写本地 state，本来就不存在"失败"这回事）。
+   */
+  onChange: (next: string) => void | Promise<unknown>;
   /**
    * 自定义文本框的提交时机。
    * `change` = 每次按键（调用方写本地 state）；`blur` = 失焦时（调用方会发请求）。
@@ -102,6 +129,21 @@ export function LlmModelSelect({
   /** 自定义文本框的草稿。`touched` 之前一律跟随外部值 —— 候选异步到达时不会卡住旧值。 */
   const [draft, setDraft] = useState(value);
   const [touched, setTouched] = useState(false);
+  /** ★ S-8：上一次 `commit='blur'` 提交失败了，草稿还没落地——见文件头那条约束。 */
+  const [commitError, setCommitError] = useState(false);
+
+  /*
+   * 外部 `value` 追上了本地草稿 —— 不管是这次提交自己成功了，还是外部真值本来就是
+   * 这个值，影子状态都可以退场了。
+   * ⚠️ 不是"`value` 一变就清"——那是把 S-9 搬进这个组件；只有当外部真相已经**等于**
+   * 用户手上的草稿时，才没有谁需要让步。
+   */
+  useEffect(() => {
+    if (touched && value === draft) {
+      setTouched(false);
+      setCommitError(false);
+    }
+  }, [value, draft, touched]);
 
   const inList = value !== '' && models.includes(value);
   /** 值不在候选里 ⇒ 必须进自定义模式，否则 `<select>` 会把它显示成空（= 悄悄丢配置）。 */
@@ -131,7 +173,7 @@ export function LlmModelSelect({
           }
           setForcedCustom(false);
           setTouched(false);
-          onChange(next);
+          settle(onChange(next));
         }}
       >
         {/*
@@ -149,23 +191,40 @@ export function LlmModelSelect({
       </select>
 
       {custom ? (
-        <input
-          value={shown}
-          spellCheck={false}
-          autoComplete="off"
-          aria-label={t('settings.modelPicker.customLabel')}
-          placeholder={t('settings.modelPicker.customPlaceholder')}
-          data-testid={`${testId}-custom`}
-          className="h-8 rounded-md border border-line bg-surface-0 px-2 font-mono text-sm text-ink"
-          onChange={(e) => {
-            setTouched(true);
-            setDraft(e.target.value);
-            if (commit === 'change') onChange(e.target.value);
-          }}
-          onBlur={(e) => {
-            if (commit === 'blur' && e.target.value !== value) onChange(e.target.value);
-          }}
-        />
+        <>
+          <input
+            value={shown}
+            spellCheck={false}
+            autoComplete="off"
+            aria-label={t('settings.modelPicker.customLabel')}
+            aria-invalid={commitError || undefined}
+            placeholder={t('settings.modelPicker.customPlaceholder')}
+            data-testid={`${testId}-custom`}
+            className={
+              commitError
+                ? 'h-8 rounded-md border border-critical-line bg-surface-0 px-2 font-mono text-sm text-ink'
+                : 'h-8 rounded-md border border-line bg-surface-0 px-2 font-mono text-sm text-ink'
+            }
+            onChange={(e) => {
+              setTouched(true);
+              setDraft(e.target.value);
+              setCommitError(false);
+              if (commit === 'change') onChange(e.target.value);
+            }}
+            onBlur={(e) => {
+              if (commit !== 'blur' || e.target.value === value) return;
+              // ★ S-8：失败别装没事——草稿留着（`touched` 不动），只标"没保存成功"；
+              // 成功不用在这里手动清 touched，上面那条 effect 会在 value 追上 draft 时自己退场。
+              setCommitError(false);
+              settle(onChange(e.target.value), () => setCommitError(true));
+            }}
+          />
+          {commitError ? (
+            <span className="text-xs text-critical" data-testid={`${testId}-custom-error`}>
+              {t('settings.modelPicker.commitError')}
+            </span>
+          ) : null}
+        </>
       ) : null}
 
       {/*

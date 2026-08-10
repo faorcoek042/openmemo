@@ -94,8 +94,17 @@ export function PurposeBindingsSection() {
   } = useLlmConfig();
   const bindings = readPurposeBindings(settings.data);
 
+  /**
+   * ★ S-8：回 `mutateAsync` 的 Promise（不是 `mutate` 就地丢弃）。
+   *
+   * 下面那条全局 `ErrorBlock`（`patch.isError`）只会说"这一档出错了"，不分行、不分字段——
+   * 用户分不清是 provider 挂了还是 model 挂了，也看不出该重填哪一格。
+   * 把 Promise 递给 `LlmModelSelect`，它就能把"没保存成功"精确标在**那一格输入框**上
+   * （见 `LlmModelSelect.tsx` 的 `commitError`），而不只是整屏底部一句模糊的报错。
+   * `patch.isError` 该有的全局提示照旧：`mutateAsync` 失败时两件事都会发生，互不干扰。
+   */
   const write = (purpose: LlmPurpose, next: { providerId?: string; model?: string }) => {
-    patch.mutate({ [LLM_PURPOSES_KEY]: mergePurposeBinding(bindings, purpose, next) });
+    return patch.mutateAsync({ [LLM_PURPOSES_KEY]: mergePurposeBinding(bindings, purpose, next) });
   };
 
   const anyOverride = LLM_PURPOSES.some((p) => bindings[p] !== undefined);
@@ -143,7 +152,13 @@ export function PurposeBindingsSection() {
                   </span>
                   <select
                     value={bindings[purpose]?.providerId ?? ''}
-                    onChange={(e) => write(purpose, { providerId: e.target.value })}
+                    // `<select>` 没有草稿态可标——PATCH 失败时它会在下次渲染跟着
+                    // `bindings[purpose]?.providerId` 自动弹回旧值，本来就不会撒谎。
+                    // 但 `write` 现在回一个 Promise，这里必须接住，否则失败时是一个
+                    // 没人看的 unhandled rejection；真正的提示仍由下面的全局 ErrorBlock 给。
+                    onChange={(e) => {
+                      void write(purpose, { providerId: e.target.value }).catch(() => undefined);
+                    }}
                     data-testid={`purpose-${purpose}-provider`}
                     className="h-8 rounded-md border border-line bg-surface-0 px-2 text-sm text-ink"
                   >

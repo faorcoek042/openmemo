@@ -80,15 +80,39 @@ export function ProxySettingsSection() {
    */
   const notImplemented = q.error instanceof ApiError && q.error.status === 404;
   const [cfg, setCfg] = useState<ProxyConfig>(DEFAULT_PROXY_CONFIG);
-  // 记录用户**动过**哪些字段。只有这些才会被 PATCH 出去（见上面的脱敏说明）
+  /*
+   * 记录用户**动过**哪些字段。只有这些才会被 PATCH 出去（见上面的脱敏说明）——
+   * 也正是这份账本让下面那条 effect 能在后台重取时分清"用户正在编辑的"和"该跟服务端同步的"。
+   */
   const [touched, setTouched] = useState<Set<keyof ProxyConfig>>(new Set());
   const dirty = touched.size > 0;
 
   useEffect(() => {
-    if (q.data?.config) {
-      setCfg({ ...DEFAULT_PROXY_CONFIG, ...q.data.config });
-      setTouched(new Set());
-    }
+    if (!q.data?.config) return;
+    const fresh: ProxyConfig = { ...DEFAULT_PROXY_CONFIG, ...q.data.config };
+    setCfg((prev) => {
+      /*
+       * ★ S-9：这条 effect 在**任何一次后台重取**后都会跑——包括 SSE 重连触发的
+       * `sync.required` 全量 `invalidateQueries()`（无参，见 lib/events/system.sse.ts
+       * 与 lib/events/source.ts 的 onopen：任何一次重连都会发一次，不只是真的丢过帧）。
+       * 用户可能正在往某个字段里打字，这时候拿服务端快照整体盖过去，会把他刚打的字
+       * （甚至覆盖成脱敏后的 `***:***@host`）当场抹掉，且没有任何提示——原样搬过来就是 S-9。
+       *
+       * `touched` 本来就是"用户动过哪些字段、还没保存"的账本——这里反过来用它做合并：
+       * 没保存的字段保留用户的草稿，其余字段跟着服务端最新值走。两边不冲突，没有一条
+       * 数据被覆盖，也就不需要另外弹提示"告知覆盖"——因为压根没有覆盖发生。
+       */
+      if (touched.size === 0) return fresh;
+      const merged: ProxyConfig = { ...fresh };
+      for (const k of touched) (merged as unknown as Record<string, unknown>)[k] = prev[k];
+      return merged;
+    });
+    // ⚠️ 不在这里 `setTouched(new Set())`——那一步做的正是"抹掉用户正在编辑的字段"的
+    // 标记。`touched` 只应该在保存成功时清空（见下面 save 的 onSuccess）。
+    //
+    // ⚠️ 依赖数组只写 `q.data`，故意不写 `touched`：这条 effect 该在**服务端数据到达**
+    // 时跑，不该在**用户每敲一个字**时跑（那会导致每次按键都多渲染一轮，且没有意义——
+    // 闭包里的 `touched` 在 `q.data` 真的变化那一刻自然是最新的，组件早已重渲染过）。
   }, [q.data]);
 
   const save = useMutation({

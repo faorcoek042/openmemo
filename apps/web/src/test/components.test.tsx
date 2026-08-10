@@ -12,7 +12,7 @@
  * 真正的保证在 `host.tsx` 里（RTL 改成动态 import + `type()` 的一次性自检），
  * 详见那边的 T-133 一节。
  */
-import { render, click, type, pressKey, text, buttonByText, stubApi } from './host';
+import { render, click, type, pressKey, blur, text, buttonByText, stubApi } from './host';
 
 import { useState } from 'react';
 import { QueryClient } from '@tanstack/react-query';
@@ -1683,6 +1683,66 @@ describe('代理配置', () => {
     assert.ok(r.container.querySelector('[data-testid="proxy-mode-manual"]'), '表单不该被藏起来');
     r.unmount();
   });
+
+  test('★ S-9：后台重取（SSE 重连 → 无参 invalidateQueries）不该抹掉正在编辑的字段，没碰的字段照常同步', async () => {
+    let fetches = 0;
+    const qc = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0, staleTime: 0 },
+        mutations: { retry: false },
+      },
+    });
+    stubApi({
+      'GET /settings/proxy': () => {
+        fetches += 1;
+        return {
+          config: {
+            ...DEFAULT_PROXY_CONFIG,
+            mode: 'manual',
+            // 第二次取（模拟重连触发的后台重取）服务端的 httpsProxy 变了 —— 用来证明
+            // "没碰过的字段照常同步"不是靠巧合读到了同一个值。
+            httpsProxy: fetches >= 2 ? 'http://second.example:7890' : 'http://first.example:7890',
+          },
+          active: null,
+          media: { supported: true, reason: null, noteZh: null },
+        };
+      },
+    });
+    const r = await render(<ProxySettingsSection />, { queryClient: qc });
+    await r.flush();
+
+    const httpBox = r.container.querySelector(
+      '[data-testid="proxy-httpProxy"]',
+    ) as HTMLInputElement;
+    // 用户正在编辑 httpProxy，还没保存
+    await type(httpBox, 'http://mine.example:1080');
+    await r.flush();
+    assert.equal(httpBox.value, 'http://mine.example:1080', '前提自检：草稿没打进去');
+
+    // 模拟 SSE 重连 → sync.required → 无参 invalidateQueries()
+    await qc.invalidateQueries();
+    await r.flush();
+    await r.flush();
+
+    assert.ok(fetches >= 2, '前提自检：没有真的重取，这条用例没测到东西');
+
+    // S-9 判据本体：正在编辑的字段必须原样保留，不能被后台快照静默盖掉
+    assert.equal(
+      httpBox.value,
+      'http://mine.example:1080',
+      'S-9：后台重取不该把用户正在打字的字段抹掉',
+    );
+    // 没碰过的字段该照常跟服务端同步 —— 证明这不是"整块冻结"，而是逐字段合并
+    const httpsBox = r.container.querySelector(
+      '[data-testid="proxy-httpsProxy"]',
+    ) as HTMLInputElement;
+    assert.equal(
+      httpsBox.value,
+      'http://second.example:7890',
+      '没碰过的字段应该跟服务端最新值同步，不能被 touched 字段的合并逻辑连累',
+    );
+    r.unmount();
+  });
 });
 
 /* ────────── 位置分辨率：短词必须能亮（T-091） ────────── */
@@ -1908,14 +1968,59 @@ describe('按用途分档', () => {
     r.unmount();
   });
 
+  test('★ S-8：提交失败草稿不能装作已保存 —— 必须标出来，生效值仍是旧的（T-133 后可测 DOM）', async () => {
+    stubApi({
+      'GET /settings': { settings: base },
+      'PATCH /settings': () =>
+        new Response(JSON.stringify({ error: { code: 'INTERNAL', message: 'daemon 挂了' } }), {
+          status: 500,
+          headers: { 'content-type': 'application/json' },
+        }),
+    });
+    const r = await render(<PurposeBindingsSection />);
+    await r.flush();
+
+    const sel = r.container.querySelector(
+      '[data-testid="purpose-chat-model"]',
+    ) as HTMLSelectElement;
+    await type(sel, '__custom__');
+    await r.flush();
+
+    const box = r.container.querySelector(
+      '[data-testid="purpose-chat-model-custom"]',
+    ) as HTMLInputElement;
+    await type(box, 'gpt-5-custom');
+    await blur(box);
+    await r.flush();
+    await r.flush();
+
+    // 草稿留着 —— 提交失败不该把用户刚打的字冲掉（影子状态本身不是罪）
+    assert.equal(box.value, 'gpt-5-custom', 'S-8：提交失败不该把用户刚打的字冲掉');
+    // 必须明确标出"没保存成功"，不能装没事
+    assert.ok(
+      r.container.querySelector('[data-testid="purpose-chat-model-custom-error"]'),
+      'S-8：提交失败必须有一个明确的"没保存成功"标记，不能一声不吭',
+    );
+    // 同屏的生效值必须仍然是旧值（服务端真相），不能被没保存成功的草稿带偏
+    const eff =
+      r.container.querySelector('[data-testid="purpose-chat-effective"]')?.textContent ?? '';
+    assert.ok(!eff.includes('gpt-5-custom'), '失败的草稿绝不能出现在"生效值"里');
+    assert.ok(eff.includes('gpt-4o-mini'), `生效值应该还是全局默认（旧值），实际：${eff}`);
+    r.unmount();
+  });
+
   /**
-   * ⚠️ 这条本来想用"在输入框里打字 → onBlur → 断言 PATCH 体"来测，跑不通：
+   * ⚠️ 这条当初想用"在输入框里打字 → onBlur → 断言 PATCH 体"来测，跑不通：
    * 组件宿主里**文本输入到不了 React**（vite 打包 hoist 了 import，
    * dom-env 的全局装配跑在 react-dom 模块初始化之后，React 于是走 IE 的
    * `attachEvent` polyfill 路径）—— 与那两条早就 skip 的用例同一个根因。
    *
-   * 所以改成直接测**规则本身**。这不是退而求其次：
+   * 所以当时改成直接测**规则本身**。这不是退而求其次：
    * 容易写错的是合并规则，不是 `onBlur` 有没有接上。
+   *
+   * ★ T-133 之后这个根因已修好（见 `test/host.tsx` 文件头与 `assertTypeReachesReact()`），
+   * 上面那条 S-8 用例就是新证据 —— 但下面这几条规则测试仍然值得留着：
+   * 它们测的是合并规则本身，不该依赖 DOM 交互才能验证。
    */
   test('★ 只填 model 时写入的绑定只含 model —— 不替用户把 provider 也钉死', () => {
     const out = mergePurposeBinding({}, 'translate', { model: 'deepseek-chat' });
