@@ -40,7 +40,21 @@ export function isPipelineKind(kind: ToastKind): kind is PipelineJobKind {
 export interface Toast {
   jobId: string;
   kind: ToastKind;
+  /**
+   * daemon 建 job 那一刻定死的名字。**它是兜底，不是最终显示值。**
+   *
+   * ⚠️ 渲染时要经过 `lib/format/jobName.ts` 的 `jobDisplayName()`：
+   * daemon 把它写死成中文（`models.ts:416` `displayNameZh`），
+   * 英文界面直接渲染这个字段就会看到中文名。**本地化发生在读的那一刻，不在这里** ——
+   * 这个 reducer 是纯的、与语言无关，`name` 保持 daemon 原样是**故意的**。
+   */
   name: string;
+  /**
+   * 目录 slug（`asr/whisper-tiny-q5_1`）。只有下载类 job 有；流水线 job 没有。
+   * 渲染层靠它去目录里查当前语言下该显示的名字 —— 上游一直有，
+   * 只是以前在这里被丢掉了，于是 toaster 想本地化也无从查起。
+   */
+  targetId?: string | null;
   totalBytes: number;
   phase: Phase;
   state: JobState;
@@ -143,6 +157,7 @@ export function toastActionFor(
           jobId: j.jobId,
           kind: j.kind,
           name: j.displayName || j.targetId,
+          targetId: j.targetId,
           totalBytes: j.totalBytes,
           state: j.state,
           phase: 'active',

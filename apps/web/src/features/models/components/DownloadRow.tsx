@@ -8,6 +8,8 @@ import { StatusChip } from '../../../components/common/StatusChip';
 import { useProgressStore } from '../../../lib/stores/progress.store';
 import { formatBytes, formatSpeed } from '../../../lib/format/bytes';
 import { stepLabel } from '../../../lib/format/stepLabel';
+import { jobDisplayName } from '../../../lib/format/jobName';
+import { useModelCatalogNames } from '../../../lib/catalog/useModelCatalogNames';
 
 /**
  * 下载中的一行（R-04 §9.3 线框）。
@@ -52,6 +54,9 @@ export interface DownloadRowProps {
 export function DownloadRow({ job, locale, onCancel, onRetry }: DownloadRowProps) {
   const { t, i18n } = useTranslation();
   const live = useProgressStore(useShallow((s) => s.byJob[job.jobId]));
+  // 名字按当前界面语言现算；兜底仍是 daemon 的 displayName（见 lib/format/jobName.ts）
+  const catalogNames = useModelCatalogNames();
+  const shownName = jobDisplayName(i18n.language, job, catalogNames);
 
   const completed = live?.completedBytes ?? job.completedBytes;
   const total = live?.totalBytes ?? job.totalBytes;
@@ -71,7 +76,7 @@ export function DownloadRow({ job, locale, onCancel, onRetry }: DownloadRowProps
     >
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-ink">{job.displayName}</p>
+          <p className="truncate text-sm font-medium text-ink">{shownName}</p>
           <p className="mt-0.5 text-xs text-ink-secondary">
             {failed ? (
               <span className="text-critical">
@@ -130,7 +135,7 @@ export function DownloadRow({ job, locale, onCancel, onRetry }: DownloadRowProps
         tone={failed ? 'critical' : 'info'}
         // 校验阶段没有可信百分比 —— 显示脉动而不是假装有进度
         indeterminate={isVerifying}
-        label={t('models.download.progressLabel', { name: job.displayName })}
+        label={t('models.download.progressLabel', { name: shownName })}
       />
 
       <div className="mt-1.5 flex items-center justify-between text-xs text-ink-secondary">

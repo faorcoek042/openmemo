@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { stepLabel as stepLabelOf } from '../../lib/format/stepLabel';
+import { jobDisplayName } from '../../lib/format/jobName';
+import { useModelCatalogNames } from '../../lib/catalog/useModelCatalogNames';
 import { useNavigate } from 'react-router';
 import { useShallow } from 'zustand/react/shallow';
 import {
@@ -115,8 +117,17 @@ function blockedFallbackName(code: string, t: TFunction): string {
 }
 
 /** 每个阶段的标题。四种 kind × 四个 phase，散在 JSX 三元里写不下第三层。 */
-function titleFor(toast: Toast, t: TFunction, step?: string | null): string {
-  const name = toast.name;
+function titleFor(
+  toast: Toast,
+  t: TFunction,
+  step?: string | null,
+  /**
+   * ★ 已按当前界面语言算好的名字。不传就退回 `toast.name`（daemon 那个写死的）。
+   * 本地化**不在这个纯函数里做** —— 它只负责选词条，查目录是调用方的事。
+   */
+  shownName?: string,
+): string {
+  const name = shownName ?? toast.name;
   if (toast.phase === 'done') {
     if (toast.kind === 'transcribe') return t('jobToast.doneTranscribe', { name });
     if (toast.kind === 'mindmap') return t('jobToast.doneMindmap', { name });
@@ -341,6 +352,21 @@ export function JobToaster() {
 
 function ToastRow({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }) {
   const { t, i18n } = useTranslation();
+  /*
+   * ★ 名字按当前界面语言现算。daemon 把它写死成中文（`models.ts:416`），
+   *   英文界面直接渲染 `toast.name` 就会看到中文名。
+   *   兜底仍是 `toast.name`，所以后端包 / 目录没加载时一个字都不会少。
+   */
+  const catalogNames = useModelCatalogNames();
+  const shownName = jobDisplayName(
+    i18n.language,
+    {
+      type: toast.kind === 'model' ? 'download.model' : String(toast.kind),
+      targetId: toast.targetId,
+      displayName: toast.name,
+    },
+    catalogNames,
+  );
   const navigate = useNavigate();
   const locale = i18n.language;
 
@@ -381,7 +407,9 @@ function ToastRow({ toast, onDismiss }: { toast: Toast; onDismiss: () => void })
       <div className="flex items-start gap-2">
         <ToastIcon phase={toast.phase} verifying={verifying} />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-ink">{titleFor(toast, t, step)}</p>
+          <p className="truncate text-sm font-medium text-ink">
+            {titleFor(toast, t, step, shownName)}
+          </p>
 
           {/* 阶段名 + 字节 + 速度 + ETA。全部用 tabular-nums，数字跳动时不抖行宽。 */}
           {toast.phase === 'active' ? (
@@ -437,7 +465,7 @@ function ToastRow({ toast, onDismiss }: { toast: Toast; onDismiss: () => void })
           // 校验阶段没有可信百分比 —— 脉动而不是假装有进度（D-05 §7.3 的"稀疏值不编数字"）
           indeterminate={verifying || step === 'resolving' || step == null}
           tone="info"
-          label={toast.name}
+          label={shownName}
         />
       ) : null}
 

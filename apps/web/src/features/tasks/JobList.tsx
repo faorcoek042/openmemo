@@ -2,6 +2,8 @@ import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 
 import { stepLabel as stepLabelOf } from '../../lib/format/stepLabel';
+import { jobDisplayName } from '../../lib/format/jobName';
+import { useModelCatalogNames } from '../../lib/catalog/useModelCatalogNames';
 import { Pause, Play, RotateCcw, ShieldCheck, X } from 'lucide-react';
 
 import { ProgressMeter } from '../../components/common/ProgressMeter';
@@ -56,6 +58,14 @@ function JobRow({ job, compact }: { job: MergedJob; compact?: boolean }) {
 
   // 收敛到共享实现：此前这里缺词条会**原样渲染 step key**（英文机器枚举值）
   const stepText = stepLabelOf(job.step, t, (k: string) => i18n.exists(k));
+  /*
+   * ★ 名字按**当前界面语言**现算，不直接渲染 daemon 那个写死的 `displayName`。
+   *   兜底（目录没加载 / 不在目录里 / 后端包）仍然是 `displayName`，
+   *   所以这一行不会让任何原本有名字的行变空。理由见 `lib/format/jobName.ts`。
+   */
+  // hook 单独一行、无条件调用 —— 别塞进表达式里（Rules of Hooks 被我踩过一次）
+  const catalogNames = useModelCatalogNames();
+  const shownName = jobDisplayName(i18n.language, job, catalogNames) || job.type;
   const eta = approxEta(job.etaSeconds, i18n.language);
   const running = job.state === 'running' || job.state === 'leased';
   const verifying = running && job.step === 'verifying';
@@ -114,10 +124,10 @@ function JobRow({ job, compact }: { job: MergedJob; compact?: boolean }) {
             className="min-w-0 truncate text-sm text-ink hover:text-accent-ink hover:underline"
             data-testid="job-result-link"
           >
-            {job.displayName || job.type}
+            {shownName}
           </Link>
         ) : (
-          <span className="min-w-0 truncate text-sm text-ink">{job.displayName || job.type}</span>
+          <span className="min-w-0 truncate text-sm text-ink">{shownName}</span>
         )}
         <StatusChip
           tone={running ? 'running' : tone}

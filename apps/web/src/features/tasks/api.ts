@@ -51,7 +51,17 @@ export function useJobsQuery() {
 /** 服务端 job + 内存进度的合并视图。 */
 export interface MergedJob {
   jobId: string;
+  /**
+   * daemon 建 job 那一刻定死的名字。**兜底用，不是最终显示值** ——
+   * 渲染要走 `lib/format/jobName.ts`，理由见那里的文件头。
+   */
   displayName: string;
+  /**
+   * 目录 slug。只有下载类 job 有，流水线 job 没有，所以是可选的。
+   * ⚠️ **可选是有意的**：`MergedJob` 是两种 job 合流后的形状，
+   * 把它写成必填会逼着流水线那一侧编一个假值。
+   */
+  targetId?: string | null;
   type: string;
   state: JobState;
   step: string | null;
@@ -130,6 +140,7 @@ function mergeOne(job: AnyJob, live: JobProgressSnapshot | undefined): MergedJob
   return {
     jobId: job.jobId,
     displayName: job.displayName,
+    targetId: job.targetId,
     type: job.type,
     state: live?.state ? (live.state as JobState) : job.state,
     step: live?.step ?? job.step,

@@ -318,6 +318,151 @@ const job = (over: Partial<MergedJob> = {}): MergedJob => ({
   ...over,
 });
 
+/**
+ * ★ 任务名写死中文：英文界面上也是中文。
+ *
+ * daemon 建 job 时写死 `displayName: model.displayNameZh`
+ * （`apps/daemon/src/http/rest/models.ts:416`），而 `packages/downloader/src/queue.ts`
+ * 的 `enqueue()` 把它**存进对象**，`/api/jobs` 只是原样吐出去 ——
+ * **读的时候完全不现算**。于是英文界面看到 `Downloading model · <中文名>`。
+ *
+ * 修法不是让 daemon 按请求语言给（同一个 job 在两个标签页里会显示不同名字，
+ * 而它是同一个 job），是**前端拿 `targetId` 自己本地化**：
+ * 语言属于**读的那一刻**，不属于被观察的那个对象。
+ *
+ * ⚠️ 这条是**渲染级**的腿：钉的是"某个 locale 下渲染出来的就是那门语言的名字"，
+ * 不是"某个函数返回了什么"。纯函数那一层在 `lib/format/jobName.test.ts`。
+ *
+ * ⚠️ 不用关键词匹配（那会惩罚好文案），用的是**目录里两份名字互不相同**这个结构：
+ * 断言"渲染出了 EN 且没渲染 ZH"，反过来也钉一遍。
+ *
+ * ── 把名字遮住，这些断言什么时候会失败 ────────────────────────────────────────
+ * 任何人把渲染点改回直接用 `job.displayName`，或者把 `targetId` 从
+ * `MergedJob` / `Toast` 上再摘掉（那样前端就无从查起）。
+ */
+describe('★ 任务名按界面语言现算（daemon 那份写死的只当兜底）', () => {
+  const SLUG = 'asr/whisper-tiny-q5_1';
+  const EN = 'Whisper Tiny (Q5_1)';
+  const ZH = '超小语音模型（Q5_1 量化）';
+
+  /**
+   * ⚠️ **喂服务端形状的 `DownloadJob`，走 `TasksPage`**，不直接给 `JobList` 手搓
+   * `MergedJob` —— 被测的那一跳里有 `mergeOne()`（它以前把 `targetId` 丢掉了，
+   * 前端于是无从查起）。手搓 `MergedJob` 会正好绕过它。
+   * 这条规矩本文件 `T-192` 那一族已经写过一次，我第一版还是踩了：
+   * 摘掉 `mergeOne` 里的 `targetId` 时我的用例**全绿**，是突变验证把它照出来的。
+   */
+  const DL = {
+    jobId: 'jn1',
+    kind: 'model',
+    type: 'download.model',
+    targetId: SLUG,
+    // daemon 实际写死的就是中文（models.ts:416 displayNameZh）
+    displayName: ZH,
+    state: 'running',
+    step: 'downloading',
+    provider: null,
+    totalBytes: 100,
+    completedBytes: 42,
+    speedBps: 1000,
+    etaSeconds: 30,
+    parts: [],
+    currentFile: null,
+    fileIndex: 0,
+    fileCount: 1,
+    attempt: 0,
+    maxAttempts: 5,
+    error: null,
+    startedAt: '2026-08-10T00:00:00.000Z',
+    updatedAt: '2026-08-10T00:00:00.000Z',
+  };
+
+  const CATALOG = {
+    catalogVersion: 'v1',
+    source: 'bundled',
+    fetchedAt: '2026-08-10T00:00:00.000Z',
+    stale: false,
+    hardwareSnapshotId: null,
+    groups: [
+      {
+        groupId: 'asr/whisper-tiny',
+        role: 'asr',
+        family: 'whisper',
+        displayName: 'Whisper Tiny',
+        displayNameZh: '超小语音模型',
+        descriptionZh: '',
+        descriptionEn: '',
+        languages: [],
+        tags: [],
+        license: { spdx: 'MIT', url: null, notice: null },
+        variants: [
+          {
+            id: SLUG,
+            displayName: EN,
+            displayNameZh: ZH,
+            installed: false,
+            fitness: { verdict: 'fits', reasons: [] },
+          },
+        ],
+      },
+    ],
+  };
+
+  const openTasks = async (withCatalog: boolean) => {
+    stubApi({
+      '/jobs': { jobs: [DL], concurrencyLimit: 2 },
+      ...(withCatalog ? { '/models/catalog?role=all': CATALOG } : {}),
+    });
+    const r = await render(<TasksPage />, { route: '/tasks' });
+    await r.flush();
+    return r;
+  };
+
+  test('前提自检：目录里中英两份名字不同，且中文那份真的是中文', () => {
+    assert.notEqual(EN, ZH);
+    assert.match(ZH, /[一-龥]/, '中文夹具里没有汉字 —— 这条缺陷就测不出来');
+  });
+
+  test('★ 英文界面：渲染的是英文名，而 daemon 给的是中文名', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      const r = await openTasks(true);
+      const shown = text(r.container);
+      // 前提：这一行真的渲染出来了。否则"没看到中文"会被"压根没渲染"白白满足
+      assert.ok(
+        shown.includes(EN) || shown.includes(ZH),
+        `任务行压根没渲染出来 —— 前提不成立，这条测不到东西：${shown}`,
+      );
+      assert.ok(shown.includes(EN), `英文界面上没有英文名 → ${shown}`);
+      assert.equal(shown.includes(ZH), false, `英文界面上仍然渲染了中文名 → ${shown}`);
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  test('★ 中文界面：仍然是中文名（这一半不许被改坏）', async () => {
+    const r = await openTasks(true);
+    const shown = text(r.container);
+    assert.ok(shown.includes(ZH), `中文界面上没有中文名 → ${shown}`);
+    assert.equal(shown.includes(EN), false, `中文界面上渲染了英文名 → ${shown}`);
+    r.unmount();
+  });
+
+  test('★ 目录没加载 → 退回 daemon 的名字，绝不空白、绝不摆原始 slug', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      const r = await openTasks(false);
+      const shown = text(r.container);
+      assert.ok(shown.includes(ZH), `目录拿不到时把名字弄没了 → ${shown}`);
+      assert.equal(shown.includes(SLUG), false, `把原始 slug 摆给用户看了 → ${shown}`);
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+});
+
 describe('JobList（任务分组与动作）', () => {
   beforeEach(() => stubApi({}));
 
