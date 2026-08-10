@@ -376,6 +376,38 @@ export function BackendPackCard({
           {!pack.applicable && pack.inapplicableReason ? (
             <p className="mt-1 text-xs text-ink-muted">{pack.inapplicableReason}</p>
           ) : null}
+          {/*
+            ★★ T-197：**这一格是「安装 119 MB」那句话唯一的解药。**
+
+            `[用户真机实测，:10000]` 同一时刻 `/api/selfcheck` 的 `tool.ffmpeg` 是绿的、
+            流水线正拿它转码，而这张卡写着「安装 119 MB」。成因不在这张卡：盘上那份是
+            **7.1.5**、目录已升到 **8.1.2**，**归档文件名都不同** —— 对账按目录声明的
+            名字去 stat 连痕迹都找不到，于是它既不在 `installed` 里、也不在 skipped 里。
+            屏幕上没有任何东西说过"你已经有一份了"。
+
+            daemon 现在把这件事发出来了（`installedOnDiskButUnrecorded`），
+            证据是**解析器当下解析到的那个路径**，不是我们的推断。这里只负责说出来。
+
+            ⚠️ 与 `installed` **不共用槽位**：`installed` 仍然只回答"有没有安装记录"，
+            按钮也照旧可点 —— 装一次是有意义的（拿到目录这一版并让它被记录接管）。
+            这里改的只有一件事：**用户点之前知道自己已经有一份在跑。**
+
+            ⚠️ 字段可选，缺失（老 daemon / 解析器失败）时**一个字不说** ——
+            不替它说"你别处没有副本"，那是它没说过的话。判据与 `updateAvailable`、
+            `inapplicableKind` 同源。
+          */}
+          {!pack.installed && pack.installedOnDiskButUnrecorded ? (
+            <p
+              className="mt-1 text-xs text-warning"
+              data-testid={`backend-unrecorded-${pack.id}`}
+              title={pack.installedOnDiskButUnrecorded.path}
+            >
+              {t('runtime.pack.servedFromUnrecorded', {
+                file: pack.installedOnDiskButUnrecorded.file,
+                path: pack.installedOnDiskButUnrecorded.path,
+              })}
+            </p>
+          ) : null}
           {pack.requiresDriver ? (
             <p className="mt-1 text-[11px] text-ink-muted">
               {t('runtime.pack.requiresDriver')}

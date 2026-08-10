@@ -328,7 +328,8 @@
       "loadBearingNote": "The CPU backend is the never-failing fallback and cannot be uninstalled",
       "update": "Update",
       "updateTitle": "The version you have installed is not the same file as the one in the catalogue. Install the catalogue version (the old one is replaced).",
-      "catalogHas": "catalog has {{version}} ({{size}})"
+      "catalogHas": "catalog has {{version}} ({{size}})",
+      "servedFromUnrecorded": "A copy of {{file}} is already on disk and in use, but it has no install record ({{path}}) — installing gets you the catalog version and takes over from it."
     },
     "chip": {
       "active": "In use",

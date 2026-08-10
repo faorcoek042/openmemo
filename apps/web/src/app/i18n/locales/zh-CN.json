@@ -328,7 +328,8 @@
       "loadBearingNote": "CPU 后端是永不失败的兜底，不可卸载",
       "update": "更新",
       "updateTitle": "你装的这一版和目录里现在这一版不是同一个文件。点它装上目录里这一版（旧的会被替换）。",
-      "catalogHas": "目录里是 {{version}}（{{size}}）"
+      "catalogHas": "目录里是 {{version}}（{{size}}）",
+      "servedFromUnrecorded": "盘上已经有一份 {{file}} 正在被使用，但它没有安装记录（{{path}}）—— 装一次会得到目录里这一版并接管它。"
     },
     "chip": {
       "active": "使用中",
