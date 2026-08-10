@@ -1278,3 +1278,80 @@ Orphan-exports ratchet ✘
 没碰 `scripts/ci/verify-e2e-attestation.mjs` / `emit-e2e-attestation.mjs`（`a1f778cf…` 在动）；
 别人在飞的 `e2e-import-audit.mjs` 没动；没用 `git stash` / `git checkout -- <file>` / `--amend`；
 两次提交都带 pathspec、按 hash push 并 `merge-base --is-ancestor` 复核。
+
+---
+
+## [2026-08-10 19:20] ③ ✅ · CheckStatus 第四态 ✅ · ② 落地但**尚未生效** · ① 未做（撞到接缝）
+
+交付（均已 push 并 `merge-base --is-ancestor` 复核）:
+`f2dc294`（③）· `3d38f5f`（CheckStatus 第四态 + 前端）· `1e47907`（② + 共用判定）
+
+# 逐条状态
+
+| | 状态 | 说明 |
+|---|---|---|
+| ③ hw.cpu 硬件预言 | ✅ **已生效** | 措辞三句分开、`remediation` 置 null、第四态 |
+| CheckStatus 第四态 | ✅ **已生效** | 含前端渲染（否则只修一半） |
+| ② tool.* | ⚠️ **代码在，但production 里还没生效** | 见下 |
+| ① 首屏横幅 | ❌ **未做** | 撞到同一个接缝，见下 |
+
+## ③（`f2dc294`）
+
+空的 `features` 有三个真实生产者（win32 PowerShell 被执行策略挡住 / 命令跑通没解析出东西 /
+非三大平台 default 无条件 `[]`），而自检把它读成"测过了，没有"。
+措辞按你的要求**三句分开**，用词抄 `FitBadge.tsx:99-105` 已经在用的那句，没重新发明；
+`remediation` 置 `null`（原来那句不是动作，是结论）。
+
+## CheckStatus 第四态（`3d38f5f`）
+
+`'unavailable'` = **没有答案，也没有下一步**；`remediation` 必须为 null；
+`counts` 单独一档（**不并进 warn**，并进去第三态就消失了）；`ok:` 判据不动。
+⚠️ **没动 `notProbed()` 的 warn**（T-119：id 集合不变）。
+
+★ **同时改了 `DiagnosticsPage`**：它的 `LevelIcon` 是"不是 ok 也不是 warn 就画红叉"，
+新态不接的话 daemon 侧"不再永久红"那半**在界面上等于没做**。
+⚠️ 顺带避开一个本仓栽过的坑：我先写的 `text-muted` **全仓零命中**，
+而 Tailwind 对不存在的类不报错（⑤A-16）—— 改用真实在用的 `text-ink-muted`。
+
+## ② —— 代码落地了，但**还没有人调它**（如实说）
+
+`hasInstallablePackProviding()` 放在 `backends/applicability.ts`（**一处判定**，
+①② 都该调它）；`SelfCheckProbes` 加了**可选** `canInstallBinary`；
+`!found` 分叉、守卫齐全（判据钉**因果**而不是 `r.ok`，因为那个场景里本来就有别的 required 失败）。
+
+⚠️⚠️ **但 daemon 还没有传这个探针**，所以线上行为**一个字都没变** ——
+探针缺席时按设计退回原行为。**这正是本仓那条「算好发出、离终点一行被丢掉」**，
+我不想让它以"已修复"的名义留在这儿，所以明说。
+
+# 🔴 我撞到的接缝（① 和 ② 收尾共用同一个）
+
+**`buildPipeline(paths: AppPaths)` 只拿得到 `paths`，拿不到后端目录。**
+而 ①② 都需要问「目录里有没有一条装得到的包给出这个二进制」。三条路，代价不同：
+
+| 方案 | 代价 |
+|---|---|
+| (a) 在 `buildPipeline` 里加载 catalog | 给**冷启动热路径**加一次清单 I/O + 一条新耦合；`buildPipeline` 目前是纯的 |
+| (b) 在 `main.ts:484-496` 序列化 health 时算（那里可能已有 catalog） | `buildPipeline` 保持纯；但要确认 catalog 在那一刻真的可得 |
+| (c) health 处理器里惰性算 | 每次轮询都算一次，或者要自己做缓存 |
+
+**我倾向 (b)**，但没有验证 catalog 在 `main.ts` 那一刻是否已加载 —— **没验证的我不写**。
+
+## ① 还剩什么（设计已就绪，含你标红的陷阱）
+
+1. 用上面的判定把 `missing[]` 拆成"还装得到"与"本平台没有可下载的包"；
+   🔴 **`asr-model` 必须排除在新态外** —— 模型不按平台圈定
+   （只有可选的 `coreml-encoder` sidecar 带 `os: darwin`，ggml 底模没有平台字段）。
+   否则一台没装模型的 Intel Mac 会被告知"本平台没有可下载的组件包"——
+   **一句和正在修的那句一模一样形状的新假话。**
+2. `PipelineBundle` + `main.ts:490` 的 health `pipeline` 多一个字段；
+3. `ReadinessBanner.tsx:190` 那条 `tone:'critical'` 分叉：装不到时**不许**承诺下载量/耗时、
+   **不许**把「去修复」指向 `/runtime`（那页会把这些包如实渲染成「其它平台」）；
+4. 两份 locale **只新增 key**（三路正在动那两个文件）。
+
+需要 Manager 决策: **接缝走 (a)/(b)/(c) 哪条**。定了我接着做 ①，并把 ② 的 daemon 侧一起接上
+（两者共用同一处判定，本来就该一次接完）。
+
+未做/未碰: `:10000` 没碰；没建/改/删 release、没打 tag、没触发构建；
+没用 `git stash` / `git checkout -- <file>` / `--amend` / `-a`；
+三次提交都带 pathspec、按 hash push 并 `merge-base --is-ancestor` 复核；
+未跟踪的 `backendInstallAvailability.test.ts`（别人在飞、编译不过）没动；locale 一个字没改。
