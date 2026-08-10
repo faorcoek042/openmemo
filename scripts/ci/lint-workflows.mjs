@@ -233,6 +233,7 @@ for (const file of files.sort()) {
     'orphan_exports',
     'test_ratchet',
     'locale_ratchet',
+    'contract_fields',
   ]) {
     const s = byId.get(id);
     must(!!s, `ci.yml: gate 里找不到 \`id: ${id}\` 的 step`);

@@ -200,6 +200,7 @@ jobs:
       orphan_exports: ${{ steps.orphan_exports.outcome }}
       test_ratchet: ${{ steps.test_ratchet.outcome }}
       locale_ratchet: ${{ steps.locale_ratchet.outcome }}
+      contract_fields: ${{ steps.contract_fields.outcome }}
       ci_scripts_selftest: ${{ steps.ci_scripts_selftest.outcome }}
       test: ${{ steps.test.outcome }}
       mutation_anchors: ${{ steps.mutation_anchors.outcome }}
@@ -396,6 +397,18 @@ jobs:
       # 而且它红的时候意味着 build-backends 那条线是坏的 —— 那是更要紧的信号。
       # ↓ 这三步是**真依赖**（实测：没 build 就直接抛「先 pnpm build:safe」），
       #   所以它们跳过是**诚实的** —— 不该硬拉起来跑一个注定失败的假红。
+      # 契约字段的**读者**门禁。⚠️ 审计发现它此前**一个调用方都没有** ——
+      # 脚本在、7 条规则在、理由写得很清楚，`grep` 全仓零命中。
+      # 和 `check:orphans` 当初那把「造好的锁挂在没人经过的门上」是同一件事。
+      #
+      # ⚠️ 它判的是**「字段在其目录下至少有 1 个真实读取」**，
+      #   **不是**「用户真的看见了」：实测把某个卡片的渲染整个换成 `{null}`，
+      #   只要同目录另一处读取还在，它仍然绿。绿灯输出里已经把这句写死了。
+      - name: Contract-field readers (零消费 ≠ 用户看得见)
+        id: contract_fields
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm check:contract-fields
+
       - name: CI scripts self-test
         id: ci_scripts_selftest
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -467,7 +480,7 @@ jobs:
       - name: 汇总
         env:
           GATE_RESULT: ${{ needs.gate.result }}
-          GATE_STEP_NAMES: format_check,install,build,typecheck,lint,tracked_sources,orphan_exports,test_ratchet,locale_ratchet,ci_scripts_selftest,test,mutation_anchors
+          GATE_STEP_NAMES: format_check,install,build,typecheck,lint,tracked_sources,orphan_exports,test_ratchet,locale_ratchet,contract_fields,ci_scripts_selftest,test,mutation_anchors
           # ★ 来自**独立 job** 的 result（不再是 gate 的 step outcome）。
           #   job result 与 step outcome 用的是同一套词汇（success/failure/skipped/cancelled），
           #   所以 summarize-gate.mjs 一个字都不用改：失败→「失败」、跳过/取消→「未验证」，
@@ -481,6 +494,7 @@ jobs:
           GATE_STEP_ORPHAN_EXPORTS: ${{ needs.gate.outputs.orphan_exports }}
           GATE_STEP_TEST_RATCHET: ${{ needs.gate.outputs.test_ratchet }}
           GATE_STEP_LOCALE_RATCHET: ${{ needs.gate.outputs.locale_ratchet }}
+          GATE_STEP_CONTRACT_FIELDS: ${{ needs.gate.outputs.contract_fields }}
           GATE_STEP_CI_SCRIPTS_SELFTEST: ${{ needs.gate.outputs.ci_scripts_selftest }}
           GATE_STEP_TEST: ${{ needs.gate.outputs.test }}
           GATE_STEP_MUTATION_ANCHORS: ${{ needs.gate.outputs.mutation_anchors }}

@@ -96,6 +96,7 @@ export const STEP_LABELS = {
   orphan_exports: 'Orphan-exports ratchet',
   test_ratchet: 'Test-file ratchet',
   locale_ratchet: 'Locale key guard',
+  contract_fields: 'Contract-field readers',
   ci_scripts_selftest: 'CI scripts self-test',
   test: 'Test',
   mutation_anchors: 'Mutation-spec anchors',
