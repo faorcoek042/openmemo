@@ -45,7 +45,12 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 import { describe, it } from 'node:test';
 
-import type { Backend, BackendStatus, GetBackendCatalogResponse } from '@openmemo/shared';
+import type {
+  Backend,
+  BackendStatus,
+  BackendUnavailableKind,
+  GetBackendCatalogResponse,
+} from '@openmemo/shared';
 
 import { SseHub } from '../sse.js';
 import { currentPlatform, handleBackendRoutes } from './backends.js';
@@ -126,6 +131,8 @@ type UnavailableVulkan = {
   probed: boolean;
   installed: boolean;
   unavailableReason: string;
+  /** T-196：那句英文的机器可判版本。夹具也得给，否则它构造的就不是产品真会产出的形状。 */
+  unavailableKind: BackendUnavailableKind;
 };
 
 /** 一份 vulkan 处于指定状态的硬件快照。其余后端保持"没装"。 */
@@ -150,6 +157,7 @@ function hardwareWith(vulkan: UnavailableVulkan) {
             installed: false,
             probed: false,
             unavailableReason: 'backend package not installed',
+            unavailableKind: 'not_installed' as const,
           };
     }),
     selectedBackend: 'cpu' as Backend,
@@ -204,6 +212,7 @@ const NOT_PROBED: UnavailableVulkan = {
   available: false,
   unavailableReason:
     'installed, but this detection run did not load it: only the backend directory currently in use is scanned (…), and this backend’s library is not in it.',
+  unavailableKind: 'not_probed_this_run',
 };
 
 /** 装了、探针**真的**加载过、确实没枚举到设备（真结论）。 */
@@ -212,6 +221,7 @@ const REALLY_UNAVAILABLE: UnavailableVulkan = {
   probed: true,
   available: false,
   unavailableReason: 'installed but enumerated no devices (driver missing or too old)',
+  unavailableKind: 'enumerated_none',
 };
 
 describe('T-168 ★ POST /api/backends/select 不许把用户锁死在 CPU 上', () => {
@@ -244,6 +254,7 @@ describe('T-168 ★ POST /api/backends/select 不许把用户锁死在 CPU 上',
       probed: false,
       available: false,
       unavailableReason: 'backend package not installed',
+      unavailableKind: 'not_installed',
     });
     const cap = await selectBackend(state, 'vulkan');
     assert.equal(cap.status(), 409);
