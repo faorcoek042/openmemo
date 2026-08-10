@@ -18,6 +18,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "format:changed": "node scripts/format-changed.mjs",
     "license:report": "node scripts/license-report.mjs",
     "submodules:init": "git submodule update --init --depth 1 --recommend-shallow",
     "check:sources": "node scripts/check-tracked-sources.mjs",
