@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
+import { TERMINAL_JOB_STATES } from '@openmemo/shared';
 
 import { stepLabel as stepLabelOf } from '../../lib/format/stepLabel';
 import { jobDisplayName } from '../../lib/format/jobName';
@@ -190,7 +191,14 @@ function JobRow({ job, compact }: { job: MergedJob; compact?: boolean }) {
           </Button>
         ) : null}
 
-        {job.state !== 'succeeded' && job.state !== 'cancelled' ? (
+        {/*
+          ★ T-198：**终态行不许再渲染取消按钮。**
+          原判据是 `!== 'succeeded' && !== 'cancelled'` —— 漏了 `failed`，
+          于是一条已经失败的任务还带着「取消」，点下去必然 409。
+          判据收敛到 `TERMINAL_JOB_STATES`（succeeded|failed|cancelled）这一份，
+          免得下一个终态加进来时这里又漏一个。
+        */}
+        {!(TERMINAL_JOB_STATES as readonly string[]).includes(job.state) ? (
           <Button size="sm" variant="ghost" onClick={() => actions.cancel.mutate(job.jobId)}>
             <X className="size-3" />
             {t('progress.cancel')}

@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { AnyJob, DownloadJob, JobState, PipelineJobKind } from '@openmemo/shared';
 import { isPipelineJob, TERMINAL_JOB_STATES } from '@openmemo/shared';
 
-import { api } from '../../lib/api/client';
+import { api, ApiError } from '../../lib/api/client';
 import { qk } from '../../app/query';
 import { useProgressStore, type JobProgressSnapshot } from '../../lib/stores/progress.store';
 import { isActiveJobState, pickActiveNoteJob } from '../../lib/jobs/noteJobs';
@@ -118,7 +118,25 @@ export function jobResultHref(job: Pick<MergedJob, 'noteUid'>): string | null {
   return job.noteUid ? `/notes/${encodeURIComponent(job.noteUid)}` : null;
 }
 
-function mergeOne(job: AnyJob, live: JobProgressSnapshot | undefined): MergedJob {
+function mergeOne(job: AnyJob, liveRaw: JobProgressSnapshot | undefined): MergedJob {
+  /*
+   * ★★ T-198：**服务端说它已经是终态了，内存里的旧快照就一个字都不许再压过它。**
+   *
+   * 修之前每个字段都是 `live?.x ?? job.x` —— 也就是 `progressStore` 的瞬时快照
+   * **无条件胜过**服务端行。配上 `features/tasks/sse.ts` 只在终态 `job.progress`
+   * 时才清 store（而取消发的是 `job.state`），结果是：
+   * 一条陈旧的 `running` / `resolving` 快照**永久压制**正确的 `cancelled`。
+   *
+   * `[用户真机 Windows v0.7.0]` 的同屏自相矛盾就是这么来的：
+   * 「进行中 (1)」+ 0% + 「正在选择下载源」，紧挨着「任务不存在或已结束」。
+   * 而 `useJobsQuery` 当时既没有轮询、`refetchOnWindowFocus` 也是 false ——
+   * **掉一帧 SSE 就永远错，除非硬刷新。**
+   *
+   * 规则写成一句话：**内存快照只用来让"还在跑的任务"更跟手；一旦服务端宣布结束，
+   * 服务端就是唯一事实。** 这与"服务端还没刷新、内存已终态时以内存为准"
+   * （下面 `toProgressRow` 那条）不冲突：两条都是"谁先知道结束，就听谁的"。
+   */
+  const live = (TERMINAL_JOB_STATES as readonly string[]).includes(job.state) ? undefined : liveRaw;
   /*
    * 流水线 job 没有字节计数（`PipelineJob` 里根本没有这些字段，而不是填 0）——
    * 所以进度取 `progress`（0..1），字节一律 null。
@@ -286,12 +304,34 @@ function jobAction(action: 'cancel' | 'pause' | 'resume' | 'retry') {
     api<{ ok: true }>('jobs', `/jobs/${jobId}/${action}`, { method: 'POST' });
 }
 
+/**
+ * 取消：**409「任务不存在或已结束」不是错误**（T-198）。
+ *
+ * 用户点取消，想要的结果是"这条任务别再跑了"。如果它此刻已经是终态，
+ * **那个结果已经达成** —— 把 daemon 的 409 原样糊到界面上
+ * （`[用户真机]` 看到的是 `{"code":"CONFLICT","status":409}`）只会让他以为
+ * 取消失败了，然后再点一次，再得到一个 409。
+ *
+ * 所以这里把 409 咽掉并**刷新列表**（列表会把它显示成「已取消」/「已完成」，
+ * 那才是他要的确认）。其它状态码照常抛出去渲染成错误块 ——
+ * 咽掉一切等于把"说错话"换成"不说话"，那是另一种病。
+ */
+function cancelJob(jobId: string): Promise<void> {
+  return api<{ ok: true }>('jobs', `/jobs/${jobId}/cancel`, { method: 'POST' }).then(
+    () => undefined,
+    (err: unknown) => {
+      if (err instanceof ApiError && err.status === 409) return;
+      throw err;
+    },
+  );
+}
+
 export function useJobActions() {
   const qc = useQueryClient();
   const invalidate = () => void qc.invalidateQueries({ queryKey: qk.jobs.all });
 
   return {
-    cancel: useMutation({ mutationFn: jobAction('cancel'), onSuccess: invalidate }),
+    cancel: useMutation({ mutationFn: cancelJob, onSuccess: invalidate }),
     pause: useMutation({ mutationFn: jobAction('pause'), onSuccess: invalidate }),
     resume: useMutation({ mutationFn: jobAction('resume'), onSuccess: invalidate }),
     retry: useMutation({ mutationFn: jobAction('retry'), onSuccess: invalidate }),

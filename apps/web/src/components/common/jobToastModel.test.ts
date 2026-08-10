@@ -265,3 +265,45 @@ describe('T-130 流水线 job 的状态能不能到达 toast 层', () => {
     assert.equal(toast.totalBytes, 874_000_000, '下载 job 的字节计数必须保留，进度条靠它');
   });
 });
+
+/**
+ * ★ T-198 —— **取消之后 toast 不许直接消失。**
+ *
+ * 原来是 `if (ev.state === 'cancelled') return { kind: 'dismiss', jobId }` ——
+ * 用户点了取消，提示**直接不见了**，等于零确认。他无从判断是
+ * "取消成功了" 还是 "提示自己没了、任务还在跑"，于是回任务中心找，
+ * 而那里当时正显示着一条僵尸「进行中」（同一个 bug 的另一半）。
+ *
+ * 产品原则：**做完一件事就要说**。成功要说，取消也要说。
+ */
+describe('★ T-198 取消要给确认，不能静默消失', () => {
+  const JOB = {
+    ...CREATED,
+    job: { ...CREATED.job, jobId: 'j-cancel', displayName: 'ffmpeg' },
+  };
+
+  test('★ 取消后 toast 必须还在，并且落在"已结束"那一档', () => {
+    const toasts = feed([
+      ['job.created', JOB],
+      [
+        'job.state',
+        { type: 'job.state', jobId: 'j-cancel', state: 'cancelled', previousState: 'running' },
+      ],
+    ]);
+    const t = toasts.find((x) => x.jobId === 'j-cancel');
+    assert.ok(t, '取消后 toast 被直接抹掉了 —— 用户得不到任何确认');
+    assert.equal(t.phase, 'done', '要落在"已结束"这一档，状态文案走 jobState.cancelled');
+    assert.equal(t.state, 'cancelled', '必须说清是「已取消」，不能糊成"完成"');
+  });
+
+  test('前提自检：成功态本来就会保留 toast（对照组，说明上面不是恒真）', () => {
+    const toasts = feed([
+      ['job.created', JOB],
+      [
+        'job.state',
+        { type: 'job.state', jobId: 'j-cancel', state: 'succeeded', previousState: 'running' },
+      ],
+    ]);
+    assert.equal(toasts.find((x) => x.jobId === 'j-cancel')?.phase, 'done');
+  });
+});

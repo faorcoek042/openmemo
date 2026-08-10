@@ -15,16 +15,40 @@
  * 它们的调用点一个字都不用改。同一件事在三处各写一遍，正是本仓反复清的那族。
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { GetJobsResponse } from '@openmemo/shared';
+import { TERMINAL_JOB_STATES, type GetJobsResponse } from '@openmemo/shared';
 
 import { qk } from '../../app/query';
 import { api } from './client';
+
+/**
+ * 任务列表。
+ *
+ * ## ★ T-198：一条**有界**的兜底轮询
+ *
+ * 这个查询原本既没有 `refetchInterval`，`app/query.ts` 里 `refetchOnWindowFocus`
+ * 又是 `false` —— 也就是说**列表只靠 SSE 推动**。掉一帧（网络抖动、标签页被挂起、
+ * 事件在重连窗口里丢了）就永远停在错的状态上，除非用户硬刷新。
+ * `[用户真机 Windows v0.7.0]` 那条「进行中 (1)」僵尸就一直挂在那儿。
+ *
+ * ⚠️ **有界**是关键，不是无条件常驻轮询：只在**还有非终态任务**时每 5 秒兜一次，
+ * 全部结束就自动停。空闲的任务中心（以及后台标签页）不会有任何多余请求 ——
+ * 常驻轮询会让"任务中心开着"变成一个持续的电量/流量成本。
+ */
+const JOBS_POLL_MS = 5000;
 
 export function useJobsQuery() {
   return useQuery({
     queryKey: qk.jobs.all,
     queryFn: () => api<GetJobsResponse>('jobs', '/jobs'),
+    refetchInterval: (q) => (hasUnfinishedJob(q.state.data) ? JOBS_POLL_MS : false),
   });
+}
+
+/** 还有没有没跑完的任务 —— 决定要不要继续兜底轮询。 */
+export function hasUnfinishedJob(data: GetJobsResponse | undefined): boolean {
+  return (data?.jobs ?? []).some(
+    (j) => !(TERMINAL_JOB_STATES as readonly string[]).includes(j.state),
+  );
 }
 
 export function useJobCancelMutation() {

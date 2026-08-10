@@ -177,7 +177,25 @@ export function toastActionFor(
           settled: true,
         };
       }
-      if (ev.state === 'cancelled') return { kind: 'dismiss', jobId: ev.jobId };
+      /*
+       * ★ T-198：取消**必须给确认**，不能直接把 toast 抹掉。
+       *
+       * 原来是 `{ kind: 'dismiss' }` —— 点了取消，提示直接消失，**零确认**。
+       * 用户无从判断"是取消成功了"还是"提示自己没了、任务还在跑"，
+       * 于是他会回任务中心找，而那里当时正显示着一条僵尸「进行中」。
+       * 这和 ①③④ 是同一个病的另一半：**产品做完了一件事却不说**。
+       *
+       * 走 `phase: 'done'` + `settled`，与成功态同一条路径 —— 状态文案由
+       * `jobState.cancelled` 给（zh-CN / en 两份 locale 里都已存在），渲染不用改。
+       */
+      if (ev.state === 'cancelled') {
+        return {
+          kind: 'upsert',
+          jobId: ev.jobId,
+          patch: { jobId: ev.jobId, phase: 'done', state: ev.state },
+          settled: true,
+        };
+      }
       // blocked / failed 有各自的专门事件，这里不重复处理
       if (ev.state === 'blocked' || ev.state === 'failed') return { kind: 'ignore' };
       return {
