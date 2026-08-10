@@ -1355,3 +1355,74 @@ Orphan-exports ratchet ✘
 没用 `git stash` / `git checkout -- <file>` / `--amend` / `-a`；
 三次提交都带 pathspec、按 hash push 并 `merge-base --is-ancestor` 复核；
 未跟踪的 `backendInstallAvailability.test.ts`（别人在飞、编译不过）没动；locale 一个字没改。
+
+---
+
+## [2026-08-10 22:05] 我那条红已清 —— 当前 master 的红换人了
+
+交付: `63df9fd`（撤掉没有消费者的谓词，已 push 并 `merge-base --is-ancestor` 复核）
+
+# 第一句：**我造成的那条红没了。** `[CI 实测 run 31395275433]` `✔ 没有新的零引用导出，基线也没有过期条目`
+
+按你给的第 2 条走的：**把提交自洽掉，没有改基线把它"允许"掉**。
+谓词会和它的消费者一起再提交 —— 那本来也是更好的历史。
+
+⚠️ 你提醒的那行我记下了：`只有测试引用 16 个` —— **守卫测试不算消费者**，
+所以"补几条腿"救不了孤儿棘轮。我没走那条歪路。
+
+# 接缝：你裁的 (b) 我验了，结论是**它需要先解决一个时序问题**
+
+按你的条件①先验证 —— **catalog 在自检跑的那一刻可能根本还没加载**：
+
+```
+models.ts:124   statePromise ??= RestState.create(deps)      ← 懒的
+state.ts:643    注释原话「RestState.create() 是**懒的** —— 只在第一次命中
+                /api/models/* 之类的路由时才真正执行」
+```
+
+`/api/selfcheck` 不走那条路由，所以它跑的时候 `backendCatalog` 可能是**未加载**状态。
+
+⇒ **你的条件② 因此不是可选项，是承重的**：谓词返回值不能是 `boolean`。
+把"没加载"当成"目录里没有" ⇒ 用户读到「本平台目前没有可下载的组件包」——
+**一句因为时序意外而产生的、和我们正在修的那句一模一样形状的新假话。**
+所以再提交时是 `'yes' | 'no' | 'unknown'`，调用方拿到 `unknown` **什么都不说，保持原样**。
+
+⇒ 按你的条件①「未加载不许在那里补一次加载」：走法是从 `models.ts` 已有的
+`statePromise` 上开一个**非强制的窥视口**（已加载就给、没加载就说 unknown），
+**不新建缓存**（再造一份缓存 = 再造一份影子状态）。这两条我都写进了 `63df9fd` 的提交信息里，
+免得下次又只落半边。
+
+# 🔴 现在挡着 master 的是另一条，**不是我的**
+
+```
+✘ Test-file ratchet (守卫文件不许静默消失)
+   + apps/daemon/src/http/rest/backendInstallAvailability.test.ts
+   修法就一条命令：pnpm check:test-ratchet --update
+   然后把 scripts/test-ratchet-baseline.json 一起提交。
+```
+
+**属于刚推 `16a5f42`（T-196 ④「install 闸门也读 availability」）的那一路** ——
+那个测试文件是他们这次新加的，而这条棘轮**新增也要红**
+（它自己的理由写得很好：基线不跟上新增，就永远保护不到「刚加进来、还没被任何人记住」
+那一档 —— 而今天那次事故删掉的正是这一种）。
+
+⚠️ **我没有替他们跑那条命令**，两个理由：
+1. 那是他们的文件、他们的提交，一条命令而已；
+2. ⚠️ 更要紧的：`check-test-ratchet` 扫的是 `git ls-files`（已跟踪文件）。
+   此刻树上有多路**未提交**的新测试文件，谁去跑 `--update` 都应该**在自己那次提交的
+   上下文里跑**，否则很容易把别人还没提交的东西一起写进基线 —— 那就是往一条
+   反影子状态的守卫里种影子状态。
+
+需要 Manager 决策: 把这条转给 `16a5f42` 那一路（一条命令 + 提交基线）。
+
+# 我这边的下一步（等你放行）
+
+接缝已经验清楚，① 和 ② 的 daemon 侧可以一次接完：
+`hasInstallablePackProviding` 改三态 → 从 `models.ts` 开非强制窥视口 →
+自检 `canInstallBinary` 接上 → `setup.ts` 拆 `missing[]`（🔴 **`asr-model` 排除在外**）→
+横幅分叉（装不到时**不承诺下载量/耗时、不把「去修复」指向 `/runtime`**）→ locale 只新增 key。
+
+未做/未碰: 没碰 release / v0.7.0 tag / 发版；没碰 `:10000`；
+没用 `git stash` / `git checkout -- <file>` / `-a`；
+提交带 pathspec 一步到位，`git show --stat` 复核只含我那一个文件；
+别人在飞的 `backends.ts`（TS18047）、未跟踪的那些测试文件一个都没动。
