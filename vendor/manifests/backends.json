@@ -630,7 +630,7 @@
         "whisper.dll"
       ],
       "priority": 80,
-      "availability": "pending-ci",
+      "availability": "published",
       "benchmark": null,
       "catalogVersion": "2026.08.07"
     },
@@ -684,7 +684,7 @@
         "whisper-vad-speech-segments"
       ],
       "priority": 90,
-      "availability": "pending-ci",
+      "availability": "published",
       "benchmark": null,
       "catalogVersion": "2026.08.07"
     }
