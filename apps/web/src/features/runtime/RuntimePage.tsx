@@ -242,7 +242,7 @@ export default function RuntimePage() {
         <ErrorBlock error={hardware.error} onRetry={() => void hardware.refetch()} />
       ) : null}
       {hardware.isLoading ? <p className="text-xs text-ink-muted">{t('runtime.probing')}</p> : null}
-      {hw ? <HardwareCard hw={hw} locale={locale} /> : null}
+      {hw ? <HardwareCard hw={hw} locale={locale} runtime={hardware.data?.runtime} /> : null}
 
       {/*
         ★ T-174：断路器提示。**放在硬件卡下面、后端包上面**，因为它解释的正是

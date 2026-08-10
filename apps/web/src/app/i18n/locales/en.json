@@ -361,9 +361,12 @@
       "diskFree": "{{free}} free of {{total}}",
       "backendsLabel": "Backends:",
       "whyUnavailable": "Why these backends are unavailable ({{n}})",
+      "reasonPlatformUnsupported": "Not applicable on this platform — this backend exists only on Apple platforms (macOS)",
       "detectedAt": "Probed at {{at}} · {{platform}}/{{arch}} {{version}}",
       "avx2Unknown": " · AVX2 support could not be determined",
-      "gpuUnknownNoBackend": "No GPU backend pack installed yet — cannot detect"
+      "gpuNotProbed": "Not checked yet — no GPU-capable backend was loaded this run (GPU enumeration is done by the probe that ships with a backend pack)",
+      "gpuAdvisorySeen": "The system does report an adapter: {{adapters}} — so we can see the card, we just have no backend pack installed that can use it (possible: {{backends}})",
+      "gpuProbedUnusable": "No usable GPU was enumerated — but the system reports {{adapters}} is present, so the gap is on our side, not \"you have no GPU\""
     },
     "breaker": {
       "title": "GPU acceleration is temporarily disabled",

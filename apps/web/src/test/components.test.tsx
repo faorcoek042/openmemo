@@ -52,6 +52,8 @@ async function readSource(rel: string): Promise<string> {
 }
 import { StatusChip } from '../components/common/StatusChip';
 import { ProgressMeter } from '../components/common/ProgressMeter';
+import { DownloadRow } from '../components/common/DownloadRow';
+import { useProgressStore } from '../lib/stores/progress.store';
 import type { MergedJob } from '../features/tasks/api';
 import { arr } from '../lib/safe';
 import { ApiError, api, setCsrf, clearCsrf, hasCsrf } from '../lib/api/client';
@@ -115,8 +117,11 @@ import { MindmapView } from '../features/mindmap/MindmapView';
 import type { MindMapDoc } from '@openmemo/mindmap';
 import type { PipelineJob } from '@openmemo/shared';
 import RuntimePage from '../features/runtime/RuntimePage';
+import { HardwareCard } from '../features/runtime/components/HardwareCard';
 import TasksPage from '../features/tasks/TasksPage';
 import { BackendPackCard } from '../features/runtime/components/BackendPackCard';
+import { tasksSse } from '../features/tasks/sse';
+import { modelsSse } from '../features/models/sse';
 import { isMeaningfulRecommendation } from '../features/runtime/packStatus';
 import { splitEmphasis } from '../components/common/Emphasis';
 import { ConnectivitySummary } from '../components/common/MockNotice';
@@ -4196,6 +4201,237 @@ describe('T-129b /runtime 不许中英混排', () => {
    * 这条前提自检钉的就是"桩真的接上了"：断的是硬件卡里那些**只可能来自桩数据**
    * 的字段，不是"页面渲染出来了"。
    */
+  /* ── T-195 显卡那一格：四态，不是两态 ───────────────────────────────────────── */
+
+  /**
+   * `[用户真机 2026-08-10，win32/x64 10.0.26200]`
+   * AMD Ryzen 7 7840HS **w/ Radeon 780M Graphics**，卡片写着「未检测到可用 GPU」——
+   * **而 CPU 那栏自己就印着 `Radeon 780M Graphics`**。
+   *
+   * 成因不在 CIM 那一步（另一路从截图里倒推：Vulkan 包显示「可安装」⇒
+   * `applicability.ts:206` 那条 `advisory.includes('vulkan')` 的环打破器命中 ⇒
+   * advisory **确实看见了那块卡**）。成因在**面板这一侧把它扔了**：
+   * `hardware.gpus` 完全由探针枚举结果构造，没装 GPU 后端包 ⇒ 没有 `ggml-vulkan.dll` ⇒
+   * 枚举为空 ⇒ 面板一片空白，然后被渲染成"你没有显卡"。
+   *
+   * 判据是**这四句话必须互不相同**，且每一句都只在它该出现的时候出现：
+   *   ① 没查过 + 系统也没说什么   ② 没查过 + 系统说有这块卡
+   *   ③ 查过了 + 真的没有         ④ 查过了 + 系统说有（卡在我们这侧）
+   */
+  describe('T-195 显卡那一格必须分得清"没查过"和"没有"', () => {
+    const HW = (over: Record<string, unknown> = {}) =>
+      ({
+        detectedAt: '2026-08-10T10:09:06.000Z',
+        os: { platform: 'win32', arch: 'x64', version: '10.0.26200' },
+        cpu: {
+          brand: 'AMD Ryzen 7 7840HS w/ Radeon 780M Graphics',
+          physicalCores: 8,
+          logicalCores: 16,
+          features: [],
+        },
+        ram: { totalMB: 34000, availableMB: 12000 },
+        gpus: [],
+        selectedGpuIndex: null,
+        unifiedMemory: false,
+        disks: [],
+        // 用户那台的形状：只装了 CPU 包 —— **没有任何能枚举显卡的后端被加载过**
+        backends: [
+          { id: 'cpu', installed: true, available: true, probed: true, unavailableReason: null },
+          {
+            id: 'vulkan',
+            installed: false,
+            available: false,
+            probed: false,
+            unavailableReason: 'backend package not installed',
+          },
+        ],
+        selectedBackend: 'cpu',
+        ...over,
+      }) as never;
+
+    /** 系统层面看见了那块 780M（advisory 那条路的真实产出形状）。 */
+    const SAW_780M = {
+      probe: { timeoutMs: 10000 },
+      breaker: {
+        consecutiveFailures: 0,
+        threshold: 2,
+        open: false,
+        lastError: null,
+        verdict: 'closed',
+        retryAt: null,
+        recovering: false,
+        recoveryStartedAt: null,
+        recoveryTimeoutMs: 90000,
+      },
+      blacklistedBackends: [],
+      advisoryBackends: ['vulkan'],
+      advisoryGpus: [
+        {
+          name: 'AMD Radeon(TM) 780M Graphics',
+          vendor: 'amd',
+          candidateBackends: ['vulkan'],
+          source: 'Get-CimInstance Win32_VideoController',
+        },
+      ],
+    } as never;
+
+    const gpuCell = (root: Element): string =>
+      root.querySelector('[data-testid="runtime-hardware-card"] dd')?.textContent ?? '';
+
+    test('★ 用户那台的形状：只装了 CPU 包 ⇒ 必须说「还没查过」，不许说「未检测到可用 GPU」', async () => {
+      const r = await render(<HardwareCard hw={HW()} locale="zh-CN" />);
+      const cell = gpuCell(r.container);
+      /*
+       * ⚠️ 断的是**说了什么**，不是"某个 testid 在"。
+       * 上一版的判据（`backends.some(b => b.installed)`）在这个 fixture 上恒为真，
+       * 于是它会走到「未检测到可用 GPU」——这条断言正是钉那个。
+       */
+      assert.ok(
+        !cell.includes('未检测到可用 GPU'),
+        `装了 CPU 包就宣称"查过了、没有显卡" —— 而没有任何能枚举显卡的后端被加载过 → ${cell}`,
+      );
+      assert.ok(cell.includes('还没查过'), `应说明"没查过" → ${cell}`);
+      r.unmount();
+    });
+
+    test('★ 系统看见了 780M ⇒ 必须把那块卡的名字说出来', async () => {
+      const r = await render(<HardwareCard hw={HW()} locale="zh-CN" runtime={SAW_780M} />);
+      const cell = gpuCell(r.container);
+      /*
+       * 这一条是整个改动的意义所在：用户读到的从"你没有显卡"变成
+       * "你的显卡我们看见了，只是还没装上能用它的东西" —— **对他的下一步指引完全相反**。
+       */
+      assert.ok(
+        cell.includes('AMD Radeon(TM) 780M Graphics'),
+        `系统报告的适配器名一个字都没显示 → ${cell}`,
+      );
+      assert.ok(!cell.includes('未检测到可用 GPU'), `仍在说"没有显卡" → ${cell}`);
+      r.unmount();
+    });
+
+    test('★ 真的没有（查过了、系统也没说什么）⇒ 这时候才允许说「未检测到可用 GPU」', async () => {
+      const probed = HW({
+        backends: [
+          { id: 'cpu', installed: true, available: true, probed: true, unavailableReason: null },
+          {
+            id: 'vulkan',
+            installed: true,
+            available: false,
+            probed: true, // ★ 真的加载了 vulkan 库，然后枚举出 0 个设备
+            unavailableReason: 'enumerated no usable device',
+          },
+        ],
+      });
+      const r = await render(<HardwareCard hw={probed} locale="zh-CN" />);
+      const cell = gpuCell(r.container);
+      assert.ok(
+        cell.includes('未检测到可用 GPU'),
+        `这一档是真的查过且没有，必须说得出结论 → ${cell}`,
+      );
+      r.unmount();
+    });
+
+    test('★ 查过了但系统说有 ⇒ 说清"卡在我们这一侧"，不许让用户以为自己没显卡', async () => {
+      const probed = HW({
+        backends: [
+          { id: 'cpu', installed: true, available: true, probed: true, unavailableReason: null },
+          {
+            id: 'vulkan',
+            installed: true,
+            available: false,
+            probed: true,
+            unavailableReason: 'enumerated no usable device',
+          },
+        ],
+      });
+      const r = await render(<HardwareCard hw={probed} locale="zh-CN" runtime={SAW_780M} />);
+      const cell = gpuCell(r.container);
+      assert.ok(cell.includes('AMD Radeon(TM) 780M Graphics'), `没说出那块卡 → ${cell}`);
+      assert.ok(
+        !/^\s*未检测到可用 GPU/.test(cell),
+        `系统明明报告有卡，却只说"未检测到可用 GPU" → ${cell}`,
+      );
+      r.unmount();
+    });
+
+    test('★ 四句话必须互不相同（写成同一句，上面每一条都还是绿的）', async () => {
+      const said = new Set<string>();
+      const probedBackends = [
+        { id: 'cpu', installed: true, available: true, probed: true, unavailableReason: null },
+        {
+          id: 'vulkan',
+          installed: true,
+          available: false,
+          probed: true,
+          unavailableReason: 'enumerated no usable device',
+        },
+      ];
+      for (const [hw, rt] of [
+        [HW(), undefined],
+        [HW(), SAW_780M],
+        [HW({ backends: probedBackends }), undefined],
+        [HW({ backends: probedBackends }), SAW_780M],
+      ] as const) {
+        const r = await render(<HardwareCard hw={hw} locale="zh-CN" runtime={rt} />);
+        said.add(gpuCell(r.container).replace(/\s+/g, ' ').trim());
+        r.unmount();
+      }
+      assert.equal(said.size, 4, `四态被压成了 ${said.size} 句话：\n  ${[...said].join('\n  ')}`);
+    });
+
+    /**
+     * ★ **第二个入口，同一条缝**：断路器跳闸时 `setup.ts:800-814` **整个跳过 probe**
+     * （`probe.ok = false`），于是 `hardware.gpus` 照样是空的 ——
+     * **就算这台机器有 GPU、探针也跑得起来**。
+     *
+     * 而 `applicability.ts:206` 那条 advisory 通道**不看断路器**，所以 Vulkan 包
+     * 仍然显示「可安装」。两边合起来又是那句假话："你没有显卡，但这个包可以装"。
+     *
+     * 判据必须覆盖这个入口 —— 而不是只覆盖"没装后端包"那个。
+     * 它天然被覆盖：`probed = probe.ok && (…)`，`probe.ok=false` ⇒ 全 false。
+     * 但**天然覆盖也要钉住**，否则哪天判据换成"装没装"就又漏了。
+     */
+    test('★ 断路器跳闸（probe 被整个跳过）⇒ 同样是"还没查过"，不是"没有显卡"', async () => {
+      const trippedBreaker = HW({
+        backends: [
+          // 断路器 open 时**连 cpu 都没被探过**（probe 根本没跑）
+          {
+            id: 'cpu',
+            installed: true,
+            available: false,
+            probed: false,
+            unavailableReason: 'probe skipped: circuit breaker open',
+          },
+          {
+            id: 'vulkan',
+            installed: true, // ★ 装了 —— 旧判据在这里恒为真
+            available: false,
+            probed: false,
+            unavailableReason: 'probe skipped: circuit breaker open',
+          },
+        ],
+      });
+      const r = await render(
+        <HardwareCard hw={trippedBreaker} locale="zh-CN" runtime={SAW_780M} />,
+      );
+      const cell = gpuCell(r.container);
+      assert.ok(
+        !cell.includes('未检测到可用 GPU'),
+        `断路器跳闸让 probe 整个没跑，却宣称"查过了、没有显卡" → ${cell}`,
+      );
+      assert.ok(cell.includes('AMD Radeon(TM) 780M Graphics'), `没说出那块卡 → ${cell}`);
+      r.unmount();
+    });
+
+    test('★ advisory 为空 ≠ 没有显卡 —— 老 daemon 不发这个字段时不许自作主张', async () => {
+      // runtime 整个缺失（老 daemon / models.ts 那条兜底路由）
+      const r = await render(<HardwareCard hw={HW()} locale="zh-CN" />);
+      const cell = gpuCell(r.container);
+      assert.ok(cell.includes('还没查过'), `缺字段时应退回"没查过"，而不是下结论 → ${cell}`);
+      r.unmount();
+    });
+  });
+
   test('前提自检：硬件卡真的渲染了（桩键写错时它是静默不渲染的）', async () => {
     stubRuntimePage();
     const r = await render(<RuntimePage />, { route: '/runtime' });
@@ -9602,5 +9838,152 @@ describe('T-192 落地页真有他要的东西(不是"跳转发生了")', () => 
     );
     const shown = text(r.container).trim();
     assert.equal(shown.length > 0, true, '页面上一个字都没有');
+  });
+});
+
+/* ══════════ T-199 ② 服务端说停了，这一行就不许再画"还在跑" ══════════ */
+
+/**
+ * `DownloadRow` 的六个字段原本都是 `live?.x ?? job.x` —— **内存快照无条件胜过服务端行**。
+ * 于是一条陈旧的 `running` 快照会同时压住 state / step / 速率 / 字节 / ETA，
+ * 连 `ratio` 也继承陈旧值：任务已经取消了，这一行还在画「正在下载 · 45% · 3.2 MB/s」。
+ *
+ * ⚠️ 判据一律**让两个数据源给出可区分的值**，再断言渲染出来的是**服务端那一份** ——
+ * 不是去匹配"正在下载"这类文案（文案一改判据就哑，且它在惩罚好文案）。
+ */
+describe('T-199 ② DownloadRow 的影子守卫', () => {
+  const JOB_ID = 'dl-job-1';
+  const MB = 1_000_000;
+
+  /** 服务端行：真相。刻意给 12% 且无速率。 */
+  const serverJob = (over: Record<string, unknown> = {}) => ({
+    jobId: JOB_ID,
+    kind: 'model' as const,
+    type: 'download.model',
+    targetId: 'asr/whisper-base',
+    displayName: 'Whisper base',
+    state: 'cancelled',
+    step: null,
+    provider: null,
+    completedBytes: 12 * MB,
+    totalBytes: 100 * MB,
+    speedBps: null,
+    etaSeconds: null,
+    attempt: 1,
+    maxAttempts: 5,
+    error: null,
+    createdAt: '2026-08-01T00:00:00.000Z',
+    updatedAt: '2026-08-01T00:00:00.000Z',
+    ...over,
+  });
+
+  /** 陈旧的内存快照：说还在跑、45%、3.2 MB/s。 */
+  function seedStaleRunning() {
+    useProgressStore.setState({
+      byJob: {
+        [JOB_ID]: {
+          jobId: JOB_ID,
+          jobType: 'download.model',
+          state: 'running',
+          progress: 0.45,
+          step: 'downloading',
+          completedBytes: 45 * MB,
+          totalBytes: 100 * MB,
+          speedBps: 3.2 * MB,
+          etaSeconds: 120,
+          at: Date.now(),
+        },
+      },
+    });
+  }
+
+  afterEach(() => useProgressStore.getState().clearAll());
+
+  const renderRow = async (over: Record<string, unknown> = {}) => {
+    stubApi({});
+    seedStaleRunning();
+    const r = await render(
+      <DownloadRow
+        job={serverJob(over) as unknown as Parameters<typeof DownloadRow>[0]['job']}
+        locale="zh-CN"
+        onCancel={() => {}}
+        onRetry={() => {}}
+      />,
+    );
+    await r.flush();
+    return r;
+  };
+
+  test('★ 服务端说 cancelled：百分比必须是服务端那份(12%)，不是快照那份(45%)', async () => {
+    const r = await renderRow({ state: 'cancelled' });
+    const t = text(r.container);
+    assert.equal(/·\s*12%/.test(t), true, `没采用服务端的进度（实际渲染：${t}）`);
+    assert.equal(/45%/.test(t), false, `仍在画陈旧快照的 45%（实际渲染：${t}）`);
+    r.unmount();
+  });
+
+  test('★ 服务端说 cancelled：陈旧速率不许再出现', async () => {
+    const r = await renderRow({ state: 'cancelled' });
+    const t = text(r.container);
+    // 3.2 MB/s 这个数只可能来自内存快照——服务端那份 speedBps 是 null
+    assert.equal(/3\.2/.test(t), false, `已取消的任务还在报速率（实际渲染：${t}）`);
+    r.unmount();
+  });
+
+  /**
+   * ★ `state` 这一格单独钉一条，判据是**结构**不是文案：
+   * 服务端说 failed 时这一行走的是「失败」分支——那一支渲染的是「重试」按钮，
+   * **没有** `models-download-cancel`。修之前 state 被快照的 `running` 压着，
+   * 于是一条失败的任务照样显示取消按钮、且完全不提失败。
+   */
+  test('★ 服务端说 failed：必须走失败分支（取消按钮消失），而不是被快照按成 running', async () => {
+    const r = await renderRow({
+      state: 'failed',
+      error: { code: 'NETWORK_TIMEOUT', message: 'timeout', messageZh: '网络超时' },
+    });
+    assert.equal(
+      !!r.container.querySelector('[data-testid="models-download-cancel"]'),
+      false,
+      '失败的任务仍在显示「取消」——说明 state 还是被陈旧快照压着',
+    );
+    r.unmount();
+  });
+
+  /**
+   * ★ 契约防线：`JOB_TRANSITIONS` 允许 `running → paused / blocked`。
+   * `[实测]` `DownloadQueue` 今天还产不出这两个（没有暂停实现，pause 端点回 501），
+   * 所以这条钉的是"等有人把暂停做出来时，这一行不用再修一次"。
+   * 它同时也是**不许把守卫退回 `TERMINAL_JOB_STATES`** 的那根钉子。
+   */
+  for (const state of ['paused', 'blocked']) {
+    test(`★ 服务端说 ${state}：同样丢掉陈旧快照（终态表覆盖不到这两个）`, async () => {
+      const r = await renderRow({ state });
+      const t = text(r.container);
+      assert.equal(/·\s*12%/.test(t), true, `${state} 下没采用服务端进度（实际：${t}）`);
+      assert.equal(/45%/.test(t), false, `${state} 下仍在画陈旧的 45%（实际：${t}）`);
+      r.unmount();
+    });
+  }
+
+  /**
+   * ★★ 这两条是**反向鉴别**：守卫做过头一样是 bug。
+   *
+   * 没有它们的话，"把 `live` 永远置空"也能让上面五条全绿 ——
+   * 而那会让下载进度条彻底不动（本行存在的全部意义就是跟手）。
+   */
+  test('★ 服务端说 running：快照仍然生效（守卫不许把实时进度也一起掐掉）', async () => {
+    const r = await renderRow({ state: 'running' });
+    const t = text(r.container);
+    assert.equal(/·\s*45%/.test(t), true, `running 时丢掉了实时快照（实际：${t}）`);
+    r.unmount();
+  });
+
+  test('★ 服务端说 queued：快照仍然生效 —— 那是"还没开始"，不是"停了"', async () => {
+    // 刚 POST 完的真实时序：内存已经在跑，5s 轮询还没把服务端行刷成 running。
+    // 把 queued 算进守卫会让刚点下去的下载倒退回 0% 并停住几秒。
+    const r = await renderRow({ state: 'queued' });
+    const t = text(r.container);
+    assert.equal(/·\s*45%/.test(t), true, `queued 时误伤了合法的"内存领先"（实际：${t}）`);
+    r.unmount();
   });
 });

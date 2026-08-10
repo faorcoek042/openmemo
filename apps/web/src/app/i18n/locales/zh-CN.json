@@ -361,9 +361,12 @@
       "diskFree": "剩余 {{free}} / {{total}}",
       "backendsLabel": "后端：",
       "whyUnavailable": "为什么这些后端不可用（{{n}} 项）",
+      "reasonPlatformUnsupported": "本平台不适用 —— 这个后端只存在于 Apple 平台（macOS）",
       "detectedAt": "探测于 {{at}} · {{platform}}/{{arch}} {{version}}",
       "avx2Unknown": " · 无法确认是否支持 AVX2",
-      "gpuUnknownNoBackend": "尚未安装 GPU 后端包，无法检测"
+      "gpuNotProbed": "还没查过 —— 这轮没有加载任何能枚举显卡的后端（显卡枚举由后端包里的探针做）",
+      "gpuAdvisorySeen": "但系统报告本机装着：{{adapters}} —— 也就是说这块卡我们看见了，只是还没装上能用它的后端包（可能支持 {{backends}}）",
+      "gpuProbedUnusable": "没有枚举到可用 GPU —— 但系统报告本机装着 {{adapters}}，所以卡在我们这一侧，不是你没有显卡"
     },
     "breaker": {
       "title": "GPU 加速已暂时停用",

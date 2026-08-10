@@ -1,8 +1,47 @@
 import { useTranslation } from 'react-i18next';
 import { ChevronRight, Cpu, HardDrive, MemoryStick, MonitorCog } from 'lucide-react';
-import type { HardwareInfo } from '@openmemo/shared';
+import type { Backend, GetHardwareResponse, HardwareInfo } from '@openmemo/shared';
 import { BackendChip } from '../../../components/common/BackendChip';
 import { formatBytes } from '../../../lib/format/bytes';
+
+/**
+ * 哪些后端**有资格枚举显卡**。总 `Record` —— 新增一种后端而没人表态，**构建就红**。
+ *
+ * 判据不是"名字里有没有 GPU"，是「probe 加载它之后，`ggml_backend_dev_type` 有可能
+ * 报出 `gpu` / `igpu`」。`cpu` 显然不算；`coreml` 也不算 —— 它不是一个可 dlopen 的
+ * ggml backend（CoreML 是 PRIVATE 链进 libwhisper 的，`vendor/whisper.cpp/src/CMakeLists.txt`），
+ * 所以它永远不会出现在 `probedBackendsInDir()` 的结果里，拿它当"查过显卡"的证据是假的。
+ */
+const BACKEND_CAN_ENUMERATE_GPU: Readonly<Record<Backend, boolean>> = {
+  cuda: true,
+  vulkan: true,
+  rocm: true,
+  metal: true,
+  coreml: false,
+  cpu: false,
+};
+
+/**
+ * 这一轮**到底有没有去看过显卡**。
+ *
+ * ─── 这条判据为什么必须换掉（T-195，用户真机 win32/x64 10.0.26200）────────────────
+ *
+ * 用户的 AMD Ryzen 7 7840HS **w/ Radeon 780M Graphics** 上，卡片写着
+ * 「未检测到可用 GPU」——**而 CPU 那栏自己就印着 `Radeon 780M Graphics`**。
+ *
+ * 上一版的判据是 `hw.backends.some((b) => b.installed)`：**装了任何后端包**就算"查过了"。
+ * 那是错的，而且错得很具体 —— `HardwareInfo.gpus` **完全由 probe 的枚举结果构造**
+ * （`buildHardwareInfo`），而 probe 只能用**它扫的那一个目录里**的 ggml 库去枚举
+ * （`ggml_backend_load_all_from_path`，单值 `backendDir`）。装了 CPU 包 ⇒
+ * `some(b => b.installed)` 为真 ⇒ 界面宣称"查过了，没有" ——
+ * **而机器上根本没有任何能枚举显卡的库被加载过。**
+ *
+ * 正确的判据是 `BackendStatus.probed`（T-168 就是为这件事加的字段：
+ * 「这一轮到底有没有加载过这个后端的库」），且只看**有资格枚举显卡**的那几个。
+ */
+export function gpuEnumerationHappened(hw: HardwareInfo): boolean {
+  return hw.backends.some((b) => BACKEND_CAN_ENUMERATE_GPU[b.id] && b.probed);
+}
 
 /**
  * 硬件探测结果卡（章程要求 2.1 的第一步："网页检测硬件"）。
@@ -13,10 +52,37 @@ import { formatBytes } from '../../../lib/format/bytes';
  * `vramFreeMB` 为 null 时明确写"未知"，不拿总量冒充可用量。
  */
 
-export function HardwareCard({ hw, locale }: { hw: HardwareInfo; locale: string }) {
+export function HardwareCard({
+  hw,
+  locale,
+  runtime,
+}: {
+  hw: HardwareInfo;
+  locale: string;
+  /** daemon 的诊断字段。**可选**：`models.ts` 那条兜底路由不带它（见契约注释）。 */
+  runtime?: GetHardwareResponse['runtime'];
+}) {
   const { t } = useTranslation();
   const gpu = hw.selectedGpuIndex != null ? hw.gpus[hw.selectedGpuIndex] : null;
   const modelsDisk = hw.disks.find((d) => d.pathFor === 'models_root') ?? hw.disks[0];
+  const probedForGpu = gpuEnumerationHappened(hw);
+  /**
+   * 操作系统层面**独立于"装没装包"**的证据（`Get-CimInstance Win32_VideoController` /
+   * sysfs DRM / nvidia-smi 认为本机可能支持哪些后端）。
+   * `undefined` = 老 daemon 不发这个字段；`[]` = **没有独立证据**，
+   * **不是**"本机没有显卡"（powershell 失败、sysfs 读不到都会是空）。
+   */
+  const advisory = runtime?.advisoryBackends;
+  /**
+   * 系统层面**逐块看见的**显示适配器。名字直接来自
+   * `Get-CimInstance Win32_VideoController` / sysfs / nvidia-smi。
+   *
+   * ⚠️ **绝不混进 `hw.gpus`。** 那个字段是"探针枚举到、可以拿来算显存与后端可用性"的设备；
+   * 这个只是"操作系统说这台机器上插着什么"。混进去会污染 fit 计算与后端选择
+   * （`detect/gpu.ts` 抬头两个实测反例：库在但无 GPU；lavapipe 报一个 CPU 设备）。
+   * **它只用来说话。**
+   */
+  const seenAdapters = (runtime?.advisoryGpus ?? []).map((g) => g.name).filter(Boolean);
 
   return (
     <section
@@ -45,17 +111,47 @@ export function HardwareCard({ hw, locale }: { hw: HardwareInfo; locale: string 
             </>
           ) : hw.unifiedMemory ? (
             <span className="text-ink">{t('runtime.hw.unifiedMemory')}</span>
-          ) : (
-            /*
-              ★ 这一格此前说的是「未检测到可用 GPU」—— 一句**我们没资格说的话**。
-                GPU 枚举是探针干的，而探针随后端包出厂；后端包没装时我们**根本没查过**，
-                与 CPU 特性那条是同一个病：把"没查"渲染成"查过且没有"。
-                所以按有没有装过后端包分两句话说，并给一个能去装的入口。
+          ) : /*
+              ★★ 三态，不是两态（T-195）。
+
+              📝 **此前这里写的是** `hw.backends.some((b) => b.installed) ? noGpu : …` ——
+              「装了任何后端包」就算"查过了"。用户真机（win32/x64，Ryzen 7 7840HS
+              **w/ Radeon 780M Graphics**）上，装的是 CPU 包，于是这条为真、
+              界面宣称「未检测到可用 GPU」——**而机器上根本没有任何能枚举显卡的库被加载过**。
+              CPU 那栏自己就印着 `Radeon 780M Graphics`，隔壁却说没有显卡。
+
+              判据换成 `BackendStatus.probed`（T-168 正是为"这轮有没有加载过它"加的字段），
+              且只看**有资格枚举显卡**的那几个后端。三档：
+
+                ① 没有任何 GPU 后端被加载 → **我们没查过**（附上系统层面的独立证据，如果有）
+                ② 查过了、且系统也说没有   → 真的没有可用 GPU
+                ③ 查过了、但系统说有       → 有卡，我们这套没能用上它（第二态，值得单说）
             */
-            <span className="text-ink-secondary">
-              {hw.backends.some((b) => b.installed)
-                ? t('runtime.hw.noGpu')
-                : t('runtime.hw.gpuUnknownNoBackend')}
+          !probedForGpu ? (
+            <span className="text-ink-secondary" data-testid="hw-gpu-unprobed">
+              {t('runtime.hw.gpuNotProbed')}
+              {/*
+                  ★ **我们看见的那块卡，要说出它的名字。**
+                  用户那台的 CPU 那栏自己就印着 `Radeon 780M Graphics`，
+                  隔壁却说"没有显卡" —— 而同一次 advisory 探测其实**是有那块卡的**。
+                  说出名字，"这是我们这边还没装上东西"与"你没有显卡"才分得开。
+                */}
+              {seenAdapters.length > 0 ? (
+                <span className="block text-ink" data-testid="hw-gpu-advisory-seen">
+                  {t('runtime.hw.gpuAdvisorySeen', {
+                    adapters: seenAdapters.join('、'),
+                    backends: (advisory ?? []).join(' / '),
+                  })}
+                </span>
+              ) : null}
+            </span>
+          ) : seenAdapters.length > 0 ? (
+            <span className="text-warning" data-testid="hw-gpu-probed-but-unusable">
+              {t('runtime.hw.gpuProbedUnusable', { adapters: seenAdapters.join('、') })}
+            </span>
+          ) : (
+            <span className="text-ink-secondary" data-testid="hw-gpu-none">
+              {t('runtime.hw.noGpu')}
             </span>
           )}
         </Row>
@@ -140,16 +236,23 @@ export function HardwareCard({ hw, locale }: { hw: HardwareInfo; locale: string 
                *   与真正加载成功的显示同一个「已安装」，T-168 建立的区分
                *   在最后一跳上死掉了（那句"这一轮没有去加载它"只在折叠的 details 里）。
                *   现在装在盘上但这轮没被加载的单独成一档。
+               *
+               * ★ T-196：`platform_unsupported` 排在**最前面**，比 `installed` 还靠前 ——
+               *   Metal/CoreML 在 Windows 上 `installed` 恒为 false，落到最后就是「不可用」，
+               *   与「还没装」显示成同一个东西。**判据是字段不是文案**：读
+               *   `unavailableKind`，绝不去匹配 `unavailableReason` 那句英文。
                */
               hw.selectedBackend === b.id
                 ? 'active'
-                : b.installed
-                  ? b.probed
-                    ? 'installed'
-                    : 'installed-unprobed'
-                  : b.available
-                    ? 'available'
-                    : 'not-installed'
+                : b.unavailableKind === 'platform_unsupported'
+                  ? 'other-platform'
+                  : b.installed
+                    ? b.probed
+                      ? 'installed'
+                      : 'installed-unprobed'
+                    : b.available
+                      ? 'available'
+                      : 'not-installed'
             }
           />
         ))}
@@ -183,8 +286,27 @@ export function HardwareCard({ hw, locale }: { hw: HardwareInfo; locale: string 
             {hw.backends
               .filter((b) => !b.available && b.unavailableReason)
               .map((b) => (
-                <li key={b.id} className="font-mono text-[11px] break-all text-ink-muted">
-                  {b.id}：{b.unavailableReason}
+                <li key={b.id} className="text-[11px] break-all text-ink-muted">
+                  {b.unavailableKind === 'platform_unsupported' ? (
+                    <>
+                      {/*
+                        说人话的那一句。**永远不和「未安装」合并成一句好听的中文** ——
+                        「装不了」和「还没装」对用户是两条不同的指令，后者让他去装，
+                        前者照着做就是去找一个不可能存在的包。
+                      */}
+                      <span>
+                        {b.id}：{t('runtime.hw.reasonPlatformUnsupported')}
+                      </span>
+                      {/* 英文原文降级成技术尾巴（D-05 §5.3）：排障拿得到，但不占正文 */}
+                      <span className="mt-0.5 block font-mono opacity-70">
+                        {b.unavailableReason}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="font-mono">
+                      {b.id}：{b.unavailableReason}
+                    </span>
+                  )}
                 </li>
               ))}
           </ul>
