@@ -10581,3 +10581,193 @@ describe('★★ T-198/S-2 终态之后 store 里不许留残影（两个订阅�
     useProgressStore.getState().clear(JID);
   });
 });
+
+/* ══════════ T-200 S-6 组件页不许冻结在一次「检查更新」的快照上 ══════════ */
+
+/**
+ * `ComponentsPage:36` 原本是 `const data = check.data ?? q.data`。
+ * `check.data` 是一次 mutation 的**快照**，在下一次 mutate 之前永远不变
+ * （`check.reset()` 全仓零调用），于是它一旦有值就把活的 `q.data` 永久压住。
+ *
+ * 而服务端那侧一直在正确更新（`features/components/sse.ts` 三个事件 +
+ * `useUpdateComponentMutation.onSuccess` 都 invalidate 了 `qk.components.all`）——
+ * **`q.data` 真的变新了，渲染读不到。**
+ *
+ * 用户看到的：点「更新到 X」→ 任务真的跑完 → 卡片仍显示旧版本和「更新到 X」
+ * → **他会再点一次**。
+ *
+ * ⚠️ 这条腿刻意**走产品自己的那条路**：真点「检查更新」、真点「更新」，
+ * 让 `onSuccess` 自己去 invalidate ——
+ * 手动 `setQueryData` 只能证明 react-query 会传播，证明不了这一页接没接上。
+ */
+describe('T-200 S-6 组件页必须跟着活查询走', () => {
+  const BASE = {
+    id: 'ytdlp-linux-x64',
+    displayName: 'yt-dlp',
+    displayNameZh: 'yt-dlp 站点解析器（Linux x64）',
+    category: 'media-tool',
+    pinnedVersion: 'v1',
+    installedVersion: 'v1',
+    latestVersion: null as string | null,
+    updateAvailable: false,
+    checkError: null,
+    checkedAt: null as string | null,
+    provenance: {
+      repoUrl: 'https://example.invalid/repo',
+      releaseUrl: 'https://example.invalid/rel',
+      license: 'MIT',
+      licenseUrl: 'https://example.invalid/lic',
+    },
+    upstream: { kind: 'github-release' as const, repo: 'a/b' },
+    sizeBytes: 1000,
+    sha256: 'x'.repeat(64),
+    sha256Provenance: null,
+    rollbackVersion: null,
+  };
+
+  function stubConfirmTrue(): () => void {
+    const w = window as unknown as { confirm: (m?: string) => boolean };
+    const prev = w.confirm;
+    w.confirm = () => true;
+    return () => {
+      w.confirm = prev;
+    };
+  }
+
+  /** 卡片上那一行版本号（结构判据：钉这张卡，不做整页文字匹配）。 */
+  const cardText = (c: HTMLElement): string =>
+    (
+      [...c.querySelectorAll('section > *')].find((el) =>
+        (el.textContent ?? '').includes('yt-dlp 站点解析器'),
+      )?.textContent ??
+      c.textContent ??
+      ''
+    ).replace(/\s+/g, ' ');
+
+  test('★ 检查更新 → 真的更新 → 卡片必须显示新版本，而不是冻结在检查那一刻', async () => {
+    const restore = stubConfirmTrue();
+    try {
+      /*
+       * `/components` 的返回随"服务端真实状态"变：
+       * 更新任务跑完之前是 v1，跑完之后是 v2。
+       * `useUpdateComponentMutation.onSuccess` 会 invalidate，届时这个桩会被再问一次。
+       */
+      let installed = 'v1';
+      const stub = stubApi({
+        '/components': () => ({
+          components: [{ ...BASE, installedVersion: installed, pinnedVersion: 'v2' }],
+          online: true,
+          checkedAt: '2026-08-10T00:00:00.000Z',
+        }),
+        // 「检查更新」发现上游有 v2
+        'POST /components/check': {
+          components: [
+            {
+              ...BASE,
+              installedVersion: 'v1',
+              pinnedVersion: 'v2',
+              latestVersion: 'v2',
+              updateAvailable: true,
+            },
+          ],
+          online: true,
+          checkedAt: '2026-08-10T00:00:00.000Z',
+        },
+        'POST /components/ytdlp-linux-x64/update': () => {
+          installed = 'v2'; // 任务跑完了：服务端从此说 v2
+          return {
+            ok: true,
+            id: 'ytdlp-linux-x64',
+            toVersion: 'v2',
+            jobId: 'j1',
+            deduplicated: false,
+          };
+        },
+      });
+
+      const r = await render(<ComponentsPage />);
+      await r.flush();
+      assert.equal(/v1/.test(cardText(r.container)), true, '前提：初始显示 v1');
+
+      await click(r.container.querySelector('[data-testid="components-check-updates"]'));
+      await r.flush();
+      await r.flush();
+      assert.equal(
+        /v2/.test(cardText(r.container)),
+        true,
+        '前提：检查之后应该看得到 v2 这个新版本（否则下面测的不是冻结）',
+      );
+
+      // 真按下更新
+      // 已装过 ⇒ 走的是「更新」那一支（`component-update-*`），不是「安装」
+      const btn = r.container.querySelector('[data-testid="component-update-ytdlp-linux-x64"]');
+      assert.ok(btn, `找不到更新按钮：${cardText(r.container)}`);
+      await click(btn);
+      for (let i = 0; i < 4; i++) await r.flush();
+
+      assert.equal(
+        stub.calls.some((c) => c.path === '/components/ytdlp-linux-x64/update'),
+        true,
+        '前提：更新请求真的发出去了',
+      );
+      /* ★ 判据：更新完成后，页面必须问过服务端并采用新答案 */
+      const after = stub.calls.filter((c) => c.path === '/components' && c.method === 'GET').length;
+      assert.equal(
+        after >= 2,
+        true,
+        `更新成功后没有重新拉过清单（GET /components 只发了 ${after} 次）`,
+      );
+      /*
+       * 结构判据：服务端已经说装的是 v2 了，那颗「更新到 v2」的按钮就必须消失。
+       * 只断言"页面上有 v2"是不够的 —— 冻结态里也有 v2（那是 latestVersion）。
+       * 按钮在不在，才是"用户会不会再点一次"的直接判据。
+       */
+      assert.equal(
+        !!r.container.querySelector('[data-testid="component-update-ytdlp-linux-x64"]'),
+        false,
+        `更新装完了，卡片仍在提供「更新到 v2」—— 冻结在检查那一刻的快照上（实际：${cardText(r.container)}）`,
+      );
+      assert.equal(
+        /本机已装\s*v2/.test(cardText(r.container)),
+        true,
+        `「本机已装」仍是旧版本（实际：${cardText(r.container)}）`,
+      );
+      r.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  /**
+   * ★ 反向鉴别：不许"干脆不显示检查结果"也能过。
+   * 只删 `check.data ??` 而 `onSuccess` 没把结果写进缓存的话，这条会红。
+   */
+  test('★ 「检查更新」的结果必须仍然看得见（它已经被写进查询缓存，不是靠 mutation.data 撑着）', async () => {
+    const stub = stubApi({
+      '/components': { components: [{ ...BASE }], online: false, checkedAt: null },
+      'POST /components/check': {
+        components: [{ ...BASE, latestVersion: 'v9', updateAvailable: true }],
+        online: true,
+        checkedAt: '2026-08-10T00:00:00.000Z',
+      },
+    });
+    const r = await render(<ComponentsPage />);
+    await r.flush();
+    assert.equal(/v9/.test(cardText(r.container)), false, '前提：检查之前不该有 v9');
+
+    await click(r.container.querySelector('[data-testid="components-check-updates"]'));
+    await r.flush();
+    await r.flush();
+    assert.equal(
+      /v9/.test(cardText(r.container)),
+      true,
+      '检查结果丢了 —— 说明它只活在 mutation.data 里，没进查询缓存',
+    );
+    assert.equal(
+      stub.calls.some((c) => c.path === '/components/check'),
+      true,
+      '前提：检查请求真的发出去了',
+    );
+    r.unmount();
+  });
+});

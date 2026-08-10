@@ -33,7 +33,27 @@ export default function ComponentsPage() {
 
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const data = check.data ?? q.data;
+  /*
+   * ★ T-200 S-6：**渲染只认活查询，不认 mutation 的返回值。**
+   *
+   * 这里原本是 `check.data ?? q.data`。`check.data` 是一次「检查更新」的**快照**，
+   * 而 `useMutation` 的 `data` 在下一次 mutate 之前**永远不变**（`check.reset()` 全仓零调用），
+   * 于是它一旦有值就把活的 `q.data` 永久压住 —— 整页冻结在那一刻。
+   *
+   * 而服务端那一侧一直在正确地更新：`features/components/sse.ts` 的
+   * `backend.installed` / `backend.removed` / `model.installed` 与
+   * `api.ts` 的 `useUpdateComponentMutation.onSuccess` 都 invalidate 了
+   * `qk.components.all`，`q.data` 真的变新了 —— **只是渲染读不到。**
+   *
+   * 用户看到的：点「更新到 X」→ 任务真的跑完 → 卡片仍显示旧版本和「更新到 X」按钮
+   * → **他会再点一次**。
+   *
+   * 删掉 `check.data ?? ` **不丢任何信息**：`useCheckUpdatesMutation.onSuccess`
+   * 已经把整份响应 `setQueryData` 写进了 `[...qk.components.all, false]` 与 `[..., true]`
+   * 两把键（见 `api.ts`）——也就是说检查结果本来就已经在 `q.data` 里了，
+   * `check.data` 从头到尾只是同一份数据的第二个、而且不会更新的副本。
+   */
+  const data = q.data;
   const components = useMemo(() => data?.components ?? [], [data]);
   const updatable = components.filter((c) => c.updateAvailable);
   const unchecked = components.filter((c) => !c.updateAvailable && !c.latestVersion);
