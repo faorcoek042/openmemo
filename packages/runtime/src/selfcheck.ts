@@ -244,6 +244,18 @@ export interface SelfCheckProbes {
    */
   catalogLoad?: () => Promise<CatalogLoadProbe>;
   /**
+   * 「本平台目录里，有没有一条装得到的包会给出这个二进制」——
+   * 传入的是**落盘名**（win32 上带 `.exe`）。
+   *
+   * ⚠️ 它回答的是**关于目录的事实**，不是"这个平台行不行"。判定只有一处：
+   * `backends/applicability.ts` 的 `hasInstallablePackProviding()`；
+   * 首屏横幅（daemon 的 `pipeline/setup.ts`）问的是同一个问题，调的是同一个函数。
+   * 上次「芯片判、按钮不判」当场打架的账记在 `packStatus.ts` 的 T-196 注释里。
+   *
+   * 可选：没给就退回原来的行为（"未找到 → 去装"）—— 那在**有包可装**的平台上是对的。
+   */
+  canInstallBinary?: (binary: string) => Promise<boolean>;
+  /**
    * Run the four-word Chinese FTS5 test.
    * Returns hit counts, or null when the tokenizer could not even be loaded.
    */
@@ -782,6 +794,28 @@ function libSuffix(): string {
   return '.so';
 }
 
+/**
+ * `tool.*` 的检查 id → **落盘文件名**（win32 带 `.exe`）。
+ *
+ * ⚠️ 必须是落盘名，因为对面 `providesFiles` 记的就是落盘名
+ *（`ytdlp-win32-x64` 写的是 `yt-dlp.exe`，不是 `yt-dlp`）——
+ * 这正是 T-147 在 `ytdlpInstall.test.ts` 那族里踩过的同一个坑：
+ * **夹具按 POSIX 造名字，于是那几条用例在 Windows 上测的不是"选包对不对"，是"名字对不对"。**
+ */
+function toolBinaryName(id: string): string {
+  const base =
+    id === 'tool.ffmpeg'
+      ? 'ffmpeg'
+      : id === 'tool.ffprobe'
+        ? 'ffprobe'
+        : id === 'tool.whisperCli'
+          ? 'whisper-cli'
+          : id === 'tool.whisperVad'
+            ? 'whisper-vad-speech-segments'
+            : 'yt-dlp';
+  return process.platform === 'win32' ? `${base}.exe` : base;
+}
+
 export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckReport> {
   const results: CheckResult[] = [];
   const add = (r: CheckResult): void => {
@@ -1117,15 +1151,39 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
   ] as const) {
     const found = await exists(path, constants.X_OK);
     if (!found) {
+      /*
+       * ★★ 「找不到」和「装得到吗」是两个问题，中间那步以前从来没被问过。
+       *
+       * 原来这里无条件说「在「本机组件」页安装对应组件」+ 三条 `required: true`。
+       * 而 `vendor/manifests/backends.json` 的实测事实是：
+       * **darwin/x64 有 0 条包、win32/arm64 有 0 条、linux/arm64 只有 1 条**（`ytdlp-linux-arm64`）。
+       * ffmpeg 只由 `media-tools-{linux-x64, win-x64, macos-arm64}` 提供。
+       * ⇒ 在 Intel Mac 上，三个必需工具全 null，自检**永久红**，
+       *   而那句"去装"指向的页面会把这些包如实渲染成「其它平台」——
+       *   **同一次点击，一个说去装，一个说装不了。**
+       *
+       * ⚠️ 逐**二进制**判，不按平台判：`linux/arm64` 上 yt-dlp 装得到、另外三个装不到，
+       *   按平台判会把它们一起判错（判据走 `providesFiles`，天然分得开）。
+       */
+      const installable = input.probes.canInstallBinary
+        ? await input.probes.canInstallBinary(toolBinaryName(id))
+        : true;
       add({
         layer: 'tools',
         id,
         label,
         labelZh,
-        status: required ? 'fail' : 'warn',
-        detail: '未找到',
+        // ★ 装不到时既不是 fail 也不是 warn：没有下一步（见 CheckStatus 注释）。
+        status: installable ? (required ? 'fail' : 'warn') : 'unavailable',
+        detail: installable ? '未找到' : '未找到 —— 本平台目前没有可下载的组件包',
+        detailEn: installable
+          ? 'not found'
+          : 'not found — no downloadable component package for this platform yet',
+        // ★ `required` 保持不变（它是纯逻辑，不许随环境漂移，见 backend.libLinks 那条），
+        //   靠 `status` 而不是靠改 required 来避免"整份报告永久红"。
         required,
-        remediation: '在「本机组件」页安装对应组件',
+        remediation: installable ? '在「本机组件」页安装对应组件' : null,
+        remediationEn: installable ? 'Install the component on the “Components” page' : null,
       });
     } else if (fromStore(path)) {
       add({

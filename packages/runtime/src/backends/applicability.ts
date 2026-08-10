@@ -312,3 +312,54 @@ export function isPackApplicable(
     ...(advisoryCandidates ? { advisoryCandidates } : {}),
   });
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════════════
+ * 「本平台目录里，有没有一条装得到的包会给出这个二进制」
+ * ═══════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ★★ 这个函数回答的是**关于目录的事实**，不是关于平台能力的推断。
+ *
+ * ── 为什么必须写死这一点 ──────────────────────────────────────────────────────────
+ *
+ * 「没有包 ⇒ 本平台不适用」是一句**会说谎的推理**。按后端数一遍现有目录：
+ * `{cpu: 10, vulkan: 2, cuda: 1, metal: 1}` —— **`rocm` 与 `coreml` 在任何平台都是 0 条**。
+ * 照那句推理，**在一台真能跑 CoreML 的机器上，CoreML 会被渲染成「其它平台」**。
+ * 所以这里的措辞只能落在目录侧（「目前没有可下载的组件包」），
+ * **绝不能复用 `runtime.chip.otherPlatform` 那句「其它平台」** ——
+ * 那是 {@link evaluateApplicability} 才有资格说的话。
+ *
+ * ── 逐二进制判，不按平台判 ────────────────────────────────────────────────────────
+ *
+ * `linux/arm64` 是最锋利的反例：目录里只有 `ytdlp-linux-arm64` 一条 ——
+ * **yt-dlp 装得到，ffmpeg / ffprobe / whisper-cli 装不到**。
+ * 按平台判会把这四个一起判错；按 `providesFiles` 判则天然分得开。
+ *
+ * ── 为什么只有这一处 ─────────────────────────────────────────────────────────────
+ *
+ * 首屏横幅（`apps/daemon/src/pipeline/setup.ts`）与自检（`selfcheck.ts` 的 `tool.*`）
+ * 问的是同一个问题。上次「芯片判、按钮不判」当场打架的账记在
+ * `apps/web/src/features/runtime/packStatus.ts` 的 T-196 注释里 ——
+ * **一个事实一处判断**，所以两边都调这个函数，不各写一份。
+ *
+ * @param binary   要找的落盘文件名。⚠️ 传**平台化之后**的名字（win32 上是 `yt-dlp.exe`），
+ *                 因为 `providesFiles` 记的就是落盘名（`ytdlp-win32-x64` 写的是 `yt-dlp.exe`）。
+ * @param packs    目录里的全部包（含 `providesFiles`）。
+ * @param platform 本机。
+ */
+export function hasInstallablePackProviding(
+  binary: string,
+  packs: readonly (PackDescriptor & { providesFiles: readonly string[] })[],
+  platform: { os: OsPlatform; arch: string },
+  opts?: { backends?: BackendStatus[] | null; advisoryCandidates?: readonly Backend[] },
+): boolean {
+  return packs.some((p) => {
+    if (!p.providesFiles.includes(binary)) return false;
+    return evaluateApplicability({
+      pack: p,
+      platform,
+      backends: opts?.backends ?? null,
+      advisoryCandidates: opts?.advisoryCandidates,
+    }).applicable;
+  });
+}

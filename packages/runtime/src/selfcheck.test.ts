@@ -1355,3 +1355,71 @@ describe('★ CheckStatus 第四态：hw.cpu 不再对一台没测过的 CPU 下
     assert.equal(r.ok, requiredFails.length === 0);
   });
 });
+
+/* ═════ ★ ② tool.* —— 「找不到」不等于「去装」，中间那步得先问 ═════ */
+
+describe('★ tool.* 装不到时报 unavailable，而不是让整份报告永久红', () => {
+  /*
+   * 实测的平台事实（`vendor/manifests/backends.json` 14 条）：
+   * **darwin/x64 有 0 条包、win32/arm64 有 0 条、linux/arm64 只有 1 条**（`ytdlp-linux-arm64`）。
+   * ffmpeg 只由 `media-tools-{linux-x64, win-x64, macos-arm64}` 提供。
+   * ⇒ Intel Mac 上三个必需工具全 null，自检**永久红**，而那句"去「本机组件」页装"
+   *   指向的页面会把这些包如实渲染成「其它平台」——**一个说去装，一个说装不了。**
+   *
+   * ⚠️ 判据钉后果：`ok` 不再被它拖红、且不给一条走不出去的补救。
+   */
+  it('★ 目录里没有能给出该二进制的包 ⇒ unavailable + 无补救 + 不拖红整份报告', async () => {
+    const r = await runSelfCheck({
+      ...BASE,
+      probes: minimalProbes({ canInstallBinary: () => Promise.resolve(false) }),
+    });
+    for (const id of ['tool.ffmpeg', 'tool.ffprobe', 'tool.whisperCli']) {
+      const c = byId(r, id);
+      assert.ok(c, `${id} 必须仍然出现（T-119：id 集合不变）`);
+      assert.equal(c.status, 'unavailable', `${id} 应为 unavailable，实得 ${c.status}`);
+      assert.equal(c.remediation, null, `${id} 装不到却给了补救 —— 那是走不出去的路`);
+      assert.equal(c.required, true, 'required 是纯逻辑，不许随环境漂移');
+    }
+    /*
+     * ⚠️ 判据钉的是**因果**，不是 `r.ok === true`：
+     * 这个最小探针场景里本来就还有别的 required 失败（例如 `model.asr` 真的没装），
+     * 拿全局 `ok` 当判据会把"别人的红"算到这条修复头上 —— 那样它既可能假绿也可能假红。
+     * 要证明的是：**这三条不再出现在"required 的 fail"集合里**。
+     */
+    const requiredFails = r.results
+      .filter((c) => c.status === 'fail' && c.required)
+      .map((c) => c.id);
+    for (const id of ['tool.ffmpeg', 'tool.ffprobe', 'tool.whisperCli']) {
+      assert.equal(
+        requiredFails.includes(id),
+        false,
+        `${id} 仍在把整份报告拖红：${requiredFails.join(', ')}`,
+      );
+    }
+  });
+
+  it('★ 反向：目录里有包时，仍然是原来的「去装」（这条修复不许把能装的也说成装不到）', async () => {
+    const r = await runSelfCheck({
+      ...BASE,
+      probes: minimalProbes({ canInstallBinary: () => Promise.resolve(true) }),
+    });
+    const c = byId(r, 'tool.ffmpeg');
+    assert.equal(c?.status, 'fail');
+    assert.equal(c?.detail, '未找到');
+    assert.match(c?.remediation ?? '', /本机组件/);
+    const requiredFails = r.results
+      .filter((x) => x.status === 'fail' && x.required)
+      .map((x) => x.id);
+    assert.equal(
+      requiredFails.includes('tool.ffmpeg'),
+      true,
+      '能装却没装 = 真的缺东西，这条必须仍然是 required 的 fail',
+    );
+  });
+
+  it('探针没给 ⇒ 退回原行为（不是所有调用方都拿得到目录）', async () => {
+    const r = await runSelfCheck({ ...BASE, probes: minimalProbes() });
+    assert.equal(byId(r, 'tool.ffmpeg')?.status, 'fail');
+    assert.match(byId(r, 'tool.ffmpeg')?.remediation ?? '', /本机组件/);
+  });
+});
