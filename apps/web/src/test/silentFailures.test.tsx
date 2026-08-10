@@ -465,7 +465,13 @@ describe('契约字段必须出现在用户走到的路径上', () => {
     speedSource: 'none',
     cpuFeaturesUnverified: [],
     notRecommendedForLanguage: false,
-    detail: { needMB: 1200, vramBudgetMB: 0, ramBudgetMB: 8000, diskFreeMB: 50000, diskNeededMB: 1400 },
+    detail: {
+      needMB: 1200,
+      vramBudgetMB: 0,
+      ramBudgetMB: 8000,
+      diskFreeMB: 50000,
+      diskNeededMB: 1400,
+    },
     ...over,
   });
 
@@ -565,7 +571,10 @@ describe('契约字段必须出现在用户走到的路径上', () => {
     stubApi({});
     const r = await render(card());
     await r.flush();
-    assert.equal(r.container.querySelector('[data-testid="model-capability-caveats"]') === null, true);
+    assert.equal(
+      r.container.querySelector('[data-testid="model-capability-caveats"]') === null,
+      true,
+    );
     r.unmount();
   });
 });

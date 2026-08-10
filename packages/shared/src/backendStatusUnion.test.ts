@@ -131,7 +131,7 @@ describe('BackendStatus 的非法组合在类型层不可表达（T-194）', () 
   it('★ 运行时层：zod 必须拒绝 available:true + probed:false', () => {
     const r = HardwareInfoSchema.safeParse(
       withBackends([{ ...COMMON, available: true, probed: false }]),
-      );
+    );
     assert.equal(
       r.success,
       false,

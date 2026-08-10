@@ -68,7 +68,12 @@ async function dirWithEmptyManifest(): Promise<string> {
   const d = await mkdtemp(join(tmpdir(), 'om-mf-zero-'));
   await writeFile(
     join(d, 'models-none.json'),
-    JSON.stringify({ schemaVersion: 1, catalogVersion: '2026.01.01', generatedAt: '2026-01-01T00:00:00Z', models: [] }),
+    JSON.stringify({
+      schemaVersion: 1,
+      catalogVersion: '2026.01.01',
+      generatedAt: '2026-01-01T00:00:00Z',
+      models: [],
+    }),
   );
   return d;
 }
@@ -84,7 +89,10 @@ async function unreadableDir(): Promise<string | null> {
   const d = await mkdtemp(join(tmpdir(), 'om-mf-noperm-'));
   const inner = join(d, 'manifests');
   await mkdir(inner);
-  await writeFile(join(inner, 'models-x.json'), '{"schemaVersion":1,"catalogVersion":"1","generatedAt":"x","models":[]}');
+  await writeFile(
+    join(inner, 'models-x.json'),
+    '{"schemaVersion":1,"catalogVersion":"1","generatedAt":"x","models":[]}',
+  );
   await chmod(inner, 0o000);
   // root 无视 mode 位 —— 这台机器上跑 CI 时是 root，那就诚实地说"这条造不出来"，
   // 而不是让用例在一个没成立的前提上"通过"。
@@ -156,10 +164,7 @@ describe('T-153 「清单读不了」不许被降级成「清单里零条」', (
 
   it('★ 路径是个文件而不是目录 —— 同样属于"读不了"', async () => {
     const bad = await loadModelCatalog(await notADir());
-    assert.ok(
-      (bad as { loadError?: unknown }).loadError,
-      'ENOTDIR 也是读不了，不是"零条"',
-    );
+    assert.ok((bad as { loadError?: unknown }).loadError, 'ENOTDIR 也是读不了，不是"零条"');
   });
 
   it('★ 没有读权限 —— 第三种读不了（root 下造不出来时如实跳过并说明）', async (t) => {
@@ -223,7 +228,8 @@ describe('T-153 读不了的时候，自检要说出"发生了什么"', () => {
         dir: '/nope/vendor/manifests',
         models: 0,
         packs: 0,
-        reasonZh: '不是"没有可用项"，是内置目录没能读取 —— 目录不存在。找的是：/nope/vendor/manifests',
+        reasonZh:
+          '不是"没有可用项"，是内置目录没能读取 —— 目录不存在。找的是：/nope/vendor/manifests',
         reasonEn: 'ENOENT: no such directory (/nope/vendor/manifests)',
       }),
     );
@@ -236,7 +242,14 @@ describe('T-153 读不了的时候，自检要说出"发生了什么"', () => {
 
   it('★ 读到了但零条 → warn，而且**不能**和"读不到"说同一句话', async () => {
     const zero = await runWith(() =>
-      Promise.resolve({ loaded: true, dir: '/tmp/m', models: 0, packs: 0, reasonZh: null, reasonEn: null }),
+      Promise.resolve({
+        loaded: true,
+        dir: '/tmp/m',
+        models: 0,
+        packs: 0,
+        reasonZh: null,
+        reasonEn: null,
+      }),
     );
     const broken = await runWith(() =>
       Promise.resolve({
@@ -256,7 +269,14 @@ describe('T-153 读不了的时候，自检要说出"发生了什么"', () => {
 
   it('★ 正常 → ok，且不给 remediation（没坏就不该有"下一步"）', async () => {
     const c = await runWith(() =>
-      Promise.resolve({ loaded: true, dir: '/tmp/m', models: 40, packs: 20, reasonZh: null, reasonEn: null }),
+      Promise.resolve({
+        loaded: true,
+        dir: '/tmp/m',
+        models: 40,
+        packs: 20,
+        reasonZh: null,
+        reasonEn: null,
+      }),
     );
     assert.ok(c);
     assert.equal(c.status, 'ok');
