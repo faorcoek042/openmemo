@@ -11,6 +11,7 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 
 import { backendPrefsPath, discoverTools, resolveStoreRoot } from '@openmemo/pipeline';
+import { detectDisks, detectMemory } from '@openmemo/runtime';
 
 import {
   ArtifactStore,
@@ -352,6 +353,16 @@ export class RestState {
   private hardwareFingerprint: string | null = null;
 
   /**
+   * 结构探测那一刻解析出来的 runtimes 目录。
+   *
+   * 只用来给 `detectDisks()` 指路 —— **路径本身是结构事实**，随快照一起缓存是对的；
+   * 现算的是它上面的**读数**。为它单独再跑一次 `resolveRuntimeLayout()` 会白做一遍
+   * 目录扫描，而在本文件里再推导一次 `<dataDir>/bin/runtime` 就是第二份路径约定
+   * （`inferDataDir` 的注释里记着这一族缺陷的成因）。
+   */
+  private runtimesRoot: string | null = null;
+
+  /**
    * 「机器上有什么」的**廉价指纹**：装了哪些后端包 + 用户选了哪个后端 + 模型根目录。
    *
    * **不 spawn、不探测**（只是一次 `listManifests` 的 readdir），所以可以在每个
@@ -435,8 +446,55 @@ export class RestState {
       ? { ...detection.hardware, selectedBackend: this.prefs.selectedBackend }
       : detection.hardware;
     this.advisoryBackends = detection.advisoryBackends;
+    // 路径是**结构事实**（只随数据目录搬迁而变），读数才是环境事实。
+    // 记下来，好让 `hardwareWithLiveReadings()` 不必为了拿一个路径再跑一次探测。
+    this.runtimesRoot = detection.layout.runtimesRoot;
     this.hardwareFingerprint = fp;
     return this.hardware;
+  }
+
+  /**
+   * ★★ T-195：把**环境读数**换成现算的，结构事实照旧用缓存。
+   *
+   * ## 判据不在"几份快照"那个轴上，在"这一格该不该被缓存"那个轴上
+   *
+   * `HardwareInfo` 把两类**寿命完全不同**的事实装在同一个 blob 里：
+   *
+   * | 类 | 字段 | 取一次的代价 | 什么时候变 |
+   * |---|---|---|---|
+   * | 结构事实 | cpu / gpus / backends / os | **spawn**：probe(≤10s) + nvidia-smi | 换机器、装卸后端包、换驱动 |
+   * | 环境读数 | `disks[].freeMB`、`ram.availableMB` | `statfs` + `os.freemem()`，**零 spawn** | 一直在变（任何一次下载，甚至别的程序） |
+   *
+   * 缓存的存在理由（"探测要 spawn"）**只对第一类成立**。缓存第二类不省任何东西，
+   * 代价却是判断建立在假数字上。
+   *
+   * ## 为什么这一格在 `state.ts` 里是**承重**的
+   *
+   * `buildCatalog()` 把 `this.hardware` 喂给 `computeFit()`，而
+   * `fitness.ts:196` 的 `modelsRootFreeMB()` 读的就是 `disks[].freeMB` ——
+   * 它决定一个模型是不是 `blocked_disk`，也就是**用户能不能装**。
+   * 而**用户刚腾出空间的那一刻，正是他最可能去装东西的那一刻**。
+   *
+   * ## ⚠️ `state.ts` 的消费方我自己数过一遍，没有照抄 `hardware.ts` 的结论
+   *
+   * `this.hardware` 在本文件与 `backends.ts` 里的读取点共 8 处，除 `computeFit`
+   * 之外全部只读**结构那一半**（`backends[]` 判适用性 / `selectedBackend` 判推荐与
+   * 活动状态）—— 它们用缓存是对的，现算反而会让"装了什么"的结论随机漂。
+   * 所以这里**不把整份快照改成现算**，只在真正吃环境读数的那一处换。
+   *
+   * ⚠️ `detectedAt` 不跟着刷新：那句话说的是**结构探测**发生在什么时候，
+   * 刷成"现在"等于声称刚跑过一次 probe —— 而我们恰恰没有跑，那正是省下来的东西。
+   */
+  private async hardwareWithLiveReadings(): Promise<HardwareInfo> {
+    if (this.runtimesRoot === null) return this.hardware;
+    return {
+      ...this.hardware,
+      disks: await detectDisks({
+        modelsRoot: this.modelsRoot,
+        runtimesRoot: this.runtimesRoot,
+      }),
+      ram: detectMemory(),
+    };
   }
 
   /**
@@ -519,6 +577,15 @@ export class RestState {
      * 那本身就会改变指纹。放在它前面的话，启动完第一个请求又会重探一次。
      */
     state.hardwareFingerprint = await state.machineFingerprint();
+    /*
+     * ★ T-195：启动这一次探测也要把 runtimesRoot 记下来。
+     *
+     * ⚠️ 这一行是**被用例逼出来的**，不是我一开始想到的：只在 `freshHardware()` 里赋值时，
+     * 冷启动之后指纹一直没变 ⇒ 那条早退分支直接 return ⇒ `runtimesRoot` 永远是 null
+     * ⇒ `hardwareWithLiveReadings()` 一路退回缓存，**修复静默失效**。
+     * 用例（投毒快照后判定必须不变）当场变红把它照了出来。
+     */
+    state.runtimesRoot = detection.layout.runtimesRoot;
     state.bridgeQueueToSse();
     return state;
   }
@@ -995,6 +1062,11 @@ export class RestState {
   ): Promise<GetCatalogResponse> {
     const installed = await this.listInstalled();
     const installedIds = new Set(installed.map((m) => m.id));
+    /*
+     * ★ T-195：`computeFit` 吃 `disks[].freeMB` 判 `blocked_disk` —— 那是"能不能装"。
+     * 取一次现算的读数（`statfs`，零 spawn），整份目录共用，避免每个变体各读一次。
+     */
+    const liveHardware = await this.hardwareWithLiveReadings();
     const groups = new Map<string, CatalogGroupWithFitness>();
     // 与 groups 一一对应：当前那个代表变体的优先级（越小越该被信任，见
     // catalogDescriptionRank()）。只在新变体的排名严格更靠前时才覆盖代表文案。
@@ -1020,7 +1092,7 @@ export class RestState {
           notRecommendedFor: m.notRecommendedFor ?? [],
           targetLanguage,
         },
-        this.hardware,
+        liveHardware,
       );
 
       const variant: CatalogVariant = { ...m, installed: installedIds.has(m.id), fitness };
