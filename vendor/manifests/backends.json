@@ -663,7 +663,9 @@
         }
       ],
       "totalSizeBytes": 2005577,
-      "requiresDriver": null,
+      "requiresDriver": {
+        "macosVersion": "13.3"
+      },
       "license": {
         "id": "MIT",
         "gated": false,
