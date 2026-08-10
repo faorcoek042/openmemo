@@ -526,3 +526,92 @@ describe('client —— 缺失的写路由不许污染这个面的 MOCK 标注�
     assert.equal(surfaceState('notes'), 'mock', '读端点还在回落 mock，标注不许消失');
   });
 });
+
+/**
+ * ★ T-200 S-4 追问：**60s 窗口与"探路请求"给写操作新造出的问题面。**
+ *
+ * 「写绝不走 mock 捷径」此前只有一处守卫（`if (!isWrite && …)`）。S-4 之后多了
+ * 窗口与探路两个时序，所以要正面回答三件事 —— 而不是靠"我看代码觉得没问题"。
+ *
+ * `[分析]` 实际上有**两道互相独立**的防线：
+ * 1. `const missRec = isWrite ? undefined : …` —— 写永远绑不到记录；
+ * 2. `endpointKey()` **把 method 拼进键**，`GET /x` 与 `PATCH /x` 是两把不同的键 ——
+ *    就算第 1 道被拆了，读的记录也落不到写头上。
+ * 另：`client.ts` 里**没有任何按 path 合流的在途请求表**（grep 过），
+ * 所以"探路请求正在飞"与并发的写之间不共享除 `missingEndpoints` 以外的状态。
+ *
+ * 下面三条把这三件事分别钉住。**它们第一次跑就是绿的**（没有查出新缺陷），
+ * 价值在于：这两道防线此前只有第 1 道被变异覆盖，第 2 道与时序面是裸的。
+ */
+describe('client —— 窗口/探路都不许把写放进 mock（T-200 S-4 新问题面）', () => {
+  beforeEach(async () => {
+    installFetch();
+    await freshHandshake();
+  });
+
+  it('★ 读被钉住时，同一条路径上的写必须照常发出去并如实报错（键按 method 分开）', async () => {
+    await api('notes', '/notes/x').catch(() => undefined); // GET 404 → 钉住 GET /notes/x
+    assert.deepEqual(missingEndpointList(), ['GET /notes/x'], '前提：读被钉住了');
+
+    calls = [];
+    mockCalls = [];
+    await assert.rejects(
+      () => api('notes', '/notes/x', { method: 'PATCH', body: { a: 1 } }),
+      '写被读的那条钉住记录带进了 mock —— 用户会以为保存成功了',
+    );
+    assert.equal(businessCalls().length, 1, '写没有真的发出去（被早退截了）');
+    assert.equal(mockCalls.length, 0, '写走了 mock');
+  });
+
+  it('★ 写自己被钉住之后，窗口内再写一次仍然必须发请求 + 抛错，绝不回落 mock', async () => {
+    await api('notes', '/notes/x', { method: 'PATCH', body: {} }).catch(() => undefined);
+    assert.deepEqual(missingEndpointList(), ['PATCH /notes/x'], '前提：写被记账了');
+
+    calls = [];
+    mockCalls = [];
+    await assert.rejects(() => api('notes', '/notes/x', { method: 'PATCH', body: {} }));
+    assert.equal(businessCalls().length, 1, '窗口内的写被早退截了 —— 这正是 E3 守的那件事');
+    assert.equal(mockCalls.length, 0, '窗口内的写走了 mock');
+  });
+
+  /**
+   * ⚠️ **这一条钉不住上面两道防线，我如实标出来。**
+   *
+   * `[实测]` 拆掉第 1 道（`isWrite ? undefined`）它不红，连第 2 道（键含 method）
+   * 一起拆掉它也不红 —— 因为「探路在飞」与「早退生效」是**互斥状态**：
+   * 窗口没过就不会探路，窗口过了谁都走不进早退。也就是说这个时序**结构上就没有洞**，
+   * 不是"我们守住了"。
+   *
+   * 那为什么留着：它钉的是一条**将来才会被打破**的前提 ——
+   * `client.ts` 目前**没有任何按 path 合流的在途请求表**。哪天有人加了合流，
+   * 这个写就可能领到探路（读）的结果，届时下面 `PATCH` 那条计数会变 0 而变红。
+   * **它是一条前提哨兵，不是这两道防线的腿** —— 别把它算进覆盖率里。
+   */
+  it('★ 探路请求正在飞的时候并发一个写：写不许拿到 mock 结果', async () => {
+    // 先把读钉住，再把时钟拨过窗口，让下一次读成为"探路请求"
+    await api('notes', '/notes/x').catch(() => undefined);
+    const realNow = Date.now;
+    const base = realNow();
+    Date.now = () => base + 61_000;
+
+    calls = [];
+    mockCalls = [];
+    // 探路（读）与写同时在途
+    const probe = api('notes', '/notes/x').catch(() => undefined);
+    const write = api('notes', '/notes/x', { method: 'PATCH', body: {} }).catch((e: unknown) => e);
+    const [, writeErr] = await Promise.all([probe, write]);
+    Date.now = realNow;
+
+    assert.equal(
+      writeErr instanceof ApiError,
+      true,
+      `写应当拿到真实错误，实际：${String(writeErr)}`,
+    );
+    assert.equal(
+      mockCalls.some((c) => c.method === 'PATCH'),
+      false,
+      '并发时序下写拿到了 mock —— 界面会显示"保存成功"而实际什么都没发生',
+    );
+    assert.equal(businessCalls().filter((c) => c.method === 'PATCH').length, 1, '写没有真的发出去');
+  });
+});
