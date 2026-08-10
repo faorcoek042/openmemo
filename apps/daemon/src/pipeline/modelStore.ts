@@ -180,6 +180,83 @@ export const MODEL_FORMAT_BY_ENGINE = {
  * **宁可对陌生格式说"不能加载"**：错判成不能，用户看到的是一条明确的"没有可用模型"；
  * 错判成能，用户看到的是引擎崩在一个看不懂的 exit code 上。
  */
+/**
+ * **这个 role 的权重，本机上由哪个引擎去加载。** `null` = 说不出。
+ *
+ * ## 为什么它必须是"只在说得出的时候才回答"
+ *
+ * `role` 与"消费方引擎"**不是**一一对应的：
+ *   · `vad` 是：这个槽位的唯一消费方是 whisper-cli 自带的
+ *     `whisper-vad-speech-segments`（`setup.ts` 的 `resolveWhisperVadModel()` 是
+ *     全仓唯一按 `role:'vad'` 解析的地方 —— sherpa / paraformer 走它们自己的目录，
+ *     从不读这个槽位）。
+ *   · `asr` **不是**：跑哪个引擎由 `selectEngine()` 按语言现挑（中文会切 Paraformer），
+ *     而 paraformer / sherpa 各有各的模型路径。硬给 asr 填一个引擎就是编。
+ *
+ * 所以这里返回 `null` 的含义是「**这个问题在这台机器上没有唯一答案**」，
+ * 调用方必须把它当"不知道"处理 —— 不许折成 `'whisper.cpp'` 兜底。
+ *
+ * ## 它为什么在这里，而不是在调用点各写一遍
+ *
+ * `setup.ts:224` 原来是把 `engine: 'whisper.cpp'` 直接写死在 VAD 那次查询里。
+ * 那句写死是**对的**，但它同时也是激活规则要问的同一个事实
+ * （"新装的这个 VAD，本机拿它的那个引擎读得动吗"）。写两遍就会漂，
+ * 而"同一条规则在每个调用点各写一遍、写了三遍第四种面目照样漏"正是
+ * {@link MODEL_FORMAT_BY_ENGINE} 那张表要根治的病 —— 这里只是把它补完整。
+ */
+export function soleConsumerEngine(role: string): AsrEngineId | null {
+  return role === 'vad' ? VAD_CONSUMER_ENGINE : null;
+}
+
+/**
+ * `role:'vad'` 那个槽位的唯一消费方。
+ *
+ * 单独导出一个常量，是为了让 {@link resolveWhisperVadModel} 那次查询与激活规则
+ * **用的是同一个字面量**，而不是"那边写死 `'whisper.cpp'`、这边 `soleConsumerEngine('vad')`"。
+ * 后者在类型上是 `| null`，调用点会被迫写一个 `?? 'whisper.cpp'` 兜底 ——
+ * 那个兜底就是第二份真相，而且是**编不出错**的那种。
+ */
+export const VAD_CONSUMER_ENGINE: AsrEngineId = 'whisper.cpp';
+
+/**
+ * 一条安装记录，**站在"谁来读它"的角度**该有的最小形状。
+ * `InstalledModel`（shared 契约）结构上满足它，所以 REST 层不必再转一次。
+ */
+export interface RoleConsumerCheckInput {
+  readonly role?: string;
+  readonly files?: readonly InstallRecordFile[];
+}
+
+/**
+ * **这条已装的权重，本机上拿它的那个引擎读得动吗。**
+ *
+ * 三态，`null` = **说不出**，调用方不许把它折成 true 或 false：
+ *   · `soleConsumerEngine()` 说不出（例如 `asr` 由 `selectEngine()` 按语言现挑）；
+ *   · 记录里指不到一个真实存在的权重文件（旧记录 / 文件被挪走）。
+ *
+ * ## 它服务两个调用方，而这正是它存在的理由（A-4）
+ *
+ * 1. **写**：装完之后要不要顺手占住 `active[role]` 这个槽位
+ *    （`rest/models.ts` 与 `rest/state.ts` 的内置模型导入，两处都是"先装的赢"）；
+ * 2. **读**：目录/存储页在说「使用中」之前，得先知道这句话是不是真的
+ *    （`GetInstalledResponse.activeUnusable`）。
+ *
+ * 两处若各判一次，就会出现"写的时候认为能用、读的时候认为不能用"这种自相矛盾 ——
+ * 而 A-4 要修的**恰恰就是两个消费方对同一件事说相反的话**。判据仍然是
+ * {@link canEngineLoad} 的**文件内容**，不是 `engines` 字段：老记录里没有那个字段，
+ * 按它过滤等于按一个不存在的东西过滤（见 `MODEL_FORMAT_BY_ENGINE` 上面那张表）。
+ */
+export async function loadableByRoleConsumer(
+  modelsDir: string,
+  rec: RoleConsumerCheckInput,
+): Promise<boolean | null> {
+  const engine = rec.role === undefined ? null : soleConsumerEngine(rec.role);
+  if (engine === null) return null;
+  const p = weightsPathOf(modelsDir, { files: rec.files ? [...rec.files] : undefined });
+  if (p === undefined) return null;
+  return canEngineLoad(engine, p);
+}
+
 export async function canEngineLoad(engine: AsrEngineId, path: string): Promise<boolean> {
   const want = MODEL_FORMAT_BY_ENGINE[engine];
   const isGgml = await isGgmlModelFile(path);

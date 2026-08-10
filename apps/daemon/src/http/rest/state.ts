@@ -54,7 +54,11 @@ import {
   type StorageBreakdownItem,
 } from '@openmemo/shared';
 
-import { byModelDir } from '../../pipeline/modelStore.js';
+import {
+  byModelDir,
+  loadableByRoleConsumer,
+  soleConsumerEngine,
+} from '../../pipeline/modelStore.js';
 import type { SseHub } from '../sse.js';
 /*
  * ⚠️ **静态 import，不许改成动态 `import()`。**
@@ -72,7 +76,7 @@ import {
   type ModelCatalog,
 } from './manifests.js';
 import { reconcileBundledModels } from './modelReconcile.js';
-import { roleToActivationSlot } from './roleMap.js';
+import { roleToActivationSlot, roleToStoreKind } from './roleMap.js';
 
 export const HARDWARE_SNAPSHOT_ID = 'hw-local';
 
@@ -672,7 +676,35 @@ export class RestState {
             `包内那份原样保留——同盘是硬链接、不占双份空间，跨盘才会真复制）`,
         );
         const model = this.modelCatalog.models.find((m) => m.id === r.modelId);
-        if (model && !this.active[model.role]) {
+        /*
+         * ★★ A-4 ①（第二处）：**"先装的赢"在这里也有一份，判据必须与 `models.ts` 同一个。**
+         *
+         * 这一处极容易被漏掉：病灶报告指的是 `rest/models.ts` 的下载安装路径，
+         * 而**内置模型首次运行导入**走的是这里，两条路都会去占 `active[role]`。
+         * 只修一边的话，另一条路照样能造出同一个矛盾，而修复报告会说"已修"。
+         * 所以两处调**同一个** `loadableByRoleConsumer()`，三态语义一字不差
+         * （`null` = 说不出 ⇒ 放行；只有**确知加载不了**才不占这个槽位）。
+         *
+         * ⚠️ **如实记一句：这道闸今天在这条路上打不起来。**
+         *   `BUNDLED_MODEL_IDS` 里的 VAD 只有 `vad/silero-vad-ggml`（whisper.cpp 读得动），
+         *   另外两个是 asr —— 而 `asr` 没有唯一消费方（`selectEngine()` 按语言现挑），
+         *   `soleConsumerEngine()` 对它返回 `null`。也就是说它现在只在**代码层**成立。
+         *   保留的理由是"两个写入点不许对同一件事有两种判断"，不是"它今天挡住了什么"。
+         *
+         * ⚠️ 用 `readManifest` 单点读，不是 `listInstalled()` 全量扫：这在启动路径上，
+         *   而且非 vad 的 role 连这一次读都不会发生（下面的 `soleConsumerEngine` 先短路）。
+         */
+        const verdict =
+          model === undefined || soleConsumerEngine(model.role) === null
+            ? null
+            : await loadableByRoleConsumer(
+                this.modelsRoot,
+                (await this.store.readManifest<InstalledModel>(
+                  roleToStoreKind(model.role),
+                  model.id,
+                )) ?? { role: model.role },
+              );
+        if (model && !this.active[model.role] && verdict !== false) {
           const previous = this.active[model.role];
           this.active[model.role] = model.id;
           await this.persistActive();

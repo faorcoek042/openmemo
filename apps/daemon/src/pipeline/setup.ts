@@ -55,6 +55,7 @@ import {
   materializeModelDir,
   resolveActiveModel,
   scanByName,
+  VAD_CONSUMER_ENGINE,
 } from './modelStore.js';
 
 export interface PipelineBundle {
@@ -215,14 +216,19 @@ export async function resolveWhisperVadModel(
   };
 
   /*
-   * `engine: 'whisper.cpp'` 取代了原来手写的 `accept: isGgmlModelFile`。
+   * `engine: VAD_CONSUMER_ENGINE` 取代了原来手写的 `accept: isGgmlModelFile`。
    * 判据一个字没松（whisper.cpp 的格式就是 ggml），但**规则从这里搬进了
    * `MODEL_FORMAT_BY_ENGINE` 那一份表** —— 本轮的根因修复就是不让同一条规则
    * 在每个调用点各写一遍（写了三遍，第四种面目照样漏）。
+   *
+   * ★ A-4：引擎名也从字面量换成了 {@link VAD_CONSUMER_ENGINE}。
+   *   它不再只是"这次查询用谁"，还是**激活规则要问的同一个事实**
+   *   （"新装的这个 VAD，本机拿它的那个引擎读得动吗"）——
+   *   两处各写一个 `'whisper.cpp'`，下一次换消费方时只会改一处。
    */
   const fromRecords = await resolveActiveModel(modelsDir, {
     role: 'vad',
-    engine: 'whisper.cpp',
+    engine: VAD_CONSUMER_ENGINE,
     onRejected: (recs) => {
       for (const r of recs) rejected.push(r.path);
     },
