@@ -425,7 +425,8 @@ function startModelPull(
     },
     async (ctx) => {
       ctx.setStep('resolving');
-      const probes = await state.probeMirrors(model.files[0].mirrors);
+      // T-198：把取消信号带进探测 —— 否则 resolving 期间点取消是空操作
+      const probes = await state.probeMirrors(model.files[0].mirrors, ctx.signal);
 
       /*
        * ★ 真事故（`[CI 实测]` run 31352570989，三平台一模一样）：这一步以前排在

@@ -98,3 +98,117 @@ describe('下载失败时交给界面的错误文案', () => {
     assert.equal(job?.error?.messageZh, 'naked');
   });
 });
+
+/**
+ * ★★ T-198 —— **取消一个正在跑的任务，必须真的到达 `cancelled`。**
+ *
+ * ## 这条测试不存在，正是那个 bug 能出厂的原因
+ *
+ * `queue.test.ts` 此前**一个 cancel 用例都没有**（全是错误文案本地化），
+ * daemon 侧零个，唯一的前端 cancel 测试只断言"请求发出去了"、
+ * **从不看之后长什么样**。于是 `cancel()` 里这个形状活到了用户真机上：
+ *
+ * ```ts
+ * const idx = this.waiting.indexOf(jobId);
+ * if (idx >= 0) { …; this.forceState(e.job, 'cancelled'); }  // ← 终态在 if 里
+ * return true;                                                // ← 但一律回 true
+ * ```
+ *
+ * 正在跑的任务早被 `pump()` 的 `shift()` 挪出了 waiting → `idx === -1`
+ * → **终态那句根本不执行**，而端点照样回 204。
+ * `[用户真机 Windows v0.7.0]` 取消 ffmpeg 下载后，任务中心同屏自相矛盾：
+ * 「进行中 (1)」+ 0% + 「正在选择下载源」，紧挨着「任务不存在或已结束」。
+ *
+ * ## 断言的是"之后长什么样"，不是"cancel() 返回了 true"
+ *
+ * 返回值那条正是当初骗过所有人的东西 —— 它一直是 true。
+ */
+describe('★ T-198 取消：状态必须诚实', () => {
+  /** 一个"打不断"的任务：**故意不认 signal**，模拟 resolving/installing 那些阶段。 */
+  function uninterruptible(ms: number) {
+    return () => new Promise<void>((r) => setTimeout(r, ms).unref?.());
+  }
+
+  function enqueueOne(q: DownloadQueue, task: () => Promise<void>) {
+    return q.enqueue(
+      {
+        kind: 'model',
+        targetId: `asr/t-${Math.random().toString(36).slice(2)}`,
+        displayName: 'x',
+        totalBytes: 1,
+      },
+      task,
+    ).job;
+  }
+
+  it('★★ 取消一个**正在跑**的任务 → 立刻到达 cancelled（这条就是那个 bug）', async () => {
+    const q = new DownloadQueue(1);
+    const job = enqueueOne(q, uninterruptible(50));
+    // 等它真的被 pump 起来（= 已经被 shift 出 waiting，正是出事的那个状态）
+    await new Promise<void>((r) => setTimeout(r, 10).unref?.());
+    assert.equal(q.get(job.jobId)?.state, 'running', '前提：它必须真的在跑，否则测不到这个 bug');
+
+    assert.equal(q.cancel(job.jobId), true);
+    assert.equal(
+      q.get(job.jobId)?.state,
+      'cancelled',
+      'cancel() 回了 true，状态却没变 —— 端点会回 204 说"取消成功"',
+    );
+  });
+
+  it('★ 取消时 step 一起清 —— 否则「正在选择下载源」冻在终态之后', async () => {
+    const q = new DownloadQueue(1);
+    const job = enqueueOne(q, uninterruptible(50));
+    await new Promise<void>((r) => setTimeout(r, 10).unref?.());
+    assert.equal(q.get(job.jobId)?.step, 'resolving', '前提：它此刻确实停在 resolving');
+
+    q.cancel(job.jobId);
+    assert.equal(q.get(job.jobId)?.step, null, '状态说"已取消"、阶段说"正在选择下载源" = 自相矛盾');
+  });
+
+  it('★★ 打不断的残余工作跑完后，**不许**把状态改回 succeeded', async () => {
+    const q = new DownloadQueue(1);
+    const job = enqueueOne(q, uninterruptible(40)); // 不认 signal，一定会"成功"跑完
+    await new Promise<void>((r) => setTimeout(r, 10).unref?.());
+    q.cancel(job.jobId);
+    assert.equal(q.get(job.jobId)?.state, 'cancelled');
+
+    // 等残余工作自然结束
+    await new Promise<void>((r) => setTimeout(r, 80).unref?.());
+    assert.equal(
+      q.get(job.jobId)?.state,
+      'cancelled',
+      '残余工作把状态改回去了 —— 用户会看到一个"取消不掉"的取消',
+    );
+    assert.equal(q.get(job.jobId)?.step, null);
+  });
+
+  it('★ 取消一个**还在排队**的任务仍然照常工作（不许把老路径改坏）', async () => {
+    const q = new DownloadQueue(1);
+    enqueueOne(q, uninterruptible(60)); // 占住唯一的并发位
+    const queued = enqueueOne(q, uninterruptible(10));
+    await new Promise<void>((r) => setTimeout(r, 10).unref?.());
+    assert.equal(q.get(queued.jobId)?.state, 'queued', '前提：第二条确实还在排队');
+
+    assert.equal(q.cancel(queued.jobId), true);
+    assert.equal(q.get(queued.jobId)?.state, 'cancelled');
+  });
+
+  it('★ 已经是终态的任务再取消 → 返回 false（端点据此回 409）', async () => {
+    const q = new DownloadQueue(1);
+    const job = enqueueOne(q, uninterruptible(5));
+    await new Promise<void>((r) => setTimeout(r, 10).unref?.());
+    q.cancel(job.jobId);
+    assert.equal(q.cancel(job.jobId), false, '第二次取消必须回 false —— 界面据此知道"已经结束了"');
+  });
+
+  it('★ 取消会发出 job.state 事件（前端就是靠它清掉进度快照的）', async () => {
+    const q = new DownloadQueue(1);
+    const seen: string[] = [];
+    q.on('job.state', (...args: unknown[]) => seen.push((args[0] as { state: string }).state));
+    const job = enqueueOne(q, uninterruptible(50));
+    await new Promise<void>((r) => setTimeout(r, 10).unref?.());
+    q.cancel(job.jobId);
+    assert.ok(seen.includes('cancelled'), `没发 job.state(cancelled)，实际: ${seen.join(',')}`);
+  });
+});

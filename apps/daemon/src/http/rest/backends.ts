@@ -199,7 +199,8 @@ export function startPackInstall(
     },
     async (ctx) => {
       ctx.setStep('resolving');
-      const probes = await state.probeMirrors(pack.files[0].mirrors);
+      // T-198：把取消信号带进探测 —— 否则 resolving 期间点取消是空操作
+      const probes = await state.probeMirrors(pack.files[0].mirrors, ctx.signal);
 
       /*
        * ⚠️ **这里刻意不把清单里的目录字段传给安装器的 `unpackInto`。** 不是遗漏，是查过之后的决定。

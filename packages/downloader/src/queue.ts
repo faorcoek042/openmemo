@@ -234,11 +234,27 @@ export class DownloadQueue extends EventEmitter<DownloadQueueEvents> {
 
     try {
       await entry.task(ctx);
+      /*
+       * ★ 取消守卫（T-198）。**残余工作跑完了，也不许把状态改回去。**
+       *
+       * `abort()` 在 `resolving` / `verifying` / `unpacking` / `installing` 这些阶段
+       * 目前是空操作（那些代码不接 `ctx.signal`），所以任务会一路跑到成功。
+       * 没有这道守卫的话，用户点了取消、`cancel()` 刚落下 `cancelled`，
+       * 几秒后残余工作又把它改成 `succeeded` —— 一个"取消不掉"的取消。
+       *
+       * 这条守卫是"可中断性还没做完"期间的**正确兜底**，不是临时补丁：
+       * 即便将来每个阶段都认 signal，它也应该留着 —— 竞态窗口永远存在。
+       */
+      if (job.state === 'cancelled') return;
       job.step = null;
       this.transition(job, 'succeeded');
       this.emit('job.done', job);
     } catch (e) {
+      // 同上：`cancel()` 已经落过终态了，残余的报错不许覆盖它（也不该再发一次事件）
+      if (job.state === 'cancelled') return;
       if (entry.controller.signal.aborted && job.state !== 'failed') {
+        // 这一支是 abort 真的把底层工作打断了的情况；step 同样要清
+        job.step = null;
         this.forceState(job, 'cancelled');
       } else {
         const err = e as {
@@ -307,18 +323,64 @@ export class DownloadQueue extends EventEmitter<DownloadQueueEvents> {
     this.emit('job.state', job, prev);
   }
 
-  /** Cancel a job. The `.partial` file is kept so it can be resumed later. */
+  /**
+   * Cancel a job. The `.partial` file is kept so it can be resumed later.
+   *
+   * ## ★ T-198：终态**必须无条件落**，不能只落在"还排在队里"那一支
+   *
+   * 修之前是这样的：
+   *
+   * ```ts
+   * const idx = this.waiting.indexOf(jobId);
+   * if (idx >= 0) {                       // ← 只覆盖仍在 waiting 里的 queued 任务
+   *   this.waiting.splice(idx, 1);
+   *   this.forceState(e.job, 'cancelled');  // ← 终态在这个 if 里面
+   *   e.resolveDone();
+   * }
+   * return true;                          // ← 但无论如何都 return true → HTTP 204「成功」
+   * ```
+   *
+   * **正在跑的任务早就被 `pump()` 的 `shift()` 挪出 waiting 了**，于是 `idx === -1`，
+   * 终态那一句根本不执行 —— 而端点照样回 204「取消成功」。
+   * `[用户真机 Windows v0.7.0]` 取消 ffmpeg 下载后，任务中心同屏自相矛盾：
+   * 「进行中 (1)」+ 0% + 「正在选择下载源」，紧挨着「任务不存在或已结束」。
+   *
+   * 两条不变量，缺一不可：
+   *
+   * 1. **只要这次 cancel 返回 true，任务就一定已经在 `cancelled` 上**
+   *    —— 端点回 204 与"状态真的变了"必须是同一件事，不能一个真一个假。
+   * 2. **底层工作打不打得断，与状态诚不诚实是两件事。**
+   *    `abort()` 在 `resolving` / `verifying` / `installing` 这些阶段目前是空操作
+   *    （见 `run()` 里的取消守卫），残余工作还会继续跑完；
+   *    但它**不许把状态改回去**。所以终态在这里就落，守卫在那边挡。
+   */
   cancel(jobId: string): boolean {
     const e = this.entries.get(jobId);
     if (!e) return false;
     if (TERMINAL_JOB_STATES.includes(e.job.state)) return false;
+
     e.controller.abort();
     const idx = this.waiting.indexOf(jobId);
-    if (idx >= 0) {
-      this.waiting.splice(idx, 1);
-      this.forceState(e.job, 'cancelled');
-      e.resolveDone();
-    }
+    if (idx >= 0) this.waiting.splice(idx, 1);
+
+    /*
+     * ★ `step` 必须一起清（T-198 第 ③ 条）。
+     *
+     * 成功路径 `run()` 里是 `job.step = null` 之后才 transition，
+     * 取消路径原来没有这一句 —— 于是「正在选择下载源」被冻在终态之后，
+     * 用户看到一条"已取消"的任务还在"选择下载源"。
+     * 状态和阶段是同一条消息的两半，只改一半就是自相矛盾。
+     */
+    e.job.step = null;
+    this.forceState(e.job, 'cancelled');
+    e.resolveDone();
+
+    /*
+     * ⚠️ 刻意**不**从 `this.running` 里摘掉，也不在这里 `pump()`：
+     * 残余工作还在真的占着资源，摘掉它会让并发上限变成一句空话
+     * （立刻放进来的下一个任务和这个还没停下的任务同时在跑）。
+     * `run()` 的 `finally` 会在残余工作结束时正常收尾。
+     */
     return true;
   }
 

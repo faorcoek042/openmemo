@@ -1406,9 +1406,19 @@ export class RestState {
    * 下载前必探：ADR-004 决策 1 的核心是"不去回答 hf-mirror 在墙内通不通"，
    * 而是并发实测、按速度排序、失败自动切换。
    */
-  async probeMirrors(mirrors: readonly Mirror[]): Promise<ProbeOutcome[]> {
+  async probeMirrors(
+    mirrors: readonly Mirror[],
+    /**
+     * ★ T-198：任务的取消信号。**这是用户真机撞到的那个窗口** ——
+     * 取消一个还停在 `resolving` 的下载时，探测完全不认 signal，`abort()` 成了空操作。
+     * 可选：`/api/models/sources/probe` 那种"用户主动测速"没有任务上下文，不传即可。
+     */
+    signal?: AbortSignal,
+  ): Promise<ProbeOutcome[]> {
     const outcomes = await probeAll(
       mirrors.map((m) => ({ provider: m.provider, url: m.url, official: m.official })),
+      undefined,
+      signal,
     );
     this.mergeProbes(outcomes);
     this.publish(

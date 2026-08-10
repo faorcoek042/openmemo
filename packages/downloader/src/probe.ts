@@ -32,20 +32,30 @@ export interface ProbeOutcome {
 export const PROBE_BYTES = 256 * 1024;
 export const PROBE_TIMEOUT_MS = 5000;
 
+/**
+ * @param signal 调用方（任务队列）的取消信号。
+ *
+ * ★ T-198：**探测阶段必须认取消。** 用户在 Windows v0.7.0 上撞到的正是这个窗口 ——
+ * 取消一个刚开始、还停在 `resolving` 的下载，而这里只有自己的 5s 内部超时、
+ * 完全不认外部 signal，于是 `abort()` 是空操作，任务照跑。
+ * 用 `AbortSignal.any` 把两个信号并起来：谁先到都停。
+ */
 export async function probeSource(
   target: ProbeTarget,
   timeoutMs = PROBE_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<ProbeOutcome> {
   const probedAt = new Date().toISOString();
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
+  const effective = signal ? AbortSignal.any([ac.signal, signal]) : ac.signal;
   const t0 = Date.now();
   try {
     const res = await fetch(target.url, {
       method: 'GET',
       headers: { range: `bytes=0-${PROBE_BYTES - 1}`, 'user-agent': 'OpenMemo/0.1' },
       redirect: 'follow',
-      signal: ac.signal,
+      signal: effective,
     });
     if (!res.ok && res.status !== 206) {
       return {
@@ -93,8 +103,9 @@ export async function probeSource(
 export async function probeAll(
   targets: ProbeTarget[],
   timeoutMs = PROBE_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<ProbeOutcome[]> {
-  return Promise.all(targets.map((t) => probeSource(t, timeoutMs)));
+  return Promise.all(targets.map((t) => probeSource(t, timeoutMs, signal)));
 }
 
 /**
