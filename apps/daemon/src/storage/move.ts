@@ -172,6 +172,15 @@ export async function freeSpaceAt(dir: string): Promise<number | undefined> {
 export interface VerifyResult {
   readonly ok: boolean;
   readonly mismatches: readonly string[];
+  /**
+   * 大小对不上，但调用方**明确认定**这个位置允许字节漂移（见 `tolerateSizeDriftFor`）——
+   * 因此**没有**被计进 `mismatches`、不会拦下搬迁。
+   *
+   * ⚠️ 这不是"跳过"：路径存在性、类型（文件/目录/符号链接不能变）仍然照查不误，
+   * 只放宽字节数。而且这里必须被调用方显式转述给用户 —— **计算了却不说出去，
+   * 等于又造一次"跳过 = 撒谎"**（本文件开头那条规则）。空数组＝没有任何位置享受了这条豁免。
+   */
+  readonly tolerated: readonly string[];
 }
 
 /**
@@ -205,6 +214,18 @@ async function listTree(root: string): Promise<Map<string, TreeEntry>> {
   return out;
 }
 
+export interface VerifyOptions {
+  /**
+   * 对某个相对路径返回 `true` ⇒ 它的**大小**不一致时不算校验失败，
+   * 改记进 `VerifyResult.tolerated`，其余检查（存在性、类型、符号链接目标）不受影响。
+   *
+   * 默认不传 ⇒ 严格模式，等价于从前的行为（任何大小不一致都是 `mismatches`）。
+   * 这个参数存在的唯一理由是 `moveDataDir` 对诊断日志的豁免（见 `isDiagnosticLogPath`）——
+   * `verifyTreesMatch` 本身不认识"日志"这个概念，谁传谁负责。
+   */
+  readonly tolerateSizeDriftFor?: (relPath: string) => boolean;
+}
+
 /**
  * 校验两棵树一致（相对路径集合 + 普通文件字节数 + **符号链接的目标**）。
  *
@@ -216,9 +237,14 @@ async function listTree(root: string): Promise<Map<string, TreeEntry>> {
  * 校验会顺利通过，然后源目录一删链接就全断 —— 这正是 T-128 事故的形状。
  * 比目标字符串则当场报「链接目标不一致」。
  */
-export async function verifyTreesMatch(a: string, b: string): Promise<VerifyResult> {
+export async function verifyTreesMatch(
+  a: string,
+  b: string,
+  opts: VerifyOptions = {},
+): Promise<VerifyResult> {
   const [ma, mb] = await Promise.all([listTree(a), listTree(b)]);
   const mismatches: string[] = [];
+  const tolerated: string[] = [];
   for (const [k, v] of ma) {
     const other = mb.get(k);
     if (other === undefined) {
@@ -227,13 +253,33 @@ export async function verifyTreesMatch(a: string, b: string): Promise<VerifyResu
       // 例如 dereference 打开后链接被复制成了真文件：字节数甚至可能"更对"，但语义已经变了
       mismatches.push(`类型不一致: ${k} (${kindZh(v)} → ${kindZh(other)})`);
     } else if (v.kind === 'file' && other.kind === 'file' && v.size !== other.size) {
-      mismatches.push(`大小不一致: ${k} (${v.size} → ${other.size})`);
+      if (opts.tolerateSizeDriftFor?.(k)) {
+        tolerated.push(`${k} (${v.size} → ${other.size})`);
+      } else {
+        mismatches.push(`大小不一致: ${k} (${v.size} → ${other.size})`);
+      }
     } else if (v.kind === 'link' && other.kind === 'link' && v.target !== other.target) {
       mismatches.push(`链接目标不一致: ${k} (${v.target} → ${other.target})`);
     }
   }
   for (const k of mb.keys()) if (!ma.has(k)) mismatches.push(`多出: ${k}`);
-  return { ok: mismatches.length === 0, mismatches };
+  return { ok: mismatches.length === 0, mismatches, tolerated };
+}
+
+/**
+ * `verifyTreesMatch` 的默认生产豁免谓词：只豁免 `logs/` 目录下的文件。
+ *
+ * 理由是**分类**上的，不是"图省事"：应用自己的数据目录视图早就把 `logs`
+ * 标成"运行日志（可随时删）"，跟 `openmemo.db` / `media` / `models` 不是一个级别的东西。
+ * 日志文件在搬迁窗口内被后台调度器持续追加写入是已知的、无法用缩短窗口彻底消灭的现象
+ * （见 `main.ts` 里 `captureConsoleToFile` 的文档注释：`2930→2809` 是这个问题的上一次发作，
+ * 当时把无界的 stdio 管道换成了有界窗口，缓解但没有根除——重启后台调度器的重试噪音
+ * 仍能在窗口内追加）。既然本质是"日志不是数据，拿它的字节数当搬迁成败的判据本来就可疑"，
+ * 就该在这里明说豁免，而不是继续在时间窗口上打补丁去赌一个几乎赌不赢的race。
+ */
+export function isDiagnosticLogPath(relPath: string): boolean {
+  const first = relPath.split(/[\\/]/, 1)[0];
+  return first === 'logs';
 }
 
 export interface StaleLink {
@@ -472,6 +518,19 @@ export interface MoveResult {
    * `false` ⇒ 调用方**必须**改口，不许再说"已移动"。
    */
   readonly sourceRemoved: boolean;
+  /**
+   * 校验时发现大小不一致、但被判定为可容忍（当前只有 `logs/` 下的文件，见
+   * `isDiagnosticLogPath`）而**放行**的相对路径，附带 `(源 → 目标)` 字节数。
+   *
+   * 这不是"跳过校验" —— 存在性、类型（文件/目录/符号链接不能变）仍然照查不误，
+   * 只放宽了字节数这一项，理由是诊断日志在搬迁窗口内可能仍被后台调度器追加写入
+   * （`main.ts` 的 `captureConsoleToFile` 文档记录过同一个问题的上一次发作）。
+   *
+   * ⚠️ **必须被调用方转述给用户**（本文件开头「跳过 = 撒谎」那条规则的延伸：
+   * 算了却不说，等于又造一次"静默豁免"）。空数组＝没有任何位置享受了这条豁免，
+   * 这次搬迁的校验和从前一样是严格的。
+   */
+  readonly toleratedSizeDrift: readonly string[];
 }
 
 /**
@@ -501,6 +560,7 @@ export async function moveDataDir(
       sourceIntact: true,
       sourceRemoved: false,
       sourceResidue: RESIDUE_EMPTY,
+      toleratedSizeDrift: [],
     };
   }
 
@@ -522,6 +582,7 @@ export async function moveDataDir(
       sourceIntact: true,
       sourceRemoved: false,
       sourceResidue: RESIDUE_EMPTY,
+      toleratedSizeDrift: [],
     };
   }
 
@@ -533,10 +594,18 @@ export async function moveDataDir(
   const succeeded = async (
     strategy: 'rename' | 'copy',
     removeSourceError?: string,
+    toleratedSizeDrift: readonly string[] = [],
   ): Promise<MoveResult> => {
     step('checking-links');
     const { staleLinks, unscanned } = await findStaleLinks(to, from);
     const warnings: string[] = [];
+    if (toleratedSizeDrift.length > 0) {
+      warnings.push(
+        `有 ${toleratedSizeDrift.length} 个诊断日志文件在复制期间仍被追加写入，` +
+          `大小校验放宽未拦下（例如 ${toleratedSizeDrift[0]}）——不影响数据完整性，` +
+          `这些文件本就不是需要逐字节保留的数据。`,
+      );
+    }
     if (staleLinks.length > 0) {
       warnings.push(
         `数据已全部移动到新位置，但有 ${staleLinks.length} 个符号链接仍指向旧位置` +
@@ -599,6 +668,7 @@ export async function moveDataDir(
       sourceIntact: removeSourceError !== undefined,
       sourceRemoved: removeSourceError === undefined,
       sourceResidue: residue,
+      toleratedSizeDrift,
     };
   };
 
@@ -619,6 +689,7 @@ export async function moveDataDir(
         sourceIntact: true,
         sourceRemoved: false,
         sourceResidue: RESIDUE_EMPTY,
+        toleratedSizeDrift: [],
       };
     }
   } catch {
@@ -644,6 +715,7 @@ export async function moveDataDir(
       sourceIntact: true,
       sourceRemoved: false,
       sourceResidue: RESIDUE_EMPTY,
+      toleratedSizeDrift: [],
     };
   }
 
@@ -670,6 +742,7 @@ export async function moveDataDir(
   }
 
   // ---- 慢路径：复制 → 校验 → 通过后才删源 ----
+  let toleratedSizeDrift: readonly string[];
   try {
     step('copying');
     /*
@@ -692,7 +765,7 @@ export async function moveDataDir(
     });
 
     step('verifying');
-    const v = await verifyTreesMatch(from, to);
+    const v = await verifyTreesMatch(from, to, { tolerateSizeDriftFor: isDiagnosticLogPath });
     if (!v.ok) {
       // 校验没过：**删掉刚复制出来的那份，源一个字节都不动**
       step('rollback');
@@ -710,8 +783,10 @@ export async function moveDataDir(
         sourceIntact: true,
         sourceRemoved: false,
         sourceResidue: RESIDUE_EMPTY,
+        toleratedSizeDrift: [],
       };
     }
+    toleratedSizeDrift = v.tolerated;
   } catch (err) {
     step('rollback');
     await fs.rm(to, { recursive: true, force: true }).catch(() => {});
@@ -728,6 +803,7 @@ export async function moveDataDir(
       sourceIntact: true,
       sourceRemoved: false,
       sourceResidue: RESIDUE_EMPTY,
+      toleratedSizeDrift: [],
     };
   }
 
@@ -751,5 +827,5 @@ export async function moveDataDir(
   }
 
   // 同快路径：收尾**放在 try 之外**，否则它抛错会触发回滚。
-  return await succeeded('copy', removeSourceError);
+  return await succeeded('copy', removeSourceError, toleratedSizeDrift);
 }

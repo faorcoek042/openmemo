@@ -675,6 +675,12 @@ export function createStorageRoutes(deps: StorageRoutesDeps): {
         unscannedLinkPaths: result.unscannedLinkPaths,
         ...(result.warningZh ? { warningZh: result.warningZh } : {}),
         /*
+         * ★ 诊断日志大小漂移被放行的位置，结构化地回给调用方 —— 不能只塞进
+         *   `warningZh` 里让前端正则去猜（同上一条 T-144 教训）。空数组＝这次
+         *   校验和从前一样严格，没有任何位置享受豁免。
+         */
+        toleratedSizeDrift: result.toleratedSizeDrift,
+        /*
          * ★ 结构化地告诉调用方「源目录还在不在」。
          *   前端不该去正则匹配 `warningZh` —— 那是 T-144「产出方与使用方用了两个名字」那一族。
          */
