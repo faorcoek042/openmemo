@@ -257,8 +257,25 @@ jobs:
           node scripts/ci/e2e-allcomponents.mjs \
             --bundle "${{ steps.unpack.outputs.bundle_dir }}" \
             --port 19830 \
+            --undecided-out "e2e-allcomponents-undecided-${{ matrix.label }}.json" \
             --mode "${{ inputs.mode || 'sample' }}" \
             --model-budget-mb "${{ inputs.modelBudgetMb || '2600' }}"
+
+      # ★ 覆盖面（undecided 计数）单独一份 artifact，供 attest 作业归并后传给
+      # emit-e2e-attestation.mjs --undecided。文件形状与另外四条腿逐字相同。
+      #
+      # `!cancelled()`：失败也传 —— 一次红跑的未决清单恰恰最想看。
+      # `if-no-files-found: warn`：脚本没跑到统计那一步时**故意不写文件**
+      # （见 e2e-allcomponents.mjs 的 finally：`llmGapIds === null` 时一个字都不写，
+      #  因为「没数」和「数出来是 0」必须分得开），少一格由下游如实收敛成 null，
+      # 不该在这里再红一次。
+      - name: 留档（覆盖面计数）
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: e2e-allcomponents-undecided-${{ matrix.label }}
+          path: e2e-allcomponents-undecided-${{ matrix.label }}.json
+          if-no-files-found: warn
 
       # 几 GB 的东西留在 runner 上没意义；脚本自己也清，这里再兜一次。
       - name: 清理（跑完自己清）
@@ -312,12 +329,119 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
+      # ═══════════════════════════════════════════════════════════════════════════════
+      # ★ `--undecided`：这条腿本轮有几条断言**跑了但什么都没证明**
+      #
+      # ## ① 这个数是什么：`role=llm` 的那几个变体
+      #
+      # `vendor/manifests/models-llm.json` 里有 5 个 `role=llm` 变体
+      # （qwen3-4b-q4_k_m / qwen3-4b-q5_k_m / qwen3-8b-q4_k_m / qwen3-1.7b-q8_0 /
+      #  gemma-3-4b-it-q4_k_m）。本腿的 B 层「真装一遍」是**从 `/api/models/catalog`
+      # 枚举出来的**，而那个端点**不列 role=llm**（它们归 `/api/llm/models` 那条线）。
+      # 所以这 5 个**一次都没被装过** —— 用户能不能装上，这条腿说不出话。
+      # 脚本第 1 节早就把这句话用 `[未验证]` 打进日志了，但它此前**只活在日志里**：
+      # 凭证的 `undecided` 是 `null`，闸门读出来是"这条腿没上报覆盖面"。
+      #
+      # ## ② 为什么它**永远是 5**（不是抽样波动）
+      #
+      # 它数的是清单里 `role=llm` 的条目数，**与 `--mode` / `--model-budget-mb`
+      # 一个字的关系都没有**。抽样跳过的那些模型**不进这个数**，理由三条：
+      #   · A 层已经逐个探过它们的每一个镜像（脚本里明写）；
+      #   · `mode=sample` 已经是它的专属字段，闸门也已经念出来了
+      #     （"抽样=sample（**不是全量**）"）—— 再报一遍是同一个事实说两遍，
+      #     而说两遍会**稀释**它；
+      #   · `undecided` 的语义是「**某条断言**没能被评估」。抽样跳过的模型在台账里
+      #     根本没有逐个断言，只有一条对 picked 集合的聚合 judge ——
+      #     **它们是样本更小，不是判据没跑。** 而且那个数会随一个调参旋钮乱跳，
+      #     那种数字训练人忽略它。
+      #
+      # ## ③ ⚠️ 它什么时候**应该变成 0** —— 别让它变成一件没人再看的家具
+      #
+      # **一个永远是 5、永不变化的数，和一个乱跳的数一样会训练人忽略它。**
+      # 报 5 严格优于沉默（今天这 5 个一个字都没有），但它是**诚实的过渡态，不是终点**。
+      # 真正该修的是那条路本身够不着：要么 `/api/models/catalog` 把 role=llm 也列出来，
+      # 要么本腿另外走一遍 `/api/llm/models` 把它们真装一遍。
+      # **那一天这个数会自己变成 0** —— 因为它是数出来的，不是写死的。
+      # 如果哪天你发现它还是 5 而上面那条路已经修好了，那说明脚本里
+      # `llmGapIds` 那一处没跟上，去改脚本，不要来改这里的数字。
+      #
+      # ## 归并口径：`--reduce agree`，**不是** `sum`
+      #
+      # 另外三条腿（runtime/browser/record）的未决是**每个平台各自独立**的，所以求和。
+      # 这条腿不是：那 5 个来自 `models-llm.json` —— **一个与平台无关的文件**，
+      # 三个包里装的是同一份。求和会得到 15，也就是**把同一个文件数了三遍**。
+      # 所以用 `agree`：要求三格报同一个值，取那个公共值。
+      # ⚠️ 三格不一致**不是噪声，是信号**（三个平台读到的清单真的不同）——
+      #    那时 `sum-undecided.mjs` 收敛成 null 并大声说，**绝不挑一个当代表**。
+      #
+      # ## ⏱ 这个数多久才看得到（免得下一个人以为它已经在生效了）
+      #
+      # 本作业的门是 `legs == 'all' && bundleRunId != ''`，而 `bundleRunId`
+      # **没有 `default:`** ⇒ **只有显式钉了批次的 run 才会走到这里**。
+      # `schedule` 触发和默认参数的手动 dispatch **都跳过**，所以那些跑里
+      # 看不到这个数 —— 那不是它没接上，是这条腿本来就"没钉批次不发凭证"。
+      # ═══════════════════════════════════════════════════════════════════════════════
+      - name: 下载三平台的覆盖面计数
+        uses: actions/download-artifact@v7
+        with:
+          pattern: e2e-allcomponents-undecided-*
+          path: undecided
+          merge-multiple: true
+
+      # 任何一格对不上（缺失/读不出/三格不一致），sum-undecided.mjs 只会警告 +
+      # 把 undecided_flag 收敛成空字符串，**不会**让这一步失败 —— 一个纯展示用的
+      # 覆盖面统计出故障，不该连累下面「写凭证」这一步（那一步产出的 artifact
+      # 名字才是闸门真正认的信号）。
+      - name: 归并覆盖面计数（agree：同一件事的三次观察，不相加）
+        id: sum
+        run: |
+          node scripts/ci/sum-undecided.mjs \
+            --dir undecided \
+            --expect-labels linux-x64,darwin-arm64,win32-x64 \
+            --file-template 'e2e-allcomponents-undecided-{label}.json' \
+            --reduce agree \
+            --github-output "$GITHUB_OUTPUT"
+
+      # ═══════════════════════════════════════════════════════════════════════════════
+      # 🧨 下面那句 `--mode "${{ inputs.mode }}"` 是**一颗没引信的雷**，读到这里请先看完
+      #
+      # 它**没有** `|| 'sample'` 兜底，而同一个 workflow 上面判据本体那处
+      # （`--mode "${{ inputs.mode || 'sample' }}"`）**有**。这个不一致是**故意留着的**，
+      # 见文件头 :62 —— 今晚那一跑正是去看 `schedule` 下 `inputs` 到底是什么，
+      # **补上默认值就把待测的现象消灭了**。⚠️ 别顺手给它补 `|| 'sample'`。
+      #
+      # ## 它今天为什么是安全的：**安全性不在它自己身上**
+      #
+      # `inputs.mode` 为空时这里会传 `--mode ""`，而 `emit-e2e-attestation.mjs`
+      # 只认 `sample|full`，收到空串会 `die()` —— **凭证根本发不出去**。
+      # 它今天碰不到那条路，靠的是**另外两处的巧合**：
+      #
+      #   ① 本作业的门 `if: legs == 'all' && bundleRunId != ''`；
+      #   ② `bundleRunId` **没有 `default:`**（见本文件 `inputs` 定义）。
+      #
+      # 两者合起来 ⇒ 任何没有显式钉批次的 run（`schedule`、以及**默认参数的手动
+      # dispatch**）在这一格就被跳过了，`--mode ""` 那一行**根本没机会执行**。
+      #
+      # ## 什么时候它会变成活雷
+      #
+      # **只要有人做了下面任何一件事，它立刻就会炸**，而且炸出来的样子是
+      # 「凭证发不出去 → 闸门说这条腿没跑过」，看起来像闸门坏了：
+      #
+      #   · 给 `bundleRunId` 加一个 `default:`（哪怕是空字符串以外的任何值）；
+      #   · 把 `if:` 里 `bundleRunId != ''` 那半条去掉或改松；
+      #   · 给这条腿加 `schedule:` 并让它以某种方式满足上面那道门。
+      #
+      # **做这三件事中的任何一件之前，先把这里的 `--mode` 一起解决掉**
+      # （那时候待测的现象已经有答案了，补默认值或改用显式常量都行）。
+      # 记在这里，是因为「靠另一处的巧合才安全」这件事**不会自己喊**。
+      # ═══════════════════════════════════════════════════════════════════════════════
       - name: 写凭证
         run: |
           node scripts/ci/emit-e2e-attestation.mjs \
             --leg allcomponents \
             --bundle-run "${{ inputs.bundleRunId }}" \
             --platforms linux-x64,darwin-arm64,win32-x64 \
+            ${{ steps.sum.outputs.undecided_flag }} \
             --mode "${{ inputs.mode }}" \
             --out dist/e2e-attest.json
       - uses: actions/upload-artifact@v6

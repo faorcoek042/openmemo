@@ -283,6 +283,80 @@ function main() {
     else bad('C2 缺 --expect-labels 居然 exit 0');
   }
 
+  /* ═══ D 组：`--reduce agree` —— 三格是同一件事的三次观察，**不相加** ═══════════ */
+  console.log('\n\x1b[1mD 组：--reduce agree（allcomponents 腿的归并口径）\x1b[0m');
+
+  {
+    // D1 —— 三格一致（都是 5）→ 取公共值 5。**不是 15**：求和会把同一个
+    //       与平台无关的清单文件（vendor/manifests/models-llm.json）数三遍。
+    const dir = makeCellDir(scratch, 'd1', {
+      'e2e-runtime-undecided-linux-x64.json': '{"unknowns": 5}\n',
+      'e2e-runtime-undecided-darwin-arm64.json': '{"unknowns": 5}\n',
+      'e2e-runtime-undecided-win32-x64.json': '{"unknowns": 5}\n',
+    });
+    const r = run(dir, ['--reduce', 'agree']);
+    if (r.status === 0 && r.flag === '--undecided 5') {
+      ok('D1 三格一致（5/5/5）→ flag = "--undecided 5"（取公共值，**不是求和的 15**）');
+    } else {
+      bad(
+        `D1 期望 flag="--undecided 5"，实得 exit ${r.status} flag=${JSON.stringify(r.flag)}\n${r.out.slice(0, 500)}`,
+      );
+    }
+  }
+
+  {
+    // D2 —— 同一批文件，**默认 sum** 下必须仍然是 15。
+    //       证明这个新档是 opt-in：老调用方（runtime/browser/record）一个字不用改。
+    const dir = makeCellDir(scratch, 'd2', {
+      'e2e-runtime-undecided-linux-x64.json': '{"unknowns": 5}\n',
+      'e2e-runtime-undecided-darwin-arm64.json': '{"unknowns": 5}\n',
+      'e2e-runtime-undecided-win32-x64.json': '{"unknowns": 5}\n',
+    });
+    const r = run(dir);
+    if (r.status === 0 && r.flag === '--undecided 15') {
+      ok('D2 同一批文件不传 --reduce → 仍然求和得 15（新档是 opt-in，没动默认行为）');
+    } else {
+      bad(
+        `D2 期望默认仍求和 flag="--undecided 15"，实得 exit ${r.status} flag=${JSON.stringify(r.flag)}\n${r.out.slice(0, 500)}`,
+      );
+    }
+  }
+
+  {
+    // D3（这一组最要紧的一条）—— 三格**不一致**时绝不挑代表。
+    //     不一致意味着三个平台读到的清单真的不同，那是要查的信息，不是噪声。
+    //     口径与 B 组一致：exit 0（不连累"写凭证"）+ flag 为空（⇒ null）。
+    const dir = makeCellDir(scratch, 'd3', {
+      'e2e-runtime-undecided-linux-x64.json': '{"unknowns": 5}\n',
+      'e2e-runtime-undecided-darwin-arm64.json': '{"unknowns": 5}\n',
+      'e2e-runtime-undecided-win32-x64.json': '{"unknowns": 4}\n',
+    });
+    const r = run(dir, ['--reduce', 'agree']);
+    if (r.status === 0 && r.flag === '') {
+      ok('D3 三格不一致（5/5/4）→ exit 0 + flag 为空（收敛成 null，**不挑代表、不取众数**）');
+    } else {
+      bad(
+        `D3 期望 exit 0 + flag=""，实得 exit ${r.status} flag=${JSON.stringify(r.flag)}\n${r.out.slice(0, 500)}`,
+      );
+    }
+  }
+
+  {
+    // D4 —— 不认识的 --reduce 值是**调用方配置错误**（写死在 YAML 里，不随平台跑没跑
+    //       而变），与 C 组同类：照旧 die()。**不静默退回 sum** —— 那会把 5 悄悄变成 15。
+    const dir = makeCellDir(scratch, 'd4', {
+      'e2e-runtime-undecided-linux-x64.json': '{"unknowns": 5}\n',
+      'e2e-runtime-undecided-darwin-arm64.json': '{"unknowns": 5}\n',
+      'e2e-runtime-undecided-win32-x64.json': '{"unknowns": 5}\n',
+    });
+    const r = run(dir, ['--reduce', 'average']);
+    if (r.status !== 0) {
+      ok('D4 --reduce average（不认识的值）→ 非 0 退出（不静默退回 sum，那会把 5 悄悄变成 15）');
+    } else {
+      bad(`D4 不认识的 --reduce 居然 exit 0，flag=${JSON.stringify(r.flag)}`);
+    }
+  }
+
   rmSync(scratch, { recursive: true, force: true });
 
   console.log('');
@@ -290,7 +364,7 @@ function main() {
   // 让回归证明能断言"红的正是这一格、且正是那个被禁止的部分和"，
   // 而不只是"整套里有什么东西红了"（后者可能撞上无关案例，误报护栏有牙齿）。
   const b2Flag = b2 ? b2.flag : null;
-  if (checked < 11) {
+  if (checked < 15) {
     console.log(`\x1b[31m✘ 只跑了 ${checked} 条断言 —— 少于预期，先怀疑这个自检本身瞎了\x1b[0m`);
     return { ok: false, b2Flag };
   }
