@@ -109,9 +109,34 @@ jobs:
             }
           - { runner: windows-2025, label: win32-x64, target: win-x64, artifact: bundle-win-x64 }
     steps:
-      # submodules **不需要**：这条腿一个音频样本都不用（转写的可行性证明归
-      # cold-start-audit）。少 checkout 一棵 whisper.cpp 省好几分钟。
+      # ★★ submodules: recursive（Manager 2026-08-11 裁决，#77 六腿预检抓到的红）。
+      #
+      #   这里原来写的是"submodules 不需要"，理由是"这条腿一个音频样本都不用"——
+      #   那句话在 `42fbc41`（这条腿刚建、默认还是 artifact 模式）时是对的：
+      #   artifact 模式只下载 build-bundles 的产物，压根不碰 submodule。
+      #
+      #   `f130abe`（08-08）把默认改成了 checkout（本次代码现组装），这条腿
+      #   从此会在本 job 里现跑 `scripts/build-bundle.mjs`；`d087b6e`（08-09）
+      #   给它加了一条硬校验——组装出的包必须带 `vendor/whisper.cpp/samples/jfk.wav`，
+      #   缺了就不允许降级放行（每一个包用户的自检都会卡在"没有测试音频"）。
+      #   这里的 submodule 跳过没跟着这两次改动同步，于是 checkout 模式的默认路径
+      #   从 `d087b6e` 落地那一刻起就没法走通——而这条腿只在 workflow_dispatch 上跑，
+      #   直到 `[实测 run 31483864964]` 才第一次被看见（坏了两天，零信号）。
+      #
+      #   **不放宽 `d087b6e` 那条校验**（那是一次有意的加固），改这里的配置：
+      #   把 submodule 补上，让前提能被满足。
+      #
+      #   只需要 `vendor/whisper.cpp`（build-bundle.mjs 只读它的 samples/jfk.wav，
+      #   不碰另外三个 submodule），跟 `build-bundles.yml` / `e2e-notes.yml` /
+      #   `e2e-import.yml` 一样写 `recursive` 而不是单独只 init 一个：
+      #   `.gitmodules` 里四个 submodule 都标了 `shallow = true`，
+      #   `[实测 run 31485554473 的 e2e-notes]` 四个（含 libsimple 嵌的 vcpkg）
+      #   一起 shallow clone 在 Linux runner 上总共约 15 秒——"省好几分钟"那句
+      #   过时了，实测代价并不高；跟三条已有的腿保持同一种写法，比再发明一种
+      #   "只 init 一个 submodule" 的新写法更省认知成本。
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - uses: actions/setup-node@v6
         with:
@@ -266,7 +291,12 @@ jobs:
               only: 'M-driver-lie',
             }
     steps:
+      # submodules: recursive —— 同一份理由见上面 audit job 的 checkout 步骤：
+      # 这个 job 在 bundleSource=checkout（默认）时也会现跑 build-bundle.mjs，
+      # 一样要过 jfk.wav 那条硬校验。两个 job 各自独立 checkout，缺一个都还是红。
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
