@@ -11037,3 +11037,105 @@ describe('T-202 ② 搜索结果行纳入骨架后跳转仍然对', () => {
     r.unmount();
   });
 });
+
+/* ═══════ #87 「没能确认工具链」这句话必须到得了屏幕，不只是到 API ═══════ */
+
+/**
+ * ## 这一组钉的是「**说出来了**」，不是「没放行」
+ *
+ * `63b2143` 把队列闸修好了：daemon 读到 UNKNOWN 时不再解除任务阻塞。
+ * 但**只钉"没放行"是不够的** —— 一个静默卡死的实现（不放行、也不吭声）
+ * 能让那种断言全绿，而用户看到的是"什么都没发生"：任务没开始，屏幕上没有任何解释。
+ * **静默卡住比放行更坏**：放行至少会吵闹地失败。
+ *
+ * 所以这里断言的是**那句原因真的出现在容器里**。
+ *
+ * ## 三态各不相同（这才是判据本身）
+ *
+ * | daemon 发的 | 意思 | 横幅 |
+ * |---|---|---|
+ * | `missing: [...]` | 查过了，缺这些 | 原来那档 |
+ * | `missing: null` + reason | **没能确认** | 说出来 + 带上原因 |
+ * | 字段缺席（老 daemon） | 我们什么都不知道 | **什么都不说** |
+ *
+ * ⚠️ `null` 与 `undefined` 合并是最容易犯的那个错：前者是 daemon 主动报告的一次失败，
+ * 后者只是字段缺席。合并之后要么老 daemon 上凭空多出一条告警（替它说了它没说的话），
+ * 要么真失败时一言不发（回到本 bug）。下面两条阴性对照各钉一头。
+ */
+describe('★ #87 横幅：UNKNOWN 必须说出原因', () => {
+  const REASON = 'discoverTools 抛了：EACCES /usr/local/bin';
+
+  async function bannerText(pipeline: unknown): Promise<{ t: string; unmount: () => void }> {
+    stubApi({
+      'GET /health': {
+        db: { extensions: { libsimple: true, sqliteVec: true } },
+        pipeline,
+      },
+    });
+    const r = await render(<ReadinessBanner />);
+    await r.flush();
+    // 明细默认折叠 —— 不点开就只有摘要，断言会看不到那句原因
+    const toggle = r.container.querySelector('[data-testid="readiness-toggle"]');
+    if (toggle) {
+      await click(toggle);
+      await r.flush();
+    }
+    return { t: text(r.container), unmount: () => r.unmount() };
+  }
+
+  test('★★ `missing: null` ⇒ 屏幕上必须出现"没能确认"**和那句具体原因**', async () => {
+    const { t, unmount } = await bannerText({ missing: null, missingUnknownReason: REASON });
+    assert.ok(
+      t.includes('没能确认'),
+      `UNKNOWN 时横幅一言不发 —— 任务没开始而用户看到"什么都没发生"：${t.slice(0, 300)}`,
+    );
+    /*
+     * ★ 这一条才是与"只钉没放行"的区别：**原因本身**要在屏幕上。
+     * 少了它，用户知道"没开始"却不知道为什么，也就无从判断该等还是该动手。
+     */
+    assert.ok(t.includes('EACCES'), `原因没有出现在屏幕上（它只到了 API）：${t.slice(0, 300)}`);
+    unmount();
+  });
+
+  test('★ UNKNOWN 那一档不许带动作按钮 —— 此刻我们连缺什么都不知道', async () => {
+    stubApi({
+      'GET /health': {
+        db: { extensions: { libsimple: true, sqliteVec: true } },
+        pipeline: { missing: null, missingUnknownReason: REASON },
+      },
+    });
+    const r = await render(<ReadinessBanner />);
+    await r.flush();
+    const toggle = r.container.querySelector('[data-testid="readiness-toggle"]');
+    if (toggle) {
+      await click(toggle);
+      await r.flush();
+    }
+    assert.equal(
+      !!r.container.querySelector('[data-testid="readiness-action-toolchain-unknown"]'),
+      false,
+      '给了动作按钮 —— 它只能把人送到一个我们说不出该做什么的页面',
+    );
+    r.unmount();
+  });
+
+  test('★ 阴性对照：`missing: []`（查过了、齐了）不许冒出这一档', async () => {
+    const { t, unmount } = await bannerText({ missing: [] });
+    assert.equal(
+      t.includes('没能确认'),
+      false,
+      `一切就绪却报"没能确认" —— 那条判据恒真，等于没判：${t.slice(0, 200)}`,
+    );
+    unmount();
+  });
+
+  test('★★ 阴性对照：字段缺席（老 daemon）⇒ 什么都不说，不许替它说话', async () => {
+    const { t, unmount } = await bannerText({});
+    assert.equal(
+      t.includes('没能确认'),
+      false,
+      `把 undefined 当成了 null —— 老 daemon 上会凭空多出一条它从没报告过的告警：${t.slice(0, 200)}`,
+    );
+    unmount();
+  });
+});
