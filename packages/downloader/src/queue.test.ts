@@ -37,21 +37,70 @@ function failingWith(code: string, message: string, retryable?: boolean) {
     );
 }
 
-async function runOne(task: () => Promise<never>) {
-  const q = new DownloadQueue(1);
-  const { job } = q.enqueue(
+/**
+ * 等这条任务失败。
+ *
+ * ## 为什么这个兜底要写成这样（T-198 收尾）
+ *
+ * 它原来是这三行：
+ *
+ * ```ts
+ * await new Promise<void>((resolve) => {
+ *   q.on('job.failed', () => resolve());
+ *   setTimeout(resolve, 2000).unref?.();   // ← 兜底
+ * });
+ * ```
+ *
+ * 三个毛病，合起来是同一个形状 —— **一个永远不会现形的兜底**：
+ *
+ * 1. **`unref` 过**：unref 的定时器不把事件循环撑住。真出事（`job.failed` 不来）时
+ *    循环里没别的待办，node 认为"已经空了"，这个兜底**根本不会触发**，
+ *    promise 永远不结算 → 子测试被 runner 整批取消（`cancelledByParent`）。
+ *    本文件下半部分正是栽在这上面，CI run 31397063723 六条全灭。
+ * 2. **`resolve` 而不是 `reject`**：就算它触发了，也只是让 `runOne` 返回一个
+ *    **状态还没落到 failed** 的 job，后面的断言去读 `job.error` 拿到 undefined ——
+ *    用户看到的是一条语焉不详的 TypeError，而不是"等不到 job.failed"。
+ * 3. **从不 `clearTimeout`**：正常路径下那个 2 秒定时器仍然挂着。
+ *
+ * 现在按 `waitForState()` 立的那个形状统一：**ref 过 + reject + 用完就清**。
+ * 真等不到时要拿到一条**说得出原因的失败**，而不是一次静默的"通过" ——
+ * **一个永远不会触发的兜底，和没有兜底，在绿灯里长得一模一样。**
+ */
+function waitForJobFailed(q: DownloadQueue, jobId: string, timeoutMs = 2000): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(
+        new Error(
+          `等不到 ${jobId} 的 job.failed（${timeoutMs}ms 内没到；当前状态 ${String(
+            q.get(jobId)?.state,
+          )}）`,
+        ),
+      );
+    }, timeoutMs);
+    q.on('job.failed', (...args: unknown[]) => {
+      if ((args[0] as { jobId?: string } | undefined)?.jobId !== jobId) return;
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+function enqueueFor(q: DownloadQueue, task: (...a: never[]) => Promise<void>) {
+  return q.enqueue(
     {
       kind: 'model',
       targetId: `asr/t-${Math.random().toString(36).slice(2)}`,
       displayName: 'x',
       totalBytes: 1,
     },
-    task,
-  );
-  await new Promise<void>((resolve) => {
-    q.on('job.failed', () => resolve());
-    setTimeout(resolve, 2000).unref?.();
-  });
+    task as Parameters<DownloadQueue['enqueue']>[1],
+  ).job;
+}
+
+async function runOne(task: () => Promise<never>) {
+  const q = new DownloadQueue(1);
+  const job = enqueueFor(q, task);
+  await waitForJobFailed(q, job.jobId);
   return q.get(job.jobId);
 }
 
@@ -97,6 +146,44 @@ describe('下载失败时交给界面的错误文案', () => {
     assert.equal(job?.error?.code, 'INTERNAL');
     assert.equal(job?.error?.messageZh, 'naked');
   });
+
+  /**
+   * ★★ **这条兜底自己也要被守住**（T-198 收尾）。
+   *
+   * 上面 6 条全都 `await runOne(...)`，而 `runOne` 里那个"等不到就算了"的兜底
+   * 原来是 **unref + resolve + 不 clearTimeout** —— 也就是说：
+   * 真出事时它**根本不会触发**，触发了也只会让用例安静地往下走。
+   * 它存在的那两年里，**没有任何一次运行能证明它工作过**。
+   *
+   * 所以这里直接把它逼到真出事的那一格：造一个**永远不会 `job.failed` 的任务**
+   * （它会成功），断言兜底以**带话的失败**现形。
+   *
+   * 这条不是"再验一遍已经修好的东西"，它是那个兜底**唯一**的证据 ——
+   * 一个永远不会触发的兜底，和没有兜底，在绿灯里长得一模一样。
+   */
+  it('★★ 兜底自己也要能红：job.failed 不来时必须是一条带话的失败，不是静默通过', async () => {
+    const q = new DownloadQueue(1);
+    // 这个任务会**成功**，所以 job.failed 永远不会到 —— 正是兜底该说话的那一格
+    const job = enqueueFor(q, () => Promise.resolve());
+    await assert.rejects(
+      () => waitForJobFailed(q, job.jobId, 50),
+      (err: Error) => {
+        assert.match(err.message, /等不到.*job\.failed/, '兜底触发了，但没说清等不到什么');
+        assert.match(err.message, new RegExp(job.jobId), '要说清是哪条任务');
+        return true;
+      },
+      '兜底没有以失败现形 —— 那它和没有兜底在绿灯里长得一模一样',
+    );
+  });
+
+  it('★ 正常路径下兜底会被清掉（否则这 6 条用例每条都要多挂 2 秒）', async () => {
+    const q = new DownloadQueue(1);
+    const job = enqueueFor(q, () => Promise.reject(new Error('boom')) as Promise<void>);
+    const t0 = Date.now();
+    await waitForJobFailed(q, job.jobId, 2000);
+    // 真等满 2 秒说明 clearTimeout 没生效 / 走的是兜底而不是事件
+    assert.ok(Date.now() - t0 < 500, `等了 ${Date.now() - t0}ms —— 兜底没被清掉`);
+  });
 });
 
 /**
@@ -124,7 +211,6 @@ describe('下载失败时交给界面的错误文案', () => {
  * 返回值那条正是当初骗过所有人的东西 —— 它一直是 true。
  */
 describe('★ T-198 取消：状态必须诚实', () => {
-  /** 一个"打不断"的任务：**故意不认 signal**，模拟 resolving/installing 那些阶段。 */
   /**
    * 一个"打不断"的任务：**故意不认 signal**，模拟 resolving/installing 那些阶段。
    *
