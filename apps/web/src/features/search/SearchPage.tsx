@@ -1,10 +1,11 @@
-import { useNavigate, useSearchParams } from 'react-router';
+import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { Search as SearchIcon } from 'lucide-react';
 
 import { useSearchModesQuery, useSearchQuery } from './api';
 import { availableModes, effectiveMode, missingModes } from './modes';
 import { EmptyState } from '../../components/common/EmptyState';
+import { ListRow } from '../../components/common/ListRow';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { MockNotice } from '../../components/common/MockNotice';
 import { timecode } from '../../lib/format/time';
@@ -33,7 +34,6 @@ import { cn } from '../../lib/utils';
  */
 export default function SearchPage() {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const q = params.get('q') ?? '';
 
@@ -148,35 +148,36 @@ export default function SearchPage() {
       ) : (
         <ul className="flex flex-col gap-2" role="list">
           {hits.map((h, i) => (
-            <li key={`${h.noteUid}-${h.startMs ?? i}`}>
-              <button
-                type="button"
-                onClick={() =>
-                  // ★ 直达时间点：带上 ?t=<ms>，详情页据此 seek
-                  navigate(
-                    h.startMs != null
-                      ? `/notes/${h.noteUid}?t=${h.startMs}`
-                      : `/notes/${h.noteUid}`,
-                  )
-                }
-                className="w-full rounded-lg border border-line bg-surface-1 p-3 text-left transition-colors hover:bg-fill-hover"
-              >
-                <div className="flex items-baseline gap-2">
-                  <span className="truncate text-sm font-medium text-ink">{h.noteTitle}</span>
-                  {h.startMs != null ? (
-                    <span className="shrink-0 tabular-nums text-xs text-accent-ink">
-                      {timecode(h.startMs)}
-                    </span>
-                  ) : null}
-                </div>
-                {/* snippet 由服务端 simple_highlight 产出，含 <mark> 标签。
-                    这里是**受控的服务端输出**，不是用户输入，故可安全渲染。 */}
-                <p
-                  className="mt-1 text-sm text-ink-secondary [&_mark]:bg-accent-tint [&_mark]:text-ink"
-                  dangerouslySetInnerHTML={{ __html: h.snippet }}
-                />
-              </button>
-            </li>
+            <ListRow
+              key={`${h.noteUid}-${h.startMs ?? i}`}
+              /*
+               * ★ T-202：这一行原本是 `<button onClick={navigate(...)}>`。
+               * 换成 `<Link>` 不只是为了跟另外两处长得一样 —— **一个"点了会导航"的东西
+               * 本来就该是链接**：`<button>` 没有 href，于是中键新标签打开、右键复制链接、
+               * Cmd/Ctrl+点击 全都用不了，而这三样在搜索结果上恰恰是最常用的
+               * （搜到几条想并排打开）。骨架顺带把这个缺陷一起修了。
+               */
+              href={
+                h.startMs != null ? `/notes/${h.noteUid}?t=${h.startMs}` : `/notes/${h.noteUid}`
+              }
+              /* 行内没有任何其它可点控件 —— 整行可点，判据见 ListRow 的 clickTarget */
+              clickTarget="row"
+              title={h.noteTitle}
+              trailing={
+                h.startMs != null ? (
+                  <span className="shrink-0 tabular-nums text-xs text-accent-ink">
+                    {timecode(h.startMs)}
+                  </span>
+                ) : null
+              }
+            >
+              {/* snippet 由服务端 simple_highlight 产出，含 <mark> 标签。
+                  这里是**受控的服务端输出**，不是用户输入，故可安全渲染。 */}
+              <p
+                className="mt-1 text-sm text-ink-secondary [&_mark]:bg-accent-tint [&_mark]:text-ink"
+                dangerouslySetInnerHTML={{ __html: h.snippet }}
+              />
+            </ListRow>
           ))}
         </ul>
       )}

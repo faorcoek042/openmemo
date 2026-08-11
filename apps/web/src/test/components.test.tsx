@@ -24,6 +24,7 @@ import { TagEditor } from '../features/notes/TagEditor';
 import { NoteActionsMenu } from '../features/notes/NoteActionsMenu';
 import { useMoveNoteMutation } from '../features/folders/api';
 import { SearchBox } from '../features/search/SearchBox';
+import SearchPage from '../features/search/SearchPage';
 import { JobList } from '../features/tasks/JobList';
 import { LlmSettingsSection } from '../components/common/llm/LlmSettingsSection';
 import { buildLlmSettingsPatch, LLM_PURPOSES_KEY } from '../components/common/llm/api';
@@ -10954,6 +10955,78 @@ describe('T-202 ① 整行可点在任务行的真实形态下成不成立', () 
       0,
       '给了一个点了到不了任何地方的假出口',
     );
+    r.unmount();
+  });
+});
+
+/**
+ * ★ T-202 ②：搜索结果那一列纳入骨架之后，跳转必须仍然对。
+ *
+ * 这一处此前**不在任何统一里**（`<button onClick={navigate(...)}>`），所以是这次最容易
+ * 被弄坏的一处 —— 而且它带一个别处没有的东西：`?t=<startMs>` 直达时间点。
+ * 那个查询串一旦在重构里掉了，搜索结果会退化成"只打开笔记、不跳到那一刻"，
+ * 而页面看起来完全正常（本仓 A9 就是这个形状，修好过一次）。
+ */
+describe('T-202 ② 搜索结果行纳入骨架后跳转仍然对', () => {
+  const UID = '01KZ1H8Y5XJ6DMJFW08P7DVA4Q';
+  const stubHits = (startMs: number | null) =>
+    stubApi({
+      '/search?q=%E6%88%90%E6%9C%AC&limit=50': {
+        hits: [
+          { noteUid: UID, noteTitle: '产品评审会', startMs, snippet: '这里说到<mark>成本</mark>' },
+        ],
+      },
+    });
+
+  const open = async (startMs: number | null) => {
+    stubHits(startMs);
+    const r = await render(
+      <div>
+        <SearchPage />
+        <LocationProbe />
+      </div>,
+      { route: '/search?q=成本' },
+    );
+    await r.flush();
+    await r.flush();
+    return r;
+  };
+
+  test('★ 有时间点的命中：链接必须带上 ?t=<startMs>（掉了就退化成"只打开笔记"）', async () => {
+    const r = await open(754_000);
+    const a = r.container.querySelector('[data-testid="list-row-link"]');
+    assert.ok(a, `搜索结果行上没有链接：${text(r.container).slice(0, 160)}`);
+    assert.equal(a!.getAttribute('href'), `/notes/${UID}?t=754000`);
+    r.unmount();
+  });
+
+  test('★ 没有时间点的命中：只跳笔记，不许拼出 ?t=null', async () => {
+    const r = await open(null);
+    const a = r.container.querySelector('[data-testid="list-row-link"]');
+    assert.equal(a?.getAttribute('href'), `/notes/${UID}`);
+    r.unmount();
+  });
+
+  test('★★ 点下去真的跳到那一刻（钉后果，不是钉 href 字符串）', async () => {
+    const r = await open(754_000);
+    assert.equal(locOf(r.container), '/search?q=成本', '前提：还没跳');
+    await click(r.container.querySelector('[data-testid="list-row-link"]'));
+    await r.flush();
+    assert.equal(locOf(r.container), `/notes/${UID}?t=754000`);
+    r.unmount();
+  });
+
+  /**
+   * ★ 换成 `<Link>` 而不是 `<button onClick={navigate}>` 的**用户可见收益**：
+   * 中键新标签 / 右键复制链接 / Cmd+点击 都要求这是一个真的 `a[href]`。
+   * 搜到几条想并排打开，正是搜索页最常见的用法。
+   */
+  test('★ 必须是真的 a[href]，不是 button —— 否则中键/右键/Cmd+点击全用不了', async () => {
+    const r = await open(754_000);
+    const li = r.container.querySelector('main li') ?? r.container.querySelector('li');
+    assert.ok(li, '行没渲染出来');
+    assert.equal(li!.querySelectorAll('a[href]').length, 1, '行上没有真链接');
+    assert.equal(li!.querySelectorAll('button').length, 0, '还留着 button 那条老路');
     r.unmount();
   });
 });
