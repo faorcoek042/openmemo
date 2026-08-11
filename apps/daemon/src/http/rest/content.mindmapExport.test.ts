@@ -99,6 +99,12 @@ before(async () => {
     // 导出分支用不到这两个；给最小桩而不是启动真队列/事件总线
     queue: {} as unknown as JobQueue,
     sse: { publish: () => {} } as unknown as SseHub,
+    /*
+     * 导出分支同样用不到 `dataDir`（它只喂重跑判据 `resolveRetranscribeSource`），
+     * 但**不能给假路径**：给个存在的目录，万一将来有人在这条链上加了真读盘的一步，
+     * 失败会是"读不到东西"而不是"路径根本是编的"。
+     */
+    dataDir: tmpdir(),
   });
 
   const server = createServer((req, res) => {

@@ -219,12 +219,19 @@ export default function NoteDetailPage() {
               {/*
                 ★ 重新转写入口。放在转写稿面板的头上 —— 用户是**看着那篇被翻译成英文的稿子**
                 想重跑的，入口就该在他视线所及之处，而不是埋进设置里。
+
+                ★ `retranscribeBlocked` 必须跟着 `canRetranscribe` 一起传（#95）：
+                不传的话，按钮变灰时只会显示那句**写死的**「没有记录原始输入」，
+                而 daemon 判 `false` 的原因现在不止这一种。显示错的那一种比不显示更糟 ——
+                它把人往"只能重新导入"指，而实际多半只是文件被删 / 外置盘没挂，
+                把文件接回去就好。
               */}
               <RetranscribeButton
                 noteUid={noteUid ?? ''}
                 segments={arr(transcript.data?.segments)}
                 currentLanguage={transcript.data?.language ?? null}
                 canRetranscribe={note.data?.canRetranscribe}
+                retranscribeBlocked={note.data?.retranscribeBlocked}
               />
             </div>
           </div>

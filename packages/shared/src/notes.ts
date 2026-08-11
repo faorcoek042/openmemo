@@ -278,15 +278,56 @@ export interface NoteDetail {
   /**
    * 这条笔记能不能重新转写 —— **由服务端判定并明说**，客户端不要自己猜。
    *
-   * 判据只有一条：这条笔记记录了原始输入（`media_sources.input_url` 非空）。
-   * 早期本地导入把它存成 null，那种笔记重跑必然 409 `NO_SOURCE_INPUT` ——
-   * 让按钮亮着然后报错，不如一开始就告诉客户端它不可用。
+   * ⚠️ **判据换过一次（#95），别按旧描述理解这个字段。**
+   * 它原来是 `media_sources.input_url != null`，也就是**只判非空**。
+   * 而那一列存的是绝对路径，且全仓没有任何一处在数据目录搬家时更新它 ——
+   * 搬完家每条笔记都成了"字段非空、路径失效"：按钮亮着、POST 回 202、
+   * job 事后死在 `no media source can handle this input`。
+   * `[实测]` demo 库里两条笔记此刻就是这个形态。
+   *
+   * 现在的判据是**真的去解析一次**（`daemon/src/media/retranscribeSource.ts`）：
+   *   · 本地来源 → `input_url` 打不开就退回本笔记的 `role='original'` 归档原件，
+   *     两档都落空才 `false`；
+   *   · 链接来源 → 恒 `true`，**而且这是"未知"不是"已验证"**：不做网络探测，
+   *     否则断网/限流/防盗链都会被误报成"这条不能重跑"。
+   *
+   * 为 `false` 时 `retranscribeBlocked` **必然非 null**，反之亦然 —— 两个字段是一对。
    *
    * 与 `NoteAsset.state` 同一条分工：**契约要求服务端必发**；
    * 而消费方拿到老响应（真的没有这个键）时按**可以重跑**处理 ——
    * 「字段缺失」不等于「不能重跑」，那会对所有旧数据静默藏掉一个本来能用的功能。
    */
   canRetranscribe: boolean;
+
+  /**
+   * 不能重跑时**为什么** —— 能重跑时为 `null`。
+   *
+   * ─── 为什么光把 `canRetranscribe` 修准是不够的 ──────────────────────────────
+   * 一颗**无声变灰**的按钮，和一颗**亮着但点下去必死**的按钮，是同一种不诚实：
+   * 两种情况下用户都只能猜。而客户端也不该自己编原因 ——
+   * 它不知道服务端找过哪些位置，编出来的必然是假诊断。
+   *
+   * `messageZh` / `message` 可**直接展示**；`tried` 是找过的每个绝对路径，
+   * 用户照着它能自己确认到底是"文件没了"还是"我们找错了地方"
+   * （`/media/asset/:uid` 已经为同一课付过账，见 T-136）。
+   */
+  retranscribeBlocked: RetranscribeBlocked | null;
+}
+
+/** `NoteDetail.retranscribeBlocked` 的形状。 */
+export interface RetranscribeBlocked {
+  /**
+   * `NO_SOURCE_INPUT`（压根没记原始输入）
+   * 或 `SOURCE_UNREADABLE`（记了，但那个位置读不到，且没有可回退的归档原件）。
+   *
+   * 与绕过按钮直接调重跑端点时拿到的 `error.code` **是同一套值** ——
+   * 事前禁用与事后拒绝必须给同一个诊断，否则用户会当成两个不同的毛病。
+   */
+  code: 'NO_SOURCE_INPUT' | 'SOURCE_UNREADABLE';
+  message: string;
+  messageZh: string;
+  /** 找过的绝对路径。空数组 = 没有任何候选落在数据目录内。 */
+  tried: readonly string[];
 }
 
 /* ------------------------------- transcript ------------------------------- */

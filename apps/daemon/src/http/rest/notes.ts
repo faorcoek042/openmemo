@@ -43,6 +43,7 @@ import { NoMediaSourceError, type MediaSourceRegistry } from '@openmemo/pipeline
 
 import { parseWordsJson, type Repos } from '../../db/repos.js';
 import type { JobQueue } from '../../jobs/queue.js';
+import { looksLikeUrl, resolveRetranscribeSource } from '../../media/retranscribeSource.js';
 import type { SseHub } from '../sse.js';
 import { readJsonBody, sendError, sendJson } from '../respond.js';
 
@@ -58,6 +59,16 @@ export interface NoteRoutesDeps {
   readonly sse: SseHub;
   /** 本地导入允许的根目录 —— 路径穿越防护（D-01 §8.5）。 */
   readonly importRoots: readonly string[];
+  /**
+   * 数据目录。**只用来判「这条笔记现在还重跑得了吗」**（`resolveRetranscribeSource`）。
+   *
+   * 与 `importRoots` 不是一回事，别合并：`importRoots` 是"允许从哪导入"（可由
+   * `OPENMEMO_IMPORT_ROOTS` 扩出数据目录之外），而重跑判据要的是"runner 待会儿
+   * 真能从哪读"—— 那由 `LocalFileSource` 的 `allowedRoot = paths.dataDir` 决定
+   * （`pipeline/setup.ts:542`）。用 `importRoots` 去判会把一批**导得进、却重跑不了**
+   * 的笔记judge成可重跑，也就是把这次要消灭的那句谎话换个地方再说一遍。
+   */
+  readonly dataDir: string;
 }
 
 interface ImportBody {
@@ -249,9 +260,15 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
           return true;
         }
 
-        // 本地路径必须落在允许的根内；URL 交给 pipeline 的 argGuard 做校验
-        const looksLikeUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(input);
-        if (!looksLikeUrl) {
+        /*
+         * 本地路径必须落在允许的根内；URL 交给 pipeline 的 argGuard 做校验。
+         *
+         * 判据从这里的行内正则改成引用 `media/retranscribeSource.ts` 的 `looksLikeUrl` ——
+         * 「这串输入是链接还是本地路径」现在有两个消费方（导入、重跑判据），
+         * 各写一遍就是给自己留一条"两边规则不一样"的缝。
+         */
+        const isUrl = looksLikeUrl(input);
+        if (!isUrl) {
           if (!isAbsolute(input)) {
             sendError(
               res,
@@ -296,8 +313,8 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
         const note = repos.createNote({ title, kind: 'media', language });
         repos.createSource({
           noteId: note.id,
-          kind: looksLikeUrl ? 'url' : 'local',
-          adapterId: looksLikeUrl ? null : 'local',
+          kind: isUrl ? 'url' : 'local',
+          adapterId: isUrl ? null : 'local',
           /*
            * ⚠️ 本地路径**也要存**。
            * D-02 对 `input_url` 的定义是"用户原始输入"，不限于 URL。
@@ -320,7 +337,7 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
             engineId,
             modelId,
             prompt,
-            sourceKind: looksLikeUrl ? 'url' : 'local',
+            sourceKind: isUrl ? 'url' : 'local',
           },
         });
 
@@ -604,6 +621,17 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
 
         // ---- GET /api/notes/:uid ----
         if (method === 'GET') {
+          /*
+           * ★ 重跑可用性：**真的去解析一次**，不再只判 `input_url` 非空（#95）。
+           *
+           * 这一次探测最多两个 `open()` + 读 4 字节，且**只在单条笔记详情上发生** ——
+           * `canRetranscribe` 不在 `NoteListItem` 上（列表分支在上面，不含此字段），
+           * 所以笔记列表一次都不会调它。别把这个字段加进列表，除非先解决 N 次探测。
+           */
+          const retranscribe = await resolveRetranscribeSource(
+            { repos, dataDir: deps.dataDir },
+            note.id,
+          );
           const assets: NoteAsset[] = repos.assetsOfNote(note.id).map((a) => ({
             uid: a.uid,
             role: a.role,
@@ -685,11 +713,29 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
             /*
              * 能不能重跑，**由 daemon 判定并明说**，前端不要自己猜。
              *
-             * 真实前提只有一条：这条笔记记录了原始输入（`media_sources.input_url`）。
-             * 早期本地导入把它存成 null，那种笔记重跑必然 409 ——
-             * 让按钮亮着然后报错，不如一开始就告诉前端它不可用。
+             * ⚠️ 这里原来是 `repos.primarySourceOf(note.id)?.input_url != null` ——
+             * **只判非空**。那句判断在"字段还在、路径已经失效"面前完全无效，而这正是
+             * 数据目录搬家之后的常态（`input_url` 是绝对路径，没有任何迁移会更新它）。
+             * 后果是一条不报错的闭合链：按钮亮 → POST 回 202 → job 事后死在
+             * `no media source can handle this input`，而笔记详情页对此**一个字都不显示**
+             * （只有右下角一条会消失的 toast，刷新即无）。`[实测]` demo 库两条笔记就是这形态。
+             *
+             * 现在两个字段一起发，且**同出一个判据**（`resolveRetranscribeSource`）——
+             * 事前禁用与事后 409 因此不可能给出不同的诊断。
              */
-            canRetranscribe: repos.primarySourceOf(note.id)?.input_url != null,
+            canRetranscribe: retranscribe.ok,
+            /*
+             * 变灰必须自带理由。**无声变灰 = 亮着但必死**，两者都是让用户自己猜。
+             * `ok` 时恒 `null`：不要发一个"空的原因对象"，那会让消费方以为有话要说。
+             */
+            retranscribeBlocked: retranscribe.ok
+              ? null
+              : {
+                  code: retranscribe.code,
+                  message: retranscribe.message,
+                  messageZh: retranscribe.messageZh,
+                  tried: retranscribe.tried,
+                },
             createdAt: new Date(note.created_at).toISOString(),
           };
           sendJson(res, 200, detail);
