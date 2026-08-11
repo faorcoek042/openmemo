@@ -2545,8 +2545,10 @@ try {
     say(tail(daemonLogs, 60));
   }
   /*
-   * 继任者自己的账——见 main.ts 的 restart()：每次自重启会把继任者的
-   * stdout/stderr 落到 `<dataDir>/logs/restart.log`（覆盖，不追加）。
+   * 继任者自己的账——见 main.ts 的 captureConsoleToFile()：接班者起来后会在一个
+   * 有界窗口内（接班等待窗口 + 余量）把自己的 console.{log,warn,error,info}
+   * 抄一份到 `<dataDir>/logs/restart.log`（每次重启覆盖，不追加；窗口外不再变化，
+   * 不会跟迁移搬迁校验之类后续操作打架——这是吃过一次亏才这样设计的）。
    * 这是失败现场唯一可能反映"继任者自己说了什么"的地方。
    */
   const restartLogPath = join(DATA_DIR, 'logs', 'restart.log');
