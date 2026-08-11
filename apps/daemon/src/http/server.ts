@@ -64,7 +64,11 @@ export interface ServerDeps {
    */
   readonly host: () => string;
   /** 健康检查里暴露的运行时状态（不含任何 secret）。 */
-  readonly status: () => Record<string, unknown>;
+  /**
+   * ⚠️ 可以是 async：`/api/health` 会**按需重算**工具链（#87 修法 A）。
+   * 未 ready 时**不会被调用**（上面直接 503），所以它不在冷启动热路径上。
+   */
+  readonly status: () => Record<string, unknown> | Promise<Record<string, unknown>>;
   /**
    * 触发自我重启。
    *
@@ -190,7 +194,7 @@ async function handleRequest(
     }
     sendJson(res, 200, {
       ...identity,
-      ...deps.status(),
+      ...(await deps.status()),
     });
     return;
   }
@@ -418,7 +422,7 @@ async function handleRequest(
 
   // ---- REST 骨架 ----
   if (path === '/api/daemon/status' && method === 'GET') {
-    sendJson(res, 200, deps.status());
+    sendJson(res, 200, await deps.status());
     return;
   }
 
