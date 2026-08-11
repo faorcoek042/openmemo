@@ -227,12 +227,26 @@ jobs:
           if [ "${{ inputs.assembleFromSource }}" = "true" ]; then
             echo "== 回归门禁模式：用本次 checkout 现组装的界面 =="
             node scripts/ci/e2e-browser-audit.mjs --port 19980 \
+              --undecided-out "e2e-browser-undecided-${{ matrix.label }}.json" \
               ${{ (inputs.diagnoseDownload != '' && matrix.label == 'win32-x64') && format('--diagnose-download {0}', inputs.diagnoseDownload) || '' }}
           else
             echo "== 发布审计模式：对 build-bundles run ${{ steps.pick.outputs.run_id }} 的包 =="
             node scripts/ci/e2e-browser-audit.mjs --port 19980 \
+              --undecided-out "e2e-browser-undecided-${{ matrix.label }}.json" \
               --bundle "${{ steps.extract.outputs.bundle_dir }}"
           fi
+
+      # ★ 覆盖面（undecided 计数）单独一份 artifact，供 attest job 跨平台求和后
+      # 传给 emit-e2e-attestation.mjs --undecided（照抄 e2e-runtime.yml 的同一模式）。
+      # 无条件上传、失败也传——这是展示用的覆盖面统计，不是判定；attest job
+      # 本来就只在 !assembleFromSource 时跑，两种模式下都写文件不影响判定。
+      - name: 留档（覆盖面计数）
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: e2e-browser-undecided-${{ matrix.label }}
+          path: e2e-browser-undecided-${{ matrix.label }}.json
+          if-no-files-found: warn
 
       # 失败时把现场留下来 —— 「点了没反应」这类问题，事后看日志远不如看截图
       - name: 失败时留下截图
@@ -279,17 +293,52 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+    env:
+      # ★ --expect-labels（求和用）与 --platforms（写凭证用）的唯一真源：两处都从
+      #   这一个变量取值，照抄 e2e-runtime.yml 的同一模式（唯一真源止步于哪见那边
+      #   的注释——GitHub Actions 没有现成办法把 `browser` job 的 matrix 标签列表
+      #   自动投影进这里，这里仍是手写的一份字符串，加/删平台要跟上面 matrix 手动同步）。
+      #
+      #   忘了同步不会被静默吞掉：`sum-undecided.mjs` 本来就拿 --expect-labels 跟
+      #   目录里实际下到的文件做双向比对——matrix 多一格而这里没跟着加，多出来的
+      #   文件会被「未预期文件」分支逮住；matrix 少一格而这里没跟着删，会被「缺失」
+      #   分支逮住。两种情况都不是悄悄少算，而是响亮警告 + 收敛成 null，判定不受影响。
+      PLATFORMS: linux-x64,darwin-arm64,win32-x64
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
+
+      # 三个矩阵格各自留的覆盖面计数（e2e-browser-undecided-<label>.json），
+      # merge-multiple 摊平进同一个目录——与 build-backends.yml 的
+      # merge-manifest job 取 fragment、e2e-runtime.yml 的 attest job 是同一个模式。
+      - name: 下载三平台的覆盖面计数
+        uses: actions/download-artifact@v7
+        with:
+          pattern: e2e-browser-undecided-*
+          path: undecided
+          merge-multiple: true
+
+      # 任何一格对不上，sum-undecided.mjs 只会警告 + 把 undecided_flag 收敛成
+      # 空字符串，**不会**让这一步失败——一个纯展示用的覆盖面统计出故障，
+      # 不该连累下面「写凭证」这一步（那一步产出的 artifact 名字才是闸门真正认的信号）。
+      - name: 求和覆盖面计数
+        id: sum
+        run: |
+          node scripts/ci/sum-undecided.mjs \
+            --dir undecided \
+            --expect-labels "$PLATFORMS" \
+            --file-template 'e2e-browser-undecided-{label}.json' \
+            --github-output "$GITHUB_OUTPUT"
+
       - name: 写凭证
         run: |
           node scripts/ci/emit-e2e-attestation.mjs \
             --leg browser \
             --bundle-run "${{ needs.browser.outputs.bundle_run_id }}" \
-            --platforms linux-x64,darwin-arm64,win32-x64 \
+            --platforms "$PLATFORMS" \
+            ${{ steps.sum.outputs.undecided_flag }} \
             --out dist/e2e-attest.json
       - uses: actions/upload-artifact@v6
         with:
