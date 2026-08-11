@@ -659,21 +659,14 @@ export function upstreamKnownVersion(u: UpstreamCheck): string | null {
   }
 }
 
-/** 我们问过的时刻；`never-checked` / `no-upstream` 没有这个时刻，返回 `null`。 */
-export function upstreamCheckedAt(u: UpstreamCheck): string | null {
-  switch (u.kind) {
-    case 'failed':
-    case 'current':
-    case 'newer':
-    case 'indeterminate':
-      return u.checkedAt;
-    case 'never-checked':
-    case 'no-upstream':
-      return null;
-    default:
-      return assertNeverUpstreamCheck(u);
-  }
-}
+/*
+ * ⚠️ 这里原本还有一个 `upstreamCheckedAt(u): string | null`。**删掉了，因为零调用方** ——
+ * CI 的 orphan-exports 门禁把它逮住了，而它说得对：那不是死代码，是**功能只做了一半**。
+ * 真实需求是页面顶部那一句"什么时候查的"，而那一句读的是
+ * `GetComponentsResponse.sweep.at`（一次扫描一个时刻），不是每条组件各自的 `checkedAt`。
+ * 单条组件的 `checkedAt` 今天没有渲染点；真要显示时，直接判 `kind` 取即可 ——
+ * 那正是判别联合的用法，不需要一个绕过 `kind` 的取值器。
+ */
 
 /**
  * 由「上游给的版本」+「我们钉的版本」推出结论。
