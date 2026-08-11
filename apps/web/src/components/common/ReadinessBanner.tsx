@@ -45,7 +45,18 @@ import { worstTone, type StatusTone } from './statusTone';
 interface HealthDegradation {
   db?: { extensions?: { tokenizer?: string; libsimple?: boolean; sqliteVec?: boolean } };
   pipeline?: {
-    missing?: string[];
+    /**
+     * 缺哪些工具。**三态,而且三态各不相同**（#87）:
+     *   · `string[]` —— 查过了,缺这些（空数组 = 齐了）；
+     *   · `null`     —— daemon **明确说"我没能确认"**（UNKNOWN）；
+     *   · `undefined`—— 老 daemon 不发这个字段 ⇒ 我们**什么都不知道,也什么都不说**。
+     *
+     * ⚠️ `null` 与 `undefined` 不许合并:前者是 daemon 主动报告的一次失败,
+     * 必须让用户看见理由；后者只是字段缺席,替它说话就是编。
+     */
+    missing?: string[] | null;
+    /** `missing === null` 时的原因。**这是用户唯一能看到的那句话。** */
+    missingUnknownReason?: string;
     /**
      * `missing` 里**本平台根本没有可下载的包**的那一部分（daemon 侧算好，T-199 ①）。
      * ⚠️ 判据是**目录事实**，不是平台能力推断；⚠️ **不含 `asr-model`**（模型不按平台圈定）。
@@ -157,7 +168,18 @@ export function ReadinessBanner() {
 
   /* ── 2. 后端能力（health 轮询）── */
   const ext = data?.db?.extensions;
-  const missing = data?.pipeline?.missing ?? [];
+  /*
+   * ★ #87 第三态。这里原来是一句 `data?.pipeline?.missing ?? []` ——
+   * 而 daemon 现在会明确发 `missing: null` 表示"我没能确认工具链"。
+   * `?? []` 会把那句话读成**空缺失列表 = 什么都不缺**,于是横幅一言不发:
+   * 理由到得了 API,到不了屏幕。**静默正是这条修复要消灭的东西。**
+   *
+   * ⚠️ 只有**显式的 `null`** 才算 UNKNOWN。`undefined`（老 daemon 不发这个字段）
+   * 仍然走原来的分支、什么都不说 —— 字段缺席不等于 daemon 报告了一次失败。
+   */
+  const missingRaw = data?.pipeline?.missing;
+  const toolchainUnknown = missingRaw === null;
+  const missing = missingRaw ?? [];
   const pendingRestart =
     data?.restartRequired?.required === true ? (data.restartRequired.extensions ?? []) : [];
   const awaits = (n: string) => pendingRestart.includes(n);
@@ -210,6 +232,32 @@ export function ReadinessBanner() {
    */
   const unavailable = data?.pipeline?.unavailableOnPlatform ?? [];
   const installable = missing.filter((m) => !unavailable.includes(m));
+
+  /*
+   * ★★ #87 —— 「我们没能确认工具链」必须**说出来**。
+   *
+   * 这一档与下面两档天然互斥:`missing === null` 时缺失列表读不出任何东西,
+   * 所以 `installable` / `unavailable` 都是空的,不会同屏。
+   *
+   * ⚠️ **没有动作按钮**,理由与"其它平台"那一档同源:此刻我们连缺什么都不知道,
+   * 把人送去 `/runtime` 或 `/models` 是送他去一个我们说不出该做什么的页面。
+   * 用户此刻唯一能做的事是"再看一眼",而那由诊断页那颗「重新检测」负责。
+   *
+   * ⚠️ tone 是 `warning` 不是 `critical`:产品**没有**坏 —— 我们只是没查出来。
+   * 报成 critical 会让一次探测失败长得像一次转写故障。
+   *
+   * ⚠️ 原因原文放 `hint`:它是给排障的人看的技术串（`EACCES` 之类）,
+   * 但**必须出现在屏幕上** —— 一个"因为没能确认所以没开始"的解释,
+   * 少了那半句就又变回"什么都没发生"。
+   */
+  if (toolchainUnknown) {
+    items.push({
+      key: 'toolchain-unknown',
+      tone: 'warning',
+      text: t('readiness.items.toolchainUnknown'),
+      ...(data?.pipeline?.missingUnknownReason ? { hint: data.pipeline.missingUnknownReason } : {}),
+    });
+  }
 
   if (unavailable.length > 0) {
     items.push({

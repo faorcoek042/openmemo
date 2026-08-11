@@ -1058,7 +1058,8 @@
       "tokenizer": "中文分词未启用，中文搜索可能不准",
       "vec": "向量检索未启用，语义搜索暂不可用",
       "pipeline": "还有 {{count}} 个组件没装 —— 首次启动，这是正常的",
-      "pipelineUnavailable": "本平台目前没有可下载的组件包（{{count}} 项）"
+      "pipelineUnavailable": "本平台目前没有可下载的组件包（{{count}} 项）",
+      "toolchainUnknown": "没能确认工具链装齐了没有 —— 在确认之前，新任务不会开始"
     }
   },
   "jobState": {

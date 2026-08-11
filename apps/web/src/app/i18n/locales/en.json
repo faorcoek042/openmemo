@@ -1058,7 +1058,8 @@
       "tokenizer": "Chinese tokenizer not enabled — Chinese search may be inaccurate",
       "vec": "Vector search not enabled — semantic search unavailable",
       "pipeline": "{{count}} component(s) still to install — this is normal on first launch",
-      "pipelineUnavailable": "No downloadable component package for this platform yet ({{count}})"
+      "pipelineUnavailable": "No downloadable component package for this platform yet ({{count}})",
+      "toolchainUnknown": "We could not confirm whether the toolchain is complete — new jobs will not start until we can"
     }
   },
   "jobState": {
