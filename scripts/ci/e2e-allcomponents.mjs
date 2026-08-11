@@ -758,8 +758,17 @@ try {
   await startDaemon('warm');
   await local('/api/auth/session', { method: 'POST', body: {} });
   const h = await local('/api/health');
-  const missing = h.body?.pipeline?.missing ?? [];
-  say(`   pipeline.missing = ${JSON.stringify(missing)}`);
+  /*
+   * ★ #87：`missing` 现在是**三态**。`?? []` 会把 daemon 明确报的
+   * `null`（"我没能确认"）读成空清单 ⇒ 下面那条 `!missing.includes(...)` 恒真 ⇒
+   * **UNKNOWN 被收进"通过"那一档**。而这条腿正是验证链本身 ——
+   * 让验证链把"没查出来"当成"查过了、没问题"，正是这条修复要治的病。
+   * 容忍第三态 ≠ 当成通过：这里把它判**失败**（本脚本的 judge 只有二值）。
+   */
+  const missingRaw = h.body?.pipeline?.missing;
+  const toolchainUnknown = missingRaw === null;
+  const missing = missingRaw ?? [];
+  say(`   pipeline.missing = ${toolchainUnknown ? 'null（没能确认）' : JSON.stringify(missing)}`);
   const sc = await local('/api/selfcheck', { timeoutMs: 120_000 });
   const checks = sc.body?.checks ?? sc.body?.results ?? [];
   const toolChecks = checks.filter((c) => String(c.id).startsWith('tool.'));
@@ -772,10 +781,14 @@ try {
   }
   judge('★ 装完之后流水线缺件清单里不再有刚装的那些工具', {
     ok:
+      !toolchainUnknown &&
       !missing.includes('ffmpeg') &&
       !missing.includes('ffprobe') &&
       !missing.includes('whisper-cli'),
-    reason: `pipeline.missing = ${JSON.stringify(missing)}`,
+    reason: toolchainUnknown
+      ? `pipeline.missing = null —— daemon 没能确认工具链，**这不是"通过"**：` +
+        `${h.body?.pipeline?.missingUnknownReason ?? '（未给原因）'}`
+      : `pipeline.missing = ${JSON.stringify(missing)}`,
   });
   const badTools = toolChecks.filter((c) => c.status === 'fail');
   judge('★ 自检里 tool.* 没有 fail（装上了 ≠ 能用）', {

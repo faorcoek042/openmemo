@@ -936,6 +936,7 @@
     "notFound": "未找到",
     "ready": "就绪",
     "missingItems": "缺少：{{items}}",
+    "toolchainUnknown": "没能确认工具链装齐了没有 —— 这一格不是「正常」，是「没查出来」",
     "scheduler": "任务调度",
     "runningJobs": "{{n}} 个任务进行中",
     "surface": {

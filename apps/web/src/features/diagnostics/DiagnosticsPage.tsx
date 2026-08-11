@@ -64,7 +64,17 @@ interface Health {
     search?: { ok?: boolean; tokenizer?: string };
   };
   pipeline?: {
-    missing?: string[];
+    /**
+     * 缺哪些工具。**三态，三态各不相同**（#87）：
+     *   · `string[]` —— 查过了，缺这些（空数组 = 齐了）；
+     *   · `null`     —— daemon **明确说"我没能确认"**（UNKNOWN）；
+     *   · `undefined`—— 老 daemon 不发这个字段 ⇒ 我们什么都不知道，也什么都不说。
+     *
+     * ⚠️ `null` 与 `undefined` 不许合并，理由见 `ReadinessBanner` 里同一段注释。
+     */
+    missing?: string[] | null;
+    /** `missing === null` 时的原因 —— 诊断页上这一格唯一说得出的话。 */
+    missingUnknownReason?: string;
     ffmpeg?: string | null;
     whisperCli?: string | null;
     /** T-148 —— 切分方式。`fixed` 是降级态：转写仍会完成，但断句变差。 */
@@ -239,7 +249,19 @@ export default function DiagnosticsPage() {
   }
 
   const ext = data.db?.extensions;
-  const missing = data.pipeline?.missing ?? [];
+  /*
+   * ★★ #87 —— **诊断页是第二个读者，而它这里比横幅更危险。**
+   *
+   * 原来是 `data.pipeline?.missing ?? []`，下面那一格再判 `missing.length === 0 ? 'ok' : 'fail'`
+   * ⇒ **UNKNOWN 会被渲染成绿色的「正常」**。一个"我们没能确认"被显示成"查过了、没问题"，
+   * 发生在**排障页**上 —— 用户来这一页正是为了弄清楚哪里坏了，
+   * 而这一页会告诉他一切正常。这比横幅少说一句话严重。
+   *
+   * ⚠️ 只有**显式的 `null`** 才算 UNKNOWN；`undefined`（老 daemon）走原来的分支。
+   */
+  const missingRaw = data.pipeline?.missing;
+  const toolchainUnknown = missingRaw === null;
+  const missing = missingRaw ?? [];
 
   const groups: { title: string; rows: Row[] }[] = [
     {
@@ -305,13 +327,23 @@ export default function DiagnosticsPage() {
         },
         {
           label: t('diagnostics.asrEngine'),
-          level: missing.length === 0 ? 'ok' : 'fail',
-          detail:
-            missing.length === 0
+          /*
+           * 三档：不知道 = `warn`（**不是 `ok`**，也不是 `fail` —— 产品没坏，是我们没查出来）。
+           * 报成 `ok` 就是在排障页上说一句我们没有依据的话；
+           * 报成 `fail` 又会把一次探测失败说成一次功能故障。
+           */
+          level: toolchainUnknown ? 'warn' : missing.length === 0 ? 'ok' : 'fail',
+          detail: toolchainUnknown
+            ? (data.pipeline?.missingUnknownReason ?? t('diagnostics.toolchainUnknown'))
+            : missing.length === 0
               ? (data.pipeline?.whisperCli ?? t('diagnostics.ready'))
               : t('diagnostics.missingItems', { items: missing.join(', ') }),
           probe: 'presence',
-          ...(missing.length > 0
+          /*
+           * UNKNOWN 时**不给「去修复」**：此刻我们连缺什么都不知道，
+           * 按钮只能把人送到一个我们说不出该做什么的页面（与横幅那一档同源）。
+           */
+          ...(!toolchainUnknown && missing.length > 0
             ? {
                 action: {
                   label: t('health.fix'),

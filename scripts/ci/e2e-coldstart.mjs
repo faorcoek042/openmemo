@@ -395,10 +395,19 @@ try {
   const health = await http('/api/health');
   dump('GET /api/health', health.body, 2000);
 
-  const missingAtBoot = health.body?.pipeline?.missing ?? [];
+  /*
+   * ★ #87：三态。`?? []` 会把"没能确认"读成"什么都不缺" —— 在**冷启动这条腿**上
+   * 那尤其糟：冷启动正是最可能解析失败的时刻，而这里一旦读成空清单，
+   * 下面每一条基于它的断言都会以为自己验过了。
+   */
+  const missingRawBoot = health.body?.pipeline?.missing;
+  const bootToolchainUnknown = missingRawBoot === null;
+  const missingAtBoot = missingRawBoot ?? [];
   observe(
     '首屏「缺少工具」清单',
-    `pipeline.missing = ${JSON.stringify(missingAtBoot)}（这就是用户看到的第一句话的来源）`,
+    bootToolchainUnknown
+      ? `pipeline.missing = null —— daemon 没能确认工具链（${health.body?.pipeline?.missingUnknownReason ?? '未给原因'}）`
+      : `pipeline.missing = ${JSON.stringify(missingAtBoot)}（这就是用户看到的第一句话的来源）`,
   );
 
   const sc = await http('/api/selfcheck');
@@ -538,12 +547,17 @@ try {
    *   真正的判据是下面那条：**whisper-cli 必须来自包内，不许还要用户去装**。
    */
   const h1b = await http('/api/health');
-  const missing1b = h1b.body?.pipeline?.missing ?? [];
+  const missing1bRaw = h1b.body?.pipeline?.missing;
+  const unknown1b = missing1bRaw === null;
+  const missing1b = missing1bRaw ?? [];
   judge('★ 引擎已在盒子里：什么都不装时，缺件清单里**不再有 whisper-cli**', {
-    ok: !missing1b.includes('whisper-cli'),
-    reason:
-      `什么都没装时 pipeline.missing = ${JSON.stringify(missing1b)}` +
-      `（转写 job 终态：${coldChain}）`,
+    // ★ 没能确认 ⇒ **不算通过**（容忍第三态 ≠ 把它收进 OK 那一档）
+    ok: !unknown1b && !missing1b.includes('whisper-cli'),
+    reason: unknown1b
+      ? `pipeline.missing = null —— 没能确认工具链，这条断言无法成立：` +
+        `${h1b.body?.pipeline?.missingUnknownReason ?? '（未给原因）'}`
+      : `什么都没装时 pipeline.missing = ${JSON.stringify(missing1b)}` +
+        `（转写 job 终态：${coldChain}）`,
   });
 
   /* ── 2. 探测 → 推荐 → 安装：走用户会走的那条路 ── */
