@@ -936,6 +936,7 @@
     "notFound": "not found",
     "ready": "ready",
     "missingItems": "missing: {{items}}",
+    "toolchainUnknown": "Could not confirm whether the toolchain is complete — this is not \"OK\", it is \"could not check\"",
     "scheduler": "Scheduler",
     "runningJobs": "{{n}} job(s) running",
     "surface": {
