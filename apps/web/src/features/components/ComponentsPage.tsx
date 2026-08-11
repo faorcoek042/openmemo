@@ -198,10 +198,13 @@ export default function ComponentsPage() {
         ★ 判据从 `data?.checkedAt && !data.online` 换成 `sweep` 这一个字段：
           原来那两个字段拼出的第三态（"查过了" ∧ "没人答"）现在是
           `kind === 'attempted' && reached === 0`，一处读完，没有第二处要保持一致。
-        ★ `[实测 2026-08-11]` 这条横幅**今天在真 daemon 上就该亮**：
-          `GET :10000/api/components?check=1` → 27 条**全部** `timed out after 8000ms`，
-          问到 0 个。成因是并发数 —— 27 个查询同时打 GitHub，而单次往返本机实测 1.3–2.6s，
-          daemon 的超时是 8s。查询去重（27 → 9）之后实测 9/9 全答上、总耗时 2.6s。
+        ★ `[实测 2026-08-11]` 这条横幅**真的会亮**：那天 `GET :10000/api/components?check=1`
+          → 27 条**全部** `timed out after 8000ms`，问到 0 个。
+          ⚠️ 但**成因不是并发数**（我一开始是这么写的，后来被自己的复测证伪）：
+          同样 27 并发、同样 8s 超时复现一次，是 26/27 拿到 200、0 超时、总耗时 2.4s。
+          那次是**网络瞬态**（同一刻单发一个请求就要 7.35s）。
+          这条横幅要处理的正是这种情形 —— 它不需要知道为什么问不到，只需要说清
+          「问到 0 个」**不等于**「都最新」。
       */}
       {sweep?.kind === 'attempted' && sweep.reached === 0 ? (
         <Banner

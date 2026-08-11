@@ -308,11 +308,14 @@ function newestByScheme(tags: readonly string[]): Partial<Record<VersionScheme, 
  * 这不是"省事"，是**能不能拿到答案**的区别：
  *   · 限额：GitHub 匿名 60 次/小时/IP。27 次一扫，**两次刷新就见底**；9 次一扫，
  *     一小时能扫 6 次。
- *   · 延迟：`[实测 2026-08-11，本机]` 单次 GitHub API 往返 ~1.3–2.6s；
- *     **9 个查询并发全部答上，总耗时 2.6s**；而同一时刻的真 daemon
- *     （27 个并发、8s 超时）实测 **27/27 全是 `timed out after 8000ms`，0 个答上**
- *     （`GET http://127.0.0.1:10000/api/components?check=1`）。
- *     并发数本身就是失败原因 —— 去重把它从 27 降到 9。
+ *
+ * ⚠️ **理由只有配额这一条，别再往上加"更快"。**
+ * 这段注释原来还写着「27 并发本身就是失败原因」，证据是 `GET :10000/api/components?check=1`
+ * 实测 27/27 `timed out after 8000ms`。**那个因果推断后来被我自己的复测证伪了**：
+ * 同样 27 个并发、同样 8s 超时、同样这台机器，直接复现一次是
+ * **26/27 拿到 200、0 个超时、0 个 403/429、总耗时 2.4s**。
+ * 也就是说那次全超时是**当时的网络瞬态**（同一刻单发一个请求就要 7.35s，本身已逼近 8s 超时），
+ * 不是并发数。去重**不会**让慢网络变快，只会让配额少烧 —— 只认后者。
  */
 export async function checkAllUpstreams(
   sources: { id: string; upstream: UpstreamSource | null }[],
