@@ -791,10 +791,19 @@ try {
       : `pipeline.missing = ${JSON.stringify(missing)}`,
   });
   const badTools = toolChecks.filter((c) => c.status === 'fail');
+  /*
+   * ★ 空集守卫，与冷启动那条同形：没有 tool.* 时 `badTools.length === 0` 恒真 ⇒ 判通过，
+   * 理由打印「**0 项 tool.* 全部非 fail**」。那个 `0` 确实漏在理由里、细心的读者能抓到，
+   * **但一条断言不该靠读者细心** —— 它该自己红。
+   * 自检正常时必然有 5 项 `tool.*`，所以 0 项 = 没拿到，不是"都好"。
+   */
+  const toolChecksUsable = sc.status === 200 && toolChecks.length > 0;
   judge('★ 自检里 tool.* 没有 fail（装上了 ≠ 能用）', {
-    ok: badTools.length === 0,
-    reason:
-      badTools.length === 0
+    ok: toolChecksUsable && badTools.length === 0,
+    reason: !toolChecksUsable
+      ? `拿不到 tool.* 自检项（HTTP ${sc.status}，共 ${checks.length} 项、tool.* ${toolChecks.length} 项）` +
+        ` —— **这不是"全部非 fail"，是"没检查成"**`
+      : badTools.length === 0
         ? `${toolChecks.length} 项 tool.* 全部非 fail`
         : badTools.map((c) => `${c.id}: ${String(c.detail ?? '').slice(0, 80)}`).join('；'),
   });
