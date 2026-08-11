@@ -1501,20 +1501,15 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         : '[daemon][stop] server.close() 之前没有活动连接',
     );
     /*
-     * ★★ 逐秒活性观测（Manager 2026-08-11 第二次裁决）：只看，不许靠它去"解决"
-     * 卡住——不调大窗口、不 closeAllConnections()，先让它说话。
+     * ★★ 逐秒活性观测（Manager 2026-08-11 第二次裁决，仍然保留）：
      *
-     * 每秒记一次"还剩哪些连接、这一秒里有没有收到新请求"。如果幸存连接是被
-     * 反复进来的新请求续命（审计脚本或前端在 daemon 重启期间还在轮询），
-     * 这里能直接看见；如果它纹丝不动地空闲挂着，这里也会如实显示"否"。
-     * 这是给"server.close() 在等一个被轮询续命、永远不会自然结束的连接"
-     * 这个假设配的证据，不预设它成立。
-     *
-     * 上限 55 个 tick（55s）自行停表——卡在 5s 内主要是对齐前任侧
-     * `restart-predecessor.log` 的 60s 抄写窗口（见 restart() 里那次
-     * captureConsoleToFile 调用）：超过窗口这些行已经没人接、写不进那份
-     * 落盘的账本，纯属噪音，没必要再打。不代表 server.close() 本身有任何
-     * 超时——55s 到了它照样继续等，只是这道观测自己先闭嘴。
+     * 每秒记一次"还剩哪些连接、这一秒里有没有收到新请求"。#77 finding① 真实
+     * 派发（run 31498002020, win32）已经拿到定论性的数据：55/55 个 tick 全是
+     * "有新请求"——幸存连接是 `scripts/ci/e2e-runtime-audit.mjs` 的
+     * `waitHealth()`（500ms 轮询 `/api/health`），不是空闲 keep-alive 没回收。
+     * 这道观测继续留着——下面新加的强制关闭理应让它再也走不到 20+ 秒，
+     * 但万一某天又有别的连接用别的方式把 server.close() 卡住，这里还能
+     * 立刻说清楚是谁、有没有新请求——不该只在这次调查时才有。
      */
     const lastRequestSeenAt = new Map<string, number>();
     for (const [label, info] of activeConnections) lastRequestSeenAt.set(label, info.lastRequestAt);
@@ -1548,7 +1543,60 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         clearInterval(closeWatch);
       }
     }, 1000).unref();
+    /*
+     * ★★ 修法 (A)（Manager 2026-08-11 第三次裁决，#77 finding①）：给
+     * server.close() 的等待设上界，到点用 server.closeAllConnections()
+     * （Node ≥18.2）强制收尾。
+     *
+     * 因果链已经用真实数据钉死（run 31498002020，win32）：`waitHealth()`
+     * 每 500ms 轮询一次 `/api/health`，把同一条 keep-alive 连接的空闲计时器
+     * 连续清零——它永远攒不够 `keepAliveTimeout`（5000ms）的空闲时间，
+     * Node 自己那道"空闲连接自动回收"永远不会触发，而 `server.close()`
+     * 只等**自然结束**、不主动断连接，于是死等。
+     *
+     * **不管挂着的是谁**，daemon 因为某个客户端一直在正常轮询就永远关不掉
+     * 自己，这本身就是缺陷——重启不该被任何一个客户端的访问模式挟持。
+     * 之前不许用 `closeAllConnections()` 是因为不知道挂着的是谁、怕把现象
+     * 一并消灭；现在知道了，禁令解除。
+     *
+     * ## 宽限期为什么是 keepAliveTimeout + 2000ms，不是随手填的数
+     *
+     * · **先让 Node 自己的空闲回收有机会先动手**——宽限期不短于
+     *   `keepAliveTimeout` 本身，这样"真正空闲、只是还没被回收"的连接
+     *   （非病理情况）走的还是 Node 原生的正常路径，不会被我们抢在前面
+     *   粗暴打断。
+     * · **再加 2000ms 固定余量**——给调度抖动、以及"宽限期临界点前一刻
+     *   刚好有个正常请求还没写完响应"这种情况留一点让它自然收尾的空间，
+     *   不是掐着 keepAliveTimeout 那一刻就精确开枪。
+     * · **总量对 15s 接班窗口够克制**：`server.keepAliveTimeout` 现在是
+     *   5000ms（Node 默认，没配过），宽限期算下来 7000ms，stop() 其余
+     *   几步都是毫秒级，留给继任者 `pidAlive()` 轮询、本进程真正
+     *   `process.exit(0)`、OS 回收端口这些收尾的余量还有 7s+——不是卡线过关。
+     *   `server.keepAliveTimeout` 万一将来被显式调大，这个算式跟着它走，
+     *   不会因为写死了 7000 这个字面量而脱节。
+     *
+     * ⚠️ 仍然不许靠调大 Windows 那 15s 窗口"解决"——那是给症状让路，
+     * 这里改的是 daemon 自己该有的性质：关闭不该被无限期挟持。
+     */
+    const graceMs = server.keepAliveTimeout + 2_000;
+    let closedNaturally = false;
+    const forceCloseTimer = setTimeout(() => {
+      if (closedNaturally) return;
+      const remaining = activeConnections.size;
+      console.log(
+        `[daemon][stop] server.close() 等了 ${graceMs}ms 仍有 ${remaining} 条连接没自然结束，` +
+          `强制关闭（server.closeAllConnections()）：` +
+          (remaining > 0
+            ? [...activeConnections.entries()]
+                .map(([label, info]) => `${label}(path=${info.lastPath}, ua=${info.lastUserAgent})`)
+                .join(', ')
+            : '（清单已空，等的是 close 回调本身）'),
+      );
+      server.closeAllConnections();
+    }, graceMs).unref();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    closedNaturally = true;
+    clearTimeout(forceCloseTimer);
     clearInterval(closeWatch);
     mark('server.close');
     try {
