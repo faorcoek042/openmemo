@@ -1477,6 +1477,65 @@ describe('重跑保留编辑（换回「已保留」）', () => {
     assert.equal(btn.disabled, false, '老响应不带这个键，不能把功能藏起来');
     r.unmount();
   });
+
+  /*
+   * ★★ #95：变灰时显示的必须是 **daemon 给的那条真实原因**，不是写死的那句。
+   *
+   * 上面那条用例（`canRetranscribe={false}` 不带理由）钉的是**回落**那一档，
+   * 这一条钉的是主档。两条都要在：
+   * 只有回落 → 源文件读不到时会显示「没有记录原始输入」，那是**一句新的谎**
+   *（明明记录了，只是打不开），而且会把人往"只能重新导入"指，
+   * 实际多半只是文件被删 / 外置盘没挂，接回去就好。
+   */
+  test('★ retranscribeBlocked 有值时，tooltip 用 daemon 的真实原因而不是写死那句', async () => {
+    stubApi({});
+    const r = await render(
+      <RetranscribeButton
+        noteUid="n1"
+        segments={[]}
+        currentLanguage="zh"
+        canRetranscribe={false}
+        retranscribeBlocked={{
+          code: 'SOURCE_UNREADABLE',
+          message: 'the recorded source input can no longer be read',
+          messageZh: '记录的原始输入已经读不到了：/tmp/omdemo/jfk.wav',
+          tried: ['/data/media/jfk.wav', '/data/jfk.wav'],
+        }}
+      />,
+    );
+    const btn = r.container.querySelector('[data-testid="retranscribe-open"]') as HTMLButtonElement;
+    const title = btn.getAttribute('title') ?? '';
+    assert.equal(btn.disabled, true);
+    assert.ok(title.includes('/tmp/omdemo/jfk.wav'), 'daemon 说的那个路径要在里面');
+    assert.ok(!title.includes('没有记录原始输入'), '这条笔记**记录了**原始输入，不许再说那句话');
+    // 找过的位置必须列出来：否则用户分不清"文件没了"和"我们找错了地方"（T-136 那一课）
+    assert.ok(title.includes('/data/media/jfk.wav'), 'tried 要列出来供用户核对');
+    assert.ok(title.includes('/data/jfk.wav'));
+    r.unmount();
+  });
+
+  test('retranscribeBlocked.tried 为空时不渲染空的「找过这些位置」', async () => {
+    stubApi({});
+    const r = await render(
+      <RetranscribeButton
+        noteUid="n1"
+        segments={[]}
+        currentLanguage="zh"
+        canRetranscribe={false}
+        retranscribeBlocked={{
+          code: 'NO_SOURCE_INPUT',
+          message: 'this note has no recorded source input',
+          messageZh: '这条笔记没有记录原始输入，无法重跑。',
+          tried: [],
+        }}
+      />,
+    );
+    const btn = r.container.querySelector('[data-testid="retranscribe-open"]') as HTMLButtonElement;
+    const title = btn.getAttribute('title') ?? '';
+    assert.ok(title.includes('没有记录原始输入'));
+    assert.ok(!title.includes('找过这些位置'), '一个位置都没找过时，别摆一个空标题');
+    r.unmount();
+  });
 });
 
 /* ──────────── 零宽词：每段第一个词永远不亮（T-086 ①） ──────────── */

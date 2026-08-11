@@ -28,6 +28,7 @@ import {
 import { extractPlainText } from '../../db/richText.js';
 import type { Repos } from '../../db/repos.js';
 import type { JobQueue } from '../../jobs/queue.js';
+import { resolveRetranscribeSource } from '../../media/retranscribeSource.js';
 import { readJsonBody, sendError, sendJson } from '../respond.js';
 import type { SseHub } from '../sse.js';
 
@@ -37,6 +38,12 @@ export interface ContentRoutesDeps {
   readonly mindmaps: MindMapRepo;
   readonly queue: JobQueue;
   readonly sse: SseHub;
+  /**
+   * 数据目录 —— 只给重跑判据用（`resolveRetranscribeSource`，#95）。
+   * 与 `rest/notes.ts` 那边**必须是同一个值**，否则"事前禁用"和"事后拒绝"
+   * 会在不同的根里找文件，给出互相矛盾的诊断。
+   */
+  readonly dataDir: string;
 }
 
 const NOTE_RE = /^\/api\/notes\/([0-9A-HJKMNP-TV-Z]{26})\/(mindmap|export)$/;
@@ -253,15 +260,25 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
           sendError(res, 404, 'NOTE_NOT_FOUND', 'no such note', '笔记不存在');
           return true;
         }
-        const src = repos.primarySourceOf(note.id);
-        if (!src?.input_url) {
-          sendError(
-            res,
-            409,
-            'NO_SOURCE_INPUT',
-            'note has no recorded source input',
-            '这条笔记没有记录原始输入，无法重跑',
-          );
+        /*
+         * ★ 与 `GET /api/notes/:uid` 的 `canRetranscribe` **同一个判据**（#95）。
+         *
+         * 这里原来只判 `input_url` 非空，与详情接口那一行是**各写一遍的同一条规则** ——
+         * 而"事前禁用"和"事后拒绝"一旦分叉，用户就会拿到两个互相矛盾的说法。
+         * 现在两边都调 `resolveRetranscribeSource`：它要么给出**已经核验过打得开**
+         * 的那个路径（`input_url` 本身，或退回本笔记的 `role='original'` 归档原件），
+         * 要么给出一句能直接展示的原因。
+         *
+         * ⚠️ 链接类来源（`from === 'url'`）走的是"未核验放行"那一档 ——
+         * 这里**不做网络探测**，所以它照旧可能在 fetch 阶段失败。那是如实的未知，
+         * 不是我们声称验证过（见 `retranscribeSource.ts` 文件头）。
+         */
+        const source = await resolveRetranscribeSource({ repos, dataDir: deps.dataDir }, note.id);
+        if (!source.ok) {
+          sendError(res, 409, source.code, source.message, source.messageZh, {
+            // 找过的每个位置一起给 —— 只报"读不到"时用户无从判断是文件没了还是我们找错地方
+            details: { tried: source.tried },
+          });
           return true;
         }
         const body = (await readJsonBody(req)) as
@@ -278,11 +295,23 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
         /*
          * ★ 必须带上**上一份稿的 id**，否则重跑会整篇覆盖、用户的编辑被静默抹掉。
          *
-         * 两阶段合并（`mergeTranscripts`）只在 `mergeWithTranscriptId` 有值时才跑，
-         * 而在此之前**全仓只有录音会话传它**，REST 这条重跑通道不传 ——
-         * 于是"编辑过的段落在重跑后保留"这条被实测验证过的规则，
-         * **在产品主路径上根本不成立**。用户改过的字，重跑一次就没了，且没有任何提示。
-         * 这是"验证过但走不到"的又一例，而这次的代价是用户数据。
+         * ─── 这段注释曾经说的是反话，现在把事实和历史都留下（#96 ①）───────────────
+         * 它原文是「全仓只有录音会话传 `mergeWithTranscriptId`，REST 这条重跑通道**不传**
+         * …… 用户改过的字，重跑一次就没了」—— 而**紧接着下面第一行 payload 就在传**。
+         * 也就是说：洞已经被堵上了，警报文案没跟着改，于是这段注释本身变成了
+         * 「描述了不存在事实的文档」，正是本仓最贵的那一类。
+         *
+         * **删说法不删事实**，所以两句都写清楚：
+         *   · 曾经为真：`mergeWithTranscriptId` 一度只有 `ws/recorder.ts` 传，
+         *     REST 重跑不传 → 两阶段合并（`mergeTranscripts`）不跑 → 整篇覆盖，
+         *     用户编辑过的段落被静默抹掉，且没有任何提示。
+         *   · 现在不成立：下面 `...(previous ? { mergeWithTranscriptId: previous.id } : {})`
+         *     真的在传，runner 侧的合并入口也接上了（`runners/transcribe.ts` 里
+         *     `payload.mergeWithTranscriptId !== undefined && !== transcript.id` 那一段）。
+         *     前端 `RetranscribeButton` 因此显示的是「已保留你编辑过的 N 段」而不是
+         *     「会被覆盖」。
+         *
+         * ⚠️ 所以这一行**不是可有可无的优化**：删掉它，上面那段"曾经为真"会立刻回来。
          */
         const previous = repos.activeTranscriptOfNote(note.id);
 
@@ -293,14 +322,20 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
           noteId: note.id,
           payload: {
             noteId: note.id,
-            input: src.input_url,
+            /*
+             * ★ 喂给 runner 的是**已经核验过打得开**的那个路径，不再是 `input_url` 原文。
+             * 两者在正常情况下逐字节相同；不同的唯一情形是 `input_url` 已经失效而
+             * 本笔记的归档原件还在（搬过家的库就是这个形态）—— 那种时候用归档原件
+             * 是**唯一**能让用户真的重跑成功的做法，否则只能告诉他"这条永远不能重跑了"。
+             */
+            input: source.input,
             language,
             ...(previous ? { mergeWithTranscriptId: previous.id } : {}),
             // 重新转写是"上次结果不对"的补救通道，用户往往正是要换引擎/模型/加 prompt
             engineId: typeof body?.engineId === 'string' ? body.engineId : null,
             modelId: typeof body?.modelId === 'string' ? body.modelId : null,
             prompt: typeof body?.prompt === 'string' ? body.prompt : null,
-            sourceKind: src.kind,
+            sourceKind: source.sourceKind,
           },
         });
         repos.updateNote(note.id, { status: 'processing' });

@@ -80,6 +80,18 @@ async function makeNote(name: string): Promise<Fixture> {
 
   const repos = new Repos(d.database.db);
   const note = repos.createNote({ title: '一节课的录音', kind: 'media', language: 'zh' });
+  /*
+   * ★ #95：`src.wav` **必须真的写到盘上**。
+   *
+   * 这个夹具原来只往 `media_sources.input_url` 里写了一个路径，**从不创建那个文件** ——
+   * 而当时的 `canRetranscribe` 判据是"这一列非空"，所以它照样报 `true`。
+   * 也就是说：夹具描述的是一条**在真实环境里根本重跑不了**的笔记，而契约测试
+   * 替它背了书。判据改成"真的去解析一次"之后，这条夹具当场暴露（`false`）。
+   *
+   * 修法是**把夹具改真**，不是把断言放松：它自称 `kind:'local'` 的本地导入，
+   * 那就该有那个文件。放松断言等于把刚拆掉的那句谎话重新装回去。
+   */
+  writeFileSync(join(dataDir, 'src.wav'), Buffer.from('RIFFxxxxWAVEfixture'));
   repos.createSource({
     noteId: note.id,
     kind: 'local',
@@ -345,6 +357,9 @@ describe('T-139 —— 这个端点整体（E1：此前一次都没被执行过�
         'transcriptUid',
         'segmentCount',
         'canRetranscribe',
+        // #95：变灰的**理由**与"能不能重跑"是一对。少了它，按钮变灰时只能显示
+        // 那句写死的「没有记录原始输入」—— 而 daemon 判 false 的原因已经不止一种。
+        'retranscribeBlocked',
         'createdAt',
       ]) {
         assert.equal(Object.prototype.hasOwnProperty.call(body, key), true, `响应里少了 ${key}`);
@@ -526,6 +541,19 @@ describe('T-142 并入 —— 详情端点上另外几条"坏了不会报错"的
         unknown
       >;
       assert.equal(typeof body['canRetranscribe'], 'boolean');
+      /*
+       * ★ #95：两个字段是**一对**，契约规定「能重跑 ⇔ 理由为 null」。
+       *
+       * 单验各自的类型挡不住最要命的那种分叉：`canRetranscribe:false` 配 `null` 理由
+       * ——那就是一颗**无声变灰**的按钮，与修复前"亮着但必死"是同一种不诚实。
+       * 这条笔记的源文件是真的（`makeNote` 造的），所以这里走的是 ok 那一档。
+       */
+      assert.equal(body['canRetranscribe'], true, '夹具的源文件是真的，应当判可重跑');
+      assert.equal(
+        body['retranscribeBlocked'],
+        null,
+        '能重跑时理由必须是 null —— 发一个"空的原因对象"会让消费方以为有话要说',
+      );
       assert.equal(
         typeof body['createdAt'] === 'string' &&
           !Number.isNaN(Date.parse(body['createdAt'] as string)),

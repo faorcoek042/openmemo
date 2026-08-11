@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next';
 import { RefreshCw } from 'lucide-react';
 
 import { api, ApiError } from '../../lib/api/client';
+import type { RetranscribeBlocked } from '../../lib/api/types';
+import { pickLocalized } from '../../lib/format/localized';
 import { qk } from '../../app/query';
 import { Button } from '../../components/common/Button';
 import { Banner } from '../../components/common/Banner';
@@ -56,21 +58,38 @@ export function RetranscribeButton({
   segments,
   currentLanguage,
   canRetranscribe,
+  retranscribeBlocked,
 }: {
   noteUid: string;
   segments: readonly (Partial<TranscriptSegmentDto> & { edited?: boolean })[];
   currentLanguage: string | null;
   /**
-   * 来自 `NoteDetail.canRetranscribe`（daemon 按 `input_url` 非空判定）。
+   * 来自 `NoteDetail.canRetranscribe`。
    *
-   * 之前没有这个字段，前端无从判断，只能让 409 事后暴露。现在能**事前**禁用了 ——
-   * 但 `undefined` 要当成"可以"：老响应里没有这个键，
+   * ⚠️ **daemon 侧的判据已经换过（#95）**：它不再是"`input_url` 非空"，而是真的去
+   * 解析一次（打不开就退回本笔记的归档原件，两档都落空才 `false`）。这里不需要跟着改
+   * 逻辑，但要知道 `false` 的**原因不止一种**了 —— 所以下面那个 prop 是必需的。
+   *
+   * `undefined` 要当成"可以"：老响应里没有这个键，
    * 把"字段缺失"读成"不能重跑"会把功能对所有旧数据藏起来。
    * 宁可点下去吃一个说人话的 409，也不要静默隐藏一个本来能用的入口。
    */
   canRetranscribe?: boolean;
+  /**
+   * 来自 `NoteDetail.retranscribeBlocked` —— 不能重跑时**为什么**（#95）。
+   *
+   * 有它，"变灰"才是一个诚实的状态。在此之前禁用时显示的是一句**写死的**
+   * 「这条笔记没有记录原始输入」，而 daemon 判 `false` 的原因已经不止这一种：
+   * 源文件读不到（数据目录搬过家、文件被删、外置盘没挂）时照旧显示那句话，
+   * 就是**一句新的谎** —— 明明记录了原始输入，只是那个位置现在打不开，
+   * 而这两种情况的处置完全不同（前者只能重新导入，后者把文件接回去就好）。
+   *
+   * 所以理由必须由 daemon 给：**只有它知道找过哪些位置**。
+   * 字段缺失（老响应）时回落到那句通用文案 —— 与 `canRetranscribe` 同一条约定。
+   */
+  retranscribeBlocked?: RetranscribeBlocked | null;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   // 默认填**当前转写稿实际用的语言**，而不是 auto：
@@ -104,6 +123,30 @@ export function RetranscribeButton({
    */
   const noSource = run.error instanceof ApiError && run.error.code === 'NO_SOURCE_INPUT';
 
+  /*
+   * 禁用的控件必须自己解释为什么，否则用户只会以为坏了 —— 这条规矩本来就在。
+   * 变的是**那句解释从哪来**：优先用 daemon 给的真实原因，没有才回落到通用文案。
+   *
+   * 回落那一档不是可有可无：老 daemon 的响应真的没有 `retranscribeBlocked`，
+   * 而"没有原因字段"绝不能渲染成一个空 tooltip（那就退回成无声变灰了）。
+   *
+   * `tried` 一起拼进去：只说"读不到"时，用户无从判断到底是文件没了还是我们找错了
+   * 地方 —— 把找过的位置列出来，他照着就能自己确认一遍。
+   */
+  const blockedReason = ((): string => {
+    if (canRetranscribe !== false) return '';
+    if (!retranscribeBlocked) return t('detail.retranscribe.noSource');
+    const head = pickLocalized(
+      i18n.language,
+      retranscribeBlocked.messageZh,
+      retranscribeBlocked.message,
+    );
+    const tried = retranscribeBlocked.tried;
+    return tried.length > 0
+      ? `${head}\n${t('detail.retranscribe.triedPaths')}\n${tried.join('\n')}`
+      : head;
+  })();
+
   return (
     <div className="relative">
       <Button
@@ -112,8 +155,7 @@ export function RetranscribeButton({
         className="h-6 px-1.5 text-xs"
         data-testid="retranscribe-open"
         disabled={canRetranscribe === false}
-        // 禁用的控件必须自己解释为什么，否则用户只会以为坏了
-        title={canRetranscribe === false ? t('detail.retranscribe.noSource') : ''}
+        title={blockedReason}
         onClick={() => setOpen((v) => !v)}
       >
         <RefreshCw className="size-3.5" aria-hidden />

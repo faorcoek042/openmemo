@@ -30,6 +30,7 @@ import type {
   NoteKind as NoteKindContract,
   NoteListItem,
   NoteStatus as NoteStatusContract,
+  RetranscribeBlocked as RetranscribeBlockedContract,
 } from '@openmemo/shared';
 
 import type { TranscriptSegmentDto } from '../events/types';
@@ -84,6 +85,14 @@ export type NoteSummary = NoteListItem;
  * 现在它是 `@openmemo/shared` 的 `NoteDetail`：读一个 daemon 不发的字段 = 编译错误。
  */
 export type NoteDetail = NoteDetailContract;
+
+/**
+ * 「为什么不能重跑」—— 同样直接取自共享契约（#95）。
+ *
+ * 独立导出是给 `RetranscribeButton` 用的：组件只吃这一个字段，不该为了标注一个 prop
+ * 去 import 整个 `NoteDetail`（那会让它看起来依赖了整条详情响应）。
+ */
+export type RetranscribeBlocked = RetranscribeBlockedContract;
 
 /**
  * 一条媒体资产 —— 同样直接取自共享契约（`shared` 的 `NoteAsset`）。

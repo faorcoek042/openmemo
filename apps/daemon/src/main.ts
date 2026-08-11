@@ -1205,8 +1205,23 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
           paths.dataDir,
           ...(process.env['OPENMEMO_IMPORT_ROOTS'] ?? '').split(delimiter).filter(Boolean),
         ],
+        /*
+         * 重跑判据要的根（#95）—— **只能是 `paths.dataDir`，不能用 `importRoots`**。
+         * 它判的是"runner 待会儿真读得到吗"，而 runner 那边的 `LocalFileSource`
+         * 认的正是 `allowedRoot = paths.dataDir`（`pipeline/setup.ts`）。
+         * 用 `importRoots` 会把一批**导得进、却重跑不了**的笔记判成可重跑。
+         */
+        dataDir: paths.dataDir,
       }),
-      createContentRoutes({ db: database.db, repos, mindmaps, queue, sse }),
+      createContentRoutes({
+        db: database.db,
+        repos,
+        mindmaps,
+        queue,
+        sse,
+        // 与上面 createNoteRoutes 的 dataDir 必须同一个值（事前禁用与事后拒绝同源）
+        dataDir: paths.dataDir,
+      }),
       // 数据目录：定义 / 修改 / 移动（路径名与 architect 的设置页对齐）
       createStorageRoutes({
         paths,

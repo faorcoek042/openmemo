@@ -248,6 +248,12 @@ function seedNote(partial: Partial<MockNote> & { title: string }): MockNote {
     transcriptUid: partial.transcriptUid ?? null,
     segmentCount: partial.segmentCount ?? 0,
     canRetranscribe: partial.canRetranscribe ?? true,
+    /*
+     * 默认 `null` 与 `canRetranscribe: true` 是**一对**（#95）：契约规定"能重跑 ⇔ 理由为
+     * null"。mock 默认造的是"能重跑"那一档，所以这里只能是 null ——
+     * 给个非空理由会造出一个契约上不存在的状态，而 mock 的全部价值就是形状与真响应一致。
+     */
+    retranscribeBlocked: partial.retranscribeBlocked ?? null,
   };
   notes.set(uid, note);
   return note;
