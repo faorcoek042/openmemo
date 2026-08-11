@@ -16,6 +16,7 @@ import type {
   GetComponentsResponse,
   UpdateComponentRequest,
 } from '@openmemo/shared';
+import { componentsQueryString } from '@openmemo/shared';
 
 import { api } from '../../lib/api/client';
 import { qk, STALE_TIME_OVERRIDES } from '../../app/query';
@@ -25,11 +26,24 @@ import { qk, STALE_TIME_OVERRIDES } from '../../app/query';
  *
  * `check=false` 时**完全不查上游** —— 纯本地数据，断网也能看清单、看来源、装组件。
  * 版本检测是锦上添花，绝不能成为前置条件。
+ *
+ * ★★ query string 由 `@openmemo/shared` 的 `componentsQueryString()` 拼，
+ * **这里不许再手写 `?check=…`**。
+ * `[实测 2026-08-11]` 这一行原来手写的是 `?check=true`，而真 daemon 认的是 `'1'`
+ * （`apps/daemon/src/http/rest/components.ts`）——`?check=true` 打到真 daemon 上
+ * 会返回 **200 + 完整清单 + 一次上游都没问**，静默地什么都没做。
+ * 漂移的来源已查明：`packages/downloader/scripts/reference-server.mjs` 认的是 `'true'`，
+ * 也就是说**前端对的是参考服务器，不是真 daemon**。
+ *
+ * ⚠️ 口径要准：`useComponentsQuery(true)` **今天全仓没有调用方**（唯一调用点是
+ * `ComponentsPage` 的 `useComponentsQuery(false)`），所以这曾是**休眠的雷，不是正在
+ * 害人的 bug**。但只要有人按直觉打开自动检查，第一脚就踩上，而且症状是
+ * "页面看起来正常，只是永远说未检测" —— 最难查的那一种。
  */
 export function useComponentsQuery(check = false) {
   return useQuery({
     queryKey: [...qk.components.all, check],
-    queryFn: () => api<GetComponentsResponse>(`/components${check ? '?check=true' : ''}`),
+    queryFn: () => api<GetComponentsResponse>(`/components${componentsQueryString(check)}`),
     staleTime: check ? 60_000 : STALE_TIME_OVERRIDES.catalog,
   });
 }

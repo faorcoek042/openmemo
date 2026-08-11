@@ -19,6 +19,22 @@ import { QueryClient } from '@tanstack/react-query';
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { useLocation } from 'react-router';
+import type { UpstreamCheck } from '@openmemo/shared';
+
+/**
+ * #66 测试夹具：造一条「上游有新版本」的 `UpstreamCheck`。
+ *
+ * ★ 存在的理由是**它造不出服务端造不出的状态**：`newer` 这条腿在契约里
+ * **强制**带 `binarySource`（「问版本的仓」是不是「发二进制的仓」），
+ * 所以夹具里没法只写"有新版本"而不说清能不能装 —— 那正是 PR #19 删掉的
+ * 那颗骗人按钮犯的错，形状上现在说不出来了。
+ */
+const NEWER = (version: string, repo = 'yt-dlp/yt-dlp'): UpstreamCheck => ({
+  kind: 'newer',
+  checkedAt: '2026-08-11T00:00:00.000Z',
+  version,
+  binarySource: { kind: 'same-source', repo },
+});
 
 import { TagEditor } from '../features/notes/TagEditor';
 import { NoteActionsMenu } from '../features/notes/NoteActionsMenu';
@@ -3853,10 +3869,9 @@ describe('T-132 组件与来源页', () => {
     pinnedVersion: '2026.07.04',
     // 三态里的「没装」那一格（契约已从 `string | null` 换成 `InstalledVersion`）。
     installedVersion: { kind: 'not-installed' } as const,
-    latestVersion: null,
-    updateAvailable: false,
-    checkError: null,
-    checkedAt: null,
+    // #66：四个字段（latestVersion / updateAvailable / checkError / checkedAt）换成一个
+    // 判别联合。「从没查过」现在有自己的一条腿，不再和"查了但失败了"挤在同一格。
+    upstreamCheck: { kind: 'never-checked' as const },
     provenance: {
       repoUrl: 'https://github.com/yt-dlp/yt-dlp',
       releaseUrl: 'https://github.com/yt-dlp/yt-dlp/releases/tag/2026.07.04',
@@ -3895,7 +3910,7 @@ describe('T-132 组件与来源页', () => {
   }
 
   test('★ 未安装的组件有「安装」按钮 —— 以前这里只有"未安装"三个字，没有任何可点的东西', async () => {
-    stubApi({ '/components': { components: [YTDLP], online: false, checkedAt: null } });
+    stubApi({ '/components': { components: [YTDLP], sweep: { kind: 'not-attempted' } } });
     const r = await render(<ComponentsPage />);
     await r.flush();
     const btn = r.container.querySelector('[data-testid="component-install-ytdlp-linux-x64"]');
@@ -3917,7 +3932,7 @@ describe('T-132 组件与来源页', () => {
     const restore = stubConfirm(true);
     try {
       const stub = stubApi({
-        '/components': { components: [YTDLP], online: false, checkedAt: null },
+        '/components': { components: [YTDLP], sweep: { kind: 'not-attempted' } },
         'POST /components/ytdlp-linux-x64/update': {
           ok: true,
           id: 'ytdlp-linux-x64',
@@ -3953,11 +3968,10 @@ describe('T-132 组件与来源页', () => {
    * 判据钉的是**送到用户眼前的那串字**，不是"页面上有没有出现回滚两个字"。
    */
   /*
-   * ★ `updateAvailable` 从 `true` 改成 `false`，**因为真服务端在这份数据上算不出 true**。
+   * ★ 上游这一格是 `current`（**不是** `newer`），**因为真服务端在这份数据上算不出 newer**。
    *
-   * 它是服务端算的：`isUpdateAvailable(pinnedVersion, latestVersion)` =
-   * `compareVersions(latest, pinned) > 0`。这里 pinned 与 latest 都是 `2026.07.04`
-   * ⇒ 相等 ⇒ `false`。手写成 `true` 等于**编了一个服务端没有的状态**。
+   * 服务端算的是 `compareVersions(upstreamVersion, pinnedVersion)`：这里两边都是
+   * `2026.07.04` ⇒ `same` ⇒ `current`。手写成 `newer` 等于**编了一个服务端没有的状态**。
    *
    * 这条用例真正的前提是「**已装的比目录钉的旧**」（2026.06.01 < 2026.07.04），
    * 而那正是「装一次真的有用」的那一种情形 —— 按钮现在也钉在这条轴上。
@@ -3965,8 +3979,11 @@ describe('T-132 组件与来源页', () => {
   const INSTALLED_WITH_UPDATE = {
     ...YTDLP,
     installedVersion: { kind: 'known', version: '2026.06.01' } as const,
-    latestVersion: '2026.07.04',
-    updateAvailable: false,
+    upstreamCheck: {
+      kind: 'current' as const,
+      checkedAt: '2026-08-11T00:00:00.000Z',
+      version: '2026.07.04',
+    },
   };
 
   /** 替换 confirm 并把它收到的那句话录下来。 */
@@ -3990,7 +4007,7 @@ describe('T-132 组件与来源页', () => {
     const cap = captureConfirm(false);
     try {
       stubApi({
-        '/components': { components: [INSTALLED_WITH_UPDATE], online: false, checkedAt: null },
+        '/components': { components: [INSTALLED_WITH_UPDATE], sweep: { kind: 'not-attempted' } },
       });
       const r = await render(<ComponentsPage />);
       await r.flush();
@@ -4037,7 +4054,7 @@ describe('T-132 组件与来源页', () => {
    */
 
   test('★ 随应用一起装的 npm 组件不画安装按钮（画了也只会拿到 409，比没有更糟）', async () => {
-    stubApi({ '/components': { components: [BUNDLED], online: false, checkedAt: null } });
+    stubApi({ '/components': { components: [BUNDLED], sweep: { kind: 'not-attempted' } } });
     const r = await render(<ComponentsPage />);
     await r.flush();
     assert.equal(
@@ -5135,10 +5152,11 @@ describe('T-135 ③ 组件卡片：displayNameZh 是两份里的一份，不是�
     category: 'sqlite-ext',
     pinnedVersion: 'v0.5.2',
     installedVersion: { kind: 'known', version: 'v0.5.2' } as const,
-    latestVersion: 'v0.5.2',
-    updateAvailable: false,
-    checkError: null,
-    checkedAt: null,
+    upstreamCheck: {
+      kind: 'current' as const,
+      checkedAt: '2026-08-11T00:00:00.000Z',
+      version: 'v0.5.2',
+    },
     provenance: {
       repoUrl: 'https://github.com/wangfenjin/simple',
       releaseUrl: 'https://github.com/wangfenjin/simple/releases/tag/v0.5.2',
@@ -5154,7 +5172,7 @@ describe('T-135 ③ 组件卡片：displayNameZh 是两份里的一份，不是�
   test('★ 英文界面下卡片标题用 displayName，不是 displayNameZh', async () => {
     await i18nInstance.changeLanguage('en');
     try {
-      stubApi({ '/components': { components: [COMP], online: false, checkedAt: null } });
+      stubApi({ '/components': { components: [COMP], sweep: { kind: 'not-attempted' } } });
       const r = await render(<ComponentsPage />);
       await r.flush();
       const h3 = r.container.querySelector('[data-testid="component-card-libsimple-linux-x64"] h3');
@@ -5171,7 +5189,7 @@ describe('T-135 ③ 组件卡片：displayNameZh 是两份里的一份，不是�
   });
 
   test('★ 中文界面下仍然是中文名（这一半不许被改坏）', async () => {
-    stubApi({ '/components': { components: [COMP], online: false, checkedAt: null } });
+    stubApi({ '/components': { components: [COMP], sweep: { kind: 'not-attempted' } } });
     const r = await render(<ComponentsPage />);
     await r.flush();
     const h3 = r.container.querySelector('[data-testid="component-card-libsimple-linux-x64"] h3');
@@ -6091,7 +6109,7 @@ describe('T-140 ① /components 在界面上到得了', () => {
     },
     '/backends/catalog': { stale: false, packs: [] },
     '/backends/installed': { selectedBackend: 'cpu', packs: [] },
-    '/components': { components: [], online: false, checkedAt: null },
+    '/components': { components: [], sweep: { kind: 'not-attempted' } },
   };
 
   test('★ 从 /runtime 点得到 /components —— 且落地的真是那一页，不只是 URL 变了', async () => {
@@ -10770,10 +10788,7 @@ describe('T-200 S-6 组件页必须跟着活查询走', () => {
     category: 'media-tool',
     pinnedVersion: 'v1',
     installedVersion: { kind: 'known', version: 'v1' } as InstalledVersion,
-    latestVersion: null as string | null,
-    updateAvailable: false,
-    checkError: null,
-    checkedAt: null as string | null,
+    upstreamCheck: { kind: 'never-checked' } as UpstreamCheck,
     provenance: {
       repoUrl: 'https://example.invalid/repo',
       releaseUrl: 'https://example.invalid/rel',
@@ -10823,8 +10838,7 @@ describe('T-200 S-6 组件页必须跟着活查询走', () => {
               pinnedVersion: 'v2',
             },
           ],
-          online: true,
-          checkedAt: '2026-08-10T00:00:00.000Z',
+          sweep: { kind: 'attempted', at: '2026-08-10T00:00:00.000Z', reached: 1, total: 1 },
         }),
         // 「检查更新」发现上游有 v2
         'POST /components/check': {
@@ -10833,14 +10847,17 @@ describe('T-200 S-6 组件页必须跟着活查询走', () => {
               ...BASE,
               installedVersion: { kind: 'known', version: 'v1' },
               pinnedVersion: 'v2',
-              latestVersion: 'v2',
-              // 真服务端算的是 compareVersions(latest, pinned) > 0；v2 vs v2 ⇒ false。
-              // 手写 true 会让这条腿跑在一个服务端造不出的状态上。
-              updateAvailable: false,
+              // 真服务端算的是 compareVersions(upstreamVersion, pinnedVersion)：
+              // v2 vs v2 ⇒ `same` ⇒ `current`。手写 `newer` 会让这条腿跑在一个
+              // 服务端造不出的状态上。
+              upstreamCheck: {
+                kind: 'current',
+                checkedAt: '2026-08-10T00:00:00.000Z',
+                version: 'v2',
+              } as UpstreamCheck,
             },
           ],
-          online: true,
-          checkedAt: '2026-08-10T00:00:00.000Z',
+          sweep: { kind: 'attempted', at: '2026-08-10T00:00:00.000Z', reached: 1, total: 1 },
         },
         'POST /components/ytdlp-linux-x64/update': () => {
           /*
@@ -10925,11 +10942,10 @@ describe('T-200 S-6 组件页必须跟着活查询走', () => {
    */
   test('★ 「检查更新」的结果必须仍然看得见（它已经被写进查询缓存，不是靠 mutation.data 撑着）', async () => {
     const stub = stubApi({
-      '/components': { components: [{ ...BASE }], online: false, checkedAt: null },
+      '/components': { components: [{ ...BASE }], sweep: { kind: 'not-attempted' } },
       'POST /components/check': {
-        components: [{ ...BASE, latestVersion: 'v9', updateAvailable: true }],
-        online: true,
-        checkedAt: '2026-08-10T00:00:00.000Z',
+        components: [{ ...BASE, upstreamCheck: NEWER('v9') }],
+        sweep: { kind: 'attempted', at: '2026-08-10T00:00:00.000Z', reached: 1, total: 1 },
       },
     });
     const r = await render(<ComponentsPage />);
@@ -11250,10 +11266,7 @@ describe('组件更新：门控的轴和动作必须是同一件事', () => {
     category: 'media-tool',
     pinnedVersion: '2026.07.04',
     installedVersion: { kind: 'known', version: '2026.07.04' } as InstalledVersion,
-    latestVersion: null as string | null,
-    updateAvailable: false,
-    checkError: null,
-    checkedAt: null as string | null,
+    upstreamCheck: { kind: 'never-checked' } as UpstreamCheck,
     provenance: {
       repoUrl: 'https://github.com/yt-dlp/yt-dlp',
       releaseUrl: 'https://github.com/yt-dlp/yt-dlp/releases/tag/2026.07.04',
@@ -11268,7 +11281,7 @@ describe('组件更新：门控的轴和动作必须是同一件事', () => {
 
   const show = async (over: Record<string, unknown>) => {
     stubApi({
-      '/components': { components: [{ ...BASE_C, ...over }], online: true, checkedAt: null },
+      '/components': { components: [{ ...BASE_C, ...over }], sweep: { kind: 'not-attempted' } },
     });
     const r = await render(<ComponentsPage />);
     await r.flush();
@@ -11276,7 +11289,7 @@ describe('组件更新：门控的轴和动作必须是同一件事', () => {
   };
 
   test('★★ 已装 = 钉定、上游更新 ⇒ **没有**那颗按钮（它承诺的版本这里装不到）', async () => {
-    const r = await show({ latestVersion: '2026.09.01', updateAvailable: true });
+    const r = await show({ upstreamCheck: NEWER('2026.09.01') });
     assert.equal(
       r.container.querySelector('[data-testid="component-update-ytdlp-linux-x64"]'),
       null,
@@ -11286,7 +11299,7 @@ describe('组件更新：门控的轴和动作必须是同一件事', () => {
   });
 
   test('★★ 同一现场必须给出真话 + 真出口（上游发布页），不是静默', async () => {
-    const r = await show({ latestVersion: '2026.09.01', updateAvailable: true });
+    const r = await show({ upstreamCheck: NEWER('2026.09.01') });
     const box = r.container.querySelector(
       '[data-testid="component-upstream-newer-ytdlp-linux-x64"]',
     );
@@ -11304,7 +11317,7 @@ describe('组件更新：门控的轴和动作必须是同一件事', () => {
   });
 
   test('★★ PATH 那句只对有 PATH 档的工具说 —— sqlite-ext 不许有', async () => {
-    const tool = await show({ latestVersion: '2026.09.01', updateAvailable: true });
+    const tool = await show({ upstreamCheck: NEWER('2026.09.01') });
     assert.equal(
       (
         tool.container.querySelector('[data-testid="component-upstream-newer-ytdlp-linux-x64"]')
@@ -11322,8 +11335,7 @@ describe('组件更新：门控的轴和动作必须是同一件事', () => {
     const ext = await show({
       id: 'libsimple-linux-x64',
       category: 'sqlite-ext',
-      latestVersion: 'v0.9.0',
-      updateAvailable: true,
+      upstreamCheck: NEWER('v0.9.0'),
     });
     assert.equal(
       (
@@ -11404,10 +11416,7 @@ describe('组件卡片：说不出已装版本时，不许给「装上钉定版�
     category: 'media-tool',
     // vendor/manifests/components.json 里的真值
     pinnedVersion: 'autobuild-2026-07-31-14-10',
-    latestVersion: null as string | null,
-    updateAvailable: false,
-    checkError: null,
-    checkedAt: null as string | null,
+    upstreamCheck: { kind: 'never-checked' } as UpstreamCheck,
     provenance: {
       repoUrl: 'https://github.com/BtbN/FFmpeg-Builds',
       releaseUrl: 'https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-07-31-14-10',
@@ -11421,12 +11430,11 @@ describe('组件卡片：说不出已装版本时，不许给「装上钉定版�
     sha256Provenance: null,
   };
 
-  const showFfmpeg = async (installedVersion: InstalledVersion) => {
+  const showFfmpeg = async (installedVersion: InstalledVersion, over: object = {}) => {
     stubApi({
       '/components': {
-        components: [{ ...FFMPEG_COMPONENT, installedVersion }],
-        online: false,
-        checkedAt: null,
+        components: [{ ...FFMPEG_COMPONENT, installedVersion, ...over }],
+        sweep: { kind: 'not-attempted' },
       },
     });
     const r = await render(<ComponentsPage />);
@@ -11489,6 +11497,65 @@ describe('组件卡片：说不出已装版本时，不许给「装上钉定版�
       r.container.querySelector('[data-testid="component-update-media-tools-win-x64"]'),
       null,
       '已装的就是钉定那一版，按钮只会让人白下一遍',
+    );
+    r.unmount();
+  });
+
+  /*
+   * ★★ **两个三态碰头的那一格** —— 上游侧 `newer`（#66）× 本地侧 `not-applicable`（#33）。
+   *
+   * 这一格在产品里真实存在：随包出厂的后端包（说不出版本号）+ 上游确实发了新版。
+   * 两条腿各自都是对的，**拼起来却可能又给出一句召唤了动作却没有动作的话** ——
+   * 那是 #33 修掉那颗按钮的镜像面：不是"点了没用的按钮"，是"喊了没有的按钮"。
+   *
+   * 判据钉两头：芯片照说「有新版本」（真话，不许因为装不了就藏起来），
+   * 而同一段里必须**自己说清为什么这里一颗按钮都没有**。
+   */
+  const NEWER_FFMPEG = NEWER('autobuild-2026-09-01-00-00', 'BtbN/FFmpeg-Builds');
+
+  test('★★ 上游有新版 × 本机版本说不出 ⇒ 仍然没有按钮（不许是那个 bug 的第二次转世）', async () => {
+    const r = await showFfmpeg(installedVersionOf(BUNDLED_FFMPEG_RECORD), {
+      upstreamCheck: NEWER_FFMPEG,
+    });
+    assert.equal(
+      r.container.querySelector('[data-testid="component-update-media-tools-win-x64"]'),
+      null,
+      '上游有新版就把按钮放回来了 —— 可我们仍然说不出机器上装的是什么，这还是白下 145 MB',
+    );
+    r.unmount();
+  });
+
+  test('★★ 同一格：既要说「上游有新版」，也要说清为什么没有按钮 —— 缺哪一半都算骗人', async () => {
+    const r = await showFfmpeg(installedVersionOf(BUNDLED_FFMPEG_RECORD), {
+      upstreamCheck: NEWER_FFMPEG,
+    });
+    const box = r.container.querySelector(
+      '[data-testid="component-upstream-newer-media-tools-win-x64"]',
+    );
+    assert.equal(box === null, false, '上游有新版这件事被整段吞掉了 —— 那是另一种不诚实');
+    const said = box?.textContent ?? '';
+    assert.equal(said.includes('autobuild-2026-09-01-00-00'), true, `没说上游是哪一版：${said}`);
+    // 本地那一侧必须在同一段里自己说出来，否则用户读到的是"有新版本但什么都不给我"
+    assert.equal(
+      said.includes('说不出这台机器上装的是哪一版'),
+      true,
+      `只解释了上游那一半，没说为什么一颗按钮都没有：${said}`,
+    );
+    r.unmount();
+  });
+
+  test('★ 阴性对照：本机版本说得出时，同一段**不许**再说那句（否则上一条是空跑）', async () => {
+    const r = await showFfmpeg(
+      { kind: 'known', version: 'autobuild-2026-06-01-00-00' },
+      { upstreamCheck: NEWER_FFMPEG },
+    );
+    const said =
+      r.container.querySelector('[data-testid="component-upstream-newer-media-tools-win-x64"]')
+        ?.textContent ?? '';
+    assert.equal(
+      said.includes('说不出这台机器上装的是哪一版'),
+      false,
+      `本机版本明明说得出，却还在说"说不出"：${said}`,
     );
     r.unmount();
   });

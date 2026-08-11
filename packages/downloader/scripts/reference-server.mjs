@@ -78,8 +78,16 @@ const { ArtifactStore } = await import(path.join(DIST, 'store.js'));
 const { DownloadQueue } = await import(path.join(DIST, 'queue.js'));
 const { install } = await import(path.join(DIST, 'installer.js'));
 const { probeAll } = await import(path.join(DIST, 'probe.js'));
-const { computeFit, makeEvent, referenceSpeedOf, topics, formatSseFrame, formatSseRetry } =
-  await import(path.join(SHARED, 'index.js'));
+const {
+  computeFit,
+  makeEvent,
+  referenceSpeedOf,
+  topics,
+  formatSseFrame,
+  formatSseRetry,
+  COMPONENTS_CHECK_PARAM,
+  parseComponentsCheckParam,
+} = await import(path.join(SHARED, 'index.js'));
 const { listComponents } = await import(path.join(DIST, 'components.js'));
 const COMPONENT_REGISTRY = path.join(REPO, 'vendor', 'manifests', 'components.json');
 /** Cache the last upstream sweep so the page does not re-hit GitHub on every render. */
@@ -790,7 +798,13 @@ const server = http.createServer(async (req, res) => {
 
     /* ---- components: provenance + upstream version tracking (T-068) ---- */
     if (p === '/api/components' && method === 'GET') {
-      const check = url.searchParams.get('check') === 'true';
+      /*
+       * ★ 与真 daemon 用**同一个**解析函数。这里原来是 `=== 'true'`，而真 daemon 是
+       * `=== '1'` —— 前端对上的是这台参考服务器，对不上真 daemon，于是
+       * `?check=true` 在真 daemon 上静默地什么都不做。漂移的修法不是对齐字面量，
+       * 是让它只有一份定义（`packages/shared/src/components.ts`）。
+       */
+      const check = parseComponentsCheckParam(url.searchParams.get(COMPONENTS_CHECK_PARAM));
       if (!check && componentCache) return json(res, 200, componentCache);
       const r = await listComponents({
         registryPath: COMPONENT_REGISTRY,

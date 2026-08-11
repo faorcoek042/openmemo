@@ -103,17 +103,23 @@ export interface ComponentStatus {
    * 详见 {@link installedVersionOf} 与 {@link pinRelation}。
    */
   installedVersion: InstalledVersion;
-  /** Newest upstream version, or null when the check failed or was never run. */
-  latestVersion: string | null;
 
   /**
-   * True only when latestVersion is known AND differs from pinnedVersion.
-   * Never inferred from a failed lookup — "unknown" must not render as "up to date".
+   * 上游检查此刻的结论 —— **一个判别联合，不是四个互相依赖的字段**。
+   *
+   * 这里原来是四个字段：`latestVersion: string|null` + `updateAvailable: boolean` +
+   * `checkError: string|null` + `checkedAt: string|null`。名义上 16 种组合，
+   * 合法的只有 3 种；不变量在 `listComponents()` 里建立，然后在 UI 层
+   * **被重新推导一遍**（`ComponentCard.checkState()` 读 `updateAvailable || latestVersion`，
+   * `ComponentsPage` 读 `!updateAvailable && !latestVersion`）。
+   * 那是**两处独立的约定，不是一个结构** —— 它们今天恰好推导得一致，
+   * 而"恰好一致"不是任何人能依赖的东西。
+   *
+   * 同族的先例：{@link ../toolchain.ts ToolchainVerdict}（`unknown` 结构上放不下
+   * `missing`）、{@link ../models.ts SpeedEvidence}（`unmeasured` 结构上放不下 `rtf`）。
+   * 判据一样：**让错误的写法不可表达，好过用纪律要求别人别那么写。**
    */
-  updateAvailable: boolean;
-  /** Why latestVersion is null, shown as a quiet note rather than an error. */
-  checkError: string | null;
-  checkedAt: string | null;
+  upstreamCheck: UpstreamCheck;
 
   provenance: Provenance;
   upstream: UpstreamSource | null;
@@ -130,11 +136,31 @@ export interface ComponentStatus {
   sha256Provenance?: string | null;
 }
 
+/**
+ * 这一次 `GET /api/components` **有没有去问上游**，问到了多少。
+ *
+ * 原形状是 `{ online: boolean; checkedAt: string | null }` —— 与 `ComponentStatus`
+ * 那四个字段同病：`online: false` 同时表示「没查」和「查了但一个都没答」，
+ * 靠 `checkedAt` 是不是 null 去二次推断。页面上真的这么写着：
+ * `{data?.checkedAt && !data.online ? …}` —— 一个由两个字段拼出来的第三态。
+ */
+export type UpstreamSweep =
+  | {
+      /** 这次请求根本没去问上游（`?check` 没带，或带了但没被识别）。 */
+      readonly kind: 'not-attempted';
+    }
+  | {
+      readonly kind: 'attempted';
+      readonly at: string;
+      /** 问到了几个（拿到版本号的）。0 表示一个都没问到，**不表示都最新**。 */
+      readonly reached: number;
+      /** 这次一共问了几个。 */
+      readonly total: number;
+    };
+
 export interface GetComponentsResponse {
   components: ComponentStatus[];
-  /** Whether the last upstream sweep reached the network at all. */
-  online: boolean;
-  checkedAt: string | null;
+  sweep: UpstreamSweep;
 }
 
 export interface CheckUpdatesRequest {
@@ -268,10 +294,11 @@ export function compareVersions(a: string, b: string): VersionOrder {
  * 排序需要一个全序，而"比不了"在全序里没有位置。这里把跨方案的一对压成一个
  * **确定但任意**的次序（按方案名、再按字典序），好让 `sort()` 的结果可复现。
  *
- * ⚠️ 这个任意次序**不构成任何关于新旧的断言**。"跨方案的候选里哪个最新"没有定义 ——
- * 这里挑出来的那个只是排序 tie-break 的产物。真正的保护在 `listComponents()`：
- * 挑出来的版本一旦与我们钉的**比不了**，就当成"没问到"而不是"已是最新"。
- * （把"候选跨了多个 tag 家族"本身变成一条会说话的腿，是 #66 主线那一步的事。）
+ * ⚠️ 这个任意次序**不构成任何关于新旧的断言**。跨方案时它挑出来的那个"最新"
+ * 只是字典序的产物 —— 所以 `checkUpstream` 除了这个 `version` 之外，还必须上报
+ * `newestByScheme`（每族各自的最新）与 `candidates`（全部候选），
+ * 让 `listComponents()` 按我们钉的那一族去挑，并且能看出"我们钉的那一版
+ * 压根不在这个仓的命名空间里"。
  */
 export function compareVersionsForSort(a: string, b: string): number {
   switch (compareVersions(a, b)) {
@@ -429,4 +456,296 @@ export function pinRelation(installed: InstalledVersion, pinnedVersion: string):
 function unrecognizedInstalledArm(arm: never): PinRelation {
   void arm;
   return 'unknowable';
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════
+ * 上游检查的结论 —— 判别联合
+ *
+ * ★★ **它和上面那个 {@link InstalledVersion} 是一对，要一起读。**
+ *
+ * 「该不该给这张卡一颗按钮」这个判断有**两条腿**，各自都是三/四态，各自都有
+ * "答不出来"的那一格：
+ *
+ * | 问的是 | 联合 | 判据 |
+ * |---|---|---|
+ * | **本地**：这台机器上装的是哪一版 | {@link InstalledVersion} | {@link pinRelation} |
+ * | **上游**：外面有没有更新的 | {@link UpstreamCheck} | {@link upstreamHasNewer} |
+ *
+ * 两侧"答不出来"的那些格子**对得上，但故意不同名**，对照如下：
+ *
+ * | 情形 | 上游侧 | 本地侧 |
+ * |---|---|---|
+ * | **这个概念对它不适用** | `no-upstream` | `not-applicable` |
+ * | 有数据，但和我们的排不出先后 | `indeterminate` | —（见下） |
+ * | 还没做这件事 | `never-checked` | —（读本地清单没有"还没读"这一态） |
+ * | 做了但失败了 | `failed` | —（同上） |
+ *
+ * **为什么不统一命名成一个词**（这是刻意的，不是漏掉的）：
+ *   1. `no-upstream` **点出了缺的是什么**（没有上游发布源）。上游侧只有这一种"不适用"，
+ *      所以名字可以具体。本地侧的 `not-applicable` 得同时装下两种成因
+ *      （后端包只有 `engineVersion`、模型只有 `catalogVersion`，两者都不是同一套编号），
+ *      名字只能泛，具体的话交给它的 `reason`。**把具体的改泛，是丢信息。**
+ *   2. 真正要一致的**不是名字，是契约**，而那一条两边确实一致：
+ *      **凡是"答不出来"的腿，都强制带一个会原样显示给用户的 `reason`。**
+ *      说"不知道"的时候必须同时说清为什么不知道 —— 否则它在屏幕上和"没有问题"长得一样。
+ *   3. 本地侧没有 `indeterminate` 的对应物，**这也是刻意的**：`pinRelation()` 问的是
+ *      「装一次会不会真的改变这台机器上的东西」，那是**字符串同一性**，不是版本先后。
+ *      所以它用 `===` 而不是 {@link compareVersions} —— 别"顺手"把比较器接进去，
+ *      那会把「两个都认识、只是排不出先后」错判成「一样」。
+ * ═══════════════════════════════════════════════════════════════════════════════════ */
+
+export const UPSTREAM_CHECK_KINDS = [
+  'never-checked',
+  'no-upstream',
+  'failed',
+  'current',
+  'newer',
+  'indeterminate',
+] as const;
+export type UpstreamCheckKind = (typeof UPSTREAM_CHECK_KINDS)[number];
+
+/**
+ * 我们装的那个二进制**是谁发的** —— 与「我们问版本问的是谁」不一定是同一个仓。
+ *
+ * `[实测 2026-08-11]` 27 条组件里 **5 条**是 `our-mirror`，全是 whisper.cpp：
+ * `whispercpp-{cpu,vulkan}-linux-x64` / `whispercpp-{cpu,vulkan}-win-x64` /
+ * `whispercpp-metal-macos-arm64`。它们问 `ggml-org/whisper.cpp`，
+ * 而二进制来自 `faorcoek042/openmemo`（我们自己编的 —— 上游在这些平台
+ * 只发库 / 不发可执行程序）。
+ *
+ * ⚠️ **不要一刀切成"provenance.repoUrl 与 upstream.repo 不同就是镜像"。**
+ * 判据是 `provenance.releaseUrl` 的 GitHub owner/repo，而且**只对 GitHub 那两种 kind 生效**：
+ *   · `npm`（`sherpa-onnx-node`）—— npm registry **既是版本来源也是制品来源**，
+ *     `provenance.repoUrl` 指向 GitHub 只是"项目主页"，不是镜像关系；
+ *   · `huggingface`（`asr/whisper-large-v3-turbo-q5_0`）—— 同理，HF 两者皆是。
+ * 这两条**不是** `our-mirror`。
+ *
+ * `[实测]` 这个判据不需要给 manifest 加新字段：`provenance.releaseUrl` 与
+ * `backends.json` 里真正的下载 URL **14/14 个包完全一致**，事实本来就在数据里，
+ * 只是从来没人把它读出来。
+ */
+export type BinarySource =
+  | {
+      /** 问版本的地方就是发二进制的地方。 */
+      readonly kind: 'same-source';
+      readonly repo: string;
+    }
+  | {
+      /**
+       * **问版本的仓 ≠ 二进制来源的仓。**
+       *
+       * 「上游有 vX」是关于**项目**的真话，但它**没有回答**用户真正在问的那句：
+       * 「存在一个我们能装的 vX 二进制包吗？」——那要等我们自己重编并镜像。
+       * 产品决定（2026-08-11 用户裁决）：**如实说「上游有新版，但我们还没镜像」**，
+       * 不新增镜像构建线，也不藏起来。
+       */
+      readonly kind: 'our-mirror';
+      /** 我们问版本的那个上游项目仓。 */
+      readonly versionRepo: string;
+      /** 二进制实际来自的那个仓（我们自己的）。 */
+      readonly binaryRepo: string;
+    };
+
+/**
+ * 「上游有没有更新的版本」此刻的结论。
+ *
+ * ⚠️ 这六条腿里有**三条**在旧形状里挤在同一格（`latestVersion === null`），
+ * 而界面对那一格说的是「我们**没能问到**上游 …… 点『检查更新』**重试**」——
+ * 一句**试过、失败了**的话。首屏 27 条全落在这一格，而 daemon 一次都没问过。
+ * 对 `no-upstream` 说"重试"更糟：那是对一个**结构上就没有上游可问**的东西
+ * 指一条死路。
+ *
+ * 各腿的字段是**按"这一态真的知道什么"给的**，不是给全再填 null：
+ * `never-checked` 连 `checkedAt` 都没有（没查过哪来的时刻），
+ * `no-upstream` 也没有（不需要问，也就没有"问的时刻"）。
+ */
+export type UpstreamCheck =
+  | {
+      /** 从来没查过。**这是首屏的常态**，不是错误，不该说"没能问到"。 */
+      readonly kind: 'never-checked';
+    }
+  | {
+      /**
+       * 这个组件**结构上就没有上游可问**（`upstream: null`，或 `kind: 'static'`）。
+       * 对它说"重试"是把人送上死路 —— 再点一百次也还是没有上游。
+       */
+      readonly kind: 'no-upstream';
+      readonly reason: string;
+    }
+  | {
+      /** 问了，但没问到（超时 / 限流 / 仓库改名 / 断网）。**重试是真的有意义的那一档。** */
+      readonly kind: 'failed';
+      readonly checkedAt: string;
+      readonly reason: string;
+    }
+  | {
+      /** 问到了，而且上游没有比我们钉的更新的。这一档**才**配绿勾。 */
+      readonly kind: 'current';
+      readonly checkedAt: string;
+      readonly version: string;
+    }
+  | {
+      /** 问到了，上游确实更新。 */
+      readonly kind: 'newer';
+      readonly checkedAt: string;
+      /** 上游那个**项目**发到了哪一版。这是真话，照实说。 */
+      readonly version: string;
+      /**
+       * ★★ **上游发了新版 ≠ 存在一个我们能装的新版二进制包。**
+       *
+       * 这条腿**结构上**必须同时带上后者。理由不是洁癖：PR #19 刚删掉的那颗骗人按钮，
+       * 犯的正是"只说前半句"这个错 —— 它承诺了一个版本号，而服务端从来装不到。
+       * **同一个错不要在同一栏里再犯第二次。** 把它放进结构而不是文案里，
+       * 是因为文案会被翻译、会被改，结构不会。
+       */
+      readonly binarySource: BinarySource;
+    }
+  | {
+      /**
+       * 问到了一个版本号，但**没法和我们钉的那个比**。
+       *
+       * ⚠️ 这一档在旧形状里被渲染成**绿勾「已是最新」**（`updateAvailable === false`
+       * 且 `latestVersion !== null` ⇒ `checkState() === 'current'`）——
+       * **UNKNOWN 塌成 PASS**，本轮最该修的一处。
+       */
+      readonly kind: 'indeterminate';
+      readonly checkedAt: string;
+      /** 我们确实问到的那个版本号（照实显示），只是**排不出先后**。 */
+      readonly version: string;
+      /** 为什么排不出先后 —— 必填，跟 `ToolchainVerdict.unknown` 同一条纪律。 */
+      readonly reason: string;
+    };
+
+/**
+ * 新增腿时让所有消费点变红的陷阱。
+ *
+ * 抄的是 `models.ts` 的 `assertNeverSpeed`：`switch` 少写一条腿，`default` 收到的
+ * 就不再是 `never`，**构建直接红**，而不是新腿悄悄走进某个运行时兜底分支。
+ */
+export function assertNeverUpstreamCheck(x: never, what = 'UpstreamCheck'): never {
+  throw new Error(`unhandled ${what}: ${JSON.stringify(x)}`);
+}
+
+/**
+ * **唯一**允许用来回答「要不要提示用户有新版本」的入口。
+ *
+ * 只有 `newer` 是 true。`indeterminate` 是 false —— 但那**不代表已是最新**，
+ * 所以任何要画绿勾的地方都不许用 `!upstreamHasNewer(u)` 当判据，
+ * 必须显式判 `kind === 'current'`。
+ */
+export function upstreamHasNewer(u: UpstreamCheck): boolean {
+  return u.kind === 'newer';
+}
+
+/**
+ * 我们**确实问到**的那个上游版本号；没问到时是 `null`。
+ *
+ * **故意不叫 `version`。** `u.version === null` 读起来太像"已是最新"了；
+ * `upstreamKnownVersion(u) === null` 读起来是它真正的意思：**我们不知道**。
+ * 同一条纪律见 `toolchain.ts` 的 `toolchainMissing`（它也故意不叫 `missing`）。
+ */
+export function upstreamKnownVersion(u: UpstreamCheck): string | null {
+  switch (u.kind) {
+    case 'current':
+    case 'newer':
+    case 'indeterminate':
+      return u.version;
+    case 'never-checked':
+    case 'no-upstream':
+    case 'failed':
+      return null;
+    default:
+      return assertNeverUpstreamCheck(u);
+  }
+}
+
+/** 我们问过的时刻；`never-checked` / `no-upstream` 没有这个时刻，返回 `null`。 */
+export function upstreamCheckedAt(u: UpstreamCheck): string | null {
+  switch (u.kind) {
+    case 'failed':
+    case 'current':
+    case 'newer':
+    case 'indeterminate':
+      return u.checkedAt;
+    case 'never-checked':
+    case 'no-upstream':
+      return null;
+    default:
+      return assertNeverUpstreamCheck(u);
+  }
+}
+
+/**
+ * 由「上游给的版本」+「我们钉的版本」推出结论。
+ *
+ * **全仓唯一的 `UpstreamCheck` 构造点在 `packages/downloader/src/components.ts` 的
+ * `listComponents()`**，这里只提供算法，不要在别处再拼一个。
+ *
+ * 注意 `older` 也映射成 `current`：上游最新的比我们钉的还旧，确实"没有更新可拿"。
+ */
+export function upstreamVerdict(args: {
+  pinnedVersion: string;
+  upstreamVersion: string;
+  checkedAt: string;
+  /** 必填 —— 见 `UpstreamCheck` 的 `newer` 腿：不说清二进制来自哪，就报不出"有新版本"。 */
+  binarySource: BinarySource;
+}): UpstreamCheck {
+  const { pinnedVersion, upstreamVersion, checkedAt, binarySource } = args;
+  switch (compareVersions(upstreamVersion, pinnedVersion)) {
+    case 'newer':
+      return { kind: 'newer', checkedAt, version: upstreamVersion, binarySource };
+    case 'older':
+    case 'same':
+      return { kind: 'current', checkedAt, version: upstreamVersion };
+    case 'incomparable':
+      return {
+        kind: 'indeterminate',
+        checkedAt,
+        version: upstreamVersion,
+        reason:
+          `上游给的 ${upstreamVersion}（${versionScheme(upstreamVersion)} 方案）与目录钉的 ` +
+          `${pinnedVersion}（${versionScheme(pinnedVersion)} 方案）不是同一套编号，排不出先后`,
+      };
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════
+ * `GET /api/components?check=…` 的参数 —— **只有一份定义**
+ * ═══════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ★ 这一对函数存在的唯一理由：**同一个参数曾经有三份互不相同的定义。**
+ *
+ * `[实测 2026-08-11]`
+ *   - 前端发的是 `?check=true`（`apps/web/src/features/components/api.ts`）
+ *   - 真 daemon 认的是 `=== '1'`（`apps/daemon/src/http/rest/components.ts`）
+ *   - 参考服务器认的是 `=== 'true'`（`packages/downloader/scripts/reference-server.mjs`）
+ *
+ * 于是前端对上了**参考服务器**，没对上真 daemon：真 daemon 收到 `check=true`
+ * 会返回 **200 + 完整清单 + 一次上游都没问**，静默地什么都没做。
+ *
+ * ⚠️ 口径要准：`useComponentsQuery(true)` **今天全仓没有调用方**，
+ * 所以这是**休眠的雷，不是正在害人的 bug**。但只要有人按直觉打开自动检查，
+ * 第一脚就踩上，而且症状是"页面看起来正常，只是永远说未检测"——最难查的那一种。
+ *
+ * 修法不是把三处改成同一个字面量（那还会再漂一次），是**让它没有第二份**：
+ * 拼参数与解参数都只能走这里。
+ */
+export const COMPONENTS_CHECK_PARAM = 'check';
+
+/** 前端拼 query string 的唯一入口。 */
+export function componentsQueryString(check: boolean): string {
+  return check ? `?${COMPONENTS_CHECK_PARAM}=1` : '';
+}
+
+/**
+ * 服务端解这个参数的唯一入口。
+ *
+ * 宽进严出：`1` / `true` / `yes` / 空串（`?check`）都算真 —— 因为**收紧它救不了任何人**，
+ * 只会让另一个手拼 URL 的调用方再踩一次同样的静默失败。其余一律假。
+ */
+export function parseComponentsCheckParam(raw: string | null | undefined): boolean {
+  if (raw == null) return false;
+  const v = raw.trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes' || v === '';
 }
