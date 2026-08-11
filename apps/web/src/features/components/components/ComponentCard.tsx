@@ -56,6 +56,20 @@ const CHECK_UI: Record<
   },
 };
 
+/**
+ * 哪些**类别**的组件，"自己装到系统 PATH 上我们会直接用"这句话是**真的**。
+ *
+ * 判据不是我猜的，是 `packages/pipeline/src/tools.ts` 的 `RESOLUTION_PLANS`：
+ * 只有 `ffmpeg` / `ffprobe` / `whisperCli` / `whisperVad` / `ytDlp` 五条的 `order`
+ * 里带 `'path'`。对应到 `components.json` 的 `category`，就是 `media-tool`
+ * （ffmpeg/ffprobe/yt-dlp）与 `backend-pack`（whisper-cli 那一族）。
+ *
+ * ⚠️ **`sqlite-ext` 不在里面**：libsimple / sqlite-vec 是 SQLite 扩展，
+ *    从 `<dataDir>/bin/ext` 加载，**没有 PATH 这一档** —— 对它们说这句话
+ *    就是把用户送上一条走不通的路。`model` 同理（权重只能经我们的目录进来）。
+ */
+const PATH_RESOLVED_CATEGORIES: ReadonlySet<string> = new Set(['media-tool', 'backend-pack']);
+
 export interface ComponentCardProps {
   component: ComponentStatus;
   locale: string;
@@ -163,7 +177,30 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
               随应用一起安装，不单独下载
             </span>
           ) : null}
-          {installed && c.updateAvailable ? (
+          {/*
+            ★★ 这颗按钮的判据换了一条轴，**因为它原来钉在了自己做不到的那件事上**。
+
+            原来是 `installed && c.updateAvailable`，按钮上写着「更新到 {latestVersion}」。
+            而 `POST /api/components/:id/update` **从不读请求体**，直接
+            `startPackInstall(state, pack)` 装**目录里钉死的那一版**，并回
+            `toVersion: comp.pinnedVersion`（`rest/components.ts`，那段注释自己写着
+            「更新 = 安装清单里钉死的那个版本」，理由是我们手上没有上游那一版的 sha256）。
+
+            于是两种情形正好各错一半：
+              · 已装 = 钉定，上游更新 ⇒ `updateAvailable` 为真 ⇒ **按钮出现，
+                上面写着一个它装不到的版本号**，点完什么都没变，用户会再点一次；
+              · 已装 < 钉定（旧机器没跟上目录）⇒ `updateAvailable` 为假 ⇒ **没有按钮**，
+                而这恰恰是装一次**真的有用**的那一种情形。
+
+            也就是说门控用的是「上游 vs 我们钉的」，动作做的是「装我们钉的」——
+            **两个轴共用了一个槽位。** 现在各归各：
+              · 按钮 ⇐ `installedVersion !== pinnedVersion`（装一次真会变），文案说钉定那一版；
+              · 「上游有更新」⇐ 下面那一段真话 + 真出口，不再伪装成一个可点的动作。
+
+            用户 2026-08-09 的原话：**引导动作的按钮跳转后的逻辑能解决对应问题就补上，
+            否则就删掉。** 这颗按钮比一般的死按钮更糟 —— 它**具体地承诺了一个版本号**。
+          */}
+          {installed && downloadable && c.installedVersion !== c.pinnedVersion ? (
             <Button
               size="sm"
               variant="primary"
@@ -172,7 +209,7 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
               data-testid={`component-update-${c.id}`}
             >
               <ArrowUpCircle className="size-3.5" aria-hidden />
-              {busy ? '更新中…' : `更新到 ${c.latestVersion}`}
+              {busy ? '更新中…' : `装上目录钉定的 ${c.pinnedVersion}`}
             </Button>
           ) : null}
           {/*
@@ -183,6 +220,46 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
           */}
         </div>
       </div>
+
+      {/*
+        ★★ 「上游有更新」现在说一句真话 + 给一个真出口，**不再是一个可点的承诺**。
+
+        能说的是：上游有 vX，我们目录里钉的是 vY，**这里装不了上游那一版** ——
+        因为我们手上没有它的 sha256，而"没有校验和就下载安装"会放弃
+        「每个制品都校验」这条底线（服务端 `rest/components.ts` 里那段注释的原话）。
+        真出口是上游发布页：他可以自己看变更、自己决定要不要等我们把它钉进目录。
+
+        ⚠️ **「装到系统 PATH 上我们会直接用」这句只对有 PATH 那一档的工具说。**
+           `packages/pipeline/src/tools.ts` 的 `RESOLUTION_PLANS` 里只有五条
+           （ffmpeg / ffprobe / whisperCli / whisperVad / ytDlp）带 `'path'`；
+           sqlite-ext（libsimple / sqlite-vec）是 SQLite 扩展，从 `<dataDir>/bin/ext`
+           加载，**根本没有 PATH 这一档** —— 对它们说这句就是给一条走不通的路。
+        ⚠️ 「装完要重启」是实的，不是客套：热刷新只认**通过产品装**的那条路（#87 查实）。
+      */}
+      {c.updateAvailable && c.latestVersion ? (
+        <p
+          className="mt-2.5 rounded border border-line bg-surface-0 p-2 text-xs text-ink-secondary"
+          data-testid={`component-upstream-newer-${c.id}`}
+        >
+          上游有 <code className="font-mono text-ink">{c.latestVersion}</code>，我们目录里钉的是{' '}
+          <code className="font-mono text-ink">{c.pinnedVersion}</code>。
+          <strong className="text-ink"> 这里装不了上游那一版</strong>
+          —— 我们手上没有它的 sha256，没有校验和就下载安装会放弃「每个制品都校验」这条底线。
+          {PATH_RESOLVED_CATEGORIES.has(c.category) ? (
+            <> 你可以自己把新版装到系统 PATH 上，我们会直接用它（装完需要重启产品才生效）。</>
+          ) : null}{' '}
+          <a
+            href={c.provenance.repoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-accent-ink hover:underline"
+            data-testid={`component-upstream-link-${c.id}`}
+          >
+            <ExternalLink className="size-3" aria-hidden />
+            去上游看这一版
+          </a>
+        </p>
+      ) : null}
 
       {/* ═══ 来源链：源码 commit → 发布页 → 二进制 → sha256 → 许可证 ═══
           用户原话「只要写明从哪里下载对应依赖即可」。全部可点，不只躺在 json 里。 */}

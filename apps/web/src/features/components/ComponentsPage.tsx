@@ -86,7 +86,21 @@ export default function ComponentsPage() {
            *   · 但更新**成功之后**没有退路：清单里只钉一个版本，没有第二个 sha256 可回。
            *     说清楚，让用户在点之前就知道。
            */
-          `将「${c.displayNameZh}」从 ${c.pinnedVersion} 更新到 ${c.latestVersion}？\n\n` +
+          /*
+           * ★★ 这一行原本写着「从 {pinnedVersion} 更新到 {latestVersion}」——**是假的**。
+           *
+           * 服务端那条路由**不读请求体**，装的永远是**目录钉死的 `pinnedVersion`**
+           * （`rest/components.ts`，它自己的注释就写着「更新 = 安装清单里钉死的那个版本」，
+           * 理由是我们手上没有上游那一版的 sha256）。
+           * 于是用户点「更新到 v1.9.2」→ 装了一遍 v1.9.1 → 卡片仍写着 v1.9.2 →
+           * **他会再点一次**。这句话每点一次就被服务端证伪一次。
+           *
+           * 现在说的是真的：**你手上那份和目录钉的不是同一版，这一次把钉的那一版装上。**
+           * 「上游更新了」那件事已经挪到卡片上单独说（`component-upstream-newer-*`），
+           * 不再冒充成一个可点的动作。
+           */
+          `将「${c.displayNameZh}」从 ${c.installedVersion} 换成目录钉定的 ${c.pinnedVersion}？\n\n` +
+            `· 装的是**目录钉死的那一版**，不是上游最新版（我们没有上游那一版的 sha256）\n` +
             `· 会重新下载并校验 sha256，校验不通过不会安装\n` +
             `· 上游换版本可能改变行为（例如文件格式变化），不一定完全兼容\n` +
             `· 下载或校验失败时，当前版本原地不动（新版本校验通过后才替换）\n` +
@@ -96,7 +110,8 @@ export default function ComponentsPage() {
     if (!ok) return;
     setBusyId(c.id);
     try {
-      await update.mutateAsync({ id: c.id, toVersion: c.latestVersion ?? undefined });
+      // ★ 不再发 `toVersion`：服务端从不读它，而它正是上面那句假话的载体（契约里已拿掉）。
+      await update.mutateAsync({ id: c.id });
     } finally {
       setBusyId(null);
     }
