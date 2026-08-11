@@ -63,7 +63,7 @@
  */
 /* global document, getComputedStyle */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -94,6 +94,19 @@ const MUTATE = arg('--mutate', null);
  * ⚠️ 不传这个参数时整段跳过,所以它**不可能**拖慢门禁。
  */
 const DIAGNOSE_DOWNLOAD = arg('--diagnose-download', null);
+/**
+ * ★ 覆盖面上报（照抄 runtime 腿 `e2e-runtime-audit.mjs` 的同名 flag，
+ * Manager 2026-08-11 裁决，browser 腿）：`verify-e2e-attestation.mjs` 仍然只看
+ * artifact 名字判定通过/不通过（不变），但会把 `undecided` 念出来做**建议性**
+ * 展示——前提是这条腿真的把数字报出来。这个 flag 只是把下面「汇总」已经
+ * 算出来的 `undec.length` 落盘成一个小文件，供 `attest` job 跨平台求和后
+ * 传给 `emit-e2e-attestation.mjs --undecided`。
+ * ⚠️ 与 runtime 不同：**本文件没有 runtime 那种「变异模式整段换一套汇总语义」的分支**
+ * ——`--mutate` 在这里只是在同一趟运行末尾追加一条额外断言（见上方「4b. 额外变异」），
+ * 不替换主汇总。所以这里**不需要**像 runtime 那样用 `!mutation` 网关；
+ * 下面「汇总」块本来就是唯一、无条件执行的那一段。
+ */
+const UNDECIDED_OUT = arg('--undecided-out', null);
 const BASE = `http://127.0.0.1:${PORT}`;
 const IS_WIN = process.platform === 'win32';
 
@@ -1827,6 +1840,15 @@ const undec = results.filter((r) => r.status === 'UNDECIDED' || r.status === 'MU
 say(
   `   断言通过 ${pass} 条 · 变异证明 ${mut} 条 · 失败 ${failed} 条 · 无从判断 ${undec.length} 条`,
 );
+/*
+ * ★ 覆盖面落盘。不看 failed —— 这是展示用的覆盖面计数，不是判定，
+ * 红也要如实落盘（与 runtime 腿同一条道理）。
+ */
+if (UNDECIDED_OUT) {
+  mkdirSync(dirname(UNDECIDED_OUT), { recursive: true });
+  writeFileSync(UNDECIDED_OUT, `${JSON.stringify({ unknowns: undec.length }, null, 2)}\n`);
+  say(`   覆盖面已写到 ${UNDECIDED_OUT}（unknowns=${undec.length}）`);
+}
 if (undec.length > 0) {
   // 单独列出来：**这些不是通过**。不列的话它们会混在一片绿里被当成覆盖到了。
   say('   ？ 本轮无从判断（这一轮没验到，别当成绿）：');
