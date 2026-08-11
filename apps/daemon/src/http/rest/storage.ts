@@ -289,7 +289,9 @@ export function moveMessageZh(
     files: number;
     links: number;
     sourceRemoved: boolean;
-    sourceResidue?: readonly string[];
+    sourceResidue?:
+      | { readonly kind: 'read'; readonly entries: readonly string[] }
+      | { readonly kind: 'unreadable'; readonly reason: string };
   },
   from: string,
 ): string {
@@ -306,14 +308,25 @@ export function moveMessageZh(
    *
    * 判据仍是 Manager 2026-08-08 那条：**界面说的和实际发生的必须一致**。
    */
-  const residue = result.sourceResidue ?? [];
+  /*
+   * ★ #87 三态。这里原来是 `result.sourceResidue ?? []` ⇒ 读不到旧目录时
+   * 渲染成「**目录本身还在，但里面已经空了**」——**逐字上屏的一句假话**，
+   * 而且出现在用户最需要真话的时刻（他正在判断那个旧目录能不能删）。
+   * 缺席（老 daemon）与"读不到"都不许被说成"空了"。
+   */
+  const residue = result.sourceResidue;
   const tail =
-    residue.length > 0
-      ? `**里面还剩下：${residue.join('、')}**，请自行确认后删除。` +
-        (residue.includes('secrets.json')
-          ? '（`secrets.json` 是明文的 API Key，注意别外传。）'
-          : '')
-      : `目录本身还在，但里面已经空了。`;
+    residue === undefined
+      ? `目录本身还在；这一版没有报告里面还剩什么。`
+      : residue.kind === 'unreadable'
+        ? `而且**我没能读到那个目录**（${residue.reason}），所以**不知道里面还剩什么**` +
+          ` —— 删它之前请自己先看一眼。`
+        : residue.entries.length > 0
+          ? `**里面还剩下：${residue.entries.join('、')}**，请自行确认后删除。` +
+            (residue.entries.includes('secrets.json')
+              ? '（`secrets.json` 是明文的 API Key，注意别外传。）'
+              : '')
+          : `目录本身还在，但里面已经空了。`;
   return (
     `已复制 ${what}到新位置并逐文件校验通过，正在重启以生效。` +
     `⚠️ 旧目录 ${from} **没能删掉，仍留在原地**。${tail}`

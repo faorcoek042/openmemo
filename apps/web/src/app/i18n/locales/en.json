@@ -198,6 +198,7 @@
       "inUse": "In use",
       "empty": "No model installed yet",
       "reclaimable": "Reclaimable: unfinished downloads {{partials}} · orphan blobs {{orphans}} · unrecognised leftovers {{unclaimed}}",
+      "unknownAmount": "unknown",
       "gc": "Reclaim {{size}}"
     },
     "fit": {

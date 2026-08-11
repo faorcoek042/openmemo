@@ -509,7 +509,28 @@ export async function handleBackendRoutes(
         p.id,
         {
           engineVersion: p.engineVersion,
-          sizeBytes: (p.files ?? []).reduce((n, f) => n + (f.sizeBytes ?? 0), 0),
+          /*
+           * ★ #87：这里原来是 `reduce((n, f) => n + (f.sizeBytes ?? 0), 0)`。
+           *
+           * 老记录里 `files[].sizeBytes` 可能缺失 —— 每缺一个就少加一份，
+           * **全缺时求和恰好是 `0`**。而 `0 != null`，于是
+           * `BackendPackCard` 那道**刻意的三态守卫**（`installedSizeBytes != null`
+           * 才用机器上那份、否则回落目录值）**永远不会触发**，卡片渲染出
+           * 「ffmpeg n7.1.5 · linux/x64 · **0 B**」。
+           *
+           * 守卫是对的、位置是对的，被上游一个默认值架空了 —— 所以修上游，不动守卫。
+           * 判据：**只要有一个文件说不出大小，这份总和就是"不知道"，不是某个数字。**
+           */
+          sizeBytes: (() => {
+            const files = p.files ?? [];
+            if (files.length === 0) return null;
+            let total = 0;
+            for (const f of files) {
+              if (f.sizeBytes == null) return null;
+              total += f.sizeBytes;
+            }
+            return total;
+          })(),
         },
       ]),
     );
