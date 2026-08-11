@@ -379,6 +379,22 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     : undefined;
   const server = createUnboundServer(tls ? { key: tls.key, cert: tls.cert } : undefined);
 
+  /*
+   * ★★ #77 finding① 分段打点用（Manager 2026-08-11 裁决，win32 重启不回来复检）：
+   * 只在这里记"谁连着"，不改行为、不主动断开任何人。
+   *
+   * `stop()` 里的 `server.close()` 要等**全部**连接（含闲置的 keep-alive）都断了
+   * 才会回调——如果自我重启时那一步吃掉了继任者的 15s 接班窗口，这份清单能
+   * 直接说是不是这个原因、是谁的连接（比如审计脚本自己复用长连接接着 daemon，
+   * 那样"产品卡住 15s"至少有一半是测试工具自己造成的，该改的地方就不在这里）。
+   */
+  const activeConnections = new Set<string>();
+  server.on('connection', (socket) => {
+    const label = `${socket.remoteAddress ?? '?'}:${socket.remotePort ?? '?'}`;
+    activeConnections.add(label);
+    socket.on('close', () => activeConnections.delete(label));
+  });
+
   let boundPort = 0;
   /*
    * 实际绑定到的监听地址。**在 `server.address()` 之前先用 BIND_HOST 兜底** ——
@@ -1419,17 +1435,44 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
   const stop = async (): Promise<void> => {
     if (stopped) return;
     stopped = true;
+    /*
+     * ★★ #77 finding① 分段打点（Manager 2026-08-11 裁决）：
+     *
+     * 已经证实继任者在 Windows 上判定"前任还没死透"、15s 接班窗口耗尽后
+     * 自弃权（DataDirLockedError）——但没证实前任这边到底卡/慢在哪一段。
+     * "总时长长"分不出是哪段，所以每一段完成都单独打一条时间戳，
+     * `server.close()` 之前额外记一次"还有几条连接、来自谁"——
+     * 它要等**全部**连接（含闲置的 keep-alive）都断了才回调，如果这就是
+     * 卡点，产品代码本身没问题，是某个长连接（很可能是审计脚本自己那条）
+     * 挡住了 daemon 关掉自己。
+     */
+    const t0 = Date.now();
+    const mark = (step: string): void => {
+      console.log(`[daemon][stop] ${step} 完成（+${Date.now() - t0}ms）`);
+    };
     await scheduler?.stop();
+    mark('scheduler.stop');
     sse.close();
+    mark('sse.close');
+    console.log(
+      activeConnections.size > 0
+        ? `[daemon][stop] server.close() 之前还有 ${activeConnections.size} 条连接：` +
+            [...activeConnections].join(', ')
+        : '[daemon][stop] server.close() 之前没有活动连接',
+    );
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    mark('server.close');
     try {
       database?.db.setPragma('wal_checkpoint(TRUNCATE)');
     } catch {
       /* 关闭路径上的 checkpoint 失败不阻塞退出 */
     }
+    mark('wal_checkpoint(TRUNCATE)');
     database?.close();
+    mark('database.close');
     removeRuntimeJson(paths.runtimeJson);
     dirLock.release();
+    mark('dirLock.release');
   };
 
   const restart = async (reason: string, opts?: { dataDir?: string }): Promise<void> => {
@@ -1528,6 +1571,25 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     }
     child.unref();
     console.log(`[daemon] 新进程 pid=${child.pid ?? '?'} 已就位，本进程退出`);
+
+    /*
+     * ★★ #77 finding① 分段打点：把 stop() 那份分段账也落一份盘，不能只指望
+     * 审计脚本那边"daemon 最后 60 行"——那是尾部截断的缓冲，前面一堆步骤
+     * 日志把它填满之后，留不留得下 stop() 这几行不一定，不该赌。
+     * 窗口给足 60s（对齐审计脚本自己整轮的失败预算）：stop() 正常应该是
+     * 毫秒到几秒量级，给这么大余量只是不想在这次诊断上再因为"窗口太短"
+     * 白跑一轮。
+     *
+     * ⚠️ 必须落在 `targetDataDir`，不能落在 `paths.logsDir`（本进程——也就是
+     * 前任——自己那份、可能已经是**刚被搬迁清空的源目录**）。这正是
+     * `restart.log` 已经栽过一次的坑（A-DATADIR-MOVE：`sourceResidue` 在
+     * 搬迁那一刻算出来是空的，重启这一步却又在源目录里现开一个新文件，
+     * 把"源已空"的判据坐实成假的）。这次这份新文件如果也焊死在
+     * `paths.logsDir` 上，会原样把同一个回归犯第二遍——
+     * `[CI 实测 run 31494724525]` 就是这样在 darwin/linux 上撞上
+     * `A-DATADIR-MOVE`：sourceResidue=[] 但磁盘上多出一个 "logs"。
+     */
+    captureConsoleToFile(join(targetDataDir, 'logs', 'restart-predecessor.log'), 60_000);
 
     await stop();
     setTimeout(() => process.exit(0), 50);
