@@ -11,8 +11,8 @@
  *   7. 就绪
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { delimiter, join, resolve } from 'node:path';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs';
+import { delimiter, dirname, join, resolve } from 'node:path';
 
 import { openAppDatabase, defaultExtensionPaths, type AppDatabase } from '@openmemo/db';
 import { materializeSqliteExtensions } from '@openmemo/pipeline';
@@ -199,6 +199,62 @@ export class StartupConflictError extends Error {
   }
 }
 
+/**
+ * 在**有界窗口**内把 `console.{log,warn,error,info}` 的输出也抄一份到
+ * `logPath`，窗口结束后自动摘掉、关闭文件——之后这个文件就是一份静态快照，
+ * 不再随进程继续跑而变化。
+ *
+ * 只包 `console.*`（不碰更底层的 `process.stdout/stderr.write`）：
+ * 接班这条链路上（acquireDataDirLock / acquireSingleInstance 的失败分支、
+ * 启动横幅）实测全部走 `console.*`，没有更底层的直写；包 console 比包
+ * stream.write 好类型化，出错概率更低。
+ *
+ * ⚠️ **为什么不直接把 fd 接给子进程的 stdio**（`spawn(..., {stdio: [...]})`）——
+ * 这是试过、错过的路：那样接上去的 fd 跟着子进程活到它自己退出/被下一次
+ * 重启覆盖为止，等于让这份"诊断这一次重启"的日志变成了子进程**整个生涯**
+ * 的实时账本。CI 里撞上 A-DATADIR-MOVE：子进程活得比"这次重启"久得多，
+ * 数据目录搬迁校验期间它自己一条 console 输出就把这个文件写"动"了，
+ * 跟搬迁前拍的快照对不上，被"源目录残留必须与磁盘一致"这条断言当场抓到
+ * （win32 实测：`verification failed: 大小不一致 logs\restart.log 2930→2809`）。
+ * 现在这版从子进程自己内部挂钩子、绑一个跟接班等待窗口对齐的定时器，
+ * 从根上避免这个文件在"这一次重启"的诊断窗口之外继续变化。
+ */
+function captureConsoleToFile(logPath: string, windowMs: number): void {
+  let fd: number;
+  try {
+    mkdirSync(dirname(logPath), { recursive: true });
+    fd = openSync(logPath, 'w');
+  } catch {
+    return; // 诊断本身开不了文件，不该拖垮启动
+  }
+  const append = (line: string): void => {
+    try {
+      writeSync(fd, line + '\n');
+    } catch {
+      /* 诊断写失败不致命，不能让它把 daemon 拖挂 */
+    }
+  };
+  const methods = ['log', 'warn', 'error', 'info'] as const;
+  const originals = methods.map((m) => console[m].bind(console));
+  methods.forEach((m, i) => {
+    console[m] = (...args: unknown[]): void => {
+      append(args.map((a) => (typeof a === 'string' ? a : String(a))).join(' '));
+      originals[i](...args);
+    };
+  });
+  const stop = (): void => {
+    methods.forEach((m, i) => {
+      console[m] = originals[i];
+    });
+    try {
+      closeSync(fd);
+    } catch {
+      /* 关闭失败不致命，进程退出时 OS 会收 */
+    }
+  };
+  setTimeout(stop, windowMs).unref();
+}
+
 export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemon> {
   /*
    * ★ 随包出厂的 CPU 基线运行时：**没设环境变量时自己算出来**（2026-08-08）。
@@ -267,6 +323,25 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
    */
   const handoverWaitMs =
     waitForPortRaw && Number.isFinite(Number(waitForPortRaw)) ? Number(waitForPortRaw) : 0;
+
+  /*
+   * ★★ 可观测性缺口（Manager 2026-08-11 裁决，#77 runtime 复检）：见 restart() 上的注释。
+   *
+   * `handoverWaitMs > 0` 就是"我是被自我重启拉起来的接班者"这件事本身的标志
+   * （见上面 268 行的注释），不用再单独发一个信号量。在这里、
+   * acquireDataDirLock 判定成败**之前**挂上有界窗口的 console 抄录 ——
+   * 这样不管它是撞锁自弃（DataDirLockedError，退出码 5）还是顺利往下走，
+   * 这段时间里 console.{log,warn,error,info} 说过的话都留得下来。
+   *
+   * 用 `paths.logsDir`（本进程——也就是继任者自己——刚 resolve 出来的
+   * dataDir 下的 logs/）：这是继任者自己的目录，不是前任的，也不会跟
+   * "搬迁刚清空源目录"那类场景冲突，因为这里的 `paths` 本来就是拿
+   * argv 里那个（已经被 restart() 重写过的）--data-dir 解出来的，
+   * 天然跟着"这一次到底该落在哪"走，不需要再猜一遍。
+   */
+  if (handoverWaitMs > 0) {
+    captureConsoleToFile(join(paths.logsDir, 'restart.log'), handoverWaitMs + 10_000);
+  }
 
   /*
    * 数据目录锁必须在**打开数据库之前**拿到 —— 否则第二个实例已经写过库了才被拒。
@@ -1405,6 +1480,21 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       console.log(`[daemon] 重启后切换数据目录：${paths.dataDir} → ${targetDataDir}`);
     }
 
+    /*
+     * ★★ 可观测性缺口（Manager 2026-08-11 裁决，#77 runtime 复检）：
+     *
+     * 继任者是 `detached + stdio:'ignore'` 起的 —— 它自己的 console 输出
+     * 完全没有任何地方能看到。一旦它在接班窗口里卡住或失败（比如
+     * acquireDataDirLock 判定"前任还没死透"而自我放弃、退出码 5），
+     * 唯一能看的是本进程（前任）自己的缓冲，跟继任者发生了什么毫无关系
+     * （`e2e-runtime-audit.mjs` 失败时 dump 的"daemon 最后 N 行"曾一直标着
+     * 这个假话，查错的人会在一份看似相关、实则来自另一个进程的日志上推理）。
+     *
+     * 补法**不在这里**（父进程/spawn 的 stdio 参数），而在子进程自己起来后
+     * 用 `captureConsoleToFile` 挂一个有界窗口——见那个函数上的注释，
+     * 那里记着为什么"父进程把 fd 一直接给子进程"这条路已经试过且被
+     * A-DATADIR-MOVE 抓到了回归，不要重蹈。
+     */
     const child = spawn(process.execPath, argv, {
       detached: true,
       stdio: 'ignore',

@@ -2527,8 +2527,39 @@ try {
   say(`✘ 审计中断：${e.message}`);
   if (proc) say(`   daemon 进程：exitCode=${proc.exitCode} signal=${proc.signalCode}`);
   if (daemonLogs.length) {
-    say('   daemon 最后 60 行：');
+    /*
+     * ★★ 这份缓冲区**不是"当前失败现场"的日志** —— 它是本轮最早那个被
+     * `proc.stdout.on('data', …)` 接住的进程的输出。自重启起的继任者是
+     * `detached`，`proc` 一旦被 `restartViaHttp()` 置空就再也没有新数据流进来，
+     * 所以只要发生过至少一次重启，这里 dump 出来的就是**一个更早、可能已经
+     * 退出的进程**的尾巴，跟这次失败是不是同一个进程无关（Manager 2026-08-11
+     * 裁决，#77 runtime 复检：之前这里的标签"daemon 最后 60 行"没说清楚是谁的
+     * 日志，查错的人会在一份看似相关、实则来自另一个进程的日志上推理）。
+     */
+    say(
+      proc === null
+        ? '   本轮发生过至少一次自重启：以下不是失败现场那个进程的日志，' +
+            '是重启前那个（更早、可能已退出的）进程冻结在缓冲区里的尾部——'
+        : '   daemon 最后 60 行（当前唯一存在过的进程，没发生过自重启）：',
+    );
     say(tail(daemonLogs, 60));
+  }
+  /*
+   * 继任者自己的账——见 main.ts 的 captureConsoleToFile()：接班者起来后会在一个
+   * 有界窗口内（接班等待窗口 + 余量）把自己的 console.{log,warn,error,info}
+   * 抄一份到 `<dataDir>/logs/restart.log`（每次重启覆盖，不追加；窗口外不再变化，
+   * 不会跟迁移搬迁校验之类后续操作打架——这是吃过一次亏才这样设计的）。
+   * 这是失败现场唯一可能反映"继任者自己说了什么"的地方。
+   */
+  const restartLogPath = join(DATA_DIR, 'logs', 'restart.log');
+  if (existsSync(restartLogPath)) {
+    say(`   继任者自己的日志（落盘：${restartLogPath}）：`);
+    say(
+      readFileSync(restartLogPath, 'utf8')
+        .split('\n')
+        .map((l) => `      ${l}`)
+        .join('\n'),
+    );
   }
   results.push({ id: 'A-RUN-COMPLETED', status: 'FAIL', detail: e.message });
 } finally {
