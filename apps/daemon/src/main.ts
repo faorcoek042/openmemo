@@ -1579,8 +1579,17 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
      * 窗口给足 60s（对齐审计脚本自己整轮的失败预算）：stop() 正常应该是
      * 毫秒到几秒量级，给这么大余量只是不想在这次诊断上再因为"窗口太短"
      * 白跑一轮。
+     *
+     * ⚠️ 必须落在 `targetDataDir`，不能落在 `paths.logsDir`（本进程——也就是
+     * 前任——自己那份、可能已经是**刚被搬迁清空的源目录**）。这正是
+     * `restart.log` 已经栽过一次的坑（A-DATADIR-MOVE：`sourceResidue` 在
+     * 搬迁那一刻算出来是空的，重启这一步却又在源目录里现开一个新文件，
+     * 把"源已空"的判据坐实成假的）。这次这份新文件如果也焊死在
+     * `paths.logsDir` 上，会原样把同一个回归犯第二遍——
+     * `[CI 实测 run 31494724525]` 就是这样在 darwin/linux 上撞上
+     * `A-DATADIR-MOVE`：sourceResidue=[] 但磁盘上多出一个 "logs"。
      */
-    captureConsoleToFile(join(paths.logsDir, 'restart-predecessor.log'), 60_000);
+    captureConsoleToFile(join(targetDataDir, 'logs', 'restart-predecessor.log'), 60_000);
 
     await stop();
     setTimeout(() => process.exit(0), 50);
