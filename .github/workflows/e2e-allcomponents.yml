@@ -31,7 +31,80 @@
 
 name: e2e-allcomponents
 
+# ── 每天一次的定时跑：**先只装这一条，而且这一跑是去问一个问题的** ────────────────
+#
+# ## 为什么六条腿里先只给这一条加 cron
+#
+# 两个确证实例（notes 从改名那刻起坏着、runtime 坏了两天）都是**靠有人恰好手动跑**
+# 才发现的 —— 六条腿全是 `workflow_dispatch`，没有一条随 push 或定时跑。所以要定时跑。
+#
+# 但 `[实测]` 查下来有个**能让定时跑变成比现状更坏**的坑：
+#
+# > `inputs` 上下文只在 `workflow_dispatch` / `workflow_call` 时被填充。
+# > **`workflow_dispatch` 的 `default:` 不会应用到 `schedule` 触发的运行上**，
+# > 而"取不存在的属性 ⇒ 空字符串"。
+#
+# 而六条腿是**部分设防、且不一致**的。空值下会发生的不是红，是**绿**：
+# `e2e-browser` 会跳过现场组装、改走 bundleRunId 为空的 artifact 分支；
+# `e2e-runtime` 的变异矩阵（默认 true）整个不跑。
+# **跳过的步骤不会让 job 变红** ⇒ 一条每天跑、每天绿、但**测得比手动跑浅**的检查。
+# 那不只是没解决问题，是造出一个**让所有人以为有人在跑**的东西。
+#
+# 这个前提**验不了**：文档页截断拿不到确切措辞、仓里零 `schedule` 先例、
+# 而 `schedule` 只在默认分支触发 ⇒ PR 上测不了。三条路都堵死。
+#
+# **所以先只装这一条，因为它是唯一在关键参数上已经设防的：**
+#   · `plan` 作业：`const legs = process.env.LEGS || "all"`
+#   · 判据本体：`--mode "… || 'sample'"`、`--model-budget-mb "… || '2600'"`
+# **即使上面的判断成立，它也掉不进 `full` 模式** —— 这正是选它的理由。
+#
+# ⚠️ 下面那个"观测 inputs"的步骤是**加可见，不是加设防**。
+#    刻意**没有**给 attest 作业里那处没设防的 `--mode "${{ inputs.mode }}"` 补默认值
+#    —— **补上就把待测的现象消灭了**，就永远不知道 schedule 下 inputs 到底是什么。
+#    **先让它说话，再决定要不要给它戴嘴套。**
+#
+# 🔴 **拿到这一跑的事实之前，不许把 cron 铺到其余五条腿上。**
+#
+# ## 红了谁会看见 —— 三条可审计的事实，其中一条**没被验证过**
+#
+# 1. **谁收到**：GitHub 对 `schedule` 失败的通知**发给创建该 workflow 的用户**；
+#    若他人修改了 cron，则改发给**该修改者**（GitHub 官方文档原文）。
+#    也就是**提交这条 cron 的那个账号**。
+# 2. **它依赖什么**：该账号**打开了 Actions 的通知**。
+#    ⚠️ **这一项没有被验证过** —— 查不到别人的通知设置。已请 Manager 去向用户确认。
+#    在确认之前，**不许把这条读成"已经有人会看见"**。
+# 3. **如果这条断了会怎样**：定时跑照常跑、照常红，**而没有人知道** ——
+#    于是我们只是把"没人跑"换成了"没人看"，**回到正要治的那个病**。
+#    这句写在这里，是为了让后人知道第 2 条不是可有可无的装饰。
+#
+# ## 成本（实测，不是估的）
+#
+# 六条腿全部每天跑一次：**85 job-分钟/天、2,550 job-分钟/月**
+# （注意：GitHub **按 job 向上取整到整分钟**计费，六条腿是 **26 个 job** 不是 6 个；
+#  串行墙钟只有 34.7 分钟/天，拿墙钟当成本会低估 2.4 倍）。
+# 本仓是 **public + 全 GitHub 托管标准 runner ⇒ $0，没有分钟额度**。
+# ⚠️ **若仓库将来转为 private，这条会变成约 $91/月，其中 macOS 占 79%** ——
+#    那是一个会改变结论的条件，写在这里省得后人重算。
+#
+# ## 时间与串行
+#
+# 18:00 UTC（约北京时间凌晨 2 点）。将来铺开时其余五条**错开 15 分钟依次启动**，
+# 天然串行、零编排 —— 不是为了省钱（$0），是**别在同一时刻抢 runner 影响别人的 PR 判决**。
+# 不建编排器的硬理由：`GITHUB_TOKEN` 触发的 `workflow_dispatch` **不产生新的 run**
+# （GitHub 防递归），做编排就得引 PAT ⇒ 那是新基础设施。
+#
+# ## 顺带留档：browser 那条腿的抖动赔率（省得下次有人重做这轮推理）
+#
+# `[实测]` 对同一 SHA 全默认参数连跑 4 次，**12 个平台 job 全绿**（含此前红过的 win32-x64）。
+# 能下的结论**只有**：真实红率若为 50%，连出 4 绿的概率仅 6.25% ⇒ **可排除"掷硬币"**；
+# 但红率若为 10%，连出 4 绿的概率是 66% ⇒ **排除不了"偶发"**。
+# 一侧 95% 置信上界 ≈ **53%**。**要把上界压到 10% 以下需要约 28 跑。**
+# 结论：**不是高频抖动，发版当天预算一次重跑即可**；那 28 跑**不做**，
+# 因为它不改变这句结论（收窄一个不影响行动的区间 = 把精确当目的）。
 on:
+  schedule:
+    # 每天 18:00 UTC。⚠️ schedule 只在**默认分支**上触发。
+    - cron: '0 18 * * *'
   workflow_dispatch:
     inputs:
       bundleRunId:
@@ -74,6 +147,39 @@ jobs:
     outputs:
       matrix: ${{ steps.pick.outputs.matrix }}
     steps:
+      # ★★ 一次性观测：**schedule 触发下 `inputs.*` 到底是什么？**
+      #
+      # 这一步**只打印，不改任何行为** —— 它存在的唯一目的，是把一个
+      # **验不了的前提**（`workflow_dispatch` 的 `default:` 会不会应用到 schedule 运行上）
+      # 变成一条**可读的事实**。三条验证路都堵死：文档页截断、仓里零 schedule 先例、
+      # schedule 只在默认分支触发所以 PR 上测不了。**那就只能让它自己说一次。**
+      #
+      # ⚠️ 刻意打印**原始值**，不带任何 `|| 'default'` 兜底 ——
+      #    兜底会把待测的现象消灭掉。用 `${#VAR}` 打长度，是为了让
+      #    **"空串"和"字面量 sample"在日志里不可能被看混**。
+      #
+      # 读法：若 `event_name=schedule` 时 `mode` 长度为 0 ⇒ 判断成立
+      #       （默认值不生效），其余五条腿铺开前必须逐个补兜底；
+      #       若长度为 6（`sample`）⇒ 判断不成立，可以直接铺开。
+      - name: 观测 inputs 在本次触发下的真实取值（只打印，不改行为）
+        shell: bash
+        env:
+          RAW_MODE: ${{ inputs.mode }}
+          RAW_BUDGET: ${{ inputs.modelBudgetMb }}
+          RAW_LEGS: ${{ inputs.legs }}
+          RAW_BUNDLE: ${{ inputs.bundleRunId }}
+        run: |
+          echo "── inputs 原始取值观测（本步骤不影响后续行为）──"
+          echo "github.event_name    = '${{ github.event_name }}'"
+          echo "inputs.mode          = '${RAW_MODE}'    len=${#RAW_MODE}"
+          echo "inputs.modelBudgetMb = '${RAW_BUDGET}'  len=${#RAW_BUDGET}"
+          echo "inputs.legs          = '${RAW_LEGS}'    len=${#RAW_LEGS}"
+          echo "inputs.bundleRunId   = '${RAW_BUNDLE}'  len=${#RAW_BUNDLE}"
+          echo "──"
+          echo "若 event_name=schedule 且 mode 的 len=0 ⇒ dispatch 的 default 不适用于 schedule，"
+          echo "其余五条腿在铺开 cron 之前必须逐个补兜底（尤其 browser 的 assembleFromSource、"
+          echo "runtime 的 mutations —— 它们空值下会**静默少跑**而不是变红）。"
+
       - id: pick
         shell: bash
         env:
