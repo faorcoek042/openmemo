@@ -3890,11 +3890,21 @@ describe('T-132 组件与来源页', () => {
    *
    * 判据钉的是**送到用户眼前的那串字**，不是"页面上有没有出现回滚两个字"。
    */
+  /*
+   * ★ `updateAvailable` 从 `true` 改成 `false`，**因为真服务端在这份数据上算不出 true**。
+   *
+   * 它是服务端算的：`isUpdateAvailable(pinnedVersion, latestVersion)` =
+   * `compareVersions(latest, pinned) > 0`。这里 pinned 与 latest 都是 `2026.07.04`
+   * ⇒ 相等 ⇒ `false`。手写成 `true` 等于**编了一个服务端没有的状态**。
+   *
+   * 这条用例真正的前提是「**已装的比目录钉的旧**」（2026.06.01 < 2026.07.04），
+   * 而那正是「装一次真的有用」的那一种情形 —— 按钮现在也钉在这条轴上。
+   */
   const INSTALLED_WITH_UPDATE = {
     ...YTDLP,
     installedVersion: '2026.06.01',
     latestVersion: '2026.07.04',
-    updateAvailable: true,
+    updateAvailable: false,
   };
 
   /** 替换 confirm 并把它收到的那句话录下来。 */
@@ -10756,18 +10766,32 @@ describe('T-200 S-6 组件页必须跟着活查询走', () => {
               installedVersion: 'v1',
               pinnedVersion: 'v2',
               latestVersion: 'v2',
-              updateAvailable: true,
+              // 真服务端算的是 compareVersions(latest, pinned) > 0；v2 vs v2 ⇒ false。
+              // 手写 true 会让这条腿跑在一个服务端造不出的状态上。
+              updateAvailable: false,
             },
           ],
           online: true,
           checkedAt: '2026-08-10T00:00:00.000Z',
         },
         'POST /components/ytdlp-linux-x64/update': () => {
-          installed = 'v2'; // 任务跑完了：服务端从此说 v2
+          /*
+           * ★★ 这个桩曾经编码了一个**真服务端没有的行为**。
+           *
+           * 它写的是"装完之后版本变成 latest"。而真路由（`rest/components.ts`）
+           * **不读请求体**，装的永远是**目录钉死的 `pinnedVersion`**，回的也是
+           * `toVersion: comp.pinnedVersion`。
+           *
+           * 在这份数据上两者恰好同值（pinned 就是 'v2'），所以桩**看起来**是对的 ——
+           * 而这正是它危险的地方：它守住的是一个不存在的世界，
+           * 一旦有人照着它去实现"装上游最新版"，用例会一路绿着放行。
+           * 现在把这句话钉死：**变成 pinnedVersion，不是 latestVersion。**
+           */
+          installed = 'v2'; // = pinnedVersion（真服务端装的就是它）
           return {
             ok: true,
             id: 'ytdlp-linux-x64',
-            toVersion: 'v2',
+            toVersion: 'v2', // = pinnedVersion
             jobId: 'j1',
             deduplicated: false,
           };
@@ -11137,5 +11161,119 @@ describe('★ #87 横幅：UNKNOWN 必须说出原因', () => {
       `把 undefined 当成了 null —— 老 daemon 上会凭空多出一条它从没报告过的告警：${t.slice(0, 200)}`,
     );
     unmount();
+  });
+});
+
+/* ══════ A-4/更新：「上游有新版」不许再冒充成一个可点的动作 ══════ */
+
+/**
+ * 现场：卡片上那颗按钮写着「更新到 v1.9.2」，而 `POST /api/components/:id/update`
+ * **不读请求体**，装的永远是目录钉死的那一版，回的也是 `toVersion: pinnedVersion`。
+ * 用户点完 → 装了一遍旧版 → 卡片仍写「更新到 v1.9.2」→ **他会再点一次**。
+ *
+ * 用户 2026-08-09 的规矩：**引导动作的按钮跳转后的逻辑能解决对应问题就补上，否则删掉。**
+ * 这颗按钮比一般的死按钮更糟 —— 它**具体地承诺了一个版本号**。
+ */
+describe('组件更新：门控的轴和动作必须是同一件事', () => {
+  const BASE_C = {
+    id: 'ytdlp-linux-x64',
+    displayName: 'yt-dlp',
+    displayNameZh: 'yt-dlp 站点解析器',
+    category: 'media-tool',
+    pinnedVersion: '2026.07.04',
+    installedVersion: '2026.07.04',
+    latestVersion: null as string | null,
+    updateAvailable: false,
+    checkError: null,
+    checkedAt: null as string | null,
+    provenance: {
+      repoUrl: 'https://github.com/yt-dlp/yt-dlp',
+      releaseUrl: 'https://github.com/yt-dlp/yt-dlp/releases/tag/2026.07.04',
+      license: 'GPL-3.0-or-later',
+      licenseUrl: 'https://www.gnu.org/licenses/gpl-3.0.html',
+    },
+    upstream: { kind: 'github-release' as const, repo: 'yt-dlp/yt-dlp' },
+    sizeBytes: 39_924_536,
+    sha256: '6b'.repeat(32),
+    sha256Provenance: null,
+  };
+
+  const show = async (over: Record<string, unknown>) => {
+    stubApi({
+      '/components': { components: [{ ...BASE_C, ...over }], online: true, checkedAt: null },
+    });
+    const r = await render(<ComponentsPage />);
+    await r.flush();
+    return r;
+  };
+
+  test('★★ 已装 = 钉定、上游更新 ⇒ **没有**那颗按钮（它承诺的版本这里装不到）', async () => {
+    const r = await show({ latestVersion: '2026.09.01', updateAvailable: true });
+    assert.equal(
+      r.container.querySelector('[data-testid="component-update-ytdlp-linux-x64"]'),
+      null,
+      `按钮还在 —— 它会写着一个服务端装不到的版本号：${text(r.container).slice(0, 200)}`,
+    );
+    r.unmount();
+  });
+
+  test('★★ 同一现场必须给出真话 + 真出口（上游发布页），不是静默', async () => {
+    const r = await show({ latestVersion: '2026.09.01', updateAvailable: true });
+    const box = r.container.querySelector(
+      '[data-testid="component-upstream-newer-ytdlp-linux-x64"]',
+    );
+    assert.equal(box === null, false, '删了按钮却什么都没说 —— 那是把死路换成静默');
+    const said = box?.textContent ?? '';
+    assert.equal(said.includes('2026.09.01'), true, `没说上游是哪一版：${said}`);
+    assert.equal(said.includes('2026.07.04'), true, `没说我们钉的是哪一版：${said}`);
+    assert.equal(said.includes('装不了'), true, `没说清这里装不了那一版：${said}`);
+    assert.equal(
+      r.container.querySelector('[data-testid="component-upstream-link-ytdlp-linux-x64"]') === null,
+      false,
+      '没有通向上游那一版的出口',
+    );
+    r.unmount();
+  });
+
+  test('★★ PATH 那句只对有 PATH 档的工具说 —— sqlite-ext 不许有', async () => {
+    const tool = await show({ latestVersion: '2026.09.01', updateAvailable: true });
+    assert.equal(
+      (
+        tool.container.querySelector('[data-testid="component-upstream-newer-ytdlp-linux-x64"]')
+          ?.textContent ?? ''
+      ).includes('PATH'),
+      true,
+      'media-tool 少了那条真能走的路（RESOLUTION_PLANS 里 ytDlp 确实有 path 档）',
+    );
+    tool.unmount();
+
+    /*
+     * sqlite-ext 是 SQLite 扩展，从 `<dataDir>/bin/ext` 加载，
+     * `RESOLUTION_PLANS` 里**没有它** —— 对它说"装到 PATH 我们会直接用"是一条走不通的路。
+     */
+    const ext = await show({
+      id: 'libsimple-linux-x64',
+      category: 'sqlite-ext',
+      latestVersion: 'v0.9.0',
+      updateAvailable: true,
+    });
+    assert.equal(
+      (
+        ext.container.querySelector('[data-testid="component-upstream-newer-libsimple-linux-x64"]')
+          ?.textContent ?? ''
+      ).includes('PATH'),
+      false,
+      'sqlite-ext 没有 PATH 那一档，这句话对它是假的',
+    );
+    ext.unmount();
+  });
+
+  test('★★ 已装 < 钉定 ⇒ 按钮回来，而且说的是**钉定**那一版', async () => {
+    const r = await show({ installedVersion: '2026.06.01' });
+    const btn = r.container.querySelector('[data-testid="component-update-ytdlp-linux-x64"]');
+    assert.equal(btn === null, false, '装一次真的有用的那一种情形，反而没有按钮');
+    const label = btn?.textContent ?? '';
+    assert.equal(label.includes('2026.07.04'), true, `按钮没说清装的是哪一版：${label}`);
+    r.unmount();
   });
 });

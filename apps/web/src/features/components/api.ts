@@ -83,7 +83,13 @@ export function useUpdateComponentMutation() {
         {
           method: 'POST',
           body: req,
-          idempotencyKey: `component-update:${req.id}:${req.toVersion ?? 'latest'}`,
+          /*
+           * ★ key 里原来编的是 `req.toVersion ?? 'latest'` —— 一个**服务端从不读**的字段。
+           *   后果不是多余，是**错的**：「更新到 1.9.2」与「更新到 1.9.3」会被当成两个
+           *   不同的请求，而它们做的是同一件事（装目录钉死的那一版）。
+           *   幂等键应当钉「这次真的要做什么」，所以只剩组件 id。
+           */
+          idempotencyKey: `component-update:${req.id}`,
         },
       ),
     onSuccess: () => {

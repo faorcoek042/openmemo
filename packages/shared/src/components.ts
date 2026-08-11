@@ -135,10 +135,23 @@ export interface CheckUpdatesRequest {
   ids?: string[];
 }
 
+/**
+ * `POST /api/components/:id/update`。
+ *
+ * ⚠️ **只有 `id`。** 这里原来还有一个 `toVersion?: string`（"Target version; omit to
+ * take the newest known"）—— 那句注释描述的是一个**服务端从来没有过**的能力：
+ * 该路由**不读请求体**（`rest/components.ts` 那 55 行里 `readBody` 出现 0 次），
+ * 直接 `startPackInstall()` 装**目录里钉死的那一版**，并回 `toVersion: pinnedVersion`。
+ *
+ * 它不只是"没人读"这么简单：前端把它编进了 `idempotencyKey`
+ * （`component-update:<id>:<toVersion>`），于是「更新到 1.9.2」和「更新到 1.9.3」
+ * 被当成**两个不同的请求**，而它们做的是**同一件事**（装钉死那一版）。
+ *
+ * 「服务端算了没人读」的镜像面：**客户端发了、服务端从不读，而那个字段正好是
+ * 界面上那句假话的载体。** 拿掉它，形状上就说不出那句话了。
+ */
 export interface UpdateComponentRequest {
   id: string;
-  /** Target version; omit to take the newest known. */
-  toVersion?: string;
 }
 
 /**
