@@ -387,12 +387,46 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
    * 才会回调——如果自我重启时那一步吃掉了继任者的 15s 接班窗口，这份清单能
    * 直接说是不是这个原因、是谁的连接（比如审计脚本自己复用长连接接着 daemon，
    * 那样"产品卡住 15s"至少有一半是测试工具自己造成的，该改的地方就不在这里）。
+   *
+   * ★★ 第二层（Manager 2026-08-11 第二次裁决）：光记数量/地址分不出"卡住的
+   * 那条连接"和"1ms 就放行的那条连接"有什么不同——同一次真实派发里两次
+   * 都是 2 条、都是 127.0.0.1，一次立刻关掉、一次挂死超过 60s。这层补两样、
+   * 仍然只看不动手：
+   *   · 身份：每条连接最后一次请求的 path + User-Agent（拿不到就如实记
+   *     'unknown'，不猜是谁）；
+   *   · 活性：交给 stop() 里 server.close() 之后的逐秒观测（见那边注释）——
+   *     这里只负责把"最后一次请求发生在什么时候"钉在每条连接上，供那边
+   *     每秒比对"这一秒有没有新请求进来"。
+   *   这只是给 Manager 提出的"审计脚本/前端轮询把 keep-alive 续命，
+   *   server.close() 在等一个永远不会自然结束的连接"这个假设配的观测，
+   *   不预设结论、也不能证实——只能证伪或者留着继续可疑。
    */
-  const activeConnections = new Set<string>();
+  interface ConnInfo {
+    lastPath: string;
+    lastUserAgent: string;
+    lastRequestAt: number;
+  }
+  const activeConnections = new Map<string, ConnInfo>();
   server.on('connection', (socket) => {
     const label = `${socket.remoteAddress ?? '?'}:${socket.remotePort ?? '?'}`;
-    activeConnections.add(label);
+    activeConnections.set(label, {
+      lastPath: 'unknown',
+      lastUserAgent: 'unknown',
+      lastRequestAt: 0,
+    });
     socket.on('close', () => activeConnections.delete(label));
+  });
+  // 单独挂一个 'request' 监听——只读 req.url / User-Agent，不消费 body、不碰响应，
+  // 跟 attachHttpHandlers() 那份真正处理请求的监听器互不干扰。
+  server.on('request', (req) => {
+    const socket = req.socket;
+    const label = `${socket.remoteAddress ?? '?'}:${socket.remotePort ?? '?'}`;
+    const info = activeConnections.get(label);
+    if (!info) return; // 'connection' 理论上必然先于 'request'，防御性地不假设
+    info.lastPath = req.url ?? 'unknown';
+    const ua = req.headers['user-agent'];
+    info.lastUserAgent = typeof ua === 'string' ? ua : 'unknown';
+    info.lastRequestAt = Date.now();
   });
 
   let boundPort = 0;
@@ -1455,12 +1489,67 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     sse.close();
     mark('sse.close');
     console.log(
+      `[daemon][stop] server.keepAliveTimeout=${server.keepAliveTimeout}ms, ` +
+        `server.headersTimeout=${server.headersTimeout}ms（未显式设置过，这是 Node 实际生效值）`,
+    );
+    console.log(
       activeConnections.size > 0
         ? `[daemon][stop] server.close() 之前还有 ${activeConnections.size} 条连接：` +
-            [...activeConnections].join(', ')
+            [...activeConnections.entries()]
+              .map(([label, info]) => `${label}(path=${info.lastPath}, ua=${info.lastUserAgent})`)
+              .join(', ')
         : '[daemon][stop] server.close() 之前没有活动连接',
     );
+    /*
+     * ★★ 逐秒活性观测（Manager 2026-08-11 第二次裁决）：只看，不许靠它去"解决"
+     * 卡住——不调大窗口、不 closeAllConnections()，先让它说话。
+     *
+     * 每秒记一次"还剩哪些连接、这一秒里有没有收到新请求"。如果幸存连接是被
+     * 反复进来的新请求续命（审计脚本或前端在 daemon 重启期间还在轮询），
+     * 这里能直接看见；如果它纹丝不动地空闲挂着，这里也会如实显示"否"。
+     * 这是给"server.close() 在等一个被轮询续命、永远不会自然结束的连接"
+     * 这个假设配的证据，不预设它成立。
+     *
+     * 上限 55 个 tick（55s）自行停表——卡在 5s 内主要是对齐前任侧
+     * `restart-predecessor.log` 的 60s 抄写窗口（见 restart() 里那次
+     * captureConsoleToFile 调用）：超过窗口这些行已经没人接、写不进那份
+     * 落盘的账本，纯属噪音，没必要再打。不代表 server.close() 本身有任何
+     * 超时——55s 到了它照样继续等，只是这道观测自己先闭嘴。
+     */
+    const lastRequestSeenAt = new Map<string, number>();
+    for (const [label, info] of activeConnections) lastRequestSeenAt.set(label, info.lastRequestAt);
+    const closeWatchStart = Date.now();
+    let closeWatchTicks = 0;
+    const closeWatch = setInterval(() => {
+      closeWatchTicks += 1;
+      if (activeConnections.size === 0) {
+        console.log(
+          `[daemon][stop] server.close() 后 +${Date.now() - closeWatchStart}ms：连接已清空，等回调`,
+        );
+      } else {
+        const rows = [...activeConnections.entries()].map(([label, info]) => {
+          const prev = lastRequestSeenAt.get(label) ?? 0;
+          const gotNewRequest = info.lastRequestAt > prev;
+          lastRequestSeenAt.set(label, info.lastRequestAt);
+          return (
+            `${label}(这一秒有新请求=${gotNewRequest ? '是' : '否'}, ` +
+            `path=${info.lastPath}, ua=${info.lastUserAgent})`
+          );
+        });
+        console.log(
+          `[daemon][stop] server.close() 后 +${Date.now() - closeWatchStart}ms 仍在等：` +
+            rows.join(', '),
+        );
+      }
+      if (closeWatchTicks >= 55) {
+        console.log(
+          '[daemon][stop] 逐秒观测达到 55s 上限，停止打点（不代表 server.close() 有任何超时机制）',
+        );
+        clearInterval(closeWatch);
+      }
+    }, 1000).unref();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    clearInterval(closeWatch);
     mark('server.close');
     try {
       database?.db.setPragma('wal_checkpoint(TRUNCATE)');
