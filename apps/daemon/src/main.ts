@@ -55,7 +55,7 @@ import { jobCreatedEvent, jobStateEvent, pipelineJobOf, pipelineKindOf } from '.
 import { toolchainMissing } from '@openmemo/shared';
 import { LanePool } from './jobs/lanes.js';
 import { Repos } from './db/repos.js';
-import { buildPipeline, type PipelineBundle } from './pipeline/setup.js';
+import { buildPipeline, resolveToolchain, type PipelineBundle } from './pipeline/setup.js';
 import { toolRefreshMessage } from './bootstrap/tool-refresh-message.js';
 import { resolveExtensionDir } from './pipeline/modelStore.js';
 import { vadHealth } from './pipeline/vadStatus.js';
@@ -323,6 +323,14 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
    * 详见 http/server.ts 的 `ServerDeps.ready`。
    */
   let isReady = false;
+  /**
+   * 「发现工具链变了 ⇒ 重建流水线」的**单飞**（#87 修法 A）。
+   *
+   * 横幅 30 s 轮询一次，而重建要构造引擎、可能跑好几秒 —— 不去重的话
+   * 第二次轮询会撞上还没跑完的第一次，两发同时装配同一条流水线。
+   * 与断路器那一处（T-175）是同一条理由：**猛敲一个正在被修的东西**。
+   */
+  let rebuilding = false;
   let instanceIdRef = '';
   let repos: Repos | undefined;
   let bundle: PipelineBundle | undefined;
@@ -451,133 +459,185 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       // 不 await：让 HTTP 响应先发出去，前端才能显示"正在重启"
       void restartHook.run?.(reason, o);
     },
-    status: () => ({
+    status: async () => {
       /*
-       * 「装了但没生效」—— 前端那条横幅「中文分词器已安装，需重启生效 →[立即重启]」
-       * 的唯一触发源。
+       * ★★ #87 修法 A —— **按需重算工具链**。
        *
-       * 为什么非要有这个字段：SQLite 扩展是在**打开 DB 的那个连接**上加载的，
-       * model-mgmt 把 libsimple 装到磁盘上之后，本进程的 tokenizer 仍然是 trigram。
-       * 只看 extensions.libsimple=false，前端分不清"没装"和"装了但要重启" ——
-       * 前者该显示"去安装"，后者该显示"点一下重启"。这跟 T-060 那次
-       * 「检测中」和「检测过了但不可用」必须分开是同一类问题。
+       * 病的形状：我们把「世界变了」窄化成了「我们自己改变了世界」。
+       * `bundle` 是启动时的快照，只在 SSE 的 `model.installed` / `backend.installed`
+       * 这类**我们自己发出的**事件上刷新。用户按 v0.7.0 发布说明自己
+       * `brew install ffmpeg` 之后不产生任何事件 ⇒ 界面一直说缺，直到重启 daemon。
+       *
+       * 三条硬约束都成立：
+       *   ① **不新建缓存** —— 结果写回 `bundle` 这个既有的唯一来源，不另存一份；
+       *   ② **不上冷启动热路径** —— 未 ready 时 `/api/health` 直接 503，压根不调 status()；
+       *   ③ **拿不到结果 ⇒ UNKNOWN**，绝不当成"什么都不缺"（catch 那一支）。
+       *
+       * 代价：`resolveToolchain()` 只做文件系统解析、不构造引擎。
+       * `[实测]` p50 Linux 4.53ms · macOS 5.88ms · Windows 29.65ms，
+       * 横幅 30 s 轮询一次 ⇒ 每分钟几十毫秒的 I/O。
+       *
+       * ⚠️ **发现变了就要重建 bundle，不能只更新这一格**：
+       * `bundle.tools` 还握着旧的工具路径，光把 `missing` 说成空的，
+       * 就成了"报告已就绪、实际跑不了" —— 那是比原 bug 更坏的一句假话。
+       * 重建在后台跑（不挡住这次响应），下一次轮询就一致了。
        */
-      restartRequired: restartRequirement(),
-      /*
-       * ★ LLM 可用性的**唯一权威**。
-       *
-       * 此前是"两处各答各的"：`/models` 看**本地模型库**（`model.llm` 有没有装权重），
-       * `/settings` 看**已配置的 provider**。于是用户同时看到
-       * 「语言模型未选择 · 思维导图不可用」和「当前生效 DeepSeek」——
-       * 两边都没读错自己的源，**但它们在用同一句话回答不同的问题**。
-       *
-       * 真正决定思维导图能不能跑的，是 `resolveConfiguredProvider()` ——
-       * 配了云厂商就能跑，本地有没有装权重无关。所以权威口径定在这里，
-       * 前端两处都读它，不要各自推断。
-       */
-      llm: llmAvailability(),
-      db: database
-        ? {
-            driver: database.driver,
-            sqliteVersion: database.sqliteVersion,
-            journalMode: database.journalMode,
-            schemaVersion: database.schema.to,
-            extensions: {
-              libsimple: database.extensions.libsimple,
-              sqliteVec: database.extensions.sqliteVec,
-              tokenizer: database.extensions.tokenizer,
-              failures: database.extensions.failures,
-            },
-            search: { ok: database.search.ok, tokenizer: database.search.tokenizer },
+      if (bundle) {
+        const before = bundle.toolchain;
+        try {
+          const fresh = await resolveToolchain(paths);
+          bundle = { ...bundle, toolchain: { kind: 'known', missing: fresh.missing } };
+          const changed =
+            before.kind !== 'known' || before.missing.join(',') !== fresh.missing.join(',');
+          if (changed && !rebuilding) {
+            rebuilding = true;
+            void (async () => {
+              try {
+                bundle = await buildPipeline(paths);
+                console.log('[daemon] 工具链变了（不是我们装的）—— 已重建流水线');
+              } catch (e) {
+                console.warn(`[daemon] 工具链变了但重建失败：${String(e)}`);
+              } finally {
+                rebuilding = false;
+              }
+            })();
           }
-        : null,
-      jobs: queue ? queue.counts() : null,
-      lanes: lanes.snapshot(),
-      sseClients: sse.clientCount,
-      scheduler: scheduler ? { running: scheduler.runningCount } : null,
-      pipeline: bundle
-        ? {
-            /*
-             * ★ #87：`unknown` 时发 **null + 原因**，绝不发空数组 ——
-             * 空数组会被两个 UI 读者和 e2e 断言一致地读成"什么都不缺"。
-             */
-            missing: bundle.toolchain.kind === 'known' ? bundle.toolchain.missing : null,
-            ...(bundle.toolchain.kind === 'unknown'
-              ? { missingUnknownReason: bundle.toolchain.reason }
-              : {}),
-            /*
-             * ★ `missing` 里**装得到**与**装不到**是两回事（T-199 ①）。
-             *
-             * 实测：`darwin/x64` 目录里 0 条包、`win32/arm64` 0 条、`linux/arm64` 只有
-             * `ytdlp-linux-arm64` 一条。而首屏横幅对整个 `missing` 一律说
-             * 「点「安装」即可，下载约 …，要几分钟」+「去修复」→ `/runtime`，
-             * 而 `/runtime` 会把这些包如实渲染成「其它平台」——
-             * **同一次点击，横幅承诺下载量和耗时，落地页说其它平台。**
-             *
-             * 🔴 **`asr-model` 必须排除**：模型**不按平台圈定**
-             *（`models-whisper.json` 只把可选的 `coreml-encoder` sidecar 按 `os: darwin`
-             * 圈住，ggml 底模没有平台字段，每个平台都能下）。把它算进来，
-             * 一台**没装模型**的 Intel Mac 会被告知「本平台没有可下载的组件包」——
-             * **一句和这条修复正在消灭的那句一模一样形状的新假话。**
-             *
-             * ⚠️ 算在这里而不是 `buildPipeline()` 里：那个函数只拿得到 `paths`，
-             * 给它加载一次目录等于给冷启动热路径加 I/O。这里是**请求时**求值，
-             * 而且目录**已经加载好才用**（`peekBackendCatalog()` 返回 null = 还没读到
-             * ⇒ `'unknown'` ⇒ 什么都不说，保持原样）。
-             */
-            unavailableOnPlatform: toolchainMissing(bundle.toolchain).filter((m) => {
-              if (m === 'asr-model') return false;
-              return (
-                hasInstallablePackProviding(
-                  process.platform === 'win32' ? `${m}.exe` : m,
-                  modelRoutesFor(serverDeps).peekBackendCatalog()?.packs ?? null,
-                  {
-                    os:
-                      process.platform === 'win32'
-                        ? 'win32'
-                        : process.platform === 'darwin'
-                          ? 'darwin'
-                          : 'linux',
-                    arch: currentArch(),
-                  },
-                ) === 'no'
-              );
-            }),
-            modelPath: bundle.modelPath,
-            streamAvailable: bundle.streamAvailable,
-            streamModelId: bundle.streamModelId,
-            paraformerAvailable: bundle.paraformerAvailable,
-            /*
-             * ★ 必须把**没构造出来**的引擎也列进来（T-160）。
-             *
-             * 只列 `candidates` 的话，模型没装的引擎在这份列表里根本不存在 ——
-             * 前端 `AsrEngineStatus` 会把它补成"未安装"，但**说不出原因、也给不出下一步**。
-             * 而真实原因（"未安装流式中文模型，去模型页装 X"）daemon 是知道的。
-             * 不说出来，就是把一次可操作的缺失变成一个用户查不下去的哑巴状态。
-             */
-            engines: [
-              ...bundle.candidates.map((c) => ({
-                id: c.engine.id,
-                available: c.available,
-                ...(c.unavailableReason ? { reason: c.unavailableReason } : {}),
-              })),
-              ...bundle.unavailableEngines.map((e) => ({
-                id: e.id,
-                available: false,
-                reason: e.reasonZh,
-              })),
-            ],
-            ffmpeg: bundle.tools.ffmpeg || null,
-            whisperCli: bundle.tools.whisperCli,
-            /*
-             * 切分方式必须露到界面上（T-148）。
-             * VAD 不可用时转写照样完成，只是断句变差 —— 一个用户看不见的降级，
-             * 与假绿灯是同一类问题：结果给了，代价没说。
-             */
-            vad: vadHealth(bundle.vad),
-          }
-        : null,
-    }),
+        } catch (e) {
+          // ③ 拿不到结果就是 UNKNOWN —— 不许当成"什么都不缺"
+          bundle = {
+            ...bundle,
+            toolchain: { kind: 'unknown', reason: `工具链解析失败：${String(e)}` },
+          };
+        }
+      }
+      return {
+        /*
+         * 「装了但没生效」—— 前端那条横幅「中文分词器已安装，需重启生效 →[立即重启]」
+         * 的唯一触发源。
+         *
+         * 为什么非要有这个字段：SQLite 扩展是在**打开 DB 的那个连接**上加载的，
+         * model-mgmt 把 libsimple 装到磁盘上之后，本进程的 tokenizer 仍然是 trigram。
+         * 只看 extensions.libsimple=false，前端分不清"没装"和"装了但要重启" ——
+         * 前者该显示"去安装"，后者该显示"点一下重启"。这跟 T-060 那次
+         * 「检测中」和「检测过了但不可用」必须分开是同一类问题。
+         */
+        restartRequired: restartRequirement(),
+        /*
+         * ★ LLM 可用性的**唯一权威**。
+         *
+         * 此前是"两处各答各的"：`/models` 看**本地模型库**（`model.llm` 有没有装权重），
+         * `/settings` 看**已配置的 provider**。于是用户同时看到
+         * 「语言模型未选择 · 思维导图不可用」和「当前生效 DeepSeek」——
+         * 两边都没读错自己的源，**但它们在用同一句话回答不同的问题**。
+         *
+         * 真正决定思维导图能不能跑的，是 `resolveConfiguredProvider()` ——
+         * 配了云厂商就能跑，本地有没有装权重无关。所以权威口径定在这里，
+         * 前端两处都读它，不要各自推断。
+         */
+        llm: llmAvailability(),
+        db: database
+          ? {
+              driver: database.driver,
+              sqliteVersion: database.sqliteVersion,
+              journalMode: database.journalMode,
+              schemaVersion: database.schema.to,
+              extensions: {
+                libsimple: database.extensions.libsimple,
+                sqliteVec: database.extensions.sqliteVec,
+                tokenizer: database.extensions.tokenizer,
+                failures: database.extensions.failures,
+              },
+              search: { ok: database.search.ok, tokenizer: database.search.tokenizer },
+            }
+          : null,
+        jobs: queue ? queue.counts() : null,
+        lanes: lanes.snapshot(),
+        sseClients: sse.clientCount,
+        scheduler: scheduler ? { running: scheduler.runningCount } : null,
+        pipeline: bundle
+          ? {
+              /*
+               * ★ #87：`unknown` 时发 **null + 原因**，绝不发空数组 ——
+               * 空数组会被两个 UI 读者和 e2e 断言一致地读成"什么都不缺"。
+               */
+              missing: bundle.toolchain.kind === 'known' ? bundle.toolchain.missing : null,
+              ...(bundle.toolchain.kind === 'unknown'
+                ? { missingUnknownReason: bundle.toolchain.reason }
+                : {}),
+              /*
+               * ★ `missing` 里**装得到**与**装不到**是两回事（T-199 ①）。
+               *
+               * 实测：`darwin/x64` 目录里 0 条包、`win32/arm64` 0 条、`linux/arm64` 只有
+               * `ytdlp-linux-arm64` 一条。而首屏横幅对整个 `missing` 一律说
+               * 「点「安装」即可，下载约 …，要几分钟」+「去修复」→ `/runtime`，
+               * 而 `/runtime` 会把这些包如实渲染成「其它平台」——
+               * **同一次点击，横幅承诺下载量和耗时，落地页说其它平台。**
+               *
+               * 🔴 **`asr-model` 必须排除**：模型**不按平台圈定**
+               *（`models-whisper.json` 只把可选的 `coreml-encoder` sidecar 按 `os: darwin`
+               * 圈住，ggml 底模没有平台字段，每个平台都能下）。把它算进来，
+               * 一台**没装模型**的 Intel Mac 会被告知「本平台没有可下载的组件包」——
+               * **一句和这条修复正在消灭的那句一模一样形状的新假话。**
+               *
+               * ⚠️ 算在这里而不是 `buildPipeline()` 里：那个函数只拿得到 `paths`，
+               * 给它加载一次目录等于给冷启动热路径加 I/O。这里是**请求时**求值，
+               * 而且目录**已经加载好才用**（`peekBackendCatalog()` 返回 null = 还没读到
+               * ⇒ `'unknown'` ⇒ 什么都不说，保持原样）。
+               */
+              unavailableOnPlatform: toolchainMissing(bundle.toolchain).filter((m) => {
+                if (m === 'asr-model') return false;
+                return (
+                  hasInstallablePackProviding(
+                    process.platform === 'win32' ? `${m}.exe` : m,
+                    modelRoutesFor(serverDeps).peekBackendCatalog()?.packs ?? null,
+                    {
+                      os:
+                        process.platform === 'win32'
+                          ? 'win32'
+                          : process.platform === 'darwin'
+                            ? 'darwin'
+                            : 'linux',
+                      arch: currentArch(),
+                    },
+                  ) === 'no'
+                );
+              }),
+              modelPath: bundle.modelPath,
+              streamAvailable: bundle.streamAvailable,
+              streamModelId: bundle.streamModelId,
+              paraformerAvailable: bundle.paraformerAvailable,
+              /*
+               * ★ 必须把**没构造出来**的引擎也列进来（T-160）。
+               *
+               * 只列 `candidates` 的话，模型没装的引擎在这份列表里根本不存在 ——
+               * 前端 `AsrEngineStatus` 会把它补成"未安装"，但**说不出原因、也给不出下一步**。
+               * 而真实原因（"未安装流式中文模型，去模型页装 X"）daemon 是知道的。
+               * 不说出来，就是把一次可操作的缺失变成一个用户查不下去的哑巴状态。
+               */
+              engines: [
+                ...bundle.candidates.map((c) => ({
+                  id: c.engine.id,
+                  available: c.available,
+                  ...(c.unavailableReason ? { reason: c.unavailableReason } : {}),
+                })),
+                ...bundle.unavailableEngines.map((e) => ({
+                  id: e.id,
+                  available: false,
+                  reason: e.reasonZh,
+                })),
+              ],
+              ffmpeg: bundle.tools.ffmpeg || null,
+              whisperCli: bundle.tools.whisperCli,
+              /*
+               * 切分方式必须露到界面上（T-148）。
+               * VAD 不可用时转写照样完成，只是断句变差 —— 一个用户看不见的降级，
+               * 与假绿灯是同一类问题：结果给了，代价没说。
+               */
+              vad: vadHealth(bundle.vad),
+            }
+          : null,
+      };
+    },
   };
   attachHttpHandlers(server, serverDeps);
 

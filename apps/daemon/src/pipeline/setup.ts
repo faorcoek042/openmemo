@@ -358,8 +358,46 @@ function subprocessProxyResolver(targetUrl: string): { url: string; noProxy?: st
   return noProxy.length > 0 ? { url, noProxy } : { url };
 }
 
-export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
+/**
+ * 工具链解析 —— **`buildPipeline()` 的前半段，原样搬出来的**（#87 修法 A）。
+ *
+ * ## 为什么必须搬出来，而不是再写一份
+ *
+ * `/api/health` 要能**按需重算**"还缺什么"：用户自己 `brew install ffmpeg` 之后
+ * 不产生任何 SSE 事件，而 daemon 的 `bundle` 是启动时的快照，界面于是一直说缺。
+ * 但重算**不能另写一份解析逻辑** —— 那就成了"同一台机器上两个答案"，
+ * 正是这一整条修复在治的病。所以这里是**同一段代码**：两边都调它。
+ *
+ * ## 切在哪儿，为什么切得动
+ *
+ * 这一段从 `storeRoot` 到 `asr-model` 全是**文件系统解析**（discoverTools / VAD /
+ * ASR 模型），**不构造任何引擎** —— 引擎与 registry 从 `buildDefaultRegistry()` 才开始。
+ * 所以按需重算付的是几毫秒的 I/O，不是一次装配。
+ * `[实测]` `discoverTools()` p50：Linux 4.53ms · macOS 5.88ms · **Windows 29.65ms**
+ * ⚠️ 代价跟 **PATH 条目数**走，不是操作系统（Win runner 146 条 vs 17/21）——
+ * 传"Windows 慢"会让人以为换个系统就好了，传"长 PATH 慢"才能让人预判自己那台机器。
+ *
+ * ## ⚠️ 警告由**调用方**决定打不打
+ *
+ * 这一段原有两处 `console.warn`。启动时打是对的；而按需重算**每 30 秒一次**
+ * （横幅在轮询 `/api/health`），照打就会刷屏 —— 一个每半分钟重复一次的告警，
+ * 用户学会的是忽略它。所以改成返回 `warnings`：`buildPipeline()` 打，健康检查不打。
+ * `warnVadOnce()` 自带一次性守卫，原样保留。
+ */
+export interface ToolchainResolution {
+  readonly dirs: ManagedDirs;
+  readonly tools: ToolPaths;
+  readonly vad: Awaited<ReturnType<typeof resolveWhisperVadModel>>;
+  readonly missing: string[];
+  readonly whisperCliOrigin: Awaited<ReturnType<typeof resolveBackendTool>>;
+  readonly asrModelPath: string | null;
+  /** 解析过程中值得说的话。**调用方决定要不要打** —— 见上面那段。 */
+  readonly warnings: readonly string[];
+}
+
+export async function resolveToolchain(paths: AppPaths): Promise<ToolchainResolution> {
   const env = process.env;
+  const warnings: string[] = [];
 
   /*
    * 单一来源（D-08 D4）：制品根目录只在 `resolveStoreRoot` 里定义一次。
@@ -423,8 +461,8 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
      * 必须出声，理由与上面那条 VAD 警告一样：形态是"用户选了加速后端、装上了、
      * 跑的却是另一个包"，而**每一层都不会报错**。静默降级是本仓最贵的一类 bug。
      */
-    console.warn(
-      `[daemon] ⚠️ 已选中后端 ${whisperCliOrigin.preferred ?? '(无)'}，但 whisper-cli 来自 ` +
+    warnings.push(
+      `⚠️ 已选中后端 ${whisperCliOrigin.preferred ?? '(无)'}，但 whisper-cli 来自 ` +
         `${whisperCliOrigin.packId ?? '(来源不明)'}（backend=${whisperCliOrigin.backend ?? '未知'}）` +
         ` —— 选中的那个包里没有 ${whisperCliName()}，已退回。加速不会生效。`,
     );
@@ -470,12 +508,32 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
   const asrIsActuallyVad =
     modelPath !== null && tools.vadModel !== undefined && modelPath === tools.vadModel;
   if (asrIsActuallyVad) {
-    console.warn(
-      `[daemon] ⚠️ ASR 模型解析到了 VAD 权重（${modelPath}）—— 拒绝使用，按"未安装 ASR 模型"处理`,
+    warnings.push(
+      `⚠️ ASR 模型解析到了 VAD 权重（${modelPath}）—— 拒绝使用，按"未安装 ASR 模型"处理`,
     );
   }
   const asrModelPath = asrIsActuallyVad ? null : modelPath;
   if (!asrModelPath) missing.push('asr-model');
+
+  return { dirs, tools, vad, missing, whisperCliOrigin, asrModelPath, warnings };
+}
+
+export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
+  const env = process.env;
+  const {
+    dirs,
+    tools,
+    vad,
+    missing,
+    whisperCliOrigin,
+    asrModelPath,
+    warnings: resolveWarnings,
+  } = await resolveToolchain(paths);
+  /*
+   * 启动时把解析过程中的话打出来。**按需重算那条路径不打** ——
+   * 每 30 秒重复一次的告警，用户学会的是忽略它。
+   */
+  for (const w of resolveWarnings) console.warn(`[daemon] ${w}`);
 
   const registry = buildDefaultRegistry({
     tools,
