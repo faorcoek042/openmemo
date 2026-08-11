@@ -80,6 +80,16 @@ const BUNDLE = arg('--bundle', null);
 const PORT = Number(arg('--port', '19830'));
 const MODE = arg('--mode', 'sample'); // sample | full
 const MODEL_BUDGET_MB = Number(arg('--model-budget-mb', '2600'));
+/**
+ * ★ 覆盖面上报：把本轮**没能被评估**的断言条数落盘，供 attest 作业归并后传给
+ * `emit-e2e-attestation.mjs --undecided`。文件形状 `{ unknowns: N }` 与另外三条腿
+ * 逐字相同，好共用 `sum-undecided.mjs`。
+ *
+ * ⚠️ 但**归并口径不同**：那三条腿用 `--reduce sum`（每个平台各自独立的未决），
+ *    这条腿用 `--reduce agree`（三格是同一件事的三次观察）。理由见下面
+ *    `llmGapIds` 那一段，以及 `e2e-allcomponents.yml` attest 作业里的论证。
+ */
+const UNDECIDED_OUT = arg('--undecided-out', null);
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32';
 
@@ -98,6 +108,29 @@ const mb = (b) => `${(b / 1048576).toFixed(0)}MB`;
 const ledger = [];
 let exitCode = 0;
 let aborted = null;
+/**
+ * ★ 本腿**唯一**的真·未决：`role=llm` 那几个变体，B 层结构上够不着。
+ *
+ * `/api/models/catalog` 不列 role=llm（它们归 `/api/llm/models` 那条线），
+ * 而本腿的 B 层"真装一遍"是**从目录枚举出来的**——所以那几个变体
+ * **一次都没被装过，用户能否装上这条腿说不出话**。脚本第 1 节早就把这句话
+ * 用 `[未验证]` 写在日志里了，但它此前**只活在日志里**：凭证的 `undecided`
+ * 一格是 null，闸门读出来是"这条腿没上报覆盖面"。
+ *
+ * `null` 是 `[未验证]` 这件事本身没被上报；把它变成一个真数出来的数，
+ * 闸门才会替我们把这句话念出来。
+ *
+ * ⚠️ 保持为 `null` 直到真的数出来为止 —— 中断在数出来之前时**不写文件**，
+ *    下游 `sum-undecided.mjs` 会因为缺一格如实收敛成 null。
+ *    写一个 `0` 才是撒谎（"查过了，一条未决都没有"）。
+ */
+let llmGapIds = null;
+/**
+ * 记一条**被评估过**的断言。本腿是**两态**的：`r.ok` 只有 true/false。
+ * 「前提构造不出来」一律主动判 FAIL（典型：第 8 节挑不出可做失败样本的小包时，
+ * reason 直接写「**没跑** ——（不是跳过，是到不了）」）。
+ * ⚠️ 别往这里塞第三态：汇总段有一条会红的守卫盯着（搜 `TWO_STATE`）。
+ */
 function judge(name, r, { fatal = true } = {}) {
   ledger.push({ name, ok: r.ok, reason: r.reason, fatal });
   say(`   ${r.ok ? '✔' : '✘'} ${name}：${r.reason}`);
@@ -423,6 +456,13 @@ try {
       `**本腿 B 层覆盖不到它们**，A 层已逐个探过镜像。` +
       `用户能否从那条线装上：\`[未验证]\`。`,
   );
+  /*
+   * ★ 就在这里把这句 `[未验证]` **数出来**，而不是让它只活在日志里。
+   *   这是本腿唯一进 `undecided` 的东西 —— 抽样跳过的那些模型**不算**，
+   *   理由见 yml 里 attest 那一段（一句话：它们是样本更小，不是判据没跑，
+   *   而且 `mode=sample` 已经在替它们说话，再报一遍只会稀释这个数）。
+   */
+  llmGapIds = [...manifestLlmIds];
 
   /*
    * ★ 包内清单 vs 当前 checkout 的清单：**漂开了就当场点名**。
@@ -914,9 +954,43 @@ try {
 } finally {
   await stopDaemon();
   hdr('结论台账');
+  /*
+   * ⚠️ 这里原本写的是 `e.ok === null ? 'ⓘ' : …` —— 一条**零生产者**的渲染分支：
+   *   全文 `ledger.push` 只有 `judge()` 一个写入点，而 `ok: null` 一次都没出现过，
+   *   那个 ⓘ **一次也画不出来**。
+   *
+   *   它不是无害的死代码：**任何来审计这条腿的人，看到那个分支都会得出
+   *   "这条腿支持三态"的结论**，而它一次都没成立过。本仓这一周抓到的四道
+   *   空转守卫全是这个形状 —— 一个**看起来在工作**的东西。
+   *   （record 腿是反过来的：那边有人写第三态、没人分类。**有人写没人分 vs
+   *     有人分没人写，两种都得治。**）
+   *
+   *   所以删掉它，并在下面钉一根**会红**的桩：真有人往台账里塞第三态时当场喊，
+   *   而不是让一个画不出来的图标替我们假装支持它。
+   */
   for (const e of ledger) {
-    say(`   ${e.ok === null ? 'ⓘ' : e.ok ? '✔' : '✘'} ${e.name}`);
+    say(`   ${e.ok ? '✔' : '✘'} ${e.name}`);
     say(`      ${String(e.reason).replace(/\s+/g, ' ').slice(0, 300)}`);
+  }
+  /*
+   * ★ TWO_STATE —— 「本腿是两态的」这句话的看门狗。
+   *
+   * 它撑着两件事：① 上面那个只认 true/false 的渲染；② 凭证里 `--undecided` 报的
+   * 是 `llmGapIds.length`，**而不是从台账里数第三态**。哪天有人往 `judge()` 里
+   * 塞一个 `ok: null`（或别的非布尔），这两件事会同时变成假话，而**两件都不会自己喊**。
+   * 所以在这里判红，并直接指到该一起改的那三个地方。
+   */
+  const nonBoolean = ledger.filter((e) => e.ok !== true && e.ok !== false);
+  if (nonBoolean.length > 0) {
+    exitCode = 1;
+    say('');
+    say(`   ✘ 台账里出现了 ${nonBoolean.length} 条非布尔的 ok（本腿此前是**两态**的）：`);
+    for (const e of nonBoolean) say(`     · ${e.name} → ok=${JSON.stringify(e.ok)}`);
+    say('     如果它表示「这条断言没能被评估」，那么三处要一起改：');
+    say('       ① 上面的渲染（现在只认 true/false）；');
+    say('       ② 本文件的 --undecided-out（现在只报 llmGapIds.length，不数台账）；');
+    say('       ③ e2e-allcomponents.yml 里 attest 那段论证（它明写"未决只有 LLM 那一处"）。');
+    say('     别只把渲染补回去 —— 那正是这一行要挡的事。');
   }
   const red = ledger.filter((x) => x.ok === false && x.fatal);
   say('');
@@ -933,6 +1007,39 @@ try {
   say('');
   say('   ⚠️ 重申局限：**CI 可达 ≠ 用户可达。** 这条腿全绿也不代表中国网络下装得上；');
   say('      能代表的那一半是第 3 节的镜像结构。');
+
+  /*
+   * 覆盖面落盘。**包在 try 里**：纯展示用的统计出故障不该连累这条腿的判定
+   * （`sum-undecided.mjs` 顶部那段裁决同一条理由）。
+   *
+   * ⚠️ `llmGapIds === null` 时**一个字都不写** —— 那表示这一轮压根没跑到数它的地方
+   *    （第 1 节之前就中断了）。少一格会让下游如实收敛成 null，而写个 0 是撒谎：
+   *    0 的意思是"查过了，一条未决都没有"。**没数 ≠ 数出来是 0**，这正是这批
+   *    改动从头到尾在守的那条线。
+   */
+  if (UNDECIDED_OUT) {
+    if (llmGapIds === null) {
+      say('');
+      say(`   ⚠️ 没跑到统计未决的那一步，**不写** ${UNDECIDED_OUT}。`);
+      say('      下游 sum-undecided.mjs 会因为缺一格如实收敛成 null —— 那是对的：');
+      say('      「没数」和「数出来是 0」必须分得开。');
+    } else {
+      try {
+        mkdirSync(dirname(UNDECIDED_OUT), { recursive: true });
+        writeFileSync(
+          UNDECIDED_OUT,
+          `${JSON.stringify({ unknowns: llmGapIds.length, llmIds: llmGapIds }, null, 2)}\n`,
+        );
+        say('');
+        say(`   覆盖面已写到 ${UNDECIDED_OUT}（unknowns=${llmGapIds.length}）`);
+        say(
+          `     内容：role=llm 的 ${llmGapIds.length} 个变体本腿 B 层够不着 —— ${llmGapIds.join(', ')}`,
+        );
+      } catch (err) {
+        say(`   ⚠️ 覆盖面写不出去（${String(err?.message ?? err)}）—— 不影响本腿判定。`);
+      }
+    }
+  }
   // 几 GB 的下载留在 runner 上没意义，跑完自己清（Manager 2026-08-09 要求）
   try {
     rmSync(ROOT, { recursive: true, force: true });

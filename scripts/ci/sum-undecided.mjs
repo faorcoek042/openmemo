@@ -51,7 +51,12 @@
  *     --expect-labels linux-x64,darwin-arm64,win32-x64 \
  *     --file-template 'e2e-runtime-undecided-{label}.json' \
  *     [--field unknowns] \
+ *     [--reduce sum|agree] \
  *     [--github-output "$GITHUB_OUTPUT"]
+ *
+ * `--reduce` 决定"三格怎么并成一个数"，**默认 `sum`**（见下面那段注释）：
+ * 每平台各自独立的未决用 `sum`；三格是同一件事的三次观察时用 `agree`
+ * （要求一致、取公共值，不一致就收敛成 null）。
  *
  * `--dir` / `--expect-labels` 缺失是**调用方本身的配置错误**（写死在 YAML 里，
  * 不随平台跑没跑而变），这两项照旧 die()——它们与"某一平台跑没跑"不是同一类问题。
@@ -81,6 +86,30 @@ if (!expectLabelsRaw)
   die('--expect-labels 是必填项（逗号分隔，例如 linux-x64,darwin-arm64,win32-x64）');
 
 const field = arg('--field', 'unknowns');
+/*
+ * ★ 怎么把三格并成一个数（`--reduce`，默认 `sum`，老调用方一个字都不用改）
+ *
+ * 加这一档，是因为 **allcomponents 腿把"求和"暴露成了一个错误的默认**：
+ *
+ *   · runtime / browser / record 三条腿的未决是**每个平台各自独立**的
+ *     （"这台 runner 上构造不出这个前提"）—— 三格是三件不同的事，**该加起来**。
+ *   · allcomponents 腿的未决是 `role=llm` 那 5 个变体够不着
+ *     （`/api/models/catalog` 不列它们）。而那 5 个来自
+ *     `vendor/manifests/models-llm.json` —— **一个与平台无关的文件**，
+ *     三个包里装的是同一份。求和会得到 15，也就是**把同一个文件数了三遍**。
+ *
+ * 所以两种归并都要有名字，而且**必须在调用点写出来**：
+ *   · `--reduce sum`   三格是三件独立的事 → 相加
+ *   · `--reduce agree` 三格是同一件事的三次观察 → 要求它们**一致**，取那个公共值
+ *
+ * ⚠️ `agree` 模式下"三格不一致"**不是噪声，是信号**：它意味着三个平台读到的
+ *    清单真的不一样。那种情况按本脚本一贯的口径处理 —— 响亮警告 + 收敛成 null，
+ *    **绝不挑一个当代表**（挑一个正是"靠巧合才安全"的那种写法）。
+ */
+const reduce = arg('--reduce', 'sum');
+if (!['sum', 'agree'].includes(reduce)) {
+  die(`--reduce 只能是 sum 或 agree，实得 ${JSON.stringify(reduce)}`);
+}
 const fileTemplate = arg('--file-template', '{label}.json');
 if (!fileTemplate.includes('{label}')) {
   die(`--file-template 必须包含 {label} 占位符，实得 ${JSON.stringify(fileTemplate)}`);
@@ -169,10 +198,34 @@ if (extras.length > 0) {
 
 console.log('');
 
+/*
+ * 归并。`agree` 模式多一道判据：三格必须报出**同一个值**。
+ * 不一致时**不挑代表、不取众数、不取最大** —— 按本脚本一贯的口径收敛成 null。
+ */
+let reduced = sum;
+if (problems.length === 0 && reduce === 'agree') {
+  const distinct = [...new Set(breakdown.filter((b) => b.status === 'ok').map((b) => b.value))];
+  if (distinct.length === 1) {
+    reduced = distinct[0];
+  } else {
+    problems.push(
+      `--reduce agree 要求各格报同一个值，实得 ${distinct.sort((a, b) => a - b).join(' / ')}` +
+        `（${breakdown
+          .filter((b) => b.status === 'ok')
+          .map((b) => `${b.label}=${b.value}`)
+          .join('，')}）—— 三个平台读到的不是同一份东西，这本身就是要查的信息`,
+    );
+  }
+}
+
 let flag;
 if (problems.length === 0) {
-  flag = `--undecided ${sum}`;
-  console.log(`✔ ${uniqueLabels.length}/${uniqueLabels.length} 个标签都到齐，合计 ${field}=${sum}`);
+  flag = `--undecided ${reduced}`;
+  console.log(
+    reduce === 'agree'
+      ? `✔ ${uniqueLabels.length}/${uniqueLabels.length} 个标签都到齐且**一致**，${field}=${reduced}（agree：同一件事的三次观察，不相加）`
+      : `✔ ${uniqueLabels.length}/${uniqueLabels.length} 个标签都到齐，合计 ${field}=${sum}`,
+  );
 } else {
   flag = '';
   const foundLabels = breakdown.filter((b) => b.status === 'ok').map((b) => b.label);
