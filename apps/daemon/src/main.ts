@@ -387,12 +387,46 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
    * 才会回调——如果自我重启时那一步吃掉了继任者的 15s 接班窗口，这份清单能
    * 直接说是不是这个原因、是谁的连接（比如审计脚本自己复用长连接接着 daemon，
    * 那样"产品卡住 15s"至少有一半是测试工具自己造成的，该改的地方就不在这里）。
+   *
+   * ★★ 第二层（Manager 2026-08-11 第二次裁决）：光记数量/地址分不出"卡住的
+   * 那条连接"和"1ms 就放行的那条连接"有什么不同——同一次真实派发里两次
+   * 都是 2 条、都是 127.0.0.1，一次立刻关掉、一次挂死超过 60s。这层补两样、
+   * 仍然只看不动手：
+   *   · 身份：每条连接最后一次请求的 path + User-Agent（拿不到就如实记
+   *     'unknown'，不猜是谁）；
+   *   · 活性：交给 stop() 里 server.close() 之后的逐秒观测（见那边注释）——
+   *     这里只负责把"最后一次请求发生在什么时候"钉在每条连接上，供那边
+   *     每秒比对"这一秒有没有新请求进来"。
+   *   这只是给 Manager 提出的"审计脚本/前端轮询把 keep-alive 续命，
+   *   server.close() 在等一个永远不会自然结束的连接"这个假设配的观测，
+   *   不预设结论、也不能证实——只能证伪或者留着继续可疑。
    */
-  const activeConnections = new Set<string>();
+  interface ConnInfo {
+    lastPath: string;
+    lastUserAgent: string;
+    lastRequestAt: number;
+  }
+  const activeConnections = new Map<string, ConnInfo>();
   server.on('connection', (socket) => {
     const label = `${socket.remoteAddress ?? '?'}:${socket.remotePort ?? '?'}`;
-    activeConnections.add(label);
+    activeConnections.set(label, {
+      lastPath: 'unknown',
+      lastUserAgent: 'unknown',
+      lastRequestAt: 0,
+    });
     socket.on('close', () => activeConnections.delete(label));
+  });
+  // 单独挂一个 'request' 监听——只读 req.url / User-Agent，不消费 body、不碰响应，
+  // 跟 attachHttpHandlers() 那份真正处理请求的监听器互不干扰。
+  server.on('request', (req) => {
+    const socket = req.socket;
+    const label = `${socket.remoteAddress ?? '?'}:${socket.remotePort ?? '?'}`;
+    const info = activeConnections.get(label);
+    if (!info) return; // 'connection' 理论上必然先于 'request'，防御性地不假设
+    info.lastPath = req.url ?? 'unknown';
+    const ua = req.headers['user-agent'];
+    info.lastUserAgent = typeof ua === 'string' ? ua : 'unknown';
+    info.lastRequestAt = Date.now();
   });
 
   let boundPort = 0;
@@ -1470,12 +1504,115 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     sse.close();
     mark('sse.close');
     console.log(
+      `[daemon][stop] server.keepAliveTimeout=${server.keepAliveTimeout}ms, ` +
+        `server.headersTimeout=${server.headersTimeout}ms（未显式设置过，这是 Node 实际生效值）`,
+    );
+    console.log(
       activeConnections.size > 0
         ? `[daemon][stop] server.close() 之前还有 ${activeConnections.size} 条连接：` +
-            [...activeConnections].join(', ')
+            [...activeConnections.entries()]
+              .map(([label, info]) => `${label}(path=${info.lastPath}, ua=${info.lastUserAgent})`)
+              .join(', ')
         : '[daemon][stop] server.close() 之前没有活动连接',
     );
+    /*
+     * ★★ 逐秒活性观测（Manager 2026-08-11 第二次裁决，仍然保留）：
+     *
+     * 每秒记一次"还剩哪些连接、这一秒里有没有收到新请求"。#77 finding① 真实
+     * 派发（run 31498002020, win32）已经拿到定论性的数据：55/55 个 tick 全是
+     * "有新请求"——幸存连接是 `scripts/ci/e2e-runtime-audit.mjs` 的
+     * `waitHealth()`（500ms 轮询 `/api/health`），不是空闲 keep-alive 没回收。
+     * 这道观测继续留着——下面新加的强制关闭理应让它再也走不到 20+ 秒，
+     * 但万一某天又有别的连接用别的方式把 server.close() 卡住，这里还能
+     * 立刻说清楚是谁、有没有新请求——不该只在这次调查时才有。
+     */
+    const lastRequestSeenAt = new Map<string, number>();
+    for (const [label, info] of activeConnections) lastRequestSeenAt.set(label, info.lastRequestAt);
+    const closeWatchStart = Date.now();
+    let closeWatchTicks = 0;
+    const closeWatch = setInterval(() => {
+      closeWatchTicks += 1;
+      if (activeConnections.size === 0) {
+        console.log(
+          `[daemon][stop] server.close() 后 +${Date.now() - closeWatchStart}ms：连接已清空，等回调`,
+        );
+      } else {
+        const rows = [...activeConnections.entries()].map(([label, info]) => {
+          const prev = lastRequestSeenAt.get(label) ?? 0;
+          const gotNewRequest = info.lastRequestAt > prev;
+          lastRequestSeenAt.set(label, info.lastRequestAt);
+          return (
+            `${label}(这一秒有新请求=${gotNewRequest ? '是' : '否'}, ` +
+            `path=${info.lastPath}, ua=${info.lastUserAgent})`
+          );
+        });
+        console.log(
+          `[daemon][stop] server.close() 后 +${Date.now() - closeWatchStart}ms 仍在等：` +
+            rows.join(', '),
+        );
+      }
+      if (closeWatchTicks >= 55) {
+        console.log(
+          '[daemon][stop] 逐秒观测达到 55s 上限，停止打点（不代表 server.close() 有任何超时机制）',
+        );
+        clearInterval(closeWatch);
+      }
+    }, 1000).unref();
+    /*
+     * ★★ 修法 (A)（Manager 2026-08-11 第三次裁决，#77 finding①）：给
+     * server.close() 的等待设上界，到点用 server.closeAllConnections()
+     * （Node ≥18.2）强制收尾。
+     *
+     * 因果链已经用真实数据钉死（run 31498002020，win32）：`waitHealth()`
+     * 每 500ms 轮询一次 `/api/health`，把同一条 keep-alive 连接的空闲计时器
+     * 连续清零——它永远攒不够 `keepAliveTimeout`（5000ms）的空闲时间，
+     * Node 自己那道"空闲连接自动回收"永远不会触发，而 `server.close()`
+     * 只等**自然结束**、不主动断连接，于是死等。
+     *
+     * **不管挂着的是谁**，daemon 因为某个客户端一直在正常轮询就永远关不掉
+     * 自己，这本身就是缺陷——重启不该被任何一个客户端的访问模式挟持。
+     * 之前不许用 `closeAllConnections()` 是因为不知道挂着的是谁、怕把现象
+     * 一并消灭；现在知道了，禁令解除。
+     *
+     * ## 宽限期为什么是 keepAliveTimeout + 2000ms，不是随手填的数
+     *
+     * · **先让 Node 自己的空闲回收有机会先动手**——宽限期不短于
+     *   `keepAliveTimeout` 本身，这样"真正空闲、只是还没被回收"的连接
+     *   （非病理情况）走的还是 Node 原生的正常路径，不会被我们抢在前面
+     *   粗暴打断。
+     * · **再加 2000ms 固定余量**——给调度抖动、以及"宽限期临界点前一刻
+     *   刚好有个正常请求还没写完响应"这种情况留一点让它自然收尾的空间，
+     *   不是掐着 keepAliveTimeout 那一刻就精确开枪。
+     * · **总量对 15s 接班窗口够克制**：`server.keepAliveTimeout` 现在是
+     *   5000ms（Node 默认，没配过），宽限期算下来 7000ms，stop() 其余
+     *   几步都是毫秒级，留给继任者 `pidAlive()` 轮询、本进程真正
+     *   `process.exit(0)`、OS 回收端口这些收尾的余量还有 7s+——不是卡线过关。
+     *   `server.keepAliveTimeout` 万一将来被显式调大，这个算式跟着它走，
+     *   不会因为写死了 7000 这个字面量而脱节。
+     *
+     * ⚠️ 仍然不许靠调大 Windows 那 15s 窗口"解决"——那是给症状让路，
+     * 这里改的是 daemon 自己该有的性质：关闭不该被无限期挟持。
+     */
+    const graceMs = server.keepAliveTimeout + 2_000;
+    let closedNaturally = false;
+    const forceCloseTimer = setTimeout(() => {
+      if (closedNaturally) return;
+      const remaining = activeConnections.size;
+      console.log(
+        `[daemon][stop] server.close() 等了 ${graceMs}ms 仍有 ${remaining} 条连接没自然结束，` +
+          `强制关闭（server.closeAllConnections()）：` +
+          (remaining > 0
+            ? [...activeConnections.entries()]
+                .map(([label, info]) => `${label}(path=${info.lastPath}, ua=${info.lastUserAgent})`)
+                .join(', ')
+            : '（清单已空，等的是 close 回调本身）'),
+      );
+      server.closeAllConnections();
+    }, graceMs).unref();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    closedNaturally = true;
+    clearTimeout(forceCloseTimer);
+    clearInterval(closeWatch);
     mark('server.close');
     try {
       database?.db.setPragma('wal_checkpoint(TRUNCATE)');
