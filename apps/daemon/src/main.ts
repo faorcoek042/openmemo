@@ -1418,11 +1418,20 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
      * 先补上这个洞，再去动"交接会不会把前任错认成陌生人"那个假设——
      * 假设要靠继任者自己的账才能证实，不能靠猜。
      *
-     * 落到 `paths.logsDir`（本进程自己的数据目录下，已经在启动时创建过）。
+     * ⚠️ 落到 `targetDataDir` 下的 `logs/`，**不是 `paths.logsDir`**（本进程/前任的）。
+     * 这不是随手选的：迁移场景下 `targetDataDir !== paths.dataDir`，若在这里用
+     * `paths.logsDir`，就会在**搬迁刚判定"源已清空"之后**，于源目录下凭空建出一个
+     * `logs/` —— 那正是 `A-DATADIR-MOVE` 断言的"残留清单与磁盘一致"检查的东西
+     * （`[实测]` 第一版这么写过：搬迁 rename 策略下磁盘上多出一个源目录不该有的
+     * `logs/`，把"源已清空"这条真结论变成了假话）。
+     * 用 `targetDataDir`：普通重启时它就是 `paths.dataDir`，行为不变；
+     * 迁移重启时它跟着继任者真正要用的目录走，不会污染刚清空的源。
+     *
      * **每次重启覆盖而非追加**：这里只诊断"这一次"，不做日志历史，避免无界增长。
      */
-    mkdirSync(paths.logsDir, { recursive: true });
-    const restartLogPath = join(paths.logsDir, 'restart.log');
+    const restartLogDir = join(targetDataDir, 'logs');
+    mkdirSync(restartLogDir, { recursive: true });
+    const restartLogPath = join(restartLogDir, 'restart.log');
     writeFileSync(
       restartLogPath,
       `[daemon] 自我重启（${reason}），前任 pid=${process.pid}，${new Date().toISOString()}\n` +
