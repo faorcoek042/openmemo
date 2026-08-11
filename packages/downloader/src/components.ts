@@ -24,8 +24,7 @@ import type {
   Provenance,
   UpstreamSource,
 } from '@openmemo/shared';
-import { checkAllUpstreams } from './upstream.js';
-import { isUpdateAvailable } from './upstream.js';
+import { checkAllUpstreams, upstreamRelation } from './upstream.js';
 import type { ArtifactStore } from './store.js';
 import { STORE_KINDS } from './store.js';
 
@@ -109,7 +108,37 @@ export async function listComponents(opts: ListComponentsOptions): Promise<GetCo
 
   const components: ComponentStatus[] = reg.components.map((c) => {
     const chk = checks.get(c.id);
-    const latest = chk?.latestVersion ?? null;
+    const found = chk?.latestVersion ?? null;
+    /*
+     * ★★ **「比不了」不许再塌成「已是最新」。**
+     *
+     * `compareVersions` 现在分得出四态，而这一栏的旧形状只有三格
+     * （有新版本 / 已是最新 / 未检测）。把 `incomparable` 放进哪一格是有对错的：
+     *   · 放进「已是最新」= **UNKNOWN 塌成 PASS**，一个绿勾说着我们根本没判断出来的事；
+     *   · 放进「未检测」= 说"我们不知道"，**这是真话**，而且下面那句解释会把
+     *     `checkError` 原样显示出来，用户看得到到底为什么不知道。
+     * 所以这里把它归到后者，并写清原因。
+     *
+     * `[实测 2026-08-11，真 daemon :10000]` 这条路径今天有一个真实的走法：
+     * `whispercpp-cpu-macos-arm64` 的 `upstream.repo` 指向我们自己的镜像仓
+     * （里面同时有 `v0.7.0` 一族和 `model-mirror-2026.08.06` 一族），没配 tagPattern，
+     * 于是"最新"挑出 `model-mirror-2026.08.06`，与 pin `v1.9.1` 一比 —— 旧比较器
+     * 刮出 2026 vs 1 得 2025，**报出假的「有新版本」并被算进页面顶部的横幅**。
+     * 现在它是 date vs semver ⇒ `incomparable` ⇒ 显示「未检测 + 原因」。
+     *
+     * ⚠️ **补 `tagPattern` 在这一条上不是解，是换一句假话。** 那个仓里真正驮着这个
+     * 二进制的是 `v0.6.0`（`backends.json` 的下载 URL 实测），也就是 `^v\d+\.\d+\.\d+$`
+     * 一族；配上之后"最新"变成 `v0.7.0`，而 pin 是 `v1.9.1`（whisper.cpp 的版本号）——
+     * 两个都是 semver 形状，比得出来，结论是 `v0.7.0 < v1.9.1` ⇒ **绿勾「已是最新」**。
+     * 那比现在这句假话更坏。真正的解是让"这个仓同时在发两族 tag"变成一条会说话的
+     * 结论（#66 主线的 `indeterminate`），而不是靠配置去躲。
+     */
+    const rel = upstreamRelation(c.pinnedVersion, found);
+    const incomparable = rel === 'incomparable';
+    const latest = incomparable ? null : found;
+    const incomparableNote = incomparable
+      ? `上游给的 ${found} 与目录钉的 ${c.pinnedVersion} 不是同一套编号，排不出先后`
+      : null;
     return {
       id: c.id,
       displayName: c.displayName,
@@ -118,8 +147,8 @@ export async function listComponents(opts: ListComponentsOptions): Promise<GetCo
       pinnedVersion: c.pinnedVersion,
       installedVersion: installed.get(c.id) ?? null,
       latestVersion: latest,
-      updateAvailable: isUpdateAvailable(c.pinnedVersion, latest),
-      checkError: chk?.error ?? null,
+      updateAvailable: rel === 'newer',
+      checkError: incomparableNote ?? chk?.error ?? null,
       checkedAt: chk?.checkedAt ?? null,
       provenance: c.provenance,
       upstream: c.upstream,

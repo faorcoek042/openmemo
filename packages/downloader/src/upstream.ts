@@ -9,8 +9,8 @@
  * installing what is already pinned. A version check is a convenience; an install is not.
  */
 
-import type { UpstreamSource } from '@openmemo/shared';
-import { compareVersions } from '@openmemo/shared';
+import type { UpstreamSource, VersionOrder } from '@openmemo/shared';
+import { compareVersions, compareVersionsForSort } from '@openmemo/shared';
 
 export interface UpstreamRelease {
   version: string;
@@ -145,7 +145,7 @@ export async function checkUpstream(
       }
       // Sort by our own comparator rather than trusting list order, which is by date and
       // does not match build-number or date-tag ordering in every repo.
-      candidates.sort((a, b) => compareVersions(b.tag_name, a.tag_name));
+      candidates.sort((a, b) => compareVersionsForSort(b.tag_name, a.tag_name));
       const newest = candidates[0];
       return { latestVersion: newest.tag_name, release: toRelease(newest), error: null, checkedAt };
     }
@@ -161,7 +161,7 @@ export async function checkUpstream(
       const names = tags.map((t) => t.name).filter((n) => (re ? re.test(n) : true));
       if (!names.length)
         return { latestVersion: null, release: null, error: 'no tag matched', checkedAt };
-      names.sort((a, b) => compareVersions(b, a));
+      names.sort((a, b) => compareVersionsForSort(b, a));
       return { latestVersion: names[0], release: null, error: null, checkedAt };
     }
 
@@ -236,14 +236,19 @@ export async function checkAllUpstreams(
 }
 
 /**
- * Decide whether an update should be offered.
+ * 上游那一版相对我们钉的那一版是什么关系 —— **三态原样传出去，不在这里压成布尔**。
  *
- * Only `true` when the newer version is genuinely newer AND comparable. Anything unknown
- * yields `false`, because a spurious update prompt costs more trust than a missed one:
- * an upstream release can change file format outright, and the user is the one who has to
- * live with the consequences.
+ * ★★ 这里原来是 `isUpdateAvailable(pinned, latest): boolean` —— 一台
+ * **三态进、二态出**的机器：`compareVersions` 的「比不了」和「相等」被同一个 `> 0`
+ * 一起压进 false，于是"我们没能判断"和"你已经是最新的"在下游长得一模一样。
+ * `[实测 2026-08-11]` 这正是 `whispercpp-cpu-macos-arm64` 线上那句假话的下半段：
+ * 比较器把 `model-mirror-2026.08.06` 的 `2026` 当成主版本号去和 `v1.9.1` 的 `1` 比，
+ * 得 2025 > 0，报出假的「有新版本」。
+ *
+ * 现在把 `VersionOrder` 原样交给 `listComponents()`，由它决定
+ * 「比不了」该显示成什么 —— 而不是在这里替它做掉。
  */
-export function isUpdateAvailable(pinned: string, latest: string | null): boolean {
-  if (!latest) return false;
-  return compareVersions(latest, pinned) > 0;
+export function upstreamRelation(pinned: string, latest: string | null): VersionOrder | null {
+  if (!latest) return null;
+  return compareVersions(latest, pinned);
 }
