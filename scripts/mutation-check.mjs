@@ -187,9 +187,21 @@ const MUTATIONS = [
     pkg: 'apps/daemon',
     artifact: 'dist/http/rest/notes.js',
     tests: ['dist/http/noteDetailContract.test.js'],
-    find: "                if (method === 'GET') {\n                    const assets = repos.assetsOfNote(note.id)",
+    /*
+     * ⚠️ 锚点在 #95 那次改动里烂过一次 —— **规格没变**（还是"把整个端点变成不执行"），
+     * 变的只是那一段的**第一条语句**：GET 分支开头插进了一次 `resolveRetranscribeSource`
+     * （`canRetranscribe` 从"判 input_url 非空"改成"真去解析一次"）。
+     *
+     * 重新指的时候**刻意避开注释和 `const assets = …`**，改钉**分支里第一条可执行语句**：
+     *   · 原锚点把 `if (method === 'GET') {` 和它下面那行绑在一起，于是"在开头插一行"
+     *     这种再正常不过的改动都会让它失效 —— 这已经是它第二次被同类改动打断；
+     *   · 钉第一条语句则只要求"这个分支还有第一条语句"，插入注释、插入新语句都不影响，
+     *     而变异的语义（在分支最前面 throw）仍然**逐字不变**。
+     * 产物里唯一（`grep -c` = 1）。
+     */
+    find: '                    const retranscribe = await resolveRetranscribeSource(',
     replace:
-      "                if (method === 'GET') {\n                    throw new Error('mutation-check: 端点没被执行');\n                    const assets = repos.assetsOfNote(note.id)",
+      "                    throw new Error('mutation-check: 端点没被执行');\n                    const retranscribe = await resolveRetranscribeSource(",
     why: '端点整个不执行 —— T-139 的两个 P0（播放器拿不到音源、正文写得进读不回）就藏在这里，结构上不可能被发现',
   },
   {
