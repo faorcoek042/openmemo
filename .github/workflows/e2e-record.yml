@@ -253,7 +253,25 @@ jobs:
         run: |
           node scripts/ci/e2e-record.mjs \
             --bundle "${{ steps.unpack.outputs.bundle_dir }}" \
+            --undecided-out "e2e-record-undecided-${{ matrix.label }}.json" \
             --port 19790
+
+      # ★ 覆盖面（undecided 计数）单独一份 artifact，供 attest job 跨平台求和后
+      # 传给 emit-e2e-attestation.mjs --undecided（照抄 e2e-runtime.yml / e2e-browser.yml
+      # 的同一模式，不另发明）。
+      #
+      # `!cancelled()`：**失败也要传**。这是展示用的覆盖面统计，不是判定；
+      # 而一次红跑的未决清单恰恰是最想看的东西（"到底是验红了，还是压根没验到"）。
+      # `if-no-files-found: warn`：脚本在写这个文件之前就崩了的话（比如 --bundle
+      # 指的目录不是个包，直接 exit 2），少一格由下游 sum-undecided.mjs 收敛成 null，
+      # 不该在这里再红一次。
+      - name: 留档（覆盖面计数）
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: e2e-record-undecided-${{ matrix.label }}
+          path: e2e-record-undecided-${{ matrix.label }}.json
+          if-no-files-found: warn
 
   # ═══════════════════════════════════════════════════════════════════════════════════
   # 发一张「这条腿对着**这一批包**跑绿过」的凭证（契约见 D-17 §11）。
@@ -290,17 +308,86 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+    env:
+      # `--expect-labels`（求和用）与 `--platforms`（写凭证用）的唯一真源
+      # ——照抄 e2e-browser.yml 的同一模式。GitHub Actions 没有现成办法把上面
+      # `e2e` job 的 matrix 标签自动投影进这里，所以它仍是手写的一份字符串；
+      # 但**忘了跟 matrix 同步不会被静默吞掉**：`sum-undecided.mjs` 拿它跟目录里
+      # 实际下到的文件做双向比对，多一格被「未预期文件」逮住、少一格被「缺失」
+      # 逮住，两种都是响亮警告 + 收敛成 null，判定不受影响。
+      PLATFORMS: linux-x64,darwin-arm64,win32-x64
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
+
+      # ═══════════════════════════════════════════════════════════════════════════════
+      # ★ `--undecided`：这条腿本轮有几条断言**跑了但什么都没证明**
+      #
+      # 在此之前这一格是 `null`（"这条腿还没接线"），而闸门下游
+      # （`verify-e2e-attestation.mjs`）里 `null` 和 `0` 差一个字：
+      # **`0` = 查过了，一条未决都没有；`null` = 没查**。六条腿全是 null 的时候，
+      # 这句"跑绿过"读起来就像"全验过"。
+      #
+      # ## 为什么是**真的去数**，不是照 e2e-import.yml 那样写死一个 0
+      #
+      # import 腿写死 0 是有论证的（它把"环境没准备好"主动判成 FAIL，结构上不产生
+      # 未决）。record 腿**乍看也成立**：它每一处"跳过某条断言"的分支，旁边都有一条
+      # `judge(ok:false)` 判红兜着 —— 而一次判红的运行里 `needs: [e2e]` 会让本 job
+      # 直接不跑，凭证根本不会发出来。也就是说"绿跑里未决恒为 0"几乎是对的。
+      #
+      # **几乎**。那个论证有**一个洞**，就在 `e2e-record.mjs` 的 `retranscribe()` 里：
+      # 重转之后如果笔记上 `role=original` 的资产整个不见了，"重转没把原始录音弄丢"
+      # 那条探针会跳过，而后面第 10 节取时长的地方有 `?? 兜底值`、不会红 ——
+      # 这一轮会**绿着走完，却少验了一条**。所以这里的数**不是恒为 0**，
+      # 是"通常为 0，但有一条真的能在绿跑里冒出来"。
+      #
+      # 更要紧的是：**"恒为 0"是一句会过期的话，而一个真的去数的管道不会。**
+      # 写死 0 的话，哪天有人在脚本里加了一处新的未决，凭证还是会说 0 ——
+      # 那时候这个 0 就从"我们查过"变成了"我们以为查过"。数出来的 0 不会这样烂掉。
+      #
+      # ## 它数的是什么、不数什么
+      #
+      # `e2e-record.mjs` 的台账现在有三种条目，三个互不相通的写入口：
+      #   · `judge()`     → 判决，决定红绿
+      #   · `undecided()` → 断言**没能被评估**（前提构造不出来）—— 只有它进这个数
+      #   · `note()`      → 纯描述性观测（"流式吐了几条 partial"、"anchors 回了 200"），
+      #                     本来就不是断言，**永远不计入未决**
+      # 这三者以前有两类挤在同一个 `observe()` 里（都是 `ok: null`），照 `ok === null`
+      # 去数会把"我记了一笔"算成"我没验到" —— **报一个虚高的未决数比不报更糟**：
+      # 不报至少是诚实的空缺，虚高是一句假话。
+      # ═══════════════════════════════════════════════════════════════════════════════
+
+      # 三个矩阵格各自留的覆盖面计数（e2e-record-undecided-<label>.json），
+      # merge-multiple 摊平进同一个目录 —— 与 e2e-runtime / e2e-browser 的 attest job
+      # 同一个模式。
+      - name: 下载三平台的覆盖面计数
+        uses: actions/download-artifact@v7
+        with:
+          pattern: e2e-record-undecided-*
+          path: undecided
+          merge-multiple: true
+
+      # 任何一格对不上，sum-undecided.mjs 只会警告 + 把 undecided_flag 收敛成空字符串，
+      # **不会**让这一步失败 —— 一个纯展示用的覆盖面统计出故障，不该连累下面
+      # 「写凭证」这一步（那一步产出的 artifact 名字才是闸门真正认的信号）。
+      - name: 求和覆盖面计数
+        id: sum
+        run: |
+          node scripts/ci/sum-undecided.mjs \
+            --dir undecided \
+            --expect-labels "$PLATFORMS" \
+            --file-template 'e2e-record-undecided-{label}.json' \
+            --github-output "$GITHUB_OUTPUT"
+
       - name: 写凭证
         run: |
           node scripts/ci/emit-e2e-attestation.mjs \
             --leg record \
             --bundle-run "${{ inputs.bundleRunId }}" \
-            --platforms linux-x64,darwin-arm64,win32-x64 \
+            --platforms "$PLATFORMS" \
+            ${{ steps.sum.outputs.undecided_flag }} \
             --out dist/e2e-attest.json
       - uses: actions/upload-artifact@v6
         with:

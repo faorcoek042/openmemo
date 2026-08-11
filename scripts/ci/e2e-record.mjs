@@ -84,6 +84,15 @@ const PORT = Number(arg('--port', '19790'));
 const BUNDLE = arg('--bundle', null);
 const MASK = !argv.includes('--no-mask');
 const SAMPLE = arg('--sample', join(REPO, 'vendor', 'whisper.cpp', 'samples', 'jfk.wav'));
+/**
+ * ★ 覆盖面上报：把本轮**没能被评估**的断言条数落盘成一个小文件，供 `attest` job
+ * 跨平台求和（`sum-undecided.mjs`）后传给 `emit-e2e-attestation.mjs --undecided`。
+ * 文件形状 `{ "unknowns": N }` 与 runtime / browser 两条腿**逐字相同**，
+ * 好让三条腿共用同一个求和脚本（它的 `--field` 默认就是 `unknowns`）。
+ *
+ * ⚠️ 只数 `kind === 'undecided'` 的条目，**不数 `note()`** —— 见上面台账那一段。
+ */
+const UNDECIDED_OUT = arg('--undecided-out', null);
 const HOST = '127.0.0.1';
 const BASE = `http://${HOST}:${PORT}`;
 const IS_WIN = process.platform === 'win32';
@@ -107,18 +116,67 @@ const hdr = (s) => {
   say('─'.repeat(94));
 };
 
-/* 判据台账：每条关键断言的结论都记在这里，最后统一摊开并决定退出码。 */
+/*
+ * 判据台账 —— **三种条目，三个互不相通的写入口**。
+ *
+ * ## 为什么非要分成三个函数（这一段是判据，不是风格）
+ *
+ * 这里以前只有 `judge()` 和 `observe()` 两个入口，而 `observe()` 一个桶里
+ * 装了**语义完全相反**的两类东西：
+ *   · 「换模型重转」—— 上一步没排上队，**那条断言根本没被评估**；
+ *   · 「流式识别结果 partial×N final×M」/「anchors 端点回了 200」
+ *     —— 只是把观察到的事实记一笔，**本来就不是断言**。
+ * 两者在台账里长得一模一样（都是 `ok: null`），区别只活在**人写的一句注释**里。
+ *
+ * 于是「本轮有几条断言没被验到」（凭证的 `undecided` 字段）没法从台账里算出来：
+ * 照 `ok === null` 数会把「我记了一笔」算成「我没验到」——**报一个虚高的未决数
+ * 比不报更糟，不报至少是诚实的空缺，虚高是一句假话。**
+ *
+ * ## 怎么让"混淆"写不出来，而不是靠约定
+ *
+ *   1. **三个函数，签名各不相同**：`undecided()` 强制你写出「被跳过的是哪条断言」
+ *      和「前提为什么不成立」两句话——凑不出这两句，说明它压根不是未决，
+ *      你要找的是 `note()`。
+ *   2. **只有 `judge()` 写 `ok` 字段**。`undecided` / `note` 条目**根本没有 `ok`**，
+ *      所以任何"只认识两种状态"的下游（`e.ok === true` / `=== false` / `!e.ok`）
+ *      都不可能把它们误读成判决，也不可能从 `ok` 里数出未决——
+ *      想数未决**只能**显式问 `kind === 'undecided'`。
+ *      这正是这一周反复出现的那个病（三态值被二态层消费掉）在本文件里的解法：
+ *      把第三态从那个二态字段里**搬走**，而不是在旁边写注释提醒别搞混。
+ */
 const ledger = [];
 let exitCode = 0;
+/** 一条**真的被评估过**的断言。只有它写 `ok`，也只有它决定红绿。 */
 function judge(name, result, { fatal = true } = {}) {
-  ledger.push({ name, ok: result.ok, reason: result.reason, fatal });
+  ledger.push({ kind: 'verdict', name, ok: result.ok, reason: result.reason, fatal });
   say(`   ${result.ok ? '✔' : '✘'} ${name}：${result.reason}`);
   if (!result.ok && fatal) exitCode = 1;
   return result.ok;
 }
-/** 观测项：照报，但**没有资格**决定红绿（与 cold-start-audit 第 6b 节同一条纪律）。 */
-function observe(name, text) {
-  ledger.push({ name, ok: null, reason: text, fatal: false });
+/**
+ * 一条**没能被评估**的断言：前提在这台 runner / 这一轮里构造不出来。
+ * 它进凭证的 `undecided` 计数 —— 那个数回答的问题是「这条腿跑绿了，
+ * 但有几条断言其实什么都没证明」。
+ *
+ * @param skippedAssertion 被跳过的**那条断言**叫什么（不是"这一步"叫什么）
+ * @param whyPremiseFailed 前提**为什么**不成立（要能让人判断它什么时候会变回可评估）
+ */
+function undecided(skippedAssertion, whyPremiseFailed) {
+  ledger.push({
+    kind: 'undecided',
+    name: skippedAssertion,
+    reason: `前提不成立，这条断言没有被评估：${whyPremiseFailed}`,
+    fatal: false,
+  });
+  say(`   ？ ${skippedAssertion}：**未决** —— ${whyPremiseFailed}`);
+}
+/**
+ * 纯描述性观测：把观察到的事实记一笔。
+ * **它本来就不是断言**，所以既不决定红绿（与 cold-start-audit 第 6b 节同一条纪律），
+ * 也**永远不计入 undecided** —— 没有"没能评估"这回事，因为压根没有要评估的东西。
+ */
+function note(name, text) {
+  ledger.push({ kind: 'note', name, reason: text, fatal: false });
   say(`   ⓘ ${name}：${text}`);
 }
 
@@ -632,7 +690,14 @@ try {
     A.checkRecorderSession({ messages, sampleRate: SAMPLE_RATE }),
   );
   const noteUid = ready.noteUid;
-  observe(
+  /*
+   * 这是 `note()` 不是 `undecided()`：它下面**没有任何一条断言被跳过**。
+   * 这一步该判的东西上一行已经判完了（`checkRecorderSession`）；
+   * 这里只是把"服务端到底吐了几条 partial/final、排没排重跑"记进台账，
+   * 好让日后看日志的人知道那一轮的现场长什么样。识别内容本来就不作判据
+   * （流式模型是中文的、样本是英语），所以不存在"没能评估"这回事。
+   */
+  note(
     '流式识别结果',
     `partial×${messages.filter((m) => m.type === 'partial').length} final×${messages.filter((m) => m.type === 'final').length}；` +
       `segmentCount=${stopped?.segmentCount ?? '?'}；rerunJobUid=${stopped?.rerunJobUid ?? 'null'}` +
@@ -811,6 +876,25 @@ try {
             : `HTTP ${probe.status} —— 录音文件不在 rel_path 指的位置了；` +
               `这正是后续「重新转写」报 no media source can handle this input 的成因候选`,
       });
+    } else {
+      /*
+       * ★ 这个 `else` 以前**不存在**，而它是本条腿里**唯一一处能在"整轮全绿"里
+       *   发生的空缺** —— 其余的跳过都被某条 judge 判红兜住了，这一处没有。
+       *
+       *   走到这里意味着：第 6 节确认过 `role=original` 存在（否则
+       *   `checkAudioAsset` 当场判红），而重转之后它**从笔记上消失了**。
+       *   上面那条探针是专门去分辨"录音被 archiveIntoMedia 搬走了"的，
+       *   资产行整个不见时它就跳过了，而后面第 10 节拿 `audio2?.durationMs ?? 算出来的值`
+       *   有兜底、不会红 —— 于是这一轮会**绿着走完，却少验了一条**。
+       *   记成未决，让它出现在凭证的 undecided 里；改成判红是另一个决定
+       *   （会改变这条腿的红绿口径），不在本次范围内。
+       */
+      undecided(
+        `[${label}] 重转之后原始录音仍然取得到字节（rel_path 没有被搬空）`,
+        `重转之后笔记上已经没有 role=original 的资产了（现有：` +
+          `${(after?.assets ?? []).map((x) => x.role).join(',') || '(空)'}）—— ` +
+          `探针没有对象可探，"录音还在不在原位"这句话既没被证实也没被证伪`,
+      );
     }
     const tr = (await http(`/api/notes/${noteUid}/transcript`)).body;
     return { ok: true, status: r.status, job: st, transcript: tr };
@@ -845,6 +929,23 @@ try {
       '★ 没装 VAD 时是**明确降级**，不是静默出错',
       A.checkVadDegradedExplicitly({ vad: vad0, segments: segsA }),
     );
+  } else {
+    /*
+     * ★ 这个 `else` 以前**不存在** —— `runA` 没排上队时，上面两条断言
+     *   （词级时间戳、没装 VAD 时明确降级）就这么**从台账里凭空消失**，
+     *   一行痕迹都不留。那比未决更难查：未决至少说得出"我没验到"，
+     *   而消失连"这里本该有两条"都说不出来。
+     *   这一步不改判决（这一轮早已被上面那条 judge 判红），只是把空缺记下来。
+     */
+    undecided(
+      '★ 词级时间戳真的落库并发得出来',
+      '第 7 节的重转没排上队，一份稿子都没拿到，"词级时间戳在不在"无从谈起',
+    );
+    undecided(
+      '★ 没装 VAD 时是**明确降级**，不是静默出错',
+      '"明确降级"的判据里包含"降级之后仍然转得出文本"，而这一轮压根没转成，' +
+        '分不出是"降级坏了"还是"重转本身就没排上"',
+    );
   }
 
   /* ── 8. ★ 换模型重转：词级时间戳不许丢 ── */
@@ -871,7 +972,19 @@ try {
       segsA = runB.transcript?.segments ?? segsA;
     }
   } else {
-    observe('换模型重转', '上一步就没排上队，这一步无从谈起（不当绿灯记）');
+    /*
+     * 这一条是**真·未决**，不是观测：`checkRetranscribeKeptWords` 要的前提
+     * （第 7 节那次重转排上了队、产出了一份带词级时间戳的基线稿）根本不存在，
+     * 所以它没有被评估过 —— 既不是通过也不是失败。
+     * ⚠️ 走到这里时第 7 节的 `judge('录音笔记可以被「重新转写」…')` **已经判红**，
+     *    所以这一条只会出现在一次注定失败的运行里（这条性质见 e2e-record.yml
+     *    attest job 的注释，它决定了绿跑里这个数是不是恒为 0）。
+     */
+    undecided(
+      '★ 模型真的换了 **且** 词级时间戳还在',
+      '第 7 节的重转就没排上队（HTTP 非 202），没有第一份稿子可以拿来比对，' +
+        '"换没换成"与"词有没有丢"两句话都无从谈起',
+    );
   }
 
   /* ── 9. ★ 装上 VAD 再跑一遍 ── */
@@ -909,7 +1022,14 @@ try {
   );
 
   const anchors = await http(`/api/notes/${noteUid}/anchors`);
-  observe(
+  /*
+   * 同样是 `note()`：这里**没有断言**，连"锚点应该有几个"这句话都没写下来过，
+   * 所以也就不存在"没能评估"。它是一笔留给日后的观测——哪天要给锚点写判据，
+   * 这一行的历史输出就是"当时到底是什么样"的现场。
+   * ⚠️ 反过来说：它今天**不保证任何事**。要是有人把它读成"锚点验过了"，
+   *   那是读错了；真要验就得写成 `judge()`。
+   */
+  note(
     'GET /api/notes/:uid/anchors',
     `HTTP ${anchors.status}，${(anchors.body?.anchors ?? []).length} 个锚点`,
   );
@@ -989,18 +1109,53 @@ try {
   await stopDaemon();
 
   hdr('结论台账');
+  /* 标记按 `kind` 走，**不按 `ok`** —— 只有 verdict 条目有 `ok` 这个字段。 */
+  const NON_VERDICT_MARK = { undecided: '？', note: 'ⓘ' };
   for (const e of ledger) {
-    const mark = e.ok === null ? 'ⓘ' : e.ok ? '✔' : '✘';
+    const mark = e.kind === 'verdict' ? (e.ok ? '✔' : '✘') : NON_VERDICT_MARK[e.kind];
     say(`   ${mark} ${e.name}`);
     say(`      ${String(e.reason).replace(/\s+/g, ' ').slice(0, 220)}`);
   }
-  const red = ledger.filter((e) => e.ok === false && e.fatal);
+  const verdicts = ledger.filter((e) => e.kind === 'verdict');
+  const undecideds = ledger.filter((e) => e.kind === 'undecided');
+  const notes = ledger.filter((e) => e.kind === 'note');
+  const red = verdicts.filter((e) => e.ok === false && e.fatal);
   say('');
   say(
     red.length === 0
-      ? `✔ ${ledger.filter((e) => e.ok === true).length} 条关键断言全部成立`
+      ? `✔ ${verdicts.filter((e) => e.ok === true).length} 条关键断言全部成立`
       : `✘ ${red.length} 条关键断言不成立：${red.map((e) => e.name).join('；')}`,
   );
+  /*
+   * 三个桶分开报。**"未决 N 条"与"观测 M 条"必须是两句话** ——
+   * 合成一句"其他 N+M 条"正是这次要拆掉的那个桶。
+   */
+  say(
+    `   台账：判决 ${verdicts.length} 条（成立 ${verdicts.filter((e) => e.ok === true).length}／` +
+      `不成立 ${verdicts.filter((e) => e.ok === false).length}）· ` +
+      `**未决 ${undecideds.length} 条**（跑了，但什么都没证明）· ` +
+      `观测 ${notes.length} 条（本来就不是断言，不计入未决）`,
+  );
+  if (undecideds.length > 0) {
+    say('   ── 没被评估的断言 ──');
+    for (const u of undecideds) say(`     ？ ${u.name}`);
+  }
+
+  /*
+   * 覆盖面落盘。**包在 try 里**：这是纯展示用的统计，
+   * 它自己出故障绝不该连累这条腿的判定（`sum-undecided.mjs` 顶部那段裁决同一条理由 ——
+   * 一个统计脚本挂掉把凭证一起带走，比"凭证在、但 undecided=null"更糟）。
+   */
+  if (UNDECIDED_OUT) {
+    try {
+      mkdirSync(dirname(UNDECIDED_OUT), { recursive: true });
+      writeFileSync(UNDECIDED_OUT, `${JSON.stringify({ unknowns: undecideds.length }, null, 2)}\n`);
+      say(`   覆盖面已写到 ${UNDECIDED_OUT}（unknowns=${undecideds.length}）`);
+    } catch (err) {
+      say(`   ⚠️ 覆盖面写不出去（${String(err?.message ?? err)}）—— 不影响本腿判定，`);
+      say('      下游 sum-undecided.mjs 会因为少一格而如实收敛成 null，不会拼凑一个数。');
+    }
+  }
   say(`   数据目录 ${DATA_DIR} 留在 runner 上，随 runner 一起销毁。`);
 }
 
