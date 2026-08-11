@@ -184,7 +184,9 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
             而 `POST /api/components/:id/update` **从不读请求体**，直接
             `startPackInstall(state, pack)` 装**目录里钉死的那一版**，并回
             `toVersion: comp.pinnedVersion`（`rest/components.ts`，那段注释自己写着
-            「更新 = 安装清单里钉死的那个版本」，理由是我们手上没有上游那一版的 sha256）。
+            「更新 = 安装清单里钉死的那个版本」；那段注释给的理由是"我们手上没有上游那一版的
+            sha256"，⚠️ **那句今天已经不成立**，真正的理由见本文件下方那段 —— 上游给得出摘要，
+            但那个摘要与"有新版本"同源）。
 
             于是两种情形正好各错一半：
               · 已装 = 钉定，上游更新 ⇒ `updateAvailable` 为真 ⇒ **按钮出现，
@@ -224,10 +226,22 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
       {/*
         ★★ 「上游有更新」现在说一句真话 + 给一个真出口，**不再是一个可点的承诺**。
 
-        能说的是：上游有 vX，我们目录里钉的是 vY，**这里装不了上游那一版** ——
-        因为我们手上没有它的 sha256，而"没有校验和就下载安装"会放弃
-        「每个制品都校验」这条底线（服务端 `rest/components.ts` 里那段注释的原话）。
+        能说的是：上游有 vX，我们目录里钉的是 vY，**这里装不了上游那一版**。
         真出口是上游发布页：他可以自己看变更、自己决定要不要等我们把它钉进目录。
+
+        ── ⚠️ 这一段原来的理由「我们手上没有它的 sha256」**今天已经不成立** ──
+        `[实测 2026-08-11]` GitHub releases API **直接给出每个资产的 sha256 digest**
+        （`assets[].digest`，形如 `sha256:7e26fa…`），实测三个仓 100% 覆盖：
+        ggml-org/whisper.cpp v1.9.2 **9/9**、yt-dlp 2026.07.04 **24/24**、
+        我们自己的镜像仓 v0.7.0 **3/3**。而 `packages/downloader/src/upstream.ts`
+        的 `toRelease()` **已经在解析它**，只是 `listComponents()` 把整个 release 对象丢掉了。
+
+        但**不能改成相反的假话**（"拿得到，所以能装"）。诚实的说法是：
+        **拿得到，但那个校验和跟「有新版本」这句话来自同一个来源** —— 它能证明
+        你下到的字节没在路上被改，**不能证明那个来源本身没问题**。
+        这正是仓里已有的那个区分：`sha256Provenance` 的「上游 API 提供」
+        vs「本机下载后独立复算」（下面 `ProvenanceNote` 还把前者渲染成警告色）。
+        用现成的词，不造新词。
 
         ⚠️ **「装到系统 PATH 上我们会直接用」这句只对有 PATH 那一档的工具说。**
            `packages/pipeline/src/tools.ts` 的 `RESOLUTION_PLANS` 里只有五条
@@ -244,7 +258,11 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
           上游有 <code className="font-mono text-ink">{c.latestVersion}</code>，我们目录里钉的是{' '}
           <code className="font-mono text-ink">{c.pinnedVersion}</code>。
           <strong className="text-ink"> 这里装不了上游那一版</strong>
-          —— 我们手上没有它的 sha256，没有校验和就下载安装会放弃「每个制品都校验」这条底线。
+          —— 我们只装 sha256 <strong className="text-ink">本机独立复算过</strong>的版本。 上游确实随
+          release 给出了新版本的 sha256，但那是
+          <strong className="text-ink">上游 API 提供</strong>
+          的摘要，和「有新版本」这句话同一个来源：它能证明字节没在路上被改，
+          不能证明那个来源本身没问题。
           {PATH_RESOLVED_CATEGORIES.has(c.category) ? (
             <> 你可以自己把新版装到系统 PATH 上，我们会直接用它（装完需要重启产品才生效）。</>
           ) : null}{' '}

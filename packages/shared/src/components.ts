@@ -154,52 +154,131 @@ export interface UpdateComponentRequest {
   id: string;
 }
 
-/**
- * Compare two upstream version strings.
- *
- * Handles the three shapes our upstreams actually use:
- *   semver-ish   v1.9.1 / 0.1.9
- *   build number b10223            (llama.cpp)
- *   date tag     autobuild-2026-08-02-13-17  (BtbN FFmpeg-Builds)
- *
- * Returns >0 if `a` is newer, <0 if older, 0 if equal/incomparable. Incomparable pairs
- * deliberately return 0 so an unrecognised scheme reports "no update" rather than
- * nagging the user to "upgrade" to something we cannot actually order.
- */
-export function compareVersions(a: string, b: string): number {
-  if (a === b) return 0;
-  const dateA = /(\d{4})-(\d{2})-(\d{2})(?:-(\d{2})-(\d{2}))?/.exec(a);
-  const dateB = /(\d{4})-(\d{2})-(\d{2})(?:-(\d{2})-(\d{2}))?/.exec(b);
-  if (dateA && dateB) {
-    const key = (m: RegExpExecArray) => m.slice(1).map((x) => Number(x ?? 0));
-    const ka = key(dateA);
-    const kb = key(dateB);
-    for (let i = 0; i < Math.max(ka.length, kb.length); i++) {
-      const d = (ka[i] ?? 0) - (kb[i] ?? 0);
-      if (d !== 0) return d;
-    }
-    return 0;
-  }
-  const buildA = /^b(\d+)$/.exec(a);
-  const buildB = /^b(\d+)$/.exec(b);
-  if (buildA && buildB) return Number(buildA[1]) - Number(buildB[1]);
+/* ══════════════════════════════════════════════════════════════════════════════════════
+ * 版本比较 —— **三态，第三态是「比不了」，不是 0**
+ * ═══════════════════════════════════════════════════════════════════════════════════ */
 
-  const numsA = a
-    .replace(/^v/, '')
-    .split(/[.\-+]/)
-    .map((x) => Number(x))
-    .filter((x) => Number.isFinite(x));
-  const numsB = b
-    .replace(/^v/, '')
-    .split(/[.\-+]/)
-    .map((x) => Number(x))
-    .filter((x) => Number.isFinite(x));
-  if (numsA.length && numsB.length) {
-    for (let i = 0; i < Math.max(numsA.length, numsB.length); i++) {
-      const d = (numsA[i] ?? 0) - (numsB[i] ?? 0);
-      if (d !== 0) return d;
+/**
+ * 一个版本字符串属于哪一套编号方案。
+ *
+ * **方案不同就是比不了。** 这不是保守，是事实：`v1.9.1` 是 whisper.cpp 的版本号，
+ * `model-mirror-2026.08.06` 是我们镜像仓的日期 tag —— 它们之间没有"谁更新"这回事，
+ * 就像问「第 3 章」和「星期二」哪个大。
+ */
+export const VERSION_SCHEMES = ['semver', 'date', 'build', 'opaque'] as const;
+export type VersionScheme = (typeof VERSION_SCHEMES)[number];
+
+/** `b10223` —— llama.cpp 的构建号。**必须排在 hex 判定之前**：`b10223` 六个字符全是合法十六进制。 */
+const RE_BUILD = /^b(\d+)$/;
+/** `2026-08-02-13-17` / `2026.08.06` —— 带或不带前缀（`autobuild-…` / `model-mirror-…`）。 */
+const RE_DATE = /(\d{4})[.-](\d{2})[.-](\d{2})(?:[.-](\d{2})[.-](\d{2}))?/;
+/** 裸 commit sha。要求至少一个字母，否则 `1234567` 这种纯数字会被当成 sha。 */
+const RE_SHA = /^[0-9a-f]{7,40}$/i;
+/** `v1.9.1` / `1.13.5` / `v8.1.2-2` / `v0.1.10-alpha.4`。 */
+const RE_SEMVER = /^v?\d+(?:\.\d+)*(?:[-+][0-9A-Za-z.-]+)?$/;
+
+/** 判断一个版本字符串用的是哪套编号方案。顺序有意义，见各条注释。 */
+export function versionScheme(v: string): VersionScheme {
+  if (RE_BUILD.test(v)) return 'build';
+  if (RE_DATE.test(v)) return 'date';
+  if (RE_SHA.test(v) && /[a-f]/i.test(v)) return 'opaque';
+  if (RE_SEMVER.test(v)) return 'semver';
+  return 'opaque';
+}
+
+/**
+ * 两个版本的先后关系。
+ *
+ * `incomparable` 是**独立的一态**，不再和 `same` 挤在 `0` 里。这四种可能里有两种
+ * 是坏消息，而它们的坏法**相反**：
+ *   - `same` 说「你已经是最新的」→ 可以画绿勾；
+ *   - `incomparable` 说「我没能判断」→ **绝不能画绿勾**，它是 UNKNOWN，不是 PASS。
+ * 旧的 `number` 返回值把这两件事写成同一个 `0`，于是每个调用点都要靠约定去分辨，
+ * 而 `> 0` 这个写法**把两者一起塞进了"没有更新"那一档**。
+ */
+export const VERSION_ORDERS = ['newer', 'older', 'same', 'incomparable'] as const;
+export type VersionOrder = (typeof VERSION_ORDERS)[number];
+
+/**
+ * `a` 相对 `b` 是更新、更旧、相同，还是**比不了**。
+ *
+ * ★★ `[实测 2026-08-11，对 packages/shared/dist 跑的]` 改之前，**两个方向都在出错**：
+ *
+ * | a vs b | 旧的 `number` | 旧结论 | 现在 |
+ * |---|---|---|---|
+ * | `model-mirror-2026.08.06` vs `v1.9.1` | **2025** | 假的「有新版本」（线上正在发生） | `incomparable` |
+ * | `2024-11-03` vs `v1.9.1` | **2023** | 假的「有新版本」 | `incomparable` |
+ * | 两个不同的 commit sha | **0** | 假的「已是最新」（绿勾） | `incomparable` |
+ * | `b10223` vs `v1.9.1` | **0** | 假的「已是最新」（绿勾） | `incomparable` |
+ * | `v1.9.2` vs `v1.9.1` | 1 | 对照组，正确 | `newer` |
+ *
+ * 前两行的成因是同一个：日期分支要求**两侧都**匹配日期正则，只有一侧匹配时就
+ * 静默掉进数字分支，于是 `2026` 被当成主版本号去和 `1` 比。
+ * 后两行的成因也是同一个：走到最后 `return 0`，而调用方读的是 `> 0`。
+ *
+ * **先分方案，方案不同一律 `incomparable`，方案相同再比** —— 这样"漏配 tagPattern"
+ * 之类的配置错误不会再静默地变成一句假话。
+ */
+export function compareVersions(a: string, b: string): VersionOrder {
+  if (a === b) return 'same';
+
+  const sa = versionScheme(a);
+  const sb = versionScheme(b);
+  if (sa !== sb) return 'incomparable';
+
+  // 不透明字符串（commit sha、`latest` 这种移动 tag）**只有相等可判**，
+  // 而 a === b 已经在开头返回了 —— 走到这里就是两个不同的 sha，它们没有先后。
+  if (sa === 'opaque') return 'incomparable';
+
+  const key = (v: string): number[] => {
+    if (sa === 'build') return [Number(RE_BUILD.exec(v)?.[1] ?? 0)];
+    if (sa === 'date') {
+      const m = RE_DATE.exec(v);
+      return m ? m.slice(1).map((x) => Number(x ?? 0)) : [];
     }
-    return 0;
+    return v
+      .replace(/^v/, '')
+      .split(/[.\-+]/)
+      .map((x) => Number(x))
+      .filter((x) => Number.isFinite(x));
+  };
+
+  const ka = key(a);
+  const kb = key(b);
+  // 同方案却一个数字都抠不出来 —— 依旧是"比不了"，不是"相等"。
+  if (!ka.length || !kb.length) return 'incomparable';
+  for (let i = 0; i < Math.max(ka.length, kb.length); i++) {
+    const d = (ka[i] ?? 0) - (kb[i] ?? 0);
+    if (d > 0) return 'newer';
+    if (d < 0) return 'older';
   }
-  return 0; // incomparable → report no update rather than guess
+  return 'same';
+}
+
+/**
+ * **只用来排序候选列表**的比较器 —— 不许拿它判「有没有更新」。
+ *
+ * 排序需要一个全序，而"比不了"在全序里没有位置。这里把跨方案的一对压成一个
+ * **确定但任意**的次序（按方案名、再按字典序），好让 `sort()` 的结果可复现。
+ *
+ * ⚠️ 这个任意次序**不构成任何关于新旧的断言**。"跨方案的候选里哪个最新"没有定义 ——
+ * 这里挑出来的那个只是排序 tie-break 的产物。真正的保护在 `listComponents()`：
+ * 挑出来的版本一旦与我们钉的**比不了**，就当成"没问到"而不是"已是最新"。
+ * （把"候选跨了多个 tag 家族"本身变成一条会说话的腿，是 #66 主线那一步的事。）
+ */
+export function compareVersionsForSort(a: string, b: string): number {
+  switch (compareVersions(a, b)) {
+    case 'newer':
+      return 1;
+    case 'older':
+      return -1;
+    case 'same':
+      return 0;
+    case 'incomparable': {
+      const sa = versionScheme(a);
+      const sb = versionScheme(b);
+      if (sa !== sb) return sa < sb ? -1 : 1;
+      return a < b ? -1 : a > b ? 1 : 0;
+    }
+  }
 }
