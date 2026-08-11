@@ -1,4 +1,4 @@
-import { Link, useNavigate, useSearchParams } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { arr } from '../../lib/safe';
 import { useTranslation } from 'react-i18next';
 import { FileAudio, Mic, Star } from 'lucide-react';
@@ -10,6 +10,7 @@ import { EmptyState } from '../../components/common/EmptyState';
 import { MockNotice } from '../../components/common/MockNotice';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { StatusChip } from '../../components/common/StatusChip';
+import { ListRow } from '../../components/common/ListRow';
 import { Button } from '../../components/common/Button';
 import { NoteProgressLine } from './NoteProgressLine';
 import { humanDuration, relativeTime } from '../../lib/format/time';
@@ -148,91 +149,76 @@ export default function NotesListPage() {
       {toggleStar.isError ? <ErrorBlock error={toggleStar.error} className="mb-3" /> : null}
       <ul className="flex flex-col gap-2" role="list" data-testid="notes-list">
         {visible.map((n) => (
-          <li key={n.uid}>
-            <Link
-              to={`/notes/${n.uid}`}
-              className="block rounded-lg border border-line bg-surface-1 p-3 transition-colors hover:bg-fill-hover"
-            >
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5 text-ink-muted" aria-hidden>
-                  {n.kind === 'recording' ? (
-                    <Mic className="size-4" />
-                  ) : (
-                    <FileAudio className="size-4" />
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <h2 className="truncate text-sm font-medium text-ink">
-                      {n.title || t('notes.untitled')}
-                    </h2>
-                    {/* 星标此前只显示不能点 —— 现在是真的写入路径（乐观更新） */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        toggleStar.mutate({ noteUid: n.uid, starred: !n.starred });
-                      }}
-                      aria-label={n.starred ? t('notes.unstar') : t('notes.star')}
-                      aria-pressed={n.starred}
-                      className="shrink-0 rounded p-0.5 hover:bg-fill-hover"
-                    >
-                      <Star
-                        className={cn(
-                          'size-3.5',
-                          n.starred ? 'fill-current text-warning' : 'text-ink-muted',
-                        )}
-                        aria-hidden
-                      />
-                    </button>
-                  </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
-                    {n.durationMs ? (
-                      <span>{humanDuration(n.durationMs, i18n.language)}</span>
-                    ) : null}
-                    {/*
-                      ⚠️ 这里原来有一个站点徽章 `{n.source?.site ? <span>{n.source.site}</span> : null}`。
-                      **删掉了，不是改名**（T-150）：`GET /api/notes` 的 `.map()` 从来不发 `source`
-                      —— 全仓唯一提供它的是 `lib/api/mock.ts`。于是这个徽章
-                      **在真实环境里一次都没渲染过**，只是因为用了可选链所以不崩。
-                      与 `n.activeJobId`（见下面那条）、与 `<audio>` 从未进过 DOM（T-139 A1）
-                      是同一族：**mock 的形状比真响应宽**。
-
-                      没有"把它补进 daemon 的响应"，是因为列表页要的是"这条是从哪来的"，
-                      而那个事实在详情页已经有出处；给列表端点再加一份就是第二个出处。
-                      真要在列表上显示来源，正确做法是先在 `NoteListItem` 契约里加字段
-                      （加了这里就会编译报错提醒有人来渲染它），而不是先在界面上摆一个空位。
-                    */}
-                    <span>{relativeTime(Date.parse(n.updatedAt), i18n.language)}</span>
-                    {arr(n.tags).map((tag) => (
-                      <span
-                        key={tag.uid}
-                        className="rounded bg-surface-0 px-1.5 py-0.5 text-ink-secondary"
-                      >
-                        {tag.name}
-                      </span>
-                    ))}
-                  </div>
-                  {/*
-                    未完成的任务在列表里也要能看到进度 —— 进度来自 jobs，与页面无关。
-                    条件不再由这里判断：`n.activeJobId` 是一个 daemon 从未返回过的字段，
-                    这一行因此**在真实环境里从来没渲染过**（T-138 ②）。
-                  */}
-                  <NoteProgressLine noteUid={n.uid} className="mt-2" />
-                </div>
-                <div className="shrink-0">
-                  {n.status === 'processing' ? (
-                    <StatusChip tone="running" label={t('notes.processing')} />
-                  ) : n.status === 'failed' ? (
-                    <StatusChip tone="critical" label={t('notes.failed')} />
-                  ) : n.status === 'partial' ? (
-                    <StatusChip tone="warning" label={t('notes.partial')} />
-                  ) : null}
-                </div>
-              </div>
-            </Link>
-          </li>
+          <ListRow
+            key={n.uid}
+            href={`/notes/${n.uid}`}
+            /* 整行可点：这一行里除标题外只有一个星标小控件，用 stopPropagation 躲得开。
+               判据与取舍见 `components/common/ListRow.tsx` 的 `clickTarget`。 */
+            clickTarget="row"
+            leading={
+              n.kind === 'recording' ? <Mic className="size-4" /> : <FileAudio className="size-4" />
+            }
+            title={n.title || t('notes.untitled')}
+            trailing={
+              <>
+                {/* 星标此前只显示不能点 —— 现在是真的写入路径（乐观更新）。
+                    它嵌在整行链接里，所以必须同时 preventDefault + stopPropagation，
+                    否则点星标会顺带把用户导航走。 */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    toggleStar.mutate({ noteUid: n.uid, starred: !n.starred });
+                  }}
+                  aria-label={n.starred ? t('notes.unstar') : t('notes.star')}
+                  aria-pressed={n.starred}
+                  className="shrink-0 rounded p-0.5 hover:bg-fill-hover"
+                >
+                  <Star
+                    className={cn(
+                      'size-3.5',
+                      n.starred ? 'fill-current text-warning' : 'text-ink-muted',
+                    )}
+                    aria-hidden
+                  />
+                </button>
+                {n.status === 'processing' ? (
+                  <StatusChip tone="running" label={t('notes.processing')} />
+                ) : n.status === 'failed' ? (
+                  <StatusChip tone="critical" label={t('notes.failed')} />
+                ) : n.status === 'partial' ? (
+                  <StatusChip tone="warning" label={t('notes.partial')} />
+                ) : null}
+              </>
+            }
+            meta={
+              <>
+                {n.durationMs ? <span>{humanDuration(n.durationMs, i18n.language)}</span> : null}
+                {/*
+                  ⚠️ 这里原来有一个站点徽章 `{n.source?.site ? … : null}`。
+                  **删掉了，不是改名**（T-150）：`GET /api/notes` 的 `.map()` 从来不发 `source`
+                  —— 全仓唯一提供它的是 `lib/api/mock.ts`，于是它**在真实环境里一次都没渲染过**。
+                */}
+                <span>{relativeTime(Date.parse(n.updatedAt), i18n.language)}</span>
+                {arr(n.tags).map((tag) => (
+                  <span
+                    key={tag.uid}
+                    className="rounded bg-surface-0 px-1.5 py-0.5 text-ink-secondary"
+                  >
+                    {tag.name}
+                  </span>
+                ))}
+              </>
+            }
+          >
+            {/*
+              未完成的任务在列表里也要能看到进度 —— 进度来自 jobs，与页面无关。
+              条件不再由这里判断：`n.activeJobId` 是一个 daemon 从未返回过的字段，
+              这一行因此**在真实环境里从来没渲染过**（T-138 ②）。
+            */}
+            <NoteProgressLine noteUid={n.uid} className="mt-2" />
+          </ListRow>
         ))}
       </ul>
 

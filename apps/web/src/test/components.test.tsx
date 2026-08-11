@@ -10859,3 +10859,96 @@ describe('T-200 S-6 组件页必须跟着活查询走', () => {
     r.unmount();
   });
 });
+
+/* ══════════ T-202 三处列表行统一到一套骨架 ══════════ */
+
+/**
+ * 用户要求：「统一「任务中心」和「全部笔记」的列表和点击样式，方便复用代码」，
+ * 参照系是**笔记行**（他说它更好用）。
+ *
+ * ⚠️ 判据不是"看起来像就合并"。笔记行 `[实测]` 每行只有 **1** 个内嵌控件（星标），
+ * 而任务行非终态时有 2~3 个动作按钮 + 可能的 `ErrorBlock`（自带重试/补救/展开）。
+ * 所以下面第一组用例问的是一个**具体的、可证伪的**问题：
+ * **整行可点这套做法，在任务行那几种真实形态下还成不成立？**
+ */
+describe('T-202 ① 整行可点在任务行的真实形态下成不成立', () => {
+  const NOTE = '01KZ1H8Y5XJ6DMJFW08P7DVA4Q';
+
+  const renderRow = async (over: Partial<MergedJob>) => {
+    stubApi({});
+    const r = await render(
+      <div>
+        <JobList jobs={[job({ noteUid: NOTE, displayName: '一条任务', ...over })]} />
+        <LocationProbe />
+      </div>,
+      { route: '/tasks' },
+    );
+    await r.flush();
+    return r;
+  };
+
+  test('★ 点行的空白处 → 跳到这条任务做出来的笔记', async () => {
+    const r = await renderRow({ state: 'succeeded' });
+    assert.equal(locOf(r.container), '/tasks', '前提：还没跳');
+    await click(r.container.querySelector('[data-testid="list-row-link"]'));
+    await r.flush();
+    assert.equal(locOf(r.container), `/notes/${NOTE}`);
+    r.unmount();
+  });
+
+  /**
+   * ★★ 这一条是本轮的判据本身：**非终态行（有暂停 + 取消两个按钮）里点按钮，
+   * 动作要生效，而且绝不能顺带把用户导航走。**
+   */
+  test('★★ running 行：点「取消」→ 动作生效，且**不许**跳转', async () => {
+    const r = await renderRow({ state: 'running' });
+    const before = locOf(r.container);
+    const cancel = buttonByText(r.container, '取消');
+    assert.ok(cancel, '前提：running 行应当有取消按钮（信息没被统一裁掉）');
+    await click(cancel);
+    await r.flush();
+    assert.equal(
+      locOf(r.container),
+      before,
+      '点动作按钮把用户导航走了 —— 整行可点这套在任务行不成立',
+    );
+    r.unmount();
+  });
+
+  test('★★ running 行：点「暂停」同样不许跳转', async () => {
+    const r = await renderRow({ state: 'running' });
+    const before = locOf(r.container);
+    await click(buttonByText(r.container, '暂停'));
+    await r.flush();
+    assert.equal(locOf(r.container), before);
+    r.unmount();
+  });
+
+  test('★★ blocked 行：「重试」按钮也不许跳转', async () => {
+    const r = await renderRow({ state: 'blocked' });
+    const before = locOf(r.container);
+    await click(buttonByText(r.container, '重试'));
+    await r.flush();
+    assert.equal(locOf(r.container), before);
+    r.unmount();
+  });
+
+  test('★ 信息没被统一裁掉：running 行仍有进度条与阶段文字', async () => {
+    const r = await renderRow({ state: 'running', step: 'downloading', progress: 0.42 });
+    const t = text(r.container);
+    assert.ok(/42\s*%/.test(t), `进度百分比没了（实际：${t}）`);
+    assert.ok(!!r.container.querySelector('[role="progressbar"]'), '进度条没了');
+    r.unmount();
+  });
+
+  /** ★ 没有落点的任务（下载类没有 noteUid）**不许**长出任何链接 —— T-192 那条不许回退。 */
+  test('★ 没有 noteUid 的任务：整行一个链接都不许有（不给假出口）', async () => {
+    const r = await renderRow({ state: 'succeeded', noteUid: null });
+    assert.equal(
+      r.container.querySelectorAll('[data-testid="list-row-link"]').length,
+      0,
+      '给了一个点了到不了任何地方的假出口',
+    );
+    r.unmount();
+  });
+});
