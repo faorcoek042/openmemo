@@ -10969,9 +10969,16 @@ describe('T-202 ① 整行可点在任务行的真实形态下成不成立', () 
  */
 describe('T-202 ② 搜索结果行纳入骨架后跳转仍然对', () => {
   const UID = '01KZ1H8Y5XJ6DMJFW08P7DVA4Q';
+  /*
+   * 打桩键**照抄 `features/search/api.ts` 实际拼出来的路径**：
+   * 结果是 `/search?q=<enc>&mode=<mode>`（`:58`），档位探测是 `/search?q=`（`:79`）。
+   * 第一版我按 `&limit=50` 编了一个，CI 直接把真实路径打了出来
+   * （`no stub for GET /search?q=…&mode=keyword`）—— **编一个桩出来，测的是自己的想象。**
+   */
   const stubHits = (startMs: number | null) =>
     stubApi({
-      '/search?q=%E6%88%90%E6%9C%AC&limit=50': {
+      '/search?q=': { modes: [{ id: 'keyword', available: true }] },
+      '/search?q=%E6%88%90%E6%9C%AC&mode=keyword': {
         hits: [
           { noteUid: UID, noteTitle: '产品评审会', startMs, snippet: '这里说到<mark>成本</mark>' },
         ],
