@@ -10890,7 +10890,12 @@ describe('T-202 ① 整行可点在任务行的真实形态下成不成立', () 
   test('★ 点行的空白处 → 跳到这条任务做出来的笔记', async () => {
     const r = await renderRow({ state: 'succeeded' });
     assert.equal(locOf(r.container), '/tasks', '前提：还没跳');
-    await click(r.container.querySelector('[data-testid="list-row-link"]'));
+    /*
+     * ⚠️ 锚点是 `job-result-link`（任务行保留了 T-192 那批腿钉的名字），
+     * **不是骨架的默认 `list-row-link`**。第一版这里写的是默认名，CI 报
+     * `click: 元素不存在` —— 又一次锚点漂移伪装成行为失败，方向正好相反。
+     */
+    await click(r.container.querySelector('[data-testid="job-result-link"]'));
     await r.flush();
     assert.equal(locOf(r.container), `/notes/${NOTE}`);
     r.unmount();
@@ -10945,7 +10950,7 @@ describe('T-202 ① 整行可点在任务行的真实形态下成不成立', () 
   test('★ 没有 noteUid 的任务：整行一个链接都不许有（不给假出口）', async () => {
     const r = await renderRow({ state: 'succeeded', noteUid: null });
     assert.equal(
-      r.container.querySelectorAll('[data-testid="list-row-link"]').length,
+      r.container.querySelectorAll('a[href]').length,
       0,
       '给了一个点了到不了任何地方的假出口',
     );
