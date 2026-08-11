@@ -11,7 +11,7 @@
  *   7. 就绪
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
 
 import { openAppDatabase, defaultExtensionPaths, type AppDatabase } from '@openmemo/db';
@@ -1405,9 +1405,34 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       console.log(`[daemon] 重启后切换数据目录：${paths.dataDir} → ${targetDataDir}`);
     }
 
+    /*
+     * ★★ 可观测性缺口（Manager 2026-08-11 裁决，#77 runtime 复检）：
+     *
+     * 继任者此前是 `detached + stdio:'ignore'` 起的 —— 它自己的 console 输出
+     * **在这之前完全没有任何地方能看到**。一旦它在起来的路上卡住或失败，
+     * 唯一能看的是本进程（前任）自己的缓冲，而那份缓冲跟继任者发生了什么
+     * 毫无关系（`e2e-runtime-audit.mjs` 失败时 dump 的"daemon 最后 N 行"
+     * 一直标着这个假话，查错的人会在一份看似相关、实则来自另一个进程的
+     * 日志上推理）。
+     *
+     * 先补上这个洞，再去动"交接会不会把前任错认成陌生人"那个假设——
+     * 假设要靠继任者自己的账才能证实，不能靠猜。
+     *
+     * 落到 `paths.logsDir`（本进程自己的数据目录下，已经在启动时创建过）。
+     * **每次重启覆盖而非追加**：这里只诊断"这一次"，不做日志历史，避免无界增长。
+     */
+    mkdirSync(paths.logsDir, { recursive: true });
+    const restartLogPath = join(paths.logsDir, 'restart.log');
+    writeFileSync(
+      restartLogPath,
+      `[daemon] 自我重启（${reason}），前任 pid=${process.pid}，${new Date().toISOString()}\n` +
+        '[daemon] 以下是继任者自己的 stdout/stderr（不是前任的缓冲）：\n',
+    );
+    const restartLogFd = openSync(restartLogPath, 'a');
+
     const child = spawn(process.execPath, argv, {
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', restartLogFd, restartLogFd],
       windowsHide: true,
       env: {
         ...process.env,
@@ -1417,6 +1442,8 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
         OPENMEMO_SESSIONS: JSON.stringify(sessions.export()),
       },
     });
+    // 子进程已经在 spawn() 里拿到自己的 fd 副本，父进程这份可以关了。
+    closeSync(restartLogFd);
 
     // 先不 unref：留一个窗口观察它是不是当场就死
     const bornOk = await new Promise<boolean>((resolve) => {
