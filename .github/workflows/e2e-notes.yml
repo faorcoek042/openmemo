@@ -323,12 +323,52 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
+      # ═══════════════════════════════════════════════════════════════════════════════
+      # ★ `--undecided 0`（#77 notes 腿）—— **这是一个需要论证的结论，不是默认值**
+      #
+      # 这一格此前是 `null`，而闸门下游（`verify-e2e-attestation.mjs`）把两者说成
+      # 两句不同的话：**`0` = 查过了，一条未决都没有；`null` = 这条腿还没接线**。
+      #
+      # ## 为什么这里是写死的 0，而不是照 runtime/browser/record 那样真的去数
+      #
+      # 因为**这条腿结构上没有第三态可数**。`e2e-notes-audit.mjs` 的总表只有五种
+      # 状态（PASS / FAIL / MUT-OK / MUT-BAD / ABORTED），**没有一种表示「跑了但
+      # 什么都没证明」**。每一处「前提在这台 runner 上构造不出来」都被**主动换成了
+      # FAIL**，逐条核过：
+      #
+      #   · 第 3 节数据目录里没有带转写稿的笔记 → `throw`（文件头 §75 明写
+      #     「当场红并说清是前置步骤没跑，**不假装跳过**」）
+      #   · 转写稿是空的 → `ok(trSegs.length > 0, …)` 抛
+      #   · 第 11 节从转写稿里挑不出探针词 → F5-e1／F5-e2 的 `ok()` 抛
+      #   · 「非空虚前提」在本文件里是**一等公民**：删除前搜得到、starred 总数真的
+      #     超过一页、tool.* 自检项非空 —— 每一条空集都有一条会红的守卫兜着，
+      #     而不是空集判通过
+      #
+      # 而一条判红的腿，`needs: [e2e]` 会让本 attest 作业**直接不跑**，凭证根本不会
+      # 发出来。所以不存在「三平台都绿、但暗地里有几条没验到」这种需要 undecided
+      # 去描述的状态。**是这条腿主动把 undecided 换成了 FAIL，不是它没有这个概念。**
+      #
+      # ## 与 record 腿的差别（那条腿为什么反过来要真去数）
+      #
+      # record 腿的论证有一个洞：`retranscribe()` 里有一处跳过**没有 judge 兜住**，
+      # 能在「整轮全绿」里发生。本腿逐个核过每一个 `check()`／`mutation()` 调用点，
+      # **没有这种洞**：它们要么在 try 块顶层，要么在第 13 节那个内层 try 里，
+      # 而内层 try 抛出去会被外层 catch 接住 → `failed += 1` + 一行 ABORTED。
+      #
+      # ## ⚠️ 这句话什么时候会失效（写在这里，好让后人判断，而不是重新考古）
+      #
+      # 只要有人给 `results` 加一个新状态来表示「这条断言没能被评估」，这个 0 就
+      # 变成假话。**那一天不需要靠人记得**：`e2e-notes-audit.mjs` 的汇总段钉了一根桩，
+      # 出现任何计划外的 status 就当场判红，并直接指回这段论证。
+      # （「恒为 0」是一句会过期的话；一条会红的断言不会。）
+      # ═══════════════════════════════════════════════════════════════════════════════
       - name: 写凭证
         run: |
           node scripts/ci/emit-e2e-attestation.mjs \
             --leg notes \
             --bundle-run "${{ needs.e2e.outputs.bundle_run_id }}" \
             --platforms linux-x64,darwin-arm64,win32-x64 \
+            --undecided 0 \
             --out dist/e2e-attest.json
       - uses: actions/upload-artifact@v6
         with:
