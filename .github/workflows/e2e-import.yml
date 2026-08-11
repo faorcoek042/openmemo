@@ -243,6 +243,26 @@ jobs:
         with:
           node-version: '22'
 
+      # ★ --undecided（Manager 2026-08-11 裁决，import 腿）
+      #
+      # runtime/browser 两条腿是**三态**（PASS/FAIL/UNKNOWN），"前提在这台 runner 上
+      # 构造不出来"有专门的第三态承接，所以要真的跨平台数、跨平台求和
+      # （见 sum-undecided.mjs）。import 腿不是同一个形状 —— 它是**二态**
+      # （`ok: true/false`），`e2e-import-audit.mjs` 里唯一会出现 `ok: null` 的地方
+      # 只有人手动传 `--skip-f1` 那一处（下面 `${{ inputs.skipF1 }}` 决定的这个数）。
+      #
+      # 这不是"这条腿没有 undecided 概念"，是**它主动把 undecided 换成了 FAIL**：
+      # `e2e-import-audit.mjs` 里"环境没准备好"（比如 fixture 主机名没指向回环）曾经
+      # 也报成 `ok: null` 然后照常 `exit 0`，后来被改掉——PROTOCOL §11：
+      # 「跳过不许渲染成成功」，现在当场判 `fail()`。一条判 fail 的腿，`needs: [e2e]`
+      # 会让这个 attest job **直接不跑**，凭证根本不会发出来——不存在"三平台都绿、
+      # 但暗地里有几条没验到"这种状态留给 undecided 去描述。所以标准门禁跑法下
+      # （`skipF1=false`，release-upload.yml 的 e2e-gate 用的就是这条默认路径）
+      # 这个数**结构上恒为 0**：不是"没查"，是"这条腿设计上不产生未决"。
+      #
+      # 唯一真实的例外是人为诊断跑法：`--skip-f1`（"只在排查 F2 时用"，输入自己的
+      # 说明写着）。那种情况下 F1 是真的一条都没验，如实报 1，不假装成 0——
+      # 留 0 会把"我们知道答案是 0"变成"我们选择不说"，两者不是一回事。
       - name: 写凭证
         id: attest
         run: |
@@ -250,6 +270,7 @@ jobs:
             --leg import \
             --bundle-run "${{ needs.e2e.outputs.bundle_run_id }}" \
             --platforms linux-x64,darwin-arm64,win32-x64 \
+            --undecided ${{ inputs.skipF1 && '1' || '0' }} \
             --out dist/e2e-attest.json
 
       - uses: actions/upload-artifact@v6
