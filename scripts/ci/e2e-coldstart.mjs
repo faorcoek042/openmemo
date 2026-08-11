@@ -434,10 +434,24 @@ try {
   const deadEnds = checks.filter(
     (c) => c.status === 'fail' && c.required === true && !c.remediation,
   );
+  /*
+   * ★ 空集守卫：`checks` 为空时 `deadEnds.length === 0` 恒真 ⇒ **判通过**，
+   * 而理由会打印一句「**0 条 required 红全部带 remediation**」——
+   * 一个"检查了 0 条，然后宣布全部合格"的句子。
+   *
+   * 空不是"都合格"，是**没拿到自检结果**（非 200 / 鉴权没过 / 超时）：
+   * `/api/selfcheck` 正常时永远有项。
+   *
+   * ⚠️ 这个形状本仓早就认识：`e2e-runtime-audit` 用 `checks.length > 0` 守着、
+   * `e2e-notes-audit` 在同文件 120 行之前用 `ok(!!cn, '判据本身不见了')` 守过一次。
+   * **形状被认识到了，只是没被贯彻。**
+   */
+  const selfcheckUsable = sc.status === 200 && checks.length > 0;
   judge('自检里每一条 required 的红都带得出「怎么修」（否则用户只看到"坏了"）', {
-    ok: deadEnds.length === 0,
-    reason:
-      deadEnds.length === 0
+    ok: selfcheckUsable && deadEnds.length === 0,
+    reason: !selfcheckUsable
+      ? `拿不到自检结果（HTTP ${sc.status}，${checks.length} 项）—— **这不是"全部合格"，是"没检查成"**`
+      : deadEnds.length === 0
         ? `${checks.filter((c) => c.status === 'fail' && c.required === true).length} 条 required 红全部带 remediation`
         : `${deadEnds.length} 条 required 的红没有 remediation：${deadEnds.map((c) => c.id).join(', ')}`,
   });

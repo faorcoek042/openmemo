@@ -1439,6 +1439,22 @@ try {
   const sc = await j('/api/selfcheck');
   const checks = sc.body?.checks ?? sc.body?.results ?? [];
   const tools = checks.filter((c) => String(c.id).startsWith('tool.'));
+  /*
+   * ★ 空集守卫。没有这一句时，拿不到自检结果会让下面整段打印出
+   * 「✅ 产品自己下载并校验的 (0)」「❌ 装不上/不可用 (0)」，并以
+   * 「**本轮结论：借了宿主 0 个**」收尾 —— **三个 0 被当成发现报了出来。**
+   *
+   * 这里没有 PASS 会翻转（本段只 say 不 judge），但**一份会说假话的审计记录，
+   * 和一次假绿一样会被引用** —— 后面读报告的人拿不到"这一轮没测成"这个信息。
+   *
+   * ⚠️ 本文件 120 行之前就守过同一个形状（`ok(!!cn, '判据本身不见了')`）。
+   * 用同一个 `ok()`，让它按本文件的规矩红。
+   */
+  ok(
+    sc.status === 200 && tools.length > 0,
+    `拿不到 tool.* 自检项（HTTP ${sc.status}，共 ${checks.length} 项、tool.* ${tools.length} 项）` +
+      ` —— 下面那句「借了宿主 N 个」会变成一句假话`,
+  );
   const own = tools.filter((c) => c.status === 'ok');
   const borrowed = tools.filter((c) => c.status === 'warn' && /PATH/i.test(String(c.detail ?? '')));
   const missing = tools.filter(
