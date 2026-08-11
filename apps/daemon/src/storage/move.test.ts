@@ -7,13 +7,14 @@
  */
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 
 import {
   findStaleLinks,
+  isDiagnosticLogPath,
   looksLikeDataDir,
   measureTree,
   moveDataDir,
@@ -190,6 +191,77 @@ describe('verifyTreesMatch —— 敢不敢删源的依据', () => {
     const v = await verifyTreesMatch(a, b);
     assert.equal(v.ok, false);
     assert.ok(v.mismatches.some((m) => m.includes('缺失') && m.includes('libwhisper.so')));
+  });
+
+  /*
+   * ↓↓↓ #93：`logs/restart.log` 在搬迁窗口内仍可能被后台调度器追加写入
+   * （`main.ts` 的 `captureConsoleToFile`），导致复制完成后源文件比目标"长"，
+   * 校验把这当成"大小不一致"直接拒收，把整次搬迁回滚 —— 而数据其实完好。
+   * `tolerateSizeDriftFor` 就是这里加的口子：**默认严格**（不传 = 老行为），
+   * 传了谓词的路径大小不一致时改记进 `tolerated`，不算 `mismatches`。
+   */
+  it('★ #93：大小不一致的路径若被 tolerateSizeDriftFor 判定豁免 → 记入 tolerated，不进 mismatches', async () => {
+    const a = tmp('tol-a');
+    const b = tmp('tol-b');
+    await seed(a);
+    await fs.mkdir(join(a, 'logs'), { recursive: true });
+    await fs.writeFile(join(a, 'logs', 'restart.log'), 'x'.repeat(100));
+    await fs.cp(a, b, { recursive: true });
+    // 复制之后源继续被"追加写入"，模拟调度器噪音仍落在捕获窗口内
+    await fs.appendFile(join(a, 'logs', 'restart.log'), 'y'.repeat(21));
+
+    const v = await verifyTreesMatch(a, b, {
+      tolerateSizeDriftFor: (rel) => rel.startsWith('logs'),
+    });
+    assert.equal(v.ok, true, '被豁免的大小漂移不该拦下校验');
+    assert.deepEqual(v.mismatches, []);
+    assert.equal(v.tolerated.length, 1);
+    assert.match(v.tolerated[0] ?? '', /restart\.log \(121 → 100\)/);
+  });
+
+  it('★ #93 对照：不传谓词 = 严格模式，同样的漂移必须照旧报出来（这是默认行为，没变）', async () => {
+    const a = tmp('tol-strict-a');
+    const b = tmp('tol-strict-b');
+    await seed(a);
+    await fs.mkdir(join(a, 'logs'), { recursive: true });
+    await fs.writeFile(join(a, 'logs', 'restart.log'), 'x'.repeat(100));
+    await fs.cp(a, b, { recursive: true });
+    await fs.appendFile(join(a, 'logs', 'restart.log'), 'y'.repeat(21));
+
+    const v = await verifyTreesMatch(a, b);
+    assert.equal(v.ok, false);
+    assert.ok(v.mismatches.some((m) => m.includes('大小不一致') && m.includes('restart.log')));
+    assert.deepEqual(v.tolerated, []);
+  });
+
+  it('★ #93 对照：谓词只豁免它明确点名的路径 —— 数据文件的漂移必须照旧拦下', async () => {
+    const a = tmp('tol-scope-a');
+    const b = tmp('tol-scope-b');
+    await seed(a);
+    await fs.cp(a, b, { recursive: true });
+    await fs.appendFile(join(a, 'openmemo.db'), 'MORE'); // 不在 logs 下
+
+    const v = await verifyTreesMatch(a, b, {
+      tolerateSizeDriftFor: (rel) => rel.startsWith('logs'),
+    });
+    assert.equal(v.ok, false, '豁免范围之外的漂移不能被顺带放过');
+    assert.ok(v.mismatches.some((m) => m.includes('大小不一致') && m.includes('openmemo.db')));
+    assert.deepEqual(v.tolerated, []);
+  });
+});
+
+describe('isDiagnosticLogPath —— #93 默认豁免谓词的范围', () => {
+  it('logs 目录下的文件命中，不管用哪种路径分隔符（POSIX 相对路径用 /，但也要接住 Windows 的 \\）', () => {
+    assert.equal(isDiagnosticLogPath('logs/restart.log'), true);
+    assert.equal(isDiagnosticLogPath('logs\\restart.log'), true);
+    assert.equal(isDiagnosticLogPath('logs/nested/whatever.log'), true);
+  });
+
+  it('顶层不叫 logs、或者只是"看起来像"，一律不豁免（不能靠子串猜）', () => {
+    assert.equal(isDiagnosticLogPath('openmemo.db'), false);
+    assert.equal(isDiagnosticLogPath('models/logs.txt'), false, '文件名含 logs ≠ 在 logs 目录下');
+    assert.equal(isDiagnosticLogPath('logsBackup/x'), false, '前缀相同 ≠ 同一个目录');
+    assert.equal(isDiagnosticLogPath('media/logs/x'), false, '必须是顶层 logs，不是任意深度');
   });
 });
 
@@ -497,6 +569,68 @@ describe('moveDataDir', () => {
     assert.equal((await measureTree(to)).bytes, before.bytes);
     // 顺序必须是先校验后删源 —— 反过来就是"校验没过数据已经没了"
     assert.ok(steps.indexOf('verifying') < steps.indexOf('removing-source'));
+  });
+
+  /*
+   * ↓↓↓ #93 端到端：`CI 实测 run 31508855804, windows-2025`，`logs/restart.log`
+   * 在真实数据目录移动过程中被后台调度器继续追加（`2548 → 2427`），复制早已完成、
+   * 校验时源比目标"多"了 121 字节 —— 老行为是整次搬迁回滚（数据其实完好）。
+   *
+   * 这里用 `onStep('copying')` 的缝隙，在 `fs.cp` 跑完、`verifyTreesMatch` 跑之前，
+   * 精确复现"复制之后、校验之前，源又被写了几笔"，而不是编一个假造的错误对象。
+   * `moveDataDir` 默认就该用 `isDiagnosticLogPath` 豁免这条 —— **不需要调用方额外传参**。
+   */
+  it('★ #93：日志在复制之后仍被追加写入 → 默认豁免，搬迁仍然成功且如实报出豁免', async () => {
+    const base = tmp('logdrift');
+    const from = join(base, 'src');
+    const to = join(base, 'dst');
+    await fs.mkdir(join(from, 'logs'), { recursive: true });
+    await seed(from);
+    await fs.writeFile(join(from, 'logs', 'restart.log'), 'L'.repeat(100));
+    const before = await measureTree(from);
+
+    const r = await moveDataDir(from, to, {
+      forceCopy: true,
+      // ★ 必须是**同步**写：onStep 本身是同步回调，若用 fs.promises 版本，
+      // 它的 Promise 不会被调用方 await（`step()` 是 `void` 签名），写入是否
+      // 赶在紧跟着的 `verifyTreesMatch` 之前完成就成了一场赌 —— 用 *Sync 消掉这场赌。
+      onStep: (s) => {
+        // 此刻 fs.cp 已经跑完（目标已经有一份 100 字节的快照），
+        // 校验还没开始 —— 正是调度器噪音能插进来的那道缝
+        if (s === 'verifying') appendFileSync(join(from, 'logs', 'restart.log'), 'M'.repeat(21));
+      },
+    });
+
+    assert.equal(r.ok, true, '日志漂移不该拖累整次搬迁回滚 —— 数据本身完好');
+    assert.equal(r.strategy, 'copy');
+    assert.equal((await measureTree(to)).files, before.files);
+    assert.equal(r.toleratedSizeDrift.length, 1);
+    assert.match(r.toleratedSizeDrift[0] ?? '', /restart\.log/);
+    assert.ok(r.warningZh, '豁免了却不说 = 又一次静默豁免');
+    assert.match(r.warningZh ?? '', /诊断日志文件.*追加写入/);
+  });
+
+  it('★ #93 对照：同样的"复制后又被写"若发生在数据文件上，仍必须拦下并回滚', async () => {
+    const base = tmp('datadrift');
+    const from = join(base, 'src');
+    const to = join(base, 'dst');
+    await fs.mkdir(from, { recursive: true });
+    await seed(from);
+
+    const r = await moveDataDir(from, to, {
+      forceCopy: true,
+      // 模拟"复制完成后，源上的数据文件又被写了几个字节"——这是外部实际发生的变化，
+      // 不是这次移动造成的，所以下面不该拿"搬之前的快照"去比源（那个快照现在必然对不上，
+      // 跟这条测试想钉的东西无关）。真正要钉的是：这不属于豁免范围，必须回滚、目标不留残留。
+      onStep: (s) => {
+        if (s === 'verifying') appendFileSync(join(from, 'openmemo.db'), 'MORE');
+      },
+    });
+
+    assert.equal(r.ok, false, '数据文件的漂移不是日志噪音，不该被默认豁免吞掉');
+    assert.equal(r.sourceIntact, true);
+    await fs.access(join(from, 'openmemo.db')); // 源仍然可读，没被移动逻辑碰过
+    await assert.rejects(() => fs.access(to)); // 回滚干净，目标不留半份
   });
 
   it('★ 目标非空必须拒绝，且**源原封不动**', async () => {
