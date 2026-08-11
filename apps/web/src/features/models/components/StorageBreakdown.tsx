@@ -40,9 +40,21 @@ export function StorageBreakdown({ storage, locale, onGc, gcPending }: StorageBr
    * 与 `inapplicableKind` 缺失时不替 daemon 说话同一条。
    * daemon 那边只把**确认没在用**的算进这个数（正在被解析到的一个字节都不算）。
    */
+  /*
+   * ★ #87：上面那段注释**自己写着**「`?? 0` 是"我不知道"而不是"没有"」——
+   * 然后下一行就把它当成了 0。两处后果：
+   *   ① 明细里渲染成 `0 B`（把"没查到"说成"没有"）；
+   *   ② `disabled={reclaimableBytes === 0}` **连带禁用了 GC 按钮** ——
+   *      而**不知道有多少可回收 ≠ 不能回收**：那正是最该让用户点一下的情形。
+   * 所以把"知不知道"单独留着，两处各自据它分支。
+   */
+  const unclaimedKnown = reclaimable.unclaimedBytes != null;
+  /** 仅用于求和的**下界**：未知时按 0 计，但绝不据此声称"没有可回收的"。 */
   const unclaimedBytes = reclaimable.unclaimedBytes ?? 0;
   const reclaimableBytes =
     reclaimable.orphanBlobsBytes + reclaimable.stalePartialsBytes + unclaimedBytes;
+  /** 确知没有可回收的 —— 只有**每一项都数得出来**且都为 0 才算。 */
+  const knownNothingToReclaim = unclaimedKnown && reclaimableBytes === 0;
 
   // 只展示 Top 4，其余归"其他" —— 不新造第 5 个分类色（tokens.css 的约定）。
   const sorted = [...storage.breakdown].sort((a, b) => b.bytes - a.bytes);
@@ -120,13 +132,16 @@ export function StorageBreakdown({ storage, locale, onGc, gcPending }: StorageBr
           {t('models.storage.reclaimable', {
             partials: formatBytes(reclaimable.stalePartialsBytes, locale),
             orphans: formatBytes(reclaimable.orphanBlobsBytes, locale),
-            unclaimed: formatBytes(unclaimedBytes, locale),
+            // 未知就说未知：`0 B` 会被读成"这一格确认没有"
+            unclaimed: unclaimedKnown
+              ? formatBytes(unclaimedBytes, locale)
+              : t('models.storage.unknownAmount'),
           })}
         </span>
         <Button
           size="sm"
           variant="secondary"
-          disabled={reclaimableBytes === 0 || gcPending}
+          disabled={knownNothingToReclaim || gcPending}
           onClick={onGc}
           data-testid="models-gc-button"
         >

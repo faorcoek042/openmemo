@@ -73,7 +73,7 @@ describe('搬完数据目录之后，那句话必须是真的', () => {
         files: 54,
         links: 0,
         sourceRemoved: false,
-        sourceResidue: ['models', 'openmemo.db', 'secrets.json'],
+        sourceResidue: { kind: 'read', entries: ['models', 'openmemo.db', 'secrets.json'] },
       },
       '/old',
     );
@@ -87,7 +87,12 @@ describe('搬完数据目录之后，那句话必须是真的', () => {
 
   it('★★ 密钥**已经被删掉**时，绝不许再声称它还在', () => {
     const msg = moveMessageZh(
-      { files: 54, links: 0, sourceRemoved: false, sourceResidue: ['models', 'openmemo.db'] },
+      {
+        files: 54,
+        links: 0,
+        sourceRemoved: false,
+        sourceResidue: { kind: 'read', entries: ['models', 'openmemo.db'] },
+      },
       '/old',
     );
     assert.equal(
@@ -101,11 +106,43 @@ describe('搬完数据目录之后，那句话必须是真的', () => {
 
   it('★ 旧目录已经空了（只剩目录本身）→ 不许列出任何文件名', () => {
     const msg = moveMessageZh(
-      { files: 54, links: 0, sourceRemoved: false, sourceResidue: [] },
+      {
+        files: 54,
+        links: 0,
+        sourceRemoved: false,
+        sourceResidue: { kind: 'read', entries: [] },
+      },
       '/old',
     );
     assert.equal(msg.includes('secrets.json'), false);
     assert.equal(msg.includes('已经空了'), true, '如实说"目录还在但里面空了"');
+  });
+
+  /**
+   * ★★ #87：**读不到旧目录 ≠ 旧目录是空的。**
+   *
+   * `residue` 只在删源失败时才算，而读它的 `catch` 只在 `readdir` 也失败时触发 ——
+   * 两者高度相关（EPERM、目录被占）。**它最可能说"空了"的时刻，
+   * 恰恰是这句话最不成立的时刻**，而用户此刻正在判断那个旧目录能不能删。
+   * 说错方向的代价是他去删一个"已经空了"、里面却还有东西的目录。
+   */
+  it('★★ 读不到旧目录时：不许说"空了"，要说"我没能读到、所以不知道"', () => {
+    const msg = moveMessageZh(
+      {
+        files: 54,
+        links: 0,
+        sourceRemoved: false,
+        sourceResidue: { kind: 'unreadable', reason: 'EPERM: operation not permitted' },
+      },
+      '/old',
+    );
+    assert.equal(
+      msg.includes('已经空了'),
+      false,
+      '★ 读不到被说成了"空了" —— 用户可能据此删掉一个还有东西的目录',
+    );
+    assert.equal(msg.includes('不知道里面还剩什么'), true, '要说出"我没能看"这件事本身');
+    assert.equal(msg.includes('EPERM'), true, '原因要带上，否则用户无从判断该怎么办');
   });
 
   it('★ 符号链接数只在非零时出现（别对着 0 说"与 0 个符号链接"）', () => {

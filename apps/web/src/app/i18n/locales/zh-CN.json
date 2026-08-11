@@ -198,6 +198,7 @@
       "inUse": "使用中",
       "empty": "还没有安装任何模型",
       "reclaimable": "可清理：未完成的下载 {{partials}} · 孤立文件 {{orphans}} · 无法识别的残留 {{unclaimed}}",
+      "unknownAmount": "未知",
       "gc": "清理 {{size}}"
     },
     "fit": {

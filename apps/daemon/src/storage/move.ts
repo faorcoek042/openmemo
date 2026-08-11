@@ -33,6 +33,23 @@
 import { promises as fs } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
+/**
+ * 旧目录里还剩什么 —— **三态**（#87）。
+ *
+ * `unreadable` 与 `read + 空` 是两件完全不同的事：前者是"我没能看"，
+ * 后者是"我看了，是空的"。合并成空数组就等于把前者说成后者。
+ */
+export type SourceResidue =
+  | { readonly kind: 'read'; readonly entries: readonly string[] }
+  | {
+      readonly kind: 'unreadable';
+      /** 为什么没能读到（`readdir` 的错）。界面要能说出"所以我不知道里面还剩什么"。 */
+      readonly reason: string;
+    };
+
+/** 删成功/没走到那一步 ⇒ 我们确实看过，且是空的。 */
+const RESIDUE_EMPTY: SourceResidue = { kind: 'read', entries: [] };
+
 export interface MovePlan {
   readonly ok: boolean;
   readonly reason?: string;
@@ -413,9 +430,26 @@ export interface MoveResult {
    * 判据仍是 Manager 2026-08-08 那条：**界面说的和实际发生的必须一致**。
    * 所以这里如实列出剩下的东西，让文案照着念，而不是照着猜。
    *
-   * 成功删掉时为空数组。
+   * 成功删掉时 `entries` 为空。
+   *
+   * ## ★ 为什么是判别联合，不是"读不到就给空数组"（#87）
+   *
+   * 这里原来是 `readonly string[]`，而读不到旧目录时 `catch` 会给 `[]`。
+   * 注释当时写的是「读不到就给空数组（**宁可不说，也不编**）」——
+   * 但**空数组不是"不说"，它就是在说"空了"**：两个消费方都据此渲染
+   * 「旧目录已经空了」/「里面已经空了」，逐字上屏。
+   *
+   * ⚠️ 而这句假话出现的时机是最坏的那个：`residue` **只在删源失败时才算**，
+   * 那个 `catch` **只在 `readdir` 也失败时触发** —— 两者高度相关
+   * （EPERM、目录被占、盘符掉了）。**它最可能说"空了"的时刻，
+   * 恰恰是这句话最不成立的时刻。**
+   *
+   * 而此刻用户正在等一个「我的数据到底搬完没有」的答案。说错方向的代价是
+   * **他可能去删那个"已经空了"的旧目录，而里面还有东西。**
+   *
+   * 所以三态各自可表达，`?? []` 与 `.length === 0` 都写不出来。
    */
-  readonly sourceResidue: readonly string[];
+  readonly sourceResidue: SourceResidue;
   /**
    * 源目录**有没有真的被删掉**。
    *
@@ -466,7 +500,7 @@ export async function moveDataDir(
       ...(plan.reasonZh ? { errorZh: plan.reasonZh } : {}),
       sourceIntact: true,
       sourceRemoved: false,
-      sourceResidue: [],
+      sourceResidue: RESIDUE_EMPTY,
     };
   }
 
@@ -487,7 +521,7 @@ export async function moveDataDir(
       errorZh: '读不到当前数据目录',
       sourceIntact: true,
       sourceRemoved: false,
-      sourceResidue: [],
+      sourceResidue: RESIDUE_EMPTY,
     };
   }
 
@@ -529,19 +563,23 @@ export async function moveDataDir(
      * 删源失败时**读一次旧目录**，如实拿到还剩什么 —— 不猜。
      * 读不到就给空数组（宁可不说，也不编）。
      */
-    let residue: string[] = [];
+    let residue: SourceResidue = RESIDUE_EMPTY;
     if (removeSourceError !== undefined) {
       try {
-        residue = (await fs.readdir(from)).sort();
-      } catch {
-        residue = [];
+        residue = { kind: 'read', entries: (await fs.readdir(from)).sort() };
+      } catch (e) {
+        // ★ 读不到 ⇒ 如实说"没读到"。给空数组会被下游念成「已经空了」（见类型上那段）。
+        residue = { kind: 'unreadable', reason: String(e) };
       }
       warnings.push(
         `数据已完整复制到新位置并**逐文件校验通过**，但旧目录 ${from} 没能删掉（${removeSourceError}）。` +
           `新位置的数据是完整的；` +
-          (residue.length > 0
-            ? `**旧目录里还剩下：${residue.join('、')}**，请自行确认后删除。`
-            : `旧目录已经空了，但目录本身还在。`),
+          (residue.kind === 'unreadable'
+            ? `而且**我没能读到那个目录**（${residue.reason}），` +
+              `所以**不知道里面还剩什么** —— 删它之前请自己先看一眼。`
+            : residue.entries.length > 0
+              ? `**旧目录里还剩下：${residue.entries.join('、')}**，请自行确认后删除。`
+              : `旧目录已经空了，但目录本身还在。`),
       );
     }
     return {
@@ -580,7 +618,7 @@ export async function moveDataDir(
         errorZh: '新位置已存在且不是空目录',
         sourceIntact: true,
         sourceRemoved: false,
-        sourceResidue: [],
+        sourceResidue: RESIDUE_EMPTY,
       };
     }
   } catch {
@@ -605,7 +643,7 @@ export async function moveDataDir(
       errorZh: `目标磁盘空间不足（约需 ${(need / 1e6).toFixed(1)}MB，可用 ${(free / 1e6).toFixed(1)}MB）`,
       sourceIntact: true,
       sourceRemoved: false,
-      sourceResidue: [],
+      sourceResidue: RESIDUE_EMPTY,
     };
   }
 
@@ -671,7 +709,7 @@ export async function moveDataDir(
         errorZh: `复制后校验不一致（${v.mismatches.length} 处），已回滚，原数据未动`,
         sourceIntact: true,
         sourceRemoved: false,
-        sourceResidue: [],
+        sourceResidue: RESIDUE_EMPTY,
       };
     }
   } catch (err) {
@@ -689,7 +727,7 @@ export async function moveDataDir(
       errorZh: '移动失败，已回滚，原数据未动',
       sourceIntact: true,
       sourceRemoved: false,
-      sourceResidue: [],
+      sourceResidue: RESIDUE_EMPTY,
     };
   }
 
