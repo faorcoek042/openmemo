@@ -2561,6 +2561,25 @@ try {
         .join('\n'),
     );
   }
+  /*
+   * ★★ #77 finding① 分段打点（Manager 2026-08-11 裁决）：前任自己的账——
+   * 同一个 captureConsoleToFile()，前任在调用 stop() 之前给自己也挂一份
+   * 有界窗口抄写，写到同一个 dataDir 下的 `logs/restart-predecessor.log`
+   * （文件名不同，不会跟继任者那份互相覆盖）。stop() 分 6 段各打一条
+   * 时间戳，server.close() 之前还单独记一次"还有几条连接、来自谁"——
+   * 这是唯一能看出 15s 接班窗口到底卡在哪一段（还是根本没卡在 stop()
+   * 里、是 pidAlive() 的 Windows 语义问题）的地方。
+   */
+  const restartPredecessorLogPath = join(DATA_DIR, 'logs', 'restart-predecessor.log');
+  if (existsSync(restartPredecessorLogPath)) {
+    say(`   前任自己的账（落盘：${restartPredecessorLogPath}）：`);
+    say(
+      readFileSync(restartPredecessorLogPath, 'utf8')
+        .split('\n')
+        .map((l) => `      ${l}`)
+        .join('\n'),
+    );
+  }
   results.push({ id: 'A-RUN-COMPLETED', status: 'FAIL', detail: e.message });
 } finally {
   await shutdownViaHttp();
