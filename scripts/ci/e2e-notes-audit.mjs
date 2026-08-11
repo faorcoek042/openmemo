@@ -1305,9 +1305,18 @@ try {
     return CN_WORDS.map((w) => `${w}:${(cnHits[w].body?.hits ?? []).length}`).join(' ');
   });
 
-  await check('F5-d2 /api/search 自报 modes.chineseTokenizer=true', () => {
+  /*
+   * ★ 键名跟着 T-200 A-2（`ae48f0b`）改：`/api/search` 的 `modes` 早就不发
+   * `chineseTokenizer`（boolean）了，契约收口成 `tokenizer: 'simple'|'trigram'`
+   * （`packages/shared/src/schemas.ts` 的 `SearchResponseSchema`）。这条腿
+   * 只在 `workflow_dispatch` 手动触发时跑，不随 push 跑——键名改名落地那一刻起
+   * 这两条断言就在拿一个 daemon 早就不发的旧键名去读 `undefined`，`eq()` 用的是
+   * `===` 全等比较，`undefined !== true`，理应当场红；但因为没人手动跑这条腿，
+   * 直到这次 dispatch 之前没有任何东西说过一句话（Manager 2026-08-11 裁决）。
+   */
+  await check('F5-d2 /api/search 自报 modes.tokenizer=simple', () => {
     const m = cnHits[CN_WORDS[0]].body?.modes ?? {};
-    eq(m.chineseTokenizer, true, 'modes.chineseTokenizer');
+    eq(m.tokenizer, 'simple', 'modes.tokenizer');
     eq(m.keyword, true, 'modes.keyword');
     return JSON.stringify(m);
   });
@@ -1546,10 +1555,11 @@ try {
       return '四个词全是 HTTP 200 + 0 条本样本命中，一个错都不报 —— 这就是那个静默';
     });
 
-    await check('MUT-2 变异实例上 modes.chineseTokenizer 如实报 false', () => {
+    // ★ 同一次键名收口（T-200 A-2）：变异实例退化时 modes.tokenizer 应如实报 'trigram'。
+    await check('MUT-2 变异实例上 modes.tokenizer 如实报 trigram', () => {
       const m = mutHits[CN_WORDS[0]].body?.modes ?? {};
-      eq(m.chineseTokenizer, false, '变异实例的 modes.chineseTokenizer');
-      return 'chineseTokenizer=false';
+      eq(m.tokenizer, 'trigram', '变异实例的 modes.tokenizer');
+      return 'tokenizer=trigram';
     });
   } finally {
     await stopDaemon(mutDaemon);
