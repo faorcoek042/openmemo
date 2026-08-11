@@ -749,14 +749,29 @@ try {
   await stopDaemon();
   await startDaemon('warm');
   const health2 = await http('/api/health');
-  const missingAfter = health2.body?.pipeline?.missing ?? [];
-  say(`   重启前 missing = ${JSON.stringify(missingAtBoot)}`);
-  say(`   重启后 missing = ${JSON.stringify(missingAfter)}`);
+  /*
+   * ★ #87 三态。这一条**尤其**要小心：`?? []` 之后 `length` 是 0，
+   * 而判据是"变短了" ⇒ UNKNOWN 会打印一句**得意的 `3 → 0`** 并判通过。
+   * 那是"看起来验过了"的最强形态：一个数字、一个箭头、一个绿勾，全是假的。
+   * 两端都要看 —— 起点（`bootToolchainUnknown`）不知道时同样比不出"变短"。
+   */
+  const missingAfterRaw = health2.body?.pipeline?.missing;
+  const afterToolchainUnknown = missingAfterRaw === null;
+  const missingAfter = missingAfterRaw ?? [];
+  const eitherUnknown = bootToolchainUnknown || afterToolchainUnknown;
+  say(
+    `   重启前 missing = ${bootToolchainUnknown ? 'null（没能确认）' : JSON.stringify(missingAtBoot)}`,
+  );
+  say(
+    `   重启后 missing = ${afterToolchainUnknown ? 'null（没能确认）' : JSON.stringify(missingAfter)}`,
+  );
   if (installedOk) {
     judge('★ 装完并重启之后，缺失清单真的变短了（"装了有用"，不是"job 说成功了"）', {
-      ok: missingAfter.length < missingAtBoot.length,
-      reason:
-        missingAfter.length < missingAtBoot.length
+      ok: !eitherUnknown && missingAfter.length < missingAtBoot.length,
+      reason: eitherUnknown
+        ? `两端至少有一端是 null（没能确认工具链）—— **比不出"变短了"**，这不是通过：` +
+          `${health2.body?.pipeline?.missingUnknownReason ?? '（未给原因）'}`
+        : missingAfter.length < missingAtBoot.length
           ? `${missingAtBoot.length} → ${missingAfter.length}`
           : `${missingAtBoot.length} → ${missingAfter.length}：装完之后一项都没少，` +
             `说明装上的东西没有被产品认出来`,
@@ -849,11 +864,26 @@ try {
   await stopDaemon();
   await startDaemon('final');
   const h3 = await http('/api/health');
-  const missingFinal = h3.body?.pipeline?.missing ?? [];
+  /*
+   * ★★ #87 三态 —— **这是整条冷启动腿的最终判据，而它的方向原本是反的。**
+   *
+   * `unknown` 时 daemon **恰恰拒绝解除任务阻塞**（`main.ts` 的队列闸）：
+   * 也就是说**产品静默停摆的那个状态，正是这条裁判亮绿灯的状态**。
+   * 而它是发布闸门的一条腿。
+   */
+  const missingFinalRaw = h3.body?.pipeline?.missing;
+  const finalToolchainUnknown = missingFinalRaw === null;
+  const missingFinal = missingFinalRaw ?? [];
   dump('最终 /api/health 的 pipeline', h3.body?.pipeline ?? {}, 1200);
   judge('★ 走完全程之后，「缺少工具」清单不再包含转写必需的那几项', {
-    ok: !missingFinal.includes('asr-model') && !missingFinal.includes('whisper-cli'),
-    reason: `最终 missing = ${JSON.stringify(missingFinal)}`,
+    ok:
+      !finalToolchainUnknown &&
+      !missingFinal.includes('asr-model') &&
+      !missingFinal.includes('whisper-cli'),
+    reason: finalToolchainUnknown
+      ? `最终 missing = null —— 没能确认工具链，**这不是通过**：` +
+        `${h3.body?.pipeline?.missingUnknownReason ?? '（未给原因）'}`
+      : `最终 missing = ${JSON.stringify(missingFinal)}`,
   });
 
   /* ── 7. ★ 通过**启动器**起一次：`packs > 0` 才算数 ── */
@@ -950,10 +980,16 @@ try {
       reason: lgroups.length > 0 ? `groups = ${lgroups.length}` : '**groups = 0**',
     });
     const lh = await http('/api/health');
-    const lmissing = lh.body?.pipeline?.missing ?? [];
+    // ★ #87 三态：没能确认 ⇒ 不算"认出来了"（容忍第三态 ≠ 收进 OK 那一档）
+    const lmissingRaw = lh.body?.pipeline?.missing;
+    const lToolchainUnknown = lmissingRaw === null;
+    const lmissing = lmissingRaw ?? [];
     judge('★ 通过启动器起来时，包内 CPU 引擎也被认出来了（missing 里没有 whisper-cli）', {
-      ok: !lmissing.includes('whisper-cli'),
-      reason: `启动器 + 全新默认数据目录下 pipeline.missing = ${JSON.stringify(lmissing)}`,
+      ok: !lToolchainUnknown && !lmissing.includes('whisper-cli'),
+      reason: lToolchainUnknown
+        ? `pipeline.missing = null —— 没能确认工具链，这条断言无法成立：` +
+          `${lh.body?.pipeline?.missingUnknownReason ?? '（未给原因）'}`
+        : `启动器 + 全新默认数据目录下 pipeline.missing = ${JSON.stringify(lmissing)}`,
     });
   }
   killTree(launcherProc.pid);
