@@ -79,7 +79,7 @@
     "failureMindmap": "Mind map generation failed for this note",
     "failureHint": "It will not run again on its own. You can retry it right away; if the reason above points at a missing component or a file that has moved, fix that first — otherwise the retry will fail the same way.",
     "cancelledTitle": "This transcription was cancelled",
-    "cancelledHint": "Whatever finished is kept. To carry on, use \"Re-transcribe\" on the transcript panel below — it resumes from the chunks already done instead of starting over, and lets you switch engine or model on the way.",
+    "cancelledHint": "Whatever finished is kept. To carry on, use \"{{action}}\" on the transcript panel below — it resumes from the chunks already done instead of starting over, and lets you switch engine or model on the way.",
     "partial": "Partial",
     "untitled": "Untitled",
     "addTag": "Add tag",
@@ -823,11 +823,6 @@
     "generate": "Generate mind map",
     "generating": "Generating…",
     "generateBlocked": "On hold",
-    "blocked": {
-      "NO_TRANSCRIPT": "This note has no transcript yet. Transcribe it first, then come back and generate the mind map.",
-      "LLM_NOT_CONFIGURED": "No language model is available yet. Add an API key in Settings, or install a local model.",
-      "UNKNOWN": "The job is on hold. Open the task centre to see what it is waiting for."
-    },
     "export": "Export",
     "exportImageGroup": "Image (current canvas)",
     "exportDataGroup": "Structured (re-importable elsewhere)",
@@ -1075,6 +1070,12 @@
       "pipelineUnavailable": "No downloadable component package for this platform yet ({{count}})",
       "toolchainUnknown": "We could not confirm whether the toolchain is complete — new jobs will not start until we can"
     }
+  },
+  "jobBlocked": {
+    "MISSING_ASR_MODEL": "Waiting for a speech recognition model. Once one is installed this job carries on by itself — you do not have to come back and start it again.",
+    "NO_TRANSCRIPT": "This note has no transcript yet. Transcribe it first, then come back and generate the mind map.",
+    "LLM_NOT_CONFIGURED": "No language model is available yet. Add an API key in Settings, or install a local model.",
+    "UNKNOWN": "The job is on hold. Open the task centre to see what it is waiting for."
   },
   "jobState": {
     "queued": "Queued",
