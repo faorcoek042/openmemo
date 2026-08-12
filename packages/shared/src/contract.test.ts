@@ -20,6 +20,13 @@ import { describe, it } from 'node:test';
 
 import { CONTRACT_VERSION, PACKAGE_NAME } from './index.js';
 import {
+  PROGRESS_READING_KINDS,
+  PROGRESS_UNREPORTABLE,
+  fractionOf,
+  progressFraction,
+  progressOf,
+} from './progress.js';
+import {
   AUTHORITATIVE_EVENT_TYPES,
   SEQUENCED_EVENT_TYPES,
   SSE_EVENT_TYPES,
@@ -43,9 +50,17 @@ describe('CONTRACT_VERSION —— daemon ↔ web 的握手位', () => {
     // 如果你是有意 bump 的：把下面的期望值一起改掉，并确认
     //   ① apps/daemon 与 apps/web 会一起发布；
     //   ② 老前端撞上新 daemon 时那条阻断路径仍然走得通。
+    //
+    // ── 1 → 2（#90，有意 bump，两条确认都做过）─────────────────────────────
+    // `job.progress` 的刻度字段从 `pct: number | null` 换成
+    // `progress: ProgressReading`（判别式联合，见 `progress.ts` 的文件头）。
+    // ① 成立：daemon 自己 serve 那份 SPA，同一个 bundle 一起发。
+    // ② 成立且**正是我们要的**：老前端读 `e.pct` 会得到 `undefined`，
+    //    `?? 0` 之后每条任务恒显示 0% —— 与其让他盯着一排静止的 0%，
+    //    不如让 `connect.ts` 的版本比对把他挡在"刷新一下"那句话上。
     assert.equal(
       CONTRACT_VERSION,
-      1,
+      2,
       'CONTRACT_VERSION 变了。这是破坏性改动，不是版本号自增 —— 见本条注释',
     );
   });
@@ -92,7 +107,11 @@ describe('SSE 事件类型表 —— 拼错一个字符就永远静默', () => {
 });
 
 describe('SSE 线格式 —— 少一个换行就永远不 dispatch', () => {
-  const sample = { type: 'job.progress', jobId: 'j1', pct: 42 } as unknown as SseEvent;
+  const sample = {
+    type: 'job.progress',
+    jobId: 'j1',
+    progress: { kind: 'fraction', value: 0.42 },
+  } as unknown as SseEvent;
 
   it('★ 帧必须以空行（\\n\\n）结束', () => {
     // SSE 的分帧符就是这个空行。少了它，服务端 write 成功、连接正常，
@@ -134,5 +153,102 @@ describe('SSE 线格式 —— 少一个换行就永远不 dispatch', () => {
   it('id 单调递增地原样出现（重连补发靠它）', () => {
     assert.equal(formatSseFrame(0, sample).startsWith('id: 0\n'), true);
     assert.equal(formatSseFrame(12345, sample).startsWith('id: 12345\n'), true);
+  });
+});
+
+/* ══════════════ #90 进度刻度 —— 一个数字，两种量纲，靠约定维持 ══════════════ */
+
+/**
+ * ## 被守的那件事
+ *
+ * `job.progress` 的刻度字段曾经是 `pct: number | null`，而**两个生产者对它的
+ * 理解不一样**：流水线那侧发 `fraction * 100`（0–100），下载那侧发
+ * `completed / total`（0–1）。契约、openapi、store、`ProgressMeter`、
+ * `formatPercent` 全按 0–1 用。
+ *
+ * 于是任何 ≥1 的帧一到，`formatPercent` 就把它夹成 `1`：
+ * **每一条正在跑的转写任务都显示「100%」，进度条满格、`aria-valuenow="100"`**，
+ * 而同一时刻 `GET /api/jobs` 说 `0.728`。一条 40 分钟的音频，用户会盯着
+ * 「100%」看好几分钟。
+ *
+ * `number | null` 分不出 `0.9` 和 `90`。这一组测试钉的就是**分得出**。
+ *
+ * ## 抽掉修法会不会红
+ *
+ * · 把 `progressFraction` 改回"乘 100 再返回" → 第 1 条当场红。
+ * · 把 `unreportable` 那一格加回一个 `value: null` 字段 → 第 4 条当场红。
+ * · 让越界值悄悄通过（回到"静默夹紧"） → 第 2 条当场红。
+ */
+describe('#90 ProgressReading —— 刻度必须跟着值一起走', () => {
+  it('★★ 0.9 进去就是 0.9 出来 —— 不许有人在中间乘 100', () => {
+    const r = progressFraction(0.9, 'contract-test');
+    assert.equal(r.kind, 'fraction');
+    assert.equal(
+      r.kind === 'fraction' ? r.value : null,
+      0.9,
+      '构造点把 0–1 改写成了别的刻度 —— 这正是 #90：转写任务因此恒显示 100%',
+    );
+  });
+
+  it('★★ 90 不是一个合法读数：它降级成"报不出进度"，并且出声', () => {
+    const errs: unknown[][] = [];
+    const original = console.error;
+    console.error = (...a: unknown[]) => void errs.push(a);
+    let r;
+    try {
+      r = progressFraction(90, 'contract-test');
+    } finally {
+      console.error = original;
+    }
+    assert.equal(
+      r.kind,
+      'unreportable',
+      '90 被当成了合法比例 —— 那是把百分比当小数传，界面会显示一个理直气壮的 100%',
+    );
+    assert.equal(r.kind === 'unreportable' ? r.reason : null, 'out_of_range');
+    assert.equal(
+      errs.length,
+      1,
+      '越界被静默吞掉了。夹紧可以，闭嘴不行 —— 一个 90 倍的偏差不该只留下一个好看的数字',
+    );
+  });
+
+  it('0..1 的边界值照常通过（别把修法做成"什么都不信"）', () => {
+    for (const v of [0, 0.001, 0.5, 1]) {
+      const r = progressFraction(v, 'contract-test');
+      assert.equal(r.kind, 'fraction', `${v} 应该是合法比例`);
+      assert.equal(r.kind === 'fraction' ? r.value : null, v);
+    }
+  });
+
+  it('★ "报不出进度"不携带任何数字 —— 于是 `?? 0` 写不出来', () => {
+    const r = PROGRESS_UNREPORTABLE.no_denominator;
+    assert.equal(r.kind, 'unreportable');
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(r, 'value'),
+      false,
+      'unreportable 带上 value 就等于把 `value ?? 0` 重新变成可写的 —— ' +
+        '而"这一步没有刻度"被渲染成"0%"正是同一族的另一半（"正在安装"停在 0%）',
+    );
+    assert.equal(fractionOf(r), null, '唯一读取点必须对"没有刻度"回答 null，不是 0');
+  });
+
+  it('没有分母时不编百分比（`total<=0` → no_denominator，不是 0%）', () => {
+    assert.equal(progressOf(5, 0, 'contract-test').kind, 'unreportable');
+    assert.equal(fractionOf(progressOf(3, 4, 'contract-test')), 0.75);
+  });
+
+  it('NaN / Infinity 也不许变成 0%', () => {
+    assert.equal(progressFraction(Number.NaN, 'contract-test').kind, 'unreportable');
+    assert.equal(progressFraction(Number.POSITIVE_INFINITY, 'contract-test').kind, 'unreportable');
+  });
+
+  it('★ 契约里只有 fraction 一种可传输量纲 —— percent 不是一格', () => {
+    assert.deepEqual(
+      [...PROGRESS_READING_KINDS],
+      ['fraction', 'unreportable'],
+      '一旦有人加进 percent 那一格，"两种量纲共用一个字段"就又写得出来了 —— ' +
+        '百分比是显示形态，只许在渲染层现算',
+    );
   });
 });

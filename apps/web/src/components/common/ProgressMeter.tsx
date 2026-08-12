@@ -1,4 +1,9 @@
+import { reportProgressDimensionViolation } from '@openmemo/shared';
+
 import { cn } from '../../lib/utils';
+
+/** 浮点累加出来的 `1.0000000000000002` 不该被当成量纲错。 */
+const EPSILON = 1e-9;
 
 /**
  * 进度条（D-05 §7.3 的 meter 规格）。
@@ -42,7 +47,12 @@ const TONE_TRACK: Record<MeterTone, string> = {
 };
 
 export interface ProgressMeterProps {
-  /** 0..1。超出范围会被夹紧。 */
+  /**
+   * **0..1 的比例**，不是百分数。
+   *
+   * 越界（含 NaN）不再被夹紧成满条 —— 它会**出声并退化成不确定表达**，理由见下面
+   * `outOfRange` 那一段。要画"没有刻度"，用 `indeterminate` 明说，别传越界值。
+   */
   value: number;
   tone?: MeterTone;
   /** 行内 6px / 抽屉 8px（D-05 §7.3） */
@@ -62,6 +72,23 @@ export function ProgressMeter({
   className,
   label,
 }: ProgressMeterProps) {
+  /*
+   * ── ★ #90：越界不再被夹成满条，而是**出声 + 退化成不确定表达** ──────────────
+   *
+   * 原来是 `const pct = Math.min(100, Math.max(0, value * 100))`。于是上游把
+   * 0–100 的百分比当 0–1 传进来（`value = 90`）时，`9000` 被夹成 `100`：
+   * **满格的条 + `aria-valuenow="100"`** —— 屏幕阅读器和视力正常的用户一起被骗，
+   * 而屏幕上没有任何一处显得不对劲。一条 40 分钟的音频转到 72%，它说 100%。
+   *
+   * 夹紧本身要留（绝不能让 `width: 9000%` 撑破布局），要改的是**夹完不吭声**。
+   * 越界现在走 `indeterminate` 那条既有的路：脉动、不给 `aria-valuenow` ——
+   * 与本组件对 `verifying` 的处理是同一条规则：
+   * **没有可信刻度时画脉动，不画一个假的百分比。**
+   */
+  const outOfRange = !Number.isFinite(value) || value < -EPSILON || value > 1 + EPSILON;
+  if (outOfRange && Number.isFinite(value))
+    reportProgressDimensionViolation('ProgressMeter', value);
+  const unknown = indeterminate || outOfRange;
   const pct = Math.min(100, Math.max(0, (Number.isFinite(value) ? value : 0) * 100));
   const h = size === 'sm' ? 'h-1.5' : 'h-2';
 
@@ -71,7 +98,7 @@ export function ProgressMeter({
       aria-label={label}
       aria-valuemin={0}
       aria-valuemax={100}
-      aria-valuenow={indeterminate ? undefined : Math.round(pct)}
+      aria-valuenow={unknown ? undefined : Math.round(pct)}
       className={cn('w-full overflow-hidden rounded-full', TONE_TRACK[tone], h, className)}
     >
       <div
@@ -80,9 +107,9 @@ export function ProgressMeter({
           // 基线端方角、数据端圆角
           'rounded-l-none rounded-r-[4px]',
           TONE_FILL[tone],
-          indeterminate && 'animate-pulse',
+          unknown && 'animate-pulse',
         )}
-        style={{ width: indeterminate ? '40%' : `${pct}%` }}
+        style={{ width: unknown ? '40%' : `${pct}%` }}
       />
     </div>
   );

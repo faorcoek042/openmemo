@@ -20,7 +20,7 @@ import type {
   SourcesProbedEvent,
   StorageChangedEvent,
 } from '@openmemo/shared';
-import { TERMINAL_JOB_STATES } from '@openmemo/shared';
+import { TERMINAL_JOB_STATES, fractionOf } from '@openmemo/shared';
 
 import { bus } from '../../lib/events/bus';
 import { qk } from '../../app/query';
@@ -59,13 +59,16 @@ export const modelsSse: SseBinding = (qc: QueryClient) => [
       jobType: 'download',
       state: e.state,
       /*
-       * ★ `pct: null` 的意思是「这一步报不出进度」（契约原话：
-       *   "Null when the step genuinely cannot report a fraction."），
-       *   **不是 0%**。以前这里兜底成 0，于是"正在安装"显示成停在 0% 的进度条 ——
-       *   一条看起来精确的假话。现在原样传 null，由渲染层用**不确定表达**去画。
+       * ★ `unreportable` 的意思是「这一步报不出进度」，**不是 0%**。以前这里兜底成 0，
+       *   于是"正在安装"显示成停在 0% 的进度条 —— 一条看起来精确的假话。
+       *   现在原样传 null，由渲染层用**不确定表达**去画。
+       *
+       * ★ #90：这段注释守住的规则，隔壁 `features/tasks/sse.ts` 当时正破着
+       *   （那边写的是 `e.pct ?? 0`）。契约把刻度升格成 `ProgressReading` 之后，
+       *   `unreportable` 那一格**不带 value 字段**，两侧都没法再兜底成 0。
        */
       progress:
-        e.pct ??
+        fractionOf(e.progress) ??
         (e.totalBytes && e.completedBytes != null ? e.completedBytes / e.totalBytes : null),
       step: e.step,
       completedBytes: e.completedBytes,

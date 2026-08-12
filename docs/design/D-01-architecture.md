@@ -397,7 +397,8 @@ id: 000000000000123          <- 单调递增序号（重放游标）
 event: job.progress          <- 具名类型（订正 1）。⚠️ 后果：EventSource.onmessage
                                 永不触发，前端必须逐类型 addEventListener（见 D-05 §2.3）
 data: {"type":"job.progress","ts":"2026-08-02T…","topic":"job:01J…",
-       "jobId":"01J…","step":"asr","pct":0.29,"state":"running", …}
+       "jobId":"01J…","step":"asr","progress":{"kind":"fraction","value":0.29},
+       "state":"running", …}
                              ↑ 业务字段与信封字段**平铺在同一层**
 ```
 
@@ -612,12 +613,12 @@ sequenceDiagram
     W->>SP: yt-dlp --dump-single-json -- <url>   [probe，不下载]
     SP-->>W: {title, duration, formats[], thumbnail, uploader}
     W->>DB: 更新 media_source 元数据 + note.title
-    W-->>U: SSE job.progress {step:"probe", pct:5}
+    W-->>U: SSE job.progress {step:"probe", progress:{kind:"fraction",value:0.05}}
 
     W->>SP: yt-dlp -f bestaudio --paths <tmp> -o <常量模板> -- <url>
     loop 下载中
         SP-->>W: stdout 进度行（解析）
-        W-->>U: SSE job.progress {step:"fetch", pct}  (250ms 节流)
+        W-->>U: SSE job.progress {step:"fetch", progress}  (250ms 节流)
     end
     SP-->>W: exit 0 → 原始媒体文件
     W->>DB: media_assets(role=original) + step[fetch]=succeeded

@@ -222,7 +222,12 @@ export const SEQUENCED_EVENT_TYPES = ['transcribe.segment', 'mindmap.delta'];
 ```ts
 // 通用进度：下载与流水线共用。step 是机器可读阶段名，UI 负责翻译成人话
 JobProgressEvent  { jobId, step: 'fetch'|'demux'|'vad'|'asr'|'structure'|…,
-                    pct, completedBytes, totalBytes, speedBps, etaSeconds, state }
+                    progress: ProgressReading, completedBytes, totalBytes,
+                    speedBps, etaSeconds, state }
+// ProgressReading = {kind:'fraction', value: 0..1} | {kind:'unreportable', reason}
+// ⚠️ 它替换的 `pct: number|null` 是 #90 的成因：本文档与 D-01 曾把同一个字段
+//    写成两种刻度（D-01 §F1 `"pct":0.29` vs §F4 `pct:5`），实现照着抄，
+//    于是转写任务恒显示 100%。刻度现在跟着值一起走，不再靠约定。
 
 // 前置条件不满足 —— remediation 是要求 2.1 的支点
 JobBlockedEvent   { jobId, blockedCode, messageZh, remediation: Remediation | null }

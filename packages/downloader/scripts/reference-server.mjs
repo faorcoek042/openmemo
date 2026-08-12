@@ -495,7 +495,10 @@ queue.on('job.progress', (job) =>
     makeEvent('job.progress', topics.job(job.jobId), {
       jobId: job.jobId,
       step: job.step,
-      pct: job.totalBytes ? job.completedBytes / job.totalBytes : null,
+      // #90：契约里刻度已升格成 ProgressReading（判别式联合），裸数字不再合法
+      progress: job.totalBytes
+        ? { kind: 'fraction', value: job.completedBytes / job.totalBytes }
+        : { kind: 'unreportable', reason: 'no_denominator' },
       completedBytes: job.completedBytes,
       totalBytes: job.totalBytes,
       speedBps: job.speedBps,

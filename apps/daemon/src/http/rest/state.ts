@@ -29,8 +29,10 @@ import {
 import {
   BUNDLED_MODEL_IDS,
   MODEL_ROLES,
+  PROGRESS_UNREPORTABLE,
   computeFit,
   makeEvent,
+  progressOf,
   referenceSpeedOf,
   topics,
   type ActiveSlotUnusable,
@@ -817,7 +819,16 @@ export class RestState {
         makeEvent('job.progress', topics.job(job.jobId), {
           jobId: job.jobId,
           step: job.step,
-          pct: job.totalBytes ? job.completedBytes / job.totalBytes : null,
+          /*
+           * 下载这一侧的刻度**一直是对的**（0..1），坏的是流水线那一侧
+           * （`jobs/events.ts` 曾在这里写 `fraction * 100`）。这也正是 #90 那条
+           * 「每条任务都显示 100%」能活下来的原因：**最常被人盯着看的那条
+           * 进度条没坏**，坏的只有转写/导图。
+           *
+           * 现在两侧都必须经过 `progressOf()` —— 没有分母时它给的是
+           * `no_denominator`，不是 0%。
+           */
+          progress: progressOf(job.completedBytes, job.totalBytes, 'downloadQueue'),
           completedBytes: job.completedBytes,
           totalBytes: job.totalBytes,
           speedBps: job.speedBps,
@@ -832,8 +843,9 @@ export class RestState {
     /*
      * ★ step 变化：发一条**只带 step、不带刻度**的 job.progress。
      *
-     * · `pct: null` 是契约里就写好的表达（"Null when the step genuinely cannot
-     *   report a fraction."）—— 安装/解压没有字节刻度，**绝不编一个百分比**。
+     * · `unreportable` 是契约里就写好的表达（`ProgressReading` 的第二格）——
+     *   安装/解压没有字节刻度，**绝不编一个百分比**。它**不带 value 字段**，
+     *   所以下游想 `?? 0` 兜成 0% 也写不出来（#90 一并修的第二半）。
      * · 字节计数一并置 null：它们是上一阶段（下载）的数，留着会让界面继续画
      *   一条"已完成 574MB/574MB"的满条，看起来像还在下载。
      * · **刻意不传 throttleTopic**：这是低频的阶段公告（每阶段一次），
@@ -845,7 +857,7 @@ export class RestState {
         makeEvent('job.progress', topics.job(job.jobId), {
           jobId: job.jobId,
           step: job.step,
-          pct: null,
+          progress: PROGRESS_UNREPORTABLE.step_announcement,
           completedBytes: null,
           totalBytes: null,
           speedBps: null,

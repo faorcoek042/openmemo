@@ -386,6 +386,27 @@ const MUTATIONS = [
     replace: '    /* gate removed */;',
     why: '首屏每个 query 都比握手快 ⇒ 一片 401 ⇒ 满屏"未认证，请重新打开应用"',
   },
+
+  /* ── P90：进度刻度。#90 闸门在真浏览器里抓到的，形状是"一个数字两种量纲" ── */
+  {
+    id: 'P90-progress-scale-x100',
+    pkg: 'apps/daemon',
+    artifact: 'dist/jobs/events.js',
+    tests: ['dist/jobs/pipelineJobEvents.test.js'],
+    /*
+     * 锚点钉在**唯一构造点的调用**上，不钉注释、不钉行号。
+     * 变异体做的正是被修掉的那件事：把 0..1 乘成 0..100 再塞进同一个字段
+     * —— 也就是把 `jobs/events.ts` 恢复成 #90 之前的样子（连 clamp 一起照抄）。
+     * 产物里唯一（`grep -c` = 1）。
+     */
+    find: "        progress: progressFraction(p.fraction, 'jobProgressEvent'),",
+    replace:
+      "        progress: { kind: 'fraction', value: Math.round(Math.max(0, Math.min(1, p.fraction)) * 100) },",
+    why:
+      '每一条正在跑的转写任务都显示「100%」、进度条满格、aria-valuenow=100，' +
+      '而同一时刻 GET /api/jobs 说 0.728 —— 一条 40 分钟的音频，用户会盯着「100%」看好几分钟。' +
+      '下载那条进度是对的（它自己从字节算），所以最常被人盯着看的进度条没坏，它因此活了很久',
+  },
 ];
 
 // ─────────────────────────── 以下是执行器 ───────────────────────────

@@ -114,7 +114,7 @@ async function waitTerminalAndReport(label) {
     const kind = ev.type ?? '?';
     const extra =
       kind === 'job.progress'
-        ? `step=${ev.step ?? '?'} pct=${ev.pct ?? 'null'}`
+        ? `step=${ev.step ?? '?'} progress=${ev.progress?.kind === 'fraction' ? ev.progress.value : (ev.progress?.reason ?? 'null')}`
         : kind === 'job.state'
           ? `state=${ev.state}`
           : '';

@@ -92,7 +92,12 @@ import { arr } from '../lib/safe';
 import { ApiError, api, setCsrf, clearCsrf, hasCsrf } from '../lib/api/client';
 import { PanelBoundary } from '../components/common/PanelBoundary';
 import { ErrorBlock, resolveErrorText } from '../components/common/ErrorBlock';
-import { ASR_ENGINE_IDS } from '@openmemo/shared';
+import {
+  ASR_ENGINE_IDS,
+  CONTRACT_VERSION,
+  PROGRESS_UNREPORTABLE,
+  progressFraction,
+} from '@openmemo/shared';
 import { ASR_ENGINE_LABELS, isValidAsrLanguage } from '../lib/asr';
 import { AsrModelPicker } from '../components/common/AsrModelPicker';
 import { AsrEngineStatus } from '../components/common/AsrEngineStatus';
@@ -990,20 +995,54 @@ describe('状态呈现', () => {
     r.unmount();
   });
 
-  test('ProgressMeter 夹紧越界值，不产出 aria-valuenow=-20 这种', async () => {
+  /**
+   * ★ #90 改判：这条以前断言的是「`value={5}` → `aria-valuenow="100"`」——
+   * **它把 bug 的表现当成正确行为固化了**。
+   *
+   * 越界值只有一个来源：**上游把 0–100 的百分比当 0–1 传了**（正是 #90 的成因）。
+   * 静默夹成 100% 会把一个 90 倍的偏差翻译成一个看起来合理的数字，
+   * 于是这条路径被 review 过很多遍都没人发现 —— 屏幕上没有任何一处显得不对。
+   *
+   * 现在的判据：**夹紧照旧（不许 `width: 9000%` 撑破布局），但不许再声称一个刻度。**
+   * 越界 ⇒ 退化成不确定表达（不给 `aria-valuenow`）+ 出声。
+   */
+  test('★ ProgressMeter 对越界值不再声称刻度（越界 = 上游量纲错，不是"接近满"）', async () => {
     stubApi({});
-    const r1 = await render(<ProgressMeter value={-0.2} label="x" />);
-    assert.equal(
-      r1.container.querySelector('[role="progressbar"]')!.getAttribute('aria-valuenow'),
-      '0',
-    );
-    r1.unmount();
-    const r2 = await render(<ProgressMeter value={5} label="x" />);
-    assert.equal(
-      r2.container.querySelector('[role="progressbar"]')!.getAttribute('aria-valuenow'),
-      '100',
-    );
-    r2.unmount();
+    const errs: unknown[][] = [];
+    const original = console.error;
+    console.error = (...a: unknown[]) => void errs.push(a);
+    try {
+      for (const bad of [-0.2, 5, 90]) {
+        const r = await render(<ProgressMeter value={bad} label="x" />);
+        const bar = r.container.querySelector('[role="progressbar"]')!;
+        assert.equal(
+          bar.getAttribute('aria-valuenow'),
+          null,
+          `value=${bad} 仍然报出了一个 aria-valuenow —— 越界值没有可信刻度，` +
+            '把 90 夹成 100% 正是 #90 里"每条任务都显示 100%"的最后一步',
+        );
+        r.unmount();
+      }
+    } finally {
+      console.error = original;
+    }
+    assert.equal(errs.length, 3, '每一个越界值都必须留下一条现场，静默夹紧等于把量纲错藏起来');
+  });
+
+  test('合法范围内照常报刻度（别把修法做成"什么都不信"）', async () => {
+    stubApi({});
+    for (const [v, want] of [
+      [0, '0'],
+      [1, '100'],
+      [0.9, '90'],
+    ] as const) {
+      const r = await render(<ProgressMeter value={v} label="x" />);
+      assert.equal(
+        r.container.querySelector('[role="progressbar"]')!.getAttribute('aria-valuenow'),
+        want,
+      );
+      r.unmount();
+    }
   });
 });
 
@@ -2794,7 +2833,7 @@ describe('CSRF 令牌', () => {
       'GET /health': {
         app: 'openmemo',
         version: '0.1.0',
-        contractVersion: 1,
+        contractVersion: CONTRACT_VERSION,
         instanceId: 'i',
         dataDir: '/tmp',
         host: '127.0.0.1',
@@ -4050,7 +4089,7 @@ describe('T-129 同族：显示条件不许被别人的条件包住', () => {
   const HEALTH = {
     version: '9.9.9',
     instanceId: '01TESTTESTTESTTESTTESTTEST',
-    contractVersion: 1,
+    contractVersion: CONTRACT_VERSION,
     dataDir: '/tmp/never-real',
     port: 65535,
     pid: 1,
@@ -7226,7 +7265,7 @@ describe('T-150 ① /diagnostics 读 /api/selfcheck', () => {
   const HEALTH = {
     version: '0.1.0',
     instanceId: 'i',
-    contractVersion: 1,
+    contractVersion: CONTRACT_VERSION,
     dataDir: '/tmp/t150/data',
     port: 17650,
     pid: 1,
@@ -11428,7 +11467,7 @@ describe('★★ T-198/S-2 终态之后 store 里不许留残影（两个订阅�
         jobId: JID,
         state: 'cancelled',
         step: 'resolving',
-        pct: 0,
+        progress: progressFraction(0, 'test'),
         completedBytes: 0,
         totalBytes: 100,
         speedBps: null,
@@ -11455,7 +11494,7 @@ describe('★★ T-198/S-2 终态之后 store 里不许留残影（两个订阅�
         jobId: JID,
         state: 'running',
         step: 'downloading',
-        pct: 0.42,
+        progress: progressFraction(0.42, 'test'),
         completedBytes: 42,
         totalBytes: 100,
         speedBps: 1000,
@@ -12264,5 +12303,170 @@ describe('组件卡片：说不出已装版本时，不许给「装上钉定版�
       `本机版本明明说得出，却还在说"说不出"：${said}`,
     );
     r.unmount();
+  });
+});
+
+/* ══════ #90 ① 每一条正在跑的任务都显示 100% —— 管道末端的那一半 ══════ */
+
+/**
+ * ## 用户看到的
+ *
+ * 笔记列表行、笔记详情进度行、`/tasks` 进行中那行，**同时**显示
+ * 「转写中 **100%**」、进度条满格（`aria-valuenow="100"`、`width:100%`），
+ * 而同一时刻 `GET /api/jobs` 的 `progress` 是 **0.728**。
+ * 一条 40 分钟的音频，用户会盯着「100%」看好几分钟，然后以为卡死了。
+ *
+ * ## 根因是一条**跨进程**的量纲分叉
+ *
+ * `job.progress` 的刻度字段曾是 `pct: number | null`，两个生产者理解不同：
+ * 流水线侧发 `fraction*100`，下载侧发 `completed/total`。web 全按 0–1 用，
+ * `formatPercent` 把 `90` 夹成 `1` ⇒ 恒 `100%`。
+ *
+ * 审计的反证很干净：掐断 `/api/events`，同一条任务立刻显示 **71%**
+ * （服务端的 0–1 值）；实时通道一恢复就跳回 **100%**。
+ *
+ * ## 这一族守的是**管道末端**
+ *
+ * 生产端那一半由 `apps/daemon/src/jobs/pipelineJobEvents.test.ts` 的
+ * 「#90 jobProgressEvent」钉着（把 `*100` 加回去 → 那边当场红）。
+ * 这里钉的是：**一条合法的 0.9 读数，从 SSE 一路走到屏幕上必须是 90%**，
+ * 以及**一条越界读数绝不许被渲染成一个理直气壮的 100%**。
+ *
+ * ⚠️ 刻意走 `TasksPage`（服务端形状进、渲染出来断言），不手搓 `MergedJob`：
+ * 被测的那一跳里就有 `mergeOne()`，手搓会正好绕过它。
+ */
+describe('★★ #90 ① 进度读数从 SSE 到屏幕的刻度', () => {
+  const JID = 'job_p90';
+  const NOTE = '01BBBBBBBBBBBBBBBBBBBBBBBB';
+
+  /** `pushProgress` 有 200ms 节流，必须等它 flush 完才能断言。 */
+  const afterFlush = () => new Promise((r) => setTimeout(r, 260));
+
+  const serverRow = (over: Partial<PipelineJob> = {}) =>
+    pipelineJob({
+      noteUid: NOTE,
+      jobId: JID,
+      state: 'running',
+      step: 'asr',
+      // 服务端的真值（0..1）。SSE 断了时界面就该显示它 —— 审计量到的那个 71% 同族。
+      progress: 0.728,
+      ...over,
+    });
+
+  /** 通过**真实的** SSE 绑定喂一帧进去 —— 不直接写 progressStore，那会绕过被测的那一跳。 */
+  function emitProgress(progress: unknown) {
+    const disposers = tasksSse(new QueryClient());
+    try {
+      bus.emit('job.progress', {
+        type: 'job.progress',
+        ts: new Date().toISOString(),
+        topic: `job:${JID}`,
+        jobId: JID,
+        state: 'running',
+        step: 'asr',
+        progress,
+        completedBytes: null,
+        totalBytes: null,
+        speedBps: null,
+        etaSeconds: null,
+      } as never);
+    } finally {
+      disposers.forEach((d) => d());
+    }
+  }
+
+  test('★★ 喂一帧 0.9：界面必须显示 90%，不是 100%', async () => {
+    useProgressStore.getState().clear(JID);
+    emitProgress(progressFraction(0.9, 'test'));
+    await afterFlush();
+
+    stubApi({ '/jobs': { jobs: [serverRow()], concurrencyLimit: 2 } });
+    const r = await render(<TasksPage />, { route: '/tasks' });
+    await r.flush();
+
+    const shown = text(r.container);
+    assert.ok(
+      shown.includes('90%'),
+      `进度读数不是 90%。这正是 #90：任何 ≥1 的帧一到就永久钉在 100%。实际渲染：${shown.slice(0, 300)}`,
+    );
+    assert.ok(
+      !shown.includes('100%'),
+      `界面上出现了 100% —— 服务端说 0.9。实际：${shown.slice(0, 300)}`,
+    );
+
+    const bar = r.container.querySelector('[role="progressbar"]');
+    assert.ok(bar, '进行中的任务必须有进度条');
+    assert.equal(
+      bar!.getAttribute('aria-valuenow'),
+      '90',
+      '屏幕阅读器读到的值也必须是 90 —— 原来的 bug 把它一起骗了（aria-valuenow="100"）',
+    );
+
+    r.unmount();
+    useProgressStore.getState().clear(JID);
+  });
+
+  test('★★ 喂一帧 90（0..100 量纲）：绝不许显示成 100%', async () => {
+    useProgressStore.getState().clear(JID);
+    const errs: unknown[][] = [];
+    const original = console.error;
+    console.error = (...a: unknown[]) => void errs.push(a);
+    try {
+      // 手拼一个越界读数 —— 模拟"有人又在上游乘了 100"。
+      // 走 `progressFraction(90)` 是拼不出来的（它当场降级），这里刻意绕过构造点，
+      // 因为要测的正是**渲染层对一个不该出现的值的反应**。
+      emitProgress({ kind: 'fraction', value: 90 });
+      await afterFlush();
+
+      stubApi({ '/jobs': { jobs: [serverRow()], concurrencyLimit: 2 } });
+      const r = await render(<TasksPage />, { route: '/tasks' });
+      await r.flush();
+
+      const shown = text(r.container);
+      assert.ok(
+        !shown.includes('100%'),
+        '一个 90 倍的量纲错被夹成了「100%」—— 这就是本条 bug 逃过十几个 agent 的原因：' +
+          `它看起来只是"跑得快"，没有任何一处报错。实际渲染：${shown.slice(0, 300)}`,
+      );
+      const bar = r.container.querySelector('[role="progressbar"]');
+      assert.equal(
+        bar?.getAttribute('aria-valuenow') ?? null,
+        null,
+        '说不出刻度时不许给 aria-valuenow —— 不确定的进度要用不确定的表达',
+      );
+      r.unmount();
+    } finally {
+      console.error = original;
+    }
+    assert.ok(
+      errs.length > 0,
+      '越界被静默吞掉了。夹紧可以，闭嘴不行 —— 静默夹紧正是把 90 倍偏差藏起来的那一步',
+    );
+    useProgressStore.getState().clear(JID);
+  });
+
+  test('★ 没有实时帧时显示服务端的 0..1 值（审计掐断 /api/events 时看到的那 71%）', async () => {
+    useProgressStore.getState().clear(JID);
+    stubApi({ '/jobs': { jobs: [serverRow({ progress: 0.71 })], concurrencyLimit: 2 } });
+    const r = await render(<TasksPage />, { route: '/tasks' });
+    await r.flush();
+    assert.ok(
+      text(r.container).includes('71%'),
+      `SSE 断开时应当显示服务端真值 71%，实际：${text(r.container).slice(0, 300)}`,
+    );
+    r.unmount();
+  });
+
+  test('★ "报不出进度"不许被渲染成 0%（`?? 0` 的那一半）', async () => {
+    useProgressStore.getState().clear(JID);
+    emitProgress(PROGRESS_UNREPORTABLE.step_announcement);
+    await afterFlush();
+    assert.equal(
+      useProgressStore.getState().byJob[JID]?.progress ?? 'MISSING',
+      null,
+      '「这一步没有刻度」被兜底成了数字 —— `features/models/sse.ts` 用一整段注释防的就是这件事，' +
+        '而 `features/tasks/sse.ts` 当时正写着 `e.pct ?? 0`',
+    );
+    useProgressStore.getState().clear(JID);
   });
 });
