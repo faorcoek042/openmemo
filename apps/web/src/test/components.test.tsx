@@ -4412,6 +4412,45 @@ const EMPHASIS_REGISTRY: Record<string, string[]> = {
   /* T-157 ④：「优先」不是「只用」—— 这一句要防的正是"以为自己关掉了别的源"。 */
   'models.sources.hint': ['features/models/components/SourcesSection.tsx'],
   'secureContext.caps.microphone': [],
+
+  /* ── #105 ③：「为什么这些后端不可用」那七档里，六条新写的人话 ────────────────
+   *
+   * 强调标记不是排版：每一条要跳出来的都是**同一件事** ——
+   * 「我们**什么都没测**」vs「我们测了，**没有**」。那正是这一整轮在分开的那一对，
+   * 也是用户判断"我该不该去装点什么"的唯一依据。
+   * （`reasonPlatformUnsupported` 是老词条，本来就不带标记，不在这里。）
+   */
+  'runtime.hw.reasonProbeFailed': ['features/runtime/components/HardwareCard.tsx'],
+  'runtime.hw.reasonDisabledAfterFailures': ['features/runtime/components/HardwareCard.tsx'],
+  'runtime.hw.reasonNotInstalled': ['features/runtime/components/HardwareCard.tsx'],
+  'runtime.hw.reasonNotProbedThisRun': ['features/runtime/components/HardwareCard.tsx'],
+  'runtime.hw.reasonNoUsableDevices': ['features/runtime/components/HardwareCard.tsx'],
+  'runtime.hw.reasonEnumeratedNone': ['features/runtime/components/HardwareCard.tsx'],
+
+  /* ── #105 ⑥：代理那三句 ──────────────────────────────────────────────────────
+   * 强调的是**数字与范围**（测了几个 / 跳过几个 / 几个源不可达）——
+   * 这句总结原来说的是「各目标站均可达」，而它连"跳过的那些"都没算过。
+   */
+  'settings.proxy.verdictAllOk': ['features/settings/ProxySettingsSection.tsx'],
+  'settings.proxy.verdictOkSomeSkipped': ['features/settings/ProxySettingsSection.tsx'],
+  'settings.proxy.sourcesSomeUnreachable': ['features/settings/ProxySettingsSection.tsx'],
+
+  /* ── #105 ①：`/components` 整页收进 i18n 时带过来的强调 ──────────────────────
+   *
+   * 这九条**原来就是 JSX 里写死的 `<strong>`**（不是新加的排版）。
+   * 整句进词条是因为穿插标签的句子没法整句翻译；标记保留是因为
+   * 那几段（"我们还没问过上游" / "重试也不会变好" / "这里装不了上游那一版" /
+   * "我们说不出这台机器上装的是哪一版"）正是每张卡片要让人一眼读到的结论。
+   */
+  'components.failedNote': ['features/components/ComponentsPage.tsx'],
+  'components.indeterminateNote': ['features/components/ComponentsPage.tsx'],
+  'components.note.neverChecked': ['features/components/components/ComponentCard.tsx'],
+  'components.note.noUpstream': ['features/components/components/ComponentCard.tsx'],
+  'components.note.failed': ['features/components/components/ComponentCard.tsx'],
+  'components.note.indeterminate': ['features/components/components/ComponentCard.tsx'],
+  'components.upstreamNewerMirror': ['features/components/components/ComponentCard.tsx'],
+  'components.upstreamNewerPinned': ['features/components/components/ComponentCard.tsx'],
+  'components.upstreamNewerUnknowable': ['features/components/components/ComponentCard.tsx'],
 };
 
 describe('T-129b 写了 `**` 就必须有人渲染它', () => {
@@ -12733,7 +12772,7 @@ describe('#105 ① /components 整页 —— 英文界面下必须是英文', ()
    * `[闸门实测 2026-08-12，真浏览器]` 同一个上下文里 `documentElement.lang === 'en'`、
    * 侧栏英文、`/runtime` 英文，而 `/components` 的 `h1` 是「组件与来源」，
    * 芯片是「未检测 / 已安装 / 目录钉定 / 本机已装 / 上游最新」，正文整片中文。
-   * 根因：`ComponentsPage.tsx` 里 `t('` 出现 **0 次**。
+   * 根因：`ComponentsPage.tsx` 里一次 `useTranslation()` 的 `t` 都没调过（0 处）。
    *
    * ── 为什么这条值一整组用例 ──────────────────────────────────────────────────────
    * 这一轮在**这一页上**做的三件事 —— `a2c2e28`（说不出已装版本时不许号召重下 145 MB）、

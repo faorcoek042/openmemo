@@ -56,9 +56,14 @@ import { cn } from '../../../lib/utils';
  * 等于这一轮在这一页上做的三件事（`a2c2e28` / `af25cf3` / `23a8471`）
  * 对英文用户**全部不存在**。
  *
- * ⚠️ 为什么仍然是 `Record`，而不是就地拼 `t('components.chip.' + u.kind)`：
+ * ⚠️ 为什么仍然是 `Record`，而不是就地把 key 拼成 `components.chip.<u.kind>`：
  * 拼字符串那种写法里，`UpstreamCheck` 新增一条腿会**静默**渲染出原始 key 串
  * （i18next 找不到就把 key 原样吐回来），而这里少一格**编译当场就红**。
+ *
+ * ⚠️ 上面这句刻意**没有**写成一段可执行样子的代码：`check-locale-ratchet.mjs`
+ * 扫的是 `git grep '\bt\([[:space:]]*['"']'`，**它不区分代码和注释** ——
+ * 在注释里举一个反例，会被它当成"源码用到了一个不存在的 key"而判红
+ * （这条本身是对的：一个静态扫描器不该去解析注释）。`[实测 CI run 31621726113]`
  * 与 `HardwareCard` 的 `UNDETERMINED_REASON_KEYS`（`79cc117`）同一条判据：
  * **契约多一种情况而没人给它写话，必须是构建错误，不能是一句空白。**
  */
