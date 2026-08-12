@@ -313,8 +313,21 @@ const MUTATIONS = [
   {
     id: 'M-active-partial-load',
     file: 'http/rest/state.js',
-    find: 'for (const role of MODEL_ROLES) {',
-    replace: "for (const role of ['asr', 'llm']) {",
+    /*
+     * ★ 锚点必须带上循环体第一行 —— 只锚 `for (const role of MODEL_ROLES) {` 会**命中两处**。
+     *
+     *   `[CI 实测 run 31568740737]` 这条变异**存活**，退出码 2，报的是
+     *   「锚点出现 2 次（要求恰好 1 次）」。第二处是 `671946a`
+     *   （`feat(models): 契约多一格「记为活动、但本机这个引擎加载不了」`）新增的
+     *   `activeUnusable()` —— 它遍历同一个 `MODEL_ROLES`，长得一模一样。
+     *   那个提交没有碰这条变异要守的那段逻辑，**却让这条变异从此什么都没测**。
+     *
+     *   本条要守的是 `load()` 里那个**读回**的循环（写全 7 个 role、只读回两个
+     *   ⇒ 用户选的 VAD 每次重启被静默清空）。`const v = rec[role];` 全文件唯一，
+     *   拿它把锚点钉在「读回」那一处，而不是钉在行号或缩进上。
+     */
+    find: 'for (const role of MODEL_ROLES) {\n                const v = rec[role];',
+    replace: "for (const role of ['asr', 'llm']) {\n                const v = rec[role];",
     proves: ['A-MODEL-SWITCH-PERSISTS'],
     phases: ['boot', 'models'],
     why: '把本轮实测抓到的那个真缺陷种回去：写全部 7 个 role、只读回 asr/llm ⇒ 用户选的 VAD 每次重启都被静默清空，而产品装完组件后还会主动请他重启',
