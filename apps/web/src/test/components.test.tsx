@@ -6096,7 +6096,13 @@ describe('#98 NoteStateNotice（笔记页的状态告知条）', () => {
 
   test('★★ 取消：说出「重新转写」在哪，并且说明它**接着已完成的片段跑**', async () => {
     stubApi({});
-    const r = await render(<NoteStateNotice note={noteDetail({ status: 'cancelled' })} />);
+    // ★ #90 ④：`segmentCount` 必须 > 0 —— 这条测的是"攒下了东西"那一档。
+    //   工厂默认是 0，而 0 的时候产品说的是另一句（下面单独一条钉）。
+    //   ⚠️ 这条以前用的就是工厂默认值 0，于是它**把 bug 当成正确行为断言了**：
+    //   一段都没落，横幅照说「已经跑完的部分保留着」。
+    const r = await render(
+      <NoteStateNotice note={noteDetail({ status: 'cancelled', segmentCount: 3 })} />,
+    );
     await r.flush();
     const t = text(r.container);
 
@@ -6125,8 +6131,87 @@ describe('#98 NoteStateNotice（笔记页的状态告知条）', () => {
      */
     assert.match(
       t,
-      /接着已完成|不从头再来/,
+      /接着已完成/,
       `没说会不会从头再来（实际：${t}）—— 用户最怕的正是"再等一遍那么久"`,
+    );
+    r.unmount();
+  });
+
+  /* ── ★★ #90 ③：一句话里承诺了两件互斥的事 ────────────────────────────────── */
+
+  /**
+   * 原话：「…它会接着已完成的片段跑，**不从头再来**，**还能顺便换引擎或模型**。」
+   *
+   * 审计三次实测：
+   *   A 同引擎同模型 → 承诺成立 ✓（daemon 打印 `[transcribe] 续跑 transcript=…`）
+   *   B 换模型再提交 → **承诺破了**：新建 transcript、零续跑日志、从 chunk 0 重来，旧稿被丢
+   *
+   * 根因：`repos.resumableTranscript()` 按 `engine_id` **且** `model_id` 匹配。
+   * Manager 裁决：**不做跨模型 resume**（那是个功能，语义还可疑），**改这句话**。
+   *
+   * 所以判据是：**这句话必须把两种情况分开说**，不许再出现一个无条件的
+   * 「不从头再来 + 还能顺便换模型」。
+   */
+  test('★★ 取消提示不许无条件承诺"换了模型也不从头再来"', async () => {
+    const zh = zhAt('notes.cancelledHint');
+    const en = (enLocale as unknown as { notes: Record<string, string> }).notes[
+      'cancelledHint'
+    ] as string;
+
+    // 「换引擎/模型」这件事一旦被提到，就必须在同一句里说清它的后果是**从头跑**
+    assert.ok(
+      /换了引擎或模型[^。]*从头/.test(zh),
+      `中文提示提到了换引擎/模型，却没说这一次会从头跑（实际：${zh}）—— ` +
+        '实测 B：换模型提交会新建 transcript、从 chunk 0 重来、旧稿被丢',
+    );
+    assert.ok(
+      /switch engine or model[^.]*starts over/i.test(en),
+      `英文提示没说换引擎/模型会从头跑（实际：${en}）`,
+    );
+    // 反向：不许留下"不从头再来"这种无条件断言
+    assert.ok(
+      !zh.includes('不从头再来'),
+      `提示里还留着一句无条件的「不从头再来」（实际：${zh}）—— 换了模型时它是假的`,
+    );
+  });
+
+  /* ── ★★ #90 ④：一段都没落时不许说"已经跑完的部分保留着" ──────────────────── */
+
+  /**
+   * 实测：导入后 2 秒取消，`segmentCount=0`，横幅照说「已经跑完的部分保留着」。
+   * 判好了：段数为 0 时改说「这次没来得及跑出任何内容」。
+   */
+  test('★★ 一段都没落（segmentCount=0）时不许说"保留着"', async () => {
+    stubApi({});
+    const r = await render(
+      <NoteStateNotice note={noteDetail({ status: 'cancelled', segmentCount: 0 })} />,
+    );
+    await r.flush();
+    const t = text(r.container);
+    assert.ok(
+      t.includes(zhAt('notes.cancelledHintNothingKept')),
+      `段数为 0 却没说"没跑出任何内容"（实际：${t}）`,
+    );
+    assert.ok(
+      !t.includes('保留着'),
+      `一段都没落，横幅还在说"已经跑完的部分保留着"（实际：${t}）—— 那是一句可验证的假话`,
+    );
+    // 指路仍然要在：没攒下东西 ≠ 没有下一步
+    assert.ok(t.includes(zhAt('detail.retranscribe.open')), `没说该点哪个按钮（实际：${t}）`);
+    r.unmount();
+  });
+
+  test('★ 老响应没有 segmentCount 时**不下断言**（不知道 ≠ 一点都没有）', async () => {
+    stubApi({});
+    const legacy = noteDetail({ status: 'cancelled' });
+    delete (legacy as unknown as Record<string, unknown>)['segmentCount'];
+    const r = await render(<NoteStateNotice note={legacy} />);
+    await r.flush();
+    const t = text(r.container);
+    assert.ok(
+      !t.includes(zhAt('notes.cancelledHintNothingKept')),
+      '字段缺失时斩钉截铁地说"一点都没跑出来" —— 我们并不知道，' +
+        '这与本组件顶上「原因永远不在这里现编」是同一条规矩',
     );
     r.unmount();
   });
