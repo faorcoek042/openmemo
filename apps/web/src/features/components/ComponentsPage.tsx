@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CircleHelp, RefreshCw, ShieldCheck } from 'lucide-react';
 import type { ComponentStatus } from '@openmemo/shared';
+import { upstreamHasNewer, upstreamKnownVersion } from '@openmemo/shared';
 
 import { Banner } from '../../components/common/Banner';
 import { Button } from '../../components/common/Button';
@@ -55,8 +56,20 @@ export default function ComponentsPage() {
    */
   const data = q.data;
   const components = useMemo(() => data?.components ?? [], [data]);
-  const updatable = components.filter((c) => c.updateAvailable);
-  const unchecked = components.filter((c) => !c.updateAvailable && !c.latestVersion);
+  /*
+   * ★ #66：这两行原来是**在 UI 层把服务端已经算过的结论重新推导一遍** ——
+   *   `c.updateAvailable` 与 `!c.updateAvailable && !c.latestVersion`。
+   *   后者尤其危险：它把「没查过」「查失败了」「没有上游可问」**外加**
+   *   「查到了但比不出新旧」全都算成"没问到"，然后底部那句话对它们统一说
+   *   "再点一次「检查更新」通常就好"。
+   *   现在读 `upstreamCheck.kind`，一件事一格。
+   */
+  const updatable = components.filter((c) => upstreamHasNewer(c.upstreamCheck));
+  /** 真的问了、真的没问到 —— **只有这一档重试才有意义**。 */
+  const failed = components.filter((c) => c.upstreamCheck.kind === 'failed');
+  /** 问到了版本号但排不出先后。重试**不会**变好，所以不能和上面那档说同一句话。 */
+  const indeterminate = components.filter((c) => c.upstreamCheck.kind === 'indeterminate');
+  const sweep = data?.sweep;
 
   async function handleUpdate(c: ComponentStatus) {
     /*
@@ -140,9 +153,9 @@ export default function ComponentsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {data?.checkedAt ? (
-            <span className="text-[11px] text-ink-muted">
-              {new Date(data.checkedAt).toLocaleString(locale)} 检查
+          {sweep?.kind === 'attempted' ? (
+            <span className="text-[11px] text-ink-muted" data-testid="components-sweep-at">
+              {new Date(sweep.at).toLocaleString(locale)} 检查（问到 {sweep.reached}/{sweep.total}）
             </span>
           ) : null}
           <Button
@@ -173,17 +186,32 @@ export default function ComponentsPage() {
         <Banner
           tone="warning"
           title={`${updatable.length} 个组件有新版本`}
-          detail={updatable.map((c) => `${c.displayNameZh} → ${c.latestVersion}`).join(' · ')}
+          detail={updatable
+            .map((c) => `${c.displayNameZh} → ${upstreamKnownVersion(c.upstreamCheck)}`)
+            .join(' · ')}
         />
       ) : null}
 
-      {/* 检查过但一个都没问到 → 明确说这是"不知道"，不是"都最新" */}
-      {data?.checkedAt && !data.online ? (
+      {/*
+        检查过但一个都没问到 → 明确说这是"不知道"，不是"都最新"。
+
+        ★ 判据从 `data?.checkedAt && !data.online` 换成 `sweep` 这一个字段：
+          原来那两个字段拼出的第三态（"查过了" ∧ "没人答"）现在是
+          `kind === 'attempted' && reached === 0`，一处读完，没有第二处要保持一致。
+        ★ `[实测 2026-08-11]` 这条横幅**真的会亮**：那天 `GET :10000/api/components?check=1`
+          → 27 条**全部** `timed out after 8000ms`，问到 0 个。
+          ⚠️ 但**成因不是并发数**（我一开始是这么写的，后来被自己的复测证伪）：
+          同样 27 并发、同样 8s 超时复现一次，是 26/27 拿到 200、0 超时、总耗时 2.4s。
+          那次是**网络瞬态**（同一刻单发一个请求就要 7.35s）。
+          这条横幅要处理的正是这种情形 —— 它不需要知道为什么问不到，只需要说清
+          「问到 0 个」**不等于**「都最新」。
+      */}
+      {sweep?.kind === 'attempted' && sweep.reached === 0 ? (
         <Banner
           tone="warning"
           icon={<CircleHelp className="size-4" aria-hidden />}
-          title="没能连上任何上游"
-          detail="下面的「未检测」表示不知道有没有新版本，不代表已是最新。已安装的组件不受影响，照常可用。"
+          title={`没能问到任何上游（0/${sweep.total}）`}
+          detail="下面这些组件的上游状态是「不知道」，不代表已是最新。已安装的组件不受影响，照常可用。"
         />
       ) : null}
 
@@ -223,10 +251,25 @@ export default function ComponentsPage() {
         ))}
       </section>
 
-      {unchecked.length > 0 && data?.checkedAt ? (
-        <p className="text-[11px] text-ink-muted">
-          {unchecked.length} 个组件这次没问到上游（可能是限流或网络问题）。
+      {/*
+        ★ 底部这一段原来只有一句话，覆盖的却是四种情形；其中两种听了它的建议会白费力气：
+          · `no-upstream` —— 再点一百次也没有上游可问；
+          · `indeterminate` —— 问到了，只是比不出先后，重试不会变好。
+        所以现在只有**重试真的有意义**的那一档才说"再点一次"。
+      */}
+      {sweep?.kind === 'attempted' && failed.length > 0 ? (
+        <p className="text-[11px] text-ink-muted" data-testid="components-failed-note">
+          {failed.length} 个组件这次没问到上游（可能是限流、超时或网络问题）。
           再点一次「检查更新」通常就好；查不到不影响安装和使用。
+        </p>
+      ) : null}
+      {sweep?.kind === 'attempted' && indeterminate.length > 0 ? (
+        <p className="text-[11px] text-ink-muted" data-testid="components-indeterminate-note">
+          {indeterminate.length} 个组件问到了上游版本号，但它和目录钉的
+          <strong className="text-ink-secondary">不是同一套编号，排不出先后</strong>
+          —— 这是「不知道」，不是「已是最新」，而且
+          <strong className="text-ink-secondary">重试也不会变好</strong>
+          。多半是那个仓同时在发好几族 tag，而我们没写明要哪一族。
         </p>
       ) : null}
     </div>

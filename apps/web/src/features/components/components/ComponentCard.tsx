@@ -1,15 +1,17 @@
 import {
   ArrowUpCircle,
+  AlertTriangle,
   CheckCircle2,
   CircleHelp,
+  CircleSlash,
   Download,
   ExternalLink,
   FileDigit,
   GitCommitHorizontal,
   Package,
 } from 'lucide-react';
-import type { ComponentStatus } from '@openmemo/shared';
-import { pinRelation } from '@openmemo/shared';
+import type { ComponentStatus, UpstreamCheck, UpstreamCheckKind } from '@openmemo/shared';
+import { assertNeverUpstreamCheck, pinRelation } from '@openmemo/shared';
 import { Button } from '../../../components/common/Button';
 import { StatusChip } from '../../../components/common/StatusChip';
 import { formatBytes } from '../../../lib/format/bytes';
@@ -19,43 +21,139 @@ import { cn } from '../../../lib/utils';
 /**
  * One component: what it is, where it came from, and whether it can be updated.
  *
- * ★ Rule this card exists to enforce: 「未检测」must never look like 「已是最新」.
+ * ★ Rule this card exists to enforce: 「不知道」must never look like 「已是最新」.
  * They are different facts — one is "upstream says you are current", the other is "we
- * could not ask". Rendering both as a grey tick teaches users to stop reading the state,
+ * could not tell". Rendering both as a tick teaches users to stop reading the state,
  * which is exactly how a green light stops meaning anything.
- * So: different icon (CircleHelp vs CheckCircle2), different colour, and an explicit
- * sentence saying it means "unknown".
+ *
+ * ── #66 改了什么（**这一栏原来基本是诚实的，只有两处真会骗人，改的就是那两处**）──
+ *
+ * ① **`checkState()` 没了。** 它原来从 `updateAvailable` / `latestVersion` 两个字段
+ *    **重新推导**一遍服务端已经算过的结论 —— 与 `listComponents()` 里那份是
+ *    **两处独立的约定，不是一个结构**。现在直接读 `upstreamCheck.kind`。
+ *
+ * ② **「未检测」那一格拆成了三格。** 它原来同时装着「从没查过」「查了但失败了」
+ *    「结构上没有上游可问」，而写死的措辞是「我们**没能问到**上游 …… 点『检查更新』
+ *    **重试**」——一句"试过、失败了"的话。`[实测 2026-08-11]` 首屏 27 条全落在这一格，
+ *    **而 daemon 一次都没问过**。对 `no-upstream` 说"重试"更糟：那是对一个结构上
+ *    就没有上游可问的东西指一条死路。
+ *
+ * ③ **`indeterminate` 单独一档，绝不给绿勾。** 它原来落进 `current`
+ *    （`!updateAvailable && latestVersion` ⇒ 绿勾「已是最新」）——**UNKNOWN 塌成 PASS**，
+ *    本轮最该修的一处。
  */
 
-type CheckState = 'update' | 'current' | 'unchecked';
-
-function checkState(c: ComponentStatus): CheckState {
-  if (c.updateAvailable) return 'update';
-  if (c.latestVersion) return 'current';
-  return 'unchecked';
-}
-
+/** 每一态的芯片。**总 `Record`** —— `UpstreamCheck` 加一条腿，这里不加就编译不过。 */
 const CHECK_UI: Record<
-  CheckState,
+  UpstreamCheckKind,
   { tone: 'warning' | 'good' | 'neutral'; label: string; icon: React.ReactNode }
 > = {
-  update: {
-    tone: 'warning',
-    label: '有新版本',
-    icon: <ArrowUpCircle className="size-3.5" aria-hidden />,
+  // 没查过 ≠ 查失败。这是首屏的常态，不该长得像出了错。
+  'never-checked': {
+    tone: 'neutral',
+    label: '未检测',
+    icon: <CircleHelp className="size-3.5" aria-hidden />,
   },
+  // 没有上游可问 —— 再点一百次「检查更新」也不会变。
+  'no-upstream': {
+    tone: 'neutral',
+    label: '无上游可查',
+    icon: <CircleSlash className="size-3.5" aria-hidden />,
+  },
+  // 真的问了、真的没问到。**这一档才配说"重试"。**
+  failed: {
+    tone: 'warning',
+    label: '没问到上游',
+    icon: <AlertTriangle className="size-3.5" aria-hidden />,
+  },
+  // ★ 全卡唯一一个绿勾。它要求：问到了 **且** 比出来了 **且** 不比我们的新。
   current: {
     tone: 'good',
     label: '已是最新',
     icon: <CheckCircle2 className="size-3.5" aria-hidden />,
   },
-  // Deliberately a question mark, not a tick.
-  unchecked: {
+  newer: {
+    tone: 'warning',
+    label: '有新版本',
+    icon: <ArrowUpCircle className="size-3.5" aria-hidden />,
+  },
+  // Deliberately a question mark, not a tick. 这一档以前就是被画成绿勾的那一档。
+  indeterminate: {
     tone: 'neutral',
-    label: '未检测',
+    label: '无法判断新旧',
     icon: <CircleHelp className="size-3.5" aria-hidden />,
   },
 };
+
+/**
+ * 「上游最新」那一行显示什么。
+ *
+ * `never-checked` / `no-upstream` / `failed` 三态都**没有版本号可显示**，
+ * 但它们要显示的**破折号含义不同**，所以不共用一句 `??`。
+ */
+function upstreamVersionCell(u: UpstreamCheck): string | null {
+  switch (u.kind) {
+    case 'current':
+    case 'newer':
+    case 'indeterminate':
+      return u.version;
+    case 'never-checked':
+    case 'no-upstream':
+    case 'failed':
+      return null;
+    default:
+      return assertNeverUpstreamCheck(u);
+  }
+}
+
+/**
+ * 每一态下面那句解释。**四种"不是有新版本"的情形各说各的话** ——
+ * 它们能让用户做的事完全不同：等 / 重试 / 什么都不用做 / 去上游自己看。
+ */
+function UpstreamNote({ c }: { c: ComponentStatus }) {
+  const u = c.upstreamCheck;
+  const cls = 'mt-1.5 text-[11px] text-ink-muted';
+  switch (u.kind) {
+    case 'never-checked':
+      return (
+        <p className={cls} data-testid="upstream-note-never-checked">
+          「未检测」表示<strong className="text-ink-secondary">我们还没问过上游</strong>
+          ，不代表已是最新。首屏默认不联网查 —— 点上方「检查更新」就会去问。
+          已安装的版本不受影响，照常可用。
+        </p>
+      );
+    case 'no-upstream':
+      return (
+        <p className={cls} data-testid="upstream-note-no-upstream">
+          这个组件<strong className="text-ink-secondary">没有可查的上游发布源</strong>（{u.reason}
+          ）。
+          <strong className="text-ink"> 点「检查更新」不会有结果</strong>
+          —— 这不是失败，是没有这个问题可问。
+        </p>
+      );
+    case 'failed':
+      return (
+        <p className={cls} data-testid="upstream-note-failed">
+          我们<strong className="text-ink-secondary">问了上游但没问到</strong>（{u.reason}
+          ），不代表已是最新。点上方「检查更新」重试通常就好。已安装的版本不受影响，照常可用。
+        </p>
+      );
+    case 'indeterminate':
+      return (
+        <p className={cls} data-testid="upstream-note-indeterminate">
+          上游给的是 <code className="font-mono text-ink-secondary">{u.version}</code>，目录钉的是{' '}
+          <code className="font-mono text-ink-secondary">{c.pinnedVersion}</code>，
+          <strong className="text-ink">这两个号排不出先后</strong>（{u.reason}）。 所以这里
+          <strong className="text-ink">既不说有新版本，也不说已是最新</strong> —— 我们不知道。
+        </p>
+      );
+    case 'current':
+    case 'newer':
+      return null;
+    default:
+      return assertNeverUpstreamCheck(u);
+  }
+}
 
 /**
  * 哪些**类别**的组件，"自己装到系统 PATH 上我们会直接用"这句话是**真的**。
@@ -79,8 +177,8 @@ export interface ComponentCardProps {
 }
 
 export function ComponentCard({ component: c, locale, busy, onUpdate }: ComponentCardProps) {
-  const st = checkState(c);
-  const ui = CHECK_UI[st];
+  const u = c.upstreamCheck;
+  const ui = CHECK_UI[u.kind];
   /*
    * ★★ 「装一次会不会真的改变这台机器上的东西」**只从这一个判据出**（`@openmemo/shared`）。
    *
@@ -164,19 +262,14 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
 
             <dt className="text-ink-muted">上游最新</dt>
             <dd className="truncate font-mono text-ink-secondary" data-testid="latest-version">
-              {c.latestVersion ?? <span className="font-sans text-ink-muted">—</span>}
+              {upstreamVersionCell(c.upstreamCheck) ?? (
+                <span className="font-sans text-ink-muted">—</span>
+              )}
             </dd>
           </dl>
 
-          {/* "未检测" 必须解释清楚它是"不知道"，不是"没有新版本" */}
-          {st === 'unchecked' ? (
-            <p className="mt-1.5 text-[11px] text-ink-muted" data-testid="unchecked-note">
-              「未检测」表示<strong className="text-ink-secondary">我们没能问到上游</strong>
-              ，不代表已是最新。
-              {c.checkError ? `（${c.checkError}）` : '点上方「检查更新」重试。'}
-              已安装的版本不受影响，照常可用。
-            </p>
-          ) : null}
+          {/* 每一种"不是有新版本"都必须解释清楚它到底是哪一种"不知道"或"知道" */}
+          <UpstreamNote c={c} />
         </div>
 
         <div className="flex shrink-0 flex-col items-end gap-1.5">
@@ -262,7 +355,7 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
       </div>
 
       {/*
-        ★★ 「上游有更新」现在说一句真话 + 给一个真出口，**不再是一个可点的承诺**。
+        ★★ 「上游有更新」说一句真话 + 给一个真出口，**不是一个可点的承诺**。
 
         能说的是：上游有 vX，我们目录里钉的是 vY，**这里装不了上游那一版**。
         真出口是上游发布页：他可以自己看变更、自己决定要不要等我们把它钉进目录。
@@ -287,20 +380,81 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
            sqlite-ext（libsimple / sqlite-vec）是 SQLite 扩展，从 `<dataDir>/bin/ext`
            加载，**根本没有 PATH 这一档** —— 对它们说这句就是给一条走不通的路。
         ⚠️ 「装完要重启」是实的，不是客套：热刷新只认**通过产品装**的那条路（#87 查实）。
+
+        ── ★ #66 ①：产品决定已裁（2026-08-11 用户）────────────────────────────────
+        `[实测 2026-08-11]` 27 条组件里 **5 条 whisper.cpp** 的「问版本的仓 ≠ 二进制来源的仓」：
+        `whispercpp-{cpu,vulkan}-linux-x64` / `whispercpp-{cpu,vulkan}-win-x64` /
+        `whispercpp-metal-macos-arm64` 问 `ggml-org/whisper.cpp`，
+        而二进制来自我们自己的镜像仓 `faorcoek042/openmemo`（上游在这些平台只发库、
+        不发可执行程序，所以是我们自己编的）。
+
+        **裁决：如实说「上游有新版，但我们还没镜像」。** 不新增镜像构建线
+        （每次重编三平台、重算 sha256、自己盯 CVE，是一条独立的长期维护线），也不藏起来。
+
+        所以这一段**必须同时说两件事，而且不许混成一句**：
+          ① 上游那个项目发到哪一版了 —— 真话，照常报 `newer`；
+          ② 你现在能装的仍是清单里钉死的那一版 —— 因为**我们还没跟上**。
+        ⚠️ 别塌成「有更新，去点更新吧」——那正是 PR #19 刚删掉的那颗按钮犯的错：
+           它承诺的版本，服务端从来装不到。**同一个错不要在同一栏里再犯第二次。**
+        ⚠️ 也别塌成 `no-upstream`（「这条没有上游可问」）—— 那是假话，上游明明有，
+           而且我们真问到了。
+
+        这个区别落在**数据结构**里（`UpstreamCheck.newer.binarySource`），不在文案里 ——
+        文案会被翻译、会被改，结构不会。这里只是把结构读出来。
       */}
-      {c.updateAvailable && c.latestVersion ? (
+      {u.kind === 'newer' ? (
         <p
           className="mt-2.5 rounded border border-line bg-surface-0 p-2 text-xs text-ink-secondary"
           data-testid={`component-upstream-newer-${c.id}`}
         >
-          上游有 <code className="font-mono text-ink">{c.latestVersion}</code>，我们目录里钉的是{' '}
-          <code className="font-mono text-ink">{c.pinnedVersion}</code>。
-          <strong className="text-ink"> 这里装不了上游那一版</strong>
-          —— 我们只装 sha256 <strong className="text-ink">本机独立复算过</strong>的版本。 上游确实随
-          release 给出了新版本的 sha256，但那是
-          <strong className="text-ink">上游 API 提供</strong>
-          的摘要，和「有新版本」这句话同一个来源：它能证明字节没在路上被改，
-          不能证明那个来源本身没问题。
+          {u.binarySource.kind === 'our-mirror' ? (
+            <>
+              上游项目 <code className="font-mono text-ink">{u.binarySource.versionRepo}</code>{' '}
+              发到了 <code className="font-mono text-ink">{u.version}</code>
+              ，我们目录里钉的是 <code className="font-mono text-ink">{c.pinnedVersion}</code>。
+              <strong className="text-ink"> 但这里点不了更新，因为我们还没镜像这一版</strong>
+              —— 这个组件的二进制不是上游直接发的（上游在这个平台只发库、不发可执行程序），
+              是我们自己编译后放在{' '}
+              <code className="font-mono text-ink">{u.binarySource.binaryRepo}</code> 的。
+              <strong className="text-ink">上游发了新版 ≠ 我们已经镜像了新版。</strong>
+            </>
+          ) : (
+            <>
+              上游有 <code className="font-mono text-ink">{u.version}</code>
+              ，我们目录里钉的是 <code className="font-mono text-ink">{c.pinnedVersion}</code>。
+              <strong className="text-ink"> 这里装不了上游那一版</strong>
+              —— 我们只装 sha256 <strong className="text-ink">本机独立复算过</strong>的版本。
+              上游确实随 release 给出了新版本的 sha256，但那是
+              <strong className="text-ink">上游 API 提供</strong>
+              的摘要，和「有新版本」这句话同一个来源：它能证明字节没在路上被改，
+              不能证明那个来源本身没问题。
+            </>
+          )}
+          {/*
+            ★★ **两个三态在这里碰头，而"各自正确"不等于"拼起来正确"。**
+
+            上游侧说 `newer`（真话），本地侧说 `unknowable`（也是真话，a2c2e28 治的那条）。
+            拼起来这张卡会变成：芯片喊「有新版本」、**一颗按钮都没有**、而下面这段
+            只解释了上游那一侧 —— 用户读到的是「有新版本，但什么都不给我，也不说为什么」。
+
+            那是刚修掉那个 bug 的**镜像面**：#33 拿掉的是一颗点了没用的按钮，
+            这里要防的是**一句召唤了动作却没有动作、也没有解释的话**。
+            所以本地那一侧必须在同一段里自己说出来。
+
+            只有 `unknowable` 需要这一句，其余三格本身就自洽：
+              · `not-installed`     → 有「安装 {pinnedVersion}」按钮
+              · `differs-from-pinned` → 有「装上目录钉定的 …」按钮
+              · `same-as-pinned`    → 没按钮是对的（装了也白装），且这段已说清原因
+          */}
+          {c.installedVersion.kind === 'not-applicable' ? (
+            <>
+              {' '}
+              另外，<strong className="text-ink">我们说不出这台机器上装的是哪一版</strong>（
+              {c.installedVersion.reason}）——
+              所以这张卡也不会让你「装上目录钉定的那一版」：在不知道你手上是什么的情况下
+              号召重装，多半只是白下一遍。
+            </>
+          ) : null}
           {PATH_RESOLVED_CATEGORIES.has(c.category) ? (
             <> 你可以自己把新版装到系统 PATH 上，我们会直接用它（装完需要重启产品才生效）。</>
           ) : null}{' '}

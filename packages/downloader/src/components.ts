@@ -9,9 +9,13 @@
  * Design constraints that shaped this:
  *   - Upstream lookups are OPTIONAL. `listComponents()` returns a complete, useful answer
  *     with the network unplugged; version checking is layered on top, never a precondition.
- *   - A failed check yields `latestVersion: null` + a reason, never a silent "up to date".
- *     Reporting "no update" when we simply could not ask is the kind of green light that
- *     teaches people to distrust the screen.
+ *   - A failed check yields `upstreamCheck.kind === 'failed'` + a reason, never a silent
+ *     "up to date". Reporting "no update" when we simply could not ask is the kind of
+ *     green light that teaches people to distrust the screen.
+ *   - ★ 「从没查过」「没有上游可问」「查了但失败了」是**三件事**，各占一条腿。
+ *     旧形状里它们挤在同一个 `latestVersion === null`，而界面对那一格只有一句话
+ *     （「我们**没能问到**上游 …… 点『检查更新』**重试**」）—— 首屏 27 条全落在那一格，
+ *     可 daemon 一次都没问过；其中还有结构上就没有上游可问的，对它说"重试"是死路。
  *   - Nothing here mutates state. Updating is a separate, explicit user action that goes
  *     through the ordinary installer, so it inherits verification, resume, dedup and the
  *     temp-dir-then-rename rollback safety already proven there.
@@ -19,14 +23,23 @@
 
 import { promises as fs } from 'node:fs';
 import type {
+  BinarySource,
   ComponentStatus,
   GetComponentsResponse,
   InstalledVersion,
   Provenance,
+  UpstreamCheck,
   UpstreamSource,
 } from '@openmemo/shared';
-import { installedVersionOf, NOT_INSTALLED } from '@openmemo/shared';
-import { checkAllUpstreams, upstreamRelation } from './upstream.js';
+import {
+  installedVersionOf,
+  NOT_INSTALLED,
+  upstreamKnownVersion,
+  upstreamVerdict,
+  versionScheme,
+} from '@openmemo/shared';
+import type { UpstreamProbe } from './upstream.js';
+import { checkAllUpstreams } from './upstream.js';
 import type { ArtifactStore } from './store.js';
 import { STORE_KINDS } from './store.js';
 
@@ -97,86 +110,140 @@ async function readInstalledVersions(store: ArtifactStore): Promise<Map<string, 
 export interface ListComponentsOptions {
   registryPath: string;
   store: ArtifactStore;
-  /** Query upstreams. When false (or offline) everything still works, just without latestVersion. */
+  /**
+   * Query upstreams. When false (or offline) everything still works — every component
+   * just carries `upstreamCheck: { kind: 'never-checked' }`, which the UI must render as
+   * "we have not asked", **not** as "we asked and failed".
+   */
   checkUpstream?: boolean;
   timeoutMs?: number;
   /** Optional GitHub token; raises the anonymous rate limit. */
   token?: string;
 }
 
+/**
+ * 「问版本的仓」和「发二进制的仓」是不是同一个 —— **在这里算一次，不在 UI 层重推**。
+ *
+ * 事实本来就在 manifest 里（`upstream.repo` vs `provenance.releaseUrl`），
+ * 只是从来没人读出来。`[实测 2026-08-11]` `provenance.releaseUrl` 与 `backends.json`
+ * 里真正的下载 URL **14/14 个包完全一致**，所以不需要给 manifest 加新字段。
+ */
+function binarySourceOf(c: ComponentRecord): BinarySource {
+  const src = c.upstream;
+  // npm / huggingface：registry 既是版本来源也是制品来源。`provenance.repoUrl` 指向
+  // GitHub 只是"项目主页"，**不构成镜像关系** —— 不许一刀切。
+  if (!src || (src.kind !== 'github-release' && src.kind !== 'github-tag')) {
+    return { kind: 'same-source', repo: src?.repo ?? c.provenance.repoUrl };
+  }
+  const m = /^https:\/\/github\.com\/([^/]+\/[^/]+)(?:\/|$)/.exec(c.provenance.releaseUrl);
+  const binaryRepo = m?.[1];
+  if (!binaryRepo || binaryRepo === src.repo) {
+    return { kind: 'same-source', repo: src.repo };
+  }
+  return { kind: 'our-mirror', versionRepo: src.repo, binaryRepo };
+}
+
+/**
+ * 把一次上游查询的结果 + 我们钉的版本，收成 `UpstreamCheck` 的一条腿。
+ *
+ * ★★ **这是全仓唯一构造 `UpstreamCheck` 的地方。** 不变量不再靠"每个消费方自己
+ * 推导得一致"维持 —— 消费方读 `kind` 就行，读不出别的。
+ */
+function verdictFor(c: ComponentRecord, probe: UpstreamProbe | undefined): UpstreamCheck {
+  const pinnedVersion = c.pinnedVersion;
+  // 这次请求压根没查上游。**不是失败**，所以界面上不该说"没能问到"、更不该说"重试"。
+  if (!probe) return { kind: 'never-checked' };
+
+  switch (probe.kind) {
+    case 'no-upstream':
+      return { kind: 'no-upstream', reason: probe.reason };
+    case 'failed':
+      return { kind: 'failed', checkedAt: probe.checkedAt, reason: probe.reason };
+    case 'ok': {
+      /*
+       * ★★ 多族 tag 的仓库要挑对那一族 —— **只有这里知道我们钉的是哪一族**。
+       *
+       * `[实测 2026-08-11]` 全仓 9 个上游配置里有 2 个仓同时在发多族 tag：
+       *   · `ggml-org/whisper.cpp` → `v1.9.2`（semver）**和** `b2365`（build number）
+       *   · `faorcoek042/openmemo` → `v0.7.0`（semver）**和** `model-mirror-2026.08.06`（date）
+       * 两者都是"多族"，但**该给的答案完全相反**，所以"多族"本身不是判据：
+       *   · 前者我们钉的 `v1.9.1` **就在**它的 semver 一族里 ⇒ 比得有意义 ⇒ `newer`（v1.9.2）
+       *   · 后者我们钉的 `v1.9.1` 是 **whisper.cpp 的版本号**，压根不在这个仓的任何一族里
+       *     （它只有 `v0.x` 应用发布和 `model-mirror-*` 镜像 tag）⇒ 拿两套编号硬比 ⇒ 不知道
+       *
+       * 判据因此是两条**同时**成立：**这个仓发了不止一族 tag**，
+       * 而且**我们钉的那一版不在它的候选里**。
+       *
+       * ⚠️ 只用"多族"会把上面第一种也判成不知道（实测会误伤 6 条 whisper.cpp）；
+       *    只用"pin 不在候选里"会误伤"pin 比 30 条 release 的窗口还老"的正常情形。
+       */
+      const pinScheme = versionScheme(pinnedVersion);
+      const schemes = Object.keys(probe.newestByScheme);
+      const picked = probe.newestByScheme[pinScheme] ?? probe.version;
+      const pinOutsideNamespace =
+        probe.candidates.length > 0 && !probe.candidates.includes(pinnedVersion);
+      if (schemes.length > 1 && pinOutsideNamespace) {
+        return {
+          kind: 'indeterminate',
+          checkedAt: probe.checkedAt,
+          version: picked,
+          reason:
+            `这个仓同时在发 ${schemes.length} 族 tag（${Object.values(probe.newestByScheme).join(' / ')}），` +
+            `而目录钉的 ${pinnedVersion} 不在其中任何一族里 —— 这是在拿两套编号硬比`,
+        };
+      }
+      return upstreamVerdict({
+        pinnedVersion,
+        upstreamVersion: picked,
+        checkedAt: probe.checkedAt,
+        binarySource: binarySourceOf(c),
+      });
+    }
+  }
+}
+
 export async function listComponents(opts: ListComponentsOptions): Promise<GetComponentsResponse> {
   const reg = await loadComponentRegistry(opts.registryPath);
   const installed = await readInstalledVersions(opts.store);
 
-  let checks = new Map<
-    string,
-    { latestVersion: string | null; error: string | null; checkedAt: string }
-  >();
-  let online = false;
+  let probes = new Map<string, UpstreamProbe>();
   if (opts.checkUpstream) {
-    checks = await checkAllUpstreams(
+    probes = await checkAllUpstreams(
       reg.components.map((c) => ({ id: c.id, upstream: c.upstream })),
       { timeoutMs: opts.timeoutMs, token: opts.token },
     );
-    // "Online" means at least one upstream answered — not that every one did.
-    online = [...checks.values()].some((c) => c.latestVersion !== null);
   }
 
-  const components: ComponentStatus[] = reg.components.map((c) => {
-    const chk = checks.get(c.id);
-    const found = chk?.latestVersion ?? null;
-    /*
-     * ★★ **「比不了」不许再塌成「已是最新」。**
-     *
-     * `compareVersions` 现在分得出四态，而这一栏的旧形状只有三格
-     * （有新版本 / 已是最新 / 未检测）。把 `incomparable` 放进哪一格是有对错的：
-     *   · 放进「已是最新」= **UNKNOWN 塌成 PASS**，一个绿勾说着我们根本没判断出来的事；
-     *   · 放进「未检测」= 说"我们不知道"，**这是真话**，而且下面那句解释会把
-     *     `checkError` 原样显示出来，用户看得到到底为什么不知道。
-     * 所以这里把它归到后者，并写清原因。
-     *
-     * `[实测 2026-08-11，真 daemon :10000]` 这条路径今天有一个真实的走法：
-     * `whispercpp-cpu-macos-arm64` 的 `upstream.repo` 指向我们自己的镜像仓
-     * （里面同时有 `v0.7.0` 一族和 `model-mirror-2026.08.06` 一族），没配 tagPattern，
-     * 于是"最新"挑出 `model-mirror-2026.08.06`，与 pin `v1.9.1` 一比 —— 旧比较器
-     * 刮出 2026 vs 1 得 2025，**报出假的「有新版本」并被算进页面顶部的横幅**。
-     * 现在它是 date vs semver ⇒ `incomparable` ⇒ 显示「未检测 + 原因」。
-     *
-     * ⚠️ **补 `tagPattern` 在这一条上不是解，是换一句假话。** 那个仓里真正驮着这个
-     * 二进制的是 `v0.6.0`（`backends.json` 的下载 URL 实测），也就是 `^v\d+\.\d+\.\d+$`
-     * 一族；配上之后"最新"变成 `v0.7.0`，而 pin 是 `v1.9.1`（whisper.cpp 的版本号）——
-     * 两个都是 semver 形状，比得出来，结论是 `v0.7.0 < v1.9.1` ⇒ **绿勾「已是最新」**。
-     * 那比现在这句假话更坏。真正的解是让"这个仓同时在发两族 tag"变成一条会说话的
-     * 结论（#66 主线的 `indeterminate`），而不是靠配置去躲。
-     */
-    const rel = upstreamRelation(c.pinnedVersion, found);
-    const incomparable = rel === 'incomparable';
-    const latest = incomparable ? null : found;
-    const incomparableNote = incomparable
-      ? `上游给的 ${found} 与目录钉的 ${c.pinnedVersion} 不是同一套编号，排不出先后`
-      : null;
-    return {
-      id: c.id,
-      displayName: c.displayName,
-      displayNameZh: c.displayNameZh,
-      category: c.category,
-      pinnedVersion: c.pinnedVersion,
-      installedVersion: installed.get(c.id) ?? NOT_INSTALLED,
-      latestVersion: latest,
-      updateAvailable: rel === 'newer',
-      checkError: incomparableNote ?? chk?.error ?? null,
-      checkedAt: chk?.checkedAt ?? null,
-      provenance: c.provenance,
-      upstream: c.upstream,
-      sizeBytes: c.sizeBytes,
-      sha256: c.sha256,
-      sha256Provenance: c.sha256Provenance ?? null,
-    };
-  });
+  const components: ComponentStatus[] = reg.components.map((c) => ({
+    id: c.id,
+    displayName: c.displayName,
+    displayNameZh: c.displayNameZh,
+    category: c.category,
+    pinnedVersion: c.pinnedVersion,
+    installedVersion: installed.get(c.id) ?? NOT_INSTALLED,
+    upstreamCheck: verdictFor(c, probes.get(c.id)),
+    provenance: c.provenance,
+    upstream: c.upstream,
+    sizeBytes: c.sizeBytes,
+    sha256: c.sha256,
+    sha256Provenance: c.sha256Provenance ?? null,
+  }));
 
-  return {
-    components,
-    online,
-    checkedAt: opts.checkUpstream ? new Date().toISOString() : null,
-  };
+  /*
+   * ★ `online: boolean` 换成 `sweep`。旧字段的意思是"至少有一个上游答上了"，
+   *   而 `false` 同时表示「没查」和「查了一个都没答」—— 页面靠
+   *   `data?.checkedAt && !data.online` 拼出第三态。现在三态各占一格，
+   *   而且 `reached / total` 让"27 个里问到了 0 个"这句话说得出来
+   *   （旧形状只能说 `online: false`）。
+   */
+  const sweep: GetComponentsResponse['sweep'] = opts.checkUpstream
+    ? {
+        kind: 'attempted',
+        at: new Date().toISOString(),
+        reached: components.filter((c) => upstreamKnownVersion(c.upstreamCheck) !== null).length,
+        total: components.length,
+      }
+    : { kind: 'not-attempted' };
+
+  return { components, sweep };
 }

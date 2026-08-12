@@ -13,13 +13,16 @@
  * 静默更新会让用户的转写结果无缘无故变样。所以**必须由用户点一下**。
  *
  * ## 诚实边界
- * `latestVersion` 查不到时是 `null` 且带 `checkError`，**绝不退化成"已是最新"** ——
+ * 查不到时 `upstreamCheck.kind` 是 `failed` 且带 `reason`，**绝不退化成"已是最新"** ——
  * "不知道"和"最新"是两件事，混在一起就是又一个假绿灯。
+ * 而「从没查过」（`never-checked`）与「没有上游可问」（`no-upstream`）又各是第三、第四件事：
+ * 对前者说"没能问到"是编，对后者说"重试"是把人送上死路。
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { listComponents } from '@openmemo/downloader';
 import type { GetComponentsResponse } from '@openmemo/shared';
+import { COMPONENTS_CHECK_PARAM, parseComponentsCheckParam } from '@openmemo/shared';
 
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -79,8 +82,19 @@ export function createComponentRoutes(deps: ComponentRoutesDeps): {
 
       // ---- 1. 列表：默认不查网络，秒回 ----
       if (path === '/api/components' && method === 'GET') {
-        // ?check=1 时顺带查上游（会慢，取决于网络）
-        const check = url.searchParams.get('check') === '1';
+        /*
+         * ★ 参数解析走 `@openmemo/shared` 的共享函数，**这里不许再写字面量比较**。
+         *
+         * `[实测 2026-08-11]` 这一行原来是 `=== '1'`，而前端发的是 `?check=true`
+         * （对的是 `reference-server.mjs` 的 `=== 'true'`，不是真 daemon）。
+         * 后果不是 400，是 **200 + 完整清单 + 一次上游都没问** —— 静默什么都没做，
+         * 页面上只会永远显示"未检测"。口径要准：`useComponentsQuery(true)` 今天
+         * **全仓没有调用方**，所以这是休眠的雷，不是正在害人的 bug；但只要有人
+         * 按直觉打开自动检查，第一脚就踩上。
+         *
+         * 改成"三处都写同一个字面量"救不了下一次漂移，**让它没有第二份**才行。
+         */
+        const check = parseComponentsCheckParam(url.searchParams.get(COMPONENTS_CHECK_PARAM));
         sendJson(res, 200, await load(state, check));
         return true;
       }
