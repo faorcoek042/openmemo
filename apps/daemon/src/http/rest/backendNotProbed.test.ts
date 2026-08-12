@@ -292,3 +292,69 @@ describe('T-168 ★ inapplicableKind：没测过 = undetermined，不是 unsuppo
     assert.equal(pack.inapplicableKind, 'undetermined');
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════════════════
+ * #105 ② —— 「同屏两句互相打脸」的**根**
+ *
+ * `[闸门实测 2026-08-12，真浏览器，同一屏，两句都在视口内]`
+ *   · 硬件卡：「**还没查过** —— 这轮没有加载任何能枚举显卡的后端」
+ *   · 折叠区 Vulkan（linux/x64）：芯片「本机不支持」+
+ *     「**已经探测过了**：这台机器上没有这个后端可用的设备。」
+ *
+ * 成因就在 `inapplicableKind()` 那一行：它当时写的是
+ * `status?.installed === true && status.probed !== true`。**包没装**的路径因此绕过
+ * 结构判据，落到下面那条只认 `probe did not complete|probe skipped` 的正则上；
+ * 而没装时 `manager.ts` 给的理由是 `backend package not installed` ——
+ * 不含 `probe` 这个词 ⇒ 正则不中 ⇒ 一路掉到 `return 'unsupported'`。
+ *
+ * 可"包没装"恰恰是**最不可能测出结论**的那一档：probe 只能枚举其 ggml 库已经在
+ * 扫描目录里的后端，而那个库就在包里。**没装 ⇒ 没有库 ⇒ 什么都没枚举。**
+ *
+ * D-21 的总判据在这里是反方向失败的：**「没有可用设备」≠「平台上不可能」**，
+ * 而这里更进一步 —— 我们连"有没有设备"都没量过。
+ * ══════════════════════════════════════════════════════════════════════════════════════ */
+describe('#105 ② ★ 包根本没装 = undetermined —— 「没测过」不许被说成「测过了，不支持」', () => {
+  /** 包**没装**（缺陷现场：闸门那台机器上 vulkan/cuda/rocm 全是这一档）。 */
+  const NOT_INSTALLED: UnavailableVulkan = {
+    installed: false,
+    probed: false,
+    available: false,
+    unavailableReason: 'backend package not installed',
+    unavailableKind: 'not_installed',
+  };
+
+  it('★★ 没装 → undetermined（缺陷原状是 unsupported）', async () => {
+    const pack = await packOf(await seed(NOT_INSTALLED));
+    assert.equal(
+      pack.inapplicableKind,
+      'undetermined',
+      '★ 缺陷原状：一个从没被加载过的后端，被告知"已经探测过了，你的机器不支持"',
+    );
+  });
+
+  it('★★ 结构蕴含：说得出 unsupported ⇒ 这个后端这一轮真的 probed 过', async () => {
+    /*
+     * 这一条钉的是**两句话来自同一次探测**，而不是"两处各自看起来对"。
+     *
+     * 界面那一侧（`HardwareCard.gpuEnumerationHappened`）说"查过了"的条件是
+     * 「某个**能枚举显卡**的后端 `probed === true`」，而 vulkan 就在那张
+     * `BACKEND_CAN_ENUMERATE_GPU` 表里。所以只要这里的 `unsupported` 蕴含
+     * `probed === true`，硬件卡就**不可能**同时说「还没查过」。
+     *
+     * 遍历三种 `probed:false` 的现场逐一确认蕴含成立 ——
+     * 只测一种的话，把修法改回 `installed && probed !== true` 仍会有两条是绿的。
+     */
+    for (const v of [NOT_INSTALLED, NOT_PROBED, { ...NOT_PROBED, unavailableReason: '' }]) {
+      const pack = await packOf(await seed(v));
+      assert.notEqual(
+        pack.inapplicableKind,
+        'unsupported',
+        `probed=false 却报了 unsupported（${v.unavailableReason || '<空 reason>'}）—— ` +
+          '硬件卡会同时说「还没查过」，同屏两句互相打脸',
+      );
+    }
+    // 阴性对照：真的 probed 过、真的没设备 —— 这一档**必须**还说得出 unsupported，
+    // 否则这次修改只是把闸门焊死在 "永远 undetermined" 上。
+    assert.equal((await packOf(await seed(REALLY_UNAVAILABLE))).inapplicableKind, 'unsupported');
+  });
+});

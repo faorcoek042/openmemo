@@ -10,9 +10,11 @@ import {
   GitCommitHorizontal,
   Package,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { ComponentStatus, UpstreamCheck, UpstreamCheckKind } from '@openmemo/shared';
 import { assertNeverUpstreamCheck, pinRelation } from '@openmemo/shared';
 import { Button } from '../../../components/common/Button';
+import { Emphasis } from '../../../components/common/Emphasis';
 import { StatusChip } from '../../../components/common/StatusChip';
 import { formatBytes } from '../../../lib/format/bytes';
 import { localizedName } from '../../../lib/format/localized';
@@ -43,46 +45,77 @@ import { cn } from '../../../lib/utils';
  *    本轮最该修的一处。
  */
 
-/** 每一态的芯片。**总 `Record`** —— `UpstreamCheck` 加一条腿，这里不加就编译不过。 */
+/**
+ * 每一态的芯片。**总 `Record`** —— `UpstreamCheck` 加一条腿，这里不加就编译不过。
+ *
+ * ── ★★ #105 ①：`label` 从**中文字面量**换成 **locale key** ─────────────────────────
+ *
+ * `[闸门实测 2026-08-12，真浏览器]` 同一个上下文里 `documentElement.lang === 'en'`、
+ * 侧栏英文、`/runtime` 英文，而这一格逐字是「未检测 / 已是最新 / 有新版本」。
+ * 芯片是这张卡上**信息密度最高**的一格（用户扫一眼只看它），它说中文，
+ * 等于这一轮在这一页上做的三件事（`a2c2e28` / `af25cf3` / `23a8471`）
+ * 对英文用户**全部不存在**。
+ *
+ * ⚠️ 为什么仍然是 `Record`，而不是就地拼 `t('components.chip.' + u.kind)`：
+ * 拼字符串那种写法里，`UpstreamCheck` 新增一条腿会**静默**渲染出原始 key 串
+ * （i18next 找不到就把 key 原样吐回来），而这里少一格**编译当场就红**。
+ * 与 `HardwareCard` 的 `UNDETERMINED_REASON_KEYS`（`79cc117`）同一条判据：
+ * **契约多一种情况而没人给它写话，必须是构建错误，不能是一句空白。**
+ */
 const CHECK_UI: Record<
   UpstreamCheckKind,
-  { tone: 'warning' | 'good' | 'neutral'; label: string; icon: React.ReactNode }
+  { tone: 'warning' | 'good' | 'neutral'; labelKey: string; icon: React.ReactNode }
 > = {
   // 没查过 ≠ 查失败。这是首屏的常态，不该长得像出了错。
   'never-checked': {
     tone: 'neutral',
-    label: '未检测',
+    labelKey: 'components.chip.neverChecked',
     icon: <CircleHelp className="size-3.5" aria-hidden />,
   },
   // 没有上游可问 —— 再点一百次「检查更新」也不会变。
   'no-upstream': {
     tone: 'neutral',
-    label: '无上游可查',
+    labelKey: 'components.chip.noUpstream',
     icon: <CircleSlash className="size-3.5" aria-hidden />,
   },
   // 真的问了、真的没问到。**这一档才配说"重试"。**
   failed: {
     tone: 'warning',
-    label: '没问到上游',
+    labelKey: 'components.chip.failed',
     icon: <AlertTriangle className="size-3.5" aria-hidden />,
   },
   // ★ 全卡唯一一个绿勾。它要求：问到了 **且** 比出来了 **且** 不比我们的新。
   current: {
     tone: 'good',
-    label: '已是最新',
+    labelKey: 'components.chip.current',
     icon: <CheckCircle2 className="size-3.5" aria-hidden />,
   },
   newer: {
     tone: 'warning',
-    label: '有新版本',
+    labelKey: 'components.chip.newer',
     icon: <ArrowUpCircle className="size-3.5" aria-hidden />,
   },
   // Deliberately a question mark, not a tick. 这一档以前就是被画成绿勾的那一档。
   indeterminate: {
     tone: 'neutral',
-    label: '无法判断新旧',
+    labelKey: 'components.chip.indeterminate',
     icon: <CircleHelp className="size-3.5" aria-hidden />,
   },
+};
+
+/**
+ * 每一态下面那句解释该用哪条词条。**同样是总表。**
+ *
+ * `current` / `newer` 写在 `Exclude` 里而不是给它们一个 `null` 值：这两档不需要
+ * 额外解释（前者芯片已说完，后者有自己那一整段），而 `Exclude` 让"新增一条腿"
+ * 照样落进这张表 —— 少一格编译就红。`Record<所有腿, string | null>` 做不到这一点：
+ * 那里 `null` 与"忘了写"长得一模一样。
+ */
+const NOTE_KEYS: Record<Exclude<UpstreamCheckKind, 'current' | 'newer'>, string> = {
+  'never-checked': 'components.note.neverChecked',
+  'no-upstream': 'components.note.noUpstream',
+  failed: 'components.note.failed',
+  indeterminate: 'components.note.indeterminate',
 };
 
 /**
@@ -109,45 +142,49 @@ function upstreamVersionCell(u: UpstreamCheck): string | null {
 /**
  * 每一态下面那句解释。**四种"不是有新版本"的情形各说各的话** ——
  * 它们能让用户做的事完全不同：等 / 重试 / 什么都不用做 / 去上游自己看。
+ *
+ * ★ #105 ①：这四段原来是**穿插着 `<strong>` / `<code>` 的 JSX 字面量**。
+ *   那种形状**没法整句翻译** —— 断句、语序、哪一段该重读，每种语言都不一样，
+ *   拆成三截各自翻译只会拼出一句谁都不会说的话。所以整句进词条，
+ *   强调用 `**…**` + `<Emphasis>`（T-129b 立的那条路），版本号照旧插值进去。
+ *   丢掉的只有 `<code>` 的等宽字体，换来的是这四句话在英文界面上真的存在。
+ *
+ * ⚠️ `u.reason` 仍然是 daemon 的原话（限流还要等多久、为什么排不出先后 ——
+ *    只有它知道），这里照旧只负责把它放进句子里，不自己编。
  */
 function UpstreamNote({ c }: { c: ComponentStatus }) {
+  const { t } = useTranslation();
   const u = c.upstreamCheck;
   const cls = 'mt-1.5 text-[11px] text-ink-muted';
   switch (u.kind) {
     case 'never-checked':
       return (
         <p className={cls} data-testid="upstream-note-never-checked">
-          「未检测」表示<strong className="text-ink-secondary">我们还没问过上游</strong>
-          ，不代表已是最新。首屏默认不联网查 —— 点上方「检查更新」就会去问。
-          已安装的版本不受影响，照常可用。
+          <Emphasis text={t(NOTE_KEYS[u.kind])} />
         </p>
       );
     case 'no-upstream':
       return (
         <p className={cls} data-testid="upstream-note-no-upstream">
-          这个组件<strong className="text-ink-secondary">没有可查的上游发布源</strong>（{u.reason}
-          ）。
-          <strong className="text-ink"> 点「检查更新」不会有结果</strong>
-          —— 这不是失败，是没有这个问题可问。
+          <Emphasis text={t(NOTE_KEYS[u.kind], { reason: u.reason })} />
         </p>
       );
     case 'failed':
       return (
         <p className={cls} data-testid="upstream-note-failed">
-          我们<strong className="text-ink-secondary">问了上游但没问到</strong>（{u.reason}
-          ），不代表已是最新。
-          <strong className="text-ink-secondary">重试的时机以上面括号里那句为准</strong>
-          —— 配额用尽时它会说明还要等多久，那种情况下立刻再点是白点。
-          已安装的版本不受影响，照常可用。
+          <Emphasis text={t(NOTE_KEYS[u.kind], { reason: u.reason })} />
         </p>
       );
     case 'indeterminate':
       return (
         <p className={cls} data-testid="upstream-note-indeterminate">
-          上游给的是 <code className="font-mono text-ink-secondary">{u.version}</code>，目录钉的是{' '}
-          <code className="font-mono text-ink-secondary">{c.pinnedVersion}</code>，
-          <strong className="text-ink">这两个号排不出先后</strong>（{u.reason}）。 所以这里
-          <strong className="text-ink">既不说有新版本，也不说已是最新</strong> —— 我们不知道。
+          <Emphasis
+            text={t(NOTE_KEYS[u.kind], {
+              upstream: u.version,
+              pinned: c.pinnedVersion,
+              reason: u.reason,
+            })}
+          />
         </p>
       );
     case 'current':
@@ -180,6 +217,7 @@ export interface ComponentCardProps {
 }
 
 export function ComponentCard({ component: c, locale, busy, onUpdate }: ComponentCardProps) {
+  const { t } = useTranslation();
   const u = c.upstreamCheck;
   const ui = CHECK_UI[u.kind];
   /*
@@ -225,10 +263,10 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
               （同型的 `/models`、`/runtime` 已在 T-129b 接上同一个 helper。）
             */}
             <h3 className="text-sm font-medium text-ink">{localizedName(locale, c)}</h3>
-            <StatusChip tone={ui.tone} label={ui.label} icon={ui.icon} />
+            <StatusChip tone={ui.tone} label={t(ui.labelKey)} icon={ui.icon} />
             <StatusChip
               tone={installed ? 'good' : 'neutral'}
-              label={installed ? '已安装' : '未安装'}
+              label={t(installed ? 'components.installedChip' : 'components.notInstalledChip')}
             />
             <span className="rounded bg-surface-0 px-1.5 py-0.5 text-[11px] text-ink-secondary">
               {c.category}
@@ -237,12 +275,12 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
 
           {/* 三个版本分开显示：它们可能两两不同，合并成一个数字就丢信息 */}
           <dl className="mt-2 grid grid-cols-[5.5rem_1fr] gap-x-3 gap-y-1 text-xs">
-            <dt className="text-ink-muted">目录钉定</dt>
+            <dt className="text-ink-muted">{t('components.pinnedLabel')}</dt>
             <dd className="truncate font-mono text-ink" data-testid="pinned-version">
               {c.pinnedVersion}
             </dd>
 
-            <dt className="text-ink-muted">本机已装</dt>
+            <dt className="text-ink-muted">{t('components.installedLabel')}</dt>
             {/*
               三态各说各的话。**「装了但记录里没有版本号」不许长得像「没装」**，
               也不许冒充成一个版本号 —— 那正是哨兵 `'installed'` 当初做的事
@@ -255,15 +293,15 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
               {c.installedVersion.kind === 'known' ? (
                 c.installedVersion.version
               ) : c.installedVersion.kind === 'not-installed' ? (
-                <span className="font-sans text-ink-muted">尚未安装</span>
+                <span className="font-sans text-ink-muted">{t('components.notInstalledYet')}</span>
               ) : (
                 <span className="font-sans text-ink-muted">
-                  已安装（{c.installedVersion.reason}）
+                  {t('components.installedNoVersion', { reason: c.installedVersion.reason })}
                 </span>
               )}
             </dd>
 
-            <dt className="text-ink-muted">上游最新</dt>
+            <dt className="text-ink-muted">{t('components.upstreamLabel')}</dt>
             <dd className="truncate font-mono text-ink-secondary" data-testid="latest-version">
               {upstreamVersionCell(c.upstreamCheck) ?? (
                 <span className="font-sans text-ink-muted">—</span>
@@ -293,7 +331,9 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
               data-testid={`component-install-${c.id}`}
             >
               <Download className="size-3.5" aria-hidden />
-              {busy ? '安装中…' : `安装 ${c.pinnedVersion}`}
+              {busy
+                ? t('components.installingBtn')
+                : t('components.install', { version: c.pinnedVersion })}
             </Button>
           ) : null}
           {rel === 'not-installed' && !downloadable ? (
@@ -301,7 +341,7 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
               className="max-w-[12rem] text-right text-[11px] text-ink-muted"
               data-testid={`component-bundled-${c.id}`}
             >
-              随应用一起安装，不单独下载
+              {t('components.bundledNoDownload')}
             </span>
           ) : null}
           {/*
@@ -345,7 +385,9 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
               data-testid={`component-update-${c.id}`}
             >
               <ArrowUpCircle className="size-3.5" aria-hidden />
-              {busy ? '更新中…' : `装上目录钉定的 ${c.pinnedVersion}`}
+              {busy
+                ? t('components.updatingBtn')
+                : t('components.update', { version: c.pinnedVersion })}
             </Button>
           ) : null}
           {/*
@@ -411,27 +453,21 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
           data-testid={`component-upstream-newer-${c.id}`}
         >
           {u.binarySource.kind === 'our-mirror' ? (
-            <>
-              上游项目 <code className="font-mono text-ink">{u.binarySource.versionRepo}</code>{' '}
-              发到了 <code className="font-mono text-ink">{u.version}</code>
-              ，我们目录里钉的是 <code className="font-mono text-ink">{c.pinnedVersion}</code>。
-              <strong className="text-ink"> 但这里点不了更新，因为我们还没镜像这一版</strong>
-              —— 这个组件的二进制不是上游直接发的（上游在这个平台只发库、不发可执行程序），
-              是我们自己编译后放在{' '}
-              <code className="font-mono text-ink">{u.binarySource.binaryRepo}</code> 的。
-              <strong className="text-ink">上游发了新版 ≠ 我们已经镜像了新版。</strong>
-            </>
+            <Emphasis
+              text={t('components.upstreamNewerMirror', {
+                repo: u.binarySource.versionRepo,
+                upstream: u.version,
+                pinned: c.pinnedVersion,
+                binaryRepo: u.binarySource.binaryRepo,
+              })}
+            />
           ) : (
-            <>
-              上游有 <code className="font-mono text-ink">{u.version}</code>
-              ，我们目录里钉的是 <code className="font-mono text-ink">{c.pinnedVersion}</code>。
-              <strong className="text-ink"> 这里装不了上游那一版</strong>
-              —— 我们只装 sha256 <strong className="text-ink">本机独立复算过</strong>的版本。
-              上游确实随 release 给出了新版本的 sha256，但那是
-              <strong className="text-ink">上游 API 提供</strong>
-              的摘要，和「有新版本」这句话同一个来源：它能证明字节没在路上被改，
-              不能证明那个来源本身没问题。
-            </>
+            <Emphasis
+              text={t('components.upstreamNewerPinned', {
+                upstream: u.version,
+                pinned: c.pinnedVersion,
+              })}
+            />
           )}
           {/*
             ★★ **两个三态在这里碰头，而"各自正确"不等于"拼起来正确"。**
@@ -450,16 +486,14 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
               · `same-as-pinned`    → 没按钮是对的（装了也白装），且这段已说清原因
           */}
           {c.installedVersion.kind === 'not-applicable' ? (
-            <>
-              {' '}
-              另外，<strong className="text-ink">我们说不出这台机器上装的是哪一版</strong>（
-              {c.installedVersion.reason}）——
-              所以这张卡也不会让你「装上目录钉定的那一版」：在不知道你手上是什么的情况下
-              号召重装，多半只是白下一遍。
-            </>
+            <Emphasis
+              text={t('components.upstreamNewerUnknowable', {
+                reason: c.installedVersion.reason,
+              })}
+            />
           ) : null}
           {PATH_RESOLVED_CATEGORIES.has(c.category) ? (
-            <> 你可以自己把新版装到系统 PATH 上，我们会直接用它（装完需要重启产品才生效）。</>
+            <Emphasis text={t('components.pathHint')} />
           ) : null}{' '}
           <a
             href={c.provenance.repoUrl}
@@ -469,7 +503,7 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
             data-testid={`component-upstream-link-${c.id}`}
           >
             <ExternalLink className="size-3" aria-hidden />
-            去上游看这一版
+            {t('components.upstreamLink')}
           </a>
         </p>
       ) : null}
@@ -477,13 +511,15 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
       {/* ═══ 来源链：源码 commit → 发布页 → 二进制 → sha256 → 许可证 ═══
           用户原话「只要写明从哪里下载对应依赖即可」。全部可点，不只躺在 json 里。 */}
       <div className="mt-3 border-t border-line pt-2.5" data-testid="provenance">
-        <p className="mb-1.5 text-[11px] font-medium text-ink-secondary">来源</p>
+        <p className="mb-1.5 text-[11px] font-medium text-ink-secondary">
+          {t('components.provenanceTitle')}
+        </p>
 
         <ol className="space-y-1 text-xs">
           {c.provenance.submodulePath ? (
             <li className="flex flex-wrap items-center gap-1.5">
               <GitCommitHorizontal className="size-3 shrink-0 text-ink-muted" aria-hidden />
-              <span className="text-ink-muted">源码</span>
+              <span className="text-ink-muted">{t('components.sourceLabel')}</span>
               <code className="font-mono text-ink-secondary">{c.provenance.submodulePath}</code>
               <span className="text-ink-muted">@</span>
               <code className="font-mono text-ink-secondary">
@@ -500,7 +536,7 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
               className="inline-flex items-center gap-1 text-accent-ink hover:underline"
             >
               <ExternalLink className="size-3" aria-hidden />
-              上游仓库
+              {t('components.repoLink')}
             </a>
             <a
               href={c.provenance.releaseUrl}
@@ -510,7 +546,7 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
               data-testid="release-link"
             >
               <ExternalLink className="size-3" aria-hidden />
-              发布页（{c.pinnedVersion}）
+              {t('components.releaseLink', { version: c.pinnedVersion })}
             </a>
             <a
               href={c.provenance.licenseUrl}
@@ -518,7 +554,7 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-ink-secondary hover:underline"
             >
-              许可证 {c.provenance.license}
+              {t('components.licenseLink', { license: c.provenance.license })}
             </a>
             {c.sizeBytes > 0 ? (
               <span className="text-ink-muted">{formatBytes(c.sizeBytes, locale)}</span>
@@ -549,15 +585,22 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
   );
 }
 
-/** Render where a digest came from, defaulting to the stronger local-verification claim. */
+/**
+ * Render where a digest came from, defaulting to the stronger local-verification claim.
+ *
+ * ⚠️ `note` 有值时**照样原样渲染** —— 那是清单里写的一句关于这一份制品的事实
+ * （`sha256Provenance`，属于数据），不是界面文案。只有**缺省那一句**归 i18n：
+ * 它是我们替清单说的话，所以它得跟着界面语言走。
+ */
 function ProvenanceNote({ note }: { note?: string | null }) {
+  const { t } = useTranslation();
   const upstreamProvided = note != null && /API|digest|upstream/i.test(note);
   return (
     <p
       className={cn('mt-0.5 text-[11px]', upstreamProvided ? 'text-warning' : 'text-ink-muted')}
       data-testid="sha256-provenance"
     >
-      {note ?? '本机下载后独立复算'}
+      {note ?? t('components.sha256Local')}
     </p>
   );
 }

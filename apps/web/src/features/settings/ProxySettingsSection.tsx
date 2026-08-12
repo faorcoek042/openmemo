@@ -15,6 +15,7 @@ import {
 
 import { api, ApiError } from '../../lib/api/client';
 import { arr } from '../../lib/safe';
+import { cn } from '../../lib/utils';
 import { Button } from '../../components/common/Button';
 import { Emphasis } from '../../components/common/Emphasis';
 import { Banner } from '../../components/common/Banner';
@@ -152,6 +153,33 @@ export function ProxySettingsSection() {
   const manual = cfg.mode === 'manual';
   // 由 daemon 判定，不再靠前端猜"填了 socks5 就一定降级"
   const media = q.data?.media;
+
+  /**
+   * 这一次代理测试**到底测了几个目标、跳过了几个**（#105 ⑥）。
+   *
+   * `ProxyTestReport.ok` 的定义是「每一条**非 skipped** 的探针都 ok」——
+   * 它对 skipped 那些**一个字都没说**，而总结句原文却是「各目标站均可达」。
+   * 这里把两个数分开数出来，好让那句话只覆盖它真的量过的东西。
+   */
+  const probeCounts = (() => {
+    const probes = arr(testProxy.data?.probes);
+    const skipped = probes.filter((p) => p.result === 'skipped').length;
+    return { tested: probes.length - skipped, skipped };
+  })();
+
+  /**
+   * 下载源延迟表里**有几个不可达、分别是谁**（#105 ⑥）。
+   *
+   * 这张表此前**一句摘要都没有**，于是整屏上唯一的总结就是上面那句代理结论 ——
+   * 而它测的是另一组中立目标。闸门读到的正是这个组合：
+   * 「代理可用，且各目标站均可达。」＋ 下面 Hugging Face 不可达 / hf-mirror 不可达。
+   * 判据：**总结句不许比表格乐观。有不可达的就说出来。**
+   */
+  const sourceStats = (() => {
+    const rows = arr(testSources.data?.rows);
+    const down = rows.filter((r) => !r.reachable);
+    return { total: rows.length, down };
+  })();
 
   return (
     <section className="rounded-lg border border-line bg-surface-1 p-4">
@@ -323,19 +351,48 @@ export function ProxySettingsSection() {
             把它们并成一个红叉，正是别的工具里代理设置让人抓狂的原因
             —— `proxyReachable` 这个字段就是为此存在的，别浪费它。
           */}
-          <p className="mb-1.5 text-xs">
-            {testProxy.data.proxyReachable === false
-              ? t('settings.proxy.verdictProxyDown')
-              : testProxy.data.ok
-                ? t('settings.proxy.verdictAllOk')
-                : /*
-                   * 至少一条探针落在了 'unclassified' —— classify() 也说不清是代理还是
-                   * 目标站的问题。这时绝不能落到 verdictUpstreamBlocked，那句话的原文
-                   * 就是「问题不在你的代理」，对一个诚实的"不知道"来说这是在瞎猜。
-                   */
-                  arr(testProxy.data.probes).some((p) => p.result === 'unclassified')
-                  ? t('settings.proxy.verdictUnclassified')
-                  : t('settings.proxy.verdictUpstreamBlocked')}
+          <p className="mb-1.5 text-xs" data-testid="proxy-verdict">
+            <Emphasis
+              text={
+                testProxy.data.proxyReachable === false
+                  ? t('settings.proxy.verdictProxyDown')
+                  : testProxy.data.ok
+                    ? /*
+                       * ★★ #105 ⑥：**这句总结原来盖过了它根本没测的东西。**
+                       *
+                       * 原文是「代理可用，且**各目标站均可达**。」而 `ProxyTestReport.ok`
+                       * 的契约注释逐字写着：
+                       *   > True only if every **non-skipped** probe returned `ok`.
+                       * 也就是说**被 noProxy 跳过的那些探针，它一个都没算** ——
+                       * "没测过"被这句话说成了"可达"，而这两件事正是本轮整批在分开的那一对。
+                       *
+                       * 闸门实测到的还有第二层：紧跟在它下面的**下载源延迟表**里
+                       * Hugging Face / hf-mirror 都写着「不可达」—— 那张表测的是**另一组目标**，
+                       * 这句话对它一个字的依据都没有，却是整屏上唯一的总结。
+                       *
+                       * 所以两处一起改：
+                       *   · 这里**把范围说出来**（"这次探的 N 个目标"，并点明不覆盖那张表）；
+                       *   · 有 skipped 时换一句**分开报数**的话；
+                       *   · 那张表自己长出一句摘要（下面的 `proxy-source-summary`）。
+                       *
+                       * 判据：**总结句不许比它下面的表格乐观。**
+                       */
+                      probeCounts.skipped > 0
+                      ? t('settings.proxy.verdictOkSomeSkipped', {
+                          tested: probeCounts.tested,
+                          skipped: probeCounts.skipped,
+                        })
+                      : t('settings.proxy.verdictAllOk', { n: probeCounts.tested })
+                    : /*
+                       * 至少一条探针落在了 'unclassified' —— classify() 也说不清是代理还是
+                       * 目标站的问题。这时绝不能落到 verdictUpstreamBlocked，那句话的原文
+                       * 就是「问题不在你的代理」，对一个诚实的"不知道"来说这是在瞎猜。
+                       */
+                      arr(testProxy.data.probes).some((p) => p.result === 'unclassified')
+                      ? t('settings.proxy.verdictUnclassified')
+                      : t('settings.proxy.verdictUpstreamBlocked')
+              }
+            />
           </p>
           <ul className="space-y-1">
             {arr(testProxy.data.probes).map((p) => (
@@ -366,6 +423,33 @@ export function ProxySettingsSection() {
 
       {/* ── 下载源延迟表 ── */}
       {testSources.isError ? <ErrorBlock error={testSources.error} /> : null}
+      {/*
+        ★★ #105 ⑥：**这张表自己的一句摘要。**
+        它此前没有摘要，于是"整屏唯一的总结"落到了上面那句代理结论上 ——
+        而那一句测的是另一组目标。有不可达的就把是谁说出来（`{{list}}` 用的是
+        `r.label`，也就是用户在表里逐字看到的那几个字，不是 provider id）。
+        全通时也说一句：**沉默会让"没测"和"都通了"再次长得一样。**
+      */}
+      {testSources.data ? (
+        <p
+          className={cn(
+            'mt-3 text-xs',
+            sourceStats.down.length > 0 ? 'text-warning' : 'text-ink-secondary',
+          )}
+          data-testid="proxy-source-summary"
+        >
+          <Emphasis
+            text={
+              sourceStats.down.length > 0
+                ? t('settings.proxy.sourcesSomeUnreachable', {
+                    n: sourceStats.down.length,
+                    list: sourceStats.down.map((r) => r.label).join('、'),
+                  })
+                : t('settings.proxy.sourcesAllReachable', { n: sourceStats.total })
+            }
+          />
+        </p>
+      ) : null}
       {testSources.data ? (
         <table className="mt-3 w-full text-xs" data-testid="proxy-source-table">
           <thead>

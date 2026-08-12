@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, Copy, MinusCircle, RefreshCw, XCircle } from 'lucide-react';
+import type { BundledModelId } from '@openmemo/shared';
 
 import { ApiError, rawFetch } from '../../lib/api/client';
 import { Button } from '../../components/common/Button';
@@ -102,6 +103,20 @@ interface Health {
  * 这正是本仓记过的「算好发出、离终点一行被丢掉」那一族。
  */
 type Level = 'ok' | 'warn' | 'fail' | 'unavailable';
+
+/**
+ * whisper.cpp 那一份 VAD 权重的模型 id —— 「去修复」的直达落点（#105 ⑤）。
+ *
+ * ⚠️ 类型写成 `BundledModelId` 而不是 `string`，**那是这一行唯一的守卫**：
+ * 这个 id 一旦从 `BUNDLED_MODEL_IDS` 里改名或消失，**这里当场编译不过**，
+ * 而不是静默变成一条 404 的「去修复」——「点得动、跳得走、就是到不了」
+ * 正是这一条要修掉的东西，不能靠一个字符串常量把它换个形状留下来。
+ *
+ * ⚠️ **另一个 VAD 变体 `vad/silero-vad-onnx` 不能用**：那是 sherpa 流式引擎的，
+ * whisper.cpp 加载不了它（`modelStore.ts` 的两条 engines 声明）。装错那个正是
+ * 用户 2026-08-09 在 Windows 上撞到的现场。
+ */
+const VAD_MODEL_ID: BundledModelId = 'vad/silero-vad-ggml';
 
 /**
  * `GET /api/selfcheck` 的一条结果。
@@ -263,6 +278,31 @@ export default function DiagnosticsPage() {
   const toolchainUnknown = missingRaw === null;
   const missing = missingRaw ?? [];
 
+  /**
+   * 切分降级了 —— **装一个模型能不能修好它**，三档。
+   *
+   * ★ #105 ⑤。判据读的是 `pipeline.vad.model`（**解析器最后交出来的那份权重**），
+   * 不是去猜 `reasonZh` 那句中文在说什么 —— 后者是 daemon 的自由文本，
+   * 本仓在"拿散文当判据"上已经栽过两次（`unavailableReason` 那两条）。
+   *
+   *   · `none`            —— 没降级（`chunking === 'vad'`），不给任何动作
+   *   · `install-model`   —— 一份能加载的权重都没解析到（`model == null`）。
+   *                          **这一档，而且只有这一档，装 `vad/silero-vad-ggml` 真能修好**：
+   *                          它覆盖"根本没装"和"只装了 sherpa 那个 ONNX"两种现场，
+   *                          而这两种要装的恰好是同一个 id（`vadStatus.ts` / `setup.ts`）。
+   *   · `runtime-failure` —— 权重在盘上（`model != null`）而 `chunking` 仍是 `fixed`：
+   *                          `vadHealth()` 里只有"运行期跑失败了"这一条路能产出这个组合。
+   *                          **再装一遍不会有任何变化**，所以不给安装入口，改为明说。
+   *   · `unknown`         —— 老 daemon 不发 `vad` 这个字段。我们不知道缺的是什么，
+   *                          就不许把人送到一个**具体的**模型详情页；退回原来的 `/models`。
+   */
+  const vadFix: 'none' | 'install-model' | 'runtime-failure' | 'unknown' = (() => {
+    const vad = data.pipeline?.vad;
+    if (vad === undefined) return 'unknown';
+    if (vad.chunking === 'vad') return 'none';
+    return (vad.model ?? null) === null ? 'install-model' : 'runtime-failure';
+  })();
+
   const groups: { title: string; rows: Row[] }[] = [
     {
       title: t('diagnostics.groupService'),
@@ -365,14 +405,48 @@ export default function DiagnosticsPage() {
           label: t('diagnostics.chunking'),
           level: data.pipeline?.vad?.chunking === 'vad' ? 'ok' : 'warn',
           detail:
-            data.pipeline?.vad?.reasonZh ??
-            (data.pipeline?.vad?.chunking === 'vad'
-              ? t('diagnostics.chunkingVad')
-              : t('diagnostics.chunkingFixed')),
+            (data.pipeline?.vad?.reasonZh ??
+              (data.pipeline?.vad?.chunking === 'vad'
+                ? t('diagnostics.chunkingVad')
+                : t('diagnostics.chunkingFixed'))) +
+            /*
+             * ★ #105 ⑤ 的另一半：**"装模型解决不了这个"必须说出口。**
+             * `runtime-failure` 那一档权重就在盘上（`vad.model !== null`），降级的成因
+             * 是 VAD 那一步**跑**失败了。这时既不该给「去装 VAD 模型」，也不能一句不说
+             * —— 一行只写着"降级了"、旁边没有任何动作，会让用户去找一个并不存在的修法
+             * （`79cc117` ③ 立的那条：**"不需要你做什么 / 做了也没用"必须明说**）。
+             */
+            (vadFix === 'runtime-failure' ? t('diagnostics.chunkingRuntimeFailure') : ''),
           probe: 'presence',
-          ...(data.pipeline?.vad?.chunking === 'vad'
-            ? {}
-            : { action: { label: t('health.fix'), to: '/models' } }),
+          /*
+           * ★★ #105 ⑤：**「去修复」落在能修的那一格上，而不是整张模型页。**
+           *
+           * `[闸门实测 2026-08-12]` 这一行写着「未安装 VAD 模型 → 切分降级为固定窗口」
+           * ＋一颗「去修复」，点下去落在 `/models` —— **一张 30+ 个模型的大页**。
+           * 而正确的直达链接**就写在它上面两行**：同一页的自检区块里，
+           * `packages/runtime/src/selfcheck.ts:1382` 那条 remediation 逐字给出
+           * `/models/vad%2Fsilero-vad-ggml`。
+           * 「点得动、跳得走、就是到不了能修的那一格」——D-21 §9 第 2 条点名的形状。
+           *
+           * ⚠️ 直达只在**装一个模型真能修好**的那一档给（`vadFix === 'install-model'`）。
+           * 三档的划分见下面 `vadFix` 的注释 —— 它读的是 `vad.model` 这个结构字段，
+           * 不是去猜 `reasonZh` 那句话在说什么。
+           */
+          ...(vadFix === 'install-model'
+            ? {
+                action: {
+                  label: t('diagnostics.chunkingFixInstall'),
+                  /*
+                   * `%2F` 是 id 里那个 `/` 的转义 —— `ModelDetailPage` 读的是
+                   * `useParams().modelId`，不转义会被路由切成两段。
+                   * 与 `selfcheck.ts` 那条 remediation **逐字同形**，两处指同一个落点。
+                   */
+                  to: `/models/${encodeURIComponent(VAD_MODEL_ID)}`,
+                },
+              }
+            : vadFix === 'unknown'
+              ? { action: { label: t('health.fix'), to: '/models' } }
+              : {}),
         },
         {
           label: t('diagnostics.scheduler'),
