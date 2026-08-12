@@ -7,7 +7,7 @@
  * several, and the registry keeps working when it is removed.
  *
  * The proof is not this comment either — it is
- * `media/__tests__/registry.ytdlpRemoval.test.ts`, which disables the adapter and asserts
+ * `media/__tests__/ytdlpRemoval.test.ts`, which disables the adapter and asserts
  * the product still resolves podcasts, RSS, HLS and direct links.
  *
  * TYPE OWNERSHIP (ADR-001 mandate 2): `MediaInfo` and `FetchedMedia` are OUR types.

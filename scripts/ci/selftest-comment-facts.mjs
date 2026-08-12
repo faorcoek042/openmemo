@@ -34,6 +34,9 @@ import { fileURLToPath } from 'node:url';
 import {
   blockedCodesFrom,
   commentSpans,
+  constArrayFrom,
+  fallbackNameCodesFrom,
+  notInContract,
   pipelineErrorCodesFrom,
   scanCommentFacts,
   stripComments,
@@ -233,6 +236,56 @@ check('从 jobs.ts 源码里真的读得出 PIPELINE_ERROR_CODES', () => {
 check('常量被改名 → 报"找不到"，不是悄悄当成空集放行', () => {
   if (pipelineErrorCodesFrom('export const SOMETHING_ELSE = [] as const;') !== null) {
     throw new Error('改名之后它返回了非 null —— 那会让这条规则静默失效');
+  }
+});
+
+/* ── ⑤b 前端那两份手写清单 ⊆ 契约 ────────────────────────────────────────── */
+console.log('\n⑤b 前端两份清单 ⊆ 契约');
+
+/**
+ * ⚠️ 这两份**不是同一个东西**（`JobToaster.tsx` 的注释在这一点上是对的）：
+ * `KNOWN_BLOCKED_CODES` 答「**为什么**卡住」，`blockedFallbackName()` 答「这是**哪种**任务」。
+ * 所以下面**没有**一条"它们必须相等"的断言 —— 只断言两份都 ⊆ 契约。
+ */
+const BLOCKED_REASON = 'apps/web/src/lib/jobs/blockedReason.ts';
+const JOB_TOASTER = 'apps/web/src/components/common/JobToaster.tsx';
+
+check(`从 ${BLOCKED_REASON} 真的读得出 KNOWN_BLOCKED_CODES`, () => {
+  const got = constArrayFrom(readRepo(BLOCKED_REASON), 'KNOWN_BLOCKED_CODES');
+  if (!got || got.length === 0) throw new Error('读不出来 —— 常量被改名/改写了？');
+  if (!got.includes('MISSING_ASR_MODEL')) throw new Error(`读出来的内容不对：${got.join(',')}`);
+});
+
+check(`从 ${JOB_TOASTER} 真的读得出 blockedFallbackName() 认的码`, () => {
+  const got = fallbackNameCodesFrom(readRepo(JOB_TOASTER));
+  if (!got || got.length === 0) throw new Error('读不出来 —— 函数被改名/改写了？');
+  for (const want of ['MISSING_ASR_MODEL', 'NO_TRANSCRIPT', 'LLM_NOT_CONFIGURED']) {
+    if (!got.includes(want)) throw new Error(`漏读了 ${want}：实得 ${got.join(',')}`);
+  }
+});
+
+check('★反向：函数被改名 → 返回 null（不许当成"没有码所以通过"）', () => {
+  if (fallbackNameCodesFrom('function somethingElse(code) { return code; }') !== null) {
+    throw new Error('改名之后返回了非 null —— 这条规则会静默恒真');
+  }
+});
+
+check('★反向：清单里多一个契约没有的码 → 判定函数必须报出来', () => {
+  const contract = pipelineErrorCodesFrom(readRepo('packages/shared/src/jobs.ts'));
+  const extra = notInContract(['MISSING_ASR_MODEL', 'CODE_THE_CONTRACT_NEVER_HEARD_OF'], contract);
+  if (extra.length !== 1 || extra[0] !== 'CODE_THE_CONTRACT_NEVER_HEARD_OF') {
+    throw new Error(`多出来的码没被报出来：${JSON.stringify(extra)}`);
+  }
+});
+
+check('真仓库上这两份今天都 ⊆ 契约（这条绿是结论，不是假设）', () => {
+  const contract = pipelineErrorCodesFrom(readRepo('packages/shared/src/jobs.ts'));
+  for (const [rel, got] of [
+    [BLOCKED_REASON, constArrayFrom(readRepo(BLOCKED_REASON), 'KNOWN_BLOCKED_CODES')],
+    [JOB_TOASTER, fallbackNameCodesFrom(readRepo(JOB_TOASTER))],
+  ]) {
+    const extra = notInContract(got, contract);
+    if (extra.length > 0) throw new Error(`${rel} 里有契约没有的码：${extra.join(' / ')}`);
   }
 });
 

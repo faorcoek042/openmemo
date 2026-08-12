@@ -18,7 +18,9 @@ export function timecode(ms: number): string {
 /**
  * SRT/VTT 用的完整时间码 `HH:MM:SS.mmm`（整数毫秒 → 无浮点误差，D-02 §3.6）。
  *
- * ⚠️ **必须挡住 NaN/Infinity。**（本函数早期版本漏了这层，由 `export.test.ts` 逮到。）
+ * ⚠️ **必须挡住 NaN/Infinity。**（本函数早期版本漏了这层，由
+ * `apps/daemon/src/http/rest/content.export.test.ts` 逮到 —— 前端那份 `export.test.ts`
+ * 随导出实现一起搬去了服务端，用例整套跟着搬，没有消失。）
  * `Math.max(0, Math.floor(NaN))` 仍是 `NaN`，会产出 `NaN:NaN:NaN,NaN` 写进字幕文件 ——
  * 而这在我们自己的 UI 里**完全看不出来**（转写稿照常显示），
  * 只有用户把 .srt 拖进播放器、发现整个文件失效时才会暴露。
