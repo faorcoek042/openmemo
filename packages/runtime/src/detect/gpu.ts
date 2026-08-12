@@ -40,21 +40,36 @@
  *                 `Array.isArray(raw) ? raw : [raw]` 那条兜底是**必经之路**，不是保险；
  *               · `nvidia-smi` 不存在时是 `spawnSync … ENOENT`（`run()` 收成 ok:false）。
  *
- *             🔴 **同一次实测暴露出一个缺陷，本轮只记录未修**（改它会动到
- *             `advisoryBackends` → `applicability` 的判定，且手上没有真 Hyper-V+GPU 机器可验）：
+ *             🔴 **同一次实测暴露出一个缺陷**（v0.7.1 已知边界第 7 条公开承认、当时未修）：
  *             `"Microsoft Hyper-V Video"` **匹配不上** `SOFTWARE_ADAPTER_NAMES`
  *             （那条正则里是 `microsoft basic`，不是 `hyper-v`），而它的 `PNPDeviceID` 是
  *             `VMBUS\\…`、**没有 `VEN_xxxx`** ⇒ vendor 落到 `'other'`，然后照样被塞进
- *             `gpus` 并带上 `candidateBackends: ['vulkan']`。
- *             也就是说：**任何 Hyper-V/VM 里的 Windows 客户机，都会被我们判成"可能支持 Vulkan"**。
+ *             `gpus` 并带上 `['vulkan']`。
+ *             也就是说：**任何虚拟机里的客户机，都会被我们判成"可能支持 Vulkan"**。
  *             ⚠️ 修法不能简单粗暴 —— 把"虚拟适配器"筛得太狠会误杀真实核显
- *             （用户那台的 Radeon 780M 就是核显），所以这条要单独立项、单独验。
+ *             （用户那台的 Radeon 780M 就是核显）。
+ *
+ *             ✅ **2026-08-12 修（#86）：上第三态，而不是把"可能支持"翻成"不支持"。**
+ *             完整论证在 `@openmemo/shared` 的 `AdvisoryGpuVerdict` 上，一句话版本是两条：
+ *               · 「看到虚拟适配器 ⇒ 没有 GPU 加速」**被本仓自己的实测证伪** ——
+ *                 两台 macOS runner 的 GPU 都是 `Apple Paravirtual device`，
+ *                 而 Metal 在它们上面真的能跑（`warmup.ts` / ADR-003 的 123 ms 热跑）；
+ *               · 判成"不支持"会让 Vulkan 包在 `applicability` 里变成"不适用"，
+ *                 而 probe 要先装包才能跑 ——
+ *                 **等于同时断掉用户唯一能拿到答案的那条路**。
+ *             所以虚拟适配器落 `undetermined`：候选后端**照旧进并集**（包仍然可安装），
+ *             但界面不再替它说"可能支持"，而是说"我们判断不了"。
+ *
+ *             ⚠️ 这个缺陷**从来不是 Windows 专属**：下面 Linux 那条路
+ *             连软件适配器过滤都没有，`/sys/class/drm` 下每张 card 都直接拿 `['vulkan']`，
+ *             而虚拟机里那张 card 的 PCI 厂商号（virtio / QXL / VMware / VirtualBox …）
+ *             一个都不在 `PCI_VENDORS` 里 ⇒ 一律 `'other'` ⇒ 同一句假话。
  */
 
 import { readFile, readdir } from 'node:fs/promises';
 import * as os from 'node:os';
 
-import type { Backend, GpuDevice } from '@openmemo/shared';
+import type { AdvisoryGpuVerdict, Backend, GpuDevice } from '@openmemo/shared';
 
 import type { AdvisoryDetection, AdvisoryGpu } from '../types.js';
 import { run } from './system.js';
@@ -70,6 +85,93 @@ const PCI_VENDORS: Record<string, GpuDevice['vendor']> = {
 
 const SOFTWARE_ADAPTER_NAMES =
   /llvmpipe|lavapipe|swiftshader|softpipe|basic render|microsoft basic|warp/i;
+
+/**
+ * **虚拟机/半虚拟化提供的显示适配器**的名字（#86）。
+ *
+ * `[CI 实测 run 31389910051]` `Microsoft Hyper-V Video` 是这里唯一一条**量到过**的；
+ * 其余几条是同族的已知产品名，**没有一台机器实测过**（`vmware svga`、`virtualbox`、
+ * `virtio`、`qxl`、`parallels`、`bochs`、`red hat`）。它们判错的代价是有界的：
+ * 落到 `undetermined` 只是**少说一句"可能支持"**，候选后端照旧进并集、包照旧可装。
+ *
+ * ⚠️ 与 {@link SOFTWARE_ADAPTER_NAMES} **不是一回事，不许合并**：
+ * 那一条是"软件光栅器，永远不是加速目标"（llvmpipe 会枚举出一个 CPU 设备，
+ * 比 CPU 后端还慢），可以直接扔掉；这一条是"**我们不知道它背后有没有真显卡**"
+ * —— 扔掉它就是在替一个我们没验过的否定背书。
+ */
+const VIRTUAL_ADAPTER_NAMES =
+  /hyper-v|vmware|virtualbox|virtio|qxl|parallels|bochs|red hat|virtual (display|video|graphics)/i;
+
+/**
+ * 虚拟显示设备的 **PCI 厂商号**（Linux 那条路唯一拿得到的身份证）。
+ *
+ * 这些号码**一个都不在** {@link PCI_VENDORS} 里，所以在这次改动之前它们全部落成
+ * `vendor: 'other'` 然后照样带上 `['vulkan']` —— Windows 那句假话在 Linux 上一字不差。
+ *
+ * `[未实测]` 号码来自公开的 PCI ID 库；本仓那台 T-012 机器上 `/sys/class/drm` 是空的
+ * （QEMU 的 VGA 适配器没绑 DRM 驱动），所以**这条路上一个真实样本都没有**。
+ * 判错的代价同上：只少说一句"可能支持"。
+ */
+const VIRTUAL_PCI_VENDORS: Record<string, string> = {
+  '0x1af4': 'virtio (QEMU/KVM)',
+  '0x1b36': 'Red Hat QXL',
+  '0x15ad': 'VMware SVGA',
+  '0x80ee': 'VirtualBox',
+  '0x1414': 'Microsoft Hyper-V',
+  '0x1234': 'QEMU stdvga (Bochs)',
+};
+
+/** 一块显示适配器的身份：软件光栅器 / 虚拟机适配器 / 真的一块卡。 */
+export type AdapterClass = 'software' | 'virtual' | 'real';
+
+/**
+ * **纯函数**，因为它是这次改动里唯一需要被逐条钉死的判断。
+ *
+ * 三条判据按可信度排序：
+ *   ① 名字命中软件光栅器 → `software`（今天就有，行为不变：直接扔掉）
+ *   ② `PNPDeviceID` 以 `VMBUS\` 开头 → `virtual`。**这一条是最硬的**：
+ *      VMBUS 是 Hyper-V 的虚拟总线，挂在上面的设备不是一块 PCI 显卡。
+ *      `[CI 实测]` runner 上那块正是 `VMBUS\{DA0A7802-…}\{5620E0C7-…}`。
+ *   ③ 名字或 PCI 厂商号命中虚拟适配器 → `virtual`
+ *
+ * ⚠️ **顺序不能反**：`Microsoft Basic Render Driver` 同时像 ① 和 ③，
+ * 而它是软件光栅器（宿主机上没装驱动时也会出现），不是"虚拟机适配器"。
+ *
+ * ⚠️ **真核显不许落进 `virtual`**：用户那台的 `AMD Radeon(TM) 780M Graphics`
+ * 三条判据一条都不命中（`PCI\VEN_1002&…`），这是这个函数的头号回归风险，
+ * `gpu.test.ts` 里为它单独钉了一条。
+ */
+export function classifyDisplayAdapter(input: {
+  name: string;
+  /** Windows：`Win32_VideoController.PNPDeviceID`。 */
+  pnpDeviceId?: string | undefined;
+  /** Linux：`/sys/class/drm/cardN/device/vendor`（小写 `0x` 前缀）。 */
+  pciVendorId?: string | undefined;
+}): AdapterClass {
+  if (SOFTWARE_ADAPTER_NAMES.test(input.name)) return 'software';
+  if (/^vmbus\\/i.test(input.pnpDeviceId ?? '')) return 'virtual';
+  if (input.pciVendorId !== undefined && input.pciVendorId in VIRTUAL_PCI_VENDORS) return 'virtual';
+  if (VIRTUAL_ADAPTER_NAMES.test(input.name)) return 'virtual';
+  return 'real';
+}
+
+/**
+ * 虚拟适配器的三态结论 —— **这句 `reason` 会被硬件卡原样渲染给用户**，
+ * 所以它必须说人话、且必须说出"下一步能做什么"。
+ *
+ * 它要回答的是用户真正问的那个问题：**这台机器上到底能不能用 GPU 加速？**
+ * 诚实的答案是"我们还没回答"，而不是"不能"。
+ */
+export function virtualAdapterVerdict(name: string, probeWith: Backend[]): AdvisoryGpuVerdict {
+  return {
+    kind: 'undetermined',
+    reason:
+      `「${name}」是虚拟机提供的显示适配器 —— ` +
+      `它背后有没有一块真显卡（GPU 直通 / 半虚拟化），我们从适配器本身判断不出来。` +
+      `装上 ${probeWith.join(' / ')} 后端包让探针枚举一次，才知道这台机器能不能用 GPU 加速。`,
+    probeWith,
+  };
+}
 
 export async function detectGpus(): Promise<AdvisoryDetection> {
   switch (os.platform()) {
@@ -108,7 +210,12 @@ async function detectGpusLinux(): Promise<AdvisoryDetection> {
         // nvidia-smi reports MiB; the contract is decimal MB.
         vramTotalMB: toDecimalMB(Number(memTotal)),
         driverVersion: driver ?? null,
-        candidateBackends: ['cuda', 'vulkan'],
+        /*
+         * nvidia-smi 回话 = 驱动装着、卡在那儿。这是本文件里**最强的一条证据**，
+         * 直通到虚拟机里的 N 卡走的也是这一支（客户机里装的是真驱动）——
+         * 所以它是 `candidate`，不是 `undetermined`。
+         */
+        verdict: { kind: 'candidate', backends: ['cuda', 'vulkan'] },
         capabilities: cc ? { cudaComputeCapability: cc } : {},
         source: 'nvidia-smi',
       });
@@ -144,12 +251,30 @@ async function detectGpusLinux(): Promise<AdvisoryDetection> {
       candidateBackends.push('rocm');
     }
 
+    const name = (await readPciName(base)) ?? `${vendor} GPU (${card})`;
+    /*
+     * ★ #86：Linux 这条路**此前没有任何过滤** —— 虚拟机里那张 card
+     * （virtio / QXL / VMware / VirtualBox …）的厂商号一个都不在 `PCI_VENDORS` 里，
+     * 于是 `'other'` + `['vulkan']`，与 Windows 上那句"可能支持 Vulkan"一字不差。
+     * 名字还是 `readPciName()` 拼出来的 `PCI 0x1af4:0x1050`，用户更无从判断。
+     */
+    /*
+     * 这里**只喂 PCI 厂商号**，刻意不喂名字：`readPciName()` 拼出来的是
+     * `PCI 0x1af4:0x1050` 这种纯数字串（无 udev/hwdb 依赖，见那个函数的注释），
+     * 拿它去匹配产品名正则是演戏 —— 永远不会命中，还会让人以为这条路有名字过滤。
+     * 于是这条路上 `classifyDisplayAdapter` 只可能回 `virtual` / `real`。
+     */
+    const isVirtual = classifyDisplayAdapter({ pciVendorId: vendorId, name: '' }) === 'virtual';
+    const verdict: AdvisoryGpuVerdict = isVirtual
+      ? virtualAdapterVerdict(VIRTUAL_PCI_VENDORS[vendorId] ?? name, candidateBackends)
+      : { kind: 'candidate', backends: candidateBackends };
+
     gpus.push({
       vendor,
-      name: (await readPciName(base)) ?? `${vendor} GPU (${card})`,
+      name,
       vramTotalMB: Number.isFinite(vramBytes) && vramBytes > 0 ? Math.round(vramBytes / 1e6) : null,
       driverVersion: null,
-      candidateBackends,
+      verdict,
       capabilities: { pciVendorId: vendorId },
       source: `sysfs:${card}`,
     });
@@ -232,7 +357,19 @@ async function detectGpusDarwin(): Promise<AdvisoryDetection> {
           // report null and let the fitness calculator use system RAM instead.
           vramTotalMB: isAppleSilicon ? null : parseVramString(d.spdisplays_vram),
           driverVersion: null,
-          candidateBackends,
+          /*
+           * ★ #86：macOS 这条路**刻意不判 `virtual`**，而这正是这次改动的关键反例。
+           *
+           * 两台 CI runner 的 `sppci_model` 就是 `Apple Paravirtual device` ——
+           * 一块不折不扣的虚拟适配器。`[实测]` 探针在它上面**真的枚举到了 Metal 设备**
+           * 并跑出 123 ms / 90 ms 的热样本（`warmup.ts`、ADR-003）。
+           * 也就是说：**半虚拟化 ≠ 没有加速**，把它判成 `undetermined`
+           * 会把一个我们量过、确实能跑的配置降级成"我们不知道"。
+           *
+           * 而且这里的证据本来就比名字硬：`spdisplays_mtlgpufamilysupport` 是
+           * 系统报出来的**能力**，不是一个产品名。有能力就是 `candidate`。
+           */
+          verdict: { kind: 'candidate', backends: candidateBackends },
           capabilities: d.spdisplays_mtlgpufamilysupport
             ? { metalFamily: d.spdisplays_mtlgpufamilysupport }
             : {},
@@ -253,7 +390,7 @@ async function detectGpusDarwin(): Promise<AdvisoryDetection> {
       name: 'Apple Silicon GPU',
       vramTotalMB: null,
       driverVersion: null,
-      candidateBackends: ['metal'],
+      verdict: { kind: 'candidate', backends: ['metal'] },
       capabilities: {},
       source: 'assumed (arm64 Darwin)',
     });
@@ -294,7 +431,8 @@ async function detectGpusWin32(): Promise<AdvisoryDetection> {
         name: name ?? 'NVIDIA GPU',
         vramTotalMB: toDecimalMB(Number(memTotal)),
         driverVersion: driver ?? null,
-        candidateBackends: ['cuda', 'vulkan'],
+        /* 同 Linux 那一支：nvidia-smi 回话 = 真驱动 + 真卡（直通进虚拟机的也走这里）。 */
+        verdict: { kind: 'candidate', backends: ['cuda', 'vulkan'] },
         capabilities: cc ? { cudaComputeCapability: cc } : {},
         source: 'nvidia-smi',
       });
@@ -337,8 +475,10 @@ async function detectGpusWin32(): Promise<AdvisoryDetection> {
       }[]) {
         const name = entry.Name ?? 'Unknown display adapter';
 
+        const klass = classifyDisplayAdapter({ name, pnpDeviceId: entry.PNPDeviceID });
+
         // Microsoft Basic Render Driver / WARP is a software adapter, never a target.
-        if (SOFTWARE_ADAPTER_NAMES.test(name)) {
+        if (klass === 'software') {
           warnings.push(`ignoring software adapter: ${name}`);
           continue;
         }
@@ -358,10 +498,19 @@ async function detectGpusWin32(): Promise<AdvisoryDetection> {
           name,
           vramTotalMB: trustworthy ? ramMB : null,
           driverVersion: entry.DriverVersion ?? null,
-          // ADR-003 decision 3: Vulkan is the default for AMD and Intel on Windows.
-          // DirectML is NOT offered — ggml has no DirectML backend, so choosing it would
-          // mean swapping the whole inference stack (see R-02 §B.5).
-          candidateBackends: ['vulkan'],
+          /*
+           * ADR-003 decision 3: Vulkan is the default for AMD and Intel on Windows.
+           * DirectML is NOT offered — ggml has no DirectML backend, so choosing it would
+           * mean swapping the whole inference stack (see R-02 §B.5).
+           *
+           * ★ #86：**虚拟机适配器落 `undetermined`，但候选后端一个不少**
+           * （`probeWith` 照旧进 `advisoryBackends` 并集 ⇒ Vulkan 包仍然可安装）。
+           * 变的只有界面那句话：从"可能支持 Vulkan"变成"判断不了，装上探一次才知道"。
+           */
+          verdict:
+            klass === 'virtual'
+              ? virtualAdapterVerdict(name, ['vulkan'])
+              : { kind: 'candidate', backends: ['vulkan'] },
           capabilities: vendorId !== undefined ? { pciVendorId: `0x${vendorId}` } : {},
           source: 'Get-CimInstance Win32_VideoController',
         });

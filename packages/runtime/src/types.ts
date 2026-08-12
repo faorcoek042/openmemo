@@ -6,7 +6,7 @@
  * that never leave this package: the probe's wire format and detection intermediates.
  */
 
-import type { Backend, GpuDevice } from '@openmemo/shared';
+import type { AdvisoryGpuVerdict, GpuDevice } from '@openmemo/shared';
 
 // ---------------------------------------------------------------------------------------
 // Probe wire format — must stay in lockstep with packages/runtime/src/native/probe.c
@@ -112,8 +112,17 @@ export interface AdvisoryGpu {
   name: string;
   vramTotalMB: number | null;
   driverVersion: string | null;
-  /** Backends this device plausibly supports, pending probe confirmation. */
-  candidateBackends: Backend[];
+  /**
+   * 这块适配器能不能做 GPU 加速的**结论** —— 三态（#86，定义与完整论证在
+   * `@openmemo/shared` 的 {@link AdvisoryGpuVerdict}）。
+   *
+   * 这里原本是 `candidateBackends: Backend[]` —— 两态，装不下"我们判断不了"，
+   * 于是虚拟机里的显示适配器被界面说成「可能支持 Vulkan」。
+   * 改成判别联合是为了**让错误的写法不可表达**：拿不到一个裸数组，
+   * 就不可能顺手把虚拟机适配器当成一块可能支持 Vulkan 的卡。
+   * 要那个数组的地方调 `advisoryGpuBackends()`。
+   */
+  verdict: AdvisoryGpuVerdict;
   capabilities: Record<string, string>;
   /** Where this came from, so the UI and logs can attribute it. */
   source: string;

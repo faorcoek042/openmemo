@@ -78,7 +78,13 @@ export {
   detectOs,
   detectUnifiedMemory,
 } from './detect/system.js';
-export { SOFTWARE_ADAPTER_NAMES, detectGpus } from './detect/gpu.js';
+export {
+  SOFTWARE_ADAPTER_NAMES,
+  classifyDisplayAdapter,
+  detectGpus,
+  virtualAdapterVerdict,
+} from './detect/gpu.js';
+export type { AdapterClass } from './detect/gpu.js';
 
 // -- probe --------------------------------------------------------------------------------
 export {

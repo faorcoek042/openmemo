@@ -70,6 +70,81 @@ export interface GpuDevice {
 }
 
 /**
+ * advisory 探测对**一块显示适配器**给出的结论：能不能拿它做 GPU 加速 —— **三态**（#86）。
+ *
+ * 形状照抄 `ToolchainVerdict`：判别联合，且"我们没能确认"那一格**必须带上原因**。
+ *
+ * ## 为什么不能是一个 `Backend[]`
+ *
+ * 原来的形状是 `candidateBackends: Backend[]`：有东西 = 可能支持，空 = 不支持。
+ * 「**我们判断不了**」无处可放，而虚拟机里的显示适配器恰恰只能落在那一格：
+ *
+ * `[CI 实测 2026-08-10, windows-2025, run 31389910051]` 那台 runner 的唯一适配器是
+ * `Microsoft Hyper-V Video`（`PNPDeviceID` = `VMBUS\…`，没有 `VEN_xxxx`），
+ * 它匹配不上 `SOFTWARE_ADAPTER_NAMES`（正则里是 `microsoft basic`，不是 `hyper-v`），
+ * 于是被当成一块普通显卡带上 `['vulkan']` ——
+ * **任何虚拟机里的客户机都会被告知「可能支持 Vulkan」**（v0.7.1 已知边界第 7 条）。
+ *
+ * ## 为什么"分不清"的诚实答案不是"不支持"
+ *
+ * 那是**把一个假阳性换成一个假阴性**，而这里的假阴性更贵。两条理由都是量出来的：
+ *
+ * 1. **「看到虚拟适配器 ⇒ 没有 GPU 加速」这条规则被本仓自己的实测证伪。**
+ *    两台 macOS runner 的 GPU 都是 `Apple Paravirtual device`（虚拟适配器），
+ *    而 Metal 在它们上面**真的能跑**（探针枚举得到，热跑 123 ms / 90 ms —— 见
+ *    `apps/daemon/src/runtime/warmup.ts` 与 ADR-003）。**半虚拟化 ≠ 没有加速。**
+ * 2. **probe 是唯一权威，而 probe 要先装包才能跑。** advisory 是
+ *    `evaluateApplicability` 那条环打破器的唯一输入，判成"不支持"会让 Vulkan 包
+ *    变成"不适用" —— **等于同时断掉用户唯一能拿到答案的那条路。**
+ *
+ * ## 三态（与 `ToolchainVerdict` 逐格对应）
+ *
+ * | verdict | 意思 | 界面该说什么 |
+ * |---|---|---|
+ * | `candidate` + 非空 `backends` | 看见一块真适配器 | 「可能支持 X，装上探一次」 |
+ * | `candidate` + 空 `backends`   | 看见了，但没有一个后端够格 | 只说看见了，**不许说"可能支持"** |
+ * | `undetermined`                | **虚拟机适配器，判断不了** | 「判断不了，装上探一次才知道」 |
+ *
+ * ⚠️ 判据是：**虚拟机用户读完之后，知不知道「这台机器上到底能不能用 GPU 加速」
+ * 这个问题我们回答了没有。** 所以 `undetermined` 既不许显示成"可能支持"，
+ * 也不许显示成"未检测到可用 GPU"。
+ */
+export type AdvisoryGpuVerdict =
+  | {
+      readonly kind: 'candidate';
+      /** 这块设备可能支持的后端，**待 probe 确认**。 */
+      readonly backends: Backend[];
+    }
+  | {
+      readonly kind: 'undetermined';
+      /**
+       * **为什么判断不了** —— 必填，而且**这句话是给用户看的**（硬件卡直接渲染它）。
+       *
+       * `unknown` 时的沉默比说错更坏：用户会看到一句"没有显卡"或者一片空白，
+       * 而真相是"我们没能回答这个问题"。所以这一格不许只留一个 kind。
+       */
+      readonly reason: string;
+      /**
+       * 要**回答**这个问题，该装哪几个后端包让探针枚举一次。
+       *
+       * ⚠️ 这几个**照旧进 `advisoryBackends` 并集**（daemon 的 `setup.ts`）——
+       * 环打破器只看那个并集，把它优化掉就等于把 Vulkan 包判成不适用，
+       * 也就是上面第 2 条那个假阴性。
+       */
+      readonly probeWith: Backend[];
+    };
+
+/**
+ * 这块适配器**待确认的**候选后端 —— `candidate` 与 `undetermined` 在这一点上**同权**。
+ *
+ * 之所以有这个函数而不是让每个调用方自己 `v.kind === … ? … : …`：
+ * 那种写法里"忘了处理 undetermined"会静默地变成"这块适配器没有候选后端"，
+ * 而那正是要避免的假阴性。
+ */
+export const advisoryGpuBackends = (v: AdvisoryGpuVerdict): Backend[] =>
+  v.kind === 'candidate' ? v.backends : v.probeWith;
+
+/**
  * `available: false` 的**成因**，机器可判。
  *
  * ## 为什么必须是字段，不是把 `unavailableReason` 拿去做正则

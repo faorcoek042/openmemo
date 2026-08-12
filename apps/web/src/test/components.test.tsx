@@ -4599,7 +4599,8 @@ describe('T-129b /runtime 不许中英混排', () => {
         {
           name: 'AMD Radeon(TM) 780M Graphics',
           vendor: 'amd',
-          candidateBackends: ['vulkan'],
+          /* #86：真卡走第一档 —— 这一档的措辞与行为一个字都不该变。 */
+          verdict: { kind: 'candidate', backends: ['vulkan'] },
           source: 'Get-CimInstance Win32_VideoController',
         },
       ],
@@ -4758,6 +4759,128 @@ describe('T-129b /runtime 不许中英混排', () => {
       const r = await render(<HardwareCard hw={HW()} locale="zh-CN" />);
       const cell = gpuCell(r.container);
       assert.ok(cell.includes('还没查过'), `缺字段时应退回"没查过"，而不是下结论 → ${cell}`);
+      r.unmount();
+    });
+
+    /* ════════════════════════════════════════════════════════════════════════
+     * #86 —— 虚拟机里那块适配器：**第三态**
+     *
+     * `[CI 实测 run 31389910051]` windows-2025 runner 的唯一适配器是
+     * `Microsoft Hyper-V Video`。在这组用例之前，界面对虚拟机用户说两句假话：
+     *   · 探测前：「**这块卡我们看见了**……（可能支持 vulkan）」
+     *   · 探测后：「所以**卡在我们这一侧，不是你没有显卡**」
+     * 后一句更糟 —— 它无条件断言用户有显卡，还把他支回我们这边继续找问题。
+     *
+     * 判据不是"某个 testid 在"，是**说了什么**：虚拟机用户读完之后，
+     * 得知道「这台机器上到底能不能用 GPU 加速」这个问题**我们回答了没有**。
+     * ════════════════════════════════════════════════════════════════════════ */
+
+    /** daemon 那句原话的形状（`detect/gpu.ts` 的 `virtualAdapterVerdict` 产出）。 */
+    const VM_REASON =
+      '「Microsoft Hyper-V Video」是虚拟机提供的显示适配器 —— ' +
+      '它背后有没有一块真显卡（GPU 直通 / 半虚拟化），我们从适配器本身判断不出来。' +
+      '装上 vulkan 后端包让探针枚举一次，才知道这台机器能不能用 GPU 加速。';
+
+    /** 虚拟机那台机器的真实形状：并集里**仍有 vulkan**（包照旧可安装），但 verdict 落第三档。 */
+    const SAW_HYPERV = {
+      probe: { timeoutMs: 10000 },
+      breaker: {
+        consecutiveFailures: 0,
+        threshold: 2,
+        open: false,
+        lastError: null,
+        verdict: 'closed',
+        retryAt: null,
+        recovering: false,
+        recoveryStartedAt: null,
+        recoveryTimeoutMs: 90000,
+      },
+      blacklistedBackends: [],
+      advisoryBackends: ['vulkan'],
+      advisoryGpus: [
+        {
+          name: 'Microsoft Hyper-V Video',
+          vendor: 'other',
+          verdict: { kind: 'undetermined', reason: VM_REASON, probeWith: ['vulkan'] },
+          source: 'Get-CimInstance Win32_VideoController',
+        },
+      ],
+    } as never;
+
+    test('★ 虚拟机 + 还没探过 ⇒ 说出「判断不了」那句原话，且不许再说"这块卡我们看见了 / 可能支持"', async () => {
+      const r = await render(<HardwareCard hw={HW()} locale="zh-CN" runtime={SAW_HYPERV} />);
+      const cell = gpuCell(r.container);
+
+      assert.ok(
+        cell.includes(VM_REASON),
+        `daemon 给了理由，界面一个字没渲染 —— 用户仍然不知道我们回答了没有 → ${cell}`,
+      );
+      assert.ok(
+        !cell.includes('可能支持'),
+        `虚拟机适配器仍被说成"可能支持 vulkan"（#86 那句原话） → ${cell}`,
+      );
+      assert.ok(!cell.includes('这块卡我们看见了'), `把一个虚拟机适配器称作"你的卡" → ${cell}`);
+      assert.ok(
+        !cell.includes('未检测到可用 GPU'),
+        `把"判断不了"说成了"没有显卡" —— 假阳性换成假阴性，比原来更坏 → ${cell}`,
+      );
+      r.unmount();
+    });
+
+    test('★ 虚拟机 + 探过了且枚举到 0 个设备 ⇒ probe 是权威，说结论；不许再说"不是你没有显卡"', async () => {
+      const probed = HW({
+        backends: [
+          { id: 'cpu', installed: true, available: true, probed: true, unavailableReason: null },
+          {
+            id: 'vulkan',
+            installed: true,
+            available: false,
+            probed: true, // ★ 用户照我们说的装了包，探针真的加载过了
+            unavailableReason: 'enumerated no usable device',
+          },
+        ],
+      });
+      const r = await render(<HardwareCard hw={probed} locale="zh-CN" runtime={SAW_HYPERV} />);
+      const cell = gpuCell(r.container);
+
+      assert.ok(
+        cell.includes('未检测到可用 GPU'),
+        `用户已经装包探过了、问题有答案了，界面却还不肯下结论 → ${cell}`,
+      );
+      assert.ok(
+        !cell.includes('不是你没有显卡'),
+        `拿一个虚拟机适配器去断言"你有显卡，是我们这边的问题" —— #86 里更坏的那一句 → ${cell}`,
+      );
+      assert.ok(!cell.includes(VM_REASON), `问题已经被 probe 回答了，却还在说"判断不了" → ${cell}`);
+      r.unmount();
+    });
+
+    test('★ 真卡 + 虚拟适配器同时在：真卡那句照说，虚拟那句也要说（两件事，两句话）', async () => {
+      const both = {
+        ...(SAW_780M as unknown as Record<string, unknown>),
+        advisoryGpus: [
+          {
+            name: 'AMD Radeon(TM) 780M Graphics',
+            vendor: 'amd',
+            verdict: { kind: 'candidate', backends: ['vulkan'] },
+            source: 'Get-CimInstance Win32_VideoController',
+          },
+          {
+            name: 'Microsoft Hyper-V Video',
+            vendor: 'other',
+            verdict: { kind: 'undetermined', reason: VM_REASON, probeWith: ['vulkan'] },
+            source: 'Get-CimInstance Win32_VideoController',
+          },
+        ],
+      } as never;
+
+      const r = await render(<HardwareCard hw={HW()} locale="zh-CN" runtime={both} />);
+      const cell = gpuCell(r.container);
+      assert.ok(
+        cell.includes('AMD Radeon(TM) 780M Graphics'),
+        `真卡被虚拟适配器带着一起哑掉了 —— 那是把一个修复变成另一个缺陷 → ${cell}`,
+      );
+      assert.ok(cell.includes(VM_REASON), `虚拟适配器那句被真卡挤掉了 → ${cell}`);
       r.unmount();
     });
   });

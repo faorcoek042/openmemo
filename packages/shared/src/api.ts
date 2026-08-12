@@ -11,7 +11,7 @@
  */
 
 import type { AsrEngineId, BackendPack, InstalledBackendPack } from './backends.js';
-import type { Backend, HardwareInfo } from './hardware.js';
+import type { AdvisoryGpuVerdict, Backend, HardwareInfo } from './hardware.js';
 import type { AnyJob } from './jobs.js';
 import type {
   CatalogGroup,
@@ -568,7 +568,22 @@ export interface HardwareRuntimeDiagnostics {
   readonly advisoryGpus?: readonly {
     readonly name: string;
     readonly vendor: string;
-    readonly candidateBackends: readonly Backend[];
+    /**
+     * ★ #86：这块适配器**能不能拿来做 GPU 加速**的结论 —— 三态。
+     *
+     * 这里原本是 `candidateBackends: readonly Backend[]`（两态：有 = 可能支持，
+     * 空 = 不支持），于是**虚拟机里的显示适配器只能被说成「可能支持 Vulkan」** ——
+     * `[CI 实测 run 31389910051]` `Microsoft Hyper-V Video` 就是这么被说的
+     * （v0.7.1 已知边界第 7 条）。
+     *
+     * 而它**不能被翻成"不支持"**：本仓两台 macOS runner 的 GPU 都是虚拟适配器
+     * `Apple Paravirtual device`，Metal 在上面**实测能跑**；何况 probe 是唯一权威，
+     * 而 probe 要先装包才能跑，说"不支持"会连求证的路一起断掉。
+     *
+     * 所以是三态。**渲染方必须分别对待，不许 `?? []` 折回两态**：
+     * `undetermined` 时要说的是"我们判断不了"，不是"可能支持"，也不是"没有显卡"。
+     */
+    readonly verdict?: AdvisoryGpuVerdict;
     readonly source: string;
   }[];
 }
