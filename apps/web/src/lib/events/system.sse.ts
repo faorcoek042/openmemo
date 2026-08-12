@@ -10,10 +10,22 @@ import type { SseBinding } from './bindings';
 
 export const systemSse: SseBinding = (qc: QueryClient) => [
   /**
-   * 重放缓冲滚过（256 条，`SSE_REPLAY_BUFFER_SIZE`）→ 我们不知道漏了什么。
-   * 唯一安全的做法是全量失效。宁可多拉一次，也不要前后端状态不一致。
+   * **服务端说**"你漏了"：重放缓冲滚过（256 条，`SSE_REPLAY_BUFFER_SIZE`）或它重启过。
+   * 我们不知道漏了什么，唯一安全的做法是全量失效 —— 宁可多拉一次，也不要状态不一致。
    */
   bus.on('sync.required', () => {
+    void qc.invalidateQueries();
+  }),
+
+  /**
+   * **客户端自己发现**"我漏了"：seq 缺口 / 本标签重连 / 主标签重连。
+   *
+   * ⚠️ 这两条**必须都在**。它们此前是同一个 key —— `source.ts` 直接伪造了一条
+   * 服务端事件（`reason: 'replay_gap'` 根本不在 `SyncRequiredEvent` 的 union 里，
+   * 而 `bus.emit` 是松类型所以编译不报）。拆开之后**漏掉这一条的后果是
+   * 缺口检测与重连重拉全部静默失效**，而界面上什么都看不出来。
+   */
+  bus.on('x.sync.required', () => {
     void qc.invalidateQueries();
   }),
 
