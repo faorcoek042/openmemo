@@ -9,6 +9,7 @@ import {
   Package,
 } from 'lucide-react';
 import type { ComponentStatus } from '@openmemo/shared';
+import { pinRelation } from '@openmemo/shared';
 import { Button } from '../../../components/common/Button';
 import { StatusChip } from '../../../components/common/StatusChip';
 import { formatBytes } from '../../../lib/format/bytes';
@@ -80,7 +81,21 @@ export interface ComponentCardProps {
 export function ComponentCard({ component: c, locale, busy, onUpdate }: ComponentCardProps) {
   const st = checkState(c);
   const ui = CHECK_UI[st];
-  const installed = c.installedVersion != null;
+  /*
+   * ★★ 「装一次会不会真的改变这台机器上的东西」**只从这一个判据出**（`@openmemo/shared`）。
+   *
+   * 这里原来是 `installed && downloadable && c.installedVersion !== c.pinnedVersion` ——
+   * 一条**两态的比较**去读一个其实有三态的事实，第三态（「这份安装记录根本不记版本号」）
+   * 被上游写成了字符串哨兵 `'installed'`，于是 `!==` 恒真：随包出厂的
+   * `media-tools-win-x64` 长期挂着一颗「装上目录钉定的 autobuild-2026-07-31-14-10」，
+   * 点一次白下 145,349,121 字节，装完卡片一个字不变 —— 他会再点一次。
+   *
+   * 现在第三态在类型里（`InstalledVersion`），`pinRelation()` 在
+   * `not-applicable` 那一格上**说不出** `differs-from-pinned` —— 不是多加一句
+   * `!== 'installed'` 的字符串防守（那只是给哨兵换个字面量，下一个哨兵照样漏）。
+   */
+  const rel = pinRelation(c.installedVersion, c.pinnedVersion);
+  const installed = rel !== 'not-installed';
   /*
    * 这条组件到底有没有"一份要下载的制品"。
    *
@@ -127,8 +142,24 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
             </dd>
 
             <dt className="text-ink-muted">本机已装</dt>
-            <dd className="truncate font-mono text-ink-secondary">
-              {c.installedVersion ?? <span className="font-sans text-ink-muted">尚未安装</span>}
+            {/*
+              三态各说各的话。**「装了但记录里没有版本号」不许长得像「没装」**，
+              也不许冒充成一个版本号 —— 那正是哨兵 `'installed'` 当初做的事
+              （它会被原样渲染进这一格，看上去像个版本）。
+            */}
+            <dd
+              className="truncate font-mono text-ink-secondary"
+              data-testid={`installed-version-${c.id}`}
+            >
+              {c.installedVersion.kind === 'known' ? (
+                c.installedVersion.version
+              ) : c.installedVersion.kind === 'not-installed' ? (
+                <span className="font-sans text-ink-muted">尚未安装</span>
+              ) : (
+                <span className="font-sans text-ink-muted">
+                  已安装（{c.installedVersion.reason}）
+                </span>
+              )}
             </dd>
 
             <dt className="text-ink-muted">上游最新</dt>
@@ -157,7 +188,7 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
             （T-132 实测：yt-dlp 缺失导致 F1 断掉后，这一页正是用户唯一会去的地方。）
             走的是与「更新」完全同一个端点/同一个下载器，不是新开一条安装路径。
           */}
-          {!installed && downloadable ? (
+          {rel === 'not-installed' && downloadable ? (
             <Button
               size="sm"
               variant="primary"
@@ -169,7 +200,7 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
               {busy ? '安装中…' : `安装 ${c.pinnedVersion}`}
             </Button>
           ) : null}
-          {!installed && !downloadable ? (
+          {rel === 'not-installed' && !downloadable ? (
             <span
               className="max-w-[12rem] text-right text-[11px] text-ink-muted"
               data-testid={`component-bundled-${c.id}`}
@@ -201,8 +232,15 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
 
             用户 2026-08-09 的原话：**引导动作的按钮跳转后的逻辑能解决对应问题就补上，
             否则就删掉。** 这颗按钮比一般的死按钮更糟 —— 它**具体地承诺了一个版本号**。
+
+            ── ⚠️ 上面那条「各归各」当时只做对了一半（本次补的就是另一半）──────────
+            判据换成 `installedVersion !== pinnedVersion` 之后，它读的那一栏**根本不是
+            一个版本号**：`readInstalledVersions()` 对没有版本字段的记录填的是哨兵
+            `'installed'`，于是 `!==` 恒真，按钮对每个随包出厂的后端包**长期常亮**。
+            现在判据是 `pinRelation()` 的四态，`unknowable` 那一格**给不出按钮**：
+            不知道机器上装的是什么，就不许号召人去装一遍。
           */}
-          {installed && downloadable && c.installedVersion !== c.pinnedVersion ? (
+          {rel === 'differs-from-pinned' && downloadable ? (
             <Button
               size="sm"
               variant="primary"

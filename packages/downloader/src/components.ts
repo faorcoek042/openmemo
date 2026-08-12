@@ -21,9 +21,11 @@ import { promises as fs } from 'node:fs';
 import type {
   ComponentStatus,
   GetComponentsResponse,
+  InstalledVersion,
   Provenance,
   UpstreamSource,
 } from '@openmemo/shared';
+import { installedVersionOf, NOT_INSTALLED } from '@openmemo/shared';
 import { checkAllUpstreams, upstreamRelation } from './upstream.js';
 import type { ArtifactStore } from './store.js';
 import { STORE_KINDS } from './store.js';
@@ -62,17 +64,31 @@ export async function loadComponentRegistry(manifestPath: string): Promise<Compo
  * Reads the install manifests the installer writes, so it reflects reality rather than
  * intent. Returns null when absent — "not installed" and "installed at an unknown
  * version" must not look the same to the UI.
+ *
+ * ★★ **上面那句是规格，而这个函数曾经违反的正是它自己那句。**
+ *
+ * 原来的一行是 `out.set(r.id, r.version ?? r.catalogVersion ?? 'installed')` ——
+ * 「装了、但记录里没有版本号」被压成字符串哨兵 `'installed'`，也就是规格里
+ * 「must not look the same to the UI」点名禁止的那个塌陷；而且它**从不返回 null**，
+ * 所以那句 "Returns null when absent" 也早就不成立了。
+ *
+ * 后果是恒真的判据：卡片按钮判 `installedVersion !== pinnedVersion`，
+ * `'installed'` 永远不等于 `autobuild-2026-07-31-14-10`
+ * ⇒ 每个随包出厂的后端包都长期挂着一颗白下 145 MB 的按钮。
+ *
+ * 现在走 `installedVersionOf()` 这个**唯一构造点**（`@openmemo/shared`），
+ * 三态在类型里，哨兵没有地方可写。为什么 `engineVersion` / `catalogVersion`
+ * **不能**顶替这一栏，见那个函数的注释（一句话：它们和 `pinnedVersion` 不是同一套编号）。
  */
-async function readInstalledVersions(store: ArtifactStore): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
+async function readInstalledVersions(store: ArtifactStore): Promise<Map<string, InstalledVersion>> {
+  const out = new Map<string, InstalledVersion>();
   for (const kind of STORE_KINDS) {
     const records = await store.listManifests<{
       id?: string;
       version?: string;
-      catalogVersion?: string;
     }>(kind);
     for (const r of records) {
-      if (r.id) out.set(r.id, r.version ?? r.catalogVersion ?? 'installed');
+      if (r.id) out.set(r.id, installedVersionOf(r));
     }
   }
   return out;
@@ -145,7 +161,7 @@ export async function listComponents(opts: ListComponentsOptions): Promise<GetCo
       displayNameZh: c.displayNameZh,
       category: c.category,
       pinnedVersion: c.pinnedVersion,
-      installedVersion: installed.get(c.id) ?? null,
+      installedVersion: installed.get(c.id) ?? NOT_INSTALLED,
       latestVersion: latest,
       updateAvailable: rel === 'newer',
       checkError: incomparableNote ?? chk?.error ?? null,

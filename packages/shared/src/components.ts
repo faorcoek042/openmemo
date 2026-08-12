@@ -94,8 +94,15 @@ export interface ComponentStatus {
    * it — not synonyms, despite the similar names.
    */
   pinnedVersion: string;
-  /** Version actually present on this machine; null when not installed. */
-  installedVersion: string | null;
+  /**
+   * 本机上装着的是哪一版 —— **三态**，见 {@link InstalledVersion}。
+   *
+   * ⚠️ 这里原来是 `string | null`，而 `null` 只够表达「没装」。第三种情形
+   * ——「装了，但这份安装记录里根本没有一个能和 `pinnedVersion` 比较的版本号」——
+   * 无处可放，于是被写成了字符串哨兵 `'installed'`，
+   * 详见 {@link installedVersionOf} 与 {@link pinRelation}。
+   */
+  installedVersion: InstalledVersion;
   /** Newest upstream version, or null when the check failed or was never run. */
   latestVersion: string | null;
 
@@ -281,4 +288,144 @@ export function compareVersionsForSort(a: string, b: string): number {
       return a < b ? -1 : a > b ? 1 : 0;
     }
   }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════
+ * 「本机已装的版本」—— **三态，第三态是「这个概念对这份记录不适用」**
+ * ═══════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ★★ 为什么这里必须是一个联合，而不是 `string | null`。
+ *
+ * `packages/downloader/src/components.ts` 的 `readInstalledVersions()` 头上写着规格原话：
+ *
+ *   > Returns null when absent — "not installed" and "installed at an unknown version"
+ *   > must not look the same to the UI.
+ *
+ * 而紧接着的第一行就是 `r.version ?? r.catalogVersion ?? 'installed'` ——
+ * 把「装了，但这份记录里没有可比较的版本号」压成一个**长得像版本号的字符串**，
+ * 正是那句规格明令禁止的事。**规格没错，是代码偏离了它。**
+ *
+ * 代价是具体的、用户机器上正在发生的：卡片那颗主按钮的判据是
+ * `installedVersion !== pinnedVersion`，而哨兵 `'installed'` **永远**不等于
+ * `autobuild-2026-07-31-14-10` 这种真版本号 ⇒ 判据**恒真** ⇒ 每一个随包出厂的
+ * 后端包记录都长期挂着一颗「装上目录钉定的 …」按钮。点 `media-tools-win-x64` 那颗，
+ * 白下 145,349,121 字节，装完卡片一个字都不变 —— 于是用户会再点一次。
+ *
+ * 改法照 {@link VersionOrder}（af25cf3）那一条：**把第三态提成独立的一格**，
+ * 让「说不出版本号」在**类型上**就没法再冒充成一个可比较的版本号 ——
+ * 而不是再加一句 `!== 'installed'` 的字符串防守（那只是给哨兵换个字面量）。
+ */
+export interface NotInstalled {
+  readonly kind: 'not-installed';
+}
+
+/** 装了，而且这份记录里有一个**能和 `pinnedVersion` 放在一起比较**的版本号。 */
+export interface KnownInstalledVersion {
+  readonly kind: 'known';
+  readonly version: string;
+}
+
+/**
+ * 装了，但**「已安装版本」这个概念对这份记录不适用** —— 不是"还没查"，是"没有这一栏"。
+ *
+ * `reason` 会原样显示给用户（同 `checkError` 的待遇）：说"不知道"的时候必须一并说清
+ * 为什么不知道，否则它在屏幕上和"没装"长得一样。
+ */
+export interface NotApplicableInstalledVersion {
+  readonly kind: 'not-applicable';
+  readonly reason: string;
+}
+
+export type InstalledVersion = NotInstalled | KnownInstalledVersion | NotApplicableInstalledVersion;
+
+/** 没有安装记录的那一档。单例，省得每个调用点自己拼一个字面量。 */
+export const NOT_INSTALLED: NotInstalled = { kind: 'not-installed' };
+
+/**
+ * **唯一构造点**：从一份安装记录（`manifests/<桶>/<id>.json`）里读出「本机已装的版本」。
+ *
+ * 全仓只有两种记录会落到这些桶里，而**它们都没有一个可比较的制品版本号**：
+ *
+ * | 记录 | 有什么 | 为什么不能拿去和 `pinnedVersion` 比 |
+ * |---|---|---|
+ * | `InstalledBackendPack` | `engineVersion` | `ComponentStatus.pinnedVersion` 的注释自己写着：两者**不是同义词**，2026-08-09 实测 23 个重叠 id 里 3 个不同（全是 `media-tools-*`）。拿它去比会给这 3 条报出假的「和钉定的不一样」。而随包出厂那份更直白：`engineVersion` 是 `BUNDLED_VERSION_UNKNOWN`（`'unknown'`）—— 又一个哨兵。 |
+ * | `InstalledModel` | `catalogVersion` | 它的注释写着 "Set by the catalog build, used for staleness display" —— 是**目录快照**的版本，不是这份权重的版本；`models.ts` 的导入路径干脆写死成字面量 `'imported'`。而目录里那条模型组件的 `pinnedVersion` 是一个 commit sha（`5359861c…`），跟 `2026.08.02` 之间没有"谁更新"这回事。 |
+ *
+ * 所以今天的诚实答案是 `not-applicable`：**我们没有记过这些制品装的是哪一版。**
+ * `known` 那一格不是摆设 —— 哪天安装器真的往记录里写一个 `version`，
+ * 它立刻就有值，而在那之前**没有任何东西能伪造出一个可比较的版本号**。
+ *
+ * ⚠️ 想把 `engineVersion` / `catalogVersion` 接进来的人：那不是补一个字段，
+ * 是先要回答"它和 `pinnedVersion` 是不是同一套编号"。上表两行就是答案，都是否。
+ */
+export function installedVersionOf(record: object): InstalledVersion {
+  /*
+   * 参数写成 `object` 而不是 `{ version?: string }`，是为了能**原样**接住
+   * `InstalledBackendPack` / `InstalledModel` 这两种真记录。
+   * 写成后者时 `tsc` 会报 TS2559「has no properties in common」——
+   * 那条错误本身就是本次缺陷的证明（这类记录里根本没有 `version` 这一栏），
+   * 但它会把真实记录挡在门外，逼调用方去写一个"看起来有版本号"的中间对象。
+   */
+  const r = record as { version?: string; catalogVersion?: string };
+  /*
+   * ⚠️ 本条 commit **故意**保留旧行为（`?? 'installed'`）—— 这一条只落三态类型、
+   *    判据接线和测试，**不修**构造点。
+   *
+   *    这样做是为了让下一条 commit 的修法有一次**公开可查的红**。本仓刚为此吃过亏：
+   *    这个缺陷当初溜进来，正是因为既有用例用的全是 `v1` / `v2` 这类语义版本号，
+   *    **永远撞不上哨兵**，于是那条恒真的判据在测试里从来没有机会恒真 ——
+   *    「测试写了」和「测试有用」不是一回事。所以这一次要把红跑出来给人看，
+   *    而不是口头声称"抽掉修法就会红"。
+   *
+   *    下一条 commit 把这一行换成真正的三态判定，本注释一并消失。
+   */
+  return { kind: 'known', version: r.version ?? r.catalogVersion ?? 'installed' };
+}
+
+/**
+ * 已装的那一份和目录钉的那一版是什么关系 —— **四态，第四态是「答不出来」**。
+ *
+ * 这是「装一次会不会真的改变这台机器上的东西」的唯一判据。四态里两态是"别给按钮"，
+ * 而它们的**理由相反**：
+ *   - `same-as-pinned`：一模一样，装了也白装；
+ *   - `unknowable`：**我们根本不知道机器上那份是什么** —— 不许因此就假设"不一样"。
+ *
+ * ★ 旧写法 `installedVersion !== pinnedVersion` 把后者塞进了"不一样"那一档
+ *   （`'installed' !== 'autobuild-…'` 恒真），于是「不知道」变成了一句
+ *   **具体承诺了版本号**的号召 —— 与 af25cf3 里 `> 0` 把 `incomparable` 压成
+ *   「没有更新」是同一台机器，只是方向反过来。
+ */
+export const PIN_RELATIONS = [
+  'not-installed',
+  'same-as-pinned',
+  'differs-from-pinned',
+  'unknowable',
+] as const;
+export type PinRelation = (typeof PIN_RELATIONS)[number];
+
+export function pinRelation(installed: InstalledVersion, pinnedVersion: string): PinRelation {
+  switch (installed.kind) {
+    case 'not-installed':
+      return 'not-installed';
+    case 'known':
+      return installed.version === pinnedVersion ? 'same-as-pinned' : 'differs-from-pinned';
+    case 'not-applicable':
+      return 'unknowable';
+    default:
+      return unrecognizedInstalledArm(installed);
+  }
+}
+
+/**
+ * 编译期穷尽性检查；**运行期不 throw**。
+ *
+ * 加一格 {@link InstalledVersion} 而忘了在上面处理，这里的参数就不再是 `never`，
+ * `tsc` 当场红 —— 那是我们要的。但真跑到这一行（例如产品和 daemon 版本错配）时，
+ * 让组件页整块崩掉是更坏的结果，而"没认出来"本来就该归到 `unknowable`：
+ * **不给按钮、也不声称一致。**
+ */
+function unrecognizedInstalledArm(arm: never): PinRelation {
+  void arm;
+  return 'unknowable';
 }

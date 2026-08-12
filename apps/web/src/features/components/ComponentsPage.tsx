@@ -64,7 +64,16 @@ export default function ComponentsPage() {
      * 文案必须分开 —— 对一个从没装过的组件说"从 X 更新到 null"是句假话，
      * 而 `latestVersion` 在没点过「检查更新」时本来就是 null。
      */
-    const installing = c.installedVersion == null;
+    const installing = c.installedVersion.kind === 'not-installed';
+    /*
+     * 「从**哪一版**换成钉定的那一版」—— 只有 `known` 那一格答得出来。
+     *
+     * 这一句原来直接插值 `c.installedVersion`，而那一栏可能是哨兵 `'installed'`，
+     * 于是确认框上会出现「将「ffmpeg」从 installed 换成目录钉定的 …」。
+     * 走到这个分支时判据（`pinRelation()`）已经保证是 `differs-from-pinned` ⇒ `known`；
+     * 兜底那句只是为了让这个函数是全的，不是给哨兵留的后门。
+     */
+    const from = c.installedVersion.kind === 'known' ? c.installedVersion.version : '当前这一份';
     const ok = window.confirm(
       installing
         ? `安装「${c.displayNameZh}」${c.pinnedVersion}？\n\n` +
@@ -103,7 +112,7 @@ export default function ComponentsPage() {
            * 「上游更新了」那件事已经挪到卡片上单独说（`component-upstream-newer-*`），
            * 不再冒充成一个可点的动作。
            */
-          `将「${c.displayNameZh}」从 ${c.installedVersion} 换成目录钉定的 ${c.pinnedVersion}？\n\n` +
+          `将「${c.displayNameZh}」从 ${from} 换成目录钉定的 ${c.pinnedVersion}？\n\n` +
             `· 装的是**目录钉死的那一版**，不是上游最新版 —— 目录这一版的 sha256 是我们本机独立复算过的\n` +
             `· 会重新下载并校验 sha256，校验不通过不会安装\n` +
             `· 上游换版本可能改变行为（例如文件格式变化），不一定完全兼容\n` +
