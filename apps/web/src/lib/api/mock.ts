@@ -254,6 +254,12 @@ function seedNote(partial: Partial<MockNote> & { title: string }): MockNote {
      * 给个非空理由会造出一个契约上不存在的状态，而 mock 的全部价值就是形状与真响应一致。
      */
     retranscribeBlocked: partial.retranscribeBlocked ?? null,
+    /*
+     * 默认 `null` = 这条笔记上没有需要用户处理的失败（#98）。
+     * mock 造的是"一切正常"那一档；编一条假的失败会让形状对上、语义对不上，
+     * 而 mock 存在的全部价值就是这两件事都对得上。
+     */
+    lastFailure: partial.lastFailure ?? null,
   };
   notes.set(uid, note);
   return note;

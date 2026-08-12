@@ -18,6 +18,7 @@
  */
 
 import type { Remediation } from './events.js';
+import type { PipelineJobKind } from './jobs.js';
 
 /** ULID (26 chars, Crockford base32). The only note identifier the API exposes. */
 export type NoteUid = string;
@@ -44,6 +45,31 @@ export type NoteKind = (typeof NOTE_KINDS)[number];
  */
 export const NOTE_STATUSES = ['draft', 'processing', 'ready', 'partial', 'failed'] as const;
 export type NoteStatus = (typeof NOTE_STATUSES)[number];
+
+/**
+ * ★ `'failed'` 是**读的时候算出来的，不是库里存着的**（#98）。
+ *
+ * 这一档在 `notes.status` 的 CHECK 约束里从第一天就在，`NotesListPage` 也一直
+ * 渲染它（红色的「失败」）—— 但**全仓没有任何一处写它**：`updateNote()` 只有
+ * 三四个调用点，取值只有 `processing` / `ready` / `partial`。
+ * **接收端早就建好了，发送端从来没接上**，于是一条转写失败的笔记在列表里
+ * 永远写着「处理中」。
+ *
+ * 修法**不是**在失败路径上补一句 `updateNote({status:'failed'})`，理由两条：
+ *   1. 那样只能救以后的数据；`:10000` 上那个库里已经卡住的几条，以及所有
+ *      用户机器上已经卡住的，仍然会永远转圈 —— 除非再写一次性迁移。
+ *   2. 「失败」本来就是**从 job 状态推出来的结论**，不是笔记自己的独立事实。
+ *      存一份就等于建立第二个真相，两者迟早分叉（本仓已经为这个形状付过多次账）。
+ *
+ * 所以 daemon 在序列化时问一次 `jobs` 表：**这条笔记最近一条转写任务是不是
+ * 终态 `failed`，而库里存的又还是 `processing`** —— 是就如实报 `'failed'`。
+ * 一个字节都不写库，且**修复之前就坏掉的数据同时被救回来**。
+ * （同一条路子在 #29 的「重新转写」判据上用过：`canRetranscribe` 也是读时真解析一次。）
+ *
+ * ⚠️ 这一档**只从 `processing` 升上来**。一条已经 `ready` 的笔记重跑失败时仍然是
+ * `ready` —— 它的稿子确实还在、读得了；那次失败由 `NoteDetail.lastFailure` 说，
+ * 不该把整条笔记标红。
+ */
 
 /**
  * `media_assets.state` —— `CHECK (state IN ('pending','ready','missing','failed'))`。
@@ -312,6 +338,61 @@ export interface NoteDetail {
    * （`/media/asset/:uid` 已经为同一课付过账，见 T-136）。
    */
   retranscribeBlocked: RetranscribeBlocked | null;
+
+  /**
+   * ★ 这条笔记上**最近一次终态失败**的流水线任务；没有就是 `null`（#98）。
+   *
+   * ─── 为什么这个字段必须存在 ────────────────────────────────────────────────────
+   * 在它之前，一次转写失败在**整个产品里只活几秒钟**：右下角一条 toast，
+   * 刷新即无。笔记详情页对此**一个字都不显示**，笔记列表则因为 `notes.status`
+   * 永远停在 `processing` 而写着「处理中」—— 也就是说，对一件已经彻底结束的事，
+   * 产品同时给出「什么都没发生」和「还在进行中」两个说法，两个都不是真的。
+   *
+   * `status` 那一半由 daemon 在**读的时候**自愈（见 `status` 字段的说明），
+   * 它回答「这条笔记现在是什么状态」。这个字段回答另外两个问题：
+   * **为什么失败**（`messageZh` / `message` 可直接展示）与
+   * **能对哪条任务动手**（`jobUid` 就是任务中心那条，可以直接重试）。
+   * 三件事缺一件，用户就还是只能猜。
+   *
+   * ⚠️ 判定与 `status` 用的是**同一份 job 快照**（同一次请求里的同一次查询），
+   * 所以不会出现「状态说失败、底下却没有原因」这类自相矛盾。
+   *
+   * ⚠️ **它不等于「这条笔记坏了」**：一条已经转写好的笔记（`status: 'ready'`）
+   * 重跑失败时 `status` 保持 `ready`（稿子确实还在、读得了），而这个字段非 null。
+   * 消费方别把它写成「有 lastFailure 就当整条笔记不可用」。
+   */
+  lastFailure: NoteFailure | null;
+}
+
+/**
+ * `NoteDetail.lastFailure` 的形状。
+ *
+ * 字段只有**服务端真的知道**的那些：`jobs` 表那一行的 uid / 类型 / 错误码 /
+ * 两份文案 / 结束时间。**没有 `retryable`** —— 对一条已经处于 `failed` 终态的任务
+ * 它恒为 false（自动重试的预算已经用完，或这类错误本来就不该重试），
+ * 发一个恒定值只会让消费方以为它带着信息。
+ * 「还能不能再试一次」的答案在别处：`POST /api/jobs/:uid/retry`
+ * （`queue.requeue()` 把 attempt 归零）对**任何**终态任务都成立，不需要这里再说一遍。
+ */
+export interface NoteFailure {
+  /** 失败的那条任务（`jobs.uid`）。UI 直接拿它调 `POST /api/jobs/:uid/retry`。 */
+  jobUid: string;
+  /** 决定标题说「转写失败」还是「生成思维导图失败」—— 两者的下一步动作不同。 */
+  kind: PipelineJobKind;
+  /** `jobs.error_code`，例如 `NO_MEDIA_SOURCE` / `RUNNER_ERROR`。 */
+  code: string;
+  /** 英文 / 技术原文，可直接展示。 */
+  message: string;
+  /**
+   * 中文文案，可直接展示。
+   *
+   * ⚠️ 它**不是** `message` 的原样拷贝。曾经是 —— `pipelineJobOf()` 把
+   * `error_detail`（一个英文串）同时填进两个字段，于是中文界面上的任务错误全是英文，
+   * 而且没有任何东西会因此报错。现在两份都由 daemon 的 `jobErrorTextOf()` 一处产出。
+   */
+  messageZh: string;
+  /** 这条任务结束的时间（ISO 8601）。 */
+  at: string;
 }
 
 /** `NoteDetail.retranscribeBlocked` 的形状。 */

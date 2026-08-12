@@ -436,4 +436,99 @@ export class JobQueue {
       .prepare<JobRow>(`SELECT * FROM jobs ORDER BY created_at DESC LIMIT :limit`)
       .all({ limit });
   }
+
+  /**
+   * 一批笔记各自的**每种 job 类型最近一条任务**（#98）。
+   *
+   * ## 它存在的理由
+   *
+   * `notes.status` 里的 `'failed'` 这一档**全仓没有任何一处写过**，而列表页一直
+   * 在渲染它。补写入方不是好办法（只救得了以后的数据，且会造出第二个真相），
+   * 所以改成**读的时候问一次这里**：这条笔记最近一条转写任务是不是终态 `failed`。
+   * 判据与序列化在同一次请求里完成，一个字节都不写库，
+   * **修复之前就已经卡住的笔记同时被救回来**。
+   *
+   * ## 为什么是"每种 type 的最近一条"，而不是"有没有失败过"
+   *
+   * 「失败过」是个会**永久为真**的判据：用户重跑成功之后，那条旧的失败记录还在，
+   * 笔记会永远标红。真正要问的是**最近一次**的结论 —— 重跑一次就该翻篇。
+   * 按 type 分开是因为转写和导图是两件事：导图生成失败不该让一条转写好的笔记
+   * 显示"处理失败"，而转写失败也不该被随后一次成功的导图任务盖过去。
+   *
+   * ## 一次查询，不做 N+1
+   *
+   * 列表一页最多 200 条，`note_id IN (...)` 一次取回，在 JS 里按
+   * `(note_id, type)` 折叠。**别改成按笔记逐条查** —— `canRetranscribe` 那边
+   * 之所以刻意不进列表，正是因为它每条要做真实的文件探测；这里只是一次索引扫描，
+   * 两者不是一回事，但"列表里不许出现 N 次往返"这条规矩对两者都成立。
+   *
+   * @returns noteId → (job type → 该类型下**最近一条**任务)。没有任务的笔记不出现在 map 里。
+   */
+  noteJobDigests(noteIds: readonly number[]): Map<number, Map<string, NoteJobRecord>> {
+    const out = new Map<number, Map<string, NoteJobRecord>>();
+    if (noteIds.length === 0) return out;
+
+    const unique = [...new Set(noteIds)];
+    const placeholders = unique.map((_, i) => `:n${i}`).join(',');
+    const params: Record<string, number> = {};
+    unique.forEach((id, i) => (params[`n${i}`] = id));
+
+    /*
+     * `ORDER BY updated_at, id` 升序 + 后写覆盖 = 每个 (note, type) 留下最新的那条。
+     * 用 `id` 兜同一毫秒内的并列：`updated_at` 是毫秒时间戳，同一条笔记上两个任务
+     * 撞进同一毫秒是完全可能的（重跑就是紧接着入队的），只按时间排会得到不确定的赢家。
+     */
+    const rows = this.db
+      .prepare<{
+        note_id: number;
+        uid: string;
+        type: string;
+        state: JobState;
+        error_code: string | null;
+        error_detail: string | null;
+        updated_at: number;
+      }>(
+        `SELECT note_id, uid, type, state, error_code, error_detail, updated_at
+         FROM jobs
+         WHERE note_id IN (${placeholders})
+         ORDER BY updated_at ASC, id ASC`,
+      )
+      .all(params);
+
+    for (const r of rows) {
+      let byType = out.get(r.note_id);
+      if (!byType) {
+        byType = new Map<string, NoteJobRecord>();
+        out.set(r.note_id, byType);
+      }
+      byType.set(r.type, {
+        uid: r.uid,
+        type: r.type,
+        state: r.state,
+        errorCode: r.error_code,
+        errorDetail: r.error_detail,
+        updatedAt: r.updated_at,
+      });
+    }
+    return out;
+  }
+}
+
+/**
+ * 一条笔记上某个类型的**最近一条**任务，只含判"这条笔记现在是什么状态"要用的列。
+ *
+ * 刻意**不是** `JobRow`：那是整行（含 payload / lease / 各种计时器字段），
+ * 而这里的消费方是 HTTP 序列化路径 —— 给它一个大对象只会让下一个人顺手读到
+ * 一个不该出现在响应里的字段。
+ */
+export interface NoteJobRecord {
+  /** `jobs.uid`，对外唯一能说出口的任务标识。 */
+  uid: string;
+  /** `jobs.type`（`'transcribe'` / `'mindmap'` / …）。 */
+  type: string;
+  state: JobState;
+  errorCode: string | null;
+  errorDetail: string | null;
+  /** `jobs.updated_at`（毫秒时间戳）。 */
+  updatedAt: number;
 }

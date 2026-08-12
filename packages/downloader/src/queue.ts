@@ -191,7 +191,30 @@ export class DownloadQueue extends EventEmitter<DownloadQueueEvents> {
   private async run(entry: Entry): Promise<void> {
     const { job } = entry;
     this.transition(job, 'running');
-    job.step = 'resolving';
+    /*
+     * ★★ #60：这里原来是 `job.step = 'resolving'` —— 而**「正在选择下载源」这条播报
+     *    因此从来没有触发过一次**。
+     *
+     * 链条是这样闭合的：
+     *   1. 这一行**直接改字段**，绕过 `setStep()`，所以不发事件（对的，此刻还没开始跑）；
+     *   2. 每个真实任务的第一句都是 `ctx.setStep('resolving')`
+     *      （`rest/models.ts:475`、`rest/backends.ts:203`）；
+     *   3. 而 `setStep()` 的去重判据是 `job.step !== s` —— 上一行刚把它预置成
+     *      `'resolving'`，于是 `changed === false`，**那条 `job.step` 事件一次都没发出去**。
+     *
+     * 也就是说：产品在下载最开头那段（探测镜像、可能要好几秒）**一句话都不说**，
+     * 而说这句话的代码、词条（`stepLabel.resolving` 中英两份）、渲染分支
+     * （`JobToaster` 的 indeterminate 脉动条）**全都写好了、全都在**。
+     * 这正是本仓最贵的那一类：一段看起来接好了的线，其实两端没通。
+     *
+     * ★ 修法是**换初始值，不是删掉这一行**（裁决）。这一行有它自己的职责：
+     *   把上一轮遗留的 step 清干净（同一个 job 对象会跨状态复用），
+     *   删掉它会让"上一次卡在 verifying"的残值活到下一次运行里。
+     *   `null` 是唯一诚实的初始值 —— 此刻我们**确实**还不知道它在哪个阶段；
+     *   渲染层早就认得 `null`（`stepLabelOf(step ?? state)` 退回状态文案，
+     *   进度条走 indeterminate），所以这一改不需要任何前端配合。
+     */
+    job.step = null;
 
     const ctx: QueueTaskContext = {
       jobId: job.jobId,

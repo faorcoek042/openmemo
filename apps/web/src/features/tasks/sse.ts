@@ -3,7 +3,7 @@
  */
 
 import type { QueryClient } from '@tanstack/react-query';
-import type { JobFailedEvent, JobProgressEvent, JobStateEvent } from '@openmemo/shared';
+import type { JobProgressEvent, JobStateEvent } from '@openmemo/shared';
 import { TERMINAL_JOB_STATES } from '@openmemo/shared';
 
 import { bus } from '../../lib/events/bus';
@@ -60,6 +60,16 @@ export const tasksSse: SseBinding = (qc: QueryClient) => [
   bus.on('job.state', (e: JobStateEvent) => {
     if ((TERMINAL_JOB_STATES as readonly string[]).includes(e.state)) {
       useProgressStore.getState().clear(e.jobId);
+      /*
+       * ★ 终态也要让**笔记**失效（#98）。
+       *
+       * `notes.status` 现在是 daemon 在读的时候从 job 状态算出来的
+       * （`jobs/noteStatus.ts`），`NoteDetail.lastFailure` 同理 ——
+       * 也就是说**一条任务到达终态，就是这条笔记的状态变了**。
+       * 只失效 `jobs` 的话，列表里那条「处理中」要等下一次手动刷新才会变成「失败」，
+       * 而这正是这一轮在修的那个病（用户得刷新才能看见真相）的翻版。
+       */
+      void qc.invalidateQueries({ queryKey: qk.notes.all });
     }
     void qc.invalidateQueries({ queryKey: qk.jobs.all });
   }),
@@ -77,9 +87,31 @@ export const tasksSse: SseBinding = (qc: QueryClient) => [
     void qc.invalidateQueries({ queryKey: qk.jobs.all });
   }),
 
-  bus.on('job.failed', (e: JobFailedEvent) => {
+  /**
+   * ★ `bus.emit('ui.toast.jobFailed', e)` **删掉了**（#98 ⑤）。
+   *
+   * 它长得像接线，其实是死代码：全仓 `ui.toast.*` 有 **2 个 emit、0 个 `bus.on`**，
+   * 而且这个事件名根本不在 `EventMap` 里 —— `bus.emit(type: string, …)` 的签名
+   * 是宽的，所以它编译得过、跑得过、什么都不做。
+   *
+   * 危害不是"多了两行"，是**它会骗人**：任何人读到这一行都会以为失败 toast 是它发的，
+   * 于是去改它、去它的订阅端找 bug。真正的 toast 走的是另一条路 ——
+   * `JobToaster.tsx` 自己 `bus.on('job.failed', …)`，直接吃 SSE 的原始事件。
+   * （本轮修 #98 时正是先照着这一行找了一圈订阅者，才发现根本没有。）
+   *
+   * 保留的那半句判断（`willRetry` 时不打扰用户）**已经在真正的消费方里**：
+   * `jobToastModel.ts` 的 `job.failed` 分支 —— `willRetry` 为真时 phase 保持
+   * `active` 并降级成「正在自动重试」，也只有为假时才补建一条 toast。
+   * 也就是说这里删掉之后，那条规则一条都没少，只是不再有第二份写在没人走的路上。
+   */
+  bus.on('job.failed', () => {
     void qc.invalidateQueries({ queryKey: qk.jobs.all });
-    // 自动重试中的失败不该打扰用户（D-05 §2.3 映射表）
-    if (!e.willRetry) bus.emit('ui.toast.jobFailed', e);
+    /*
+     * 失败也要让笔记失效 —— 理由同上面 `job.state` 那条：`notes.status` 的
+     * 「失败」和 `NoteDetail.lastFailure` 都是从这条事实推出来的。
+     * ⚠️ **不按 `willRetry` 区分**：还会自动重试的那次失败会把 job 置回 `queued`，
+     * 笔记状态因此仍是「处理中」—— 重新拉一次得到的还是同一句话，不会闪。
+     */
+    void qc.invalidateQueries({ queryKey: qk.notes.all });
   }),
 ];

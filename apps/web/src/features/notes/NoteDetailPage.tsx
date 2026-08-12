@@ -13,6 +13,7 @@ import { PanelBoundary } from '../../components/common/PanelBoundary';
 import { WordLevelBadge } from '../transcript';
 import { GenerateMindmapButton, MindmapView, useMindmapQuery } from '../mindmap';
 import { NoteProgressLine } from './NoteProgressLine';
+import { NoteFailureNotice } from './NoteFailureNotice';
 import { TagEditor } from './TagEditor';
 import { RetranscribeButton } from './RetranscribeButton';
 import { NoteEditor } from './NoteEditor';
@@ -183,6 +184,20 @@ export default function NoteDetailPage() {
         hint={t('detail.backgroundHint')}
         className="border-b border-line bg-surface-1 px-4 py-2"
       />
+
+      {/*
+        ★ 失败告知条（#98）。**这一页此前对一次失败的转写一个字都不显示。**
+
+        用户看到的是：空的转写稿面板 + 不动的播放器 + 零条解释。
+        唯一说过话的是右下角那条 toast，而它刷新即无 ——
+        也就是说，只要他不是**正好**在失败那一刻盯着屏幕，这件事就从未发生过。
+
+        ⚠️ 它与上面的进度行**不互斥**，这是有意的：转写失败之后用户点了「生成导图」，
+        那一刻页面上应该同时有"导图正在生成"和"上次转写失败了"。
+        互斥会让其中一句消失，而两句都是真的。
+        （`lastFailure` 只认每种任务类型的**最近一条**，所以重跑之后旧的失败会自动翻篇。）
+      */}
+      <NoteFailureNotice note={n} className="border-b border-line bg-surface-1 px-4 py-2" />
 
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
         <h1 className="min-w-0 truncate text-base font-semibold text-ink">{n.title}</h1>

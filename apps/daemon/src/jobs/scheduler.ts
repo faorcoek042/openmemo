@@ -4,6 +4,7 @@
  * D-01 §4.2：**不设全局并发数**，按资源类别的 lane 信号量。
  * D-01 §4.6：lease + 续租，让"daemon 重启后判定这个 job 真的没人在跑"成立。
  */
+import { describeRunnerError } from './errorText.js';
 import { jobDoneEvent, jobFailedEvent, jobStateEvent } from './events.js';
 
 import type { SseHub } from '../http/sse.js';
@@ -232,13 +233,29 @@ export class Scheduler {
       }
     } catch (err) {
       const aborted = ac.signal.aborted;
-      const message = err instanceof Error ? err.message : String(err);
+      /*
+       * ★ 这一行原来是 `const message = err instanceof Error ? err.message : String(err)`
+       *   —— 也就是**只取 message，其余一律丢掉**（#98 ③）。
+       *
+       * 代价具体在哪：`NoMediaSourceError.message` 是一个**写死的常量**
+       * （`no media source can handle this input`），信息量为零；真正有用的
+       * 「换直链 / 换 RSS / 从本机导入」以及「每个候选适配器分别为什么不行」
+       * 全在它的 `remediation` 字段里，是 `media/registry.ts` 认真算出来的。
+       * 它在这一行被丢掉，之后**再也找不回来** —— 落库只剩两个 TEXT 列。
+       * 用户最终看到的是一句既看不懂、也做不了任何事的英文。
+       *
+       * `describeRunnerError()` 负责在**错误还是对象**的时候把该救的救出来，
+       * 并同时给出中文那一份（原来这里的 `messageZh` 是把英文串套进
+       * `任务失败：${message}` —— 好过 `events.ts` 那边直接交英文原文，
+       * 但两处各写各的，迟早分叉）。
+       */
+      const desc = describeRunnerError(err);
       // 用户取消不算失败
       // 中止：worker 已经停了，这里按**意图**把状态收口。
       // 只置 cancel_requested 而不改 state，任务会永远卡在 running（T-049 实测）。
       const state = aborted
         ? this.#settleAborted(job)
-        : queue.fail(job.id, 'RUNNER_ERROR', message, isRetryable(err));
+        : queue.fail(job.id, desc.code, desc.message, desc.retryable);
 
       /*
        * 三种中止意图**不能都报成 job.failed/已取消**：
@@ -262,9 +279,14 @@ export class Scheduler {
           jobFailedEvent(
             job.uid,
             {
-              code: 'RUNNER_ERROR',
-              message,
-              messageZh: `任务失败，正在自动重试：${message}`,
+              code: desc.code,
+              message: desc.message,
+              /*
+               * 「还会再试」是**附加**在那句话后面，不是把它包起来。
+               * 包起来会得到「任务失败，正在自动重试：任务失败：…」这种套娃 ——
+               * 而 `desc.messageZh` 已经是一句完整的话了。
+               */
+              messageZh: `${desc.messageZh}（正在自动重试）`,
               retryable: true,
             },
             true,
@@ -277,9 +299,9 @@ export class Scheduler {
           jobFailedEvent(
             job.uid,
             {
-              code: aborted ? 'CANCELLED' : 'RUNNER_ERROR',
-              message: aborted ? 'cancelled by user' : message,
-              messageZh: aborted ? '任务已取消' : `任务失败：${message}`,
+              code: aborted ? 'CANCELLED' : desc.code,
+              message: aborted ? 'cancelled by user' : desc.message,
+              messageZh: aborted ? '任务已取消' : desc.messageZh,
               retryable: false,
             },
             false,
@@ -319,10 +341,11 @@ function resultKindOf(
   return null;
 }
 
-/** 瞬时错误可重试；参数/格式类错误不重试（D-01 §4.7）。 */
-function isRetryable(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  if (/ENOTFOUND|ECONNRESET|ETIMEDOUT|EBUSY|socket hang up|timeout/i.test(msg)) return true;
-  if (/not found|unsupported|invalid|forbidden|refused|guard/i.test(msg)) return false;
-  return false;
-}
+/*
+ * ⚠️ `isRetryable()` 搬去了 `./errorText.ts`（判据一个字没改）。
+ *
+ * 理由不是整理：**"哪些错误算终态"和"终态错误该怎么说给用户听"必须在同一处对得上。**
+ * `notes.status` 的读时自愈判的正是 `jobs.state === 'failed'`，而只有这个函数
+ * 回 false 时才会真的落到那个状态。两者分居两个文件的话，改其中一个不会有
+ * 任何东西提醒你另一个的含义也跟着变了。
+ */
