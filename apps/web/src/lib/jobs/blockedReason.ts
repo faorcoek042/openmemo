@@ -4,7 +4,7 @@
  * ## 为什么它必须是公共的（Manager 2026-08-12 裁决）
  *
  * 这张表原来**只长在导图那一半**：`GenerateMindmapButton` 里一句
- * `t(\`mindmap.blocked.\${code}\`, { defaultValue: t('mindmap.blocked.UNKNOWN') })`。
+ * `t(\`mindmap.blocked.\${code}\`, { defaultValue: … })`（那个命名空间已经搬走）。
  * 而 `blocked` 不是导图独有的状态 —— 转写同样会挂起（没装 ASR 模型），
  * 笔记页那条进度行只说得出「暂时无法继续」，**说不出在等什么，也给不出下一步**。
  *
@@ -27,21 +27,21 @@
  * ⚠️ 回落必须落在**这一层**，不是各调用点各写一次 `?? 'UNKNOWN'` ——
  * 漏一处就是一块空白，而空白不会让任何测试变红。
  *
- * ## ⏳ 命名空间还没搬（这是已知的半成品，不是遗漏）
+ * ## ✅ 命名空间搬完了（`jobBlocked.*`）
  *
- * 下面的 value 指向两个**已经存在的**词条位置：`mindmap.blocked.*`（导图那三条）
- * 与 `errors.MISSING_ASR_MODEL.detail`（转写那条，`ErrorBlock` 的文案表里早就有，
- * 而且措辞正好是一句可以直接当"在等什么"用的话）。
+ * 上一轮这些 value 还散在两处**已经存在的**词条位置：`mindmap.blocked.*`（导图三条）
+ * 与 `errors.MISSING_ASR_MODEL.detail`（转写那条）。两处都是历史落点：
+ *   · 一个叫 `mindmap.blocked.*` 的键服务**转写**任务，本身就是命名谎话；
+ *   · `errors.*` 那条是 `ErrorBlock` 的**报错**文案，语义合、**口吻不对** ——
+ *     「在等你装模型」是个可修复的等待态（装好会自己接着跑），
+ *     不该穿着"出错了"的衣服。
  *
- * 它们本该统一到一个 `jobBlocked.*` 命名空间下 —— 一个叫 `mindmap.blocked.*` 的键
- * 服务转写任务，本身就是个命名谎话。**没有一起做，是因为 locale 那两份文件本轮
- * 归另一路（`a8916f71` 正在改三处最后一米），窗口开了才轮到我动它。**
+ * 现在四条都在 `jobBlocked.*` 下，转写那条是**新写的**、按等待态的口吻写。
+ * ⚠️ `errors.MISSING_ASR_MODEL.*` **一个字没动**：它另有消费方（`ErrorBlock` 的
+ * 文案表按 `code` 查 `title`/`detail`/`action` 三件套），改它会在另一条路上出事。
+ * **新写一条比改现有那条安全** —— 那条词条有两个消费方，别改一处忘一处。
  *
- * ✅ 但那次搬迁**只需要改这个文件里的常量，消费方一行都不用动** ——
- * 这正是把它提成公共表的意义所在。搬迁时一并要做的两件事记在这里：
- *   ① `mindmap.blocked.*` / `errors.MISSING_ASR_MODEL.detail` → `jobBlocked.*`；
- *   ② `blockedReason.test.ts` 里那条"表里每个 key 在两份 locale 里都真的存在"
- *      会跟着一起变绿/变红，不需要新写守卫。
+ * 这次搬迁应验了提表时写下的那句：**只改了这个文件里的常量，两个消费方一行都没动。**
  *
  * ## 本文件不 import React / i18next 运行时
  *
@@ -51,7 +51,7 @@
  */
 
 /**
- * daemon **真的会发**的 `blockedCode` → i18n key。
+ * daemon **真的会发**的 `blockedCode`。
  *
  * ⚠️ 这三个是**核过的全集**（全仓 `queue.block(` 的调用点）：
  *   · `jobs/runners/transcribe.ts` → `MISSING_ASR_MODEL`
@@ -63,13 +63,34 @@
  * daemon **一个都没发过**，而 daemon 真发的两个它**没有**。已单独报出，本轮不动它。
  * 照着那份写这张表，会得到 4 条永远走不到的分支 + 2 条永远落 UNKNOWN 的真实状态。
  */
-export const BLOCKED_REASON_KEYS: Readonly<Record<string, string>> = {
+export const KNOWN_BLOCKED_CODES = [
+  'MISSING_ASR_MODEL',
+  'NO_TRANSCRIPT',
+  'LLM_NOT_CONFIGURED',
+] as const;
+export type KnownBlockedCode = (typeof KNOWN_BLOCKED_CODES)[number];
+
+/**
+ * `blockedCode` → i18n key。
+ *
+ * ★ 类型是**全量 `Record<KnownBlockedCode, string>`，不是 `Record<string, string>`**。
+ * 差别不是风格：往上面那个数组里加一个码而**没人给它写话**，
+ * 这一行**构建当场就红**（缺属性）。写成宽 Record 的话，新码会安静地落进兜底 ——
+ * 一句"任务被挂起了，去任务中心看看"，而任务中心也只会重复同一句。
+ * 那种失败没有任何东西会报，只有用户觉得这软件说不清话。
+ *
+ * ⚠️ 反过来**不能**把 `blockedReasonKey()` 的入参也收成 `KnownBlockedCode`：
+ * `queue.block()` 的第二个参数是自由字符串，daemon 随时能发一个我们没见过的码。
+ * **闭集用于"我们答应过要写话的那些"，开集用于"运行时真会收到的那些"** ——
+ * 两者是不同的集合，混成一个会让其中一半说谎。
+ */
+export const BLOCKED_REASON_KEYS: Readonly<Record<KnownBlockedCode, string>> = {
   /* 转写：没装语音识别模型。 */
-  MISSING_ASR_MODEL: 'errors.MISSING_ASR_MODEL.detail',
+  MISSING_ASR_MODEL: 'jobBlocked.MISSING_ASR_MODEL',
   /* 导图：这条笔记还没有转写稿。 */
-  NO_TRANSCRIPT: 'mindmap.blocked.NO_TRANSCRIPT',
+  NO_TRANSCRIPT: 'jobBlocked.NO_TRANSCRIPT',
   /* 导图：没有可用的语言模型。 */
-  LLM_NOT_CONFIGURED: 'mindmap.blocked.LLM_NOT_CONFIGURED',
+  LLM_NOT_CONFIGURED: 'jobBlocked.LLM_NOT_CONFIGURED',
 };
 
 /**
@@ -78,7 +99,7 @@ export const BLOCKED_REASON_KEYS: Readonly<Record<string, string>> = {
  * 措辞是「任务被挂起了。去任务中心看看它在等什么。」—— 它**只说我们确实知道的**
  * （挂起了、去哪能看到更多），不猜原因。
  */
-export const BLOCKED_REASON_FALLBACK_KEY = 'mindmap.blocked.UNKNOWN';
+export const BLOCKED_REASON_FALLBACK_KEY = 'jobBlocked.UNKNOWN';
 
 /**
  * `blockedCode` → 要渲染的那条 i18n key。**永远返回一个 key，不返回 null。**
@@ -89,5 +110,8 @@ export const BLOCKED_REASON_FALLBACK_KEY = 'mindmap.blocked.UNKNOWN';
  */
 export function blockedReasonKey(code: string | null | undefined): string {
   if (!code) return BLOCKED_REASON_FALLBACK_KEY;
-  return BLOCKED_REASON_KEYS[code] ?? BLOCKED_REASON_FALLBACK_KEY;
+  // 入参刻意是 `string`（见上）：这里查的是一张闭集表，查不到就是查不到。
+  return (
+    (BLOCKED_REASON_KEYS as Readonly<Record<string, string>>)[code] ?? BLOCKED_REASON_FALLBACK_KEY
+  );
 }

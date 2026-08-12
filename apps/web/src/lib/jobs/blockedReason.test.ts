@@ -24,18 +24,25 @@ import { describe, it } from 'node:test';
 import {
   BLOCKED_REASON_FALLBACK_KEY,
   BLOCKED_REASON_KEYS,
+  KNOWN_BLOCKED_CODES,
   blockedReasonKey,
 } from './blockedReason';
 
 describe('blockedCode → 那句话（公共表）', () => {
-  it('★ daemon 真的会发的三个码，各自有自己的话', () => {
+  it('★ daemon 真的会发的每个码，都各自有自己的话', () => {
     /*
-     * 这三个是**核过的全集**（全仓 `queue.block(` 的调用点）：
+     * 遍历 `KNOWN_BLOCKED_CODES` 而**不是**在这里再抄一份码名单：
+     * 抄一份的话，往那个数组里加一个码、这里忘了跟，新码就悄悄没人验。
+     * （表本身的类型是全量 `Record<KnownBlockedCode, string>`，
+     *   所以"加了码却没写话"在**构建期**就红了；这条守的是运行期的分派。）
+     *
+     * 那三个码是**核过的全集**（全仓 `queue.block(` 的调用点）：
      *   transcribe.ts → MISSING_ASR_MODEL
      *   mindmap.ts    → NO_TRANSCRIPT / LLM_NOT_CONFIGURED
-     * 少一个就意味着某条真实的挂起态在界面上退化成了一句通用话。
+     * 少一个就意味着某条真实的挂起态在界面上退化成一句通用话。
      */
-    for (const code of ['MISSING_ASR_MODEL', 'NO_TRANSCRIPT', 'LLM_NOT_CONFIGURED']) {
+    assert.ok(KNOWN_BLOCKED_CODES.length >= 3, '码表缩水了 —— 少的那个码会静默落进兜底');
+    for (const code of KNOWN_BLOCKED_CODES) {
       const key = blockedReasonKey(code);
       assert.notEqual(
         key,

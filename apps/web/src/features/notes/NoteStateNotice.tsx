@@ -156,9 +156,15 @@ export function NoteStateNotice({
             runner 的 `resumableTranscript()` 会复用未跑完的稿并跳过已完成的 chunk
             （D-01 §4.5，`rest/content.ts` 的重跑通道正是走这条路）。
             如果哪天它不再成立，这句话要跟着删 —— 别留一句描述了不存在行为的提示。
+
+            ★ 按钮名**从那颗按钮自己的词条取**（`detail.retranscribe.open`），
+            不在这句话里再抄一遍中文。抄一遍的话，那颗按钮改名之后这句话会
+            指着一个屏幕上不存在的控件 —— 而且**不会有任何东西报错**：
+            用户按着提示去找「重新转写」，看到的是别的字，只能怪自己没看懂。
+            组件测试钉的正是这一条：渲染出来的提示里必须出现按钮**当前**的标签。
           */}
           <p className="mt-0.5 text-xs text-ink-secondary" data-testid="note-cancelled-hint">
-            {t('notes.cancelledHint')}
+            {t('notes.cancelledHint', { action: t('detail.retranscribe.open') })}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {/*

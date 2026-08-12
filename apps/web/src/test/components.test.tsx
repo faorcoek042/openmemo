@@ -151,6 +151,8 @@ import { breakerAdvice, breakerDetail } from '@openmemo/shared';
 import ModelsPage from '../features/models/ModelsPage';
 import NotesListPage from '../features/notes/NotesListPage';
 import { NoteProgressLine } from '../features/notes/NoteProgressLine';
+import { NoteStateNotice } from '../features/notes/NoteStateNotice';
+import type { NoteDetail } from '../lib/api/types';
 // 「这条任务在等什么」那张表的**唯一一份**（Manager 2026-08-12 裁决：不建第二张）
 import {
   BLOCKED_REASON_FALLBACK_KEY,
@@ -5871,22 +5873,65 @@ describe('T-138 ① 思维导图的生成入口', () => {
      * 它进的是 CommonJS 通道，手边没有词条文件。**指向一个不存在的词条**
      * 是另一种失败，而且长得和拼对了一模一样：i18next 会把 key 原样渲染出来，
      * 不报错、不留痕。两条一起才完整。
+     *
+     * ★★ 这条用例是 `jobBlocked.*` 那次搬迁的**安全网**，所以它自己先得被证明有效。
+     * 判据与 `check-contract-fields-shown.mjs` 的 `assertMatcherWorks()` 同一条：
+     * **先证明探针能看见你已知存在的东西，再相信它说"没有"。**
+     * 下面第一段就是那个对照 —— 只差一个字母的 key 必须解析不出来。
+     * 少了它，这条用例可能因为解析器自己写错而**恒绿**，
+     * 那时它守的那次搬迁就是在没有安全网的情况下做的。
      */
+    const lookup = (key: string, bundle: unknown): unknown =>
+      key
+        .split('.')
+        .reduce<unknown>((acc, k) => (acc as Record<string, unknown> | undefined)?.[k], bundle);
+
+    // ── 对照组：探针必须看得见"这个词条不存在"这件事 ──
+    for (const broken of ['jobBlocked.UNKNOWNX', 'jobBlockd.UNKNOWN', 'jobBlocked', 'nope.nope']) {
+      assert.notEqual(
+        typeof lookup(broken, zhLocale),
+        'string',
+        `解析器把不存在的 ${broken} 当成了有效词条 —— 这条用例本身是瞎的`,
+      );
+    }
+    // 反向对照：真存在的那条必须解析得出来，否则上面那组是空虚为真
+    assert.equal(
+      typeof lookup(BLOCKED_REASON_FALLBACK_KEY, zhLocale),
+      'string',
+      '连兜底那条都解析不出来 —— 上面那组"看得见缺失"因此毫无意义',
+    );
+
     const keys = [...Object.values(BLOCKED_REASON_KEYS), BLOCKED_REASON_FALLBACK_KEY];
     for (const key of keys) {
       for (const [name, bundle] of [
         ['zh-CN', zhLocale],
         ['en', enLocale],
       ] as const) {
-        const value = key
-          .split('.')
-          .reduce<unknown>((acc, k) => (acc as Record<string, unknown> | undefined)?.[k], bundle);
+        const value = lookup(key, bundle);
         assert.equal(
-          typeof value === 'string' && value.length > 0,
+          typeof value === 'string' && (value as string).length > 0,
           true,
           `${name}.json 里没有 ${key} —— i18next 会把这串 key 原样摆给用户看`,
         );
       }
+    }
+  });
+
+  test('★ 搬完之后 `mindmap.blocked.*` 必须真的没了（留着 = 两份说法并存）', () => {
+    /*
+     * 搬迁最容易留下的尾巴是"新的加了、旧的忘了删"。两份词条并存不报错，
+     * 但下一个人改文案时有一半概率改到**那份没人读的** —— 而他改完看不出任何变化。
+     */
+    for (const [name, bundle] of [
+      ['zh-CN', zhLocale],
+      ['en', enLocale],
+    ] as const) {
+      const mindmap = (bundle as unknown as { mindmap: Record<string, unknown> }).mindmap;
+      assert.equal(
+        mindmap['blocked'],
+        undefined,
+        `${name}.json 里 mindmap.blocked 还在 —— 它已经搬到 jobBlocked.*，留着就是两份说法`,
+      );
     }
   });
 
@@ -5911,6 +5956,186 @@ describe('T-138 ① 思维导图的生成入口', () => {
       (enLocale as unknown as { mindmap: Record<string, string> }).mindmap['emptyHint'],
       'en 少了 mindmap.emptyHint',
     );
+  });
+});
+
+/*
+ * ══ #98 收尾：笔记页那条状态告知条 ══════════════════════════════════════════════
+ *
+ * 判据**不是"渲染了某个 key"**，是**渲染出来的那句话回答了什么**：
+ *   · 失败那一档 → 它说得出 **daemon 给的原因原文**（不是一句我们自己编的通用话），
+ *     并且那颗「重试」真的打到 `POST /jobs/:uid/retry`；
+ *   · 取消那一档 → 它说得出 **「重新转写」在哪**、并且说明**接着已完成的片段跑**，
+ *     而且**不给「重试」当主按钮** —— 用户没遇到故障，他是自己停下的。
+ *
+ * daemon 那一半（`jobs/noteStatus.test.ts`）已经钉了"状态算得对"。
+ * 这一组钉的是**界面真的把它说出来了** —— 少了这一半就是
+ * "daemon 侧测了、用户看的那一半没人看着"。
+ */
+describe('#98 NoteStateNotice（笔记页的状态告知条）', () => {
+  const NOTE_UID = '01AAAAAAAAAAAAAAAAAAAAAAAA';
+
+  /** 一条最小但**形状真实**的 `NoteDetail`（字段名逐个对着 `shared/notes.ts`）。 */
+  function noteDetail(over: Partial<NoteDetail> = {}): NoteDetail {
+    return {
+      uid: NOTE_UID,
+      title: '一节课的录音',
+      status: 'ready',
+      kind: 'media',
+      language: 'zh',
+      durationMs: 1000,
+      summaryMd: null,
+      assets: [],
+      transcriptUid: null,
+      segmentCount: 0,
+      createdAt: '2026-08-01T00:00:00.000Z',
+      tags: [],
+      starred: false,
+      folderUid: null,
+      bodyJson: null,
+      canRetranscribe: true,
+      retranscribeBlocked: null,
+      lastFailure: null,
+      ...over,
+    };
+  }
+
+  const FAILURE = {
+    jobUid: '01JOBJOBJOBJOBJOBJOBJOBJOB',
+    kind: 'transcribe' as const,
+    code: 'NO_MEDIA_SOURCE',
+    message: 'no media source can handle this input. Try a direct file URL.',
+    messageZh: '没有可用的媒体来源能读取这个输入 —— 可以换成直链音视频文件。',
+    at: '2026-08-01T00:00:00.000Z',
+  };
+
+  test('★ 没什么要说的时候，一个字都不渲染（不许留一条空告警条）', async () => {
+    stubApi({});
+    const r = await render(<NoteStateNotice note={noteDetail()} />);
+    await r.flush();
+    assert.equal(text(r.container), '', `没有失败也没被取消，却渲染了东西：${text(r.container)}`);
+    r.unmount();
+  });
+
+  test('★★ 失败：说出 daemon 给的**原因原文**，而不是一句我们自己编的通用话', async () => {
+    stubApi({});
+    const r = await render(
+      <NoteStateNotice note={noteDetail({ status: 'failed', lastFailure: FAILURE })} />,
+    );
+    await r.flush();
+    const t = text(r.container);
+    assert.ok(t.includes(zhAt('notes.failureTranscribe')), `没说是哪件事失败了（实际：${t}）`);
+    /*
+     * ★ 这一条是整组里最要紧的：daemon 把原因算出来了（`NoteFailure.messageZh`），
+     * 而 #98 之前它在最后一米被丢掉，页面一个字都不显示。
+     * 断的是**那串原文出现在屏幕上**，不是"某个 key 渲染了"。
+     */
+    assert.ok(
+      t.includes(FAILURE.messageZh),
+      `daemon 的原因没上屏（实际：${t}）—— 一句不说为什么的失败提示，和沉默是同一件事`,
+    );
+    r.unmount();
+  });
+
+  test('★★ 失败：「重试」真的打到 POST /jobs/:uid/retry（不是一个假出口）', async () => {
+    const s = stubApi({ [`POST /jobs/${FAILURE.jobUid}/retry`]: { ok: true } });
+    const r = await render(
+      <NoteStateNotice note={noteDetail({ status: 'failed', lastFailure: FAILURE })} />,
+    );
+    await r.flush();
+    await click(r.container.querySelector('[data-testid="note-failure-retry"]') as HTMLElement);
+    await r.flush();
+    assert.ok(
+      s.calls.some((c) => c.method === 'POST' && c.path === `/jobs/${FAILURE.jobUid}/retry`),
+      `没打出那个请求（实际：${JSON.stringify(s.calls)}）—— ` +
+        '一颗点了什么都不发生的按钮，和一颗不存在的按钮是同一件事',
+    );
+    r.unmount();
+  });
+
+  test('★★ 取消：说出「重新转写」在哪，并且说明它**接着已完成的片段跑**', async () => {
+    stubApi({});
+    const r = await render(<NoteStateNotice note={noteDetail({ status: 'cancelled' })} />);
+    await r.flush();
+    const t = text(r.container);
+
+    assert.ok(t.includes(zhAt('notes.cancelledTitle')), `没说这次转写被取消了（实际：${t}）`);
+
+    /*
+     * ★ 指路的那句话，指的必须是**屏幕上真实存在的那个控件名**。
+     * 提示里把按钮名抄一遍的话，那颗按钮改名之后这句话就指着一个不存在的控件，
+     * 而且**不会有任何东西报错** —— 用户按着提示去找，看到的是别的字。
+     * 所以文案用 `{{action}}` 占位，值取自按钮自己的词条。
+     */
+    const actionLabel = zhAt('detail.retranscribe.open');
+    assert.ok(
+      t.includes(actionLabel),
+      `没说该点哪个按钮（实际：${t}）—— 「什么都做不了」和「没说能做什么」在用户那里一样`,
+    );
+    assert.ok(
+      zhAt('notes.cancelledHint').includes('{{action}}'),
+      '提示把按钮名写死了 —— 按钮一改名，这句话就开始指一个不存在的控件，且不会有任何东西报错',
+    );
+
+    /*
+     * ★ "接着已完成的片段跑"是一句**关于产品行为的承诺**，它今天是真的
+     * （runner 的 `resumableTranscript()` 复用未跑完的稿并跳过已完成的 chunk）。
+     * 钉住它是因为：一旦那个行为没了而这句话还在，我们就在对用户说一件不存在的事。
+     */
+    assert.match(
+      t,
+      /接着已完成|不从头再来/,
+      `没说会不会从头再来（实际：${t}）—— 用户最怕的正是"再等一遍那么久"`,
+    );
+    r.unmount();
+  });
+
+  test('★★ 取消：**不给「重试」** —— 他没遇到故障，是自己停下的', async () => {
+    stubApi({});
+    const r = await render(<NoteStateNotice note={noteDetail({ status: 'cancelled' })} />);
+    await r.flush();
+    assert.equal(
+      r.container.querySelector('[data-testid="note-failure-retry"]'),
+      null,
+      '给取消配了一颗「重试」当主按钮 = 把用户刚做过的动作说成一次故障；' +
+        '他要的是「重新转写」（可以顺便换引擎/模型），两者不是一回事',
+    );
+    r.unmount();
+  });
+
+  test('★ 两档同时成立时只说失败（信息量严格更大，且带可点动作）', async () => {
+    stubApi({});
+    const r = await render(
+      <NoteStateNotice note={noteDetail({ status: 'cancelled', lastFailure: FAILURE })} />,
+    );
+    await r.flush();
+    assert.ok(!!r.container.querySelector('[data-testid="note-failure-notice"]'));
+    assert.equal(
+      r.container.querySelector('[data-testid="note-cancelled-notice"]'),
+      null,
+      '两条一起摆，用户会以为是同一件事的两种说法',
+    );
+    r.unmount();
+  });
+
+  test('★ 老响应没有 lastFailure 这个键时按"没有失败"处理，不许崩', async () => {
+    stubApi({});
+    // 逐字模拟一个**旧 daemon** 的响应：连这个键都不存在（不是 null）
+    const legacy = noteDetail();
+    delete (legacy as unknown as Record<string, unknown>)['lastFailure'];
+    const r = await render(<NoteStateNotice note={legacy} />);
+    await r.flush();
+    assert.equal(text(r.container), '');
+    r.unmount();
+  });
+
+  test('★ 它真的被笔记详情页渲染了（组件造出来没人用 = 这一页仍然一个字不说）', async () => {
+    const src = await readSource('features/notes/NoteDetailPage.tsx');
+    assert.ok(
+      /^import \{[^}]*\bNoteStateNotice\b[^}]*\} from '[^']+';$/m.test(src),
+      'NoteDetailPage 没有 import NoteStateNotice —— 注释里提一句不算（T-129b 的教训）',
+    );
+    assert.ok(/<NoteStateNotice\b/.test(src), 'import 了但没渲染 —— 用户仍然什么都看不到');
   });
 });
 
