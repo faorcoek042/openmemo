@@ -598,12 +598,12 @@ function replaceJobIf(text, jobName, newIfLine) {
   // 在这个 job 的块里找到 `    if:` 那一行，把它连同后续更深缩进的续行一起换掉。
   let i = jobAt + 1;
   for (; i < lines.length; i++) {
-    if (/^  \S/.test(lines[i])) return null; // 走出这个 job 了，没找到 if:
-    if (/^    if:/.test(lines[i])) break;
+    if (/^ {2}\S/.test(lines[i])) return null; // 走出这个 job 了，没找到 if:
+    if (/^ {4}if:/.test(lines[i])) break;
   }
   if (i >= lines.length) return null;
   let j = i + 1;
-  while (j < lines.length && /^      /.test(lines[j])) j++;
+  while (j < lines.length && /^ {6}/.test(lines[j])) j++;
   return [...lines.slice(0, i), newIfLine, ...lines.slice(j)].join('\n');
 }
 
@@ -615,7 +615,7 @@ function revertAttestGate(text) {
   if (t !== null) t = t.replace(/^.*--mutations ".*\n/m, '');
   // 判据落在**解析出来的结构**上，不落在"文本里还有没有某几个字"上：
   // 写凭证那一行本来就会提到 needs.mutations.result，用文本判会把自己判错。
-  let attest = null;
+  let attest;
   try {
     attest = t === null ? null : parse(t)?.jobs?.attest;
   } catch {
