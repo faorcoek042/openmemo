@@ -17,6 +17,7 @@
  * and the daemon converts at the boundary.
  */
 
+import type { AsrEngineId } from './backends.js';
 import type { Remediation } from './events.js';
 import type { PipelineJobKind } from './jobs.js';
 
@@ -612,6 +613,37 @@ export interface RetranscribeRequest {
    * but never send an empty string.
    */
   language?: string;
+
+  /**
+   * ★ 只为**这一次重跑**指定引擎。省略 = 后端按语言自动选（今天的行为，不变）。
+   *
+   * ## 为什么类型是 `AsrEngineId` 而不是 `string`
+   *
+   * daemon 侧收的是**未校验的自由字符串**（`rest/content.ts` 只判 `typeof === 'string'`），
+   * 而 `pipeline/setup.ts` 里 `candidates.find(c => c.engine.id === override.engineId && c.available)`
+   * 找不到时**不报错、不警告、不记日志**，直接落回 `pickEngine(language)` 自动选择。
+   * 也就是说：**拼错一个 id 与选对一个 id，在响应上完全无法区分** ——
+   * 用户以为自己换到了 paraformer，实际跑的还是 whisper.cpp。
+   *
+   * 所以这里收窄到联合类型：**拼错的 id 在编译期就过不去**，
+   * 这是这条链路上唯一一道真的会拦住人的闸（后端那道不存在）。
+   *
+   * ## ⚠️ 类型对了也不够 —— 调用方必须自己按 `available` 过滤
+   *
+   * 联合类型只能保证"这个 id 后端认识"，保证不了"这台机器上它装了"。
+   * `paraformer` 需要 `OPENMEMO_PARAFORMER_DIR` 指向模型目录，没设就不进候选，
+   * 于是它同样走上面那条静默回落。可用性只有一个来源：
+   * `GET /api/health` 的 `pipeline.engines[]`（`{id, available, reason?}`）。
+   *
+   * ## 事后怎么确认真的换了
+   *
+   * **不是靠 SSE**：`TranscribeStartedEvent`（见 events.ts）只有
+   * `modelId`，**没有 `engineId`**。唯一的事后凭据是
+   * `GET /api/notes/:uid/transcript` 的 `transcript.engineId` ——
+   * 那一列由 runner 写入**实际选中**的引擎（`chosen.engineId`），不是请求里的那个。
+   * 静默回落发生时，这两个值会不一样，而这是它唯一看得出来的地方。
+   */
+  engineId?: AsrEngineId;
 }
 
 export interface RetranscribeResponse {

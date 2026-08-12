@@ -1,4 +1,4 @@
-import { type AsrEngineId } from '@openmemo/shared';
+import { type AsrEngineId, ASR_ENGINE_IDS } from '@openmemo/shared';
 
 /**
  * 转写语言 —— 前端侧的常量与校验。
@@ -65,6 +65,24 @@ export const ASR_LANGUAGES: readonly AsrLanguageOption[] = [
  */
 export function autoLanguageDowngradesEngine(language: string): boolean {
   return language === ASR_LANGUAGE_AUTO;
+}
+
+/**
+ * 把一个来路不明的字符串收窄回 `AsrEngineId`；认不出就给 `null`。
+ *
+ * ⚠️ **不要硬转**。两个入口喂进来的都是 `string`：
+ * `GET /api/health` 的 `pipeline.engines[].id`（daemon 直接摊的引擎自报 id），
+ * 和 `GET /api/notes/:uid/transcript` 的 `transcript.engineId`（库里那一列，
+ * 老数据里出现过 `'fixture'` 这类夹具值）。硬转会让一个后端不认识的 id
+ * 一路流到请求体里，而 daemon 对不认识的 `engineId` 是**静默回落**到自动选择的 ——
+ * 于是界面显示"引擎：turbo"，实际跑的是 whisper.cpp，且没有任何地方看得出来。
+ *
+ * 放在这里而不是各写一遍：`AsrEngineStatus`（读 health）与 `RetranscribeButton`
+ * （读 transcript）判的是同一件事，两份实现迟早分叉。
+ */
+export function toAsrEngineId(raw: string | null | undefined): AsrEngineId | null {
+  if (!raw) return null;
+  return (ASR_ENGINE_IDS as readonly string[]).includes(raw) ? (raw as AsrEngineId) : null;
 }
 
 /** 引擎展示名。键是 `AsrEngineId`，编不出后端不存在的引擎。 */

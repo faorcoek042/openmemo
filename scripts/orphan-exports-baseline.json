@@ -261,11 +261,6 @@
     },
     {
       "file": "packages/shared/src/notes.ts",
-      "name": "RetranscribeRequest",
-      "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
-    },
-    {
-      "file": "packages/shared/src/notes.ts",
       "name": "RetranscribeResponse",
       "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
     },

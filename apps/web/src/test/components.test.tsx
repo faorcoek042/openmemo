@@ -1455,6 +1455,407 @@ describe('重新转写入口', () => {
   });
 });
 
+/* ─────────────────── 换引擎重转（#99 ①，方案 A） ─────────────────── */
+
+/**
+ * 后端从 `content.ts` 起就收 `engineId` 了，前端一直没发 —— **端点有了，路没有**。
+ * 这一组钉的是那条路，以及它**唯一**的安全闸。
+ *
+ * ## 🔴 为什么每条都打在 `GET /health` 上，而不是替换 `useAsrEngines`
+ *
+ * 这一轮已经因为造替身红过一次：手写的替身只实现"有引擎、都可用"那一条分支，
+ * 于是**测的是自己写的假货**，而真实契约里最要紧的恰恰是另一条
+ * —— `{available:false, reason}`（daemon 只列构造成功的候选，
+ * Paraformer 没设 `OPENMEMO_PARAFORMER_DIR` 就整条缺席）。
+ * 所以这里桩在 **HTTP 那一层**，跑的是真的 `useAsrEngines`：
+ * 它自己的收窄、补全、`available` 判定全都真的执行一遍。
+ *
+ * ## 🔴 判据是「请求体里到底有什么」和「屏幕上到底写着什么」
+ *
+ * 不断言 key 存在、不断言 props 传到了。每条都问同一个问题：
+ * **把修法抽掉，它会不会红。**
+ */
+describe('重新转写：换引擎', () => {
+  const noEdits = [{ seq: 1, text: 'a', edited: false }];
+
+  /** daemon 实测形状：只列构造成功的候选，`reason` 只在不可用时才有。 */
+  const HEALTH = (engines: { id: string; available: boolean; reason?: string }[]) => ({
+    'GET /health': { pipeline: { engines } },
+  });
+  const MODELS = (active: string | null, models: unknown[] = []) => ({
+    'GET /models/installed': { models, active: { asr: active } },
+  });
+  /**
+   * 展开面板，并**等两拍**。
+   *
+   * 两个查询是 `enabled: open` 的 —— 它们在这次点击之后才起飞，
+   * 一拍只够 fetch 兑现，第二拍才轮到 react-query 提交状态、组件重渲染。
+   * 只 flush 一次的话，断言会打在"数据还没到"的那一帧上：
+   * 而那一帧长得和"这个功能没接上"**一模一样**，于是缺陷实现也可能是绿的。
+   */
+  const openPanel = async (r: { container: HTMLElement; flush: () => Promise<void> }) => {
+    await click(r.container.querySelector('[data-testid="retranscribe-open"]'));
+    await r.flush();
+    await r.flush();
+  };
+  const engineSelect = (c: HTMLElement) =>
+    c.querySelector('select[data-testid="retranscribe-engine-select"]') as HTMLSelectElement | null;
+
+  /**
+   * ★★ 本功能的**主判据**：选了引擎，那个引擎要真的出现在请求体里。
+   *
+   * 抽掉 `body` 里的 `engineId` 展开 ⇒ 请求体退回 `{language}` ⇒ 这条红。
+   * 抽掉整个下拉 ⇒ `engineSelect()` 为 null ⇒ `type()` 抛"元素不存在" ⇒ 这条红。
+   */
+  test('★ 换了引擎，engineId 真的进请求体 —— 否则这条路等于没通', async () => {
+    const { calls } = stubApi({
+      ...HEALTH([
+        { id: 'whisper.cpp', available: true },
+        { id: 'paraformer', available: true },
+      ]),
+      ...MODELS(null),
+      'POST /notes/n1/retranscribe': { jobUid: 'j9', noteUid: 'n1' },
+    });
+    const r = await render(
+      <RetranscribeButton
+        noteUid="n1"
+        segments={noEdits}
+        currentLanguage="zh"
+        currentEngineId="whisper.cpp"
+        currentModelId="ggml-base.en.bin"
+      />,
+    );
+    await openPanel(r);
+    await type(engineSelect(r.container), 'paraformer');
+    await click(r.container.querySelector('[data-testid="retranscribe-submit"]'));
+    await r.flush();
+
+    const post = calls.find((c) => c.path === '/notes/n1/retranscribe');
+    assert.ok(post, '应发出 retranscribe 请求');
+    assert.deepEqual(
+      post!.body,
+      { language: 'zh', engineId: 'paraformer' },
+      '用户选的引擎必须原样进请求体',
+    );
+    r.unmount();
+  });
+
+  /**
+   * ★★ **唯一的安全闸**：不可用的引擎绝不能出现在候选里。
+   *
+   * 后端那道闸不存在 —— 给一个不可用的 `engineId`，daemon 不报错、不警告，
+   * 直接静默回落到自动选择（`pipeline/setup.ts` 的 `forced === undefined` 分支），
+   * 而那个 `reason` 谁都不读、不落库、不上 SSE。也就是说：
+   * **让用户选中一个装不了的引擎 = 让他相信一件永远看不出真假的事。**
+   *
+   * 抽掉 `.filter(e => e.available)` ⇒ Paraformer 进入选项 ⇒ 这条红。
+   */
+  test('★ 装不了的引擎不许进候选 —— 后端对它是静默回落，选了看不出真假', async () => {
+    stubApi({
+      ...HEALTH([
+        { id: 'whisper.cpp', available: true },
+        { id: 'paraformer', available: false, reason: '未设置 OPENMEMO_PARAFORMER_DIR' },
+        // sherpa-onnx 整条缺席 —— daemon 只列构造成功的候选，这是实测形状
+      ]),
+      ...MODELS(null),
+    });
+    const r = await render(
+      <RetranscribeButton
+        noteUid="n1"
+        segments={noEdits}
+        currentLanguage="zh"
+        currentEngineId="whisper.cpp"
+      />,
+    );
+    await openPanel(r);
+
+    const opts = [...engineSelect(r.container)!.querySelectorAll('option')].map(
+      (o) => o.textContent ?? '',
+    );
+    assert.ok(
+      opts.some((o) => o.includes('Whisper.cpp')),
+      `可用的引擎要在，实际：${JSON.stringify(opts)}`,
+    );
+    assert.ok(
+      !opts.some((o) => o.includes('Paraformer')),
+      `不可用的引擎不许出现在候选里，实际：${JSON.stringify(opts)}`,
+    );
+    assert.ok(
+      !opts.some((o) => o.includes('Sherpa')),
+      `daemon 没报告的引擎同样不许出现，实际：${JSON.stringify(opts)}`,
+    );
+    r.unmount();
+  });
+
+  /**
+   * ★★ 默认值必须**等数据到了再定**，不能在挂载那一帧捕获。
+   *
+   * 这条专打 `useState(currentEngineId ?? …)` 那个写法：`useState` 的初值只取一次，
+   * 而挂载那一帧 `/health` 还没回来（面板没展开时甚至根本没发请求），
+   * 于是默认值会**永远**停在「自动」，"默认=上次用的"整条是个空转 ——
+   * 而且用 props 直接喂的测试是**绿的**，只有真实环境里失效。
+   *
+   * 这里的桩是异步兑现的（走完整个 fetch → react-query 链路），所以
+   * 缺陷实现在这条上会得到 `__auto__` 而不是 `whisper.cpp`。
+   */
+  test('★ 默认选中「这条上次实际用的那个引擎」，且是等 health 回来之后才定的', async () => {
+    stubApi({
+      ...HEALTH([
+        { id: 'whisper.cpp', available: true },
+        { id: 'paraformer', available: true },
+      ]),
+      ...MODELS(null),
+    });
+    const r = await render(
+      <RetranscribeButton
+        noteUid="n1"
+        segments={noEdits}
+        currentLanguage="zh"
+        currentEngineId="paraformer"
+      />,
+    );
+    await openPanel(r);
+    assert.equal(
+      engineSelect(r.container)!.value,
+      'paraformer',
+      '默认应是这条笔记上次实际用的引擎（transcripts.engine_id）',
+    );
+    r.unmount();
+  });
+
+  /**
+   * ★★ 上次用的引擎现在装不了 —— **回到「自动」，并且说出原因**。
+   *
+   * 两件事一起钉：
+   *   ① 不许把一个不可用的引擎当默认值发出去（那就是上面那条静默回落）；
+   *   ② 下拉"自己跳回自动"必须有解释 —— 不解释与"这个下拉坏了"完全同形。
+   *
+   * `reason` 断言的是 **daemon 给的原文**，不是我们编的文案：
+   * 改成写死一句"引擎不可用"⇒ 这条红。
+   */
+  test('★ 上次用的引擎现在不可用：回到自动、说出 daemon 给的原因、且绝不发出去', async () => {
+    const { calls } = stubApi({
+      ...HEALTH([
+        { id: 'whisper.cpp', available: true },
+        { id: 'paraformer', available: false, reason: '未设置 OPENMEMO_PARAFORMER_DIR' },
+      ]),
+      ...MODELS(null),
+      'POST /notes/n1/retranscribe': { jobUid: 'j9', noteUid: 'n1' },
+    });
+    const r = await render(
+      <RetranscribeButton
+        noteUid="n1"
+        segments={noEdits}
+        currentLanguage="zh"
+        currentEngineId="paraformer"
+      />,
+    );
+    await openPanel(r);
+
+    assert.equal(engineSelect(r.container)!.value, '__auto__', '不可用就不能当默认值');
+    const shown = text(r.container);
+    assert.ok(shown.includes('Paraformer'), '要说清是哪个引擎没了');
+    assert.ok(
+      shown.includes('未设置 OPENMEMO_PARAFORMER_DIR'),
+      `原因必须是 daemon 给的原文，实际：${shown.slice(0, 300)}`,
+    );
+
+    await click(r.container.querySelector('[data-testid="retranscribe-submit"]'));
+    await r.flush();
+    const post = calls.find((c) => c.path === '/notes/n1/retranscribe');
+    assert.deepEqual(
+      post!.body,
+      { language: 'zh' },
+      '「自动」= 一个 engineId 键都不发（与本功能之前的行为逐字节相同）',
+    );
+    r.unmount();
+  });
+
+  /**
+   * ★★ 「上次实际用的模型」与「当前全局激活的模型」**必须并列摆出来**。
+   *
+   * 两者是**两个命名空间**：前者是权重文件名（`ggml-base.en.bin`，`transcripts.model_id`），
+   * 后者是安装目录 id / 显示名（`asr/whisper-large-v3`，`/models/installed` 的 `active.asr`）。
+   * 正因为不可比，才不做模型预选、改成把两个事实并排给用户自己看。
+   *
+   * 抽掉这一行 ⇒ 两个名字都不在屏幕上 ⇒ 这条红。
+   * 只显示其中一个 ⇒ 另一条断言红 —— 而"只显示一个"恰恰是让用户
+   * 以为自己换了模型、实际重跑同一个的那种形态。
+   */
+  test('★ 上次实际用的模型 与 当前全局激活的模型，两个都要写出来', async () => {
+    stubApi({
+      ...HEALTH([{ id: 'whisper.cpp', available: true }]),
+      ...MODELS('asr/whisper-large-v3', [
+        {
+          id: 'asr/whisper-large-v3',
+          role: 'asr',
+          displayName: 'Whisper Large v3',
+          integrity: 'ok',
+          groupId: 'whisper-large',
+        },
+      ]),
+    });
+    const r = await render(
+      <RetranscribeButton
+        noteUid="n1"
+        segments={noEdits}
+        currentLanguage="zh"
+        currentEngineId="whisper.cpp"
+        currentModelId="ggml-base.en.bin"
+      />,
+    );
+    await openPanel(r);
+    const shown = text(r.container);
+
+    assert.ok(
+      shown.includes('ggml-base.en.bin'),
+      `必须写出上次实际用的那个模型名，实际：${shown.slice(0, 400)}`,
+    );
+    assert.ok(
+      shown.includes('Whisper Large v3'),
+      `必须同时写出当前全局激活的那个，实际：${shown.slice(0, 400)}`,
+    );
+    r.unmount();
+  });
+
+  /**
+   * ★★ **引擎是 per-job、模型是全局** —— 面板里必须各自说清楚。
+   *
+   * 这两个下拉挨在一起、长得一模一样，作用域却不同。少任何一句话，
+   * 用户都会以为两个都是"这一次"或两个都是"以后所有" ——
+   * 而"以为只改这一次、实际把全局模型换掉了"是不可逆的误操作。
+   */
+  test('★ 引擎说「只影响这一次」、模型说「对之后所有转写生效」—— 两句都得在', async () => {
+    stubApi({
+      ...HEALTH([{ id: 'whisper.cpp', available: true }]),
+      ...MODELS('asr/w', [
+        { id: 'asr/w', role: 'asr', displayName: 'Whisper A', integrity: 'ok', groupId: 'w' },
+      ]),
+    });
+    const r = await render(
+      <RetranscribeButton
+        noteUid="n1"
+        segments={noEdits}
+        currentLanguage="zh"
+        currentEngineId="whisper.cpp"
+      />,
+    );
+    await openPanel(r);
+    const shown = text(r.container);
+
+    assert.ok(shown.includes('只影响这一次重跑'), '引擎那一半必须说明它只管这一次');
+    assert.ok(
+      shown.includes('切换后对之后所有转写生效'),
+      '模型那一半必须说明它是全局的 —— 两句都在，用户才分得清',
+    );
+    r.unmount();
+  });
+
+  /**
+   * ★ 强制了引擎之后，那句「自动识别下不会启用 Paraformer」**必须闭嘴**。
+   *
+   * 后端一旦走 `forced` 分支就**不看语言前缀**了，那句提示会当场否认用户刚选的引擎
+   * （他选了 Paraformer，屏幕上写着 Paraformer 不会被启用）。
+   * 这是本次改动**自己引进来的**矛盾，所以必须自己钉住。
+   *
+   * 两个方向都断言：不强制时它得在（否则这条会退化成"永远看不到那句话"的空转）。
+   */
+  test('★ 语言=自动时那句 Paraformer 提示：不指定引擎要在，指定了必须消失', async () => {
+    stubApi({
+      ...HEALTH([
+        { id: 'whisper.cpp', available: true },
+        { id: 'paraformer', available: true },
+      ]),
+      ...MODELS(null),
+    });
+    // currentLanguage=null ⇒ 语言默认 auto ⇒ 那条提示的前提成立
+    const r = await render(
+      <RetranscribeButton noteUid="n1" segments={noEdits} currentLanguage={null} />,
+    );
+    await openPanel(r);
+    assert.ok(
+      text(r.container).includes('不会启用 Paraformer'),
+      '没强制引擎时，这条因果提示是真的，必须在',
+    );
+
+    await type(engineSelect(r.container), 'paraformer');
+    await r.flush();
+    assert.ok(
+      !text(r.container).includes('不会启用 Paraformer'),
+      '强制了引擎之后后端不看语言前缀，这句话就是假的，必须消失',
+    );
+    r.unmount();
+  });
+
+  /**
+   * ★ 库里那一列**没有 CHECK 约束**，夹具/老数据里出现过 `'fixture'`。
+   * 认不出的值不许硬转成引擎 id 塞进请求体 —— 那正好撞上 daemon 的静默回落。
+   */
+  test('★ transcript.engineId 是个认不出的值时，退回「自动」而不是原样发出去', async () => {
+    const { calls } = stubApi({
+      ...HEALTH([{ id: 'whisper.cpp', available: true }]),
+      ...MODELS(null),
+      'POST /notes/n1/retranscribe': { jobUid: 'j9', noteUid: 'n1' },
+    });
+    const r = await render(
+      <RetranscribeButton
+        noteUid="n1"
+        segments={noEdits}
+        currentLanguage="zh"
+        currentEngineId="fixture"
+      />,
+    );
+    await openPanel(r);
+    assert.equal(engineSelect(r.container)!.value, '__auto__');
+
+    await click(r.container.querySelector('[data-testid="retranscribe-submit"]'));
+    await r.flush();
+    assert.deepEqual(calls.find((c) => c.path === '/notes/n1/retranscribe')!.body, {
+      language: 'zh',
+    });
+    r.unmount();
+  });
+
+  /**
+   * ★ 面板不展开时**一个请求都不许发**。
+   *
+   * 这个组件挂在**每一条笔记**的详情页头上，无条件拉的话，用户只是打开一条笔记看看，
+   * 就白白多两个请求（`/health` + `/models/installed`，后者要列出全部已装模型）。
+   */
+  test('★ 面板没展开时不为它拉 /health 和 /models/installed', async () => {
+    const { calls } = stubApi({
+      ...HEALTH([{ id: 'whisper.cpp', available: true }]),
+      ...MODELS(null),
+    });
+    const r = await render(
+      <RetranscribeButton
+        noteUid="n1"
+        segments={noEdits}
+        currentLanguage="zh"
+        currentEngineId="whisper.cpp"
+      />,
+    );
+    await r.flush();
+    assert.deepEqual(
+      calls.map((c) => c.path),
+      [],
+      `折叠状态下不该有任何请求，实际：${JSON.stringify(calls.map((c) => c.path))}`,
+    );
+
+    // 展开之后才拉 —— 否则上面那条会退化成"这两个查询压根没接上"也照样绿
+    await openPanel(r);
+    assert.ok(
+      calls.some((c) => c.path === '/health'),
+      '展开后必须真的去问引擎可用性',
+    );
+    assert.ok(
+      calls.some((c) => c.path === '/models/installed'),
+      '展开后必须真的去问当前激活的模型',
+    );
+    r.unmount();
+  });
+});
+
 /* ──────────────── 逐字高亮 + 重跑保留编辑（T-084） ──────────────── */
 
 /**

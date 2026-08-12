@@ -9,7 +9,12 @@ import { AsrModelPicker } from './AsrModelPicker';
  *
  * 只放**真的会被后端消费**的选项。目前就一个半：
  * - `language` —— 全通：import / upload / retranscribe 三个入口都收，一路到 whisper 的 `-l`
- * - 模型 —— 半通：能切**全局激活**的模型，但不能"本次任务用这个"（后端无此入参）
+ * - 模型 —— 半通：能切**全局激活**的模型，但不能"本次任务用这个"
+ *
+ * ⚠️ "不能本次任务用这个"的**理由已经不是"后端无此入参"**了（#99 ①）：
+ * `/api/notes/import` 与 `/api/notes/:uid/retranscribe` 都收 `modelId`。
+ * 不做 per-task 模型预选是**判断**：`transcripts.model_id` 存权重文件名、
+ * `activate` 用安装目录 id，两个命名空间不可比（详见 `AsrModelPicker` 的文件头）。
  *
  * 曾经放在这里的 `diarize` / `keepVideo` / `structure` 三个勾选框已删除：
  * 它们连 HTTP 请求体都没进过（`api.ts` 只发 `{input}`），
@@ -20,10 +25,23 @@ export function TranscribeOptions({
   language,
   onLanguageChange,
   showModel = true,
+  engineForced = false,
 }: {
   language: string;
   onLanguageChange: (v: string) => void;
   showModel?: boolean;
+  /**
+   * 调用方自己已经**显式指定了引擎**（`engineId` 会真的进请求体）。
+   *
+   * 唯一的作用是**闭掉下面那条 `asr.autoHint`**：它说的是「自动识别下不会启用
+   * Paraformer，因为后端按语言前缀选引擎」—— 而一旦调用方强制了引擎，
+   * 后端走的是 `forced` 那一支，**根本不看语言前缀**，那句话当场变成假话
+   * （用户明明选了 Paraformer，界面却告诉他 Paraformer 不会被启用）。
+   *
+   * 默认 `false`：捕获页/录音页至今不发 `engineId`，对它们那句提示仍然为真。
+   * 今天唯一传 `true` 的是 `features/notes/RetranscribeButton.tsx` 的引擎下拉。
+   */
+  engineForced?: boolean;
 }) {
   const { t } = useTranslation();
   // 后端对非法值是静默降级成 auto 的，所以校验只为把错误显示出来
@@ -79,8 +97,11 @@ export function TranscribeOptions({
       {/*
         auto 会让 Paraformer 落选 —— 后端的引擎自动选择只认 zh / cmn / yue 前缀。
         这是用户完全看不见的因果链，不写出来他只会觉得"有时候快有时候慢"。
+
+        ⚠️ `engineForced` 时**必须闭嘴**：那条路后端走 `forced` 分支、压根不看语言前缀，
+        这句话会变成"你选的 Paraformer 不会被启用"—— 一句当场可证伪的谎。
       */}
-      {autoLanguageDowngradesEngine(language) ? (
+      {!engineForced && autoLanguageDowngradesEngine(language) ? (
         <p className="text-xs text-ink-muted" data-testid="asr-language-auto-hint">
           {t('asr.autoHint')}
         </p>

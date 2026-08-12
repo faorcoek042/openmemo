@@ -254,10 +254,22 @@ export default function NoteDetailPage() {
                 把文件接回去就好。而那句话必须落在**读得到的地方**，
                 不能再挂在一个 `pointer-events: none` 元素的 `title` 上（见下方注释）。
               */}
+              {/*
+                ★ `engineId` / `modelId` 来自**同一个已经在拉的 `useTranscriptQuery`**
+                （上面那个 `transcript`）—— 零额外请求。
+
+                它俩是「上次这条笔记**实际**用了什么」：`transcripts.engine_id` 那一列
+                由 runner 写入 `chosen.engineId`（真正跑起来的那个），不是请求里写的那个。
+                所以它同时当两样东西用：引擎下拉的**默认值**，和用户点完之后
+                「这一次到底用了哪个」的**事后凭据** —— SSE 那条路给不了后者，
+                `TranscribeStartedEvent` 只有 `modelId`，没有 `engineId`。
+              */}
               <RetranscribeButton
                 noteUid={noteUid ?? ''}
                 segments={arr(transcript.data?.segments)}
                 currentLanguage={transcript.data?.language ?? null}
+                currentEngineId={transcript.data?.engineId ?? null}
+                currentModelId={transcript.data?.modelId ?? null}
                 canRetranscribe={note.data?.canRetranscribe}
               />
             </div>
