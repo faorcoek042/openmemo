@@ -76,7 +76,18 @@ function readCoverage(runId, name) {
     const f = join(dir, 'e2e-attest.json');
     if (!existsSync(f)) return { ok: false, why: '包里没有 e2e-attest.json' };
     const j = JSON.parse(readFileSync(f, 'utf8'));
-    return { ok: true, undecided: j.undecided ?? null, mode: j.mode ?? null };
+    return {
+      ok: true,
+      undecided: j.undecided ?? null,
+      mode: j.mode ?? null,
+      /*
+       * ★ `mutations`（#102）：`ran` / `skipped` / `null`（这条腿没接）。
+       *   这道闸此前只念 `undecided` 与 `mode`；`mutations` 一落地就必须有消费方，
+       *   否则它会立刻变成本文件上面那段说的"没有消费方的字段" ——
+       *   **和没有这个字段是一回事**。
+       */
+      mutations: j.mutations ?? null,
+    };
   } catch (e) {
     return { ok: false, why: String(e.message).slice(0, 80) };
   } finally {
@@ -97,7 +108,20 @@ function coverageText(cov) {
     cov.mode === null
       ? ''
       : ` · 抽样=${cov.mode}${cov.mode === 'sample' ? '（**不是全量**）' : ''}`;
-  return `  〔${u}${m}〕`;
+  /*
+   * ⚠️ 三态，三句不同的话：
+   *   · `null`    —— 这条腿没上报（**不知道，别当成跑过了**）；
+   *   · `ran`     —— 变异验证跑了且没红；
+   *   · `skipped` —— **整轮没跑**。凭证仍然存在（那是有意的：否则 mutations=false
+   *     的跑会让发布闸门直接卡死），但它对"这些断言有没有牙齿"一个字都没说。
+   */
+  const mu =
+    cov.mutations === null
+      ? ''
+      : cov.mutations === 'skipped'
+        ? ' · 变异=**skipped（整轮没跑，跳过≠通过）**'
+        : ` · 变异=${cov.mutations}`;
+  return `  〔${u}${m}${mu}〕`;
 }
 
 const argv = process.argv.slice(2);
@@ -264,13 +288,25 @@ if (missing.length === 0) {
     (f) => f.cov?.ok && typeof f.cov.undecided === 'number' && f.cov.undecided > 0,
   );
   const sampled = found.filter((f) => f.cov?.ok && f.cov.mode === 'sample');
+  const noMut = found.filter((f) => f.cov?.ok && f.cov.mutations === 'skipped');
   const silent = found.filter((f) => !f.cov?.ok || f.cov.undecided === null);
-  if (withUn.length > 0 || sampled.length > 0 || silent.length > 0) {
+  if (withUn.length > 0 || sampled.length > 0 || silent.length > 0 || noMut.length > 0) {
     say('');
     say('⚠️ 「跑绿过」不等于「全验过」——：');
     for (const f of withUn)
       say(`   · ${f.leg}：有 **${f.cov.undecided} 条断言没被验到**（无从判断）`);
     for (const f of sampled) say(`   · ${f.leg}：抽样模式 sample —— **不是全量覆盖**`);
+    /*
+     * ★ #102：这一条与上面两条**不是同一层**的事 ——
+     *   `undecided` / `mode` 说的是"断言覆盖了多少"，
+     *   这一条说的是"**那些断言到底有没有牙齿从来没被验过**"。
+     *   一条从来没红过的断言，和一条不存在的断言，对用户来说是同一个东西。
+     */
+    for (const f of noMut)
+      say(
+        `   · ${f.leg}：**变异验证整轮没跑**（mutations=skipped）——` +
+          ' 这条腿的断言"会不会红"本轮**没有被证明过**',
+      );
     for (const f of silent)
       say(`   · ${f.leg}：**没上报覆盖面**（未接线或读不到）—— 不知道等于没验过，别当成 0`);
     say('   （以上不影响放行判定；要不要因此卡住，由 Manager 裁。）');
@@ -309,6 +345,16 @@ const DISPATCH_HINT = {
   // ⚠️ bundlesRunId，多一个 s；且必须 artifact 模式。
   runtime: (b) =>
     `gh workflow run e2e-runtime.yml --ref master -f bundleSource=artifact -f bundlesRunId=${b}`,
+  /*
+   * ★ `browser` 此前**在 LEGS 里却不在这张表里** —— 于是它缺凭证时，这道闸只会说
+   *   "没有登记触发方式，自己去 workflow 里看输入名"。一条会把人推去读 YAML 的提示，
+   *   和没有提示的差别很小；而这张表存在的理由恰恰是"每条腿的输入名都不一样"。
+   *   它与 `notes` 同一套拼法（`assembleFromSource` + `bundleRunId`）。
+   *   `bundleRunId` 必须给：留空时三个平台各自解析，可能验的不是同一批包，
+   *   那种 run 现在不发凭证（见 e2e-browser.yml 的 attest 作业）。
+   */
+  browser: (b) =>
+    `gh workflow run e2e-browser.yml --ref master -f assembleFromSource=false -f bundleRunId=${b}`,
 };
 say('   要放行，先把缺的腿对**这一批包**跑一遍（注意各腿的输入名不同）：');
 for (const m of missing) {
