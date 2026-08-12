@@ -74,10 +74,12 @@ import { WordLevelBadge } from '../features/transcript';
 import { WordHighlight, findActiveWord } from '../features/transcript/WordHighlight';
 import {
   DEFAULT_PROXY_CONFIG,
+  installedVersionOf,
   LLM_SETTING_KEYS,
   MAINSTREAM_PROVIDER_IDS,
   PROVIDER_KINDS,
 } from '@openmemo/shared';
+import type { InstalledBackendPack, InstalledVersion } from '@openmemo/shared';
 import { ProxySettingsSection } from '../features/settings/ProxySettingsSection';
 import ComponentsPage from '../features/components/ComponentsPage';
 import {
@@ -3849,7 +3851,8 @@ describe('T-132 组件与来源页', () => {
     displayNameZh: 'yt-dlp 站点解析器（Linux x64）',
     category: 'media-tool',
     pinnedVersion: '2026.07.04',
-    installedVersion: null,
+    // 三态里的「没装」那一格（契约已从 `string | null` 换成 `InstalledVersion`）。
+    installedVersion: { kind: 'not-installed' } as const,
     latestVersion: null,
     updateAvailable: false,
     checkError: null,
@@ -3961,7 +3964,7 @@ describe('T-132 组件与来源页', () => {
    */
   const INSTALLED_WITH_UPDATE = {
     ...YTDLP,
-    installedVersion: '2026.06.01',
+    installedVersion: { kind: 'known', version: '2026.06.01' } as const,
     latestVersion: '2026.07.04',
     updateAvailable: false,
   };
@@ -5131,7 +5134,7 @@ describe('T-135 ③ 组件卡片：displayNameZh 是两份里的一份，不是�
     displayNameZh: '中文分词器 libsimple（Linux x64）',
     category: 'sqlite-ext',
     pinnedVersion: 'v0.5.2',
-    installedVersion: 'v0.5.2',
+    installedVersion: { kind: 'known', version: 'v0.5.2' } as const,
     latestVersion: 'v0.5.2',
     updateAvailable: false,
     checkError: null,
@@ -10766,7 +10769,7 @@ describe('T-200 S-6 组件页必须跟着活查询走', () => {
     displayNameZh: 'yt-dlp 站点解析器（Linux x64）',
     category: 'media-tool',
     pinnedVersion: 'v1',
-    installedVersion: 'v1',
+    installedVersion: { kind: 'known', version: 'v1' } as InstalledVersion,
     latestVersion: null as string | null,
     updateAvailable: false,
     checkError: null,
@@ -10813,7 +10816,13 @@ describe('T-200 S-6 组件页必须跟着活查询走', () => {
       let installed = 'v1';
       const stub = stubApi({
         '/components': () => ({
-          components: [{ ...BASE, installedVersion: installed, pinnedVersion: 'v2' }],
+          components: [
+            {
+              ...BASE,
+              installedVersion: { kind: 'known', version: installed },
+              pinnedVersion: 'v2',
+            },
+          ],
           online: true,
           checkedAt: '2026-08-10T00:00:00.000Z',
         }),
@@ -10822,7 +10831,7 @@ describe('T-200 S-6 组件页必须跟着活查询走', () => {
           components: [
             {
               ...BASE,
-              installedVersion: 'v1',
+              installedVersion: { kind: 'known', version: 'v1' },
               pinnedVersion: 'v2',
               latestVersion: 'v2',
               // 真服务端算的是 compareVersions(latest, pinned) > 0；v2 vs v2 ⇒ false。
@@ -11240,7 +11249,7 @@ describe('组件更新：门控的轴和动作必须是同一件事', () => {
     displayNameZh: 'yt-dlp 站点解析器',
     category: 'media-tool',
     pinnedVersion: '2026.07.04',
-    installedVersion: '2026.07.04',
+    installedVersion: { kind: 'known', version: '2026.07.04' } as InstalledVersion,
     latestVersion: null as string | null,
     updateAvailable: false,
     checkError: null,
@@ -11328,11 +11337,159 @@ describe('组件更新：门控的轴和动作必须是同一件事', () => {
   });
 
   test('★★ 已装 < 钉定 ⇒ 按钮回来，而且说的是**钉定**那一版', async () => {
-    const r = await show({ installedVersion: '2026.06.01' });
+    const r = await show({ installedVersion: { kind: 'known', version: '2026.06.01' } });
     const btn = r.container.querySelector('[data-testid="component-update-ytdlp-linux-x64"]');
     assert.equal(btn === null, false, '装一次真的有用的那一种情形，反而没有按钮');
     const label = btn?.textContent ?? '';
     assert.equal(label.includes('2026.07.04'), true, `按钮没说清装的是哪一版：${label}`);
+    r.unmount();
+  });
+});
+
+/* ══════ 随包出厂的后端包：「已装版本」这个概念不适用 ⇒ 不许号召人再下一遍 ══════ */
+
+/**
+ * ★★ 现场（用户真机 v0.7.0 Windows，`media-tools-win-x64`）。
+ *
+ * `packages/downloader/src/components.ts` 的 `readInstalledVersions()` 原来写的是
+ * `r.version ?? r.catalogVersion ?? 'installed'`，而落在 `manifests/backend/` 里的
+ * `InstalledBackendPack` **既没有 `version` 也没有 `catalogVersion`** —— 它的版本栏
+ * 叫 `engineVersion`，而随包出厂那份填的是 `BUNDLED_VERSION_UNKNOWN`（`'unknown'`）。
+ * 于是每次都掉进哨兵 `'installed'`。
+ *
+ * 卡片按钮判 `installedVersion !== pinnedVersion`：
+ * `'installed' !== 'autobuild-2026-07-31-14-10'` **恒真** ⇒ 按钮长期常亮，
+ * 上面写着「装上目录钉定的 autobuild-2026-07-31-14-10」。点一次 = 白下
+ * **145,349,121 字节**，装完卡片一个字都不变 —— 他会再点一次。
+ *
+ * ⚠️ **这条腿刻意不手写 `installedVersion: 'installed'`。**
+ * 它从**真的 `InstalledBackendPack`**（`source:'bundled'`、`engineVersion:'unknown'`、
+ * 连 `version` / `catalogVersion` 这两个键都不存在）出发，喂进产品**唯一的构造点**
+ * `installedVersionOf()`，用它吐出来的东西渲染。
+ * 手写哨兵只能钉住"今天这个字面量"，而这个缺陷的下一次转世必然是**换一个字面量**
+ * （`'unknown'` 就在旁边等着）—— 从记录形状出发才拦得住那一次。
+ *
+ * 为什么老用例一条都没红：`ComponentCard` 的既有用例用的全是 `'v1'`/`'v2'`/
+ * `'2026.06.01'` 这种语义版本号，**永远撞不上哨兵**，于是那条恒真的判据在测试里
+ * 从来没有机会恒真。
+ */
+describe('组件卡片：说不出已装版本时，不许给「装上钉定版」按钮', () => {
+  /**
+   * 真形状，逐字对着 `reconcileBundledPacks()`（`apps/daemon/src/http/rest/backendReconcile.ts`）
+   * 写出来的那条记录：**没有 `version`，没有 `catalogVersion`**。
+   */
+  const BUNDLED_FFMPEG_RECORD: InstalledBackendPack = {
+    schemaVersion: 1,
+    id: 'media-tools-win-x64',
+    engine: 'ffmpeg',
+    // 取不到就说 unknown，不拿目录里那个版本号顶替（= BUNDLED_VERSION_UNKNOWN）
+    engineVersion: 'unknown',
+    backend: 'cpu',
+    source: 'bundled',
+    installedAt: '2026-07-31T14:10:00.000Z',
+    // 随包出厂那份没做过逐字节校验，这两格必须如实
+    verifiedAt: null,
+    integrity: 'unverified',
+    files: [
+      { name: 'ffmpeg.exe', sha256: '', sizeBytes: 113_000_000, path: 'runtime/probe/ffmpeg.exe' },
+      { name: 'ffprobe.exe', sha256: '', sizeBytes: 32_349_121, path: 'runtime/probe/ffprobe.exe' },
+    ],
+    selfTest: null,
+  };
+
+  const FFMPEG_COMPONENT = {
+    id: 'media-tools-win-x64',
+    displayName: 'FFmpeg + FFprobe (Windows x64)',
+    displayNameZh: 'FFmpeg 媒体工具（Windows x64）',
+    category: 'media-tool',
+    // vendor/manifests/components.json 里的真值
+    pinnedVersion: 'autobuild-2026-07-31-14-10',
+    latestVersion: null as string | null,
+    updateAvailable: false,
+    checkError: null,
+    checkedAt: null as string | null,
+    provenance: {
+      repoUrl: 'https://github.com/BtbN/FFmpeg-Builds',
+      releaseUrl: 'https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-07-31-14-10',
+      license: 'GPL-3.0-or-later',
+      licenseUrl: 'https://www.gnu.org/licenses/gpl-3.0.html',
+    },
+    upstream: { kind: 'github-release' as const, repo: 'BtbN/FFmpeg-Builds' },
+    // 点一次就要重下的字节数，写在这里是为了让这条腿的代价看得见
+    sizeBytes: 145_349_121,
+    sha256: 'ab'.repeat(32),
+    sha256Provenance: null,
+  };
+
+  const showFfmpeg = async (installedVersion: InstalledVersion) => {
+    stubApi({
+      '/components': {
+        components: [{ ...FFMPEG_COMPONENT, installedVersion }],
+        online: false,
+        checkedAt: null,
+      },
+    });
+    const r = await render(<ComponentsPage />);
+    await r.flush();
+    return r;
+  };
+
+  test('★★ 构造点：一份没有版本号的安装记录，说不出就是说不出，不许编一个', () => {
+    const iv = installedVersionOf(BUNDLED_FFMPEG_RECORD);
+    assert.equal(
+      iv.kind,
+      'not-applicable',
+      `把一份没有版本号的安装记录说成了「知道版本」：${JSON.stringify(iv)}`,
+    );
+  });
+
+  /** 上一条钉构造点，这一条钉**屏幕**：判据分开，反悔哪一半都会红。 */
+  test('★★ 真的随包出厂记录 ⇒ **没有**那颗按钮（点一次白下 145,349,121 字节）', async () => {
+    const r = await showFfmpeg(installedVersionOf(BUNDLED_FFMPEG_RECORD));
+    const btn = r.container.querySelector('[data-testid="component-update-media-tools-win-x64"]');
+    assert.equal(
+      btn,
+      null,
+      '按钮还在 —— 它对着一份我们根本说不出版本号的安装，号召用户重下 145,349,121 字节：' +
+        `${btn?.textContent ?? ''} / ${text(r.container).slice(0, 200)}`,
+    );
+    r.unmount();
+  });
+
+  test('★ 同一现场：这一格要说「已安装」+ 为什么说不出版本，不许长得像「尚未安装」', async () => {
+    const r = await showFfmpeg(installedVersionOf(BUNDLED_FFMPEG_RECORD));
+    const cell = r.container.querySelector('[data-testid="installed-version-media-tools-win-x64"]');
+    const said = cell?.textContent ?? '';
+    assert.equal(said.includes('已安装'), true, `没说它其实是装着的：${said}`);
+    assert.equal(
+      said.includes('尚未安装'),
+      false,
+      `把「装了但说不出版本」渲染成了「没装」：${said}`,
+    );
+    // 哨兵曾经会被原样印进这一格，看上去像个版本号
+    assert.equal(said.includes('installed'), false, `哨兵漏到屏幕上了：${said}`);
+    r.unmount();
+  });
+
+  test('★ 阳性对照：真有一个更旧的版本号时，按钮必须还在（否则上面那条是空跑）', async () => {
+    const r = await showFfmpeg({ kind: 'known', version: 'autobuild-2026-06-01-00-00' });
+    const btn = r.container.querySelector('[data-testid="component-update-media-tools-win-x64"]');
+    assert.equal(btn === null, false, '装一次真的有用的那一种情形，反而没有按钮');
+    assert.equal(
+      (btn?.textContent ?? '').includes('autobuild-2026-07-31-14-10'),
+      true,
+      `按钮没说清装的是哪一版：${btn?.textContent ?? ''}`,
+    );
+    r.unmount();
+  });
+
+  test('★ 阴性对照：已装 = 钉定 ⇒ 也没有按钮（两条"不给按钮"的理由不许混为一谈）', async () => {
+    const r = await showFfmpeg({ kind: 'known', version: 'autobuild-2026-07-31-14-10' });
+    assert.equal(
+      r.container.querySelector('[data-testid="component-update-media-tools-win-x64"]'),
+      null,
+      '已装的就是钉定那一版，按钮只会让人白下一遍',
+    );
     r.unmount();
   });
 });
