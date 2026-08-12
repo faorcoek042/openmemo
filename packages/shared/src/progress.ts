@@ -39,7 +39,8 @@
  *
  * 1. **判别式联合**，`kind` 打头 —— 数字不再单独存在，它永远和它的量纲绑在一起。
  * 2. **只有一种量纲可表达**：`fraction`（0–1）。**没有 `percent` 这一格** ——
- *    百分比是**显示形态**，不是传输形态，它只在渲染层由 `toPercentDisplay()` 现算。
+ *    百分比是**显示形态**，不是传输形态：它只在渲染层现算（`ProgressMeter` 把比例
+ *    乘 100 画成宽度，`formatPercent` 交给 `Intl` 去本地化），**从不上线**。
  *    ⇒ 「两种量纲共用一个字段名」在类型上**写不出来**。
  * 3. **「报不出进度」是独立一格，且不携带那个数字**（不是 `value: null`，是**没有
  *    `value` 这一栏**）。这一条顺手把 `features/models/sse.ts` 用一段注释苦苦守护的
@@ -63,7 +64,6 @@
 
 /** 判别式。`percent` **刻意不存在** —— 见文件头第 2 条。 */
 export const PROGRESS_READING_KINDS = ['fraction', 'unreportable'] as const;
-export type ProgressReadingKind = (typeof PROGRESS_READING_KINDS)[number];
 
 /**
  * 为什么报不出进度。**不是装饰**：每一格都对应一种真实处境，
@@ -175,14 +175,4 @@ export const PROGRESS_UNREPORTABLE: Readonly<
 export function fractionOf(reading: ProgressReading | null | undefined): number | null {
   if (!reading) return null;
   return reading.kind === 'fraction' ? reading.value : null;
-}
-
-/**
- * 渲染层用的百分比。**百分比只在这里出现一次**，而且它带着名字。
- *
- * 返回 `null` = 没有可显示的百分比（调用方要给不确定表达，不许自己兜底成 0）。
- */
-export function toPercentDisplay(reading: ProgressReading | null | undefined): number | null {
-  const f = fractionOf(reading);
-  return f === null ? null : f * 100;
 }
