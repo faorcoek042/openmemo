@@ -48,6 +48,15 @@
  *   · 外部命令与页面操作**一律带超时**；
  *   · **「跳过」不许渲染成「成功」**：找不到按钮是**红**（并说清是哪一种找不到）。
  *
+ * ## 等待：等那条断言**真正需要的那个东西**，不是等「网络安静了」
+ *
+ * `waitUntil:'networkidle'` + 一段定值 `waitForTimeout` 曾经遍布本文件。
+ * 它的前提「网络安静 ⇒ 页面画完了」**是假的**：`networkidle` 可以恰好落在
+ * 「bundle 下完、React 还没发出第一个 `/api` 请求」的缝里。
+ * `[CI 实测 run 31629900327, win32-x64]` 就栽在这条缝上 ——
+ * B1 把「这一页还没加载完」印成了「页面上根本没有这个按钮」。
+ * 详细的成因、计时对照与替代做法见下方「★ 等什么」那一大段。
+ *
  * ## 用法
  *
  *   node scripts/ci/e2e-browser-audit.mjs [--bundle <包目录>] [--port 19980]
@@ -397,6 +406,107 @@ try {
     if (r.status() >= 400) badResponses.push(`${r.status()} ${r.request().method()} ${r.url()}`);
   });
 
+  /* ── ★ 等什么：**等这一页真的画完，不是等"网络安静了"** ──────────────────────
+   *
+   * `[CI 实测 run 31629900327, win32-x64]` B1 报「页面上根本没有这个按钮」，
+   * 而**同一趟运行**两分钟后的 2b 节里，同一个按钮 `存在=true 可见=true 禁用=false`。
+   * 变的不是产品，是我等的方式：
+   *
+   *     await page.goto(…, { waitUntil: 'networkidle', timeout: 30_000 });
+   *     await page.waitForTimeout(1500);
+   *
+   * `networkidle` 说的是「连接安静了 500 ms」——它可以**恰好落在**
+   * 「bundle 下完了、React 还没发出第一个 `/api` 请求」的那个缝里：缝的两侧都安静。
+   * 同一趟运行的计时对照（`goto` 本身耗时，= 打印时刻差 − 那 1500 ms）：
+   *   · win32 **0.59 s** → 红；   · linux **1.03 s** → 绿；
+   *   · 通过的两趟 win32：**7.13 s**（run 31633140317）/ **7.81 s**（run 31571495081）。
+   * **0.59 s 那趟不是页面快，是 idle 得太早**，而定值 1500 ms 盖不住这个缺口。
+   *
+   * 缺口另一侧是产品的渲染契约：`useModelsSourcesQuery()` pending 期间
+   * `SourcesSection.tsx:48` 是 `if (!data) return null;` —— 整块下载源区块连同
+   * `data-testid="models-sources-probe"`（同文件 :91）**根本不在 DOM 里**，
+   * 不是隐藏、不是禁用，是**不存在**。于是「还没加载完」和「按钮真的没了」
+   * 在 `exists === false` 这一个布尔上**完全同形**。
+   * **一条把"还在加载"报成"按钮不存在"的腿，正是本文件要拆掉的那种假红。**
+   *
+   * ⇒ 之后**一律等那条断言真正需要的那个东西**：
+   *     · `openPage()` 只等 DOM 到手（`domcontentloaded`），不再拿网络冒充页面；
+   *     · 紧跟着 `waitForSel()` / `until()` 等**具体那个元素/条件**，带超时；
+   *     · **等不到不抛** —— 结果交给断言，断言才说得清是「这一页没加载完」
+   *       还是「那个东西真的不在」（`endpointEvidence()` 提供分辨用的证据）。
+   *
+   * ⚠️ **判据一个字都没放松**：等不到照样红，只是红的那句话变准了。
+   *   刻意保留的定值等待只有两类，各自在原地写明理由：
+   *     ① `REACTION_WINDOW_MS` —— 它**就是**判据本身（「点击之后的 1.5 秒内」）；
+   *     ② 采样循环的 200/300 ms 间隔、以及 B12 变异基线那 1.2 s ——
+   *        那是**测量**（要的就是"过了这么久"），不是等待。
+   */
+  const READY_MS = 20_000;
+
+  /** 打开一页：只等 DOM 到手。「这一页画完没有」由调用方按自己需要的东西去等。 */
+  async function openPage(page_, path) {
+    await page_.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  }
+
+  /**
+   * 等一个选择器出现。**等不到不抛**，返回 `{ ok, ms }`（全是字符串/数字/布尔，§8）。
+   * 谁调用谁负责把"没等到"写进自己那条断言的失败消息里 —— 这正是两件事分得开的地方。
+   */
+  async function waitForSel(page_, sel, { timeout = READY_MS, state = 'attached' } = {}) {
+    const t0 = Date.now();
+    try {
+      await page_.waitForSelector(sel, { state, timeout });
+      return { ok: true, ms: Date.now() - t0 };
+    } catch {
+      return { ok: false, ms: Date.now() - t0 };
+    }
+  }
+
+  /**
+   * 轮询一个谓词（页面侧或 Node 侧都行）直到为真或超时，同样**不抛**。
+   *
+   * ⚠️ 用它替换定值 sleep 时，**谓词必须和那条断言用的是同一个** ——
+   * 谓词一旦比断言宽，就成了"等到断言能过为止"，那是放水，不是等待。
+   */
+  async function until(probe, { timeout = READY_MS, interval = 150 } = {}) {
+    const t0 = Date.now();
+    for (;;) {
+      let hit;
+      try {
+        hit = (await probe()) === true;
+      } catch {
+        // 探针自己抛了（页面正在导航、元素刚被换掉…）= 这一轮不算命中，继续等
+        hit = false;
+      }
+      if (hit) return { ok: true, ms: Date.now() - t0 };
+      if (Date.now() - t0 >= timeout) return { ok: false, ms: Date.now() - t0 };
+      await new Promise((r) => setTimeout(r, interval));
+    }
+  }
+
+  /** SPA 真的挂上了（body 里有字），不是一张白纸。给"只要一个页面上下文"的地方用。 */
+  async function waitForAppMounted(page_, { timeout = READY_MS } = {}) {
+    return await until(
+      async () => (await page_.evaluate(() => document.body.innerText.trim().length)) > 0,
+      { timeout, interval: 100 },
+    );
+  }
+
+  /**
+   * 某个端点这一轮到底发生过什么。断言拿它把三件事分开说：
+   *   · 请求 0 条  ⇒ 前端压根没发起（页面没跑到那一步）—— **不是产品缺陷**；
+   *   · 有 >=400   ⇒ 请求失败了，该走错误分支；
+   *   · 有请求、无错误、界面却没东西 ⇒ **这才轮到怀疑产品**。
+   */
+  function endpointEvidence(needle) {
+    const reqs = requests.filter((r) => r.includes(needle));
+    const bad = badResponses.filter((r) => r.includes(needle));
+    if (reqs.length === 0) return `${needle} 请求 0 条（前端根本没发起 —— 页面还没跑到那一步）`;
+    return bad.length > 0
+      ? `${needle} 请求 ${reqs.length} 条，其中 HTTP>=400 ${bad.length} 条：${bad[0]}`
+      : `${needle} 请求 ${reqs.length} 条，没有 >=400 的响应`;
+  }
+
   /**
    * 把当前页所有**可见**的按钮/链接列出来（纯字符串，§8）。
    * 先枚举再点 —— 猜选择器猜错时报出来的是"按钮不存在"，那是**假缺陷**，
@@ -423,9 +533,45 @@ try {
     });
   }
 
-  /** 装一个变异体：让目标按钮"还在但点不动"。**不改产品源码一个字节。** */
+  /**
+   * 横扫专用的「画完了」：**按钮清单连续两次采样一模一样**。
+   *
+   * 横扫没有"要等的那一个元素" —— 它要等的是**全部**，所以只能等清单静止。
+   * 静不下来**不红**（那不是这一节的判据），但必须如实说一句：
+   * 默默少扫几个按钮才是最坏的形态 —— **覆盖面缩水，而汇总里一片绿**。
+   */
+  async function waitForInventorySettled(page_, { timeout = 12_000, interval = 300 } = {}) {
+    const t0 = Date.now();
+    let prev = null;
+    for (;;) {
+      // 采样自己出错（正在导航、执行上下文刚被换掉）**不许把整页判成"打不开"** ——
+      // 外层那个 try 会 `continue` 掉一整页，那才是真正的覆盖面损失。
+      let now;
+      try {
+        now = (await inventory(page_)).join('\n');
+      } catch {
+        now = '';
+      }
+      if (prev !== null && now === prev && now.length > 0) {
+        return { ok: true, ms: Date.now() - t0, count: now.split('\n').length };
+      }
+      prev = now;
+      if (Date.now() - t0 >= timeout) {
+        return { ok: false, ms: Date.now() - t0, count: now ? now.split('\n').length : 0 };
+      }
+      await new Promise((r) => setTimeout(r, interval));
+    }
+  }
+
+  /**
+   * 装一个变异体：让目标按钮"还在但点不动"。**不改产品源码一个字节。**
+   *
+   * ⚠️ `return` 不许再丢：原来这里 `await` 了页面侧的返回值却没往外传，
+   * 于是**变异体没装上**（按钮还没渲染出来）与**装上了**在调用方看来一模一样，
+   * 而后者会被 `mutation()` 记成 MUT-OK ——「这条断言有牙齿」是**假的**。
+   */
   async function installMutation(page_, needle) {
-    await page_.evaluate((n) => {
+    return await page_.evaluate((n) => {
       const all = [...document.querySelectorAll('button, a')];
       const target = all.find(
         (el) => el.getAttribute('data-testid') === n || (el.textContent || '').trim().includes(n),
@@ -491,6 +637,12 @@ try {
       }
     }
 
+    /*
+     * ★ 这个定值等待**刻意保留**：它不是"等页面画完"，它**就是判据本身** ——
+     *   文件头写死的「点击之后的 1.5 秒内至少发生一件」。
+     *   改成"等到有反应为止"会把判据从"1.5 秒内有反应"偷换成"迟早会有反应"，
+     *   那是放水。等待可以改，**判据不行**。
+     */
     await page_.waitForTimeout(REACTION_WINDOW_MS);
 
     const after = {
@@ -536,9 +688,18 @@ try {
   /* ── 2. 复现用户报的那两个 ─────────────────────────────────────────────── */
 
   hdr('2. 复现用户报的两个按钮（空数据目录 = 用户当时的状态）');
-  await page.goto(`${BASE}/models`, { waitUntil: 'networkidle', timeout: 30_000 });
-  await page.waitForTimeout(1500);
+  await openPage(page, '/models');
+  /*
+   * ★ 等的是**下载源区块真的挂进 DOM**，不是"网络安静了 + 睡 1.5 秒"（见上方「等什么」）。
+   *   `models-sources` 是 `useModelsSourcesQuery()` 落地的**唯一** DOM 出口，
+   *   而「立即测速」就长在它里面 —— 它出现了，B1 的 `exists=false` 才说得上是缺陷。
+   */
+  const sourcesReady = await waitForSel(page, '[data-testid="models-sources"]');
   say(`   打开 ${BASE}/models`);
+  say(
+    `   下载源区块（models-sources）就绪=${sourcesReady.ok}，等了 ${sourcesReady.ms} ms` +
+      ` | ${endpointEvidence('/api/models/sources')}`,
+  );
   say(`   页面标题：${await page.title()}`);
   say('   ── 这一页上所有可见按钮（先枚举再点，不猜选择器）──');
   for (const b of await inventory(page)) say(`      ${b}`);
@@ -564,6 +725,19 @@ try {
   if (badResponses.length === 0) say('      (没有)');
 
   await check('B1 「立即测速」点下去有反应', () => {
+    /*
+     * ★ 这一条**先于**"按钮在不在"：把「这一页没加载完」和「按钮真的不在」分开说。
+     *   两者在 `exists === false` 上同形，而只有后者是缺陷。
+     *   `[CI 实测 run 31629900327, win32-x64]` 红的正是前者，却印成了后者。
+     */
+    ok(
+      sourcesReady.ok === true,
+      `等了 ${sourcesReady.ms} ms，下载源区块（models-sources）**从没进过 DOM** —— ` +
+        '这一轮**页面没加载完**，不是"按钮不存在"' +
+        `（pending 期间 SourcesSection.tsx:48 整段 return null）。证据：${endpointEvidence(
+          '/api/models/sources',
+        )}`,
+    );
     ok(probeR.exists === true, '页面上根本没有这个按钮', probeR);
     ok(probeR.visible === true, '按钮存在但不可见', probeR);
     ok(
@@ -586,6 +760,19 @@ try {
      * 所以两种形态都算通过：**不存在**，或者**存在且点了有反应**；
      * 只有"存在但点了没反应"是那个缺陷本身。
      */
+    /*
+     * ★ 「不存在」在这条断言里是**通过**的形态之一，所以它对"页面没加载完"
+     *   格外脆弱：`[CI 实测 run 31629900327, win32-x64]` 那一轮页面根本没画完，
+     *   B2 却报了 PASS —— **一次假绿，就躺在那次假红旁边**。
+     * ⚠️ `sourcesReady` 不是 `AsrModelPicker` 那条 query 的直接证据（是另一条），
+     *   但同一次挂载发出的那批请求里已经有一条落地了，足以否掉「整页还是空的」
+     *   这一种 —— 而那正是这里唯一会把"没加载完"读成"已修复"的情形。
+     */
+    ok(
+      sourcesReady.ok === true,
+      `等了 ${sourcesReady.ms} ms 这一页的数据一条都没落地 —— ` +
+        '此时"按钮不在页面上"什么都说明不了，不许记成"正是修复后的形态"',
+    );
     if (installR.exists !== true) {
       return '按钮已不在 /models 上（改成了说明文案）—— 正是修复后的形态';
     }
@@ -621,8 +808,18 @@ try {
   for (const path of SWEEP_PAGES) {
     let names = [];
     try {
-      await page.goto(`${BASE}${path}`, { waitUntil: 'networkidle', timeout: 30_000 });
-      await page.waitForTimeout(1000);
+      await openPage(page, path);
+      /*
+       * ★ 横扫的危害形状和 B1 不同：页面没画完不会红，会**默默少扫几个按钮** ——
+       *   覆盖面缩水，汇总里却一片绿。所以这里等的是"按钮清单不再往外冒"。
+       */
+      const settled = await waitForInventorySettled(page);
+      if (!settled.ok) {
+        say(
+          `   ${path}：${settled.ms} ms 内按钮清单一直在变（当前 ${settled.count} 个）—— ` +
+            '这一页可能没扫全，如实记一句（不红：这不是本节的判据）',
+        );
+      }
       names = await page.evaluate(
         ({ skipSrc }) => {
           const re = new RegExp(skipSrc);
@@ -655,41 +852,59 @@ try {
       const n = clickable[i];
       try {
         // 每点一次都回到该页重新开始 —— 上一次点击可能已经把我们导航走了
-        await page.goto(`${BASE}${path}`, { waitUntil: 'networkidle', timeout: 30_000 });
-        await page.waitForTimeout(700);
+        await openPage(page, path);
+        /*
+         * ★ 先等清单静止**再**按序号打标：序号是在上面枚举完整清单时定的，
+         *   在一张还在往外冒按钮的页面上数到第 i 个，数到的可能是**另一颗按钮**。
+         *   （定值 700 ms 时这个错位一直存在，只是没人看得见。）
+         */
+        await waitForInventorySettled(page, { timeout: 8_000 });
         /*
          * ★ 按**枚举序号**打标再点，不靠文案。
          *   `[实测]` 第一版用文案定位，而图标按钮**没有文案** —— `getByText('')`
          *   定位不到，于是它们被报成"点了没反应"。那是**我的选择器坏了**，
          *   不是产品坏了。差点因此报出一串假缺陷。
          *   打的是一个惰性属性（不改行为），而且每次导航都会被重置。
+         *
+         * ★ 等的是"第 i 个可点按钮真的枚举得到"，不是定值 700 ms ——
+         *   页面没画完时打不上标，会走到下面那句「这一轮枚举不到它了，跳过」，
+         *   而那句话在说的其实是"我来早了"。同一形状：**把没看见说成不存在**。
          */
-        const tagged = await page.evaluate(
-          ({ skipSrc, idx }) => {
-            const re = new RegExp(skipSrc);
-            let k = 0;
-            for (const el of document.querySelectorAll('button')) {
-              const st = getComputedStyle(el);
-              const r = el.getBoundingClientRect();
-              if (st.display === 'none' || st.visibility === 'hidden' || r.width === 0) continue;
-              if (el.disabled) continue;
-              const label = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40);
-              const aria = el.getAttribute('aria-label') || '';
-              const title = el.getAttribute('title') || '';
-              if (re.test(label + ' ' + aria + ' ' + title)) continue;
-              if (k === idx) {
-                el.setAttribute('data-sweep-idx', String(idx));
-                return true;
-              }
-              k += 1;
-            }
-            return false;
+        let tagged = false;
+        const tagWait = await until(
+          async () => {
+            tagged = await page.evaluate(
+              ({ skipSrc, idx }) => {
+                const re = new RegExp(skipSrc);
+                let k = 0;
+                for (const el of document.querySelectorAll('button')) {
+                  const st = getComputedStyle(el);
+                  const r = el.getBoundingClientRect();
+                  if (st.display === 'none' || st.visibility === 'hidden' || r.width === 0)
+                    continue;
+                  if (el.disabled) continue;
+                  const label = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+                  const aria = el.getAttribute('aria-label') || '';
+                  const title = el.getAttribute('title') || '';
+                  if (re.test(label + ' ' + aria + ' ' + title)) continue;
+                  if (k === idx) {
+                    el.setAttribute('data-sweep-idx', String(idx));
+                    return true;
+                  }
+                  k += 1;
+                }
+                return false;
+              },
+              { skipSrc: SKIP_WORDS.source, idx: i },
+            );
+            return tagged;
           },
-          { skipSrc: SKIP_WORDS.source, idx: i },
+          { timeout: 10_000, interval: 250 },
         );
         if (!tagged) {
           say(
-            `   ── ${path} #${i}「${n.label || n.aria || '(图标按钮)'}」：这一轮枚举不到它了，跳过`,
+            `   ── ${path} #${i}「${n.label || n.aria || '(图标按钮)'}」：` +
+              `等了 ${tagWait.ms} ms 仍枚举不到它，跳过（这一页这一轮就是没画出它）`,
           );
           continue;
         }
@@ -786,8 +1001,13 @@ try {
       }),
     }),
   );
-  await page.goto(`${BASE}/models`, { waitUntil: 'networkidle', timeout: 30_000 });
-  await page.waitForTimeout(1200);
+  await openPage(page, '/models');
+  /*
+   * ★ 同 B1：等那颗按钮真的进 DOM。这里等不到的话，B5 会报「按钮没点到」——
+   *   又一句把"页面没加载完"说成产品问题的话（`clickAndObserve` 只拍快照，不等）。
+   */
+  const probeBtnReady = await waitForSel(page, '[data-testid="models-sources-probe"]');
+  say(`   「立即测速」就绪=${probeBtnReady.ok}，等了 ${probeBtnReady.ms} ms`);
   const beforeErrText = await page.evaluate(() =>
     document.body.innerText.replace(/\s+/g, ' ').slice(0, 4000),
   );
@@ -807,6 +1027,11 @@ try {
   await page.unroute('**/api/models/sources/probe');
 
   await check('B5 测速失败时，界面上必须出现看得懂的错误（不许静默吞掉）', () => {
+    ok(
+      probeBtnReady.ok === true,
+      `等了 ${probeBtnReady.ms} ms「立即测速」都没进 DOM —— **页面没加载完**，` +
+        `不是产品问题（${endpointEvidence('/api/models/sources')}）`,
+    );
     ok(probeFailR.clicked === true, '按钮没点到，这条无从谈起');
     ok(
       looksLikeError === true,
@@ -851,8 +1076,13 @@ try {
   /** 阶段倒退的那个词 —— 出现在后段之后就是谎话。 */
   const REGRESS_ZH = '排队中';
 
-  await page.goto(`${BASE}/models`, { waitUntil: 'networkidle', timeout: 30_000 });
-  await page.waitForTimeout(800);
+  /*
+   * ★ 这一次 `goto` 只是为了要一个**同源的页面上下文**去 `fetch` ——
+   *   下面那段 `page.evaluate` 完全不看 DOM。所以只等 SPA 挂上就够，
+   *   原来的 `networkidle` + 800 ms 既不必要、又会白白吃掉后面那段很短的安装窗口。
+   */
+  await openPage(page, '/models');
+  await waitForAppMounted(page);
 
   // 起一个真实安装：走产品自己的 HTTP 路径，但**观测只看界面**。
   const packToInstall = await page.evaluate(async () => {
@@ -894,7 +1124,16 @@ try {
   let sampleRounds = 0;
 
   if (packToInstall !== null) {
-    await page.goto(`${BASE}/tasks`, { waitUntil: 'networkidle', timeout: 30_000 });
+    /*
+     * ★ 这里**故意只等到"SPA 挂上"就开始采样**，不等更多。
+     *   安装窗口本来就短（门禁装的是 5.3 MB 的小包），多等一毫秒都可能把
+     *   "看得见安装在进行"的那几个瞬间等没了 —— 而 `progressVisibleSamples`
+     *   少一个，B6 就更容易掉进 UNDECIDED。
+     *   `networkidle` 在这里恰恰是**等得太久**的那一种错，方向和 B1 相反、成因同一个：
+     *   拿网络状态冒充页面状态。
+     */
+    await openPage(page, '/tasks');
+    await waitForAppMounted(page, { timeout: 10_000 });
     for (let i = 0; i < 150; i++) {
       const snap = await page.evaluate(() => ({
         body: document.body.innerText.replace(/\s+/g, ' '),
@@ -1107,8 +1346,14 @@ try {
    *
    * 所以判据不是"跳转发生了"，是**"落到的那个页面上真的有他要用的控件"**。
    * ───────────────────────────────────────────────────────────────────────── */
-  await page.goto(`${BASE}/models?tab=llm`, { waitUntil: 'networkidle', timeout: 30_000 });
-  await page.waitForTimeout(1000);
+  await openPage(page, '/models?tab=llm');
+  /*
+   * ★ 等的是 llm **面板**（`models-llm-tab`，`ModelsPage.tsx:484`）挂上 ——
+   *   B7 问的是"落地页上有没有他要用的控件"，页面没画完时答案必然是"没有"，
+   *   而那句"引导把用户送到了一个他做不了事的地方"就成了假指控。
+   */
+  const llmReady = await waitForSel(page, '[data-testid="models-llm-tab"]');
+  say(`   /models?tab=llm 面板就绪=${llmReady.ok}，等了 ${llmReady.ms} ms`);
   const llmLanding = await page.evaluate(() => ({
     hasProviderPicker: !!document.querySelector(
       '[data-testid*="llm"], select, [data-testid*="provider"]',
@@ -1145,7 +1390,14 @@ try {
      * Toast 就再也不出现了**（任务中心里还在，Toast 层空）。
      * 对"转瞬即逝的通知"来说这也许可以接受，但它是真实存在的行为差异。
      */
-    await page.goto(`${BASE}/tasks`, { waitUntil: 'networkidle', timeout: 30_000 });
+    await openPage(page, '/tasks');
+    /*
+     * ★ 这里的"先落页再 POST"是判据的一部分（见上一段），所以等的必须是
+     *   **SPA 真的挂上了**，而不是"网络安静了" —— 后者可能在 React 还没挂载时就成立，
+     *   于是 `job.created` 又一次落在一个不存在的 Toast 层上，正是上一次踩的坑。
+     */
+    const mounted = await waitForAppMounted(page);
+    say(`   /tasks 已挂载=${mounted.ok}（等了 ${mounted.ms} ms）—— 之后才发起任务`);
     const started = await page.evaluate(async (id) => {
       const r = await fetch('/api/models/pull', {
         method: 'POST',
@@ -1296,6 +1548,11 @@ try {
 
   await check('B7 llm 引导落地页上必须真的有可操作的控件（不是只发生了跳转）', () => {
     ok(
+      llmReady.ok === true,
+      `等了 ${llmReady.ms} ms，llm 面板（models-llm-tab）都没挂上 —— ` +
+        '这一页没加载完，"落地页上没有控件"这句话此刻不成立',
+    );
+    ok(
       llmLanding.hasProviderPicker === true,
       '落地页上找不到任何 llm 相关控件 —— 引导把用户送到了一个他做不了事的地方',
       [llmLanding.text.slice(0, 200)],
@@ -1348,8 +1605,22 @@ try {
         }),
       }),
   );
-  await page.goto(`${BASE}/runtime`, { waitUntil: 'networkidle', timeout: 30_000 });
-  await page.waitForTimeout(1800);
+  await openPage(page, '/runtime');
+  /*
+   * ★ 等的是**这一页上真的出现了可点的「安装 …」按钮** —— 那就是 B12 的前提本身。
+   *   定值 1800 ms 在慢 runner 上盖不住目录渲染，于是 B12 会报
+   *   「/runtime 上没有一个可点的「安装」按钮」—— 一句关于产品的**假指控**。
+   */
+  const installBtnReady = await until(async () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('button')].some(
+        (e) => !e.disabled && /^安装\s/.test((e.textContent || '').trim()),
+      ),
+    ),
+  );
+  say(
+    `   /runtime 上出现可点的「安装 …」按钮=${installBtnReady.ok}，等了 ${installBtnReady.ms} ms`,
+  );
 
   const beforeInstall = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
   // 挑第一个**没有被禁用**、文案以「安装 」开头的按钮，并打标再点（不靠 getByText）
@@ -1369,7 +1640,20 @@ try {
     } catch {
       /* 下面按未点到处理 */
     }
-    await page.waitForTimeout(2500);
+    /*
+     * ★ 等的是"界面说话了"，不是定值 2.5 s：**谓词与 B12 的断言逐字相同**，
+     *   所以等到就走、等不到就照旧红 —— 判据没动，动的只是"我肯等多久"。
+     *   预算 2.5 s → 8 s：这条断言防的是「静默吞掉」（= 永远不出现），
+     *   把预算放宽到 8 s 遮不住它；而 2.5 s 在慢 runner 上遮得住的，
+     *   恰恰是"产品其实说了话"这一面 —— 那才是假红。
+     */
+    await until(
+      async () => {
+        const now = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
+        return FAIL_WORDS.test(now.replace(beforeInstall, ''));
+      },
+      { timeout: 8_000, interval: 250 },
+    );
   }
   const afterInstall = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
   const installAdded = afterInstall.replace(beforeInstall, '');
@@ -1393,6 +1677,11 @@ try {
    * 判据一个字没改，只是把名字分开：**同名不同物比没有名字更坏**。
    */
   await check('B12 ★ 安装失败时界面必须出现读得懂的话（不许静默吞掉）', () => {
+    ok(
+      installBtnReady.ok === true,
+      `等了 ${installBtnReady.ms} ms，/runtime 上一个可点的「安装 …」按钮都没画出来 —— ` +
+        '**这一页没加载完**，不是"目录是空的"',
+    );
     ok(
       targetLabel !== null,
       '/runtime 上没有一个可点的「安装」按钮 —— 先确认目录不是空的（本轮 catalog 有 25 个包）',
@@ -1424,7 +1713,12 @@ try {
    * 报"无从判断"，不报"变异存活"。
    */
   await mutation('B12 的证伪能力（没注入故障那轮不该有错误话，同一谓词必须红）', async () => {
-    await page.goto(`${BASE}/runtime`, { waitUntil: 'networkidle', timeout: 30_000 });
+    /*
+     * ⚠️ 这里**不再**用 `networkidle` 冒充"画完了"，但下面那个静止循环
+     *   （连续两次文本一致）**原样保留** —— 它不是"等待"，它就是这条变异的**测量**：
+     *   要的正是"页面已经不动了"这个前提本身。同理下面那 1.2 s 也保留（见原注）。
+     */
+    await openPage(page, '/runtime');
     const textNow = () => page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
     let prev = null;
     let settled = false;
@@ -1473,8 +1767,19 @@ try {
 
   /* ── 3c. 「复制诊断信息」：成功要出声，失败也要出声 ────────────────────────── */
   hdr('3c. 「复制诊断信息」点完必须出声（Manager 裁决：成功必须出声）');
-  await page.goto(`${BASE}/diagnostics`, { waitUntil: 'networkidle', timeout: 30_000 });
-  await page.waitForTimeout(1200);
+  await openPage(page, '/diagnostics');
+  /*
+   * ★ `clickAndObserve` 只**拍快照**，自己不等 —— 所以按钮得先等出来，
+   *   否则 B13 报的是「按钮没点到」，而真话是「我来早了」。
+   */
+  const copyBtnReady = await until(async () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('button')].some((e) =>
+        (e.textContent || '').includes('复制诊断信息'),
+      ),
+    ),
+  );
+  say(`   「复制诊断信息」就绪=${copyBtnReady.ok}，等了 ${copyBtnReady.ms} ms`);
   const copyR = await clickAndObserve(page, { name: '「复制诊断信息」', text: '复制诊断信息' });
   const copyFeedback = await page.evaluate(() => ({
     ok: !!document.querySelector('[data-testid="diagnostics-copy-ok"]'),
@@ -1484,6 +1789,10 @@ try {
   say(`   反馈：成功=${copyFeedback.ok} 失败=${copyFeedback.failed} 退路=${copyFeedback.fallback}`);
 
   await check('B13 ★ 「复制诊断信息」点完必须出声（成功或失败都算，沉默不算）', () => {
+    ok(
+      copyBtnReady.ok === true,
+      `等了 ${copyBtnReady.ms} ms，/diagnostics 上「复制诊断信息」都没画出来 —— 这一页没加载完`,
+    );
     ok(copyR.clicked === true, `按钮没点到：${copyR.clickError}`);
     ok(
       copyFeedback.ok === true || copyFeedback.failed === true,
@@ -1520,8 +1829,14 @@ try {
   hdr('3d. 文件夹改名 + 笔记移动到文件夹（两条 mutation 刚接上入口）');
 
   // 侧栏文件夹树在每一页都在，随便挑一页
-  await page.goto(`${BASE}/notes`, { waitUntil: 'networkidle', timeout: 30_000 });
-  await page.waitForTimeout(1200);
+  await openPage(page, '/notes');
+  /*
+   * ★ 等**改名入口真的挂进 DOM**（`state: 'attached'` —— 它平时是 `opacity-0`，
+   *   等"可见"永远等不到）。定值 1200 ms 等不够时 `count() === 0`，
+   *   B8 会报「入口是死的」—— 又一句把"我来早了"说成产品缺陷的话。
+   */
+  const renameBtnReady = await waitForSel(page, '[data-testid="folder-rename"]');
+  say(`   侧栏「重命名」入口就绪=${renameBtnReady.ok}，等了 ${renameBtnReady.ms} ms`);
 
   /*
    * 改名按钮是 hover 才显形的（`opacity-0 group-hover:opacity-100`），
@@ -1532,12 +1847,16 @@ try {
     const btn = page.locator('[data-testid="folder-rename"]').first();
     if ((await btn.count()) === 0) return false;
     await btn.click({ force: true, timeout: 8000 });
-    await page.waitForTimeout(600);
-    return (await page.locator('[data-testid="folder-rename-input"]').count()) > 0;
+    // 等的是就地编辑框真的展开，不是定值 600 ms
+    return (await waitForSel(page, '[data-testid="folder-rename-input"]', { timeout: 10_000 })).ok;
   })();
   say(`   点「重命名」后出现输入框 = ${renameOpened}`);
 
   await check('B8 ★ 文件夹改名有入口，且点了真的展开就地编辑（不是死按钮）', () => {
+    ok(
+      renameBtnReady.ok === true,
+      `等了 ${renameBtnReady.ms} ms，侧栏里连「重命名」按钮都没挂上 —— 这一页没加载完，不是"入口是死的"`,
+    );
     ok(renameOpened === true, '点了重命名按钮，输入框没出现 —— 入口是死的');
     return '出现 folder-rename-input';
   });
@@ -1577,7 +1896,11 @@ try {
       .first()
       .pressSequentially(` 改名${Date.now() % 1000}`, { delay: 15 });
     await page.locator('[data-testid="folder-rename-input"]').first().press('Enter');
-    await page.waitForTimeout(1500);
+    /*
+     * ★ 等的是 **PATCH 真的发出去了**（B9 的判据本身），不是定值 1500 ms。
+     *   谓词与断言完全相同：发出了就立刻走，没发出照旧红。
+     */
+    await until(async () => renameReqs.length > 0, { timeout: 10_000, interval: 150 });
   } catch (e) {
     say(`   ⚠️ 提交改名时出错：${String(e.message).slice(0, 120)}`);
   }
@@ -1616,12 +1939,18 @@ try {
    * 列表页上没有它。`[实测]` 第一版建完笔记还停在 `/notes` 列表页，
    * 于是 `note-actions` 一直找不到 —— 又一次"我的测试没走到那儿"被误读成"入口是死的"。
    */
+  /**
+   * ★ 「移动面板到底开没开」的等待预算。**B10 和它的变异必须用同一个值** ——
+   *   变异等得比正路短，就成了拿"我等得少"冒充"面板没开"，
+   *   那条变异证明的是我的耐心，不是产品。
+   */
+  const MOVE_PANEL_MS = 10_000;
+  let actionsReady = { ok: false, ms: 0 };
   if (imported.uid) {
-    await page.goto(`${BASE}/notes/${imported.uid}`, {
-      waitUntil: 'networkidle',
-      timeout: 30_000,
-    });
-    await page.waitForTimeout(1500);
+    await openPage(page, `/notes/${imported.uid}`);
+    // 等的是「⋯」菜单入口真的挂上，不是定值 1500 ms
+    actionsReady = await waitForSel(page, '[data-testid="note-actions"]');
+    say(`   笔记详情页「⋯」入口就绪=${actionsReady.ok}，等了 ${actionsReady.ms} ms`);
   }
 
   /* ── 笔记移动：入口在笔记自己的「⋯」菜单里 ── */
@@ -1630,12 +1959,14 @@ try {
       const act = page.locator('[data-testid="note-actions"]').first();
       if ((await act.count()) === 0) return null; // 一条笔记都没有 —— 不算失败，如实说
       await act.click({ timeout: 8000 });
-      await page.waitForTimeout(400);
-      const mv = page.locator('[data-testid="note-move"]').first();
-      if ((await mv.count()) === 0) return false;
-      await mv.click({ timeout: 8000 });
-      await page.waitForTimeout(900);
-      return (await page.locator('[data-testid="note-move-panel"]').count()) > 0;
+      // 等菜单项出现，不是定值 400 ms
+      if (!(await waitForSel(page, '[data-testid="note-move"]', { timeout: MOVE_PANEL_MS })).ok) {
+        return false;
+      }
+      await page.locator('[data-testid="note-move"]').first().click({ timeout: 8000 });
+      // 等面板出现，不是定值 900 ms
+      return (await waitForSel(page, '[data-testid="note-move-panel"]', { timeout: MOVE_PANEL_MS }))
+        .ok;
     } catch (e) {
       say(`   ⚠️ 打开移动面板时出错：${String(e.message).slice(0, 120)}`);
       return false;
@@ -1644,7 +1975,13 @@ try {
   say(`   点「移动到文件夹」后出现面板 = ${moveOpened}`);
 
   await check('B10 ★ 笔记「移动到文件夹」有入口且点得开（不是死按钮）', () => {
-    ok(moveOpened !== null, '页面上一条笔记都没有 —— 这一节没有被真的执行（§11）');
+    ok(
+      moveOpened !== null,
+      `页面上一条笔记都没有 —— 这一节没有被真的执行（§11）` +
+        `（「⋯」入口就绪=${actionsReady.ok}，等了 ${actionsReady.ms} ms；导入 uid=${
+          imported.uid ?? '(无)'
+        }）`,
+    );
     ok(moveOpened === true, '点了「移动到文件夹」，面板没出现 —— 入口是死的');
     return '出现 note-move-panel';
   });
@@ -1715,7 +2052,22 @@ try {
     await page.click('[data-testid="note-move-root"]', { timeout: 8000 }).catch((e) => {
       clickErr = String(e.message).slice(0, 120);
     });
-    await page.waitForTimeout(1800);
+    /*
+     * ★ 等的是"面板里冒出错误块"（**与 B11 的判据逐字相同**：面板仍开着 +
+     *   面板内有 error-block 且文字非空），不是定值 1800 ms。
+     *   等到就走；等不到照旧红。这条防的是「静默吞掉」= 永远不出现，
+     *   把预算从 1.8 s 放到 8 s 遮不住它，遮住的只是慢 runner 造的假红。
+     */
+    await until(
+      async () =>
+        page.evaluate(() => {
+          const panel = document.querySelector('[data-testid="note-move-panel"]');
+          if (panel === null) return false;
+          const el = panel.querySelector('[data-testid="error-block"]');
+          return el !== null && (el.textContent || '').replace(/\s+/g, ' ').trim().length > 0;
+        }),
+      { timeout: 8_000, interval: 200 },
+    );
     const probe = await page.evaluate(() => {
       const panel = document.querySelector('[data-testid="note-move-panel"]');
       if (!panel) return { panel: false, block: false, text: '' };
@@ -1751,28 +2103,53 @@ try {
     return '面板里出现了错误块';
   });
 
-  // 变异①（死按钮那一种）：把「移动到文件夹」变成点不动，B10 必须红
+  /* 变异①（死按钮那一种）：把「移动到文件夹」变成点不动，B10 必须红。
+   *
+   * ⚠️ `[CI 实测 run 31629900327, win32-x64]` 这条报的是
+   *   **MUT-OK「如期变红：locator.click: Timeout 8000ms exceeded / waiting for
+   *   locator('[data-testid="note-actions"]')」** —— 也就是说：
+   *   **变异体一次都没装上，整段函数体根本没跑到，却被记成"这条断言有牙齿"。**
+   *   成因就写在上面 B10 自己的注释里：`NoteActionsMenu` 只渲染在**笔记详情页**，
+   *   而这里 `goto('/notes')` 落在**列表页**上。B10 走的是 `/notes/<uid>`，
+   *   它的变异走的却是另一页 —— 两条路从来没对齐过。
+   *   `mutation()` 把"抛了"一律读成"如期变红"，于是**导航错页**伪装成了好消息。
+   *
+   * 修法两条，缺一不可：
+   *   ① 落到**和 B10 同一页**（`/notes/<uid>`）；
+   *   ② 前提（菜单入口、菜单项）没构造出来就报**无从判断**（MUT-UNKNOWN），
+   *      绝不许再落进 MUT-OK —— 这正是本文件为变异立第三态的原意。
+   */
   await mutation('B10 的证伪能力（把「移动到文件夹」弄成死按钮，必须红）', async () => {
-    await page.goto(`${BASE}/notes`, { waitUntil: 'networkidle', timeout: 30_000 });
-    await page.waitForTimeout(1000);
+    if (!imported.uid) undecided('这一轮没建出笔记，变异体无处可装');
+    await openPage(page, `/notes/${imported.uid}`);
+    if (!(await waitForSel(page, '[data-testid="note-actions"]')).ok) {
+      undecided('笔记详情页上没等到「⋯」入口，变异体装不上 —— 这一轮什么都没证明');
+    }
     await page.locator('[data-testid="note-actions"]').first().click({ timeout: 8000 });
-    await page.waitForTimeout(400);
-    await page.evaluate(() => {
+    if (!(await waitForSel(page, '[data-testid="note-move"]', { timeout: MOVE_PANEL_MS })).ok) {
+      undecided('菜单里没等到「移动到文件夹」，变异体装不上 —— 这一轮什么都没证明');
+    }
+    const installed = await page.evaluate(() => {
       const el = document.querySelector('[data-testid="note-move"]');
-      if (el) {
-        el.addEventListener(
-          'click',
-          (ev) => {
-            ev.stopImmediatePropagation();
-            ev.preventDefault();
-          },
-          true,
-        );
-      }
+      if (el === null) return false;
+      el.addEventListener(
+        'click',
+        (ev) => {
+          ev.stopImmediatePropagation();
+          ev.preventDefault();
+        },
+        true,
+      );
+      return true;
     });
+    if (installed !== true) undecided('变异体没挂上 —— 这一轮什么都没证明');
     await page.locator('[data-testid="note-move"]').first().click({ timeout: 8000 });
-    await page.waitForTimeout(900);
-    const opened = (await page.locator('[data-testid="note-move-panel"]').count()) > 0;
+    // ★ 和 B10 用**同一个**等待预算（MOVE_PANEL_MS）：短了就是拿耐心冒充结论
+    const opened = (
+      await waitForSel(page, '[data-testid="note-move-panel"]', {
+        timeout: MOVE_PANEL_MS,
+      })
+    ).ok;
     ok(opened === true, '点了「移动到文件夹」，面板没出现 —— 入口是死的');
   });
 
@@ -1783,9 +2160,20 @@ try {
   say('   按钮还在、还可见、还可点、样式不变 —— 但点击到不了任何处理器。');
   say('   **产品源码一个字节都没改**（PROTOCOL §10）。');
 
-  await page.goto(`${BASE}/models`, { waitUntil: 'networkidle', timeout: 30_000 });
-  await page.waitForTimeout(1200);
-  await installMutation(page, 'models-sources-probe');
+  await openPage(page, '/models');
+  /*
+   * ★ 变异体只能装在**已经在 DOM 里**的元素上。定值 1200 ms 等不到那颗按钮时，
+   *   `installMutation` 静默什么都不做，随后 `mutR.exists === false` 让下面第一条
+   *   `ok()` 抛出去 —— 而 `mutation()` 把"抛了"一律记成 **MUT-OK**。
+   *   **变异体根本没装上，汇总里却写着"这条断言有牙齿"。**
+   *   （和 B1 本身是同一个缺口的两面：那边把"没加载完"报成假红，这边报成假绿。）
+   */
+  const mutTargetReady = await waitForSel(page, '[data-testid="models-sources-probe"]');
+  const mutInstalled =
+    mutTargetReady.ok === true ? await installMutation(page, 'models-sources-probe') : false;
+  say(
+    `   变异体装上了=${mutInstalled}（按钮就绪=${mutTargetReady.ok}，等了 ${mutTargetReady.ms} ms）`,
+  );
   const mutR = await clickAndObserve(page, {
     name: '「立即测速」（已被变异成死按钮）',
     testid: 'models-sources-probe',
@@ -1793,6 +2181,13 @@ try {
   reportClick(mutR);
 
   await mutation('B1 的证伪能力（按钮死了时，同一条断言必须红）', () => {
+    // 前提没构造出来 = 什么都没证明 ⇒ 第三态，不许记成"如期变红"
+    if (mutInstalled !== true) {
+      undecided(
+        `变异体没装上（按钮就绪=${mutTargetReady.ok}，等了 ${mutTargetReady.ms} ms）—— ` +
+          '这一轮既没证明断言有牙齿，也没证明它没有',
+      );
+    }
     ok(mutR.exists === true, '页面上根本没有这个按钮');
     ok(mutR.visible === true, '按钮存在但不可见');
     ok(mutR.clicked === true, `点不动：${mutR.clickError}`);
@@ -1801,9 +2196,11 @@ try {
 
   if (MUTATE) {
     hdr(`4b. 额外变异：--mutate ${MUTATE}`);
-    await page.goto(`${BASE}/models`, { waitUntil: 'networkidle', timeout: 30_000 });
-    await page.waitForTimeout(1000);
-    await installMutation(page, MUTATE);
+    await openPage(page, '/models');
+    await waitForAppMounted(page);
+    // 同上：装没装上要说出来，不许让"没装上"看起来像"装上了但没反应"
+    const extraInstalled = await installMutation(page, MUTATE);
+    say(`   变异体装上了=${extraInstalled}`);
     const r = await clickAndObserve(page, { name: `自定义变异 ${MUTATE}`, text: MUTATE });
     reportClick(r);
   }
