@@ -3,6 +3,7 @@ import { Sparkles } from 'lucide-react';
 
 import { useGenerateMindmapMutation } from './api';
 import { useActiveNoteJob } from '../tasks';
+import { blockedReasonKey } from '../../lib/jobs/blockedReason';
 import { Button } from '../../components/common/Button';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { formatPercent } from '../../lib/format/bytes';
@@ -61,12 +62,17 @@ export function GenerateMindmapButton({
    * blocked 的原因用 daemon 给的 `blockedCode` 分派，**不在前端重新判断一次条件**
    * （"有没有转写稿""配没配 LLM"只有 daemon 说了算，前端猜必然有猜错的那天）。
    * 认不出的 code 回落到一句通用的"去任务中心看看"，而不是显示一个空白。
+   *
+   * ★ 那张 code → 词条的表**搬去了 `lib/jobs/blockedReason.ts`**（Manager 裁决）。
+   * 理由：`blocked` 不是导图独有的状态 —— 转写同样会挂起（没装 ASR 模型），
+   * 而笔记页那条进度行此前说不出在等什么。在那边再建一张表就是「同一个概念两份」，
+   * 今天两张说的话一致，下一个人只会改一张。
+   *
+   * ⚠️ 这里少掉的那句 `defaultValue` **不是丢了，是挪进了 `blockedReasonKey()`**：
+   * 回落归表管，不归每个调用点各写一次 —— 各写一次就一定会漏，
+   * 而漏掉的那一处是一块**不会让任何测试变红**的空白。
    */
-  const blockedHint = blocked
-    ? t(`mindmap.blocked.${job?.blockedCode ?? 'UNKNOWN'}`, {
-        defaultValue: t('mindmap.blocked.UNKNOWN'),
-      })
-    : null;
+  const blockedHint = blocked ? t(blockedReasonKey(job?.blockedCode)) : null;
 
   return (
     <div className={className}>
