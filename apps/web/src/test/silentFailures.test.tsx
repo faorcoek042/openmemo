@@ -30,6 +30,8 @@ import { QueryClient, useQuery } from '@tanstack/react-query';
 import { render, click, type, text, stubApi } from './host';
 import { ConnectionBanner } from '../components/common/ConnectionBanner';
 import { useConnectionStore } from '../lib/stores/connection.store';
+import { startSse, type ChannelLike, type EventSourceLike } from '../lib/events/source';
+import { systemSse } from '../lib/events/system.sse';
 import { DEGRADED_POLL_INTERVAL_MS, startDegradedPolling } from '../lib/events/degradedPolling';
 import { NoteActionsMenu } from '../features/notes/NoteActionsMenu';
 import { countUnfinishedJobs } from '../features/tasks/api';
@@ -264,10 +266,18 @@ describe('被去重的那次点击也必须有反应', () => {
     bus.emit('job.created', {
       type: 'job.created',
       ts: new Date().toISOString(),
+      /*
+       * ⚠️ `topic` 与 `job.type` 都是**被收紧后的 `bus.emit` 当场抓出来的**：
+       * 这个夹具原来缺 `topic`，且写的是 `type: 'model_pull'` —— 那个字符串
+       * **服务端根本不会发**（`DOWNLOAD_JOB_TYPES` 只有 `download.model` /
+       * `download.backend`）。也就是说它模拟的是一帧**不可能出现**的事件。
+       * 之所以一直没人发现，正是因为 `emit` 原来是 `(type: string, payload: unknown)`。
+       */
+      topic: `job:${jobId}`,
       job: {
         jobId,
         kind: 'model',
-        type: 'model_pull',
+        type: 'download.model',
         targetId: 'asr/whisper-tiny-q5_1',
         displayName: 'Whisper 超小模型（Q5_1 量化）',
         state: 'running',
@@ -746,28 +756,35 @@ describe('A-4 三态在模型卡上各说各的动作', () => {
  * ⚠️ 每条用例都必须把连接态复位：store 是模块级单例，
  * 上一条留下的 `degraded` 会让下一条从"已经在轮询"起步，得到一个假绿。
  */
+/**
+ * 探针：一个真实的活跃 query。`calls.n` 就是"它又去要了几次数据"。
+ *
+ * ★ 这一族用例**只能**钉这个数。钉"连接态变了""横幅出现了""收到广播了"
+ * 全都会**恒绿** —— 缺陷状态下那些事本来就都成立，缺的从头到尾就是那次请求。
+ */
+function probe() {
+  const calls = { n: 0 };
+  // 每个探针一把独立的 key：同名 query 会跨用例共用缓存，把"又拉了一次"的计数搅浑
+  const key = `poll-probe-${Math.random().toString(36).slice(2)}`;
+  const Probe = () => {
+    const q = useQuery({
+      queryKey: [key],
+      queryFn: () => {
+        calls.n += 1;
+        return Promise.resolve(calls.n);
+      },
+      staleTime: 0,
+      gcTime: 0,
+      retry: false,
+    });
+    return <span data-testid="probe">{String(q.data ?? '')}</span>;
+  };
+  return { calls, Probe };
+}
+
+const wait = (ms: number) => new Promise((res) => setTimeout(res, ms));
+
 describe('SSE 降级的轮询兜底', () => {
-  /** 探针：一个真实的活跃 query。`calls` 就是"它又去要了几次数据"。 */
-  function probe() {
-    const calls = { n: 0 };
-    const Probe = () => {
-      const q = useQuery({
-        queryKey: ['degraded-probe'],
-        queryFn: () => {
-          calls.n += 1;
-          return Promise.resolve(calls.n);
-        },
-        staleTime: 0,
-        gcTime: 0,
-        retry: false,
-      });
-      return <span data-testid="probe">{String(q.data ?? '')}</span>;
-    };
-    return { calls, Probe };
-  }
-
-  const wait = (ms: number) => new Promise((res) => setTimeout(res, ms));
-
   beforeEach(() => {
     useConnectionStore.setState({ state: 'connecting' });
   });
@@ -906,5 +923,275 @@ describe('SSE 降级的轮询兜底', () => {
 
     r.unmount();
     qc.clear();
+  });
+});
+
+/* ────────── 多标签：跟随者的连接态不许自己编（#101 顺带） ────────── */
+
+/**
+ * ## 这一组防的是什么
+ *
+ * `source.ts` 的 `becomeFollower()` 原来无条件 `setState('open')`，注释写着
+ * 「跟随者的"连接"就是 BroadcastChannel，视作已连」。听上去成立，实际是：
+ *
+ * > **主标签降级了，第二个标签仍然显示"实时正常"，而数据早就停了。**
+ *
+ * 还要糟一层：`degraded` 的轮询兜底由连接态驱动，而跟随者**永远看不到 `degraded`**
+ * ⇒ 那条兜底在它上面**根本不会启动**。用户在第二个标签里
+ * **既没有实时更新、也没有轮询、还看着一切正常**。
+ *
+ * ## 为什么此前一条测试都没有
+ *
+ * 因为测试宿主里的 `BroadcastChannel` 是个空壳（`test/dom-env.ts`：
+ * `postMessage(){}`），**任何跨标签行为在测试里都必然静默无事发生**。
+ * 所以 `startSse` 加了 `channelFactory` 注入口（与既有的 `factory` 同一手法），
+ * 下面用一个进程内的小 hub 把"两个标签"真的接起来。
+ *
+ * ⚠️ 与真 `BroadcastChannel` 的**唯一**差别：这里是同步投递，真实是异步任务。
+ * 用例断言的都是"最终发生了什么"，不依赖投递时机；写在这里是为了别把它当等价物。
+ */
+describe('多标签：跟随者的连接态', () => {
+  /** 一个进程内的广播 hub —— 每个 `make()` 相当于一个标签页。 */
+  function makeHub() {
+    const members: { fns: ((e: MessageEvent) => void)[] }[] = [];
+    const posted: unknown[] = [];
+    function make(): ChannelLike {
+      const self = { fns: [] as ((e: MessageEvent) => void)[] };
+      members.push(self);
+      return {
+        postMessage(msg: unknown) {
+          posted.push(msg);
+          for (const m of members) {
+            if (m === self) continue; // 规范：不投递给发送者自己
+            for (const fn of m.fns) fn({ data: msg } as MessageEvent);
+          }
+        },
+        addEventListener(_t: 'message', fn: (e: MessageEvent) => void) {
+          self.fns.push(fn);
+        },
+        close() {
+          const i = members.indexOf(self);
+          if (i >= 0) members.splice(i, 1);
+        },
+      };
+    }
+    return { make, posted };
+  }
+
+  /**
+   * 钉住 Web Locks 的授予时机。
+   *
+   * ⚠️ `grant: true` 必须**异步**授予（`Promise.resolve().then`）。真实浏览器就是异步的，
+   * 而 `startSse` 依赖这一点：它先同步跑 `becomeFollower()`（置 `isLeader=false`），
+   * 拿到锁的回调**之后**才把它翻成 `true`。同步授予会让顺序反过来，
+   * 于是"主标签"被自己的 `becomeFollower()` 降回从标签 —— 那是夹具造出来的假象，不是产品缺陷。
+   */
+  function stubLocks(grant: boolean): () => void {
+    const fake = {
+      request: (_n: string, _o: unknown, cb: () => unknown) =>
+        grant ? Promise.resolve().then(() => cb()) : new Promise<void>(() => {}),
+    };
+    Object.defineProperty(globalThis.navigator, 'locks', { value: fake, configurable: true });
+    return () => {
+      Reflect.deleteProperty(globalThis.navigator as unknown as object, 'locks');
+    };
+  }
+
+  function fakeEventSource(): EventSourceLike {
+    return { addEventListener() {}, close() {}, onerror: null, onopen: null };
+  }
+
+  beforeEach(() => {
+    useConnectionStore.setState({ state: 'connecting' });
+  });
+  afterEach(() => {
+    useConnectionStore.setState({ state: 'connecting' });
+  });
+
+  test('★★ 主标签降级 ⇒ 跟随者**真的又去要了一次数据**（不是"它的 state 变了"）', async () => {
+    stubApi({});
+    const restore = stubLocks(false); // 永远拿不到锁 ⇒ 这一个实例就是跟随者
+    const hub = makeHub();
+    const leader = hub.make(); // 扮演另一个标签里的主标签
+    const { calls, Probe } = probe();
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+    });
+    const stopPoll = startDegradedPolling(qc, { intervalMs: 20 });
+    const stopSse = startSse({
+      url: '/api/events',
+      channelFactory: () => hub.make(),
+      factory: fakeEventSource,
+    });
+    const r = await render(<Probe />, { queryClient: qc });
+    await r.flush();
+
+    const baseline = calls.n;
+    assert.ok(baseline >= 1, '前提自检：探针没拉过数据，这条用例是空的');
+
+    leader.postMessage({ kind: 'state', state: 'degraded' });
+    await r.flush();
+
+    assert.equal(
+      useConnectionStore.getState().state,
+      'degraded',
+      '跟随者没有采纳主标签的状态 —— 它还在自己编',
+    );
+    assert.ok(
+      calls.n > baseline,
+      `跟随者进了降级却一次都没重拉：轮询兜底由连接态驱动，跟随者看不到 degraded 就等于没有兜底。实际仍是 ${calls.n}`,
+    );
+
+    stopSse();
+    stopPoll();
+    r.unmount();
+    qc.clear();
+    restore();
+  });
+
+  test('★★ 还没听到主标签说话时，不许自称 open —— 那正是原来那句谎话', async () => {
+    stubApi({});
+    const restore = stubLocks(false);
+    const hub = makeHub();
+    const stopSse = startSse({
+      url: '/api/events',
+      channelFactory: () => hub.make(),
+      factory: fakeEventSource,
+    });
+    await wait(0);
+
+    assert.notEqual(
+      useConnectionStore.getState().state,
+      'open',
+      '没有任何主标签，却已经显示"实时正常" —— 这就是被修掉的那句话',
+    );
+    assert.equal(useConnectionStore.getState().state, 'connecting', '唯一诚实的初值是 connecting');
+
+    stopSse();
+    restore();
+  });
+
+  test('★ 跟随者上线要主动问一次；否则会一直停在 connecting（新谎话换旧谎话）', async () => {
+    stubApi({});
+    const restore = stubLocks(false);
+    const hub = makeHub();
+    const stopSse = startSse({
+      url: '/api/events',
+      channelFactory: () => hub.make(),
+      factory: fakeEventSource,
+    });
+    await wait(0);
+
+    assert.ok(
+      hub.posted.some((m) => (m as { kind?: string }).kind === 'hello'),
+      '主标签只在状态**变化**时广播 —— 不主动问，刚打开的标签就永远等不到',
+    );
+
+    stopSse();
+    restore();
+  });
+
+  test('★ 主标签必须回答 hello，并广播自己的每一次状态变化', async () => {
+    stubApi({});
+    const restore = stubLocks(true); // 立刻拿到锁 ⇒ 这一个实例是主标签
+    const hub = makeHub();
+    const other = hub.make(); // 扮演另一个标签
+    const seen: unknown[] = [];
+    other.addEventListener('message', (e) => seen.push(e.data));
+
+    let es: EventSourceLike | null = null;
+    const stopSse = startSse({
+      url: '/api/events',
+      channelFactory: () => hub.make(),
+      factory: () => {
+        es = fakeEventSource();
+        return es;
+      },
+    });
+    await wait(0); // 让锁的授予落地（真实浏览器同样是异步的）
+
+    // ① 有人问，就要答得上当前状态
+    seen.length = 0;
+    other.postMessage({ kind: 'hello' });
+    assert.ok(
+      seen.some((m) => (m as { kind?: string }).kind === 'state'),
+      '主标签收到 hello 却不回答 —— 新开的标签会一直停在 connecting',
+    );
+
+    // ② 自己的状态一变就要广播（这里用连续报错把它推到 degraded）
+    seen.length = 0;
+    const src = es as EventSourceLike | null;
+    assert.ok(src?.onerror, '前提自检：attach() 没接上 onerror，后面的断言没有意义');
+    for (let i = 0; i < 5; i += 1) src!.onerror!(new Event('error'));
+
+    const states = seen
+      .filter(
+        (m): m is { kind: 'state'; state: string } => (m as { kind?: string }).kind === 'state',
+      )
+      .map((m) => m.state);
+    assert.ok(
+      states.includes('degraded'),
+      `主标签降级了却没告诉别人（收到的状态：${JSON.stringify(states)}）—— 跟随者会一直显示实时正常`,
+    );
+
+    stopSse();
+    restore();
+  });
+});
+
+/* ────────── sync.required：服务端那条与客户端那条都得接着 ────────── */
+
+/**
+ * 拆成两个 key 是因为它们**本来就是两件事**（服务端说"你漏了" vs 客户端自己发现"我漏了"），
+ * 而客户端那条原来在**冒充**服务端的事件：`reason: 'replay_gap'` 根本不在
+ * `SyncRequiredEvent` 的 union 里，还缺 `ts`/`topic`/`oldestAvailableId`，
+ * 而 `bus.emit(type: string, payload: unknown)` 是松类型，**`tsc` 一个字都不报**。
+ *
+ * ⚠️ 拆开最容易犯的错是**只接一条**，而漏掉的那条会**静默失效**：
+ * 界面照常渲染，只是从此不再重拉。所以两条都要有用例压着。
+ */
+describe('两条 sync 通道都必须触发重拉', () => {
+  async function mount() {
+    stubApi({});
+    const { calls, Probe } = probe();
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+    });
+    const disposers = systemSse(qc);
+    const r = await render(<Probe />, { queryClient: qc });
+    await r.flush();
+    return {
+      calls,
+      r,
+      done: () => {
+        disposers.forEach((d) => d());
+        r.unmount();
+        qc.clear();
+      },
+    };
+  }
+
+  test('★ 服务端的 sync.required 照旧要重拉', async () => {
+    const { calls, r, done } = await mount();
+    const before = calls.n;
+    bus.emit('sync.required', {
+      type: 'sync.required',
+      ts: new Date().toISOString(),
+      topic: 'system',
+      reason: 'replay_buffer_overflow',
+      oldestAvailableId: null,
+    });
+    await r.flush();
+    assert.ok(calls.n > before, '服务端说"你漏了"，前端却没去补 —— 拆 key 时把这条漏掉了');
+    done();
+  });
+
+  test('★ 客户端自己发现的 x.sync.required 也要重拉（缺口 / 重连 / 主标签重连）', async () => {
+    const { calls, r, done } = await mount();
+    const before = calls.n;
+    bus.emit('x.sync.required', { type: 'x.sync.required', reason: 'replay_gap' });
+    await r.flush();
+    assert.ok(calls.n > before, 'seq 缺口检测与重连重拉全都挂在这条上，漏掉它是静默失效');
+    done();
   });
 });

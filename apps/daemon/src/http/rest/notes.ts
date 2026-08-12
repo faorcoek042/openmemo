@@ -660,6 +660,17 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
             bytes: a.bytes,
             durationMs: a.duration_ms,
             /*
+             * ★ #96②：**「你存的这份原件被换过」要有地方看得见。**
+             *
+             * 上面这两个数在这次改动之前是**冻住的**：网络导入重转会重新下载一次源、
+             * 覆盖同名文件，而 `createAsset` 按 `rel_path` 幂等、原样返回旧行，
+             * 于是 `bytes` / `durationMs` 停在第一次下载时的值。
+             * 而 `/media/asset/:uid` 用 `stat()` 现取真实大小 ——
+             * **正因为播放不受影响，这个错数才会一直没人发现。**
+             * 现在覆盖发生时那两个数会被刷新，覆盖时刻记在这一列上。
+             */
+            replacedAt: a.replaced_at,
+            /*
              * ★ `state` —— **资产能不能用**（T-139 A1）。
              *
              * 这一列从 `0001_init.sql` 起就在（`pending|ready|missing|failed`，NOT NULL），

@@ -100,6 +100,12 @@ const MUST_FAIL_LOUDLY = {
 
 const problems = [];
 let checks = 0;
+/**
+ * 有多少个 job **解除了默认的 `success()`** 却带着 `needs:`（见下面那条 #102 断言）。
+ * 用来防"空集判通过"：这条规则今天有主语（`e2e-runtime` 的 attest），
+ * 哪天主语没了，要么是有人把修法退回去了，要么这条规则该删 —— 两种都得有人看见。
+ */
+let statusFnJobsSeen = 0;
 
 function must(cond, msg) {
   checks += 1;
@@ -141,6 +147,75 @@ for (const file of files.sort()) {
 
     for (const need of [].concat(job?.needs ?? [])) {
       must(jobNames.has(need), `${where}: needs 指向不存在的 job \`${need}\``);
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════════════
+     * ★ #102：**解除了默认 `success()`，就必须把每一条 `needs` 的 result 逐条写回来**
+     *
+     * GitHub 的规则（文档原文，"Evaluate expressions in workflows and actions"）：
+     *   `A default status check of success() is applied unless you include one of
+     *    these functions.`（success / failure / always / cancelled）
+     *
+     * 也就是说 `if: ${{ !cancelled() && … }}` 会**一次性解除**"所有 needs 都得 success"
+     * 这条默认要求。有时候必须解除 —— 那是唯一能把 needs 的 `skipped` 和 `failure`
+     * 分开对待的办法（默认语义下两者都让本 job 一起被跳过）。但解除的代价是：
+     * 一道**自动**的闸换成了一份**手写**的清单，而手写清单会漏。
+     *
+     * 漏了长什么样：`e2e-runtime` 的 attest 作业曾经 `needs: [audit]`，变异 job
+     * 压根不在里面 —— `[实测 run 31568740737]` 三平台审计全绿、变异红、run 判 failure，
+     * 而 `e2e-attest-runtime-31568189189` **照发了、未过期**。那次还不是状态函数的锅
+     * （是 `needs` 自己漏了一个），但加上状态函数之后，同样的"漏一条"会更安静：
+     * 连默认的 success 兜底都不在了。
+     *
+     * 所以这条断言钉的是：**`needs:` 里的每一个名字，都得在 `if:` 里被
+     * `needs.<名字>.result` 提到**。它不管你把它判成什么（那是设计决定），
+     * 只管**你确实对它做过一个决定**。
+     * ════════════════════════════════════════════════════════════════════════════ */
+    const jobIf = String(job?.if ?? '');
+    const needList = [].concat(job?.needs ?? []);
+    /*
+     * 两种"其实没解除"的情形不在管辖范围内：
+     *   · 表达式里写了**未取反的 `success()`** —— 那就是把默认检查显式写了一遍，
+     *     覆盖面与默认完全相同（`release-upload.yml#verify` 正是这么写的，
+     *     它的注释还专门解释了为什么要显式写出来）。
+     *   · `if:` 里根本没有状态函数 —— 默认的 `success()` 仍在，自动管住全部 needs。
+     */
+    const hasBareSuccess = /(^|[^!\w])success\s*\(\s*\)/.test(jobIf);
+    const dissolvesDefault =
+      /\b(always|cancelled|failure)\s*\(\s*\)/.test(jobIf) && !hasBareSuccess;
+    if (dissolvesDefault && needList.length > 0) {
+      statusFnJobsSeen += 1;
+      /*
+       * ⚠️ 白名单：**只放"不做任何判定"的纯汇报作业**，而且必须写清理由。
+       *   放行的判据不是"它一直是这样"，而是「它绿不绿都不构成一句关于产品的断言，
+       *   且真正做判定的那个 job 失败时 run 已经是红的」。
+       *   一个做判定的作业出现在这里，就是把 #102 又演一遍。
+       */
+      const REPORTER_ONLY = {
+        // `gate` 已在 MUST_FAIL_LOUDLY 里：它红 → run 红。gate-summary 只把
+        // gate/format 已经产生的 outcome 读出来数清楚，自身不产出任何判定，
+        // 而它必须在 gate 红时照跑 —— 一个"谁没跑到"的汇报器如果自己被跳过就白做了。
+        'ci.yml#gate-summary': '纯汇报：只读已有 outcome 计数，不做判定；判定方 gate 红则 run 红',
+      };
+      const exemptReason = REPORTER_ONLY[`${file}#${jobName}`];
+      if (exemptReason) {
+        must(
+          typeof exemptReason === 'string' && exemptReason.length > 10,
+          `${where}: 豁免必须带理由（这条是空的）`,
+        );
+      } else {
+        for (const need of needList) {
+          const esc = String(need).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          must(
+            new RegExp(String.raw`needs\.${esc}\.result`).test(jobIf),
+            `${where}: \`if:\` 里用了 always()/cancelled()/failure()（于是默认的 success ` +
+              `检查被解除了），但 \`needs\` 里的 \`${need}\` **没有任何 ` +
+              `\`needs.${need}.result\` 判断** —— 它失败/取消时这个 job 会照跑。` +
+              `三条出路：把这条 result 写进 \`if:\`；把状态函数换成显式的 \`success() && …\`；` +
+              `或者它确实是个不做判定的纯汇报作业 —— 那就写进本文件的 REPORTER_ONLY 并说明理由。`,
+          );
+        }
+      }
     }
 
     const steps = job?.steps ?? [];
@@ -831,6 +906,20 @@ for (const file of files.sort()) {
       '删掉它就等于宣称机器管住了它，而机器并没有',
   );
 }
+
+/*
+ * ★ 防"空集判通过"（本周抓到的四道假守卫之一就是这个形状）。
+ *   上面那条 #102 断言只在"job 用了状态函数且有 needs"时才有主语。
+ *   如果全仓一个这样的 job 都没有，它就会**每天绿、每天什么都没查** ——
+ *   而今天是有的（`e2e-runtime` 的 attest）。所以这里把"主语存在"本身也变成一条断言。
+ */
+must(
+  statusFnJobsSeen > 0,
+  '没有任何 job 的 `if:` 用了状态函数（always/cancelled/success/failure）且带 needs —— ' +
+    '上面那条「解除默认 success 就得逐条检查 needs.*.result」的断言因此**一条都没查**。' +
+    '要么是有人把 #102 的修法退回去了（e2e-runtime 的 attest 应该是它的主语），' +
+    '要么这条规则确实没主语了、该连同这句一起删。两种都得有人当场看见。',
+);
 
 if (problems.length > 0) {
   console.log(`✘ lint-workflows: ${problems.length} 个问题（共 ${checks} 条断言）`);

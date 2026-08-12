@@ -107,6 +107,42 @@ export interface XIndexProgressEvent {
   total: number;
 }
 
+/**
+ * ★ **客户端自己判定的"该整篇重拉了"** —— 与服务端的 `sync.required` **不是同一件事**。
+ *
+ * ## 为什么必须另起一个名字（#101 顺带）
+ *
+ * `source.ts` 原来两处直接发 `bus.emit('sync.required', { type:'sync.required',
+ * reason:'replay_gap' })`，冒充服务端那条事件。而 `packages/shared` 的
+ * `SyncRequiredEvent` 声明的是：
+ *   · `reason: 'replay_buffer_overflow' | 'server_restarted'`（**没有** `'replay_gap'`）
+ *   · 外加 `SseEventBase` 的 `ts` / `topic`，以及 `oldestAvailableId: number | null`
+ *
+ * 三处对不上，而 `bus.emit(type: string, payload: unknown)` 是松类型，**`tsc` 一个字都不报**。
+ *
+ * 修法**不是**把 shared 的 union 拓宽去迁就客户端 —— 那份契约描述的是
+ * **服务端会发什么**，客户端伪造的东西不该写进去。也不是给本地事件编造一个
+ * `ts`/`topic`/`oldestAvailableId`（那是把一句谎话补齐成三句）。
+ *
+ * 它本来就是另一个东西：**服务端说"你漏了"** vs **客户端自己发现"我漏了"**。
+ * 按本仓既有约定（`x.` 前缀 = shared 未覆盖 / 本地扩展），给它自己的名字与自己的 `reason`。
+ *
+ * ⚠️ 它**故意不在** `EXTENSION_SSE_EVENT_TYPES` 里：那张表喂给 `addEventListener`，
+ * 进去就等于声称"服务端会发这个类型"。它纯粹是进程内的，服务端永远不会发。
+ */
+export interface XSyncRequiredEvent {
+  type: 'x.sync.required';
+  /**
+   * - `replay_gap` —— 收到的 `seq` 与上一条对不上，中间那几条我们没见过。
+   * - `reconnected` —— 断开过又连上了。重放缓冲只有 256 条，一次批量下载就能滚过，
+   *   所以宁可全量重拉。⚠️ 这一档原来也报 `'replay_gap'`，**那是第二句假话**：
+   *   它不是缺口，是重连。两者的排查方向完全不同。
+   * - `leader_reconnected` —— 多标签下**主标签**重连成功，跟随者也得跟着重拉
+   *   （它自己那份 Query 缓存没人替它刷）。
+   */
+  reason: 'replay_gap' | 'reconnected' | 'leader_reconnected';
+}
+
 export const EXTENSION_SSE_EVENT_TYPES = [
   'x.transcribe.replaced',
   'x.summary.delta',
@@ -132,8 +168,29 @@ export const ALL_SSE_EVENT_TYPES: readonly string[] = [
 
 export type AnySseEvent = SharedSseEvent | ExtensionSseEvent;
 
-/** 事件类型 → payload 映射，供 bus 做类型安全订阅。 */
-export type EventMap = { [E in AnySseEvent as E['type']]: E };
+/**
+ * **只活在进程内**的总线事件 —— 服务端永远不发，因此不在 `ALL_SSE_EVENT_TYPES` 里。
+ *
+ * 它们进 `EventMap` 的唯一目的是让 `bus.emit` / `bus.on` **对它们也做类型检查**。
+ * 在此之前 `emit` 是 `(type: string, payload: unknown)`，这一族因此完全没人管。
+ *
+ * ## ⚠️ 登记的前提：**它今天真的还在被发**
+ *
+ * 这张表描述的是"进程内现在跑着哪些事件"。**给一个已经没人发的事件留一条形状登记，
+ * 等于给下一个人一张过期的地图** —— 他会照着它去找发送方、去接订阅端，
+ * 而那条路已经被走完并拆掉了。删掉一个事件时，这里必须跟着删。
+ *
+ * 这条不是假想：本文件初稿曾登记过两条 `ui.toast.*`，写的是「如实登记，不是背书」，
+ * 当时也确实核过（2 个 emit、0 个 `bus.on`）。**但同一天另一路把那两个 emit 删了**
+ * （#98 ⑤），于是那两行登记连同它们的说明一起变成了假话 ——
+ * 两份都诚实、都核过，合在一起就有一份是错的，而 **git 一个冲突标记都不会报**。
+ */
+interface LocalBusEventMap {
+  'x.sync.required': XSyncRequiredEvent;
+}
+
+/** 事件类型 → payload 映射，供 bus 做类型安全订阅**与发布**。 */
+export type EventMap = { [E in AnySseEvent as E['type']]: E } & LocalBusEventMap;
 
 /* ═══════════════════════════ REST DTO 的段落形状 ═══════════════════════════ */
 

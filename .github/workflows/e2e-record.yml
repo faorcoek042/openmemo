@@ -45,7 +45,32 @@
 
 name: e2e-record
 
+# ── ⚠️ 读 `inputs.*` 之前先读这一段（#91：`schedule` 下 `default:` 不生效）──────────
+#
+# **已实测**（scheduled run `31526070085`，2026-08-11 首跑）：`schedule` 触发的运行里
+# `inputs.*` **全是空串（len=0）** —— `workflow_dispatch` 的 `default:` **不会**应用到
+# `schedule`。不用再猜，也不用再验一遍。
+#
+# 空值下发生的不是红，是**静默少跑 / 悄悄换模式**（跳过的步骤不会让 job 变红）。
+# 所以这条腿里每一处读 `inputs.X` 的地方都必须满足一条性质：
+#
+#   > **`inputs` 全空时的行为，必须与 `inputs` 取各自 `default:` 时逐字相同。**
+#
+# 这条性质由 `scripts/ci/selftest-workflow-gates.mjs` **对每一处 `${{ }}` 求值后逐点比对**
+# （不是读一遍 YAML 说没问题），挂在 `pnpm test:ci-scripts` 上 —— 少一处兜底就红。
+#
+# ⚠️ 布尔输入的兜底写法是 `format('{0}', inputs.X) != 'false'`，**不是** `inputs.X || true`
+#    也**不是** `inputs.X != 'false'`：GitHub 的 `==` 在类型不同时把两边转成数字
+#    （`'' → 0`、`false → 0`），于是 **`'' == false` 为真**，空串与"用户显式关掉"分不开；
+#    而 `||` 只看真假，会把显式的 `false` 一起覆盖掉。完整推导见 `e2e-runtime.yml` 文件头。
 on:
+  schedule:
+    # 每天 19:15 UTC。⚠️ schedule 只在**默认分支**上触发 —— 这条 cron 在 PR 上验不了，
+    # 所以上面那条「空 inputs ≡ default」的性质是**合并前唯一的证据**。
+    # 六条腿依次错开 15 分钟（allcomponents 18:00 / runtime 18:15 / browser 18:30 /
+    # notes 18:45 / import 19:00 / record 19:15）：不是为了省钱（public 仓 $0），
+    # 是别在同一时刻抢 runner 影响别人的 PR 判决。
+    - cron: '15 19 * * *'
   workflow_dispatch:
     inputs:
       # ★ 必填，且**故意不给默认值**。
@@ -286,8 +311,15 @@ jobs:
   # `needs:` 已经管住了结果：任一平台失败/取消 → 本 job 被跳过 → **凭证根本不存在**
   # （GitHub 对带 `needs` 的 job 默认要求 needs 全部 success，普通布尔表达式不会解除它）。
   # 下面那个 `if:` 只用来排除**这张凭证没有意义**的模式。
-  # ⚠️ **永远不要把它改成 `always()` / `!cancelled()`** —— 那会解除默认的 success 要求，
-  #    于是"部分跑"也能发出凭证，而这正是本机制要挡的那件事。
+  # ⚠️ **不许在没有逐条 `needs.*.result` 检查的情况下改成 `always()` / `!cancelled()`**
+  #    —— 那会解除默认的 success 要求，于是"部分跑/跑挂了"也能发出凭证。
+  #    这条规则 2026-08-12 从"永远不要用"细化成了现在这句：`e2e-runtime` 的 attest
+  #    **必须**用 `!cancelled()`，因为那是唯一能把 needs 的 `skipped`（变异被跳过）
+  #    与 `failure`（变异红）分开对待的办法 —— 默认语义下两者都会把凭证一起跳掉。
+  #    代价是那份 success 清单从**自动**变成**手写**，所以
+  #    `scripts/ci/lint-workflows.mjs` 现在机械地钉着：用了状态函数，就得把
+  #    `needs:` 里每一个名字的 `.result` 都写进 `if:`，漏一条就红。
+  #    **这条腿今天不需要那样做**（它没有可跳过的 need），保持默认语义即可。
   # ═══════════════════════════════════════════════════════════════════════════════════
   attest:
     name: e2e 凭证（三平台全跑且全绿才发）
@@ -303,7 +335,18 @@ jobs:
     #      这条腿的 `bundleRunId` 是**必填无默认**的（作者写明"给默认只会让它慢慢过期"），
     #      所以输入本身就是权威值，`resolve-bundle-run.sh` 对非空入参原样回显。
     #      这样就**一行都不用改它原有的 job**。
-    if: ${{ inputs.legs == 'all' }}
+    #
+    # ★★ 第二个条件 `bundleRunId != ''`（#91 补）：**没钉批次就不发凭证**。
+    #    `required: true` 只是 **dispatch 表单**上的约束，`schedule` 触发时它一个字都不管
+    #    （`[实测 run 31526070085]`：schedule 下 inputs 全空）。空串会一路传到
+    #    `--bundle-run ""`，让 `emit-e2e-attestation.mjs` die —— 也就是把「这次没钉批次」
+    #    渲染成一个**看起来像闸门坏了**的红。写成显式的门，让它**跳过**而不是炸，
+    #    并且与 `e2e-allcomponents` 那条同款规则（"自动解析的 run 不发凭证"）对齐。
+    #    ⚠️ 对手动 dispatch 这一条**一个字都没改**（`required: true` 保证它非空）。
+    #    ⚠️ `legs` 这一半补 `|| 'all'`，与 `plan` job 里 `LEGS || "all"` 同一口径 ——
+    #       否则 schedule 下 `plan` 跑满三个平台、而这里因为 `'' != 'all'` 跳过，
+    #       两处读同一个输入却给出两种默认，那种不一致迟早会被谁"顺手对齐"成错的那边。
+    if: ${{ inputs.bundleRunId != '' && (inputs.legs || 'all') == 'all' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

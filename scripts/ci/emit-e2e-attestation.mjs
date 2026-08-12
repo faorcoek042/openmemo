@@ -49,6 +49,7 @@
  *   node scripts/ci/emit-e2e-attestation.mjs \
  *     --leg import --bundle-run 31252923419 \
  *     --platforms linux-x64,darwin-arm64,win32-x64 \
+ *     [--undecided N] [--mode sample|full] [--mutations ran|skipped] \
  *     --out dist/e2e-attest.json [--github-output "$GITHUB_OUTPUT"]
  *
  * 缺任何一个必填项就 **exit 1 且不写文件** —— 一个说了半句真话的凭证比没有更糟。
@@ -92,11 +93,52 @@ const out = arg('--out', 'dist/e2e-attest.json');
  */
 const undecidedRaw = arg('--undecided', null);
 const mode = arg('--mode', null);
+/*
+ * ★ `--mutations`（#102，2026-08-12）：**变异验证这一轮到底跑没跑。**
+ *
+ * ## 它修的那件事（真事故，不是假想）
+ *
+ * `[实测 e2e-runtime run 31568740737]`：三平台审计全 `success`、
+ * `变异验证（linux-x64）` **failure**（一条变异存活）、run 的 conclusion 是 **failure**，
+ * 而 `e2e-attest-runtime-31568189189` **照发了、未过期**。成因是 attest 作业的
+ * `needs:` 里只有审计那个 job，变异 job 不在里面 —— 三平台审计全绿 ⇒ attest 照跑照发。
+ *
+ * 修法有两半，这个字段是**第二半**：
+ *   ① `needs:` 补上变异 job，并在 `if:` 里显式白名单 `success | skipped`
+ *      ⇒ **变异红 = 凭证根本不存在**（所以下面**没有** `failed` 这个取值，
+ *        不是忘了写：能走到这个脚本的运行，变异必然没红）；
+ *   ② 变异**被跳过**时凭证照发（否则 `mutations=false` 的跑会让发布闸门直接卡死），
+ *      但必须**在凭证里说出来** —— 这就是本字段。**跳过 ≠ 通过。**
+ *
+ * ## 取值（只有两个，别加第三个）
+ *
+ *   · `ran`     —— 这一轮变异验证跑了，且没红。
+ *   · `skipped` —— 这一轮**没跑**（例如显式 `mutations=false`）。
+ *   · 不传 ⇒ `null` —— **这条腿没接这个字段**，与 `skipped` 是两句不同的话
+ *     （和 `undecided` 的 `null` vs `0` 同一条规矩）。
+ *
+ * ## ⚠️ `ran` **不等于**「每条变异都被验证了」
+ *
+ * `e2e-runtime-audit.mjs --mutate` 的退出码是三态的，`3 = 跑起来了但什么都没证明`
+ * （前提在这台 runner 上构造不出来）**不判红**。所以 `ran` 里仍可能有若干条
+ * 什么都没证明的变异 —— 它们今天只出现在日志与 step summary 里，**还没有被数出来**。
+ * 把那个数接进来是**下一步**（形状与 `--undecided` 完全相同）；在那之前，这个字段
+ * 只承诺它字面说的那件事：**跑了，没红**。少承诺一点，好过承诺一句查不了的话。
+ */
+const mutations = arg('--mutations', null);
 if (undecidedRaw !== null && !/^\d+$/.test(String(undecidedRaw))) {
   die(`--undecided 必须是非负整数，实得 ${JSON.stringify(undecidedRaw)}`);
 }
 if (mode !== null && !/^(sample|full)$/.test(String(mode))) {
   die(`--mode 只能是 sample 或 full，实得 ${JSON.stringify(mode)}`);
+}
+if (mutations !== null && !/^(ran|skipped)$/.test(String(mutations))) {
+  die(
+    `--mutations 只能是 ran 或 skipped，实得 ${JSON.stringify(mutations)}。\n` +
+      '  （**故意没有 failed 这个取值**：变异红的运行不该走到这里 —— 发凭证那个作业的\n' +
+      '   `if:` 应该已经把它挡在门外了。收到别的值说明那道门被改松了，此刻**当场炸**\n' +
+      '   比发一张写着奇怪值的凭证好。）',
+  );
 }
 
 if (!leg || !/^[a-z0-9-]+$/.test(leg))
@@ -130,6 +172,13 @@ const attestation = {
    */
   undecided: undecidedRaw === null ? null : Number(undecidedRaw),
   mode: mode === null ? null : String(mode),
+  /**
+   * ★ `mutations`（#102）：`ran` = 变异验证跑了且没红；`skipped` = **这一轮没跑**；
+   * `null` = 这条腿没接这个字段。**跳过 ≠ 通过** —— 一条从来没红过的断言
+   * 和一条不存在的断言，对用户来说是同一个东西，而"变异整轮没跑"就是那种状态。
+   * ⚠️ 没有 `failed`：那种运行**不该有凭证**（挡在发凭证作业的 `if:` 上）。
+   */
+  mutations: mutations === null ? null : String(mutations),
   /** 以下只用于事后审计，**不参与判定**。 */
   e2eRunId: process.env.GITHUB_RUN_ID ?? null,
   e2eRunAttempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
@@ -152,8 +201,15 @@ console.log(`   针对包  ：build-bundles run ${bundleRun}`);
 console.log(`   平台    ：${platforms.join(', ')}`);
 console.log(
   `   覆盖面  ：未决 ${undecidedRaw === null ? '未上报' : `${undecidedRaw} 条`}` +
-    ` · 抽样 ${mode === null ? '不适用/未上报' : mode}`,
+    ` · 抽样 ${mode === null ? '不适用/未上报' : mode}` +
+    ` · 变异 ${mutations === null ? '不适用/未上报' : mutations}`,
 );
+if (mutations === 'skipped') {
+  console.log(
+    '   ⚠️ 本轮**变异验证整个没跑**（mutations=skipped）——' +
+      ' 这张凭证说的是"断言跑绿了"，**没说那些断言有牙齿**。跳过 ≠ 通过。',
+  );
+}
 if (undecidedRaw !== null && Number(undecidedRaw) > 0) {
   console.log(
     `   ⚠️ 这条腿有 ${undecidedRaw} 条断言**没被验到**（无从判断）——` +

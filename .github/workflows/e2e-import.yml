@@ -32,7 +32,32 @@
 
 name: e2e-import
 
+# ── ⚠️ 读 `inputs.*` 之前先读这一段（#91：`schedule` 下 `default:` 不生效）──────────
+#
+# **已实测**（scheduled run `31526070085`，2026-08-11 首跑）：`schedule` 触发的运行里
+# `inputs.*` **全是空串（len=0）** —— `workflow_dispatch` 的 `default:` **不会**应用到
+# `schedule`。不用再猜，也不用再验一遍。
+#
+# 空值下发生的不是红，是**静默少跑 / 悄悄换模式**（跳过的步骤不会让 job 变红）。
+# 所以这条腿里每一处读 `inputs.X` 的地方都必须满足一条性质：
+#
+#   > **`inputs` 全空时的行为，必须与 `inputs` 取各自 `default:` 时逐字相同。**
+#
+# 这条性质由 `scripts/ci/selftest-workflow-gates.mjs` **对每一处 `${{ }}` 求值后逐点比对**
+# （不是读一遍 YAML 说没问题），挂在 `pnpm test:ci-scripts` 上 —— 少一处兜底就红。
+#
+# ⚠️ 布尔输入的兜底写法是 `format('{0}', inputs.X) != 'false'`，**不是** `inputs.X || true`
+#    也**不是** `inputs.X != 'false'`：GitHub 的 `==` 在类型不同时把两边转成数字
+#    （`'' → 0`、`false → 0`），于是 **`'' == false` 为真**，空串与"用户显式关掉"分不开；
+#    而 `||` 只看真假，会把显式的 `false` 一起覆盖掉。完整推导见 `e2e-runtime.yml` 文件头。
 on:
+  schedule:
+    # 每天 19:00 UTC。⚠️ schedule 只在**默认分支**上触发 —— 这条 cron 在 PR 上验不了，
+    # 所以上面那条「空 inputs ≡ default」的性质是**合并前唯一的证据**。
+    # 六条腿依次错开 15 分钟（allcomponents 18:00 / runtime 18:15 / browser 18:30 /
+    # notes 18:45 / import 19:00 / record 19:15）：不是为了省钱（public 仓 $0），
+    # 是别在同一时刻抢 runner 影响别人的 PR 判决。
+    - cron: '0 19 * * *'
   workflow_dispatch:
     inputs:
       bundleRunId:
@@ -224,14 +249,40 @@ jobs:
   # **旧凭证自动失效**。消费方（发布前那道闸）只问名字在不在，不读内容 ——
   # 一个需要读内容才能判定的凭证，迟早会有人读错。
   #
-  # ## 这个 job **不带任何 `if:`**，且 `needs:` 矩阵全部
+  # ## 这个 job 的 `if:` 里**一个 needs 的 result 都不许读**，且 `needs:` 矩阵全部
   #
   # 任何一个平台失败或被跳过 → 它自己被跳过 → **凭证根本不存在**。
   # "部分跑"的 run 里不会出现一张说了半句真话的凭证（PROTOCOL §11）。
+  # ⚠️ 这句话原本写的是"**不带任何 `if:`**"。下面现在有一个 `if:` 了 ——
+  #    它管的是**模式**（有没有钉批次），不碰任何 `needs.*.result`，
+  #    默认的 `success()` 一个字没被解除（表达式里没有状态函数）。
+  #    真正不许做的是**用 `always()` / `!cancelled()` 解除默认 success 检查**；
+  #    `scripts/ci/lint-workflows.mjs` 现在机械地钉着这一条。
   # ═══════════════════════════════════════════════════════════════════════════════════
   attest:
-    name: e2e 凭证（三平台全绿才发）
+    name: e2e 凭证（三平台全绿、且钉死同一批包才发）
     needs: [e2e]
+    # ★★ `bundleRunId != ''`（#91 补，**这是一次有意的收紧**）：**没钉批次就不发凭证**。
+    #
+    #   为什么必须有它：这条腿的 `bundleRunId` 是**可选**的，留空时三个平台各自跑
+    #   `resolve-bundle-run.sh "$ARTIFACT" ""`，**按 artifact 名各自解析** ——
+    #   完全可能落到**不同批**的包上（那正是 `resolve-bundle-run.sh` 文件头记的那次事故：
+    #   最近一次成功的 run 只有 darwin 产物）。而凭证名只取
+    #   `needs.e2e.outputs.bundle_run_id` **一个**值 —— 矩阵 job 的 output 由
+    #   最后完成的那一格写入，没有任何一致性保证。
+    #   于是留空跑出来的凭证会写着"三平台验过 run X"，而其中某些平台验的根本不是 X。
+    #   **那不是覆盖面不足，那是伪证** —— 与 `e2e-allcomponents` 拒绝为自动解析的 run
+    #   发凭证是同一条判据（见那条腿 attest 的注释）。
+    #
+    #   #91 让这件事从"少见"变成"每天一次"：加了 cron 之后，`schedule` 触发的 run
+    #   `inputs` 全空 ⇒ 每天都会自动解析一批、每天都会发一张说不清宾语的凭证。
+    #
+    #   ⚠️ 收紧的代价写在这里，别让下一个人以为是坏了：**用默认参数（留空）跑这条腿，
+    #      从此不再产出凭证**。发布闸门要的那条命令本来就钉批次
+    #      （`verify-e2e-attestation.mjs` 的 DISPATCH_HINT：`-f bundleRunId=<批次>`），
+    #      标准发布路径一个字都不用改；受影响的只有"随手跑一发默认参数"那种用法 ——
+    #      而那种 run 此前发出的凭证，本来就说不清它验的是哪一批。
+    if: ${{ inputs.bundleRunId != '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

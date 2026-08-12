@@ -218,7 +218,8 @@ function later(fn: () => void, ms: number) {
 }
 
 function emit(type: string, payload: Record<string, unknown>) {
-  bus.emit(type, { type, ...payload });
+  // mock 源与真 SSE 同属"运行时才知道类型"的那一档（见 bus.ts 的说明）
+  bus.emitFromWire(type, { type, ...payload });
 }
 
 function seedNote(partial: Partial<MockNote> & { title: string }): MockNote {
@@ -280,7 +281,8 @@ function mockAsset(a: {
   durationMs: number | null;
 }): MediaAssetDto {
   const uid = nextId('as');
-  return { uid, url: `/media/asset/${uid}`, state: 'ready', ...a };
+  /* `replacedAt: null` —— mock 里的原件没有被「重新转写」覆盖过（#96②）。 */
+  return { uid, url: `/media/asset/${uid}`, state: 'ready', replacedAt: null, ...a };
 }
 
 function makeSegments(count: number, startSeq = 0): TranscriptSegmentDto[] {

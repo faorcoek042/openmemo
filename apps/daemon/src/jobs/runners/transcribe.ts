@@ -204,9 +204,26 @@ export function runModelId(
   return fallback;
 }
 
-/** 把绝对路径转成相对 media 根的路径（D-02 §1.1：绝不存绝对路径，数据目录可搬迁）。 */
+/** {@link archiveIntoMedia} 的结论：**落点**，以及**它有没有压掉一份已经在那儿的文件**。 */
+export interface ArchivedFile {
+  /** 相对 media 根的路径（D-02 §1.1：绝不存绝对路径，数据目录可搬迁）。 */
+  readonly rel: string;
+  /**
+   * 归档时那个落点上**本来就有一份文件**，被这一次的产物覆盖掉了。
+   *
+   * 这不是一个"出错了"的信号 —— 重转要重取一次源，覆盖是这个动作的题中之义，
+   * 而且只发生在重新取到之后（取失败会在归档之前就抛出去）。
+   * 它是一条**必须留痕的事实**：被换掉的是用户存的那份原件，
+   * 而在 #96② 之前，这件事从库到界面一个字都没有（见 `Repos.createAsset`）。
+   *
+   * `false` 的两种情形都不该留痕：落点是空的（首次导入），
+   * 或者文件本来就在 media/ 里、我们**根本没动它**（录音、本地导入、上传的重跑）。
+   */
+  readonly replacedExisting: boolean;
+}
+
 /**
- * 把产物**归档进 media 根**，返回相对路径。
+ * 把产物**归档进 media 根**。
  *
  * ## 这里原来是个会丢数据的坑
  * 旧实现是「算相对路径，带 `..` 就原样存绝对路径」。后果两条叠加：
@@ -224,7 +241,7 @@ export async function archiveIntoMedia(
   noteUid: string,
   abs: string,
   name: string,
-): Promise<string> {
+): Promise<ArchivedFile> {
   /*
    * ★ 比较之前**两边都要规范化**（CI run 31247843782 抓到的）。
    *
@@ -247,11 +264,22 @@ export async function archiveIntoMedia(
   const absC = canonical(abs);
   const rel = relative(rootC, absC);
   // 已经在 media/ 里就别动它（重跑时会走到这里）
-  if (!rel.startsWith('..') && !isAbsolute(rel)) return rel;
+  if (!rel.startsWith('..') && !isAbsolute(rel)) return { rel, replacedExisting: false };
 
   const destDir = join(mediaRoot, noteUid);
   await mkdir(destDir, { recursive: true });
   const dest = join(destDir, name);
+  /*
+   * ★ #96②：**先问一句"这儿本来有东西吗"，再覆盖。**
+   *
+   * `rename(2)` 覆盖同名目标是原子且**完全静默**的：不报错、不留痕、事后无从分辨。
+   * 网络导入重转会把重新下载回来的源落到**同一个** `<mediaRoot>/<noteUid>/source.<ext>`，
+   * 于是用户存的那份原件被换掉，而库里 `uid` / `rel_path` / `created_at` 一个都没变。
+   * 覆盖保留（重取一次源正是「重新转写」的题中之义），但**必须先记下它发生过**。
+   *
+   * 一次 `existsSync`，只在真要搬文件的这一支上；提前返回那一支根本不走到这里。
+   */
+  const replacedExisting = existsSync(dest);
   try {
     await rename(abs, dest);
   } catch (err) {
@@ -259,7 +287,7 @@ export async function archiveIntoMedia(
     if ((err as NodeJS.ErrnoException).code === 'EXDEV') await copyFile(abs, dest);
     else throw err;
   }
-  return relative(mediaRoot, dest);
+  return { rel: relative(mediaRoot, dest), replacedExisting };
 }
 
 export async function runTranscribeJob(
@@ -546,18 +574,34 @@ export async function runTranscribeJob(
    * 先归档再落库：**顺序不能反**。
    * 反过来会先写一条指向 tmp 的记录，万一归档失败就留下一条永远读不到的资产。
    */
-  const originalRel = await archiveIntoMedia(
+  const original = await archiveIntoMedia(
     deps.mediaRoot,
     note.uid,
     result.media.path,
     basename(result.media.path),
   );
-  const normalizedRel = await archiveIntoMedia(
+  const normalized = await archiveIntoMedia(
     deps.mediaRoot,
     note.uid,
     result.normalizedPath,
     'audio16k.wav',
   );
+  /*
+   * ★ #96②：**被换掉的原件要说出来**，至少要说进日志和库里。
+   *
+   * 只有网络导入的重转会走到这一支（本地导入/上传/录音重跑时文件本来就在 media/ 里，
+   * `archiveIntoMedia` 提前返回，`replacedExisting` 恒为 false）。用户点的是「重新转写」，
+   * 重取一次源是这个动作的题中之义，所以我们**不拦**、也不弹确认框
+   * （把一个常用动作变成两步，代价大于收益）——但如果远端内容改过，
+   * 他存的那份就是被另一份替掉了，这件事必须**可发现**。
+   */
+  const replacedAt = original.replacedExisting ? Date.now() : null;
+  if (replacedAt !== null) {
+    console.log(
+      `[transcribe] 重新取源覆盖了原件：${original.rel}` +
+        `（${result.media.sizeBytes} 字节 / ${result.durationMs} ms，note=${note.uid}）`,
+    );
+  }
 
   /*
    * ★ `mime` **刻意不填**（判断，不是遗漏 —— 写在这里免得下一个人"顺手补上"）。
@@ -580,18 +624,26 @@ export async function runTranscribeJob(
   const originalAsset = repos.createAsset({
     noteId: note.id,
     role: 'original',
-    relPath: originalRel,
+    relPath: original.rel,
     displayName: basename(payload.input),
     durationMs: result.durationMs,
     bytes: result.media.sizeBytes,
+    /* 盘上那份真被换掉了才传：它同时是「刷新 bytes/duration_ms」的开关（见 `createAsset`）。 */
+    replacedAt,
   });
   repos.createAsset({
     noteId: note.id,
     role: 'audio16k',
-    relPath: normalizedRel,
+    relPath: normalized.rel,
     durationMs: result.durationMs,
     sampleRate: 16000,
     channels: 1,
+    /*
+     * 归一化音频**每一跑都是新造的**（落在 job 专属的 scratch 里再搬进来），
+     * 所以第二次起必然覆盖上一份 —— 与 original 那条不同，这一条对所有导入方式都成立。
+     * 它的 `duration_ms` 此前同样冻在第一次的值上。
+     */
+    replacedAt: normalized.replacedExisting ? Date.now() : null,
   });
 
   /*
@@ -611,7 +663,7 @@ export async function runTranscribeJob(
    */
   const peaks = await generatePeaksAsset(
     { repos, sse, mediaRoot: deps.mediaRoot, dataDir: deps.dataDir },
-    { noteId: note.id, noteUid: note.uid, wavPath: join(deps.mediaRoot, normalizedRel) },
+    { noteId: note.id, noteUid: note.uid, wavPath: join(deps.mediaRoot, normalized.rel) },
   );
   if (peaks) {
     console.log(
