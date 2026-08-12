@@ -27,7 +27,20 @@ import { useConnectionStore } from '../stores/connection.store';
 
 const CHANNEL = 'openmemo-sse';
 const LOCK_NAME = 'openmemo-sse-leader';
-/** 连续这么多次重连失败后降级为轮询（约 15s） */
+/**
+ * 连续这么多次重连失败后转入 `degraded` —— 由 `degradedPolling.ts` 接手，
+ * 改为每 `DEGRADED_POLL_INTERVAL_MS`（15s）全量重拉一次。
+ *
+ * ─── 这句话曾经是假的，两边都留着（#101）───────────────────────────────
+ * 原文写的就是「降级为**轮询**（约 15s）」，而顺着 `degraded` 查下来
+ * 只有一个枚举值、一条黄色横幅和一张 tone 表 —— **全仓没有任何一处在拉数据**。
+ * 也就是说：SSE 断到降级之后，界面永久停在最后一帧上，而这句注释
+ * 恰恰会让下一个人**不去查这里**（"哦，有兜底的"）。
+ *
+ * 现在兜底真的存在了（`lib/events/degradedPolling.ts`，由 `system.sse.ts` 装上），
+ * 所以这句话第一次成立。⚠️ 那个模块删了，这里就要跟着改回"没有兜底"，
+ * 不许留着这句话继续替不存在的东西背书。
+ */
 const MAX_RECONNECT_BEFORE_DEGRADE = 5;
 /** 超过 keepalive 间隔这么多倍没收到任何帧，判定连接已死 */
 const WATCHDOG_FACTOR = 2;

@@ -69,7 +69,12 @@ import {
   StaleLinksWarning,
   resultTextKey,
 } from '../features/settings/DataLocationSection';
-import { RetranscribeButton, isSegmentEdited } from '../features/notes/RetranscribeButton';
+import {
+  RETRANSCRIBE_BLOCKED_ID,
+  RetranscribeBlockedNotice,
+  RetranscribeButton,
+  isSegmentEdited,
+} from '../features/notes/RetranscribeButton';
 import { WordLevelBadge } from '../features/transcript';
 import { WordHighlight, findActiveWord } from '../features/transcript/WordHighlight';
 import {
@@ -1456,19 +1461,62 @@ describe('重跑保留编辑（换回「已保留」）', () => {
     assert.equal(isSegmentEdited({}), false);
   });
 
-  test('★ canRetranscribe=false 时按钮事前禁用并说明原因', async () => {
+  /**
+   * ★★ 这一条**换过判据**（v0.7.1 已知边界第 4 条）。
+   *
+   * 它原来断言的是 `btn.getAttribute('title')` 里有那句话 ——
+   * 而那句话**任何输入方式都拿不到**：`Button` 基类带 `disabled:pointer-events-none`，
+   * `pointer-events: none` 的元素收不到 `mouseover`，原生 tooltip 对鼠标用户也不弹；
+   * `disabled` 又把它移出了 tab 序列；`title` 在多数读屏配置下不播报。
+   *
+   * 于是那条断言证明的是「**这个字符串被算出来了**」，而不是「**用户读得到**」——
+   * 它绿着，产品却是一个说不出话的灰按钮。这正是本仓最贵的那一类守卫。
+   *
+   * 现在钉的是后果：**这句话必须出现在渲染出来的文档里**。
+   * 把 `<RetranscribeBlockedNotice/>` 从渲染里拿掉，这条立刻红。
+   */
+  test('★ canRetranscribe=false：按钮禁用，理由**渲染进文档**（不是挂在 title 上）', async () => {
     stubApi({});
     const r = await render(
-      <RetranscribeButton
-        noteUid="n1"
-        segments={[]}
-        currentLanguage="zh"
-        canRetranscribe={false}
-      />,
+      <>
+        <RetranscribeButton
+          noteUid="n1"
+          segments={[]}
+          currentLanguage="zh"
+          canRetranscribe={false}
+        />
+        <RetranscribeBlockedNotice canRetranscribe={false} />
+      </>,
     );
     const btn = r.container.querySelector('[data-testid="retranscribe-open"]') as HTMLButtonElement;
     assert.equal(btn.disabled, true);
-    assert.ok((btn.getAttribute('title') ?? '').includes('没有记录原始输入'), '禁用要自带解释');
+
+    // ① 用户读得到：理由在文本节点里，不需要悬停、不需要聚焦
+    assert.ok(
+      text(r.container).includes('没有记录原始输入'),
+      `禁用理由必须是页面上读得到的文字，实际：${text(r.container).slice(0, 200)}`,
+    );
+    // ② 读屏：禁用按钮与那条理由必须**关联**上，否则听到的仍然只是"重新转写，已禁用"
+    assert.equal(btn.getAttribute('aria-describedby'), RETRANSCRIBE_BLOCKED_ID);
+    assert.ok(
+      r.container.querySelector(`#${RETRANSCRIBE_BLOCKED_ID}`),
+      'aria-describedby 指向的节点必须真的存在 —— 指空 id 不报错，只会静默失效',
+    );
+    r.unmount();
+  });
+
+  test('★ 反面：可以重跑时不许平白挂一条警告横幅，也不许留着 aria-describedby', async () => {
+    stubApi({});
+    const r = await render(
+      <>
+        <RetranscribeButton noteUid="n1" segments={[]} currentLanguage="zh" />
+        <RetranscribeBlockedNotice />
+      </>,
+    );
+    const btn = r.container.querySelector('[data-testid="retranscribe-open"]') as HTMLButtonElement;
+    assert.equal(btn.disabled, false);
+    assert.equal(btn.getAttribute('aria-describedby'), null, '没被拦住就不该指向任何解释');
+    assert.equal(r.container.querySelector('[data-testid="retranscribe-blocked"]'), null);
     r.unmount();
   });
 
@@ -1489,13 +1537,10 @@ describe('重跑保留编辑（换回「已保留」）', () => {
    *（明明记录了，只是打不开），而且会把人往"只能重新导入"指，
    * 实际多半只是文件被删 / 外置盘没挂，接回去就好。
    */
-  test('★ retranscribeBlocked 有值时，tooltip 用 daemon 的真实原因而不是写死那句', async () => {
+  test('★ retranscribeBlocked 有值时，界面上显示 daemon 的真实原因而不是写死那句', async () => {
     stubApi({});
     const r = await render(
-      <RetranscribeButton
-        noteUid="n1"
-        segments={[]}
-        currentLanguage="zh"
+      <RetranscribeBlockedNotice
         canRetranscribe={false}
         retranscribeBlocked={{
           code: 'SOURCE_UNREADABLE',
@@ -1505,24 +1550,19 @@ describe('重跑保留编辑（换回「已保留」）', () => {
         }}
       />,
     );
-    const btn = r.container.querySelector('[data-testid="retranscribe-open"]') as HTMLButtonElement;
-    const title = btn.getAttribute('title') ?? '';
-    assert.equal(btn.disabled, true);
-    assert.ok(title.includes('/tmp/omdemo/jfk.wav'), 'daemon 说的那个路径要在里面');
-    assert.ok(!title.includes('没有记录原始输入'), '这条笔记**记录了**原始输入，不许再说那句话');
+    const shown = text(r.container);
+    assert.ok(shown.includes('/tmp/omdemo/jfk.wav'), `daemon 说的那个路径要在里面：${shown}`);
+    assert.ok(!shown.includes('没有记录原始输入'), '这条笔记**记录了**原始输入，不许再说那句话');
     // 找过的位置必须列出来：否则用户分不清"文件没了"和"我们找错了地方"（T-136 那一课）
-    assert.ok(title.includes('/data/media/jfk.wav'), 'tried 要列出来供用户核对');
-    assert.ok(title.includes('/data/jfk.wav'));
+    assert.ok(shown.includes('/data/media/jfk.wav'), 'tried 要列出来供用户核对');
+    assert.ok(shown.includes('/data/jfk.wav'));
     r.unmount();
   });
 
   test('retranscribeBlocked.tried 为空时不渲染空的「找过这些位置」', async () => {
     stubApi({});
     const r = await render(
-      <RetranscribeButton
-        noteUid="n1"
-        segments={[]}
-        currentLanguage="zh"
+      <RetranscribeBlockedNotice
         canRetranscribe={false}
         retranscribeBlocked={{
           code: 'NO_SOURCE_INPUT',
@@ -1532,11 +1572,69 @@ describe('重跑保留编辑（换回「已保留」）', () => {
         }}
       />,
     );
-    const btn = r.container.querySelector('[data-testid="retranscribe-open"]') as HTMLButtonElement;
-    const title = btn.getAttribute('title') ?? '';
-    assert.ok(title.includes('没有记录原始输入'));
-    assert.ok(!title.includes('找过这些位置'), '一个位置都没找过时，别摆一个空标题');
+    const shown = text(r.container);
+    assert.ok(shown.includes('没有记录原始输入'));
+    assert.ok(!shown.includes('找过这些位置'), '一个位置都没找过时，别摆一个空标题');
     r.unmount();
+  });
+
+  /**
+   * ★★ **产品真实路径**上的那一格。
+   *
+   * 上面几条都只渲染组件本身，而这次的缺陷恰恰藏在**组装**里：
+   * 理由横幅由 `NoteDetailPage` 渲染，与按钮分处两个节点 ——
+   * 忘了那一行，按钮的 `aria-describedby` 会指向一个不存在的 id，
+   * **不报错、不报警，静默退回"无声变灰"**，而只渲染组件的用例照样全绿。
+   *
+   * 所以这一条钉在页面这一层：打开一条不能重跑的笔记，
+   * **理由必须出现在他眼前**，不需要悬停、不需要聚焦、不需要点。
+   */
+  test('★★ 打开一条不能重跑的笔记：理由直接出现在详情页上', async () => {
+    const NUID = '01HZZZZZZZZZZZZZZZZZZZZZZZ';
+    stubApi({
+      [`/notes/${NUID}`]: {
+        uid: NUID,
+        title: '搬过家的那条',
+        status: 'done',
+        durationMs: null,
+        tags: [],
+        summaryMd: null,
+        bodyJson: null,
+        assets: [],
+        canRetranscribe: false,
+        retranscribeBlocked: {
+          code: 'SOURCE_UNREADABLE',
+          message: 'the recorded source input can no longer be read',
+          messageZh: '记录的原始输入已经读不到了：/old/disk/talk.m4a',
+          tried: ['/data/media/talk.m4a', '/old/disk/talk.m4a'],
+        },
+      },
+      [`/notes/${NUID}/transcript`]: { transcript: null, segments: [] },
+      [`/notes/${NUID}/mindmap`]: { mindmap: null, doc: null },
+    });
+    const r = await render(
+      <Routes>
+        <Route path="/notes/:noteUid" element={<NoteDetailPage />} />
+      </Routes>,
+      { route: `/notes/${NUID}` },
+    );
+    try {
+      await r.flush();
+      await r.flush();
+      const shown = text(r.container);
+      assert.ok(
+        shown.includes('/old/disk/talk.m4a'),
+        `详情页上要能直接读到 daemon 给的原因，实际：${shown.slice(0, 400)}`,
+      );
+      assert.ok(shown.includes('/data/media/talk.m4a'), '找过的位置也要在页面上');
+      assert.ok(
+        r.container.querySelector(`#${RETRANSCRIBE_BLOCKED_ID}`),
+        '按钮的 aria-describedby 指的就是这个 id —— 它必须真的在页面里',
+      );
+    } finally {
+      // 断言红了也要卸载：详情页里有 rAF 自循环，不卸载会让整个文件挂住而不是报红
+      r.unmount();
+    }
   });
 });
 

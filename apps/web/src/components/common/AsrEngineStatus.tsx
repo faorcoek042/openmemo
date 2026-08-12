@@ -88,15 +88,22 @@ export function useAsrEngines(): { engines: EngineState[]; isLoading: boolean; r
  *
  * ## 为什么是只读，而不是选择器
  *
- * 这不是偷懒，是**后端目前不接受**：
- * - `TranscribePayload`（`jobs/runners/transcribe.ts`）只有
- *   `{noteId, input, language, sourceKind, mergeWithTranscriptId}` 五个键，没有 `engineId`
- * - `selectEngine()` 支持 `forceEngineId`，但**整个 daemon 零调用方**
- * - 引擎当前唯一的外部输入口是环境变量 `OPENMEMO_ASR_ENGINE`
+ * ─── 当初的理由是"后端不接受"，那条**已经不成立**了（#99 ①）─────────────
+ * 原文列的三条是：`TranscribePayload` 只有五个键没有 `engineId`；
+ * `selectEngine()` 的 `forceEngineId` **整个 daemon 零调用方**；
+ * 引擎唯一的外部输入口是环境变量 `OPENMEMO_ASR_ENGINE`。
+ * **三条今天全都翻了面**：`TranscribePayload` 有 `engineId`/`modelId`/`prompt`
+ * （`jobs/runners/transcribe.ts`），`pipelineFor(language, { engineId })` 在同一个文件里
+ * 被真的调用，`/api/notes/import` 与 `/api/notes/:uid/retranscribe` 两个端点都收这三个键。
  *
- * 在这种情况下画一个下拉框，选中的值只能扔掉 —— 那正是本轮要消灭的东西
- * （原来的 `'paraformer' | 'turbo'` 就是这么来的，而 `'turbo'` 后端根本不存在）。
- * 所以这里如实显示"**哪些引擎真的能用、用不了的原因是什么**"，
+ * 保持只读现在是**尚未裁决**（#99 ①），不是"选了会被扔掉"。
+ * ⚠️ 真要改成选择器，先看清一条实测结论：给一个**不可用或不认识**的 `engineId`，
+ * daemon 会**静默回落**到自动挑选（`pipeline/setup.ts` 的 `forced === undefined` 分支），
+ * 那个 `reason` 字符串谁都不读、不落库、不上 SSE ——
+ * 也就是说"我选了 paraformer、实际跑的是 whisper"在界面上**看不出来**。
+ * 所以选择器必须自己先按 `available` 过滤，不能把校验交给后端。
+ *
+ * 在此之前这里如实显示"**哪些引擎真的能用、用不了的原因是什么**"，
  * 并给出唯一真实的操作：去装缺的运行时。
  *
  * 用户能间接影响引擎选择的手段是**语言** —— 后端按语言自动选（中文走 Paraformer）。

@@ -14,7 +14,7 @@ import { WordLevelBadge } from '../transcript';
 import { GenerateMindmapButton, MindmapView, useMindmapQuery } from '../mindmap';
 import { NoteProgressLine } from './NoteProgressLine';
 import { TagEditor } from './TagEditor';
-import { RetranscribeButton } from './RetranscribeButton';
+import { RetranscribeBlockedNotice, RetranscribeButton } from './RetranscribeButton';
 import { NoteEditor } from './NoteEditor';
 import { parseSeekParam } from './seekParam';
 import { ExportMenu } from './ExportMenu';
@@ -220,21 +220,35 @@ export default function NoteDetailPage() {
                 ★ 重新转写入口。放在转写稿面板的头上 —— 用户是**看着那篇被翻译成英文的稿子**
                 想重跑的，入口就该在他视线所及之处，而不是埋进设置里。
 
-                ★ `retranscribeBlocked` 必须跟着 `canRetranscribe` 一起传（#95）：
-                不传的话，按钮变灰时只会显示那句**写死的**「没有记录原始输入」，
-                而 daemon 判 `false` 的原因现在不止这一种。显示错的那一种比不显示更糟 ——
+                ★ `retranscribeBlocked` 现在传给**下面那条横幅**而不是这个按钮（#95 + 无障碍）：
+                daemon 判 `false` 的原因不止一种，显示错的那一种比不显示更糟 ——
                 它把人往"只能重新导入"指，而实际多半只是文件被删 / 外置盘没挂，
-                把文件接回去就好。
+                把文件接回去就好。而那句话必须落在**读得到的地方**，
+                不能再挂在一个 `pointer-events: none` 元素的 `title` 上（见下方注释）。
               */}
               <RetranscribeButton
                 noteUid={noteUid ?? ''}
                 segments={arr(transcript.data?.segments)}
                 currentLanguage={transcript.data?.language ?? null}
                 canRetranscribe={note.data?.canRetranscribe}
-                retranscribeBlocked={note.data?.retranscribeBlocked}
               />
             </div>
           </div>
+          {/*
+            ★★ 「为什么不能重跑」的**真表面**（v0.7.1 已知边界第 4 条）。
+
+            上面那个按钮变灰时，理由此前**只挂在它的 `title` 上** —— 而按钮基类带
+            `disabled:pointer-events-none`，`pointer-events: none` 的元素收不到
+            `mouseover`，原生 tooltip 对鼠标用户也不会弹；`disabled` 又把它移出了
+            tab 序列。三种输入方式一个都到不了，daemon 算出来的那条原因等于没显示。
+
+            ⚠️ 这一行不是可有可无的装饰：删掉它，按钮上的 `aria-describedby` 会指向
+            一个不存在的 id —— **不报错，静默退回"无声变灰"**。
+          */}
+          <RetranscribeBlockedNotice
+            canRetranscribe={note.data?.canRetranscribe}
+            retranscribeBlocked={note.data?.retranscribeBlocked}
+          />
           <div className="min-h-0 flex-1">
             <PanelBoundary name={t('detail.transcript')}>
               <TranscriptList

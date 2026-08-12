@@ -24,13 +24,25 @@ import type { TranscriptSegmentDto } from '../../lib/events/types';
  * `POST /api/notes/:uid/retranscribe` 早就接受 `language` 了，
  * 但产品里没有任何地方能调到它：**端点有了，路没有**。
  *
- * ## 只暴露语言，不画引擎/模型选择器
+ * ## 只暴露语言 —— 但理由已经**不是**"后端不收"了（#99 ①）
  *
- * 后端 `retranscribe` 的 body 目前**只解析 `language`**（`content.ts` 里
- * `typeof body?.language === 'string'`，其余键读都不读）。
- * 在 `oss-scout` 把 `engineId` / `modelId` / `prompt` 加上之前，
- * 多画一个下拉框就是多一个"选了会被丢掉"的谎 —— 上一轮刚拆掉两个，不再造第三个。
- * 模型仍可切，但走的是**全局激活**（`TranscribeOptions` 里的 `AsrModelPicker`），那是真生效的。
+ * ─── 这段话曾经为真，现在不成立，两边都留着 ────────────────────────────
+ * 原文写的是「后端 `retranscribe` 的 body 目前**只解析 `language`**，其余键读都不读」，
+ * 结论是"多画一个下拉框就是多一个选了会被丢掉的谎"。**那个前提今天是假的**：
+ * `apps/daemon/src/http/rest/content.ts` 的 `retranscribe` 分支
+ * （`body: { language?, engineId?, modelId?, prompt? }`）三个键**都在解析并塞进 payload**，
+ * `POST /api/notes/import` 同样收这三个，`jobs/runners/transcribe.ts` 也真的在用它们。
+ *
+ * 于是缺口**翻了个面**：不再是"前端画了后端不认"，而是
+ * **后端已经支持的「换引擎重转 / 换模型重转 / 加 prompt 重转」，从 UI 一条路都到不了** ——
+ * 下面 `run` 的 body 至今只有 `{ language }`。
+ *
+ * ⚠️ 补上它**不是加一行 fetch body**，是一个产品决定（列哪些引擎/模型、默认选谁、
+ * prompt 露不露），已作为 #99 ① 上报等裁决。**在裁决下来之前这里不许偷偷加下拉框** ——
+ * 但也不许再用"后端不收"当理由，那句话会让下一个人不去查 `content.ts`。
+ *
+ * 模型目前仍可切，走的是**全局激活**（`TranscribeOptions` 里的 `AsrModelPicker`），
+ * 那条路是真生效的，只是它改的是"以后所有转写"，不是"这一次重跑"。
  */
 
 /**
@@ -53,27 +65,72 @@ export function isSegmentEdited(
   return seg.edited === true;
 }
 
-export function RetranscribeButton({
-  noteUid,
-  segments,
-  currentLanguage,
+/**
+ * 禁用理由那条横幅的 DOM id。按钮用 `aria-describedby` 指过来。
+ *
+ * 常量而不是字面量：id 一旦和 `aria-describedby` 对不上，**不会报任何错**，
+ * 只会安静地退回"读屏用户什么都听不到"—— 正是本轮要修的那个形状。
+ */
+export const RETRANSCRIBE_BLOCKED_ID = 'retranscribe-blocked-reason';
+
+/**
+ * "为什么不能重跑"的那句话。`null` = 可以重跑，什么都不用说。
+ *
+ * `tried` 单独返回而不是拼进字符串：横幅要把它排成一列路径给用户逐条核对，
+ * 拼成一行加 `\n` 的那种做法只在 `title` 里成立 —— 而 `title` 已经被证明没人读得到。
+ */
+function useBlockedReason(
+  canRetranscribe: boolean | undefined,
+  retranscribeBlocked: RetranscribeBlocked | null | undefined,
+): { head: string; tried: readonly string[] } | null {
+  const { t, i18n } = useTranslation();
+  if (canRetranscribe !== false) return null;
+  /*
+   * 回落那一档不是可有可无：老 daemon 的响应真的没有 `retranscribeBlocked`，
+   * 而"没有原因字段"绝不能渲染成一条空横幅（那就退回成无声变灰了）。
+   */
+  if (!retranscribeBlocked) return { head: t('detail.retranscribe.noSource'), tried: [] };
+  return {
+    head: pickLocalized(i18n.language, retranscribeBlocked.messageZh, retranscribeBlocked.message),
+    tried: retranscribeBlocked.tried,
+  };
+}
+
+/**
+ * ★★ 禁用理由的**真表面**（v0.7.1 已知边界第 4 条）。
+ *
+ * ## 在它之前，那条理由任何输入方式都拿不到
+ *
+ * 理由只挂在按钮的 `title` 上，而 `Button` 基类带 `disabled:pointer-events-none`：
+ *
+ * - **鼠标**：`pointer-events: none` 的元素收不到 `mouseover`，
+ *   浏览器的原生 tooltip **根本不会弹** —— 不是"要悬停久一点"，是永远不弹。
+ * - **键盘**：`disabled` 把它移出了 tab 序列，聚焦不到，也就没有任何触发方式。
+ * - **读屏**：没有 aria-label / aria-describedby，`title` 在多数读屏配置下不播报。
+ *
+ * 也就是说：daemon 认认真真算出来的那条原因（`retranscribeBlocked`，含
+ * `code`/`message`/`messageZh`/`tried`），**到了界面上等于没有**。
+ * 用户看到的只是一个说不出话的灰按钮 —— 和"这功能坏了"完全一样。
+ *
+ * ## 仓库自己的测试没抓到，是因为它断言的是 `title` 属性存在
+ *
+ * 「文本存在」和「用户读得到」是两件事，而那条断言只证明了前者。
+ * 换掉之后钉的是后果：**这句话必须出现在渲染出来的文档里**（见 components.test.tsx）。
+ *
+ * ## 为什么是横幅而不是"点一下才展开"
+ *
+ * 它不需要用户先想到去点。而且这条信息本来就不止服务于"重新转写"：
+ * 源文件读不到意味着导出原件、重新剪辑同样做不了。
+ *
+ * ⚠️ 它由 `NoteDetailPage` 渲染在转写稿面板头的正下方，与按钮**分处两个节点**。
+ * 忘了渲染它 = 按钮的 `aria-describedby` 指向一个不存在的 id，**不报错、静默失效**。
+ * 因此那条回归腿钉在 `NoteDetailPage` 这一层，而不是只渲染按钮。
+ */
+export function RetranscribeBlockedNotice({
   canRetranscribe,
   retranscribeBlocked,
 }: {
-  noteUid: string;
-  segments: readonly (Partial<TranscriptSegmentDto> & { edited?: boolean })[];
-  currentLanguage: string | null;
-  /**
-   * 来自 `NoteDetail.canRetranscribe`。
-   *
-   * ⚠️ **daemon 侧的判据已经换过（#95）**：它不再是"`input_url` 非空"，而是真的去
-   * 解析一次（打不开就退回本笔记的归档原件，两档都落空才 `false`）。这里不需要跟着改
-   * 逻辑，但要知道 `false` 的**原因不止一种**了 —— 所以下面那个 prop 是必需的。
-   *
-   * `undefined` 要当成"可以"：老响应里没有这个键，
-   * 把"字段缺失"读成"不能重跑"会把功能对所有旧数据藏起来。
-   * 宁可点下去吃一个说人话的 409，也不要静默隐藏一个本来能用的入口。
-   */
+  /** 来自 `NoteDetail.canRetranscribe`。`undefined` / `true` 都表示"没被拦住"，渲染 `null`。 */
   canRetranscribe?: boolean;
   /**
    * 来自 `NoteDetail.retranscribeBlocked` —— 不能重跑时**为什么**（#95）。
@@ -89,7 +146,65 @@ export function RetranscribeButton({
    */
   retranscribeBlocked?: RetranscribeBlocked | null;
 }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
+  const reason = useBlockedReason(canRetranscribe, retranscribeBlocked);
+  if (!reason) return null;
+
+  return (
+    <div id={RETRANSCRIBE_BLOCKED_ID} data-testid="retranscribe-blocked">
+      <Banner
+        tone="warning"
+        title={t('detail.retranscribe.blockedTitle')}
+        detail={
+          <>
+            <span className="block">{reason.head}</span>
+            {/* 找过的位置必须列出来：只说"读不到"时，用户无从判断到底是文件没了
+                还是我们找错了地方 —— 列出来他照着就能自己确认一遍。 */}
+            {reason.tried.length > 0 ? (
+              <>
+                <span className="mt-1 block">{t('detail.retranscribe.triedPaths')}</span>
+                <ul className="list-inside list-disc break-all">
+                  {reason.tried.map((p) => (
+                    <li key={p}>{p}</li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+          </>
+        }
+      />
+    </div>
+  );
+}
+
+export function RetranscribeButton({
+  noteUid,
+  segments,
+  currentLanguage,
+  canRetranscribe,
+}: {
+  noteUid: string;
+  segments: readonly (Partial<TranscriptSegmentDto> & { edited?: boolean })[];
+  currentLanguage: string | null;
+  /**
+   * 来自 `NoteDetail.canRetranscribe`。
+   *
+   * ⚠️ **daemon 侧的判据已经换过（#95）**：它不再是"`input_url` 非空"，而是真的去
+   * 解析一次（打不开就退回本笔记的归档原件，两档都落空才 `false`）。这里不需要跟着改
+   * 逻辑，但要知道 `false` 的**原因不止一种**了。
+   *
+   * ⚠️ **理由本身不再由这个组件渲染**：它现在归 `<RetranscribeBlockedNotice/>`。
+   * 这不是拆得更好看 —— 理由此前挂在本按钮的 `title` 上，而按钮基类带
+   * `disabled:pointer-events-none`，那句话**鼠标、键盘、读屏三条路都到不了**。
+   * 这里只保留 `aria-describedby`，把禁用状态指向那条真正读得到的横幅。
+   *
+   * `undefined` 要当成"可以"：老响应里没有这个键，
+   * 把"字段缺失"读成"不能重跑"会把功能对所有旧数据藏起来。
+   * 宁可点下去吃一个说人话的 409，也不要静默隐藏一个本来能用的入口。
+   */
+  canRetranscribe?: boolean;
+}) {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   // 默认填**当前转写稿实际用的语言**，而不是 auto：
@@ -125,27 +240,17 @@ export function RetranscribeButton({
 
   /*
    * 禁用的控件必须自己解释为什么，否则用户只会以为坏了 —— 这条规矩本来就在。
-   * 变的是**那句解释从哪来**：优先用 daemon 给的真实原因，没有才回落到通用文案。
    *
-   * 回落那一档不是可有可无：老 daemon 的响应真的没有 `retranscribeBlocked`，
-   * 而"没有原因字段"绝不能渲染成一个空 tooltip（那就退回成无声变灰了）。
+   * ⚠️ **那句解释不再放在 `title` 上**（v0.7.1 已知边界第 4 条）。
+   * `Button` 基类带 `disabled:pointer-events-none`，而 `pointer-events: none` 的元素
+   * **收不到 `mouseover`**，原生 tooltip 对鼠标用户也不会弹；`disabled` 又把它移出了
+   * tab 序列。所以那个 `title` 在三种输入方式下**一个都到不了** —— 它看起来像解释，
+   * 实际是装饰。留着它只会让下一个人以为这里已经解释过了。
    *
-   * `tried` 一起拼进去：只说"读不到"时，用户无从判断到底是文件没了还是我们找错了
-   * 地方 —— 把找过的位置列出来，他照着就能自己确认一遍。
+   * 真解释在 `<RetranscribeBlockedNotice/>`（由 `NoteDetailPage` 渲染在下方），
+   * 这里只负责把禁用状态和那条横幅**关联起来**。
    */
-  const blockedReason = ((): string => {
-    if (canRetranscribe !== false) return '';
-    if (!retranscribeBlocked) return t('detail.retranscribe.noSource');
-    const head = pickLocalized(
-      i18n.language,
-      retranscribeBlocked.messageZh,
-      retranscribeBlocked.message,
-    );
-    const tried = retranscribeBlocked.tried;
-    return tried.length > 0
-      ? `${head}\n${t('detail.retranscribe.triedPaths')}\n${tried.join('\n')}`
-      : head;
-  })();
+  const blocked = canRetranscribe === false;
 
   return (
     <div className="relative">
@@ -154,8 +259,8 @@ export function RetranscribeButton({
         variant="ghost"
         className="h-6 px-1.5 text-xs"
         data-testid="retranscribe-open"
-        disabled={canRetranscribe === false}
-        title={blockedReason}
+        disabled={blocked}
+        aria-describedby={blocked ? RETRANSCRIBE_BLOCKED_ID : undefined}
         onClick={() => setOpen((v) => !v)}
       >
         <RefreshCw className="size-3.5" aria-hidden />

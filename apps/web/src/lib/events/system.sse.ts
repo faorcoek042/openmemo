@@ -5,6 +5,7 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { bus } from './bus';
 import { useConnectionStore } from '../stores/connection.store';
+import { startDegradedPolling } from './degradedPolling';
 import type { SseBinding } from './bindings';
 
 export const systemSse: SseBinding = (qc: QueryClient) => [
@@ -15,6 +16,18 @@ export const systemSse: SseBinding = (qc: QueryClient) => [
   bus.on('sync.required', () => {
     void qc.invalidateQueries();
   }),
+
+  /**
+   * ★ `degraded` 的轮询兜底（#101）。
+   *
+   * 挂在这里而不是 `source.ts` 里，是因为它要的是 `QueryClient` 而不是 EventSource：
+   * 轮询发生在**放弃 SSE 之后**，与那条流已经没有关系了。
+   * 而这份绑定表本来就是"拿着 qc、按连接态做事"的地方。
+   *
+   * 在此之前 `degraded` 只有一条黄色横幅 —— 横幅说着"正在轮询"，
+   * 而全仓没有任何一处在拉数据。见 `degradedPolling.ts` 文件头。
+   */
+  startDegradedPolling(qc),
 
   bus.on('x.daemon.shutdown', () => {
     useConnectionStore.getState().setState('degraded');
