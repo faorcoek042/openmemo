@@ -280,7 +280,8 @@ function mockAsset(a: {
   durationMs: number | null;
 }): MediaAssetDto {
   const uid = nextId('as');
-  return { uid, url: `/media/asset/${uid}`, state: 'ready', ...a };
+  /* `replacedAt: null` —— mock 里的原件没有被「重新转写」覆盖过（#96②）。 */
+  return { uid, url: `/media/asset/${uid}`, state: 'ready', replacedAt: null, ...a };
 }
 
 function makeSegments(count: number, startSeq = 0): TranscriptSegmentDto[] {

@@ -6,7 +6,7 @@
  * **双 ID 约定**（D-02 §1.1）：内部 `id INTEGER PRIMARY KEY`（FTS5 `content_rowid` 与
  * sqlite-vec 都要求整数），对外只暴露 `uid`（ULID）。仓储层负责两者之间的翻译。
  */
-import type { DatabaseHandle } from '@openmemo/db';
+import type { DatabaseHandle, SqlValue } from '@openmemo/db';
 import type { WordTimestamp } from '@openmemo/pipeline';
 import { ulid } from '@openmemo/shared';
 
@@ -49,6 +49,13 @@ export interface AssetRow {
   sample_rate: number | null;
   channels: number | null;
   state: string;
+  /**
+   * 盘上这份文件**上一次被一份新副本覆盖**的时刻（`0003_media_assets_replaced_at.sql`）。
+   *
+   * `null` = 从导入到现在没被换过。**不是**"这一行上次被 UPDATE 的时间"——
+   * 见 {@link Repos.createAsset} 里那段：只有调用方明说"我刚把盘上那份换掉了"才会写它。
+   */
+  replaced_at: number | null;
 }
 
 export interface TranscriptRow {
@@ -536,6 +543,14 @@ export class Repos {
     durationMs?: number | null;
     sampleRate?: number | null;
     channels?: number | null;
+    /**
+     * **"我刚把盘上这个路径上的文件换成了另一份"** —— 覆盖发生的时刻，没覆盖就别传。
+     *
+     * 传了它，下面那条幂等分支才会把本次实测的数字写回旧行；不传就和以前逐字一样，
+     * 旧行原样返回、一个字节不动（`archiveIntoMedia` 提前返回的那几条路
+     * —— 录音、本地导入、上传 —— 走的就是这一支）。
+     */
+    replacedAt?: number | null;
     now?: number;
   }): AssetRow {
     const now = p.now ?? Date.now();
@@ -551,7 +566,51 @@ export class Repos {
     const existing = this.db
       .prepare<AssetRow>(`SELECT * FROM media_assets WHERE rel_path = :rel`)
       .get({ rel: p.relPath });
-    if (existing) return existing;
+    if (existing) {
+      /*
+       * ★ #96②：**行的身份不变，描述那个文件的数字必须跟着文件走。**
+       *
+       * 旧写法是无条件 `return existing` —— 它对"重跑不该长出第二条资产"是对的，
+       * 但它顺手把**这一次真的量到的数**（`stat()` 出来的 `bytes`、ffprobe 出来的
+       * `duration_ms`）全丢了。网络导入重转会重新下载一次源、覆盖掉同名文件，
+       * 于是行里留着**上一份文件**的大小与时长：
+       *   · `GET /api/notes/:uid` 的 `assets[].bytes` / `.durationMs` 从此是错的；
+       *   · 而 `/media/asset/:uid` 用 `stat()` 现取真实大小，**播放完全不受影响** ——
+       *     正因为播放不受影响，这个错数才会一直没人发现。
+       *   · 同一次重转里 `notes.duration_ms` 与 `transcripts.duration_ms` **是刷新的**，
+       *     所以错的那一份还会和自己家的另外两份对不上。
+       *
+       * 判据是**盘上那份文件有没有真的被换掉**（调用方传 `replacedAt`），
+       * 不是"这次调用有没有带新数字"：文件没动的时候（`archiveIntoMedia` 提前返回，
+       * 录音/本地导入/上传都走那一支）重新量出来的数即使不同也不该覆盖 ——
+       * 那是**同一份文件的两种量法**（录音记的是墙上时钟，重转量的是 ffprobe），
+       * 悄悄换掉一个不是修复，是另一种漂移。
+       */
+      if (p.replacedAt == null) return existing;
+
+      /* 只改「描述这个文件」的那几列，且**只改调用方这次给了的**。
+       * 没给（`undefined`）= 这次没量，不是量到 0 —— 不许拿"没量"去覆盖一个量过的数。 */
+      const sets = ['replaced_at = :replacedAt'];
+      const params: Record<string, SqlValue> = { id: existing.id, replacedAt: p.replacedAt };
+      if (p.bytes !== undefined) {
+        sets.push('bytes = :bytes');
+        params['bytes'] = p.bytes;
+      }
+      if (p.durationMs !== undefined) {
+        sets.push('duration_ms = :dur');
+        params['dur'] = p.durationMs;
+      }
+      if (p.sampleRate !== undefined) {
+        sets.push('sample_rate = :sr');
+        params['sr'] = p.sampleRate;
+      }
+      if (p.channels !== undefined) {
+        sets.push('channels = :ch');
+        params['ch'] = p.channels;
+      }
+      this.db.prepare(`UPDATE media_assets SET ${sets.join(', ')} WHERE id = :id`).run(params);
+      return this.assetById(existing.id) as AssetRow;
+    }
 
     const r = this.db
       .prepare(
