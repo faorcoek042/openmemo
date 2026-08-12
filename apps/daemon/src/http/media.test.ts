@@ -71,6 +71,8 @@ async function get(dataDir: string, relPath: string, uid = UID): Promise<Fetched
     sample_rate: null,
     channels: null,
     state: 'ready',
+    /* `/media` 只读 rel_path/uid/mime 与盘上的 `stat()`，这一列对它没有任何影响。 */
+    replaced_at: null,
   };
   const routes = createMediaRoutes({
     repos: { assetByUid: (u) => (u === UID ? asset : undefined) },

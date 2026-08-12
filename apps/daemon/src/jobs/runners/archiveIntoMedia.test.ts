@@ -46,9 +46,14 @@ async function fixture(): Promise<{ root: string; media: string; wav: string }> 
 describe('archiveIntoMedia —— 已经在 media/ 里的文件不许被搬走', () => {
   it('直路：mediaRoot 与文件路径写法一致时，原样返回相对路径且不动文件', async () => {
     const { media, wav } = await fixture();
-    const rel = await archiveIntoMedia(media, 'NOTEUID', wav, 'REC01.wav');
-    assert.equal(rel, join('recordings', 'REC01.wav'));
+    const r = await archiveIntoMedia(media, 'NOTEUID', wav, 'REC01.wav');
+    assert.equal(r.rel, join('recordings', 'REC01.wav'));
     assert.equal(existsSync(wav), true, '文件被搬走了');
+    assert.equal(
+      r.replacedExisting,
+      false,
+      '压根没动盘上的文件，却报告"换掉了一份原件" —— 录音/本地导入重跑会因此被记上一笔假的替换',
+    );
   });
 
   it('★ mediaRoot 经由符号链接传进来时，结论必须不变（macOS /var → /private/var 的形状）', async () => {
@@ -57,7 +62,8 @@ describe('archiveIntoMedia —— 已经在 media/ 里的文件不许被搬走',
     const alias = join(root, 'alias');
     await symlink(media, alias, 'dir');
 
-    const rel = await archiveIntoMedia(alias, 'NOTEUID', wav, 'REC01.wav');
+    const r = await archiveIntoMedia(alias, 'NOTEUID', wav, 'REC01.wav');
+    const rel = r.rel;
 
     /*
      * 判据有两条，缺一不可：
@@ -81,10 +87,44 @@ describe('archiveIntoMedia —— 已经在 media/ 里的文件不许被搬走',
     await mkdir(join(root, 'tmp-job'), { recursive: true });
     await writeFile(outside, Buffer.from('normalized'));
 
-    const rel = await archiveIntoMedia(media, 'NOTEUID', outside, 'audio16k.wav');
+    const r = await archiveIntoMedia(media, 'NOTEUID', outside, 'audio16k.wav');
 
-    assert.equal(rel, join('NOTEUID', 'audio16k.wav'));
+    assert.equal(r.rel, join('NOTEUID', 'audio16k.wav'));
     assert.equal(existsSync(outside), false, '外面那份该被搬走（tmp/ 要保持"可随时删"）');
     assert.equal(existsSync(join(media, 'NOTEUID', 'audio16k.wav')), true);
+    assert.equal(r.replacedExisting, false, '落点本来是空的，不该报告成"换掉了一份"');
+  });
+
+  /*
+   * ★ #96②：**覆盖保留，但必须说得出它发生过。**
+   *
+   * 这是网络导入重转的形状：两次下载的源落在**同一个** `<mediaRoot>/<noteUid>/source.<ext>`，
+   * `rename(2)` 覆盖同名目标是原子且完全静默的 —— 不报错、不留痕。
+   * 在这条用例之前，`archiveIntoMedia` 的两次调用返回**逐字相同的字符串**，
+   * 调用方（以及库、以及界面）没有任何办法分辨"新写了一份"和"压掉了用户存的那份"。
+   */
+  it('★ 落点已经有一份文件时：照样覆盖，但必须报告 replacedExisting', async () => {
+    const { root, media } = await fixture();
+    const dest = join(media, 'NOTEUID', 'source.mp3');
+    await mkdir(join(media, 'NOTEUID'), { recursive: true });
+    await writeFile(dest, Buffer.from('第一次下载回来的那一份'));
+
+    const scratch = join(root, 'job-2', 'source.mp3');
+    await mkdir(join(root, 'job-2'), { recursive: true });
+    await writeFile(scratch, Buffer.from('第二次下载回来的、内容不一样的那一份'));
+
+    const r = await archiveIntoMedia(media, 'NOTEUID', scratch, 'source.mp3');
+
+    assert.equal(r.rel, join('NOTEUID', 'source.mp3'));
+    assert.equal(
+      (await readFile(dest)).toString('utf8'),
+      '第二次下载回来的、内容不一样的那一份',
+      '覆盖没发生 —— 重转拿到的稿子会和盘上的音频对不上',
+    );
+    assert.equal(
+      r.replacedExisting,
+      true,
+      '用户存的那份原件被换掉了，而归档只回了一个路径字符串 —— 这正是 #96② 那条"静默换掉"',
+    );
   });
 });
