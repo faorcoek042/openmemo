@@ -8,7 +8,7 @@ import { type AsrEngineId, ASR_ENGINE_IDS } from '@openmemo/shared';
 import { api } from '../../lib/api/client';
 import { qk } from '../../app/query';
 import { arr } from '../../lib/safe';
-import { ASR_ENGINE_LABELS } from '../../lib/asr';
+import { ASR_ENGINE_LABELS, toAsrEngineId } from '../../lib/asr';
 import { Button } from './Button';
 
 /** `GET /api/daemon/status` 里我们要用的那一小块（见 `apps/daemon/src/main.ts` 的 `pipeline`）。 */
@@ -28,14 +28,24 @@ export interface EngineState {
   reason?: string;
 }
 
-/** 把 daemon 返回的字符串收窄回联合类型；不认识的 id 直接丢弃而不是硬转。 */
-function toEngineId(raw: string): AsrEngineId | null {
-  return (ASR_ENGINE_IDS as readonly string[]).includes(raw) ? (raw as AsrEngineId) : null;
-}
-
-export function useAsrEngines(): { engines: EngineState[]; isLoading: boolean; ready: boolean } {
+export function useAsrEngines(
+  /**
+   * 关掉时不发请求。默认 `true` —— 既有调用方（录音页 / 模型页 / 本文件的状态条）
+   * 都是"这一页打开就要知道引擎状态"，行为一个字节都不变。
+   *
+   * 它是给**藏在折叠面板背后**的调用方用的：「重新转写」那个面板不展开时
+   * 不该为它拉一次 `/health`，而 hook 不能写在 `if` 里。
+   *
+   * ⚠️ 关着的时候 `engines` 是**全部 `available:false`**（下面那个补全逻辑的结果），
+   * 而 `isLoading` 是 `false`（react-query 的 `enabled:false` 不算在加载中）。
+   * 也就是说这时候它和"三个引擎都没装"**长得一模一样** ——
+   * 调用方绝不能在 `enabled=false` 时拿这个结论去渲染任何东西。
+   */
+  enabled = true,
+): { engines: EngineState[]; isLoading: boolean; ready: boolean } {
   const { data, isLoading } = useQuery({
     queryKey: qk.daemon.status,
+    enabled,
     /**
      * 用 `/api/health` 而不是 `/api/daemon/status`。
      *
@@ -54,7 +64,7 @@ export function useAsrEngines(): { engines: EngineState[]; isLoading: boolean; r
 
   const reported = new Map<AsrEngineId, EngineState>();
   for (const e of arr(data?.pipeline?.engines)) {
-    const id = toEngineId(e.id);
+    const id = toAsrEngineId(e.id);
     if (id)
       reported.set(id, {
         id,
@@ -96,14 +106,20 @@ export function useAsrEngines(): { engines: EngineState[]; isLoading: boolean; r
  * （`jobs/runners/transcribe.ts`），`pipelineFor(language, { engineId })` 在同一个文件里
  * 被真的调用，`/api/notes/import` 与 `/api/notes/:uid/retranscribe` 两个端点都收这三个键。
  *
- * 保持只读现在是**尚未裁决**（#99 ①），不是"选了会被扔掉"。
- * ⚠️ 真要改成选择器，先看清一条实测结论：给一个**不可用或不认识**的 `engineId`，
- * daemon 会**静默回落**到自动挑选（`pipeline/setup.ts` 的 `forced === undefined` 分支），
- * 那个 `reason` 字符串谁都不读、不落库、不上 SSE ——
+ * ─── "尚未裁决"那句也**已经不成立**了（#99 ① 已裁决）───────────────────
+ * 裁决结果是**方案 A**：只在「重新转写」那一条路上给引擎选择器
+ * （`features/notes/RetranscribeButton.tsx`），因为那里才有"上次实际用了哪个"
+ * 这个可比的事实当默认值、也当事后凭据。**本组件仍然只读，而这是终局，不是待办**：
+ * 录音页/捕获页在开跑之前没有"上次"，给一个凭空的默认值只会让人以为自己选过了。
+ *
+ * ⚠️ 那条实测结论对选择器仍然成立，一个字都不能松：给一个**不可用或不认识**的
+ * `engineId`，daemon 会**静默回落**到自动挑选（`pipeline/setup.ts` 的
+ * `forced === undefined` 分支），那个 `reason` 字符串谁都不读、不落库、不上 SSE ——
  * 也就是说"我选了 paraformer、实际跑的是 whisper"在界面上**看不出来**。
  * 所以选择器必须自己先按 `available` 过滤，不能把校验交给后端。
+ * `RetranscribeButton` 正是这么做的，它的引擎候选来自本文件的 `useAsrEngines()`。
  *
- * 在此之前这里如实显示"**哪些引擎真的能用、用不了的原因是什么**"，
+ * 这里如实显示"**哪些引擎真的能用、用不了的原因是什么**"，
  * 并给出唯一真实的操作：去装缺的运行时。
  *
  * 用户能间接影响引擎选择的手段是**语言** —— 后端按语言自动选（中文走 Paraformer）。

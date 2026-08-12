@@ -36,9 +36,29 @@ import { ErrorBlock } from './ErrorBlock';
  * `engineId` / `modelId` / `prompt` 并塞进 job payload**，
  * `jobs/runners/transcribe.ts` 也真的在按它们挑引擎和模型。
  *
- * 所以「per-task 覆盖」现在**是后端支持的**，只是前端一处都没接
- * （全仓没有任何请求体带过这三个键）。这里保持全局语义是**尚未裁决**，
- * 不是"后端不收"—— 见 #99 ①。⚠️ 别再拿旧理由挡下一个来问的人。
+ * 所以「per-task 覆盖」现在**是后端支持的**。
+ *
+ * ─── "前端一处都没接 / 尚未裁决"这两句今天也不成立了（#99 ① 已裁决）───────
+ * `features/notes/RetranscribeButton.tsx` 现在真的发 `engineId`，
+ * 也就是说**引擎已经是 per-job 的了**。
+ *
+ * ⚠️⚠️ 于是这个组件底下那句 `asr.activeIsGlobal`（「切换后对之后所有转写生效」）
+ * **只对模型成立，对引擎不成立** —— 两者语义已经分家：
+ *
+ * | | 改了之后影响谁 | 在哪里改 |
+ * |---|---|---|
+ * | **引擎** | **只这一次重跑** | 重新转写面板里的引擎下拉 |
+ * | **模型** | **之后所有转写**（全局激活） | 就是这个组件 |
+ *
+ * 所以文案必须各说各的：这里说"全局"，引擎那个下拉旁边说"只影响这一次重跑"。
+ * 少了任何一句，用户都会以为两个是同一种作用域。
+ *
+ * ⚠️ 模型**刻意没有做 per-job 预选**，理由不是懒：`transcripts.model_id` 存的是
+ * 权重**文件名**（`ggml-base.en.bin`），而安装记录/`activate` 用的是目录 id
+ * （`asr/whisper-base-q5_1`）—— **两个命名空间**。靠模糊匹配去预选，
+ * 造出来的是一条没人测得到的猜测逻辑，而它指错时用户会以为自己换了模型、
+ * 实际重跑的还是同一个。引擎那一半没有这个问题（`transcripts.engine_id`
+ * 与 `ASR_ENGINE_IDS` 逐字同域），所以只有它拿到了下拉框。
  */
 /**
  * 下拉里那一行字。
@@ -85,9 +105,13 @@ function groupByFamily(models: InstalledModel[]): [string, InstalledModel[]][] {
  * `showModel={false}` 同族：**写的时候是对的，环境一变就成了谎**。
  * 修法同样不是改个更准的常量，而是**让它没有常量可写** —— 名字只能从后端来。
  */
-export function useActiveAsrModel(): { id: string | null; displayName: string | null } {
+export function useActiveAsrModel(
+  /** 关掉时不发请求。见 `useAsrEngines` 里同名参数的理由（折叠面板里的调用方）。 */
+  enabled = true,
+): { id: string | null; displayName: string | null } {
   const { data } = useQuery({
     queryKey: qk.models.installed,
+    enabled,
     queryFn: () => api<GetInstalledResponse>('models', '/models/installed'),
     staleTime: 30_000,
   });
