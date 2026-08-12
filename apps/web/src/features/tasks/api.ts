@@ -95,6 +95,26 @@ export interface MergedJob {
    * 客户端离终点一行把它扔了，全程零报错。**
    */
   noteUid: string | null;
+  /**
+   * 这条任务**在等什么**（`D-02 jobs.blocked_code`）。非 blocked 时为 null。
+   *
+   * ⚠️ #90 ②：这个字段此前**不在这个接口里**，`mergeOne()` 的流水线分支没拷贝它 ——
+   * 与上面 `noteUid` 那条（T-192）**逐字同一个形状**，而且就在同一个对象字面量里，
+   * 修 `noteUid` 时逐字段过了一遍，它当时**就在眼前，仍然漏了**。
+   *
+   * 代价是用户可见的：`/tasks`「需要处理」那一行的全部内容曾经是
+   * 「标题 / 需要处理 / 0% / [重试] [取消]」—— **一个字都不说它在等什么**。
+   * 而**同一条任务**在笔记页上说得出「还没有可用的语言模型。去设置里填一个
+   * API Key，或者装一个本地模型。」，因为那条路走的是 `ActiveNoteJob`，它带着这个字段。
+   *
+   * 更糟的是产品正把用户往这儿送：`jobBlocked.UNKNOWN` 当时的原话是
+   * 「任务被挂起了。**去任务中心看看它在等什么**。」—— 指向的正是这间更空的房间。
+   *
+   * ⚠️ 光有这个字段还不够：blocked 的行 `error` **恒为 null**
+   * （`queue.block()` 只写 `blocked_code` + `remediation_json`，从不写 `error_*`），
+   * 所以 `JobList` 那句 `job.error ? … : null` 对 blocked 永远走不到。两处都要动。
+   */
+  blockedCode: string | null;
   /** true = 这条只在内存里有，服务端还没收录（刚创建的瞬间） */
   transientOnly: boolean;
 }
@@ -158,6 +178,9 @@ function mergeOne(job: AnyJob, liveRaw: JobProgressSnapshot | undefined): Merged
       maxAttempts: job.maxAttempts,
       error: job.error,
       noteUid: job.noteUid,
+      // ★ #90 ②：**服务端一直在发它，这一行以前把它扔了**（同 T-192 的 noteUid）。
+      //   没有它，`/tasks` 的「需要处理」那一行就一个字都说不出在等什么。
+      blockedCode: job.blockedCode,
       transientOnly: false,
     };
   }
@@ -178,8 +201,10 @@ function mergeOne(job: AnyJob, liveRaw: JobProgressSnapshot | undefined): Merged
     attempt: job.attempt,
     maxAttempts: job.maxAttempts,
     error: job.error,
-    // `DownloadJob` 契约上就没有这个字段（只有 targetId）—— 如实为 null，不编
+    // `DownloadJob` 契约上就没有这两个字段（只有 targetId）—— 如实为 null，不编。
+    // 下载类任务不会进 blocked（`queue.block()` 只有流水线 runner 在调）。
     noteUid: null,
+    blockedCode: null,
     transientOnly: false,
   };
 }
@@ -228,6 +253,8 @@ export function useMergedJobs(): {
        * 这里**不猜**：宁可这一瞬间没有链接，也不编一个可能指错的 uid。
        */
       noteUid: null,
+      // 同上：内存快照里没有 blockedCode，而这一支只活在服务端收录前的一瞬间。
+      blockedCode: null,
       transientOnly: true,
     });
   }
@@ -289,13 +316,26 @@ export function useActiveNoteJob(
   };
 }
 
-/** 分组：**"需要处理"排在"已完成"之前** —— blocked/failed 是唯一需要用户动作的一类。 */
+/**
+ * 分组：**"需要处理"排在"已完成"之前** —— blocked/failed 是唯一需要用户动作的一类。
+ *
+ * ★ #90 ②：`cancelled` 从 `done` 里拆出来单列一组。
+ *
+ * 原来它和 `succeeded` 同桶，于是屏幕上出现「**已完成 (1)**」底下挂着一行
+ * 芯片写「**已取消**」—— 组标题和行内芯片当场对不上。**芯片是对的、分组名不对**：
+ * 一件"你亲手取消掉的事"被算进"完成了的事"里，是把两种结果混成一句话。
+ *
+ * 顺带一提为什么不能靠 `TERMINAL_JOB_STATES` 一把梭：那张表答的是
+ * 「结束了没有」（succeeded|failed|cancelled 三个都算），而这里问的是
+ * 「**结束成什么样**」—— `failed` 已经在 `attention` 里了。两个问题不同，别合并。
+ */
 export function groupJobs(jobs: MergedJob[]) {
   return {
     running: jobs.filter((j) => j.state === 'running' || j.state === 'leased'),
     waiting: jobs.filter((j) => j.state === 'queued' || j.state === 'paused'),
     attention: jobs.filter((j) => j.state === 'blocked' || j.state === 'failed'),
-    done: jobs.filter((j) => j.state === 'succeeded' || j.state === 'cancelled'),
+    done: jobs.filter((j) => j.state === 'succeeded'),
+    cancelled: jobs.filter((j) => j.state === 'cancelled'),
   };
 }
 

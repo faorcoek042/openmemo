@@ -108,6 +108,16 @@ const SUCCESS_LINGER_MS = 8000;
  * `job.created` 完全可能滚出去而 `job.blocked` 还在里面。那种时候宁可显示一个笼统的名字，
  * 也不能把"需要用户动手"的状态整条丢掉 —— 后者正是 T-130 那个"零报错的卡住"。
  * 未知 code 一律落到"后台任务"：宁可笼统，也不编一个具体但可能是错的名字。
+ *
+ * ── ⚠️ 它和 `lib/jobs/blockedReason.ts` **不是同一张表，刻意不合并**（Manager 裁决）──
+ *
+ * 那张表答的是「**为什么**卡住」（一句给用户看的原因），这里答的是
+ * 「这是**哪种**任务」（一个名字，填进 toast 标题）。语义不同，合并会让其中一个说谎。
+ *
+ * 但有一笔账记在这儿：**它认得的三个 code 与 `KNOWN_BLOCKED_CODES` 恰好同集**。
+ * 将来 daemon 加一个新码，**两处都要跟** —— 而只有那边有
+ * `Record<KnownBlockedCode, …>` 的全量哨兵会在漏写时把构建打红；
+ * 这边漏了只会安静地落到"后台任务"。加码时请顺手来这里看一眼。
  */
 function blockedFallbackName(code: string, t: TFunction): string {
   if (code === 'MISSING_ASR_MODEL') return t('jobToast.blockedTranscribe');

@@ -522,6 +522,7 @@
     "waiting": "等待中",
     "needsAttention": "需要处理",
     "done": "已完成",
+    "cancelled": "已取消",
     "empty": "暂无任务",
     "backgroundNotice": "任务在本地服务中运行，关闭浏览器或本页面都不会中断。",
     "pauseAll": "全部暂停",
@@ -1075,7 +1076,7 @@
     "MISSING_ASR_MODEL": "在等一个语音识别模型。装好之后这条任务会自己接着跑，不用回来重点一次。",
     "NO_TRANSCRIPT": "这条笔记还没有转写稿。先把它转写出来，再回来生成导图。",
     "LLM_NOT_CONFIGURED": "还没有可用的语言模型。去设置里填一个 API Key，或者装一个本地模型。",
-    "UNKNOWN": "任务被挂起了。去任务中心看看它在等什么。"
+    "UNKNOWN": "任务被挂起了，而它没有说明在等什么。"
   },
   "jobState": {
     "queued": "排队中",

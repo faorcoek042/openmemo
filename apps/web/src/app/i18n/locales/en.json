@@ -522,6 +522,7 @@
     "waiting": "Waiting",
     "needsAttention": "Needs attention",
     "done": "Completed",
+    "cancelled": "Cancelled",
     "empty": "No tasks",
     "backgroundNotice": "Tasks run in the local service. Closing this page or the browser will not interrupt them.",
     "pauseAll": "Pause all",
@@ -1075,7 +1076,7 @@
     "MISSING_ASR_MODEL": "Waiting for a speech recognition model. Once one is installed this job carries on by itself — you do not have to come back and start it again.",
     "NO_TRANSCRIPT": "This note has no transcript yet. Transcribe it first, then come back and generate the mind map.",
     "LLM_NOT_CONFIGURED": "No language model is available yet. Add an API key in Settings, or install a local model.",
-    "UNKNOWN": "The job is on hold. Open the task centre to see what it is waiting for."
+    "UNKNOWN": "The job is on hold, and it did not say what it is waiting for."
   },
   "jobState": {
     "queued": "Queued",

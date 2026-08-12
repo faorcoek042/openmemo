@@ -25,9 +25,11 @@ import { ErrorBlock } from '../../components/common/ErrorBlock';
  * | `blocked` / `paused` | ❌ | `NoteProgressLine` **已经**在页顶如实说了（「暂时无法继续」/「已暂停」） |
  *
  * 后两档不在这里再说一遍是**判断**：同一件事在同一屏说两遍，用户会当成两回事。
- * ⚠️ 但那条进度行只说「状态」，不说 `blockedCode` 的**原因**，也不给动作 ——
- * 那是同一族的另一个缺口（`GenerateMindmapButton` 已经用 `mindmap.blocked.*`
- * 那张表解过导图那一半）。本轮**没做**，已单独报出。
+ *
+ * ✅ **上一版这里写着「那条进度行只说状态、不说 `blockedCode` 的原因……本轮没做」——
+ * 那件事已经做了**（#90 ②）。原因文案收敛进 `lib/jobs/blockedReason.ts` 那张唯一的表，
+ * `NoteProgressLine` 与 `/tasks` 的挂起行现在**说的是逐字相同的一句**。
+ * （那段旧注释还提到 `mindmap.blocked.*`，那个命名空间也已经搬成 `jobBlocked.*`。）
  *
  * ## 两档的动作刻意不同
  *

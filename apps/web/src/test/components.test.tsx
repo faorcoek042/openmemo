@@ -162,6 +162,7 @@ import type { NoteDetail } from '../lib/api/types';
 import {
   BLOCKED_REASON_FALLBACK_KEY,
   BLOCKED_REASON_KEYS,
+  KNOWN_BLOCKED_CODES,
   blockedReasonKey,
 } from '../lib/jobs/blockedReason';
 import { SourcesSection } from '../features/models/components/SourcesSection';
@@ -373,8 +374,9 @@ const job = (over: Partial<MergedJob> = {}): MergedJob => ({
   attempt: 0,
   maxAttempts: 5,
   error: null,
-  // 工厂默认造的是 download.model —— 契约上就没有 noteUid，如实 null
+  // 工厂默认造的是 download.model —— 契约上就没有 noteUid / blockedCode，如实 null
   noteUid: null,
+  blockedCode: null,
   transientOnly: false,
   ...over,
 });
@@ -12342,7 +12344,7 @@ describe('★★ #90 ① 进度读数从 SSE 到屏幕的刻度', () => {
   /** `pushProgress` 有 200ms 节流，必须等它 flush 完才能断言。 */
   const afterFlush = () => new Promise((r) => setTimeout(r, 260));
 
-  const serverRow = (over: Partial<PipelineJob> = {}) =>
+  const serverRow = (over: Omit<Partial<PipelineJob>, 'noteUid'> = {}) =>
     pipelineJob({
       noteUid: NOTE,
       jobId: JID,
@@ -12468,5 +12470,130 @@ describe('★★ #90 ① 进度读数从 SSE 到屏幕的刻度', () => {
         '而 `features/tasks/sse.ts` 当时正写着 `e.pct ?? 0`',
     );
     useProgressStore.getState().clear(JID);
+  });
+});
+
+/* ══════ #90 ② `/tasks` 的 blocked 行一个字都不说，而产品正把用户往这儿送 ══════ */
+
+/**
+ * ## 用户看到的
+ *
+ * `/tasks`「需要处理」那一行的全部内容：**标题 / 需要处理 / 0% / [重试] [取消]**。
+ * **没有原因。** 而**同一条任务**在笔记页上说得出「还没有可用的语言模型。
+ * 去设置里填一个 API Key，或者装一个本地模型。」
+ *
+ * 更糟的是指路：`jobBlocked.UNKNOWN` 的原话曾是「任务被挂起了。**去任务中心看看
+ * 它在等什么**。」—— 指向的正是这间更空的房间。
+ *
+ * ## 三条根因（缺一条都还是不说话）
+ *
+ * ① `MergedJob` 没有 `blockedCode` 字段 —— 服务端一直在发，`mergeOne()` 扔了；
+ * ② `JobList` 只渲染 `job.error`，而 blocked 的 `error` **恒为 null**
+ *    （`queue.block()` 只写 `blocked_code` + `remediation_json`，从不写 `error_*`）；
+ * ③ 那句 `UNKNOWN` 文案自指。
+ *
+ * ⚠️ 这一族**必须走 `TasksPage` 喂服务端形状的 `/jobs`**，不手搓 `MergedJob`：
+ * 被测的那一跳正是 `mergeOne()`，手搓会**正好绕过**根因①。
+ */
+describe('★★ #90 ② /tasks 的挂起行必须说出它在等什么', () => {
+  const NOTE = '01CCCCCCCCCCCCCCCCCCCCCCCC';
+  const zhAt = (key: string): string =>
+    key
+      .split('.')
+      .reduce<unknown>(
+        (acc, k) => (acc as Record<string, unknown> | undefined)?.[k],
+        zhLocale as unknown,
+      ) as string;
+
+  const blockedRow = (blockedCode: string | null) =>
+    pipelineJob({
+      noteUid: NOTE,
+      jobId: 'jb1',
+      state: 'blocked',
+      step: null,
+      progress: 0,
+      blockedCode,
+    });
+
+  async function renderTasks(jobs: unknown[]) {
+    stubApi({ '/jobs': { jobs, concurrencyLimit: 2 } });
+    const r = await render(<TasksPage />, { route: '/tasks' });
+    await r.flush();
+    return r;
+  }
+
+  test('★★ 挂起行显示的原因，与笔记页上那条**逐字相同**', async () => {
+    for (const code of KNOWN_BLOCKED_CODES) {
+      const r = await renderTasks([blockedRow(code)]);
+      const el = r.container.querySelector<HTMLElement>('[data-testid="job-blocked-reason"]');
+      assert.ok(
+        el,
+        `${code}：挂起行没有任何原因文本 —— 那一行的全部内容就只剩「需要处理」四个字，` +
+          '而同一条任务在笔记页上说得出在等什么',
+      );
+      assert.equal(
+        text(el!),
+        zhAt(blockedReasonKey(code)),
+        `${code}：/tasks 上的原因与那张唯一的表对不上 —— 两处说法一旦分叉，` +
+          '下一个人只会改其中一张',
+      );
+      r.unmount();
+    }
+  });
+
+  test('★ 认不出的 code 也要说话，不许渲染成空白', async () => {
+    const r = await renderTasks([blockedRow('SOMETHING_DAEMON_ADDED_LATER')]);
+    const el = r.container.querySelector<HTMLElement>('[data-testid="job-blocked-reason"]');
+    assert.ok(el, 'daemon 新增一个码就让界面变哑 —— 用户会以为软件坏了');
+    assert.equal(text(el!), zhAt(BLOCKED_REASON_FALLBACK_KEY));
+    r.unmount();
+  });
+
+  test('★★ 兜底那句话不许把用户送回他已经在的这一页', async () => {
+    // 它以前写的是「去任务中心看看它在等什么」。任务中心就是这一页，
+    // 而这一页显示的正是同一句 —— 一个自指的死循环。
+    const fallback = zhAt(BLOCKED_REASON_FALLBACK_KEY);
+    assert.ok(
+      !fallback.includes(zhAt('tasks.title')),
+      `兜底文案把用户指向「${zhAt('tasks.title')}」，而它自己就显示在那一页上：${fallback}`,
+    );
+  });
+
+  test('★ 等待态不许穿"进度"的衣服（blocked 行不该有 0% 的进度条）', async () => {
+    const r = await renderTasks([blockedRow('MISSING_ASR_MODEL')]);
+    assert.equal(
+      r.container.querySelector('[role="progressbar"]'),
+      null,
+      'blocked 行画了一条进度条 —— 它不是"跑到了 0%"，它是还没开始、且在等一个前置条件。' +
+        '一条永远不会自己动的进度条，比不画更像故障',
+    );
+    assert.ok(!text(r.container).includes('0%'), '挂起行不该报一个 0% 的刻度');
+    r.unmount();
+  });
+
+  test('★★ 已取消不许被算进「已完成」', async () => {
+    const r = await renderTasks([
+      pipelineJob({ noteUid: NOTE, jobId: 'jc1', state: 'cancelled', step: null, progress: 0 }),
+    ]);
+    const shown = text(r.container);
+    assert.ok(
+      shown.includes(zhAt('tasks.cancelled')),
+      `没有「${zhAt('tasks.cancelled')}」这一组，实际渲染：${shown.slice(0, 300)}`,
+    );
+    assert.ok(
+      !shown.includes(zhAt('tasks.done')),
+      '一件用户亲手取消掉的事被算进了「已完成」—— 组标题与行内芯片当场打架',
+    );
+    r.unmount();
+  });
+
+  test('★ 真的完成了的还是要落在「已完成」（别把修法做成"取消吃掉一切"）', async () => {
+    const r = await renderTasks([
+      pipelineJob({ noteUid: NOTE, jobId: 'js1', state: 'succeeded', step: null, progress: 1 }),
+    ]);
+    const shown = text(r.container);
+    assert.ok(shown.includes(zhAt('tasks.done')), `实际渲染：${shown.slice(0, 300)}`);
+    assert.ok(!shown.includes(zhAt('tasks.cancelled')));
+    r.unmount();
   });
 });
