@@ -372,7 +372,7 @@
       "unknown": "未知",
       "vram": " · 显存 {{total}}（可用 {{free}}）",
       "unifiedMemory": "统一内存架构（显存与内存共享）",
-      "noGpu": "未检测到可用 GPU",
+      "noGpu": "探过了 —— 这台机器上没有能用的 GPU",
       "ramAvailable": " · 可用 {{free}}",
       "cores": " · {{physical}} 核 / {{logical}} 线程",
       "noAvx2": " · 不支持 AVX2",
@@ -384,7 +384,8 @@
       "avx2Unknown": " · 无法确认是否支持 AVX2",
       "gpuNotProbed": "还没查过 —— 这轮没有加载任何能枚举显卡的后端（显卡枚举由后端包里的探针做）",
       "gpuAdvisorySeen": "但系统报告本机装着：{{adapters}} —— 也就是说这块卡我们看见了，只是还没装上能用它的后端包（可能支持 {{backends}}）",
-      "gpuProbedUnusable": "没有枚举到可用 GPU —— 但系统报告本机装着 {{adapters}}，所以卡在我们这一侧，不是你没有显卡"
+      "gpuProbedUnusable": "没有枚举到可用 GPU —— 但系统报告本机装着 {{adapters}}，所以卡在我们这一侧，不是你没有显卡",
+      "gpuVirtualUndetermined": "「{{adapter}}」是虚拟机提供的显示适配器 —— 它背后有没有一块真显卡，我们判断不出来。装上 {{backends}} 后端包让探针枚举一次，才知道这台机器能不能用 GPU 加速。"
     },
     "breaker": {
       "title": "GPU 加速已暂时停用",
@@ -430,7 +431,10 @@
       "blockedTitle": "这条笔记现在不能重新转写",
       "noSource": "这条笔记没有记录原始输入，无法重跑。仅当来源是可重新获取的链接或文件时才能重新转写。",
       "editsPreserved": "已保留你编辑过的 {{count}} 段",
-      "triedPaths": "找过这些位置："
+      "triedPaths": "找过这些位置：",
+      "replacedTitle": "这条笔记的原件被替换过",
+      "replacedDetail": "{{at}} 的一次「重新转写」重新取了一遍源，覆盖掉了你原先存的那一份。我们没有比对过两份文件的内容，也没有留下旧的那一份。",
+      "replacedNoAction": "现在播放与导出用的都是新取回的这一份 —— 不需要你做什么。"
     },
     "mindmapReadonly": "此处为预览，改动不会保存",
     "mindmapEdit": "去导图页编辑",

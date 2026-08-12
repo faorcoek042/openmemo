@@ -97,6 +97,33 @@ export function pickAudioAsset(note: NoteDetail | undefined): MediaAssetDto | un
 }
 
 /**
+ * **被换掉过的那份原件**（#96②），没有就是 `undefined`。
+ *
+ * ## 它对着的那件事
+ *
+ * 网络导入的笔记点「重新转写」会**重新下载一次源**，落在与上次完全相同的路径上，
+ * `rename(2)` 静默覆盖。覆盖本身是对的（用户点的就是"重来一次"，而且只在重新取到
+ * 之后才发生，文件永远可取）——**不对的是没人说过这件事**：`uid` / `rel_path` / `url`
+ * 全不变，界面一个字不提，用户存的那一份就这么被换成了另一份。
+ *
+ * 所以 daemon 记下了**被换掉的时刻**（`media_assets.replaced_at` → `NoteAsset.replacedAt`），
+ * 而这个函数是它到界面的最后一米 —— 没有这一米，那个字段就是"有人写没人读"。
+ *
+ * ⚠️ 判据是 `replacedAt != null`，**不是"内容变了"**：我们没有比对过两份文件的内容，
+ * 也没有留下旧的那一份。把"被换掉"说成"内容变了"是编一个我们没查过的因果。
+ *
+ * ⚠️ 只看 `role === 'original'`：`audio16k` / `peaks` 是**我们自己生成的派生物**，
+ * 每跑一次必然重写一次，对它们说"你存的东西被换掉了"没有意义（用户没存过它们）。
+ * 这里也**刻意不过滤 `isUsableAsset`**：这条事实与"现在能不能播"无关 ——
+ * 一份状态是 `missing` 的原件同样值得说"它上次被换过"。
+ */
+export function pickReplacedOriginal(note: NoteDetail | undefined): MediaAssetDto | undefined {
+  const assets = note?.assets;
+  if (!Array.isArray(assets)) return undefined;
+  return assets.find((a) => a.role === 'original' && typeof a.replacedAt === 'number');
+}
+
+/**
  * 预计算波形（`.ompk`）。
  *
  * **没有就是没有** —— 调用方必须如实不画波形，绝不能因为"界面空着不好看"就造一份

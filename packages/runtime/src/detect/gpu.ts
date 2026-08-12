@@ -156,21 +156,24 @@ export function classifyDisplayAdapter(input: {
 }
 
 /**
- * 虚拟适配器的三态结论 —— **这句 `reason` 会被硬件卡原样渲染给用户**，
- * 所以它必须说人话、且必须说出"下一步能做什么"。
+ * 虚拟适配器的三态结论。
  *
  * 它要回答的是用户真正问的那个问题：**这台机器上到底能不能用 GPU 加速？**
  * 诚实的答案是"我们还没回答"，而不是"不能"。
+ *
+ * ⚠️ **这里不再拼那句中文。** 上一版返回的是一整句 daemon 写好的中文，
+ * 硬件卡原样渲染 —— 后果是**它没法翻译**：英文界面上会冒出一整句中文，
+ * 而"往 `en.json` 里塞中文占位"正是本版在治的那个形状
+ * （v0.7.1 已知边界里那颗写死中文的「检查更新」按钮）。
+ * 所以 daemon 只说**是什么原因**（`'virtual_adapter'`）
+ * 与**要装什么才问得出答案**（`probeWith`），措辞归 `apps/web` 的两份 locale，
+ * 那边有一张总 `Record` 逼着每种原因都得有话说。
+ *
+ * 适配器**叫什么**不在这里拼进句子：`AdvisoryGpu.name` 本来就一起发出去了，
+ * 界面拿它填模板 —— 同一个事实不写两遍。
  */
-export function virtualAdapterVerdict(name: string, probeWith: Backend[]): AdvisoryGpuVerdict {
-  return {
-    kind: 'undetermined',
-    reason:
-      `「${name}」是虚拟机提供的显示适配器 —— ` +
-      `它背后有没有一块真显卡（GPU 直通 / 半虚拟化），我们从适配器本身判断不出来。` +
-      `装上 ${probeWith.join(' / ')} 后端包让探针枚举一次，才知道这台机器能不能用 GPU 加速。`,
-    probeWith,
-  };
+export function virtualAdapterVerdict(probeWith: Backend[]): AdvisoryGpuVerdict {
+  return { kind: 'undetermined', reason: 'virtual_adapter', probeWith };
 }
 
 export async function detectGpus(): Promise<AdvisoryDetection> {
@@ -266,12 +269,17 @@ async function detectGpusLinux(): Promise<AdvisoryDetection> {
      */
     const isVirtual = classifyDisplayAdapter({ pciVendorId: vendorId, name: '' }) === 'virtual';
     const verdict: AdvisoryGpuVerdict = isVirtual
-      ? virtualAdapterVerdict(VIRTUAL_PCI_VENDORS[vendorId] ?? name, candidateBackends)
+      ? virtualAdapterVerdict(candidateBackends)
       : { kind: 'candidate', backends: candidateBackends };
 
     gpus.push({
       vendor,
-      name,
+      /*
+       * 虚拟适配器**报出它是哪种虚拟化**，而不是 `PCI 0x1af4:0x1050`。
+       * 界面那句「「{adapter}」是虚拟机提供的显示适配器」要把这个名字填进去，
+       * 而一串裸 PCI 号对用户等于没说 —— 原始号码没丢，仍在 `capabilities.pciVendorId`。
+       */
+      name: (isVirtual ? VIRTUAL_PCI_VENDORS[vendorId] : undefined) ?? name,
       vramTotalMB: Number.isFinite(vramBytes) && vramBytes > 0 ? Math.round(vramBytes / 1e6) : null,
       driverVersion: null,
       verdict,
@@ -509,7 +517,7 @@ async function detectGpusWin32(): Promise<AdvisoryDetection> {
            */
           verdict:
             klass === 'virtual'
-              ? virtualAdapterVerdict(name, ['vulkan'])
+              ? virtualAdapterVerdict(['vulkan'])
               : { kind: 'candidate', backends: ['vulkan'] },
           capabilities: vendorId !== undefined ? { pciVendorId: `0x${vendorId}` } : {},
           source: 'Get-CimInstance Win32_VideoController',
