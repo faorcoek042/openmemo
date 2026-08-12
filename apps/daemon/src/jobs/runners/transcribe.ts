@@ -138,6 +138,72 @@ function asAsrEngineId(id: string): AsrEngineId | undefined {
   return (ASR_ENGINE_IDS as readonly string[]).includes(id) ? (id as AsrEngineId) : undefined;
 }
 
+/**
+ * **这一次转写实际用的模型，叫什么名字。** 落库与广播共用这一份。
+ *
+ * ## 修的是什么
+ *
+ * `transcribe.started` 事件原来发的是 `deps.modelId` —— 也就是 **bundle 默认值**
+ * （`main.ts` 里 `getBundle().modelPath` 的 basename），**不是这次任务选中的那个**。
+ * 同一个函数里 DB 行存的却是对的。也就是说：
+ * **库里是真话，事件里是假话，而用户只看得见事件。**
+ *
+ * 它现在要紧，是因为下一轮要做「换引擎/换模型重转」的选择器：
+ * **事件说假话 ⇒ 用户没法验证自己真的换了模型。加了选择器却验不了，比不加更糟。**
+ *
+ * ## 取哪个名字（这是判断，不是实现细节）
+ *
+ * 契约上 `TranscribeStartedEvent.modelId` 是**一个字符串**，所以必须在
+ * 两个命名空间里选：目录 id（`asr/whisper-base-q5_1`，安装记录用的那套）
+ * 与权重文件名（`ggml-base.en.bin`，`transcripts.model_id` 存的那套）。
+ *
+ * 判据是「**报出我们真正知道的、最能让用户对上账的那一个**」：
+ *
+ * 1. **用户显式点了某个目录 id，且它真解析出了权重** → 报那个**目录 id**。
+ *    那正是他在选择器里点下去的那串字，也是唯一能让他确认"我真的换了"的东西；
+ *    它还与 `model_installs.model_id` 同域，模型页点得过去。
+ * 2. **否则** → 报权重**文件名 / 目录名**。自动选择走的是 `active.json` /
+ *    `OPENMEMO_ASR_MODEL` / `scanByName` 兜底扫描，**那几条路真的不知道目录 id**
+ *    （用户手工拷进 `by-name/` 的文件压根没有清单条目）。这时候编一个目录 id
+ *    才是说谎；报盘上那个真名是我们知道的全部。
+ * 3. 两者都没有才回落到 bundle 默认值。
+ *
+ * ⚠️ **代价要说清楚：这个字段因此不是单一命名空间的**，消费方只能拿它**显示/排查**，
+ * 不能当 join key。让它单一要么给没进目录的文件编 id、要么丢掉用户自己的说法，
+ * 两条都更坏。真正的修法是发两个字段（`modelId` + `modelRef`），
+ * 那要动 `packages/shared/src/events.ts` —— 本轮那个文件归另一路，已单独报出。
+ *
+ * ## 为什么不用 `path.basename`
+ *
+ * 原实现是 `modelPath.split('/').pop()`：**Windows 的绝对路径里没有 `/`**，
+ * 于是 `C:\Users\x\models\ggml-base.en.bin` 原样返回整条路径 ——
+ * 用户看到的"模型名"是一串本机绝对路径（还顺带把本地目录结构广播了出去）。
+ * `path.basename` 在 Windows 上是对的，但**在 Linux 上不认 `\`**，
+ * 于是这个 bug 在本机与 CI 上都测不出来（`isWithinImportRoots` 为同一课付过账）。
+ * 所以这里显式按两种分隔符切，**结论与宿主平台无关**。
+ *
+ * ⚠️ 先剥掉结尾的分隔符：sherpa / Paraformer 的 `modelPath` 是**目录**，
+ * 带不带尾斜杠都可能出现，不剥的话会得到空串。目录名（`paraformer-zh-small`）
+ * 本身就是有意义的标识，所以目录这一档不需要特殊处理，只需要别被尾斜杠坑到。
+ */
+export function runModelId(
+  /** 用户显式指定、且**真的解析出了权重**的目录 id；没有就传 undefined。 */
+  catalogId: string | null | undefined,
+  /** 这次实际要加载的权重路径（文件或目录）。 */
+  modelPath: string | null,
+  /** 兜底：bundle 默认模型的名字。 */
+  fallback: string,
+): string {
+  const id = catalogId?.trim();
+  if (id) return id;
+  if (modelPath) {
+    const trimmed = modelPath.replace(/[\\/]+$/, '');
+    const name = trimmed.split(/[\\/]/).pop();
+    if (name) return name;
+  }
+  return fallback;
+}
+
 /** {@link archiveIntoMedia} 的结论：**落点**，以及**它有没有压掉一份已经在那儿的文件**。 */
 export interface ArchivedFile {
   /** 相对 media 根的路径（D-02 §1.1：绝不存绝对路径，数据目录可搬迁）。 */
@@ -353,9 +419,21 @@ export async function runTranscribeJob(
    * 有就**接着写**，不新建 —— 新建会让 completedChunks 查到空表而全量重跑，
    * 并且把用户已经看到的旧稿置为非活跃。
    */
-  const modelId = chosen.modelPath
-    ? (chosen.modelPath.split('/').pop() ?? deps.modelId)
-    : deps.modelId;
+  /*
+   * ★ 这一次真正用的模型叫什么 —— **落库与广播共用这一个值**（判据见 `runModelId`）。
+   *
+   * 原来这里是 `chosen.modelPath.split('/').pop()`，而 `transcribe.started` 事件
+   * 发的是另一个东西（`deps.modelId`，bundle 默认值）。两处各算各的，
+   * 于是**库里是真话、事件里是假话**，而用户只看得见事件。
+   *
+   * `overrideModelPath` 非空 ⇔ 用户显式指定的那个目录 id **真的解析出了权重**，
+   * 所以这时候 `payload.modelId` 是可信的、也是用户唯一能对上账的那串字。
+   */
+  const modelId = runModelId(
+    overrideModelPath ? payload.modelId : undefined,
+    chosen.modelPath,
+    deps.modelId,
+  );
   const resumable = repos.resumableTranscript(note.id, chosen.engineId, modelId);
   const transcript =
     resumable ??
@@ -386,7 +464,20 @@ export async function runTranscribeJob(
     transcribeStartedEvent({
       transcriptUid: transcript.uid,
       noteUid: note.uid,
-      modelId: deps.modelId,
+      /*
+       * ★★ 这里原来是 `deps.modelId` —— **bundle 默认值**，不是这次任务选中的那个。
+       *
+       * 也就是说：用户在「重新转写」里挑了 large-v3，事件照样广播 `ggml-base.en.bin`；
+       * 而**同一个函数里 DB 行存的是对的**。库里是真话、事件里是假话，
+       * 而用户只看得见事件。
+       *
+       * 它现在要紧：下一轮要做「换引擎/换模型重转」的选择器 ——
+       * **事件说假话 ⇒ 用户没法验证自己真的换了模型。加了选择器却验不了，比不加更糟。**
+       *
+       * 现在与 `transcripts.model_id` **同一个值**（上面那个 `modelId`），
+       * 两处不可能再分叉。取名判据见 `runModelId()`。
+       */
+      modelId,
       durationMs: 0,
       language: payload.language ?? null,
     }),

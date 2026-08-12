@@ -121,6 +121,12 @@ function narrowColumn<T extends string>(
   );
 }
 
+/*
+ * ⚠️ 这一句判的是**列**，所以用 `isNoteStatus`（= CHECK 约束那五档），
+ * **不是** `isNoteViewStatus`（那份还含 `cancelled`/`blocked`/`paused`，是**响应**的词汇表）。
+ * 用宽的那份会把这道窄闸悄悄放开：一个本该被 CHECK 拦住的越界值就能一路走到界面上。
+ * 响应里多出来的那几档由 `effectiveNoteStatus()` 从 job 状态算，不经过这里。
+ */
 const noteStatusOf = (v: string): NoteStatus => narrowColumn(v, isNoteStatus, 'notes.status');
 const noteKindOf = (v: string): NoteKind => narrowColumn(v, isNoteKind, 'notes.kind');
 const assetStateOf = (v: string): MediaAssetState =>

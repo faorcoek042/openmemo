@@ -10,6 +10,7 @@ import { EmptyState } from '../../components/common/EmptyState';
 import { MockNotice } from '../../components/common/MockNotice';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { StatusChip } from '../../components/common/StatusChip';
+import { jobStateTone } from '../../components/common/statusTone';
 import { ListRow } from '../../components/common/ListRow';
 import { Button } from '../../components/common/Button';
 import { NoteProgressLine } from './NoteProgressLine';
@@ -183,12 +184,28 @@ export default function NotesListPage() {
                     aria-hidden
                   />
                 </button>
+                {/*
+                  ★ 三档新状态（#98 收尾）：`cancelled` / `blocked` / `paused`。
+                  它们和 `failed` 一样是 daemon **读时从 job 状态算出来**的，
+                  库里永远不会存（见 `NOTE_VIEW_STATUSES`）。
+
+                  ⚠️ 修之前这三档全都落进「处理中」，而**同一行里就自相矛盾**：
+                  这颗芯片写「处理中」，紧挨着下面那条 `NoteProgressLine`
+                  按 job 状态写「暂时无法继续」/「已暂停」。`cancelled` 更糟 ——
+                  进度行对终态返回 null，于是整行只剩一句「处理中」，零解释。
+
+                  ★ 文案与颜色**复用任务中心那一份**（`jobState.*` + `jobStateTone()`），
+                  不新造词条：同一个状态在产品里只准有一种说法，
+                  而这三档说的本来就是"那条任务现在怎么样了"。
+                */}
                 {n.status === 'processing' ? (
                   <StatusChip tone="running" label={t('notes.processing')} />
                 ) : n.status === 'failed' ? (
                   <StatusChip tone="critical" label={t('notes.failed')} />
                 ) : n.status === 'partial' ? (
                   <StatusChip tone="warning" label={t('notes.partial')} />
+                ) : n.status === 'cancelled' || n.status === 'blocked' || n.status === 'paused' ? (
+                  <StatusChip tone={jobStateTone(n.status)} label={t(`jobState.${n.status}`)} />
                 ) : null}
               </>
             }

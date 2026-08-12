@@ -31,7 +31,12 @@
  * 上一次同类判据（toast 能不能显示）正是因为埋在组件的 useEffect 里，
  * 才让「blocked 到不了屏幕上」活了那么久。
  */
-import { PIPELINE_JOB_KINDS, type NoteFailure, type NoteStatus } from '@openmemo/shared';
+import {
+  PIPELINE_JOB_KINDS,
+  type NoteFailure,
+  type NoteStatus,
+  type NoteViewStatus,
+} from '@openmemo/shared';
 
 import { jobErrorTextOf } from './errorText.js';
 import type { NoteJobRecord } from './queue.js';
@@ -42,9 +47,8 @@ export type NoteJobDigest = ReadonlyMap<string, NoteJobRecord>;
 /**
  * 库里存的状态 + 这条笔记的 job 快照 → **如实的**状态。
  *
- * 规则只有一条，刻意写得很窄：
- *
- * > 库里说 `processing`，而**最近一条转写任务已经终态失败** ⇒ 报 `'failed'`。
+ * 规则：库里说 `processing` 时，**用最近一条转写任务此刻的真实状态**来说话；
+ * 其余情况原样返回。
  *
  * ### 为什么只从 `processing` 升上来
  *
@@ -58,27 +62,81 @@ export type NoteJobDigest = ReadonlyMap<string, NoteJobRecord>;
  * （`runners/transcribe.ts` 收尾、`ws/recorder.ts` 录音结束）。导图任务失败
  * 不该让一条转写好的笔记显示"处理失败" —— 那是任务中心与 `lastFailure` 的事。
  *
- * ### 为什么 `blocked` 不算失败（这是判断，不是遗漏）
- *
- * `blocked` = 缺前置条件（没装 ASR 模型、没配 LLM），**条件满足后会自动继续**，
- * 而且它带着可点击的 remediation。把它报成 `'failed'` 会把一个可修复的等待态
- * 说成终局。⚠️ 但今天它落在 `processing` 这一档，也就是列表上仍写着「处理中」——
- * 那句话对一个"在等你装模型"的任务同样不准确。`NOTE_STATUSES` 里没有对应的档，
- * 补一档要动建表约束 + 契约 + 三处渲染，**本轮刻意没做，记在这里**。
- * 在补上之前，这类笔记的出口是任务中心那条带按钮的 `blocked` 记录。
- *
  * ### 为什么"可重试的中间失败"不会被误判
  *
  * `queue.fail()` 在可重试时把 state 置回 **`queued`**（留着 error_code，退避后再跑），
- * 只有真的没救了才写 `state='failed'`。所以这里判 `state === 'failed'`
+ * 只有真的没救了才写 `state='failed'`。所以判 `state === 'failed'`
  * 恰好就是"终态失败"，**一次网络抖动不会把笔记永久标红**。
+ *
+ * ### ★ 为什么是**穷尽 switch**，而不是「等于 failed 就报 failed，其余算处理中」
+ *
+ * 上一版就是那么写的，于是 `cancelled` / `paused` / `blocked` 三种"任务已经不在跑了"
+ * 全都静默落进「处理中」。三条一模一样的谎话，只是没人撞见过前两条。
+ *
+ * `[实测]` 后两条更难看，因为**同一行里就自相矛盾**：列表行既渲染这个状态芯片，
+ * 又渲染 `NoteProgressLine`（它按 job 状态说话）。于是芯片写「处理中」、
+ * 紧挨着的那行写「暂时无法继续」/「已暂停」。而 `cancelled` 连进度行都没有
+ * （终态不渲染），**整行零解释**。
+ *
+ * 写成对 `JobState` 的穷尽 switch 之后，将来加一个 job 状态**必须**在这里显式回答
+ * 「这条笔记该怎么说」，编译器不让它悄悄落进 default。
  */
 export function effectiveNoteStatus(
   stored: NoteStatus,
   digest: NoteJobDigest | undefined,
-): NoteStatus {
+): NoteViewStatus {
   if (stored !== 'processing') return stored;
-  return digest?.get('transcribe')?.state === 'failed' ? 'failed' : stored;
+  const state = digest?.get('transcribe')?.state;
+  if (state === undefined) return stored;
+
+  switch (state) {
+    // 还在流程里 —— 「处理中」是真话
+    case 'queued':
+    case 'leased':
+    case 'running':
+      return stored;
+
+    /*
+     * 终态失败。⚠️ 只有真没救了才会是这个状态（可重试时 `queue.fail()` 置回 queued），
+     * 所以这里不会把一次网络抖动说成永久失败。
+     */
+    case 'failed':
+      return 'failed';
+
+    /*
+     * ★ 用户自己取消的。**刻意不并进 `failed`** —— 「我自己取消的」和「它失败了」
+     * 对用户是两件事：前者不需要「重试」当主按钮，需要的是「重新转写」。
+     * 并档能少改几处，代价是产品对用户刚做过的动作说错话。
+     *
+     * ⚠️ 取消可能留下**半截稿子**（已落库的段落按设计保留）。这里仍报 `cancelled`
+     * 而不是 `partial`：`partial` 的既有含义是"跑完了但结果不全"（`result.yielded`），
+     * 而这条的成因是"被你停下了"。用户要知道的是**为什么停的**。
+     */
+    case 'cancelled':
+      return 'cancelled';
+
+    /*
+     * ★ 在等一个**可修复的前置条件**（没装 ASR 模型 / 没配 LLM / 磁盘不足）。
+     * 条件满足会自动继续，所以**不是**失败 —— 报成 `failed` 是把等待态说成终局。
+     * 但它同样不是「处理中」：此刻什么都没在跑，而且它不会自己好。
+     */
+    case 'blocked':
+      return 'blocked';
+
+    /* ★ 用户暂停的，可 resume。同样：没在跑，但也没结束。 */
+    case 'paused':
+      return 'paused';
+
+    /*
+     * 任务成功了、笔记却还写着 `processing` —— 这是个**真异常**
+     * （runner 在 `updateNote(ready)` 与 `queue.succeed()` 之间死了）。
+     * 这里**不编**一个结论：如实回落到库里存的那个值，让它继续显示「处理中」，
+     * 排查时能看出"有一条成功的 job 配着一条没收尾的笔记"。
+     * 猜成 `ready` 会掩盖掉这个信号，而且那条笔记多半真的没有稿子。
+     */
+    case 'succeeded':
+      return stored;
+  }
 }
 
 /**

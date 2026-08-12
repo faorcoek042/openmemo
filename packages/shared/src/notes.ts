@@ -72,6 +72,59 @@ export type NoteStatus = (typeof NOTE_STATUSES)[number];
  */
 
 /**
+ * ★★ API **报出来**的笔记状态：库里存的那几档 + 从 job 状态推出来的那几档。
+ *
+ * ## 为什么必须是两个常量，而不是把新档塞进 `NOTE_STATUSES`
+ *
+ * `NOTE_STATUSES` 有一条**已经在跑的守卫**钉着它：`packages/db/src/schemaContract.test.ts`
+ * 断言 `CHECK (status IN (...))` 的取值集合与它**逐字相等**。也就是说那个常量的职责
+ * 是"这一列可以存什么"，而不是"接口可以报什么"。往里加 `cancelled` 会当场把那条
+ * 守卫弄红 —— 而它红得对：我们**永远不会把这几个值写进库**。
+ *
+ * 唯一的另一条路是给 CHECK 做迁移把它们放进去。那是**另一个方向的不诚实**：
+ * schema 会声称"这一列可能出现 cancelled"，而全仓没有、也不打算有任何一处这么写。
+ *
+ * → 所以分开：`NOTE_STATUSES` 继续如实描述那一列，这一份如实描述**响应**。
+ *   两者是子集关系（`NoteStatus ⊂ NoteViewStatus`），消费方读的是这一份。
+ *
+ * ## 新增这三档各自在修哪一句谎话
+ *
+ * 三条**形状完全相同**（都是"job 已经不在跑了，而笔记还写着「处理中」"），
+ * 所以一次判完，不分两轮：
+ *
+ * | 档 | 修之前用户看到的 |
+ * |---|---|
+ * | `cancelled` | 自己点了取消，笔记**永远**停在「处理中」。列表行里连进度行都没有（终态不渲染），**整行零解释**。 |
+ * | `blocked` | 同一行里**自相矛盾**：芯片写「处理中」，紧挨着的进度行写「暂时无法继续」。 |
+ * | `paused` | 同上：芯片「处理中」，进度行「已暂停」。 |
+ *
+ * ⚠️ `cancelled` **刻意不并进 `failed`**：「我自己取消的」和「它失败了」是两件事，
+ * 前者不需要「重试」当主按钮，需要的是「重新转写」。并档能少改三处，
+ * 代价是让产品对用户自己刚做过的动作说错话 —— 那正是这一族缺陷的定义。
+ *
+ * ⚠️ `blocked` **刻意不并进 `failed`**：它在等一个可修复的前置条件（没装 ASR 模型），
+ * 条件满足会自动继续。报成失败是把等待态说成终局。
+ *
+ * ## 判据由 daemon 一处算
+ *
+ * `apps/daemon/src/jobs/noteStatus.ts` 的 `effectiveNoteStatus()`，
+ * 对 `JobState` 做**穷尽 switch** —— 加一个 job 状态就必须在那里显式回答
+ * "这条笔记该怎么说"，而不是悄悄落进 default。
+ */
+export const NOTE_VIEW_STATUSES = [...NOTE_STATUSES, 'cancelled', 'blocked', 'paused'] as const;
+export type NoteViewStatus = (typeof NOTE_VIEW_STATUSES)[number];
+
+/*
+ * ⚠️ 这里**刻意没有** `isNoteViewStatus()`。
+ *
+ * 我顺手写了一个"对称一点"，`check:orphans` 当场报它零调用方 —— 报得对：
+ * 没有任何一处需要把一个**不可信的字符串**收窄成 `NoteViewStatus`。
+ * 收窄发生在读**列**的时候（那是 `isNoteStatus`），而这几档新值压根不来自列，
+ * 它们由 daemon 自己算出来，类型上就是对的。
+ * 一个"看起来该有"的判据函数摆在这儿，只会让下一个人以为存在一条它守着的路。
+ */
+
+/**
  * `media_assets.state` —— `CHECK (state IN ('pending','ready','missing','failed'))`。
  *
  * ⚠️ **"字段缺失"绝不能读成"不可用"**（T-139 A1 的教训，见 `NoteAsset.state`）。
@@ -159,7 +212,12 @@ export interface ImportNoteResponse {
 export interface NoteListItem {
   uid: NoteUid;
   title: string;
-  status: NoteStatus;
+  /**
+   * ⚠️ 是 `NoteViewStatus` 而**不是** `NoteStatus`：这里可能出现库里永远不会存的
+   * `failed` / `cancelled` / `blocked` / `paused` —— 它们由 daemon 在读的时候
+   * 从这条笔记最近一条转写任务算出来。见 `NOTE_VIEW_STATUSES` 的说明。
+   */
+  status: NoteViewStatus;
   kind: NoteKind;
   language: string | null;
   durationMs: number | null;
@@ -268,7 +326,8 @@ export interface NoteTag {
 export interface NoteDetail {
   uid: NoteUid;
   title: string;
-  status: NoteStatus;
+  /** 同 `NoteListItem.status`：**报出来的**状态，含读时算出来的那几档。 */
+  status: NoteViewStatus;
   kind: NoteKind;
   language: string | null;
   durationMs: number | null;
