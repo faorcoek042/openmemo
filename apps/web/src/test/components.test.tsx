@@ -6188,10 +6188,14 @@ describe('#98 NoteStateNotice（笔记页的状态告知条）', () => {
     );
     await r.flush();
     const t = text(r.container);
-    assert.ok(
-      t.includes(zhAt('notes.cancelledHintNothingKept')),
-      `段数为 0 却没说"没跑出任何内容"（实际：${t}）`,
-    );
+    /*
+     * ⚠️ 词条里带 `{{action}}`，渲染出来是插值后的结果 —— 直接 `includes(原词条)`
+     * 永远为假。按占位符切开逐段比对：既避开插值，又**不在测试里硬写中文**
+     * （硬写的话文案一改这条就开始测一句不存在的话）。
+     */
+    for (const part of zhAt('notes.cancelledHintNothingKept').split('{{action}}')) {
+      assert.ok(t.includes(part), `段数为 0 却没说"没跑出任何内容"（实际：${t}）`);
+    }
     assert.ok(
       !t.includes('保留着'),
       `一段都没落，横幅还在说"已经跑完的部分保留着"（实际：${t}）—— 那是一句可验证的假话`,
@@ -12548,8 +12552,13 @@ describe('★★ #90 ① 进度读数从 SSE 到屏幕的刻度', () => {
     useProgressStore.getState().clear(JID);
     emitProgress(PROGRESS_UNREPORTABLE.step_announcement);
     await afterFlush();
+    const snap = useProgressStore.getState().byJob[JID];
+    // ⚠️ 前提自检要单写：把它折进下面那条断言（`snap?.progress ?? 'MISSING'`）
+    //    会被 `??` 自己吃掉 —— `null ?? 'MISSING'` 就是 'MISSING'，
+    //    于是"快照不存在"和"progress 正确地为 null"被判成同一件事。
+    assert.ok(snap, '前提：这一帧必须进 store（不进 store 的话下面那条断言测的是空气）');
     assert.equal(
-      useProgressStore.getState().byJob[JID]?.progress ?? 'MISSING',
+      snap.progress,
       null,
       '「这一步没有刻度」被兜底成了数字 —— `features/models/sse.ts` 用一整段注释防的就是这件事，' +
         '而 `features/tasks/sse.ts` 当时正写着 `e.pct ?? 0`',
