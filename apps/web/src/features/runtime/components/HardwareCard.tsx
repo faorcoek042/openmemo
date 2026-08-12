@@ -1,6 +1,11 @@
 import { useTranslation } from 'react-i18next';
 import { ChevronRight, Cpu, HardDrive, MemoryStick, MonitorCog } from 'lucide-react';
-import type { Backend, GetHardwareResponse, HardwareInfo } from '@openmemo/shared';
+import type {
+  AdvisoryUndeterminedReason,
+  Backend,
+  GetHardwareResponse,
+  HardwareInfo,
+} from '@openmemo/shared';
 import { BackendChip } from '../../../components/common/BackendChip';
 import { formatBytes } from '../../../lib/format/bytes';
 
@@ -42,6 +47,18 @@ const BACKEND_CAN_ENUMERATE_GPU: Readonly<Record<Backend, boolean>> = {
 export function gpuEnumerationHappened(hw: HardwareInfo): boolean {
   return hw.backends.some((b) => BACKEND_CAN_ENUMERATE_GPU[b.id] && b.probed);
 }
+
+/**
+ * 「判断不了」的每一种原因该说哪句话。**总 `Record`** —— 契约里新增一种原因而没人
+ * 给它写话，**构建就红**（`AdvisoryUndeterminedReason` 一变，这里少一格就编译不过）。
+ *
+ * 为什么非要一张表：上一版这句话是 daemon 拼好的整句中文，界面原样渲染 ——
+ * 那意味着**英文界面上会出现一整句中文**。措辞留在这一侧，两份 locale 才对得起来
+ * （`check-locale-ratchet.mjs` 会替我们盯住"两份 key 集合一致"）。
+ */
+const UNDETERMINED_REASON_KEYS: Readonly<Record<AdvisoryUndeterminedReason, string>> = {
+  virtual_adapter: 'runtime.hw.gpuVirtualUndetermined',
+};
 
 /**
  * 硬件探测结果卡（章程要求 2.1 的第一步："网页检测硬件"）。
@@ -100,17 +117,32 @@ export function HardwareCard({
     .map((g) => g.name)
     .filter(Boolean);
   /**
-   * 「我们判断不了」那一档的**原话**，由 daemon 给（`detect/gpu.ts` 的
-   * `virtualAdapterVerdict`）—— 只有那一侧知道是哪种虚拟适配器、
-   * 以及要装哪个包才能把这个问题问出答案。
+   * 「我们判断不了」那一档要说的话 —— **在这一侧组装，不是 daemon 递一句中文过来**。
+   *
+   * 上一版是 daemon 直接给整句中文、这里原样渲染。那句话**没法翻译**：
+   * 英文界面上会冒出一整句中文 —— 而"往 `en.json` 里塞中文"正是本版在治的形状
+   * （v0.7.1 已知边界里那颗写死中文的「检查更新」按钮）。
+   * 现在 daemon 只说**原因**（`AdvisoryUndeterminedReason`）和**装什么才问得出答案**
+   * （`probeWith`），措辞在下面那张总 `Record` 里 —— 新增一种原因而没人给它写话，
+   * **构建当场就红**，不会静默退化成一句空白。
    *
    * ⚠️ 它不是"技术细节"，是这一档**唯一的正文**：省掉或折叠它，
    * 用户就只剩一句"还没查过"，而「这台机器上到底能不能用 GPU 加速」
    * 这个问题**我们回答了没有**，他仍然不知道。
    */
-  const undeterminedReasons = advisoryGpus
-    .map((g) => (g.verdict?.kind === 'undetermined' ? g.verdict.reason : null))
-    .filter((r): r is string => r !== null && r !== '');
+  const undeterminedNotes = advisoryGpus.flatMap((g) =>
+    g.verdict?.kind === 'undetermined'
+      ? [
+          {
+            key: g.name,
+            text: t(UNDETERMINED_REASON_KEYS[g.verdict.reason], {
+              adapter: g.name,
+              backends: g.verdict.probeWith.join(' / '),
+            }),
+          },
+        ]
+      : [],
+  );
 
   return (
     <section
@@ -179,9 +211,9 @@ export function HardwareCard({
                   这里说的是"我们看见的是虚拟机的适配器，它背后有没有卡我们不知道" ——
                   合并回一句就等于回到那个两态。
                 */}
-              {undeterminedReasons.map((reason) => (
-                <span className="block text-ink" data-testid="hw-gpu-undetermined" key={reason}>
-                  {reason}
+              {undeterminedNotes.map((n) => (
+                <span className="block text-ink" data-testid="hw-gpu-undetermined" key={n.key}>
+                  {n.text}
                 </span>
               ))}
             </span>

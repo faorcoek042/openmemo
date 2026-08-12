@@ -372,7 +372,7 @@
       "unknown": "unknown",
       "vram": " · VRAM {{total}} ({{free}} free)",
       "unifiedMemory": "Unified memory (VRAM shared with system RAM)",
-      "noGpu": "No usable GPU detected",
+      "noGpu": "Checked — this machine has no usable GPU",
       "ramAvailable": " · {{free}} available",
       "cores": " · {{physical}} cores / {{logical}} threads",
       "noAvx2": " · no AVX2 support",
@@ -384,7 +384,8 @@
       "avx2Unknown": " · AVX2 support could not be determined",
       "gpuNotProbed": "Not checked yet — no GPU-capable backend was loaded this run (GPU enumeration is done by the probe that ships with a backend pack)",
       "gpuAdvisorySeen": "The system does report an adapter: {{adapters}} — so we can see the card, we just have no backend pack installed that can use it (possible: {{backends}})",
-      "gpuProbedUnusable": "No usable GPU was enumerated — but the system reports {{adapters}} is present, so the gap is on our side, not \"you have no GPU\""
+      "gpuProbedUnusable": "No usable GPU was enumerated — but the system reports {{adapters}} is present, so the gap is on our side, not \"you have no GPU\"",
+      "gpuVirtualUndetermined": "\"{{adapter}}\" is a display adapter provided by a virtual machine — we cannot tell from the adapter alone whether a real GPU sits behind it. Install the {{backends}} backend pack and let the probe enumerate once; that is the only way to find out whether this machine can use GPU acceleration."
     },
     "breaker": {
       "title": "GPU acceleration is temporarily disabled",
@@ -430,7 +431,10 @@
       "blockedTitle": "This note cannot be re-transcribed right now",
       "noSource": "This note has no recorded source input, so it cannot be re-run. Re-transcription only works when the source is a re-fetchable link or file.",
       "editsPreserved": "Your {{count}} edited segment(s) will be preserved",
-      "triedPaths": "Looked for the source file here:"
+      "triedPaths": "Looked for the source file here:",
+      "replacedTitle": "The original file for this note was replaced",
+      "replacedDetail": "A re-transcribe on {{at}} fetched the source again and overwrote the copy you had. We did not compare the contents of the two files, and the old one was not kept.",
+      "replacedNoAction": "Playback and export now use the newly fetched copy — nothing for you to do."
     },
     "mindmapReadonly": "Preview only — changes here are not saved",
     "mindmapEdit": "Edit in mindmap page",

@@ -1652,6 +1652,126 @@ describe('重跑保留编辑（换回「已保留」）', () => {
       r.unmount();
     }
   });
+
+  /**
+   * ★★ #96② 最后一米 —— **「你存的那份原件被换掉了」要真的出现在他眼前。**
+   *
+   * 网络导入的笔记点「重新转写」会重新下载一次源，落在与上次完全相同的路径上，
+   * `rename(2)` 静默覆盖：`uid` / `rel_path` / `url` 全不变，播放照旧
+   * （`/media` 用 `stat()` 现取大小），**所以在此之前这件事零痕迹**。
+   * daemon 记下了被换掉的时刻，这一条钉的是它没有停在 API 上。
+   *
+   * ⚠️ 判据是**这句话说了什么**：
+   *   ① 换掉这件事说了；② **没有**编造"内容变了"（我们没比对过两份文件）；
+   *   ③ 说清"不用你做什么" —— 这条提示不带任何可点的操作，
+   *      只丢一句"你的原件被替换了"会让用户去找一个并不存在的补救入口。
+   */
+  test('★★ 原件被重转覆盖过 ⇒ 详情页说出来，且不编造"内容变了"', async () => {
+    const NUID = '01HZZZZZZZZZZZZZZZZZZZZZY';
+    stubApi({
+      [`/notes/${NUID}`]: {
+        uid: NUID,
+        title: '从链接导入、重转过一次的那条',
+        status: 'done',
+        durationMs: 143000,
+        tags: [],
+        summaryMd: null,
+        bodyJson: null,
+        assets: [
+          {
+            uid: 'as_src',
+            role: 'original',
+            mime: 'audio/mpeg',
+            bytes: 2500000,
+            durationMs: 143000,
+            state: 'ready',
+            url: '/media/asset/as_src',
+            replacedAt: 1_770_000_000_000,
+          },
+        ],
+        canRetranscribe: true,
+        retranscribeBlocked: null,
+      },
+      [`/notes/${NUID}/transcript`]: { transcript: null, segments: [] },
+      [`/notes/${NUID}/mindmap`]: { mindmap: null, doc: null },
+    });
+    const r = await render(
+      <Routes>
+        <Route path="/notes/:noteUid" element={<NoteDetailPage />} />
+      </Routes>,
+      { route: `/notes/${NUID}` },
+    );
+    try {
+      await r.flush();
+      await r.flush();
+      const shown = text(r.container);
+      assert.ok(
+        shown.includes('原件被替换过'),
+        `原件被换掉了，详情页一个字没说 —— replacedAt 就成了"有人写没人读" → ${shown.slice(0, 400)}`,
+      );
+      assert.ok(
+        shown.includes('覆盖掉了你原先存的那一份'),
+        `没说清发生了什么（谁被谁覆盖了） → ${shown.slice(0, 400)}`,
+      );
+      assert.ok(
+        /不需要你做什么/.test(shown),
+        `只说"你的原件被替换了"却不说"不用你做什么" —— 用户会去找一个并不存在的补救入口 → ${shown.slice(0, 400)}`,
+      );
+      assert.ok(
+        !/内容(变了|不同|已改变)/.test(shown),
+        `编了一个我们没查过的因果：我们没有比对过两份文件的内容 → ${shown.slice(0, 400)}`,
+      );
+    } finally {
+      r.unmount();
+    }
+  });
+
+  test('★ 没被换过的笔记：一个字都不许说（否则每条笔记上都会挂一条噪音）', async () => {
+    const NUID = '01HZZZZZZZZZZZZZZZZZZZZZX';
+    stubApi({
+      [`/notes/${NUID}`]: {
+        uid: NUID,
+        title: '导入之后没重转过',
+        status: 'done',
+        durationMs: 143000,
+        tags: [],
+        summaryMd: null,
+        bodyJson: null,
+        assets: [
+          {
+            uid: 'as_src',
+            role: 'original',
+            mime: 'audio/mpeg',
+            bytes: 2500000,
+            durationMs: 143000,
+            state: 'ready',
+            url: '/media/asset/as_src',
+            replacedAt: null,
+          },
+        ],
+        canRetranscribe: true,
+        retranscribeBlocked: null,
+      },
+      [`/notes/${NUID}/transcript`]: { transcript: null, segments: [] },
+      [`/notes/${NUID}/mindmap`]: { mindmap: null, doc: null },
+    });
+    const r = await render(
+      <Routes>
+        <Route path="/notes/:noteUid" element={<NoteDetailPage />} />
+      </Routes>,
+      { route: `/notes/${NUID}` },
+    );
+    try {
+      await r.flush();
+      await r.flush();
+      assert.ok(
+        !text(r.container).includes('原件被替换过'),
+        '没被换过却挂着"原件被替换过" —— 那是给每一条笔记加一条假话',
+      );
+    } finally {
+      r.unmount();
+    }
+  });
 });
 
 /* ──────────── 零宽词：每段第一个词永远不亮（T-086 ①） ──────────── */
@@ -4609,16 +4729,16 @@ describe('T-129b /runtime 不许中英混排', () => {
     const gpuCell = (root: Element): string =>
       root.querySelector('[data-testid="runtime-hardware-card"] dd')?.textContent ?? '';
 
-    test('★ 用户那台的形状：只装了 CPU 包 ⇒ 必须说「还没查过」，不许说「未检测到可用 GPU」', async () => {
+    test('★ 用户那台的形状：只装了 CPU 包 ⇒ 必须说「还没查过」，不许说「没有能用的 GPU」', async () => {
       const r = await render(<HardwareCard hw={HW()} locale="zh-CN" />);
       const cell = gpuCell(r.container);
       /*
        * ⚠️ 断的是**说了什么**，不是"某个 testid 在"。
        * 上一版的判据（`backends.some(b => b.installed)`）在这个 fixture 上恒为真，
-       * 于是它会走到「未检测到可用 GPU」——这条断言正是钉那个。
+       * 于是它会走到「探过了 —— 这台机器上没有能用的 GPU」——这条断言正是钉那个。
        */
       assert.ok(
-        !cell.includes('未检测到可用 GPU'),
+        !cell.includes('没有能用的 GPU'),
         `装了 CPU 包就宣称"查过了、没有显卡" —— 而没有任何能枚举显卡的后端被加载过 → ${cell}`,
       );
       assert.ok(cell.includes('还没查过'), `应说明"没查过" → ${cell}`);
@@ -4636,11 +4756,11 @@ describe('T-129b /runtime 不许中英混排', () => {
         cell.includes('AMD Radeon(TM) 780M Graphics'),
         `系统报告的适配器名一个字都没显示 → ${cell}`,
       );
-      assert.ok(!cell.includes('未检测到可用 GPU'), `仍在说"没有显卡" → ${cell}`);
+      assert.ok(!cell.includes('没有能用的 GPU'), `仍在说"没有显卡" → ${cell}`);
       r.unmount();
     });
 
-    test('★ 真的没有（查过了、系统也没说什么）⇒ 这时候才允许说「未检测到可用 GPU」', async () => {
+    test('★ 真的没有（查过了、系统也没说什么）⇒ 这时候才允许说「探过了 —— 没有能用的 GPU」', async () => {
       const probed = HW({
         backends: [
           { id: 'cpu', installed: true, available: true, probed: true, unavailableReason: null },
@@ -4656,8 +4776,9 @@ describe('T-129b /runtime 不许中英混排', () => {
       const r = await render(<HardwareCard hw={probed} locale="zh-CN" />);
       const cell = gpuCell(r.container);
       assert.ok(
-        cell.includes('未检测到可用 GPU'),
-        `这一档是真的查过且没有，必须说得出结论 → ${cell}`,
+        cell.includes('探过了') && cell.includes('没有能用的 GPU'),
+        `这一档是真的查过且没有，必须说得出结论**并说清"查过了"** —— ` +
+          `「没探过」和「探过了、没有」是两件事，这一版整批治的就是这个 → ${cell}`,
       );
       r.unmount();
     });
@@ -4679,8 +4800,8 @@ describe('T-129b /runtime 不许中英混排', () => {
       const cell = gpuCell(r.container);
       assert.ok(cell.includes('AMD Radeon(TM) 780M Graphics'), `没说出那块卡 → ${cell}`);
       assert.ok(
-        !/^\s*未检测到可用 GPU/.test(cell),
-        `系统明明报告有卡，却只说"未检测到可用 GPU" → ${cell}`,
+        !/^\s*探过了 —— 这台机器上没有能用的 GPU/.test(cell),
+        `系统明明报告有卡，却只说"没有能用的 GPU" → ${cell}`,
       );
       r.unmount();
     });
@@ -4747,7 +4868,7 @@ describe('T-129b /runtime 不许中英混排', () => {
       );
       const cell = gpuCell(r.container);
       assert.ok(
-        !cell.includes('未检测到可用 GPU'),
+        !cell.includes('没有能用的 GPU'),
         `断路器跳闸让 probe 整个没跑，却宣称"查过了、没有显卡" → ${cell}`,
       );
       assert.ok(cell.includes('AMD Radeon(TM) 780M Graphics'), `没说出那块卡 → ${cell}`);
@@ -4775,11 +4896,16 @@ describe('T-129b /runtime 不许中英混排', () => {
      * 得知道「这台机器上到底能不能用 GPU 加速」这个问题**我们回答了没有**。
      * ════════════════════════════════════════════════════════════════════════ */
 
-    /** daemon 那句原话的形状（`detect/gpu.ts` 的 `virtualAdapterVerdict` 产出）。 */
-    const VM_REASON =
-      '「Microsoft Hyper-V Video」是虚拟机提供的显示适配器 —— ' +
-      '它背后有没有一块真显卡（GPU 直通 / 半虚拟化），我们从适配器本身判断不出来。' +
-      '装上 vulkan 后端包让探针枚举一次，才知道这台机器能不能用 GPU 加速。';
+    /**
+     * ⚠️ daemon 现在**只给机器可读的原因**（`AdvisoryUndeterminedReason`），
+     * 那句话由这一侧按 locale 组装 —— 上一版是 daemon 递一整句中文过来、界面原样渲染，
+     * 那句话没法翻译（英文界面上会冒出一整句中文）。
+     *
+     * 所以下面断言的是**渲染出来的那段文字**里的几件事实，而不是某个常量：
+     * 说出了是哪一块适配器、说出了我们判断不了、说出了装什么才问得出答案。
+     * 把 locale 那句改成一句空话，这三条会红。
+     */
+    const VM_ADAPTER = 'Microsoft Hyper-V Video';
 
     /** 虚拟机那台机器的真实形状：并集里**仍有 vulkan**（包照旧可安装），但 verdict 落第三档。 */
     const SAW_HYPERV = {
@@ -4799,9 +4925,9 @@ describe('T-129b /runtime 不许中英混排', () => {
       advisoryBackends: ['vulkan'],
       advisoryGpus: [
         {
-          name: 'Microsoft Hyper-V Video',
+          name: VM_ADAPTER,
           vendor: 'other',
-          verdict: { kind: 'undetermined', reason: VM_REASON, probeWith: ['vulkan'] },
+          verdict: { kind: 'undetermined', reason: 'virtual_adapter', probeWith: ['vulkan'] },
           source: 'Get-CimInstance Win32_VideoController',
         },
       ],
@@ -4811,9 +4937,18 @@ describe('T-129b /runtime 不许中英混排', () => {
       const r = await render(<HardwareCard hw={HW()} locale="zh-CN" runtime={SAW_HYPERV} />);
       const cell = gpuCell(r.container);
 
+      /*
+       * 判据是**这句话回答了什么**，不是"某个字符串在"：
+       * ① 是哪一块（不说名字，用户不知道我们在讲什么）
+       * ② 我们判断不了（这一档的全部内容）
+       * ③ 装什么才问得出答案（否则他只知道我们不知道，仍然无事可做）
+       */
+      assert.ok(cell.includes(VM_ADAPTER), `没说出我们看到的是哪一块适配器 → ${cell}`);
+      assert.ok(cell.includes('虚拟机'), `没说出它是虚拟机给的适配器 → ${cell}`);
+      assert.ok(/判断不出来|判断不了/.test(cell), `没说出"我们下不了结论" → ${cell}`);
       assert.ok(
-        cell.includes(VM_REASON),
-        `daemon 给了理由，界面一个字没渲染 —— 用户仍然不知道我们回答了没有 → ${cell}`,
+        cell.includes('vulkan') && /装上|安装/.test(cell),
+        `没说出装什么才能问出答案 —— 用户只知道我们不知道，仍然无事可做 → ${cell}`,
       );
       assert.ok(
         !cell.includes('可能支持'),
@@ -4821,7 +4956,7 @@ describe('T-129b /runtime 不许中英混排', () => {
       );
       assert.ok(!cell.includes('这块卡我们看见了'), `把一个虚拟机适配器称作"你的卡" → ${cell}`);
       assert.ok(
-        !cell.includes('未检测到可用 GPU'),
+        !cell.includes('没有能用的 GPU'),
         `把"判断不了"说成了"没有显卡" —— 假阳性换成假阴性，比原来更坏 → ${cell}`,
       );
       r.unmount();
@@ -4844,14 +4979,17 @@ describe('T-129b /runtime 不许中英混排', () => {
       const cell = gpuCell(r.container);
 
       assert.ok(
-        cell.includes('未检测到可用 GPU'),
+        cell.includes('探过了') && cell.includes('没有能用的 GPU'),
         `用户已经装包探过了、问题有答案了，界面却还不肯下结论 → ${cell}`,
       );
       assert.ok(
         !cell.includes('不是你没有显卡'),
         `拿一个虚拟机适配器去断言"你有显卡，是我们这边的问题" —— #86 里更坏的那一句 → ${cell}`,
       );
-      assert.ok(!cell.includes(VM_REASON), `问题已经被 probe 回答了，却还在说"判断不了" → ${cell}`);
+      assert.ok(
+        !/判断不出来|判断不了/.test(cell),
+        `问题已经被 probe 回答了，却还在说"判断不了" → ${cell}`,
+      );
       r.unmount();
     });
 
@@ -4866,9 +5004,9 @@ describe('T-129b /runtime 不许中英混排', () => {
             source: 'Get-CimInstance Win32_VideoController',
           },
           {
-            name: 'Microsoft Hyper-V Video',
+            name: VM_ADAPTER,
             vendor: 'other',
-            verdict: { kind: 'undetermined', reason: VM_REASON, probeWith: ['vulkan'] },
+            verdict: { kind: 'undetermined', reason: 'virtual_adapter', probeWith: ['vulkan'] },
             source: 'Get-CimInstance Win32_VideoController',
           },
         ],
@@ -4880,7 +5018,10 @@ describe('T-129b /runtime 不许中英混排', () => {
         cell.includes('AMD Radeon(TM) 780M Graphics'),
         `真卡被虚拟适配器带着一起哑掉了 —— 那是把一个修复变成另一个缺陷 → ${cell}`,
       );
-      assert.ok(cell.includes(VM_REASON), `虚拟适配器那句被真卡挤掉了 → ${cell}`);
+      assert.ok(
+        cell.includes(VM_ADAPTER) && /判断不出来|判断不了/.test(cell),
+        `虚拟适配器那句被真卡挤掉了 → ${cell}`,
+      );
       r.unmount();
     });
   });

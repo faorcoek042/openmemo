@@ -28,7 +28,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { advisoryGpuBackends, type AdvisoryGpuVerdict } from '@openmemo/shared';
+import {
+  ADVISORY_UNDETERMINED_REASONS,
+  advisoryGpuBackends,
+  type AdvisoryGpuVerdict,
+} from '@openmemo/shared';
 
 import { evaluateApplicability } from '../backends/applicability.js';
 import { classifyDisplayAdapter, virtualAdapterVerdict } from './gpu.js';
@@ -123,7 +127,7 @@ describe('#86 ③ undetermined 仍然让 Vulkan 包可安装（这条被优化�
   /** 虚拟机那台机器上，advisory 唯一那块适配器给出的结论。 */
   const vmVerdict: AdvisoryGpuVerdict = {
     kind: 'undetermined',
-    reason: '「Microsoft Hyper-V Video」是虚拟机提供的显示适配器 —— …装上 vulkan 后端包探一次…',
+    reason: 'virtual_adapter',
     probeWith: ['vulkan'],
   };
 
@@ -166,37 +170,37 @@ describe('#86 ③ undetermined 仍然让 Vulkan 包可安装（这条被优化�
   });
 });
 
-describe('#86 ④ 那句理由是要给用户看的', () => {
-  it('★ 说得出"是什么"和"下一步做什么"，且不含"可能支持 / 不支持"这种已经下了结论的话', () => {
+describe('#86 ④ 原因必须是机器可读的，而不是一句 daemon 拼好的中文', () => {
+  it('★ reason 是契约里那个枚举的成员，且说得出装什么才问得出答案', () => {
     /*
-     * ⚠️ 判据不是"reason 非空"（那和"文本存在"是同一族）。
-     * 判据是这句话**回答了用户真正问的那个问题**：
-     * 「这台机器上到底能不能用 GPU 加速」—— 我们回答了没有。
-     * 所以它必须说出①看到的是什么 ②为什么下不了结论 ③照着做什么能拿到结论。
+     * ⚠️ 这一条钉的是**上一版踩过的坑**：`virtualAdapterVerdict()` 曾经返回一整句中文，
+     * 硬件卡原样渲染 —— 那句话**没法翻译**，英文界面上会冒出一整句中文，
+     * 而"往 `en.json` 里塞中文占位"正是本版在治的形状
+     * （v0.7.1 已知边界里那颗写死中文的「检查更新」按钮）。
      *
-     * 断的是**产品自己那个函数**的返回值（`virtualAdapterVerdict`），不是复刻一份 ——
-     * 复刻一份就只证明了"我抄的那句话符合我抄的那句话"。
+     * 所以判据有两半：daemon 这一侧只说**是什么原因** + **装什么能问出答案**；
+     * 那句话本身归 `apps/web` 的两份 locale，由 `components.test.tsx` 断言
+     * **渲染出来的文字**回答了什么（是哪一块 / 我们判断不了 / 装什么才知道）。
+     *
+     * 断的是**产品自己那个函数**的返回值，不是复刻一份 ——
+     * 复刻只能证明"我抄的那句话符合我抄的那句话"。
      */
     assert.equal(
       classifyDisplayAdapter(HYPERV),
       'virtual',
       '前提自检：这块适配器根本没走到 undetermined 那一支',
     );
-    const v = virtualAdapterVerdict(HYPERV.name, ['vulkan']);
+    const v = virtualAdapterVerdict(['vulkan']);
     assert.equal(v.kind, 'undetermined');
     if (v.kind !== 'undetermined') return;
 
-    assert.ok(v.reason.includes('Microsoft Hyper-V Video'), `没说出看到的是哪一块 → ${v.reason}`);
-    assert.ok(v.reason.includes('虚拟机'), `没说出它是什么 → ${v.reason}`);
-    assert.ok(/判断不出来|判断不了/.test(v.reason), `没说出"我们下不了结论" → ${v.reason}`);
-    assert.ok(v.reason.includes('vulkan'), `没说出装哪个包能问出答案 → ${v.reason}`);
     assert.ok(
-      !v.reason.includes('可能支持'),
-      `又说回"可能支持"了 —— 那正是这次要修掉的那句 → ${v.reason}`,
+      (ADVISORY_UNDETERMINED_REASONS as readonly string[]).includes(v.reason),
+      `reason 不在契约那张枚举里 —— 界面那张总 Record 会找不到话说 → ${v.reason}`,
     );
     assert.ok(
-      !/不支持|没有显卡/.test(v.reason),
-      `把"判断不了"说成了"不支持" —— 假阳性换成假阴性 → ${v.reason}`,
+      !/[\u4e00-\u9fa5]/.test(v.reason),
+      `reason 里又出现中文了 —— 它会被原样渲染到英文界面上 → ${v.reason}`,
     );
     assert.deepEqual(v.probeWith, ['vulkan'], '说了"装个包探一次"，却没说是哪个包');
   });

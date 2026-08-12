@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import type { NoteDetail } from '../../lib/api/types';
-import { isUsableAsset, pickAudioAsset, pickPeaksAsset } from './noteAssets';
+import { isUsableAsset, pickAudioAsset, pickPeaksAsset, pickReplacedOriginal } from './noteAssets';
 
 /**
  * ★ 取证：`curl -s http://127.0.0.1:17971/api/notes/01KZ47VXT0G82CP80S0MD7DHW1`
@@ -204,5 +204,56 @@ describe('T-139 A3 —— 波形只能来自真资产', () => {
       assets: [REAL_NOTE_RESPONSE.assets[0]],
     } as unknown as NoteDetail;
     assert.equal(pickPeaksAsset(onlyAudio), undefined);
+  });
+});
+
+describe('#96② —— 「原件被换掉过」这条事实要挑得出来', () => {
+  /**
+   * 网络导入重转会重新下载一次源、覆盖同名文件，`uid` / `rel_path` / `url` 全不变。
+   * daemon 记的是**被换掉的时刻**（`media_assets.replaced_at` → `NoteAsset.replacedAt`）。
+   * 这个选择器是它到界面的最后一米 —— 没有它，那个字段就是"有人写没人读"。
+   */
+  const withReplaced = (over: Record<string, unknown>): NoteDetail =>
+    ({
+      ...REAL_NOTE_RESPONSE,
+      assets: [
+        { uid: 'as_a16k', role: 'audio16k', state: 'ready', url: '/media/asset/as_a16k' },
+        { uid: 'as_src', role: 'original', state: 'ready', url: '/media/asset/as_src', ...over },
+      ],
+    }) as unknown as NoteDetail;
+
+  it('★ 原件带 replacedAt ⇒ 挑得出来（界面才说得出那句话）', () => {
+    const a = pickReplacedOriginal(withReplaced({ replacedAt: 1_700_000_000_000 }));
+    assert.equal(a?.uid, 'as_src');
+    assert.equal(a?.replacedAt, 1_700_000_000_000);
+  });
+
+  it('★ 没被换过（replacedAt 为 null）⇒ 一个字都不该说', () => {
+    assert.equal(pickReplacedOriginal(withReplaced({ replacedAt: null })), undefined);
+  });
+
+  it('★ 老响应根本没有这个键 ⇒ 同样什么都不说（缺字段 ≠ 被换过）', () => {
+    assert.equal(pickReplacedOriginal(withReplaced({})), undefined);
+  });
+
+  it('派生物（audio16k / peaks）被重写不算 —— 用户没存过它们', () => {
+    /*
+     * `audio16k` 每跑一次必然被重写，它的 `replacedAt` 因此几乎总是有值。
+     * 对用户说"你存的东西被换掉了"只在 `original` 上成立 ——
+     * 那才是他导入进来的那一份。
+     */
+    const note = {
+      ...REAL_NOTE_RESPONSE,
+      assets: [
+        {
+          uid: 'as_a16k',
+          role: 'audio16k',
+          state: 'ready',
+          url: '/media/asset/as_a16k',
+          replacedAt: 1_700_000_000_000,
+        },
+      ],
+    } as unknown as NoteDetail;
+    assert.equal(pickReplacedOriginal(note), undefined);
   });
 });

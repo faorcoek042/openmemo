@@ -627,7 +627,7 @@ export interface RuntimeDetection {
   /**
    * **advisory 探测**（nvidia-smi / sysfs DRM / system_profiler / DXGI）认为本机
    * 可能支持的后端，取所有探到的 GPU 的**待确认候选后端**并集
-   * （{@link advisoryBackendsOf}：`candidate` 取 `backends`，`undetermined` 取 `probeWith`）。
+   * （`advisoryGpuBackends()`：`candidate` 取 `backends`，`undetermined` 取 `probeWith`）。
    *
    * 它是 L2 适用性判定里**唯一不依赖"包已经装了"的证据**，也就是解开
    * 「要先有 A 才能装 B，而 A 要 B 装好才能被发现」那个环的东西
@@ -673,7 +673,7 @@ export interface RuntimeDetection {
      *
      * 这里原本是 `candidateBackends: readonly Backend[]` —— 两态，装不下"判断不了"，
      * 于是虚拟机里的显示适配器被界面说成「可能支持 Vulkan」。
-     * 现在虚拟适配器落 `undetermined`（带一句给用户看的 `reason`），
+     * 现在虚拟适配器落 `undetermined`（带一个**机器可读的** `reason`，措辞归 web 的 locale），
      * 而它的 `probeWith` **照旧进 {@link advisoryBackends} 并集** ——
      * 那条环打破器不能因为这次改动而失效。
      */

@@ -109,6 +109,16 @@ export interface GpuDevice {
  * 这个问题我们回答了没有。** 所以 `undetermined` 既不许显示成"可能支持"，
  * 也不许显示成"未检测到可用 GPU"。
  */
+/**
+ * `undetermined` 的**机器可读原因**。
+ *
+ * 现在只有一种，而且**刻意不预留第二种** —— 空着的枚举成员是"永远不会触发的兜底"，
+ * 本仓这周为此单独立了条目。真出现第二种（比如"我们连适配器清单都没问到"）时再加，
+ * 加的那一刻 `apps/web` 那张总 `Record` 会当场编译不过，逼着人给它写一句话。
+ */
+export const ADVISORY_UNDETERMINED_REASONS = ['virtual_adapter'] as const;
+export type AdvisoryUndeterminedReason = (typeof ADVISORY_UNDETERMINED_REASONS)[number];
+
 export type AdvisoryGpuVerdict =
   | {
       readonly kind: 'candidate';
@@ -118,12 +128,17 @@ export type AdvisoryGpuVerdict =
   | {
       readonly kind: 'undetermined';
       /**
-       * **为什么判断不了** —— 必填，而且**这句话是给用户看的**（硬件卡直接渲染它）。
+       * **为什么判断不了** —— 必填。`unknown` 时的沉默比说错更坏：
+       * 用户会看到一句"没有显卡"或者一片空白，而真相是"我们没能回答这个问题"。
+       * 所以这一格不许只留一个 kind。
        *
-       * `unknown` 时的沉默比说错更坏：用户会看到一句"没有显卡"或者一片空白，
-       * 而真相是"我们没能回答这个问题"。所以这一格不许只留一个 kind。
+       * ⚠️ **它是机器可读的原因，不是一句中文散文**（`SpeedUnmeasuredReason` 同一形状）。
+       * 上一版这里是 daemon 直接给的整句中文，界面原样渲染 —— 那句话**没法翻译**：
+       * 英文界面上会冒出一整句中文，而"`en.json` 里塞中文占位"正是本版在治的形状
+       * （v0.7.1 已知边界里那颗写死中文的「检查更新」按钮）。
+       * 措辞归 `apps/web` 的 locale 两份，daemon 只说**是什么原因**。
        */
-      readonly reason: string;
+      readonly reason: AdvisoryUndeterminedReason;
       /**
        * 要**回答**这个问题，该装哪几个后端包让探针枚举一次。
        *

@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useNoteQuery, useTranscriptQuery } from './api';
 import { qk } from '../../app/query';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
+import { Banner } from '../../components/common/Banner';
 import { Button } from '../../components/common/Button';
 import { MockNotice } from '../../components/common/MockNotice';
 import { PanelBoundary } from '../../components/common/PanelBoundary';
@@ -27,14 +28,14 @@ import { useUiStore } from '../../lib/stores/ui.store';
 import { decodeOmpk, type DecodedPeaks } from '../../lib/format/peaks';
 import { timecode } from '../../lib/format/time';
 import { mediaUrl } from '../../lib/api/client';
-import { pickAudioAsset, pickPeaksAsset } from './noteAssets';
+import { pickAudioAsset, pickPeaksAsset, pickReplacedOriginal } from './noteAssets';
 import { cn } from '../../lib/utils';
 
 type Tab = 'summary' | 'mindmap' | 'notes';
 
 /** F5 笔记详情 —— 产品心脏（D-05 §4.4）。 */
 export default function NoteDetailPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { noteUid } = useParams<{ noteUid: string }>();
   const [params, setParams] = useSearchParams();
   const tab = (params.get('tab') as Tab) ?? 'summary';
@@ -56,6 +57,14 @@ export default function NoteDetailPage() {
 
   const audioAsset = pickAudioAsset(note.data);
   const peaksAsset = pickPeaksAsset(note.data);
+  /*
+   * ★ #96②：**「你存的那份原件被换掉了」要有人说出来。**
+   * 重新转写会重新下载一次源并覆盖同名文件；覆盖本身保留（用户点的就是"重来一次"，
+   * 而且只在重新取到之后才发生），但在此之前这件事从库到界面一个字都没有。
+   * daemon 现在记了被换掉的时刻，这里是它到用户眼前的最后一米 ——
+   * 少了这一米，`replacedAt` 就是又一个"有人写没人读"的字段。
+   */
+  const replacedOriginal = pickReplacedOriginal(note.data);
 
   useEffect(() => {
     if (!note.data) return;
@@ -268,6 +277,39 @@ export default function NoteDetailPage() {
             canRetranscribe={note.data?.canRetranscribe}
             retranscribeBlocked={note.data?.retranscribeBlocked}
           />
+          {/*
+            ★ #96②：**原件被换掉过 —— 说出来，并且说清"不用你做什么"。**
+
+            它挨着「重新转写」那一带，因为这件事正是那个按钮的后果：点一次重跑
+            就会重新取一遍源、覆盖掉盘上那一份。
+
+            ⚠️ 措辞的两条红线：
+              · 说的是「**盘上那份被换掉了**」，**不是「内容变了」** ——
+                我们没有比对过两份文件，编一个我们没查过的因果比不说更坏；
+              · 必须把「不需要你做什么」说出口。这条提示不带任何可点的操作，
+                如果只丢下一句"你的原件被替换了"，用户会去找一个并不存在的补救入口。
+
+            tone 用 `info` 不用 `warning`：**这不是故障**，是一次他自己发起的动作
+            的副作用，而且文件一直可取（覆盖只发生在重新下载成功之后）。
+          */}
+          {replacedOriginal?.replacedAt != null ? (
+            <div data-testid="original-replaced">
+              <Banner
+                tone="info"
+                title={t('detail.retranscribe.replacedTitle')}
+                detail={
+                  <>
+                    <span className="block">
+                      {t('detail.retranscribe.replacedDetail', {
+                        at: new Date(replacedOriginal.replacedAt).toLocaleString(i18n.language),
+                      })}
+                    </span>
+                    <span className="mt-1 block">{t('detail.retranscribe.replacedNoAction')}</span>
+                  </>
+                }
+              />
+            </div>
+          ) : null}
           <div className="min-h-0 flex-1">
             <PanelBoundary name={t('detail.transcript')}>
               <TranscriptList
