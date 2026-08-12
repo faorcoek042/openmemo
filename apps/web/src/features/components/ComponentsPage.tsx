@@ -256,11 +256,18 @@ export default function ComponentsPage() {
           · `no-upstream` —— 再点一百次也没有上游可问；
           · `indeterminate` —— 问到了，只是比不出先后，重试不会变好。
         所以现在只有**重试真的有意义**的那一档才说"再点一次"。
+        ★ #100 又收窄一次：`failed` 里还分**立刻重试有用**（超时／网络瞬态）和
+          **必须等**（配额用尽，`reason` 里带着"约 X 分钟后恢复"）两种。
+          这里不再替它们统一说"再点一次通常就好" —— 那对后者是句白话，
+          而"等 3 分钟"才是可执行的。措辞的唯一来源是
+          `packages/downloader/src/upstream.ts` 的 `httpFailureReason()`。
       */}
       {sweep?.kind === 'attempted' && failed.length > 0 ? (
         <p className="text-[11px] text-ink-muted" data-testid="components-failed-note">
           {failed.length} 个组件这次没问到上游（可能是限流、超时或网络问题）。
-          再点一次「检查更新」通常就好；查不到不影响安装和使用。
+          每张卡片上写着各自的原因 ——{' '}
+          <strong className="text-ink-secondary">重试的时机以那句为准</strong>
+          ：配额用尽时它会说明还要等多久，那种情况下立刻再点是白点。查不到不影响安装和使用。
         </p>
       ) : null}
       {sweep?.kind === 'attempted' && indeterminate.length > 0 ? (

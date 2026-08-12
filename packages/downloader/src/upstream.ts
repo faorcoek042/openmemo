@@ -76,6 +76,133 @@ export type UpstreamProbe =
 
 const UA = 'OpenMemo/0.1 (+https://github.com/openmemo)';
 
+/**
+ * 响应里那套配额头 —— **每一格都可能没有，没有就是 `null`，不编一个**。
+ *
+ * `[实测 2026-08-12]` 真实取到的形状（同一台机器，两次真请求）：
+ *
+ * ```
+ * 200  x-ratelimit-limit:60  remaining:59  reset:1786532531  resource:core   used:1
+ * 403  x-ratelimit-limit:10  remaining:0   reset:1786528992  resource:search used:10
+ * ```
+ *
+ * 两条从实测里学到、写死在这里会出错的事：
+ *   1. **`limit` 不是常数 60。** 不同的桶不一样（core 60、search 10），
+ *      所以那句「每小时 N 次」要**读出来**，不能照抄文档里的 60。
+ *   2. **主配额限流不带 `retry-after`。** 上面那个真的 403 里没有这个头 ——
+ *      恢复时刻只能从 `x-ratelimit-reset`（epoch 秒）算。
+ *      `retry-after` 是**次级限流**才有的（这一条来自上游文档，**我没有实测到**）。
+ */
+export interface RateLimitSnapshot {
+  /** 这一刻还剩多少次。 */
+  readonly remaining: number | null;
+  /** 这个桶的上限。**读出来的，不写死。** */
+  readonly limit: number | null;
+  /** 配额重置的时刻（epoch 毫秒）。 */
+  readonly resetAtMs: number | null;
+  /** 次级限流才有。 */
+  readonly retryAfterMs: number | null;
+  /** 哪个配额桶（`core` / `search` / …）。 */
+  readonly resource: string | null;
+}
+
+const NO_RATE_INFO: RateLimitSnapshot = {
+  remaining: null,
+  limit: null,
+  resetAtMs: null,
+  retryAfterMs: null,
+  resource: null,
+};
+
+/** 只把**真的存在且是数字**的头读成数字；其余一律 `null`。 */
+function readRateLimit(res: Response): RateLimitSnapshot {
+  const num = (name: string): number | null => {
+    const raw = res.headers.get(name);
+    if (raw == null) return null;
+    const n = Number(raw.trim());
+    return Number.isFinite(n) ? n : null;
+  };
+  const resetSec = num('x-ratelimit-reset');
+  const retryAfterSec = num('retry-after');
+  return {
+    remaining: num('x-ratelimit-remaining'),
+    limit: num('x-ratelimit-limit'),
+    resetAtMs: resetSec == null ? null : resetSec * 1000,
+    retryAfterMs: retryAfterSec == null ? null : retryAfterSec * 1000,
+    resource: res.headers.get('x-ratelimit-resource'),
+  };
+}
+
+/** 一次 HTTP 失败，**连它当时的配额快照一起**带出来。 */
+class UpstreamHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly rate: RateLimitSnapshot,
+  ) {
+    super(`HTTP ${status}`);
+    this.name = 'UpstreamHttpError';
+  }
+}
+
+/** 「约 3 分钟」/「约 40 秒」。**只在算得出来时调用。** */
+function humanizeMs(ms: number): string {
+  const sec = Math.ceil(ms / 1000);
+  if (sec < 60) return `约 ${sec} 秒`;
+  return `约 ${Math.ceil(sec / 60)} 分钟`;
+}
+
+/**
+ * 把一次 403/429 变成一句**用户能照着做**的话。
+ *
+ * ★★ 这条线要治的病：`x-ratelimit-remaining` 上游**每次响应都给**，而我们原来
+ * **只在 403/429 时**把它变成一句话，正常响应里那个数字直接丢掉 ——
+ * 于是我们永远只在撞墙之后才知道自己快撞墙了。而撞墙那一刻我们说的还是
+ * 「rate limited by upstream (HTTP 403)」：**它不可执行**。
+ * 「等 3 分钟再试」是可执行的。
+ *
+ * 🔴 **「配额还剩多少」与「这次查询成功没有」是两件事，这里不许把它们塌成一个。**
+ * 具体到代码上有三条：
+ *   1. `status` 和 `rate` 是**两个独立入参**，本函数**从不**用 `remaining` 去推断成功与否；
+ *   2. 反过来也一样：`remaining === 0` **不会**让一次成功的请求变成失败 ——
+ *      本函数只在失败路径上被调用，成功响应压根不经过这里
+ *      （`remaining: 0` 的成功请求就是成功的，那个 0 说的是**下一次**）；
+ *   3. **403 不等于限流。** 上游对私有/改名仓库、滥用保护也回 403。
+ *      所以 `remaining > 0` 时这里**明说「不是配额问题」**，而不是像原来那样
+ *      一律宣布 "rate limited" —— 那是在没有证据的地方给了一个具体的错误原因。
+ *
+ * ⚠️ **算不出恢复时间就不说时间**（本条要求 3）：`reset` 缺失、或已经是过去时，
+ * 都只说「配额用尽」，绝不编一个「等 X 分钟」。编出来的那个数会被用户当真去等。
+ */
+export function httpFailureReason(status: number, rate: RateLimitSnapshot, nowMs: number): string {
+  const bucket = rate.limit == null ? '' : `每小时 ${rate.limit} 次`;
+  const where = rate.resource == null ? '' : `${rate.resource} 配额`;
+  const who = [where, bucket].filter(Boolean).join('，');
+
+  // 次级限流：上游直接告诉了我们等多久，照说。
+  if (rate.retryAfterMs != null && rate.retryAfterMs > 0) {
+    return `上游限流（HTTP ${status}），${humanizeMs(rate.retryAfterMs)}后可再试`;
+  }
+
+  if (rate.remaining === 0) {
+    const head = `上游配额已用尽${who ? `（${who}）` : ''}`;
+    // 只有真的算得出来才给时间。
+    if (rate.resetAtMs != null && rate.resetAtMs > nowMs) {
+      return `${head}，${humanizeMs(rate.resetAtMs - nowMs)}后恢复`;
+    }
+    return `${head}；上游没给出恢复时刻，过一阵再试`;
+  }
+
+  // ★ 有配额却还是 403/429 —— **这不是限流**，别替它编一个原因。
+  if (rate.remaining != null) {
+    return (
+      `HTTP ${status}（不是配额问题：这一刻还剩 ${rate.remaining} 次）` +
+      `，可能是仓库改名/转私有，或触发了上游的滥用保护`
+    );
+  }
+
+  return `HTTP ${status}（上游没给配额信息，判断不了是不是限流）`;
+}
+
 async function getJson(
   url: string,
   timeoutMs: number,
@@ -94,10 +221,17 @@ async function getJson(
       },
       signal: ac.signal,
     });
+    /*
+     * 403/429 把**当时的配额快照**一起带走 —— 措辞在 `httpFailureReason()` 里定。
+     * 这里原来直接抛一句写死的 "rate limited by upstream (HTTP 403)"：
+     * 它既**不可执行**（不知道等多久），又在 `remaining > 0` 的 403 上**说了假话**
+     * （403 不等于限流）。
+     */
     if (res.status === 403 || res.status === 429) {
-      throw new Error(`rate limited by upstream (HTTP ${res.status})`);
+      throw new UpstreamHttpError(res.status, readRateLimit(res));
     }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // 其余非 2xx 不谈配额：那是在没有证据的地方加戏。
+    if (!res.ok) throw new UpstreamHttpError(res.status, NO_RATE_INFO);
     return await res.json();
   } finally {
     clearTimeout(t);
@@ -268,15 +402,22 @@ export async function checkUpstream(
   } catch (e) {
     // Degrade quietly: a failed check must never look like "you are up to date", and must
     // never prevent installing the pinned version.
-    return {
-      kind: 'failed',
-      checkedAt,
-      reason:
-        (e as Error)?.name === 'AbortError'
-          ? `timed out after ${timeoutMs}ms`
-          : String((e as Error)?.message ?? e),
-    };
+    return { kind: 'failed', checkedAt, reason: failureReason(e, timeoutMs) };
   }
+}
+
+/**
+ * 一次异常变成 `UpstreamCheck.failed` 的 `reason` —— **全仓唯一的措辞点**。
+ *
+ * ⚠️ **超时那一条刻意什么都不猜。** 一次超时**同时**发生在配额见底的时刻，
+ * 并不构成"因为配额见底所以超时"的证据 —— 那正是上一轮被实测证伪过的那种推断
+ * （27/27 超时曾被我归因成"并发数太高"，复测里同样的 27 并发 2.4s 全过，
+ * 真凶是网络瞬态）。**没有证据就不给原因。**
+ */
+function failureReason(e: unknown, timeoutMs: number): string {
+  if (e instanceof UpstreamHttpError) return httpFailureReason(e.status, e.rate, Date.now());
+  if ((e as Error)?.name === 'AbortError') return `timed out after ${timeoutMs}ms`;
+  return String((e as Error)?.message ?? e);
 }
 
 /**
