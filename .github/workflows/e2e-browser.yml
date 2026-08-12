@@ -32,7 +32,32 @@
 
 name: e2e-browser
 
+# ── ⚠️ 读 `inputs.*` 之前先读这一段（#91：`schedule` 下 `default:` 不生效）──────────
+#
+# **已实测**（scheduled run `31526070085`，2026-08-11 首跑）：`schedule` 触发的运行里
+# `inputs.*` **全是空串（len=0）** —— `workflow_dispatch` 的 `default:` **不会**应用到
+# `schedule`。不用再猜，也不用再验一遍。
+#
+# 空值下发生的不是红，是**静默少跑 / 悄悄换模式**（跳过的步骤不会让 job 变红）。
+# 所以这条腿里每一处读 `inputs.X` 的地方都必须满足一条性质：
+#
+#   > **`inputs` 全空时的行为，必须与 `inputs` 取各自 `default:` 时逐字相同。**
+#
+# 这条性质由 `scripts/ci/selftest-workflow-gates.mjs` **对每一处 `${{ }}` 求值后逐点比对**
+# （不是读一遍 YAML 说没问题），挂在 `pnpm test:ci-scripts` 上 —— 少一处兜底就红。
+#
+# ⚠️ 布尔输入的兜底写法是 `format('{0}', inputs.X) != 'false'`，**不是** `inputs.X || true`
+#    也**不是** `inputs.X != 'false'`：GitHub 的 `==` 在类型不同时把两边转成数字
+#    （`'' → 0`、`false → 0`），于是 **`'' == false` 为真**，空串与"用户显式关掉"分不开；
+#    而 `||` 只看真假，会把显式的 `false` 一起覆盖掉。完整推导见 `e2e-runtime.yml` 文件头。
 on:
+  schedule:
+    # 每天 18:30 UTC。⚠️ schedule 只在**默认分支**上触发 —— 这条 cron 在 PR 上验不了，
+    # 所以上面那条「空 inputs ≡ default」的性质是**合并前唯一的证据**。
+    # 六条腿依次错开 15 分钟（allcomponents 18:00 / runtime 18:15 / browser 18:30 /
+    # notes 18:45 / import 19:00 / record 19:15）：不是为了省钱（public 仓 $0），
+    # 是别在同一时刻抢 runner 影响别人的 PR 判决。
+    - cron: '30 18 * * *'
   workflow_dispatch:
     inputs:
       # ⚠️ 拼法**照抄 `e2e-notes`**（同一个人写的另一条腿）：
@@ -136,7 +161,7 @@ jobs:
       # 网页产物必须是**这次 checkout 编出来的**，否则点的是别人留下的旧界面。
       # CI runner 是一次性的，PROTOCOL §7 禁的是共享开发树，这里不适用。
       - name: 构建（含 apps/web/dist —— 缺了用户打开是白页）
-        if: ${{ inputs.assembleFromSource }}
+        if: ${{ format('{0}', inputs.assembleFromSource) != 'false' }}
         shell: bash
         run: pnpm -r build
 
@@ -147,7 +172,7 @@ jobs:
       # `v0.4.0` 就是在"界面能不能点"零证据的情况下发出去的（第五类盲区）。
       - name: 解析要用哪个 build-bundles run
         id: pick
-        if: ${{ !inputs.assembleFromSource }}
+        if: ${{ format('{0}', inputs.assembleFromSource) == 'false' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -176,7 +201,7 @@ jobs:
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
 
       - name: 下载预编译包
-        if: ${{ !inputs.assembleFromSource }}
+        if: ${{ format('{0}', inputs.assembleFromSource) == 'false' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -189,7 +214,7 @@ jobs:
       # 解包走**共享脚手架**（同一类 shell 坑撞过三次之后提出来的那一份）
       - name: 解开归档 + 验结构（共享脚手架）
         id: extract
-        if: ${{ !inputs.assembleFromSource }}
+        if: ${{ format('{0}', inputs.assembleFromSource) == 'false' }}
         shell: bash
         run: |
           node scripts/ci/resolve-bundle.mjs \
@@ -224,7 +249,7 @@ jobs:
             ls "$(npm root -g | tr '\\' '/')" || true
             exit 1
           fi
-          if [ "${{ inputs.assembleFromSource }}" = "true" ]; then
+          if [ "${{ format('{0}', inputs.assembleFromSource) != 'false' }}" = "true" ]; then
             echo "== 回归门禁模式：用本次 checkout 现组装的界面 =="
             node scripts/ci/e2e-browser-audit.mjs --port 19980 \
               --undecided-out "e2e-browser-undecided-${{ matrix.label }}.json" \
@@ -286,9 +311,27 @@ jobs:
     #   两者之间隔着整条 build-bundles 流水线。
     # ⚠️ 这个 `if:` 管的是**模式**，绝不是**结果**。`needs:` 已经管住了结果
     #   （带 needs 的 job 默认要求 needs 全部 success）。
-    #   **永远不要改成 always() / !cancelled()** —— 那会解除默认的 success 要求，
-    #   于是"部分跑/跑挂了"也能发出凭证，而这正是本机制要挡的那件事。
-    if: ${{ !inputs.assembleFromSource }}
+    #   ⚠️ **不许在没有逐条 `needs.*.result` 检查的情况下改成 always() / !cancelled()**
+    #      —— 那会解除默认的 success 要求，于是"部分跑/跑挂了"也能发出凭证。
+    #      （2026-08-12 细化：`e2e-runtime` 的 attest **必须**用 `!cancelled()`，
+    #       那是唯一能把 needs 的 `skipped` 与 `failure` 分开的办法；
+    #       代价由 `lint-workflows.mjs` 的一条断言兜着 —— 用了状态函数就得逐条写
+    #       `needs.<名字>.result`。**这条腿不需要**，保持默认语义即可。）
+    # ★★ 第二个条件 `bundleRunId != ''`（#91 补，**这是一次有意的收紧**）：
+    #    **没钉批次就不发凭证。**
+    #
+    #    这条腿的 `bundleRunId` 是**可选**的，留空时三个平台各自去解析"最近一次带本平台
+    #    产物的成功 run"，完全可能落到**不同批**的包上；而凭证名只取
+    #    `needs.<job>.outputs.bundle_run_id` **一个**值（矩阵 job 的 output 由最后完成的
+    #    那一格写入，没有任何一致性保证）。于是留空跑出来的凭证会写着"三平台验过 run X"，
+    #    而其中某些平台验的根本不是 X —— **那不是覆盖面不足，那是伪证**。
+    #    与 `e2e-allcomponents` 拒绝为自动解析的 run 发凭证是同一条判据。
+    #
+    #    ⚠️ 代价：`assembleFromSource=false` 但不给 `bundleRunId` 的跑法，从此不发凭证。
+    #       `verify-e2e-attestation.mjs` 的 DISPATCH_HINT 给的命令本来就钉批次。
+    if: >-
+      ${{ format('{0}', inputs.assembleFromSource) == 'false'
+      && inputs.bundleRunId != '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

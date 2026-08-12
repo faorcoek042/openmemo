@@ -33,7 +33,38 @@
 
 name: e2e-runtime
 
+# ── ⚠️ 读 `inputs.*` 之前先读这一段（#91：`schedule` 下 `default:` 不生效）──────────
+#
+# **已实测**（scheduled run `31526070085`，2026-08-11 首跑）：`schedule` 触发的运行里
+# `github.event_name = 'schedule'`，而 `inputs.mode / modelBudgetMb / legs / bundleRunId`
+# **全是空串（len=0）** —— `workflow_dispatch` 的 `default:` **不会**应用到 `schedule`。
+# 不用再猜，也不用再验一遍。
+#
+# 空值下这条腿发生的不是红，是**静默少跑**：`inputs.mutations`（默认 true）为空 ⇒
+# 假 ⇒ **整个变异矩阵不跑**，而跳过的 job 在结果列表里和跑过的 job 长得一模一样。
+#
+# ## 兜底为什么写成 `format('{0}', inputs.X) != 'false'` 而不是 `inputs.X || true`
+#
+# 因为 GitHub 的 `==` 在两边类型不同时**把两边都转成数字**：`'' → 0`、`false → 0`，
+# 于是 **`'' == false` 是 true** —— 空串和"用户显式关掉"在 `==` 下**分不开**。
+# 而 `||` 只看真假：`false || true` = `true`，会把**显式的关闭**也覆盖掉。
+# 只有比较**字符串渲染**才同时分得开三种情形：
+#
+#   | `inputs.X`      | `inputs.X \|\| true` | `inputs.X != 'false'` | `format('{0}', inputs.X) != 'false'` |
+#   | 空串（schedule）| true ✅              | true ✅               | true ✅                              |
+#   | `true`（默认）  | true ✅              | true ✅               | true ✅                              |
+#   | `false`（显式） | **true ❌**          | **true ❌**           | false ✅                             |
+#
+# 这三种写法的判据、以及"空 inputs 的行为必须与 `default:` 的行为逐字相同"这条性质，
+# 由 `scripts/ci/selftest-workflow-gates.mjs` **逐点求值比对**（不是读一遍 YAML 说没问题），
+# 挂在 `pnpm test:ci-scripts` 上。改动这里而不改那里，会红。
 on:
+  schedule:
+    # 每天 18:15 UTC。⚠️ schedule 只在**默认分支**上触发 —— 这条 cron 在 PR 上验不了，
+    # 所以上面那条"空 inputs ≡ default"的性质是**合并前唯一的证据**，见 :selftest。
+    # 时刻与 e2e-allcomponents（18:00）错开 15 分钟：不是为了省钱（public 仓 $0），
+    # 是别在同一时刻抢 runner 影响别人的 PR 判决。
+    - cron: '15 18 * * *'
   workflow_dispatch:
     inputs:
       bundleSource:
@@ -224,7 +255,7 @@ jobs:
             --bundle "${{ steps.assemble.outputs.bundle_dir || steps.bundle.outputs.bundle_dir }}" \
             --require-bundle \
             --port 19820 \
-            ${{ (matrix.target == 'linux-x64' && inputs.resumeTest) && '--resume-test' || '' }} \
+            ${{ (matrix.target == 'linux-x64' && format('{0}', inputs.resumeTest) != 'false') && '--resume-test' || '' }} \
             --undecided-out e2e-runtime-undecided-${{ matrix.label }}.json \
             2>&1 | tee e2e-runtime-${{ matrix.label }}.log
 
@@ -263,7 +294,13 @@ jobs:
   #    抄进 YAML 就会有第二份，加了新变异忘了同步的表现是"少跑一条"而不是报错。
   mutations:
     name: 变异验证（${{ matrix.label }}）
-    if: ${{ inputs.mutations }}
+    # ★ 兜底（#91）：空串（`schedule` 触发）⇒ **跑**，与 `default: true` 一致；
+    #   只有**显式**传 `mutations=false` 才不跑。写法理由见文件头那张三行表 ——
+    #   `inputs.mutations` 直接当条件用时，空串是假，于是定时跑会**静默少跑**整个矩阵。
+    #
+    # ⚠️ 这个 job 被跳过时，下面的 `attest` **仍然会发凭证**，但凭证里会写明
+    #   `mutations: skipped`。**跳过 ≠ 通过** —— 别把这里的跳过读成"变异过了"。
+    if: ${{ format('{0}', inputs.mutations) != 'false' }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -436,27 +473,84 @@ jobs:
   # 所以**换一批包就是另一个名字，旧凭证自动失效** —— 在此之前，
   # 「我们跑过 e2e」是一个**没有宾语的句子**，`v0.3.0` 就是这么发出去的。
   #
-  # ## 这个 job 的 `if:` 管的是**模式**，绝不是**结果**
+  # ## 🔴 #102：**一条 failure 的腿发出过一张合格凭证** —— 下面这个 `if:` 是那次的修法
   #
-  # `needs:` 已经管住了结果：任一平台失败/取消 → 本 job 被跳过 → **凭证根本不存在**
-  # （GitHub 对带 `needs` 的 job 默认要求 needs 全部 success，普通布尔表达式不会解除它）。
-  # 下面那个 `if:` 只用来排除**这张凭证没有意义**的模式。
-  # ⚠️ **永远不要把它改成 `always()` / `!cancelled()`** —— 那会解除默认的 success 要求，
-  #    于是"部分跑"也能发出凭证，而这正是本机制要挡的那件事。
+  # `[实测]` e2e-runtime run `31568740737`（v0.7.1 发布过程中撞出来的）：
+  #
+  #   · 三平台审计 `success`、`变异验证（linux-x64）` **failure**（一条变异存活）；
+  #   · run 的 conclusion 是 **failure**；
+  #   · 而 `e2e 凭证` 这个 job **success**，`e2e-attest-runtime-31568189189`
+  #     **照发了、未过期**（`gh api …/runs/31568740737/artifacts` 可复核）。
+  #
+  # 成因就是这一行：`needs:` 里**只有 `audit`**，变异 job 不在里面 ⇒
+  # 三平台审计全绿 ⇒ attest 照跑照发。上面那句"`needs:` 已经管住了结果"当时是真的，
+  # **但它管住的只是它列进去的那些结果** —— 而这条腿的判据④（文件头 :23）
+  # 「每条关键断言都有对应的变异证明它会红」根本没被列进去。
+  #
+  # ⚠️ **今天没出人命，靠的是另一处巧合，不是这道闸**：`verify-e2e-attestation.mjs`
+  #    只翻 `conclusion === 'success'` 的 run，而变异红把整条 run 判红了，
+  #    所以那张凭证问不到（`[实测]` 拿 `--bundle-run 31568189189 --legs runtime` 跑闸门：
+  #    **拒绝发布**）。但**设计要的是"凭证根本不存在"，不是"凭证存在但恰好查不到"**。
+  #    而且那层巧合在**变异被跳过**时直接失效：`mutations=false` ⇒ 变异 job `skipped`
+  #    ⇒ run conclusion 仍是 **success** ⇒ 凭证发出来**并且会被闸门接受**，
+  #    而它对"断言有没有牙齿"一个字都没说。这才是今天真正敞着的那个口。
+  #
+  # ## 三态：跑了且绿 / 跑了但红 / 被跳过 —— **跳过 ≠ 通过**
+  #
+  #   | `needs.mutations.result` | 这个 job | 凭证 | 凭证里的 `mutations` 字段 |
+  #   | `success`                | 跑       | 发   | `ran`                     |
+  #   | `skipped`（mutations=false）| 跑    | 发   | **`skipped`**             |
+  #   | `failure` / `cancelled`  | **不跑** | **不存在** | —                   |
+  #
+  # 「跑了但红」不需要在凭证里表达，因为**那种情况下凭证根本不会存在**；
+  # 「被跳过」必须表达，因为凭证存在、而它证明的东西少了一整条判据。
+  #
+  # ## ⚠️ 这里用了 `!cancelled()`，而上一版注释写着"永远不要用" —— 为什么改口
+  #
+  # 那句话的**理由**仍然成立：`always()` / `!cancelled()` 会**解除默认的 `success()`**
+  # （GitHub 文档原文：`A default status check of success() is applied unless you include
+  # one of these functions.`），于是"部分跑"也能发凭证。但**不解除就表达不了三态** ——
+  # `skipped` 的 need 在默认语义下会把本 job 一起跳掉，凭证就在 `mutations=false` 时
+  # 整个消失，那是另一种坏（发布闸门直接卡死）。
+  #
+  # 所以规则从"不许用"改成**"用了就必须把每一条 `needs` 的 result 逐条写出来"**：
+  #   · `needs.audit.result == 'success'` —— 补回被解除的那半条，一个平台都不能少；
+  #   · `needs.mutations.result` 显式白名单 `success | skipped`，**其余一律不发**。
+  # 这条"用了状态函数就必须逐条检查 needs"由 `scripts/ci/lint-workflows.mjs` 机械钉住
+  # （漏一条 need 就红），三态的真值表由 `scripts/ci/selftest-workflow-gates.mjs`
+  # **逐格模拟**（含把这里改回 `needs: [audit]` 时"审计绿+变异红 ⇒ 凭证照发"的历史复现）。
   # ═══════════════════════════════════════════════════════════════════════════════════
   attest:
-    name: e2e 凭证（仅 artifact 模式，三平台全绿才发）
-    needs: [audit]
+    name: e2e 凭证（仅 artifact 模式，三平台审计 + 变异验证都过才发）
+    # ★★ `mutations` 必须在这里 —— #102 就是它不在这里。加/删 needs 时，
+    #    下面 `if:` 里对应的 `needs.<名字>.result` 那一行**必须同步**（lint 会逼你）。
+    needs: [audit, mutations]
     # ★★ 只有 `bundleSource=artifact` 才发凭证。
     #
     #   `checkout` 模式（默认）跑的是**本次代码现组装**的包，那是回归门禁；
     #   它证明不了"某一批已发布的包好"—— 两者不是同一堆字节。
+    #   （顺带：这也是 `schedule` 触发时这一格被跳过的原因 —— 空 inputs ⇒
+    #    `'' != 'artifact'` ⇒ 落回 checkout，与 `default: checkout` 逐字相同。）
     #
     #   ⚠️ 这条腿的输入叫 `bundlesRunId`（**多一个 s**，与另外三条腿不同）。
     #      名字拼错不会报错，只会让表达式求值成空串，于是凭证名变成
     #      `e2e-attest-runtime-`，消费方永远问不到 —— 那正是"看起来已认证"的假通过。
     #      所以这里绑的是**解析后的 job output**，不是输入本身。
-    if: ${{ inputs.bundleSource == 'artifact' }}
+    #
+    # ★★ `bundlesRunId != ''`（#91 补，**有意的收紧**）：**没钉批次就不发凭证。**
+    #    留空时三个平台各自跑 `resolve-bundle-run.sh` 按 artifact 名解析，可能落到
+    #    **不同批**的包上，而凭证名只取 `needs.audit.outputs.bundle_run_id` 一个值
+    #    （矩阵 job 的 output 由最后完成的那格写入，无一致性保证）⇒ 那种凭证是伪证。
+    #    六条腿现在是同一条规矩（`e2e-allcomponents` 最早立的）。
+    #    `[实测]` 发布实际用的就是钉死批次那条命令
+    #    （run 31571491809 的日志里是 `resolve-bundle-run.sh 'bundle-linux-x64' '31570874689'`），
+    #    所以标准发布路径一个字都不用改。
+    if: >-
+      ${{ !cancelled()
+      && inputs.bundleSource == 'artifact'
+      && inputs.bundlesRunId != ''
+      && needs.audit.result == 'success'
+      && (needs.mutations.result == 'success' || needs.mutations.result == 'skipped') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -507,12 +601,20 @@ jobs:
             --file-template 'e2e-runtime-undecided-{label}.json' \
             --github-output "$GITHUB_OUTPUT"
 
+      # ★ `--mutations`（#102）：把「这一轮变异验证到底跑没跑」写进凭证。
+      #
+      #   取值只有两种到得了这里：`success` ⇒ `ran`、`skipped` ⇒ `skipped`。
+      #   `failure` / `cancelled` **到不了**（上面的 `if:` 已经把凭证挡掉了），
+      #   所以 `emit-e2e-attestation.mjs` 也只认 `ran|skipped`，别的一律 die ——
+      #   万一哪天上面那道门被改松，这里会**当场炸**（凭证发不出去），
+      #   而不是发一张写着奇怪值的凭证。**炸比撒谎好。**
       - name: 写凭证
         run: |
           node scripts/ci/emit-e2e-attestation.mjs \
             --leg runtime \
             --bundle-run "${{ needs.audit.outputs.bundle_run_id }}" \
             --platforms "$PLATFORMS" \
+            --mutations "${{ needs.mutations.result == 'skipped' && 'skipped' || 'ran' }}" \
             ${{ steps.sum.outputs.undecided_flag }} \
             --out dist/e2e-attest.json
       - uses: actions/upload-artifact@v6

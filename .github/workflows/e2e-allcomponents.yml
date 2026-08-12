@@ -58,12 +58,35 @@ name: e2e-allcomponents
 #   · 判据本体：`--mode "… || 'sample'"`、`--model-budget-mb "… || '2600'"`
 # **即使上面的判断成立，它也掉不进 `full` 模式** —— 这正是选它的理由。
 #
-# ⚠️ 下面那个"观测 inputs"的步骤是**加可见，不是加设防**。
-#    刻意**没有**给 attest 作业里那处没设防的 `--mode "${{ inputs.mode }}"` 补默认值
-#    —— **补上就把待测的现象消灭了**，就永远不知道 schedule 下 inputs 到底是什么。
-#    **先让它说话，再决定要不要给它戴嘴套。**
+# ## ✅ 2026-08-12：那一跑回来了，上面那个前提**成立**，五条腿的 cron 已铺开（#91）
 #
-# 🔴 **拿到这一跑的事实之前，不许把 cron 铺到其余五条腿上。**
+# `[实测 scheduled run 31526070085]`（2026-08-11 首跑；cron 写 18:00 UTC，实际
+# 19:05 UTC 才触发 —— **晚约 65 分钟是 GitHub 排队常态，不是 cron 坏了**）：
+#
+#     github.event_name    = 'schedule'
+#     inputs.mode          = ''    len=0
+#     inputs.modelBudgetMb = ''    len=0
+#     inputs.legs          = ''    len=0
+#     inputs.bundleRunId   = ''    len=0
+#
+# ⇒ **`workflow_dispatch` 的 `default:` 不适用于 `schedule` 触发的运行。**已确证，
+#   不用再猜。上面那段"这个前提验不了"**保留**：它记的是当时的处境，
+#   而不是一个还没答案的问题 —— **删说法不删事实**。
+#
+# ⚠️ 下面那个"观测 inputs"的步骤当初是**加可见，不是加设防**，并且刻意**没有**给
+#    attest 作业里那处 `--mode "${{ inputs.mode }}"` 补默认值 ——
+#    **补上就把待测的现象消灭了**。现在现象已经测到，那处**已经补上 `|| 'sample'`**
+#    （见本文件 attest 作业里那段 🧨→✅ 的注释，理由与拆除日期都写在那儿）。
+#    观测步骤**保留**：它是这条结论的证据产地，也是下次 GitHub 改语义时最先说话的地方。
+#
+# 🔴 原来这里写着「**拿到这一跑的事实之前，不许把 cron 铺到其余五条腿上**」。
+#    **事实已拿到 ⇒ 这条禁令解除**，其余五条腿的 cron 于 2026-08-12 一并加上，
+#    错开 15 分钟依次启动：allcomponents 18:00 / runtime 18:15 / browser 18:30 /
+#    notes 18:45 / import 19:00 / record 19:15（UTC）。
+#    ⚠️ 解除的前提不只是"知道了 inputs 是空"，还包括**五条腿逐个补完兜底**，
+#       并且「空 inputs 的行为 ≡ `default:` 的行为」这条性质被
+#       `scripts/ci/selftest-workflow-gates.mjs` **逐点求值比对**钉住（挂在
+#       `pnpm test:ci-scripts`）。**光知道现象、不补兜底就铺 cron，才是当初禁的那件事。**
 #
 # ## 红了谁会看见 —— 三条可审计的事实（第 2 条已于 2026-08-11 确认）
 #
@@ -403,37 +426,55 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
 
       # ═══════════════════════════════════════════════════════════════════════════════
-      # 🧨 下面那句 `--mode "${{ inputs.mode }}"` 是**一颗没引信的雷**，读到这里请先看完
+      # 🧨→✅ 下面那句 `--mode` 曾经是**一颗没引信的雷**（`--mode "${{ inputs.mode }}"`，
+      #        没有 `|| 'sample'` 兜底）。**2026-08-12 已拆除**，理由如下 ——
+      #        删的是那条"先别补"的说法，**不删它当初存在的事实**。
       #
-      # 它**没有** `|| 'sample'` 兜底，而同一个 workflow 上面判据本体那处
-      # （`--mode "${{ inputs.mode || 'sample' }}"`）**有**。这个不一致是**故意留着的**，
-      # 见文件头 :62 —— 今晚那一跑正是去看 `schedule` 下 `inputs` 到底是什么，
-      # **补上默认值就把待测的现象消灭了**。⚠️ 别顺手给它补 `|| 'sample'`。
+      # ## 当初为什么刻意不补（这句留着，它是一条判据，不是一句过时的话）
       #
-      # ## 它今天为什么是安全的：**安全性不在它自己身上**
+      # 那个不一致是**故意**的：同一个 workflow 上面判据本体那处
+      # （`--mode "${{ inputs.mode || 'sample' }}"`）有兜底，这里没有。
+      # 因为当时要测的现象就是「`schedule` 触发时 `inputs` 到底是什么」，
+      # 而 **补上默认值就把待测的现象消灭了** —— 那样永远不会知道答案。
+      # **先让它说话，再决定要不要给它戴嘴套。**
+      #
+      # ## 事实已经拿到了，所以现在补
+      #
+      # `[实测 scheduled run 31526070085]`（2026-08-11 首跑，18:00 UTC 的 cron
+      # 实际 19:05 UTC 才触发 —— GitHub 排队常态，不是 cron 坏了）：
+      #
+      #     github.event_name    = 'schedule'
+      #     inputs.mode          = ''    len=0
+      #     inputs.modelBudgetMb = ''    len=0
+      #     inputs.legs          = ''    len=0
+      #     inputs.bundleRunId   = ''    len=0
+      #
+      # ⇒ **`workflow_dispatch` 的 `default:` 不适用于 `schedule` 触发的运行。**
+      #    结论已经拿到，观测点的使命结束，嘴套现在可以戴上了。
+      #
+      # ## 它此前为什么没炸：**安全性不在它自己身上**
       #
       # `inputs.mode` 为空时这里会传 `--mode ""`，而 `emit-e2e-attestation.mjs`
       # 只认 `sample|full`，收到空串会 `die()` —— **凭证根本发不出去**。
-      # 它今天碰不到那条路，靠的是**另外两处的巧合**：
+      # 它碰不到那条路，靠的是**另外两处的巧合**：
       #
       #   ① 本作业的门 `if: legs == 'all' && bundleRunId != ''`；
       #   ② `bundleRunId` **没有 `default:`**（见本文件 `inputs` 定义）。
       #
       # 两者合起来 ⇒ 任何没有显式钉批次的 run（`schedule`、以及**默认参数的手动
-      # dispatch**）在这一格就被跳过了，`--mode ""` 那一行**根本没机会执行**。
+      # dispatch**）在这一格就被跳过了，`--mode ""` 那一行根本没机会执行。
+      # **这两处巧合今天仍然成立，兜底不是替换它们，是不再依赖它们。**
       #
-      # ## 什么时候它会变成活雷
+      # ## 补完之后，"什么时候会炸"这张清单还剩什么
       #
-      # **只要有人做了下面任何一件事，它立刻就会炸**，而且炸出来的样子是
-      # 「凭证发不出去 → 闸门说这条腿没跑过」，看起来像闸门坏了：
+      # 原来那三件事（给 `bundleRunId` 加 `default:` / 放松 `if:` 里的
+      # `bundleRunId != ''` / 让 schedule 满足这道门）现在**都不会再炸在 `--mode` 上**。
+      # 但它们仍然会让**这条腿在没钉批次的情况下发凭证** —— 那是伪证，见下面
+      # `if:` 那一段。清单没消失，只是它守的东西换了一件。
       #
-      #   · 给 `bundleRunId` 加一个 `default:`（哪怕是空字符串以外的任何值）；
-      #   · 把 `if:` 里 `bundleRunId != ''` 那半条去掉或改松；
-      #   · 给这条腿加 `schedule:` 并让它以某种方式满足上面那道门。
-      #
-      # **做这三件事中的任何一件之前，先把这里的 `--mode` 一起解决掉**
-      # （那时候待测的现象已经有答案了，补默认值或改用显式常量都行）。
-      # 记在这里，是因为「靠另一处的巧合才安全」这件事**不会自己喊**。
+      # ⚠️ 「空 inputs 的行为 ≡ `default:` 的行为」这条性质现在由
+      #    `scripts/ci/selftest-workflow-gates.mjs` 对每一处 `${{ }}` 求值后逐点比对，
+      #    挂在 `pnpm test:ci-scripts` 上：把这里的 `|| 'sample'` 删掉会**当场红**。
       # ═══════════════════════════════════════════════════════════════════════════════
       - name: 写凭证
         run: |
@@ -442,7 +483,7 @@ jobs:
             --bundle-run "${{ inputs.bundleRunId }}" \
             --platforms linux-x64,darwin-arm64,win32-x64 \
             ${{ steps.sum.outputs.undecided_flag }} \
-            --mode "${{ inputs.mode }}" \
+            --mode "${{ inputs.mode || 'sample' }}" \
             --out dist/e2e-attest.json
       - uses: actions/upload-artifact@v6
         with:
