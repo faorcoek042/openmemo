@@ -367,20 +367,21 @@ export function installedVersionOf(record: object): InstalledVersion {
    * 那条错误本身就是本次缺陷的证明（这类记录里根本没有 `version` 这一栏），
    * 但它会把真实记录挡在门外，逼调用方去写一个"看起来有版本号"的中间对象。
    */
-  const r = record as { version?: string; catalogVersion?: string };
+  const r = record as { version?: unknown };
   /*
-   * ⚠️ 本条 commit **故意**保留旧行为（`?? 'installed'`）—— 这一条只落三态类型、
-   *    判据接线和测试，**不修**构造点。
+   * **只认 `version` 这一栏，而且必须是一个非空字符串。**
    *
-   *    这样做是为了让下一条 commit 的修法有一次**公开可查的红**。本仓刚为此吃过亏：
-   *    这个缺陷当初溜进来，正是因为既有用例用的全是 `v1` / `v2` 这类语义版本号，
-   *    **永远撞不上哨兵**，于是那条恒真的判据在测试里从来没有机会恒真 ——
-   *    「测试写了」和「测试有用」不是一回事。所以这一次要把红跑出来给人看，
-   *    而不是口头声称"抽掉修法就会红"。
+   * 没有它就是 `not-applicable` —— 不去 `?? catalogVersion`、更不 `?? 'installed'`：
+   * 那两步各自都是在"答不出来"的位置上**编一个答案**，而编出来的东西会一路流到
+   * `pinRelation()` 被当成真版本号比较，最后变成屏幕上一句具体承诺了版本号的号召。
    *
-   *    下一条 commit 把这一行换成真正的三态判定，本注释一并消失。
+   * `reason` 是要显示给用户的（同 `checkError` 的待遇）：说"不知道"的时候必须一并
+   * 说清为什么不知道，否则它在屏幕上和"没装"长得一样。
    */
-  return { kind: 'known', version: r.version ?? r.catalogVersion ?? 'installed' };
+  if (typeof r.version === 'string' && r.version.length > 0) {
+    return { kind: 'known', version: r.version };
+  }
+  return { kind: 'not-applicable', reason: '安装记录里没有记版本号' };
 }
 
 /**
