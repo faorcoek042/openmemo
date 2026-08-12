@@ -91,8 +91,13 @@ export const tasksSse: SseBinding = (qc: QueryClient) => [
    * ★ `bus.emit('ui.toast.jobFailed', e)` **删掉了**（#98 ⑤）。
    *
    * 它长得像接线，其实是死代码：全仓 `ui.toast.*` 有 **2 个 emit、0 个 `bus.on`**，
-   * 而且这个事件名根本不在 `EventMap` 里 —— `bus.emit(type: string, …)` 的签名
-   * 是宽的，所以它编译得过、跑得过、什么都不做。
+   * 而且这个事件名根本不在 `EventMap` 里 —— 当时 `bus.emit(type: string, …)` 的签名
+   * 是**宽**的，所以它编译得过、跑得过、什么都不做。
+   *
+   * ⚠️ 后半句已经不成立了，**而这是好事**：`bus.emit` 现在按事件名索引
+   * （`emit<K extends keyof EventMap>`，见 `lib/events/bus.ts`），
+   * 线上来的那一档单独叫 `emitFromWire`。也就是说**这一行今天再写回来会直接编译不过** ——
+   * 当初让它活下来的那个洞已经堵上，不必再靠这段注释看着它。
    *
    * 危害不是"多了两行"，是**它会骗人**：任何人读到这一行都会以为失败 toast 是它发的，
    * 于是去改它、去它的订阅端找 bug。真正的 toast 走的是另一条路 ——

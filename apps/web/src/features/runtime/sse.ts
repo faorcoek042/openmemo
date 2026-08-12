@@ -24,7 +24,11 @@ export const runtimeSse: SseBinding = (qc: QueryClient) => [
    *   **删掉了**（#98 ⑤）—— 它是一句从来没有执行过任何效果的话。
    *
    * `ui.toast.*` 全仓 **2 个 emit、0 个 `bus.on`**，事件名也不在 `EventMap` 里；
-   * `bus.emit(type: string, …)` 的签名是宽的，所以它编译得过、跑得过、什么都不做。
+   * 当时 `bus.emit(type: string, …)` 的签名是**宽**的，所以它编译得过、跑得过、什么都不做。
+   *
+   * ⚠️ 后半句已经不成立了，**而这是好事**：`bus.emit` 现在按事件名索引
+   * （`emit<K extends keyof EventMap>`，见 `lib/events/bus.ts`），
+   * 线上来的那一档单独叫 `emitFromWire`。**这一行今天再写回来会直接编译不过。**
    * 也就是说：那条注释描述的承诺**从未兑现**，而它的存在会让每个读到的人
    * 以为已经兑现了 —— 本仓最贵的那一类「描述了不存在事实的代码」。
    *

@@ -218,7 +218,8 @@ function later(fn: () => void, ms: number) {
 }
 
 function emit(type: string, payload: Record<string, unknown>) {
-  bus.emit(type, { type, ...payload });
+  // mock 源与真 SSE 同属"运行时才知道类型"的那一档（见 bus.ts 的说明）
+  bus.emitFromWire(type, { type, ...payload });
 }
 
 function seedNote(partial: Partial<MockNote> & { title: string }): MockNote {

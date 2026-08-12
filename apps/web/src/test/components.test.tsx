@@ -10820,6 +10820,9 @@ describe('★★ T-198/S-2 终态之后 store 里不许留残影（两个订阅�
     withBothBindings(() => {
       bus.emit('job.progress', {
         type: 'job.progress',
+        // ts/topic 是 `SseEventBase` 的必填项，此前夹具里没有 —— 收紧 `bus.emit` 后当场红
+        ts: new Date().toISOString(),
+        topic: `job:${JID}`,
         jobId: JID,
         state: 'cancelled',
         step: 'resolving',
@@ -10844,6 +10847,9 @@ describe('★★ T-198/S-2 终态之后 store 里不许留残影（两个订阅�
     withBothBindings(() => {
       bus.emit('job.progress', {
         type: 'job.progress',
+        // ts/topic 是 `SseEventBase` 的必填项，此前夹具里没有 —— 收紧 `bus.emit` 后当场红
+        ts: new Date().toISOString(),
+        topic: `job:${JID}`,
         jobId: JID,
         state: 'running',
         step: 'downloading',
