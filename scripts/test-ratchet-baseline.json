@@ -15,9 +15,9 @@
     "先例（同一套棘轮姿势）：scripts/orphan-exports-baseline.json、",
     "scripts/ci/single-source-baseline.json、scripts/ci/selfcheck-known-gaps.json。"
   ],
-  "generatedAt": "2026-08-10",
+  "generatedAt": "2026-08-12",
   "generatedBy": "test-ratchet（事故：31d3ae3 静默删除 platformUnsupported.test.ts 191 行，7581cff 恢复）",
-  "floor": 152,
+  "floor": 158,
   "tracked": [
     "apps/daemon/src/bootstrap/entrypoint.test.ts",
     "apps/daemon/src/bootstrap/open-browser.test.ts",
@@ -54,17 +54,20 @@
     "apps/daemon/src/http/rest/moveTruthfulness.test.ts",
     "apps/daemon/src/http/rest/retiredRoles.test.ts",
     "apps/daemon/src/http/rest/selfTestRecord.test.ts",
+    "apps/daemon/src/http/rest/servedFromSystemPath.test.ts",
     "apps/daemon/src/http/rest/servedFromUnrecorded.test.ts",
     "apps/daemon/src/http/rest/settings.roundtrip.test.ts",
     "apps/daemon/src/http/rest/sourceSelect.test.ts",
     "apps/daemon/src/http/rest/storage.dataDir.test.ts",
     "apps/daemon/src/http/rest/unclaimedFiles.test.ts",
     "apps/daemon/src/http/rest/updates.test.ts",
+    "apps/daemon/src/http/rest/vadActivationTruth.test.ts",
     "apps/daemon/src/http/sourcesRest.test.ts",
     "apps/daemon/src/http/storageLayout.test.ts",
     "apps/daemon/src/http/upload.test.ts",
     "apps/daemon/src/jobs/lanes.test.ts",
     "apps/daemon/src/jobs/mergeWords.test.ts",
+    "apps/daemon/src/jobs/noteStatus.test.ts",
     "apps/daemon/src/jobs/pipelineJobEvents.test.ts",
     "apps/daemon/src/jobs/runners/archiveIntoMedia.test.ts",
     "apps/daemon/src/jobs/runners/retitle.test.ts",
@@ -162,6 +165,7 @@
     "packages/runtime/src/backends/notProbedVsUnavailable.test.ts",
     "packages/runtime/src/backends/platformUnsupported.test.ts",
     "packages/runtime/src/childEnv.test.ts",
+    "packages/runtime/src/detect/diskUnknown.test.ts",
     "packages/runtime/src/platform/osFloors.test.ts",
     "packages/runtime/src/probe/breaker.test.ts",
     "packages/runtime/src/probe/breakerNotInstalled.test.ts",
@@ -169,8 +173,10 @@
     "packages/shared/src/backendStatusUnion.test.ts",
     "packages/shared/src/breaker.test.ts",
     "packages/shared/src/contract.test.ts",
+    "packages/shared/src/diskUnknown.test.ts",
     "packages/shared/src/jobs.test.ts",
-    "packages/shared/src/schemas.test.ts"
+    "packages/shared/src/schemas.test.ts",
+    "packages/shared/src/toolchain.test.ts"
   ],
   "removed": []
 }

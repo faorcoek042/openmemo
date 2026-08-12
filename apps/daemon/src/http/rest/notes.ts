@@ -42,6 +42,7 @@ import {
 import { NoMediaSourceError, type MediaSourceRegistry } from '@openmemo/pipeline';
 
 import { parseWordsJson, type Repos } from '../../db/repos.js';
+import { effectiveNoteStatus, noteFailureOf } from '../../jobs/noteStatus.js';
 import type { JobQueue } from '../../jobs/queue.js';
 import { looksLikeUrl, resolveRetranscribeSource } from '../../media/retranscribeSource.js';
 import type { SseHub } from '../sse.js';
@@ -499,11 +500,19 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
         const total = repos.countNotes(filter);
         // 一次 IN 查询拿全部标签，避免列表页 N+1
         const tagMap = repos.tagsOfNotes(rows.map((n) => n.id));
+        /*
+         * ★ 同样一次 IN 查询拿这一页每条笔记的 job 快照（#98）。
+         *
+         * 它是 `notes.status` 里 `'failed'` 这一档**唯一**的来源 —— 那一档全仓
+         * 没有任何写入方，而这一页一直在渲染它（红色的「失败」chip）。
+         * 判据见 `jobs/noteStatus.ts`；这里只负责"别为它做 N 次往返"。
+         */
+        const digests = queue.noteJobDigests(rows.map((n) => n.id));
         // ★ 显式标注：少一个键或多一个键都在这里编译失败（见文件头那张表）
         const notes: NoteListItem[] = rows.map((n) => ({
           uid: n.uid,
           title: n.title,
-          status: noteStatusOf(n.status),
+          status: effectiveNoteStatus(noteStatusOf(n.status), digests.get(n.id)),
           kind: noteKindOf(n.kind),
           language: n.language,
           durationMs: n.duration_ms,
@@ -632,6 +641,12 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
             { repos, dataDir: deps.dataDir },
             note.id,
           );
+          /*
+           * ★ 这条笔记的 job 快照（#98）。**`status` 与 `lastFailure` 同出这一份** ——
+           * 各查一次的话，两个字段可能来自两个瞬间，于是响应里会出现
+           * 「状态说失败、下面却没有原因」或者反过来的自相矛盾。
+           */
+          const digest = queue.noteJobDigests([note.id]).get(note.id);
           const assets: NoteAsset[] = repos.assetsOfNote(note.id).map((a) => ({
             uid: a.uid,
             role: a.role,
@@ -673,7 +688,7 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
           const detail: NoteDetail = {
             uid: note.uid,
             title: note.title,
-            status: noteStatusOf(note.status),
+            status: effectiveNoteStatus(noteStatusOf(note.status), digest),
             kind: noteKindOf(note.kind),
             language: note.language,
             durationMs: note.duration_ms,
@@ -736,6 +751,16 @@ export function createNoteRoutes(deps: NoteRoutesDeps): {
                   messageZh: retranscribe.messageZh,
                   tried: retranscribe.tried,
                 },
+            /*
+             * ★ 最近一次失败的流水线任务（#98）。
+             *
+             * 在它之前，笔记详情页对一次失败的转写**一个字都不显示** ——
+             * 唯一说过话的是右下角那条刷新即无的 toast。而 daemon 手里
+             * 一直握着完整的答案：哪条任务、什么错、什么时候。
+             * 与 `canRetranscribe`/`retranscribeBlocked` 是同一条规矩：
+             * **服务端判定并明说，客户端不要自己猜。**
+             */
+            lastFailure: noteFailureOf(digest),
             createdAt: new Date(note.created_at).toISOString(),
           };
           sendJson(res, 200, detail);

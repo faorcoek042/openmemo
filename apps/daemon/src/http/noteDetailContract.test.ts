@@ -360,6 +360,13 @@ describe('T-139 —— 这个端点整体（E1：此前一次都没被执行过�
         // #95：变灰的**理由**与"能不能重跑"是一对。少了它，按钮变灰时只能显示
         // 那句写死的「没有记录原始输入」—— 而 daemon 判 false 的原因已经不止一种。
         'retranscribeBlocked',
+        /*
+         * #98：这条笔记最近一次失败的流水线任务（没有就是 null）。
+         * 少了它，笔记详情页对一次转写失败**一个字都不显示** —— 用户看到的是
+         * 一个空的转写稿面板 + 零条解释，而 daemon 手里一直握着完整答案；
+         * 唯一说过话的是右下角那条刷新即无的 toast。
+         */
+        'lastFailure',
         'createdAt',
       ]) {
         assert.equal(Object.prototype.hasOwnProperty.call(body, key), true, `响应里少了 ${key}`);

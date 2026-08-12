@@ -48,6 +48,7 @@ import type {
 } from '@openmemo/shared';
 import { PIPELINE_JOB_KINDS, makeEvent, topics } from '@openmemo/shared';
 
+import { jobErrorTextOf } from './errorText.js';
 import type { JobRow } from './queue.js';
 
 /**
@@ -74,6 +75,19 @@ export function pipelineJobOf(
 ): PipelineJob | undefined {
   const kind = pipelineKindOf(row.type);
   if (!kind) return undefined;
+  /*
+   * ★ 两份文案由 `jobErrorTextOf()` 产（#98 ④）。
+   *
+   * 这里原来是：
+   *     message:   row.error_detail ?? row.error_code,
+   *     messageZh: row.error_detail ?? row.error_code,   // ← 同一个英文串
+   * 也就是把英文原文**当作中文交出去**。消费方（任务中心 `JobList.tsx`、
+   * 右下角 `JobToaster.tsx`）都是按界面语言二选一 —— 中文界面读 `messageZh`，
+   * 于是老老实实渲染出 `no media source can handle this input`。
+   * 契约里 `messageZh` 存在的全部理由就是"这句已经翻好了"，而这里等于
+   * 宣称翻好了然后交出原文。类型对、字段在，**没有任何东西会因此报错**。
+   */
+  const text = jobErrorTextOf(row.error_code, row.error_detail);
   return {
     jobId: row.uid,
     kind,
@@ -88,9 +102,17 @@ export function pipelineJobOf(
     error: row.error_code
       ? {
           code: row.error_code,
-          message: row.error_detail ?? row.error_code,
-          messageZh: row.error_detail ?? row.error_code,
-          retryable: false,
+          message: text.message,
+          messageZh: text.messageZh,
+          /*
+           * ★ 这里原来是写死的 `false`，而带 `error_code` 的行**不一定是终态**：
+           * `queue.fail()` 在可重试时把 state 置回 `queued` 并留着错误码
+           * （那正是"失败了、但还会自己再试一次"的形态）。恒 false 会让
+           * `JobError.retryable` 这个字段对流水线 job 永远说同一句话，
+           * 而契约给它的定义是"UI 据此决定给什么出口"。
+           * 判据取**这一行此刻的真实状态**：回到队列里 = 真的还会再跑。
+           */
+          retryable: row.state === 'queued',
         }
       : null,
     blockedCode: row.blocked_code,

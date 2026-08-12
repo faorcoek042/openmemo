@@ -338,7 +338,26 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
             sourceKind: source.sourceKind,
           },
         });
-        repos.updateNote(note.id, { status: 'processing' });
+        /*
+         * ★ 这里原来有一句 `repos.updateNote(note.id, { status: 'processing' })`。
+         *   **删掉了，不是挪走**（#98）。
+         *
+         * 它把一条**已经转写好**的笔记打回「处理中」，然后 —— 因为全仓没有任何一处
+         * 写 `'failed'` —— 一旦这次重跑失败，那条笔记就**永久停在「处理中」**：
+         * 稿子还在、读得了，列表却说它还在跑。用户点一次「重新转写」失败，
+         * 就永久损失一条笔记的正确状态显示，而且没有任何办法改回去。
+         *
+         * 删掉它不会让"重跑期间看不出在跑"：
+         *   · 列表行与详情页顶部都渲染 `NoteProgressLine`，它按 `noteUid` 问
+         *     `GET /api/jobs` + 实时进度，**排队/阻塞/运行三档都说得出话**；
+         *   · `notes.status` 现在是**读时算的**（`jobs/noteStatus.ts`）——
+         *     一条库里存着 `processing` 的笔记，在最近一条转写任务终态失败时
+         *     会如实报 `'failed'`；而存着 `ready` 的笔记重跑失败仍是 `ready`
+         *     （它的稿子确实还在），那次失败由 `NoteDetail.lastFailure` 单独说。
+         *
+         * 也就是说：这一行原本想表达的"有活在跑"由别人如实回答了，
+         * 而它自己带来的那个不可逆副作用没有任何补偿。
+         */
         sendJson(res, 202, { jobUid: job.uid, noteUid: note.uid });
         return true;
       }

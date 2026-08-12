@@ -496,7 +496,21 @@ function ToastIcon({ phase, verifying }: { phase: Phase; verifying: boolean }) {
  */
 function subtitleFor(toast: Toast, step: string | null, t: TFunction): string {
   if (toast.phase === 'blocked') return t('jobToast.blockedHint');
-  if (toast.phase === 'failed') return t('jobToast.backgroundHint');
+  /*
+   * ★★ 这一行原来是 `t('jobToast.backgroundHint')` —— 也就是
+   * **「可以离开此页面，安装会在后台继续」**（#98 ②）。
+   *
+   * 它对一条**已经死掉的转写任务**说了三件假话：那不是安装、它没有在后台继续、
+   * 它也不会自己再来一次。标题那一层早就按任务类型分开了
+   * （`titleFor()` 会说「处理失败 · 笔记名」而不是「安装失败」），
+   * 漏的正是副文案 —— 它和"装组件"共用同一条词条，于是标题说失败、
+   * 底下那行说还在装，**同一条提示自己跟自己打架**。
+   *
+   * 换成一句只说它确实知道的话：任务停了、不会自己继续、下一步在哪。
+   * 失败的原因由上面那个 `toast.reason` 段落说（服务端两份文案二选一），
+   * 这里不重复它 —— 一条 toast 里同一件事说两遍，用户会以为是两回事。
+   */
+  if (toast.phase === 'failed') return t('jobToast.failedHint');
   if (toast.phase === 'done') {
     if (toast.needsRestart) return t('jobToast.doneRestartHint');
     // 「去捕获页粘一个链接就能转写」对一条**刚转写完**的任务是句废话

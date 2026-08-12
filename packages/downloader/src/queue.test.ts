@@ -24,7 +24,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { DownloadQueue } from './queue.js';
+import { DownloadQueue, type QueueTask, type QueueTaskContext } from './queue.js';
 
 /** 抛一个带 `code` 的错误 —— 与 `DownloadError` / `HttpError` 真实抛出的形状一致。 */
 function failingWith(code: string, message: string, retryable?: boolean) {
@@ -227,6 +227,28 @@ describe('★ T-198 取消：状态必须诚实', () => {
     return () => new Promise<void>((r) => setTimeout(r, ms));
   }
 
+  /**
+   * 同上，但**像真任务那样先报一句 `resolving`**。
+   *
+   * ⚠️ 为什么要有这个变体（#60）：下面那条「取消时 step 一起清」原来把
+   * `uninterruptible` 直接扔进去，然后断言「前提：它此刻确实停在 resolving」——
+   * 而那个 `resolving` 根本不是任务报的，是 `run()` 里一句
+   * `job.step = 'resolving'` **预置**的。也就是说这条前提断言证明的是
+   * **一个预置常量**，不是任何真实播报。
+   *
+   * 而那句预置恰恰是 #60 的成因：它让每个真任务开头的 `ctx.setStep('resolving')`
+   * 被 `setStep()` 的去重判据当成"没变化"，于是**「正在选择下载源」这条事件
+   * 一次都没发出去过**。预置改成 `null` 之后，这条用例如果继续依赖它就会红 ——
+   * **红得对**：它本来就该照着真实路径写。所以任务在这里自己报一句，
+   * 与 `rest/models.ts` / `rest/backends.ts` 里真实任务的第一句一致。
+   */
+  function uninterruptibleResolving(ms: number) {
+    return async (ctx: QueueTaskContext) => {
+      ctx.setStep('resolving');
+      await new Promise<void>((r) => setTimeout(r, ms));
+    };
+  }
+
   /** 让出若干毫秒。同样**不许 unref**，理由同上。 */
   const tick = (ms = 10) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -256,7 +278,12 @@ describe('★ T-198 取消：状态必须诚实', () => {
     });
   }
 
-  function enqueueOne(q: DownloadQueue, task: () => Promise<void>) {
+  /*
+   * ⚠️ `task` 的类型是 `QueueTask`（收 ctx），不是 `() => Promise<void>`。
+   * 写窄了的话，一个**像真任务那样报阶段**的 task 就传不进来 ——
+   * 而"照真实路径写"正是 #60 那条用例现在必须做到的事。
+   */
+  function enqueueOne(q: DownloadQueue, task: QueueTask) {
     return q.enqueue(
       {
         kind: 'model',
@@ -285,7 +312,7 @@ describe('★ T-198 取消：状态必须诚实', () => {
 
   it('★ 取消时 step 一起清 —— 否则「正在选择下载源」冻在终态之后', async () => {
     const q = new DownloadQueue(1);
-    const job = enqueueOne(q, uninterruptible(50));
+    const job = enqueueOne(q, uninterruptibleResolving(50));
     await waitForState(q, job.jobId, 'running');
     assert.equal(q.get(job.jobId)?.step, 'resolving', '前提：它此刻确实停在 resolving');
 
