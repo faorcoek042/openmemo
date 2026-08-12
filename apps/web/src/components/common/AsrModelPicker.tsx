@@ -25,13 +25,20 @@ import { ErrorBlock } from './ErrorBlock';
  *
  * ## 现在的真实边界（重要，不粉饰）
  *
- * 后端的 `ImportNoteRequest` 只接受 `{input, title?, language?}` ——
- * **没有 `engineId` / `modelId`**，也就是说**"单次任务用哪个模型"目前不可指定**。
- * 能改的是**全局激活的模型**（`POST /api/models/activate`）。
+ * 这个组件切的是**全局激活的模型**（`POST /api/models/activate`），
+ * 不是"这一次任务用哪个" —— 界面上那句 `asr.activeIsGlobal` 说的就是这件事。
  *
- * 所以这里做成"**切换当前使用的模型**"而不是"本次任务用哪个"：
- * 前者是真的、立刻生效；后者会是又一个假选择器。
- * 等后端支持按任务覆盖，再把它升级成 per-task 选择即可 —— 数据源不用改。
+ * ─── 但当初的**理由**已经不成立了，两边都留着（#99 ①）──────────────────
+ * 原文写的是「后端的 `ImportNoteRequest` 只接受 `{input, title?, language?}`，
+ * **没有 `engineId` / `modelId`**，"单次任务用哪个模型"目前不可指定」。
+ * **今天不是这样**：`POST /api/notes/import`（`rest/notes.ts` 的 `ImportBody`）
+ * 与 `POST /api/notes/:uid/retranscribe`（`rest/content.ts`）**都解析
+ * `engineId` / `modelId` / `prompt` 并塞进 job payload**，
+ * `jobs/runners/transcribe.ts` 也真的在按它们挑引擎和模型。
+ *
+ * 所以「per-task 覆盖」现在**是后端支持的**，只是前端一处都没接
+ * （全仓没有任何请求体带过这三个键）。这里保持全局语义是**尚未裁决**，
+ * 不是"后端不收"—— 见 #99 ①。⚠️ 别再拿旧理由挡下一个来问的人。
  */
 /**
  * 下拉里那一行字。

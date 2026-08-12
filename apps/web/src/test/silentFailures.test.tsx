@@ -23,10 +23,14 @@
  * 所以这里一律断言 `[data-testid="error-block"]`（`ErrorBlock` 的结构标记，
  * 同时带 `role="alert"`）**出现在该出现的容器里**，且**文字非空**。
  */
-import { test, describe } from 'node:test';
+import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { QueryClient, useQuery } from '@tanstack/react-query';
 
 import { render, click, type, text, stubApi } from './host';
+import { ConnectionBanner } from '../components/common/ConnectionBanner';
+import { useConnectionStore } from '../lib/stores/connection.store';
+import { DEGRADED_POLL_INTERVAL_MS, startDegradedPolling } from '../lib/events/degradedPolling';
 import { NoteActionsMenu } from '../features/notes/NoteActionsMenu';
 import { countUnfinishedJobs } from '../features/tasks/api';
 import { JobToaster } from '../components/common/JobToaster';
@@ -718,5 +722,189 @@ describe('A-4 三态在模型卡上各说各的动作', () => {
     await r.flush();
     assert.equal(r.container.querySelector('[data-testid="model-unusable-vad/silero-vad"]'), null);
     r.unmount();
+  });
+});
+
+/* ────────── SSE 降级之后：兜底必须真的在拉数据（#101） ────────── */
+
+/**
+ * ## 这一组防的是什么
+ *
+ * `lib/events/source.ts` 的 `MAX_RECONNECT_BEFORE_DEGRADE` 注释写着
+ * 「连续这么多次重连失败后**降级为轮询（约 15s）**」。顺着 `degraded` 查下来只有
+ * 三样东西：一个枚举值、一条黄色横幅、一张 tone 表 —— **全仓没有一处在拉数据**。
+ *
+ * 也就是说：SSE 断到降级之后，界面**永久停在最后一帧**，
+ * 而横幅还在说「正在轮询」，注释还在让下一个人**不去查这里**。
+ *
+ * ## 判据：必须钉「真的又去要了一次数据」
+ *
+ * 这是本组唯一的重点。只钉「state 变成了 degraded」或「横幅出现了」都会**恒绿** ——
+ * 缺陷状态下这两件事本来就都成立，缺的从来就是那次请求。
+ * 所以探针是一个真实的 `useQuery`，断言的是它的 `queryFn` **被再调用了一次**。
+ *
+ * ⚠️ 每条用例都必须把连接态复位：store 是模块级单例，
+ * 上一条留下的 `degraded` 会让下一条从"已经在轮询"起步，得到一个假绿。
+ */
+describe('SSE 降级的轮询兜底', () => {
+  /** 探针：一个真实的活跃 query。`calls` 就是"它又去要了几次数据"。 */
+  function probe() {
+    const calls = { n: 0 };
+    const Probe = () => {
+      const q = useQuery({
+        queryKey: ['degraded-probe'],
+        queryFn: () => {
+          calls.n += 1;
+          return Promise.resolve(calls.n);
+        },
+        staleTime: 0,
+        gcTime: 0,
+        retry: false,
+      });
+      return <span data-testid="probe">{String(q.data ?? '')}</span>;
+    };
+    return { calls, Probe };
+  }
+
+  const wait = (ms: number) => new Promise((res) => setTimeout(res, ms));
+
+  beforeEach(() => {
+    useConnectionStore.setState({ state: 'connecting' });
+  });
+  afterEach(() => {
+    useConnectionStore.setState({ state: 'connecting' });
+  });
+
+  test('★★ 进入 degraded 后，活跃 query 必须真的被重新拉 —— 否则「降级」只是一条横幅', async () => {
+    stubApi({});
+    const { calls, Probe } = probe();
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+    });
+    // 20ms 只为让用例跑得完；产品用的是 DEGRADED_POLL_INTERVAL_MS（15s），下面单独钉
+    const stop = startDegradedPolling(qc, { intervalMs: 20 });
+    const r = await render(<Probe />, { queryClient: qc });
+    await r.flush();
+
+    const atOpen = calls.n;
+    assert.ok(atOpen >= 1, '前提自检：探针本身没拉过数据，这条用例就是空的');
+
+    useConnectionStore.setState({ state: 'degraded' });
+    await r.flush();
+    assert.ok(
+      calls.n > atOpen,
+      `降级的第一拍就该立刻重拉一次（让用户干等 15 秒，横幅那句话在这 15 秒里就是假的）。实际仍是 ${calls.n}`,
+    );
+
+    const afterFirst = calls.n;
+    await wait(70);
+    await r.flush();
+    assert.ok(
+      calls.n > afterFirst,
+      `轮询没有继续 —— 只在进入降级时拉一次不叫兜底。实际停在 ${calls.n}`,
+    );
+
+    stop();
+    r.unmount();
+    qc.clear();
+  });
+
+  test('★ 反面：连接正常时不许自己轮询（否则上面那条写成恒真也会绿）', async () => {
+    stubApi({});
+    const { calls, Probe } = probe();
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+    });
+    const stop = startDegradedPolling(qc, { intervalMs: 20 });
+    const r = await render(<Probe />, { queryClient: qc });
+    await r.flush();
+
+    const baseline = calls.n;
+    useConnectionStore.setState({ state: 'open' });
+    await wait(70);
+    await r.flush();
+    assert.equal(calls.n, baseline, 'SSE 好好的时候还去轮询 = 白白多打一倍请求');
+
+    stop();
+    r.unmount();
+    qc.clear();
+  });
+
+  test('★ 恢复 open 之后必须停下来 —— 否则降级过一次就永远多一条轮询', async () => {
+    stubApi({});
+    const { calls, Probe } = probe();
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+    });
+    const stop = startDegradedPolling(qc, { intervalMs: 20 });
+    const r = await render(<Probe />, { queryClient: qc });
+    await r.flush();
+
+    useConnectionStore.setState({ state: 'degraded' });
+    await wait(70);
+    await r.flush();
+    useConnectionStore.setState({ state: 'open' });
+    await r.flush();
+
+    const afterRecovery = calls.n;
+    await wait(70);
+    await r.flush();
+    assert.equal(calls.n, afterRecovery, `恢复之后定时器没清掉，还在拉（${calls.n}）`);
+
+    stop();
+    r.unmount();
+    qc.clear();
+  });
+
+  test('★ 间隔就是注释当初承诺的那个数（15s）—— 不许改小声了事', () => {
+    assert.equal(
+      DEGRADED_POLL_INTERVAL_MS,
+      15_000,
+      'source.ts 的注释对读者许的是"约 15s"。改这个数就要同时改那句话，否则它又变回一句假话',
+    );
+  });
+
+  /**
+   * 横幅这一格钉的是**它说的话对不对、给不给得出下一步**。
+   *
+   * 上一版它写的是「实时更新已断开，正在轮询」—— 后半句当时是假的。
+   * 现在轮询真的有了，但用户看到的仍是**最多迟 15 秒**的界面，
+   * 所以横幅必须给一条不丢页面状态的出路（F5 整页重载会丢掉正在播的音频与滚动位置）。
+   */
+  test('★★ 降级横幅要给一个点得动的动作，且点下去真的重拉', async () => {
+    stubApi({});
+    const { calls, Probe } = probe();
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+    });
+    const r = await render(
+      <>
+        <Probe />
+        <ConnectionBanner />
+      </>,
+      { queryClient: qc },
+    );
+    await r.flush();
+
+    assert.equal(
+      r.container.querySelector('[data-testid="sse-degraded-refresh"]'),
+      null,
+      '前提自检：没降级时不该有这条横幅',
+    );
+
+    useConnectionStore.setState({ state: 'degraded' });
+    await r.flush();
+
+    const btn = r.container.querySelector('[data-testid="sse-degraded-refresh"]');
+    assert.ok(btn, `降级了却没有任何用户能做的动作：${text(r.container).slice(0, 200)}`);
+    assert.ok(text(r.container).length > 0, '横幅必须说话');
+
+    const before = calls.n;
+    await click(btn);
+    await r.flush();
+    assert.ok(calls.n > before, '「立即刷新」点了不重拉 —— 又一个只会变色的按钮');
+
+    r.unmount();
+    qc.clear();
   });
 });

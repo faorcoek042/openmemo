@@ -13,7 +13,7 @@ import {
   Stethoscope,
 } from 'lucide-react';
 
-import { Banner } from './components/common/Banner';
+import { ConnectionBanner } from './components/common/ConnectionBanner';
 import { ConnectivitySummary } from './components/common/MockNotice';
 import { JobToaster } from './components/common/JobToaster';
 import { PanelBoundary } from './components/common/PanelBoundary';
@@ -24,7 +24,6 @@ import { Button } from './components/common/Button';
 import { TasksDrawer } from './features/tasks/TasksDrawer';
 import { useUnfinishedJobCount } from './features/tasks/api';
 import { useUiStore } from './lib/stores/ui.store';
-import { useConnectionStore } from './lib/stores/connection.store';
 import { activeNavTarget, NAV_FILTER_KEYS } from './lib/nav/activeNav';
 import { cn } from './lib/utils';
 
@@ -34,7 +33,6 @@ export default function App() {
   const setTasksDrawer = useUiStore((s) => s.setTasksDrawer);
   // 侧栏「任务」徽标：与任务中心同一个数据源，不许各拉各的
   const unfinishedJobs = useUnfinishedJobCount();
-  const conn = useConnectionStore((s) => s.state);
   /*
    * ★ T-198 / S-1：顶栏「进行中 N」**收敛到与侧栏同一个数据源**。
    *
@@ -180,8 +178,12 @@ export default function App() {
       <PanelBoundary name={t('readiness.title')} fallback={() => null}>
         <ReadinessBanner />
       </PanelBoundary>
-      {conn === 'degraded' ? <Banner tone="warning" title={t('banner.sseDegraded')} /> : null}
-      {conn === 'reconnecting' ? <Banner tone="info" title={t('banner.sseReconnecting')} /> : null}
+      {/*
+        连接降级/重连的横幅收进 `ConnectionBanner`（#101）。
+        抽出去的理由不是整洁：留在这里的话，那句话说得对不对**没有任何测试碰得到**——
+        而它上一版正是在说一句假话（「正在轮询」，可轮询根本没实现）。
+      */}
+      <ConnectionBanner />
 
       <div className="flex min-h-0 flex-1">
         {/* ── 侧栏 ── */}

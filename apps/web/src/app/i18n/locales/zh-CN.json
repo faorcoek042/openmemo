@@ -27,7 +27,9 @@
   "banner": {
     "mockTitle": "MOCK 模式：本地服务未接通",
     "mockDetail": "当前数据由前端内存模拟，用于 UI 评审。daemon 实现后将自动切换为真实数据。",
-    "sseDegraded": "实时更新已断开，正在轮询",
+    "sseDegraded": "实时更新已断开，改为每 15 秒自动刷新一次",
+    "sseDegradedDetail": "页面上的内容最多会迟 15 秒，转写的逐句滚动这段时间不会出现。后台仍在尝试重新连接，连上就会自动恢复实时。",
+    "refreshNow": "立即刷新",
     "sseReconnecting": "正在重新连接本地服务…",
     "portDrift": "端口已从 {{expected}} 变更为 {{actual}}，浏览器会把它当作新站点，需要重新授权麦克风。",
     "shutdown": "本地服务正在退出"
@@ -420,8 +422,7 @@
       "starting": "正在排队…",
       "currentLang": "当前转写稿使用的语言：{{lang}}",
       "currentLangUnknown": "当前转写稿没有记录语言（很可能就是这次出问题的原因）",
-      "editsAtRisk": "⚠️ 你编辑过的 {{count}} 段会被覆盖",
-      "editsAtRiskDetail": "当前 daemon 在「重新转写」这条路径上不做两阶段合并，重跑结果会整篇替换现有转写稿。想保留请先导出。（录音页的重跑会保留编辑，这条路径暂时不会——已报后端修复。）",
+      "blockedTitle": "这条笔记现在不能重新转写",
       "noSource": "这条笔记没有记录原始输入，无法重跑。仅当来源是可重新获取的链接或文件时才能重新转写。",
       "editsPreserved": "已保留你编辑过的 {{count}} 段",
       "triedPaths": "找过这些位置："
