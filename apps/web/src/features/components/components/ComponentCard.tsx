@@ -135,7 +135,10 @@ function UpstreamNote({ c }: { c: ComponentStatus }) {
       return (
         <p className={cls} data-testid="upstream-note-failed">
           我们<strong className="text-ink-secondary">问了上游但没问到</strong>（{u.reason}
-          ），不代表已是最新。点上方「检查更新」重试通常就好。已安装的版本不受影响，照常可用。
+          ），不代表已是最新。
+          <strong className="text-ink-secondary">重试的时机以上面括号里那句为准</strong>
+          —— 配额用尽时它会说明还要等多久，那种情况下立刻再点是白点。
+          已安装的版本不受影响，照常可用。
         </p>
       );
     case 'indeterminate':
