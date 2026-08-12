@@ -23,7 +23,13 @@
  *
  *   ① 「见 <文件>」——  指路语 + 文件名 ⇒ 那个文件必须在册
  *   ② `{@link X}`   ——  TSDoc 链接 ⇒ 那个符号必须在仓里找得到
- *   ③ `queue.block()` 发出的码 ⇒ 必须在 `PIPELINE_ERROR_CODES` 里（#104）
+ *   ③ 阻塞码的**三份**手写清单 ⇒ 都必须 ⊆ `PIPELINE_ERROR_CODES`（#104）
+ *
+ * ③ 为什么是三份：`queue.block()` 的实参（daemon 真发的）、`KNOWN_BLOCKED_CODES`
+ * （前端「**为什么**卡住」）、`blockedFallbackName()`（前端「这是**哪种**任务」）。
+ * 三处语义不同、**刻意不合并**，但今天各写一遍、只有一处有类型哨兵 ——
+ * 加一个新码时没有任何东西提醒另外两处。这道门不强求它们相等，
+ * 只钉一条：**谁都不许认一个契约里没有的码**。
  *
  * ## ⚠️ 它**抓不到**什么（诚实边界，别以为装了这个就不会再有假注释）
  *
@@ -278,11 +284,45 @@ export function scanCommentFacts({ files, docs = [], tracked }) {
   return { violations, narrated, pointerRefs, linkRefs };
 }
 
-/** 从 `packages/shared/src/jobs.ts` 的**源码文本**里读出那份契约。 */
-export function pipelineErrorCodesFrom(text) {
-  const m = /export const PIPELINE_ERROR_CODES = \[([\s\S]*?)\] as const;/.exec(text);
+/**
+ * 从源码文本里读出一个 `export const X = [...] as const;` 的字面量成员。
+ *
+ * ⚠️ **读的是源码文本，不是 import 进来的值。** 两个理由：`packages/shared` 要先 build
+ * 才 import 得到（这道门不该依赖构建产物），而 `apps/web` 那两份根本没有 `dist`。
+ * 代价是它对写法敏感 —— 所以找不到时**返回 null 并报红**，绝不当成空集放行：
+ * 一个「常量改名了 ⇒ 检查静默变成恒真」的守卫，正是这一周抓到的失效形态。
+ */
+export function constArrayFrom(text, name) {
+  const m = new RegExp(`export const ${name} = \\[([\\s\\S]*?)\\] as const;`).exec(text);
   if (!m) return null;
   return [...m[1].matchAll(/'([A-Za-z0-9_]+)'/g)].map((x) => x[1]);
+}
+
+/** 从 `packages/shared/src/jobs.ts` 的**源码文本**里读出那份契约。 */
+export function pipelineErrorCodesFrom(text) {
+  return constArrayFrom(text, 'PIPELINE_ERROR_CODES');
+}
+
+/**
+ * 「这份清单里有哪些码是契约没有的」—— 三条 ⊆ 断言**共用这一个**判定。
+ *
+ * 单独抽出来不是为了少写一行 `.filter`：selftest 必须能量到**门真正用的那个判定**，
+ * 而不是它自己重写的一份"等价"逻辑（那样量的就不是这道门了）。
+ */
+export function notInContract(list, contract) {
+  return list.filter((c) => !contract.includes(c));
+}
+
+/**
+ * `JobToaster.tsx` 的 `blockedFallbackName()` 认得的那些码。
+ *
+ * 它是**第三份**手写清单，形状和另外两份都不一样（不是数组，是一串 `code === 'X'`），
+ * 所以得单独抠。抠不出来同样返回 null → 报红。
+ */
+export function fallbackNameCodesFrom(text) {
+  const m = /function blockedFallbackName\([\s\S]*?\n}/.exec(text);
+  if (!m) return null;
+  return [...m[0].matchAll(/code === '([A-Za-z0-9_]+)'/g)].map((x) => x[1]);
 }
 
 /**
@@ -390,7 +430,7 @@ function main() {
     console.log('✘ 全仓一个 `queue.block(` 都没扫到 —— 扫描坏了，不是"没有调用点"。');
     failed++;
   } else {
-    const missing = [...codes.keys()].filter((c) => !contract.includes(c));
+    const missing = notInContract([...codes.keys()], contract);
     if (missing.length > 0) {
       console.log('✘ #104 · `queue.block()` 发得出、而契约里没有的码：');
       for (const c of missing)
@@ -416,6 +456,64 @@ function main() {
     if (unemitted.length > 0) {
       console.log(`   ⓘ 契约里今天没有任何 queue.block() 发出的码：${unemitted.join(' / ')}`);
       console.log('     （不判红：契约可以先于实现。但别照它建界面分支 —— 那些分支走不到。）');
+    }
+  }
+
+  /*
+   * ③b 前端那**两份**手写清单也得 ⊆ 契约。
+   *
+   * ## ⚠️ 这两份**不是同一个东西，刻意不合并**（Manager 裁决，`JobToaster.tsx` 的注释是对的）
+   *
+   *   · `KNOWN_BLOCKED_CODES`  答的是「**为什么**卡住」—— 一句给用户看的原因。
+   *   · `blockedFallbackName()` 答的是「这是**哪种**任务」—— 一个填进 toast 标题的名字。
+   *
+   * 语义不同，合并会让其中一个说谎。这里加的**不是**"它们该相等"的断言，
+   * 只有一条：**两份都不许出现契约里没有的码**。
+   *
+   * 治的是这个：`blockedReason.ts` 与 `JobToaster.tsx` 今天恰好同集，
+   * 而只有前者有 `Record<KnownBlockedCode, …>` 的全量哨兵会在漏写时把构建打红；
+   * 后者漏了只会安静地落到"后台任务"。第三份（契约）此前和这两份都对不上（#104）。
+   * ⇒ 三处各写一遍、只有一处有哨兵 —— 加一个新码时**没有任何东西**会提醒另外两处。
+   */
+  const WEB_LISTS = [
+    {
+      rel: 'apps/web/src/lib/jobs/blockedReason.ts',
+      what: 'KNOWN_BLOCKED_CODES',
+      means: '「为什么卡住」—— 给用户看的那句原因',
+      read: (t) => constArrayFrom(t, 'KNOWN_BLOCKED_CODES'),
+    },
+    {
+      rel: 'apps/web/src/components/common/JobToaster.tsx',
+      what: 'blockedFallbackName()',
+      means: '「这是哪种任务」—— 填进 toast 标题的那个名字',
+      read: fallbackNameCodesFrom,
+    },
+  ];
+  if (contract !== null) {
+    for (const L of WEB_LISTS) {
+      const got = L.read(readFileSync(resolve(REPO, L.rel), 'utf8'));
+      if (got === null || got.length === 0) {
+        console.log(`✘ 在 ${L.rel} 里读不出 ${L.what} —— 是不是改名/改写了？`);
+        console.log('   读不出来时这道门**不许当成通过** —— 那样它就静默恒真了。');
+        failed++;
+        continue;
+      }
+      const extra = notInContract(got, contract);
+      if (extra.length > 0) {
+        console.log(`✘ ${L.what}（${L.rel}）里有契约没有的码：${extra.join(' / ')}`);
+        console.log(`   这份表答的是 ${L.means}，`);
+        console.log('   但它认得的码必须是契约认得的码 —— 否则前端在给一个后端发不出的状态写话。');
+        failed++;
+      } else {
+        console.log(`✔ ${L.what} 的 ${got.length} 个码全在契约里（${L.means}）`);
+      }
+      const behind = [...codes.keys()].filter((c) => !got.includes(c));
+      if (behind.length > 0) {
+        console.log(`   ⓘ daemon 发得出、而这份表没跟上的码：${behind.join(' / ')}`);
+        console.log(
+          `     （不判红：本轮只裁到「⊆ 契约」这一条。但用户会在这些状态上看到兜底话术。）`,
+        );
+      }
     }
   }
 
