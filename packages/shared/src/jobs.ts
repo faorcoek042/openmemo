@@ -125,11 +125,49 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
 /**
  * Codes emitted by the pipeline/job system rather than the downloader.
  *
- * The daemon already blocks jobs with these (`queue.block(id, 'MISSING_ASR_MODEL', …)`)
- * and the web app already has localized copy for them.
+ * ## ⚠️ 这段注释此前说了两句假话（#104）
+ *
+ * 原文是「The daemon already blocks jobs with these […] and the web app already has
+ * localized copy for them」。`[实测 f0b0ad3]` 两句都不成立：
+ *
+ *   · **daemon 只发得出这里的 1 个**（`MISSING_ASR_MODEL`）。全仓 `queue.block(` 三个
+ *     调用点发的是 `MISSING_ASR_MODEL` / `NO_TRANSCRIPT` / `LLM_NOT_CONFIGURED`，
+ *     而后两个**这份清单里没有**。
+ *   · `MISSING_LLM` 与 `MISSING_API_KEY` 在两份 locale 里**一条词条都没有**。
+ *
+ * 代价是具体的：谁照这份清单写一张「这条任务在等什么」的表，
+ * 会得到 **4 条永远走不到的分支 + 2 条永远落兜底的真实状态**。
+ * `apps/web/src/lib/jobs/blockedReason.ts` 正是因为发现了这一点才**没有**用它，
+ * 而是另外手写了一份 —— 那份注释里记着「实测两边只交叠 1 个」。
+ *
+ * ## 现在这份清单分两截，**哪一截是真的写清楚**
+ *
+ * ⓐ **daemon 今天真的发得出**（`queue.block()` 的实参，机器核过）。
+ * ⓑ **今天没有任何发出者**：契约先于实现是允许的，但**别照 ⓑ 建界面分支** ——
+ *    那些分支走不到。留着它们而不是删掉，是因为 `MISSING_BACKEND` /
+ *    `RESOURCE_DISK_FULL` 已经有界面文案，删了会把那两条文案变成孤儿；
+ *    该不该整体收掉是另一个决定，不在 #104 的范围里。
+ *
+ * ## 🔒 它不再靠人记得同步
+ *
+ * `scripts/ci/check-comment-facts.mjs` 断言 **`queue.block(` 的实参集合 ⊆ 本清单**，
+ * 挂在 `pnpm test:ci-scripts` 上。下一个人加一个 `queue.block(id, 'NEW_CODE')`
+ * 而忘了回来加一行，CI **当场红**，并且会指着那个新调用点说话。
+ *
+ * ⚠️ 这道门看不见第二个实参不是字面量的调用点（今天 0 个）。
+ * 也就是说它保证的是「**写死的码不会漏配**」，不是「运行时不会出现别的码」——
+ * 后者做不到：`queue.block()` 的第二个参数在类型上就是自由字符串。
  */
 export const PIPELINE_ERROR_CODES = [
+  /* ⓐ daemon 今天真的发得出的（`queue.block(` 的实参，check-comment-facts 核过） */
+  /** `jobs/runners/transcribe.ts` —— 没装语音识别模型。 */
   'MISSING_ASR_MODEL',
+  /** `jobs/runners/mindmap.ts` —— 这条笔记还没有转写稿。 */
+  'NO_TRANSCRIPT',
+  /** `jobs/runners/mindmap.ts` —— 没有可用的语言模型。 */
+  'LLM_NOT_CONFIGURED',
+
+  /* ⓑ 今天没有任何发出者。别照这一截建界面分支。 */
   'MISSING_LLM',
   'MISSING_BACKEND',
   'RESOURCE_DISK_FULL',
