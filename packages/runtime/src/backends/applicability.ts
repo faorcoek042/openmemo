@@ -143,7 +143,8 @@ export interface ApplicabilityInput {
   backends: BackendStatus[] | null;
   /**
    * Backends that ADVISORY detection considers plausible for hardware it actually saw
-   * (`AdvisoryGpu.candidateBackends`, union over all detected GPUs).
+   * (`advisoryGpuBackends(AdvisoryGpu.verdict)`, union over all detected adapters —
+   * `undetermined`（虚拟机适配器）也在里面，见 `AdvisoryGpuVerdict` 上的 #86 那段).
    *
    * This is deliberately a separate input from `backends`: it is the one signal that does
    * NOT depend on any pack being installed, which is what makes it able to break the
@@ -267,7 +268,7 @@ export function isPackApplicable(
   platform: { os: OsPlatform; arch: string },
   hardware: HardwareInfo | null,
   /**
-   * Union of `AdvisoryGpu.candidateBackends`. See `ApplicabilityInput.advisoryCandidates`.
+   * Union of `advisoryGpuBackends(AdvisoryGpu.verdict)`. See `ApplicabilityInput.advisoryCandidates`.
    *
    * Optional so existing callers keep compiling, but a caller that CAN supply it and does
    * not is choosing the deadlock: without it, rule 2 in the file header never fires.

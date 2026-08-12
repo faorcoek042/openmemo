@@ -81,8 +81,36 @@ export function HardwareCard({
    * 这个只是"操作系统说这台机器上插着什么"。混进去会污染 fit 计算与后端选择
    * （`detect/gpu.ts` 抬头两个实测反例：库在但无 GPU；lavapipe 报一个 CPU 设备）。
    * **它只用来说话。**
+   *
+   * ★ #86：**「我们看见一块卡」与「我们看见一个虚拟机适配器」不是同一句话。**
+   * 这里原来是 `advisoryGpus.map(g => g.name)` —— 一视同仁。于是虚拟机里那块
+   * `Microsoft Hyper-V Video` 被当成"你的卡"说了两遍假话：
+   *   · 探测前：「**这块卡我们看见了**，只是还没装上能用它的后端包（可能支持 vulkan）」
+   *   · 探测后：「所以**卡在我们这一侧，不是你没有显卡**」——
+   *     更糟，它无条件断言用户有显卡，还把他支回我们这边继续找问题。
+   * 现在按 `verdict` 分开：`undetermined` 的那些**不算"看见的卡"**，
+   * 它们带着自己的理由单独说一句「判断不了」。
+   *
+   * ⚠️ `verdict` 缺失时**退回旧行为**（当成 candidate）：老 daemon 发的
+   * `candidateBackends` 语义就是它。这是向后兼容，不是一次新的判断。
    */
-  const seenAdapters = (runtime?.advisoryGpus ?? []).map((g) => g.name).filter(Boolean);
+  const advisoryGpus = runtime?.advisoryGpus ?? [];
+  const seenAdapters = advisoryGpus
+    .filter((g) => g.verdict?.kind !== 'undetermined')
+    .map((g) => g.name)
+    .filter(Boolean);
+  /**
+   * 「我们判断不了」那一档的**原话**，由 daemon 给（`detect/gpu.ts` 的
+   * `virtualAdapterVerdict`）—— 只有那一侧知道是哪种虚拟适配器、
+   * 以及要装哪个包才能把这个问题问出答案。
+   *
+   * ⚠️ 它不是"技术细节"，是这一档**唯一的正文**：省掉或折叠它，
+   * 用户就只剩一句"还没查过"，而「这台机器上到底能不能用 GPU 加速」
+   * 这个问题**我们回答了没有**，他仍然不知道。
+   */
+  const undeterminedReasons = advisoryGpus
+    .map((g) => (g.verdict?.kind === 'undetermined' ? g.verdict.reason : null))
+    .filter((r): r is string => r !== null && r !== '');
 
   return (
     <section
@@ -144,12 +172,33 @@ export function HardwareCard({
                   })}
                 </span>
               ) : null}
+              {/*
+                  ★ #86 第三态：**「我们判断不了」要说出口，而且要说清下一步。**
+                  这几句由 daemon 逐块给（每块虚拟适配器一句，含"装哪个包能问出答案"）。
+                  它**不与上面那句合并**：上面说的是"我们看见了一块卡"，
+                  这里说的是"我们看见的是虚拟机的适配器，它背后有没有卡我们不知道" ——
+                  合并回一句就等于回到那个两态。
+                */}
+              {undeterminedReasons.map((reason) => (
+                <span className="block text-ink" data-testid="hw-gpu-undetermined" key={reason}>
+                  {reason}
+                </span>
+              ))}
             </span>
           ) : seenAdapters.length > 0 ? (
             <span className="text-warning" data-testid="hw-gpu-probed-but-unusable">
               {t('runtime.hw.gpuProbedUnusable', { adapters: seenAdapters.join('、') })}
             </span>
           ) : (
+            /*
+             * ★ #86：探针**跑过了**（`probedForGpu`）而且一个设备都没枚举到 ——
+             * 这时候 probe 就是权威，答案是"这台机器上没有能用的 GPU"，句号。
+             *
+             * 虚拟适配器在这一档**刻意不再出现**：装上包探一次正是我们让用户做的事，
+             * 他做完了，问题就有答案了。继续说"判断不了"是把一个已经回答的问题
+             * 重新说成悬案；而说成 `gpuProbedUnusable`（「不是你没有显卡」）
+             * 则是拿一个虚拟适配器去断言用户有显卡 —— 那正是这次要修掉的那句。
+             */
             <span className="text-ink-secondary" data-testid="hw-gpu-none">
               {t('runtime.hw.noGpu')}
             </span>

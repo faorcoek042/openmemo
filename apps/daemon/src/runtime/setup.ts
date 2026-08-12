@@ -76,7 +76,14 @@ import {
   type ProbeResult,
   type SelfTestOutcome,
 } from '@openmemo/runtime';
-import type { Backend, HardwareInfo, InstalledBackendPack, Remediation } from '@openmemo/shared';
+import {
+  advisoryGpuBackends,
+  type AdvisoryGpuVerdict,
+  type Backend,
+  type HardwareInfo,
+  type InstalledBackendPack,
+  type Remediation,
+} from '@openmemo/shared';
 
 /**
  * 除 cpu 外的全部后端。
@@ -619,11 +626,18 @@ export interface RuntimeDetection {
   readonly installedBackends: Backend[];
   /**
    * **advisory 探测**（nvidia-smi / sysfs DRM / system_profiler / DXGI）认为本机
-   * 可能支持的后端，取所有探到的 GPU 的 `candidateBackends` 并集。
+   * 可能支持的后端，取所有探到的 GPU 的**待确认候选后端**并集
+   * （{@link advisoryBackendsOf}：`candidate` 取 `backends`，`undetermined` 取 `probeWith`）。
    *
    * 它是 L2 适用性判定里**唯一不依赖"包已经装了"的证据**，也就是解开
    * 「要先有 A 才能装 B，而 A 要 B 装好才能被发现」那个环的东西
    * （见 `packages/runtime/src/backends/applicability.ts` 的文件头）。
+   *
+   * ⚠️ **`undetermined` 也必须进这个并集**（#86）。理由是它保住的正是那条环：
+   * probe 是唯一权威，而 probe 要先装包才能跑；虚拟机里把 Vulkan 包判成"不适用"，
+   * 等于**同时断掉用户唯一能拿到答案的路** —— 那比多说一句"可能支持"更贵。
+   * 这一句是判据，不是风格：把 `undetermined` 从并集里摘掉，
+   * `applicability` 的行为会当场改变，`gpu.test.ts` 里有一条钉着它。
    *
    * ⚠️ 它**不是**"这个后端能用"的结论 —— 那个结论只能来自 probe。
    * 空数组的含义是"没有独立证据"，不是"本机没有 GPU"。
@@ -654,7 +668,16 @@ export interface RuntimeDetection {
   readonly advisoryGpus: readonly {
     readonly name: string;
     readonly vendor: string;
-    readonly candidateBackends: readonly Backend[];
+    /**
+     * ★ #86：这块适配器**能不能拿来做 GPU 加速**的三态结论（`AdvisoryVerdict`）。
+     *
+     * 这里原本是 `candidateBackends: readonly Backend[]` —— 两态，装不下"判断不了"，
+     * 于是虚拟机里的显示适配器被界面说成「可能支持 Vulkan」。
+     * 现在虚拟适配器落 `undetermined`（带一句给用户看的 `reason`），
+     * 而它的 `probeWith` **照旧进 {@link advisoryBackends} 并集** ——
+     * 那条环打破器不能因为这次改动而失效。
+     */
+    readonly verdict: AdvisoryGpuVerdict;
     /** 这条事实的出处（`Get-CimInstance Win32_VideoController` / `sysfs:card0` / …）。 */
     readonly source: string;
   }[];
@@ -844,7 +867,14 @@ export async function detectRuntimeHardware(
       })
     : await composeHardware(layout, probe, advisory, installed, blacklisted);
 
-  const advisoryBackends = [...new Set(advisory.gpus.flatMap((g) => g.candidateBackends))];
+  /*
+   * ★ #86：`undetermined`（虚拟机适配器）的 `probeWith` **照旧算进来**。
+   * 见 `RuntimeDetection.advisoryBackends` 上那段：摘掉它就是把"我们判断不了"
+   * 当成"不支持"用，Vulkan 包会在虚拟机里变成不可安装 —— 而那是用户唯一的求证途径。
+   */
+  const advisoryBackends = [
+    ...new Set(advisory.gpus.flatMap((g) => advisoryGpuBackends(g.verdict))),
+  ];
 
   return {
     hardware,
@@ -869,7 +899,7 @@ export async function detectRuntimeHardware(
     advisoryGpus: advisory.gpus.map((g) => ({
       name: g.name,
       vendor: g.vendor,
-      candidateBackends: g.candidateBackends,
+      verdict: g.verdict,
       source: g.source,
     })),
     advisoryWarnings: advisory.warnings,
