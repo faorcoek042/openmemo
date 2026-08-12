@@ -468,6 +468,76 @@ export async function resolveToolchain(paths: AppPaths): Promise<ToolchainResolu
     );
   }
 
+  const asr = await resolveWhisperModelPath(dirs.modelsDir, tools.vadModel, env);
+  warnings.push(...asr.warnings);
+  const asrModelPath = asr.path;
+  if (!asrModelPath) missing.push('asr-model');
+
+  return { dirs, tools, vad, missing, whisperCliOrigin, asrModelPath, warnings };
+}
+
+/**
+ * **whisper.cpp 这一次要加载哪个权重。** 全仓唯一一份解析。
+ *
+ * ## 为什么它被从 `resolveToolchain()` 里提出来（#90 C）
+ *
+ * 它原来是 `resolveToolchain()` 中间的一段，也就是说**只在启动时、以及
+ * `main.ts` 那个 800ms debounce 重建时算一次**，结果固化进 `bundle.modelPath`。
+ *
+ * 于是用户在重转面板里换掉模型（`AsrModelPicker` 的 `onChange` 立刻
+ * `POST /api/models/activate`，daemon await 落盘 `active.json` 再返回 200）之后
+ * **立刻**提交，跑的仍然是旧模型 —— 200 已经回来了，而 pipeline 还要 800ms
+ * 之后才重建。**用户选了 B，这一次跑的是 A，而且没有任何一处会报错。**
+ *
+ * 提成函数之后，转写 runner 可以在**起任务那一刻**再问一次（见
+ * `jobs/runners/transcribe.ts`），从而完全绕开那个窗口。
+ *
+ * ## ⚠️ 提取的边界（Manager 2026-08-12 划的，逐字遵守）
+ *
+ * **只有「模型路径解析」这一件事被挪动。** 引擎选择（`pickEngine` /
+ * `selectEngine`）、后端探测（`buildCandidates` → `engine.isAvailable()`）、
+ * 引擎构造**一行都没动**，本函数也不碰它们中的任何一个。
+ *
+ * 这条边界画得出来，靠的是一个**必须写下来的事实**（我第一次判断时把它看反了）：
+ *
+ * > **`/api/models/activate` 只写 `active.json`，而 `active.json` 只影响
+ * > whisper.cpp 这一条路径。**
+ *
+ * sherpa 与 paraformer 的模型是 `resolveStreamingModel()` /
+ * `resolveOfflineChineseModel()` 按**安装记录的文件形状**挑的
+ * （`looksLikeTransducer` / `looksLikeParaformer`），**从不读 `active.json`**。
+ * 而引擎能不能用只取决于二进制在不在（`WhisperCppEngine.isAvailable()` 全文
+ * 只有一句 `isExecutable(tools.whisperCli)`）。
+ * ⇒ **激活一个模型，改变不了 `engines[]`、`candidates`，也改变不了选出哪个引擎。**
+ * 它能改变的只有这里返回的这一个路径。
+ *
+ * 反过来说：`buildPipeline()` 里 `enginePaths` 那张表**先选引擎、再查模型**
+ * （`setup.ts` 那段注释与 `transcribe.ts:314-320` 都把顺序钉死了：
+ * 「模型能不能用取决于谁来加载它，在知道引擎之前这个问题没有答案」），
+ * 所以现读模型也不会反过来动摇引擎。
+ *
+ * ## 为什么是提取，而不是在 runner 里再写一遍
+ *
+ * 这条链有**三级优先序 + 一道闸**（env > `active.json` > `by-name` 扫描，
+ * 再加 ASR≠VAD）。在 runner 里只重抄中间那一级，就会得到
+ * **两个「哪个模型」的答案**，而且只在少见路径上分叉 ——
+ * 正是这个仓一整周在拆的形状。一份实现，两个调用点。
+ */
+export async function resolveWhisperModelPath(
+  modelsDir: string,
+  /**
+   * `tools.vadModel`；用于最后那道 ASR≠VAD 闸。不知道就传 undefined。
+   *
+   * ⚠️ 类型是 `string | null | undefined` 而下面的判断写的是 `!== undefined` ——
+   * 这是**原样保留**提取前的表达式（`ToolPaths.vadModel` 本来就是 `string | null`，
+   * 那个 `!== undefined` 一直没对上类型）。两者行为逐字相同：`vadModel` 为 null 时，
+   * 下面 `modelPath === vadModel` 在 `modelPath !== null` 的前提下必然为 false。
+   * 这次只搬位置、不趁机改语义 —— 要改也该单独一条，别混进一个竞态修复里。
+   */
+  vadModel: string | null | undefined,
+  env: NodeJS.ProcessEnv,
+): Promise<{ path: string | null; warnings: string[] }> {
+  const warnings: string[] = [];
   /*
    * ASR 模型：**读安装记录**，不猜文件名（ADR-014 ②）。
    *
@@ -476,16 +546,16 @@ export async function resolveToolchain(paths: AppPaths): Promise<ToolchainResolu
    * 顺序：环境变量（开发用）> active.json 指定的 > 任意已装且完好的 > by-name 扫描。
    */
   /*
-   * ★ `engine: 'whisper.cpp'` —— 这一行就是本轮那个用户可见故障的修复点。
+   * ★ `engine: 'whisper.cpp'` —— 这一行就是那个用户可见故障的修复点。
    *
-   * 这里解析出来的 `modelPath` 最终交给下面构造的 `WhisperCppEngine`，
+   * 这里解析出来的 `modelPath` 最终交给 `WhisperCppEngine`，
    * 所以这个查询**从来就该带上引擎**。在此之前它只问 role，于是
    * `active.json.asr` 只要指着一个 sherpa 的模型（"先装的赢"，而流式模型
    * 恰恰是 F3 必须先装的那个），whisper.cpp 就会拿到一个 ONNX 转换器 →
    * `error: failed to initialize whisper context` → **录完音之后产品自己发起的
    * 那次转写必然失败**，三平台一字不差（`[CI 实测]` run 31248849155）。
    */
-  const asrInstalled = await resolveActiveModel(dirs.modelsDir, {
+  const asrInstalled = await resolveActiveModel(modelsDir, {
     role: 'asr',
     engine: 'whisper.cpp',
   });
@@ -494,7 +564,7 @@ export async function resolveToolchain(paths: AppPaths): Promise<ToolchainResolu
     asrInstalled?.path ??
     // **排除 silero**：没有安装记录时这里会把 by-name/asr 下任意 .bin 交出去，
     // 而 VAD 权重历史上就躺在这个桶里 —— 不排除就等于把 VAD 当 ASR 发出去。
-    scanByName(dirs.modelsDir, 'asr', { ext: '.bin', excludes: 'silero' }) ??
+    scanByName(modelsDir, 'asr', { ext: '.bin', excludes: 'silero' }) ??
     null;
 
   /*
@@ -504,18 +574,17 @@ export async function resolveToolchain(paths: AppPaths): Promise<ToolchainResolu
    * 而 pipeline.missing 是空的、健康检查全绿，用户只看到转写结果是垃圾。
    * 与其相信上面每一层都挑对了，不如在这里直接否掉这个不可能成立的状态：
    * 宁可显式报 `asr-model` 缺失（用户会看到安装引导），也不要绿着跑错模型。
+   *
+   * ⚠️ 它跟着解析一起搬过来了 —— **不搬这道闸，起任务时现读就等于绕过它**，
+   * 那正是"修一个 bug、开一个更安静的口子"。
    */
-  const asrIsActuallyVad =
-    modelPath !== null && tools.vadModel !== undefined && modelPath === tools.vadModel;
+  const asrIsActuallyVad = modelPath !== null && vadModel !== undefined && modelPath === vadModel;
   if (asrIsActuallyVad) {
     warnings.push(
       `⚠️ ASR 模型解析到了 VAD 权重（${modelPath}）—— 拒绝使用，按"未安装 ASR 模型"处理`,
     );
   }
-  const asrModelPath = asrIsActuallyVad ? null : modelPath;
-  if (!asrModelPath) missing.push('asr-model');
-
-  return { dirs, tools, vad, missing, whisperCliOrigin, asrModelPath, warnings };
+  return { path: asrIsActuallyVad ? null : modelPath, warnings };
 }
 
 export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {

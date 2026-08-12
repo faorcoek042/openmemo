@@ -387,6 +387,25 @@ const MUTATIONS = [
     why: '首屏每个 query 都比握手快 ⇒ 一片 401 ⇒ 满屏"未认证，请重新打开应用"',
   },
 
+  /* ── P90C：换了模型立刻提交，跑的必须是用户选的那个（#90 第 3 条 C 那半） ── */
+  {
+    id: 'P90C-stale-model-on-submit',
+    pkg: 'apps/daemon',
+    artifact: 'dist/jobs/runners/transcribe.js',
+    tests: ['dist/jobs/mergeWords.test.js'],
+    /*
+     * 锚点钉在**那个 if 的条件**上，不钉注释、不钉行号。产物里唯一。
+     * 变异体把条件恒假 —— 也就是把 runner 恢复成"只信流水线快照"，
+     * 正是 #90 C 之前的样子（模型路径固化在 800ms debounce 那次重建里）。
+     */
+    find: "    if (!overrideModelPath && baselineEngine === 'whisper.cpp') {",
+    replace: '    if (false) {',
+    why:
+      '用户在重转面板里换掉模型、立刻点开始，这一次跑的仍是**上一个模型** —— ' +
+      'activate 的 200 已经回来（active.json 确实落盘了），而流水线要 800ms 之后才重建。' +
+      '他选了 B、跑了 A，全程零报错，只能靠转写质量去猜',
+  },
+
   /* ── P90：进度刻度。#90 闸门在真浏览器里抓到的，形状是"一个数字两种量纲" ── */
   {
     id: 'P90-progress-scale-x100',

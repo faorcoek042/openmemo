@@ -48,6 +48,7 @@ import {
   MODEL_FORMAT_BY_ENGINE,
   resolveModelById,
 } from '../../pipeline/modelStore.js';
+import { resolveWhisperModelPath } from '../../pipeline/setup.js';
 import { noteVadRuntimeFailure, noteVadRuntimeSuccess } from '../../pipeline/vadStatus.js';
 
 export interface TranscribeRunnerDeps {
@@ -74,6 +75,13 @@ export interface TranscribeRunnerDeps {
   readonly modelId: string;
   /** 解析用户显式指定的 modelId 需要它。 */
   readonly modelsDir: string;
+  /**
+   * `bundle.tools.vadModel`。只用于起任务时现读模型路径的那道 ASR≠VAD 闸。
+   *
+   * ⚠️ 它**可以**是流水线快照里的值：VAD 权重不受 `/api/models/activate` 影响
+   * （那条走的是 role=`vad` 的另一次解析），所以这里不需要也跟着现读。
+   */
+  readonly vadModelPath: string | null;
 }
 
 export interface TranscribePayload {
@@ -345,6 +353,58 @@ export async function runTranscribeJob(
       );
     }
   }
+  /*
+   * ★★ #90 C —— **起任务时再问一次「现在激活的是哪个模型」。**
+   *
+   * ## 修的是什么（一个用户选了 B、这一次跑了 A 的竞态）
+   *
+   * 重转面板里那颗模型选择器是 `onChange` **立刻** `POST /api/models/activate`
+   * （不是提交时）。daemon 那侧 await 落盘 `active.json` 之后才返回 200，
+   * 所以"存下来了"这件事是可信的。
+   *
+   * **不可信的是"生效了"**：转写用的模型路径来自 `bundle.modelPath`，而 `bundle`
+   * 只在 `main.ts` 那个 **800ms debounce** 的 SSE 监听里重建（而且是滑动窗口，
+   * 连发事件会不断把它往后推）。于是 200 已经回来、用户立刻点「开始重跑」——
+   * 这一次跑的仍是**旧模型**。审计实测过这一幕（情形 C）：`active.json` 已改，
+   * 跑的还是上一个。**全程没有任何一处会报错**，用户只能靠转写质量去猜。
+   *
+   * ## 为什么修在这里
+   *
+   * `deps.modelsDir` 来自 `paths.modelsDir`（`main.ts` 建 handler 时传的），
+   * **不经过 bundle** —— 所以这一问天然绕开那个 800ms 窗口。
+   * 而 `resolveWhisperModelPath()` 就是 `buildPipeline()` 启动时用的**同一份实现**
+   * （env > active.json > by-name 扫描，外加 ASR≠VAD 那道闸），
+   * 不是在这里重抄一遍优先序 —— 重抄就会有两个"哪个模型"的答案。
+   *
+   * ## 边界（Manager 划的，逐字遵守）
+   *
+   * **只有模型路径这一件事现读。** 引擎仍然由上面的 `baseline` 定（`pickEngine` /
+   * `selectEngine` / `candidates` / 后端探测一行未动），而且**顺序仍然是引擎在前**：
+   * 这一问带着 `'whisper.cpp'` 这个已知引擎去解析，与 `payload.modelId` 那一支同构。
+   *
+   * 三个不做的：
+   *  · **只在 whisper.cpp 这一档现读。** `active.json` 只影响它 —— sherpa 与
+   *    paraformer 的模型是按安装记录的文件形状挑的（`looksLikeTransducer` /
+   *    `looksLikeParaformer`），**从不读 `active.json`**，激活改不动它们。
+   *  · **用户显式指定了 `modelId` 就不插手**：那是更强的意图，上面已经解析过了。
+   *  · **解析不出来就不覆盖**，让它照旧回落到 `pipelineFor` 的默认值 ——
+   *    现读是为了更准，不是为了多一条能把人挡在门外的新失败路径。
+   */
+  if (!overrideModelPath && baselineEngine === 'whisper.cpp') {
+    const fresh = await resolveWhisperModelPath(deps.modelsDir, deps.vadModelPath, process.env);
+    for (const w of fresh.warnings) console.warn(`[transcribe] ${w}`);
+    if (fresh.path) {
+      // 只在**和快照不一样**时说话：一样的时候这条日志每次转写都会刷，等于噪音。
+      if (fresh.path !== baseline.modelPath) {
+        console.log(
+          `[transcribe] 激活的模型比流水线快照新，按现在激活的那个跑：${fresh.path}` +
+            `（快照里是 ${baseline.modelPath ?? '无'}）`,
+        );
+      }
+      overrideModelPath = fresh.path;
+    }
+  }
+
   const chosenEarly = deps.pipelineFor(payload.language ?? undefined, {
     ...(payload.engineId ? { engineId: payload.engineId } : {}),
     ...(overrideModelPath ? { modelPath: overrideModelPath } : {}),
