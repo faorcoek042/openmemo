@@ -3,10 +3,12 @@ import { ChevronRight, Cpu, HardDrive, MemoryStick, MonitorCog } from 'lucide-re
 import type {
   AdvisoryUndeterminedReason,
   Backend,
+  BackendUnavailableKind,
   GetHardwareResponse,
   HardwareInfo,
 } from '@openmemo/shared';
 import { BackendChip } from '../../../components/common/BackendChip';
+import { Emphasis } from '../../../components/common/Emphasis';
 import { formatBytes } from '../../../lib/format/bytes';
 
 /**
@@ -58,6 +60,44 @@ export function gpuEnumerationHappened(hw: HardwareInfo): boolean {
  */
 const UNDETERMINED_REASON_KEYS: Readonly<Record<AdvisoryUndeterminedReason, string>> = {
   virtual_adapter: 'runtime.hw.gpuVirtualUndetermined',
+};
+
+/**
+ * 「为什么这些后端不可用」里，每一种成因该说哪句话。**总 `Record`** ——
+ * `BackendUnavailableKind` 加一档而没人给它写话，**编译当场就红**。
+ *
+ * ── ★★ #105 ③：为什么这一格非有不可 ─────────────────────────────────────────────
+ *
+ * `[闸门实测 2026-08-12，中文界面]` 这个列表逐字是：
+ * ```
+ * cuda：backend package not installed
+ * vulkan：backend package not installed
+ * rocm：backend package not installed
+ * ```
+ * ——**中文界面上的三条英文机器串**。而同一个列表里 metal / coreml 两条是完整中文、
+ * 而且说得对（闸门逐条确认过）：那两条走的是 `platform_unsupported`，**它早就有词条**。
+ * 所以这不是"没想到要翻译"，是 T-196 只给当时手上那一档写了人话，
+ * 其余六档一直原样甩英文原文。
+ *
+ * ── 判据为什么是 `unavailableKind` 而不是那句英文 ──────────────────────────────
+ * 与本文件下方 T-196 那段同一条：`unavailableReason` 是给排障的人看的**英文自由文本**，
+ * `manager.ts` 一共会写 7 种，改一个词、加一个括号，任何按文案分档的写法都会静默失效。
+ * `BACKEND_UNAVAILABLE_KINDS` 正是 daemon 为此单列的机器可判字段，这里逐格读它。
+ *
+ * ── ⚠️ 「package not installed」还有第二个毛病，也在这里治 ──────────────────────
+ * 那句话**召唤的动作在这台机器上到不了**：唯一对应的包就在同页折叠区里、按钮是禁用的。
+ * 所以 `not_installed` 那一格不能只是把英文译成中文，它必须回答「那我现在能做什么」——
+ * 指向那张卡片，并预先说清"如果那里也是灰的，卡片上写着为什么"。
+ * **一句翻得很好但通向死路的话，和一句英文一样没用。**
+ */
+const UNAVAILABLE_REASON_KEYS: Readonly<Record<BackendUnavailableKind, string>> = {
+  platform_unsupported: 'runtime.hw.reasonPlatformUnsupported',
+  probe_failed: 'runtime.hw.reasonProbeFailed',
+  disabled_after_failures: 'runtime.hw.reasonDisabledAfterFailures',
+  not_installed: 'runtime.hw.reasonNotInstalled',
+  not_probed_this_run: 'runtime.hw.reasonNotProbedThisRun',
+  no_usable_devices: 'runtime.hw.reasonNoUsableDevices',
+  enumerated_none: 'runtime.hw.reasonEnumeratedNone',
 };
 
 /**
@@ -371,15 +411,25 @@ export function HardwareCard({
               .filter((b) => !b.available && b.unavailableReason)
               .map((b) => (
                 <li key={b.id} className="text-[11px] break-all text-ink-muted">
-                  {b.unavailableKind === 'platform_unsupported' ? (
+                  {/*
+                    ★★ #105 ③：**七档全都说人话，不只 `platform_unsupported` 那一档。**
+
+                    这里原来是个二分：认得 `platform_unsupported` 就给中文 + 英文尾巴，
+                    其余**一律**把 `unavailableReason` 原样甩出去 ——
+                    于是中文界面上出现 `cuda：backend package not installed` 三条。
+
+                    「装不了」和「还没装」**永远不合并成一句好听的话** ——
+                    它们对用户是两条不同的指令，后者让他去装，前者照做就是去找一个
+                    不可能存在的包。现在七档各说各的（见 `UNAVAILABLE_REASON_KEYS`）。
+
+                    `unavailableKind` 缺失（老 daemon）时**照旧只显示英文原文** ——
+                    我们不知道它是哪一档，替它挑一句中文就是编。
+                  */}
+                  {b.unavailableKind != null ? (
                     <>
-                      {/*
-                        说人话的那一句。**永远不和「未安装」合并成一句好听的中文** ——
-                        「装不了」和「还没装」对用户是两条不同的指令，后者让他去装，
-                        前者照着做就是去找一个不可能存在的包。
-                      */}
-                      <span>
-                        {b.id}：{t('runtime.hw.reasonPlatformUnsupported')}
+                      <span data-testid={`hw-unavailable-${b.id}`}>
+                        {b.id}：
+                        <Emphasis text={t(UNAVAILABLE_REASON_KEYS[b.unavailableKind])} />
                       </span>
                       {/* 英文原文降级成技术尾巴（D-05 §5.3）：排障拿得到，但不占正文 */}
                       <span className="mt-0.5 block font-mono opacity-70">

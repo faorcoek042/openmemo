@@ -107,20 +107,45 @@ function inapplicableKind(
 
   const status = state.hardware.backends.find((b) => b.id === pack.backend);
   /*
-   * ★ T-168：**结构判据排在字符串嗅探前面。**
+   * ★★ #105 ②：判据是 **`probed`，只是 `probed`** —— 不再要求"而且它已经装了"。
    *
-   * 包已装、而这次探测根本没加载它（`backendDir` 单值，一次只扫一个包的目录）——
-   * 这是"没测过"，不是"不支持"。此前这里会落到最后一行报 `unsupported`，
-   * 于是一个完好的 Vulkan 包在网页上被标成「本机不支持」。
+   * ── 现场（闸门 2026-08-12，真浏览器，同一屏，两句都在视口内）──────────────────
+   *   · 硬件卡：「**还没查过** —— 这轮没有加载任何能枚举显卡的后端」
+   *   · 折叠区 Vulkan（linux/x64）：芯片「本机不支持」+「**已经探测过了**：
+   *     这台机器上没有这个后端可用的设备。」
+   * 同一次探测，两句互相打脸。
    *
-   * 用 `probed` 而不是继续加正则：判据必须独立于文案。下面那条正则要求
-   * `unavailableReason` 里逐字出现某句英文，改一个词它就哑掉且不会有人发现
-   * （T-144「产出方与使用方用了两个名字」的同一族）。
+   * ── 为什么是这一行 ────────────────────────────────────────────────────────────
+   * 上一版多了 `status.installed === true &&` 这半句。于是 **包没装** 的路径绕过了
+   * 结构判据，落到下面那条正则上；而没装时 `manager.ts` 给的理由是
+   * `backend package not installed`（`kind: 'not_installed'`）——**它不含 `probe` 这个词**，
+   * 正则不命中 ⇒ 一路掉到 `return 'unsupported'`。
+   *
+   * 可"包没装"恰恰是**最不可能测出结论的**那一档：probe 只能枚举**其 ggml 库已经在
+   * 扫描目录里**的后端（`applicability.ts` 文件头的 T-160 那一段写的就是这件事），
+   * 库就在包里。**没装 ⇒ 没有库 ⇒ 什么都没枚举**，这是"没测过"的教科书定义，
+   * 而我们把它说成了"测过了，你的机器不支持"。
+   *
+   * `applicability.ts:247` 那段注释早就把话说全了 ——
+   * > `probed === false` is exactly "no verdict exists", which is the same epistemic
+   * > state as "not installed" and must break the cycle the same way.
+   * 那里已经这么做了（环打破器读的就是 `installed !== true || probed !== true`），
+   * **只有这里还留着 `installed &&` 那半句**。现在两处对齐。
+   *
+   * ── 它同时把「同屏两句话」钉成了一条结构蕴含 ──────────────────────────────────
+   * `HardwareCard.gpuEnumerationHappened()` 说"查过了"的条件是
+   * 「**某个能枚举显卡的后端** `probed === true`」。而 vulkan/cuda/rocm/metal
+   * 都在那张 `BACKEND_CAN_ENUMERATE_GPU` 表里为 `true`。于是：
+   *
+   *   这里说 `unsupported` ⟹ 该后端 `probed === true` ⟹ 硬件卡不可能说「还没查过」。
+   *
+   * **两句话现在真的来自同一次探测的同一个字段**，不是两处各自"看起来对"。
+   *
+   * ⚠️ 正则那一行**删掉了，不是忘了**：probe 没跑成时 `manager.ts` 给每个后端写的
+   * `probed` 都是 false，上面这一行必然先命中 —— 它已经不可达。留着一条永远不会
+   * 触发的字符串嗅探，比没有更坏（它看起来像还有人在守，其实没有）。
    */
-  if (status?.installed === true && status.probed !== true) return 'undetermined';
-  const why = status?.unavailableReason ?? '';
-  // runtime 在 probe 没跑成时给的就是这句 —— 它代表"未知"，不代表"不支持"
-  if (/probe did not complete|probe skipped/i.test(why)) return 'undetermined';
+  if (status?.probed !== true) return 'undetermined';
   return 'unsupported';
 }
 

@@ -265,12 +265,55 @@ export function BackendPackCard({
         {t('runtime.pack.uninstall')}
       </Button>
     </>
+  ) : status === 'other-platform' ? (
+    /*
+     * ★★ #105 ④：**这一档一颗按钮都不渲染。**
+     *
+     * `[闸门实测 2026-08-12，真浏览器]` 折叠区那 20 颗按钮逐颗量出来是：
+     * `innerText` 空（里面只有一个 `<svg>`）、`title === null`、`aria-label === null`、
+     * `disabled`、`pointer-events: none` —— **鼠标、键盘、读屏三条路都拿不到它是什么。**
+     * 一个既说不出自己是谁、又永远点不动的控件，唯一的作用是占位和制造疑惑。
+     *
+     * 而 D-21 §6 对这一档写得很死：
+     *   | 本平台不适用 | 什么都不用做，也没有任何东西可装 | **不该引导安装。不许报体积** |
+     * 它当时的行文却是「安装 5.3 MB」「安装 678 MB」——**两条都违反**：
+     * 「安装」是引导，「678 MB」是体积。（唯一的缓解是按钮确实 disabled、整段默认折叠。）
+     *
+     * 所以给的是一句**说得出话的正文**，不是一颗说不出话的按钮：
+     * 「适用于 darwin/arm64，与本机不符 —— 装不了，你也不需要做任何事。」
+     * 它同时答了本轮的总判据：用户读完知道下一步是什么（**什么都不用做**），
+     * 而且那句"什么都不用做"是**明说出来的**，不是靠"没有按钮"去暗示。
+     *
+     * ⚠️ 措辞从 `pack.os` / `pack.arch` **两个结构字段**拼，不复用 daemon 那句
+     * `inapplicableReason`（`applicability.ts` 里写死的中文「适用于 X/Y，与本机不符」）——
+     * 那句话在英文界面上是中文，与 #105 ① 是同一个毛病。
+     */
+    <p
+      className="max-w-[16rem] text-right text-[11px] text-ink-muted"
+      data-testid={`backend-other-platform-${pack.id}`}
+    >
+      {t('runtime.pack.otherPlatformNote', { os: pack.os, arch: pack.arch })}
+    </p>
   ) : (
     <Button
       size="sm"
       variant={showRecommended ? 'primary' : 'secondary'}
       disabled={installing || !pack.applicable || pendingCi}
-      title={pendingCi ? t('runtime.pack.pendingCiTitle') : undefined}
+      /*
+       * ★ #105 ④：**灰掉的按钮也得说得出自己是什么。**
+       * 这里原来只有 `pendingCi` 那一档给 `title`，其余禁用档一律 `undefined` ——
+       * 而按钮的可见文字在 `disabled` + 默认折叠的 `<details>` 里，读屏与
+       * `innerText` 都拿不到。`title` 在 disabled 元素上仍然提供可访问名
+       * （tooltip 因 `pointer-events:none` 弹不出来，但 AT 读得到），所以这一格是
+       * **兜底，不是装饰**。落点仍然是 daemon 的原话优先、档位文案兜底。
+       */
+      title={
+        pendingCi
+          ? t('runtime.pack.pendingCiTitle')
+          : !pack.applicable
+            ? (pack.inapplicableReason ?? t(`runtime.kind.${status}`, { defaultValue: '' }))
+            : undefined
+      }
       onClick={() => onInstall(pack.id)}
       data-testid={`backend-install-${pack.id}`}
     >
@@ -340,13 +383,23 @@ export function BackendPackCard({
             {pack.installed && pack.installedEngineVersion != null
               ? pack.installedEngineVersion
               : pack.engineVersion}{' '}
-            · {pack.os}/{pack.arch} ·{' '}
-            {formatBytes(
-              pack.installed && pack.installedSizeBytes != null
-                ? pack.installedSizeBytes
-                : pack.totalSizeBytes,
-              locale,
-            )}
+            · {pack.os}/{pack.arch}
+            {/*
+              ★ #105 ④：**「本平台不适用」这一档不报体积。**
+              D-21 §6 那一行写得很死（「不该引导安装。**不许报体积**」），
+              而这里此前是无条件渲染的 —— 于是即使按钮已经拿掉，
+              一个永远装不上的包仍然在报「678 MB」。一个数字**本身**就是一句邀请：
+              读到它的人会去找那颗按钮，而这一档根本没有下一步。
+              `os/arch` 留着，那是这一档**唯一**有信息量的东西（它说明这包是给谁的）。
+            */}
+            {status === 'other-platform'
+              ? null
+              : ` · ${formatBytes(
+                  pack.installed && pack.installedSizeBytes != null
+                    ? pack.installedSizeBytes
+                    : pack.totalSizeBytes,
+                  locale,
+                )}`}
             {pack.installed &&
             pack.updateAvailable === true &&
             pack.installedEngineVersion != null ? (
@@ -373,7 +426,15 @@ export function BackendPackCard({
               {t(`runtime.kind.${status}`)}
             </p>
           ) : null}
-          {!pack.applicable && pack.inapplicableReason ? (
+          {/*
+            ⚠️ #105 ④：`other-platform` 这一档**不再渲染 daemon 那句原话**。
+            `applicability.ts` 对它写死的是一句中文（「适用于 {os}/{arch}，与本机不符」）——
+            在英文界面上就是一句中文，而这一档它是**唯一**的正文。
+            同一句事实已经由右侧 `otherPlatformNote` 从 `pack.os` / `pack.arch` 说了，
+            两份语言都有。其余档位的 `inapplicableReason` 照旧透传：那些是
+            "具体卡在哪"的技术原话（探针路径、驱动版本），不是我们能替它翻译的东西。
+          */}
+          {!pack.applicable && status !== 'other-platform' && pack.inapplicableReason ? (
             <p className="mt-1 text-xs text-ink-muted">{pack.inapplicableReason}</p>
           ) : null}
           {/*

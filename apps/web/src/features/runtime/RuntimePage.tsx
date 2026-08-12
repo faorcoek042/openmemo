@@ -93,7 +93,32 @@ export default function RuntimePage() {
    * 且摘要行写清楚折了几个、为什么折。
    */
   const applicable = useMemo(() => sorted.filter((p) => p.applicable), [sorted]);
-  const inapplicable = useMemo(() => sorted.filter((p) => !p.applicable), [sorted]);
+  /**
+   * ★★ #105 ②b：**折叠区拆成两个，因为它原来那句摘要对其中一半是假的。**
+   *
+   * `[闸门实测 2026-08-12]` 一个 **linux/x64** 的 Vulkan 包，在一台 **linux/x64**
+   * 机器上，被收进了标题写着「不适用于这台机器的 20 个包（**面向其它系统 / 架构**）」
+   * 的那一段。它不是别的平台的包 —— 它就是给这台机器编的，只是这一轮没测出结论。
+   *
+   * 这是 D-21 §6 那条「⚠️ 反方向」判据的原样重演：**「没有可用设备」≠「平台上不可能」**
+   * （那一条举的例子是「一台 Mac 上的 CoreML 被标成『其它平台』」）。只不过这次
+   * 假话不在芯片上，而在**装着它的那个抽屉的标题上** —— 抽屉默认折叠，
+   * 于是那句标题往往是用户对这一批包读到的**唯一**一句话。
+   *
+   * 判据用 `inapplicableKind === 'platform'`（daemon 的结构字段），
+   * **不在这里重算 `pack.os !== 本机 os`** —— 那会变成第二份"这是不是别的平台的包"
+   * 的判断，两份必然漂移（本仓已为此立过账）。字段缺失（老 daemon）时落进
+   * 「本机平台但装不上」那一档：那一档的措辞对两种情况都成立，
+   * 而「面向其它系统」是一句**具体的**话，没有依据就不许说。
+   */
+  const otherPlatform = useMemo(
+    () => sorted.filter((p) => !p.applicable && p.inapplicableKind === 'platform'),
+    [sorted],
+  );
+  const localBlocked = useMemo(
+    () => sorted.filter((p) => !p.applicable && p.inapplicableKind !== 'platform'),
+    [sorted],
+  );
 
   const anyFailed = (installed.data?.packs ?? []).some((p) => p.selfTest && !p.selfTest.passed);
 
@@ -283,18 +308,44 @@ export default function RuntimePage() {
 
         {applicable.map(renderPack)}
 
-        {/* 不适用于本机的：折叠，但说清楚折了几个 —— 隐藏而不说明会让人以为目录不全 */}
-        {inapplicable.length > 0 ? (
+        {/*
+          本机平台的包、但现在装不上：**单独一个抽屉**。
+          它们和下面那批不是一回事 —— 这些是给这台机器编的，用户对它们**有可能有下一步**
+          （每张卡上写着是「还没测过」还是「测过了，确认不支持」）。
+          把它们和「别的平台的包」压进同一个抽屉，那句摘要对它们就是假的（#105 ②b）。
+        */}
+        {localBlocked.length > 0 ? (
           <details className="group rounded-lg border border-line bg-surface-1">
             <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-xs text-ink-secondary hover:text-ink">
               <ChevronRight
                 className="size-3.5 transition-transform group-open:rotate-90"
                 aria-hidden
               />
-              {t('runtime.inapplicableSummary', { n: inapplicable.length })}
+              <span data-testid="runtime-local-blocked-summary">
+                {t('runtime.localBlockedSummary', { n: localBlocked.length })}
+              </span>
+              <span className="text-ink-muted">{t('runtime.localBlockedHint')}</span>
+            </summary>
+            <div className="space-y-3 border-t border-line p-3">{localBlocked.map(renderPack)}</div>
+          </details>
+        ) : null}
+
+        {/* 别的平台的包：折叠，但说清楚折了几个 —— 隐藏而不说明会让人以为目录不全 */}
+        {otherPlatform.length > 0 ? (
+          <details className="group rounded-lg border border-line bg-surface-1">
+            <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-xs text-ink-secondary hover:text-ink">
+              <ChevronRight
+                className="size-3.5 transition-transform group-open:rotate-90"
+                aria-hidden
+              />
+              <span data-testid="runtime-other-platform-summary">
+                {t('runtime.inapplicableSummary', { n: otherPlatform.length })}
+              </span>
               <span className="text-ink-muted">{t('runtime.inapplicableHint')}</span>
             </summary>
-            <div className="space-y-3 border-t border-line p-3">{inapplicable.map(renderPack)}</div>
+            <div className="space-y-3 border-t border-line p-3">
+              {otherPlatform.map(renderPack)}
+            </div>
           </details>
         ) : null}
       </section>

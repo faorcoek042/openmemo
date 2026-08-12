@@ -6,8 +6,10 @@ import { upstreamHasNewer, upstreamKnownVersion } from '@openmemo/shared';
 
 import { Banner } from '../../components/common/Banner';
 import { Button } from '../../components/common/Button';
+import { Emphasis } from '../../components/common/Emphasis';
 import { EmptyState } from '../../components/common/EmptyState';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
+import { localizedName } from '../../lib/format/localized';
 import { useCheckUpdatesMutation, useComponentsQuery, useUpdateComponentMutation } from './api';
 import { ComponentCard } from './components/ComponentCard';
 
@@ -24,7 +26,21 @@ import { ComponentCard } from './components/ComponentCard';
  *   静默更新会让用户的转写结果莫名其妙变化，而且无从追查。
  */
 export default function ComponentsPage() {
-  const { i18n } = useTranslation();
+  /*
+   * ★★ #105 ①：**这一页此前一个 `t(` 都没有。**
+   *
+   * `[闸门实测 2026-08-12，真浏览器]` 同一个上下文里 `documentElement.lang === 'en'`、
+   * 侧栏英文、`/runtime` 英文，而这一页的 `h1` 是「组件与来源」、芯片是
+   * 「未检测 / 已安装 / 目录钉定 / 本机已装 / 上游最新」、正文整片中文。
+   *
+   * 代价不是"不好看"：这一轮在**这一页上**做的三件事 ——
+   * `a2c2e28`（说不出已装版本时不许号召重下 145 MB）、`af25cf3`（止血两句假话）、
+   * `23a8471`（删掉那颗承诺了服务端装不到的版本号的按钮）——
+   * **在英文界面上等于不存在**。修的是同一批话能不能被读到。
+   *
+   * ⚠️ 英文那份是**真英文**，不是把中文搬进 `en.json`（`79cc117` 立的规矩）。
+   */
+  const { t, i18n } = useTranslation();
   const locale = i18n.language;
 
   // 首屏不查上游：先把本地清单和来源渲染出来，联网检测是用户点出来的额外动作。
@@ -86,14 +102,26 @@ export default function ComponentsPage() {
      * 走到这个分支时判据（`pinRelation()`）已经保证是 `differs-from-pinned` ⇒ `known`；
      * 兜底那句只是为了让这个函数是全的，不是给哨兵留的后门。
      */
-    const from = c.installedVersion.kind === 'known' ? c.installedVersion.version : '当前这一份';
+    const from =
+      c.installedVersion.kind === 'known'
+        ? c.installedVersion.version
+        : t('components.currentCopy');
+    /*
+     * ⚠️ 这两句话此前**连名字都取错了语言**：插的是 `c.displayNameZh`，
+     * 于是英文界面上的确认框里会冒出组件的中文名。`localizedName()` 是仓里
+     * 早就有的那一个（T-135 给卡片接上过），这里跟着用同一份。
+     * ⚠️ 词条里**不带 `**` 标记**：`window.confirm` 渲染不了 `<strong>`，
+     * 带了就是把裸星号送到用户眼前（`Emphasis` 文件头记的正是这条）。
+     */
+    const name = localizedName(locale, c);
     const ok = window.confirm(
       installing
-        ? `安装「${c.displayNameZh}」${c.pinnedVersion}？\n\n` +
-            `· 从 ${c.provenance.repoUrl} 的官方发布页下载\n` +
-            `· 会校验 sha256，校验不通过不会安装\n` +
-            `· 许可证：${c.provenance.license}\n\n` +
-            `确定现在安装吗？`
+        ? t('components.confirmInstall', {
+            name,
+            version: c.pinnedVersion,
+            repo: c.provenance.repoUrl,
+            license: c.provenance.license,
+          })
         : /*
            * ⚠️ **最后一行原本写着「旧版本会保留，出问题可以一键回滚」。那是假的**（T-157 ②）。
            *
@@ -125,13 +153,7 @@ export default function ComponentsPage() {
            * 「上游更新了」那件事已经挪到卡片上单独说（`component-upstream-newer-*`），
            * 不再冒充成一个可点的动作。
            */
-          `将「${c.displayNameZh}」从 ${from} 换成目录钉定的 ${c.pinnedVersion}？\n\n` +
-            `· 装的是**目录钉死的那一版**，不是上游最新版 —— 目录这一版的 sha256 是我们本机独立复算过的\n` +
-            `· 会重新下载并校验 sha256，校验不通过不会安装\n` +
-            `· 上游换版本可能改变行为（例如文件格式变化），不一定完全兼容\n` +
-            `· 下载或校验失败时，当前版本原地不动（新版本校验通过后才替换）\n` +
-            `· ⚠️ 但更新成功后**无法回退到旧版本** —— 清单里只钉了一个版本\n\n` +
-            `确定现在更新吗？`,
+          t('components.confirmUpdate', { name, from, version: c.pinnedVersion }),
     );
     if (!ok) return;
     setBusyId(c.id);
@@ -147,15 +169,17 @@ export default function ComponentsPage() {
     <div className="mx-auto w-full max-w-4xl space-y-4 p-4" data-testid="components-page">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold text-ink">组件与来源</h1>
-          <p className="mt-0.5 text-xs text-ink-secondary">
-            每个组件从哪里下载、钉在哪个版本、上游有没有新版本 —— 全部可查。
-          </p>
+          <h1 className="text-lg font-semibold text-ink">{t('components.title')}</h1>
+          <p className="mt-0.5 text-xs text-ink-secondary">{t('components.intro')}</p>
         </div>
         <div className="flex items-center gap-2">
           {sweep?.kind === 'attempted' ? (
             <span className="text-[11px] text-ink-muted" data-testid="components-sweep-at">
-              {new Date(sweep.at).toLocaleString(locale)} 检查（问到 {sweep.reached}/{sweep.total}）
+              {t('components.sweepAt', {
+                at: new Date(sweep.at).toLocaleString(locale),
+                reached: sweep.reached,
+                total: sweep.total,
+              })}
             </span>
           ) : null}
           <Button
@@ -169,7 +193,7 @@ export default function ComponentsPage() {
               className={check.isPending ? 'size-3.5 animate-spin' : 'size-3.5'}
               aria-hidden
             />
-            {check.isPending ? '检查中…' : '检查更新'}
+            {check.isPending ? t('components.checking') : t('components.checkUpdates')}
           </Button>
         </div>
       </header>
@@ -178,16 +202,17 @@ export default function ComponentsPage() {
       <Banner
         tone="info"
         icon={<ShieldCheck className="size-4" aria-hidden />}
-        title="不会自动更新"
-        detail="检测到新版本只会在这里提示。是否更新、什么时候更新，由你决定 —— 上游换版本可能改变行为。"
+        title={t('components.noAutoUpdateTitle')}
+        detail={t('components.noAutoUpdateDetail')}
       />
 
       {updatable.length > 0 ? (
         <Banner
           tone="warning"
-          title={`${updatable.length} 个组件有新版本`}
+          title={t('components.updatableTitle', { n: updatable.length })}
+          /* 名字也走 `localizedName()` —— 这条横幅原来固定念 `displayNameZh` */
           detail={updatable
-            .map((c) => `${c.displayNameZh} → ${upstreamKnownVersion(c.upstreamCheck)}`)
+            .map((c) => `${localizedName(locale, c)} → ${upstreamKnownVersion(c.upstreamCheck)}`)
             .join(' · ')}
         />
       ) : null}
@@ -210,8 +235,8 @@ export default function ComponentsPage() {
         <Banner
           tone="warning"
           icon={<CircleHelp className="size-4" aria-hidden />}
-          title={`没能问到任何上游（0/${sweep.total}）`}
-          detail="下面这些组件的上游状态是「不知道」，不代表已是最新。已安装的组件不受影响，照常可用。"
+          title={t('components.sweepNoneTitle', { total: sweep.total })}
+          detail={t('components.sweepNoneDetail')}
         />
       ) : null}
 
@@ -230,13 +255,10 @@ export default function ComponentsPage() {
         `update` 从头到尾不在那份名单上 —— 这是**当时漏的**，不是刻意留的。
       */}
       {update.isError ? <ErrorBlock error={update.error} /> : null}
-      {q.isLoading ? <p className="text-xs text-ink-muted">正在读取组件清单…</p> : null}
+      {q.isLoading ? <p className="text-xs text-ink-muted">{t('components.loading')}</p> : null}
 
       {!q.isLoading && components.length === 0 ? (
-        <EmptyState
-          title="还没有登记任何组件"
-          hint="组件清单来自 vendor/manifests/components.json。"
-        />
+        <EmptyState title={t('components.emptyTitle')} hint={t('components.emptyHint')} />
       ) : null}
 
       <section className="space-y-3">
@@ -262,21 +284,19 @@ export default function ComponentsPage() {
           而"等 3 分钟"才是可执行的。措辞的唯一来源是
           `packages/downloader/src/upstream.ts` 的 `httpFailureReason()`。
       */}
+      {/*
+        ⚠️ 强调段从写死的 `<strong>` 换成词条里的 `**…**` + `<Emphasis>`（T-129b 那条路）：
+        JSX 里穿插 `<strong>` 的句子**没法整句翻译** —— 断句、语序、哪一段该重读，
+        每种语言都不一样，拆成三段各自翻译只会拼出一句谁都不会说的话。
+      */}
       {sweep?.kind === 'attempted' && failed.length > 0 ? (
         <p className="text-[11px] text-ink-muted" data-testid="components-failed-note">
-          {failed.length} 个组件这次没问到上游（可能是限流、超时或网络问题）。
-          每张卡片上写着各自的原因 ——{' '}
-          <strong className="text-ink-secondary">重试的时机以那句为准</strong>
-          ：配额用尽时它会说明还要等多久，那种情况下立刻再点是白点。查不到不影响安装和使用。
+          <Emphasis text={t('components.failedNote', { n: failed.length })} />
         </p>
       ) : null}
       {sweep?.kind === 'attempted' && indeterminate.length > 0 ? (
         <p className="text-[11px] text-ink-muted" data-testid="components-indeterminate-note">
-          {indeterminate.length} 个组件问到了上游版本号，但它和目录钉的
-          <strong className="text-ink-secondary">不是同一套编号，排不出先后</strong>
-          —— 这是「不知道」，不是「已是最新」，而且
-          <strong className="text-ink-secondary">重试也不会变好</strong>
-          。多半是那个仓同时在发好几族 tag，而我们没写明要哪一族。
+          <Emphasis text={t('components.indeterminateNote', { n: indeterminate.length })} />
         </p>
       ) : null}
     </div>
