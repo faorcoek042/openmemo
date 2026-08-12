@@ -35,6 +35,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 
+import { GGML_FILE_MAGIC } from '@openmemo/downloader';
 import { openAppDatabase } from '@openmemo/db';
 import type { TranscribePipeline, TranscriptSegment, WordTimestamp } from '@openmemo/pipeline';
 
@@ -100,13 +101,22 @@ interface RerunOutcome {
     edited_at: number | null;
   }>;
   dataDir: string;
+  /**
+   * runner 真正交给引擎的那个权重路径（#90 C 用它当判据）。
+   * 从 `pipeline.run(req)` 的入参上取 —— 那是**最后一米**，
+   * 中间任何一层想错了都会在这里现形。
+   */
+  modelPathSeen: string | null;
 }
 
 /**
  * 建一份「流式草稿」（用户改过其中一段），再跑一次**带 `mergeWithTranscriptId` 的**
  * 离线重跑 job —— 这正是 F3 停止录音后自动排的那个 job，以及 F5「重新转写」走的那条路。
  */
-async function rerunOverDraft(): Promise<RerunOutcome> {
+async function rerunOverDraft(
+  /** #90 C：给一个**真有模型**的 modelsDir，让"起任务时现读"这条路真的走起来。 */
+  opts: { modelsDir?: string } = {},
+): Promise<RerunOutcome> {
   const dataDir = await mkdtemp(join(tmpdir(), 'om-merge-'));
   made.push(dataDir);
   const mediaRoot = join(dataDir, 'media');
@@ -177,10 +187,13 @@ async function rerunOverDraft(): Promise<RerunOutcome> {
   await writeFile(inputWav, tinyWav());
   await writeFile(normalizedWav, tinyWav());
 
+  let modelPathSeen: string | null = null;
   const fakePipeline = {
     async run(req: {
+      modelPath?: string;
       onChunkComplete?: (c: unknown, s: TranscriptSegment[]) => Promise<void>;
     }): Promise<unknown> {
+      modelPathSeen = req.modelPath ?? null;
       // runner 靠 onChunkComplete 把段落落库 —— 走真路径，不直接写表
       await req.onChunkComplete?.({ index: 0 }, rerunSegments);
       return {
@@ -231,7 +244,10 @@ async function rerunOverDraft(): Promise<RerunOutcome> {
       mediaRoot,
       dataDir,
       modelId: 'ggml-base-q5_1.bin',
-      modelsDir: join(dataDir, 'models'),
+      modelsDir: opts.modelsDir ?? join(dataDir, 'models'),
+      // #90 C：这份夹具的 modelsDir 是空目录，起任务时现读解析不出模型，
+      // 于是 override 不生效、照旧走 pipelineFor 的返回值 —— 本组用例的判据不变。
+      vadModelPath: null,
     },
     new AbortController().signal,
   );
@@ -256,7 +272,7 @@ async function rerunOverDraft(): Promise<RerunOutcome> {
     )
     .all({ t: active.id });
 
-  return { rows, dataDir };
+  return { rows, dataDir, modelPathSeen };
 }
 
 describe('重新转写 / F3 离线重跑：词级时间戳不许被合并抹掉（T-164 ④）', () => {
@@ -319,5 +335,79 @@ describe('重新转写 / F3 离线重跑：词级时间戳不许被合并抹掉�
     );
     const words = JSON.parse(replaced.words_json ?? 'null') as WordTimestamp[] | null;
     assert.equal(words?.length, 2, '替换进来的段没有带上重跑那份词表');
+  });
+});
+
+/**
+ * ★★ #90 C —— **换了模型立刻提交，这一次跑的必须是用户选的那个。**
+ *
+ * 这一条守的是**接线**，不是解析。解析那半由
+ * `pipeline/activeModelRace.test.ts` 钉着；这里问的是另一个问题：
+ * **runner 到底有没有去问。**
+ *
+ * 之所以放在这个文件里：它是全仓唯一真正驱动 `runTranscribeJob()` 的用例，
+ * 手搭一套 DB + repos + queue + 假引擎的第二份没有意义。
+ * 判据取在**最后一米** —— `pipeline.run(req).modelPath`，也就是真正交给引擎的那个值。
+ *
+ * ## 为什么这条会红
+ *
+ * `deps.pipelineFor()` 在这份夹具里**永远返回 A**（模拟 800ms 窗口里那个陈旧快照），
+ * 而 `active.json` 已经指向 B。抽掉 `transcribe.ts` 里那段现读 →
+ * runner 拿到的就是 A → 当场红。这正是审计实测到的那一幕：
+ * **用户选了 B，这一次跑的是 A，而且全程零报错。**
+ */
+describe('★★ #90 C runner 起任务时要去问一次「现在激活的是哪个模型」', () => {
+  const GGML_MAGIC = (() => {
+    const b = Buffer.alloc(4);
+    b.writeUInt32LE(GGML_FILE_MAGIC, 0);
+    return b;
+  })();
+
+  /** 两个都能被 whisper.cpp 加载的模型；`active.json` 指向 B。 */
+  async function twoModels(): Promise<{ dir: string; b: string }> {
+    const { mkdir, writeFile: wf } = await import('node:fs/promises');
+    const dir = await mkdtemp(join(tmpdir(), 'om-cmodels-'));
+    made.push(dir);
+    await mkdir(join(dir, 'by-name', 'asr'), { recursive: true });
+    await mkdir(join(dir, 'manifests', 'asr'), { recursive: true });
+    const a = join(dir, 'by-name', 'asr', 'ggml-tiny-q5_1.bin');
+    const b = join(dir, 'by-name', 'asr', 'ggml-large-v3-q5_1.bin');
+    for (const [id, f] of [
+      ['asr/whisper-tiny-q5_1', a],
+      ['asr/whisper-large-v3-q5_1', b],
+    ] as const) {
+      await wf(f, Buffer.concat([GGML_MAGIC, Buffer.alloc(64)]));
+      await wf(
+        join(dir, 'manifests', 'asr', `${id.replace(/\//g, '_')}.json`),
+        JSON.stringify({
+          id,
+          role: 'asr',
+          integrity: 'ok',
+          files: [{ role: 'weights', path: f }],
+        }),
+      );
+    }
+    // 用户刚在选择器里点的那一下 = 只写了这个文件，什么都还没重建
+    await wf(join(dir, 'active.json'), JSON.stringify({ asr: 'asr/whisper-large-v3-q5_1' }));
+    return { dir, b };
+  }
+
+  it('★★ 流水线快照还停在旧模型上时，跑的必须是 active.json 里那个新的', async () => {
+    const { dir, b } = await twoModels();
+    const out = await rerunOverDraft({ modelsDir: dir });
+    assert.equal(
+      out.modelPathSeen,
+      b,
+      '引擎收到的仍是流水线快照里那个旧模型 —— 用户在面板里换成了另一个、' +
+        '立刻点了开始，而这一次跑的还是上一个，且没有任何一处会报错',
+    );
+  });
+
+  it('★ modelsDir 里什么都没有时，照旧用流水线给的那个（现读不许变成新的失败路径）', async () => {
+    const out = await rerunOverDraft();
+    assert.ok(
+      out.modelPathSeen?.endsWith('ggml-base-q5_1.bin'),
+      `解析不出来就该老老实实回落到 pipelineFor 的值，实际：${out.modelPathSeen}`,
+    );
   });
 });

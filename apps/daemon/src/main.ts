@@ -1067,6 +1067,12 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
           pipelineFor: (lang, override) => getBundle().pipelineFor(lang, override),
           modelsDir: paths.modelsDir,
           modelPath: getBundle().modelPath,
+          /*
+           * ASR≠VAD 那道闸要用它。取快照值是**刻意的**：VAD 权重不受
+           * `/api/models/activate` 影响（那条走 role=`vad` 的另一次解析），
+           * 所以它不需要跟着 #90 C 一起现读。
+           */
+          vadModelPath: getBundle().tools.vadModel,
           mediaRoot: paths.mediaDir,
           dataDir: paths.dataDir,
           /*
