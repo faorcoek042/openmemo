@@ -60,7 +60,7 @@ import { toolRefreshMessage } from './bootstrap/tool-refresh-message.js';
 import { resolveExtensionDir } from './pipeline/modelStore.js';
 import { vadHealth } from './pipeline/vadStatus.js';
 import { Scheduler, type JobHandler } from './jobs/scheduler.js';
-import { runTranscribeJob } from './jobs/runners/transcribe.js';
+import { runModelId, runTranscribeJob } from './jobs/runners/transcribe.js';
 import { createNoteRoutes } from './http/rest/notes.js';
 import { createContentRoutes } from './http/rest/content.js';
 import { createRuntimeRoutes } from './http/rest/hardware.js';
@@ -1069,7 +1069,16 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
           modelPath: getBundle().modelPath,
           mediaRoot: paths.mediaDir,
           dataDir: paths.dataDir,
-          modelId: getBundle().modelPath?.split('/').pop() ?? 'unknown',
+          /*
+           * ⚠️ 这只是**兜底名**（"连这次要加载哪个权重都不知道"时才会用到），
+           * 不是"这次用的模型"。它一度被 `transcribe.started` 当成后者广播出去过。
+           *
+           * 走 `runModelId()` 而不是 `.split('/').pop()`：后者在 **Windows** 上
+           * 原样返回整条绝对路径（那里的分隔符是 `\`），于是"模型名"变成一串
+           * 本机路径。同一个坑在 `isWithinImportRoots` 上付过账 ——
+           * 而它在 Linux 上测不出来。
+           */
+          modelId: runModelId(undefined, getBundle().modelPath ?? null, 'unknown'),
         },
         signal,
       ),

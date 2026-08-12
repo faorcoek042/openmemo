@@ -135,6 +135,76 @@ describe('#98 笔记状态的读时自愈', () => {
     assert.equal(noteFailureOf(digestOf(queue, noteId)), null);
   });
 
+  /*
+   * ── 三档「任务已经不在跑了，而笔记还写着处理中」──────────────────────────────
+   *
+   * 与上面那条 `failed` **形状完全相同**，只是没人撞见过。
+   * `[核过]` 修之前它们全都静默落进 `processing`，而列表行同时渲染
+   * `NoteProgressLine`（按 job 状态说话）—— 于是同一行里芯片写「处理中」、
+   * 紧挨着写「暂时无法继续」/「已暂停」。`cancelled` 更糟：终态 ⇒ 进度行返回 null，
+   * **整行只剩那句「处理中」，零解释**。
+   */
+  it('★★ 用户取消之后 → 报 cancelled，**不许**并进 failed', () => {
+    const { queue, noteId, jobId } = noteWithJob();
+    queue.markCancelled(jobId);
+
+    assert.equal(
+      effectiveNoteStatus('processing', digestOf(queue, noteId)),
+      'cancelled',
+      '库里存着 processing、任务已被取消 —— 「处理中」是这一族里最后一句没修的谎话',
+    );
+    /*
+     * 取消不是失败：`lastFailure` 必须是 null。
+     * 并进 failed 能少改三处，代价是详情页给他一颗「重试」当主按钮 ——
+     * 而他要的是「重新转写」（可换引擎/模型），两者不是一回事。
+     */
+    assert.equal(
+      noteFailureOf(digestOf(queue, noteId)),
+      null,
+      '把用户自己按的取消说成「失败」，还配一颗重试按钮 = 对他刚做过的动作说错话',
+    );
+  });
+
+  it('★★ blocked → 报 blocked（等条件 ≠ 失败，也 ≠ 处理中）', () => {
+    const { queue, noteId, jobId } = noteWithJob();
+    queue.block(jobId, 'MISSING_ASR_MODEL', { action: 'installModel' });
+
+    assert.equal(
+      effectiveNoteStatus('processing', digestOf(queue, noteId)),
+      'blocked',
+      '「在等你装模型」和「正在处理」是两件事；而报 failed 会把可修复的等待态说成终局',
+    );
+    assert.equal(noteFailureOf(digestOf(queue, noteId)), null);
+  });
+
+  it('★ paused → 报 paused（没在跑，也没结束）', () => {
+    const { queue, noteId, jobId } = noteWithJob();
+    queue.pauseQueued(jobId);
+
+    assert.equal(effectiveNoteStatus('processing', digestOf(queue, noteId)), 'paused');
+    assert.equal(noteFailureOf(digestOf(queue, noteId)), null);
+  });
+
+  it('★ 取消之后重新排一条 → 立刻回到 processing（终态不许粘住）', () => {
+    const { queue, noteId, jobId } = noteWithJob();
+    queue.markCancelled(jobId);
+    assert.equal(effectiveNoteStatus('processing', digestOf(queue, noteId)), 'cancelled');
+
+    queue.enqueue({ type: 'transcribe', lane: 'gpu.asr', noteId });
+    assert.equal(effectiveNoteStatus('processing', digestOf(queue, noteId)), 'processing');
+  });
+
+  it('★ 已经转写好的笔记，被取消的重跑不许把它打回「已取消」', () => {
+    const { queue, noteId, jobId } = noteWithJob();
+    queue.markCancelled(jobId);
+
+    assert.equal(
+      effectiveNoteStatus('ready', digestOf(queue, noteId)),
+      'ready',
+      '稿子确实还在、读得了 —— 只从 processing 升档这条规矩对新增的三档同样成立',
+    );
+  });
+
   it('★ 重跑一次就翻篇 —— 旧的失败不许一直挂在页面上', () => {
     const { queue, noteId, jobId } = noteWithJob();
     queue.fail(jobId, 'RUNNER_ERROR', 'boom', false);

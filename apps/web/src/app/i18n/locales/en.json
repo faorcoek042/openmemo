@@ -78,6 +78,8 @@
     "failureTranscribe": "Transcription failed for this note",
     "failureMindmap": "Mind map generation failed for this note",
     "failureHint": "It will not run again on its own. You can retry it right away; if the reason above points at a missing component or a file that has moved, fix that first — otherwise the retry will fail the same way.",
+    "cancelledTitle": "This transcription was cancelled",
+    "cancelledHint": "Whatever finished is kept. To carry on, use \"Re-transcribe\" on the transcript panel below — it resumes from the chunks already done instead of starting over, and lets you switch engine or model on the way.",
     "partial": "Partial",
     "untitled": "Untitled",
     "addTag": "Add tag",
