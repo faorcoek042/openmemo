@@ -297,6 +297,28 @@ check('真仓库上跑 CLI → 绿', () => {
   if (r.status !== 0) throw new Error(`真仓库上是红的：\n${(r.stdout ?? '') + (r.stderr ?? '')}`);
 });
 
+/**
+ * ★ 反方向那条 ⓘ **必须每一轮都出现在 CI 输出里**，连同「为什么刻意不红」的理由。
+ *
+ * 这条用例钉的是一个**真的发生过**的失效：上一版把那行挂在「有欠账才打印」上，
+ * 于是三份表恰好同集 ⇒ **它一次都没在 CI 日志里出现过**。
+ * 一条只在出事那天才第一次露面的提示，等于要求读到它的人当场从零理解它 ——
+ * 而他手上正拿着一个待修的 bug，最省事的做法就是把这道门改成红。
+ *
+ * ⚠️ 断言的是**输出**，不是"代码里有没有那个字符串"：
+ * 「写在脚本里」和「CI 日志里看得见」是两件事，这一整批门治的正是这类差别。
+ */
+check('★ 反方向的 ⓘ 与「为什么不红」的理由，每一轮都必须打印出来', () => {
+  const r = spawnSync(process.execPath, [SCRIPT], { cwd: REPO, encoding: 'utf8' });
+  const out = (r.stdout ?? '') + (r.stderr ?? '');
+  if (!/ⓘ daemon 发得出/.test(out)) {
+    throw new Error(`反方向那行 ⓘ 没打印 —— 它又变成"只在出事那天才露面"了：\n${out}`);
+  }
+  if (!/反方向不判红/.test(out) || !/代价不对称/.test(out)) {
+    throw new Error(`「为什么刻意不红」的理由没打印 —— 下一个人会顺手把它改成红：\n${out}`);
+  }
+});
+
 check('④ 自指：被测脚本自己的注释也过了这道门', () => {
   const rel = 'scripts/ci/check-comment-facts.mjs';
   const text = readRepo(rel);
