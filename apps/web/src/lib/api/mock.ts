@@ -12,6 +12,15 @@
  */
 
 import type { AnyJob, ListNotesResponse, PipelineJob } from '@openmemo/shared';
+/*
+ * ★ #90 顺带记一笔：本文件的 `emit()` 签名是
+ * `(type: string, payload: Record<string, unknown>)` —— **不受契约类型约束**。
+ * 所以 mock 发的 `job.progress` 一直与 `JobProgressEvent` 对不上（它发的字段名当时
+ * 就叫 `progress`，而契约那时叫 `pct`，还多带 jobType/noteUid/stepIndex/stepCount）。
+ * 契约把刻度升格成 `ProgressReading` 之后名字碰巧对上了，但**形状仍要走唯一构造点**，
+ * 否则 mock 模式下每条进度都会被 `fractionOf()` 判成「报不出进度」、画成脉动条。
+ */
+import { progressFraction } from '@openmemo/shared';
 
 import { bus } from '../events/bus';
 import { ApiError, registerMockFetcher, type ApiOptions, type Fetcher } from './client';
@@ -382,7 +391,7 @@ function runImportPipeline(note: MockNote, jobId: string) {
         state: 'running',
         jobType: 'import.url',
         noteUid: note.uid,
-        progress,
+        progress: progressFraction(progress, 'mock:step'),
         step: name,
         completedBytes: null,
         totalBytes: null,
@@ -500,7 +509,7 @@ function runImportPipeline(note: MockNote, jobId: string) {
           state: 'running',
           jobType: 'import.url',
           noteUid: note.uid,
-          progress: 0.5 + 0.45 * ((c + 1) / totalChunks),
+          progress: progressFraction(0.5 + 0.45 * ((c + 1) / totalChunks), 'mock:asr'),
           step: 'asr',
           stepIndex: 5,
           stepCount: 7,
@@ -541,7 +550,7 @@ function runImportPipeline(note: MockNote, jobId: string) {
       state: 'succeeded',
       jobType: 'import.url',
       noteUid: note.uid,
-      progress: 1,
+      progress: progressFraction(1, 'mock:done'),
       step: null,
       completedBytes: null,
       totalBytes: null,

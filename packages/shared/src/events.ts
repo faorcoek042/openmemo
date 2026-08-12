@@ -22,11 +22,16 @@
  * D-05 did not specify payloads, so these are derived from D-01's F1–F5 sequence
  * diagrams (`job.progress {step:"fetch", pct}`, `job.done {noteUid}`) and D-05 §4.1/4.3/4.6.
  * Derivation is recorded in coordination/inbox/model-mgmt.md for `architect` to confirm.
+ *
+ * ⚠️ That `pct` in the D-01 quote above is the historical name and D-01 spells it two
+ * incompatible ways (`"pct":0.29` at §F1 vs `pct:5` at §F4) — which is exactly how the
+ * scale drift got in. The field is now `progress: ProgressReading`; see `progress.ts`.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import type { AnyJob, JobError, JobState } from './jobs.js';
 import type { HardwareInfo } from './hardware.js';
+import type { ProgressReading } from './progress.js';
 
 export const SSE_EVENT_TYPES = [
   // ── job lifecycle (generic: downloads AND pipeline jobs) ──
@@ -127,8 +132,18 @@ export interface JobProgressEvent extends SseEventBase {
   jobId: string;
   /** Machine-readable stage, e.g. "probe" | "fetch" | "demux" | "vad" | "asr" | "structure". */
   step: string | null;
-  /** 0..1. Null when the step genuinely cannot report a fraction. */
-  pct: number | null;
+  /**
+   * How far along — **with its scale attached**. See `progress.ts` for the full story.
+   *
+   * This used to be `pct: number | null` and two producers disagreed about what the
+   * number meant: the pipeline one wrote `fraction * 100`, the download one wrote
+   * `completed / total`. Every consumer assumed 0..1, so the first producer pinned
+   * every running transcription at "100%" while `GET /api/jobs` still said `0.728`.
+   * `number | null` cannot tell `0.9` from `90`. This type can — and the
+   * `'unreportable'` arm carries **no number at all**, so `?? 0` ("we don't know"
+   * rendered as "0%", the other half of the same bug) is unwritable too.
+   */
+  progress: ProgressReading;
   /** Byte counters, for transfer-shaped steps. Null for compute-shaped steps. */
   completedBytes: number | null;
   totalBytes: number | null;

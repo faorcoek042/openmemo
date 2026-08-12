@@ -43,6 +43,8 @@ import {
   missingEndpointList,
   registerMockFetcher,
 } from './client';
+import { CONTRACT_VERSION } from '@openmemo/shared';
+
 import type { ApiOptions } from './client';
 import { resetConnection } from './connect';
 import { surfaceState } from './surfaces';
@@ -101,7 +103,13 @@ async function freshHandshake(): Promise<void> {
       'GET /api/health',
       {
         status: 200,
-        body: { version: '0', instanceId: 'i', contractVersion: 1, port: 80, pid: 1 },
+        body: {
+          version: '0',
+          instanceId: 'i',
+          contractVersion: CONTRACT_VERSION,
+          port: 80,
+          pid: 1,
+        },
       },
     ],
     ['POST /api/auth/session', { status: 200, body: { csrf: CSRF } }],

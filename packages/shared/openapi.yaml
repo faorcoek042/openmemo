@@ -1997,6 +1997,37 @@ components:
             job:
               $ref: '#/components/schemas/DownloadJob'
 
+    ProgressReading:
+      description: >-
+        How far along, with its scale attached. Replaced `pct: number | null` in
+        CONTRACT_VERSION 2 (#90): two producers had disagreed about what that bare
+        number meant — the pipeline one sent `fraction * 100`, the download one sent
+        `completed / total` — and every consumer assumed 0..1, which pinned every
+        running transcription at "100%" while the REST API still said 0.728.
+        The `unreportable` arm deliberately carries NO value field, so "we do not
+        know" cannot be defaulted to 0%. See packages/shared/src/progress.ts.
+      oneOf:
+        - type: object
+          required: [kind, value]
+          properties:
+            kind:
+              type: string
+              enum: [fraction]
+            value:
+              type: number
+              minimum: 0
+              maximum: 1
+              description: The only transportable scale. 0..1, never 0..100.
+        - type: object
+          required: [kind, reason]
+          properties:
+            kind:
+              type: string
+              enum: [unreportable]
+            reason:
+              type: string
+              enum: [no_denominator, step_announcement, not_a_number, out_of_range]
+
     JobProgressEvent:
       description: >-
         Generic progress, used by downloads AND pipeline jobs. Never written into a
@@ -2005,7 +2036,7 @@ components:
         - $ref: '#/components/schemas/SseEventBase'
         - type: object
           required:
-            [type, jobId, step, pct, completedBytes, totalBytes, speedBps, etaSeconds, state]
+            [type, jobId, step, progress, completedBytes, totalBytes, speedBps, etaSeconds, state]
           properties:
             type:
               type: string
@@ -2015,9 +2046,8 @@ components:
             step:
               type: [string, 'null']
               description: Machine-readable stage, e.g. "probe" | "fetch" | "demux" | "vad" | "asr" | "structure".
-            pct:
-              type: [number, 'null']
-              description: 0..1. Null when the step genuinely cannot report a fraction.
+            progress:
+              $ref: '#/components/schemas/ProgressReading'
             completedBytes:
               type: [integer, 'null']
               format: int64

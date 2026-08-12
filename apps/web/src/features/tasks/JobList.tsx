@@ -14,6 +14,7 @@ import { Button } from '../../components/common/Button';
 import { ListRow } from '../../components/common/ListRow';
 import { approxEta } from '../../lib/format/time';
 import { formatBytes, formatPercent, formatSpeed } from '../../lib/format/bytes';
+import { blockedReasonKey } from '../../lib/jobs/blockedReason';
 import { groupJobs, jobResultHref, useJobActions, type MergedJob } from './api';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 
@@ -32,6 +33,14 @@ export function JobList({ jobs, compact }: { jobs: MergedJob[]; compact?: boolea
     [t('tasks.waiting'), g.waiting],
     [t('tasks.needsAttention'), g.attention],
     [t('tasks.done'), g.done],
+    /*
+     * ★ #90 ②：「已取消」自己一组。
+     *
+     * 它以前和 `succeeded` 同挂在「已完成」下面，于是屏幕上出现
+     * 「**已完成 (1)**」底下一行芯片写「**已取消**」—— 组标题和芯片当场打架。
+     * **芯片是对的**：一件你亲手取消掉的事，不该被算进"完成了的事"。
+     */
+    [t('tasks.cancelled'), g.cancelled],
   ];
 
   return (
@@ -72,6 +81,19 @@ function JobRow({ job, compact }: { job: MergedJob; compact?: boolean }) {
   const running = job.state === 'running' || job.state === 'leased';
   const verifying = running && job.step === 'verifying';
   const attention = job.state === 'blocked' || job.state === 'failed';
+  /*
+   * ★ #90 ②：**等待态不许穿"进度"的衣服。**
+   *
+   * 这个判据以前写的是 `job.state !== 'succeeded' && job.state !== 'cancelled'` ——
+   * 一张**排除法**的名单，于是 `blocked` 一路漏进来，画出
+   * 「左边空白 · 右边 0% · 下面一条空槽」：一条永远不会自己动的进度条。
+   * `blocked` 不是"跑到了 0%"，它是**还没开始，而且在等一个前置条件**。
+   *
+   * ⚠️ 同一个判据在本文件里出现过两次：下面取消按钮那条**当年已被 T-198 收敛成
+   * `TERMINAL_JOB_STATES`**，而这一条当时没跟着改（那次的教训注释就写在下面）。
+   * 这回两条一起收敛掉，别留第三次 —— 改成**正向名单**：只有真的在推进的状态才有刻度。
+   */
+  const hasScale = running || job.state === 'queued' || job.state === 'paused';
   /*
    * 四个动作共用一个渲染点：同一时刻用户只可能点了其中一个，
    * 分成四个 ErrorBlock 只会让同一条错误有四个出处（D-10 §3.2 R3）。
@@ -146,7 +168,7 @@ function JobRow({ job, compact }: { job: MergedJob; compact?: boolean }) {
         />
       }
     >
-      {job.state !== 'succeeded' && job.state !== 'cancelled' ? (
+      {hasScale ? (
         <>
           <div className="mt-1.5 mb-1.5 flex items-center justify-between gap-2 text-xs text-ink-muted">
             <span className="min-w-0 truncate">
@@ -177,6 +199,27 @@ function JobRow({ job, compact }: { job: MergedJob; compact?: boolean }) {
         <p className="mt-1.5 text-xs text-critical">
           {i18n.language.startsWith('zh') ? job.error.messageZh : job.error.message}
           {job.maxAttempts > 0 ? ` (${job.attempt}/${job.maxAttempts})` : ''}
+        </p>
+      ) : null}
+
+      {/*
+       * ★ #90 ②：**挂起的任务必须说出它在等什么。**
+       *
+       * 这一行以前的全部内容是「标题 / 需要处理 / 0% / [重试] [取消]」——
+       * 上面那个 `job.error` 三元对 blocked **恒为 false**（`queue.block()` 只写
+       * `blocked_code`，从不写 `error_*`），于是原因一个字都没有。
+       * 而**同一条任务**在笔记页上说得出「还没有可用的语言模型。去设置里填一个
+       * API Key，或者装一个本地模型。」—— 料一直在，只是 `mergeOne()` 把它扔了。
+       *
+       * 文案走 `lib/jobs/blockedReason.ts` 那张**唯一的**表（Manager 裁决：不建第二张），
+       * 所以这里显示的原因与笔记页**逐字相同**。
+       *
+       * 用 `progress.state.blocked` + 原因**成对**渲染，与 `NoteProgressLine` 同一个搭配 ——
+       * 「状态」和「在等什么」是两件事，只给其中一件用户都不知道该干嘛。
+       */}
+      {job.state === 'blocked' ? (
+        <p className="mt-1.5 text-xs text-ink-secondary" data-testid="job-blocked-reason">
+          {t(blockedReasonKey(job.blockedCode))}
         </p>
       ) : null}
 

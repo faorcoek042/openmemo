@@ -32,6 +32,7 @@ import { after, describe, it } from 'node:test';
 
 import { SESSION_COOKIE, CSRF_HEADER } from '../http/auth.js';
 import { startDaemon } from '../main.js';
+import { jobProgressEvent } from './events.js';
 
 const ROOT = mkdtempSync(join(tmpdir(), 'omjobs-'));
 after(() => rmSync(ROOT, { recursive: true, force: true }));
@@ -275,6 +276,77 @@ describe('T-130 流水线 job 的事件链路（真 daemon + 真 SSE + 真上传
       );
     } finally {
       await d.stop();
+    }
+  });
+});
+
+/* ═══════════ #90 —— 进度帧的刻度：这一行曾让每条转写任务都显示 100% ═══════════ */
+
+/**
+ * ## 它守的是哪一行
+ *
+ * `jobProgressEvent()` 曾经这样写：
+ *
+ *     // 契约用的是百分比（0..100），不是 0..1 的小数 —— 又一处只有类型检查才拦得住的差异
+ *     pct: Math.round(Math.max(0, Math.min(1, p.fraction)) * 100),
+ *
+ * 那句注释两处都说反了：契约（`packages/shared/src/events.ts` 与 `openapi.yaml`）
+ * 写的是 **0..1**，同一字段的另一个生产者（下载队列桥接）发的也是 `completed/total`。
+ * 于是**同一个字段名承载了两种刻度**，而 web 全按 0–1 用：
+ * `formatPercent` 把 `90` 夹成 `1` ⇒ **每一条正在跑的任务都显示「100%」**，
+ * 而同一时刻 `GET /api/jobs` 说 `0.728`。
+ *
+ * 审计在真浏览器里量到过这条的反证：用 playwright 掐断 `/api/events`，
+ * 同一条任务立刻显示 **71%**（服务端的 0–1 值）；实时通道一恢复就跳回 **100%**。
+ *
+ * ## 抽掉修法必须当场红
+ *
+ * 把这个函数改回 `* 100`（或任何别的换算）→ 下面第一条立刻红。
+ * 这正是 `scripts/mutation-check.mjs` 里 `P90-progress-scale-x100` 那条变异做的事。
+ *
+ * ⚠️ 为什么不在上面那个"真 daemon + 真 SSE"的用例里断言：
+ * 那个场景是**没装模型 ⇒ 必然 blocked**，一条 `job.progress` 都不会发。
+ * 要在真流上抓到进度帧就得跑一次真转写（要模型、要几十秒）——
+ * 而被测的那条不变量是**纯函数级**的，端到端跑一遍并不会让它更真。
+ */
+describe('#90 jobProgressEvent —— 进度帧的刻度只有 0..1 一种', () => {
+  it('★★ fraction 0.9 发出去仍然是 0.9 —— 不许乘 100', () => {
+    const ev = jobProgressEvent('01J8TESTTESTTESTTESTTESTTE', {
+      step: 'asr',
+      fraction: 0.9,
+      state: 'running',
+    });
+    assert.equal(
+      ev.progress.kind,
+      'fraction',
+      '进度帧必须带一个有刻度的读数（这一步明明报得出进度）',
+    );
+    assert.equal(
+      ev.progress.kind === 'fraction' ? ev.progress.value : null,
+      0.9,
+      '刻度在发出去的路上被改写了 —— 这就是 #90：' +
+        'web 全按 0..1 用，收到 90 会被 formatPercent 夹成 100%，' +
+        '一条 40 分钟的音频转到 90% 时用户看到的是「100%」，然后以为卡死了',
+    );
+  });
+
+  it('★ 0.728（审计实测的那个值）不许显示成满格', () => {
+    const ev = jobProgressEvent('01J8TESTTESTTESTTESTTESTTE', {
+      step: 'asr',
+      fraction: 0.728,
+      state: 'running',
+    });
+    assert.equal(ev.progress.kind === 'fraction' ? ev.progress.value : null, 0.728);
+  });
+
+  it('两端点原样通过（别把修法做成"什么都不信"）', () => {
+    for (const f of [0, 1]) {
+      const ev = jobProgressEvent('01J8TESTTESTTESTTESTTESTTE', {
+        step: 'asr',
+        fraction: f,
+        state: 'running',
+      });
+      assert.equal(ev.progress.kind === 'fraction' ? ev.progress.value : null, f);
     }
   });
 });

@@ -25,9 +25,11 @@ import { ErrorBlock } from '../../components/common/ErrorBlock';
  * | `blocked` / `paused` | ❌ | `NoteProgressLine` **已经**在页顶如实说了（「暂时无法继续」/「已暂停」） |
  *
  * 后两档不在这里再说一遍是**判断**：同一件事在同一屏说两遍，用户会当成两回事。
- * ⚠️ 但那条进度行只说「状态」，不说 `blockedCode` 的**原因**，也不给动作 ——
- * 那是同一族的另一个缺口（`GenerateMindmapButton` 已经用 `mindmap.blocked.*`
- * 那张表解过导图那一半）。本轮**没做**，已单独报出。
+ *
+ * ✅ **上一版这里写着「那条进度行只说状态、不说 `blockedCode` 的原因……本轮没做」——
+ * 那件事已经做了**（#90 ②）。原因文案收敛进 `lib/jobs/blockedReason.ts` 那张唯一的表，
+ * `NoteProgressLine` 与 `/tasks` 的挂起行现在**说的是逐字相同的一句**。
+ * （那段旧注释还提到 `mindmap.blocked.*`，那个命名空间也已经搬成 `jobBlocked.*`。）
  *
  * ## 两档的动作刻意不同
  *
@@ -152,10 +154,29 @@ export function NoteStateNotice({
             {t('notes.cancelledTitle')}
           </p>
           {/*
-            这句话里那个"接着跑"**是真的**，不是安慰：
-            runner 的 `resumableTranscript()` 会复用未跑完的稿并跳过已完成的 chunk
-            （D-01 §4.5，`rest/content.ts` 的重跑通道正是走这条路）。
-            如果哪天它不再成立，这句话要跟着删 —— 别留一句描述了不存在行为的提示。
+            ── ★ #90 ③④：这句话原本在一句里承诺了两件**互斥**的事 ──────────────
+            原文是：「…它会接着已完成的片段跑，**不从头再来**，**还能顺便换引擎或模型**。」
+            审计三次实测：
+              A 同引擎同模型 → 承诺成立 ✓（daemon 打印 `[transcribe] 续跑 transcript=…`）
+              B 在同一面板里换模型再提交 → **承诺破了**：新建 transcript、
+                没有任何续跑日志、从 chunk 0 重来，旧稿被丢。
+            根因在 `repos.resumableTranscript()`：它按 `engine_id` **且** `model_id` 匹配。
+
+            Manager 裁决：**不做跨模型 resume**（那是个功能，而且语义可疑 ——
+            两个模型产出的分片能不能拼在一起本身要论证），**改这句话**。
+            所以现在它把两种情况分开说，并给出"为什么"。
+            ⚠️ 如果哪天真做了跨模型续跑，这句话要跟着改回来 ——
+            别留一句描述了不存在行为的提示，也别留一句低估了真实能力的提示。
+
+            ── ★ #90 ④：一段都没落时不许说"已经跑完的部分保留着" ──────────────
+            实测：导入后 2 秒取消，`segmentCount=0`，横幅照说那句。
+            `note.segmentCount` 是**已落盘**的段数（`insertSegments` 在同一事务里重算），
+            取消时没人会补写它 —— 正是"这一刻攒下了多少"的语义。
+
+            判据刻意是 `=== 0` 而不是 `!segmentCount`：字段缺失（老 daemon）时我们
+            **不知道**攒下了多少，那就不该斩钉截铁地说"一点都没有"。
+            宁可退回那句更常见的，也不编一个我们没有依据的断言 ——
+            这与本文件顶上「原因永远不在这里现编」是同一条规矩。
 
             ★ 按钮名**从那颗按钮自己的词条取**（`detail.retranscribe.open`），
             不在这句话里再抄一遍中文。抄一遍的话，那颗按钮改名之后这句话会
@@ -164,7 +185,12 @@ export function NoteStateNotice({
             组件测试钉的正是这一条：渲染出来的提示里必须出现按钮**当前**的标签。
           */}
           <p className="mt-0.5 text-xs text-ink-secondary" data-testid="note-cancelled-hint">
-            {t('notes.cancelledHint', { action: t('detail.retranscribe.open') })}
+            {t(
+              note?.segmentCount === 0 ? 'notes.cancelledHintNothingKept' : 'notes.cancelledHint',
+              {
+                action: t('detail.retranscribe.open'),
+              },
+            )}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {/*

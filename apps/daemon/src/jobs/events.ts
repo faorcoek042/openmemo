@@ -46,7 +46,7 @@ import type {
   TranscribeSegmentEvent,
   TranscribeStartedEvent,
 } from '@openmemo/shared';
-import { PIPELINE_JOB_KINDS, makeEvent, topics } from '@openmemo/shared';
+import { PIPELINE_JOB_KINDS, makeEvent, progressFraction, topics } from '@openmemo/shared';
 
 import { jobErrorTextOf } from './errorText.js';
 import type { JobRow } from './queue.js';
@@ -154,8 +154,28 @@ export function jobProgressEvent(
   return makeEvent('job.progress', topics.job(jobUid), {
     jobId: jobUid,
     step: p.step,
-    // 契约用的是百分比（0..100），不是 0..1 的小数 —— 又一处只有类型检查才拦得住的差异
-    pct: Math.round(Math.max(0, Math.min(1, p.fraction)) * 100),
+    /*
+     * ★★ #90 —— **这一行是「每一条正在跑的任务都显示 100%」的成因。**
+     *
+     * 它原本写的是：
+     *
+     *     // 契约用的是百分比（0..100），不是 0..1 的小数 —— 又一处只有类型检查才拦得住的差异
+     *     pct: Math.round(Math.max(0, Math.min(1, p.fraction)) * 100),
+     *
+     * 那句注释**两处都说反了**：契约（`packages/shared/src/events.ts` 与
+     * `openapi.yaml` 两处原文）写的是 `0..1`，而同一个字段的另一个生产者
+     * （`http/rest/state.ts` 的下载桥接）发的也是 `completed/total`。
+     * 于是转写/导图发 `90`、下载发 `0.9`，**同一个字段名，两种刻度**。
+     * web 那侧全按 0–1 用，`formatPercent` 把 90 夹成 1 ⇒ 恒 `100%`。
+     *
+     * 最刺人的是注释的后半句：它准确地说出了"只有类型检查才拦得住"，
+     * 然后自己成了那个没被拦住的例子 —— `number | null` 对 `0.9` 和 `90` 一视同仁。
+     *
+     * 所以修法不是在这里补一个 `/ 100`：`progressFraction()` 是全仓唯一的构造点，
+     * 它产出的 `ProgressReading` **只有 fraction 一种量纲可表达**，
+     * 乘 100 这件事从此写不进这个字段（写了也编译不过）。
+     */
+    progress: progressFraction(p.fraction, 'jobProgressEvent'),
     completedBytes: null,
     totalBytes: null,
     speedBps: null,

@@ -4,7 +4,7 @@
 
 import type { QueryClient } from '@tanstack/react-query';
 import type { JobProgressEvent, JobStateEvent } from '@openmemo/shared';
-import { TERMINAL_JOB_STATES } from '@openmemo/shared';
+import { TERMINAL_JOB_STATES, fractionOf } from '@openmemo/shared';
 
 import { bus } from '../../lib/events/bus';
 import { qk } from '../../app/query';
@@ -26,7 +26,23 @@ export const tasksSse: SseBinding = (qc: QueryClient) => [
       // 从 topic（形如 "job:01J8…"）只能拿到 jobId，类型只好留空由列表页 join 补。
       jobType: 'job',
       state: e.state,
-      progress: e.pct ?? 0,
+      /*
+       * ★ #90：这一行以前是 `progress: e.pct ?? 0`，**同时错了两件事**。
+       *
+       * ① 量纲：`e.pct` 从流水线那侧来的是 0–100（`daemon/src/jobs/events.ts` 曾写
+       *    `fraction * 100`），而 store / `ProgressMeter` / `formatPercent` 全按 0–1 用。
+       *    ⇒ 任何 ≥1 的帧一到，界面就永久钉在 100%。审计用 playwright 掐断
+       *    `/api/events` 做过反证：同一条任务立刻显示 71%（服务端的 0–1 值），
+       *    实时通道一恢复就跳回 100%。
+       * ② `?? 0`：契约里"报不出进度"的表达被兜底成了 **0%** ——
+       *    正是 `features/models/sse.ts` 用一整段注释在防的那件事
+       *    （"正在安装"显示成停在 0% 的进度条，一个看起来精确的假话）。
+       *    **同一条规则，隔壁文件守着，这里破着。**
+       *
+       * `fractionOf()` 是唯一读取点：它要么给 0–1，要么给 `null`＝「这一步没有刻度」。
+       * store 的 `progress` 本来就是 `number | null`，`null` 由渲染层用不确定表达画。
+       */
+      progress: fractionOf(e.progress),
       step: e.step,
       completedBytes: e.completedBytes,
       totalBytes: e.totalBytes,

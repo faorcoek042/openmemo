@@ -92,7 +92,12 @@ import { arr } from '../lib/safe';
 import { ApiError, api, setCsrf, clearCsrf, hasCsrf } from '../lib/api/client';
 import { PanelBoundary } from '../components/common/PanelBoundary';
 import { ErrorBlock, resolveErrorText } from '../components/common/ErrorBlock';
-import { ASR_ENGINE_IDS } from '@openmemo/shared';
+import {
+  ASR_ENGINE_IDS,
+  CONTRACT_VERSION,
+  PROGRESS_UNREPORTABLE,
+  progressFraction,
+} from '@openmemo/shared';
 import { ASR_ENGINE_LABELS, isValidAsrLanguage } from '../lib/asr';
 import { AsrModelPicker } from '../components/common/AsrModelPicker';
 import { AsrEngineStatus } from '../components/common/AsrEngineStatus';
@@ -157,6 +162,7 @@ import type { NoteDetail } from '../lib/api/types';
 import {
   BLOCKED_REASON_FALLBACK_KEY,
   BLOCKED_REASON_KEYS,
+  KNOWN_BLOCKED_CODES,
   blockedReasonKey,
 } from '../lib/jobs/blockedReason';
 import { SourcesSection } from '../features/models/components/SourcesSection';
@@ -368,8 +374,9 @@ const job = (over: Partial<MergedJob> = {}): MergedJob => ({
   attempt: 0,
   maxAttempts: 5,
   error: null,
-  // 工厂默认造的是 download.model —— 契约上就没有 noteUid，如实 null
+  // 工厂默认造的是 download.model —— 契约上就没有 noteUid / blockedCode，如实 null
   noteUid: null,
+  blockedCode: null,
   transientOnly: false,
   ...over,
 });
@@ -990,20 +997,54 @@ describe('状态呈现', () => {
     r.unmount();
   });
 
-  test('ProgressMeter 夹紧越界值，不产出 aria-valuenow=-20 这种', async () => {
+  /**
+   * ★ #90 改判：这条以前断言的是「`value={5}` → `aria-valuenow="100"`」——
+   * **它把 bug 的表现当成正确行为固化了**。
+   *
+   * 越界值只有一个来源：**上游把 0–100 的百分比当 0–1 传了**（正是 #90 的成因）。
+   * 静默夹成 100% 会把一个 90 倍的偏差翻译成一个看起来合理的数字，
+   * 于是这条路径被 review 过很多遍都没人发现 —— 屏幕上没有任何一处显得不对。
+   *
+   * 现在的判据：**夹紧照旧（不许 `width: 9000%` 撑破布局），但不许再声称一个刻度。**
+   * 越界 ⇒ 退化成不确定表达（不给 `aria-valuenow`）+ 出声。
+   */
+  test('★ ProgressMeter 对越界值不再声称刻度（越界 = 上游量纲错，不是"接近满"）', async () => {
     stubApi({});
-    const r1 = await render(<ProgressMeter value={-0.2} label="x" />);
-    assert.equal(
-      r1.container.querySelector('[role="progressbar"]')!.getAttribute('aria-valuenow'),
-      '0',
-    );
-    r1.unmount();
-    const r2 = await render(<ProgressMeter value={5} label="x" />);
-    assert.equal(
-      r2.container.querySelector('[role="progressbar"]')!.getAttribute('aria-valuenow'),
-      '100',
-    );
-    r2.unmount();
+    const errs: unknown[][] = [];
+    const original = console.error;
+    console.error = (...a: unknown[]) => void errs.push(a);
+    try {
+      for (const bad of [-0.2, 5, 90]) {
+        const r = await render(<ProgressMeter value={bad} label="x" />);
+        const bar = r.container.querySelector('[role="progressbar"]')!;
+        assert.equal(
+          bar.getAttribute('aria-valuenow'),
+          null,
+          `value=${bad} 仍然报出了一个 aria-valuenow —— 越界值没有可信刻度，` +
+            '把 90 夹成 100% 正是 #90 里"每条任务都显示 100%"的最后一步',
+        );
+        r.unmount();
+      }
+    } finally {
+      console.error = original;
+    }
+    assert.equal(errs.length, 3, '每一个越界值都必须留下一条现场，静默夹紧等于把量纲错藏起来');
+  });
+
+  test('合法范围内照常报刻度（别把修法做成"什么都不信"）', async () => {
+    stubApi({});
+    for (const [v, want] of [
+      [0, '0'],
+      [1, '100'],
+      [0.9, '90'],
+    ] as const) {
+      const r = await render(<ProgressMeter value={v} label="x" />);
+      assert.equal(
+        r.container.querySelector('[role="progressbar"]')!.getAttribute('aria-valuenow'),
+        want,
+      );
+      r.unmount();
+    }
   });
 });
 
@@ -2794,7 +2835,7 @@ describe('CSRF 令牌', () => {
       'GET /health': {
         app: 'openmemo',
         version: '0.1.0',
-        contractVersion: 1,
+        contractVersion: CONTRACT_VERSION,
         instanceId: 'i',
         dataDir: '/tmp',
         host: '127.0.0.1',
@@ -4050,7 +4091,7 @@ describe('T-129 同族：显示条件不许被别人的条件包住', () => {
   const HEALTH = {
     version: '9.9.9',
     instanceId: '01TESTTESTTESTTESTTESTTEST',
-    contractVersion: 1,
+    contractVersion: CONTRACT_VERSION,
     dataDir: '/tmp/never-real',
     port: 65535,
     pid: 1,
@@ -6055,7 +6096,13 @@ describe('#98 NoteStateNotice（笔记页的状态告知条）', () => {
 
   test('★★ 取消：说出「重新转写」在哪，并且说明它**接着已完成的片段跑**', async () => {
     stubApi({});
-    const r = await render(<NoteStateNotice note={noteDetail({ status: 'cancelled' })} />);
+    // ★ #90 ④：`segmentCount` 必须 > 0 —— 这条测的是"攒下了东西"那一档。
+    //   工厂默认是 0，而 0 的时候产品说的是另一句（下面单独一条钉）。
+    //   ⚠️ 这条以前用的就是工厂默认值 0，于是它**把 bug 当成正确行为断言了**：
+    //   一段都没落，横幅照说「已经跑完的部分保留着」。
+    const r = await render(
+      <NoteStateNotice note={noteDetail({ status: 'cancelled', segmentCount: 3 })} />,
+    );
     await r.flush();
     const t = text(r.container);
 
@@ -6084,8 +6131,91 @@ describe('#98 NoteStateNotice（笔记页的状态告知条）', () => {
      */
     assert.match(
       t,
-      /接着已完成|不从头再来/,
+      /接着已完成/,
       `没说会不会从头再来（实际：${t}）—— 用户最怕的正是"再等一遍那么久"`,
+    );
+    r.unmount();
+  });
+
+  /* ── ★★ #90 ③：一句话里承诺了两件互斥的事 ────────────────────────────────── */
+
+  /**
+   * 原话：「…它会接着已完成的片段跑，**不从头再来**，**还能顺便换引擎或模型**。」
+   *
+   * 审计三次实测：
+   *   A 同引擎同模型 → 承诺成立 ✓（daemon 打印 `[transcribe] 续跑 transcript=…`）
+   *   B 换模型再提交 → **承诺破了**：新建 transcript、零续跑日志、从 chunk 0 重来，旧稿被丢
+   *
+   * 根因：`repos.resumableTranscript()` 按 `engine_id` **且** `model_id` 匹配。
+   * Manager 裁决：**不做跨模型 resume**（那是个功能，语义还可疑），**改这句话**。
+   *
+   * 所以判据是：**这句话必须把两种情况分开说**，不许再出现一个无条件的
+   * 「不从头再来 + 还能顺便换模型」。
+   */
+  test('★★ 取消提示不许无条件承诺"换了模型也不从头再来"', async () => {
+    const zh = zhAt('notes.cancelledHint');
+    const en = (enLocale as unknown as { notes: Record<string, string> }).notes[
+      'cancelledHint'
+    ] as string;
+
+    // 「换引擎/模型」这件事一旦被提到，就必须在同一句里说清它的后果是**从头跑**
+    assert.ok(
+      /换了引擎或模型[^。]*从头/.test(zh),
+      `中文提示提到了换引擎/模型，却没说这一次会从头跑（实际：${zh}）—— ` +
+        '实测 B：换模型提交会新建 transcript、从 chunk 0 重来、旧稿被丢',
+    );
+    assert.ok(
+      /switch engine or model[^.]*starts over/i.test(en),
+      `英文提示没说换引擎/模型会从头跑（实际：${en}）`,
+    );
+    // 反向：不许留下"不从头再来"这种无条件断言
+    assert.ok(
+      !zh.includes('不从头再来'),
+      `提示里还留着一句无条件的「不从头再来」（实际：${zh}）—— 换了模型时它是假的`,
+    );
+  });
+
+  /* ── ★★ #90 ④：一段都没落时不许说"已经跑完的部分保留着" ──────────────────── */
+
+  /**
+   * 实测：导入后 2 秒取消，`segmentCount=0`，横幅照说「已经跑完的部分保留着」。
+   * 判好了：段数为 0 时改说「这次没来得及跑出任何内容」。
+   */
+  test('★★ 一段都没落（segmentCount=0）时不许说"保留着"', async () => {
+    stubApi({});
+    const r = await render(
+      <NoteStateNotice note={noteDetail({ status: 'cancelled', segmentCount: 0 })} />,
+    );
+    await r.flush();
+    const t = text(r.container);
+    /*
+     * ⚠️ 词条里带 `{{action}}`，渲染出来是插值后的结果 —— 直接 `includes(原词条)`
+     * 永远为假。按占位符切开逐段比对：既避开插值，又**不在测试里硬写中文**
+     * （硬写的话文案一改这条就开始测一句不存在的话）。
+     */
+    for (const part of zhAt('notes.cancelledHintNothingKept').split('{{action}}')) {
+      assert.ok(t.includes(part), `段数为 0 却没说"没跑出任何内容"（实际：${t}）`);
+    }
+    assert.ok(
+      !t.includes('保留着'),
+      `一段都没落，横幅还在说"已经跑完的部分保留着"（实际：${t}）—— 那是一句可验证的假话`,
+    );
+    // 指路仍然要在：没攒下东西 ≠ 没有下一步
+    assert.ok(t.includes(zhAt('detail.retranscribe.open')), `没说该点哪个按钮（实际：${t}）`);
+    r.unmount();
+  });
+
+  test('★ 老响应没有 segmentCount 时**不下断言**（不知道 ≠ 一点都没有）', async () => {
+    stubApi({});
+    const legacy = noteDetail({ status: 'cancelled' });
+    delete (legacy as unknown as Record<string, unknown>)['segmentCount'];
+    const r = await render(<NoteStateNotice note={legacy} />);
+    await r.flush();
+    const t = text(r.container);
+    assert.ok(
+      !t.includes(zhAt('notes.cancelledHintNothingKept')),
+      '字段缺失时斩钉截铁地说"一点都没跑出来" —— 我们并不知道，' +
+        '这与本组件顶上「原因永远不在这里现编」是同一条规矩',
     );
     r.unmount();
   });
@@ -7226,7 +7356,7 @@ describe('T-150 ① /diagnostics 读 /api/selfcheck', () => {
   const HEALTH = {
     version: '0.1.0',
     instanceId: 'i',
-    contractVersion: 1,
+    contractVersion: CONTRACT_VERSION,
     dataDir: '/tmp/t150/data',
     port: 17650,
     pid: 1,
@@ -11428,7 +11558,7 @@ describe('★★ T-198/S-2 终态之后 store 里不许留残影（两个订阅�
         jobId: JID,
         state: 'cancelled',
         step: 'resolving',
-        pct: 0,
+        progress: progressFraction(0, 'test'),
         completedBytes: 0,
         totalBytes: 100,
         speedBps: null,
@@ -11455,7 +11585,7 @@ describe('★★ T-198/S-2 终态之后 store 里不许留残影（两个订阅�
         jobId: JID,
         state: 'running',
         step: 'downloading',
-        pct: 0.42,
+        progress: progressFraction(0.42, 'test'),
         completedBytes: 42,
         totalBytes: 100,
         speedBps: 1000,
@@ -12263,6 +12393,301 @@ describe('组件卡片：说不出已装版本时，不许给「装上钉定版�
       false,
       `本机版本明明说得出，却还在说"说不出"：${said}`,
     );
+    r.unmount();
+  });
+});
+
+/* ══════ #90 ① 每一条正在跑的任务都显示 100% —— 管道末端的那一半 ══════ */
+
+/**
+ * ## 用户看到的
+ *
+ * 笔记列表行、笔记详情进度行、`/tasks` 进行中那行，**同时**显示
+ * 「转写中 **100%**」、进度条满格（`aria-valuenow="100"`、`width:100%`），
+ * 而同一时刻 `GET /api/jobs` 的 `progress` 是 **0.728**。
+ * 一条 40 分钟的音频，用户会盯着「100%」看好几分钟，然后以为卡死了。
+ *
+ * ## 根因是一条**跨进程**的量纲分叉
+ *
+ * `job.progress` 的刻度字段曾是 `pct: number | null`，两个生产者理解不同：
+ * 流水线侧发 `fraction*100`，下载侧发 `completed/total`。web 全按 0–1 用，
+ * `formatPercent` 把 `90` 夹成 `1` ⇒ 恒 `100%`。
+ *
+ * 审计的反证很干净：掐断 `/api/events`，同一条任务立刻显示 **71%**
+ * （服务端的 0–1 值）；实时通道一恢复就跳回 **100%**。
+ *
+ * ## 这一族守的是**管道末端**
+ *
+ * 生产端那一半由 `apps/daemon/src/jobs/pipelineJobEvents.test.ts` 的
+ * 「#90 jobProgressEvent」钉着（把 `*100` 加回去 → 那边当场红）。
+ * 这里钉的是：**一条合法的 0.9 读数，从 SSE 一路走到屏幕上必须是 90%**，
+ * 以及**一条越界读数绝不许被渲染成一个理直气壮的 100%**。
+ *
+ * ⚠️ 刻意走 `TasksPage`（服务端形状进、渲染出来断言），不手搓 `MergedJob`：
+ * 被测的那一跳里就有 `mergeOne()`，手搓会正好绕过它。
+ */
+describe('★★ #90 ① 进度读数从 SSE 到屏幕的刻度', () => {
+  const JID = 'job_p90';
+  const NOTE = '01BBBBBBBBBBBBBBBBBBBBBBBB';
+
+  /** `pushProgress` 有 200ms 节流，必须等它 flush 完才能断言。 */
+  const afterFlush = () => new Promise((r) => setTimeout(r, 260));
+
+  const serverRow = (over: Omit<Partial<PipelineJob>, 'noteUid'> = {}) =>
+    pipelineJob({
+      noteUid: NOTE,
+      jobId: JID,
+      state: 'running',
+      step: 'asr',
+      // 服务端的真值（0..1）。SSE 断了时界面就该显示它 —— 审计量到的那个 71% 同族。
+      progress: 0.728,
+      ...over,
+    });
+
+  /** 通过**真实的** SSE 绑定喂一帧进去 —— 不直接写 progressStore，那会绕过被测的那一跳。 */
+  function emitProgress(progress: unknown) {
+    const disposers = tasksSse(new QueryClient());
+    try {
+      bus.emit('job.progress', {
+        type: 'job.progress',
+        ts: new Date().toISOString(),
+        topic: `job:${JID}`,
+        jobId: JID,
+        state: 'running',
+        step: 'asr',
+        progress,
+        completedBytes: null,
+        totalBytes: null,
+        speedBps: null,
+        etaSeconds: null,
+      } as never);
+    } finally {
+      disposers.forEach((d) => d());
+    }
+  }
+
+  test('★★ 喂一帧 0.9：界面必须显示 90%，不是 100%', async () => {
+    useProgressStore.getState().clear(JID);
+    emitProgress(progressFraction(0.9, 'test'));
+    await afterFlush();
+
+    stubApi({ '/jobs': { jobs: [serverRow()], concurrencyLimit: 2 } });
+    const r = await render(<TasksPage />, { route: '/tasks' });
+    await r.flush();
+
+    const shown = text(r.container);
+    assert.ok(
+      shown.includes('90%'),
+      `进度读数不是 90%。这正是 #90：任何 ≥1 的帧一到就永久钉在 100%。实际渲染：${shown.slice(0, 300)}`,
+    );
+    assert.ok(
+      !shown.includes('100%'),
+      `界面上出现了 100% —— 服务端说 0.9。实际：${shown.slice(0, 300)}`,
+    );
+
+    const bar = r.container.querySelector('[role="progressbar"]');
+    assert.ok(bar, '进行中的任务必须有进度条');
+    assert.equal(
+      bar!.getAttribute('aria-valuenow'),
+      '90',
+      '屏幕阅读器读到的值也必须是 90 —— 原来的 bug 把它一起骗了（aria-valuenow="100"）',
+    );
+
+    r.unmount();
+    useProgressStore.getState().clear(JID);
+  });
+
+  test('★★ 喂一帧 90（0..100 量纲）：绝不许显示成 100%', async () => {
+    useProgressStore.getState().clear(JID);
+    const errs: unknown[][] = [];
+    const original = console.error;
+    console.error = (...a: unknown[]) => void errs.push(a);
+    try {
+      // 手拼一个越界读数 —— 模拟"有人又在上游乘了 100"。
+      // 走 `progressFraction(90)` 是拼不出来的（它当场降级），这里刻意绕过构造点，
+      // 因为要测的正是**渲染层对一个不该出现的值的反应**。
+      emitProgress({ kind: 'fraction', value: 90 });
+      await afterFlush();
+
+      stubApi({ '/jobs': { jobs: [serverRow()], concurrencyLimit: 2 } });
+      const r = await render(<TasksPage />, { route: '/tasks' });
+      await r.flush();
+
+      const shown = text(r.container);
+      assert.ok(
+        !shown.includes('100%'),
+        '一个 90 倍的量纲错被夹成了「100%」—— 这就是本条 bug 逃过十几个 agent 的原因：' +
+          `它看起来只是"跑得快"，没有任何一处报错。实际渲染：${shown.slice(0, 300)}`,
+      );
+      const bar = r.container.querySelector('[role="progressbar"]');
+      assert.equal(
+        bar?.getAttribute('aria-valuenow') ?? null,
+        null,
+        '说不出刻度时不许给 aria-valuenow —— 不确定的进度要用不确定的表达',
+      );
+      r.unmount();
+    } finally {
+      console.error = original;
+    }
+    assert.ok(
+      errs.length > 0,
+      '越界被静默吞掉了。夹紧可以，闭嘴不行 —— 静默夹紧正是把 90 倍偏差藏起来的那一步',
+    );
+    useProgressStore.getState().clear(JID);
+  });
+
+  test('★ 没有实时帧时显示服务端的 0..1 值（审计掐断 /api/events 时看到的那 71%）', async () => {
+    useProgressStore.getState().clear(JID);
+    stubApi({ '/jobs': { jobs: [serverRow({ progress: 0.71 })], concurrencyLimit: 2 } });
+    const r = await render(<TasksPage />, { route: '/tasks' });
+    await r.flush();
+    assert.ok(
+      text(r.container).includes('71%'),
+      `SSE 断开时应当显示服务端真值 71%，实际：${text(r.container).slice(0, 300)}`,
+    );
+    r.unmount();
+  });
+
+  test('★ "报不出进度"不许被渲染成 0%（`?? 0` 的那一半）', async () => {
+    useProgressStore.getState().clear(JID);
+    emitProgress(PROGRESS_UNREPORTABLE.step_announcement);
+    await afterFlush();
+    const snap = useProgressStore.getState().byJob[JID];
+    // ⚠️ 前提自检要单写：把它折进下面那条断言（`snap?.progress ?? 'MISSING'`）
+    //    会被 `??` 自己吃掉 —— `null ?? 'MISSING'` 就是 'MISSING'，
+    //    于是"快照不存在"和"progress 正确地为 null"被判成同一件事。
+    assert.ok(snap, '前提：这一帧必须进 store（不进 store 的话下面那条断言测的是空气）');
+    assert.equal(
+      snap.progress,
+      null,
+      '「这一步没有刻度」被兜底成了数字 —— `features/models/sse.ts` 用一整段注释防的就是这件事，' +
+        '而 `features/tasks/sse.ts` 当时正写着 `e.pct ?? 0`',
+    );
+    useProgressStore.getState().clear(JID);
+  });
+});
+
+/* ══════ #90 ② `/tasks` 的 blocked 行一个字都不说，而产品正把用户往这儿送 ══════ */
+
+/**
+ * ## 用户看到的
+ *
+ * `/tasks`「需要处理」那一行的全部内容：**标题 / 需要处理 / 0% / [重试] [取消]**。
+ * **没有原因。** 而**同一条任务**在笔记页上说得出「还没有可用的语言模型。
+ * 去设置里填一个 API Key，或者装一个本地模型。」
+ *
+ * 更糟的是指路：`jobBlocked.UNKNOWN` 的原话曾是「任务被挂起了。**去任务中心看看
+ * 它在等什么**。」—— 指向的正是这间更空的房间。
+ *
+ * ## 三条根因（缺一条都还是不说话）
+ *
+ * ① `MergedJob` 没有 `blockedCode` 字段 —— 服务端一直在发，`mergeOne()` 扔了；
+ * ② `JobList` 只渲染 `job.error`，而 blocked 的 `error` **恒为 null**
+ *    （`queue.block()` 只写 `blocked_code` + `remediation_json`，从不写 `error_*`）；
+ * ③ 那句 `UNKNOWN` 文案自指。
+ *
+ * ⚠️ 这一族**必须走 `TasksPage` 喂服务端形状的 `/jobs`**，不手搓 `MergedJob`：
+ * 被测的那一跳正是 `mergeOne()`，手搓会**正好绕过**根因①。
+ */
+describe('★★ #90 ② /tasks 的挂起行必须说出它在等什么', () => {
+  const NOTE = '01CCCCCCCCCCCCCCCCCCCCCCCC';
+  const zhAt = (key: string): string =>
+    key
+      .split('.')
+      .reduce<unknown>(
+        (acc, k) => (acc as Record<string, unknown> | undefined)?.[k],
+        zhLocale as unknown,
+      ) as string;
+
+  const blockedRow = (blockedCode: string | null) =>
+    pipelineJob({
+      noteUid: NOTE,
+      jobId: 'jb1',
+      state: 'blocked',
+      step: null,
+      progress: 0,
+      blockedCode,
+    });
+
+  async function renderTasks(jobs: unknown[]) {
+    stubApi({ '/jobs': { jobs, concurrencyLimit: 2 } });
+    const r = await render(<TasksPage />, { route: '/tasks' });
+    await r.flush();
+    return r;
+  }
+
+  test('★★ 挂起行显示的原因，与笔记页上那条**逐字相同**', async () => {
+    for (const code of KNOWN_BLOCKED_CODES) {
+      const r = await renderTasks([blockedRow(code)]);
+      const el = r.container.querySelector<HTMLElement>('[data-testid="job-blocked-reason"]');
+      assert.ok(
+        el,
+        `${code}：挂起行没有任何原因文本 —— 那一行的全部内容就只剩「需要处理」四个字，` +
+          '而同一条任务在笔记页上说得出在等什么',
+      );
+      assert.equal(
+        text(el!),
+        zhAt(blockedReasonKey(code)),
+        `${code}：/tasks 上的原因与那张唯一的表对不上 —— 两处说法一旦分叉，` +
+          '下一个人只会改其中一张',
+      );
+      r.unmount();
+    }
+  });
+
+  test('★ 认不出的 code 也要说话，不许渲染成空白', async () => {
+    const r = await renderTasks([blockedRow('SOMETHING_DAEMON_ADDED_LATER')]);
+    const el = r.container.querySelector<HTMLElement>('[data-testid="job-blocked-reason"]');
+    assert.ok(el, 'daemon 新增一个码就让界面变哑 —— 用户会以为软件坏了');
+    assert.equal(text(el!), zhAt(BLOCKED_REASON_FALLBACK_KEY));
+    r.unmount();
+  });
+
+  test('★★ 兜底那句话不许把用户送回他已经在的这一页', async () => {
+    // 它以前写的是「去任务中心看看它在等什么」。任务中心就是这一页，
+    // 而这一页显示的正是同一句 —— 一个自指的死循环。
+    const fallback = zhAt(BLOCKED_REASON_FALLBACK_KEY);
+    assert.ok(
+      !fallback.includes(zhAt('tasks.title')),
+      `兜底文案把用户指向「${zhAt('tasks.title')}」，而它自己就显示在那一页上：${fallback}`,
+    );
+  });
+
+  test('★ 等待态不许穿"进度"的衣服（blocked 行不该有 0% 的进度条）', async () => {
+    const r = await renderTasks([blockedRow('MISSING_ASR_MODEL')]);
+    assert.equal(
+      r.container.querySelector('[role="progressbar"]'),
+      null,
+      'blocked 行画了一条进度条 —— 它不是"跑到了 0%"，它是还没开始、且在等一个前置条件。' +
+        '一条永远不会自己动的进度条，比不画更像故障',
+    );
+    assert.ok(!text(r.container).includes('0%'), '挂起行不该报一个 0% 的刻度');
+    r.unmount();
+  });
+
+  test('★★ 已取消不许被算进「已完成」', async () => {
+    const r = await renderTasks([
+      pipelineJob({ noteUid: NOTE, jobId: 'jc1', state: 'cancelled', step: null, progress: 0 }),
+    ]);
+    const shown = text(r.container);
+    assert.ok(
+      shown.includes(zhAt('tasks.cancelled')),
+      `没有「${zhAt('tasks.cancelled')}」这一组，实际渲染：${shown.slice(0, 300)}`,
+    );
+    assert.ok(
+      !shown.includes(zhAt('tasks.done')),
+      '一件用户亲手取消掉的事被算进了「已完成」—— 组标题与行内芯片当场打架',
+    );
+    r.unmount();
+  });
+
+  test('★ 真的完成了的还是要落在「已完成」（别把修法做成"取消吃掉一切"）', async () => {
+    const r = await renderTasks([
+      pipelineJob({ noteUid: NOTE, jobId: 'js1', state: 'succeeded', step: null, progress: 1 }),
+    ]);
+    const shown = text(r.container);
+    assert.ok(shown.includes(zhAt('tasks.done')), `实际渲染：${shown.slice(0, 300)}`);
+    assert.ok(!shown.includes(zhAt('tasks.cancelled')));
     r.unmount();
   });
 });
