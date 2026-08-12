@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { stepLabel as stepLabelOf } from '../../lib/format/stepLabel';
 import { useActiveNoteJob } from '../tasks';
+import { blockedReasonKey } from '../../lib/jobs/blockedReason';
 import { ProgressMeter } from '../../components/common/ProgressMeter';
 import { approxEta } from '../../lib/format/time';
 import { formatPercent } from '../../lib/format/bytes';
@@ -56,6 +57,24 @@ export function NoteProgressLine({
     : t(`progress.state.${job.state}`, { defaultValue: job.state });
   const eta = approxEta(job.etaSeconds, i18n.language);
 
+  /*
+   * ★ 挂起时**说出在等什么**（Manager 2026-08-12 裁决的另一半）。
+   *
+   * 在这之前这一行只说得出「暂时无法继续」—— 一个状态词，没有原因、没有下一步。
+   * 而 daemon 早就把答案发过来了：`PipelineJob.blockedCode`（`ActiveNoteJob` 上
+   * 一直有这个字段，只是**从来没有人读它**）。最常见的那一档是"没装语音识别模型"，
+   * 用户对着「暂时无法继续」是猜不出来的。
+   *
+   * 导图那一半（`GenerateMindmapButton`）早就把这句话说出来了，用的正是同一张表 ——
+   * 现在两边共用 `lib/jobs/blockedReason.ts`，不许各建一张。
+   *
+   * ⚠️ 只在 `blocked` 时说：其余状态没有"在等什么"这回事，
+   * 挂一句通用的"去任务中心看看"只会变成噪音。
+   * ⚠️ 认不出的 code 由那张表回落到 `UNKNOWN`（"任务被挂起了，去任务中心看看"）——
+   * daemon 随时可以新增一个码，而**前端不该因此变哑**。
+   */
+  const blockedReason = job.state === 'blocked' ? t(blockedReasonKey(job.blockedCode)) : null;
+
   return (
     <div className={className} data-testid="note-progress-line">
       <div className="mb-1 flex items-center justify-between gap-2 text-xs text-ink-secondary">
@@ -69,6 +88,11 @@ export function NoteProgressLine({
         </span>
       </div>
       <ProgressMeter value={job.progress} label={stepText} />
+      {blockedReason ? (
+        <p className="mt-1 text-xs text-ink-secondary" data-testid="note-progress-blocked">
+          {blockedReason}
+        </p>
+      ) : null}
       {hint ? <p className="mt-1 text-xs text-ink-muted">▸ {hint}</p> : null}
     </div>
   );

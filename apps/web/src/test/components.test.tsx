@@ -67,6 +67,23 @@ import { readFileSync, readdirSync } from 'node:fs';
 async function readSource(rel: string): Promise<string> {
   return readFileSync(`${process.cwd()}/src/${rel}`, 'utf8');
 }
+
+/**
+ * 按点分路径从 `zh-CN.json` 取一条词条。
+ *
+ * ⚠️ 存在的理由是**别把"这句话住在哪"在测试里再写一遍**：
+ * 用例原来硬编码 `zhLocale.mindmap.blocked['LLM_NOT_CONFIGURED']`，
+ * 而那张表刚被提成公共的（`lib/jobs/blockedReason.ts`），命名空间的搬迁也已排上。
+ * 搬完之后组件是对的、测试却会红 —— 而红的是测试自己，那种红只会训练人去改断言。
+ * 现在断言钉的是「**渲染出来的那句话，就是表指到的那一句**」，与 key 住在哪无关。
+ */
+function zhAt(key: string): string {
+  const v = key
+    .split('.')
+    .reduce<unknown>((acc, k) => (acc as Record<string, unknown> | undefined)?.[k], zhLocale);
+  assert.equal(typeof v, 'string', `zh-CN.json 里没有 ${key} —— 断言本身就落空了`);
+  return v as string;
+}
 import { StatusChip } from '../components/common/StatusChip';
 import { ProgressMeter } from '../components/common/ProgressMeter';
 import { DownloadRow } from '../components/common/DownloadRow';
@@ -133,6 +150,13 @@ import i18nInstance from '../app/i18n';
 import { breakerAdvice, breakerDetail } from '@openmemo/shared';
 import ModelsPage from '../features/models/ModelsPage';
 import NotesListPage from '../features/notes/NotesListPage';
+import { NoteProgressLine } from '../features/notes/NoteProgressLine';
+// 「这条任务在等什么」那张表的**唯一一份**（Manager 2026-08-12 裁决：不建第二张）
+import {
+  BLOCKED_REASON_FALLBACK_KEY,
+  BLOCKED_REASON_KEYS,
+  blockedReasonKey,
+} from '../lib/jobs/blockedReason';
 import { SourcesSection } from '../features/models/components/SourcesSection';
 import App from '../App';
 import { GenerateMindmapButton } from '../features/mindmap/GenerateMindmapButton';
@@ -5600,13 +5624,18 @@ describe('T-138 ① 思维导图的生成入口', () => {
     await r.flush();
     const t = text(r.container);
     assert.ok(t.includes(zhMindmap.generateBlocked), `没说它被挂起了（实际：${t}）`);
-    const reason = (zhLocale as unknown as { mindmap: { blocked: Record<string, string> } }).mindmap
-      .blocked;
+    /*
+     * ★ 词条位置**从这里的字面量换成去问那张公共表**（`lib/jobs/blockedReason.ts`）。
+     * 原来这两行硬编码 `zhLocale.mindmap.blocked` —— 也就是把"这句话住在哪"
+     * 在测试里又写了一遍。表一搬（`jobBlocked.*` 的搬迁已经排上），
+     * 组件是对的、测试却会红，而红的是测试自己。判据现在钉的是
+     * **"渲染出来的那句话，就是表指到的那一句"**，与 key 住在哪无关。
+     */
     assert.ok(
-      t.includes(reason['LLM_NOT_CONFIGURED']!),
+      t.includes(zhAt(blockedReasonKey('LLM_NOT_CONFIGURED'))),
       `没说原因（实际：${t}）—— 一个不说为什么的禁用按钮和坏了没有区别`,
     );
-    assert.ok(!t.includes(reason['NO_TRANSCRIPT']!), '原因不该串档');
+    assert.ok(!t.includes(zhAt(blockedReasonKey('NO_TRANSCRIPT'))), '原因不该串档');
     r.unmount();
   });
 
@@ -5630,10 +5659,94 @@ describe('T-138 ① 思维导图的生成入口', () => {
     await r.flush();
     const hint = r.container.querySelector('[data-testid="generate-mindmap-blocked"]');
     assert.equal(!!hint, true, '认不出的 code 让提示整块消失了');
-    const reason = (zhLocale as unknown as { mindmap: { blocked: Record<string, string> } }).mindmap
-      .blocked;
-    assert.equal(hint!.textContent, reason['UNKNOWN']);
+    assert.equal(hint!.textContent, zhAt(BLOCKED_REASON_FALLBACK_KEY));
     r.unmount();
+  });
+
+  /*
+   * ★★ 转写那一半 —— **表提成公共的之后，兜底必须仍然守得住它**（Manager 点名）。
+   *
+   * 这条与上面那条是同一个判据的两侧：导图那边验的是"认不出的码不渲染成空白"，
+   * 这边验的是"**另一个消费方**照样有话说"。表只有一张、兜底只有一份，
+   * 所以两边不会各漏各的 —— 而这正是不建第二张表的理由。
+   */
+  test('★★ 转写挂起时，笔记页那条进度行说得出「在等什么」', async () => {
+    stubApi({
+      '/jobs': {
+        jobs: [
+          pipelineJob({
+            noteUid: NOTE,
+            kind: 'transcribe',
+            type: 'transcribe',
+            state: 'blocked',
+            step: null,
+            progress: 0,
+            blockedCode: 'MISSING_ASR_MODEL',
+          }),
+        ],
+        concurrencyLimit: 2,
+      },
+    });
+    const r = await render(<NoteProgressLine noteUid={NOTE} />);
+    await r.flush();
+    const t = text(r.container);
+    assert.ok(
+      t.includes(zhAt(blockedReasonKey('MISSING_ASR_MODEL'))),
+      `进度行只说了状态、没说在等什么（实际：${t}）—— ` +
+        '「暂时无法继续」对一个"没装语音识别模型"的任务，用户是猜不出来的；' +
+        '而 daemon 早就把 blockedCode 发过来了，此前全仓没有一处读它',
+    );
+    r.unmount();
+  });
+
+  test('★ 转写挂起、码却认不出 → 同样回落，不许留空白', async () => {
+    stubApi({
+      '/jobs': {
+        jobs: [
+          pipelineJob({
+            noteUid: NOTE,
+            kind: 'transcribe',
+            type: 'transcribe',
+            state: 'blocked',
+            step: null,
+            progress: 0,
+            blockedCode: 'SOMETHING_DAEMON_ADDED_LATER',
+          }),
+        ],
+        concurrencyLimit: 2,
+      },
+    });
+    const r = await render(<NoteProgressLine noteUid={NOTE} />);
+    await r.flush();
+    const line = r.container.querySelector('[data-testid="note-progress-blocked"]');
+    assert.equal(!!line, true, '认不出的 code 让这块提示整个消失了');
+    assert.equal(line!.textContent, zhAt(BLOCKED_REASON_FALLBACK_KEY));
+    r.unmount();
+  });
+
+  test('★ 表里每个 key 在**两份** locale 里都真的存在（拼错 = 界面上一片空白）', () => {
+    /*
+     * 纯逻辑那份（`lib/jobs/blockedReason.test.ts`）只判得了"像不像一条 i18n 路径"——
+     * 它进的是 CommonJS 通道，手边没有词条文件。**指向一个不存在的词条**
+     * 是另一种失败，而且长得和拼对了一模一样：i18next 会把 key 原样渲染出来，
+     * 不报错、不留痕。两条一起才完整。
+     */
+    const keys = [...Object.values(BLOCKED_REASON_KEYS), BLOCKED_REASON_FALLBACK_KEY];
+    for (const key of keys) {
+      for (const [name, bundle] of [
+        ['zh-CN', zhLocale],
+        ['en', enLocale],
+      ] as const) {
+        const value = key
+          .split('.')
+          .reduce<unknown>((acc, k) => (acc as Record<string, unknown> | undefined)?.[k], bundle);
+        assert.equal(
+          typeof value === 'string' && value.length > 0,
+          true,
+          `${name}.json 里没有 ${key} —— i18next 会把这串 key 原样摆给用户看`,
+        );
+      }
+    }
   });
 
   test('★ 两个空态都真的接上了这个按钮（组件造出来没人用 = 入口仍然不存在）', async () => {
