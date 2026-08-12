@@ -234,11 +234,21 @@ async function rerunOverDraft(
       repos,
       sse,
       queue,
-      pipelineFor: () => ({
+      /*
+       * ⚠️ 这个替身**必须实现 `override?.modelPath ?? 默认值`**，因为真的那个就是这么写的
+       * （`pipeline/setup.ts` 的 `pipelineFor`：`override?.modelPath ?? enginePaths[...] ?? asrModelPath`）。
+       *
+       * 第一版我把它写成了返回常量、把 override 整个吞掉 —— 于是 #90 C 那条守卫
+       * **永远红**，红的却不是产品：是替身没有履行它所替代的那份契约。
+       * 一个不实现契约的替身，测出来的是替身自己。
+       *
+       * 这里的常量扮演的是「流水线快照里那个旧模型」，也就是 800ms 窗口里的陈旧值。
+       */
+      pipelineFor: (_lang, override) => ({
         pipeline: fakePipeline,
         engineId: 'whisper.cpp',
         reason: 'test',
-        modelPath: join(dataDir, 'ggml-base-q5_1.bin'),
+        modelPath: override?.modelPath ?? join(dataDir, 'ggml-base-q5_1.bin'),
       }),
       modelPath: null,
       mediaRoot,
