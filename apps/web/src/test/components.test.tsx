@@ -2404,36 +2404,84 @@ describe('代理配置', () => {
     r.unmount();
   });
 
+  /**
+   * ★ SOCKS 那条横幅 —— **判定归 daemon，措辞归 locale**（#106 改了后半句）。
+   *
+   * 上一版这条用例断的是「daemon 给的 `noteZh` 被原样渲染出来」，夹具里塞一整段中文。
+   * 那正是 #106 要治的形状：横幅标题走词条（英文界面上是英文），正文却是 daemon 的
+   * 中文原话 —— 英文用户看到的是**标题英文、正文整段中文**，而
+   * `settings.proxy.socksFfmpegDetail`（两份语言都有、内容还更全：它连 yt-dlp 那条
+   * 链路照旧走代理都说了）因为 `noteZh ?? reason ?? t(…)` 长期是死代码。
+   *
+   * 所以 `noteZh` 那一格已经从 daemon 删掉，夹具跟着删。
+   *
+   * ⚠️ **要钉的性质一条没变**，只是换了来源：
+   *   ① 说出真实边界（媒体那条链路会直连）；
+   *   ② 同时说清哪条链路仍然走代理 —— 否则读起来像整个功能坏了；
+   *   ③ 判定仍然只来自 daemon 的 `supported === false` 这个**结构字段**
+   *      （下面那条 HTTP 代理的反向用例钉的就是它）。
+   * 断言从"命中我手写的那句中文"换成"命中**词条里那几段**"：措辞可以改，
+   * 这三条不能丢。外加一条英文界面的腿 —— 那才是这次缺陷真正的现场。
+   */
   test('★ 选 SOCKS 要提示 ffmpeg 链路直连 —— 别让用户以为全走代理了', async () => {
     // media 判定由 daemon 给（ffmpegProxySupport），前端不再自己猜"填了 socks5 就降级"
     stubApi(
       wrap(
         { ...DEFAULT_PROXY_CONFIG, mode: 'manual', socks5: 'socks5://127.0.0.1:1080' },
-        {
-          supported: false,
-          reason: 'ffmpeg does not support SOCKS',
-          noteZh:
-            'ffmpeg 不支持 SOCKS 代理（libavformat 只识别 http_proxy）。选择 SOCKS 时，模型下载会走代理，但**在线媒体拉流会直连**。如需媒体也走代理，请改填 HTTP 代理地址。',
-        },
+        { supported: false, reason: 'ffmpeg does not support SOCKS' },
       ),
     );
     const r = await render(<ProxySettingsSection />);
     await r.flush();
     const shown = text(r.container);
-    // 直接渲染 daemon 给的 noteZh —— 能力边界由做判定的那一方描述
-    assert.ok(shown.includes('在线媒体拉流会直连'), 'SOCKS 的真实边界必须说出来');
+    const chunks = literalChunks(zhAt('settings.proxy.socksFfmpegDetail'));
+    assert.ok(chunks.length > 0, '词条里取不出可断言的片段 —— 这条会空转');
+    for (const chunk of chunks) {
+      assert.ok(shown.includes(chunk), `SOCKS 的真实边界必须说出来，缺了一段：「${chunk}」`);
+    }
+    assert.ok(shown.includes('直连'), '没说出"会直连"这件事');
     assert.ok(
-      shown.includes('模型下载会走代理'),
+      shown.includes('yt-dlp') || shown.includes('走代理'),
       '同时要说清哪条链路仍然走代理，否则像是整个功能坏了',
     );
     r.unmount();
+  });
+
+  test('★★ #106：同一条横幅在英文界面上必须是英文 —— 标题英文、正文中文是缺陷原状', async () => {
+    stubApi(
+      wrap(
+        { ...DEFAULT_PROXY_CONFIG, mode: 'manual', socks5: 'socks5://127.0.0.1:1080' },
+        // ⚠️ daemon 的 `reason` 是**英文自由文本**，故意留着：它不该被当成横幅正文，
+        //    但它在那儿也不该把英文界面弄脏。
+        { supported: false, reason: 'ffmpeg does not support SOCKS' },
+      ),
+    );
+    await i18nInstance.changeLanguage('en');
+    try {
+      const r = await render(<ProxySettingsSection />);
+      await r.flush();
+      const shown = text(r.container);
+      const chunks = literalChunks(enAt('settings.proxy.socksFfmpegDetail'));
+      assert.ok(chunks.length > 0, '英文词条里取不出可断言的片段 —— 这条会空转');
+      for (const chunk of chunks) {
+        assert.ok(shown.includes(chunk), `英文正文缺了一段：「${chunk}」`);
+      }
+      const bad = shown.match(new RegExp(`.{0,24}${CJK105.source}.{0,24}`, 'g'));
+      assert.equal(bad, null, `★ 缺陷原状：英文界面上这条横幅的正文是中文 → ${bad?.join(' | ')}`);
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
   });
 
   test('HTTP 代理不该弹 SOCKS 警告', async () => {
     stubApi(wrap({ ...DEFAULT_PROXY_CONFIG, mode: 'manual', httpProxy: 'http://127.0.0.1:7890' }));
     const r = await render(<ProxySettingsSection />);
     await r.flush();
-    assert.ok(!text(r.container).includes('在线媒体拉流会直连'));
+    // 判据仍然是 daemon 的 `supported` 这个结构字段：没给 media ⇒ 这条横幅一个字都不该有
+    const chunk = literalChunks(zhAt('settings.proxy.socksFfmpegDetail'))[0] ?? '';
+    assert.ok(chunk.length >= 8, '取不到可断言的片段 —— 这条反向用例会空转');
+    assert.ok(!text(r.container).includes(chunk));
     r.unmount();
   });
 
