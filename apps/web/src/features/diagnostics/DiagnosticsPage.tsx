@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, Copy, MinusCircle, RefreshCw, XCircle } from 'lucide-react';
-import type { BundledModelId } from '@openmemo/shared';
+import type { BundledModelId, VadChunkingReason } from '@openmemo/shared';
 
 import { ApiError, rawFetch } from '../../lib/api/client';
 import { Button } from '../../components/common/Button';
@@ -82,7 +82,17 @@ interface Health {
     vad?: {
       model?: string | null;
       chunking?: 'vad' | 'fixed';
-      reasonZh?: string;
+      /**
+       * **为什么是这种切分** —— 机器可读（#106，见 `VadChunkingReason`）。
+       *
+       * 这里原来是 `reasonZh?: string`，而契约那一侧**连 `reasonEn` 都没有** ——
+       * 也就是说下面那一行在英文界面上**必然**是中文，还会和后半句英文
+       * （`diagnostics.chunkingRuntimeFailure`）连成一句中英各半的话。
+       * 现在措辞在下面那张总 `Record` + 两份 locale 里。
+       *
+       * **可选**照旧：老 daemon 不发这个字段，那时退回 `chunking` 那两句通用文案。
+       */
+      reason?: VadChunkingReason;
       rejected?: string[];
     };
   };
@@ -181,6 +191,42 @@ function LevelIcon({ level }: { level: Level }) {
   if (level === 'unavailable')
     return <MinusCircle className="mt-0.5 size-3.5 shrink-0 text-ink-muted" aria-hidden />;
   return <XCircle className="mt-0.5 size-3.5 shrink-0 text-critical" aria-hidden />;
+}
+
+/**
+ * 「切分方式」那一行的每一种成因该说哪句话。**总 `Record`**（#106）——
+ * `VadChunkingReason` 加一档而没人给它写话，**编译当场就红**。
+ *
+ * 上一版这一行渲染的是 daemon 的 `reasonZh`：`/api/health` 那一格
+ * **只有中文、连 `reasonEn` 都没有**，所以英文界面上这一行**必然**是中文；
+ * 更难看的是 `runtime_failure` 那一档还会把它和后半句英文
+ * （`diagnostics.chunkingRuntimeFailure`）拼成一句中英各半的话。
+ *
+ * ⚠️ **导出是给用例用的**（`apps/web/src/test/components.test.tsx`）：
+ * 「每一档都得有一条渲染用例」这条只有拿到这张表才断得出来 ——
+ * 否则契约里加一档、这里加一行，而没有任何东西要求有人去看它渲染成什么样。
+ */
+export const VAD_REASON_KEYS: Readonly<Record<VadChunkingReason['kind'], string>> = {
+  vad_active: 'diagnostics.chunkingReason.vadActive',
+  no_vad_model_installed: 'diagnostics.chunkingReason.noVadModelInstalled',
+  installed_weights_not_loadable: 'diagnostics.chunkingReason.installedWeightsNotLoadable',
+  runtime_failure: 'diagnostics.chunkingReason.runtimeFailure',
+};
+
+/**
+ * 一条 `VadChunkingReason` → 当前语言的那句话。
+ *
+ * ⚠️ `undefined` 时返回 `null`（**不是空串**）：老 daemon 不发这个字段，
+ * 调用方据此退回 `chunking` 那两句通用文案 —— 不替它编一个具体成因。
+ */
+function vadReasonText(
+  t: (key: string, params?: Record<string, unknown>) => string,
+  r: VadChunkingReason | undefined,
+): string | null {
+  if (r === undefined) return null;
+  return r.kind === 'installed_weights_not_loadable'
+    ? t(VAD_REASON_KEYS[r.kind], { rejected: r.rejected.join(' / ') })
+    : t(VAD_REASON_KEYS[r.kind]);
 }
 
 export default function DiagnosticsPage() {
@@ -282,8 +328,11 @@ export default function DiagnosticsPage() {
    * 切分降级了 —— **装一个模型能不能修好它**，三档。
    *
    * ★ #105 ⑤。判据读的是 `pipeline.vad.model`（**解析器最后交出来的那份权重**），
-   * 不是去猜 `reasonZh` 那句中文在说什么 —— 后者是 daemon 的自由文本，
+   * 不是去猜那句解释在说什么 —— 它当时是 daemon 的自由文本，
    * 本仓在"拿散文当判据"上已经栽过两次（`unavailableReason` 那两条）。
+   * （#106 之后那一格已经是 `VadChunkingReason` 了，但**这里照旧读 `model`**：
+   * 两个字段各自独立地说明同一件事，判据钉在其中一个上就够，
+   * 换成读 `reason.kind` 只是把依赖从一个结构字段挪到另一个。）
    *
    *   · `none`            —— 没降级（`chunking === 'vad'`），不给任何动作
    *   · `install-model`   —— 一份能加载的权重都没解析到（`model == null`）。
@@ -405,7 +454,7 @@ export default function DiagnosticsPage() {
           label: t('diagnostics.chunking'),
           level: data.pipeline?.vad?.chunking === 'vad' ? 'ok' : 'warn',
           detail:
-            (data.pipeline?.vad?.reasonZh ??
+            (vadReasonText(t, data.pipeline?.vad?.reason) ??
               (data.pipeline?.vad?.chunking === 'vad'
                 ? t('diagnostics.chunkingVad')
                 : t('diagnostics.chunkingFixed'))) +

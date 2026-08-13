@@ -20,12 +20,25 @@
  * 而假红灯会训练人忽略告警（HANDOFF ⑤B）。
  */
 
-/** 最近一次转写里 VAD 真的跑失败了。null = 没观测到失败（**不等于**观测到成功）。 */
-let lastFailure: { readonly atMs: number; readonly reasonZh: string } | null = null;
+import type { VadChunkingReason } from '@openmemo/shared';
 
-/** 转写 runner 在退回固定窗口时调用。`reasonZh` 应当是能给用户看的一句话。 */
-export function noteVadRuntimeFailure(reasonZh: string): void {
-  lastFailure = { atMs: Date.now(), reasonZh };
+/** 最近一次转写里 VAD 真的跑失败了。null = 没观测到失败（**不等于**观测到成功）。 */
+let lastFailure: { readonly atMs: number } | null = null;
+
+/**
+ * 转写 runner 在退回固定窗口时调用。
+ *
+ * ⚠️ **不再收一句话**（#106）。上一版收的是 `warningsZh[0]`，一句中文，
+ * 它一路走到 `/api/health` 再原样渲染在诊断页上 —— 英文界面上那一行必然是中文。
+ * 这一格现在只记「**观测到了一次运行期失败**」这个事实（`VadChunkingReason` 的
+ * `runtime_failure`），措辞归 `apps/web` 的两份 locale。
+ *
+ * 原始错误串没有丢：它照旧进 daemon 日志（`transcribe.ts` 的 `console.warn`）
+ * 与 job 结果里的 `warningsZh`。**这里不去劈那句中文把它抠出来** ——
+ * 拿散文当结构是本仓清过两次的形状。
+ */
+export function noteVadRuntimeFailure(): void {
+  lastFailure = { atMs: Date.now() };
 }
 
 /** VAD 成功跑完一次 —— 把上一次的失败记录清掉，否则修好了也一直报红。 */
@@ -33,7 +46,7 @@ export function noteVadRuntimeSuccess(): void {
   lastFailure = null;
 }
 
-export function vadRuntimeFailure(): { readonly atMs: number; readonly reasonZh: string } | null {
+export function vadRuntimeFailure(): { readonly atMs: number } | null {
   return lastFailure;
 }
 
@@ -47,7 +60,14 @@ export interface VadHealth {
   readonly model: string | null;
   /** 实际会用哪种切分。**判据是后果，不是"文件在不在"。** */
   readonly chunking: 'vad' | 'fixed';
-  readonly reasonZh: string;
+  /**
+   * **为什么是这种切分** —— 机器可读（#106，见 {@link VadChunkingReason}）。
+   *
+   * 这里原来只有一格 `reasonZh`，**连 `reasonEn` 都没有** ——
+   * 也就是说诊断页那一行在英文界面上**必然**是中文，不是"偶尔漏"。
+   * 现在措辞归 `apps/web` 的两份 locale，这里只说是哪一种。
+   */
+  readonly reason: VadChunkingReason;
   /** 存在但 whisper.cpp 加载不了的候选（典型：sherpa 的 `silero_vad.onnx`）。 */
   readonly rejected: readonly string[];
 }
@@ -60,7 +80,7 @@ export interface VadHealth {
  */
 export function vadHealth(resolved: {
   path: string | null;
-  reasonZh: string;
+  reason: VadChunkingReason;
   rejected: readonly string[];
 }): VadHealth {
   const runtime = vadRuntimeFailure();
@@ -68,14 +88,14 @@ export function vadHealth(resolved: {
     return {
       model: resolved.path,
       chunking: 'fixed',
-      reasonZh: runtime.reasonZh,
+      reason: { kind: 'runtime_failure' },
       rejected: resolved.rejected,
     };
   }
   return {
     model: resolved.path,
     chunking: resolved.path === null ? 'fixed' : 'vad',
-    reasonZh: resolved.reasonZh,
+    reason: resolved.reason,
     rejected: resolved.rejected,
   };
 }

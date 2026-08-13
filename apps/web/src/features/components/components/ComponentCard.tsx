@@ -19,6 +19,12 @@ import { StatusChip } from '../../../components/common/StatusChip';
 import { formatBytes } from '../../../lib/format/bytes';
 import { localizedName } from '../../../lib/format/localized';
 import { cn } from '../../../lib/utils';
+import {
+  INSTALLED_VERSION_UNKNOWN_KEYS,
+  NO_UPSTREAM_KEYS,
+  indeterminateText,
+  upstreamFailureText,
+} from '../reasonText';
 
 /**
  * One component: what it is, where it came from, and whether it can be updated.
@@ -154,11 +160,16 @@ function upstreamVersionCell(u: UpstreamCheck): string | null {
  *   强调用 `**…**` + `<Emphasis>`（T-129b 立的那条路），版本号照旧插值进去。
  *   丢掉的只有 `<code>` 的等宽字体，换来的是这四句话在英文界面上真的存在。
  *
- * ⚠️ `u.reason` 仍然是 daemon 的原话（限流还要等多久、为什么排不出先后 ——
- *    只有它知道），这里照旧只负责把它放进句子里，不自己编。
+ * ⚠️ #106：`u.reason` **不再是 daemon 的原话**。它以前是一整句中文，被插进上面
+ *    这四句英文的 `{{reason}}` 里 —— 英文界面上于是长成「We did ask upstream and got
+ *    no answer (上游配额已用尽…)」。现在 daemon 只交出**机器可读的原因 + 结构化数字**
+ *    （`UpstreamFailure` / `NoUpstreamReason` / `UpstreamIndeterminate`），
+ *    措辞在 `../reasonText` 那三张**总表**里 —— 契约新增一种原因而没人写话，
+ *    构建当场就红。daemon 仍然是唯一知道"限流还要等多久"的那一方，
+ *    只是它现在给的是毫秒数，不是一句中文。
  */
 function UpstreamNote({ c }: { c: ComponentStatus }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const u = c.upstreamCheck;
   const cls = 'mt-1.5 text-[11px] text-ink-muted';
   switch (u.kind) {
@@ -171,13 +182,15 @@ function UpstreamNote({ c }: { c: ComponentStatus }) {
     case 'no-upstream':
       return (
         <p className={cls} data-testid="upstream-note-no-upstream">
-          <Emphasis text={t(NOTE_KEYS[u.kind], { reason: u.reason })} />
+          <Emphasis text={t(NOTE_KEYS[u.kind], { reason: t(NO_UPSTREAM_KEYS[u.reason]) })} />
         </p>
       );
     case 'failed':
       return (
         <p className={cls} data-testid="upstream-note-failed">
-          <Emphasis text={t(NOTE_KEYS[u.kind], { reason: u.reason })} />
+          <Emphasis
+            text={t(NOTE_KEYS[u.kind], { reason: upstreamFailureText(t, i18n.language, u.reason) })}
+          />
         </p>
       );
     case 'indeterminate':
@@ -187,7 +200,7 @@ function UpstreamNote({ c }: { c: ComponentStatus }) {
             text={t(NOTE_KEYS[u.kind], {
               upstream: u.version,
               pinned: c.pinnedVersion,
-              reason: u.reason,
+              reason: indeterminateText(t, u.reason),
             })}
           />
         </p>
@@ -301,7 +314,9 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
                 <span className="font-sans text-ink-muted">{t('components.notInstalledYet')}</span>
               ) : (
                 <span className="font-sans text-ink-muted">
-                  {t('components.installedNoVersion', { reason: c.installedVersion.reason })}
+                  {t('components.installedNoVersion', {
+                    reason: t(INSTALLED_VERSION_UNKNOWN_KEYS[c.installedVersion.reason]),
+                  })}
                 </span>
               )}
             </dd>
@@ -493,7 +508,7 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
           {c.installedVersion.kind === 'not-applicable' ? (
             <Emphasis
               text={t('components.upstreamNewerUnknowable', {
-                reason: c.installedVersion.reason,
+                reason: t(INSTALLED_VERSION_UNKNOWN_KEYS[c.installedVersion.reason]),
               })}
             />
           ) : null}

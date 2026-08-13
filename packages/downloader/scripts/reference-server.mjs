@@ -998,11 +998,27 @@ const server = http.createServer(async (req, res) => {
           ...pk,
           installed: false,
           applicable: applicable && backendAvailable,
-          inapplicableReason: !applicable
-            ? `适用于 ${pk.os}/${pk.arch}，与本机不符`
+          /*
+           * #106：这一格原来叫 `inapplicableReason`，发的是**整句中文**，
+           * 而网页会把它插进英文界面上一行解释里。真 daemon 现在发的是
+           * `inapplicability`（机器可读 + 结构化参数，见 `packages/shared/src/hardware.ts`），
+           * 措辞在 `apps/web` 的两份 locale。参考服务器**必须跟着改**：
+           * 它存在的全部理由就是"跟真 daemon 说同一种话"，否则拿它开发的人
+           * 会照着一个真 daemon 早就不发的字段写代码。
+           */
+          inapplicability: !applicable
+            ? { kind: 'platform_mismatch', packOs: pk.os, packArch: pk.arch }
             : !backendAvailable
-              ? (hardware.backends.find((b) => b.id === pk.backend)?.unavailableReason ??
-                '该后端在本机不可用')
+              ? (() => {
+                  const st = hardware.backends.find((b) => b.id === pk.backend);
+                  return st === undefined
+                    ? { kind: 'backend_status_missing' }
+                    : {
+                        kind: 'backend_unavailable',
+                        unavailableKind: st.unavailableKind ?? 'no_usable_devices',
+                        detail: st.unavailableReason ?? null,
+                      };
+                })()
               : null,
           recommended: applicable && backendAvailable && pk.backend === hardware.selectedBackend,
         };

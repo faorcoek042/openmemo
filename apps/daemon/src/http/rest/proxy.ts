@@ -73,17 +73,20 @@ function effectiveUrl(cfg: ProxyConfig): string | null {
 function mediaCaveat(cfg: ProxyConfig): {
   supported: boolean;
   reason: string | null;
-  noteZh: string | null;
 } {
   const url = effectiveUrl(cfg);
   const s = ffmpegProxySupport(url ? { url } : null);
-  return {
-    supported: s.supported,
-    reason: s.reason,
-    noteZh: s.supported
-      ? null
-      : 'ffmpeg 不支持 SOCKS 代理（libavformat 只识别 http_proxy）。选择 SOCKS 时，模型下载会走代理，但**在线媒体拉流会直连**。如需媒体也走代理，请改填 HTTP 代理地址。',
-  };
+  /*
+   * ⚠️ #106：这里原来还发一格 `noteZh` —— 一整段中文，设置页把它当作横幅正文
+   * 原样渲染（`noteZh ?? reason ?? t(…)`，中文那一份无条件胜出）。
+   * 于是英文界面上那条横幅标题英文、正文整段中文，而一条早就写好的英文词条
+   * （`settings.proxy.socksFfmpegDetail`，两份语言都有、内容还更全）长期是死代码。
+   *
+   * **判定仍然由做判定的那一方给**：下面 `supported` 这个布尔就是
+   * `ffmpegProxySupport()` 的结论，设置页读的正是它。变的只有措辞的归属 ——
+   * 它去了有 i18n 的那一侧。`reason` 保留：它是**排障用的原文**，不是横幅正文。
+   */
+  return { supported: s.supported, reason: s.reason };
 }
 
 function publicView(cfg: ProxyConfig): Record<string, unknown> {

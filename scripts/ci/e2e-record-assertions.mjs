@@ -304,6 +304,25 @@ export function checkRetranscribeKeptWords({ before, after }) {
 /* ────────────────────────── VAD 切分 ────────────────────────── */
 
 /**
+ * `pipeline.vad.reason` 那一格**说没说出成因** —— 判据是**结构**，不是那句话长什么样。
+ *
+ * ## ⚠️ 为什么不读 `reasonZh`（#106）
+ *
+ * 上一版读的是 `String(vad.reasonZh ?? '')` 非不非空。那一格已经从契约里删掉了：
+ * 它是 daemon 拼的**整句中文**，被诊断页原样渲染 ⇒ 英文界面上那一行必然是中文。
+ * 现在 daemon 交出的是 `VadChunkingReason`（机器可读，见
+ * `packages/shared/src/api.ts`），措辞归 `apps/web` 的两份 locale。
+ *
+ * **改成读 `reasonEn` 是错的修法**：那只是把"读中文散文"换成"读英文散文"，
+ * 下次措辞一动它照样漂 —— 而本仓在拿散文当判据上已经栽过两次
+ * （`unavailableReason` 那两条）。**读结构才是收法。**
+ */
+function vadReasonKind(vad) {
+  const k = vad?.reason?.kind;
+  return typeof k === 'string' && k.length > 0 ? k : null;
+}
+
+/**
  * **没装 VAD 时是"明确降级"，不是"静默出错"。**
  *
  * 三档要分清（`apps/daemon/src/pipeline/vadStatus.ts`）：
@@ -311,16 +330,30 @@ export function checkRetranscribeKeptWords({ before, after }) {
  *   · `chunking:'fixed'` + `rejected` 为空      → **合法降级**：没装，退固定窗口，转写照跑
  *   · `chunking:'fixed'` + `rejected` 非空      → **事故**：装了一份 whisper.cpp 加载不了的权重
  *
- * "明确"的判据不是"有个字段"，是：**理由能给用户看**（非空、说明了原因），
- * 且**转写仍然产出了文本**（降级 ≠ 失败）。只断言 `chunking==='fixed'`
- * 抓不到"它退了但整单也死了"这种情形，而那恰恰是 T-148 的现场。
+ * "明确"的判据不是"有个字段"，是：**成因说得出来**（`reason.kind` 在，且它没有
+ * 反过来说"没降级"），且**转写仍然产出了文本**（降级 ≠ 失败）。
+ * 只断言 `chunking==='fixed'` 抓不到"它退了但整单也死了"这种情形，
+ * 而那恰恰是 T-148 的现场。
  */
 export function checkVadDegradedExplicitly({ vad, segments }) {
   if (!vad) return no('/api/health 里没有 pipeline.vad —— 切分方式无从判断');
   if (vad.chunking !== 'fixed') return no(`期望降级到固定窗口，实际 chunking=${vad.chunking}`);
-  const reason = String(vad.reasonZh ?? '');
-  if (reason.trim().length === 0) {
-    return no('降级了但 reasonZh 是空的 —— 这就是"静默降级"，用户看不到发生了什么');
+  const kind = vadReasonKind(vad);
+  if (kind === null) {
+    return no(
+      '降级了但 pipeline.vad.reason 这一格是空的 —— 这就是"静默降级"，用户看不到发生了什么',
+    );
+  }
+  /*
+   * ★★ **同一格自相矛盾比没有这一格更坏。**
+   * `chunking:'fixed'` 说"退到固定窗口了"，而 `reason.kind:'vad_active'` 说"按静音切分"——
+   * 诊断页读的就是后者，于是屏幕上会写着「VAD 可用：按静音切分」，而每一次转写都在降级。
+   * 那正是 T-148 要消灭的假绿灯，只是换了一格来发作。
+   */
+  if (kind === 'vad_active') {
+    return no(
+      'chunking=fixed 却报 reason.kind=vad_active —— 同一格自相矛盾，诊断页会显示一盏假绿灯',
+    );
   }
   if ((vad.rejected ?? []).length > 0) {
     return no(
@@ -337,21 +370,31 @@ export function checkVadDegradedExplicitly({ vad, segments }) {
   if (text.length < 20) {
     return no(`降级之后只转出 ${text.length} 个字符 —— 判据是"仍然可用"，不是"没报错"`);
   }
-  return yes(
-    `chunking=fixed，理由「${reason}」，仍转出 ${segments.length} 段 / ${text.length} 字符`,
-  );
+  return yes(`chunking=fixed，成因 ${kind}，仍转出 ${segments.length} 段 / ${text.length} 字符`);
 }
 
 /** 装了 VAD 之后必须真的用上它 —— 且要报出用的是哪份权重。 */
 export function checkVadActive(vad) {
   if (!vad) return no('/api/health 里没有 pipeline.vad');
   if (vad.chunking !== 'vad') {
-    return no(`装了 ggml VAD，chunking 却是 ${vad.chunking}（理由：${vad.reasonZh ?? '(空)'}）`);
+    return no(
+      `装了 ggml VAD，chunking 却是 ${vad.chunking}（成因 ${vadReasonKind(vad) ?? '(空)'}）`,
+    );
   }
   if (!vad.model || String(vad.model).trim().length === 0) {
     return no('chunking=vad 却说不出用的是哪份权重 —— "报告说好了"不等于"真的好了"');
   }
-  return yes(`chunking=vad，权重 ${vad.model}`);
+  /*
+   * ★ 反方向的同一条（#106）：`chunking:'vad'` 而 `reason.kind` 说的是别的成因
+   * （典型 `no_vad_model_installed`），两格在讲两件事。这里读**结构**，
+   * 所以它不会随文案漂 —— 上一版这一格只把 `reasonZh` 拿去拼错误信息，
+   * 一个字都没判过。
+   */
+  const kind = vadReasonKind(vad);
+  if (kind !== null && kind !== 'vad_active') {
+    return no(`chunking=vad 却报 reason.kind=${kind} —— 两格在说两件事，界面读哪一格都可能说假话`);
+  }
+  return yes(`chunking=vad，权重 ${vad.model}，成因 ${kind ?? '(未报)'}`);
 }
 
 /* ────────────────────────── 时间轴 ────────────────────────── */

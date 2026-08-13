@@ -354,14 +354,30 @@ export interface KnownInstalledVersion {
 }
 
 /**
+ * 「说不出已装的是哪一版」的**机器可读原因**（#106）。
+ *
+ * 现在只有一种，而且**刻意不预留第二种** —— 空着的枚举成员是"永远不会触发的兜底"。
+ * 真出现第二种（比如"安装记录读不出来"）时再加，加的那一刻 `apps/web` 那张
+ * 总 `Record` 会当场编译不过，逼着人给它写一句话。形状照 `AdvisoryUndeterminedReason`。
+ */
+export const INSTALLED_VERSION_UNKNOWN_REASONS = ['no_version_recorded'] as const;
+export type InstalledVersionUnknownReason = (typeof INSTALLED_VERSION_UNKNOWN_REASONS)[number];
+
+/**
  * 装了，但**「已安装版本」这个概念对这份记录不适用** —— 不是"还没查"，是"没有这一栏"。
  *
- * `reason` 会原样显示给用户（同 `checkError` 的待遇）：说"不知道"的时候必须一并说清
+ * `reason` 会显示给用户（同 `checkError` 的待遇）：说"不知道"的时候必须一并说清
  * 为什么不知道，否则它在屏幕上和"没装"长得一样。
+ *
+ * ⚠️ **它是机器可读的原因，不是一句中文散文**（#106，与 `AdvisoryUndeterminedReason`
+ * 同一形状）。上一版这里是 `'安装记录里没有记版本号'` 这句中文，而组件页
+ * **每一条已安装组件**都渲染它（`components.installedNoVersion` = `installed ({{reason}})`）
+ * —— 于是英文界面上那一整列写的是 `installed (安装记录里没有记版本号)`。
+ * 措辞归 `apps/web` 的两份 locale，这里只说**是哪一种原因**。
  */
 export interface NotApplicableInstalledVersion {
   readonly kind: 'not-applicable';
-  readonly reason: string;
+  readonly reason: InstalledVersionUnknownReason;
 }
 
 export type InstalledVersion = NotInstalled | KnownInstalledVersion | NotApplicableInstalledVersion;
@@ -408,7 +424,7 @@ export function installedVersionOf(record: object): InstalledVersion {
   if (typeof r.version === 'string' && r.version.length > 0) {
     return { kind: 'known', version: r.version };
   }
-  return { kind: 'not-applicable', reason: '安装记录里没有记版本号' };
+  return { kind: 'not-applicable', reason: 'no_version_recorded' };
 }
 
 /**
@@ -547,6 +563,124 @@ export type BinarySource =
     };
 
 /**
+ * 「结构上就没有上游可问」的**两种成因**（#106）。
+ *
+ * 两条都指向同一个结论（别点「检查更新」），但**说的不是同一件事**，所以不合并：
+ *   · `static_source`  目录里登记了上游，而它的 `kind` 就是 `static` —— 有登记、无可问；
+ *   · `not_registered` 目录里 `upstream` 干脆是 `null` —— 连登记都没有。
+ * 合成一句会让"我们没登记"冒充成"这东西本来就没有上游"。
+ */
+export const NO_UPSTREAM_REASONS = ['static_source', 'not_registered'] as const;
+export type NoUpstreamReason = (typeof NO_UPSTREAM_REASONS)[number];
+
+/**
+ * **为什么排不出先后** —— 判别联合，数字/版本号是结构化字段（#106）。
+ *
+ * 两条腿分别来自两个构造点：`upstreamVerdict()`（比较器给出 `incomparable`）
+ * 与 `packages/downloader/src/components.ts` 的 `verdictFor()`（多族 tag 且 pin 不在其中）。
+ */
+export type UpstreamIndeterminate =
+  | {
+      /** 两个版本号不是同一套编号方案，比较器直接说了 `incomparable`。 */
+      readonly kind: 'version_schemes_differ';
+      readonly upstreamScheme: VersionScheme;
+      readonly pinnedVersion: string;
+      readonly pinnedScheme: VersionScheme;
+    }
+  | {
+      /**
+       * 这个仓同时在发好几族 tag，而我们钉的那一版**不在其中任何一族里**。
+       * `newestPerFamily` 是每一族各自最新的那个 —— 数据，照实列出。
+       */
+      readonly kind: 'pin_outside_all_tag_families';
+      readonly newestPerFamily: readonly string[];
+      readonly pinnedVersion: string;
+    };
+
+/**
+ * 一次上游查询**为什么失败** —— 判别联合，**措辞归 `apps/web`**（#106）。
+ *
+ * ## 为什么不是一句话
+ *
+ * 上一版这里是 daemon 拼好的整句中文（`httpFailureReason()` 那一族），
+ * 而界面把它插进 `components.upstream.failed` 这句英文里 ——
+ * 英文用户读到的是**半句中文**。它符合「CJK 只出现在数据里」的表面判据
+ * （`en.json` 里一个汉字都没有），但那句话是我们自己产出的**解释**，不是数据。
+ * 形状照 `AdvisoryUndeterminedReason` / `SpeedUnmeasuredReason`。
+ *
+ * ## ⚠️ 数字不许拼进枚举名
+ *
+ * 「约 3 分钟后可再试」这种，`kind` 只说是哪一种原因，**毫秒数作为字段跟着走**，
+ * web 侧插值成本地语言的时长。拼成 `retry_in_3_min` 会让枚举变成无穷集合。
+ *
+ * ## ⚠️ `upstream_error_text` 是**故意不枚举**的那一格
+ *
+ * 网络栈 / 上游原样抛回来的错误串（`fetch failed`、`ENOTFOUND …`、TLS 报错……）
+ * **不是一个我们认识的有限集合**。硬编一个枚举去装它，是把「我不知道这是什么」
+ * 塌成「我知道」——本仓反复清的正是这个形状。所以它如实标成「来自上游的原文」，
+ * 界面明说这一段不会被翻译。**新增失败原因时不要往这一格塞**：
+ * 凡是我们自己判断出来的，都该有自己的 `kind`。
+ */
+export type UpstreamFailure =
+  /** 次级限流：上游直接告诉了我们等多久。 */
+  | { readonly kind: 'rate_limited'; readonly status: number; readonly retryAfterMs: number }
+  /** 配额用尽，而且**算得出**什么时候恢复。 */
+  | {
+      readonly kind: 'quota_exhausted';
+      /** 距离恢复还有多久（毫秒）。**只在真算得出来时走这一格。** */
+      readonly resetInMs: number;
+      /** 哪个配额桶（`core` / `search` / …）。上游没给就是 `null`。 */
+      readonly resource: string | null;
+      /** 这个桶每小时多少次。**读出来的，不写死 60。** */
+      readonly limit: number | null;
+    }
+  /**
+   * 配额用尽，但**上游没给出恢复时刻**。
+   *
+   * ★ 与上面那格分开，不是合并成一个 `resetInMs: number | null` ——
+   * 「算不出恢复时间就不说时间」这条要求（v0.7.2）必须留在**结构里**：
+   * 合成一格之后，界面上少写一个 `null` 判断就会编出一个「等 0 分钟」。
+   */
+  | {
+      readonly kind: 'quota_exhausted_no_reset';
+      readonly resource: string | null;
+      readonly limit: number | null;
+    }
+  /**
+   * 403/429 **但配额还有剩** —— 这不是限流，别替它编一个原因
+   * （仓库改名/转私有、上游的滥用保护都会回 403）。
+   */
+  | { readonly kind: 'http_error_not_quota'; readonly status: number; readonly remaining: number }
+  /** 非 2xx，而且上游一个配额头都没给：**判断不了是不是限流**。 */
+  | { readonly kind: 'http_error_no_quota_info'; readonly status: number }
+  /** 超时。**刻意什么都不猜** —— 一次超时不构成"因为配额见底"的证据。 */
+  | { readonly kind: 'timed_out'; readonly timeoutMs: number }
+  /** 拉到了 release 列表，但没有一条匹配 `tagPattern`。 */
+  | { readonly kind: 'no_release_matches_tag_pattern'; readonly tagPattern: string }
+  /** 这个仓一个 release 都没有。 */
+  | { readonly kind: 'repo_has_no_releases' }
+  /** 拉到了 tag 列表，但没有一条匹配 `tagPattern`。 */
+  | { readonly kind: 'no_tag_matches_tag_pattern'; readonly tagPattern: string }
+  /** 这个仓没有 tag。 */
+  | { readonly kind: 'repo_has_no_tags' }
+  /** npm registry 回了 200，但 body 里没有 `version`。 */
+  | { readonly kind: 'npm_response_has_no_version' }
+  /** HuggingFace 回了 200，但 body 里没有 `sha`。 */
+  | { readonly kind: 'huggingface_response_has_no_sha' }
+  /** `UpstreamSource.kind` 是我们不会问的那种 —— 配置错了，不是网络问题。 */
+  | { readonly kind: 'unsupported_upstream_kind'; readonly upstreamKind: string }
+  | {
+      /**
+       * **来自上游 / 运行时的原文，我们没有解读它。**
+       *
+       * 界面必须明说这一段不会被翻译 —— 假装它是我们的话，等于替一个我们没看懂的
+       * 字符串背书。见本类型头部那段 ⚠️。
+       */
+      readonly kind: 'upstream_error_text';
+      readonly text: string;
+    };
+
+/**
  * 「上游有没有更新的版本」此刻的结论。
  *
  * ⚠️ 这六条腿里有**三条**在旧形状里挤在同一格（`latestVersion === null`），
@@ -570,13 +704,13 @@ export type UpstreamCheck =
        * 对它说"重试"是把人送上死路 —— 再点一百次也还是没有上游。
        */
       readonly kind: 'no-upstream';
-      readonly reason: string;
+      readonly reason: NoUpstreamReason;
     }
   | {
       /** 问了，但没问到（超时 / 限流 / 仓库改名 / 断网）。**重试是真的有意义的那一档。** */
       readonly kind: 'failed';
       readonly checkedAt: string;
-      readonly reason: string;
+      readonly reason: UpstreamFailure;
     }
   | {
       /** 问到了，而且上游没有比我们钉的更新的。这一档**才**配绿勾。 */
@@ -612,8 +746,13 @@ export type UpstreamCheck =
       readonly checkedAt: string;
       /** 我们确实问到的那个版本号（照实显示），只是**排不出先后**。 */
       readonly version: string;
-      /** 为什么排不出先后 —— 必填，跟 `ToolchainVerdict.unknown` 同一条纪律。 */
-      readonly reason: string;
+      /**
+       * 为什么排不出先后 —— 必填，跟 `ToolchainVerdict.unknown` 同一条纪律。
+       *
+       * ⚠️ 机器可读（#106）：措辞归 `apps/web` 的两份 locale，数字与版本号
+       * 作为**结构化字段**跟着走。
+       */
+      readonly reason: UpstreamIndeterminate;
     };
 
 /**
@@ -695,9 +834,17 @@ export function upstreamVerdict(args: {
         kind: 'indeterminate',
         checkedAt,
         version: upstreamVersion,
-        reason:
-          `上游给的 ${upstreamVersion}（${versionScheme(upstreamVersion)} 方案）与目录钉的 ` +
-          `${pinnedVersion}（${versionScheme(pinnedVersion)} 方案）不是同一套编号，排不出先后`,
+        /*
+         * #106：这里原来是一整句中文，界面把它插进 `components.upstream.indeterminate`
+         * 那句英文里 —— 英文用户读到半句中文。现在只交出**是哪一种排不出先后**
+         * 和参与比较的那两个版本号 / 两套编号方案，措辞在 `apps/web` 的两份 locale。
+         */
+        reason: {
+          kind: 'version_schemes_differ',
+          upstreamScheme: versionScheme(upstreamVersion),
+          pinnedVersion,
+          pinnedScheme: versionScheme(pinnedVersion),
+        },
       };
   }
 }

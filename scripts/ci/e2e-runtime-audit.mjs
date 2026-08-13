@@ -105,6 +105,17 @@ import {
   killTree,
   assertPortFree as sharedAssertPortFree,
 } from './launcher-spawn.mjs';
+/*
+ * ★ 判据本身住在一个**能 import 的**模块里（#106）。
+ *   本文件全程顶层执行、末尾 `process.exit()`，import 不进来 ⇒ 它内部的判据
+ *   一条都喂不了输入。上一版那条 `/先安装 CPU/` 正则就是这么烂掉的：
+ *   T-191 把文案改成「先装 CPU 基础包」之后它再也没匹配过，而**没有任何东西会发现**。
+ *   证明见 `scripts/ci/selftest-e2e-runtime.mjs`。
+ */
+import {
+  saysHardwareNotProbedYet,
+  stillSaysHardwareNotProbedYet,
+} from './e2e-runtime-assertions.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const IS_WIN = process.platform === 'win32';
@@ -1219,7 +1230,7 @@ async function phaseBackends() {
   for (const p of packs) {
     if (p.os !== (IS_WIN ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux')) continue;
     say(
-      `     ${String(p.id).padEnd(32)} backend=${String(p.backend).padEnd(7)} applicable=${String(p.applicable).padEnd(5)} kind=${String(p.inapplicableKind ?? '').padEnd(12)} ${String(p.inapplicableReason ?? '').slice(0, 60)}`,
+      `     ${String(p.id).padEnd(32)} backend=${String(p.backend).padEnd(7)} applicable=${String(p.applicable).padEnd(5)} kind=${String(p.inapplicableKind ?? '').padEnd(12)} ${String(p.inapplicability?.kind ?? '')}${p.inapplicability?.detail ? ` (${String(p.inapplicability.detail).slice(0, 40)})` : ''}`,
     );
   }
   assert('A-CATALOG-APPLICABLE', applicable.length > 0, `本机适用包 ${applicable.length} 个`);
@@ -1280,16 +1291,26 @@ async function phaseBackends() {
    *   而"重启之后就好了"对一个还没被告知需要重启的用户没有任何意义。
    */
   const catBeforeRestart = await j('/api/backends/catalog');
-  const staleAdvice = (catBeforeRestart.body?.packs ?? []).filter(
-    (p) => p.applicable === false && /先安装 CPU/.test(String(p.inapplicableReason ?? '')),
-  );
+  /*
+   * ★★ #106：**判据从「匹配那句中文」换成「读结构」**。
+   *
+   * 上一版是 `/先安装 CPU/.test(inapplicableReason)`，而 T-191 早就把文案改成了
+   * 「还没装过就**先装** CPU 基础包」—— `先安装 CPU` ≠ `先装 CPU`，
+   * 于是这条检测**从那天起一次都没触发过**：产品真的退化回这个 bug，它也不吭声。
+   * 一条恒不触发的检测比没有更坏（它看起来像还有人在守）。
+   *
+   * ⚠️ 没有改成读那句英文 —— 那只是把"读中文散文"换成"读英文散文"。
+   * `inapplicability.kind` 是 daemon 为分档单列的结构字段，不随文案漂。
+   */
+  const staleAdvice = (catBeforeRestart.body?.packs ?? []).filter(saysHardwareNotProbedYet);
   if (staleAdvice.length > 0 && probe?.ok === true) {
     finding(
       '刚在网页上装完 CPU 基础包，目录却仍然叫用户"请先安装 CPU 基础包"',
       [
         `此刻 /api/backends/installed 里确实有 ${cpuPack.id}，探针也确实跑通了（ok=true, devicesFound=${probe?.devicesFound}），`,
         `而 /api/backends/catalog 对 ${staleAdvice.map((p) => p.id).join(', ')} 给出的理由仍是：`,
-        `  「${staleAdvice[0].inapplicableReason}」`,
+        `  inapplicability.kind = ${staleAdvice[0].inapplicability?.kind}` +
+          `（界面上那句话由 apps/web 的 runtime.pack.inapplicable.hardwareNotProbedYet 渲染）`,
         '成因：applicability 读的是 `RestState.hardware`，那是 **daemon 启动时的快照**；',
         '装完包不会触发重新探测（全仓只有 /api/backends/select 会改写它，且只改 selectedBackend）。',
         '而运行时页问的就是这个端点。用户可见后果：他被要求去做一件他刚做完的事，',
@@ -1321,12 +1342,9 @@ async function phaseBackends() {
    *   加速包那一格仍然写着「请先安装 CPU 基础包」—— 让用户去做他刚做完的事。
    */
   const catAfterRestart = await j('/api/backends/catalog');
-  const accelAfter = (catAfterRestart.body?.packs ?? []).filter(
-    (p) =>
-      p.applicable === false &&
-      p.inapplicableKind === 'undetermined' &&
-      /先安装 CPU/.test(String(p.inapplicableReason ?? '')),
-  );
+  // #106：同上，读结构不读散文。这一格额外要求 `inapplicableKind === 'undetermined'`
+  //       —— 两格由 daemon 的同一次判断产出，只中一格说明其中一格漂了。
+  const accelAfter = (catAfterRestart.body?.packs ?? []).filter(stillSaysHardwareNotProbedYet);
   if (accelAfter.length > 0) {
     finding(
       '装完 CPU 基础包后，目录仍然叫用户"请先安装 CPU 基础包"',
@@ -1466,7 +1484,7 @@ async function phaseBackends() {
     );
     unknown(
       'A-ACCEL-INSTALL',
-      `本 runner 上没有任何加速包适用 —— 逐个理由：${cands.map((p) => `${p.id}=${p.inapplicableKind}:${String(p.inapplicableReason ?? '').slice(0, 40)}`).join(' | ') || '(目录里没有本平台的加速包)'}`,
+      `本 runner 上没有任何加速包适用 —— 逐个理由：${cands.map((p) => `${p.id}=${p.inapplicableKind}:${String(p.inapplicability?.kind ?? '')}`).join(' | ') || '(目录里没有本平台的加速包)'}`,
     );
     unknown('A-ACCEL-SWITCH', '前提（装上一个加速后端）不成立，切换无从谈起');
   } else {

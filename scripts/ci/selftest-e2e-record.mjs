@@ -325,15 +325,34 @@ prove(
 
 /* ═══════════════════════ 4. VAD ═══════════════════════ */
 
+/*
+ * ★★ #106：这一组的夹具从 `reasonZh`（一句中文）换成了 `reason`（`VadChunkingReason`，
+ *   机器可读）。那一格已经从 `/api/health` 的契约里删掉 —— 它是 daemon 拼的整句中文，
+ *   诊断页原样渲染 ⇒ 英文界面上那一行必然是中文。
+ *
+ *   ⚠️ **不是改成读 `reasonEn`**：那只是把"读中文散文"换成"读英文散文"，
+ *   下次措辞一动照样漂。判据现在读 `reason.kind` —— 结构不随文案变。
+ *
+ *   下面第 1、2 两个变异体就是这条新判据的**牙齿证明**：
+ *   把 `checkVadDegradedExplicitly` 里那两行结构判断抽掉，它们会当场存活 ⇒ 自检红。
+ */
 const DEGRADED_OK = {
-  vad: { chunking: 'fixed', reasonZh: '未安装 VAD 模型 → 切分降级为固定窗口', rejected: [] },
+  vad: { chunking: 'fixed', reason: { kind: 'no_vad_model_installed' }, rejected: [] },
   segments: GOOD_SEGMENTS,
 };
 
 prove('checkVadDegradedExplicitly', A.checkVadDegradedExplicitly, DEGRADED_OK, [
   [
-    '理由是空的（= 静默降级，用户看不到发生了什么）',
-    { ...DEGRADED_OK, vad: { ...DEGRADED_OK.vad, reasonZh: '' } },
+    '成因这一格是空的（= 静默降级，用户看不到发生了什么）',
+    { ...DEGRADED_OK, vad: { ...DEGRADED_OK.vad, reason: null } },
+  ],
+  [
+    '成因这一格在，但里面没有 kind（老 daemon / 半个对象，同样等于没说）',
+    { ...DEGRADED_OK, vad: { ...DEGRADED_OK.vad, reason: {} } },
+  ],
+  [
+    '★★ 同一格自相矛盾：chunking=fixed 却报 reason.kind=vad_active —— 诊断页会显示假绿灯',
+    { ...DEGRADED_OK, vad: { ...DEGRADED_OK.vad, reason: { kind: 'vad_active' } } },
   ],
   [
     '装了一份 whisper.cpp 加载不了的权重（T-148 的事故形态，不是降级）',
@@ -354,15 +373,79 @@ prove(
   {
     chunking: 'vad',
     model: '/m/ggml-silero-v6.2.0.bin',
-    reasonZh: 'VAD 可用：按静音切分',
+    reason: { kind: 'vad_active' },
     rejected: [],
   },
   [
-    ['装了却没用上', { chunking: 'fixed', reasonZh: '未安装 VAD 模型', rejected: [] }],
+    [
+      '装了却没用上',
+      { chunking: 'fixed', reason: { kind: 'no_vad_model_installed' }, rejected: [] },
+    ],
     ['说用上了却报不出用的哪份权重', { chunking: 'vad', model: '', rejected: [] }],
+    [
+      '★ 反方向的自相矛盾：chunking=vad 却报 reason.kind=no_vad_model_installed',
+      {
+        chunking: 'vad',
+        model: '/m/ggml-silero-v6.2.0.bin',
+        reason: { kind: 'no_vad_model_installed' },
+        rejected: [],
+      },
+    ],
     ['没有 pipeline.vad', null],
   ],
 );
+
+/*
+ * ★★ **前提检查：这一组的判据必须真的与文案无关。**
+ *
+ * 上一版读 `reasonZh` 那句中文，措辞一改（T-191 那种）判据就静默漂掉 ——
+ * 而"漂掉"在这里的表现是**恒不触发**，与本轮在 `e2e-runtime-audit.mjs` 里
+ * 抓到的那条死门是同一个形状。所以这里正面钉一次：
+ * 把成因那句话换成任意别的字符串、甚至根本不给这两个旧字段，结论都不许变。
+ */
+say('');
+say('── checkVadDegradedExplicitly：判据必须与文案无关（#106）');
+{
+  const base = A.checkVadDegradedExplicitly(DEGRADED_OK);
+  cases += 1;
+  if (!base.ok) {
+    failures += 1;
+    say(`   ✘ 真形状先得过 —— 否则下面比的是两个假：${base.reason}`);
+  }
+  for (const noise of [
+    { reasonZh: '随便一句完全不同的中文' },
+    { reasonEn: 'some entirely different english sentence' },
+    { reasonZh: '', reasonEn: '' },
+  ]) {
+    cases += 1;
+    const r = A.checkVadDegradedExplicitly({
+      ...DEGRADED_OK,
+      vad: { ...DEGRADED_OK.vad, ...noise },
+    });
+    if (!r.ok) {
+      failures += 1;
+      say(`   ✘ 判据被文案影响了（${JSON.stringify(noise)}）：${r.reason}`);
+    } else {
+      say(`   ✔ 加噪 ${JSON.stringify(noise)} → 结论不变`);
+    }
+  }
+  /*
+   * ★ 反过来：结构没了、只剩一句中文，它**必须**红。
+   * 少了这一条，上面那三条只是"恒真"的另一种说法 —— 一个什么都不看的判据
+   * 也能让"加噪不改变结论"成立。
+   */
+  cases += 1;
+  const broken = A.checkVadDegradedExplicitly({
+    ...DEGRADED_OK,
+    vad: { ...DEGRADED_OK.vad, reason: null, reasonZh: '未安装 VAD 模型 → 切分降级为固定窗口' },
+  });
+  if (broken.ok) {
+    failures += 1;
+    say('   ✘ 结构没了、只剩一句中文，它却照样通过 —— 判据还在读散文');
+  } else {
+    say('   ✔ 只剩一句中文（没有 reason.kind）→ 红：判据读的确实是结构');
+  }
+}
 
 /* ═══════════════════════ 5. 时间轴 ═══════════════════════ */
 

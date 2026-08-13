@@ -15,6 +15,7 @@ import type {
 import { DownloadRow } from '../../../components/common/DownloadRow';
 import { Button } from '../../../components/common/Button';
 import { StatusChip } from '../../../components/common/StatusChip';
+import { Emphasis, stripEmphasis } from '../../../components/common/Emphasis';
 import { BackendChip, type BackendChipState } from '../../../components/common/BackendChip';
 import { formatBytes } from '../../../lib/format/bytes';
 import { localizedName } from '../../../lib/format/localized';
@@ -26,6 +27,7 @@ import {
   STATUS_NEEDS_EXPLANATION,
   type PackStatus,
 } from '../packStatus';
+import { inapplicabilityText } from '../reasonKeys';
 
 type Pack = GetBackendCatalogResponse['packs'][number];
 
@@ -159,6 +161,19 @@ export function BackendPackCard({
    * 而 daemon 照删不误。判据现在对准真实约束，见 `isLoadBearingPack()`。
    */
   const isLoadBearing = isLoadBearingPack(pack);
+  /**
+   * 「这个包为什么装不了」那一行的文字 —— **在这一侧组装**（#106）。
+   *
+   * daemon 现在只交出 `Inapplicability`（机器可读 + 结构化参数），措辞在
+   * `../reasonKeys` 那张总表 + 两份 locale 里。上一版这里读的是
+   * `pack.inapplicableReason`：daemon 拼好的一整句中文，英文界面上原样渲染。
+   *
+   * `null` 时**一个字都不说** —— 不替 daemon 编一句"不支持"，
+   * 判据与 `inapplicableKind` / `updateAvailable` 缺失时同源。
+   */
+  const inapplicableText = pack.inapplicability
+    ? inapplicabilityText(t, pack.inapplicability)
+    : null;
   /**
    * ★★ **随应用出厂的那一档卸不掉** —— 与承重墙是两条轴，不许合并。
    *
@@ -312,9 +327,11 @@ export function BackendPackCard({
      * 它同时答了本轮的总判据：用户读完知道下一步是什么（**什么都不用做**），
      * 而且那句"什么都不用做"是**明说出来的**，不是靠"没有按钮"去暗示。
      *
-     * ⚠️ 措辞从 `pack.os` / `pack.arch` **两个结构字段**拼，不复用 daemon 那句
-     * `inapplicableReason`（`applicability.ts` 里写死的中文「适用于 X/Y，与本机不符」）——
-     * 那句话在英文界面上是中文，与 #105 ① 是同一个毛病。
+     * ⚠️ 措辞从 `pack.os` / `pack.arch` **两个结构字段**拼。
+     * #105 当时的理由是「不复用 daemon 那句 `inapplicableReason`，它在英文界面上是中文」；
+     * #106 之后 daemon 那一格已经不是中文了（`Inapplicability.platform_mismatch`
+     * 只交 os/arch 两个字段），**这一行照旧从结构字段拼**：它想说的话
+     * （「装不了，你也不需要做任何事」）比那一档的通用措辞更具体。
      */
     <p
       className="max-w-[16rem] text-right text-[11px] text-ink-muted"
@@ -339,7 +356,14 @@ export function BackendPackCard({
         pendingCi
           ? t('runtime.pack.pendingCiTitle')
           : !pack.applicable
-            ? (pack.inapplicableReason ?? t(`runtime.kind.${status}`, { defaultValue: '' }))
+            ? /*
+               * ⚠️ `stripEmphasis`：`title` 是**纯文本**属性，`<Emphasis>` 在这里用不上。
+               * `inapplicabilityText()` 的 `backend_unavailable` 那一档转给了
+               * `runtime.hw.reason*`，而那七条里有六条带 `**…**`（硬件卡是走
+               * `<Emphasis>` 渲染的）—— 原样塞进 `title` 会让读屏念出裸星号。
+               */
+              stripEmphasis(inapplicableText ?? '') ||
+              t(`runtime.kind.${status}`, { defaultValue: '' })
             : undefined
       }
       onClick={() => onInstall(pack.id)}
@@ -456,14 +480,27 @@ export function BackendPackCard({
           ) : null}
           {/*
             ⚠️ #105 ④：`other-platform` 这一档**不再渲染 daemon 那句原话**。
-            `applicability.ts` 对它写死的是一句中文（「适用于 {os}/{arch}，与本机不符」）——
-            在英文界面上就是一句中文，而这一档它是**唯一**的正文。
             同一句事实已经由右侧 `otherPlatformNote` 从 `pack.os` / `pack.arch` 说了，
-            两份语言都有。其余档位的 `inapplicableReason` 照旧透传：那些是
-            "具体卡在哪"的技术原话（探针路径、驱动版本），不是我们能替它翻译的东西。
+            两份语言都有，而这一档它是**唯一**的正文。
+
+            ★★ #106：其余档位原来是**原样透传 daemon 那句中文**
+            （`applicability.ts` 里的「尚未探测到硬件能力 —— …」「该后端在本机不可用」），
+            于是英文界面上「具体卡在哪」这一整行是中文。当时那段注释写的是
+            「那些是技术原话，不是我们能替它翻译的东西」—— **只有一半成立**：
+            探针路径、驱动版本确实是原话，但外面包着的那句解释是我们自己写的。
+            现在两者分开了：`Inapplicability` 说是哪一种成因（措辞在 `../reasonKeys`
+            那张总表 + 两份 locale），daemon 那句英文原话作为 `detail` 跟着走，
+            并被明确标成「探针原话，未翻译」。
           */}
-          {!pack.applicable && status !== 'other-platform' && pack.inapplicableReason ? (
-            <p className="mt-1 text-xs text-ink-muted">{pack.inapplicableReason}</p>
+          {!pack.applicable && status !== 'other-platform' && inapplicableText ? (
+            /*
+              ⚠️ 必须走 `<Emphasis>`：这段文字有一档（`backend_unavailable`）转给了
+              `runtime.hw.reason*`，那六条词条带 `**…**`。原样 `{text}` 渲染的话，
+              两种语言下用户都会看到裸星号 —— T-129b 立的正是这条。
+            */
+            <p className="mt-1 text-xs text-ink-muted">
+              <Emphasis text={inapplicableText} />
+            </p>
           ) : null}
           {/*
             ★★ T-197：**这一格是「安装 119 MB」那句话唯一的解药。**

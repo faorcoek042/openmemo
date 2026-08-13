@@ -3,13 +3,13 @@ import { ChevronRight, Cpu, HardDrive, MemoryStick, MonitorCog } from 'lucide-re
 import type {
   AdvisoryUndeterminedReason,
   Backend,
-  BackendUnavailableKind,
   GetHardwareResponse,
   HardwareInfo,
 } from '@openmemo/shared';
 import { BackendChip } from '../../../components/common/BackendChip';
 import { Emphasis } from '../../../components/common/Emphasis';
 import { formatBytes } from '../../../lib/format/bytes';
+import { UNAVAILABLE_REASON_KEYS } from '../reasonKeys';
 
 /**
  * 哪些后端**有资格枚举显卡**。总 `Record` —— 新增一种后端而没人表态，**构建就红**。
@@ -58,46 +58,16 @@ export function gpuEnumerationHappened(hw: HardwareInfo): boolean {
  * 那意味着**英文界面上会出现一整句中文**。措辞留在这一侧，两份 locale 才对得起来
  * （`check-locale-ratchet.mjs` 会替我们盯住"两份 key 集合一致"）。
  */
+/**
+ * 这七档的措辞**已搬去 `../reasonKeys`**（#106）。
+ *
+ * 搬家的理由不是整洁：后端包卡片上那句「这个包为什么装不了」原来走的是
+ * daemon 拼的中文散文（`applicability.ts`），而它的成因就是同一个
+ * `BackendUnavailableKind`。同一个成因在同一页上有两种说法，其中一种在英文
+ * 界面上还是中文。现在两处共用同一张表。
+ */
 const UNDETERMINED_REASON_KEYS: Readonly<Record<AdvisoryUndeterminedReason, string>> = {
   virtual_adapter: 'runtime.hw.gpuVirtualUndetermined',
-};
-
-/**
- * 「为什么这些后端不可用」里，每一种成因该说哪句话。**总 `Record`** ——
- * `BackendUnavailableKind` 加一档而没人给它写话，**编译当场就红**。
- *
- * ── ★★ #105 ③：为什么这一格非有不可 ─────────────────────────────────────────────
- *
- * `[闸门实测 2026-08-12，中文界面]` 这个列表逐字是：
- * ```
- * cuda：backend package not installed
- * vulkan：backend package not installed
- * rocm：backend package not installed
- * ```
- * ——**中文界面上的三条英文机器串**。而同一个列表里 metal / coreml 两条是完整中文、
- * 而且说得对（闸门逐条确认过）：那两条走的是 `platform_unsupported`，**它早就有词条**。
- * 所以这不是"没想到要翻译"，是 T-196 只给当时手上那一档写了人话，
- * 其余六档一直原样甩英文原文。
- *
- * ── 判据为什么是 `unavailableKind` 而不是那句英文 ──────────────────────────────
- * 与本文件下方 T-196 那段同一条：`unavailableReason` 是给排障的人看的**英文自由文本**，
- * `manager.ts` 一共会写 7 种，改一个词、加一个括号，任何按文案分档的写法都会静默失效。
- * `BACKEND_UNAVAILABLE_KINDS` 正是 daemon 为此单列的机器可判字段，这里逐格读它。
- *
- * ── ⚠️ 「package not installed」还有第二个毛病，也在这里治 ──────────────────────
- * 那句话**召唤的动作在这台机器上到不了**：唯一对应的包就在同页折叠区里、按钮是禁用的。
- * 所以 `not_installed` 那一格不能只是把英文译成中文，它必须回答「那我现在能做什么」——
- * 指向那张卡片，并预先说清"如果那里也是灰的，卡片上写着为什么"。
- * **一句翻得很好但通向死路的话，和一句英文一样没用。**
- */
-const UNAVAILABLE_REASON_KEYS: Readonly<Record<BackendUnavailableKind, string>> = {
-  platform_unsupported: 'runtime.hw.reasonPlatformUnsupported',
-  probe_failed: 'runtime.hw.reasonProbeFailed',
-  disabled_after_failures: 'runtime.hw.reasonDisabledAfterFailures',
-  not_installed: 'runtime.hw.reasonNotInstalled',
-  not_probed_this_run: 'runtime.hw.reasonNotProbedThisRun',
-  no_usable_devices: 'runtime.hw.reasonNoUsableDevices',
-  enumerated_none: 'runtime.hw.reasonEnumeratedNone',
 };
 
 /**

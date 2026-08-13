@@ -15,7 +15,12 @@
  *   压成 false）。它已经删掉；留着它就等于留着那台机器。
  */
 
-import type { UpstreamSource, VersionScheme } from '@openmemo/shared';
+import type {
+  NoUpstreamReason,
+  UpstreamFailure,
+  UpstreamSource,
+  VersionScheme,
+} from '@openmemo/shared';
 import { compareVersions, compareVersionsForSort, versionScheme } from '@openmemo/shared';
 
 export interface UpstreamRelease {
@@ -65,13 +70,18 @@ export type UpstreamProbe =
   | {
       /** 这个组件结构上就没有上游可问。**不是失败，别叫用户重试。** */
       readonly kind: 'no-upstream';
-      readonly reason: string;
+      readonly reason: NoUpstreamReason;
     }
   | {
       /** 问了没问到：超时、限流、改名、断网。重试是有意义的。 */
       readonly kind: 'failed';
+      /**
+       * ⚠️ **机器可读，不是一句话**（#106）。措辞归 `apps/web` 的两份 locale ——
+       * 这一格会被插进 `components.upstream.failed` 那句英文里，
+       * 塞一句中文进去就是给英文用户一句半中文的话。
+       */
       readonly checkedAt: string;
-      readonly reason: string;
+      readonly reason: UpstreamFailure;
     };
 
 const UA = 'OpenMemo/0.1 (+https://github.com/openmemo)';
@@ -144,15 +154,8 @@ class UpstreamHttpError extends Error {
   }
 }
 
-/** 「约 3 分钟」/「约 40 秒」。**只在算得出来时调用。** */
-function humanizeMs(ms: number): string {
-  const sec = Math.ceil(ms / 1000);
-  if (sec < 60) return `约 ${sec} 秒`;
-  return `约 ${Math.ceil(sec / 60)} 分钟`;
-}
-
 /**
- * 把一次 403/429 变成一句**用户能照着做**的话。
+ * 把一次 403/429 变成一条**用户能照着做**的结论 —— **机器可读的那一种**。
  *
  * ★★ 这条线要治的病：`x-ratelimit-remaining` 上游**每次响应都给**，而我们原来
  * **只在 403/429 时**把它变成一句话，正常响应里那个数字直接丢掉 ——
@@ -171,36 +174,45 @@ function humanizeMs(ms: number): string {
  *      一律宣布 "rate limited" —— 那是在没有证据的地方给了一个具体的错误原因。
  *
  * ⚠️ **算不出恢复时间就不说时间**（本条要求 3）：`reset` 缺失、或已经是过去时，
- * 都只说「配额用尽」，绝不编一个「等 X 分钟」。编出来的那个数会被用户当真去等。
+ * 都只走 `quota_exhausted_no_reset`，绝不编一个「等 X 分钟」。
+ * 编出来的那个数会被用户当真去等 —— 所以这一条现在**由类型守着**：
+ * 只有 `quota_exhausted` 那一格才有 `resetInMs`，而它是 `number`，不是 `number | null`。
+ *
+ * ⚠️ **#106：这里不再产出一句话。** 上一版返回的是
+ * 「上游限流（HTTP 403），约 3 分钟后可再试」这种整句中文，而 `apps/web` 把它插进
+ * `components.upstream.failed`（一句英文）里 —— 英文界面上就是半句中文。
+ * 讽刺的是那句话本身是 v0.7.2 刚做好的诚实文案：**内容是对的，位置是错的。**
+ * 现在只交出 `kind` + 结构化数字，措辞与时长格式化都在 `apps/web` 的两份 locale。
  */
-export function httpFailureReason(status: number, rate: RateLimitSnapshot, nowMs: number): string {
-  const bucket = rate.limit == null ? '' : `每小时 ${rate.limit} 次`;
-  const where = rate.resource == null ? '' : `${rate.resource} 配额`;
-  const who = [where, bucket].filter(Boolean).join('，');
-
-  // 次级限流：上游直接告诉了我们等多久，照说。
+export function httpFailureReason(
+  status: number,
+  rate: RateLimitSnapshot,
+  nowMs: number,
+): UpstreamFailure {
+  // 次级限流：上游直接告诉了我们等多久，照传。
   if (rate.retryAfterMs != null && rate.retryAfterMs > 0) {
-    return `上游限流（HTTP ${status}），${humanizeMs(rate.retryAfterMs)}后可再试`;
+    return { kind: 'rate_limited', status, retryAfterMs: rate.retryAfterMs };
   }
 
   if (rate.remaining === 0) {
-    const head = `上游配额已用尽${who ? `（${who}）` : ''}`;
-    // 只有真的算得出来才给时间。
+    // 只有真的算得出来才带时间。
     if (rate.resetAtMs != null && rate.resetAtMs > nowMs) {
-      return `${head}，${humanizeMs(rate.resetAtMs - nowMs)}后恢复`;
+      return {
+        kind: 'quota_exhausted',
+        resetInMs: rate.resetAtMs - nowMs,
+        resource: rate.resource,
+        limit: rate.limit,
+      };
     }
-    return `${head}；上游没给出恢复时刻，过一阵再试`;
+    return { kind: 'quota_exhausted_no_reset', resource: rate.resource, limit: rate.limit };
   }
 
   // ★ 有配额却还是 403/429 —— **这不是限流**，别替它编一个原因。
   if (rate.remaining != null) {
-    return (
-      `HTTP ${status}（不是配额问题：这一刻还剩 ${rate.remaining} 次）` +
-      `，可能是仓库改名/转私有，或触发了上游的滥用保护`
-    );
+    return { kind: 'http_error_not_quota', status, remaining: rate.remaining };
   }
 
-  return `HTTP ${status}（上游没给配额信息，判断不了是不是限流）`;
+  return { kind: 'http_error_no_quota_info', status };
 }
 
 async function getJson(
@@ -295,7 +307,7 @@ export async function checkUpstream(
   try {
     if (src.kind === 'static') {
       // 不是失败：`static` 的意思就是"没有可问的上游"。叫用户重试是把他送上死路。
-      return { kind: 'no-upstream', reason: '这个组件没有上游发布源（upstream.kind = static）' };
+      return { kind: 'no-upstream', reason: 'static_source' };
     }
 
     if (src.kind === 'github-release') {
@@ -317,8 +329,8 @@ export async function checkUpstream(
           kind: 'failed',
           checkedAt,
           reason: src.tagPattern
-            ? `没有 release 匹配 tagPattern ${src.tagPattern}`
-            : '这个仓一个 release 都没有',
+            ? { kind: 'no_release_matches_tag_pattern', tagPattern: src.tagPattern }
+            : { kind: 'repo_has_no_releases' },
         };
       }
       // Sort by our own comparator rather than trusting list order, which is by date and
@@ -348,7 +360,9 @@ export async function checkUpstream(
         return {
           kind: 'failed',
           checkedAt,
-          reason: src.tagPattern ? `没有 tag 匹配 tagPattern ${src.tagPattern}` : '这个仓没有 tag',
+          reason: src.tagPattern
+            ? { kind: 'no_tag_matches_tag_pattern', tagPattern: src.tagPattern }
+            : { kind: 'repo_has_no_tags' },
         };
       }
       names.sort((a, b) => compareVersionsForSort(b, a));
@@ -376,7 +390,7 @@ export async function checkUpstream(
             // npm 的 `/latest` 只回一个值，没有候选列表可比对。
             candidates: [],
           }
-        : { kind: 'failed', checkedAt, reason: 'npm 返回里没有 version 字段' };
+        : { kind: 'failed', checkedAt, reason: { kind: 'npm_response_has_no_version' } };
     }
 
     if (src.kind === 'huggingface') {
@@ -395,10 +409,14 @@ export async function checkUpstream(
             // HF 只回一个整仓 commit sha，没有候选列表可比对。
             candidates: [],
           }
-        : { kind: 'failed', checkedAt, reason: 'HuggingFace 返回里没有 sha 字段' };
+        : { kind: 'failed', checkedAt, reason: { kind: 'huggingface_response_has_no_sha' } };
     }
 
-    return { kind: 'failed', checkedAt, reason: `unsupported upstream kind: ${src.kind}` };
+    return {
+      kind: 'failed',
+      checkedAt,
+      reason: { kind: 'unsupported_upstream_kind', upstreamKind: src.kind },
+    };
   } catch (e) {
     // Degrade quietly: a failed check must never look like "you are up to date", and must
     // never prevent installing the pinned version.
@@ -414,10 +432,16 @@ export async function checkUpstream(
  * （27/27 超时曾被我归因成"并发数太高"，复测里同样的 27 并发 2.4s 全过，
  * 真凶是网络瞬态）。**没有证据就不给原因。**
  */
-function failureReason(e: unknown, timeoutMs: number): string {
+function failureReason(e: unknown, timeoutMs: number): UpstreamFailure {
   if (e instanceof UpstreamHttpError) return httpFailureReason(e.status, e.rate, Date.now());
-  if ((e as Error)?.name === 'AbortError') return `timed out after ${timeoutMs}ms`;
-  return String((e as Error)?.message ?? e);
+  if ((e as Error)?.name === 'AbortError') return { kind: 'timed_out', timeoutMs };
+  /*
+   * ⚠️ **这一行刻意不枚举**（#106）。落到这里的是 `fetch` / DNS / TLS 原样抛回来的
+   * `message`（`fetch failed`、`getaddrinfo ENOTFOUND …`……）—— 一个**我们没有解读过、
+   * 也没有边界**的集合。给它硬编一个枚举，是把「我不知道这是什么」塌成「我知道」。
+   * 所以它如实进 `upstream_error_text`，界面上明说这一段是原文、不会被翻译。
+   */
+  return { kind: 'upstream_error_text', text: String((e as Error)?.message ?? e) };
 }
 
 /**
@@ -471,7 +495,7 @@ export async function checkAllUpstreams(
     if (!s.upstream) {
       out.set(s.id, {
         kind: 'no-upstream',
-        reason: '这个组件没有登记上游发布源（components.json 里 upstream 为 null）',
+        reason: 'not_registered',
       });
       continue;
     }
