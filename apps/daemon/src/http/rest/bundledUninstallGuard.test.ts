@@ -279,30 +279,35 @@ describe('随应用出厂的组件不许被产品自己删掉', () => {
     const r = await del(state, BUNDLED_ID);
 
     /*
-     * ① 服务端故障关闭。204 = 它刚刚删了已安装应用自己的一部分。
+     * ① ★★ **第一条断言刻意落在文件系统上，不在 HTTP 信封上。**
+     *
+     * 顺序是判据的一部分：这个缺陷的伤害是**磁盘上的字节没了**，状态码只是它的
+     * 影子。先断言状态码的话，红出来的那行写的是「期望 409 得到 204」——
+     * 读的人还得自己想明白"所以文件呢"。先断言字节，红出来的那行直接就是
+     * **「包内的 ffmpeg 被删了」**，也顺便证明了这条断言真的有牙齿：
+     * 一条只看状态码的用例**根本抓不到这个 bug**。
+     */
+    assert.deepEqual(
+      await readFile(join(probeDir, 'ffmpeg')).catch(() => null),
+      FFMPEG_BYTES,
+      '包内的 ffmpeg 没了（或被改了）—— 那是**已安装应用本体**的字节，真机上 ~115 MB，' +
+        '除了把整个产品重下一遍拿不回来',
+    );
+    assert.deepEqual(
+      await readFile(join(probeDir, 'ffprobe')).catch(() => null),
+      FFPROBE_BYTES,
+      '包内的 ffprobe 没了（或被改了）',
+    );
+
+    /*
+     * ② 服务端必须**故障关闭**：204 = 它刚刚同意删掉应用自己的一部分。
      */
     assert.notEqual(
       r.status,
       204,
-      '服务端接受了这次卸载 —— 真机上那是 ~230 MB 属于**应用本体**的字节，' +
-        '除了重下整个产品拿不回来',
+      '服务端接受了这次卸载 —— 就算这一跑侥幸没删掉文件，这个答复本身就是错的',
     );
     assert.equal(r.status, 409, `期望 409（这不是"没装"，是"不该由这里删"）：${r.body}`);
-
-    /*
-     * ② ★ **判据在文件系统上**，不在信封里。
-     *    只断言状态码的用例抓不到这个 bug —— 它的伤害是磁盘上的字节没了。
-     */
-    assert.deepEqual(
-      await readFile(join(probeDir, 'ffmpeg')),
-      FFMPEG_BYTES,
-      '包内的 ffmpeg 被删了/被改了 —— 请求被拒绝**却仍然动了盘**，那比直接 204 更糟',
-    );
-    assert.deepEqual(
-      await readFile(join(probeDir, 'ffprobe')),
-      FFPROBE_BYTES,
-      '包内的 ffprobe 被删了/被改了',
-    );
 
     /*
      * ③ 拒绝要**说得出理由**：用户点的是一颗亮着的按钮，只回一个 409 数字
