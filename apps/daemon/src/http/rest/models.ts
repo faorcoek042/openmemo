@@ -733,13 +733,24 @@ async function deleteModel(state: RestState, res: ServerResponse, id: string): P
    * 而 `removeManifest` 是 `fs.rm(..., {force:true})` —— **找不到不报错**。
    * 后果：HTTP 返回 204、事件也发了、记录还在，模型看起来"删不掉"。
    */
-  await state.dropInstalledRecord(id);
+  const dropped = await state.dropInstalledRecord(id);
   // manifest 没了，它引用的 blob 立刻变孤儿 —— 顺手回收
   const gc = await state.store.collectGarbage(['orphan_blobs']);
   state.publish(
     makeEvent('model.removed', topics.models(), { modelId: id, freedBytes: gc.freedBytes }),
   );
   await state.emitStorageChanged();
+  // ★ T-107 ②：与 `DELETE /api/backends/:id` 同一条规则、同一个形状 ——
+  // 有文件被拒绝删除就说出来，干净的那条路仍然是 204。两处若只改一处，
+  // "同一件事两种答案"这族 bug 就又多一条。
+  if (dropped.refused.length > 0) {
+    sendJson(res, 200, {
+      modelId: id,
+      freedBytes: gc.freedBytes,
+      filesNotRemoved: dropped.refused.map((r) => ({ name: r.name, reason: r.reason })),
+    });
+    return true;
+  }
   res.writeHead(204);
   res.end();
   return true;

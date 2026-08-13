@@ -15,9 +15,9 @@
     "先例（同一套棘轮姿势）：scripts/orphan-exports-baseline.json、",
     "scripts/ci/single-source-baseline.json、scripts/ci/selfcheck-known-gaps.json。"
   ],
-  "generatedAt": "2026-08-12",
+  "generatedAt": "2026-08-13",
   "generatedBy": "test-ratchet（事故：31d3ae3 静默删除 platformUnsupported.test.ts 191 行，7581cff 恢复）",
-  "floor": 165,
+  "floor": 167,
   "tracked": [
     "apps/daemon/src/bootstrap/entrypoint.test.ts",
     "apps/daemon/src/bootstrap/open-browser.test.ts",
@@ -40,6 +40,7 @@
     "apps/daemon/src/http/rest/backendNotProbed.test.ts",
     "apps/daemon/src/http/rest/backendReconcile.test.ts",
     "apps/daemon/src/http/rest/bundledReconcile.test.ts",
+    "apps/daemon/src/http/rest/bundledUninstallGuard.test.ts",
     "apps/daemon/src/http/rest/catalogDescriptionRank.test.ts",
     "apps/daemon/src/http/rest/catalogDiskFreshness.test.ts",
     "apps/daemon/src/http/rest/content.export.test.ts",
@@ -47,6 +48,7 @@
     "apps/daemon/src/http/rest/hardwareFingerprintCoverage.test.ts",
     "apps/daemon/src/http/rest/hardwareLiveReadings.test.ts",
     "apps/daemon/src/http/rest/hardwareSnapshot.test.ts",
+    "apps/daemon/src/http/rest/installRecordBounds.test.ts",
     "apps/daemon/src/http/rest/installWarmup.test.ts",
     "apps/daemon/src/http/rest/llmRoutes.test.ts",
     "apps/daemon/src/http/rest/manifestLoadFailure.test.ts",

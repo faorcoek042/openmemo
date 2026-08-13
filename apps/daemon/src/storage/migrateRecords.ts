@@ -13,7 +13,9 @@
  *
  * ## 迁移做三件事（都幂等）
  * 1. 绝对路径 → `root:'models'` + `relPath`（相对当前 models 根）
- * 2. 路径已失效但**同名文件在当前库里** → 重新指向它（数据目录搬过家就是这种）
+ * 2. 路径已失效但**当前库里有同一条库内路径** → 重新指向它（数据目录搬过家就是这种）
+ *    ⚠️ 判据是"整条库内路径是后缀"，**不是 basename 相等** —— 见 `remapsOnto()`，
+ *    那里记着一次真实的"守卫被自家迁移绕过"。
  * 3. 删掉残留的 `installPath`（T-097 已拆成 linkInto/unpackInto）
  *
  * 找不到对应文件时**不删记录、也不假装正常**：保留原样并计入 `unresolved`，
@@ -50,6 +52,52 @@ export interface MigrationOutcome {
 function inside(root: string, p: string): boolean {
   const rel = relative(root, p);
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+}
+
+/**
+ * 一条失效的绝对路径 `stale`，可以被重新指向当前库里的 `candidate`（相对 models 根）吗？
+ *
+ * ## ★★ T-107 ③：判据从 **basename 相等** 收紧成 **整条库内路径是后缀**
+ *
+ * ── 上一版为什么是个洞 ───────────────────────────────────────────────────────────
+ *
+ * 上一版是 `basename(candidate) === basename(stale)`。**basename 匹配极其松** ——
+ * 它可以把**任意**一条记录重新指到一个只是重名的文件上。下一个人需要知道这件事，
+ * 所以写在这里：库里只要有一个同名文件，这条判据就成立，**不管那个文件是谁的、
+ * 也不管原路径本来指向哪儿**。
+ *
+ * `[隔离实例实测]` 真出过事：随应用出厂的记录（`source: 'bundled'`，
+ * `path = <安装目录>/runtime/probe/ffmpeg`）在用户**同时也下载装了** media-tools 时，
+ * 被这条迁移**悄悄改成**指向 `by-name/backend/media-tools-linux-x64/ffmpeg`：
+ *
+ * ```
+ * note: media-tools-linux-x64.json: ffmpeg 原路径已失效（…/app/runtime/probe/ffmpeg），
+ *       重新指向 by-name/backend/media-tools-linux-x64/ffmpeg
+ * source=bundled  files[0]={"root":"models","relPath":"by-name/backend/media-tools-…/ffmpeg"}
+ * ```
+ *
+ * 后果不是"多迁了一条"，是 **一道守卫被自家另一段代码绕过去了**：任何把"不许删随包
+ * 出厂那份"的判据从 `source` 改写成"路径在不在库内"的修法，都会被这条迁移**在启动时
+ * 悄悄满足掉**。一道能被绕开的守卫比没有守卫更坏——它看起来像还有人在守。
+ *
+ * ── 收紧成什么 ─────────────────────────────────────────────────────────────────
+ *
+ * 只有当 `stale` **以 `candidate` 整条相对路径结尾**（按路径段比，不是按字符串比）
+ * 时才重指。语义是：「这条记录原先指向的就是**一个和我们同构的库**，只是根不同」——
+ * 那正是"数据目录搬过家"的定义，也**只**覆盖那一种。
+ *
+ *   · `/tmp/cold4/models/by-name/asr/x.bin`  vs  `by-name/asr/x.bin`  → ✅ 搬家，重指
+ *   · `<安装目录>/runtime/probe/ffmpeg`      vs  `by-name/backend/…/ffmpeg` → ❌ 不是同一个库
+ *
+ * 不匹配时**不删记录、不假装正常**，落进 `unresolved` 由调用方打印 —— 与第 ③ 档一致。
+ */
+function remapsOnto(stale: string, candidate: string): boolean {
+  const seg = (p: string): string[] => p.split(/[\\/]/).filter((s) => s.length > 0);
+  const want = seg(candidate);
+  const have = seg(stale);
+  if (want.length === 0 || have.length < want.length) return false;
+  const tail = have.slice(have.length - want.length);
+  return tail.every((s, i) => s === want[i]);
 }
 
 /**
@@ -90,8 +138,8 @@ export function migrateRecord(
       const { path: _drop, ...rest } = f;
       return { ...rest, root: 'models', relPath: rel };
     }
-    // ② 路径失效（例如数据目录搬过家）→ 按文件名在当前库里找回来
-    const hit = [...existing].find((r) => basename(r) === basename(abs));
+    // ② 路径失效（例如数据目录搬过家）→ 在当前库里找回来
+    const hit = [...existing].find((r) => remapsOnto(abs, r));
     if (hit) {
       changed = true;
       notes.push(`${basename(abs)} 原路径已失效（${abs}），重新指向 ${hit}`);

@@ -164,7 +164,7 @@ describe('T-162 ①-bis 安装记录要带上 priority（否则解析器永远�
 
     const differing: string[] = [];
     for (const pack of catalog.packs) {
-      const rec = toInstalledRecord(pack, []);
+      const rec = toInstalledRecord(pack, [], { modelsRoot: MANIFEST_DIR });
       if (rec.priority !== pack.priority) differing.push(pack.id);
     }
     assert.deepEqual(differing, [], '这些包的 priority 没被抄进安装记录');
