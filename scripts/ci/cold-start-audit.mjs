@@ -975,7 +975,13 @@ try {
         } else if (vad.chunking === 'vad') {
           say(`   ✔ 切分方式 = VAD（按静音切分），权重 ${vad.model}`);
         } else {
-          say(`   ⚠️ 切分方式 = 固定窗口：${vad.reasonZh}`);
+          /*
+           * #106：这里原来打的是 `vad.reasonZh` —— 那一格已经从契约里删掉
+           * （它是 daemon 拼的整句中文，诊断页原样渲染 ⇒ 英文界面上必然是中文）。
+           * 不改的话这一行会打出一个 `undefined`，而**诊断工具说假话比不说更坏**。
+           * 现在打成因那一格（`VadChunkingReason.kind`，`packages/shared/src/api.ts`）。
+           */
+          say(`   ⚠️ 切分方式 = 固定窗口，成因 ${vad.reason?.kind ?? '(daemon 没给)'}`);
           if ((vad.rejected ?? []).length > 0) {
             say(`   ✘ 装上的 VAD 权重 whisper.cpp 加载不了：${vad.rejected.join(', ')}`);
             exitCode = 1;

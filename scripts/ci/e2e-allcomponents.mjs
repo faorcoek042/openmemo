@@ -689,13 +689,17 @@ try {
   say(`   后端包：适用 ${applicable.length} 个、**本平台不适用 ${notApplicable.length} 个**`);
   say('   ── 不适用的逐个列出（"不适用"是正常，不是失败；但必须看得见是哪些、为什么）──');
   for (const p of notApplicable) {
-    say(
-      `     ${String(p.id).padEnd(34)} ${String(
-        p.reasonZh ?? p.reason ?? p.applicableReason ?? '(目录没给理由)',
-      )
-        .replace(/\s+/g, ' ')
-        .slice(0, 70)}`,
-    );
+    /*
+     * ⚠️ 这一行原来读的是 `p.reasonZh ?? p.reason ?? p.applicableReason` ——
+     * **后端包上这三格从来都不存在**（真名当时是 `inapplicableReason`），
+     * 所以它一直在打「(目录没给理由)」。与 #106 在 `e2e-runtime-audit.mjs` 里
+     * 抓到的那条死正则是同一族：**看起来在报，其实什么都没报。**
+     * 现在读结构那一格（`Inapplicability`，`packages/shared/src/hardware.ts`）。
+     */
+    const why = p.inapplicability
+      ? `${p.inapplicability.kind}${p.inapplicability.detail ? ` (${p.inapplicability.detail})` : ''}`
+      : '(目录没给理由)';
+    say(`     ${String(p.id).padEnd(34)} ${why.replace(/\s+/g, ' ').slice(0, 70)}`);
   }
 
   const packResults = [];
