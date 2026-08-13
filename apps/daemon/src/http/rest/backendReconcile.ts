@@ -176,7 +176,7 @@ export async function reconcileBackendManifests(opts: ReconcileOptions): Promise
     if (!sawSomething || files.length !== pack.files.length) continue;
 
     const record: InstalledBackendPack = {
-      ...toInstalledRecord(pack, files),
+      ...toInstalledRecord(pack, files, { modelsRoot: opts.store.root }),
       // 它不是现在装的 —— 用那条链的 mtime，那是我们手上唯一真实的时间证据
       installedAt: new Date(mtimeMs).toISOString(),
       // 这一条才是"现在"：上面每个文件都刚被逐字节校验过
@@ -289,7 +289,15 @@ async function reconcileBundledPacks(
     }
 
     const record: InstalledBackendPack = {
-      ...toInstalledRecord(pack, files),
+      /*
+       * ★★ T-107 ①：这一档的 `files[].path` **全都落在库外**（`bundledRuntimeDir()`
+       * 底下，也就是应用自己的安装目录）。`toInstalledRecord()` 的结构判据因此
+       * 对它们**一个路径字段都不写** —— 记录仍然如实说得出"有哪些文件、多大"，
+       * 但**说不出它们在哪儿**，于是删除路径拿不到可 `rm` 的路径。
+       * 这正是想要的：随应用出厂的字节不归我们删，而这件事现在由**形状**保证，
+       * 不再依赖谁记得在删除入口写一句 `if (source === 'bundled')`。
+       */
+      ...toInstalledRecord(pack, files, { modelsRoot: opts.store.root }),
       source: 'bundled',
       // 我们不知道包内这份对应上游哪一次构建 —— 不拿目录里那个版本号顶替
       engineVersion: BUNDLED_VERSION_UNKNOWN,

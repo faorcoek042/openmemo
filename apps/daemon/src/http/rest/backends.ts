@@ -18,7 +18,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import { install } from '@openmemo/downloader';
+import { install, isInsideRoot, toPortableRecord } from '@openmemo/downloader';
 import * as path from 'node:path';
 
 import { discoverTools, materializeSqliteExtensions } from '@openmemo/pipeline';
@@ -170,9 +170,31 @@ function inapplicableKind(
  * 留在 `startPackInstall` 的闭包里就只能靠"真的装一次"才测得到，而那需要网络；
  * 抽出来之后可以拿**真实目录**里的每一条去断言"抄全了"。
  */
+/**
+ * ★★ T-107 ①：一个文件路径 → **可移植记录**，库外的文件则一个路径字段都不写。
+ *
+ * 这是这一轮的治本点，理由在 `InstalledBackendPack.files` 的注释里写全了。
+ * 一句话：上一版无条件抄绝对 `path`，于是「随应用出厂那份」有办法把
+ * `<安装目录>/runtime/probe/ffmpeg` 写进安装记录，而删除路径照着它 `fs.rm`。
+ *
+ * ⚠️ 这里**不看 `pack.source`、不看 id**，判据是**结构性的**：路径在不在库里。
+ * 按 `source === 'bundled'` 分叉等于把同一条规则写第二遍，而写第二遍的那两份
+ * 迟早会不一致 —— 本轮的启动迁移就是这么绕过守卫的（见 `migrateRecords.ts`）。
+ * 结构判据顺带覆盖了**将来任何**把库外路径塞进记录的新写法，不只今天这一个。
+ */
+function toRecordFile(
+  f: { name: string; sha256: string; sizeBytes: number; path: string },
+  modelsRoot: string,
+): InstalledBackendPack['files'][number] {
+  const base = { name: f.name, sha256: f.sha256, sizeBytes: f.sizeBytes };
+  if (!isInsideRoot(modelsRoot, f.path)) return base;
+  return { ...base, ...toPortableRecord(f.path, modelsRoot) };
+}
+
 export function toInstalledRecord(
   pack: BackendPack,
   files: readonly { name: string; sha256: string; sizeBytes: number; path: string }[],
+  opts: { modelsRoot: string },
 ): InstalledBackendPack {
   return {
     schemaVersion: 1,
@@ -185,12 +207,7 @@ export function toInstalledRecord(
     integrity: 'ok',
     priority: pack.priority,
     ...(pack.linkInto ? { linkInto: pack.linkInto } : {}),
-    files: files.map((f) => ({
-      name: f.name,
-      sha256: f.sha256,
-      sizeBytes: f.sizeBytes,
-      path: f.path,
-    })),
+    files: files.map((f) => toRecordFile(f, opts.modelsRoot)),
     // ★ 从未运行 ≠ 通过。需要真实推理自检才能填，见文件头注释。
     selfTest: null,
   };
@@ -284,7 +301,7 @@ export function startPackInstall(
       });
 
       ctx.setStep('installing');
-      const record = toInstalledRecord(pack, result.files);
+      const record = toInstalledRecord(pack, result.files, { modelsRoot: state.store.root });
       // blob 先落、manifest 最后写：中途崩溃只会留下可回收的孤儿 blob，
       // 绝不会留下指向不存在文件的 manifest。
       await state.store.writeManifest('backend', pack.id, record);
@@ -857,7 +874,7 @@ export async function handleBackendRoutes(
      * 与 T-164 在模型那一格修的是同一件事、同一个成因；那次**没有覆盖 backend 桶**
      * （`dropInstalledFiles()` 里那句 `if (kind === 'backend') continue`）。
      */
-    await state.dropInstalledFiles(id, ['backend']);
+    const dropped = await state.dropInstalledFiles(id, ['backend']);
     await state.store.removeManifest('backend', id);
     // 链都删干净了，blob 这才真的成为孤儿 —— 现在回收它才对得上账
     const gc = await state.store.collectGarbage(['orphan_blobs']);
@@ -865,6 +882,25 @@ export async function handleBackendRoutes(
       makeEvent('backend.removed', topics.backends(), { packId: id, freedBytes: gc.freedBytes }),
     );
     await state.emitStorageChanged();
+    /*
+     * ★★ T-107 ②：有东西被拒绝删除时，**回一个说得出话的 200，而不是一个沉默的 204**。
+     *
+     * 为什么记录照删、不改成 409：这条记录指向的字节**已经不属于我们**
+     * （越界，或者路径早就失效）。硬把整条 DELETE 变成 409 的话，用户会
+     * **永远清不掉一条烂记录** —— 那是另一个方向的坏。所以卸载动作照常兑现
+     * （manifest 走掉、界面上它真的消失），同时如实说清「有几个文件没删、为什么」。
+     *
+     * 干净的那条路**仍然是 204**：不为了统一形状去改一个正确的既有契约
+     * （e2e 的 A-UNINSTALL-* 两条腿钉的就是它）。
+     */
+    if (dropped.refused.length > 0) {
+      sendJson(res, 200, {
+        packId: id,
+        freedBytes: gc.freedBytes,
+        filesNotRemoved: dropped.refused.map((r) => ({ name: r.name, reason: r.reason })),
+      });
+      return true;
+    }
     res.writeHead(204);
     res.end();
     return true;

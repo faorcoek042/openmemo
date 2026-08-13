@@ -17,6 +17,7 @@ import {
   ArtifactStore,
   DownloadQueue,
   STORE_KINDS,
+  assertInsideInstallRoots,
   bucketForRole,
   orderSourcesForDownload,
   probeAll,
@@ -97,6 +98,27 @@ export const HARDWARE_SNAPSHOT_ID = 'hw-local';
  * 那比一个安静地不出现在可回收里的数字诚实得多。
  */
 const RESOLVER_UNAVAILABLE = '工具解析器当前不可用，无法证明它没在被使用';
+
+/** 一条**被拒绝删除**的记录项 —— 不是"删了但不在"，是"知道它在、不肯去删"。 */
+export interface RefusedFile {
+  /** 安装记录里那个文件的名字（`files[].name`），用户界面能对上号的那个。 */
+  readonly name: string;
+  /** 为什么拒绝。原样来自解析层的异常，里面带着路径与允许的根。 */
+  readonly reason: string;
+}
+
+/**
+ * `dropInstalledFiles()` 的账。
+ *
+ * 存在的理由见该方法的注释：**没有这份返回值，「拒绝」就无法与「本来就没有」区分**，
+ * 于是既没法告诉用户，也没法写一条会红的断言。
+ */
+export interface DropFilesReport {
+  /** 真的走到 `fs.rm` 的条目数（`force:true`，文件本来就不在也算走到了）。 */
+  readonly removed: number;
+  /** 我们**拒绝**去删的条目。空数组 = 这次卸载没有任何东西被留下。 */
+  readonly refused: readonly RefusedFile[];
+}
 
 /**
  * 产品**现在**把工具解析到了哪些路径 —— 「无法识别的残留」的第二道闸。
@@ -1086,11 +1108,25 @@ export class RestState {
    * 不把 `backend` 直接并进默认集合：`dropInstalledRecord()`（模型那条路）
    * 也调这个函数，而模型 id 与后端包 id 撞名时会误删。**显式传 kinds，别猜。**
    */
+  /**
+   * ★★ T-107 ②：**拒绝必须能被外面读到。**
+   *
+   * 上一版这里是一句光秃秃的 `catch { continue }` —— 于是「记录越界、我们拒绝去删」
+   * 和「这条记录本来就没有文件」在函数外面**长得一模一样**：都是静默、都返回 204。
+   * 一道说不出自己拦过什么的闸门，既没法向用户交代，**也没法写测试**
+   * （把闸门整个抽掉，行为观察不出区别 ⇒ 变异存活 ⇒ 那条断言从来没被验证过）。
+   *
+   * 所以现在返回一份**逐条的账**。⚠️ 这两件事**不许再共用一个静默出口**：
+   *   · `refused` —— 我们**知道**有个文件，但**不肯**按这条记录去 `rm`（越界/记录损坏）；
+   *   · 删了但文件本来就不在 —— `fs.rm(..., {force:true})` 的正常语义，不进账。
+   */
   async dropInstalledFiles(
     id: string,
     kinds: readonly (typeof STORE_KINDS)[number][] = STORE_KINDS.filter((k) => k !== 'backend'),
-  ): Promise<void> {
+  ): Promise<DropFilesReport> {
     const roots = { models: this.store.root };
+    const refused: RefusedFile[] = [];
+    let removed = 0;
     for (const kind of kinds) {
       const rec = await this.store.readManifest<InstalledModel>(kind, id);
       if (!rec) continue;
@@ -1098,29 +1134,58 @@ export class RestState {
         let abs: string;
         try {
           abs = resolveInstalledFile(f, roots);
-        } catch {
-          continue; // 记录损坏/越界 —— 宁可留下也不按猜出来的路径去 rm
+        } catch (err) {
+          // 记录损坏/越界 —— 宁可留下也不按猜出来的路径去 rm，**但要说出来**
+          refused.push({ name: f.name, reason: err instanceof Error ? err.message : String(err) });
+          continue;
         }
         await fs.rm(abs, { force: true }).catch(() => undefined);
+        removed += 1;
         // 归档包展开出来的目录（`by-name/<kind>/<unpackDirName(name)>`）
         const dir = path.join(path.dirname(abs), unpackDirName(f.name));
-        if (dir !== abs) await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+        if (dir === abs) continue;
+        /*
+         * 🔴 T-107（硬要求 b）：**这条派生路径也要过同一道边界。**
+         *
+         * `abs` 过了闸不代表 `dir` 过得了：`unpackDirName(f.name)` 是拿**记录里的
+         * 文件名**去拼的，一个带 `../` 的 `name`（或一条 `abs` 恰好贴着根边缘的记录）
+         * 能让它落到根外 —— 而这一句是 `recursive: true`，越界的代价是**递归删**。
+         * 用的是与解析层同一个 `assertInsideInstallRoots()`，不是另写一份判断。
+         */
+        try {
+          assertInsideInstallRoots(dir, roots, `Unpack directory derived from ${f.name}`);
+        } catch (err) {
+          refused.push({
+            name: unpackDirName(f.name),
+            reason: err instanceof Error ? err.message : String(err),
+          });
+          continue;
+        }
+        await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
       }
       // `materializeModelDir()` 摊出来的每模型独占目录（T-160 ①附）
       await fs
         .rm(byModelDir(this.store.root, id), { recursive: true, force: true })
         .catch(() => undefined);
     }
+    for (const r of refused) {
+      console.warn(
+        `[store] 拒绝按安装记录 ${id} 删除 ${r.name}：${r.reason} —— ` +
+          `记录已按用户的卸载动作删掉，但这些字节留在盘上（我们不拥有它们）`,
+      );
+    }
+    return { removed, refused };
   }
 
   /** 把某个 id 的安装记录从**所有**桶里删干净（旧布局可能不止一处）。 */
-  async dropInstalledRecord(id: string): Promise<void> {
+  async dropInstalledRecord(id: string): Promise<DropFilesReport> {
     // ★ 顺序不能反：先按记录删文件，再删记录 —— 记录没了就不知道该删哪些文件了
-    await this.dropInstalledFiles(id);
+    const report = await this.dropInstalledFiles(id);
     for (const kind of STORE_KINDS) {
       if (kind === 'backend') continue;
       await this.store.removeManifest(kind, id);
     }
+    return report;
   }
 
   async listInstalledBackends(): Promise<InstalledBackendPack[]> {

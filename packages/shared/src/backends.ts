@@ -277,7 +277,39 @@ export interface InstalledBackendPack {
   priority?: number;
   /** Mirrors {@link BackendPack.linkInto}; absent for packs that are not linked anywhere. */
   linkInto?: string;
-  files: { name: string; sha256: string; sizeBytes: number; path: string }[];
+  /**
+   * 这个包在盘上的文件。
+   *
+   * ## ★★ T-107：三个字段全是可选的，**这正是要点**
+   *
+   * 上一版是 `{ name; sha256; sizeBytes; path: string }` —— `path` **必填、绝对**。
+   * 于是 `reconcileBundledPacks()` 给**随应用出厂**那份补记录时，唯一能填的东西
+   * 就是 `<安装目录>/runtime/probe/ffmpeg`：一个**指向应用本体、不在用户数据目录里**
+   * 的绝对路径。而删除路径会把记录里点名的路径直接 `fs.rm`
+   * ⇒ 卸载一个组件删掉了产品自己的文件（v0.7.2 实证）。
+   *
+   * 修法不是"再加一道守卫"，是**让那句话说不出口**：
+   *   · 文件在库内 ⇒ 写 `root` + `relPath`（可移植，搬数据目录后仍然指得对）；
+   *   · 文件在库外（随包出厂那档）⇒ **一个路径字段都不写**。
+   * 于是 `resolveInstalledFile()` 对后者抛「既没 root+relPath 也没 path」，
+   * **删除在形状上不可能**，而不是靠某处记得写 `if (source === 'bundled')`。
+   * （那道 409 守卫仍然保留：形状负责保证做不到，守卫负责跟用户把话说清楚——
+   *   光靠静默跳过会让 DELETE 回一个 204，那是又一次"报告一件没发生的事"。）
+   *
+   * `path` 保留为**可选**，只为读回 T-107 之前写下的记录；新代码一律经
+   * `resolveInstalledFile()` 读，不要直接碰这三个字段中的任何一个。
+   */
+  files: {
+    name: string;
+    sha256: string;
+    sizeBytes: number;
+    /** 与 {@link InstalledFile.root} 同义。库外的文件没有这一格。 */
+    root?: 'models';
+    /** 相对 `root` 的路径，POSIX 分隔符。库外的文件没有这一格。 */
+    relPath?: string;
+    /** @deprecated 绝对路径，只为读回旧记录。见上面那段：新记录不再写它。 */
+    path?: string;
+  }[];
   /** Result of the post-install self-test (ADR-003 decision 3). */
   selfTest: BackendSelfTest | null;
 }

@@ -402,6 +402,52 @@ export class ArtifactStore {
 }
 
 /**
+ * 一个绝对路径是否落在 `root` 之内（含 `root` 自身）。
+ *
+ * `resolve` 之后按**分隔符**比前缀，不能用裸 `startsWith`：那会把 `/data-backup`
+ * 判成 `/data` 的内部，而这个函数的下游是 `fs.rm`。
+ */
+export function isInsideRoot(root: string, abs: string): boolean {
+  const r = path.resolve(root);
+  const a = path.resolve(abs);
+  return a === r || a.startsWith(r.endsWith(path.sep) ? r : r + path.sep);
+}
+
+/**
+ * 一条**没有声明自己属于哪个根**的绝对路径，必须落在调用方给出的某个根之内 —— 越界即抛。
+ *
+ * ## 为什么它单独存在，而不是并进 `resolveInstalledFile()`（T-107 ②）
+ *
+ * 因为**删除路径会从解析结果再派生出别的路径**，而派生出来的那个同样能越界：
+ * `dropInstalledFiles()` 在拿到 `abs` 之后还会算一个
+ * `join(dirname(abs), unpackDirName(f.name))` 并对它做**递归** `rm`。
+ * 只在 `resolveInstalledFile()` 里挡住 `abs`，那条派生路径就仍然没人管
+ * —— 同一个洞的第二个出口。导出这一个判据、两处共用，是为了让它们不可能分叉。
+ *
+ * ## ⚠️ 这里**故意不套用** `resolveInstalledFile()` 里那套 `??` 默认根
+ *
+ * 那边 `roots.data` 缺省成 `<models>/..`（即整个数据目录），因为那边解析的是
+ * 记录**自己声明**的根名，默认值只是把一个已声明的名字解析出来。
+ * 而这里做的是**包含性检查**：套用同一套默认值会把闸门从"库之内"悄悄放宽成
+ * "数据目录之内"，于是一条指向 `<dataDir>/openmemo.db` 的遗留记录也能过。
+ * **只认调用方显式给出的根。** 想放宽，就显式把那个根传进来。
+ */
+export function assertInsideInstallRoots(
+  abs: string,
+  roots: { models: string; runtimes?: string; data?: string },
+  what: string,
+): string {
+  const allowed = [roots.models, roots.runtimes, roots.data].filter(
+    (r): r is string => typeof r === 'string' && r.length > 0,
+  );
+  if (allowed.some((r) => isInsideRoot(r, abs))) return abs;
+  throw new Error(
+    `${what} resolves to ${abs}, which is outside every allowed root ` +
+      `(${allowed.join(', ')}) — refusing to hand out a path we do not own`,
+  );
+}
+
+/**
  * Resolve an installed-file record to an absolute path.
  *
  * Handles both shapes so the migration is invisible to callers:
@@ -410,6 +456,27 @@ export class ArtifactStore {
  *
  * Consumers should call this rather than reading either field, so that when the legacy
  * field is finally dropped only this function changes.
+ *
+ * ## ★★ T-107：遗留分支**也**要做越界检查（这是删除路径，不是读取路径）
+ *
+ * 这个函数最主要的下游是 `fs.rm`。上一版的遗留分支是一句
+ * `if (rec.path) return rec.path;` —— **原样交出，不作任何检查**，于是任何
+ * `path` 指向库外的遗留记录都会被 `rm` 到。
+ * `[v0.7.2 实证]` 卸载随包出厂的组件把 `ffmpeg`/`ffprobe` 从**已安装的应用本体**里删掉了
+ * （测试里那个文件从盘上消失，`+ actual: null`）。v0.7.2 在路由层按
+ * `source === 'bundled'` 挡住了**已确证可达**的那一条；底层成因就是这里。
+ *
+ * ## 🔴 判据是「**越界**才拒」，不是「没有 root+relPath 就拒」
+ *
+ * 这条极其反直觉，写下来免得下一个人"顺手收严"：
+ * 把遗留分支整个删掉（或改成"必须有 root+relPath"）会让**刚装完、还没重启过**的
+ * 后端包记录（只有绝对 `path`，但路径就在库内 —— `toInstalledRecord()` 写的就是这形状，
+ * 要到下次启动 `migrateInstallRecords()` 才升级）解析失败。
+ * 而 `claimedInstallPaths()` 用的是同一个函数：解析失败 ⇒ 那个包**不再被任何记录认领**
+ * ⇒ `collectUnclaimed()` 把它当"无法识别的残留"**删掉**。
+ * **那是把一个「删太多」换成另一个「删太多」。**
+ *
+ * 所以：形状不变，只加边界 —— 库内的遗留记录**照旧解析得出、照旧删得掉**。
  */
 export function resolveInstalledFile(
   rec: { root?: string; relPath?: string; path?: string },
@@ -424,13 +491,21 @@ export function resolveInstalledFile(
           : (roots.data ?? path.join(roots.models, '..'));
     const abs = path.resolve(base, rec.relPath);
     // Defence in depth: a record that escapes its root is corrupt, not merely odd.
+    // 这一条比下面那条**更严**（钉的是记录自己声明的那个根），故意保留，不合并。
     const root = path.resolve(base);
     if (abs !== root && !abs.startsWith(root + path.sep)) {
       throw new Error(`Installed-file record escapes its root: ${rec.relPath}`);
     }
     return abs;
   }
-  if (rec.path) return rec.path; // legacy
+  if (rec.path) {
+    // legacy：没有声明根，所以只能问"它落在我们拥有的哪个根里吗"
+    return assertInsideInstallRoots(
+      path.resolve(rec.path),
+      roots,
+      `Legacy installed-file record ${JSON.stringify(rec.path)}`,
+    );
+  }
   throw new Error('Installed-file record has neither root+relPath nor a legacy path');
 }
 
