@@ -274,6 +274,14 @@ const MUTATIONS = [
     replace: '/* mutation: 不真的卸载 */',
     proves: ['A-UNINSTALL-GONE'],
     phases: ['boot', 'backends'],
+    /*
+     * ★ `[CI 实测 run 31629895521]` 这条变异**存活**（退出码 1），而产品没坏 ——
+     *   那一轮 github.com 抽风，CPU 包压根没装上（A-INSTALL-JOB 红），
+     *   于是"删完之后它不在已安装列表里"变成一句关于空集的废话，照样绿。
+     *   目标断言那侧已经补上前提检查：**装没装上是当场量的**，
+     *   没装上就报 UNKNOWN（退出码 3 = 什么都没证明），不再冒充"存活"。
+     *   排查顺序因此有了区别：先看那一轮的 A-INSTALL-JOB，再谈断言有没有牙齿。
+     */
     why: '卸载返回 204 但东西还在。用户点了卸载、界面刷新后包又出现了 —— T-149 同一形状的老朋友',
   },
   {
@@ -987,6 +995,48 @@ function listDir(d) {
   }
 }
 
+/**
+ * 某个后端包在**盘上**的那份安装记录（`models/manifests/backend/<id>.json`），
+ * 没有就是 `null`。
+ *
+ * 为什么不问 `/api/backends/installed`：那个端点返回的就是这个目录里的东西，
+ * 拿它去验"记录删掉了没有"等于**让被告自证**。同一份事实，一份是自述、
+ * 一份是地面真相，卸载这一格要的是后者。
+ *
+ * 文件名不按 id 拼（产品那侧过一道 `sanitizeId`，拼一份就是把同一条约定抄两遍），
+ * 而是逐个读进来比 `id` 字段 —— 与本文件验"空记录"那一段同一种找法。
+ */
+function backendManifestOnDisk(packId) {
+  const dir = join(DATA_DIR, 'models', 'manifests', 'backend');
+  for (const f of listDir(dir)) {
+    if (!f.endsWith('.json')) continue;
+    const p = join(dir, f);
+    try {
+      const rec = JSON.parse(readFileSync(p, 'utf8'));
+      if (rec?.id === packId) return { path: p, rec };
+    } catch {
+      /* 读不出/半截的记录：当它不是这一条，别让一个坏文件把判定顶成"找到了" */
+    }
+  }
+  return null;
+}
+
+/**
+ * 一份安装记录**自己点名**的那些文件的绝对路径。
+ *
+ * 两种记法都认，与产品侧 `resolveInstalledFile()` 同一条规则：
+ * 新记录是 `root` + `relPath`（可移植），旧记录只有一个绝对 `path`。
+ * 用记录自己写的路径，而不是按命名规律去猜 —— 猜出来的路径验的是我们的想象。
+ */
+function declaredFilePaths(rec) {
+  const out = [];
+  for (const f of rec?.files ?? []) {
+    if (f?.root === 'models' && f?.relPath) out.push(join(DATA_DIR, 'models', f.relPath));
+    else if (f?.path) out.push(String(f.path));
+  }
+  return out;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 /* 主流程                                                                      */
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -1289,21 +1339,105 @@ async function phaseBackends() {
 
   /* ────────────── 2.1 ④：卸载 ────────────── */
   hdr('6. 要求 2.1 ④：网页卸载（DELETE /api/backends/:id）');
+  /*
+   * ★★ 这一格的**前提必须当场量**，不许默认它成立。
+   *
+   * `[CI 实测 run 31629895521]` 变异 `M-uninstall-noop`（把
+   * `removeManifest('backend', id)` 整句拿掉）**存活**了 —— 而产品那一侧一个字节都没坏。
+   * 那一轮真正发生的事是 github.com 抽风（`PROVIDER_UNREACHABLE`，探文件大小就没连上）：
+   * A-INSTALL-JOB / A-INSTALL-GROUNDTRUTH / A-RESTART-PERSIST 三条一起红，
+   * CPU 包**根本没装上**。于是 DELETE 回 404（本来就没这条记录可删），
+   * 而这条断言读到的是「已安装列表里没有它」—— 照样绿。
+   * **一句关于空集的废话**：删之前它就不在，删之后它当然还不在。
+   * 同一轮里 A-UNINSTALL-ACCEPTED 反倒红了 —— 变异是被**旁边那条**抓住的，
+   * 而它自己声称守着的那件事，一次都没被验过。
+   *
+   * 判据补三处，缺任何一处都还能被空集糊弄过去：
+   *   ① 删**之前**它必须真的在已安装列表里。不在 ⇒ `unknown()`（前提没构造出来），
+   *      **不是绿**。变异模式下这会落到退出码 3「跑起来了但什么都没证明」——
+   *      那才是那一轮的真相，而不是"这条断言没牙齿"（两者的处置完全相反：
+   *      前者重跑，后者改断言）。
+   *   ② 绿的条件里含「DELETE 被接受（204）」：一个 404 不许被读成"删干净了"。
+   *   ③ 记录的存亡看**盘上**那份 json，不看端点的自述（端点返回的就是那个目录）。
+   *
+   * 「记录点名的文件还在不在」与「models 树真的少了多少字节」也一起量，
+   * 但它们走 `finding()` 而不是判据：那是 T-192 的形状（删一个 6 MB 的包、
+   * 磁盘只少几百字节），是**产品的问题**，不是这条断言的判据；
+   * 而且 Windows 上一个被占住的句柄足以让 `rm` 失败，
+   * 拿它当判据会换来一条随机变红、然后没人再信的断言。
+   */
+  const beforeDel = await j('/api/backends/installed');
+  const idsBeforeDel = (beforeDel.body?.packs ?? []).map((p) => p.id);
+  const manBefore = backendManifestOnDisk(cpuPack.id);
+  const declaredFiles = manBefore ? declaredFilePaths(manBefore.rec) : [];
+  const declaredBytes = (manBefore?.rec?.files ?? []).reduce((a, f) => a + (f?.sizeBytes ?? 0), 0);
+  const duBeforeDel = duBytes(join(DATA_DIR, 'models'));
+
   const del = await j(`/api/backends/${encodeURIComponent(cpuPack.id)}`, { method: 'DELETE' });
   assert('A-UNINSTALL-ACCEPTED', del.status === 204, `HTTP ${del.status}`);
   const afterDel = await j('/api/backends/installed');
   const idsAfterDel = (afterDel.body?.packs ?? []).map((p) => p.id);
-  assert(
-    'A-UNINSTALL-GONE',
-    !idsAfterDel.includes(cpuPack.id),
-    `卸载后 /api/backends/installed = [${idsAfterDel.join(', ') || '(空)'}]`,
+  const manAfter = backendManifestOnDisk(cpuPack.id);
+  const leftovers = declaredFiles.filter((p) => existsSync(p));
+  const duAfterDel = duBytes(join(DATA_DIR, 'models'));
+  const realDelta = duBeforeDel - duAfterDel;
+
+  say('');
+  say(`   删之前已安装        [${idsBeforeDel.join(', ') || '(空)'}]`);
+  say(
+    `   盘上那份安装记录    ${manBefore ? manBefore.path : '(删之前就没有)'} → ${manAfter ? '**仍在**' : '已不在'}`,
   );
-  const delAgain = await j(`/api/backends/${encodeURIComponent(cpuPack.id)}`, { method: 'DELETE' });
-  assert(
-    'A-UNINSTALL-IDEMPOTENT',
-    delAgain.status === 404,
-    `再删一次 → HTTP ${delAgain.status}（应为 404，而不是假装成功）`,
+  say(
+    `   记录点名的文件      ${declaredFiles.length} 个（声明 ${declaredBytes} B）→ 卸载后仍在 ${leftovers.length} 个`,
   );
+  say(`   实测 models/ 树     ${duBeforeDel} → ${duAfterDel} B（少了 ${realDelta} B）`);
+
+  if (!idsBeforeDel.includes(cpuPack.id)) {
+    unknown(
+      'A-UNINSTALL-GONE',
+      `删之前 ${cpuPack.id} 就不在已安装列表里（[${idsBeforeDel.join(', ') || '(空)'}]）——` +
+        '装那一步没成功（看 A-INSTALL-JOB / A-INSTALL-GROUNDTRUTH 这一轮的取值），' +
+        '"删完之后它不在列表里"在这里是一句关于空集的废话，什么都证明不了',
+    );
+    unknown(
+      'A-UNINSTALL-IDEMPOTENT',
+      '同上：第一次删就没有任何东西可删，"再删一次回 404"证明不了幂等',
+    );
+  } else {
+    const gone = del.status === 204 && !idsAfterDel.includes(cpuPack.id) && manAfter === null;
+    assert(
+      'A-UNINSTALL-GONE',
+      gone,
+      gone
+        ? `${cpuPack.id} 装着 → 删掉：/api/backends/installed = [${idsAfterDel.join(', ') || '(空)'}]，` +
+            `盘上那份安装记录也没了（实测 models/ 少了 ${realDelta} B）`
+        : `DELETE=${del.status}；卸载后 /api/backends/installed = [${idsAfterDel.join(', ') || '(空)'}]；` +
+            `盘上那份安装记录${manAfter ? `**仍在**（${manAfter.path}）` : '已不在'}`,
+    );
+
+    if (leftovers.length > 0 || (declaredBytes >= 1048576 && realDelta < 65536)) {
+      finding(
+        '卸载返回 204，但盘上的东西没真的走掉（T-192 的形状）',
+        [
+          `包 ${cpuPack.id}：记录声明 ${declaredBytes} B，实测 models/ 树只少了 ${realDelta} B。`,
+          `记录点名的 ${declaredFiles.length} 个文件里，卸载后仍在 ${leftovers.length} 个：`,
+          ...leftovers.slice(0, 5).map((p) => `  ${p}`),
+          'T-192 修的就是这件事：`by-name/backend/` 是 `findInBackendPacks()` 的发现路径，',
+          '硬链还在 ⇒ blob 的 inode 仍被引用 ⇒ 磁盘一个字节都不回收，',
+          '而一个"已卸载"的包仍然会被解析到并真的跑起来 —— 用户以为删了，产品还在用它。',
+        ].join('\n'),
+      );
+    }
+
+    const delAgain = await j(`/api/backends/${encodeURIComponent(cpuPack.id)}`, {
+      method: 'DELETE',
+    });
+    assert(
+      'A-UNINSTALL-IDEMPOTENT',
+      delAgain.status === 404,
+      `再删一次 → HTTP ${delAgain.status}（应为 404，而不是假装成功）`,
+    );
+  }
 
   /* ────────────── 2.1 ⑤：装另一个后端 + 切换 ────────────── */
   hdr('7. 要求 2.1 ⑤：装另一个后端并切换（POST /api/backends/select）');
