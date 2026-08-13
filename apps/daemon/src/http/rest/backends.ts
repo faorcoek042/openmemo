@@ -519,6 +519,17 @@ export async function handleBackendRoutes(
       [...new Set((files ?? []).map((f) => f.sha256 ?? ''))].sort().join(',');
     const installedShaById = new Map(installedRecords.map((p) => [p.id, shaSetOf(p.files)]));
     /**
+     * 随应用出厂 ⇒ **卸不掉**（`DELETE` 会 409 `BUNDLED_NOT_REMOVABLE`）。
+     *
+     * 发这一格是为了让卡片**在按下之前**就把按钮灰掉并说出理由，
+     * 而不是让用户点完确认框才收到一句拒绝。规则的权威留在这一侧
+     * （真正执行 `fs.rm` 的是 daemon），前端只读结论 —— 送 `source` 过去
+     * 等于请前端再实现一遍同一条规则，两处必然漂移。
+     */
+    const bundledIds = new Set(
+      installedRecords.filter((p) => p.source === 'bundled').map((p) => p.id),
+    );
+    /**
      * ★ T-193 ③：**机器上那一份**的版本与体积，与目录里的那份分开发。
      *
      * `updateAvailable` 只回答了"要不要动"，没回答"我现在手里是哪一份"——
@@ -597,6 +608,12 @@ export async function handleBackendRoutes(
            */
           installedEngineVersion: installedFactsById.get(pack.id)?.engineVersion ?? null,
           installedSizeBytes: installedFactsById.get(pack.id)?.sizeBytes ?? null,
+          /*
+           * 这一格**无条件发**（不是"只在真时才发"）：daemon 手里有安装记录，
+           * "它不是随包出厂的"同样是一句它**知道**的话，不是"我不知道"。
+           * 三态由**字段在不在**承担（老 daemon 不发 ⇒ 客户端表达"不知道"）。
+           */
+          bundledWithApp: bundledIds.has(pack.id),
           applicable,
           /**
            * 区分"还没测出来"和"测完了不支持"。UI 据此决定说
@@ -777,6 +794,52 @@ export async function handleBackendRoutes(
     const record = installed.find((p) => p.id === id);
     if (!record) {
       sendError(res, 404, 'NOT_FOUND', `backend pack ${id} is not installed`, '未安装该后端包');
+      return true;
+    }
+    /*
+     * ★★ **产品不许删掉自己** —— 随应用出厂的那一档故障关闭。
+     *
+     * `[隔离实例实测]` `DELETE /api/backends/media-tools-linux-x64` → **204**，
+     * 而包内 `runtime/probe/ffmpeg`、`runtime/probe/ffprobe` **就此消失**。
+     * 真机上那是 ~115 MB × 2 ≈ 230 MB，并且它们**不在用户的数据目录里** ——
+     * 删掉的是**已安装的应用本体**的一部分，除了把整个产品重下一遍拿不回来。
+     * 界面那一侧没有拦住它：`/runtime` 那颗卸载按钮是**亮的**，前面只有一个
+     * 泛泛的 `window.confirm`。
+     *
+     * ## 为什么闸门落在这里，而不是"把路径修正确"
+     *
+     * 链条有三环，这里只补**第二环**：
+     *   ① `backendReconcile.ts` 给包内那份补记录时写的是 **legacy 形状**
+     *      （绝对 `path`、无 `root`/`relPath`），并且如实标了 `source: 'bundled'`；
+     *   ② 本处**不看 `source`**，直接 `dropInstalledFiles` + `removeManifest`；
+     *   ③ `resolveInstalledFile()` 的越界检查**只写在 `root + relPath` 那条分支**上，
+     *      legacy 分支是 `if (rec.path) return rec.path;` —— 原样返回、不作检查，
+     *      于是那个指向模型根之外的绝对路径畅通无阻地走到 `fs.rm`。
+     *
+     * ③ 是**通用**的洞：收紧它会影响每一条 legacy 记录（模型桶也在内），
+     * 该有它自己的影响面分析，不该顺手夹在这次改动里。
+     * 而 ② 是**这台机器上唯一知道"这些字节属于谁"的地方** —— 记录自己就带着
+     * `source`，服务端据此拒绝是一次小而确定的防御：**没有证据说该删，就不删。**
+     *
+     * ⚠️ 只挡 `bundled` 那一档。下载装进 store 的包**照旧删得掉** ——
+     * 把它一起锁死不是安全，是"用户拿不回自己的磁盘"（`packStatus.ts`
+     * 的 `isLoadBearingPack()` 已经为同一句话付过一次代价）。
+     * ⚠️ 也**不删记录**：拒绝之后记录必须原样留着，否则界面开始说「未安装」、
+     * 而文件还在盘上被解析器用着 —— 那正是本仓反复在清的"第三个答案"。
+     */
+    if (record.source === 'bundled') {
+      sendError(
+        res,
+        409,
+        'BUNDLED_NOT_REMOVABLE',
+        `backend pack ${id} ships inside the application itself, so uninstalling it would delete ` +
+          `files belonging to OpenMemo rather than to your data folder. Those bytes only come ` +
+          `back by reinstalling the app, so this pack cannot be uninstalled here.`,
+        // ⚠️ 用户可见的原话，**不要写 markdown 强调**：界面按纯文本渲染，
+        // `**…**` 会原样显示出来（邻居那几条 messageZh 也都是纯文本）。
+        `${id} 是随应用一起出厂的：它的文件在程序自己的安装目录里，不在你的数据目录里。` +
+          `删掉它等于删掉产品自身的一部分（只能重装应用才能拿回来），所以这里不允许卸载。`,
+      );
       return true;
     }
     /*

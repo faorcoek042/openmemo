@@ -325,6 +325,7 @@
       "selfTest": "Self-test",
       "uninstall": "Uninstall",
       "loadBearingTitle": "The CPU backend is the fallback. Removing it crashes the inference process whenever no other backend is usable, so it cannot be uninstalled.",
+      "bundledTitle": "This component ships inside the application: its files live in the app's own install folder, not in your data folder. Removing it would delete part of the product itself, and only reinstalling the app brings it back — so it cannot be uninstalled.",
       "pendingCiTitle": "This component is built and its digest verified, but no download URL has been published yet (CI has to publish it first).",
       "pendingCi": "Not published yet",
       "installing": "Starting…",

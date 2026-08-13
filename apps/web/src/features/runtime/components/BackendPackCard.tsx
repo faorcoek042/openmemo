@@ -159,6 +159,22 @@ export function BackendPackCard({
    * 而 daemon 照删不误。判据现在对准真实约束，见 `isLoadBearingPack()`。
    */
   const isLoadBearing = isLoadBearingPack(pack);
+  /**
+   * ★★ **随应用出厂的那一档卸不掉** —— 与承重墙是两条轴，不许合并。
+   *
+   * 承重墙说的是「删了推理进程会 SIGABRT」；这一条说的是
+   * **「这些字节根本不在你的数据目录里」**：它们在**程序自己的安装目录**
+   * （`runtime/probe/ffmpeg` 那一族），删掉等于删掉产品自身的一部分，
+   * 真机上 ~230 MB，只能重装应用才拿得回来。理由不同 ⇒ 说给用户的话也不同。
+   *
+   * daemon 那侧已经故障关闭（409 `BUNDLED_NOT_REMOVABLE`）。这里做的是另一半：
+   * **别让用户点了才知道**。与 `pendingCi` / `other-platform` 同一条判据 ——
+   * 一颗点了必然失败的按钮，要在按下之前就说清楚。
+   *
+   * ⚠️ `=== true`：字段**可选**，老 daemon 不发。缺失是"我不知道"，
+   * 不许当成"可以卸载"，也不许当成"不能卸载"——保持老样子，由服务端兜底。
+   */
+  const bundledWithApp = pack.bundledWithApp === true;
   /** 「设为当前后端」只对**算力轴上**的包有意义 —— 见 `BACKEND_IS_COMPUTE_AXIS`。 */
   const onComputeAxis = BACKEND_IS_COMPUTE_AXIS[pack.engine];
   /**
@@ -256,8 +272,20 @@ export function BackendPackCard({
       <Button
         size="sm"
         variant="ghost"
-        disabled={isLoadBearing}
-        title={isLoadBearing ? t('runtime.pack.loadBearingTitle') : undefined}
+        disabled={isLoadBearing || bundledWithApp}
+        /*
+         * ★ #105 ④ 那条判据在这里同样成立：**灰掉的按钮也得说得出自己为什么灰。**
+         * `title` 在 disabled 元素上仍然提供可访问名（tooltip 因 `pointer-events:none`
+         * 弹不出来，但读屏拿得到），所以这是兜底而不是装饰。
+         * 承重墙优先：它更严重（点了会崩），而两者同时成立时只能说一句话。
+         */
+        title={
+          isLoadBearing
+            ? t('runtime.pack.loadBearingTitle')
+            : bundledWithApp
+              ? t('runtime.pack.bundledTitle')
+              : undefined
+        }
         onClick={() => onRemove(pack.id)}
         data-testid={`backend-remove-${pack.id}`}
       >
