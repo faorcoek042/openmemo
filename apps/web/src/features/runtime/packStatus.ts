@@ -302,12 +302,17 @@ export function isActivePack(
  * 删掉 yt-dlp 或 libsimple 不可能让 ggml SIGABRT。
  *
  * 所以锁只落在「**推理引擎包 ∧ 它是那个 CPU 兜底**」上。
- * 其余的包 daemon 本来就允许删（`DELETE /api/backends/:id` 照删不误），
+ * 其余的包 daemon 允许删（`DELETE /api/backends/:id`）—— **但随应用一起出厂的那一份除外**：
+ * 服务端会拒绝（`BUNDLED_NOT_REMOVABLE`），因为它的文件在程序自己的安装目录里，
+ * 删掉等于删产品本体。那道守卫在服务端，不在这个判据里。
  * 而用户明确要求过「组件要能删除、能看到空间回收，且删除不影响程序本体运行」。
  *
  * ⚠️ **不是"什么都能删"**：whisper 的 CPU 包仍然锁着，删了它转写会直接崩。
- * ⚠️ 也**不是**"删了没后果"：删掉 ffmpeg 会让转写停摆 —— 但那是**可恢复**的
+ * ⚠️ 也**不是**"删了没后果"：删掉**下载来的** ffmpeg 会让转写停摆 —— 那是**可恢复**的
  * （重新装回来即可）、daemon 允许的、而且自检里 `tool.ffmpeg` 会立刻出声。
+ * ⚠️ **随包出厂的那一份不适用上面这句**：它的字节在应用安装目录里，
+ * 重装那个包**只能恢复功能，拿不回包内原来那两个文件**（只能重下整个产品）。
+ * 这正是它必须在服务端被拦住、而不是靠这个判据的原因。
  * 把它锁死换来的不是安全，是"用户拿不回自己的磁盘"。
  */
 export function isLoadBearingPack(pack: Pick<CatalogPack, 'engine' | 'backend' | 'tier'>): boolean {
