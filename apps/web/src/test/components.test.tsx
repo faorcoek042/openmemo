@@ -9583,6 +9583,114 @@ describe('★ T-191：装的是旧版时，已安装分支必须给出「更新�
 });
 
 /**
+ * ## ★★ 随应用出厂的组件：卸载按钮必须**在按下之前**就灰掉并说出理由
+ *
+ * daemon 那侧已经故障关闭了（`DELETE /api/backends/:id` 对
+ * `source: 'bundled'` 的记录回 409 `BUNDLED_NOT_REMOVABLE`）——
+ * 那是**安全**那一半，没有它，一次点击就抹掉 ~230 MB 属于**应用本体**的字节
+ * （`runtime/probe/{ffmpeg,ffprobe}`，不在用户的数据目录里）。
+ *
+ * 这一组守的是**另一半**：只有闸门的话，用户看到的仍然是一颗亮按钮 + 一个泛泛的
+ * `window.confirm`，点下去才拿到一句拒绝。本仓对这个形状已经写过好几次同一条判据
+ * （`pendingCi`、`other-platform`）：**点了必然失败的按钮，要在按下之前说清楚。**
+ *
+ * ── 把名字遮住，这些断言什么时候会失败 ────────────────────────────────────────
+ * 有人把 `bundledWithApp` 从 daemon 的目录响应里拿掉（按钮重新变亮，用户重新
+ * 撞上那句 409）；或者把判据写成 `!== false`（于是**老 daemon 不发这个字段时**
+ * 所有包的卸载按钮集体灰掉 —— 把"我不知道"渲染成了"不能卸载"）。
+ */
+describe('★★ 随应用出厂的组件不许被"邀请卸载"', () => {
+  const NOOP = {
+    locale: 'zh-CN',
+    isActive: false,
+    selfTest: null,
+    installing: false,
+    onInstall: () => undefined,
+    onRemove: () => undefined,
+    onSelect: () => undefined,
+    onSelfTest: () => undefined,
+  } as const;
+
+  /**
+   * 真机上那张卡：`media-tools-*`（ffmpeg/ffprobe）。
+   * ⚠️ `engine: 'ffmpeg'` 是**前提**：它不在算力轴上 ⇒ `isLoadBearingPack()` 为 false
+   * ⇒ 卸载按钮本来是**亮的**。拿一个 `whisper.cpp` 的包来测，会被承重墙那条
+   * 顺手灰掉，于是这组用例即使把本次改动整个删掉也照样绿 —— 那是一盏假灯。
+   */
+  const mediaTools = (over: Record<string, unknown> = {}) =>
+    pack({ id: 'media-tools-linux-x64', engine: 'ffmpeg', installed: true, ...over });
+
+  const removeBtn = (c: ParentNode) =>
+    c.querySelector<HTMLButtonElement>('[data-testid="backend-remove-media-tools-linux-x64"]');
+
+  test('★ 前提自检：没有这一格时，这张卡的卸载按钮确实是**亮**的', async () => {
+    const r = await render(<BackendPackCard {...NOOP} pack={mediaTools() as never} />);
+    assert.equal(
+      removeBtn(r.container)?.disabled,
+      false,
+      '这张卡的卸载本来就是灰的 ⇒ 本组用例测不出任何东西（阴性对照失败）',
+    );
+    r.unmount();
+  });
+
+  test('★★ `bundledWithApp: true` → 卸载按钮灰掉', async () => {
+    const r = await render(
+      <BackendPackCard {...NOOP} pack={mediaTools({ bundledWithApp: true }) as never} />,
+    );
+    assert.equal(
+      removeBtn(r.container)?.disabled,
+      true,
+      '按钮还亮着 —— 用户会点它、过一遍确认框，然后拿到一句 409。' +
+        '失败要在看得见的地方发生，不要推迟到点击之后',
+    );
+    r.unmount();
+  });
+
+  test('★★ 灰掉还不够：得**说得出为什么**，而且不是承重墙那句话', async () => {
+    const r = await render(
+      <BackendPackCard {...NOOP} pack={mediaTools({ bundledWithApp: true }) as never} />,
+    );
+    const title = removeBtn(r.container)?.getAttribute('title') ?? '';
+    /*
+     * `title` 在 disabled 元素上仍然提供可访问名（tooltip 因 `pointer-events:none`
+     * 弹不出来，但读屏拿得到）—— #105 ④ 那条判据。一个灰着又说不出自己是什么的
+     * 按钮，唯一的作用是制造疑惑。
+     */
+    assert.notEqual(title, '', '灰掉了却一个字都不说 —— 用户只知道"点不动"，不知道为什么');
+    assert.equal(
+      title.includes('CPU'),
+      false,
+      `拿承重墙那句话（"CPU 后端是兜底…"）去解释一个 ffmpeg 包，是**说错了原因**：${title}`,
+    );
+    assert.match(
+      title,
+      /随应用|出厂|安装目录/,
+      `理由没说到点子上（该说的是"这些字节在程序自己的安装目录里"）：${title}`,
+    );
+    r.unmount();
+  });
+
+  test('★★ 字段缺失（老 daemon）→ 保持老样子，**不许**把"我不知道"渲染成"不能卸载"', async () => {
+    const r = await render(<BackendPackCard {...NOOP} pack={mediaTools() as never} />);
+    assert.equal(
+      removeBtn(r.container)?.disabled,
+      false,
+      '老 daemon 不发这个字段，界面却替它宣布"卸不掉" —— 那会把一批**真的能卸**的包锁死，' +
+        '而用户拿不回自己的磁盘',
+    );
+    r.unmount();
+  });
+
+  test('★ `bundledWithApp: false`（下载装的）→ 照旧卸得掉', async () => {
+    const r = await render(
+      <BackendPackCard {...NOOP} pack={mediaTools({ bundledWithApp: false }) as never} />,
+    );
+    assert.equal(removeBtn(r.container)?.disabled, false, '把 downloaded 的包也锁死了');
+    r.unmount();
+  });
+});
+
+/**
  * ## T-165 ②「推荐」徽章只在真的有得选时才出现
  *
  * daemon 算的是 `recommended = applicable && pack.backend === selectedBackend`。
