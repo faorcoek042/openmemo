@@ -94,8 +94,12 @@ describe('L2 适用性：解开"要先装才能被发现"的环', () => {
     const r = evaluateApplicability({ pack: pack('cuda'), platform: LINUX, backends: statuses() });
     assert.equal(r.applicable, false);
     assert.equal(r.tier, 'l2');
-    // 这句正是环本身：它说的是"因为没装，所以不给装"
-    assert.match(r.reason ?? '', /not installed/);
+    // 这一格正是环本身：它说的是"因为没装，所以不给装"
+    assert.deepEqual(r.reason, {
+      kind: 'backend_unavailable',
+      unavailableKind: 'not_installed',
+      detail: 'backend package not installed',
+    });
   });
 
   it('advisory 探到 N 卡 → CUDA 包变成可装（环被解开）', () => {
@@ -155,7 +159,11 @@ describe('L2 适用性：解开"要先装才能被发现"的环', () => {
       advisoryCandidates: ['cuda', 'vulkan'],
     });
     assert.equal(r.applicable, false);
-    assert.match(r.reason ?? '', /enumerated no devices/);
+    assert.deepEqual(r.reason, {
+      kind: 'backend_unavailable',
+      unavailableKind: 'enumerated_none',
+      detail: 'installed but enumerated no devices (driver missing or too old)',
+    });
   });
 
   it('★ T-168：装了、但**这次探测根本没加载它** → 那不是裁决，不许当裁决用', () => {
@@ -215,14 +223,22 @@ describe('L2 适用性：解开"要先装才能被发现"的环', () => {
      *   ② 指向一个**真存在、真能点**的控件（「本机组件」页上的安装 / 更新）。
      * 措辞可以改，这两条不能丢。
      */
-    const reason = never.reason ?? '';
-    assert.match(reason, /尚未探测到/, '要先说清"还没探测到"，而不是让人以为硬件不支持');
-    assert.match(
-      reason,
-      /本机组件|运行时|CPU 基础包/,
-      '不可用理由必须指向一个真能点的控件；只说"不可用"等于把成本转嫁给用户',
+    /*
+     * ★ #106：这三条断言原来是**读中文散文**的（`/尚未探测到/`、`/本机组件|…/`、
+     *   长度 >= 20）。那句中文如今已经不在 daemon 侧了 —— 它整句搬去了
+     *   `apps/web` 的两份 locale（`runtime.pack.inapplicable.hardwareNotProbedYet`）。
+     *
+     *   ⚠️ **它们要钉的那两条性质没有被删掉，只是换了地方**：
+     *   「① 说清是"还没探测到"而不是"硬件不支持" ② 指向一个真能点的控件」
+     *   现在钉在 `apps/web/src/test/components.test.tsx` 里 ——
+     *   断的是**英文界面上真正渲染出来的那段文字**，比在这里读一句中文更接近用户。
+     *   这里只负责一件事：**这一档必须与"测过了、不支持"是两个不同的值**。
+     */
+    assert.deepEqual(
+      never.reason,
+      { kind: 'hardware_not_probed_yet' },
+      '"还没探测到"必须是它自己的一格 —— 塌进 backend_unavailable 就等于说"你的硬件不支持"',
     );
-    assert.ok(reason.length >= 20, `理由太短，装不下"是什么状态 + 该做什么"两件事：${reason}`);
 
     const withEvidence = evaluateApplicability({
       pack: pack('vulkan'),
@@ -241,7 +257,7 @@ describe('L2 适用性：解开"要先装才能被发现"的环', () => {
       advisoryCandidates: ['cuda'],
     });
     assert.equal(r.applicable, false);
-    assert.match(r.reason ?? '', /与本机不符/);
+    assert.deepEqual(r.reason, { kind: 'platform_mismatch', packOs: 'win32', packArch: 'x64' });
   });
 
   it('L1（CPU）不受影响 —— 它是地板，永远可装', () => {
@@ -327,8 +343,15 @@ describe('L2 适用性：解开"要先装才能被发现"的环', () => {
       "currently in use is scanned, and this backend's library is not in it. " +
       'This is not a driver or hardware fault — nothing was measured about it.';
 
-    /** 探针没跑成时，该给用户的那句**可执行**的话。 */
-    const ACTIONABLE = /尚未探测到硬件能力/;
+    /**
+     * 探针没跑成时，该落到的**那一格**。
+     *
+     * #106：这里原来是一条正则 `/尚未探测到硬件能力/` —— 读的是 daemon 拼的中文。
+     * 那句话已经搬进 `apps/web` 的两份 locale，daemon 只交出这个 kind。
+     * 判据因此从"文案里有没有这几个字"换成"落没落到这一格"，
+     * **它挡的还是同一件事**：把「还没测出来」退化成探针内部的英文原话。
+     */
+    const NOT_PROBED_YET = 'hardware_not_probed_yet';
 
     it('前提检查：这段真实文案里确实没有 probe 这个词（前提没了的话下面全是空转）', () => {
       assert.equal(
@@ -351,16 +374,16 @@ describe('L2 适用性：解开"要先装才能被发现"的环', () => {
       const hw = hardwareWith(probeFailed(T168_REASON));
       const r = isPackApplicable(pack('vulkan'), LINUX, hw);
 
-      assert.match(
-        r.reason ?? '',
-        ACTIONABLE,
-        '判据又在读散文了：换个文案就把"请先装 CPU 包，装完自动重探"退化成了探针的英文原话',
+      assert.equal(
+        r.reason?.kind,
+        NOT_PROBED_YET,
+        '判据又在读散文了：换个文案就把"还没探测到"退化成了探针的英文原话',
       );
     });
 
     it('探针失败的老文案下，行为必须与从前一字不差（不许借修复之名改掉别的）', () => {
       const hw = hardwareWith(probeFailed('probe did not complete: probe executable not found'));
-      assert.match(isPackApplicable(pack('vulkan'), LINUX, hw).reason ?? '', ACTIONABLE);
+      assert.equal(isPackApplicable(pack('vulkan'), LINUX, hw).reason?.kind, NOT_PROBED_YET);
       assert.equal(
         isPackApplicable(pack('vulkan'), LINUX, hw, ['vulkan']).applicable,
         true,

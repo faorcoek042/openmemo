@@ -199,6 +199,65 @@ export const BACKEND_UNAVAILABLE_KINDS = [
 export type BackendUnavailableKind = (typeof BACKEND_UNAVAILABLE_KINDS)[number];
 
 /**
+ * 「这个后端包为什么装不了」—— **机器可读**，措辞归 `apps/web` 的两份 locale（#106）。
+ *
+ * ## 为什么不是 `reason: string`
+ *
+ * 上一版 `ApplicabilityResult.reason` 是一句**中文散文**，`BackendPackCard` 原样
+ * 渲染在英文那句 `runtime.kind.<档>` 下面 —— 于是英文界面上「具体卡在哪」那一行
+ * 整句是中文。#105 已经对 `other-platform` 那一档止过血（改成从 `pack.os`/`pack.arch`
+ * 两个结构字段在 web 侧拼），但那是**一档一档地绕**，剩下的档位照旧透传。
+ * 这里把整条轴换掉：daemon 只说是哪一种，措辞在 locale 里，
+ * 而 web 侧那张 `Record<Inapplicability['kind'], string>` 是总表 ——
+ * 新增一种而没人写话，**构建当场就红**。形状照 `AdvisoryUndeterminedReason`（79cc117）。
+ *
+ * ⚠️ **参数不许拼进 kind**：`platform_mismatch` 的 os/arch 是**结构化字段**，
+ * 由 web 插值，不是 `platform_mismatch_darwin_arm64` 这种无穷枚举。
+ */
+export type Inapplicability =
+  | {
+      /** 包是给另一个 os/arch 编的。换台机器也没用，**什么都不用做**。 */
+      readonly kind: 'platform_mismatch';
+      readonly packOs: OsPlatform;
+      readonly packArch: string;
+    }
+  | {
+      /**
+       * 探针一次都没跑成 —— **「还没测出来」，不是「测过了，不支持」**。
+       * 这一档要说的是"装一个带 `openmemo-probe` 的后端包才问得出答案"。
+       */
+      readonly kind: 'hardware_not_probed_yet';
+    }
+  | {
+      /**
+       * 探针有结论，而这个后端不可用。**成因照抄 {@link BackendUnavailableKind}**，
+       * 不新造一套 —— `apps/web` 那张 `Record<BackendUnavailableKind, string>`
+       * （硬件卡上那张）已经为七档各写了一句话，两处共用同一张表。
+       */
+      readonly kind: 'backend_unavailable';
+      readonly unavailableKind: BackendUnavailableKind;
+      /**
+       * daemon 那句**英文技术原话**（`manager.ts` 的 `unavailableReason`：探针路径、
+       * 驱动版本这类）。
+       *
+       * ⚠️ **它和上面那个 `unavailableKind` 不是一回事，也不许合并**：后者是我们要
+       * 翻译的那句话，这一格是**排障用的原文，不翻译**（同 `UpstreamFailure` 里
+       * `upstream_error_text` 的待遇）。界面必须让人看得出哪一段是原文 ——
+       * 把它伪装成我们自己的话，等于替一段没有 i18n 的字符串背书。
+       */
+      readonly detail: string | null;
+    }
+  | {
+      /**
+       * 探针有结论，但**这份结论里压根没有这个后端**（`backends[]` 里找不到它）。
+       *
+       * ★ 与 `backend_unavailable` 分开，不合并成"不可用"：我们对这个后端
+       * **一个字都没测到**，说"本机不支持"是替一次没做过的测量下结论。
+       */
+      readonly kind: 'backend_status_missing';
+    };
+
+/**
  * `BackendStatus` 里**与"可用不可用"这条轴无关**的那几格。
  *
  * 拆出来只是为了让下面那个判别联合两条分支不必各写一遍；

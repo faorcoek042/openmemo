@@ -64,6 +64,16 @@ export default function CapturePage() {
           undefined,
           // 本地文件与链接导入走同一个语言设置 —— 两条路径给出不同结果会很难解释
           language,
+          /*
+           * #106：上传过程里要显示的两句话在**这一侧**解析。
+           * `upload.ts` 刻意不 import i18n 实例（它被编成 CJS 跑 node --test，
+           * 而 react-i18next 是纯 ESM）—— 见那边 `UploadStrings` 的注释。
+           * 少了 `locale` 这一格，daemon 双语错误体里中文那份会无条件胜出。
+           */
+          {
+            locale: i18n.language,
+            endpointMissing: (status: number) => t('capture.uploadEndpointMissing', { status }),
+          },
         )
           .then((r) => navigate(`/notes/${r.noteUid}`))
           .catch((err) =>
@@ -74,8 +84,9 @@ export default function CapturePage() {
       }
     },
     // language 必须进依赖数组：漏了它，改语言后拖进来的文件仍会用旧值上传，
-    // 而这种"闭包捕获了过期状态"的 bug 在 UI 上完全看不出来
-    [navigate, language],
+    // 而这种"闭包捕获了过期状态"的 bug 在 UI 上完全看不出来。
+    // `t` / `i18n` 同理（#106）：切到英文之后拖进来的文件，错误提示不许还是中文。
+    [navigate, language, t, i18n],
   );
 
   const probeMut = useProbeMutation();

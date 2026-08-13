@@ -187,9 +187,17 @@ function verdictFor(c: ComponentRecord, probe: UpstreamProbe | undefined): Upstr
           kind: 'indeterminate',
           checkedAt: probe.checkedAt,
           version: picked,
-          reason:
-            `这个仓同时在发 ${schemes.length} 族 tag（${Object.values(probe.newestByScheme).join(' / ')}），` +
-            `而目录钉的 ${pinnedVersion} 不在其中任何一族里 —— 这是在拿两套编号硬比`,
+          /*
+           * #106：原来是一整句中文，被 `apps/web` 插进
+           * `components.upstream.indeterminate`（一句英文）里。现在只交出
+           * **是哪一种排不出先后** + 每一族各自最新的那个（数据，照实列），
+           * 措辞归 `apps/web` 的两份 locale。
+           */
+          reason: {
+            kind: 'pin_outside_all_tag_families',
+            newestPerFamily: Object.values(probe.newestByScheme),
+            pinnedVersion,
+          },
         };
       }
       return upstreamVerdict({

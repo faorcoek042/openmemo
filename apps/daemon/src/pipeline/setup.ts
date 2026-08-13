@@ -47,7 +47,7 @@ import {
 
 import { activeProxyConfig, isGgmlModelFile } from '@openmemo/downloader';
 import { proxyUrlFor } from '@openmemo/shared';
-import type { ToolchainVerdict } from '@openmemo/shared';
+import type { ToolchainVerdict, VadChunkingReason } from '@openmemo/shared';
 
 import type { AppPaths } from '../config/paths.js';
 import { whisperCliName } from '../runtime/setup.js';
@@ -188,6 +188,14 @@ export interface VadModelResolution {
    */
   readonly rejected: readonly string[];
   readonly reasonZh: string;
+  /**
+   * 同一件事的**机器可读版本**（#106）—— 上面那句中文只喂 daemon 控制台，
+   * 这一格进 `/api/health` 给网页，措辞由 `apps/web` 的两份 locale 决定。
+   *
+   * ⚠️ 两格必须说同一件事：下面那个三元表达式**一次同时产出两格**，
+   * 别在别处各算一次（两份必然漂移）。
+   */
+  readonly reason: VadChunkingReason;
 }
 
 /**
@@ -290,7 +298,24 @@ export async function resolveWhisperVadModel(
           `去「模型」页装上它即可恢复按静音切分。`
         : '未安装 VAD 模型 → 切分降级为固定窗口';
 
-  return { path, rejected, reasonZh };
+  /*
+   * #106：`reasonZh` 上面那段注释的最后一句写着「英文该去有 i18n 的那一侧（网页）。
+   * ⚠️ 但那需要把 `reasonZh` 换成 reason **code** 再由前端翻译，是另一件事，
+   * **本轮没做**」。这就是那件事 —— 中文那句**原地不动**（它只喂控制台，
+   * 而控制台没有 i18n），旁边多一格 code 给网页。
+   */
+  const reason: VadChunkingReason =
+    path !== null
+      ? { kind: 'vad_active' }
+      : rejected.length > 0
+        ? {
+            kind: 'installed_weights_not_loadable',
+            // 只交文件名，不交整条路径：那是数据，也是用户唯一认得出的东西。
+            rejected: rejected.map((p) => p.split(/[\\/]/).pop() ?? p),
+          }
+        : { kind: 'no_vad_model_installed' };
+
+  return { path, rejected, reasonZh, reason };
 }
 
 /**

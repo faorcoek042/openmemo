@@ -22,6 +22,7 @@ import { StatusChip } from './StatusChip';
 import { useProgressStore } from '../../lib/stores/progress.store';
 import { formatBytes, formatSpeed } from '../../lib/format/bytes';
 import { stepLabel } from '../../lib/format/stepLabel';
+import { pickLocalized } from '../../lib/format/localized';
 import { jobDisplayName } from '../../lib/format/jobName';
 import { useJobCatalogNames } from '../../lib/catalog/useJobCatalogNames';
 
@@ -144,7 +145,13 @@ export function DownloadRow({ job, locale, onCancel, onRetry }: DownloadRowProps
           <p className="mt-0.5 text-xs text-ink-secondary">
             {failed ? (
               <span className="text-critical">
-                {job.error?.messageZh ?? job.error?.message ?? t('models.download.failed')}
+                {/*
+                  #106：`messageZh ?? message` 让中文那一份**无条件胜出** ——
+                  英文界面上这一行于是永远是中文。`JobList.tsx` 同一件事一直是
+                  按语言挑的，这里是唯一的例外。
+                */}
+                {pickLocalized(i18n.language, job.error?.messageZh, job.error?.message) ||
+                  t('models.download.failed')}
                 {job.attempt > 1
                   ? t('models.download.attempt', { attempt: job.attempt, max: job.maxAttempts })
                   : ''}

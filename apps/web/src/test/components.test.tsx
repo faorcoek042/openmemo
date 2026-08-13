@@ -125,9 +125,23 @@ import {
   PROVIDER_KINDS,
   UPSTREAM_CHECK_KINDS,
 } from '@openmemo/shared';
-import type { InstalledBackendPack, InstalledVersion } from '@openmemo/shared';
+import type {
+  InstalledBackendPack,
+  InstalledVersion,
+  UpstreamFailure,
+  VadChunkingReason,
+} from '@openmemo/shared';
 import { ProxySettingsSection } from '../features/settings/ProxySettingsSection';
 import ComponentsPage from '../features/components/ComponentsPage';
+/*
+ * #106：这三张**总表**是措辞的唯一事实来源 —— 用例直接引它们去查词条，
+ * 而不是在断言里再抄一份 key。契约新增一格而没人写话时，先在构建期红的是产品代码；
+ * 而"新增一格却没有用例覆盖"由下面 `FAILURE_ARMS` 那条前提自检当场判红。
+ */
+import { UPSTREAM_FAILURE_KEYS } from '../features/components/reasonText';
+import { INAPPLICABILITY_KEYS, UNAVAILABLE_REASON_KEYS } from '../features/runtime/reasonKeys';
+import { ComponentCard } from '../features/components/components/ComponentCard';
+import { FitBadge } from '../components/common/FitBadge';
 import {
   getPositionMs,
   setPositionMs,
@@ -4053,7 +4067,13 @@ function stubModelsPage(opts: { withCatalog?: boolean } = {}) {
     requirements: { ramRequiredMB: 512, vramRequiredMB: 0, computedAtContext: null },
     fitness: {
       tier: 'recommended',
+      /*
+       * ⚠️ `FitResult` 契约里 `reasonZh` / `reasonEn` **成对**（`shared/fitness.ts` 十条
+       * 分支每一条都填了两份）。夹具只写一份 = 造一个生产者产不出来的形状，
+       * 而 #106 修的正是"有翻译没用上"—— 少写英文那份，回落会把它盖过去。
+       */
       reasonZh: 'dummy reason',
+      reasonEn: 'dummy reason',
       notRecommendedForLanguage: false,
       speedTier: 'unknown',
       speedSource: 'none',
@@ -4821,12 +4841,48 @@ const EMPHASIS_REGISTRY: Record<string, string[]> = {
    * 也是用户判断"我该不该去装点什么"的唯一依据。
    * （`reasonPlatformUnsupported` 是老词条，本来就不带标记，不在这里。）
    */
-  'runtime.hw.reasonProbeFailed': ['features/runtime/components/HardwareCard.tsx'],
-  'runtime.hw.reasonDisabledAfterFailures': ['features/runtime/components/HardwareCard.tsx'],
-  'runtime.hw.reasonNotInstalled': ['features/runtime/components/HardwareCard.tsx'],
-  'runtime.hw.reasonNotProbedThisRun': ['features/runtime/components/HardwareCard.tsx'],
-  'runtime.hw.reasonNoUsableDevices': ['features/runtime/components/HardwareCard.tsx'],
-  'runtime.hw.reasonEnumeratedNone': ['features/runtime/components/HardwareCard.tsx'],
+  'runtime.hw.reasonProbeFailed': [
+    'features/runtime/components/HardwareCard.tsx',
+    // #106：后端包卡片的「具体卡在哪」那一行也转给了这六条（`reasonKeys.ts` 的
+    // `inapplicabilityText()` 把 `backend_unavailable` 整档交给它们），所以这里
+    // 也是渲染点。它经 `<Emphasis>` 渲染、`title` 走 `stripEmphasis`。
+    'features/runtime/components/BackendPackCard.tsx',
+  ],
+  'runtime.hw.reasonDisabledAfterFailures': [
+    'features/runtime/components/HardwareCard.tsx',
+    // #106：后端包卡片的「具体卡在哪」那一行也转给了这六条（`reasonKeys.ts` 的
+    // `inapplicabilityText()` 把 `backend_unavailable` 整档交给它们），所以这里
+    // 也是渲染点。它经 `<Emphasis>` 渲染、`title` 走 `stripEmphasis`。
+    'features/runtime/components/BackendPackCard.tsx',
+  ],
+  'runtime.hw.reasonNotInstalled': [
+    'features/runtime/components/HardwareCard.tsx',
+    // #106：后端包卡片的「具体卡在哪」那一行也转给了这六条（`reasonKeys.ts` 的
+    // `inapplicabilityText()` 把 `backend_unavailable` 整档交给它们），所以这里
+    // 也是渲染点。它经 `<Emphasis>` 渲染、`title` 走 `stripEmphasis`。
+    'features/runtime/components/BackendPackCard.tsx',
+  ],
+  'runtime.hw.reasonNotProbedThisRun': [
+    'features/runtime/components/HardwareCard.tsx',
+    // #106：后端包卡片的「具体卡在哪」那一行也转给了这六条（`reasonKeys.ts` 的
+    // `inapplicabilityText()` 把 `backend_unavailable` 整档交给它们），所以这里
+    // 也是渲染点。它经 `<Emphasis>` 渲染、`title` 走 `stripEmphasis`。
+    'features/runtime/components/BackendPackCard.tsx',
+  ],
+  'runtime.hw.reasonNoUsableDevices': [
+    'features/runtime/components/HardwareCard.tsx',
+    // #106：后端包卡片的「具体卡在哪」那一行也转给了这六条（`reasonKeys.ts` 的
+    // `inapplicabilityText()` 把 `backend_unavailable` 整档交给它们），所以这里
+    // 也是渲染点。它经 `<Emphasis>` 渲染、`title` 走 `stripEmphasis`。
+    'features/runtime/components/BackendPackCard.tsx',
+  ],
+  'runtime.hw.reasonEnumeratedNone': [
+    'features/runtime/components/HardwareCard.tsx',
+    // #106：后端包卡片的「具体卡在哪」那一行也转给了这六条（`reasonKeys.ts` 的
+    // `inapplicabilityText()` 把 `backend_unavailable` 整档交给它们），所以这里
+    // 也是渲染点。它经 `<Emphasis>` 渲染、`title` 走 `stripEmphasis`。
+    'features/runtime/components/BackendPackCard.tsx',
+  ],
 
   /* ── #105 ⑥：代理那三句 ──────────────────────────────────────────────────────
    * 强调的是**数字与范围**（测了几个 / 跳过几个 / 几个源不可达）——
@@ -5040,7 +5096,13 @@ describe('T-129b /runtime 不许中英混排', () => {
             recommended: true,
             priority: 10,
             requiresDriver: null,
-            inapplicableReason: null,
+            /*
+             * #106：这一格原来叫 `inapplicableReason`，装的是 daemon 拼好的中文散文。
+             * 现在是 `Inapplicability | null`（机器可读 + 结构化参数），措辞归两份 locale。
+             * 改名是刻意的：还在读老字段的地方会拿到 `undefined` 静默渲染成空白，
+             * 而夹具是 `Record<string, unknown>`，`tsc` 替我们抓不到 —— 只能靠这里写对。
+             */
+            inapplicability: null,
           },
           {
             id: 'whispercpp-cuda-win-x64',
@@ -5058,7 +5120,8 @@ describe('T-129b /runtime 不许中英混排', () => {
             recommended: false,
             priority: 5,
             requiresDriver: { nvidiaDriver: '535' },
-            inapplicableReason: 'built for win32/x64',
+            // #106：「built for win32/x64」这句话现在由 os/arch 两个结构字段在 web 侧拼
+            inapplicability: { kind: 'platform_mismatch', packOs: 'win32', packArch: 'x64' },
           },
         ],
       },
@@ -8600,7 +8663,9 @@ describe('T-150 ② 转写 Tab 三分组（D-10 #9 #10 #29）', () => {
       requirements: { ramRequiredMB: 512, vramRequiredMB: 0, computedAtContext: null },
       fitness: {
         tier: 'recommended',
+        // `FitResult` 的两份原因是成对的（见上面那个夹具里的说明）
         reasonZh: 'stub reason',
+        reasonEn: 'stub reason',
         notRecommendedForLanguage: false,
         speedTier: 'unknown',
         speedSource: 'none',
@@ -9150,7 +9215,8 @@ function pack(over: Record<string, unknown> = {}): Record<string, unknown> {
     recommended: false,
     priority: 10,
     requiresDriver: null,
-    inapplicableReason: null,
+    /** #106：机器可读的「为什么装不了」。`null` = 没有这个问题（默认这条包是适用的）。 */
+    inapplicability: null,
     ...over,
   };
 }
@@ -9342,12 +9408,18 @@ describe('T-165 ①「不可用」的三档不许长成同一个样子', () => {
     onSelfTest: () => undefined,
   } as const;
 
-  async function renderKind(kind: string | undefined, reason: string) {
+  /**
+   * ⚠️ #106：第二个参数从 daemon 拼好的**一句中文散文**换成了 `Inapplicability`
+   * （机器可读 + 结构化参数）。措辞现在住在 `features/runtime/reasonKeys.ts`
+   * 那张总表 + 两份 locale 里 —— 这一组用例断的仍然是**渲染出来的那段文字**，
+   * 只是"那段文字从哪来"变了。
+   */
+  async function renderKind(kind: string | undefined, reason: Record<string, unknown> | null) {
     const p = pack({
       id: 'whispercpp-vulkan-linux-x64',
       backend: 'vulkan',
       applicable: false,
-      inapplicableReason: reason,
+      inapplicability: reason,
       ...(kind === undefined ? {} : { inapplicableKind: kind }),
     });
     const r = await render(<BackendPackCard {...NOOP} pack={p as never} />);
@@ -9355,35 +9427,53 @@ describe('T-165 ①「不可用」的三档不许长成同一个样子', () => {
   }
 
   test('★ `undetermined`（还没探测到）不许被说成「不可用」', async () => {
-    const { r, shown } = await renderKind('undetermined', '尚未探测到硬件能力');
+    const { r, shown } = await renderKind('undetermined', { kind: 'hardware_not_probed_yet' });
     assert.equal(
       shown.includes('不可用'),
       false,
       `probe 还没跑成 ≠ 你的机器不支持，界面却说了「不可用」→ ${shown}`,
     );
     assert.ok(shown.includes('待检测'), `没有说出「待检测」这一档 → ${shown}`);
-    // daemon 的原话必须照抄，档位不是用来顶替它的
-    assert.ok(shown.includes('尚未探测到硬件能力'), `daemon 给的原因被吃掉了 → ${shown}`);
+    /*
+     * 「具体卡在哪」那一行必须还在 —— 档位不是用来顶替它的。
+     * #106 之前这里断的是 daemon 那句中文原话（`'尚未探测到硬件能力'`）；
+     * 那句话如今在 `runtime.pack.inapplicable.hardwareNotProbedYet` 里，逐段取自 locale。
+     */
+    for (const chunk of literalChunks(zhAt('runtime.pack.inapplicable.hardwareNotProbedYet'))) {
+      assert.ok(shown.includes(chunk), `「具体卡在哪」缺了一段：「${chunk}」→ ${shown}`);
+    }
     r.unmount();
   });
 
   test('★ `unsupported`（探测完成、确认没有设备）才可以说「本机不支持」', async () => {
-    const { r, shown } = await renderKind('unsupported', 'no vulkan device enumerated');
+    const { r, shown } = await renderKind('unsupported', {
+      kind: 'backend_unavailable',
+      unavailableKind: 'enumerated_none',
+      detail: 'no vulkan device enumerated',
+    });
     assert.ok(shown.includes('本机不支持'), `没说出「本机不支持」这一档 → ${shown}`);
+    // 探针原话是排障依据，降级成技术尾巴但不许被吃掉
+    assert.ok(shown.includes('no vulkan device enumerated'), `探针原话被吃掉了 → ${shown}`);
     r.unmount();
   });
 
   test('★ `platform`（别的平台的包）说的是平台，不是能力', async () => {
-    const { r, shown } = await renderKind('platform', '适用于 win32/x64，与本机不符');
+    const { r, shown } = await renderKind('platform', {
+      kind: 'platform_mismatch',
+      packOs: 'win32',
+      packArch: 'x64',
+    });
     assert.ok(shown.includes('其它平台'), `没说出「其它平台」这一档 → ${shown}`);
     assert.equal(shown.includes('本机不支持'), false, `平台不匹配被说成了能力不支持 → ${shown}`);
     r.unmount();
   });
 
   test('★ 三档渲染出来的文本必须两两不同 —— 这条钉的正是「区分」这个后果本身', async () => {
-    const a = await renderKind('undetermined', 'R');
-    const b = await renderKind('unsupported', 'R');
-    const c = await renderKind('platform', 'R');
+    /* 三档喂**同一个** `Inapplicability` —— 差别只能来自档位那一轴，不能来自原因文本。 */
+    const SAME = { kind: 'backend_unavailable', unavailableKind: 'not_installed', detail: 'R' };
+    const a = await renderKind('undetermined', SAME);
+    const b = await renderKind('unsupported', SAME);
+    const c = await renderKind('platform', SAME);
     const set = new Set([a.shown, b.shown, c.shown]);
     assert.equal(set.size, 3, `三档里有两档在屏幕上长得一模一样 → ${JSON.stringify([...set])}`);
     a.r.unmount();
@@ -9392,10 +9482,17 @@ describe('T-165 ①「不可用」的三档不许长成同一个样子', () => {
   });
 
   test('★ daemon 没给档位时不许替它说话（既不说"不支持"也不说"待检测"）', async () => {
-    const { r, shown } = await renderKind(undefined, '原因由服务端给出');
+    const { r, shown } = await renderKind(undefined, {
+      kind: 'backend_unavailable',
+      unavailableKind: 'not_installed',
+      detail: 'probe path /x/openmemo-probe not found',
+    });
     assert.equal(shown.includes('本机不支持'), false, `没有证据却断言用户的硬件不支持 → ${shown}`);
     assert.equal(shown.includes('待检测'), false, `同样是编出来的档位 → ${shown}`);
-    assert.ok(shown.includes('原因由服务端给出'), `服务端的原话必须还在 → ${shown}`);
+    assert.ok(
+      shown.includes('probe path /x/openmemo-probe not found'),
+      `服务端的原话必须还在 → ${shown}`,
+    );
     r.unmount();
   });
 });
@@ -9719,7 +9816,8 @@ describe('T-165 ②「推荐」徽章只在真的有得选时才出现', () => {
       backend: 'vulkan',
       applicable: false,
       inapplicableKind: 'undetermined',
-      inapplicableReason: '尚未探测到硬件能力',
+      // #106：「尚未探测到硬件能力」那句中文散文换成了它的机器可读原因
+      inapplicability: { kind: 'hardware_not_probed_yet' },
       recommended: false,
     }),
     pack({ id: 'media-tools-linux-x64', engine: 'ffmpeg', installed: true, recommended: true }),
@@ -13322,14 +13420,23 @@ describe('#105 ① /components 整页 —— 英文界面下必须是英文', ()
     ...over,
   });
 
-  /** 六条腿各一条卡片 —— 一次渲染盖住全部 `UPSTREAM_CHECK_KINDS`。 */
+  /**
+   * 六条腿各一条卡片 —— 一次渲染盖住全部 `UPSTREAM_CHECK_KINDS`。
+   *
+   * ⚠️ #106：三条腿的 `reason` 原来是 daemon 拼好的**一句散文**
+   * （`'no release feed configured'` / `'rate limited, retry in about 3 minutes'` /
+   * `'two unrelated tag families'`），被界面插进英文句子的 `{{reason}}` 里。
+   * 现在它们各自是机器可读的判别联合，措辞归 `features/components/reasonText.ts`
+   * 那三张总表 + 两份 locale。**这里挑的腿要让下面每一条断言仍然有意义**：
+   * 三条都带结构化参数（状态码、毫秒、tag 族），整页扫描才真的扫到了插值那一段。
+   */
   const ALL_KINDS: Record<string, Record<string, unknown>> = {
     'never-checked': { kind: 'never-checked' },
-    'no-upstream': { kind: 'no-upstream', reason: 'no release feed configured' },
+    'no-upstream': { kind: 'no-upstream', reason: 'not_registered' },
     failed: {
       kind: 'failed',
       checkedAt: '2026-08-11T00:00:00.000Z',
-      reason: 'rate limited, retry in about 3 minutes',
+      reason: { kind: 'rate_limited', status: 429, retryAfterMs: 180_000 },
     },
     current: { kind: 'current', checkedAt: '2026-08-11T00:00:00.000Z', version: '2026.07.04' },
     newer: {
@@ -13342,7 +13449,11 @@ describe('#105 ① /components 整页 —— 英文界面下必须是英文', ()
       kind: 'indeterminate',
       checkedAt: '2026-08-11T00:00:00.000Z',
       version: 'nightly-2026.08.01',
-      reason: 'two unrelated tag families',
+      reason: {
+        kind: 'pin_outside_all_tag_families',
+        newestPerFamily: ['b6421', 'nightly-2026.08.01'],
+        pinnedVersion: '2026.07.04',
+      },
     },
   };
 
@@ -13460,7 +13571,8 @@ describe('#105 ① /components 整页 —— 英文界面下必须是英文', ()
         '/components': {
           components: [
             comp({
-              installedVersion: { kind: 'not-applicable', reason: 'this record has no version' },
+              // #106：`reason` 从一句散文换成了 `InstalledVersionUnknownReason` 枚举
+              installedVersion: { kind: 'not-applicable', reason: 'no_version_recorded' },
               upstreamCheck: ALL_KINDS['newer'],
             }),
           ],
@@ -13601,7 +13713,8 @@ describe('#105 ②b /runtime 折叠区 —— 本机的包不许被说成「面�
     recommended: false,
     priority: 10,
     requiresDriver: null,
-    inapplicableReason: null,
+    /** #106：`inapplicableReason: string | null` → `inapplicability: Inapplicability | null`。 */
+    inapplicability: null,
     ...over,
   });
 
@@ -13614,7 +13727,15 @@ describe('#105 ②b /runtime 折叠区 —— 本机的包不许被说成「面�
     os: 'linux',
     arch: 'x64',
     inapplicableKind: 'undetermined',
-    inapplicableReason: 'backend package not installed',
+    /*
+     * 「backend package not installed」这句英文机器串现在分成了两半：
+     * `unavailableKind` 是我们要翻译的那一档，`detail` 是原样保留的排障原文。
+     */
+    inapplicability: {
+      kind: 'backend_unavailable',
+      unavailableKind: 'not_installed',
+      detail: 'backend package not installed',
+    },
   });
 
   /** 真·别的平台的包。 */
@@ -13627,7 +13748,8 @@ describe('#105 ②b /runtime 折叠区 —— 本机的包不许被说成「面�
     arch: 'arm64',
     totalSizeBytes: 678_000_000,
     inapplicableKind: 'platform',
-    inapplicableReason: '适用于 darwin/arm64，与本机不符',
+    // #106：那句中文散文（「适用于 darwin/arm64，与本机不符」）现在只是 os/arch 两个字段
+    inapplicability: { kind: 'platform_mismatch', packOs: 'darwin', packArch: 'arm64' },
   });
 
   async function renderRuntime(packs: Record<string, unknown>[]) {
@@ -13698,11 +13820,40 @@ describe('#105 ②b /runtime 折叠区 —— 本机的包不许被说成「面�
      * 「没有这个字段」= 我们不知道它是哪一档。「面向其它系统 / 架构」是一句**具体的**话，
      * 没有依据就不许说 —— 与 `inapplicableKind` 自己那条兜底判据同源。
      */
-    const r = await renderRuntime([PACK({ id: 'legacy-pack', inapplicableReason: 'unknown' })]);
+    /*
+     * ⚠️ #106：这里原来喂的是 `inapplicableReason: 'unknown'` —— 一个我们**读不懂**的
+     * daemon 给的字符串。新契约里"读不懂"的正确表达就是 `inapplicability: null`
+     * （老 daemon 根本不发这个字段，反序列化后就是它）。**不许**顺手映射成
+     * `backend_status_missing` 之类的具体档位：那是替一次没做过的判断下结论。
+     */
+    const r = await renderRuntime([PACK({ id: 'legacy-pack', inapplicability: null })]);
     assert.deepEqual(packsUnder(r.container, 'runtime-local-blocked-summary'), [
       'backend-pack-legacy-pack',
     ]);
     assert.equal(r.container.querySelector('[data-testid="runtime-other-platform-summary"]'), null);
+
+    /*
+     * ★ 而且它必须**一个字都不说**。前提自检先确认这张卡真的渲染出来了，
+     * 否则下面那一串否定断言全是空转（⑤A-2）。
+     */
+    const card = r.container.querySelector('[data-testid="backend-pack-legacy-pack"]');
+    assert.ok(card, '这张卡根本没渲染 —— 下面那些否定断言会空转');
+    const said = text(card as HTMLElement);
+    assert.ok(said.length > 10, `卡片几乎什么都没渲染（${said.length} 字），这条在空转`);
+    for (const key of [
+      'runtime.kind.unsupported',
+      'runtime.kind.undetermined',
+      'runtime.pack.inapplicable.platformMismatch',
+      'runtime.pack.inapplicable.hardwareNotProbedYet',
+      'runtime.pack.inapplicable.backendStatusMissing',
+    ]) {
+      const first = literalChunks(zhAt(key))[0];
+      if (first)
+        assert.ok(
+          !said.includes(first),
+          `daemon 什么都没说，界面却替它挑了「${key}」那句话 → ${said}`,
+        );
+    }
     r.unmount();
   });
 });
@@ -13892,7 +14043,8 @@ describe('#105 ④ 折叠区那 20 颗禁用按钮 —— 要么不渲染，要�
     installed: false,
     applicable: false,
     inapplicableKind: 'platform',
-    inapplicableReason: '适用于 darwin/arm64，与本机不符',
+    // #106：daemon 不再拼那句中文；这一档的正文照旧从 `pack.os`/`pack.arch` 在 web 侧拼
+    inapplicability: { kind: 'platform_mismatch', packOs: 'darwin', packArch: 'arm64' },
     totalSizeBytes: 678_000_000,
   });
 
@@ -13967,7 +14119,9 @@ describe('#105 ④ 折叠区那 20 颗禁用按钮 —— 要么不渲染，要�
       assert.equal(
         shown.match(new RegExp(CJK105.source, 'g')),
         null,
-        `英文界面上这张卡出现了中文（多半是又把 inapplicableReason 原样渲染了）→ ${shown}`,
+        // #106：老字段 `inapplicableReason` 已经不存在了，同一个错今天的形状是
+        // 「把 `pack.inapplicability` 那句解释挑成了中文那一份 / 直接渲染 daemon 的散文」
+        `英文界面上这张卡出现了中文（多半是又把 pack.inapplicability 渲染成了中文）→ ${shown}`,
       );
     } finally {
       await i18nInstance.changeLanguage('zh-CN');
@@ -13986,7 +14140,16 @@ describe('#105 ④ 折叠区那 20 颗禁用按钮 —— 要么不渲染，要�
       installed: false,
       applicable: false,
       inapplicableKind: 'undetermined',
-      inapplicableReason: 'backend package not installed',
+      /*
+       * #106：`detail` 是 daemon 那句**英文技术原话**，它会被包进
+       * `runtime.pack.inapplicable.verbatimDetail`（「探针原话，未翻译：…」）——
+       * 所以下面那条"可访问名里必须逐字有它"照旧成立。
+       */
+      inapplicability: {
+        kind: 'backend_unavailable',
+        unavailableKind: 'not_installed',
+        detail: 'backend package not installed',
+      },
     });
     const r = await render(<BackendPackCard {...NOOP} pack={undetermined as never} />);
     const btn = r.container.querySelector(
@@ -14065,10 +14228,15 @@ describe('#105 ⑤ 诊断页「去修复」—— 落在能修的那一格上', 
   }
 
   test('★★ 没装 VAD 权重 → 按钮跳到那一个模型的详情页，不是整张 /models', async () => {
+    /*
+     * ⚠️ #106：`reasonZh: '未安装'` 换成了 `reason: { kind: 'no_vad_model_installed' }`。
+     * **这一档三档划分的判据仍然是 `vad.model`**（见 `DiagnosticsPage` 的 `vadFix`），
+     * 不是 `reason` —— 这里 `model: null` 才是"装一个模型真能修好"的那一格。
+     */
     const r = await renderDiag({
       model: null,
       chunking: 'fixed',
-      reasonZh: '未安装',
+      reason: { kind: 'no_vad_model_installed' },
       rejected: [],
     });
     assert.equal(locOf(r.container), '/diagnostics', '前提：还没跳转');
@@ -14100,10 +14268,20 @@ describe('#105 ⑤ 诊断页「去修复」—— 落在能修的那一格上', 
      * 所以给一个「去装 VAD 模型」按钮就是又一条走不通的指引。
      * 但**不能因此一句话不说** —— 那会让用户去找一个并不存在的修法。
      */
+    /*
+     * ⚠️ #106：`reasonZh: 'VAD 子进程退出码 134'` 换成了
+     * `reason: { kind: 'runtime_failure' }`。**这一格刻意不带原始错误串** ——
+     * 契约里写着为什么（`VadChunkingReason.runtime_failure` 的注释）：那串原文此前
+     * 只存在于一句中文散文里，要取出来只能去劈那句中文。原文没有丢，它照旧进
+     * daemon 日志与 job 结果的 `warningsZh`。
+     * ⇒ 所以下面那条断言从「`'134'` 还在不在」换成了「这一档该说的那句话在不在」。
+     * 「装模型解决不了」那半句由 `vadFix === 'runtime-failure'` 驱动，而它读的是
+     * `model` 非空 + `chunking === 'fixed'` —— 与 `reason` 无关，照旧成立。
+     */
     const r = await renderDiag({
       model: '/models/by-name/vad/ggml-silero-v6.2.0.bin',
       chunking: 'fixed',
-      reasonZh: 'VAD 子进程退出码 134',
+      reason: { kind: 'runtime_failure' },
       rejected: [],
     });
     assert.equal(chunkingAction(r.container), null, '权重就在盘上，却还在号召用户去装一个模型');
@@ -14114,7 +14292,12 @@ describe('#105 ⑤ 诊断页「去修复」—— 落在能修的那一格上', 
         `没说清"装模型解决不了"，缺了「${chunk}」→ ${shown.slice(0, 400)}`,
       );
     }
-    assert.ok(shown.includes('134'), 'daemon 给的具体原因被吃掉了');
+    for (const chunk of literalChunks(zhAt('diagnostics.chunkingReason.runtimeFailure'))) {
+      assert.ok(
+        shown.includes(chunk),
+        `daemon 给的具体成因被吃掉了，缺了「${chunk}」→ ${shown.slice(0, 400)}`,
+      );
+    }
     r.unmount();
   });
 
@@ -14122,7 +14305,8 @@ describe('#105 ⑤ 诊断页「去修复」—— 落在能修的那一格上', 
     const r = await renderDiag({
       model: '/x/vad.bin',
       chunking: 'vad',
-      reasonZh: '按静音切分',
+      // #106：`reasonZh: '按静音切分'` → 机器可读的「没降级」那一格
+      reason: { kind: 'vad_active' },
       rejected: [],
     });
     assert.equal(chunkingAction(r.container), null, 'VAD 好着呢，却还挂着一颗「去修复」');
@@ -14319,5 +14503,922 @@ describe('#105 ⑥ 代理测试总结句 —— 不许比它下面的表格乐�
       `全通却报了"有不可达" → ${said}`,
     );
     r.unmount();
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════════════════
+ * #106 **英文界面上那半句中文** —— daemon 拼好的散文不许再钻进英文句子的 `{{reason}}` 里
+ *
+ * ## 缺陷原状（逐字）
+ *
+ * 契约那一侧原来交出来的是**一整句中文**（`InstalledVersion.reason`、
+ * `UpstreamCheck.reason`、`ApplicabilityResult.reason`、`pipeline.vad.reasonZh`），
+ * 而界面把它插进英文句子的 `{{reason}}` 里。于是英文界面上逐字是：
+ *
+ * ```
+ * installed (安装记录里没有记版本号)
+ * We did ask upstream and got no answer (上游配额已用尽（core 配额，每小时 60 次）…)
+ * ```
+ *
+ * 它符合「CJK 只出现在数据里」的表面判据 —— `en.json` 里一个汉字都没有 ——
+ * **但对英文用户就是半句中文**。所以判据必须落在**渲染出来的那段字**上，
+ * 而不是"词条在不在""夹具能不能来回转一圈"。
+ *
+ * ## 这一组每一条都过一遍那四种守卫失效形态
+ *
+ *   ① **空转**：整段是空的时候，"不许有汉字"也成立 ⇒ 每一条「无中文」断言旁边
+ *      必须有一条**正面**断言（那句话真的在），每个循环先自检输入数组非空。
+ *   ② **钉错**：任何地方都不许断言"英文界面上出现了中文"。
+ *   ③ **量错东西**：断的一律是 DOM 里的文字，不是 `t()` 的返回值、不是 locale JSON、
+ *      也不是夹具往返；不造任何重新实现映射的替身。
+ *   ④ **注释型断言**：每一条声称的性质都有一句跑得起来的 assert。
+ *
+ * ## 反悔测试（逐条问过）
+ *
+ * 「把产品改回去（daemon 重新发中文散文 / web 原样渲染）之后，这条会不会红？」
+ * ——会。这些断言全部要求**英文词条里那几段字**出现在屏幕上；
+ * 渲染成中文散文时那几段字不存在，逐条判红。
+ * ══════════════════════════════════════════════════════════════════════════════════════ */
+
+describe('#106 组件页：说不出已装版本时，那句话在英文界面上必须是英文', () => {
+  const PROV106 = {
+    repoUrl: 'https://github.com/yt-dlp/yt-dlp',
+    releaseUrl: 'https://github.com/yt-dlp/yt-dlp/releases/tag/2026.07.04',
+    license: 'GPL-3.0-or-later',
+    licenseUrl: 'https://www.gnu.org/licenses/gpl-3.0.html',
+  };
+
+  /**
+   * 一条组件。**自由文本一律 ASCII** —— 混进中文会让"英文界面不许有汉字"
+   * 判不出是"硬编码中文"还是"数据里本来就有中文"（③）。
+   */
+  const comp106 = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: 'ytdlp-linux-x64',
+    displayName: 'yt-dlp site extractor (Linux x64)',
+    displayNameZh: 'yt-dlp site extractor (Linux x64)',
+    category: 'media-tool',
+    pinnedVersion: '2026.07.04',
+    installedVersion: { kind: 'not-installed' },
+    upstreamCheck: { kind: 'never-checked' },
+    provenance: PROV106,
+    upstream: { kind: 'github-release', repo: 'yt-dlp/yt-dlp' },
+    sizeBytes: 39_924_536,
+    sha256: '6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae',
+    sha256Provenance: null,
+    ...over,
+  });
+
+  const renderCard = async (over: Record<string, unknown>, locale: string) =>
+    render(
+      <ComponentCard
+        component={comp106(over) as never}
+        locale={locale}
+        busy={false}
+        onUpdate={() => undefined}
+      />,
+    );
+
+  /** 「这台机器上装的是哪一版」那一格。 */
+  const installedCell = (c: HTMLElement): string => {
+    const cell = c.querySelector('[data-testid="installed-version-ytdlp-linux-x64"]');
+    assert.ok(cell, '「本机已装」那一格根本没渲染出来 —— 下面的断言会空转');
+    return text(cell as HTMLElement);
+  };
+
+  const NOT_APPLICABLE = {
+    installedVersion: { kind: 'not-applicable', reason: 'no_version_recorded' },
+  };
+
+  test('★★ 英文界面：这一格得说清「装了」+「记录里没版本号」，而且一个汉字都没有', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      const r = await renderCard(NOT_APPLICABLE, 'en');
+      const said = installedCell(r.container);
+
+      // ⑤A-2 前提自检：先确认真的看到东西了，否则下面那条「无中文」是空转
+      assert.ok(said.length >= 20, `这一格几乎什么都没渲染（${said.length} 字）→ ${said}`);
+      assert.equal(
+        said.match(new RegExp(CJK105.source, 'g')),
+        null,
+        `★ 缺陷原状：英文界面上这一格逐字是 installed (安装记录里没有记版本号) → ${said}`,
+      );
+
+      // ── 正面：它必须真的说出**两件事**，逐段取自 en.json（不是我在这里另写英文）
+      for (const chunk of literalChunks(enAt('components.installedNoVersion'))) {
+        assert.ok(said.includes(chunk), `「已安装」那半句缺了一段：「${chunk}」→ ${said}`);
+      }
+      const why = enAt('components.reason.installedVersion.noVersionRecorded');
+      assert.ok(why.length >= 8, '词条短到取不出可断言的片段 —— 这条会空转');
+      assert.ok(said.includes(why), `没说清"为什么说不出版本号"（期望「${why}」）→ ${said}`);
+
+      // ── 而且语义上确实是那两件事，不是一句读不懂的话
+      assert.match(said, /\binstalled\b/i, `没说它其实是装着的 → ${said}`);
+      assert.match(said, /no version/i, `没说"没有版本号"这件事 → ${said}`);
+      // i18next 找不到 key 时把 key 原样吐回来 —— 那是最像"通过"的失败
+      assert.ok(!said.includes('components.reason.'), `渲染成了原始 key 串 → ${said}`);
+      // 括号里不许是空的（`{{reason}}` 那个洞没被填上就长这样）
+      assert.ok(!/\(\s*\)/.test(said), `括号里什么都没有 —— {{reason}} 没被填上 → ${said}`);
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  test('★ 镜像用例：中文界面上这一格必须是那句中文（防"到处写死英文"的反向退化）', async () => {
+    const r = await renderCard(NOT_APPLICABLE, 'zh-CN');
+    const said = installedCell(r.container);
+    assert.ok(said.length >= 8, `这一格几乎什么都没渲染 → ${said}`);
+    const why = zhAt('components.reason.installedVersion.noVersionRecorded');
+    assert.ok(said.includes(why), `中文界面上这一格没说中文（期望「${why}」）→ ${said}`);
+    assert.ok(said.includes('已安装'), `中文界面上没说它是装着的 → ${said}`);
+    r.unmount();
+  });
+});
+
+describe('#106 上游查询失败：14 格每一格在英文界面上都得说出一句英文', () => {
+  /**
+   * ── 为什么必须**逐格**跑一遍 ────────────────────────────────────────────────────
+   * 这 14 格里只有一两格在开发机上容易碰到（限流、超时），其余要么要撞上真实上游状态、
+   * 要么要目录配错。「抽查两格」= 剩下 12 格在英文界面上仍然可能是中文，
+   * 而没有任何东西会红。
+   *
+   * ── 为什么数组是从类型出发的 ────────────────────────────────────────────────────
+   * `FAILURE_ARMS` 声明成 `readonly UpstreamFailure[]`：**少写一格的字段** `tsc` 当场红；
+   * 而**少写一整格**由下面那条前提自检对着 `UPSTREAM_FAILURE_KEYS`（产品那张总表）
+   * 判红 —— 契约加一条腿 ⇒ 总表加一格 ⇒ 这里的 `deepEqual` 立刻不成立。
+   * 所以"悄悄加一格而没人给它写用例"在结构上做不到。
+   */
+  const FAILURE_ARMS: readonly UpstreamFailure[] = [
+    { kind: 'rate_limited', status: 403, retryAfterMs: 90_000 },
+    { kind: 'quota_exhausted', resetInMs: 42 * 60_000, resource: 'core', limit: 60 },
+    { kind: 'quota_exhausted_no_reset', resource: 'core', limit: 60 },
+    { kind: 'http_error_not_quota', status: 403, remaining: 4987 },
+    { kind: 'http_error_no_quota_info', status: 502 },
+    { kind: 'timed_out', timeoutMs: 8000 },
+    { kind: 'no_release_matches_tag_pattern', tagPattern: '^autobuild-' },
+    { kind: 'repo_has_no_releases' },
+    { kind: 'no_tag_matches_tag_pattern', tagPattern: '^b[0-9]+$' },
+    { kind: 'repo_has_no_tags' },
+    { kind: 'npm_response_has_no_version' },
+    { kind: 'huggingface_response_has_no_sha' },
+    { kind: 'unsupported_upstream_kind', upstreamKind: 'gitlab-release' },
+    { kind: 'upstream_error_text', text: 'ENOTFOUND api.github.com' },
+  ];
+
+  const comp106 = (u: unknown): Record<string, unknown> => ({
+    id: 'ytdlp-linux-x64',
+    displayName: 'yt-dlp site extractor (Linux x64)',
+    displayNameZh: 'yt-dlp site extractor (Linux x64)',
+    category: 'media-tool',
+    pinnedVersion: '2026.07.04',
+    installedVersion: { kind: 'known', version: '2026.07.04' },
+    upstreamCheck: u,
+    provenance: {
+      repoUrl: 'https://github.com/yt-dlp/yt-dlp',
+      releaseUrl: 'https://github.com/yt-dlp/yt-dlp/releases/tag/2026.07.04',
+      license: 'GPL-3.0-or-later',
+      licenseUrl: 'https://www.gnu.org/licenses/gpl-3.0.html',
+    },
+    upstream: { kind: 'github-release', repo: 'yt-dlp/yt-dlp' },
+    sizeBytes: 39_924_536,
+    sha256: 'a'.repeat(64),
+    sha256Provenance: null,
+  });
+
+  /** 渲染一次「问了但没问到」的卡片，返回那句注释文字。 */
+  async function failedNote(reason: UpstreamFailure, locale = 'en') {
+    const r = await render(
+      <ComponentCard
+        component={
+          comp106({ kind: 'failed', checkedAt: '2026-08-11T00:00:00.000Z', reason }) as never
+        }
+        locale={locale}
+        busy={false}
+        onUpdate={() => undefined}
+      />,
+    );
+    const note = r.container.querySelector('[data-testid="upstream-note-failed"]');
+    assert.ok(note, `「${reason.kind}」这一档连那句注释都没渲染 —— 断言会空转`);
+    return { r, said: text(note as HTMLElement) };
+  }
+
+  test('★ 前提自检：14 格一个不少，且与产品那张总表逐格对齐', () => {
+    assert.ok(FAILURE_ARMS.length > 0, '夹具是空的 —— 下面那个循环一次都不会跑（① 空转）');
+    assert.equal(
+      FAILURE_ARMS.length,
+      Object.keys(UPSTREAM_FAILURE_KEYS).length,
+      '夹具的格数与 UPSTREAM_FAILURE_KEYS 对不上 —— 有一格没人给它写用例',
+    );
+    assert.deepEqual(
+      FAILURE_ARMS.map((f) => f.kind).sort(),
+      Object.keys(UPSTREAM_FAILURE_KEYS).sort(),
+      '契约里新增/改名了一种失败原因，而这里没跟上',
+    );
+  });
+
+  test('★★ 14 格全部：英文界面上没有汉字，且 {{reason}} 那个洞真的被填上了', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      assert.ok(FAILURE_ARMS.length > 0, '前提：夹具非空');
+      for (const arm of FAILURE_ARMS) {
+        const { r, said } = await failedNote(arm);
+
+        // ① 先证明"我真的看到东西了"，再谈"里面没有汉字"
+        assert.ok(
+          said.length > 80,
+          `「${arm.kind}」那句注释短得可疑（${said.length} 字）→ ${said}`,
+        );
+        assert.equal(
+          said.match(new RegExp(CJK105.source, 'g')),
+          null,
+          `★ 缺陷原状：英文界面上「${arm.kind}」这一格是中文 → ${said}`,
+        );
+
+        // ── 「不是只剩一个框架」的三条判据
+        assert.ok(
+          !said.includes('components.reason.'),
+          `「${arm.kind}」渲染成了原始 key 串（词条缺失最像"通过"的失败）→ ${said}`,
+        );
+        assert.ok(
+          !/\(\s*\)/.test(said),
+          `「${arm.kind}」的括号是空的 —— {{reason}} 没被填上 → ${said}`,
+        );
+        const chunks = literalChunks(enAt(UPSTREAM_FAILURE_KEYS[arm.kind]));
+        assert.ok(chunks.length > 0, `「${arm.kind}」的词条取不出可断言的片段 —— 这条会空转`);
+        for (const chunk of chunks) {
+          assert.ok(said.includes(chunk), `「${arm.kind}」缺了一段：「${chunk}」→ ${said}`);
+        }
+        r.unmount();
+      }
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  test('★★ `quota_exhausted`：算得出恢复时间就要说出来（3 分钟那一格）', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      const { r, said } = await failedNote({
+        kind: 'quota_exhausted',
+        resetInMs: 3 * 60_000,
+        resource: null,
+        limit: null,
+      });
+      for (const chunk of literalChunks(enAt('components.reason.failed.quotaExhausted'))) {
+        assert.ok(said.includes(chunk), `缺了一段：「${chunk}」→ ${said}`);
+      }
+      assert.match(said, /\b3\s*min/i, `算得出 3 分钟，却没把这个数说给用户 → ${said}`);
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  test('★★ `quota_exhausted_no_reset`：**算不出时间就不许编时间**（不许出现「0 min」）', async () => {
+    /*
+     * ── 这一条现在是这条规矩在**文字层**唯一的钉子 ──────────────────────────────
+     * v0.7.2 立的那条：上游没给恢复时刻时，界面不许编一个"等 0 分钟"。
+     * 契约那一侧靠**把两格拆开**来保证（`quota_exhausted` 带 `resetInMs`，
+     * `quota_exhausted_no_reset` 结构上就没有这个字段），但结构挡不住
+     * "词条里自己写死一个 0"或者"把 `wait` 插成空串后又补一句 0 分钟"。
+     * 所以这里断的是**屏幕上那串字**。
+     */
+    await i18nInstance.changeLanguage('en');
+    try {
+      const { r, said } = await failedNote({
+        kind: 'quota_exhausted_no_reset',
+        resource: null,
+        limit: null,
+      });
+      // 正面：这一格该说的话必须真的在（否则下面那串否定断言是空转）
+      for (const chunk of literalChunks(enAt('components.reason.failed.quotaExhaustedNoReset'))) {
+        assert.ok(said.includes(chunk), `缺了一段：「${chunk}」→ ${said}`);
+      }
+      assert.ok(!said.includes('0 min'), `★ 算不出时间却编了一个「0 min」→ ${said}`);
+      assert.ok(!said.includes('0 分钟'), `★ 算不出时间却编了一个「0 分钟」→ ${said}`);
+      assert.ok(
+        !/\d+\s*(min|mins|minute|minutes|hr|hrs|hour|hours|sec|secs|second|seconds)\b/i.test(said),
+        `★ 上游没说什么时候恢复，界面却报了一个等待时长 → ${said}`,
+      );
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  test('★★ 不到一分钟也不许四舍五入成「0 min」（`resetInMs: 40_000`）', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      const { r, said } = await failedNote({
+        kind: 'quota_exhausted',
+        resetInMs: 40_000,
+        resource: null,
+        limit: null,
+      });
+      for (const chunk of literalChunks(enAt('components.reason.failed.quotaExhausted'))) {
+        assert.ok(said.includes(chunk), `缺了一段：「${chunk}」→ ${said}`);
+      }
+      /*
+       * ⚠️ 正面：`{{wait}}` 那个洞必须**真的被填上**，不能是"填了空串所以看不到 0"。
+       * 那句话由 `lib/format/time.ts` 的 `approxEta()` 给出，不到一分钟时是
+       * 「less than a minute」——**判的是这个意思，不是某一句完整措辞**
+       * （词条本身随时会被润色，钉整句只会训练人去改断言）。
+       */
+      assert.match(
+        said,
+        /less than a minute/i,
+        `等待时长那个洞是空的（或者说成了一个具体数字）→ ${said}`,
+      );
+      assert.ok(!said.includes('0 min'), `★ 40 秒被四舍五入成了「0 min」→ ${said}`);
+      assert.ok(!said.includes('0 分钟'), `★ 40 秒被四舍五入成了「0 分钟」→ ${said}`);
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  test('★★ `upstream_error_text`：原文逐字照抄，并且**明说这一段没翻译**', async () => {
+    /*
+     * 这一格是唯一**故意不解释内容**的：那串字符我们确实没看懂。
+     * 所以两件事都得说到 —— 原文一个字不改地在屏幕上，且读者一眼看得出它是原文。
+     * 只做前者 = 让一段没有 i18n 的字符串冒充产品文案（`verbatimDetail` 同一条纪律）。
+     */
+    await i18nInstance.changeLanguage('en');
+    try {
+      const RAW = 'ENOTFOUND api.github.com';
+      const { r, said } = await failedNote({ kind: 'upstream_error_text', text: RAW });
+      assert.ok(said.includes(RAW), `上游原文被吃掉了 → ${said}`);
+      for (const chunk of literalChunks(enAt('components.reason.failed.upstreamErrorText'))) {
+        assert.ok(said.includes(chunk), `缺了一段：「${chunk}」→ ${said}`);
+      }
+      assert.match(said, /not translated/i, `没说清"这一段不是我们的话" → ${said}`);
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+});
+
+describe('#106 后端包卡片：「具体卡在哪」那一行在英文界面上必须是英文', () => {
+  const NOOP106 = {
+    isActive: false,
+    selfTest: null,
+    installing: false,
+    onInstall: () => undefined,
+    onRemove: () => undefined,
+    onSelect: () => undefined,
+    onSelfTest: () => undefined,
+  } as const;
+
+  /** 本机平台、还没探出结论的那一档 —— `other-platform` 之外的档位才渲染这一行。 */
+  const pack106 = (inapplicability: unknown) =>
+    pack({
+      id: 'whispercpp-vulkan-linux-x64',
+      backend: 'vulkan',
+      displayName: 'whisper.cpp - Vulkan (Linux x64)',
+      displayNameZh: 'whisper.cpp - Vulkan (Linux x64)',
+      installed: false,
+      applicable: false,
+      inapplicableKind: 'undetermined',
+      inapplicability,
+    });
+
+  const renderEn = async (inapplicability: unknown) =>
+    render(<BackendPackCard {...NOOP106} locale="en" pack={pack106(inapplicability) as never} />);
+
+  /**
+   * 一条词条里必然会**逐字**出现在这张卡上的那几段。
+   *
+   * ⚠️ 与文件上方那个 `literalChunks` 的唯一区别：**在 `**` 处也断开**，而不是把它抹掉。
+   * 因为这一行把 `inapplicabilityText()` 的返回值**当纯文本渲染**（它没有走 `<Emphasis>`，
+   * 而硬件卡上那一行走了），而它 `backend_unavailable` 那一档转交的
+   * `UNAVAILABLE_REASON_KEYS` 词条里带 `**强调**`。抹掉再整段比对，
+   * 等于让这条断言顺带去判"强调怎么渲染"—— 而它要判的是**语言**。
+   * 断在 `**` 处，两种渲染结果下都成立。
+   */
+  const plainChunks = (entry: string): string[] =>
+    entry
+      .split(/\{\{[^}]+\}\}|\*\*/)
+      .map((s) => s.trim())
+      .filter((s) => s.length >= 8);
+
+  /** 一条词条里**最长**的那段字面量 —— 最不容易和别处撞车，用来做否定断言。 */
+  const longestChunk = (entry: string): string =>
+    [...plainChunks(entry)].sort((a, b) => b.length - a.length)[0] ?? '';
+
+  test('★★ `hardware_not_probed_yet`：说的是「还没测」，不是「不支持」，而且给得出下一步', async () => {
+    /*
+     * ── 这条性质是**从 `packages/runtime/src/backends/applicability.test.ts` 搬过来的** ──
+     * 那边原来用一条中文正则（`/尚未探测到/`、`/本机组件|运行时|CPU 基础包/`）钉住
+     * 「① 说清是"还没探测到" ② 指向一个真能点的控件」。#106 之后那句中文已经不在
+     * daemon 侧了，那边只剩下「这一档必须是它自己的一格」这条枚举断言。
+     * **措辞这一半如果不在这里钉住，它就没了。**
+     */
+    await i18nInstance.changeLanguage('en');
+    try {
+      const r = await renderEn({ kind: 'hardware_not_probed_yet' });
+      const shown = text(r.container);
+      assert.ok(shown.length > 40, `卡片几乎没渲染（${shown.length} 字）—— 这条在空转`);
+      assert.equal(
+        shown.match(new RegExp(CJK105.source, 'g')),
+        null,
+        `★ 缺陷原状：英文界面上「具体卡在哪」这一整行是中文 → ${shown}`,
+      );
+
+      // ── ① 「还没测出来」：整句逐段取自 en.json
+      const entry = enAt('runtime.pack.inapplicable.hardwareNotProbedYet');
+      const chunks = plainChunks(entry);
+      assert.ok(chunks.length > 0, '词条取不出可断言的片段 —— 这条会空转');
+      for (const chunk of chunks) {
+        assert.ok(shown.includes(chunk), `缺了一段：「${chunk}」→ ${shown}`);
+      }
+      assert.match(shown, /not probed|have not probed/i, `没说出"还没探测过" → ${shown}`);
+
+      // ── 而且**不许**被说成"测过了，不支持"（那正是这一档存在的理由）
+      assert.ok(
+        !shown.includes(enAt('runtime.kind.unsupported')),
+        `★ 「还没测」被说成了「测过了、不支持」→ ${shown}`,
+      );
+      assert.ok(
+        !shown.includes(enAt('runtime.chip.unsupported')),
+        `★ 芯片把「还没测」说成了「本机不支持」→ ${shown}`,
+      );
+      // 反向自检：这一档该有的芯片确实在（否则上面两条否定断言可能只是卡片没渲染）
+      assert.ok(
+        shown.includes(enAt('runtime.chip.undetermined')),
+        `「还没测出来」那一档的芯片不见了 → ${shown}`,
+      );
+
+      // ── ② 指向一个**用户真能去做**的地方
+      assert.match(shown, /Components page/i, `没指出去哪能修 → ${shown}`);
+      assert.match(shown, /base pack/i, `没说清该先装什么 → ${shown}`);
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  test('★★ `backend_unavailable`：那一档说人话，而探针原话被标成「未翻译」', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      const DETAIL = 'backend package not installed';
+      const r = await renderEn({
+        kind: 'backend_unavailable',
+        unavailableKind: 'not_installed',
+        detail: DETAIL,
+      });
+      const shown = text(r.container);
+      assert.ok(shown.length > 40, `卡片几乎没渲染（${shown.length} 字）—— 这条在空转`);
+      assert.equal(
+        shown.match(new RegExp(CJK105.source, 'g')),
+        null,
+        `英文界面上这张卡出现了中文 → ${shown}`,
+      );
+
+      // ① `not_installed` 那一档的**译文**（与硬件卡共用同一张表）
+      const entry = enAt(UNAVAILABLE_REASON_KEYS['not_installed']);
+      const chunks = plainChunks(entry);
+      assert.ok(chunks.length > 0, '词条取不出可断言的片段 —— 这条会空转');
+      for (const chunk of chunks) {
+        assert.ok(shown.includes(chunk), `缺了一段：「${chunk}」→ ${shown}`);
+      }
+
+      // ② 探针原话：逐字在，且被明确标成"不是我们的话"
+      assert.ok(shown.includes(DETAIL), `探针原话被吃掉了，排障就没有依据了 → ${shown}`);
+      for (const chunk of plainChunks(enAt('runtime.pack.inapplicable.verbatimDetail'))) {
+        assert.ok(shown.includes(chunk), `没标明这一段是原文：缺「${chunk}」→ ${shown}`);
+      }
+      assert.match(shown, /not translated/i, `没说清"这一段没翻译" → ${shown}`);
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  test('★★ 反向用例：`inapplicability` 是 null 时，这一行**一个字都不说**', async () => {
+    /*
+     * 没有这一条，上面两条的修法可以退化成"总是渲染一句兜底解释" ——
+     * 而那句兜底必然是我们替 daemon 编的。老 daemon 不发这个字段时它就是 null。
+     */
+    await i18nInstance.changeLanguage('en');
+    try {
+      const r = await renderEn(null);
+      const shown = text(r.container);
+
+      // 前提自检：卡片本身照旧渲染，而且档位那句话还在 —— 少的只有"具体卡在哪"那一行
+      assert.ok(shown.length > 40, `卡片几乎没渲染（${shown.length} 字）—— 下面全是空转`);
+      assert.ok(
+        shown.includes(enAt('runtime.chip.undetermined')),
+        `连档位芯片都不见了 —— 这条测的不是它要测的东西 → ${shown}`,
+      );
+      for (const chunk of plainChunks(enAt('runtime.kind.undetermined'))) {
+        assert.ok(shown.includes(chunk), `档位那句解释也被一起吃掉了：缺「${chunk}」→ ${shown}`);
+      }
+
+      // 而"具体卡在哪"那一行的**任何一种说法**都不许出现
+      const forbidden = [
+        ...Object.values(INAPPLICABILITY_KEYS),
+        ...Object.values(UNAVAILABLE_REASON_KEYS),
+        'runtime.pack.inapplicable.verbatimDetail',
+      ];
+      assert.ok(forbidden.length > 0, '禁止清单是空的 —— 这条在空转');
+      for (const key of forbidden) {
+        const chunk = longestChunk(enAt(key));
+        if (chunk.length < 8) continue;
+        assert.ok(
+          !shown.includes(chunk),
+          `daemon 一个字都没说，界面却替它挑了「${key}」那句话 → ${shown}`,
+        );
+      }
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+});
+
+describe('#106 诊断页「音频切分方式」那一行 —— 英文界面上不许是中文', () => {
+  /**
+   * `/api/health` 的 `pipeline.vad` 上一版**只有 `reasonZh`、连 `reasonEn` 都没有**，
+   * 所以英文界面上这一行**必然**是中文；`runtime_failure` 那一档更难看：
+   * 它会和后半句英文（`diagnostics.chunkingRuntimeFailure`）拼成一句中英各半的话。
+   */
+  const HEALTH106 = (vad: unknown) => ({
+    version: '0.7.2',
+    instanceId: 'i',
+    contractVersion: CONTRACT_VERSION,
+    dataDir: '/tmp/d',
+    port: 10000,
+    pid: 1,
+    db: { driver: 'x', extensions: { libsimple: true, sqliteVec: true } },
+    pipeline: {
+      missing: [],
+      ffmpeg: '/x/ffmpeg',
+      whisperCli: '/x/whisper-cli',
+      ...(vad === undefined ? {} : { vad }),
+    },
+    scheduler: { running: 0 },
+    sseClients: 1,
+  });
+
+  async function renderDiag106(vad: unknown) {
+    stubApi({
+      '/health': HEALTH106(vad),
+      '/selfcheck': {
+        ok: true,
+        ranAt: '2026-08-12T00:00:00.000Z',
+        counts: { ok: 0, warn: 0, fail: 0 },
+        results: [],
+      },
+    });
+    const { default: DiagnosticsPage } = await import('../features/diagnostics/DiagnosticsPage');
+    const r = await render(<DiagnosticsPage />, { route: '/diagnostics' });
+    await r.flush();
+    await r.flush();
+    return r;
+  }
+
+  /** 「音频切分方式」那一整行的文字（英文界面）。 */
+  function chunkingRow(c: HTMLElement): string {
+    const label = enAt('diagnostics.chunking');
+    const row = [...c.querySelectorAll('li')].find((li) => (li.textContent ?? '').includes(label));
+    assert.ok(row, `找不到「${label}」那一行 —— 这条会空转`);
+    return text(row as HTMLElement);
+  }
+
+  /** 一次英文界面下的渲染 + 这一行的通用体检（非空 + 无汉字）。 */
+  async function enRow(vad: unknown) {
+    const r = await renderDiag106(vad);
+    const said = chunkingRow(r.container);
+    assert.ok(said.length > 20, `这一行几乎什么都没写（${said.length} 字）→ ${said}`);
+    assert.equal(
+      said.match(new RegExp(CJK105.source, 'g')),
+      null,
+      `★ 缺陷原状：英文界面上这一行是 daemon 的中文原话 → ${said}`,
+    );
+    assert.ok(!said.includes('diagnostics.chunkingReason.'), `渲染成了原始 key 串 → ${said}`);
+    return { r, said };
+  }
+
+  const REASON = (kind: VadChunkingReason['kind']): VadChunkingReason =>
+    // `installed_weights_not_loadable` 是唯一带字段的那一格，这里的三种都不带
+    ({ kind }) as VadChunkingReason;
+
+  test('★★ 一份 VAD 权重都没装 → 英文这一行说"缺一个 VAD 模型"', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      const { r, said } = await enRow({
+        chunking: 'fixed',
+        model: null,
+        reason: REASON('no_vad_model_installed'),
+        rejected: [],
+      });
+      const chunks = literalChunks(enAt('diagnostics.chunkingReason.noVadModelInstalled'));
+      assert.ok(chunks.length > 0, '词条取不出可断言的片段 —— 这条会空转');
+      for (const chunk of chunks) {
+        assert.ok(said.includes(chunk), `缺了一段：「${chunk}」→ ${said}`);
+      }
+      assert.match(said, /VAD model/i, `没说清缺的是一个 VAD 模型 → ${said}`);
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  test('★★ 运行期跑挂了 → 英文这一行同时说清"这不是缺模型，再装也没用"', async () => {
+    /*
+     * 这一行由**两半**拼成：成因那半走 `VadChunkingReason`，
+     * 「装模型解决不了」那半由 `vadFix === 'runtime-failure'` 驱动（判据是 `vad.model` 非空）。
+     * 缺陷原状里前半是中文、后半是英文 —— 同一句话中英各半。两半都得断。
+     */
+    await i18nInstance.changeLanguage('en');
+    try {
+      const { r, said } = await enRow({
+        chunking: 'fixed',
+        model: '/x/y.bin',
+        reason: REASON('runtime_failure'),
+        rejected: [],
+      });
+      for (const chunk of literalChunks(enAt('diagnostics.chunkingReason.runtimeFailure'))) {
+        assert.ok(said.includes(chunk), `成因那半缺了一段：「${chunk}」→ ${said}`);
+      }
+      for (const chunk of literalChunks(enAt('diagnostics.chunkingRuntimeFailure'))) {
+        assert.ok(said.includes(chunk), `"再装也没用"那半缺了一段：「${chunk}」→ ${said}`);
+      }
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  test('★ 老 daemon 不发 `reason` 时退回通用文案（照旧是英文，且不替它编一个成因）', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      // ── 降级了：退回 `chunkingFixed`
+      const fixed = await enRow({ chunking: 'fixed', model: null, rejected: [] });
+      for (const chunk of literalChunks(enAt('diagnostics.chunkingFixed'))) {
+        assert.ok(fixed.said.includes(chunk), `没退回通用文案：缺「${chunk}」→ ${fixed.said}`);
+      }
+      // 而且不许替它挑一个具体成因
+      for (const key of [
+        'diagnostics.chunkingReason.noVadModelInstalled',
+        'diagnostics.chunkingReason.runtimeFailure',
+        'diagnostics.chunkingReason.installedWeightsNotLoadable',
+      ]) {
+        const chunk = [...literalChunks(enAt(key))].sort((a, b) => b.length - a.length)[0] ?? '';
+        if (chunk.length < 8) continue;
+        assert.ok(
+          !fixed.said.includes(chunk),
+          `daemon 没说成因，界面却替它挑了「${key}」→ ${fixed.said}`,
+        );
+      }
+      fixed.r.unmount();
+
+      // ── 没降级：退回 `chunkingVad`
+      const ok = await enRow({ chunking: 'vad', model: '/x/y.bin', rejected: [] });
+      for (const chunk of literalChunks(enAt('diagnostics.chunkingVad'))) {
+        assert.ok(ok.said.includes(chunk), `没退回通用文案：缺「${chunk}」→ ${ok.said}`);
+      }
+      ok.r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  /*
+   * ★★ **总表覆盖腿** —— 与上游失败那 14 格同一条纪律。
+   *
+   * 上面三条各盯一档，但「契约里加一档而没人给它写话」这件事**它们抓不到**：
+   * 新档位的用例不存在，三条老用例照样绿。这一条直接读
+   * `DiagnosticsPage` 导出的那张总 `Record`，逐格真渲染一次 ——
+   * 加一档而没写词条 ⇒ 渲染出原始 key 串 ⇒ 这里当场红。
+   *
+   * 带字段的那一格（`installed_weights_not_loadable`）在这里也覆盖到了，
+   * 而且顺带钉住"被拒的文件名真的出现在句子里" —— 那串文件名是**数据**，
+   * 它是用户唯一认得出"我装错了哪个"的东西。
+   */
+  test('★★ VAD_REASON_KEYS 的每一格都真渲染得出一句英文（新增一档没写词条 ⇒ 红）', async () => {
+    const { VAD_REASON_KEYS } = await import('../features/diagnostics/DiagnosticsPage');
+    const kinds = Object.keys(VAD_REASON_KEYS) as VadChunkingReason['kind'][];
+    assert.ok(kinds.length >= 4, `总表只有 ${kinds.length} 格 —— 是不是拿错表了`);
+
+    await i18nInstance.changeLanguage('en');
+    try {
+      for (const kind of kinds) {
+        const reason: VadChunkingReason =
+          kind === 'installed_weights_not_loadable'
+            ? { kind, rejected: ['silero_vad.onnx'] }
+            : ({ kind } as VadChunkingReason);
+        const { r, said } = await enRow({
+          // `vad_active` 那一格只在没降级时出现，其余三格都是降级态
+          chunking: kind === 'vad_active' ? 'vad' : 'fixed',
+          model: kind === 'no_vad_model_installed' ? null : '/x/y.bin',
+          reason,
+          rejected: [],
+        });
+        const chunks = literalChunks(enAt(VAD_REASON_KEYS[kind]));
+        assert.ok(chunks.length > 0, `${kind} 的词条取不出可断言的片段 —— 这一格会空转`);
+        for (const chunk of chunks) {
+          assert.ok(said.includes(chunk), `${kind}：缺了一段「${chunk}」→ ${said}`);
+        }
+        if (kind === 'installed_weights_not_loadable') {
+          assert.ok(
+            said.includes('silero_vad.onnx'),
+            `没说出被拒的是哪一份权重 —— 用户认不出自己装错了哪个 → ${said}`,
+          );
+        }
+        r.unmount();
+      }
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+});
+
+describe('#106 模型适配结论：`reasonEn` 契约里一直有，不许再写死取中文那一份', () => {
+  /**
+   * 三处写死 `fitness.reasonZh` 的位置：`FitBadge`（详情页）、`ModelCard`（列表卡）、
+   * `ModelsPage`（"仍要下载吗"那个确认框）。这不是"缺翻译"，是**有翻译没用上** ——
+   * `shared/fitness.ts` 十条分支每一条都同时填了 `reasonZh` 与 `reasonEn`。
+   */
+  const ZH = '内存不够（需要 6 GB，可用 3 GB）';
+  const EN = 'Not enough memory (needs 6 GB, 3 GB available)';
+
+  const FIT = {
+    tier: 'unsupported',
+    reasonZh: ZH,
+    reasonEn: EN,
+    notRecommendedForLanguage: false,
+    speedTier: 'unknown',
+    speedSource: 'none',
+    estMinutesPerAudioHour: null,
+    estGpuLayers: null,
+  };
+
+  test('★★ FitBadge（详情页那一行）：英文界面显示英文那份，且一个汉字都没有', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      const r = await render(<FitBadge fitness={FIT as never} showReason />);
+      const said = text(r.container);
+      assert.ok(said.length > EN.length, `徽标几乎没渲染（${said.length} 字）→ ${said}`);
+      assert.ok(said.includes(EN), `英文界面上没显示英文那一份 → ${said}`);
+      assert.equal(
+        said.match(new RegExp(CJK105.source, 'g')),
+        null,
+        `★ 缺陷原状：英文界面上这一行是 reasonZh → ${said}`,
+      );
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  test('★ 镜像用例：中文界面上 FitBadge 显示中文那份（不许把修法做成"到处写死英文"）', async () => {
+    const r = await render(<FitBadge fitness={FIT as never} showReason />);
+    const said = text(r.container);
+    assert.ok(said.includes(ZH), `中文界面上没显示中文那一份 → ${said}`);
+    assert.ok(!said.includes(EN), `中文界面上显示的是英文那一份 → ${said}`);
+    r.unmount();
+  });
+
+  /* ── 列表卡 + 确认框：走真的 `/models` 页 ─────────────────────────────────────── */
+
+  const VARIANT = {
+    id: 'asr/fit106-q5',
+    groupId: 'asr/fit106',
+    role: 'asr',
+    arch: 'whisper',
+    format: 'ggml',
+    quantization: 'q5_1',
+    languages: ['multi'],
+    totalSizeBytes: 60_000_000,
+    catalogVersion: '2026.08.03',
+    license: { id: 'MIT', url: 'https://example.invalid', requiresAcceptance: false, gated: false },
+    files: [{ name: 'a.bin', sha256: 'x'.repeat(64), sizeBytes: 60_000_000, optional: false }],
+    requirements: { ramRequiredMB: 512, vramRequiredMB: 0, computedAtContext: null },
+    fitness: FIT,
+  };
+
+  const GROUP = {
+    groupId: 'asr/fit106',
+    role: 'asr',
+    displayName: 'Fit106 ASR',
+    displayNameZh: 'Fit106 ASR',
+    descriptionEn: 'a stub group',
+    descriptionZh: 'a stub group',
+    // `recommended-default` ⇒ 落进「推荐」那一栏（直接渲染，不在折叠区里）
+    tags: ['recommended-default'],
+    variants: [VARIANT],
+  };
+
+  function stubFit106() {
+    const catalog = {
+      stale: false,
+      fetchedAt: '2026-08-03T00:00:00.000Z',
+      groups: [GROUP],
+    };
+    return stubApi({
+      // 界面语言决定 `lang=` —— 两份都打桩，中英两条路径才都命中
+      '/models/catalog?role=all&lang=en': catalog,
+      '/models/catalog?role=all&lang=zh': catalog,
+      '/models/installed': { models: [], active: { asr: null, llm: null } },
+      '/models/storage': {
+        usedBytes: 0,
+        volume: { freeBytes: 1_000_000_000, totalBytes: 2_000_000_000 },
+        breakdown: [],
+        reclaimable: { orphanBlobsBytes: 0, stalePartialsBytes: 0 },
+      },
+      '/jobs': { jobs: [] },
+      // 与 `stubModelsPage` 同形：这一页的 LLM 区块要读 provider 列表
+      '/settings': {
+        settings: {
+          'llm.providers': [
+            {
+              id: 'deepseek',
+              kind: 'openai-compatible',
+              label: 'DeepSeek',
+              baseUrl: 'https://api.deepseek.com/v1',
+              model: 'deepseek-chat',
+              isLocal: false,
+            },
+          ],
+          'llm.defaultProviderId': 'deepseek',
+          'llm.defaultModelId': 'deepseek-chat',
+        },
+      },
+      '/secrets': { secrets: [], disclosure: null },
+    });
+  }
+
+  /** 那张卡片本身（不扫整页 —— 整页还有服务商品牌名之类的中文数据）。 */
+  function fitCard(c: HTMLElement): string {
+    const card = c.querySelector('[data-testid="model-card-asr/fit106"]');
+    assert.ok(card, '那张模型卡根本没渲染出来 —— 这条会空转');
+    return text(card as HTMLElement);
+  }
+
+  test('★★ ModelCard（列表卡那一行）：英文界面显示英文那份，且卡内没有汉字', async () => {
+    await i18nInstance.changeLanguage('en');
+    try {
+      stubFit106();
+      const r = await render(<ModelsPage />, { route: '/models' });
+      await r.flush();
+      const said = fitCard(r.container);
+      assert.ok(said.includes(EN), `英文界面上这张卡没显示英文那一份 → ${said}`);
+      assert.equal(
+        said.match(new RegExp(CJK105.source, 'g')),
+        null,
+        `★ 缺陷原状：英文界面上这张卡的适配结论是中文 → ${said}`,
+      );
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
+  test('★ 镜像用例：中文界面上这张卡显示中文那份', async () => {
+    stubFit106();
+    const r = await render(<ModelsPage />, { route: '/models' });
+    await r.flush();
+    const said = fitCard(r.container);
+    assert.ok(said.includes(ZH), `中文界面上这张卡没显示中文那一份 → ${said}`);
+    assert.ok(!said.includes(EN), `中文界面上显示的是英文那一份 → ${said}`);
+    r.unmount();
+  });
+
+  test('★★ 「仍要下载吗」那个确认框里的原因也得跟着界面语言走', async () => {
+    /*
+     * `window.confirm` 收到的是**一个字符串**，它是这一步唯一送到用户眼前的东西。
+     * 判据钉的是那串字，不是"调了 confirm"。
+     */
+    await i18nInstance.changeLanguage('en');
+    const w = window as unknown as { confirm: (m?: string) => boolean };
+    const prev = w.confirm;
+    let seen = '';
+    w.confirm = (m?: string) => {
+      seen = m ?? '';
+      return false; // 这条只看那串字，不真发请求
+    };
+    try {
+      stubFit106();
+      const r = await render(<ModelsPage />, { route: '/models' });
+      await r.flush();
+      const btn = r.container.querySelector('[data-testid="models-download-button"]');
+      assert.ok(btn, '这张卡上没有下载按钮 —— 这条会空转');
+      await click(btn);
+      await r.flush();
+
+      assert.ok(seen.length > EN.length, `确认框没收到文案（拿到 ${JSON.stringify(seen)}）`);
+      assert.ok(seen.includes(EN), `确认框里的原因不是英文那一份 → ${seen}`);
+      assert.equal(
+        seen.match(new RegExp(CJK105.source, 'g')),
+        null,
+        `★ 缺陷原状：英文界面的确认框里出现了中文 → ${seen}`,
+      );
+      r.unmount();
+    } finally {
+      w.confirm = prev;
+      await i18nInstance.changeLanguage('zh-CN');
+    }
   });
 });

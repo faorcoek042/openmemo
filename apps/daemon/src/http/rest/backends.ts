@@ -32,6 +32,7 @@ import {
   type DownloadJob,
   type GetBackendCatalogResponse,
   type GetInstalledBackendsResponse,
+  type Inapplicability,
   type InapplicableKind,
   type InstalledBackendPack,
   type PlatformSelector,
@@ -74,7 +75,7 @@ export function currentPlatform(): PlatformSelector {
 function applicability(
   state: RestState,
   pack: BackendPack,
-): { applicable: boolean; reason: string | null; kind: InapplicableKind } {
+): { applicable: boolean; reason: Inapplicability | null; kind: InapplicableKind } {
   const platform = currentPlatform();
   const r = isPackApplicable(
     { id: pack.id, backend: pack.backend, os: pack.os, arch: pack.arch },
@@ -99,7 +100,7 @@ export type { InapplicableKind };
 function inapplicableKind(
   state: RestState,
   pack: BackendPack,
-  r: { applicable: boolean; reason: string | null },
+  r: { applicable: boolean },
 ): InapplicableKind {
   if (r.applicable) return 'applicable';
   const platform = currentPlatform();
@@ -637,7 +638,7 @@ export async function handleBackendRoutes(
            *「检测中 / 装上 CPU 包后可检测」还是「本机不支持」。
            */
           inapplicableKind: kind,
-          inapplicableReason: reason,
+          inapplicability: reason,
           recommended: applicable && pack.backend === state.hardware.selectedBackend,
         };
       }),

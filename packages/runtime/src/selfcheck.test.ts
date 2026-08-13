@@ -803,9 +803,16 @@ describe('diffSelfCheckReports 真的抓得到漂移', () => {
       label: r.id,
       labelZh: r.id,
       status: r.status,
+      /*
+       * 四个文本字段在这一组里都是空的，**这是有意的**：`diffSelfCheckReports`
+       * 刻意不比 detail（路径/设备数天生不同，见它的注释），所以夹具里给什么都不影响判据。
+       * `detailEn` / `remediationEn` 自 #106 起是必填字段，这里只是把形状补齐。
+       */
       detail: '',
+      detailEn: '',
       required: r.required ?? false,
       remediation: null,
+      remediationEn: null,
     })),
   });
 
@@ -1168,10 +1175,26 @@ describe('T-173 断路器在自检里是可见的', () => {
  * 对 `VAD 切分器` 当场变红，不需要任何豁免。范围含全角标点（`（`、`，`），
  * 因为 `yt-dlp（可选，GPL）` 的括号逗号也是全角，那同样是"英文界面上的中文"。
  *
- * `detail` **不在检查范围内**：它按设计就是中文原文（见 `CheckResult` 的注释），
- * 英文版走可选的 `detailEn`。`labelZh` 同理不检查（它可以是拉丁字母的工具名）。
+ * `detail` **仍然不在检查范围内**：它**按设计就是中文原文**（见 `CheckResult` 的注释），
+ * 英文版走 `detailEn`。`labelZh` 同理不检查（它可以是拉丁字母的工具名）。
+ *
+ * ## ★ #106：光有"不许含 CJK"是不够的 —— 它对**空缺**天然放行
+ *
+ * 上面那条守卫只在字段**有内容**时才说得上话：`detailEn === undefined` 时它
+ * `continue` 掉，一路绿。而 `detailEn` 当时是**可选**字段，于是 28 条检查项里
+ * 22 条干脆不写英文，`pickCheckText` 静默回退成中文原文 ——
+ * **英文诊断页几乎整页中文，而这条守卫全程是绿的。**
+ * "没写"和"写对了"在它眼里长得一模一样，那正是本仓反复付账的那个形状。
+ *
+ * 所以 #106 把两件事一起做了：
+ *   ① 类型上 `detailEn` / `remediationEn` 改成**必填** —— 门禁是 `tsc`，
+ *      新加检查项忘了英文根本编不过，不依赖谁记得；
+ *   ② 这里补一条**遍历整份报告**的运行时守卫（下面那条 `it`）：
+ *      `detailEn` 非空、无 CJK，且 `remediationEn` 与 `remediation` **同时为 null**。
+ *      判据必须落在 `report.results` 上、不许写成一张 id 名单 ——
+ *      名单挡不住"新加的那条"，而新加的那条正是最可能忘的。
  */
-describe('★ T-174 英文字段里不许出现中文', () => {
+describe('★ T-174 / #106 英文字段：不许含中文，也不许缺席', () => {
   /**
    * CJK 统一表意文字 + CJK 标点（、。）+ 全角形式（（），）。
    *
@@ -1272,6 +1295,287 @@ describe('★ T-174 英文字段里不许出现中文', () => {
       true,
       `只检查了 ${String(checked)} 个字段，样本太少，守卫可能是空的`,
     );
+  });
+
+  /**
+   * ★ #106：比上面三份**宽得多**的一组报告 —— 目的只有一个：让守卫真的走到那些分支上。
+   *
+   * `reportsCoveringAllToolBranches()` 那三份都是"最小探针"，于是几乎每条检查项
+   * 都只走 `null` / 未探测那一支。而 #106 漏英文最多的地方恰恰是**有内容的那一支**：
+   * 列了一串文件名的、拼了一句"读不到"的、把 unscanned 的位置摊开的那些。
+   * 只跑最小探针的守卫会对它们全部报绿 —— 与 T-174 那条「三个 `add()` 只跑一个分支」
+   * 是同一个形状的假绿灯，所以这里把探针喂满，并摆出几组互斥的真实形态。
+   */
+  async function reportsCoveringManyBranches(): Promise<SelfCheckReport[]> {
+    const BIN = 'ggml-large-v3-turbo-q5_0.bin';
+    const ENC = 'ggml-large-v3-turbo-encoder.mlmodelc';
+    const magic = Buffer.alloc(4);
+    magic.writeUInt32LE(GGML_FILE_MAGIC, 0);
+
+    /** by-name/asr 下摆一个**结构正确**的 encoder（CoreML 的 ok 支）。 */
+    const goodEnc = mkdtempSync(join(tmpdir(), 'om-sc-106-enc-'));
+    tmpRoots.push(goodEnc);
+    await fs.mkdir(join(goodEnc, 'by-name', 'asr', ENC), { recursive: true });
+    await fs.writeFile(join(goodEnc, 'by-name', 'asr', ENC, 'coremldata.bin'), 'x');
+    await fs.writeFile(join(goodEnc, 'by-name', 'asr', BIN), magic);
+
+    /** 同上，但多套了一层同名目录 —— 事故形态（CoreML 的 fail 支）。 */
+    const shellEnc = mkdtempSync(join(tmpdir(), 'om-sc-106-shell-'));
+    tmpRoots.push(shellEnc);
+    await fs.mkdir(join(shellEnc, 'by-name', 'asr', ENC, ENC), { recursive: true });
+    await fs.writeFile(join(shellEnc, 'by-name', 'asr', ENC, ENC, 'coremldata.bin'), 'x');
+    await fs.writeFile(join(shellEnc, 'by-name', 'asr', BIN), magic);
+
+    /** by-name/backend 是个**文件** → ENOTDIR：`backend.libLinks` 的"没扫完"那一支。 */
+    const notDir = mkdtempSync(join(tmpdir(), 'om-sc-106-notdir-'));
+    tmpRoots.push(notDir);
+    await fs.mkdir(join(notDir, 'by-name'), { recursive: true });
+    await fs.writeFile(join(notDir, 'by-name', 'backend'), 'x');
+
+    /** `model.vad` 的 ok（真 ggml）与 fail（文件在、但 whisper 加载不了）两支。 */
+    const vadDir = mkdtempSync(join(tmpdir(), 'om-sc-106-vad-'));
+    tmpRoots.push(vadDir);
+    const ggmlVad = join(vadDir, 'ggml-silero-v6.2.0.bin');
+    await fs.writeFile(ggmlVad, Buffer.concat([magic, Buffer.alloc(32)]));
+    const onnxVad = join(vadDir, 'silero_vad.onnx');
+    await fs.writeFile(onnxVad, Buffer.from([0x08, 0x07, 0x12, 0x0c]));
+    const withVad = (vadModel: string): Partial<SelfCheckProbes> => ({
+      tools: () =>
+        Promise.resolve({
+          ffmpeg: null,
+          ffprobe: null,
+          whisperCli: null,
+          whisperVad: null,
+          vadModel,
+          ytDlp: null,
+        }),
+    });
+
+    const asrRole = (names: string[]) => () => Promise.resolve({ names, skippedWithoutRole: 0 });
+    const mac = { platform: 'darwin' as NodeJS.Platform, arch: 'arm64' };
+    const macProbes = (names: string[], version: string | null): SelfCheckProbes =>
+      minimalProbes({
+        installedByRole: asrRole(names),
+        macosProductVersion: () => Promise.resolve(version),
+      });
+
+    /** 探针全给、且每一条都答得出内容的那一份。 */
+    const rich = minimalProbes({
+      installed: (kind) =>
+        Promise.resolve(kind === 'backend' ? ['whispercpp-cpu-linux-x64'] : [BIN, 'stray.onnx']),
+      installedByRole: (role) =>
+        Promise.resolve(
+          role === 'asr'
+            ? { names: [BIN], skippedWithoutRole: 2 }
+            : { names: ['silero_vad.onnx'], skippedWithoutRole: 2 },
+        ),
+      backendSelection: () =>
+        Promise.resolve({
+          selectedBackend: 'vulkan',
+          packId: 'whispercpp-cpu-linux-x64',
+          packBackend: 'cpu',
+          degraded: true,
+        }),
+      catalogLoad: () =>
+        Promise.resolve({
+          loaded: false,
+          dir: '/opt/app/vendor/manifests',
+          models: 0,
+          packs: 0,
+          reasonZh: null,
+          reasonEn: null,
+        }),
+      canInstallBinary: () => Promise.resolve('no' as const),
+      // 四个探测词里有两个零命中 —— `ext.chineseSearch` 的 fail 支
+      chineseSearch: () => Promise.resolve({ 用户: 3, 推特: 0, 中国: 1, 服务: 0 }),
+      vecVersion: () => Promise.resolve('v0.1.9'),
+      engines: () =>
+        Promise.resolve([
+          { id: 'whisper.cpp', available: true },
+          {
+            id: 'sherpa-onnx',
+            available: false,
+            reason: 'the streaming recognition component is not installed',
+          },
+        ]),
+      selectFor: () =>
+        Promise.resolve({
+          engineId: 'whisper.cpp',
+          reason: 'automatic: best fit for this language',
+        }),
+      // 一条越界、一条读不到 —— datadir 那两项的"有内容"支各一
+      mediaAssets: () =>
+        Promise.resolve([
+          { role: 'original', relPath: 'gone.wav' },
+          { role: 'audio16k', relPath: '/somewhere/else/tmp/job-1/audio16k.wav' },
+        ]),
+      localLlmServices: () => Promise.resolve([{ label: 'Ollama', models: 2 }]),
+      llmKeyConfig: () => Promise.resolve({ providerId: 'openai', hasKey: true }),
+      breaker: breakerProbe(),
+      proxy: () =>
+        Promise.resolve({
+          mode: 'manual',
+          activeUrl: 'socks5://***@127.0.0.1:1080',
+          ffmpegSupported: false,
+          /*
+           * ★ 这个字段是 `packages/pipeline/src/subprocess/proxy.ts` 产出的**中文**句子，
+           * 别人家的包，本任务动不了它。夹具里如实摆成中文，正是为了钉住
+           * 「`proxy.ffmpeg` 的 `detailEn` 不许把它拼进去」—— 谁哪天顺手插了回去，
+           * 下面那条"英文字段无 CJK"当场红。
+           */
+          ffmpegReason: 'ffmpeg 不支持 SOCKS 代理（libavformat 的 http 协议只读 http_proxy）。',
+        }),
+      proxyConnectivity: () =>
+        Promise.resolve({
+          ok: false,
+          probes: [{ target: 'https://example.com', result: 'ETIMEDOUT', viaProxy: true }],
+        }),
+    });
+
+    /** 另一半：探针都在、但一律答"拿不到" —— 走的是另一整套分支。 */
+    const nulls = minimalProbes({
+      probePath: () => Promise.resolve(null),
+      installed: (kind) => Promise.resolve(kind === 'backend' ? ['whispercpp-cpu-linux-x64'] : []),
+      backendSelection: () => Promise.resolve(null),
+      catalogLoad: () =>
+        Promise.resolve({
+          loaded: true,
+          dir: '/opt/app/vendor/manifests',
+          models: 0,
+          packs: 0,
+          reasonZh: null,
+          reasonEn: null,
+        }),
+      chineseSearch: () => Promise.resolve({ 用户: 1, 推特: 2, 中国: 1, 服务: 2 }),
+      mediaAssets: () => Promise.resolve(null),
+      localLlmServices: () => Promise.resolve(null),
+      llmKeyConfig: () => Promise.resolve(null),
+      breaker: () => Promise.resolve(null),
+      proxy: () => Promise.resolve(null),
+    });
+
+    // 资产**真的读得到**那一支（detail 里带首 4 字节的证据），以及"没有媒体资产"
+    const okDataDir = await seedDataDir({ 'media/a.wav': 'WXYZ' });
+
+    return [
+      await runSelfCheck({ ...BASE, storeRoot: goodEnc, probes: rich, proxyTest: true }),
+      await runSelfCheck({ ...BASE, storeRoot: goodEnc, probes: nulls }),
+      // 链接全断（remediation 走"搬过家"那一句）/ 链接完好 / 目录读不动
+      await runSelfCheck({
+        ...BASE,
+        storeRoot: await seedBackend({ broken: true }),
+        probes: minimalProbes({ installed: () => Promise.resolve(['whisper-bin-ubuntu-x64']) }),
+      }),
+      await runSelfCheck({
+        ...BASE,
+        storeRoot: await seedBackend({ broken: false }),
+        probes: minimalProbes({ installed: () => Promise.resolve(['whisper-bin-ubuntu-x64']) }),
+      }),
+      await runSelfCheck({
+        ...BASE,
+        storeRoot: notDir,
+        probes: minimalProbes({ installed: () => Promise.resolve(['whisper-bin-ubuntu-x64']) }),
+      }),
+      await runSelfCheck({
+        ...BASE,
+        dataDir: okDataDir,
+        probes: minimalProbes({
+          mediaAssets: () => Promise.resolve([{ role: 'original', relPath: 'a.wav' }]),
+        }),
+      }),
+      await runSelfCheck({
+        ...BASE,
+        probes: minimalProbes({ mediaAssets: () => Promise.resolve([]) }),
+      }),
+      await runSelfCheck({ ...BASE, probes: minimalProbes(withVad(ggmlVad)) }),
+      await runSelfCheck({ ...BASE, probes: minimalProbes(withVad(onnxVad)) }),
+      /*
+       * macOS 专属的三条（`asr.coreml` + 两条 `os.macos.*`）在 Linux 的 CI 上
+       * 一次都不会被执行，除非把 platform/arch 注进去 —— 与 T-168 ④ 同一招、
+       * 同一个理由：一条从没被跑过的分支，正是最容易漏掉英文的那条。
+       */
+      await runSelfCheck({ ...BASE, ...mac, storeRoot: goodEnc, probes: macProbes([BIN], '13.4') }),
+      await runSelfCheck({ ...BASE, ...mac, storeRoot: goodEnc, probes: macProbes([BIN], '15.6') }),
+      await runSelfCheck({ ...BASE, ...mac, storeRoot: shellEnc, probes: macProbes([BIN], null) }),
+      // 一个 ASR 都没装 / 装的不是 ggml / 装了 ggml 但 encoder 目录不在
+      // —— `asr.coreml` 剩下的三句（五档一条不落）
+      await runSelfCheck({ ...BASE, ...mac, storeRoot: goodEnc, probes: macProbes([], '15.6') }),
+      await runSelfCheck({
+        ...BASE,
+        ...mac,
+        storeRoot: goodEnc,
+        probes: macProbes(['sherpa-encoder.onnx'], '15.6'),
+      }),
+      // storeRoot 用 BASE 那个不存在的路径 → readdir 抛错 → 走 missing 那一支
+      await runSelfCheck({ ...BASE, ...mac, probes: macProbes([BIN], '15.6') }),
+    ];
+  }
+
+  it('★ #106 每一条结果都必须**真的有**英文：detailEn 非空无 CJK，remediationEn 与 remediation 同生共死', async () => {
+    const reports = [
+      ...(await reportsCoveringAllToolBranches()),
+      ...(await reportsCoveringManyBranches()),
+    ];
+    let checked = 0;
+    const seenIds = new Set<string>();
+
+    for (const r of reports) {
+      // 空报告上这条守卫什么也没守（⑤A-2：空集返回绿是本仓最贵的那类假绿）
+      assert.ok(r.results.length > 0, '这份报告一条检查项都没有 —— 守卫会空跑');
+      for (const c of r.results) {
+        checked += 1;
+        seenIds.add(c.id);
+
+        assert.equal(typeof c.detailEn, 'string', `${c.id}.detailEn 不是字符串`);
+        assert.notEqual(
+          c.detailEn,
+          '',
+          `${c.id} 没给英文 detail —— 英文界面会静默回退成中文原文（#106 就是这么攒出来的）`,
+        );
+        assert.equal(
+          CJK.test(c.detailEn),
+          false,
+          `${c.id}.detailEn 是英文字段，却含中文：${JSON.stringify(c.detailEn)}`,
+        );
+
+        /*
+         * 「中文有一句补救、英文是 null」不会让那一行消失（`pickCheckRemediation`
+         * 会回退成中文），但那正是要修的形状：**只有英文用户会看到的静默降级**。
+         * 反向更糟：中文 `null` 而英文有话 —— `unavailable` 那一态的定义就是
+         * "没有下一步"，给它一句英文补救等于在英文界面上偷偷把它退回成 `fail`。
+         */
+        assert.equal(
+          c.remediationEn === null,
+          c.remediation === null,
+          `${c.id}: remediation=${JSON.stringify(c.remediation)} 而 remediationEn=${JSON.stringify(c.remediationEn)} —— 两者必须同时为 null`,
+        );
+        if (c.remediationEn !== null) {
+          assert.notEqual(c.remediationEn, '', `${c.id}.remediationEn 是空串，等于没给`);
+          assert.equal(
+            CJK.test(c.remediationEn),
+            false,
+            `${c.id}.remediationEn 是英文字段，却含中文：${JSON.stringify(c.remediationEn)}`,
+          );
+        }
+      }
+    }
+
+    /*
+     * 前提自检两条：样本量、以及**那三条只在 macOS 上产出的检查项真的被跑到了**。
+     * 少了后面这条，把 platform 注入删掉之后守卫会照样绿 —— 而它守的正是那三条。
+     */
+    assert.equal(checked > 200, true, `只检查了 ${String(checked)} 条结果，样本太少`);
+    for (const id of [
+      'asr.coreml',
+      'os.macos.semanticSearch',
+      'os.macos.streamingAsr',
+      'catalog.bundled',
+      'backend.selection',
+      'proxy.connectivity',
+      'hw.breaker',
+    ]) {
+      assert.equal(seenIds.has(id), true, `${id} 一次都没被产出 —— 这条守卫没覆盖到它`);
+    }
   });
 
   it('那 5 条工具检查各自给出了英文标签（不是把中文抄过去）', async () => {

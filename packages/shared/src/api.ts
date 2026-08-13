@@ -11,7 +11,7 @@
  */
 
 import type { AsrEngineId, BackendPack, InstalledBackendPack } from './backends.js';
-import type { AdvisoryGpuVerdict, Backend, HardwareInfo } from './hardware.js';
+import type { AdvisoryGpuVerdict, Backend, HardwareInfo, Inapplicability } from './hardware.js';
 import type { AnyJob } from './jobs.js';
 import type {
   CatalogGroup,
@@ -94,6 +94,56 @@ export interface GetCatalogResponse {
  * 措辞交给有 i18n 的那一侧。daemon 控制台没有 i18n，把中文句子塞进契约
  * 就等于让英文用户在网页上也读中文 —— 那个坑 `pipeline/setup.ts` 里记着。
  */
+/**
+ * 「这台机器上转写实际用的是哪种切分，为什么」—— **机器可读**（#106）。
+ *
+ * ## 为什么它非在契约里不可
+ *
+ * `/api/health` 的 `pipeline.vad` 上一版**只有 `reasonZh` 一格，没有 `reasonEn`**。
+ * 诊断页那一行（`DiagnosticsPage` 的"切分方式"）直接渲染它，于是
+ * **英文界面上这一行必然是中文** —— 不是"有时漏"，是结构上没有别的东西可渲染。
+ * 更难看的是它还会和后面那半句英文（`diagnostics.chunkingRuntimeFailure`）连起来，
+ * 拼成一句一半中文一半英文的话。
+ *
+ * `apps/daemon/src/pipeline/setup.ts` 那段注释早就把结论写下了：
+ * 「英文该去**有 i18n 的那一侧**（网页）…… 但那需要把 `reasonZh` 换成
+ * reason **code** 再由前端翻译，是另一件事，**本轮没做**」。这就是那件事。
+ *
+ * ⚠️ **daemon 控制台那句中文保留、不动。** 那一侧没有 i18n（从启动横幅到每一条
+ * `[daemon]` 都是中文），在那里插英文既不一致也救不了谁 —— 这条判断是上一轮
+ * 实测之后写下的，本轮没有推翻它。变的只有**进契约、上网页**的那一份。
+ */
+export type VadChunkingReason =
+  | {
+      /** 没降级：真的在按静音切分。 */
+      readonly kind: 'vad_active';
+    }
+  | {
+      /** 一份 VAD 权重都没装 ⇒ 固定窗口。**装一个模型真能修好**的那一档。 */
+      readonly kind: 'no_vad_model_installed';
+    }
+  | {
+      /**
+       * 盘上有 VAD 权重，但 whisper.cpp 一个都加载不了
+       * （典型：装成了 sherpa 专用的 `silero_vad.onnx`）。
+       */
+      readonly kind: 'installed_weights_not_loadable';
+      /** 被拒的那几份权重的**文件名**（数据，照实列，不翻译）。 */
+      readonly rejected: readonly string[];
+    }
+  | {
+      /**
+       * 权重挑对了、二进制也在，**这一轮 VAD 真的跑失败了**（缺共享库、被杀、超时……）。
+       *
+       * ⚠️ **这一格刻意不带原始错误串。** 它在 `packages/pipeline` 里被包在一句中文
+       * 里（`VAD 未能运行，本次已退回固定窗口切分（…）：<原文>`），要把 `<原文>` 单独
+       * 取出来只能去劈那句中文 —— 拿散文当结构，正是本仓清过两次的形状。
+       * 原始错误**没有丢**：它照旧进 daemon 日志与 job 结果里的 `warningsZh`。
+       * 哪天 `planAudioChunks` 把它作为结构字段交出来，这一格再加一个 `detail`。
+       */
+      readonly kind: 'runtime_failure';
+    };
+
 export interface ActiveSlotUnusable {
   /** 记在这个槽位里的模型 id —— 与 `active[role]` 同值，便于调用方不用回查。 */
   modelId: string;
@@ -367,12 +417,24 @@ export interface GetBackendCatalogResponse {
      * 不可用属于哪一档。
      *
      * **可选**是刻意的：老 daemon 不发这个字段，而客户端**必须**能表达"我不知道"。
-     * 缺失时正确的行为是**什么档都不说**（只照抄 `inapplicableReason`），
+     * 缺失时正确的行为是**什么档都不说**（只照抄 `inapplicability`），
      * 而不是默认成 `unsupported` —— 那会让界面替 daemon 说出一句它没说过的话。
      */
     inapplicableKind?: InapplicableKind;
-    /** Why not applicable, when applicable=false. */
-    inapplicableReason: string | null;
+    /**
+     * Why not applicable, when applicable=false. **机器可读**（#106）。
+     *
+     * 这一格原来叫 `inapplicableReason`，类型是 `string | null`，里面装的是
+     * `applicability.ts` 写死的中文散文；`BackendPackCard` 把它原样渲染在英文那句
+     * 档位说明底下 —— 英文界面上「具体卡在哪」整行是中文。改名是**刻意的**：
+     * 类型换了，字段名也换，这样任何还在读老字段的地方都会当场编译不过，
+     * 而不是静默地拿到 `undefined` 渲染成空白。
+     *
+     * ⚠️ 与 `inapplicableKind` **不重复**：后者是"要不要给按钮 / 该说哪一档"的
+     * 粗分（三档，前端排序与折叠用），这一格是"具体卡在哪"（含结构化参数）。
+     * 两格由 daemon 的同一次判断同时产出（`rest/backends.ts` 的 `applicability()`）。
+     */
+    inapplicability: Inapplicability | null;
     recommended: boolean;
     /**
      * 装是装了，但**装的不是目录里现在这一版**（同一个 id，字节不同）。

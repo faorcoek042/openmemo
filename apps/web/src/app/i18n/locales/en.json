@@ -36,6 +36,7 @@
   },
   "capture": {
     "title": "New capture",
+    "uploadEndpointMissing": "The upload endpoint does not exist on this daemon (HTTP {{status}}).",
     "urlLabel": "Paste a link here, or drop a file",
     "urlPlaceholder": "https://www.youtube.com/watch?v=…",
     "supported": "YouTube / Bilibili / podcasts / RSS / direct links — or drop a local audio or video file",
@@ -350,7 +351,13 @@
       "catalogHas": "catalog has {{version}} ({{size}})",
       "servedFromUnrecorded": "A copy of {{file}} is already on disk and in use, but it has no install record ({{path}}) — installing gets you the catalog version and takes over from it.",
       "servedFromSystemPath": "Your system already has a working {{file}} ({{path}}) and we are using it — installing this only switches to our own copy; it is not required.",
-      "otherPlatformNote": "Built for {{os}}/{{arch}}, which is not this machine — it cannot be installed here, and there is nothing for you to do."
+      "otherPlatformNote": "Built for {{os}}/{{arch}}, which is not this machine — it cannot be installed here, and there is nothing for you to do.",
+      "inapplicable": {
+        "platformMismatch": "Built for {{os}}/{{arch}}, which is not this machine.",
+        "hardwareNotProbedYet": "We have not probed this machine's acceleration yet, so we cannot tell whether this pack applies — that needs a backend pack containing openmemo-probe. If you have never installed one, install the CPU base pack first; if you already did and still see this line, the copy you hold is the older build — press Update on it on the Components page. Probing re-runs by itself once it is in place.",
+        "backendStatusMissing": "This detection run says nothing at all about this backend — we have not measured it, so we are not calling it unsupported either.",
+        "verbatimDetail": "Reported by the probe, verbatim and not translated: {{detail}}"
+      }
     },
     "chip": {
       "active": "In use",
@@ -962,6 +969,12 @@
     "asrEngine": "Speech recognition engine",
     "chunking": "audio chunking",
     "chunkingVad": "VAD available: split on silence",
+    "chunkingReason": {
+      "vadActive": "VAD available: split on silence",
+      "noVadModelInstalled": "No VAD model installed → chunking falls back to fixed windows",
+      "installedWeightsNotLoadable": "whisper.cpp cannot load any of the VAD weights installed here ({{rejected}}) → chunking falls back to fixed windows. Transcription still completes, but sentence boundaries get worse. What you have is most likely the one sherpa-onnx uses; whisper.cpp needs \"vad/silero-vad-ggml\" — install that from the Models page to get silence-based splitting back.",
+      "runtimeFailure": "The VAD step failed to run this time → chunking fell back to fixed windows."
+    },
     "chunkingFixed": "VAD unavailable → fixed 30 s windows (transcription still works, sentence boundaries get worse)",
     "chunkingFixInstall": "Install the VAD model",
     "chunkingRuntimeFailure": " ⚠️ This is not a missing model — the weights are on disk and the VAD step itself failed, so installing the model again will not fix it.",
@@ -1160,6 +1173,40 @@
     "upstreamLabel": "Upstream latest",
     "notInstalledYet": "not installed yet",
     "installedNoVersion": "installed ({{reason}})",
+    "reason": {
+      "installedVersion": {
+        "noVersionRecorded": "the install record carries no version number"
+      },
+      "noUpstream": {
+        "staticSource": "the catalog registers it with upstream.kind = static",
+        "notRegistered": "components.json registers no upstream for it at all"
+      },
+      "indeterminate": {
+        "versionSchemesDiffer": "upstream numbers releases in the {{upstreamScheme}} scheme while we pin {{pinnedVersion}}, which is {{pinnedScheme}} — two different schemes cannot be ordered",
+        "pinOutsideAllTagFamilies": "this repo publishes several tag families at once ({{families}}), and the pinned {{pinnedVersion}} belongs to none of them"
+      },
+      "quotaScope": {
+        "both": " (the {{resource}} bucket, {{limit}} calls per hour)",
+        "resource": " (the {{resource}} bucket)",
+        "limit": " ({{limit}} calls per hour)"
+      },
+      "failed": {
+        "rateLimited": "upstream is throttling us (HTTP {{status}}); the wait it gave us: {{wait}}",
+        "quotaExhausted": "the upstream quota is used up{{scope}}; time until it comes back: {{wait}}",
+        "quotaExhaustedNoReset": "the upstream quota is used up{{scope}}, and upstream did not say when it resets — so clicking again right now will not help; come back later",
+        "httpErrorNotQuota": "HTTP {{status}}, and this is not a quota problem — {{remaining}} calls were still left at that moment. The repository may have been renamed or made private, or upstream's abuse protection kicked in",
+        "httpErrorNoQuotaInfo": "HTTP {{status}}, and upstream sent no quota headers at all, so we cannot tell whether this was throttling",
+        "timedOut": "the request timed out after {{timeoutMs}} ms. We deliberately do not guess why — a timeout is not evidence of any particular cause",
+        "noReleaseMatchesTagPattern": "no release matches the tag pattern {{tagPattern}}",
+        "repoHasNoReleases": "this repository has no releases at all",
+        "noTagMatchesTagPattern": "no tag matches the tag pattern {{tagPattern}}",
+        "repoHasNoTags": "this repository has no tags",
+        "npmResponseHasNoVersion": "the npm registry answered, but its reply had no version field",
+        "huggingfaceResponseHasNoSha": "HuggingFace answered, but its reply had no sha field",
+        "unsupportedUpstreamKind": "we do not know how to query an upstream of kind {{upstreamKind}} — this is a catalog configuration problem, not a network one",
+        "upstreamErrorText": "verbatim from upstream, not translated by us: {{text}}"
+      }
+    },
     "note": {
       "neverChecked": "\"Not checked\" means **we have not asked upstream yet** — it does not mean you are up to date. The first load deliberately makes no network call; press \"Check for updates\" above and we will go and ask. The installed version is unaffected and keeps working.",
       "noUpstream": "This component **has no upstream release feed we can query** ({{reason}}). **Pressing \"Check for updates\" will produce nothing for it** — that is not a failure, there is simply no such question to ask.",

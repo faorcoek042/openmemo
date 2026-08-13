@@ -8,7 +8,7 @@ import { Emphasis } from '../../../components/common/Emphasis';
 import { StatusChip } from '../../../components/common/StatusChip';
 import { FitBadge, FitEta, FitGpuLayers } from '../../../components/common/FitBadge';
 import { formatBytes } from '../../../lib/format/bytes';
-import { localizedDescription, localizedName } from '../../../lib/format/localized';
+import { localizedDescription, localizedName, pickLocalized } from '../../../lib/format/localized';
 import { useAsrEngines } from '../../../components/common/AsrEngineStatus';
 import { useIsAppleSilicon } from '../../../lib/api/hardware';
 import { QuantSelector } from './QuantSelector';
@@ -343,7 +343,10 @@ export function ModelCard({
         <FitEta fitness={variant.fitness} />
       </div>
 
-      <p className="mt-2 text-xs text-ink-secondary">{variant.fitness.reasonZh}</p>
+      {/* #106：`reasonEn` 契约里一直有，这里原来写死取中文那一份。 */}
+      <p className="mt-2 text-xs text-ink-secondary">
+        {pickLocalized(locale, variant.fitness.reasonZh, variant.fitness.reasonEn)}
+      </p>
       <FitGpuLayers fitness={variant.fitness} />
 
       {/*

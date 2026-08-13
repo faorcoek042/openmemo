@@ -51,7 +51,11 @@ interface ProxyResponse {
   /** 进程里**实际生效**的那一份。与 config 不一致时说明改了还没应用。 */
   active?: { url: string | null; mode?: string } | null;
   /** ffmpeg 的代理能力，由 daemon 判定并给出中文说明 —— 前端不再自己拼这段话。 */
-  media?: { supported: boolean; reason: string | null; noteZh: string | null };
+  /**
+   * ffmpeg 在当前代理形态下能不能用。**只读 `supported` 这个结论**（#106）——
+   * `reason` 是 daemon 的排障原文，不进横幅正文；`noteZh` 那一格已经删掉了。
+   */
+  media?: { supported: boolean; reason: string | null };
   appliedImmediately?: boolean;
 }
 
@@ -281,12 +285,17 @@ export function ProxySettingsSection() {
           tone="warning"
           title={t('settings.proxy.socksFfmpegTitle')}
           /*
-           * ★ 直接渲染 daemon 给的 `media.noteZh`，不再用我自己写的那段。
-           * 判定来自 `ffmpegProxySupport()`（实测 libavformat 只认 http_proxy），
-           * 前端复刻一份措辞只会在两边不一致时误导用户 ——
-           * 能力边界由**做判定的那一方**来描述。
+           * ★ **判定**来自 `ffmpegProxySupport()`（实测 libavformat 只认 http_proxy），
+           * 读的就是它那一格结构化的 `supported === false` —— 能力边界仍然由
+           * 做判定的那一方来决定，这一点没变。
+           *
+           * ★★ #106：**措辞不再读 daemon 的 `noteZh` / `reason`。** 那两格都是中文，
+           * 而这条横幅的标题是英文词条 —— 英文界面上于是标题英文、正文整段中文。
+           * 更糟的是 `noteZh ?? reason ?? t(…)` 让中文那一份**无条件胜出**，
+           * 把一条早就写好的英文词条（`socksFfmpegDetail`，两份语言都有、而且比
+           * daemon 那段更全：它还说清了 yt-dlp 那条链路是走代理的）变成了死代码。
            */
-          detail={media.noteZh ?? media.reason ?? t('settings.proxy.socksFfmpegDetail')}
+          detail={t('settings.proxy.socksFfmpegDetail')}
         />
       ) : null}
 

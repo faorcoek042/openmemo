@@ -36,6 +36,7 @@
   },
   "capture": {
     "title": "新建捕获",
+    "uploadEndpointMissing": "这个 daemon 上没有上传接口（HTTP {{status}}）。",
     "urlLabel": "把链接粘到这里，或把文件拖进来",
     "urlPlaceholder": "https://www.youtube.com/watch?v=…",
     "supported": "支持 YouTube / Bilibili / 播客 / RSS / 直链，或拖入本地音视频文件",
@@ -350,7 +351,13 @@
       "catalogHas": "目录里是 {{version}}（{{size}}）",
       "servedFromUnrecorded": "盘上已经有一份 {{file}} 正在被使用，但它没有安装记录（{{path}}）—— 装一次会得到目录里这一版并接管它。",
       "servedFromSystemPath": "系统里已经有一份可用的 {{file}}（{{path}}），产品正在用它 —— 装这个只是改用产品自己那份，不是必须的。",
-      "otherPlatformNote": "适用于 {{os}}/{{arch}}，与本机不符 —— 这台机器上装不了它，你也不需要做任何事。"
+      "otherPlatformNote": "适用于 {{os}}/{{arch}}，与本机不符 —— 这台机器上装不了它，你也不需要做任何事。",
+      "inapplicable": {
+        "platformMismatch": "适用于 {{os}}/{{arch}}，与本机不符。",
+        "hardwareNotProbedYet": "还没探测过这台机器的加速能力，所以判断不了这个包适不适用 —— 探测需要一个带 openmemo-probe 的后端包。还没装过就先装 CPU 基础包；已经装了却仍是这一句，说明手里那份是旧版，去「本机组件」页对它点「更新」。装好后会自动重新探测。",
+        "backendStatusMissing": "这一轮探测对这个后端一个字都没说 —— 我们没测过它，所以也不会说它「本机不支持」。",
+        "verbatimDetail": "探针原话，未翻译：{{detail}}"
+      }
     },
     "chip": {
       "active": "使用中",
@@ -962,6 +969,12 @@
     "asrEngine": "语音识别引擎",
     "chunking": "音频切分方式",
     "chunkingVad": "VAD 可用：按静音切分",
+    "chunkingReason": {
+      "vadActive": "VAD 可用：按静音切分",
+      "noVadModelInstalled": "未安装 VAD 模型 → 切分降级为固定窗口",
+      "installedWeightsNotLoadable": "已安装的 VAD 权重 whisper.cpp 一个都加载不了（{{rejected}}）→ 切分降级为固定窗口，转写仍可完成但断句会变差。你装的多半是 sherpa-onnx 用的那一个；whisper.cpp 需要「vad/silero-vad-ggml」，去「模型」页装上它即可恢复按静音切分。",
+      "runtimeFailure": "这一次 VAD 那一步跑失败了 → 切分降级为固定窗口。"
+    },
     "chunkingFixed": "VAD 不可用 → 固定 30 秒窗口切分（转写仍可完成，断句会变差）",
     "chunkingFixInstall": "去装 VAD 模型",
     "chunkingRuntimeFailure": " ⚠️ 这一次不是「没装模型」—— 权重就在盘上，是 VAD 那一步跑失败了，所以再装一遍模型解决不了它。",
@@ -1160,6 +1173,40 @@
     "upstreamLabel": "上游最新",
     "notInstalledYet": "尚未安装",
     "installedNoVersion": "已安装（{{reason}}）",
+    "reason": {
+      "installedVersion": {
+        "noVersionRecorded": "安装记录里没有记版本号"
+      },
+      "noUpstream": {
+        "staticSource": "目录里给它登记的是 upstream.kind = static",
+        "notRegistered": "components.json 里根本没给它登记上游"
+      },
+      "indeterminate": {
+        "versionSchemesDiffer": "上游用的是 {{upstreamScheme}} 编号方案，而我们钉的 {{pinnedVersion}} 是 {{pinnedScheme}} 方案 —— 两套编号排不出先后",
+        "pinOutsideAllTagFamilies": "这个仓同时在发好几族 tag（{{families}}），而目录钉的 {{pinnedVersion}} 不在其中任何一族里"
+      },
+      "quotaScope": {
+        "both": "（{{resource}} 配额桶，每小时 {{limit}} 次）",
+        "resource": "（{{resource}} 配额桶）",
+        "limit": "（每小时 {{limit}} 次）"
+      },
+      "failed": {
+        "rateLimited": "上游在限流（HTTP {{status}}）。它给出的等待时间：{{wait}}",
+        "quotaExhausted": "上游配额已用尽{{scope}}。距离恢复：{{wait}}",
+        "quotaExhaustedNoReset": "上游配额已用尽{{scope}}，而且上游没说什么时候恢复 —— 所以现在再点也没用，过一阵再来",
+        "httpErrorNotQuota": "HTTP {{status}}，而且不是配额问题 —— 那一刻还剩 {{remaining}} 次。可能是仓库改名/转私有，或触发了上游的滥用保护",
+        "httpErrorNoQuotaInfo": "HTTP {{status}}，而且上游一个配额头都没给，所以判断不了这是不是限流",
+        "timedOut": "请求 {{timeoutMs}} 毫秒后超时。这里刻意不猜原因 —— 一次超时不构成任何具体成因的证据",
+        "noReleaseMatchesTagPattern": "没有 release 匹配 tagPattern {{tagPattern}}",
+        "repoHasNoReleases": "这个仓一个 release 都没有",
+        "noTagMatchesTagPattern": "没有 tag 匹配 tagPattern {{tagPattern}}",
+        "repoHasNoTags": "这个仓没有 tag",
+        "npmResponseHasNoVersion": "npm registry 答复了，但返回里没有 version 字段",
+        "huggingfaceResponseHasNoSha": "HuggingFace 答复了，但返回里没有 sha 字段",
+        "unsupportedUpstreamKind": "我们不知道该怎么问一个 kind 是 {{upstreamKind}} 的上游 —— 这是目录配置的问题，不是网络问题",
+        "upstreamErrorText": "以下是上游原文，我们没有翻译它：{{text}}"
+      }
+    },
     "note": {
       "neverChecked": "「未检测」表示**我们还没问过上游**，不代表已是最新。首屏默认不联网查 —— 点上方「检查更新」就会去问。已安装的版本不受影响，照常可用。",
       "noUpstream": "这个组件**没有可查的上游发布源**（{{reason}}）。**点「检查更新」不会有结果** —— 这不是失败，是没有这个问题可问。",

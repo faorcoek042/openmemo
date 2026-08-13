@@ -67,7 +67,13 @@
  * decides it.
  */
 
-import type { Backend, BackendStatus, HardwareInfo, OsPlatform } from '@openmemo/shared';
+import type {
+  Backend,
+  BackendStatus,
+  HardwareInfo,
+  Inapplicability,
+  OsPlatform,
+} from '@openmemo/shared';
 
 /** The always-installable tier. */
 export const L1_BACKENDS: readonly Backend[] = ['cpu'];
@@ -160,7 +166,19 @@ export interface ApplicabilityInput {
 
 export interface ApplicabilityResult {
   applicable: boolean;
-  reason: string | null;
+  /**
+   * 不适用时**为什么** —— **机器可读**（#106，见 {@link Inapplicability}）。
+   *
+   * 这里原来是 `string | null`，而里面装的是三句写死的中文散文
+   * （「适用于 X/Y，与本机不符」「尚未探测到硬件能力 —— …」「该后端在本机不可用」）。
+   * `BackendPackCard` 把它原样渲染在英文那句档位说明底下，于是英文界面上
+   * 「具体卡在哪」那一行整句是中文。措辞现在归 `apps/web` 的两份 locale，
+   * 本模块只回答**是哪一种**。
+   *
+   * `applicable === true` 时恒为 `null`：一个"能装"的包带着一个"为什么不能装"，
+   * 和 `BackendStatus` 里可用后端带着不可用理由是同一种自相矛盾的对象。
+   */
+  reason: Inapplicability | null;
   /** Which tier decided it — surfaced so the UI can explain, and so tests can assert. */
   tier: 'l1' | 'l2';
 }
@@ -174,7 +192,7 @@ export function evaluateApplicability(input: ApplicabilityInput): ApplicabilityR
   if (pack.os !== platform.os || pack.arch !== platform.arch) {
     return {
       applicable: false,
-      reason: `适用于 ${pack.os}/${pack.arch}，与本机不符`,
+      reason: { kind: 'platform_mismatch', packOs: pack.os, packArch: pack.arch },
       tier: isAlwaysApplicable(pack.backend, pack.os) ? 'l1' : 'l2',
     };
   }
@@ -213,14 +231,7 @@ export function evaluateApplicability(input: ApplicabilityInput): ApplicabilityR
      * 安装状态的事实来源，而 `backends[].installed` 已经是那一份 —— 两份必然漂移。
      * 改的是措辞本身：让它在**两种状态下都成立、且都指向一个真能点的控件**。
      */
-    return {
-      applicable: false,
-      reason:
-        '尚未探测到硬件能力 —— 需要一个带 openmemo-probe 的后端包。' +
-        '还没装过就先装 CPU 基础包；已经装了却仍是这一句，说明手里那份是旧版，' +
-        '去「本机组件」页对它点「更新」。装好后会自动重新探测',
-      tier: 'l2',
-    };
+    return { applicable: false, reason: { kind: 'hardware_not_probed_yet' }, tier: 'l2' };
   }
 
   const status = backends.find((b) => b.id === pack.backend);
@@ -248,9 +259,26 @@ export function evaluateApplicability(input: ApplicabilityInput): ApplicabilityR
     return { applicable: true, reason: null, tier: 'l2' };
   }
 
+  /*
+   * ★ #106：「找不到这个后端的状态」与「找到了、它不可用」**不是同一句话**。
+   *
+   * 上一版两条挤在 `status?.unavailableReason ?? '该后端在本机不可用'` 一行里：
+   * 前者退化成后者，也就是把"我们对它一个字都没测到"说成了"本机不支持"。
+   * 拆开之后 `backend_status_missing` 才有地方说自己的话。
+   *
+   * `unavailableKind` 直接用 `BackendStatus` 上那一格（T-196 就是为按成因分档加的），
+   * 而 `unavailableReason` 那句**英文技术原话**作为 `detail` 跟着走、不翻译。
+   */
+  if (status === undefined) {
+    return { applicable: false, reason: { kind: 'backend_status_missing' }, tier: 'l2' };
+  }
   return {
     applicable: false,
-    reason: status?.unavailableReason ?? '该后端在本机不可用',
+    reason: {
+      kind: 'backend_unavailable',
+      unavailableKind: status.unavailableKind,
+      detail: status.unavailableReason,
+    },
     tier: 'l2',
   };
 }

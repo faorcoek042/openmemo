@@ -21,7 +21,7 @@ import { EmptyState } from '../../components/common/EmptyState';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { StatusChip } from '../../components/common/StatusChip';
 import { formatBytes } from '../../lib/format/bytes';
-import { localizedName } from '../../lib/format/localized';
+import { localizedName, pickLocalized } from '../../lib/format/localized';
 import {
   useGcMutation,
   useJobCancelMutation,
@@ -197,7 +197,8 @@ export default function ModelsPage() {
       const ok = window.confirm(
         t('models.confirmUnsupported', {
           name: localizedName(locale, v),
-          reason: v.fitness.reasonZh,
+          // #106：`reasonEn` 契约里一直有，这里原来写死取中文那一份。
+          reason: pickLocalized(locale, v.fitness.reasonZh, v.fitness.reasonEn),
         }),
       );
       if (!ok) return;

@@ -96,28 +96,48 @@ export interface CheckResult {
   label: string;
   labelZh: string;
   status: CheckStatus;
-  /** ⚠️ 历史包袱：`detail` 是**中文**（`label`/`labelZh` 那对却是英/中）。见 `detailEn`。 */
+  /**
+   * ⚠️ 历史包袱：`detail` 是**中文**（`label`/`labelZh` 那对却是英/中）。
+   * 英文版在 `detailEn`，**那一份是必填的**（不再是"新写的才给"）。见 `detailEn`。
+   */
   detail: string;
   /** A failing required check means the product is broken, not merely degraded. */
   required: boolean;
   /** What the user should do. Null when nothing is wrong. */
   remediation: string | null;
   /**
-   * `detail` 的英文版。**可选**，前端 `detailEn ?? detail` 回退。
+   * `detail` 的英文版。**必填**（#106）。
    *
    * 为什么不是把 `detail` 改成英文、再加 `detailZh`（那才与 `label`/`labelZh` 一致）：
-   * 那要改写全部 25 条检查项的字面量，而 locale/自检两块同时有别的 agent 在动。
-   * 这里只承诺**新写的检查项两种语言都给**，不假装历史那 24 条也给了。
+   * 那要改写全部检查项的字面量，而 locale/自检两块当时同时有别的 agent 在动。
+   *
+   * ─── #106：这个字段以前是可选的，代价是整页英文诊断页是中文 ────────────────────
+   * 前端 `pickCheckText(zh, r.detail, r.detailEn)` 在缺 `detailEn` 时回退到**中文原文**
+   * （回退成空白会让告警消失，比难看严重得多，所以回退方向是对的）。
+   * 但"可选"意味着**绝大多数检查项干脆不写英文**：28 条里只有 6 条给了 ——
+   * 于是英文用户看到的诊断页几乎整页中文，而这件事在中文界面上**看不出来**，
+   * 静默回退不留任何痕迹。
+   *
+   * 现在两个字段都改成必填：**门禁是编译器，不是约定。**
+   * 新加一条检查项而忘了英文 ⇒ `tsc` 当场红，不依赖谁记得这条规矩
+   *（"要靠人记得同步的规则 = 迟早会漂移的规则"，见本文件顶部 `store.ts` 那段前车之鉴）。
+   * 运行时那一半的守卫在 `selfcheck.test.ts`：「英文字段里不许出现 CJK」+
+   * 「每条结果的 `detailEn` 非空」，判据不是"中英字段不相等"（`ffmpeg` 本来就该相等）。
    *
    * `[T-174 已修]` 另有 5 条（`tool.ffmpeg` / `tool.ffprobe` / `tool.whisperCli` /
    * `tool.whisperVad` / `tool.ytDlp`）连 `label` 都写成了 `labelZh` 的值，
-   * 英文界面上显示的是 `VAD 切分器` / `yt-dlp（可选，GPL）`。现已各给一份英文，
-   * 并加了守卫「`label` / `detailEn` / `remediationEn` 里不许出现 CJK」——
-   * 判据不是"中英字段不相等"（`ffmpeg` 本来就该相等），见 `selfcheck.test.ts`。
+   * 英文界面上显示的是 `VAD 切分器` / `yt-dlp（可选，GPL）`。现已各给一份英文。
    */
-  detailEn?: string;
-  /** `remediation` 的英文版。同上。 */
-  remediationEn?: string | null;
+  detailEn: string;
+  /**
+   * `remediation` 的英文版。**必填**，且**必须与 `remediation` 同时为 `null`**。
+   *
+   * 「中文有一句、英文写 `null`」不会让那一行消失（`pickCheckRemediation` 会回退成
+   * 中文原文），但那正是这次要修掉的形状：**一条静默的、只有英文用户会看到的降级**。
+   * 反过来「中文 `null` 而英文有话」更糟 —— `unavailable` 那一态的定义里就写着
+   * 「没有下一步」，给它一句英文补救等于在英文界面上偷偷把它退回成 `fail`。
+   */
+  remediationEn: string | null;
 }
 
 export interface SelfCheckReport {
@@ -463,6 +483,7 @@ async function checkOsFloors(input: SelfCheckInput, add: (r: CheckResult) => voi
         detailEn: `macOS ${r.productVersion} ≥ ${f.floor}; ${f.label} is available`,
         required: false,
         remediation: null,
+        remediationEn: null,
       });
     } else if (r.verdict === 'below-floor') {
       add({
@@ -482,6 +503,7 @@ async function checkOsFloors(input: SelfCheckInput, add: (r: CheckResult) => voi
           `Core features (transcription, playback, notes, Chinese full-text search) work fine here.`,
         required: false,
         remediation: `升级到 macOS ${f.floor} 或更高即可启用；不升级也不影响核心功能`,
+        remediationEn: `Upgrading to macOS ${f.floor} or newer enables it; staying on this version does not affect core features`,
       });
     } else {
       add({
@@ -495,6 +517,7 @@ async function checkOsFloors(input: SelfCheckInput, add: (r: CheckResult) => voi
         detailEn: `could not determine the macOS version, so cannot tell whether ${f.label} is available (needs ≥ ${f.floor})`,
         required: false,
         remediation: `手动核对：终端跑 sw_vers -productVersion，低于 ${f.floor} 则该功能不可用`,
+        remediationEn: `Check it by hand: run sw_vers -productVersion in a terminal; below ${f.floor} means that feature is unavailable`,
       });
     }
   }
@@ -511,10 +534,17 @@ async function checkCoreMl(
     return;
 
   const asrDir = join(input.storeRoot, 'by-name', 'asr');
+  /*
+   * ★ #106：这个 helper 原来只收中文的 `detail` / `remediation`，于是它产出的
+   * **五条分支在英文界面上全是中文**。英文两个参数是必填的（不是可选的第 4/5 个）
+   * —— 可选就等于又留了一条"忘了写也编得过"的路，而那正是 #106 的成因。
+   */
   const emit = (
     status: CheckResult['status'],
     detail: string,
+    detailEn: string,
     remediation: string | null,
+    remediationEn: string | null,
   ): void => {
     add({
       layer: 'models',
@@ -523,6 +553,7 @@ async function checkCoreMl(
       labelZh: 'CoreML 编码器（神经引擎 ANE）',
       status,
       detail,
+      detailEn,
       /*
        * ★ T-168 ④：`required: false` → `true`（Manager 裁决）。
        *
@@ -557,11 +588,18 @@ async function checkCoreMl(
        */
       required: true,
       remediation,
+      remediationEn,
     });
   };
 
   if (realAsr.length === 0) {
-    emit('warn', '还没有 ASR 模型，无从判断 ANE 是否可用', '先在「模型」页装一个语音识别模型');
+    emit(
+      'warn',
+      '还没有 ASR 模型，无从判断 ANE 是否可用',
+      'no ASR model installed yet, so there is nothing to judge ANE readiness against',
+      '先在「模型」页装一个语音识别模型',
+      'Install a speech recognition model on the "Models" page first',
+    );
     return;
   }
 
@@ -579,14 +617,24 @@ async function checkCoreMl(
       'warn',
       `没有 whisper.cpp 的 ggml 模型，ANE 不适用（CoreML encoder 只服务 whisper.cpp；` +
         `当前 by-name/asr 下是：${realAsr.slice(0, 4).join(', ')}）`,
+      `no whisper.cpp ggml model installed, so ANE does not apply here (a CoreML encoder only ` +
+        `serves whisper.cpp; by-name/asr currently holds: ${realAsr.slice(0, 4).join(', ')})`,
+      null,
       null,
     );
     return;
   }
 
+  /*
+   * ★ #106：中英两份**同时**攒。
+   * 攒完中文再"翻译"是做不到的 —— 这些片段里混着文件名与目录清单，
+   * 事后从字符串里把数据抠回来，只会得到一份既容易错又没人敢改的解析代码。
+   */
   const found: string[] = [];
   const shells: string[] = [];
+  const shellsEn: string[] = [];
   const missing: string[] = [];
+  const missingEn: string[] = [];
   for (const bin of ggml) {
     const encName = coreMlEncoderNameFor(bin);
     const encDir = join(asrDir, encName);
@@ -595,6 +643,7 @@ async function checkCoreMl(
       entries = await readdir(encDir);
     } catch {
       missing.push(`${bin} → 缺 ${encName}`);
+      missingEn.push(`${bin} -> missing ${encName}`);
       continue;
     }
     /*
@@ -602,17 +651,25 @@ async function checkCoreMl(
      * 「目录存在」正是那个空壳的表现 —— 只查存在性等于把 fail 读成 ok。
      */
     if (entries.includes('coremldata.bin')) found.push(`${bin} → ${encName}`);
-    else
-      shells.push(
-        `${encName}（里面是 ${entries.slice(0, 3).join(', ') || '空'}，不是编译好的 mlmodelc）`,
+    else {
+      const inside = entries.slice(0, 3).join(', ');
+      shells.push(`${encName}（里面是 ${inside || '空'}，不是编译好的 mlmodelc）`);
+      shellsEn.push(
+        `${encName} (contains ${inside || 'nothing'}, which is not a compiled mlmodelc)`,
       );
+    }
   }
 
   if (shells.length > 0) {
     emit(
       'fail',
       `CoreML encoder 目录结构不对，whisper 会**静默回退**到 Metal/CPU：${shells.join('；')}`,
+      `the CoreML encoder directory has the wrong structure, so whisper will **silently fall back** ` +
+        `to Metal/CPU: ${shellsEn.join('; ')}`,
       '删掉该目录重装；若重装后仍是这个结构，是解包多了一层同名目录（installer.ts 的 stripExt + zip 自带顶层目录）',
+      'Delete that directory and reinstall; if the same structure comes back, unpacking added an ' +
+        'extra directory level with the same name (stripExt in installer.ts plus the top-level ' +
+        'directory the zip already carries)',
     );
     return;
   }
@@ -620,6 +677,9 @@ async function checkCoreMl(
     emit(
       'ok',
       `ANE 已就绪（encoder 只接管 whisper 的 encoder 部分，decoder 仍走 Metal/CPU）：${found.join('；')}`,
+      `ANE is ready (the encoder only takes over whisper's encoder half; the decoder still runs on ` +
+        `Metal/CPU): ${found.map((f) => f.replace(' → ', ' -> ')).join('; ')}`,
+      null,
       null,
     );
     return;
@@ -627,7 +687,10 @@ async function checkCoreMl(
   emit(
     'warn',
     `未启用 ANE —— 转写会走 Metal/CPU（功能正常，只是慢）：${missing.join('；')}`,
+    `ANE is not in use -- transcription will run on Metal/CPU (it works, it is just slower): ` +
+      `${missingEn.join('; ')}`,
     '在「模型」页为该模型安装可选的 CoreML encoder（role=coreml-encoder）',
+    'Install the optional CoreML encoder for that model on the "Models" page (role=coreml-encoder)',
   );
 }
 
@@ -656,12 +719,27 @@ async function checkCoreMl(
  * ★ `stderr` 为空**本身就是结论**，不是"没信息"：它说明探针连第一个后端都没
  *   来得及打印就没了。所以空也要明写出来，不能省略成一片空白 ——
  *   那正是这条注释存在的原因。
+ *
+ * ★ #106：返回 `{ zh, en }` 两句，形状与 `@openmemo/shared` 的 `breakerDetail()` 一致。
+ *   这个函数是**唯一**知道 stderr 尾部怎么裁、耗时怎么摆的地方；让它只产中文，
+ *   等于让调用点自己再拼一遍英文 —— 两处拼法迟早不一样，而不一样的那天没人看得出来。
+ *   `r.message` 与 stderr 是数据（`probe/runProbe.ts` 那边本来就是英文），原样带过去。
  */
-function probeFailureDetail(r: { message: string; stderr: string; durationMs: number }): string {
+function probeFailureDetail(r: { message: string; stderr: string; durationMs: number }): {
+  zh: string;
+  en: string;
+} {
   const err = r.stderr.replace(/\s+/g, ' ').trim();
-  const tail =
+  const tailZh =
     err.length > 0 ? `stderr 尾部：${err.slice(-400)}` : 'stderr 为空（探针连一行都没来得及输出）';
-  return `${r.message}（耗时 ${String(r.durationMs)}ms；${tail}）`;
+  const tailEn =
+    err.length > 0
+      ? `stderr tail: ${err.slice(-400)}`
+      : 'stderr was empty (the probe died before printing a single line)';
+  return {
+    zh: `${r.message}（耗时 ${String(r.durationMs)}ms；${tailZh}）`,
+    en: `${r.message} (took ${String(r.durationMs)}ms; ${tailEn})`,
+  };
 }
 
 async function exists(p: string | null | undefined, mode: number): Promise<boolean> {
@@ -683,6 +761,15 @@ export interface SymlinkHealth {
   readable: boolean;
   /** 读不到时的原因（errno），读得到时是首 4 字节的十六进制 */
   note: string;
+  /**
+   * `note` 的英文版（#106）。
+   *
+   * 绝大多数情况下它与 `note` **逐字相同** —— errno（`ENOENT`）和十六进制都不是语言。
+   * 唯一分叉的是"只读到 N 字节"那一句：它是散文，而它会被拼进 `backend.libLinks`
+   * 的 `detail`，于是在英文界面上就是一句中文。两个字段而不是"就地翻译"，
+   * 是因为 `note` 已经有测试逐字钉住（`selfcheck.test.ts` 断言 `'7f454c46'` / `'ENOENT'`）。
+   */
+  noteEn: string;
 }
 
 /**
@@ -761,6 +848,7 @@ export async function checkBackendSymlinks(storeRoot: string): Promise<BackendSy
         }
         let readable = false;
         let note: string;
+        let noteEn: string;
         let fh;
         try {
           // open() 跟随符号链接 —— 悬空链接在这里就会抛 ENOENT
@@ -769,12 +857,17 @@ export async function checkBackendSymlinks(storeRoot: string): Promise<BackendSy
           const { bytesRead } = await fh.read(buf, 0, 4, 0);
           readable = bytesRead === 4;
           note = readable ? buf.toString('hex') : `只读到 ${bytesRead} 字节（文件为空或被截断）`;
+          noteEn = readable
+            ? buf.toString('hex')
+            : `only ${bytesRead} bytes readable (file is empty or truncated)`;
         } catch (err) {
+          // errno 不是语言 —— 两边同一个值，不许为了"看起来双语"改写它
           note = (err as NodeJS.ErrnoException).code ?? String(err);
+          noteEn = note;
         } finally {
           await fh?.close().catch(() => {});
         }
-        links.push({ rel: relOf(p), target, readable, note });
+        links.push({ rel: relOf(p), target, readable, note, noteEn });
       } else if (e.isDirectory()) {
         await walk(p);
       }
@@ -839,6 +932,7 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
       detailEn: 'not probed (this run did not supply that probe)',
       required: false,
       remediation: null,
+      remediationEn: null,
     });
 
   // ---- hardware ---------------------------------------------------------------------
@@ -850,9 +944,12 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
     label: 'OS / arch',
     labelZh: 'OS / 架构',
     status: 'ok',
+    // 全是数据，中英本来就该逐字相同 —— 守卫允许相等（见 `selfcheck.test.ts` 头注）。
     detail: `${os.platform}/${os.arch} ${os.version}`,
+    detailEn: `${os.platform}/${os.arch} ${os.version}`,
     required: false,
     remediation: null,
+    remediationEn: null,
   });
 
   const cpu = await detectCpu();
@@ -914,8 +1011,10 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
     labelZh: '内存',
     status: 'ok',
     detail: `${ram.totalMB} MB total`,
+    detailEn: `${ram.totalMB} MB total`,
     required: false,
     remediation: null,
+    remediationEn: null,
   });
 
   /*
@@ -962,26 +1061,52 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
           probeInstalledPacks.length === 0
             ? 'openmemo-probe 未安装（后端能力未知）'
             : `已装的后端包里没有 openmemo-probe（后端能力未知）：${probeInstalledPacks.join(', ')}`,
+        detailEn:
+          probeInstalledPacks.length === 0
+            ? 'openmemo-probe is not installed (backend capabilities unknown)'
+            : `none of the installed backend packs ships openmemo-probe (backend capabilities ` +
+              `unknown): ${probeInstalledPacks.join(', ')}`,
         required: false,
         remediation:
           probeInstalledPacks.length === 0
             ? '在「本机组件」页安装一个后端包，它会带上 openmemo-probe；在此之前只能按 CPU 保守选择'
             : '你装的后端包是旧版（不含探针）。去「本机组件」页对它点「更新」，' +
               '装上目录里现在这一版即可；在此之前只能按 CPU 保守选择',
+        /*
+         * 英文这两句的**分叉必须原样保留**（T-191）：对一个已经装了后端包的用户说
+         * "去装一个后端包"，他照做之后什么都不会变 —— 那正是这条分叉存在的理由。
+         */
+        remediationEn:
+          probeInstalledPacks.length === 0
+            ? 'Install a backend pack on the "Components" page; it brings openmemo-probe with it. ' +
+              'Until then the selection stays conservative and assumes CPU only'
+            : 'The backend pack you have is an older build without the probe. Press "Update" on it ' +
+              'on the "Components" page to get the build the catalog ships today. Until then the ' +
+              'selection stays conservative and assumes CPU only',
       });
     } else {
       const r = await runProbe({ probePath, backendDir: dirname(probePath) });
+      // 一次算好两句：`r` 是按 `ok` 判别的联合类型，在 `add({...})` 的字段里
+      // 分别写两个三元表达式就要么重复窄化、要么退回类型断言。
+      const text = r.ok
+        ? {
+            zh: `${r.output.deviceCount} 个设备, ggml ${r.output.ggmlVersion}`,
+            en: `${r.output.deviceCount} devices, ggml ${r.output.ggmlVersion}`,
+          }
+        : probeFailureDetail(r);
       add({
         layer: 'hardware',
         id: 'hw.probe',
         label: 'device enumeration (subprocess)',
         labelZh: 'probe 子进程枚举设备',
         status: r.ok ? 'ok' : 'warn',
-        detail: r.ok
-          ? `${r.output.deviceCount} 个设备, ggml ${r.output.ggmlVersion}`
-          : probeFailureDetail(r),
+        detail: text.zh,
+        detailEn: text.en,
         required: false,
         remediation: r.ok ? null : '探测失败 → 加速后端不可判定，会退回 L1 CPU',
+        remediationEn: r.ok
+          ? null
+          : 'The probe failed -> accelerator backends cannot be judged, so selection falls back to L1 CPU',
       });
     }
   }
@@ -1064,8 +1189,11 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
     labelZh: '已安装后端包',
     status: backendPacks.length > 0 ? 'ok' : 'warn',
     detail: backendPacks.length > 0 ? backendPacks.join(', ') : '无',
+    detailEn: backendPacks.length > 0 ? backendPacks.join(', ') : 'none',
     required: false,
     remediation: backendPacks.length > 0 ? null : '在「本机组件」页安装 CPU 基础包',
+    remediationEn:
+      backendPacks.length > 0 ? null : 'Install the base CPU pack on the "Components" page',
   });
 
   /*
@@ -1087,11 +1215,16 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         labelZh: '实际生效的后端包',
         status: 'warn',
         detail: 'whisper-cli 不是从后端包解析出来的（环境变量覆盖 / 系统 PATH / 未找到）',
+        detailEn:
+          'whisper-cli was not resolved from a backend pack (env override / system PATH / not found)',
         required: false,
         remediation: '在「本机组件」页安装后端包，让产品自己的安装通道提供 whisper-cli',
+        remediationEn:
+          'Install a backend pack on the "Components" page so whisper-cli comes from the app\'s own install channel',
       });
     } else {
       const chosen = sel.selectedBackend ?? '未选择（按 priority 挑）';
+      const chosenEn = sel.selectedBackend ?? 'none selected (picked by priority)';
       add({
         layer: 'tools',
         id: 'backend.selection',
@@ -1101,10 +1234,18 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         detail:
           `选中 ${chosen} → 实际使用 ${sel.packId ?? '(来源不明，无安装记录)'}` +
           `（backend=${sel.packBackend ?? '未知'}）`,
+        detailEn:
+          `selected ${chosenEn} -> actually using ${sel.packId ?? '(unknown origin, no install record)'}` +
+          ` (backend=${sel.packBackend ?? 'unknown'})`,
         required: false,
         remediation: sel.degraded
           ? '选中的后端包里没有 whisper-cli，已退回另一个包 —— 加速不会生效。' +
             '重装该后端包，或在「本机组件」页改选一个真的能用的后端'
+          : null,
+        remediationEn: sel.degraded
+          ? 'The backend pack you selected has no whisper-cli, so another pack took over -- ' +
+            'acceleration will not kick in. Reinstall that pack, or pick a backend that actually ' +
+            'works on the "Components" page'
           : null,
       });
     }
@@ -1203,9 +1344,12 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         label,
         labelZh,
         status: 'ok',
+        // 一条绝对路径，中英同形 —— 守卫允许相等（见 `selfcheck.test.ts` 头注）。
         detail: path as string,
+        detailEn: path as string,
         required,
         remediation: null,
+        remediationEn: null,
       });
     } else if (isBundledRuntimePath(path as string)) {
       /*
@@ -1226,8 +1370,10 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         labelZh,
         status: 'ok',
         detail: `${path as string}（随预编译包出厂）`,
+        detailEn: `${path as string} (ships inside the prebuilt package)`,
         required,
         remediation: null,
+        remediationEn: null,
       });
     } else {
       add({
@@ -1237,9 +1383,14 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         labelZh,
         status: 'warn',
         detail: `${path as string}（来自系统 PATH，非本产品安装 —— 用户机器上不一定有）`,
+        detailEn:
+          `${path as string} (found on the system PATH, not installed by this app -- ` +
+          `another user's machine may not have it)`,
         // 借来的工具能跑，所以不算"坏了"；但它不可分发，所以也不能算 ok。
         required: false,
         remediation: '产品自带的安装通道尚未覆盖该工具，当前依赖系统里已有的版本',
+        remediationEn:
+          "The app's own install channel does not cover this tool yet, so it currently relies on the copy already present on this system",
       });
     }
   }
@@ -1295,6 +1446,33 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
             : soLinks.length === 0
               ? '该后端包不含符号链接（未做检查，不代表后端可用）'
               : `${soLinks.length} 条链接全部可读到目标内容`,
+    /*
+     * ★ 英文那句「不是"链接都正常"，是**没有检查完**」的**否定语序必须原样保留**（T-166）。
+     * 这一句存在的全部理由，就是挡住"没报错 ⇒ 没问题"这个默认推断；
+     * 翻成 "some locations could not be scanned" 这类中性描述，读的人照样会读成
+     * "扫过了、没事" —— 那就等于把这条检查修回它坏掉的样子。
+     */
+    detailEn:
+      brokenLinks.length > 0
+        ? `${brokenLinks.length}/${soLinks.length} symlinks could not be read through to their target: ` +
+          brokenLinks
+            .slice(0, 3)
+            .map((l) => `${l.rel}->${l.target}(${l.noteEn})`)
+            .join('  ')
+        : scanIncomplete
+          ? `this is NOT "all links are fine", it is **the scan did not finish** -- ` +
+            `${soScan.unscanned.length} locations could not be read (` +
+            soScan.unscanned
+              .slice(0, 3)
+              .map((u) => `${u.rel}:${u.code}`)
+              .join(' ') +
+            `). Nothing was wrong in the ${soLinks.length} links that were checked, but the ` +
+            `unchecked part cannot be spoken for.`
+          : backendPacks.length === 0
+            ? 'no backend pack installed, so there are no links to check'
+            : soLinks.length === 0
+              ? 'this backend pack contains no symlinks (nothing was checked; that does NOT mean the backend works)'
+              : `all ${soLinks.length} symlinks read through to real content`,
     required: true,
     remediation:
       brokenLinks.length > 0
@@ -1303,6 +1481,14 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
           : '在「本机组件」页重新安装该后端包 —— 链接的目标文件已不存在，whisper 会报 "cannot open shared object file" 而无法加载。'
         : scanIncomplete
           ? '这几个位置读不动，先确认后端目录的权限与磁盘状态；在此之前不要把"没报错"当作后端可用。'
+          : null,
+    remediationEn:
+      brokenLinks.length > 0
+        ? looksLikeMovedDataDir(brokenLinks)
+          ? 'These links point into an old data directory (most likely left behind by moving the data directory). Reinstalling that backend pack on the "Components" page fixes it; your data and notes are not affected.'
+          : 'Reinstall that backend pack on the "Components" page -- the files the links point at are gone, so whisper fails to load with "cannot open shared object file".'
+        : scanIncomplete
+          ? 'These locations could not be read. Check the permissions and disk state of the backend directory first; until then, do not read "no error reported" as "the backend works".'
           : null,
   });
 
@@ -1360,6 +1546,19 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
              */
             `已装的 VAD 权重 whisper.cpp 一个都加载不了（已装：${strandedVad.join('、')}）→ 切分降级为固定窗口`
           : '未安装 → 切分降级为固定窗口',
+    /*
+     * ★ 中文那条 T-149 订正在英文里同样成立：**只说观测到的事实**
+     * （"已装的这些，whisper 一个都加载不了"），不许顺嘴说成"那是 sherpa 的 ONNX 格式"。
+     * 走到这一支只说明解析器没交出一份 whisper 能加载的 ggml 权重 ——
+     * 文件可能是 ggml 但读不到、被截断、或权限不对。**说得很具体的错话最能把人带偏。**
+     */
+    detailEn: vadLoadable
+      ? (tools.vadModel as string)
+      : vadPresent
+        ? `${tools.vadModel as string} is not in ggml format, so whisper.cpp cannot load it (it reports "bad magic") -> segmentation falls back to fixed windows`
+        : strandedVad.length > 0
+          ? `whisper.cpp cannot load any of the installed VAD weights (installed: ${strandedVad.join(', ')}) -> segmentation falls back to fixed windows`
+          : 'not installed -> segmentation falls back to fixed windows',
     required: false,
     /*
      * ★ T-149：这条以前写的是「在「模型」页安装 `vad/silero-vad-ggml`」，
@@ -1382,6 +1581,21 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         '（直达：`/models/vad%2Fsilero-vad-ggml`）。' +
         '两个 VAD 变体体积与量化都一样，差别在**引擎**：ggml 那个给 whisper.cpp，' +
         '`vad/silero-vad-onnx` 给 sherpa 流式，**两者不能互换**。',
+    /*
+     * ★ 分组名与 Tab 名**逐字抄自英文界面真的会显示的那两个词条**
+     * （`apps/web/src/app/i18n/locales/en.json`：`models.tabs.asr` = "Transcription"，
+     *   `models.section.realtime` = "Live-caption components"）。
+     * 中文那条 T-149 的账就是这么记的：分组名写错 = 又一条"照做找不到"的指引，
+     * 而它不会让任何东西变红。英文这一份同样得指得到，所以不许自己另造一个说法。
+     * 直达地址两边同一条 —— 它不依赖列表分组，任何时候都打得开。
+     */
+    remediationEn: vadLoadable
+      ? null
+      : 'Install `vad/silero-vad-ggml` on the "Models" page, under Transcription -> the ' +
+        '**"Live-caption components"** group (direct link: `/models/vad%2Fsilero-vad-ggml`). ' +
+        'The two VAD variants have the same size and quantization; what differs is the **engine**: ' +
+        'the ggml one is for whisper.cpp and `vad/silero-vad-onnx` is for sherpa streaming. ' +
+        '**They are not interchangeable.**',
   });
 
   /* ---- 内置目录（T-153）------------------------------------------------------------
@@ -1456,6 +1670,10 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
     asrInstalled.skippedWithoutRole > 0
       ? `；另有 ${asrInstalled.skippedWithoutRole} 条安装记录没写 role，一律不猜类型（重装一次即可补上）`
       : '';
+  const skipNoteEn =
+    asrInstalled.skippedWithoutRole > 0
+      ? `; another ${asrInstalled.skippedWithoutRole} install records carry no role, and their type is never guessed (reinstalling once fills it in)`
+      : '';
   add({
     layer: 'models',
     id: 'model.asr',
@@ -1468,6 +1686,12 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         : otherRoleFiles.length > 0
           ? `无可用 ASR 模型（by-name/asr 下的文件都不是 ASR 角色：${otherRoleFiles.join(', ')}）${skipNote}`
           : `无${skipNote}`,
+    detailEn:
+      realAsr.length > 0
+        ? `${realAsr.join(', ')}${skipNoteEn}`
+        : otherRoleFiles.length > 0
+          ? `no usable ASR model (none of the files under by-name/asr has the ASR role: ${otherRoleFiles.join(', ')})${skipNoteEn}`
+          : `none${skipNoteEn}`,
     required: true,
     /*
      * ⚠️ T-149：这条 remediation 说的是「模型」页，而那一页**目前只渲染 role='asr'**
@@ -1476,6 +1700,8 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
      * **`model.vad` 那条不是**，见上面那一条的注释。
      */
     remediation: realAsr.length > 0 ? null : '在「模型」页下载一个语音识别模型',
+    remediationEn:
+      realAsr.length > 0 ? null : 'Download a speech recognition model on the "Models" page',
   });
 
   await checkCoreMl(input, realAsr, add);
@@ -1509,10 +1735,21 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
       detail: configured
         ? `${cfg.providerId as string} + 已存 Key（★ 只表示配了，未代发请求验证可用性）`
         : `未配置（provider=${cfg?.providerId ?? '无'} key=${cfg?.hasKey ? '有' : '无'}）`,
+      /*
+       * 「配了 ≠ 能用」这半句不许省：验证可用性要拿用户的 Key 发一次真请求
+       * —— 花他的钱，还可能在他不知情时把 Key 发出去。所以这里只报"配没配"，
+       * 而**读的人必须知道这一点**，否则这条绿灯就是一句更贵的谎。
+       */
+      detailEn: configured
+        ? `${cfg.providerId as string} + key stored (this only means it is configured; no request was sent to verify that it works)`
+        : `not configured (provider=${cfg?.providerId ?? 'none'} key=${cfg?.hasKey ? 'yes' : 'no'})`,
       required: false,
       remediation: configured
         ? null
         : '在设置页填一个在线模型的 API Key，否则 F4 思维导图会转 blocked',
+      remediationEn: configured
+        ? null
+        : 'Enter an API key for an online model on the Settings page, otherwise F4 mind maps will turn blocked',
     });
   }
 
@@ -1530,8 +1767,13 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         svc !== null && svc.length > 0
           ? svc.map((s) => `${s.label}(${s.models} 模型)`).join(', ')
           : '未探测到 Ollama / LM Studio（正常：用户没装就没有）',
+      detailEn:
+        svc !== null && svc.length > 0
+          ? svc.map((s) => `${s.label}(${s.models} models)`).join(', ')
+          : 'no Ollama / LM Studio detected (normal: if you never installed one, there is none)',
       required: false,
       remediation: null,
+      remediationEn: null,
     });
   }
 
@@ -1549,8 +1791,14 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
     labelZh: 'jieba 词典',
     status: hasDict ? 'ok' : 'warn',
     detail: hasDict ? dictDir : '缺失 → 分词退化为字符切分（仍优于 trigram）',
+    detailEn: hasDict
+      ? dictDir
+      : 'missing -> tokenization degrades to per-character splitting (still better than trigram)',
     required: false,
     remediation: hasDict ? null : '重新安装中文分词扩展 libsimple（上游包自带 dict/）',
+    remediationEn: hasDict
+      ? null
+      : 'Reinstall the Chinese tokenizer extension libsimple (the upstream package ships dict/ with it)',
   });
 
   const hits = await input.probes.chineseSearch();
@@ -1561,28 +1809,51 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
       label: 'Chinese two-character search',
       labelZh: '中文双字词可搜索',
       status: 'fail',
+      // "没测成"不是"测过了没事" —— 英文这句同样要说清是**没测**。
       detail: '分词器不可用，未能测试',
+      detailEn: 'the tokenizer could not be loaded, so this was never tested',
       required: true,
       remediation: '安装中文分词扩展（libsimple）',
+      remediationEn: 'Install the Chinese tokenizer extension (libsimple)',
     });
   } else {
-    const misses = Object.entries(hits)
-      .filter(([, n]) => n === 0)
-      .map(([w]) => w);
+    const entries = Object.entries(hits);
+    const misses = entries.filter(([, n]) => n === 0).map(([w]) => w);
+    /*
+     * ★ #106 —— 这一条是全部检查项里**唯一**一处英文没法逐字照搬的地方，理由记在这里。
+     *
+     * 这里的"数据"本身就是中文：被搜的四个探测词（`CHINESE_PROBE_WORDS`）按定义
+     * 只能是中文双字词 —— 这条检查测的就是"中文双字词切不切得出来"。
+     * 而英文字段里**不许出现 CJK**（守卫见 `selfcheck.test.ts`），
+     * 于是"把词原样回显"和"英文字段无 CJK"这两条在这一格里真的冲突。
+     *
+     * 处置：英文侧用**序号**指代，编号顺序与 `detailEn` 里逐条列出的完全一致，
+     * 自成一套闭环，不要求读者去看中文那一份（英文界面根本看不到中文 `detail`）。
+     * 结论（几条命中、几条零命中、多半是退回 trigram）一个字都没少 ——
+     * 丢的只是"具体是哪两个字"，而那件事在英文界面上本来也印不出来。
+     */
+    const numbered = entries.map(([, n], i) => `#${String(i + 1)}=${String(n)}`).join(' ');
+    const missPositions = entries
+      .map(([, n], i) => (n === 0 ? `#${String(i + 1)}` : null))
+      .filter((x): x is string => x !== null);
     add({
       layer: 'ext',
       id: 'ext.chineseSearch',
       label: 'Chinese two-character search',
       labelZh: '中文双字词可搜索',
       status: misses.length === 0 ? 'ok' : 'fail',
-      detail: Object.entries(hits)
-        .map(([w, n]) => `${w}:${n}`)
-        .join(' '),
+      detail: entries.map(([w, n]) => `${w}:${n}`).join(' '),
+      detailEn: `hit counts for the ${String(entries.length)} two-character Chinese probe words, in probe order: ${numbered}`,
       required: true,
       remediation:
         misses.length === 0
           ? null
           : `这些词搜不到：${misses.join('、')}。多半是分词器退回 trigram（无法匹配 3 字以下）`,
+      remediationEn:
+        misses.length === 0
+          ? null
+          : `These probe words return nothing: ${missPositions.join(', ')} (numbered as in the detail above). ` +
+            `Most likely the tokenizer fell back to trigram, which cannot match anything shorter than 3 characters.`,
     });
   }
 
@@ -1594,8 +1865,10 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
     labelZh: '向量检索扩展',
     status: vec !== null ? 'ok' : 'warn',
     detail: vec ?? '不可用 → 语义检索关闭',
+    detailEn: vec ?? 'unavailable -> semantic search is turned off',
     required: false,
     remediation: vec !== null ? null : '安装向量检索扩展',
+    remediationEn: vec !== null ? null : 'Install the vector search extension',
   });
 
   /*
@@ -1629,8 +1902,11 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         labelZh: 'media_assets 路径全在 dataDir 内',
         status: 'warn',
         detail: '读不到数据库（全新安装尚未建库时属正常）',
+        detailEn:
+          'could not read the database (normal on a fresh install that has not created it yet)',
         required: false,
         remediation: null,
+        remediationEn: null,
       });
       add({
         layer: 'datadir',
@@ -1639,8 +1915,10 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         labelZh: 'media_assets 文件都在',
         status: 'warn',
         detail: '读不到数据库',
+        detailEn: 'could not read the database',
         required: false,
         remediation: null,
+        remediationEn: null,
       });
     } else {
       /*
@@ -1657,13 +1935,19 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
        * 真读到的字节，以及**程序到底找过哪几个位置**。
        */
       const roots = mediaAssetRoots(input.dataDir);
+      // ★ #106：中英两份同时攒（理由与 `checkCoreMl` 里那两个数组一样 ——
+      //   事后从拼好的字符串里把路径抠回来，只会得到一份没人敢改的解析代码）。
       const escaped: string[] = [];
+      const escapedEn: string[] = [];
       const dangling: string[] = [];
+      const danglingEn: string[] = [];
       let evidence = '';
+      let evidenceEn = '';
       for (const r of rows) {
         const probe = await probeAssetFile(roots, r.relPath);
         if (probe.tried.length === 0) {
           escaped.push(`${r.role}→${r.relPath}`);
+          escapedEn.push(`${r.role}->${r.relPath}`);
         } else if (probe.abs === null && probe.escaped.length > 0) {
           /*
            * ★ T-143 ①：候选**落在根内**，但顺着符号链接解析出去了。
@@ -1672,12 +1956,20 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
            * 指向 /etc 的软链，那正是本项目定义的最贵的一种假红灯：**结论对、理由假**。
            */
           escaped.push(`${r.role}→${r.relPath}（软链指向根外：${probe.escaped.join('、')}）`);
+          escapedEn.push(
+            `${r.role}->${r.relPath} (symlink resolves outside the root: ${probe.escaped.join(', ')})`,
+          );
         } else if (probe.abs === null) {
           dangling.push(`${r.role}→${r.relPath}（找过：${probe.tried.join('、')}）`);
+          danglingEn.push(`${r.role}->${r.relPath} (looked in: ${probe.tried.join(', ')})`);
         } else if (probe.bytesRead === 0) {
           dangling.push(`${r.role}→${r.relPath}（${probe.abs} 是 0 字节，播不了）`);
+          danglingEn.push(
+            `${r.role}->${r.relPath} (${probe.abs} is 0 bytes, so it cannot be played)`,
+          );
         } else if (evidence === '') {
           evidence = `${r.relPath} → ${probe.abs} 首 4 字节 ${probe.note}`;
+          evidenceEn = `${r.relPath} -> ${probe.abs} first 4 bytes ${probe.note}`;
         }
       }
       add({
@@ -1690,11 +1982,19 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
           escaped.length === 0
             ? `${rows.length} 条资产全部落在 ${input.dataDir} 内`
             : `${escaped.length}/${rows.length} 条指向 dataDir 外（移动数据目录后会失效）：${escaped.slice(0, 3).join(' ')}`,
+        detailEn:
+          escaped.length === 0
+            ? `all ${rows.length} assets resolve inside ${input.dataDir}`
+            : `${escaped.length}/${rows.length} assets point outside dataDir (they break once the data directory is moved): ${escapedEn.slice(0, 3).join(' ')}`,
         required: true,
         remediation:
           escaped.length === 0
             ? null
             : '这些资产存的是绝对路径或落在 dataDir 之外，搬家后会取不到；需要把文件收进 <dataDir>/media 并改存相对路径',
+        remediationEn:
+          escaped.length === 0
+            ? null
+            : 'These assets are stored as absolute paths, or live outside dataDir, so they become unreachable after a move. The files need to be brought under <dataDir>/media and stored as relative paths',
       });
       add({
         layer: 'datadir',
@@ -1708,6 +2008,12 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
               ? '没有媒体资产'
               : `${rows.length} 条资产都真的读到了内容（例：${evidence}）`
             : `${dangling.length}/${rows.length} 条读不出来：${dangling.slice(0, 3).join('；')}`,
+        detailEn:
+          dangling.length === 0
+            ? rows.length === 0
+              ? 'no media assets'
+              : `content was really read back for all ${rows.length} assets (for example: ${evidenceEn})`
+            : `${dangling.length}/${rows.length} could not be read: ${danglingEn.slice(0, 3).join('; ')}`,
         required: false,
         /*
          * 措辞是这条检查最要命的地方 —— 旧文案直接断言"已被删除"，而实测中
@@ -1718,6 +2024,16 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
           dangling.length === 0
             ? null
             : '⚠️ 这**不等于**文件被删除：更常见的是记录里的路径与文件实际位置对不上（括号里就是程序真正找过的位置，可以自己去核对）。重启 daemon 会跑一次路径迁移，能自动修好一部分；仍然报的才需要找回文件。',
+        /*
+         * ★ 「这**不等于**文件被删除」这半句在英文里同样是**第一句**，不许弱化成
+         * "files may be missing"。旧中文文案直接断言"已被删除"，实测更常见的成因是
+         * 记录里的路径与文件实际位置对不上 —— 一句说错的红灯会让用户去翻备份、
+         * 怀疑自己误删，还会淹没真正丢了的那条。英文说软了，等于把这个 bug 重造一遍。
+         */
+        remediationEn:
+          dangling.length === 0
+            ? null
+            : 'WARNING: this does **NOT** mean the files were deleted. More often the path in the record does not match where the file actually is (the locations in parentheses are the ones actually searched, so you can check for yourself). Restarting the daemon runs a path migration that fixes some of these automatically; only the ones still reported afterwards need the file recovered.',
       });
     }
   }
@@ -1730,9 +2046,18 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
       label: e.id,
       labelZh: e.id,
       status: e.available ? 'ok' : 'warn',
+      /*
+       * `e.reason` 是**别人家的字段**，但它已经是英文（`packages/pipeline` 的
+       * `AsrAvailability.reason`，如 "the speech recognition engine is not installed"）
+       * —— 所以两边照原样带过去，不许在这里替它翻译或改写。
+       */
       detail: e.available ? '可用' : (e.reason ?? '不可用'),
+      detailEn: e.available ? 'available' : (e.reason ?? 'unavailable'),
       required: false,
       remediation: e.available ? null : '安装该引擎所需的后端包与模型',
+      remediationEn: e.available
+        ? null
+        : 'Install the backend pack and the model this engine needs',
     });
   }
 
@@ -1747,9 +2072,13 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
       label: `auto engine (${lang})`,
       labelZh,
       status: sel !== null ? 'ok' : 'fail',
+      // `sel.reason` 同上：`selectEngine.ts` 产出的就是英文（"automatic: …"）。
       detail: sel !== null ? `${sel.engineId}（${sel.reason}）` : '无可用引擎',
+      detailEn: sel !== null ? `${sel.engineId} (${sel.reason})` : 'no engine available',
       required: true,
       remediation: sel !== null ? null : '安装 CPU 基础包与一个语音识别模型',
+      remediationEn:
+        sel !== null ? null : 'Install the base CPU pack and one speech recognition model',
     });
   }
 
@@ -1769,8 +2098,13 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         px === null
           ? '未配置（off=直连 / system=继承环境变量 / manual=手填）'
           : `mode=${px.mode}${px.activeUrl ? ` → ${px.activeUrl}` : ''}`,
+      detailEn:
+        px === null
+          ? 'not configured (off=direct / system=inherit the environment variables / manual=entered by hand)'
+          : `mode=${px.mode}${px.activeUrl ? ` -> ${px.activeUrl}` : ''}`,
       required: false,
       remediation: null,
+      remediationEn: null,
     });
 
     /*
@@ -1786,10 +2120,28 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
       labelZh: '代理覆盖 ffmpeg',
       status: ffOk ? 'ok' : 'warn',
       detail: ffOk ? '当前代理形态 ffmpeg 可用' : (px?.ffmpegReason ?? 'ffmpeg 不走当前代理'),
+      /*
+       * ★ #106：英文这一句**刻意不插 `px.ffmpegReason`**。
+       *
+       * 那个字段是 `packages/pipeline/src/subprocess/proxy.ts` 的
+       * `ffmpegProxySupport()` 产出的中文句子 —— **别人家的字段，这里不该也不能改**。
+       * 把它拼进 `detailEn` 就等于让"英文字段无 CJK"这条守卫的成败取决于另一个包
+       * 什么时候改文案，而那种耦合是看不见的：改的人不会知道自己弄红了自检。
+       *
+       * 所以英文只从**结构化的 `px.ffmpegSupported` 布尔**复述同一个事实
+       *（"ffmpeg 走不走当前代理"），具体成因（SOCKS / URL 非法）留在中文 `detail` 里，
+       * 英文侧由下面的 remediation 承担"该怎么办"——**结论一个字没少**。
+       */
+      detailEn: ffOk
+        ? 'ffmpeg works with the current proxy setup'
+        : 'ffmpeg does not go through the current proxy',
       required: false,
       remediation: ffOk
         ? null
         : '模型下载与站点解析仍走代理；若要在线拉流也走代理，请改填 HTTP 代理地址',
+      remediationEn: ffOk
+        ? null
+        : 'Model downloads and site resolution still go through the proxy; to send live stream pulls through it as well, enter an HTTP proxy address instead',
     });
   }
 
@@ -1803,6 +2155,12 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
         : rep.probes
             .map((p) => `${p.target}:${p.result}${p.viaProxy ? '(经代理)' : '(直连)'}`)
             .join(' ') || '无探针结果';
+    const detailEn =
+      rep === null
+        ? 'the probe failed'
+        : rep.probes
+            .map((p) => `${p.target}:${p.result}${p.viaProxy ? '(via proxy)' : '(direct)'}`)
+            .join(' ') || 'no probe results';
     /*
      * 只有 mode=manual 时才算"必需项"。
      * 用户明确填了代理却连不上 = 配置坏了，下载一定会失败，该红。
@@ -1816,8 +2174,19 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
       labelZh: '代理实连测试',
       status: rep?.ok === true ? 'ok' : manual ? 'fail' : 'warn',
       detail: detail + (manual ? '' : '（未配代理：失败可能只是本机离线）'),
+      // 「失败可能只是本机离线」这半句不许省：把"离线"渲染成"产品坏了"，
+      // 与"绿灯不代表能用"是同一个病的两面。
+      detailEn:
+        detailEn +
+        (manual
+          ? ''
+          : ' (no proxy configured: a failure here may just mean this machine is offline)'),
       required: manual,
       remediation: rep?.ok === true ? null : '检查代理地址与端口，或先确认本机能出网',
+      remediationEn:
+        rep?.ok === true
+          ? null
+          : 'Check the proxy address and port, or first confirm that this machine can reach the internet at all',
     });
   }
 

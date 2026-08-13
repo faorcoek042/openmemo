@@ -10,6 +10,7 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { FitResult, FitTier } from '@openmemo/shared';
 import { cn } from '../../lib/utils';
+import { pickLocalized } from '../../lib/format/localized';
 
 /**
  * "这台机器能跑吗" 徽标（章程要求 2.2 的核心可视化）。
@@ -77,7 +78,7 @@ export interface FitBadgeProps {
 }
 
 export function FitBadge({ fitness, showReason = false, className }: FitBadgeProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const s = TIER_STYLE[fitness.tier] ?? FALLBACK;
   return (
     <div className={cn('flex flex-col gap-0.5', className)} data-testid="fit-badge">
@@ -86,8 +87,15 @@ export function FitBadge({ fitness, showReason = false, className }: FitBadgePro
         <span>{t(s.labelKey)}</span>
       </span>
       {showReason ? (
-        // reasonZh 来自服务端（fitness.ts 生成），前端不拼装这句话。
-        <span className="text-xs text-ink-secondary">{fitness.reasonZh}</span>
+        /*
+         * 这句话来自服务端（`shared/fitness.ts` 生成），前端不拼装它 ——
+         * 但**要挑对语言**（#106）。这里原来写死取 `reasonZh`，而契约里
+         * `reasonEn` **十条分支每一条都填了**：不是缺翻译，是有翻译没用上。
+         * 与 `localized.ts` 开头那段说的是同一件事。
+         */
+        <span className="text-xs text-ink-secondary">
+          {pickLocalized(i18n.language, fitness.reasonZh, fitness.reasonEn)}
+        </span>
       ) : null}
       {/*
         ★ 「我们没查过」是**第三种说法**，不是上面那个结论的修饰。

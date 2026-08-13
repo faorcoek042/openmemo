@@ -623,7 +623,13 @@ export async function runTranscribeJob(
    *   ③ job 的成功结果里带上原文（`queue.succeed` 的 payload）
    */
   if (result.warningsZh.length > 0) {
-    noteVadRuntimeFailure(result.warningsZh[0] as string);
+    /*
+     * #106：这里原来把 `warningsZh[0]`（一句中文）交给 `noteVadRuntimeFailure()`，
+     * 它一路走到 `/api/health` 再被诊断页原样渲染 —— 英文界面上那一行必然是中文。
+     * 现在只记「观测到一次运行期失败」这个事实，措辞归 `apps/web` 的两份 locale。
+     * **原文没有丢**：下面那行 `console.warn` 照旧全文打印，job 结果里也照旧带着。
+     */
+    noteVadRuntimeFailure();
     for (const w of result.warningsZh) console.warn(`[transcribe] ⚠️ ${w}`);
   } else if (result.chunking === 'vad') {
     noteVadRuntimeSuccess();
