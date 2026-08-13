@@ -27,6 +27,11 @@
  * 这一层抓的正是用户撞上的那一类：**下载源不可达 / URL 失效 / 文件被换掉**。
  * 它便宜（每个镜像只取 64 KB），所以**没有资格抽样**。
  *
+ * ⚠️ **失败的镜像会按轮退避重试**（#108，策略见 `probe-mirror.mjs`）：
+ * 零重试 + 29 个单源组件 = 上游抖一下就红，而**一条会随机变红的门，
+ * 教给人的是「别信这盏灯」**。但重试只滤抖动：次数（4）与总预算（180s）都是显式上限，
+ * 用尽仍失败**照样红**，报告里带得出试了几次、每次隔多久、每次为什么失败。
+ *
  * ### B 层：**产品自己的完整安装路径**（下载 → 校验 → 解包 → 落位 → 安装记录 → 真的可用）
  *
  *   · **本平台适用的后端包：全部，每次都装。** 体量有界（每平台约 6 个）。
@@ -53,7 +58,6 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { request as httpRequest } from 'node:http';
-import { request as httpsRequest } from 'node:https';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -69,6 +73,20 @@ import {
   magicOf,
   tagOf,
 } from './e2e-allcomponents-assertions.mjs';
+/*
+ * ★ #108：A 层探针与它的**退避重试**搬进 `probe-mirror.mjs`。
+ *   搬家的理由不是整洁，是**可证伪**：留在这个 1000 行、要 bundle 要 daemon 的脚本里，
+ *   重试逻辑就只能靠读代码相信它 —— 没人会为了验一次重试跑 90 分钟的 job。
+ *   变异证明写在 scripts/ci/selftest-probe-mirror.mjs（真 HTTP 服务器、真 503、真掐 socket）。
+ */
+import {
+  A_LAYER_RETRY_POLICY,
+  attemptTrail,
+  probeFollow,
+  retryDelayMs,
+  retryFailedProbes,
+  summarizeRetryZh,
+} from './probe-mirror.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const argv = process.argv.slice(2);
@@ -198,86 +216,6 @@ async function local(path, opts = {}) {
     }
   }
   throw new Error(`${path}: ${last?.message}（重试 4 次后仍失败）`);
-}
-
-/* ═══════════════════ A 层：镜像探针 ═══════════════════ */
-
-/**
- * 对一个 URL 发**真实**的 Range 请求，只取前 `want` 字节。
- *
- * 只取头部而不整下：这一层要回答的是「这个来源还在不在、还是不是那个文件」，
- * 而那三件事（可达、总长度、魔数）在头 64 KB 里就能答完。
- * 整下一遍留给 B 层 —— 两层加起来才是完整判据，单独任何一层都不是。
- */
-function probeUrl(url, want = 65536, timeoutMs = 45_000) {
-  return new Promise((resolve) => {
-    let u;
-    try {
-      u = new URL(url);
-    } catch {
-      resolve({ ok: false, reason: `URL 不合法：${url}` });
-      return;
-    }
-    const fn = u.protocol === 'https:' ? httpsRequest : httpRequest;
-    const req = fn(
-      {
-        host: u.host,
-        path: u.pathname + u.search,
-        method: 'GET',
-        headers: { range: `bytes=0-${want - 1}`, 'user-agent': 'openmemo-e2e-allcomponents' },
-        timeout: timeoutMs,
-      },
-      (res) => {
-        // 跟随重定向（GitHub releases → objects CDN；HF → CDN）
-        if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
-          res.resume();
-          resolve({ redirect: new URL(res.headers.location, url).href });
-          return;
-        }
-        const chunks = [];
-        let got = 0;
-        res.on('data', (d) => {
-          chunks.push(d);
-          got += d.length;
-          if (got >= want) req.destroy();
-        });
-        const done = () => {
-          const buf = Buffer.concat(chunks);
-          let total = null;
-          const cr = res.headers['content-range'];
-          if (cr) {
-            const m = /\/(\d+)$/.exec(String(cr));
-            if (m) total = Number(m[1]);
-          } else if (res.headers['content-length'] && res.statusCode === 200) {
-            total = Number(res.headers['content-length']);
-          }
-          resolve({
-            ok: res.statusCode === 200 || res.statusCode === 206,
-            status: res.statusCode,
-            total,
-            head: buf,
-          });
-        };
-        res.on('end', done);
-        res.on('close', done);
-      },
-    );
-    req.on('timeout', () => req.destroy(new Error('timeout')));
-    req.on('error', (e) => resolve({ ok: false, reason: e.message }));
-    req.end();
-  });
-}
-async function probeFollow(url, hops = 5) {
-  let cur = url;
-  for (let i = 0; i < hops; i += 1) {
-    const r = await probeUrl(cur);
-    if (r.redirect) {
-      cur = r.redirect;
-      continue;
-    }
-    return r;
-  }
-  return { ok: false, reason: `重定向超过 ${hops} 跳` };
 }
 
 /* ═══════════════════ daemon ═══════════════════ */
@@ -506,7 +444,9 @@ try {
 
   /* ── 2. A 层：每一个组件的每一个镜像，真发一次请求 ── */
 
-  hdr('2. A 层：**每一个组件、每一个镜像**都真发一次 Range 请求（100% 覆盖，不抽样）');
+  hdr(
+    '2. A 层：**每一个组件、每一个镜像**都真发一次 Range 请求（100% 覆盖，不抽样；失败的按轮退避重试）',
+  );
   const manifest = {};
   for (const f of readdirSync(manifestDir).filter((n) => n.endsWith('.json'))) {
     const j = JSON.parse(readFileSync(join(manifestDir, f), 'utf8'));
@@ -516,6 +456,37 @@ try {
 
   const compRows = [];
   const ids = Object.keys(manifest);
+  /*
+   * ★ #108：把「一次探测的结果 → 一格表」抽成函数，因为**重试之后要再算一次**。
+   *   内联两份的话，重试回来的那一格很容易忘了重算 sizeOk/kindOk，
+   *   于是一个"重试后恢复"的镜像会带着第一轮的 null 进分类 —— 那正是量错东西。
+   */
+  const cellOf = (file, url, r) => {
+    const host = (() => {
+      try {
+        return new URL(url).host;
+      } catch {
+        return '?';
+      }
+    })();
+    const sizeOk = r.ok && file.sizeBytes ? r.total === file.sizeBytes : null;
+    const wantKind = KIND_BY_EXT(file.name ?? '');
+    const gotKind = r.ok ? magicOf(r.head) : null;
+    const kindOk = r.ok && wantKind !== 'any' ? gotKind === wantKind : null;
+    return {
+      host,
+      ok: !!r.ok,
+      status: r.status,
+      total: r.total,
+      sizeOk,
+      kindOk,
+      gotKind,
+      reason: r.reason,
+    };
+  };
+
+  /** 第一轮失败、待重试的镜像。`apply` 把重试结果写回它在 compRows 里的那一格。 */
+  const retryTargets = [];
   say(`   共 ${ids.length} 个组件，逐个逐镜像探测（每个镜像只取 64 KB）…`);
   for (const id of ids) {
     const entry = manifest[id];
@@ -524,27 +495,17 @@ try {
       const results = [];
       for (const mi of mirrors) {
         const r = await probeFollow(mi.url);
-        const host = (() => {
-          try {
-            return new URL(mi.url).host;
-          } catch {
-            return '?';
-          }
-        })();
-        const sizeOk = r.ok && file.sizeBytes ? r.total === file.sizeBytes : null;
-        const wantKind = KIND_BY_EXT(file.name ?? '');
-        const gotKind = r.ok ? magicOf(r.head) : null;
-        const kindOk = r.ok && wantKind !== 'any' ? gotKind === wantKind : null;
-        results.push({
-          host,
-          ok: !!r.ok,
-          status: r.status,
-          total: r.total,
-          sizeOk,
-          kindOk,
-          gotKind,
-          reason: r.reason,
-        });
+        const cell = cellOf(file, mi.url, r);
+        results.push(cell);
+        if (!cell.ok) {
+          retryTargets.push({
+            key: `t${retryTargets.length}`,
+            label: `${id}/${file.name} @ ${cell.host}`,
+            url: mi.url,
+            first: r,
+            apply: (r2) => Object.assign(cell, cellOf(file, mi.url, r2)),
+          });
+        }
       }
       compRows.push({
         id,
@@ -554,6 +515,59 @@ try {
         mirrors: results,
       });
     }
+  }
+
+  /*
+   * ── #108：第一轮失败的镜像，带退避重试再问几遍 ──────────────────────────────
+   *
+   * 🔴 这一段**不是**为了把红灯变绿。它分开的是两件事：
+   *   · 抖一下（一次 hang up / 一次 503）→ 退避后成功，正常继续；
+   *   · 真的不可达 → 次数或预算用尽后**仍然红**，且下面每条判据的理由里
+   *     都带得出「试了几次、每次隔多久、每次为什么失败」。
+   *
+   * 策略与两个上限在跑之前就打出来 —— 否则下一个人看到一条跑了几分钟的探测，
+   * 分不清是网络慢还是我们在死等。
+   */
+  const retryTrail = new Map();
+  let retrySummary = summarizeRetryZh(null);
+  if (retryTargets.length > 0) {
+    const P = A_LAYER_RETRY_POLICY;
+    const delays = Array.from({ length: P.maxAttempts - 1 }, (_, i) => retryDelayMs(i + 1, P));
+    say('');
+    say(`   ⚠️ 第一轮有 **${retryTargets.length}** 个镜像没答应。先别急着判红 ——`);
+    say('   ── 退避重试（#108：单源组件 29 个，一次瞬时抖动不该直接转成红灯）──');
+    say(
+      `      策略：每个镜像最多 ${P.maxAttempts} 次尝试（首探 + ${P.maxAttempts - 1} 次重试），` +
+        `退避 ${delays.map((d) => `${d / 1000}s`).join(' / ')}；`,
+    );
+    say(
+      `            **整个重试阶段**总预算 ${P.budgetMs / 1000}s（连请求耗时一起算），到点就停并明说。`,
+    );
+    say('      按轮走：同一轮里所有失败镜像共用一次等待，所以总时长不随失败个数放大。');
+    say('      404 这类确定性失败**一次都不重试**（重试三次仍是 404，只是多晾几十秒）。');
+    const outcome = await retryFailedProbes(retryTargets, {
+      probe: (u) => probeFollow(u),
+      log: (line) => say(line),
+    });
+    for (const s of [...outcome.recovered, ...outcome.stillFailing]) {
+      s.target.apply(s.result);
+      retryTrail.set(s.target.label, attemptTrail(s.attempts));
+    }
+    retrySummary = summarizeRetryZh(outcome);
+    say('');
+    say(`   ── 重试结论：${retrySummary}`);
+    if (outcome.recovered.length > 0) {
+      say(`   ── 重试之后**恢复**的 ${outcome.recovered.length} 个（它们不再算红，但确实抖过）──`);
+      for (const s of outcome.recovered)
+        say(`     ✔ ${s.target.label}：${attemptTrail(s.attempts)}`);
+    }
+    if (outcome.stillFailing.length > 0) {
+      say(`   ── 重试之后**仍然失败**的 ${outcome.stillFailing.length} 个 ──`);
+      for (const s of outcome.stillFailing)
+        say(`     ✘ ${s.target.label}：${attemptTrail(s.attempts)}`);
+    }
+  } else {
+    say(`   ⓘ ${retrySummary}`);
   }
 
   /*
@@ -580,12 +594,23 @@ try {
     );
   }
 
+  /*
+   * ★ #108：这条红**必须带上重试史**。
+   *   「一个镜像都不可达」在加了重试之后有两种读法 —— "试了 4 次都不行"
+   *   和 "预算不够，只试了 1 次"。不写出来的话，下一个人无从判断该去查上游还是查我们。
+   */
+  const trailOf = (r) =>
+    (r.mirrors ?? [])
+      .map((m) => retryTrail.get(`${r.id}/${r.file} @ ${m.host}`))
+      .filter(Boolean)
+      .join(' | ');
   judge('★ 每一个组件至少有一个镜像真的可达（下载源不可达 = 用户装不上）', {
     ok: noMirror.length === 0,
     reason:
       noMirror.length === 0
-        ? `${compRows.length} 个文件全部至少一个镜像可达`
-        : `${noMirror.length} 个文件**一个镜像都不可达**：${noMirror.map((r) => `${r.id}/${r.file}`).join(', ')}`,
+        ? `${compRows.length} 个文件全部至少一个镜像可达（重试：${retrySummary}）`
+        : `${noMirror.length} 个文件**一个镜像都不可达**（重试：${retrySummary}）：` +
+          noMirror.map((r) => `${r.id}/${r.file}[${trailOf(r) || '无重试记录'}]`).join(', '),
   });
   judge('★ 可达镜像的总长度与清单里的 sizeBytes 一致（上游换了文件就在这里露馅）', {
     ok: sizeMismatch.length === 0,

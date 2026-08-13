@@ -20,9 +20,14 @@ import * as path from 'node:path';
 import {
   HttpError,
   MAX_RETRIES,
+  ProbeFailedError,
+  type RemoteFileInfo,
   backoffMs,
+  describeProbeAttemptsEn,
+  describeProbeAttemptsZh,
+  isRetriableHttpCode,
   openRangeStream,
-  probeRemoteFile,
+  probeRemoteFileWithRetry,
   sleep,
 } from './http.js';
 import {
@@ -323,18 +328,53 @@ async function downloadFromSource(
    * 消息里会直接写着"卡在探测文件大小"，而不是笼统的"下载源无法访问" ——
    * 那时我们就有证据，不用再猜。
    */
-  let info: Awaited<ReturnType<typeof probeRemoteFile>>;
+  /*
+   * ★★ #108：这一步**必须带退避重试**，而它此前是零重试的。
+   *
+   * `[CI 实测 2026-08-12]` 那一夜六条定时腿 4 条红，全部是**同一个上游故障窗口**：
+   * 19:59–20:00 六个文件一律 `Origin error 503`，而 20:06 同一批文件又全部成功。
+   * 探大小这一步一失败就整源判死，于是一次分钟级的抖动 = 用户眼里的"装不上"、
+   * CI 眼里的一条红 —— 而**一条会随机变红的门，教给人的是"别信这盏灯"**。
+   *
+   * ⚠️ 但重试的目的是滤掉抖动，**不是把真的不可达也重试成绿**：
+   *   · 404 / 403 这类确定性失败 `isRetriableHttpCode()` 直接判不可重试，一次都不多试；
+   *   · 次数（4）与总预算（60s）都是显式上限，用尽仍失败就**照样抛**，
+   *     并且把"试了几次、每次隔多久、每次为什么失败"写进用户看得见的消息里。
+   */
+  let info: RemoteFileInfo;
   try {
-    info = await probeRemoteFile(source.url, { signal: opts.signal, token: opts.token });
+    const probed = await probeRemoteFileWithRetry(source.url, {
+      signal: opts.signal,
+      token: opts.token,
+      onRetry: (a, delayMs) => {
+        console.warn(
+          `[downloader] 探测 ${hostOf(source.url)} 文件大小第 ${String(a.attempt)} 次失败` +
+            `（${a.message}），${String(Math.round(delayMs / 100) / 10)}s 后重试`,
+        );
+      },
+    });
+    info = probed.info;
+    // 抖动被吸收掉时**说出来**：否则日志里"这次很慢"和"这次一切正常"长得一样。
+    if (probed.attempts.length > 1) {
+      console.warn(
+        `[downloader] 探测 ${hostOf(source.url)} 文件大小：第 ${String(probed.attempts.length)} 次才成功` +
+          `（前 ${String(probed.attempts.length - 1)} 次：${probed.attempts
+            .slice(0, -1)
+            .map((a) => a.message)
+            .join('；')}）—— 上游抖动已被退避重试吸收。`,
+      );
+    }
   } catch (e) {
     if (opts.signal?.aborted) throw e;
     const de = toDownloadError(e, source.provider);
+    const trailEn = e instanceof ProbeFailedError ? ` ${describeProbeAttemptsEn(e)}` : '';
+    const trailZh = e instanceof ProbeFailedError ? `${describeProbeAttemptsZh(e)}` : '';
     throw new DownloadError(
-      `Failed while probing file size at ${hostOf(source.url)} (before any bytes were transferred): ${de.message}. ${PROXY_HINT_EN}`,
+      `Failed while probing file size at ${hostOf(source.url)} (before any bytes were transferred): ${de.message}.${trailEn} ${PROXY_HINT_EN}`,
       de.code,
       de.retryable,
       source.provider,
-      `连接 ${hostOf(source.url)} 失败：卡在**探测文件大小**这一步，还没开始传字节。${PROXY_HINT_ZH}`,
+      `连接 ${hostOf(source.url)} 失败：卡在**探测文件大小**这一步，还没开始传字节。${trailZh}${PROXY_HINT_ZH}`,
     );
   }
   const total = info.sizeBytes ?? opts.sizeBytes ?? 0;
@@ -621,11 +661,9 @@ async function ensurePartialFile(partialPath: string, total: number): Promise<vo
 function toDownloadError(e: unknown, provider?: string): DownloadError {
   if (e instanceof DownloadError) return e;
   if (e instanceof HttpError) {
-    const retryable =
-      e.code === 'NETWORK_TIMEOUT' ||
-      e.code === 'RATE_LIMITED' ||
-      e.code === 'PROVIDER_UNREACHABLE';
-    return new DownloadError(e.message, e.code, retryable, provider);
+    // 这张表**只有 http.ts 那一份**（#108 合并）：这里原本另抄了同样三个码，
+    // 而"探测该不该重试"与"这个错该不该重试"必须是同一条判据 —— 分头维护会分头改。
+    return new DownloadError(e.message, e.code, isRetriableHttpCode(e.code), provider);
   }
   const msg = (e as Error)?.message ?? String(e);
   if (/ENOSPC/.test(msg)) return new DownloadError('Disk full', 'DISK_FULL', false, provider);
