@@ -67,9 +67,19 @@ export function probeUrl(url, want = 65536, timeoutMs = 45_000) {
       return;
     }
     const fn = u.protocol === 'https:' ? httpsRequest : httpRequest;
+    /*
+     * ⚠️ `hostname` + `port` 分开传，**不能**用 `host`（`URL.host` 里带端口）。
+     *
+     * `[CI 实测 run 31695269578]` 这一条是被自检当场抓出来的：搬过来的原版写的是
+     * `host: u.host`，对 `https://github.com/...` 没事（`u.host` 不含默认端口），
+     * 但对 `http://127.0.0.1:41273/...` 就变成"去解析一个叫 `127.0.0.1:41273` 的主机名"
+     * ⇒ 一个请求都发不出去。**真实清单里没有带端口的 URL，所以它一直是潜伏的**，
+     * 而自检里的桩上游必然带端口 —— 于是 12 条里 7 条当场红，正是它该有的样子。
+     */
     const req = fn(
       {
-        host: u.host,
+        hostname: u.hostname,
+        port: u.port || (u.protocol === 'https:' ? 443 : 80),
         path: u.pathname + u.search,
         method: 'GET',
         headers: { range: `bytes=0-${want - 1}`, 'user-agent': 'openmemo-e2e-allcomponents' },
