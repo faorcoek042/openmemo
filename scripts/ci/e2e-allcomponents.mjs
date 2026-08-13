@@ -887,8 +887,13 @@ try {
    * 改的是我复制出来的那份，**包内那份一个字节都没动**。
    *
    * 判据是错误文案里出现「设置 → 代理」——
-   * `packages/downloader/src/download.ts:308` 在 probe 失败分支拼上了 PROXY_HINT_ZH，
+   * `packages/downloader/src/download.ts` 的 `downloadFromSource()` 在 probe 失败分支
+   * 拼上了 `PROXY_HINT_ZH`（原本写的是 `download.ts:308`，那个行号在 #108 之前就已经
+   * 不对了；改成指函数名，行号会漂，函数名不会），
    * 而 probe 失败正是用户那条（连不上 / DNS / TLS）与本例（404）共同经过的那一步。
+   *
+   * ⚠️ #108 之后这条路上多了一层退避重试，但本例是 **404**：确定性失败一次都不重试，
+   *    所以这一节的耗时不变，判据也不变（代理那句仍在同一个分支里拼上）。
    */
   const doctored = join(ROOT, 'manifests-doctored');
   mkdirSync(doctored, { recursive: true });
