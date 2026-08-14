@@ -39,11 +39,11 @@
  *   node scripts/ci/check-release-refs.mjs --manifests <dir>      # 指定清单目录（默认仓库的）
  */
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
-import { request as httpsRequest } from 'node:https';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { collectReleaseRefs } from './e2e-allcomponents-assertions.mjs';
+import { probeFollow as probe } from './probe-mirror.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const argv = process.argv.slice(2);
@@ -86,43 +86,37 @@ function readAllUrls(dir) {
   return urls;
 }
 
-/** 只探头 1 KB，够回答"它还在不在"。跟随重定向。 */
-function probe(url, hops = 5) {
-  return new Promise((resolve) => {
-    let u;
-    try {
-      u = new URL(url);
-    } catch {
-      resolve({ ok: false, status: 0, reason: 'URL 不合法' });
-      return;
-    }
-    const req = httpsRequest(
-      {
-        host: u.host,
-        path: u.pathname + u.search,
-        method: 'GET',
-        headers: { range: 'bytes=0-1023', 'user-agent': 'openmemo-check-release-refs' },
-        timeout: 45_000,
-      },
-      (res) => {
-        if (
-          [301, 302, 303, 307, 308].includes(res.statusCode) &&
-          res.headers.location &&
-          hops > 0
-        ) {
-          res.resume();
-          resolve(probe(new URL(res.headers.location, url).href, hops - 1));
-          return;
-        }
-        res.resume();
-        resolve({ ok: res.statusCode === 200 || res.statusCode === 206, status: res.statusCode });
-      },
-    );
-    req.on('timeout', () => req.destroy(new Error('timeout')));
-    req.on('error', (e) => resolve({ ok: false, status: 0, reason: e.message }));
-    req.end();
-  });
-}
+/*
+ * ★★ #111 ①：这里原本有一份**自己手写的** `probe()`，现在直接用 `probe-mirror.mjs`
+ *    的 `probeFollow()`。删掉的那份里有两个真 bug，而两个都是"今天无害"的：
+ *
+ *      const req = httpsRequest({ host: u.host, … })   // ← 删掉的原文
+ *
+ *    ① `host: u.host` —— **`URL.host` 含端口**，且这里根本没传 `port`。
+ *       对 `https://github.com/...` 没事（默认端口不出现在 `u.host` 里），
+ *       对 `http://127.0.0.1:41273/...` 就变成"去解析一个叫 `127.0.0.1:41273` 的主机名"
+ *       ⇒ 一个请求都发不出去。
+ *    ② 无论 `u.protocol` 是什么都走 `node:https` ⇒ `http:` 的地址必然连不上。
+ *
+ *    这是**同一形状的第二个实例**。第一个（`probe-mirror.mjs::probeUrl`）在 #108
+ *    被自检当场抓出来：`[CI 实测 run 31695269578]` 12 条里 7 条一起红。
+ *    它在真实清单上一直潜伏，是因为 release 地址不带端口、也全是 https ——
+ *    **潜伏不是因为它对，是因为没有任何输入能让它错**。
+ *
+ *    所以修法不是"把这份改对"，而是**不再有第二份**：
+ *    `probeUrl()` 已经有 `selftest-probe-mirror.mjs` 守着，那份自检起的是一个
+ *    绑 `:0`、由 OS 分端口的桩上游 —— 也就是说，这条腿从此**继承**了
+ *    唯一能让这个 bug 现形的那种输入。手写一份新的就等于退出那份自检的覆盖范围。
+ *
+ * ⚠️ 两处行为差异，都是划算的：
+ *    · 每个地址取 64 KB（原来 1 KB）。发布前一次几十个地址，多几 MB，可忽略。
+ *    · User-Agent 变成 `openmemo-e2e-allcomponents`（`probeUrl` 里写死的）。
+ *      上游日志里两条腿从此不好分 —— 但换来的是判据只剩一份。
+ *      `probe-mirror.mjs` 不在本次改动范围内，不为了这个去动它。
+ *
+ * 返回形状与原来那份兼容：`{ ok, status, reason }`（确定性失败时没有 `status`，
+ * 下面的消费方本来就写的是 `res.status || res.reason`）。
+ */
 
 const all = readAllUrls(MANIFESTS);
 const ours = collectReleaseRefs(all);
