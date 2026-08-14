@@ -15,9 +15,9 @@
     "先例（同一套棘轮姿势）：scripts/orphan-exports-baseline.json、",
     "scripts/ci/single-source-baseline.json、scripts/ci/selfcheck-known-gaps.json。"
   ],
-  "generatedAt": "2026-08-13",
+  "generatedAt": "2026-08-14",
   "generatedBy": "test-ratchet（事故：31d3ae3 静默删除 platformUnsupported.test.ts 191 行，7581cff 恢复）",
-  "floor": 168,
+  "floor": 169,
   "tracked": [
     "apps/daemon/src/bootstrap/entrypoint.test.ts",
     "apps/daemon/src/bootstrap/open-browser.test.ts",
@@ -160,6 +160,7 @@
     "packages/pipeline/src/audio/__tests__/vad.test.ts",
     "packages/pipeline/src/audio/__tests__/vadDegradation.test.ts",
     "packages/pipeline/src/media/__tests__/registryFallback.test.ts",
+    "packages/pipeline/src/media/__tests__/resumableFetchRetry.test.ts",
     "packages/pipeline/src/media/__tests__/ytdlpRemoval.test.ts",
     "packages/pipeline/src/queue/__tests__/lanes.test.ts",
     "packages/pipeline/src/subprocess/__tests__/argGuard.test.ts",
