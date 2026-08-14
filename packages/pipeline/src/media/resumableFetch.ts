@@ -84,8 +84,12 @@ export async function resumableFetch(opts: ResumableFetchOptions): Promise<Resum
    * 这条腿当时没跟上（`http.ts` 里那段注释还点名说 `resumableFetch.ts` 留在旧层）。
    *
    * ⚠️ 用 `MEDIA_PROBE_RETRY_POLICY` 而**不是**出厂的 `PROBE_RETRY_POLICY`：
-   *    探测发生在任何 `onProgress` 之前，重试的整段时间里进度条冻在 0%，
-   *    而组件安装是用户可以走开的后台任务。理由与具体数字见那个常量的注释。
+   *    探测发生在任何 `onProgress` 之前，重试全程界面是**冻住的**
+   *    （实测停在「解析中 · 10%」，不是 0% —— 详见那个常量的注释），
+   *    而组件安装是用户可以走开的后台任务。
+   *    ★ `budgetMs` 压到 4 秒，是为了让**最坏值 ≈ 24 秒**、
+   *      而上游挂起这种最常见的坏**恰好还是今天的 20 秒**。
+   *      理由、算式和"牺牲了什么"全写在那个常量上，改数字前请先读。
    *
    * ⚠️ **确定性失败一次都不重试**：404 / 403 / 其它 4xx 的分类
    *    （`isRetriableHttpCode()` 是三码白名单）决定了它们直接抛，
@@ -98,7 +102,12 @@ export async function resumableFetch(opts: ResumableFetchOptions): Promise<Resum
     signal,
     timeoutMs: 20_000,
     policy: MEDIA_PROBE_RETRY_POLICY,
-    // 进度条这段时间是不动的，日志里至少要留下"它在重试、等了多久、为什么"
+    /*
+     * 界面这段时间是冻住的，而**重试对用户完全不可见**（那条路上没有任何
+     * 现成信号能承载"正在重试"，走查见常量注释）。所以日志是唯一的痕迹 ——
+     * 排查"用户说导入卡了半分钟"时，这几行是唯一能还原现场的东西。
+     * 组件下载那条路（PR #56）也只 `console.warn`，保持一致。
+     */
     onRetry: (attempt, delayMs) => {
       console.warn(
         `[media] 探测 ${url} 第 ${String(attempt.attempt)} 次失败（${attempt.code} ${String(attempt.status)}：${attempt.message}），` +

@@ -49,6 +49,11 @@ interface Plan {
   failTimes: number;
   status: number;
   body: Buffer;
+  /**
+   * 坏掉的那些请求**拖多久才回**。默认 0 = 立刻失败（那一夜 `Origin error 503`
+   * 的形状）。用来区分"快速失败"和"慢速失败" —— `budgetMs` 判的正是这两者。
+   */
+  failDelayMs?: number;
 }
 interface Seen {
   url: string;
@@ -75,8 +80,12 @@ before(async () => {
     }
     const nth = seen.filter((s) => s.url === url).length;
     if (nth <= plan.failTimes) {
-      res.writeHead(plan.status, { 'content-type': 'text/plain' });
-      res.end('upstream is having a moment');
+      const fail = (): void => {
+        res.writeHead(plan.status, { 'content-type': 'text/plain' });
+        res.end('upstream is having a moment');
+      };
+      if (plan.failDelayMs) setTimeout(fail, plan.failDelayMs).unref();
+      else fail();
       return;
     }
     // Range 支持：探测发的是 `bytes=0-0`，取字节发的是 `bytes=<start>-<end>`
@@ -215,6 +224,68 @@ describe('#111 ② 媒体导入的探测重试', () => {
 
     assert.equal(r.sizeBytes, bodyOf(url).length);
     assert.equal(probeHits(url).length, 1, '一切正常还探了不止一次 —— 那说明重试不是按失败触发的');
+  });
+
+  /*
+   * ══════════════════════════════════════════════════════════════════════════
+   * ⑤ `budgetMs` 那个决定本身 —— 成对钉住（#111 ② 的裁决）
+   *
+   * 重试全程**对用户不可见**（那条路上没有现成信号能承载"正在重试"），
+   * 所以最坏时长被压回今天的量级：`最坏 ≈ budgetMs + timeoutMs`，
+   * `4_000 + 20_000 = 24s`，而今天（零重试）是 20s。
+   *
+   * 这个取舍只有**两条一起**才立得住，少任何一条都会被下一次调参悄悄推翻：
+   *   · 下面这条：**慢速失败**必须被预算当场砍掉（把 `budgetMs` 调回 25_000，
+   *     它就会重试 → 当场红）；
+   *   · 上面 ① / ②：**快速失败**必须还能用满 3 次（把 `budgetMs` 压到 0
+   *     或者把 `baseMs` 调大，它们就会红）。
+   * 也就是说这一组同时封住了"调大"和"调小"两个方向 —— 而中间那段
+   * 正是"救得到抖动、又不多让用户等"的那个窗口。
+   * ══════════════════════════════════════════════════════════════════════════
+   */
+  it('★★ ⑤ 慢速失败被预算当场砍掉：只探一次，且 budgetExhausted', async () => {
+    // 第 1 次就要 5 秒才失败 ⇒ elapsed(5000) + 最小退避(200) 已经越过 4000 的预算
+    const url = route({ failTimes: Infinity, status: 503, failDelayMs: 5000 });
+
+    const startedAt = Date.now();
+    const err = await run(url).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    const elapsed = Date.now() - startedAt;
+
+    assert.ok(err instanceof ProbeFailedError, `期望 ProbeFailedError，拿到 ${String(err)}`);
+    assert.equal(
+      probeHits(url).length,
+      1,
+      `慢速失败应当只探 1 次（预算 ${String(MEDIA_PROBE_RETRY_POLICY.budgetMs)}ms 当场用尽），` +
+        `实际 ${String(probeHits(url).length)} 次 —— ` +
+        '有人把 budgetMs 调大了？请先读 http.ts 上那段"最坏值 = budgetMs + timeoutMs"',
+    );
+    assert.equal(err.budgetExhausted, true, '这一条是**预算**用尽，不是次数用尽');
+    // 上界：一次请求 5s + 一点余量。真退回 25_000 预算的话这里会是 ~10s+
+    assert.ok(elapsed < 9000, `慢速失败总耗时 ${String(elapsed)}ms，超出预期上界`);
+  });
+
+  it('★ ⑤ 前提检查：同一个上游**快速**失败时，3 次是用得满的（证明上一条不是恒真）', async () => {
+    const url = route({ failTimes: Infinity, status: 503 });
+
+    const err = await run(url).then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    assert.ok(err instanceof ProbeFailedError);
+    assert.equal(
+      probeHits(url).length,
+      MEDIA_PROBE_RETRY_POLICY.maxAttempts,
+      '快速失败没能用满次数 —— 预算压过头了，抖动救不回来了',
+    );
+    assert.equal(
+      err.budgetExhausted,
+      false,
+      '快速失败不该撞到预算：撞到就说明 budgetMs 与 baseMs 的比例失衡了',
+    );
   });
 
   /*
