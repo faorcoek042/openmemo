@@ -536,6 +536,15 @@
     "insecureAlternative": "Everything else works here: import a local media file or a link from the Capture page — transcription, summary and mindmap are unaffected.",
     "streamError": "Live recognition connection failed; streaming stopped. The recording is still saved locally and can be re-transcribed later.",
     "overrun": "The network could not keep up and some audio frames were dropped (words may be missing). The original recording is unaffected.",
+    "wsError": {
+      "streamEngineUnavailable": "Live transcription cannot start: no streaming model is installed. Install one on the Models page — nothing was recorded, so nothing was lost.",
+      "startFailed": "Recording could not start, so nothing was saved. Reported by the recorder, verbatim and not translated: {{detail}}",
+      "engineError": "The recognition engine reported an error mid-session. What has already been transcribed is kept. Reported by the engine, verbatim and not translated: {{detail}}",
+      "finalizeFailed": "Recording could not be finalised. The audio may already be on disk, but this session did not close cleanly. Reported by the recorder, verbatim and not translated: {{detail}}",
+      "controlMessageNotJson": "The browser sent a control message the daemon could not parse. That is a defect in the app, not something you did wrong.",
+      "asrWorkerNotImplemented": "The browser-based recognition worker is not available in v1 (ADR-006 decision 3 downgraded it to an experiment).",
+      "notReported": "The recorder reported an error, but this daemon build did not say which one. The details are in the daemon log; if a newer build is already installed, reloading this page will pick it up."
+    },
     "rerunFailed": "Offline re-run failed. The streaming result is kept.",
     "doneSummary": "Recording finished — {{segments}} segments",
     "preservedOnly": "{{count}} segment(s) you edited were preserved.",
@@ -752,6 +761,20 @@
       "route": "Route",
       "fastest": "fastest",
       "unreachable": "unreachable",
+      "probeDetail": {
+        "proxyUnreachableNotSent": "could not reach the proxy {{proxyUrl}} — no request was sent to {{target}} at all",
+        "proxyRejectedCredentials": "the proxy {{proxyUrl}} rejected the credentials (407) — check the username/password; this is not the target's doing",
+        "proxyRefusedTunnel": "the proxy {{proxyUrl}} answered but refused to open a tunnel to {{target}} (CONNECT was neither 2xx nor 407) — common with corporate proxies that deny by policy; we cannot tell whether the problem is the proxy policy or the target",
+        "probeErrorText": "verbatim from the probe, not translated by us: {{text}}"
+      },
+      "sourceName": {
+        "hf": "Hugging Face",
+        "hf-mirror": "hf-mirror (mirror)",
+        "modelscope": "ModelScope",
+        "github": "GitHub"
+      },
+      "sourceNameVerbatim": "{{label}} (custom source, name shown as configured)",
+      "sourceListSeparator": ", ",
       "sourcesSomeUnreachable": "⚠️ **{{n}} download source(s) are unreachable**: {{list}}. This table and the proxy verdict above **were measured against different targets** — a working proxy does not mean these sources can be downloaded from.",
       "sourcesAllReachable": "All {{n}} download sources are reachable.",
       "effective": "In effect",
@@ -882,7 +905,11 @@
     "idleHint": "Chinese word segmentation and pinyin supported. Transcript hits jump straight to that second.",
     "noResults": "No matches",
     "noResultsHint": "Try different words. Transcript hits jump straight to that second.",
-    "tokenizerDegraded": "Chinese segmentation has fallen back to trigram — two-character terms may not be found. Your notes are unaffected; search again once it is restored."
+    "tokenizerDegraded": "Chinese segmentation has fallen back to trigram — two-character terms may not be found. Your notes are unaffected; search again once it is restored.",
+    "semanticUnavailable": {
+      "noEmbeddingStage": "the vector extension is loaded, but nothing generates embeddings yet — that part is ours to finish, not something you can install",
+      "vectorExtensionNotLoaded": "the sqlite-vec extension is not loaded"
+    }
   },
   "onboarding": {
     "title": "Welcome to OpenMemo",
@@ -1038,7 +1065,21 @@
       "ru": "Russian",
       "custom": "Custom…"
     },
-    "installHereHint": "Install one from this page"
+    "installHereHint": "Install one from this page",
+    "engineUnavailable": {
+      "modelNotInstalled": "no model is installed for it — install one on the Models page to enable it",
+      "installedButFilesIncomplete": "installed ({{ids}}), but the files are incomplete so it cannot load — reinstall it on the Models page",
+      "overrideDirIncomplete": "{{envVar}} points at {{dir}}, and the files this engine needs are not there",
+      "engineProbeText": "reported by the engine, verbatim and not translated: {{text}}"
+    },
+    "engineWithReason": "{{engine}} ({{reason}})",
+    "reasonParenthetical": " ({{reason}})",
+    "engineListSeparator": "; "
+  },
+  "uninstall": {
+    "recordRemovedFilesKept": "Uninstalled — the record is gone. But {{n}} file(s) could not be deleted, because the record pointed outside the data folder: {{names}}",
+    "filesKeptHint": "Nothing more is needed here: the uninstall itself went through, and pressing it again will only report that the record no longer exists. Delete those files yourself if you want the space back.",
+    "verbatimReason": "Reported by the store layer, verbatim and not translated: {{reason}}"
   },
   "secureContext": {
     "title": "This address is not a secure context — some features are unavailable",

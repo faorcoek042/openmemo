@@ -159,15 +159,21 @@ describe('★★ #90 C 边界：现读模型不许动摇引擎选择', () => {
     const streamAfter = await resolveStreamingModel(root, {});
     const paraAfter = await resolveOfflineChineseModel(root, {});
 
+    /*
+     * ⚠️ #112：比的是 `reason`（`EngineUnavailableReason`，深比整条判别联合），
+     * 不再是 `reasonZh` 那句中文。要守的性质一个字没变 ——「引擎侧的输入逐字不变」——
+     * 只是那一格现在装的是**结构**而不是散文：`deepEqual` 连
+     * `installedIds` / `envVar` / `dir` 这些字段一起比，比读一句话更严。
+     */
     assert.deepEqual(
-      { dir: streamAfter.dir ?? null, reasonZh: streamAfter.reasonZh },
-      { dir: streamBefore.dir ?? null, reasonZh: streamBefore.reasonZh },
+      { dir: streamAfter.dir ?? null, reason: streamAfter.reason },
+      { dir: streamBefore.dir ?? null, reason: streamBefore.reason },
       'sherpa 的解析被 active.json 影响了 —— 那意味着激活能改变 engines[] 的成员，' +
         '于是"只现读模型路径"这条边界不再成立，起任务时现读会配出「新模型 + 旧引擎」',
     );
     assert.deepEqual(
-      { model: paraAfter.model ?? null, reasonZh: paraAfter.reasonZh },
-      { model: paraBefore.model ?? null, reasonZh: paraBefore.reasonZh },
+      { model: paraAfter.model ?? null, reason: paraAfter.reason },
+      { model: paraBefore.model ?? null, reason: paraBefore.reason },
       'paraformer 的解析被 active.json 影响了 —— 同上',
     );
   });

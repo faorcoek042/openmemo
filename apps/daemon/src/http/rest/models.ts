@@ -46,6 +46,7 @@ import {
   type PlatformSelector,
   type ProviderId,
   type Quantization,
+  type UninstallWithRefusalsResponse,
 } from '@openmemo/shared';
 
 import { loadableByRoleConsumer } from '../../pipeline/modelStore.js';
@@ -744,11 +745,13 @@ async function deleteModel(state: RestState, res: ServerResponse, id: string): P
   // 有文件被拒绝删除就说出来，干净的那条路仍然是 204。两处若只改一处，
   // "同一件事两种答案"这族 bug 就又多一条。
   if (dropped.refused.length > 0) {
+    // ★ #109：同 `backends.ts` 那一处，`satisfies` 把这个 body 钉在契约上 ——
+    // 网页读的是同一个 `UninstallWithRefusalsResponse`，两侧漂了没人会说话。
     sendJson(res, 200, {
       modelId: id,
       freedBytes: gc.freedBytes,
       filesNotRemoved: dropped.refused.map((r) => ({ name: r.name, reason: r.reason })),
-    });
+    } satisfies UninstallWithRefusalsResponse & { readonly modelId: string });
     return true;
   }
   res.writeHead(204);

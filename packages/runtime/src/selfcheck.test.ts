@@ -1395,7 +1395,15 @@ describe('★ T-174 / #106 英文字段：不许含中文，也不许缺席', ()
           {
             id: 'sherpa-onnx',
             available: false,
-            reason: 'the streaming recognition component is not installed',
+            /*
+             * #112：这一格从裸字符串换成了 `engine_probe_text` 那个信封。
+             * 里面那句英文**一个字都没动** —— 它就是 `packages/pipeline` 的原话，
+             * 而下面「英文字段无 CJK」那条守的正是"别在这里替它编中文"。
+             */
+            reason: {
+              kind: 'engine_probe_text',
+              text: 'the streaming recognition component is not installed',
+            },
           },
         ]),
       selectFor: () =>

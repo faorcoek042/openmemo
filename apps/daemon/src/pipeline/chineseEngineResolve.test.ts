@@ -171,12 +171,85 @@ describe('中文/流式引擎：判据是"模型装没装"，不是"环境变量
     const ids = bundle.unavailableEngines.map((e) => e.id).sort();
     assert.deepEqual(ids, ['paraformer', 'sherpa-onnx']);
 
-    // 原因必须**可操作** —— "不可用"三个字等于没说。UI 直接渲染这句话。
+    /*
+     * ★★ 原因必须**可操作**，而且必须**说得出是哪一种可操作** ——
+     * "不可用"三个字等于没说。
+     *
+     * ── #112：这三行断言原来是什么，为什么必须换掉 ──────────────────────────────
+     *
+     * 原来是 `assert.match(e.reasonZh, /未安装/)` + `/模型/` —— 读的是 daemon
+     * **拼好的那句中文**。那句中文正是这次要修的缺陷本身：它被前端三个渲染点
+     * 原样插值进英文句子里，英文用户看到的是半句中文。
+     * **一条断言要求缺陷继续存在，它就不再是护栏，是钉子。**
+     *
+     * 换成钉**结构**，不是把同一条断言重新指向新的中文措辞（那是同一个错误
+     * 换个字符串）：落在哪一档、那一档带的数据是什么。措辞那一层没有丢，
+     * 只是搬去了 `apps/web/src/features/models/engineReasonText.test.ts`
+     * （断的是**渲染出来的英文**，比在这里读一句中文更接近用户）。
+     * 两层缺一不可：只留这里 ⇒ 结构对了、界面上可能是一段空白；
+     * 只留那里 ⇒ 「装没装」与「装坏了」两档会在 daemon 侧悄悄合并。
+     *
+     * ⚠️ 判据是 `model_not_installed` 这**一档**，不是"有个 kind 就行"：
+     * 一台什么都没装的机器落到 `installed_but_files_incomplete`，
+     * 界面会叫他"去重装你装过的那个" —— 而他一个都没装过。
+     */
     for (const e of bundle.unavailableEngines) {
-      assert.ok(e.reasonZh.length > 0, `${e.id} 缺原因`);
-      assert.match(e.reasonZh, /未安装/, `${e.id} 的原因没说清是"没装"：${e.reasonZh}`);
-      assert.match(e.reasonZh, /模型/, `${e.id} 的原因没告诉用户去哪装：${e.reasonZh}`);
+      assert.deepEqual(
+        e.reason,
+        { kind: 'model_not_installed' },
+        `${e.id} 的原因不是"一个模型都没装"那一档：${JSON.stringify(e.reason)}`,
+      );
     }
+  });
+
+  /**
+   * ★★ 与上一条配对的**鉴别腿**：装了、但文件不全，必须落到**另一档**。
+   *
+   * 没有这一条，上面那条 `model_not_installed` 可以靠"永远返回这一档"蒙对 ——
+   * 而那正是这两档不许合并的理由：
+   *   · `model_not_installed`            ⇒ 界面说"去装一个"；
+   *   · `installed_but_files_incomplete` ⇒ 界面说"你装的那个不全，重装它"。
+   * 合并之后，一个已经装过的人会被送去再装一遍他刚装完的东西。
+   *
+   * ## 夹具为什么是"装完再把一个文件弄没"
+   *
+   * 因为 `looksLikeParaformer()`（按**记录里的文件名**判）与
+   * `resolveParaformerModel()`（按**磁盘上真有什么**判）用的是同一条规则，
+   * 光靠挑文件名凑不出"记录认、目录不认"。而真实世界里这一档正是这么发生的：
+   * **记录说文件在，文件不在了**（blob 被清、by-name 链断、盘上手工删过）。
+   * 所以这里如实复现那一幕：正常装好，然后把 `tokens.txt` 的 blob 与 by-name
+   * 链一起删掉 —— `materializeModelDir()` 找不到源就跳过它（不报错），
+   * 摊出来的目录里只剩 `*.onnx`，`resolveParaformerModel()` 于是解析不出来。
+   */
+  it('★ 装了但文件不全 ⇒ 落在**另一档**，并说得出是哪个 id（不是"没装"）', async () => {
+    const paths = await freshPaths('incomplete');
+    const tokens = Buffer.from('PARAFORMER-TOKENS\n<blk> 0\n');
+    await fakeInstall(paths.modelsDir, {
+      id: 'asr/paraformer-zh-small',
+      role: 'asr',
+      family: 'paraformer',
+      files: [
+        { name: 'model.int8.onnx', bytes: onnx('paraformer') },
+        { name: 'tokens.txt', bytes: tokens },
+      ],
+    });
+    // 记录原封不动留着（它仍然写着 tokens.txt），只把那个文件的两个来源弄没。
+    await rm(join(paths.modelsDir, 'blobs', `sha256-${sha256(tokens)}`), { force: true });
+    await rm(join(paths.modelsDir, 'by-name', 'asr', 'tokens.txt'), { force: true });
+
+    const bundle = await buildPipeline(paths);
+    const para = bundle.unavailableEngines.find((e) => e.id === 'paraformer');
+    assert.ok(para, 'paraformer 解析不出来就必须出现在 unavailableEngines 里');
+    assert.equal(
+      para.reason.kind,
+      'installed_but_files_incomplete',
+      `装过的东西被说成"没装"，界面会叫他再装一遍：${JSON.stringify(para.reason)}`,
+    );
+    assert.deepEqual(
+      para.reason.kind === 'installed_but_files_incomplete' ? [...para.reason.installedIds] : [],
+      ['asr/paraformer-zh-small'],
+      '说不出是哪一个装坏了，用户就不知道该重装哪一个',
+    );
   });
 
   it('装上流式中文模型 → streamAvailable 翻成 true（零环境变量）', async () => {

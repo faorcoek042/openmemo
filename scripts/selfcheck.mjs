@@ -391,12 +391,20 @@ async function main() {
       chineseSearch: () => (sqlite === null ? Promise.resolve(null) : sqlite.chineseSearch()),
       vecVersion: () => (sqlite === null ? Promise.resolve(null) : sqlite.vecVersion()),
 
+      /*
+       * #112：`reason` 这一格是 `EngineUnavailableReason`，不再是裸字符串。
+       * 这里落进来的一律是 `packages/pipeline` 的英文原话，所以走
+       * `engine_probe_text` 那一格 —— 与 `apps/daemon/src/http/rest/selfcheck.ts`
+       * 的同名探针**逐字节同形**（`meta.sameSource` 比的就是这两个出口）。
+       */
       engines: () =>
         Promise.resolve(
           candidates.map((c) => ({
             id: c.engine.id,
             available: c.available,
-            ...(c.unavailableReason ? { reason: c.unavailableReason } : {}),
+            ...(c.unavailableReason
+              ? { reason: { kind: 'engine_probe_text', text: c.unavailableReason } }
+              : {}),
           })),
         ),
       selectFor: (language) => {

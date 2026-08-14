@@ -36,11 +36,19 @@
  * 三条否定断言**全部空转通过**。
  */
 
-/** `useAsrEngines()` 给出的每个引擎的状态（只取本模块用得到的三个字段）。 */
+import type { EngineUnavailableReason } from '@openmemo/shared';
+
+/**
+ * `useAsrEngines()` 给出的每个引擎的状态（只取本模块用得到的三个字段）。
+ *
+ * ⚠️ #112：`reason` 从 `string` 换成了 {@link EngineUnavailableReason}。
+ * 本模块**照旧不碰文案** —— 它只决定"哪几条原因该被念出来"，
+ * 把哪一档翻成哪句话是 `components/common/engineReasonText.ts` 的事。
+ */
 export interface LocalEngine {
   readonly id: string;
   readonly available: boolean;
-  readonly reason?: string | undefined;
+  readonly reason?: EngineUnavailableReason | undefined;
 }
 
 export type EngineFitKind =
@@ -64,7 +72,7 @@ export interface EngineFit {
    * 只取**这条模型声明的那些引擎**的原因 —— 一条会对不相干的东西发表意见的提示，
    * 说对的时候也不该被相信。
    */
-  readonly reasons: readonly string[];
+  readonly reasons: readonly EngineUnavailableReason[];
 }
 
 export interface EngineFitInput {
@@ -90,11 +98,23 @@ export function engineFit(input: EngineFitInput): EngineFit {
   if (engines.some((e) => usable.has(e))) return { kind: 'fits', reasons: [] };
 
   const byId = new Map(local.map((e) => [e.id, e]));
-  const reasons: string[] = [];
+  const reasons: EngineUnavailableReason[] = [];
+  const seen = new Set<string>();
   for (const id of engines) {
     const r = byId.get(id)?.reason;
-    // 只收"这个引擎不可用"的原因；空字符串不算原因（那是"没给"，不是"给了一句空话"）
-    if (r !== undefined && r !== '' && !reasons.includes(r)) reasons.push(r);
+    /*
+     * 只收"这个引擎不可用"的原因。**没给就是没给** —— 不许在这里凑一句。
+     *
+     * 去重按序列化后的整条原因，不是按 `kind`：sherpa 与 Paraformer 可能同时落在
+     * `installed_but_files_incomplete`，但 `installedIds` 是**不同的两串 id**，
+     * 按 `kind` 去重会把其中一条静默吃掉。上一版按整句字符串去重，
+     * 效果与这里一致（同一句话 = 同一条原因）。
+     */
+    if (r === undefined) continue;
+    const key = JSON.stringify(r);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    reasons.push(r);
   }
   return { kind: 'not-enabled', reasons };
 }

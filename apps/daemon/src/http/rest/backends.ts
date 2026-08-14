@@ -36,6 +36,7 @@ import {
   type InapplicableKind,
   type InstalledBackendPack,
   type PlatformSelector,
+  type UninstallWithRefusalsResponse,
 } from '@openmemo/shared';
 
 import {
@@ -895,11 +896,18 @@ export async function handleBackendRoutes(
      * （e2e 的 A-UNINSTALL-* 两条腿钉的就是它）。
      */
     if (dropped.refused.length > 0) {
+      /*
+       * ★ #109：`satisfies` 不是装饰。这个 body 的读者是网页那一侧
+       * （`features/runtime/api.ts` 的 `api<UninstallWithRefusalsResponse | undefined>`），
+       * 而 `sendJson` 的第三个参数是 `unknown` —— 少发一格、改个名字、把
+       * `filesNotRemoved` 写成 `filesKept`，服务端这边**一个字都不会说**，
+       * 只有用户会发现界面上那句话没了。钉在契约类型上，两侧才不可能各自漂。
+       */
       sendJson(res, 200, {
         packId: id,
         freedBytes: gc.freedBytes,
         filesNotRemoved: dropped.refused.map((r) => ({ name: r.name, reason: r.reason })),
-      });
+      } satisfies UninstallWithRefusalsResponse & { readonly packId: string });
       return true;
     }
     res.writeHead(204);

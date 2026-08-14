@@ -15,6 +15,7 @@ import { TranscribeOptions } from '../../components/common/TranscribeOptions';
 import { ASR_ENGINE_LABELS, ASR_LANGUAGE_AUTO } from '../../lib/asr';
 import { isMicrophoneAvailable, localhostEquivalent } from '../../lib/secure-context';
 import { applyCaption, startRecording, type RecorderHandle } from './asrStream';
+import { normalizeRecorderError, recorderErrorText } from './recorderErrorText';
 import { useProgressStore } from '../../lib/stores/progress.store';
 import { useJobsQuery } from '../../lib/api/jobs';
 import { useTranscriptQuery } from '../notes';
@@ -276,7 +277,19 @@ export default function RecorderPage() {
               setStreamError(t('recorder.overrun'));
               break;
             case 'error':
-              setStreamError(msg.messageZh);
+              /*
+               * ★ 帧上**没有句子了**（#112 第 19 处）。原来这里是
+               * `setStreamError(msg.messageZh)` —— 帧上唯一的人话、而且只有中文，
+               * 于是英文用户这条横幅在结构上就没救。措辞现在归两份 locale。
+               *
+               * 🔴 **必须保证是非空串。** 渲染点是
+               * `{streamError ? <Banner … /> : null}`：假值渲染出来的是
+               * **什么都没有** —— 比一句说错了的话更糟，用户不会知道出过事。
+               * 这条保证由 `normalizeRecorderError()` 兜住（它对任何缺失/不认识的
+               * 东西都回 `not_reported`，而那一格有自己的词条），
+               * 不是靠"daemon 应该会发对"。
+               */
+              setStreamError(recorderErrorText(t, normalizeRecorderError(msg.reason)));
               /*
                * ★ 致命错误必须把界面带回 idle，并**放开麦克风**（T-164 ②）。
                *
@@ -288,6 +301,16 @@ export default function RecorderPage() {
                * 只对**会话根本没开起来**的两个码这么做：`overrun` /
                * `ASR_STREAM_ERROR` 这类是「录着录着出了点问题」，
                * 把它们也打回 idle 会丢掉已经识别出来的内容。
+               *
+               * ⚠️ **判据仍然是 `code`，不是 `reason.kind`** —— 这一条是想过之后
+               * 决定不动的。两者在**新** daemon 上一一对应
+               * （`ASR_STREAM_UNAVAILABLE`⇄`stream_engine_unavailable`、
+               * `RECORD_START_FAILED`⇄`start_failed`，各只有一个发出点），
+               * 但在**老** daemon 上不是：老 daemon 发 `code` 而**不发 `reason`**，
+               * 那时 `normalizeRecorderError` 只能给出 `not_reported`，
+               * 于是改判 `reason.kind` 会让这个分支**恰好对最该保护的那批人失效** ——
+               * 麦克风灯继续亮、界面停在「录音中」，T-164 ② 修掉的东西原样回来。
+               * `code` 是这条帧上**唯一跨版本都在**的那一格，判据留在它上面。
                */
               if (msg.code === 'ASR_STREAM_UNAVAILABLE' || msg.code === 'RECORD_START_FAILED') {
                 if (timerRef.current) clearInterval(timerRef.current);

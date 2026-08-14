@@ -10,6 +10,7 @@ import type {
   GetHardwareResponse,
   GetInstalledBackendsResponse,
   PullResponse,
+  UninstallWithRefusalsResponse,
 } from '@openmemo/shared';
 import { breakerTripped } from '@openmemo/shared';
 
@@ -157,11 +158,20 @@ export function useBackendInstallMutation() {
   });
 }
 
+/**
+ * 卸载一个后端包。
+ *
+ * 返回值两档，与 `useModelDeleteMutation()` 一字不差（同一个契约、同一条规则）：
+ * `undefined` = 204 全删干净；对象 = 200 + `filesNotRemoved`，**记录已经清掉了**，
+ * 只是有几个文件我们拒绝去删。写成 `api<void>` 就等于把那句话在最后一米丢掉（#109）。
+ */
 export function useBackendRemoveMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<void>(`/backends/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+      api<UninstallWithRefusalsResponse | undefined>(`/backends/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.backends.installed });
       void qc.invalidateQueries({ queryKey: qk.backends.catalog });

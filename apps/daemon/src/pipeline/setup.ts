@@ -47,7 +47,11 @@ import {
 
 import { activeProxyConfig, isGgmlModelFile } from '@openmemo/downloader';
 import { proxyUrlFor } from '@openmemo/shared';
-import type { ToolchainVerdict, VadChunkingReason } from '@openmemo/shared';
+import type {
+  EngineUnavailableReason,
+  ToolchainVerdict,
+  VadChunkingReason,
+} from '@openmemo/shared';
 
 import type { AppPaths } from '../config/paths.js';
 import { whisperCliName } from '../runtime/setup.js';
@@ -125,9 +129,15 @@ export interface PipelineBundle {
    * 那正是"静默不可用"本身 —— 与 VAD 那次降级同族：**结果给了，代价没说**。
    *
    * 这里补上缺席的那几条，`main.ts` 把它们并进 health 的 `engines`，
-   * 前端 `AsrEngineStatus` 现成就会渲染 `reason` + 「去装运行时」按钮，一行前端代码都不用改。
+   * 前端 `AsrEngineStatus` 渲染 `reason` + 「去装运行时」按钮。
+   *
+   * ⚠️ **#112：这一格从 `reasonZh: string` 换成了机器可读的
+   * {@link EngineUnavailableReason}。** 原因不是"中文不好看"，是那句中文会被
+   * 前端**原样插值**进英文界面 —— `AsrEngineStatus` / `EngineFitChip` /
+   * 重转弹窗三个渲染点都是 `（${reason}）`。措辞现在归 `apps/web` 的两份 locale
+   * （`asr.engineUnavailable.*`），daemon 只说是哪一种 + 交出结构化字段。
    */
-  readonly unavailableEngines: readonly { id: EngineId; reasonZh: string }[];
+  readonly unavailableEngines: readonly { id: EngineId; reason: EngineUnavailableReason }[];
   /**
    * **这次跑的 whisper-cli 是哪个后端包给的**（T-162）。
    *
@@ -680,7 +690,7 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
    * ─────────────────────────────────────────────────────────────────────────────
    */
   const engines: AsrEngine[] = [whisper];
-  const unavailableEngines: { id: EngineId; reasonZh: string }[] = [];
+  const unavailableEngines: { id: EngineId; reason: EngineUnavailableReason }[] = [];
 
   const stream = await resolveStreamingModel(dirs.modelsDir, env);
   let sherpa: SherpaOnnxEngine | undefined;
@@ -688,7 +698,7 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
     sherpa = new SherpaOnnxEngine({ model: stream.model, provider: 'cpu' });
     engines.push(sherpa);
   } else {
-    unavailableEngines.push({ id: 'sherpa-onnx', reasonZh: stream.reasonZh });
+    unavailableEngines.push({ id: 'sherpa-onnx', reason: stream.reason });
   }
 
   const para = await resolveOfflineChineseModel(dirs.modelsDir, env);
@@ -706,7 +716,7 @@ export async function buildPipeline(paths: AppPaths): Promise<PipelineBundle> {
     });
     engines.push(paraformer);
   } else {
-    unavailableEngines.push({ id: 'paraformer', reasonZh: para.reasonZh });
+    unavailableEngines.push({ id: 'paraformer', reason: para.reason });
   }
 
   const candidates = await buildCandidates(engines);
@@ -883,13 +893,37 @@ function looksLikeParaformer(names: readonly string[]): boolean {
   return names.some((n) => n.endsWith('.onnx')) && names.includes('tokens.txt');
 }
 
-interface ResolvedEngineModel<T> {
-  readonly model: T | undefined;
-  /** 摊出来的模型目录（引擎自己不需要，但 `pipelineFor` 的 modelPath 要）。 */
-  readonly dir: string | undefined;
-  /** 不可用时给用户的话。可用时是空串。 */
-  readonly reasonZh: string;
-}
+/**
+ * 一次「这个引擎的模型解析出来了没有」的结果。
+ *
+ * ## #112：`reasonZh: string` 换成了 {@link EngineUnavailableReason}
+ *
+ * 那句中文原本一路进 `/api/health` 的 `pipeline.engines[].reason`，被前端三个
+ * 渲染点**原样插值**进英文句子里 —— 英文界面上于是有半句中文。
+ * 现在 daemon 只说**是哪一种**（外加已装 id / 变量名 / 目录这些**数据**），
+ * 措辞归 `apps/web` 的两份 locale（`asr.engineUnavailable.*`）。
+ *
+ * ## 为什么写成两条腿的联合，而不是 `reason: EngineUnavailableReason | null`
+ *
+ * 因为「解析成功 ⇔ 没有原因」这条不变量得有人守。写成可空字段，装配那一侧
+ * （`buildPipeline` 的 `else` 分支）拿到的就是 `… | null`，只能补一个 `??` 兜底 ——
+ * 而那个兜底一旦真跑到，就是**替一次未知的失败编一个具体原因**。
+ * 联合让 `if (stream.model)` 一句话同时收窄两格，一行运行期代码都不用写。
+ */
+type ResolvedEngineModel<T> =
+  | {
+      readonly model: T;
+      /** 摊出来的模型目录（引擎自己不需要，但 `pipelineFor` 的 modelPath 要）。 */
+      readonly dir: string;
+      /** 解析成功就没有"为什么用不了"这回事。 */
+      readonly reason: null;
+    }
+  | {
+      readonly model: undefined;
+      readonly dir: undefined;
+      /** 用不了的**机器可读**原因；措辞在 web 的 locale 里。 */
+      readonly reason: EngineUnavailableReason;
+    };
 
 /**
  * F3 流式中文模型。
@@ -913,11 +947,15 @@ export async function resolveStreamingModel(
   if (override) {
     const model = resolveSherpaModel(override);
     return model
-      ? { model, dir: override, reasonZh: '' }
+      ? { model, dir: override, reason: null }
       : {
           model: undefined,
           dir: undefined,
-          reasonZh: `OPENMEMO_SHERPA_STREAM_DIR 指向 ${override}，但那里没有 encoder/decoder/joiner/tokens.txt`,
+          reason: {
+            kind: 'override_dir_incomplete',
+            envVar: 'OPENMEMO_SHERPA_STREAM_DIR',
+            dir: override,
+          },
         };
   }
 
@@ -926,15 +964,21 @@ export async function resolveStreamingModel(
   for (const rec of candidates) {
     const dir = await materializeModelDir(modelsDir, rec);
     const model = dir ? resolveSherpaModel(dir) : undefined;
-    if (dir && model) return { model, dir, reasonZh: '' };
+    if (dir && model) return { model, dir, reason: null };
   }
+  /*
+   * ⚠️ 这两档**不许合并成"没装好"**：用户看得见的下一步不同 ——
+   * 一档是"去装一个"，另一档是"你装的那个不全，重装它"。
+   * 把已经装过的人送去再装一遍，正是本仓清过的那种「叫用户去做他刚做完的事」。
+   * 已装 id 是**数据**，照实列进 `installedIds` 由 web 插值，不拼进句子。
+   */
   return {
     model: undefined,
     dir: undefined,
-    reasonZh:
+    reason:
       candidates.length === 0
-        ? '未安装流式中文模型 —— 去「模型」页装 “sherpa 流式中文 zh-14M” 即可启用录音转文字'
-        : `已安装 ${candidates.map((c) => c.id).join('、')}，但文件不完整（缺 encoder/decoder/joiner/tokens.txt 之一）`,
+        ? { kind: 'model_not_installed' }
+        : { kind: 'installed_but_files_incomplete', installedIds: candidates.map((c) => c.id) },
   };
 }
 
@@ -947,11 +991,15 @@ export async function resolveOfflineChineseModel(
   if (override) {
     const model = resolveParaformerModel(override);
     return model
-      ? { model, dir: override, reasonZh: '' }
+      ? { model, dir: override, reason: null }
       : {
           model: undefined,
           dir: undefined,
-          reasonZh: `OPENMEMO_PARAFORMER_DIR 指向 ${override}，但那里没有 *.onnx + tokens.txt`,
+          reason: {
+            kind: 'override_dir_incomplete',
+            envVar: 'OPENMEMO_PARAFORMER_DIR',
+            dir: override,
+          },
         };
   }
 
@@ -960,15 +1008,16 @@ export async function resolveOfflineChineseModel(
   for (const rec of candidates) {
     const dir = await materializeModelDir(modelsDir, rec);
     const model = dir ? resolveParaformerModel(dir) : undefined;
-    if (dir && model) return { model, dir, reasonZh: '' };
+    if (dir && model) return { model, dir, reason: null };
   }
+  // 两档为什么不许合并，见 `resolveStreamingModel()` 里同一处的注释。
   return {
     model: undefined,
     dir: undefined,
-    reasonZh:
+    reason:
       candidates.length === 0
-        ? '未安装离线中文模型 —— 去「模型」页装 “Paraformer 中文 small” 即可启用（ADR-013：中文默认引擎）'
-        : `已安装 ${candidates.map((c) => c.id).join('、')}，但文件不完整（缺 *.onnx 或 tokens.txt）`,
+        ? { kind: 'model_not_installed' }
+        : { kind: 'installed_but_files_incomplete', installedIds: candidates.map((c) => c.id) },
   };
 }
 

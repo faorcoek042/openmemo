@@ -20,6 +20,7 @@ import { Button } from '../../components/common/Button';
 import { EmptyState } from '../../components/common/EmptyState';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { StatusChip } from '../../components/common/StatusChip';
+import { UninstallResidueBanner } from '../../components/common/UninstallResidueBanner';
 import { formatBytes } from '../../lib/format/bytes';
 import { localizedName, pickLocalized } from '../../lib/format/localized';
 import {
@@ -543,6 +544,18 @@ export default function ModelsPage() {
         */}
         {pull.isError ? <ErrorBlock error={pull.error} /> : null}
         {del.isError ? <ErrorBlock error={del.error} /> : null}
+        {/*
+          ★ #109：卸载**成功了、但有文件没删掉**的那一档。和上面那行是两件事，
+          不是同一件事的两种严重程度 —— 上面是"卸载没成"，这里是"卸载成了，有残留"。
+          所以它不走 `ErrorBlock`（见 `UninstallResidueBanner` 的文件头）。
+
+          ⚠️ 读的是 `del.data` 而**不是**另立一份 `useState`：react-query 在每次
+          mutate 进入 pending 时就把 `data` 清成 `undefined`，于是**下一次干净卸载
+          （204 → undefined）会自动把这条横幅收掉**。自己存一份 state 就得记得在
+          成功路径上清它，而"忘了清"的结果是一句更坏的假话：卸载干净了，界面还挂着
+          「有文件被留下」。
+        */}
+        <UninstallResidueBanner files={del.data?.filesNotRemoved} />
         {/*
           ★ 这四条以前是 `void X.mutateAsync(...)` —— 失败时界面一个字都不说。
           它们**不是刻意静默**：本页紧挨着的 `pull` / `del` 就是这么渲染错误的，

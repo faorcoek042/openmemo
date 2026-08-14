@@ -3,17 +3,23 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { CircleAlert, CircleCheck, Download } from 'lucide-react';
 
-import { type AsrEngineId, ASR_ENGINE_IDS } from '@openmemo/shared';
+import { type AsrEngineId, type EngineUnavailableReason, ASR_ENGINE_IDS } from '@openmemo/shared';
 
 import { api } from '../../lib/api/client';
 import { qk } from '../../app/query';
 import { arr } from '../../lib/safe';
 import { ASR_ENGINE_LABELS, toAsrEngineId } from '../../lib/asr';
+import { engineUnavailableText, normalizeEngineReason } from './engineReasonText';
 import { Button } from './Button';
 
 /** `GET /api/daemon/status` 里我们要用的那一小块（见 `apps/daemon/src/main.ts` 的 `pipeline`）。 */
 interface DaemonStatusPipeline {
-  engines?: { id: string; available: boolean; reason?: string }[];
+  /**
+   * ⚠️ `reason` 在这里是 `unknown`，**不是** `EngineUnavailableReason` ——
+   * 它是从网线上来的 JSON，写成后者只是我们对着服务端许愿。
+   * 收窄归 `normalizeEngineReason()`（下面），认不出的一律当没给。
+   */
+  engines?: { id: string; available: boolean; reason?: unknown }[];
   paraformerAvailable?: boolean;
   streamAvailable?: boolean;
   missing?: string[];
@@ -25,7 +31,14 @@ interface DaemonStatus {
 export interface EngineState {
   id: AsrEngineId;
   available: boolean;
-  reason?: string;
+  /**
+   * 为什么用不了 —— **机器可读**（#112）。措辞归 `engineReasonText.ts` + 两份 locale。
+   *
+   * 上一版这里是 `reason?: string`：daemon 拼好的**中文散文**，被三个渲染点原样
+   * 插值进英文句子里（英文界面上半句中文），而 `packages/pipeline` 那一支发的是
+   * **英文散文**（中文界面上半句英文）。同一格两头漏，所以整条轴换成了枚举 + 数据。
+   */
+  reason?: EngineUnavailableReason;
 }
 
 export function useAsrEngines(
@@ -65,12 +78,13 @@ export function useAsrEngines(
   const reported = new Map<AsrEngineId, EngineState>();
   for (const e of arr(data?.pipeline?.engines)) {
     const id = toAsrEngineId(e.id);
-    if (id)
-      reported.set(id, {
-        id,
-        available: e.available === true,
-        ...(e.reason ? { reason: e.reason } : {}),
-      });
+    if (!id) continue;
+    const reason = normalizeEngineReason(e.reason);
+    reported.set(id, {
+      id,
+      available: e.available === true,
+      ...(reason ? { reason } : {}),
+    });
   }
 
   /**
@@ -86,8 +100,8 @@ export function useAsrEngines(
    * 缺席即"未安装"，并给出安装入口。
    */
   const engines: EngineState[] = ASR_ENGINE_IDS.map(
-    (id) => reported.get(id) ?? { id, available: false, reason: undefined as string | undefined },
-  ).map((e) => (e.reason === undefined ? { id: e.id, available: e.available } : e));
+    (id) => reported.get(id) ?? { id, available: false },
+  );
 
   // isLoading 期间还没有数据，不要把"全都没装"当成结论
   return { engines, isLoading, ready: engines.some((e) => e.available) };
@@ -143,7 +157,7 @@ export function AsrEngineStatus({ className }: { className?: string }) {
           <span
             key={e.id}
             className={`inline-flex items-center gap-1 ${e.available ? 'text-ink-secondary' : 'text-ink-muted'}`}
-            title={e.reason ?? ''}
+            title={e.reason ? engineUnavailableText(t, e.reason) : ''}
           >
             {e.available ? (
               <CircleCheck className="size-3.5 text-good" aria-hidden />
@@ -155,13 +169,32 @@ export function AsrEngineStatus({ className }: { className?: string }) {
         ))}
       </p>
 
-      {/* 装不上的不灰掉了事 —— 给出路。reason 是 daemon 实测给的，不是我编的文案 */}
+      {/*
+        装不上的不灰掉了事 —— 给出路。
+        **原因仍然是 daemon 实测给的**，只是它现在给的是一个机器可读的档位
+        （`EngineUnavailableReason`），措辞在 `engineReasonText.ts` + 两份 locale 里 ——
+        所以这句话在英文界面上是英文，在中文界面上是中文，而不是像以前那样
+        无论哪种语言都渲染 daemon 拼好的那句中文散文。
+      */}
+      {/*
+        ⚠️ **括号与分号也归 locale**（#112 收尾）。
+        这里原来写死的是全角 `（）` 与 `；` —— 于是英文界面上是
+        `Sherpa-onnx（no model is installed…）`：一句英文，两个中文标点。
+        标点是文案的一部分，不是排版常量；写死一套就必然有一种语言是错的。
+      */}
       {missing.length > 0 ? (
         <p className="mt-1 flex flex-wrap items-center gap-2 text-ink-muted">
           <span>
             {missing
-              .map((e) => `${ASR_ENGINE_LABELS[e.id]}${e.reason ? `（${e.reason}）` : ''}`)
-              .join('；')}
+              .map((e) =>
+                e.reason
+                  ? t('asr.engineWithReason', {
+                      engine: ASR_ENGINE_LABELS[e.id],
+                      reason: engineUnavailableText(t, e.reason),
+                    })
+                  : ASR_ENGINE_LABELS[e.id],
+              )
+              .join(t('asr.engineListSeparator'))}
           </span>
           <Button
             size="sm"

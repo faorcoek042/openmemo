@@ -10,6 +10,7 @@ import { FitBadge, FitEta, FitGpuLayers } from '../../../components/common/FitBa
 import { formatBytes } from '../../../lib/format/bytes';
 import { localizedDescription, localizedName, pickLocalized } from '../../../lib/format/localized';
 import { useAsrEngines } from '../../../components/common/AsrEngineStatus';
+import { engineUnavailableText } from '../../../components/common/engineReasonText';
 import { useIsAppleSilicon } from '../../../lib/api/hardware';
 import { QuantSelector } from './QuantSelector';
 import { engineFit } from '../engineFit';
@@ -75,13 +76,20 @@ import { engineFit } from '../engineFit';
  *
  * 原文三件都答不了：「当前用不上」既不说是哪一种，也不给下一步。
  *
- * ── 修法：**不自己造话，念 daemon 已经算好的那句** ─────────────────────────────
+ * ── 修法：**不自己判断为什么，念 daemon 实测出来的那一档** ─────────────────────
  *
  * `useAsrEngines()` 一直带着每个引擎的 `reason`（`AsrEngineStatus.tsx` 里
  * 「reason 是 daemon 实测给的，不是我编的文案」那条规矩），而这里此前把它丢了。
  * 现在：
- *   · 引擎不可用但 daemon 给了原因 ⇒ **原样念它**（它自带 (b) 与 (c)）；
+ *   · 引擎不可用但 daemon 给了原因 ⇒ **照它说的那一档渲染**（它自带 (b) 与 (c)）；
  *   · daemon 没给原因 ⇒ 退回一句不发明因果的中性说明，**不再说"换引擎"**。
+ *
+ * ⚠️ **#112：「daemon 给的」现在指的是一个机器可读的档位，不是一句现成的话。**
+ * 那句话原来是 daemon 拼好的**中文散文**，被这里原样插进
+ * `models.engineFit.notEnabledWithReason` 的 `{{reason}}` 里 —— 英文界面上于是
+ * 半句中文。判据（是哪一档、已装哪几个 id）仍然**只由 daemon 出**，我们一个字
+ * 都没有替它判断；变的只是措辞的归属：它现在住在两份 locale 里，由
+ * `components/common/engineReasonText.ts` 那张总表取出。
  *
  * 措辞也从"用不上"改成"**引擎未启用**"：前者听起来像"这东西对你没用"（(a)），
  * 后者说的是事实 —— 引擎还没启用，而下一句正好告诉他怎么启用。
@@ -94,6 +102,8 @@ function EngineFitChip({ engines }: { engines: readonly string[] }) {
   // 判据抽在 `../engineFit`（纯函数，单测直接钉）—— 这里只负责怎么把它画出来。
   const { kind, reasons } = engineFit({ engines, local, ready });
   const mismatch = kind === 'not-enabled';
+  // 措辞抽在 `engineReasonText.ts`（总表 + 两份 locale）—— 见本组件顶上的 #112 那段。
+  const sentences = reasons.map((r) => engineUnavailableText(t, r));
 
   return (
     <span
@@ -105,17 +115,17 @@ function EngineFitChip({ engines }: { engines: readonly string[] }) {
       }
       title={
         mismatch
-          ? reasons.length > 0
-            ? reasons.join('\n')
+          ? sentences.length > 0
+            ? sentences.join('\n')
             : t('models.engineFit.mismatchHint')
           : undefined
       }
     >
       {mismatch
-        ? reasons.length > 0
+        ? sentences.length > 0
           ? t('models.engineFit.notEnabledWithReason', {
               engines: engines.join(' / '),
-              reason: reasons[0],
+              reason: sentences[0],
             })
           : t('models.engineFit.notEnabled', { engines: engines.join(' / ') })
         : t('models.engineFit.fits', { engines: engines.join(' / ') })}

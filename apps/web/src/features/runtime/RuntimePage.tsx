@@ -7,6 +7,7 @@ import type { Backend, DownloadJob, GetBackendCatalogResponse } from '@openmemo/
 import { Banner } from '../../components/common/Banner';
 import { Emphasis } from '../../components/common/Emphasis';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
+import { UninstallResidueBanner } from '../../components/common/UninstallResidueBanner';
 import { formatBytes } from '../../lib/format/bytes';
 import {
   useBackendInstallMutation,
@@ -262,6 +263,15 @@ export default function RuntimePage() {
         <ErrorBlock error={install.error} onRetry={() => install.reset()} />
       ) : null}
       {remove.isError ? <ErrorBlock error={remove.error} onRetry={() => remove.reset()} /> : null}
+      {/*
+        ★ #109：与 `/models` 那一处同一个组件、同一句话 —— 卸载**生效了**，
+        只是有几个文件我们拒绝去删（记录指向数据目录之外）。上一行是"卸载没成"，
+        这一行是"卸载成了、有残留"，两者不许共用一个渲染点，也不许都渲染成错误。
+
+        ⚠️ 读 `remove.data` 而不是自存 state：mutate 一进入 pending，react-query
+        就把 `data` 清成 `undefined`，所以**下一次干净卸载（204）会自动收掉它**。
+      */}
+      <UninstallResidueBanner files={remove.data?.filesNotRemoved} />
 
       {hardware.isError ? (
         <ErrorBlock error={hardware.error} onRetry={() => void hardware.refetch()} />

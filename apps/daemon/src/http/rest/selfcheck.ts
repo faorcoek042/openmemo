@@ -271,12 +271,22 @@ export function createSelfCheckRoutes(deps: SelfCheckRoutesDeps): {
             }
           },
 
+          /*
+           * #112：`unavailableReason` 是 `packages/pipeline` 的**英文自由文本**
+           * （`AsrAvailability.reason`，里面还可能带 `require()` 抛回来的 message）。
+           * 它照旧原样传给自检报告，只是**装进 `engine_probe_text` 那一格**：
+           * 同一条轴上 `/api/health` 的 `pipeline.engines[].reason` 已经是
+           * `EngineUnavailableReason` 了，两个出口各一种形状会让下游必须分别识别。
+           * 这一格刻意不枚举 —— 我们没解读过那串字符，也就不替它背书。
+           */
           engines: () =>
             Promise.resolve(
               (bundle?.candidates ?? []).map((c) => ({
                 id: c.engine.id,
                 available: c.available,
-                ...(c.unavailableReason ? { reason: c.unavailableReason } : {}),
+                ...(c.unavailableReason
+                  ? { reason: { kind: 'engine_probe_text', text: c.unavailableReason } as const }
+                  : {}),
               })),
             ),
 

@@ -88,10 +88,13 @@ function onRecorder(ws: WebSocket, url: URL, deps: WsDeps): void {
       started = true;
     })
     .catch((err: unknown) => {
+      const detail = errorDetail(err);
+      // 控制台那一侧没有 i18n（见 `finish()` 里那段说明），照旧说中文
+      console.error(`[ws/recorder] 录音启动失败：${detail}`);
       send({
         type: 'error',
         code: 'RECORD_START_FAILED',
-        messageZh: `录音启动失败：${err instanceof Error ? err.message : String(err)}`,
+        reason: { kind: 'start_failed', detail },
       });
       ws.close();
     });
@@ -110,9 +113,21 @@ function onRecorder(ws: WebSocket, url: URL, deps: WsDeps): void {
     p.then(
       () => then?.(),
       (err: unknown) => {
-        const messageZh = `录音收尾失败：${err instanceof Error ? err.message : String(err)}`;
-        console.error(`[ws/recorder] ${messageZh}`);
-        send({ type: 'error', code: 'RECORD_FINALIZE_FAILED', messageZh });
+        const detail = errorDetail(err);
+        /*
+         * ⚠️ **中文这一句留在 daemon 控制台，一个字没动**（#112 第 19 处）。
+         *
+         * 帧上那格 `messageZh` 删掉了，但这一侧**没有 i18n**：从启动横幅到每一条
+         * `[daemon]` 都是中文，在这里插英文既不一致也救不了谁。变的只有
+         * **上了网线、进浏览器**的那一份 —— 浏览器那边有两份 locale，
+         * 而这个控制台没有。所以句子在这里现拼，不再由帧顺路捎带。
+         */
+        console.error(`[ws/recorder] 录音收尾失败：${detail}`);
+        send({
+          type: 'error',
+          code: 'RECORD_FINALIZE_FAILED',
+          reason: { kind: 'finalize_failed', detail },
+        });
         try {
           ws.close();
         } catch {
@@ -136,7 +151,7 @@ function onRecorder(ws: WebSocket, url: URL, deps: WsDeps): void {
         finish(session.stop(), () => ws.close());
       }
     } catch {
-      send({ type: 'error', code: 'BAD_JSON', messageZh: '控制消息不是合法 JSON' });
+      send({ type: 'error', code: 'BAD_JSON', reason: { kind: 'control_message_not_json' } });
     }
   });
 
@@ -151,12 +166,28 @@ function onRecorder(ws: WebSocket, url: URL, deps: WsDeps): void {
 
 /** `/ws/asr-worker`：ADR-006 决策 3 已把 L0 降级为实验特性，v1 不实现。 */
 function onAsrWorker(ws: WebSocket): void {
-  ws.send(
-    JSON.stringify({
-      type: 'error',
-      code: 'NOT_IMPLEMENTED',
-      messageZh: '浏览器 WebGPU worker 通道 v1 不提供（ADR-006 决策 3 已降级为实验特性）',
-    }),
-  );
+  /*
+   * ★ 这条帧原来是一个**没有类型标注的对象字面量** —— 于是它上面那句 `messageZh`
+   * 从来不受 `ServerMessage` 约束，帧的形状换掉时编译器一个字都不会说。
+   * 显式标成 `ServerMessage`：两条 WS 通道下行的是同一套帧，
+   * 错误说法换形状时这里必须一起红。
+   */
+  const msg: ServerMessage = {
+    type: 'error',
+    code: 'NOT_IMPLEMENTED',
+    reason: { kind: 'asr_worker_not_implemented' },
+  };
+  ws.send(JSON.stringify(msg));
   ws.close();
+}
+
+/**
+ * `err.message` 的**原样串** —— 进 `RecorderErrorReason` 的 `detail`。
+ *
+ * ⚠️ 不加前缀、不翻译、不加工：这一格的全部含义就是「我们没有解读过的那段原文」。
+ * 拼一句话进去（原来那三处 `录音启动失败：…` 就是这么干的）等于把散文塞进结构字段，
+ * 前端想把原文单独取出来只能去劈那句话。
+ */
+function errorDetail(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

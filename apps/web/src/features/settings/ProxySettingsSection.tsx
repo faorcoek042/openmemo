@@ -13,6 +13,7 @@ import {
   type SourceLatencyReport,
 } from '@openmemo/shared';
 
+import { normalizeProbeDetail, proxyProbeDetailText, sourceDisplayName } from './proxyReasonText';
 import { api, ApiError } from '../../lib/api/client';
 import { arr } from '../../lib/safe';
 import { cn } from '../../lib/utils';
@@ -404,28 +405,46 @@ export function ProxySettingsSection() {
             />
           </p>
           <ul className="space-y-1">
-            {arr(testProxy.data.probes).map((p) => (
-              <li key={p.url} className="flex flex-wrap items-center gap-2 text-xs">
-                {/* StatusChip 强制要求 label —— 状态绝不只用颜色表达 */}
-                <StatusChip
-                  tone={
-                    p.result === 'ok'
-                      ? 'good'
-                      : p.result === 'skipped' || p.result === 'unclassified'
-                        ? 'neutral'
-                        : 'critical'
-                  }
-                  label={t(`settings.proxy.probe.${p.result}`)}
-                />
-                <span className="text-ink">{p.target}</span>
-                <span className="tabular-nums text-ink-muted">{p.elapsedMs}ms</span>
-                {/* 这一条到底走没走代理，必须逐条可见：noProxy 命中时是直连 */}
-                <span className="text-ink-muted">
-                  {p.viaProxy ? t('settings.proxy.viaProxy') : t('settings.proxy.direct')}
-                </span>
-                {p.detail ? <span className="text-ink-muted">· {p.detail}</span> : null}
-              </li>
-            ))}
+            {arr(testProxy.data.probes).map((p) => {
+              /*
+               * ★★ #112 第 16 处：**这一行的细节不再是 daemon 拼好的中文句子。**
+               *
+               * 上一版逐字渲染的是 `连不上代理 http://127.0.0.1:7890/ —— 未向 YouTube 发出请求`，
+               * 而它上下左右全是英文词条。现在 daemon 只说是哪一格
+               *（`ProxyProbeDetail`），措辞走总表 + 两份 locale。
+               *
+               * ⚠️ 线上那一格**再收一道**：字段是可选的，旧 daemon 发的是一个 `string`，
+               * 直接插进模板会渲染成 `· [object Object]` —— 那不是一句说错了的话，
+               * 是一段泄漏出来的内部表示。认不出来就**这一行不带细节**（状态芯片与目标仍在）。
+               */
+              const detail = normalizeProbeDetail(p.detail);
+              return (
+                <li key={p.url} className="flex flex-wrap items-center gap-2 text-xs">
+                  {/* StatusChip 强制要求 label —— 状态绝不只用颜色表达 */}
+                  <StatusChip
+                    tone={
+                      p.result === 'ok'
+                        ? 'good'
+                        : p.result === 'skipped' || p.result === 'unclassified'
+                          ? 'neutral'
+                          : 'critical'
+                    }
+                    label={t(`settings.proxy.probe.${p.result}`)}
+                  />
+                  <span className="text-ink">{p.target}</span>
+                  <span className="tabular-nums text-ink-muted">{p.elapsedMs}ms</span>
+                  {/* 这一条到底走没走代理，必须逐条可见：noProxy 命中时是直连 */}
+                  <span className="text-ink-muted">
+                    {p.viaProxy ? t('settings.proxy.viaProxy') : t('settings.proxy.direct')}
+                  </span>
+                  {detail ? (
+                    <span className="text-ink-muted" data-testid={`proxy-probe-detail-${p.target}`}>
+                      · {proxyProbeDetailText(t, detail)}
+                    </span>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         </div>
       ) : null}
@@ -435,9 +454,14 @@ export function ProxySettingsSection() {
       {/*
         ★★ #105 ⑥：**这张表自己的一句摘要。**
         它此前没有摘要，于是"整屏唯一的总结"落到了上面那句代理结论上 ——
-        而那一句测的是另一组目标。有不可达的就把是谁说出来（`{{list}}` 用的是
-        `r.label`，也就是用户在表里逐字看到的那几个字，不是 provider id）。
+        而那一句测的是另一组目标。有不可达的就把是谁说出来。
         全通时也说一句：**沉默会让"没测"和"都通了"再次长得一样。**
+
+        ★★ #112 第 17 处：`{{list}}` 里那几个名字走 `sourceDisplayName`，**不是 `r.label`**。
+        这是那个名字的**第二个渲染点** —— 只改下面表格里那一处，
+        这句摘要仍然会在英文界面上写「hf-mirror 镜像」，等于只修了一半。
+        判据仍是那句：**用户在表里逐字看到的那几个字** —— 而那几个字现在由词条决定，
+        两处走同一个函数才可能一直是同一份。
       */}
       {testSources.data ? (
         <p
@@ -452,7 +476,10 @@ export function ProxySettingsSection() {
               sourceStats.down.length > 0
                 ? t('settings.proxy.sourcesSomeUnreachable', {
                     n: sourceStats.down.length,
-                    list: sourceStats.down.map((r) => r.label).join('、'),
+                    /* 分隔符也归 locale：写死顿号 `、` 会让英文摘要句里出现中文标点（#112） */
+                    list: sourceStats.down
+                      .map((r) => sourceDisplayName(t, r.provider, r.label))
+                      .join(t('settings.proxy.sourceListSeparator')),
                   })
                 : t('settings.proxy.sourcesAllReachable', { n: sourceStats.total })
             }
@@ -474,8 +501,16 @@ export function ProxySettingsSection() {
                 key={r.provider}
                 className={r.provider === testSources.data.fastest ? 'text-accent-ink' : 'text-ink'}
               >
-                <td>
-                  {r.label}
+                {/*
+                  ★★ #112 第 17 处：名字按 `provider` 翻，**绝不渲染 `r.label`**。
+                  目录里那两条 label 逐字是 `hf-mirror 镜像` / `ModelScope 魔搭` ——
+                  英文界面上的两段中文。`provider` 一直是机器可读的那根轴
+                  （`fastest` 比的就是它），只是从来没人拿它当措辞轴用。
+                  认不出的 provider（调用方可以传自定义源）由 `sourceDisplayName`
+                  如实标成"按配置原样显示"，而不是把一段来源不明的字装成文案。
+                */}
+                <td data-testid={`proxy-source-name-${r.provider}`}>
+                  {sourceDisplayName(t, r.provider, r.label)}
                   {r.provider === testSources.data.fastest
                     ? ` · ${t('settings.proxy.fastest')}`
                     : ''}

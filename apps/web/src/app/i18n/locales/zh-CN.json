@@ -536,6 +536,15 @@
     "insecureAlternative": "这条地址下其它功能不受影响：可以在「捕获」页导入本地音视频文件或链接，转写、摘要、导图都正常。",
     "streamError": "实时识别连接出错，已停止推流；录音仍在本地保存，可稍后重新转写。",
     "overrun": "网络跟不上，已丢弃部分音频帧（识别可能漏字）。原始录音不受影响。",
+    "wsError": {
+      "streamEngineUnavailable": "无法开始实时转写：没有安装流式模型。去「模型」页装一个即可 —— 这一次什么都没录上，所以也没有丢失任何东西。",
+      "startFailed": "录音没能启动，因此什么都没有保存。以下是录音端原文，我们没有翻译它：{{detail}}",
+      "engineError": "识别引擎在录音过程中报错。已经识别出来的内容会保留。以下是引擎原文，我们没有翻译它：{{detail}}",
+      "finalizeFailed": "录音没能正常收尾。音频可能已经落盘，但这一路会话没有干净地关闭。以下是录音端原文，我们没有翻译它：{{detail}}",
+      "controlMessageNotJson": "浏览器发出的控制消息 daemon 解析不了。这是应用自身的缺陷，不是你操作错了。",
+      "asrWorkerNotImplemented": "浏览器端识别 worker 在 v1 不提供（ADR-006 决策 3 已把它降级为实验特性）。",
+      "notReported": "录音端报了一个错，但这一版 daemon 没有说是哪一种。细节在 daemon 日志里；如果已经装了更新的版本，刷新本页即可读到。"
+    },
     "rerunFailed": "离线重跑失败。流式识别的结果仍然保留。",
     "doneSummary": "录音完成，共 {{segments}} 段",
     "preservedOnly": "你编辑过的 {{count}} 段已保留。",
@@ -752,6 +761,20 @@
       "route": "线路",
       "fastest": "最快",
       "unreachable": "不可达",
+      "probeDetail": {
+        "proxyUnreachableNotSent": "连不上代理 {{proxyUrl}} —— 未向 {{target}} 发出任何请求",
+        "proxyRejectedCredentials": "代理 {{proxyUrl}} 拒绝了凭据（407）—— 请检查用户名/密码，不是目标站的问题",
+        "proxyRefusedTunnel": "代理 {{proxyUrl}} 应答了，但拒绝建立到 {{target}} 的隧道（CONNECT 非 2xx、非 407）—— 常见于按策略拒绝的企业代理；无法进一步判断问题在代理策略还是目标站",
+        "probeErrorText": "以下是探针原文，我们没有翻译它：{{text}}"
+      },
+      "sourceName": {
+        "hf": "Hugging Face",
+        "hf-mirror": "hf-mirror 镜像",
+        "modelscope": "ModelScope 魔搭",
+        "github": "GitHub"
+      },
+      "sourceNameVerbatim": "{{label}}（自定义源，按配置原样显示）",
+      "sourceListSeparator": "、",
       "sourcesSomeUnreachable": "⚠️ **{{n}} 个下载源不可达**：{{list}}。这张表和上面那句代理结论**测的不是同一组目标** —— 代理通不代表这些源能下得动。",
       "sourcesAllReachable": "{{n}} 个下载源全部可达。",
       "effective": "当前生效",
@@ -882,7 +905,11 @@
     "idleHint": "支持中文分词与拼音；命中转写内容时可直接跳到那一秒。",
     "noResults": "没有找到匹配内容",
     "noResultsHint": "换个关键词试试；命中转写内容时可直接跳到那一秒。",
-    "tokenizerDegraded": "中文分词已回退到三元组 —— 两个字的词可能搜不到。笔记本身不受影响；分词恢复后再搜一次即可。"
+    "tokenizerDegraded": "中文分词已回退到三元组 —— 两个字的词可能搜不到。笔记本身不受影响；分词恢复后再搜一次即可。",
+    "semanticUnavailable": {
+      "noEmbeddingStage": "向量扩展已加载，但还没有任何环节生成 embedding —— 这一段要等我们接通，不是你装个什么就能好的",
+      "vectorExtensionNotLoaded": "sqlite-vec 扩展没有加载"
+    }
   },
   "onboarding": {
     "title": "欢迎使用 OpenMemo",
@@ -1038,7 +1065,21 @@
       "ru": "俄语",
       "custom": "自定义…"
     },
-    "installHereHint": "就在这一页里下载安装"
+    "installHereHint": "就在这一页里下载安装",
+    "engineUnavailable": {
+      "modelNotInstalled": "还没有为它装模型 —— 去「模型」页装一个即可启用",
+      "installedButFilesIncomplete": "已安装（{{ids}}），但文件不全、加载不起来 —— 去「模型」页重装一次",
+      "overrideDirIncomplete": "{{envVar}} 指向 {{dir}}，而这个引擎要的文件不在那里",
+      "engineProbeText": "以下是引擎原文，我们没有翻译它：{{text}}"
+    },
+    "engineWithReason": "{{engine}}（{{reason}}）",
+    "reasonParenthetical": "（{{reason}}）",
+    "engineListSeparator": "；"
+  },
+  "uninstall": {
+    "recordRemovedFilesKept": "已卸载 —— 记录已经清掉了。但有 {{n}} 个文件没能删除，因为记录指向了数据目录之外：{{names}}",
+    "filesKeptHint": "这里不需要再做什么：卸载本身已经生效，再点一次只会告诉你记录已经不存在了。想收回这部分空间，请自行删除那几个文件。",
+    "verbatimReason": "以下是存储层原文，我们没有翻译它：{{reason}}"
   },
   "secureContext": {
     "title": "当前地址不是安全上下文，部分功能不可用",

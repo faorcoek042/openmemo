@@ -23,6 +23,8 @@
  * 3. **语义 3：stop 幂等。** 断线等同 stop，所以重复调用必须安全。
  */
 
+import type { RecorderErrorReason } from '@openmemo/shared';
+
 /** 与 daemon 的 `RECORD_SAMPLE_RATE` 必须一致 —— 不一致会让识别结果整体错位。 */
 export const RECORD_SAMPLE_RATE = 16_000;
 
@@ -38,7 +40,20 @@ export type RecorderServerMessage =
   | { type: 'final'; seq: number; startMs: number; endMs: number; text: string }
   | { type: 'overrun'; droppedSamples: number }
   | { type: 'stopped'; segmentCount: number; rerunJobUid: string | null }
-  | { type: 'error'; code: string; messageZh: string };
+  /**
+   * `messageZh` **没有了**（#112 第 19 处）。它曾是帧上唯一的人话、而且只有中文，
+   * 于是英文用户那条横幅在结构上就没救。措辞现在归两份 locale，
+   * daemon 只说是哪一种 —— 见 `./recorderErrorText.ts`。
+   *
+   * ⚠️ **`reason` 在这一侧是可选的，而 daemon 那一侧是必填的**，这个不对称是刻意的：
+   * daemon 的 `ServerMessage` 要求它，所以**新 daemon 发不出一条没有 `reason` 的帧**；
+   * 而 WS 不是类型边界，**老 daemon 的帧照样会到达这里**（v0.7.2 及以前只有
+   * `messageZh`）。把它标成必填就是替对面担保一件我们担保不了的事，而代价正是
+   * 这次要修的那个形状：`undefined` 一路走到 `{streamError ? <Banner/> : null}`
+   * ⇒ **整条横幅不渲染**，会话已经死了而界面上一个字都没有。
+   * 所以它可缺，且缺失由 `normalizeRecorderError()` 收成 `not_reported`。
+   */
+  | { type: 'error'; code: string; reason?: RecorderErrorReason };
 
 export interface RecorderHandle {
   /** 发送 stop 并等待服务端的 `stopped`。幂等。 */

@@ -685,13 +685,50 @@ export interface SearchHit {
  * 收在 `tokenizer` 这一侧而不是 boolean：它比"加载了没有"多说一句
  * **"降级成了什么"**，而那正是用户需要知道的（trigram 下中文双字词可能搜不到）。
  */
+/**
+ * 「为什么没有语义检索」—— **机器可读**，措辞归 `apps/web` 的两份 locale（#112）。
+ *
+ * ## 为什么不是 `semanticReason: string`
+ *
+ * 上一版这一格是一句**中文散文**（`sqlite-vec 未加载`），而 `SearchPage` 把它插进
+ * `search.modesUnavailable`（**一句英文**）的 `{{reason}}` 里，逐字渲染成：
+ *
+ * ```
+ * Semantic search is unavailable: sqlite-vec 已加载，但尚无 embedding 生成环节（链路未接通）
+ * ```
+ *
+ * 它符合「CJK 只出现在数据里」的表面判据（`en.json` 里一个汉字都没有），
+ * **但对英文用户就是半句中文**。
+ *
+ * ★ 只有两格，而且**必须是两格**：向量扩展装没装上，对用户的下一步是不同的答案 ——
+ * 装上了只差链路 ⇒ **他做什么都没用，等产品接通**；没装上 ⇒ 那是一个环境问题。
+ * 合并成一句「语义检索不可用」会把这条区别抹掉。
+ */
+export type SemanticUnavailableReason =
+  | {
+      /**
+       * `sqlite-vec` 加载上了，**但全仓没有任何地方生成 embedding** —— 链路没接通。
+       * ⚠️ 这一档要说清「**不是你的环境问题，等产品接通**」，别让用户去折腾扩展。
+       */
+      readonly kind: 'no_embedding_stage';
+    }
+  | {
+      /** `sqlite-vec` 扩展没加载上 —— 向量路连地基都没有。 */
+      readonly kind: 'vector_extension_not_loaded';
+    };
+
 export interface SearchModeReport {
   keyword: boolean;
   semantic: boolean;
   /** Hybrid (keyword + vector) — false until an embedding step exists. */
   hybrid: boolean;
-  /** Why semantic/hybrid is unavailable, in the server's own words. Null when it is. */
-  semanticReason: string | null;
+  /**
+   * Why semantic/hybrid is unavailable. Null when it is available.
+   *
+   * ⚠️ **机器可读，不是一句话**（#112）：它会被插进 `search.modesUnavailable`
+   * 那句**英文**里，塞一句中文进去就是给英文用户一句半中文的话。
+   */
+  semanticReason: SemanticUnavailableReason | null;
   /** "simple" = libsimple Chinese segmentation; "trigram" = degraded fallback. */
   tokenizer: 'simple' | 'trigram';
 }

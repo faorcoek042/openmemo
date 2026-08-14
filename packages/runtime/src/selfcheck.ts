@@ -56,6 +56,7 @@ import {
  * 就顺带成了它的守卫**：谁改坏了措辞，这里当场红。
  */
 import { breakerDetail, breakerRemediation, breakerTripped } from '@openmemo/shared';
+import type { EngineUnavailableReason } from '@openmemo/shared';
 
 import { MACOS_FLOORS, detectMacosProductVersion, evaluateOsFloors } from './platform/osFloors.js';
 
@@ -288,8 +289,25 @@ export interface SelfCheckProbes {
   chineseSearch: () => Promise<Record<string, number> | null>;
   /** sqlite-vec version, or null when unavailable. */
   vecVersion: () => Promise<string | null>;
-  /** ASR engine candidates with availability. */
-  engines: () => Promise<{ id: string; available: boolean; reason?: string }[]>;
+  /**
+   * ASR engine candidates with availability.
+   *
+   * ⚠️ `reason` is deliberately narrowed to the **one** arm of
+   * `EngineUnavailableReason` this report knows how to print: the verbatim probe
+   * text from `packages/pipeline`. It used to be a bare `string`; #112 turned the
+   * whole axis into a machine-readable union, whose wording lives in the two web
+   * locale files — and this report has **no access to those**, it hand-writes its
+   * own `detail`/`detailEn` pair for every item. So if someone ever pipes the other
+   * arms (`model_not_installed`, …) in here, `tsc` stops them and they have to
+   * decide what this report says, instead of it silently printing `[object Object]`.
+   */
+  engines: () => Promise<
+    {
+      id: string;
+      available: boolean;
+      reason?: Extract<EngineUnavailableReason, { kind: 'engine_probe_text' }>;
+    }[]
+  >;
   /** Auto-selected engine per language; null when nothing is available. */
   selectFor: (language: string) => Promise<{ engineId: string; reason: string } | null>;
 
@@ -2047,12 +2065,15 @@ export async function runSelfCheck(input: SelfCheckInput): Promise<SelfCheckRepo
       labelZh: e.id,
       status: e.available ? 'ok' : 'warn',
       /*
-       * `e.reason` 是**别人家的字段**，但它已经是英文（`packages/pipeline` 的
+       * `e.reason.text` 是**别人家的字段**，但它已经是英文（`packages/pipeline` 的
        * `AsrAvailability.reason`，如 "the speech recognition engine is not installed"）
        * —— 所以两边照原样带过去，不许在这里替它翻译或改写。
+       *
+       * #112 把外面那一层从裸字符串换成了 `{ kind: 'engine_probe_text', text }`，
+       * 这里只是拆掉那层信封；**打印出来的字一个都没变**。
        */
-      detail: e.available ? '可用' : (e.reason ?? '不可用'),
-      detailEn: e.available ? 'available' : (e.reason ?? 'unavailable'),
+      detail: e.available ? '可用' : (e.reason?.text ?? '不可用'),
+      detailEn: e.available ? 'available' : (e.reason?.text ?? 'unavailable'),
       required: false,
       remediation: e.available ? null : '安装该引擎所需的后端包与模型',
       remediationEn: e.available
