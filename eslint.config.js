@@ -198,5 +198,55 @@ export default tseslint.config(
       globals: { ...globals.node },
     },
   },
+  // ───────────────────────────────────────────────────────────────────────────
+  // #111 ①：`host: <某个 URL>.host` —— 让这个形状写不出来
+  //
+  // 这条规则存在的理由不是"有人粗心"，而是**这个错误的反馈信号在生产输入上
+  // 恒为零**：`URL.host` 含端口，而 `http.request({host})` 是一个真实、文档化的
+  // 选项，所以 `host: u.host` 类型对、lint 干净、代码评审看不出、
+  // 并且对**每一个默认端口的 URL 都正常工作**。它只在带端口的地址上炸，
+  // 而仓库里真实的清单地址一个带端口的都没有。
+  //
+  // 于是它被独立写出来了**两次**：
+  //   · `scripts/ci/probe-mirror.mjs::probeUrl`  —— #108 被桩上游抓到（run 31695269578，12 条里红 7 条）
+  //   · `scripts/ci/check-release-refs.mjs::probe` —— #111，潜伏至今，从没红过
+  // 两次都是"从旁边那份抄过来"。靠纪律避免注定失败：**在人会看的每一个位置上，
+  // 错的那版和对的那版长得一模一样。**
+  //
+  // 正确写法（`probe-mirror.mjs` 里那份，有 `selftest-probe-mirror.mjs` 守着）：
+  //     hostname: u.hostname,
+  //     port: u.port || (u.protocol === 'https:' ? 443 : 80),
+  //
+  // ⚠️ 选择器刻意只认**两侧都是 `host`** 的那一种：`host: <expr>.host`。
+  //    `[实测]` 全仓扫描（2026-08-14）下当前零命中 —— `host: u.hostname`、
+  //    `host: HOST`、`host: '127.0.0.1'`、`host: deps.host()` 都不匹配，
+  //    `parsed.host.toLowerCase() !== host`（auth.ts 的同源校验，那里**就该**带端口）
+  //    是 BinaryExpression 也不匹配。也就是说它今天不误伤任何一处，
+  //    而下一次有人写出这个形状时当场红。
+  //
+  // ⚠️ 用 `no-restricted-syntax`（本仓此前未使用过的规则名）而不是往上面那两块里加 ——
+  //    flat config 同名规则是**整体覆盖**不是合并，复用 `no-restricted-imports`
+  //    会把前端分层护栏和 child_process 闸门悄悄吃掉（第 133 行那段说的就是这件事）。
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    files: ['**/*.{js,mjs,cjs,ts,tsx,mts,cts}'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "Property[key.name='host'][value.type='MemberExpression'][value.property.name='host']",
+          message:
+            '`URL.host` **含端口**，而 `http/https.request({ host })` 不接受 "主机:端口" —— ' +
+            '带端口的地址会变成"去解析一个叫 `127.0.0.1:41273` 的主机名"，一个请求都发不出去。' +
+            '改成 `hostname: u.hostname` + `port: u.port || (u.protocol === "https:" ? 443 : 80)`，' +
+            '并且请求函数要按 `u.protocol` 在 node:http / node:https 之间选。' +
+            '更好的做法是别再写第三份：`scripts/ci/probe-mirror.mjs` 的 `probeUrl()` / `probeFollow()` ' +
+            '已经是对的，而且有 `selftest-probe-mirror.mjs`（绑 :0 的桩上游）守着。' +
+            '（这个形状已经被独立写出来过两次：#108、#111）',
+        },
+      ],
+    },
+  },
   prettier,
 );

@@ -7,8 +7,10 @@
  * succeeds" is a functional difference.
  *
  * REUSE, NOT REWRITE (ADR instruction): the transfer primitives come from
- * `@openmemo/downloader` — `probeRemoteFile`, `openRangeStream`, `backoffMs`, `sleep`.
+ * `@openmemo/downloader` — `probeRemoteFileWithRetry`, `openRangeStream`, `backoffMs`, `sleep`.
  * Those are the pieces `model-mgmt` already exercised on a real 77 MB download.
+ * (The probe used to be the un-retried `probeRemoteFile`; see the call site for why
+ * that was a functional gap and why this leg uses a *shorter* policy than installs.)
  *
  * What is NOT reused is `downloadFile()`, and the reason matters: it *requires* a known
  * SHA-256 up front to honour "verified == installed". That is exactly right for catalog
@@ -25,7 +27,13 @@ import { rename, stat, unlink } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { pipeline as streamPipeline } from 'node:stream/promises';
 
-import { backoffMs, openRangeStream, probeRemoteFile, sleep } from '@openmemo/downloader';
+import {
+  MEDIA_PROBE_RETRY_POLICY,
+  backoffMs,
+  openRangeStream,
+  probeRemoteFileWithRetry,
+  sleep,
+} from '@openmemo/downloader';
 
 export interface ResumableFetchOptions {
   url: string;
@@ -64,7 +72,40 @@ export async function resumableFetch(opts: ResumableFetchOptions): Promise<Resum
   const maxAttempts = opts.maxAttempts ?? 5;
   const partialPath = `${destPath}.partial`;
 
-  const info = await probeRemoteFile(url, { signal, timeoutMs: 20_000 });
+  /*
+   * ★★ #111 ②：这一行以前是 `probeRemoteFile()` —— **零重试**。
+   *
+   * 它坐在下面那个 `while (attempts < maxAttempts)` 重试循环**外面**，也没有任何
+   * try/catch 包着，所以上游抖一下（503、socket hang up）就**原样抛出整个函数**，
+   * 一次尝试都不记。下面那套 `maxAttempts ?? 5` + `backoffMs` 只保护取字节那一段，
+   * 从来没保护过探测这一下。用户看到的是"从链接导入"直接失败。
+   *
+   * `probeRemoteFileWithRetry()` 是 #108 / PR #56 为组件下载加的，
+   * 这条腿当时没跟上（`http.ts` 里那段注释还点名说 `resumableFetch.ts` 留在旧层）。
+   *
+   * ⚠️ 用 `MEDIA_PROBE_RETRY_POLICY` 而**不是**出厂的 `PROBE_RETRY_POLICY`：
+   *    探测发生在任何 `onProgress` 之前，重试的整段时间里进度条冻在 0%，
+   *    而组件安装是用户可以走开的后台任务。理由与具体数字见那个常量的注释。
+   *
+   * ⚠️ **确定性失败一次都不重试**：404 / 403 / 其它 4xx 的分类
+   *    （`isRetriableHttpCode()` 是三码白名单）决定了它们直接抛，
+   *    不会被"重试成绿"，也不会白等两轮退避。
+   *
+   * `ProbeFailedError` 仍然是 `HttpError`（码/状态逐字沿用最后一次失败），
+   * 所以 `directHttp.ts` 那侧的错误处理一个字都不用改。
+   */
+  const { info } = await probeRemoteFileWithRetry(url, {
+    signal,
+    timeoutMs: 20_000,
+    policy: MEDIA_PROBE_RETRY_POLICY,
+    // 进度条这段时间是不动的，日志里至少要留下"它在重试、等了多久、为什么"
+    onRetry: (attempt, delayMs) => {
+      console.warn(
+        `[media] 探测 ${url} 第 ${String(attempt.attempt)} 次失败（${attempt.code} ${String(attempt.status)}：${attempt.message}），` +
+          `${String(delayMs)}ms 后重试`,
+      );
+    },
+  });
 
   if (info.sizeBytes !== null && info.sizeBytes > maxBytes) {
     throw new Error(

@@ -113,6 +113,7 @@ import {
  *   证明见 `scripts/ci/selftest-e2e-runtime.mjs`。
  */
 import {
+  checkUninstallReachedDisk,
   saysHardwareNotProbedYet,
   stillSaysHardwareNotProbedYet,
 } from './e2e-runtime-assertions.mjs';
@@ -294,6 +295,27 @@ const MUTATIONS = [
      *   排查顺序因此有了区别：先看那一轮的 A-INSTALL-JOB，再谈断言有没有牙齿。
      */
     why: '卸载返回 204 但东西还在。用户点了卸载、界面刷新后包又出现了 —— T-149 同一形状的老朋友',
+  },
+  {
+    id: 'M-uninstall-keep-files',
+    file: 'http/rest/backends.js',
+    find: "const dropped = await state.dropInstalledFiles(id, ['backend']);",
+    replace: 'const dropped = { removed: 0, refused: [] };',
+    proves: ['A-UNINSTALL-BYTES-GONE'],
+    phases: ['boot', 'backends'],
+    /*
+     * ★ 这条变异存在的全部意义，是把 #110 那个缺口**变成可执行的**：
+     *   它只掐掉「删文件」，`removeManifest` 原样保留。于是
+     *   —— DELETE 照回 204（`refused` 是空的）
+     *   —— id 从 `/api/backends/installed` 里消失
+     *   —— 盘上那份 `manifests/backend/<id>.json` 也真的没了
+     *   `A-UNINSTALL-GONE` 三格**全绿**，而包的每一个字节都还在盘上。
+     *
+     *   也就是说：这条变异会**被 A-UNINSTALL-BYTES-GONE 单独抓住**，
+     *   而它旁边那条钉了三年的断言一声不吭。两条断言各自守着什么，
+     *   在这里第一次分得开。
+     */
+    why: '卸载把记录删了、字节一个不动。界面上它消失了，磁盘一点没回收，而 `by-name/backend/` 是 `findInBackendPacks()` 的发现路径 —— 一个"已卸载"的包仍然会被解析到并真的跑起来（T-192 的形状）',
   },
   {
     id: 'M-model-inuse-guard-off',
@@ -1033,17 +1055,25 @@ function backendManifestOnDisk(packId) {
 }
 
 /**
- * 一份安装记录**自己点名**的那些文件的绝对路径。
+ * 一份安装记录**自己点名**的那些文件：`{ name, path }`。
  *
  * 两种记法都认，与产品侧 `resolveInstalledFile()` 同一条规则：
  * 新记录是 `root` + `relPath`（可移植），旧记录只有一个绝对 `path`。
  * 用记录自己写的路径，而不是按命名规律去猜 —— 猜出来的路径验的是我们的想象。
+ *
+ * ★ 连 `name` 一起带出来（#110）：DELETE 的 200 那条路回的 `filesNotRemoved[]`
+ *   用的就是记录里的 `files[].name`，要把「产品说没删的」对到「盘上还在的」，
+ *   两边得有同一个键。
+ *   三个路径字段全缺的条目**刻意不产出** —— `source: 'bundled'` 的记录按设计
+ *   就是这样（让"删掉应用本体"在形状上不可能），它们不是"路径解析失败"。
  */
 function declaredFilePaths(rec) {
   const out = [];
   for (const f of rec?.files ?? []) {
-    if (f?.root === 'models' && f?.relPath) out.push(join(DATA_DIR, 'models', f.relPath));
-    else if (f?.path) out.push(String(f.path));
+    const name = String(f?.name ?? '');
+    if (f?.root === 'models' && f?.relPath)
+      out.push({ name, path: join(DATA_DIR, 'models', f.relPath) });
+    else if (f?.path) out.push({ name, path: String(f.path) });
   }
   return out;
 }
@@ -1378,11 +1408,34 @@ async function phaseBackends() {
    *   ② 绿的条件里含「DELETE 被接受（204）」：一个 404 不许被读成"删干净了"。
    *   ③ 记录的存亡看**盘上**那份 json，不看端点的自述（端点返回的就是那个目录）。
    *
-   * 「记录点名的文件还在不在」与「models 树真的少了多少字节」也一起量，
-   * 但它们走 `finding()` 而不是判据：那是 T-192 的形状（删一个 6 MB 的包、
-   * 磁盘只少几百字节），是**产品的问题**，不是这条断言的判据；
-   * 而且 Windows 上一个被占住的句柄足以让 `rm` 失败，
-   * 拿它当判据会换来一条随机变红、然后没人再信的断言。
+   * ★★ #110：上面三条**全是「记录」**，一格都没问过「字节」。
+   *
+   * 「记录点名的文件还在不在」与「models 树真的少了多少字节」其实一直在量
+   * （下面的 `leftovers` / `realDelta`），但**只喂 `finding()`** —— 那是一条
+   * 不改退出码的通报。于是「量了」和「判了」之间一直隔着一整条判据：
+   * 一个包可以回 204、从列表里消失、连安装记录都删掉，而**一个字节都没走**，
+   * `A-UNINSTALL-GONE` 照样绿。
+   *
+   * PR #55 之后这个缺口更宽了：DELETE 多了一条**合法**路径
+   * （记录删掉、文件因越界被拒 ⇒ `200 + filesNotRemoved`），
+   * 也就是说现在连产品自己都承认「id 没了」与「字节没了」可以不一致。
+   *
+   * 所以新增 `A-UNINSTALL-BYTES-GONE`，判据在
+   * `e2e-runtime-assertions.mjs::checkUninstallReachedDisk()`（能 import、能喂输入、
+   * 证明在 `selftest-e2e-runtime.mjs` ⑤）。它问的**不是**「盘上必须干净」，
+   * 而是「**产品那句话必须与盘对得上**」：
+   *   · 204 ⇒ 记录点名的文件一个都不许还在；
+   *   · 200 + `filesNotRemoved` ⇒ 被点名的必须还在、没被点名的必须没了、
+   *     每条拒绝都要说得出理由。
+   *
+   * ⚠️ **win32 上降级成 UNKNOWN**，理由是原来那段注释说的那件事，它是对的：
+   * `state.ts::dropInstalledFiles()` 里 `fs.rm(...).catch(() => undefined)`
+   * 把 rm 的失败**吞掉了**（而且吞掉之后照样 `removed += 1`），
+   * 一个被占住的句柄就能走到「rm 静默失败 → 回 204 → 文件还在」。
+   * 在那台 runner 上拿它当判据 = 一条随机变红、然后没人再信的断言。
+   * 三态里的第三态，不是绿。变异矩阵本来就只在 Linux 上跑全量变异
+   * （`.github/workflows/e2e-runtime.yml`），判据的牙齿在那条腿上全额验得到。
+   * 那句吞掉 rm 失败的 `.catch()` 本身是**产品的问题**，另开一条记；本脚本不碰 daemon。
    */
   const beforeDel = await j('/api/backends/installed');
   const idsBeforeDel = (beforeDel.body?.packs ?? []).map((p) => p.id);
@@ -1396,9 +1449,11 @@ async function phaseBackends() {
   const afterDel = await j('/api/backends/installed');
   const idsAfterDel = (afterDel.body?.packs ?? []).map((p) => p.id);
   const manAfter = backendManifestOnDisk(cpuPack.id);
-  const leftovers = declaredFiles.filter((p) => existsSync(p));
+  const leftovers = declaredFiles.filter((f) => existsSync(f.path));
   const duAfterDel = duBytes(join(DATA_DIR, 'models'));
   const realDelta = duBeforeDel - duAfterDel;
+  // 产品自己那句话：204 没有 body；200 那条路带着 `filesNotRemoved[]`
+  const notRemoved = Array.isArray(del.body?.filesNotRemoved) ? del.body.filesNotRemoved : null;
 
   say('');
   say(`   删之前已安装        [${idsBeforeDel.join(', ') || '(空)'}]`);
@@ -1409,8 +1464,15 @@ async function phaseBackends() {
     `   记录点名的文件      ${declaredFiles.length} 个（声明 ${declaredBytes} B）→ 卸载后仍在 ${leftovers.length} 个`,
   );
   say(`   实测 models/ 树     ${duBeforeDel} → ${duAfterDel} B（少了 ${realDelta} B）`);
+  say(
+    `   产品自述没删的      ${notRemoved ? `${notRemoved.length} 个（filesNotRemoved）` : '(无 —— 204 这条路没有 body)'}`,
+  );
 
   if (!idsBeforeDel.includes(cpuPack.id)) {
+    unknown(
+      'A-UNINSTALL-BYTES-GONE',
+      '同上：删之前它就不在，盘上也就没有任何属于它的字节可谈 —— 前提没构造出来',
+    );
     unknown(
       'A-UNINSTALL-GONE',
       `删之前 ${cpuPack.id} 就不在已安装列表里（[${idsBeforeDel.join(', ') || '(空)'}]）——` +
@@ -1433,13 +1495,42 @@ async function phaseBackends() {
             `盘上那份安装记录${manAfter ? `**仍在**（${manAfter.path}）` : '已不在'}`,
     );
 
+    /*
+     * ★★ #110：字节那一格。判据本身在 `e2e-runtime-assertions.mjs`（能喂输入、有证明），
+     *    这里只负责**把地面真相端过去**：`declaredFiles` 是删之前那份盘上记录点名的，
+     *    `leftovers` 是 `existsSync` 出来的（不听产品自述），
+     *    `notRemoved` 是产品自己那句话。
+     *
+     *    `expectCleanRemoval: true` —— 这个 CPU 包是**本审计自己通过产品的安装流程装进
+     *    store 的**，按定义在界内，不存在任何合法的越界拒绝。没有这一格的话，
+     *    「把删除整个禁掉、再把每个文件都报成 refused」能满足全部一致性检查。
+     */
+    if (IS_WIN) {
+      unknown(
+        'A-UNINSTALL-BYTES-GONE',
+        'win32：`dropInstalledFiles()` 里 `fs.rm(...).catch(() => undefined)` 把 rm 的失败吞掉了' +
+          '（且照样 `removed += 1`），一个被占住的句柄就能走到「rm 静默失败 → 回 204 → 文件还在」。' +
+          '在这里判红分不开"产品退化"和"句柄被占"——如实报第三态，判据的牙齿在 Linux 腿上验',
+      );
+    } else {
+      const disk = checkUninstallReachedDisk({
+        status: del.status,
+        filesNotRemoved: notRemoved,
+        declared: declaredFiles,
+        stillOnDisk: leftovers.map((f) => f.path),
+        expectCleanRemoval: true,
+      });
+      if (disk.undecidable) unknown('A-UNINSTALL-BYTES-GONE', disk.reason);
+      else assert('A-UNINSTALL-BYTES-GONE', disk.ok, disk.reason);
+    }
+
     if (leftovers.length > 0 || (declaredBytes >= 1048576 && realDelta < 65536)) {
       finding(
         '卸载返回 204，但盘上的东西没真的走掉（T-192 的形状）',
         [
           `包 ${cpuPack.id}：记录声明 ${declaredBytes} B，实测 models/ 树只少了 ${realDelta} B。`,
           `记录点名的 ${declaredFiles.length} 个文件里，卸载后仍在 ${leftovers.length} 个：`,
-          ...leftovers.slice(0, 5).map((p) => `  ${p}`),
+          ...leftovers.slice(0, 5).map((f) => `  ${f.path}`),
           'T-192 修的就是这件事：`by-name/backend/` 是 `findInBackendPacks()` 的发现路径，',
           '硬链还在 ⇒ blob 的 inode 仍被引用 ⇒ 磁盘一个字节都不回收，',
           '而一个"已卸载"的包仍然会被解析到并真的跑起来 —— 用户以为删了，产品还在用它。',
