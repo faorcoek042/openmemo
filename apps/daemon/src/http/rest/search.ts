@@ -202,9 +202,21 @@ function modeReport(deps: SearchRoutesDeps): SearchModeReport {
     tokenizer: deps.hasChineseTokenizer ? ('simple' as const) : ('trigram' as const),
     // 向量路：扩展在也没用，因为没有任何地方生成 embedding
     semantic: false,
+    /*
+     * ★★ #112 第 11 处：**这一格发的是判别式联合，不是一句中文**。
+     *
+     * 上一版这里是两句中文散文（`sqlite-vec 未加载`），而搜索页把它插进
+     * `search.modesUnavailable`（**一句英文**）的 `{{reason}}` 里，
+     * 英文界面上逐字渲染成：
+     *   `Semantic search is unavailable: sqlite-vec 未加载`
+     * 它符合「CJK 只出现在数据里」的表面判据（`en.json` 里一个汉字都没有），
+     * **但对英文用户就是半句中文**。措辞现在归 `apps/web` 的两份 locale；
+     * daemon 只说**是哪一格**（判据见 `SemanticUnavailableReason` 的契约注释：
+     * 装上了只差链路 ⇒ 用户做什么都没用；没装上 ⇒ 那是一个环境问题）。
+     */
     semanticReason: deps.hasVectorIndex
-      ? 'sqlite-vec 已加载，但尚无 embedding 生成环节（链路未接通）'
-      : 'sqlite-vec 未加载',
+      ? { kind: 'no_embedding_stage' as const }
+      : { kind: 'vector_extension_not_loaded' as const },
     hybrid: false,
   };
 }

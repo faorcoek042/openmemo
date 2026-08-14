@@ -1186,7 +1186,15 @@ describe('转写选项：选中的值真的发给后端', () => {
         pipeline: {
           engines: [
             { id: 'whisper.cpp', available: true },
-            { id: 'paraformer', available: false, reason: '未设置 OPENMEMO_PARAFORMER_DIR' },
+            {
+              id: 'paraformer',
+              available: false,
+              reason: {
+                kind: 'override_dir_incomplete',
+                envVar: 'OPENMEMO_PARAFORMER_DIR',
+                dir: '/opt/models/paraformer',
+              },
+            },
             { id: 'turbo', available: true },
           ],
         },
@@ -1199,9 +1207,56 @@ describe('转写选项：选中的值真的发给后端', () => {
     assert.ok(shown.includes('Whisper.cpp'));
     assert.ok(shown.includes('Paraformer'));
     assert.ok(!shown.includes('turbo'), '认不出的引擎 id 应被丢弃，不能照抄进 UI');
-    // 用不了的要说原因 + 给出路，而不是灰掉了事
-    assert.ok(shown.includes('OPENMEMO_PARAFORMER_DIR'), '应展示 daemon 给的真实原因');
+    /*
+     * 用不了的要说原因 + 给出路，而不是灰掉了事。
+     *
+     * ⚠️ #112：断的是**结构化字段被真的插进了那句话**（变量名与目录），
+     * 不是「daemon 那句中文原话被原样渲染」—— 后者正是这一轮要治的病，
+     * 而这条用例上一版恰好把它钉成了对的。
+     */
+    assert.ok(shown.includes('OPENMEMO_PARAFORMER_DIR'), '原因里没有 daemon 给的变量名');
+    assert.ok(shown.includes('/opt/models/paraformer'), '原因里没有 daemon 给的目录');
     assert.ok(shown.includes('去安装本机组件'));
+    r.unmount();
+  });
+
+  /**
+   * ★★ #112：**老 daemon 的那句散文不许被原样端上屏幕。**
+   *
+   * v0.7.2 的 daemon 在这一格发的是一句中文散文（`未设置 OPENMEMO_PARAFORMER_DIR`），
+   * 而三个渲染点都是原样插值 —— 英文界面上就是半句中文。契约已经换成判别式联合，
+   * 但**网线不是类型边界**：真有一个旧 daemon 就会把那个裸字符串送到这里。
+   *
+   * 判据是**双向**的，少一半就不算数：
+   *   ① 那句散文不许出现在屏幕上（只留前一半 ⇒ 把 `reason` 整个丢掉也算绿，
+   *      而那会让"用不了却一个字的原因都没有"混过去）；
+   *   ② 这一行**仍然要在**、仍然给得出下一步（引擎名 + 去装的入口）。
+   *
+   * 把 `normalizeEngineReason` 的收窄删掉（改成原样透传）⇒ ① 当场红。
+   */
+  test('★★ 老 daemon 发来的裸字符串 reason：不许原样渲染，但这一行不许消失', async () => {
+    stubApi({
+      'GET /health': {
+        pipeline: {
+          engines: [
+            { id: 'whisper.cpp', available: true },
+            // v0.7.2 的真实形状：一句中文散文，不是判别式联合
+            { id: 'paraformer', available: false, reason: '未设置 OPENMEMO_PARAFORMER_DIR' },
+          ],
+        },
+      },
+    });
+    const r = await render(<AsrEngineStatus />);
+    await r.flush();
+    const shown = text(r.container);
+
+    assert.ok(
+      !shown.includes('未设置 OPENMEMO_PARAFORMER_DIR'),
+      `老 daemon 的中文散文被原样渲染了：${shown.slice(0, 300)}`,
+    );
+    // ② 但这一行必须还在 —— 说不出原因不等于连"这个引擎用不了"都不说了
+    assert.ok(shown.includes('Paraformer'), '认不出原因就把整个引擎藏了');
+    assert.ok(shown.includes('去安装本机组件'), '认不出原因就连出路也一起没了');
     r.unmount();
   });
 
@@ -1493,7 +1548,15 @@ describe('重新转写：换引擎', () => {
   const noEdits = [{ seq: 1, text: 'a', edited: false }];
 
   /** daemon 实测形状：只列构造成功的候选，`reason` 只在不可用时才有。 */
-  const HEALTH = (engines: { id: string; available: boolean; reason?: string }[]) => ({
+  /**
+   * ⚠️ `reason` 是 `unknown`，**刻意的**（#112）。
+   *
+   * 它在契约上是 `EngineUnavailableReason`（判别式联合），但这个 stub 喂的是
+   * **网线上的 JSON** —— 而 `useAsrEngines()` 的职责之一正是把认不出的形状收窄掉。
+   * 写成强类型就没法喂一个畸形值去验那条收窄，那正是下面「老 daemon 的裸字符串
+   * 不许被原样渲染」那条用例要打的地方。
+   */
+  const HEALTH = (engines: { id: string; available: boolean; reason?: unknown }[]) => ({
     'GET /health': { pipeline: { engines } },
   });
   const MODELS = (active: string | null, models: unknown[] = []) => ({
@@ -1568,7 +1631,7 @@ describe('重新转写：换引擎', () => {
     stubApi({
       ...HEALTH([
         { id: 'whisper.cpp', available: true },
-        { id: 'paraformer', available: false, reason: '未设置 OPENMEMO_PARAFORMER_DIR' },
+        { id: 'paraformer', available: false, reason: { kind: 'model_not_installed' } },
         // sherpa-onnx 整条缺席 —— daemon 只列构造成功的候选，这是实测形状
       ]),
       ...MODELS(null),
@@ -1644,14 +1707,28 @@ describe('重新转写：换引擎', () => {
    *   ① 不许把一个不可用的引擎当默认值发出去（那就是上面那条静默回落）；
    *   ② 下拉"自己跳回自动"必须有解释 —— 不解释与"这个下拉坏了"完全同形。
    *
-   * `reason` 断言的是 **daemon 给的原文**，不是我们编的文案：
-   * 改成写死一句"引擎不可用"⇒ 这条红。
+   * ⚠️ **#112 把这条断言换了一层，要钉的性质一条没少。**
+   *
+   * 上一版断的是「daemon 那句中文原话 `未设置 OPENMEMO_PARAFORMER_DIR` 被原样渲染」——
+   * 而那正是这一轮要治的病：那句中文会被插进英文界面里。**旧断言把病钉成了对的。**
+   * 现在 daemon 只发 `kind` + 结构化字段，措辞在两份 locale 里。
+   *
+   * 所以这里断的是：**daemon 给的那几个结构化事实真的出现在了用户读到的那句话里**
+   * （变量名、目录）。改成写死一句"引擎不可用"、或者把 `reason` 整个丢掉 ⇒ 这条照样红。
    */
   test('★ 上次用的引擎现在不可用：回到自动、说出 daemon 给的原因、且绝不发出去', async () => {
     const { calls } = stubApi({
       ...HEALTH([
         { id: 'whisper.cpp', available: true },
-        { id: 'paraformer', available: false, reason: '未设置 OPENMEMO_PARAFORMER_DIR' },
+        {
+          id: 'paraformer',
+          available: false,
+          reason: {
+            kind: 'override_dir_incomplete',
+            envVar: 'OPENMEMO_PARAFORMER_DIR',
+            dir: '/opt/models/paraformer',
+          },
+        },
       ]),
       ...MODELS(null),
       'POST /notes/n1/retranscribe': { jobUid: 'j9', noteUid: 'n1' },
@@ -1670,8 +1747,8 @@ describe('重新转写：换引擎', () => {
     const shown = text(r.container);
     assert.ok(shown.includes('Paraformer'), '要说清是哪个引擎没了');
     assert.ok(
-      shown.includes('未设置 OPENMEMO_PARAFORMER_DIR'),
-      `原因必须是 daemon 给的原文，实际：${shown.slice(0, 300)}`,
+      shown.includes('OPENMEMO_PARAFORMER_DIR') && shown.includes('/opt/models/paraformer'),
+      `原因里必须带上 daemon 给的结构化事实（变量名 + 目录），实际：${shown.slice(0, 300)}`,
     );
 
     await click(r.container.querySelector('[data-testid="retranscribe-submit"]'));

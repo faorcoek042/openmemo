@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Search as SearchIcon } from 'lucide-react';
 
 import { useSearchModesQuery, useSearchQuery } from './api';
-import { availableModes, effectiveMode, missingModes } from './modes';
+import { SEMANTIC_UNAVAILABLE_KEYS, availableModes, effectiveMode, missingModes } from './modes';
 import { EmptyState } from '../../components/common/EmptyState';
 import { ListRow } from '../../components/common/ListRow';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
@@ -104,9 +104,21 @@ export default function SearchPage() {
       ) : null}
 
       {/*
-        缺的那几档：**说出来，并且用服务端给的原话**。
+        缺的那几档：**说出来，并且说的是服务端认定的那个成因**。
         不说的话用户只会以为这个产品没设计过语义检索；
         自己编一句理由则是把一个真实的限制换成一句想象 —— 那正是这条要修的病。
+
+        ★★ #112 第 11 处：**成因归服务端，措辞归这里。**
+        上一版这里插的是服务端拼好的**中文句子**，而外面这句
+        `search.modesUnavailable` 是**英文**，于是英文界面上逐字是：
+          `Semantic search is unavailable: sqlite-vec 未加载`
+        现在服务端只说是哪一格（`SemanticUnavailableReason`），
+        句子从 `SEMANTIC_UNAVAILABLE_KEYS` 这张**总表**查到词条 ——
+        契约加一格而没人给它写话，**构建当场红**，不会静默渲染成一段空白。
+
+        ⚠️ `null` 那条兜底**留着**：它说的是「服务端没说为什么」，
+        这是一句真话（旧 daemon / 字段缺失 / 认不出的成因都落在这里），
+        比替服务端猜一个成因诚实。
       */}
       {/*
         ★ T-200 A-2：**分词降级要说出来。**
@@ -130,7 +142,9 @@ export default function SearchPage() {
         <p className="text-xs text-ink-muted" data-testid="search-modes-unavailable">
           {t('search.modesUnavailable', {
             modes: missing.map((m) => t(`search.modes.${m}`)).join(' / '),
-            reason: modes.semanticReason ?? t('search.modesUnavailableUnknown'),
+            reason: modes.semanticReason
+              ? t(SEMANTIC_UNAVAILABLE_KEYS[modes.semanticReason.kind])
+              : t('search.modesUnavailableUnknown'),
           })}
         </p>
       ) : null}

@@ -676,7 +676,24 @@ export const SearchResponseSchema = z.object({
     // ★ T-200 A-2：`hybrid` / `semanticReason` 是 daemon **一直在发**的，
     //   只是契约里没有；前端因此只能 `as Record<string, unknown>` 硬取。
     hybrid: z.boolean(),
-    semanticReason: z.string().nullable(),
+    /*
+     * ★ #112 第 11 处：这一格从 `z.string()` 换成判别式联合，跟上 `SemanticUnavailableReason`。
+     *
+     * ⚠️ **这不是顺手改的**：`validateSearchResponse()` 有一个真实调用点
+     *（`apps/web/src/features/search/api.ts` 的 `assertModesMatchContract`，DEV 下 warn）。
+     * 留着 `z.string()` 的后果不是"少校验一格"，是**每一次搜索都在开发控制台里
+     * 报一句「响应与契约不符」** —— 而那句话是假的（daemon 发的正是契约要求的形状）。
+     * 一个天天误报的校验器会被所有人学会忽略，那时它连真的漂移也拦不住了。
+     *
+     * `discriminatedUnion` 而不是 `union`：坏 `kind` 报的是"未知的判别值"，
+     * 而不是把两条腿的错误各列一遍（同 `SpeedEvidenceSchema` 的理由）。
+     */
+    semanticReason: z
+      .discriminatedUnion('kind', [
+        z.object({ kind: z.literal('no_embedding_stage') }),
+        z.object({ kind: z.literal('vector_extension_not_loaded') }),
+      ])
+      .nullable(),
     tokenizer: z.enum(['simple', 'trigram']),
   }),
 });

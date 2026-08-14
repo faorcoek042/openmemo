@@ -91,6 +91,59 @@ export const PROXY_PROBE_RESULTS = [
 ] as const;
 export type ProxyProbeResult = (typeof PROXY_PROBE_RESULTS)[number];
 
+/**
+ * 一条探针结果那句**细节**说的是什么 —— 机器可读，措辞归两份 locale（#112）。
+ *
+ * ## 为什么不能复用 {@link ProxyProbeResult}
+ *
+ * 看起来该复用（那八格已经有 `settings.proxy.probe.*` 一整套词条），**但核过之后不行**：
+ *   · 这句细节说的比芯片标签**多** —— 它点名脱敏后的代理 URL 与目标站；
+ *   · 更要紧的是 `refused` 那一档发的 `result` 是 `'unclassified'`，而 `classify()`
+ *     在**别的成因**上也会给出同一个 `'unclassified'`。**两者不是一一对应。**
+ *
+ * 硬套一张表，就是把「我不知道这是什么」塌成「我知道」。所以细节自己一根轴。
+ */
+export type ProxyProbeDetail =
+  | {
+      /**
+       * 连不上代理本身 —— **一个请求都没有向目标站发出去**。
+       * 这一格要说清后半句：否则用户会以为目标站也测过了。
+       */
+      readonly kind: 'proxy_unreachable_not_sent';
+      /** 已脱敏的代理 URL（数据，不翻译）。 */
+      readonly proxyUrl: string;
+      /** 本来要发往的目标（`ProxyProbe.target`，例如 `YouTube`）。 */
+      readonly target: string;
+    }
+  | {
+      /** 代理答了但拒绝凭据（407）—— **这不是上游的问题**，别让用户去查目标站。 */
+      readonly kind: 'proxy_rejected_credentials';
+      readonly proxyUrl: string;
+    }
+  | {
+      /**
+       * 代理答了，但拒绝建立到目标的隧道（CONNECT 非 2xx、非 407）。
+       *
+       * ⚠️ 这一格**必须如实说「判断不下去」**：常见于按策略拒绝的企业代理，
+       * 而我们分不出问题在代理策略还是目标站。给它一个具体结论就是在没有证据的地方下判断。
+       */
+      readonly kind: 'proxy_refused_tunnel';
+      readonly proxyUrl: string;
+      readonly target: string;
+    }
+  | {
+      /**
+       * fetch / DNS / TLS **原样抛回来的串**。
+       *
+       * ⚠️ **这一格刻意不枚举**：落进来的是一个我们没有解读过、也没有边界的集合。
+       * 给它硬编一个枚举，是把「我不知道这是什么」塌成「我知道」。
+       * 它如实进 `text`，界面上明说这一段是原文、不翻译 ——
+       * 同 `UpstreamFailure.upstream_error_text` 的待遇。
+       */
+      readonly kind: 'probe_error_text';
+      readonly text: string;
+    };
+
 export interface ProxyProbe {
   /** Human label, e.g. "Hugging Face". */
   target: string;
@@ -100,8 +153,11 @@ export interface ProxyProbe {
   viaProxy: boolean;
   httpStatus?: number;
   elapsedMs: number;
-  /** Raw error text, for the details expander. Never the only thing shown. */
-  detail?: string;
+  /**
+   * 这一条的细节。**机器可读，不是一句话**（#112）—— 上一版这里是三句中文散文
+   * 加一条原始错误串，而设置页把它渲染在一整屏英文里。
+   */
+  detail?: ProxyProbeDetail;
 }
 
 export interface ProxyTestReport {
@@ -125,9 +181,44 @@ export interface ProxyTestReport {
  * failure. Folding them into one button forces both answers into a single red/green
  * verdict and loses the comparison entirely.
  */
+/**
+ * 内置下载源的 provider id —— **措辞轴**（#112 第 17 处）。
+ *
+ * ## 这一处不新建枚举，因为机器可读的那一格本来就在
+ *
+ * 源表格与它的摘要句上一版渲染的是 `label`，而目录里那两条 label 逐字是
+ * `'hf-mirror 镜像'` 与 `'ModelScope 魔搭'` —— **英文界面上的两段中文**。
+ * 但这里不需要造一张 reason 表：`provider` 一直是机器可读的 id，
+ * 只是从来没人拿它当措辞轴用。
+ *
+ * ⚠️ **这个联合就是那道闸门**：`DOWNLOAD_SOURCE_TARGETS` 被钉成"只能用这几个
+ * provider"，所以加一个内置源必须先加到这里，而那会让 web 侧那张
+ * `Record<DownloadSourceProvider, string>` **当场编译红** —— 加了源没写话，红。
+ */
+export const DOWNLOAD_SOURCE_PROVIDERS = ['hf', 'hf-mirror', 'modelscope', 'github'] as const;
+export type DownloadSourceProvider = (typeof DOWNLOAD_SOURCE_PROVIDERS)[number];
+
+/** 这个 provider 是不是我们认得的内置源（调用方可以传自定义源，那时为假）。 */
+export function isDownloadSourceProvider(p: string): p is DownloadSourceProvider {
+  return (DOWNLOAD_SOURCE_PROVIDERS as readonly string[]).includes(p);
+}
+
 export interface SourceLatency {
-  /** Provider id, e.g. "hf" / "hf-mirror" / "modelscope" / "github". */
+  /**
+   * Provider id, e.g. "hf" / "hf-mirror" / "modelscope" / "github".
+   *
+   * ★ **界面上那个名字按这一格翻**（#112），不是按下面的 `label`。
+   * 调用方可以传自定义源，所以这里仍是 `string`；
+   * 认不认得由 {@link isDownloadSourceProvider} 判，认不出时界面如实标"原文"。
+   */
   provider: string;
+  /**
+   * 目录里那个**原始**名字。
+   *
+   * ⚠️ **不是本地化文案**，别直接渲染给用户 —— 它逐字含中文
+   * （`hf-mirror 镜像` / `ModelScope 魔搭`），这正是 #112 第 17 处要治的。
+   * 它留着有两个用处：排障时对得上目录，以及自定义源（没有 provider 词条）时的兜底。
+   */
   label: string;
   url: string;
   reachable: boolean;

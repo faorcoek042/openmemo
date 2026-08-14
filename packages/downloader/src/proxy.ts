@@ -24,6 +24,7 @@
 import net from 'node:net';
 
 import {
+  type DownloadSourceProvider,
   type ProxyConfig,
   type ProxyProbe,
   type ProxyProbeResult,
@@ -54,9 +55,21 @@ import {
  */
 export const PROXY_TEST_TARGET = { target: 'YouTube', url: 'https://www.youtube.com/generate_204' };
 
-/** Download sources, measured as a comparison table — a separate action from the above. */
+/**
+ * Download sources, measured as a comparison table — a separate action from the above.
+ *
+ * ★ `provider` is pinned to {@link DownloadSourceProvider}, not `string` (#112 §17).
+ * That union is the gate: adding a built-in source here forces adding it to the union in
+ * `shared`, which in turn reddens the web app's total `Record<DownloadSourceProvider,
+ * string>` of display names. A new source with no name to show fails the build instead of
+ * quietly rendering `label` — which is what this fix exists to stop.
+ *
+ * ⚠️ `label` stays exactly as it is, and is **not** what the UI renders. It is the raw
+ * catalog name (two of them contain Chinese verbatim) — see `SourceLatency.label` in
+ * `shared` for what it is still good for.
+ */
 export const DOWNLOAD_SOURCE_TARGETS: ReadonlyArray<{
-  provider: string;
+  provider: DownloadSourceProvider;
   label: string;
   url: string;
 }> = [
@@ -424,6 +437,20 @@ export async function testProxyConnectivity(
       const proxyUrl = proxyUrlFor(cfg, t.url, env);
       const viaProxy = Boolean(proxyUrl);
       const started = Date.now();
+      /*
+       * ★ #112 §16: `detail` used to be three hand-written Chinese sentences, rendered
+       * verbatim into an otherwise-English settings panel. The wording now lives in the
+       * web app's two locale files; this module says only WHICH case it is.
+       *
+       * Credentials stay redacted here, at the point where the value is produced —
+       * `detail` goes into an HTTP response body, and the raw URL may carry a password.
+       * `redactProxyUrl` only returns null for a null/empty input, and all three arms
+       * below are guarded by `viaProxy` (i.e. a non-empty proxy URL), so the fallback is
+       * unreachable; it reuses redactProxyUrl's own placeholder rather than an empty
+       * string, because a sentence with a blank where the address should be reads like a
+       * rendering bug.
+       */
+      const redactedProxy = redactProxyUrl(proxyUrl) ?? '<invalid proxy url>';
 
       // All three short-circuits come from the CONNECT handshake, which is the only place
       // the real status line still exists — by the time undici's own fetch reports back
@@ -437,7 +464,11 @@ export async function testProxyConnectivity(
           result: 'proxy_unreachable',
           viaProxy,
           elapsedMs: Date.now() - started,
-          detail: `连不上代理 ${redactProxyUrl(proxyUrl)} —— 未向 ${t.target} 发出请求`,
+          detail: {
+            kind: 'proxy_unreachable_not_sent',
+            proxyUrl: redactedProxy,
+            target: t.target,
+          },
         });
         continue;
       }
@@ -448,7 +479,7 @@ export async function testProxyConnectivity(
           result: 'proxy_auth_failed',
           viaProxy,
           elapsedMs: Date.now() - started,
-          detail: `代理 ${redactProxyUrl(proxyUrl)} 拒绝了凭据（407）—— 请检查用户名/密码，不是上游的问题`,
+          detail: { kind: 'proxy_rejected_credentials', proxyUrl: redactedProxy },
         });
         continue;
       }
@@ -459,7 +490,7 @@ export async function testProxyConnectivity(
           result: 'unclassified',
           viaProxy,
           elapsedMs: Date.now() - started,
-          detail: `代理 ${redactProxyUrl(proxyUrl)} 应答了，但拒绝建立到 ${t.target} 的隧道（CONNECT 非 2xx、非 407）—— 常见于按策略拒绝的企业代理；无法进一步判断问题在代理策略还是目标站`,
+          detail: { kind: 'proxy_refused_tunnel', proxyUrl: redactedProxy, target: t.target },
         });
         continue;
       }
@@ -492,7 +523,17 @@ export async function testProxyConnectivity(
           result: classify(err, proxyReachable, viaProxy),
           viaProxy,
           elapsedMs: Date.now() - started,
-          detail: err instanceof Error ? err.message : String(err),
+          /*
+           * ⚠️ Deliberately NOT enumerated (#112 §16): this is whatever fetch / DNS / TLS
+           * threw, a set we have neither read nor bounded. Pinning an enum on it would
+           * collapse "we do not know what this is" into "we know". It goes through as
+           * text, and the UI says out loud that this part is verbatim and untranslated —
+           * the same treatment `UpstreamFailure.upstream_error_text` gets.
+           */
+          detail: {
+            kind: 'probe_error_text',
+            text: err instanceof Error ? err.message : String(err),
+          },
         });
       } finally {
         clearTimeout(timer);

@@ -14,6 +14,7 @@ import { Banner } from '../../components/common/Banner';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { TranscribeOptions } from '../../components/common/TranscribeOptions';
 import { useAsrEngines } from '../../components/common/AsrEngineStatus';
+import { engineUnavailableText } from '../../components/common/engineReasonText';
 import { useActiveAsrModel } from '../../components/common/AsrModelPicker';
 import { ASR_ENGINE_LABELS, ASR_LANGUAGE_AUTO, toAsrEngineId } from '../../lib/asr';
 import type { TranscriptSegmentDto } from '../../lib/events/types';
@@ -501,14 +502,24 @@ export function RetranscribeButton({
 
           {/*
             上次用的引擎现在装不了/没配好时，下拉会**自己回到「自动」** ——
-            不解释的话，那与"下拉坏了"完全同形。reason 是 daemon 给的实测原因。
+            不解释的话，那与"下拉坏了"完全同形。
+
+            原因仍然**只由 daemon 判**（是哪一档、已装哪几个 id 都来自 `/api/health`），
+            我们没有替它猜任何东西；#112 之后它给的是一个机器可读的档位，
+            措辞在 `components/common/engineReasonText.ts` 那张总表 + 两份 locale 里 ——
+            上一版这里原样插的是 daemon 拼好的**中文散文**，英文用户读到的是半句中文。
           */}
           {lastEngineGone && lastEngine ? (
             <p className="text-xs text-warning" data-testid="retranscribe-engine-unavailable">
               {t('detail.retranscribe.lastEngineUnavailable', {
                 engine: ASR_ENGINE_LABELS[lastEngine],
               })}
-              {lastEngineState?.reason ? `（${lastEngineState.reason}）` : ''}
+              {/* 括号归 locale —— 写死全角 `（）` 会让英文界面上这半句带中文标点（#112） */}
+              {lastEngineState?.reason
+                ? t('asr.reasonParenthetical', {
+                    reason: engineUnavailableText(t, lastEngineState.reason),
+                  })
+                : ''}
             </p>
           ) : null}
 

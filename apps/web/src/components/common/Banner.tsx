@@ -26,14 +26,24 @@ export interface BannerProps {
   detail?: ReactNode;
   action?: ReactNode;
   className?: string;
+  /**
+   * 挂在**条幅自己**这个元素上的测试标记（可选）。
+   *
+   * ⚠️ 刻意不用外面套一层 `<div data-testid>`：那样断言只够到包装盒，
+   * 而这一族最容易出错的恰恰是条幅**自己**的属性 —— `tone` 一旦被改成
+   * `critical`，`aria-live` 与左边那道色条会跟着变，而包装盒上什么都看不出来。
+   * 标记落在条幅上，"它不是错误态"才断言得了（#109）。
+   */
+  testId?: string;
 }
 
-export function Banner({ tone, icon, title, detail, action, className }: BannerProps) {
+export function Banner({ tone, icon, title, detail, action, className, testId }: BannerProps) {
   return (
     <div
       // 降级/错误态用 assertive，让屏幕阅读器立即播报（D-05 §6.3）
       role="status"
       aria-live={tone === 'critical' ? 'assertive' : 'polite'}
+      {...(testId ? { 'data-testid': testId } : {})}
       className={cn(
         'flex items-start gap-3 border-b border-l-4 border-b-line px-4 py-2 text-sm',
         TONE_STYLES[tone],

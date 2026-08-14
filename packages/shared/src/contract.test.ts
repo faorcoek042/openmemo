@@ -58,9 +58,31 @@ describe('CONTRACT_VERSION —— daemon ↔ web 的握手位', () => {
     // ② 成立且**正是我们要的**：老前端读 `e.pct` 会得到 `undefined`，
     //    `?? 0` 之后每条任务恒显示 0% —— 与其让他盯着一排静止的 0%，
     //    不如让 `connect.ts` 的版本比对把他挡在"刷新一下"那句话上。
+    //
+    // ── 2 → 3（#112，有意 bump，两条确认**重新**做过）───────────────────────
+    // 四处「原因」字段从自由文本换成判别式联合：`pipeline.engines[].reason`、
+    // `probes[].detail`、`modes.semanticReason`，以及 `/ws/recorder` 的 error 帧
+    // （`messageZh` 整格删掉，换成 `reason: RecorderErrorReason`）。
+    //
+    // ⚠️ 这两条确认是**重新核的，不是抄上面那次的**：
+    // 「先例存在」和「先例的前提今天还成立」是两件事。
+    // ① 成立（复核）：daemon 自己 serve 那份 SPA，同一个 bundle 一起发。
+    // ② 成立（复核）：`apps/web/src/lib/api/connect.ts` 仍然在比对
+    //    `/api/health` 的 `contractVersion`，不等即进阻断页。而且这条路**真的会被
+    //    走到**：daemon 重启会换 token ⇒ 旧标签页下一个请求 401 ⇒ `lib/api/client.ts`
+    //    的自愈 `resetConnection()` ⇒ 重新握手 ⇒ 在版本比对这里被拦下。
+    //
+    // 为什么这次值得挡：逐条量过旧前端撞上新 daemon 会渲染出什么 ——
+    //   · `engines[].reason` → `AsrEngineStatus` 模板串插值 ⇒ `（[object Object]）`
+    //   · `probes[].detail`  → 设置页 ⇒ `· [object Object]`
+    //   · WS 的 `messageZh`  → `setStreamError(undefined)`，而渲染点是
+    //     `{streamError ? <Banner/> : null}` ⇒ **整条横幅不渲染**，
+    //     录音会话已经死了而界面上一个字都没有。
+    // 前两条不是"说错了一句话"，是**泄漏出来的内部表示**；第三条更坏 ——
+    // 用户根本不知道出了事。一次刷新换掉这三样。
     assert.equal(
       CONTRACT_VERSION,
-      2,
+      3,
       'CONTRACT_VERSION 变了。这是破坏性改动，不是版本号自增 —— 见本条注释',
     );
   });

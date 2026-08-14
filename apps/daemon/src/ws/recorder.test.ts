@@ -164,7 +164,13 @@ async function record(frames: number): Promise<Recorded> {
       const msg = JSON.parse(raw.toString('utf8')) as ServerMessage;
       messages.push(msg);
       if (msg.type === 'stopped') resolve();
-      if (msg.type === 'error') reject(new Error(`${msg.code}: ${msg.messageZh}`));
+      /*
+       * ★ 这里原来读的是 `msg.messageZh` —— 那一格已经从帧上删掉了（#112 第 19 处）。
+       * 换成 `code` + 整条 `reason`：**失败信息不能因为改契约而变哑**，
+       * 而 `reason` 序列化出来恰好把「哪一种 + 原文 detail」都带上，
+       * 比原来那句拼好的中文散文更好查。
+       */
+      if (msg.type === 'error') reject(new Error(`${msg.code}: ${JSON.stringify(msg.reason)}`));
     });
     ws.on('error', reject);
     setTimeout(() => reject(new Error('录音会话超时，没有收到 stopped')), 15_000).unref();

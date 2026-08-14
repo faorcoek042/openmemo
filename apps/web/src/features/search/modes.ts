@@ -12,7 +12,29 @@
  * 与 `noteAssets.ts` 拆出来的理由一模一样。
  */
 
+import type { SemanticUnavailableReason } from '@openmemo/shared';
+
 export type SearchMode = 'keyword' | 'semantic' | 'hybrid';
+
+/**
+ * 「为什么没有语义检索」的每一种成因该说哪句话。**总表**（#112 第 11 处）。
+ *
+ * ## 为什么是 `Record<全部 kind, string>` 而不是 `switch` 或 `?? ''`
+ *
+ * 照 `features/components/reasonText.ts` 那四张表的姿势：契约里新增一格而没人给它
+ * 写话，**构建当场就红**。换成 `KEYS[k] ?? ''`，新的一格会静默渲染成一段空白 ——
+ * 而这一句的位置恰好在「{{modes}} search is unavailable: 」后面，
+ * 空白会让它读成一句**没说完的话**。
+ *
+ * ⚠️ 它同时是**运行期认得哪几格的唯一来源**（见 `normalizeModes`）：
+ * 加一格 ⇒ 编译逼着补词条 ⇒ 那一格自动被运行期收下。两件事不会各走各的。
+ */
+export const SEMANTIC_UNAVAILABLE_KEYS: Readonly<
+  Record<SemanticUnavailableReason['kind'], string>
+> = {
+  no_embedding_stage: 'search.semanticUnavailable.noEmbeddingStage',
+  vector_extension_not_loaded: 'search.semanticUnavailable.vectorExtensionNotLoaded',
+};
 
 /**
  * 服务端**真的**能提供哪几路检索（`apps/daemon/src/http/rest/search.ts` 的 `modeReport()`）。
@@ -25,8 +47,19 @@ export interface SearchModes {
   keyword: boolean;
   semantic: boolean;
   hybrid: boolean;
-  /** 为什么没有语义路（服务端给的原话，不由前端编）。 */
-  semanticReason: string | null;
+  /**
+   * 为什么没有语义路 —— **机器可读的那一格**（#112 第 11 处）。
+   *
+   * ⚠️ 这里存的是**成因**，不是话。措辞由 `SEMANTIC_UNAVAILABLE_KEYS` + 两份 locale 出，
+   * 因为这句会被插进 `search.modesUnavailable` 那句**英文**里 ——
+   * 上一版服务端发的是中文散文，英文界面上逐字是
+   * `Semantic search is unavailable: sqlite-vec 未加载`。
+   *
+   * `null` 仍然是一个**真实的状态**：服务端没说为什么（旧 daemon、字段缺失、脏值）。
+   * 那时界面说的是 `search.modesUnavailableUnknown` ——「服务端未说明原因」，
+   * 而不是替它编一个成因。
+   */
+  semanticReason: SemanticUnavailableReason | null;
   /**
    * 关键词那一路**实际用的分词器**（T-200 A-2）。
    *
@@ -40,6 +73,32 @@ export interface SearchModes {
    * `db.extensions.tokenizer`，**另一个端点**）**明说降级了**。同一个事实，两处分叉。
    */
   tokenizer: 'simple' | 'trigram';
+}
+
+/**
+ * 线上那一格 → 认得的成因，认不出一律 `null`（#112 第 11 处）。
+ *
+ * ⚠️ **必须在运行期收一道**：它是从网线上来的。类型上写着判别式联合，
+ * 不代表它到手时就是；旧 daemon 发的是**一句中文散文**，
+ * 而更旧的什么都不发。两种都必须落到"服务端没说为什么"那一档。
+ *
+ * 认不出的 `kind` 也归 `null`，**不猜一格**：这里的判据仍是那句
+ * **「哪个默认值会让界面说一句不成立的话」** ——
+ * 猜一格会让界面言之凿凿地说出一个我们并不知道的成因
+ * （比如把新出的第三格说成「扩展没加载」，把用户支去装一个装了也没用的东西）；
+ * 而 `null` 说的是「服务端没说」—— 这句在任何情况下都成立。
+ *
+ * 认哪几格由 {@link SEMANTIC_UNAVAILABLE_KEYS} 这张**总表**说了算，
+ * 不在这里另抄一份常量：抄一份就会有一天两边不一样。
+ */
+function semanticReasonOf(raw: unknown): SemanticUnavailableReason | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const kind: unknown = (raw as { kind?: unknown }).kind;
+  if (typeof kind !== 'string') return null;
+  // `hasOwnProperty.call` 而不是 `in`：`'toString' in KEYS` 是真的。
+  if (!Object.prototype.hasOwnProperty.call(SEMANTIC_UNAVAILABLE_KEYS, kind)) return null;
+  // 只留 `kind`：线上多带的字段一律不进前端状态。
+  return { kind: kind as SemanticUnavailableReason['kind'] };
 }
 
 /** 展示顺序。**不是"有哪几档"** —— 那个只有服务端知道。 */
@@ -65,7 +124,7 @@ export function normalizeModes(raw: unknown): SearchModes {
     keyword: bool(m['keyword'], true),
     semantic: bool(m['semantic'], false),
     hybrid: bool(m['hybrid'], false),
-    semanticReason: typeof m['semanticReason'] === 'string' ? m['semanticReason'] : null,
+    semanticReason: semanticReasonOf(m['semanticReason']),
     /*
      * ⚠️ 缺省取 `'simple'`（**不降级**），方向与 `semantic` 那几个相反 —— 刻意的：
      * 这里"宽松"的后果是**少说一句降级**，而"严格"（默认 trigram）的后果是

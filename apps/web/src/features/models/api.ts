@@ -19,6 +19,7 @@ import type {
   PullRequest,
   PullResponse,
   SelectSourceRequest,
+  UninstallWithRefusalsResponse,
 } from '@openmemo/shared';
 
 import { api } from '../../lib/api/client';
@@ -105,11 +106,27 @@ export function useModelPullMutation() {
   });
 }
 
+/**
+ * 卸载一个模型。
+ *
+ * ## 返回值有两档，**`void` 说不出第二档**（#109）
+ *
+ * · `undefined` —— 服务端回了 **204**：记录没了、文件也全删干净了，没什么可说的；
+ * · 一个对象   —— 服务端回了 **200 + `filesNotRemoved`**：记录**照样没了**，
+ *                 但有几个文件我们拒绝去删（记录指向数据目录之外）。
+ *
+ * `795f091` 把这个 200 写出来之后，这里仍然是 `api<void>` —— body 被整个丢掉，
+ * 界面上一个字都没有。**一个只到 API 的字段就是「有人写没人读」。**
+ * 两条路的区分由 `lib/api/client.ts` 替我们做完了（204 → `undefined`），
+ * 所以调用方只需要问"拿到的是不是 undefined"。
+ */
 export function useModelDeleteMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<void>(`/models/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+      api<UninstallWithRefusalsResponse | undefined>(`/models/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.models.installed });
       void qc.invalidateQueries({ queryKey: qk.models.storage });

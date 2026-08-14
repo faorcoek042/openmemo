@@ -50,7 +50,7 @@ import { hasInstallablePackProviding } from '@openmemo/runtime';
 import { SseHub } from './http/sse.js';
 import { attachWebSocket } from './http/ws.js';
 import { JobQueue } from './jobs/queue.js';
-import type { PipelineJob } from '@openmemo/shared';
+import type { EngineUnavailableReason, PipelineJob } from '@openmemo/shared';
 import { jobCreatedEvent, jobStateEvent, pipelineJobOf, pipelineKindOf } from './jobs/events.js';
 import { toolchainMissing } from '@openmemo/shared';
 import { LanePool } from './jobs/lanes.js';
@@ -736,21 +736,41 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
                *
                * 只列 `candidates` 的话，模型没装的引擎在这份列表里根本不存在 ——
                * 前端 `AsrEngineStatus` 会把它补成"未安装"，但**说不出原因、也给不出下一步**。
-               * 而真实原因（"未安装流式中文模型，去模型页装 X"）daemon 是知道的。
+               * 而真实原因（模型没装 / 装了但文件不全）daemon 是知道的。
                * 不说出来，就是把一次可操作的缺失变成一个用户查不下去的哑巴状态。
+               *
+               * ★★ #112：`reason` 这一格**两个产出方，方向相反的两句谎**。
+               *
+               * 下面两支合并进同一个数组，而它们此前一支发中文散文（`unavailableEngines`）、
+               * 一支发英文散文（`candidates` 的 `unavailableReason`，来自
+               * `packages/pipeline` 的 `AsrAvailability.reason`）。前端三个渲染点都是
+               * 原样插值 ⇒ **英文界面上半句中文，中文界面上半句英文**。
+               * 现在两支都发 {@link EngineUnavailableReason}：
+               *   · `unavailableEngines` 那支本来就是我们自己算的，直接给结构化的档位；
+               *   · `candidates` 那支**是别人家的自由文本**，没有边界也没被解读过，
+               *     所以整段进 `engine_probe_text.text`，界面上明说这一段是原文、
+               *     不翻译（同 `UpstreamFailure.upstream_error_text`）。
                */
               engines: [
                 ...bundle.candidates.map((c) => ({
                   id: c.engine.id,
                   available: c.available,
-                  ...(c.unavailableReason ? { reason: c.unavailableReason } : {}),
+                  ...(c.unavailableReason
+                    ? { reason: { kind: 'engine_probe_text', text: c.unavailableReason } as const }
+                    : {}),
                 })),
                 ...bundle.unavailableEngines.map((e) => ({
                   id: e.id,
                   available: false,
-                  reason: e.reasonZh,
+                  reason: e.reason,
                 })),
-              ],
+                /*
+                 * ⚠️ `satisfies` 不是装饰：`deps.status()` 的返回类型是
+                 * `Record<string, unknown>`（`http/server.ts`），也就是说**这整块
+                 * 对象字面量没有任何一格是被类型检查的**。少了这一行，谁哪天把
+                 * `reason` 写回一句散文，tsc 一个字都不会说。
+                 */
+              ] satisfies { id: string; available: boolean; reason?: EngineUnavailableReason }[],
               ffmpeg: bundle.tools.ffmpeg || null,
               whisperCli: bundle.tools.whisperCli,
               /*

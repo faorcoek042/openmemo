@@ -24,7 +24,7 @@ import { join } from 'node:path';
 import type { AsrStream, TranscriptSegment } from '@openmemo/pipeline';
 import { PRIORITY } from '@openmemo/pipeline';
 import { canonicalAssetRelPath } from '@openmemo/runtime';
-import { makeEvent, topics, ulid, type SseEvent } from '@openmemo/shared';
+import { makeEvent, topics, ulid, type RecorderErrorReason, type SseEvent } from '@openmemo/shared';
 
 import type { Repos } from '../db/repos.js';
 import type { SseHub } from '../http/sse.js';
@@ -79,7 +79,23 @@ export type ServerMessage =
   | { type: 'final'; seq: number; startMs: number; endMs: number; text: string }
   | { type: 'overrun'; droppedSamples: number }
   | { type: 'stopped'; segmentCount: number; rerunJobUid: string | null }
-  | { type: 'error'; code: string; messageZh: string };
+  /**
+   * **这一格上没有句子**（#112 第 19 处）。
+   *
+   * 原来是 `messageZh: string` —— 帧上唯一的人话，而且**只有中文**；
+   * `RecorderPage` 直接 `setStreamError(msg.messageZh)`。也就是说
+   * **英文用户那条横幅无论怎么改前端都救不了**：帧上根本没有别的东西可渲染。
+   *
+   * `messageZh` 是**整格删掉**，不是留着当兜底 —— 同 #106 删
+   * `pipeline.vad.reasonZh` 那一手：留着它，前端永远有一句中文可以回落，
+   * `RECORDER_ERROR_KEYS` 那张总表也就形同虚设，编译期的闸门是装饰品。
+   * 中文原话**没有丢**，它照旧进 daemon 控制台（那一侧没有 i18n，见 `http/ws.ts`
+   * 的 `finish()`）。
+   *
+   * ⚠️ `code` **保留**：录音页据它决定「要不要把界面打回 idle、放开麦克风」，
+   * 而那条判断必须对**发不出 `reason` 的老 daemon** 也成立（见 `RecorderPage`）。
+   */
+  | { type: 'error'; code: string; reason: RecorderErrorReason };
 
 /**
  * 一路录音会话。**一个 WS 连接对应一个实例**。
@@ -152,7 +168,7 @@ export class RecorderSession {
       this.send({
         type: 'error',
         code: 'ASR_STREAM_UNAVAILABLE',
-        messageZh: '流式识别引擎不可用（未安装流式模型）',
+        reason: { kind: 'stream_engine_unavailable' },
       });
       this.#emitState('failed');
       return;
@@ -267,7 +283,17 @@ export class RecorderSession {
     });
 
     stream.on('error', (err: Error) => {
-      this.send({ type: 'error', code: 'ASR_STREAM_ERROR', messageZh: `识别出错：${err.message}` });
+      /*
+       * **阶段是知道的，成因不知道**：`kind` 只说"会话开着、引擎自己报错"，
+       * `err.message` 原样进 `detail`。给成因硬编一个枚举，是替一段没看懂的
+       * 字符串背书（同 `UpstreamFailure.upstream_error_text` 的待遇）。
+       * 界面上那句话会明说这一段是原文、不会被翻译。
+       */
+      this.send({
+        type: 'error',
+        code: 'ASR_STREAM_ERROR',
+        reason: { kind: 'engine_error', detail: err.message },
+      });
     });
 
     this.send({
@@ -351,9 +377,24 @@ export class RecorderSession {
      */
     const relPath = canonicalAssetRelPath(this.deps.dataDir, this.#wavPath);
     if (relPath === null) {
+      /*
+       * ⚠️ **这句话是英文的，而且必须是**（#112 第 19 处的收尾）。
+       *
+       * 它不再只进日志：`stop()` 抛出来之后，`http/ws.ts` 的 `finish()` 会把
+       * `err.message` 原样放进 `finalize_failed.detail`，而那一格在网页上被
+       * `recorder.wsError.finalizeFailed` 包成「以下是原文，我们没有翻译它：…」。
+       *
+       * 于是写成中文的话，**英文用户拿到的是一句英文后面缀一句中文** —— 正是这一轮
+       * 要清的那个形状，只不过换了条路径进来。`detail` 那一格的契约是"我们没解读过的
+       * 原文"，而这一句**是我们自己写的散文**，不能拿"原文不翻译"当挡箭牌。
+       *
+       * 收成英文而不是搬进 locale：抛出的 `Error.message` 是**排障字符串**，
+       * 全仓（`store.ts` / `whisperCpp.ts` …）一律英文；把它做成可翻译的会让
+       * 一个异常在两种语言里有两副面孔，日志和用户报告就对不上号了。
+       */
       throw new Error(
-        `录音落盘路径不在数据目录内，拒绝把绝对路径写进 media_assets.rel_path：` +
-          `${this.#wavPath}（dataDir=${this.deps.dataDir}）`,
+        `recording path is outside the data directory; refusing to write an absolute ` +
+          `path into media_assets.rel_path: ${this.#wavPath} (dataDir=${this.deps.dataDir})`,
       );
     }
     const asset = this.deps.repos.createAsset({

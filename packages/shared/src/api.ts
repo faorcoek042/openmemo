@@ -144,6 +144,177 @@ export type VadChunkingReason =
       readonly kind: 'runtime_failure';
     };
 
+/**
+ * 「这个 ASR 引擎为什么用不了」—— **机器可读**，措辞归 `apps/web` 的两份 locale（#112）。
+ *
+ * ## 为什么不是 `reason: string`
+ *
+ * `/api/health` 的 `pipeline.engines[].reason` 上一版是一格自由文本，而它有
+ * **两个产出方，方向相反的两句谎**：
+ *
+ *   · `pipeline/setup.ts` 的 `unavailableEngines` 发**中文散文**
+ *     （「未安装流式中文模型 —— 去「模型」页装 …」）；
+ *   · `packages/pipeline` 的 `buildCandidates()` 发 `AsrAvailability.reason`，
+ *     那是**英文散文**（`the streaming recognition component is not installed (…)`）。
+ *
+ * 三个渲染点（录音页的引擎芯片、模型页的 `EngineFitChip`、重转弹窗那一行）都是
+ * 原样插值 —— 于是**英文界面上是半句中文，中文界面上是半句英文**，同一格两头漏。
+ *
+ * 这里把整条轴换掉：daemon 只说是哪一种 + 结构化字段，措辞在 locale 里，
+ * 而 web 侧那张 `Record<EngineUnavailableReason['kind'], string>` 是总表 ——
+ * 新增一种而没人写话，**构建当场就红**。形状照 {@link Inapplicability}（#106）。
+ *
+ * ⚠️ **参数不许拼进 kind**：`installed_but_files_incomplete` 的已装 id 列表、
+ * `override_dir_incomplete` 的变量名与目录，都是**结构化字段**，由 web 插值。
+ */
+export type EngineUnavailableReason =
+  | {
+      /**
+       * 这个引擎要的模型**一个都没装**。**装一个模型真能修好**的那一档 ——
+       * 界面据此指向「模型」页，所以它必须与下面那一档分开。
+       */
+      readonly kind: 'model_not_installed';
+    }
+  | {
+      /**
+       * 装是装了，但目录里**缺文件**（sherpa 缺 encoder/decoder/joiner/tokens.txt 之一，
+       * Paraformer 缺 `*.onnx` 或 `tokens.txt`）。
+       *
+       * ★ 与 `model_not_installed` 分开、不合并成"没装好"：**用户看得见的下一步不同** ——
+       * 这一档要说的是"你装的那个是坏的/不全的，重装它"，而不是"去装一个"。
+       * 让一个已经装过的人再去装一遍，正是本仓清过的那种「叫用户去做他刚做完的事」。
+       */
+      readonly kind: 'installed_but_files_incomplete';
+      /** 已装、但文件不全的那几个模型 id（数据，照实列，不翻译）。 */
+      readonly installedIds: readonly string[];
+    }
+  | {
+      /**
+       * 环境变量覆盖指向了一个**没有所需文件**的目录。开发/自检路径，
+       * 但它必须说得出是**哪个变量**、指向**哪里** —— 否则排障时只知道"用不了"。
+       */
+      readonly kind: 'override_dir_incomplete';
+      /** 例如 `OPENMEMO_SHERPA_STREAM_DIR`。 */
+      readonly envVar: string;
+      /** 那个变量当时的值（数据，不翻译）。 */
+      readonly dir: string;
+    }
+  | {
+      /**
+       * 引擎**构造出来了**，但它自己的 `isAvailable()` 说不可用 —— 这一格装的是
+       * `packages/pipeline` 那句**英文原话**（含 `err.message`）。
+       *
+       * ⚠️ **这一格刻意不枚举。** 落进来的是 `AsrAvailability.reason`：一个
+       * **我们没有解读过、也没有边界**的集合（它自带 `require()` 抛回来的 message）。
+       * 给它硬编一个枚举，是把「我不知道这是什么」塌成「我知道」。
+       * 所以它如实进 `text`，界面上明说这一段是原文、不会被翻译 ——
+       * 同 `UpstreamFailure.upstream_error_text` 与
+       * `Inapplicability.backend_unavailable.detail` 的待遇。
+       */
+      readonly kind: 'engine_probe_text';
+      readonly text: string;
+    };
+
+/**
+ * `/ws/recorder` 的 error 帧「是哪一种错」—— **机器可读**（#112 第 19 处）。
+ *
+ * ## 这一处和另外五处不是一个病
+ *
+ * 其余几处都是「daemon 有中文、前端照抄」。这一格**连英文字段都没有**：
+ * 帧上原来只有 `messageZh`，`RecorderPage` 直接 `setStreamError(msg.messageZh)`。
+ * 也就是说**英文用户那条横幅无论怎么改前端都救不了** —— 必须从这一侧加字段。
+ *
+ * `messageZh` 已经从帧上**删掉**（同 #106 删 `pipeline.vad.reasonZh` 那一手）：
+ * 留着它，前端就永远有一句中文可以回落，那张总表也就形同虚设。
+ * 中文原话**没有丢**，它照旧进 daemon 控制台的 `console.error`（那一侧没有 i18n）。
+ *
+ * ⚠️ **web 侧渲染用的联合比这里多一格** `not_reported`（"对面这一版没说是哪一种"），
+ * 它**刻意不在这个契约里** —— 那样 daemon 在类型上就发不出它，
+ * 它只可能来自一个更旧的 daemon。见 `apps/web/src/features/recorder/recorderErrorText.ts`。
+ */
+export type RecorderErrorReason =
+  | {
+      /** 流式识别引擎不可用（未安装流式模型）。会话根本没开起来。 */
+      readonly kind: 'stream_engine_unavailable';
+    }
+  | {
+      /**
+       * 录音**启动**失败。
+       *
+       * ⚠️ **阶段是知道的，成因不知道** —— `detail` 装的是 `err.message` 原样串。
+       * 所以 `kind` 只说"卡在启动这一步"，成因如实标成不翻译的原文。
+       * 给成因硬编一个枚举，是替一段没看懂的字符串背书。
+       */
+      readonly kind: 'start_failed';
+      readonly detail: string;
+    }
+  | {
+      /** 会话开着，识别引擎自己报错。同上：阶段知道、成因是原文。 */
+      readonly kind: 'engine_error';
+      readonly detail: string;
+    }
+  | {
+      /**
+       * 停止录音时的**收尾**失败（落盘路径算不出规范相对路径这类）。同上。
+       *
+       * ★ 与 `start_failed` 分开：**用户已经录到的东西在不在，两档的答案不同** ——
+       * 启动失败时一行都没建，收尾失败时音频可能已经落了盘。
+       */
+      readonly kind: 'finalize_failed';
+      readonly detail: string;
+    }
+  | {
+      /** 上行的控制消息不是合法 JSON。 */
+      readonly kind: 'control_message_not_json';
+    }
+  | {
+      /** `/ws/asr-worker`：ADR-006 决策 3 已把 L0 降级为实验特性，v1 不实现。 */
+      readonly kind: 'asr_worker_not_implemented';
+    };
+
+/**
+ * 一次卸载里**我们拒绝去删**的一个条目（#109 / T-107）。
+ *
+ * ⚠️ `reason` 是解析层抛回来的**英文技术原话**（带绝对路径与允许的根），
+ * **不翻译**，界面必须让人看得出哪一段是原文 —— 同
+ * `Inapplicability.backend_unavailable.detail` 的待遇。
+ *
+ * ★ 这里**没有**把它收成枚举，是刻意的：它由 `packages/downloader/src/store.ts`
+ * 里四条不同的 `throw` 汇流而成，而那四条的措辞是给排障的人看的、随时会加第五条。
+ * 收成枚举就得替每一条决定"它属于哪一格"，而**用户要读的那一句不在这里** ——
+ * 在 `filesNotRemoved` 那句话本身（记录已清 + 有几个没删掉 + 它们在哪儿）。
+ */
+export interface RefusedFileReport {
+  /** 安装记录里那个文件的名字，用户在界面上对得上号的那个。 */
+  readonly name: string;
+  /** 解析层的英文原话。**不翻译。** */
+  readonly reason: string;
+}
+
+/**
+ * `DELETE /api/models/:id` 与 `DELETE /api/backends/:id` 在**有拒绝时**的 200 响应体。
+ *
+ * ## 为什么它非在契约里不可（#109）
+ *
+ * `795f091` 让这两个端点在有拒绝时回 `200 + filesNotRemoved`，**但那只到服务端边界**：
+ * 响应体 + 一条 `console.warn`，**界面上一个字都没有**。而两个 web 调用方都是
+ * `api<void>(…)` —— body 被整个丢掉。**一个只到 API 的字段就是「有人写没人读」。**
+ *
+ * ⚠️ 干净路径仍然是 **204**，body 是 `undefined` —— 客户端
+ * （`lib/api/client.ts:212`）已经替我们把两条路分开了，所以调用方读到
+ * `undefined` 就是"全删干净了"，读到这个对象才需要说话。
+ *
+ * 🔴 **界面上那句话必须先说「记录已经清掉了」。** 用户点卸载看到「有 N 个文件没能删」，
+ * 最自然的解读是「卸载失败了，我再点一次」—— 而记录其实已经走了，**再点会拿到 404**。
+ * 同理 tone 是**信息级不是故障级**：卸载成功了，只是有残留。
+ */
+export interface UninstallWithRefusalsResponse {
+  /** 这次真的回收了多少字节。 */
+  readonly freedBytes: number;
+  /** 我们拒绝去删的条目。**能走到这个响应体，它就一定非空**（空的走 204）。 */
+  readonly filesNotRemoved: readonly RefusedFileReport[];
+}
+
 export interface ActiveSlotUnusable {
   /** 记在这个槽位里的模型 id —— 与 `active[role]` 同值，便于调用方不用回查。 */
   modelId: string;
