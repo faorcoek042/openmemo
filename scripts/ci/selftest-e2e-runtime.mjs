@@ -38,6 +38,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   NOT_PROBED_YET_KIND,
+  checkUninstallReachedDisk,
   saysHardwareNotProbedYet,
   stillSaysHardwareNotProbedYet,
 } from './e2e-runtime-assertions.mjs';
@@ -199,6 +200,183 @@ say('── ④ 契约漂移守卫：这个 kind 必须真的还在 Inapplicabil
   const nonsense = `readonly kind: 'definitely_not_a_real_kind_${Date.now()}';`;
   if (src.includes(nonsense)) bad('前提检查', '不可能的字面量竟然命中了 —— 这条守卫是恒真的');
   else ok('前提检查：不存在的 kind 确实匹配不到（上一条不是恒真）');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+say('');
+say('── ⑤ 卸载：「记录没了」与「字节没了」是两件事（#110）');
+
+/*
+ * 这一组的形状与①②③相同，但被测的是 `checkUninstallReachedDisk`。
+ *
+ * ★ 它为什么需要**成对**的样本：这条判据有两个方向，各自都能被单独绕过。
+ *   · 只查「该走的走了」⇒ 把每个文件都报成 refused、一个不删，全部通过；
+ *   · 只查「该留的留了」⇒ 什么都不删、什么都不报，全部通过。
+ *   下面 GOOD 里两条、BAD 里七条，正是钉住这两个方向各自的失效。
+ *
+ * 判据本身在 `e2e-runtime-assertions.mjs`；把它任何一段拿掉，这一组当场红。
+ */
+
+/** 删之前那份记录点名的文件（`declaredFilePaths()` 的产物 + 名字）。 */
+const DECL = [
+  { name: 'ggml-cpu.so', path: '/tmp/store/models/by-name/backend/cpu/ggml-cpu.so' },
+  { name: 'whisper.tar.gz', path: '/tmp/store/models/by-name/backend/cpu/whisper.tar.gz' },
+];
+const P = (n) => DECL.find((f) => f.name === n).path;
+const OUT_OF_BOUNDS =
+  'Legacy installed-file record "/etc/ssl/x" resolves to /etc/ssl/x, which is outside every allowed root (/tmp/store/models) — refusing to hand out a path we do not own';
+
+/** 两条**真·合法**的现场：判据必须放它们过去。 */
+const UNINSTALL_GOOD = [
+  [
+    '干净卸载：204，记录点名的两个文件盘上都没了',
+    {
+      status: 204,
+      filesNotRemoved: null,
+      declared: DECL,
+      stillOnDisk: [],
+      expectCleanRemoval: true,
+    },
+  ],
+  [
+    '★ #55 那条新的合法态：200 + filesNotRemoved，被拒的那个**字节还在**、没被拒的那个没了',
+    {
+      status: 200,
+      filesNotRemoved: [{ name: 'ggml-cpu.so', reason: OUT_OF_BOUNDS }],
+      declared: DECL,
+      stillOnDisk: [P('ggml-cpu.so')],
+    },
+  ],
+];
+
+/** 每一条都必须被判红 —— 每条对应一种真实的绕过法。 */
+const UNINSTALL_BAD = [
+  [
+    '★★ M-uninstall-keep-files：记录删了、204 照回，而字节一个没走（T-192 的形状）',
+    {
+      status: 204,
+      filesNotRemoved: null,
+      declared: DECL,
+      stillOnDisk: [P('ggml-cpu.so'), P('whisper.tar.gz')],
+      expectCleanRemoval: true,
+    },
+  ],
+  [
+    '只走掉一半：204 说全删了，其实还剩一个',
+    {
+      status: 204,
+      filesNotRemoved: null,
+      declared: DECL,
+      stillOnDisk: [P('whisper.tar.gz')],
+      expectCleanRemoval: true,
+    },
+  ],
+  [
+    '★ 把删除整个禁掉、再把每个文件都报成 refused —— 只查①的判据会放它过去',
+    {
+      status: 200,
+      filesNotRemoved: DECL.map((f) => ({ name: f.name, reason: OUT_OF_BOUNDS })),
+      declared: DECL,
+      stillOnDisk: DECL.map((f) => f.path),
+      expectCleanRemoval: true,
+    },
+  ],
+  [
+    '★ 嘴上说拒绝、照删不误（越界检查是摆设）—— 只查②的判据会放它过去',
+    {
+      status: 200,
+      filesNotRemoved: [{ name: 'ggml-cpu.so', reason: OUT_OF_BOUNDS }],
+      declared: DECL,
+      stillOnDisk: [],
+    },
+  ],
+  [
+    '拒绝了一个，另一个也没删（没被点名的必须没了）',
+    {
+      status: 200,
+      filesNotRemoved: [{ name: 'ggml-cpu.so', reason: OUT_OF_BOUNDS }],
+      declared: DECL,
+      stillOnDisk: DECL.map((f) => f.path),
+    },
+  ],
+  [
+    '拒绝说不出理由（#107 补 reason 就是为了这个）',
+    {
+      status: 200,
+      filesNotRemoved: [{ name: 'ggml-cpu.so', reason: '' }],
+      declared: DECL,
+      stillOnDisk: [P('ggml-cpu.so')],
+    },
+  ],
+  [
+    '204 却同时带着 filesNotRemoved —— 两句话互相矛盾',
+    {
+      status: 204,
+      filesNotRemoved: [{ name: 'ggml-cpu.so', reason: OUT_OF_BOUNDS }],
+      declared: DECL,
+      stillOnDisk: [P('ggml-cpu.so')],
+    },
+  ],
+  [
+    '200 却没有 filesNotRemoved —— 契约漂了',
+    { status: 200, filesNotRemoved: [], declared: DECL, stillOnDisk: [] },
+  ],
+];
+
+for (const [why, input] of UNINSTALL_GOOD) {
+  const r = checkUninstallReachedDisk(input);
+  if (r.ok) ok(`「${why}」→ 判绿`);
+  else bad(`「${why}」应当判绿`, `判据把一个合法现场判红了：${r.reason}`);
+}
+assert.ok(UNINSTALL_BAD.length >= 7, 'BAD 样本少于 7 个 —— 覆盖不到两个方向各自的绕过法');
+for (const [why, input] of UNINSTALL_BAD) {
+  const r = checkUninstallReachedDisk(input);
+  if (r.ok) bad(`「${why}」应当判红`, '判据放它过去了 —— 这条绕过法此刻是活的');
+  else if (r.undecidable)
+    bad(`「${why}」应当判红`, `判成了 UNKNOWN，而这是一个确定的失败：${r.reason}`);
+  else ok(`「${why}」→ 判红`);
+}
+
+/*
+ * ★ 前提缺失必须是 UNKNOWN，不是绿也不是红。
+ *   bundled 包的记录按设计不带任何可解析路径（让"删掉应用本体"形状上不可能），
+ *   这时"字节还在不在"问不出来。报绿 = 又一句关于空集的废话（PR #52 拆的就是这个）。
+ */
+{
+  const r = checkUninstallReachedDisk({
+    status: 204,
+    filesNotRemoved: null,
+    declared: [],
+    stillOnDisk: [],
+  });
+  if (r.undecidable && !r.ok) ok('★ 记录没点名任何可解析文件 → UNKNOWN（不是绿，也不是红）');
+  else
+    bad(
+      '前提缺失时应当 UNKNOWN',
+      `实际 ok=${String(r.ok)} undecidable=${String(r.undecidable)} —— 关于空集的废话又回来了`,
+    );
+}
+
+/*
+ * 契约漂移守卫，与 ④ 同一种理由：`.mjs` 拿不到 TS 的类型检查。
+ * `filesNotRemoved` 这个字段名一旦在 daemon 那侧改名，本判据会把
+ * 「有拒绝」永远读成「没拒绝」，而上面 GOOD/BAD 全用夹具、一条都不会红。
+ */
+{
+  const src = readFileSync(
+    join(REPO, 'apps', 'daemon', 'src', 'http', 'rest', 'backends.ts'),
+    'utf8',
+  );
+  const hits = src.split('filesNotRemoved:').length - 1;
+  if (hits === 1) ok('backends.ts 里恰好一处 `filesNotRemoved:`（DELETE 那条 200 的路）');
+  else
+    bad(
+      'backends.ts 里应当恰好有一处 `filesNotRemoved:`',
+      `实际 ${hits} 处 —— 字段被改名/删掉/复制了，而判据里的字面量没跟上`,
+    );
+  const nonsense = `filesNotRemoved_definitely_not_real_${Date.now()}:`;
+  if (src.includes(nonsense)) bad('前提检查', '不可能的字段名竟然命中了 —— 这条守卫是恒真的');
+  else ok('前提检查：不存在的字段名确实匹配不到（上一条不是恒真）');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
