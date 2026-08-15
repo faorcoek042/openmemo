@@ -1428,14 +1428,23 @@ async function phaseBackends() {
    *   · 200 + `filesNotRemoved` ⇒ 被点名的必须还在、没被点名的必须没了、
    *     每条拒绝都要说得出理由。
    *
-   * ⚠️ **win32 上降级成 UNKNOWN**，理由是原来那段注释说的那件事，它是对的：
-   * `state.ts::dropInstalledFiles()` 里 `fs.rm(...).catch(() => undefined)`
-   * 把 rm 的失败**吞掉了**（而且吞掉之后照样 `removed += 1`），
-   * 一个被占住的句柄就能走到「rm 静默失败 → 回 204 → 文件还在」。
-   * 在那台 runner 上拿它当判据 = 一条随机变红、然后没人再信的断言。
-   * 三态里的第三态，不是绿。变异矩阵本来就只在 Linux 上跑全量变异
-   * （`.github/workflows/e2e-runtime.yml`），判据的牙齿在那条腿上全额验得到。
-   * 那句吞掉 rm 失败的 `.catch()` 本身是**产品的问题**，另开一条记；本脚本不碰 daemon。
+   * ⚠️→✅ **win32 那条降级已经撤掉了（#113）。**
+   *
+   * 上一版这里在 win32 上直接 `unknown()`，理由是：`state.ts::dropInstalledFiles()`
+   * 里 `fs.rm(...).catch(() => undefined)` 把 rm 的失败**吞掉了**（而且吞掉之后
+   * 照样 `removed += 1`），一个被占住的句柄就能走到「rm 静默失败 → 回 204 → 文件还在」，
+   * 于是在那台 runner 上判红分不开"产品退化"和"句柄被占"。
+   * `[实证]` v0.7.3 发布跑：本条在 win32 上如实报 UNKNOWN，linux 实删 24 MB、
+   * darwin 7.5 MB 均 PASS —— **那条 UNKNOWN 本身就是 #113 的证据。**
+   *
+   * `#113` 把那一档接了出来（`filesFailedToRemove`：rm 抛了 ⇒ 进第三档，
+   * `removed` 不加，响应从 204 抬到 200）。**产品现在自己说得出"哪几个没删动"**，
+   * 于是一致性判据在 win32 上问得出来了：一个被占住的句柄不再让断言变红，
+   * 它会让产品如实报出那一格，而判据要的正是这句话与盘对得上。
+   * **能问出来的问题不许再报第三态** —— 降级留着就变成一条永远不判的断言。
+   *
+   * 唯一保留的平台差别是 `allowRemovalFailures`：win32 上「删不动」是合法结果，
+   * Linux/macOS 的 runner 上不是（那里没有别人握着我们刚装进 store 的文件）。
    */
   const beforeDel = await j('/api/backends/installed');
   const idsBeforeDel = (beforeDel.body?.packs ?? []).map((p) => p.id);
@@ -1452,8 +1461,12 @@ async function phaseBackends() {
   const leftovers = declaredFiles.filter((f) => existsSync(f.path));
   const duAfterDel = duBytes(join(DATA_DIR, 'models'));
   const realDelta = duBeforeDel - duAfterDel;
-  // 产品自己那句话：204 没有 body；200 那条路带着 `filesNotRemoved[]`
+  // 产品自己那句话：204 没有 body；200 那条路带着 `filesNotRemoved[]`（不肯删）
   const notRemoved = Array.isArray(del.body?.filesNotRemoved) ? del.body.filesNotRemoved : null;
+  // ★ #113：以及 `filesFailedToRemove[]`（试了、没删动）。两格是两件事，别合并读。
+  const failedToRemove = Array.isArray(del.body?.filesFailedToRemove)
+    ? del.body.filesFailedToRemove
+    : null;
 
   say('');
   say(`   删之前已安装        [${idsBeforeDel.join(', ') || '(空)'}]`);
@@ -1466,6 +1479,14 @@ async function phaseBackends() {
   say(`   实测 models/ 树     ${duBeforeDel} → ${duAfterDel} B（少了 ${realDelta} B）`);
   say(
     `   产品自述没删的      ${notRemoved ? `${notRemoved.length} 个（filesNotRemoved）` : '(无 —— 204 这条路没有 body)'}`,
+  );
+  say(
+    `   产品自述删不动的    ${
+      failedToRemove
+        ? `${failedToRemove.length} 个（filesFailedToRemove）：` +
+          failedToRemove.map((f) => `${String(f?.name)}[${String(f?.kind)}]`).join('、')
+        : '(无 —— 204 这条路没有 body)'
+    }`,
   );
 
   if (!idsBeforeDel.includes(cpuPack.id)) {
@@ -1505,24 +1526,24 @@ async function phaseBackends() {
      *    store 的**，按定义在界内，不存在任何合法的越界拒绝。没有这一格的话，
      *    「把删除整个禁掉、再把每个文件都报成 refused」能满足全部一致性检查。
      */
-    if (IS_WIN) {
-      unknown(
-        'A-UNINSTALL-BYTES-GONE',
-        'win32：`dropInstalledFiles()` 里 `fs.rm(...).catch(() => undefined)` 把 rm 的失败吞掉了' +
-          '（且照样 `removed += 1`），一个被占住的句柄就能走到「rm 静默失败 → 回 204 → 文件还在」。' +
-          '在这里判红分不开"产品退化"和"句柄被占"——如实报第三态，判据的牙齿在 Linux 腿上验',
-      );
-    } else {
-      const disk = checkUninstallReachedDisk({
-        status: del.status,
-        filesNotRemoved: notRemoved,
-        declared: declaredFiles,
-        stillOnDisk: leftovers.map((f) => f.path),
-        expectCleanRemoval: true,
-      });
-      if (disk.undecidable) unknown('A-UNINSTALL-BYTES-GONE', disk.reason);
-      else assert('A-UNINSTALL-BYTES-GONE', disk.ok, disk.reason);
-    }
+    const disk = checkUninstallReachedDisk({
+      status: del.status,
+      filesNotRemoved: notRemoved,
+      filesFailedToRemove: failedToRemove,
+      declared: declaredFiles,
+      stillOnDisk: leftovers.map((f) => f.path),
+      expectCleanRemoval: true,
+      /*
+       * ★ #113：**唯一**保留的平台差别。win32 上「rm 删不动」是一个合法结果
+       * （句柄可能没释放），产品如实报进第三档即可；Linux/macOS 的 runner 上
+       * 没有别人握着我们刚装进 store 的文件，那里报出"删不动"就是在替一个 bug 遮掩。
+       *
+       * ⚠️ 它**只**放开第三档，不放开 `refused` —— 越界拒绝与操作系统无关。
+       */
+      allowRemovalFailures: IS_WIN,
+    });
+    if (disk.undecidable) unknown('A-UNINSTALL-BYTES-GONE', disk.reason);
+    else assert('A-UNINSTALL-BYTES-GONE', disk.ok, disk.reason);
 
     if (leftovers.length > 0 || (declaredBytes >= 1048576 && realDelta < 65536)) {
       finding(

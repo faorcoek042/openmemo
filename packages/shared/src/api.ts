@@ -292,6 +292,86 @@ export interface RefusedFileReport {
 }
 
 /**
+ * 一次卸载里**我们试着删了、但删不动**的那一格（#113）。
+ *
+ * ## 🔴 它为什么必须与 {@link RefusedFileReport} 分开，而不是并进 `refused[]`
+ *
+ * 两者的**下一步动作不同**，这是分档唯一的判据：
+ *
+ *   · `refused`（#107）—— 我们**知道**有这么个文件，但**不肯**按那条记录去 `rm`
+ *     （记录越界，那些字节不属于我们）。产品这边没有任何东西会变，
+ *     用户要么自己去删，要么就让它留着。**再试一次也还是拒绝。**
+ *   · `failed`（本类型）—— 我们**试了**，`fs.rm` **抛了**。
+ *     这一档**可能会变**：句柄放开了、权限改了，下一次就删得掉。
+ *     Windows 上「进程还占着」正是这一格，而它的解药是一次重启 ——
+ *     那是一句**可执行的建议**，塞进 `refused` 就说不出来了。
+ *
+ * ## 这一档在 #113 之前是**被吞掉**的
+ *
+ * `state.ts::dropInstalledFiles()` 里那句 `fs.rm(...).catch(() => undefined)`
+ * 把失败整个咽了，而且咽完**照样 `removed += 1`** —— 于是 `removed` 在数它
+ * 没删掉的东西，用户拿到一个干净的成功，文件还在盘上。
+ * `e2e-runtime` 的 `A-UNINSTALL-BYTES-GONE` 在 win32 上如实报 UNKNOWN
+ * 用的就是这个理由（linux/darwin 两条腿 PASS）。
+ */
+export interface FailedFileReport {
+  /** 安装记录里那个文件的名字（目录那几条是派生出来的目录名）。 */
+  readonly name: string;
+  /**
+   * 我们试图删除的**绝对路径** —— 「那个文件到底在哪儿」的答案。
+   *
+   * ⚠️ 这一格不是可选的装饰：这一档的用户动作是**他自己去删**，
+   * 而没有路径他就无从下手。`refused` 那一格靠 `reason` 里的原话带出路径
+   * （解析层的异常正好带着它），这一格的异常来自 `fs.rm`，
+   * 里面**不一定**有完整路径，所以必须单独带一格出来。
+   */
+  readonly path: string;
+  /** 分档 —— 措辞归两份 locale，界面按**全量 `Record`** 渲染（少一格构建当场红）。 */
+  readonly kind: RemovalFailureKind;
+  /**
+   * 系统/Node 抛回来的**原话**（英文）。**不翻译。**
+   *
+   * ⚠️ 与 `RefusedFileReport.reason` 同一条待遇，理由也一样：它是 errno + syscall +
+   * 路径的自由文本，不是一个我们枚举得完的集合。`kind === 'unknown'` 时它是我们
+   * 唯一能说的东西 —— 那时界面必须**如实说「原因我们没弄清」并把这段原话摆出来**，
+   * 不许替它编一个成因。
+   */
+  readonly detail: string;
+}
+
+/**
+ * 「删不动」的成因分档。**判据是「用户的下一步动作不同」，不是 errno 好看。**
+ *
+ * ⚠️ 只有三格，而且刻意**没有**按 errno 一一对应：多分一格却给不出不同的建议，
+ * 就是拿分类学冒充信息。加第四格之前先回答「用户看到它会做一件别的事吗」。
+ */
+export type RemovalFailureKind =
+  /**
+   * 文件正被占用（`EBUSY` / `ETXTBSY`）。
+   *
+   * ★ 这一格存在的全部理由：**它有解药，而且用户做得到** —— 关掉占着它的程序、
+   * 或者重启一次。Windows 上这是最常见的一档（后端包里的 `.dll` 可能正被
+   * 推理进程加载着），而它恰恰是最值得说出口的一档。
+   */
+  | 'in_use'
+  /**
+   * 系统不允许我们删（`EACCES` / `EPERM`）。
+   *
+   * ⚠️ 在 Windows 上，一个**被程序打开着**的文件也会报到这一档
+   * （`STATUS_CANNOT_DELETE` → `ERROR_ACCESS_DENIED`）。所以这一格的措辞
+   * **两种可能都要说**，不许只挑一种讲得像我们查清楚了。
+   */
+  | 'permission_denied'
+  /**
+   * **我们不认识这个错。**
+   *
+   * 🔴 这一格是有意留白的：`fs.rm` 能抛的东西没有边界，而**编一个成因比沉默更坏**。
+   * 界面在这一格上说的是「没删掉、它在这儿、原因我们没弄清」＋ `detail` 原话，
+   * 不给任何我们证明不了的建议。
+   */
+  | 'unknown';
+
+/**
  * `DELETE /api/models/:id` 与 `DELETE /api/backends/:id` 在**有拒绝时**的 200 响应体。
  *
  * ## 为什么它非在契约里不可（#109）
@@ -307,12 +387,33 @@ export interface RefusedFileReport {
  * 🔴 **界面上那句话必须先说「记录已经清掉了」。** 用户点卸载看到「有 N 个文件没能删」，
  * 最自然的解读是「卸载失败了，我再点一次」—— 而记录其实已经走了，**再点会拿到 404**。
  * 同理 tone 是**信息级不是故障级**：卸载成功了，只是有残留。
+ *
+ * ## ★ #113：这条 200 现在有**两个**来源，而它们不是同一件事
+ *
+ * `filesNotRemoved`（我们**不肯**删）与 `filesFailedToRemove`（我们**没删动**）
+ * 各自都能单独把响应从 204 抬到 200。**两格都空才是 204。**
+ *
+ * ⚠️ 于是「`filesNotRemoved` 在 200 上一定非空」这条旧不变式**不再成立** ——
+ * 一次纯粹的 rm 失败会给出 `filesNotRemoved: []` + 非空的 `filesFailedToRemove`。
+ * `scripts/ci/e2e-runtime-assertions.mjs` 里那条形状检查已经按这条改过；
+ * 谁要是把它改回「200 ⇒ `filesNotRemoved` 非空」，第三档就会被判成契约漂移。
  */
 export interface UninstallWithRefusalsResponse {
   /** 这次真的回收了多少字节。 */
   readonly freedBytes: number;
-  /** 我们拒绝去删的条目。**能走到这个响应体，它就一定非空**（空的走 204）。 */
+  /**
+   * 我们**拒绝**去删的条目（越界 / 记录损坏）。
+   *
+   * ⚠️ **可以是空数组**（#113 之后）：另一格非空时这条 200 照样会发出来。
+   */
   readonly filesNotRemoved: readonly RefusedFileReport[];
+  /**
+   * 我们**试着删了、没删动**的条目（`fs.rm` 抛了）。同样**可以是空数组**。
+   *
+   * 🔴 **不许把它并进 `filesNotRemoved`。** 两者对用户的下一步动作不同 ——
+   * 详见 {@link FailedFileReport} 的文件头。
+   */
+  readonly filesFailedToRemove: readonly FailedFileReport[];
 }
 
 export interface ActiveSlotUnusable {

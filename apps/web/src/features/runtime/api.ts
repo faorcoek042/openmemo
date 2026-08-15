@@ -162,8 +162,10 @@ export function useBackendInstallMutation() {
  * 卸载一个后端包。
  *
  * 返回值两档，与 `useModelDeleteMutation()` 一字不差（同一个契约、同一条规则）：
- * `undefined` = 204 全删干净；对象 = 200 + `filesNotRemoved`，**记录已经清掉了**，
- * 只是有几个文件我们拒绝去删。写成 `api<void>` 就等于把那句话在最后一米丢掉（#109）。
+ * `undefined` = 204 全删干净；对象 = 200，**记录已经清掉了**、但盘上留下了东西 ——
+ * 要么我们**不肯**删（`filesNotRemoved`，越界），要么我们**试了、没删动**
+ * （`filesFailedToRemove`，`fs.rm` 抛了，#113）。两格都空才会走 204。
+ * 写成 `api<void>` 就等于把那句话在最后一米丢掉（#109）。
  */
 export function useBackendRemoveMutation() {
   const qc = useQueryClient();

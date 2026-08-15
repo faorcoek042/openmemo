@@ -271,7 +271,11 @@ export default function RuntimePage() {
         ⚠️ 读 `remove.data` 而不是自存 state：mutate 一进入 pending，react-query
         就把 `data` 清成 `undefined`，所以**下一次干净卸载（204）会自动收掉它**。
       */}
-      <UninstallResidueBanner files={remove.data?.filesNotRemoved} />
+      {/* ★ #113：第三档（试了、没删动）—— 与 `/models` 那一处递的是同一对字段 */}
+      <UninstallResidueBanner
+        files={remove.data?.filesNotRemoved}
+        failed={remove.data?.filesFailedToRemove}
+      />
 
       {hardware.isError ? (
         <ErrorBlock error={hardware.error} onRetry={() => void hardware.refetch()} />

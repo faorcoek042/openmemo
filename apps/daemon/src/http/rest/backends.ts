@@ -894,8 +894,17 @@ export async function handleBackendRoutes(
      *
      * 干净的那条路**仍然是 204**：不为了统一形状去改一个正确的既有契约
      * （e2e 的 A-UNINSTALL-* 两条腿钉的就是它）。
+     *
+     * ★★ #113：这条 200 现在有**两个**来源，判据仍然是同一条 ——
+     * **盘上留下了东西就必须说出来**。「我们不肯删」（`refused`）与
+     * 「我们没删动」（`failed`）各自都能把响应从 204 抬到 200；
+     * 只有两格都空，"全删干净了"才是真话。
+     *
+     * ⚠️ 把 `failed` 并进 `refused` 会让这一行少写一半，但那是在**丢掉信息**：
+     * 「删不动」这一档可能只是句柄没放开，用户重启一次就好 ——
+     * 而那句建议在 `refused` 的语义里说不出口。
      */
-    if (dropped.refused.length > 0) {
+    if (dropped.refused.length > 0 || dropped.failed.length > 0) {
       /*
        * ★ #109：`satisfies` 不是装饰。这个 body 的读者是网页那一侧
        * （`features/runtime/api.ts` 的 `api<UninstallWithRefusalsResponse | undefined>`），
@@ -907,6 +916,18 @@ export async function handleBackendRoutes(
         packId: id,
         freedBytes: gc.freedBytes,
         filesNotRemoved: dropped.refused.map((r) => ({ name: r.name, reason: r.reason })),
+        /*
+         * ★ #113：逐格摊开而不是 `dropped.failed` 直接甩上去。
+         * 这不是洁癖：`DropFilesReport.failed` 是 daemon 内部那份账，
+         * 哪天它多带一格内部信息（绝对路径之外的东西），这里会**原样漏到网线上**
+         * 而没有任何东西会说一句话。写死四格 ⇒ 契约变了，这一行当场红。
+         */
+        filesFailedToRemove: dropped.failed.map((f) => ({
+          name: f.name,
+          path: f.path,
+          kind: f.kind,
+          detail: f.detail,
+        })),
       } satisfies UninstallWithRefusalsResponse & { readonly packId: string });
       return true;
     }

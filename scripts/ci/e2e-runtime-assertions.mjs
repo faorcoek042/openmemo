@@ -110,14 +110,30 @@ export function stillSaysHardwareNotProbedYet(pack) {
  * 会换来一条随机变红、然后没人再信的断言（`e2e-runtime-audit.mjs` 里那段注释
  * 说的就是这件事，它是对的）。
  *
- * 所以判据问的是**一致性**，并且调用方在 win32 上把结论降级成 `unknown()` ——
- * 三态里的第三态，不是绿。这不是把问题绕开：Linux 腿上判据全额生效，
- * 而变异矩阵（`.github/workflows/e2e-runtime.yml`）本来就只在 Linux 上跑全量变异。
+ * 所以判据问的是**一致性**。
+ *
+ * ## ★★ #113：第三档 —— 于是 win32 那条腿**不再需要降级成 UNKNOWN**
+ *
+ * 上一版这里调用方在 win32 上直接 `unknown()`，理由正是上面那句「rm 失败被吞掉」：
+ * 产品说 204 而文件还在，判红分不开"产品退化"和"句柄被占"。
+ *
+ * `#113` 把那一档接了出来：`fs.rm` 抛了 ⇒ 进 `filesFailedToRemove`，
+ * `removed` 不再加，响应从 204 抬到 200。**产品现在自己说得出「哪几个没删动」**，
+ * 于是一致性判据在 win32 上**问得出来了**：
+ *
+ *   · 产品说没删动的 ⇒ 盘上必须**还在**（说了没删就得真没删）；
+ *   · 产品没提的     ⇒ 盘上必须**没了**（没说的就得真删掉）。
+ *
+ * 一个被占住的句柄不再让这条断言变红 —— 它会让产品**如实报出那一格**，
+ * 而判据要的就是这一句话与盘对得上。降级那一档因此撤掉（见
+ * `allowRemovalFailures`）：**能问出来的问题不许再报第三态**。
  *
  * @param {object} a
  * @param {number} a.status        DELETE 的 HTTP 状态码
  * @param {Array<{name?: string, reason?: string}>|null|undefined} a.filesNotRemoved
- *        200 那条路的 `body.filesNotRemoved`；204 应当没有
+ *        200 那条路的 `body.filesNotRemoved`（我们**不肯**删的）；204 应当没有
+ * @param {Array<{name?: string, path?: string, kind?: string, detail?: string}>|null|undefined} [a.filesFailedToRemove]
+ *        200 那条路的 `body.filesFailedToRemove`（我们**没删动**的，#113）；204 应当没有
  * @param {Array<{name: string, path: string}>} a.declared
  *        **删之前**盘上那份安装记录点名的文件（名字 + 解析出来的绝对路径）
  * @param {ReadonlyArray<string>} a.stillOnDisk
@@ -126,16 +142,25 @@ export function stillSaysHardwareNotProbedYet(pack) {
  *        这个包是不是**本来就该被干净删掉**（审计自己装进 store 的包按定义在界内）。
  *        为真时，任何拒绝、任何非 204 都是失败 —— 否则「把删除整个禁掉、
  *        再把每个文件都报成 refused」会满足上面所有一致性检查。
+ * @param {boolean} [a.allowRemovalFailures]
+ *        这台机器上「rm 删不动」是不是一个**合法**结果（win32：句柄可能没释放）。
+ *        ⚠️ 只放开 `expectCleanRemoval` 对**第三档**的那一半，**不放开 `refused`** ——
+ *        越界拒绝与操作系统无关，一个界内的包在任何平台上都不该有拒绝。
+ *        为假（Linux/macOS）时，一个界内的包报出任何"删不动"都是真失败：
+ *        那台 runner 上没有别人握着我们的文件，产品那样说就是在替一个 bug 遮掩。
  * @returns {{ok: boolean, reason: string, undecidable?: boolean}}
  */
 export function checkUninstallReachedDisk({
   status,
   filesNotRemoved,
+  filesFailedToRemove,
   declared,
   stillOnDisk,
   expectCleanRemoval = false,
+  allowRemovalFailures = false,
 }) {
   const refused = Array.isArray(filesNotRemoved) ? filesNotRemoved : [];
+  const failed = Array.isArray(filesFailedToRemove) ? filesFailedToRemove : [];
   const decl = Array.isArray(declared) ? declared : [];
 
   /*
@@ -155,24 +180,34 @@ export function checkUninstallReachedDisk({
   }
 
   const onDisk = new Set(stillOnDisk ?? []);
+  /*
+   * ★ #113：两档合起来才是「产品声称没走掉的那些」。
+   *   它们对**用户**是两件事（不肯删 vs 删不动），但对**这条判据**是同一件：
+   *   凡是产品点了名的，盘上就必须还在；凡是没点名的，盘上就必须没了。
+   */
   const refusedNames = new Set(refused.map((r) => String(r?.name ?? '')));
+  const failedNames = new Set(failed.map((r) => String(r?.name ?? '')));
+  const spokenFor = new Set([...refusedNames, ...failedNames]);
 
-  /* ── 形状先对：状态码与 filesNotRemoved 必须自洽 ────────────────────────── */
-  if (status === 204 && refused.length > 0) {
-    return {
-      ok: false,
-      reason: `DELETE 回 204（"全删干净了"）却同时带着 ${String(refused.length)} 条 filesNotRemoved —— 两句话互相矛盾`,
-    };
-  }
-  if (status === 200 && refused.length === 0) {
+  /* ── 形状先对：状态码与那两格必须自洽 ──────────────────────────────────── */
+  if (status === 204 && refused.length + failed.length > 0) {
     return {
       ok: false,
       reason:
-        'DELETE 回 200 却没有 filesNotRemoved —— 200 这条路存在的理由就是"有东西没删成"，空着说明契约漂了',
+        `DELETE 回 204（"全删干净了"）却同时带着 ${String(refused.length)} 条 filesNotRemoved ` +
+        `+ ${String(failed.length)} 条 filesFailedToRemove —— 两句话互相矛盾`,
+    };
+  }
+  if (status === 200 && refused.length + failed.length === 0) {
+    return {
+      ok: false,
+      reason:
+        'DELETE 回 200 却两格都空 —— 200 这条路存在的理由就是"有东西没走掉"（不肯删 或 删不动），' +
+        '空着说明契约漂了',
     };
   }
   if (status !== 200 && status !== 204) {
-    return { ok: false, reason: `DELETE 回 HTTP ${String(status)}，既不是干净卸载也不是"有拒绝"` };
+    return { ok: false, reason: `DELETE 回 HTTP ${String(status)}，既不是干净卸载也不是"有残留"` };
   }
 
   /*
@@ -180,17 +215,47 @@ export function checkUninstallReachedDisk({
    *   没有它，产品只要把每个文件都塞进 filesNotRemoved，
    *   下面两个方向的一致性检查就全都**真的成立**了 —— 而一个字节都没删。
    */
-  if (expectCleanRemoval && (status !== 204 || refused.length > 0)) {
+  if (expectCleanRemoval && refused.length > 0) {
     return {
       ok: false,
       reason:
-        `这个包是审计自己装进 store 的（按定义在界内），本该被干净删掉，` +
+        `这个包是审计自己装进 store 的（按定义在界内），不该有任何越界拒绝，` +
         `实际 HTTP ${String(status)}、拒绝了 ${String(refused.length)} 个文件：` +
         refused
           .map((r) => `${String(r?.name ?? '?')}（${String(r?.reason ?? '没给理由')}）`)
           .join('；'),
     };
   }
+  /*
+   * ★★ #113：同一条闸门的第三档那一半 —— 但它**按平台放行**。
+   *
+   * 「删不动」在 win32 上是一个合法结果（句柄没释放），在 Linux/macOS 的 runner 上
+   * 不是：那里没有别人握着我们刚装进 store 的文件。所以这条不放开时，
+   * 一个界内的包报出任何"删不动"都算失败 —— 否则产品只要把每个文件都塞进
+   * `filesFailedToRemove`，就能一个字节不删地满足下面全部一致性检查
+   * （与上一格堵的是同一条绕过法，只是换了一格）。
+   */
+  if (expectCleanRemoval && !allowRemovalFailures && failed.length > 0) {
+    return {
+      ok: false,
+      reason:
+        `这个包是审计自己装进 store 的，而这台机器上没有别人握着它的文件，` +
+        `本该被干净删掉；实际 HTTP ${String(status)}、报了 ${String(failed.length)} 个"删不动"：` +
+        failed
+          .map(
+            (f) =>
+              `${String(f?.name ?? '?')}（${String(f?.kind ?? '没分档')}：${String(f?.detail ?? '没给原话')}）`,
+          )
+          .join('；'),
+    };
+  }
+  /*
+   * ⚠️ 这里**没有**第三条「expectCleanRemoval 且 status !== 204 就红」。
+   * 它看着该有，实际是**恒不触发**的：走到这一行时 status 只可能是 200 或 204
+   * （上面第三条形状检查挡掉了别的），而 200 必然伴随两格之一非空
+   * （第二条形状检查），refused 非空进上上格、failed 非空进上一格。
+   * 写下来只会多一条永远不亮的灯 —— 本仓正在清的第①类失效。
+   */
 
   /* ── 每条拒绝都要说得出理由 ─────────────────────────────────────────────── */
   const mute = refused.filter((r) => !String(r?.reason ?? '').trim());
@@ -211,8 +276,42 @@ export function checkUninstallReachedDisk({
     };
   }
 
+  /*
+   * ── #113：每条「删不动」都要说得出**三件事** ────────────────────────────
+   *
+   * 「没删掉 + 在哪儿 + 能做什么」。缺任何一件，这一档就退化成一句
+   * "有东西没删掉"——那和它要取代的那个沉默的 204 对用户是同一个东西。
+   *   · `name`   —— 对得到界面上那一行；
+   *   · `path`   —— **在哪儿**。这一档的用户动作是他自己去删，没有路径就无从下手，
+   *                  而 `fs.rm` 抛的那串不保证带完整路径，所以契约里单列了一格；
+   *   · `kind`   —— **能做什么**由它分档（界面按全量 Record 渲染措辞）；
+   *   · `detail` —— 系统原话。`kind === 'unknown'` 时它是唯一能说的东西。
+   */
+  const KNOWN_FAILURE_KINDS = new Set(['in_use', 'permission_denied', 'unknown']);
+  for (const field of ['name', 'path', 'detail']) {
+    const missing = failed.filter((f) => !String(f?.[field] ?? '').trim());
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        reason:
+          `filesFailedToRemove 里有 ${String(missing.length)} 条没写 ${field} ——` +
+          `「没删掉 + 在哪儿 + 能做什么」缺了一件，这一档就退回一句沉默的成功（#113）`,
+      };
+    }
+  }
+  const badKind = failed.filter((f) => !KNOWN_FAILURE_KINDS.has(String(f?.kind ?? '')));
+  if (badKind.length > 0) {
+    return {
+      ok: false,
+      reason:
+        `filesFailedToRemove 里有 ${String(badKind.length)} 条的 kind 不在契约的三格里` +
+        `（${badKind.map((f) => String(f?.kind ?? '(缺)')).join('、')}）——` +
+        '界面按全量 Record 渲染措辞，认不出的一格在屏幕上就是一句没有"能做什么"的话',
+    };
+  }
+
   /* ── 方向①：产品说删掉了的，盘上必须真的没了 ───────────────────────────── */
-  const claimedGone = decl.filter((f) => !refusedNames.has(f.name));
+  const claimedGone = decl.filter((f) => !spokenFor.has(f.name));
   const stillThere = claimedGone.filter((f) => onDisk.has(f.path));
   if (stillThere.length > 0) {
     return {
@@ -231,24 +330,28 @@ export function checkUninstallReachedDisk({
   }
 
   /* ── 方向②：产品说没删的，盘上必须真的还在 ─────────────────────────────── */
-  const claimedKept = decl.filter((f) => refusedNames.has(f.name));
+  const claimedKept = decl.filter((f) => spokenFor.has(f.name));
   const vanished = claimedKept.filter((f) => !onDisk.has(f.path));
   if (vanished.length > 0) {
     return {
       ok: false,
       reason:
-        `filesNotRemoved 声称这 ${String(claimedKept.length)} 个文件"没删"，` +
+        `产品声称这 ${String(claimedKept.length)} 个文件没走掉` +
+        `（filesNotRemoved ${String(refused.length)} 条 + filesFailedToRemove ${String(failed.length)} 条），` +
         `但其中 ${String(vanished.length)} 个**盘上已经不见了**：` +
         `${vanished
           .slice(0, 5)
           .map((f) => f.path)
           .join('、')} —— ` +
-        '要么越界检查是摆设（照删不误，只是嘴上说拒绝），要么这份报告是编的。两种都比沉默更坏',
+        '要么越界检查/失败上报是摆设（照删不误，只是嘴上说没删），要么这份报告是编的。两种都比沉默更坏',
     };
   }
 
   const keptDesc =
-    claimedKept.length > 0 ? `，另有 ${String(claimedKept.length)} 个如实报了"没删"且确实还在` : '';
+    claimedKept.length > 0
+      ? `，另有 ${String(claimedKept.length)} 个如实报了"没走掉"且确实还在` +
+        `（不肯删 ${String(refused.length)} / 删不动 ${String(failed.length)}）`
+      : '';
   return {
     ok: true,
     reason:

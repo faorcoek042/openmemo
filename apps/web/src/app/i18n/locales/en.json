@@ -1079,7 +1079,15 @@
   "uninstall": {
     "recordRemovedFilesKept": "Uninstalled — the record is gone. But {{n}} file(s) could not be deleted, because the record pointed outside the data folder: {{names}}",
     "filesKeptHint": "Nothing more is needed here: the uninstall itself went through, and pressing it again will only report that the record no longer exists. Delete those files yourself if you want the space back.",
-    "verbatimReason": "Reported by the store layer, verbatim and not translated: {{reason}}"
+    "verbatimReason": "Reported by the store layer, verbatim and not translated: {{reason}}",
+    "recordRemovedFilesFailed": "Uninstalled — the record is gone. But {{n}} file(s) could not be deleted and are still on disk: {{names}}",
+    "filesFailedHint": "The uninstall itself went through; pressing it again will only report that the record no longer exists. Each file is listed below with where it is and what you can do about it.",
+    "verbatimSystemError": "Reported by the operating system, verbatim and not translated: {{detail}}",
+    "removalFailure": {
+      "in_use": "{{name}} ({{path}}): another program was holding this file open when we tried to delete it. Close whatever might be using it, or restart once, and it will most likely delete fine.",
+      "permission_denied": "{{name}} ({{path}}): the system did not allow us to delete it. Delete it yourself from an account that has permission. On Windows a file that is still open in some program reports the same error, so try closing whatever might be using it (or restarting once) first.",
+      "unknown": "{{name}} ({{path}}): we could not delete it, and we do not know why — so we are not going to hand you advice we cannot back up. You can delete it yourself at the path above."
+    }
   },
   "secureContext": {
     "title": "This address is not a secure context — some features are unavailable",

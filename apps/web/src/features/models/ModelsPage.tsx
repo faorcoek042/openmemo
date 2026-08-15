@@ -555,7 +555,14 @@ export default function ModelsPage() {
           成功路径上清它，而"忘了清"的结果是一句更坏的假话：卸载干净了，界面还挂着
           「有文件被留下」。
         */}
-        <UninstallResidueBanner files={del.data?.filesNotRemoved} />
+        {/*
+          ★ #113：第三档（我们**试了、没删动**）与上面那档来自同一个响应体，
+          所以两格一起递进去 —— 分两处渲染就又回到"同一件事两个页面各说各的"。
+        */}
+        <UninstallResidueBanner
+          files={del.data?.filesNotRemoved}
+          failed={del.data?.filesFailedToRemove}
+        />
         {/*
           ★ 这四条以前是 `void X.mutateAsync(...)` —— 失败时界面一个字都不说。
           它们**不是刻意静默**：本页紧挨着的 `pull` / `del` 就是这么渲染错误的，
