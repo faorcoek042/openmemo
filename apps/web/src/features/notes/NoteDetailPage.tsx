@@ -21,6 +21,7 @@ import { NoteEditor } from './NoteEditor';
 import { parseSeekParam } from './seekParam';
 import { ExportMenu } from './ExportMenu';
 import { NoteActionsMenu } from './NoteActionsMenu';
+import { NotesOfflineReason } from './NotesOfflineReason';
 import { TranscriptList } from '../transcript';
 import { PlayerBar } from '../player';
 import { usePlayerStore } from '../../lib/stores/player.store';
@@ -216,6 +217,16 @@ export default function NoteDetailPage() {
         <h1 className="min-w-0 truncate text-base font-semibold text-ink">{n.title}</h1>
         <span className="flex items-center gap-2">
           <TagEditor noteUid={n.uid} tags={arr(n.tags)} />
+          {/*
+            ★ 「导出」与「⋯」灰掉时的**真解释**（v0.7.3 已知边界第 6 条）。
+            两颗按钮此前把理由挂在 `title` 上，而 `Button` 基类带
+            `disabled:pointer-events-none` ⇒ 鼠标、键盘、读屏三条路都拿不到它。
+            这一句是可见的，两颗按钮用 `aria-describedby` 指过来 ——
+            与 `RetranscribeBlockedNotice` 是同一个形状。
+            ⚠️ 它必须和那两颗按钮**同屏**：忘了渲染 = 两个 `aria-describedby`
+            指向一个不存在的 id，**不报错、静默失效**（`check-usefulness.mjs` 钉这个）。
+          */}
+          <NotesOfflineReason />
           <ExportMenu note={n} />
           {/*
             重命名 / 删除（T-155）。三条 mutation 早就写好了，此前**全仓零调用方** ——

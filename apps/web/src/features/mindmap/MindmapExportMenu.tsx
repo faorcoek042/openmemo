@@ -45,6 +45,13 @@ type ServerFormat = 'md' | 'opml' | 'mm' | 'json';
 const SERVER_FORMATS: readonly ServerFormat[] = ['md', 'opml', 'mm', 'json'];
 const IMAGE_FORMATS: readonly ImageFormat[] = ['svg', 'png'];
 
+/**
+ * 「这四行为什么灰」那句话的锚点。四行共用一句 —— 原因是同一个，
+ * 说四遍只会让菜单变长。⚠️ 它与那四行**同生同灭**（都由 `!live` 控制），
+ * 否则 `aria-describedby` 会指向一个不存在的 id：不报错、静默失效。
+ */
+const MINDMAP_EXPORT_OFFLINE_ID = 'mindmap-export-offline-reason';
+
 function exportHref(noteUid: string, format: ServerFormat): string {
   return `/api/notes/${encodeURIComponent(noteUid)}/export?what=mindmap&format=${format}`;
 }
@@ -123,7 +130,13 @@ export function MindmapExportMenu({
                 <span
                   role="menuitem"
                   aria-disabled="true"
-                  title={t('mindmap.exportNeedsDaemon')}
+                  /*
+                   * ⚠️ 理由此前只挂在 `title` 上。这一档虽然不是原生 `disabled`
+                   * （所以鼠标悬停还能弹出 tooltip），但**键盘到不了**（不在 tab 序列里）、
+                   * **读屏也听不到**（有可见文字时 `title` 不参与可访问名）。
+                   * 现在那句话就写在菜单里、看得见，这里指过去。
+                   */
+                  aria-describedby={MINDMAP_EXPORT_OFFLINE_ID}
                   className="block w-full cursor-not-allowed px-3 py-1.5 text-left text-xs text-ink-muted opacity-60"
                 >
                   {t(`mindmap.exportFormats.${f}`)}
@@ -131,6 +144,16 @@ export function MindmapExportMenu({
               )}
             </li>
           ))}
+          {/* 灰掉的那四行**为什么**灰 —— 一句可见的话，不是一个只有鼠标够得着的 tooltip。 */}
+          {live ? null : (
+            <li
+              id={MINDMAP_EXPORT_OFFLINE_ID}
+              data-testid="mindmap-export-offline"
+              className="px-3 pb-1 text-[11px] leading-relaxed text-serious"
+            >
+              {t('mindmap.exportNeedsDaemon')}
+            </li>
+          )}
 
           {/*
             ★ 这一句是**实测出来的**，不是照着文档写的（取证见 `coordination/inbox/ui-backlog.md`）：

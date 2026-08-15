@@ -103,7 +103,7 @@
       "json": "JSON（完整）"
     },
     "exportServerOnly": "DOCX / PDF 需服务端支持，暂未提供",
-    "exportNeedsDaemon": "导出需要本地服务在运行",
+    "exportNeedsDaemon": "本地服务没在运行 —— 导出和这条笔记的其它操作现在都做不了",
     "folderEmpty": "「{{name}}」里还没有笔记",
     "folderEmptyHint": "这里会连子文件夹里的笔记一起显示。",
     "shownOfTotal": "已显示 {{shown}} / {{total}} 条",
@@ -426,6 +426,7 @@
     "followPlayback": "跟随播放",
     "searchInNote": "段内搜索",
     "noTranscript": "尚无转写稿",
+    "noTranscriptHint": "转写还没跑完，或者这一次没留下任何片段。要重跑一次，用这块面板顶上的「{{action}}」——它如果是灰的，紧挨着的那条提示会说明原因。",
     "generating": "正在生成…",
     "summaryEmpty": "还没有摘要",
     "backgroundHint": "可以关闭此页面，任务会继续",

@@ -15,7 +15,12 @@ import type {
 import { DownloadRow } from '../../../components/common/DownloadRow';
 import { Button } from '../../../components/common/Button';
 import { StatusChip } from '../../../components/common/StatusChip';
-import { Emphasis, stripEmphasis } from '../../../components/common/Emphasis';
+/*
+ * ⚠️ `stripEmphasis` 在这个文件里已经**没有调用点**：它当初存在的唯一理由是
+ * 「那句解释要塞进 `title`，而 `title` 是纯文本属性」。理由现在不成立了 ——
+ * 那句解释搬进了卡片正文，走 `<Emphasis>` 正常渲染。
+ */
+import { Emphasis } from '../../../components/common/Emphasis';
 import { BackendChip, type BackendChipState } from '../../../components/common/BackendChip';
 import { formatBytes } from '../../../lib/format/bytes';
 import { localizedName } from '../../../lib/format/localized';
@@ -218,6 +223,39 @@ export function BackendPackCard({
    */
   const pendingCi = status === 'not-published';
 
+  /**
+   * ★★ **灰掉的按钮为什么灰 —— 一句看得见的话，不是一个到不了的 `title`。**
+   *
+   * v0.7.3 已知边界第 6 条承认的那批里，这张卡占两颗（安装 / 卸载）。
+   * 当时理由挂在 `title` 上，而 `Button` 基类带 `disabled:pointer-events-none`：
+   * `pointer-events: none` 的元素收不到 `mouseover` ⇒ 原生 tooltip **对鼠标也不弹**，
+   * `disabled` 又把它移出 tab 序列 —— **鼠标、键盘、读屏三条路都到不了。**
+   *
+   * 现在改成 `RetranscribeButton` 那个形状：理由渲染在卡片正文里（本来就有几行
+   * 在那儿说"这是哪一档"），按钮用 `aria-describedby` 指过来。
+   *
+   * ⚠️ 这一段**只在真的有话说时**才让按钮指过来（下面的 `installWhyShown` /
+   * `uninstallWhy`）—— 指向一个空的（或不存在的）元素等于没指，而且不报错。
+   */
+  const packWhyId = `backend-why-${pack.id}`;
+  /** 卸载灰掉的两种理由；`null` = 卸载按钮不该是灰的。 */
+  const uninstallWhy = isLoadBearing
+    ? t('runtime.pack.loadBearingTitle')
+    : bundledWithApp
+      ? t('runtime.pack.bundledTitle')
+      : null;
+  /**
+   * 安装灰掉时，卡片正文里**确实**渲染出了一句解释吗。
+   *
+   * 三个来源，任意一个成立就够：档位那句（`runtime.kind.*`）、daemon 的原话
+   * （`inapplicableText`）、以及「尚未发布」那句。都不成立时不指过去 ——
+   * 与其指向一段空文字，不如老实承认这一档我们没话说。
+   */
+  const installWhyShown =
+    pendingCi ||
+    STATUS_NEEDS_EXPLANATION.includes(status) ||
+    (!pack.applicable && status !== 'other-platform' && inapplicableText != null);
+
   const actions = pack.installed ? (
     <>
       {/*
@@ -290,17 +328,15 @@ export function BackendPackCard({
         disabled={isLoadBearing || bundledWithApp}
         /*
          * ★ #105 ④ 那条判据在这里同样成立：**灰掉的按钮也得说得出自己为什么灰。**
-         * `title` 在 disabled 元素上仍然提供可访问名（tooltip 因 `pointer-events:none`
-         * 弹不出来，但读屏拿得到），所以这是兜底而不是装饰。
-         * 承重墙优先：它更严重（点了会崩），而两者同时成立时只能说一句话。
+         *
+         * ⚠️ 上一版把那句话放在 `title` 上，并写着「读屏拿得到」—— **那半句不成立**：
+         * 这颗按钮有可见文字（「卸载」），有可见文字时 `title` 不参与可访问名，
+         * 多数读屏配置也不播报它；而 `disabled:pointer-events-none` 让 tooltip
+         * 对鼠标同样弹不出来。三条路都到不了 ⇒ 那不是兜底，是装饰。
+         * 现在理由渲染在卡片正文（`packWhyId` 那一段），这里只做关联。
+         * 承重墙优先：它更严重（点了会崩），两者同时成立时只说一句。
          */
-        title={
-          isLoadBearing
-            ? t('runtime.pack.loadBearingTitle')
-            : bundledWithApp
-              ? t('runtime.pack.bundledTitle')
-              : undefined
-        }
+        aria-describedby={uninstallWhy ? packWhyId : undefined}
         onClick={() => onRemove(pack.id)}
         data-testid={`backend-remove-${pack.id}`}
       >
@@ -345,27 +381,17 @@ export function BackendPackCard({
       variant={showRecommended ? 'primary' : 'secondary'}
       disabled={installing || !pack.applicable || pendingCi}
       /*
-       * ★ #105 ④：**灰掉的按钮也得说得出自己是什么。**
-       * 这里原来只有 `pendingCi` 那一档给 `title`，其余禁用档一律 `undefined` ——
-       * 而按钮的可见文字在 `disabled` + 默认折叠的 `<details>` 里，读屏与
-       * `innerText` 都拿不到。`title` 在 disabled 元素上仍然提供可访问名
-       * （tooltip 因 `pointer-events:none` 弹不出来，但 AT 读得到），所以这一格是
-       * **兜底，不是装饰**。落点仍然是 daemon 的原话优先、档位文案兜底。
+       * ★ #105 ④：**灰掉的按钮也得说得出自己为什么灰。**
+       *
+       * ⚠️ 上一版把那句话放在 `title` 上并注明「AT 读得到」——**那半句不成立**
+       * （见上面卸载按钮那段的同一条理由）。而且它当时还要 `stripEmphasis()`
+       * 把 `**…**` 抹掉，因为 `title` 是纯文本属性 —— 那正是"这句话放错了地方"的
+       * 症状：同一句话在卡片正文里是走 `<Emphasis>` 正常渲染的。
+       *
+       * 现在只做关联，落点是卡片正文那一段（档位那句 / daemon 原话 /「尚未发布」）。
+       * `installing` 那一档**不指** —— 瞬时禁用不需要理由，按钮自己写着「安装中…」。
        */
-      title={
-        pendingCi
-          ? t('runtime.pack.pendingCiTitle')
-          : !pack.applicable
-            ? /*
-               * ⚠️ `stripEmphasis`：`title` 是**纯文本**属性，`<Emphasis>` 在这里用不上。
-               * `inapplicabilityText()` 的 `backend_unavailable` 那一档转给了
-               * `runtime.hw.reason*`，而那七条里有六条带 `**…**`（硬件卡是走
-               * `<Emphasis>` 渲染的）—— 原样塞进 `title` 会让读屏念出裸星号。
-               */
-              stripEmphasis(inapplicableText ?? '') ||
-              t(`runtime.kind.${status}`, { defaultValue: '' })
-            : undefined
-      }
+      aria-describedby={installWhyShown ? packWhyId : undefined}
       onClick={() => onInstall(pack.id)}
       data-testid={`backend-install-${pack.id}`}
     >
@@ -465,6 +491,16 @@ export function BackendPackCard({
             ) : null}
           </p>
           {/*
+            ★★ **「按钮为什么是灰的」全部集中在这一段里，并且看得见。**
+
+            这个 `<div>` 只做一件事：给下面这几句话一个**稳定的锚点**，让灰掉的
+            安装 / 卸载按钮能用 `aria-describedby` 指过来（v0.7.3 已知边界第 6 条）。
+            它不加任何样式，所以对布局零影响；里面每一句仍然各自决定要不要出现。
+
+            ⚠️ 空着的时候没人指过来 —— 指向一段空文字和不指是一回事，而且不报错。
+          */}
+          <div id={packWhyId}>
+            {/*
             ★ T-165：先说**这是哪一档**，再照抄 daemon 给的原因。
 
             两句话是分工的，不是重复：
@@ -473,12 +509,12 @@ export function BackendPackCard({
             此前只渲染后者，而后者不含档位信息 —— 于是"还没测出来"和"确认没有这块卡"
             在屏幕上长得一模一样，用户只能按最坏的那个理解。
           */}
-          {STATUS_NEEDS_EXPLANATION.includes(status) ? (
-            <p className="mt-1 text-xs text-ink-secondary" data-testid={`backend-kind-${status}`}>
-              {t(`runtime.kind.${status}`)}
-            </p>
-          ) : null}
-          {/*
+            {STATUS_NEEDS_EXPLANATION.includes(status) ? (
+              <p className="mt-1 text-xs text-ink-secondary" data-testid={`backend-kind-${status}`}>
+                {t(`runtime.kind.${status}`)}
+              </p>
+            ) : null}
+            {/*
             ⚠️ #105 ④：`other-platform` 这一档**不再渲染 daemon 那句原话**。
             同一句事实已经由右侧 `otherPlatformNote` 从 `pack.os` / `pack.arch` 说了，
             两份语言都有，而这一档它是**唯一**的正文。
@@ -492,16 +528,40 @@ export function BackendPackCard({
             那张总表 + 两份 locale），daemon 那句英文原话作为 `detail` 跟着走，
             并被明确标成「探针原话，未翻译」。
           */}
-          {!pack.applicable && status !== 'other-platform' && inapplicableText ? (
-            /*
+            {!pack.applicable && status !== 'other-platform' && inapplicableText ? (
+              /*
               ⚠️ 必须走 `<Emphasis>`：这段文字有一档（`backend_unavailable`）转给了
               `runtime.hw.reason*`，那六条词条带 `**…**`。原样 `{text}` 渲染的话，
               两种语言下用户都会看到裸星号 —— T-129b 立的正是这条。
             */
-            <p className="mt-1 text-xs text-ink-muted">
-              <Emphasis text={inapplicableText} />
-            </p>
-          ) : null}
+              <p className="mt-1 text-xs text-ink-muted">
+                <Emphasis text={inapplicableText} />
+              </p>
+            ) : null}
+            {/*
+              ★ 「尚未发布」那一档此前只有按钮上那句短的（「尚未发布，暂不可安装」），
+              **为什么**只在 `title` 里 —— 也就是没人读得到。这里把它说全。
+            */}
+            {pendingCi ? (
+              <p className="mt-1 text-xs text-ink-secondary" data-testid="backend-pending-ci-why">
+                {t('runtime.pack.pendingCiTitle')}
+              </p>
+            ) : null}
+            {/*
+              ★ 卸载灰掉的理由。此前**屏幕上一个字都没有**：只有一颗「承重墙」芯片
+              （那是标签，不是理由）和一个到不了的 `title`。
+              两条轴刻意不合并（承重墙 = 删了会崩 / 随产品自带 = 那些字节不在数据目录里），
+              同时成立时说更严重的那一条。
+            */}
+            {pack.installed && uninstallWhy ? (
+              <p
+                className="mt-1 text-xs text-ink-muted"
+                data-testid={`backend-uninstall-why-${pack.id}`}
+              >
+                {uninstallWhy}
+              </p>
+            ) : null}
+          </div>
           {/*
             ★★ T-197：**这一格是「安装 119 MB」那句话唯一的解药。**
 
