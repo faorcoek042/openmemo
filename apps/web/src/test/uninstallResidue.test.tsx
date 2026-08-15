@@ -34,6 +34,20 @@
  *
  * ⚠️ 用中文那一份：宿主把 `openmemo.locale` 钉成了 `zh-CN`（见 `dom-env.ts` 末尾），
  *   所有组件测试都在中文界面上跑。
+ *
+ * ## ★★ #113：同一条规则的**第二档来源**
+ *
+ * 那条 200 现在有两个来源，而它们对用户是两件事：
+ *
+ *   · `filesNotRemoved`      —— 我们**不肯**删（记录越界）。他只能自己去删。
+ *   · `filesFailedToRemove`  —— 我们**试了、没删动**（`fs.rm` 抛了）。
+ *     这一档**可能会变**：句柄放开了、权限改了就删得掉，
+ *     所以它必须把「能做什么」说出口（Windows 上重启一次多半就好）。
+ *
+ * 于是本文件多出两组判据，缺一条都能被绕过：
+ *   ① 第三档那条横幅**说得出三件事**：没删掉 + **在哪儿**（绝对路径）+ 能做什么；
+ *   ② **两档不许互相污染** —— 只有拒绝时不许冒出"我们没删动"，
+ *      只有失败时不许冒出"记录指向了数据目录之外"（那是一句编出来的成因）。
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -44,6 +58,14 @@ import RuntimePage from '../features/runtime/RuntimePage';
 import zhLocale from '../app/i18n/locales/zh-CN.json';
 
 const UNINSTALL = (zhLocale as unknown as { uninstall: Record<string, string> }).uninstall;
+/**
+ * ★ #113：三格「删不动」的措辞表，从**产品真正读的那份 JSON** 里取。
+ * 三句话必须各不相同 —— 把 `REMOVAL_FAILURE_KEYS` 三格指向同一个词条
+ * （一种很自然的"简化"）会让"能做什么"这件事整个消失，而下面的断言正是钉它。
+ */
+const REMOVAL_FAILURE = (
+  zhLocale as unknown as { uninstall: { removalFailure: Record<string, string> } }
+).uninstall.removalFailure;
 
 /**
  * 自己做一遍 i18next 的插值。
@@ -87,6 +109,46 @@ const REFUSED = [
 const EXPECTED_TITLE = fill(UNINSTALL['recordRemovedFilesKept']!, {
   n: String(REFUSED.length),
   names: REFUSED.map((f) => f.name).join(', '),
+});
+
+/**
+ * ★ #113：服务端**试着删了、没删动**的那三条 —— 形状照抄 `FailedFileReport`。
+ *
+ * 🔴 **三条恰好覆盖三格 kind**，这是判据的一部分而不是凑数：
+ * 界面按 `Record<RemovalFailureKind, string>` 分档渲染措辞，
+ * 只测一格的话「三格全指同一句话」这种退化在断言里看不出来 ——
+ * 而那正是"能做什么"这件事被抹掉的方式。
+ *
+ * `detail` 用的是 Node 在各自 errno 下真会抛的那串（带绝对路径），
+ * 契约刻意没有把它收成枚举，界面必须原样照登。
+ */
+const FAILED = [
+  {
+    name: 'ggml-cpu.dll',
+    path: 'C:\\Users\\u\\.openmemo\\models\\by-name\\backend\\cpu\\ggml-cpu.dll',
+    kind: 'in_use',
+    detail:
+      "EBUSY: resource busy or locked, unlink 'C:\\Users\\u\\.openmemo\\models\\by-name\\backend\\cpu\\ggml-cpu.dll'",
+  },
+  {
+    name: 'whisper-cli',
+    path: '/home/u/.openmemo/models/by-name/backend/cpu/whisper-cli',
+    kind: 'permission_denied',
+    detail:
+      "EACCES: permission denied, unlink '/home/u/.openmemo/models/by-name/backend/cpu/whisper-cli'",
+  },
+  {
+    name: 'ggml-tiny-encoder.mlmodelc',
+    path: '/home/u/.openmemo/models/by-name/asr/ggml-tiny-encoder.mlmodelc',
+    kind: 'unknown',
+    detail:
+      'Path is a directory: rm returned EISDIR (is a directory) /home/u/.openmemo/models/by-name/asr/ggml-tiny-encoder.mlmodelc',
+  },
+] as const;
+
+const EXPECTED_FAILED_TITLE = fill(UNINSTALL['recordRemovedFilesFailed']!, {
+  n: String(FAILED.length),
+  names: FAILED.map((f) => f.name).join(', '),
 });
 
 /** 204 —— 全删干净了，客户端拿到的是 `undefined`。 */
@@ -182,6 +244,99 @@ function assertSaysRecordRemovedButFilesKept(root: Element): void {
     inErrorBlock,
     false,
     '这句话被塞进了错误块里 —— 那需要先编一个 ApiError 出来，而根本没有错误发生',
+  );
+}
+
+/**
+ * ★★ #113：第三档那条横幅要同时说清**三件事**，顺序同样是判据的一部分。
+ *
+ *   ① 先说「记录已经清掉了」—— 与上面那条一字不差的理由（#107 的教训）；
+ *   ② **在哪儿** —— 绝对路径必须逐条出现在屏幕上。这一档的用户动作是他自己去删，
+ *      没有路径他无从下手，而这是整条链上唯一的出处；
+ *   ③ **能做什么** —— 按 kind 分档的那句话，逐条**逐字**命中两份 locale 里的词条。
+ *
+ * 🔴 ③ 为什么钉整句而不是关键词：见文件头。这里还多一层 ——
+ * 三格 kind 的三句话必须**互不相同**，否则「三格全指同一个词条」这种退化
+ * 会让"能做什么"整个消失，而关键词判据看不出这个区别。
+ */
+function assertSaysRecordRemovedButFilesFailed(root: Element): void {
+  const banner = root.querySelector('[data-testid="uninstall-files-failed"]');
+  assert.ok(
+    banner,
+    '卸载回了 200 + filesFailedToRemove，界面上却没有任何东西 —— 这正是 #113 的下半场：' +
+      'daemon 好不容易把"哪几个没删动、在哪儿、能做什么"算了出来，最后一米又丢掉。' +
+      `页面全文：${squash(root.textContent)}`,
+  );
+
+  const said = squash(banner.textContent);
+
+  // ① 最先读到的那一句必须是"卸载已生效、记录已清掉"
+  assert.ok(
+    said.startsWith(EXPECTED_FAILED_TITLE),
+    '横幅开头那句不是"卸载已生效、记录已清掉" —— 用户会把它读成"卸载失败了，我再点一次"，' +
+      `而记录其实已经走了，再点会拿到 404（#107）。\n  期望开头：${EXPECTED_FAILED_TITLE}\n  实际全文：${said}`,
+  );
+
+  for (const f of FAILED) {
+    // ② 名字与**绝对路径**都要在屏幕上
+    assert.ok(said.includes(f.name), `没说是哪几个文件（缺 ${f.name}）：${said}`);
+    assert.ok(
+      said.includes(f.path),
+      `没说那个文件在哪儿（缺 ${f.path}）—— 这一档的用户动作是他自己去删，` +
+        `没有路径这条横幅就只是在通报一个他做不了任何事的坏消息：${said}`,
+    );
+
+    // ③ 那一格的**建议**必须逐字出现（期望值来自产品真正读的 zh-CN.json）
+    const advice = fill(REMOVAL_FAILURE[f.kind]!, { name: f.name, path: f.path });
+    assert.ok(
+      said.includes(advice),
+      `kind="${f.kind}" 那一格的措辞没出现在屏幕上 —— 用户拿不到"能做什么"。` +
+        `\n  期望：${advice}\n  实际：${said}`,
+    );
+
+    // 系统原话，逐条照登且标明"不是我们写的"
+    assert.ok(
+      said.includes(fill(UNINSTALL['verbatimSystemError']!, { detail: f.detail })),
+      `没有原样照登系统那句话（unknown 那一档它是唯一说得出的东西）：\n  缺：${f.detail}\n  实际：${said}`,
+    );
+  }
+
+  /*
+   * 🔴 三格必须说三句**不一样**的话。把 `REMOVAL_FAILURE_KEYS` 三格指向同一个
+   * 词条，上面每一条 `includes` 都还是绿的（同一句话出现三次），
+   * 而"能做什么"这件事已经没了。这一条专门堵那一路。
+   */
+  const advices = new Set(FAILED.map((f) => REMOVAL_FAILURE[f.kind]!));
+  assert.equal(
+    advices.size,
+    FAILED.length,
+    `三格 kind 指向的词条只有 ${String(advices.size)} 句不同的话 —— ` +
+      '分档塌成了一句，用户不论撞上哪种成因都拿到同一条建议',
+  );
+
+  assert.ok(
+    said.includes(UNINSTALL['filesFailedHint']!),
+    `没说"卸载本身已经生效" —— 那一句是 ① 的兑现方式：${said}`,
+  );
+
+  // ④ 插值真的发生了
+  assert.equal(
+    /\{\{\w+\}\}/.test(said),
+    false,
+    `渲染结果里还留着 {{…}} 占位符 —— 参数名传错了：${said}`,
+  );
+
+  /*
+   * ⑤ 🔴 **不是错误态。** 卸载成功了、记录真的走了，只是有几个文件没删动。
+   *   渲染成故障会把用户的下一步动作推回"再点一次"（#107 定过的反面）。
+   *   这一档"更严重"的那部分由**那句话本身**（重启一次多半就好）承担，不由色条承担。
+   */
+  assert.equal(banner.getAttribute('role'), 'status', '这条横幅被渲染成了警报');
+  assert.equal(banner.getAttribute('aria-live'), 'polite', 'assertive 是故障级播报');
+  assert.equal(
+    /border-l-(critical|serious)/.test(banner.className),
+    false,
+    `用了故障级色条：${banner.className}`,
   );
 }
 
@@ -298,6 +453,8 @@ describe('#109 /models 卸载：记录清掉了，但有文件留下', () => {
       modelId: VARIANT_ID,
       freedBytes: 0,
       filesNotRemoved: REFUSED,
+      // #113 之后这一格在契约里是必填的；纯拒绝的那条路上它是空数组
+      filesFailedToRemove: [],
     });
     try {
       const r = await render(<ModelsPage />, { route: '/models' });
@@ -311,6 +468,48 @@ describe('#109 /models 卸载：记录清掉了，但有文件留下', () => {
       );
 
       assertSaysRecordRemovedButFilesKept(r.container);
+      /*
+       * 🔴 **两档不许互相污染。** 这次只有"我们不肯删"，第三档那条横幅
+       * 一个字都不该出现 —— 否则用户会去找几个根本没有"删不动"过的文件，
+       * 还会收到一条"重启一次试试"的无用建议。
+       */
+      assert.equal(
+        r.container.querySelector('[data-testid="uninstall-files-failed"]'),
+        null,
+        '只有越界拒绝，界面却也说了"我们没删动" —— 两档串味了',
+      );
+      r.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  test('★★ #113 服务端回 200 + filesFailedToRemove ⇒ 界面必须说清"记录已清 + 哪几个没删动 + 在哪 + 能做什么"', async () => {
+    const restore = withConfirm(true);
+    const { calls } = stubModelsPage({
+      modelId: VARIANT_ID,
+      freedBytes: 0,
+      // 纯粹的 rm 失败：**没有任何拒绝**。#113 之前这条路根本不存在（回的是 204）
+      filesNotRemoved: [],
+      filesFailedToRemove: FAILED,
+    });
+    try {
+      const r = await render(<ModelsPage />, { route: '/models' });
+      await r.flush();
+      await clickModelDelete(r);
+
+      assert.ok(
+        calls.some((c) => c.method === 'DELETE' && c.path.startsWith('/models/')),
+        `卸载请求根本没发出去：${JSON.stringify(calls)}`,
+      );
+
+      assertSaysRecordRemovedButFilesFailed(r.container);
+      // 反向也要成立：没有拒绝，就不许冒出「记录指向了数据目录之外」那句话
+      assert.equal(
+        r.container.querySelector('[data-testid="uninstall-files-kept"]'),
+        null,
+        '一个文件都没被拒绝，界面却说"记录指向了数据目录之外" —— 那是一句凭空造出来的成因',
+      );
       r.unmount();
     } finally {
       restore();
@@ -334,6 +533,12 @@ describe('#109 /models 卸载：记录清掉了，但有文件留下', () => {
         null,
         '全都删干净了（204），界面却说有文件被留下 —— 那是凭空造出来的一句假话',
       );
+      // #113：第三档那条横幅同样不许出现（否则每一次卸载都会附赠一句"有东西没删动"）
+      assert.equal(
+        r.container.querySelector('[data-testid="uninstall-files-failed"]'),
+        null,
+        '全都删干净了（204），界面却说有文件没删动',
+      );
       r.unmount();
     } finally {
       restore();
@@ -353,7 +558,7 @@ describe('#109 /models 卸载：记录清掉了，但有文件留下', () => {
     stubModelsPage(() => {
       nth += 1;
       return nth === 1
-        ? { modelId: VARIANT_ID, freedBytes: 0, filesNotRemoved: REFUSED }
+        ? { modelId: VARIANT_ID, freedBytes: 0, filesNotRemoved: REFUSED, filesFailedToRemove: [] }
         : cleanUninstall();
     });
     try {
@@ -458,6 +663,7 @@ describe('#109 /runtime 卸载：同一句话，不许两个页面各说各的',
       packId: PACK_ID,
       freedBytes: 0,
       filesNotRemoved: REFUSED,
+      filesFailedToRemove: [],
     });
     try {
       const r = await render(<RuntimePage />, { route: '/runtime' });
@@ -470,13 +676,53 @@ describe('#109 /runtime 卸载：同一句话，不许两个页面各说各的',
       );
 
       assertSaysRecordRemovedButFilesKept(r.container);
+      assert.equal(
+        r.container.querySelector('[data-testid="uninstall-files-failed"]'),
+        null,
+        '只有越界拒绝，界面却也说了"我们没删动" —— 两档串味了',
+      );
       r.unmount();
     } finally {
       restore();
     }
   });
 
-  test('★★ 反面：干净卸载（204）时不许冒出这条横幅', async () => {
+  test('★★ #113 后端包 rm 失败 ⇒ 界面必须说同样的四件事（后端包那一侧撞上它的机会最大）', async () => {
+    /*
+     * ⚠️ 这一档在 `/runtime` 上不是理论风险：后端包里的动态库**可能正被推理进程
+     * 加载着**，而 Windows 上那就是 `fs.rm` 抛错的头号成因。#113 之前用户在这里
+     * 看到的是"卸载了、磁盘没变小、产品一个字没说"。
+     */
+    const restore = withConfirm(true);
+    const { calls } = stubRuntimePage({
+      packId: PACK_ID,
+      freedBytes: 0,
+      filesNotRemoved: [],
+      filesFailedToRemove: FAILED,
+    });
+    try {
+      const r = await render(<RuntimePage />, { route: '/runtime' });
+      await r.flush();
+      await clickPackRemove(r);
+
+      assert.ok(
+        calls.some((c) => c.method === 'DELETE' && c.path === `/backends/${PACK_ID}`),
+        `卸载请求根本没发出去：${JSON.stringify(calls)}`,
+      );
+
+      assertSaysRecordRemovedButFilesFailed(r.container);
+      assert.equal(
+        r.container.querySelector('[data-testid="uninstall-files-kept"]'),
+        null,
+        '一个文件都没被拒绝，界面却说"记录指向了数据目录之外"',
+      );
+      r.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  test('★★ 反面：干净卸载（204）时不许冒出这两条横幅', async () => {
     const restore = withConfirm(true);
     stubRuntimePage(cleanUninstall);
     try {
@@ -488,6 +734,11 @@ describe('#109 /runtime 卸载：同一句话，不许两个页面各说各的',
         r.container.querySelector('[data-testid="uninstall-files-kept"]'),
         null,
         '全都删干净了（204），界面却说有文件被留下',
+      );
+      assert.equal(
+        r.container.querySelector('[data-testid="uninstall-files-failed"]'),
+        null,
+        '全都删干净了（204），界面却说有文件没删动',
       );
       r.unmount();
     } finally {

@@ -42,6 +42,7 @@ import {
   type CatalogGroupWithFitness,
   type CatalogVariant,
   type DownloadJob,
+  type FailedFileReport,
   type GetCatalogResponse,
   type GetStorageResponse,
   type GetSourcesResponse,
@@ -53,6 +54,7 @@ import {
   type ModelEntry,
   type ModelRole,
   type ProviderId,
+  type RemovalFailureKind,
   type SourceProbe,
   type SseEvent,
   type StorageBreakdownItem,
@@ -108,16 +110,87 @@ export interface RefusedFile {
 }
 
 /**
+ * 一条**试着删了、没删动**的记录项（#113）—— 与 {@link RefusedFile} 是两件事。
+ *
+ * ★ 直接**别名**契约里那个类型，不像 `RefusedFile` 那样另抄一份字段：
+ * 这一格是 #113 新加的，没有历史包袱，而两份结构各写一遍的代价本仓已经付过
+ * （`filesNotRemoved` 那次靠 `satisfies` 才把两侧钉住）。别名之后
+ * daemon 与网线上的形状**在类型上就是同一个**，漂不了。
+ */
+export type FailedFile = FailedFileReport;
+
+/**
  * `dropInstalledFiles()` 的账。
  *
  * 存在的理由见该方法的注释：**没有这份返回值，「拒绝」就无法与「本来就没有」区分**，
  * 于是既没法告诉用户，也没法写一条会红的断言。
  */
 export interface DropFilesReport {
-  /** 真的走到 `fs.rm` 的条目数（`force:true`，文件本来就不在也算走到了）。 */
+  /**
+   * **真的删成了**的条目数。
+   *
+   * ⚠️ #113 之前这里数的是「走到了 `fs.rm` 那一行」—— 而那一行是
+   * `fs.rm(...).catch(() => undefined)`，**抛了也照样 `removed += 1`**。
+   * 于是这个数在数它没删掉的东西，用户拿到一个干净的成功而文件还在盘上。
+   * 现在只有 `fs.rm` **没有抛**才计数。
+   *
+   * `force: true` 的语义不变：文件本来就不在**算删成了**（那正是我们要的终态），
+   * 它和「删不动」在 `fs.rm` 那里本来就是两个结果，不需要我们再分一次。
+   */
   readonly removed: number;
-  /** 我们**拒绝**去删的条目。空数组 = 这次卸载没有任何东西被留下。 */
+  /** 我们**拒绝**去删的条目。空数组 = 这次卸载没有任何东西因越界被留下。 */
   readonly refused: readonly RefusedFile[];
+  /**
+   * 我们**试了、没删动**的条目（#113）。空数组 = 没有任何一次 `fs.rm` 抛过。
+   *
+   * 🔴 **不许并进 `refused`**：那一格的语义是「我们主动不删」，这一格是
+   * 「我们想删、删不动」，**对用户的下一步动作不同**（前者只能他自己去删，
+   * 后者重启一次多半就好）。详见 `FailedFileReport` 的文件头。
+   */
+  readonly failed: readonly FailedFile[];
+}
+
+/**
+ * 一个 `fs.rm` 抛出来的错 → 用户读得懂的那一档。
+ *
+ * ## 🔴 判据是「用户会做一件别的事吗」，不是 errno 好看
+ *
+ * 三格，一个都不多。多分一格却给不出不同的建议 = 拿分类学冒充信息，
+ * 而这一族缺陷（说了一堆话、用户仍然不知道该干什么）本仓正在清。
+ *
+ * ## ⚠️ 认不出来的一律 `unknown`，**不许猜**
+ *
+ * `fs.rm` 能抛的东西没有边界（`ERR_FS_EISDIR`、`ENOTDIR`、文件系统自己的
+ * 各种 errno…）。给一个我们没看懂的错编一个成因，比说「不知道」更坏：
+ * 用户会照着那个编出来的建议去做一件没有用的事，然后连"要不要相信这句话"
+ * 都判断不了。`unknown` 那一格的界面文案本身就把这件事说了出来。
+ *
+ * ## 为什么 `EPERM` 不按平台分叉
+ *
+ * 诱惑是「win32 的 EPERM 多半是句柄被占 ⇒ 报 `in_use`，让用户去重启」。
+ * **但那是在猜**：libuv 在 Windows 上把「只读属性」「文件被映射（正在运行的 DLL）」
+ * 和「ACL 不允许」都收敛到同一批错误码上，我们分不出来。
+ * 所以 `EPERM`/`EACCES` 统一进 `permission_denied`，而**那一格的措辞
+ * 把两种可能都说出来**（见 locale 里 `uninstall.removalFailure.permission_denied`）
+ * —— 说「可能是 A 也可能是 B」是诚实的，挑一个说得斩钉截铁不是。
+ */
+export function classifyRemovalFailure(err: unknown): RemovalFailureKind {
+  const code =
+    typeof err === 'object' && err !== null && typeof (err as { code?: unknown }).code === 'string'
+      ? (err as { code: string }).code
+      : '';
+  switch (code) {
+    // 有别的东西正握着它。**这一格有解药，而且用户做得到**：关掉它，或者重启。
+    case 'EBUSY':
+    case 'ETXTBSY':
+      return 'in_use';
+    // 系统不让删。Windows 上「被打开着」也会落到这里 —— 措辞里两种都说。
+    case 'EACCES':
+    case 'EPERM':
+      return 'permission_denied';
+    default:
+      return 'unknown';
+  }
 }
 
 /**
@@ -1116,9 +1189,33 @@ export class RestState {
    * 一道说不出自己拦过什么的闸门，既没法向用户交代，**也没法写测试**
    * （把闸门整个抽掉，行为观察不出区别 ⇒ 变异存活 ⇒ 那条断言从来没被验证过）。
    *
-   * 所以现在返回一份**逐条的账**。⚠️ 这两件事**不许再共用一个静默出口**：
+   * 所以现在返回一份**逐条的账**。⚠️ 这三件事**不许再共用一个静默出口**：
    *   · `refused` —— 我们**知道**有个文件，但**不肯**按这条记录去 `rm`（越界/记录损坏）；
+   *   · `failed`  —— 我们**试了**，`fs.rm` **抛了**（#113，见下）；
    *   · 删了但文件本来就不在 —— `fs.rm(..., {force:true})` 的正常语义，不进账。
+   *
+   * ## ★★ #113：第三档 —— **rm 真失败**，此前被吞掉
+   *
+   * 上一版这里三处 `fs.rm` 全是 `.catch(() => undefined)`，而**文件那一处
+   * 吞完还照样 `removed += 1`**。后果不是"少了一条日志"：
+   *
+   *   > 用户点卸载 → 卡片消失 → 界面说成功 → **文件还在盘上**，
+   *   > 而 `removed` 这个数在数它没删掉的东西。
+   *
+   * `[实证]` v0.7.3 发布跑：`e2e-runtime` 的 `A-UNINSTALL-BYTES-GONE` 在 win32 上
+   * 如实报 UNKNOWN（盘上文件还在，而 `removed` 说删了）；linux 实删 24 MB、
+   * darwin 7.5 MB 均 PASS。**原注释担心的 Windows 句柄问题是对的** ——
+   * `fs.rm` 在那里确实可能因为句柄没释放而失败。所以这次要回答的问题**不是**
+   * "怎么保证删得掉"，而是"**删不掉时该说什么**"。
+   *
+   * ## ⚠️ 三处 `fs.rm` 全都要收，不能只收第一处
+   *
+   * 只把文件那一处接进账，剩下两处（展开目录、`by-model/<id>/`）照旧静默 ——
+   * 那是**在同一个函数里把刚修好的病又留了两份**。三处共用 {@link tryRemove}，
+   * 判据是同一条：走到了 `fs.rm` 就必须为它的结果负责。
+   *
+   * ⚠️ 单个条目失败**不中断**整轮：卸载动作必须照常兑现（manifest 走掉、
+   * 界面上它真的消失），否则用户会卡在"删不掉"上 —— 那是 #107 已经定过的方向。
    */
   async dropInstalledFiles(
     id: string,
@@ -1126,7 +1223,44 @@ export class RestState {
   ): Promise<DropFilesReport> {
     const roots = { models: this.store.root };
     const refused: RefusedFile[] = [];
+    const failed: FailedFile[] = [];
     let removed = 0;
+    /*
+     * `by-model/<id>/` 是**每个 id 一个**，与 kind 无关 —— 而下面那个 rm 住在
+     * kind 循环里，多个桶都有这条 id 的记录时会被试上好几遍。
+     * 以前无所谓（失败静音、成功之后重试是空转），现在**会重复记账** ——
+     * 同一个目录在界面上出现两次是一句我们自己造出来的噪音。试一次就够。
+     */
+    let modelDirTried = false;
+
+    /**
+     * 删一个路径；**删不动就如实记一笔**，而不是把异常咽掉。
+     *
+     * @returns 真的删成了吗 —— 调用方只在 `true` 时给 `removed` 加一。
+     *   ⚠️ 返回值必须被用上：`removed` 与 `failed` 是同一件事的两半，
+     *   加一那行若独立于这里的结果，第三档就又变成一句没人读的话。
+     */
+    const tryRemove = async (
+      target: string,
+      name: string,
+      opts: { readonly recursive?: boolean } = {},
+    ): Promise<boolean> => {
+      try {
+        await fs.rm(target, { force: true, ...opts });
+        return true;
+      } catch (err) {
+        failed.push({
+          name,
+          // 「那个文件在哪儿」——这一档的用户动作是他自己去删，没有路径就无从下手
+          path: target,
+          kind: classifyRemovalFailure(err),
+          // 原话照登、不翻译：`unknown` 那一档它是我们唯一说得出的东西
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        return false;
+      }
+    };
+
     for (const kind of kinds) {
       const rec = await this.store.readManifest<InstalledModel>(kind, id);
       if (!rec) continue;
@@ -1139,8 +1273,12 @@ export class RestState {
           refused.push({ name: f.name, reason: err instanceof Error ? err.message : String(err) });
           continue;
         }
-        await fs.rm(abs, { force: true }).catch(() => undefined);
-        removed += 1;
+        if (await tryRemove(abs, f.name)) removed += 1;
+        /*
+         * ⚠️ 上一行失败也要继续往下走：展开目录是**另一条独立的路径**，
+         * 文件删不动不代表目录也删不动。`continue` 掉会让一次 EBUSY
+         * 顺手把一整个目录留在 `by-name/` 里 —— 而那里是发现路径。
+         */
         // 归档包展开出来的目录（`by-name/<kind>/<unpackDirName(name)>`）
         const dir = path.join(path.dirname(abs), unpackDirName(f.name));
         if (dir === abs) continue;
@@ -1161,12 +1299,14 @@ export class RestState {
           });
           continue;
         }
-        await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+        await tryRemove(dir, unpackDirName(f.name), { recursive: true });
       }
       // `materializeModelDir()` 摊出来的每模型独占目录（T-160 ①附）
-      await fs
-        .rm(byModelDir(this.store.root, id), { recursive: true, force: true })
-        .catch(() => undefined);
+      if (!modelDirTried) {
+        modelDirTried = true;
+        const modelDir = byModelDir(this.store.root, id);
+        await tryRemove(modelDir, path.basename(modelDir), { recursive: true });
+      }
     }
     for (const r of refused) {
       console.warn(
@@ -1174,7 +1314,13 @@ export class RestState {
           `记录已按用户的卸载动作删掉，但这些字节留在盘上（我们不拥有它们）`,
       );
     }
-    return { removed, refused };
+    for (const f of failed) {
+      console.warn(
+        `[store] 按安装记录 ${id} 删除 ${f.name} 失败（${f.kind}）：${f.detail} —— ` +
+          `记录已按用户的卸载动作删掉，但 ${f.path} 还在盘上`,
+      );
+    }
+    return { removed, refused, failed };
   }
 
   /** 把某个 id 的安装记录从**所有**桶里删干净（旧布局可能不止一处）。 */

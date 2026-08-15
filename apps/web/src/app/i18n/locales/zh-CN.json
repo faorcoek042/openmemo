@@ -1079,7 +1079,15 @@
   "uninstall": {
     "recordRemovedFilesKept": "已卸载 —— 记录已经清掉了。但有 {{n}} 个文件没能删除，因为记录指向了数据目录之外：{{names}}",
     "filesKeptHint": "这里不需要再做什么：卸载本身已经生效，再点一次只会告诉你记录已经不存在了。想收回这部分空间，请自行删除那几个文件。",
-    "verbatimReason": "以下是存储层原文，我们没有翻译它：{{reason}}"
+    "verbatimReason": "以下是存储层原文，我们没有翻译它：{{reason}}",
+    "recordRemovedFilesFailed": "已卸载 —— 记录已经清掉了。但有 {{n}} 个文件我们没能删掉，它们还留在盘上：{{names}}",
+    "filesFailedHint": "卸载本身已经生效，再点一次只会告诉你记录已经不存在了。下面逐条写了每个文件在哪儿、以及你可以做什么。",
+    "verbatimSystemError": "以下是系统原话，我们没有翻译它：{{detail}}",
+    "removalFailure": {
+      "in_use": "{{name}}（{{path}}）：删除时它正被别的程序占用着。关掉可能在用它的程序，或者重启一次，多半就能把它删掉了。",
+      "permission_denied": "{{name}}（{{path}}）：系统不允许我们删除它。请用有权限的账号手动删除；在 Windows 上，一个正被程序打开着的文件也会报同样的错，所以先关掉可能在用它的程序（或者重启一次）再试。",
+      "unknown": "{{name}}（{{path}}）：我们没能删掉它，原因我们也没弄清 —— 所以这里不给你一个我们证明不了的建议。你可以照上面这个路径自己去删除它。"
+    }
   },
   "secureContext": {
     "title": "当前地址不是安全上下文，部分功能不可用",

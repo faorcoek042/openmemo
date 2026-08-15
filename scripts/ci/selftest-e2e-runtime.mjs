@@ -226,6 +226,17 @@ const P = (n) => DECL.find((f) => f.name === n).path;
 const OUT_OF_BOUNDS =
   'Legacy installed-file record "/etc/ssl/x" resolves to /etc/ssl/x, which is outside every allowed root (/tmp/store/models) — refusing to hand out a path we do not own';
 
+/**
+ * ★ #113：一条**说得全**的「删不动」。四格缺一都要被判红（下面 BAD 里逐格钉）。
+ * `detail` 用的是 Node 在 Windows 上句柄被占时真会抛的那句原话。
+ */
+const BUSY = {
+  name: 'ggml-cpu.so',
+  path: P('ggml-cpu.so'),
+  kind: 'in_use',
+  detail: `EBUSY: resource busy or locked, unlink '${P('ggml-cpu.so')}'`,
+};
+
 /** 两条**真·合法**的现场：判据必须放它们过去。 */
 const UNINSTALL_GOOD = [
   [
@@ -245,6 +256,28 @@ const UNINSTALL_GOOD = [
       filesNotRemoved: [{ name: 'ggml-cpu.so', reason: OUT_OF_BOUNDS }],
       declared: DECL,
       stillOnDisk: [P('ggml-cpu.so')],
+    },
+  ],
+  [
+    '★★ #113 那条新的合法态：200 + filesFailedToRemove（rm 真失败），说不动的那个还在、另一个没了',
+    {
+      status: 200,
+      filesNotRemoved: [],
+      filesFailedToRemove: [BUSY],
+      declared: DECL,
+      stillOnDisk: [P('ggml-cpu.so')],
+    },
+  ],
+  [
+    '★★ #113 win32：界内的包也允许"删不动"（句柄没释放），只要它如实说出来且与盘对得上',
+    {
+      status: 200,
+      filesNotRemoved: [],
+      filesFailedToRemove: [BUSY],
+      declared: DECL,
+      stillOnDisk: [P('ggml-cpu.so')],
+      expectCleanRemoval: true,
+      allowRemovalFailures: true,
     },
   ],
 ];
@@ -318,8 +351,101 @@ const UNINSTALL_BAD = [
     },
   ],
   [
-    '200 却没有 filesNotRemoved —— 契约漂了',
-    { status: 200, filesNotRemoved: [], declared: DECL, stillOnDisk: [] },
+    '200 却两格都空 —— 契约漂了',
+    { status: 200, filesNotRemoved: [], filesFailedToRemove: [], declared: DECL, stillOnDisk: [] },
+  ],
+
+  /* ── ★★ #113：第三档自己的绕过法，逐条钉 ───────────────────────────────── */
+  [
+    /*
+     * ⚠️ 输入形状与上面「只走掉一半」重合，**这是有意的**：#113 的成因不同
+     * （rm 抛了、被 `.catch()` 吞掉、`removed` 照加），而在这一层看到的
+     * 后果是同一个 —— 一个沉默的 204 加一个还在盘上的文件。
+     * 留着这一条是为了让"把 #113 的修法整个抽掉"在这份自测里有名有姓，
+     * 不是为了增加覆盖面。
+     */
+    '★★ M-113-swallow：rm 失败被吞掉 —— 回 204、两格都空，而那个文件还在盘上（本轮修的就是它）',
+    {
+      status: 204,
+      filesNotRemoved: null,
+      filesFailedToRemove: null,
+      declared: DECL,
+      stillOnDisk: [P('ggml-cpu.so')],
+      expectCleanRemoval: true,
+    },
+  ],
+  [
+    '★ 把"删不动"塞满每一格、一个字节都不删 —— 只查①的判据会放它过去（与 refused 那条同形）',
+    {
+      status: 200,
+      filesNotRemoved: [],
+      filesFailedToRemove: DECL.map((f) => ({ ...BUSY, name: f.name, path: f.path })),
+      declared: DECL,
+      stillOnDisk: DECL.map((f) => f.path),
+      expectCleanRemoval: true,
+      // Linux/macOS 的 runner 上没有别人握着我们的文件 ⇒ 这里不许放行
+      allowRemovalFailures: false,
+    },
+  ],
+  [
+    '★ 嘴上说"删不动"、照删不误 —— 只查②的判据会放它过去',
+    {
+      status: 200,
+      filesNotRemoved: [],
+      filesFailedToRemove: [BUSY],
+      declared: DECL,
+      stillOnDisk: [],
+    },
+  ],
+  [
+    '说不动了一个，另一个也没删（没被点名的必须没了）',
+    {
+      status: 200,
+      filesNotRemoved: [],
+      filesFailedToRemove: [BUSY],
+      declared: DECL,
+      stillOnDisk: DECL.map((f) => f.path),
+    },
+  ],
+  [
+    '★ 「删不动」却说不出**在哪儿** —— 这一档的用户动作是他自己去删，没有 path 就无从下手',
+    {
+      status: 200,
+      filesNotRemoved: [],
+      filesFailedToRemove: [{ ...BUSY, path: '' }],
+      declared: DECL,
+      stillOnDisk: [P('ggml-cpu.so')],
+    },
+  ],
+  [
+    '★ 「删不动」却说不出**能做什么**（kind 不在契约的三格里）—— 界面上就是一句没有下一步的话',
+    {
+      status: 200,
+      filesNotRemoved: [],
+      filesFailedToRemove: [{ ...BUSY, kind: 'because_reasons' }],
+      declared: DECL,
+      stillOnDisk: [P('ggml-cpu.so')],
+    },
+  ],
+  [
+    '★ 「删不动」却没有系统原话（unknown 那一档它是唯一说得出的东西）',
+    {
+      status: 200,
+      filesNotRemoved: [],
+      filesFailedToRemove: [{ ...BUSY, detail: '   ' }],
+      declared: DECL,
+      stillOnDisk: [P('ggml-cpu.so')],
+    },
+  ],
+  [
+    '204 却同时带着 filesFailedToRemove —— 两句话互相矛盾',
+    {
+      status: 204,
+      filesNotRemoved: null,
+      filesFailedToRemove: [BUSY],
+      declared: DECL,
+      stillOnDisk: [P('ggml-cpu.so')],
+    },
   ],
 ];
 
@@ -328,7 +454,10 @@ for (const [why, input] of UNINSTALL_GOOD) {
   if (r.ok) ok(`「${why}」→ 判绿`);
   else bad(`「${why}」应当判绿`, `判据把一个合法现场判红了：${r.reason}`);
 }
-assert.ok(UNINSTALL_BAD.length >= 7, 'BAD 样本少于 7 个 —— 覆盖不到两个方向各自的绕过法');
+assert.ok(
+  UNINSTALL_BAD.length >= 15,
+  'BAD 样本少于 15 个 —— 两个方向 × 两档（不肯删 / 删不动）各自的绕过法覆盖不全',
+);
 for (const [why, input] of UNINSTALL_BAD) {
   const r = checkUninstallReachedDisk(input);
   if (r.ok) bad(`「${why}」应当判红`, '判据放它过去了 —— 这条绕过法此刻是活的');
@@ -367,16 +496,61 @@ for (const [why, input] of UNINSTALL_BAD) {
     join(REPO, 'apps', 'daemon', 'src', 'http', 'rest', 'backends.ts'),
     'utf8',
   );
-  const hits = src.split('filesNotRemoved:').length - 1;
-  if (hits === 1) ok('backends.ts 里恰好一处 `filesNotRemoved:`（DELETE 那条 200 的路）');
-  else
-    bad(
-      'backends.ts 里应当恰好有一处 `filesNotRemoved:`',
-      `实际 ${hits} 处 —— 字段被改名/删掉/复制了，而判据里的字面量没跟上`,
-    );
+  for (const field of ['filesNotRemoved:', 'filesFailedToRemove:']) {
+    const hits = src.split(field).length - 1;
+    if (hits === 1) ok(`backends.ts 里恰好一处 \`${field}\`（DELETE 那条 200 的路）`);
+    else
+      bad(
+        `backends.ts 里应当恰好有一处 \`${field}\``,
+        `实际 ${hits} 处 —— 字段被改名/删掉/复制了，而判据里的字面量没跟上`,
+      );
+  }
   const nonsense = `filesNotRemoved_definitely_not_real_${Date.now()}:`;
   if (src.includes(nonsense)) bad('前提检查', '不可能的字段名竟然命中了 —— 这条守卫是恒真的');
   else ok('前提检查：不存在的字段名确实匹配不到（上一条不是恒真）');
+
+  /*
+   * ★★ #113：判据里那三个 `kind` 字面量必须真的还在契约的联合类型里。
+   *
+   * 与 ④ 同一种理由，但这一条更要紧：`KNOWN_FAILURE_KINDS` 是**白名单**判据
+   * （不在名单里就判红）。契约那侧改名之后，产品发出来的每一格都会被判成
+   * "kind 不在契约三格里" —— 那是一条**恒红**的断言，比恒绿更快被人学会无视。
+   * 反过来，契约里**新增**第四格而这里没跟上，同样会把一个合法态判红。
+   * 两个方向都必须在这里出声。
+   */
+  {
+    const api = readFileSync(join(REPO, 'packages', 'shared', 'src', 'api.ts'), 'utf8');
+    /*
+     * ⚠️ 只在 `RemovalFailureKind` **这一条声明**里找，不在整个 api.ts 里 grep：
+     * `'unknown'` 在这份文件里另有别的联合也在用（speedTier 那几个），
+     * 整文件 grep 会让这一格**恒真** —— 那正是本轮在清的第①类失效。
+     */
+    const m = /export type RemovalFailureKind =([\s\S]*?);\n/.exec(api);
+    if (!m) {
+      bad(
+        'api.ts 里应当有 `export type RemovalFailureKind = …;`',
+        '契约那个联合被改名/删掉了，而 `checkUninstallReachedDisk` 的白名单没跟上',
+      );
+    } else {
+      const decl = m[1];
+      // 白名单与联合成员必须**双向**一致：少一格是恒红，多一格是把合法态判红
+      const inUnion = [...decl.matchAll(/'([a-z_]+)'/g)].map((x) => x[1]).sort();
+      const inGuard = ['in_use', 'permission_denied', 'unknown'].sort();
+      if (JSON.stringify(inUnion) === JSON.stringify(inGuard)) {
+        ok(`RemovalFailureKind 的三格与判据白名单逐字一致：${inUnion.join('、')}`);
+      } else {
+        bad(
+          'RemovalFailureKind 与 `checkUninstallReachedDisk` 的白名单对不上',
+          `契约里是 [${inUnion.join('、')}]，判据里是 [${inGuard.join('、')}] —— ` +
+            '少一格 ⇒ 产品发的那一格被判成 kind 非法（恒红）；' +
+            '多一格 ⇒ 一个合法态被判红。两个方向都得在这里出声',
+        );
+      }
+      if (/'definitely_not_a_real_removal_kind'/.test(decl))
+        bad('前提检查', '不可能的 kind 竟然命中了 —— 这条守卫是恒真的');
+      else ok('前提检查：不存在的 kind 确实不在那个联合里（上一条不是恒真）');
+    }
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */

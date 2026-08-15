@@ -744,13 +744,23 @@ async function deleteModel(state: RestState, res: ServerResponse, id: string): P
   // ★ T-107 ②：与 `DELETE /api/backends/:id` 同一条规则、同一个形状 ——
   // 有文件被拒绝删除就说出来，干净的那条路仍然是 204。两处若只改一处，
   // "同一件事两种答案"这族 bug 就又多一条。
-  if (dropped.refused.length > 0) {
+  //
+  // ★★ #113：两个来源。「我们不肯删」与「我们没删动」各自都能把它抬到 200 ——
+  // 判据是同一条：**盘上留下了东西就必须说出来**。两格都空才是 204。
+  if (dropped.refused.length > 0 || dropped.failed.length > 0) {
     // ★ #109：同 `backends.ts` 那一处，`satisfies` 把这个 body 钉在契约上 ——
     // 网页读的是同一个 `UninstallWithRefusalsResponse`，两侧漂了没人会说话。
     sendJson(res, 200, {
       modelId: id,
       freedBytes: gc.freedBytes,
       filesNotRemoved: dropped.refused.map((r) => ({ name: r.name, reason: r.reason })),
+      // 逐格摊开，理由同 `backends.ts` 那一处（内部账多一格不许原样漏到网线上）
+      filesFailedToRemove: dropped.failed.map((f) => ({
+        name: f.name,
+        path: f.path,
+        kind: f.kind,
+        detail: f.detail,
+      })),
     } satisfies UninstallWithRefusalsResponse & { readonly modelId: string });
     return true;
   }
