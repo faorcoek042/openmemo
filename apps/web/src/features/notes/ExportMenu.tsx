@@ -5,6 +5,7 @@ import { Download } from 'lucide-react';
 import { Button } from '../../components/common/Button';
 import { surfaceState } from '../../lib/api/surfaces';
 import type { NoteDetail } from '../../lib/api/types';
+import { NOTES_OFFLINE_REASON_ID } from './NotesOfflineReason';
 
 /**
  * 笔记导出入口。
@@ -55,7 +56,14 @@ export function ExportMenu({ note }: { note: Pick<NoteDetail, 'uid' | 'title'> }
         variant="ghost"
         onClick={() => setOpen((v) => !v)}
         disabled={!live}
-        title={live ? undefined : t('notes.exportNeedsDaemon')}
+        /*
+         * ⚠️ 理由**不挂在 `title` 上**（v0.7.3 已知边界第 6 条）：`Button` 基类带
+         * `disabled:pointer-events-none`，`pointer-events: none` 的元素收不到
+         * `mouseover` ⇒ 原生 tooltip 对鼠标也不弹；`disabled` 又把它移出 tab 序列。
+         * 真解释是同一行里的 `<NotesOfflineReason/>`（由 `NoteDetailPage` 渲染），
+         * 这里只负责把禁用状态与那句话**关联起来**。
+         */
+        aria-describedby={live ? undefined : NOTES_OFFLINE_REASON_ID}
       >
         <Download className="size-3.5" />
         {t('notes.export')}

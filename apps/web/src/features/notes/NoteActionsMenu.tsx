@@ -13,6 +13,7 @@ import {
   useRestoreNoteMutation,
 } from './api';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
+import { NOTES_OFFLINE_REASON_ID } from './NotesOfflineReason';
 
 /**
  * 笔记的「重命名 / 删除」入口（T-155）。
@@ -143,7 +144,12 @@ export function NoteActionsMenu({ note }: { note: Pick<NoteDetail, 'uid' | 'titl
         disabled={!live}
         aria-haspopup="menu"
         aria-expanded={open}
-        title={live ? undefined : t('notes.exportNeedsDaemon')}
+        /*
+         * ⚠️ 与 `ExportMenu` 同一条：理由不挂 `title`（disabled + `pointer-events:none`
+         * ⇒ 鼠标、键盘、读屏三条路都到不了）。两颗按钮灰掉的原因**是同一个**，
+         * 所以指向同一句可见文字，而不是各说各的。
+         */
+        aria-describedby={live ? undefined : NOTES_OFFLINE_REASON_ID}
         data-testid="note-actions"
       >
         <MoreHorizontal className="size-3.5" />

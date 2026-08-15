@@ -103,7 +103,7 @@
       "json": "JSON (full)"
     },
     "exportServerOnly": "DOCX / PDF need server support — not available yet",
-    "exportNeedsDaemon": "Export requires the local service to be running",
+    "exportNeedsDaemon": "The local service is not running — export and the other actions on this note are unavailable",
     "folderEmpty": "Nothing in “{{name}}” yet",
     "folderEmptyHint": "This view includes notes in sub-folders too.",
     "shownOfTotal": "Showing {{shown}} of {{total}}",
@@ -426,6 +426,7 @@
     "followPlayback": "Follow playback",
     "searchInNote": "Find in transcript",
     "noTranscript": "No transcript yet",
+    "noTranscriptHint": "Either the transcription has not finished, or this run left no segments behind. To run it again, use “{{action}}” at the top of this panel — if it is greyed out, the notice right next to it says why.",
     "generating": "Generating…",
     "summaryEmpty": "No summary yet",
     "backgroundHint": "You can close this page — the task keeps running",

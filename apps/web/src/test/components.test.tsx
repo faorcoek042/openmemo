@@ -9868,26 +9868,40 @@ describe('★★ 随应用出厂的组件不许被"邀请卸载"', () => {
     r.unmount();
   });
 
-  test('★★ 灰掉还不够：得**说得出为什么**，而且不是承重墙那句话', async () => {
+  /**
+   * ★★ 这一条**换过判据**（v0.7.3 已知边界第 6 条），走的是
+   * `RetranscribeButton` 那条已经走过一遍的路。
+   *
+   * 它原来断言的是 `removeBtn.getAttribute('title')`，理由写着「tooltip 弹不出来，
+   * 但读屏拿得到」—— **那半句不成立**：这颗按钮有可见文字（「卸载」），
+   * 有可见文字时 `title` 不参与可访问名，多数读屏配置也不播报它；
+   * 而 `disabled:pointer-events-none` 让 tooltip 对鼠标同样弹不出来。
+   * 于是那条断言证明的是「**这个字符串被算出来了**」，不是「**用户读得到**」。
+   *
+   * 现在钉的是后果：那句话必须**渲染进文档**并与按钮**关联**上。
+   * 把卡片正文里那一段拿掉，这条立刻红。
+   */
+  test('★★ 灰掉还不够：理由要**渲染进文档并关联到按钮**，而且不是承重墙那句话', async () => {
     const r = await render(
       <BackendPackCard {...NOOP} pack={mediaTools({ bundledWithApp: true }) as never} />,
     );
-    const title = removeBtn(r.container)?.getAttribute('title') ?? '';
-    /*
-     * `title` 在 disabled 元素上仍然提供可访问名（tooltip 因 `pointer-events:none`
-     * 弹不出来，但读屏拿得到）—— #105 ④ 那条判据。一个灰着又说不出自己是什么的
-     * 按钮，唯一的作用是制造疑惑。
-     */
-    assert.notEqual(title, '', '灰掉了却一个字都不说 —— 用户只知道"点不动"，不知道为什么');
+    // ① 读屏：禁用按钮与那条理由必须关联，否则听到的只是"卸载，已禁用"
+    const whyId = removeBtn(r.container)?.getAttribute('aria-describedby') ?? '';
+    assert.notEqual(whyId, '', '灰掉了却没有任何东西解释它 —— 用户只知道"点不动"，不知道为什么');
+    const why = r.container.querySelector(`#${whyId}`);
+    assert.ok(why, 'aria-describedby 指向的节点必须真的存在 —— 指空 id 不报错，只会静默失效');
+    // ② 用户读得到：理由在文本节点里，不需要悬停、不需要聚焦
+    const whyText = why.textContent ?? '';
+    assert.notEqual(whyText.trim(), '', '关联过去的那一段是空的 —— 指向一段空文字等于没指');
     assert.equal(
-      title.includes('CPU'),
+      whyText.includes('CPU'),
       false,
-      `拿承重墙那句话（"CPU 后端是兜底…"）去解释一个 ffmpeg 包，是**说错了原因**：${title}`,
+      `拿承重墙那句话（"CPU 后端是兜底…"）去解释一个 ffmpeg 包，是**说错了原因**：${whyText}`,
     );
     assert.match(
-      title,
+      whyText,
       /随应用|出厂|安装目录/,
-      `理由没说到点子上（该说的是"这些字节在程序自己的安装目录里"）：${title}`,
+      `理由没说到点子上（该说的是"这些字节在程序自己的安装目录里"）：${whyText}`,
     );
     r.unmount();
   });
@@ -14283,14 +14297,24 @@ describe('#105 ④ 折叠区那 20 颗禁用按钮 —— 要么不渲染，要�
     assert.ok(btn, '「还没测出来」那一档的按钮被一起删掉了 —— 那是把假阳性换成了假阴性');
     // 它是灰的（本来就该是），但**必须说得出自己是什么** —— 这是这一条的全部
     assert.equal(btn.hasAttribute('disabled'), true, '前提：这一档的按钮确实是灰的');
-    const name = btn.getAttribute('title') ?? btn.getAttribute('aria-label') ?? '';
-    assert.ok(
-      name.trim().length > 0,
-      '灰按钮既没有 title 也没有 aria-label —— 读屏拿不到它是什么（闸门量的正是这个）',
+    /*
+     * ⚠️ 判据换过（v0.7.3 已知边界第 6 条）：原来读的是 `title`／`aria-label`，
+     * 而 `title` 在这颗按钮上**三条输入路都到不了**（disabled +
+     * `pointer-events:none` ⇒ tooltip 不弹、tab 序列里没有它、有可见文字时
+     * 读屏也不念 title）。现在读的是**渲染进文档、并被 `aria-describedby`
+     * 关联过来**的那一段 —— 也就是用户真的看得到的东西。
+     */
+    const whyId = btn.getAttribute('aria-describedby') ?? '';
+    assert.notEqual(
+      whyId,
+      '',
+      '灰按钮没有任何东西解释它 —— 用户拿不到它为什么点不动（闸门量的正是这个）',
     );
+    const why = r.container.querySelector(`#${whyId}`);
+    assert.ok(why, 'aria-describedby 指向的节点必须真的存在 —— 指空 id 不报错，只会静默失效');
     assert.ok(
-      name.includes('backend package not installed'),
-      `可访问名没说出为什么点不动 → ${JSON.stringify(name)}`,
+      (why.textContent ?? '').includes('backend package not installed'),
+      `那一段没说出为什么点不动 → ${JSON.stringify(why.textContent)}`,
     );
     r.unmount();
   });

@@ -105,7 +105,29 @@ export function TranscriptList({
   }, [setFollow]);
 
   if (segments.length === 0) {
-    return <p className="px-4 py-8 text-sm text-ink-muted">{t('detail.noTranscript')}</p>;
+    /*
+     * ★ **空面板也得说下一步。**
+     *
+     * 此前这里只有一句「尚无转写稿」—— 而这块面板恰恰是**失败 / 取消**的笔记
+     * 最后停留的地方：页顶那条告知条写着「用下面转写稿面板上的『重新转写』」，
+     * 用户照着看下来，看到的是一句名词，屏幕上再没有别的话。
+     *
+     * ⚠️ 按钮名**从按钮自己的词条取**（`detail.retranscribe.open`），与页顶那条
+     * `notes.cancelledHint` 用的是同一条来源（#44 立的形状）——
+     * 两处指的必须是同一颗按钮上的同一个字，否则改名之后它们会各说各的。
+     *
+     * ⚠️ 措辞刻意含着"还没跑完"那一档：这个分支对**正在转写**的笔记同样成立，
+     * 那时用户什么都不用做。把两种情况都说到，比斩钉截铁地只说一种要诚实。
+     * 那颗按钮如果是灰的，`<RetranscribeBlockedNotice/>` 就在它正下方说原因。
+     */
+    return (
+      <div className="px-4 py-8" data-testid="transcript-empty">
+        <p className="text-sm text-ink-muted">{t('detail.noTranscript')}</p>
+        <p className="mt-1 text-xs text-ink-muted">
+          {t('detail.noTranscriptHint', { action: t('detail.retranscribe.open') })}
+        </p>
+      </div>
+    );
   }
 
   return (
