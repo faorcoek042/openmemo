@@ -15,9 +15,9 @@
     "先例（同一套棘轮姿势）：scripts/orphan-exports-baseline.json、",
     "scripts/ci/single-source-baseline.json、scripts/ci/selfcheck-known-gaps.json。"
   ],
-  "generatedAt": "2026-08-14",
+  "generatedAt": "2026-08-15",
   "generatedBy": "test-ratchet（事故：31d3ae3 静默删除 platformUnsupported.test.ts 191 行，7581cff 恢复）",
-  "floor": 177,
+  "floor": 178,
   "tracked": [
     "apps/daemon/src/bootstrap/entrypoint.test.ts",
     "apps/daemon/src/bootstrap/open-browser.test.ts",
@@ -55,6 +55,7 @@
     "apps/daemon/src/http/rest/modelDiskReclaim.test.ts",
     "apps/daemon/src/http/rest/modelReconcile.test.ts",
     "apps/daemon/src/http/rest/moveTruthfulness.test.ts",
+    "apps/daemon/src/http/rest/removalFailureAccounting.test.ts",
     "apps/daemon/src/http/rest/retiredRoles.test.ts",
     "apps/daemon/src/http/rest/selfTestRecord.test.ts",
     "apps/daemon/src/http/rest/servedFromSystemPath.test.ts",
