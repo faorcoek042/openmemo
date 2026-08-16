@@ -345,7 +345,6 @@
       "unknownReason": "未知原因",
       "retrySelfTest": "重试自检",
       "switchToCpu": "改用 CPU",
-      "loadBearingNote": "CPU 后端是永不失败的兜底，不可卸载",
       "update": "更新",
       "updateTitle": "你装的这一版和目录里现在这一版不是同一个文件。点它装上目录里这一版（旧的会被替换）。",
       "catalogHas": "目录里是 {{version}}（{{size}}）",

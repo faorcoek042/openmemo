@@ -757,11 +757,16 @@ export function BackendPackCard({
         </div>
       ) : null}
 
-      {isLoadBearing && pack.installed ? (
-        <p className="mt-1.5 text-right text-[11px] text-ink-muted">
-          {t('runtime.pack.loadBearingNote')}
-        </p>
-      ) : null}
+      {/*
+        这里原来还有一句 `runtime.pack.loadBearingNote`（「CPU 后端是永不失败的兜底，
+        不可卸载」），条件与上面正文里那句 `loadBearingTitle` 完全相同
+        （`isLoadBearing && pack.installed`）—— 同一张卡上，同一件事说了两遍、两种措辞。
+
+        删的是这一句，留的是正文里那句：**只有那一句挂着 `aria-describedby`**
+        （`packWhyId`），是本轮「禁用按钮的理由要读得到」真正接上的那一头；
+        删它等于把修法退回去。而这一句是这一版自己带进来的重复
+        —— 搬长句进正文时没删掉旧的短提示。
+      */}
     </article>
   );
 }
