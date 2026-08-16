@@ -119,7 +119,7 @@
  */
 /* global document, getComputedStyle */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -133,9 +133,12 @@ import {
 } from './e2e-browser-assertions.mjs';
 import {
   Undecided,
+  absenceAnnotation,
+  absentMutations,
   assertOk,
   classifyMutationThrow,
   markUndecided,
+  extractMutationIds,
   mutationAnnotation,
 } from './mutation-verdict.mjs';
 
@@ -2425,6 +2428,52 @@ try {
   await new Promise((r) => setTimeout(r, 1200));
   killTreeHard(daemon?.pid);
   rmSync(SCRATCH, { recursive: true, force: true });
+}
+
+/*
+ * ★★ 缺席检测：**声明了 N 条变异，这一轮只出现了 M 行**。
+ *
+ * 上面那条地板只管「一条 MUT-OK 都没有」。它管不到「10 条里跑了 6 条」——
+ * 而那正是整轮被掐断时的样子：`[CI 实测 run 31484205254 win32：4 条变异 0 行]` 变异 0 行，
+ * 总表只是短了几行，**没有一个字说少的那几条去哪了**。
+ *
+ * N 从**这个脚本自己的源码**里数（`await mutation('<id>'` 的调用点就是注册表，
+ * 不另立第二份清单 —— 那只是把一个漂移换成另一个）。缺席的补成
+ * `MUT-UNKNOWN`(absent) 进总表 ⇒ 进「无从判断」⇒ **进凭证的覆盖面**。
+ * 于是「这一轮少验了几条」第一次说得出口。
+ *
+ * ⚠️ 两条一起：
+ *   · 正常轮 ⇒ 一条都不缺 ⇒ 这一段等于不存在，**不许因此变红**；
+ *   · 掐断/绕过 ⇒ 缺席逐条列出 + `::warning`，但**仍然不计入 failed**
+ *     （掐断本身已经红过一次了，重复计只是复述同一件事）。
+ * ⚠️ 扫描非空地板：扫出 0 个调用点 = 提取器坏了，而它坏掉的表现恰恰是
+ *   "从此永远没有缺席"。**那要当场红。**
+ */
+const declaredMutations = extractMutationIds(readFileSync(fileURLToPath(import.meta.url), 'utf8'));
+if (declaredMutations.length === 0) {
+  failed += 1;
+  say('');
+  say('   ✘ 从本脚本源码里一条 `await mutation(...)` 都没扫到 —— **提取器坏了**。');
+  say('     它坏掉的表现是"从此永远不报缺席"，所以这里当场红，而不是安静地少一项检查。');
+}
+const absent = absentMutations(declaredMutations, results);
+for (const id of absent) {
+  results.push({
+    id,
+    status: 'MUT-UNKNOWN',
+    mutKind: 'absent',
+    detail: '【这一轮根本没跑到】声明了但一行都没有 —— 整轮被掐断，或被分支绕过',
+  });
+}
+if (absent.length > 0) {
+  say('');
+  say(
+    `   ？ 本轮声明 ${declaredMutations.length} 条变异，其中 ${absent.length} 条**一行都没有**：`,
+  );
+  for (const id of absent) say(`     · ${id}`);
+  say('     它们既没证明这条断言有牙齿，也没证明它没有 —— 已计入下面的「无从判断」。');
+  const ann = absenceAnnotation(absent, declaredMutations.length);
+  if (ann) say(ann);
 }
 
 hdr('汇总');
