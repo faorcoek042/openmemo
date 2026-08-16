@@ -382,6 +382,12 @@ jobs:
       #   「跑了但没证明、写成 ran」是同一个病的镜像面。
       #
       #   ⚠️ 复用同一份 artifact、同一个目录：不新开一条管道，就少四个会漂的名字。
+      #      但这是**削减，不是消除** —— 另开一条管道要新添五个手抄的名字，复用之后是
+      #      **五个收成了一个**：覆盖面文件里那个 JSON 键 `unverified`
+      #      （`collect-unverified-mutations.mjs` 读的就是它）。
+      #      而收成的这一个，在 2026-08-17 之前**一个守卫都没有**：改了名 ⇒ 读不出 ⇒
+      #      按它自己的裁决收敛成 `ran-unverified` ⇒ 退出码 0 ⇒ 没有一盏灯会红。
+      #      现在由 `selftest-undecided-wiring.mjs` 的 R8 守着（`unknowns` 那一格是 R7）。
       - name: 汇总未验证的变异
         id: mut
         run: |
