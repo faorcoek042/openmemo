@@ -254,15 +254,35 @@ expect('从源码里数出调用点（定义与注释都不算）', () => {
     'C 的证伪能力',
   ]);
 });
-expect('🔴 块注释里的 `await mutation(...)` 不许被数进来（否则每轮都报假缺席 ⇒ 恒吵）', () => {
+expect('🔴 块注释里的 `await mutation(...)` 不许被数进来（行首是 `/`，不是 `await`）', () => {
   assert.ok(!extractMutationIds(FAKE_SOURCE).includes('注释里的假 id'));
 });
-expect('🔴 整行 `//` 注释里的也不许', () => {
+expect('🔴 整行 `//` 注释里的也不许（行首是 `/`）', () => {
   const src = [
     "// await mutation('行注释里的假 id', () => {}); ",
     "await mutation('真的', () => {",
   ].join('\n');
   assert.deepEqual(extractMutationIds(src), ['真的']);
+});
+/*
+ * ★★ **真事故的存档**（PR #66 第一版，被这份文件自己的地板抓住）。
+ *
+ * 第一版是"先剥块注释再找调用点"。`e2e-notes-audit.mjs:1473` 有这么一行**字符串**：
+ *   accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,* / *;q=0.8'
+ * （HTTP 的 Accept 头，此处斜杠间加了空格，免得这段注释自己再触发一次同样的事故）
+ * 那个 `* / *` 里含着一个「斜杠+星号」—— 剥注释的正则把它当成块注释**开始**，
+ * 一路吃到下一个真正的注释结束符，**连着吞掉了 F5-e4 那条真变异**，
+ * 于是 notes 只数到 9 条（地板 10）当场红。
+ * ⇒ 改成**行首锚定**（语句位置），不再需要理解字符串。
+ */
+expect('★ 字符串里的 Accept 头 `*/*` 不许吞掉它后面的调用点（PR #66 第一版的真事故）', () => {
+  const src = [
+    '  const h = {',
+    "    accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',",
+    '  };',
+    "  await mutation('它后面的那条真变异', async () => {",
+  ].join('\n');
+  assert.deepEqual(extractMutationIds(src), ['它后面的那条真变异']);
 });
 expect('行尾的 `http://` 不许被当成注释而误伤后面的调用点', () => {
   const src = ["const u = 'http://127.0.0.1:19980/api';", "await mutation('真的', () => {"].join(
@@ -284,6 +304,11 @@ for (const rel of ['scripts/ci/e2e-browser-audit.mjs', 'scripts/ci/e2e-notes-aud
     assert.ok(
       /await mutation\('<id>'/.test(src),
       '真文件里那句说明不在了 —— 这条用例失去了它的靶子，请换一个真实的幽灵来源或删掉它',
+    );
+    // 靶子必须真的长在注释里（行首是 `*`），否则这条用例证明的不是同一件事
+    assert.ok(
+      /^\s*\*.*await mutation\('<id>'/m.test(src),
+      '那句说明不在注释行里了 —— 行首锚定挡不住它，这条用例的前提变了',
     );
     const ids = extractMutationIds(src);
     assert.ok(!ids.includes('<id>'), `扫出了幽灵 id：${JSON.stringify(ids.slice(0, 20))}`);
