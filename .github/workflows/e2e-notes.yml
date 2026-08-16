@@ -310,7 +310,23 @@ jobs:
           node scripts/ci/e2e-notes-audit.mjs \
             --bundle "${{ steps.extract.outputs.bundle_dir }}" \
             --data-dir "${{ runner.temp }}/e2e-notes-shared/data" \
-            --port 19960 --llm-port 19961 --mutation-port 19970
+            --port 19960 --llm-port 19961 --mutation-port 19970 \
+            --undecided-out "e2e-notes-undecided-${{ matrix.label }}.json"
+
+      # ★ 覆盖面（undecided 计数）单独一份 artifact，供 attest job 跨平台求和后
+      # 传给 emit-e2e-attestation.mjs --undecided（照抄 e2e-browser.yml 的同一模式）。
+      #
+      # 无条件上传、**失败也传**：这是覆盖面统计不是判定。判定早已由 `needs: [e2e]`
+      # 管住 —— 红的 run 里 attest 作业根本不跑，这份文件也就没人读。
+      # 而红的 run 里**照样落盘**是有意的：它让「这一轮到底有几条没验到」在事后
+      # 读日志时说得出来，而不是只剩一句"红了"。
+      - name: 留档（覆盖面计数）
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: e2e-notes-undecided-${{ matrix.label }}
+          path: e2e-notes-undecided-${{ matrix.label }}.json
+          if-no-files-found: warn
 
   # ═══════════════════════════════════════════════════════════════════════════════════
   # 发一张「这条腿对着**这一批包**跑绿过」的凭证（契约见 D-17 §11）。
@@ -364,23 +380,33 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+    env:
+      # ★ `--expect-labels`（求和用）与 `--platforms`（写凭证用）的唯一真源：两处都从
+      #   这一个变量取值，照抄 e2e-browser.yml / e2e-runtime.yml 的同一模式。
+      #   加/删平台要跟上面 matrix 手动同步 —— 但忘了同步**不会被静默吞掉**：
+      #   `sum-undecided.mjs` 拿 `--expect-labels` 跟目录里实际下到的文件做双向比对，
+      #   多一格被「未预期文件」逮住、少一格被「缺失」逮住，两种都是响亮警告 +
+      #   收敛成 null，绝不悄悄少算。
+      #   ⚠️ 此前这里是写死的 `--platforms linux-x64,darwin-arm64,win32-x64`，
+      #      与 matrix 是两份手抄。收成一份不改变判定，只是少一处会漂的地方。
+      PLATFORMS: linux-x64,darwin-arm64,win32-x64
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
       # ═══════════════════════════════════════════════════════════════════════════════
-      # ★ `--undecided 0`（#77 notes 腿）—— **这是一个需要论证的结论，不是默认值**
+      # ★ 覆盖面这一格：**曾经写死 `--undecided 0`，现在真的去数**
       #
-      # 这一格此前是 `null`，而闸门下游（`verify-e2e-attestation.mjs`）把两者说成
-      # 两句不同的话：**`0` = 查过了，一条未决都没有；`null` = 这条腿还没接线**。
+      # 闸门下游（`verify-e2e-attestation.mjs`）把三种取值说成三句不同的话：
+      # **`0` = 查过了，一条未决都没有；`null` = 这条腿还没接线；`N` = 有 N 条没验到**。
       #
-      # ## 为什么这里是写死的 0，而不是照 runtime/browser/record 那样真的去数
+      # ## 那个写死的 0 **曾经**是对的（#77 的论证，原样留着 —— 删说法不删事实）
       #
-      # 因为**这条腿结构上没有第三态可数**。`e2e-notes-audit.mjs` 的总表只有五种
+      # 因为那时**这条腿结构上没有第三态可数**。`e2e-notes-audit.mjs` 的总表只有五种
       # 状态（PASS / FAIL / MUT-OK / MUT-BAD / ABORTED），**没有一种表示「跑了但
       # 什么都没证明」**。每一处「前提在这台 runner 上构造不出来」都被**主动换成了
-      # FAIL**，逐条核过：
+      # FAIL**，当时逐条核过：
       #
       #   · 第 3 节数据目录里没有带转写稿的笔记 → `throw`（文件头 §75 明写
       #     「当场红并说清是前置步骤没跑，**不假装跳过**」）
@@ -390,31 +416,70 @@ jobs:
       #     超过一页、tool.* 自检项非空 —— 每一条空集都有一条会红的守卫兜着，
       #     而不是空集判通过
       #
-      # 而一条判红的腿，`needs: [e2e]` 会让本 attest 作业**直接不跑**，凭证根本不会
-      # 发出来。所以不存在「三平台都绿、但暗地里有几条没验到」这种需要 undecided
-      # 去描述的状态。**是这条腿主动把 undecided 换成了 FAIL，不是它没有这个概念。**
+      # 而一条判红的腿，`needs: [e2e]` 会让本 attest 作业**直接不跑**。所以当时不存在
+      # 「三平台都绿、但暗地里有几条没验到」这种需要 undecided 去描述的状态。
+      # 上面这些事实**今天仍然成立**：`check()` 那一侧一个字都没变。
       #
-      # ## 与 record 腿的差别（那条腿为什么反过来要真去数）
+      # ## 🔴 **它从什么时候起不再成立**：#64 的后续，`mutation()` 开始产出 `MUT-UNKNOWN`
+      #
+      # 当年那段论证自己写过一句预言：
+      #
+      #   > 只要有人给 `results` 加一个新状态来表示「这条断言没能被评估」，这个 0 就
+      #   > 变成假话。（「恒为 0」是一句会过期的话；一条会红的断言不会。）
+      #
+      # **那一天到了，而且不是靠人记得的** —— `e2e-notes-audit.mjs` 汇总段那根桩
+      # （出现计划外 status 就当场红）正是为此立的，它按设计工作了。
+      #
+      # 触发它的改动：`mutation()` 不再把**任何**抛出读成「如期变红」。Playwright/HTTP
+      # 超时、daemon 抖动、端口被抢 —— 这些「腿自己炸了」的抛出此前冒充「断言有牙齿」
+      # （browser 腿的 `B10` 靠这个连续 5 天、63 个 job 腿都在说谎），现在判 `MUT-UNKNOWN`。
+      # 本腿这 10 条变异里有 3 条跑真 HTTP，**结构上产得出未决了**。
+      #
+      # ⇒ 写死的 0 变成假话 ⇒ 接上真管道（`--undecided-out` → `sum-undecided.mjs`）。
+      #    这**不是**给那根桩开例外，是把它守着的那段论证换成了新的一段。
+      #
+      # ## 与 record 腿的差别（当年那条腿为什么反过来要真去数）
       #
       # record 腿的论证有一个洞：`retranscribe()` 里有一处跳过**没有 judge 兜住**，
       # 能在「整轮全绿」里发生。本腿逐个核过每一个 `check()`／`mutation()` 调用点，
       # **没有这种洞**：它们要么在 try 块顶层，要么在第 13 节那个内层 try 里，
       # 而内层 try 抛出去会被外层 catch 接住 → `failed += 1` + 一行 ABORTED。
-      #
-      # ## ⚠️ 这句话什么时候会失效（写在这里，好让后人判断，而不是重新考古）
-      #
-      # 只要有人给 `results` 加一个新状态来表示「这条断言没能被评估」，这个 0 就
-      # 变成假话。**那一天不需要靠人记得**：`e2e-notes-audit.mjs` 的汇总段钉了一根桩，
-      # 出现任何计划外的 status 就当场判红，并直接指回这段论证。
-      # （「恒为 0」是一句会过期的话；一条会红的断言不会。）
+      # 这条差别今天已经不重要了 —— **两条腿现在都真的在数。**
       # ═══════════════════════════════════════════════════════════════════════════════
+      # 三个矩阵格各自留的覆盖面计数（e2e-notes-undecided-<label>.json），
+      # merge-multiple 摊平进同一个目录 —— 与 e2e-browser.yml 的 attest job 同一模式。
+      - name: 下载三平台的覆盖面计数
+        uses: actions/download-artifact@v7
+        with:
+          pattern: e2e-notes-undecided-*
+          path: undecided
+          merge-multiple: true
+
+      # 任何一格对不上，sum-undecided.mjs 只会警告 + 把 undecided_flag 收敛成
+      # 空字符串（⇒ emit 收到它自己的默认值 `null`），**不会**让这一步失败 ——
+      # 一个纯展示用的覆盖面统计出故障，不该连累下面「写凭证」那一步
+      # （那一步产出的 artifact 名字才是闸门真正认的信号）。
+      #
+      # ★ `--reduce` 用**默认的 `sum`**，这是一次有意的选择，不是没看见那个参数：
+      #   本腿的未决是「**某台 runner 上**那条变异炸了」——三格各自独立的事实，该相加。
+      #   `agree` 是给「三格是同一件事的三次观察」用的（`e2e-allcomponents` 那种
+      #   平台无关的缺口清单，相加会把同一个东西数三遍）。本腿不是那种形状。
+      - name: 求和覆盖面计数
+        id: sum
+        run: |
+          node scripts/ci/sum-undecided.mjs \
+            --dir undecided \
+            --expect-labels "$PLATFORMS" \
+            --file-template 'e2e-notes-undecided-{label}.json' \
+            --github-output "$GITHUB_OUTPUT"
+
       - name: 写凭证
         run: |
           node scripts/ci/emit-e2e-attestation.mjs \
             --leg notes \
             --bundle-run "${{ needs.e2e.outputs.bundle_run_id }}" \
-            --platforms linux-x64,darwin-arm64,win32-x64 \
-            --undecided 0 \
+            --platforms "$PLATFORMS" \
+            ${{ steps.sum.outputs.undecided_flag }} \
             --out dist/e2e-attest.json
       - uses: actions/upload-artifact@v6
         with:
