@@ -1786,13 +1786,31 @@ if (unexpectedStatuses.length > 0) {
   say('     请连同 e2e-notes.yml 里那段论证一起更新，别只把这个名字加进 KNOWN_STATUSES。');
 }
 /*
- * ★ 覆盖面落盘。**不看 failed** —— 这是覆盖面计数不是判定，红也要如实落盘
- * （与 runtime / browser 腿同一条道理）。
+ * ★ 覆盖面落盘。**不看 failed** —— 这是覆盖面计数不是判定，红也要如实落盘。
+ *
+ * ⚠️ 🔴 **`unknowns` 是一个把两件事加在一起的整数**（已知限制，2026-08-17 登记）：
+ *   · 「这条**断言**没能被评估」（`UNDECIDED`）；
+ *   · 「这条**变异**什么都没证明」（`MUT-UNKNOWN`：前提没构造出来 / 腿炸了 / 根本没跑到）。
+ *   两者的**补救完全不同**：crash 那支要去修**测试**，premise 那支是这台机器没条件。
+ *   控制台把它们分开列了（见上面两段），**而这个整数把它们加成了一个数**。
+ *   拆开要动凭证 schema 更多，不在这一轮 —— 但别让下一个人以为它是单一含义的。
+ *
+ * ★ `unverified` 是**同一份文件里的另一格**：哪几条变异什么都没证明。
+ *   它喂给 `collect-unverified-mutations.mjs`，最终变成凭证的
+ *   `mutations: ran|ran-unverified` + `unverifiedMutations`。
+ *   ⚠️ 与 `unknowns` **不是同一个集合**：`unknowns` 还含断言级的 `UNDECIDED`。
  */
+const unverifiedMut = results.filter((r) => r.status === 'MUT-UNKNOWN').map((r) => String(r.id));
 if (UNDECIDED_OUT) {
   mkdirSync(dirname(UNDECIDED_OUT), { recursive: true });
-  writeFileSync(UNDECIDED_OUT, `${JSON.stringify({ unknowns: undec.length }, null, 2)}\n`);
-  say(`   覆盖面已写到 ${UNDECIDED_OUT}（unknowns=${undec.length}）`);
+  writeFileSync(
+    UNDECIDED_OUT,
+    `${JSON.stringify({ unknowns: undec.length, unverified: unverifiedMut }, null, 2)}\n`,
+  );
+  say(
+    `   覆盖面已写到 ${UNDECIDED_OUT}（unknowns=${undec.length}` +
+      ` · 其中变异未验证 ${unverifiedMut.length} 条）`,
+  );
 }
 if (undec.length > 0) {
   say('');

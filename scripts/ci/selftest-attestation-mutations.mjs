@@ -25,7 +25,7 @@
  */
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -224,6 +224,54 @@ rmSync(scratch, { recursive: true, force: true });
 
 say('');
 say('── ⑤ 接线：MUT_LABELS 必须与变异 matrix 一致（否则每轮虚报一条）────────────');
+
+/*
+ * ★ 每一条接了这条轴的腿：collect 步骤必须有 `id: mut`，且 emit 必须真的读它。
+ *   少一个 `id:`，`steps.mut.outputs.*` 会**静默渲染成空串** ⇒ `--mutations ""`
+ *   ⇒ emit die ⇒ 凭证发不出去。宁可在这里红，也别在发布当天红。
+ */
+const wfDir = join(REPO, '.github', 'workflows');
+const wired = [];
+for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.yml'))) {
+  const doc = parse(readFileSync(join(wfDir, f), 'utf8'));
+  const steps = Object.values(doc?.jobs ?? {}).flatMap((j) => j?.steps ?? []);
+  const collect = steps.find((x) => /collect-unverified-mutations\.mjs/.test(String(x.run ?? '')));
+  if (!collect) continue;
+  wired.push(f);
+  const emit = steps.find((x) => /emit-e2e-attestation\.mjs/.test(String(x.run ?? '')));
+  const sum = steps.find((x) => /sum-undecided\.mjs/.test(String(x.run ?? '')));
+  expect(`${f}：collect 有 id、emit 真的读它、两个 flag 都在`, () => {
+    assert.ok(collect.id, 'collect 步骤没有 id: —— 下游会静默拿到空串');
+    assert.ok(emit, '没有 emit 步骤');
+    const run = String(emit.run);
+    const re = (k) => new RegExp(`\\$\\{\\{\\s*steps\\.${collect.id}\\.outputs\\.${k}\\s*\\}\\}`);
+    assert.ok(re('mutations_state').test(run), 'emit 没读 mutations_state');
+    assert.ok(re('unverified_flag').test(run), 'emit 没读 unverified_flag');
+    assert.ok(
+      !/--unverified-mutations\s+"[^$]/.test(run),
+      '把清单写死了 —— 那个数永远不会跟着实际情况变',
+    );
+  });
+  if (sum) {
+    /*
+     * ★ browser / notes 的 collect 与 sum **读的是同一份文件**（复用覆盖面 artifact）。
+     *   两处 `--file-template` 一旦分叉，collect 会永远找不到文件 ⇒ 每轮虚报
+     *   `ran-unverified` ⇒ 恒吵。这里正面钉住它们一致。
+     */
+    expect(`${f}：collect 与 sum 读同一份文件（--file-template 必须逐字相同）`, () => {
+      const t = (x) => String(x.run).match(/--file-template\s+'([^']+)'/)?.[1] ?? null;
+      const dirOf = (x) => String(x.run).match(/--dir\s+(\S+)/)?.[1] ?? null;
+      if (dirOf(collect) !== dirOf(sum)) return; // 各读各的目录，不适用
+      assert.equal(t(collect), t(sum), '同一个目录、不同的模板 —— collect 会永远读不到');
+    });
+  }
+}
+expect(`扫到 ${wired.length} 条接了这条轴的腿（地板 3：runtime / browser / notes）`, () => {
+  assert.ok(
+    wired.length >= 3,
+    `只扫到 ${wired.length} 条：${wired.join(', ')} —— 扫描本身坏了，或有腿掉线了`,
+  );
+});
 
 expect('e2e-runtime.yml 的 MUT_LABELS ≡ mutations matrix 的标签', () => {
   const d = parse(readFileSync(join(REPO, '.github', 'workflows', 'e2e-runtime.yml'), 'utf8'));

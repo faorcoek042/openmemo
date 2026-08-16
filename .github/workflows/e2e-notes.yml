@@ -473,12 +473,30 @@ jobs:
             --file-template 'e2e-notes-undecided-{label}.json' \
             --github-output "$GITHUB_OUTPUT"
 
+      # ★ 变异那一轴（2026-08-17）：这条腿的变异**跑在与断言同一次脚本调用里**，
+      #   所以「哪几条什么都没证明」早就在上面那份覆盖面文件里（`unverified` 那一格）——
+      #   只是此前**没有往凭证上传**，于是凭证写着 `mutations: null`＝「这条腿没接这个字段」。
+      #   一条每轮真跑变异的腿，凭证却说这条轴没接线 —— 与 runtime 那边
+      #   「跑了但没证明、写成 ran」是同一个病的镜像面。
+      #
+      #   ⚠️ 复用同一份 artifact、同一个目录：不新开一条管道，就少四个会漂的名字。
+      - name: 汇总未验证的变异
+        id: mut
+        run: |
+          node scripts/ci/collect-unverified-mutations.mjs \
+            --dir undecided \
+            --expect-labels "$PLATFORMS" \
+            --file-template 'e2e-notes-undecided-{label}.json' \
+            --github-output "$GITHUB_OUTPUT"
+
       - name: 写凭证
         run: |
           node scripts/ci/emit-e2e-attestation.mjs \
             --leg notes \
             --bundle-run "${{ needs.e2e.outputs.bundle_run_id }}" \
             --platforms "$PLATFORMS" \
+            --mutations "${{ steps.mut.outputs.mutations_state }}" \
+            ${{ steps.mut.outputs.unverified_flag }} \
             ${{ steps.sum.outputs.undecided_flag }} \
             --out dist/e2e-attest.json
       - uses: actions/upload-artifact@v6
