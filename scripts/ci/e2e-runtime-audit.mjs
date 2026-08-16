@@ -346,8 +346,14 @@ const MUTATIONS = [
      * ★ 这里**曾经**有一个 `requiresTwoPacks: true`，注释写着
      *   「Linux/Windows 的 runner 上加速包因为没有 GPU 硬件证据装不上，前提构造不出来」。
      *   两件事都要记下来（删说法不删事实）：
-     *     ① **那句话是假的** —— linux/win32 装得上、构造得出来、每轮都抓得住；
-     *        构造不出来的是 darwin（`libggml-metal.so` 随核心包发 ⇒ metal 恒 probed）。
+     *     ① **那句话是假的**。真相是四件**分开的**事，合起来说正是它当初错的方式：
+     *        · linux：加速包装得上、前提构造得出来，**而且这条变异确实在那里被抓住过**；
+     *        · win32：**审计**里前提同样构造得出来 —— 但变异矩阵只有 linux 与 darwin
+     *          两格（`.github/workflows/e2e-runtime.yml` 的 mutations matrix），
+     *          所以 `M-driver-lie` **在 win32 上一次都没跑过**（构造得出前提 ≠ 跑过）；
+     *        · darwin：这个状态**结构上不存在**（`libggml-metal.so` 随 macOS 核心包发
+     *          ⇒ `metal.probed` 恒为 true），所以那里既抓不住也不算存活；
+     *        · ⇒ **唯一抓住过它的平台是 linux**，要查证据就只能去那一格。
      *     ② **那个字段从来没有被任何代码读过**（全仓只有这一处定义）。
      *   一个没人读的字段，看起来像"平台门在这儿"，于是真正的平台门
      *   （`e2e-runtime.yml` 里手写的 `only:`）反而没人去核 —— 而它写反了。
@@ -1759,13 +1765,21 @@ async function phaseBackends() {
         `「装了却没被探」这个状态在这里不会出现。` +
         '⚠️ 🔴 这里**曾经**写着「它是真机才有的现场（驱动装了但探不出来 / GPU 被别的' +
         '进程占住 / 驱动版本过老），CI 结构性给不了」—— **那也是假的**（2026-08-17 查清，' +
-        '这是同一条诊断上的第二个错误解释）。真实情况：linux/win32 上这个前提**构造得出来**，' +
-        'M-driver-lie 在那里每轮都被抓住；构造不出来的只有 darwin，而原因与「真机」无关 —— ' +
-        'libggml-metal.so 随 macOS **核心（cpu）包**一起发（backends.json 的 ' +
+        '这是同一条诊断上的第二个错误解释）。真实情况是**四件分开的事，一件一句，不许合并**：' +
+        '① win32 的**审计**里这个前提**构造得出来**（那一格印的是「1 个『装了但这次没探它』' +
+        '的后端…vulkan」）。' +
+        '② **但变异矩阵只有 linux 与 darwin 两格**（.github/workflows/e2e-runtime.yml 的 ' +
+        'mutations matrix，MUT_LABELS=linux-x64,darwin-arm64）—— 所以 M-driver-lie ' +
+        '**在 win32 上一次都没跑过**：能构造出前提，不等于那条变异在那里跑过。' +
+        '③ 真正**抓住过** M-driver-lie 的平台**只有 linux 一个**。' +
+        '④ darwin 上这个状态**结构上不存在**，而原因与「真机」无关：libggml-metal.so 随 ' +
+        'macOS **核心（cpu）包**一起发（backends.json 的 ' +
         'whispercpp-cpu-macos-arm64.providesFiles，build-whisper.sh 的 T-146 段刻意如此、' +
         '并有 die 兜底），所以无论用哪个 backendDir，Metal 的 ggml 模块都在里面，' +
-        'metal.probed 恒为 true。「装了但这次没探它」在 darwin 上**结构上不存在**，' +
-        '任何一台 Mac 都一样。',
+        'metal.probed 恒为 true —— 任何一台 Mac 都一样。' +
+        '👉 **看到这条 UNKNOWN，想知道这条断言到底被证明过没有：去 mutations 作业的 ' +
+        'linux-x64 那一格看 M-driver-lie。** 那是唯一出过证据的地方 —— ' +
+        'win32 那边没有证据（那条变异在那里没跑过），darwin 那边出不了证据（前提结构上不存在）。',
     );
   } else {
     /*
