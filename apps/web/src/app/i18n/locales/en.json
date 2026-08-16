@@ -345,7 +345,6 @@
       "unknownReason": "reason unknown",
       "retrySelfTest": "Retry self-test",
       "switchToCpu": "Switch to CPU",
-      "loadBearingNote": "The CPU backend is the never-failing fallback and cannot be uninstalled",
       "update": "Update",
       "updateTitle": "The version you have installed is not the same file as the one in the catalogue. Install the catalogue version (the old one is replaced).",
       "catalogHas": "catalog has {{version}} ({{size}})",
