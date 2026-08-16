@@ -100,6 +100,7 @@ import { tmpdir } from 'node:os';
 import { spawnDaemon, assertPortFree, killTree, killTreeHard } from './launcher-spawn.mjs';
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
+import { assertOk, classifyMutationThrow, mutationAnnotation } from './mutation-verdict.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const argv = process.argv.slice(2);
@@ -116,6 +117,17 @@ const MUT_PORT = Number(arg('--mutation-port', '19970'));
 const MASK = !argv.includes('--no-mask');
 /** 星标分页要真跑到边界：默认 limit 是 50，所以必须造出 > 50 条。 */
 const BULK_NOTES = Number(arg('--bulk-notes', '56'));
+/**
+ * ★ 覆盖面上报（照抄 browser / runtime 腿的同名 flag）。
+ *
+ * 本腿此前**没有**这个 flag，`e2e-notes.yml` 的 attest 作业写死 `--undecided 0`，
+ * 论证是「这条腿结构上不产生未决」。那句话**从本轮起不再成立** ——
+ * `mutation()` 现在会为「腿自己炸了」产出 `MUT-UNKNOWN`。
+ * 那段论证自己预言过这一天（「只要有人给 results 加一个新状态…这个 0 就变成假话」），
+ * 所以这里接上真数：写一个 `{ unknowns: N }` 的小文件，由 attest 作业跨平台求和。
+ * **「恒为 0」是一句会过期的话；一条真的去数的管道不会。**
+ */
+const UNDECIDED_OUT = arg('--undecided-out', null);
 
 const BASE = `http://127.0.0.1:${PORT}`;
 const LLM_BASE_URL = `http://127.0.0.1:${LLM_PORT}/v1`;
@@ -160,11 +172,14 @@ const brief = (v) => {
   return s.length > 300 ? `${s.slice(0, 300)}…(共 ${s.length} 字符)` : s;
 };
 
-/** 断言：`cond` 为真，否则抛。**只吃布尔**，不吃对象 —— 见 PROTOCOL §8。 */
+/**
+ * 断言：`cond` 为真，否则抛。**只吃布尔**，不吃对象 —— 见 PROTOCOL §8。
+ *
+ * ★ 抛的是**专用类型** `AssertionFailed`（`mutation-verdict.mjs`），不是裸 `Error` ——
+ *   那是 `mutation()` 分得开「断言按设计判红」和「这条腿自己炸了」的唯一依据。
+ */
 function ok(cond, msg, got) {
-  if (cond !== true) {
-    throw new Error(`${msg}${got === undefined ? '' : `（实得：${brief(got)}）`}`);
-  }
+  assertOk(cond, msg, got, brief);
 }
 function eq(actual, expected, msg) {
   const a = typeof actual === 'string' ? actual : JSON.stringify(actual);
@@ -189,8 +204,25 @@ async function check(id, fn) {
 }
 
 /**
- * **变异证明**：`fn` 必须抛。抛不出来说明对应的那条断言量不出东西 —— 那是假绿灯，
- * 比断言本身红更严重，所以这里也计入 failed。
+ * **变异证明**：那条断言必须**按设计**判红。判决走 `mutation-verdict.mjs` 里
+ * 唯一的那一份（有正反证明），按**抛出的类型**分四档：
+ *
+ *   · 什么都没抛        ⇒ `MUT-BAD`      变异体存活 —— 假绿灯，**计入 failed**
+ *   · `AssertionFailed` ⇒ `MUT-OK`       断言按设计判红
+ *   · `Undecided`       ⇒ `MUT-UNKNOWN`  前提没构造出来（本腿今天没有这种调用点）
+ *   · **其它任何抛出**  ⇒ `MUT-UNKNOWN`  **这条腿自己炸了**，什么都没证明
+ *
+ * ## 为什么本腿也要这一档（它此前是两态的）
+ *
+ * 这 10 条变异里有 3 条是 `async` 的，中间跑真 HTTP（`F5-a5`、`F5-d1`、`F5-e4`）。
+ * daemon 抖一下、端口被抢、`fetch failed` —— 老实现会把这些一律记成「如期变红」。
+ * `[实测语料 30 轮 e2e-notes / 727 次 MUT-OK]` 本腿**一次都没被咬过**（全是 A 类），
+ * 但 browser 腿的 `B10` 被咬了 **63 个 job 腿 / 22 轮 / 连续 5 天**，
+ * 而它被堵住靠的是一次**无关的**修复顺手改对了导航。**这里是提前上锁。**
+ *
+ * ⚠️ `MUT-UNKNOWN` **不计入 failed**（否则一次 HTTP 抖动会让整条腿红 ——
+ * 一条会随机变红的门，教给人的还是那句「别信这盏灯」）。所以它必须**响**：
+ * 打 `::warning` 注解、进「本轮无从判断」清单、并**真的被数进凭证的覆盖面**。
  */
 async function mutation(id, fn) {
   let threw = null;
@@ -199,15 +231,13 @@ async function mutation(id, fn) {
   } catch (e) {
     threw = e;
   }
-  if (threw) {
-    results.push({ id, status: 'MUT-OK', detail: threw.message });
-    say(`   ✔ [变异] ${id} —— 如期变红：${brief(threw.message)}`);
-    return true;
-  }
-  failed += 1;
-  results.push({ id, status: 'MUT-BAD', detail: '变异体没有让断言变红 —— 这条断言证伪不了' });
-  say(`   ✘ [变异] ${id} —— **没有变红**。这条断言量不出东西，等于假绿灯。`);
-  return false;
+  const verdict = classifyMutationThrow(threw, brief);
+  results.push({ id, status: verdict.status, detail: verdict.detail, mutKind: verdict.kind });
+  say(`   ${verdict.mark} [变异] ${id} —— ${verdict.text}`);
+  const annotation = mutationAnnotation(id, verdict);
+  if (annotation) say(annotation);
+  if (verdict.status === 'MUT-BAD') failed += 1;
+  return verdict.status === 'MUT-OK';
 }
 
 /* ═══════════════════════════ HTTP 客户端 ═══════════════════════════════════════
@@ -1647,30 +1677,47 @@ for (const r of results) {
 say('');
 const pass = results.filter((r) => r.status === 'PASS').length;
 const mut = results.filter((r) => r.status === 'MUT-OK').length;
-say(`   断言通过 ${pass} 条 · 变异证明 ${mut} 条 · 失败 ${failed} 条`);
+const undec = results.filter((r) => r.status === 'MUT-UNKNOWN' || r.status === 'UNDECIDED');
+say(
+  `   断言通过 ${pass} 条 · 变异证明 ${mut} 条 · 失败 ${failed} 条 · 无从判断 ${undec.length} 条`,
+);
 
 /* ═══════════════════════════════════════════════════════════════════════════════
- * ★ 「这条腿结构上不产生未决」这句话的**看门狗**（#77 notes 腿）
+ * ★ 「这条腿结构上不产生未决」那句话的看门狗（#77 notes 腿）—— **那句话已经过期了**
+ *
+ * ## 它**曾经**为什么成立（原文保留，因为它当时是对的）
  *
  * `e2e-notes.yml` 的 attest 作业据此写死 `--undecided 0`（凭证的覆盖面那一格）。
- * 那句话**今天为真**，理由是本文件是**两态**的：每一处「前提在这台 runner 上
- * 构造不出来」都当场判 FAIL，从不留成第三态 ——
+ * 那句话在 #77 到 #64 之间**为真**，理由是本文件是**两态**的：每一处「前提在这台
+ * runner 上构造不出来」都当场判 FAIL，从不留成第三态 ——
  *   · 第 3 节没有带转写稿的笔记 → `throw`（红）
  *   · 转写稿是空的 → `ok()` 抛（红）
  *   · 第 11 节挑不出探针词 → F5-e1／F5-e2 抛（红）
  * 而判红的 run 里 `needs: [e2e]` 会让 attest 作业直接不跑，凭证根本不会发出来。
  *
- * ⚠️ 但**「恒为 0」是一句会过期的话**。下一个人只要往 `results` 里推一个新状态
- * （`'SKIP'` / `'UNDECIDED'` / `'DEGRADED'` …），yml 里那个 `0` **不会跟着变**，
- * 于是它从「我们查过」悄悄变成「我们以为查过」—— 而这正是 `undecided` 这一格
- * 当初要消灭的东西（`null` vs `0`：没查 vs 查过了确实没有）。
+ * 当时还写了这么一句预言：
  *
- * 所以在这里钉一根桩：**出现任何计划外的 status 就当场红**，并直接把人指到
- * 该重新论证的那一行。它今天一次都不会触发（上面 5 个 `results.push` 全是字面量），
- * 明天有人加第三态时会立刻喊出来 —— 靠注释维持的约定，下一个人一定会破坏；
- * 靠一条会红的断言维持的约定，不会。
+ *   > ⚠️ **「恒为 0」是一句会过期的话**。下一个人只要往 `results` 里推一个新状态
+ *   > （`'SKIP'` / `'UNDECIDED'` / `'DEGRADED'` …），yml 里那个 `0` **不会跟着变**，
+ *   > 于是它从「我们查过」悄悄变成「我们以为查过」。
+ *
+ * ## **什么时候起不再成立**：本轮（#64 的后续），`mutation()` 开始产出 `MUT-UNKNOWN`
+ *
+ * `mutation()` 现在按抛出的类型分档，「这条腿自己炸了」判 `MUT-UNKNOWN` 而不再
+ * 冒充「如期变红」。**那正是上面预言的那个新状态。** 于是：
+ *   · 写死的 `--undecided 0` 变成一句假话 ⇒ 已改成**真的去数**
+ *     （`--undecided-out` → `sum-undecided.mjs` → `emit-e2e-attestation --undecided`）；
+ *   · `MUT-UNKNOWN` 进 `KNOWN_STATUSES` —— **不是给看门狗开例外**，
+ *     是把它守着的那段论证换成了新的那一段。
+ *
+ * ## 这根桩今天守什么
+ *
+ * 换了宾语，判据没松：**再出现任何计划外的 status 仍然当场红**。只不过要检查的
+ * 那件事从「`--undecided 0` 还成立吗」变成了「新状态该不该被数进 `undec`」——
+ * 因为现在 `undec` 是一条**真管道**，漏一个状态名，凭证的覆盖面就又开始少数东西。
+ * 靠注释维持的约定，下一个人一定会破坏；靠一条会红的断言维持的约定，不会。
  * ═══════════════════════════════════════════════════════════════════════════════ */
-const KNOWN_STATUSES = new Set(['PASS', 'FAIL', 'MUT-OK', 'MUT-BAD', 'ABORTED']);
+const KNOWN_STATUSES = new Set(['PASS', 'FAIL', 'MUT-OK', 'MUT-BAD', 'MUT-UNKNOWN', 'ABORTED']);
 const unexpectedStatuses = [...new Set(results.map((r) => r.status))].filter(
   (s) => !KNOWN_STATUSES.has(s),
 );
@@ -1678,11 +1725,62 @@ if (unexpectedStatuses.length > 0) {
   failed += 1;
   say('');
   say(`   ✘ 总表里出现了计划外的状态：${unexpectedStatuses.join(', ')}`);
-  say('     本腿此前只有两态（判决红/绿），`e2e-notes.yml` 的 attest 作业正是据此');
-  say('     写死 `--undecided 0`。多出一个状态 = 那句论证**可能已经不成立**：');
-  say('     如果新状态表示「这条断言没能被评估」，那 `--undecided 0` 现在是一句假话，');
-  say('     要改成照 runtime/browser 那样真的去数（--undecided-out → sum-undecided.mjs）。');
+  say('     凭证的覆盖面那一格现在是**真数出来的**（--undecided-out → sum-undecided.mjs），');
+  say('     数的是 `undec` 那一句里列举的状态名。多出一个状态 = 那句列举**可能已经漏了它**：');
+  say('     如果新状态表示「这条断言没能被评估」，它必须进 `undec`，否则凭证会少数东西 ——');
+  say('     那正是这条管道当初要消灭的东西（`null` vs `0`：没查 vs 查过了确实没有）。');
   say('     请连同 e2e-notes.yml 里那段论证一起更新，别只把这个名字加进 KNOWN_STATUSES。');
+}
+/*
+ * ★ 覆盖面落盘。**不看 failed** —— 这是覆盖面计数不是判定，红也要如实落盘
+ * （与 runtime / browser 腿同一条道理）。
+ */
+if (UNDECIDED_OUT) {
+  mkdirSync(dirname(UNDECIDED_OUT), { recursive: true });
+  writeFileSync(UNDECIDED_OUT, `${JSON.stringify({ unknowns: undec.length }, null, 2)}\n`);
+  say(`   覆盖面已写到 ${UNDECIDED_OUT}（unknowns=${undec.length}）`);
+}
+if (undec.length > 0) {
+  say('');
+  say('   ？ 本轮无从判断（这一轮没验到，别当成绿）：');
+  for (const r of undec) say(`     · ${r.id} —— ${r.detail}`);
+}
+/*
+ * ★ 「这条腿自己炸了」单独再列一次：它和「前提没构造出来」同为 MUT-UNKNOWN、
+ *   同样不计入 failed，但**下一步不同** —— 前者要去修**测试**，后者是这台机器
+ *   本来就没条件。混着列，"测试坏了"会被当成"没条件"而永远没人去修。
+ */
+const crashed = results.filter((r) => r.mutKind === 'crash');
+if (crashed.length > 0) {
+  say('');
+  say(`   ⚠️ 其中 ${crashed.length} 条是**这条腿自己炸了**，不是"这台机器没条件"：`);
+  for (const r of crashed) say(`     · ${r.id} —— ${r.detail}`);
+  say('     这些要去修**测试**（选择器 / 超时预算 / 端口），不是去修产品，也不是等下一轮。');
+}
+/*
+ * ★ 变异地板（照抄 browser 腿，理由逐字相同）：**这一轮至少要有一条变异判到 MUT-OK。**
+ *
+ * `MUT-UNKNOWN` 刻意不计入 failed，所以「`ok()` 不再抛 `AssertionFailed` 了」
+ * （改错 import、有人换回裸 `Error`）的表现是**10 条变异悄悄全变 UNKNOWN，
+ * 整条腿照样绿** —— 一种比它替换掉的那个更安静的假绿。
+ * 单元证明（`selftest-mutation-verdict.mjs`）证的是判据本身，**证不到接线**。
+ *
+ * 取"至少 1 条"而不是"10 条"：个别变异在某台 runner 上炸掉是可以容忍的，
+ * 钉死条数会造出一盏为合法情况常亮的灯。`[实测语料 30 轮]` 每格都是 10 条 MUT-OK，
+ * 地板离现状很远。整轮被掐断时让路 —— 那时 `failed` 已经因为中断加过一次。
+ */
+const abortedRun = results.some((r) => r.status === 'ABORTED');
+const mutTotal = results.filter((r) => String(r.status).startsWith('MUT-')).length;
+if (!abortedRun && mut === 0) {
+  failed += 1;
+  say('');
+  say(`   ✘ 这一轮登记了 ${mutTotal} 条变异，**没有一条**判到 MUT-OK。`);
+  say('     变异证明不计入失败的那两档（前提没构造出来 / 腿炸了）把整套证明吃光了 ——');
+  say('     多半是 `ok()` → `AssertionFailed` → `MUT-OK` 这条接线断了，');
+  say('     而它断掉的表现恰恰是"什么都不说"。先看上面每条变异各自是哪一档。');
+  if (mutTotal === 0) {
+    say('     （登记数是 0：变异那几段**根本没跑到**，而缺席在总表里只表现为少几行。）');
+  }
 }
 if (degraded.length > 0) {
   say('');
