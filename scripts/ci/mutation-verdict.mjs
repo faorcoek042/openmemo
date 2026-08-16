@@ -166,3 +166,92 @@ export function mutationAnnotation(id, verdict) {
     '它既没证明这条断言有牙齿，也没证明它没有。'
   );
 }
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/* 缺席：一条变异**根本没跑到**时，总表里只表现为"少几行"                        */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ★ 上面四档全都建立在一个前提上：**`mutation()` 真的被调用了。**
+ *
+ * 它没被调用时，`results` 里连一行都不会有 —— 而"少一行"在任何一盏灯上都不亮：
+ * 汇总表短了几行，`变异证明 N 条` 里的 N 小了几，没有一个字说"少的那几条去哪了"。
+ *
+ * `[实测语料 177 份 job 日志]` 至少 8 轮是这样的：
+ *   · `e2e-browser` run 31484205254 win32：`✘ 审计中断：page.goto: Timeout 30000ms
+ *     exceeded` ⇒ **4 条变异 0 行**；
+ *   · `e2e-notes`   run 31634339688 linux：同形 ⇒ **10 条变异 0 行**。
+ *
+ * 整轮被掐断那种今天由「审计中断」一条红兜着（人能顺藤摸到），但
+ * **没掐断却提前 return / 分支绕过**的那种，今天一个字都不会说。
+ *
+ * ## N 从哪来：**从源码本身数**，不另立一份清单
+ *
+ * 一份手抄的"本轮应有变异清单"只是把一个漂移换成另一个（加了变异忘了同步 ⇒
+ * 少算一条 ⇒ 又是"少几行"）。所以直接扫**这个脚本自己的源码**里
+ * `await mutation('<id>'` 的调用点 —— 调用点就是注册表，不存在第二份。
+ *
+ * ⚠️ 判据里有一条**扫描非空地板**：一条腿扫出 0 个调用点 = 提取器坏了
+ * （改了写法、regex 漂了），而它坏掉的表现恰恰是"从此永远没有缺席"——
+ * 又一个恒不触发的检查。所以 0 要当场红，调用方负责。
+ */
+export function extractMutationIds(sourceText) {
+  const out = [];
+  /*
+   * ★ **先把注释剥掉**，再找调用点。
+   *
+   * 这一步不是洁癖，是实测踩到的：本模块下面那段说明里就写着
+   * 「<await mutation 单引号 id> 的调用点就是注册表」——**它自己就长得像一个调用点**。
+   * 不剥注释，每一轮都会多出一条永远不会出现在总表里的幽灵 id，
+   * 于是这道门**每一跑都在报一条假缺席**。一个永远在喊的守卫，两周内就会被
+   * 所有人学会忽略 —— 和恒绿的守卫一样没用，只是更吵。
+   *
+   * 只剥两种：块注释、**整行**的 `//`。不剥行尾 `//`，那会误伤字符串里的
+   * `http://`；而"行尾注释里恰好写了一个完整调用"这种形状，由下面那条
+   * 对着真脚本的幽灵 id 用例 + 非空地板兜住。
+   */
+  const src = String(sourceText ?? '')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/^[ \t]*\/\/.*$/gm, ' ');
+  /*
+   * 只认 `await mutation('…'` 这一种写法。
+   * ⚠️ 刻意**不**认 `mutation(` 的裸调用：那会把函数定义
+   * （`async function mutation(id, fn)`）和注释里的 `mutation()` 一起扫进来，
+   * 于是"声明数"虚高、每一轮都报一堆不存在的缺席 —— 一个恒红的守卫，
+   * 和恒绿的一样没用。
+   */
+  for (const m of src.matchAll(/await\s+mutation\(\s*'((?:[^'\\]|\\.)*)'/g)) {
+    const id = m[1].replace(/\\'/g, "'");
+    if (!out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+/**
+ * 声明了、但这一轮**一行都没有**的那些变异。
+ *
+ * `results` 是审计脚本的总表（`{ id, status }`）。只看 `MUT-` 开头的行 ——
+ * 一条变异跑到了就一定会留下 `MUT-OK` / `MUT-BAD` / `MUT-UNKNOWN` 之一。
+ */
+export function absentMutations(declaredIds, results) {
+  const seen = new Set(
+    (results ?? [])
+      .filter((r) => String(r?.status ?? '').startsWith('MUT-'))
+      .map((r) => String(r.id)),
+  );
+  return (declaredIds ?? []).filter((id) => !seen.has(id));
+}
+
+/** 缺席那一档要喊出来的 GitHub 注解（`::warning`，与 crash 同级：不判红，但不许安静）。 */
+export function absenceAnnotation(absentIds, declaredCount) {
+  if (!absentIds || absentIds.length === 0) return null;
+  const list = absentIds
+    .join('、')
+    .replace(/[\r\n]+/g, ' ')
+    .slice(0, 300);
+  return (
+    `::warning title=有 ${absentIds.length} 条变异这一轮根本没跑到::` +
+    `本轮声明 ${declaredCount} 条变异，其中 ${absentIds.length} 条**一行都没有** —— ` +
+    `${list}。它们既没证明这条断言有牙齿，也没证明它没有。`
+  );
+}
