@@ -28,6 +28,33 @@
  *
  * 四件都没有 = **没反应** = 红。
  *
+ * ### ⚠️ 上面这四条量的是「**窗里发生过什么**」，不是「**这一次点击导致了什么**」
+ *
+ * 两者只在页面自己静止时才相等。页面一动（SSE 推任务进度、`/api/jobs` 5 秒兜底轮询、
+ * 迟到的首屏查询落地），这条判据就**恒真** —— `[CI 实测 run 31736237514 /
+ * 31833084492 / 31902320145]` 连着三夜的 `B1 的证伪能力 → MUT-BAD` 就是这么来的：
+ * 按钮**真的被弄死了**，而后台自己在动，于是"有反应=true"，变异**存活**。
+ * 同一夜 linux 判"如期变红"，靠的只是它那 1.5 秒恰好静止。
+ *
+ * 所以有名有姓的按钮（B1）另加两条，都在 `e2e-browser-assertions.mjs` 里、
+ * 都有反向证明（`selftest-e2e-browser.mjs`）：
+ *
+ *   ⑤ **空转对照窗**：点之前先量同样长的一段、**什么都不点**。
+ *      那一段里页面自己发的请求、自己改的 DOM，判据一律不认。
+ *   ⑥ **该发生的那件事**：点「立即测速」必须发出 `POST /api/models/sources/probe`。
+ *      后台轮询发的是别的端点，凑不出这一条。
+ *
+ * ⑤⑥ **不是**钉住变异体的机制（捕获阶段 `stopImmediatePropagation`），钉的是
+ * **产品的契约**。换一种弄死按钮的办法（删 onClick、`pointer-events:none`）照样红。
+ *
+ * ⚠️ **①〜④ 里的「未捕获异常」只算"有反应"，不算"该发生的事发生了"。**
+ * 把异常直接当成"红"会造出反方向的假绿 —— v0.7.3 抓到过一条（变异体导航错页、
+ * 抛了超时，而框架把任何抛出都读成"如期变红"）。「断言判红」和「腿炸了」分得开，
+ * 靠的是第三态（`Undecided` / `MUT-UNKNOWN`），不是靠数异常。
+ *
+ * ⚠️ 第 3 节那 40 个匿名按钮**仍然只有 ①〜④**（多一个对照窗 = 每个按钮多 1.5 s）。
+ * 那一格的同形缺口还在，记在 `coordination/inbox/e2e-browser.md`，不假装已修。
+ *
  * ⚠️ 判定 DOM 是否变化用**结构指纹字符串**（标签名 + testid + 可见文本的哈希），
  * **绝不把 DOM 节点本身传进断言** —— PROTOCOL §8：`assert.equal(domNode, null)`
  * 失败时 `util.inspect` 会顺着 `parentNode`/fiber 展开整棵树，实测涨到 10.5 GB，
@@ -40,6 +67,10 @@
  * 按钮**还在、还可点、样式不变**，但点击**到不了任何处理器**。
  * 这正是"按钮死了"的形状，而且**不改产品源码一个字节**（PROTOCOL §10）。
  * 判据：同一条断言量到它必须**红**。红不了，说明这条腿看不见问题。
+ *
+ * ⚠️ 「同一条断言」现在**真的是同一段代码**（`judgeProbeClick()`）。此前基线轮和
+ * 变异轮各手抄一份 `ok()` 清单，而变异轮那份是基线那份的**子集** ——
+ * 两份手抄的清单会分叉，分叉的表现是"变异证明证的是另一条断言"。
  *
  * ## PROTOCOL §11
  *
@@ -78,6 +109,12 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { assertPortFree, killTree, killTreeHard } from './launcher-spawn.mjs';
+import {
+  PROBE_EFFECT,
+  judgeDeadButton,
+  judgeExpectedEffect,
+  judgeReaction,
+} from './e2e-browser-assertions.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const argv = process.argv.slice(2);
@@ -593,8 +630,38 @@ try {
   /**
    * 点一个按钮，回答**唯一**的问题：有没有反应？
    * 返回一份**纯字符串/布尔**的报告（§8：绝不把节点带出页面）。
+   *
+   * ## `ambientWindow` —— 点之前先量一段「什么都不点」的同长窗口
+   *
+   * 判据要的是「**这一次点击**导致了什么」，而观测到的是「窗里发生过什么」。
+   * 两者只在页面自己静止时才相等 —— 页面一动（SSE 推进度、任务列表 5 秒兜底轮询、
+   * 迟到的首屏查询落地），老判据就恒真。`[CI 实测 run 31736237514 / 31833084492 /
+   * 31902320145]` 连着三夜的 `MUT-BAD` 就是这么来的：变异体把按钮弄死了，
+   * 而后台自己在动，于是"有反应=true"，变异**存活**。
+   *
+   * 打开它 ⇒ 先量 `REACTION_WINDOW_MS` 的**空转对照窗**：那一段里页面自己发的请求、
+   * 自己改的 DOM，判据一律不认（细节与推导在 `e2e-browser-assertions.mjs` 文件头）。
+   *
+   * ⚠️ 代价是每个点击多花一个观测窗（1.5 s）。所以**只给有名有姓的那几个按钮打开**，
+   * 横扫那 40 个匿名按钮维持原样（`ambient = null` ⇒ 判据退化回老四选一）——
+   * 横扫的判据没有变，这次改的是 B1 那一条。横扫那一格的同形缺口**仍然在**，
+   * 单独记在 `coordination/inbox/e2e-browser.md`，不在这次的范围里。
+   *
+   * ## `expectApi` —— 「该发生的那件事」
+   *
+   * 形如 `'POST /api/models/sources/probe'`。有它的按钮，判据不再只问"窗里动了吗"，
+   * 还要问"**那一条**请求发出去了吗"。后台轮询发的是别的端点，凑不出这一条。
    */
-  async function clickAndObserve(page_, { name, testid, text, rawSel, expectUrlChange = false }) {
+  async function clickAndObserve(page_, opts) {
+    const {
+      name,
+      testid,
+      text,
+      rawSel,
+      expectUrlChange = false,
+      ambientWindow = false,
+      expectApi = null,
+    } = opts;
     const sel = rawSel ?? (testid ? `[data-testid="${testid}"]` : null);
     // 先定位。找不到是**红**，而且要说清是"页面上没有"还是"有但不可见/被禁用"。
     const found = await page_.evaluate(
@@ -618,12 +685,29 @@ try {
       { sel, text },
     );
 
+    /*
+     * ★ 空转对照窗（t0 → t1）：**同样长、什么都不点**。
+     *   它量的是"这一刻页面自己在动多少" —— 点击窗里凑不出比它更多的东西，
+     *   就说明这一次点击什么都没导致。
+     */
+    const ambientFrom = requests.length;
+    const ambientFp = ambientWindow ? await page_.evaluate(FINGERPRINT) : null;
+    if (ambientWindow) await page_.waitForTimeout(REACTION_WINDOW_MS);
+
     const before = {
       url: page_.url(),
       fp: await page_.evaluate(FINGERPRINT),
       reqCount: requests.length,
       errCount: pageErrors.length,
     };
+    const ambient = ambientWindow
+      ? {
+          domChanged: ambientFp !== before.fp,
+          apiRequests: requests
+            .slice(ambientFrom, before.reqCount)
+            .filter((r) => r.includes('/api/')),
+        }
+      : null;
 
     let clicked = false;
     let clickError = '';
@@ -652,7 +736,7 @@ try {
     const newReqs = requests.slice(before.reqCount).filter((r) => r.includes('/api/'));
     const newErrs = pageErrors.slice(before.errCount);
 
-    return {
+    const obs = {
       name,
       ...found,
       clicked,
@@ -662,13 +746,17 @@ try {
       apiRequests: newReqs,
       newPageErrors: newErrs,
       expectUrlChange,
-      // ★ 「有反应」的定义（四选一）
-      reacted:
-        before.url !== after.url ||
-        before.fp !== after.fp ||
-        newReqs.length > 0 ||
-        newErrs.length > 0,
+      ambient,
+      expectApi,
     };
+    /*
+     * ★ 「有反应」的判据**只有一份**，在 `e2e-browser-assertions.mjs` 里 ——
+     *   抽出去是为了能对它写证明（这个文件全程顶层执行 + `process.exit()`，
+     *   import 不进来，判据留在这儿就永远喂不进输入）。
+     */
+    const reaction = judgeReaction(obs);
+    const expected = judgeExpectedEffect(obs);
+    return { ...obs, reacted: reaction.reacted, reactedWhy: reaction.why, expected };
   }
 
   function reportClick(r) {
@@ -677,12 +765,48 @@ try {
       `      存在=${r.exists} 可见=${r.visible ?? '-'} 禁用=${r.disabled ?? '-'} 文案="${r.label ?? ''}"`,
     );
     say(`      点击成功=${r.clicked}${r.clickError ? ` clickError=${r.clickError}` : ''}`);
+    if (r.ambient) {
+      // 「页面自己在动多少」——不打出来，读日志的人无从判断那句"有反应"值不值钱。
+      say(
+        `      空转对照窗（同样长、什么都不点）：DOM 自己变了=${r.ambient.domChanged}` +
+          `  /api 自己发了 ${r.ambient.apiRequests.length} 条`,
+      );
+      for (const q of r.ambient.apiRequests.slice(0, 6)) say(`        ∘ ${q}`);
+    }
     say(
       `      URL 变了=${r.urlChanged}  DOM 变了=${r.domChanged}  /api 请求 ${r.apiRequests.length} 条`,
     );
     for (const q of r.apiRequests.slice(0, 6)) say(`        → ${q}`);
     for (const e of r.newPageErrors.slice(0, 4)) say(`        ✘ 未捕获异常：${e}`);
-    say(`      **有反应 = ${r.reacted}**`);
+    say(`      **有反应 = ${r.reacted}**（${r.reactedWhy}）`);
+    if (r.expectApi) {
+      const mark = { hit: '✔', miss: '✘', ambiguous: '？' }[r.expected.verdict] ?? '-';
+      say(`      ${mark} 该发生的那件事（${r.expectApi}）：${r.expected.why}`);
+    }
+  }
+
+  /**
+   * ★ B1 的**判决那一句** —— 基线轮和变异轮共用**同一段代码**。
+   *
+   * 此前两边各写一遍 `ok()` 清单，而变异轮那份是基线那份的**子集**。
+   * 「同一条断言必须红」这句话，只有当它真的是同一条时才成立 ——
+   * 两份手抄的清单迟早会分叉，而分叉的表现正是"变异证明证的是另一条断言"。
+   *
+   * ⚠️ 这里**只放判决**，不放前提。前提（按钮在不在、点不点得到）两轮的性质不同：
+   *   · 基线轮：前提不成立 = **缺陷**（按钮没了 / 点不动，就是用户报的那个）⇒ `ok()` ⇒ FAIL；
+   *   · 变异轮：前提不成立 = **这一轮没构造出来** ⇒ `undecided()` ⇒ MUT-UNKNOWN。
+   * 把变异轮的前提也写成 `ok()` 会让"腿炸了"落进 MUT-OK ——「这条断言有牙齿」是假的，
+   * 正是 v0.7.3 抓到的那条反方向假绿（那次是"抛了超时被读成如期变红"）。
+   */
+  function judgeProbeClick(r) {
+    const verdict = judgeDeadButton(r);
+    // 第三态：页面自己就在发那条请求 ⇒ 这一轮量不出因果，什么都没证明。
+    if (verdict.verdict === 'undecidable') undecided(verdict.why);
+    ok(
+      verdict.verdict === 'alive',
+      `**点了没有发生该发生的事** —— ${verdict.why}`,
+      `有反应=${r.reacted} 该发生的事=${r.expected.verdict}`,
+    );
   }
 
   /* ── 2. 复现用户报的那两个 ─────────────────────────────────────────────── */
@@ -707,6 +831,9 @@ try {
   const probeR = await clickAndObserve(page, {
     name: '「立即测速」（models.sources.probe）',
     testid: 'models-sources-probe',
+    // ★ B1 与它的变异证明用**同一套观测参数**，否则两边量的就不是同一件事。
+    ambientWindow: true,
+    expectApi: PROBE_EFFECT,
   });
   reportClick(probeR);
 
@@ -746,8 +873,13 @@ try {
       probeR,
     );
     ok(probeR.clicked === true, `点不动：${probeR.clickError}`);
-    ok(probeR.reacted === true, '**点了完全没有反应**：URL 没变、DOM 没变、没发请求、没报错');
-    return `api=${probeR.apiRequests.length} domChanged=${probeR.domChanged}`;
+    // ★ 判决那一句与下面第 4 节的变异证明**是同一段代码**（见 judgeProbeClick 的注释）。
+    judgeProbeClick(probeR);
+    return (
+      `api=${probeR.apiRequests.length} domChanged=${probeR.domChanged}` +
+      ` 空转对照窗(DOM 自己变了=${probeR.ambient?.domChanged} /api ${probeR.ambient?.apiRequests.length} 条)` +
+      ` 该发生的事=${probeR.expected.verdict}`
+    );
   });
 
   await check('B2 /models 上不许有「去安装模型」这种点了没反应的按钮', () => {
@@ -2163,10 +2295,11 @@ try {
   await openPage(page, '/models');
   /*
    * ★ 变异体只能装在**已经在 DOM 里**的元素上。定值 1200 ms 等不到那颗按钮时，
-   *   `installMutation` 静默什么都不做，随后 `mutR.exists === false` 让下面第一条
-   *   `ok()` 抛出去 —— 而 `mutation()` 把"抛了"一律记成 **MUT-OK**。
-   *   **变异体根本没装上，汇总里却写着"这条断言有牙齿"。**
+   *   `installMutation` 静默什么都不做，随后 `mutR.exists === false`。
+   *   曾经这里写的是 `ok()` —— 而 `mutation()` 把"抛了"一律记成 **MUT-OK**，
+   *   于是**变异体根本没装上，汇总里却写着"这条断言有牙齿"**。
    *   （和 B1 本身是同一个缺口的两面：那边把"没加载完"报成假红，这边报成假绿。）
+   *   现在这一族前提全部走 `undecided()` ⇒ MUT-UNKNOWN，见下面变异体里的那段。
    */
   const mutTargetReady = await waitForSel(page, '[data-testid="models-sources-probe"]');
   const mutInstalled =
@@ -2176,22 +2309,57 @@ try {
   );
   const mutR = await clickAndObserve(page, {
     name: '「立即测速」（已被变异成死按钮）',
+    // ★ 与 B1 基线轮**逐字相同**的观测参数。少一个 `ambientWindow`，量的就不是同一件事了。
     testid: 'models-sources-probe',
+    ambientWindow: true,
+    expectApi: PROBE_EFFECT,
   });
   reportClick(mutR);
 
+  /*
+   * ★ `[CI 实测 run 31736237514 win32 / 31833084492 win32 / 31902320145 win32+darwin]`
+   *   这条连着三夜报 **MUT-BAD**，而它不是"变异体没装上"：
+   *
+   *   ```
+   *   变异体装上了=true（按钮就绪=true，等了 246 ms）
+   *   ── 「立即测速」（已被变异成死按钮）
+   *      存在=true 可见=true 禁用=false 文案="立即测速"
+   *      点击成功=true
+   *      URL 变了=false  DOM 变了=true  /api 请求 0 条      ← win32
+   *      **有反应 = true**
+   *   ```
+   *
+   *   按钮**真的死了**（点击到不了任何处理器），而判据量的是"这 1.5 秒里页面动过吗"——
+   *   后台自己在动（SSE 推任务进度、`/api/jobs` 5 秒兜底轮询、迟到的首屏查询落地），
+   *   于是"有反应=true"，**变异存活**。同一夜 linux 那格判"如期变红"，
+   *   靠的只是它恰好静止 —— 三个平台的分歧从头到尾没有一格是产品的差异。
+   *
+   *   修法两条（都在 `e2e-browser-assertions.mjs` 里，两条都有反向证明）：
+   *     ① **空转对照窗**：点之前先量同样长的一段、什么都不点，页面自己干的不算数；
+   *     ② **该发生的那件事**：点「立即测速」必须发出 `POST /api/models/sources/probe`。
+   *        后台轮询发的是别的端点，凑不出这一条 —— 判决不再取决于运气。
+   */
   await mutation('B1 的证伪能力（按钮死了时，同一条断言必须红）', () => {
-    // 前提没构造出来 = 什么都没证明 ⇒ 第三态，不许记成"如期变红"
+    /*
+     * 前提没构造出来 = 什么都没证明 ⇒ 第三态，不许记成"如期变红"。
+     * ⚠️ `exists / visible / clicked` 也是前提，**不是判决** —— 变异体本该让按钮
+     *    "还在、还可见、还可点"。它们不成立说明这一轮的现场不是我要的那个现场，
+     *    而 `mutation()` 把任何抛出都读成 MUT-OK，用 `ok()` 就会把"腿炸了"
+     *    印成"这条断言有牙齿"（v0.7.3 抓到的那条反方向假绿，同一段逻辑）。
+     */
     if (mutInstalled !== true) {
       undecided(
         `变异体没装上（按钮就绪=${mutTargetReady.ok}，等了 ${mutTargetReady.ms} ms）—— ` +
           '这一轮既没证明断言有牙齿，也没证明它没有',
       );
     }
-    ok(mutR.exists === true, '页面上根本没有这个按钮');
-    ok(mutR.visible === true, '按钮存在但不可见');
-    ok(mutR.clicked === true, `点不动：${mutR.clickError}`);
-    ok(mutR.reacted === true, '**点了完全没有反应**：URL 没变、DOM 没变、没发请求、没报错');
+    if (mutR.exists !== true) undecided('变异轮里这颗按钮不在页面上 —— 现场不成立，什么都没证明');
+    if (mutR.visible !== true) undecided('变异轮里这颗按钮不可见 —— 现场不成立，什么都没证明');
+    if (mutR.clicked !== true) {
+      undecided(`变异轮里这颗按钮点不动（${mutR.clickError}）—— 现场不成立，什么都没证明`);
+    }
+    // ★ 判决那一句与 B1 基线**是同一段代码**。
+    judgeProbeClick(mutR);
   });
 
   if (MUTATE) {
