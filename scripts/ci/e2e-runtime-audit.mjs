@@ -343,12 +343,16 @@ const MUTATIONS = [
     proves: ['A-CPU-NO-DRIVER-LIE'],
     phases: ['boot', 'backends'],
     /*
-     * ★ 这条变异**只在装得上两个后端包的平台上有意义** —— 它要的前提是
-     *   「一个包装着、而这次探测没加载它」。Linux/Windows 的 runner 上
-     *   加速包因为没有 GPU 硬件证据装不上，前提构造不出来，
-     *   那时断言本身是 UNKNOWN，变异当然也证明不了什么。**这不是缺陷，是如实报**。
+     * ★ 这里**曾经**有一个 `requiresTwoPacks: true`，注释写着
+     *   「Linux/Windows 的 runner 上加速包因为没有 GPU 硬件证据装不上，前提构造不出来」。
+     *   两件事都要记下来（删说法不删事实）：
+     *     ① **那句话是假的** —— linux/win32 装得上、构造得出来、每轮都抓得住；
+     *        构造不出来的是 darwin（`libggml-metal.so` 随核心包发 ⇒ metal 恒 probed）。
+     *     ② **那个字段从来没有被任何代码读过**（全仓只有这一处定义）。
+     *   一个没人读的字段，看起来像"平台门在这儿"，于是真正的平台门
+     *   （`e2e-runtime.yml` 里手写的 `only:`）反而没人去核 —— 而它写反了。
+     *   ⇒ 字段删掉，事实留在这段注释里。
      */
-    requiresTwoPacks: true,
     why: 'T-168 修掉的那句谎话回来：用户显式选了 CPU，他那块好好的加速包被报成「驱动缺失或过旧」，把他支去修一个根本不存在的故障',
   },
   {
@@ -1753,8 +1757,15 @@ async function phaseBackends() {
         `⚠️ **不是"加速包装不上"** —— 托管 runner 上加速包装得上（同一轮 A-ACCEL-INSTALL 就是绿的），` +
         `装上之后也**探得到**（探针如实回报"枚举不到设备"），于是 probed=true，` +
         `「装了却没被探」这个状态在这里不会出现。` +
-        `它是**真机才有的现场**（驱动装了但探不出来 / GPU 被别的进程占住 / 驱动版本过老），` +
-        `CI 结构性给不了 —— 详见本条断言上方的「CI 到不了的现场」登记。`,
+        '⚠️ 🔴 这里**曾经**写着「它是真机才有的现场（驱动装了但探不出来 / GPU 被别的' +
+        '进程占住 / 驱动版本过老），CI 结构性给不了」—— **那也是假的**（2026-08-17 查清，' +
+        '这是同一条诊断上的第二个错误解释）。真实情况：linux/win32 上这个前提**构造得出来**，' +
+        'M-driver-lie 在那里每轮都被抓住；构造不出来的只有 darwin，而原因与「真机」无关 —— ' +
+        'libggml-metal.so 随 macOS **核心（cpu）包**一起发（backends.json 的 ' +
+        'whispercpp-cpu-macos-arm64.providesFiles，build-whisper.sh 的 T-146 段刻意如此、' +
+        '并有 die 兜底），所以无论用哪个 backendDir，Metal 的 ggml 模块都在里面，' +
+        'metal.probed 恒为 true。「装了但这次没探它」在 darwin 上**结构上不存在**，' +
+        '任何一台 Mac 都一样。',
     );
   } else {
     /*

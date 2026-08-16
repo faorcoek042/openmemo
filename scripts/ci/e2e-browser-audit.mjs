@@ -63,7 +63,7 @@
  *
  * ## 变异证明：这条断言必须能在"按钮死了"时真的红
  *
- * `--mutate <selector>` 会在页面里给目标按钮挂一个**捕获阶段**的监听器，
+ * `installMutation()` 会在页面里给目标按钮挂一个**捕获阶段**的监听器，
  * 调用 `stopImmediatePropagation()` + `preventDefault()` ——
  * 按钮**还在、还可点、样式不变**，但点击**到不了任何处理器**。
  * 这正是"按钮死了"的形状，而且**不改产品源码一个字节**（PROTOCOL §10）。
@@ -107,7 +107,9 @@
  * ## 用法
  *
  *   node scripts/ci/e2e-browser-audit.mjs [--bundle <包目录>] [--port 19980]
- *        [--mutate <testid或文本>] [--keep-open]
+ *        [--keep-open]
+ *
+ * （`--mutate <testid或文本>` 已删 —— 它在 CI 里一次都没跑过，理由见第 4 节末尾。）
  *
  * 退出码：0 = 每个被点的按钮都有反应；1 = 任何一处没反应 / 变异证明没红。
  */
@@ -148,7 +150,6 @@ const arg = (n, d) => {
 
 const BUNDLE = arg('--bundle', null);
 const PORT = Number(arg('--port', '19980'));
-const MUTATE = arg('--mutate', null);
 /*
  * ★ `--diagnose-download <modelId>`：**一次性诊断,刻意不进门禁。**
  *
@@ -171,9 +172,9 @@ const DIAGNOSE_DOWNLOAD = arg('--diagnose-download', null);
  * 算出来的 `undec.length` 落盘成一个小文件，供 `attest` job 跨平台求和后
  * 传给 `emit-e2e-attestation.mjs --undecided`。
  * ⚠️ 与 runtime 不同：**本文件没有 runtime 那种「变异模式整段换一套汇总语义」的分支**
- * ——`--mutate` 在这里只是在同一趟运行末尾追加一条额外断言（见上方「4b. 额外变异」），
- * 不替换主汇总。所以这里**不需要**像 runtime 那样用 `!mutation` 网关；
- * 下面「汇总」块本来就是唯一、无条件执行的那一段。
+ * ——本腿的变异是**同一趟运行里追加的几条断言**，不替换主汇总。所以这里**不需要**
+ * 像 runtime 那样用 `!mutation` 网关；下面「汇总」块本来就是唯一、无条件执行的那一段。
+ * （原文这里举的例子是 `--mutate`，那个开关已删 —— 它在 CI 里一次都没跑过。）
  */
 const UNDECIDED_OUT = arg('--undecided-out', null);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -2392,16 +2393,21 @@ try {
     judgeProbeClick(mutR);
   });
 
-  if (MUTATE) {
-    hdr(`4b. 额外变异：--mutate ${MUTATE}`);
-    await openPage(page, '/models');
-    await waitForAppMounted(page);
-    // 同上：装没装上要说出来，不许让"没装上"看起来像"装上了但没反应"
-    const extraInstalled = await installMutation(page, MUTATE);
-    say(`   变异体装上了=${extraInstalled}`);
-    const r = await clickAndObserve(page, { name: `自定义变异 ${MUTATE}`, text: MUTATE });
-    reportClick(r);
-  }
+  /*
+   * ★ 这里**曾经**有一节「4b. 额外变异：`--mutate <选择器>`」：给任意一个按钮挂上
+   *   死按钮变异体、点一下、把观测结果打出来。**它在 CI 里一次都没跑过** ——
+   *   `e2e-browser.yml` 的两处调用都不传 `--mutate`（查过全部 31 轮日志，
+   *   没有一轮出现过「4b. 额外变异」这一行）。
+   *
+   *   它想做的事是**人工排查时的一次性工具**：怀疑某个按钮是死的，就现场变异一下
+   *   看这条腿抓不抓得住。那个用途今天由 B1/B10/B12/B13 四条常驻变异覆盖，
+   *   而且它们**每轮都跑、都有判决**；`--mutate` 那一节**不登记任何 `mutation()` 结果**，
+   *   所以它既不制造假绿也不制造假红 —— 它只是死代码。
+   *
+   *   ⚠️ 删它的理由不是"没用过"，是**它看起来像一层覆盖而实际不是**：
+   *   读文件头「用法」那一行的人会以为这条腿有一个可配的变异入口在门禁里生效。
+   *   要恢复它，`installMutation()` 还在（B1 用着），加回来是十几行。
+   */
 } catch (e) {
   failed += 1;
   aborted = true;

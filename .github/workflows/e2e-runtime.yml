@@ -316,10 +316,32 @@ jobs:
               only: '',
             }
           # macOS：只跑 `M-driver-lie`。
-          # 它的前提是「一个加速包装着、而这次探测没加载它」——
-          # 而 Linux/Windows 的 runner 上加速包**装不上**（没有 GPU 硬件证据，
-          # 这是正确行为），前提构造不出来，那条断言在那里只能是 UNKNOWN。
-          # macOS 上 Metal 是 L1（每台 Mac 都有，无驱动可装），所以那格才验得了。
+          #
+          # ⚠️ 🔴 **下面这段理由是假的，而且方向完全反了**（2026-08-17 查清，留档不删）：
+          #
+          #   > 它的前提是「一个加速包装着、而这次探测没加载它」——
+          #   > 而 Linux/Windows 的 runner 上加速包**装不上**（没有 GPU 硬件证据，
+          #   > 这是正确行为），前提构造不出来，那条断言在那里只能是 UNKNOWN。
+          #   > macOS 上 Metal 是 L1（每台 Mac 都有，无驱动可装），所以那格才验得了。
+          #
+          # 实测每一句都相反（`[CI 实测 run 31902178980]`，08-10 起每一轮同形）：
+          #   · linux 加速包**装得上**（`✔ A-ACCEL-INSTALL whispercpp-vulkan-linux-x64
+          #     → succeeded`），前提构造得出来，`M-driver-lie` 在那里**每轮都被抓住**；
+          #   · win32 同样构造得出来（`vulkan installed=true probed=false`）；
+          #   · **darwin 恰恰是唯一构造不出来的那个**：`metal installed=true probed=true`。
+          #
+          # darwin 构造不出来的**真实原因**（与 runner 无关，真机也一样）：
+          # `libggml-metal.so` 是**随 macOS 核心（cpu）包一起发的**
+          # （`vendor/manifests/backends.json` 里 `whispercpp-cpu-macos-arm64.providesFiles`
+          # 含它；`scripts/build-whisper.sh` 的 T-146 段刻意如此，并有 `die` 兜底）。
+          # 于是无论 `backendDir` 落到哪个包，Metal 的 ggml 模块都在里面 ⇒
+          # `metal.probed` 恒为 true ⇒ 「装了但这次没探它」在 darwin 上**结构上不存在**。
+          #
+          # ⇒ 按裁决保持现状：**这一格在 darwin 上永远是 UNKNOWN，并且现在说得出为什么。**
+          #   它的真正证明在 linux/win32（那里每轮都抓得住）。
+          # ⚠️ 但由此得到一个如实的现状：**darwin 这一格至今没有证明过任何事**
+          #   —— 它只跑这一条，而这一条在那里结构上验不了。要不要给它换一组变异、
+          #   或者干脆不跑，是一个覆盖面/机器成本的取舍，**已单独上报，不在这次改动里**。
           - {
               runner: macos-26,
               label: darwin-arm64,

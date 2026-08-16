@@ -163,7 +163,7 @@ lastError=probe executable not found: <data>/bin/runtime/openmemo-probe
 | 端到端 darwin-arm64     | PASS 43 / FAIL 1 / UNKNOWN 6 |
 | 端到端 win32-x64        | PASS 44 / FAIL 2 / UNKNOWN 5 |
 | 变异验证 linux-x64（9 条） | ✅ **全部被抓住**            |
-| 变异验证 darwin-arm64（M-driver-lie） | ✅ **被抓住**   |
+| 变异验证 darwin-arm64（M-driver-lie） | ~~✅ **被抓住**~~ ⇒ **假的，见下方订正** |
 
 **红的只有两类，都是产品的**：
 
@@ -225,9 +225,28 @@ sha256 由产品自己校验。打断不成功时**如实报未验证**，绝不
 判据不是"断言写了"而是"断言有牙齿"。每条变异 = 把一个安全性质拿掉，
 指定的断言**必须**变红。变异跑在**包的独立副本**（mkdtemp）上，原包不动（PROTOCOL §10）。
 
-下表"结果"列是 **CI 实测**（run 31250730491）：Linux 跑 9 条、macOS 跑 `M-driver-lie`
-（它的前提「一个加速包装着、而这次探测没加载它」只有 macOS 构造得出）。
-两个变异 job **都是 success**，即**没有一条变异存活**。
+下表"结果"列是 **CI 实测**（run 31250730491）：Linux 跑 9 条、macOS 跑 `M-driver-lie`。
+
+> ⚠️ 🔴 **2026-08-17 订正（原话留在下面，不删）**：
+>
+> > （它的前提「一个加速包装着、而这次探测没加载它」只有 macOS 构造得出）。
+>
+> **这句话是反的，而且 `M-driver-lie` 那一行「✔ 抓住（macOS 腿）」是假的。**
+> 回去核 run 31250730491 自己的日志：darwin 那格报的是
+> `? A-CPU-NO-DRIVER-LIE  UNKNOWN — 本 runner 上构造不出前提`，
+> 而**同一轮的 linux 格** `✔ 变异被抓住了 —— 这条断言是有牙齿的`。
+> 08-10 起每一轮都同形（`[CI 实测 run 31902178980]` 等）。
+>
+> 当时会写错，是因为那时的 shell 只有两分支、`allUnknown` 也返回退出码 0，
+> darwin 格打的是「→ 抓住了（或本平台构造不出前提，已如实报 UNKNOWN）」
+> 加一句「全部变异都被抓住了」—— **一句把两种结局合起来说的话，被读成了前一种。**
+> 那个二元循环后来补成了三态（退出码 3 + `::warning`），但**这份回执里的结论没人回头改**。
+>
+> darwin 构造不出前提的**真实原因**：`libggml-metal.so` 随 macOS 核心（cpu）包一起发
+> ⇒ `metal.probed` 恒为 true ⇒「装了但这次没探它」在任何一台 Mac 上都不存在。
+
+两个变异 job **都是 success**，即**没有一条变异存活** —— 但 darwin 那格的 success
+表示的是「什么都没证明」，不是「证明了」。
 
 | 变异                     | 证明的断言                  | 结果        |
 | ------------------------ | --------------------------- | ----------- |
@@ -240,7 +259,7 @@ sha256 由产品自己校验。打断不成功时**如实报未验证**，绝不
 | M-model-inuse-guard-off  | A-MODEL-DELETE-ACTIVE-REFUSED | ✔ 抓住    |
 | M-active-partial-load    | A-MODEL-SWITCH-PERSISTS     | ✔ 抓住      |
 | M-pointer-hardcoded      | A-POINTER-EXTERNAL          | ✔ 抓住（见下）|
-| M-driver-lie             | A-CPU-NO-DRIVER-LIE         | ✔ 抓住（macOS 腿） |
+| M-driver-lie             | A-CPU-NO-DRIVER-LIE         | ~~✔ 抓住（macOS 腿）~~ ⇒ **linux 腿抓住；macOS 腿 UNKNOWN**（见上方订正） |
 
 ### ★ 变异抓到了**我自己**的一条假绿灯
 
