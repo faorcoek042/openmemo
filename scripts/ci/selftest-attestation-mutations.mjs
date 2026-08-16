@@ -244,9 +244,18 @@ for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.yml'))) {
     assert.ok(collect.id, 'collect 步骤没有 id: —— 下游会静默拿到空串');
     assert.ok(emit, '没有 emit 步骤');
     const run = String(emit.run);
-    const re = (k) => new RegExp(`\\$\\{\\{\\s*steps\\.${collect.id}\\.outputs\\.${k}\\s*\\}\\}`);
-    assert.ok(re('mutations_state').test(run), 'emit 没读 mutations_state');
-    assert.ok(re('unverified_flag').test(run), 'emit 没读 unverified_flag');
+    /*
+     * ⚠️ 只要求"**引用到了**"，不要求整个插值就是它。
+     *   runtime 那条是 `${{ needs.mutations.result == 'skipped' && 'skipped'
+     *   || steps.mut.outputs.mutations_state }}` —— 引用嵌在更大的表达式里，
+     *   而那是**对的**（"跑没跑"来自 job 结果，"每条有没有结论"来自这一步）。
+     *   第一版把形状钉死成"整个插值只有它"，于是**对着正确的接线报了红**
+     *   （CI 当场逮住）。判据要钉的是"这个值真的被读了"，不是"它长什么样"。
+     */
+    const refs = (k) => new RegExp(`steps\\.${collect.id}\\.outputs\\.${k}\\b`).test(run);
+    assert.ok(refs('mutations_state'), 'emit 没读 mutations_state');
+    assert.ok(refs('unverified_flag'), 'emit 没读 unverified_flag');
+    assert.ok(/\$\{\{/.test(run), 'emit 里没有任何插值 —— 那些值不可能是动态取来的');
     assert.ok(
       !/--unverified-mutations\s+"[^$]/.test(run),
       '把清单写死了 —— 那个数永远不会跟着实际情况变',
