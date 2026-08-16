@@ -327,7 +327,10 @@ jobs:
           # 实测每一句都相反（`[CI 实测 run 31902178980]`，08-10 起每一轮同形）：
           #   · linux 加速包**装得上**（`✔ A-ACCEL-INSTALL whispercpp-vulkan-linux-x64
           #     → succeeded`），前提构造得出来，`M-driver-lie` 在那里**每轮都被抓住**；
-          #   · win32 同样构造得出来（`vulkan installed=true probed=false`）；
+          #   · win32 的**审计**里那个前提同样构造得出来（`A-CPU-NO-DRIVER-LIE` 印着
+          #     「1 个『装了但这次没探它』的后端…vulkan」）—— 但 ⚠️ **win32 根本不在
+          #     变异矩阵里**（见上面的 matrix：只有 linux 与 darwin 两格），
+          #     所以 `M-driver-lie` **在 win32 上一次都没跑过**。
           #   · **darwin 恰恰是唯一构造不出来的那个**：`metal installed=true probed=true`。
           #
           # darwin 构造不出来的**真实原因**（与 runner 无关，真机也一样）：
@@ -338,7 +341,8 @@ jobs:
           # `metal.probed` 恒为 true ⇒ 「装了但这次没探它」在 darwin 上**结构上不存在**。
           #
           # ⇒ 按裁决保持现状：**这一格在 darwin 上永远是 UNKNOWN，并且现在说得出为什么。**
-          #   它的真正证明在 linux/win32（那里每轮都抓得住）。
+          #   它的真正证明**只在 linux**（那一格每轮都抓得住）——
+          #   ⚠️ 早先这里写的是「linux/win32」，那是假的：win32 不在变异矩阵里。
           # ⚠️ 但由此得到一个如实的现状：**darwin 这一格至今没有证明过任何事**
           #   —— 它只跑这一条，而这一条在那里结构上验不了。要不要给它换一组变异、
           #   或者干脆不跑，是一个覆盖面/机器成本的取舍，**已单独上报，不在这次改动里**。
