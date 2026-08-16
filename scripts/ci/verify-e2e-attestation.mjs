@@ -49,6 +49,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { coverageAdvisories, coverageText } from './attestation-coverage.mjs';
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * ★ 把凭证的**覆盖面**读出来念一遍（Manager 2026-08-10 裁决）
@@ -87,41 +88,19 @@ function readCoverage(runId, name) {
        *   **和没有这个字段是一回事**。
        */
       mutations: j.mutations ?? null,
+      /*
+       * ★ `schemaVersion` 必须读出来：v1 与 v2 的 `mutations: 'ran'` **不是同一句话**
+       *   （v1 把"跑了但有条没结论"也算在内）。分辨在 `attestation-coverage.mjs`。
+       */
+      schemaVersion: j.schemaVersion ?? 1,
+      /** `ran-unverified` 时**是哪几条**。只给状态不给清单，等于报警不给线索。 */
+      unverifiedMutations: j.unverifiedMutations ?? null,
     };
   } catch (e) {
     return { ok: false, why: String(e.message).slice(0, 80) };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-}
-
-/** ⚠️ `null`（没上报）与 `0`（报了，确实没有）必须说成两句不同的话。 */
-function coverageText(cov) {
-  if (!cov.ok) return `  〔覆盖面读不到：${cov.why}〕`;
-  const u =
-    cov.undecided === null
-      ? '未决未上报'
-      : cov.undecided === 0
-        ? '未决 0 条'
-        : `**未决 ${cov.undecided} 条**`;
-  const m =
-    cov.mode === null
-      ? ''
-      : ` · 抽样=${cov.mode}${cov.mode === 'sample' ? '（**不是全量**）' : ''}`;
-  /*
-   * ⚠️ 三态，三句不同的话：
-   *   · `null`    —— 这条腿没上报（**不知道，别当成跑过了**）；
-   *   · `ran`     —— 变异验证跑了且没红；
-   *   · `skipped` —— **整轮没跑**。凭证仍然存在（那是有意的：否则 mutations=false
-   *     的跑会让发布闸门直接卡死），但它对"这些断言有没有牙齿"一个字都没说。
-   */
-  const mu =
-    cov.mutations === null
-      ? ''
-      : cov.mutations === 'skipped'
-        ? ' · 变异=**skipped（整轮没跑，跳过≠通过）**'
-        : ` · 变异=${cov.mutations}`;
-  return `  〔${u}${m}${mu}〕`;
 }
 
 const argv = process.argv.slice(2);
@@ -284,31 +263,23 @@ if (missing.length === 0) {
    *   而一条腿可以三平台全绿却带着若干条没被验到的断言。
    *   ⚠️ 这里**只提示，不拦**（今天不改闸门松紧：在别人正拿凭证的过程中改规则是另一种坏）。
    */
-  const withUn = found.filter(
-    (f) => f.cov?.ok && typeof f.cov.undecided === 'number' && f.cov.undecided > 0,
-  );
-  const sampled = found.filter((f) => f.cov?.ok && f.cov.mode === 'sample');
-  const noMut = found.filter((f) => f.cov?.ok && f.cov.mutations === 'skipped');
-  const silent = found.filter((f) => !f.cov?.ok || f.cov.undecided === null);
-  if (withUn.length > 0 || sampled.length > 0 || silent.length > 0 || noMut.length > 0) {
+  /*
+   * ★ 「跑绿过 ≠ 全验过」那一段，整段交给 `coverageAdvisories()`（纯函数，有用例）。
+   *
+   * ⚠️ 此前这里是十几行内联的 filter + say，**没有任何用例钉着** ——
+   *   而这一段正是闸门唯一"把覆盖面念出来"的地方：它悄悄少念一行，
+   *   凭证里的字段就等于不存在（#103 那道门栽的就是这个）。
+   *   抽成纯函数之后，`selftest-attestation-mutations.mjs` 逐条断言它念了什么。
+   *
+   * ⚠️ **只念，不拦**（Manager 2026-08-17 裁决，照 `--undecided` 的口径）：
+   *   `ran-unverified` 是**真实且合法**的状态（某条变异在这台机器上构造不出前提），
+   *   拦住它会让那一格永远发不出凭证；念出来才能让人决定要不要去修。
+   */
+  const advisories = coverageAdvisories(found);
+  if (advisories.length > 0) {
     say('');
     say('⚠️ 「跑绿过」不等于「全验过」——：');
-    for (const f of withUn)
-      say(`   · ${f.leg}：有 **${f.cov.undecided} 条断言没被验到**（无从判断）`);
-    for (const f of sampled) say(`   · ${f.leg}：抽样模式 sample —— **不是全量覆盖**`);
-    /*
-     * ★ #102：这一条与上面两条**不是同一层**的事 ——
-     *   `undecided` / `mode` 说的是"断言覆盖了多少"，
-     *   这一条说的是"**那些断言到底有没有牙齿从来没被验过**"。
-     *   一条从来没红过的断言，和一条不存在的断言，对用户来说是同一个东西。
-     */
-    for (const f of noMut)
-      say(
-        `   · ${f.leg}：**变异验证整轮没跑**（mutations=skipped）——` +
-          ' 这条腿的断言"会不会红"本轮**没有被证明过**',
-      );
-    for (const f of silent)
-      say(`   · ${f.leg}：**没上报覆盖面**（未接线或读不到）—— 不知道等于没验过，别当成 0`);
+    for (const line of advisories) say(line);
     say('   （以上不影响放行判定；要不要因此卡住，由 Manager 裁。）');
   }
   process.exit(0);

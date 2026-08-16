@@ -225,8 +225,17 @@ async function check(id, fn) {
  * 这 10 条变异里有 3 条是 `async` 的，中间跑真 HTTP（`F5-a5`、`F5-d1`、`F5-e4`）。
  * daemon 抖一下、端口被抢、`fetch failed` —— 老实现会把这些一律记成「如期变红」。
  * `[实测语料 30 轮 e2e-notes / 727 次 MUT-OK]` 本腿**一次都没被咬过**（全是 A 类），
- * 但 browser 腿的 `B10` 被咬了 **63 个 job 腿 / 22 轮 / 连续 5 天**，
- * 而它被堵住靠的是一次**无关的**修复顺手改对了导航。**这里是提前上锁。**
+ * 但 browser 腿的 `B10` 被这个坑咬了 **72 个 job 腿 / 25 轮 / 4 个 UTC 日
+ * （2026-08-09 → 08-12，跨度 3 天 15 小时）**，三平台全中
+ * （linux 25 · darwin 24 · win32 23），而它被堵住靠的是一次**无关的**修复
+ * （`ced454d`）顺手改对了导航。**这里是提前上锁。**
+ *
+ * ⚠️ **纳入条件写出来，免得下一个人拿另一个口径去对**：`workflow=e2e-browser`
+ * 的**全部 41 个 run**（`schedule` + `workflow_dispatch` 都算）下的**全部 117 个
+ * `真浏览器点按钮` job 腿**，117 份日志全部拉到、无过期；其中 114 腿印了 B10 判决行，
+ * 全是 `MUT-OK`，按 detail 分类得 B 类（Playwright 超时等"腿炸了"）72、A 类 42。
+ * ⚠️ **别写「×3」**：25 轮里有 2 轮不是三格全中（一轮 2 格、一轮 1 格），
+ * 23×3+2+1 = 72 —— 早先那句「22 轮 / 63 腿」两个数都是错的，且它俩自己就对不上。
  *
  * ⚠️ `MUT-UNKNOWN` **不计入 failed**（否则一次 HTTP 抖动会让整条腿红 ——
  * 一条会随机变红的门，教给人的还是那句「别信这盏灯」）。所以它必须**响**：
@@ -1786,13 +1795,31 @@ if (unexpectedStatuses.length > 0) {
   say('     请连同 e2e-notes.yml 里那段论证一起更新，别只把这个名字加进 KNOWN_STATUSES。');
 }
 /*
- * ★ 覆盖面落盘。**不看 failed** —— 这是覆盖面计数不是判定，红也要如实落盘
- * （与 runtime / browser 腿同一条道理）。
+ * ★ 覆盖面落盘。**不看 failed** —— 这是覆盖面计数不是判定，红也要如实落盘。
+ *
+ * ⚠️ 🔴 **`unknowns` 是一个把两件事加在一起的整数**（已知限制，2026-08-17 登记）：
+ *   · 「这条**断言**没能被评估」（`UNDECIDED`）；
+ *   · 「这条**变异**什么都没证明」（`MUT-UNKNOWN`：前提没构造出来 / 腿炸了 / 根本没跑到）。
+ *   两者的**补救完全不同**：crash 那支要去修**测试**，premise 那支是这台机器没条件。
+ *   控制台把它们分开列了（见上面两段），**而这个整数把它们加成了一个数**。
+ *   拆开要动凭证 schema 更多，不在这一轮 —— 但别让下一个人以为它是单一含义的。
+ *
+ * ★ `unverified` 是**同一份文件里的另一格**：哪几条变异什么都没证明。
+ *   它喂给 `collect-unverified-mutations.mjs`，最终变成凭证的
+ *   `mutations: ran|ran-unverified` + `unverifiedMutations`。
+ *   ⚠️ 与 `unknowns` **不是同一个集合**：`unknowns` 还含断言级的 `UNDECIDED`。
  */
+const unverifiedMut = results.filter((r) => r.status === 'MUT-UNKNOWN').map((r) => String(r.id));
 if (UNDECIDED_OUT) {
   mkdirSync(dirname(UNDECIDED_OUT), { recursive: true });
-  writeFileSync(UNDECIDED_OUT, `${JSON.stringify({ unknowns: undec.length }, null, 2)}\n`);
-  say(`   覆盖面已写到 ${UNDECIDED_OUT}（unknowns=${undec.length}）`);
+  writeFileSync(
+    UNDECIDED_OUT,
+    `${JSON.stringify({ unknowns: undec.length, unverified: unverifiedMut }, null, 2)}\n`,
+  );
+  say(
+    `   覆盖面已写到 ${UNDECIDED_OUT}（unknowns=${undec.length}` +
+      ` · 其中变异未验证 ${unverifiedMut.length} 条）`,
+  );
 }
 if (undec.length > 0) {
   say('');

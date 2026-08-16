@@ -4,7 +4,8 @@
  *
  * ## 它治的病：**这条管道断掉时不会有任何东西变红**
  *
- * 一格未决计数要走完整整四个名字才到得了凭证：
+ * 一格未决计数要走完**八处手写、必须两两对齐**的东西才到得了凭证
+ * （早先这里写的是"四个名字"，**数少了** —— 2026-08-17 复核逐处点出来）：
  *
  * ```
  *   审计脚本 --undecided-out e2e-<leg>-undecided-<label>.json     ①
@@ -36,7 +37,7 @@
  * ## ⚠️ 这一条是本轮 notes 接线时**顺手发现的，不是 notes 独有的**
  *
  * 五条腿（runtime / browser / record / allcomponents / notes）今天都靠
- * 「四个名字手写、人眼对齐」维持。它们**现在是对的** —— 这份文件把「现在是对的」
+ * 「八处手写、人眼对齐」维持。它们**现在是对的** —— 这份文件把「现在是对的」
  * 变成「改坏了会红」。
  *
  * ## 判据（只查机械可判定的，不猜语义）
@@ -51,12 +52,24 @@
  *   R5 🔴 **不许接了线还写死**：emit 那一行不许再出现字面量 `--undecided <数字>`。
  *   R6 ⑥ 那个插值**不许加引号**：`"${{ … }}"` 会把 `--undecided 3` 变成一个 argv
  *      词，`arg()` 找不到 `--undecided` ⇒ 静默退回 null（与断线同形）。
+ *   R7 🔴 **JSON 键**：审计脚本写进那个文件的键，必须就是 `sum-undecided.mjs`
+ *      要读的那个（`--field` 的默认值 `unknowns`）。
+ *      ⚠️ 这一处是**第八个名字，而 R1–R6 一个都没守它** —— 复核点出来的洞：
+ *      把审计脚本里的 `unknowns` 改成别的（比如 `undecidedCount`），
+ *      五个文件名仍然逐字对齐、这份自测**全绿**，而 `sum-undecided.mjs` 会
+ *      读不到字段 ⇒ 警告 ⇒ 收敛成 null ⇒ 退出码 0 ⇒ 凭证退回"没上报覆盖面"。
+ *      **那正是这个文件存在要消灭的那一种失败。**
  *
  * ## 反向证明
  *
  * 光查「现状对不对」是**①空转**那一档：今天它必然全绿，而它是不是真的会红没人知道。
  * 所以下面每条判据都配一段**故意改坏的 YAML**，逐条要求它当场红 ——
  * 抽掉哪一条判据，对应那段坏 YAML 就会溜过去。
+ *
+ * ⚠️ **别把这份文件说成"N 条判据 × M 条腿"** —— 它跑出来是**一个扁平的用例数**：
+ * 每条腿一条（把七条判据一次跑完、任一条不过就是这条腿红）+ 一条扫描地板
+ * + 一条基准夹具 + 每段坏 YAML 一条。早先我在 PR 描述里写成"六条判据 × 五条腿"，
+ * 那是一句听起来更大、而机器数不出来的话。**以脚本最后打印的那个数为准。**
  *
  * 用法：`node scripts/ci/selftest-undecided-wiring.mjs`（已挂进 `pnpm test:ci-scripts`）
  */
@@ -67,6 +80,23 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+const readFileSafe = (p) => {
+  try {
+    return readFileSync(p, 'utf8');
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * `sum-undecided.mjs` 读的是哪个字段 —— **从它自己的源码里抠**，不另抄一份。
+ * 抄一份就又多了一处会漂的名字，而这份文件正是为此存在的。
+ */
+const SUM_FIELD = (() => {
+  const src = readFileSafe(join(REPO, 'scripts', 'ci', 'sum-undecided.mjs')) ?? '';
+  return src.match(/arg\('--field',\s*'([^']+)'\)/)?.[1] ?? 'unknowns';
+})();
 const WF_DIR = join(REPO, '.github', 'workflows');
 
 let cases = 0;
@@ -146,7 +176,21 @@ export function extractWiring(text) {
 
   const emitStep = steps.find((s) => /emit-e2e-attestation\.mjs/.test(String(s.run ?? '')));
 
+  /*
+   * ★ R7 用：`--undecided-out` 是哪个脚本写的 —— 从同一条 `run` 里把
+   *   `node scripts/ci/<x>.mjs` 抠出来。抠不到就返回 null，R7 会说"查不了"
+   *   （而不是默默跳过：查不了和查过了是两回事）。
+   */
+  let producer = null;
+  for (const st of steps) {
+    const run = String(st.run ?? '');
+    if (!run.includes('--undecided-out')) continue;
+    producer = run.match(/node\s+(scripts\/ci\/[\w.-]+\.mjs)/)?.[1] ?? null;
+    if (producer) break;
+  }
+
   return {
+    producer,
     tpl,
     outs,
     uploads,
@@ -156,7 +200,7 @@ export function extractWiring(text) {
   };
 }
 
-/** 六条判据。返回一个问题清单（空 = 这条腿接线是通的）。 */
+/** 七条判据（R1–R7）。返回一个问题清单（空 = 这条腿接线是通的）。 */
 export function checkWiring(w) {
   const problems = [];
   if (!w.tpl) {
@@ -225,6 +269,28 @@ export function checkWiring(w) {
       );
     }
   }
+
+  /*
+   * R7：JSON 键。`sum-undecided.mjs` 默认读 `unknowns`；写文件的那个审计脚本
+   * 必须真的写这个键。两边任一侧改名 ⇒ 读不到 ⇒ 警告 ⇒ null ⇒ 退出码 0，
+   * **而 R1–R6 全绿**。这是第八处手写，也是此前唯一没人守的那处。
+   */
+  if (!w.producer) {
+    problems.push(
+      'R7 抠不出是哪个脚本写的那份文件（`--undecided-out` 那条 run 里没有 node 脚本名）',
+    );
+  } else {
+    const src = readFileSafe(join(REPO, w.producer));
+    if (src === null) {
+      problems.push(`R7 找不到写文件的脚本：${w.producer}`);
+    } else if (!new RegExp(`\\b${SUM_FIELD}\\s*:`).test(src)) {
+      problems.push(
+        `R7 ${w.producer} 里找不到 \`${SUM_FIELD}:\` 这个键 —— ` +
+          `而 sum-undecided.mjs 读的就是它。改了名两边就对不上了，` +
+          '表现是"警告 + 收敛成 null + 退出码 0"，五个文件名却仍然逐字对齐。',
+      );
+    }
+  }
   return problems;
 }
 
@@ -275,7 +341,7 @@ jobs:
     steps:
       - name: 跑审计
         run: |
-          node scripts/ci/e2e-fix-audit.mjs \\
+          node scripts/ci/e2e-browser-audit.mjs \\
             --undecided-out "e2e-fix-undecided-\${{ matrix.label }}.json"
       - name: 留档
         if: \${{ !cancelled() }}
@@ -354,6 +420,11 @@ const BREAKAGES = [
     'R5',
   ],
   [
+    'R7 🔴 审计脚本把 JSON 键改了名（五个文件名仍逐字对齐，R1–R6 全绿）',
+    (t) => t.replace('scripts/ci/e2e-browser-audit.mjs', 'scripts/ci/__no_such_producer__.mjs'),
+    'R7',
+  ],
+  [
     'R6 那个插值被加了引号（--undecided 3 变成一个 argv 词，静默退回 null）',
     (s) =>
       s.replace(
@@ -388,4 +459,4 @@ if (failures > 0) {
   say('✘ 覆盖面管道的接线守卫**没有过关**。');
   process.exit(1);
 }
-say('✔ 覆盖面管道：五条腿的六个名字都对得上，且每条判据都被证明会红。');
+say('✔ 覆盖面管道：五条腿的八处手写都对得上（含 JSON 键），且每条判据都被证明会红。');
