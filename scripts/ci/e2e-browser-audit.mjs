@@ -50,7 +50,8 @@
  * ⚠️ **①〜④ 里的「未捕获异常」只算"有反应"，不算"该发生的事发生了"。**
  * 把异常直接当成"红"会造出反方向的假绿 —— v0.7.3 抓到过一条（变异体导航错页、
  * 抛了超时，而框架把任何抛出都读成"如期变红"）。「断言判红」和「腿炸了」分得开，
- * 靠的是第三态（`Undecided` / `MUT-UNKNOWN`），不是靠数异常。
+ * 靠的是**抛出的类型**（`AssertionFailed` / `Undecided` / 其它），不是靠数异常 ——
+ * 判决那一份在 `mutation-verdict.mjs`，正反都有证明。
  *
  * ⚠️ 第 3 节那 40 个匿名按钮**仍然只有 ①〜④**（多一个对照窗 = 每个按钮多 1.5 s）。
  * 那一格的同形缺口还在，记在 `coordination/inbox/e2e-browser.md`，不假装已修。
@@ -71,6 +72,21 @@
  * ⚠️ 「同一条断言」现在**真的是同一段代码**（`judgeProbeClick()`）。此前基线轮和
  * 变异轮各手抄一份 `ok()` 清单，而变异轮那份是基线那份的**子集** ——
  * 两份手抄的清单会分叉，分叉的表现是"变异证明证的是另一条断言"。
+ *
+ * ### ⚠️ 「红了」也分两种：**断言按设计判红** vs **这条腿自己炸了**
+ *
+ * `mutation()` 此前只问"抛没抛"，于是 Playwright 超时、页面崩了、选择器写错，
+ * 全都被记成「如期变红」。`[CI 实测 run 31629900327, win32-x64]` 原话：
+ *
+ *     ✔ [变异] B10 的证伪能力（把「移动到文件夹」弄成死按钮，必须红）
+ *       —— 如期变红：locator.click: Timeout 8000ms exceeded.
+ *          waiting for locator('[data-testid="note-actions"]')
+ *
+ * **那一轮变异体一次都没装上、函数体根本没跑到，却被记成"这条断言有牙齿"。**
+ * 现在判决按**抛出的类型**分四档（`mutation-verdict.mjs`，正反都有证明）：
+ * 没抛 ⇒ `MUT-BAD`；`AssertionFailed`（只有 `ok()` 抛）⇒ `MUT-OK`；
+ * `Undecided` ⇒ `MUT-UNKNOWN`(前提)；**其它任何抛出** ⇒ `MUT-UNKNOWN`(腿炸了)。
+ * 最后一档不计入失败，但会打 `::warning` 注解并在汇总里单独列 —— 它要去修**测试**。
  *
  * ## PROTOCOL §11
  *
@@ -115,6 +131,13 @@ import {
   judgeExpectedEffect,
   judgeReaction,
 } from './e2e-browser-assertions.mjs';
+import {
+  Undecided,
+  assertOk,
+  classifyMutationThrow,
+  markUndecided,
+  mutationAnnotation,
+} from './mutation-verdict.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const argv = process.argv.slice(2);
@@ -203,12 +226,19 @@ let chromium;
 /* ── 断言框架（全部只吃字符串/布尔，PROTOCOL §8）──────────────────────────── */
 const results = [];
 let failed = 0;
+/** 整轮被异常掐断（不是某一条断言红）—— 汇总里那条"变异地板"据此让路。 */
+let aborted = false;
 const brief = (v) => {
   const s = typeof v === 'string' ? v : JSON.stringify(v);
   return s && s.length > 400 ? `${s.slice(0, 400)}…` : (s ?? '');
 };
+/*
+ * ★ `ok()` 抛的是**专用类型** `AssertionFailed`，不是裸 `Error` —— 这是
+ *   `mutation()` 分得开「断言按设计判红」和「这条腿自己炸了」的**唯一**依据。
+ *   判据是**类型**不是消息措辞（推导见 `mutation-verdict.mjs` 文件头）。
+ */
 function ok(cond, msg, got) {
-  if (cond !== true) throw new Error(`${msg}${got === undefined ? '' : `（实得：${brief(got)}）`}`);
+  assertOk(cond, msg, got, brief);
 }
 /**
  * ★ 第三种结局：**无从判断**（既不是通过，也不是失败）。
@@ -229,9 +259,8 @@ function ok(cond, msg, got) {
  * 不是缺陷。让它红会训练所有人无视这盏灯。所以：**单独一档、单独计数、
  * 汇总里单独列**，谁都能一眼看出"这条这轮没被验过"。
  */
-class Undecided extends Error {}
 function undecided(msg) {
-  throw new Undecided(msg);
+  markUndecided(msg);
 }
 
 async function check(id, fn) {
@@ -261,28 +290,28 @@ async function mutation(id, fn) {
     threw = e;
   }
   /*
-   * ★ 变异也有第三态：**前提没构造出来**。
+   * ★ 判决走**唯一**的那一份（`mutation-verdict.mjs`，有正反证明）。四档：
    *
-   * 变异的意思是「把某个性质拿掉，那条断言必须红」。如果**这一轮连基线都没成立**
-   * （比如页面还在渲染，量不出"静止时不该有错误话"），那它既不能算"变异被抓住"，
-   * 也不能算"变异存活"—— 它什么都没证明。
-   * 压成 MUT-BAD 会把"这次没量成"报成"断言没牙齿"，正是今天在
-   * `e2e-runtime.yml` 那个二元循环上踩过的同一个坑。
+   *   · 什么都没抛            ⇒ MUT-BAD      变异体存活
+   *   · `AssertionFailed`     ⇒ MUT-OK       断言**按设计**判红
+   *   · `Undecided`           ⇒ MUT-UNKNOWN  前提没构造出来
+   *   · **其它任何抛出**      ⇒ MUT-UNKNOWN  **这条腿自己炸了**
+   *
+   * 最后一档此前落在 MUT-OK 里 —— `[CI 实测 run 31629900327, win32-x64]` 原话：
+   * 「✔ [变异] B10 …—— 如期变红：locator.click: Timeout 8000ms exceeded」，
+   * 那一轮变异体一次都没装上、函数体根本没跑到，却被记成"这条断言有牙齿"。
+   *
+   * ⚠️ MUT-UNKNOWN **不计入 failed**（平台差异构造不出前提是常态），所以
+   *   `crash` 那一档必须**响**：打一条 `::warning` 注解，并进"本轮无从判断"清单。
+   *   一个安静的 UNKNOWN 只是把一种假绿换成了另一种。
    */
-  if (threw instanceof Undecided) {
-    results.push({ id, status: 'MUT-UNKNOWN', detail: threw.message });
-    say(`   ？ [变异] ${id} —— 无从判断：${threw.message}`);
-    return false;
-  }
-  if (threw) {
-    results.push({ id, status: 'MUT-OK', detail: threw.message });
-    say(`   ✔ [变异] ${id} —— 如期变红：${brief(threw.message)}`);
-    return true;
-  }
-  failed += 1;
-  results.push({ id, status: 'MUT-BAD', detail: '变异体没让断言变红' });
-  say(`   ✘ [变异] ${id} —— **没有变红**。这条腿看不见"按钮死了"，等于假绿灯。`);
-  return false;
+  const verdict = classifyMutationThrow(threw, brief);
+  results.push({ id, status: verdict.status, detail: verdict.detail, mutKind: verdict.kind });
+  say(`   ${verdict.mark} [变异] ${id} —— ${verdict.text}`);
+  const annotation = mutationAnnotation(id, verdict);
+  if (annotation) say(annotation);
+  if (verdict.status === 'MUT-BAD') failed += 1;
+  return verdict.status === 'MUT-OK';
 }
 
 /* ── §11：端口必须是空的 ─────────────────────────────────────────────────── */
@@ -2296,10 +2325,11 @@ try {
   /*
    * ★ 变异体只能装在**已经在 DOM 里**的元素上。定值 1200 ms 等不到那颗按钮时，
    *   `installMutation` 静默什么都不做，随后 `mutR.exists === false`。
-   *   曾经这里写的是 `ok()` —— 而 `mutation()` 把"抛了"一律记成 **MUT-OK**，
+   *   曾经这里写的是 `ok()`，而当时 `mutation()` 把"抛了"一律记成 **MUT-OK**，
    *   于是**变异体根本没装上，汇总里却写着"这条断言有牙齿"**。
    *   （和 B1 本身是同一个缺口的两面：那边把"没加载完"报成假红，这边报成假绿。）
-   *   现在这一族前提全部走 `undecided()` ⇒ MUT-UNKNOWN，见下面变异体里的那段。
+   *   现在两头都堵上了：这一族前提走 `undecided()` ⇒ MUT-UNKNOWN（见下面那段），
+   *   而 `mutation()` 本身也只认 `AssertionFailed` 才算"如期变红"（`mutation-verdict.mjs`）。
    */
   const mutTargetReady = await waitForSel(page, '[data-testid="models-sources-probe"]');
   const mutInstalled =
@@ -2343,9 +2373,9 @@ try {
     /*
      * 前提没构造出来 = 什么都没证明 ⇒ 第三态，不许记成"如期变红"。
      * ⚠️ `exists / visible / clicked` 也是前提，**不是判决** —— 变异体本该让按钮
-     *    "还在、还可见、还可点"。它们不成立说明这一轮的现场不是我要的那个现场，
-     *    而 `mutation()` 把任何抛出都读成 MUT-OK，用 `ok()` 就会把"腿炸了"
-     *    印成"这条断言有牙齿"（v0.7.3 抓到的那条反方向假绿，同一段逻辑）。
+     *    "还在、还可见、还可点"。它们不成立说明这一轮的现场不是我要的那个现场。
+     *    用 `ok()` 会把它们印成"这条断言有牙齿"：`ok()` 抛的是 `AssertionFailed`，
+     *    而那正是 `mutation()` 唯一认作"如期变红"的那一种。前提要走 `undecided()`。
      */
     if (mutInstalled !== true) {
       undecided(
@@ -2374,6 +2404,7 @@ try {
   }
 } catch (e) {
   failed += 1;
+  aborted = true;
   say('');
   say(`✘ 审计中断：${e.message}`);
   say(
@@ -2406,6 +2437,44 @@ say(
   `   断言通过 ${pass} 条 · 变异证明 ${mut} 条 · 失败 ${failed} 条 · 无从判断 ${undec.length} 条`,
 );
 /*
+ * ★ 变异地板：**这一轮至少要有一条变异真的判到 MUT-OK。**
+ *
+ * ⚠️ 它守的不是产品，是**这条判决链路自己还通不通**。
+ *   `MUT-UNKNOWN` 刻意不计入 failed，所以「`ok()` 不再抛 `AssertionFailed` 了」
+ *   （改错 import、类型被别的模块实例覆盖、有人把 `ok()` 换回裸 `Error`）
+ *   的表现是**四条变异悄悄全变 UNKNOWN，整条腿照样绿** ——
+ *   一种比它替换掉的那个假绿更安静的假绿。
+ *
+ *   单元证明（`selftest-mutation-verdict.mjs`）证的是判据本身，**证不到接线**。
+ *   这一条守的正是接线：`ok()` → `AssertionFailed` → `MUT-OK` 这条路还走得通。
+ *
+ * 判据取"至少 1 条"而不是"4 条"：某条变异在某台 runner 上前提构造不出来
+ * （premise ⇒ UNKNOWN）是正当的，钉死条数会造出一盏为合法情况常亮的灯。
+ * `[CI 实测]` 近 5 轮三平台每一格都是 3～4 条 MUT-OK —— 地板离现状很远，
+ * 只有链路真的断了才会踩到它。
+ *
+ * 整轮被掐断时让路：那时 `failed` 已经因为"审计中断"加过一次，
+ * 再报一条"没有变异判到 MUT-OK"只是在复述同一件事。
+ *
+ * ★ `mutTotal === 0` 也踩地板（**不是** `mutTotal > 0 && mut === 0`）。
+ *   变异**一条都没登记**时，此前的表现是"总表短了几行" —— 而少几行没有人看得见。
+ *   `[CI 实测 run 31484205254 win32-x64]` 那一轮 4 条变异一条都没出现（整轮掐断，
+ *   已由 `aborted` 兜住）；但**没掐断却一条都没跑到**的路径同样存在，
+ *   而它今天连一个字都不会说。缺席不许长得像"没事发生"。
+ */
+const mutTotal = results.filter((r) => String(r.status).startsWith('MUT-')).length;
+if (!aborted && mut === 0) {
+  failed += 1;
+  say('');
+  say(`   ✘ 这一轮登记了 ${mutTotal} 条变异，**没有一条**判到 MUT-OK。`);
+  say('     变异证明不计入失败的那两档（前提没构造出来 / 腿炸了）把整套证明吃光了 ——');
+  say('     多半是 `ok()` → `AssertionFailed` → `MUT-OK` 这条接线断了，');
+  say('     而它断掉的表现恰恰是"什么都不说"。先看上面每条变异各自是哪一档。');
+  if (mutTotal === 0) {
+    say('     （登记数是 0：变异那几段**根本没跑到**，而缺席在总表里只表现为少几行。）');
+  }
+}
+/*
  * ★ 覆盖面落盘。不看 failed —— 这是展示用的覆盖面计数，不是判定，
  * 红也要如实落盘（与 runtime 腿同一条道理）。
  */
@@ -2418,6 +2487,22 @@ if (undec.length > 0) {
   // 单独列出来：**这些不是通过**。不列的话它们会混在一片绿里被当成覆盖到了。
   say('   ？ 本轮无从判断（这一轮没验到，别当成绿）：');
   for (const r of undec) say(`     · ${r.id} —— ${r.detail}`);
+}
+/*
+ * ★ 「这条腿自己炸了」单独再列一次。
+ *
+ * 它和「前提没构造出来」同为 MUT-UNKNOWN、同样不计入 failed，但**两者的下一步不同**：
+ * 前者是**我们的测试坏了**（选择器、导航、超时预算），要去修测试；
+ * 后者往往是**平台差异**，本来就没打算每台机器都构造得出来。
+ * 混在一起列，"测试坏了"就会被当成"这台机器没条件"而永远没人去修 ——
+ * 而那正是这一版要拆掉的那种沉默（此前它连 UNKNOWN 都不是，是 MUT-OK）。
+ */
+const crashed = results.filter((r) => r.mutKind === 'crash');
+if (crashed.length > 0) {
+  say('');
+  say(`   ⚠️ 其中 ${crashed.length} 条是**这条腿自己炸了**，不是"这台机器没条件"：`);
+  for (const r of crashed) say(`     · ${r.id} —— ${r.detail}`);
+  say('     这些要去修**测试**（选择器 / 导航 / 超时预算），不是去修产品，也不是等下一轮。');
 }
 say('');
 say('   ⚠️ 无头浏览器**做不到**的（如实列出，不假装覆盖）：');
