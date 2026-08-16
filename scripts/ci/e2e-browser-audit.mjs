@@ -817,6 +817,48 @@ try {
      *   带对照窗判决的，一个全局 flag 会在探针跑的那一轮把 B1 一起降级成老判据 ——
      *   为了量一件事而把另一件已经修好的事悄悄弄松，正是这一程在拆的那种形状。
      */
+    /*
+     * ★ 探针的第三套判据：**按行做差**，而不是按布尔做差。
+     *
+     * 「严判据」把 `domChanged` 整格丢掉（只要对照窗里页面自己也在动）。
+     * 对 B1 无所谓 —— 它有 `expectApi` 扛着判决。但横扫那些**匿名**按钮里，
+     * 有一类的全部效果就是"DOM 变了"（点开一个详情块，不发任何请求）。
+     * 把这一格丢掉 = 把它们唯一的证据丢掉 ⇒ 好按钮被判死。
+     *
+     * 按行做差就细得多：指纹本来就是**一元素一行**。
+     *   · 对照窗自己变了哪些行（t0 → t1）
+     *   · 点击窗变了哪些行（t1 → t2）
+     *   · **点击窗变了、而对照窗没变的那些行** = 这次点击真正带来的东西
+     * 页面自己在跳的那一行（时钟、计数）两个窗里都会变，被减掉；
+     * 点开的详情块只在点击窗里出现，留得下来。
+     */
+    const lineSet = (fp) => new Set(String(fp ?? '').split('\n'));
+    const symDiff = (a, b) => {
+      const out = [];
+      for (const l of a) if (!b.has(l)) out.push(l);
+      for (const l of b) if (!a.has(l)) out.push(l);
+      return out;
+    };
+    let lineDiff = null;
+    if (ambientAdvisory && ambient && ambientFp !== null) {
+      const t0 = lineSet(ambientFp);
+      const t1 = lineSet(before.fp);
+      const t2 = lineSet(after.fp);
+      const ambientLines = new Set(symDiff(t0, t1));
+      const clickLines = symDiff(t1, t2);
+      const novelLines = clickLines.filter((l) => !ambientLines.has(l));
+      lineDiff = {
+        ambientChanged: ambientLines.size,
+        clickChanged: clickLines.length,
+        novel: novelLines.length,
+        sample: novelLines.slice(0, 2).map((l) => l.slice(0, 90)),
+        reacted:
+          obs.urlChanged === true ||
+          reaction.novelApi.length > 0 ||
+          newErrs.length > 0 ||
+          novelLines.length > 0,
+      };
+    }
     // `reaction` 本来就是**带对照窗**算出来的那一份 —— 它就是严判据。
     const strict = reaction;
     const lenient =
@@ -827,6 +869,7 @@ try {
       reactedWhy: lenient.why,
       reactedStrict: strict.reacted,
       reactedStrictWhy: strict.why,
+      lineDiff,
       expected,
     };
   }
@@ -1134,6 +1177,7 @@ try {
   if (PROBE_SWEEP_AMBIENT) {
     const probed = sweepResults.filter((r) => r.clicked === true);
     const flipped = probed.filter((r) => r.reacted === true && r.reactedStrict === false);
+    const flippedLine = probed.filter((r) => r.reacted === true && r.lineDiff?.reacted === false);
     const agreeAlive = probed.filter((r) => r.reacted === true && r.reactedStrict === true);
     const agreeDead = probed.filter((r) => r.reacted === false && r.reactedStrict === false);
     say('');
@@ -1153,6 +1197,23 @@ try {
       }
     } else {
       say('      一个都没翻 —— 这一轮这一格上，严判据与老判据给出同样的结论。');
+    }
+    say('');
+    say(`      ── 第三套判据（**按行做差**）：翻档 ${flippedLine.length} 个 ──`);
+    for (const r of flippedLine) {
+      say(`        · ${r.name}  行差：${JSON.stringify(r.lineDiff)}`);
+    }
+    if (flipped.length > 0) {
+      say('      对照：被"整格丢掉 DOM"判死、而按行做差**救回来**的：');
+      for (const r of flipped) {
+        if (r.lineDiff?.reacted === true) {
+          say(
+            `        · ${r.name} —— 点击窗独有的变化行 ${r.lineDiff.novel} 条` +
+              `（对照窗自己变了 ${r.lineDiff.ambientChanged} 条）`,
+          );
+          for (const x of r.lineDiff.sample) say(`            ${x}`);
+        }
+      }
     }
     say('   ══ 探针结束（以上不影响任何断言）══');
     say('');
