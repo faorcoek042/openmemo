@@ -110,20 +110,37 @@ const mode = arg('--mode', null);
  *   ② 变异**被跳过**时凭证照发（否则 `mutations=false` 的跑会让发布闸门直接卡死），
  *      但必须**在凭证里说出来** —— 这就是本字段。**跳过 ≠ 通过。**
  *
- * ## 取值（只有两个，别加第三个）
+ * ## 取值（三个）
  *
- *   · `ran`     —— 这一轮变异验证跑了，且没红。
- *   · `skipped` —— 这一轮**没跑**（例如显式 `mutations=false`）。
+ *   · `ran`             —— 跑了，且**每一条变异都有结论**（抓住 / 存活）。
+ *   · `ran-unverified`  —— 跑了，但**至少一条什么都没证明**（前提构造不出来 / 腿炸了 /
+ *                          根本没跑到）。**具体是哪几条见 `unverifiedMutations`。**
+ *   · `skipped`         —— 这一轮**没跑**（例如显式 `mutations=false`）。
  *   · 不传 ⇒ `null` —— **这条腿没接这个字段**，与 `skipped` 是两句不同的话
  *     （和 `undecided` 的 `null` vs `0` 同一条规矩）。
  *
- * ## ⚠️ `ran` **不等于**「每条变异都被验证了」
+ * ## 🔴 `ran` 的语义**收紧过一次**（v0.7.3 已知边界第 13 条，2026-08-17 关掉）
  *
- * `e2e-runtime-audit.mjs --mutate` 的退出码是三态的，`3 = 跑起来了但什么都没证明`
- * （前提在这台 runner 上构造不出来）**不判红**。所以 `ran` 里仍可能有若干条
- * 什么都没证明的变异 —— 它们今天只出现在日志与 step summary 里，**还没有被数出来**。
- * 把那个数接进来是**下一步**（形状与 `--undecided` 完全相同）；在那之前，这个字段
- * 只承诺它字面说的那件事：**跑了，没红**。少承诺一点，好过承诺一句查不了的话。
+ * 这里**曾经**只有两个取值，并且原文写着「只有两个，别加第三个」，理由是：
+ *
+ *   > `e2e-runtime-audit.mjs --mutate` 的退出码是三态的，`3 = 跑起来了但什么都没证明`
+ *   > **不判红**。所以 `ran` 里仍可能有若干条什么都没证明的变异 —— 它们今天只出现在
+ *   > 日志与 step summary 里，**还没有被数出来**。把那个数接进来是**下一步**
+ *   > （形状与 `--undecided` 完全相同）。
+ *
+ * **那句"下一步"就是这一次。** 在它落地之前，`ran` 是一句**把两种结局合起来说的话**，
+ * 而这种话会被读成前一种 —— `e2e-runtime` 的 darwin 格从 2026-08-10 起每一轮都是
+ * `M-driver-lie` 退出码 3（`metal.probed` 恒为 true，前提在**任何一台 Mac** 上都不存在），
+ * 而凭证上一直写着 `mutations: ran`，读起来是好消息。
+ *
+ * ⇒ 现在 `ran` **真的意味着「每一条都有结论」**：只要有一条没结论，就必须是
+ *   `ran-unverified`，并且**必须同时给出是哪几条**（下面的互相校验会挡住只给其一）。
+ *
+ * ## ⚠️ `schemaVersion` 因此从 1 升到 2
+ *
+ * **不是加字段，是改语义** —— 老凭证里的 `ran` 与新凭证里的 `ran` 不是同一句话。
+ * 消费方靠 `schemaVersion` 区分（见 `attestation-coverage.mjs` 的 `mutationState()`）：
+ * 老凭证的 `ran` **不许**被当成新语义下的 `ran`。
  */
 const mutations = arg('--mutations', null);
 if (undecidedRaw !== null && !/^\d+$/.test(String(undecidedRaw))) {
@@ -132,12 +149,47 @@ if (undecidedRaw !== null && !/^\d+$/.test(String(undecidedRaw))) {
 if (mode !== null && !/^(sample|full)$/.test(String(mode))) {
   die(`--mode 只能是 sample 或 full，实得 ${JSON.stringify(mode)}`);
 }
-if (mutations !== null && !/^(ran|skipped)$/.test(String(mutations))) {
+/**
+ * ★ `--unverified-mutations`：**哪几条**什么都没证明（逗号分隔，形如
+ * `darwin-arm64:M-driver-lie`）。
+ *
+ * 只给一个 `ran-unverified` 而不说是哪几条，下一个人看到它仍然不知道该去查什么 ——
+ * 那是"报了个警但没给线索"，本仓已经吃过这一课（`removed` 在数它没删掉的东西）。
+ * 所以下面有一条**互相校验**：两者必须同时出现，或者同时不出现。
+ */
+const unverifiedRaw = arg('--unverified-mutations', null);
+if (mutations !== null && !/^(ran|ran-unverified|skipped)$/.test(String(mutations))) {
   die(
-    `--mutations 只能是 ran 或 skipped，实得 ${JSON.stringify(mutations)}。\n` +
+    `--mutations 只能是 ran / ran-unverified / skipped，实得 ${JSON.stringify(mutations)}。\n` +
       '  （**故意没有 failed 这个取值**：变异红的运行不该走到这里 —— 发凭证那个作业的\n' +
       '   `if:` 应该已经把它挡在门外了。收到别的值说明那道门被改松了，此刻**当场炸**\n' +
       '   比发一张写着奇怪值的凭证好。）',
+  );
+}
+
+/**
+ * ★ 互相校验：**`ran-unverified` 与「是哪几条」必须同进同出。**
+ *
+ * 两个方向都要挡，因为两个方向各自造出一种假话：
+ *   · 有 `ran-unverified` 却没有清单 ⇒ 报了个警、没给线索，没人查得动；
+ *   · 有清单却写着 `ran` ⇒ **凭证在说「每条都有结论」，而它自己带着反例**。
+ * 在这里炸掉，比发一张自相矛盾的凭证好（与上面那条 `failed` 同一条道理）。
+ */
+const unverifiedList = String(unverifiedRaw ?? '')
+  .split(',')
+  .map((x) => x.trim())
+  .filter(Boolean);
+if (mutations === 'ran-unverified' && unverifiedList.length === 0) {
+  die(
+    '--mutations ran-unverified 必须同时给 --unverified-mutations（是哪几条）。\n' +
+      '  只说"有一条没证明"而不说是哪条，读凭证的人仍然不知道该去查什么。',
+  );
+}
+if (unverifiedList.length > 0 && mutations !== 'ran-unverified') {
+  die(
+    `给了 --unverified-mutations（${unverifiedList.length} 条）却把 --mutations 写成 ` +
+      `${JSON.stringify(mutations)}。\n` +
+      '  那张凭证会一边说"每条变异都有结论"、一边带着反例 —— 自相矛盾的凭证比没有更坏。',
   );
 }
 
@@ -158,7 +210,13 @@ if (!bundleRun || !/^\d+$/.test(bundleRun)) {
 if (platforms.length === 0) die('--platforms 是空的 —— 说不出跑过哪些平台的凭证没有意义');
 
 const attestation = {
-  schemaVersion: 1,
+  /*
+   * ★ 1 → 2（2026-08-17）：**不是加字段，是改语义。**
+   *   `mutations: 'ran'` 在 v1 里含义是「跑了且没红」（把"有一条没结论"也算了进去），
+   *   在 v2 里含义是「**每一条都有结论**」。消费方必须靠这个版本号把两者分开，
+   *   否则老凭证会被读成一句它从来没说过的话。见 `attestation-coverage.mjs`。
+   */
+  schemaVersion: 2,
   leg,
   /** 这张凭证绑定的**那一批包**。换一批包就是另一个名字，旧凭证自动失效。 */
   bundleRunId: bundleRun,
@@ -179,6 +237,12 @@ const attestation = {
    * ⚠️ 没有 `failed`：那种运行**不该有凭证**（挡在发凭证作业的 `if:` 上）。
    */
   mutations: mutations === null ? null : String(mutations),
+  /**
+   * ★ `unverifiedMutations`：**哪几条什么都没证明**（`ran-unverified` 时非空）。
+   * 形如 `["darwin-arm64:M-driver-lie"]`。`null` = 没上报这一格。
+   * 只给状态不给清单，等于报了个警却没给线索 —— 上面有互相校验挡着。
+   */
+  unverifiedMutations: unverifiedList.length > 0 ? unverifiedList : null,
   /** 以下只用于事后审计，**不参与判定**。 */
   e2eRunId: process.env.GITHUB_RUN_ID ?? null,
   e2eRunAttempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
@@ -204,6 +268,13 @@ console.log(
     ` · 抽样 ${mode === null ? '不适用/未上报' : mode}` +
     ` · 变异 ${mutations === null ? '不适用/未上报' : mutations}`,
 );
+if (mutations === 'ran-unverified') {
+  console.log(
+    `   ⚠️ 本轮有 ${unverifiedList.length} 条变异**什么都没证明**（mutations=ran-unverified）：`,
+  );
+  for (const u of unverifiedList) console.log(`        · ${u}`);
+  console.log('      它们既没被抓住，也不代表存活 —— 这几条断言"会不会红"本轮**没有被证明过**。');
+}
 if (mutations === 'skipped') {
   console.log(
     '   ⚠️ 本轮**变异验证整个没跑**（mutations=skipped）——' +

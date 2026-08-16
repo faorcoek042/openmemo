@@ -378,28 +378,62 @@ section('A 组（#102）· e2e-runtime 凭证作业的三态真值表');
   if (!emitStep) {
     bad('A7 找不到 attest 作业里那条 `emit-e2e-attestation.mjs --leg runtime` 的步骤');
   } else {
-    const render = (mutResult) =>
+    /*
+     * ★ 2026-08-17：`--mutations` 从两态变三态（关掉 v0.7.3 已知边界第 13 条）。
+     *   「跑没跑」仍由 `needs.mutations.result` 决定，而「跑了之后每条有没有结论」
+     *   来自汇总步骤 `steps.mut.outputs.mutations_state`（`ran` | `ran-unverified`）。
+     *   所以这里的夹具要能喂第二个维度 —— 少喂它，下面三条会渲染出 `--mutations ""`。
+     */
+    const render = (mutResult, mutState = 'ran', unverifiedFlag = '') =>
       interpolate(String(emitStep.run), {
         needs: {
           audit: { result: 'success', outputs: { bundle_run_id: '31568189189' } },
           mutations: { result: mutResult, outputs: {} },
         },
-        steps: { sum: { outputs: { undecided_flag: '--undecided 0' } } },
+        steps: {
+          sum: { outputs: { undecided_flag: '--undecided 0' } },
+          mut: { outputs: { mutations_state: mutState, unverified_flag: unverifiedFlag } },
+        },
         inputs: skipRun,
       });
     const asSkipped = render('skipped');
     const asRan = render('success');
+    const asUnverified = render(
+      'success',
+      'ran-unverified',
+      '--unverified-mutations "darwin-arm64:M-driver-lie"',
+    );
     is(
       /--mutations "skipped"/.test(asSkipped),
       true,
       'A7a 变异被跳过时，写凭证那一行渲染成 `--mutations "skipped"` —— 跳过被**说出来了**',
     );
-    is(/--mutations "ran"/.test(asRan), true, 'A7b 变异跑过时渲染成 `--mutations "ran"`');
+    is(
+      /--mutations "ran"/.test(asRan),
+      true,
+      'A7b 变异跑过且每条都有结论时渲染成 `--mutations "ran"`',
+    );
     is(
       asSkipped === asRan,
       false,
       'A7c 两种情形渲染出的命令**不一样** —— 否则凭证里两者长得一模一样，等于没说',
     );
+    /*
+     * 🔴 A7d/A7e：**「跑了但有一条什么都没证明」必须渲染成另一句话，并带上是哪几条。**
+     *   此前 `success` 一律渲染成 `ran`，于是退出码 3（跑了但什么都没证明）
+     *   被记成好消息 —— darwin 那一格从 08-10 起每一轮都是这样。
+     */
+    is(
+      /--mutations "ran-unverified"/.test(asUnverified),
+      true,
+      'A7d 有变异什么都没证明时渲染成 `--mutations "ran-unverified"`',
+    );
+    is(
+      /--unverified-mutations "darwin-arm64:M-driver-lie"/.test(asUnverified),
+      true,
+      'A7e 而且**说得出是哪几条** —— 只报状态不报清单等于报警不给线索',
+    );
+    is(asUnverified === asRan, false, 'A7f 「都有结论」与「有一条没结论」渲染出的命令**不一样**');
   }
 
   // A8 —— 模式门：checkout（默认，也是 schedule 落到的那一档）不发凭证。

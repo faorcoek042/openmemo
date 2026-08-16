@@ -476,8 +476,30 @@ jobs:
               echo "- 存活：\`${survived:-（无）}\`"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+          # ★ 把「哪几条什么都没证明」落盘，供 attest 作业写进凭证。
+          #   此前它只活在日志与 step summary 里 —— 而凭证那一格只有 ran|skipped，
+          #   于是 exit 3 被记成 `ran`（v0.7.3 已知边界第 13 条）。
+          #   ⚠️ 无条件写、**存活也写**：这是覆盖面上报，不是判定；
+          #      判定由下面的 `exit $rc` 与 attest 的 `if:` 管。
+          node -e '
+            const fs = require("fs");
+            const ids = process.argv[1].split(/\s+/).filter(Boolean);
+            fs.writeFileSync(process.argv[2], JSON.stringify({ unverified: ids }, null, 2) + "\n");
+          ' "${unverified}" "e2e-runtime-unverified-${{ matrix.label }}.json"
+          cat "e2e-runtime-unverified-${{ matrix.label }}.json"
           if [ $rc -ne 0 ]; then echo "存活的变异：$survived"; fi
           exit $rc
+
+      # ★ 覆盖面（哪几条变异什么都没证明）单独一份 artifact。
+      # `!cancelled()`：**失败也传** —— 这是覆盖面上报不是判定；而一次变异存活的跑里
+      # 「另外那几条有没有被验过」恰恰是最想知道的。
+      - name: 留档（未验证的变异）
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: e2e-runtime-unverified-${{ matrix.label }}
+          path: e2e-runtime-unverified-${{ matrix.label }}.json
+          if-no-files-found: warn
 
       - name: 留档
         if: ${{ !cancelled() }}
@@ -595,6 +617,14 @@ jobs:
       #   （对应 B1/B2 用例）。两种情况都不是"悄悄少算"，而是响亮警告 + 收敛成
       #   null，判据不受影响。
       PLATFORMS: linux-x64,darwin-arm64,win32-x64
+      # ★ 变异矩阵的标签**与 PLATFORMS 不同** —— 变异只在两个平台上跑
+      #   （linux 跑全部；darwin 只跑 `M-driver-lie`；**win32 根本不在变异矩阵里**）。
+      #   两份清单必须分开写，合成一份会让 `collect-unverified-mutations.mjs`
+      #   永远找不到 `e2e-runtime-unverified-win32-x64.json`，
+      #   于是**每一轮都虚报一条未验证** —— 一个恒吵的守卫，和恒绿的一样没用。
+      #   加/删变异平台时要跟 `mutations` 的 matrix 手动同步；
+      #   `selftest-attestation-mutations.mjs` 有一条用例正面钉着这两者一致。
+      MUT_LABELS: linux-x64,darwin-arm64
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -623,20 +653,49 @@ jobs:
             --file-template 'e2e-runtime-undecided-{label}.json' \
             --github-output "$GITHUB_OUTPUT"
 
-      # ★ `--mutations`（#102）：把「这一轮变异验证到底跑没跑」写进凭证。
+      # ★ 变异未验证清单：把「哪几条什么都没证明」从变异 job 带过来。
       #
-      #   取值只有两种到得了这里：`success` ⇒ `ran`、`skipped` ⇒ `skipped`。
-      #   `failure` / `cancelled` **到不了**（上面的 `if:` 已经把凭证挡掉了），
-      #   所以 `emit-e2e-attestation.mjs` 也只认 `ran|skipped`，别的一律 die ——
-      #   万一哪天上面那道门被改松，这里会**当场炸**（凭证发不出去），
-      #   而不是发一张写着奇怪值的凭证。**炸比撒谎好。**
+      #   ⚠️ 只在变异 job **真的跑过**时下载/汇总。它被跳过时下面的表达式直接选
+      #   `skipped`，这两步的输出用不上（`if:` 让它们不跑，输出为空串）。
+      - name: 下载各格的未验证变异清单
+        if: ${{ needs.mutations.result != 'skipped' }}
+        uses: actions/download-artifact@v7
+        with:
+          pattern: e2e-runtime-unverified-*
+          path: unverified
+          merge-multiple: true
+      - name: 汇总未验证的变异
+        id: mut
+        if: ${{ needs.mutations.result != 'skipped' }}
+        run: |
+          node scripts/ci/collect-unverified-mutations.mjs \
+            --dir unverified \
+            --expect-labels "$MUT_LABELS" \
+            --file-template 'e2e-runtime-unverified-{label}.json' \
+            --github-output "$GITHUB_OUTPUT"
+
+      # ★ `--mutations`（#102；三态化 2026-08-17，关掉 v0.7.3 已知边界第 13 条）
+      #
+      #   `needs.mutations.result` 只分得出「跑没跑」；**跑了之后每条有没有结论**
+      #   要靠上面那一步汇总出来的 `mutations_state`：
+      #     · `skipped`        —— 变异 job 整轮没跑；
+      #     · `ran`            —— 跑了，且**每一条都有结论**；
+      #     · `ran-unverified` —— 跑了，但至少一条什么都没证明（同时附上是哪几条）。
+      #
+      #   此前这里写死 `success ⇒ ran`，于是**退出码 3（跑了但什么都没证明）
+      #   被记成了 `ran`** —— darwin 那一格从 08-10 起每轮如此，而凭证一直说好消息。
+      #
+      #   `failure` / `cancelled` **到不了这里**（上面的 `if:` 已经把凭证挡掉了），
+      #   所以 `emit-e2e-attestation.mjs` 不认别的值，一律 die ——
+      #   万一哪天上面那道门被改松，这里会**当场炸**（凭证发不出去）。**炸比撒谎好。**
       - name: 写凭证
         run: |
           node scripts/ci/emit-e2e-attestation.mjs \
             --leg runtime \
             --bundle-run "${{ needs.audit.outputs.bundle_run_id }}" \
             --platforms "$PLATFORMS" \
-            --mutations "${{ needs.mutations.result == 'skipped' && 'skipped' || 'ran' }}" \
+            --mutations "${{ needs.mutations.result == 'skipped' && 'skipped' || steps.mut.outputs.mutations_state }}" \
+            ${{ steps.mut.outputs.unverified_flag }} \
             ${{ steps.sum.outputs.undecided_flag }} \
             --out dist/e2e-attest.json
       - uses: actions/upload-artifact@v6
