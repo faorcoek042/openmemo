@@ -253,6 +253,7 @@ jobs:
             echo "== 回归门禁模式：用本次 checkout 现组装的界面 =="
             node scripts/ci/e2e-browser-audit.mjs --port 19980 \
               --undecided-out "e2e-browser-undecided-${{ matrix.label }}.json" \
+              --probe-sweep-ambient \
               ${{ (inputs.diagnoseDownload != '' && matrix.label == 'win32-x64') && format('--diagnose-download {0}', inputs.diagnoseDownload) || '' }}
           else
             echo "== 发布审计模式：对 build-bundles run ${{ steps.pick.outputs.run_id }} 的包 =="

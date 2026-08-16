@@ -176,6 +176,19 @@ const DIAGNOSE_DOWNLOAD = arg('--diagnose-download', null);
  * 下面「汇总」块本来就是唯一、无条件执行的那一段。
  */
 const UNDECIDED_OUT = arg('--undecided-out', null);
+/**
+ * ★ `--probe-sweep-ambient`：一次性**只观测不判决**的探针，**刻意不进门禁**。
+ *
+ * 横扫那 40 个匿名按钮今天仍然只有老四选一（B1 已经用「空转对照窗 + 该发生的
+ * 那件事」修对了，横扫没有）。给它们也加对照窗之前要先回答一个**量**的问题：
+ * **那 40 个里有几个会翻档？** 翻一两个 = 收紧判据；一次翻十几个 = 那不是收紧
+ * 判据，是发现了十几个死按钮 —— 两者的下一步完全不同，不量就改是在赌。
+ *
+ * 打开它只做两件事：给横扫的每次点击加一个空转对照窗、把两套判据的差异印出来。
+ * **判决用的仍然是老那套**（`ambientAdvisory: true`，见 `clickAndObserve`），
+ * 所以这一跑不可能因为它变红，也不可能因为它变绿。
+ */
+const PROBE_SWEEP_AMBIENT = argv.includes('--probe-sweep-ambient');
 const BASE = `http://127.0.0.1:${PORT}`;
 const IS_WIN = process.platform === 'win32';
 
@@ -690,6 +703,7 @@ try {
       expectUrlChange = false,
       ambientWindow = false,
       expectApi = null,
+      ambientAdvisory = false,
     } = opts;
     const sel = rawSel ?? (testid ? `[data-testid="${testid}"]` : null);
     // 先定位。找不到是**红**，而且要说清是"页面上没有"还是"有但不可见/被禁用"。
@@ -785,7 +799,36 @@ try {
      */
     const reaction = judgeReaction(obs);
     const expected = judgeExpectedEffect(obs);
-    return { ...obs, reacted: reaction.reacted, reactedWhy: reaction.why, expected };
+    /*
+     * ★★ 一次性**只观测不判决**的探针（`--probe-sweep-ambient`，刻意不进门禁）。
+     *
+     * 横扫那 40 个匿名按钮今天仍然只有老四选一 —— 页面自己在动时，一个死按钮
+     * 可能被判成活的（B1 那条就是这么连红三夜的）。给它们也加空转对照窗之前，
+     * 要先回答一个**量**的问题：**那 40 个里有几个会翻档？**
+     *   · 翻一两个 ⇒ 是收紧判据；
+     *   · 一次翻十几个 ⇒ 那不是收紧判据，是**发现了十几个死按钮**，得单独报。
+     *
+     * 所以这里**两套判据都算，但只有老的那套参与判决**：
+     *   · `reacted`       —— ambient 置 null，与探针关掉时**逐字相同**（B3 判决不变）；
+     *   · `reactedStrict` —— 带对照窗的严判据，**只印出来，不喂给任何断言**。
+     * 探针关掉时 `ambient === null`，两者本来就相等，这一段等于不存在。
+     *
+     * ⚠️ 用**调用点**上的 `ambientAdvisory` 开关，不是一个全局 flag：B1 是**正经**
+     *   带对照窗判决的，一个全局 flag 会在探针跑的那一轮把 B1 一起降级成老判据 ——
+     *   为了量一件事而把另一件已经修好的事悄悄弄松，正是这一程在拆的那种形状。
+     */
+    // `reaction` 本来就是**带对照窗**算出来的那一份 —— 它就是严判据。
+    const strict = reaction;
+    const lenient =
+      ambientAdvisory && ambient ? judgeReaction({ ...obs, ambient: null }) : reaction;
+    return {
+      ...obs,
+      reacted: lenient.reacted,
+      reactedWhy: lenient.why,
+      reactedStrict: strict.reacted,
+      reactedStrictWhy: strict.why,
+      expected,
+    };
   }
 
   function reportClick(r) {
@@ -1072,6 +1115,9 @@ try {
         const r = await clickAndObserve(page, {
           name: `${path} #${i}「${n.label || n.aria || '(图标按钮)'}」`,
           rawSel: `[data-sweep-idx="${i}"]`,
+          // ★ 只观测不判决：判决用的仍是老四选一（见 clickAndObserve 里那段）
+          ambientWindow: PROBE_SWEEP_AMBIENT,
+          ambientAdvisory: true,
         });
         sweepResults.push(r);
         if (r.reacted !== true) reportClick(r);
@@ -1082,6 +1128,36 @@ try {
   }
 
   say('');
+  /*
+   * ★ 探针的**全部产出**：两套判据在这 40 个按钮上差多少。不参与任何判决。
+   */
+  if (PROBE_SWEEP_AMBIENT) {
+    const probed = sweepResults.filter((r) => r.clicked === true);
+    const flipped = probed.filter((r) => r.reacted === true && r.reactedStrict === false);
+    const agreeAlive = probed.filter((r) => r.reacted === true && r.reactedStrict === true);
+    const agreeDead = probed.filter((r) => r.reacted === false && r.reactedStrict === false);
+    say('');
+    say('   ══ 探针（只观测不判决）：横扫这一格换成严判据会翻几个 ══');
+    say(`      真点到的 ${probed.length} 个 —— 两套判据一致「活」${agreeAlive.length} 个 ·`);
+    say(`      一致「死」${agreeDead.length} 个 · **翻档（松判活、严判死）${flipped.length} 个**`);
+    if (flipped.length > 0) {
+      say('      翻档的逐个列出（这些就是"页面自己在动，于是死按钮被判成活的"的候选）：');
+      for (const r of flipped) {
+        say(`        · ${r.name}`);
+        say(`          松：${r.reactedWhy}`);
+        say(`          严：${r.reactedStrictWhy}`);
+        say(
+          `          空转对照窗：DOM 自己变了=${r.ambient?.domChanged}` +
+            ` /api 自己发了 ${r.ambient?.apiRequests.length ?? 0} 条`,
+        );
+      }
+    } else {
+      say('      一个都没翻 —— 这一轮这一格上，严判据与老判据给出同样的结论。');
+    }
+    say('   ══ 探针结束（以上不影响任何断言）══');
+    say('');
+  }
+
   say(`   ── 跳过的破坏性/重量级按钮（${skipped.length} 个，明确记在案，不算通过）──`);
   for (const sk of skipped.slice(0, 20)) say(`      ${sk}`);
 
