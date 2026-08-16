@@ -226,6 +226,8 @@ let chromium;
 /* ── 断言框架（全部只吃字符串/布尔，PROTOCOL §8）──────────────────────────── */
 const results = [];
 let failed = 0;
+/** 整轮被异常掐断（不是某一条断言红）—— 汇总里那条"变异地板"据此让路。 */
+let aborted = false;
 const brief = (v) => {
   const s = typeof v === 'string' ? v : JSON.stringify(v);
   return s && s.length > 400 ? `${s.slice(0, 400)}…` : (s ?? '');
@@ -2402,6 +2404,7 @@ try {
   }
 } catch (e) {
   failed += 1;
+  aborted = true;
   say('');
   say(`✘ 审计中断：${e.message}`);
   say(
@@ -2433,6 +2436,35 @@ const undec = results.filter((r) => r.status === 'UNDECIDED' || r.status === 'MU
 say(
   `   断言通过 ${pass} 条 · 变异证明 ${mut} 条 · 失败 ${failed} 条 · 无从判断 ${undec.length} 条`,
 );
+/*
+ * ★ 变异地板：**这一轮至少要有一条变异真的判到 MUT-OK。**
+ *
+ * ⚠️ 它守的不是产品，是**这条判决链路自己还通不通**。
+ *   `MUT-UNKNOWN` 刻意不计入 failed，所以「`ok()` 不再抛 `AssertionFailed` 了」
+ *   （改错 import、类型被别的模块实例覆盖、有人把 `ok()` 换回裸 `Error`）
+ *   的表现是**四条变异悄悄全变 UNKNOWN，整条腿照样绿** ——
+ *   一种比它替换掉的那个假绿更安静的假绿。
+ *
+ *   单元证明（`selftest-mutation-verdict.mjs`）证的是判据本身，**证不到接线**。
+ *   这一条守的正是接线：`ok()` → `AssertionFailed` → `MUT-OK` 这条路还走得通。
+ *
+ * 判据取"至少 1 条"而不是"4 条"：某条变异在某台 runner 上前提构造不出来
+ * （premise ⇒ UNKNOWN）是正当的，钉死条数会造出一盏为合法情况常亮的灯。
+ * `[CI 实测]` 近 5 轮三平台每一格都是 3～4 条 MUT-OK —— 地板离现状很远，
+ * 只有链路真的断了才会踩到它。
+ *
+ * 整轮被掐断时让路：那时 `failed` 已经因为"审计中断"加过一次，
+ * 再报一条"没有变异判到 MUT-OK"只是在复述同一件事。
+ */
+const mutTotal = results.filter((r) => String(r.status).startsWith('MUT-')).length;
+if (!aborted && mutTotal > 0 && mut === 0) {
+  failed += 1;
+  say('');
+  say(`   ✘ 这一轮 ${mutTotal} 条变异**没有一条**判到 MUT-OK。`);
+  say('     变异证明不计入失败的那两档（前提没构造出来 / 腿炸了）把整套证明吃光了 ——');
+  say('     多半是 `ok()` → `AssertionFailed` → `MUT-OK` 这条接线断了，');
+  say('     而它断掉的表现恰恰是"什么都不说"。先看上面每条变异各自是哪一档。');
+}
 /*
  * ★ 覆盖面落盘。不看 failed —— 这是展示用的覆盖面计数，不是判定，
  * 红也要如实落盘（与 runtime 腿同一条道理）。
