@@ -599,10 +599,7 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
                     "上游 API 提供" 与 "本机独立复算" 是两种不同强度的证据：
                     前者信任上游没被攻破，后者只信任字节本身。混为一谈会高估可信度。
                   */}
-                  <ProvenanceNote
-                    verification={c.sha256Verification}
-                    note={c.sha256Provenance}
-                  />
+                  <ProvenanceNote verification={c.sha256Verification} note={c.sha256Provenance} />
                 </div>
               </div>
             </li>

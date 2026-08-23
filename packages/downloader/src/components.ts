@@ -58,7 +58,7 @@ export interface ComponentRecord {
    * 见 `@openmemo/shared` 的 `Sha256Verification`：**渲染判断只许读这一格。**
    *
    * ⚠️ 清单里缺这一格时**不许静默当成"本机复算"** —— 那正好是强度更高的那一档，
-   * 沉默的默认值会把一个抄来的摘要说成我们自己算过的。见 {@link toStatus}。
+   * 沉默的默认值会把一个抄来的摘要说成我们自己算过的。退法写在 `listComponents()` 里。
    */
   sha256Verification?: Sha256Verification | null;
   sha256Provenance?: string | null;
