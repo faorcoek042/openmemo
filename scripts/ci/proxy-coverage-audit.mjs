@@ -489,11 +489,52 @@ try {
    *    它把一个**静默的**失败改成**大声的**失败。修完这一段，这一步该红照样红，
    *    只是红的那句话会指着真正的成因，而不是指着一个空文件名。
    *
-   * 为什么顺带印编码器清单：本仓对成因的当前判断是「产品自带的 media-tools ffmpeg
-   * 是**面向解码**的构建，`libx264` / `aac` 编码器不在里面」——
-   * 那是**推断**，没有人查过。下面这几行让下一次运行**直接回答**它，
-   * 而不是让下一个人继续照抄这条推断。
+   * ── ★ 那条写了 13 天的推断：**实测之后一半是错的**（run 32655294063）───────────
+   *
+   * 此前记的成因是「产品自带的 media-tools ffmpeg 是**面向解码**的构建，
+   * `libx264` / `aac` 编码器不在里面」。加上编码器探测之后，实测结果是：
+   *
+   *     无 libx264 **有 libopenh264** **有 mpeg4** **有 aac** 有 libmp3lame 有 pcm_s16le
+   *     ffmpeg stderr: `Unknown encoder 'libx264'` / `Encoder not found`
+   *
+   * 也就是说：**编码器好好地在**，缺的只有 `libx264` 一个 —— 而它缺的原因是
+   * **许可证**，不是"面向解码"：那个包的路径里就写着 `…-linux64-**lgpl**-8.1`，
+   * 而 libx264 是 GPL，LGPL 构建里本来就不会有它（同仓 `ffmpeg-lgpl-verify.yml`
+   * 量的就是这件事）。
+   *
+   * ⚠️ 这条订正值得单独记一笔，因为**旧推断会把下一个人带向错误的修法**：
+   *    照着"编码器不在"去做，结论是"换一条不依赖编码器的 fixture 路径"
+   *    （往仓库里塞一个二进制夹具之类）。而真实的修法是**换一个编码器名字**。
+   *    `stdio:'ignore'` 吞掉的那一行 stderr，值 13 天。
    */
+
+  /*
+   * 按偏好挑一个**这台机器上真的有**的视频编码器，而不是写死一个。
+   * 顺序理由：libopenh264 与 libx264 同为 H.264（产物形态最接近原来的意图）；
+   * mpeg4 是最后的兜底，任何 ffmpeg 都有。
+   * ⚠️ 挑中的那个会打印出来 —— fixture 用什么编的，不许靠猜。
+   */
+  const encoderList = await new Promise((resolve) => {
+    let o = '';
+    const p = spawn(FFMPEG, ['-hide_banner', '-encoders'], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    p.stdout.on('data', (b) => (o += b.toString()));
+    p.on('close', () => resolve(o));
+    p.on('error', () => resolve(''));
+  });
+  const hasEncoder = (name) => new RegExp(`^\\s*\\S+\\s+${name}\\s`, 'm').test(encoderList);
+  const VCODEC = ['libx264', 'libopenh264', 'mpeg4'].find(hasEncoder);
+  const ACODEC = ['aac', 'libmp3lame', 'pcm_s16le'].find(hasEncoder);
+  if (!VCODEC || !ACODEC) {
+    throw new Error(
+      `这个 ffmpeg 一个可用的${!VCODEC ? '视频' : '音频'}编码器都没有（${FFMPEG}）。\n` +
+        `  探到的：libx264=${hasEncoder('libx264')} libopenh264=${hasEncoder('libopenh264')} ` +
+        `mpeg4=${hasEncoder('mpeg4')} aac=${hasEncoder('aac')} pcm_s16le=${hasEncoder('pcm_s16le')}`,
+    );
+  }
+  say(`   fixture 编码器：${VCODEC} / ${ACODEC}（按这台机器实际有的挑，不是写死的）`);
+
   const ffmpegArgs = [
     '-y',
     '-f',
@@ -507,11 +548,11 @@ try {
     '-t',
     '2',
     '-c:v',
-    'libx264',
+    VCODEC,
     '-pix_fmt',
     'yuv420p',
     '-c:a',
-    'aac',
+    ACODEC,
     '-shortest',
     out,
   ];
@@ -525,29 +566,15 @@ try {
     p.on('error', (e) => resolve({ code: null, err: `spawn 失败：${e.message}` }));
   });
   if (enc.code !== 0) {
-    /* 只在失败时才去问编码器 —— 成功路径上不多跑一个进程。 */
-    const list = await new Promise((resolve) => {
-      let outBuf = '';
-      const p = spawn(FFMPEG, ['-hide_banner', '-encoders'], {
-        stdio: ['ignore', 'pipe', 'ignore'],
-      });
-      p.stdout.on('data', (b) => {
-        outBuf += b.toString();
-      });
-      p.on('close', () => resolve(outBuf));
-      p.on('error', () => resolve(''));
-    });
-    const has = (name) => new RegExp(`^\\s*\\S+\\s+${name}\\s`, 'm').test(list);
     const probed = ['libx264', 'libopenh264', 'mpeg4', 'aac', 'libmp3lame', 'pcm_s16le']
-      .map((n) => `${has(n) ? '有' : '无'} ${n}`)
-      .join('　');
+      .map((n) => `${hasEncoder(n) ? '有' : '无'} ${n}`)
+      .join('  ');
     throw new Error(
-      `造 fixture 的 ffmpeg 退出码 ${enc.code}（${FFMPEG}）。\n` +
+      `造 fixture 的 ffmpeg 退出码 ${enc.code}（${FFMPEG}，用的是 ${VCODEC}/${ACODEC}）。\n` +
         `  ffmpeg stderr（末 800 字）：\n${enc.err.slice(-800)}\n` +
-        `  ★ 该 ffmpeg 的编码器实况：${probed || '(问不出来)'}\n` +
-        `  ★ 若 libx264 / aac 为"无"，那就证实了「产品的 media-tools 是面向解码的构建」这条推断，\n` +
-        `    修法是换一条不依赖编码器的 fixture 路径（见 proxy-coverage.yml 文件头「首跑结果」一节），\n` +
-        `    **不是**放宽这条断言。`,
+        `  ★ 该 ffmpeg 的编码器实况：${probed}\n` +
+        `  ★ 挑编码器这一步已经按实况挑过了，所以这里的红**不再是"缺 libx264"那一类**。\n` +
+        `    先读上面那段 stderr，别照抄文件头里任何一条旧推断。`,
     );
   }
   const { readFileSync } = await import('node:fs');
