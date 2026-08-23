@@ -27,12 +27,12 @@ let fail = 0;
 const section = (s) => console.log(`\n${s}`);
 function ok(msg) {
   pass++;
-  console.log(`  [32m✔[0m ${msg}`);
+  console.log(`  \x1b[32m✔\x1b[0m ${msg}`);
 }
 function bad(msg, detail) {
   fail++;
-  console.log(`  [31m✘[0m ${msg}`);
-  if (detail) console.log(`      [31m${detail}[0m`);
+  console.log(`  \x1b[31m✘\x1b[0m ${msg}`);
+  if (detail) console.log(`      \x1b[31m${detail}\x1b[0m`);
 }
 function is(actual, expected, msg) {
   if (actual === expected) ok(msg);
@@ -54,7 +54,7 @@ function redBecause(problems, needle, msg) {
  * A 组 · 「暗着的 workflow」登记册
  * ═══════════════════════════════════════════════════════════════════════════════════ */
 
-section('[1mA 组 · 只能手动触发的 workflow 必须登记，挂起的必须有截止版本[0m');
+section('\x1b[1mA 组 · 只能手动触发的 workflow 必须登记，挂起的必须有截止版本\x1b[0m');
 
 /* A0 正向：今天的真登记 + 今天的真版本，必须是绿的（否则下面所有反向都不可信）。 */
 {
@@ -198,7 +198,7 @@ section('  ── ★ 过期判定');
  * B 组 · 链条跑到底，不在第一处红停下
  * ═══════════════════════════════════════════════════════════════════════════════════ */
 
-section('[1mB 组 · run-selftests-all：链条跑到底，不在第一处红停下[0m');
+section('\x1b[1mB 组 · run-selftests-all：链条跑到底，不在第一处红停下\x1b[0m');
 
 /* B1 切分：真链切出来的环数与"数 && 的个数 + 1"一致，且每一环都认得出形状。 */
 {
@@ -301,7 +301,7 @@ is(parseLink('pnpm run x'), null, 'B2d ★ 认不出来就返回 null —— 不
 
 console.log('');
 if (fail > 0) {
-  console.error(`[31m✘ selftest-workflow-expiry: ${pass} passed, ${fail} failed[0m`);
+  console.error(`\x1b[31m✘ selftest-workflow-expiry: ${pass} passed, ${fail} failed\x1b[0m`);
   process.exit(1);
 }
-console.log(`[32m✔ selftest-workflow-expiry: ${pass} 个用例全部通过[0m`);
+console.log(`\x1b[32m✔ selftest-workflow-expiry: ${pass} 个用例全部通过\x1b[0m`);
