@@ -8,7 +8,9 @@
     "language": "语言",
     "themeSystem": "跟随系统",
     "themeLight": "浅色",
-    "themeDark": "深色"
+    "themeDark": "深色",
+    "versionUnknown": "版本未知",
+    "versionStampTitle": "{{version}} · 启动于 {{at}}"
   },
   "nav": {
     "newCapture": "新建捕获",
@@ -984,6 +986,11 @@
     "groupApi": "接口连通性",
     "daemon": "本地服务",
     "dataDir": "数据目录",
+    "build": "构建",
+    "buildDirty": "构建时有未提交改动",
+    "buildCommitted": "提交于 {{at}}",
+    "buildBuilt": "构建于 {{at}}",
+    "buildStarted": "本次启动 {{at}}",
     "liveUpdates": "实时更新",
     "sseClients": "{{n}} 个连接",
     "database": "数据库",
