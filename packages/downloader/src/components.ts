@@ -28,6 +28,7 @@ import type {
   GetComponentsResponse,
   InstalledVersion,
   Provenance,
+  Sha256Verification,
   UpstreamCheck,
   UpstreamSource,
 } from '@openmemo/shared';
@@ -53,6 +54,13 @@ export interface ComponentRecord {
   upstream: UpstreamSource | null;
   sizeBytes: number;
   sha256: string;
+  /**
+   * 见 `@openmemo/shared` 的 `Sha256Verification`：**渲染判断只许读这一格。**
+   *
+   * ⚠️ 清单里缺这一格时**不许静默当成"本机复算"** —— 那正好是强度更高的那一档，
+   * 沉默的默认值会把一个抄来的摘要说成我们自己算过的。退法写在 `listComponents()` 里。
+   */
+  sha256Verification?: Sha256Verification | null;
   sha256Provenance?: string | null;
 }
 
@@ -234,6 +242,16 @@ export async function listComponents(opts: ListComponentsOptions): Promise<GetCo
     upstream: c.upstream,
     sizeBytes: c.sizeBytes,
     sha256: c.sha256,
+    /*
+     * ★★ 缺这一格时**退到强度更低的那一档**，不是更高的那一档。
+     *
+     * 诱惑是写 `?? 'local-recomputed'`（清单里今天 27 条全是它）。但那条默认值
+     * 说的是「**我们自己把每个字节都下下来算过**」—— 一句关于我们做过什么的断言。
+     * 一条忘了填这一格的新组件会**自动获得这句我们没有做过的保证**，而且不会有
+     * 任何东西报错。退到 `upstream-provided` 则只会让界面多一个警告色：
+     * **错的方向是"少信我们一点"，不是"多信我们一点"。**
+     */
+    sha256Verification: c.sha256Verification ?? 'upstream-provided',
     sha256Provenance: c.sha256Provenance ?? null,
   }));
 

@@ -89,6 +89,8 @@ interface PackEntry {
 }
 interface ComponentEntry {
   id: string;
+  sha256?: string;
+  sha256Verification?: string;
   sha256Provenance?: string;
   provenance?: { releaseUrl?: string };
 }
@@ -207,6 +209,63 @@ describe('openmemo-probe 必须随包出厂（T-167 / ADR-015 §7）', () => {
           `而 sizeBytes/sha256 已经是自建产物的值 —— 两者对不上，用户查来源会被带偏`,
       );
     }
+  });
+
+  /*
+   * ★★ 「这个哈希是谁算的」必须是**机器可判的一格**，不许再从散文里嗅。
+   *
+   * 上一版界面用 `/API|digest|upstream/i.test(sha256Provenance)` 判证据强弱。
+   * `[实测 2026-08-24]` 13 条散文里 **5 条被判成"上游提供"，全部误判**，而且正好是
+   * 证据最强的那几条 —— `whispercpp-cpu-win-x64` 明写着「不带任何凭证全量重下后本机
+   * `sha256sum` 复算」，命中的 `api` 来自另一句里的 DLL 名 `api-ms-win-crt-*`。
+   *
+   * 这条腿守的是那个修法的前提：**每一条有 sha256 的组件都得自己说出这一格**。
+   * 缺了不会崩（`components.ts` 退到 `upstream-provided`，方向是"少信我们一点"），
+   * 但那是保险丝不是设计 —— 清单里就该写全。
+   */
+  it('★★ 每条带 sha256 的组件都声明了 sha256Verification（判据不许再落在散文上）', async () => {
+    const list = await components();
+    const withHash = list.filter((c) => c.sha256 && c.sha256 !== 'n/a');
+    assert.ok(withHash.length > 0, '一条带 sha256 的组件都没有 —— 这条在空转');
+
+    const LEGAL = new Set(['local-recomputed', 'upstream-provided']);
+    const missing = withHash.filter((c) => !c.sha256Verification).map((c) => c.id);
+    assert.deepEqual(
+      missing,
+      [],
+      `这些组件有 sha256 却没说它是谁算的：${missing.join(', ')}\n` +
+        `  界面要靠这一格决定"要不要提醒用户少信它"，缺了就只能回去猜散文。`,
+    );
+
+    const illegal = withHash
+      .filter((c) => !LEGAL.has(c.sha256Verification!))
+      .map((c) => `${c.id}=${c.sha256Verification!}`);
+    assert.deepEqual(
+      illegal,
+      [],
+      `sha256Verification 只有两个合法值（local-recomputed / upstream-provided），` +
+        `这些不是：${illegal.join(', ')}`,
+    );
+  });
+
+  /*
+   * ★ 反向腿：**散文里出现 `API` / `upstream` 不许改变任何结论。**
+   *
+   * 没有这一条，上面那条可以被"顺手再嗅一次散文当兜底"绕过去，而那正是本次要拆的
+   * 那个判据。这里直接对着数据断：确实存在既写着 `local-recomputed`、散文里又含
+   * 那几个词的条目 —— 它们就是上一版误判的那 5 条。
+   */
+  it('★ 确实存在「散文含 API/upstream 但结论是本机复算」的条目（上一版正是在这里翻车）', async () => {
+    const list = await components();
+    const traps = list.filter(
+      (c) =>
+        c.sha256Verification === 'local-recomputed' &&
+        /API|digest|upstream/i.test(c.sha256Provenance ?? ''),
+    );
+    assert.ok(
+      traps.length > 0,
+      '一条这样的条目都没有 —— 那么上面那条反向腿测的是零，说明清单变了，判据要重写',
+    );
   });
 
   it('④ 白名单里不许躺着一个已经不存在的 id', async () => {
