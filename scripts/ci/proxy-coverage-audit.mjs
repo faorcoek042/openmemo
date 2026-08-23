@@ -472,37 +472,91 @@ try {
   say(`   ffmpeg: ${FFMPEG ?? '(没找到)'}`);
   if (!FFMPEG) throw new Error('storeRoot 里没有 ffmpeg —— 造不出 fixture');
   const out = join(ROOT, 'clip.mp4');
-  await new Promise((r) => {
-    const p = spawn(
-      FFMPEG,
-      [
-        '-y',
-        '-f',
-        'lavfi',
-        '-i',
-        'testsrc=size=160x120:rate=10:duration=2',
-        '-f',
-        'lavfi',
-        '-i',
-        'anullsrc=r=16000:cl=mono',
-        '-t',
-        '2',
-        '-c:v',
-        'libx264',
-        '-pix_fmt',
-        'yuv420p',
-        '-c:a',
-        'aac',
-        '-shortest',
-        out,
-      ],
-      { stdio: 'ignore' },
-    );
-    p.on('close', r);
-    p.on('error', r);
+
+  /*
+   * ── 🔴 这一段此前把自己的失败吞掉了（2026-08-23 修）────────────────────────────
+   *
+   * `[实测 run 31424996163]` 首跑死在这里，而现场看到的是：
+   *
+   *     ✘ 中断：ENOENT: no such file or directory, open '/tmp/…/clip.mp4'
+   *
+   * 一个**离成因很远**的 ENOENT。三处叠加造成的：
+   *   ① `stdio: 'ignore'` —— ffmpeg 把原因写在 stderr 上，而那句话被丢了；
+   *   ② `p.on('close', r)` —— resolve 不带退出码，**任何退出码都当成功**；
+   *   ③ 紧接着盲读 `readFileSync(out)` —— 于是失败以"文件不存在"现形。
+   *
+   * ⚠️ 这**不是**在"改断言让它绿"（本 workflow 文件头写死的禁令）。方向正好相反：
+   *    它把一个**静默的**失败改成**大声的**失败。修完这一段，这一步该红照样红，
+   *    只是红的那句话会指着真正的成因，而不是指着一个空文件名。
+   *
+   * 为什么顺带印编码器清单：本仓对成因的当前判断是「产品自带的 media-tools ffmpeg
+   * 是**面向解码**的构建，`libx264` / `aac` 编码器不在里面」——
+   * 那是**推断**，没有人查过。下面这几行让下一次运行**直接回答**它，
+   * 而不是让下一个人继续照抄这条推断。
+   */
+  const ffmpegArgs = [
+    '-y',
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc=size=160x120:rate=10:duration=2',
+    '-f',
+    'lavfi',
+    '-i',
+    'anullsrc=r=16000:cl=mono',
+    '-t',
+    '2',
+    '-c:v',
+    'libx264',
+    '-pix_fmt',
+    'yuv420p',
+    '-c:a',
+    'aac',
+    '-shortest',
+    out,
+  ];
+  const enc = await new Promise((resolve) => {
+    let err = '';
+    const p = spawn(FFMPEG, ffmpegArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
+    p.stderr.on('data', (b) => {
+      err += b.toString();
+    });
+    p.on('close', (code) => resolve({ code, err }));
+    p.on('error', (e) => resolve({ code: null, err: `spawn 失败：${e.message}` }));
   });
+  if (enc.code !== 0) {
+    /* 只在失败时才去问编码器 —— 成功路径上不多跑一个进程。 */
+    const list = await new Promise((resolve) => {
+      let outBuf = '';
+      const p = spawn(FFMPEG, ['-hide_banner', '-encoders'], {
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      p.stdout.on('data', (b) => {
+        outBuf += b.toString();
+      });
+      p.on('close', () => resolve(outBuf));
+      p.on('error', () => resolve(''));
+    });
+    const has = (name) => new RegExp(`^\\s*\\S+\\s+${name}\\s`, 'm').test(list);
+    const probed = ['libx264', 'libopenh264', 'mpeg4', 'aac', 'libmp3lame', 'pcm_s16le']
+      .map((n) => `${has(n) ? '有' : '无'} ${n}`)
+      .join('　');
+    throw new Error(
+      `造 fixture 的 ffmpeg 退出码 ${enc.code}（${FFMPEG}）。\n` +
+        `  ffmpeg stderr（末 800 字）：\n${enc.err.slice(-800)}\n` +
+        `  ★ 该 ffmpeg 的编码器实况：${probed || '(问不出来)'}\n` +
+        `  ★ 若 libx264 / aac 为"无"，那就证实了「产品的 media-tools 是面向解码的构建」这条推断，\n` +
+        `    修法是换一条不依赖编码器的 fixture 路径（见 proxy-coverage.yml 文件头「首跑结果」一节），\n` +
+        `    **不是**放宽这条断言。`,
+    );
+  }
   const { readFileSync } = await import('node:fs');
   MP4 = readFileSync(out);
+  if (MP4.length === 0) {
+    /* ffmpeg 退 0 却写出空文件也发生过（磁盘满 / 管道断）。空 fixture 会让后面
+       每一条"代理看见了请求"都变成看见一个 0 字节的请求 —— 那是假绿，不是通过。 */
+    throw new Error(`fixture clip.mp4 是 0 字节 —— ffmpeg 退了 0 但什么都没写出来`);
+  }
   say(`   fixture clip.mp4：${MP4.length} B`);
 
   hdr('3. 通过产品自己的设置接口打开代理');

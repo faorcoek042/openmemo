@@ -596,6 +596,14 @@ for (const file of files.sort()) {
       // D-12：版本号单一事实来源。被"顺手简化"掉时会当场红，而不是等用户发现
       // 界面上那个数字又几个月没动过了。
       'check-version-sync.mjs',
+      /*
+       * ★ 2026-08-23：这一条守的是「只能手动触发的 workflow 必须登记 + 挂起的必须
+       *   有截止版本」。它自己被摘掉时的样子，恰恰就是它要防的那件事 ——
+       *   一条判据写在没人读的地方，然后三次发版都没看见它。
+       *   `[实测]` proxy-coverage 的过期判据写在 YAML 注释里，滑过了 0.7.2/0.7.3/0.7.4。
+       */
+      'check-workflow-expiry.mjs',
+      'selftest-workflow-expiry.mjs',
     ]) {
       must(
         cmd.includes(f),

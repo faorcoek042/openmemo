@@ -43,8 +43,9 @@
  *
  * ## 反向验证（判据：抽掉修法必须红）
  *
- * `scripts/ci/selftest-run-selftests-all.mjs` 逐条钉住：链条被切短会红、
- * 有一环红时**后面的环仍然被执行**、以及"一条都没解析出来"必须红（空转防线）。
+ * `scripts/ci/selftest-workflow-expiry.mjs` 的 B 组逐条钉住：链条被切短会红、
+ * 有一环红时**后面的环仍然被执行**（拿一条故意在中间红的假链跑）、
+ * 以及"一条都没解析出来"必须红（空转防线）。
  */
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
@@ -92,44 +93,53 @@ const PER_LINK_TIMEOUT_MS = 5 * 60 * 1000;
  */
 const MIN_LINKS = 25;
 
-async function main() {
-  const pkg = JSON.parse(await readFile(join(REPO_ROOT, 'package.json'), 'utf8'));
-  const chain = String(pkg.scripts?.['test:ci-scripts'] ?? '');
+/**
+ * 跑完一条链，返回逐环结果。**入参化是为了让反向验证跑得起来** ——
+ * 「一环红了，后面的环仍然被执行」这条性质只有拿一条**故意在中间红**的假链
+ * 才证得了，而真链（希望）不是随时都有一环红的。
+ *
+ * @param {{chain: string, cwd: string, minLinks?: number, quiet?: boolean}} o
+ */
+export async function runAll({ chain, cwd, minLinks = MIN_LINKS, quiet = false } = {}) {
+  const say = quiet ? () => {} : (s) => console.log(s);
   const links = splitChain(chain);
 
-  if (links.length < MIN_LINKS) {
-    console.error(
-      `✘ run-selftests-all: 从 package.json 的 test:ci-scripts 只解析出 ${links.length} 环 ` +
-        `(< ${MIN_LINKS})。要么那条链被截短了，要么这里的切法过期了 —— ` +
-        `两种都必须有人看一眼，不许当成"跑完了"。`,
-    );
-    process.exit(1);
+  if (links.length < minLinks) {
+    return {
+      ok: false,
+      results: [],
+      fatal:
+        `从 package.json 的 test:ci-scripts 只解析出 ${links.length} 环 (< ${minLinks})。` +
+        `要么那条链被截短了，要么这里的切法过期了 —— 两种都必须有人看一眼，不许当成"跑完了"。`,
+    };
   }
 
   const bad = links.filter((l) => parseLink(l) === null);
   if (bad.length > 0) {
-    console.error(
-      `✘ run-selftests-all: 这些环认不出来（只支持 \`node X\` / \`bash X\`）：\n` +
+    return {
+      ok: false,
+      results: [],
+      fatal:
+        `这些环认不出来（只支持 \`node X\` / \`bash X\`）：\n` +
         bad.map((b) => `    ${b}`).join('\n') +
         `\n认不出来就跑不到 —— 与其悄悄跳过，不如在这里红。`,
-    );
-    process.exit(1);
+    };
   }
 
-  console.log(
+  say(
     `══ run-selftests-all ══ ${links.length} 环，**全部跑完再汇总**（不在第一处红停下）\n` +
-      `   平台：${process.platform}/${process.arch}　node ${process.versions.node}\n`,
+      `   平台：${process.platform}/${process.arch} node ${process.versions.node}\n`,
   );
 
   const results = [];
   for (const [i, link] of links.entries()) {
     const { bin, script, args, label } = parseLink(link);
     const n = `[${String(i + 1).padStart(2)}/${links.length}]`;
-    console.log(`\n───── ${n} ${label} ─────`);
+    say(`\n───── ${n} ${label} ─────`);
     const t0 = Date.now();
     const r = spawnSync(bin, [script, ...args], {
-      cwd: REPO_ROOT,
-      stdio: 'inherit',
+      cwd,
+      stdio: quiet ? 'ignore' : 'inherit',
       timeout: PER_LINK_TIMEOUT_MS,
       shell: false,
     });
@@ -139,18 +149,32 @@ async function main() {
     const ok = r.status === 0;
     results.push({ label, ok, status: r.status, timedOut, spawnError: r.error?.message, ms });
     if (!ok) {
-      console.log(
+      say(
         `───── ${n} ✘ ${label} —— ` +
           (timedOut
             ? `超过 ${PER_LINK_TIMEOUT_MS / 1000}s 被打断`
             : r.error
               ? `起不来：${r.error.message}`
               : `exit ${r.status}`) +
-          `　**继续跑下一环**（这正是本脚本存在的理由）`,
+          ` **继续跑下一环**（这正是本脚本存在的理由）`,
       );
     }
   }
+  return { ok: results.every((r) => r.ok), results, fatal: null };
+}
 
+async function main() {
+  const pkg = JSON.parse(await readFile(join(REPO_ROOT, 'package.json'), 'utf8'));
+  const chain = String(pkg.scripts?.['test:ci-scripts'] ?? '');
+  const { results, fatal } = await runAll({ chain, cwd: REPO_ROOT });
+  if (fatal) {
+    console.error(`✘ run-selftests-all: ${fatal}`);
+    process.exit(1);
+  }
+  reportAndExit(results);
+}
+
+function reportAndExit(results) {
   const failed = results.filter((r) => !r.ok);
   console.log(`\n══ 汇总（${process.platform}/${process.arch}）══════════════════════════════`);
   for (const r of results) {
@@ -158,7 +182,7 @@ async function main() {
       `  ${r.ok ? '✔' : '✘'} ${r.label}` +
         (r.ok
           ? ''
-          : `　← ${r.timedOut ? 'timeout' : r.spawnError ? 'spawn 失败' : `exit ${r.status}`}`),
+          : ` ← ${r.timedOut ? 'timeout' : r.spawnError ? 'spawn 失败' : `exit ${r.status}`}`),
     );
   }
   if (failed.length === 0) {
