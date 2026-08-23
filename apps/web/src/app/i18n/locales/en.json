@@ -210,6 +210,7 @@
       "empty": "No model installed yet",
       "reclaimable": "Reclaimable: unfinished downloads {{partials}} · orphan blobs {{orphans}} · unrecognised leftovers {{unclaimed}}",
       "unknownAmount": "unknown",
+      "unclaimedSegment": "Unrecognised leftovers",
       "gc": "Reclaim {{size}}"
     },
     "fit": {
@@ -357,6 +358,7 @@
         "platformMismatch": "Built for {{os}}/{{arch}}, which is not this machine.",
         "hardwareNotProbedYet": "We have not probed this machine yet, so we cannot tell whether this pack applies. Install the CPU base pack first (if you already did, press Update on it on the Components page). Probing re-runs by itself once it is in place.",
         "backendStatusMissing": "This detection run says nothing at all about this backend — we have not measured it, so we are not calling it unsupported either.",
+        "backendNotInstalledHere": "This pack is not installed, so **nothing at all was measured** about it — that is not \"your machine does not support it\". The system does not report an adapter that could use it either, and those two together are why it cannot be installed right now. Install the CPU base pack first: it ships the probe, and detection re-runs by itself afterwards — if this machine does support it, this pack becomes installable.",
         "verbatimDetail": "Probe output: {{detail}}"
       }
     },
@@ -391,6 +393,7 @@
       "noAvx2": " · no AVX2 support",
       "diskFree": "{{free}} free of {{total}}",
       "backendsLabel": "Backends:",
+      "backendReasonSeparator": ": ",
       "whyUnavailable": "Why these backends are unavailable ({{n}})",
       "reasonPlatformUnsupported": "Not applicable on this platform — this backend exists only on Apple platforms (macOS)",
       "reasonProbeFailed": "The probe did not run this round, so **nothing at all was measured** about this backend. This is not \"your machine does not support it\".",
@@ -1283,6 +1286,9 @@
     "licenseLink": "Licence {{license}}",
     "sha256Local": "recomputed independently on this machine after downloading",
     "sha256Upstream": "digest supplied by upstream; we did not recompute it ourselves",
-    "provenanceDetail": "Where this build came from"
+    "provenanceDetail": "Where this build came from",
+    "caveat": {
+      "e2eUnverified": "We have not verified this end to end on this platform (install \u2192 actually produce text)"
+    }
   }
 }

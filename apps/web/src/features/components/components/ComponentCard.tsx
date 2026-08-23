@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type {
+  ComponentCaveatKind,
   ComponentStatus,
   Sha256Verification,
   UpstreamCheck,
@@ -280,9 +281,10 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
             {/*
               ★ T-135：走 `localizedName()`，不要写死 `displayNameZh`。
               这条属于「第三类混语言」：**数据齐全、契约齐全，只是渲染时挑错了那一份**
-              —— `vendor/manifests/components.json` 里 8 条组件**每一条都同时有**
-              `displayName` 与 `displayNameZh`，`packages/shared` 的 `ComponentStatus`
-              两个字段也都在。所以这不是"缺翻译"，是"有翻译没用上"。
+              —— `vendor/manifests/components.json` 里 **27 条组件每一条都同时有**
+              `displayName` 与 `displayNameZh`（2026-08-24 复核；这里原来写着"8 条"，
+              那是清单还只有 8 条时留下的数，早已不成立），`packages/shared` 的
+              `ComponentStatus` 两个字段也都在。所以这不是"缺翻译"，是"有翻译没用上"。
               （同型的 `/models`、`/runtime` 已在 T-129b 接上同一个 helper。）
             */}
             <h3 className="text-sm font-medium text-ink">{localizedName(locale, c)}</h3>
@@ -336,6 +338,38 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
 
           {/* 每一种"不是有新版本"都必须解释清楚它到底是哪一种"不知道"或"知道" */}
           <UpstreamNote c={c} />
+
+          {/*
+            ★★ 「关于这一份，有件事得先说」—— **必须在折叠外面。**
+
+            这 4 条（`whispercpp-cpu-linux-x64` / `-cpu-win-x64` / `-vulkan-win-x64` /
+            `-metal-macos-arm64`）在 `sha256Provenance` 里逐字承认「端到端『干净机器 →
+            真的转出非空文本』尚未重跑」。上一轮把那段长文折进「这一份是怎么来的」之后，
+            **这句承认跟着进去了**，而卡片正面只剩一个干干净净的「安装 v1.9.1」。
+
+            `[审计实测 2026-08-24]` 那个折叠标签承诺的是**来源**，不是**警示** ——
+            把「我们没验过」藏在它后面，等于把「我们不知道」收回成了沉默，
+            撞的正是这几版第一条红线。**折叠是对的，藏是不对的。**
+
+            所以：一句短的留在正面，详情留在折叠里。判据走 `caveats` 那一格
+            （机器可读），**不许再去嗅 `sha256Provenance` 那段散文** —— 同一页上
+            那个教训刚付过学费。
+          */}
+          {/*
+            ⚠️ `?? []`：契约上它必填，但**它是从网线上来的** —— 陈旧标签页 + 旧 daemon
+            这条路本仓真实存在（`lib/api/client.ts` 的自愈重连走的就是它）。
+            收不住的后果是 `.length` 抛在渲染里，整张卡片白掉。
+          */}
+          {(c.caveats ?? []).length > 0 ? (
+            <ul className="mt-2 space-y-0.5" data-testid={`component-caveats-${c.id}`}>
+              {(c.caveats ?? []).map((k) => (
+                <li key={k} className="flex items-start gap-1 text-[11px] text-warning">
+                  <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden />
+                  <span>{t(CAVEAT_KEYS[k])}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
 
         <div className="flex shrink-0 flex-col items-end gap-1.5">
@@ -615,6 +649,14 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
  * `tsc` 当场红。换成 `KEYS[v] ?? ''` 或带万能 `default` 的三元，新档位会静默渲染成
  * 一片空白，而这一格的空白说的是「我们没告诉你这个哈希是谁算的」。
  */
+/**
+ * 每一种提醒该说哪句话。**总表** —— `ComponentCaveatKind` 加一档而没人给它写话，
+ * `tsc` 当场红。它渲染在卡片正面（不是折叠里），理由见渲染点上面那段。
+ */
+const CAVEAT_KEYS: Readonly<Record<ComponentCaveatKind, string>> = {
+  'e2e-unverified': 'components.caveat.e2eUnverified',
+};
+
 const SHA256_CLAIM_KEYS: Readonly<Record<Sha256Verification, string>> = {
   'local-recomputed': 'components.sha256Local',
   'upstream-provided': 'components.sha256Upstream',
@@ -626,9 +668,32 @@ const SHA256_CLAIM_KEYS: Readonly<Record<Sha256Verification, string>> = {
  * ## ★★ 结论那一行现在读枚举，不再嗅探散文
  *
  * 上一版是 `/API|digest|upstream/i.test(note)`：拿**一段自由散文**去判"证据强不强"。
- * `[实测 2026-08-24]` 27 个组件里 13 个带散文，其中 **5 个被判成警告色，全部误判**，
- * 而且恰好是全仓证据最强的那几条：
  *
+ * **8 条被判成警告色（13 条带散文里），而 8 条全部是假阳性。**
+ *
+ * ── 这个数怎么来的（重算它，别信这行字）──────────────────────────────────────
+ * 对 `vendor/manifests/components.json` 的 `components[]`，取 `sha256Provenance`
+ * 非空的条目，用**被删掉的那条正则原样**重放一次：
+ *
+ * ```js
+ * const RX = /API|digest|upstream/i;                       // 逐字就是上一版的判据
+ * const withNote = components.filter((c) => c.sha256Provenance);
+ * const hits = withNote.filter((c) => RX.test(c.sha256Provenance));
+ * // 2026-08-24 于 36f1326（改前）与 2d62d6d（改后）各跑一次，两次同值：
+ * //   components 27 · withNote 13 · hits 8
+ * // 且 hits.every((c) => c.sha256Verification === 'local-recomputed') === true
+ * ```
+ *
+ * `apps/web/src/features/components/sha256ProvenanceRegex.test.ts` 把这段
+ * 钉成了一条会红的用例 —— 清单一改数就跟着变，不用靠人记得回来更新这段注释。
+ *
+ * ⚠️ **这行字第一版写的是 5，那是错的。** 脚本当时打印的就是 8，是我在写注释时
+ * 誊错了，还给它盖了 `[实测]` 的戳。方向无害（8 条全是假阳性，结论不变），
+ * 但**它长着一副被测量过的样子却偏了 60%**，而没有任何门禁管得住
+ * 「我们说了一个我们没量过的数」——只有人去问「这个数哪来的」。
+ * 所以现在把**算法**写在这里，而不只是把结果写在这里。
+ *
+ * ── 为什么它们是假阳性（抽两条看形状）─────────────────────────────────────────
  *   · `whispercpp-cpu-win-x64` 散文原话是「**不带任何凭证从 release URL 全量重下后
  *     本机 `sha256sum` 复算**」，命中的 `api` 来自另一句里的 DLL 名 `api-ms-win-crt-*`；
  *   · `media-tools-linux-x64` 原话是「本机下载全部 111,679,252 字节后独立复算，

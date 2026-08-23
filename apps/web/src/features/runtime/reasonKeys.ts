@@ -79,6 +79,35 @@ export const INAPPLICABILITY_KEYS: Readonly<
 type Translate = (key: string, params?: Record<string, unknown>) => string;
 
 /**
+ * 「这个包为什么装不了」在**后端包卡片上**该怎么说 —— 与硬件卡**同因不同落点**。
+ *
+ * ## ★★ 为什么这里要覆盖 `not_installed` 那一格
+ *
+ * `[审计实测 2026-08-24，真浏览器]` Vulkan 卡的「安装 29 MB」是灰的，
+ * 它的 `aria-describedby` 结尾逐字是：
+ *
+ *   > …这不是「你的机器不支持」。**去下面的「加速后端包」装它。**
+ *
+ * 而 `<h2>加速后端包</h2>` 在 abs y=65，这句话在 abs y=838 ——
+ * **那个区块在上面，而这个灰按钮就在它里面。**
+ * 「下面」是错的方向，「去」指向用户已经站着的地方：**一句通向自己的话。**
+ *
+ * ⚠️ 这不是「同一个成因在同一页上有两种说法」（本文件抬头禁止的那件事）。
+ * **事实只有一个**（这个后端的包没装、这一轮没测过它），两处说的是同一件；
+ * 不同的是**下一步**，而下一步本来就取决于读者站在哪：
+ *
+ *   · 硬件卡（在包区**上方**）→ 「去下面的加速后端包装它」**是对的**，不动；
+ *   · 包卡片（**就在**包区里）→ 得说清「在这里为什么现在装不了」。
+ *
+ * 上一轮删掉的那半句「如果那里它的安装按钮是灰的，那张卡片上写着现在为什么装不了」
+ * 之所以存在，正是因为**这张卡当时说不出自己的理由**。现在它说得出了，
+ * 那半句才真的可以不要 —— 而不是删掉它、让指路悬空。
+ */
+export const PACK_SURFACE_OVERRIDES: Partial<Record<BackendUnavailableKind, string>> = {
+  not_installed: 'runtime.pack.inapplicable.backendNotInstalledHere',
+};
+
+/**
  * 一条 `Inapplicability` → 用户读得懂的那句话（当前语言）。
  *
  * ⚠️ **`detail` 是 daemon 的英文技术原话，这里不假装它是我们的话。**
@@ -95,7 +124,10 @@ export function inapplicabilityText(t: Translate, r: Inapplicability): string {
     case 'backend_status_missing':
       return t(INAPPLICABILITY_KEYS[r.kind]);
     case 'backend_unavailable': {
-      const head = t(UNAVAILABLE_REASON_KEYS[r.unavailableKind]);
+      // 有本卡专用措辞就用它，否则照旧转交硬件卡那张总表（见上面那段）。
+      const head = t(
+        PACK_SURFACE_OVERRIDES[r.unavailableKind] ?? UNAVAILABLE_REASON_KEYS[r.unavailableKind],
+      );
       return r.detail === null
         ? head
         : `${head} ${t('runtime.pack.inapplicable.verbatimDetail', { detail: r.detail })}`;

@@ -136,9 +136,16 @@ export interface ComponentStatus {
    * ── ★★ 为什么这一格必须存在（它不是把散文"整理"一下） ──────────────────────
    *
    * 界面上那个「弱证据 ⇒ 警告色」的判据，此前是**正则嗅探下面那段散文**：
-   * `/API|digest|upstream/i.test(sha256Provenance)`。`[实测 2026-08-24]`
-   * 27 个组件里 13 个带散文，其中 **5 个被判成"上游提供"（警告色）——全部是误判**，
-   * 而且恰恰是全仓证据最强的那几条：
+   * `/API|digest|upstream/i.test(sha256Provenance)`。
+   *
+   * **13 条带散文的条目里，8 条被判成"上游提供"（警告色）—— 8 条全部是误判。**
+   *
+   * 这个数由 `apps/web/src/features/components/sha256ProvenanceRegex.test.ts`
+   * 对着清单重放那条正则算出来，**不是抄在这里的一个常量** —— 清单一改它就跟着变。
+   * ⚠️ 本注释第一版写的是 5，那是誊错的（脚本当时打印的就是 8），还盖了 `[实测]`
+   * 的戳。方向无害但**它长着一副被测量过的样子**：所以现在这个数有一条会红的腿撑着。
+   *
+   * 误判的形状（抽两条）：
    *
    *   · `whispercpp-cpu-win-x64`  散文原话：「**不带任何凭证从 release URL 全量重下后
    *     本机 `sha256sum` 复算**，没有抄 CI fragment」——命中的 `api` 来自另一句里的
@@ -151,6 +158,15 @@ export interface ComponentStatus {
    * 判据只要还落在散文上，改一个词就会翻转，而且没有任何东西会红。
    */
   sha256Verification: Sha256Verification;
+  /**
+   * 这一份制品上挂着的提醒（见 {@link ComponentCaveatKind}）。空数组 = 没登记提醒。
+   *
+   * ⚠️ 它必须渲染在**折叠区外面**：`sha256Provenance` 那段长文进了
+   * 「这一份是怎么来的」`<details>`，而那个标签承诺的是**来源**，不是**警示**。
+   * 把「我们没验过端到端」藏在一个说"来源"的折叠里，等于把「我们不知道」
+   * 收回成了沉默 —— 那正是这几版一直在治的那条红线。
+   */
+  caveats: readonly ComponentCaveatKind[];
   /**
    * 上面那一格的**长版说明**（可选，属于数据不属于文案）。
    *
@@ -165,13 +181,45 @@ export interface ComponentStatus {
  * - `local-recomputed` —— 我们自己把全部字节下下来重算过（只信字节）。
  * - `upstream-provided` —— 我们抄的是上游给的值（还得信上游没被攻破）。
  *
- * ⚠️ `upstream-provided` **今天没有生产者**：清单里 27 个组件逐条核过，全部是
- * `local-recomputed`。保留这一格不是"三态渲染凑数"，而是因为
- * `components.upstreamNewerPinned` 那句话正建立在这个区分上（我们拒绝安装
- * 上游那一版，理由就是它的 sha256 来自上游 API）。一旦有人往清单里加一个抄来的
- * 摘要，**必须在这里说出口**，而不是让它沉默地混进"本机复算"里。
+ * ## ⚠️ 「今天没有生产者」这句话我写错过一次 —— 订正如下
+ *
+ * **清单**里确实一条都没有（27 个组件逐条核过，全部 `local-recomputed`，
+ * 而且 `probeShipping.test.ts` 有一条腿钉着"每条都得声明"）。
+ * **但产品代码里有一个活的生产者**：`packages/downloader/src/components.ts` 的
+ * `c.sha256Verification ?? 'upstream-provided'` —— 清单漏填这一格时**故意**退到
+ * 弱的那一档（退到强的那一档等于让一条忘了填的新组件白拿一句"我们逐字节算过"）。
+ *
+ * 所以这一格**不是一条零生产者的三态渲染**（本仓拆过那种，见 583f82d），
+ * 它是「合法的空集 + 一个会真的触发的兜底」。两条腿撑着它，不靠这段话：
+ *   · `components.test.tsx` —— 喂 `upstream-provided` 进去，断言那句话与警告色**真的渲染**；
+ *   · `components.test.ts`（downloader）—— 断言漏填时兜底**真的退到弱档**。
+ *
+ * 保留这个区分本身还有第三个理由：`components.upstreamNewerPinned` 那句话正建立
+ * 在它上面（我们拒绝安装上游那一版，理由就是它的 sha256 来自上游 API）。
  */
 export type Sha256Verification = 'local-recomputed' | 'upstream-provided';
+
+/**
+ * 「关于这一份制品，有件事我们得先说」—— **机器可读的提醒清单。**
+ *
+ * ## ★★ 为什么不是从 `sha256Provenance` 那段散文里找
+ *
+ * 那段散文里确实写着 `⚠️ **未验证**：…端到端「干净机器 → 真的转出非空文本」尚未重跑`，
+ * 而且写得很清楚。**但产品不许再去读它** —— `sha256Verification` 那一格刚刚才因为
+ * 「拿正则嗅散文」翻过车（8 条全假阳性）。同一个错误不犯第二次：
+ * **散文归人读，判断归字段。**
+ *
+ * （`sha256ProvenanceRegex.test.ts` 里有一条**交叉核对**：散文里承认了未验证、
+ * 而这里没登记，就红。测试可以读散文——它量的是"作者有没有登记全"；产品不行。）
+ *
+ * ## ⚠️ 缺省是「没登记任何提醒」，**不是「已经验过了」**
+ *
+ * 界面只会因为这里**有东西**而多说一句，永远不会因为这里是空的而宣称"已验证"。
+ * 这是刻意的：一条忘了填的新组件顶多是少一句提醒，而不会**自动获得一句
+ * 我们没做过的保证**（同 `sha256Verification` 退到 `upstream-provided` 的方向）。
+ */
+export const COMPONENT_CAVEAT_KINDS = ['e2e-unverified'] as const;
+export type ComponentCaveatKind = (typeof COMPONENT_CAVEAT_KINDS)[number];
 
 /**
  * 这一次 `GET /api/components` **有没有去问上游**，问到了多少。

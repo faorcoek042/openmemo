@@ -28,6 +28,7 @@ import type {
   GetComponentsResponse,
   InstalledVersion,
   Provenance,
+  ComponentCaveatKind,
   Sha256Verification,
   UpstreamCheck,
   UpstreamSource,
@@ -61,6 +62,8 @@ export interface ComponentRecord {
    * 沉默的默认值会把一个抄来的摘要说成我们自己算过的。退法写在 `listComponents()` 里。
    */
   sha256Verification?: Sha256Verification | null;
+  /** 见 `@openmemo/shared` 的 `ComponentCaveatKind`。缺省 = 没登记提醒。 */
+  caveats?: readonly ComponentCaveatKind[] | null;
   sha256Provenance?: string | null;
 }
 
@@ -252,6 +255,11 @@ export async function listComponents(opts: ListComponentsOptions): Promise<GetCo
      * **错的方向是"少信我们一点"，不是"多信我们一点"。**
      */
     sha256Verification: c.sha256Verification ?? 'upstream-provided',
+    /*
+     * 缺省是**空数组**（没登记提醒），不是某个默认提醒 —— 界面只因为它非空而多说
+     * 一句，永远不会因为它是空的而宣称"已验证"。方向与上面那一格一致。
+     */
+    caveats: c.caveats ?? [],
     sha256Provenance: c.sha256Provenance ?? null,
   }));
 

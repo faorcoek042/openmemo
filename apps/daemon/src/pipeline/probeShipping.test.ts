@@ -215,9 +215,11 @@ describe('openmemo-probe 必须随包出厂（T-167 / ADR-015 §7）', () => {
    * ★★ 「这个哈希是谁算的」必须是**机器可判的一格**，不许再从散文里嗅。
    *
    * 上一版界面用 `/API|digest|upstream/i.test(sha256Provenance)` 判证据强弱。
-   * `[实测 2026-08-24]` 13 条散文里 **5 条被判成"上游提供"，全部误判**，而且正好是
-   * 证据最强的那几条 —— `whispercpp-cpu-win-x64` 明写着「不带任何凭证全量重下后本机
-   * `sha256sum` 复算」，命中的 `api` 来自另一句里的 DLL 名 `api-ms-win-crt-*`。
+   * 13 条散文里 **8 条被判成"上游提供"，8 条全部误判**，而且正好是证据最强的那几条 ——
+   * `whispercpp-cpu-win-x64` 明写着「不带任何凭证全量重下后本机 `sha256sum` 复算」，
+   * 命中的 `api` 来自另一句里的 DLL 名 `api-ms-win-crt-*`。
+   * （这个数由 `apps/web/src/features/components/sha256ProvenanceRegex.test.ts`
+   *   重放那条正则算出来，不是抄的常量 —— 它第一版被誊成了 5，见那份文件的抬头。）
    *
    * 这条腿守的是那个修法的前提：**每一条有 sha256 的组件都得自己说出这一格**。
    * 缺了不会崩（`components.ts` 退到 `upstream-provided`，方向是"少信我们一点"），

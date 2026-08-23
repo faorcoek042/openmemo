@@ -62,7 +62,14 @@ export function StorageBreakdown({ storage, locale, onGc, gcPending }: StorageBr
   const restBytes = sorted.slice(4).reduce((a, x) => a + x.bytes, 0);
   const segments = [
     ...top.map((x, i) => ({
-      label: x.displayName,
+      /*
+       * ★ 「无法识别的残留」那一档走词条，**不读 `displayName`** ——
+       * daemon 往那个字段里拼的是一句中文（`无法识别的残留（3 项）`），
+       * 原样当段标签画的结果就是**英文界面的 /models 上出现中文**。
+       * 与 `RemediationButton` 的 `labelZh` 是同一个形状：有翻译没用上
+       * （`models.storage.reclaimable` 里早就有 "unrecognised leftovers"）。
+       */
+      label: x.kind === 'unclaimed' ? t('models.storage.unclaimedSegment') : x.displayName,
       bytes: x.bytes,
       color: CAT_COLOR[i],
       active: x.active,

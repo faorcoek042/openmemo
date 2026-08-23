@@ -1675,7 +1675,13 @@ export class RestState {
     if (unclaimed.length > 0) {
       breakdown.push({
         id: '__unclaimed__',
-        kind: 'backend-pack' as const,
+        /*
+         * ★ 这一档不再冒充 `backend-pack`，而且**这句中文不再是界面的措辞来源**：
+         * `StorageBreakdown` 现在按 `kind` 取词条（`models.storage.unclaimedSegment`），
+         * 英文界面上才不会再冒出「无法识别的残留（3 项）」。
+         * 这里仍然发一句中文，只是给**旧前端**兜底，别让它显示空白。
+         */
+        kind: 'unclaimed' as const,
         displayName: `无法识别的残留（${String(unclaimed.length)} 项）`,
         bytes: unclaimed.reduce((a, x) => a + x.bytes, 0),
         active: unclaimed.some((x) => x.inUseBy !== null),
