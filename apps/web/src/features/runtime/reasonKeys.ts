@@ -83,7 +83,7 @@ type Translate = (key: string, params?: Record<string, unknown>) => string;
  *
  * ⚠️ **`detail` 是 daemon 的英文技术原话，这里不假装它是我们的话。**
  * 它被单独包进 `runtime.pack.inapplicable.verbatimDetail` 那句词条里
- * （「探针原话，未翻译：…」），读者一眼看得出哪一段是原文。
+ * （「探针原文：…」），读者一眼看得出哪一段是原文。
  * 直接拼在句尾会让一段没有 i18n 的字符串冒充成产品文案 ——
  * 那与 `UpstreamFailure.upstream_error_text` 是同一条纪律。
  */

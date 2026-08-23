@@ -491,10 +491,19 @@ function ProviderForm({
    * 目录声明了、但**我们存不下也不会发出去**的那些字段（temperature / maxTokens /
    * apiVersion / deploymentId）：`llm.providers` 的记录里没有它们，
    * `resolveConfiguredProvider()` 也一个都不读。
-   * → **不给控件**（一个改了不生效的输入框是假控件），但**要说出来**，
-   *   否则下一个人会以为 `configFieldKeys` 已经吃全了。
+   * → **不给控件**（一个改了不生效的输入框是假控件）。
+   *
+   * ## ⚠️ 那句 `settings.unwiredFields` 删掉了，连同它的计算
+   *
+   * 原话是「目录里这家还声明了 X —— 本地服务现在不读这几个字段，所以这里不给控件
+   * （给了也不会生效）」。它对用户是**纯内部状态**：读完他既做不了什么，我们也
+   * 没承诺以后会接。判据是那条 —— **什么都做不了就明说然后闭嘴**，而这一句
+   * 连"明说"都不是，它说的是我们的实现进度。
+   *
+   * 原注释里"要说出来，否则下一个人会以为 `configFieldKeys` 已经吃全了"——
+   * 那个担心是真的，但**它的读者是下一个改这个文件的人，不是用户**。
+   * 所以它留在这里（注释），不留在屏幕上。
    */
-  const unwired = fields.filter((f) => f !== 'baseURL' && f !== 'model' && f !== 'apiKey');
 
   return (
     <div className="mt-3 grid gap-2 border-t border-line pt-3">
@@ -564,12 +573,6 @@ function ProviderForm({
           </span>
           <span className="text-ink-muted">{t('settings.keyKeepHint')}</span>
         </label>
-      ) : null}
-
-      {unwired.length > 0 ? (
-        <p className="text-xs text-ink-muted" data-testid="llm-unwired-fields">
-          {t('settings.unwiredFields', { fields: unwired.join(', ') })}
-        </p>
       ) : null}
 
       <div className="flex justify-end">

@@ -48,7 +48,7 @@ export const PROXY_PROBE_DETAIL_KEYS: Readonly<Record<ProxyProbeDetail['kind'], 
   proxy_rejected_credentials: 'settings.proxy.probeDetail.proxyRejectedCredentials',
   proxy_refused_tunnel: 'settings.proxy.probeDetail.proxyRefusedTunnel',
   /**
-   * ⚠️ 这一格的词条**刻意只说「以下是探针原文，我们没有翻译它」**。
+   * ⚠️ 这一格的词条**刻意只标出处、不解释内容**（「探针原文：…」）。
    * 落进来的是 fetch / DNS / TLS 原样抛回来的串 —— 一个我们没解读过也没有边界的集合。
    * 把它写成一句像模像样的解释，等于替一段没看懂的字符串背书
    *（同 `components.reason.failed.upstreamErrorText` 的待遇）。

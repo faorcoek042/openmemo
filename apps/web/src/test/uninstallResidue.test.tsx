@@ -168,6 +168,37 @@ function withConfirm(answer: boolean): () => void {
  * 一条横幅要同时说清三件事，**顺序是判据的一部分**。
  * 抽出来是因为两个页面说的必须是同一句话 —— 各写一份断言，两边就会各自漂。
  */
+/**
+ * 🔴 **那几段原文必须落在一个等宽容器里。**
+ *
+ * 这一条是**删掉「以下是系统原话，我们没有翻译它：」的前提**，不是装饰。
+ *
+ * 那句话的职责只有一个：**标出这一段不是我们写的**。它被删掉，是因为这一行
+ * 本来就是 `font-mono` 渲染的 —— **形式已经在承担同一个职责**，话是冗余的。
+ * 但那个论证只有在容器**真的还在**时才成立：有人顺手把 `font-mono` 摘掉，
+ * 屏幕上就只剩一段没有任何标记的机器串冒充产品文案，
+ * 而上面所有 `includes(f.reason)` 的断言**照样全绿**。
+ *
+ * 所以：**删了话，就得钉住形式。** 否则这次改动等于把一个信号净删掉了。
+ */
+function assertVerbatimIsInMonoContainer(banner: Element, raws: readonly string[]): void {
+  const mono = [...banner.querySelectorAll('*')].filter((el) =>
+    (el.getAttribute('class') ?? '').split(/\s+/).includes('font-mono'),
+  );
+  assert.ok(
+    mono.length > 0,
+    '横幅里一个等宽容器都没有 —— 那几段机器原文现在和我们自己的话长得一模一样。' +
+      '「这一段不是产品在说话」原本由那句元说明承担，删掉它的理由就是"形式在承担"，' +
+      '形式没了，理由就不成立了。',
+  );
+  for (const raw of raws) {
+    assert.ok(
+      mono.some((el) => squash(el.textContent).includes(squash(raw))),
+      `这段原文没落在等宽容器里，等于在冒充我们自己的文案：\n  ${raw}`,
+    );
+  }
+}
+
 function assertSaysRecordRemovedButFilesKept(root: Element): void {
   const banner = root.querySelector('[data-testid="uninstall-files-kept"]');
   assert.ok(
@@ -195,15 +226,26 @@ function assertSaysRecordRemovedButFilesKept(root: Element): void {
   }
 
   /*
-   * ③ **那几个文件在哪儿** —— 只有解析层的英文原话答得出来（它带着绝对路径），
-   *   而且必须被标成"原文、未翻译"，不许伪装成我们自己的话。
+   * ③ **那几个文件在哪儿** —— 只有解析层的英文原话答得出来（它带着绝对路径）。
+   *
+   * ⚠️ 判据变过一次。这里原来还要求那句「以下是存储层原文，我们没有翻译它：」
+   * 逐字出现。那句词条**已删**：这一行本来就是**等宽字体**渲染的，
+   * **形式已经在承担"这一段不是我们写的"这个职责**，那句话是纯冗余；
+   * 而且它说的是「**我们**没有翻译它」—— 一句关于我们工作流程的陈述。
+   *
+   * 现在断的是**真正不能丢的那件事**：原文一个字不改地在屏幕上（含绝对路径），
+   * 而且它落在一个等宽容器里 —— 后者由下面那条单独断，不靠措辞。
    */
   for (const f of REFUSED) {
     assert.ok(
-      said.includes(fill(UNINSTALL['verbatimReason']!, { reason: f.reason })),
+      said.includes(f.reason),
       `没有原样照登解析层那句话（它是"文件在哪儿"唯一的出处）：\n  缺：${f.reason}\n  实际：${said}`,
     );
   }
+  assertVerbatimIsInMonoContainer(
+    banner,
+    REFUSED.map((f) => f.reason),
+  );
   assert.ok(
     said.includes(UNINSTALL['filesKeptHint']!),
     `没说"这里不需要再做什么" —— 那一句是 ① 的兑现方式：${said}`,
@@ -294,11 +336,16 @@ function assertSaysRecordRemovedButFilesFailed(root: Element): void {
         `\n  期望：${advice}\n  实际：${said}`,
     );
 
-    // 系统原话，逐条照登且标明"不是我们写的"
+    /*
+     * 系统原话，逐条照登。
+     * ⚠️ 同上：不再要求「以下是系统原话，我们没有翻译它：」那句前缀 ——
+     * 它已删，职责由等宽字体承担（见下面那条容器断言）。
+     */
     assert.ok(
-      said.includes(fill(UNINSTALL['verbatimSystemError']!, { detail: f.detail })),
+      said.includes(f.detail),
       `没有原样照登系统那句话（unknown 那一档它是唯一说得出的东西）：\n  缺：${f.detail}\n  实际：${said}`,
     );
+    assertVerbatimIsInMonoContainer(banner, [f.detail]);
   }
 
   /*

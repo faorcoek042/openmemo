@@ -14962,11 +14962,22 @@ describe('#106 上游查询失败：14 格每一格在英文界面上都得说�
     }
   });
 
-  test('★★ `upstream_error_text`：原文逐字照抄，并且**明说这一段没翻译**', async () => {
+  test('★★ `upstream_error_text`：原文逐字照抄，并且**标明了它的出处**', async () => {
     /*
      * 这一格是唯一**故意不解释内容**的：那串字符我们确实没看懂。
-     * 所以两件事都得说到 —— 原文一个字不改地在屏幕上，且读者一眼看得出它是原文。
+     * 所以两件事都得说到 —— 原文一个字不改地在屏幕上，且读者一眼看得出它不是我们写的。
      * 只做前者 = 让一段没有 i18n 的字符串冒充产品文案（`verbatimDetail` 同一条纪律）。
+     *
+     * ## ⚠️ 断言换过一次：从 `/not translated/i` 换成「出处说出来了没有」
+     *
+     * 词条原来是「verbatim from upstream, **not translated by us**: …」。
+     * 「我们没有翻译它」是一句**关于我们工作流程的陈述** —— 用户不关心我们翻不翻，
+     * 他要知道的是"这段字是谁说的"。词条因此缩成 `upstream output: {{text}}`。
+     *
+     * 断言跟着换，但**没有退回去断 key 存在**：仍然断**渲染出来的那段文字**
+     * 回答了「这一段是谁的话」——判据是 `upstream`（出处）与原文同时在场。
+     * 反向自检那一条更关键：**不许出现"我们没翻译"那种元说明**，
+     * 否则这次的修改可以被悄悄改回去。
      */
     await i18nInstance.changeLanguage('en');
     try {
@@ -14976,7 +14987,11 @@ describe('#106 上游查询失败：14 格每一格在英文界面上都得说�
       for (const chunk of literalChunks(enAt('components.reason.failed.upstreamErrorText'))) {
         assert.ok(said.includes(chunk), `缺了一段：「${chunk}」→ ${said}`);
       }
-      assert.match(said, /not translated/i, `没说清"这一段不是我们的话" → ${said}`);
+      assert.match(said, /upstream/i, `没说清这段字是谁说的 → ${said}`);
+      assert.ok(
+        !/not translated|verbatim and not|we did not translate/i.test(said),
+        `★ 又把「我们没有翻译它」搬回屏幕上了 —— 用户不关心我们的翻译流程 → ${said}`,
+      );
       r.unmount();
     } finally {
       await i18nInstance.changeLanguage('zh-CN');
@@ -15108,12 +15123,26 @@ describe('#106 后端包卡片：「具体卡在哪」那一行在英文界面�
         assert.ok(shown.includes(chunk), `缺了一段：「${chunk}」→ ${shown}`);
       }
 
-      // ② 探针原话：逐字在，且被明确标成"不是我们的话"
+      /*
+       * ② 探针原话：逐字在，且**标明了出处**。
+       *
+       * ⚠️ 这条断言换过一次。词条原来是「Reported by the probe, **verbatim and not
+       * translated**: …」——「我们没有翻译它」是一句关于**我们工作流程**的陈述，
+       * 用户不关心。词条缩成 `Probe output: {{detail}}`。
+       *
+       * 判据没有退回「key 存在」：仍然断**渲染出来的那段文字**回答了
+       * 「这一段是谁说的」（`probe`），加上原文逐字在场。
+       * 再加一条反向的：不许把那种元说明搬回屏幕，否则这次改动能被悄悄撤销。
+       */
       assert.ok(shown.includes(DETAIL), `探针原话被吃掉了，排障就没有依据了 → ${shown}`);
       for (const chunk of plainChunks(enAt('runtime.pack.inapplicable.verbatimDetail'))) {
         assert.ok(shown.includes(chunk), `没标明这一段是原文：缺「${chunk}」→ ${shown}`);
       }
-      assert.match(shown, /not translated/i, `没说清"这一段没翻译" → ${shown}`);
+      assert.match(shown, /probe/i, `没说清这段字是谁说的 → ${shown}`);
+      assert.ok(
+        !/not translated|verbatim and not|we did not translate/i.test(shown),
+        `★ 又把「我们没有翻译它」搬回屏幕上了 → ${shown}`,
+      );
       r.unmount();
     } finally {
       await i18nInstance.changeLanguage('zh-CN');

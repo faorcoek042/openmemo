@@ -644,8 +644,16 @@ export default function DiagnosticsPage() {
             </span>
           ) : null}
         </div>
-        <p className="mb-2 text-xs text-ink-secondary">{t('diagnostics.selfcheck.hint')}</p>
+        {/*
+          ⚠️ 这里原来有一句 `diagnostics.selfcheck.hint`：
+          「判据只有一份：命令行 scripts/selfcheck.mjs 与 GET /api/selfcheck 调的是
+          同一个实现，差异只允许在显示上。」
 
+          **整句删掉。** 它是一条关于我们自己代码架构的陈述 —— 文件路径 + 端点 +
+          实现复用纪律。用户从中拿不到任何东西：既不是「发生了什么」，也不是
+          「对他意味着什么」，更不是「他能做什么」。那条纪律本身仍然成立，
+          它归 `scripts/selfcheck.mjs` 的注释与 CI，不归屏幕。
+        */}
         {selfcheck.isLoading ? (
           <p className="text-xs text-ink-muted">{t('diagnostics.selfcheck.loading')}</p>
         ) : selfcheck.isError ? (
