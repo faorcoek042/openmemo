@@ -526,7 +526,7 @@ export function BackendPackCard({
             探针路径、驱动版本确实是原话，但外面包着的那句解释是我们自己写的。
             现在两者分开了：`Inapplicability` 说是哪一种成因（措辞在 `../reasonKeys`
             那张总表 + 两份 locale），daemon 那句英文原话作为 `detail` 跟着走，
-            并被明确标成「探针原话，未翻译」。
+            并被标明出处（「Probe output: …」/「探针原文：…」）。
           */}
             {!pack.applicable && status !== 'other-platform' && inapplicableText ? (
               /*

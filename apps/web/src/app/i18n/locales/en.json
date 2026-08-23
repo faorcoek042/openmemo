@@ -28,7 +28,7 @@
     "mockTitle": "MOCK mode: local service not connected",
     "mockDetail": "Data is simulated in the browser for UI review. It will switch to real data once the daemon is implemented.",
     "sseDegraded": "Live updates disconnected — refreshing every 15 seconds instead",
-    "sseDegradedDetail": "What you see can be up to 15 seconds behind, and transcripts will not scroll in line by line until the connection is back. Reconnection keeps retrying in the background; live updates resume on their own.",
+    "sseDegradedDetail": "Transcripts will not scroll in line by line until the connection is back. Reconnection keeps retrying; live updates resume on their own.",
     "refreshNow": "Refresh now",
     "sseReconnecting": "Reconnecting to the local service…",
     "portDrift": "The port changed from {{expected}} to {{actual}}. The browser treats this as a new site, so microphone access must be granted again.",
@@ -80,7 +80,7 @@
     "failureMindmap": "Mind map generation failed for this note",
     "failureHint": "It will not run again on its own. You can retry it right away; if the reason above points at a missing component or a file that has moved, fix that first — otherwise the retry will fail the same way.",
     "cancelledTitle": "This transcription was cancelled",
-    "cancelledHint": "Whatever finished is kept. To carry on, use \"{{action}}\" on the transcript panel below — as long as the engine and model stay the same it resumes from the chunks already done; switch engine or model and this run starts over from the beginning (chunks from two different models cannot be stitched together).",
+    "cancelledHint": "Whatever finished is kept. Use \"{{action}}\" on the transcript panel below to carry on: as long as the engine and model stay the same it resumes from the chunks already done; switch engine or model and this run starts over from the beginning.",
     "cancelledHintNothingKept": "Nothing came out of this run. To start over, use \"{{action}}\" on the transcript panel below.",
     "partial": "Partial",
     "untitled": "Untitled",
@@ -93,7 +93,7 @@
     "actions": "More actions",
     "delete": "Delete",
     "deleteConfirm": "Delete \"{{title}}\"?",
-    "deleteHint": "It will disappear from lists and search; you can undo it right after (the row is soft-deleted, not erased).",
+    "deleteHint": "It will disappear from lists and search; you can undo it right after.",
     "export": "Export",
     "exportFormats": {
       "txt": "Plain text (.txt)",
@@ -197,7 +197,7 @@
       "colSize": "Size",
       "colVram": "VRAM",
       "colFit": "This machine",
-      "vramNote": "VRAM figures include the KV cache{{ctx}}. There is no quality star rating here — we have no trustworthy accuracy data and will not invent one.",
+      "vramNote": "VRAM figures include the KV cache{{ctx}}.",
       "vramNoteContext": " (computed at a {{ctx}} context)"
     },
     "storage": {
@@ -244,7 +244,7 @@
       "accuracyTitle": "Accuracy and speed",
       "benchResult": "Measured RTF {{rtf}} — about {{minutes}} min per hour of audio",
       "benchProvenance": "Measured on {{at}} on this machine, {{device}} ({{backend}}), using {{seconds}}s of test audio",
-      "benchNone": "Not measured yet. We **do not show accuracy numbers from papers** — they do not hold on your machine with your audio. Press the button below to measure it here with the bundled test clip.",
+      "benchNone": "Not measured yet. We **do not show accuracy numbers from papers** — press the button below to measure it here with the bundled test clip.",
       "benchRunning": "Running the benchmark…",
       "benchRun": "Run benchmark",
       "benchNeedsInstall": "The model must be installed before it can be benchmarked.",
@@ -252,7 +252,7 @@
       "verify": "Verify integrity",
       "upstream": "Upstream project and license",
       "diagTitle": "The numbers behind this verdict",
-      "diagNote": "Server-computed intermediates, listed so you can sanity-check us — if the verdict looks wrong, see which number is wrong.",
+      "diagNote": "If the verdict looks wrong, see which number is wrong.",
       "diag": {
         "needMB": "Model needs",
         "vramBudgetMB": "VRAM available",
@@ -267,7 +267,7 @@
       "realtime": "Live-caption components",
       "realtimeHint": "Live captions while recording need these. They are parts of one chain, not alternatives to each other: without the streaming engine you fall back to \"transcribe after recording\", without VAD to fixed-window chunking, and without punctuation restoration Chinese output is one long unpunctuated block.",
       "more": "More tiers",
-      "moreHint": "A tier is a catalog constant, assigned by model size and independent of your machine. \"About how long it takes on your machine\" is the line inside each card."
+      "moreHint": "A tier is assigned by model size and is independent of your machine. \"About how long it takes on your machine\" is the line inside each card."
     },
     "speedClass": {
       "fast": "Fast",
@@ -310,7 +310,7 @@
     "componentsLinkHint": "where from · pinned version · update / rollback",
     "selfTestFailedTitle": "An acceleration backend failed its self-test",
     "selfTestFailedDetail": "The card below spells out why. You can retry the self-test, or switch to the CPU backend (always available).",
-    "probing": "Probing hardware (devices are really enumerated, this can take a few seconds)…",
+    "probing": "Probing hardware (this can take a few seconds)…",
     "packsTitle": "Acceleration backend packs",
     "staleCatalog": "offline catalog",
     "noPacks": "The catalog has no acceleration backend pack for this machine yet. The CPU backend is always available.",
@@ -318,15 +318,15 @@
     "inapplicableHint": "(they cannot be installed on this machine and there is nothing to do about it; listed so you know what the catalog holds)",
     "localBlockedSummary": "{{n}} pack(s) built for this machine that cannot be installed right now",
     "localBlockedHint": "(these were built for this OS and CPU — each card states whether that is \"not probed yet\" or \"probed, confirmed unsupported\")",
-    "rtfNote": "Note: the RTF in a self-test is **measured on this machine**; the “estimated time” on model cards is **extrapolated** from it, and the extrapolation factor is not calibrated yet — treat it as indicative.",
+    "rtfNote": "Note: the RTF in a self-test is **measured on this machine**; the \"estimated time\" on model cards is an **estimate** extrapolated from it — treat it as indicative.",
     "installTarget": "Backend packs install onto the volume holding the models directory ({{free}} free).",
     "confirmRemove": "Uninstall this acceleration backend? You can download it again later.",
     "pack": {
       "setActive": "Use this backend",
       "selfTest": "Self-test",
       "uninstall": "Uninstall",
-      "loadBearingTitle": "The CPU backend is the fallback. Removing it crashes the inference process whenever no other backend is usable, so it cannot be uninstalled.",
-      "bundledTitle": "This component ships inside the application: its files live in the app's own install folder, not in your data folder. Removing it would delete part of the product itself, and only reinstalling the app brings it back — so it cannot be uninstalled.",
+      "loadBearingTitle": "The CPU backend is the fallback. Removing it would crash the inference process, so it cannot be uninstalled.",
+      "bundledTitle": "Ships inside the app and cannot be uninstalled separately — its files are part of the application itself.",
       "pendingCiTitle": "This component is built and its digest verified, but no download URL has been published yet (CI has to publish it first).",
       "pendingCi": "Not published yet",
       "installing": "Starting…",
@@ -353,9 +353,9 @@
       "otherPlatformNote": "Built for {{os}}/{{arch}}, which is not this machine — it cannot be installed here, and there is nothing for you to do.",
       "inapplicable": {
         "platformMismatch": "Built for {{os}}/{{arch}}, which is not this machine.",
-        "hardwareNotProbedYet": "We have not probed this machine's acceleration yet, so we cannot tell whether this pack applies — that needs a backend pack containing openmemo-probe. If you have never installed one, install the CPU base pack first; if you already did and still see this line, the copy you hold is the older build — press Update on it on the Components page. Probing re-runs by itself once it is in place.",
+        "hardwareNotProbedYet": "We have not probed this machine yet, so we cannot tell whether this pack applies. Install the CPU base pack first (if you already did, press Update on it on the Components page). Probing re-runs by itself once it is in place.",
         "backendStatusMissing": "This detection run says nothing at all about this backend — we have not measured it, so we are not calling it unsupported either.",
-        "verbatimDetail": "Reported by the probe, verbatim and not translated: {{detail}}"
+        "verbatimDetail": "Probe output: {{detail}}"
       }
     },
     "chip": {
@@ -393,8 +393,8 @@
       "reasonPlatformUnsupported": "Not applicable on this platform — this backend exists only on Apple platforms (macOS)",
       "reasonProbeFailed": "The probe did not run this round, so **nothing at all was measured** about this backend. This is not \"your machine does not support it\".",
       "reasonDisabledAfterFailures": "Disabled automatically after repeated failures — that is **a guard on our side**, not a conclusion about your hardware. Re-running the self-test lets it try again.",
-      "reasonNotInstalled": "The backend pack is not installed, so **nothing was measured** about it this round. This is not \"your machine does not support it\". To install it, see \"Acceleration backend packs\" below — if the install button there is greyed out, that card states why it cannot be installed right now.",
-      "reasonNotProbedThisRun": "Installed, but this detection run never loaded it (only the backend directory currently in use is scanned) — that is **no information, not a fault**. Select it as the active backend, or run the self-test on that pack, to get a real answer.",
+      "reasonNotInstalled": "The backend pack is not installed, so **nothing was measured** about it this round. This is not \"your machine does not support it\". To install it, see \"Acceleration backend packs\" below.",
+      "reasonNotProbedThisRun": "Installed, but this detection run never loaded it — that is **no information, not a fault**. Select it as the active backend, or run the self-test on that pack, to get a real answer.",
       "reasonNoUsableDevices": "It loaded, but **not one of the devices it reported is usable** (typically only a software renderer) — it falls back to the CPU.",
       "reasonEnumeratedNone": "It loaded, and **enumerated no device at all** — most likely the driver is missing or too old.",
       "detectedAt": "Probed at {{at}} · {{platform}}/{{arch}} {{version}}",
@@ -402,7 +402,7 @@
       "gpuNotProbed": "Not checked yet — no GPU-capable backend was loaded this run (GPU enumeration is done by the probe that ships with a backend pack)",
       "gpuAdvisorySeen": "The system does report an adapter: {{adapters}} — so we can see the card, we just have no backend pack installed that can use it (possible: {{backends}})",
       "gpuProbedUnusable": "No usable GPU was enumerated — but the system reports {{adapters}} is present, so the gap is on our side, not \"you have no GPU\"",
-      "gpuVirtualUndetermined": "\"{{adapter}}\" is a display adapter provided by a virtual machine — we cannot tell from the adapter alone whether a real GPU sits behind it. Install the {{backends}} backend pack and let the probe enumerate once; that is the only way to find out whether this machine can use GPU acceleration."
+      "gpuVirtualUndetermined": "\"{{adapter}}\" is a display adapter provided by a virtual machine — we cannot tell whether a real GPU sits behind it. Install the {{backends}} backend pack and probe once to find out."
     },
     "breaker": {
       "title": "GPU acceleration is temporarily disabled",
@@ -437,7 +437,7 @@
     "doubleClickToEdit": "Double-click to edit; Esc cancels, ⌘/Ctrl+Enter saves",
     "edited": "edited",
     "preserved": "kept (no matching update)",
-    "preservedWhy": "The re-run aligns by timeline, not segment index — the two models segment speech differently. You edited this line and the re-run found no counterpart, so it was kept as-is: never overwritten, never deleted.",
+    "preservedWhy": "You edited this line and the re-run found no counterpart, so it was kept as-is.",
     "revert": "Revert",
     "revertHint": "Revert to the recognised text: {{raw}}",
     "retranscribe": {
@@ -532,17 +532,17 @@
     "wordLevelUnavailable": "This engine has no word-level timestamps — captions highlight per sentence",
     "wordLevelAvailable": "Word-level highlighting on",
     "insecureTitle": "Recording is unavailable at this address",
-    "insecureHelp": "Browsers only expose the microphone in a secure context (https:// or localhost). At an http://<IP> address `navigator.mediaDevices` does not exist — this is not browser-specific, switching browsers will not help.",
-    "insecureAlternative": "Everything else works here: import a local media file or a link from the Capture page — transcription, summary and mindmap are unaffected.",
+    "insecureHelp": "Browsers do not expose the microphone at this address.",
+    "insecureAlternative": "Importing a local media file or a link is unaffected — transcription, summary and mindmap all work.",
     "streamError": "Live recognition connection failed; streaming stopped. The recording is still saved locally and can be re-transcribed later.",
     "overrun": "The network could not keep up and some audio frames were dropped (words may be missing). The original recording is unaffected.",
     "wsError": {
       "streamEngineUnavailable": "Live transcription cannot start: no streaming model is installed. Install one on the Models page — nothing was recorded, so nothing was lost.",
-      "startFailed": "Recording could not start, so nothing was saved. Reported by the recorder, verbatim and not translated: {{detail}}",
-      "engineError": "The recognition engine reported an error mid-session. What has already been transcribed is kept. Reported by the engine, verbatim and not translated: {{detail}}",
-      "finalizeFailed": "Recording could not be finalised. The audio may already be on disk, but this session did not close cleanly. Reported by the recorder, verbatim and not translated: {{detail}}",
+      "startFailed": "Recording could not start, so nothing was saved. Recorder output: {{detail}}",
+      "engineError": "The recognition engine reported an error mid-session. What has already been transcribed is kept. Engine output: {{detail}}",
+      "finalizeFailed": "Recording could not be finalised. The audio may already be on disk, but this session did not close cleanly. Recorder output: {{detail}}",
       "controlMessageNotJson": "The browser sent a control message the daemon could not parse. That is a defect in the app, not something you did wrong.",
-      "asrWorkerNotImplemented": "The browser-based recognition worker is not available in v1 (ADR-006 decision 3 downgraded it to an experiment).",
+      "asrWorkerNotImplemented": "Browser-based recognition is not available in this version.",
       "notReported": "The recorder reported an error, but this daemon build did not say which one. The details are in the daemon log; if a newer build is already installed, reloading this page will pick it up."
     },
     "rerunFailed": "Offline re-run failed. The streaming result is kept.",
@@ -633,7 +633,7 @@
     },
     "NOT_IMPLEMENTED": {
       "title": "Benchmarking is not implemented yet",
-      "detail": "A real speed number has to come from running inference on your own machine, and that step is not wired up yet. The product will not fill it in with numbers from a paper or a vendor page — better blank than fake."
+      "detail": "A real speed number has to come from running inference on your own machine, and that step is not wired up yet."
     },
     "FOLDER_NOT_FOUND": {
       "title": "Folder not found",
@@ -737,7 +737,7 @@
       "authHint": "For authentication, embed it in the URL: http://user:pass@127.0.0.1:7890",
       "loopbackAlwaysBypassed": "Loopback addresses (localhost / 127.x / .local) always bypass the proxy — a locally hosted LLM behind a remote proxy could never work.",
       "socksFfmpegTitle": "With SOCKS, media streaming goes direct",
-      "socksFfmpegDetail": "ffmpeg does not support SOCKS (libavformat only reads http_proxy), so fetching and transcoding remote media bypasses the proxy. Link resolution and downloading use yt-dlp, which does support SOCKS and will go through it. To route everything through the proxy, use an HTTP/HTTPS proxy instead.",
+      "socksFfmpegDetail": "With SOCKS, fetching remote media bypasses the proxy and goes direct (link resolution and downloading are unaffected). To route everything through the proxy, use an HTTP/HTTPS proxy instead.",
       "unsupported": "This daemon does not expose a proxy settings endpoint yet",
       "unsupportedDetail": "You can fill the form in, but saving will fail — it will not pretend to succeed. It will work unchanged once the endpoint ships. Until then, start the daemon with HTTPS_PROXY set.",
       "verdictProxyDown": "The proxy itself is unreachable — check the address, port, and that your client is running.",
@@ -766,7 +766,7 @@
         "proxyUnreachableNotSent": "could not reach the proxy {{proxyUrl}} — no request was sent to {{target}} at all",
         "proxyRejectedCredentials": "the proxy {{proxyUrl}} rejected the credentials (407) — check the username/password; this is not the target's doing",
         "proxyRefusedTunnel": "the proxy {{proxyUrl}} answered but refused to open a tunnel to {{target}} (CONNECT was neither 2xx nor 407) — common with corporate proxies that deny by policy; we cannot tell whether the problem is the proxy policy or the target",
-        "probeErrorText": "verbatim from the probe, not translated by us: {{text}}"
+        "probeErrorText": "probe output: {{text}}"
       },
       "sourceName": {
         "hf": "Hugging Face",
@@ -829,8 +829,7 @@
       "commitError": "Not saved — your typed value is still shown here, but the save failed. Fix the underlying problem and leave the field to retry."
     },
     "noKeyNeeded": "no API key needed",
-    "baseUrlLocked": "This vendor rejects a custom endpoint (baseUrl.editable = false in the catalog), so the field is read-only.",
-    "unwiredFields": "The catalog also declares {{fields}} for this provider — the local service does not read those fields yet, so no control is shown (one would not take effect).",
+    "baseUrlLocked": "This vendor does not accept a custom endpoint, so the field is read-only.",
     "bucket": {
       "mainstream": "Common",
       "more": "More providers ({{n}})"
@@ -846,7 +845,7 @@
     },
     "local": {
       "title": "Local models (Ollama / LM Studio)",
-      "intro": "Connect a local service you **already installed**. We no longer ship downloadable local models (ADR-016), so this does exactly one thing: ask this machine whether anything is running.",
+      "intro": "Connect a local service you **already installed**. We do not ship downloadable local models, so this does exactly one thing: ask this machine whether anything is running.",
       "probe": "Scan this machine",
       "probing": "Scanning…",
       "notProbedYet": "Not scanned yet — press the button",
@@ -856,7 +855,7 @@
       "models": "reports {{n}} models",
       "add": "+ Add",
       "alreadyAdded": "Already in the list above",
-      "falsePositiveNote": "The test is **an actual request that returns a model list**, not an open port — an open port could be another service, a zombie process or a proxy. Installed but with no models pulled counts as unusable here; no false positives."
+      "falsePositiveNote": "The test is **an actual request that returns a model list**, not an open port. So something installed with no models pulled will not show up here either."
     }
   },
   "mock": {
@@ -908,7 +907,7 @@
     "noResultsHint": "Try different words. Transcript hits jump straight to that second.",
     "tokenizerDegraded": "Chinese segmentation has fallen back to trigram — two-character terms may not be found. Your notes are unaffected; search again once it is restored.",
     "semanticUnavailable": {
-      "noEmbeddingStage": "the vector extension is loaded, but nothing generates embeddings yet — that part is ours to finish, not something you can install",
+      "noEmbeddingStage": "semantic search is not wired up yet — that part is ours to finish, not something you can install",
       "vectorExtensionNotLoaded": "the sqlite-vec extension is not loaded"
     }
   },
@@ -976,7 +975,7 @@
     "title": "Diagnostics",
     "recheck": "Re-check",
     "copy": "Copy report",
-    "probeCaveat": "This page has two data sources. The self-check above asks whether the FEATURE works (does a Chinese word actually match in FTS5; can whisper actually load the VAD weights we hand it). The groups below ask whether a COMPONENT is present and loaded — useful for pinpointing which part is missing, but a green light there does not guarantee the feature works.",
+    "probeCaveat": "The self-check above asks whether the FEATURE works. The groups below ask whether a COMPONENT is present and loaded. A green light below does not guarantee the feature works.",
     "daemonDown": "Cannot reach the local service",
     "daemonDownHint": "The OpenMemo local service is not running, or the port changed.",
     "groupService": "Service",
@@ -1020,13 +1019,12 @@
     },
     "selfcheck": {
       "title": "Feature self-check",
-      "hint": "One implementation, two surfaces: the CLI scripts/selfcheck.mjs and GET /api/selfcheck call the same runSelfCheck(); only the rendering may differ.",
       "counts": "{{ok}} ok · {{warn}} warning · {{fail}} failed",
       "ranAt": "checked at {{time}}",
       "required": "required",
       "loading": "Running self-check…",
       "unavailable": "Self-check results unavailable",
-      "unavailableHint": "GET /api/selfcheck did not return successfully (an older local service does this). The groups below still work, but they only check whether components are present — do not read this blank as \"everything is fine\".",
+      "unavailableHint": "Self-check results did not come back (an older local service does this). The groups below still work, but they only check whether components are present — do not read this blank as \"everything is fine\".",
       "empty": "The self-check returned zero checks. That is itself abnormal; do not read it as \"everything is fine\".",
       "layer": {
         "hardware": "Hardware",
@@ -1071,7 +1069,7 @@
       "modelNotInstalled": "no model is installed for it — install one on the Models page to enable it",
       "installedButFilesIncomplete": "installed ({{ids}}), but the files are incomplete so it cannot load — reinstall it on the Models page",
       "overrideDirIncomplete": "{{envVar}} points at {{dir}}, and the files this engine needs are not there",
-      "engineProbeText": "reported by the engine, verbatim and not translated: {{text}}"
+      "engineProbeText": "engine output: {{text}}"
     },
     "engineWithReason": "{{engine}} ({{reason}})",
     "reasonParenthetical": " ({{reason}})",
@@ -1079,15 +1077,13 @@
   },
   "uninstall": {
     "recordRemovedFilesKept": "Uninstalled — the record is gone. But {{n}} file(s) could not be deleted, because the record pointed outside the data folder: {{names}}",
-    "filesKeptHint": "Nothing more is needed here: the uninstall itself went through, and pressing it again will only report that the record no longer exists. Delete those files yourself if you want the space back.",
-    "verbatimReason": "Reported by the store layer, verbatim and not translated: {{reason}}",
+    "filesKeptHint": "The uninstall went through — no need to press again. Delete those files yourself if you want the space back.",
     "recordRemovedFilesFailed": "Uninstalled — the record is gone. But {{n}} file(s) could not be deleted and are still on disk: {{names}}",
-    "filesFailedHint": "The uninstall itself went through; pressing it again will only report that the record no longer exists. Each file is listed below with where it is and what you can do about it.",
-    "verbatimSystemError": "Reported by the operating system, verbatim and not translated: {{detail}}",
+    "filesFailedHint": "The uninstall went through — no need to press again. Each file is listed below with where it is and what you can do.",
     "removalFailure": {
-      "in_use": "{{name}} ({{path}}): another program was holding this file open when we tried to delete it. Close whatever might be using it, or restart once, and it will most likely delete fine.",
-      "permission_denied": "{{name}} ({{path}}): the system did not allow us to delete it. Delete it yourself from an account that has permission. On Windows a file that is still open in some program reports the same error, so try closing whatever might be using it (or restarting once) first.",
-      "unknown": "{{name}} ({{path}}): we could not delete it, and we do not know why — so we are not going to hand you advice we cannot back up. You can delete it yourself at the path above."
+      "in_use": "{{name}} ({{path}}): another program was holding this file open. Close it, or restart once, and try again.",
+      "permission_denied": "{{name}} ({{path}}): the system did not allow us to delete it. Delete it from an account that has permission. On Windows a file still open in some program reports the same error — close it and try again.",
+      "unknown": "{{name}} ({{path}}): we could not delete it, and we do not know why. You can delete it yourself at the path above."
     }
   },
   "secureContext": {
@@ -1107,9 +1103,9 @@
     "startedModel": "Downloading model · {{name}}",
     "startedBackend": "Installing component · {{name}}",
     "backgroundHint": "You can leave this page — it keeps going in the background",
-    "verifyingHint": "Download finished; verifying SHA-256 byte by byte. For large models this takes tens of seconds and the bar does not move — that is normal, not a freeze.",
+    "verifyingHint": "Verifying SHA-256. For large models this takes tens of seconds and the bar does not move — that is normal.",
     "installingHint": "Unpacking and writing to the models folder. This step has no progress scale — please wait.",
-    "warmingHint": "First Metal run on this Mac — building the GPU shader cache so later hardware checks stay fast. Takes around 15 seconds, happens only once per machine, and the bar will not move. That is normal, not a freeze.",
+    "warmingHint": "Building the GPU shader cache — happens only once per machine. Takes around 15 seconds and the bar will not move; that is normal.",
     "queuedHint": "Waiting for a free download lane; it will start automatically.",
     "doneModel": "Installed · {{name}}",
     "doneBackend": "Installed · {{name}}",
@@ -1150,7 +1146,7 @@
     "hide": "Hide",
     "items": {
       "secureContext": "{{count}} browser capabilities unavailable at this address (including recording)",
-      "secureContextHint": "Browsers only expose the microphone, clipboard and cross-tab locks over https or localhost. Open http://127.0.0.1 instead (works if you are on the machine running OpenMemo). This is not browser-specific — switching browsers will not help. Everything else is unaffected.",
+      "secureContextHint": "Browsers only expose the microphone, clipboard and cross-tab locks over https or localhost. Open http://127.0.0.1 instead (works if you are on the machine running OpenMemo). Switching browsers will not help; everything else is unaffected.",
       "multiTab": "Cross-tab leader election unavailable; each tab opens its own connection",
       "tokenizer": "Chinese tokenizer not enabled — Chinese search may be inaccurate",
       "vec": "Vector search not enabled — semantic search unavailable",
@@ -1199,14 +1195,14 @@
     "noAutoUpdateDetail": "A newer version is only reported here. Whether and when to update is your call — an upstream version bump can change behaviour.",
     "updatableTitle": "{{n}} component(s) have a newer version upstream",
     "sweepNoneTitle": "No upstream could be reached (0/{{total}})",
-    "sweepNoneDetail": "The upstream state of the components below is \"unknown\", which is not the same as \"up to date\". Installed components are unaffected and keep working.",
+    "sweepNoneDetail": "Their upstream state is \"unknown\", which is not the same as \"up to date\". Installed components keep working.",
     "loading": "Reading the component manifest…",
     "emptyTitle": "No components are registered yet",
-    "emptyHint": "The component list comes from vendor/manifests/components.json.",
-    "failedNote": "{{n}} component(s) could not reach their upstream this time (rate limit, timeout, or a network problem). Each card states its own reason — **that sentence, not this one, tells you when to retry**: when a quota is exhausted it says how long you still have to wait, and clicking again right away is wasted. Not knowing does not affect installing or using them.",
-    "indeterminateNote": "{{n}} component(s) did return an upstream version number, but it **is not from the same numbering scheme as the pinned one, so the two cannot be ordered** — that is \"unknown\", not \"up to date\", and **retrying will not improve it**. Most likely that repository publishes several tag families and we never said which one we want.",
+    "emptyHint": "The component list ships with the app.",
+    "failedNote": "{{n}} component(s) could not reach their upstream this time. **Each card states its own reason and when to retry.** Not knowing does not affect installing or using them.",
+    "indeterminateNote": "{{n}} component(s) returned an upstream version, but it **is not the same numbering scheme as the pinned one, so the two cannot be ordered**. Retrying will not improve it.",
     "confirmInstall": "Install \"{{name}}\" {{version}}?\n\n· Downloaded from the official release page of {{repo}}\n· The sha256 is verified; nothing is installed if it does not match\n· Licence: {{license}}\n\nInstall now?",
-    "confirmUpdate": "Replace \"{{name}}\" (currently {{from}}) with the pinned {{version}}?\n\n· This installs the version pinned in our manifest, not the latest upstream one — the sha256 of the pinned build was recomputed independently on our own machines\n· It is downloaded again and its sha256 verified; nothing is installed if it does not match\n· An upstream version bump can change behaviour (a file format, for instance) and may not be fully compatible\n· If the download or the verification fails, your current version is left untouched (the new one only replaces it once it verifies)\n· ⚠️ But once the update succeeds there is no way back to the old version — the manifest pins exactly one\n\nUpdate now?",
+    "confirmUpdate": "Replace \"{{name}}\" (currently {{from}}) with the pinned {{version}}?\n\n· This installs the version pinned in our manifest, not the latest upstream one\n· If the download or the verification fails, your current version is left untouched\n· ⚠️ Once the update succeeds there is no way back to the old version\n\nUpdate now?",
     "currentCopy": "the copy you have now",
     "chip": {
       "neverChecked": "Not checked",
@@ -1254,14 +1250,14 @@
         "npmResponseHasNoVersion": "the npm registry answered, but its reply had no version field",
         "huggingfaceResponseHasNoSha": "HuggingFace answered, but its reply had no sha field",
         "unsupportedUpstreamKind": "we do not know how to query an upstream of kind {{upstreamKind}} — this is a catalog configuration problem, not a network one",
-        "upstreamErrorText": "verbatim from upstream, not translated by us: {{text}}"
+        "upstreamErrorText": "upstream output: {{text}}"
       }
     },
     "note": {
-      "neverChecked": "\"Not checked\" means **we have not asked upstream yet** — it does not mean you are up to date. The first load deliberately makes no network call; press \"Check for updates\" above and we will go and ask. The installed version is unaffected and keeps working.",
+      "neverChecked": "\"Not checked\" means **we have not asked upstream yet** — it does not mean you are up to date. Press \"Check for updates\" above to ask.",
       "noUpstream": "This component **has no upstream release feed we can query** ({{reason}}). **Pressing \"Check for updates\" will produce nothing for it** — that is not a failure, there is simply no such question to ask.",
-      "failed": "We **did ask upstream and got no answer** ({{reason}}), which does not mean you are up to date. **The reason in brackets above, not this line, tells you when to retry** — when a quota is exhausted it says how long you still have to wait, and clicking again right away is wasted. The installed version is unaffected and keeps working.",
-      "indeterminate": "Upstream reports **{{upstream}}**, our manifest pins **{{pinned}}**, and **these two numbers cannot be ordered** ({{reason}}). So this card says **neither \"newer available\" nor \"up to date\"** — we do not know."
+      "failed": "We **asked upstream and got no answer** ({{reason}}) — that is \"unknown\", not \"up to date\". The installed version keeps working.",
+      "indeterminate": "Upstream reports **{{upstream}}**, our manifest pins **{{pinned}}**, and the two cannot be ordered ({{reason}}) — we do not know which is newer."
     },
     "install": "Install {{version}}",
     "installingBtn": "Installing…",
@@ -1269,8 +1265,8 @@
     "updatingBtn": "Updating…",
     "bundledNoDownload": "Ships with the app; not downloaded separately",
     "upstreamNewerMirror": "The upstream project {{repo}} has released {{upstream}}; our manifest pins {{pinned}}. **You cannot update from here, because we have not mirrored that version yet** — the binary for this component is not published by upstream (on this platform they ship libraries only, no executables), we build it ourselves and host it at {{binaryRepo}}. **Upstream releasing a new version is not the same as us having mirrored it.**",
-    "upstreamNewerPinned": "Upstream has {{upstream}}; our manifest pins {{pinned}}. **The upstream version cannot be installed from here** — we only install versions whose sha256 we **recomputed independently on our own machines**. Upstream does publish a sha256 with the release, but that digest is **provided by the upstream API**: the same source as the \"there is a newer version\" claim itself. It proves the bytes were not altered in transit; it does not prove the source is sound.",
-    "upstreamNewerUnknowable": " On top of that, **we cannot say which version this machine currently has** ({{reason}}) — which is why this card does not offer to install the pinned version either: urging a reinstall without knowing what you already have would most likely just waste a download.",
+    "upstreamNewerPinned": "Upstream has {{upstream}}; our manifest pins {{pinned}}. **The upstream version cannot be installed from here** — we only install versions whose sha256 we recomputed independently ourselves.",
+    "upstreamNewerUnknowable": " On top of that, **we cannot say which version this machine currently has** ({{reason}}), so this card does not offer to install the pinned version either.",
     "pathHint": " You can install the newer version onto your system PATH yourself and we will use it directly (restart the app for that to take effect).",
     "upstreamLink": "See this release upstream",
     "provenanceTitle": "Provenance",

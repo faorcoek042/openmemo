@@ -74,9 +74,12 @@ export function removalFailureKindOf(raw: unknown): RemovalFailureKind {
  * 那样「这一格该有哪几个洞」就变成运气 —— 少一个字段时渲染出来的是原样的
  * `{{path}}` 占位符，而不是一个编译错误（`proxyReasonText.ts` 同一条注释）。
  *
- * ⚠️ `detail`（系统原话）**不从这里出**：它由横幅用
- * `uninstall.verbatimSystemError` 单独渲染，因为那一句的职责是
- * **标出这一段不是我们写的**，混进正文就等于替它背书。
+ * ⚠️ `detail`（系统原话）**不从这里出**：它由横幅单独渲染成**独立的一行等宽文本**，
+ * 因为那一段的职责是**标出这一段不是我们写的**，混进正文就等于替它背书。
+ * （原来那里还有一句「以下是系统原话，我们没有翻译它：」——已删：等宽字体
+ * 已经在承担同一个职责，而那句话说的是**我们的翻译流程**，用户不关心。
+ * 守卫见 `test/uninstallResidue.test.tsx` 的 `assertVerbatimIsInMonoContainer`：
+ * **删了话就得钉住形式**，否则等于把一个信号净删掉。）
  */
 export function removalFailureText(t: Translate, f: FailedFileReport): string {
   const kind = removalFailureKindOf(f.kind);

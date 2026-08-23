@@ -14146,9 +14146,19 @@ describe('#105 ③ 「为什么这些后端不可用」—— 七档全说人话
   test('★★ `not_installed` 必须回答「那我现在能做什么」（闸门点名的第二个毛病）', async () => {
     /*
      * 「package not installed」召唤的动作在那台机器上**到不了**：唯一对应的包就在
-     * 同页折叠区里、按钮是禁用的。所以这一档不能只是把英文译成中文 ——
-     * 它必须指出去哪找，并预先说清"如果那里也是灰的，卡片上写着为什么"。
+     * 同页折叠区里、按钮可能是禁用的。所以这一档不能只是把英文译成中文 ——
+     * 它必须①说清这是"没测"不是"不支持"，②指出去哪装。
      * **一句翻得很好但通向死路的话，和一句英文一样没用。**
+     *
+     * ## ⚠️ 第三条断言删了：`said.includes('灰的')`
+     *
+     * 那句话原文是「…如果那里它的安装按钮是灰的，那张卡片上写着现在为什么装不了」——
+     * **界面在给自己做导游**：预先解释用户还没走到的一个状态。而那张卡片**自己会说**
+     * （`BackendPackCard` 的 `pendingCiTitle` / `inapplicableText` 就是干这个的，
+     * 本文件下面 #105 ④ 那一族正在钉它）。Coordinator 2026-08-24 裁定删。
+     *
+     * 判据没有降级：这一条仍然断**渲染出来的那句话回答了什么** —— 少了"没测"或者
+     * 少了落点，照样红。删掉的是一句**转述别处文案**的话，不是一个事实或出路。
      */
     const hw = HW([
       { id: 'cpu', installed: true, available: true, probed: true, unavailableReason: null },
@@ -14161,7 +14171,6 @@ describe('#105 ③ 「为什么这些后端不可用」—— 七档全说人话
 
     assert.ok(said.includes('什么都没测'), `没说清"这一轮什么都没测" → ${said}`);
     assert.ok(said.includes('加速后端包'), `没指出去哪装 → ${said}`);
-    assert.ok(said.includes('灰的'), `没说"如果那里也点不动，卡片上写着为什么" → ${said}`);
     r.unmount();
   });
 
@@ -15119,11 +15128,22 @@ describe('#106 上游查询失败：14 格每一格在英文界面上都得说�
     }
   });
 
-  test('★★ `upstream_error_text`：原文逐字照抄，并且**明说这一段没翻译**', async () => {
+  test('★★ `upstream_error_text`：原文逐字照抄，并且**标明了它的出处**', async () => {
     /*
      * 这一格是唯一**故意不解释内容**的：那串字符我们确实没看懂。
-     * 所以两件事都得说到 —— 原文一个字不改地在屏幕上，且读者一眼看得出它是原文。
+     * 所以两件事都得说到 —— 原文一个字不改地在屏幕上，且读者一眼看得出它不是我们写的。
      * 只做前者 = 让一段没有 i18n 的字符串冒充产品文案（`verbatimDetail` 同一条纪律）。
+     *
+     * ## ⚠️ 断言换过一次：从 `/not translated/i` 换成「出处说出来了没有」
+     *
+     * 词条原来是「verbatim from upstream, **not translated by us**: …」。
+     * 「我们没有翻译它」是一句**关于我们工作流程的陈述** —— 用户不关心我们翻不翻，
+     * 他要知道的是"这段字是谁说的"。词条因此缩成 `upstream output: {{text}}`。
+     *
+     * 断言跟着换，但**没有退回去断 key 存在**：仍然断**渲染出来的那段文字**
+     * 回答了「这一段是谁的话」——判据是 `upstream`（出处）与原文同时在场。
+     * 反向自检那一条更关键：**不许出现"我们没翻译"那种元说明**，
+     * 否则这次的修改可以被悄悄改回去。
      */
     await i18nInstance.changeLanguage('en');
     try {
@@ -15133,7 +15153,11 @@ describe('#106 上游查询失败：14 格每一格在英文界面上都得说�
       for (const chunk of literalChunks(enAt('components.reason.failed.upstreamErrorText'))) {
         assert.ok(said.includes(chunk), `缺了一段：「${chunk}」→ ${said}`);
       }
-      assert.match(said, /not translated/i, `没说清"这一段不是我们的话" → ${said}`);
+      assert.match(said, /upstream/i, `没说清这段字是谁说的 → ${said}`);
+      assert.ok(
+        !/not translated|verbatim and not|we did not translate/i.test(said),
+        `★ 又把「我们没有翻译它」搬回屏幕上了 —— 用户不关心我们的翻译流程 → ${said}`,
+      );
       r.unmount();
     } finally {
       await i18nInstance.changeLanguage('zh-CN');
@@ -15265,12 +15289,26 @@ describe('#106 后端包卡片：「具体卡在哪」那一行在英文界面�
         assert.ok(shown.includes(chunk), `缺了一段：「${chunk}」→ ${shown}`);
       }
 
-      // ② 探针原话：逐字在，且被明确标成"不是我们的话"
+      /*
+       * ② 探针原话：逐字在，且**标明了出处**。
+       *
+       * ⚠️ 这条断言换过一次。词条原来是「Reported by the probe, **verbatim and not
+       * translated**: …」——「我们没有翻译它」是一句关于**我们工作流程**的陈述，
+       * 用户不关心。词条缩成 `Probe output: {{detail}}`。
+       *
+       * 判据没有退回「key 存在」：仍然断**渲染出来的那段文字**回答了
+       * 「这一段是谁说的」（`probe`），加上原文逐字在场。
+       * 再加一条反向的：不许把那种元说明搬回屏幕，否则这次改动能被悄悄撤销。
+       */
       assert.ok(shown.includes(DETAIL), `探针原话被吃掉了，排障就没有依据了 → ${shown}`);
       for (const chunk of plainChunks(enAt('runtime.pack.inapplicable.verbatimDetail'))) {
         assert.ok(shown.includes(chunk), `没标明这一段是原文：缺「${chunk}」→ ${shown}`);
       }
-      assert.match(shown, /not translated/i, `没说清"这一段没翻译" → ${shown}`);
+      assert.match(shown, /probe/i, `没说清这段字是谁说的 → ${shown}`);
+      assert.ok(
+        !/not translated|verbatim and not|we did not translate/i.test(shown),
+        `★ 又把「我们没有翻译它」搬回屏幕上了 → ${shown}`,
+      );
       r.unmount();
     } finally {
       await i18nInstance.changeLanguage('zh-CN');

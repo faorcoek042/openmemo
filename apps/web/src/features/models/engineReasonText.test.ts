@@ -159,11 +159,23 @@ describe('#112 第 8–10 处：引擎为什么用不了（英文界面）', () 
     const probe = engineUnavailableText(t, SAMPLES.engine_probe_text);
     assert.ok(probe.includes(PROBE), `引擎原话被弄丢了 —— 排障时唯一的线索：${probe}`);
     /*
-     * 而且原话**不是**这句话的全部：词条自己要说清"这一段是原文、没翻译"。
+     * 而且原话**不是**这句话的全部：词条自己要标明**这一段是谁说的**。
      * 只发原话等于把一段没有 i18n 的字符串当成产品文案
      * （同 `UpstreamFailure.upstream_error_text` 那条纪律）。
+     *
+     * ⚠️ 判据换过一次。原来是 `probe.length > PROBE.length + 20` —— 一个**按当时那句
+     * 长文案标定出来的魔数**。那句词条原文是「reported by the engine, verbatim and
+     * **not translated**: …」，而「我们没有翻译它」是一句关于**我们工作流程**的陈述，
+     * 用户不关心；缩成 `engine output: …` 之后前缀只有 15 个字符，这条就红了 ——
+     * **红的是那个魔数，不是产品**。
+     *
+     * 换成与长度无关、直接断"它回答了什么"的写法：原话前面**有东西**，
+     * 而且那个东西**说出了出处**。这比数字符更强：把前缀换成一句无意义的
+     * 「Details:」也会红。
      */
-    assert.ok(probe.length > PROBE.length + 20, `除了原话什么都没说：${probe}`);
+    const prefix = probe.slice(0, probe.indexOf(PROBE)).trim();
+    assert.notEqual(prefix, '', `除了原话什么都没说 —— 读者看不出这一段不是我们写的：${probe}`);
+    assert.match(prefix, /engine/i, `没标明这段原话是谁说的（前缀："${prefix}"）`);
   });
 
   it('★ 「没装」与「装了但不全」必须是**两句不同的话**（合并 = 叫人再装一遍他装过的）', () => {

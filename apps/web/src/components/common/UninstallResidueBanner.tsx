@@ -95,11 +95,17 @@ export function UninstallResidueBanner({ files, failed }: UninstallResidueBanner
                  * ★ 逐条把**解析层的英文原话**照登出来 —— 那串字里带着绝对路径，
                  * 也就是"那几个文件到底在哪"这个问题在整条链上唯一的答案。
                  * 契约（`RefusedFileReport.reason`）刻意没有把它收成枚举，
-                 * 所以这里也不许把它改写成我们自己的话：`uninstall.verbatimReason`
-                 * 那句词条的职责就是**标出这一段不是我们写的**。
+                 * 所以这里也不许把它改写成我们自己的话。
+                 *
+                 * ## ★★ 那句「以下是存储层原文，我们没有翻译它：」删掉了
+                 *
+                 * 它的职责是**标出这一段不是我们写的**，而这一行**已经是等宽字体**了 ——
+                 * 形式在承担同一个职责，那句话是纯冗余。而且它说的是
+                 * 「**我们**没有翻译它」：一句关于我们工作流程的陈述，用户不关心。
+                 * 留一个短标签在这儿仍然多余：等宽 + 独占一行已经说清了。
                  */
                 <span key={`${String(i)}-${f.name}`} className="mt-0.5 block break-all font-mono">
-                  {t('uninstall.verbatimReason', { reason: f.reason })}
+                  {f.reason}
                 </span>
               ))}
             </>
@@ -127,14 +133,13 @@ export function UninstallResidueBanner({ files, failed }: UninstallResidueBanner
                    */}
                   <span className="block break-all">{removalFailureText(t, f)}</span>
                   {/*
-                   * ★ 系统原话单独一行、单独一句词条。
-                   * 它的职责是**标出这一段不是我们写的** —— 与 `verbatimReason`
-                   * 同一条待遇。`kind === 'unknown'` 时这是我们唯一说得出的东西，
-                   * 所以它不是可选的装饰；另外两格留着它是给排障用的。
+                   * ★ 系统原话单独一行、等宽。
+                   * `kind === 'unknown'` 时这是我们唯一说得出的东西，所以它不是
+                   * 可选的装饰；另外两格留着它是给排障用的。
+                   * 「以下是系统原话，我们没有翻译它：」同上删掉 —— 等宽已经把
+                   * 「这一段不是产品在说话」说完了。
                    */}
-                  <span className="mt-0.5 block break-all font-mono">
-                    {t('uninstall.verbatimSystemError', { detail: f.detail })}
-                  </span>
+                  <span className="mt-0.5 block break-all font-mono">{f.detail}</span>
                 </span>
               ))}
             </>

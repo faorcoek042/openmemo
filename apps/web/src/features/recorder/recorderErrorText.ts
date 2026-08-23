@@ -57,7 +57,7 @@ const NOT_REPORTED: RenderableRecorderError = { kind: 'not_reported' };
  * ⚠️ **`detail` 是 daemon 捕到的 `err.message` 原样串，这里不假装它是我们的话。**
  * 三条 `*_failed` / `engine_error` 走的是「**阶段知道、成因不知道**」那个形状：
  * `kind` 说清卡在哪一步（够不够用户判断"我录的东西还在不在"），
- * `detail` 由词条单独包起来（「…verbatim and not translated: …」），
+ * `detail` 由词条单独包起来（「Recorder output: …」/「录音端原文：…」），
  * 读者一眼看得出哪一段是原文。直接拼在句尾会让一段没有 i18n 的字符串
  * 冒充成产品文案 —— 同 `UpstreamFailure.upstream_error_text` 与
  * `Inapplicability.backend_unavailable.detail` 的纪律。
