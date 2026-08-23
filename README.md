@@ -29,7 +29,7 @@ ffmpeg / whisper / yt-dlp / CUDA 都不用预装)。
 
 ⚠️ **macOS 上"双击没反应"最容易被误判成"包坏了"**:Gatekeeper 拦在**打开脚本**那一步,
 终端窗口根本没被启动,你也看不到任何错误。**换命令行 `tar` 解压绕不开它**
-(实测访达与 `tar` 都会传播隔离属性;~~v0.2.0 说的"命令行解压就不会被拦"~~ 是错的)。
+(实测访达与 `tar` 都会传播隔离属性)。
 另一条路 `xattr -dr com.apple.quarantine "<文件夹>"` —— 它**等于对这些文件关掉 Gatekeeper 检查**,
 先确认你信任来源。实测细节见 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §8.9。
 
@@ -97,43 +97,26 @@ F1–F5 各有一条端到端腿(用预编译包、走真实 HTTP、三平台各
 ## 许可证
 
 `package.json` 仍是 `UNLICENSED`(ADR-002);仓库根目录有一份 `LICENSE` 说明授权状态,
-预编译包内另带 `THIRD-PARTY-NOTICES`。(~~无 LICENSE 文件~~ ~~一旦要分发就是硬阻断~~
-—— 这两句 2026-08-08 起不再为真,订正见 [`docs/design/D-19-user-doc-provenance.md`](docs/design/D-19-user-doc-provenance.md)。)
-~~**ffmpeg** 是 **GPL-3.0-or-later**,而**它的字节从不经过我们**:由你的机器直连上游取,
-我们只以命令行方式调用 —— 所以发预编译包不触发 GPL。~~
-（2026-08-09 起，此句只对 **macOS** 仍成立：供应商 jellyfin-ffmpeg，**GPL-3.0-or-later**，
-继续由你的机器直连上游下载，字节不经过我们。**Linux / Windows 计划改为随包内置**
-（BtbN 的 LGPL 变体，**LGPL-3.0-or-later**，与原下载的 GPL 变体同源同 commit）——
-落地后字节会随我们的包分发，但我们仍只以 `spawn` 命令行方式调用可执行文件，不
-`dlopen`、不链接其库，LGPL 的链接触发义务不适用；许可证全文由 ffmpeg 归档自带的
-`LICENSE.txt` 满足，随归档整份分发。
-⚠️ **今天(2026-08-09)这件事还没发生**：CI 里核对"NOTICES 声称的和包里实际有的
-是否一致"的守卫（`scripts/ci/verify-bundle.sh`）目前对 Linux/Windows 报的是
-**警告级**——包里实测还没有这些字节，NOTICES 的措辞跑在了实际打包前面。
-**已经安装过 ffmpeg 组件的用户，机器上大概率仍是旧的 GPL 变体**，产品目前按
-组件包 ID 而非内容判断"你机器上装的是什么"，同一个 ID 的归档换了内容它不会
-自动发现，重装之前不会变。三个平台现在不是同一个答案、也不是同一个供应商，
-详见 [`docs/design/D-20-bundled-deps.md` §9.2/§13](docs/design/D-20-bundled-deps.md)，
-逐条以 `vendor/manifests/backends.json` 每条 `license.id` 为准。此为 Manager 依据两轮
-真机验证结果（§13.7）所作裁定。）
-**yt-dlp 项目本身是 [Unlicense](https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE)(公共领域),
-但官方发布的可执行二进制内嵌了另外的 GPL 组件**:全平台内嵌 mutagen(GPL-2.0-or-later),
-Linux x64/arm64 额外内嵌 GNU Readline(GPL-3.0-or-later)——
-`[实测]` 见 [`docs/design/D-20-bundled-deps.md` §14](docs/design/D-20-bundled-deps.md)。
-~~这与上面 ffmpeg 是**同一条逃逸路径**:字节从不经过我们,由你的机器直连 yt-dlp 官方 GitHub 取,
-我们只以命令行方式调用 —— 所以发预编译包同样不触发 GPL。~~
-（2026-08-09 订正：上面 ffmpeg 已经不是"一条逃逸路径"了，按平台分叉成两条不同的
-论证，不能再拿 yt-dlp 去类比"上面 ffmpeg"这个整体。准确的说法是——
-**yt-dlp 自己不受这次变动影响**：三个平台**都**仍是字节从不经过我们，由你的机器
-直连 yt-dlp 官方 GitHub 取，我们只以命令行方式调用，跟**macOS 那一半的 ffmpeg**
-是同一条路，跟 Linux/Windows 计划内置的那一半不是。它不触发 GPL 的理由也不是
-"项目许可证宽松"（那个理由本来就不成立，见下一段订正）——而是这条"传播行为不
-发生在我们这里"的路径本身，三平台一致，不因 ffmpeg 那边的变化而变。）
-~~yt-dlp 是 Unlicense(公共领域),与 GPL 无关~~
-(此处 2026-08-09 第一次订正时把"项目本身的许可证"和"官方二进制里内嵌了什么依赖"
-混为一谈,"与 GPL 无关"这句话讲过头了;同日晚些时候按 D-20 §14 的二进制实测再次订正,
-订正人:执行 ytdlp-binary-audit 任务的 agent)。
-逐条依据见附录 A 或 `pnpm license:report`。
+预编译包内另带 `THIRD-PARTY-NOTICES`——**包里实际内置了什么以那一份为准**,它按平台生成。
+
+**ffmpeg 按平台不同**:
+
+- **Linux / Windows**:随包内置 BtbN 的 **LGPL-3.0-or-later** 变体。我们只以 `spawn`
+  命令行方式调用可执行文件,不 `dlopen`、不链接其库,LGPL 的链接触发义务不适用;
+  许可证全文由 ffmpeg 归档自带的 `LICENSE.txt` 满足,随包分发。
+- **macOS**:不内置。供应商 jellyfin-ffmpeg 不发 LGPL 变体,仍是 **GPL-3.0-or-later**,
+  由你的机器直连上游下载,字节不经过我们。
+
+⚠️ **已经装过 ffmpeg 组件的用户,机器上仍是旧的 GPL 变体**:产品按组件包 ID 而非内容
+判断"你机器上装的是什么",同一个 ID 的归档换了内容它不会自动发现,**重装之前不会变**。
+
+**yt-dlp 三个平台都不内置**。项目本身是 [Unlicense](https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE)(公共领域),
+但官方发布的可执行二进制内嵌了另外的 GPL 组件:全平台内嵌 mutagen(GPL-2.0-or-later),
+Linux x64/arm64 额外内嵌 GNU Readline(GPL-3.0-or-later)。字节由你的机器直连 yt-dlp
+官方 GitHub 取,不经过我们。
+
+逐条依据见 [`docs/design/D-20-bundled-deps.md` §9.2/§13/§14](docs/design/D-20-bundled-deps.md),
+以 `vendor/manifests/backends.json` 每条 `license.id` 为准;或跑 `pnpm license:report`。
 
 ## 更多文档
 
