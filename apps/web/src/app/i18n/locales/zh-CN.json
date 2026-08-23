@@ -211,6 +211,7 @@
       "reclaimable": "可清理：未完成的下载 {{partials}} · 孤立文件 {{orphans}} · 无法识别的残留 {{unclaimed}}",
       "unknownAmount": "未知",
       "unclaimedSegment": "无法识别的残留",
+      "unclaimedSegmentN": "无法识别的残留（{{n}} 项）",
       "gc": "清理 {{size}}"
     },
     "fit": {
@@ -337,6 +338,7 @@
       "recommended": "推荐",
       "loadBearing": "兜底后端",
       "requiresDriver": "需要驱动：",
+      "driverUnknown": "这个包要不要驱动、要哪一版，目录里没记 —— 我们不知道，不是「不需要」。",
       "selfTestPassed": "自检通过",
       "selfTestNoAccel": "跑通了，但加速没有生效",
       "selfTestNoAccelDetail": "这次自检确实跑完了推理，但一个设备都没枚举到 —— 说明它退回 CPU 算完了，这个包的加速在你这台机器上没有用上。",
@@ -358,7 +360,7 @@
         "platformMismatch": "适用于 {{os}}/{{arch}}，与本机不符。",
         "hardwareNotProbedYet": "还没探测过这台机器，判断不了这个包适不适用。先装 CPU 基础包（已装的话去「本机组件」页点「更新」），装好会自动重测。",
         "backendStatusMissing": "这一轮探测对这个后端一个字都没说 —— 我们没测过它，所以也不会说它「本机不支持」。",
-        "backendNotInstalledHere": "这个包还没装，所以这一轮**一个字都没测到它** —— 这不是「你的机器不支持」。而系统报告的显卡里也没有能用它的，两条合起来，现在装不了。先装 CPU 基础包：它带着探针，装完会自动重测一次；如果这台机器真的支持，这个包就能装了。",
+        "backendNotInstalledHere": "探针跑过了，但**没测到这个后端** —— 这个包没装，而探针一次只加载当前生效的那个后端目录；系统报告的显示适配器里也没有一个把它列为候选。两条都拿不出正面证据，所以现在装不了 —— **但这不是「确认不支持」**。如果这台机器确实有独立显卡，多半是驱动没装好：装好驱动后重启 OpenMemo 会重新探测。否则这一格没有你能做的。",
         "verbatimDetail": "探针原文：{{detail}}"
       }
     },

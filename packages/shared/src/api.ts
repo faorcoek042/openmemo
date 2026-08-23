@@ -548,6 +548,15 @@ export interface StorageBreakdownItem {
   displayName: string;
   bytes: number;
   active: boolean;
+  /**
+   * 这一项由**几件东西**合成 —— `kind === 'unclaimed'` 时必填。
+   *
+   * ⚠️ 它是**会改变用户下一步的事实**：「4 项」和「400 项」不是一回事。
+   * 上一轮把 daemon 拼的那句 `无法识别的残留（4 项）` 换成词条时，**件数跟着一起没了**
+   * （中英两个语言都只剩「无法识别的残留 749 MB」），而下面那行「可回收」也只有字节
+   * —— 全界面没有任何一处再说得出到底有几项。**删说法不删事实**，所以件数走这一格回来。
+   */
+  itemCount?: number;
 }
 
 export interface GetStorageResponse {

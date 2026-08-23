@@ -157,9 +157,26 @@ describe('无法识别的残留：看得见 / 删得掉 / 删之前证明没在�
       (storage.reclaimable.unclaimedBytes ?? 0) >= PAYLOAD.length,
       `可回收里没算上残留：${String(storage.reclaimable.unclaimedBytes)}`,
     );
-    assert.ok(
-      storage.breakdown.some((b) => b.id === '__unclaimed__'),
-      '明细里没有「无法识别的残留」这一项 —— 用户仍然只能看到一个对不上的差额',
+    const row = storage.breakdown.find((b) => b.id === '__unclaimed__');
+    assert.ok(row, '明细里没有「无法识别的残留」这一项 —— 用户仍然只能看到一个对不上的差额');
+
+    /*
+     * ★★ **件数必须发出来。**
+     *
+     * 这一项的名字原来是 daemon 拼的 `无法识别的残留（N 项）` —— 一句中文，
+     * 英文界面上原样渲染。换成词条之后中文对了，但**「（N 项）」跟着一起没了**：
+     * 中英两个语言都只剩「无法识别的残留 749 MB」，而下面那行「可回收」只有字节 ⇒
+     * **全界面再没有一处说得出到底有几项。**
+     *
+     * 「4 项」和「400 项」会让用户做不同的事，所以它是**事实**不是解释 ——
+     * 精简可以删解释，不许删事实。件数因此单列 `itemCount` 这一格。
+     */
+    assert.equal(row.kind, 'unclaimed', '这一项没被标成 unclaimed —— 界面会退回去读那句中文');
+    assert.equal(
+      row.itemCount,
+      1,
+      `件数没发出来或者不对（实得 ${String(row.itemCount)}）—— ` +
+        '界面上「几项」这个事实就没有第二个来源了',
     );
   });
 

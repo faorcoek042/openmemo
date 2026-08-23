@@ -626,6 +626,31 @@ export function BackendPackCard({
               })}
             </p>
           ) : null}
+          {/*
+            ★★ **`requiresDriver` 是 null 时不许一片空白。**
+
+            `[审计实测 2026-08-24]` `whispercpp-vulkan-win-x64` 的散文里明写着
+            「`requiresDriver` 保持 null 是**如实的空**，不是"确认不需要"」——
+            而这一行上一版只在它为真值时才渲染，**null 渲染出来什么都没有**。
+            一个如实的「我们不知道」在界面上的表现是一片空白 ⇒
+            **「不知道」被变回了「没有」**，一字不差是这几版的第一条红线。
+
+            ⚠️ 判据是 **backend 不是 cpu**，不是一份 id 清单（清单当天对、以后安静过期）：
+            · GPU 后端（vulkan / cuda / rocm / metal / coreml）没有驱动就跑不起来，
+              所以"这一格空着"只可能是**没记**，说成"不需要驱动"是我们担不起的断言；
+              同一个 vulkan 后端，`-linux-x64` 记着 `vulkanApi 1.2`、`-win-x64` 是 null
+              —— **兄弟条目自己就证明了这一格是该填的。**
+            · `cpu` 那一档 null 是**真的不需要**（媒体工具、yt-dlp 都在这一档），
+              对它们说"我们不知道"是凭空造出来的噪音。
+          */}
+          {!pack.requiresDriver && pack.backend !== 'cpu' ? (
+            <p
+              className="mt-1 text-[11px] text-warning"
+              data-testid={`backend-driver-unknown-${pack.id}`}
+            >
+              {t('runtime.pack.driverUnknown')}
+            </p>
+          ) : null}
           {pack.requiresDriver ? (
             <p className="mt-1 text-[11px] text-ink-muted">
               {t('runtime.pack.requiresDriver')}
