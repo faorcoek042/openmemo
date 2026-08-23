@@ -577,6 +577,7 @@
   "errors": {
     "title": "出错了",
     "detailToggle": "查看详情",
+    "remediationAlreadyHere": "{{label}} —— 就在本页",
     "MOCK_NOT_IMPLEMENTED": {
       "title": "该功能尚未接通",
       "detail": "本地服务还没有实现这个接口，当前处于 MOCK 模式。"

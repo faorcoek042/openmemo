@@ -577,6 +577,7 @@
   "errors": {
     "title": "Something went wrong",
     "detailToggle": "Details",
+    "remediationAlreadyHere": "{{label}} — you are already on that page",
     "MOCK_NOT_IMPLEMENTED": {
       "title": "Not wired up yet",
       "detail": "The local service has not implemented this endpoint. The app is running in MOCK mode."
