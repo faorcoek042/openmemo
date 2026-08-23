@@ -7695,11 +7695,7 @@ describe('T-140 ② ErrorBlock 自己就把补救渲染出来（不再要求调�
         `英文界面上补救按钮没说英文（实际：${shown}）—— 服务端给的 label 是 ` +
           `「${NO_MEDIA_SOURCE.remediation.label}」，它一直在，只是没被取用`,
       );
-      assert.equal(
-        shown.match(/[一-鿿]/g),
-        null,
-        `英文界面上的补救按钮里出现了汉字 → ${shown}`,
-      );
+      assert.equal(shown.match(/[一-鿿]/g), null, `英文界面上的补救按钮里出现了汉字 → ${shown}`);
       r.unmount();
     } finally {
       await i18nInstance.changeLanguage('zh-CN');
