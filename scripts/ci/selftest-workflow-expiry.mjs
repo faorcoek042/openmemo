@@ -18,6 +18,7 @@
  */
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { audit, isDark, versionAtLeast, DARK_WORKFLOWS } from './check-workflow-expiry.mjs';
 import { splitChain, parseLink, runAll } from './run-selftests-all.mjs';
@@ -203,8 +204,19 @@ section('\x1b[1mB 组 · run-selftests-all：链条跑到底，不在第一处�
 /* B1 切分：真链切出来的环数与"数 && 的个数 + 1"一致，且每一环都认得出形状。 */
 {
   const { readFileSync } = await import('node:fs');
+  /*
+   * ⚠️ 必须 `fileURLToPath()`，**不许**用 `new URL(...).pathname`。
+   *
+   * 这一行原来写的就是 `.pathname`，而它在 Windows 上给出 `/D:/a/…`，
+   * 拼出来变成 `D:\D:\a\…\package.json` → ENOENT。
+   * `[实测 run 32655289213]` —— 而抓到它的正是本 PR 给 `ci-crossplatform`
+   * 补的那两件事（cron + 不截断）：这条自检排在 37 环里的第 36 环，
+   * 短路版**根本走不到它**。D-11 §3.2 第 1 条早就写过这个坑
+   * （「手拼 file:// → 三个平台全部 false」），而知道它存在并不能阻止我再犯一次；
+   * 每轮真的跑一遍才能。
+   */
   const pkg = JSON.parse(
-    readFileSync(new URL('../../package.json', import.meta.url).pathname, 'utf8'),
+    readFileSync(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf8'),
   );
   const chain = String(pkg.scripts['test:ci-scripts']);
   const links = splitChain(chain);
