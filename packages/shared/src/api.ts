@@ -530,7 +530,21 @@ export interface GetActiveResponse {
 
 export interface StorageBreakdownItem {
   id: string;
-  kind: 'model' | 'backend-pack';
+  /**
+   * `'unclaimed'` 是**第三档**，不是 `backend-pack` 的一种。
+   *
+   * 它存在的理由是措辞而不是分类：那一项的名字此前由 daemon 拼成
+   * `无法识别的残留（3 项）` 塞进 `displayName`，而 `StorageBreakdown` 原样当段标签画
+   * —— **英文界面的 `/models` 上就是这句中文**。有了这一档，界面才能自己决定说哪种语言。
+   */
+  kind: 'model' | 'backend-pack' | 'unclaimed';
+  /**
+   * 界面上显示的名字。
+   *
+   * ⚠️ `kind === 'unclaimed'` 时**界面不读它**（那一档走 i18n 词条）——
+   * 这里仍然发一句中文只是为了让**旧前端**不至于显示空白。
+   * 新代码不许再往这里拼句子：daemon 拼的句子只有一种语言。
+   */
   displayName: string;
   bytes: number;
   active: boolean;

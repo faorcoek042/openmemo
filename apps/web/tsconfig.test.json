@@ -83,6 +83,7 @@
     "src/lib/events/types.ts",
     "src/features/diagnostics/checkText.test.ts",
     "src/features/diagnostics/checkText.ts",
+    "src/features/components/sha256ProvenanceRegex.test.ts",
     "src/features/recorder/recorderErrorText.test.ts",
     "src/features/recorder/recorderErrorText.ts",
     "src/app/i18n/locales/en.json"

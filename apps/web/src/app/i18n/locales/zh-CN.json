@@ -210,6 +210,7 @@
       "empty": "还没有安装任何模型",
       "reclaimable": "可清理：未完成的下载 {{partials}} · 孤立文件 {{orphans}} · 无法识别的残留 {{unclaimed}}",
       "unknownAmount": "未知",
+      "unclaimedSegment": "无法识别的残留",
       "gc": "清理 {{size}}"
     },
     "fit": {
@@ -357,6 +358,7 @@
         "platformMismatch": "适用于 {{os}}/{{arch}}，与本机不符。",
         "hardwareNotProbedYet": "还没探测过这台机器，判断不了这个包适不适用。先装 CPU 基础包（已装的话去「本机组件」页点「更新」），装好会自动重测。",
         "backendStatusMissing": "这一轮探测对这个后端一个字都没说 —— 我们没测过它，所以也不会说它「本机不支持」。",
+        "backendNotInstalledHere": "这个包还没装，所以这一轮**一个字都没测到它** —— 这不是「你的机器不支持」。而系统报告的显卡里也没有能用它的，两条合起来，现在装不了。先装 CPU 基础包：它带着探针，装完会自动重测一次；如果这台机器真的支持，这个包就能装了。",
         "verbatimDetail": "探针原文：{{detail}}"
       }
     },
@@ -391,6 +393,7 @@
       "noAvx2": " · 不支持 AVX2",
       "diskFree": "剩余 {{free}} / {{total}}",
       "backendsLabel": "后端：",
+      "backendReasonSeparator": "：",
       "whyUnavailable": "为什么这些后端不可用（{{n}} 项）",
       "reasonPlatformUnsupported": "本平台不适用 —— 这个后端只存在于 Apple 平台（macOS）",
       "reasonProbeFailed": "探针这一轮没跑起来 —— 关于这个后端我们**什么都没测出来**，这不是「你的机器不支持」。",
@@ -1283,6 +1286,9 @@
     "licenseLink": "许可证 {{license}}",
     "sha256Local": "本机下载后独立复算",
     "sha256Upstream": "摘要由上游提供，我们没有自己复算",
-    "provenanceDetail": "这一份是怎么来的"
+    "provenanceDetail": "这一份是怎么来的",
+    "caveat": {
+      "e2eUnverified": "我们没有在这个平台上端到端验过它（装上 → 真的转出文字）"
+    }
   }
 }

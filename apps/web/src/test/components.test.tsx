@@ -139,7 +139,11 @@ import ComponentsPage from '../features/components/ComponentsPage';
  * 而"新增一格却没有用例覆盖"由下面 `FAILURE_ARMS` 那条前提自检当场判红。
  */
 import { UPSTREAM_FAILURE_KEYS } from '../features/components/reasonText';
-import { INAPPLICABILITY_KEYS, UNAVAILABLE_REASON_KEYS } from '../features/runtime/reasonKeys';
+import {
+  INAPPLICABILITY_KEYS,
+  UNAVAILABLE_REASON_KEYS,
+  PACK_SURFACE_OVERRIDES,
+} from '../features/runtime/reasonKeys';
 import { ComponentCard } from '../features/components/components/ComponentCard';
 import { FitBadge } from '../components/common/FitBadge';
 import {
@@ -4757,6 +4761,7 @@ describe('T-132 组件与来源页', () => {
     sizeBytes: 39924536,
     sha256: '6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae',
     sha256Verification: 'local-recomputed',
+    caveats: [],
     sha256Provenance: null,
   };
   /** npm 依赖：清单里如实写着没有制品，所以它**不该**有安装按钮。 */
@@ -5023,10 +5028,13 @@ const EMPHASIS_REGISTRY: Record<string, string[]> = {
     'features/runtime/components/BackendPackCard.tsx',
   ],
   'runtime.hw.reasonNotInstalled': [
+    // ⚠️ 2026-08-24 起**只剩硬件卡**：包卡片那一档改走
+    // `runtime.pack.inapplicable.backendNotInstalledHere`（同因不同落点，
+    // 理由写在 `reasonKeys.ts` 的 `PACK_SURFACE_OVERRIDES` 上面）。
     'features/runtime/components/HardwareCard.tsx',
-    // #106：后端包卡片的「具体卡在哪」那一行也转给了这六条（`reasonKeys.ts` 的
-    // `inapplicabilityText()` 把 `backend_unavailable` 整档交给它们），所以这里
-    // 也是渲染点。它经 `<Emphasis>` 渲染、`title` 走 `stripEmphasis`。
+  ],
+  // 包卡片上那一档自己的措辞 —— 渲染点与其余 `inapplicable.*` 同源。
+  'runtime.pack.inapplicable.backendNotInstalledHere': [
     'features/runtime/components/BackendPackCard.tsx',
   ],
   'runtime.hw.reasonNotProbedThisRun': [
@@ -6269,6 +6277,7 @@ describe('T-135 ③ 组件卡片：displayNameZh 是两份里的一份，不是�
     sizeBytes: 1_234_567,
     sha256: 'aa'.repeat(32),
     sha256Verification: 'local-recomputed',
+    caveats: [],
     sha256Provenance: null,
   };
 
@@ -12499,6 +12508,7 @@ describe('T-200 S-6 组件页必须跟着活查询走', () => {
     sizeBytes: 1000,
     sha256: 'x'.repeat(64),
     sha256Verification: 'local-recomputed',
+    caveats: [],
     sha256Provenance: null,
   };
 
@@ -12978,6 +12988,7 @@ describe('组件更新：门控的轴和动作必须是同一件事', () => {
     sizeBytes: 39_924_536,
     sha256: '6b'.repeat(32),
     sha256Verification: 'local-recomputed',
+    caveats: [],
     sha256Provenance: null,
   };
 
@@ -13130,6 +13141,7 @@ describe('组件卡片：说不出已装版本时，不许给「装上钉定版�
     sizeBytes: 145_349_121,
     sha256: 'ab'.repeat(32),
     sha256Verification: 'local-recomputed',
+    caveats: [],
     sha256Provenance: null,
   };
 
@@ -13635,6 +13647,7 @@ describe('#105 ① /components 整页 —— 英文界面下必须是英文', ()
     sizeBytes: 39_924_536,
     sha256: '6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae',
     sha256Verification: 'local-recomputed',
+    caveats: [],
     sha256Provenance: null,
     ...over,
   });
@@ -14405,6 +14418,32 @@ describe('#105 ④ 折叠区那 20 颗禁用按钮 —— 要么不渲染，要�
       (why.textContent ?? '').includes('backend package not installed'),
       `那一段没说出为什么点不动 → ${JSON.stringify(why.textContent)}`,
     );
+
+    /*
+     * ★★ 而且**不许把用户支到他已经站着的地方**。
+     *
+     * `[审计实测 2026-08-24，真浏览器]` 这段话结尾曾是「…**去下面的「加速后端包」装它。**」
+     * 而 `<h2>加速后端包</h2>` 在 abs y=65、这句话在 abs y=838 ——
+     * **那个区块在上面，而这颗灰按钮就在它里面。** 方向错，动词也空。
+     *
+     * 禁止项从**硬件卡那张表**取（不在这里另抄一句），所以：
+     * 硬件卡的措辞改了这条自动跟着改；而两处一旦被合回同一句，这条当场红。
+     */
+    const hwWording = zhAt(UNAVAILABLE_REASON_KEYS['not_installed']);
+    const pointer = hwWording.slice(hwWording.indexOf('去下面'));
+    assert.ok(pointer.length > 6, '硬件卡那句话里已经没有「去下面…」了 —— 这条禁止项要重写');
+    assert.ok(
+      !(why.textContent ?? '').includes(pointer),
+      `★ 缺陷原状：包卡片把用户指向它自己所在的那个区块 → ${JSON.stringify(why.textContent)}`,
+    );
+
+    // 反向：它得**自己**说清现在为什么装不了（否则上面那条否定断言可以靠"什么都不说"通过）
+    for (const chunk of literalChunks(zhAt('runtime.pack.inapplicable.backendNotInstalledHere'))) {
+      assert.ok(
+        (why.textContent ?? '').includes(chunk),
+        `包卡片没说清"在这里为什么现在装不了"：缺「${chunk}」→ ${JSON.stringify(why.textContent)}`,
+      );
+    }
     r.unmount();
   });
 });
@@ -14803,6 +14842,7 @@ describe('#106 组件页：说不出已装版本时，那句话在英文界面�
     sizeBytes: 39_924_536,
     sha256: '6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae',
     sha256Verification: 'local-recomputed',
+    caveats: [],
     sha256Provenance: null,
     ...over,
   });
@@ -14899,6 +14939,47 @@ describe('#106 组件页：说不出已装版本时，那句话在英文界面�
     );
     // 反向自检：结论那一行仍然在（否则上面那条否定断言可能只是整块没渲染）
     assert.equal(text(provenanceLine(r.container)), zhAt('components.sha256Local'));
+    r.unmount();
+  });
+
+  /*
+   * ★★ 「我们没验过端到端」必须在**折叠外面**。
+   *
+   * `[审计实测 2026-08-24]` 4 条组件（`whispercpp-cpu-linux-x64` / `-cpu-win-x64` /
+   * `-vulkan-win-x64` / `-metal-macos-arm64`）在 `sha256Provenance` 里逐字承认
+   * 「端到端『干净机器 → 真的转出非空文本』尚未重跑」。上一轮把那段长文折进
+   * 「这一份是怎么来的」之后，**这句承认跟着进去了**，卡片正面只剩一个干净的
+   * 「安装 v1.9.1」。
+   *
+   * 那个折叠标签承诺的是**来源**，不是**警示**。把「我们不知道」藏在它后面
+   * 等于把它收回成了沉默 —— 撞的正是这几版的第一条红线。
+   *
+   * 判据是 DOM 位置，不是"有没有这句话"：只断文字存在的话，把它塞回折叠里
+   * 照样绿，而那正是要修的形状。
+   */
+  test('★★ caveat 渲染在折叠外面（藏进 details 就等于把「我们不知道」收回成沉默）', async () => {
+    const r = await renderCard({ caveats: ['e2e-unverified'] }, 'zh-CN');
+    const box = r.container.querySelector('[data-testid="component-caveats-ytdlp-linux-x64"]');
+    assert.ok(box, 'caveat 整块没渲染 —— 那句承认在界面上一个字都没有');
+    assert.ok(
+      text(box as HTMLElement).includes(zhAt('components.caveat.e2eUnverified')),
+      `caveat 那句话没说出口 → ${text(box as HTMLElement)}`,
+    );
+    assert.equal(
+      (box as HTMLElement).closest('details'),
+      null,
+      '★ 缺陷原状：那句承认坐在「这一份是怎么来的」后面 —— 那个标签承诺的是来源，不是警示',
+    );
+    r.unmount();
+  });
+
+  test('★ 没有 caveat 时不画那一块（空的警告条是一句凭空造出来的话）', async () => {
+    const r = await renderCard({ caveats: [] }, 'zh-CN');
+    assert.equal(
+      r.container.querySelector('[data-testid="component-caveats-ytdlp-linux-x64"]'),
+      null,
+      '没登记提醒却画了一条警告 —— 那是替清单编话',
+    );
     r.unmount();
   });
 
@@ -15014,6 +15095,7 @@ describe('#106 上游查询失败：14 格每一格在英文界面上都得说�
     sizeBytes: 39_924_536,
     sha256: 'a'.repeat(64),
     sha256Verification: 'local-recomputed',
+    caveats: [],
     sha256Provenance: null,
   });
 
@@ -15322,8 +15404,19 @@ describe('#106 后端包卡片：「具体卡在哪」那一行在英文界面�
         `英文界面上这张卡出现了中文 → ${shown}`,
       );
 
-      // ① `not_installed` 那一档的**译文**（与硬件卡共用同一张表）
-      const entry = enAt(UNAVAILABLE_REASON_KEYS['not_installed']);
+      /*
+       * ① `not_installed` 那一档的**译文**。
+       *
+       * ⚠️ 2026-08-24 起**包卡片有自己的措辞**，不再与硬件卡共用同一句：
+       * 硬件卡在包区**上方**，说「去下面的加速后端包装它」是对的；
+       * 而这张卡**就在**包区里，那句话指向用户已经站着的地方（审计实测：
+       * 区块标题 abs y=65，这句话 abs y=838）。理由写在 `PACK_SURFACE_OVERRIDES` 上面。
+       *
+       * 期望值从那张表**取**，不在这里另抄一句英文 —— 表改了这条自动跟着改。
+       */
+      const entry = enAt(
+        PACK_SURFACE_OVERRIDES['not_installed'] ?? UNAVAILABLE_REASON_KEYS['not_installed'],
+      );
       const chunks = plainChunks(entry);
       assert.ok(chunks.length > 0, '词条取不出可断言的片段 —— 这条会空转');
       for (const chunk of chunks) {

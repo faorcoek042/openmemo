@@ -398,7 +398,14 @@ export function HardwareCard({
                   {b.unavailableKind != null ? (
                     <>
                       <span data-testid={`hw-unavailable-${b.id}`}>
-                        {b.id}：
+                        {/*
+                          ⚠️ 冒号走词条，**别再写死全角 `：`**（U+FF1A）——
+                          英文界面上渲染出来是 `cuda：backend package not installed`。
+                          与 `settings.proxy.sourceListSeparator` 同一条：
+                          标点也是文案，中英不是同一个字符。
+                        */}
+                        {b.id}
+                        {t('runtime.hw.backendReasonSeparator')}
                         <Emphasis text={t(UNAVAILABLE_REASON_KEYS[b.unavailableKind])} />
                       </span>
                       {/* 英文原文降级成技术尾巴（D-05 §5.3）：排障拿得到，但不占正文 */}
@@ -408,7 +415,9 @@ export function HardwareCard({
                     </>
                   ) : (
                     <span className="font-mono">
-                      {b.id}：{b.unavailableReason}
+                      {b.id}
+                      {t('runtime.hw.backendReasonSeparator')}
+                      {b.unavailableReason}
                     </span>
                   )}
                 </li>
