@@ -7669,6 +7669,39 @@ describe('T-140 ② ErrorBlock 自己就把补救渲染出来（不再要求调�
     r.unmount();
   });
 
+  /*
+   * ★★ 上面那条只证明了**中文界面**上服务端那句话没丢。而缺陷恰恰只在英文界面上：
+   * `RemediationButton` 那一行原来是 `remediation.labelZh || remediation.label`，
+   * **`labelZh` 无条件优先** ⇒ 英文界面上 61 个 `<ErrorBlock>` 加任务 toast 的
+   * 补救按钮全是中文。契约里 `label` 与 `labelZh` 两个都是必填、daemon 18 个发出点
+   * 也都填了 —— 有翻译没用上。
+   *
+   * 判据是**渲染出来的那串字是不是英文**，不是"读了哪个字段"：
+   * 断言逐字比 `label`，并且额外断言整串**一个汉字都没有** —— 后者是为了让
+   * 「改回 labelZh 优先」这类退化必然变红，而不是靠字段名的拼写。
+   */
+  test('★★ 英文界面上这颗按钮说英文（labelZh 一度无条件盖过 label，61 处全中文）', async () => {
+    stubApi({});
+    await i18nInstance.changeLanguage('en');
+    try {
+      const r = await render(<ErrorBlock error={new ApiError(422, NO_MEDIA_SOURCE)} />);
+      await r.flush();
+      const btn = r.container.querySelector('[data-testid="remediation-installSiteExtractor"]');
+      const shown = (btn?.textContent ?? '').trim();
+      assert.ok(shown.length > 0, '按钮没渲染出来 —— 这条会空转');
+      assert.equal(
+        shown,
+        NO_MEDIA_SOURCE.remediation.label,
+        `英文界面上补救按钮没说英文（实际：${shown}）—— 服务端给的 label 是 ` +
+          `「${NO_MEDIA_SOURCE.remediation.label}」，它一直在，只是没被取用`,
+      );
+      assert.equal(shown.match(/[一-鿿]/g), null, `英文界面上的补救按钮里出现了汉字 → ${shown}`);
+      r.unmount();
+    } finally {
+      await i18nInstance.changeLanguage('zh-CN');
+    }
+  });
+
   test('★ 点下去落到 /components（不是 /models，也不是 /tasks）', async () => {
     stubApi({});
     const r = await render(

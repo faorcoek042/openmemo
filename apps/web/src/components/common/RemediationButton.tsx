@@ -1,6 +1,8 @@
 import { useLocation, useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { ArrowRight, HardDrive, KeyRound, PackagePlus, RefreshCw, Wrench } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { pickLocalized } from '../../lib/format/localized';
 import { remediationTarget, type RemediationLike } from '../../lib/remediation/routes';
 import { Button } from './Button';
 
@@ -66,7 +68,31 @@ export function RemediationButton({
 }: RemediationButtonProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { t, i18n } = useTranslation();
   const target = remediationTarget(remediation);
+
+  /*
+   * ★★ 按界面语言挑，**不是无条件取中文那一份**。
+   *
+   * 这一行原来是 `remediation.labelZh || remediation.label || …`。
+   * `labelZh` 无条件优先 ⇒ **英文界面上 61 个 `<ErrorBlock>` 加任务 toast 的
+   * 补救按钮全部是中文**（「去安装后端包」「去清理空间」「重新连接」…）。
+   *
+   * 而 `Remediation` 契约里 `label` 与 `labelZh` **两个都是必填**，daemon 的
+   * 18 个发出点也**两个都填了**（`backends.ts:780` 那条的 `label` 逐字是
+   * `'Install a backend pack'`）。所以这不是"缺翻译"，是**有翻译没用上** ——
+   * 与 `lib/format/localized.ts` 抬头那段说的是同一个病，那一轮清 `displayNameZh`
+   * 时**漏掉了这个组件**。修法因此不是新写文案，是复用同一个 `pickLocalized()`。
+   *
+   * ⚠️ 讽刺的是 `fallbackLabel` 那个 prop 的注释里已经写着「兜底文案属于产品面，
+   * 不该在组件里硬编码一个中文串 —— 那在 en 界面上会漏出中文」：**判据当时就写对了，
+   * 只是没应用到它正下方那一行。**
+   */
+  const label =
+    pickLocalized(i18n.language, remediation.labelZh, remediation.label) ||
+    fallbackLabel ||
+    // 最后一层兜底用原始 action 名：难看，但**看得见** —— 空按钮才是无从排查的那种
+    remediation.action;
 
   /*
    * ★ 用户 2026-08-09（Windows v0.5.0）：自检报
@@ -90,16 +116,13 @@ export function RemediationButton({
   if (!onAct && alreadyThere) {
     return (
       <span className="text-xs text-ink-secondary" data-testid="remediation-already-here">
-        {remediation.labelZh || remediation.label || fallbackLabel || remediation.action}
-        {' —— '}
-        {'就在本页'}
+        {/* ⚠️ 「就在本页」原来是组件里的一个中文字面量 —— 同一条纪律，走词条。 */}
+        {t('errors.remediationAlreadyHere', { label })}
       </span>
     );
   }
 
   const icon = ACTION_ICON[remediation.action] ?? <ArrowRight className="size-3.5" aria-hidden />;
-  // 最后一层兜底用原始 action 名：难看，但**看得见** —— 空按钮才是无从排查的那种
-  const label = remediation.labelZh || remediation.label || fallbackLabel || remediation.action;
 
   return (
     <Button
