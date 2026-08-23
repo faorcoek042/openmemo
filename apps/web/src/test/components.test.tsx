@@ -4693,29 +4693,33 @@ describe('T-129 同族：显示条件不许被别人的条件包住', () => {
    * 把 commit 拼回去、或者把 tooltip 恢复成七行，这条都会红。
    */
   test('★★ 顶栏版本戳里不许再出现 commit / dirty / CHANGELOG 这些开发者信号', async () => {
-    await withSurfaces(allLive, { ...HEALTH, build: { ...HEALTH.build, dirty: true } }, async () => {
-      const r = await render(<ConnectivitySummary />);
-      await r.flush();
-      const stamp = r.container.querySelector('[data-testid="version-stamp"]');
-      assert.ok(stamp, '版本戳没渲染 —— 下面全是空转');
-      const shown = text(stamp as HTMLElement);
-      const title = (stamp as HTMLElement).getAttribute('title') ?? '';
-      const both = `${shown}\n${title}`;
+    await withSurfaces(
+      allLive,
+      { ...HEALTH, build: { ...HEALTH.build, dirty: true } },
+      async () => {
+        const r = await render(<ConnectivitySummary />);
+        await r.flush();
+        const stamp = r.container.querySelector('[data-testid="version-stamp"]');
+        assert.ok(stamp, '版本戳没渲染 —— 下面全是空转');
+        const shown = text(stamp as HTMLElement);
+        const title = (stamp as HTMLElement).getAttribute('title') ?? '';
+        const both = `${shown}\n${title}`;
 
-      assert.ok(shown.includes('v9.9.9'), `主行不再说版本号了："${shown}"`);
-      for (const leak of ['deadbee', 'dirty', 'CHANGELOG', '第几个', 'commit']) {
+        assert.ok(shown.includes('v9.9.9'), `主行不再说版本号了："${shown}"`);
+        for (const leak of ['deadbee', 'dirty', 'CHANGELOG', '第几个', 'commit']) {
+          assert.ok(
+            !both.includes(leak),
+            `★ 开发者信号「${leak}」又回到顶栏了（它该在诊断页）：\n  主行：${shown}\n  tooltip：${title}`,
+          );
+        }
+        // 「到底重启了没有」这个刻意保留的信号**必须还在** —— 只是挪进了 tooltip
         assert.ok(
-          !both.includes(leak),
-          `★ 开发者信号「${leak}」又回到顶栏了（它该在诊断页）：\n  主行：${shown}\n  tooltip：${title}`,
+          title.length > 0 && /\d{1,2}:\d{2}/.test(title),
+          `「启动于 …」不见了 —— 版本号在重启前后一模一样，只有它答得了"重启生效没有"：${title}`,
         );
-      }
-      // 「到底重启了没有」这个刻意保留的信号**必须还在** —— 只是挪进了 tooltip
-      assert.ok(
-        title.length > 0 && /\d{1,2}:\d{2}/.test(title),
-        `「启动于 …」不见了 —— 版本号在重启前后一模一样，只有它答得了"重启生效没有"：${title}`,
-      );
-      r.unmount();
-    });
+        r.unmount();
+      },
+    );
   });
 
   test('★ daemon 没连上（health === null）时不渲染任何版本戳 —— 不编一个假版本号', async () => {
