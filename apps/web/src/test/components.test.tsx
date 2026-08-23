@@ -14448,57 +14448,157 @@ describe('#105 ④ 折叠区那 20 颗禁用按钮 —— 要么不渲染，要�
   });
 
   /*
+   * ★★ 那个 `#backend-why-*` 容器**渲染两段，而且是设计如此** —— 所以两段必须互相成立。
+   *
+   * `BackendPackCard` 那段注释把分工写得很清楚：
+   *   · 第一段（`runtime.kind.*`）回答**「我要不要放弃」**（还没测出来 / 确认不支持）；
+   *   · 第二段（`inapplicabilityText()`）回答**「具体卡在哪」**。
+   * 两段**不是二选一**，`undetermined` 这一档它们必然同屏。
+   *
+   * ⚠️ 所以复核抓到的那个矛盾**不是"两段不该同时出现"**，而是第一段说了假话：
+   *
+   *   第一段：「**还没探测到这台机器的加速能力** …探测需要先装上基础包」
+   *   第二段：「**探针跑过了**，但没测到这个后端…」
+   *
+   * 而 `inapplicableKind()` 的真实判据是 `status?.probed !== true` ——
+   * 它说的是**这个后端**没被探测过，**不是这台机器没被探测过**。
+   * （包没装 ⇒ 没有库 ⇒ 没东西可枚举；或者这一轮只加载了当前生效的那个后端目录。）
+   *
+   * ★ 这个矛盾是 #81 造出来的：第二段改真之后，第一段就露馅了。
+   *   **把一句话改准，会让和它搭配的那句话原形毕露** —— 这一族要一起看。
+   *
+   * 下面两条分别钉：① 两段确实同屏（设计如此，别有人把它们改成互斥来"消灭矛盾"）；
+   * ② 第一段不许再声称**整台机器**没被探测过。
+   */
+  test('★★ `undetermined`：档位与原因两段同屏，且第一段不许说"这台机器还没探测过"', async () => {
+    const undetermined = pack({
+      id: 'whispercpp-vulkan-linux-x64',
+      backend: 'vulkan',
+      installed: false,
+      applicable: false,
+      inapplicableKind: 'undetermined',
+      inapplicability: {
+        kind: 'backend_unavailable',
+        unavailableKind: 'not_installed',
+        detail: 'backend package not installed',
+      },
+    });
+    const r = await render(<BackendPackCard {...NOOP} pack={undetermined as never} />);
+
+    // ① 两段都在（设计如此：一段答"要不要放弃"，一段答"卡在哪"）
+    const tier = r.container.querySelector('[data-testid="backend-kind-undetermined"]');
+    assert.ok(tier, '档位那一段不见了 —— 用户只剩"具体卡在哪"，判断不了要不要放弃');
+    const why = r.container.querySelector(`#backend-why-${undetermined.id}`);
+    assert.ok(why, '理由容器不见了');
+    const whole = (why.textContent ?? '').replace(/\s+/g, ' ');
+    for (const chunk of literalChunks(zhAt('runtime.pack.inapplicable.backendNotInstalledHere'))) {
+      assert.ok(whole.includes(chunk), `原因那一段没同屏渲染：缺「${chunk}」→ ${whole}`);
+    }
+
+    /*
+     * ② 第一段不许把"这个后端没被探测过"说成"这台机器还没被探测过"。
+     *    判据钉在**那句假话的形状**上，不是钉某一版措辞：
+     *    只要它又开始声称整台机器没测过，这条就红 —— 而那正好会与第二段打脸。
+     */
+    const CLAIMS_MACHINE_UNPROBED =
+      /(还没|尚未)[^。]{0,10}探测[^。]{0,10}这台机器|这台机器[^。]{0,10}(还没|尚未)[^。]{0,10}探测/;
+
+    /*
+     * 🔴 **先证明这条守卫抓得住它要抓的那个缺陷。**
+     *
+     * 第一版我写的是 `/这台机器.{0,8}(还没|尚未)[^。]{0,8}探测/` —— 它要求
+     * 「这台机器」出现在「还没」**前面**，而缺陷原文是「**还没探测到这台机器**的加速能力」，
+     * 顺序正好相反。**那条正则对着它要抓的缺陷是不命中的：一条从出生就空转的守卫。**
+     *
+     * 所以把缺陷原文钉成夹具，反向自检一次。判据同 MEMORY 那条：
+     * **写守卫先问「抽掉修法它会红吗」** —— 这里就是那一问的答案。
+     */
+    const DEFECT_ORIGINAL = '还没探测到这台机器的加速能力 —— 这不代表你的机器不支持。';
+    assert.ok(
+      CLAIMS_MACHINE_UNPROBED.test(DEFECT_ORIGINAL),
+      '这条守卫对着它要抓的那句原文都不命中 —— 它从出生就在空转（第一版正是这样）',
+    );
+
+    const tierText = text(tier as HTMLElement);
+    assert.ok(
+      !CLAIMS_MACHINE_UNPROBED.test(tierText),
+      `★ 缺陷原状：档位那句声称"这台机器还没探测过"，而紧挨着的下一句说"探针跑过了" → ${tierText}`,
+    );
+    // 反向自检：它得**说点什么**，否则上面那条否定断言可以靠空白通过
+    assert.ok(
+      tierText.includes(zhAt('runtime.kind.undetermined')),
+      `档位那一段没说出它该说的话 → ${tierText}`,
+    );
+    r.unmount();
+  });
+
+  /*
    * ★★ **开的药不许是用户已经吃过的那副。**
    *
    * T-191 花了一整轮治这个：`hardware_not_probed_yet` 原文是「请先安装 CPU 基础包」，
    * 而 `[用户真机实测 2026-08-09]` 他**早就装了** —— 照做无事可发生。
-   * 修法是给那句话补一个"已经装了的话怎么办"的分支
-   * （今天英文里那半句是 `(if you already did, press Update on it on the Components page)`）。
+   * 修法是给那句话补一个"已经装了的话怎么办"的分支。
    *
-   * ⚠️ 然后我在 2026-08-24 新写 `backendNotInstalledHere` 时**原样又开了一遍那副药**
-   * （「先装 CPU 基础包：它带着探针，装完会自动重测一次」），而复核实测那台机器上
-   * CPU 包**已装、正在用、探针已跑**。同一个坑，隔了 15 天，换了个 key 又踩一次。
+   * 然后同一副药**又被开了两次**：
+   *   · 2026-08-24 我新写 `backendNotInstalledHere` 时原样抄了一遍（第三次）；
+   *   · 补上不变式之后，复核又在 `runtime.kind.undetermined` 上抓到第四次。
    *
-   * 所以把它钉成**跨 key 的不变式**，而不是又改一句话：
-   * `runtime.pack.inapplicable.*` 里**任何**一条只要开了"装 CPU 基础包"这副药，
-   * 就必须同时说清"已经装了的话怎么办"。判据落在**两份 locale 的文本**上 ——
-   * 新写一条犯同样错的词条，这里当场红。
+   * ## ⚠️ 第四次是这条守卫**自己漏的**，两个独立的洞
    *
-   * （允许读散文：失败模式是构建变红，不是界面上一个安静的假色 ——
-   *   界线见 `features/components/sha256ProvenanceRegex.test.ts` 抬头。）
+   *   ① **桶太窄**：上一版只扫 `runtime.pack.inapplicable.*`，
+   *      而那句话住在 `runtime.kind.*` —— 根本不在扫描范围里；
+   *   ② **匹配太紧**：它钉死 `/装\s*CPU\s*基础包/`，
+   *      而那句话写的是「先装上**基础包**」，少了"CPU"两个字就不命中。
+   *
+   * **一条只扫一个桶、只认一种措辞的正则，和一份"当天对、以后安静过期"的显式清单
+   * 是同一个形状。** 我昨天刚把这句话写进 `sha256ProvenanceRegex.test.ts` 的抬头，
+   * 转头就在这里造了一个。
+   *
+   * ## 所以这一版**不挑桶、不挑措辞**
+   *
+   * 扫**两份 locale 的全部叶子串**，判据是"提到了基础包"这个**概念**。
+   * 这样新写的词条无论落在哪个命名空间、用哪种说法，都躲不掉。
+   *
+   * ⚠️ 代价是**可能误报**（比如将来有人写一句只是"提到"基础包、并不开药的话）。
+   * **这是刻意选的方向**：误报是一次看得见的红，漏报是一句活在屏幕上没人知道的假话。
+   * 判据同 `sha256ProvenanceRegex.test.ts` 抬头那节 —— 代价落在 CI 上，不落在用户屏幕上。
+   * 真撞上误报时，改法是给那句话补一句逃生口、或者换个不提基础包的说法，都很便宜。
    */
-  test('★★ 任何「先装 CPU 基础包」的话，都得带上「已经装了的话怎么办」', () => {
-    const PRESCRIBES = { zh: /装\s*CPU\s*基础包/, en: /install the CPU base pack/i };
+  test('★★ 任何提到「基础包」的话，都得带上「已经装了的话怎么办」（全 locale，不挑桶）', () => {
+    // 概念级，不钉死措辞：`CPU 基础包` / `基础包` / `the CPU base pack` / `a base pack` 都算。
+    const MENTIONS = { zh: /基础包/, en: /base pack/i };
     const HAS_ESCAPE = { zh: /已装|已经装/, en: /already/i };
+
+    const flatten = (o: unknown, prefix = ''): [string, string][] =>
+      typeof o === 'object' && o !== null
+        ? Object.entries(o as Record<string, unknown>).flatMap(([k, v]) =>
+            flatten(v, prefix ? `${prefix}.${k}` : k),
+          )
+        : [[prefix, String(o)]];
 
     for (const [lang, locale] of [
       ['zh', zhLocale],
       ['en', enLocale],
     ] as const) {
-      const bucket = (
-        locale as unknown as {
-          runtime: { pack: { inapplicable: Record<string, string> } };
-        }
-      ).runtime.pack.inapplicable;
-      const entries = Object.entries(bucket).filter(([, v]) => typeof v === 'string');
-      assert.ok(entries.length > 0, `${lang}: inapplicable 那一组是空的 —— 这条在空转`);
+      const all = flatten(locale);
+      assert.ok(all.length > 100, `${lang}: locale 扁平化只拿到 ${all.length} 条 —— 这条在空转`);
 
-      const prescribing = entries.filter(([, v]) => PRESCRIBES[lang].test(v));
+      const mentioning = all.filter(([, v]) => MENTIONS[lang].test(v));
       assert.ok(
-        prescribing.length > 0,
-        `${lang}: 没有任何一条提到"装 CPU 基础包" —— 这条禁止项的前提没了，要重想`,
+        mentioning.length > 0,
+        `${lang}: 全 locale 没有一条提到"基础包" —— 这条禁止项的前提没了，要重想`,
       );
 
-      const missingEscape = prescribing
-        .filter(([, v]) => !HAS_ESCAPE[lang].test(v))
-        .map(([k]) => k);
+      const missingEscape = mentioning.filter(([, v]) => !HAS_ESCAPE[lang].test(v)).map(([k]) => k);
       assert.deepEqual(
         missingEscape,
         [],
-        `${lang}: 这几条让用户"装 CPU 基础包"，却没说"已经装了的话怎么办"：` +
-          `${missingEscape.join(', ')}\n` +
+        `${lang}: 这几条把用户支去"装基础包"，却没说"已经装了的话怎么办"：\n` +
+          `  ${missingEscape.join(', ')}\n` +
           `  T-191 实测过：那台机器上它早就装了，照做无事可发生 —— ` +
-          `一句用户已经做过的建议，和没有建议是一回事。`,
+          `**一句用户已经做过的建议，和没有建议是一回事。**\n` +
+          `  （若这条只是"提到"基础包、并不开药，那是本守卫刻意接受的误报：` +
+          `补一句逃生口，或者换个不提基础包的说法。）`,
       );
     }
   });

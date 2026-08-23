@@ -377,7 +377,7 @@
       "installedUnprobed": "Installed · not loaded this round"
     },
     "kind": {
-      "undetermined": "This machine has not been probed for acceleration yet — that is not the same as \"unsupported\". Probing needs the base pack installed first; it re-runs automatically afterwards.",
+      "undetermined": "This backend has not been probed — so this is \"not known\", not \"your machine does not support it\".",
       "unsupported": "Probing finished: no device this backend can use was found on this machine."
     },
     "hw": {
