@@ -40,9 +40,12 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
+import { isPackApplicable } from '@openmemo/runtime';
+import type { Backend } from '@openmemo/shared';
+
 import { SseHub } from '../sse.js';
 import { RestState } from './state.js';
-import { handleBackendRoutes } from './backends.js';
+import { currentPlatform, handleBackendRoutes } from './backends.js';
 
 const REPO_ROOT = resolve(
   join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..'),
@@ -103,8 +106,26 @@ function fakeReq(body: unknown): never {
 
 /**
  * 造一份**只含一个包**的清单目录，包的 `availability` 由调用方决定。
- * 复制真目录里一个本机适用的包，只改 id 与 availability —— 其余字段照抄，
- * 免得因为夹具自己写歪了字段而在别的断言上出事。
+ *
+ * 字段照抄真目录里的 `whispercpp-cpu-linux-x64`（免得夹具自己写歪某个字段，
+ * 在别的断言上出事），但 **`os`/`arch` 是按跑用例这台机器现合成的**，不是抄来的。
+ *
+ * ── ⚠️ 为什么必须合成，而不是照抄捐赠者的 `linux/x64` ─────────────────────────────
+ *
+ * 这段注释原文写的是"复制真目录里**一个本机适用的包**" —— 那句话**只在 linux/x64 上是真的**。
+ * 捐赠者带着 `"os":"linux","arch":"x64"`，而 `applicability.ts:192` 的平台闸
+ * （`pack.os !== platform.os || pack.arch !== platform.arch`）排在**所有其它判据之前**。
+ * 于是在 **macOS（darwin/arm64）或 Windows** 上跑这个文件时：
+ *
+ *   四条用例全部拿到 409 `platform_mismatch` —— **包括那两条断言 202 的**，
+ *   而它们本来要测的 `availability` 闸**一次都没被执行到**。
+ *
+ * 「pending-ci 必须 409」那条甚至**照旧是绿的**：它等的就是 409，只是理由完全是另一个。
+ * 也就是说这份夹具在非 linux 上是「两条假红 + 一条假绿」，而假绿的那条正是本文件的主张。
+ *
+ * `backend` 保持捐赠者的 `cpu` 不动：`applicability.ts` 的 `L1_BACKENDS = ['cpu']`，
+ * `isAlwaysApplicable()` 对 cpu **不看 os**，所以只要 os/arch 对得上，
+ * 三个平台上它都是 L1 无条件适用 —— 不依赖这台机器探到了什么硬件。
  */
 function manifestDirWith(availability: string | null): string {
   const dir = mkdtempSync(join(TEST_ROOT, 'mf-'));
@@ -113,9 +134,35 @@ function manifestDirWith(availability: string | null): string {
   };
   const donor = be.packs.find((p) => p['id'] === 'whispercpp-cpu-linux-x64');
   assert.ok(donor, '真目录里没有 whispercpp-cpu-linux-x64，夹具的前提不成立');
-  const pack: Record<string, unknown> = { ...donor, id: 'test-pack-under-gate' };
+  const host = currentPlatform();
+  const pack: Record<string, unknown> = {
+    ...donor,
+    id: 'test-pack-under-gate',
+    os: host.os,
+    arch: host.arch,
+  };
   if (availability === null) delete pack['availability'];
   else pack['availability'] = availability;
+  /*
+   * ★ 前提断言：合成出来的这个包**在本机真的适用**。
+   *
+   * 没有它，平台闸一旦重新挡住夹具（改了 arch 命名、加了新的前置闸……），
+   * 这个文件会以"四条断言各自离奇地失败/或那条 409 假绿"的方式告诉你，
+   * 而真正的原因是夹具的前提没了。这一行让它直说「前提不成立」。
+   * `hardware` 传 `null`（= 探针从没跑成）是刻意的：cpu 是 L1，本就不该依赖探测结果，
+   * 传 null 恰好把"唯一可能挡住它的就是平台闸"这件事钉住。
+   */
+  const pre = isPackApplicable(
+    { id: String(pack['id']), backend: pack['backend'] as Backend, os: host.os, arch: host.arch },
+    host,
+    null,
+  );
+  assert.equal(
+    pre.applicable,
+    true,
+    `前提不成立：夹具包在本机（${host.os}/${host.arch}）上不适用，` +
+      `安装闸根本走不到 availability 那一步 —— ${JSON.stringify(pre.reason)}`,
+  );
   writeFileSync(join(dir, 'backends.json'), JSON.stringify({ ...be, packs: [pack] }, null, 2));
   mkdirSync(join(dir, 'x'), { recursive: true });
   return dir;

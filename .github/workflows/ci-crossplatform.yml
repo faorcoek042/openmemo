@@ -166,9 +166,34 @@ jobs:
       #    于是排在后面的包（Windows 上是 `apps/web` 559 条 + `apps/daemon` 785 条）
       #    在那一轮里**一条都没跑**，而输出里没有任何一个字说了这件事。
       #    探针要的是完整清单；门禁 `ci.yml` 那边**刻意保留** bail（它要的是快速判决）。
-      - name: Test
+      # ── ⚠️ 这一步**不判红绿**，判决在最后那一步的棘轮上。读到这里请先读完这段 ──────
+      #
+      # `|| true` 在本仓通常是禁忌（它和 `continue-on-error` 是同一族：把失败写成成功）。
+      # 这里之所以成立，**唯一的理由**是：它的判决没有消失，而是被换成了一个**更强**的判据。
+      #
+      #   · 原判据：`pnpm -r test` 的退出码。它在 mac/win 上恒为非零 ——
+      #     **一个恒为真的判据不携带任何信息**，而它每天会发一封红色邮件。
+      #   · 新判据：`scripts/ci/xplat-ratchet.mjs`，两个方向都断 ——
+      #     ① 出现基线里没有的失败 ⇒ 红；② 基线里有一条今天居然过了 ⇒ **也红**。
+      #     它在**严格更多**的情况下红（新伤、以及"修好了却没划掉"），
+      #     而且带三道空转防线（包数 / 通过数 / 自检环数），"根本没跑"会红在"没跑完"上。
+      #
+      # ⚠️ 这个 `|| true` 与最后那一步的棘轮是**一对**，拆掉任何一半都会退化成假绿。
+      #    `scripts/ci/lint-workflows.mjs` 把这条配对钉成了断言：本文件里只要出现
+      #    `|| true`，就必须同时有一步跑 `xplat-ratchet.mjs`，否则当场红。
+      #
+      # ⚠️ `--no-bail` 不是可选项，见文件头「订正」①：`pnpm -r test` 默认在**第一个
+      #    失败的包**上停，Windows 上因此 `apps/web` 559 条 + `apps/daemon` 785 条
+      #    一条都没跑，而输出里没有一个字说了这件事。门禁 `ci.yml` 那边**刻意保留** bail。
+      #
+      # `shell: bash` 三平台统一（Windows 上是 Git Bash）：`pipefail` 与 `tee` 都要它。
+      - name: Test（不判红绿 —— 判决在下面的棘轮）
         if: ${{ !cancelled() }}
-        run: pnpm -r --no-bail test
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm -r --no-bail test 2>&1 | tee "$RUNNER_TEMP/xplat-test.log" || \
+            echo "↑ 退出码非零。这一步不判红绿，完整清单交给最后那一步的棘轮。"
 
       # ★ T-171 补：此前本 workflow 也**没有 `test:ci-scripts`**。
       #
@@ -215,9 +240,19 @@ jobs:
 
       # ⚠️ 跑的是**不短路**的那一版（`ci.yml` 的门禁仍跑短路版 `pnpm test:ci-scripts`）。
       #    两者读的是 `package.json` 里**同一条**清单 —— 不是两份会漂的名单。
-      - name: CI scripts self-test (跑完再汇总，不在第一处红停下)
+      #
+      # `--json`：给棘轮读的**结构化**结果。棘轮第一版是去刮下面那段人类可读汇总的，
+      #   而 `══ 汇总（` 这个锚点在 `selftest-ci-manifest` 的输出里也有 ——
+      #   于是刮到了另一个脚本的汇总，报出 16 环而真值是 37，**且不会红**。
+      #   能产出结构化结果的东西，就不该让别人去刮它的人类可读输出。
+      #
+      # 同样不判红绿，理由见上面 Test 那一步（`|| true` 与棘轮是一对）。
+      - name: CI scripts self-test（跑完再汇总；不判红绿）
         if: ${{ !cancelled() }}
-        run: node scripts/ci/run-selftests-all.mjs
+        shell: bash
+        run: |
+          node scripts/ci/run-selftests-all.mjs --json "$RUNNER_TEMP/xplat-selftests.json" || \
+            echo "↑ 退出码非零。完整清单交给最后那一步的棘轮。"
 
       # ── ⛔ `pnpm format:check` **刻意没有接**，这里也不接，`ci.yml` 里也不接 ──────────
       #
@@ -248,3 +283,35 @@ jobs:
       - name: Tracked-sources guard (三平台都应为绿 —— T-141 §3 第 30 条已由 T-147 修复)
         if: ${{ !cancelled() }}
         run: pnpm check:sources
+
+      # ════════════════════════════════════════════════════════════════════════════════
+      # ★ 这一步是本 workflow 在 macOS / Windows 上的**唯一判决**
+      # ════════════════════════════════════════════════════════════════════════════════
+      #
+      # 上面 `Test` 与 `CI scripts self-test` 刻意不判红绿（见那两步的注释）。
+      # 理由不是想让它好看，是**「恒为真的判据不携带信息」**：
+      # 那两步在 mac/win 上恒为非零，于是那面红旗每天都亮，而它每天说的是同一句话。
+      # 而用户的 Actions 邮件是六条 e2e 腿唯一的告警承重点 —— 一个天天红的 workflow
+      # 会把人训练成略过那类邮件，**连带废掉那六条腿的告警**。
+      # 那时我们不是回到"没人跑"，是回到"**没人看**"，正是这一整轮要治的病。
+      #
+      # 棘轮两个方向都断，缺一不可：
+      #   ① 今天的失败集合里出现**基线里没有的**            ⇒ 红（有新伤）
+      #   ② 基线里有一条**今天居然过了**                     ⇒ **也红**（有人修好了，去划掉）
+      # ②那一半是它不烂掉的全部关键：只有①的棘轮会安静地烂几个月，
+      # 而且看起来一直在工作。**有了②，基线只能变小，不能停在原地。**
+      #
+      # 三道空转防线在 `xplat-ratchet.mjs` 里：包数 / 通过数 / 自检环数。
+      # "根本没跑"会红在**"本轮没跑完，别拿它跟基线比"**上，
+      # 而不是红在"基线陈了，去删 50 条"——后者会指挥人去清空基线，比不响更坏。
+      #
+      # ⚠️ 基线 `scripts/ci/xplat-known-failures.json` **只能手改**。
+      #    没有任何运行时自动收录的路径：加一条必须改那个文件 ⇒ 出现在 diff 里 ⇒ 有人看得见。
+      - name: 跨平台棘轮（新伤 / 基线陈了 —— 两个方向都断）
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          node scripts/ci/xplat-ratchet.mjs \
+            --platform "${{ matrix.label }}" \
+            --test-log "$RUNNER_TEMP/xplat-test.log" \
+            --selftest-json "$RUNNER_TEMP/xplat-selftests.json"

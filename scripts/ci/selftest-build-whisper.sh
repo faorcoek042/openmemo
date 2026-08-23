@@ -22,6 +22,26 @@
 # Windows 的 zip/7z 分支（本机没有 MINGW，`uname -s` 骗不过去）。
 #
 # 跑：`pnpm test:ci-scripts`（会先跑 selftest-ci-manifest.mjs）
+# ★ 只在 Linux 上跑（2026-08-23 收窄）。250 = 「跳过」，见 platform-scope.mjs。
+#
+# `[实测 run 32656407764]` win32 与 darwin 上 1、2 两节全红，而红的理由**是对的**：
+# 本文件的 cmake 桩造出来的是 **Linux 形状**的产物（libggml-*.so），
+# 而 build-whisper.sh 按 **宿主** 平台决定该找什么名字 ——
+# 于是 Windows 上它去找 ggml-cpu*.dll、macOS 上它要 libggml-metal.so，
+# 都没找到，**正确地**报错退出。这是夹具与宿主对不上，不是 build-whisper.sh 坏了。
+#
+# 收窄的代价（这一条比另外三条大，写清楚）：本文件头明写"覆盖不到 Windows 的
+# zip/7z 分支（本机没有 MINGW）"，而真 Windows runner 上**本来是有机会覆盖到的**。
+# 要真的验那一支，得先让 build-whisper.sh 接受一个**目标平台**入参（今天它只认宿主），
+# 那是产品脚本的改动，登记为欠债，不在本轮。
+if [ "$(uname -s)" != "Linux" ]; then
+  echo "◐ platform-scope: 在 $(uname -s) 上**跳过** selftest-build-whisper.sh（只在 linux 上有意义）"
+  echo "   被测：scripts/build-whisper.sh 的非编译逻辑；桩造出的是 Linux 形状产物，"
+  echo "   而该脚本按宿主平台决定期望的产物名 —— 夹具与宿主对不上，不是回归。"
+  echo "   —— 这是「跳过」，不是「通过」。"
+  exit 250
+fi
+
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

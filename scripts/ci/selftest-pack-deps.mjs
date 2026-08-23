@@ -30,6 +30,28 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { narrowTo } from './platform-scope.mjs';
+
+/*
+ * ★ 只在 Linux 上跑（2026-08-23 收窄）。
+ *
+ * `[实测]` macOS 上第一节就炸：`copyFileSync('/bin/true', …)` → ENOENT
+ * （macOS 的 `true` 在 `/usr/bin/true`）。Windows 上同样过不去。
+ * §0 与 ①–⑥、⑨–⑪ 全部拿**真系统 ELF**当夹具并与 `objdump -p` 交叉核对 ——
+ * 那是文件头 ① 那条刻意选择，而它把整个文件绑在了 Linux 上。
+ */
+narrowTo(['linux'], {
+  subject: 'scripts/ci/pack-native-deps.mjs —— 打包时收集原生依赖 + 许可证闸',
+  why:
+    '本文件 11 节里有 9 节拿真 ELF（/bin/true、/usr/bin/git）和真 objdump 当夹具，' +
+    '这是文件头 ① 明写的刻意选择（"自己造的 ELF 只能证明我造的和我解的是同一套假设"）。' +
+    '这些夹具在 macOS/Windows 上根本不存在。',
+  lost:
+    '⚠️ 代价点名：§⑦（最小 PE，Windows 那一半）与 §⑧（Mach-O）是**平台无关的合成夹具**，' +
+    '本来在三平台上都跑得动，收窄之后只在 Linux 上跑。' +
+    '所幸它们验的是解析逻辑，而解析逻辑不吃宿主平台 —— 同一份代码同一个结论，损失接近零。' +
+    '真要在真 Windows 上验 PE 那一节，得把它拆成独立文件，登记为欠债。',
+});
 
 const WORK = mkdtempSync(join(tmpdir(), 'om-packdeps-'));
 process.on('exit', () => rmSync(WORK, { recursive: true, force: true }));

@@ -604,6 +604,13 @@ for (const file of files.sort()) {
        */
       'check-workflow-expiry.mjs',
       'selftest-workflow-expiry.mjs',
+      /*
+       * ★ 跨平台棘轮的反向验证。它自己被摘掉时的样子，正是它要防的那件事：
+       *   棘轮还在跑、还在报绿，而"基线陈了也要红"那一半已经没人验了。
+       *   `[实测]` 那一半是整条棘轮不烂掉的关键 —— 只有"新伤要红"的棘轮
+       *   会安静地烂几个月，并且看起来一直在工作。
+       */
+      'selftest-xplat-ratchet.mjs',
     ]) {
       must(
         cmd.includes(f),
@@ -760,6 +767,40 @@ for (const file of files.sort()) {
      *   期间 `ci.yml` 一直绿。删掉 cron 会让那 12 天重新变得可能，而删掉它
      *   **不会让任何一格变红** —— 所以这里替它红。
      */
+    /*
+     * ★ `|| true` 与棘轮是**一对**（2026-08-23）。
+     *
+     * 本文件里 `Test` 与 `CI scripts self-test` 两步带了 `|| true` —— 在本仓这通常是
+     * 禁忌（与 `continue-on-error` 同族：把失败写成成功）。它之所以成立，唯一的理由是
+     * **判决没有消失，而是被换成了一个更强的判据**：`xplat-ratchet.mjs` 两个方向都断
+     * （新伤要红、基线陈了也要红），且带三道空转防线。
+     *
+     * 拆掉任何一半都会退化成真正的假绿：
+     *   · 只留 `|| true`、删掉棘轮  ⇒ mac/win 上什么都不判了，而且**看起来是绿的**；
+     *   · 只留棘轮、去掉 `|| true`  ⇒ 回到天天红，棘轮的结论被埋在一片红里没人看。
+     * 所以这里把"成对出现"钉成断言 —— 少一半当场红。
+     */
+    const hasSuppress = /\|\|\s*true|\|\|\s*\\?\n?\s*echo/.test(xpRuns);
+    const hasRatchet = xpRuns.includes('xplat-ratchet.mjs');
+    must(
+      !hasSuppress || hasRatchet,
+      `${XP}: 有步骤把失败吞掉了（\`|| …\`），却没有任何一步跑 \`xplat-ratchet.mjs\` —— ` +
+        `那就是纯粹的假绿。两者必须成对出现（见本文件此处注释）`,
+    );
+    must(
+      hasRatchet,
+      `${XP}: 没有跑 \`scripts/ci/xplat-ratchet.mjs\` —— 那是本 workflow 在 mac/win 上的唯一判决。` +
+        `没有它，\`Test\` 那步的 \`|| true\` 就是把失败写成成功`,
+    );
+    /*
+     * ★ 棘轮必须对**每一格 runner** 都跑到，包括对照组。
+     *   只在 mac/win 上跑棘轮、linux 走原判据，会让"基线里 linux 那一格必须是空的"
+     *   这条性质没有任何东西守着 —— 而那一格恰恰是"主线真的坏了"的探测器。
+     */
+    must(
+      /--platform\s+"\$\{\{\s*matrix\.label\s*\}\}"/.test(xpRuns),
+      `${XP}: 棘轮的 \`--platform\` 不是 \`matrix.label\` —— 每一格 runner 都要用自己那份基线`,
+    );
     must(
       xp.on?.schedule !== undefined,
       `${XP}: 没有 \`on.schedule\` —— 只能手动触发的探针，它的红会挂在那里没人知道。` +

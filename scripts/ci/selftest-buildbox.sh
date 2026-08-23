@@ -28,6 +28,23 @@
 #   真 whisper-cli、真 ldd 对真 .so 的输出。那些只有 CI 上第一次真跑才知道。
 #
 # 跑：`pnpm test:ci-scripts`
+# ★ 只在 Linux 上跑（2026-08-23 收窄）。250 = platform-scope.mjs 约定的「跳过」退出码，
+# run-selftests-all.mjs 认得它，记在 ◐ 那一栏 —— **跳过不是通过**。
+#
+# `[实测 run 32656407764]` win32 与 darwin 上第 2 节 10 条 argv 断言全红：本文件
+# 断言的是 buildbox.sh 为 **Linux 容器** 组装的 docker -v 挂载与 --user uid:gid，
+# 而那些值从宿主取（macOS 上是 /var/folders/...、--user 501:20）。
+# buildbox 只服务 build-backends 的三条 **Linux** 腿 —— 在别的平台上验它是范畴错误。
+#
+# 收窄的代价：smoke-linux-pack.sh 那条 libggml-* 收窄判据也一起只在 Linux 上验了。
+# 它本身是纯字符串判定、平台无关，所以损失接近零；但不是零。
+if [ "$(uname -s)" != "Linux" ]; then
+  echo "◐ platform-scope: 在 $(uname -s) 上**跳过** selftest-buildbox.sh（只在 linux 上有意义）"
+  echo "   被测：scripts/ci/buildbox.sh + scripts/ci/smoke-linux-pack.sh（Linux 容器构建）"
+  echo "   —— 这是「跳过」，不是「通过」。"
+  exit 250
+fi
+
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
