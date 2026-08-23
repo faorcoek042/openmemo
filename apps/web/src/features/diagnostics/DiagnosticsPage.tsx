@@ -96,6 +96,23 @@ interface Health {
       rejected?: string[];
     };
   };
+  /**
+   * 构建标识 —— **从顶栏搬过来的**（原来挂在 `ConnectivitySummary` 的 tooltip 里）。
+   *
+   * commit / `+dirty` / 提交时间 / 构建时间是**开发者信号**：用户读不懂也用不上，
+   * 却常驻在每一页的角落。诊断页才是它们的归处 —— 这一页本来就是这个用途，
+   * 而且「导出诊断包」也在这儿，要排障的人本来就会来。
+   *
+   * **可选**：老 daemon 不发这个字段，那时这一行整个不渲染 —— 不编一句
+   * 「构建信息未知」，那是在向用户报告我们这一侧的字段缺失。
+   */
+  build?: {
+    commit: string;
+    commitTime: string | null;
+    dirty: boolean;
+    builtAt: string | null;
+    startedAt: string;
+  };
   lanes?: Record<string, { capacity: number; inUse: number }>;
   scheduler?: { running?: number };
   sseClients?: number;
@@ -374,6 +391,39 @@ export default function DiagnosticsPage() {
           detail: t('diagnostics.sseClients', { n: data.sseClients ?? 0 }),
           probe: 'presence',
         },
+        /*
+         * ★ 构建标识 —— 从顶栏搬过来的那两个开发者信号。
+         * `dirty` 时补一句人话：commit 号在那种构建下**不足以说明跑的是什么**，
+         * 而这正是排障的人需要知道的一件事（不是用户需要知道的，所以它在这一页）。
+         */
+        ...(data.build
+          ? [
+              {
+                label: t('diagnostics.build'),
+                level: 'ok' as const,
+                detail: [
+                  data.build.commit,
+                  data.build.dirty ? t('diagnostics.buildDirty') : null,
+                  data.build.commitTime
+                    ? t('diagnostics.buildCommitted', {
+                        at: new Date(data.build.commitTime).toLocaleString(i18n.language),
+                      })
+                    : null,
+                  data.build.builtAt
+                    ? t('diagnostics.buildBuilt', {
+                        at: new Date(data.build.builtAt).toLocaleString(i18n.language),
+                      })
+                    : null,
+                  t('diagnostics.buildStarted', {
+                    at: new Date(data.build.startedAt).toLocaleString(i18n.language),
+                  }),
+                ]
+                  .filter((x) => x !== null)
+                  .join(' · '),
+                probe: 'presence' as const,
+              },
+            ]
+          : []),
       ],
     },
     {

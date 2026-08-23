@@ -96,9 +96,25 @@ export function ConnectivitySummary({ className }: { className?: string }) {
    * **嵌套让 A 继承了 B 的消失条件**，而 A 和 B 本来毫无关系。
    * 判据：一个元素的显示条件，必须是它自己的条件。
    */
+  /*
+   * ⚠️ 没有 `build` 时**不给 tooltip**，而不是给一句「该 daemon 未提供构建信息」。
+   * 后者是在向用户报告我们这一侧的字段缺失 —— 他既不关心也做不了什么。
+   * 一个内容等于标签本身的 tooltip 同样是噪音。
+   */
   const buildStamp = health ? (
-    <span className="text-ink-muted/70" title={buildTitle(health.version, health.build)}>
-      daemon {versionLabel(health.version)} {buildLabel(health.build)}
+    <span
+      className="text-ink-muted/70"
+      data-testid="version-stamp"
+      {...(health.build
+        ? {
+            title: t('app.versionStampTitle', {
+              version: versionLabel(t, health.version),
+              at: hms(health.build.startedAt),
+            }),
+          }
+        : {})}
+    >
+      {versionLabel(t, health.version)}
     </span>
   ) : null;
 
@@ -122,57 +138,46 @@ export function ConnectivitySummary({ className }: { className?: string }) {
   );
 }
 
-type BuildMeta = NonNullable<
-  NonNullable<ReturnType<typeof useSurfaceStore.getState>['health']>['build']
->;
-
-const hms = (iso: string) => new Date(iso).toLocaleTimeString('zh-CN', { hour12: false });
-const mdhms = (iso: string) =>
-  `${new Date(iso).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })} ${hms(iso)}`;
+const hms = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour12: false });
 
 /**
- * 角落里这一行有**四个**信号，各答各的，谁也替不了谁 —— 所以谁也不能挤掉谁：
+ * 角落里这一格显示什么 —— **只剩两个信号，另外两个搬去了诊断页。**
  *
- * | 显示        | 回答的问题           | 为什么别的答不了                             |
- * |-------------|----------------------|----------------------------------------------|
- * | `v0.2.0`    | **第几个可用的东西** | commit 是 hash，比不出大小，也数不出"第几个" |
- * | commit/提交时间 | 跑的是哪一份代码 | 一个版本号底下可以有几十个 commit            |
- * | `起 HH:MM:SS` | 到底重启了没有     | 前两个在重启前后一模一样                     |
+ * ## 原来是四个，而其中两个是开发者信号
+ *
+ * 这一行逐字是 `daemon v0.7.4 · 08-24 12:34:56+dirty · 起 12:35:01`，
+ * tooltip 是七行，最后一行写着「版本号答「第几个」，commit 答「哪一份代码」，
+ * 启动时刻答「重启了没」」——**那是我们自己的诊断分类学**。
+ * 而 `+dirty`（构建时工作区有未提交改动）、commit hash、「见 CHANGELOG.md」
+ * 都是给开发者看的。整块还**硬编码中文、日期写死 `zh-CN`**，
+ * 于是它在英文界面上是这一页仅剩的中文之一。
+ *
+ * ## 留下的那两个，以及为什么
+ *
+ * | 显示 | 回答的问题 | 为什么留 |
+ * |---|---|---|
+ * | `v0.7.4` | 跑的是哪一版 | 用户报问题时唯一说得清的东西 |
+ * | tooltip 里的「启动于 12:35」 | **到底重启了没有** | 版本号在重启前后一模一样，只有它答得了 |
+ *
+ * 「是否重启了」这个信号是**刻意**放在这里的（用户靠它确认"我让它重启的改动生效了没"），
+ * 所以它没有被搬走，只是从主行挪进 tooltip。
+ *
+ * ## 搬走的那两个去了哪
+ *
+ * commit / `+dirty` / 提交时间 / 构建时间 → **诊断页的「服务」组**
+ * （`DiagnosticsPage` 里 `diagnostics.build` 那一行）。那一页本来就是这个用途，
+ * 而且「导出诊断包」也在那儿 —— 要排障的人本来就会去那里。
  *
  * ★ 版本号是 D-12 之后**才有意义**的。此前它是 daemon 源码里手写的 `'0.1.0'`，
- * 和任何 `package.json` 都没有关系，因此从项目开始就没变过 —— 用户看到的是一个
+ * 和任何 `package.json` 都没有关系，从项目开始就没变过 —— 用户看到的是一个
  * 长得很像版本号、但什么都不报告的东西。现在它由构建从根 `package.json` 烘焙进产物。
- *
- * `+dirty` = 构建时工作区有未提交改动，此时 commit 号不足以说明跑的是什么。
  */
-function versionLabel(version: string | undefined) {
+function versionLabel(
+  t: (key: string, params?: Record<string, unknown>) => string,
+  version: string | undefined,
+) {
   // 'unknown' 是 daemon 在读不到 dist/build-info.json 时的**诚实**回答（没构建过 /
   // 非 git 检出）。照原样渲染会变成 "vunknown"，看起来像个真版本号 —— 那正是要避免的。
-  if (!version || version === 'unknown') return '版本未知';
+  if (!version || version === 'unknown') return t('app.versionUnknown');
   return `v${version}`;
-}
-
-function buildLabel(b: BuildMeta | undefined) {
-  if (!b) return '(构建信息未知)';
-  const commit = b.commitTime ? mdhms(b.commitTime) : b.commit;
-  return `· ${commit}${b.dirty ? '+dirty' : ''} · 起 ${hms(b.startedAt)}`;
-}
-
-function buildTitle(version: string | undefined, b: BuildMeta | undefined) {
-  const head =
-    !version || version === 'unknown'
-      ? '版本: 未知（daemon 没读到构建信息，多半是没构建过）'
-      : `版本: ${version} —— 第 ${version.split('.')[1]} 个可用版本（见 CHANGELOG.md）`;
-  if (!b) return `${head}\n该 daemon 未提供构建信息（可能是旧版本，或未经构建脚本生成）`;
-  return [
-    head,
-    `commit: ${b.commit}${b.dirty ? ' (构建时工作区有未提交改动)' : ''}`,
-    b.commitTime ? `提交时间: ${mdhms(b.commitTime)}` : null,
-    b.builtAt ? `构建时间: ${mdhms(b.builtAt)}` : null,
-    `本次启动: ${mdhms(b.startedAt)}`,
-    '',
-    '版本号答「第几个」，commit 答「哪一份代码」，启动时刻答「重启了没」。',
-  ]
-    .filter((x) => x !== null)
-    .join('\n');
 }

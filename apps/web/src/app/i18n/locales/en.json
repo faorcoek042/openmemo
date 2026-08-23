@@ -8,7 +8,9 @@
     "language": "Language",
     "themeSystem": "System",
     "themeLight": "Light",
-    "themeDark": "Dark"
+    "themeDark": "Dark",
+    "versionUnknown": "version unknown",
+    "versionStampTitle": "{{version}} · started at {{at}}"
   },
   "nav": {
     "newCapture": "New capture",
@@ -984,6 +986,11 @@
     "groupApi": "API connectivity",
     "daemon": "Local service",
     "dataDir": "Data directory",
+    "build": "Build",
+    "buildDirty": "uncommitted changes at build time",
+    "buildCommitted": "committed {{at}}",
+    "buildBuilt": "built {{at}}",
+    "buildStarted": "started {{at}}",
     "liveUpdates": "Live updates",
     "sseClients": "{{n}} connection(s)",
     "database": "Database",
