@@ -25,11 +25,64 @@
 # 目的很具体：一次 dispatch 想把 macOS / Windows 上**所有**坏点一次列全，
 # 而不是每轮只看到最靠前的那一个然后再排队 20 分钟。**探针的价值就在信息密度**。
 #
-# ⚠️ 判据：如果哪天有人想把这个 workflow 当门禁用，**必须先把 `!cancelled()` 全删掉**。
+# ── 🔴 订正（2026-08-23）：上面那句"一次列全"此前**是假的**，而且假了很久 ───────────
+#
+# `!cancelled()` 只治**步骤之间**的截断。**步骤内部**还有两层，此前没人数过：
+#
+#   ① `pnpm -r test` 的 **bail** —— pnpm 在第一个失败的包上就停。
+#      `[实测 run 32651393827，2026-08-23，master d72dc34]` win32 停在
+#      `packages/pipeline`（12 红）⇒ 排在它后面的 `apps/web`（559 条）与
+#      `apps/daemon`（785 条）**当天一条都没跑**。这一格报出来的"12 条红"
+#      不是 Windows 的真实数字，而真实数字**当时没有任何人知道**。
+#      → 已改为 `pnpm -r --no-bail test`。
+#   ② `pnpm test:ci-scripts` 是一条 **35 环的 `&&` 链** —— 断在第一环。
+#      `[实测，两次真跑一致]` win32 断在第 6 环（`selftest-elf-glibc`），
+#      macOS 断在第 7 环（`selftest-pack-deps`）⇒ 后面 28 / 29 个自检
+#      **从来没有在这两个平台上执行过一次**。
+#      → 已改为 `node scripts/ci/run-selftests-all.mjs`（同一份清单，跑完再汇总）。
+#
+# ⚠️ **这两条截断的共同后果，正是本仓最贵的那类 bug**：
+#    「没跑」和「跑了并通过」在这一格的输出里长得一模一样。
+#    一个自称"把坏点一次列全"的探针，实际上每轮只列出**最靠前的那一个**。
+#
+# ⚠️ 判据：如果哪天有人想把这个 workflow 当**合并门禁**用（`push` / `pull_request`），
+#    **必须先把 `!cancelled()` 全删掉**。
+#    `schedule` 不在此列 —— 定时跑不挡任何人合并，而它恰恰最需要"一次列全"。
+#    这条区分由 `scripts/ci/lint-workflows.mjs` 钉成断言，不是靠这段话。
 
 name: ci-crossplatform
 
+# ── 为什么加 cron（2026-08-23）───────────────────────────────────────────────────────
+#
+# 此前本文件是 `workflow_dispatch:` **only**。净效果实测过一次，代价很具体：
+# run `31389910051`（2026-08-10）红着挂了 **12 天没有任何人知道**，
+# 而同一段时间里主门禁 `ci.yml` 一直是绿的。
+#
+# ★ 而这 12 天里发生的事比"没人看"更坏：**那面红旗在说谎，并且越说越有底气。**
+#   它宣称的红是 `apps/web/src/test/components.test.tsx` 的两个未用 import
+#   —— 那条**在一天之内就被 `ci.yml` 拦下并修好了**。
+#   12 天后重跑（run `32651393827`）：**control 与 lint 三平台全绿**，
+#   而 macOS / Windows 上另有两组**真的、当天仍然存在的**红。
+#   → **一次 dispatch 的结论不会随代码更新而失效，它会随代码更新而变成假话。**
+#     这是"手动触发的探针"独有的失效形态：陈旧的红与新鲜的红长得一模一样，
+#     而人只会看见最上面那一行日期。
+#
+# 六条 e2e 腿因为同一个病在 2026-08-12 铺了 cron（`e2e-allcomponents.yml:38-39`：
+# 两个确证实例都是靠有人恰好手动跑才发现的）。**本文件当时不在那批里，只是因为
+# 当时没人把它算进去** —— 不是因为它不需要。
+#
+# 时间取 **19:30 UTC**，接在六条腿的 15 分钟阶梯后面
+# （allcomponents 18:00 / runtime 18:15 / browser 18:30 / notes 18:45 /
+#   import 19:00 / record 19:15 / **本文件 19:30**）：
+# 不是为了省钱（public 仓 $0），是别在同一时刻抢 runner 影响别人的 PR 判决。
+#
+# ⚠️ 本文件**没有 `inputs:`**，所以 #91 那条「`schedule` 下 `default:` 不生效、
+#    空 inputs 会静默少跑」的整族问题在这里不适用 —— 不是被遗漏了，是不存在。
+#    谁将来给它加 `inputs:`，请先读 `e2e-import.yml:35-52` 那段，再回来补兜底。
 on:
+  schedule:
+    # 每天 19:30 UTC。⚠️ schedule 只在**默认分支**上触发 —— 这条 cron 在 PR 上验不了。
+    - cron: '30 19 * * *'
   workflow_dispatch:
 
 permissions:
@@ -89,36 +142,66 @@ jobs:
         run: pnpm typecheck
 
       # ★ T-171 补：此前本 workflow **没有 lint**，于是「跨平台门禁」在 lint 这一格上
-      #   等于不存在 —— `ci.yml`（ubuntu-24.04）是全仓唯一自动触发的 workflow，
-      #   它绿了只说明 **Linux 上**的 eslint 绿。
+      #   等于不存在 —— 它绿了只说明 **Linux 上**的 eslint 绿。
+      #   （此处曾写「`ci.yml` 是全仓唯一自动触发的 workflow」。**已过期**：
+      #     2026-08-12 起六条 e2e 腿带 cron，本文件从 2026-08-23 起也带。
+      #     仍然成立的那半是「`ci.yml` 是唯一**挡合并**的 workflow」。）
       #
       #   为什么 lint 也需要跨平台跑（不是凑数）：eslint 的一部分判定与**文件系统**有关，
       #   而三个平台在这上面不一样 —— import 解析走真实路径（macOS/Windows 大小写不敏感，
       #   Linux 敏感 ⇒ `import './Foo'` 引 `foo.ts` 在 Linux 红、另两个平台绿），
-      #   glob 展开与路径分隔符也不同。`[未验证]` 本机只有 Linux，这条预测要靠一次真 dispatch
-      #   来证实或推翻 —— 照本文件末尾那条 `check:sources` 的先例，跑完请回来更新这段话。
+      #   glob 展开与路径分隔符也不同。
+      #
+      #   ★ `[实测 run 32651393827，2026-08-23]` **三平台 lint 全绿。**
+      #     此处曾写着 `[未验证]` 并请求「跑完回来更新这段话」—— 现在更新了。
+      #     另有一次真阳性可以记账：run `31389910051`（2026-08-10）三平台 lint 同时红在
+      #     `apps/web/src/test/components.test.tsx` 的两个未用 import 上。那**不是**
+      #     平台差异（control 也红），它只是证明这一格确实在执行，不是摆设。
       - name: Lint
         if: ${{ !cancelled() }}
         run: pnpm lint
 
+      # ⚠️ `--no-bail` 不是可选项，见文件头「订正」①。
+      #    `pnpm -r test` 默认在**第一个失败的包**上停，而 pnpm 的包顺序是拓扑序 ——
+      #    于是排在后面的包（Windows 上是 `apps/web` 559 条 + `apps/daemon` 785 条）
+      #    在那一轮里**一条都没跑**，而输出里没有任何一个字说了这件事。
+      #    探针要的是完整清单；门禁 `ci.yml` 那边**刻意保留** bail（它要的是快速判决）。
       - name: Test
         if: ${{ !cancelled() }}
-        run: pnpm -r test
+        run: pnpm -r --no-bail test
 
       # ★ T-171 补：此前本 workflow 也**没有 `test:ci-scripts`**。
       #
-      #   ⚠️ **这一步在 macOS / Windows 上很可能是红的，而那正是要它的理由**（探针不是门禁）。
-      #   `[未验证，需真机]` 预测与判据：`pnpm test:ci-scripts` 串了 7 个自检，其中
-      #   `selftest-buildbox.sh` / `selftest-build-whisper.sh` 是 **bash 脚本**，用到
-      #   `mktemp` / `sed` / `grep` / `ldd`。Windows runner 上 `bash` 是 Git Bash，
-      #   前三个有、**`ldd` 没有**；macOS 上 `sed` 是 BSD 版，`sed -i` 的参数与 GNU 不兼容。
-      #   所以预期形状是「Linux 绿、另两个平台在这一步红」。
+      #   ⚠️ **这一步在 macOS / Windows 上是红的，而那正是要它的理由**（探针不是门禁）。
       #
-      #   为什么仍然接进来而不是等修好：这 7 个自检守的是 `build-backends.yml` 的判定逻辑，
+      #   为什么接进来：这些自检守的是 `build-backends.yml` 的判定逻辑，
       #   而那个 workflow **本来就要在三个平台上跑**。自检只在 Linux 上跑过，
       #   等于「用 Linux 的行为去证明 Windows 上的判定是对的」—— 本仓最贵的那类假绿。
-      #   先让它红出来，再决定是修脚本还是按平台收窄。**红了不要加 continue-on-error**
-      #   （文件头 ⚠️ 那条判据），要么修，要么把这段话改成实测结论。
+      #
+      # ── 🔴 一条**注释型断言**的现场（2026-08-23 订正，形态 ④）──────────────────────
+      #
+      #   此处曾写着一条 `[未验证，需真机]` 的预测（2026-08-07）：
+      #     「`selftest-buildbox.sh` / `selftest-build-whisper.sh` 用到 `ldd`，
+      #       Windows 上没有；macOS 上 `sed` 是 BSD 版」，
+      #   并以「先让它红出来，再决定是修脚本还是按平台收窄」的语气收尾 ——
+      #   读起来像是这条预测**已经交给机器去验了**。
+      #
+      #   **它没有。** 那两个 `.sh` 排在 `test:ci-scripts` 这条 `&&` 链的第 27、28 环，
+      #   而链条 `[实测两次真跑一致]` win32 断在第 6 环、macOS 断在第 7 环。
+      #   → **这条预测在 17 天里一次都没有被执行到**，而那段话看起来像它正被验着。
+      #
+      #   实际断在哪（两次真跑同一处，与那条预测无关）：
+      #     · win32  ：`selftest-elf-glibc.mjs` —— objdump 认不出 Linux ELF 夹具
+      #                （`file format not recognized`）。**这是一个 ELF/glibc 检查器，
+      #                在 Windows 上跑它是范畴错误**，不是产品坏了。
+      #     · darwin ：`selftest-pack-deps.mjs:118` —— `copyFileSync('/bin/true', …)`，
+      #                而 macOS 上 `true` 在 `/usr/bin/true`，`/bin/true` 不存在。
+      #                同样是 Linux-only 夹具，同样是范畴错误。
+      #
+      #   → 换成 `run-selftests-all.mjs` 之后链条会**跑到底**，那条 `ldd` / BSD `sed`
+      #     的预测**第一次真的会被执行**。跑完请回来把结论写在这里，别再留预测。
+      #     按平台收窄哪几条自检，要等这份**完整**清单出来再定 —— 拿一份被截断的清单
+      #     去做收窄决定，就是本仓说的"量错东西"。
       # ★ 真机 CPU 探测实测：`detectCpuWin32()` 补上 IsProcessorFeaturePresent 之后，
       #   "写完了"与"真的查得出来"是两件事（Add-Type 可能被策略挡、P/Invoke 签名可能对不上），
       #   而这些失败模式的共同表现是**安静地返回空集合**。只有真机看得见。
@@ -130,9 +213,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/ci/probe-cpu-features.mjs
 
-      - name: CI scripts self-test
+      # ⚠️ 跑的是**不短路**的那一版（`ci.yml` 的门禁仍跑短路版 `pnpm test:ci-scripts`）。
+      #    两者读的是 `package.json` 里**同一条**清单 —— 不是两份会漂的名单。
+      - name: CI scripts self-test (跑完再汇总，不在第一处红停下)
         if: ${{ !cancelled() }}
-        run: pnpm test:ci-scripts
+        run: node scripts/ci/run-selftests-all.mjs
 
       # ── ⛔ `pnpm format:check` **刻意没有接**，这里也不接，`ci.yml` 里也不接 ──────────
       #

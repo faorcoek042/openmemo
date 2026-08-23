@@ -184,8 +184,16 @@ jobs:
       - name: Format check
         run: pnpm format:check
 
+  # ⚠️ **这个 job 绿 ≠ 测试在 Windows / macOS 上过。它只跑 ubuntu-24.04。**
+  #    跨三平台的那份判决在 `ci-crossplatform.yml`（每天 19:30 UTC 定时跑）。
+  #    `[实测 run 32653015121，2026-08-23，同一个 commit d72dc34]` 本 job 全绿的那一版，
+  #    在 **Windows 上有 42 条测试红 + 8 个 CI 自检红**，在 **macOS 上有 7 + 5**。
+  #    这句话是可核的：把那个 run 打开对着看。写在这里是因为此前它**没有写在任何地方** ——
+  #    而"门禁绿了"是这个仓库做每一个决定（含发版、重启 demo）时读的那一行。
   gate:
-    name: typecheck + lint + test
+    # ⚠️ 这个 name 会出现在 Actions 页面和将来的分支保护里。「只有 ubuntu-24.04」
+    #    写进标题是刻意的：读到"绿"的那一刻，同时读到它绿的范围有多大。
+    name: typecheck + lint + test（只有 ubuntu-24.04；三平台见 ci-crossplatform）
     runs-on: ubuntu-24.04
     # ★ 这些 outputs 只喂给下面的 `gate-summary` job（三态汇总，见该 job 的注释
     #   和 scripts/ci/summarize-gate.mjs 顶部注释）。不影响 gate 自己的 fail-fast：

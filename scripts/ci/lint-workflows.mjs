@@ -596,6 +596,14 @@ for (const file of files.sort()) {
       // D-12：版本号单一事实来源。被"顺手简化"掉时会当场红，而不是等用户发现
       // 界面上那个数字又几个月没动过了。
       'check-version-sync.mjs',
+      /*
+       * ★ 2026-08-23：这一条守的是「只能手动触发的 workflow 必须登记 + 挂起的必须
+       *   有截止版本」。它自己被摘掉时的样子，恰恰就是它要防的那件事 ——
+       *   一条判据写在没人读的地方，然后三次发版都没看见它。
+       *   `[实测]` proxy-coverage 的过期判据写在 YAML 注释里，滑过了 0.7.2/0.7.3/0.7.4。
+       */
+      'check-workflow-expiry.mjs',
+      'selftest-workflow-expiry.mjs',
     ]) {
       must(
         cmd.includes(f),
@@ -648,11 +656,19 @@ for (const file of files.sort()) {
    * T-171 · ci-crossplatform.yml 必须跑与 ci.yml **同一套**静态检查
    *
    * 立这一组的成因：`ci-crossplatform.yml` 此前**没有 lint、也没有 test:ci-scripts**。
-   * 而 `ci.yml`（ubuntu-24.04）是全仓**唯一自动触发**的 workflow，其余 5 个都是
+   * 而 `ci.yml`（ubuntu-24.04）当时是全仓**唯一自动触发**的 workflow，其余 5 个都是
    * `workflow_dispatch`。两件事叠起来的净效果是：**「跨平台」这三个字在 lint 和
    * CI 自检这两格上等于不存在** —— 而它恰恰是最该跨平台跑的两格
    * （eslint 的 import 解析吃文件系统大小写敏感性；那 7 个 CI 自检守的是
    * `build-backends.yml` 的判定逻辑，而那个 workflow 本来就要在三个平台上跑）。
+   *
+   * ⚠️ **上一段的"唯一自动触发"已过期**（写于 T-171，2026-08-07）：2026-08-12 起
+   * 六条 e2e 腿带 cron，`ci-crossplatform.yml` 自己从 2026-08-23 起也带。
+   * 仍然成立的那半、也是这组断言真正的地基：
+   *   **`ci.yml` 是唯一挡合并的 workflow，所以「ci.yml 绿」不蕴含
+   *     「测试在 Windows / macOS 上过」。**
+   * 过期的理由要**改写成还成立的那部分**，不是整条划掉 —— 否则下一个人会拿
+   * "理由已经不成立"当成"这组断言可以删了"（ADR-017 那条同形的教训）。
    *
    * ⚠️ 判据不是"补齐了就完了"，是**"少一条当场红"** —— 否则下一个人把它删掉时，
    * 失效的样子和"本来就没有"一模一样，这正是本仓在清的假绿家族。
@@ -669,27 +685,86 @@ for (const file of files.sort()) {
       .flatMap((j) => j?.steps ?? [])
       .map((s) => String(s.run ?? ''))
       .join('\n');
-    for (const cmd of ['pnpm lint', 'pnpm test:ci-scripts', 'pnpm typecheck', 'pnpm -r test']) {
+    /*
+     * ⚠️ 这四条钉的是**不短路**的那一版命令，不是 `ci.yml` 的那一版。
+     *
+     * `[实测 run 31389910051 + 32651393827]` 短路把这条探针变成了它自己文件头
+     * 宣称要治的那个病：`pnpm -r test` 在第一个失败的包上 bail（win32 上因此
+     * `apps/web` 559 条 + `apps/daemon` 785 条一条都没跑，而输出里没有一个字说了这件事），
+     * `pnpm test:ci-scripts` 是 35 环 `&&` 链、断在第 6/7 环。
+     * **一个只报出"最靠前那一条"的探针，和一个没跑的探针，在输出上分不开。**
+     *
+     * → 探针端必须是 `--no-bail` / `run-selftests-all.mjs`；
+     *   `ci.yml` 门禁端**刻意保留**短路（它要的是快速判决，见上面那组断言）。
+     */
+    for (const cmd of [
+      'pnpm lint',
+      'pnpm typecheck',
+      'pnpm -r --no-bail test',
+      'node scripts/ci/run-selftests-all.mjs',
+    ]) {
       must(
         xpRuns.includes(cmd),
         `${XP}: 缺 \`${cmd}\` —— 跨平台探针必须跑与 ci.yml 同一套检查，` +
-          `否则「跨平台」在这一格上等于不存在（T-171）`,
+          `且必须跑**不截断**的那一版（T-171 立，2026-08-23 补 no-bail）`,
       );
     }
+    /*
+     * ★ 反向：探针端不许退回短路版。
+     *   `pnpm -r test`（不带 --no-bail）与 `pnpm test:ci-scripts` 一旦出现在这里，
+     *   就意味着有人把"一次列全"换回了"只列最靠前那一条"，而那个退化**不会**
+     *   让任何一格变红 —— 它只会让红的条数变少，看起来还像是好消息。
+     */
+    must(
+      !/pnpm -r test(?!\S)/.test(xpRuns),
+      `${XP}: 出现了短路版 \`pnpm -r test\` —— 探针端必须用 \`pnpm -r --no-bail test\`，` +
+        `否则第一个失败的包之后的所有包都不跑，而输出里看不出来（见本文件头 ① ）`,
+    );
+    must(
+      !/pnpm test:ci-scripts(?!\S)/.test(xpRuns),
+      `${XP}: 出现了短路版 \`pnpm test:ci-scripts\` —— 探针端必须用 ` +
+        `\`node scripts/ci/run-selftests-all.mjs\`（同一份清单，跑完再汇总）`,
+    );
     must(
       !/pnpm -r build/.test(xpRuns),
       `${XP}: 用了 \`pnpm -r build\` —— PROTOCOL §7 补充要求一律 \`pnpm build:safe\``,
     );
     /*
-     * 探针**不许**变成门禁而不先处理 `!cancelled()`：文件头 ⚠️ 那条判据写着
+     * 探针**不许**变成**合并门禁**而不先处理 `!cancelled()`：文件头 ⚠️ 那条判据写着
      * 「如果哪天有人想把这个 workflow 当门禁用，必须先把 `!cancelled()` 全删掉」。
-     * 这里把它钉成可执行的断言：只要还有 `!cancelled()`，就不许自动触发。
+     *
+     * ★ 2026-08-23 两处订正，方向相反，都要看：
+     *
+     *   ① **收紧**：原来只查 `on.push`。`pull_request` 同样是挡合并的触发方式，
+     *      而它当时是个洞 —— 加一条 `pull_request:` 就能绕过这条断言。补上。
+     *   ② **明确放行 `schedule`**：cron **不挡任何人合并**，它只是每天问一次
+     *      「今天 macOS / Windows 上还有什么是坏的」。那恰恰是最需要 `!cancelled()`
+     *      的场景 —— 每轮只看到最靠前的一个坏点，等于把六天的信息摊成六轮。
+     *
+     * 判据用的是「挡不挡合并」，不是「自不自动触发」。这两个概念此前被混在一起，
+     * 而混在一起的代价是具体的：本文件加 cron 时，原来那条断言**一声不吭地放行了**
+     * —— 它查的 `on.push` 确实没出现。**一条只盯着一种触发方式的断言，
+     * 在别人换一种触发方式时不会红，而它看起来仍然在工作。**
      */
     const hasNotCancelled = /!\s*cancelled\s*\(\s*\)/.test(JSON.stringify(xp));
+    const blocksMerge = xp.on?.push !== undefined || xp.on?.pull_request !== undefined;
     must(
-      !(hasNotCancelled && xp.on?.push !== undefined),
-      `${XP}: 同时有 \`!cancelled()\` 和 \`on.push\` —— 探针要转门禁，` +
-        `必须先按文件头那条判据把 \`!cancelled()\` 全删掉，否则后续步骤会在前面已红时继续跑`,
+      !(hasNotCancelled && blocksMerge),
+      `${XP}: 同时有 \`!cancelled()\` 和 \`on.push\`/\`on.pull_request\` —— 探针要转**合并门禁**，` +
+        `必须先按文件头那条判据把 \`!cancelled()\` 全删掉，否则后续步骤会在前面已红时继续跑。` +
+        `（\`schedule\` 不在此列：定时跑不挡合并，而它最需要"一次列全"。）`,
+    );
+    /*
+     * ★ cron 本身也钉住：它是 2026-08-23 才补上的，而补它的理由是一条实测的代价 ——
+     *   `workflow_dispatch:` only 时，run 31389910051 红着挂了 12 天没人知道，
+     *   期间 `ci.yml` 一直绿。删掉 cron 会让那 12 天重新变得可能，而删掉它
+     *   **不会让任何一格变红** —— 所以这里替它红。
+     */
+    must(
+      xp.on?.schedule !== undefined,
+      `${XP}: 没有 \`on.schedule\` —— 只能手动触发的探针，它的红会挂在那里没人知道。` +
+        `\`[实测]\` run 31389910051 红了 12 天，而同期 ci.yml 一直是绿的。` +
+        `真要撤掉 cron，请连同 \`scripts/ci/check-workflow-expiry.mjs\` 里那条登记一起处理。`,
     );
   }
 }

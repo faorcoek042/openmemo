@@ -473,11 +473,66 @@ const scheduled = allFiles
  * 下面的循环会跑零次然后报绿 —— 那正是本周抓到的第二道假守卫的形状。
  */
 is(scheduled.length >= 6, true, `B0 带 cron 的 workflow 有 ${scheduled.length} 个（至少 6 条腿）`);
+
+/**
+ * ★ 2026-08-23：B0b 原文是「带 cron 的**都是** e2e 腿」。
+ *
+ * `ci-crossplatform.yml` 补 cron 时它当场红了 —— **红得完全正确**，它拦住的是
+ * 「一个新东西被挂上定时跑，而没人想过它的空 inputs 行为」。所以这里**不删它**，
+ * 只把它从"都是 e2e"改成"要么是 e2e，要么在下面这张表里逐条说清楚"。
+ *
+ * 表里每一条都要回答两个问题，否则不许进来：
+ *   ① 它有没有 `inputs:`？没有 ⇒ #91 那整族问题不适用（不是被忽略，是不存在）。
+ *   ② 它为什么不该有 `attest` 作业？（D 组的主语是发布凭证腿，不是所有定时跑。）
+ */
+const NON_E2E_SCHEDULED = {
+  'proxy-coverage.yml': {
+    noInputs: true,
+    why:
+      '代理覆盖逐条实测。没有 inputs ⇒ #91 的「schedule 下 default: 不生效」不适用。' +
+      '不发凭证：它证的是"设置页说已生效的代理真的覆盖了每一条出网路径"，不是"这批产物可发布"。' +
+      '2026-08-23 首次在 CI 上跑绿（run 32656062961）之后才挂 cron —— 顺序是判据要求的。',
+  },
+  'ci-crossplatform.yml': {
+    noInputs: true,
+    why:
+      '跨平台探针。没有 inputs ⇒ #91 的「schedule 下 default: 不生效」不适用。' +
+      '不发凭证：它证的是"今天 macOS/Windows 上什么是坏的"，不是"这批产物可发布"。',
+  },
+};
+
+const unexplained = scheduled.filter((f) => !f.startsWith('e2e-') && NON_E2E_SCHEDULED[f] == null);
 is(
-  scheduled.every((f) => f.startsWith('e2e-')),
-  true,
-  'B0b 带 cron 的都是 e2e 腿（有别的了就得单独想清楚它的空 inputs 行为）',
+  unexplained.length,
+  0,
+  `B0b 带 cron 的要么是 e2e 腿，要么在 NON_E2E_SCHEDULED 里说清楚` +
+    `${unexplained.length ? `（没交代的：${unexplained.join(', ')}）` : ''}`,
 );
+
+/*
+ * ★ 反向：表里登记了、但其实**没有** cron 的条目必须红。
+ *   否则这张表会变成一张只增不减的许可证清单 —— 某条 workflow 的 cron 被撤掉之后，
+ *   它的豁免还留着，下一个人加回 cron 时就不会再被问那两个问题了。
+ */
+const staleExempt = Object.keys(NON_E2E_SCHEDULED).filter((f) => !scheduled.includes(f));
+is(
+  staleExempt.length,
+  0,
+  `B0c NON_E2E_SCHEDULED 里没有过期条目` +
+    `${staleExempt.length ? `（这些已经没有 cron 了，请删掉：${staleExempt.join(', ')}）` : ''}`,
+);
+
+/* ★ 表里声称"没有 inputs"的，必须真的没有 —— 声明与事实脱钩就等于没声明。 */
+for (const [f, meta] of Object.entries(NON_E2E_SCHEDULED)) {
+  if (!meta.noInputs || !scheduled.includes(f)) continue;
+  const d = parse(readFileSync(join(WF_DIR, f), 'utf8'));
+  is(
+    d?.on?.workflow_dispatch?.inputs == null,
+    true,
+    `B0d ${f}：登记里写着"没有 inputs"，就必须真的没有 —— ` +
+      `加了 inputs 请先读 e2e-import.yml:35-52 那段 #91，再回来补兜底并改这条登记`,
+  );
+}
 
 for (const f of scheduled) {
   const text = readFileSync(join(WF_DIR, f), 'utf8');
@@ -556,15 +611,41 @@ const PINNED = {
 
 section('D 组 · 六条腿一律「没钉批次就不发凭证」');
 
-/* 防"空集判通过"：这张表必须覆盖每一条带 cron 的腿，一条都不许漏。 */
-const uncovered = scheduled.filter((f) => PINNED[f] == null);
+/*
+ * 防"空集判通过"：这张表必须覆盖每一条**发凭证的**定时腿，一条都不许漏。
+ *
+ * ⚠️ 主语在 2026-08-23 收窄过一次，理由要写清楚，否则下一个人会以为是在放水：
+ *   原来写的是"每条带 cron 的腿"。`ci-crossplatform.yml` 补 cron 之后它红了，
+ *   而那个红**是主语错了**，不是漏登记 —— D 组问的是「没钉批次就不发凭证」，
+ *   而跨平台探针**根本不发凭证**（它没有也不该有 `attest` 作业）。
+ *   把一个不发凭证的东西塞进这张表，只会逼人给它编一个 `runIdKey`。
+ *
+ * 收窄之后仍然守得住的：**发凭证的腿一条都不许漏**（下面 `attestLegs` 的取法是
+ * "有 attest 作业"，不是"名字以 e2e- 开头" —— 后者靠命名，前者靠事实）。
+ */
+const attestLegs = scheduled.filter(
+  (f) => parse(readFileSync(join(WF_DIR, f), 'utf8'))?.jobs?.attest != null,
+);
+is(
+  attestLegs.length >= 6,
+  true,
+  `D0a 带 cron 且发凭证的腿有 ${attestLegs.length} 条（至少 6 条 —— 少于这个数说明有腿掉了 attest 作业）`,
+);
+const uncovered = attestLegs.filter((f) => PINNED[f] == null);
 is(
   uncovered.length,
   0,
-  `D0 每条带 cron 的腿都在「钉批次」表里${uncovered.length ? `（漏了 ${uncovered.join(', ')}）` : ''}`,
+  `D0 每条带 cron 且发凭证的腿都在「钉批次」表里${uncovered.length ? `（漏了 ${uncovered.join(', ')}）` : ''}`,
+);
+/* ★ 反向：表里登记了却已经没有 cron / 没有 attest 的条目，同样要红。 */
+const stalePinned = Object.keys(PINNED).filter((f) => !attestLegs.includes(f));
+is(
+  stalePinned.length,
+  0,
+  `D0b PINNED 里没有过期条目${stalePinned.length ? `（已不是带 cron 的发凭证腿：${stalePinned.join(', ')}）` : ''}`,
 );
 
-for (const f of scheduled) {
+for (const f of attestLegs) {
   if (!PINNED[f]) continue;
   const text = readFileSync(join(WF_DIR, f), 'utf8');
   const doc = parse(text);

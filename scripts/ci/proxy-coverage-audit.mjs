@@ -472,37 +472,118 @@ try {
   say(`   ffmpeg: ${FFMPEG ?? '(没找到)'}`);
   if (!FFMPEG) throw new Error('storeRoot 里没有 ffmpeg —— 造不出 fixture');
   const out = join(ROOT, 'clip.mp4');
-  await new Promise((r) => {
-    const p = spawn(
-      FFMPEG,
-      [
-        '-y',
-        '-f',
-        'lavfi',
-        '-i',
-        'testsrc=size=160x120:rate=10:duration=2',
-        '-f',
-        'lavfi',
-        '-i',
-        'anullsrc=r=16000:cl=mono',
-        '-t',
-        '2',
-        '-c:v',
-        'libx264',
-        '-pix_fmt',
-        'yuv420p',
-        '-c:a',
-        'aac',
-        '-shortest',
-        out,
-      ],
-      { stdio: 'ignore' },
-    );
-    p.on('close', r);
-    p.on('error', r);
+
+  /*
+   * ── 🔴 这一段此前把自己的失败吞掉了（2026-08-23 修）────────────────────────────
+   *
+   * `[实测 run 31424996163]` 首跑死在这里，而现场看到的是：
+   *
+   *     ✘ 中断：ENOENT: no such file or directory, open '/tmp/…/clip.mp4'
+   *
+   * 一个**离成因很远**的 ENOENT。三处叠加造成的：
+   *   ① `stdio: 'ignore'` —— ffmpeg 把原因写在 stderr 上，而那句话被丢了；
+   *   ② `p.on('close', r)` —— resolve 不带退出码，**任何退出码都当成功**；
+   *   ③ 紧接着盲读 `readFileSync(out)` —— 于是失败以"文件不存在"现形。
+   *
+   * ⚠️ 这**不是**在"改断言让它绿"（本 workflow 文件头写死的禁令）。方向正好相反：
+   *    它把一个**静默的**失败改成**大声的**失败。修完这一段，这一步该红照样红，
+   *    只是红的那句话会指着真正的成因，而不是指着一个空文件名。
+   *
+   * ── ★ 那条写了 13 天的推断：**实测之后一半是错的**（run 32655294063）───────────
+   *
+   * 此前记的成因是「产品自带的 media-tools ffmpeg 是**面向解码**的构建，
+   * `libx264` / `aac` 编码器不在里面」。加上编码器探测之后，实测结果是：
+   *
+   *     无 libx264 **有 libopenh264** **有 mpeg4** **有 aac** 有 libmp3lame 有 pcm_s16le
+   *     ffmpeg stderr: `Unknown encoder 'libx264'` / `Encoder not found`
+   *
+   * 也就是说：**编码器好好地在**，缺的只有 `libx264` 一个 —— 而它缺的原因是
+   * **许可证**，不是"面向解码"：那个包的路径里就写着 `…-linux64-**lgpl**-8.1`，
+   * 而 libx264 是 GPL，LGPL 构建里本来就不会有它（同仓 `ffmpeg-lgpl-verify.yml`
+   * 量的就是这件事）。
+   *
+   * ⚠️ 这条订正值得单独记一笔，因为**旧推断会把下一个人带向错误的修法**：
+   *    照着"编码器不在"去做，结论是"换一条不依赖编码器的 fixture 路径"
+   *    （往仓库里塞一个二进制夹具之类）。而真实的修法是**换一个编码器名字**。
+   *    `stdio:'ignore'` 吞掉的那一行 stderr，值 13 天。
+   */
+
+  /*
+   * 按偏好挑一个**这台机器上真的有**的视频编码器，而不是写死一个。
+   * 顺序理由：libopenh264 与 libx264 同为 H.264（产物形态最接近原来的意图）；
+   * mpeg4 是最后的兜底，任何 ffmpeg 都有。
+   * ⚠️ 挑中的那个会打印出来 —— fixture 用什么编的，不许靠猜。
+   */
+  const encoderList = await new Promise((resolve) => {
+    let o = '';
+    const p = spawn(FFMPEG, ['-hide_banner', '-encoders'], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    p.stdout.on('data', (b) => (o += b.toString()));
+    p.on('close', () => resolve(o));
+    p.on('error', () => resolve(''));
   });
+  const hasEncoder = (name) => new RegExp(`^\\s*\\S+\\s+${name}\\s`, 'm').test(encoderList);
+  const VCODEC = ['libx264', 'libopenh264', 'mpeg4'].find(hasEncoder);
+  const ACODEC = ['aac', 'libmp3lame', 'pcm_s16le'].find(hasEncoder);
+  if (!VCODEC || !ACODEC) {
+    throw new Error(
+      `这个 ffmpeg 一个可用的${!VCODEC ? '视频' : '音频'}编码器都没有（${FFMPEG}）。\n` +
+        `  探到的：libx264=${hasEncoder('libx264')} libopenh264=${hasEncoder('libopenh264')} ` +
+        `mpeg4=${hasEncoder('mpeg4')} aac=${hasEncoder('aac')} pcm_s16le=${hasEncoder('pcm_s16le')}`,
+    );
+  }
+  say(`   fixture 编码器：${VCODEC} / ${ACODEC}（按这台机器实际有的挑，不是写死的）`);
+
+  const ffmpegArgs = [
+    '-y',
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc=size=160x120:rate=10:duration=2',
+    '-f',
+    'lavfi',
+    '-i',
+    'anullsrc=r=16000:cl=mono',
+    '-t',
+    '2',
+    '-c:v',
+    VCODEC,
+    '-pix_fmt',
+    'yuv420p',
+    '-c:a',
+    ACODEC,
+    '-shortest',
+    out,
+  ];
+  const enc = await new Promise((resolve) => {
+    let err = '';
+    const p = spawn(FFMPEG, ffmpegArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
+    p.stderr.on('data', (b) => {
+      err += b.toString();
+    });
+    p.on('close', (code) => resolve({ code, err }));
+    p.on('error', (e) => resolve({ code: null, err: `spawn 失败：${e.message}` }));
+  });
+  if (enc.code !== 0) {
+    const probed = ['libx264', 'libopenh264', 'mpeg4', 'aac', 'libmp3lame', 'pcm_s16le']
+      .map((n) => `${hasEncoder(n) ? '有' : '无'} ${n}`)
+      .join('  ');
+    throw new Error(
+      `造 fixture 的 ffmpeg 退出码 ${enc.code}（${FFMPEG}，用的是 ${VCODEC}/${ACODEC}）。\n` +
+        `  ffmpeg stderr（末 800 字）：\n${enc.err.slice(-800)}\n` +
+        `  ★ 该 ffmpeg 的编码器实况：${probed}\n` +
+        `  ★ 挑编码器这一步已经按实况挑过了，所以这里的红**不再是"缺 libx264"那一类**。\n` +
+        `    先读上面那段 stderr，别照抄文件头里任何一条旧推断。`,
+    );
+  }
   const { readFileSync } = await import('node:fs');
   MP4 = readFileSync(out);
+  if (MP4.length === 0) {
+    /* ffmpeg 退 0 却写出空文件也发生过（磁盘满 / 管道断）。空 fixture 会让后面
+       每一条"代理看见了请求"都变成看见一个 0 字节的请求 —— 那是假绿，不是通过。 */
+    throw new Error(`fixture clip.mp4 是 0 字节 —— ffmpeg 退了 0 但什么都没写出来`);
+  }
   say(`   fixture clip.mp4：${MP4.length} B`);
 
   hdr('3. 通过产品自己的设置接口打开代理');
