@@ -1277,6 +1277,8 @@
     "repoLink": "Upstream repository",
     "releaseLink": "Release page ({{version}})",
     "licenseLink": "Licence {{license}}",
-    "sha256Local": "recomputed independently on this machine after downloading"
+    "sha256Local": "recomputed independently on this machine after downloading",
+    "sha256Upstream": "digest supplied by upstream; we did not recompute it ourselves",
+    "provenanceDetail": "Where this build came from"
   }
 }

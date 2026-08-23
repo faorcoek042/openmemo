@@ -4715,6 +4715,7 @@ describe('T-132 组件与来源页', () => {
     upstream: { kind: 'github-release' as const, repo: 'yt-dlp/yt-dlp' },
     sizeBytes: 39924536,
     sha256: '6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae',
+    sha256Verification: 'local-recomputed',
     sha256Provenance: null,
   };
   /** npm 依赖：清单里如实写着没有制品，所以它**不该**有安装按钮。 */
@@ -6226,6 +6227,7 @@ describe('T-135 ③ 组件卡片：displayNameZh 是两份里的一份，不是�
     upstream: { kind: 'github-release' as const, repo: 'wangfenjin/simple' },
     sizeBytes: 1_234_567,
     sha256: 'aa'.repeat(32),
+    sha256Verification: 'local-recomputed',
     sha256Provenance: null,
   };
 
@@ -12408,6 +12410,7 @@ describe('T-200 S-6 组件页必须跟着活查询走', () => {
     upstream: { kind: 'github-release' as const, repo: 'a/b' },
     sizeBytes: 1000,
     sha256: 'x'.repeat(64),
+    sha256Verification: 'local-recomputed',
     sha256Provenance: null,
   };
 
@@ -12886,6 +12889,7 @@ describe('组件更新：门控的轴和动作必须是同一件事', () => {
     upstream: { kind: 'github-release' as const, repo: 'yt-dlp/yt-dlp' },
     sizeBytes: 39_924_536,
     sha256: '6b'.repeat(32),
+    sha256Verification: 'local-recomputed',
     sha256Provenance: null,
   };
 
@@ -13037,6 +13041,7 @@ describe('组件卡片：说不出已装版本时，不许给「装上钉定版�
     // 点一次就要重下的字节数，写在这里是为了让这条腿的代价看得见
     sizeBytes: 145_349_121,
     sha256: 'ab'.repeat(32),
+    sha256Verification: 'local-recomputed',
     sha256Provenance: null,
   };
 
@@ -13541,6 +13546,7 @@ describe('#105 ① /components 整页 —— 英文界面下必须是英文', ()
     upstream: { kind: 'github-release', repo: 'yt-dlp/yt-dlp' },
     sizeBytes: 39_924_536,
     sha256: '6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae',
+    sha256Verification: 'local-recomputed',
     sha256Provenance: null,
     ...over,
   });
@@ -14689,6 +14695,7 @@ describe('#106 组件页：说不出已装版本时，那句话在英文界面�
     upstream: { kind: 'github-release', repo: 'yt-dlp/yt-dlp' },
     sizeBytes: 39_924_536,
     sha256: '6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae',
+    sha256Verification: 'local-recomputed',
     sha256Provenance: null,
     ...over,
   });
@@ -14713,6 +14720,98 @@ describe('#106 组件页：说不出已装版本时，那句话在英文界面�
   const NOT_APPLICABLE = {
     installedVersion: { kind: 'not-applicable', reason: 'no_version_recorded' },
   };
+
+  /* ── ★★ sha256 那一行：结论读枚举、散文折叠 ─────────────────────────────── */
+
+  /**
+   * 逐字照抄 `media-tools-linux-x64` 的形状：**本机复算**，但句子里提到了被拿来
+   * 交叉核对的那一方（`GitHub Releases API 的 digest`）。上一版的
+   * `/API|digest|upstream/i.test(note)` 正是被这种句子判成"弱证据 ⇒ 警告色"的。
+   */
+  const TRAP_NOTE =
+    '本机下载全部 111,679,252 字节后独立复算 sha256，并与 GitHub Releases API 的 ' +
+    'digest 逐字符比对一致；解压后 LICENSE.txt 实测为 LGPL v3 全文。' +
+    ' ④ ⚠️ 未验证：端到端「干净机器 → 真的转出非空文本」尚未重跑。';
+
+  const provenanceLine = (c: HTMLElement): HTMLElement => {
+    const el = c.querySelector('[data-testid="sha256-provenance"]');
+    assert.ok(el, 'sha256 来源那一行根本没渲染 —— 下面的断言会空转');
+    return el as HTMLElement;
+  };
+
+  test('★★ 散文里含 API/digest，但结论仍然是「本机复算」，且不是警告色', async () => {
+    const r = await renderCard(
+      { sha256Verification: 'local-recomputed', sha256Provenance: TRAP_NOTE },
+      'zh-CN',
+    );
+    const line = provenanceLine(r.container);
+
+    assert.equal(
+      line.getAttribute('data-verification'),
+      'local-recomputed',
+      '结论那一格没按枚举渲染 —— 判据又回到散文上了',
+    );
+    assert.equal(
+      text(line),
+      zhAt('components.sha256Local'),
+      `结论那一行说的不是"本机复算"（实际：${text(line)}）—— ` +
+        '而这一条的散文里明写着"本机下载全部字节后独立复算"',
+    );
+    assert.ok(
+      !line.className.includes('text-warning'),
+      '★ 缺陷原状：证据最强的那一档被判成警告色 —— 只因为它提到了被它核对的那一方',
+    );
+    r.unmount();
+  });
+
+  test('★★ 那段散文没被删，只是默认收起（展开后逐字都在）', async () => {
+    const r = await renderCard(
+      { sha256Verification: 'local-recomputed', sha256Provenance: TRAP_NOTE },
+      'zh-CN',
+    );
+    const det = r.container.querySelector('[data-testid="sha256-provenance-detail"]');
+    assert.ok(det, '散文整段不见了 —— 折叠不等于删除，供应链复核唯一的依据就是它');
+    assert.equal(
+      (det as HTMLDetailsElement).open,
+      false,
+      '默认是展开的 —— 27 张卡合计 11,884 字构建日志正是这么铺满整页的',
+    );
+    assert.ok(
+      text(det as HTMLElement).includes(TRAP_NOTE),
+      '折叠区里的原文被改写或截断了 —— 它是数据，不是我们的文案',
+    );
+    r.unmount();
+  });
+
+  test('★ 没有散文时不画折叠区（空的 <details> 是一句凭空造出来的话）', async () => {
+    const r = await renderCard({ sha256Provenance: null }, 'zh-CN');
+    assert.equal(
+      r.container.querySelector('[data-testid="sha256-provenance-detail"]'),
+      null,
+      '清单没写来源说明，界面却画了一个"这一份是怎么来的" —— 点开是空的',
+    );
+    // 反向自检：结论那一行仍然在（否则上面那条否定断言可能只是整块没渲染）
+    assert.equal(text(provenanceLine(r.container)), zhAt('components.sha256Local'));
+    r.unmount();
+  });
+
+  test('★★ 真的是「上游提供」时，才说它、才给警告色', async () => {
+    const r = await renderCard(
+      { sha256Verification: 'upstream-provided', sha256Provenance: null },
+      'zh-CN',
+    );
+    const line = provenanceLine(r.container);
+    assert.equal(
+      text(line),
+      zhAt('components.sha256Upstream'),
+      '弱证据那一档没说出口 —— 用户会以为这个哈希是我们自己算的',
+    );
+    assert.ok(
+      line.className.includes('text-warning'),
+      '弱证据那一档没有任何视觉提示 —— 两种强度的证据在屏幕上长得一样',
+    );
+    r.unmount();
+  });
 
   test('★★ 英文界面：这一格得说清「装了」+「记录里没版本号」，而且一个汉字都没有', async () => {
     await i18nInstance.changeLanguage('en');
@@ -14807,6 +14906,7 @@ describe('#106 上游查询失败：14 格每一格在英文界面上都得说�
     upstream: { kind: 'github-release', repo: 'yt-dlp/yt-dlp' },
     sizeBytes: 39_924_536,
     sha256: 'a'.repeat(64),
+    sha256Verification: 'local-recomputed',
     sha256Provenance: null,
   });
 

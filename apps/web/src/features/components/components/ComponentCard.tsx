@@ -11,7 +11,12 @@ import {
   Package,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { ComponentStatus, UpstreamCheck, UpstreamCheckKind } from '@openmemo/shared';
+import type {
+  ComponentStatus,
+  Sha256Verification,
+  UpstreamCheck,
+  UpstreamCheckKind,
+} from '@openmemo/shared';
 import { assertNeverUpstreamCheck, pinRelation } from '@openmemo/shared';
 import { Button } from '../../../components/common/Button';
 import { Emphasis } from '../../../components/common/Emphasis';
@@ -594,7 +599,10 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
                     "上游 API 提供" 与 "本机独立复算" 是两种不同强度的证据：
                     前者信任上游没被攻破，后者只信任字节本身。混为一谈会高估可信度。
                   */}
-                  <ProvenanceNote note={c.sha256Provenance} />
+                  <ProvenanceNote
+                    verification={c.sha256Verification}
+                    note={c.sha256Provenance}
+                  />
                 </div>
               </div>
             </li>
@@ -606,21 +614,76 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
 }
 
 /**
- * Render where a digest came from, defaulting to the stronger local-verification claim.
- *
- * ⚠️ `note` 有值时**照样原样渲染** —— 那是清单里写的一句关于这一份制品的事实
- * （`sha256Provenance`，属于数据），不是界面文案。只有**缺省那一句**归 i18n：
- * 它是我们替清单说的话，所以它得跟着界面语言走。
+ * 每一档该说哪句话。**总表** —— `Sha256Verification` 加一档而没人给它写话，
+ * `tsc` 当场红。换成 `KEYS[v] ?? ''` 或带万能 `default` 的三元，新档位会静默渲染成
+ * 一片空白，而这一格的空白说的是「我们没告诉你这个哈希是谁算的」。
  */
-function ProvenanceNote({ note }: { note?: string | null }) {
+const SHA256_CLAIM_KEYS: Readonly<Record<Sha256Verification, string>> = {
+  'local-recomputed': 'components.sha256Local',
+  'upstream-provided': 'components.sha256Upstream',
+};
+
+/**
+ * 这一份摘要是谁算的 —— **一行结论 + 一段可展开的原始记录**。
+ *
+ * ## ★★ 结论那一行现在读枚举，不再嗅探散文
+ *
+ * 上一版是 `/API|digest|upstream/i.test(note)`：拿**一段自由散文**去判"证据强不强"。
+ * `[实测 2026-08-24]` 27 个组件里 13 个带散文，其中 **5 个被判成警告色，全部误判**，
+ * 而且恰好是全仓证据最强的那几条：
+ *
+ *   · `whispercpp-cpu-win-x64` 散文原话是「**不带任何凭证从 release URL 全量重下后
+ *     本机 `sha256sum` 复算**」，命中的 `api` 来自另一句里的 DLL 名 `api-ms-win-crt-*`；
+ *   · `media-tools-linux-x64` 原话是「本机下载全部 111,679,252 字节后独立复算，
+ *     **并与** GitHub Releases API 的 digest 逐字符比对一致」—— 复算 + 交叉核对，
+ *     比两者单独都强，却因为提到了被核对的那一方而被判弱。
+ *
+ * **我们最用力的那几条，界面正好在叫用户少信它们。** 判据搬到
+ * `sha256Verification` 这一格（`Record` 全量映射 ⇒ 契约加一档没人写话就编译红）。
+ *
+ * ## ★★ 散文折叠，但一个字都不删
+ *
+ * 那段散文最长 1,761 字（`whispercpp-cpu-win-x64`），13 条合计 11,884 字，
+ * 中文写死、不过 i18n、**默认全展开**，而 `/api/components` 不按平台过滤 ⇒ 27 张卡全画。
+ * 里面是 commit hash、CI run id、ADR/T 号、仓内源码路径、`env -u … curl` 命令行、
+ * 19 个 DLL 文件名，以及写给我们自己的「⚠️ 未验证：…尚未重跑」。
+ * **那是交接记录，不是产品文案。**
+ *
+ * 但它**不删**：对一个要复核供应链的人来说，那是唯一的依据。所以进 `<details>`，
+ * 默认收起，标题走 i18n。**能折叠的是解释，不能折叠的是结论** —— 结论就在上面那一行。
+ */
+function ProvenanceNote({
+  verification,
+  note,
+}: {
+  verification: Sha256Verification;
+  note?: string | null;
+}) {
   const { t } = useTranslation();
-  const upstreamProvided = note != null && /API|digest|upstream/i.test(note);
+  const weak = verification === 'upstream-provided';
   return (
-    <p
-      className={cn('mt-0.5 text-[11px]', upstreamProvided ? 'text-warning' : 'text-ink-muted')}
-      data-testid="sha256-provenance"
-    >
-      {note ?? t('components.sha256Local')}
-    </p>
+    <>
+      <p
+        className={cn('mt-0.5 text-[11px]', weak ? 'text-warning' : 'text-ink-muted')}
+        data-testid="sha256-provenance"
+        data-verification={verification}
+      >
+        {t(SHA256_CLAIM_KEYS[verification])}
+      </p>
+      {note ? (
+        <details className="mt-0.5" data-testid="sha256-provenance-detail">
+          <summary className="cursor-pointer text-[11px] text-ink-muted hover:underline">
+            {t('components.provenanceDetail')}
+          </summary>
+          {/*
+            ⚠️ 原样渲染，不改写、不截断 —— 它是清单里关于这一份制品的记录（数据），
+            不是我们的文案。等宽 + 可换行让"这一段不是产品在说话"由形式承担。
+          */}
+          <p className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] text-ink-muted">
+            {note}
+          </p>
+        </details>
+      ) : null}
+    </>
   );
 }

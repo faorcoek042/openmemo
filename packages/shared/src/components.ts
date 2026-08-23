@@ -126,15 +126,52 @@ export interface ComponentStatus {
   sizeBytes: number;
   sha256: string;
   /**
-   * Where this digest came from, in plain language.
+   * Where this digest came from — **machine-readable**.
    *
    * "upstream API said so" and "we downloaded every byte and hashed it ourselves" are
    * different strengths of evidence — the first trusts that the upstream registry has not
    * been compromised, the second trusts only the bytes. Collapsing them into one opaque
    * hash string overstates how much we actually know, so the UI shows this next to it.
+   *
+   * ── ★★ 为什么这一格必须存在（它不是把散文"整理"一下） ──────────────────────
+   *
+   * 界面上那个「弱证据 ⇒ 警告色」的判据，此前是**正则嗅探下面那段散文**：
+   * `/API|digest|upstream/i.test(sha256Provenance)`。`[实测 2026-08-24]`
+   * 27 个组件里 13 个带散文，其中 **5 个被判成"上游提供"（警告色）——全部是误判**，
+   * 而且恰恰是全仓证据最强的那几条：
+   *
+   *   · `whispercpp-cpu-win-x64`  散文原话：「**不带任何凭证从 release URL 全量重下后
+   *     本机 `sha256sum` 复算**，没有抄 CI fragment」——命中的 `api` 来自另一句里的
+   *     **Windows DLL 名** `api-ms-win-crt-*`。
+   *   · `media-tools-linux-x64` / `ytdlp-linux-x64` 原话：「本机下载全部 N 字节后独立
+   *     复算，并与 GitHub Releases API 的 digest 逐字符比对一致」——**复算 + 交叉核对**，
+   *     比两者单独任何一个都强，却因为提到了被核对的那一方而被判弱。
+   *
+   * **也就是说：我们最用力的那几条，界面正好在叫用户少信它们。**
+   * 判据只要还落在散文上，改一个词就会翻转，而且没有任何东西会红。
+   */
+  sha256Verification: Sha256Verification;
+  /**
+   * 上面那一格的**长版说明**（可选，属于数据不属于文案）。
+   *
+   * ⚠️ 它不再决定任何渲染判断，只是被折叠展示。
    */
   sha256Provenance?: string | null;
 }
+
+/**
+ * 一份摘要的证据强度。**判断只许读这一格，不许读 `sha256Provenance` 那段散文。**
+ *
+ * - `local-recomputed` —— 我们自己把全部字节下下来重算过（只信字节）。
+ * - `upstream-provided` —— 我们抄的是上游给的值（还得信上游没被攻破）。
+ *
+ * ⚠️ `upstream-provided` **今天没有生产者**：清单里 27 个组件逐条核过，全部是
+ * `local-recomputed`。保留这一格不是"三态渲染凑数"，而是因为
+ * `components.upstreamNewerPinned` 那句话正建立在这个区分上（我们拒绝安装
+ * 上游那一版，理由就是它的 sha256 来自上游 API）。一旦有人往清单里加一个抄来的
+ * 摘要，**必须在这里说出口**，而不是让它沉默地混进"本机复算"里。
+ */
+export type Sha256Verification = 'local-recomputed' | 'upstream-provided';
 
 /**
  * 这一次 `GET /api/components` **有没有去问上游**，问到了多少。

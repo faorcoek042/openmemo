@@ -1277,6 +1277,8 @@
     "repoLink": "上游仓库",
     "releaseLink": "发布页（{{version}}）",
     "licenseLink": "许可证 {{license}}",
-    "sha256Local": "本机下载后独立复算"
+    "sha256Local": "本机下载后独立复算",
+    "sha256Upstream": "摘要由上游提供，我们没有自己复算",
+    "provenanceDetail": "这一份是怎么来的"
   }
 }
