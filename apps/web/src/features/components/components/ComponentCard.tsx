@@ -281,9 +281,10 @@ export function ComponentCard({ component: c, locale, busy, onUpdate }: Componen
             {/*
               ★ T-135：走 `localizedName()`，不要写死 `displayNameZh`。
               这条属于「第三类混语言」：**数据齐全、契约齐全，只是渲染时挑错了那一份**
-              —— `vendor/manifests/components.json` 里 8 条组件**每一条都同时有**
-              `displayName` 与 `displayNameZh`，`packages/shared` 的 `ComponentStatus`
-              两个字段也都在。所以这不是"缺翻译"，是"有翻译没用上"。
+              —— `vendor/manifests/components.json` 里 **27 条组件每一条都同时有**
+              `displayName` 与 `displayNameZh`（2026-08-24 复核；这里原来写着"8 条"，
+              那是清单还只有 8 条时留下的数，早已不成立），`packages/shared` 的
+              `ComponentStatus` 两个字段也都在。所以这不是"缺翻译"，是"有翻译没用上"。
               （同型的 `/models`、`/runtime` 已在 T-129b 接上同一个 helper。）
             */}
             <h3 className="text-sm font-medium text-ink">{localizedName(locale, c)}</h3>
