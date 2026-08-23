@@ -21,7 +21,14 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseTestLog } from './xplat-parse.mjs';
-import { judge, BASELINE_PATH, MIN_PACKAGES, MIN_PASS, MIN_LINKS } from './xplat-ratchet.mjs';
+import {
+  judge,
+  BASELINE_PATH,
+  MIN_PACKAGES,
+  MIN_PASS,
+  MIN_LINKS,
+  MAX_FLAKY,
+} from './xplat-ratchet.mjs';
 
 let pass = 0;
 let fail = 0;
@@ -209,6 +216,91 @@ const today = (tests, selftests) => ({ tests, selftests, skipped: [] });
   is(v.ok, true, 'B5 按平台跳过的那些不进比对（跳过既不是通过也不是失败）');
 }
 
+{
+  /*
+   * ★★ flaky 隔离区。`[实测]` 第一次真跑棘轮就撞上了：
+   *   `POST /api/notes/upload › 超出上限 → 413` 在 macOS 上三轮红了两轮。
+   *   **一条间歇失败的用例放进两头都断的棘轮里会天天红**：红那天不算新伤，
+   *   绿那天却被判"基线陈了"；划掉之后它下次红又变成新伤。两个方向轮流响。
+   *   所以 flaky 只豁免方向②，方向①照常 —— 下面四条把这个语义钉死。
+   */
+  const FLAKY_BASE = {
+    platforms: {
+      'p-test': {
+        tests: [
+          {
+            id: 'pkg › suite › 间歇那条',
+            why: 'unexamined',
+            since: '0.7.4',
+            flaky: true,
+            note: '三轮里红了两轮（run 1 红 / run 2 绿 / run 3 红）',
+          },
+          { id: 'pkg › suite › 稳定那条', why: 'unexamined', since: '0.7.4', note: 'x' },
+        ],
+        selftests: [],
+      },
+    },
+  };
+  const at = (tests) =>
+    judge({ platform: 'p-test', baseline: FLAKY_BASE, today: today(tests, []), health: HEALTHY });
+
+  is(
+    at(['pkg › suite › 稳定那条']).ok,
+    true,
+    'B6 ★★ flaky 那条今天**过了** ⇒ 不判"基线陈了"（间歇的绿不是"有人修好了"）',
+  );
+  is(
+    at(['pkg › suite › 间歇那条', 'pkg › suite › 稳定那条']).ok,
+    true,
+    'B6b flaky 那条今天**红了** ⇒ 也不算新伤（它在册）',
+  );
+  const still = at(['pkg › suite › 间歇那条']);
+  is(still.ok, false, 'B6c ★ 但**非** flaky 的那条今天过了 ⇒ 照样红（豁免不许外溢）');
+  because(
+    still.stale.map((d) => d.id),
+    '稳定那条',
+    'B6d 点名的是稳定那条，不是间歇那条',
+  );
+
+  /* 隔离区必须小且要有证据，否则它就是垃圾桶。 */
+  const many = {
+    platforms: {
+      'p-test': {
+        tests: Array.from({ length: 9 }, (_, i) => ({
+          id: `pkg › s › f${i}`,
+          why: 'unexamined',
+          since: '0.7.4',
+          flaky: true,
+          note: 'run 1 红 / run 2 绿',
+        })),
+        selftests: [],
+      },
+    },
+  };
+  const over = judge({ platform: 'p-test', baseline: many, today: today([], []), health: HEALTHY });
+  is(over.ok, false, `B7 ★反向：flaky 超过上限 ${MAX_FLAKY} ⇒ 红`);
+  because(over.fatal, '隔离区不是垃圾桶', 'B7b 红的那句话说的是"先修一条再加一条"，不是"调大上限"');
+
+  const noEvidence = {
+    platforms: {
+      'p-test': {
+        tests: [
+          { id: 'pkg › s › x', why: 'unexamined', since: '0.7.4', flaky: true, note: '偶尔会挂' },
+        ],
+        selftests: [],
+      },
+    },
+  };
+  const ne = judge({
+    platform: 'p-test',
+    baseline: noEvidence,
+    today: today([], []),
+    health: HEALTHY,
+  });
+  is(ne.ok, false, 'B8 ★反向：flaky 的 note 里没有间歇性证据（哪几次红哪几次绿）⇒ 红');
+  because(ne.fatal, '与 "懒得查" 分不开', 'B8b 说清了为什么要证据');
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════════════
  * C 组 · 空转防线 —— 要的不只是"红"，是**红对了理由**
  * ═══════════════════════════════════════════════════════════════════════════════════ */
@@ -268,6 +360,15 @@ section('D 组 · 签入的基线文件');
     }
   }
   is(dupes.length, 0, `D5 同一格里没有重复 id${dupes.length ? `（${dupes.join(', ')}）` : ''}`);
+
+  for (const [p, e] of Object.entries(baseline.platforms)) {
+    const f = [...(e.tests ?? []), ...(e.selftests ?? [])].filter((r) => r.flaky);
+    is(
+      f.length <= MAX_FLAKY,
+      true,
+      `D6 ${p}：flaky ${f.length} 条 ≤ 上限 ${MAX_FLAKY}（隔离区不是垃圾桶）`,
+    );
+  }
 }
 
 console.log('');

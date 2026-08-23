@@ -64,6 +64,28 @@ export const MIN_PASS = 2000;
 export const MIN_LINKS = 25;
 
 /**
+ * 每格 runner 允许的 `flaky: true` 条数上限。
+ *
+ * ## 为什么需要 `flaky`，以及它为什么必须有上限
+ *
+ * `[实测]` 第一次真跑棘轮就撞上了：`apps/daemon › POST /api/notes/upload ›
+ * 超出上限 → 413` 在 macOS 上**三轮里红了两轮**（32651393827 红、
+ * 32656407764 绿、32660814749 红）。它写 socket 时踩 EPIPE，是真的间歇。
+ *
+ * **一条间歇失败的用例放进两头都断的棘轮里，会天天红**：红的那天不算新伤，
+ * 绿的那天却会被判成"基线陈了，去划掉" —— 而划掉之后它下次红又变成新伤。
+ * 两个方向轮流响，噪音比信号还多，最后的结局仍然是有人学会忽略它。
+ *
+ * 所以 `flaky: true` 的条目**只豁免方向②**（不因为今天绿了就要求划掉），
+ * 方向①照常（它红的时候不算新伤，因为它在册）。
+ *
+ * ⚠️ 这是一个真正的减弱，所以必须有上限：**它是隔离区，不是垃圾桶**。
+ * 上限取 3：够放真正间歇的那几条，不够把"懒得查"的都塞进来。
+ * 撞上限时红的那句话是「先修一条再加一条」，不是「把上限调大」。
+ */
+export const MAX_FLAKY = 3;
+
+/**
  * @param {{
  *   platform: string,
  *   baseline: any,
@@ -101,6 +123,31 @@ export function judge({ platform, baseline, today, health }) {
   }
   if (fatal.length > 0) return { fatal, newDamage: [], stale: [], ok: false };
 
+  /*
+   * ★ `flaky: true` 只豁免方向②。它仍然在册，所以它红的时候不是新伤。
+   *   隔离区必须小且看得见 —— 超过上限当场红（见 MAX_FLAKY 的注释）。
+   */
+  const rows = [...(entry.tests ?? []), ...(entry.selftests ?? [])];
+  const flaky = rows.filter((e) => e.flaky);
+  if (flaky.length > MAX_FLAKY) {
+    fatal.push(
+      `${platform} 的基线里有 ${flaky.length} 条 \`flaky\`，超过上限 ${MAX_FLAKY}。` +
+        `**隔离区不是垃圾桶** —— 先修掉一条再加一条，别调大上限。\n` +
+        `    ` +
+        flaky.map((e) => e.id).join('\n    '),
+    );
+  }
+  const noNote = flaky.filter((e) => !/(红了|绿|run \d)/.test(String(e.note ?? '')));
+  if (noNote.length > 0) {
+    fatal.push(
+      `这些 \`flaky\` 条目的 note 里没有间歇性的**证据**（哪几次红、哪几次绿）：\n    ` +
+        noNote.map((e) => e.id).join('\n    ') +
+        `\n    没有证据的 "flaky" 与 "懒得查" 分不开，而它豁免的正是这条棘轮最要紧的那一半。`,
+    );
+  }
+  if (fatal.length > 0) return { fatal, newDamage: [], stale: [], ok: false, flaky };
+
+  const flakyIds = new Set(flaky.map((e) => e.id));
   const baseTests = new Set((entry.tests ?? []).map((e) => e.id));
   const baseSelf = new Set((entry.selftests ?? []).map((e) => e.id));
   const todayTests = new Set(today.tests);
@@ -111,11 +158,21 @@ export function judge({ platform, baseline, today, health }) {
     ...[...todaySelf].filter((id) => !baseSelf.has(id)).map((id) => ({ kind: 'selftest', id })),
   ];
   const stale = [
-    ...[...baseTests].filter((id) => !todayTests.has(id)).map((id) => ({ kind: 'test', id })),
-    ...[...baseSelf].filter((id) => !todaySelf.has(id)).map((id) => ({ kind: 'selftest', id })),
+    ...[...baseTests]
+      .filter((id) => !todayTests.has(id) && !flakyIds.has(id))
+      .map((id) => ({ kind: 'test', id })),
+    ...[...baseSelf]
+      .filter((id) => !todaySelf.has(id) && !flakyIds.has(id))
+      .map((id) => ({ kind: 'selftest', id })),
   ];
 
-  return { fatal, newDamage, stale, ok: newDamage.length === 0 && stale.length === 0 };
+  return {
+    fatal,
+    newDamage,
+    stale,
+    flaky,
+    ok: newDamage.length === 0 && stale.length === 0,
+  };
 }
 
 function arg(name) {
@@ -178,6 +235,11 @@ async function main() {
   );
 
   const verdict = judge({ platform, baseline, today, health });
+  if (verdict.flaky?.length) {
+    console.log(
+      `   ⚠️ 隔离区：${verdict.flaky.length}/${MAX_FLAKY} 条标了 flaky（只豁免"今天过了要划掉"那一半，不豁免新伤）`,
+    );
+  }
 
   const lines = [`### ${headline}`, ''];
   if (verdict.fatal.length > 0) {

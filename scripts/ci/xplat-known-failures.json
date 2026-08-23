@@ -11,7 +11,7 @@
   "_按平台收窄的不在这里": "objdump / ldd / Linux 容器 / ELF 那几条自检是**范畴错误**，已由 scripts/ci/platform-scope.mjs 在源头跳过（汇总里记 ◐，不记 ✔）。收窄完还红的才进这份基线。",
   "_一个小号现场": "上一轮我自己在新写的自检里犯了 new URL().pathname（Windows 上拼成 D:\\D:\\a\\…）。抓到它的正是「链条跑到底」那个改动 —— 那条自检排在 37 环里的第 36 环，短路版结构上走不到，而 ci.yml（ubuntu）永远绿。它证明了这两件事不是空转。",
   "recordedAtVersion": "0.7.4",
-  "recordedFromRun": "32656407764",
+  "recordedFromRun": "32660814749（首次真跑棘轮；此前的 32656407764 用于解析器标定夹具）",
   "recordedAt": "2026-08-23",
   "platforms": {
     "linux-x64 (control)": {
@@ -98,30 +98,6 @@
           "why": "unexamined",
           "since": "0.7.4",
           "note": "整个测试文件级失败（不是某一条用例）—— 本轮未查"
-        },
-        {
-          "id": "apps/daemon › T-196 ④ 服务端也要有「能不能装」这道闸 › ★★ pending-ci 的包：直接 POST 必须 409，不许静默 202 起一个必然失败的 job",
-          "why": "host-assumption",
-          "since": "0.7.4",
-          "note": "夹具克隆 linux-x64 的包再断言它能装 —— 平台闸先响。已修（见 backendInstallAvailability.test.ts），预期本条会从基线里消失"
-        },
-        {
-          "id": "apps/daemon › T-196 ④ 服务端也要有「能不能装」这道闸 › ★ published 的包照常 202（这道闸不许误伤正常安装）",
-          "why": "host-assumption",
-          "since": "0.7.4",
-          "note": "夹具克隆 linux-x64 的包再断言它能装 —— 平台闸先响。已修（见 backendInstallAvailability.test.ts），预期本条会从基线里消失"
-        },
-        {
-          "id": "apps/daemon › T-196 ④ 服务端也要有「能不能装」这道闸 › ★ 字段缺失照常 202（目录里 12/14 个包根本没写这个字段）",
-          "why": "host-assumption",
-          "since": "0.7.4",
-          "note": "夹具克隆 linux-x64 的包再断言它能装 —— 平台闸先响。已修（见 backendInstallAvailability.test.ts），预期本条会从基线里消失"
-        },
-        {
-          "id": "apps/daemon › T-196 ④ 服务端也要有「能不能装」这道闸 › ★ 409 带 remediation，且它的 action 在前端两张表里有登记（不许掉进兜底）",
-          "why": "host-assumption",
-          "since": "0.7.4",
-          "note": "夹具克隆 linux-x64 的包再断言它能装 —— 平台闸先响。已修（见 backendInstallAvailability.test.ts），预期本条会从基线里消失"
         },
         {
           "id": "apps/daemon › \\#87 系统里已经有一份 ⇒ 目录要说出来（但不许说成\"已安装\"） › ★ 用户自己 brew install 的那份被解析到 ⇒ 这一格必须有证据（就是那条路径）",
@@ -282,12 +258,6 @@
           "note": "20/27 红。verify-bundle.sh 的夹具是 Linux 形状（.so / 目录布局）；本轮未逐条查"
         },
         {
-          "id": "node scripts/ci/selftest-e2e-runtime.mjs",
-          "why": "unexamined",
-          "since": "0.7.4",
-          "note": "本轮未查"
-        },
-        {
           "id": "node scripts/ci/selftest-resolve-bundle.mjs",
           "why": "unexamined",
           "since": "0.7.4",
@@ -304,28 +274,11 @@
           "note": "macOS 上没观测到「强制关闭」日志；疑似 keepAlive 行为差异，本轮未查"
         },
         {
-          "id": "apps/daemon › T-196 ④ 服务端也要有「能不能装」这道闸 › ★★ pending-ci 的包：直接 POST 必须 409，不许静默 202 起一个必然失败的 job",
-          "why": "host-assumption",
+          "id": "apps/daemon › POST /api/notes/upload › 超出上限 → 413（Content-Length 预检 + 流式中途两条路径），半成品被删除",
+          "why": "unexamined",
           "since": "0.7.4",
-          "note": "夹具克隆 linux-x64 的包再断言它能装 —— 平台闸先响。已修（见 backendInstallAvailability.test.ts），预期本条会从基线里消失"
-        },
-        {
-          "id": "apps/daemon › T-196 ④ 服务端也要有「能不能装」这道闸 › ★ published 的包照常 202（这道闸不许误伤正常安装）",
-          "why": "host-assumption",
-          "since": "0.7.4",
-          "note": "夹具克隆 linux-x64 的包再断言它能装 —— 平台闸先响。已修（见 backendInstallAvailability.test.ts），预期本条会从基线里消失"
-        },
-        {
-          "id": "apps/daemon › T-196 ④ 服务端也要有「能不能装」这道闸 › ★ 字段缺失照常 202（目录里 12/14 个包根本没写这个字段）",
-          "why": "host-assumption",
-          "since": "0.7.4",
-          "note": "夹具克隆 linux-x64 的包再断言它能装 —— 平台闸先响。已修（见 backendInstallAvailability.test.ts），预期本条会从基线里消失"
-        },
-        {
-          "id": "apps/daemon › T-196 ④ 服务端也要有「能不能装」这道闸 › ★ 409 带 remediation，且它的 action 在前端两张表里有登记（不许掉进兜底）",
-          "why": "host-assumption",
-          "since": "0.7.4",
-          "note": "夹具克隆 linux-x64 的包再断言它能装 —— 平台闸先响。已修（见 backendInstallAvailability.test.ts），预期本条会从基线里消失"
+          "flaky": true,
+          "note": "★ 间歇：三轮里红了两轮（run 32651393827 红 / 32656407764 绿 / 32660814749 红）。红时是 write EPIPE —— 服务端在客户端写完之前就断了连接，macOS 上缓冲不下就 EPIPE、Linux 上缓冲得下。flaky 只豁免今天过了要划掉那一半；它红时照样不算新伤。要清掉它得让用例先把 EPIPE 当成合法的 413 路径。"
         }
       ],
       "selftests": [
@@ -343,5 +296,6 @@
         }
       ]
     }
-  }
+  },
+  "_flaky 是什么": "标了 flaky:true 的条目只豁免方向②（不因为今天绿了就要求划掉），方向①照常。它是**隔离区不是垃圾桶**：每格上限 3 条（MAX_FLAKY），且 note 里必须有间歇性的证据（哪几次红哪几次绿）。撞上限时的正确反应是先修一条，不是调大上限。"
 }
