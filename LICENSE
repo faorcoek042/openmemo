@@ -33,12 +33,24 @@ SQLite 扩展等）。**它们各自的许可证独立于本文件生效**，逐
 （MIT / Apache-2.0 / ISC / BSD 等）授予你的权利，不因本文件而减损。
 
 
-## 关于 GPL 组件的说明
+## 关于 GPL / LGPL 组件的说明
 
-本包**不包含** ffmpeg 与 yt-dlp。这两个组件是 GPL-3.0-or-later，
-由产品在你自己的机器上按需从上游官方发布页下载；OpenMemo 既不转存
-也不重新分发它们的字节。
+本包**不包含任何 GPL 组件**。
 
-这不是措辞技巧，而是这个包得以存在的前提：一旦把 GPL 组件的字节
-放进我们自己的分发物，ADR-002 记录的分发义务就会触发。详见
-`docs/adr/ADR-002-license-redlines.md` 与 `docs/design/D-17-prebuilt-bundles.md` §1。
+  · **yt-dlp 不随包分发。** 项目本身是 Unlicense，但官方发行的二进制内嵌了
+    GPL 组件，因此由产品在你自己的机器上按需从上游官方发布页下载；
+    OpenMemo 既不转存也不重新分发它的字节。
+
+  · **ffmpeg / ffprobe 按平台不同。** Linux 与 Windows 包内置
+    LGPL-3.0-or-later 变体，其许可证全文随之一起分发（`runtime/probe/LICENSE.txt`）；
+    macOS 包不内置，由产品按需下载。
+
+**本包实际内置了什么，以同目录的 `THIRD-PARTY-NOTICES` 为准** —— 那份文件
+按平台生成，逐条写明组件、版本、SPDX 标识与许可证正文的位置。本文件不重复
+那份清单：一个静态文件说不清一件随平台变化的事。
+
+这条边界不是措辞技巧。把 **GPL** 组件的字节放进我们自己的分发物，会触发
+ADR-002 记录的分发义务，所以我们不放。LGPL 变体是另一回事：我们只以 `spawn`
+方式调用可执行文件，不 `dlopen`、不链接其任何库，LGPL 的链接触发义务不适用；
+仍需满足的「许可证全文可得」由上述随包的 `LICENSE.txt` 满足。详见
+`docs/design/D-20-bundled-deps.md` §13.3 与 §13.7。
