@@ -137,6 +137,29 @@ export function judge({ platform, baseline, today, health }) {
         flaky.map((e) => e.id).join('\n    '),
     );
   }
+  /*
+   * ★ `prefix: true` —— 间歇性有时**不在叶子上，在整个套件上**。
+   *
+   * `[实测]` `apps/daemon › POST /api/notes/upload` 在 macOS 上就是这样：
+   * 它写 socket 时踩 EPIPE，而**每轮踩到哪一条子用例是随机的** ——
+   * 32660814749 是「超出上限 → 413」，32661634027 换成了「扩展名不在白名单 → 415」。
+   * 按叶子逐条登记，只会变成"每轮冒出一条新伤、同时另一条要划掉"，
+   * 而真相是**同一个成因**。那样登记既不准确，也会很快撞穿 MAX_FLAKY。
+   *
+   * 所以 `prefix: true` 让一条登记覆盖整个套件（前缀匹配），**只占一个隔离区名额**。
+   *
+   * ⚠️ 它只许与 `flaky: true` 同时出现。单独的 `prefix` 会变成
+   *    「这一整包我都不看了」的万能开关 —— 那正是隔离区最容易烂掉的方式。
+   */
+  const badPrefix = rows.filter((e) => e.prefix && !e.flaky);
+  if (badPrefix.length > 0) {
+    fatal.push(
+      `这些条目有 \`prefix: true\` 却没有 \`flaky: true\`：\n    ` +
+        badPrefix.map((e) => e.id).join('\n    ') +
+        `\n    前缀匹配只给**真正成片间歇**的套件用（每轮踩到哪一条是随机的）。` +
+        `单独的 prefix 等于"这一整包我都不看了"。`,
+    );
+  }
   const noNote = flaky.filter((e) => !/(红了|绿|run \d)/.test(String(e.note ?? '')));
   if (noNote.length > 0) {
     fatal.push(
@@ -147,22 +170,28 @@ export function judge({ platform, baseline, today, health }) {
   }
   if (fatal.length > 0) return { fatal, newDamage: [], stale: [], ok: false, flaky };
 
-  const flakyIds = new Set(flaky.map((e) => e.id));
+  const flakyIds = new Set(flaky.filter((e) => !e.prefix).map((e) => e.id));
+  const flakyPrefixes = flaky.filter((e) => e.prefix).map((e) => e.id);
+  const underPrefix = (id) => flakyPrefixes.some((pre) => id.startsWith(pre));
   const baseTests = new Set((entry.tests ?? []).map((e) => e.id));
   const baseSelf = new Set((entry.selftests ?? []).map((e) => e.id));
   const todayTests = new Set(today.tests);
   const todaySelf = new Set(today.selftests);
 
   const newDamage = [
-    ...[...todayTests].filter((id) => !baseTests.has(id)).map((id) => ({ kind: 'test', id })),
-    ...[...todaySelf].filter((id) => !baseSelf.has(id)).map((id) => ({ kind: 'selftest', id })),
+    ...[...todayTests]
+      .filter((id) => !baseTests.has(id) && !underPrefix(id))
+      .map((id) => ({ kind: 'test', id })),
+    ...[...todaySelf]
+      .filter((id) => !baseSelf.has(id) && !underPrefix(id))
+      .map((id) => ({ kind: 'selftest', id })),
   ];
   const stale = [
     ...[...baseTests]
-      .filter((id) => !todayTests.has(id) && !flakyIds.has(id))
+      .filter((id) => !todayTests.has(id) && !flakyIds.has(id) && !underPrefix(id))
       .map((id) => ({ kind: 'test', id })),
     ...[...baseSelf]
-      .filter((id) => !todaySelf.has(id) && !flakyIds.has(id))
+      .filter((id) => !todaySelf.has(id) && !flakyIds.has(id) && !underPrefix(id))
       .map((id) => ({ kind: 'selftest', id })),
   ];
 
@@ -236,9 +265,10 @@ async function main() {
 
   const verdict = judge({ platform, baseline, today, health });
   if (verdict.flaky?.length) {
-    console.log(
-      `   ⚠️ 隔离区：${verdict.flaky.length}/${MAX_FLAKY} 条标了 flaky（只豁免"今天过了要划掉"那一半，不豁免新伤）`,
-    );
+    for (const f of verdict.flaky) {
+      console.log(`   ⚠️ 隔离区 ${f.prefix ? '（整个套件，前缀匹配）' : ''}：${f.id}`);
+    }
+    console.log(`   ⚠️ 共 ${verdict.flaky.length}/${MAX_FLAKY} 条 —— 只豁免"今天过了要划掉"那一半`);
   }
 
   const lines = [`### ${headline}`, ''];

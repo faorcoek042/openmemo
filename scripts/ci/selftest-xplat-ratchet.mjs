@@ -281,6 +281,74 @@ const today = (tests, selftests) => ({ tests, selftests, skipped: [] });
   is(over.ok, false, `B7 ★反向：flaky 超过上限 ${MAX_FLAKY} ⇒ 红`);
   because(over.fatal, '隔离区不是垃圾桶', 'B7b 红的那句话说的是"先修一条再加一条"，不是"调大上限"');
 
+  /*
+   * ★ prefix：间歇性在**整个套件**上时（每轮踩到哪一条子用例是随机的），
+   *   一条登记按前缀覆盖，只占一个名额。见 xplat-ratchet.mjs 里 `prefix` 那段注释。
+   */
+  const PREFIX_BASE = {
+    platforms: {
+      'p-test': {
+        tests: [
+          {
+            id: 'apps/daemon › POST /api/notes/upload › ',
+            why: 'unexamined',
+            since: '0.7.4',
+            flaky: true,
+            prefix: true,
+            note: 'run 1 红 413 / run 2 绿 / run 3 红 415',
+          },
+        ],
+        selftests: [],
+      },
+    },
+  };
+  const px = (tests) =>
+    judge({ platform: 'p-test', baseline: PREFIX_BASE, today: today(tests, []), health: HEALTHY });
+  is(
+    px(['apps/daemon › POST /api/notes/upload › 超出上限 → 413']).ok,
+    true,
+    'B9 ★ prefix 覆盖套件里的任意一条子用例（今天红的是 413）',
+  );
+  is(
+    px(['apps/daemon › POST /api/notes/upload › 扩展名不在白名单 → 415']).ok,
+    true,
+    'B9b ★★ 换成另一条子用例（415）也照样覆盖 —— 这正是按叶子登记做不到的那件事',
+  );
+  is(px([]).ok, true, 'B9c 整套今天都绿 ⇒ 不判"基线陈了"（间歇的绿不是修好了）');
+  /*
+   * ★ B9d 这一条我第一版写反了，而它红得对，值得留下来：
+   *   登记的前缀**以分隔符 ` › ` 结尾**，所以 `…/upload2` 这种"名字恰好以它开头"的
+   *   **邻居套件不会被顺带豁免**。写登记时请照着这个形状写（结尾带分隔符），
+   *   否则 `foo` 会悄悄盖住 `foobar`。
+   */
+  const neighbour = px(['apps/daemon › POST /api/notes/upload2 › 别的套件']);
+  is(
+    neighbour.ok,
+    false,
+    'B9d ★ 名字恰好以它开头的**邻居套件**不被豁免（登记的前缀以 ` › ` 结尾）',
+  );
+  const far = px(['packages/db › 完全不相干的套件 › x']);
+  is(far.ok, false, 'B9e ★ 前缀外的新伤照常红 —— 豁免不许外溢到整个仓库');
+
+  const prefixNoFlaky = {
+    platforms: {
+      'p-test': {
+        tests: [
+          { id: 'apps/daemon › X › ', why: 'unexamined', since: '0.7.4', prefix: true, note: 'x' },
+        ],
+        selftests: [],
+      },
+    },
+  };
+  const pnf = judge({
+    platform: 'p-test',
+    baseline: prefixNoFlaky,
+    today: today([], []),
+    health: HEALTHY,
+  });
+  is(pnf.ok, false, 'B10 ★反向：prefix 没有配 flaky ⇒ 红');
+  because(pnf.fatal, '这一整包我都不看了', 'B10b 说清了为什么不许单独用 prefix');
+
   const noEvidence = {
     platforms: {
       'p-test': {
