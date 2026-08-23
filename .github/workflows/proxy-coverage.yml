@@ -154,11 +154,40 @@
 #
 # 反过来，④⑤⑥ 确实已被 `ffmpegProxyEnv.test.ts` 与 `proxyCoverage.test.ts`
 # （源码扫描 + 调用点钉死）覆盖 —— 那三条不是留着它的理由。**①②③⑦ 才是。**
+#
+# ── ✅✅ 它绿了（run 32656062961，2026-08-23）—— 过期判据按**出路 ①** 兑现 ────────
+#
+# 换掉写死的 `libx264` 之后，**七条路径第一次全部跑到**：
+#
+#     fixture 编码器：libopenh264 / aac（按这台机器实际有的挑）
+#     ① 模型下载              ✅ 走代理
+#     ② LLM API 调用          ✅ 走代理
+#     ③ direct-http probe     ✅ 走代理
+#     ④ ffprobe 远端读（子进程）  UNKNOWN（另有守卫：`ffmpegProxyEnv.test.ts`）
+#     ⑤ yt-dlp probe（子进程）  ✅ 走代理
+#     ⑥ yt-dlp fetch（子进程）  ✅ 走代理
+#     ⑦ 改回 off 后立即生效      ✅ 立即生效（PATCH off → 代理看到 0 条）
+#     ✔ 每一条出网路径都走代理，与设置页的声称一致。
+#     `[实测]` 下载量 **551 MB**（root 59882 → 60433），与首跑那次逐字一致。
+#
+# 所以「在它至少跑绿过一次之前不许自动触发」这个前提**已经不成立了** ——
+# 它跑绿了，于是按判据的出路 ① 挂上 cron。
+# **判据不再挂在这里**：`check-workflow-expiry.mjs` 的登记册里那条已经删掉了，
+# 因为有了自动触发器之后它就不再是一条"暗着的 workflow"。
 name: proxy-coverage
 
 on:
-  # ★ 刻意**只有** workflow_dispatch：它的第一次运行必须是被人发起、被人看着的。
-  #   在它至少跑绿过一次之前，不许自动触发（见上面「过期判据」）。
+  schedule:
+    # 每天 19:45 UTC，接在 ci-crossplatform（19:30）后面。
+    # ⚠️ schedule 只在**默认分支**上触发 —— 这条 cron 在 PR 上验不了。
+    # 阶梯：allcomponents 18:00 / runtime 18:15 / browser 18:30 / notes 18:45 /
+    #       import 19:00 / record 19:15 / ci-crossplatform 19:30 / **本文件 19:45**。
+    # 不是为了省钱（public 仓 $0），是别在同一时刻抢 runner 影响别人的 PR 判决。
+    #
+    # ⚠️ 本文件**没有 `inputs:`**，所以 #91 那条「`schedule` 下 `default:` 不生效、
+    #    空 inputs 会静默少跑」的整族问题在这里不适用 —— 不是被遗漏了，是不存在。
+    #    谁将来给它加 `inputs:`，请先读 `e2e-import.yml:35-52`，再回来补兜底。
+    - cron: '45 19 * * *'
   workflow_dispatch:
 
 permissions:

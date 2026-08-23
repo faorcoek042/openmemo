@@ -486,6 +486,13 @@ is(scheduled.length >= 6, true, `B0 带 cron 的 workflow 有 ${scheduled.length
  *   ② 它为什么不该有 `attest` 作业？（D 组的主语是发布凭证腿，不是所有定时跑。）
  */
 const NON_E2E_SCHEDULED = {
+  'proxy-coverage.yml': {
+    noInputs: true,
+    why:
+      '代理覆盖逐条实测。没有 inputs ⇒ #91 的「schedule 下 default: 不生效」不适用。' +
+      '不发凭证：它证的是"设置页说已生效的代理真的覆盖了每一条出网路径"，不是"这批产物可发布"。' +
+      '2026-08-23 首次在 CI 上跑绿（run 32656062961）之后才挂 cron —— 顺序是判据要求的。',
+  },
   'ci-crossplatform.yml': {
     noInputs: true,
     why:

@@ -110,14 +110,14 @@ section('\x1b[1mA 组 · 只能手动触发的 workflow 必须登记，挂起的
 }
 {
   const noExpiry = DARK_WORKFLOWS.map((e) =>
-    e.file === 'proxy-coverage.yml' ? { ...e, expiresAt: undefined } : e,
+    e.file === 'ffmpeg-lgpl-verify.yml' ? { ...e, expiresAt: undefined } : e,
   );
   const { problems } = await audit({ version: '0.7.4', registry: noExpiry });
   redBecause(problems, '没有截止线的"挂起"就是永久停车位', 'A5 ★反向：挂起项没有截止版本 ⇒ 红');
 }
 {
   const noForks = DARK_WORKFLOWS.map((e) =>
-    e.file === 'proxy-coverage.yml' ? { ...e, forks: undefined } : e,
+    e.file === 'ffmpeg-lgpl-verify.yml' ? { ...e, forks: undefined } : e,
   );
   const { problems } = await audit({ version: '0.7.4', registry: noForks });
   redBecause(problems, '必须给 forks', 'A5b ★反向：挂起项说不出两条出路 ⇒ 红');
@@ -150,49 +150,80 @@ is(
   'A7d ★ schedule ⇒ 不暗（这一条就是本轮给 ci-crossplatform 补的东西）',
 );
 
-/* A8 过期就红，且红的那句话把两条出路端出来 —— 并且**没到期时不红**（不是焊死在红上）。 */
-section('  ── ★ 过期判定');
+/*
+ * A8/A9 · ★ 过期判定 —— **跑在 /tmp 的夹具上，不依赖今天登记册里恰好有哪几条**。
+ *
+ * 上一版拿 `proxy-coverage.yml` 当样本。它当天就被兑现了（绿了 → 挂 cron →
+ * 不再是暗的 → 登记删除），于是那几条断言跟着坏。
+ * **一条会被"把事情做对"弄坏的自检，等于在惩罚做对。** 改成夹具。
+ */
+section('  ── ★ 过期判定（夹具，不依赖真登记册）');
 {
-  const { problems } = await audit({ version: '0.7.6' });
-  redBecause(problems, '过期判据已经触发', 'A8 ★ 产品到 v0.7.6 时 proxy-coverage 的判据触发 ⇒ 红');
-  redBecause(problems, '两条出路', 'A8b 红的那句话端出了两条出路，不只是说"过期了"');
-  redBecause(
-    problems,
-    '别靠改大 expiresAt 让它闭嘴',
-    'A8c 红的那句话堵住了"顺延一下"这条最省事的假出路',
-  );
-}
-{
-  const { problems } = await audit({ version: '0.7.5' });
-  is(problems.length, 0, 'A8d 阴性对照：v0.7.5 还没到期 ⇒ 绿（这道门不是焊死在红上的）');
+  const wf = mkdtempSync(join(tmpdir(), 'om-wfexp-'));
+  try {
+    writeFileSync(
+      join(wf, 'dark-thing.yml'),
+      'name: dark-thing\non:\n  workflow_dispatch:\njobs:\n  a:\n    runs-on: x\n',
+    );
+    const reg = [
+      {
+        file: 'dark-thing.yml',
+        kind: 'pending',
+        expiresAt: '0.7.6',
+        evidence: 'dark-thing.yml:1',
+        why: '夹具：一条自己写了「停在这里不算终态」的承诺。',
+        forks: '① 给它一个自动触发器；② 删掉并归档。',
+      },
+    ];
+    const at = (v) => audit({ version: v, registry: reg, wfDir: wf });
+
+    const { problems: p076 } = await at('0.7.6');
+    redBecause(p076, '过期判据已经触发', 'A8 ★ 产品到截止版本 v0.7.6 ⇒ 红');
+    redBecause(p076, '两条出路', 'A8b 红的那句话端出了两条出路，不只是说"过期了"');
+    redBecause(p076, '别靠改大 expiresAt 让它闭嘴', 'A8c 堵住了"顺延一下"这条最省事的假出路');
+
+    const { problems: p075 } = await at('0.7.5');
+    is(p075.length, 0, 'A8d 阴性对照：v0.7.5 还没到期 ⇒ 绿（这道门不是焊死在红上的）');
+
+    const { problems: p080 } = await at('0.8.0');
+    redBecause(p080, '过期判据已经触发', 'A8e 越过截止线之后一直红，不是只在等于那一版时红');
+
+    /*
+     * ★★ A9 —— 这一条是这整个文件存在的理由：**重演已经发生过的那次事故**。
+     *
+     * 真实历史：`proxy-coverage.yml` 的过期判据（截止 v0.7.2）写在 YAML 注释里，
+     * 没有任何守卫会读，于是 0.7.2 / 0.7.3 / 0.7.4 三次发版一次都没看见它，
+     * 红旗挂了 13 天。下面把那条登记原样重建在夹具里，逐个版本问一遍。
+     */
+    const historic = [{ ...reg[0], file: 'dark-thing.yml', expiresAt: '0.7.2' }];
+    const askAt = (v) => audit({ version: v, registry: historic, wfDir: wf });
+    is(
+      (await askAt('0.7.1')).problems.length,
+      0,
+      'A9a v0.7.1（判据写下时）⇒ 绿 —— 所以下面的红是到期，不是恒红',
+    );
+    for (const v of ['0.7.2', '0.7.3', '0.7.4']) {
+      const { problems } = await askAt(v);
+      redBecause(
+        problems,
+        '过期判据已经触发',
+        `A9 ★★ v${v} 发版时这道门会红 —— 真实历史里这一版**没有**任何东西红`,
+      );
+    }
+  } finally {
+    rmSync(wf, { recursive: true, force: true });
+  }
 }
 
-/*
- * ★★ A9 —— 这一条是这整个文件存在的理由。
- *
- * 把时钟拨回 2026-08-13（v0.7.2 发布那天），把登记恢复成 `proxy-coverage.yml`
- * 文件头里那条**原判据**（截止 v0.7.2）。这道门必须当场红。
- *
- * 真实发生的是：那条判据写在 YAML 注释里，没有任何守卫会读，
- * 于是 0.7.2 / 0.7.3 / 0.7.4 三次发版**一次都没看见它**，红旗挂了 13 天。
- * 这一条断言证明的是：**同样的事情不会再发生第二次。**
- */
+/* A10 空转防线：workflow 目录是空的 ⇒ 必须红，不许"没东西可查"报绿。 */
 {
-  const asOriginallyWritten = DARK_WORKFLOWS.map((e) =>
-    e.file === 'proxy-coverage.yml' ? { ...e, expiresAt: '0.7.2' } : e,
-  );
-  const { problems } = await audit({ version: '0.7.2', registry: asOriginallyWritten });
-  redBecause(
-    problems,
-    'proxy-coverage.yml',
-    'A9 ★★ 把时钟拨回 v0.7.2 + 原判据 ⇒ 这道门当场红（真实历史里它滑过了三次发版）',
-  );
-  const { problems: p071 } = await audit({ version: '0.7.1', registry: asOriginallyWritten });
-  is(
-    p071.length,
-    0,
-    'A9b 阴性对照：v0.7.1（判据写下时的下一版）还没到期 ⇒ 绿 —— 所以 A9 的红是"到期"，不是"恒红"',
-  );
+  const empty = mkdtempSync(join(tmpdir(), 'om-wfempty-'));
+  try {
+    const { problems } = await audit({ version: '0.7.4', registry: [], wfDir: empty });
+    redBecause(problems, '没东西可查', 'A10 ★反向：一个 workflow 都没有 ⇒ 红（空集不许判绿）');
+  } finally {
+    rmSync(empty, { recursive: true, force: true });
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════════

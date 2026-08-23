@@ -135,42 +135,23 @@ export const DARK_WORKFLOWS = [
 
   /* ───────────── 以下是 `pending`：停在这里**不算一个终态** ───────────── */
 
-  {
-    file: 'proxy-coverage.yml',
-    kind: 'pending',
-    expiresAt: '0.7.6',
-    evidence: 'proxy-coverage.yml:19-27',
-    why:
-      '它只为把「791 行的 `proxy-coverage-audit.mjs` 从没在 CI 里跑过」变成「跑过、有结论」而存在。' +
-      '文件头白纸黑字：**停在这里不算一个终态**。',
-    forks:
-      '① 让它绿过一次并挂上 cron（19:45 UTC，接在 ci-crossplatform 后面）；' +
-      '② 连同 `scripts/ci/proxy-coverage-audit.mjs` 一起删除，照 ADR-017 的形式把知识归档。',
-    /*
-     * ⚠️ **这是一条被重新签发的判据，不是新签发的** —— 必须说清楚，否则它就是个永久停车位。
-     *
-     * 原判据（文件头 L19-27）写的是 v0.7.2。仓库发了 0.7.2 / 0.7.3 / 0.7.4，**三次都没人看见**。
-     * 重新签发的理由不是"再给点时间"，是**上一轮结构上到不了裁决点**：
-     *
-     *   首跑死在第 2 步末尾自己造 fixture 那一段，而那一段
-     *   `stdio:'ignore'` 吞掉 ffmpeg 的报错 + 任何退出码都当成功 + 紧接着盲读文件，
-     *   于是失败以一个**离成因很远**的 ENOENT 现形。
-     *   → 七条出网路径**一条都没测到**。在"它到底能不能跑"都不知道的情况下，
-     *     ①②两条出路都是拍脑袋。
-     *
-     * 这一轮变了两件事，所以它不该再滑一次：
-     *   · 那一段已修（`proxy-coverage-audit.mjs`）：失败会大声说出退出码、stderr 与
-     *     该 ffmpeg 的**编码器实况**，直接回答"是不是缺 libx264/aac"这个此前只是推断的问题；
-     *   · **判据从 YAML 注释搬到了这里，由机器判** —— 上一轮失效的正是"写在没人读的地方"。
-     *
-     * 为什么不选②（删掉）：`[已核]` 它测的七条路径里，
-     * **④ 由 `ffmpegProxyEnv.test.ts` 覆盖，⑤⑥ 的调用点由 `proxyCoverage.test.ts` 的
-     * 源码扫描覆盖**，但 **①②③ 三条在进程内的路径今天只有"`setGlobalDispatcher`
-     * 装了全局分发器所以没有调用点绕得过去"这个结构论证，没有任何测试**；
-     * 而 **⑦（设置页说"已生效"对子进程也成立、且关掉之后真的关掉）没有任何东西覆盖**。
-     * 删掉它 = 这四条一起变成没人证明。所以先修，别先删。
-     */
-  },
+  /*
+   * ── ✅ `proxy-coverage.yml` 曾经在这里，2026-08-23 **按出路 ① 兑现后移出** ────
+   *
+   * 这条登记的一生就是这套机制想要的样子，值得留个脚印：
+   *   · 它的判据原本写在 `proxy-coverage.yml` 的 YAML 注释里（截止 v0.7.2），
+   *     **滑过了 0.7.2 / 0.7.3 / 0.7.4 三次发版**，红旗挂了 13 天；
+   *   · 搬进这个登记册（截止 v0.7.6）之后，同一天就被处理掉了 ——
+   *     首跑那处吞掉自己错误的代码一修，真正的成因（`Unknown encoder 'libx264'`，
+   *     LGPL 构建里没有 GPL 的 libx264）当场现形，换个编码器名字它就绿了
+   *     （run 32656062961，七条路径 ①②③⑤⑥⑦ 全绿、④ 由别处守）。
+   *   · 绿了 ⇒ 挂 cron（19:45 UTC）⇒ **它不再是一条"暗着的 workflow"**
+   *     ⇒ 这条登记必须删掉，否则上面 ② 那条反向断言会红。
+   *
+   * ⚠️ 所以别把它加回来。要加回来的唯一情形是有人把那条 cron 摘了 ——
+   *   而那时这道门会先替你红（"只有 workflow_dispatch，却没在 DARK_WORKFLOWS 里登记"）。
+   */
+
   {
     file: 'ffmpeg-lgpl-verify.yml',
     kind: 'pending',
@@ -255,23 +236,31 @@ export function isDark(doc) {
   return on.push === undefined && on.pull_request === undefined && on.schedule === undefined;
 }
 
-async function collectDark() {
-  const files = (await readdir(WF_DIR)).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'));
+async function collectDark(wfDir = WF_DIR) {
+  const files = (await readdir(wfDir)).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'));
   const dark = [];
   for (const f of files.sort()) {
-    const doc = parse(await readFile(join(WF_DIR, f), 'utf8'));
+    const doc = parse(await readFile(join(wfDir, f), 'utf8'));
     if (isDark(doc)) dark.push(f);
   }
   return { files, dark };
 }
 
-export async function audit({ version, registry = DARK_WORKFLOWS } = {}) {
+/**
+ * @param {{version: string, registry?: typeof DARK_WORKFLOWS, wfDir?: string}} o
+ *
+ * `wfDir` 是给自检用的：**判定机制的正确性不该依赖于今天登记册里恰好有哪几条**。
+ * 上一版的自检拿 `proxy-coverage.yml` 当"过期"那一格的样本，
+ * 而那一格**一旦被兑现（挂上 cron）就不再是暗的**，自检当场跟着坏 ——
+ * 一条会被"把事情做对"弄坏的自检，等于在惩罚做对。所以样本改用 /tmp 里的夹具。
+ */
+export async function audit({ version, registry = DARK_WORKFLOWS, wfDir = WF_DIR } = {}) {
   const problems = [];
-  const { files, dark } = await collectDark();
+  const { files, dark } = await collectDark(wfDir);
 
   /* 空转防线：一个 workflow 都没扫到 = 这道门什么都没检查，却会报绿。 */
   if (files.length === 0) {
-    problems.push(`${WF_DIR} 里一个 workflow 都没有 —— 这道门会因为"没东西可查"而永远绿`);
+    problems.push(`${wfDir} 里一个 workflow 都没有 —— 这道门会因为"没东西可查"而永远绿`);
     return { problems, dark, files };
   }
   if (dark.length === 0) {
